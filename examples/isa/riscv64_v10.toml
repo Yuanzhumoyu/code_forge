@@ -1,0 +1,347 @@
+# ============================================================
+# RISC-V 64-bit (RV64IM) — pure bitstring + primitives
+# ============================================================
+
+[meta]
+name = "riscv64"
+version = "10.0"
+endian = "little"
+mode = 64
+max_inst_len = 4
+no_default_lowering = true
+
+[meta.capabilities]
+variable_length = false
+prefix_layers = 0
+simd_widths = []
+mask_registers = false
+broadcast = false
+rounding_mode = false
+
+[reg.gpr]
+count = 32
+width = 64
+names = [
+    "X0","X1","X2","X3","X4","X5","X6","X7",
+    "X8","X9","X10","X11","X12","X13","X14","X15",
+    "X16","X17","X18","X19","X20","X21","X22","X23",
+    "X24","X25","X26","X27","X28","X29","X30","X31",
+]
+
+[abi]
+stack_align = 16
+[abi.frame]
+sp = "X2"
+fp = "X8"
+[abi.callee_saved]
+gpr = ["X1","X8","X9","X18","X19","X20","X21","X22","X23","X24","X25","X26","X27"]
+xmm = []
+[abi.arg_regs]
+gpr = ["X10","X11","X12","X13","X14","X15","X16","X17"]
+xmm = []
+[abi.ret_regs]
+gpr = ["X10"]
+xmm = []
+[abi.precolor]
+VReg0 = "X10"
+VReg2 = "X12"
+
+# ═══════════════════════════════════════════════
+# R-type: funct7|rs2|rs1|funct3|rd|opcode(0x33)
+# ═══════════════════════════════════════════════
+
+[inst.ADD]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{0:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "add {dest}, {src1}, {src2}"
+
+[inst.SUB]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{0:12:3}{src1:15:5}{src2:20:5}{0x20:25:7}{0x33:0:7}"
+asm = "sub {dest}, {src1}, {src2}"
+
+[inst.MUL]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{0:12:3}{src1:15:5}{src2:20:5}{0x01:25:7}{0x33:0:7}"
+asm = "mul {dest}, {src1}, {src2}"
+
+[inst.DIVU]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{5:12:3}{src1:15:5}{src2:20:5}{0x01:25:7}{0x33:0:7}"
+asm = "divu {dest}, {src1}, {src2}"
+
+[inst.DIV]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{4:12:3}{src1:15:5}{src2:20:5}{0x01:25:7}{0x33:0:7}"
+asm = "div {dest}, {src1}, {src2}"
+
+[inst.REMU]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{7:12:3}{src1:15:5}{src2:20:5}{0x01:25:7}{0x33:0:7}"
+asm = "remu {dest}, {src1}, {src2}"
+
+[inst.REM]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{6:12:3}{src1:15:5}{src2:20:5}{0x01:25:7}{0x33:0:7}"
+asm = "rem {dest}, {src1}, {src2}"
+
+[inst.AND]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{7:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "and {dest}, {src1}, {src2}"
+
+[inst.OR]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{6:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "or {dest}, {src1}, {src2}"
+
+[inst.XOR]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{4:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "xor {dest}, {src1}, {src2}"
+
+[inst.SLL]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{1:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "sll {dest}, {src1}, {src2}"
+
+[inst.SRL]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{5:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "srl {dest}, {src1}, {src2}"
+
+[inst.SRA]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{5:12:3}{src1:15:5}{src2:20:5}{0x20:25:7}{0x33:0:7}"
+asm = "sra {dest}, {src1}, {src2}"
+
+[inst.SLT]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{2:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "slt {dest}, {src1}, {src2}"
+
+[inst.SLTU]
+fields = { dest = "VReg", src1 = "VReg", src2 = "VReg" }
+encoding = "32 {dest:7:5}{3:12:3}{src1:15:5}{src2:20:5}{0x00:25:7}{0x33:0:7}"
+asm = "sltu {dest}, {src1}, {src2}"
+
+# ═══════════════════════════════════════════════
+# I-type: imm|rs1|funct3|rd|opcode
+# ═══════════════════════════════════════════════
+
+[inst.ADDI]
+fields = { dest = "VReg", src1 = "VReg", imm = "I64" }
+encoding = "32 {dest:7:5}{0:12:3}{src1:15:5}{imm:20:12}{0x13:0:7}"
+asm = "addi {dest}, {src1}, {imm}"
+
+[inst.ANDI]
+fields = { dest = "VReg", src1 = "VReg", imm = "I64" }
+encoding = "32 {dest:7:5}{7:12:3}{src1:15:5}{imm:20:12}{0x13:0:7}"
+asm = "andi {dest}, {src1}, {imm}"
+
+[inst.ORI]
+fields = { dest = "VReg", src1 = "VReg", imm = "I64" }
+encoding = "32 {dest:7:5}{6:12:3}{src1:15:5}{imm:20:12}{0x13:0:7}"
+asm = "ori {dest}, {src1}, {imm}"
+
+[inst.XORI]
+fields = { dest = "VReg", src1 = "VReg", imm = "I64" }
+encoding = "32 {dest:7:5}{4:12:3}{src1:15:5}{imm:20:12}{0x13:0:7}"
+asm = "xori {dest}, {src1}, {imm}"
+
+[inst.SLTI]
+fields = { dest = "VReg", src1 = "VReg", imm = "I64" }
+encoding = "32 {dest:7:5}{2:12:3}{src1:15:5}{imm:20:12}{0x13:0:7}"
+asm = "slti {dest}, {src1}, {imm}"
+
+[inst.SLTIU]
+fields = { dest = "VReg", src1 = "VReg", imm = "I64" }
+encoding = "32 {dest:7:5}{3:12:3}{src1:15:5}{imm:20:12}{0x13:0:7}"
+asm = "sltiu {dest}, {src1}, {imm}"
+
+# ═══════════════════════════════════════════════
+# Shift-I-type (RV64): funct6|shamt(6)|rs1|funct3|rd|opcode(0x13)
+# ═══════════════════════════════════════════════
+
+[inst.SLLI]
+fields = { dest = "VReg", src1 = "VReg", shamt = "I64" }
+encoding = "32 {dest:7:5}{1:12:3}{src1:15:5}{shamt:20:6}{0:26:6}{0x13:0:7}"
+asm = "slli {dest}, {src1}, {shamt}"
+
+[inst.SRLI]
+fields = { dest = "VReg", src1 = "VReg", shamt = "I64" }
+encoding = "32 {dest:7:5}{5:12:3}{src1:15:5}{shamt:20:6}{0:26:6}{0x13:0:7}"
+asm = "srli {dest}, {src1}, {shamt}"
+
+[inst.SRAI]
+fields = { dest = "VReg", src1 = "VReg", shamt = "I64" }
+encoding = "32 {dest:7:5}{5:12:3}{src1:15:5}{shamt:20:6}{0x10:26:6}{0x13:0:7}"
+asm = "srai {dest}, {src1}, {shamt}"
+
+# ═══════════════════════════════════════════════
+# U-type: LUI
+# ═══════════════════════════════════════════════
+
+[inst.LUI]
+fields = { dest = "VReg", imm = "I64" }
+encoding = "32 {dest:7:5}{imm:[12;20;12]}{0x37:0:7}"
+asm = "lui {dest}, {imm}"
+
+# ═══════════════════════════════════════════════
+# Load/Store
+# ═══════════════════════════════════════════════
+
+[inst.LD]
+fields = { dest = "VReg", base = "VReg", offset = "I64" }
+encoding = "32 {dest:7:5}{3:12:3}{base:15:5}{offset:20:12}{0x03:0:7}"
+asm = "ld {dest}, {imm}({base})"
+
+[inst.SD]
+fields = { src2 = "VReg", base = "VReg", offset = "I64" }
+encoding = "32 {offset:[7;5;5]}{src2:20:5}{base:15:5}{3:12:3}{offset:[25;7]}{0x23:0:7}"
+asm = "sd {src2}, {imm}({base})"
+effect = "Write"
+
+# ═══════════════════════════════════════════════
+# Control flow — bitstring with !isa1/!isa2 fixup
+# ═══════════════════════════════════════════════
+
+[inst.JAL]
+fields = { dest = "VReg", offset = "BlockTarget" }
+encoding = "32 {dest:7:5}{0x6F:0:7} !isa2"
+asm = "jal {dest}, .L{offset}"
+effect = "Jump"
+
+[inst.JALR]
+fields = { dest = "VReg", base = "VReg", offset = "I64" }
+encoding = "32 {dest:7:5}{0:12:3}{base:15:5}{offset:20:12}{0x67:0:7}"
+asm = "jalr {dest}, {imm}({base})"
+effect = "Jump"
+
+[inst.BEQ]
+fields = { src1 = "VReg", src2 = "VReg", offset = "BlockTarget" }
+encoding = "32 {src2:20:5}{src1:15:5}{0:12:3}{0x63:0:7} !isa1"
+asm = "beq {src1}, {src2}, .L{offset}"
+effect = "Branch"
+
+[inst.BNE]
+fields = { src1 = "VReg", src2 = "VReg", offset = "BlockTarget" }
+encoding = "32 {src2:20:5}{src1:15:5}{1:12:3}{0x63:0:7} !isa1"
+asm = "bne {src1}, {src2}, .L{offset}"
+effect = "Branch"
+
+[inst.BLT]
+fields = { src1 = "VReg", src2 = "VReg", offset = "BlockTarget" }
+encoding = "32 {src2:20:5}{src1:15:5}{4:12:3}{0x63:0:7} !isa1"
+asm = "blt {src1}, {src2}, .L{offset}"
+effect = "Branch"
+
+[inst.BGE]
+fields = { src1 = "VReg", src2 = "VReg", offset = "BlockTarget" }
+encoding = "32 {src2:20:5}{src1:15:5}{5:12:3}{0x63:0:7} !isa1"
+asm = "bge {src1}, {src2}, .L{offset}"
+effect = "Branch"
+
+[inst.BLTU]
+fields = { src1 = "VReg", src2 = "VReg", offset = "BlockTarget" }
+encoding = "32 {src2:20:5}{src1:15:5}{6:12:3}{0x63:0:7} !isa1"
+asm = "bltu {src1}, {src2}, .L{offset}"
+effect = "Branch"
+
+# ═══════════════════════════════════════════════
+# System
+# ═══════════════════════════════════════════════
+
+[inst.NOP]
+encoding = "32 {0x13:0:7}"
+asm = "nop"
+
+[inst.ECALL]
+encoding = "32 {0x73:0:7}"
+asm = "ecall"
+effect = "Trap"
+
+# Prologue/Epilogue
+# Note: ADDI, SD, LD, JALR are already defined above. Prologue/epilogue requires
+# physical-register variants (Reg type) for SP/RA/FP operations.
+# TODO: Add Reg-typed frame instructions (ADDI_R, SD_R, LD_R) for prologue use.
+[emit.prologue]
+insts = []
+
+[emit.epilogue]
+insts = []
+
+# ═══════════════════════════════════════════════
+# Lowering rules
+# ═══════════════════════════════════════════════
+
+[lower.Iconst]
+insts = ["ADDI rd, iconst, VReg(0)"]
+[lower.Iadd]
+insts = ["ADD rd, rs1, rs2"]
+[lower.Isub]
+insts = ["SUB rd, rs1, rs2"]
+[lower.Imul]
+insts = ["MUL rd, rs1, rs2"]
+[lower.Udiv]
+insts = ["DIVU rd, rs1, rs2"]
+[lower.Sdiv]
+insts = ["DIV rd, rs1, rs2"]
+[lower.Urem]
+insts = ["REMU rd, rs1, rs2"]
+[lower.Srem]
+insts = ["REM rd, rs1, rs2"]
+[lower.Band]
+insts = ["AND rd, rs1, rs2"]
+[lower.Bor]
+insts = ["OR rd, rs1, rs2"]
+[lower.Bxor]
+insts = ["XOR rd, rs1, rs2"]
+[lower.Bnot]
+insts = ["XORI rd, -1, rs1"]
+[lower.Ishl]
+insts = ["SLL rd, rs1, rs2"]
+[lower.Ushr]
+insts = ["SRL rd, rs1, rs2"]
+[lower.Sshr]
+insts = ["SRA rd, rs1, rs2"]
+[lower.Copy]
+insts = ["ADDI rd, 0, rs1"]
+[lower.Bitcast]
+insts = ["ADDI rd, 0, rs1"]
+[lower.Sextend]
+insts = ["ADDI rd, 0, rs1"]
+[lower.Uextend]
+insts = ["ADDI rd, 0, rs1"]
+[lower.Ireduce]
+insts = ["ADDI rd, 0, rs1"]
+[lower.Icmp.Equal]
+insts = ["SUB rd, rs1, rs2", "SLTIU rd, 1, rd"]
+[lower.Icmp.NotEqual]
+insts = ["SUB rd, rs1, rs2", "SLTU rd, VReg(0), rd"]
+[lower.Icmp.SignedLessThan]
+insts = ["SLT rd, rs1, rs2"]
+[lower.Icmp.SignedLessThanOrEqual]
+insts = ["SLT rd, rs2, rs1", "XORI rd, 1, rd"]
+[lower.Icmp.SignedGreaterThan]
+insts = ["SLT rd, rs2, rs1"]
+[lower.Icmp.SignedGreaterThanOrEqual]
+insts = ["SLT rd, rs2, rs1", "XORI rd, 1, rd"]
+[lower.Icmp.UnsignedLessThan]
+insts = ["SLTU rd, rs1, rs2"]
+[lower.Icmp.UnsignedLessThanOrEqual]
+insts = ["SLTU rd, rs2, rs1", "XORI rd, 1, rd"]
+[lower.Icmp.UnsignedGreaterThan]
+insts = ["SLTU rd, rs2, rs1"]
+[lower.Icmp.UnsignedGreaterThanOrEqual]
+insts = ["SLTU rd, rs2, rs1", "XORI rd, 1, rd"]
+[lower.Nop]
+insts = ["NOP"]
+[lower_term.Return]
+insts = ["ADDI VReg(0), 0, VReg(0)", "JALR VReg(1), VReg(0), 0"]
+[lower_term.Jump]
+insts = ["JAL VReg(0), target"]
+[lower_term.Branch]
+insts = ["BNE true_block, cond, VReg(0)", "JAL VReg(0), false_block"]
+[lower_term.Unreachable]
+insts = ["ECALL"]

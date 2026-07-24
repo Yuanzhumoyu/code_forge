@@ -1,0 +1,5 @@
+[sandbox]
+workspace_root = "D:\\Program\\rust_main\\codegen-lib"
+
+[permissions]
+allow = ["Bash(cd \"D:\\Program\\rust_main\\codegen-lib\" && git remote -v 2>/dev/null || echo \"No remotes\")"]

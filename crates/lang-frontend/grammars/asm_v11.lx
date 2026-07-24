@@ -1,0 +1,144 @@
+# ============================================================
+# ASM v11 Language Grammar
+# ============================================================
+# Grammar for the codegen-dsl assembly macro language.
+# This file defines the complete syntax used in lowering rules,
+# emit sequences, and user-defined macros.
+# ============================================================
+
+# ── Token definitions ──
+# Defined in priority order (first = highest priority)
+
+# Keywords (reserved identifiers)
+token KW_FN = "fn"
+token KW_IF = "if"
+token KW_ELSE = "else"
+token KW_FOR = "for"
+token KW_IN = "in"
+token KW_WHILE = "while"
+token KW_LET = "let"
+token KW_RETURN = "return"
+token KW_GOTO = "goto"
+
+# Special forms
+token VREG = "VReg\([0-9]+\)"
+token TEMP = "%[a-zA-Z_][a-zA-Z0-9_]*"
+token LABEL = "\.[a-zA-Z_][a-zA-Z0-9_]*"
+token REG = "[A-Z][A-Z0-9]*"
+
+# Numeric literals
+token HEX = "0x[0-9a-fA-F_]+"
+token BIN = "0b[01_]+"
+token OCT = "0o[0-7_]+"
+token FLOAT = "[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?"
+token DEC = "[0-9][0-9_]*"
+
+# String literals
+token STRING = '"[^"]*"'
+
+# Identifiers (lowest priority for text patterns)
+token IDENT = "[a-z_][a-zA-Z0-9_]*"
+
+# ── Punctuation ──
+punct "(" ")" "{" "}" "[" "]" "," ":" ";" "=" "@" "."
+punct "+" "-" "*" "/" "%"
+punct "<" ">" "<=" ">=" "==" "!="
+punct "&&" "||" "!" "~" "&" "|" "->"
+
+# ── Skip rules ──
+skip "[\n \t\r]+"
+skip "#[^\n]*"
+
+# ═══════════════════════════════════════
+# Grammar rules
+# ═══════════════════════════════════════
+
+# Top-level
+program ::= item*
+
+item ::= macro_def | stmt
+
+# Macro definition: fn name(params) { body }
+# Also: user macros without fn: name args { body }
+macro_def ::= KW_FN IDENT "(" param_list ")" block
+            | IDENT IDENT* block
+
+param_list ::= param ("," param)*
+
+param ::= IDENT
+       | "(" IDENT ("," IDENT)* ")"
+
+block ::= "{" stmt* "}"
+
+# Statements
+stmt ::= inst_like
+       | label_def
+       | pseudo_call
+       | let_stmt
+       | return_stmt
+       | goto_stmt
+
+# Instruction-like: mnemonic operands...
+# This handles both real instructions and macro calls like if/for/while
+inst_like ::= KW_IF expr block (KW_ELSE block)?
+            | KW_FOR pattern KW_IN expr block
+            | KW_WHILE expr block
+            | IDENT (operand ("," operand)*)? block*
+
+# Label definition: .name:
+label_def ::= LABEL ":"
+
+# Pseudo-directive: @name or @name()
+pseudo_call ::= "@" IDENT ("(" operand_list ")")?
+
+# Let binding: let %tmp = expr
+let_stmt ::= KW_LET operand "=" expr
+
+# Return: return expr?
+return_stmt ::= KW_RETURN expr?
+
+# Goto: goto label
+goto_stmt ::= KW_GOTO LABEL
+
+# ── Operands ──
+
+operand ::= IDENT
+         |  REG
+         |  TEMP
+         |  LABEL
+         |  VREG
+         |  HEX
+         |  BIN
+         |  OCT
+         |  DEC
+         |  FLOAT
+         |  STRING
+         |  "(" expr ")"
+
+operand_list ::= operand ("," operand)*
+
+# ── Patterns (for for-loops) ──
+
+pattern ::= IDENT
+         | "(" IDENT ("," IDENT)* ")"
+
+# ── Expressions (with standard precedence) ──
+
+expr ::= comparison (("&&" | "||") comparison)*
+
+comparison ::= additive (("<" | ">" | "<=" | ">=" | "==" | "!=") additive)?
+
+additive ::= multiplicative (("+" | "-") multiplicative)*
+
+multiplicative ::= unary (("*" | "/" | "%") unary)*
+
+unary ::= ("-" | "!" | "~") unary
+        | primary
+
+primary ::= DEC
+         |  FLOAT
+         |  STRING
+         |  IDENT
+         |  TEMP
+         |  "(" expr ")"
+         |  IDENT "(" expr ("," expr)* ")"

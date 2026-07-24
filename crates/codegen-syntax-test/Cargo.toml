@@ -1,0 +1,12 @@
+[package]
+name = "codegen-syntax-test"
+version = "0.1.0"
+edition = "2024"
+description = "ISA-DSL 全链路集成测试 — 验证 DSL → codegen → rustc 后端 → 编译的完整流程"
+
+[dependencies]
+codegen-lib = { path = "../.." }
+rustc_codegen_codegenlib = { path = "../rustc_codegen_codegenlib", optional = true }
+
+[features]
+nightly = ["rustc_codegen_codegenlib"]

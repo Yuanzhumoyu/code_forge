@@ -1,0 +1,83 @@
+[workspace]
+members = [
+    ".",
+    "crates/rustc_codegen_codegenlib",
+    "crates/codegen-dsl",
+    "crates/codegen-syntax-test",
+    "crates/lang-frontend",
+]
+resolver = "3"
+
+[package]
+name = "codegen-lib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+smallvec = "1"
+indexmap = "2"
+thiserror = "2.0.19"
+log = "0.4"
+dashu = "0.5.0"
+codegen-dsl = { path = "crates/codegen-dsl" }
+lang-frontend = { path = "crates/lang-frontend" }
+
+# Optional dependencies
+regalloc2 = { version = "0.15.2", optional = true }
+target-lexicon = { version = "0.13.5", optional = true }
+object = { version = "0.39.1", optional = true, features = ["write"] }
+libloading = { version = "0.9.0", optional = true }
+rayon = { version = "1", optional = true }
+
+[features]
+default = []
+regalloc2 = ["dep:regalloc2"]
+object-file = ["dep:object", "dep:target-lexicon"]
+plugins = ["dep:libloading"]
+parallel = ["dep:rayon"]
+
+[dev-dependencies]
+codegen-dsl = { path = "crates/codegen-dsl" }
+syn = { version = "3.0.3", features = ["full", "parsing"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "compile_bench"
+harness = false
+
+[lints.clippy.type_complexity]
+level = "allow"
+[lints.clippy.too_many_arguments]
+level = "allow"
+
+[[test]]
+name="jit_integration"
+path="tests/jit_integration.rs"
+
+[[test]]
+name="minimal_sd_tests"
+path="tests/minimal_sd_tests.rs"
+
+[[test]]
+name="fuzz_lowering"
+path="tests/fuzz_lowering.rs"
+
+[[test]]
+name="encoder_tests"
+path="tests/encoder_tests.rs"
+
+[[test]]
+name="disasm_tests"
+path="tests/disasm_tests.rs"
+
+[[test]]
+name="asm_integration_tests"
+path="tests/asm_integration_tests.rs"
+
+[[test]]
+name="asm_assembler_tests"
+path="tests/asm_assembler_tests.rs"
+
+[[example]]
+name="jit_demo"
+path="examples/jit_demo.rs"

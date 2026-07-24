@@ -1,0 +1,12 @@
+[package]
+name = "rustc_codegen_codegenlib"
+version = "0.1.0"
+edition = "2024"
+description = "rustc codegen backend powered by codegen-lib"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+codegen-lib = { path = "../../", features = ["object-file", "plugins"] }
+smallvec = "1.15.2"
