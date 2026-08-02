@@ -436,21 +436,35 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
                 .push(quote! { Inst::#vn { #(#dfs),*, .. } => smallvec::smallvec![#(#clones),*] });
         }
 
-        // reg_field/set_reg_field：按 Ireg/Freg 字段声明序读写物理索引
-        // （与指令包 xreg_map 的字段顺序一致，供分配器回写真正寄存器）
-        let reg_fields: Vec<_> = inst
+        // reg_field/set_reg_field：按 asm 模板的字段占位符序读写物理索引
+        // （与指令包 xreg_map 的 map 调用序一致——lowering 也按模板序生成；
+        // 不能用 inst.fields：serde 把 inline table 解析成 BTreeMap 字母序，
+        // 导致 dest/base 等字段序错位，分配器回写与编码对不上）
+        let field_tuples: Vec<(String, crate::model::FieldType)> = inst
             .fields
             .iter()
-            .filter(|f| f.field_type == FieldType::Ireg || f.field_type == FieldType::Freg)
+            .map(|f| (f.name.clone(), f.field_type.clone()))
+            .collect();
+        let valid_names: std::collections::HashSet<&str> =
+            inst.fields.iter().map(|f| f.name.as_str()).collect();
+        let template_order =
+            crate::asm_resolver::ParsedTemplate::parse(&inst.asm, &field_tuples).field_order();
+        let reg_fields: Vec<_> = template_order
+            .iter()
+            .filter(|(name, ty)| {
+                // 排除 asm 模板里的显示别名（如 riscv64 `sd rs2, {imm}({base})` 的 imm≠offset）
+                matches!(ty, FieldType::Ireg | FieldType::Freg)
+                    && valid_names.contains(name.as_str())
+            })
             .collect();
         if reg_fields.is_empty() {
             // 无寄存器字段：不 push 兜底（兜底统一在 impl 的 match 末尾）
         } else {
             let mut rf_arms: Vec<TokenStream> = Vec::new();
             let mut sf_arms: Vec<TokenStream> = Vec::new();
-            for (i, f) in reg_fields.iter().enumerate() {
-                let fi = format_ident!("{}", f.name);
-                let cls = if f.field_type == FieldType::Freg {
+            for (i, (fname, ftype)) in reg_fields.iter().enumerate() {
+                let fi = format_ident!("{fname}");
+                let cls = if *ftype == FieldType::Freg {
                     quote! { forge_ir::RegClass::FPR }
                 } else {
                     quote! { forge_ir::RegClass::GPR }
@@ -1929,12 +1943,16 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                         .and_then(|x| v.get(&x)).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                 };
                 if has_sd_fmov {
+                    let ret_idx = resolve_float_ret_vreg(model);
+                    let ret_idx_lit = syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
                     arms.push(quote! {
                         crate::prelude::Terminator::Return { values } => {
                             #val_code
                             if ctx.is_float_return {
                                 {
+                                    // SdFmov dest=返回FPR（字段0 预着色 XReg）、src=val（字段1）
                                     let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
+                                    __pack.map_reg_field(crate::prelude::XReg::new(#ret_idx_lit, forge_ir::RegClass::Float, 8), __idx);
                                     __pack.map_reg_field(val, __idx);
                                     #(#inst_toks)*;
                                     Ok(__pack)
@@ -2038,13 +2056,17 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
 
                     let body_toks = gen_lower_insts(&non_ret, model)?;
                     let ret_toks = gen_lower_insts(&ret_only, model)?;
+                    let ret_idx = resolve_float_ret_vreg(model);
+                    let ret_idx_lit = syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
                     arms.push(quote! {
                         crate::prelude::Terminator::Return { values } => {
                             let val = values.first().copied()
                                 .and_then(|x| v.get(&x)).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                             if ctx.is_float_return {
                                 {
+                                    // SdFmov dest=返回FPR（字段0 预着色 XReg）、src=val（字段1）
                                     let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
+                                    __pack.map_reg_field(crate::prelude::XReg::new(#ret_idx_lit, forge_ir::RegClass::Float, 8), __idx);
                                     __pack.map_reg_field(val, __idx);
                                     #(#ret_toks)*;
                                     Ok(__pack)
@@ -2083,20 +2105,24 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                     });
                 } else if *term_name == "Switch" {
                     // Switch: if-else 链展开 — 对每个 case 生成 CMP + JCC Equal
+                    // 字段已物理化（Reg）：临时 XReg 经 ctx.alloc_xreg 分配，push 时 map_reg_field 记录
                     arms.push(quote! {
                         crate::prelude::Terminator::Switch { discriminant, default_block, default_args: _, cases } => {
-                            let disc = v.get(discriminant).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
-                            let mut insts = Vec::new();
+                            let disc = v.get(discriminant).copied().unwrap_or_else(|| ctx.alloc_xreg(crate::prelude::RegClass::GPR));
                             for &(case_val, case_block, _) in cases.iter() {
-                                // SD_MOV_IMM VReg(97), case_val
-                                insts.push(Inst::SdMovImm { dest: <Reg as forge_ir::PhysReg>::from_index(97, forge_ir::RegClass::GPR), imm: case_val as i64 });
-                                // SD_CMP disc, VReg(97)
-                                insts.push(Inst::SdCmp { src1: disc, src2: <Reg as forge_ir::PhysReg>::from_index(97, forge_ir::RegClass::GPR) });
+                                // 每个 case 分配一个临时 XReg 装载常量
+                                let tmp = ctx.alloc_xreg(crate::prelude::RegClass::GPR);
+                                let __idx = __pack.push_inst(Inst::SdMovImm { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR), imm: case_val as i64 });
+                                __pack.map_reg_field(tmp, __idx);
+                                // SD_CMP disc, tmp
+                                let __idx = __pack.push_inst(Inst::SdCmp { src1: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR), src2: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR) });
+                                __pack.map_reg_field(disc, __idx);
+                                __pack.map_reg_field(tmp, __idx);
                                 // SD_JCC Equal (0), case_block
-                                insts.push(Inst::SdJcc { cond: 0u8, rel: case_block.0 as i64 });
+                                __pack.push_inst(Inst::SdJcc { cond: 0u8, rel: case_block.0 as i64 });
                             }
                             // SD_JMP default_block
-                            insts.push(Inst::SdJmp { rel: default_block.0 as i64 });
+                            __pack.push_inst(Inst::SdJmp { rel: default_block.0 as i64 });
                             Ok(__pack)
                         }
                     });

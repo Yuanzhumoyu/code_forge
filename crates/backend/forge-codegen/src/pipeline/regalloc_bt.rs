@@ -326,7 +326,7 @@ impl<'a> BtState<'a> {
     /// 注意：segment 模型通过 cover() 的 point.before() 合并修复了相邻
     /// 指令间的微间隙，因此从 (0,0) 查找 next_use 已经足够可靠。
     fn evict_and_assign(&mut self, vreg: XReg, class: RegClass) -> Result<PReg, CompileError> {
-        let current_point = ProgPoint::new(0, 0);
+        let current_point = self.current_point;
         let victim = self
             .active
             .iter()
@@ -342,7 +342,9 @@ impl<'a> BtState<'a> {
         if let Some(&(victim_vreg, victim_preg)) = victim {
             // 驱逐 victim 到栈
             self.spill_vreg(victim_vreg)?;
-            // victim 的寄存器现在空闲
+            // victim 的寄存器现在空闲：spill_vreg 会把它 push 回 free_regs，
+            // 这里必须从空闲池移除，否则后续 reload/分配会重复拿到已占寄存器
+            self.remove_from_free(victim_preg);
             self.assignments.insert(vreg, victim_preg);
             self.reg_owner.insert(victim_preg, vreg);
             // 从 active 移除 victim
@@ -461,7 +463,14 @@ impl<'a> BtState<'a> {
     }
 
     fn pop_free(&mut self, class: RegClass) -> Option<PReg> {
-        self.free_regs.get_mut(&class)?.pop()
+        let pool = self.free_regs.get_mut(&class)?;
+        // 跳过已被占用的寄存器（spill/驱逐可能把已占寄存器残留进空闲池）
+        while let Some(preg) = pool.pop() {
+            if !self.reg_owner.contains_key(&preg) {
+                return Some(preg);
+            }
+        }
+        None
     }
 
     fn remove_from_free(&mut self, preg: PReg) {

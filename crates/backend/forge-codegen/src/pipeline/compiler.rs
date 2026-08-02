@@ -581,13 +581,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // since return blocks' emit_epilogue_jump can interfere with
         // PC-relative offset calculations for forward branches.
         let scratch_regs = machine.reg_info().scratch_regs();
-        let all_vblocks: Vec<_> = self.vcode.blocks().collect();
+        let all_vblocks: Vec<_> = self.vcode.blocks().cloned().collect();
+        let mut all_vblocks = all_vblocks;
 
         // Helper: emit one block (bind label, instructions, optional epilogue JMP)
         let mut global_inst = 0usize;
-        let mut emit_one = |sink: &mut CodeSink, vb: &VCodeBlock<I>| -> Result<(), CompileError> {
+        let mut emit_one = |sink: &mut CodeSink, vb: &mut VCodeBlock<I>| -> Result<(), CompileError> {
             sink.bind_label(vb.ir_block);
-            for inst in &vb.instructions {
+            for inst in &mut vb.instructions {
                 let slot = self
                     .xreg_map
                     .get(global_inst)
@@ -618,13 +619,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
         };
 
         // Pass 1: non-return blocks
-        for vb in &all_vblocks {
+        for vb in &mut all_vblocks {
             if !vb.is_return_block {
                 emit_one(&mut sink, vb)?;
             }
         }
         // Pass 2: return blocks
-        for vb in &all_vblocks {
+        for vb in &mut all_vblocks {
             if vb.is_return_block {
                 emit_one(&mut sink, vb)?;
             }
@@ -669,7 +670,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
     #[allow(clippy::too_many_arguments)]
     fn emit_inst_with_spills(
         &self,
-        inst: &I,
+        inst: &mut I,
         encoder: &dyn TargetEncoder<Inst = I>,
         alloc_result: &AllocResult,
         frame_size: u32,
@@ -679,46 +680,35 @@ impl<I: MachineInst + 'static> CompileState<I> {
         callee_saved_bytes: i32,
         inst_xregs: &[XReg],
     ) -> Result<(), CompileError> {
-        // Collect spilled operands with their RegClass（基于指令包的 xreg_map 槽）
-        let spilled_uses: Vec<(XReg, RegClass)> = inst_xregs
-            .iter()
-            .copied()
-            .filter(|v| alloc_result.is_spilled(*v))
-            .map(|v| (v, v.class()))
-            .collect();
-        let spilled_defs: Vec<(XReg, RegClass)> = spilled_uses.clone();
-
-        if spilled_uses.is_empty() && spilled_defs.is_empty() {
+        // 去重收集 spilled XReg（同一 XReg 的 use/def 共用一个 scratch 寄存器）
+        let mut spilled: Vec<XReg> = Vec::new();
+        for &xreg in inst_xregs {
+            if alloc_result.is_spilled(xreg) && !spilled.contains(&xreg) {
+                spilled.push(xreg);
+            }
+        }
+        if spilled.is_empty() {
             return self.emit_inst(inst, encoder, alloc_result, sink);
         }
 
         // Verify we have enough scratch registers
-        let total_spilled = spilled_uses.len() + spilled_defs.len();
-        if total_spilled > scratch_reg_indices.len() {
+        if spilled.len() > scratch_reg_indices.len() {
             return Err(CompileError::RegAlloc(format!(
-                "instruction needs {total_spilled} scratch regs for spilled operands, but only {} available",
+                "instruction needs {} scratch regs for spilled operands, but only {} available",
+                spilled.len(),
                 scratch_reg_indices.len()
             )));
         }
 
-        // Build scratch register pool — each gets the correct class
-        let spill_scratch: Vec<PReg> = scratch_reg_indices
+        // Build scratch register pool — each spilled XReg gets its own scratch
+        // of the correct class.
+        let spill_scratch: Vec<PReg> = spilled
             .iter()
             .enumerate()
-            .map(|(i, &n)| {
-                // Assign class based on which spilled operand will use it
-                let class = if i < spilled_uses.len() {
-                    spilled_uses[i].1
-                } else if i - spilled_uses.len() < spilled_defs.len() {
-                    spilled_defs[i - spilled_uses.len()].1
-                } else {
-                    RegClass::GPR
-                };
-                PReg::new(n, class)
-            })
+            .map(|(i, &xreg)| PReg::new(scratch_reg_indices[i], xreg.class()))
             .collect();
 
-        // Clone AllocResult and redirect spilled VRegs to scratch PRegs
+        // Clone AllocResult and redirect spilled XRegs to scratch PRegs
         let mut local_rm = alloc_result.clone();
         // The spill area lives BELOW the pushed callee-saved registers, whose
         // saved slots occupy [rbp - callee_saved_bytes, rbp):
@@ -728,27 +718,27 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // land 8 bytes below rsp and can hit an unmapped stack page in release
         // builds (test_spill_high_pressure / e2e_jit_execute hang).
         let sp_base: i32 = -(frame_size as i32) - callee_saved_bytes;
-        let max_scratch = spill_scratch.len();
-        let mut scratch_idx = 0usize;
 
-        // Load spilled uses into scratch registers (width-aware)
-        for &(xreg, _class) in &spilled_uses {
-            if scratch_idx < max_scratch {
-                let spill_off = alloc_result.spill_slot(xreg).offset;
-                let scratch = spill_scratch[scratch_idx];
-                let width = xreg.width();
-                frame_lowering.emit_spill_load(scratch.num, sp_base + spill_off, width, sink)?;
-                local_rm.insert(xreg, scratch);
-                scratch_idx += 1;
-            }
+        // Load spilled operands into scratch registers (width-aware).
+        // 纯 def 的 XReg 也 load（其值会被指令覆盖，无害但保证 use/def 语义统一）。
+        for (i, &xreg) in spilled.iter().enumerate() {
+            let spill_off = alloc_result.spill_slot(xreg).offset;
+            let width = xreg.width();
+            frame_lowering.emit_spill_load(
+                spill_scratch[i].num,
+                sp_base + spill_off,
+                width,
+                sink,
+            )?;
+            local_rm.insert(xreg, spill_scratch[i]);
         }
 
-        // For defs, redirect to the current scratch register (after uses)
-        for &(xreg, _class) in &spilled_defs {
-            if scratch_idx < max_scratch {
-                let scratch = spill_scratch[scratch_idx];
-                local_rm.insert(xreg, scratch);
-                scratch_idx += 1;
+        // Emit 前把 spilled 字段重设为 scratch 寄存器：
+        // 分配阶段回写的旧寄存器（如 reload 后的 R9）与 scratch 不一致，
+        // 会导致 store 存回错误寄存器。重设后 emit 与 store 使用同一寄存器。
+        for (fi, &xreg) in inst_xregs.iter().enumerate() {
+            if let Some(preg) = local_rm.preg(xreg) {
+                inst.set_reg_field(fi, preg.num);
             }
         }
 
@@ -756,16 +746,18 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let result = self.emit_inst(inst, encoder, &local_rm, sink);
 
         // Store spilled defs back to stack
-        scratch_idx = spilled_uses.len(); // reset to def scratch start
-        for &(xreg, _class) in &spilled_defs {
-            if scratch_idx < max_scratch {
-                let spill_off = alloc_result.spill_slot(xreg).offset;
-                let width = xreg.width();
-                if let Some(preg) = local_rm.preg(xreg) {
-                    frame_lowering.emit_spill_store(preg.num, sp_base + spill_off, width, sink)?;
-                }
-                scratch_idx += 1;
+        for (i, &xreg) in spilled.iter().enumerate() {
+            let spill_off = alloc_result.spill_slot(xreg).offset;
+            let width = xreg.width();
+            if let Some(preg) = local_rm.preg(xreg) {
+                frame_lowering.emit_spill_store(
+                    preg.num,
+                    sp_base + spill_off,
+                    width,
+                    sink,
+                )?;
             }
+            let _ = i;
         }
 
         result
