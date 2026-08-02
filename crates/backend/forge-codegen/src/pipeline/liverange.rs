@@ -352,11 +352,7 @@ mod tests {
 
     /// 构造第 n 号 GPR 临时寄存器（测试辅助）。
     fn xgpr(n: u32) -> XReg {
-        let mut xa = XRegAllocator::new();
-        for _ in 0..n {
-            xa.alloc_default(RegClass::GPR);
-        }
-        xa.alloc_default(RegClass::GPR)
+        XReg::new(n, RegClass::GPR, 8)
     }
 
     #[test]

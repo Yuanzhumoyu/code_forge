@@ -165,8 +165,18 @@ pub struct XRegAllocator {
 
 impl XRegAllocator {
     /// 创建新的分配器。
+    ///
+    /// 分配起点从 `XREG_ALLOC_BASE`（512）开始，避开预着色/固定 XReg 编号区
+    /// （0-255：ABI 参数/返回/scratch 寄存器等，如 x86 的 XReg0=RAX、XReg96=R10、
+    /// XReg100=XMM0、XReg200=RSP、XReg201=RBP）。普通临时 XReg 与预着色 XReg
+    /// 编号空间分离，杜绝「iconst 恰好分到 XReg0 覆盖 RAX 预着色」的冲突。
+    pub const XREG_ALLOC_BASE: u32 = 512;
+
+    /// 创建新的分配器。
     pub fn new() -> Self {
-        Self { next: 0 }
+        Self {
+            next: 0,
+        }
     }
 
     /// 分配一个指定类型与位宽的新临时寄存器（被动语义：只能由后续指令 def 赋予值）。

@@ -543,11 +543,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // spill 区域：使用 regalloc 报告的 spill_area_size（含对齐与全部槽位），
         // 而不是仅对分配到的槽求和——后者在槽释放/复用时会低估实际需要的栈帧。
         let size: u32 = alloc_result.frame_info.spill_area_size;
-        let pushed_bytes = pushed_register_bytes(machine);
-        let total = pushed_bytes + size;
         let align = machine.abi().stack_align();
-        let aligned_total = total.div_ceil(align) * align;
-        aligned_total - pushed_bytes
+        // 栈对齐修正（align/2 = 8 字节）：prologue push rbp + callee-saved 后
+        // rsp%16 == 8（入口 rsp%16==8 由 call 压入的返回地址造成），sub rsp 必须
+        // 使 call 前 rsp%16 == 0（SysV/Windows x64 ABI）。spill 区 size 是 16 的
+        // 倍数（%16==0），故 frame 需额外 +8 才能满足。无 call 的函数多 8 字节
+        // 栈帧无害；有 call 的否则外部函数（Rust C ABI 的 movaps 保存）会 SEGV。
+        let frame = size.div_ceil(align) * align + align / 2;
+        frame
     }
 
     // ── Stage 8-11: Emission ──
