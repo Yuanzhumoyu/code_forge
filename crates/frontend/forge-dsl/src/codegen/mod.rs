@@ -2021,6 +2021,7 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                     arms.push(quote! {
                         crate::prelude::Terminator::Jump { target, .. } => {
                             let target = target.0 as i64;
+                            #(#inst_toks)*;
                             Ok(__pack)
                         }
                     });
@@ -2031,6 +2032,7 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                             let cond = v.get(cond_val).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                             let true_block = then_block.0 as i64;
                             let false_block = else_block.0 as i64;
+                            #(#inst_toks)*;
                             Ok(__pack)
                         }
                     });
