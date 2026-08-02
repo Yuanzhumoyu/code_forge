@@ -4,9 +4,9 @@
 //! VCode 在分配后不变；所有分配信息在 AllocResult 中。
 
 use crate::pipeline::alloc_config::{AllocContext, RegAllocConfig};
-use forge_ir::XReg;
 use crate::pipeline::alloc_result::AllocResult;
 use crate::{CompileError, MachineInst, VCode};
+use forge_ir::XReg;
 
 /// 寄存器分配器接口。
 ///

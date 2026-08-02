@@ -510,8 +510,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             param_xregs: self.param_xregs.clone(),
         };
 
-        let ctx = crate::pipeline::alloc_config::AllocContext {
-        };
+        let ctx = crate::pipeline::alloc_config::AllocContext {};
 
         let alloc_result = allocator.allocate(&self.vcode, &reg_info, &ctx, &self.xreg_map)?;
 
@@ -549,8 +548,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 使 call 前 rsp%16 == 0（SysV/Windows x64 ABI）。spill 区 size 是 16 的
         // 倍数（%16==0），故 frame 需额外 +8 才能满足。无 call 的函数多 8 字节
         // 栈帧无害；有 call 的否则外部函数（Rust C ABI 的 movaps 保存）会 SEGV。
-        let frame = size.div_ceil(align) * align + align / 2;
-        frame
+        size.div_ceil(align) * align + align / 2
     }
 
     // ── Stage 8-11: Emission ──
@@ -589,37 +587,34 @@ impl<I: MachineInst + 'static> CompileState<I> {
 
         // Helper: emit one block (bind label, instructions, optional epilogue JMP)
         let mut global_inst = 0usize;
-        let mut emit_one = |sink: &mut CodeSink, vb: &mut VCodeBlock<I>| -> Result<(), CompileError> {
-            sink.bind_label(vb.ir_block);
-            for inst in &mut vb.instructions {
-                let slot = self
-                    .xreg_map
-                    .get(global_inst)
-                    .cloned()
-                    .unwrap_or_default();
-                global_inst += 1;
-                self.emit_inst_with_spills(
-                    inst,
-                    encoder.as_ref(),
-                    alloc_result,
-                    frame_size,
-                    &scratch_regs,
-                    frame_lowering.as_ref(),
-                    sink,
-                    callee_saved_bytes,
-                    &slot,
-                )?;
-            }
-            if vb.is_return_block && frame_lowering.needs_epilogue_label() {
-                frame_lowering.emit_epilogue_jump(
-                    encoder,
-                    alloc_result,
-                    Block(0xFFFFFFFD),
-                    sink,
-                )?;
-            }
-            Ok(())
-        };
+        let mut emit_one =
+            |sink: &mut CodeSink, vb: &mut VCodeBlock<I>| -> Result<(), CompileError> {
+                sink.bind_label(vb.ir_block);
+                for inst in &mut vb.instructions {
+                    let slot = self.xreg_map.get(global_inst).cloned().unwrap_or_default();
+                    global_inst += 1;
+                    self.emit_inst_with_spills(
+                        inst,
+                        encoder.as_ref(),
+                        alloc_result,
+                        frame_size,
+                        &scratch_regs,
+                        frame_lowering.as_ref(),
+                        sink,
+                        callee_saved_bytes,
+                        &slot,
+                    )?;
+                }
+                if vb.is_return_block && frame_lowering.needs_epilogue_label() {
+                    frame_lowering.emit_epilogue_jump(
+                        encoder,
+                        alloc_result,
+                        Block(0xFFFFFFFD),
+                        sink,
+                    )?;
+                }
+                Ok(())
+            };
 
         // Pass 1: non-return blocks
         for vb in &mut all_vblocks {
@@ -753,31 +748,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
             let spill_off = alloc_result.spill_slot(xreg).offset;
             let width = xreg.width();
             if let Some(preg) = local_rm.preg(xreg) {
-                frame_lowering.emit_spill_store(
-                    preg.num,
-                    sp_base + spill_off,
-                    width,
-                    sink,
-                )?;
+                frame_lowering.emit_spill_store(preg.num, sp_base + spill_off, width, sink)?;
             }
             let _ = i;
         }
 
         result
     }
-}
-
-/// Bytes occupied by registers pushed in the prologue for stack-alignment
-/// purposes (frame pointer + all callee-saved registers). The prologue pushes
-/// them unconditionally, so this must match `calculate_frame_size` exactly.
-/// Note this INCLUDES the frame pointer (which sits at [rbp], above the
-/// callee saves) — spill offsets use only the callee-saved portion.
-fn pushed_register_bytes<M: TargetMachine>(machine: &M) -> u32 {
-    let callee_saved_count = machine.reg_info().callee_saved().len() as u32;
-    // RBP/FP is always pushed even if not in callee_saved list
-    let has_fp = machine.reg_info().fp_reg().is_some();
-    let pushed_reg_count = callee_saved_count + if has_fp { 1 } else { 0 };
-    // 使用 GPR 宽度（callee-saved + FP 寄存器均为 GPR，宽度来自 ISA model）
-    let gpr_width = machine.reg_info().reg_class_width(RegClass::GPR) as u32;
-    pushed_reg_count * gpr_width
 }

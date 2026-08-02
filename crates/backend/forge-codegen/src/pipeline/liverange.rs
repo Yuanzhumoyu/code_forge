@@ -278,7 +278,7 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     let mut block_uses: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
     let mut block_defs: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
     for (block_idx, block) in blocks.iter().enumerate() {
-        for (inst_idx, _inst) in block.instructions.iter().enumerate() {
+        for _inst in block.instructions.iter() {
             if let Some(slot) = xreg_map.get(global_inst_map) {
                 for &xreg in slot.iter() {
                     block_uses[block_idx].insert(xreg);

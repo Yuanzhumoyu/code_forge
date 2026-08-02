@@ -109,12 +109,12 @@ pub use encode::packer::BitField;
 pub use machine::assembler::AsmError;
 pub use machine::decoder::DecodeError;
 pub use machine::encoder::EncodeError;
-pub use machine::lowering::InstPacket;
 pub use machine::encoder::TargetEncoder;
 pub use machine::inst::{EffectKind, MachineInst};
 pub use machine::isa_info::IsaCapabilities;
 pub use machine::isa_info::IsaInfo;
 pub use machine::isa_info::RegisterClassInfo;
+pub use machine::lowering::InstPacket;
 pub use machine::simulator::{SimError, SimulationState};
 pub use machine::target::{ErasedTargetMachine, TargetMachine};
 pub use pipeline::alloc_config::RegAllocConfig;
@@ -196,14 +196,12 @@ impl LowerCtx {
     /// 分配一个新的临时寄存器（XReg），类型由 `class` 严格限定。
     /// 被动语义：XReg 只能作为后续指令的 def（结果）被赋予值。
     pub fn alloc_xreg(&mut self, class: RegClass) -> XReg {
-        let x = self.xregs.alloc_default(class);
-        x
+        self.xregs.alloc_default(class)
     }
 
     /// 分配一个指定宽度（8/16/32/64）的临时寄存器。
     pub fn alloc_xreg_with_width(&mut self, class: RegClass, width: u8) -> XReg {
-        let x = self.xregs.alloc(class, width);
-        x
+        self.xregs.alloc(class, width)
     }
 
     /// 分配或复用零值临时寄存器（用于比较零值）。

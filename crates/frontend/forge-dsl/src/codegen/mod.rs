@@ -506,7 +506,8 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
         {
             let d = &dfs[0];
             let u = &ufs[0];
-            move_arms.push(quote! { Inst::#vn { #d, #u, .. } => Some((#d.to_index(), #u.to_index())) });
+            move_arms
+                .push(quote! { Inst::#vn { #d, #u, .. } => Some((#d.to_index(), #u.to_index())) });
         }
 
         let effects = inst.effect.as_deref().unwrap_or(&[]);
@@ -741,6 +742,7 @@ fn gen_default_icmp_arms(
             let inst_toks = gen_lower_insts(&default_insts, model)?;
             cond_arms.push(quote! {
                 crate::prelude::IntCC::#cc_ident => {
+                    #(#inst_toks)*;
                     Ok(__pack)
                 }
             });
@@ -764,6 +766,7 @@ fn gen_default_fcmp_arms(
             let inst_toks = gen_lower_insts(&default_insts, model)?;
             cond_arms.push(quote! {
                 crate::prelude::FloatCC::#cc_ident => {
+                    #(#inst_toks)*;
                     Ok(__pack)
                 }
             });
@@ -1201,7 +1204,10 @@ fn gen_lower_insts(insts: &[String], model: &IsaModel) -> Result<Vec<TokenStream
 
             let fi = format_ident!("{}", field.name);
             // 寄存器字段（Ireg/Freg）以默认物理 Reg 占位，XReg 记录到 xreg_map
-            if matches!(field.field_type, crate::model::FieldType::Ireg | crate::model::FieldType::Freg) {
+            if matches!(
+                field.field_type,
+                crate::model::FieldType::Ireg | crate::model::FieldType::Freg
+            ) {
                 let xreg_expr = lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
                 let cls = if matches!(field.field_type, crate::model::FieldType::Freg) {
                     quote! { crate::prelude::RegClass::FPR }
@@ -1412,17 +1418,35 @@ pub(crate) fn lowering_arg_expr(
         "r2" => quote! { r2 },
         "rs1" => quote! { rs1 },
         "rs2" => quote! { rs2 },
-        "rs3" => quote! { args.get(2).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
+        "rs3" => {
+            quote! { args.get(2).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
         // Call argument registers (fixed positions). Beyond the register
         // count the operand falls back to VReg(0) (harmless extra move).
-        "arg0" => quote! { args.get(0).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
-        "arg1" => quote! { args.get(1).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
-        "arg2" => quote! { args.get(2).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
-        "arg3" => quote! { args.get(3).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
-        "arg4" => quote! { args.get(4).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
-        "arg5" => quote! { args.get(5).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
-        "arg6" => quote! { args.get(6).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
-        "arg7" => quote! { args.get(7).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) },
+        "arg0" => {
+            quote! { args.get(0).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
+        "arg1" => {
+            quote! { args.get(1).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
+        "arg2" => {
+            quote! { args.get(2).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
+        "arg3" => {
+            quote! { args.get(3).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
+        "arg4" => {
+            quote! { args.get(4).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
+        "arg5" => {
+            quote! { args.get(5).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
+        "arg6" => {
+            quote! { args.get(6).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
+        "arg7" => {
+            quote! { args.get(7).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r }) }
+        }
         // Cross-function call target: the FuncRef number from the IR Call's
         // `Immediate::Func`; the emitted machine instruction carries it and a
         // `@call_reloc` encodes a relocation against the "@N" symbol.
@@ -1510,7 +1534,9 @@ pub(crate) fn lowering_arg_expr(
 
 pub(crate) fn default_for_type(ft: &FieldType) -> TokenStream {
     match ft {
-        FieldType::Ireg | FieldType::Freg => quote! { <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR) },
+        FieldType::Ireg | FieldType::Freg => {
+            quote! { <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR) }
+        }
         FieldType::I8 => quote! { 0i8 },
         FieldType::I16 => quote! { 0i16 },
         FieldType::I32 => quote! { 0i32 },
@@ -1949,7 +1975,8 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
     let mut arms: Vec<TokenStream> = Vec::new();
 
     // Resolve float return VReg from ABI (was hardcoded VReg(100))
-    let float_ret_vreg = resolve_float_ret_vreg(model);
+    // 具体数值在使用处（gen_default_lowering/用户 Return 臂）经 resolve_float_ret_vreg 取用
+    let _float_ret_vreg = resolve_float_ret_vreg(model);
 
     for (term_name, rule) in &model.lower_term {
         let lowering = crate::cst_codegen::gen_lowering_insts_cst(&rule.insts, model)?;
@@ -1968,7 +1995,8 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                 };
                 if has_sd_fmov {
                     let ret_idx = resolve_float_ret_vreg(model);
-                    let ret_idx_lit = syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
+                    let ret_idx_lit =
+                        syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
                     arms.push(quote! {
                         crate::prelude::Terminator::Return { values } => {
                             #val_code
@@ -2081,7 +2109,8 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                     let body_toks = gen_lower_insts(&non_ret, model)?;
                     let ret_toks = gen_lower_insts(&ret_only, model)?;
                     let ret_idx = resolve_float_ret_vreg(model);
-                    let ret_idx_lit = syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
+                    let ret_idx_lit =
+                        syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
                     arms.push(quote! {
                         crate::prelude::Terminator::Return { values } => {
                             let val = values.first().copied()
@@ -2124,6 +2153,7 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                     let inst_toks = gen_lower_insts(&default_insts, model)?;
                     arms.push(quote! {
                         crate::prelude::Terminator::Unreachable => {
+                            #(#inst_toks)*;
                             Ok(__pack)
                         }
                     });
@@ -2222,6 +2252,8 @@ fn gen_lower_pattern_func(model: &IsaModel) -> Result<TokenStream, String> {
                 let rs1 = args.first().copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                 let rs2 = args.get(1).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                 #(#temp_toks);*;
+                #(#temp_toks);*;
+                #(#inst_toks)*;
                 Ok(__pack)
             }
         });

@@ -90,7 +90,7 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
         }
     };
     compile_source(&content)
-        .map(|ts| {
+        .inspect(|ts| {
             // 调试：导出生成代码（FGE_DEBUG_GEN 环境变量时，按 ISA 名区分）
             if std::env::var("FGE_DEBUG_GEN").is_ok() {
                 let base = std::path::Path::new(&path)
@@ -102,7 +102,6 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
                     ts.to_string(),
                 );
             }
-            ts
         })
         .map(Into::into)
         .unwrap_or_else(|e| {

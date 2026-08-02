@@ -174,9 +174,7 @@ impl XRegAllocator {
 
     /// 创建新的分配器。
     pub fn new() -> Self {
-        Self {
-            next: 0,
-        }
+        Self { next: 0 }
     }
 
     /// 分配一个指定类型与位宽的新临时寄存器（被动语义：只能由后续指令 def 赋予值）。

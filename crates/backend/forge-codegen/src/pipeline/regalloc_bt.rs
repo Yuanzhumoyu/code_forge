@@ -51,7 +51,8 @@ impl BacktrackingAllocator {
         let intervals = liverange::compute_live_intervals(vcode, xreg_map, &config.param_xregs);
 
         // 2. 构建状态
-        let mut state = BtState::new(config, ctx, intervals);
+        let _ = ctx; // AllocContext 预留（将来约束上下文）
+        let mut state = BtState::new(config, intervals);
 
         // 3. 应用 precolor
         for (vreg, preg) in &config.precolored {
@@ -110,7 +111,6 @@ impl RegAlloc for BacktrackingAllocator {
 
 struct BtState<'a> {
     config: &'a RegAllocConfig,
-    ctx: &'a AllocContext,
     /// XReg → LiveInterval (for liveness queries)
     intervals: HashMap<XReg, liverange::LiveInterval>,
 
@@ -136,11 +136,7 @@ struct BtState<'a> {
 }
 
 impl<'a> BtState<'a> {
-    fn new(
-        config: &'a RegAllocConfig,
-        ctx: &'a AllocContext,
-        intervals: HashMap<XReg, liverange::LiveInterval>,
-    ) -> Self {
+    fn new(config: &'a RegAllocConfig, intervals: HashMap<XReg, liverange::LiveInterval>) -> Self {
         // 为每个 class 初始化空闲寄存器池。
         // 根因修复（param XReg 预分配）后不再需要 abi_param_regs 排序 hack。
         let mut free_regs: HashMap<RegClass, Vec<PReg>> = HashMap::new();
@@ -156,7 +152,6 @@ impl<'a> BtState<'a> {
 
         Self {
             config,
-            ctx,
             intervals,
             assignments: HashMap::new(),
             spill_slots: HashMap::new(),
@@ -217,7 +212,12 @@ impl<'a> BtState<'a> {
                     self.reload_from_stack(vreg, OperandConstraint::Any)?;
                 } else if !self.assignments.contains_key(&vreg) {
                     // 首次遇到此 XReg
-                    self.assign_reg(vreg, OperandConstraint::Any, self.vreg_class(vreg), &inst_uses)?;
+                    self.assign_reg(
+                        vreg,
+                        OperandConstraint::Any,
+                        self.vreg_class(vreg),
+                        &inst_uses,
+                    )?;
                 }
             }
 
