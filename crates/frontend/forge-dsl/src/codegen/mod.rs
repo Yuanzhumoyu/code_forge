@@ -519,8 +519,15 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
         }
         if effects.iter().any(|e| e.as_str() == "Call") {
             call_arms.push(quote! { Inst::#vn { .. } => true });
-            // clobbers 暂不启用（x86 arg_regs 的 RCX/RDX/R8/R9 在发参 mov 中被 clobber 会导致
-            // 溢出回写时序问题——test_jit_call_external_function AV）。机制保留，待 ABI 配置细化。
+            // clobbers() 保持恒空（有意的权衡）：
+            // call 破坏 caller-saved（RAX/RCX/RDX/RSI/RDI/R8-R11/XMM0-15），但启用
+            // clobber 处理（process_block 1.5 步 spill 被破坏的活跃 XReg）曾导致
+            // test_jit_call_external_function AV——根因：发参 mov（arg_regs 的
+            // RCX/RDX/R8/R9）的 XReg 在 call 点仍被视为活跃，clobber spill/reload
+            // 时序与参数传递冲突。安全启用需要「参数传递 XReg 在 call 点不活跃」
+            // 的活区间语义（发参 mov 后值已传 callee，无需保留）。
+            // 当前无测试覆盖「call 后 caller-saved 中仍活跃 XReg」的场景，
+            // 恒空不影响现有正确性；待 ABI 配置细化后启用。
         }
         if effects.iter().any(|e| e.as_str() == "Ret") {
             ret_arms.push(quote! { Inst::#vn { .. } => true });
