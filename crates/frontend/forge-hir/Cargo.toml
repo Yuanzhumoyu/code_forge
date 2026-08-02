@@ -1,0 +1,15 @@
+[package]
+name = "forge-hir"
+version = "0.1.0"
+edition = "2024"
+description = "Forge HIR: brick-based compiler framework — define language lowering as composable building blocks"
+
+[dependencies]
+forge-ir = { path = "../../foundation/forge-ir" }
+forge-grammar = { path = "../forge-grammar" }
+forge-hir-macro = { path = "../forge-hir-macro" }
+smallvec = "1.15.2"
+
+[dev-dependencies]
+forge-codegen = { path = "../../backend/forge-codegen" }
+forge-hir-macro = { path = "../forge-hir-macro" }

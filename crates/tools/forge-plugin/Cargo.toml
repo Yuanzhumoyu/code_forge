@@ -1,0 +1,13 @@
+[package]
+name = "forge-plugin"
+version = "0.1.0"
+edition = "2024"
+description = "Forge Plugin: dynamic ISA backend loader (.dll/.so/.dylib)"
+
+[dependencies]
+forge-codegen = { path = "../../backend/forge-codegen" }
+libloading = "0.9.0"
+log = "0.4"
+
+[features]
+plugins = []

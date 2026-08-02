@@ -1,0 +1,5 @@
+[package]
+name = "forge-mem"
+version = "0.1.0"
+edition = "2024"
+description = "Forge Memory: cross-platform executable memory allocation with W^X security"

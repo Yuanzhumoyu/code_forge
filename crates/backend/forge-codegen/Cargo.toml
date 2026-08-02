@@ -1,0 +1,23 @@
+[package]
+name = "forge-codegen"
+version = "0.1.0"
+edition = "2024"
+description = "Forge Codegen: backend framework with lowering, register allocation, and multi-architecture support"
+
+[dependencies]
+forge-ir = { path = "../../foundation/forge-ir" }
+forge-opt = { path = "../../middle/forge-opt" }
+forge-mem = { path = "../../foundation/forge-mem" }
+forge-dsl = { path = "../../frontend/forge-dsl" }
+forge-grammar = { path = "../../frontend/forge-grammar" }
+forge-asm = { path = "../../tools/forge-asm" }
+smallvec = "1"
+thiserror = "2"
+log = "0.4"
+
+# Optional dependencies
+rayon = { version = "1", optional = true }
+
+[features]
+default = []
+parallel = ["dep:rayon", "forge-opt/parallel"]

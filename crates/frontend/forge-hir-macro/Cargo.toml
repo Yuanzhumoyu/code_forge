@@ -1,0 +1,13 @@
+[package]
+name = "forge-hir-macro"
+version = "0.1.0"
+edition = "2024"
+description = "Proc-macro crate for forge-hir: defines the `define_lowering!` DSL macro"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"

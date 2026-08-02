@@ -1,0 +1,123 @@
+# Mini C Grammar — EBNF grammar for a minimal C subset
+# Used by forge-grammar to generate lexer + parser.
+
+# ── Token Definitions ──
+
+token TYPE_INT = "int"
+token STRUCT   = "struct"
+token IDENT    = "[a-zA-Z_][a-zA-Z0-9_]*"
+token NUMBER   = "0[xX][0-9a-fA-F]+|[1-9][0-9]*|0[0-7]+|0"
+token CHAR     = "'[^']'"
+
+# ── Punctuation ──
+
+punct "(" ")" "{" "}" ";" "=" "," "+" "-" "*" "/" "%"
+punct "==" "!=" "<" ">" "<=" ">="
+punct "&&" "||"
+punct "!" "~" "&" "|" "^" "<<" ">>"
+punct "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "<<=" ">>="
+punct "."
+
+# ── Skip (whitespace + comments) ──
+
+skip "[ \t\r\n]+"
+skip "//[^\n]*"
+
+# ── Grammar Rules ──
+
+# Entry point: zero or more function definitions
+program ::= func_def*
+
+# Function definition: int name(params?) { body }
+# Params are inlined (not wrapped in param_list) so Children("param") picks them up.
+func_def ::= TYPE_INT IDENT "(" (param ("," param)*)? ")" block
+
+# Parameter
+param ::= TYPE_INT IDENT
+
+# Block: { statement* }
+block ::= "{" block_item* "}"
+
+# Statement dispatch (keyword-driven) — block_item is transparent (single child → inline)
+# so each specific stmt node appears directly in block's "items" field.
+block_item ::= return_stmt | if_stmt | while_stmt | for_stmt | do_while_stmt
+             | break_stmt | continue_stmt
+             | enum_def | struct_def | struct_decl | struct_init
+             | var_decl | assign_stmt | expr_stmt
+
+# Individual statement forms
+return_stmt ::= "return" expr? ";"
+var_decl ::= TYPE_INT IDENT ("=" expr)? ";"
+assign_stmt ::= member_access "=" expr ";"
+              | IDENT "=" expr ";"
+              | IDENT "+=" expr ";"
+              | IDENT "-=" expr ";"
+              | IDENT "*=" expr ";"
+              | IDENT "/=" expr ";"
+              | IDENT "%=" expr ";"
+              | IDENT "&=" expr ";"
+              | IDENT "|=" expr ";"
+              | IDENT "^=" expr ";"
+              | IDENT "<<=" expr ";"
+              | IDENT ">>=" expr ";"
+expr_stmt ::= expr ";"
+
+# Break and continue
+break_stmt ::= "break" ";"
+continue_stmt ::= "continue" ";"
+
+# Else clause helper to disambiguate from then-body block in optional fields
+else_clause ::= "else" block
+
+# If statement: if (cond) { body } else_clause?
+if_stmt ::= "if" "(" expr ")" block else_clause?
+
+# While loop: while (cond) { body }
+while_stmt ::= "while" "(" expr ")" block
+
+# Do-while loop: do { body } while (cond);
+do_while_stmt ::= "do" block "while" "(" expr ")" ";"
+
+# For loop: for (init?; cond?; update?) { body }
+for_stmt ::= "for" "(" for_init? ";" expr? ";" for_update? ")" block
+for_init ::= TYPE_INT IDENT "=" expr
+for_update ::= IDENT "=" expr
+
+# Expression — full C precedence chain (lowest to highest):
+# comma → assignment → logical_or → logical_and → bitwise_or → bitwise_xor
+# → bitwise_and → equality → relational → shift → additive → multiplicative → unary → primary
+#
+# Schema treats these as transparent pass-through; codegen walks children().
+
+expr ::= assignment
+assignment ::= member_access ("=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=") assignment | IDENT ("=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=") assignment | logical_or
+logical_or ::= logical_and ("||" logical_and)*
+logical_and ::= bitwise_or ("&&" bitwise_or)*
+bitwise_or ::= bitwise_xor ("|" bitwise_xor)*
+bitwise_xor ::= bitwise_and ("^" bitwise_and)*
+bitwise_and ::= equality ("&" equality)*
+equality ::= relational (("==" | "!=") relational)*
+relational ::= shift (("<" | ">" | "<=" | ">=") shift)*
+shift ::= additive (("<<" | ">>") additive)*
+additive ::= multiplicative (("+" | "-") multiplicative)*
+multiplicative ::= unary (("*" | "/" | "%") unary)*
+unary ::= ("-" | "+" | "!" | "~")? primary
+primary ::= NUMBER | CHAR | call | member_access | IDENT | "(" expr ")"
+
+# Function call: name(args?)
+call ::= IDENT "(" arg_list? ")"
+arg_list ::= expr ("," expr)*
+
+# ── Enum ──
+enum_def ::= "enum" IDENT "{" enumerator ("," enumerator)* "}" ";"
+enumerator ::= IDENT ("=" assignment)?
+
+# ── Struct ──
+struct_def ::= "struct" IDENT "{" struct_field* "}" ";"
+struct_field ::= TYPE_INT IDENT ";"
+struct_decl ::= "struct" IDENT IDENT ";"
+struct_init ::= "struct" IDENT IDENT "=" "{" expr ("," expr)* "}" ";"
+
+# ── Member access ──
+member_access ::= IDENT ("." IDENT)+
+

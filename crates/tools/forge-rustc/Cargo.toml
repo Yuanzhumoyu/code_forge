@@ -1,0 +1,11 @@
+[package]
+name = "forge-rustc"
+version = "0.1.0"
+edition = "2024"
+description = "Forge rustc backend: use code-forge as a rustc codegen backend"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+code-forge = { path = "../../..", features = ["object-file", "plugins"] }

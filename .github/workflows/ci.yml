@@ -16,30 +16,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  # Clippy (all targets, all features)
+  # Clippy (exclude forge-rustc which needs rustc_private)
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
-          components: clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+          components: clippy, rustc-dev
+      - run: cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings
 
-  # Tests on Linux
+  # Tests on Linux (exclude forge-rustc)
   test-linux:
     name: Test (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --all-features
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-dev
+      - run: cargo test --workspace --exclude forge-rustc --all-features
 
   # Tests on Windows
   test-windows:
@@ -47,8 +49,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --all-features
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-dev
+      - run: cargo test --workspace --exclude forge-rustc --all-features
 
   # Tests on macOS
   test-macos:
@@ -56,8 +60,49 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --all-features
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-dev
+      - run: cargo test --workspace --exclude forge-rustc --all-features
+
+  # forge-tests feature 矩阵（单 ISA / 单类别组合，验证 feature 门控）
+  forge-tests-matrix:
+    name: forge-tests (feature matrix)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - --no-default-features --features isa-x86_64,test-int
+          - --no-default-features --features isa-x86_64,test-float,test-io,test-control
+          - --no-default-features --features isa-aarch64,isa-riscv64,test-float
+          - --no-default-features --features isa-aarch64,test-io
+          - --no-default-features --features isa-riscv64,test-int
+          - --features isa-x86_64,isa-aarch64,isa-riscv64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo test -p forge-tests ${{ matrix.features }}
+
+  # forge-tests 跨架构模拟执行（vendored unicorn 由 build.rs 用 cmake 编译静态库）
+  forge-tests-unicorn:
+    name: forge-tests (exec-unicorn)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo test -p forge-tests --features exec-unicorn
+
+  # forge-tests nightly（forge-rustc 后端集成；需 nightly + rustc-dev 组件）
+  forge-tests-nightly:
+    name: forge-tests (nightly / forge-rustc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-dev
+      - run: cargo test -p forge-tests --features nightly
 
   # Docs check
   docs:
@@ -65,16 +110,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
 
-  # Benchmarks compile check (don't run, just verify they build)
+  # Benchmarks compile check
   bench-check:
     name: Benchmarks (check)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo bench --no-run
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo bench --no-run --workspace --exclude forge-rustc
+
+  # Code coverage via cargo-tarpaulin
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-tarpaulin
+      - name: Generate coverage
+        run: cargo tarpaulin --out xml --all-features --workspace --exclude forge-rustc
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: cobertura.xml
+          fail_ci_if_error: false

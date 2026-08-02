@@ -1,0 +1,297 @@
+# ============================================================
+# 最小标准指令集 ISA — 验证默认 Lowering 机制 (v11)
+# ============================================================
+
+[meta]
+name = "minimal_sd"
+version = "11.0"
+endian = "little"
+mode = 64
+max_inst_len = 1
+
+[meta.capabilities]
+variable_length = false
+prefix_layers = 0
+simd_widths = []
+mask_registers = false
+broadcast = false
+rounding_mode = false
+
+[reg.gpr]
+count = 8
+width = 64
+prefix = "R"
+
+[abi]
+stack_align = 16
+[abi.frame]
+sp = "R7"
+[abi.arg_regs]
+gpr = ["R0", "R1", "R2", "R3"]
+[abi.ret_regs]
+gpr = ["R0"]
+[abi.precolor]
+VReg0 = "R0"
+VReg2 = "R2"
+
+# ═══════════════════════════════════════════════
+# SD_* 指令 — 每条一个 stub opcode 字节
+# ═══════════════════════════════════════════════
+
+[inst.SD_MOV]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x10:[0;8]}"
+asm = "mov {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_MOV_IMM]
+fields = { dest = "Ireg", imm = "i64" }
+encoding = "{0x11:[0;8]}"
+asm = "mov {dest}, {imm}"
+effect = "Pure"
+
+[inst.SD_ADD]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x20:[0;8]}"
+asm = "add {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_SUB]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x21:[0;8]}"
+asm = "sub {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_MUL]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x22:[0;8]}"
+asm = "mul {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_UDIV]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x23:[0;8]}"
+asm = "udiv {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_SDIV]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x24:[0;8]}"
+asm = "sdiv {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_UREM]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x25:[0;8]}"
+asm = "urem {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_SREM]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x26:[0;8]}"
+asm = "srem {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_AND]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x30:[0;8]}"
+asm = "and {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_OR]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x31:[0;8]}"
+asm = "or {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_XOR]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x32:[0;8]}"
+asm = "xor {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_NOT]
+fields = { dest = "Ireg" }
+encoding = "{0x33:[0;8]}"
+asm = "not {dest}"
+effect = "Pure"
+
+[inst.SD_NEG]
+fields = { dest = "Ireg" }
+encoding = "{0x34:[0;8]}"
+asm = "neg {dest}"
+effect = "Pure"
+
+[inst.SD_SHL]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x40:[0;8]}"
+asm = "shl {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_SHR]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x41:[0;8]}"
+asm = "shr {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_SAR]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x42:[0;8]}"
+asm = "sar {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_CMP]
+fields = { src1 = "Ireg", src2 = "Ireg" }
+encoding = "{0x50:[0;8]}"
+asm = "cmp {src1}, {src2}"
+effect = "Read"
+
+[inst.SD_SETCC]
+fields = { dest = "Ireg", cond = "CondCode" }
+encoding = "{0x51:[0;8]}"
+asm = "set{cond} {dest}"
+effect = "Pure"
+
+[inst.SD_FMOV]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x60:[0;8]}"
+asm = "fmov {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_FMOV_BITS]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x61:[0;8]}"
+asm = "fmov.bits {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_FADD]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x70:[0;8]}"
+asm = "fadd {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_FSUB]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x71:[0;8]}"
+asm = "fsub {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_FMUL]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x72:[0;8]}"
+asm = "fmul {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_FDIV]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x73:[0;8]}"
+asm = "fdiv {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_FSQRT]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x74:[0;8]}"
+asm = "fsqrt {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_FNEG]
+fields = { dest = "Ireg" }
+encoding = "{0x75:[0;8]}"
+asm = "fneg {dest}"
+effect = "Pure"
+
+[inst.SD_FABS]
+fields = { dest = "Ireg" }
+encoding = "{0x76:[0;8]}"
+asm = "fabs {dest}"
+effect = "Pure"
+
+[inst.SD_FCMP]
+fields = { src1 = "Ireg", src2 = "Ireg" }
+encoding = "{0x77:[0;8]}"
+asm = "fcmp {src1}, {src2}"
+effect = "Read"
+
+[inst.SD_I2F]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x80:[0;8]}"
+asm = "i2f {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_F2I]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x81:[0;8]}"
+asm = "f2i {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_SEXT]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0x90:[0;8]}"
+asm = "sext {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_LOAD]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "{0xA0:[0;8]}"
+asm = "ld {dest}, [{src}]"
+effect = "Read"
+
+[inst.SD_STORE]
+fields = { addr = "Ireg", val = "Ireg" }
+encoding = "{0xA1:[0;8]}"
+asm = "st [{addr}], {val}"
+effect = "Write"
+
+[inst.SD_JMP]
+fields = { rel = "BlockTarget" }
+encoding = "{0xB0:[0;8]}"
+asm = "jmp {rel}"
+effect = "Jump"
+
+[inst.SD_JCC]
+fields = { cond = "CondCode", rel = "BlockTarget" }
+encoding = "{0xB1:[0;8]}"
+asm = "j{cond} {rel}"
+effect = "Branch"
+
+[inst.SD_CALL]
+fields = { target = "Ireg" }
+encoding = "{0xC0:[0;8]}"
+asm = "call {target}"
+effect = "Call"
+
+[inst.SD_RET]
+fields = []
+encoding = "{0xD0:[0;8]}"
+asm = "ret"
+effect = "Ret"
+
+[inst.SD_NOP]
+fields = []
+encoding = "{0x00:[0;8]}"
+asm = "nop"
+effect = "Pure"
+
+[inst.SD_UD2]
+fields = []
+encoding = "{0xFF:[0;8]}"
+asm = "ud2"
+effect = "Trap"
+
+[inst.SD_PUSH]
+fields = { reg = "Ireg" }
+encoding = "{0xE0:[0;8]}"
+asm = "push {reg}"
+effect = "Pure"
+
+[inst.SD_POP]
+fields = { reg = "Ireg" }
+encoding = "{0xE1:[0;8]}"
+asm = "pop {reg}"
+effect = "Pure"
+
+[inst.SD_STACK_ADDR]
+fields = { dest = "Ireg", offset = "i64" }
+encoding = "{0xF0:[0;8]}"
+asm = "stackaddr {dest}, {offset}"
+effect = "Pure"

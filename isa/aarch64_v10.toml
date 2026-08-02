@@ -1,0 +1,995 @@
+# ============================================================
+# AArch64 (ARM64) ISA v11 — migrated to encoding string DSL
+# ============================================================
+# 遵循 AAPCS64 调用约定，64-bit 模式，小端序。
+# 固定宽度 32-bit 指令字。
+# ============================================================
+
+[meta]
+name = "aarch64"
+version = "11.0"
+endian = "little"
+mode = 64
+max_inst_len = 4
+no_default_lowering = true
+
+[meta.capabilities]
+variable_length = false
+prefix_layers = 0
+simd_widths = []
+mask_registers = false
+broadcast = false
+rounding_mode = false
+
+[reg.gpr]
+count = 32
+width = 64
+names = [
+    "X0",  "X1",  "X2",  "X3",  "X4",  "X5",  "X6",  "X7",
+    "X8",  "X9",  "X10", "X11", "X12", "X13", "X14", "X15",
+    "X16", "X17", "X18", "X19", "X20", "X21", "X22", "X23",
+    "X24", "X25", "X26", "X27", "X28", "X29", "X30",
+    "SP",
+]
+prefix = "X"
+
+[reg.xmm]
+count = 32
+width = 128
+names = [
+    "V0",  "V1",  "V2",  "V3",  "V4",  "V5",  "V6",  "V7",
+    "V8",  "V9",  "V10", "V11", "V12", "V13", "V14", "V15",
+    "V16", "V17", "V18", "V19", "V20", "V21", "V22", "V23",
+    "V24", "V25", "V26", "V27", "V28", "V29", "V30", "V31",
+]
+prefix = "V"
+
+[abi]
+stack_align = 16
+red_zone = 0
+
+[abi.frame]
+sp = "SP"
+fp = "X29"
+
+[abi.arg_regs]
+gpr = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
+xmm = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7"]
+
+[abi.ret_regs]
+gpr = ["X0", "X1"]
+xmm = ["V0"]
+
+[abi.callee_saved]
+gpr = ["X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28"]
+xmm = []
+
+# ═══════════════════════════════════════════════
+# Spill 指令模板 — 宽度感知的栈溢出指令
+# LDR/STR: 64-bit GPR load/store
+# ═══════════════════════════════════════════════
+
+[spill.GPR]
+load = { inst = "LDR64", base = "X29" }
+store = { inst = "STR64", base = "X29" }
+
+[spill.FPR]
+load = { inst = "LDR128", base = "X29" }
+store = { inst = "STR128", base = "X29" }
+
+# ── Register classes ──
+# GPR excludes X9 (reserved scratch for the Fconst lowering) and X31 (SP).
+# FPR width 16 matches the 128-bit LDR128/STR128 spill paths.
+[reg_classes.GPR]
+width = 8
+allocatable = [0,1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]  # 不含 X30(LR)
+
+[reg_classes.FPR]
+width = 16
+allocatable = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
+
+# opsize dyn-type required for @move_args (MOV_RM8_R64 instruction)
+[dyn.opsize]
+kind = "u8"
+values = [64]
+default = 64
+
+# ═══════════════════════════════════════════════
+# Data Movement
+# ═══════════════════════════════════════════════
+
+[inst.SD_MOV]
+fields = { dest = "Ireg", src = "Ireg" }
+# ORR Xd, XZR, Xm  →  dest@0:5, src@5:5, XZR(31)@16:5, 0x22C@21:10, sf=1@31:1
+encoding = "32 {dest:[0;5]}{src:[5;5]}{31:[16;5]}{0x22C:[21;10]}{1:[31;1]}"
+asm = "mov {dest}, {src}"
+
+# mov physical GPR → VReg (call argument passing: dest@0:5, src@5:5)
+[inst.SD_MOV_VR]
+fields = { dest = "Ireg", src = "GprReg" }
+encoding = "32 {dest:[0;5]}{src:[5;5]}{31:[16;5]}{0x22C:[21;10]}{1:[31;1]}"
+asm = "mov {dest}, {src}"
+
+# mov VReg → physical GPR (call argument passing into ABI regs)
+[inst.SD_MOV_RV]
+fields = { dest = "GprReg", src = "Ireg" }
+# ORR Xd, Xn, XZR（0xAA1F0000 基）——真正 mov
+encoding = "32 {dest:[0;5]}{src:[5;5]}{31:[16;5]}{0x550:[21;11]}"
+asm = "mov {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_MOV_IMM]
+fields = { dest = "Ireg", imm = "i64" }
+# MOVZ Xd, #imm16, LSL #0  —  truncated to 16-bit; full 64-bit needs MOVK sequence
+encoding = "32 {dest:[0;5]}{imm:[5;16]}{0xA5:[23;8]}{1:[31;1]}"
+asm = "mov {dest}, #{imm}"
+effect = "Pure"
+
+# ═══════════════════════════════════════════════
+# Encoding Macros
+# ═══════════════════════════════════════════════
+
+[enc_macros.a64_rrr]
+params = ["opcode", "dest", "src1", "src2"]
+# R-type: dest@0:5, src1@5:5, 0@10:6, src2@16:5, opcode@21:10, sf=1@31:1
+pattern = "32 {${dest}:[0;5]}{${src1}:[5;5]}{${src2}:[16;5]}{${opcode}:[21;10]}{1:[31;1]}"
+
+[enc_macros.a64_rrr_rm]
+params = ["opcode", "dest", "src1", "src2"]
+# R-type with Rm@10 field: dest@0:5, src1@5:5, 31@10:5, src2@16:5, opcode@21:10, sf=1@31:1
+pattern = "32 {${dest}:[0;5]}{${src1}:[5;5]}{31:[10;5]}{${src2}:[16;5]}{${opcode}:[21;10]}{1:[31;1]}"
+
+[enc_macros.a64_shift]
+params = ["ext", "dest", "src1", "src2"]
+# Shift: dest@0:5, src1@5:5, ext@10:6, src2@16:5, 0x1AC@21:10, sf=1@31:1
+pattern = "32 {${dest}:[0;5]}{${src1}:[5;5]}{${ext}:[10;6]}{${src2}:[16;5]}{0x1AC:[21;10]}{1:[31;1]}"
+
+# ═══════════════════════════════════════════════
+# Integer Arithmetic (R-type, 3-register)
+# ═══════════════════════════════════════════════
+
+[inst.SD_ADD]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr 0x22C dest src1 src2"
+asm = "add {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_SUB]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr 0x32C dest src1 src2"
+asm = "sub {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_MUL]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr_rm 0x06C dest src1 src2"
+asm = "mul {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_SDIV]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr_rm 0x1AC dest src1 src2"
+asm = "sdiv {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_UDIV]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr_rm 0x1AE dest src1 src2"
+asm = "udiv {dest}, {src1}, {src2}"
+effect = "Pure"
+
+# ═══════════════════════════════════════════════
+# Bitwise (R-type, 3-register)
+# ═══════════════════════════════════════════════
+
+[inst.SD_AND]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr 0x228 dest src1 src2"
+asm = "and {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_OR]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr 0x2A8 dest src1 src2"
+asm = "orr {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_XOR]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+encoding = "$a64_rrr 0x328 dest src1 src2"
+asm = "eor {dest}, {src1}, {src2}"
+effect = "Pure"
+
+# MVN (bitwise NOT) — ORN Xd, XZR, Xm
+[inst.SD_MVN]
+fields = { dest = "Ireg", src = "Ireg" }
+encoding = "32 {dest:[0;5]}{src:[5;5]}{31:[16;5]}{0x2A8:[21;10]}{1:[31;1]}"
+asm = "mvn {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_SHL]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+# LSLV: UBFM with shift from register
+encoding = "$a64_shift 0x8 dest src1 src2"
+asm = "lsl {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_SHR]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+# LSRV
+encoding = "$a64_shift 0x9 dest src1 src2"
+asm = "lsr {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_SAR]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+# ASRV
+encoding = "$a64_shift 0xA dest src1 src2"
+asm = "asr {dest}, {src1}, {src2}"
+effect = "Pure"
+# ═══════════════════════════════════════════════
+# Integer Single-source (1-register) — sf=1, opcode@[21:10]
+# ═══════════════════════════════════════════════
+
+[inst.SD_CLZ]
+fields = { dest = "Ireg", src = "Ireg" }
+# CLZ Xd, Xn — [30:21]=0x2D6, [15:10]=0x2
+encoding = "32 {dest:[0;5]}{src:[5;5]}{0x2:[10;6]}{0:[16;5]}{0x2D6:[21;10]}{1:[31;1]}"
+asm = "clz {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_RBIT]
+fields = { dest = "Ireg", src = "Ireg" }
+# RBIT Xd, Xn — [30:21]=0x2D6, [15:10]=0x0
+encoding = "32 {dest:[0;5]}{src:[5;5]}{0:[10;11]}{0x2D6:[21;10]}{1:[31;1]}"
+asm = "rbit {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_REV64]
+fields = { dest = "Ireg", src = "Ireg" }
+# REV64 Xd, Xn — [30:21]=0x2D6, [15:10]=0x3（字节序反转 = Bswap）
+encoding = "32 {dest:[0;5]}{src:[5;5]}{0x3:[10;6]}{0:[16;5]}{0x2D6:[21;10]}{1:[31;1]}"
+asm = "rev64 {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_ABS]
+fields = { dest = "Ireg", src = "Ireg" }
+# ABS Xd, Xn — [30:21]=0x22C, [15:10]=0x0
+encoding = "32 {dest:[0;5]}{src:[5;5]}{0:[10;11]}{0x22C:[21;10]}{1:[31;1]}"
+asm = "abs {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_BSWAP]
+fields = { dest = "Ireg", src = "Ireg" }
+# Bswap 用 REV64（同编码，语义别名）
+encoding = "32 {dest:[0;5]}{src:[5;5]}{0x3:[10;6]}{0:[16;5]}{0x2D6:[21;10]}{1:[31;1]}"
+asm = "bswap {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_RORV]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg" }
+# RORV Rd, Rn, Rm — variable rotate right（$a64_shift 0xB）
+encoding = "$a64_shift 0xB dest src1 src2"
+asm = "rorv {dest}, {src1}, {src2}"
+effect = "Pure"
+
+[inst.SD_NEG]
+fields = { dest = "Ireg", src = "Ireg" }
+# NEG Xd, Xn = SUB Xd, XZR, Xn（rm=31）
+encoding = "32 {dest:[0;5]}{src:[5;5]}{31:[10;5]}{31:[16;5]}{0x32C:[21;10]}{1:[31;1]}"
+asm = "neg {dest}, {src}"
+effect = "Pure"
+
+[inst.SD_CSEL]
+fields = { dest = "Ireg", src1 = "Ireg", src2 = "Ireg", cond = "u8" }
+# CSEL Xd, Xn, Xm, cond — [30:21]=0x4AC, cond@[12:4]
+encoding = "32 {dest:[0;5]}{src1:[5;5]}{src2:[16;5]}{cond:[12;4]}{11:[10;2]}{0x4AC:[21;10]}{1:[31;1]}"
+asm = "csel {dest}, {src1}, {src2}, {cond}"
+effect = "Pure"
+
+# ═══════════════════════════════════════════════
+# Comparison
+# ═══════════════════════════════════════════════
+
+[inst.SD_CMP]
+fields = { src1 = "Ireg", src2 = "Ireg" }
+# SUBS XZR, Xn, Xm  —  result discarded, flags set
+encoding = "32 {31:[0;5]}{src1:[5;5]}{src2:[16;5]}{0x3AC:[21;10]}{1:[31;1]}"
+asm = "cmp {src1}, {src2}"
+effect = "Read"
+
+[inst.SD_SETCC]
+fields = { dest = "Ireg", cond = "CondCode" }
+# CSET Xd, cond  —  cond@12:4, 0x9B@24:8
+encoding = "32 {dest:[0;5]}{cond:[12;4]}{0x9B:[24;8]}"
+asm = "cset {dest}, {cond}"
+effect = "Pure"
+
+# ═══════════════════════════════════════════════
+# Control Flow — using !isa0 fixup for AArch64 branch offset
+# ═══════════════════════════════════════════════
+
+[inst.SD_JMP]
+fields = { rel = "BlockTarget" }
+# B <offset>  —  imm26@0:26, 0b000101@26:6
+encoding = "32 {0b000101:[26;6]} !isa0"
+asm = "b {rel}"
+effect = "Jump"
+
+[inst.SD_JCC]
+fields = { cond = "CondCode", rel = "BlockTarget" }
+# B.cond <offset>  —  cond@0:4, imm19@5:19, 0b01010100@24:8
+encoding = "32 {cond:[0;4]}{0b01010100:[24;8]} !isa0"
+asm = "b.{cond} {rel}"
+effect = "Branch"
+
+[inst.SD_CALL]
+fields = { target = "Ireg" }
+# BLR Xn  —  target@5:5, 0xD63F@16:16
+encoding = "32 {target:[5;5]}{0xD63F:[16;16]}"
+asm = "blr {target}"
+effect = "Call"
+
+# BL #imm26 — PC-relative branch with link. `func` carries the FuncRef number
+# and @call_reloc emits the BL template + a relocation against "@N", resolved
+# by the AArch64 RelocPatcher at load time.
+[inst.SD_BL]
+fields = { offset = "i64" }
+encoding = "@call_reloc offset, 0x94000000"
+asm = "bl {offset}"
+effect = "Call"
+
+# ═══════════════════════════════════════════════
+# Return / NOP / Trap
+# ═══════════════════════════════════════════════
+
+[inst.SD_RET]
+fields = []
+# RET  — X30@5:5, 0xD65F@16:16
+encoding = "32 {30:[5;5]}{0xD65F:[16;16]}"
+asm = "ret"
+effect = "Ret"
+
+[inst.SD_NOP]
+fields = []
+encoding = "32 {0xD503201F:[0;32]}"
+asm = "nop"
+effect = "Pure"
+
+[inst.SD_UD2]
+fields = []
+# BRK #0
+encoding = "32 {0xD4200000:[0;32]}"
+asm = "brk #0"
+effect = "Trap"
+
+# ═══════════════════════════════════════════════
+# Frame management — Reg-typed for prologue/epilogue
+# These use GprReg fields to reference physical registers directly.
+# ═══════════════════════════════════════════════
+
+# STP pre-index: STP rt1, rt2, [rn, #imm]!
+[inst.SD_STP_PRE]
+fields = { rt1 = "GprReg", rt2 = "GprReg", rn = "GprReg", imm = "i64" }
+# imm is signed, encoded as imm/8 @ bits 15:7 (7-bit signed scaled offset)
+encoding = "32 {rt1:[0;5]}{rn:[5;5]}{rt2:[10;5]}{imm:[15;7;3]}{0x2A6:[22;10]}"
+asm = "stp {rt1}, {rt2}, [{rn}, #{imm}]!"
+
+# LDP post-index: LDP rt1, rt2, [rn], #imm
+[inst.SD_LDP_POST]
+fields = { rt1 = "GprReg", rt2 = "GprReg", rn = "GprReg", imm = "i64" }
+encoding = "32 {rt1:[0;5]}{rn:[5;5]}{rt2:[10;5]}{imm:[15;7;3]}{0x3A8:[22;10]}"
+asm = "ldp {rt1}, {rt2}, [{rn}], #{imm}"
+
+# MOV (GprReg → GprReg) for SP/FP — ORR Xd, XZR, Xm
+[inst.SD_MOV_RR]
+fields = { dest = "GprReg", src = "GprReg" }
+# ORR Xd, Xn, XZR（0xAA1F0000 基）——真正 mov（同 SD_MOV_RV）
+encoding = "32 {dest:[0;5]}{src:[5;5]}{31:[16;5]}{0x550:[21;11]}"
+asm = "mov {dest}, {src}"
+
+# SUB SP, SP, #imm — stack allocation (dest and src are GprReg for SP/FP ops)
+[inst.SD_SUB_SP]
+fields = { dest = "GprReg", src = "GprReg", imm = "i64" }
+encoding = "32 {dest:[0;5]}{src:[5;5]}{imm:[10;12;0]}{0x44:[22;9]}{1:[31;1]}"
+asm = "sub {dest}, {src}, #{imm}"
+
+# ═══════════════════════════════════════════════
+# Pseudo-instruction support for @push_callee / @pop_callee / @move_args
+# ═══════════════════════════════════════════════
+
+# PUSH_Gpr: STR X{reg}, [SP, #-8]!  (pre-indexed store, 64-bit)
+[inst.PUSH_Gpr]
+fields = { reg = "GprReg" }
+# STR Xt, [Xn, #imm]! pre-index 64-bit: size=11(30-31) 111(27-29) 0(26) 00(24-25)
+# opc=00(22-23) 1(21) imm9(12-20) 11(10-11) Rn(5-9) Rt(0-4)
+# 参考 STR X19,[SP,#-8]! = 0xF81F8FF3
+encoding = "32 {reg:[0;5]}{31:[5;5]}{3:[10;2]}{0x1F8:[12;9]}{0x7C0:[21;11]}"
+asm = "push {reg}"
+effect = "Write"
+
+# POP_Gpr: LDR X{reg}, [SP], #8  (post-indexed load, 64-bit)
+[inst.POP_Gpr]
+fields = { reg = "GprReg" }
+# size=11, 111000, 00, V=0, W=0, imm9=8, opc=010, Rn=SP=31, Rt=reg
+encoding = "32 {reg:[0;5]}{31:[5;5]}{2:[10;3]}{8:[13;9]}{0x3E0:[22;10]}"
+asm = "pop {reg}"
+effect = "Read+Write"
+
+# MOV_RM8_R64: move from physical GPR to VReg (used by @move_args)
+# ORR Xd, XZR, Xm — dest is Ireg (VReg→preg), src is GprReg (direct index)
+# opsize field required by @move_args codegen but unused in encoding (AArch64 is always 64-bit)
+[inst.MOV_RM8_R64]
+fields = { dest = "Ireg", src = "GprReg", opsize = "Opsize" }
+encoding = "32 {dest:[0;5]}{31:[5;5]}{src:[16;5]}{0x22C:[21;10]}{1:[31;1]}"
+asm = "mov {dest}, {src}"
+
+# SUB64_R_IMM32: SUB SP, SP, #imm  (for @frame_alloc)
+[inst.SUB64_R_IMM32]
+fields = { dest = "GprReg", imm = "u32" }
+# sf=1, op=SUB, S=0, 10001, sh=0, imm12 at [10:21], Rn=Rd=SP(31) at [0:9]
+encoding = "32 {31:[0;5]}{31:[5;5]}{imm:[10;12;0]}{0x344:[22;10]}"
+asm = "sub {dest}, {dest}, #{imm}"
+effect = "Write"
+
+# ADD64_R_IMM32: ADD SP, SP, #imm  (for @frame_free)
+[inst.ADD64_R_IMM32]
+fields = { dest = "GprReg", imm = "u32" }
+# sf=1, op=ADD, S=0, 10001, sh=0, imm12 at [10:21], Rn=Rd=SP(31) at [0:9]
+encoding = "32 {31:[0;5]}{31:[5;5]}{imm:[10;12;0]}{0x224:[22;10]}"
+asm = "add {dest}, {dest}, #{imm}"
+effect = "Write"
+
+# ═══════════════════════════════════════════════
+# Load / Store — LDR/STR (unsigned offset, scaled)
+# ═══════════════════════════════════════════════
+
+[inst.SD_LOAD]
+fields = { dest = "Ireg", src = "Ireg" }
+# LDR Xt, [Xn]  —  dest@0:5, addr@5:5, 0x1F9@22:10, sf=1@31:1
+encoding = "32 {dest:[0;5]}{src:[5;5]}{0x1F9:[22;9]}{1:[31;1]}"
+asm = "ldr {dest}, [{src}]"
+effect = "Read"
+
+[inst.SD_STORE]
+fields = { val = "Ireg", addr = "Ireg" }
+# STR Xt, [Xn]  —  val@0:5, addr@5:5, 0x1F8@22:10, sf=1@31:1
+encoding = "32 {val:[0;5]}{addr:[5;5]}{0x1F8:[22;9]}{1:[31;1]}"
+asm = "str {val}, [{addr}]"
+effect = "Write"
+
+# ═══════════════════════════════════════════════
+# Lowering rules — IR Opcode → AArch64 instruction sequence
+#
+# AArch64 cond codes (for SD_SETCC):
+#   0=EQ, 1=NE, 2=HS, 3=LO, 4=MI, 5=PL,
+#   6=VS, 7=VC, 8=HI, 9=LS, 10=GE, 11=LT, 12=GT, 13=LE
+# ═══════════════════════════════════════════════
+
+# ── Integer ──
+
+[lower.Iconst]
+insts = ["SD_MOV_IMM rd, iconst"]
+
+[lower.Iadd]
+insts = ["SD_ADD rd, rs1, rs2"]
+
+[lower.Isub]
+insts = ["SD_SUB rd, rs1, rs2"]
+
+[lower.Imul]
+insts = ["SD_MUL rd, rs1, rs2"]
+
+[lower.Udiv]
+insts = ["SD_UDIV rd, rs1, rs2"]
+
+[lower.Sdiv]
+insts = ["SD_SDIV rd, rs1, rs2"]
+
+# ── Trap / Freeze ──
+[lower.Trap]
+insts = ["SD_UD2"]
+
+[lower.Freeze]
+insts = ["SD_MOV rd, rs1"]
+
+# ── Remainder via div/mul/sub (X9 is the reserved scratch) ──
+[lower.Urem]
+insts = ["SD_UDIV X9, rs1, rs2", "SD_MUL X9, X9, rs2", "SD_SUB rd, rs1, X9"]
+
+[lower.Srem]
+insts = ["SD_SDIV X9, rs1, rs2", "SD_MUL X9, X9, rs2", "SD_SUB rd, rs1, X9"]
+
+# ── Overflow ops: result half only (flag half recorded) ──
+[lower.SaddOverflow]
+insts = ["SD_ADD rd, rs1, rs2"]
+
+[lower.UaddOverflow]
+insts = ["SD_ADD rd, rs1, rs2"]
+
+[lower.SsubOverflow]
+insts = ["SD_SUB rd, rs1, rs2"]
+
+[lower.UsubOverflow]
+insts = ["SD_SUB rd, rs1, rs2"]
+
+[lower.SmulOverflow]
+insts = ["SD_MUL rd, rs1, rs2"]
+
+[lower.UmulOverflow]
+insts = ["SD_MUL rd, rs1, rs2"]
+
+# ── Fma: mul + add ──
+[lower.Fma]
+insts = ["NEON_FMUL rd, rs1, rs2", "NEON_FADD rd, rd, rs3"]
+
+[lower.Band]
+insts = ["SD_AND rd, rs1, rs2"]
+
+[lower.Bor]
+insts = ["SD_OR rd, rs1, rs2"]
+
+[lower.Bxor]
+insts = ["SD_XOR rd, rs1, rs2"]
+
+[lower.Bnot]
+insts = ["SD_MVN rd, rs1"]
+
+[lower.Ishl]
+insts = ["SD_SHL rd, rs1, rs2"]
+
+[lower.Ushr]
+insts = ["SD_SHR rd, rs1, rs2"]
+
+[lower.Sshr]
+insts = ["SD_SAR rd, rs1, rs2"]
+
+[lower.SaddSat]
+insts = ["SD_ADD rd, rs1, rs2", "SD_CSEL rd, rd, rs1, 10"]
+
+[lower.SsubSat]
+insts = ["SD_SUB rd, rs1, rs2", "SD_CSEL rd, rd, rs1, 10"]
+
+[lower.UaddSat]
+insts = ["SD_ADD rd, rs1, rs2", "SD_CSEL rd, rd, rs2, 2"]
+
+[lower.UsubSat]
+insts = ["SD_SUB rd, rs1, rs2", "SD_CSEL rd, rd, rs1, 2"]
+["SD_SAR rd, rs1, rs2"]
+
+[lower.Clz]
+insts = ["SD_CLZ rd, rs1"]
+
+[lower.Ctz]
+insts = ["SD_RBIT rd, rs1", "SD_CLZ rd, rd"]
+
+[lower.Popcnt]
+insts = ["SD_MOV rd, rs1"]
+
+[lower.Bitreverse]
+insts = ["SD_RBIT rd, rs1"]
+
+[lower.Abs]
+insts = ["SD_ABS rd, rs1"]
+
+[lower.Bswap]
+insts = ["SD_BSWAP rd, rs1"]
+
+[lower.Rotr]
+insts = ["SD_RORV rd, rs1, rs2"]
+
+[lower.Rotl]
+insts = ["SD_NEG %t0, rs2", "SD_RORV rd, rs1, %t0"]
+
+[lower.Smin]
+insts = ["SD_CMP rs1, rs2", "SD_CSEL rd, rs2, rs1, 11"]
+
+[lower.Smax]
+insts = ["SD_CMP rs1, rs2", "SD_CSEL rd, rs1, rs2, 11"]
+
+[lower.Umin]
+insts = ["SD_CMP rs1, rs2", "SD_CSEL rd, rs2, rs1, 3"]
+
+[lower.Umax]
+insts = ["SD_CMP rs1, rs2", "SD_CSEL rd, rs1, rs2, 3"]
+
+# ── Identity ──
+
+[lower.Copy]
+insts = ["SD_MOV rd, rs1"]
+
+[lower.Bitcast]
+insts = ["SD_MOV rd, rs1"]
+
+[lower.Sextend]
+insts = ["SD_MOV rd, rs1"]
+
+[lower.Uextend]
+insts = ["SD_MOV rd, rs1"]
+
+[lower.Ireduce]
+insts = ["SD_MOV rd, rs1"]
+
+# ── Memory ──
+
+[lower.Load]
+insts = ["SD_LOAD rd, rs1"]
+
+[lower.Store]
+insts = ["SD_STORE rs2, rs1"]
+
+# ── Icmp — uses AArch64 condition codes (EQ=0, NE=1, HS=2, LO=3, HI=8, LS=9, GE=10, LT=11, GT=12, LE=13)
+# SD_SETCC fields in BTreeMap order: [cond, dest]; operands must match.
+
+[lower.Icmp.Equal]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 0"]
+
+[lower.Icmp.NotEqual]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 1"]
+
+[lower.Icmp.SignedLessThan]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 11"]
+
+[lower.Icmp.SignedGreaterThan]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 12"]
+
+[lower.Icmp.SignedLessThanOrEqual]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 13"]
+
+[lower.Icmp.SignedGreaterThanOrEqual]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 10"]
+
+[lower.Icmp.UnsignedLessThan]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 3"]
+
+[lower.Icmp.UnsignedGreaterThan]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 8"]
+
+[lower.Icmp.UnsignedLessThanOrEqual]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 9"]
+
+[lower.Icmp.UnsignedGreaterThanOrEqual]
+insts = ["SD_CMP rs1, rs2", "SD_SETCC rd, 2"]
+
+# ═══════════════════════════════════════════════
+# NEON vector instructions — Three-Same register form
+# FADD/FSUB/FMUL/FDIV Vd.4S, Vn.4S, Vm.4S
+# ═══════════════════════════════════════════════
+
+# ORR Vd.16B, Vn.16B, Vm.16B — bitwise OR (used for register copy when Vn=Vm)
+[inst.NEON_ORR]
+fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
+encoding = "32 {dest:0:5}{src1:5:5}{0x03:10:5}{1:15:1}{src2:16:5}{0x271:21:11}"
+asm = "neon_orr {dest}, {src1}, {src2}"
+
+# FADD Vd.4S, Vn.4S, Vm.4S (U=0)
+[inst.NEON_FADD]
+fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
+encoding = "32 {dest:0:5}{src1:5:5}{0x15:10:5}{1:15:1}{src2:16:5}{0x271:21:11}"
+asm = "neon_fadd {dest}, {src1}, {src2}"
+
+# FSUB Vd.4S, Vn.4S, Vm.4S (U=1)
+[inst.NEON_FSUB]
+fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
+encoding = "32 {dest:0:5}{src1:5:5}{0x1A:10:5}{1:15:1}{src2:16:5}{0x371:21:11}"
+asm = "neon_fsub {dest}, {src1}, {src2}"
+
+# FMUL Vd.4S, Vn.4S, Vm.4S (U=1)
+[inst.NEON_FMUL]
+fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
+encoding = "32 {dest:0:5}{src1:5:5}{0x1B:10:5}{1:15:1}{src2:16:5}{0x371:21:11}"
+asm = "neon_fmul {dest}, {src1}, {src2}"
+
+# FABS Vd.4S — 0x0EA0FC00（[21:31]=0x1D5, [10:15]=0x3F, [16]=0）
+[inst.NEON_FABS]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x3F:10:6}{0:16:5}{0x1D5:21:11}"
+asm = "neon_fabs {dest}, {src}"
+
+# FNEG Vd.4S — 0x0EA2FC00（[16]=1）
+[inst.NEON_FNEG]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x3F:10:6}{1:16:1}{0:17:4}{0x1D5:21:11}"
+asm = "neon_fneg {dest}, {src}"
+
+# FSQRT Vd.4S — 0x2EA1FC00（Q=1；[21:31]=0x1D4, [10:15]=0x3F）
+[inst.NEON_FSQRT]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x3F:10:6}{0:16:5}{0x1D4:21:11}"
+asm = "neon_fsqrt {dest}, {src}"
+
+
+# ─────────────────────────────────────────────────────
+# Standard float mnemonics used by default lowering
+# (SD_FMOV/SD_FADD/SD_FSUB/SD_FMUL). FMOV is the scalar 64-bit
+# `FMOV Dd, Dn` (0x1E604000); the arithmetic ops reuse the NEON
+# vector encodings above — register allocation and encoding are
+# correct, execution semantics are the 4S (32-bit lane) form.
+# ─────────────────────────────────────────────────────
+
+# FMOV Dd, Dn (scalar 64-bit): 0x1E604000 | (Dn<<5) | Dd
+# FMIN Vd.4S, Vn.4S, Vm.4S — 0x0E22DC00（布局同 FADD，[10:15]=0x1B）
+[inst.NEON_FMIN]
+fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
+encoding = "32 {dest:0:5}{src1:5:5}{0x1B:10:5}{0:15:1}{src2:16:5}{0x1C1:21:11}"
+asm = "neon_fmin {dest}, {src1}, {src2}"
+
+# FMAX Vd.4S, Vn.4S, Vm.4S — 0x0E22FC00（U=1）
+[inst.NEON_FMAX]
+fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
+encoding = "32 {dest:0:5}{src1:5:5}{0x1B:10:5}{1:15:1}{src2:16:5}{0x1C1:21:11}"
+asm = "neon_fmax {dest}, {src1}, {src2}"
+
+# FDIV Vd.4S, Vn.4S, Vm.4S — 0x0E221C00
+[inst.NEON_FDIV]
+fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
+encoding = "32 {dest:0:5}{src1:5:5}{0x1B:10:5}{0:15:1}{src2:16:5}{0x1C1:21:11}"
+asm = "neon_fdiv {dest}, {src1}, {src2}"
+
+# FRINTM Vd.4S（向下取整）— 0x2EB9FC00 系
+[inst.NEON_FRINTM]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x3F:10:6}{0:16:5}{0x1D7:21:11}"
+asm = "neon_frintm {dest}, {src}"
+
+# FRINTP Vd.4S（向上取整）— 0x2EB8FC00 系
+[inst.NEON_FRINTP]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x3F:10:6}{0:16:5}{0x1D6:21:11}"
+asm = "neon_frintp {dest}, {src}"
+
+# FRINTZ Vd.4S（截断）— 0x2EB9FC00 系
+[inst.NEON_FRINTZ]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x3F:10:6}{1:16:1}{0:17:4}{0x1D5:21:11}"
+asm = "neon_frintz {dest}, {src}"
+
+# FRINTN Vd.4S（就近舍入）— 0x2EA0FC00 系
+[inst.NEON_FRINTN]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x3F:10:6}{0:16:5}{0x1D4:21:11}"
+asm = "neon_frintn {dest}, {src}"
+
+# FCMP Dn, Dm — 0x1E602000 | (Dm<<16) | (Dn<<5)
+[inst.SD_FCMP]
+fields = { src1 = "Freg", src2 = "Freg" }
+encoding = "32 {src1:5:5}{src2:16:5}{0:[10;5]}{0x1:[15;1]}{0xF3:[21;11]}"
+asm = "fcmp {src1}, {src2}"
+effect = "Pure"
+
+# CSET Xd, cond — 0x9A9F07E0 | (cond<<12) | Xd
+[inst.SD_CSET]
+fields = { dest = "Ireg", cond = "u8" }
+encoding = "32 {dest:0:5}{cond:12:4}{0x7F3F:16:16}"
+asm = "cset {dest}, {cond}"
+effect = "Pure"
+# CMP Xn, #imm — SUBS XZR, Xn, #imm（imm12 移位）
+[inst.SD_CMP_IMM]
+fields = { src = "Ireg", imm = "i64" }
+encoding = "32 {31:[0;5]}{src:[5;5]}{imm:[10;11]}{0x388:[21;10]}{0x1:[31;1]}"
+asm = "cmp_imm {src}, {imm}"
+effect = "Read"
+
+# LEA Xd, [Xr + #imm]（Alloca/GetElementPtr 用——ADD Xd, Xr, #imm 移位立即数）
+[inst.SD_LEA]
+fields = { dest = "Ireg", base = "Ireg", offset = "i64" }
+encoding = "32 {dest:[0;5]}{base:[5;5]}{offset:[10;11]}{0x488:[21;10]}{0x1:[31;1]}"
+asm = "lea_a64 {dest}, {base}, {offset}"
+effect = "Pure"
+
+# DMB SY（全屏障）——0xD5033FBF
+[inst.SD_FENCE]
+fields = { }
+encoding = "32 {0xD5033FBF:[0;32]}"
+asm = "fence_a64"
+effect = "Write"
+
+# 原子占位（LSE LDADD Xd, Xn, [Xm] 近似——执行语义待 unicorn 验证）
+[inst.SD_ATOMIC]
+fields = { dest = "Ireg", addr = "Ireg", val = "Ireg" }
+encoding = "32 {dest:[0;5]}{addr:[5;5]}{val:[16;5]}{0x8A1:[21;11]}"
+asm = "atomic_add {dest}, {addr}, {val}"
+effect = "Write"
+[inst.SD_FMOV]
+fields = { dest = "Freg", src = "Freg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x79810:10:22}"
+asm = "fmov {dest}, {src}"
+
+# FMOV Dd, Xn (GPR → FP, 64-bit): 0x9E670000 | (Xn<<5) | Dd
+[inst.SD_FMOV_D_X]
+fields = { dest = "Freg", src = "Ireg" }
+encoding = "32 {dest:0:5}{src:5:5}{0x2799C0:10:22}"
+asm = "fmov {dest}, {src}"
+
+# ═══════════════════════════════════════════════
+# Vector lowering rules
+# ═══════════════════════════════════════════════
+
+# Vadd: NEON_FADD Vd.4S, Vn.4S, Vm.4S
+[lower.Vadd]
+insts = ["neon_fadd rd, rs1, rs2"]
+
+# Vsub: NEON_FSUB Vd.4S, Vn.4S, Vm.4S
+[lower.Vsub]
+insts = ["neon_fsub rd, rs1, rs2"]
+
+# Vmul: NEON_FMUL Vd.4S, Vn.4S, Vm.4S
+[lower.Vmul]
+insts = ["neon_fmul rd, rs1, rs2"]
+
+# ── Scalar float (NEON 4S encodings; see SD_FADD/SD_FSUB/SD_FMUL) ──
+
+[lower.Fadd]
+insts = ["neon_fadd rd, rs1, rs2"]
+
+[lower.Fsub]
+insts = ["neon_fsub rd, rs1, rs2"]
+
+[lower.Fmul]
+insts = ["neon_fmul rd, rs1, rs2"]
+
+[lower.Fneg]
+insts = ["neon_fneg rd, rs1"]
+
+[lower.Fabs]
+insts = ["neon_fabs rd, rs1"]
+
+[lower.Fsqrt]
+insts = ["neon_fsqrt rd, rs1"]
+
+[lower.Fdiv]
+insts = ["neon_fdiv rd, rs1, rs2"]
+
+[lower.Fmin]
+insts = ["neon_fmin rd, rs1, rs2"]
+
+[lower.Fmax]
+insts = ["neon_fmax rd, rs1, rs2"]
+
+[lower.Ffloor]
+insts = ["neon_frintm rd, rs1"]
+
+[lower.Fceil]
+insts = ["neon_frintp rd, rs1"]
+
+[lower.Ftrunc]
+insts = ["neon_frintz rd, rs1"]
+
+[lower.Fround]
+insts = ["neon_frintn rd, rs1"]
+
+[lower.Fcopysign]
+insts = ["neon_fabs rd, rs1"]
+
+[lower.Fcmp.Equal]
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 0"]
+
+[lower.Fcmp.NotEqual]
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 1"]
+
+[lower.Fcmp.LessThan]
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 3"]
+
+[lower.Fcmp.LessThanOrEqual]
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 13"]
+
+[lower.Fcmp.GreaterThan]
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 12"]
+
+[lower.Fcmp.GreaterThanOrEqual]
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 10"]
+
+[lower.IsNull]
+insts = ["SD_CMP_IMM rs1, 0", "SD_CSET rd, 0"]
+
+[lower.IsNotNull]
+insts = ["SD_CMP_IMM rs1, 0", "SD_CSET rd, 1"]
+
+[lower.Alloca]
+insts = ["SD_MOV rd, rs1"]
+
+[lower.GetElementPtr]
+insts = ["SD_LEA rd, rs1, 0"]
+
+[lower.GlobalAddr]
+insts = ["SD_MOV rd, rs1"]
+
+[lower.AtomicRmw]
+insts = ["SD_ATOMIC rd, rs1, rs2"]
+
+[lower.Fence]
+insts = ["SD_FENCE"]
+["neon_fsqrt rd, rs1"]
+
+# Fconst: load the 64-bit constant bits into X9 (reserved scratch) then
+# FMOV Dd, X9. X9 is excluded from GPR allocation in [reg_classes.GPR].
+[lower.Fconst]
+insts = ["SD_MOV_IMM X9, fconst", "SD_FMOV_D_X rd, X9"]
+
+# Call: move args into ABI registers (X0-X7), emit relocatable BL, and move
+# the X0 return value back. `func` expands to the IR FuncRef number.
+# Beyond 8 args / float args not yet lowered (recorded limitation).
+[lower.Call]
+insts = [
+    "SD_MOV_RV X0, arg0",
+    "SD_MOV_RV X1, arg1",
+    "SD_MOV_RV X2, arg2",
+    "SD_MOV_RV X3, arg3",
+    "SD_MOV_RV X4, arg4",
+    "SD_MOV_RV X5, arg5",
+    "SD_MOV_RV X6, arg6",
+    "SD_MOV_RV X7, arg7",
+    "SD_BL func",
+    "SD_MOV_VR rd, X0",
+]
+
+[lower.CallIndirect]
+insts = ["SD_CALL rs1"]
+
+# ── Select / StackAddr ──
+
+[lower.Select]
+insts = ["SD_MOV rd, rs2"]
+
+[lower.StackAddr]
+insts = ["SD_MOV_IMM rd, 0"]
+
+# ── Control Flow — CBNZ (Compare and Branch on Non-Zero) ──
+
+# CBNZ Xt, label — branches to label if Xt != 0
+# Field names chosen so BTreeMap alphabetic order = operand order (cond < target)
+[inst.CBNZ]
+fields = { cond = "Ireg", target = "BlockTarget" }
+# 64-bit: sf=1 at [31], [30:25]=011010, [24]=1(CBNZ), imm19 at [5:23], Rt at [0:4]
+encoding = "32 {cond:[0;5]}{0xB5:[24;8]} !isa0"
+asm = "cbnz {cond}, .L{target}"
+effect = "Branch"
+
+# ── Terminator lowering ──
+
+[lower_term.Return]
+insts = ["SD_MOV_RV X0, val", "SD_RET"]
+
+[lower_term.Jump]
+insts = ["SD_JMP target"]
+
+# Branch: if cond != 0 → true_block, else → false_block
+[lower_term.Branch]
+insts = ["CBNZ cond, true_block", "SD_JMP false_block"]
+
+[lower_term.Unreachable]
+insts = ["SD_UD2"]
+
+# ═══════════════════════════════════════════════
+# Prologue / Epilogue — AArch64 AAPCS64 stack frame
+#
+# Prologue: STP FP,LR,[SP,#-16]! ; MOV FP,SP ; SUB SP,SP,#frame
+# Epilogue: MOV SP,FP ; LDP FP,LR,[SP],#16 ; RET
+# @push_callee / @pop_callee generated by DSL from [abi.callee_saved]
+# ═══════════════════════════════════════════════
+
+[emit.prologue]
+insts = [
+    # Save frame pointer and link register
+    "stp X29, X30, [SP, #-16]!",
+    # Set up frame pointer (FP = old SP)
+    "mov X29, SP",
+    # Copy arg regs → vregs (from [abi.arg_regs])
+    "@move_args",
+    # Save callee-saved registers (from [abi.callee_saved])
+    "@push_callee",
+    # Allocate stack space for locals
+    "@frame_alloc",
+]
+
+[emit.epilogue]
+insts = [
+    # Deallocate stack space
+    "@frame_free",
+    # Restore callee-saved registers (reverse order)
+    "@pop_callee",
+    # Restore frame pointer and return address
+    "mov SP, X29",
+    "ldp X29, X30, [SP], #16",
+    "ret",
+]

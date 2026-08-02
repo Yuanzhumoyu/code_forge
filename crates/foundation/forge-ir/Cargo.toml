@@ -1,0 +1,12 @@
+[package]
+name = "forge-ir"
+version = "0.1.0"
+edition = "2024"
+description = "Forge IR: SSA-form intermediate representation types, builder, parser, and analysis"
+
+[dependencies]
+smallvec = "1"
+thiserror = "2"
+dashu = "0.5.0"
+bitflags = "2"
+forge-grammar = { path = "../../frontend/forge-grammar" }

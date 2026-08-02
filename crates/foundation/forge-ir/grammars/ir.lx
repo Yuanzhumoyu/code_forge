@@ -1,0 +1,135 @@
+# ============================================================
+# forge-ir Text Format Grammar
+# ============================================================
+# Grammar for the forge-ir human-readable text format.
+# Used for round-tripping IR through text files for testing,
+# debugging, and serialization.
+# ============================================================
+
+# ── Token definitions ──
+
+# Keywords
+token KW_FN = "fn"
+token KW_BLOCK = "block"
+token KW_TARGET = "target"
+token KW_TRIPLE = "triple"
+token KW_DATALAYOUT = "datalayout"
+
+# Terminator keywords (must come before IDENT to prevent greedy stmt* capture)
+token KW_RET = "ret"
+token KW_JMP = "jmp"
+token KW_BR = "br"
+token KW_SWITCH = "switch"
+token KW_UNREACHABLE = "unreachable"
+
+# Type literals (must come before identifiers)
+token TYPE = "(i|f|b)[1-9][0-9]*"
+token PTR_TYPE = "ptr"
+token VEC_TYPE = "<[0-9]+x[0-9]+(i|f)[0-9]+>"
+
+# Names
+token GLOBAL_IDENT = "@[a-zA-Z_][a-zA-Z0-9_]*"
+token LOCAL_IDENT = "%[a-zA-Z_][a-zA-Z0-9_]*"
+
+# Numeric literals
+token HEX_LIT = "0x[0-9a-fA-F]+"
+token FLOAT_LIT = "[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?"
+token INT_LIT = "-?[0-9]+"
+
+# String literals
+token STRING = '"[^"]*"'
+
+# Identifiers (lowest priority)
+token IDENT = "[a-zA-Z_][a-zA-Z0-9_]*"
+
+# ── Punctuation ──
+punct "(" ")" "{" "}" "[" "]" ":" "," "=" "->" "!" ";"
+
+# ── Skip rules ──
+skip "[ \t\r\n]+"
+skip "#[^\n]*"
+
+# ═══════════════════════════════════════
+# Grammar rules
+# ═══════════════════════════════════════
+
+# Top-level
+module ::= (target_spec | function_def)*
+
+# Target specification
+target_spec ::= KW_TARGET KW_TRIPLE "=" STRING
+             |  KW_TARGET KW_DATALAYOUT "=" STRING
+
+# Function definition
+function_def ::= KW_FN IDENT "(" param_list ")" ret_types "{" block_list "}"
+
+param_list ::= (param ("," param)*)?
+
+param ::= IDENT ":" type_ann
+
+ret_types ::= ("->" type_list)?
+
+type_list ::= type_ann ("," type_ann)*
+
+type_ann ::= TYPE
+          |  PTR_TYPE
+          |  VEC_TYPE
+
+# Block list
+block_list ::= block*
+
+# Block
+block ::= IDENT block_params ":" stmt* terminator
+
+block_params ::= ("(" (block_param ("," block_param)*)? ")")?
+
+block_param ::= type_ann LOCAL_IDENT
+
+# Statements (instructions or labels)
+stmt ::= inst
+
+# Instruction: [results =] opcode operands [immediates] [flags] ";"
+inst ::= (results "=")? opcode operands immediates? flags? ";"?
+
+results ::= LOCAL_IDENT ("," LOCAL_IDENT)*
+
+opcode ::= IDENT
+
+# Operands
+operands ::= (operand ("," operand)*)?
+
+operand ::= LOCAL_IDENT
+         |  GLOBAL_IDENT
+         |  INT_LIT
+         |  HEX_LIT
+         |  FLOAT_LIT
+         |  type_ann
+         |  IDENT
+
+# Immediates
+immediates ::= "[" (immediate ("," immediate)*)? "]"
+
+immediate ::= INT_LIT
+           |  type_ann
+           |  GLOBAL_IDENT
+           |  IDENT
+           |  STRING
+
+# Flags
+flags ::= "{" flag_item ("," flag_item)* "}"
+
+flag_item ::= IDENT
+           |  "!" INT_LIT
+
+# Terminators
+terminator ::= "ret" operands ";"?
+            |  "jmp" IDENT jump_args ";"?
+            |  "br" operand "," IDENT jump_args "," IDENT jump_args ";"?
+            |  "switch" operand "," IDENT "[" switch_cases "]" ";"?
+            |  "unreachable" ";"?
+
+jump_args ::= ("(" operands ")")?
+
+switch_cases ::= (switch_case)*
+
+switch_case ::= INT_LIT "->" IDENT

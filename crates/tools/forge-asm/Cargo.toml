@@ -1,0 +1,5 @@
+[package]
+name = "forge-asm"
+version = "0.1.0"
+edition = "2024"
+description = "Forge Assembler: runtime data types for DSL-generated assembler code — zero dependencies"

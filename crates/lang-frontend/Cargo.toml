@@ -1,8 +1,0 @@
-[package]
-name = "lang-frontend"
-version = "0.1.0"
-edition = "2024"
-description = "Grammar-driven compiler frontend: EBNF-defined lexer/parser/CST"
-
-[dependencies]
-thiserror = "2.0.19"

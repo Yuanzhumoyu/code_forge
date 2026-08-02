@@ -1,0 +1,11 @@
+[package]
+name = "forge-object"
+version = "0.1.0"
+edition = "2024"
+description = "Forge Object: ELF/PE/Mach-O object file writer for compiled functions"
+
+[dependencies]
+forge-ir = { path = "../../foundation/forge-ir" }
+forge-codegen = { path = "../../backend/forge-codegen" }
+object = { version = "0.39.1", features = ["write"] }
+target-lexicon = "0.13.5"

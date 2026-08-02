@@ -1,0 +1,17 @@
+[package]
+name = "mini_c"
+version = "0.1.0"
+edition = "2024"
+description = "Mini C subset compiler — demonstrates forge-grammar frontend + forge-codegen backend"
+
+[lib]
+name = "mini_c"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mini_c"
+path = "src/main.rs"
+
+[dependencies]
+code-forge = { path = "../.." }
+forge-hir = { path = "../../crates/frontend/forge-hir" }
