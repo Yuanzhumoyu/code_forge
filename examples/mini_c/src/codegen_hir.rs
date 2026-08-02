@@ -983,9 +983,6 @@ mod tests {
         let mut jit = JitCompiler::new(tm);
         jit.compile_module(&module).unwrap();
         let main_fn: extern "C" fn() -> i32 = jit.get_fn("main").unwrap();
-        if std::env::var("DBG_RBP").is_ok() {
-            eprintln!("[main-fn] {:p}", main_fn);
-        }
         main_fn()
     }
 
