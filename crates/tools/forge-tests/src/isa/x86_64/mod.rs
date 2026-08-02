@@ -13,9 +13,9 @@ pub mod int;
 
 // 临时禁用：字段 Reg 化后的测试改造未完成
 // /// 编码 golden 断言 + 编码集成测试。
-// pub mod encode;
+pub mod encode;
 // /// 反汇编测试。
-// pub mod disasm;
+pub mod disasm;
 
 /// JIT 集成测试（从根 tests/jit_integration.rs 整体迁移）。
 pub mod jit;

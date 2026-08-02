@@ -11,9 +11,9 @@ pub mod io;
 
 // 临时禁用：字段 Reg 化后的测试改造未完成
 // /// 编码 golden 断言 + 编码集成测试。
-// pub mod encode;
+pub mod encode;
 // /// 反汇编测试。
-// pub mod disasm;
+pub mod disasm;
 
 #[cfg(test)]
 crate::coverage!(

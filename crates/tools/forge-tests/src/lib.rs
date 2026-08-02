@@ -131,17 +131,8 @@ macro_rules! encode_golden {
             #[test]
             fn encode_matches_golden() {
                 let encoder = $encoder;
-                let mut rm = code_forge::AllocResult::new();
-                for n in 0..64u32 {
-                    rm.insert(
-                        code_forge::prelude::VReg(n),
-                        code_forge::ir::PReg::new((n % 32) as u8, code_forge::ir::RegClass::Int),
-                    );
-                    rm.insert(
-                        code_forge::prelude::VReg(64 + n),
-                        code_forge::ir::PReg::new((n % 32) as u8, code_forge::ir::RegClass::Float),
-                    );
-                }
+                // 字段已物理化（Reg）：编码直接用字段 to_index()，无需 VReg 预置
+                let rm = code_forge::AllocResult::new();
                 for (inst, expected) in $cases {
                     let bytes = encoder
                         .encode_to_bytes(inst, &rm)

@@ -18,25 +18,20 @@ crate::encode_golden!(
 use code_forge::AllocResult;
 use code_forge::backend::arch::x86_64;
 use code_forge::backend::machine::encoder::TargetEncoder;
-use code_forge::ir::{PReg, RegClass};
-use code_forge::prelude::VReg;
+use code_forge::ir::RegClass;
 
 type Inst = x86_64::Inst;
+use code_forge::backend::arch::x86_64::Reg;
 
 fn encode(inst: &Inst) -> Result<Vec<u8>, code_forge::backend::EncodeError> {
+    // 字段已物理化（Reg）：编码直接用字段的 to_index()，无需 AllocResult 预置
     let encoder = x86_64::Encoder;
-    let mut rm = AllocResult::new();
-    // Pre-populate AllocResult with identity VReg→PReg mapping for all VRegs used in tests.
-    // VReg(N) maps to PReg(N), which gives correct register numbers for encoding.
-    // This avoids the "unallocated vreg" error during unit testing.
-    for n in 0..32u32 {
-        rm.insert(VReg(n), PReg::new(n as u8, RegClass::Int));
-    }
+    let rm = AllocResult::new();
     encoder.encode_to_bytes(inst, &rm)
 }
 
-fn r(n: u32) -> VReg {
-    VReg(n)
+fn r(n: u32) -> Reg {
+    <Reg as code_forge::ir::PhysReg>::from_index(n as u8, RegClass::Int)
 }
 
 // ═══════════════════════════════════════════════════
@@ -317,11 +312,7 @@ fn test_encode_into_buffer_too_small() {
 /// Encode a sequence of instructions and concatenate their bytes.
 fn encode_seq(insts: &[Inst]) -> Result<Vec<u8>, code_forge::backend::EncodeError> {
     let encoder = x86_64::Encoder;
-    // Use identity-mapped AllocResult so VReg→PReg resolution works in tests
-    let mut rm = AllocResult::new();
-    for n in 0..32u32 {
-        rm.insert(VReg(n), PReg::new(n as u8, RegClass::Int));
-    }
+    let rm = AllocResult::new();
     let mut buf = Vec::new();
     for inst in insts {
         buf.extend(encoder.encode_to_bytes(inst, &rm)?);

@@ -4,10 +4,10 @@
 
 use code_forge::backend::arch::aarch64::*;
 use code_forge::backend::machine::target::TargetMachine as TargetMachineTrait;
-use code_forge::prelude::VReg;
+use code_forge::ir::RegClass;
 
-fn r(n: u32) -> VReg {
-    VReg(n)
+fn r(n: u32) -> Reg {
+    <Reg as code_forge::ir::PhysReg>::from_index(n as u8, RegClass::Int)
 }
 
 fn disasm(inst: &Inst) -> String {

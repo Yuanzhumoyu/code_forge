@@ -5,22 +5,19 @@
 use code_forge::AllocResult;
 use code_forge::backend::arch::aarch64::*;
 use code_forge::backend::machine::encoder::TargetEncoder;
-use code_forge::ir::{PReg, RegClass};
-use code_forge::prelude::VReg;
+use code_forge::ir::RegClass;
 
 type Inst = aarch64::Inst;
 
 fn encode(inst: &Inst) -> Result<Vec<u8>, code_forge::backend::EncodeError> {
+    // 字段已物理化（Reg）：无需 VReg 预置
     let encoder = aarch64::Encoder;
-    let mut rm = AllocResult::new();
-    for n in 0..64u32 {
-        rm.insert(VReg(n), PReg::new((n % 32) as u8, RegClass::Int));
-    }
+    let rm = AllocResult::new();
     encoder.encode_to_bytes(inst, &rm)
 }
 
-fn r(n: u32) -> VReg {
-    VReg(n)
+fn r(n: u32) -> Reg {
+    <Reg as code_forge::ir::PhysReg>::from_index(n as u8, RegClass::Int)
 }
 
 use aarch64::Reg;
