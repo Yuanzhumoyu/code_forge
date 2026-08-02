@@ -123,9 +123,12 @@ struct CompileState<I: MachineInst> {
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
-    fn new<M: TargetMachine>(_machine: &M, func: &Function) -> Self {
+    fn new<M: TargetMachine>(machine: &M, func: &Function) -> Self {
         let mut ctx = LowerCtx::new();
         ctx.call_conv = func.calling_convention;
+        // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push 槽上）
+        ctx.callee_saved_bytes = (machine.reg_info().callee_saved().len() as i32)
+            * (machine.reg_info().reg_class_width(RegClass::GPR) as i32);
         ctx.is_float_return = func
             .return_tys
             .iter()
@@ -397,7 +400,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 self.ctx.current_global = Some(*g);
             }
             if let Some(Immediate::Int(v)) = inst.immediates.first() {
-                self.ctx.current_offset = *v;
+                // StackAddr 偏移平移：lea 基准从 rbp 改为 rbp - callee_saved_bytes，
+                // 避免局部变量写在 callee-saved push 槽上（覆盖调用者寄存器）
+                self.ctx.current_offset = *v - self.ctx.callee_saved_bytes as i64;
             }
             // AtomicRmw: immediates[0] = op (Uint(op as u64)), [1] = ordering
             if matches!(inst.opcode, Opcode::AtomicRmw)

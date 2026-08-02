@@ -159,6 +159,8 @@ pub struct LowerCtx {
     pub current_global: Option<GlobalId>,
     /// StackAddr 的帧偏移（Immediate::Int）。
     pub current_offset: i64,
+    /// prologue 压入的 callee-saved 寄存器总字节数（局部变量 lea 的基准平移）。
+    pub callee_saved_bytes: i32,
     /// 临时 VReg 集合（替代 VReg(96-100) 硬编码）。
     pub temp_vregs: HashSet<VReg>,
     /// 零值 VReg（复用，避免重复分配）。
@@ -183,6 +185,7 @@ impl LowerCtx {
             current_atomic_op: None,
             current_global: None,
             current_offset: 0,
+            callee_saved_bytes: 0,
             vreg_classes: HashMap::new(),
             vreg_types: HashMap::new(),
             vreg_widths: HashMap::new(),

@@ -1138,7 +1138,10 @@ insts = [
 ]
 
 [emit.epilogue]
-insts = ["@frame_free", "@pop_callee", "pop RBP", "ret"]
+# 显式 mov rsp, rbp 恢复栈帧（稳健：不依赖 pop 序列的 rsp 平衡——
+# 局部变量若与 callee-saved push 槽重叠会导致 rsp 错位、pop rbp 弹出错误值）。
+# rsp = rbp 后跳过 callee-saved 区（7×8=56）再按序 pop，保证 rbp 恢复调用者值。
+insts = ["mov64rr RSP, RBP", "sub RSP, 56", "@pop_callee", "pop RBP", "ret"]
 
 
 # ═══════════════════════════════════════════════
