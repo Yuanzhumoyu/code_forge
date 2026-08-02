@@ -387,6 +387,8 @@ fn field_type_tok(ft: &FieldType) -> TokenStream {
 fn gen_machine_inst(model: &IsaModel) -> TokenStream {
     let mut use_arms: Vec<TokenStream> = Vec::new();
     let mut def_arms: Vec<TokenStream> = Vec::new();
+    let mut use_c_arms: Vec<TokenStream> = Vec::new();
+    let mut def_c_arms: Vec<TokenStream> = Vec::new();
     let mut reg_field_arms: Vec<TokenStream> = Vec::new();
     let mut set_reg_field_arms: Vec<TokenStream> = Vec::new();
     let mut branch_arms: Vec<TokenStream> = Vec::new();
@@ -412,10 +414,18 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
             .collect();
         if ufs.is_empty() {
             use_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
+            use_c_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
         } else {
             let clones: Vec<_> = ufs.iter().map(|f| quote! { #f.to_index() }).collect();
             use_arms
                 .push(quote! { Inst::#vn { #(#ufs),*, .. } => smallvec::smallvec![#(#clones),*] });
+            let any_uses: Vec<TokenStream> = ufs
+                .iter()
+                .map(|_| quote! { crate::machine::inst::OperandConstraint::Any })
+                .collect();
+            use_c_arms.push(quote! {
+                Inst::#vn { #(#ufs),*, .. } => smallvec::smallvec![#(#any_uses),*]
+            });
         }
 
         // defs: VReg type + def role (explicit or inferred from name)
@@ -430,10 +440,18 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
             .collect();
         if dfs.is_empty() {
             def_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
+            def_c_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
         } else {
             let clones: Vec<_> = dfs.iter().map(|f| quote! { #f.to_index() }).collect();
             def_arms
                 .push(quote! { Inst::#vn { #(#dfs),*, .. } => smallvec::smallvec![#(#clones),*] });
+            let any_defs: Vec<TokenStream> = dfs
+                .iter()
+                .map(|_| quote! { crate::machine::inst::OperandConstraint::Any })
+                .collect();
+            def_c_arms.push(quote! {
+                Inst::#vn { #(#dfs),*, .. } => smallvec::smallvec![#(#any_defs),*]
+            });
         }
 
         // reg_field/set_reg_field：按 asm 模板的字段占位符序读写物理索引
@@ -563,6 +581,12 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
             }
             fn defs(&self) -> smallvec::SmallVec<[u8;2]> {
                 match self { #(#def_arms),* , Inst::Unknown(_) => smallvec::smallvec![] }
+            }
+            fn use_constraints(&self) -> smallvec::SmallVec<[crate::machine::inst::OperandConstraint;4]> {
+                match self { #(#use_c_arms),* , Inst::Unknown(_) => smallvec::smallvec![] }
+            }
+            fn def_constraints(&self) -> smallvec::SmallVec<[crate::machine::inst::OperandConstraint;2]> {
+                match self { #(#def_c_arms),* , Inst::Unknown(_) => smallvec::smallvec![] }
             }
             fn effects(&self) -> smallvec::SmallVec<[crate::prelude::EffectKind;2]> {
                 match self { #(#effects_arms),* , Inst::Unknown(_) => smallvec::smallvec![] }
