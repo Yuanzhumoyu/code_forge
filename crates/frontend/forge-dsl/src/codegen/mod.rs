@@ -1309,29 +1309,6 @@ pub(crate) enum GenMode {
     Emit,
 }
 
-/// Resolve the float return VReg from ABI config.
-///
-/// Returns the VReg index precolored to the first XMM return register,
-/// or 100 as a legacy fallback.
-fn resolve_float_ret_vreg(model: &IsaModel) -> u32 {
-    if let Some(ref abi) = model.abi
-        && let Some(first_xmm) = abi.ret_regs.xmm.first()
-    {
-        // Walk precolor map to find the VReg bound to this physical register
-        for (vreg_key, phys_name) in &abi.precolor {
-            if phys_name.eq_ignore_ascii_case(first_xmm)
-                && let Ok(idx) = vreg_key
-                    .trim_start_matches(|c: char| !c.is_ascii_digit())
-                    .parse::<u32>()
-            {
-                return idx;
-            }
-        }
-    }
-    // Legacy fallback
-    100
-}
-
 /// Resolve a physical register name to its precolored VReg index.
 ///
 /// Looks up `[abi.precolor]` to find which VReg is bound to the given physical register name.

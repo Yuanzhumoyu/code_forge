@@ -563,7 +563,8 @@ fn gen_inst_from_cst(
         {
             let is_phys = matches!(
                 crate::codegen::lookup_reg_in_model(arg_val, model),
-                crate::codegen::RegLookup::Named { .. } | crate::codegen::RegLookup::Prefixed { .. }
+                crate::codegen::RegLookup::Named { .. }
+                    | crate::codegen::RegLookup::Prefixed { .. }
             );
             let cls = if matches!(field.field_type, crate::model::FieldType::Freg) {
                 quote! { crate::prelude::RegClass::FPR }
@@ -572,19 +573,22 @@ fn gen_inst_from_cst(
             };
             if is_phys {
                 // 物理寄存器名：固定 Reg 值（不 map）
-                let (is_float, reg_idx) = crate::codegen::components::resolve_reg_index(model, arg_val);
+                let (is_float, reg_idx) =
+                    crate::codegen::components::resolve_reg_index(model, arg_val);
                 let pcls = if is_float {
                     quote! { crate::prelude::RegClass::FPR }
                 } else {
                     quote! { crate::prelude::RegClass::GPR }
                 };
-                let reg_idx_lit = syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
+                let reg_idx_lit =
+                    syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
                 field_exprs.push(quote! {
                     #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(#reg_idx_lit, #pcls); __v }
                 });
             } else {
                 let xreg_expr = lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
-                let field_idx_lit = syn::LitInt::new(&field_idx.to_string(), proc_macro2::Span::call_site());
+                let field_idx_lit =
+                    syn::LitInt::new(&field_idx.to_string(), proc_macro2::Span::call_site());
                 map_calls.push(quote! {
                     { let _: crate::prelude::XReg = #xreg_expr; __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit); }
                 });
@@ -593,7 +597,10 @@ fn gen_inst_from_cst(
         } else {
             field_exprs.push(quote! { #fi: #expr });
         }
-        if matches!(field.field_type, crate::model::FieldType::Ireg | crate::model::FieldType::Freg) {
+        if matches!(
+            field.field_type,
+            crate::model::FieldType::Ireg | crate::model::FieldType::Freg
+        ) {
             field_idx += 1;
         }
     }
@@ -817,7 +824,8 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
                 ) {
                     let is_phys = matches!(
                         crate::codegen::lookup_reg_in_model(arg_val, model),
-                        crate::codegen::RegLookup::Named { .. } | crate::codegen::RegLookup::Prefixed { .. }
+                        crate::codegen::RegLookup::Named { .. }
+                            | crate::codegen::RegLookup::Prefixed { .. }
                     );
                     let cls = if matches!(field_type, crate::model::FieldType::Freg) {
                         quote! { crate::prelude::RegClass::FPR }
@@ -825,19 +833,25 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
                         quote! { crate::prelude::RegClass::GPR }
                     };
                     if is_phys {
-                        let (is_float, reg_idx) = crate::codegen::components::resolve_reg_index(model, arg_val);
+                        let (is_float, reg_idx) =
+                            crate::codegen::components::resolve_reg_index(model, arg_val);
                         let pcls = if is_float {
                             quote! { crate::prelude::RegClass::FPR }
                         } else {
                             quote! { crate::prelude::RegClass::GPR }
                         };
-                        let reg_idx_lit = syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
+                        let reg_idx_lit =
+                            syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
                         field_exprs.push(quote! {
                             #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(#reg_idx_lit, #pcls); __v }
                         });
                     } else {
-                        let xreg_expr = lowering_arg_expr(arg_val, field_type, scratch, Some(model));
-                        let field_idx_lit = syn::LitInt::new(&reg_field_idx.to_string(), proc_macro2::Span::call_site());
+                        let xreg_expr =
+                            lowering_arg_expr(arg_val, field_type, scratch, Some(model));
+                        let field_idx_lit = syn::LitInt::new(
+                            &reg_field_idx.to_string(),
+                            proc_macro2::Span::call_site(),
+                        );
                         reg_map_calls.push(quote! {
                             __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit);
                         });
