@@ -939,9 +939,11 @@ asm = "call {target}"
 effect = "Call"
 
 # CALL r/m64 — FF /2 (indirect call through a register)
+# r8-r15 需要 REX.B 前缀（target>=8 时加 0x41 系 REX，B=target bit3），
+# 否则 r15 会编码成 rdi（低 3 位相同但缺 REX.B）。
 [inst.CALL_RM]
 fields = { target = "Ireg" }
-encoding = "{0xFF:[0;8]} {target:[0;3]}{0x2:[3;3]}{3:[6;2]}"
+encoding = "?target>=8 {0x4:[4;4]}{0:[3;1]}{0:[2;1]}{0:[1;1]}{target:[0;1;3]} {0xFF:[0;8]} {target:[0;3]}{0x2:[3;3]}{3:[6;2]}"
 asm = "call *{target}"
 effect = "Call"
 

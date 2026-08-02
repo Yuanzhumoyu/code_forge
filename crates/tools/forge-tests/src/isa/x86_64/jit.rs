@@ -2101,7 +2101,6 @@ fn test_stack_balance_deep_chain() {
 // ============================================================
 
 #[test]
-#[ignore] // 待修：XReg0(RAX预着色) 与 iconst 第 0 号 XReg 冲突（XReg 起点改 512 可修但引入 call SEGV，需进一步定位）
 fn test_spill_high_pressure() {
     // 创建 12 个局部变量 + 多个中间值 → 强制溢出
     // 可用寄存器: RAX(0,precolored), RCX(1), RDX(2,precolored), RSI(6), RDI(7), R8-R9(8-9) = 7个

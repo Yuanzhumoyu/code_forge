@@ -639,6 +639,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // Stage 11: Fixup resolution
         let relocations = sink.relocations();
         let code = sink.finish().map_err(CompileError::Emit)?;
+        if std::env::var("DBG_CODE").is_ok() {
+            eprintln!("[code] ({:02x?})", &code);
+        }
 
         Ok(CompiledFunction {
             code_size: code.len(),
