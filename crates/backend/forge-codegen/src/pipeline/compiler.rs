@@ -335,7 +335,15 @@ impl<I: MachineInst + 'static> CompileState<I> {
             let args: Vec<XReg> = inst
                 .operands
                 .iter()
-                .map(|v| self.get_or_alloc_xreg(*v))
+                .map(|v| {
+                    let ty = dfg.value_type(*v).unwrap_or(TypeId::VOID);
+                    let class = if RegClass::from_type_id(ty).is_fp() {
+                        RegClass::FPR
+                    } else {
+                        RegClass::GPR
+                    };
+                    self.get_or_alloc_xreg(*v, class)
+                })
                 .collect();
 
             let result = if matches!(inst.opcode, Opcode::Copy) {
@@ -346,9 +354,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
             } else {
                 inst.results.first().copied().map(|v| {
                     self.value_to_xreg.get(&v).copied().unwrap_or_else(|| {
-                        let xreg = self.ctx.alloc_xreg(RegClass::GPR);
-                        self.value_to_xreg.insert(v, xreg);
                         let result_ty = dfg.value_type(v).unwrap_or(TypeId::VOID);
+                        let class = if RegClass::from_type_id(result_ty).is_fp() {
+                            RegClass::FPR
+                        } else {
+                            RegClass::GPR
+                        };
+                        let xreg = self.ctx.alloc_xreg(class);
+                        self.value_to_xreg.insert(v, xreg);
                         self.ctx.xreg_types.insert(xreg, result_ty);
                         xreg
                     })
@@ -437,11 +450,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
         Ok(())
     }
 
-    fn get_or_alloc_xreg(&mut self, val: Value) -> XReg {
+    fn get_or_alloc_xreg(&mut self, val: Value, class: RegClass) -> XReg {
         if let Some(xreg) = self.value_to_xreg.get(&val).copied() {
             xreg
         } else {
-            let xreg = self.ctx.alloc_xreg(RegClass::GPR);
+            let xreg = self.ctx.alloc_xreg(class);
             self.value_to_xreg.insert(val, xreg);
             xreg
         }

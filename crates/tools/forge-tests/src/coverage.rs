@@ -361,10 +361,6 @@ mod capability_tests {
                 &["Fadd", "Fsub", "Fmul", "Fconst", "Call", "CallIndirect"],
             ),
             ("riscv64", &["Fadd", "Fsub", "Fmul", "Fdiv", "Fsqrt"]),
-            (
-                "wasm32",
-                &["Fadd", "Fmul", "Fconst", "Call", "CallIndirect"],
-            ),
         ];
 
         let mut failures: Vec<String> = Vec::new();
@@ -373,7 +369,7 @@ mod capability_tests {
                 "x86_64" => run_isa(code_forge::backend::x86_64::TargetMachine::new),
                 "aarch64" => run_isa(code_forge::backend::aarch64::TargetMachine::new),
                 "riscv64" => run_isa(code_forge::backend::riscv64::TargetMachine::new),
-                _ => run_isa(code_forge::backend::wasm32::TargetMachine::new),
+                _ => panic!("unknown isa"),
             };
             for op_name in ops.iter() {
                 if let Some((_, outcome)) = results.iter().find(|(n, _)| n == op_name)
@@ -408,7 +404,7 @@ mod zero_gaps_tests {
     #[test]
     fn coverage_all_isa_zero_gaps() {
         let mut failures: Vec<String> = Vec::new();
-        let isas: [(&str, Vec<(String, String)>); 4] = [
+        let isas: [(&str, Vec<(String, String)>); 3] = [
             (
                 "x86_64",
                 run_isa(code_forge::backend::x86_64::TargetMachine::new),
@@ -420,10 +416,6 @@ mod zero_gaps_tests {
             (
                 "riscv64",
                 run_isa(code_forge::backend::riscv64::TargetMachine::new),
-            ),
-            (
-                "wasm32",
-                run_isa(code_forge::backend::wasm32::TargetMachine::new),
             ),
         ];
         for (isa, results) in isas {

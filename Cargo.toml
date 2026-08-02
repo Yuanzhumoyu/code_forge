@@ -1,44 +1,50 @@
 [workspace]
 members = [
     ".",
-    "crates/rustc_codegen_codegenlib",
-    "crates/codegen-dsl",
-    "crates/codegen-syntax-test",
-    "crates/lang-frontend",
+    "crates/foundation/forge-ir",
+    "crates/foundation/forge-mem",
+    "crates/frontend/forge-grammar",
+    "crates/frontend/forge-dsl",
+    "crates/frontend/forge-hir",
+    "crates/frontend/forge-hir-macro",
+    "crates/middle/forge-opt",
+    "crates/backend/forge-codegen",
+    "crates/tools/forge-asm",
+    "crates/tools/forge-object",
+    "crates/tools/forge-plugin",
+    "crates/tools/forge-rustc",
+    "crates/tools/forge-tests",
+    "examples/mini_c",
 ]
 resolver = "3"
 
 [package]
-name = "codegen-lib"
-version = "0.1.0"
+name = "code-forge"
+version = "0.2.0"
 edition = "2024"
+description = "Code Forge: specification-driven compiler infrastructure — write language grammars + ISA definitions, get a working compiler"
 
 [dependencies]
-smallvec = "1"
-indexmap = "2"
-thiserror = "2.0.19"
-log = "0.4"
-dashu = "0.5.0"
-codegen-dsl = { path = "crates/codegen-dsl" }
-lang-frontend = { path = "crates/lang-frontend" }
+forge-ir = { path = "crates/foundation/forge-ir" }
+forge-mem = { path = "crates/foundation/forge-mem" }
+forge-opt = { path = "crates/middle/forge-opt" }
+forge-codegen = { path = "crates/backend/forge-codegen" }
+forge-dsl = { path = "crates/frontend/forge-dsl" }
+forge-grammar = { path = "crates/frontend/forge-grammar" }
+forge-asm = { path = "crates/tools/forge-asm" }
+smallvec = "1.15.2"
 
-# Optional dependencies
-regalloc2 = { version = "0.15.2", optional = true }
-target-lexicon = { version = "0.13.5", optional = true }
-object = { version = "0.39.1", optional = true, features = ["write"] }
-libloading = { version = "0.9.0", optional = true }
-rayon = { version = "1", optional = true }
+# Optional tools crates
+forge-object = { path = "crates/tools/forge-object", optional = true }
+forge-plugin = { path = "crates/tools/forge-plugin", optional = true }
 
 [features]
-default = []
-regalloc2 = ["dep:regalloc2"]
-object-file = ["dep:object", "dep:target-lexicon"]
-plugins = ["dep:libloading"]
-parallel = ["dep:rayon"]
+default = ["jit"]
+jit = []
+object-file = ["dep:forge-object"]
+plugins = ["dep:forge-plugin"]
 
 [dev-dependencies]
-codegen-dsl = { path = "crates/codegen-dsl" }
-syn = { version = "3.0.3", features = ["full", "parsing"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [[bench]]
@@ -49,35 +55,3 @@ harness = false
 level = "allow"
 [lints.clippy.too_many_arguments]
 level = "allow"
-
-[[test]]
-name="jit_integration"
-path="tests/jit_integration.rs"
-
-[[test]]
-name="minimal_sd_tests"
-path="tests/minimal_sd_tests.rs"
-
-[[test]]
-name="fuzz_lowering"
-path="tests/fuzz_lowering.rs"
-
-[[test]]
-name="encoder_tests"
-path="tests/encoder_tests.rs"
-
-[[test]]
-name="disasm_tests"
-path="tests/disasm_tests.rs"
-
-[[test]]
-name="asm_integration_tests"
-path="tests/asm_integration_tests.rs"
-
-[[test]]
-name="asm_assembler_tests"
-path="tests/asm_assembler_tests.rs"
-
-[[example]]
-name="jit_demo"
-path="examples/jit_demo.rs"

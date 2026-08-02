@@ -1,0 +1,4 @@
+# Increase stack size on Windows to prevent overflow in JIT tests.
+# Default 1MB stack is insufficient for the lowering + regalloc + emit pipeline.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "link-arg=/STACK:8388608"]

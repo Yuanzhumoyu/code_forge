@@ -311,7 +311,7 @@ fn gen_reg_enum(model: &IsaModel) -> TokenStream {
             }
             fn from_index(idx: u8, cls: forge_ir::RegClass) -> Self {
                 match cls {
-                    forge_ir::RegClass::Float => match idx.wrapping_sub(#fpr_offset) {
+                    forge_ir::RegClass::Float => match idx.wrapping_add(#fpr_offset) {
                         #(#fpr_idx_arms ,)*
                         _ => Reg::#first,
                     },
@@ -387,6 +387,8 @@ fn field_type_tok(ft: &FieldType) -> TokenStream {
 fn gen_machine_inst(model: &IsaModel) -> TokenStream {
     let mut use_arms: Vec<TokenStream> = Vec::new();
     let mut def_arms: Vec<TokenStream> = Vec::new();
+    let mut reg_field_arms: Vec<TokenStream> = Vec::new();
+    let mut set_reg_field_arms: Vec<TokenStream> = Vec::new();
     let mut branch_arms: Vec<TokenStream> = Vec::new();
     let mut call_arms: Vec<TokenStream> = Vec::new();
     let mut ret_arms: Vec<TokenStream> = Vec::new();
@@ -432,6 +434,36 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
             let clones: Vec<_> = dfs.iter().map(|f| quote! { #f.to_index() }).collect();
             def_arms
                 .push(quote! { Inst::#vn { #(#dfs),*, .. } => smallvec::smallvec![#(#clones),*] });
+        }
+
+        // reg_field/set_reg_field：按 Ireg/Freg 字段声明序读写物理索引
+        // （与指令包 xreg_map 的字段顺序一致，供分配器回写真正寄存器）
+        let reg_fields: Vec<_> = inst
+            .fields
+            .iter()
+            .filter(|f| f.field_type == FieldType::Ireg || f.field_type == FieldType::Freg)
+            .collect();
+        if reg_fields.is_empty() {
+            // 无寄存器字段：不 push 兜底（兜底统一在 impl 的 match 末尾）
+        } else {
+            let mut rf_arms: Vec<TokenStream> = Vec::new();
+            let mut sf_arms: Vec<TokenStream> = Vec::new();
+            for (i, f) in reg_fields.iter().enumerate() {
+                let fi = format_ident!("{}", f.name);
+                let cls = if f.field_type == FieldType::Freg {
+                    quote! { forge_ir::RegClass::FPR }
+                } else {
+                    quote! { forge_ir::RegClass::GPR }
+                };
+                rf_arms.push(quote! { (#i, Inst::#vn { #fi, .. }) => #fi.to_index() });
+                sf_arms.push(quote! {
+                    (#i, Inst::#vn { #fi, .. }) => {
+                        *#fi = <Reg as forge_ir::PhysReg>::from_index(idx, #cls);
+                    }
+                });
+            }
+            reg_field_arms.push(quote! { #(#rf_arms),* });
+            set_reg_field_arms.push(quote! { #(#sf_arms),* });
         }
 
         // is_move
@@ -538,6 +570,12 @@ fn gen_machine_inst(model: &IsaModel) -> TokenStream {
             }
             fn is_move(&self) -> Option<(u8, u8)> {
                 match self { #(#move_arms,)* _ => None }
+            }
+            fn reg_field(&self, i: usize) -> u8 {
+                match (i, self) { #(#reg_field_arms,)* _ => 0 }
+            }
+            fn set_reg_field(&mut self, i: usize, idx: u8) {
+                match (i, self) { #(#set_reg_field_arms,)* _ => {} }
             }
             fn has_side_effects(&self) -> bool {
                 self.is_call() || self.is_ret() || self.is_branch() || self.memory_access().is_some()
@@ -1896,7 +1934,7 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                             #val_code
                             if ctx.is_float_return {
                                 {
-                                    let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(#float_ret_vreg as u8, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
+                                    let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
                                     __pack.map_reg_field(val, __idx);
                                     #(#inst_toks)*;
                                     Ok(__pack)
@@ -2006,7 +2044,7 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                                 .and_then(|x| v.get(&x)).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                             if ctx.is_float_return {
                                 {
-                                    let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(#float_ret_vreg as u8, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
+                                    let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
                                     __pack.map_reg_field(val, __idx);
                                     #(#ret_toks)*;
                                     Ok(__pack)

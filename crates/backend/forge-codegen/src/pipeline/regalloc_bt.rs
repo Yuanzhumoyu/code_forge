@@ -553,7 +553,7 @@ mod tests {
         let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx);
+        let result = alloc.allocate(&vcode, &config, &ctx, &[]);
         let _ = result;
     }
 
@@ -563,7 +563,7 @@ mod tests {
         let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx);
+        let result = alloc.allocate(&vcode, &config, &ctx, &[]);
         assert!(result.is_ok());
     }
 
@@ -606,7 +606,7 @@ mod tests {
         let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx);
+        let result = alloc.allocate(&vcode, &config, &ctx, &[]);
         assert!(result.is_ok());
     }
 
@@ -618,7 +618,7 @@ mod tests {
         let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx);
+        let result = alloc.allocate(&vcode, &config, &ctx, &[]);
         assert!(
             result.is_ok(),
             "Allocator should handle high register pressure"

@@ -293,7 +293,9 @@ enum Inst {
 
 ### `fields` — 指令字段
 
-字段定义每条指令的操作数：
+字段定义每条指令的操作数。字段在生成的 `Inst` 枚举变体中按 **TOML inline table 的 BTreeMap 字母序**排列（例如 `{ dest, src }` → `[dest, src]`，`{ cond, dest }` → `[cond, dest]`）。
+
+> **重要**：`[lower.*]` 和 `[emit.*]` 中的操作数顺序必须与 BTreeMap 字母序一致。例如 `SD_SETCC` 的字段字母序为 `[cond, dest]`，lowering 序列应写为 `SD_SETCC 0, rd`（先 cond 再 dest）。asm 模板中的 `{field}` 占位符不影响 lowering 操作数顺序——它仅用于汇编器解析和消歧。
 
 | FieldType | Rust 类型 | 用途 |
 | --------- | ---------- | ------ |

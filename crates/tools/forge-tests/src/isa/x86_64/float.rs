@@ -12,6 +12,8 @@ fn run_f64(name: &str, build: fn(&mut FunctionBuilder) -> Value) -> f64 {
     crate::exec::harness::run_f64(name, build)
 }
 
+
+
 #[test]
 fn float_fadd() {
     let r = run_f64("float_fadd", |b| {
