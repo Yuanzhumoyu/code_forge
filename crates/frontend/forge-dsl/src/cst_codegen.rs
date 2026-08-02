@@ -535,6 +535,7 @@ fn gen_inst_from_cst(
 
     // Lowering 模式：记录 Ireg/Freg 字段的 XReg → (指令索引, 字段顺序索引) 映射
     let mut map_calls: Vec<TokenStream> = Vec::new();
+    let mut field_idx: usize = 0; // 寄存器字段序列位置（物理与可变字段都计数，与 set_reg_field 一致）
 
     for (field_name, arg_val) in &resolved.bindings {
         let field = inst_def
@@ -549,26 +550,51 @@ fn gen_inst_from_cst(
             }
             GenMode::Emit => emit_arg_expr(arg_val, &field.field_type, model),
         };
-        // Lowering 模式：寄存器字段（Ireg/Freg）字段以默认物理 Reg 占位，
-        // XReg 表达式记录到指令包 xreg_map（分配器分配后回填真正寄存器）
+        // Lowering 模式：寄存器字段（Ireg/Freg）处理。
+        // - 物理寄存器名（RAX/RSP/XMM0 等）：固定 Reg 值（不 map——物理属性由字段直接承载，
+        //   临时寄存器 XReg 不绑定物理属性，分配器完全自由分配）
+        // - 变量引用（rd/rs1/val）：占位 Reg + map_reg_field(xreg, idx, field_idx) 记录
+        //   （field_idx = 寄存器字段序列位置，供 set_reg_field 回填）
         if matches!(mode, GenMode::Lowering)
             && matches!(
                 field.field_type,
                 crate::model::FieldType::Ireg | crate::model::FieldType::Freg
             )
         {
-            let xreg_expr = lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
-            map_calls.push(quote! {
-                { let _: crate::prelude::XReg = #xreg_expr; __pack.map_reg_field(#xreg_expr, __idx); }
-            });
+            let is_phys = matches!(
+                crate::codegen::lookup_reg_in_model(arg_val, model),
+                crate::codegen::RegLookup::Named { .. } | crate::codegen::RegLookup::Prefixed { .. }
+            );
             let cls = if matches!(field.field_type, crate::model::FieldType::Freg) {
                 quote! { crate::prelude::RegClass::FPR }
             } else {
                 quote! { crate::prelude::RegClass::GPR }
             };
-            field_exprs.push(quote! { #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(0, #cls); __v } });
+            if is_phys {
+                // 物理寄存器名：固定 Reg 值（不 map）
+                let (is_float, reg_idx) = crate::codegen::components::resolve_reg_index(model, arg_val);
+                let pcls = if is_float {
+                    quote! { crate::prelude::RegClass::FPR }
+                } else {
+                    quote! { crate::prelude::RegClass::GPR }
+                };
+                let reg_idx_lit = syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
+                field_exprs.push(quote! {
+                    #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(#reg_idx_lit, #pcls); __v }
+                });
+            } else {
+                let xreg_expr = lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
+                let field_idx_lit = syn::LitInt::new(&field_idx.to_string(), proc_macro2::Span::call_site());
+                map_calls.push(quote! {
+                    { let _: crate::prelude::XReg = #xreg_expr; __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit); }
+                });
+                field_exprs.push(quote! { #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(0, #cls); __v } });
+            }
         } else {
             field_exprs.push(quote! { #fi: #expr });
+        }
+        if matches!(field.field_type, crate::model::FieldType::Ireg | crate::model::FieldType::Freg) {
+            field_idx += 1;
         }
     }
 
@@ -769,6 +795,7 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
             let mut bound: Vec<String> = Vec::new();
             let mut op_idx = 0;
             let mut reg_map_calls: Vec<TokenStream> = Vec::new();
+            let mut reg_field_idx: usize = 0;
             for (field_name, field_type) in &template_order {
                 if matches!(field_type, crate::model::FieldType::Opsize) {
                     continue;
@@ -788,17 +815,37 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
                     field_type,
                     crate::model::FieldType::Ireg | crate::model::FieldType::Freg
                 ) {
-                    let xreg_expr = lowering_arg_expr(arg_val, field_type, scratch, Some(model));
-                    reg_map_calls.push(quote! {
-                        __pack.map_reg_field(#xreg_expr, __idx);
-                    });
+                    let is_phys = matches!(
+                        crate::codegen::lookup_reg_in_model(arg_val, model),
+                        crate::codegen::RegLookup::Named { .. } | crate::codegen::RegLookup::Prefixed { .. }
+                    );
                     let cls = if matches!(field_type, crate::model::FieldType::Freg) {
                         quote! { crate::prelude::RegClass::FPR }
                     } else {
                         quote! { crate::prelude::RegClass::GPR }
                     };
-                    field_exprs
-                        .push(quote! { #fi: <Reg as forge_ir::PhysReg>::from_index(0, #cls) });
+                    if is_phys {
+                        let (is_float, reg_idx) = crate::codegen::components::resolve_reg_index(model, arg_val);
+                        let pcls = if is_float {
+                            quote! { crate::prelude::RegClass::FPR }
+                        } else {
+                            quote! { crate::prelude::RegClass::GPR }
+                        };
+                        let reg_idx_lit = syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
+                        field_exprs.push(quote! {
+                            #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(#reg_idx_lit, #pcls); __v }
+                        });
+                    } else {
+                        let xreg_expr = lowering_arg_expr(arg_val, field_type, scratch, Some(model));
+                        let field_idx_lit = syn::LitInt::new(&reg_field_idx.to_string(), proc_macro2::Span::call_site());
+                        reg_map_calls.push(quote! {
+                            __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit);
+                        });
+                        reg_field_idx += 1;
+                        field_exprs.push(quote! {
+                            #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(0, #cls); __v }
+                        });
+                    }
                 } else {
                     let expr = lowering_arg_expr(arg_val, field_type, scratch, Some(model));
                     field_exprs.push(quote! { #fi: #expr });

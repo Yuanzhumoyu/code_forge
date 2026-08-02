@@ -30,13 +30,7 @@ sp = "R7"
 gpr = ["R0", "R1", "R2", "R3"]
 [abi.ret_regs]
 gpr = ["R0"]
-[abi.precolor]
-VReg0 = "R0"
-VReg2 = "R2"
 
-# ═══════════════════════════════════════════════
-# SD_* 指令 — 每条一个 stub opcode 字节
-# ═══════════════════════════════════════════════
 
 [inst.SD_MOV]
 fields = { dest = "Ireg", src = "Ireg" }

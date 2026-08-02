@@ -23,7 +23,7 @@ impl RegisterAllocator {
         vcode: &VCode<I>,
         config: &RegAllocConfig,
         ctx: &AllocContext,
-        xreg_map: &[smallvec::SmallVec<[XReg; 2]>],
+        xreg_map: &[smallvec::SmallVec<[(XReg, u8); 2]>],
     ) -> Result<AllocResult, CompileError> {
         let alloc = crate::pipeline::regalloc_bt::BacktrackingAllocator::new();
         alloc.allocate(vcode, config, ctx, xreg_map)

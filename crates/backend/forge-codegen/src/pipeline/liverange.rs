@@ -169,7 +169,7 @@ impl LiveInterval {
 /// Spill weight 使用循环深度加权（循环内 ×10）。
 pub fn compute_live_intervals<I: crate::MachineInst>(
     vcode: &crate::VCode<I>,
-    xreg_map: &[smallvec::SmallVec<[XReg; 2]>],
+    xreg_map: &[smallvec::SmallVec<[(XReg, u8); 2]>],
     param_xregs: &[XReg],
 ) -> HashMap<XReg, LiveInterval> {
     // ── 阶段 0: 循环检测 ──
@@ -224,7 +224,7 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
 
             // 该指令的寄存器字段对应的 XReg（由指令包 xreg_map 聚合提供）
             if let Some(slot) = xreg_map.get(global_inst) {
-                for &xreg in slot.iter() {
+                for &(xreg, _fi) in slot.iter() {
                     let interval = intervals
                         .entry(xreg)
                         .or_insert_with(|| LiveInterval::new(xreg, xreg.class()));
@@ -280,7 +280,7 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     for (block_idx, block) in blocks.iter().enumerate() {
         for _inst in block.instructions.iter() {
             if let Some(slot) = xreg_map.get(global_inst_map) {
-                for &xreg in slot.iter() {
+                for &(xreg, _fi) in slot.iter() {
                     block_uses[block_idx].insert(xreg);
                     block_defs[block_idx].insert(xreg);
                 }

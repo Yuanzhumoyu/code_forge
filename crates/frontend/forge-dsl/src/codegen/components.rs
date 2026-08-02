@@ -50,7 +50,7 @@ fn gpr_group_name(model: &IsaModel) -> &str {
 }
 
 /// Resolve a physical register name (e.g. "XMM0", "RAX") to its (is_float, index) pair.
-fn resolve_reg_index(model: &IsaModel, reg_name: &str) -> (bool, u8) {
+pub(crate) fn resolve_reg_index(model: &IsaModel, reg_name: &str) -> (bool, u8) {
     for (group_name, group) in &model.reg {
         let is_float = group_name.contains("xmm") || group_name.contains("float");
         // Named registers: RAX, RCX, R10, R11, etc.

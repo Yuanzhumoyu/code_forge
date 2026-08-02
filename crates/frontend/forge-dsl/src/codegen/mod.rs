@@ -16,7 +16,7 @@ fn get_gpr_group(model: &IsaModel) -> &RegGroup {
         .expect("missing [reg.gpr64] or [reg.gpr]")
 }
 
-mod components;
+pub(crate) mod components;
 #[path = "../standard_insts.rs"]
 mod standard_insts;
 
@@ -167,7 +167,7 @@ pub(crate) fn pascal_ident(s: &str) -> proc_macro2::Ident {
 }
 
 /// Result of looking up a register name in the ISA model.
-enum RegLookup {
+pub(crate) enum RegLookup {
     /// Named register found at index, with its exact name.
     Named { name: String, index: u8 },
     /// Prefix-based register found at index (e.g. XMM0 with prefix "XMM").
@@ -179,7 +179,7 @@ enum RegLookup {
 /// Look up a register name in the ISA model's register groups.
 /// Searches both named registers and prefix-based registers.
 /// Returns the register's exact name and its index in the group.
-fn lookup_reg_in_model(val: &str, model: &IsaModel) -> RegLookup {
+pub(crate) fn lookup_reg_in_model(val: &str, model: &IsaModel) -> RegLookup {
     for group in model.reg.values() {
         // Named registers: "RAX", "RCX", "R10", "XMM0", ...
         if let Some(names) = &group.names
@@ -1195,6 +1195,7 @@ fn gen_lower_insts(insts: &[String], model: &IsaModel) -> Result<Vec<TokenStream
 
         let mut op_idx = 0;
         let mut reg_map_calls: Vec<TokenStream> = Vec::new();
+        let mut reg_field_idx: usize = 0;
         for field in &inst_def.fields {
             if matches!(field.field_type, crate::model::FieldType::Opsize) {
                 continue; // implicit, uses default value
@@ -1215,18 +1216,44 @@ fn gen_lower_insts(insts: &[String], model: &IsaModel) -> Result<Vec<TokenStream
                 field.field_type,
                 crate::model::FieldType::Ireg | crate::model::FieldType::Freg
             ) {
-                let xreg_expr = lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
+                let is_phys = matches!(
+                    crate::codegen::lookup_reg_in_model(arg_val, model),
+                    crate::codegen::RegLookup::Named { .. }
+                        | crate::codegen::RegLookup::Prefixed { .. }
+                );
                 let cls = if matches!(field.field_type, crate::model::FieldType::Freg) {
                     quote! { crate::prelude::RegClass::FPR }
                 } else {
                     quote! { crate::prelude::RegClass::GPR }
                 };
-                field_exprs.push(quote! {
-                    #fi: <Reg as forge_ir::PhysReg>::from_index(0, #cls)
-                });
-                reg_map_calls.push(quote! {
-                    __pack.map_reg_field(#xreg_expr, __idx);
-                });
+                if is_phys {
+                    let (is_float, reg_idx) =
+                        crate::codegen::components::resolve_reg_index(model, arg_val);
+                    let pcls = if is_float {
+                        quote! { crate::prelude::RegClass::FPR }
+                    } else {
+                        quote! { crate::prelude::RegClass::GPR }
+                    };
+                    let reg_idx_lit =
+                        syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
+                    field_exprs.push(quote! {
+                        #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(#reg_idx_lit, #pcls); __v }
+                    });
+                } else {
+                    let xreg_expr =
+                        lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
+                    let field_idx_lit = syn::LitInt::new(
+                        &reg_field_idx.to_string(),
+                        proc_macro2::Span::call_site(),
+                    );
+                    field_exprs.push(quote! {
+                        #fi: <Reg as forge_ir::PhysReg>::from_index(0, #cls)
+                    });
+                    reg_map_calls.push(quote! {
+                        __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit);
+                    });
+                    reg_field_idx += 1;
+                }
             } else {
                 let expr = lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
                 field_exprs.push(quote! { #fi: #expr });
@@ -1981,10 +2008,6 @@ pub(crate) fn gen_frame_alloc_free(model: &IsaModel, is_alloc: bool) -> TokenStr
 fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
     let mut arms: Vec<TokenStream> = Vec::new();
 
-    // Resolve float return VReg from ABI (was hardcoded VReg(100))
-    // 具体数值在使用处（gen_default_lowering/用户 Return 臂）经 resolve_float_ret_vreg 取用
-    let _float_ret_vreg = resolve_float_ret_vreg(model);
-
     for (term_name, rule) in &model.lower_term {
         let lowering = crate::cst_codegen::gen_lowering_insts_cst(&rule.insts, model)?;
         let temp_toks = lowering.temps;
@@ -2001,18 +2024,14 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                         .and_then(|x| v.get(&x)).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                 };
                 if has_sd_fmov {
-                    let ret_idx = resolve_float_ret_vreg(model);
-                    let ret_idx_lit =
-                        syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
                     arms.push(quote! {
                         crate::prelude::Terminator::Return { values } => {
                             #val_code
                             if ctx.is_float_return {
                                 {
-                                    // SdFmov dest=返回FPR（字段0 预着色 XReg）、src=val（字段1）
+                                    // SdFmov dest=返回FPR（字段0 固定 XMM0，不 map）、src=val（字段1 map）
                                     let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
-                                    __pack.map_reg_field(crate::prelude::XReg::new(#ret_idx_lit, forge_ir::RegClass::Float, 8), __idx);
-                                    __pack.map_reg_field(val, __idx);
+                                    __pack.map_reg_field(val, __idx, 1u8);
                                     #(#inst_toks)*;
                                     Ok(__pack)
                                 }
@@ -2115,19 +2134,15 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
 
                     let body_toks = gen_lower_insts(&non_ret, model)?;
                     let ret_toks = gen_lower_insts(&ret_only, model)?;
-                    let ret_idx = resolve_float_ret_vreg(model);
-                    let ret_idx_lit =
-                        syn::LitInt::new(&ret_idx.to_string(), proc_macro2::Span::call_site());
                     arms.push(quote! {
                         crate::prelude::Terminator::Return { values } => {
                             let val = values.first().copied()
                                 .and_then(|x| v.get(&x)).copied().unwrap_or_else(|| { let _r: crate::prelude::XReg = ctx.alloc_xreg(crate::prelude::RegClass::GPR); _r });
                             if ctx.is_float_return {
                                 {
-                                    // SdFmov dest=返回FPR（字段0 预着色 XReg）、src=val（字段1）
+                                    // SdFmov dest=返回FPR（字段0 固定 XMM0，不 map）、src=val（字段1 map）
                                     let __idx = __pack.push_inst(Inst::SdFmov { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR), src: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::FPR) });
-                                    __pack.map_reg_field(crate::prelude::XReg::new(#ret_idx_lit, forge_ir::RegClass::Float, 8), __idx);
-                                    __pack.map_reg_field(val, __idx);
+                                    __pack.map_reg_field(val, __idx, 1u8);
                                     #(#ret_toks)*;
                                     Ok(__pack)
                                 }
@@ -2174,11 +2189,11 @@ fn gen_lower_term_func(model: &IsaModel) -> Result<TokenStream, String> {
                                 // 每个 case 分配一个临时 XReg 装载常量
                                 let tmp = ctx.alloc_xreg(crate::prelude::RegClass::GPR);
                                 let __idx = __pack.push_inst(Inst::SdMovImm { dest: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR), imm: case_val as i64 });
-                                __pack.map_reg_field(tmp, __idx);
+                                __pack.map_reg_field(tmp, __idx, 0u8);
                                 // SD_CMP disc, tmp
                                 let __idx = __pack.push_inst(Inst::SdCmp { src1: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR), src2: <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR) });
-                                __pack.map_reg_field(disc, __idx);
-                                __pack.map_reg_field(tmp, __idx);
+                                __pack.map_reg_field(disc, __idx, 0u8);
+                                __pack.map_reg_field(tmp, __idx, 1u8);
                                 // SD_JCC Equal (0), case_block
                                 __pack.push_inst(Inst::SdJcc { cond: 0u8, rel: case_block.0 as i64 });
                             }

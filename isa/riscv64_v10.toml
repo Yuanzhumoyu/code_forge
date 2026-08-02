@@ -55,17 +55,7 @@ xmm = ["F10","F11","F12","F13","F14","F15","F16","F17"]
 [abi.ret_regs]
 gpr = ["X10"]
 xmm = []
-[abi.precolor]
-VReg0 = "X10"
-VReg2 = "X12"
-# 物理零 X0 的 VReg 代理（模板零比较用——regalloc 保留，不分配）
-VReg250 = "X0"
 
-# ═══════════════════════════════════════════════
-# Spill 指令模板 — 用于栈溢出/恢复
-# LD/SD: 8字节整数, LW/SW: 4字节整数
-# FLD/FSD: 8字节浮点 (需要 F/D 扩展)
-# ═══════════════════════════════════════════════
 
 [spill.GPR]
 load = { inst = "LD", base = "X8" }
@@ -526,13 +516,7 @@ insts = [
 # Lowering rules
 #
 # NOTE: This file uses VReg(N) syntax because:
-# 1. VReg(0) has semantic ambiguity — [abi.precolor] maps VReg0→X10 (return reg),
-#    but the RISC-V ISA also uses X0 as the hardwired zero register.
-#    Using VReg(N) makes the precolor mapping explicit.
-# 2. VReg(1) refers to X1/RA (return address link register).
-# 3. Future: add X0 to [abi.scratch] as a dedicated zero-register alias,
-#    then replace VReg(N) with physical names (X0, RA, A0, A2).
-# ═══════════════════════════════════════════════
+# 1. VReg(0) has semantic ambiguity — 
 
 [lower.Iadd]
 insts = ["ADD rd, rs1, rs2"]

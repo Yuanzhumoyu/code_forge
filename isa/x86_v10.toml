@@ -125,16 +125,7 @@ ret_mov_f = "MOVQ_FREG_XMM"  # float return ← XMM0
 gpr = ["RAX", "RDX"]
 xmm = []
 
-[abi.precolor]
-VReg0 = "RAX"
-VReg2 = "RDX"
-VReg96 = "R10"
-VReg97 = "R11"
-VReg100 = "XMM0"
-# 高编号 RSP 别名（Alloca 的 lea [RSP-…] 用——避开普通 VReg 编号）
-VReg200 = "RSP"
-# 栈帧指针（StackAddr 用）
-VReg201 = "RBP"
+
 
 [abi.scratch]
 TMP0 = 10 # R10 — general-purpose temporary

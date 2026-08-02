@@ -28,12 +28,7 @@ sp = "L1"
 gpr = ["L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9"]
 [abi.ret_regs]
 gpr = ["L2"]
-[abi.precolor]
-VReg0 = "L2"
 
-# ═══════════════════════════════════════════════
-# Encoding Macros
-# ═══════════════════════════════════════════════
 
 [enc_macros.wasm_binop]
 params = ["opcode", "dest", "src"]

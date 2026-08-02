@@ -30,7 +30,7 @@ pub trait RegAlloc: Send + Sync {
         vcode: &VCode<I>,
         config: &RegAllocConfig,
         ctx: &AllocContext,
-        xreg_map: &[smallvec::SmallVec<[XReg; 2]>],
+        xreg_map: &[smallvec::SmallVec<[(XReg, u8); 2]>],
     ) -> Result<AllocResult, CompileError>;
 
     /// 分配器名称（用于调试/日志）。

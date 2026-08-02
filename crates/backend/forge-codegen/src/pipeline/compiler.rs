@@ -115,7 +115,7 @@ struct CompileState<I: MachineInst> {
     vcode: VCode<I>,
     /// XReg → 微指令寄存器字段映射（与 vcode 的指令序列平行）。
     /// 由各指令包的 xreg_map 聚合；分配器按此构建活区间并回写字段。
-    xreg_map: Vec<smallvec::SmallVec<[XReg; 2]>>,
+    xreg_map: Vec<smallvec::SmallVec<[(XReg, u8); 2]>>,
     value_to_xreg: HashMap<Value, XReg>,
     block_map: HashMap<Block, VBlockId>,
     ctx: LowerCtx,
@@ -524,9 +524,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
         for block in self.vcode.blocks_mut() {
             for inst in block.instructions.iter_mut() {
                 if let Some(slot) = self.xreg_map.get(global_inst) {
-                    for (field_idx, &xreg) in slot.iter().enumerate() {
+                    for &(xreg, field_idx) in slot.iter() {
                         if let Some(preg) = alloc_result.preg(xreg) {
-                            inst.set_reg_field(field_idx, preg.num);
+                            inst.set_reg_field(field_idx as usize, preg.num);
                         }
                     }
                 }
@@ -598,6 +598,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 for inst in &mut vb.instructions {
                     let slot = self.xreg_map.get(global_inst).cloned().unwrap_or_default();
                     global_inst += 1;
+                    let inst_xregs: Vec<XReg> = slot.iter().map(|&(x, _fi)| x).collect();
                     self.emit_inst_with_spills(
                         inst,
                         encoder.as_ref(),
@@ -607,7 +608,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                         frame_lowering.as_ref(),
                         sink,
                         callee_saved_bytes,
-                        &slot,
+                        &inst_xregs,
                     )?;
                 }
                 if vb.is_return_block && frame_lowering.needs_epilogue_label() {

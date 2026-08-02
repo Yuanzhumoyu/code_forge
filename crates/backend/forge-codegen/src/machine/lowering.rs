@@ -27,7 +27,7 @@ pub struct InstPacket<I> {
     /// 微指令数组（寄存器字段以默认物理寄存器占位）。
     pub insts: Vec<I>,
     /// XReg → 微指令寄存器字段映射（与 insts 平行；每条指令一个 SmallVec<[XReg; 2]>）。
-    pub xreg_map: Vec<smallvec::SmallVec<[XReg; 2]>>,
+    pub xreg_map: Vec<smallvec::SmallVec<[(XReg, u8); 2]>>,
     /// 指令包输入（XReg）。
     pub inputs: Vec<XReg>,
     /// 指令包输出（XReg）。
@@ -54,9 +54,9 @@ impl<I> InstPacket<I> {
     }
 
     /// 记录 XReg → 微指令寄存器字段（追加到 `xreg_map[inst_idx]`，字段顺序即记录顺序）。
-    pub fn map_reg_field(&mut self, xreg: XReg, inst_idx: usize) {
+    pub fn map_reg_field(&mut self, xreg: XReg, inst_idx: usize, field_idx: u8) {
         if let Some(slot) = self.xreg_map.get_mut(inst_idx) {
-            slot.push(xreg);
+            slot.push((xreg, field_idx));
         }
     }
 

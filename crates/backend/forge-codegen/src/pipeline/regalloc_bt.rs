@@ -45,7 +45,7 @@ impl BacktrackingAllocator {
         vcode: &crate::VCode<I>,
         config: &RegAllocConfig,
         ctx: &AllocContext,
-        xreg_map: &[smallvec::SmallVec<[XReg; 2]>],
+        xreg_map: &[smallvec::SmallVec<[(XReg, u8); 2]>],
     ) -> Result<AllocResult, CompileError> {
         // 1. 计算 LiveInterval（XReg → 微指令字段映射驱动）
         let intervals = liverange::compute_live_intervals(vcode, xreg_map, &config.param_xregs);
@@ -54,24 +54,14 @@ impl BacktrackingAllocator {
         let _ = ctx; // AllocContext 预留（将来约束上下文）
         let mut state = BtState::new(config, intervals);
 
-        // 3. 应用 precolor
-        for (vreg, preg) in &config.precolored {
-            state.assign_reg(*vreg, OperandConstraint::Fixed(*preg), preg.class, &[])?;
-        }
-
-        // 3.5 预分配所有参数 XReg，确保它们在函数入口处有不同的寄存器。
+        // 3. 预分配所有参数 XReg，确保它们在函数入口处有不同的寄存器。
         // 序言 (gen_move_args) 在函数体执行之前批量复制 ABI 参数寄存器
         // → 参数 XReg。如果两个参数共享同一物理寄存器，第二个 MOV 会覆盖
         // 第一个参数的值。通过在此处（早于任何指令处理）分配所有参数，
         // 分配器将它们视为在 ProgPoint(0,0) 同时活跃，从而分配不同寄存器。
         for &vreg in &config.param_xregs {
             if !state.assignments.contains_key(&vreg) {
-                // 检查是否有 precolor 约束（如 XReg0→RAX）
-                let constraint = config
-                    .precolored
-                    .get(&vreg)
-                    .map(|&p| OperandConstraint::Fixed(p))
-                    .unwrap_or(OperandConstraint::Any);
+                let constraint = OperandConstraint::Any;
                 let class = state.vreg_class(vreg);
                 state.assign_reg(vreg, constraint, class, &[])?;
             }
@@ -95,7 +85,7 @@ impl RegAlloc for BacktrackingAllocator {
         vcode: &crate::VCode<I>,
         config: &RegAllocConfig,
         ctx: &AllocContext,
-        xreg_map: &[smallvec::SmallVec<[XReg; 2]>],
+        xreg_map: &[smallvec::SmallVec<[(XReg, u8); 2]>],
     ) -> Result<AllocResult, CompileError> {
         BacktrackingAllocator::allocate(self, vcode, config, ctx, xreg_map)
     }
@@ -170,7 +160,7 @@ impl<'a> BtState<'a> {
         &mut self,
         block_idx: u32,
         block: &crate::VCodeBlock<I>,
-        xreg_map: &[smallvec::SmallVec<[XReg; 2]>],
+        xreg_map: &[smallvec::SmallVec<[(XReg, u8); 2]>],
         global_inst_start: &mut usize,
     ) -> Result<(), CompileError> {
         for (inst_idx, inst) in block.instructions.iter().enumerate() {
@@ -184,7 +174,7 @@ impl<'a> BtState<'a> {
                 .cloned()
                 .unwrap_or_default();
             *global_inst_start += 1;
-            let inst_xregs: Vec<XReg> = slot.iter().copied().collect();
+            let inst_xregs: Vec<XReg> = slot.iter().map(|&(x, _fi)| x).collect();
 
             // 更新当前指令点（用于 Belady's MIN 溢出决策）
             self.current_point = use_point;
