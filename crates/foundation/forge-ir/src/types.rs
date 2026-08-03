@@ -602,10 +602,10 @@ impl TypeStore {
     pub fn fmt_type(&self, id: TypeId) -> String {
         match self.get(id) {
             TypeEntry::Int { bits: 0 } => "void".to_string(),
-            TypeEntry::Int { bits: 1 } => "bool".to_string(),
+            TypeEntry::Int { bits: 1 } => "i1".to_string(), // LLVM 严格：i1 而非 bool
             TypeEntry::Int { bits } => format!("i{}", bits),
             TypeEntry::Float { bits } => format!("f{}", bits),
-            TypeEntry::BFloat { bits } => format!("bf{}", bits),
+            TypeEntry::BFloat { .. } => "bfloat".to_string(), // LLVM 名
             TypeEntry::Vector { elem, len } => format!("<{} x {}>", len, self.fmt_type(*elem)),
             TypeEntry::ScalableVector { elem, min_len } => {
                 format!("<vscale x {} x {}>", min_len, self.fmt_type(*elem))

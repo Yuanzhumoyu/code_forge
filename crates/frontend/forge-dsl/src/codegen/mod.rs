@@ -1287,8 +1287,15 @@ fn gen_lower_insts(insts: &[String], model: &IsaModel) -> Result<Vec<TokenStream
                 .any(|f| f.name == field.name);
             if !already_emitted {
                 let fi = format_ident!("{}", field.name);
-                let default = default_for_type(&field.field_type);
-                field_exprs.push(quote! { #fi: #default });
+                // Opsize 字段在 lowering 场景取 ctx.default_opsize（按 IR 类型推断，
+                // i32 → 32 位访问）；固定 64 会导致 i32 的 load/store 用 8 字节
+                // 访问，槽位重叠（相邻局部变量互相污染 → mini_c 循环返回错误值）。
+                if matches!(field.field_type, crate::model::FieldType::Opsize) {
+                    field_exprs.push(quote! { #fi: ctx.default_opsize });
+                } else {
+                    let default = default_for_type(&field.field_type);
+                    field_exprs.push(quote! { #fi: #default });
+                }
             }
         }
 

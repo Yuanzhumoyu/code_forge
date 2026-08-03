@@ -2,8 +2,12 @@
 //!
 //! Benchmarks covering the full codegen pipeline:
 //! - IR construction (building complex functions programmatically)
-//! - IR text parsing (forge-ir human-readable format)
+//! - IR text parsing (LLVM IR syntax via logos+lalrpop: define/@/typed operands)
 //! - Optimization pipeline (individual passes + O0/O1/O2/O3 pipelines)
+//! - Pipeline pass breakdown (per-pass cost within O1/O2/O3)
+//! - IR verification (forge_ir::verify::Verifier)
+//! - Module-level compilation (cross-function call relocation) and IPA passes
+//!   with a real function table
 //! - Code generation (lowering + register allocation + emit for x86_64)
 //! - End-to-end compilation (optimize + compile, and JIT execution)
 //! - Throughput (parameterized scaling with function size)
@@ -16,7 +20,13 @@
 //! Note: `end_to_end/e2e_jit_execute` currently hangs in release builds (JIT
 //! correctness bug — see `cargo test --release --test jit_integration`); run
 //! the rest with:
-//!   cargo bench --bench compile_bench -- '^(ir_build|optimizations|codegen|throughput|code_size|comparison|end_to_end/e2e_compile_)'
+//!   cargo bench --bench compile_bench -- '^(ir_build|optimizations|pipeline_breakdown|codegen|verify|module|throughput|code_size|comparison|end_to_end/e2e_compile_)'
+//!
+//! Known frontend limitation surfaced by these benchmarks: parsing a large
+//! single-block instruction stream was ~O(n³) in the forge-grammar lexer
+//! (2 insts ≈ 6 ms, 16 ≈ 3.5 s, 300 ≈ 5.6 h). Fixed 2026-08-03 (zero-copy
+//! lexer matching — near-linear now); `ir_parse_big_text_256` samples the
+//! scaled-up input.
 
 use code_forge::backend::x86_64::{TargetMachine, ensure_registered};
 use code_forge::backend::{CompiledFunction, FunctionCompiler};
@@ -272,12 +282,35 @@ fn count_ir_insts(func: &Function) -> usize {
 // The forge-ir text parser currently handles one function per source
 // (multi-function modules are not supported yet — see forge-ir#parse_module),
 // so "multi-func" is measured by parsing several functions in sequence.
+//
+// These samples contain real instruction bodies (iadd/imul/fmul/icmp/br/jmp)
+// so the benchmark exercises actual instruction parsing — the old samples were
+// all `{ entry: ret i32 }` shells that parsed to an empty body.
 // ============================================================
 
-const IR_SIMPLE_ADD: &str = "fn add(a: i32, b: i32) -> i32 { entry: ret i32 }";
-const IR_MUL_ADD: &str = "fn mul_add(a: i32, b: i32, c: i32) -> i32 { entry: ret i32 }";
-const IR_DOT_PRODUCT: &str = "fn dot_product(a: i32, b: i32) -> i32 { entry: ret i32 }";
-const IR_LOOP_SUM: &str = "fn loop_sum(n: i32) -> i32 { entry: ret i32 }";
+const IR_SIMPLE_ADD: &str = "define i32 @add(i32 %a, i32 %b) {\n  %entry:\n    %s = add i32 %a, i32 %b\n    ret i32 %s\n}\n";
+const IR_MUL_ADD: &str = "define i32 @mul_add(i32 %a, i32 %b, i32 %c) {\n  %entry:\n    %m = mul i32 %a, i32 %b\n    %s = add i32 %m, i32 %c\n    ret i32 %s\n}\n";
+const IR_DOT_PRODUCT: &str = "define i32 @dot_product(i32 %a, i32 %b) {\n  %entry:\n    br label %header\n  %header:\n    %cond = icmp eq i32 %a, i32 %b\n    br i1 %cond, label %body, label %exit\n  %body:\n    %p = mul i32 %a, i32 %b\n    br label %header\n  %exit:\n    ret i32 %a\n}\n";
+const IR_LOOP_SUM: &str = "define i32 @loop_sum(i32 %n) {\n  %entry:\n    br label %header\n  %header:\n    %cond = icmp slt i32 0, i32 %n\n    br i1 %cond, label %body, label %exit\n  %body:\n    %s1 = add i32 0, i32 1\n    %i1 = add i32 0, i32 %n\n    br label %header\n  %exit:\n    ret i32 0\n}\n";
+/// Float + branch sample (mirrors `build_complex_function`).
+const IR_COMPLEX_TEXT: &str = "define double @complex(i32 %a, double %b) {\n  %entry:\n    %x = mul i32 %a, i32 %a\n    %f = fmul double %b, double %b\n    %cond = icmp eq i32 %x, i32 %a\n    br i1 %cond, label %then, label %els\n  %then:\n    %t = fadd double %f, double %f\n    ret double %t\n  %els:\n    %e = fsub double %f, double %f\n    ret double %e\n}\n";
+
+/// Programmatically build a large linear IR text: `n` chained `iadd`
+/// instructions in a single block (exercises parser scaling).
+fn ir_text_many_ops(n: usize) -> String {
+    let mut s = String::with_capacity(n * 24 + 64);
+    s.push_str("define i32 @many_ops(i32 %a) {\n  %entry:\n");
+    for i in 0..n {
+        let prev = if i == 0 {
+            "%a".to_string()
+        } else {
+            format!("%v{}", i - 1)
+        };
+        s.push_str(&format!("    %v{i} = add i32 {prev}, i32 %a\n"));
+    }
+    s.push_str(&format!("    ret i32 %v{}\n}}\n", n - 1));
+    s
+}
 
 // ============================================================
 // Group 1: IR Construction Benchmarks
@@ -378,6 +411,46 @@ fn bench_ir_parse_simple_add(c: &mut Criterion) {
     });
 }
 
+fn bench_ir_parse_mul_add(c: &mut Criterion) {
+    c.bench_function("ir_parse_mul_add", |b| {
+        b.iter(|| {
+            let f = forge_ir::ir_parser::parse_function(black_box(IR_MUL_ADD))
+                .unwrap_or_else(|e| panic!("ir_parse_mul_add: {e}"));
+            black_box(f);
+        });
+    });
+}
+
+fn bench_ir_parse_dot_product(c: &mut Criterion) {
+    c.bench_function("ir_parse_dot_product", |b| {
+        b.iter(|| {
+            let f = forge_ir::ir_parser::parse_function(black_box(IR_DOT_PRODUCT))
+                .unwrap_or_else(|e| panic!("ir_parse_dot_product: {e}"));
+            black_box(f);
+        });
+    });
+}
+
+fn bench_ir_parse_loop_sum(c: &mut Criterion) {
+    c.bench_function("ir_parse_loop_sum", |b| {
+        b.iter(|| {
+            let f = forge_ir::ir_parser::parse_function(black_box(IR_LOOP_SUM))
+                .unwrap_or_else(|e| panic!("ir_parse_loop_sum: {e}"));
+            black_box(f);
+        });
+    });
+}
+
+fn bench_ir_parse_complex(c: &mut Criterion) {
+    c.bench_function("ir_parse_complex", |b| {
+        b.iter(|| {
+            let f = forge_ir::ir_parser::parse_function(black_box(IR_COMPLEX_TEXT))
+                .unwrap_or_else(|e| panic!("ir_parse_complex: {e}"));
+            black_box(f);
+        });
+    });
+}
+
 fn bench_ir_parse_multi_func(c: &mut Criterion) {
     let srcs = [IR_SIMPLE_ADD, IR_MUL_ADD, IR_DOT_PRODUCT, IR_LOOP_SUM];
     c.bench_function("ir_parse_multi_func", |b| {
@@ -387,6 +460,27 @@ fn bench_ir_parse_multi_func(c: &mut Criterion) {
                     .unwrap_or_else(|e| panic!("ir_parse_multi_func: {e}"));
                 black_box(f);
             }
+        });
+    });
+}
+
+/// Large linear text (`IR_BIG_TEXT_N` chained iadds) — parser scaling. The text
+/// itself is built once outside the timed loop (only parsing is measured).
+///
+/// NOTE: was capped at 4 because the forge-grammar lexer was O(n²) (each token
+/// re-copied the remaining input and regex-matched longest-first prefixes),
+/// making 300-instr text take ~5.6 h. Fixed 2026-08-03 (zero-copy `&[char]`
+/// matching + `match_here` prefix length) — parsing is now near-linear
+/// (~46 ms @ 128 instrs debug), so the sample is scaled up to 256.
+const IR_BIG_TEXT_N: usize = 256;
+
+fn bench_ir_parse_big_text(c: &mut Criterion) {
+    let src = ir_text_many_ops(IR_BIG_TEXT_N);
+    c.bench_function("ir_parse_big_text_256", |b| {
+        b.iter(|| {
+            let f = forge_ir::ir_parser::parse_function(black_box(&src))
+                .unwrap_or_else(|e| panic!("ir_parse_big_text_256: {e}"));
+            black_box(f);
         });
     });
 }
@@ -651,6 +745,126 @@ fn bench_opt_pipeline_o3_loop_func(c: &mut Criterion) {
 }
 
 // ============================================================
+// Group 3b: Pipeline Pass Breakdown
+// ============================================================
+
+/// Per-pass cost within the O1/O2/O3 pipelines, measured on a function shape
+/// that exercises each pass (mirrors the pass lists in
+/// `PassManager::for_level`). Summing a level's rows approximates its
+/// pipeline cost; the rows identify which pass dominates a level.
+fn bench_pipeline_breakdown(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pipeline_breakdown");
+    let passes: Vec<(&str, fn() -> Box<dyn OptimizationPass>, fn() -> Function)> = vec![
+        // O1
+        (
+            "o1/const_fold",
+            || Box::new(forge_opt::scalar::const_fold::ConstFoldPass::new()),
+            build_many_ops,
+        ),
+        (
+            "o1/copy_prop",
+            || Box::new(forge_opt::scalar::copy_prop::CopyPropPass::new()),
+            build_many_ops,
+        ),
+        (
+            "o1/cse",
+            || Box::new(forge_opt::scalar::cse::CsePass::new()),
+            build_many_ops,
+        ),
+        (
+            "o1/dead_code",
+            || Box::new(forge_opt::scalar::dead_code::DeadCodeElimPass::new()),
+            build_many_ops,
+        ),
+        (
+            "o1/jump_thread",
+            || Box::new(forge_opt::scalar::jump_thread::JumpThreadPass::new()),
+            build_complex_function,
+        ),
+        // O2 (on top of O1)
+        (
+            "o2/gvn",
+            || Box::new(forge_opt::scalar::gvn::GvnPass::new()),
+            build_many_ops,
+        ),
+        (
+            "o2/gvn_pre",
+            || Box::new(forge_opt::scalar::gvn_pre::PrePass),
+            build_many_ops,
+        ),
+        (
+            "o2/sccp",
+            || Box::new(forge_opt::scalar::sccp::SccpPass::new()),
+            build_many_ops,
+        ),
+        (
+            "o2/block_param_coalesce",
+            || Box::new(forge_opt::scalar::block_param_coalesce::BlockParamCoalescePass::new()),
+            build_multi_block_function,
+        ),
+        (
+            "o2/licm",
+            || Box::new(forge_opt::loops::licm::LicmPass::new()),
+            build_multi_block_function,
+        ),
+        (
+            "o2/tail_call",
+            || {
+                Box::new(forge_opt::ipa::tail_call::TailCallPass::new(
+                    std::collections::HashMap::new(),
+                ))
+            },
+            build_many_ops,
+        ),
+        (
+            "o2/egraph",
+            || Box::new(forge_opt::advanced::egraph::EGraphPass::new()),
+            build_many_ops,
+        ),
+        // O3 (on top of O2)
+        (
+            "o3/inline",
+            || {
+                Box::new(forge_opt::ipa::inline::InlinePass::new(
+                    std::collections::HashMap::new(),
+                ))
+            },
+            build_many_ops,
+        ),
+        (
+            "o3/mem2reg",
+            || Box::new(forge_opt::scalar::mem2reg::Mem2RegPass::new()),
+            build_mem_func,
+        ),
+        (
+            "o3/ind_var_simplify",
+            || Box::new(forge_opt::loops::ind_var_simplify::IndVarSimplifyPass::new()),
+            build_multi_block_function,
+        ),
+        (
+            "o3/loop_unroll",
+            || Box::new(forge_opt::loops::loop_unroll::LoopUnrollPass::new()),
+            build_multi_block_function,
+        ),
+    ];
+
+    for (name, pass_builder, build) in passes {
+        group.bench_function(name, |b| {
+            b.iter_batched(
+                build,
+                |mut f| {
+                    let pass = pass_builder();
+                    pass.run_on_function(&mut f).unwrap();
+                    black_box(f);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+// ============================================================
 // Group 4: Code Generation Benchmarks (x86_64)
 // ============================================================
 
@@ -796,6 +1010,117 @@ fn codegen_isa_group<M: code_forge::backend::TargetMachine>(
         });
         g.finish();
     }
+}
+
+// ============================================================
+// Group 4b: IR Verification Benchmarks
+// ============================================================
+
+/// `forge_ir::verify::Verifier` on the standard benchmark functions. IR
+/// verification is ISA-independent — one group covers all representative
+/// function shapes (including the spill-heavy one, which exercises the
+/// use-list / operand-count checks hardest).
+fn bench_verify(c: &mut Criterion) {
+    let cases: Vec<(&str, Function)> = vec![
+        ("simple_add", build_simple_add()),
+        ("many_ops", build_many_ops()),
+        ("complex", build_complex_function()),
+        ("loop", build_multi_block_function()),
+        ("mem", build_mem_func()),
+        ("spill_pressure", build_spill_pressure()),
+    ];
+    for (name, func) in &cases {
+        c.bench_function(&format!("verify/{name}"), |b| {
+            b.iter(|| {
+                let mut v = forge_ir::verify::Verifier::new();
+                let ok = v.verify(black_box(func)).is_ok();
+                black_box(ok);
+            });
+        });
+    }
+}
+
+// ============================================================
+// Group 4c: Module-Level Benchmarks
+// ============================================================
+
+/// Callee for module tests: `fn callee_double(a: i32) -> i32 { a * 2 }`.
+fn build_callee() -> Function {
+    let sig = FunctionSignature::new(&[(TypeId::I32, "a")], &[TypeId::I32]);
+    let mut b = FunctionBuilder::new("callee_double", TypeContext::new(), sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "a")]);
+    b.switch_to_block(entry);
+    let two = b.iconst(2, TypeId::I32);
+    let r = b.imul(params[0], two);
+    b.ret(&[r]);
+    b.finish()
+}
+
+/// Small module: `callee_double` (FuncRef 0) then `caller` (FuncRef 1, whose
+/// body is `call @0; iadd`). `Module::add_function` assigns FuncRef in
+/// insertion order, so `build_call_func`'s hardcoded `call FuncRef(0)` targets
+/// the callee during module-level compilation.
+fn build_test_module() -> forge_ir::Module {
+    let mut m = forge_ir::Module::new();
+    m.add_function(build_callee());
+    m.add_function(build_call_func());
+    m
+}
+
+/// JIT module compile: two functions, one with a cross-function `call @0` —
+/// exercises module-level relocation resolution (unlike single-function
+/// `compile_raw`, which emits a placeholder displacement).
+fn bench_module_compile(c: &mut Criterion) {
+    ensure_registered();
+    c.bench_function("module_compile_cross_call", |b| {
+        b.iter_batched(
+            build_test_module,
+            |m| {
+                let mut jit = code_forge::jit::JitCompiler::new(TargetMachine::new());
+                jit.compile_module(&m).unwrap();
+                black_box(jit);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
+/// IPA passes with a real (non-empty) function table — the old benchmarks ran
+/// inline/tail-call with an empty HashMap, so they measured only dispatch
+/// overhead. Here the table holds the callee, so the pass has real work.
+fn bench_opt_ipa_real_table(c: &mut Criterion) {
+    let table_src = || {
+        let mut t: std::collections::HashMap<FuncRef, Function> = std::collections::HashMap::new();
+        t.insert(FuncRef(0), build_callee());
+        t.insert(FuncRef(1), build_call_func());
+        t
+    };
+
+    c.bench_function("opt_inline_real_table", |b| {
+        b.iter_batched(
+            table_src,
+            |table| {
+                let pass = forge_opt::ipa::inline::InlinePass::new(table);
+                let mut f = build_call_func();
+                pass.run_on_function(&mut f).unwrap();
+                black_box(f);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    c.bench_function("opt_tail_call_real_table", |b| {
+        b.iter_batched(
+            table_src,
+            |table| {
+                let pass = forge_opt::ipa::tail_call::TailCallPass::new(table);
+                let mut f = build_call_func();
+                pass.run_on_function(&mut f).unwrap();
+                black_box(f);
+            },
+            BatchSize::SmallInput,
+        );
+    });
 }
 
 fn bench_codegen_with_o1(c: &mut Criterion) {
@@ -944,6 +1269,38 @@ fn bench_throughput(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
+
+        // O2/O3 pipeline throughput at N ops (construction excluded).
+        let pm2 = PassManager::for_level(OptimizationLevel::O2);
+        group.bench_function("optimize_o2", |b| {
+            b.iter_batched(
+                || build_n_ops(n),
+                |mut f| {
+                    pm2.run_on_function(&mut f).unwrap();
+                    black_box(f);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+        let pm3 = PassManager::for_level(OptimizationLevel::O3);
+        group.bench_function("optimize_o3", |b| {
+            b.iter_batched(
+                || build_n_ops(n),
+                |mut f| {
+                    pm3.run_on_function(&mut f).unwrap();
+                    black_box(f);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        // IR construction throughput at N ops.
+        group.bench_function("ir_build", |b| {
+            b.iter(|| {
+                let f = black_box(build_n_ops(n));
+                black_box(f);
+            });
+        });
         group.finish();
     }
 }
@@ -1070,7 +1427,12 @@ criterion_group!(
     config = Criterion::default();
     targets =
         bench_ir_parse_simple_add,
+        bench_ir_parse_mul_add,
+        bench_ir_parse_dot_product,
+        bench_ir_parse_loop_sum,
+        bench_ir_parse_complex,
         bench_ir_parse_multi_func,
+        bench_ir_parse_big_text,
 );
 
 criterion_group!(
@@ -1108,6 +1470,12 @@ criterion_group!(
 );
 
 criterion_group!(
+    name = pipeline_breakdown;
+    config = Criterion::default();
+    targets = bench_pipeline_breakdown,
+);
+
+criterion_group!(
     name = codegen;
     config = Criterion::default();
     targets =
@@ -1124,6 +1492,20 @@ criterion_group!(
         bench_codegen_with_o2,
         bench_codegen_with_o2_complex,
         bench_codegen_other_isa,
+);
+
+criterion_group!(
+    name = verify;
+    config = Criterion::default();
+    targets = bench_verify,
+);
+
+criterion_group!(
+    name = module;
+    config = Criterion::default();
+    targets =
+        bench_module_compile,
+        bench_opt_ipa_real_table,
 );
 
 criterion_group!(
@@ -1162,9 +1544,55 @@ criterion_main!(
     ir_build,
     ir_parse,
     optimizations,
+    pipeline_breakdown,
     codegen,
+    verify,
+    module,
     end_to_end,
     throughput,
     code_size,
     comparison
 );
+
+// ============================================================
+// Sample validation tests (run via `cargo test --bench compile_bench`)
+//
+// Guard the IR text samples and any generated sources used by benchmarks:
+// every sample must parse and must contain real instructions (the old
+// `{ entry: ret i32 }` shells parsed to empty bodies and measured nothing).
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ir_text_samples_parse_with_instructions() {
+        for (name, src) in [
+            ("IR_SIMPLE_ADD", super::IR_SIMPLE_ADD),
+            ("IR_MUL_ADD", super::IR_MUL_ADD),
+            ("IR_DOT_PRODUCT", super::IR_DOT_PRODUCT),
+            ("IR_LOOP_SUM", super::IR_LOOP_SUM),
+            ("IR_COMPLEX_TEXT", super::IR_COMPLEX_TEXT),
+        ] {
+            let f = forge_ir::ir_parser::parse_function(src)
+                .unwrap_or_else(|e| panic!("{name} failed to parse: {e}"));
+            assert!(
+                super::count_ir_insts(&f) >= 2,
+                "{name}: expected real instructions, got {}",
+                super::count_ir_insts(&f)
+            );
+        }
+    }
+
+    #[test]
+    fn ir_text_many_ops_generated_scales() {
+        let src = super::ir_text_many_ops(super::IR_BIG_TEXT_N);
+        let f = forge_ir::ir_parser::parse_function(&src)
+            .unwrap_or_else(|e| panic!("big text failed to parse: {e}"));
+        assert!(
+            super::count_ir_insts(&f) >= super::IR_BIG_TEXT_N,
+            "expected >= {} insts, got {}",
+            super::IR_BIG_TEXT_N,
+            super::count_ir_insts(&f)
+        );
+    }
+}

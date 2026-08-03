@@ -42,6 +42,8 @@ prefix = "F"
 
 [abi]
 stack_align = 16
+# Prologue sd ra + sd fp 在帧指针上方 push 16 字节
+fp_push_bytes = 16
 [abi.frame]
 sp = "X2"
 fp = "X8"

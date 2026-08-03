@@ -43,7 +43,10 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         _epilogue_block: forge_ir::Block,
         _sink: &mut CodeSink,
     ) -> Result<(), CompileError> {
-        unimplemented!("TargetFrameLowering::emit_epilogue_jump must be overridden per ISA")
+        // 默认实现：未覆盖的 ISA 报错而非 panic（错误优雅传播）
+        Err(CompileError::Unimplemented(
+            "TargetFrameLowering::emit_epilogue_jump must be overridden per ISA".into(),
+        ))
     }
 
     /// Emit a spill load: load a spilled value from stack into `dst_reg`.
@@ -55,7 +58,9 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         _width: u8,
         _sink: &mut CodeSink,
     ) -> Result<(), CompileError> {
-        unimplemented!("TargetFrameLowering::emit_spill_load must be overridden per ISA")
+        Err(CompileError::Unimplemented(
+            "TargetFrameLowering::emit_spill_load must be overridden per ISA".into(),
+        ))
     }
 
     /// Emit a spill store: store `src_reg` to spilled stack slot.
@@ -67,6 +72,8 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         _width: u8,
         _sink: &mut CodeSink,
     ) -> Result<(), CompileError> {
-        unimplemented!("TargetFrameLowering::emit_spill_store must be overridden per ISA")
+        Err(CompileError::Unimplemented(
+            "TargetFrameLowering::emit_spill_store must be overridden per ISA".into(),
+        ))
     }
 }

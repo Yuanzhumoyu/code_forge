@@ -95,9 +95,9 @@ pub fn fold_opcode(
 ) -> Result<Option<ConstValue>, CompileError> {
     match opcode {
         // === 整数算术 ===
-        Opcode::Iadd => fold_binary_int(operands, ty, |a, b| a + b),
-        Opcode::Isub => fold_binary_int(operands, ty, |a, b| a - b),
-        Opcode::Imul => fold_binary_int(operands, ty, |a, b| a * b),
+        Opcode::Iadd => fold_binary_int(operands, ty, |a, b| a + b, |a, b| a.checked_add(b)),
+        Opcode::Isub => fold_binary_int(operands, ty, |a, b| a - b, |a, b| a.checked_sub(b)),
+        Opcode::Imul => fold_binary_int(operands, ty, |a, b| a * b, |a, b| a.checked_mul(b)),
         Opcode::Udiv => {
             let (a, b) = match get_two_bigs(operands) {
                 Some(v) => v,
@@ -148,9 +148,9 @@ pub fn fold_opcode(
         }
 
         // === 位运算 ===
-        Opcode::Band => fold_binary_int(operands, ty, |a, b| a & b),
-        Opcode::Bor => fold_binary_int(operands, ty, |a, b| a | b),
-        Opcode::Bxor => fold_binary_int(operands, ty, |a, b| a ^ b),
+        Opcode::Band => fold_binary_int(operands, ty, |a, b| a & b, |a, b| Some(a & b)),
+        Opcode::Bor => fold_binary_int(operands, ty, |a, b| a | b, |a, b| Some(a | b)),
+        Opcode::Bxor => fold_binary_int(operands, ty, |a, b| a ^ b, |a, b| Some(a ^ b)),
         Opcode::Bnot => {
             if operands.is_empty() {
                 return Ok(None);
@@ -694,11 +694,21 @@ fn fold_binary_int(
     operands: &[ConstValue],
     ty: TypeId,
     op: fn(Big, Big) -> Big,
+    op_small: fn(i64, i64) -> Option<i64>,
 ) -> Result<Option<ConstValue>, CompileError> {
     let (a, b) = match get_two_bigs(operands) {
         Some(v) => v,
         None => return Ok(None),
     };
+    // 小整数快路径：两个操作数都能放进 i64 且结果不溢出时用原生 i64 运算
+    // （避免 dashu Big 的堆分配 + clone——const_fold/SCCP 整数常量折叠热点）。
+    // checked 运算返回 None（溢出）时回退任意精度 Big。
+    if let (Some(ai), Some(bi)) = (a.try_to_i64(), b.try_to_i64())
+        && let Some(r) = op_small(ai, bi)
+    {
+        let rbig = Big::from_i64(r);
+        return Ok(Some(ConstValue::Int(truncate_to_type(&rbig, ty), ty)));
+    }
     let result = op(a.clone(), b.clone());
     Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
 }

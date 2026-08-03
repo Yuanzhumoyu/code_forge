@@ -131,23 +131,27 @@ examples/mini_c/
 
 ## Known Limitations
 
-1. **x86 backend branch conditions (i1)**: The JCC_REL32 instruction encoding
-   uses SETcc-style opcode byte (e.g. 0x94 for JE) instead of Jcc near byte
-   (0x84 for JE). This causes conditional branches to always fall through to
-   the next block in memory. The `for` loop works because body→cond jumps
-   happen to fall through correctly. The `if` statement and `while` condition
-   are affected.
+1. ~~**x86 backend branch conditions (i1)**~~ **已修复（2026-08-03）**。旧记录称
+   `JCC_REL32` 用 SETcc 风格 opcode（JE=0x94）导致条件分支总是 fall-through。
+   实际当前 `[cc_names]` 已用正确的 Jcc 值（JE=0F 84），`if`/`while`/`for` 的
+   条件分支均正确（`test_hir_e2e_if_else`、`test_hir_e2e_loops` 通过）。残留
+   小问题：`o/no`（jo/jno）两行曾是 SETcc 值（0x90/0x91），已修为 0x80/0x81。
 
-2. **`continue` in for loops**: May cause infinite loops due to the branch
-   encoding issue.
+2. ~~**No `Call` support**~~ **已支持（2026-08-03）**。x86 后端已实现
+   `[lower.Call]`（ABI 参数移动 + relocatable CALL + 返回值移动）+ Windows x64
+   shadow space（本次补充）；跨函数调用经 `JitCompiler::compile_module` 的
+   relocation 解析。mini_c 的 `add(2,3)` 跨函数调用测试通过
+   （`test_hir_e2e_params`）。
 
-3. **No `Call` support**: The x86 backend does not lower `Call` IR instructions.
-   Cross-function calls use AST-level inlining (callee body expanded into caller).
-   Nested calls and recursion are not supported.
-
-4. **Struct field access**: Parsing and schema are fully implemented, but
+3. **Struct field access**: Parsing and schema are fully implemented, but
    `load`/`store` after `iadd` on pointers doesn't produce correct x86 code
    for field offsets (returns pointer value instead of loaded data).
 
-5. **`alloca` not supported**: Uses `stack_addr(0) + iadd` for local variable
+4. **`alloca` not supported**: Uses `stack_addr(0) + iadd` for local variable
    stack allocation instead of the `alloca` IR instruction.
+
+5. **JIT 栈布局曾有大类 bug（已修复，2026-08-03）**: 局部变量槽曾落在
+   callee-saved push 槽内（`callee_saved_bytes` 漏计帧指针）、i32 的 load/store
+   曾固定 64 位访问导致相邻槽重叠、frame 大小未包含局部变量区（槽落在 rsp
+   之下）、`$modrm_mem_rr` 对 rbp/r13 基址误编 RIP-rel 且缺 SIB 语法。全部
+   修复后 `cargo test -p mini_c` 全绿（见 BENCHMARKS.md Known Issues）。

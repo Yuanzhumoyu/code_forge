@@ -1,0 +1,343 @@
+// forge-ir LLVM IR 语法（lalrpop 0.23）。
+// 产出 ParsedModule（中间 AST），由 semantics.rs 构建 forge IR。
+
+use std::string::String;
+use super::ast_items::*;
+use super::lexer::{LexError, Token, VecElem};
+
+grammar;
+
+extern {
+    type Location = usize;
+    type Error = LexError;
+    enum Token {
+        Define => Token::Define,
+        Declare => Token::Declare,
+        Global => Token::Global,
+        Constant => Token::Constant,
+        Target => Token::Target,
+        Triple => Token::Triple,
+        Datalayout => Token::Datalayout,
+        Attributes => Token::Attributes,
+        Ret => Token::Ret,
+        Br => Token::Br,
+        Switch => Token::Switch,
+        Unreachable => Token::Unreachable,
+        VoidTy => Token::VoidTy,
+        LabelTy => Token::LabelTy,
+        MetadataTy => Token::MetadataTy,
+        PtrTy => Token::PtrTy,
+        X => Token::X,
+        IntTy => Token::IntTy(<u16>),
+        FloatTy => Token::FloatTy(<u16>),
+        VecTy => Token::VecTy(<VecElem>),
+        GlobalId => Token::GlobalId(<String>),
+        LocalId => Token::LocalId(<String>),
+        Ident => Token::Ident(<String>),
+        HexLit => Token::HexLit(<i64>),
+        FloatLit => Token::FloatLit(<f64>),
+        IntLit => Token::IntLit(<i64>),
+        StrLit => Token::StrLit(<String>),
+        LParen => Token::LParen,
+        RParen => Token::RParen,
+        LBrace => Token::LBrace,
+        RBrace => Token::RBrace,
+        LBracket => Token::LBracket,
+        RBracket => Token::RBracket,
+        LAngle => Token::LAngle,
+        RAngle => Token::RAngle,
+        Comma => Token::Comma,
+        Colon => Token::Colon,
+        Eq => Token::Eq,
+        Star => Token::Star,
+        Bang => Token::Bang,
+        // 指令/值关键字
+        Icmp => Token::Icmp,
+        Fcmp => Token::Fcmp,
+        Call => Token::Call,
+        Alloca => Token::Alloca,
+        Load => Token::Load,
+        Store => Token::Store,
+        GetElementPtr => Token::GetElementPtr,
+        True => Token::True,
+        False => Token::False,
+        Null => Token::Null,
+        Undef => Token::Undef,
+        Poison => Token::Poison,
+        Sext => Token::Sext,
+        Zext => Token::Zext,
+        Trunc => Token::Trunc,
+        Bitcast => Token::Bitcast,
+        To => Token::To,
+    }
+}
+
+// ── 顶层 ──
+
+pub Module: ParsedModule = {
+    <items: (<ModuleItem>)*> => ParsedModule { items },
+};
+
+ModuleItem: ParsedItem = {
+    <spec: TargetSpec> => ParsedItem::Target(spec.0, spec.1),
+    <FunctionDef> => ParsedItem::Function(<>),
+    <DeclareDef> => ParsedItem::Function(<>),
+};
+
+TargetSpec: (String, String) = {
+    Target Triple Eq <s: StrLit> => ("triple".to_string(), s),
+    Target Datalayout Eq <s: StrLit> => ("datalayout".to_string(), s),
+};
+
+// ── 函数 ──
+
+FunctionDef: ParsedFunction = {
+    Define <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <body: Body> => {
+        ParsedFunction {
+            name: name,
+            ret_ty: ret,
+            params: params,
+            blocks: body,
+            declare: false,
+        }
+    }
+};
+
+DeclareDef: ParsedFunction = {
+    Declare <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen => {
+        ParsedFunction {
+            name: name,
+            ret_ty: ret,
+            params: params,
+            blocks: vec![],
+            declare: true,
+        }
+    }
+};
+
+Param: (ParsedType, String) = {
+    <ty: ValueType> <name: LocalId> => (ty, name),
+};
+
+ParamList: Vec<(ParsedType, String)> = {
+    => vec![],
+    <p: Param> => vec![p],
+    <first: Param> Comma <rest: ParamList> =>? {
+        let mut all = vec![first];
+        all.extend(rest);
+        Ok(all)
+    }
+};
+
+Body: Vec<ParsedBlock> = {
+    LBrace <blocks: (<Block>)*> RBrace => blocks,
+};
+
+// ── 块 ──
+
+Block: ParsedBlock = {
+    <label: LocalId> Colon <insts: (<Inst>)*> <term: Terminator> => ParsedBlock {
+        label: label,
+        insts: insts,
+        terminator: term,
+    },
+};
+
+// ── 指令 ──
+
+Inst: ParsedInst = {
+    <res: LocalId> Eq <body: InstBody> => body.with_result(res),
+    <body: InstBody> => body,
+};
+
+InstBody: ParsedInst = {
+    // 比较（带条件）：icmp <cond> <ty> <a>, <ty> <b>
+    <op: CompareOp> <cond: Ident> <args: TypeOps> => ParsedInst {
+        result: None,
+        opcode: op,
+        cond: Some(cond.to_string()),
+        args: args,
+    },
+    // 调用：call <retty> <callee>(<args>) —— callee 作为 args[0]
+    Call <ret: Type> <callee: Value> LParen <args: CallArgList> RParen => ParsedInst {
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        args: {
+            let mut v = args;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+    },
+    // alloca：alloca <ty>
+    Alloca <ty: Type> => ParsedInst {
+        result: None,
+        opcode: "alloca".to_string(),
+        cond: None,
+        args: vec![ParsedOperand { ty: ty, op: Operand::Null }],
+    },
+    // load：load <valty>, <addrty> <ptr>
+    Load <val: Type> Comma <addr: TypeOp> => ParsedInst {
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    // store：store <valty> <val>, <addrty> <ptr>
+    Store <val: TypeOp> Comma <addr: TypeOp> => ParsedInst {
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        args: vec![val, addr],
+    },
+    // getelementptr：getelementptr <base> <ptr>, <idx>...
+    GetElementPtr <base: Type> Comma <ptr: TypeOp> Comma <idxs: GepIdxList> => ParsedInst {
+        result: None,
+        opcode: "getelementptr".to_string(),
+        cond: None,
+        args: {
+            let mut v = vec![ParsedOperand { ty: base, op: Operand::Undef }, ptr];
+            v.extend(idxs);
+            v
+        },
+    },
+    // 转换：sext/zext/trunc/bitcast <src> to <dst>
+    <op: ConvOp> <src: TypeOp> To <dst: Type> => ParsedInst {
+        result: None,
+        opcode: op,
+        cond: None,
+        args: vec![src, ParsedOperand { ty: dst, op: Operand::Undef }],
+    },
+    // undef/poison 值指令（forge 扩展：%u = undef i32）
+    Undef <ty: ValueType> => ParsedInst {
+        result: None,
+        opcode: "undef".to_string(),
+        cond: None,
+        args: vec![ParsedOperand { ty: ty, op: Operand::Undef }],
+    },
+    Poison <ty: ValueType> => ParsedInst {
+        result: None,
+        opcode: "poison".to_string(),
+        cond: None,
+        args: vec![ParsedOperand { ty: ty, op: Operand::Poison }],
+    },
+    // 通用：<op> <ty> <val>, <ty> <val>, ...（操作数可选——nop 等无操作数指令）
+    <op: Ident> <args: TypeOps?> => ParsedInst {
+        result: None,
+        opcode: op.to_string(),
+        cond: None,
+        args: args.unwrap_or_default(),
+    },
+};
+
+CompareOp: String = {
+    Icmp => "icmp".to_string(),
+    Fcmp => "fcmp".to_string(),
+};
+
+ConvOp: String = {
+    Sext => "sext".to_string(),
+    Zext => "zext".to_string(),
+    Trunc => "trunc".to_string(),
+    Bitcast => "bitcast".to_string(),
+};
+
+TypeOps: Vec<ParsedOperand> = {
+    <v: TypeOp> => vec![v],
+    <first: TypeOp> Comma <rest: TypeOps> => {
+        let mut all = vec![first];
+        all.extend(rest);
+        all
+    }
+};
+
+GepIdxList: Vec<ParsedOperand> = {
+    <v: TypeOp> => vec![v],
+    <first: TypeOp> Comma <rest: GepIdxList> =>? {
+        let mut all = vec![first];
+        all.extend(rest);
+        Ok(all)
+    }
+};
+
+CallArgList: Vec<ParsedOperand> = {
+    => vec![],
+    <v: TypeOp> => vec![v],
+    <first: TypeOp> Comma <rest: CallArgList> =>? {
+        let mut all = vec![first];
+        all.extend(rest);
+        Ok(all)
+    }
+};
+
+TypeOp: ParsedOperand = {
+    <ty: ValueType> <v: Value> => ParsedOperand { ty: ty, op: v },
+};
+
+// ── 终结符 ──
+
+Terminator: ParsedTerminator = {
+    Ret VoidTy => ParsedTerminator::Return(vec![]),
+    Ret <op: TypeOp> => ParsedTerminator::Return(vec![op]),
+    Br LabelTy <t: LocalId> => ParsedTerminator::Jump(t),
+    Br <c: TypeOp> Comma LabelTy <t: LocalId> Comma LabelTy <f: LocalId> => {
+        ParsedTerminator::Branch(Some(c), t, f)
+    },
+    Switch <d: TypeOp> Comma LabelTy <def: LocalId> LBracket <cases: (<SwitchCase>)*> RBracket => {
+        ParsedTerminator::Switch(d, def, cases)
+    },
+    Unreachable => ParsedTerminator::Unreachable,
+};
+
+SwitchCase: (i64, String) = {
+    <_ty: ValueType> <n: IntLit> Comma LabelTy <t: LocalId> => {
+        (n, t)
+    }
+};
+
+// ── 类型 ──
+
+Type: ParsedType = {
+    <t: ValueType> => t,
+    VoidTy => ParsedType::Void,
+};
+
+// 非 void 类型（指令操作数/函数参数用；void 仅作函数返回与 ret 特例）
+ValueType: ParsedType = {
+    <t: IntTy> => ParsedType::Int(t),
+    <t: FloatTy> => ParsedType::Float(t),
+    PtrTy => ParsedType::Ptr,
+    <t: VecTy> => ParsedType::Vec(t.len, Box::new(t.elem.into())),
+    LBracket <n: IntTy> X <t: Type> RBracket => {
+        ParsedType::Array(n as u64, Box::new(t))
+    },
+    LBrace <tys: StructList> RBrace => ParsedType::Struct(tys),
+};
+
+StructList: Vec<ParsedType> = {
+    <t: Type> => vec![t],
+    <first: Type> Comma <rest: StructList> =>? {
+        let mut all = vec![first];
+        all.extend(rest);
+        Ok(all)
+    }
+};
+
+// ── 值 ──
+
+Value: Operand = {
+    <v: LocalId> => Operand::Local(v),
+    <g: GlobalId> => Operand::Global(g),
+    <n: IntLit> => Operand::Int(n),
+    <n: HexLit> => Operand::UInt(n as u64),
+    <f: FloatLit> => Operand::Float(f),
+    True => Operand::Bool(true),
+    False => Operand::Bool(false),
+    Null => Operand::Null,
+    Undef => Operand::Undef,
+    Poison => Operand::Poison,
+};
+

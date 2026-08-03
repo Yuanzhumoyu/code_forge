@@ -77,33 +77,63 @@ impl<M: TargetMachine> FunctionCompiler<M> {
 
     /// Compile an IR function (raw, no IR-level optimization passes).
     pub fn compile_raw(&self, func: &Function) -> Result<CompiledFunction, CompileError> {
+        let _cf_t0 = std::time::Instant::now();
         let mut state = CompileState::new(&self.machine, func);
+        let _t = std::time::Instant::now();
 
         // Stage 1: Block mapping
         state.create_blocks(func);
+        let _t1 = _t.elapsed();
+        let _t = std::time::Instant::now();
 
         // Stage 2: VReg pre-allocation
         state.alloc_params(func);
         state.pre_allocate_phi_vregs(func);
         state.pre_allocate_block_param_xregs(func);
+        let _t2 = _t.elapsed();
+        let _t = std::time::Instant::now();
 
         // Stage 3: Pattern matching (TODO: integrate PatternMatcher)
         // Stage 4: Instruction selection
         state.lower_all_blocks(func, self.machine.lowering().as_ref())?;
+        let _t3 = _t.elapsed();
+        let _t = std::time::Instant::now();
 
         // Stage 5: Peephole optimization
         if let Some(peep) = self.machine.peephole() {
             state.run_peephole(peep.as_ref());
         }
+        let _t4 = _t.elapsed();
+        let _t = std::time::Instant::now();
 
         // Stage 6: Register allocation
         let alloc_result = state.run_regalloc(&self.reg_alloc, &self.machine)?;
+        let _t5 = _t.elapsed();
+        let _t = std::time::Instant::now();
 
         // Stage 7: Frame layout
         let frame_size = state.calculate_frame_size(&alloc_result, &self.machine);
+        let _t6 = _t.elapsed();
+        let _t = std::time::Instant::now();
 
         // Stage 8-11: Emission
-        state.emit_code(func, &alloc_result, frame_size, &self.machine)
+        let result = state.emit_code(func, &alloc_result, frame_size, &self.machine);
+        let _t7 = _t.elapsed();
+        if std::env::var("CF_CODEGEN_TIMING").is_ok() {
+            eprintln!(
+                "[codegen {}] total={:?} blocks={:?} vreg={:?} lower={:?} peep={:?} regalloc={:?} frame={:?} emit={:?}",
+                func.name,
+                _cf_t0.elapsed(),
+                _t1,
+                _t2,
+                _t3,
+                _t4,
+                _t5,
+                _t6,
+                _t7
+            );
+        }
+        result
     }
 }
 
@@ -126,9 +156,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
     fn new<M: TargetMachine>(machine: &M, func: &Function) -> Self {
         let mut ctx = LowerCtx::new();
         ctx.call_conv = func.calling_convention;
-        // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push 槽上）
-        ctx.callee_saved_bytes = (machine.reg_info().callee_saved().len() as i32)
-            * (machine.reg_info().reg_class_width(RegClass::GPR) as i32);
+        // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
+        // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
+        // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
+        //（覆盖调用者寄存器保存值 → mini_c JIT SEGV/逻辑错误）。
+        ctx.callee_saved_bytes = (machine.reg_info().frame_pointer_overhead() as i32)
+            + (machine.reg_info().callee_saved().len() as i32)
+                * (machine.reg_info().reg_class_width(RegClass::GPR) as i32);
         ctx.is_float_return = func
             .return_tys
             .iter()
@@ -384,7 +418,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 continue;
             }
 
-            let result_ty = inst.results.first().and_then(|v| dfg.value_type(*v));
+            let result_ty = inst
+                .results
+                .first()
+                .and_then(|v| dfg.value_type(*v))
+                // 无结果指令（如 Store）用第一个操作数（被存的值）推断宽度，
+                // 否则默认 64 会让 i32 store 写 8 字节，覆盖相邻局部变量槽。
+                .or_else(|| inst.operands.first().and_then(|v| dfg.value_type(*v)));
             self.ctx.default_opsize = match result_ty {
                 Some(ty) => LowerCtx::opsize_from_type(&ty),
                 None => 64,
@@ -401,8 +441,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
             }
             if let Some(Immediate::Int(v)) = inst.immediates.first() {
                 // StackAddr 偏移平移：lea 基准从 rbp 改为 rbp - callee_saved_bytes，
-                // 避免局部变量写在 callee-saved push 槽上（覆盖调用者寄存器）
+                // 避免局部变量写在 callee-saved push 槽上（覆盖调用者寄存器）。
+                // v 是负数（-4, -8, ...），槽深 = -v + 槽宽（8 字节对齐）；记录
+                // 最大需求供 calculate_frame_size 分配（否则槽落在 rsp 之下）。
                 self.ctx.current_offset = *v - self.ctx.callee_saved_bytes as i64;
+                let depth = (-*v as u32).saturating_add(8);
+                self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(depth);
             }
             // AtomicRmw: immediates[0] = op (Uint(op as u64)), [1] = ordering
             if matches!(inst.opcode, Opcode::AtomicRmw)
@@ -546,7 +590,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
     ) -> u32 {
         // spill 区域：使用 regalloc 报告的 spill_area_size（含对齐与全部槽位），
         // 而不是仅对分配到的槽求和——后者在槽释放/复用时会低估实际需要的栈帧。
-        let size: u32 = alloc_result.frame_info.spill_area_size;
+        let spill: u32 = alloc_result.frame_info.spill_area_size;
+        // 局部变量区（stack_addr 槽）：lowering 时跟踪的最大深度。不含它，
+        // 局部槽会落在 sub rsp 分配区之外（Windows 无 red zone → SEGV）。
+        let locals: u32 = self.ctx.max_stack_bytes;
+        let size = spill.max(locals);
         let align = machine.abi().stack_align();
         // 栈对齐修正（align/2 = 8 字节）：prologue push rbp + callee-saved 后
         // rsp%16 == 8（入口 rsp%16==8 由 call 压入的返回地址造成），sub rsp 必须
@@ -572,11 +620,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let frame_lowering = machine.frame_lowering();
         let encoder = machine.encoder();
         // Bytes occupied by callee-saved registers pushed BELOW the frame
-        // pointer. The frame pointer itself sits at [rbp] (above the callee
-        // saves), so it must NOT be counted here — the spill area starts at
-        // rbp - callee_saved_bytes - frame_size.
-        let callee_saved_bytes = (machine.reg_info().callee_saved().len() as i32)
-            * (machine.reg_info().reg_class_width(RegClass::GPR) as i32);
+        // Bytes between the frame pointer and the local/spill area top:
+        // fp save slot (frame_pointer_overhead) + callee-saved pushes. The
+        // spill area starts at rbp - callee_saved_bytes - frame_size.
+        // (Old code counted only callee-saved bytes, shifting locals/spills
+        // 8 bytes into the pushed registers.)
+        let callee_saved_bytes = (machine.reg_info().frame_pointer_overhead() as i32)
+            + (machine.reg_info().callee_saved().len() as i32)
+                * (machine.reg_info().reg_class_width(RegClass::GPR) as i32);
 
         // Stage 8: Prologue
         frame_lowering.emit_prologue(frame_size, alloc_result, &mut sink)?;

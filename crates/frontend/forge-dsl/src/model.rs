@@ -454,6 +454,15 @@ pub struct Abi {
     pub stack_align: u32,
     #[serde(default)]
     pub red_zone: Option<u32>,
+    /// Bytes the prologue pushes *above* the frame pointer before callee-saved
+    /// registers (the frame-pointer save slot): x86 `push rbp` = 8,
+    /// aarch64/riscv64 `stp/sd fp,lr` = 16, wasm (no frame) = 0.
+    /// Used by codegen to compute the local-variable area base offset
+    /// (`rbp - fp_push_bytes - callee_saved_bytes`); was wrong before (only
+    /// callee-saved bytes were counted), putting locals inside the callee-saved
+    /// push slots and corrupting saved registers (mini_c SEGV).
+    #[serde(default = "default_fp_push_bytes")]
+    pub fp_push_bytes: u32,
     #[serde(default)]
     pub frame: Option<AbiFrame>,
     #[serde(default)]
@@ -472,6 +481,10 @@ pub struct Abi {
     /// lowering (arg0-arg7) is used.
     #[serde(default)]
     pub call: Option<AbiCall>,
+}
+
+fn default_fp_push_bytes() -> u32 {
+    8
 }
 
 /// Call lowering configuration: which mov instructions to use for moving

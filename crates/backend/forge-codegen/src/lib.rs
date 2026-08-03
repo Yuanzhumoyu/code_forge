@@ -161,6 +161,10 @@ pub struct LowerCtx {
     pub current_offset: i64,
     /// prologue 压入的 callee-saved 寄存器总字节数（局部变量 lea 的基准平移）。
     pub callee_saved_bytes: i32,
+    /// StackAddr 局部变量区需求（从 callee-saved 区底向下到最深槽的字节数）。
+    /// calculate_frame_size 必须把它算进 sub rsp 的帧大小，否则局部槽落在
+    /// rsp 之下（Windows 无 red zone）→ 写栈越界 SEGV（mini_c 参数内联场景）。
+    pub max_stack_bytes: u32,
     /// 临时 VReg 集合（替代 VReg(96-100) 硬编码）。
     pub temp_vregs: HashSet<VReg>,
     /// 零值 VReg（复用，避免重复分配）。
@@ -186,6 +190,7 @@ impl LowerCtx {
             current_global: None,
             current_offset: 0,
             callee_saved_bytes: 0,
+            max_stack_bytes: 0,
             vreg_classes: HashMap::new(),
             vreg_types: HashMap::new(),
             vreg_widths: HashMap::new(),

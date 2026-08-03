@@ -201,6 +201,9 @@ fn gen_target_reg_info(model: &IsaModel) -> TokenStream {
         })
         .unwrap_or_default();
 
+    // Prologue bytes pushed above the frame pointer (fp save slot).
+    let fp_push_bytes = model.abi.as_ref().map(|a| a.fp_push_bytes).unwrap_or(8);
+
     // Scratch registers — use explicit [abi.scratch] PReg numbers when available.
     // These are the physical register numbers reserved for spill loads/stores.
     // Fallback: derive from callee-saved inversion (exclude saved regs + SP).
@@ -303,6 +306,9 @@ fn gen_target_reg_info(model: &IsaModel) -> TokenStream {
             }
             fn callee_saved(&self) -> Vec<u8> {
                 vec![#(#callee_saved),*]
+            }
+            fn frame_pointer_overhead(&self) -> u32 {
+                #fp_push_bytes
             }
             fn precolored_xregs(&self) -> Vec<(crate::prelude::XReg, forge_ir::PReg)> {
                 vec![#(#precolored_vregs),*]

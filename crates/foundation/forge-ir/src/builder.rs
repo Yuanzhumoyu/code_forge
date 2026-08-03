@@ -84,10 +84,34 @@ impl FunctionBuilder {
         self.cur_block = Some(block);
         (block, params)
     }
-    /// 创建带参数的基本块。`&str` 参数名仅用于文档目的，不存储。
+    /// 创建带参数的基本块，并把参数名绑定到参数 value（可选绑定——
+    /// 绑定后 display/调试输出使用 `%name`；`create_block_with_tys` 不绑定则
+    /// 自动编号 `%v{index}`）。
     pub fn create_block_with_params(&mut self, params: &[(TypeId, &str)]) -> (Block, Vec<Value>) {
         let param_tys: Vec<TypeId> = params.iter().map(|(t, _)| *t).collect();
-        self.create_block_with_tys(&param_tys)
+        let (block, values) = self.create_block_with_tys(&param_tys);
+        for ((_, name), v) in params.iter().zip(values.iter()) {
+            if !name.is_empty() {
+                self.bind_name(*v, name);
+            }
+        }
+        (block, values)
+    }
+
+    /// 可选绑定：给 value 绑定一个名称（display/调试输出用 `%name`）。
+    /// 名称绑定是可选的——不绑定则 display 自动编号；重复绑定同名值由
+    /// display 消歧（`%x`、`%x_1`…）保证输出 SSA 唯一。同名重复绑定覆盖更新。
+    pub fn bind_name(&mut self, value: Value, name: &str) -> &mut Self {
+        let name_id = self.ctx.borrow_mut().intern_str(name);
+        self.func.value_names.insert(value, name_id);
+        self
+    }
+
+    /// 可选绑定：给 block 绑定一个名称（display 输出 `%name` 作为块标签）。
+    pub fn bind_block_name(&mut self, block: Block, name: &str) -> &mut Self {
+        let name_id = self.ctx.borrow_mut().intern_str(name);
+        self.func.block_names.insert(block, name_id);
+        self
     }
 
     /// 创建带参数类型的基本块（无参数名）。
@@ -398,10 +422,17 @@ impl<'f> IRBuilder<'f> {
         self.switch_to_block(id);
         id
     }
-    /// 创建带参数的基本块。`&str` 参数名仅用于文档目的，不存储。
+    /// 创建带参数的基本块，并把参数名绑定到参数 value。
     pub fn create_block_with_params(&mut self, params: &[(TypeId, &str)]) -> (Block, Vec<Value>) {
         let tys: Vec<TypeId> = params.iter().map(|(t, _)| *t).collect();
-        self.create_block_with_tys(&tys)
+        let (block, values) = self.create_block_with_tys(&tys);
+        for ((_, name), v) in params.iter().zip(values.iter()) {
+            if !name.is_empty() {
+                let name_id = self.ctx.borrow_mut().intern_str(name);
+                self.func.value_names.insert(*v, name_id);
+            }
+        }
+        (block, values)
     }
 
     /// 创建带参数类型的基本块（无参数名）。
@@ -463,7 +494,7 @@ impl<'f> IRBuilder<'f> {
             .into_iter()
             .collect()
     }
-    fn emit1(
+    pub fn emit1(
         &mut self,
         opcode: Opcode,
         operands: Vec<Value>,

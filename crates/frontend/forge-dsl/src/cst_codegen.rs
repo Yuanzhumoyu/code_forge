@@ -609,7 +609,16 @@ fn gen_inst_from_cst(
     for field in &inst_def.fields {
         if !resolved.bindings.iter().any(|(n, _)| *n == field.name) {
             let fi = quote::format_ident!("{}", field.name);
-            let default = default_for_type(&field.field_type);
+            // Opsize：lowering 场景取 ctx.default_opsize（按 IR 类型，i32 → 32 位
+            // 访问）；固定 64 会让 i32 的 load/store 用 8 字节，槽位重叠（相邻
+            // 局部变量互相污染 → mini_c 循环错误）。emit 场景无 ctx，保留 64。
+            let default = if matches!(mode, GenMode::Lowering)
+                && matches!(field.field_type, crate::model::FieldType::Opsize)
+            {
+                quote! { ctx.default_opsize }
+            } else {
+                default_for_type(&field.field_type)
+            };
             field_exprs.push(quote! { #fi: #default });
         }
     }
@@ -868,7 +877,15 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
             for field in &inst_def.fields {
                 if !bound.contains(&field.name) {
                     let fi = quote::format_ident!("{}", field.name);
-                    let default = default_for_type(&field.field_type);
+                    // Opsize：lowering 场景取 ctx.default_opsize（按 IR 类型，
+                    // i32 → 32 位访问；固定 64 会让 i32 的 load/store 用 8 字节，
+                    // 槽位重叠 → mini_c 循环错误）。本函数（gen_lowering_insts_cst）
+                    // 只服务 lowering，生成的代码嵌在 lowering 函数内（ctx 可用）。
+                    let default = if matches!(field.field_type, crate::model::FieldType::Opsize) {
+                        quote! { ctx.default_opsize }
+                    } else {
+                        default_for_type(&field.field_type)
+                    };
                     field_exprs.push(quote! { #fi: #default });
                 }
             }

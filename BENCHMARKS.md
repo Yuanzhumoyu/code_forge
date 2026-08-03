@@ -12,7 +12,10 @@ cargo bench --bench compile_bench
 cargo bench --bench compile_bench -- ir_build       # IR construction
 cargo bench --bench compile_bench -- ir_parse       # IR text parsing
 cargo bench --bench compile_bench -- optimizations  # Optimization passes & pipelines
-cargo bench --bench compile_bench -- codegen        # Code generation (x86_64)
+cargo bench --bench compile_bench -- pipeline_breakdown  # Per-pass pipeline cost
+cargo bench --bench compile_bench -- codegen        # Code generation (x86_64 + other ISAs)
+cargo bench --bench compile_bench -- verify         # IR verification
+cargo bench --bench compile_bench -- module         # Module-level compile + IPA with real table
 cargo bench --bench compile_bench -- end_to_end     # Full compilation pipeline
 cargo bench --bench compile_bench -- throughput     # Parameterized throughput benchmarks
 cargo bench --bench compile_bench -- code_size      # Code size metrics
@@ -55,14 +58,24 @@ Measures the cost of constructing IR functions programmatically via `FunctionBui
 
 ### 2. IR Parse (`ir_parse`)
 
-Measures forge-ir text-format parsing (lexer + CST + schema-driven AST lowering).
-Note: the text parser currently handles one function per source, so `multi_func`
-parses several functions in sequence.
+Measures forge-ir text-format parsing — **LLVM IR syntax** (logos lexer +
+lalrpop parser, `define`/`@`/typed operands/`;` comments). The samples are
+real LLVM IR functions (`define i32 @add(i32 %a, i32 %b) { %entry: %s =
+add i32 %a, i32 %b; ret i32 %s }`); `multi_func` parses several in sequence.
 
 | Benchmark | Description |
 | --------- | ----------- |
-| `ir_parse_simple_add` | Parse a single `add` function |
-| `ir_parse_multi_func` | Parse 4 functions (add, mul_add, dot_product, loop_sum) |
+| `ir_parse_simple_add` | Parse 2-instr `add` LLVM function |
+| `ir_parse_mul_add` | Parse 3-instr `mul_add` |
+| `ir_parse_dot_product` | Parse 4-block branching function |
+| `ir_parse_loop_sum` | Parse multi-block loop with icmp/br |
+| `ir_parse_complex` | Parse float + branch function |
+| `ir_parse_multi_func` | Parse 4 functions in sequence |
+| `ir_parse_big_text_256` | Parse generated 256-instr single-block text |
+
+**Scaling**: the logos+lalrpop rewrite (2026-08-03) parses near-linearly;
+256-instr text takes ~370 µs (old forge-grammar lexer was O(n²), 300 insts
+would have taken ~5.6 h).
 
 ### 3. Optimizations (`optimizations`)
 
@@ -100,6 +113,23 @@ use `iter_batched` so IR construction time is excluded from measurement.
 | `opt_pipeline_o1_loop_func` | O1 pipeline on a loop-based function |
 | `opt_pipeline_o3_loop_func` | O3 pipeline on a loop-based function |
 
+### 3b. Pipeline Pass Breakdown (`pipeline_breakdown`)
+
+Per-pass cost within each optimization level, measured on a function shape that
+exercises the pass (mirrors `PassManager::for_level` pass lists). Summing a
+level's rows approximates its pipeline cost; the rows identify which pass
+dominates.
+
+| Benchmark | Description |
+| --------- | ----------- |
+| `pipeline_breakdown/o1/{const_fold,copy_prop,cse,dead_code,jump_thread}` | O1 passes |
+| `pipeline_breakdown/o2/{gvn,gvn_pre,sccp,block_param_coalesce,licm,tail_call,egraph}` | O2 passes |
+| `pipeline_breakdown/o3/{inline,mem2reg,ind_var_simplify,loop_unroll}` | O3 passes |
+
+Measurement caveat: this group runs right after the slow `ir_parse` group, so
+its absolute numbers skew high on this machine (up to ~2.5×); relative ranking
+within the group is reliable.
+
 ### 4. Code Generation (`codegen`)
 
 Measures lowering, register allocation, and machine code emission.
@@ -117,9 +147,33 @@ Measures lowering, register allocation, and machine code emission.
 | `codegen_with_o1` | O1 optimize then compile (x86_64) |
 | `codegen_with_o2` | O2 optimize then compile (x86_64) |
 | `codegen_with_o2_complex` | O2 optimize then compile complex (x86_64) |
-| `codegen/aarch64/{case}` | Compile simple_add/many_ops/multi_block with aarch64 |
-| `codegen/riscv64/{case}` | Compile simple_add/many_ops/multi_block with riscv64 |
+| `codegen/aarch64/{case}` | Compile simple_add/many_ops/multi_block/complex with aarch64 |
+| `codegen/riscv64/{case}` | Compile simple_add/many_ops/multi_block/complex with riscv64 |
 | `codegen/wasm32/{case}` | Compile simple_add/many_ops/multi_block/complex with wasm32 |
+
+Measurement caveat: the `codegen_*` group runs right after the slow `ir_parse`
+group and its absolute numbers skew high on this machine (up to ~4× for small
+functions). Use the `comparison`/`code_size` groups for low-noise absolute
+numbers; use `--save-baseline`/`--baseline` for cross-run comparisons.
+
+### 4b. IR Verification (`verify`)
+
+`forge_ir::verify::Verifier` on representative function shapes (ISA-independent).
+
+| Benchmark | Description |
+| --------- | ----------- |
+| `verify/{simple_add,many_ops,complex,loop,mem,spill_pressure}` | Verify each shape |
+
+### 4c. Module Level (`module`)
+
+Cross-function compilation and IPA passes with a real function table (the old
+IPA benchmarks ran inline/tail-call with an empty HashMap).
+
+| Benchmark | Description |
+| --------- | ----------- |
+| `module_compile_cross_call` | `JitCompiler::compile_module` on a 2-fn module with a cross-function `call @0` (exercises relocation resolution) |
+| `opt_inline_real_table` | `InlinePass` with callee+caller in the function table |
+| `opt_tail_call_real_table` | `TailCallPass` with callee+caller in the function table |
 
 ISA capability notes: no `codegen_call` benchmark — the x86_64 lowering rules
 have no `[lower.Call]` (`Unsupported: lower Call`); `ir_build_call` still
@@ -151,6 +205,9 @@ reported throughput matches each N's instruction count.
 | --------- | ----------- |
 | `throughput/{n}/codegen` | Codegen time for functions with N ops |
 | `throughput/{n}/optimize_o1` | O1 pipeline time for functions with N ops |
+| `throughput/{n}/optimize_o2` | O2 pipeline time for functions with N ops |
+| `throughput/{n}/optimize_o3` | O3 pipeline time for functions with N ops |
+| `throughput/{n}/ir_build` | IR construction time for functions with N ops |
 
 ### 7. Code Size (`code_size`)
 
@@ -179,12 +236,27 @@ All times are criterion median wall-clock time. `cargo bench --bench compile_ben
 
 | Test Case | IR Build | IR Parse | Opt O1 | Opt O2 | Codegen | Total* |
 |---------:|---------:|-------:|-------:|--------:|-------:|
-| simple_add | 2.0 µs | 5.97 ms | 8.3 µs | 3.4 µs | 6.7 µs | ~24 µs |
+| simple_add | 2.0 µs | **9.34 µs** (was 5.97 ms, 640×) | 8.3 µs | 3.4 µs | 6.7 µs | ~24 µs |
 | many_ops | 14.5 µs | — | ~44 µs† | ~107 µs | 84.2 µs | ~210 µs |
 | complex | 4.2 µs | — | 8.3 µs | 28.5 µs | 24.1 µs | ~67 µs |
 | loop | 3.5 µs | — | 8.3 µs | 30.7 µs | 20.1 µs | ~64 µs |
 
-\* Total ≈ IR build + Opt O2 + Codegen (IR parse excluded; it is only exercised by `ir_parse`).
+\* Total ≈ IR build + Opt O2 + Codegen.
+
+### IR Parse — logos+lalrpop rewrite (2026-08-03, median)
+
+| Benchmark | before (forge-grammar) | after (logos+lalrpop) | speedup |
+| ----------- | ----------------------: | ----------------------: | --------: |
+| `ir_parse_simple_add` | 317 µs | **9.34 µs** | 34× |
+| `ir_parse_mul_add` | 460 µs | **8.60 µs** | 53× |
+| `ir_parse_dot_product` | 1.87 ms | **10.2 µs** | 183× |
+| `ir_parse_loop_sum` | 2.93 ms | **12.8 µs** | 229× |
+| `ir_parse_complex` | 2.84 ms | **14.2 µs** | 200× |
+| `ir_parse_multi_func` | 7.4 ms | **39.2 µs** | 189× |
+| `ir_parse_big_text_256` | 24.4 ms | **370 µs** | 66× |
+
+Deterministic LR parsing (logos + lalrpop) is 1–2 orders of magnitude faster
+than the previous PEG frontend; 256-instr text now parses in 370 µs.
 † O1 pipeline is dominated by `opt_const_fold` (44 µs on the 60-op function after the const-fold rework; was 469 µs).
 
 ### Optimization Pass Detail (median µs)
@@ -241,32 +313,60 @@ Codegen scales ~linearly with IR size. The O1 pipeline is now near-linear
 too (10× ops ≈ 9.6× time) after the `opt_const_fold` rework (was ~O(n²):
 500 ops took 576 ms; now 1.07 ms).
 
-### Code Size (bytes, lower is better)
+### New-group Reference Numbers (2026-08-03, median)
 
-| Test Case | IR Instructions | code-forge Size |
-| ---------: | ---------: | ---------: |
-| simple_add | 3 | 44 |
-| many_ops | 61 | 497 |
-| complex | 17 | 156 |
-| multi_block | 10 | 122 |
+`verify` (µs): simple_add 2.9, many_ops 24.0, complex 5.3, loop 5.2, mem 8.4,
+spill_pressure 3.0.
+
+`module` (µs): `module_compile_cross_call` 45.0 (2-fn module, cross-function
+`call @0`); `opt_inline_real_table` 5.9; `opt_tail_call_real_table` 5.5
+(real-table IPA vs 3.6–4.4 µs empty-table baselines).
+
+`pipeline_breakdown` (µs, relative ranking reliable; absolute values skew high
+up to ~2.5× because the group runs right after the slow `ir_parse`):
+O1 — const_fold 28.1, dead_code 21.4, cse 8.1, jump_thread 4.7, copy_prop 2.5;
+O2 — **sccp 179.6 (dominant)**, egraph 26.2, licm 24.4, gvn 14.9, tail_call 5.5,
+gvn_pre 3.6, block_param_coalesce 2.8; O3 — ind_var_simplify 25.3,
+loop_unroll 13.9, mem2reg 10.8, inline 8.5. Cross-check with the low-noise
+`opt_*` single-pass group: sccp 72.5, const_fold 28.9, gvn 16.6, cse 8.7,
+egraph 8.8 (µs @ many_ops).
+
+Pipeline (µs, complex input): O0 1.0, O1 6.5, O2 28.0, O3 43.4 (loop input:
+O1 7.0 / O2 30.2 / O3 40.9).
+
+e2e (µs): simple 13.0, complex 75.6, loop 67.4 → 43.0 (after trailing-DCE fix),
+float 206.7, mem 172.6, spill 64.5, big_loop 310.9.
 
 ---
 
 ## Known Issues
 
-1. **`ir_parse` is slow (~6 ms per function).** The forge-grammar lexer/CST →
-   schema-driven AST pipeline dominates; parsing one text function is ~3 orders
-   of magnitude slower than building the same IR programmatically. Optimizing
-   it would require reworking the grammar frontend.
-2. **Optimization pipelines can leave `Nop` tombstones.** GVN/CSE/dead-code
-   rewrite dead instructions to `Opcode::Nop`; the codegen pipeline now skips
-   them (fixed), so O2-compiled functions compile correctly. The residual Nops
-   are cleaned by DCE only when a later pass runs — a follow-up DCE at the end
-   of O2/O3 would avoid carrying them into codegen.
-3. **`Opt O2` on `many_ops` remains const-fold dominated.** The single-pass
-   numbers above are near-linear now, but the O2 pipeline (GVN/SCCP/egraph on
-   top of O1) still carries super-linear passes; see Throughput Scaling.
-4. **ISA lowering coverage: ZERO gaps.** `crates/tools/forge-tests/src/coverage.rs`
+1. **`ir_parse` was O(n³) — FIXED (2026-08-03).** The pathological scaling
+   (2 insts ≈ 13 ms, 8 ≈ 100 ms, 300 ≈ 5.6 h) was actually an **O(n²) lexer**:
+   each token re-copied the remaining input and regex-matched longest-first
+   prefixes. Zero-copy `&[char]` matching + `match_here` prefix-length made it
+   near-linear: `ir_parse_simple_add` 13 ms → **317 µs (41×)**, multi_func
+   204 → 7.4 ms, `ir_parse_big_text_256` 24 ms (300 insts used to hang).
+   The parser itself was linear all along (~500 µs); see OPTIMIZATION.md §9.
+2. **`mini_c` JIT crashes — FIXED (2026-08-03).** Five deterministic codegen
+   bugs caused `cargo test -p mini_c` to SEGV (STATUS_ACCESS_VIOLATION):
+   `$modrm_mem_rr` RIP-relative encoding for rbp/r13 bases + missing SIB
+   syntax, `callee_saved_bytes` omitting the frame-pointer slot, i32
+   load/store fixed at 64-bit (adjacent slot overlap), frame size omitting
+   the stack_addr local area, and missing `ctx.default_opsize` in lowering.
+   All fixed (see OPTIMIZATION.md §9); `cargo test -p mini_c` is fully green.
+3. **`Nop` tombstones from optimization passes — mitigated.** GVN/CSE/SCCP/egraph
+   rewrite dead instructions to `Opcode::Nop` after the O1 DCE position; codegen
+   skips them (fixed). The O2/O3 pipelines now end with a trailing
+   `DeadCodeElimPass(UntilFixedPoint)` (2026-08-03), collapsing indirect dead
+   code: `e2e_compile_loop` 67.4 → 43.0 µs (-36%). Residual `Nop` *placeholders*
+   remain in inst_order (DCE marks, does not physically remove) — physical Nop
+   removal is a possible further step.
+4. **`Opt O2` on `many_ops` remains SCCP-dominated.** SCCP is the most
+   expensive single pass (72.5 µs @ many_ops; const_fold 28.9 µs second); the
+   O2 pipeline (GVN/SCCP/egraph on top of O1) carries it. Throughput scaling is
+   otherwise near-linear (see Throughput Scaling).
+5. **ISA lowering coverage: ZERO gaps.** `crates/tools/forge-tests/src/coverage.rs`
    prints the full 75-opcode × 4-ISA matrix, and `coverage_all_isa_zero_gaps`
    asserts all four backends (x86_64/aarch64/riscv64/wasm32) lower **0/75**
    ops as unsupported. The ISA-gap pass added: aarch64 single-source int
@@ -279,6 +379,13 @@ too (10× ops ≈ 9.6× time) after the `opt_const_fold` rework (was ~O(n²):
    via `compile_module`); aarch64/riscv64 float rounding uses FRINT/fsgnjx
    approximations for Ffloor/Fceil/Ftrunc/Fround; x86 clobbers() generation is
    disabled (arg_regs spill timing — mechanism retained).
+6. **Benchmark measurement noise (Windows laptop).** Same work measured in
+   different groups varies 2–4× (codegen group after slow `ir_parse` vs
+   `comparison` group; e.g. compile many_ops 389.7 vs 92.7 µs; SCCP 72.5 vs
+   179.6 µs). Use `comparison`/`code_size` for low-noise absolute numbers and
+   `--save-baseline`/`--baseline` for cross-run comparisons. No
+   `TargetDecoder`/`TargetDisassembler` implementations exist, so no disasm
+   benchmark group (tracked in OPTIMIZATION.md §8).
 
 ## ISA lowering coverage matrix
 
@@ -554,7 +661,7 @@ Implemented in the ISA-gap pass:
 **测试级别标注**（每项测试按其验证深度归类）：
 
 | 级别 | 含义 | 载体 |
-|---|---|---|
+| --- | --- | --- |
 | `compile-only` | 只验证 lowering 编译通过（不执行） | forge-tests `coverage!`/`coverage_all_isa_zero_gaps`（覆盖矩阵，4 ISA × 75 ops） |
 | `encode-golden` | 验证指令编码字节精确匹配 | `encoder_tests`（x86 29）+ `aarch64_encoder_tests`（28）+ `riscv64_encoder_tests`（35）= 92 断言 |
 | `exec-required` | 实际执行 JIT 编译产物并断言返回值 | `jit_integration`（156 测试，宿主 x86_64 Windows） |
@@ -570,13 +677,14 @@ Implemented in the ISA-gap pass:
 **框架结构**：`crates/tools/forge-tests` 提供统一 ISA 测试框架，按 Cargo features 开关：
 
 | feature | 作用 |
-|---|---|
+| --- | --- |
 | `isa-x86_64` / `isa-aarch64` / `isa-riscv64` | ISA 开关 |
 | `test-int` / `test-float` / `test-io` / `test-control` | 指令类型分组（默认全开） |
 | `exec-unicorn` | unicorn-engine 2.1.5 跨架构模拟执行（aarch64/riscv64） |
 | `nightly` | forge-rustc 后端测试 |
 
 **测试类型**（三级标注）：
+
 - `coverage!`（compile-only 覆盖矩阵）— 用户自定义 ISA 经 backend_tests! 家族宏接入
 - `encode_golden!`（编码字节断言）
 - `exec!`（执行测试：本机 x86_64 NativeExecutor + unicorn 跨架构 UnicornExecutor）
@@ -584,4 +692,5 @@ Implemented in the ISA-gap pass:
 **跨架构执行**：unicorn-engine（Unicorn CPU 模拟器）execute-from-buffer 方式
 （mem_map 代码页+栈页 → mem_write 裸机器码 → emu_start → reg_read 返回值寄存器
 RAX/X0/X10），替代 WSL/QEMU 路径。构建前提：Windows 需 libclang（LIBCLANG_PATH）
-+ cmake（unicorn-engine-sys 编译 C 源码）；wasm32 不在本框架范围（用户确认）。
+
+- cmake（unicorn-engine-sys 编译 C 源码）；wasm32 不在本框架范围（用户确认）。

@@ -9,4 +9,8 @@ smallvec = "1"
 thiserror = "2"
 dashu = "0.5.0"
 bitflags = "2"
-forge-grammar = { path = "../../frontend/forge-grammar" }
+logos = "0.16.1"
+lalrpop-util = "0.23"
+
+[build-dependencies]
+lalrpop = "0.23.1"

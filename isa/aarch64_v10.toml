@@ -47,6 +47,8 @@ prefix = "V"
 [abi]
 stack_align = 16
 red_zone = 0
+# Prologue stp X29, X30 在帧指针上方 push 16 字节
+fp_push_bytes = 16
 
 [abi.frame]
 sp = "SP"

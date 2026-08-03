@@ -44,6 +44,13 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// 被调用者保存的寄存器索引列表。
     fn callee_saved(&self) -> Vec<u8>;
 
+    /// Prologue 在帧指针上方 push 的字节数（帧指针保存槽，如 x86 `push rbp`
+    /// = 8；aarch64/riscv64 `stp/sd fp,lr` = 16；wasm 无帧 = 0）。
+    /// codegen 用它计算局部变量区基址（`fp - overhead - callee_saved_bytes`）。
+    fn frame_pointer_overhead(&self) -> u32 {
+        8
+    }
+
     /// 预着色的 VReg → PReg 映射（如 RAX = VReg(0) 用于返回值）。
     fn precolored_xregs(&self) -> Vec<(XReg, PReg)> {
         Vec::new()

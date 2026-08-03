@@ -70,6 +70,19 @@ pub struct DataLayout {
 }
 
 impl DataLayout {
+    /// 是否全默认（未配置任何字段——display 省略 datalayout 行）。
+    pub fn is_default(&self) -> bool {
+        self.endianness == Endianness::Little
+            && self.mangling == Mangling::Elf
+            && self.pointer_layout.is_empty()
+            && self.integer_alignments.is_empty()
+            && self.float_alignments.is_empty()
+            && self.vector_alignments.is_empty()
+            && self.aggregate_align == 0
+            && self.max_alignment == 0
+            && self.stack_align == 0
+    }
+
     /// Create the default 64-bit little-endian data layout (x86-64 Linux).
     pub fn x86_64_linux() -> Self {
         Self {

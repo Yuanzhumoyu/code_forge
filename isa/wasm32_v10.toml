@@ -22,6 +22,8 @@ prefix = "L"
 
 [abi]
 stack_align = 16
+# 无栈帧 prologue
+fp_push_bytes = 0
 [abi.frame]
 sp = "L1"
 [abi.arg_regs]

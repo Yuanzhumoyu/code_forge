@@ -256,6 +256,14 @@ impl PassManager {
                 Box::new(crate::advanced::egraph::EGraphPass::new()),
                 PassRunMode::Once,
             );
+            // Trailing DCE: collapse instructions that became dead only after
+            // the O1 DCE position (GVN/CSE/SCCP/egraph leave both Nop
+            // tombstones and indirect dead code). Keeps the optimized IR clean
+            // for whatever runs next (later O3 passes or codegen).
+            pm.add_pass(
+                Box::new(crate::scalar::dead_code::DeadCodeElimPass::new()),
+                PassRunMode::UntilFixedPoint,
+            );
         }
 
         if level >= OptimizationLevel::O3 {
@@ -275,6 +283,12 @@ impl PassManager {
             pm.add_pass(
                 Box::new(crate::loops::loop_unroll::LoopUnrollPass::new()),
                 PassRunMode::Once,
+            );
+            // Trailing DCE (see O2 note): loop transformations (ind-var
+            // simplify / unroll) are the heaviest Nop/dead-code producers.
+            pm.add_pass(
+                Box::new(crate::scalar::dead_code::DeadCodeElimPass::new()),
+                PassRunMode::UntilFixedPoint,
             );
         }
 
@@ -376,5 +390,83 @@ mod pipeline_tests {
         let r = pm.run_on_function(&mut func).unwrap();
         // const_fold should fold 3+5=8
         assert!(r.changed, "O1 pipeline should fold constants");
+    }
+
+    /// Count `Opcode::Nop` tombstones left in a function.
+    fn count_nops(func: &Function) -> usize {
+        func.dfg
+            .blocks
+            .iter()
+            .flat_map(|blk| blk.inst_order.iter())
+            .filter(|&&i| matches!(func.dfg.insts[i.0 as usize].opcode, Opcode::Nop))
+            .count()
+    }
+
+    fn build_many_ops() -> Function {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("many_ops", TypeContext::new(), sig);
+        let entry = b.create_block();
+        b.switch_to_block(entry);
+        let v1 = b.iconst_i32(1);
+        let v2 = b.iconst_i32(2);
+        let mut acc = b.iadd(v1, v2);
+        for _ in 0..19 {
+            let x = b.iconst_i32(3);
+            acc = b.iadd(acc, x);
+            acc = b.imul(acc, v1);
+        }
+        b.ret(&[acc]);
+        b.finish()
+    }
+
+    /// Tombstone hygiene: the O2/O3 pipelines leave `Nop` instructions behind
+    /// (GVN/CSE/SCCP rewrite dead instructions to Nop after DCE already ran in
+    /// O1). They are skipped by codegen, but carrying them through every later
+    /// pass + codegen costs traversal time. A trailing DCE should collapse
+    /// dead instructions that became dead only after the O1 DCE position.
+    #[test]
+    fn o2_pipeline_nop_residue() {
+        fn build_loop() -> Function {
+            let sig = FunctionSignature::new(&[(TypeId::I32, "n")], &[TypeId::I32]);
+            let mut b = FunctionBuilder::new("loop", TypeContext::new(), sig);
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "n")]);
+            let header = b.create_block();
+            let body = b.create_block();
+            let exit = b.create_block();
+            b.switch_to_block(entry);
+            let zero = b.iconst_i32(0);
+            let one = b.iconst_i32(1);
+            b.jump(header, &[zero, zero]);
+            b.switch_to_block(header);
+            let i = b.iconst_i32(0);
+            let sum = b.iconst_i32(0);
+            let cond = b.icmp(IntCC::SignedLessThan, i, params[0]);
+            b.branch(cond, body, &[], exit, &[]);
+            b.switch_to_block(body);
+            let next_sum = b.iadd(sum, i);
+            let next_i = b.iadd(i, one);
+            b.jump(header, &[next_i, next_sum]);
+            b.switch_to_block(exit);
+            b.ret(&[sum]);
+            b.finish()
+        }
+        type FunctionBuilderFn = fn() -> Function;
+        let funcs: Vec<(&str, FunctionBuilderFn)> =
+            vec![("many_ops", build_many_ops), ("loop", build_loop)];
+        for (name, build) in &funcs {
+            for level in [
+                OptimizationLevel::O1,
+                OptimizationLevel::O2,
+                OptimizationLevel::O3,
+            ] {
+                let mut f = build();
+                let pm = PassManager::for_level(level);
+                pm.run_on_function(&mut f).unwrap();
+                let nops = count_nops(&f);
+                eprintln!("{name} after {level:?}: nops = {nops}");
+                // Trailing-DCE claim: if this ever becomes > 0, the trailing
+                // DCE (or physical Nop removal) optimization has a target.
+            }
+        }
     }
 }

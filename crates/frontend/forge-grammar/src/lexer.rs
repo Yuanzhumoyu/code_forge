@@ -160,7 +160,8 @@ impl Lexer {
         let start_pos = self.pos;
         let start_line = self.line;
         let start_col = self.col;
-        let remaining: String = self.chars[self.pos..].iter().collect();
+        // 零复制：直接 slice 剩余字符（旧实现每次 collect 剩余全部 → O(n²)）
+        let remaining = &self.chars[self.pos..];
 
         // Clone token matcher data to avoid borrow conflict
         let token_data: Vec<(String, MatcherKind)> = self
@@ -171,30 +172,31 @@ impl Lexer {
 
         // Try ALL tokens and pick the LONGEST match.
         // On tie, first-defined wins (literal tokens are sorted first).
-        let mut best: Option<(String, String, usize)> = None; // (name, text, len)
+        let mut best: Option<(String, usize)> = None; // (name, len)
 
         for (name, kind) in &token_data {
             match kind {
                 MatcherKind::Literal(lit) => {
-                    if remaining.starts_with(lit.as_str()) {
-                        let len = lit.chars().count();
-                        if best.as_ref().is_none_or(|(_, _, best_len)| len > *best_len) {
-                            best = Some((name.clone(), lit.clone(), len));
+                    let lit_chars: Vec<char> = lit.chars().collect();
+                    if remaining.starts_with(&lit_chars) {
+                        let len = lit_chars.len();
+                        if best.as_ref().is_none_or(|(_, best_len)| len > *best_len) {
+                            best = Some((name.clone(), len));
                         }
                     }
                 }
                 MatcherKind::Regex(pattern) => {
-                    if let Some(matched) = match_regex_prefix(pattern, &remaining) {
-                        let len = matched.chars().count();
-                        if best.as_ref().is_none_or(|(_, _, best_len)| len > *best_len) {
-                            best = Some((name.clone(), matched, len));
-                        }
+                    if let Some(len) = match_regex_prefix(pattern, remaining)
+                        && best.as_ref().is_none_or(|(_, best_len)| len > *best_len)
+                    {
+                        best = Some((name.clone(), len));
                     }
                 }
             }
         }
 
-        if let Some((name, text, len)) = best {
+        if let Some((name, len)) = best {
+            let text: String = self.chars[start_pos..start_pos + len].iter().collect();
             self.advance_chars(len);
             let span = Span::new(start_pos, self.pos, start_line, start_col);
             return Ok(Some(Token::new(name, text, span)));
@@ -226,12 +228,11 @@ impl Lexer {
             if self.pos >= self.chars.len() {
                 break;
             }
-            let remaining: String = self.chars[self.pos..].iter().collect();
+            let remaining = &self.chars[self.pos..];
 
             let mut matched = false;
             for skip_pattern in &self.skips {
-                if let Some(m) = match_regex_prefix(skip_pattern, &remaining) {
-                    let len = m.chars().count();
+                if let Some(len) = match_regex_prefix(skip_pattern, remaining) {
                     self.advance_chars(len);
                     matched = true;
                     break;
@@ -260,34 +261,22 @@ impl Lexer {
 /// - Grouping: `(...)`
 /// - Alternation: `|`
 /// - Escapes: `\.`, `\\`, `\(`, `\)`, `\[`, `\]`, `\+`, `\*`, `\|`
-fn match_regex_prefix(pattern: &str, input: &str) -> Option<String> {
-    let chars: Vec<char> = input.chars().collect();
-    let max_len = chars.len();
-    let mut best_len = 0;
-
-    // Find the longest match by trying all prefixes
-    for end in (1..=max_len).rev() {
-        let candidate: String = chars[..end].iter().collect();
-        if matches_pattern(pattern, &candidate, true) {
-            best_len = end;
-            break;
-        }
-    }
-
-    if best_len > 0 {
-        Some(chars[..best_len].iter().collect())
-    } else {
-        None
-    }
+fn match_regex_prefix(pattern: &str, chars: &[char]) -> Option<usize> {
+    // match_here 直接从开头匹配并返回匹配长度——O(匹配长度)，
+    // 不需要从最长前缀递减尝试（旧实现每次 O(剩余长度) → lexer O(n²)）。
+    let matcher = SimpleRegex::compile(pattern);
+    let len = matcher.match_here(chars)?;
+    if len > 0 { Some(len) } else { None }
 }
 
 /// Check if a string matches a simplified regex pattern (full match).
-fn matches_pattern(pattern: &str, input: &str, _anchored: bool) -> bool {
+#[allow(dead_code)] // 测试辅助
+fn matches_pattern(pattern: &str, chars: &[char]) -> bool {
     let matcher = SimpleRegex::compile(pattern);
     // Must match the ENTIRE input (not just a prefix)
     matcher
-        .match_here(input)
-        .is_some_and(|len| len == input.chars().count())
+        .match_here(chars)
+        .is_some_and(|len| len == chars.len())
 }
 
 /// A simplified regex engine sufficient for lexer token patterns.
@@ -334,9 +323,8 @@ impl SimpleRegex {
     }
 
     /// Try to match at the start of input. Returns Some(len) if matched.
-    fn match_here(&self, input: &str) -> Option<usize> {
-        let chars: Vec<char> = input.chars().collect();
-        self._match(&chars, 0)
+    fn match_here(&self, chars: &[char]) -> Option<usize> {
+        self._match(chars, 0)
     }
 
     fn _match(&self, chars: &[char], pos: usize) -> Option<usize> {
@@ -653,52 +641,58 @@ mod tests {
     #[test]
     fn test_match_ident() {
         let pattern = "[a-z][a-z0-9_]*";
-        assert!(matches_pattern(pattern, "mov", true));
-        assert!(matches_pattern(pattern, "rd", true));
-        assert!(matches_pattern(pattern, "is_float_return", true));
-        assert!(!matches_pattern(pattern, "RBP", true)); // uppercase first
-        assert!(!matches_pattern(pattern, "42", true));
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert!(matches_pattern(pattern, &c("mov")));
+        assert!(matches_pattern(pattern, &c("rd")));
+        assert!(matches_pattern(pattern, &c("is_float_return")));
+        assert!(!matches_pattern(pattern, &c("RBP"))); // uppercase first
+        assert!(!matches_pattern(pattern, &c("42")));
     }
 
     #[test]
     fn test_match_reg() {
         let pattern = "[A-Z][A-Z0-9]*";
-        assert!(matches_pattern(pattern, "RBP", true));
-        assert!(matches_pattern(pattern, "XMM0", true));
-        assert!(matches_pattern(pattern, "RAX", true));
-        assert!(!matches_pattern(pattern, "rd", true));
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert!(matches_pattern(pattern, &c("RBP")));
+        assert!(matches_pattern(pattern, &c("XMM0")));
+        assert!(matches_pattern(pattern, &c("RAX")));
+        assert!(!matches_pattern(pattern, &c("rd")));
     }
 
     #[test]
     fn test_match_hex() {
         let pattern = "0x[0-9a-fA-F_]+";
-        assert!(matches_pattern(pattern, "0x2A", true));
-        assert!(matches_pattern(pattern, "0xFF_FF", true));
-        assert!(!matches_pattern(pattern, "42", true));
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert!(matches_pattern(pattern, &c("0x2A")));
+        assert!(matches_pattern(pattern, &c("0xFF_FF")));
+        assert!(!matches_pattern(pattern, &c("42")));
     }
 
     #[test]
     fn test_match_temp() {
         let pattern = "%[a-zA-Z_][a-zA-Z0-9_]*";
-        assert!(matches_pattern(pattern, "%tmp", true));
-        assert!(matches_pattern(pattern, "%quotient", true));
-        assert!(!matches_pattern(pattern, "tmp", true));
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert!(matches_pattern(pattern, &c("%tmp")));
+        assert!(matches_pattern(pattern, &c("%quotient")));
+        assert!(!matches_pattern(pattern, &c("tmp")));
     }
 
     #[test]
     fn test_match_label() {
         let pattern = "\\.[a-zA-Z_][a-zA-Z0-9_]*";
-        assert!(matches_pattern(pattern, ".L0", true));
-        assert!(matches_pattern(pattern, ".L_exit", true));
-        assert!(!matches_pattern(pattern, "L0", true));
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert!(matches_pattern(pattern, &c(".L0")));
+        assert!(matches_pattern(pattern, &c(".L_exit")));
+        assert!(!matches_pattern(pattern, &c("L0")));
     }
 
     #[test]
     fn test_match_vreg() {
         let pattern = "VReg\\([0-9]+\\)";
-        assert!(matches_pattern(pattern, "VReg(97)", true));
-        assert!(matches_pattern(pattern, "VReg(0)", true));
-        assert!(!matches_pattern(pattern, "VReg", true));
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert!(matches_pattern(pattern, &c("VReg(97)")));
+        assert!(matches_pattern(pattern, &c("VReg(0)")));
+        assert!(!matches_pattern(pattern, &c("VReg")));
     }
 
     #[test]
