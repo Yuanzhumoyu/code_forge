@@ -1123,11 +1123,14 @@ impl TargetDecoder for Decoder {
   对非 16 GPR 的 ISA 无法逆映射）。
 - **排除变体**：fixup（分支目标需 CFG）、`BlockTarget`/`MemRef`/`F32`/`F64` 字段
   （Phase 2）；`Opsize` 隐式字段豁免（不占编码位）。
-- **Phase 2（未实现）**：x86 变长 `@modrm`/前缀/ModRM-SIB 与 `@sse_*`/`@vex_*` 等
-  原语解码——当前 x86/wasm32 的 `Primitive`/`Segmented` 编码无解码臂，decode 报
+- **Phase 2（部分实现）**：x86 变长原语子集——`@modrm`/`@op_rm`（0x66 前缀 + REX
+  W/R/B + 可选 escape + opcode + ModRM mod=11 寄存器形式）、`@push_reg`/`@pop_reg`、
+  `@mov_imm64`、`@setcc`。剩余 Phase 2b：内存寻址（mod≠3/SIB）、`@sse_*`/`@vex_*`/
+  `@leb128`/`@call_reloc` 等原语——这些编码 decode 报
   `DecodeError::Other("no matching instruction")`。
 - 回归测试：`crates/backend/forge-codegen/tests/decoder_smoke.rs`（riscv64 addi/add/fadd.s、
-  aarch64 mov 的 encode→decode→encode 字节往返 + minimal_sd 负例）。
+  aarch64 mov、x86 movrr(含 REX 扩展)/mov_imm/push/pop 的 encode→decode→encode 字节往返
+  + minimal_sd 负例）。
 
 - `Disassembler::disassemble(&Inst) -> String`：按 `asm` 模板格式化
   （`{field}` → Debug、`{field:x}` → 小写十六进制；`Unknown` → `"<unknown>"`）。
