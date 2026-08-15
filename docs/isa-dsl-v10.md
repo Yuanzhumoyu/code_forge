@@ -1,5 +1,11 @@
 # ISA-DSL v10 — 语法规范与使用方法
 
+> ## ⚠️ 历史文档（已弃用）
+> DSL 已演进到 **v11**（`crates/frontend/forge-dsl/src/lib.rs` 头注释、`isa/x86_v10.toml`
+> `version = "11.0"`），本文描述的 `[inst.*.emit]` 模板、`fields=[{name,type}]` 数组、
+> `InstructionSet` trait、`isas_from_file!` 宏等均已删除或改名。
+> **现行规范见 [`docs/isa-dsl.md`](./isa-dsl.md)（v11，1624 行）**。本文件仅作历史演进参考。
+
 ## 目录
 
 1. [概述](#概述)

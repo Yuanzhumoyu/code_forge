@@ -30,6 +30,10 @@
 
 ## 1. P0 — forge-grammar 文本解析 O(n³) 病态复杂度
 
+> **✅ 已解决（2026-08-03，见 §9 实施记录）**：根因实为 lexer O(n²)（非文法 O(n³)）——
+> 零拷贝 + match_here 后 simple_add 13ms→317µs；随后 logos+lalrpop 重写 → 9.34µs。
+> 本节为修复前分析，保留作历史记录。
+
 **证据**（`ir_parse` 组，release，median）：
 
 | 样本 | 指令数 | 块数 | 时间 |
