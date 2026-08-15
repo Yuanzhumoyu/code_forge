@@ -308,7 +308,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
         self.compiled.is_empty()
-}
+    }
 
     // --- 内部方法 ---
 

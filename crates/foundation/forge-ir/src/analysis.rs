@@ -10,7 +10,6 @@ use std::collections::HashMap;
 // CFG 辅助函数
 // ============================================================
 
-
 pub fn block_successors_in_func(func: &Function, block: Block) -> Vec<Block> {
     func.dfg
         .block_terminator(block)
@@ -93,8 +92,8 @@ impl DominatorTree {
 
     pub fn block_count(&self) -> usize {
         self.block_count
-}
     }
+}
 fn compute_postorder(func: &Function, entry: Block) -> Vec<Block> {
     let mut result = Vec::new();
     let mut visited = std::collections::HashSet::<Block>::new();

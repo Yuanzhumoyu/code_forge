@@ -1631,8 +1631,7 @@ fn roundtrip_all_assembler_cases() {
             || name.contains("redefinition"))
             && (has_asm_run || is_split)
     };
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/llvm_assembler_cases");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/llvm_assembler_cases");
     let mut checked = 0usize;
     let mut skipped = 0usize;
     let mut failures = Vec::new();

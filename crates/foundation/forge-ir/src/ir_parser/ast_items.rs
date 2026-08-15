@@ -371,7 +371,12 @@ impl ConstExpr {
             // 第二十九轮:原无前缀致 `add (5, -5)` 丢类型,reparse 拒;
             // 操作数与结果同类型（LLVM 语义）;op_ty Void 占位（顶层
             // init 无前缀形态）时仍无前缀）
-            ConstExpr::Binary { op, flags, lhs, rhs } if !matches!(op_ty, ParsedType::Void) => {
+            ConstExpr::Binary {
+                op,
+                flags,
+                lhs,
+                rhs,
+            } if !matches!(op_ty, ParsedType::Void) => {
                 let mut out = format!("{} {op}", fmt_parsed_type(op_ty));
                 for f in flags {
                     out.push(' ');

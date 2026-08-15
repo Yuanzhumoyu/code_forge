@@ -1,4 +1,4 @@
-﻿//! x86_64 浮点指令测试（test-float feature 门控）。
+//! x86_64 浮点指令测试（test-float feature 门控）。
 //! 从根 crate `tests/jit_integration.rs` 迁移的代表性浮点测试。
 
 #![cfg(test)]
@@ -105,7 +105,8 @@ fn run_fcmp_i64(name: &str, cond: FloatCC, a: f64, b: f64) -> i64 {
     let func = fb.finish().expect("build");
     let compiled = crate::exec::harness::compile_x86_64(name, &func);
     assert!(!compiled.code.is_empty(), "{name}: empty code");
-    let mem = code_forge::mem::ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
+    let mem =
+        code_forge::mem::ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
     let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).unwrap() };
     f()
 }
@@ -122,14 +123,26 @@ fn test_fcmp_nan_semantics() {
     // 有序条件：NaN 参与 → 0
     assert_eq!(run_fcmp_i64("fcmp_nan_oeq", FloatCC::Equal, nan, one), 0);
     assert_eq!(run_fcmp_i64("fcmp_nan_olt", FloatCC::LessThan, nan, one), 0);
-    assert_eq!(run_fcmp_i64("fcmp_nan_ole", FloatCC::LessThanOrEqual, nan, one), 0);
-    assert_eq!(run_fcmp_i64("fcmp_nan_ogt", FloatCC::GreaterThan, nan, one), 0);
-    assert_eq!(run_fcmp_i64("fcmp_nan_oge", FloatCC::GreaterThanOrEqual, nan, one), 0);
+    assert_eq!(
+        run_fcmp_i64("fcmp_nan_ole", FloatCC::LessThanOrEqual, nan, one),
+        0
+    );
+    assert_eq!(
+        run_fcmp_i64("fcmp_nan_ogt", FloatCC::GreaterThan, nan, one),
+        0
+    );
+    assert_eq!(
+        run_fcmp_i64("fcmp_nan_oge", FloatCC::GreaterThanOrEqual, nan, one),
+        0
+    );
     assert_eq!(run_fcmp_i64("fcmp_nan_one", FloatCC::NotEqual, nan, one), 0);
     assert_eq!(run_fcmp_i64("fcmp_nan_ord", FloatCC::Ordered, nan, one), 0);
 
     // 无序-or 条件：NaN 参与 → 1
-    assert_eq!(run_fcmp_i64("fcmp_nan_uno", FloatCC::Unordered, nan, one), 1);
+    assert_eq!(
+        run_fcmp_i64("fcmp_nan_uno", FloatCC::Unordered, nan, one),
+        1
+    );
     assert_eq!(run_fcmp_i64("fcmp_nan_ueq", FloatCC::Ueq, nan, one), 1);
     assert_eq!(run_fcmp_i64("fcmp_nan_une", FloatCC::Une, nan, one), 1);
     assert_eq!(run_fcmp_i64("fcmp_nan_ult", FloatCC::Ult, nan, one), 1);
@@ -144,6 +157,9 @@ fn test_fcmp_nan_semantics() {
     // 正常值 sanity：oeq(1,1)=1、ult(0.5,1)=1、NaN vs NaN
     assert_eq!(run_fcmp_i64("fcmp_oeq_ok", FloatCC::Equal, 1.0, 1.0), 1);
     assert_eq!(run_fcmp_i64("fcmp_ult_ok", FloatCC::Ult, 0.5, 1.0), 1);
-    assert_eq!(run_fcmp_i64("fcmp_nan_nan_oeq", FloatCC::Equal, nan, nan), 0);
+    assert_eq!(
+        run_fcmp_i64("fcmp_nan_nan_oeq", FloatCC::Equal, nan, nan),
+        0
+    );
     assert_eq!(run_fcmp_i64("fcmp_nan_nan_ueq", FloatCC::Ueq, nan, nan), 1);
 }

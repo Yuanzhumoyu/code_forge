@@ -345,8 +345,7 @@ fn fcmp_unsupported_condition() {
         let src = format!(
             "define i1 @f(double %a, double %b) {{\n  %e:\n    %r = fcmp {cond} double %a, double %b\n    ret i1 %r\n}}\n"
         );
-        let f = parse_function(&src)
-            .unwrap_or_else(|e| panic!("fcmp {cond} 应解析成功: {e}"));
+        let f = parse_function(&src).unwrap_or_else(|e| panic!("fcmp {cond} 应解析成功: {e}"));
         let inst = &f.dfg.insts[0];
         assert!(
             matches!(inst.opcode, Opcode::Fcmp { .. }),

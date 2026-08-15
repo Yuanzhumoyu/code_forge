@@ -368,7 +368,8 @@ fn map_backend_opcode(maps_to: &str) -> TokenStream {
         "mem.gep" => quote! { ::forge_hir::ir_opcode::Opcode::GetElementPtr },
         // 未知 maps_to 静默落 Nop 曾导致 HIR 图丢失指令（审计 P3）——宏展开期即报错
         _ => {
-            let msg = format!("unknown maps_to dialect: `{maps_to}`（合法前缀：arith.* / cf.* / mem.*）");
+            let msg =
+                format!("unknown maps_to dialect: `{maps_to}`（合法前缀：arith.* / cf.* / mem.*）");
             quote! { compile_error!(#msg); }
         }
     }

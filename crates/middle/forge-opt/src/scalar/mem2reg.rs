@@ -298,10 +298,7 @@ mod tests {
             .iter()
             .filter(|i| !matches!(i.opcode, crate::Opcode::Nop))
             .count();
-        assert!(
-            live_after < live_before,
-            "Instructions should be removed"
-        );
+        assert!(live_after < live_before, "Instructions should be removed");
     }
 
     #[test]

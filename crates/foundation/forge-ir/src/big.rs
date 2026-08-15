@@ -59,7 +59,6 @@ impl Big {
 }
 
 impl Big {
-
     pub fn from_f64(value: f64) -> Option<Self> {
         // 处理特殊值
         if value.is_nan() {
@@ -103,8 +102,8 @@ impl Big {
                 Real::from_parts(-sig, exp)
             };
             Some(Big::Float(result))
-    }
         }
+    }
     /// 判断是否为零。
     pub const fn is_zero(&self) -> bool {
         match self {
@@ -133,9 +132,9 @@ impl Big {
     /// 判断是否为负数（Float 变体;整数恒 false）。
     pub fn is_neg(&self) -> bool {
         match self {
-            Big::Signed(i) =>i.is_negative(),
+            Big::Signed(i) => i.is_negative(),
             Big::Float(f) => f.is_negative(),
-            _=> false,
+            _ => false,
         }
     }
 }

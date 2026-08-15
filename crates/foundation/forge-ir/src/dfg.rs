@@ -621,6 +621,4 @@ mod tests {
         let def = dfg.value_def(results[0]).unwrap();
         assert!(matches!(def, ValueDef::Inst(i, 0) if i.0 == inst.0));
     }
-
-
 }

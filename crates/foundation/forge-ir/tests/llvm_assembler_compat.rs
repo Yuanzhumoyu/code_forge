@@ -25,7 +25,7 @@
 //!   - `define internal` linkage 前缀、`dso_local ifunc`、declare 前缀 metadata
 //!     （LALR 本质冲突，见附录 §6）
 //!   - 裸全局引用 init（`@p = global ptr @h`——L6，LALR 2-lookahead 歧义）
-//! 
+//!
 //! 本轮已解锁（第十轮，57→71）：单类型第二操作数（`add i32 %a, %b`）、数字块
 //! id/字符串标签（block-labels）、nneg/disjoint/samesign/nusw/inrange 标志、二元
 //! 常量折叠表达式（add/trunc/zext/sext）、向量常量表达式（GEP 向量索引 + lane

@@ -1,4 +1,4 @@
-﻿//! 代码生成器 — 从 IsaModel 生成 Rust TokenStream。
+//! 代码生成器 — 从 IsaModel 生成 Rust TokenStream。
 //!
 //! 所有生成内容来自 TOML 模型字段，零硬编码。
 
@@ -31,11 +31,7 @@ pub(crate) fn flush_emit_stmts(
 
 /// 伪指令生成共享骨架（双轨生成器共用——cst_codegen.rs 与 codegen/mod.rs
 /// 的 5 分支 match 逐字重复,第四十五轮提取）。
-pub(crate) fn gen_pseudo_inst(
-    name: &str,
-    model: &IsaModel,
-    stmts: &mut Vec<TokenStream>,
-) {
+pub(crate) fn gen_pseudo_inst(name: &str, model: &IsaModel, stmts: &mut Vec<TokenStream>) {
     match name {
         "push_callee" => stmts.push(gen_push_callee(model, true)),
         "pop_callee" => stmts.push(gen_push_callee(model, false)),
@@ -854,7 +850,10 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
     // 约定一致；from_index 用 fpr_offset+i 对非 16 GPR 的 ISA 无法逆映射，解码
     // 不依赖它）。GPR 字段直接 from_index（to_index(Xn)=n 可逆）。
     let fpr_variants: Vec<String> = match model.reg.get("xmm").or_else(|| model.reg.get("float")) {
-        Some(g) => group_variants(g).into_iter().map(|v| v.to_string()).collect(),
+        Some(g) => group_variants(g)
+            .into_iter()
+            .map(|v| v.to_string())
+            .collect(),
         None => Vec::new(),
     };
     let fpr_match_arms: Vec<TokenStream> = fpr_variants
@@ -952,7 +951,9 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
     };
 
     for (inst_name, inst) in &model.inst {
-        let Some(enc_str) = &inst.encoding else { continue };
+        let Some(enc_str) = &inst.encoding else {
+            continue;
+        };
 
         let field_map: std::collections::BTreeMap<String, &FieldType> = inst
             .fields
@@ -960,9 +961,10 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
             .map(|f| (f.name.clone(), &f.field_type))
             .collect();
         // 不可逆解码的字段类型 → 跳过该变体（MemRef 由 @modrm_mem 提供 base/offset 可还原）
-        if field_map.values().any(|ft| {
-            matches!(ft, FieldType::BlockTarget | FieldType::F32 | FieldType::F64)
-        }) {
+        if field_map
+            .values()
+            .any(|ft| matches!(ft, FieldType::BlockTarget | FieldType::F32 | FieldType::F64))
+        {
             continue;
         }
 
@@ -973,7 +975,11 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
         let vn = pascal_ident(inst_name);
         match parsed {
             // ── Phase 1：定宽编码 ──
-            ParsedEncoding::Fixed { width, fields, fixup } => {
+            ParsedEncoding::Fixed {
+                width,
+                fields,
+                fixup,
+            } => {
                 if fixup.is_some() || fields.is_empty() {
                     continue;
                 }
@@ -981,7 +987,9 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
                 let read_expr: TokenStream = match width {
                     8 => quote! { bytes[0] as u64 },
                     16 => quote! { u16::from_le_bytes([bytes[0], bytes[1]]) as u64 },
-                    32 => quote! { u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64 },
+                    32 => {
+                        quote! { u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64 }
+                    }
                     64 => quote! {
                         u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3],
                                              bytes[4], bytes[5], bytes[6], bytes[7]]) as u64
@@ -1071,7 +1079,8 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
                     &vn,
                     &construct,
                     &raw_fpr_expr,
-                )? else {
+                )?
+                else {
                     continue;
                 };
                 arms.push(arm);
@@ -1393,8 +1402,16 @@ where
                 return Ok(None);
             }
             let opcode = lit(opcode_arg) as u8;
-            let prefix: u8 = if !prefix_arg.is_empty() { lit(prefix_arg) as u8 } else { 0 };
-            let escape: u8 = if !escape_arg.is_empty() { lit(escape_arg) as u8 } else { 0 };
+            let prefix: u8 = if !prefix_arg.is_empty() {
+                lit(prefix_arg) as u8
+            } else {
+                0
+            };
+            let escape: u8 = if !escape_arg.is_empty() {
+                lit(escape_arg) as u8
+            } else {
+                0
+            };
             let opsize_init: TokenStream = if is_lit(opsize_arg) {
                 let v = lit(opsize_arg) as u32;
                 quote! { #v }
@@ -1499,7 +1516,11 @@ where
                 return Ok(None);
             }
             let opcode = lit(opcode_arg) as u8;
-            let prefix: u8 = if !prefix_arg.is_empty() { lit(prefix_arg) as u8 } else { 0 };
+            let prefix: u8 = if !prefix_arg.is_empty() {
+                lit(prefix_arg) as u8
+            } else {
+                0
+            };
             let rex_mandatory = name == "sse_rr_w";
             let is_opsize = name == "sse_rr_opsize";
             let has_3a = name == "sse_rr_3a";
@@ -1567,19 +1588,22 @@ where
         //    C4 + VEX2 + VEX3 + opcode + ModRM [imm8]（AVX 三操作数）
         "vex_rrvvv" | "vex_rrvvv_avx2" | "vex_rrvvv_imm" => {
             // args: map pp w l opcode reg rm vv has_src [imm]
-            let (map_arg, pp_arg, w_arg, l_arg, opcode_arg, reg_arg, rm_arg, vv_arg, has_src_arg) =
-                (
-                    arg(0),
-                    arg(1),
-                    arg(2),
-                    arg(3),
-                    arg(4),
-                    arg(5),
-                    arg(6),
-                    arg(7),
-                    arg(8),
-                );
-            let imm_arg = if name == "vex_rrvvv_imm" { Some(arg(9)) } else { None };
+            let (map_arg, pp_arg, w_arg, l_arg, opcode_arg, reg_arg, rm_arg, vv_arg, has_src_arg) = (
+                arg(0),
+                arg(1),
+                arg(2),
+                arg(3),
+                arg(4),
+                arg(5),
+                arg(6),
+                arg(7),
+                arg(8),
+            );
+            let imm_arg = if name == "vex_rrvvv_imm" {
+                Some(arg(9))
+            } else {
+                None
+            };
             let has_src = is_lit(has_src_arg) && lit(has_src_arg) != 0;
             if !is_lit(map_arg)
                 || !is_lit(pp_arg)

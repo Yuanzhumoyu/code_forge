@@ -110,7 +110,6 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
     Ok(result)
 }
 
-
 /// Attempt constant folding for an instruction. If all operands are known constants, evaluate.
 /// Returns `Some((big_value, ty))` if fold succeeded.
 fn try_const_fold(

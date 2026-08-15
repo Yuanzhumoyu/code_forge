@@ -358,7 +358,6 @@ impl TypeStore {
         )
     }
 
-
     pub fn struct_named(&mut self, name: &str, fields: Vec<TypeField>, packed: bool) -> TypeId {
         let name_id = self.strings.intern(name);
         let key = TypeKey::StructName(name_id);
@@ -481,7 +480,6 @@ impl TypeStore {
     pub fn is_void(&self, id: TypeId) -> bool {
         id == self.void_ty
     }
-
 
     // === 大小 / 对齐 ===
 
