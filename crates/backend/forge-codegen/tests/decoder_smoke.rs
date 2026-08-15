@@ -4,8 +4,6 @@
 //! 再编码，断言字节一致（避免 Reg::from_index 视图选择差异干扰断言）。
 
 use forge_codegen::machine::assembler::TargetAssembler;
-use forge_codegen::machine::decoder::TargetDecoder;
-use forge_codegen::machine::encoder::TargetEncoder;
 use forge_codegen::machine::target::TargetMachine;
 
 fn roundtrip_asm<M: TargetMachine>(

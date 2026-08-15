@@ -1,4 +1,4 @@
-//! 代码生成器 — 从 IsaModel 生成 Rust TokenStream。
+﻿//! 代码生成器 — 从 IsaModel 生成 Rust TokenStream。
 //!
 //! 所有生成内容来自 TOML 模型字段，零硬编码。
 
@@ -917,10 +917,7 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
                 FieldType::Ireg | FieldType::GprReg => quote! {
                     <Reg as forge_ir::PhysReg>::from_index(#bind_ident as u32, __DEFAULT_GPR_CLASS)
                 },
-                FieldType::Freg | FieldType::XmmReg => {
-                    let e = fpr_map(&bind_ident);
-                    e
-                }
+                FieldType::Freg | FieldType::XmmReg => fpr_map(&bind_ident),
                 FieldType::I8 => quote! { #bind_ident as i8 },
                 FieldType::I16 => quote! { #bind_ident as i16 },
                 FieldType::I32 => quote! { #bind_ident as i32 },
@@ -1016,7 +1013,7 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
                             extracts.entry(name.clone()).or_default().push(contrib);
                         }
                         BitFieldValue::Hex(v) => {
-                            let v64 = *v as u64;
+                            let v64 = *v;
                             let expected = if shift == 0 {
                                 quote! { (#v64 & #mask_ts) }
                             } else {
@@ -1387,8 +1384,8 @@ where
             let prefix_arg = arg(prefix_idx);
             let escape_arg = arg(escape_idx);
             if !is_lit(opcode_arg)
-                || (prefix_arg != "" && !is_lit(prefix_arg))
-                || (escape_arg != "" && !is_lit(escape_arg))
+                || (!prefix_arg.is_empty() && !is_lit(prefix_arg))
+                || (!escape_arg.is_empty() && !is_lit(escape_arg))
                 || (!is_lit(opsize_arg) && !field_map.contains_key(opsize_arg))
                 || !field_map.contains_key(reg_arg)
                 || !field_map.contains_key(rm_arg)
@@ -1396,8 +1393,8 @@ where
                 return Ok(None);
             }
             let opcode = lit(opcode_arg) as u8;
-            let prefix: u8 = if prefix_arg != "" { lit(prefix_arg) as u8 } else { 0 };
-            let escape: u8 = if escape_arg != "" { lit(escape_arg) as u8 } else { 0 };
+            let prefix: u8 = if !prefix_arg.is_empty() { lit(prefix_arg) as u8 } else { 0 };
+            let escape: u8 = if !escape_arg.is_empty() { lit(escape_arg) as u8 } else { 0 };
             let opsize_init: TokenStream = if is_lit(opsize_arg) {
                 let v = lit(opsize_arg) as u32;
                 quote! { #v }
@@ -1493,7 +1490,7 @@ where
                 }
             };
             if !is_lit(opcode_arg)
-                || (prefix_arg != "" && !is_lit(prefix_arg))
+                || (!prefix_arg.is_empty() && !is_lit(prefix_arg))
                 || !field_map.contains_key(reg_arg)
                 || !field_map.contains_key(rm_arg)
                 || (imm_arg.is_some() && !field_map.contains_key(imm_arg.unwrap()))
@@ -1502,7 +1499,7 @@ where
                 return Ok(None);
             }
             let opcode = lit(opcode_arg) as u8;
-            let prefix: u8 = if prefix_arg != "" { lit(prefix_arg) as u8 } else { 0 };
+            let prefix: u8 = if !prefix_arg.is_empty() { lit(prefix_arg) as u8 } else { 0 };
             let rex_mandatory = name == "sse_rr_w";
             let is_opsize = name == "sse_rr_opsize";
             let has_3a = name == "sse_rr_3a";

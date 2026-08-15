@@ -1,4 +1,4 @@
-//! x86_64 JIT 集成测试（从根 tests/jit_integration.rs 整体迁移，156 条）。
+﻿//! x86_64 JIT 集成测试（从根 tests/jit_integration.rs 整体迁移，156 条）。
 //!
 //! 验证指令通过 编译→JIT→执行 的完整管线。
 
@@ -5643,7 +5643,7 @@ fn test_fcmp_ordered() {
     assert_eq!(r, 42);
     // Ordered(NaN, 1) = 0
     let r2 = run_test("fcmp_ord_nan", |b| {
-        let nan = b.fconst_f64(f64::NAN);
+        let nan = b.fconst_f64(f64::from_bits(0x7FF8_0000_0000_0000)); // f64::NAN 模块常量弃用
         let one = b.fconst_f64(1.0);
         let cond = b.fcmp(FloatCC::Ordered, nan, one);
         let c41 = b.iconst_i32(41);
@@ -5656,7 +5656,7 @@ fn test_fcmp_ordered() {
 fn test_fcmp_unordered() {
     // Unordered(NaN, 1) = 1
     let r = run_test("fcmp_uno", |b| {
-        let nan = b.fconst_f64(f64::NAN);
+        let nan = b.fconst_f64(f64::from_bits(0x7FF8_0000_0000_0000)); // f64::NAN 模块常量弃用
         let one = b.fconst_f64(1.0);
         let cond = b.fcmp(FloatCC::Unordered, nan, one);
         let c41 = b.iconst_i32(41);

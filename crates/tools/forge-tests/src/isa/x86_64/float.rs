@@ -1,4 +1,4 @@
-//! x86_64 浮点指令测试（test-float feature 门控）。
+﻿//! x86_64 浮点指令测试（test-float feature 门控）。
 //! 从根 crate `tests/jit_integration.rs` 迁移的代表性浮点测试。
 
 #![cfg(test)]
@@ -116,7 +116,7 @@ fn run_fcmp_i64(name: &str, cond: FloatCC, a: f64, b: f64) -> i64 {
 /// （实际是 ueq/ult/ule 语义）——测试固定 NaN 输入验证修正。
 #[test]
 fn test_fcmp_nan_semantics() {
-    let nan = f64::NAN;
+    let nan = f64::from_bits(0x7FF8_0000_0000_0000);
     let one = 1.0f64;
 
     // 有序条件：NaN 参与 → 0

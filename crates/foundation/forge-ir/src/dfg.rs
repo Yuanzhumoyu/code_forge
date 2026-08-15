@@ -538,6 +538,7 @@ mod tests {
         (TypeId(2), TypeId(2), TypeId(1))
     }
 
+    #[test] // 恢复丢失的 #[test]（v14 重构时属性遗失，clippy dead_code 暴露）
     fn test_make_block() {
         let mut dfg = DataFlowGraph::new();
         let b = dfg.make_block();
@@ -549,6 +550,7 @@ mod tests {
     }
 
     /// block_insts_mut：按 inst_order 可变迭代，跳过 Nop 墓碑。
+    #[test]
     fn test_block_insts_mut() {
         let mut dfg = DataFlowGraph::new();
         let b = dfg.make_block();
@@ -591,6 +593,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn test_make_block_with_params() {
         let mut dfg = DataFlowGraph::new();
         let (i32_ty, _, _) = test_types();
@@ -600,6 +603,7 @@ mod tests {
         assert!(matches!(v0, ValueDef::Param(b, 0) if b.0 == block.0));
     }
 
+    #[test]
     fn test_make_inst() {
         let mut dfg = DataFlowGraph::new();
         let (i32_ty, _, _) = test_types();

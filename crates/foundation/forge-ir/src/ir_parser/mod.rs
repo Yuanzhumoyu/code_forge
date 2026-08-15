@@ -22,7 +22,9 @@ lalrpop_mod!(
         unused_variables,
         unreachable_patterns,
         clippy::too_many_arguments,
-        unused_mut
+        unused_mut,
+        clippy::unnecessary_to_owned,
+        clippy::unnecessary_cast
     )]
     pub grammar,
     "/ir_parser/grammar.rs"
