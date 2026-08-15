@@ -783,14 +783,8 @@ mod tests {
 
         // branch
         let mut branch_attrs = HashMap::new();
-        branch_attrs.insert(
-            sym_intern("then_block"),
-            AttrValue::Block(Block(then_blk.0)),
-        );
-        branch_attrs.insert(
-            sym_intern("else_block"),
-            AttrValue::Block(Block(else_blk.0)),
-        );
+        branch_attrs.insert(sym_intern("then_block"), AttrValue::BlockId(then_blk));
+        branch_attrs.insert(sym_intern("else_block"), AttrValue::BlockId(else_blk));
         let n_branch = graph
             .create_node(atom::cf::branch(), &[v_cmp], branch_attrs, &[])
             .unwrap();

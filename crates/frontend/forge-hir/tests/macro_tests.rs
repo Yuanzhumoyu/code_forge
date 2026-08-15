@@ -294,11 +294,11 @@ fn test_e2e_if_else() {
     let mut branch_attrs = std::collections::HashMap::new();
     branch_attrs.insert(
         forge_hir::attr::sym_intern("then_block"),
-        forge_hir::AttrValue::Block(forge_ir::Block(then_blk.0)),
+        forge_hir::AttrValue::BlockId(then_blk),
     );
     branch_attrs.insert(
         forge_hir::attr::sym_intern("else_block"),
-        forge_hir::AttrValue::Block(forge_ir::Block(else_blk.0)),
+        forge_hir::AttrValue::BlockId(else_blk),
     );
     let nb = graph
         .create_node(forge_hir::atom::cf::branch(), &[vc], branch_attrs, &[])
