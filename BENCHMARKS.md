@@ -731,7 +731,7 @@ IR 构建与解析公共热点做了一轮优化。方法：先跑全量基准�
 
 ### 验证
 
-- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 235、forge-opt 91、forge-codegen 116+12+15+8、forge-tests 140 含 298 条 JIT 执行用例迁移集等）。
+- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 239、forge-opt 91、forge-codegen 116+12+15+8+12、forge-tests 140 含 298 条 JIT 执行用例迁移集等）。
 - `cargo check -p forge-ir -p forge-opt -p forge-codegen`：无警告。
 
 ---
