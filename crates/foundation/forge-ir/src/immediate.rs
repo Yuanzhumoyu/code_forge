@@ -25,26 +25,14 @@ pub enum Immediate {
     Type(TypeId),
     /// Interned 字符串。
     String(InternedStr),
+    /// 聚合常量引用（3.1：extractvalue/insertvalue 的聚合字面量操作数）。
+    Agg(AggId),
 }
 
 impl Immediate {
-    pub fn as_i64(&self) -> Option<i64> {
-        match self {
-            Immediate::Int(v) => Some(*v),
-            _ => None,
-        }
-    }
-
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Immediate::Uint(v) => Some(*v),
-            _ => None,
-        }
-    }
-
-    pub fn as_block(&self) -> Option<Block> {
-        match self {
-            Immediate::Block(b) => Some(*b),
             _ => None,
         }
     }
@@ -114,9 +102,9 @@ mod tests {
     #[test]
     fn test_int_immediate() {
         let imm = Immediate::Int(42);
-        assert_eq!(imm.as_i64(), Some(42));
+        assert!(matches!(imm, Immediate::Int(42)));
         assert_eq!(imm.as_u64(), None);
-        assert!(imm.as_block().is_none());
+        assert!(!matches!(imm, Immediate::Block(_)));
         assert!(imm.as_type().is_none());
     }
 
@@ -124,14 +112,14 @@ mod tests {
     fn test_uint_immediate() {
         let imm = Immediate::Uint(99);
         assert_eq!(imm.as_u64(), Some(99));
-        assert_eq!(imm.as_i64(), None);
+        assert!(!matches!(imm, Immediate::Int(_)));
     }
 
     #[test]
     fn test_block_immediate() {
         let imm = Immediate::Block(Block(5));
-        assert_eq!(imm.as_block(), Some(Block(5)));
-        assert!(imm.as_i64().is_none());
+        assert!(matches!(imm, Immediate::Block(Block(5))));
+        assert!(!matches!(imm, Immediate::Int(_)));
     }
 
     #[test]
@@ -143,13 +131,13 @@ mod tests {
     #[test]
     fn test_from_i64() {
         let imm: Immediate = 42i64.into();
-        assert_eq!(imm.as_i64(), Some(42));
+        assert!(matches!(imm, Immediate::Int(42)));
     }
 
     #[test]
     fn test_from_block() {
         let imm: Immediate = Block(3).into();
-        assert_eq!(imm.as_block(), Some(Block(3)));
+        assert!(matches!(imm, Immediate::Block(Block(3))));
     }
 
     #[test]

@@ -7,11 +7,11 @@
 //! - 基本类型预填充为固定索引
 
 use super::data_layout::DataLayout;
-use super::entity::SigRef;
 use super::entity::TypeId;
+use super::entity::{Endianness, SigRef};
+use super::imm_str::ImmStr;
 use super::string_pool::InternedStr;
 use super::string_pool::StringPool;
-use crate::big::FloatFormat;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -23,7 +23,7 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypeEntry {
     /// 任意位宽整数: i1 (bool), i8, i32, i64...
-    Int { bits: u16 },
+    Int { bits: u32 },
 
     /// IEEE 754 浮点: f16, f32, f64, f128
     Float { bits: u16 },
@@ -66,6 +66,10 @@ pub enum TypeEntry {
 
     /// 元数据引用类型 — 用于 metadata 值的类型标记
     Metadata,
+
+    /// 不透明占位类型（LLVM `opaque`——容器外类型，无大小；
+    /// 只能作占位，load/store 目标报错）
+    Opaque,
 }
 
 /// 结构体字段。
@@ -95,7 +99,7 @@ impl TypeField {
 /// 类型去重键 — 匿名类型按结构去重，命名类型按名去重。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum TypeKey {
-    IntBits(u16),
+    IntBits(u32),
     FloatBits(u16),
     BFloatBits(u16),
     Vector(TypeId, u32),
@@ -104,9 +108,9 @@ enum TypeKey {
     StructName(InternedStr),
     StructAnon(Vec<TypeId>, bool), // (field_types, is_packed)
     Pointer(u32),
-    Function(Vec<TypeId>, Vec<TypeId>, bool),
     Token,
     Metadata,
+    Opaque,
 }
 
 /// 类型存储 — 全局类型 interner。
@@ -123,6 +127,9 @@ pub struct TypeStore {
 
     /// 字符串 interner — 用于 struct 名称、字段名、参数名等
     pub strings: StringPool,
+
+    /// 文本层命名类型（LLVM：`%struct.X = type {...}` → 名字 → TypeId）。
+    named_types: HashMap<ImmStr, TypeId>,
 
     /// 函数签名存储 — 通过 SigRef 引用
     signatures: Vec<FunctionSignature>,
@@ -154,6 +161,7 @@ impl TypeStore {
             entries: Vec::with_capacity(64),
             dedup: HashMap::with_capacity(64),
             strings: StringPool::new(),
+            named_types: HashMap::new(),
             signatures: Vec::new(),
             data_layout,
             void_ty: TypeId(0),
@@ -183,6 +191,41 @@ impl TypeStore {
         // 索引 8: 指针 (地址空间 0)
         store.ptr_ty = store.raw_insert(TypeEntry::Pointer { addr_space: 0 }, TypeKey::Pointer(0));
 
+        // 索引 9: 保留空洞（TypeId(9) 无常量引用；占位防 get() 越界，不进 dedup）
+        debug_assert_eq!(store.entries.len(), 9, "reserved hole must stay at index 9");
+        store.entries.push(TypeEntry::Int { bits: 0 });
+
+        // 索引 10-12: 扩展标量（统一预注册，保证 TypeId 常量与 entries 索引对齐，
+        // 消除 get(I128/F16/F128) 越界）。
+        store.raw_insert(TypeEntry::Int { bits: 128 }, TypeKey::IntBits(128));
+        store.raw_insert(TypeEntry::Float { bits: 16 }, TypeKey::FloatBits(16));
+        store.raw_insert(TypeEntry::Float { bits: 128 }, TypeKey::FloatBits(128));
+
+        // 索引 13-15: 内建向量 <2 x f32>/<4 x f32>/<8 x f32>。
+        // 与 x86 PS 指令族 f32×4 语义对齐；RegClass::from_type_id 已有
+        // V64/V128/V256 → VEC 分支，注册后 is_vector/elem_ty/size_bytes 可用。
+        store.raw_insert(
+            TypeEntry::Vector {
+                elem: store.f32_ty,
+                len: 2,
+            },
+            TypeKey::Vector(store.f32_ty, 2),
+        );
+        store.raw_insert(
+            TypeEntry::Vector {
+                elem: store.f32_ty,
+                len: 4,
+            },
+            TypeKey::Vector(store.f32_ty, 4),
+        );
+        store.raw_insert(
+            TypeEntry::Vector {
+                elem: store.f32_ty,
+                len: 8,
+            },
+            TypeKey::Vector(store.f32_ty, 8),
+        );
+
         // 验证 TypeId 常量与 lib.rs 中的硬编码预设一致
         debug_assert_eq!(store.void_ty, TypeId::VOID, "void_ty mismatch");
         debug_assert_eq!(store.bool_ty, TypeId::BOOL, "bool_ty mismatch");
@@ -194,7 +237,58 @@ impl TypeStore {
         debug_assert_eq!(store.f64_ty, TypeId::F64, "f64_ty mismatch");
         debug_assert_eq!(store.ptr_ty, TypeId::PTR, "ptr_ty mismatch");
 
+        // 扩展类型（10-15）与空洞（9）的断言——预填充顺序变动时在
+        // debug 构建显式失败，而非 release 静默错位。
+        debug_assert!(
+            matches!(store.get(TypeId::I128), TypeEntry::Int { bits: 128 }),
+            "index 10 must be I128"
+        );
+        debug_assert!(
+            matches!(store.get(TypeId::F16), TypeEntry::Float { bits: 16 }),
+            "index 11 must be F16"
+        );
+        debug_assert!(
+            matches!(store.get(TypeId::F128), TypeEntry::Float { bits: 128 }),
+            "index 12 must be F128"
+        );
+        debug_assert!(
+            matches!(store.get(TypeId::V64), TypeEntry::Vector { len: 2, .. }),
+            "index 13 must be V64 (<2 x f32>)"
+        );
+        debug_assert!(
+            matches!(store.get(TypeId::V128), TypeEntry::Vector { len: 4, .. }),
+            "index 14 must be V128 (<4 x f32>)"
+        );
+        debug_assert!(
+            matches!(store.get(TypeId::V256), TypeEntry::Vector { len: 8, .. }),
+            "index 15 must be V256 (<8 x f32>)"
+        );
+
         store
+    }
+
+    /// 注册文本层命名类型（LLVM：`%struct.X = type ...` → 名字 → TypeId）。
+    pub fn define_named(&mut self, name: &str, id: TypeId) {
+        self.named_types.insert(ImmStr::from(name), id);
+    }
+
+    /// 按文本名查类型（`%struct.X` 引用）。
+    pub fn lookup_named(&self, name: &str) -> Option<TypeId> {
+        self.named_types.get(&ImmStr::from(name)).copied()
+    }
+
+    /// 遍历命名 struct（display 输出 `%struct.X = type {...}` 定义行）。
+    pub fn named_structs(&self) -> Vec<(String, TypeId)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                TypeEntry::Struct { name: Some(n), .. } => {
+                    Some((self.lookup_str(*n).to_string(), TypeId(i as u32)))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// 内部: 直接插入类型 (跳过去重检查，预填充时使用)。
@@ -217,7 +311,7 @@ impl TypeStore {
     // 类型工厂
     // ============================================================
 
-    pub fn int_ty(&mut self, bits: u16) -> TypeId {
+    pub fn int_ty(&mut self, bits: u32) -> TypeId {
         self.intern(TypeEntry::Int { bits }, TypeKey::IntBits(bits))
     }
 
@@ -249,6 +343,10 @@ impl TypeStore {
         self.intern(TypeEntry::Metadata, TypeKey::Metadata)
     }
 
+    pub fn opaque_ty(&mut self) -> TypeId {
+        self.intern(TypeEntry::Opaque, TypeKey::Opaque)
+    }
+
     pub fn array_ty(&mut self, elem: TypeId, len: u64) -> TypeId {
         self.intern(TypeEntry::Array { elem, len }, TypeKey::Array(elem, len))
     }
@@ -260,26 +358,40 @@ impl TypeStore {
         )
     }
 
-    pub fn function_ty(&mut self, params: Vec<TypeId>, rets: Vec<TypeId>, vararg: bool) -> TypeId {
-        self.intern(
-            TypeEntry::Function {
-                params: params.clone(),
-                rets: rets.clone(),
-                is_vararg: vararg,
-            },
-            TypeKey::Function(params, rets, vararg),
-        )
-    }
 
     pub fn struct_named(&mut self, name: &str, fields: Vec<TypeField>, packed: bool) -> TypeId {
         let name_id = self.strings.intern(name);
-        self.intern(
+        let key = TypeKey::StructName(name_id);
+        if let Some(&existing) = self.dedup.get(&key) {
+            // 按名去重（支持递归 struct）；同名不同布局时：若现有为空字段
+            // （两遍注册的前向引用占位——第十四轮），原位升级替换字段；
+            // 否则是定义冲突显式报错。
+            if let TypeEntry::Struct {
+                fields: old,
+                is_packed: old_packed,
+                ..
+            } = &self.entries[existing.0 as usize]
+                && (old != &fields || *old_packed != packed)
+            {
+                // 第十四轮：两遍/三遍注册的占位升级——原位替换字段
+                // （前向引用占位 id 重填；真正的布局冲突由语义层报错）
+                let upgraded = crate::types::TypeEntry::Struct {
+                    name: Some(name_id),
+                    fields: fields.clone(),
+                    is_packed: packed,
+                };
+                self.entries[existing.0 as usize] = upgraded;
+                return existing;
+            }
+            return existing;
+        }
+        self.raw_insert(
             TypeEntry::Struct {
                 name: Some(name_id),
                 fields,
                 is_packed: packed,
             },
-            TypeKey::StructName(name_id),
+            key,
         )
     }
 
@@ -316,30 +428,10 @@ impl TypeStore {
         id
     }
 
-    /// 从参数描述构建并注册函数签名，返回 SigRef。
-    pub fn make_signature(
-        &mut self,
-        params: &[(TypeId, &str)],
-        returns: &[TypeId],
-        cc: CallConv,
-    ) -> SigRef {
-        let sig = FunctionSignature::new(params, returns).with_calling_convention(cc);
-        self.register_signature(sig)
-    }
-
     /// 按 SigRef 查询函数签名。
     pub fn get_signature(&self, sr: SigRef) -> &FunctionSignature {
         &self.signatures[sr.0 as usize]
     }
-
-    /// 返回已注册的签名数量。
-    pub fn signature_count(&self) -> usize {
-        self.signatures.len()
-    }
-
-    // ============================================================
-    // 查询
-    // ============================================================
 
     pub fn get(&self, id: TypeId) -> &TypeEntry {
         &self.entries[id.0 as usize]
@@ -390,16 +482,6 @@ impl TypeStore {
         id == self.void_ty
     }
 
-    /// 获取浮点格式描述。
-    pub fn float_format(&self, id: TypeId) -> Option<FloatFormat> {
-        match self.get(id) {
-            TypeEntry::Float { bits: 16 } => Some(FloatFormat::F16),
-            TypeEntry::Float { bits: 32 } => Some(FloatFormat::F32),
-            TypeEntry::Float { bits: 64 } => Some(FloatFormat::F64),
-            TypeEntry::Float { bits: 128 } => Some(FloatFormat::F128),
-            _ => None,
-        }
-    }
 
     // === 大小 / 对齐 ===
 
@@ -410,7 +492,7 @@ impl TypeStore {
     pub fn size_bytes(&self, id: TypeId) -> u32 {
         let entry = self.get(id);
         match entry {
-            TypeEntry::Int { bits } => (*bits).div_ceil(8) as u32,
+            TypeEntry::Int { bits } => (*bits).div_ceil(8),
             TypeEntry::Float { bits } => (*bits).div_ceil(8) as u32,
             TypeEntry::BFloat { .. } => 2, // bf16 = 2 bytes
             TypeEntry::Vector { elem, len } => self.size_bytes(*elem) * len,
@@ -441,6 +523,7 @@ impl TypeStore {
             TypeEntry::Function { .. } => self.data_layout.pointer_size(0),
             TypeEntry::Token => 0,
             TypeEntry::Metadata => 0,
+            TypeEntry::Opaque => 0,
         }
     }
 
@@ -476,6 +559,7 @@ impl TypeStore {
             TypeEntry::Function { .. } => self.data_layout.pointer_size(0),
             TypeEntry::Token => 1,
             TypeEntry::Metadata => 1,
+            TypeEntry::Opaque => 1,
         }
     }
 
@@ -491,6 +575,46 @@ impl TypeStore {
     pub fn element_type(&self, id: TypeId) -> Option<TypeId> {
         match self.get(id) {
             TypeEntry::Vector { elem, .. } | TypeEntry::Array { elem, .. } => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// 聚合类型（struct/array）第 `idx` 个元素/字段的类型（extract_value 用）。
+    /// 数组按元素类型返回（任意 idx）；struct 越界返回 None。
+    pub fn aggregate_elem_type(&self, id: TypeId, idx: u32) -> Option<TypeId> {
+        match self.get(id) {
+            TypeEntry::Struct { fields, .. } => fields.get(idx as usize).map(|f| f.ty),
+            TypeEntry::Array { elem, .. } => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// 聚合类型（struct/array）第 `idx` 个元素/字段的字节偏移（内存布局，
+    /// 与 `size_bytes` 同源：非 packed struct 逐字段对齐，packed/数组连续）。
+    /// struct 越界返回 None；数组按 element_size × idx。
+    pub fn field_offset(&self, id: TypeId, idx: u32) -> Option<u32> {
+        match self.get(id) {
+            TypeEntry::Struct {
+                fields, is_packed, ..
+            } => {
+                let mut offset = 0u32;
+                for (i, f) in fields.iter().enumerate() {
+                    if i as u32 == idx {
+                        return Some(offset);
+                    }
+                    if *is_packed {
+                        offset += self.size_bytes(f.ty);
+                    } else {
+                        offset = Self::align_to(offset, self.alignment(f.ty));
+                        offset += self.size_bytes(f.ty);
+                    }
+                }
+                None
+            }
+            TypeEntry::Array { elem, .. } => {
+                let elem_size = self.size_bytes(*elem);
+                elem_size.checked_mul(idx)
+            }
             _ => None,
         }
     }
@@ -521,6 +645,8 @@ pub enum CallConv {
     CDecl,
     /// Internal convention (compiler-private)
     Internal,
+    /// 任意数值约定（LLVM `cc N`；仅文本层 round-trip 保真）。
+    Custom(u32),
     /// ARM Architecture Procedure Call Standard
     Aapcs,
     /// AAPCS with VFP (hard-float for ARM)
@@ -546,21 +672,24 @@ pub enum CallConv {
 /// 函数签名 (存储为 TypeEntry::Function 的辅助查询结构)。
 ///
 /// 签名的权威副本存储在 `TypeStore::signatures` 中，通过 `SigRef` 引用。
-/// 参数名用 `String` — 注册到 TypeStore 时自动通过 StringPool intern。
+/// 参数名用 `ImmStr` — 注册到 TypeStore 时自动通过 StringPool intern。
 #[derive(Clone, Debug)]
 pub struct FunctionSignature {
-    pub params: Vec<(TypeId, String)>,
+    pub params: Vec<(TypeId, ImmStr)>,
     pub returns: Vec<TypeId>,
     pub calling_convention: CallConv,
+    /// 可变参数（LLVM：`declare i32 @printf(ptr, ...)` 的 `...`）。
+    pub variadic: bool,
 }
 
 impl FunctionSignature {
     /// 创建一个新的函数签名。
     pub fn new(params: &[(TypeId, &str)], returns: &[TypeId]) -> Self {
         Self {
-            params: params.iter().map(|(t, n)| (*t, n.to_string())).collect(),
+            params: params.iter().map(|(t, n)| (*t, ImmStr::from(*n))).collect(),
             returns: returns.to_vec(),
             calling_convention: CallConv::default(),
+            variadic: false,
         }
     }
 
@@ -569,7 +698,14 @@ impl FunctionSignature {
             params: Vec::new(),
             returns: Vec::new(),
             calling_convention: CallConv::default(),
+            variadic: false,
         }
+    }
+
+    /// 标记可变参数签名（LLVM `...`）。
+    pub fn with_variadic(mut self, variadic: bool) -> Self {
+        self.variadic = variadic;
+        self
     }
 
     pub fn with_calling_convention(mut self, cc: CallConv) -> Self {
@@ -642,6 +778,7 @@ impl TypeStore {
             }
             TypeEntry::Token => "token".to_string(),
             TypeEntry::Metadata => "metadata".to_string(),
+            TypeEntry::Opaque => "opaque".to_string(),
         }
     }
 }
@@ -747,6 +884,9 @@ impl TypeContext {
     pub fn is_vector(&self, id: TypeId) -> bool {
         self.borrow().is_vector(id)
     }
+    pub fn element_type(&self, id: TypeId) -> Option<TypeId> {
+        self.borrow().element_type(id)
+    }
     pub fn size_bytes(&self, id: TypeId) -> u32 {
         self.borrow().size_bytes(id)
     }
@@ -756,19 +896,13 @@ impl TypeContext {
     pub fn fmt_type(&self, id: TypeId) -> String {
         self.borrow().fmt_type(id)
     }
-    pub fn type_count(&self) -> usize {
-        self.borrow().type_count()
-    }
-    pub fn signature_count(&self) -> usize {
-        self.borrow().signature_count()
-    }
     pub fn lookup_str(&self, id: InternedStr) -> String {
         self.borrow().strings.lookup(id).to_string()
     }
 
     // === Delegated mutable methods (require borrow_mut) ===
 
-    pub fn int_ty(&self, bits: u16) -> TypeId {
+    pub fn int_ty(&self, bits: u32) -> TypeId {
         self.borrow_mut().int_ty(bits)
     }
     pub fn float_ty(&self, bits: u16) -> TypeId {
@@ -817,6 +951,61 @@ impl From<TypeStore> for TypeContext {
     }
 }
 
+/// 标量类型 → 向量常量（vconst/vconst_array）辅助 trait。
+///
+/// - `vector_ty()` 返回该标量元素在 TypeStore 中的 TypeId（如 `f32::vector_ty() ==
+///   TypeId::F32`）——注意这是**标量**类型，向量类型需经
+///   `TypeStore::vector_ty(elem, len)` 构造。
+/// - `lane_bytes(endian)` 返回元素的**指定端序字节表示**（u8→1、u32→4、u64→8、
+///   u128→16、f32→IEEE 4、f64→8）——全位宽不丢失；按元素顺序拼接即向量常量数据。
+///   `Endianness::Little` → `to_le_bytes`、`Big` → `to_be_bytes`（u8/i8 单字节无端序）。
+///
+/// 用户自定义标量类型实现本 trait（`vector_ty` + `lane_bytes`）即可被
+/// `vconst`/`vconst_array` 支持，字节还原由后端按类型决定。
+pub trait Vector {
+    fn vector_ty() -> TypeId;
+    fn lane_bytes(self, endian: Endianness) -> Vec<u8>;
+}
+
+macro_rules! impl_vector_trait {
+    ($($ty:ty=>$id:ident: $conv:expr),*) => {
+        $(impl Vector for $ty {
+            fn vector_ty() -> TypeId {
+                TypeId::$id
+            }
+            fn lane_bytes(self, endian: Endianness) -> Vec<u8> {
+                let v: $ty = self;
+                ($conv)(v, endian)
+            }
+        })*
+    };
+}
+
+// 端序辅助：按 endianness 选 LE/BE 字节（1 字节类型忽略端序）。
+macro_rules! le_be {
+    ($endian:expr, $le:expr, $be:expr) => {
+        match $endian {
+            Endianness::Little => $le,
+            Endianness::Big => $be,
+        }
+    };
+}
+
+impl_vector_trait!(
+    i8=>I8: |v: i8, _: Endianness| vec![v as u8],
+    u8=>I8: |v: u8, _: Endianness| vec![v],
+    i16=>I16: |v: i16, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    u16=>I16: |v: u16, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    i32=>I32: |v: i32, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    u32=>I32: |v: u32, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    i64=>I64: |v: i64, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    u64=>I64: |v: u64, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    i128=>I128: |v: i128, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    u128=>I128: |v: u128, e: Endianness| le_be!(e, v.to_le_bytes().to_vec(), v.to_be_bytes().to_vec()),
+    f32=>F32: |v: f32, e: Endianness| le_be!(e, v.to_bits().to_le_bytes().to_vec(), v.to_bits().to_be_bytes().to_vec()),
+    f64=>F64: |v: f64, e: Endianness| le_be!(e, v.to_bits().to_le_bytes().to_vec(), v.to_bits().to_be_bytes().to_vec())
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,6 +1043,71 @@ mod tests {
         assert_eq!(store.size_bytes(v4i32), 16); // 4 * 4
         assert_eq!(store.vector_len(v4i32), Some(4));
         assert_eq!(store.element_type(v4i32), Some(store.i32_ty));
+    }
+
+    /// Vector trait：vector_ty 返回标量 TypeId；lane_bytes(endian) 返回元素按
+    /// 端序的字节（u128 → 16 字节不截断；f32 → IEEE 4 字节；Big → to_be_bytes）。
+    #[test]
+    fn test_vector_trait_lane_bytes() {
+        assert_eq!(<f32 as Vector>::vector_ty(), TypeId::F32);
+        assert_eq!(<i32 as Vector>::vector_ty(), TypeId::I32);
+        assert_eq!(<f64 as Vector>::vector_ty(), TypeId::F64);
+        assert_eq!(<u128 as Vector>::vector_ty(), TypeId::I128);
+
+        // Little：to_le_bytes
+        assert_eq!(
+            1.5f32.lane_bytes(Endianness::Little),
+            1.5f32.to_bits().to_le_bytes().to_vec()
+        );
+        assert_eq!(
+            (-2.5f64).lane_bytes(Endianness::Little),
+            (-2.5f64).to_bits().to_le_bytes().to_vec()
+        );
+        assert_eq!(1i32.lane_bytes(Endianness::Little), vec![1, 0, 0, 0]);
+        assert_eq!(
+            (-1i32).lane_bytes(Endianness::Little),
+            vec![0xFF, 0xFF, 0xFF, 0xFF]
+        );
+        assert_eq!((-1i64).lane_bytes(Endianness::Little), [0xFF; 8].to_vec());
+        // u128 16 字节完整保留（不截断）
+        assert_eq!(
+            u128::MAX.lane_bytes(Endianness::Little),
+            [0xFF; 16].to_vec()
+        );
+        assert_eq!(
+            0x1122_3344_5566_7788_99AA_BBCC_DDEE_FF00u128
+                .lane_bytes(Endianness::Little)
+                .len(),
+            16
+        );
+        assert_eq!(7u8.lane_bytes(Endianness::Little), vec![7]);
+
+        // Big：to_be_bytes
+        assert_eq!(0x0102_0304u32.lane_bytes(Endianness::Big), vec![1, 2, 3, 4]);
+        assert_eq!(0x0102u16.lane_bytes(Endianness::Big), vec![1, 2]);
+        assert_eq!(
+            0x0102_0304_0506_0708u64.lane_bytes(Endianness::Big),
+            vec![1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        assert_eq!(
+            0x0102_0304u32.lane_bytes(Endianness::Little),
+            vec![4, 3, 2, 1]
+        );
+        assert_eq!(
+            0x0102_0304_0506_0708_090A_0B0C_0D0E_0F10u128.lane_bytes(Endianness::Big),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+        assert_eq!(
+            1.5f32.lane_bytes(Endianness::Big),
+            1.5f32.to_bits().to_be_bytes().to_vec()
+        );
+        assert_eq!(
+            (-2.5f64).lane_bytes(Endianness::Big),
+            (-2.5f64).to_bits().to_be_bytes().to_vec()
+        );
+        // 单字节类型无端序
+        assert_eq!(7u8.lane_bytes(Endianness::Big), vec![7]);
+        assert_eq!((-3i8).lane_bytes(Endianness::Big), vec![0xFD]);
     }
 
     #[test]
@@ -894,18 +1148,5 @@ mod tests {
         // 不同地址空间
         let p3 = store.pointer_ty(1);
         assert_ne!(p, p3);
-    }
-
-    #[test]
-    fn test_function_types() {
-        let mut store = TypeStore::new();
-        let ft = store.function_ty(vec![store.i32_ty, store.i32_ty], vec![store.i64_ty], false);
-        match store.get(ft) {
-            TypeEntry::Function { params, rets, .. } => {
-                assert_eq!(params.len(), 2);
-                assert_eq!(rets.len(), 1);
-            }
-            _ => panic!("expected Function type"),
-        }
     }
 }

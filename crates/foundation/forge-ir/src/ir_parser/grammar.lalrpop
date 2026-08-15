@@ -13,30 +13,43 @@ extern {
     enum Token {
         Define => Token::Define,
         Declare => Token::Declare,
-        Global => Token::Global,
-        Constant => Token::Constant,
         Target => Token::Target,
         Triple => Token::Triple,
         Datalayout => Token::Datalayout,
-        Attributes => Token::Attributes,
+        SourceFilenameKw => Token::SourceFilenameKw,
+        ModuleAsmKw => Token::ModuleAsmKw,
         Ret => Token::Ret,
         Br => Token::Br,
         Switch => Token::Switch,
         Unreachable => Token::Unreachable,
         VoidTy => Token::VoidTy,
         LabelTy => Token::LabelTy,
-        MetadataTy => Token::MetadataTy,
         PtrTy => Token::PtrTy,
+        OpaqueKw => Token::OpaqueKw,
+        VscaleTy => Token::VscaleTy(<VecElem>),
+        TokenKw => Token::TokenKw,
         X => Token::X,
-        IntTy => Token::IntTy(<u16>),
+        IntTy => Token::IntTy(<u32>),
         FloatTy => Token::FloatTy(<u16>),
         VecTy => Token::VecTy(<VecElem>),
         GlobalId => Token::GlobalId(<String>),
         LocalId => Token::LocalId(<String>),
         Ident => Token::Ident(<String>),
-        HexLit => Token::HexLit(<i64>),
+        LabelStr => Token::LabelStr(<String>),
+        HexLit => Token::HexLit(<crate::big::Big>),
+        FloatHexLit => Token::FloatHexLit(<i64>),
         FloatLit => Token::FloatLit(<f64>),
-        IntLit => Token::IntLit(<i64>),
+        HexFloatLit => Token::HexFloatLit(<f64>),
+        IntLit => Token::IntLit(<crate::big::Big>),
+        MetadataFieldTupleLit => Token::MetadataFieldTupleLit(<String>),
+        GlobalPtrInitKw => Token::GlobalPtrInitKw(<String>),
+        DbgValueKw => Token::DbgValueKw,
+        DbgDeclareKw => Token::DbgDeclareKw,
+        DbgDeclareValueKw => Token::DbgDeclareValueKw,
+        DbgAssignKw => Token::DbgAssignKw,
+        DbgLabelKw => Token::DbgLabelKw,
+        DbgKillKw => Token::DbgKillKw,
+        SummaryKw => Token::SummaryKw(<String>),
         StrLit => Token::StrLit(<String>),
         LParen => Token::LParen,
         RParen => Token::RParen,
@@ -50,38 +63,939 @@ extern {
         Colon => Token::Colon,
         Eq => Token::Eq,
         Star => Token::Star,
+        AttrGroupId => Token::AttrGroupId(<u32>),
+        Attributes => Token::Attributes,
+        MetadataIdKw => Token::MetadataIdKw(<u32>),
+        MetadataDefKw => Token::MetadataDefKw(<String>),
+        MetadataNameKw => Token::MetadataNameKw(<String>),
+        MetadataKw => Token::MetadataKw,
         Bang => Token::Bang,
         // 指令/值关键字
         Icmp => Token::Icmp,
         Fcmp => Token::Fcmp,
+        // 二元指令（S2）
+        Add => Token::Add,
+        Sub => Token::Sub,
+        Mul => Token::Mul,
+        Udiv => Token::Udiv,
+        Sdiv => Token::Sdiv,
+        Urem => Token::Urem,
+        Srem => Token::Srem,
+        Shl => Token::Shl,
+        Lshr => Token::Lshr,
+        Ashr => Token::Ashr,
+        And => Token::And,
+        Or => Token::Or,
+        Xor => Token::Xor,
+        Fadd => Token::Fadd,
+        Fsub => Token::Fsub,
+        Fmul => Token::Fmul,
+        Fdiv => Token::Fdiv,
+        Frem => Token::Frem,
         Call => Token::Call,
+        Tail => Token::Tail,
+        Musttail => Token::Musttail,
+        Notail => Token::Notail,
         Alloca => Token::Alloca,
         Load => Token::Load,
         Store => Token::Store,
         GetElementPtr => Token::GetElementPtr,
+        Inbounds => Token::Inbounds,
+        AtomicRmwKw => Token::AtomicRmwKw,
+        CmpxchgKw => Token::CmpxchgKw,
+        FenceKw => Token::FenceKw,
+        Weak => Token::WeakKw,
+        AddrspaceKw => Token::AddrspaceKw,
+        UnnamedAddrKw => Token::UnnamedAddrKw,
+        LocalUnnamedAddrKw => Token::LocalUnnamedAddrKw,
+        Section => Token::SectionKw,
+        ThreadLocalKw => Token::ThreadLocalKw,
+        ThreadLocalModelKw => Token::ThreadLocalModelKw(<String>),
+        HiddenKw => Token::HiddenKw,
+        ProtectedKw => Token::ProtectedKw,
+        ComdatKw => Token::ComdatKw,
+        ComdatName => Token::ComdatName(<String>),
+        TypeKw => Token::TypeKw,
+        ExtractValueKw => Token::ExtractValueKw,
+        ExtractElementKw => Token::ExtractElementKw,
+        InsertElementKw => Token::InsertElementKw,
+        ShuffleVectorKw => Token::ShuffleVectorKw,
+        MaskVecLit => Token::MaskVecLit(<String>),
+        InsertValueKw => Token::InsertValueKw,
+        Private => Token::Private,
+        Internal => Token::Internal,
+        External => Token::External,
+        WeakOdrKw => Token::WeakOdrKw,
+        LinkonceKw => Token::LinkonceKw,
+        LinkonceOdrKw => Token::LinkonceOdrKw,
+        AppendingKw => Token::AppendingKw,
+        AvailableExternallyKw => Token::AvailableExternallyKw,
+        ExternWeakKw => Token::ExternWeakKw,
+        CommonKw => Token::CommonKw,
+        ExternallyInitializedKw => Token::ExternallyInitializedKw,
+        DllImportKw => Token::DllImportKw,
+        DllExportKw => Token::DllExportKw,
+        DsoLocal => Token::DsoLocal,
+        CString => Token::CString(<String>),
+        Volatile => Token::Volatile,
+        Align => Token::Align,
+        Signext => Token::Signext,
+        ImmargKw => Token::ImmargKw,
+        Zeroext => Token::Zeroext,
+        Noalias => Token::Noalias,
+        AliasKw => Token::AliasKw,
+        Noundef => Token::Noundef,
+        Readonly => Token::Readonly,
+        Writeonly => Token::Writeonly,
+        Nocapture => Token::Nocapture,
+        Nonnull => Token::Nonnull,
+        InregKw => Token::InregKw,
+        ByvalKw => Token::ByvalKw,
+        SretKw => Token::SretKw,
+        Nsw => Token::Nsw,
+        Nuw => Token::Nuw,
+        Exact => Token::Exact,
+        Nneg => Token::Nneg,
+        Disjoint => Token::Disjoint,
+        Samesign => Token::Samesign,
+        Nusw => Token::Nusw,
+        InrangeKw => Token::InrangeKw,
+        Fast => Token::Fast,
+        Nnan => Token::Nnan,
+        Ninf => Token::Ninf,
+        Nsz => Token::Nsz,
+        Arcp => Token::Arcp,
+        Contract => Token::Contract,
+        Afn => Token::Afn,
+        Reassoc => Token::Reassoc,
+        Fastcc => Token::Fastcc,
+        Win64cc => Token::Win64cc,
+        Cc => Token::Cc,
+        Nounwind => Token::Nounwind,
+        Noinline => Token::Noinline,
+        Alwaysinline => Token::Alwaysinline,
+        Norecurse => Token::Norecurse,
+        Optnone => Token::Optnone,
         True => Token::True,
         False => Token::False,
         Null => Token::Null,
         Undef => Token::Undef,
         Poison => Token::Poison,
+        NoneKw => Token::NoneKw,
+        SyncscopeKw => Token::SyncscopeKw,
+        ElementwiseKw => Token::ElementwiseKw,
+        IfuncKw => Token::IfuncKw,
+        DereferenceableKw => Token::DereferenceableKw,
+        DereferenceableOrNullKw => Token::DereferenceableOrNullKw,
+        UselistorderKw => Token::UselistorderKw,
+        SspKw => Token::SspKw,
+        DsoLocalEquivalentKw => Token::DsoLocalEquivalentKw,
+        PtrtoaddrKw => Token::PtrtoaddrKw,
+        ElementtypeKw => Token::ElementtypeKw,
+        ElementtypeFnKw => Token::ElementtypeFnKw(<String>),
+        GcLiveKw => Token::GcLiveKw(<String>),
+        CallbrKw => Token::CallbrKw,
+        ConvergentKw => Token::ConvergentKw,
+        StrictfpKw => Token::StrictfpKw,
+        FuncOpenAttrKw => Token::FuncOpenAttrKw(<String>),
+        ParenAttrKw => Token::ParenAttrKw(<String>),
+        ReturnedKw => Token::ReturnedKw,
+        FnegKw => Token::FnegKw,
+        AsmKw => Token::AsmKw,
+        BlockaddressKw => Token::BlockaddressKw,
+        GcKw => Token::GcKw,
+        PtrauthKw => Token::PtrauthKw,
+        DefineLinkageKw => Token::DefineLinkageKw(<String>),
+        DeclarePrefixMdKw => Token::DeclarePrefixMdKw(<String>),
+        TypedPtrKw => Token::TypedPtrKw(<String>),
+        Pipe => Token::Pipe,
+        PrefixKw => Token::PrefixKw,
+        PrologueKw => Token::PrologueKw,
+        RiscvVlsCcKw => Token::RiscvVlsCcKw(<u32>),
+        SplatKw => Token::SplatKw,
+        DenormalFpenvKw => Token::DenormalFpenvKw(<String>),
+        UselistorderBbKw => Token::UselistorderBbKw,
+        PresplitKw => Token::PresplitKw,
+        VconstOp => Token::VconstOp,
+        Big => Token::Big,
+        VecConstLit => Token::VecConstLit(<String>),
+        ZeroInitKw => Token::ZeroInitKw,
+        ZeroInitLit => Token::ZeroInitLit(<String>),
+        VecZeroInitLit => Token::VecZeroInitLit(<String>),
         Sext => Token::Sext,
         Zext => Token::Zext,
         Trunc => Token::Trunc,
+        Fptrunc => Token::Fptrunc,
+        Fpext => Token::Fpext,
+        Fptosi => Token::Fptosi,
+        Sitofp => Token::Sitofp,
+        Fptoui => Token::Fptoui,
+        Uitofp => Token::Uitofp,
+        Ptrtoint => Token::Ptrtoint,
+        Inttoptr => Token::Inttoptr,
         Bitcast => Token::Bitcast,
+        Phi => Token::Phi,
         To => Token::To,
+        Ellipsis => Token::Ellipsis,
+        AddrspaceCastKw => Token::AddrspaceCastKw,
+        LandingPadKw => Token::LandingPadKw,
+        InvokeKw => Token::InvokeKw,
+        InallocaKw => Token::InallocaKw,
+        ByrefKw => Token::ByrefKw,
+        UwtableKw => Token::UwtableKw,
+        BuiltinKw => Token::BuiltinKw,
+        NobuiltinKw => Token::NobuiltinKw,
+        CapturesKw => Token::CapturesKw,
+        NosyncKw => Token::NosyncKw,
+        ResumeKw => Token::ResumeKw,
+        VaArgKw => Token::VaArgKw,
     }
 }
 
 // ── 顶层 ──
 
 pub Module: ParsedModule = {
-    <items: (<ModuleItem>)*> => ParsedModule { items },
+    <items: (<ModuleItem>)*> => ParsedModule {
+        items,
+        attr_groups: Default::default(),
+    },
 };
 
 ModuleItem: ParsedItem = {
     <spec: TargetSpec> => ParsedItem::Target(spec.0, spec.1),
+    // comdat 声明：`$c = comdat any`（kind 丢弃——ComdatKind::Any 等价，
+    // 语义层按名去重；LLVM 先声明后引用）
+    <n: ComdatName> Eq ComdatKw <_k: Ident> => ParsedItem::ComdatDecl(n),
     <FunctionDef> => ParsedItem::Function(<>),
     <DeclareDef> => ParsedItem::Function(<>),
+    <g: GlobalDef> => ParsedItem::Global(g),
+    // alias：`@a = [internal] alias <ty>, <aliasee>`（aliasee 为常量表达式）
+    <name: GlobalId> Eq <links: LinkageSeq?> AliasKw <ty: Type> Comma <aliasee: ExprOperand> <metas: CommaAttach*> => ParsedItem::Alias(ParsedAlias {
+        name: name,
+        ty: ty,
+        aliasee,
+        linkage: links.as_ref().and_then(|l| l.0.clone()),
+        visibility: links.as_ref().and_then(|l| l.4.clone()),
+        dso_local: links.as_ref().map(|l| l.1).unwrap_or(false),
+        unnamed_addr: links.as_ref().map(|l| l.2).unwrap_or(false),
+        metadata: metas,
+    }),
+    // alias 带函数类型：`@f = alias void (), ptr @0`（anon-functions 类——函数
+    // 类型仅解析不落 IR，ty 用返回类型）
+    <name: GlobalId> Eq <links: LinkageSeq?> AliasKw <ret: Type> LParen <_params: ParamList> RParen Comma <aliasee: ExprOperand> <metas: CommaAttach*> => ParsedItem::Alias(ParsedAlias {
+        name: name,
+        ty: ret,
+        aliasee,
+        linkage: links.as_ref().and_then(|l| l.0.clone()),
+        visibility: links.as_ref().and_then(|l| l.4.clone()),
+        dso_local: links.as_ref().map(|l| l.1).unwrap_or(false),
+        unnamed_addr: links.as_ref().map(|l| l.2).unwrap_or(false),
+        metadata: metas,
+    }),
+    Attributes <id: AttrGroupId> Eq LBrace <attrs: FuncAttrs> RBrace => {
+        ParsedItem::AttrGroup(id, attrs)
+    },
+    <id: MetadataIdKw> Eq <node: MetadataNodeDef> => ParsedItem::Metadata(id, node),
+    // 命名 metadata 定义（LLVM：`!t = !{...}`）——lexer 已把 `!name =` 消歧为
+    // MetadataDefKw（含等号），此处无需 Eq。
+    <name: MetadataDefKw> <node: MetadataNodeDef> => ParsedItem::NamedMetadata(name, node),
+    // uselistorder：`uselistorder <ty> <val>, { 1, 0 }` / `uselistorder_bb label %l, { 0, 1 }`
+    // （LLVM use-list 顺序指令——解析后宽松丢弃；第十一轮）
+    UselistorderKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
+        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        
+        let name = match _v {
+            Operand::Global(g) => g,
+            Operand::Local(l) => l,
+            other => format!("{other:?}"),
+        };
+        ParsedItem::UselistOrder(name, idx, t)
+    },
+    UselistorderBbKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
+        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        
+        let name = match _v {
+            Operand::Global(g) => g,
+            Operand::Local(l) => l,
+            other => format!("{other:?}"),
+        };
+        ParsedItem::UselistOrder(name, idx, t)
+    },
+    // 模块级元数据：`source_filename = "..."` / `module asm "..."`
+    SourceFilenameKw Eq <s: StrLit> => ParsedItem::SourceFilename(s),
+    ModuleAsmKw <s: StrLit> => ParsedItem::ModuleAsm(s),
+    // summary 条目（`^N = ...`——原文保留,语义层校验）
+    <s: SummaryKw> => ParsedItem::Summary(s),
+    // LLVM 类型定义：`%struct.X = type { i32, i64 }` / `%p = type <{ i32 }>`（packed struct，现代语法）
+    // S3.2 扩展：任意 ValueType（`%t = type [8 x i8]` 数组、`%t = type opaque` 等）
+    <name: LocalId> Eq TypeKw <t: ValueType> => ParsedItem::TypeDef(name, t),
+};
+
+// metadata 节点：`!{...}` / `!named(...)`（`distinct` 前缀——去重语义丢弃，文本层等价；
+// `metadata !{}` 旧语法由 MetadataKw 专用 token 拒绝——不匹配 Ident）
+MetadataNodeDef: MetadataNodeDef = {
+    <_d: Ident> <node: MetadataNodeDef> => MetadataNodeDef::Distinct(Box::new(node)),
+    Bang LBrace <vals: MetadataValList> RBrace => MetadataNodeDef::Tuple(vals),
+    <name: MetadataNameKw> LParen <vals: MetadataValList> RParen => MetadataNodeDef::Named(name, vals),
+};
+
+MetadataValList: Vec<MetadataVal> = {
+    => vec![],
+    <mut v: (<MetadataVal> Comma)*> <p: MetadataVal> =>? {
+        v.push(p);
+        Ok(v)
+    }
+};
+
+MetadataVal: MetadataVal = {
+    <n: IntLit> => match i64::try_from(n.clone()) {
+        Ok(v) => MetadataVal::Int(v),
+        Err(_) => MetadataVal::IntBig(n),
+    },
+    <n: HexLit> => MetadataVal::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <f: FloatLit> => MetadataVal::Float(f),
+    <s: StrLit> => MetadataVal::Str(s),
+    // LLVM metadata 字符串：`!"hello"`（带 Bang）
+    Bang <s: StrLit> => MetadataVal::Str(s),
+    Null => MetadataVal::Null,
+    <id: MetadataIdKw> => MetadataVal::Ref(id),
+    // 命名节点引用（LLVM：`!{!t}`）——`!name (` 是 Named 节点定义，`!name` 后跟
+    // `,`/`}`/`)` 是引用；LALR(1) 以 LParen 区分，无冲突。
+    <name: MetadataNameKw> => MetadataVal::NamedRef(name),
+    // 裸 Ident 参数（`!DIExpression(DW_OP_constu, 42, ...)`——DWARF 操作符；
+    // 第十二轮）
+    <n: Ident> => MetadataVal::Str(n),
+    <node: MetadataNodeDef> => MetadataVal::Nested(Box::new(node)),
+    // named 节点 key:value（LLVM：`!DILocation(line: 10)`）——key 携带
+    // （第二十一轮：DI 批量校验用；build 后丢弃,IR 层值等价）；
+    // `type:`/`align:` 等关键字 key（LLVM DI 节点常用——TypeKw/Align 非 Ident）。
+    // value 用 MetadataValPrim（不含 Nested/key:value）——避免 LALR 状态膨胀
+    //（`file: !2, scope: !3` 的 `!N` 数字引用需在 value 状态可转移）。
+    <_key: Ident> Colon <v: MetadataValPrim> => MetadataVal::Field(_key, Box::new(v)),
+    <_k: TypeKw> Colon <v: MetadataValPrim> => MetadataVal::Field("type".to_string(), Box::new(v)),
+    <_k: Align> Colon <v: MetadataValPrim> => MetadataVal::Field("align".to_string(), Box::new(v)),
+    <_k: Noundef> Colon <v: MetadataValPrim> => MetadataVal::Field("noundef".to_string(), Box::new(v)),
+    <_k: UwtableKw> Colon <v: MetadataValPrim> => MetadataVal::Field("uwtable".to_string(), Box::new(v)),
+    <_k: Cc> Colon <v: MetadataValPrim> => MetadataVal::Field("cc".to_string(), Box::new(v)),
+    <_k: Attributes> Colon <v: MetadataValPrim> => MetadataVal::Field("attributes".to_string(), Box::new(v)),
+    // `key: {!0, !3, !4}` 裸 tuple 整段（lexer 合并 token——
+    // generic-debug-node.ll；第二十一轮）
+    <t: MetadataFieldTupleLit> => {
+        crate::ir_parser::ast_items::split_md_field_tuple_lit(&t)
+    },
+    // 类型化值（LLVM：`!{i32 1}` / `!{ptr null}`）——类型丢弃（内部值等价）
+    <_ty: Type> <v: Value> => match v {
+        Operand::Int(n) => MetadataVal::Int(n),
+        Operand::UInt(n) => MetadataVal::UInt(n),
+        Operand::Float(f) => MetadataVal::Float(f),
+        Operand::Null => MetadataVal::Null,
+        _ => MetadataVal::Str("value".to_string()),
+    },
+};
+
+// key:value 的值子集（prim 值——无嵌套节点/嵌套 key:value）
+MetadataValPrim: MetadataVal = {
+    <n: IntLit> => match i64::try_from(n.clone()) {
+        Ok(v) => MetadataVal::Int(v),
+        Err(_) => MetadataVal::IntBig(n),
+    },
+    <n: HexLit> => MetadataVal::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    // Tuple 值（`operands: {!0, !3, !4}`——generic-debug-node.ll；裸 LBrace
+    // grammar 分支与 Type 的匿名结构冲突,改 lexer 合并(裸 `{` 后跟 `!N`
+    // 形态与非 metadata 语法不相交);第二十一轮
+    Bang LBrace <vals: MetadataValList> RBrace => {
+        MetadataVal::Nested(Box::new(MetadataNodeDef::Tuple(vals)))
+    },
+    <f: FloatLit> => MetadataVal::Float(f),
+    <s: StrLit> => MetadataVal::Str(s),
+    Bang <s: StrLit> => MetadataVal::Str(s),
+    Null => MetadataVal::Null,
+    <id: MetadataIdKw> => MetadataVal::Ref(id),
+    // Named 节点值（`expr: !DIExpression(...)`——第十二轮：可空括号形态，
+    // 避免 LR(1) 的 LParen 2-lookahead）
+    <name: MetadataNameKw> <rest: (LParen MetadataValList RParen)?> => match rest {
+        Some((_, vals, _)) => MetadataVal::Nested(Box::new(MetadataNodeDef::Named(name, vals))),
+        None => MetadataVal::NamedRef(name),
+    },
+    True => MetadataVal::Int(1),
+    False => MetadataVal::Int(0),
+    // DWARF 枚举值（LLVM DI 节点：`language: DW_LANG_C99`）与 flag 组合
+    // （`flags: DIFlag... | DIFlag...`——第十二轮）——存字符串
+    <n: Ident> <rest: (Pipe Ident)*> => {
+        if rest.is_empty() {
+            MetadataVal::Str(n)
+        } else {
+            let mut s = n;
+            for (_, r) in rest {
+                s.push_str(" | ");
+                s.push_str(&r);
+            }
+            MetadataVal::Str(s)
+        }
+    },
+    // 类型化值（`type: i32 32`——第十二轮；类型丢弃）
+    <_ty: Type> <v: Value> => match v {
+        Operand::Int(n) => MetadataVal::Int(n),
+        Operand::UInt(n) => MetadataVal::UInt(n),
+        Operand::Float(f) => MetadataVal::Float(f),
+        Operand::Null => MetadataVal::Null,
+        _ => MetadataVal::Str("value".to_string()),
+    },
+
+};
+
+// 函数/指令尾 metadata 附加：`!dbg !0` / `!dbg !t`（≥0 个；命名定义 `!t = ...`
+// 由 lexer 消歧为 MetadataDefKw，不会误入本闭包；命名引用 `!t` 由 semantics
+// 经 lookup_named 解析为数字 id）。
+MetadataAttach: (String, MetadataRef) = {
+    <name: MetadataNameKw> <id: MetadataIdKw> => (name, MetadataRef::Num(id)),
+    <name: MetadataNameKw> <r: MetadataNameKw> => (name, MetadataRef::Named(r)),
+};
+
+// 指令级附加带逗号（LLVM：`..., !dbg !0`）；函数级无逗号
+CommaAttach: (String, MetadataRef) = {
+    Comma <m: MetadataAttach> => m,
+};
+
+// 全局类型 + 可选 zeroinitializer 的合并形式：lexer 把 `i32 zeroinitializer`
+// 合成单 token ZeroInitLit（maximal munch）——GlobalDef 的 `<ty: Type>` 位置
+// 收不到 IntTy，必须整 token 拆出类型与 ZeroInit init。
+TypeAndInit: (ParsedType, Option<GlobalInitVal>) = {
+    <t: Type> => (t, None),
+    <lit: ZeroInitLit> => (crate::ir_parser::ast_items::split_scalar_ty(&lit), Some(GlobalInitVal::ZeroInit)),
+    <lit: VecZeroInitLit> => (crate::ir_parser::ast_items::split_vec_const_lit(&lit).0, Some(GlobalInitVal::ZeroInit)),
+};
+
+// ── 全局变量：@g = global <ty> <init> [, align N] ──
+
+GlobalDef: ParsedGlobal = {
+    // ifunc（第十一轮 IfuncKw 专用 token）：`@f = [linkage] ifunc <retty> (<params>), ptr @resolver`
+    <name: GlobalId> Eq <links: LinkageSeq?> IfuncKw <ret: Type> LParen <params: ParamList> RParen Comma <_r: TypeOp> <metas: CommaAttach*> => ParsedGlobal {
+        name: name,
+        is_constant: false,
+        ty: ret,
+        init: None,
+        align: 0,
+        linkage: links.as_ref().and_then(|l| l.0.clone()),
+        dso_local: links.as_ref().map(|l| l.1).unwrap_or(false),
+        unnamed_addr: links.as_ref().map(|l| l.2).unwrap_or(false),
+        section: None,
+        addr_space: 0,
+        thread_local: false,
+        visibility: links.as_ref().and_then(|l| l.4.clone()),
+        comdat: None,
+        dll_storage: None,
+        metadata: metas,
+        // ifunc IR 表示（第二十九轮重建:参数类型文本 + resolver 名）
+        is_ifunc: true,
+        ifunc_params: params
+            .iter()
+            .map(|(ty, _, _)| crate::ir_parser::ast_items::fmt_parsed_type(ty))
+            .collect(),
+        ifunc_resolver: match &_r.op {
+            Operand::Global(g) => Some(g.clone()),
+            _ => None,
+        },
+    },
+    // ifunc（旧形态兜底）：`@name = ifunc <retty> (<params>), ptr @resolver`
+    <name: GlobalId> Eq <kw: Ident> <ret: Type> LParen <params: ParamList> RParen Comma PtrTy <_r: GlobalId> => ParsedGlobal {
+        name: name,
+        is_constant: false,
+        ty: ret,
+        init: None,
+        align: 0,
+        linkage: None,
+        dso_local: false,
+        unnamed_addr: false,
+        section: None,
+        addr_space: 0,
+        thread_local: false,
+        visibility: None,
+        comdat: None,
+        dll_storage: None,
+        metadata: vec![],
+        is_ifunc: true,
+        ifunc_params: params
+            .iter()
+            .map(|(ty, _, _)| crate::ir_parser::ast_items::fmt_parsed_type(ty))
+            .collect(),
+        ifunc_resolver: Some(_r),
+    },
+    // `global`（可变）/ `constant`（不可变）走 Ident——避免关键字遮蔽
+    // global_addr 等以 global 开头的指令名；未知 kw 宽容视为可变 global
+    <name: GlobalId> Eq <kw: Ident> <ti: TypeAndInit> <init: GlobalInit?> <tail: GlobalTail?> => ParsedGlobal {        name: name,
+        is_constant: kw == "constant",
+        ty: ti.0,
+        // ti.1 为合并 token 携带的 ZeroInit init；None 时用 `<init: GlobalInit?>` 解析结果（如 `global i32 42`）
+        init: ti.1.or(init),
+        align: tail.as_ref().map(|t| t.0).unwrap_or(0),
+        linkage: None,
+        dso_local: false,
+        unnamed_addr: false,
+        section: tail.as_ref().and_then(|t| t.1.clone()),
+        addr_space: 0,
+        thread_local: false,
+        visibility: None,
+        comdat: tail.as_ref().and_then(|t| t.2.clone()),
+        dll_storage: None,
+        metadata: tail.as_ref().map(|t| t.3.clone()).unwrap_or_default(),
+        is_ifunc: false,
+        ifunc_params: vec![],
+        ifunc_resolver: None,
+    },
+    // `global ptr [addrspace(N)] @ref` 裸引用 init（lexer 合并单 token——
+    // L6 裸全局引用;`@B = global ptr @A` 形态,GlobalId 后 Eq vs 换行的
+    // 2-lookahead 歧义经 lexer 消解;第二十一轮）
+    <name: GlobalId> Eq <g: GlobalPtrInitKw> <tail: GlobalTail?> => {
+        let (ty, target) = crate::ir_parser::ast_items::split_global_ptr_init(&g);
+        ParsedGlobal {
+            name: name,
+            is_constant: false,
+            ty,
+            init: Some(GlobalInitVal::Expr(Box::new(
+                crate::ir_parser::ast_items::ConstExpr::GlobalAddr(target),
+            ))),
+            align: tail.as_ref().map(|t| t.0).unwrap_or(0),
+            linkage: None,
+            dso_local: false,
+            unnamed_addr: false,
+            section: tail.as_ref().and_then(|t| t.1.clone()),
+            addr_space: 0,
+            thread_local: false,
+            visibility: None,
+            comdat: tail.as_ref().and_then(|t| t.2.clone()),
+            is_ifunc: false,
+            ifunc_params: vec![],
+            ifunc_resolver: None,
+            dll_storage: None,
+            metadata: tail.as_ref().map(|t| t.3.clone()).unwrap_or_default(),
+        }
+    },
+    <name: GlobalId> Eq <links: LinkageSeq> <kw: Ident> <ti: TypeAndInit> <init: GlobalInit?> <tail: GlobalTail?> => ParsedGlobal {
+        name: name,
+        is_constant: kw == "constant",
+        ty: ti.0,
+        // ti.1 为合并 token 携带的 ZeroInit init；None 时用 `<init: GlobalInit?>` 解析结果（如 `global i32 42`）
+        init: ti.1.or(init),
+        align: tail.as_ref().map(|t| t.0).unwrap_or(0),
+        linkage: links.0,
+        dso_local: links.1,
+        unnamed_addr: links.2,
+        thread_local: links.3,
+        section: tail.as_ref().and_then(|t| t.1.clone()),
+        is_ifunc: false,
+        ifunc_params: vec![],
+        ifunc_resolver: None,
+        addr_space: 0,
+        visibility: links.4,
+        comdat: tail.as_ref().and_then(|t| t.2.clone()),
+        dll_storage: links.5,
+        metadata: tail.as_ref().map(|t| t.3.clone()).unwrap_or_default(),
+    },
+    // `addrspace(N)` 前缀（LLVM：`@g = addrspace(1) global i32 0`）
+    <name: GlobalId> Eq <asp: GlobalAddrSpace> <kw: Ident> <ti: TypeAndInit> <init: GlobalInit?> <tail: GlobalTail?> => ParsedGlobal {
+        name: name,
+        is_constant: kw == "constant",
+        ty: ti.0,
+        // ti.1 为合并 token 携带的 ZeroInit init；None 时用 `<init: GlobalInit?>` 解析结果（如 `global i32 42`）
+        init: ti.1.or(init),
+        align: tail.as_ref().map(|t| t.0).unwrap_or(0),
+        linkage: None,
+        dso_local: false,
+        is_ifunc: false,
+        ifunc_params: vec![],
+        ifunc_resolver: None,
+        unnamed_addr: false,
+        thread_local: false,
+        section: tail.as_ref().and_then(|t| t.1.clone()),
+        addr_space: asp,
+        visibility: None,
+        comdat: tail.as_ref().and_then(|t| t.2.clone()),
+        dll_storage: None,
+        metadata: tail.as_ref().map(|t| t.3.clone()).unwrap_or_default(),
+    },
+    <name: GlobalId> Eq <links: LinkageSeq> <asp: GlobalAddrSpace> <kw: Ident> <ti: TypeAndInit> <init: GlobalInit?> <tail: GlobalTail?> => ParsedGlobal {
+        name: name,
+        is_constant: kw == "constant",
+        ty: ti.0,
+        // ti.1 为合并 token 携带的 ZeroInit init；None 时用 `<init: GlobalInit?>` 解析结果（如 `global i32 42`）
+        init: ti.1.or(init),
+        is_ifunc: false,
+        ifunc_params: vec![],
+        ifunc_resolver: None,
+        align: tail.as_ref().map(|t| t.0).unwrap_or(0),
+        linkage: links.0,
+        dso_local: links.1,
+        unnamed_addr: links.2,
+        thread_local: links.3,
+        section: tail.as_ref().and_then(|t| t.1.clone()),
+        addr_space: asp,
+        visibility: links.4,
+        comdat: tail.as_ref().and_then(|t| t.2.clone()),
+        dll_storage: links.5,
+        metadata: tail.as_ref().map(|t| t.3.clone()).unwrap_or_default(),
+    },
+};
+
+// 地址空间值（数字或符号化字符串——符号化宽松 0）
+AddrSpaceVal: i64 = {
+    <n: IntLit> => crate::ir_parser::ast_items::big_as_i64(&n),
+    <_s: StrLit> => 0,
+    // 标识符形态（LLVM：addrspace(D)——平台符号化地址空间）
+    <_i: Ident> => 0,
+};
+
+// 全局地址空间前缀：`addrspace(N)`
+GlobalAddrSpace: u32 = {
+    AddrspaceKw LParen <n: IntLit> RParen => crate::ir_parser::ast_items::big_as_u32(&n),
+    // 符号化地址空间（LLVM：addrspace("G")——AArch64 等按名寻址）——宽松 0
+    AddrspaceKw LParen <_s: StrLit> RParen => 0,
+};
+
+// 全局尾部属性：`, align N` / `, section "name"` / `, comdat($n)` / `, !kind !N`
+// 任意顺序/数量——列表式（每项以 Comma 开头完整匹配；与 AllocaOpt 同模式防部分消费歧义）
+GlobalTail: (u64, Option<String>, Option<String>, Vec<(String, MetadataRef)>) = {
+    <opts: (GlobalTailOpt)+> => {
+        let mut align = 0u64;
+        let mut section = None;
+        let mut comdat = None;
+        let mut metas = Vec::new();
+        for (kind, n, s, c, m) in opts {
+            match kind.as_str() {
+                "align" => align = n,
+                "section" => section = s,
+                "comdat" => comdat = c,
+                "meta" => {
+                    if let Some(m) = m {
+                        metas.push(m);
+                    }
+                }
+                _ => {}
+            }
+        }
+        (align, section, comdat, metas)
+    }
+};
+
+// 全局尾部单项（以 Comma 开头完整匹配）
+GlobalTailOpt: (String, u64, Option<String>, Option<String>, Option<(String, MetadataRef)>) = {
+    Comma Align <n: IntLit> => ("align".to_string(), crate::ir_parser::ast_items::big_as_u64(&n), None, None, None),
+    Comma Section <s: StrLit> => ("section".to_string(), 0u64, Some(s), None, None),
+    Comma ComdatKw LParen <c: ComdatName> RParen => ("comdat".to_string(), 0u64, None, Some(c), None),
+    // 无括号 comdat（`constant [7 x i8] c"...", comdat, align 1`——第十五轮）
+    Comma ComdatKw => ("comdat".to_string(), 0u64, None, None, None),
+    Comma <m: MetadataAttach> => ("meta".to_string(), 0u64, None, None, Some(m)),
+    // 关键字属性（`global i32 2, no_sanitize_address, align 4`）——宽松丢弃
+    Comma <_k: Ident> => ("attr".to_string(), 0u64, None, None, None),
+    // LLVM 全局字符串属性对：`"key" = "value"`（display 语义丢弃）
+    Comma <_s1: StrLit> Eq <_s2: StrLit> => ("attr".to_string(), 0u64, None, None, None),
+    // 无逗号形态（LLVM 新语法：`global i32 7 "key" = "value"`）
+    <_s1: StrLit> Eq <_s2: StrLit> => ("attr".to_string(), 0u64, None, None, None),
+    // 无逗号属性组引用（`global i32 2 #0`）——宽松丢弃
+    <_g: AttrGroupId> => ("attrgroup".to_string(), 0u64, None, None, None),
+    // 无值字符串属性（`global i32 0 "no_sanitize_address"`）
+    <_s: StrLit> => ("attr".to_string(), 0u64, None, None, None),
+};
+
+// 全局符号前缀：`[dso_local] [thread_local] [unnamed_addr] [linkage] [vis] [dll]`（≥1 个）
+// 6 维：link / dso / unnamed / tls / vis / dll——单闭包 + 语义分类（避免 (X)* X 闭包膨胀）
+LinkageSeq: (Option<String>, bool, bool, bool, Option<String>, Option<String>) = {
+    <ts: (<GlobalSymKw>)*> <f: GlobalSymKw> => {
+        let mut dso = false;
+        let mut unnamed = false;
+        let mut tls = false;
+        let mut link = None;
+        let mut vis = None;
+        let mut dll = None;
+        for t in ts.into_iter().chain(std::iter::once(f)) {
+            if t == "dso_local" {
+                dso = true;
+            } else if t == "unnamed_addr" || t == "local_unnamed_addr" {
+                unnamed = true;
+            } else if t == "thread_local" {
+                tls = true;
+            } else if t == "hidden" || t == "protected" {
+                vis = Some(t);
+            } else if t == "dllimport" || t == "dllexport" {
+                dll = Some(t);
+            } else {
+                link = Some(t);
+            }
+        }
+        (link, dso, unnamed, tls, vis, dll)
+    },
+};
+
+// 全局符号关键字（单 token → 字符串；dso_local 或 linkage）
+GlobalSymKw: String = {
+    DsoLocal => "dso_local".to_string(),
+    Private => "private".to_string(),
+    Internal => "internal".to_string(),
+    External => "external".to_string(),
+    Weak => "weak".to_string(),
+    WeakOdrKw => "weak_odr".to_string(),
+    LinkonceKw => "linkonce".to_string(),
+    LinkonceOdrKw => "linkonce_odr".to_string(),
+    AppendingKw => "appending".to_string(),
+    AvailableExternallyKw => "available_externally".to_string(),
+    ExternWeakKw => "extern_weak".to_string(),
+    ExternallyInitializedKw => "externally_initialized".to_string(),
+    CommonKw => "common".to_string(),
+    DllImportKw => "dllimport".to_string(),
+    DllExportKw => "dllexport".to_string(),
+    UnnamedAddrKw => "unnamed_addr".to_string(),
+    LocalUnnamedAddrKw => "local_unnamed_addr".to_string(),
+    ThreadLocalKw => "thread_local".to_string(),
+    ThreadLocalModelKw => "thread_local".to_string(),
+    HiddenKw => "hidden".to_string(),
+    ProtectedKw => "protected".to_string(),
+};
+
+GlobalInit: GlobalInitVal = {
+    <n: IntLit> => GlobalInitVal::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => GlobalInitVal::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <f: FloatLit> => GlobalInitVal::Float(f),
+    <fh: HexFloatLit> => GlobalInitVal::Float(fh),
+    <_fh: FloatHexLit> => GlobalInitVal::Float(0.0),
+    Null => GlobalInitVal::Null,
+    <c: CString> => GlobalInitVal::Str(
+        crate::ir_parser::ast_items::decode_c_string(&c),
+    ),
+    <_z: ZeroInitLit> => GlobalInitVal::ZeroInit,
+    <_z: VecZeroInitLit> => GlobalInitVal::ZeroInit,
+    ZeroInitKw => GlobalInitVal::ZeroInit,
+    // 注：裸全局引用 init（`@p = global ptr @h`）不可行——`global i32 @h` 与
+    // `global i32\n@h = ...`（下一条模块级 global）在 LALR(1) 下 2-lookahead 歧义，
+    // LLVM 自身靠上下文解析（见附录 §6 备忘）。带类型形式 `ptr @h` 走 GlobalConstExpr。
+    // 常量表达式：`ptrtoint (ptr @h to i32)` / `getelementptr (i32, ptr @h, i64 0)`
+    <e: GlobalConstExpr> => GlobalInitVal::Expr(Box::new(e)),
+    // 带类型前缀的常量表达式：`<3 x x86_fp80> splat (...)`（类型忽略——表达式自身携带）
+    <_ty: ValueType> <e: GlobalConstExpr> => GlobalInitVal::Expr(Box::new(e)),
+    // 聚合常量：`[i32 1, i32 2, ...]`（数组）与 `{ i32 1, i64 2 }`（结构体）；空聚合 `{}`/`[]` 合法
+    LBracket RBracket => GlobalInitVal::Agg(vec![]),
+    LBracket <first: GlobalAggElem> <rest: (Comma <GlobalAggElem>)*> RBracket => {
+        let mut v = vec![first];
+        v.extend(rest);
+        GlobalInitVal::Agg(v)
+    },
+    LBrace RBrace => GlobalInitVal::Agg(vec![]),
+    LBrace <first: GlobalAggElem> <rest: (Comma <GlobalAggElem>)*> RBrace => {
+        let mut v = vec![first];
+        v.extend(rest);
+        GlobalInitVal::Agg(v)
+    },
+    // packed struct：`<{ i32 7, i32 9 }>`
+    LAngle LBrace RBrace RAngle => GlobalInitVal::Agg(vec![]),
+    LAngle LBrace <first: GlobalAggElem> <rest: (Comma <GlobalAggElem>)*> RBrace RAngle => {
+        let mut v = vec![first];
+        v.extend(rest);
+        GlobalInitVal::Agg(v)
+    },
+};
+
+// 常量表达式转换操作（trunc/zext/sext——lexer 专用 token 已在 ConvOp 使用）
+ConvCastOp: String = {
+    Trunc => "trunc".to_string(),
+    Zext => "zext".to_string(),
+    Sext => "sext".to_string(),
+};
+
+// 常量表达式（3.3）：`<name> (<ty> <value> to <ty>)`（ptrtoint/inttoptr/bitcast/
+// addrspacecast 是 lexer 专用 token；getelementptr 走 Ident）与
+// `getelementptr (<indexed_ty>, <ty> <ptr>, <ty> <idx>, ...)`。
+GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
+    // 二元折叠表达式：`add nuw nsw (i64 <l>, i64 <r>)`（flags 可选；
+    // 操作数带类型前缀或嵌套表达式——ExprOperand 双形态）
+    <op: BinaryOp> <flags: InstFlagSeq> LParen <l: ExprOperand> Comma <r: ExprOperand> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::Binary {
+            op,
+            flags,
+            lhs: Box::new(l.1),
+            rhs: Box::new(r.1),
+        }
+    },
+    // `splat (i1 true)`（LLVM 18+ splat 常量表达式——宽松折叠为 0）
+    <_op: Ident> LParen <_e: ExprOperand> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::Unsupported("splat".to_string())
+    },
+    <op: BinaryOp> LParen <l: ExprOperand> Comma <r: ExprOperand> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::Binary {
+            op,
+            flags: vec![],
+            lhs: Box::new(l.1),
+            rhs: Box::new(r.1),
+        }
+    },
+    // ptrauth（LLVM AArch64 指针认证：`ptrauth (ptr @var, i32 0)`——参数携带
+    // 至语义层值级校验：base 指针类 / key i32 常量 / int_disc i64 常量 /
+    // addr_disc 指针类；校验通过宽松求值 0。第十四轮多参数形态因负向漂移
+    // 回滚（+2 = invalid-ptrauth-const3/4）——本轮语法四参数 + 值级校验配套）
+    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k]),
+    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> Comma <_d: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k, _d]),
+    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> Comma <_d: ExprOperand> Comma <_a: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k, _d, _a]),
+    // blockaddress（`ptr blockaddress(@f, %label)`——宽松 0；第十六轮 pr119818）
+    BlockaddressKw LParen <_f: GlobalId> Comma <_l: LocalId> RParen => crate::ir_parser::ast_items::ConstExpr::Int(0),
+    // splat（LLVM：`splat (ptr null)`——向量广播常量；求值宽松 0）
+    SplatKw LParen <_op: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Vector(
+        crate::ir_parser::ast_items::ParsedType::Vec(1, Box::new(crate::ir_parser::ast_items::ParsedType::Int(32))),
+        vec![],
+    ),
+    Ptrtoint LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::PtrToInt {
+            op_ty: op.0,
+            op: Box::new(op.1),
+            to_ty,
+        }
+    },
+    // ptrtoaddr（LLVM 新常量表达式：`ptrtoaddr (ptr @x to i64)`）——宽松同 ptrtoint
+    PtrtoaddrKw LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::PtrToInt {
+            op_ty: op.0,
+            op: Box::new(op.1),
+            to_ty,
+        }
+    },
+    // 转换折叠表达式：`trunc (i64 42 to i32)` / `zext (...) to i64` /
+    // `sext (...) to ...`（Trunc/Zext/Sext 是 lexer 专用 token）
+    <op: ConvCastOp> LParen <src: ExprOperand> To <to_ty: ValueType> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::Cast {
+            op,
+            src_ty: src.0,
+            src: Box::new(src.1),
+            to: to_ty,
+        }
+    },
+    Inttoptr LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::IntToPtr {
+            op_ty: op.0,
+            op: Box::new(op.1),
+            to_ty,
+        }
+    },
+    Bitcast LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::Bitcast {
+            op_ty: op.0,
+            op: Box::new(op.1),
+            to_ty,
+        }
+    },
+    AddrspaceCastKw LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::AddrSpaceCast {
+            op_ty: op.0,
+            op: Box::new(op.1),
+            to_ty,
+        }
+    },
+    GetElementPtr LParen <indexed_ty: Type> Comma <op: ExprOperand> <rest: (Comma <ExprOperand>)*> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::GetElementPtr {
+            indexed_ty,
+            op_ty: op.0,
+            ptr: Box::new(op.1),
+            indices: rest.into_iter().collect(),
+        }
+    },
+    // `getelementptr inbounds (...)` / `getelementptr nuw inrange(-8, 16) (...)`
+    //（M3 标志类：flags 解析后丢弃——与现有 Inbounds 变体行为一致）
+    GetElementPtr <_flags: GepFlagSeq> LParen <indexed_ty: Type> Comma <op: ExprOperand> <rest: (Comma <ExprOperand>)*> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::GetElementPtr {
+            indexed_ty,
+            op_ty: op.0,
+            ptr: Box::new(op.1),
+            indices: rest.into_iter().collect(),
+        }
+    },
+};
+
+// 表达式操作数：`<ty> <value>`（叶子）或嵌套表达式（`bitcast (ptr @h to ptr)`，
+// 自身带括号、无类型前缀——op_ty 用 Void 占位，display 按 op 类型判定输出）。
+ExprOperand: (crate::ir_parser::ast_items::ParsedType, crate::ir_parser::ast_items::ConstExpr) = {
+    <ty: ValueType> <v: ExprValue> => (ty, v),
+    <e: GlobalConstExpr> => (
+        crate::ir_parser::ast_items::ParsedType::Void,
+        e,
+    ),
+    // 向量常量（lexer 合并单 token）：`<2 x i64> <i64 1, i64 1>`（GEP 向量索引）
+    <lit: VecConstLit> => {
+        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
+        let expr = crate::ir_parser::ast_items::ConstExpr::Vector(ty.clone(), lanes);
+        (ty, expr)
+    },
+    // 向量 zeroinitializer（lexer 合并单 token）：`<2 x ptr> zeroinitializer`
+    <lit: VecZeroInitLit> => {
+        let ty = crate::ir_parser::ast_items::split_vec_const_lit(&lit).0;
+        let expr = crate::ir_parser::ast_items::ConstExpr::Vector(ty.clone(), vec![]);
+        (ty, expr)
+    },
+};
+
+ExprValue: crate::ir_parser::ast_items::ConstExpr = {
+    <g: GlobalId> => crate::ir_parser::ast_items::ConstExpr::GlobalAddr(
+        g.trim_start_matches('@').to_string(),
+    ),
+    <n: IntLit> => crate::ir_parser::ast_items::ConstExpr::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => crate::ir_parser::ast_items::ConstExpr::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    // 浮点十六进制位模式（宽松 0）
+    <_n: FloatHexLit> => crate::ir_parser::ast_items::ConstExpr::UInt(0),
+    <f: FloatLit> => crate::ir_parser::ast_items::ConstExpr::Float(f),
+    True => crate::ir_parser::ast_items::ConstExpr::Int(1),
+    False => crate::ir_parser::ast_items::ConstExpr::Int(0),
+    Null => crate::ir_parser::ast_items::ConstExpr::Null,
+    Undef => crate::ir_parser::ast_items::ConstExpr::Undef,
+    Poison => crate::ir_parser::ast_items::ConstExpr::Poison,
+    // 嵌套表达式：`bitcast (ptr @h to ptr)` 作为操作数（括号包裹）
+    LParen <e: GlobalConstExpr> RParen => e,
+    // 向量常量（常量表达式位置）：`<2 x i32> <i32 3, i32 4>`
+    <lit: VecConstLit> => {
+        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
+        crate::ir_parser::ast_items::ConstExpr::Vector(ty, lanes)
+    },
+    // 嵌套二元折叠表达式（带类型前缀的 ExprOperand 值位置）：
+    // `i64 add (i64 <l>, i64 <r>)`——`<ty: ValueType> <v: ExprValue>` 中
+    // ValueType 后 lookahead ∈ BinaryOp first（LParen 分支已处理括号形态）
+    <e: GlobalConstExpr> => e,
+};
+
+// 聚合常量元素：带类型标量字面量（`i32 1` / `float 1.5` / `ptr null`）
+GlobalAggElem: GlobalInitVal = {
+    <t: TypeOp> => match t.op {
+        Operand::Int(n) => GlobalInitVal::Int(n),
+        Operand::UInt(n) => GlobalInitVal::UInt(n),
+        Operand::Float(f) => GlobalInitVal::Float(f),
+        Operand::Null => GlobalInitVal::Null,
+        // 嵌套聚合（`[4 x ptr] [ptr null, ...]`——带类型前缀的嵌套 init；
+        // 第十一轮 vtable 摘要类）：Agg 透传，元素递归转换
+        Operand::Agg(v) => {
+            fn conv(p: crate::ir_parser::ast_items::ParsedOperand) -> GlobalInitVal {
+                match p.op {
+                    Operand::Int(n) => GlobalInitVal::Int(n),
+                    Operand::UInt(n) => GlobalInitVal::UInt(n),
+                    Operand::Float(f) => GlobalInitVal::Float(f),
+                    Operand::Null | Operand::Undef | Operand::Poison => GlobalInitVal::Null,
+                    Operand::Agg(v) => GlobalInitVal::Agg(v.into_iter().map(conv).collect()),
+                    _ => GlobalInitVal::Int(0),
+                }
+            }
+            GlobalInitVal::Agg(v.into_iter().map(conv).collect())
+        }
+        _ => GlobalInitVal::Int(0),
+    },
+    // 嵌套聚合元素（LLVM：`[[i32 1, i32 2], [i32 3, i32 4]]` / `{{i32 1}, i32 2}`；
+    // 内层类型从外层聚合推导——GlobalAggElem 递归，无左递归）
+    LBracket <first: GlobalAggElem> <rest: (Comma <GlobalAggElem>)*> RBracket => {
+        let mut v = vec![first];
+        v.extend(rest);
+        GlobalInitVal::Agg(v)
+    },
+    LBrace <first: GlobalAggElem> <rest: (Comma <GlobalAggElem>)*> RBrace => {
+        let mut v = vec![first];
+        v.extend(rest);
+        GlobalInitVal::Agg(v)
+    },
+};
+
+
+AlignOpt: u32 = {
+    Comma Align <n: IntLit> => crate::ir_parser::ast_items::big_as_u32(&n),
 };
 
 TargetSpec: (String, String) = {
@@ -92,41 +1006,480 @@ TargetSpec: (String, String) = {
 // ── 函数 ──
 
 FunctionDef: ParsedFunction = {
-    Define <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <body: Body> => {
-        ParsedFunction {
-            name: name,
-            ret_ty: ret,
-            params: params,
-            blocks: body,
-            declare: false,
-        }
-    }
+    // define dso_local（clang 默认输出）：非抢占保证
+    Define DsoLocal <fr: FuncRet> <name: GlobalId> LParen <params: ParamList> RParen <attrs: FuncAttrs?> <grp: AttrGroupId?> <_pre: (PrefixKw TypeOp)?> <_pro: (PrologueKw TypeOp)?> <_gc: (GcKw StrLit)?> <pers: Personality?> <comdat: ComdatOpt?> <metas: MetadataAttach*> <body: Body> => ParsedFunction {
+        name: name,
+        ret_ty: fr.2,
+        ret_attrs: fr.1,
+        metadata: metas,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: body,
+        declare: false,
+        dso_local: true,
+        call_conv: fr.0,
+        attrs: {
+            let mut a = attrs.unwrap_or_default();
+            if let Some(g) = grp {
+                a.push(format!("#{g}"));
+            }
+            a
+        },
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: pers,
+        comdat: comdat.flatten(),
+    },
+    Define DsoLocal <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <attrs: FuncAttrs?> <grp: AttrGroupId?> <_pre: (PrefixKw TypeOp)?> <_pro: (PrologueKw TypeOp)?> <_gc: (GcKw StrLit)?> <pers: Personality?> <comdat: ComdatOpt?> <metas: MetadataAttach*> <body: Body> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: body,
+        declare: false,
+        dso_local: true,
+        call_conv: None,
+        attrs: {
+            let mut a = attrs.unwrap_or_default();
+            if let Some(g) = grp {
+                a.push(format!("#{g}"));
+            }
+            a
+        },
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        ret_attrs: vec![],
+        metadata: metas,
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: pers,
+        comdat: comdat.flatten(),
+    },
+    Define <fr: FuncRet> <name: GlobalId> LParen <params: ParamList> RParen <_addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <attrs: FuncAttrs?> <grp: AttrGroupId?> <_pre: (PrefixKw TypeOp)?> <_pro: (PrologueKw TypeOp)?> <_gc: (GcKw StrLit)?> <pers: Personality?> <comdat: ComdatOpt?> <metas: MetadataAttach*> <body: Body> => ParsedFunction {
+        name: name,
+        ret_ty: fr.2,
+        ret_attrs: fr.1,
+        metadata: metas,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: body,
+        declare: false,
+        dso_local: false,
+        call_conv: fr.0,
+        attrs: {
+            let mut a = attrs.unwrap_or_default();
+            if let Some(g) = grp {
+                a.push(format!("#{g}"));
+            }
+            a
+        },
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: pers,
+        comdat: comdat.flatten(),
+    },
+    // define linkage（第十五轮 lexer 合并单 token——`define internal`）
+    DefineLinkageKw <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <_addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <attrs: FuncAttrs?> <grp: AttrGroupId?> <_pre: (PrefixKw TypeOp)?> <_pro: (PrologueKw TypeOp)?> <_gc: (GcKw StrLit)?> <pers: Personality?> <comdat: ComdatOpt?> <metas: MetadataAttach*> <body: Body> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: body,
+        declare: false,
+        dso_local: false,
+        call_conv: None,
+        attrs: {
+            let mut a = attrs.unwrap_or_default();
+            if let Some(g) = grp {
+                a.push(format!("#{g}"));
+            }
+            a
+        },
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        ret_attrs: vec![],
+        metadata: metas,
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: pers,
+        comdat: comdat.flatten(),
+    },
+    Define <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <_addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <grp: AttrGroupId?> <_pre: (PrefixKw TypeOp)?> <_pro: (PrologueKw TypeOp)?> <_gc: (GcKw StrLit)?> <pers: Personality?> <comdat: ComdatOpt?> <metas: MetadataAttach*> <body: Body> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: body,
+        declare: false,
+        dso_local: false,
+        call_conv: None,
+        attrs: grp.map(|g| vec![format!("#{g}")]).unwrap_or_default(),
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        ret_attrs: vec![],
+        metadata: metas,
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: pers,
+        comdat: comdat.flatten(),
+    },
+    Define <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <attrs: FuncAttrs> <grp: AttrGroupId?> <_pre: (PrefixKw TypeOp)?> <_pro: (PrologueKw TypeOp)?> <_gc: (GcKw StrLit)?> <pers: Personality?> <comdat: ComdatOpt?> <metas: MetadataAttach*> <body: Body> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: body,
+        declare: false,
+        dso_local: false,
+        call_conv: None,
+        attrs: {
+            let mut a = attrs;
+            if let Some(g) = grp {
+                a.push(format!("#{g}"));
+            }
+            a
+        },
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        ret_attrs: vec![],
+        metadata: metas,
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: pers,
+        comdat: comdat.flatten(),
+    },
+};
+
+// define 尾 comdat 子句（第十七轮：comdat $name 或裸 comdat {）
+// Some(name) = 有名；Some("") = 裸 comdat 无名形态（数字函数名语义层拒绝）
+ComdatOpt: Option<String> = {
+    ComdatKw <n: ComdatName> => Some(n),
+    // 裸 comdat（无名——LLVM 合法；第十七轮双分支实测 +1 漂移超限回滚,
+    // 第二十轮误接受基线 71,+1 → 72 在断言上限 80 内；语义层校验
+    // unnamed-comdat 负向形态）
+    ComdatKw => Some(String::new()),
+};
+
+// visibility 前缀关键字（declare hidden/protected——第十一轮）
+VisibilityKw: () = {
+    HiddenKw => (),
+    ProtectedKw => (),
 };
 
 DeclareDef: ParsedFunction = {
-    Declare <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen => {
-        ParsedFunction {
-            name: name,
-            ret_ty: ret,
-            params: params,
-            blocks: vec![],
-            declare: true,
+    // declare hidden/protected（visibility 前缀——第十一轮）
+    Declare <_v: VisibilityKw> <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <tail: DeclareTail> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        ret_attrs: vec![],
+        metadata: tail.1,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: vec![],
+        declare: true,
+        dso_local: false,
+        call_conv: None,
+        attrs: tail.0,
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: None,
+        comdat: None,
+    },
+    // declare dso_local：LLVM 允许 dso_local 前缀（非抢占声明）
+        Declare DsoLocal <fr: FuncRet> <name: GlobalId> LParen <params: ParamList> RParen <tail: DeclareTail> => ParsedFunction {
+        name: name,
+        ret_ty: fr.2,
+        ret_attrs: fr.1,
+        metadata: tail.1,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: vec![],
+        declare: true,
+        dso_local: true,
+        call_conv: fr.0,
+        attrs: tail.0,
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: None,
+        comdat: None,
+    },
+        Declare DsoLocal <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <tail: DeclareTail> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: vec![],
+        declare: true,
+        dso_local: true,
+        call_conv: None,
+        attrs: tail.0,
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        ret_attrs: vec![],
+        metadata: tail.1,
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: None,
+        comdat: None,
+    },
+        Declare <fr: FuncRet> <name: GlobalId> LParen <params: ParamList> RParen <tail: DeclareTail> => ParsedFunction {
+        name: name,
+        ret_ty: fr.2,
+        ret_attrs: fr.1,
+        metadata: tail.1,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: vec![],
+        declare: true,
+        dso_local: false,
+        call_conv: fr.0,
+        attrs: tail.0,
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: None,
+        comdat: None,
+    },
+        Declare <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <tail: DeclareTail> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: vec![],
+        declare: true,
+        dso_local: false,
+        call_conv: None,
+        attrs: tail.0,
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        ret_attrs: vec![],
+        metadata: tail.1,
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: None,
+        comdat: None,
+    },
+    // declare !name !N 前缀 metadata（`declare !bar !1 void @bar()`——
+    // LLVM 已弃用的 callee-type 前缀语法；lexer 合并单 token 消歧,
+    // 前缀宽松丢弃）
+    DeclarePrefixMdKw <ret: Type> <name: GlobalId> LParen <params: ParamList> RParen <tail: DeclareTail> => ParsedFunction {
+        name: name,
+        ret_ty: ret,
+        params: params.iter().map(|(t, n, _)| (t.clone(), n.clone())).collect(),
+        blocks: vec![],
+        declare: true,
+        dso_local: false,
+        call_conv: None,
+        attrs: tail.0,
+        param_attrs: params.iter().map(|(_, _, a)| a.clone()).collect(),
+        ret_attrs: vec![],
+        metadata: tail.1,
+        varargs: params.iter().any(|(_, n, _)| n == "..."),
+        personality: None,
+        comdat: None,
+    },
+};
+
+// declare 尾部：`[FuncAttrs] [#N] [MetadataAttach*]`（**必选**单非终结符——第 6 轮
+// 实测可空 DeclareTail? 与裸分支共存必冲突；空分支内含 `=> (vec![], vec![])`）。
+// 返回 (attrs, metas)：`#N` 以 `#{n}` 字符串保存，build_module 阶段经属性组展开。
+DeclareTail: (Vec<String>, Vec<(String, MetadataRef)>) = {
+    <metas: MetadataAttach*> => (vec![], metas),
+    <attrs: FuncAttrs> <metas: MetadataAttach*> => (attrs, metas),
+    <attrs: FuncAttrs> <g: AttrGroupId> <metas: MetadataAttach*> => {
+        let mut a = attrs;
+        a.push(format!("#{g}"));
+        (a, metas)
+    },
+    <g: AttrGroupId> <metas: MetadataAttach*> => (vec![format!("#{g}")], metas),
+};
+
+// 返回类型前缀：`[fastcc] [signext|zeroext|...]` + 返回类型（≥1 个关键字；
+// LLVM：`define signext i8 @g`）。显式分支规避 (X)* 与 Type 的 LR 冲突。
+FuncRet: (Option<String>, Vec<String>, ParsedType) = {
+    <ts: (<FuncRetKw>)*> <f: FuncRetKw> <ret: Type> => {
+        let mut cc = None;
+        let mut attrs = vec![];
+        for t in ts.into_iter().chain(std::iter::once(f)) {
+            if t == "fastcc" || t == "win64cc" {
+                cc = Some(t);
+            } else {
+                attrs.push(t);
+            }
         }
-    }
+        (cc, attrs, ret)
+    },
+    // 数值调用约定：`cc 10`（LLVM 标准）
+    Cc <n: IntLit> <ret: Type> => (Some(format!("cc {n}")), vec![], ret),
+    // 命名调用约定（LLVM：`declare amdgpu_cs_chain void @f()` /
+    // `define amdgpu_ps void @g()`——amdgpu_* 等平台约定走 Ident）
+    <kw: Ident> <ret: Type> => (Some(kw), vec![], ret),
+    // riscv_vls_cc(N)（第十二轮：RISC-V 可伸缩向量约定——数值参数）
+    <v: RiscvVlsCcKw> <ret: Type> => (Some(format!("riscv_vls_cc({v})")), vec![], ret),
 };
 
-Param: (ParsedType, String) = {
-    <ty: ValueType> <name: LocalId> => (ty, name),
+FuncRetKw: String = {
+    Fastcc => "fastcc".to_string(),
+    Win64cc => "win64cc".to_string(),
+        <v: ParenAttrKw> => v,
+    ReturnedKw => "returned".to_string(),
+    Signext => "signext".to_string(),
+    Zeroext => "zeroext".to_string(),
+    Noalias => "noalias".to_string(),
+    Noundef => "noundef".to_string(),
+    Readonly => "readonly".to_string(),
+    Writeonly => "writeonly".to_string(),
+    Nonnull => "nonnull".to_string(),
+    InregKw => "inreg".to_string(),
+    Align <n: IntLit> => format!("align {n}"),
+    ByvalKw LParen <t: Type> RParen => format!("byval({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    SretKw LParen <t: Type> RParen => format!("sret({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    // captures(<mode>, <mode>...)：LLVM 参数捕获属性（none/address/provenance
+    // ——开放值列表）
+    CapturesKw LParen <v: CapturesVal> <rest: (Comma CapturesVal)*> RParen => {
+        let mut parts = vec![v];
+        for (_, r) in rest {
+            parts.push(r);
+        }
+        format!("captures({})", parts.join(", "))
+    },
+    // byref 必须带类型参数（LLVM：`ptr byref(i32)`——裸 byref 拒绝，见 §7）
+    ByrefKw LParen <t: Type> RParen => format!("byref({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    // dereferenceable(N)/dereferenceable_or_null(N)（第十一轮专用 token——
+    // Ident 开放形态与命名调用约定 `Ident <ret: Type>` 的 LParen 闭包冲突）
+    DereferenceableKw LParen <n: IntLit> RParen => format!("dereferenceable({n})"),
+    DereferenceableOrNullKw LParen <n: IntLit> RParen => format!("dereferenceable_or_null({n})"),
 };
 
-ParamList: Vec<(ParsedType, String)> = {
+// captures 的值：LLVM 开放模式集合（none/address/read/ret/provenance/...）
+// ——Ident 兜底 + 与 lexer 关键字冲突的常用值（ret）
+CapturesVal: String = {
+    <v: Ident> => v,
+    Ret => "ret".to_string(),
+    // `none`（LLVM captures(none)——NoneKw 是 token 字面量专用 token）
+    NoneKw => "none".to_string(),
+    // 限定模式（LLVM 新语法）：`ret: address` / `read: provenance` 等
+    <m: Ident> Colon <v: Ident> => format!("{m}:{v}"),
+    Ret Colon <v: Ident> => format!("ret:{v}"),
+    Ret Colon NoneKw => "ret:none".to_string(),
+    NoneKw Colon <v: Ident> => format!("none:{v}"),
+};
+
+// 函数属性列表（LLVM 位置在参数列表后、body 前）：`nounwind noinline optnone ...`
+FuncAttrs: Vec<String> = {
+    <mut v: (<FuncAttr>)*> <f: FuncAttr> => {
+        v.push(f);
+        v
+    },
+};
+
+FuncAttr: String = {
+    UnnamedAddrKw => "unnamed_addr".to_string(),
+    LocalUnnamedAddrKw => "local_unnamed_addr".to_string(),
+    Align <n: IntLit> => format!("align {n}"),
+    SspKw => "ssp".to_string(),
+    ConvergentKw => "convergent".to_string(),
+    StrictfpKw => "strictfp".to_string(),
+    <v: FuncOpenAttrKw> => v,
+    // range(...)/nofpclass(...)/memory(...)（payload 原样保 roundtrip）
+    <v: ParenAttrKw> => v,
+    // 保留完整文本含模式(第二十九轮重建:原固定名丢 (ieee) 致 display 还原缺参)
+    <v: DenormalFpenvKw> => v,
+    // 字符串属性对（属性组内：`"string" = "value"`）——原样保存
+    <_k: StrLit> Eq <_v: StrLit> => format!("{_k} = {_v}"),
+    Nounwind => "nounwind".to_string(),
+    Noinline => "noinline".to_string(),
+    Alwaysinline => "alwaysinline".to_string(),
+    Norecurse => "norecurse".to_string(),
+    Optnone => "optnone".to_string(),
+    // 高频函数属性（Ident 兜底会引入 LALR 歧义——用专用 token）
+    UwtableKw => "uwtable".to_string(),
+    NosyncKw => "nosync".to_string(),
+    BuiltinKw => "builtin".to_string(),
+    NobuiltinKw => "nobuiltin".to_string(),
+    // declare/define 尾部函数属性（LLVM：`declare ... nounwind readonly`）
+    Readonly => "readonly".to_string(),
+    Writeonly => "writeonly".to_string(),
+    PresplitKw => "presplitcoroutine".to_string(),
+};
+
+Param: (ParsedType, String, Vec<String>) = {
+    <ty: Type> <name: LocalId> => (ty, name, vec![]),
+    <ty: Type> <attrs: ParamAttrs> <name: LocalId> => (ty, name, attrs),
+    // 无名参数（LLVM：`declare i32 @f(i32, ptr)` 常见；define 亦可，函数体无法引用）
+    <ty: Type> <attrs: ParamAttrs?> => (ty, "".to_string(), attrs.unwrap_or_default()),
+    // 可变参数（LLVM：`declare i32 @printf(ptr, ...)`）——并入 Param 避免
+    // ParamList 闭包在 Comma 处的 2-lookahead 歧义（`i32 %a, ...` 中 `...`
+    // 是最后一个 Param，而非独立尾部）；名字用 `...` 哨兵，semantics 过滤。
+    Ellipsis => (ParsedType::Void, "...".to_string(), vec![]),
+};
+
+// 参数属性：`signext`/`zeroext`/`noalias`/`noundef`/`readonly`/`writeonly`/`nocapture`/`nonnull`
+//（LLVM 位置：类型后、参数名前；至少 1 个——显式分支避免可空 LR 歧义）
+ParamAttrs: Vec<String> = {
+    <mut v: (<ParamAttr>)*> <f: ParamAttr> => {
+        v.push(f);
+        v
+    },
+};
+
+ParamAttr: String = {
+    // 字符串参数属性（`i64 "foo bar"`——第十五轮 incorrect-tdep；带引号存
+    // 以便语义层识别为字符串属性宽松）
+    <sv: StrLit> => format!("\"{sv}\""),
+    <v: ParenAttrKw> => v,
+    ReturnedKw => "returned".to_string(),
+    Signext => "signext".to_string(),
+    ImmargKw => "immarg".to_string(),
+    Zeroext => "zeroext".to_string(),
+    Noalias => "noalias".to_string(),
+    Noundef => "noundef".to_string(),
+    Readonly => "readonly".to_string(),
+    Writeonly => "writeonly".to_string(),
+    Nocapture => "nocapture".to_string(),
+    Nonnull => "nonnull".to_string(),
+    InregKw => "inreg".to_string(),
+    Align <n: IntLit> => format!("align {n}"),
+    // LLVM 别名语法：`align(N)` 等价 `align N`（display 规范化为 `align N`）
+    Align LParen <n: IntLit> RParen => format!("align {n}"),
+    // 类型参数属性（LLVM：`byval(%struct.S)` / `sret(%struct.S)`）——
+    // 类型经 fmt_parsed_type 序列化为文本，semantics 解析回 TypeId。
+    ByvalKw LParen <t: Type> RParen => format!("byval({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    SretKw LParen <t: Type> RParen => format!("sret({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    // captures(<mode>, <mode>...)：LLVM 参数捕获属性（none/address/provenance
+    // ——开放值列表）
+    CapturesKw LParen <v: CapturesVal> <rest: (Comma CapturesVal)*> RParen => {
+        let mut parts = vec![v];
+        for (_, r) in rest {
+            parts.push(r);
+        }
+        format!("captures({})", parts.join(", "))
+    },
+    // byref 必须带类型参数（LLVM：`ptr byref(i32)`——裸 byref 拒绝，见 §7）
+    ByrefKw LParen <t: Type> RParen => format!("byref({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    // dereferenceable(N)/dereferenceable_or_null(N)（第十一轮专用 token——
+    // Ident 开放形态与命名调用约定 `Ident <ret: Type>` 的 LParen 闭包冲突）
+    DereferenceableKw LParen <n: IntLit> RParen => format!("dereferenceable({n})"),
+    DereferenceableOrNullKw LParen <n: IntLit> RParen => format!("dereferenceable_or_null({n})"),
+};
+
+ParamList: Vec<(ParsedType, String, Vec<String>)> = {
     => vec![],
-    <p: Param> => vec![p],
-    <first: Param> Comma <rest: ParamList> =>? {
-        let mut all = vec![first];
-        all.extend(rest);
-        Ok(all)
+    // 左递归累积（替代右递归 vec![first] + extend 的 O(n²) reducer）
+    <mut v: (<Param> Comma)*> <p: Param> =>? {
+        v.push(p);
+        Ok(v)
     }
+};
+
+// uselistorder 语句（终结符后允许；LLVM use-list 特例）——(值名, 索引) 收集
+UselistorderStmt: (String, Vec<i64>, ParsedType) = {
+    UselistorderKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
+        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        
+        let name = match _v {
+            Operand::Global(g) => g,
+            Operand::Local(l) => l,
+            other => format!("{other:?}"),
+        };
+        (name, idx, t)
+    },
+    UselistorderKw LabelTy <_v: LocalId> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
+        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        
+        (_v, idx, ParsedType::Void)
+    },
+    UselistorderBbKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
+        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        
+        let name = match _v {
+            Operand::Global(g) => g,
+            Operand::Local(l) => l,
+            other => format!("{other:?}"),
+        };
+        (name, idx, t)
+    },
+    UselistorderBbKw LabelTy <_v: LocalId> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
+        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        
+        (_v, idx, ParsedType::Void)
+    },
 };
 
 Body: Vec<ParsedBlock> = {
@@ -136,12 +1489,56 @@ Body: Vec<ParsedBlock> = {
 // ── 块 ──
 
 Block: ParsedBlock = {
-    <label: LocalId> Colon <insts: (<Inst>)*> <term: Terminator> => ParsedBlock {
-        label: label,
+    <label: BlockLabel> Colon <insts: (<Inst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => ParsedBlock {
+        label: label.0,
+        label_is_num: label.1,
+        implicit: false,
+        insts: insts,
+        terminator: term,
+        uselistorders: tail,
+    },
+    // LLVM 合法语法：入口块可省略 label（`define void @f() { %a = ... }`）
+    <insts: (<Inst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => ParsedBlock {
+        label: "entry".to_string(),
+        uselistorders: tail,
+        label_is_num: false,
+        implicit: true,
         insts: insts,
         terminator: term,
     },
 };
+
+// 块 label：`%name`（LocalId）或裸名 `name`（LLVM 均合法；裸名走 Ident）
+// 返回 (名字, 是否显式数字标签)：`3:` → ("3", true)；`"2":`/`-3:`/`$N:`
+// → 字符串名（解码后可能呈数字形态但 is_num=false）。
+BlockLabel: (String, bool) = {
+    <n: LocalId> => {
+        // `%"2":` 带引号形态 → 去引号解码（与 LabelRef 一致）
+        let raw = n.trim_start_matches('%');
+        if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+            (
+                String::from_utf8_lossy(&crate::ir_parser::ast_items::decode_c_string(
+                    &raw[1..raw.len() - 1].to_string(),
+                ))
+                .into_owned(),
+                false,
+            )
+        } else {
+            (raw.to_string(), false)
+        }
+    },
+    <n: Ident> => (n, false),
+    // 数字块标签（LLVM：`3:` 显式数字标签）
+    <n: IntLit> => (n.to_string(), true),
+    // 字符串标签（LLVM：`%"2":` / `"-3":` 带引号标签）
+    <s: StrLit> => (s, false),
+    // 数字型字符串标签（LLVM：`-N-:`——`-` 开头无引号）
+    <s: LabelStr> => (s, false),
+    // `$` 前缀字符串标签（LLVM：`$N:`——lexer 产出 ComdatName token；
+    // 标签名保留 `$`（`br label %$N` 跳向 `$N:`））
+    <c: ComdatName> => (c, false),
+};
+
 
 // ── 指令 ──
 
@@ -151,86 +1548,1260 @@ Inst: ParsedInst = {
 };
 
 InstBody: ParsedInst = {
-    // 比较（带条件）：icmp <cond> <ty> <a>, <ty> <b>
-    <op: CompareOp> <cond: Ident> <args: TypeOps> => ParsedInst {
+    // #dbg_* debug record 参数形态校验（第二十一轮——终结符后无位置自动
+    // 拒绝 dbg-record-invalid-0;未知类型 lexer 拒绝 invalid-4;第 2/4 参
+    // 必须 !ref 拒绝 invalid-2/6;参数计数拒绝 invalid-7/8）
+    DbgValueKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    DbgDeclareKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    DbgDeclareValueKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    DbgLabelKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    // dbg_assign:7 参（value, !value_md, !expr, !id, addr, !expr, !loc——
+    // metadata-use-uselistorder.ll 的完整形态）
+    DbgAssignKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> Comma <_e: DbgArg> Comma <_f: DbgArg> Comma <_g: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    // dbg_kill:2 参（value, !loc）
+    DbgKillKw LParen <_a: DbgArg> Comma <_b: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    // fneg（LLVM 浮点取负：`fneg fast <3 x float> %vec`）
+    FnegKw <flags: InstFlagSeq> <t: Type> <v: Value> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: flags,
+        result: None,
+        opcode: "fneg".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: vec![ParsedOperand { ty: t, op: v }],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+    },
+    FnegKw <t: Type> <v: Value> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "fneg".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: vec![ParsedOperand { ty: t, op: v }],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+    },
+    // 比较（带条件）：icmp <cond> <ty> <a>, <ty> <b> [, !prof !N]
+    // CmpOps 固定 2 操作数 + CommaAttach——TypeOps 闭包 `(TypeOp Comma)*` 吃不下
+    // 尾逗号 `, !prof`（2-lookahead：Comma 后是 TypeOp 还是 MetadataNameKw）。
+    <op: CompareOp> <cond: Ident> <args: CmpOps> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
         result: None,
         opcode: op,
         cond: Some(cond.to_string()),
-        args: args,
+        args: args.0,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: args.1,
+        flags: vec![],
     },
-    // 调用：call <retty> <callee>(<args>) —— callee 作为 args[0]
-    Call <ret: Type> <callee: Value> LParen <args: CallArgList> RParen => ParsedInst {
+    // `icmp samesign ult i32 %a, %b`（M3 标志类——samesign 在 cond 前）
+    <op: CompareOp> Samesign <cond: Ident> <args: CmpOps> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
         result: None,
-        opcode: "call".to_string(),
+        opcode: op,
+        cond: Some(cond.to_string()),
+        args: args.0,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: args.1,
+        flags: vec!["samesign".to_string()],
+    },
+    // 二元指令（S2）：`add nsw i32 %a, %b` / `add i32 %a, %b`（LLVM 现代
+    // 语法第二操作数无类型——类型从第一推导，BinaryOps 处理）。专用
+    // BinaryOp token 集使 first 与 Ident 通用规则分离；flags 可选
+    // （InstFlagSeq 非空 vs 直接类型，first 集不相交）。
+    <op: BinaryOp> <flags: InstFlagSeq> <args: BinaryOps> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: op,
         cond: None,
+        args: args.0,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: args.1,
+        flags: flags,
+    },
+    <op: BinaryOp> <args: BinaryOps> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: op,
+        cond: None,
+        args: args.0,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: args.1,
+        flags: vec![],
+    },
+    // extractelement <vecty> <v>, <idx> / insertelement <vecty> <v>, <elemty> <x>, <idx>
+    // shufflevector <vecty> <a>, <vecty> <b>, <mask>
+    //（idx 常量存 immediates；shuffle 掩码用 MaskVecLit 单 token）
+    ExtractElementKw <v: TypeOp> Comma <idx: TypeOp> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "extractelement".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![v, idx],
+    },
+    InsertElementKw <v: TypeOp> Comma <x: TypeOp> Comma <idx: TypeOp> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "insertelement".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![v, x, idx],
+    },
+    // 掩码：VecConstLit（`<4 x i32> <i32 0, ...>` 合并 token）或 MaskVecLit
+    // （`<i32 0, ...>`——类型固定 i32 向量，semantics 只取 lane 值）
+    ShuffleVectorKw <a: TypeOp> Comma <b: TypeOp> Comma <mask: MaskOrConst> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![mask],
+        result: None,
+        opcode: "shufflevector".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![a, b, ParsedOperand { ty: ParsedType::Vec(4, Box::new(ParsedType::Int(32))), op: Operand::VecConst(vec![]) }],
+    },
+    // extractvalue <aggty> <agg>, <idx> / insertvalue <aggty> <agg>, <elemty> <elem>, <idx>
+    //（idx 是裸整数——通用 TypeOp 分支无法解析）
+    ExtractValueKw <aggty: Type> <aggv: Value> Comma <idx: IntLit> <rest: (Comma IntLit)*> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "extractvalue".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
         args: {
-            let mut v = args;
-            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            let mut v = vec![
+                ParsedOperand { ty: aggty, op: aggv },
+                ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&idx)) },
+            ];
+            for (_, n) in rest {
+                v.push(ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)) });
+            }
             v
         },
     },
-    // alloca：alloca <ty>
-    Alloca <ty: Type> => ParsedInst {
+    // va_arg <ptrty> <ptr>, <ty>（LLVM 可变参数读取；ty 为返回类型占位——
+    // ABI 布局为 P1，文本层把 (ty, undef) 占位存为第二个操作数）
+    VaArgKw <ap: TypeOp> Comma <ty: ValueType> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
         result: None,
-        opcode: "alloca".to_string(),
+        opcode: "va_arg".to_string(),
         cond: None,
-        args: vec![ParsedOperand { ty: ty, op: Operand::Null }],
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![
+            ap,
+            ParsedOperand { ty: ty, op: Operand::Undef },
+        ],
     },
-    // load：load <valty>, <addrty> <ptr>
-    Load <val: Type> Comma <addr: TypeOp> => ParsedInst {
+    InsertValueKw <aggty: Type> <aggv: Value> Comma <elem: TypeOp> Comma <idx: IntLit> <rest: (Comma IntLit)*> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "insertvalue".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![
+            ParsedOperand { ty: aggty, op: aggv },
+            elem,
+            ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&idx)) },
+        ],
+    },
+    // 原子指令（LLVM 语法）：
+    //   atomicrmw add <ty> <ptr>, <ty> <val> <memord>（ptr 在逗号前）
+    //   cmpxchg [weak] <ty> <ptr>, <ty> <cmp>, <ty> <new> <succ> <fail>
+    //   fence <memord>
+    // 操作名：S2 起 add/sub/and/or/xor/fadd/fsub 是专用 token（BinaryOp），
+    // 其余（xchg/max/min/nand/...）仍走 Ident——AtomicOp 合并两者。
+    AtomicRmwKw Volatile <_e: ElementwiseKw?> <op: AtomicOp> <ptr: TypeOp> Comma <val: TypeOp> <_sync: SyncScope?> <ord: Ident> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: 0,
+        flags: vec![op, ord],
+        result: None,
+        opcode: "atomicrmw".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![ptr, val],
+    },
+AtomicRmwKw <_e: ElementwiseKw?> <op: AtomicOp> <ptr: TypeOp> Comma <val: TypeOp> <_sync: SyncScope?> <ord: Ident> <_align: (Comma Align IntLit)?> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![op, ord],
+        result: None,
+        opcode: "atomicrmw".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![ptr, val],
+    },
+    CmpxchgKw Weak Volatile <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScope?> <succ: Ident> <fail: Ident> <_align: (Comma Align IntLit)?> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: 0,
+        flags: vec![succ, fail],
+        result: None,
+        opcode: "cmpxchg".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![ptr, cmp, new],
+    },
+CmpxchgKw Weak <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScope?> <succ: Ident> <fail: Ident> <_align: (Comma Align IntLit)?> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["weak".to_string(), succ, fail],
+        result: None,
+        opcode: "cmpxchg".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![ptr, cmp, new],
+    },
+    CmpxchgKw Volatile <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScope?> <succ: Ident> <fail: Ident> <_align: (Comma Align IntLit)?> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: 0,
+        flags: vec![succ, fail],
+        result: None,
+        opcode: "cmpxchg".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![ptr, cmp, new],
+    },
+CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScope?> <succ: Ident> <fail: Ident> <_align: (Comma Align IntLit)?> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![succ, fail],
+        result: None,
+        opcode: "cmpxchg".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![ptr, cmp, new],
+    },
+    // landingpad <resultty> <clause>[, <clause>...]（clause = cleanup | catch <ty> @f | filter <ty> @f）。
+    // flags 存子句名序列；args[0] = 结果类型（undef 占位）；args[1..] = catch/filter 的 (ty, fn) 操作数。
+    LandingPadKw <ty: ValueType> <c0: LandingPadClause> <rest: (Comma <LandingPadClause>)*> <metas: MetadataAttach*> => {
+        let mut clauses = vec![c0];
+        clauses.extend(rest);
+        let mut flags = Vec::new();
+        let mut args = vec![ParsedOperand { ty: ty, op: Operand::Undef }];
+        for (name, op) in &clauses {
+            flags.push(name.clone());
+            if let Some(op) = op {
+                args.push(op.clone());
+            }
+        }
+        ParsedInst {
+            endian: false,
+            volatile: false,
+            align: 0,
+            flags,
+            result: None,
+            opcode: "landingpad".to_string(),
+            cond: None,
+            phi_incomings: vec![],
+            arg_attrs: vec![],
+            call_fn_attrs: vec![],
+            metadata_attach: metas,
+            args,
+        }
+    },
+    FenceKw <_sync: SyncScope?> <ord: Ident> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![ord],
+        result: None,
+        opcode: "fence".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: vec![],
+    },
+    // 调用（LLVM：tail 在 call 前）：[tail|musttail] call [fastcc] <retty> <callee>(<args>)
+    // 显式 6 分支（tail × fastcc 组合）规避 CallCcKw 的 epsilon LR 冲突
+    Tail Call Fastcc <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["tail".to_string(), "fastcc".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    // tail inline asm：`tail call void asm sideeffect "mov", "~{...}"()`
+    Tail Call <ret: Type> AsmKw <_side: (Ident)*> <_s1: StrLit> <_rest: (Comma StrLit)*> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        // inline asm(第二十九轮重建:asm 串/约束入 flags,display 还原)
+        flags: {
+            let mut f = vec!["tail".to_string(), "asm".to_string()];
+            f.push(format!("asm:{_s1}"));
+            for c in _rest {
+                f.push(format!("asmc:{}", c.1));
+            }
+            f
+        },
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: Operand::Undef });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Tail Call <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["tail".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    // musttail + 显式函数类型（`musttail call ptr (ptr, ...) @f`——第十五轮）
+    Musttail Call <ret: Type> LParen <_ftys: ParamList> RParen <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["musttail".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Musttail Call Fastcc <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["tail".to_string(), "fastcc".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Musttail Call <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["tail".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Call Cc <n: IntLit> <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![format!("cc {n}")],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Call Fastcc <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["fastcc".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    // call 带显式函数类型：`call i1 (ptr, i1, ...) @f(...)`（旧式/async 变体
+    // 常用；函数类型仅校验不落 IR）
+    // call 带 flags 的显式函数类型（`call ninf nnan afn float (...) @f`；
+    // 第十三轮 fast-math-flags）
+    Call <flags: InstFlagSeq> <ret: Type> LParen <_ftys: ParamList> RParen <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: flags,
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Call <ret: Type> LParen <_ftys: ParamList> RParen <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    // call 带 fast-math 标志：`call fast <ty> @f(...)`（M3 标志类）
+    // call <ty> dso_local_equivalent @f()（dso_local_equivalent 在类型后）
+    Call <_addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <ret: Type> DsoLocalEquivalentKw <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["dso_local_equivalent".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Call <_addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <flags: InstFlagSeq> <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: flags,
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    // call 修饰：dso_local_equivalent / elementtype(N)（LLVM 新语法）——
+    // 宽松解析（flags 记录）
+    Call DsoLocalEquivalentKw <_addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec!["dso_local_equivalent".to_string()],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Call ElementtypeKw LParen <_t: Type> RParen <_addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    // inline asm（第十六轮）：`call void asm sideeffect "mov", "~{...}"()`
+    // ——约束串/副作用标识宽松丢弃，asm 体不落 IR
+    Call <ret: Type> AsmKw <_side: (Ident)*> <_s1: StrLit> <_rest: (Comma StrLit)*> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: Operand::Undef });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    Call <addrsp: (AddrspaceKw LParen AddrSpaceVal RParen)?> <ret: Type> <callee: Value> LParen <args: CallArgList> RParen <attrs: CallAttrs?> <metas: CommaAttach*> <_conv: (LBracket StrLit LParen TokenKw LocalId RParen RBracket)?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        // call addrspace 前缀编码进 flags（call-nonzero-program-addrspace 校验：
+        // 无前缀 + callee 非零 AS → 语义层拒绝）
+        flags: addrsp
+            .map(|(_, _, n, _)| format!("call-addrspace:{n}"))
+            .into_iter()
+            .collect(),
+        result: None,
+        opcode: "call".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: {
+            let mut v = args.0;
+            v.insert(0, ParsedOperand { ty: ret, op: callee });
+            v
+        },
+        arg_attrs: {
+            let mut v = args.1;
+            v.insert(0, vec![]);
+            v
+        },
+        call_fn_attrs: attrs.unwrap_or_default(),
+        metadata_attach: metas,
+    },
+    // alloca：alloca <ty> [, i32 <count>]
+    // alloca [inalloca] <ty> <rest>（rest 见 AllocaOpt，任意顺序）
+    Alloca <inalloca: InallocaKw?> <ty: Type> <rest: (AllocaOpt)*> <metas: CommaAttach*> => {
+        let mut align = 0u64;
+        let mut args = vec![ParsedOperand { ty: ty, op: Operand::Null }];
+        let mut flags = Vec::new();
+        if inalloca.is_some() {
+            flags.push("inalloca".to_string());
+        }
+        // LLVM 的 alloca 参数顺序固定：count → align → addrspace（addrspace
+        // 必须最后——`alloca i32, addrspace(1), align 4` 被 llvm-as 拒绝，
+        // 官方负向用例 alloca-addrspace-parse-error-1）
+        let mut seen_addrspace = false;
+        for (kind, op, val) in rest {
+            match kind.as_str() {
+                "count" => {
+                    if let Some(op) = op {
+                        args.push(op);
+                    }
+                }
+                "align" => {
+                    if seen_addrspace {
+                        flags.push("addrspace-order-error".to_string());
+                    }
+                    align = val as u64;
+                }
+                "addrspace" => {
+                    seen_addrspace = true;
+                    flags.push(format!("addrspace:{val}"))
+                }
+                _ => {}
+            }
+        }
+        ParsedInst {
+            endian: false,
+            volatile: false,
+            align,
+            result: None,
+            opcode: "alloca".to_string(),
+            cond: None,
+            phi_incomings: vec![],
+            arg_attrs: vec![],
+            call_fn_attrs: vec![],
+            metadata_attach: metas,
+            flags,
+            args,
+        }
+    },
+// load：load <valty>, <addrty> <ptr>
+    // load atomic（LLVM 新语法）：`load atomic [volatile] <ty>, ptr %p
+    // [syncscope("...")] <ord>[, align N]`——ord 是 Ident 宽松匹配；opcode 落
+    // load（atomic 语义 flags 携带，display 不还原）
+    Load <_a: Ident> <_e: ElementwiseKw?> <val: Type> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
         result: None,
         opcode: "load".to_string(),
         cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
         args: vec![
             ParsedOperand { ty: val, op: Operand::Undef },
             addr,
         ],
     },
-    // store：store <valty> <val>, <addrty> <ptr>
-    Store <val: TypeOp> Comma <addr: TypeOp> => ParsedInst {
+    Load <_a: Ident> <_e: ElementwiseKw?> <val: Type> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    Load <_a: Ident> Volatile <_e: ElementwiseKw?> <val: Type> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: 0,
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    Load <_a: Ident> Volatile <_e: ElementwiseKw?> <val: Type> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    Load <val: Type> Comma <addr: TypeOp> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    Load <val: Type> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    Load Volatile <val: Type> Comma <addr: TypeOp> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: 0,
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    Load Volatile <val: Type> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "load".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![
+            ParsedOperand { ty: val, op: Operand::Undef },
+            addr,
+        ],
+    },
+    // store：store <valty> <val>, <addrty> <ptr> [volatile] [, align N]
+    // store atomic（LLVM 新语法）：`store atomic [volatile] <ty> <v>, ptr %p
+    // [syncscope("...")] <ord>[, align N]`（atomic 走 Ident——lexer 无专用 token）
+    Store <_a: Ident> <val: TypeOp> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
         result: None,
         opcode: "store".to_string(),
         cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
         args: vec![val, addr],
     },
-    // getelementptr：getelementptr <base> <ptr>, <idx>...
-    GetElementPtr <base: Type> Comma <ptr: TypeOp> Comma <idxs: GepIdxList> => ParsedInst {
+    Store <_a: Ident> <val: TypeOp> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
+        args: vec![val, addr],
+    },
+    Store <_a: Ident> Volatile <val: TypeOp> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: 0,
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
+        args: vec![val, addr],
+    },
+    Store <_a: Ident> Volatile <val: TypeOp> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![ord],
+        args: vec![val, addr],
+    },
+    // store 命名类型值（`store %0 %r, ptr %p`——%0 是 type 定义；第十四轮）
+    Store <nty: LocalId> <nv: Value> Comma <addr: TypeOp> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        args: vec![
+            ParsedOperand { ty: crate::ir_parser::ast_items::ParsedType::Named(nty), op: nv },
+            addr,
+        ],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+    },
+    Store <val: TypeOp> Comma <addr: TypeOp> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![val, addr],
+    },
+    Store <val: TypeOp> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![val, addr],
+    },
+    Store Volatile <val: TypeOp> Comma <addr: TypeOp> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: 0,
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![val, addr],
+    },
+    Store Volatile <val: TypeOp> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: true,
+        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        result: None,
+        opcode: "store".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: vec![val, addr],
+    },
+    // getelementptr：getelementptr [inbounds] [nuw] [nusw] <base>, <ptr>, <idx>...
+    //（M3 标志类：nuw/nusw 任意顺序组合，flags 顺序保留）
+    GetElementPtr <flags: GepFlagSeq> <base: Type> Comma <ptr: TypeOp> <idxs: GepIdx*> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: flags,
         result: None,
         opcode: "getelementptr".to_string(),
         cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        args: {
+            let mut v = vec![ParsedOperand { ty: base, op: Operand::Null }, ptr];
+            v.extend(idxs);
+            v
+        },
+    },
+    GetElementPtr <base: Type> Comma <ptr: TypeOp> <idxs: GepIdx*> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: "getelementptr".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
         args: {
             let mut v = vec![ParsedOperand { ty: base, op: Operand::Undef }, ptr];
             v.extend(idxs);
             v
         },
     },
-    // 转换：sext/zext/trunc/bitcast <src> to <dst>
-    <op: ConvOp> <src: TypeOp> To <dst: Type> => ParsedInst {
+    // 转换：sext/zext/trunc/bitcast <src> to <dst>（可选标志：
+    // `zext nneg i32 %a to i64` / `trunc nsw i64 %a to i32`——M3 标志类）
+    <op: ConvOp> <flags: InstFlagSeq> <src: TypeOp> To <dst: Type> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
         result: None,
         opcode: op,
         cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: flags,
+        args: vec![src, ParsedOperand { ty: dst, op: Operand::Undef }],
+    },
+    <op: ConvOp> <src: TypeOp> To <dst: Type> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: op,
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
         args: vec![src, ParsedOperand { ty: dst, op: Operand::Undef }],
     },
     // undef/poison 值指令（forge 扩展：%u = undef i32）
-    Undef <ty: ValueType> => ParsedInst {
+    Undef <ty: ValueType> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
         result: None,
         opcode: "undef".to_string(),
         cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
         args: vec![ParsedOperand { ty: ty, op: Operand::Undef }],
     },
-    Poison <ty: ValueType> => ParsedInst {
+    Poison <ty: ValueType> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
         result: None,
         opcode: "poison".to_string(),
         cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
         args: vec![ParsedOperand { ty: ty, op: Operand::Poison }],
     },
-    // 通用：<op> <ty> <val>, <ty> <val>, ...（操作数可选——nop 等无操作数指令）
-    <op: Ident> <args: TypeOps?> => ParsedInst {
+
+    // phi <ty> [ <val>, %pred ], ...（标准 LLVM；forge 内部转块参数）
+    Phi <ty: Type> <incs: PhiIncomingList> <metas: MetadataAttach*> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: "phi".to_string(),
+        cond: None,
+        args: vec![ParsedOperand { ty: ty, op: Operand::Undef }],
+        phi_incomings: incs,
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+    },
+    // vconst <ty> [<lane>, ...] [big]（forge 扩展——向量常量数据 round-trip；
+    // lanes 缺失时退化为 vconst <ty>；`big` 标记 lane 大端字节序）
+    VconstOp <ty: ValueType> <lanes: VconstLanes?> <endian: EndianKw?> <metas: MetadataAttach*> => ParsedInst {
+        endian: endian.unwrap_or(false),
+        volatile: false,
+        align: 0,
+        result: None,
+        opcode: "vconst".to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: metas,
+        flags: vec![],
+        args: {
+            let mut v = vec![ParsedOperand { ty: ty.clone(), op: Operand::Undef }];
+            v.extend(
+                lanes
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|op| ParsedOperand { ty: ty.clone(), op }),
+            );
+            v
+        },
+    },
+    // 通用：<op> [nsw nuw exact fast nnan ...] <ty> <val>, ...（操作数可选——
+    // nop 等无操作数指令；标志流 (X)* X 至少 1 个，规避与 TypeOps? 的 LR 冲突）
+    <op: Ident> <flags: InstFlagSeq> <args: TypeOps?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: flags,
         result: None,
         opcode: op.to_string(),
         cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: vec![],
         args: args.unwrap_or_default(),
     },
+    <op: Ident> <args: TypeOps?> => ParsedInst {
+        endian: false,
+        volatile: false,
+        align: 0,
+        flags: vec![],
+        result: None,
+        opcode: op.to_string(),
+        cond: None,
+        phi_incomings: vec![],
+        arg_attrs: vec![],
+        call_fn_attrs: vec![],
+        metadata_attach: vec![],
+        args: args.unwrap_or_default(),
+    },
+};
+// load atomic 的 syncscope 子句（LLVM：`syncscope("singlethread")`）——
+// 专用 token 避免与 memord Ident 冲突
+SyncScope: String = {
+    SyncscopeKw LParen <_s: StrLit> RParen => _s,
+};
+
+// shufflevector 掩码：MaskVecLit（`<i32 0, ...>`）或 VecConstLit
+// （`<4 x i32> <i32 0, ...>`——VecTy+lane 合并格式）
+MaskOrConst: String = {
+    <m: MaskVecLit> => m,
+    <c: VecConstLit> => c,
+};
+
+
+
+// 指令标志流（≥1 个）：算术 `nsw`/`nuw`/`exact` + fast-math `fast`/`nnan`/`ninf`/...
+// （仅对应指令类别合法——verify 检查）
+InstFlagSeq: Vec<String> = {
+    <mut v: (<InstFlag>)*> <f: InstFlag> => {
+        v.push(f);
+        v
+    },
+};
+
+InstFlag: String = {
+    Nsw => "nsw".to_string(),
+    Nuw => "nuw".to_string(),
+    Exact => "exact".to_string(),
+    Nneg => "nneg".to_string(),
+    Disjoint => "disjoint".to_string(),
+    Fast => "fast".to_string(),
+    Nnan => "nnan".to_string(),
+    Ninf => "ninf".to_string(),
+    Nsz => "nsz".to_string(),
+    Arcp => "arcp".to_string(),
+    Contract => "contract".to_string(),
+    Afn => "afn".to_string(),
+    Reassoc => "reassoc".to_string(),
+    <v: ParenAttrKw> => v,
 };
 
 CompareOp: String = {
@@ -238,71 +2809,539 @@ CompareOp: String = {
     Fcmp => "fcmp".to_string(),
 };
 
+// 二元指令 opcode 集（S2 专用 token——见 lexer.rs；与 Ident 分离以支持
+// 单类型第二操作数的专用规则）
+BinaryOp: String = {
+    Add => "add".to_string(),
+    Sub => "sub".to_string(),
+    Mul => "mul".to_string(),
+    Udiv => "udiv".to_string(),
+    Sdiv => "sdiv".to_string(),
+    Urem => "urem".to_string(),
+    Srem => "srem".to_string(),
+    Shl => "shl".to_string(),
+    Lshr => "lshr".to_string(),
+    Ashr => "ashr".to_string(),
+    And => "and".to_string(),
+    Or => "or".to_string(),
+    Xor => "xor".to_string(),
+    Fadd => "fadd".to_string(),
+    Fsub => "fsub".to_string(),
+    Fmul => "fmul".to_string(),
+    Fdiv => "fdiv".to_string(),
+    Frem => "frem".to_string(),
+};
+
 ConvOp: String = {
     Sext => "sext".to_string(),
     Zext => "zext".to_string(),
     Trunc => "trunc".to_string(),
+    Fptrunc => "fptrunc".to_string(),
+    Fpext => "fpext".to_string(),
+    Fptosi => "fptosi".to_string(),
+    Sitofp => "sitofp".to_string(),
+    Fptoui => "fptoui".to_string(),
+    Uitofp => "uitofp".to_string(),
+    Ptrtoint => "ptrtoint".to_string(),
+    Inttoptr => "inttoptr".to_string(),
     Bitcast => "bitcast".to_string(),
+    AddrspaceCastKw => "addrspacecast".to_string(),
+    PtrtoaddrKw => "ptrtoaddr".to_string(),
+};
+
+// landingpad 子句：`cleanup` 或 `catch <ty> @f` / `filter <ty> @f`（关键字名宽松，semantics 校验）
+LandingPadClause: (String, Option<ParsedOperand>) = {
+    <kw: Ident> => (kw, None),
+    <kw: Ident> <op: TypeOp> => (kw, Some(op)),
+};
+
+// alloca 尾选项（任意顺序，每个以 Comma 开头完整匹配：`<ty> <count>` / `align N` / `addrspace(N)`）
+AllocaOpt: (String, Option<ParsedOperand>, u64) = {
+    Comma <n: TypeOp> => ("count".to_string(), Some(n), 0u64),
+    Comma Align <a: IntLit> => ("align".to_string(), None, crate::ir_parser::ast_items::big_as_u64(&a)),
+    Comma AddrspaceKw LParen <n: IntLit> RParen => ("addrspace".to_string(), None, crate::ir_parser::ast_items::big_as_u64(&n)),
+    // 符号化地址空间（alloca i32, addrspace("A")）——宽松 0
+    Comma AddrspaceKw LParen <_s: StrLit> RParen => ("addrspace".to_string(), None, 0u64),
+};
+
+// phi 入边列表：`[ <val>, %pred ], [ <val>, %pred ], ...`（≥1 条）
+PhiIncomingList: Vec<PhiIncoming> = {
+    <mut v: (<PhiIncoming> Comma)*> <last: PhiIncoming> => {
+        v.push(last);
+        v
+    },
+    // 零入边 phi（LLVM：`%r = phi i32`——dead phi；第十二轮）
+    => vec![],
+};
+
+PhiIncoming: PhiIncoming = {
+    LBracket <v: PhiValue> Comma <l: LocalId> RBracket => PhiIncoming {
+        val: v,
+        pred: crate::ir_parser::ast_items::LabelRef::named(l.trim_start_matches('%').to_string()),
+    },
+};
+
+// phi 入边值：`%name` 或裸字面量（类型由 phi 头类型决定；这里 ty 仅占位）
+PhiValue: ParsedOperand = {
+    <l: LocalId> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Local(l) },
+    <n: IntLit> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)) },
+    <n: HexLit> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)) },
+    <f: FloatLit> => ParsedOperand { ty: ParsedType::Float(32), op: Operand::Float(f) },
+    Undef => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Undef },
+    Poison => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Poison },
+    Null => ParsedOperand { ty: ParsedType::Ptr, op: Operand::Null },
 };
 
 TypeOps: Vec<ParsedOperand> = {
-    <v: TypeOp> => vec![v],
-    <first: TypeOp> Comma <rest: TypeOps> => {
-        let mut all = vec![first];
-        all.extend(rest);
-        all
+    <mut v: (<TypeOp> Comma)*> <p: TypeOp> => {
+        v.push(p);
+        v
     }
 };
 
-GepIdxList: Vec<ParsedOperand> = {
-    <v: TypeOp> => vec![v],
-    <first: TypeOp> Comma <rest: GepIdxList> =>? {
-        let mut all = vec![first];
-        all.extend(rest);
-        Ok(all)
+// atomicrmw 操作名：S2 起二元指令为专用 token（add/sub/and/or/xor/fadd/fsub），
+// 其余操作名（xchg/max/min/nand/uinc_wrap/...）仍走 Ident——合并两者。
+AtomicOp: String = {
+    <b: BinaryOp> => b,
+    <i: Ident> => i,
+};
+
+// icmp/fcmp 操作数：固定 2 个类型化操作数 + 可选 `, !prof !0`（尾逗号 attach）。
+// 独立规则避免把尾逗号引入通用 TypeOps 闭包（后者 2-lookahead 必冲突）。
+// icmp/fcmp 第二操作数的标量子集（无聚合常量——LBrace/LBracket 与
+// TypeOp 的 struct/数组类型 LALR(1) 本质冲突，见附录 §6）
+CmpScalarValue: Operand = {
+    <v: LocalId> => Operand::Local(v),
+    <g: GlobalId> => Operand::Global(g),
+    <n: IntLit> => Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    // 浮点十六进制位模式（宽松 0）
+    <n: FloatHexLit> => Operand::UInt(n as u64),
+    <f: FloatLit> => Operand::Float(f),
+    <fh: HexFloatLit> => Operand::Float(fh),
+    True => Operand::Bool(true),
+    False => Operand::Bool(false),
+    Null => Operand::Null,
+    Undef => Operand::Undef,
+    Poison => Operand::Poison,
+    // `token none`（LLVM token 类型字面量——宽松映射 Undef）
+    NoneKw => Operand::Undef,
+    ZeroInitKw => Operand::ZeroInit,
+    // 常量表达式第二操作数：`add <4 x i32> %a, splat (i32 137)`（M3/S6 扩展）
+    <e: GlobalConstExpr> => Operand::ConstExpr(e),
+};
+
+CmpOps: (Vec<ParsedOperand>, Vec<(String, MetadataRef)>) = {
+    <a: TypeOp> Comma <b: TypeOp> <metas: CommaAttach*> => (vec![a, b], metas),
+    // LLVM 现代语法：第二操作数无类型（`fcmp olt float 1.5, 2.5`——类型从第一推导）
+    <a: TypeOp> Comma <b: CmpScalarValue> <metas: CommaAttach*> => {
+        let a_ty = a.ty.clone();
+        (vec![a, ParsedOperand { ty: a_ty, op: b }], metas)
+    },
+};
+
+// 二元指令操作数（S2）：固定 2 个操作数 + 尾 metadata attach。与 CmpOps
+// 同构：第二操作数可为标量子集（无聚合常量——LBrace/LBracket 与 TypeOp 的
+// struct/数组类型 LALR(1) 本质冲突，见附录 §6）。
+BinaryOps: (Vec<ParsedOperand>, Vec<(String, MetadataRef)>) = {
+    <a: TypeOp> Comma <b: TypeOp> <metas: CommaAttach*> => (vec![a, b], metas),
+    // LLVM 现代语法：第二操作数无类型（`add i32 %a, %b`——类型从第一推导）
+    <a: TypeOp> Comma <b: CmpScalarValue> <metas: CommaAttach*> => {
+        let a_ty = a.ty.clone();
+        (vec![a, ParsedOperand { ty: a_ty, op: b }], metas)
+    },
+};
+
+// vconst lane 值列表：`[<lane>, ...]`（≥1 个；IntLit/FloatLit/HexLit 裸值）
+VconstLanes: Vec<Operand> = {
+    LBracket <mut v: (<VconstLane> Comma)*> <p: VconstLane> RBracket =>? {
+        v.push(p);
+        Ok(v)
     }
 };
 
-CallArgList: Vec<ParsedOperand> = {
-    => vec![],
-    <v: TypeOp> => vec![v],
-    <first: TypeOp> Comma <rest: CallArgList> =>? {
-        let mut all = vec![first];
-        all.extend(rest);
-        Ok(all)
+VconstLane: Operand = {
+    <n: IntLit> => Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    // 浮点十六进制位模式（宽松 0）
+    <n: FloatHexLit> => Operand::UInt(n as u64),
+    <f: FloatLit> => Operand::Float(f),
+    <fh: HexFloatLit> => Operand::Float(fh),
+};
+
+// 端序标记：`big`（缺省 Little）
+EndianKw: bool = {
+    Big => true,
+};
+
+// call 实参：`<ty> <attrs?> <value>`（LLVM：属性在类型后、值前）
+CallArgList: (Vec<ParsedOperand>, Vec<Vec<String>>) = {
+    => (vec![], vec![]),
+    // 可变参数调用（`call void @f(ptr %p, ...)`——第十五轮 musttail）
+    <mut v: (<CallArg> Comma)*> Ellipsis =>? {
+        let mut ops = Vec::new();
+        let mut attrs = Vec::new();
+        for (o, a) in v {
+            ops.push(o);
+            attrs.push(a);
+        }
+        ops.push(ParsedOperand {
+            ty: crate::ir_parser::ast_items::ParsedType::Void,
+            op: Operand::Undef,
+        });
+        attrs.push(vec![]);
+        Ok((ops, attrs))
+    },
+    <mut v: (<CallArg> Comma)*> <p: CallArg> =>? {
+        let mut ops = Vec::new();
+        let mut attrs = Vec::new();
+        for (o, a) in v {
+            ops.push(o);
+            attrs.push(a);
+        }
+        let (o, a) = p;
+        ops.push(o);
+        attrs.push(a);
+        Ok((ops, attrs))
     }
+};
+
+// call-site 函数属性：`(nounwind|noinline|...)+` 或 `#N`（LLVM 属性组引用）
+CallAttrs: Vec<String> = {
+    <mut v: (<FuncAttr>)+> => v,
+    <id: AttrGroupId> => vec![format!("#{id}")],
+};
+
+CallArg: (ParsedOperand, Vec<String>) = {
+    <ty: ValueType> <v: Value> => (ParsedOperand { ty, op: v }, vec![]),
+    <ty: ValueType> <attrs: ParamAttrs> <v: Value> => (ParsedOperand { ty, op: v }, attrs),
+    // elementtype 参数（`ptr elementtype(void ()) @func`——GC statepoint；
+    // 第十七轮——修饰宽松丢弃；函数类型内嵌形态 LR 冲突记录）
+    <ty: ValueType> ElementtypeKw LParen <_t: Type> RParen <v: Value> => (ParsedOperand { ty, op: v }, vec![]),
+    // elementtype 内嵌函数类型（`ptr elementtype(void ()) @func`——lexer
+    // 合并单 token,修饰宽松丢弃;T2-3）
+    <ty: ValueType> ElementtypeFnKw <v: Value> => (ParsedOperand { ty, op: v }, vec![]),
+    // 命名类型参数（`call %ty @f(%ty %arg)`——%ty 是 type 定义；第十二轮）
+    <ty: LocalId> <v: Value> => (
+        ParsedOperand { ty: crate::ir_parser::ast_items::ParsedType::Named(ty), op: v },
+        vec![],
+    ),
+    // metadata 类型参数（调试 intrinsic）：`metadata i32 0`（类型化值）/
+    // `metadata !10` / `metadata !{}` / `metadata !name`（引用——宽松 Undef）
+    MetadataKw <op: TypeOp> => (
+        ParsedOperand { ty: ParsedType::Metadata, op: op.op },
+        vec![],
+    ),
+    MetadataKw <_n: MetadataIdKw> => (
+        ParsedOperand { ty: ParsedType::Metadata, op: Operand::Undef },
+        vec![],
+    ),
+    MetadataKw <_n: MetadataNodeDef> => (
+        ParsedOperand { ty: ParsedType::Metadata, op: Operand::Undef },
+        vec![],
+    ),
+    // metadata 局部值引用（`metadata %after`——前向引用 UndefNamed 保留名,
+    // display 输出 `metadata %name`;第二十九轮重建）
+    MetadataKw <_l: LocalId> => (
+        ParsedOperand { ty: ParsedType::Metadata, op: Operand::Local(_l) },
+        vec![],
+    ),
+    // metadata undef / null（LLVM 合法值）
+    MetadataKw <_u: Undef> => (
+        ParsedOperand { ty: ParsedType::Metadata, op: Operand::Undef },
+        vec![],
+    ),
+    MetadataKw Null => (
+        ParsedOperand { ty: ParsedType::Metadata, op: Operand::Null },
+        vec![],
+    ),
+    MetadataKw <_n: MetadataNameKw> => (
+        ParsedOperand { ty: ParsedType::Metadata, op: Operand::Undef },
+        vec![],
+    ),
+    // metadata 字符串字面量（`metadata !"Float8E5M2"`——类型名作字符串；
+    // 第十二轮）——宽松 Undef
+    MetadataKw Bang <_s: StrLit> => (
+        ParsedOperand { ty: ParsedType::Metadata, op: Operand::Undef },
+        vec![],
+    ),
 };
 
 TypeOp: ParsedOperand = {
     <ty: ValueType> <v: Value> => ParsedOperand { ty: ty, op: v },
+    // target extension type 操作数（`ret target("spirv.Sampler") %a` 等指令
+    // 操作数位置——ValueType 加 Target 分支致 2052 冲突(§2.6)，局部展开）
+    Target LParen <_args: TargetArgList> RParen <v: Value> => ParsedOperand {
+        ty: ParsedType::Opaque,
+        op: v,
+    },
+    // 旧式匿名聚合指针操作数（`store ..., {{i32},{float, double}}* %p`——
+    // insertextractvalue.ll；TypedPtrKw 局部展开，宽松映射 Ptr）
+    <_t: TypedPtrKw> <v: Value> => ParsedOperand {
+        ty: ParsedType::Ptr,
+        op: v,
+    },
+    // 向量常量字面量（lexer 单 token）：`<4 x float> <1.5, 2.5, -3.5, 4.25>`
+    <lit: VecConstLit> => {
+        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
+        ParsedOperand { ty: ty, op: Operand::VecConst(lanes) }
+    },
+    // `zeroinitializer` 关键字（lexer 单 token，标量/向量）
+    <lit: ZeroInitLit> => ParsedOperand {
+        ty: crate::ir_parser::ast_items::split_scalar_ty(&lit),
+        op: Operand::ZeroInit,
+    },
+    <lit: VecZeroInitLit> => ParsedOperand {
+        ty: crate::ir_parser::ast_items::split_vec_const_lit(&lit).0,
+        op: Operand::ZeroInit,
+    },
+
+    // metadata 类型操作数（call 参数等调试 intrinsic）：
+    // `metadata i32 0`（类型化值——op 取内层值）/ `metadata !10` /
+    // `metadata !{}` / `metadata !name`（引用——宽松 Undef）
+    MetadataKw <op: TypeOp> => ParsedOperand {
+        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        op: op.op,
+    },
+    MetadataKw <_n: MetadataIdKw> => ParsedOperand {
+        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        op: Operand::Undef,
+    },
+    MetadataKw <_n: MetadataNameKw> => ParsedOperand {
+        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        op: Operand::Undef,
+    },
+    MetadataKw <_n: MetadataNodeDef> => ParsedOperand {
+        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        op: Operand::Undef,
+    },
+};
+
+
+
+
+// getelementptr 的单个索引：`, <ty> <idx>`（GepIdx* 支持零个或多个）
+GepIdx: ParsedOperand = {
+    Comma <p: TypeOp> => p,
+};
+
+// getelementptr 标志序列（≥1；任意组合）：inbounds / nuw / nusw / inrange(lo, hi)
+GepFlagSeq: Vec<String> = {
+    <mut v: (GepFlag)*> <f: GepFlag> => {
+        v.push(f);
+        v
+    },
+};
+
+GepFlag: String = {
+    Inbounds => "inbounds".to_string(),
+    Nuw => "nuw".to_string(),
+    Nusw => "nusw".to_string(),
+    InrangeKw LParen <lo: IntLit> Comma <hi: IntLit> RParen => format!("inrange({lo}, {hi})"),
 };
 
 // ── 终结符 ──
 
-Terminator: ParsedTerminator = {
-    Ret VoidTy => ParsedTerminator::Return(vec![]),
-    Ret <op: TypeOp> => ParsedTerminator::Return(vec![op]),
-    Br LabelTy <t: LocalId> => ParsedTerminator::Jump(t),
-    Br <c: TypeOp> Comma LabelTy <t: LocalId> Comma LabelTy <f: LocalId> => {
-        ParsedTerminator::Branch(Some(c), t, f)
+// 带可选块参数的标签引用：label %t / label %t(i32 %v, i64 %w)
+// 标签引用：`%N`（纯数字）→ 数字块 id 引用；`%"2"`/`%-3`/`%name` → 字符串标签名。
+LabelRef: crate::ir_parser::ast_items::LabelRef = {
+    LabelTy <t: LocalId> => {
+        // `%"2"` 带引号字符串标签 → 去引号解码（lexer 产出含引号的 LocalId）；
+        // `%2`/`%name` → 数字 id 引用或字符串名
+        let raw = t.trim_start_matches('%');
+        if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+            crate::ir_parser::ast_items::LabelRef {
+                name: String::from_utf8_lossy(
+                    &crate::ir_parser::ast_items::decode_c_string(
+                        &raw[1..raw.len() - 1].to_string(),
+                    ),
+                )
+                .into_owned(),
+                is_num: false,
+            }
+        } else {
+            crate::ir_parser::ast_items::LabelRef::named(raw.to_string())
+        }
     },
-    Switch <d: TypeOp> Comma LabelTy <def: LocalId> LBracket <cases: (<SwitchCase>)*> RBracket => {
-        ParsedTerminator::Switch(d, def, cases)
+    // 字符串标签引用（LLVM：`br label %"2"` 的引号形态已由 LocalId 处理；
+    // 本分支兜底裸引号串）
+    LabelTy <t: StrLit> => crate::ir_parser::ast_items::LabelRef {
+        name: t,
+        is_num: false,
     },
-    Unreachable => ParsedTerminator::Unreachable,
 };
 
-SwitchCase: (i64, String) = {
-    <_ty: ValueType> <n: IntLit> Comma LabelTy <t: LocalId> => {
-        (n, t)
-    }
+// personality 函数：`personality ptr @__gxx_personality_v0`（关键字名宽松，semantics 不校验）
+Personality: String = {
+    <_kw: Ident> <_ty: Type> <fname: GlobalId> => fname,
 };
+
+// #dbg_* 参数（宽松形态：类型化值/!N 引用/!Named(...) 命名节点——
+// 第二十一轮 dbg-record 参数形状校验）
+DbgArg: () = {
+    <_v: TypeOp> => (),
+    <_n: MetadataIdKw> => (),
+    <_n: MetadataNameKw> <rest: (LParen MetadataValList RParen)?> => (),
+    Null => (),
+};
+
+// #dbg_* 的 !ref 参数（第 2/4/6 参——DILocation/DIAssignID 引用形态）
+MdRef: () = {
+    <_n: MetadataIdKw> => (),
+    <_n: MetadataNameKw> => (),
+};
+
+Terminator: ParsedTerminator = {
+    // callbr asm（`callbr i32 asm "", "=r,r,!i,!i"(i32 0)`——asm 体丢弃）
+    CallbrKw <_ret: Type> AsmKw <_side: (Ident)*> <_s1: StrLit> <_rest: (Comma StrLit)*> LParen <_args: CallArgList> RParen <_tail: (To LabelTy LocalId (LBracket LabelTy LocalId (Comma LabelTy LocalId)* RBracket)?)?> <metas: CommaAttach*> => ParsedTerminator::Unreachable,
+    // callbr（终结符）：`callbr <retty> @callee(args) to label %cont [label %kill, ...]`
+    // （LLVM 间接跳转调用——宽松按 Jump 处理，标签列表丢弃）
+    CallbrKw <_ret: Type> <_callee: Value> LParen <_args: CallArgList> RParen To LabelTy <_n: LocalId> LBracket LabelTy <_l: LocalId> <_rest: (Comma LabelTy LocalId)*> RBracket <metas: CommaAttach*> => ParsedTerminator::Jump(
+        crate::ir_parser::ast_items::LabelRef::named(_n.trim_start_matches('%').to_string()),
+        metas,
+    ),
+    Ret VoidTy <metas: CommaAttach*> => ParsedTerminator::Return(vec![], metas),
+    // ret 命名类型值（`ret %ty %copy`——%ty 是 type 定义；第十二轮）
+    Ret <ty: LocalId> <v: Value> <metas: CommaAttach*> => ParsedTerminator::Return(
+        vec![ParsedOperand {
+            ty: crate::ir_parser::ast_items::ParsedType::Named(ty),
+            op: v,
+        }],
+        metas,
+    ),
+    Ret <op: TypeOp> <metas: CommaAttach*> => ParsedTerminator::Return(vec![op], metas),
+    Br <t: LabelRef> <metas: CommaAttach*> => ParsedTerminator::Jump(t, metas),
+    Br <c: TypeOp> Comma <t: LabelRef> Comma <f: LabelRef> <metas: CommaAttach*> => {
+        ParsedTerminator::Branch(Some(c), t, f, metas)
+    },
+    Switch <d: TypeOp> Comma <def: LabelRef> LBracket <cases: (<SwitchCase>)*> RBracket <metas: CommaAttach*> => {
+        ParsedTerminator::Switch(d, def, cases, metas)
+    },
+    // invoke <retty> @callee(args) to label %ok unwind label %pad（返回值可选绑定 `%r =`）
+    // invoke 带显式函数类型：`invoke void (...) %p(ptr %p) to label %ok unwind label %pad`
+    InvokeKw <ret: Type> LParen <_ftys: ParamList> RParen <callee: Value> LParen <args: CallArgList> RParen To LabelTy <norm: LocalId> <_unw: Ident> LabelTy <unw: LocalId> <metas: CommaAttach*> => {
+        ParsedTerminator::Invoke {
+            result: None,
+            callee: format_operand_callee(&callee),
+            ret_ty: ret,
+            args: args.0,
+            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            metas,
+        }
+    },
+    // invoke 普通形态：`invoke i32 @f(i32 1) to label %ok unwind label %pad`
+    InvokeKw <ret: Type> <callee: Value> LParen <args: CallArgList> RParen To LabelTy <norm: LocalId> <_unw: Ident> LabelTy <unw: LocalId> <metas: CommaAttach*> => {
+        ParsedTerminator::Invoke {
+            result: None,
+            callee: format_operand_callee(&callee),
+            ret_ty: ret,
+            args: args.0,
+            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            metas,
+        }
+    },
+    // invoke 带 GC live 列表（statepoint：`invoke token (...) @f(...) ["gc-live"(ptr %b, ...)]`
+    // ——GC statepoint 专用后缀经 lexer 合并为必选单 token,与无 gc 变体
+    // 经 lookahead(GcLiveKw vs To)消歧,宽松丢弃）
+    InvokeKw <ret: Type> LParen <_ftys: ParamList> RParen <callee: Value> LParen <args: CallArgList> RParen <_gc: GcLiveKw> To LabelTy <norm: LocalId> <_unw: Ident> LabelTy <unw: LocalId> <metas: CommaAttach*> => {
+        ParsedTerminator::Invoke {
+            result: None,
+            callee: format_operand_callee(&callee),
+            ret_ty: ret,
+            args: args.0,
+            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            metas,
+        }
+    },
+    <res: LocalId> Eq InvokeKw <ret: Type> LParen <_ftys: ParamList> RParen <callee: Value> LParen <args: CallArgList> RParen To LabelTy <norm: LocalId> <_unw: Ident> LabelTy <unw: LocalId> <metas: CommaAttach*> => {
+        ParsedTerminator::Invoke {
+            result: Some(res.trim_start_matches('%').to_string()),
+            callee: format_operand_callee(&callee),
+            ret_ty: ret,
+            args: args.0,
+            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            metas,
+        }
+    },
+    <res: LocalId> Eq InvokeKw <ret: Type> LParen <_ftys: ParamList> RParen <callee: Value> LParen <args: CallArgList> RParen <_gc: GcLiveKw> To LabelTy <norm: LocalId> <_unw: Ident> LabelTy <unw: LocalId> <metas: CommaAttach*> => {
+        ParsedTerminator::Invoke {
+            result: Some(res.trim_start_matches('%').to_string()),
+            callee: format_operand_callee(&callee),
+            ret_ty: ret,
+            args: args.0,
+            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            metas,
+        }
+    },
+    <res: LocalId> Eq InvokeKw <ret: Type> <callee: Value> LParen <args: CallArgList> RParen To LabelTy <norm: LocalId> <_unw: Ident> LabelTy <unw: LocalId> <metas: CommaAttach*> => {
+        ParsedTerminator::Invoke {
+            result: Some(res.trim_start_matches('%').to_string()),
+            callee: format_operand_callee(&callee),
+            ret_ty: ret,
+            args: args.0,
+            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            metas,
+        }
+    },
+    // resume <ty> %val（重新抛出）
+    ResumeKw <v: TypeOp> <metas: CommaAttach*> => ParsedTerminator::Resume(v, metas),
+    Unreachable <_metas: CommaAttach*> => ParsedTerminator::Unreachable,
+};
+
+SwitchCase: (i64, crate::ir_parser::ast_items::LabelRef) = {
+    <_ty: ValueType> <n: IntLit> Comma <t: LabelRef> => {
+        (crate::ir_parser::ast_items::big_as_i64(&n), t)
+    },
+};
+
 
 // ── 类型 ──
 
 Type: ParsedType = {
     <t: ValueType> => t,
     VoidTy => ParsedType::Void,
+    <n: LocalId> => ParsedType::Named(n),
+    // metadata 类型（declare 参数/返回位置：`declare void @llvm.dbg.value(metadata, ...)`）
+    MetadataKw => ParsedType::Metadata,
+    // target extension type（LLVM 18：`target("a", void, i8, 5, target("b"))`）
+    // ——宽松映射 Opaque（第十三轮；参数混合列表仅语法消费）。
+    // 第二十三轮:布局名 "type" 的裸 IntLit 参数拒绝
+    //（invalid-target-type-mixed——"expected uint32 param"）;
+    // 正向 target-type-mangled/params 的 "a" 布局裸参数合法
+    Target LParen <args: TargetArgList> RParen =>? {
+        if args.0 == "type" && args.1 {
+            Err(lalrpop_util::ParseError::User {
+                error: crate::ir_parser::lexer::LexError,
+            })
+        } else {
+            Ok(ParsedType::Opaque)
+        }
+    },
+    // 旧式 typed pointer（`%fum*`——宽松映射 Ptr；第十五轮）
+    <_t: TypedPtrKw> => ParsedType::Ptr,
+};
+
+// target 类型参数列表（str/类型/int/嵌套 target 混合）
+TargetArgList: (String, bool) = {
+    => (String::new(), false),
+    // 首参（布局名）
+    <s: StrLit> <rest: (Comma TargetArg)*> => (s, rest.iter().any(|(_, b)| *b)),
+    <f: TargetArg> <rest: (Comma TargetArg)*> => (String::new(), f || rest.iter().any(|(_, b)| *b)),
+};
+
+// 嵌套 target(...) 经 Type 分支自然递归（Type 含 target 分支）。
+// 第二十三轮（invalid-target-type-mixed）：宽松恢复——正向
+// target-type-mangled/params 用裸参数（"a" 布局合法）;仅布局名 "type"
+// 的裸 IntLit 参数在 Target 分支语义拒绝（"expected uint32 param"）
+TargetArg: bool = {
+    <_t: Type> => false,
+    <_n: IntLit> => true,
 };
 
 // 非 void 类型（指令操作数/函数参数用；void 仅作函数返回与 ret 特例）
@@ -310,19 +3349,30 @@ ValueType: ParsedType = {
     <t: IntTy> => ParsedType::Int(t),
     <t: FloatTy> => ParsedType::Float(t),
     PtrTy => ParsedType::Ptr,
+    OpaqueKw => ParsedType::Opaque,
+    TokenKw => ParsedType::Token,
     <t: VecTy> => ParsedType::Vec(t.len, Box::new(t.elem.into())),
-    LBracket <n: IntTy> X <t: Type> RBracket => {
-        ParsedType::Array(n as u64, Box::new(t))
+    <t: VscaleTy> => ParsedType::VecScalable(t.len, Box::new(t.elem.into())),
+    // ptr addrspace(N)
+    PtrTy AddrspaceKw LParen <n: IntLit> RParen => ParsedType::PtrAddrSpace(crate::ir_parser::ast_items::big_as_u32(&n)),
+    // 符号化地址空间（LLVM：ptr addrspace("G")）——宽松 0
+    PtrTy AddrspaceKw LParen <_s: StrLit> RParen => ParsedType::PtrAddrSpace(0),
+    LBracket <n: IntLit> X <t: Type> RBracket => {
+        ParsedType::Array(crate::ir_parser::ast_items::big_as_u64(&n), Box::new(t))
     },
+    LBrace RBrace => ParsedType::Struct(vec![]),
     LBrace <tys: StructList> RBrace => ParsedType::Struct(tys),
+    // 打包结构体（packed struct）：`<{ i32, i32 }>`（LLVM 现代语法）
+    LAngle LBrace RBrace RAngle => ParsedType::StructPacked(vec![]),
+    LAngle LBrace <tys: StructList> RBrace RAngle => ParsedType::StructPacked(tys),
+    // 旧式指针 `T*`（pre-opaque-ptr）不再支持——仅最新版 LLVM IR（`ptr` 唯一指针类型）。
+    // 注意：此分支删除后 `i32*`/`ptr*` 等输入直接 parse 拒绝（invalid-opaque-ptr 用例）。
 };
 
 StructList: Vec<ParsedType> = {
-    <t: Type> => vec![t],
-    <first: Type> Comma <rest: StructList> =>? {
-        let mut all = vec![first];
-        all.extend(rest);
-        Ok(all)
+    <mut v: (<Type> Comma)*> <p: Type> =>? {
+        v.push(p);
+        Ok(v)
     }
 };
 
@@ -331,13 +3381,59 @@ StructList: Vec<ParsedType> = {
 Value: Operand = {
     <v: LocalId> => Operand::Local(v),
     <g: GlobalId> => Operand::Global(g),
-    <n: IntLit> => Operand::Int(n),
-    <n: HexLit> => Operand::UInt(n as u64),
+    <n: IntLit> => Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    // 浮点十六进制位模式（宽松 0）
+    <n: FloatHexLit> => Operand::UInt(n as u64),
     <f: FloatLit> => Operand::Float(f),
+    <fh: HexFloatLit> => Operand::Float(fh),
     True => Operand::Bool(true),
     False => Operand::Bool(false),
     Null => Operand::Null,
     Undef => Operand::Undef,
     Poison => Operand::Poison,
+    // `token none`（LLVM token 类型字面量——宽松映射 Undef）
+    NoneKw => Operand::Undef,
+    ZeroInitKw => Operand::ZeroInit,
+    // 聚合常量字面量：[i32 1, i32 2]（数组）/ { i32 1, i64 2 }（struct）/ <{...}>（packed struct）；空聚合 `{}`/`[]` 合法
+    LBracket RBracket => Operand::Agg(vec![]),
+    LBracket <elems: AggList> RBracket => Operand::Agg(elems),
+    LBrace RBrace => Operand::Agg(vec![]),
+    LBrace <elems: AggList> RBrace => Operand::Agg(elems),
+    LAngle LBrace RBrace RAngle => Operand::Agg(vec![]),
+    LAngle LBrace <elems: AggList> RBrace RAngle => Operand::Agg(elems),
+    // 常量表达式操作数：`ret i64 add (i64 <l>, i64 <r>)`（带类型前缀——
+    // `<ty: ValueType> <v: Value>` 中 Value 处于第二位置，不膨胀 TypeOp first，
+    // 避免 TypeOps/InstFlagSeq 闭包 LALR 冲突）。semantics 求值折叠。
+    <e: GlobalConstExpr> => Operand::ConstExpr(e),
+};
+
+// 聚合字面量元素：`<ty> <value>`（可为嵌套聚合——LLVM `[[i32 1], ...]`/`{{i32 1}, ...}`）
+AggList: Vec<ParsedOperand> = {
+    <mut v: (<AggListElem> Comma)*> <p: AggListElem> =>? {
+        v.push(p);
+        Ok(v)
+    }
+};
+
+AggListElem: ParsedOperand = {
+    <t: TypeOp> => t,
+    // 命名类型聚合元素（`{ %1 { i32 4 }, ... }`——%1 是 type 定义；第十四轮）
+    <nty: LocalId> <nv: Value> => ParsedOperand {
+        ty: crate::ir_parser::ast_items::ParsedType::Named(nty),
+        op: nv,
+    },
+    // 嵌套聚合（非空——`{{}}` 与"空 struct 类型 + 值"的 TypeOp 在 LALR(1)
+    // 下本质歧义，LLVM 同（空嵌套写法无实际用途））
+    LBracket <first: AggListElem> <rest: (Comma <AggListElem>)*> RBracket => {
+        let mut v = vec![first];
+        v.extend(rest);
+        ParsedOperand { ty: ParsedType::Void, op: Operand::Agg(v) }
+    },
+    LBrace <first: AggListElem> <rest: (Comma <AggListElem>)*> RBrace => {
+        let mut v = vec![first];
+        v.extend(rest);
+        ParsedOperand { ty: ParsedType::Void, op: Operand::Agg(v) }
+    },
 };
 

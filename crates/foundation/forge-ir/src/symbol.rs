@@ -8,7 +8,7 @@
 //!   `Comdat`, `ThreadLocalMode`, `UnnamedAddr`
 //! - Cranelift: simpler model with just `Linkage::Local/Exported/Preemptible`
 
-use super::entity::{FuncRef, GlobalId};
+use super::imm_str::ImmStr;
 
 // ============================================================
 // Visibility
@@ -76,40 +76,7 @@ pub enum Linkage {
     Common,
 }
 
-impl Linkage {
-    /// Whether this linkage is local to the module.
-    pub fn is_local(self) -> bool {
-        matches!(self, Linkage::Internal | Linkage::Private)
-    }
-
-    /// Whether this linkage may be discarded if unused.
-    pub fn is_discardable_if_unused(self) -> bool {
-        matches!(
-            self,
-            Linkage::LinkOnceAny | Linkage::LinkOnceODR | Linkage::AvailableExternally
-        )
-    }
-
-    /// Whether the definition may be overridden at link time.
-    pub fn is_interposable(self) -> bool {
-        matches!(
-            self,
-            Linkage::External | Linkage::WeakAny | Linkage::ExternalWeak
-        )
-    }
-
-    /// Whether this is a weak symbol.
-    pub fn is_weak(self) -> bool {
-        matches!(
-            self,
-            Linkage::WeakAny
-                | Linkage::WeakODR
-                | Linkage::ExternalWeak
-                | Linkage::LinkOnceAny
-                | Linkage::LinkOnceODR
-        )
-    }
-}
+impl Linkage {}
 
 impl std::fmt::Display for Linkage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -204,7 +171,7 @@ pub struct ComdatId(pub u32);
 #[derive(Clone, Debug)]
 pub struct Comdat {
     /// Name of the comdat group.
-    pub name: String,
+    pub name: ImmStr,
     /// Selection kind.
     pub kind: ComdatKind,
 }
@@ -224,7 +191,7 @@ pub struct SymbolInfo {
     /// DLL storage class (Windows only).
     pub dll_storage_class: DllStorageClass,
     /// Custom section name (if placed in a specific section).
-    pub section: Option<String>,
+    pub section: Option<ImmStr>,
     /// Comdat group reference.
     pub comdat: Option<ComdatId>,
     /// Thread-local storage model (if TLS).
@@ -234,6 +201,8 @@ pub struct SymbolInfo {
     pub unnamed_addr: bool,
     /// The symbol can be safely discarded if unused.
     pub can_discard: bool,
+    /// `dso_local` — 地址不会跨 DSO 抢占（允许直接访问优化）。
+    pub dso_local: bool,
 }
 
 impl SymbolInfo {
@@ -241,112 +210,11 @@ impl SymbolInfo {
     pub fn new() -> Self {
         Self::default()
     }
-
-    /// Create a symbol with internal linkage (module-local).
-    pub fn internal() -> Self {
-        Self {
-            linkage: Linkage::Internal,
-            ..Default::default()
-        }
-    }
-
-    /// Create a symbol with hidden visibility.
-    pub fn hidden() -> Self {
-        Self {
-            visibility: Visibility::Hidden,
-            ..Default::default()
-        }
-    }
-
-    /// Create a symbol with private linkage.
-    pub fn private() -> Self {
-        Self {
-            linkage: Linkage::Private,
-            ..Default::default()
-        }
-    }
-
-    /// Set the linkage.
-    pub fn with_linkage(mut self, linkage: Linkage) -> Self {
-        self.linkage = linkage;
-        self
-    }
-
-    /// Set the visibility.
-    pub fn with_visibility(mut self, vis: Visibility) -> Self {
-        self.visibility = vis;
-        self
-    }
-
-    /// Set the section.
-    pub fn with_section(mut self, section: &str) -> Self {
-        self.section = Some(section.to_string());
-        self
-    }
-
-    /// Set the comdat group.
-    pub fn with_comdat(mut self, comdat: ComdatId) -> Self {
-        self.comdat = Some(comdat);
-        self
-    }
-
-    /// Set TLS model.
-    pub fn with_tls(mut self, model: TlsModel) -> Self {
-        self.tls_model = Some(model);
-        self
-    }
-}
-
-// ============================================================
-// Alias
-// ============================================================
-
-/// A symbol alias — maps one name to another symbol.
-#[derive(Clone, Debug)]
-pub struct Alias {
-    /// The alias name.
-    pub name: String,
-    /// Target: either a function or a global variable.
-    pub target: AliasTarget,
-    /// Symbol info for the alias.
-    pub symbol: SymbolInfo,
-}
-
-/// Target of an alias.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AliasTarget {
-    /// Alias to a function.
-    Function(FuncRef),
-    /// Alias to a global variable.
-    Global(GlobalId),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_linkage_is_local() {
-        assert!(Linkage::Internal.is_local());
-        assert!(Linkage::Private.is_local());
-        assert!(!Linkage::External.is_local());
-    }
-
-    #[test]
-    fn test_linkage_is_weak() {
-        assert!(Linkage::WeakAny.is_weak());
-        assert!(Linkage::LinkOnceAny.is_weak());
-        assert!(!Linkage::External.is_weak());
-        assert!(!Linkage::Internal.is_weak());
-    }
-
-    #[test]
-    fn test_linkage_is_interposable() {
-        assert!(Linkage::External.is_interposable());
-        assert!(Linkage::WeakAny.is_interposable());
-        assert!(!Linkage::Internal.is_interposable());
-        assert!(!Linkage::LinkOnceAny.is_interposable());
-    }
 
     #[test]
     fn test_symbol_info_default() {
@@ -356,22 +224,5 @@ mod tests {
         assert!(info.section.is_none());
         assert!(info.comdat.is_none());
         assert!(info.tls_model.is_none());
-    }
-
-    #[test]
-    fn test_symbol_info_internal() {
-        let info = SymbolInfo::internal();
-        assert!(info.linkage.is_local());
-    }
-
-    #[test]
-    fn test_symbol_info_builder() {
-        let info = SymbolInfo::new()
-            .with_linkage(Linkage::WeakAny)
-            .with_visibility(Visibility::Hidden)
-            .with_section(".my_section");
-        assert!(info.linkage.is_weak());
-        assert_eq!(info.visibility, Visibility::Hidden);
-        assert_eq!(info.section, Some(".my_section".to_string()));
     }
 }

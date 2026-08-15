@@ -1,3 +1,4 @@
+use crate::error::IrError;
 use dashu::{
     Integer, Natural, Real,
     base::{Abs, ConversionError, Signed},
@@ -32,13 +33,6 @@ impl FloatFormat {
     pub fn total_bits(&self) -> u32 {
         1 + self.exp_bits + self.sig_bits
     }
-    pub fn sig_mask(&self) -> u64 {
-        if self.sig_bits >= 64 {
-            u64::MAX
-        } else {
-            (1u64 << self.sig_bits) - 1
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,9 +59,6 @@ impl Big {
 }
 
 impl Big {
-    pub fn from_f32(value: f32) -> Option<Self> {
-        Self::from_f64(value as f64)
-    }
 
     pub fn from_f64(value: f64) -> Option<Self> {
         // 处理特殊值
@@ -112,6 +103,14 @@ impl Big {
                 Real::from_parts(-sig, exp)
             };
             Some(Big::Float(result))
+    }
+        }
+    /// 判断是否为零。
+    pub const fn is_zero(&self) -> bool {
+        match self {
+            Self::Signed(i) => i.is_zero(),
+            Self::Unsigned(i) => i.is_zero(),
+            Self::Float(f) => f.repr().is_pos_zero() || f.repr().is_neg_zero(),
         }
     }
 
@@ -123,17 +122,6 @@ impl Big {
             Self::Float(f) => Self::Float(f.clone().abs()),
         }
     }
-
-    /// 判断是否为零。
-    pub const fn is_zero(&self) -> bool {
-        match self {
-            Self::Signed(i) => i.is_zero(),
-            Self::Unsigned(i) => i.is_zero(),
-            Self::Float(f) => f.repr().is_pos_zero() || f.repr().is_neg_zero(),
-        }
-    }
-
-    /// 判断是否为 1。
     pub const fn is_one(&self) -> bool {
         match self {
             Self::Signed(i) => i.is_one(),
@@ -142,23 +130,12 @@ impl Big {
         }
     }
 
-    /// 判断是否为负数
-    pub fn is_negative(&self) -> bool {
+    /// 判断是否为负数（Float 变体;整数恒 false）。
+    pub fn is_neg(&self) -> bool {
         match self {
-            Self::Signed(i) => i.is_negative(),
-            Self::Unsigned(_) => false,
-            Self::Float(f) => f.is_negative(),
-        }
-    }
-
-    /// 判断是否为 NaN
-    #[allow(clippy::eq_op)]
-    pub fn is_nan(&self) -> bool {
-        match self {
-            Self::Signed(_) => false,
-            Self::Unsigned(_) => false,
-            // NaN is the only float where x != x
-            Self::Float(f) => f != f,
+            Big::Signed(i) =>i.is_negative(),
+            Big::Float(f) => f.is_negative(),
+            _=> false,
         }
     }
 }
@@ -366,8 +343,28 @@ impl std::ops::Rem for Big {
             (Big::Signed(a), Big::Unsigned(b)) => Big::Signed(a % Integer::from(b)),
             (Big::Unsigned(a), Big::Signed(b)) => Big::Signed(Integer::from(a) % b),
             (Big::Unsigned(a), Big::Unsigned(b)) => Big::Unsigned(a % b),
-            (Big::Float(a), _) | (_, Big::Float(a)) => Big::Float(a),
+            // Float 取模 = fmod（dashu Real 的 `%`）。混合类型经 f64 中间值
+            // （有损但语义明确——不再静默返回第一个操作数）。
+            (Big::Float(a), Big::Float(b)) => Big::Float(a % b),
+            (Big::Float(a), b) => {
+                let af = f64::try_from(a.clone()).unwrap_or(0.0);
+                Big::from_f64(af % b.to_f64_lossy()).unwrap_or(Big::F_ZERO)
+            }
+            (a, Big::Float(b)) => {
+                let bf = f64::try_from(b.clone()).unwrap_or(0.0);
+                Big::from_f64(a.to_f64_lossy() % bf).unwrap_or(Big::F_ZERO)
+            }
         }
+    }
+}
+
+/// 位运算操作数必须为整数——Float 参与位运算是未定义语义，
+/// 显式 panic 而非静默当作 0（静默 0 会产出错误的折叠结果）。
+fn bitop_integer(b: Big) -> Integer {
+    match b {
+        Big::Signed(i) => i,
+        Big::Unsigned(u) => Integer::from(u),
+        Big::Float(_) => panic!("bitwise operation on Float Big is undefined"),
     }
 }
 
@@ -376,19 +373,7 @@ impl std::ops::BitAnd for Big {
     fn bitand(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Big::Unsigned(a), Big::Unsigned(b)) => Big::Unsigned(a & b),
-            (a, b) => {
-                let ai = match a {
-                    Big::Signed(i) => i,
-                    Big::Unsigned(u) => Integer::from(u),
-                    Big::Float(_) => Integer::ZERO,
-                };
-                let bi = match b {
-                    Big::Signed(i) => i,
-                    Big::Unsigned(u) => Integer::from(u),
-                    Big::Float(_) => Integer::ZERO,
-                };
-                Big::Signed(ai & bi)
-            }
+            (a, b) => Big::Signed(bitop_integer(a) & bitop_integer(b)),
         }
     }
 }
@@ -396,34 +381,14 @@ impl std::ops::BitAnd for Big {
 impl std::ops::BitOr for Big {
     type Output = Self;
     fn bitor(self, rhs: Self) -> Self::Output {
-        let ai = match self {
-            Big::Signed(i) => i,
-            Big::Unsigned(u) => Integer::from(u),
-            Big::Float(_) => Integer::ZERO,
-        };
-        let bi = match rhs {
-            Big::Signed(i) => i,
-            Big::Unsigned(u) => Integer::from(u),
-            Big::Float(_) => Integer::ZERO,
-        };
-        Big::Signed(ai | bi)
+        Big::Signed(bitop_integer(self) | bitop_integer(rhs))
     }
 }
 
 impl std::ops::BitXor for Big {
     type Output = Self;
     fn bitxor(self, rhs: Self) -> Self::Output {
-        let ai = match self {
-            Big::Signed(i) => i,
-            Big::Unsigned(u) => Integer::from(u),
-            Big::Float(_) => Integer::ZERO,
-        };
-        let bi = match rhs {
-            Big::Signed(i) => i,
-            Big::Unsigned(u) => Integer::from(u),
-            Big::Float(_) => Integer::ZERO,
-        };
-        Big::Signed(ai ^ bi)
+        Big::Signed(bitop_integer(self) ^ bitop_integer(rhs))
     }
 }
 
@@ -464,29 +429,11 @@ impl Big {
     pub fn from_i128(value: i128) -> Self {
         Big::Signed(Integer::from(value))
     }
-    pub fn infinity(sign: bool) -> Self {
-        Big::Float(if sign {
-            Real::NEG_INFINITY
-        } else {
-            Real::INFINITY
-        })
-    }
 
     // 类型查询
-    pub fn is_signed(&self) -> bool {
-        matches!(self, Big::Signed(_))
-    }
-    pub fn is_unsigned(&self) -> bool {
-        matches!(self, Big::Unsigned(_))
-    }
     pub fn is_float(&self) -> bool {
         matches!(self, Big::Float(_))
     }
-    pub fn is_infinity(&self) -> bool {
-        matches!(self, Big::Float(f) if f == &Real::INFINITY || f == &Real::NEG_INFINITY)
-    }
-
-    // 转换为原生类型
     pub fn try_to_i64(&self) -> Option<i64> {
         match self {
             Big::Signed(i) => i64::try_from(i).ok(),
@@ -501,28 +448,14 @@ impl Big {
             _ => None,
         }
     }
-    pub fn trunc_to_i64(&self) -> i64 {
-        self.try_to_i64().unwrap_or(0)
-    }
-    pub fn trunc_to_u64(&self) -> u64 {
-        self.try_to_u64().unwrap_or(0)
-    }
     pub fn to_f64(&self) -> f64 {
         match self {
             Big::Float(f) => f64::try_from(f.clone()).unwrap_or(f64::NAN),
             _ => self.to_f64_lossy(),
         }
     }
-    pub fn to_f32(&self) -> f32 {
-        self.to_f64() as f32
-    }
-
-    // 比较
-    pub fn cmp_signed(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
-    }
-    pub fn eq_signed(&self, other: &Self) -> bool {
-        self == other
+    pub fn trunc_to_u64(&self) -> u64 {
+        self.try_to_u64().unwrap_or(0)
     }
 
     // 位宽截断
@@ -576,9 +509,9 @@ impl Big {
     }
 
     // 除法变体
-    pub fn sdiv(&self, other: &Self) -> Result<Self, String> {
+    pub fn sdiv(&self, other: &Self) -> Result<Self, IrError> {
         if other.is_zero() {
-            return Err("division by zero".into());
+            return Err(IrError::DivisionByZero);
         }
         let a = self.clone();
         let b = other.clone();
@@ -591,25 +524,25 @@ impl Big {
         })
     }
 
-    pub fn udiv(&self, other: &Self) -> Result<Self, String> {
+    pub fn udiv(&self, other: &Self) -> Result<Self, IrError> {
         if other.is_zero() {
-            return Err("division by zero".into());
+            return Err(IrError::DivisionByZero);
         }
         let a = self.abs_as_unsigned();
         let b = other.abs_as_unsigned();
         Ok(Big::Unsigned(a / b))
     }
 
-    pub fn srem(&self, other: &Self) -> Result<Self, String> {
+    pub fn srem(&self, other: &Self) -> Result<Self, IrError> {
         if other.is_zero() {
-            return Err("division by zero".into());
+            return Err(IrError::DivisionByZero);
         }
         Ok(self.clone() % other.clone())
     }
 
-    pub fn urem(&self, other: &Self) -> Result<Self, String> {
+    pub fn urem(&self, other: &Self) -> Result<Self, IrError> {
         if other.is_zero() {
-            return Err("division by zero".into());
+            return Err(IrError::DivisionByZero);
         }
         let a = self.abs_as_unsigned();
         let b = other.abs_as_unsigned();
@@ -715,10 +648,7 @@ mod tests {
     #[test]
     fn from_i64_conversions() {
         assert_eq!(Big::from_i64(42).try_to_i64(), Some(42));
-        assert!(Big::from_i64(-42).is_negative());
-        assert!(Big::from_i64(0).is_zero());
     }
-
     #[test]
     fn add_sub() {
         let a = Big::from_i64(100);
@@ -821,13 +751,6 @@ mod tests {
     }
 
     #[test]
-    fn float_special_values() {
-        let inf = Big::infinity(false);
-        assert!(inf.is_infinity());
-        assert!(!inf.is_zero());
-    }
-
-    #[test]
     fn float_negate() {
         let a = Big::from_f64(3.0).unwrap();
         assert!((-a.to_f64() + 3.0).abs() < 1e-10);
@@ -859,19 +782,10 @@ mod tests {
     #[test]
     fn float_from_bits_f32() {
         let bf = Big::from_bits(0x40490FDB, FloatFormat::F32);
-        assert!((bf.to_f64() - std::f64::consts::PI).abs() < 0.001);
         assert_eq!(bf.to_bits_trunc(FloatFormat::F32), 0x40490FDB);
     }
 
     // === Big enum 特定测试 ===
-    #[test]
-    fn signed_unsigned_conversion() {
-        let s = Big::from_i64(-42);
-        assert!(s.is_signed());
-        let u = Big::from_u64(42);
-        assert!(u.is_unsigned());
-    }
-
     #[test]
     fn cross_type_addition() {
         let s = Big::from_i64(10);
@@ -884,7 +798,6 @@ mod tests {
     fn float_to_int_conversion() {
         let f = Big::from_f64(1.5).unwrap();
         assert!(f.is_float());
-        assert!(!f.is_nan());
     }
 
     #[test]

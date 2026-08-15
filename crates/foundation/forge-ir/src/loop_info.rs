@@ -1,6 +1,6 @@
 //! 循环森林 — 自然循环检测与分析。
 
-use crate::analysis::{DominatorTree, block_predecessors, block_successors_in_func};
+use crate::analysis::{DominatorTree, block_successors_in_func};
 use crate::entity::*;
 use crate::function::Function;
 use std::collections::{HashMap, HashSet};
@@ -17,7 +17,6 @@ pub struct LoopInfo {
 #[derive(Clone, Debug)]
 pub struct LoopForest {
     loops: Vec<LoopInfo>,
-    header_to_loop: HashMap<Block, usize>,
     depths: HashMap<Block, u32>,
 }
 
@@ -26,16 +25,17 @@ impl LoopForest {
         let mut loops: Vec<LoopInfo> = Vec::new();
         let mut header_to_loop: HashMap<Block, usize> = HashMap::new();
 
-        // Detect back-edges
+        // Detect back-edges（用 Function 惰性 predecessors 缓存加速 collect_loop_body）
+        let preds_map = func.predecessors();
         for (pred, bd) in func.dfg.blocks() {
             for succ in bd.terminator.successors() {
                 if dom_tree.dominates(succ, pred) {
                     let header = succ;
                     if let Some(&idx) = header_to_loop.get(&header) {
-                        collect_loop_body(func, pred, header, &mut loops[idx].blocks);
+                        collect_loop_body(preds_map, pred, header, &mut loops[idx].blocks);
                     } else {
                         let mut blocks = vec![header];
-                        collect_loop_body(func, pred, header, &mut blocks);
+                        collect_loop_body(preds_map, pred, header, &mut blocks);
                         let idx = loops.len();
                         loops.push(LoopInfo {
                             header,
@@ -106,22 +106,12 @@ impl LoopForest {
 
         Self {
             loops,
-            header_to_loop,
             depths: depth_map,
         }
     }
 
-    pub fn is_loop_header(&self, block: Block) -> bool {
-        self.header_to_loop.contains_key(&block)
-    }
     pub fn get_loop_depth(&self, block: Block) -> u32 {
         self.depths.get(&block).copied().unwrap_or(0)
-    }
-    pub fn top_level_loops(&self) -> Vec<&LoopInfo> {
-        self.loops
-            .iter()
-            .filter(|l| l.parent_loop.is_none())
-            .collect()
     }
     pub fn all_loops(&self) -> &[LoopInfo] {
         &self.loops
@@ -134,7 +124,12 @@ impl LoopForest {
     }
 }
 
-fn collect_loop_body(func: &Function, start: Block, header: Block, body: &mut Vec<Block>) {
+fn collect_loop_body(
+    preds: &HashMap<Block, Vec<Block>>,
+    start: Block,
+    header: Block,
+    body: &mut Vec<Block>,
+) {
     let mut body_set: HashSet<Block> = body.iter().copied().collect();
     let mut worklist = vec![start];
     if !body_set.contains(&start) {
@@ -145,7 +140,7 @@ fn collect_loop_body(func: &Function, start: Block, header: Block, body: &mut Ve
         if current == header {
             continue;
         }
-        for pred in block_predecessors(func, current) {
+        for &pred in preds.get(&current).map(|v| v.as_slice()).unwrap_or(&[]) {
             if !body_set.contains(&pred) && pred != header {
                 body.push(pred);
                 body_set.insert(pred);
@@ -158,10 +153,15 @@ fn collect_loop_body(func: &Function, start: Block, header: Block, body: &mut Ve
     }
 }
 
+/// 迭代化深度计算（替代递归——深嵌套循环不再有栈溢出风险）。
 fn compute_depth(loops: &[LoopInfo], idx: usize) -> u32 {
-    loops[idx]
-        .parent_loop
-        .map_or(1, |p| compute_depth(loops, p) + 1)
+    let mut depth: u32 = 1;
+    let mut cur = loops[idx].parent_loop;
+    while let Some(p) = cur {
+        depth += 1;
+        cur = loops[p].parent_loop;
+    }
+    depth
 }
 
 // ============================================================
@@ -200,7 +200,7 @@ mod tests {
         let r = fb.iconst_i32(0);
         fb.ret(&[r]);
 
-        let func = fb.finish();
+        let func = fb.finish().expect("build");
         let dt = DominatorTree::build(&func);
         let lf = LoopForest::build(&func, &dt);
         (func, lf)
@@ -240,7 +240,7 @@ mod tests {
         let r = fb.iconst_i32(0);
         fb.ret(&[r]);
 
-        let func = fb.finish();
+        let func = fb.finish().expect("build");
         let dt = DominatorTree::build(&func);
         let lf = LoopForest::build(&func, &dt);
         (func, lf)
@@ -255,7 +255,7 @@ mod tests {
         fb.switch_to_block(entry);
         let v = fb.iconst_i32(42);
         fb.ret(&[v]);
-        let func = fb.finish();
+        let func = fb.finish().expect("build");
         let dt = DominatorTree::build(&func);
         let lf = LoopForest::build(&func, &dt);
         assert!(lf.is_empty());
@@ -271,18 +271,13 @@ mod tests {
     #[test]
     fn single_loop_header_identified() {
         let (_func, lf) = build_single_loop();
-        let top = lf.top_level_loops();
-        assert_eq!(top.len(), 1, "expected 1 top-level loop");
-        let the_loop = top[0];
-        // Header should be recognized as loop header
-        assert!(lf.is_loop_header(the_loop.header));
+        assert_eq!(lf.all_loops().len(), 1, "expected 1 loop");
     }
 
     #[test]
     fn single_loop_depth() {
         let (_func, lf) = build_single_loop();
-        let top = lf.top_level_loops();
-        let the_loop = top[0];
+        let the_loop = &lf.all_loops()[0];
         assert_eq!(the_loop.depth, 1);
         assert!(lf.get_loop_depth(the_loop.header) > 0);
     }
@@ -290,8 +285,7 @@ mod tests {
     #[test]
     fn single_loop_has_exit() {
         let (_func, lf) = build_single_loop();
-        let top = lf.top_level_loops();
-        let the_loop = top[0];
+        let the_loop = &lf.all_loops()[0];
         assert!(
             !the_loop.exit_blocks.is_empty(),
             "loop should have at least 1 exit block"
@@ -363,7 +357,7 @@ mod tests {
             fb.switch_to_block(merge_blk);
             fb.ret(&[merge_params[0]]);
         }
-        let func = fb.finish();
+        let func = fb.finish().expect("build");
         let dt = DominatorTree::build(&func);
         let lf = LoopForest::build(&func, &dt);
         assert!(lf.is_empty(), "diamond CFG should have no loops");

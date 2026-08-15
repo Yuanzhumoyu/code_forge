@@ -1,0 +1,40 @@
+skip-value-numbers-globals.ll: immediates Global(GlobalId(1)) vs Global(GlobalId(2)) of GlobalAddr:
+target datalayout = "e-m:e-p:64:64-i1:8-i8:8-i16:16-i32:32-i64:64-i128:128-f16:16-f32:32-f64:64-f128:128-v64:64-v128:128-v256:256-v512:512-n:8:16:32:64-S:16"
+
+@5 = global i8 0
+@"" = global i8 1
+@15 = ifunc ptr (), ptr @20
+@10 = alias i8, ptr @5
+define ptr @20() {
+  %entry:
+
+    ret ptr null
+
+}
+
+declare void @25()
+
+
+declare ptr @""(ptr %arg0)
+
+
+define void @test(ptr %p) {
+  %entry:
+
+    store ptr @5, ptr %p
+
+    store ptr @undef, ptr %p
+
+    store ptr @undef, ptr %p
+
+    store ptr @15, ptr %p
+
+    store ptr @5, ptr %p
+
+    store ptr @"", ptr %p
+
+    store ptr @undef, ptr %p
+    ret void
+
+}
+

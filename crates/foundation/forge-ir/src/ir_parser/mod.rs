@@ -12,37 +12,29 @@
 pub mod lexer;
 pub mod llvm_mapping;
 
-// lalrpop 生成的语法模块（build.rs 处理 grammar.lalrpop）
-lalrpop_mod!(#[allow(clippy::redundant_field_names)] pub grammar, "/ir_parser/grammar.rs");
+// lalrpop 生成的语法模块（build.rs 处理 grammar.lalrpop）——
+// 生成代码标准豁免:type_complexity(4595 条,规则多字段元组)/未用绑定
+// (变体参数全弃)/unreachable_patterns(多变体共享前缀)
+lalrpop_mod!(
+    #[allow(
+        clippy::redundant_field_names,
+        clippy::type_complexity,
+        unused_variables,
+        unreachable_patterns,
+        clippy::too_many_arguments,
+        unused_mut
+    )]
+    pub grammar,
+    "/ir_parser/grammar.rs"
+);
 mod semantics;
 
 // ============================================================
 // Parse Error
 // ============================================================
 
-#[derive(Debug)]
-pub enum ParseError {
-    /// 词法层错误（logos LexingError）。
-    Grammar(String),
-    /// 语法层错误（lalrpop ParseError）。
-    Parse(String),
-    /// 语义层错误（类型不匹配、未定义值、SSA 重复定义、不支持的构造）。
-    Semantic(String),
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParseError::Grammar(e) => write!(f, "lex error: {}", e),
-            ParseError::Parse(e) => write!(f, "parse error: {}", e),
-            ParseError::Semantic(e) => write!(f, "semantic error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
-
 pub mod ast_items;
+use crate::error::IrError;
 use lalrpop_util::lalrpop_mod;
 
 // ============================================================
@@ -50,12 +42,12 @@ use lalrpop_util::lalrpop_mod;
 // ============================================================
 
 /// 解析 LLVM IR module（可含 target/define/declare 多个函数）。
-pub fn parse_module(source: &str) -> Result<crate::function::Module, ParseError> {
+pub fn parse_module(source: &str) -> Result<crate::function::Module, IrError> {
     semantics::parse_module(source)
 }
 
 /// 解析单个 LLVM IR 函数定义。
-pub fn parse_function(source: &str) -> Result<crate::function::Function, ParseError> {
+pub fn parse_function(source: &str) -> Result<crate::function::Function, IrError> {
     semantics::parse_function(source)
 }
 
@@ -93,7 +85,7 @@ mod tests {
         assert_eq!(f.params.len(), 2);
         assert_eq!(f.params[0].1, "%a");
         assert_eq!(f.blocks.len(), 1);
-        assert_eq!(f.blocks[0].label, "%entry");
+        assert_eq!(f.blocks[0].label, "entry");
         assert_eq!(f.blocks[0].insts.len(), 1);
         let inst = &f.blocks[0].insts[0];
         assert_eq!(inst.opcode, "add");
@@ -102,7 +94,7 @@ mod tests {
         assert!(matches!(inst.args[0].op, Operand::Local(_)));
         assert!(matches!(
             f.blocks[0].terminator,
-            ParsedTerminator::Return(_)
+            ParsedTerminator::Return(..)
         ));
     }
 
@@ -129,7 +121,7 @@ mod tests {
         assert_eq!(f.blocks[0].insts[0].cond.as_deref(), Some("slt"));
         assert!(matches!(
             f.blocks[0].terminator,
-            ParsedTerminator::Branch(_, _, _)
+            ParsedTerminator::Branch(..)
         ));
     }
 
@@ -143,7 +135,7 @@ mod tests {
         };
         assert!(matches!(
             f.blocks[0].terminator,
-            ParsedTerminator::Switch(_, _, _)
+            ParsedTerminator::Switch(..)
         ));
         assert!(matches!(
             f.blocks[1].terminator,
@@ -175,7 +167,7 @@ mod semantics_tests {
             "define i32 @add(i32 %a, i32 %b) {\n  %entry:\n    %s = add i32 %a, i32 %b\n    ret i32 %s\n}\n",
         )
         .expect("parse");
-        assert_eq!(f.name, "add");
+        assert_eq!(f.name.as_str(), "add");
         // inst_order 含 iadd；ret 是 terminator（不占 inst_order）
         let insts: usize = f.dfg.blocks.iter().map(|b| b.inst_order.len()).sum();
         assert_eq!(insts, 1, "iadd in inst_order");
@@ -207,8 +199,8 @@ mod semantics_tests {
         )
         .expect("parse");
         // 2 个函数 + 跨函数 call
-        assert!(m.get_function(crate::entity::FuncRef(0)).name == "add");
-        assert!(m.get_function(crate::entity::FuncRef(1)).name == "main");
+        assert!(m.get_function(crate::entity::FuncRef(0)).name.as_str() == "add");
+        assert!(m.get_function(crate::entity::FuncRef(1)).name.as_str() == "main");
     }
 
     #[test]
@@ -220,12 +212,154 @@ mod semantics_tests {
     }
 
     #[test]
-    fn typed_operand_mismatch_detected() {
-        // add 的操作数类型不一致（i32 vs i64 常量被 iconst 按类型建——不报错；
-        // 此测试验证 undefined % 值报错）
+    fn typed_operand_undefined_value_lenient() {
+        // 第十一轮语义变更：未定义 % 值引用（use-list 测试的故意引用）宽松
+        // 为 undef 占位——不再报错
         let r = parse_function(
             "define i32 @f() {\n  %entry:\n    %x = add i32 1, %undefined\n    ret i32 %x\n}\n",
         );
-        assert!(r.is_err(), "undefined %undefined should fail");
+        assert!(
+            r.is_ok(),
+            "undefined %undefined should be lenient (undef placeholder)"
+        );
+    }
+
+    #[test]
+    fn declare_and_forward_ref() {
+        // declare 外部函数 + define 函数前向引用 call（foo 定义在 main 之后）
+        let m = parse_module(
+            "declare i32 @puts(ptr %s)\n\
+             define i32 @main() {\n  %entry:\n    %r = call i32 @foo()\n    %q = call i32 @puts(ptr null)\n    ret i32 %r\n}\n\
+             define i32 @foo() {\n  %entry:\n    ret i32 42\n}\n",
+        )
+        .expect("parse");
+        assert_eq!(m.function_count(), 3, "declare + 2 define");
+        // 函数表顺序：puts(0), main(1), foo(2)——前向引用解析到 foo
+        let names: Vec<String> = m.iter_functions().map(|f| f.name.to_string()).collect();
+        assert_eq!(names, vec!["puts", "main", "foo"]);
+        // declare 函数无 body（空壳）
+        let decl = m.get_function(crate::entity::FuncRef(0));
+        assert!(decl.layout.block_order.is_empty(), "declare has no body");
+    }
+
+    #[test]
+    fn datalayout_parsed() {
+        // target datalayout 真正解析：32 位布局 → 指针 4 字节
+        let m = parse_module(
+            "target datalayout = \"e-p:32:32-i64:64\"\n\
+             define i32 @f() {\n  %entry:\n    ret i32 0\n}\n",
+        )
+        .expect("parse");
+        assert_eq!(m.data_layout.pointer_size(0), 4, "p:32 → 4-byte pointer");
+        // 关键：types 内嵌布局必须与 data_layout 同步（历史 bug：parse
+        // 只写字段，types 仍默认 x86_64）——size/align 查询走 types
+        assert_eq!(
+            m.types.size_bytes(crate::TypeId::PTR),
+            4,
+            "TypeStore size_bytes must reflect parsed layout"
+        );
+        assert_eq!(m.types.alignment(crate::TypeId::PTR), 4);
+        // display 应输出该 datalayout（非默认 x86_64）
+        let text = format!("{}", m);
+        assert!(
+            text.contains("target datalayout"),
+            "datalayout round-trips to text, got: {text}"
+        );
+    }
+
+    #[test]
+    fn declare_round_trip() {
+        // parse（declare + define）→ display → 再 parse：declare 保持 declare
+        let src = "declare i32 @puts(ptr %s)\n\
+                   define i32 @main() {\n  %entry:\n    ret i32 0\n}\n";
+        let m = parse_module(src).expect("parse");
+        let text = format!("{}", m);
+        assert!(text.contains("declare"), "declare preserved: {text}");
+        let m2 = parse_module(&text).expect("re-parse");
+        assert_eq!(m2.function_count(), 2, "declare + define round-trip");
+    }
+
+    fn first_vconst_bytes(func: &crate::function::Function) -> Vec<u8> {
+        for inst in &func.dfg.insts {
+            if matches!(inst.opcode, crate::Opcode::Vconst)
+                && let Some(crate::Immediate::Const(cid)) = inst.immediates.first()
+            {
+                return func.constants.get_vector(*cid).unwrap_or(&[]).to_vec();
+            }
+        }
+        Vec::new()
+    }
+
+    #[test]
+    fn vconst_round_trip_bytes() {
+        // 修复历史缺陷：vconst 数据曾静默丢失（parse 后变零向量）
+        let src = "define <4 x f32> @v() {\n  %entry:\n    %v = vconst <4 x f32> [1.5, 2.5, -3.5, 4.25]\n    ret <4 x f32> %v\n}\n";
+        let m = parse_module(src).expect("parse");
+        let text = format!("{}", m);
+        assert!(
+            text.contains("<1.5, 2.5, -3.5, 4.25>"),
+            "lane data in text: {text}"
+        );
+        let m2 = parse_module(&text).expect("re-parse");
+        let f1 = m.get_function(crate::entity::FuncRef(0));
+        let f2 = m2.get_function(crate::entity::FuncRef(0));
+        let expect: Vec<u8> = [1.5f32, 2.5, -3.5, 4.25]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        assert_eq!(first_vconst_bytes(f1), expect, "source bytes");
+        assert_eq!(first_vconst_bytes(f2), expect, "round-trip bytes");
+    }
+
+    #[test]
+    fn vconst_round_trip_big_endian() {
+        // 大端向量常量：display 输出 `big` 标记，round-trip 保留字节序
+        let src = "define <2 x f64> @v() {\n  %entry:\n    %v = vconst <2 x f64> [1.5, 2.5] big\n    ret <2 x f64> %v\n}\n";
+        let m = parse_module(src).expect("parse");
+        let text = format!("{}", m);
+        assert!(text.contains("big"), "endian marker in text: {text}");
+        let m2 = parse_module(&text).expect("re-parse");
+        let f1 = m.get_function(crate::entity::FuncRef(0));
+        let f2 = m2.get_function(crate::entity::FuncRef(0));
+        let expect: Vec<u8> = [1.5f64, 2.5].iter().flat_map(|x| x.to_be_bytes()).collect();
+        assert_eq!(first_vconst_bytes(f1), expect, "source big-endian bytes");
+        assert_eq!(
+            first_vconst_bytes(f2),
+            expect,
+            "round-trip big-endian bytes"
+        );
+    }
+
+    #[test]
+
+    fn global_round_trip() {
+        // global/constant 定义 + 函数内 @g 直接引用（LLVM 标准，无 global_addr
+        // 指令行）+ display round-trip
+        let src = "@g = global i32 42\n\
+                   @c = constant f32 1.5\n\
+                   @n = global ptr\n\
+                   @a = global i64 -7, align 16\n\
+                   define i32 @main() {\n  %entry:\n    %p = load i32, ptr @g\n    ret i32 %p\n}\n";
+        let m = parse_module(src).expect("parse");
+        assert_eq!(m.global_count(), 4, "4 globals");
+        let text = format!("{}", m);
+        for frag in [
+            "@g = global i32 42",
+            "@c = constant f32 1.5",
+            "@n = global ptr",
+            "align 16",
+            "load i32, ptr @g",
+        ] {
+            assert!(text.contains(frag), "missing {frag:?} in: {text}");
+        }
+        let m2 = parse_module(&text).expect("re-parse");
+        assert_eq!(m2.global_count(), 4, "globals survive round-trip");
+        for (id, gv) in m2.iter_globals() {
+            let g1 = m.get_global(id).expect("same id");
+            assert_eq!(g1.name, gv.name, "name");
+            assert_eq!(g1.is_constant, gv.is_constant, "constness");
+            assert_eq!(g1.alignment, gv.alignment, "alignment");
+            assert_eq!(g1.init, gv.init, "init bytes");
+        }
     }
 }

@@ -418,12 +418,61 @@ fn conversions() {
         ),
         Opcode::Ireduce
     );
-    // trunc：浮点 → Ftrunc
+    // trunc：浮点 → Fptrunc（LLVM：trunc 对浮点是精度截断）
     assert_eq!(
         first_op(
             "define float @f(double %a) {\n  %e:\n    %r = trunc double %a to float\n    ret float %r\n}\n"
         ),
-        Opcode::Ftrunc
+        Opcode::Fptrunc
+    );
+    // 新增 LLVM 转换全集：fptrunc/fpext/fptosi/sitofp/fptoui/uitofp/ptrtoint/inttoptr
+    assert_eq!(
+        first_op(
+            "define float @f(double %a) {\n  %e:\n    %r = fptrunc double %a to float\n    ret float %r\n}\n"
+        ),
+        Opcode::Fptrunc
+    );
+    assert_eq!(
+        first_op(
+            "define double @f(float %a) {\n  %e:\n    %r = fpext float %a to double\n    ret double %r\n}\n"
+        ),
+        Opcode::Fpext
+    );
+    assert_eq!(
+        first_op(
+            "define i32 @f(double %a) {\n  %e:\n    %r = fptosi double %a to i32\n    ret i32 %r\n}\n"
+        ),
+        Opcode::Fptosi
+    );
+    assert_eq!(
+        first_op(
+            "define double @f(i32 %a) {\n  %e:\n    %r = sitofp i32 %a to double\n    ret double %r\n}\n"
+        ),
+        Opcode::Sitofp
+    );
+    assert_eq!(
+        first_op(
+            "define i32 @f(double %a) {\n  %e:\n    %r = fptoui double %a to i32\n    ret i32 %r\n}\n"
+        ),
+        Opcode::Fptoui
+    );
+    assert_eq!(
+        first_op(
+            "define double @f(i32 %a) {\n  %e:\n    %r = uitofp i32 %a to double\n    ret double %r\n}\n"
+        ),
+        Opcode::Uitofp
+    );
+    assert_eq!(
+        first_op(
+            "define i64 @f(ptr %p) {\n  %e:\n    %r = ptrtoint ptr %p to i64\n    ret i64 %r\n}\n"
+        ),
+        Opcode::Ptrtoint
+    );
+    assert_eq!(
+        first_op(
+            "define ptr @f(i64 %a) {\n  %e:\n    %r = inttoptr i64 %a to ptr\n    ret ptr %r\n}\n"
+        ),
+        Opcode::Inttoptr
     );
     assert_eq!(
         first_op(
@@ -516,7 +565,7 @@ fn module_target_and_comment() {
     )
     .expect("parse module");
     assert!(m.target_triple.is_some(), "target triple set");
-    assert!(m.get_function(forge_ir::entity::FuncRef(0)).name == "f");
+    assert!(m.get_function(forge_ir::entity::FuncRef(0)).name.as_str() == "f");
 }
 
 // ── 错误路径 ──
@@ -528,12 +577,12 @@ fn errors() {
         parse_function("define i32 @f() {\n  %e:\n    %r = frobnicate i32 1\n    ret i32 %r\n}\n")
             .is_err()
     );
-    // 未定义值
+    // 未定义值——第十一轮宽松：undef 占位（use-list 测试语义），不再报错
     assert!(
         parse_function(
             "define i32 @f() {\n  %e:\n    %r = add i32 %missing, i32 1\n    ret i32 %r\n}\n"
         )
-        .is_err()
+        .is_ok()
     );
     // SSA 重复
     assert!(parse_function("define i32 @f() {\n  %e:\n    %x = add i32 1, 2\n    %x = add i32 3, 4\n    ret i32 %x\n}\n").is_err());
@@ -541,4 +590,69 @@ fn errors() {
     assert!(parse_function("define i32 @f() {\n  %e:\n    br label %nowhere\n}\n").is_err());
     // 非法 token
     assert!(parse_function("define i32 @f() {\n  %e:\n    %r = ????\n}\n").is_err());
+}
+
+// ── 语义错误路径 ──────────────────────────────────────────
+
+#[test]
+fn errors_undefined_block() {
+    let r = parse_function("define i32 @f() {\n  %e:\n    br label %missing\n}");
+    assert!(r.is_err(), "br to undefined block should error");
+}
+
+#[test]
+fn errors_undefined_function() {
+    let r = parse_function(
+        "define i32 @f() {\n  %e:\n    %v = call i32 @missing(i32 1)\n    ret i32 %v\n}",
+    );
+    assert!(r.is_err(), "call to undefined function should error");
+}
+
+// ── 深层聚合提取（第二十九轮:多索引 extractvalue 链式）──────────
+
+#[test]
+fn deep_extractvalue_nested_indices() {
+    // {i64, {i32, i32}} 的多索引提取:extractvalue ..., 1, 0 → i32
+    let src = r#"
+define i32 @f() {
+  %e:
+    %agg = extractvalue {i64, {i32, i32}} {i64 1, {i32, i32} {i32 2, i32 3}}, 1, 0
+    ret i32 %agg
+}
+"#;
+    let f = parse_function(src).expect("deep extractvalue should parse+build");
+    // 常量聚合路径:链式 emit 两个 ExtractValue(值语义等价)
+    let mut count = 0;
+    for bd in f.dfg.blocks.iter() {
+        for &i in &bd.inst_order {
+            if f.dfg.insts[i.0 as usize].opcode == Opcode::ExtractValue {
+                count += 1;
+            }
+        }
+    }
+    assert_eq!(count, 2, "两层索引 → 两条 ExtractValue 链");
+}
+
+#[test]
+fn deep_extractvalue_value_path() {
+    // 值路径(load 出的聚合)多索引
+    let src = r#"
+@g = global {i64, {i32, i32}} {i64 1, {i32, i32} {i32 2, i32 3}}
+define i32 @f() {
+  %e:
+    %p = load {i64, {i32, i32}}, ptr @g
+    %x = extractvalue {i64, {i32, i32}} %p, 1, 0
+    ret i32 %x
+}
+"#;
+    let f = parse_function(src).expect("value-path deep extractvalue should parse+build");
+    let mut count = 0;
+    for bd in f.dfg.blocks.iter() {
+        for &i in &bd.inst_order {
+            if f.dfg.insts[i.0 as usize].opcode == Opcode::ExtractValue {
+                count += 1;
+            }
+        }
+    }
+    assert_eq!(count, 2, "值路径两层索引 → 两条 ExtractValue 链");
 }

@@ -73,41 +73,6 @@ impl MemFlags {
     pub fn is_volatile(self) -> bool {
         self.contains(Self::VOLATILE)
     }
-
-    /// Check if the access has acquire ordering.
-    pub fn is_acquire(self) -> bool {
-        self.contains(Self::ACQUIRE)
-    }
-
-    /// Check if the access has release ordering.
-    pub fn is_release(self) -> bool {
-        self.contains(Self::RELEASE)
-    }
-
-    /// Check if the access is non-temporal.
-    pub fn is_nontemporal(self) -> bool {
-        self.contains(Self::NON_TEMPORAL)
-    }
-
-    /// Check if both little-endian and big-endian are set (invalid).
-    pub fn has_conflicting_endian(self) -> bool {
-        self.contains(Self::LITTLE_ENDIAN | Self::BIG_ENDIAN)
-    }
-
-    /// Get the display suffix for these flags.
-    pub fn display_suffix(self) -> &'static str {
-        if self.is_volatile() {
-            if self.is_nontemporal() {
-                " volatile, nontemporal"
-            } else {
-                " volatile"
-            }
-        } else if self.is_nontemporal() {
-            " nontemporal"
-        } else {
-            ""
-        }
-    }
 }
 
 #[cfg(test)]
@@ -123,26 +88,5 @@ mod tests {
     fn test_volatile() {
         assert!(MemFlags::VOLATILE.is_volatile());
         assert!(!MemFlags::NONE.is_volatile());
-    }
-
-    #[test]
-    fn test_acquire_release() {
-        assert!(MemFlags::ACQUIRE.is_acquire());
-        assert!(!MemFlags::ACQUIRE.is_release());
-        assert!(MemFlags::RELEASE.is_release());
-        assert!(!MemFlags::RELEASE.is_acquire());
-    }
-
-    #[test]
-    fn test_nontemporal() {
-        assert!(MemFlags::NON_TEMPORAL.is_nontemporal());
-        assert!(!MemFlags::NONE.is_nontemporal());
-    }
-
-    #[test]
-    fn test_endian_conflict() {
-        let both = MemFlags::LITTLE_ENDIAN | MemFlags::BIG_ENDIAN;
-        assert!(both.has_conflicting_endian());
-        assert!(!MemFlags::LITTLE_ENDIAN.has_conflicting_endian());
     }
 }

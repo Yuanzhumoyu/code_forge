@@ -4,34 +4,18 @@
 
 use crate::entity::*;
 use crate::function::Function;
-use crate::terminator::Terminator;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // ============================================================
 // CFG 辅助函数
 // ============================================================
 
-pub fn block_successors(terminator: &Terminator) -> Vec<Block> {
-    terminator.successors()
-}
 
 pub fn block_successors_in_func(func: &Function, block: Block) -> Vec<Block> {
     func.dfg
         .block_terminator(block)
         .map(|t| t.successors())
         .unwrap_or_default()
-}
-
-pub fn block_predecessors(func: &Function, target: Block) -> Vec<Block> {
-    let mut preds = Vec::new();
-    for (block, bd) in func.dfg.blocks() {
-        for succ in bd.terminator.successors() {
-            if succ == target {
-                preds.push(block);
-            }
-        }
-    }
-    preds
 }
 
 // ============================================================
@@ -41,9 +25,12 @@ pub fn block_predecessors(func: &Function, target: Block) -> Vec<Block> {
 #[derive(Clone, Debug)]
 pub struct DominatorTree {
     pub entry: Block,
-    idom: HashMap<Block, Block>,
     children: HashMap<Block, Vec<Block>>,
-    dom_sets: HashMap<Block, HashSet<Block>>,
+    /// DFS 进入/离开时间戳（支配树上的区间序）。
+    /// a 支配 b ⟺ tin[a] ≤ tin[b] 且 tout[b] ≤ tout[a]——O(1) 查询、
+    /// O(n) 空间（替代原 dom_sets 的每块全套支配者 HashSet，O(n²) 空间）。
+    tin: HashMap<Block, u32>,
+    tout: HashMap<Block, u32>,
     block_count: usize,
 }
 
@@ -61,13 +48,13 @@ impl DominatorTree {
 
         let idom = compute_idom(func, entry, &postorder, &postorder_rank);
         let children = compute_children(&idom);
-        let dom_sets = compute_dom_sets(&idom, &children);
+        let (tin, tout) = compute_intervals(entry, &children);
 
         Self {
             entry,
-            idom,
             children,
-            dom_sets,
+            tin,
+            tout,
             block_count,
         }
     }
@@ -75,9 +62,9 @@ impl DominatorTree {
     fn empty() -> Self {
         Self {
             entry: Block(0),
-            idom: HashMap::new(),
             children: HashMap::new(),
-            dom_sets: HashMap::new(),
+            tin: HashMap::new(),
+            tout: HashMap::new(),
             block_count: 0,
         }
     }
@@ -86,36 +73,31 @@ impl DominatorTree {
         if a == b {
             return true;
         }
-        self.dom_sets.get(&a).is_some_and(|set| set.contains(&b))
-    }
-
-    pub fn strictly_dominates(&self, a: Block, b: Block) -> bool {
-        a != b && self.dominates(a, b)
-    }
-
-    pub fn idom(&self, block: Block) -> Option<Block> {
-        self.idom.get(&block).copied().filter(|&id| id != block)
+        // 区间判定：a 支配 b ⟺ b 落在 a 的 DFS 子树区间内
+        match (
+            self.tin.get(&a),
+            self.tout.get(&a),
+            self.tin.get(&b),
+            self.tout.get(&b),
+        ) {
+            (Some(&ta_in), Some(&ta_out), Some(&tb_in), Some(&tb_out)) => {
+                ta_in <= tb_in && tb_out <= ta_out
+            }
+            _ => false,
+        }
     }
 
     pub fn children(&self, block: Block) -> &[Block] {
         self.children.get(&block).map_or(&[], |v| v.as_slice())
     }
 
-    pub fn entry(&self) -> Block {
-        self.entry
-    }
     pub fn block_count(&self) -> usize {
         self.block_count
-    }
 }
-
+    }
 fn compute_postorder(func: &Function, entry: Block) -> Vec<Block> {
     let mut result = Vec::new();
-    let mut visited = HashSet::new();
-    // Iterative DFS to avoid stack overflow on deep CFGs (>10k blocks).
-    // Stack holds (block, children_processed): push (block, false) on first
-    // visit, then (block, true) after pushing unvisited successors in reverse
-    // order so that the left-most successor is popped first.
+    let mut visited = std::collections::HashSet::<Block>::new();
     let mut stack = vec![(entry, false)];
     while let Some((current, processed)) = stack.pop() {
         if processed {
@@ -126,8 +108,7 @@ fn compute_postorder(func: &Function, entry: Block) -> Vec<Block> {
             continue;
         }
         stack.push((current, true));
-        let succs = block_successors_in_func(func, current);
-        for succ in succs.into_iter().rev() {
+        for succ in block_successors_in_func(func, current) {
             if !visited.contains(&succ) {
                 stack.push((succ, false));
             }
@@ -142,6 +123,14 @@ fn compute_idom(
     postorder: &[Block],
     postorder_rank: &HashMap<Block, usize>,
 ) -> HashMap<Block, Block> {
+    // 一次构建前驱映射（替代每轮对每个 block 线性扫全函数，O(轮数×n²) → O(轮数×n)）。
+    let mut preds_map: HashMap<Block, Vec<Block>> = HashMap::new();
+    for (block, bd) in func.dfg.blocks() {
+        for succ in bd.terminator.successors() {
+            preds_map.entry(succ).or_default().push(block);
+        }
+    }
+
     let mut idom: HashMap<Block, Block> = HashMap::new();
     idom.insert(entry, entry);
 
@@ -152,9 +141,12 @@ fn compute_idom(
             if block == entry {
                 continue;
             }
-            let preds = block_predecessors(func, block);
-            let processed: Vec<Block> =
-                preds.into_iter().filter(|p| idom.contains_key(p)).collect();
+            let preds = preds_map.get(&block).map(|v| v.as_slice()).unwrap_or(&[]);
+            let processed: Vec<Block> = preds
+                .iter()
+                .copied()
+                .filter(|p| idom.contains_key(p))
+                .collect();
             if processed.is_empty() {
                 continue;
             }
@@ -204,32 +196,37 @@ fn compute_children(idom: &HashMap<Block, Block>) -> HashMap<Block, Vec<Block>> 
     children
 }
 
-fn compute_dom_sets(
-    idom: &HashMap<Block, Block>,
+/// 支配树上的 DFS 进入/离开时间戳（区间序，迭代实现防深树栈溢出）。
+/// a 支配 b ⟺ tin[a] ≤ tin[b] 且 tout[b] ≤ tout[a]。
+fn compute_intervals(
+    entry: Block,
     children: &HashMap<Block, Vec<Block>>,
-) -> HashMap<Block, HashSet<Block>> {
-    let mut sets: HashMap<Block, HashSet<Block>> = HashMap::new();
-    let entry = idom.iter().find(|(k, v)| k == v).map(|(k, _)| *k);
-    if let Some(entry) = entry {
-        compute_dom_set_rec(entry, children, &mut sets);
-    }
-    sets
-}
-
-fn compute_dom_set_rec(
-    node: Block,
-    children: &HashMap<Block, Vec<Block>>,
-    sets: &mut HashMap<Block, HashSet<Block>>,
-) -> HashSet<Block> {
-    let mut dom_set = HashSet::new();
-    dom_set.insert(node);
-    if let Some(kids) = children.get(&node) {
-        for &child in kids {
-            dom_set.extend(compute_dom_set_rec(child, children, sets));
+) -> (HashMap<Block, u32>, HashMap<Block, u32>) {
+    let mut tin: HashMap<Block, u32> = HashMap::new();
+    let mut tout: HashMap<Block, u32> = HashMap::new();
+    let mut timer: u32 = 0;
+    // Iterative DFS：stack 存 (node, exiting)；先推 (node, false) 入点，
+    // 出点 (node, true) 记录 tout。
+    let mut stack = vec![(entry, false)];
+    while let Some((node, exiting)) = stack.pop() {
+        if exiting {
+            timer += 1;
+            tout.insert(node, timer);
+            continue;
+        }
+        if tin.contains_key(&node) {
+            continue;
+        }
+        timer += 1;
+        tin.insert(node, timer);
+        stack.push((node, true));
+        if let Some(kids) = children.get(&node) {
+            for &kid in kids.iter().rev() {
+                stack.push((kid, false));
+            }
         }
     }
-    sets.insert(node, dom_set.clone());
-    dom_set
+    (tin, tout)
 }
 
 #[cfg(test)]
@@ -248,26 +245,26 @@ mod tests {
         let else_blk = fb.create_block();
         let (merge_blk, _) = fb.create_block_with_params(&[(TypeId::I32, "r")]);
         {
-            let mut b = fb.build(entry);
-            let c = b.iconst_i32(1);
-            b.branch(c, then_blk, &[], else_blk, &[]);
+            fb.switch_to_block(entry);
+            let c = fb.iconst_i32(1);
+            fb.branch(c, then_blk, &[], else_blk, &[]);
         }
         {
-            let mut b = fb.build(then_blk);
-            let v = b.iconst_i32(42);
-            b.jump(merge_blk, &[v]);
+            fb.switch_to_block(then_blk);
+            let v = fb.iconst_i32(42);
+            fb.jump(merge_blk, &[v]);
         }
         {
-            let mut b = fb.build(else_blk);
-            let v = b.iconst_i32(0);
-            b.jump(merge_blk, &[v]);
+            fb.switch_to_block(else_blk);
+            let v = fb.iconst_i32(0);
+            fb.jump(merge_blk, &[v]);
         }
         {
             let params = fb.func.dfg.block_param_values(merge_blk).to_vec();
-            let mut b = fb.build(merge_blk);
-            b.ret(&[params[0]]);
+            fb.switch_to_block(merge_blk);
+            fb.ret(&[params[0]]);
         }
-        let func = fb.finish();
+        let func = fb.finish().expect("build");
         let dt = DominatorTree::build(&func);
         assert!(dt.dominates(entry, merge_blk));
     }

@@ -4,8 +4,9 @@ use bitflags::bitflags;
 
 bitflags! {
     /// 指令属性 — 位掩码，影响优化 pass 的行为。
+    /// 第二十五轮:u16→u32(16 位已占满致 INALLOCA/INBOUNDS 撞 bit 13)。
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct InstFlags: u16 {
+    pub struct InstFlags: u32 {
         const NONE          = 0;
 
         /// 指令可能产生未定义行为 (如 udiv by zero / OOB load)。
@@ -41,12 +42,38 @@ bitflags! {
         /// Allow Reassociation: 允许 (a+b)+c → a+(b+c)。
         const FMF_REASSOC   = 1 << 9;
 
+        /// Contract: 允许 FMA 融合 (a*b+c → fma)。
+        const FMF_CONTRACT  = 1 << 14;
+
+        /// Approximate Functions: 允许不精确的数学函数近似。
+        const FMF_AFN       = 1 << 15;
+
         /// 所有 fast-math 标志 (最激进的浮点优化)。
         const FMF_FAST      = Self::FMF_NNAN.bits()
                             | Self::FMF_NINF.bits()
                             | Self::FMF_NSZ.bits()
                             | Self::FMF_ARCP.bits()
-                            | Self::FMF_REASSOC.bits();
+                            | Self::FMF_REASSOC.bits()
+                            | Self::FMF_CONTRACT.bits()
+                            | Self::FMF_AFN.bits();
+
+        /// inalloca 前缀（LLVM `alloca inalloca <ty>`；C++ 类成员传参约定）。
+        /// 第二十五轮:原 1<<13 与 INBOUNDS 冲突(真实 bug)——换 1<<16 空位。
+        const INALLOCA      = 1 << 16;
+
+        // LLVM 算术标志（文本层 round-trip：`add nsw i32 %a, i32 %b`）
+
+        /// `nsw` — no signed wrap（add/sub/mul/shl；无符号回绕即 UB）。
+        const NSW          = 1 << 10;
+
+        /// `nuw` — no unsigned wrap（add/sub/mul/shl）。
+        const NUW          = 1 << 11;
+
+        /// `exact` — 除尽保证（udiv/sdiv/lshr/ashr；余数非零即 UB）。
+        const EXACT        = 1 << 12;
+
+        /// `inbounds` — getelementptr 不越界（指针运算保证；越界即 poison）。
+        const INBOUNDS     = 1 << 13;
     }
 }
 

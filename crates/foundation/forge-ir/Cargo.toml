@@ -14,3 +14,10 @@ lalrpop-util = "0.23"
 
 [build-dependencies]
 lalrpop = "0.23.1"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "ir_parse"
+harness = false

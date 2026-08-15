@@ -25,6 +25,30 @@ pub struct Block(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct TypeId(pub u32);
 
+// 常用类型常量——**单一数据源**：TypeStore 预填充（types.rs with_data_layout）
+// 按固定顺序插入，每步 debug_assert 与这里的索引对齐（见 types.rs）。
+impl TypeId {
+    pub const VOID: TypeId = TypeId(0);
+    pub const BOOL: TypeId = TypeId(1);
+    pub const I8: TypeId = TypeId(2);
+    pub const I16: TypeId = TypeId(3);
+    pub const I32: TypeId = TypeId(4);
+    pub const I64: TypeId = TypeId(5);
+    pub const F32: TypeId = TypeId(6);
+    pub const F64: TypeId = TypeId(7);
+    pub const PTR: TypeId = TypeId(8);
+    // Extended types（统一预注册，见 TypeStore::with_data_layout 索引 10-15；
+    // 索引 9 为保留空洞——历史上预填充顺序与常量定义错位，保留数值以稳定
+    // TypeId 公共 id；新增类型时优先填充空洞或追加 16+ 并在 types.rs 同步）
+    pub const I128: TypeId = TypeId(10);
+    pub const F16: TypeId = TypeId(11);
+    pub const F128: TypeId = TypeId(12);
+    pub const V64: TypeId = TypeId(13);
+    pub const V128: TypeId = TypeId(14);
+    pub const V256: TypeId = TypeId(15);
+    // NOTE: All type construction must go through TypeStore methods.
+}
+
 /// 函数引用 (在 Module 中解析)。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct FuncRef(pub u32);
@@ -39,6 +63,10 @@ pub struct FuncRef(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct ConstId(pub u32);
 
+/// 聚合常量 id（ConstantPool::aggregates 池索引；与 ConstId 分离——聚合是树形）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AggId(pub u32);
+
 impl ConstId {
     /// Tag indicating this is an integer constant.
     pub const TAG_INT: u32 = 0;
@@ -46,6 +74,8 @@ impl ConstId {
     pub const TAG_FLOAT: u32 = 1;
     /// Tag indicating this is a big (arbitrary precision) constant.
     pub const TAG_BIG: u32 = 2;
+    /// Tag indicating this is a vector constant (lane bit-pattern list).
+    pub const TAG_VEC: u32 = 3;
 
     /// Maximum index value per category (30 bits).
     const MAX_INDEX: u32 = (1 << 30) - 1;
@@ -202,12 +232,12 @@ impl XRegAllocator {
 /// 物理寄存器。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PReg {
-    pub num: u8,
+    pub num: u32,
     pub class: RegClass,
 }
 
 impl PReg {
-    pub const fn new(num: u8, class: RegClass) -> Self {
+    pub const fn new(num: u32, class: RegClass) -> Self {
         Self { num, class }
     }
 }
@@ -258,6 +288,73 @@ impl TypeId {
             b => Some(b),
         }
     }
+
+    /// 是否为整数类型。
+    pub fn is_int(&self) -> bool {
+        matches!(
+            *self,
+            TypeId::I8
+                | TypeId::I16
+                | TypeId::I32
+                | TypeId::I64
+                | TypeId::I128
+                | TypeId::BOOL
+                | TypeId::PTR
+        )
+    }
+
+    /// 是否为浮点数类型。
+    pub fn is_float(&self) -> bool {
+        matches!(*self, TypeId::F32 | TypeId::F64 | TypeId::F128)
+    }
+
+    /// 尝试向上转型。
+    pub fn upcast(self, rhs: Self) -> Option<TypeId> {
+        match (self, rhs) {
+            // 布尔
+            (Self::BOOL, Self::BOOL) => Some(Self::BOOL),
+            (Self::BOOL, Self::I8) | (Self::I8, Self::BOOL) => Some(Self::I8),
+            (Self::BOOL, Self::I16) | (Self::I16, Self::BOOL) => Some(Self::I16),
+            (Self::BOOL, Self::I32) | (Self::I32, Self::BOOL) => Some(Self::I32),
+            (Self::BOOL, Self::I64) | (Self::I64, Self::BOOL) => Some(Self::I64),
+            (Self::BOOL, Self::I128) | (Self::I128, Self::BOOL) => Some(Self::I128),
+            // 整数
+            (Self::I8, Self::I8) => Some(Self::I8),
+            (Self::I8, Self::I16) | (Self::I16, Self::I8) => Some(Self::I16),
+            (Self::I8, Self::I32) | (Self::I32, Self::I8) => Some(Self::I32),
+            (Self::I8, Self::I64) | (Self::I64, Self::I8) => Some(Self::I64),
+            (Self::I8, Self::I128) | (Self::I128, Self::I8) => Some(Self::I128),
+            (Self::I16, Self::I16) => Some(Self::I16),
+            (Self::I16, Self::I32) | (Self::I32, Self::I16) => Some(Self::I32),
+            (Self::I16, Self::I64) | (Self::I64, Self::I16) => Some(Self::I64),
+            (Self::I16, Self::I128) | (Self::I128, Self::I16) => Some(Self::I128),
+            (Self::I32, Self::I32) => Some(Self::I32),
+            (Self::I32, Self::I64) | (Self::I64, Self::I32) => Some(Self::I64),
+            (Self::I32, Self::I128) | (Self::I128, Self::I32) => Some(Self::I128),
+            (Self::I64, Self::I64) => Some(Self::I64),
+            (Self::I64, Self::I128) | (Self::I128, Self::I64) => Some(Self::I128),
+            (Self::I128, Self::I128) => Some(Self::I128),
+            // 浮点数
+            (Self::F16, Self::F16) => Some(Self::F16),
+            (Self::F16, Self::F32) | (Self::F32, Self::F16) => Some(Self::F32),
+            (Self::F16, Self::F64) | (Self::F64, Self::F16) => Some(Self::F64),
+            (Self::F16, Self::F128) | (Self::F128, Self::F16) => Some(Self::F128),
+            (Self::F32, Self::F32) => Some(Self::F32),
+            (Self::F32, Self::F64) | (Self::F64, Self::F32) => Some(Self::F64),
+            (Self::F32, Self::F128) | (Self::F128, Self::F32) => Some(Self::F128),
+            (Self::F64, Self::F64) => Some(Self::F64),
+            (Self::F64, Self::F128) | (Self::F128, Self::F64) => Some(Self::F128),
+            (Self::F128, Self::F128) => Some(Self::F128),
+            // 指针
+            (Self::PTR, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I8) | (Self::I8, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I16) | (Self::I16, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I32) | (Self::I32, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I64) | (Self::I64, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I128) | (Self::I128, Self::PTR) => Some(Self::PTR),
+            _ => None,
+        }
+    }
 }
 
 /// 寄存器类别 — 表示一组可互换的物理寄存器。
@@ -276,62 +373,65 @@ impl TypeId {
 /// VEC256 (YMM) 包含 VEC128 子寄存器。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RegClass {
-    /// 通用整数寄存器（默认，64-bit）
-    GPR,
-    /// 8-bit 整数子寄存器（如 x86 AL/CL/DL/BL, R8B-R15B）
-    GPR8,
-    /// 16-bit 整数子寄存器
-    GPR16,
-    /// 32-bit 整数子寄存器
-    GPR32,
-
-    /// 浮点/SSE 寄存器
-    FPR,
-    /// 128-bit 向量寄存器（XMM — 与 FPR 共享物理寄存器文件）
-    VEC128,
-    /// 256-bit 向量寄存器（YMM — 包含 XMM 子寄存器）
-    VEC256,
+    /// 通用整数寄存器，payload = 字节宽度（任意 ISA 自定义宽度）。
+    GPR(u16),
+    /// 浮点寄存器，payload = 字节宽度。
+    FPR(u16),
+    /// 向量寄存器，payload = 字节宽度。
+    VEC(u16),
 }
 
-/// 向后兼容别名。
+/// 向后兼容别名与便捷常量。
 impl RegClass {
-    /// [`RegClass::GPR`] 的旧称。
+    // ── 旧裸变体名的便捷常量（64 位主视图）──
+    /// [`RegClass::GPR(8)`]（64 位整数）。
+    pub const GPR64: Self = Self::GPR(8);
+    /// [`RegClass::FPR(8)`]（64 位浮点）。
+    pub const FPR64: Self = Self::FPR(8);
+    /// [`RegClass::GPR64`] 的旧称（64 位视图）。
     #[allow(nonstandard_style)]
-    pub const Int: Self = RegClass::GPR;
-    /// [`RegClass::FPR`] 的旧称。
+    pub const Int: Self = Self::GPR(8);
+    /// [`RegClass::FPR64`] 的旧称（64 位视图）。
     #[allow(nonstandard_style)]
-    pub const Float: Self = RegClass::FPR;
+    pub const Float: Self = Self::FPR(8);
 
-    /// 此类寄存器的默认宽度（字节）。
-    pub fn default_width(self) -> u8 {
+    // ── 宽度子类常量（原 GPR8/GPR16/GPR32/VEC128/VEC256 变体）──
+    /// 8 位整数（1 字节）。
+    pub const GPR8: Self = Self::GPR(1);
+    /// 16 位整数（2 字节）。
+    pub const GPR16: Self = Self::GPR(2);
+    /// 32 位整数（4 字节）。
+    pub const GPR32: Self = Self::GPR(4);
+    /// 128 位向量（16 字节，如 x86 XMM）。
+    pub const VEC128: Self = Self::VEC(16);
+    /// 256 位向量（32 字节，如 x86 YMM）。
+    pub const VEC256: Self = Self::VEC(32);
+
+    /// 此类寄存器的宽度（字节）—— 由 payload 决定，支持任意 ISA 宽度。
+    pub fn width(self) -> u16 {
         match self {
-            RegClass::GPR => 8,
-            RegClass::GPR8 => 1,
-            RegClass::GPR16 => 2,
-            RegClass::GPR32 => 4,
-            RegClass::FPR => 8,
-            RegClass::VEC128 => 16,
-            RegClass::VEC256 => 32,
+            Self::GPR(w) | Self::FPR(w) | Self::VEC(w) => w,
         }
     }
 
-    /// 是否为整数类（GPR + 所有宽度子类）。
-    pub fn is_int(self) -> bool {
-        matches!(
-            self,
-            RegClass::GPR | RegClass::GPR8 | RegClass::GPR16 | RegClass::GPR32
-        )
+    /// 此类寄存器的默认宽度（字节）—— 等价于 payload。
+    pub fn default_width(self) -> u8 {
+        self.width() as u8
     }
 
-    /// 是否为浮点/向量类。
+    /// 是否为整数类（GPR 族）。
+    pub fn is_int(self) -> bool {
+        matches!(self, Self::GPR(_))
+    }
+
+    /// 是否为浮点/向量类（FPR/VEC 族）。
     pub fn is_fp(self) -> bool {
-        matches!(self, RegClass::FPR | RegClass::VEC128 | RegClass::VEC256)
+        matches!(self, Self::FPR(_) | Self::VEC(_))
     }
 
     /// 两个类是否有重叠的物理寄存器（决定 interference）。
-    /// - GPR 子类之间始终重叠（共享 GPR 寄存器文件）
-    /// - FPR/VEC128/VEC256 之间始终重叠（共享 XMM 寄存器文件）
-    /// - Int 与 Float 从不重叠
+    /// - GPR 族内始终重叠（共享 GPR 寄存器文件，如 RAX=EAX=AX=AL 同编号）
+    /// - FPR/VEC 之间始终重叠（共享向量寄存器文件，如 x86 XMM）
     pub fn overlaps(self, other: RegClass) -> bool {
         if self == other {
             return true;
@@ -349,25 +449,25 @@ impl RegClass {
     pub fn from_type_id(ty: TypeId) -> Self {
         match ty {
             // bool, ptr, i64
-            TypeId::BOOL | TypeId::PTR | TypeId::I64 => RegClass::GPR,
+            TypeId::BOOL | TypeId::PTR | TypeId::I64 => Self::GPR(8),
             // i8
-            TypeId::I8 => RegClass::GPR8,
+            TypeId::I8 => Self::GPR(1),
             // i16
-            TypeId::I16 => RegClass::GPR16,
+            TypeId::I16 => Self::GPR(2),
             // i32
-            TypeId::I32 => RegClass::GPR32,
+            TypeId::I32 => Self::GPR(4),
             // f32, f64
-            TypeId::F32 | TypeId::F64 => RegClass::FPR,
-            // I128
-            TypeId::I128 => RegClass::GPR,
+            TypeId::F32 | TypeId::F64 => Self::FPR(8),
+            // I128（x86 由双 GPR 模拟，宽度按主视图）
+            TypeId::I128 => Self::GPR(8),
             // F16, F128
-            TypeId::F16 | TypeId::F128 => RegClass::FPR,
+            TypeId::F16 | TypeId::F128 => Self::FPR(8),
             // V64, V128
-            TypeId::V64 | TypeId::V128 => RegClass::VEC128,
+            TypeId::V64 | TypeId::V128 => Self::VEC(16),
             // V256
-            TypeId::V256 => RegClass::VEC256,
+            TypeId::V256 => Self::VEC(32),
             // void (0), composite (9, 16+), unknown → GPR fallback
-            _ => RegClass::GPR,
+            _ => Self::GPR(8),
         }
     }
 }
@@ -381,7 +481,7 @@ pub enum FrameAccess<R: PhysReg> {
 }
 
 impl<R: PhysReg> FrameAccess<R> {
-    pub fn register_index(&self) -> Option<u8> {
+    pub fn register_index(&self) -> Option<u32> {
         match self {
             FrameAccess::Register(r) => Some(r.to_index()),
             _ => None,
@@ -391,8 +491,9 @@ impl<R: PhysReg> FrameAccess<R> {
 
 /// 物理寄存器 trait — ISA 后端定义自己的寄存器枚举实现此 trait。
 pub trait PhysReg: Copy + Clone + core::fmt::Debug + PartialEq + Send + Sync + 'static {
-    fn to_index(self) -> u8;
-    fn from_index(idx: u8, class: RegClass) -> Self;
+    /// 物理寄存器编号（u32：支持 >255 寄存器的 ISA，如 JVM 类）。
+    fn to_index(self) -> u32;
+    fn from_index(idx: u32, class: RegClass) -> Self;
     fn class(self) -> RegClass;
 }
 
@@ -673,8 +774,8 @@ mod tests {
 
     #[test]
     fn preg_display() {
-        assert_eq!(format!("{}", PReg::new(0, RegClass::GPR)), "r0");
-        assert_eq!(format!("{}", PReg::new(3, RegClass::FPR)), "f3");
+        assert_eq!(format!("{}", PReg::new(0, RegClass::GPR64)), "r0");
+        assert_eq!(format!("{}", PReg::new(3, RegClass::FPR64)), "f3");
         // Int/Float 常量别名仍可用
         assert_eq!(format!("{}", PReg::new(1, RegClass::Int)), "r1");
         assert_eq!(format!("{}", PReg::new(7, RegClass::Float)), "f7");
@@ -732,57 +833,57 @@ mod tests {
     #[test]
     fn reg_class_variants() {
         // 新变体
-        let gpr = RegClass::GPR;
+        let gpr = RegClass::GPR64;
         let gpr8 = RegClass::GPR8;
-        let fpr = RegClass::FPR;
+        let fpr = RegClass::FPR64;
         assert_ne!(gpr, fpr);
         assert_ne!(gpr8, fpr);
         // Copy
         let gpr2 = gpr;
         assert_eq!(gpr, gpr2);
-        assert_eq!(fpr, RegClass::FPR);
+        assert_eq!(fpr, RegClass::FPR64);
         // 向后兼容别名
-        assert_eq!(RegClass::Int, RegClass::GPR);
-        assert_eq!(RegClass::Float, RegClass::FPR);
+        assert_eq!(RegClass::Int, RegClass::GPR64);
+        assert_eq!(RegClass::Float, RegClass::FPR64);
         // default_width
-        assert_eq!(RegClass::GPR.default_width(), 8);
+        assert_eq!(RegClass::GPR64.default_width(), 8);
         assert_eq!(RegClass::GPR8.default_width(), 1);
         assert_eq!(RegClass::GPR16.default_width(), 2);
         assert_eq!(RegClass::GPR32.default_width(), 4);
-        assert_eq!(RegClass::FPR.default_width(), 8);
+        assert_eq!(RegClass::FPR64.default_width(), 8);
         assert_eq!(RegClass::VEC128.default_width(), 16);
         assert_eq!(RegClass::VEC256.default_width(), 32);
     }
 
     #[test]
     fn reg_class_is_int_is_fp() {
-        assert!(RegClass::GPR.is_int());
+        assert!(RegClass::GPR64.is_int());
         assert!(RegClass::GPR8.is_int());
         assert!(RegClass::GPR16.is_int());
         assert!(RegClass::GPR32.is_int());
-        assert!(!RegClass::GPR.is_fp());
+        assert!(!RegClass::GPR64.is_fp());
         assert!(!RegClass::GPR8.is_fp());
 
-        assert!(RegClass::FPR.is_fp());
+        assert!(RegClass::FPR64.is_fp());
         assert!(RegClass::VEC128.is_fp());
         assert!(RegClass::VEC256.is_fp());
-        assert!(!RegClass::FPR.is_int());
+        assert!(!RegClass::FPR64.is_int());
         assert!(!RegClass::VEC128.is_int());
     }
 
     #[test]
     fn reg_class_overlaps() {
         // 同类的重叠
-        assert!(RegClass::GPR.overlaps(RegClass::GPR));
+        assert!(RegClass::GPR64.overlaps(RegClass::GPR64));
         // GPR 子类之间重叠
-        assert!(RegClass::GPR.overlaps(RegClass::GPR8));
+        assert!(RegClass::GPR64.overlaps(RegClass::GPR8));
         assert!(RegClass::GPR32.overlaps(RegClass::GPR16));
         assert!(RegClass::GPR8.overlaps(RegClass::GPR32));
         // FPR/VEC 之间重叠
-        assert!(RegClass::FPR.overlaps(RegClass::VEC128));
+        assert!(RegClass::FPR64.overlaps(RegClass::VEC128));
         assert!(RegClass::VEC128.overlaps(RegClass::VEC256));
         // Int 与 Float 不重叠
-        assert!(!RegClass::GPR.overlaps(RegClass::FPR));
+        assert!(!RegClass::GPR64.overlaps(RegClass::FPR64));
         assert!(!RegClass::GPR8.overlaps(RegClass::VEC128));
         assert!(!RegClass::GPR32.overlaps(RegClass::VEC256));
     }
@@ -792,17 +893,17 @@ mod tests {
         assert_eq!(RegClass::from_type_id(TypeId::I8), RegClass::GPR8);
         assert_eq!(RegClass::from_type_id(TypeId::I16), RegClass::GPR16);
         assert_eq!(RegClass::from_type_id(TypeId::I32), RegClass::GPR32);
-        assert_eq!(RegClass::from_type_id(TypeId::I64), RegClass::GPR);
-        assert_eq!(RegClass::from_type_id(TypeId::BOOL), RegClass::GPR);
-        assert_eq!(RegClass::from_type_id(TypeId::PTR), RegClass::GPR);
-        assert_eq!(RegClass::from_type_id(TypeId::F32), RegClass::FPR);
-        assert_eq!(RegClass::from_type_id(TypeId::F64), RegClass::FPR);
-        assert_eq!(RegClass::from_type_id(TypeId::F16), RegClass::FPR);
-        assert_eq!(RegClass::from_type_id(TypeId::F128), RegClass::FPR);
+        assert_eq!(RegClass::from_type_id(TypeId::I64), RegClass::GPR64);
+        assert_eq!(RegClass::from_type_id(TypeId::BOOL), RegClass::GPR64);
+        assert_eq!(RegClass::from_type_id(TypeId::PTR), RegClass::GPR64);
+        assert_eq!(RegClass::from_type_id(TypeId::F32), RegClass::FPR64);
+        assert_eq!(RegClass::from_type_id(TypeId::F64), RegClass::FPR64);
+        assert_eq!(RegClass::from_type_id(TypeId::F16), RegClass::FPR64);
+        assert_eq!(RegClass::from_type_id(TypeId::F128), RegClass::FPR64);
         assert_eq!(RegClass::from_type_id(TypeId::V128), RegClass::VEC128);
         assert_eq!(RegClass::from_type_id(TypeId::V256), RegClass::VEC256);
         // void → GPR fallback
-        assert_eq!(RegClass::from_type_id(TypeId::VOID), RegClass::GPR);
+        assert_eq!(RegClass::from_type_id(TypeId::VOID), RegClass::GPR64);
     }
 
     #[test]
@@ -817,16 +918,16 @@ mod tests {
         // Need a concrete PhysReg impl for testing.
         // Use a test-only register type.
         #[derive(Clone, Copy, Debug, PartialEq)]
-        struct TestReg(u8);
+        struct TestReg(u32);
         impl PhysReg for TestReg {
-            fn to_index(self) -> u8 {
+            fn to_index(self) -> u32 {
                 self.0
             }
-            fn from_index(idx: u8, _class: RegClass) -> Self {
+            fn from_index(idx: u32, _class: RegClass) -> Self {
                 TestReg(idx)
             }
             fn class(self) -> RegClass {
-                RegClass::GPR
+                RegClass::GPR64
             }
         }
 

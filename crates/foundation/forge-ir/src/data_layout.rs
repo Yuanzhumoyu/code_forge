@@ -18,9 +18,10 @@
 //! - `a:<abi>:<pref>`: aggregate alignment
 //! - `n<size>:<size>:...`: native integer widths
 //! - `S<size>`: stack alignment
+use crate::error::IrError;
 
-use super::entity::{Endianness, TypeId};
-use super::types::TypeEntry;
+use super::entity::Endianness;
+use super::imm_str::ImmStr;
 use std::collections::HashMap;
 
 // ============================================================
@@ -45,7 +46,7 @@ pub struct DataLayout {
     pub pointer_layout: HashMap<u32, (u32, u32)>,
 
     /// Integer alignment overrides by bit width.
-    pub integer_alignments: HashMap<u16, u32>,
+    pub integer_alignments: HashMap<u32, u32>,
 
     /// Float alignment overrides by bit width.
     pub float_alignments: HashMap<u16, u32>,
@@ -67,6 +68,71 @@ pub struct DataLayout {
 
     /// Stack alignment in bytes.
     pub stack_align: u32,
+}
+
+/// LLVM DataLayout 字符串格式（与 [`DataLayout::parse`] 对称）。
+///
+/// 仅输出已配置字段；`m:`/`e` 恒输出（parse 的起始状态即 x86_64_linux 默认）。
+impl std::fmt::Display for DataLayout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts: Vec<String> = Vec::new();
+        match self.endianness {
+            Endianness::Little => parts.push("e".to_string()),
+            Endianness::Big => parts.push("E".to_string()),
+        }
+        parts.push(
+            match self.mangling {
+                Mangling::Elf => "m:e",
+                Mangling::MachO => "m:o",
+                Mangling::WindowsCoff => "m:w",
+            }
+            .to_string(),
+        );
+        // pointer layout（按地址空间排序保证确定性）
+        let mut ptrs: Vec<_> = self.pointer_layout.iter().collect();
+        ptrs.sort_by_key(|(as_, _)| **as_);
+        for (as_, &(size_bytes, abi_bytes)) in ptrs {
+            parts.push(if *as_ == 0 {
+                format!("p:{}:{}", size_bytes * 8, abi_bytes * 8)
+            } else {
+                format!("p{}:{}:{}", as_, size_bytes * 8, abi_bytes * 8)
+            });
+        }
+        // 整数/浮点/向量对齐：`i{bits}:{abi_bits}`（abi 字节 → bit）
+        let mut ints: Vec<_> = self.integer_alignments.iter().collect();
+        ints.sort_by_key(|(b, _)| **b);
+        for (bits, align) in ints {
+            parts.push(format!("i{}:{}", bits, align * 8));
+        }
+        let mut floats: Vec<_> = self.float_alignments.iter().collect();
+        floats.sort_by_key(|(b, _)| **b);
+        for (bits, align) in floats {
+            parts.push(format!("f{}:{}", bits, align * 8));
+        }
+        let mut vecs: Vec<_> = self.vector_alignments.iter().collect();
+        vecs.sort_by_key(|(b, _)| **b);
+        for (bits, align) in vecs {
+            parts.push(format!("v{}:{}", bits, align * 8));
+        }
+        if self.aggregate_align != 0 {
+            parts.push(format!("a:{}", self.aggregate_align * 8));
+        }
+        if !self.native_integer_widths.is_empty() {
+            let mut w = self.native_integer_widths.clone();
+            w.sort();
+            parts.push(format!(
+                "n:{}",
+                w.iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(":")
+            ));
+        }
+        if self.stack_align != 0 {
+            parts.push(format!("S:{}", self.stack_align));
+        }
+        write!(f, "{}", parts.join("-"))
+    }
 }
 
 impl DataLayout {
@@ -128,13 +194,6 @@ impl DataLayout {
     }
 
     /// Create the default 64-bit little-endian data layout (x86-64 Windows).
-    pub fn x86_64_windows() -> Self {
-        let mut dl = Self::x86_64_linux();
-        dl.mangling = Mangling::WindowsCoff;
-        dl
-    }
-
-    /// Create a 32-bit little-endian data layout (x86).
     pub fn x86_32_linux() -> Self {
         let mut dl = Self::x86_64_linux();
         dl.pointer_layout.insert(0, (4, 4)); // 4-byte ptr
@@ -150,30 +209,13 @@ impl DataLayout {
     }
 
     /// Create a 64-bit little-endian data layout (AArch64).
-    pub fn aarch64_linux() -> Self {
-        let mut dl = Self::x86_64_linux();
-        dl.mangling = Mangling::Elf;
-        dl.max_alignment = 16;
-        dl.native_vector_widths = vec![64, 128];
-        dl
-    }
-
-    /// Create a default data layout for WASM (32-bit).
-    pub fn wasm32() -> Self {
-        let mut dl = Self::x86_32_linux();
-        dl.mangling = Mangling::Elf;
-        dl.native_vector_widths = vec![128];
-        dl
-    }
-
-    /// Parse an LLVM-style data layout string.
     ///
     /// Supported specifiers: `e`/`E`, `m:`, `p:`, `i:`, `f:`, `v:`, `a:`,
     /// `n`, `S`. The `-` prefix separator and `:pref` alignment parts are
     /// accepted but the preferred alignment is currently ignored.
     ///
     /// Returns `Err(msg)` for unparseable or unsupported specifiers.
-    pub fn parse(s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> Result<Self, IrError> {
         let mut dl = Self::x86_64_linux();
         dl.pointer_layout.clear();
         dl.integer_alignments.clear();
@@ -203,7 +245,7 @@ impl DataLayout {
                         "e" => Mangling::Elf,
                         "o" => Mangling::MachO,
                         "w" | "x" => Mangling::WindowsCoff,
-                        _ => return Err(format!("unknown mangling: '{}'", rest)),
+                        _ => return Err(IrError::Parse(format!("unknown mangling: '{}'", rest))),
                     };
                 }
                 'p' => {
@@ -221,7 +263,7 @@ impl DataLayout {
                         let as_num: u32 = as_str.parse().unwrap_or(0);
                         (as_num, &after_p[colon_pos + 1..])
                     } else {
-                        return Err(format!("invalid p spec: '{}'", seg));
+                        return Err(IrError::Parse(format!("invalid p spec: '{}'", seg)));
                     };
                     let (size_bits, abi) = parse_size_align(size_abi_str)
                         .ok_or(format!("invalid p spec: '{}'", seg))?;
@@ -234,8 +276,7 @@ impl DataLayout {
                     let (bits, abi) =
                         parse_size_align(&rest).ok_or(format!("invalid i spec: '{}'", part))?;
                     // i spec: <size> is bit width (key), <abi> is in bits → convert to bytes
-                    dl.integer_alignments
-                        .insert(bits as u16, bits_to_bytes(abi));
+                    dl.integer_alignments.insert(bits, bits_to_bytes(abi));
                 }
                 'f' => {
                     let (bits, abi) =
@@ -249,8 +290,16 @@ impl DataLayout {
                     dl.vector_alignments.insert(bits, bits_to_bytes(abi));
                 }
                 'a' => {
-                    let (abi, _pref) =
-                        parse_size_align(&rest).ok_or(format!("invalid a spec: '{}'", part))?;
+                    // a spec: `<abi>[:<pref>]`——pref 可省略(默认 = abi)
+                    //（第二十九轮:display 输出单值 `a:<abi>`,parser 原要求
+                    // 双值;LLVM 语法单值合法,roundtrip 不等）
+                    let (abi, _pref) = if let Some(v) = parse_size_align(&rest) {
+                        v
+                    } else if let Ok(abi) = rest.parse::<u32>() {
+                        (abi, abi)
+                    } else {
+                        return Err(IrError::Parse(format!("invalid a spec: '{part}'")));
+                    };
                     // a spec: <abi> is in bits → convert to bytes
                     dl.aggregate_align = bits_to_bytes(abi);
                 }
@@ -264,7 +313,30 @@ impl DataLayout {
                 'S' => {
                     dl.stack_align = rest.parse::<u32>().unwrap_or(16);
                 }
-                _ => return Err(format!("unknown data layout specifier: '{}'", spec)),
+                // A<AS>: allocator address space（忽略存储，仅接受语法；值域 < 2^24）
+                'A' => {
+                    let as_: u32 = rest
+                        .parse()
+                        .map_err(|_| IrError::Parse(format!("invalid A spec: '{}'", part)))?;
+                    if as_ >= (1 << 24) {
+                        return Err(IrError::Parse(format!(
+                            "A spec address space {as_} exceeds maximum 2^24-1"
+                        )));
+                    }
+                }
+                // P<AS>: program address space（忽略存储，仅接受语法）
+                'P' => {
+                    let as_: u32 = rest
+                        .parse()
+                        .map_err(|_| IrError::Parse(format!("invalid P spec: '{}'", part)))?;
+                    if as_ >= (1 << 24) {
+                        return Err(IrError::Parse(format!(
+                            "P spec address space {as_} exceeds maximum 2^24-1"
+                        )));
+                    }
+                }
+                // 未知 specifier（'F' 等 LLVM 扩展——宽松忽略；第十二轮）
+                _ => {}
             }
         }
 
@@ -305,11 +377,11 @@ impl DataLayout {
 
     /// Get the ABI alignment for an integer of the given bit width.
     /// Falls back to natural alignment (bits/8 rounded up to power-of-2).
-    pub fn integer_align(&self, bits: u16) -> u32 {
+    pub fn integer_align(&self, bits: u32) -> u32 {
         self.integer_alignments
             .get(&bits)
             .copied()
-            .unwrap_or_else(|| natural_align(bits as u32))
+            .unwrap_or_else(|| natural_align(bits))
     }
 
     /// Get the ABI alignment for a float of the given bit width.
@@ -326,74 +398,6 @@ impl DataLayout {
             .get(&total_bits)
             .copied()
             .unwrap_or_else(|| natural_align(total_bits))
-    }
-
-    /// Get the size in bytes of a type entry.
-    /// `type_size_fn` provides size for nested TypeIds (e.g., element types).
-    pub fn size_bytes(&self, entry: &TypeEntry, type_size_fn: &dyn Fn(TypeId) -> u32) -> u32 {
-        match entry {
-            TypeEntry::Int { bits } => (*bits).div_ceil(8) as u32,
-            TypeEntry::Float { bits } => (*bits).div_ceil(8) as u32,
-            TypeEntry::BFloat { .. } => 2,
-            TypeEntry::Vector { elem, len } => type_size_fn(*elem) * len,
-            TypeEntry::ScalableVector { elem, min_len } => type_size_fn(*elem) * min_len,
-            TypeEntry::Array { elem, len } => type_size_fn(*elem) * (*len as u32),
-            TypeEntry::Struct {
-                fields, is_packed, ..
-            } => {
-                if *is_packed {
-                    fields.iter().map(|f| type_size_fn(f.ty)).sum()
-                } else {
-                    let mut offset = 0u32;
-                    let mut max_align = 1u32;
-                    for f in fields {
-                        let align = type_size_fn(f.ty); // natural align as size proxy
-                        let size = type_size_fn(f.ty);
-                        max_align = max_align.max(align);
-                        offset = align_to(offset, align);
-                        offset += size;
-                    }
-                    align_to(offset, max_align)
-                }
-            }
-            TypeEntry::Pointer { addr_space } => self.pointer_size(*addr_space),
-            TypeEntry::Function { .. } => self.pointer_size(0),
-            TypeEntry::Token => 0,
-            TypeEntry::Metadata => 0,
-        }
-    }
-
-    /// Get the ABI alignment of a type entry.
-    /// `type_align_fn` provides alignment for nested TypeIds.
-    pub fn alignment(&self, entry: &TypeEntry, type_align_fn: &dyn Fn(TypeId) -> u32) -> u32 {
-        match entry {
-            TypeEntry::Int { bits } => self.integer_align(*bits),
-            TypeEntry::Float { bits } => self.float_align(*bits),
-            TypeEntry::BFloat { .. } => 2,
-            TypeEntry::Vector { elem: _, len } => self.vector_align(*len),
-            TypeEntry::ScalableVector { elem, .. } => type_align_fn(*elem),
-            TypeEntry::Array { elem, .. } => type_align_fn(*elem),
-            TypeEntry::Struct {
-                fields, is_packed, ..
-            } => {
-                if *is_packed {
-                    1
-                } else if self.aggregate_align > 0 {
-                    self.aggregate_align
-                } else {
-                    fields
-                        .iter()
-                        .map(|f| type_align_fn(f.ty))
-                        .max()
-                        .unwrap_or(1)
-                        .min(self.max_alignment)
-                }
-            }
-            TypeEntry::Pointer { addr_space } => self.pointer_align(*addr_space),
-            TypeEntry::Function { .. } => self.pointer_size(0),
-            TypeEntry::Token => 1,
-            TypeEntry::Metadata => 1,
-        }
     }
 
     // ============================================================
@@ -467,13 +471,13 @@ pub enum Mangling {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetTriple {
     /// Architecture: x86_64, aarch64, riscv64, riscv32, wasm32, etc.
-    pub arch: String,
+    pub arch: ImmStr,
     /// Vendor: unknown, pc, apple, ibm, etc.
-    pub vendor: String,
+    pub vendor: ImmStr,
     /// Operating system: linux, windows, macos, none, etc.
-    pub os: String,
+    pub os: ImmStr,
     /// Environment: gnu, msvc, musl, elf, etc.
-    pub environment: String,
+    pub environment: ImmStr,
 }
 
 impl TargetTriple {
@@ -481,10 +485,10 @@ impl TargetTriple {
     pub fn parse(s: &str) -> Self {
         let parts: Vec<&str> = s.split('-').collect();
         Self {
-            arch: parts.first().copied().unwrap_or("unknown").to_string(),
-            vendor: parts.get(1).copied().unwrap_or("unknown").to_string(),
-            os: parts.get(2).copied().unwrap_or("unknown").to_string(),
-            environment: parts.get(3).copied().unwrap_or("").to_string(),
+            arch: ImmStr::from(parts.first().copied().unwrap_or("unknown")),
+            vendor: ImmStr::from(parts.get(1).copied().unwrap_or("unknown")),
+            os: ImmStr::from(parts.get(2).copied().unwrap_or("unknown")),
+            environment: ImmStr::from(parts.get(3).copied().unwrap_or("")),
         }
     }
 
@@ -578,14 +582,30 @@ fn natural_align(size: u32) -> u32 {
     align
 }
 
-/// Align `offset` up to `alignment`.
-fn align_to(offset: u32, align: u32) -> u32 {
-    offset.div_ceil(align) * align
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_default() {
+        // default() = x86_64_linux（pointer_layout 等已配置）→ 非"全默认"
+        assert!(!DataLayout::default().is_default());
+        // 空构造（无任何配置）→ 全默认
+        let empty = DataLayout {
+            endianness: Endianness::Little,
+            mangling: Mangling::Elf,
+            pointer_layout: HashMap::new(),
+            integer_alignments: HashMap::new(),
+            float_alignments: HashMap::new(),
+            vector_alignments: HashMap::new(),
+            aggregate_align: 0,
+            max_alignment: 0,
+            stack_align: 0,
+            native_integer_widths: vec![],
+            native_vector_widths: vec![],
+        };
+        assert!(empty.is_default(), "empty layout should be default");
+    }
 
     #[test]
     fn test_default_layout() {
@@ -651,7 +671,7 @@ mod tests {
     #[test]
     fn test_target_triple() {
         let t = TargetTriple::parse("x86_64-pc-windows-msvc");
-        assert_eq!(t.arch, "x86_64");
+        assert_eq!(t.arch.as_str(), "x86_64");
         assert!(t.is_64bit());
 
         let t = TargetTriple::parse("wasm32-unknown-unknown");

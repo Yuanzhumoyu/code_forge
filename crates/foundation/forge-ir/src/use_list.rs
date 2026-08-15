@@ -5,6 +5,7 @@
 
 use super::dfg::DataFlowGraph;
 use super::entity::{Inst, Value};
+use crate::error::IrError;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -37,7 +38,10 @@ pub struct UseLists {
 impl UseLists {
     pub fn new() -> Self {
         Self {
-            uses: HashMap::new(),
+            // 适度预分配：容量 8 覆盖单条指令的少量 use 项，同时让中大型
+            // 函数少几次 rehash。不设过大——微小函数（2-3 条指令）的
+            // HashMap 初始化成本会反超收益（ir_build_simple_add +39%）。
+            uses: HashMap::with_capacity(8),
         }
     }
 
@@ -112,6 +116,9 @@ impl UseLists {
 
     /// 替换某个值的所有使用 (RAUW: Replace All Uses With)。
     /// 返回被替换的使用数量。
+    ///
+    /// 注意：只维护 use-list 侧；DFG 指令中的 operands 由调用方
+    /// （`Function::replace_all_uses`）同步更新。
     pub fn replace_all_uses(&mut self, old: Value, new: Value) -> usize {
         let uses: Vec<Use> = self.uses(old).to_vec();
         let count = uses.len();
@@ -125,6 +132,12 @@ impl UseLists {
         count
     }
 
+    /// 移除某个值的所有使用记录（值死亡时清理 use-list 条目）。
+    /// 返回被移除的数量。
+    pub fn remove_value(&mut self, value: Value) -> usize {
+        self.uses.remove(&value).map(|l| l.len()).unwrap_or(0)
+    }
+
     /// 清空所有使用信息。
     pub fn clear(&mut self) {
         self.uses.clear();
@@ -135,7 +148,7 @@ impl UseLists {
     // ============================================================
 
     /// 验证 UseLists 与 DFG 一致。
-    pub fn verify(&self, dfg: &DataFlowGraph) -> Result<(), Vec<String>> {
+    pub fn verify(&self, dfg: &DataFlowGraph) -> Result<(), Vec<IrError>> {
         let mut errors = Vec::new();
 
         // 检查每条指令的所有操作数都在 use-lists 中
@@ -146,10 +159,10 @@ impl UseLists {
                     .iter()
                     .any(|u| u.user == inst && u.operand_idx == idx as u8)
                 {
-                    errors.push(format!(
+                    errors.push(IrError::Internal(format!(
                         "inst {} operand {} (value {}) not found in use-lists for {}",
                         inst, idx, operand, operand
-                    ));
+                    )));
                 }
             }
         }
@@ -158,19 +171,19 @@ impl UseLists {
         for (value, uses) in self.uses.iter() {
             for u in uses {
                 if u.user.0 as usize >= dfg.inst_count() {
-                    errors.push(format!(
+                    errors.push(IrError::Internal(format!(
                         "use-list for {} references non-existent inst {}",
                         value, u.user
-                    ));
+                    )));
                 }
                 let operands = dfg.inst_operands(u.user);
                 if u.operand_idx as usize >= operands.len()
                     || operands[u.operand_idx as usize] != *value
                 {
-                    errors.push(format!(
+                    errors.push(IrError::Internal(format!(
                         "use-list for {}: inst {} operand {} mismatch",
                         value, u.user, u.operand_idx
-                    ));
+                    )));
                 }
             }
         }

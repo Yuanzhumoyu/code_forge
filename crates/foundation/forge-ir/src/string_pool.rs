@@ -3,13 +3,15 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::ImmStr;
+
 /// 字符串池 — 按内容去重，返回轻量级句柄。
 #[derive(Clone, Debug, Default)]
 pub struct StringPool {
     /// InternedStr(u32) → String
-    pool: Vec<String>,
+    pool: Vec<ImmStr>,
     /// String → InternedStr
-    dedup: HashMap<String, InternedStr>,
+    dedup: HashMap<ImmStr, InternedStr>,
 }
 
 impl StringPool {
@@ -18,14 +20,14 @@ impl StringPool {
     }
 
     /// 插入字符串，返回其 InternedStr 句柄。已存在则返回已有句柄。
-    pub fn intern(&mut self, s: &str) -> InternedStr {
-        if let Some(&id) = self.dedup.get(s) {
+    pub fn intern(&mut self, s: impl Into<ImmStr>) -> InternedStr {
+        let s = s.into();
+        if let Some(&id) = self.dedup.get(&s) {
             return id;
         }
-        let owned = s.to_string();
         let id = InternedStr(self.pool.len() as u32);
-        self.dedup.insert(owned.clone(), id);
-        self.pool.push(owned); // single allocation, clone into dedup
+        self.dedup.insert(s.clone(), id);
+        self.pool.push(s); // single allocation, clone into dedup
         id
     }
 

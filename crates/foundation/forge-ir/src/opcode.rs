@@ -115,10 +115,15 @@ pub enum Opcode {
     // === 内存 (2) ===
     Load,
     Store,
+    /// 浮点 load（按类型分派到 MOVSD_RM 等——普通 Load 走 GPR，F64 值会错乱）
+    Fload,
+    /// 浮点 store（按类型分派到 MOVSD_MR 等）
+    Fstore,
 
     // === 常量 (2) ===
     Iconst,
     Fconst,
+    Vconst,
 
     // === 值语义 (2) ===
     /// Produce a poison value of given type (deferred UB)
@@ -126,10 +131,18 @@ pub enum Opcode {
     /// Produce an undef value (arbitrary bit pattern, each use independent)
     Undef,
 
-    // === 类型转换 (4) ===
+    // === 类型转换 (12) ===
     Sextend,
     Uextend,
     Ireduce,
+    Fptrunc,
+    Fpext,
+    Fptosi,
+    Sitofp,
+    Fptoui,
+    Uitofp,
+    Ptrtoint,
+    Inttoptr,
     Bitcast,
 
     // === 函数调用 (2) ===
@@ -158,16 +171,26 @@ pub enum Opcode {
     Vbitcast,
     Vbroadcast,
     ShuffleVector,
+    /// 宽向量 → 128 位片段提取（V256 → V128；fragment 立即数选片段）。
+    Vsplit,
+    /// 128 位片段拼接成宽向量（V128×2 → V256）。
+    Vconcat,
 
     // === 陷阱 (1) ===
     /// Trigger a trap (unreachable by definition, e.g. failed bounds check)
     Trap,
 
-    // === 指针操作 (2) ===
+    // === 指针操作 (4) ===
     /// Test if pointer is null
     IsNull,
     /// Test if pointer is not null
     IsNotNull,
+    /// 指针地址空间转换（LLVM `addrspacecast`；结果类型 = 目标 addrspace 指针）。
+    AddrSpaceCast,
+    /// 可变参数读取（LLVM `va_arg`；ABI 布局见 P1——文本层存 (Type, ptr) 操作数）。
+    VaArg,
+    /// 异常着陆垫（LLVM `landingpad`；P1.1 文本层解析，codegen Unsupported）。
+    LandingPad,
 
     // === 原子操作 (3) ===
     AtomicRmw,
@@ -190,7 +213,7 @@ impl Opcode {
     pub fn result_count(&self) -> u8 {
         match self {
             // 无结果 (副作用)
-            Opcode::Store | Opcode::Fence | Opcode::Nop | Opcode::Trap => 0,
+            Opcode::Store | Opcode::Fstore | Opcode::Fence | Opcode::Nop | Opcode::Trap => 0,
             // 双结果 (value + overflow flag)
             Opcode::SaddOverflow
             | Opcode::UaddOverflow
@@ -230,11 +253,13 @@ impl Opcode {
         matches!(
             self,
             Opcode::Store
+                | Opcode::Fstore
                 | Opcode::Call
                 | Opcode::CallIndirect
                 | Opcode::AtomicRmw
                 | Opcode::Cmpxchg
                 | Opcode::Fence
+                | Opcode::VaArg
                 | Opcode::Trap
         )
     }
@@ -301,13 +326,24 @@ impl Opcode {
             Opcode::UmulOverflow => "umul_overflow",
             Opcode::Load => "load",
             Opcode::Store => "store",
+            Opcode::Fload => "fload",
+            Opcode::Fstore => "fstore",
             Opcode::Iconst => "iconst",
             Opcode::Fconst => "fconst",
+            Opcode::Vconst => "vconst",
             Opcode::Poison => "poison",
             Opcode::Undef => "undef",
             Opcode::Sextend => "sextend",
             Opcode::Uextend => "uextend",
             Opcode::Ireduce => "ireduce",
+            Opcode::Fptrunc => "fptrunc",
+            Opcode::Fpext => "fpext",
+            Opcode::Fptosi => "fptosi",
+            Opcode::Sitofp => "sitofp",
+            Opcode::Fptoui => "fptoui",
+            Opcode::Uitofp => "uitofp",
+            Opcode::Ptrtoint => "ptrtoint",
+            Opcode::Inttoptr => "inttoptr",
             Opcode::Bitcast => "bitcast",
             Opcode::Call => "call",
             Opcode::CallIndirect => "call_indirect",
@@ -325,10 +361,15 @@ impl Opcode {
             Opcode::Vinsert => "vinsert",
             Opcode::Vbitcast => "vbitcast",
             Opcode::Vbroadcast => "vbroadcast",
+            Opcode::Vsplit => "vsplit",
+            Opcode::Vconcat => "vconcat",
             Opcode::ShuffleVector => "shufflevector",
             Opcode::Trap => "trap",
             Opcode::IsNull => "is_null",
             Opcode::IsNotNull => "is_not_null",
+            Opcode::AddrSpaceCast => "addrspacecast",
+            Opcode::VaArg => "va_arg",
+            Opcode::LandingPad => "landingpad",
             Opcode::AtomicRmw => "atomicrmw",
             Opcode::Cmpxchg => "cmpxchg",
             Opcode::Fence => "fence",
@@ -410,13 +451,25 @@ impl Opcode {
             | Opcode::Vabs
             | Opcode::IsNull
             | Opcode::IsNotNull
+            | Opcode::AddrSpaceCast
+            | Opcode::VaArg
             | Opcode::Load
+            | Opcode::Fload
             | Opcode::Sextend
             | Opcode::Uextend
             | Opcode::Ireduce
+            | Opcode::Fptrunc
+            | Opcode::Fpext
+            | Opcode::Fptosi
+            | Opcode::Sitofp
+            | Opcode::Fptoui
+            | Opcode::Uitofp
+            | Opcode::Ptrtoint
+            | Opcode::Inttoptr
             | Opcode::Bitcast
             | Opcode::Vextract
-            | Opcode::Vbitcast => 1,
+            | Opcode::Vbitcast
+            | Opcode::Vsplit => 1,
 
             // 3-operand: fma, select, cmpxchg
             Opcode::Fma => 3,
@@ -424,23 +477,30 @@ impl Opcode {
             Opcode::Cmpxchg => 3,
 
             // 2 + ptr: Store, atomicrmw, vinsert, insertvalue
-            Opcode::Store | Opcode::Vinsert | Opcode::InsertValue | Opcode::AtomicRmw => 2,
+            Opcode::Store
+            | Opcode::Fstore
+            | Opcode::Vinsert
+            | Opcode::InsertValue
+            | Opcode::AtomicRmw => 2,
 
             // Variable-count: Call, CallIndirect, GEP, ShuffleVector, Vbroadcast
             Opcode::Call
             | Opcode::CallIndirect
             | Opcode::GetElementPtr
             | Opcode::ShuffleVector
-            | Opcode::Vbroadcast => 0,
+            | Opcode::Vbroadcast
+            | Opcode::Vconcat => 0,
 
             // Zero-operand: constants, addresses, alloca, poison, undef, trap, nop, fence
             Opcode::Iconst
             | Opcode::Fconst
+            | Opcode::Vconst
             | Opcode::Poison
             | Opcode::Undef
             | Opcode::StackAddr
             | Opcode::GlobalAddr
             | Opcode::Alloca
+            | Opcode::LandingPad
             | Opcode::Trap
             | Opcode::Nop
             | Opcode::Fence => 0,
@@ -556,6 +616,8 @@ pub enum AtomicRmwOp {
     Min,
     Umax,
     Umin,
+    Fadd,
+    Fsub,
 }
 
 #[cfg(test)]
@@ -734,9 +796,12 @@ mod tests {
             // Memory
             Opcode::Load,
             Opcode::Store,
+            Opcode::Fload,
+            Opcode::Fstore,
             // Constants
             Opcode::Iconst,
             Opcode::Fconst,
+            Opcode::Vconst,
             // Value semantics
             Opcode::Poison,
             Opcode::Undef,
@@ -777,6 +842,11 @@ mod tests {
             // Compound
             Opcode::ExtractValue,
             Opcode::InsertValue,
+            // Pointer
+            Opcode::AddrSpaceCast,
+            Opcode::VaArg,
+            // Exception
+            Opcode::LandingPad,
             // Other
             Opcode::Copy,
             Opcode::Select,

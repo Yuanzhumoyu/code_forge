@@ -10,9 +10,7 @@
 //! - `MetadataStore`: interning deduplication table
 //! - Attached to Instruction, Function, and Module
 
-use super::entity::TypeId;
-use super::entity::Value;
-use super::string_pool::InternedStr;
+use super::imm_str::ImmStr;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -32,47 +30,22 @@ pub struct MetadataId(pub u32);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MetadataValue {
     /// String value.
-    String(InternedStr),
+    String(ImmStr),
     /// Unsigned integer.
     Uint(u64),
     /// Signed integer.
     Int(i64),
-    /// Type reference.
-    Type(TypeId),
-    /// SSA value reference.
-    Value(Value),
+    /// 超 i64 范围大整数（第二十三轮 Big 化——原文字符串,display 精确输出）。
+    IntBig(ImmStr),
+    /// Floating-point value（以 bits 存储——保持 Eq/Hash）。
+    Float(u64),
+    /// Null literal（metadata 节点中的 `null`）。
+    Null,
     /// Reference to another metadata node.
     Node(MetadataId),
-}
-
-impl MetadataValue {
-    pub fn as_uint(&self) -> Option<u64> {
-        match self {
-            MetadataValue::Uint(v) => Some(*v),
-            _ => None,
-        }
-    }
-
-    pub fn as_int(&self) -> Option<i64> {
-        match self {
-            MetadataValue::Int(v) => Some(*v),
-            _ => None,
-        }
-    }
-
-    pub fn as_string(&self) -> Option<InternedStr> {
-        match self {
-            MetadataValue::String(s) => Some(*s),
-            _ => None,
-        }
-    }
-
-    pub fn as_node(&self) -> Option<MetadataId> {
-        match self {
-            MetadataValue::Node(id) => Some(*id),
-            _ => None,
-        }
-    }
+    /// named 节点 key:value 字段（第二十一轮——DI 校验与 display roundtrip
+    /// 需还原 `key: value` 形态）
+    Field(ImmStr, Box<MetadataValue>),
 }
 
 // ============================================================
@@ -83,7 +56,7 @@ impl MetadataValue {
 ///
 /// These are the standard LLVM metadata kinds used for optimization
 /// hints and debug information.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MetadataKind {
     /// Debug location (DILocation).
     DebugLoc,
@@ -112,7 +85,7 @@ pub enum MetadataKind {
     /// Floating-point math flags.
     FpMath,
     /// Custom named kind (for user-defined metadata).
-    Custom(InternedStr),
+    Custom(ImmStr),
 }
 
 impl MetadataKind {
@@ -132,7 +105,9 @@ impl MetadataKind {
             MetadataKind::Loop => "loop",
             MetadataKind::Prof => "prof",
             MetadataKind::FpMath => "fpmath",
-            MetadataKind::Custom(_) => "custom",
+            // 自定义 kind 保留原始名（第二十九轮:原固定输出 "custom"
+            // 丢失 !associated/!foo 等自定义 kind,roundtrip 不等）
+            MetadataKind::Custom(s) => s.as_str(),
         }
     }
 }
@@ -162,6 +137,8 @@ pub struct MetadataStore {
     nodes: Vec<MetadataNode>,
     /// Deduplication map: node → MetadataId.
     dedup: HashMap<MetadataNode, MetadataId>,
+    /// 命名 metadata（LLVM：`!t = !{...}` → 名字 → id）。
+    names: HashMap<ImmStr, MetadataId>,
 }
 
 /// A metadata node — a tuple of metadata values.
@@ -171,10 +148,13 @@ pub enum MetadataNode {
     Leaf(MetadataValue),
     /// A tuple of values: !{val1, val2, ...}
     Tuple(SmallVec<[MetadataValue; 4]>),
-    /// A named node: !name(val1, val2, ...)
+    /// A named node: !name(val1, val2, ...) — distinct 前缀标志
+    ///（第二十九轮:parse 时 Distinct 展开后标志丢失,display 无法还原
+    /// `distinct !DICompileUnit(...)`,reparse 时 DI 校验拒绝）
     Named {
-        name: InternedStr,
+        name: ImmStr,
         ops: SmallVec<[MetadataValue; 4]>,
+        distinct: bool,
     },
 }
 
@@ -184,6 +164,7 @@ impl MetadataStore {
         Self {
             nodes: Vec::new(),
             dedup: HashMap::new(),
+            names: HashMap::new(),
         }
     }
 
@@ -198,23 +179,39 @@ impl MetadataStore {
         id
     }
 
-    /// Create a leaf node with a string value.
-    pub fn string_node(&mut self, s: InternedStr) -> MetadataId {
-        self.intern(MetadataNode::Leaf(MetadataValue::String(s)))
+    /// 按名查命名 metadata。
+    pub fn lookup_named(&self, name: &str) -> Option<MetadataId> {
+        self.names.get(&ImmStr::from(name)).copied()
     }
 
-    /// Create a tuple node.
-    pub fn tuple_node(&mut self, vals: SmallVec<[MetadataValue; 4]>) -> MetadataId {
-        self.intern(MetadataNode::Tuple(vals))
+    /// 注册命名 metadata（`!t = !{...}` → 名字 → id）。
+    pub fn define_named(&mut self, name: &str, id: MetadataId) {
+        self.names.insert(ImmStr::from(name), id);
     }
 
-    /// Create a named node.
-    pub fn named_node(
-        &mut self,
-        name: InternedStr,
-        ops: SmallVec<[MetadataValue; 4]>,
-    ) -> MetadataId {
-        self.intern(MetadataNode::Named { name, ops })
+    /// 反查：id → 命名（display 还原 `!t`；未命名返回 None）。
+    pub fn name_of(&self, id: MetadataId) -> Option<String> {
+        self.names
+            .iter()
+            .find(|(_, v)| **v == id)
+            .map(|(k, _)| k.to_string())
+    }
+
+    /// 遍历全部节点（display 序列化用）。
+    pub fn iter(&self) -> impl Iterator<Item = (MetadataId, &MetadataNode)> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (MetadataId(i as u32), n))
+    }
+
+    /// 按显式 id 插入（LLVM：`!5 = ...` 的 id 是文本数字；0..id 补空占位）。
+    pub fn insert_at(&mut self, id: MetadataId, node: MetadataNode) {
+        if self.nodes.len() <= id.0 as usize {
+            self.nodes
+                .resize(id.0 as usize + 1, MetadataNode::Tuple(SmallVec::new()));
+        }
+        self.nodes[id.0 as usize] = node;
     }
 
     /// Look up a metadata node by ID.
@@ -231,35 +228,6 @@ impl MetadataStore {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
-
-    /// Create a TBAA root node.
-    pub fn tbaa_root(&mut self, name: InternedStr) -> MetadataId {
-        self.tuple_node(smallvec::smallvec![MetadataValue::String(name),])
-    }
-
-    /// Create a TBAA access tag: !{!type_node, !type_node, i64 offset}
-    pub fn tbaa_tag(
-        &mut self,
-        base_type: MetadataId,
-        access_type: MetadataId,
-        offset: i64,
-    ) -> MetadataId {
-        self.tuple_node(smallvec::smallvec![
-            MetadataValue::Node(base_type),
-            MetadataValue::Node(access_type),
-            MetadataValue::Int(offset),
-        ])
-    }
-
-    /// Create a branch_weights metadata node: !{!"branch_weights", i32 N, i32 M, ...}
-    pub fn branch_weights(&mut self, weights: &[u32]) -> MetadataId {
-        let mut vals: SmallVec<[MetadataValue; 4]> = SmallVec::new();
-        vals.push(MetadataValue::String(InternedStr(0))); // placeholder, caller should intern "branch_weights"
-        for &w in weights {
-            vals.push(MetadataValue::Uint(w as u64));
-        }
-        self.tuple_node(vals)
-    }
 }
 
 #[cfg(test)]
@@ -268,38 +236,7 @@ mod tests {
 
     #[test]
     fn test_metadata_store_basic() {
-        let mut store = MetadataStore::new();
-        let id1 = store.string_node(InternedStr(0));
-        let id2 = store.string_node(InternedStr(0));
-        assert_eq!(id1, id2); // dedup: same content → same ID
-        assert_eq!(store.len(), 1);
-    }
-
-    #[test]
-    fn test_metadata_tuple_dedup() {
-        let mut store = MetadataStore::new();
-        let vals = smallvec::smallvec![MetadataValue::Uint(42), MetadataValue::Int(-1),];
-        let id1 = store.tuple_node(vals.clone());
-        let id2 = store.tuple_node(vals);
-        assert_eq!(id1, id2);
-    }
-
-    #[test]
-    fn test_metadata_tbaa_tag() {
-        let mut store = MetadataStore::new();
-        let root = store.tbaa_root(InternedStr(0));
-        let tag = store.tbaa_tag(root, root, 0);
-        assert!(tag.0 > 0);
-    }
-
-    #[test]
-    fn test_metadata_named_node() {
-        let mut store = MetadataStore::new();
-        let ops = smallvec::smallvec![MetadataValue::Uint(1), MetadataValue::Uint(2),];
-        let id = store.named_node(InternedStr(0), ops);
-        match store.get(id) {
-            MetadataNode::Named { .. } => {}
-            _ => panic!("expected Named node"),
-        }
+        let store = MetadataStore::new();
+        assert_eq!(store.len(), 0);
     }
 }

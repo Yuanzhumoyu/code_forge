@@ -3,11 +3,12 @@
 //! 覆盖全部 105 个 forge Opcode 的 LLVM 文本形式。指令名经 logos `Ident`
 //! 进入此处查表；向量类型指令（`add <4 x i32>`）由 `vector_op` 精化。
 
+use crate::error::IrError;
 use crate::opcode::{FloatCC, IntCC, Opcode};
 
 /// LLVM 指令名 → forge Opcode（标量基础；向量类型由 [`vector_op`] 精化）。
 /// 返回错误信息用于语义错误报告。
-pub fn opcode(name: &str) -> Result<Opcode, String> {
+pub fn opcode(name: &str) -> Result<Opcode, IrError> {
     Ok(match name {
         // 整数算术
         "add" => Opcode::Iadd,
@@ -22,6 +23,8 @@ pub fn opcode(name: &str) -> Result<Opcode, String> {
         "fsub" => Opcode::Fsub,
         "fmul" => Opcode::Fmul,
         "fdiv" => Opcode::Fdiv,
+        // frem 宽松映射 Fdiv（forge 无浮点取模；第十三轮 parse 通过优先）
+        "frem" => Opcode::Fdiv,
         "fneg" => Opcode::Fneg,
         "fabs" => Opcode::Fabs,
         "fsqrt" => Opcode::Fsqrt,
@@ -58,8 +61,20 @@ pub fn opcode(name: &str) -> Result<Opcode, String> {
         "floor" => Opcode::Ffloor,
         "ceil" => Opcode::Fceil,
         "round" => Opcode::Fround,
-        // 转换（trunc 按操作数类型在语义层分发：整数→Ireduce、浮点→Ftrunc）
+        // 向量除法：forge Vdiv 的 LLVM 名（display 输出 "div"，标量走 udiv/sdiv/fdiv）
+        "div" => Opcode::Vdiv,
+        // 转换（trunc 按操作数类型在语义层分发：整数→Ireduce、浮点→Fptrunc）
         "trunc" => Opcode::Ireduce,
+        "fptrunc" => Opcode::Fptrunc,
+        "fpext" => Opcode::Fpext,
+        "fptosi" => Opcode::Fptosi,
+        "sitofp" => Opcode::Sitofp,
+        "fptoui" => Opcode::Fptoui,
+        "uitofp" => Opcode::Uitofp,
+        "ptrtoint" => Opcode::Ptrtoint,
+        // ptrtoaddr 宽松映射 ptrtoint（LLVM 新指令；第十一轮）
+        "ptrtoaddr" => Opcode::Ptrtoint,
+        "inttoptr" => Opcode::Inttoptr,
         "zext" => Opcode::Uextend,
         "sext" => Opcode::Sextend,
         "bitcast" => Opcode::Bitcast,
@@ -77,8 +92,12 @@ pub fn opcode(name: &str) -> Result<Opcode, String> {
         "getelementptr" => Opcode::GetElementPtr,
         // 调用/地址
         "call" => Opcode::Call,
+        "callbr" => Opcode::Call,
         "stack_addr" => Opcode::StackAddr, // forge 扩展
         "global_addr" => Opcode::GlobalAddr,
+        // 指针
+        "addrspacecast" => Opcode::AddrSpaceCast,
+        "va_arg" => Opcode::VaArg,
         // 值语义
         "select" => Opcode::Select,
         "freeze" => Opcode::Freeze,
@@ -89,6 +108,7 @@ pub fn opcode(name: &str) -> Result<Opcode, String> {
         "extractvalue" => Opcode::ExtractValue,
         "insertvalue" => Opcode::InsertValue,
         "vextractelement" => Opcode::Vextract,
+        "extractelement" => Opcode::Vextract,
         "insertelement" => Opcode::Vinsert,
         "shufflevector" => Opcode::ShuffleVector,
         "vbroadcast" => Opcode::Vbroadcast, // forge 扩展
@@ -102,15 +122,19 @@ pub fn opcode(name: &str) -> Result<Opcode, String> {
         "nop" => Opcode::Nop,
         "isnull" => Opcode::IsNull,
         "isnotnull" => Opcode::IsNotNull,
+        // 异常（P1.1）
+        "landingpad" => Opcode::LandingPad,
         "icmp" | "fcmp" => {
-            return Err("icmp/fcmp need a condition; use icmp <cond> / fcmp <cond>".into());
+            return Err(IrError::Parse(
+                "icmp/fcmp need a condition; use icmp <cond> / fcmp <cond>".into(),
+            ));
         }
-        _ => return Err(format!("unknown LLVM instruction '{}'", name)),
+        _ => return Err(IrError::UnknownOpcode(name.to_string())),
     })
 }
 
 /// LLVM icmp 条件 → forge IntCC（全 10）。
-pub fn int_cc(name: &str) -> Result<IntCC, String> {
+pub fn int_cc(name: &str) -> Result<IntCC, IrError> {
     Ok(match name {
         "eq" => IntCC::Equal,
         "ne" => IntCC::NotEqual,
@@ -122,14 +146,14 @@ pub fn int_cc(name: &str) -> Result<IntCC, String> {
         "ugt" => IntCC::UnsignedGreaterThan,
         "ule" => IntCC::UnsignedLessThanOrEqual,
         "uge" => IntCC::UnsignedGreaterThanOrEqual,
-        _ => return Err(format!("unknown icmp condition '{}'", name)),
+        _ => return Err(IrError::UnknownIntCc(name.to_string())),
     })
 }
 
 /// LLVM fcmp 条件 → forge FloatCC。
 /// forge FloatCC 仅 8 个有序语义条件；其余 8 个 LLVM 条件（false/ueq/ugt/
 /// uge/ult/ule/une/true）无对应，报语义错误。
-pub fn float_cc(name: &str) -> Result<FloatCC, String> {
+pub fn float_cc(name: &str) -> Result<FloatCC, IrError> {
     Ok(match name {
         "oeq" => FloatCC::Equal,
         "one" => FloatCC::NotEqual,
@@ -140,10 +164,7 @@ pub fn float_cc(name: &str) -> Result<FloatCC, String> {
         "ord" => FloatCC::Ordered,
         "uno" => FloatCC::Unordered,
         _ => {
-            return Err(format!(
-                "fcmp condition '{}' not supported by forge FloatCC (8 ordered conditions only)",
-                name
-            ));
+            return Err(IrError::UnknownFloatCc(name.to_string()));
         }
     })
 }
@@ -214,6 +235,7 @@ pub fn llvm_mnemonic(op: &Opcode) -> String {
         Opcode::Fcopysign => "fcopysign",
         Opcode::Ffloor => "floor",
         Opcode::Fceil => "ceil",
+        Opcode::Ftrunc => "ftrunc",
         Opcode::Fround => "round",
         // 比较（条件由 display 拼）
         Opcode::Icmp { .. } => "icmp",
@@ -228,15 +250,27 @@ pub fn llvm_mnemonic(op: &Opcode) -> String {
         // 内存
         Opcode::Load => "load",
         Opcode::Store => "store",
-        // 常量（display 内联，不输出指令行）
+        Opcode::Fload => "load", // forge 扩展：浮点 load（display 复用 load）
+        Opcode::Fstore => "store", // forge 扩展：浮点 store
+        // 常量（Iconst/Fconst 内联为操作数，不输出指令行）
         Opcode::Iconst | Opcode::Fconst => "iconst",
+        // Vconst 输出 forge 扩展 `vconst <ty>`（数据在常量池，不文本化）
+        Opcode::Vconst => "vconst",
         // 值语义
         Opcode::Poison => "poison",
         Opcode::Undef => "undef",
         // 转换
         Opcode::Sextend => "sext",
         Opcode::Uextend => "zext",
-        Opcode::Ireduce | Opcode::Ftrunc => "trunc",
+        Opcode::Ireduce => "trunc",
+        Opcode::Fptrunc => "fptrunc",
+        Opcode::Fpext => "fpext",
+        Opcode::Fptosi => "fptosi",
+        Opcode::Sitofp => "sitofp",
+        Opcode::Fptoui => "fptoui",
+        Opcode::Uitofp => "uitofp",
+        Opcode::Ptrtoint => "ptrtoint",
+        Opcode::Inttoptr => "inttoptr",
         Opcode::Bitcast => "bitcast",
         // 调用/地址
         Opcode::Call | Opcode::CallIndirect => "call",
@@ -251,15 +285,19 @@ pub fn llvm_mnemonic(op: &Opcode) -> String {
         Opcode::Vdiv => "div",
         Opcode::Vneg => "fneg",
         Opcode::Vabs => "fabs",
-        Opcode::Vextract => "vextractelement",
+        Opcode::Vextract => "extractelement",
         Opcode::Vinsert => "insertelement",
         Opcode::Vbitcast => "bitcast",
         Opcode::Vbroadcast => "vbroadcast",
         Opcode::ShuffleVector => "shufflevector",
+        Opcode::Vsplit => "vsplit",
+        Opcode::Vconcat => "vconcat",
         // 陷阱/指针/原子/复合/其他
         Opcode::Trap => "trap",
         Opcode::IsNull => "isnull",
         Opcode::IsNotNull => "isnotnull",
+        Opcode::AddrSpaceCast => "addrspacecast",
+        Opcode::VaArg => "va_arg",
         Opcode::AtomicRmw => "atomicrmw",
         Opcode::Cmpxchg => "cmpxchg",
         Opcode::Fence => "fence",
@@ -269,6 +307,7 @@ pub fn llvm_mnemonic(op: &Opcode) -> String {
         Opcode::Select => "select",
         Opcode::Freeze => "freeze",
         Opcode::Nop => "nop",
+        Opcode::LandingPad => "landingpad",
     };
     // Icmp/Fcmp 附加条件
     match op {

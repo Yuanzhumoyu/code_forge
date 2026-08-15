@@ -3,13 +3,14 @@
 //! 为 IR 指令附加源码位置信息，支持调试输出和未来的 DWARF 生成。
 
 use super::entity::Value;
+use super::imm_str::ImmStr;
 use std::fmt;
 
 /// 源码位置。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceLocation {
     /// 文件路径。
-    pub file: Option<String>,
+    pub file: Option<ImmStr>,
     /// 行号 (1-based)。
     pub line: Option<u32>,
     /// 列号 (1-based)。
@@ -20,7 +21,7 @@ impl SourceLocation {
     /// 创建一个新的源码位置。
     pub fn new(file: &str, line: u32, column: u32) -> Self {
         Self {
-            file: Some(file.to_string()),
+            file: Some(ImmStr::from(file)),
             line: Some(line),
             column: Some(column),
         }
@@ -53,7 +54,7 @@ pub struct DebugInfo {
     /// 指令结果 Value → 源码位置的映射。
     pub locations: std::collections::HashMap<Value, SourceLocation>,
     /// 函数名（用于调试输出）。
-    pub function_name: Option<String>,
+    pub function_name: Option<ImmStr>,
 }
 
 impl DebugInfo {
