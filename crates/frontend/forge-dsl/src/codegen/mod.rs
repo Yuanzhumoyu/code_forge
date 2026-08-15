@@ -874,12 +874,32 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
             }
         }
     };
+    // 裸索引映射（0..count → 变体）：ModRM 系原语（@modrm/@sse_*）的寄存器字段
+    // 编码裸索引（3 位 + REX 扩展位），非 to_index 值——与定宽 ISA 的 FPR 字段不同。
+    let fpr_raw_arms: Vec<TokenStream> = fpr_variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let idx = i as u64;
+            let ident = format_ident!("{v}");
+            quote! { #idx => Reg::#ident }
+        })
+        .collect();
+    let raw_fpr_expr = |bind_ident: &proc_macro2::Ident| {
+        quote! {
+            match #bind_ident {
+                #(#fpr_raw_arms,)*
+                _ => <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS),
+            }
+        }
+    };
 
     // 共享字段构造：field_exprs（字段名 → u64 值表达式）→ (绑定语句, Inst 构造表达式)。
     // 非 Opsize 字段缺失 → None（该变体无法还原）。Opsize 未提供 → 0（不占编码位）。
     let construct = |vn: &syn::Ident,
                      field_map: &std::collections::BTreeMap<String, &FieldType>,
-                     field_exprs: &std::collections::BTreeMap<String, TokenStream>|
+                     field_exprs: &std::collections::BTreeMap<String, TokenStream>,
+                     fpr_map: &dyn Fn(&proc_macro2::Ident) -> TokenStream|
      -> Option<(Vec<TokenStream>, TokenStream)> {
         let mut field_binds: Vec<TokenStream> = Vec::new();
         let mut variant_fields: Vec<TokenStream> = Vec::new();
@@ -898,7 +918,7 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
                     <Reg as forge_ir::PhysReg>::from_index(#bind_ident as u32, __DEFAULT_GPR_CLASS)
                 },
                 FieldType::Freg | FieldType::XmmReg => {
-                    let e = fpr_expr(&bind_ident);
+                    let e = fpr_map(&bind_ident);
                     e
                 }
                 FieldType::I8 => quote! { #bind_ident as i8 },
@@ -1026,7 +1046,8 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
                     };
                     field_exprs.insert(fname.clone(), val);
                 }
-                let Some((binds, inst_expr)) = construct(&vn, &field_map, &field_exprs) else {
+                let Some((binds, inst_expr)) = construct(&vn, &field_map, &field_exprs, &fpr_expr)
+                else {
                     continue;
                 };
                 let guard_ts = if guards.is_empty() {
@@ -1047,9 +1068,14 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
 
             // ── Phase 2：x86 变长原语子集（mod=11 寄存器形式）──
             ParsedEncoding::Primitive { name, args } => {
-                let Some(arm) =
-                    gen_primitive_decode_arm(&name, &args, &field_map, &vn, &construct)?
-                else {
+                let Some(arm) = gen_primitive_decode_arm(
+                    &name,
+                    &args,
+                    &field_map,
+                    &vn,
+                    &construct,
+                    &raw_fpr_expr,
+                )? else {
                     continue;
                 };
                 arms.push(arm);
@@ -1092,12 +1118,14 @@ fn gen_primitive_decode_arm<F>(
     field_map: &std::collections::BTreeMap<String, &crate::model::FieldType>,
     vn: &syn::Ident,
     construct: &F,
+    fpr_map: &dyn Fn(&proc_macro2::Ident) -> TokenStream,
 ) -> Result<Option<TokenStream>, String>
 where
     F: Fn(
         &syn::Ident,
         &std::collections::BTreeMap<String, &crate::model::FieldType>,
         &std::collections::BTreeMap<String, TokenStream>,
+        &dyn Fn(&proc_macro2::Ident) -> TokenStream,
     ) -> Option<(Vec<TokenStream>, TokenStream)>,
 {
     let arg = |i: usize| args.get(i).map(|s| s.as_str()).unwrap_or("");
@@ -1294,10 +1322,107 @@ where
                 quote! { ((__modrm & 7) as u64) | (__rex_b << 3) as u64 },
             );
         }
+        // ── SSE 族：@sse_rr / @sse_rr_3a / @sse_rr_38 / @sse_rr_opsize /
+        //    @sse_rr_imm8 / @sse_rr_w / @sse_ps_rr —— [prefix?] [REX?] 0F [3A|38] opcode ModRM [imm8]
+        "sse_rr" | "sse_rr_3a" | "sse_rr_38" | "sse_rr_opsize" | "sse_rr_imm8" | "sse_rr_w"
+        | "sse_ps_rr" => {
+            // 参数布局：sse_rr = prefix opcode w reg rm（w=REX.W 位，解码忽略）；
+            // sse_rr_3a/38/imm8/w = prefix opcode reg rm [imm]；
+            // sse_rr_opsize = prefix opcode opsize reg rm；sse_ps_rr = opcode reg rm
+            let (prefix_arg, opcode_arg, reg_arg, rm_arg, opsize_arg, imm_arg) = match name {
+                "sse_rr" => (arg(0), arg(1), arg(3), arg(4), None, None),
+                "sse_rr_opsize" => (arg(0), arg(1), arg(3), arg(4), Some(arg(2)), None),
+                "sse_ps_rr" => ("", arg(0), arg(1), arg(2), None, None),
+                _ => {
+                    let has_imm = name == "sse_rr_3a" || name == "sse_rr_imm8";
+                    (
+                        arg(0),
+                        arg(1),
+                        arg(2),
+                        arg(3),
+                        None,
+                        if has_imm { Some(arg(4)) } else { None },
+                    )
+                }
+            };
+            if !is_lit(opcode_arg)
+                || (prefix_arg != "" && !is_lit(prefix_arg))
+                || !field_map.contains_key(reg_arg)
+                || !field_map.contains_key(rm_arg)
+                || (imm_arg.is_some() && !field_map.contains_key(imm_arg.unwrap()))
+                || (opsize_arg.is_some() && !field_map.contains_key(opsize_arg.unwrap()))
+            {
+                return Ok(None);
+            }
+            let opcode = lit(opcode_arg) as u8;
+            let prefix: u8 = if prefix_arg != "" { lit(prefix_arg) as u8 } else { 0 };
+            let rex_mandatory = name == "sse_rr_w";
+            let is_opsize = name == "sse_rr_opsize";
+            let has_3a = name == "sse_rr_3a";
+            let has_38 = name == "sse_rr_38";
+            prelude.push(quote! {
+                let mut __o = 0usize;
+                let mut __opsize: u32 = 32;
+                let mut __rex_r: u32 = 0;
+                let mut __rex_b: u32 = 0;
+                if #prefix != 0u8 {
+                    if __o >= bytes.len() || bytes[__o] != #prefix { return None; }
+                    __o += 1;
+                }
+                if #is_opsize && __o < bytes.len() && bytes[__o] == 0x66 {
+                    __opsize = 16; __o += 1;
+                }
+                if #rex_mandatory {
+                    if __o >= bytes.len() || !(0x40..=0x4F).contains(&bytes[__o]) { return None; }
+                    let __rex = bytes[__o]; __o += 1;
+                    __rex_r = ((__rex >> 2) & 1) as u32;
+                    __rex_b = (__rex & 1) as u32;
+                    if (__rex & 0x08) != 0 { __opsize = 64; }
+                } else if __o < bytes.len() && (0x40..=0x4F).contains(&bytes[__o]) {
+                    let __rex = bytes[__o]; __o += 1;
+                    __rex_r = ((__rex >> 2) & 1) as u32;
+                    __rex_b = (__rex & 1) as u32;
+                    if (__rex & 0x08) != 0 { __opsize = 64; }
+                }
+                if __o >= bytes.len() || bytes[__o] != 0x0F { return None; }
+                __o += 1;
+                if #has_3a {
+                    if __o >= bytes.len() || bytes[__o] != 0x3A { return None; }
+                    __o += 1;
+                } else if #has_38 {
+                    if __o >= bytes.len() || bytes[__o] != 0x38 { return None; }
+                    __o += 1;
+                }
+                if __o >= bytes.len() || bytes[__o] != #opcode { return None; }
+                __o += 1;
+                if __o >= bytes.len() { return None; }
+                let __modrm = bytes[__o]; __o += 1;
+                if (__modrm >> 6) != 3 { return None; }
+            });
+            field_exprs.insert(
+                reg_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | (__rex_r << 3) as u64 },
+            );
+            field_exprs.insert(
+                rm_arg.to_string(),
+                quote! { ((__modrm & 7) as u64) | (__rex_b << 3) as u64 },
+            );
+            if let Some(ia) = imm_arg {
+                prelude.push(quote! {
+                    if __o >= bytes.len() { return None; }
+                    let __imm = bytes[__o] as u64;
+                    __o += 1;
+                });
+                field_exprs.insert(ia.to_string(), quote! { __imm });
+            }
+            if let Some(oa) = opsize_arg {
+                field_exprs.insert(oa.to_string(), quote! { __opsize as u64 });
+            }
+        }
         _ => return Ok(None),
     }
 
-    let Some((binds, inst_expr)) = construct(vn, field_map, &field_exprs) else {
+    let Some((binds, inst_expr)) = construct(vn, field_map, &field_exprs, fpr_map) else {
         return Ok(None);
     };
     Ok(Some(quote! {

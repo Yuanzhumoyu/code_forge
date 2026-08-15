@@ -134,6 +134,25 @@ fn x86_push_pop_roundtrip() {
     );
 }
 
+#[test]
+fn x86_sse_rr_roundtrip() {
+    // @sse_rr：addsd(0xF2 0F 58)——Freg 字段走裸索引 FPR 映射（movsd 有 MOVSD_RR
+    // 重载歧义，用 addsd 规避）
+    roundtrip_asm(
+        "x86_addsd",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "addsd XMM2, XMM3",
+    );
+    // @sse_rr 前缀 0：MOVZX 0F B6 /r（GPR 字段）
+    roundtrip_asm(
+        "x86_movzx_b",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "movzx_b RAX, RBX",
+    );
+}
+
 // ── minimal_sd：编码不含寄存器字段 → 无可解码变体（负例）──
 
 #[test]
