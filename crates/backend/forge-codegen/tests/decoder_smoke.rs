@@ -153,6 +153,24 @@ fn x86_sse_rr_roundtrip() {
     );
 }
 
+#[test]
+fn x86_modrm_mem_roundtrip() {
+    // @modrm_mem 内存寻址（mod=00 无位移；base 为 Reg 字段）
+    roundtrip_asm(
+        "x86_xchg_mem",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "xchg [RAX], RBX",
+    );
+    // [RBP] 强制带位移（force_disp_base → mod=01 + disp8=0）
+    roundtrip_asm(
+        "x86_xchg_mem_rbp",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "xchg [RBP], RBX",
+    );
+}
+
 // ── minimal_sd：编码不含寄存器字段 → 无可解码变体（负例）──
 
 #[test]

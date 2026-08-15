@@ -930,6 +930,11 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
                 FieldType::U32 => quote! { #bind_ident as u32 },
                 FieldType::U64 => quote! { #bind_ident as u64 },
                 FieldType::CondCode | FieldType::Opsize => quote! { #bind_ident as u8 },
+                // MemRef：field_exprs 条目即为完整 MemRef 表达式（base/offset/width 由原语解码填充）
+                FieldType::MemRef => {
+                    variant_fields.push(quote! { #fi: #val_ts });
+                    continue;
+                }
                 _ => continue,
             };
             variant_fields.push(quote! { #fi: #expr });
@@ -957,15 +962,9 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
             .iter()
             .map(|f| (f.name.clone(), &f.field_type))
             .collect();
-        // 不可逆解码的字段类型 → 跳过该变体
+        // 不可逆解码的字段类型 → 跳过该变体（MemRef 由 @modrm_mem 提供 base/offset 可还原）
         if field_map.values().any(|ft| {
-            matches!(
-                ft,
-                FieldType::BlockTarget
-                    | FieldType::MemRef
-                    | FieldType::F32
-                    | FieldType::F64
-            )
+            matches!(ft, FieldType::BlockTarget | FieldType::F32 | FieldType::F64)
         }) {
             continue;
         }
@@ -1321,6 +1320,152 @@ where
                 dest_arg.to_string(),
                 quote! { ((__modrm & 7) as u64) | (__rex_b << 3) as u64 },
             );
+        }
+        // @cmovcc opsize cc dest src — 0F 4{cc} /r 条件传送（mod=11）
+        "cmovcc" => {
+            let opsize_arg = arg(0);
+            let cc_arg = arg(1);
+            let dest_arg = arg(2);
+            let src_arg = arg(3);
+            if !is_lit(cc_arg)
+                || (!is_lit(opsize_arg) && !field_map.contains_key(opsize_arg))
+                || !field_map.contains_key(dest_arg)
+                || !field_map.contains_key(src_arg)
+            {
+                return Ok(None);
+            }
+            let cc = lit(cc_arg) as u8;
+            let opsize_init: TokenStream = if is_lit(opsize_arg) {
+                let v = lit(opsize_arg) as u32;
+                quote! { #v }
+            } else {
+                quote! { 32u32 }
+            };
+            prelude.push(quote! {
+                let mut __o = 0usize;
+                let mut __opsize: u32 = #opsize_init;
+                let mut __rex_r: u32 = 0;
+                let mut __rex_b: u32 = 0;
+                if __o < bytes.len() && bytes[__o] == 0x66 { __opsize = 16; __o += 1; }
+                if __o < bytes.len() && (0x40..=0x4F).contains(&bytes[__o]) {
+                    let __rex = bytes[__o]; __o += 1;
+                    __rex_r = ((__rex >> 2) & 1) as u32;
+                    __rex_b = (__rex & 1) as u32;
+                    if (__rex & 0x08) != 0 { __opsize = 64; }
+                }
+                if __o + 2 >= bytes.len() { return None; }
+                if bytes[__o] != 0x0F { return None; }
+                if bytes[__o + 1] != (0x40u8 | #cc) { return None; }
+                let __modrm = bytes[__o + 2];
+                if (__modrm >> 6) != 3 { return None; }
+                let __o = __o + 3;
+            });
+            field_exprs.insert(
+                dest_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | (__rex_r << 3) as u64 },
+            );
+            field_exprs.insert(
+                src_arg.to_string(),
+                quote! { ((__modrm & 7) as u64) | (__rex_b << 3) as u64 },
+            );
+            if !is_lit(opsize_arg) {
+                field_exprs.insert(opsize_arg.to_string(), quote! { __opsize as u64 });
+            }
+        }
+        // @modrm_mem opsize opcode reg base [disp] [prefix] [escape] — 内存寻址
+        // （mod≠3；SIB 仅支持无 index 形式；MemRef 字段路径恢复 disp 为 offset）
+        "modrm_mem" => {
+            let opsize_arg = arg(0);
+            let opcode_arg = arg(1);
+            let reg_arg = arg(2);
+            let rm_arg = arg(3);
+            let is_memref = field_map
+                .get(rm_arg)
+                .map(|t| **t == crate::model::FieldType::MemRef)
+                .unwrap_or(false);
+            let (prefix_idx, escape_idx) = if is_memref { (4, 5) } else { (5, 6) };
+            let prefix_arg = arg(prefix_idx);
+            let escape_arg = arg(escape_idx);
+            if !is_lit(opcode_arg)
+                || (prefix_arg != "" && !is_lit(prefix_arg))
+                || (escape_arg != "" && !is_lit(escape_arg))
+                || (!is_lit(opsize_arg) && !field_map.contains_key(opsize_arg))
+                || !field_map.contains_key(reg_arg)
+                || !field_map.contains_key(rm_arg)
+            {
+                return Ok(None);
+            }
+            let opcode = lit(opcode_arg) as u8;
+            let prefix: u8 = if prefix_arg != "" { lit(prefix_arg) as u8 } else { 0 };
+            let escape: u8 = if escape_arg != "" { lit(escape_arg) as u8 } else { 0 };
+            let opsize_init: TokenStream = if is_lit(opsize_arg) {
+                let v = lit(opsize_arg) as u32;
+                quote! { #v }
+            } else {
+                quote! { 32u32 }
+            };
+            prelude.push(quote! {
+                let mut __o = 0usize;
+                let mut __opsize: u32 = #opsize_init;
+                let mut __rex_r: u32 = 0;
+                let mut __rex_b: u32 = 0;
+                if #prefix != 0u8 {
+                    if __o >= bytes.len() || bytes[__o] != #prefix { return None; }
+                    __o += 1;
+                }
+                if __o < bytes.len() && (0x40..=0x4F).contains(&bytes[__o]) {
+                    let __rex = bytes[__o]; __o += 1;
+                    __rex_r = ((__rex >> 2) & 1) as u32;
+                    __rex_b = (__rex & 1) as u32;
+                    if (__rex & 0x08) != 0 { __opsize = 64; }
+                }
+                if #escape != 0u8 {
+                    if __o >= bytes.len() || bytes[__o] != #escape { return None; }
+                    __o += 1;
+                }
+                if __o >= bytes.len() || bytes[__o] != #opcode { return None; }
+                __o += 1;
+                if __o >= bytes.len() { return None; }
+                let __modrm = bytes[__o]; __o += 1;
+                let __mod = __modrm >> 6;
+                if __mod == 3 { return None; }
+                let mut __base: u64 = ((__modrm & 7) as u64) | (__rex_b << 3) as u64;
+                if (__modrm & 7) == 4 {
+                    // SIB：仅支持 index=100（无 index，MemRef 无法表达 index/scale）
+                    if __o >= bytes.len() { return None; }
+                    let __sib = bytes[__o]; __o += 1;
+                    if ((__sib >> 3) & 7) != 4 { return None; }
+                    __base = ((__sib & 7) as u64) | (__rex_b << 3) as u64;
+                }
+                let mut __disp: i32 = 0;
+                if __mod == 1 {
+                    if __o >= bytes.len() { return None; }
+                    __disp = (bytes[__o] as i8) as i32;
+                    __o += 1;
+                } else if __mod == 2 {
+                    if __o + 3 >= bytes.len() { return None; }
+                    __disp = i32::from_le_bytes([
+                        bytes[__o], bytes[__o + 1], bytes[__o + 2], bytes[__o + 3],
+                    ]);
+                    __o += 4;
+                }
+            });
+            field_exprs.insert(
+                reg_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | (__rex_r << 3) as u64 },
+            );
+            if is_memref {
+                // MemRef：base + offset（从 disp 恢复）+ width=0（类型宽度不在编码中）
+                field_exprs.insert(
+                    rm_arg.to_string(),
+                    quote! { crate::prelude::MemRef::new(__base as u32, __disp, 0) },
+                );
+            } else {
+                field_exprs.insert(rm_arg.to_string(), quote! { __base });
+            }
+            if !is_lit(opsize_arg) {
+                field_exprs.insert(opsize_arg.to_string(), quote! { __opsize as u64 });
+            }
         }
         // ── SSE 族：@sse_rr / @sse_rr_3a / @sse_rr_38 / @sse_rr_opsize /
         //    @sse_rr_imm8 / @sse_rr_w / @sse_ps_rr —— [prefix?] [REX?] 0F [3A|38] opcode ModRM [imm8]
