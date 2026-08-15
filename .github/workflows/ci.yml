@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v14-forge-ir-redesign]
   pull_request:
-    branches: [main]
+    branches: [main, v14-forge-ir-redesign]
 
 env:
   CARGO_TERM_COLOR: always
