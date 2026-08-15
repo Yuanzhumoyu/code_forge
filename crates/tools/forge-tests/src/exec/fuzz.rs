@@ -30,7 +30,7 @@ fn build_func(name: &str, build: impl Fn(&mut FunctionBuilder) -> Value) -> Func
     b.switch_to_block(entry);
     let ret_val = build(&mut b);
     b.ret(&[ret_val]);
-    b.finish()
+    b.finish().expect("build")
 }
 
 /// 验证 JIT 执行结果等于期望值。

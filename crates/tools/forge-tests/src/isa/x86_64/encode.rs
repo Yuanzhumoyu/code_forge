@@ -18,6 +18,7 @@ crate::encode_golden!(
 use code_forge::AllocResult;
 use code_forge::backend::arch::x86_64;
 use code_forge::backend::machine::encoder::TargetEncoder;
+use code_forge::ir::PhysReg;
 use code_forge::ir::RegClass;
 
 type Inst = x86_64::Inst;
@@ -31,7 +32,7 @@ fn encode(inst: &Inst) -> Result<Vec<u8>, code_forge::backend::EncodeError> {
 }
 
 fn r(n: u32) -> Reg {
-    <Reg as code_forge::ir::PhysReg>::from_index(n as u8, RegClass::Int)
+    <Reg as code_forge::ir::PhysReg>::from_index(n, RegClass::Int)
 }
 
 // ═══════════════════════════════════════════════════
@@ -433,4 +434,84 @@ fn test_encode_movabs_global() {
         .unwrap(),
         vec![0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0]
     );
+}
+
+// ═══════════════════════════════════════════════════
+// 多宽度寄存器索引映射（DSL 生成完整寄存器组后）
+// ═══════════════════════════════════════════════════
+
+/// x86_v10.toml 的 6 个寄存器组（gpr64/gpr32/gpr16/gpr8l/gpr8h/xmm）都应生成到 Reg 枚举，
+/// 且 to_index() 返回 x86 物理编码编号：
+/// - gpr64/gpr32/gpr16/gpr8l 同族不同宽度视图共享物理编号 0..15
+/// - gpr8h（高字节，无 REX 编码空间）→ 4..7
+/// - xmm → 16+n（分配器 VReg id 域与 GPR 不重叠；低 4 位即 XMM 编码编号）
+#[test]
+fn test_multi_width_reg_index_map() {
+    // 各宽度视图共享物理编号
+    assert_eq!(Reg::RAX.to_index(), 0);
+    assert_eq!(Reg::EAX.to_index(), 0);
+    assert_eq!(Reg::AX.to_index(), 0);
+    assert_eq!(Reg::AL.to_index(), 0);
+    assert_eq!(Reg::R15.to_index(), 15);
+    assert_eq!(Reg::R15D.to_index(), 15);
+    assert_eq!(Reg::R15W.to_index(), 15);
+    assert_eq!(Reg::R15B.to_index(), 15);
+    // gpr8h 高字节：物理编号 4..7
+    assert_eq!(Reg::AH.to_index(), 4);
+    assert_eq!(Reg::CH.to_index(), 5);
+    assert_eq!(Reg::DH.to_index(), 6);
+    assert_eq!(Reg::BH.to_index(), 7);
+    // xmm：16+n
+    assert_eq!(Reg::XMM0.to_index(), 16);
+    assert_eq!(Reg::XMM8.to_index(), 24);
+    assert_eq!(Reg::XMM15.to_index(), 31);
+    // class 判定：子寄存器属 Int，XMM 属 Float
+    assert_eq!(Reg::EAX.class(), RegClass::Int);
+    assert_eq!(Reg::AL.class(), RegClass::Int);
+    assert_eq!(Reg::AH.class(), RegClass::Int);
+    assert_eq!(Reg::XMM0.class(), RegClass::Float);
+    // from_index 主视图：GPR 返回 gpr64 变体，Float 返回 XMM 变体
+    assert_eq!(
+        <Reg as code_forge::ir::PhysReg>::from_index(0, RegClass::Int),
+        Reg::RAX
+    );
+    assert_eq!(
+        <Reg as code_forge::ir::PhysReg>::from_index(1, RegClass::Int),
+        Reg::RCX
+    );
+    assert_eq!(
+        <Reg as code_forge::ir::PhysReg>::from_index(15, RegClass::Int),
+        Reg::R15
+    );
+    assert_eq!(
+        <Reg as code_forge::ir::PhysReg>::from_index(0, RegClass::Float),
+        Reg::XMM0
+    );
+    assert_eq!(
+        <Reg as code_forge::ir::PhysReg>::from_index(15, RegClass::Float),
+        Reg::XMM15
+    );
+    // 布局顺序：全部 GPR 变体（含子寄存器）的判别值先于 XMM（fpr_offset 区间判定依据）
+    assert!((Reg::BH as u32) < (Reg::XMM0 as u32));
+    assert!((Reg::XMM15 as u32) > (Reg::XMM0 as u32));
+}
+
+/// 编码级验证：32 位/8 位视图寄存器与 64 位视图编码等价（编号相同，宽度由 opsize 驱动）。
+#[test]
+fn test_multi_width_reg_encodes_same_number() {
+    // MOV_R_RM（0x8B /r，dest 在 rm 字段）：opsize=32 无 REX → 8B ModRM(reg=src, rm=dest)
+    let e32 = encode(&Inst::MovRRm {
+        opsize: 32u8,
+        dest: Reg::EAX,
+        src: Reg::ECX,
+    })
+    .unwrap();
+    let e32b = encode(&Inst::MovRRm {
+        opsize: 32u8,
+        dest: Reg::RAX,
+        src: Reg::RCX,
+    })
+    .unwrap();
+    assert_eq!(e32, e32b, "EAX/RAX 同编号，32 位编码应一致");
+    assert_eq!(e32, vec![0x8B, 0xC1]);
 }

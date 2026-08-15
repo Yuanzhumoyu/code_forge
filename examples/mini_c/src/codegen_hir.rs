@@ -1052,7 +1052,7 @@ mod tests {
         builder.switch_to_block(entry);
         let v = builder.iconst_i32(42);
         builder.ret(&[v]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let mut module = Module::new();
         module.add_function(func);

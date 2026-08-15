@@ -301,7 +301,7 @@ pub fn build_min(op: Opcode) -> Function {
     };
     let ret_val = r;
     b.ret(&[ret_val]);
-    b.finish()
+    b.finish().expect("build")
 }
 
 /// 对单个 ISA 跑 75 ops 的 compile_raw 检查，返回 (op 名, 结果)。

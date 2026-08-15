@@ -1,6 +1,6 @@
 # forge-tests — 通用 ISA 测试框架
 
-`forge-tests` 为 code-forge 的 ISA 后端（内置 x86_64 / aarch64 / riscv64 / wasm32，
+`forge-tests` 为 code-forge 的 ISA 后端（内置 x86_64 / aarch64 / riscv64(wasm32 测试模块第三十三轮已移除)，
 以及**用户自定义指令集**如 minimal_sd）提供统一的测试框架：覆盖矩阵（compile-only）、
 编码断言（encode-golden）、反汇编断言（disasm）、执行测试（本机 / unicorn 跨架构模拟）、
 性质测试（确定性 / 恒等式 / 边界值），全部通过 Cargo features 按 ISA 与指令类型开关。
@@ -11,7 +11,7 @@
 
 | feature | 作用 |
 | --- | --- |
-| `isa-x86_64` / `isa-aarch64` / `isa-riscv64` | 打开对应 ISA 的测试模块（wasm32 始终启用，compile-only） |
+| `isa-x86_64` / `isa-aarch64` / `isa-riscv64` | 打开对应 ISA 的测试模块（wasm32 测试模块已移除——编译覆盖在 forge-codegen 内嵌测试） |
 | `test-int` / `test-float` / `test-io` / `test-control` | 指令类型分组（整数 / 浮点 / IO / 控制流），默认全开 |
 | `exec-unicorn` | 启用 vendored unicorn-engine 跨架构模拟执行（aarch64/riscv64） |
 | `nightly` | forge-rustc 后端集成测试（需 nightly 工具链 + `rustc-dev` 组件） |

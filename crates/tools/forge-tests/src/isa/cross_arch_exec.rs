@@ -39,7 +39,7 @@ mod unicorn_exec {
         b.switch_to_block(block);
         let v = build(&mut b, &p);
         b.ret(&[v]);
-        let func = b.finish();
+        let func = b.finish().expect("build");
         let compiled = FunctionCompiler::new(machine)
             .compile_raw(&func)
             .expect("compile");
@@ -59,7 +59,7 @@ mod unicorn_exec {
         b.create_block_here();
         let v = build(&mut b);
         b.ret(&[v]);
-        let func = b.finish();
+        let func = b.finish().expect("build");
         let compiled = FunctionCompiler::new(machine)
             .compile_raw(&func)
             .expect("compile");

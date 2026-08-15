@@ -18,7 +18,7 @@ pub fn build_func(name: &str, ret: TypeId, build: fn(&mut FunctionBuilder) -> Va
     b.create_block_here();
     let v = build(&mut b);
     b.ret(&[v]);
-    b.finish()
+    b.finish().expect("build")
 }
 
 /// 构建带参函数（build 接收参数 Value 切片，返回单个值）。
@@ -34,7 +34,7 @@ pub fn build_func_args(
     b.switch_to_block(block);
     let v = build(&mut b, &p);
     b.ret(&[v]);
-    b.finish()
+    b.finish().expect("build")
 }
 
 /// 用 x86_64 后端编译。
@@ -95,6 +95,39 @@ pub fn run_f64(name: &str, build: fn(&mut FunctionBuilder) -> Value) -> f64 {
     assert!(!compiled.code.is_empty(), "{name}: empty code");
     let mem = ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
     let f: extern "C" fn() -> f64 = unsafe { mem.get_fn(0).unwrap() };
+    f()
+}
+
+/// 本机执行：无参返回 f32（第四十五轮——jit.rs 转发用）。
+pub fn run_f32(name: &str, build: fn(&mut FunctionBuilder) -> Value) -> f32 {
+    let func = build_func(name, TypeId::F32, build);
+    let compiled = compile_x86_64(name, &func);
+    assert!(!compiled.code.is_empty(), "{name}: empty code");
+    let mem = ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
+    let f: extern "C" fn() -> f32 = unsafe { mem.get_fn(0).unwrap() };
+    f()
+}
+
+/// 本机执行：无参返回 i1（转 bool——jit.rs 转发用）。
+pub fn run_bool(name: &str, build: fn(&mut FunctionBuilder) -> Value) -> bool {
+    let func = build_func(name, TypeId::I8, build);
+    let compiled = compile_x86_64(name, &func);
+    assert!(!compiled.code.is_empty(), "{name}: empty code");
+    let mem = ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
+    let f: extern "C" fn() -> u8 = unsafe { mem.get_fn(0).unwrap() };
+    f() != 0
+}
+
+/// 本机执行：无参无返回值（构建块无 ret——jit.rs 转发用）。
+pub fn run_block(name: &str, build: fn(&mut FunctionBuilder)) -> i32 {
+    let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+    let mut b = FunctionBuilder::new(name, TypeContext::new(), sig);
+    build(&mut b);
+    let func = b.finish().expect("build");
+    let compiled = compile_x86_64(name, &func);
+    assert!(!compiled.code.is_empty(), "{name}: empty code");
+    let mem = ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
+    let f: extern "C" fn() -> i32 = unsafe { mem.get_fn(0).unwrap() };
     f()
 }
 

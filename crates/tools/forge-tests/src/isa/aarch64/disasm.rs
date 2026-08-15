@@ -7,7 +7,7 @@ use code_forge::backend::machine::target::TargetMachine as TargetMachineTrait;
 use code_forge::ir::RegClass;
 
 fn r(n: u32) -> Reg {
-    <Reg as code_forge::ir::PhysReg>::from_index(n as u8, RegClass::Int)
+    <Reg as code_forge::ir::PhysReg>::from_index(n, RegClass::Int)
 }
 
 fn disasm(inst: &Inst) -> String {

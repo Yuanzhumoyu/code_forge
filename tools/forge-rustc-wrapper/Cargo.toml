@@ -1,0 +1,8 @@
+[package]
+name = "forge-rustc-wrapper"
+version = "0.1.0"
+edition = "2024"
+description = "rustc wrapper for cargo integration with forge-rustc codegen backend"
+
+# 独立于主 workspace（不参与其成员/依赖解析）
+[workspace]

@@ -125,7 +125,7 @@ mod tests {
         let (_block, params) = b.create_block_here_with([(TypeId::I64, "a"), (TypeId::I64, "b")]);
         let s = b.iadd(params[0], params[1]);
         b.ret(&[s]);
-        let func = b.finish();
+        let func = b.finish().expect("build");
         FunctionCompiler::new(code_forge::backend::x86_64::TargetMachine::new())
             .compile_raw(&func)
             .expect("compile add")

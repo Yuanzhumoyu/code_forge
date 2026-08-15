@@ -40,7 +40,7 @@ macro_rules! backend_tests {
                 let func = {
                     let v = fb.iconst_i32(42);
                     fb.ret(&[v]);
-                    fb.finish()
+                    fb.finish().expect("build")
                 };
                 let compiler = code_forge::backend::FunctionCompiler::new(<$tm>::new());
                 let compiled = compiler
@@ -165,11 +165,11 @@ macro_rules! encode_golden_err {
                 for n in 0..64u32 {
                     rm.insert(
                         code_forge::prelude::VReg(n),
-                        code_forge::ir::PReg::new((n % 32) as u8, code_forge::ir::RegClass::Int),
+                        code_forge::ir::PReg::new((n % 32) as u32, code_forge::ir::RegClass::Int),
                     );
                     rm.insert(
                         code_forge::prelude::VReg(64 + n),
-                        code_forge::ir::PReg::new((n % 32) as u8, code_forge::ir::RegClass::Float),
+                        code_forge::ir::PReg::new((n % 32) as u32, code_forge::ir::RegClass::Float),
                     );
                 }
                 for inst in $cases {
@@ -331,10 +331,10 @@ pub fn run_x86_64_pipeline_tests() {
     let mut fb = FunctionBuilder::new("test", TypeContext::new(), sig);
     let (entry, _) = fb.create_entry_block();
     let func = {
-        let mut b = fb.build(entry);
-        let v = b.iconst_i32(42);
-        b.ret(&[v]);
-        fb.finish()
+        fb.switch_to_block(entry);
+        let v = fb.iconst_i32(42);
+        fb.ret(&[v]);
+        fb.finish().expect("build")
     };
     let compiler = FunctionCompiler::new(x86_64::TargetMachine::new());
     let compiled = compiler

@@ -18,7 +18,7 @@ fn encode(inst: &Inst) -> Result<Vec<u8>, code_forge::backend::EncodeError> {
 }
 
 fn r(n: u32) -> Reg {
-    <Reg as code_forge::ir::PhysReg>::from_index(n as u8, RegClass::Int)
+    <Reg as code_forge::ir::PhysReg>::from_index(n, RegClass::Int)
 }
 fn xr(n: u8) -> Reg {
     match n {

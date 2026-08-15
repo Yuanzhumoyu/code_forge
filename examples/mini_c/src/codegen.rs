@@ -165,7 +165,7 @@ pub fn codegen_function(
     );
 
     let ctx = module.types.clone();
-    let mut b = FunctionBuilder::new(&name, ctx, sig);
+    let mut b = FunctionBuilder::new(name.as_str(), ctx, sig);
 
     // Entry block with params
     let (entry_block, entry_params) = b.create_entry_block();
@@ -197,7 +197,7 @@ pub fn codegen_function(
         }
     } // cg dropped — borrow on b released
 
-    let func = b.finish();
+    let func = b.finish().expect("build");
     Ok(module.add_function(func))
 }
 

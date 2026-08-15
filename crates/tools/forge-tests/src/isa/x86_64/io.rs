@@ -54,14 +54,16 @@ fn io_alloca_store_load_compiles() {
     assert!(!compiled.code.is_empty(), "alloca function should compile");
 }
 
-/// 不同 offset 的 stack_addr 指向不同地址（offset 4 与 0 相差非零）。
+/// 不同 offset 的 stack_addr 指向不同地址（offset 相差 4 字节）。
+/// 用负偏移（rbp 下方局部槽区）：正偏移属 rbp 上方（返回地址/调用者区），
+/// 不参与本函数 locals 帧计算。
 #[test]
 fn io_stack_addr_distinct_offsets() {
     let r = run("io_stack_addr_distinct_offsets", |b| {
-        let a0 = b.stack_addr(0);
-        let a4 = b.stack_addr(4);
-        let diff = b.isub(a4, a0);
-        let zero = b.iconst_i32(0);
+        let a0 = b.stack_addr(-16);
+        let a4 = b.stack_addr(-12);
+        let diff = b.isub(a4, a0); // 指针差 = 4
+        let zero = b.iconst(0, TypeId::I64);
         let ne = b.icmp(code_forge::ir::IntCC::NotEqual, diff, zero);
         b.uextend(ne, TypeId::I32)
     });

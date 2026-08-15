@@ -135,7 +135,7 @@ fn run_test(build: fn(&mut FunctionBuilder)) -> Result<i64, String> {
     let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
     b.create_block_here();
     build(&mut b);
-    let func = b.finish();
+    let func = b.finish().expect("build");
     let compiled = FunctionCompiler::new(x86_64::TargetMachine::new())
         .compile_raw(&func)
         .map_err(|e| format!("{}", e))?;

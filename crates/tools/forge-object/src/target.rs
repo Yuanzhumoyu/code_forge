@@ -2,7 +2,7 @@
 //!
 //! 需要启用 `object-file` feature。
 
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use target_lexicon::Triple;
 
 /// 目标平台配置。
@@ -16,7 +16,7 @@ pub struct TargetConfig {
 
 impl TargetConfig {
     /// 获取宿主平台的目标配置。
-    pub fn host() -> Result<Self, CompileError> {
+    pub fn host() -> Result<Self, IrError> {
         let triple = Triple::host();
         Ok(Self { triple })
     }
@@ -27,10 +27,10 @@ impl TargetConfig {
     /// ```ignore
     /// let config = TargetConfig::from_triple("x86_64-unknown-linux-gnu")?;
     /// ```
-    pub fn from_triple(triple_str: &str) -> Result<Self, CompileError> {
-        let triple = triple_str.parse::<Triple>().map_err(|e| {
-            CompileError::Unsupported(format!("invalid triple '{triple_str}': {e}"))
-        })?;
+    pub fn from_triple(triple_str: &str) -> Result<Self, IrError> {
+        let triple = triple_str
+            .parse::<Triple>()
+            .map_err(|e| IrError::Unsupported(format!("invalid triple '{triple_str}': {e}")))?;
         Ok(Self { triple })
     }
 

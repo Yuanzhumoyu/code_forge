@@ -15,7 +15,8 @@
 //! ```
 
 use forge_codegen::{CompiledFunction, RelocKind};
-use forge_ir::CompileError;
+use forge_ir::ImmStr;
+use forge_ir::IrError;
 use object::write::{
     Object, Relocation, SectionId, StandardSegment, Symbol, SymbolId, SymbolSection,
 };
@@ -37,16 +38,16 @@ pub struct ObjectWriter<'a> {
     /// 目标架构。
     arch: Architecture,
     /// 已写入的函数名集合（防止重复符号）。
-    written_symbols: std::collections::HashSet<String>,
+    written_symbols: std::collections::HashSet<ImmStr>,
     /// 已声明的外部符号名 -> SymbolId 映射（避免重复创建 UNDEF 条目）。
-    declared_externs: std::collections::HashMap<String, SymbolId>,
+    declared_externs: std::collections::HashMap<ImmStr, SymbolId>,
 }
 
 impl<'a> ObjectWriter<'a> {
     /// 创建新的对象文件写入器。
     ///
     /// 根据目标三元组自动选择格式（ELF/PE/Mach-O）和架构。
-    pub fn new(config: &crate::target::TargetConfig) -> Result<Self, CompileError> {
+    pub fn new(config: &crate::target::TargetConfig) -> Result<Self, IrError> {
         let (format, arch, endianness) = map_triple(&config.triple)?;
 
         let mut obj = Object::new(format, arch, endianness);
@@ -82,40 +83,10 @@ impl<'a> ObjectWriter<'a> {
         })
     }
 
-    /// 创建一个不带默认 data/rodata section 的最小对象文件写入器。
-    ///
-    /// 适合只写入 text 内容的场景。
-    pub fn new_text_only(config: &crate::target::TargetConfig) -> Result<Self, CompileError> {
-        let (format, arch, endianness) = map_triple(&config.triple)?;
-
-        let mut obj = Object::new(format, arch, endianness);
-
-        let text_section = obj.add_section(
-            obj.segment_name(StandardSegment::Text).to_vec(),
-            b".text".to_vec(),
-            SectionKind::Text,
-        );
-
-        Ok(Self {
-            obj,
-            text_section,
-            data_section: None,
-            rodata_section: None,
-            format,
-            arch,
-            written_symbols: std::collections::HashSet::new(),
-            declared_externs: std::collections::HashMap::new(),
-        })
-    }
-
     /// 添加一个已编译函数到对象文件的 `.text` 段。
     ///
     /// 函数名将成为对象文件中的全局符号。
-    pub fn add_function(
-        &mut self,
-        name: &str,
-        func: &CompiledFunction,
-    ) -> Result<(), CompileError> {
+    pub fn add_function(&mut self, name: &str, func: &CompiledFunction) -> Result<(), IrError> {
         self.add_function_with_alignment(name, func, 1)
     }
 
@@ -125,9 +96,9 @@ impl<'a> ObjectWriter<'a> {
         name: &str,
         func: &CompiledFunction,
         alignment: u64,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         if self.written_symbols.contains(name) {
-            return Err(CompileError::Emit(format!(
+            return Err(IrError::Emit(format!(
                 "duplicate symbol: '{name}' already exists in this object file"
             )));
         }
@@ -139,9 +110,9 @@ impl<'a> ObjectWriter<'a> {
             size: func.code.len() as u64,
             kind: SymbolKind::Text,
             scope: SymbolScope::Linkage,
-            weak: false,
             section: SymbolSection::Section(self.text_section),
             flags: SymbolFlags::None,
+            weak: false,
         });
 
         // add_symbol_data 追加数据到 section，返回数据在 section 内的偏移量，
@@ -161,21 +132,14 @@ impl<'a> ObjectWriter<'a> {
             )?;
         }
 
-        self.written_symbols.insert(name.to_string());
+        self.written_symbols.insert(ImmStr::from(name));
         Ok(())
     }
 
     /// 添加只读数据到 `.rodata` 段。
-    pub fn add_rodata(
-        &mut self,
-        name: &str,
-        data: &[u8],
-        alignment: u64,
-    ) -> Result<(), CompileError> {
+    pub fn add_rodata(&mut self, name: &str, data: &[u8], alignment: u64) -> Result<(), IrError> {
         let section = self.rodata_section.ok_or_else(|| {
-            CompileError::Emit(
-                "rodata section not available (use new() not new_text_only())".into(),
-            )
+            IrError::Emit("rodata section not available (use new() not new_text_only())".into())
         })?;
 
         let sym_id = self.obj.add_symbol(Symbol {
@@ -184,25 +148,33 @@ impl<'a> ObjectWriter<'a> {
             size: data.len() as u64,
             kind: SymbolKind::Data,
             scope: SymbolScope::Linkage,
-            weak: false,
             section: SymbolSection::Section(section),
             flags: SymbolFlags::None,
+            weak: false,
         });
-
-        // add_symbol_data 自动更新符号的 value/size/section
-        self.obj.add_symbol_data(sym_id, section, data, alignment);
+        let offset = self.obj.add_symbol_data(sym_id, section, data, alignment);
+        self.written_symbols.insert(ImmStr::from(name));
+        let _ = offset;
         Ok(())
     }
 
     /// 添加可读写数据到 `.data` 段。
-    pub fn add_data(
+    pub fn add_data(&mut self, name: &str, data: &[u8], alignment: u64) -> Result<(), IrError> {
+        self.add_data_with_relocs(name, data, &[], alignment)
+    }
+
+    /// 添加可读写数据到 `.data` 段，并附加数据内符号引用重定位。
+    /// 注：vtable 指针表用 .data（而非 .rodata）——MSVC 链接器对 .rodata
+    /// 段的 ADDR64 重定位不应用（实测链接后全 0），.data 段正常。
+    pub fn add_data_with_relocs(
         &mut self,
         name: &str,
         data: &[u8],
+        relocs: &[(usize, RelocKind, &str, i64)],
         alignment: u64,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         let section = self.data_section.ok_or_else(|| {
-            CompileError::Emit("data section not available (use new() not new_text_only())".into())
+            IrError::Emit("data section not available (use new() not new_text_only())".into())
         })?;
 
         let sym_id = self.obj.add_symbol(Symbol {
@@ -216,27 +188,36 @@ impl<'a> ObjectWriter<'a> {
             flags: SymbolFlags::None,
         });
 
-        // add_symbol_data 自动更新符号的 value/size/section
-        self.obj.add_symbol_data(sym_id, section, data, alignment);
+        let actual_offset = self.obj.add_symbol_data(sym_id, section, data, alignment);
+
+        for (off, kind, sym, addend) in relocs {
+            self.add_relocation_to_section(
+                section,
+                actual_offset + *off as u64,
+                kind,
+                sym,
+                *addend,
+            )?;
+        }
         Ok(())
     }
 
     /// 将对象文件写入字节缓冲区。
-    pub fn write(&self, writer: impl std::io::Write) -> Result<(), CompileError> {
+    pub fn write(&self, writer: impl std::io::Write) -> Result<(), IrError> {
         self.obj
             .write_stream(writer)
-            .map_err(|e| CompileError::Emit(format!("failed to write object file: {e}")))
+            .map_err(|e| IrError::Emit(format!("failed to write object file: {e}")))
     }
 
     /// 将对象文件写入磁盘。
-    pub fn write_to_file(&self, path: impl AsRef<Path>) -> Result<(), CompileError> {
+    pub fn write_to_file(&self, path: impl AsRef<Path>) -> Result<(), IrError> {
         let mut file = std::fs::File::create(path.as_ref())
-            .map_err(|e| CompileError::Emit(format!("failed to create object file: {e}")))?;
+            .map_err(|e| IrError::Emit(format!("failed to create object file: {e}")))?;
         self.write(&mut file)
     }
 
     /// 写入到 Vec<u8>。
-    pub fn write_to_vec(&self) -> Result<Vec<u8>, CompileError> {
+    pub fn write_to_vec(&self) -> Result<Vec<u8>, IrError> {
         let mut buf = Vec::new();
         self.write(&mut buf)?;
         Ok(buf)
@@ -251,11 +232,23 @@ impl<'a> ObjectWriter<'a> {
         kind: &RelocKind,
         symbol_name: &str,
         addend: i64,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         // 确保目标符号已声明（外部符号）
         let target_sym = self.find_or_declare_symbol(symbol_name);
 
         let flags = map_reloc_flags(kind, self.format, self.arch);
+
+        // COFF REL32 的 addend 补偿：object crate 写 COFF 时对
+        // IMAGE_REL_AMD64_REL32 自动执行 addend += 4（coff_adjust_addend，
+        // 适配 MSVC 链接器 target = S + A - (P+4) 公式），若不反向补偿 -4，
+        // 链接后的 call 目标会指向符号起始 +4 字节（跳过函数 prologue）。
+        let addend = if self.format == BinaryFormat::Coff
+            && matches!(flags, RelocationFlags::Coff { typ } if typ == object::pe::IMAGE_REL_AMD64_REL32)
+        {
+            addend - 4
+        } else {
+            addend
+        };
 
         // 添加重定位到 section
         self.obj
@@ -268,12 +261,12 @@ impl<'a> ObjectWriter<'a> {
                     flags,
                 },
             )
-            .map_err(|e| CompileError::Emit(format!("failed to add relocation: {e}")))
+            .map_err(|e| IrError::Emit(format!("failed to add relocation: {e}")))
     }
 
     fn find_or_declare_symbol(&mut self, name: &str) -> SymbolId {
         use std::collections::hash_map::Entry;
-        match self.declared_externs.entry(name.to_string()) {
+        match self.declared_externs.entry(ImmStr::from(name)) {
             Entry::Occupied(entry) => *entry.get(), // 已存在，复用 SymbolId
             Entry::Vacant(entry) => {
                 let sym_id = self.obj.add_symbol(Symbol {
@@ -298,14 +291,14 @@ impl<'a> ObjectWriter<'a> {
 // ============================================================
 
 /// 将 target_lexicon::Triple 映射到 object crate 的类型。
-fn map_triple(triple: &Triple) -> Result<(BinaryFormat, Architecture, Endianness), CompileError> {
+fn map_triple(triple: &Triple) -> Result<(BinaryFormat, Architecture, Endianness), IrError> {
     let format = match triple.binary_format {
         target_lexicon::BinaryFormat::Elf => BinaryFormat::Elf,
         target_lexicon::BinaryFormat::Coff => BinaryFormat::Coff,
         target_lexicon::BinaryFormat::Macho => BinaryFormat::MachO,
         target_lexicon::BinaryFormat::Xcoff => BinaryFormat::Xcoff,
         _ => {
-            return Err(CompileError::Unsupported(format!(
+            return Err(IrError::Unsupported(format!(
                 "unsupported binary format in triple: {}",
                 triple
             )));
@@ -326,7 +319,7 @@ fn map_triple(triple: &Triple) -> Result<(BinaryFormat, Architecture, Endianness
 }
 
 /// 将 target_lexicon 的架构映射到 object crate。
-fn map_architecture(arch: &target_lexicon::Architecture) -> Result<Architecture, CompileError> {
+fn map_architecture(arch: &target_lexicon::Architecture) -> Result<Architecture, IrError> {
     match arch {
         target_lexicon::Architecture::X86_64 => Ok(Architecture::X86_64),
         target_lexicon::Architecture::Aarch64(_) => Ok(Architecture::Aarch64),
@@ -334,7 +327,7 @@ fn map_architecture(arch: &target_lexicon::Architecture) -> Result<Architecture,
         target_lexicon::Architecture::Riscv64(_) => Ok(Architecture::Riscv64),
         target_lexicon::Architecture::Riscv32(_) => Ok(Architecture::Riscv32),
         target_lexicon::Architecture::X86_32(_) => Ok(Architecture::I386),
-        _ => Err(CompileError::Unsupported(format!(
+        _ => Err(IrError::Unsupported(format!(
             "unsupported architecture: {:?}",
             arch
         ))),

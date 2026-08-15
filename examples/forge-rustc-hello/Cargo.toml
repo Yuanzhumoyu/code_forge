@@ -1,0 +1,13 @@
+[package]
+name = "forge-rustc-hello"
+version = "0.1.0"
+edition = "2024"
+
+# 独立于主 workspace（用 forge-rustc wrapper + build-std 构建，需 RUSTFLAGS）
+[workspace]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
