@@ -89,6 +89,51 @@ fn aarch64_mov_roundtrip() {
     );
 }
 
+// ── x86_64（Phase 2 变长原语：@modrm/@mov_imm64/@push_reg/@pop_reg，mod=11）──
+
+#[test]
+fn x86_modrm_roundtrip() {
+    roundtrip_asm(
+        "x86_movrr",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "movrr RAX, RBX",
+    );
+    // 高编号寄存器 → REX.R/REX.B 扩展位
+    roundtrip_asm(
+        "x86_movrr_r8",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "movrr R8, R9",
+    );
+}
+
+#[test]
+fn x86_mov_imm64_roundtrip() {
+    roundtrip_asm(
+        "x86_mov_imm",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "mov_imm RAX, 0x10",
+    );
+}
+
+#[test]
+fn x86_push_pop_roundtrip() {
+    roundtrip_asm(
+        "x86_push_r12",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "push R12", // REX.B 扩展
+    );
+    roundtrip_asm(
+        "x86_pop_rax",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "pop RAX",
+    );
+}
+
 // ── minimal_sd：编码不含寄存器字段 → 无可解码变体（负例）──
 
 #[test]

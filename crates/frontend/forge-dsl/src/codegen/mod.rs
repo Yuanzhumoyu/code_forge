@@ -875,10 +875,64 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
         }
     };
 
+    // 共享字段构造：field_exprs（字段名 → u64 值表达式）→ (绑定语句, Inst 构造表达式)。
+    // 非 Opsize 字段缺失 → None（该变体无法还原）。Opsize 未提供 → 0（不占编码位）。
+    let construct = |vn: &syn::Ident,
+                     field_map: &std::collections::BTreeMap<String, &FieldType>,
+                     field_exprs: &std::collections::BTreeMap<String, TokenStream>|
+     -> Option<(Vec<TokenStream>, TokenStream)> {
+        let mut field_binds: Vec<TokenStream> = Vec::new();
+        let mut variant_fields: Vec<TokenStream> = Vec::new();
+        for (fname, ftype) in field_map {
+            let fi = format_ident!("{fname}");
+            let Some(val_ts) = field_exprs.get(fname) else {
+                if matches!(ftype, FieldType::Opsize) {
+                    variant_fields.push(quote! { #fi: 0u8 });
+                }
+                continue;
+            };
+            let bind_ident = format_ident!("__dec_{fname}");
+            field_binds.push(quote! { let #bind_ident = #val_ts; });
+            let expr: TokenStream = match ftype {
+                FieldType::Ireg | FieldType::GprReg => quote! {
+                    <Reg as forge_ir::PhysReg>::from_index(#bind_ident as u32, __DEFAULT_GPR_CLASS)
+                },
+                FieldType::Freg | FieldType::XmmReg => {
+                    let e = fpr_expr(&bind_ident);
+                    e
+                }
+                FieldType::I8 => quote! { #bind_ident as i8 },
+                FieldType::I16 => quote! { #bind_ident as i16 },
+                FieldType::I32 => quote! { #bind_ident as i32 },
+                FieldType::I64 => quote! { #bind_ident as i64 },
+                FieldType::U8 => quote! { #bind_ident as u8 },
+                FieldType::U16 => quote! { #bind_ident as u16 },
+                FieldType::U32 => quote! { #bind_ident as u32 },
+                FieldType::U64 => quote! { #bind_ident as u64 },
+                FieldType::CondCode | FieldType::Opsize => quote! { #bind_ident as u8 },
+                _ => continue,
+            };
+            variant_fields.push(quote! { #fi: #expr });
+        }
+        // 非 Opsize 声明字段必须有值表达式，否则无法还原
+        if field_map
+            .iter()
+            .any(|(n, t)| *t != &FieldType::Opsize && !field_exprs.contains_key(n))
+        {
+            return None;
+        }
+        let inst_expr = if variant_fields.is_empty() {
+            quote! { Inst::#vn }
+        } else {
+            quote! { Inst::#vn { #(#variant_fields),* } }
+        };
+        Some((field_binds, inst_expr))
+    };
+
     for (inst_name, inst) in &model.inst {
         let Some(enc_str) = &inst.encoding else { continue };
 
-        let field_map: std::collections::HashMap<String, &FieldType> = inst
+        let field_map: std::collections::BTreeMap<String, &FieldType> = inst
             .fields
             .iter()
             .map(|f| (f.name.clone(), &f.field_type))
@@ -900,143 +954,113 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
             .map_err(|e| format!("decode: expand '{enc_str}': {e}"))?;
         let parsed = crate::bitstring::parse_encoding(&expanded)
             .map_err(|e| format!("decode: parse '{enc_str}': {e}"))?;
-        let ParsedEncoding::Fixed { width, fields, fixup } = parsed else {
-            continue;
-        };
-        if fixup.is_some() || fields.is_empty() {
-            continue;
-        }
-
-        let byte_len = (width as usize).div_ceil(8);
-        let read_expr: TokenStream = match width {
-            8 => quote! { bytes[0] as u64 },
-            16 => quote! { u16::from_le_bytes([bytes[0], bytes[1]]) as u64 },
-            32 => quote! { u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64 },
-            64 => quote! {
-                u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3],
-                                     bytes[4], bytes[5], bytes[6], bytes[7]]) as u64
-            },
-            _ => continue,
-        };
-
-        // 常量位段 guard + 字段位段提取（同名多段 OR 累加）
-        let mut guards: Vec<TokenStream> = Vec::new();
-        let mut extracts: std::collections::BTreeMap<String, Vec<TokenStream>> = Default::default();
-        for bf in &fields {
-            let offset = bf.offset as u64;
-            let shift = bf.shift.unwrap_or(0) as u64;
-            let mask_ts = if bf.width == 64 {
-                quote! { u64::MAX }
-            } else {
-                let m = (1u64 << bf.width) - 1;
-                quote! { #m }
-            };
-            let masked = quote! { ((__w >> #offset) & #mask_ts) };
-            match &bf.value {
-                BitFieldValue::Field(name) => {
-                    let contrib = if shift == 0 {
-                        masked
-                    } else {
-                        quote! { (#masked) << #shift }
-                    };
-                    extracts.entry(name.clone()).or_default().push(contrib);
-                }
-                BitFieldValue::Hex(v) => {
-                    let v64 = *v as u64;
-                    let expected = if shift == 0 {
-                        quote! { (#v64 & #mask_ts) }
-                    } else {
-                        quote! { ((#v64 >> #shift) & #mask_ts) }
-                    };
-                    guards.push(quote! { (#masked) == (#expected) });
-                }
-                BitFieldValue::Dec(v) => {
-                    let v64 = *v as u64;
-                    let expected = if shift == 0 {
-                        quote! { (#v64 & #mask_ts) }
-                    } else {
-                        quote! { ((#v64 >> #shift) & #mask_ts) }
-                    };
-                    guards.push(quote! { (#masked) == (#expected) });
-                }
-            }
-        }
-
-        // 每个声明字段（Opsize 除外——隐式宽度提示不占编码位）都必须出现在
-        // encoding 中，否则无法还原该变体
-        if inst
-            .fields
-            .iter()
-            .any(|f| f.field_type != FieldType::Opsize && !extracts.contains_key(&f.name))
-        {
-            continue;
-        }
-
         let vn = pascal_ident(inst_name);
-        let mut field_binds: Vec<TokenStream> = Vec::new();
-        let mut variant_fields: Vec<TokenStream> = Vec::new();
-        for f in &inst.fields {
-            let fi = format_ident!("{}", f.name);
-            let Some(parts) = extracts.get(&f.name) else {
-                // Opsize 未编码 → 默认 0（不影响定宽编码字节；与 encode 侧一致）
-                if matches!(field_map.get(&f.name), Some(FieldType::Opsize)) {
-                    variant_fields.push(quote! { #fi: 0u8 });
+        match parsed {
+            // ── Phase 1：定宽编码 ──
+            ParsedEncoding::Fixed { width, fields, fixup } => {
+                if fixup.is_some() || fields.is_empty() {
+                    continue;
                 }
-                continue;
-            };
-            let val_ts = if parts.len() == 1 {
-                parts[0].clone()
-            } else {
-                quote! { #(#parts)|* }
-            };
-            let bind_ident = format_ident!("__dec_{}", f.name);
-            field_binds.push(quote! { let #bind_ident = #val_ts; });
-            let expr: TokenStream = match field_map.get(&f.name) {
-                Some(FieldType::Ireg | FieldType::GprReg) => quote! {
-                    <Reg as forge_ir::PhysReg>::from_index(#bind_ident as u32, __DEFAULT_GPR_CLASS)
-                },
-                Some(FieldType::Freg | FieldType::XmmReg) => {
-                    let e = fpr_expr(&bind_ident);
-                    e
-                }
-                Some(FieldType::I8) => quote! { #bind_ident as i8 },
-                Some(FieldType::I16) => quote! { #bind_ident as i16 },
-                Some(FieldType::I32) => quote! { #bind_ident as i32 },
-                Some(FieldType::I64) => quote! { #bind_ident as i64 },
-                Some(FieldType::U8) => quote! { #bind_ident as u8 },
-                Some(FieldType::U16) => quote! { #bind_ident as u16 },
-                Some(FieldType::U32) => quote! { #bind_ident as u32 },
-                Some(FieldType::U64) => quote! { #bind_ident as u64 },
-                Some(FieldType::CondCode | FieldType::Opsize) => quote! { #bind_ident as u8 },
-                _ => continue,
-            };
-            variant_fields.push(quote! { #fi: #expr });
-        }
+                let byte_len = (width as usize).div_ceil(8);
+                let read_expr: TokenStream = match width {
+                    8 => quote! { bytes[0] as u64 },
+                    16 => quote! { u16::from_le_bytes([bytes[0], bytes[1]]) as u64 },
+                    32 => quote! { u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64 },
+                    64 => quote! {
+                        u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3],
+                                             bytes[4], bytes[5], bytes[6], bytes[7]]) as u64
+                    },
+                    _ => continue,
+                };
 
-        let guard_ts = if guards.is_empty() {
-            quote! { true }
-        } else {
-            quote! { #(#guards)&&* }
-        };
-        let inst_expr = if variant_fields.is_empty() {
-            quote! { Inst::#vn }
-        } else {
-            quote! { Inst::#vn { #(#variant_fields),* } }
-        };
-
-        arms.push(quote! {
-            if bytes.len() >= #byte_len {
-                let __w = #read_expr;
-                if #guard_ts {
-                    #(#field_binds)*
-                    return Ok((#inst_expr, #byte_len));
+                // 常量位段 guard + 字段位段提取（同名多段 OR 累加）
+                let mut guards: Vec<TokenStream> = Vec::new();
+                let mut extracts: std::collections::BTreeMap<String, Vec<TokenStream>> =
+                    Default::default();
+                for bf in &fields {
+                    let offset = bf.offset as u64;
+                    let shift = bf.shift.unwrap_or(0) as u64;
+                    let mask_ts = if bf.width == 64 {
+                        quote! { u64::MAX }
+                    } else {
+                        let m = (1u64 << bf.width) - 1;
+                        quote! { #m }
+                    };
+                    let masked = quote! { ((__w >> #offset) & #mask_ts) };
+                    match &bf.value {
+                        BitFieldValue::Field(name) => {
+                            let contrib = if shift == 0 {
+                                masked
+                            } else {
+                                quote! { (#masked) << #shift }
+                            };
+                            extracts.entry(name.clone()).or_default().push(contrib);
+                        }
+                        BitFieldValue::Hex(v) => {
+                            let v64 = *v as u64;
+                            let expected = if shift == 0 {
+                                quote! { (#v64 & #mask_ts) }
+                            } else {
+                                quote! { ((#v64 >> #shift) & #mask_ts) }
+                            };
+                            guards.push(quote! { (#masked) == (#expected) });
+                        }
+                        BitFieldValue::Dec(v) => {
+                            let v64 = *v as u64;
+                            let expected = if shift == 0 {
+                                quote! { (#v64 & #mask_ts) }
+                            } else {
+                                quote! { ((#v64 >> #shift) & #mask_ts) }
+                            };
+                            guards.push(quote! { (#masked) == (#expected) });
+                        }
+                    }
                 }
+                let mut field_exprs: std::collections::BTreeMap<String, TokenStream> =
+                    Default::default();
+                for (fname, parts) in &extracts {
+                    let val = if parts.len() == 1 {
+                        parts[0].clone()
+                    } else {
+                        quote! { #(#parts)|* }
+                    };
+                    field_exprs.insert(fname.clone(), val);
+                }
+                let Some((binds, inst_expr)) = construct(&vn, &field_map, &field_exprs) else {
+                    continue;
+                };
+                let guard_ts = if guards.is_empty() {
+                    quote! { true }
+                } else {
+                    quote! { #(#guards)&&* }
+                };
+                arms.push(quote! {
+                    if bytes.len() >= #byte_len {
+                        let __w = #read_expr;
+                        if #guard_ts {
+                            #(#binds)*
+                            return Ok((#inst_expr, #byte_len));
+                        }
+                    }
+                });
             }
-        });
+
+            // ── Phase 2：x86 变长原语子集（mod=11 寄存器形式）──
+            ParsedEncoding::Primitive { name, args } => {
+                let Some(arm) =
+                    gen_primitive_decode_arm(&name, &args, &field_map, &vn, &construct)?
+                else {
+                    continue;
+                };
+                arms.push(arm);
+            }
+
+            ParsedEncoding::Segmented { .. } => continue,
+        }
     }
 
     Ok(quote! {
-        /// DSL 生成的字节→指令解码器（Phase 1：定宽编码；变长 ISA 无解码臂）。
+        /// DSL 生成的字节→指令解码器（Phase 1 定宽 + Phase 2 变长原语子集）。
         pub struct Decoder;
 
         impl crate::machine::decoder::TargetDecoder for Decoder {
@@ -1053,6 +1077,241 @@ fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
             }
         }
     })
+}
+
+/// Phase 2：x86 变长原语解码臂（mod=11 寄存器形式子集）。
+///
+/// 支持 @modrm/@op_rm（REX + 可选 escape + opcode + ModRM(reg-reg)）、
+/// @push_reg/@pop_reg（REX.B + 50/58+r）、@mov_imm64（REX.W + B8+r + imm64）、
+/// @setcc（REX + 0F 90+cc + ModRM(reg=0)）。内存寻址（mod≠3）与 SIMD/VEX/
+/// leb128 等原语返回 None（Phase 2b 不支持）。生成的臂用闭包尝试解码，
+/// 不匹配即返回 None 落到下一个变体。
+fn gen_primitive_decode_arm<F>(
+    name: &str,
+    args: &[String],
+    field_map: &std::collections::BTreeMap<String, &crate::model::FieldType>,
+    vn: &syn::Ident,
+    construct: &F,
+) -> Result<Option<TokenStream>, String>
+where
+    F: Fn(
+        &syn::Ident,
+        &std::collections::BTreeMap<String, &crate::model::FieldType>,
+        &std::collections::BTreeMap<String, TokenStream>,
+    ) -> Option<(Vec<TokenStream>, TokenStream)>,
+{
+    let arg = |i: usize| args.get(i).map(|s| s.as_str()).unwrap_or("");
+    // TOML 数字参数多为 0x 十六进制字面量（opcode/escape/ext）——i64::parse 不认，
+    // 需显式按前缀解析
+    let parse_num = |s: &str| -> Option<i64> {
+        let t = s.trim();
+        if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+            i64::from_str_radix(h, 16).ok()
+        } else {
+            t.parse::<i64>().ok()
+        }
+    };
+    let is_lit = |s: &str| !s.is_empty() && parse_num(s).is_some();
+    let lit = |s: &str| -> i64 { parse_num(s).unwrap_or(0) };
+
+    let mut field_exprs: std::collections::BTreeMap<String, TokenStream> = Default::default();
+    let mut prelude: Vec<TokenStream> = Vec::new();
+
+    match name {
+        // @modrm opsize opcode reg rm [escape]
+        "modrm" => {
+            let opsize_arg = arg(0);
+            let opcode_arg = arg(1);
+            let reg_arg = arg(2);
+            let rm_arg = arg(3);
+            if !is_lit(opcode_arg)
+                || (!is_lit(opsize_arg) && !field_map.contains_key(opsize_arg))
+                || !field_map.contains_key(reg_arg)
+                || !field_map.contains_key(rm_arg)
+            {
+                return Ok(None);
+            }
+            let opcode = lit(opcode_arg) as u8;
+            let escape: u8 = if args.len() > 4 { lit(arg(4)) as u8 } else { 0 };
+            let opsize_init: TokenStream = if is_lit(opsize_arg) {
+                let v = lit(opsize_arg) as u32;
+                quote! { #v }
+            } else {
+                quote! { 32u32 }
+            };
+            prelude.push(quote! {
+                let mut __o = 0usize;
+                let mut __opsize: u32 = #opsize_init;
+                let mut __rex_r: u32 = 0;
+                let mut __rex_b: u32 = 0;
+                if __o < bytes.len() && bytes[__o] == 0x66 { __opsize = 16; __o += 1; }
+                if __o < bytes.len() && (0x40..=0x4F).contains(&bytes[__o]) {
+                    let __rex = bytes[__o]; __o += 1;
+                    __rex_r = ((__rex >> 2) & 1) as u32;
+                    __rex_b = (__rex & 1) as u32;
+                    if (__rex & 0x08) != 0 { __opsize = 64; }
+                }
+                if #escape != 0u8 {
+                    if __o >= bytes.len() || bytes[__o] != #escape { return None; }
+                    __o += 1;
+                }
+                if __o >= bytes.len() || bytes[__o] != #opcode { return None; }
+                __o += 1;
+                if __o >= bytes.len() { return None; }
+                let __modrm = bytes[__o]; __o += 1;
+                if (__modrm >> 6) != 3 { return None; }
+            });
+            field_exprs.insert(
+                reg_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | (__rex_r << 3) as u64 },
+            );
+            field_exprs.insert(
+                rm_arg.to_string(),
+                quote! { ((__modrm & 7) as u64) | (__rex_b << 3) as u64 },
+            );
+            if !is_lit(opsize_arg) {
+                field_exprs.insert(opsize_arg.to_string(), quote! { __opsize as u64 });
+            }
+        }
+        // @op_rm opsize opcode ext rm — reg 位置为常量 ext
+        "op_rm" => {
+            let opsize_arg = arg(0);
+            let opcode_arg = arg(1);
+            let ext_arg = arg(2);
+            let rm_arg = arg(3);
+            if !is_lit(opcode_arg)
+                || !is_lit(ext_arg)
+                || (!is_lit(opsize_arg) && !field_map.contains_key(opsize_arg))
+                || !field_map.contains_key(rm_arg)
+            {
+                return Ok(None);
+            }
+            let opcode = lit(opcode_arg) as u8;
+            let ext = lit(ext_arg) as u8;
+            let opsize_init: TokenStream = if is_lit(opsize_arg) {
+                let v = lit(opsize_arg) as u32;
+                quote! { #v }
+            } else {
+                quote! { 32u32 }
+            };
+            prelude.push(quote! {
+                let mut __o = 0usize;
+                let mut __opsize: u32 = #opsize_init;
+                let mut __rex_r: u32 = 0;
+                let mut __rex_b: u32 = 0;
+                if __o < bytes.len() && bytes[__o] == 0x66 { __opsize = 16; __o += 1; }
+                if __o < bytes.len() && (0x40..=0x4F).contains(&bytes[__o]) {
+                    let __rex = bytes[__o]; __o += 1;
+                    __rex_r = ((__rex >> 2) & 1) as u32;
+                    __rex_b = (__rex & 1) as u32;
+                    if (__rex & 0x08) != 0 { __opsize = 64; }
+                }
+                if __o >= bytes.len() || bytes[__o] != #opcode { return None; }
+                __o += 1;
+                if __o >= bytes.len() { return None; }
+                let __modrm = bytes[__o]; __o += 1;
+                if (__modrm >> 6) != 3 { return None; }
+                if ((__modrm >> 3) & 7) != #ext { return None; }
+            });
+            field_exprs.insert(
+                rm_arg.to_string(),
+                quote! { ((__modrm & 7) as u64) | (__rex_b << 3) as u64 },
+            );
+            if !is_lit(opsize_arg) {
+                field_exprs.insert(opsize_arg.to_string(), quote! { __opsize as u64 });
+            }
+        }
+        // @push_reg reg / @pop_reg reg
+        "push_reg" | "pop_reg" => {
+            let reg_arg = arg(0);
+            if !field_map.contains_key(reg_arg) {
+                return Ok(None);
+            }
+            let base: u8 = if name == "push_reg" { 0x50 } else { 0x58 };
+            prelude.push(quote! {
+                let mut __o = 0usize;
+                let mut __rex_b: u32 = 0;
+                if !bytes.is_empty() && bytes[0] == 0x41 { __rex_b = 1; __o = 1; }
+                if __o >= bytes.len() { return None; }
+                let __b = bytes[__o];
+                if (__b & 0xF8) != #base { return None; }
+                __o += 1;
+            });
+            field_exprs.insert(
+                reg_arg.to_string(),
+                quote! { ((__b & 7) as u64) | (__rex_b << 3) as u64 },
+            );
+        }
+        // @mov_imm64 reg imm — REX.W + B8+r + imm64
+        "mov_imm64" => {
+            let reg_arg = arg(0);
+            let imm_arg = arg(1);
+            if !field_map.contains_key(reg_arg) || !field_map.contains_key(imm_arg) {
+                return Ok(None);
+            }
+            prelude.push(quote! {
+                if bytes.len() < 10 { return None; }
+                let __rex = bytes[0];
+                if __rex != 0x48 && __rex != 0x49 { return None; }
+                let __b = bytes[1];
+                if (__b & 0xF8) != 0xB8 { return None; }
+                let __o = 10usize;
+            });
+            field_exprs.insert(
+                reg_arg.to_string(),
+                quote! { ((__b & 7) | ((__rex & 1) << 3)) as u64 },
+            );
+            field_exprs.insert(
+                imm_arg.to_string(),
+                quote! {
+                    u64::from_le_bytes([bytes[2], bytes[3], bytes[4], bytes[5],
+                                        bytes[6], bytes[7], bytes[8], bytes[9]])
+                },
+            );
+        }
+        // @setcc dest cond — [REX] 0F (0x90|cc) ModRM(reg=0, rm=dest)
+        "setcc" => {
+            let dest_arg = arg(0);
+            let cond_arg = arg(1);
+            if !field_map.contains_key(dest_arg) || !is_lit(cond_arg) {
+                return Ok(None);
+            }
+            let cc = lit(cond_arg) as u8;
+            prelude.push(quote! {
+                let mut __o = 0usize;
+                let mut __rex_b: u32 = 0;
+                if !bytes.is_empty() && bytes[0] == 0x41 { __rex_b = 1; __o = 1; }
+                else if !bytes.is_empty() && bytes[0] == 0x40 { __o = 1; }
+                if __o + 2 >= bytes.len() { return None; }
+                if bytes[__o] != 0x0F { return None; }
+                if bytes[__o + 1] != (0x90u8 | #cc) { return None; }
+                let __modrm = bytes[__o + 2];
+                if (__modrm >> 6) != 3 || ((__modrm >> 3) & 7) != 0 { return None; }
+                let __o = __o + 3;
+            });
+            field_exprs.insert(
+                dest_arg.to_string(),
+                quote! { ((__modrm & 7) as u64) | (__rex_b << 3) as u64 },
+            );
+        }
+        _ => return Ok(None),
+    }
+
+    let Some((binds, inst_expr)) = construct(vn, field_map, &field_exprs) else {
+        return Ok(None);
+    };
+    Ok(Some(quote! {
+        {
+            let __try = |bytes: &[u8]| -> Option<(Inst, usize)> {
+                #(#prelude)*
+                #(#binds)*
+                Some((#inst_expr, __o))
+            };
+            if let Some(__r) = __try(bytes) {
+                return Ok(__r);
+            }
+        }
+    }))
 }
 
 /// 生成序言/尾声 body — use `insts` asm sequence.
