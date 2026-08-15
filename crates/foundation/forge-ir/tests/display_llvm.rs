@@ -1682,9 +1682,12 @@ fn roundtrip_all_assembler_cases() {
     for f in &failures {
         eprintln!("ROUNDTRIP-FAIL: {f}");
     }
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("roundtrip_failures.txt");
     if !failures.is_empty() {
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("roundtrip_failures.txt");
-        let _ = std::fs::write(p, failures.join("\n"));
+        let _ = std::fs::write(&p, failures.join("\n"));
+    } else if p.exists() {
+        // 自愈：上次失败留下的记录在修复后删除，避免过期残留误导（P0）
+        let _ = std::fs::remove_file(&p);
     }
     assert!(
         failures.is_empty(),

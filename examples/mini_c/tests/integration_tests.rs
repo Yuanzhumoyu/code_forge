@@ -2,11 +2,10 @@
 //!
 //! Each test compiles and JIT-executes a Mini C program, asserting the return value.
 //!
-//! ## Known Limitation
-//! The x86 backend's `Branch` lowering (`test cond,cond; je false; jmp true`)
-//! incorrectly routes all branches to the first (then) block. As a result,
-//! `if` conditions that should be FALSE still execute the then-branch.
-//! Tests that depend on correct branch dispatching are marked `#[ignore]`.
+//! ## Note
+//! 历史上的 x86 后端 Branch lowering 缺陷（所有分支路由到 then 块）已在
+//! `b87f0b7`（mini_c break SEGV 根治）等提交修复；`test_if_not_taken` /
+//! `test_equal_false` 等 false 分支行为测试现在真实执行并通过，无需 `#[ignore]`。
 
 use mini_c::compiler::compile_and_run;
 

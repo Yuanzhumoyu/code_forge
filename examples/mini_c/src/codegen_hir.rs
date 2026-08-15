@@ -1164,6 +1164,42 @@ mod tests {
     }
 
     #[test]
+    fn test_hir_e2e_loop_bound_from_param() {
+        // 残余回归（commit cc28d46 记录 "loops got 1"）：循环边界来自函数参数，
+        // 而非字面量——覆盖参数入栈 + 循环条件读取栈槽的组合。
+        assert_eq!(
+            run_hir(
+                "int sum(int n) { int s = 0; for (int i = 0; i < n; i = i + 1) { s = s + i; } return s; } int main() { return sum(10); }"
+            ),
+            45
+        );
+        assert_eq!(
+            run_hir(
+                "int count(int n) { int c = 0; int i = 0; while (i < n) { c = c + 1; i = i + 1; } return c; } int main() { return count(7); }"
+            ),
+            7
+        );
+    }
+
+    #[test]
+    fn test_hir_e2e_multi_param_call_after_loop() {
+        // 残余回归（commit cc28d46 记录 "params SEGV"）：循环体之后的多参数
+        // 函数调用——覆盖循环退出后栈布局与参数槽的重叠场景。
+        assert_eq!(
+            run_hir(
+                "int f(int a, int b, int c) { return a + b + c; } int main() { int s = 0; for (int i = 0; i < 3; i = i + 1) { s = s + 1; } return f(s, 2, 3); }"
+            ),
+            8
+        );
+        assert_eq!(
+            run_hir(
+                "int f(int a, int b, int c, int d) { return a * 1000 + b * 100 + c * 10 + d; } int main() { int s = 0; while (s < 2) { s = s + 1; } return f(1, 2, s, 4); }"
+            ),
+            1224
+        );
+    }
+
+    #[test]
     fn test_hir_e2e_bitwise_and_shift() {
         assert_eq!(run_hir("int main() { return 6 & 3; }"), 2);
         assert_eq!(run_hir("int main() { return 5 | 2; }"), 7);
