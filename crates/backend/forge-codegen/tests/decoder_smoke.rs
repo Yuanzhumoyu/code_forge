@@ -171,6 +171,24 @@ fn x86_modrm_mem_roundtrip() {
     );
 }
 
+#[test]
+fn x86_vex_roundtrip() {
+    // @vex_rrvvv 无源（vvvv=1111）：vmovaps XMM0, XMM1
+    roundtrip_asm(
+        "x86_vmovaps",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "vmovaps XMM0, XMM1",
+    );
+    // @vex_rrvvv 有源（三操作数，vvvv=~src1）：vaddps XMM0, XMM1, XMM2
+    roundtrip_asm(
+        "x86_vaddps",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "vaddps XMM0, XMM1, XMM2",
+    );
+}
+
 // ── minimal_sd：编码不含寄存器字段 → 无可解码变体（负例）──
 
 #[test]

@@ -1564,6 +1564,82 @@ where
                 field_exprs.insert(oa.to_string(), quote! { __opsize as u64 });
             }
         }
+        // ── VEX 家族：@vex_rrvvv / @vex_rrvvv_avx2 / @vex_rrvvv_imm ——
+        //    C4 + VEX2 + VEX3 + opcode + ModRM [imm8]（AVX 三操作数）
+        "vex_rrvvv" | "vex_rrvvv_avx2" | "vex_rrvvv_imm" => {
+            // args: map pp w l opcode reg rm vv has_src [imm]
+            let (map_arg, pp_arg, w_arg, l_arg, opcode_arg, reg_arg, rm_arg, vv_arg, has_src_arg) =
+                (
+                    arg(0),
+                    arg(1),
+                    arg(2),
+                    arg(3),
+                    arg(4),
+                    arg(5),
+                    arg(6),
+                    arg(7),
+                    arg(8),
+                );
+            let imm_arg = if name == "vex_rrvvv_imm" { Some(arg(9)) } else { None };
+            let has_src = is_lit(has_src_arg) && lit(has_src_arg) != 0;
+            if !is_lit(map_arg)
+                || !is_lit(pp_arg)
+                || !is_lit(w_arg)
+                || !is_lit(l_arg)
+                || !is_lit(opcode_arg)
+                || !is_lit(has_src_arg)
+                || !field_map.contains_key(reg_arg)
+                || !field_map.contains_key(rm_arg)
+                || (!has_src && !is_lit(vv_arg))
+                || (has_src && !field_map.contains_key(vv_arg))
+                || (imm_arg.is_some() && !field_map.contains_key(imm_arg.unwrap()))
+            {
+                return Ok(None);
+            }
+            let map = lit(map_arg) as u8;
+            let pp = lit(pp_arg) as u8;
+            let w = lit(w_arg) as u8;
+            let l = lit(l_arg) as u8;
+            let opcode = lit(opcode_arg) as u8;
+            prelude.push(quote! {
+                if bytes.len() < 5 { return None; }
+                if bytes[0] != 0xC4 { return None; }
+                let __b2 = bytes[1];
+                let __b3 = bytes[2];
+                if (__b2 & 0x1F) != #map { return None; }
+                if (__b3 >> 7) != #w { return None; }
+                if ((__b3 >> 2) & 1) != #l { return None; }
+                if (__b3 & 3) != #pp { return None; }
+                if bytes[3] != #opcode { return None; }
+                let __modrm = bytes[4];
+                if (__modrm >> 6) != 3 { return None; }
+                // VEX R/B 反相：R=0 ⟺ reg 位3、B=0 ⟺ rm 位3
+                let __rex_r: u32 = ((__b2 >> 7) & 1) as u32;
+                let __rex_b: u32 = ((__b2 >> 5) & 1) as u32;
+                let __vvvv = (__b3 >> 3) & 0xF;
+                let __vv = ((!__vvvv & 0x0F) as u64);
+                let __o = 5usize;
+            });
+            field_exprs.insert(
+                reg_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | ((1 - __rex_r as u64) << 3) },
+            );
+            field_exprs.insert(
+                rm_arg.to_string(),
+                quote! { ((__modrm & 7) as u64) | ((1 - __rex_b as u64) << 3) },
+            );
+            if has_src {
+                field_exprs.insert(vv_arg.to_string(), quote! { __vv });
+            }
+            if let Some(ia) = imm_arg {
+                prelude.push(quote! {
+                    if bytes.len() < 6 { return None; }
+                    let __imm = bytes[5] as u64;
+                    let __o = 6usize;
+                });
+                field_exprs.insert(ia.to_string(), quote! { __imm });
+            }
+        }
         _ => return Ok(None),
     }
 
