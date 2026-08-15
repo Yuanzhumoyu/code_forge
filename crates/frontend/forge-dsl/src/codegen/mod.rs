@@ -1640,6 +1640,117 @@ where
                 field_exprs.insert(ia.to_string(), quote! { __imm });
             }
         }
+        // @lea_sib dest base index scale disp — REX.W + 8D + ModRM/SIB + disp
+        "lea_sib" => {
+            let dest_arg = arg(0);
+            let base_arg = arg(1);
+            let index_arg = arg(2);
+            let scale_arg = arg(3);
+            let disp_arg = arg(4);
+            if !field_map.contains_key(dest_arg)
+                || !field_map.contains_key(base_arg)
+                || !field_map.contains_key(index_arg)
+                || !field_map.contains_key(scale_arg)
+                || !field_map.contains_key(disp_arg)
+            {
+                return Ok(None);
+            }
+            prelude.push(quote! {
+                if bytes.len() < 4 { return None; }
+                let __rex = bytes[0];
+                if (__rex & 0xF8) != 0x48 { return None; } // REX.W 强制
+                let __rex_r: u32 = ((__rex >> 2) & 1) as u32;
+                let __rex_x: u32 = ((__rex >> 1) & 1) as u32;
+                let __rex_b: u32 = (__rex & 1) as u32;
+                if bytes[1] != 0x8D { return None; }
+                let __modrm = bytes[2];
+                let mut __o = 3usize;
+                let __mod = __modrm >> 6;
+                if __mod == 3 { return None; }
+                let __rm = __modrm & 7;
+                let mut __base: u64 = (__rm as u64) | (__rex_b << 3) as u64;
+                let mut __index: u64 = 4u64 | (__rex_x << 3) as u64; // RSP 哨兵（无 index）
+                let mut __scale: u64 = 1;
+                if __rm == 4 {
+                    if __o >= bytes.len() { return None; }
+                    let __sib = bytes[__o]; __o += 1;
+                    __scale = 1u64 << ((__sib >> 6) & 3);
+                    __index = (((__sib >> 3) & 7) as u64) | (__rex_x << 3) as u64;
+                    __base = ((__sib & 7) as u64) | (__rex_b << 3) as u64;
+                }
+                let mut __disp: i32 = 0;
+                if __mod == 1 {
+                    if __o >= bytes.len() { return None; }
+                    __disp = (bytes[__o] as i8) as i32;
+                    __o += 1;
+                } else if __mod == 2 {
+                    if __o + 3 >= bytes.len() { return None; }
+                    __disp = i32::from_le_bytes([
+                        bytes[__o], bytes[__o + 1], bytes[__o + 2], bytes[__o + 3],
+                    ]);
+                    __o += 4;
+                }
+            });
+            field_exprs.insert(
+                dest_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | (__rex_r << 3) as u64 },
+            );
+            field_exprs.insert(base_arg.to_string(), quote! { __base });
+            field_exprs.insert(index_arg.to_string(), quote! { __index });
+            field_exprs.insert(scale_arg.to_string(), quote! { __scale });
+            field_exprs.insert(disp_arg.to_string(), quote! { __disp as u64 });
+        }
+        // @lea_rbp_disp dest base disp — REX.W + 8D + ModRM(mod=1|2) + disp
+        "lea_rbp_disp" => {
+            let dest_arg = arg(0);
+            let base_arg = arg(1);
+            let disp_arg = arg(2);
+            let base_is_lit = is_lit(base_arg);
+            if !field_map.contains_key(dest_arg)
+                || (!base_is_lit && !field_map.contains_key(base_arg))
+                || !field_map.contains_key(disp_arg)
+            {
+                return Ok(None);
+            }
+            let base_guard: TokenStream = if base_is_lit {
+                let b = lit(base_arg) as u8;
+                quote! { if (__modrm & 7) != #b { return None; } }
+            } else {
+                quote! {}
+            };
+            prelude.push(quote! {
+                if bytes.len() < 4 { return None; }
+                let __rex = bytes[0];
+                if (__rex & 0xF8) != 0x48 { return None; }
+                let __rex_r: u32 = ((__rex >> 2) & 1) as u32;
+                if bytes[1] != 0x8D { return None; }
+                let __modrm = bytes[2];
+                let __mod = __modrm >> 6;
+                if __mod != 1 && __mod != 2 { return None; }
+                #base_guard
+                let __o = 3usize;
+                let (__disp, __o) = if __mod == 1 {
+                    if __o >= bytes.len() { return None; }
+                    ((bytes[__o] as i8) as i32, __o + 1)
+                } else {
+                    if __o + 3 >= bytes.len() { return None; }
+                    (
+                        i32::from_le_bytes([
+                            bytes[__o], bytes[__o + 1], bytes[__o + 2], bytes[__o + 3],
+                        ]),
+                        __o + 4,
+                    )
+                };
+            });
+            field_exprs.insert(
+                dest_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | (__rex_r << 3) as u64 },
+            );
+            if !base_is_lit {
+                field_exprs.insert(base_arg.to_string(), quote! { (__modrm & 7) as u64 });
+            }
+            field_exprs.insert(disp_arg.to_string(), quote! { __disp as u64 });
+        }
         _ => return Ok(None),
     }
 

@@ -189,6 +189,24 @@ fn x86_vex_roundtrip() {
     );
 }
 
+#[test]
+fn x86_lea_roundtrip() {
+    // @lea_sib：REX.W + 8D + SIB + disp——[RBX+RCX*4+8]
+    roundtrip_asm(
+        "x86_lea_sib",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "lea RAX, [RBX+RCX*4+8]",
+    );
+    // @lea_rbp_disp：REX.W + 8D + ModRM(base=5) + disp8——[RBP+8]（栈帧地址）
+    roundtrip_asm(
+        "x86_lea_rbp",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "lea_off RAX, [RBP+8]",
+    );
+}
+
 // ── minimal_sd：编码不含寄存器字段 → 无可解码变体（负例）──
 
 #[test]
