@@ -153,6 +153,9 @@ pub fn generate(model: &IsaModel) -> Result<TokenStream, String> {
     // v19: Componentized TargetMachine + trait impls
     let v19_components = components::gen_v19_components(model);
 
+    // P2: DSL 生成字节→指令解码器（Phase 1 定宽编码）
+    let decoder = gen_decoder(model)?;
+
     // ISA 默认值类（元数据驱动）：lowering 中 alloc_xreg/from_index 的默认
     // 目标类。DSL 生成代码不再硬编码 RegClass::GPR64/FPR64——非 64 位主类
     // 的 ISA（如 32 位寄存器组的 wasm32）按声明的宽度推导。
@@ -175,6 +178,8 @@ pub fn generate(model: &IsaModel) -> Result<TokenStream, String> {
         #lower_func
         #lower_term_func
         #lower_pattern_func
+        // ── 字节→指令解码器（P2 DSL 生成；Phase 1 定宽编码）──
+        #decoder
         // ── v19 componentized API ──
         #v19_components
     };
@@ -827,6 +832,225 @@ fn gen_emit_func(model: &IsaModel) -> Result<TokenStream, String> {
             let frame_size = fs;
             #epilogue_body
             Ok(())
+        }
+    })
+}
+
+/// 生成字节→指令解码器（P2：DSL 生成 TargetDecoder，字节→Inst 反解）。
+///
+/// Phase 1：仅支持 `ParsedEncoding::Fixed` 且无 fixup、字段全部可逆（无
+/// BlockTarget/MemRef/F32/F64——分支/内存/浮点立即数 Phase 1 不还原）的变体。
+/// 定宽 ISA（riscv64/aarch64/minimal_sd）获得完整解码臂；x86 变长 @modrm、
+/// wasm32 @leb128 等 Primitive/Segmented 编码 Phase 2 支持——不生成解码臂，
+/// 走 unknown 错误。编码语义镜像 emit 侧：`word |= ((value >> shift) & mask) << offset`，
+/// 解码 = 常量位段 guard + 字段位段提取（同名多段 OR 累加）。
+fn gen_decoder(model: &IsaModel) -> Result<TokenStream, String> {
+    use crate::bitstring::{BitFieldValue, ParsedEncoding};
+    use crate::model::FieldType;
+
+    let mut arms: Vec<TokenStream> = Vec::new();
+
+    // FPR 解码表：镜像 gen_reg_enum 的 to_index（硬编码 16+i——与 x86 VReg 域
+    // 约定一致；from_index 用 fpr_offset+i 对非 16 GPR 的 ISA 无法逆映射，解码
+    // 不依赖它）。GPR 字段直接 from_index（to_index(Xn)=n 可逆）。
+    let fpr_variants: Vec<String> = match model.reg.get("xmm").or_else(|| model.reg.get("float")) {
+        Some(g) => group_variants(g).into_iter().map(|v| v.to_string()).collect(),
+        None => Vec::new(),
+    };
+    let fpr_match_arms: Vec<TokenStream> = fpr_variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let idx = 16u64 + i as u64;
+            let ident = format_ident!("{v}");
+            quote! { #idx => Reg::#ident }
+        })
+        .collect();
+    let fpr_expr = |bind_ident: &proc_macro2::Ident| {
+        quote! {
+            match #bind_ident {
+                #(#fpr_match_arms,)*
+                _ => <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS),
+            }
+        }
+    };
+
+    for (inst_name, inst) in &model.inst {
+        let Some(enc_str) = &inst.encoding else { continue };
+
+        let field_map: std::collections::HashMap<String, &FieldType> = inst
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), &f.field_type))
+            .collect();
+        // 不可逆解码的字段类型 → 跳过该变体
+        if field_map.values().any(|ft| {
+            matches!(
+                ft,
+                FieldType::BlockTarget
+                    | FieldType::MemRef
+                    | FieldType::F32
+                    | FieldType::F64
+            )
+        }) {
+            continue;
+        }
+
+        let expanded = crate::bitstring::expand_encoding(enc_str, model)
+            .map_err(|e| format!("decode: expand '{enc_str}': {e}"))?;
+        let parsed = crate::bitstring::parse_encoding(&expanded)
+            .map_err(|e| format!("decode: parse '{enc_str}': {e}"))?;
+        let ParsedEncoding::Fixed { width, fields, fixup } = parsed else {
+            continue;
+        };
+        if fixup.is_some() || fields.is_empty() {
+            continue;
+        }
+
+        let byte_len = (width as usize).div_ceil(8);
+        let read_expr: TokenStream = match width {
+            8 => quote! { bytes[0] as u64 },
+            16 => quote! { u16::from_le_bytes([bytes[0], bytes[1]]) as u64 },
+            32 => quote! { u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64 },
+            64 => quote! {
+                u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3],
+                                     bytes[4], bytes[5], bytes[6], bytes[7]]) as u64
+            },
+            _ => continue,
+        };
+
+        // 常量位段 guard + 字段位段提取（同名多段 OR 累加）
+        let mut guards: Vec<TokenStream> = Vec::new();
+        let mut extracts: std::collections::BTreeMap<String, Vec<TokenStream>> = Default::default();
+        for bf in &fields {
+            let offset = bf.offset as u64;
+            let shift = bf.shift.unwrap_or(0) as u64;
+            let mask_ts = if bf.width == 64 {
+                quote! { u64::MAX }
+            } else {
+                let m = (1u64 << bf.width) - 1;
+                quote! { #m }
+            };
+            let masked = quote! { ((__w >> #offset) & #mask_ts) };
+            match &bf.value {
+                BitFieldValue::Field(name) => {
+                    let contrib = if shift == 0 {
+                        masked
+                    } else {
+                        quote! { (#masked) << #shift }
+                    };
+                    extracts.entry(name.clone()).or_default().push(contrib);
+                }
+                BitFieldValue::Hex(v) => {
+                    let v64 = *v as u64;
+                    let expected = if shift == 0 {
+                        quote! { (#v64 & #mask_ts) }
+                    } else {
+                        quote! { ((#v64 >> #shift) & #mask_ts) }
+                    };
+                    guards.push(quote! { (#masked) == (#expected) });
+                }
+                BitFieldValue::Dec(v) => {
+                    let v64 = *v as u64;
+                    let expected = if shift == 0 {
+                        quote! { (#v64 & #mask_ts) }
+                    } else {
+                        quote! { ((#v64 >> #shift) & #mask_ts) }
+                    };
+                    guards.push(quote! { (#masked) == (#expected) });
+                }
+            }
+        }
+
+        // 每个声明字段（Opsize 除外——隐式宽度提示不占编码位）都必须出现在
+        // encoding 中，否则无法还原该变体
+        if inst
+            .fields
+            .iter()
+            .any(|f| f.field_type != FieldType::Opsize && !extracts.contains_key(&f.name))
+        {
+            continue;
+        }
+
+        let vn = pascal_ident(inst_name);
+        let mut field_binds: Vec<TokenStream> = Vec::new();
+        let mut variant_fields: Vec<TokenStream> = Vec::new();
+        for f in &inst.fields {
+            let fi = format_ident!("{}", f.name);
+            let Some(parts) = extracts.get(&f.name) else {
+                // Opsize 未编码 → 默认 0（不影响定宽编码字节；与 encode 侧一致）
+                if matches!(field_map.get(&f.name), Some(FieldType::Opsize)) {
+                    variant_fields.push(quote! { #fi: 0u8 });
+                }
+                continue;
+            };
+            let val_ts = if parts.len() == 1 {
+                parts[0].clone()
+            } else {
+                quote! { #(#parts)|* }
+            };
+            let bind_ident = format_ident!("__dec_{}", f.name);
+            field_binds.push(quote! { let #bind_ident = #val_ts; });
+            let expr: TokenStream = match field_map.get(&f.name) {
+                Some(FieldType::Ireg | FieldType::GprReg) => quote! {
+                    <Reg as forge_ir::PhysReg>::from_index(#bind_ident as u32, __DEFAULT_GPR_CLASS)
+                },
+                Some(FieldType::Freg | FieldType::XmmReg) => {
+                    let e = fpr_expr(&bind_ident);
+                    e
+                }
+                Some(FieldType::I8) => quote! { #bind_ident as i8 },
+                Some(FieldType::I16) => quote! { #bind_ident as i16 },
+                Some(FieldType::I32) => quote! { #bind_ident as i32 },
+                Some(FieldType::I64) => quote! { #bind_ident as i64 },
+                Some(FieldType::U8) => quote! { #bind_ident as u8 },
+                Some(FieldType::U16) => quote! { #bind_ident as u16 },
+                Some(FieldType::U32) => quote! { #bind_ident as u32 },
+                Some(FieldType::U64) => quote! { #bind_ident as u64 },
+                Some(FieldType::CondCode | FieldType::Opsize) => quote! { #bind_ident as u8 },
+                _ => continue,
+            };
+            variant_fields.push(quote! { #fi: #expr });
+        }
+
+        let guard_ts = if guards.is_empty() {
+            quote! { true }
+        } else {
+            quote! { #(#guards)&&* }
+        };
+        let inst_expr = if variant_fields.is_empty() {
+            quote! { Inst::#vn }
+        } else {
+            quote! { Inst::#vn { #(#variant_fields),* } }
+        };
+
+        arms.push(quote! {
+            if bytes.len() >= #byte_len {
+                let __w = #read_expr;
+                if #guard_ts {
+                    #(#field_binds)*
+                    return Ok((#inst_expr, #byte_len));
+                }
+            }
+        });
+    }
+
+    Ok(quote! {
+        /// DSL 生成的字节→指令解码器（Phase 1：定宽编码；变长 ISA 无解码臂）。
+        pub struct Decoder;
+
+        impl crate::machine::decoder::TargetDecoder for Decoder {
+            type Inst = Inst;
+
+            fn decode(
+                &self,
+                bytes: &[u8],
+            ) -> Result<(Inst, usize), crate::machine::decoder::DecodeError> {
+                #(#arms)*
+                Err(crate::machine::decoder::DecodeError::Other(
+                    "no matching instruction".to_string(),
+                ))
+            }
         }
     })
 }

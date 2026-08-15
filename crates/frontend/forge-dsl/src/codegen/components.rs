@@ -996,6 +996,7 @@ fn gen_target_machine_struct(model: &IsaModel) -> TokenStream {
             frame_lowering: std::sync::Arc<dyn crate::machine::frame::TargetFrameLowering<Inst = Inst>>,
             disassembler: std::sync::Arc<dyn crate::machine::disasm::TargetDisassembler<Inst = Inst>>,
             assembler: std::sync::Arc<dyn crate::machine::assembler::TargetAssembler<Inst = Inst>>,
+            decoder: std::sync::Arc<dyn crate::machine::decoder::TargetDecoder<Inst = Inst>>,
         }
 
         impl TargetMachine {
@@ -1009,6 +1010,7 @@ fn gen_target_machine_struct(model: &IsaModel) -> TokenStream {
                     frame_lowering: std::sync::Arc::new(FrameLowering),
                     disassembler: std::sync::Arc::new(Disassembler),
                     assembler: std::sync::Arc::new(Assembler),
+                    decoder: std::sync::Arc::new(Decoder),
                 }
             }
 
@@ -1030,6 +1032,7 @@ fn gen_target_machine_struct(model: &IsaModel) -> TokenStream {
             fn frame_lowering(&self) -> &std::sync::Arc<dyn crate::machine::frame::TargetFrameLowering<Inst = Self::Inst>> { &self.frame_lowering }
             fn disassembler(&self) -> Option<&std::sync::Arc<dyn crate::machine::disasm::TargetDisassembler<Inst = Self::Inst>>> { Some(&self.disassembler) }
             fn assembler(&self) -> Option<&std::sync::Arc<dyn crate::machine::assembler::TargetAssembler<Inst = Self::Inst>>> { Some(&self.assembler) }
+            fn decoder(&self) -> Option<&std::sync::Arc<dyn crate::machine::decoder::TargetDecoder<Inst = Self::Inst>>> { Some(&self.decoder) }
 
             #pattern_matcher_fn
         }
