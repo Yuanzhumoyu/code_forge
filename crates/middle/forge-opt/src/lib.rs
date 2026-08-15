@@ -185,6 +185,13 @@ impl PassManager {
     /// function table. Use [`for_level_with_table`] to provide a pre-built
     /// function table for cross-function optimization.
     pub fn for_level(level: OptimizationLevel) -> Self {
+        // 空函数表时 Inline/TailCall 实际不生效（静默 no-op）——显式告警（P1）
+        if level >= OptimizationLevel::O2 {
+            eprintln!(
+                "forge-opt: for_level({level:?}) 使用空函数表——Inline/TailCall IPA pass 将是 no-op；\
+                 跨函数优化请用 for_level_with_table"
+            );
+        }
         Self::for_level_with_table(level, std::collections::HashMap::new())
     }
 

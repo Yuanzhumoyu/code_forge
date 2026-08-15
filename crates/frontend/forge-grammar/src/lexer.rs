@@ -319,7 +319,9 @@ impl SimpleRegex {
     fn compile(pattern: &str) -> Self {
         let mut parser = RegexParser::new(pattern);
         let result = parser.parse_alt();
-        result.unwrap_or(SimpleRegex::Char('?')) // fallback
+        // 曾静默退化为匹配字面 '?'（InvalidRegex 死变体从未被构造，审计 P3）——
+        // 非法 token 正则必须在文法加载期暴露，否则产生静默错匹配
+        result.unwrap_or_else(|| panic!("invalid regex pattern `{pattern}` (RegexParser 解析失败)"))
     }
 
     /// Try to match at the start of input. Returns Some(len) if matched.
