@@ -694,3 +694,82 @@ Implemented in the ISA-gap pass:
 RAX/X0/X10），替代 WSL/QEMU 路径。构建前提：Windows 需 libclang（LIBCLANG_PATH）
 
 - cmake（unicorn-engine-sys 编译 C 源码）；wasm32 不在本框架范围（用户确认）。
+
+---
+
+## 性能优化记录（2026-08，compile_bench 驱动）
+
+基于 `benches/compile_bench.rs` 基准热点，对 codegen/regalloc 链、优化 pass 层、
+IR 构建与解析公共热点做了一轮优化。方法：先跑全量基准存 `--save-baseline main`，
+每阶段改完后用 `--baseline main` 对比（criterion change，p<0.05 视为显著）。
+
+### 优化内容
+
+| 模块 | 改动 |
+| --- | --- |
+| regalloc | `reg_owner` HashMap 全表扫描 → 按物理寄存器编号索引数组（O(1) 冲突检测）；`active` Vec retain+push → HashMap（O(1) 插入/移除）；process_block 消除 4 处每指令克隆（slot/clobbers/inst_uses/二次 clone） |
+| liverange | 阶段 0（循环检测）与阶段 2（CFG 构建）重复扫描合并为一遍；跨块区间扩展 O(V×B) → 按块 Σ live_out |
+| emission | `emit_code` 改 `&mut self`，用块引用替代整 VCode clone；emit 闭包去 self 捕获（emit_inst 系列改静态方法）；每指令 slot 借用化 |
+| compiler | `func.clone()` 条件化——仅 pattern isel 启用的 ISA 才克隆整个 Function（x86_64 零克隆） |
+| pass 层 | sccp worklist 加 in-queue 去重 + 借用替代克隆；copy_prop 单轮收敛（链式 Copy 已解析）；改 CFG 的 pass（dead_code/jump_thread/const_fold）调用 `analysis_mut().invalidate()` 失效分析缓存 |
+| IR 构建 | builder `emit` 每指令 `env::var_os("FORGE_TRACE_IR")` → OnceLock 缓存；`ops.clone()` 双克隆 → 单次拷贝；dfg Instruction 构造 `results.clone()` → move |
+| IR 解析 | semantics `value_map`/`block_map` String key → 借用 `&str`（消除每指令 String 克隆）；grammar 5 处右递归列表（ParamList/TypeOps/GepIdxList/CallArgList/StructList）O(n²) reducer → 左递归累积 |
+
+### 基准结果（criterion change vs main baseline，中位数）
+
+| 基准组 | 变化范围 | 代表项 |
+| --- | --- | --- |
+| ir_build | **-8.8% ~ -46.8%** | many_ops 20.4→11.5µs（-44.7%）、mem -46.8%、float -43.4%、big_loop -44.7%、spill_pressure -39.7% |
+| ir_parse | **-11.4% ~ -24.1%** | big_text_256 372→322µs（-14.1%）、loop_sum -24.1%、mul_add -21.3%、multi_func -18.9% |
+| optimizations | sccp **-62.6%**（67.5→23.9µs）、copy_prop -19.5%、dead_code_elim -15.8%、cse -10.1%、const_fold_float -6.1% | pipeline O2 -7.4%、O3 -3.5%、loop_func -5.6% |
+| codegen | **-3.9% ~ -19.0%** | mem -19.0%、multi_block -15.5%、big_loop -11.5%、float -10.3%、simple_add -9.5%、many_ops -6.7%、spill_pressure -6.3%、with_o1 -6.6%、with_o2 -5.8% |
+| throughput | codegen -3.9~-5.2%；ir_build -42~-52%（500 ops 457→219µs） | optimize_o1 -5.1%、o2 -2.6% |
+| e2e | float **-34.7%**（274→179µs，func.clone 移除）、mem -14.9%、complex -6.7% | simple -4.4%、big_loop -3.5% |
+
+无显著回退（codegen_float 首次对比 +6% 经重跑确认是顺序噪声，实际 -10.3%）。
+
+### 验证
+
+- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 201、forge-opt 91、forge-codegen 116+12+15+8、forge-tests 140 含 156 条 JIT 执行用例迁移集等）。
+- `cargo check -p forge-ir -p forge-opt -p forge-codegen`：无警告。
+
+---
+
+## 性能优化记录（2026-08 第二轮：codegen 链残余 + 框架级）
+
+基于 `docs/codegen_stage_profile.md` 的 stage 占比实测（**regalloc 仍占 codegen
+63-67%**、lowering 14-20%、emit ~11%）与已识别未实施的优化点，完成第二轮优化。
+对比基准同为 `--save-baseline main`（第一轮优化前）；下表为**两轮累计**变化
+（criterion change vs main baseline，中位数）。
+
+### 优化内容(2026-08-06)
+
+| 模块 | 改动 |
+| --- | --- |
+| regalloc | `compute_live_intervals` intervals HashMap 按指令数预分配（免 rehash）；`LiveInterval::next_use_after` 线性 find → `partition_point` 二分（spill 决策 O(log n)） |
+| emission | **spill 指令的 `AllocResult` 深克隆完全消除**：以 `SmallVec<[(XReg,PReg);2]>` 稀疏 overrides + 闭包查询替代整表克隆（覆盖优先、base 回退）。经核实 encode 从指令字段读物理寄存器（`set_reg_field` 已写入），不依赖 reg_map 覆盖——比计划中的 AllocResultView 方案更优：零接口改动、改动面 6+ 文件收敛为 1 个 |
+| lowering | `lower_block` 每块 `cloned().collect()` 深克隆整块指令 → 直接借用迭代（`block_inst_iter` 返回 `&Instruction`） |
+| pass 层 | `ExprKey.operands` Vec → `SmallVec<[Value;4]>`（cse/gvn/gvn_pre 三处构造，每指令省一次堆分配）；cse/gvn 块 `inst_order.clone()` → 借用（dfg 字段级拆分借用） |
+| IR 构建 | `UseLists` HashMap 预分配 `with_capacity(8)`（微函数不受损，中大型函数少 rehash） |
+| JIT 并行化 | `compile_module` 自适应并行：函数数 ≥8 时 `std::thread::scope` 并行编译（每函数独立 `compile_raw`），串行按 func_ref 序注册符号；`Function` 加 `unsafe impl Sync`（文档约束：编译只读路径安全，惰性分析并发由调用方约束）；新增 `test_jit_parallel_module_compile`（8 函数 + 跨函数 call） |
+| 修复 | **既有 bug**：`apply_relocations_to` 的 `pending_relocs` 覆盖式赋值改追加——8+ 函数模块中中间函数的跨函数 call relocation 会丢失 patch（2 函数时侥幸正常），执行返回垃圾值 |
+
+### 基准结果（vs main baseline，两轮累计）
+
+| 基准组 | 变化范围 | 代表项 |
+| --- | --- | --- |
+| codegen | **-0.8% ~ -29.2%** | big_loop -29.2%（369→299µs）、mem -23.0%、multi_block -14.0%、many_ops -11.4%、with_o2 -10.0%、spill_pressure -9.8%、with_o1 -9.7%、complex -8.0%；aarch64/riscv64/wasm32 各函数 -2.8~-15.1% |
+| ir_build | **-10.6% ~ -50.3%** | mem -50.3%、float -47.8%、many_ops -43.9%、big_loop -43.7%、spill_pressure -42.1% |
+| ir_parse | **-5.3% ~ -21.3%** | big_text_256 -21.3%（372→292µs）、loop_sum -20.8%、mul_add -17.9%、multi_func -17.4% |
+| optimizations | sccp **-63.1%**、cse -20.1%、gvn_pre -5.3%、gvn -4.7% | pipeline O2 -13.7%、O1 -9.4%、O3 -9.1% |
+| module | module_compile_cross_call -2.4%（串行路径，无回退） | |
+
+无显著回退（`ir_build_simple_add` 曾 +39.5%，系 UseLists 过度预分配所致，改为
+`with_capacity(8)` 后恢复 -10.6%；`codegen_float` +1.5% 属运行噪声范围）。
+
+### 验证(2026-08-06)
+
+- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 201、
+  forge-opt 91、forge-codegen 117 含新并行测试、forge-tests 140 含 JIT 跨函数回归）。
+- 新增测试覆盖：`test_jit_parallel_module_compile`（8 函数并行编译 + 跨函数 call 执行）。
+- `unsafe impl Sync for Function` 附文档约束（编译只读路径安全；惰性分析并发由调用方保证）。

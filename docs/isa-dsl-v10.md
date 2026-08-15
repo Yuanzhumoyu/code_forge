@@ -210,8 +210,8 @@ prefix = "XMM"
 
 ```rust
 impl PhysReg for Reg {
-    fn to_index(self) -> u8 { self as u8 }
-    fn from_index(idx: u8, class: RegClass) -> Self { /* ... */ }
+    fn to_index(self) -> u32 { self as u32 }
+    fn from_index(idx: u32, class: RegClass) -> Self { /* ... */ }
     fn class(self) -> RegClass {
         // gpr → RegClass::Int, xmm → RegClass::Float
     }
@@ -309,6 +309,96 @@ enum Inst {
 | `CondCode` | `u8` | 条件码（如 SETcc / Jcc 的 opcode 后缀） |
 
 > **命名约定**：名为 `dest` 或 `reg` 的字段自动标记为 **def**（写入）寄存器操作，其他 `VReg` 字段标记为 **use**（读取）寄存器操作。这影响寄存器分配的 live-range 分析。
+
+### `fields` 三种写法（v10.2+）
+
+为了减少重复书写，`fields` 支持三种形态（按优先级）：
+
+```toml
+# 1. 内联表（原始写法，字段名 → 类型）
+[inst.A]
+fields = { dest = "Ireg", src = "Freg" }
+asm = "a {dest}, {src}"
+
+# 2. 紧凑字符串（类型列表，按 asm 占位符顺序映射字段名）
+[inst.B]
+fields = "Ireg Freg"
+asm = "b {dest}, {src}"
+
+# 3. 缺省（完全省略）——字段名从 asm 模板 {name} 占位符推断，类型默认 Ireg
+[inst.C]
+asm = "c {x}, {y}"    # → fields = [x: Ireg, y: Ireg]
+```
+
+- 紧凑字符串的类型数量必须等于 asm 占位符数量，否则解析报错（防静默错配）。
+- 需要特殊类型（`Freg`/`Opsize`/`GprReg`/`MemRef` 等）时才需要写类型；纯整数操作数可全部省略。
+- `{mnemonic}` 是 opcodes 表模板的保留占位符，不参与字段推断。
+
+### `opcodes` 表 — 同族指令一表生成（v10.3+）
+
+当一族指令仅 opcode/mnemonic 不同（如 SSE 的 addps/subps/…），用 `opcodes` 表：
+
+```toml
+[inst.PS_BIN]
+fields = "Freg Freg"
+encoding = "@sse_ps_rr {opcode} dest src"
+asm = "{mnemonic} {dest}, {src}"
+opcodes = [
+  ["ADDPS", "0x58", "addps"],
+  ["SUBPS", "0x5C", "subps"],
+]
+```
+
+- 每个条目 `[name, opcode, mnemonic]` 展开为一条指令：`{opcode}` 替换 encoding、`{mnemonic}` 替换 asm。
+- 模板条目本身不生成指令；展开发生在 `parse` 后（`expand_opcodes`）。
+
+### `variants` — 重载组（v10.3+ 支持 asm 覆盖）
+
+`variants` 每条变体除 `enc`/`effect`/`name` 外，现支持 `asm` 覆盖：
+
+```toml
+[inst.PSH]
+fields = "Ireg Ireg"
+asm = "psh {dest}, {src}"
+variants = [
+  { name = "RR", dest = "Ireg", src = "Ireg", enc = "@op_rm 64 0x01 0 dest src", asm = "pshrr {dest}, {src}" },
+]
+```
+
+### `MemRef` 字段 — 内存操作数（v10.3+）
+
+`MemRef` 字段携带 `base`（物理寄存器编号）+ `offset`（位移）+ `width`（数据宽度）：
+
+```toml
+[inst.LOAD64]
+fields = { dest = "GprReg", mem = "MemRef" }
+encoding = "@modrm_mem 64 0x8B dest mem"
+asm = "load64 {dest}, {mem}"
+```
+
+- 编码原语 `@modrm_mem` 遇到 MemRef 字段时自动展开 base/offset（含 SIB/位移选择）。
+- 汇编解析端 `{mem}` 单占位符消费整个 `[...]` 内存操作数。
+- 也可写寄存器字段形式 `@modrm_mem 64 0x8B dest base offset`（base/offset 双字段）——两种形式等价。
+
+### `[lower.*]` 模板 — 条件比较规则一表生成（v10.4+）
+
+`Fcmp`/`Icmp` 等按条件码展开的规则可用 `template` + `conditions`：
+
+```toml
+[lower.Icmp]
+template = ["xor rd, rd", "cmp rs1, rs2", "set$CC rd"]
+conditions = [
+  ["Equal", "e"], ["NotEqual", "ne"],
+  ["SignedLessThan", "l"], ["SignedLessThanOrEqual", "le"],
+  ["SignedGreaterThan", "g"], ["SignedGreaterThanOrEqual", "ge"],
+]
+```
+
+> `conditions` 必须使用**数组形式**（`[["Cond", "value"], ...]`）——TOML 1.0 内联表不允许跨行，数组可跨行。旧的内联表写法（`{ Equal = "e" }`）为兼容仍可解析，但不推荐。`$CC` 占位符替换为每个 condition 的值；规则名 = `{name}.{cond}`。
+
+- 展开为 `[lower.Icmp.Equal]` → `insts = ["xor rd, rd", "cmp rs1, rs2", "sete rd"]` 等。
+- `$CC` 占位符替换为每个 condition 的值；规则名 = `{name}.{cond}`。
+- 模板规则本身不参与 lowering（展开后删除）。
 
 ### `emit.template` — 编码模板
 

@@ -67,7 +67,7 @@ assert_eq!(unsafe { add(3, 4) }, 7);
 | ------- | -------- | ------ |
 | x86_64 | ✅ Full backend | `isa/x86_v10.toml` |
 | RISC-V64 | ✅ Full backend | `isa/riscv64_v10.toml` |
-| WASM32 | ✅ Full backend | `isa/wasm32_v10.toml` |
+| WASM32 | ✅ 编译后端(forge-tests 测试模块已于第三十三轮移除——wasm32 编译覆盖在 forge-codegen arch/wasm32.rs 内嵌测试) | `isa/wasm32_v10.toml` |
 | AArch64 | 🚧 TOML validated | `isa/aarch64_v10.toml` |
 | Minimal SD | ✅ Validation only | `isa/minimal_sd.toml` |
 

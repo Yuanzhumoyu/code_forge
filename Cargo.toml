@@ -50,8 +50,3 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 [[bench]]
 name = "compile_bench"
 harness = false
-
-[lints.clippy.type_complexity]
-level = "allow"
-[lints.clippy.too_many_arguments]
-level = "allow"

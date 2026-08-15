@@ -65,6 +65,30 @@ jobs:
           components: rustc-dev
       - run: cargo test --workspace --exclude forge-rustc --all-features
 
+  # forge-rustc 编译检查（rustc_private 依赖 nightly + rustc-dev；P4.6 纳入 CI）
+  forge-rustc-check:
+    name: forge-rustc (check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-dev
+      - run: cargo check -p forge-rustc
+
+  # forge-rustc 端到端真值测试（Windows：需 MSVC 链接器；rust-src 供
+  # e2e 的 cargo +nightly -Z build-std 流程。nightly 用最新——rustc API
+  # 漂移由 rustc_compat.rs 适配层兜底，CI 能提前暴露漂移）
+  forge-rustc-e2e:
+    name: forge-rustc (e2e, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-dev, rust-src
+      - run: cargo test -p forge-rustc --test e2e
+
   # forge-tests feature 矩阵（单 ISA / 单类别组合，验证 feature 门控）
   forge-tests-matrix:
     name: forge-tests (feature matrix)

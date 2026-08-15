@@ -3,5 +3,9 @@ Cargo.lock
 **/*.rs.bk
 *.pdb
 .DS_Store
-/target2/
-/target_jit/
+/.reasonix
+
+**/target/
+
+# rustc ICE 崩溃转储（codegen backend panic 时自动生成，调试垃圾）
+**/rustc-ice-*.txt

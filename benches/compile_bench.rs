@@ -17,10 +17,13 @@
 //! Run with: `cargo bench`
 //! Run a single group: `cargo bench -- optimizations`
 //!
-//! Note: `end_to_end/e2e_jit_execute` currently hangs in release builds (JIT
-//! correctness bug — see `cargo test --release --test jit_integration`); run
-//! the rest with:
-//!   cargo bench --bench compile_bench -- '^(ir_build|optimizations|pipeline_breakdown|codegen|verify|module|throughput|code_size|comparison|end_to_end/e2e_compile_)'
+//! Note: `end_to_end/e2e_jit_execute` previously hung *intermittently* in
+//! release builds — root cause was non-deterministic register allocation
+//! (HashMap iteration order picked eviction victims / inherited class configs
+//! arbitrarily across processes), producing dead-loops in generated code.
+//! Fixed 2026-08-06 with deterministic tie-breakers (regalloc evict_and_assign,
+//! TargetMachine class-config inheritance). All benchmarks run with plain
+//! `cargo bench`.
 //!
 //! Known frontend limitation surfaced by these benchmarks: parsing a large
 //! single-block instruction stream was ~O(n³) in the forge-grammar lexer
@@ -46,7 +49,7 @@ fn build_simple_add() -> Function {
     b.switch_to_block(entry);
     let sum = b.iadd(params[0], params[1]);
     b.ret(&[sum]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 fn build_many_ops() -> Function {
@@ -63,7 +66,7 @@ fn build_many_ops() -> Function {
         acc = b.imul(acc, v1);
     }
     b.ret(&[acc]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Parameterized builder: `n` rounds of (iconst, iadd, imul) — used by
@@ -82,7 +85,7 @@ fn build_n_ops(n: usize) -> Function {
         acc = b.imul(acc, v1);
     }
     b.ret(&[acc]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 fn build_complex_function() -> Function {
@@ -119,7 +122,7 @@ fn build_complex_function() -> Function {
     b.switch_to_block(merge_block);
     let result_param = b.iconst(0, TypeId::F64); // Simplified phi
     b.ret(&[result_param]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 fn build_multi_block_function() -> Function {
@@ -149,7 +152,7 @@ fn build_multi_block_function() -> Function {
 
     b.switch_to_block(exit);
     b.ret(&[sum]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Memory-heavy function: 20 rounds of store → load → accumulate. Gives
@@ -168,7 +171,7 @@ fn build_mem_func() -> Function {
         acc = b.iadd(acc, loaded);
     }
     b.ret(&[acc]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Floating-point-heavy function: F64 multiply-accumulate chain.
@@ -184,7 +187,7 @@ fn build_float_func() -> Function {
         acc = b.fmul(acc, params[0]);
     }
     b.ret(&[acc]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Function with an external call site (`call @0`). The callee is not part of
@@ -197,7 +200,7 @@ fn build_call_func() -> Function {
     let rets = b.call(FuncRef(0), &[params[0]], &[TypeId::I32]);
     let r = b.iadd(params[0], rets[0]);
     b.ret(&[r]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Spill-pressure function: 12 live constants + a balanced add tree, so the
@@ -232,7 +235,7 @@ fn build_spill_pressure() -> Function {
     let t1 = b.iadd(m1, m2);
     let r = b.iadd(t1, m3);
     b.ret(&[r]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Loop function with a large body (20 arithmetic ops per iteration).
@@ -268,7 +271,7 @@ fn build_big_loop() -> Function {
 
     b.switch_to_block(exit);
     b.ret(&[sum]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Count IR instructions in a function.
@@ -598,7 +601,7 @@ fn bench_opt_gvn_pre(c: &mut Criterion) {
 }
 
 fn bench_opt_egraph(c: &mut Criterion) {
-    let pass = forge_opt::advanced::egraph::EGraphPass::new();
+    let pass = forge_opt::advanced::algebraic::EGraphPass::new();
     bench_function_pass(c, "opt_egraph", build_many_ops, Box::new(pass));
 }
 
@@ -608,7 +611,7 @@ fn bench_opt_pgo(c: &mut Criterion) {
 }
 
 fn bench_opt_isel(c: &mut Criterion) {
-    let pass = forge_opt::advanced::egraph::ISelPass::new();
+    let pass = forge_opt::advanced::algebraic::EGraphPass::new();
     bench_function_pass(c, "opt_isel", build_many_ops, Box::new(pass));
 }
 
@@ -754,7 +757,12 @@ fn bench_opt_pipeline_o3_loop_func(c: &mut Criterion) {
 /// pipeline cost; the rows identify which pass dominates a level.
 fn bench_pipeline_breakdown(c: &mut Criterion) {
     let mut group = c.benchmark_group("pipeline_breakdown");
-    let passes: Vec<(&str, fn() -> Box<dyn OptimizationPass>, fn() -> Function)> = vec![
+    type Pass = (
+        &'static str,
+        fn() -> Box<dyn OptimizationPass>,
+        fn() -> Function,
+    );
+    let passes: Vec<Pass> = vec![
         // O1
         (
             "o1/const_fold",
@@ -817,8 +825,8 @@ fn bench_pipeline_breakdown(c: &mut Criterion) {
             build_many_ops,
         ),
         (
-            "o2/egraph",
-            || Box::new(forge_opt::advanced::egraph::EGraphPass::new()),
+            "o2/algebraic",
+            || Box::new(forge_opt::advanced::algebraic::EGraphPass::new()),
             build_many_ops,
         ),
         // O3 (on top of O2)
@@ -1053,7 +1061,7 @@ fn build_callee() -> Function {
     let two = b.iconst(2, TypeId::I32);
     let r = b.imul(params[0], two);
     b.ret(&[r]);
-    b.finish()
+    b.finish().unwrap()
 }
 
 /// Small module: `callee_double` (FuncRef 0) then `caller` (FuncRef 1, whose
