@@ -567,18 +567,18 @@ fn gen_inst_from_cst(
                     | crate::codegen::RegLookup::Prefixed { .. }
             );
             let cls = if matches!(field.field_type, crate::model::FieldType::Freg) {
-                quote! { crate::prelude::RegClass::FPR }
+                quote! { crate::prelude::RegClass::FPR64 }
             } else {
-                quote! { crate::prelude::RegClass::GPR }
+                quote! { crate::prelude::RegClass::GPR64 }
             };
             if is_phys {
                 // 物理寄存器名：固定 Reg 值（不 map）
                 let (is_float, reg_idx) =
                     crate::codegen::components::resolve_reg_index(model, arg_val);
                 let pcls = if is_float {
-                    quote! { crate::prelude::RegClass::FPR }
+                    quote! { crate::prelude::RegClass::FPR64 }
                 } else {
-                    quote! { crate::prelude::RegClass::GPR }
+                    quote! { crate::prelude::RegClass::GPR64 }
                 };
                 let reg_idx_lit =
                     syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
@@ -589,8 +589,11 @@ fn gen_inst_from_cst(
                 let xreg_expr = lowering_arg_expr(arg_val, &field.field_type, scratch, Some(model));
                 let field_idx_lit =
                     syn::LitInt::new(&field_idx.to_string(), proc_macro2::Span::call_site());
+                // is_def：该字段是输出（dest/reg 类）还是输入（src/rs1 类），
+                // 由 DSL 的 is_field_def 判定；regalloc 活区间需区分 use/def 点。
+                let is_def = crate::codegen::is_field_def(field);
                 map_calls.push(quote! {
-                    { let _: crate::prelude::XReg = #xreg_expr; __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit); }
+                    { let _: crate::prelude::XReg = #xreg_expr; __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit, #is_def); }
                 });
                 field_exprs.push(quote! { #fi: { let __v: Reg = <Reg as forge_ir::PhysReg>::from_index(0, #cls); __v } });
             }
@@ -649,10 +652,65 @@ pub struct LoweringInsts {
     pub insts: Vec<TokenStream>,
 }
 
+/// 临时寄存器类型：GPR（默认）或 FPR（`%name:fpr` 后缀）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TempClass {
+    Gpr,
+    Fpr,
+}
+
+#[derive(Debug)]
+struct TempSpec {
+    name: String,
+    class: TempClass,
+}
+
+/// 规则操作数里的小写占位符（rd/rs1/rs2/argN/func 等）——不是物理寄存器。
+const PLACEHOLDER_TOKENS: &[&str] = &[
+    "rd", "rs1", "rs2", "r2", "func", "index", "base", "offset", "dest", "src", "target", "op",
+    "imm", "imm0", "imm1", "imm2", "imm3", "imm4", "imm5", "imm6", "imm7", "imm8", "imm9", "arg0",
+    "arg1", "arg2", "arg3", "arg4", "arg5", "arg6", "arg7", "arg8", "arg9", "args",
+];
+
+/// 自动推导规则 clobbers：扫描 insts，收集显式出现的物理寄存器操作数
+/// （如 "mov RAX, rs1" 的 RAX）——它们在本序列被写死占用，分配器必须避开。
+/// `%temp` 与占位符（rd/rs1/rs2/argN/func 等）不参与。
+/// 隐式使用（如 x86 div 的 RDX、@shift_reg 的 CL）扫描不到，由
+/// `clobbers = [...]` 手动补充。返回物理寄存器名（有序去重）。
+pub(crate) fn collect_phys_regs(insts: &[String], model: &IsaModel) -> Vec<String> {
+    let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for line in insts {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('@') {
+            continue;
+        }
+        for part in trimmed.split(|c: char| c.is_whitespace() || c == ',' || c == '(' || c == ')') {
+            let part = part.trim();
+            if part.is_empty() || part.starts_with('%') {
+                continue;
+            }
+            let lower = part.to_ascii_lowercase();
+            if PLACEHOLDER_TOKENS.contains(&lower.as_str()) {
+                continue;
+            }
+            // 数字/符号字面量（"32"、".L"、"+8" 等）不是寄存器名。
+            if part.starts_with(|c: char| c.is_ascii_digit() || c == '.' || c == '-' || c == '+') {
+                continue;
+            }
+            // 大小写不敏感匹配模型寄存器名（RAX/R11/x1 等）。
+            if crate::codegen::components::is_phys_reg_name(model, part) {
+                out.insert(part.to_ascii_uppercase());
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// Scan lowering instruction strings for `%name` temporary VReg references.
-/// Returns unique names in sorted order (deterministic).
-fn collect_temp_names(insts: &[String]) -> Vec<String> {
-    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+/// `%name` → GPR 临时；`%name:fpr` → FPR 临时（`%name:gpr` 显式等价）。
+/// 返回按名字排序的规格（确定性）；非法类型/同名冲突报错。
+fn collect_temp_specs(insts: &[String]) -> Result<Vec<TempSpec>, String> {
+    let mut out: std::collections::BTreeMap<String, TempClass> = std::collections::BTreeMap::new();
     for line in insts {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('@') {
@@ -661,15 +719,44 @@ fn collect_temp_names(insts: &[String]) -> Vec<String> {
         // Split on whitespace and commas to find operand tokens
         for part in trimmed.split(|c: char| c.is_whitespace() || c == ',') {
             let part = part.trim();
-            if let Some(name) = part.strip_prefix('%')
-                && !name.is_empty()
-                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-            {
-                names.insert(name.to_string());
+            let Some(spec) = part.strip_prefix('%') else {
+                continue;
+            };
+            if spec.is_empty() {
+                continue;
             }
+            let (name, class) = match spec.split_once(':') {
+                None => (spec, "gpr"),
+                Some((n, c)) => (n, c),
+            };
+            if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Err(format!(
+                    "invalid temp register '%{spec}' — name must be alphanumeric/underscore"
+                ));
+            }
+            let class = match class {
+                "gpr" => TempClass::Gpr,
+                "fpr" => TempClass::Fpr,
+                other => {
+                    return Err(format!(
+                        "invalid temp register class '%{spec}' — supported: gpr, fpr (got '{other}')"
+                    ));
+                }
+            };
+            if let Some(existing) = out.get(name)
+                && *existing != class
+            {
+                return Err(format!(
+                    "temp register '%{name}' used with conflicting classes (gpr vs fpr)"
+                ));
+            }
+            out.insert(name.to_string(), class);
         }
     }
-    names.into_iter().collect()
+    Ok(out
+        .into_iter()
+        .map(|(name, class)| TempSpec { name, class })
+        .collect())
 }
 
 /// Generate lowering instruction TokenStreams from V11-format assembly strings.
@@ -683,11 +770,15 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
     let resolver = AsmResolver::build(model);
 
     // Collect %name temporary VReg references
-    let temp_names = collect_temp_names(insts);
+    let temp_specs = collect_temp_specs(insts)?;
     let mut temps: Vec<TokenStream> = Vec::new();
-    for name in &temp_names {
-        let vi = quote::format_ident!("__vreg_{name}");
-        temps.push(quote! { let #vi = ctx.alloc_xreg(crate::prelude::RegClass::GPR); });
+    for spec in &temp_specs {
+        let vi = quote::format_ident!("__vreg_{}", spec.name);
+        let class_tok = match spec.class {
+            TempClass::Gpr => quote! { crate::prelude::RegClass::GPR64 },
+            TempClass::Fpr => quote! { crate::prelude::RegClass::FPR64 },
+        };
+        temps.push(quote! { let #vi = ctx.alloc_xreg(#class_tok); });
     }
 
     let mut result = Vec::new();
@@ -808,15 +899,24 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
             let template_order =
                 crate::asm_resolver::ParsedTemplate::parse(&inst_def.asm, &field_tuples)
                     .field_order();
+            // 模板各字段的操作数形状（内存操作数必须带方括号）——lower 规则的
+            // 操作数写法必须与 asm 模板严格一致，否则编译报错（防止"按位置绑定
+            // 碰巧能编译但不符合 asm 编码格式"的写法，如 AtomicRmw 曾用
+            // 'XADD_MEM_R rs1, rs2' 而模板要求 'xadd [{base}], {src}'）。
+            let template_shapes =
+                crate::asm_resolver::ParsedTemplate::parse(&inst_def.asm, &field_tuples)
+                    .operand_shapes();
             let mut bound: Vec<String> = Vec::new();
             let mut op_idx = 0;
             let mut reg_map_calls: Vec<TokenStream> = Vec::new();
             let mut reg_field_idx: usize = 0;
-            for (field_name, field_type) in &template_order {
+            for ((field_name, field_type), shape) in
+                template_order.iter().zip(template_shapes.iter())
+            {
                 if matches!(field_type, crate::model::FieldType::Opsize) {
                     continue;
                 }
-                let arg_val = if op_idx < operands.len() {
+                let raw_arg = if op_idx < operands.len() {
                     operands[op_idx]
                 } else {
                     return Err(format!(
@@ -824,6 +924,39 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
                     ));
                 };
                 op_idx += 1;
+                // 形状校验：内存操作数（模板 [field]）必须带方括号，普通操作数禁止。
+                let is_bracketed = raw_arg.starts_with('[');
+                match shape {
+                    crate::asm_resolver::OperandShape::Memory if !is_bracketed => {
+                        return Err(format!(
+                            "lowering '{trimmed}': operand for field '{field_name}' must be a \
+                             memory operand '[...]' per asm template '{}' — write \
+                             '[{raw_arg}]' instead of '{raw_arg}'",
+                            inst_def.asm
+                        ));
+                    }
+                    crate::asm_resolver::OperandShape::Plain if is_bracketed => {
+                        return Err(format!(
+                            "lowering '{trimmed}': operand for field '{field_name}' is a plain \
+                             operand per asm template '{}' — bracketed '[...]' not \
+                             allowed here",
+                            inst_def.asm
+                        ));
+                    }
+                    _ => {}
+                }
+                // 寄存器字段（Ireg/Freg）的内存操作数形式：剥离方括号后按寄存器间接
+                // 绑定（'[rs1]' → XReg rs1——编码经 @modrm_mem 生成 [reg+0] 内存访问）。
+                // MemRef 字段保持原样（lowering_arg_expr 的 MemRef 分支解析 [base+disp]）。
+                let arg_val = if is_bracketed
+                    && matches!(
+                        field_type,
+                        crate::model::FieldType::Ireg | crate::model::FieldType::Freg
+                    ) {
+                    raw_arg.trim_start_matches('[').trim_end_matches(']').trim()
+                } else {
+                    raw_arg
+                };
                 let fi = quote::format_ident!("{}", field_name);
                 bound.push(field_name.clone());
                 // 寄存器字段（Ireg/Freg）以默认物理 Reg 占位，XReg 记录到 xreg_map
@@ -837,17 +970,17 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
                             | crate::codegen::RegLookup::Prefixed { .. }
                     );
                     let cls = if matches!(field_type, crate::model::FieldType::Freg) {
-                        quote! { crate::prelude::RegClass::FPR }
+                        quote! { crate::prelude::RegClass::FPR64 }
                     } else {
-                        quote! { crate::prelude::RegClass::GPR }
+                        quote! { crate::prelude::RegClass::GPR64 }
                     };
                     if is_phys {
                         let (is_float, reg_idx) =
                             crate::codegen::components::resolve_reg_index(model, arg_val);
                         let pcls = if is_float {
-                            quote! { crate::prelude::RegClass::FPR }
+                            quote! { crate::prelude::RegClass::FPR64 }
                         } else {
-                            quote! { crate::prelude::RegClass::GPR }
+                            quote! { crate::prelude::RegClass::GPR64 }
                         };
                         let reg_idx_lit =
                             syn::LitInt::new(&reg_idx.to_string(), proc_macro2::Span::call_site());
@@ -861,8 +994,10 @@ pub fn gen_lowering_insts_cst(insts: &[String], model: &IsaModel) -> Result<Lowe
                             &reg_field_idx.to_string(),
                             proc_macro2::Span::call_site(),
                         );
+                        // 该路径按字段名判定 use/def（dest/reg 为 def）
+                        let is_def = field_name == "dest" || field_name == "reg";
                         reg_map_calls.push(quote! {
-                            __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit);
+                            __pack.map_reg_field(#xreg_expr, __idx, #field_idx_lit, #is_def);
                         });
                         reg_field_idx += 1;
                         field_exprs.push(quote! {
@@ -935,19 +1070,6 @@ pub fn gen_emit_insts_cst(insts: &[String], model: &IsaModel) -> TokenStream {
     let mut all_stmts: Vec<TokenStream> = Vec::new();
     let mut pending: Vec<TokenStream> = Vec::new();
 
-    let flush = |pending: &mut Vec<TokenStream>, stmts: &mut Vec<TokenStream>| {
-        if !pending.is_empty() {
-            stmts.push(quote::quote! {
-                for __inst in &[#(#pending),*] {
-                    if let Err(e) = emit_inst(__inst, rm, &mut *sink) {
-                        return Err(e);
-                    }
-                }
-            });
-            pending.clear();
-        }
-    };
-
     for line in insts {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -956,15 +1078,14 @@ pub fn gen_emit_insts_cst(insts: &[String], model: &IsaModel) -> TokenStream {
 
         // Handle pseudo-calls
         if let Some(name) = trimmed.strip_prefix('@') {
-            flush(&mut pending, &mut all_stmts);
-            match name {
-                "push_callee" => all_stmts.push(gen_push_callee(model, true)),
-                "pop_callee" => all_stmts.push(gen_push_callee(model, false)),
-                "move_args" => all_stmts.push(gen_move_args(model)),
-                "frame_alloc" => all_stmts.push(gen_frame_alloc_free(model, true)),
-                "frame_free" => all_stmts.push(gen_frame_alloc_free(model, false)),
-                _ => {}
-            }
+            crate::codegen::flush_emit_stmts(
+                &mut pending,
+                &mut all_stmts,
+                &quote::quote!(emit_inst),
+                &quote::quote!(rm),
+                &quote::quote!(&mut *sink),
+            );
+            crate::codegen::gen_pseudo_inst(name, model, &mut all_stmts);
             continue;
         }
 
@@ -976,7 +1097,13 @@ pub fn gen_emit_insts_cst(insts: &[String], model: &IsaModel) -> TokenStream {
         }
     }
 
-    flush(&mut pending, &mut all_stmts);
+    crate::codegen::flush_emit_stmts(
+        &mut pending,
+        &mut all_stmts,
+        &quote::quote!(emit_inst),
+        &quote::quote!(rm),
+        &quote::quote!(&mut *sink),
+    );
     if all_stmts.is_empty() {
         quote::quote! { let _ = (frame_size, rm, sink); }
     } else {
@@ -1087,6 +1214,11 @@ mod tests {
                 capabilities: Default::default(),
                 no_default_lowering: true,
                 no_epilogue_label: false,
+                gpr_bank_order: vec![],
+                modrm_force_disp_base: vec![],
+                epilogue_jump_opcode: None,
+                default_fpr_width: None,
+                enable_pattern_isel: None,
             },
             reg: {
                 let mut m = BTreeMap::new();
@@ -1097,6 +1229,7 @@ mod tests {
                         width: 64,
                         names: None,
                         prefix: None,
+                        base_index: None,
                     },
                 );
                 m
@@ -1129,7 +1262,7 @@ mod tests {
                 t.insert(
                     "TEMP".into(),
                     crate::model::LangTokenDef {
-                        pattern: "%[a-zA-Z_][a-zA-Z0-9_]*".into(),
+                        pattern: "%[a-zA-Z_][a-zA-Z0-9_]*(:[a-zA-Z_][a-zA-Z0-9_]*)?".into(),
                     },
                 );
                 t.insert(
@@ -1186,6 +1319,8 @@ mod tests {
                 encoding: None,
                 asm: "add {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1196,6 +1331,8 @@ mod tests {
                 encoding: None,
                 asm: "mov {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1206,6 +1343,8 @@ mod tests {
                 encoding: None,
                 asm: "push {reg}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1216,6 +1355,8 @@ mod tests {
                 encoding: None,
                 asm: "ret".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1226,6 +1367,8 @@ mod tests {
                 encoding: None,
                 asm: "jmp {rel}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1243,6 +1386,8 @@ mod tests {
                 encoding: None,
                 asm: "j{cond} {rel}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1260,6 +1405,8 @@ mod tests {
                 encoding: None,
                 asm: "set{cond} {dest}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1270,6 +1417,8 @@ mod tests {
                 encoding: None,
                 asm: "xor {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1280,6 +1429,8 @@ mod tests {
                 encoding: None,
                 asm: "shl {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1290,6 +1441,8 @@ mod tests {
                 encoding: None,
                 asm: "shr {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1300,6 +1453,8 @@ mod tests {
                 encoding: None,
                 asm: "sar {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1310,6 +1465,8 @@ mod tests {
                 encoding: None,
                 asm: "imul {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1334,6 +1491,8 @@ mod tests {
                 encoding: None,
                 asm: "lea {dest}, [{base}+{index}*{scale}]".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1344,6 +1503,8 @@ mod tests {
                 encoding: None,
                 asm: "movsd {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1786,4 +1947,116 @@ mod tests {
             lowering.insts.len()
         );
     }
+
+    #[test]
+    fn test_v10_lower_shape_check() {
+        // V10 大写 lower 规则的操作数必须与 asm 模板格式一致：
+        // 'mov_mem {dest}, [{base}]' 的 base 是内存操作数，必须写 '[rs1]'。
+        let mut model = test_model();
+        model.inst.insert(
+            "MOV_MEM".into(),
+            crate::model::Instruction {
+                fields: vec![
+                    crate::model::InstField {
+                        role: None,
+                        name: "dest".into(),
+                        field_type: crate::model::FieldType::Ireg,
+                    },
+                    crate::model::InstField {
+                        role: None,
+                        name: "base".into(),
+                        field_type: crate::model::FieldType::Ireg,
+                    },
+                ],
+                encoding: None,
+                asm: "mov_mem {dest}, [{base}]".into(),
+                variants: None,
+                opcodes: None,
+                implicit: None,
+                effect: None,
+            },
+        );
+
+        // 缺方括号 → 编译期报错（带字段名与修复提示）
+        let err = match gen_lowering_insts_cst(&["MOV_MEM rd, rs1".to_string()], &model) {
+            Ok(_) => panic!("缺方括号应报错"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("memory operand") && err.contains("base"),
+            "应提示 base 需内存操作数: {err}"
+        );
+
+        // 正确形式 '[rs1]' → 生成成功且引用 rs1 XReg（剥离方括号后寄存器间接）
+        let ok = gen_lowering_insts_cst(&["MOV_MEM rd, [rs1]".to_string()], &model)
+            .expect("正确形式应生成成功");
+        let out = ok.insts.iter().map(|t| t.to_string()).collect::<String>();
+        assert!(out.contains("rs1"), "生成代码应引用 rs1 XReg: {out}");
+
+        // 普通操作数字段误加方括号 → 报错
+        let err = match gen_lowering_insts_cst(&["MOV_MEM [rd], [rs1]".to_string()], &model) {
+            Ok(_) => panic!("dest 是普通操作数，禁方括号"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("plain operand") && err.contains("dest"),
+            "应提示 dest 禁方括号: {err}"
+        );
+    }
 } // mod tests
+
+#[cfg(test)]
+mod temp_spec_tests {
+    use super::*;
+
+    #[test]
+    fn test_collect_temp_gpr_default() {
+        let insts = vec!["mov64rr %t, rs1".to_string(), "add64rr rd, %t".to_string()];
+        let specs = collect_temp_specs(&insts).expect("ok");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "t");
+        assert!(matches!(specs[0].class, TempClass::Gpr));
+    }
+
+    #[test]
+    fn test_collect_temp_fpr_suffix() {
+        let insts = vec![
+            "movsd_rr %t:fpr, rs1".to_string(),
+            "movsd_rr rd, %t:fpr".to_string(),
+        ];
+        let specs = collect_temp_specs(&insts).expect("ok");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "t");
+        assert!(matches!(specs[0].class, TempClass::Fpr));
+    }
+
+    #[test]
+    fn test_collect_temp_sorted_dedup() {
+        let insts = vec![
+            "mov64rr %b, rs1".to_string(),
+            "mov64rr %a, rs2".to_string(),
+            "add64rr rd, %b".to_string(),
+        ];
+        let specs = collect_temp_specs(&insts).expect("ok");
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].name, "a");
+        assert_eq!(specs[1].name, "b");
+    }
+
+    #[test]
+    fn test_collect_temp_invalid_class() {
+        let insts = vec!["mov64rr %t:foo, rs1".to_string()];
+        let err = collect_temp_specs(&insts).expect_err("非法类型应报错");
+        assert!(err.contains("foo"), "错误应含非法类型: {err}");
+    }
+
+    #[test]
+    fn test_collect_temp_conflicting_classes() {
+        let insts = vec![
+            "mov64rr %t, rs1".to_string(),
+            "movsd_rr %t:fpr, rs2".to_string(),
+        ];
+        let err = collect_temp_specs(&insts).expect_err("同名不同类型应报错");
+        assert!(err.contains("conflicting"), "错误应提示冲突: {err}");
+    }
+}

@@ -17,7 +17,7 @@
 //! 处理 Block Parameters 的自然冗余。
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 
 #[derive(Default)]
@@ -36,13 +36,13 @@ impl OptimizationPass for BlockParamCoalescePass {
     fn description(&self) -> &'static str {
         "Eliminates redundant block parameters that receive the same value from all predecessors"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         coalesce_block_params(func)
     }
 }
 
 /// 对函数中的所有块执行块参数合并。
-pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     let preds = func.predecessors().clone();
 
@@ -117,37 +117,11 @@ pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, CompileE
         for &(param_idx, replacement) in params_to_coalesce.iter().rev() {
             let param_val = func.dfg.blocks[bi].param_values[param_idx];
 
-            // Replace all uses of param_val with replacement
-            func.use_lists.replace_all_uses(param_val, replacement);
+            // RAUW（DFG + use-lists 双更新）
+            func.replace_all_uses(param_val, replacement);
 
-            // Remove the param from the block
-            func.dfg.blocks[bi].params.remove(param_idx);
-            func.dfg.blocks[bi].param_values.remove(param_idx);
-
-            // Remove the corresponding arg from all predecessor terminators
-            for &pred_block in preds.get(&block).unwrap_or(&Vec::new()) {
-                let term = &mut func.dfg.blocks[pred_block.0 as usize].terminator;
-                match term {
-                    Terminator::Jump { args, .. } => {
-                        args.remove(param_idx);
-                    }
-                    Terminator::Branch {
-                        then_block,
-                        then_args,
-                        else_block,
-                        else_args,
-                        ..
-                    } => {
-                        if *then_block == block {
-                            then_args.remove(param_idx);
-                        }
-                        if *else_block == block {
-                            else_args.remove(param_idx);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            // 原子删除参数（含所有前驱终结符对应 args 清理）
+            func.remove_block_param(block, param_idx);
 
             result.values_replaced += 1;
         }
@@ -168,7 +142,7 @@ mod tests {
         b.switch_to_block(entry);
         let v = b.iconst_i32(42);
         b.ret(&[v]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = BlockParamCoalescePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -183,7 +157,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
         b.ret(&[params[0]]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = BlockParamCoalescePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -216,7 +190,7 @@ mod tests {
         let _merge_val = merge_block.1[0];
         b.ret(&[c42]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let param_count_before = func.dfg.blocks[3].params.len();
         assert_eq!(param_count_before, 1);
 
@@ -256,7 +230,7 @@ mod tests {
         let merge_val = merge_block.1[0];
         b.ret(&[merge_val]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let param_count_before = func.dfg.blocks[3].params.len();
         assert_eq!(param_count_before, 1);
 

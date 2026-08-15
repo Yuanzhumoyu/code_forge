@@ -5,7 +5,7 @@
 //! 2. 死块消除 — 从入口块做 DFS，将不可达块清空
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -28,13 +28,13 @@ impl OptimizationPass for DeadCodeElimPass {
         "Dead code elimination: removes unused instructions and unreachable blocks"
     }
 
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         eliminate_dead_code(func)
     }
 }
 
 /// 对单个函数执行死代码消除。
-pub fn eliminate_dead_code(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn eliminate_dead_code(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
 
     // 阶段 1: 死指令消除
@@ -46,6 +46,11 @@ pub fn eliminate_dead_code(func: &mut Function) -> Result<PassResult, CompileErr
     result.blocks_removed += block_count;
 
     result.changed = inst_count > 0 || block_count > 0;
+    if result.changed {
+        // 死块已删除：失效分析缓存（前驱/后继/支配树），
+        // 避免后续 pass 复用 stale 的 CFG 分析。
+        func.analysis_mut().invalidate();
+    }
     Ok(result)
 }
 
@@ -61,7 +66,7 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
     loop {
         let mut removed_this_round = 0;
 
-        // 构建 use-count
+        // 构建 use-count（官方 use-lists + 终结符参数补充）
         let use_counts = build_use_counts(func);
 
         // Collect inst IDs since we can't borrow func.dfg mutably while iterating
@@ -72,8 +77,10 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
             }
         }
 
+        // 无使用者的纯指令 → 延迟到循环后统一原子删除（kill_inst 同步 use-lists）
+        let mut to_kill: Vec<Inst> = Vec::new();
         for inst_id in &inst_ids {
-            let inst = &mut func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.insts[inst_id.0 as usize];
             // 跳过已经是 Nop 的指令
             if matches!(inst.opcode, Opcode::Nop) {
                 continue;
@@ -88,15 +95,13 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
             if let Some(result_val) = inst.results.first().copied() {
                 let count = use_counts.get(&result_val).copied().unwrap_or(0);
                 if count == 0 {
-                    // 无使用者 → 替换为 Nop
-                    inst.opcode = Opcode::Nop;
-                    inst.operands.clear();
-                    // Update result value type to VOID
-                    func.dfg.values[result_val.0 as usize].ty = TypeId::VOID;
-                    inst.results.clear();
+                    to_kill.push(*inst_id);
                     removed_this_round += 1;
                 }
             }
+        }
+        for inst in to_kill {
+            func.kill_inst(inst);
         }
 
         total_removed += removed_this_round;
@@ -109,56 +114,23 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
 }
 
 /// 构建 Value → use-count 映射。
+///
+/// 指令操作数部分来自官方 `UseLists`（各 pass 经 kill/RAUW/apply_replacements
+/// 维护的新鲜 def-use 链）；终结符参数不在 use-lists 记录范围，需补充计数。
 fn build_use_counts(func: &Function) -> HashMap<Value, usize> {
     let mut counts: HashMap<Value, usize> = HashMap::new();
 
-    for block in func.dfg.blocks.iter() {
-        for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
-            if matches!(inst.opcode, Opcode::Nop) {
-                continue;
-            }
-            for operand in &inst.operands {
-                *counts.entry(*operand).or_insert(0) += 1;
-            }
+    for (value, _) in func.dfg.values() {
+        let n = func.use_lists.use_count(value);
+        if n > 0 {
+            counts.insert(value, n);
         }
+    }
 
-        // Terminator 使用的值也计入
-        match &block.terminator {
-            Terminator::Branch {
-                cond,
-                then_args,
-                else_args,
-                ..
-            } => {
-                *counts.entry(*cond).or_insert(0) += 1;
-                for v in then_args.iter().chain(else_args.iter()) {
-                    *counts.entry(*v).or_insert(0) += 1;
-                }
-            }
-            Terminator::Jump { args, .. } => {
-                for v in args {
-                    *counts.entry(*v).or_insert(0) += 1;
-                }
-            }
-            Terminator::Return { values } => {
-                for v in values {
-                    *counts.entry(*v).or_insert(0) += 1;
-                }
-            }
-            Terminator::Unreachable => {}
-            Terminator::Switch {
-                discriminant,
-                cases,
-                ..
-            } => {
-                *counts.entry(*discriminant).or_insert(0) += 1;
-                for (_, _, args) in cases.iter() {
-                    for v in args {
-                        *counts.entry(*v).or_insert(0) += 1;
-                    }
-                }
-            }
+    // Terminator 使用的值也计入
+    for (_, block_data) in func.dfg.blocks() {
+        for v in block_data.terminator.used_values() {
+            *counts.entry(v).or_insert(0) += 1;
         }
     }
 
@@ -203,6 +175,15 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
                 stack.push(*target);
             }
             Terminator::Return { .. } | Terminator::Unreachable => {}
+            Terminator::Invoke {
+                normal_block,
+                unwind_block,
+                ..
+            } => {
+                stack.push(*normal_block);
+                stack.push(*unwind_block);
+            }
+            Terminator::Resume { .. } => {}
             Terminator::Switch {
                 default_block,
                 cases,
@@ -255,16 +236,23 @@ mod tests {
         let ret_val = b.iconst_i32(0); // used by return -> live
         b.ret(&[ret_val]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = DeadCodeElimPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
 
         assert!(r.changed);
         assert!(r.instructions_removed >= 1);
-        // c should become Nop
-        let inst_id = func.dfg.blocks[0].inst_order[0];
-        let affected_inst = &func.dfg.insts[inst_id.0 as usize];
-        assert!(matches!(affected_inst.opcode, Opcode::Nop));
+        // c 应被原子删除（kill_inst 从 inst_order 移除墓碑）：值类型 VOID
+        let ValueDef::Inst(c_inst, _) = func.dfg.value_def(_c).unwrap() else {
+            panic!("c 应是指令定义")
+        };
+        assert!(
+            matches!(func.dfg.insts[c_inst.0 as usize].opcode, Opcode::Nop),
+            "c 指令应已墓碑化为 Nop"
+        );
+        assert_eq!(func.dfg.value_type(_c), Some(TypeId::VOID), "c 值应为 VOID");
+        // ret_val 仍活跃
+        assert_eq!(func.dfg.value_type(ret_val), Some(TypeId::I32));
     }
 
     #[test]
@@ -278,7 +266,7 @@ mod tests {
         b.store(val, p); // Store has side effects, cannot eliminate
         b.ret(&[]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = DeadCodeElimPass::new();
         let _r = pass.run_on_function(&mut func).unwrap();
 
@@ -308,7 +296,7 @@ mod tests {
         b.switch_to_block(merge);
         b.ret(&[]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = DeadCodeElimPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
 

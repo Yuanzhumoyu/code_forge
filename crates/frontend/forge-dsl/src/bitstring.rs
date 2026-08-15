@@ -1006,7 +1006,7 @@ pub fn gen_bitstring_emit(
                         &mut buffered,
                         &mut stmts,
                     );
-                    let prim_ts = gen_primitive(prim_name, prim_args, &field_map)?;
+                    let prim_ts = gen_primitive(prim_name, prim_args, &field_map, model)?;
                     stmts.push(prim_ts);
                     continue;
                 }
@@ -1099,7 +1099,7 @@ pub fn gen_bitstring_emit(
             };
             Ok(all_stmts)
         }
-        ParsedEncoding::Primitive { name, args } => gen_primitive(&name, &args, &field_map),
+        ParsedEncoding::Primitive { name, args } => gen_primitive(&name, &args, &field_map, model),
     }
 }
 
@@ -1160,11 +1160,20 @@ fn resolve_condition(
         .map_err(|e| format!("invalid segment condition '{condition}': {e}"))
 }
 
+/// Parse a non-negative integer literal (decimal or 0x hex).
+fn parse_num_u64(s: &str) -> Option<u64> {
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        return u64::from_str_radix(hex, 16).ok();
+    }
+    s.parse::<u64>().ok()
+}
+
 /// Generate code for encoding primitives like @jmp_rel32, @mov_imm64, etc.
 fn gen_primitive(
     name: &str,
     args: &[String],
-    _field_map: &std::collections::HashMap<String, &crate::model::FieldType>,
+    field_map: &std::collections::HashMap<String, &crate::model::FieldType>,
+    model: &crate::model::IsaModel,
 ) -> Result<proc_macro2::TokenStream, String> {
     use proc_macro2::TokenStream;
     use quote::quote;
@@ -1173,17 +1182,17 @@ fn gen_primitive(
     let arg_expr = |idx: usize| -> TokenStream {
         let val = args.get(idx).map(|s| s.as_str()).unwrap_or("_");
         // Check if numeric (decimal or hex)
-        if (val.starts_with("0x") || val.starts_with("0X"))
-            && let Ok(n) = u64::from_str_radix(&val[2..], 16)
-        {
+        if let Some(n) = parse_num_u64(val) {
             return quote! { #n };
         }
         if let Ok(n) = val.parse::<i64>() {
             return quote! { #n };
         }
-        // Otherwise treat as identifier
+        // Otherwise treat as a field binding — emit functions match on `&Inst`,
+        // so non-register fields are references (`&u8`, `&i64`, …) and must be
+        // dereferenced.
         let ident = syn::Ident::new(val, proc_macro2::Span::call_site());
-        quote! { #ident }
+        quote! { *#ident }
     };
 
     let arg_ident = |idx: usize| -> syn::Ident {
@@ -1191,7 +1200,534 @@ fn gen_primitive(
         syn::Ident::new(name, proc_macro2::Span::call_site())
     };
 
+    // Register operand: a field name (resolved via `.to_index()`) or a numeric literal.
+    let reg_expr = |idx: usize| -> TokenStream {
+        let val = args.get(idx).map(|s| s.as_str()).unwrap_or("0");
+        if let Some(n) = parse_num_u64(val) {
+            return quote! { #n as u32 };
+        }
+        let ident = syn::Ident::new(val, proc_macro2::Span::call_site());
+        quote! { #ident.to_index() as u32 }
+    };
+
+    // Numeric literal arg (prefix/escape bytes): must be a non-negative number.
+    let num_arg = |idx: usize, prim: &str| -> Result<u64, String> {
+        match args.get(idx) {
+            None => Ok(0),
+            Some(s) => parse_num_u64(s)
+                .ok_or_else(|| format!("@{prim} arg {idx} ('{s}') must be a numeric literal")),
+        }
+    };
+
     match name {
+        // ──────────────────────────────────────────────────────
+        // 通用 ModRM/REX 编码原语（参数化，无 ISA 专有常量）。
+        // 供使用 ModRM 编码体系的 ISA（如 x86）直接引用；opsize
+        // 可为数字字面量或指令的 Opsize 字段名。
+        // ──────────────────────────────────────────────────────
+
+        // @modrm opsize opcode reg rm [escape] — 宽度感知 ModRM(mod=11b)。
+        //   16-bit → 0x66 前缀；64-bit → REX.W=1；32-bit + 扩展寄存器 → REX.W=0。
+        //   可选 escape 字节（如 0x0F）插在 opcode 之前。
+        "modrm" => {
+            let opsize = arg_expr(0);
+            let opcode = arg_expr(1);
+            let reg = reg_expr(2);
+            let rm = reg_expr(3);
+            let escape = num_arg(4, "modrm")?;
+            let esc_tok = if escape != 0 {
+                quote! { sink.put1(#escape as u8); }
+            } else {
+                quote! {}
+            };
+            Ok(quote! {
+                let __opsize = #opsize as i64;
+                let __reg = #reg;
+                let __rm = #rm;
+                if __opsize == 16 { sink.put1(0x66u8); }
+                let __rex: u8 = if __opsize == 64 { 0x48 } else { 0x40 }
+                    | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                    | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__reg & 0x8) != 0 || (__rm & 0x8) != 0 { sink.put1(__rex); }
+                #esc_tok
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @modrm_mem opsize opcode reg base disp [prefix] [escape] — ModRM
+        // 内存寻址。base 编码为 100 (RSP/R12) 时自动插入 SIB；base 属于
+        // [meta].modrm_force_disp_base（如 x86 RBP=5/R13=13）时强制带位移
+        // （mod=00+rm=101 在 x86 上是 RIP-relative）。disp 可为 0/字面量/字段。
+        "modrm_mem" => {
+            let opsize = arg_expr(0);
+            let opcode = arg_expr(1);
+            let reg = reg_expr(2);
+            // rm 参数可以是寄存器字段（现有）或 MemRef 字段（自动展开 base/offset）。
+            let is_memref = args
+                .get(3)
+                .and_then(|a| field_map.get(a.as_str()))
+                .is_some_and(|t| **t == crate::model::FieldType::MemRef);
+            let (rm_tok, disp_tok) = if is_memref {
+                let m = arg_ident(3);
+                (quote! { #m.base as u32 }, quote! { #m.offset as i32 })
+            } else {
+                let d = arg_expr(4);
+                (reg_expr(3), quote! { #d as i32 })
+            };
+            // MemRef 路径无显式 disp 参数（位移来自 mem.offset），因此
+            // [prefix] [escape] 从 index 4/5 读；寄存器 rm 路径 disp 占用
+            // index 4，prefix/escape 从 index 5/6 读。
+            let (prefix_idx, escape_idx) = if is_memref { (4, 5) } else { (5, 6) };
+            let prefix = num_arg(prefix_idx, "modrm_mem")?;
+            let escape = num_arg(escape_idx, "modrm_mem")?;
+            let pre_tok = if prefix != 0 {
+                quote! { sink.put1(#prefix as u8); }
+            } else {
+                quote! {}
+            };
+            let esc_tok = if escape != 0 {
+                quote! { sink.put1(#escape as u8); }
+            } else {
+                quote! {}
+            };
+            let force = &model.meta.modrm_force_disp_base;
+            let force_toks: Vec<TokenStream> = force.iter().map(|&b| quote! { #b }).collect();
+            Ok(quote! {
+                let __opsize = #opsize as i64;
+                let __reg = #reg;
+                let __rm = #rm_tok;
+                let __disp = #disp_tok;
+                #pre_tok
+                let __rex: u8 = if __opsize == 64 { 0x48 } else { 0x40 }
+                    | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                    | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__reg & 0x8) != 0 || (__rm & 0x8) != 0 { sink.put1(__rex); }
+                #esc_tok
+                sink.put1(#opcode as u8);
+                const FORCE_DISP: &[u8] = &[#(#force_toks),*];
+                let __sib = (__rm & 7) == 4;
+                let __force = FORCE_DISP.contains(&(__rm as u8));
+                let __mod: u8 = if __disp == 0 && !__force {
+                    0
+                } else if (-128i32..=127i32).contains(&__disp) {
+                    1
+                } else {
+                    2
+                };
+                if __sib {
+                    // SIB required: rm=100; index=4 (无 index), base=rm
+                    sink.put1((__mod << 6) | ((__reg as u8 & 0x7) << 3) | 0x04);
+                    sink.put1(0x20u8 | (__rm as u8 & 0x7));
+                } else {
+                    sink.put1((__mod << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+                }
+                if __mod == 1 {
+                    sink.put1(__disp as u8);
+                } else if __mod == 2 {
+                    sink.put4(__disp as u32);
+                }
+            })
+        }
+
+        // @op_rm opsize opcode ext rm — /digit 单操作数（reg 固定为 ext）。
+        "op_rm" => {
+            let opsize = arg_expr(0);
+            let opcode = arg_expr(1);
+            let ext = arg_expr(2);
+            let rm = reg_expr(3);
+            Ok(quote! {
+                let __opsize = #opsize as i64;
+                let __rm = #rm;
+                if __opsize == 16 { sink.put1(0x66u8); }
+                let __rex: u8 = if __opsize == 64 { 0x48 } else { 0x40 }
+                    | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__rm & 0x8) != 0 { sink.put1(__rex); }
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((#ext as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @modrm_imm32 opsize opcode ext rm imm — 81 /digit + imm32。
+        "modrm_imm32" => {
+            let opsize = arg_expr(0);
+            let opcode = arg_expr(1);
+            let ext = arg_expr(2);
+            let rm = reg_expr(3);
+            let imm = arg_expr(4);
+            Ok(quote! {
+                let __opsize = #opsize as i64;
+                let __rm = #rm;
+                if __opsize == 16 { sink.put1(0x66u8); }
+                let __rex: u8 = if __opsize == 64 { 0x48 } else { 0x40 }
+                    | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__rm & 0x8) != 0 { sink.put1(__rex); }
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((#ext as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+                let __imm = #imm as u32;
+                sink.put1(__imm as u8);
+                sink.put1((__imm >> 8) as u8);
+                sink.put1((__imm >> 16) as u8);
+                sink.put1((__imm >> 24) as u8);
+            })
+        }
+
+        // @op_rm_imm32 opcode ext rm imm — 固定 64 位 /digit + imm32（帧分配）。
+        "op_rm_imm32" => {
+            let opcode = arg_expr(0);
+            let ext = arg_expr(1);
+            let rm = reg_expr(2);
+            let imm = arg_expr(3);
+            Ok(quote! {
+                let __rm = #rm;
+                let __rex: u8 = 0x48 | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                sink.put1(__rex);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((#ext as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+                let __imm = #imm as u32;
+                sink.put1(__imm as u8);
+                sink.put1((__imm >> 8) as u8);
+                sink.put1((__imm >> 16) as u8);
+                sink.put1((__imm >> 24) as u8);
+            })
+        }
+
+        // @cmovcc opsize cc dest src — 0F 4{cc} /r 条件传送。
+        "cmovcc" => {
+            let opsize = arg_expr(0);
+            let cc = arg_expr(1);
+            let dest = reg_expr(2);
+            let src = reg_expr(3);
+            Ok(quote! {
+                let __opsize = #opsize as i64;
+                let __dest = #dest;
+                let __src = #src;
+                if __opsize == 16 { sink.put1(0x66u8); }
+                let __rex: u8 = if __opsize == 64 { 0x48 } else { 0x40 }
+                    | if (__dest & 0x8) != 0 { 0x04 } else { 0 }
+                    | if (__src & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__dest & 0x8) != 0 || (__src & 0x8) != 0 { sink.put1(__rex); }
+                sink.put1(0x0Fu8);
+                sink.put1(0x40u8 | (#cc as u8 & 0x0F));
+                sink.put1((3u8 << 6) | ((__dest as u8 & 0x7) << 3) | (__src as u8 & 0x7));
+            })
+        }
+
+        // @sse_rr prefix opcode w reg rm — SSE reg-reg（w=REX.W 位值，0/1）。
+        "sse_rr" => {
+            let prefix = arg_expr(0);
+            let opcode = arg_expr(1);
+            let w = arg_expr(2);
+            let reg = reg_expr(3);
+            let rm = reg_expr(4);
+            Ok(quote! {
+                let __p = #prefix as u8;
+                if __p != 0 { sink.put1(__p); }
+                let __reg = #reg;
+                let __rm = #rm;
+                if (__reg & 0x8) != 0 || (__rm & 0x8) != 0 {
+                    let __rex: u8 = 0x40 | ((#w as u8 & 0x1) << 3)
+                        | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                        | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                    sink.put1(__rex);
+                }
+                sink.put1(0x0Fu8);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @sse_rr_3a prefix opcode reg rm imm — SSE 66 0F 3A /r ib。
+        "sse_rr_3a" => {
+            let prefix = arg_expr(0);
+            let opcode = arg_expr(1);
+            let reg = reg_expr(2);
+            let rm = reg_expr(3);
+            let imm = arg_expr(4);
+            Ok(quote! {
+                let __p = #prefix as u8;
+                if __p != 0 { sink.put1(__p); }
+                let __reg = #reg;
+                let __rm = #rm;
+                if (__reg & 0x8) != 0 || (__rm & 0x8) != 0 {
+                    let __rex: u8 = 0x40
+                        | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                        | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                    sink.put1(__rex);
+                }
+                sink.put1(0x0Fu8);
+                sink.put1(0x3Au8);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+                sink.put1(#imm as u8);
+            })
+        }
+
+        // @sse_rr_38 prefix opcode reg rm — SSE 66 0F 38 xx /r（SSE4.1，如 PMULLD）。
+        "sse_rr_38" => {
+            let prefix = arg_expr(0);
+            let opcode = arg_expr(1);
+            let reg = reg_expr(2);
+            let rm = reg_expr(3);
+            Ok(quote! {
+                let __p = #prefix as u8;
+                if __p != 0 { sink.put1(__p); }
+                let __reg = #reg;
+                let __rm = #rm;
+                if (__reg & 0x8) != 0 || (__rm & 0x8) != 0 {
+                    let __rex: u8 = 0x40
+                        | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                        | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                    sink.put1(__rex);
+                }
+                sink.put1(0x0Fu8);
+                sink.put1(0x38u8);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @sse_rr_opsize prefix opcode opsize reg rm — SSE/GPR 0F xx /r，
+        // REX.W/66 前缀按运行时 opsize 动态（修复固定 w=1 导致窄宽度也 64 位执行）。
+        "sse_rr_opsize" => {
+            let prefix = arg_expr(0);
+            let opcode = arg_expr(1);
+            let opsize = arg_expr(2);
+            let reg = reg_expr(3);
+            let rm = reg_expr(4);
+            Ok(quote! {
+                let __opsize = #opsize as i64;
+                let __p = #prefix as u8;
+                if __p != 0 { sink.put1(__p); }
+                if __opsize == 16 { sink.put1(0x66u8); }
+                let __reg = #reg;
+                let __rm = #rm;
+                let __rex: u8 = 0x40
+                    | if __opsize == 64 { 0x08 } else { 0 }
+                    | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                    | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__reg & 0x8) != 0 || (__rm & 0x8) != 0 {
+                    sink.put1(__rex);
+                }
+                sink.put1(0x0Fu8);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @vex_rrvvv map pp w l opcode reg rm vv has_src — 3 字节 VEX（C4）三操作数 AVX
+        // （vaddps 等：dest=ModRM.reg、rm=ModRM.r/m、vvvv=~src1）。
+        // has_src=0（无 src1，如 vextractf128/vbroadcastss）：vvvv 字段直接编码 1111
+        // （Intel 约定：无操作数时 vvvv=1111，不反转）；has_src=1：vvvv = ~vv & 0xF。
+        "vex_rrvvv" => {
+            let map = arg_expr(0);
+            let pp = arg_expr(1);
+            let w = arg_expr(2);
+            let l = arg_expr(3);
+            let opcode = arg_expr(4);
+            let reg = reg_expr(5);
+            let rm = reg_expr(6);
+            let vv = reg_expr(7);
+            let has_src = arg_expr(8);
+            Ok(quote! {
+                assert!(crate::prelude::avx_available(), "AVX instruction on non-AVX CPU");
+                let __reg = #reg;
+                let __rm = #rm;
+                let __vv = #vv;
+                sink.put1(0xC4u8);
+                // R = ~reg.bit3、B = ~rm.bit3；无 SIB 时 X 位标准编码置 1。
+                let __b: u8 = if (__rm & 0x8) != 0 { 0 } else { 1 };
+                let __x: u8 = 1;
+                let __r: u8 = if (__reg & 0x8) != 0 { 0 } else { 1 };
+                sink.put1((__r << 7) | (__x << 6) | (__b << 5) | (#map as u8 & 0x1F));
+                let __w = #w as u8;
+                let __vvvv: u8 = if #has_src == 0 { 0x0F } else { (!(__vv as u8 & 0x0F)) & 0x0F };
+                sink.put1((__w << 7) | (__vvvv << 3) | ((#l as u8 & 0x1) << 2) | (#pp as u8 & 0x3));
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @vex_rrvvv_avx2 map pp w l opcode reg rm vv has_src — 同 @vex_rrvvv 但断言
+        // AVX2（整数 256 位指令：VPADDD/VPSUBD/VPXOR/VPMULLD 等，AVX1 无 ymm 整数）。
+        "vex_rrvvv_avx2" => {
+            let map = arg_expr(0);
+            let pp = arg_expr(1);
+            let w = arg_expr(2);
+            let l = arg_expr(3);
+            let opcode = arg_expr(4);
+            let reg = reg_expr(5);
+            let rm = reg_expr(6);
+            let vv = reg_expr(7);
+            let has_src = arg_expr(8);
+            Ok(quote! {
+                assert!(crate::prelude::avx2_available(), "AVX2 instruction on non-AVX2 CPU");
+                let __reg = #reg;
+                let __rm = #rm;
+                let __vv = #vv;
+                sink.put1(0xC4u8);
+                let __b: u8 = if (__rm & 0x8) != 0 { 0 } else { 1 };
+                let __x: u8 = 1;
+                let __r: u8 = if (__reg & 0x8) != 0 { 0 } else { 1 };
+                sink.put1((__r << 7) | (__x << 6) | (__b << 5) | (#map as u8 & 0x1F));
+                let __w = #w as u8;
+                let __vvvv: u8 = if #has_src == 0 { 0x0F } else { (!(__vv as u8 & 0x0F)) & 0x0F };
+                sink.put1((__w << 7) | (__vvvv << 3) | ((#l as u8 & 0x1) << 2) | (#pp as u8 & 0x3));
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @vex_rrvvv_imm map pp w l opcode reg rm vv has_src imm — VEX + 立即数
+        // （vinsertf128/vextractf128 等：66 0F3A xx /r ib）。
+        "vex_rrvvv_imm" => {
+            let map = arg_expr(0);
+            let pp = arg_expr(1);
+            let w = arg_expr(2);
+            let l = arg_expr(3);
+            let opcode = arg_expr(4);
+            let reg = reg_expr(5);
+            let rm = reg_expr(6);
+            let vv = reg_expr(7);
+            let has_src = arg_expr(8);
+            let imm = arg_expr(9);
+            Ok(quote! {
+                assert!(crate::prelude::avx_available(), "AVX instruction on non-AVX CPU");
+                let __reg = #reg;
+                let __rm = #rm;
+                let __vv = #vv;
+                sink.put1(0xC4u8);
+                let __b: u8 = if (__rm & 0x8) != 0 { 0 } else { 1 };
+                let __x: u8 = 1;
+                let __r: u8 = if (__reg & 0x8) != 0 { 0 } else { 1 };
+                sink.put1((__r << 7) | (__x << 6) | (__b << 5) | (#map as u8 & 0x1F));
+                let __w = #w as u8;
+                let __vvvv: u8 = if #has_src == 0 { 0x0F } else { (!(__vv as u8 & 0x0F)) & 0x0F };
+                sink.put1((__w << 7) | (__vvvv << 3) | ((#l as u8 & 0x1) << 2) | (#pp as u8 & 0x3));
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+                sink.put1(#imm as u8);
+            })
+        }
+
+        // @sse_rr_imm8 prefix opcode reg rm imm — SSE 0F xx /r ib（PSHUFD/SHUFPS 等）。
+        "sse_rr_imm8" => {
+            let prefix = arg_expr(0);
+            let opcode = arg_expr(1);
+            let reg = reg_expr(2);
+            let rm = reg_expr(3);
+            let imm = arg_expr(4);
+            Ok(quote! {
+                let __p = #prefix as u8;
+                if __p != 0 { sink.put1(__p); }
+                let __reg = #reg;
+                let __rm = #rm;
+                if (__reg & 0x8) != 0 || (__rm & 0x8) != 0 {
+                    let __rex: u8 = 0x40
+                        | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                        | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                    sink.put1(__rex);
+                }
+                sink.put1(0x0Fu8);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+                sink.put1(#imm as u8);
+            })
+        }
+
+        // @sse_rr_w prefix opcode reg rm — SSE 恒发 REX.W（GPR↔XMM 等）。
+        "sse_rr_w" => {
+            let prefix = arg_expr(0);
+            let opcode = arg_expr(1);
+            let reg = reg_expr(2);
+            let rm = reg_expr(3);
+            Ok(quote! {
+                let __p = #prefix as u8;
+                if __p != 0 { sink.put1(__p); }
+                let __reg = #reg;
+                let __rm = #rm;
+                let __rex: u8 = 0x48
+                    | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                    | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                sink.put1(__rex);
+                sink.put1(0x0Fu8);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @sse_ps_rr opcode reg rm — SSE packed-single（无强制前缀）。
+        "sse_ps_rr" => {
+            let opcode = arg_expr(0);
+            let reg = reg_expr(1);
+            let rm = reg_expr(2);
+            Ok(quote! {
+                let __reg = #reg;
+                let __rm = #rm;
+                if (__reg & 0x8) != 0 || (__rm & 0x8) != 0 {
+                    let __rex: u8 = 0x40
+                        | if (__reg & 0x8) != 0 { 0x04 } else { 0 }
+                        | if (__rm & 0x8) != 0 { 0x01 } else { 0 };
+                    sink.put1(__rex);
+                }
+                sink.put1(0x0Fu8);
+                sink.put1(#opcode as u8);
+                sink.put1((3u8 << 6) | ((__reg as u8 & 0x7) << 3) | (__rm as u8 & 0x7));
+            })
+        }
+
+        // @push_reg reg / @pop_reg reg — PUSH/POP r64（REX 扩展）。
+        "push_reg" => {
+            let reg = reg_expr(0);
+            Ok(quote! {
+                let __reg = #reg;
+                if (__reg & 0x8) != 0 { sink.put1(0x41u8); }
+                sink.put1(0x50u8 | (__reg as u8 & 0x7));
+            })
+        }
+        "pop_reg" => {
+            let reg = reg_expr(0);
+            Ok(quote! {
+                let __reg = #reg;
+                if (__reg & 0x8) != 0 { sink.put1(0x41u8); }
+                sink.put1(0x58u8 | (__reg as u8 & 0x7));
+            })
+        }
+
+        // @mov_imm64 reg imm — MOV r64, imm64（REX.W + B8+r + 8 字节）。
+        "mov_imm64" => {
+            let reg = reg_expr(0);
+            let imm = arg_expr(1);
+            Ok(quote! {
+                let __reg = #reg;
+                if (__reg & 0x8) != 0 { sink.put1(0x49u8); } else { sink.put1(0x48u8); }
+                sink.put1(0xB8u8 | (__reg as u8 & 0x7));
+                let __imm = #imm as u64;
+                sink.put1(__imm as u8);
+                sink.put1((__imm >> 8) as u8);
+                sink.put1((__imm >> 16) as u8);
+                sink.put1((__imm >> 24) as u8);
+                sink.put1((__imm >> 32) as u8);
+                sink.put1((__imm >> 40) as u8);
+                sink.put1((__imm >> 48) as u8);
+                sink.put1((__imm >> 56) as u8);
+            })
+        }
+
+        // @setcc dest cond — SETcc r/m8（0F 90+cc /r）。
+        "setcc" => {
+            let dest = reg_expr(0);
+            let cond = arg_expr(1);
+            Ok(quote! {
+                let __dest = #dest;
+                if (__dest & 0x8) != 0 { sink.put1(0x41u8); }
+                else if __dest >= 4 { sink.put1(0x40u8); }
+                sink.put1(0x0Fu8);
+                sink.put1(0x90u8 | (#cond as u8 & 0x0F));
+                sink.put1((3u8 << 6) | (__dest as u8 & 0x7));
+            })
+        }
+
         "leb128" => {
             let a = arg_ident(0);
             Ok(quote! {
@@ -1237,41 +1773,121 @@ fn gen_primitive(
             })
         }
         "lea_rbp_disp" => {
-            let dest = arg_ident(0);
-            let disp = arg_ident(1);
+            // @lea_rbp_disp dest base disp — REX.W + 8D + ModRM(base) + disp8/disp32。
+            // base 为寄存器字段或物理编号字面量（x86 RBP=5）。
+            let dest = reg_expr(0);
+            let base = reg_expr(1);
+            let disp = arg_expr(2);
             Ok(quote! {
-                enc_lea_rbp(sink, #dest.to_index(), *#disp as i32);
+                let __rd = #dest;
+                let __base = #base;
+                let __disp = #disp as i32;
+                let __rex: u8 = 0x48 | if (__rd & 0x8) != 0 { 0x04 } else { 0 };
+                sink.put1(__rex);
+                sink.put1(0x8Du8);
+                if (-128i32..=127i32).contains(&__disp) {
+                    sink.put1((1u8 << 6) | ((__rd as u8 & 0x7) << 3) | (__base as u8 & 0x7));
+                    sink.put1(__disp as u8);
+                } else {
+                    sink.put1((2u8 << 6) | ((__rd as u8 & 0x7) << 3) | (__base as u8 & 0x7));
+                    sink.put4(__disp as u32);
+                }
             })
         }
         "lea_sib" => {
-            let dest = arg_ident(0);
-            let base = arg_ident(1);
-            let index = arg_ident(2);
-            let scale = arg_ident(3);
-            let disp = arg_ident(4);
+            // @lea_sib dest base index scale disp — REX.W + 8D + ModRM/SIB + disp。
+            // force-disp base 编号来自 [meta].modrm_force_disp_base。
+            let dest = reg_expr(0);
+            let base = reg_expr(1);
+            let index = reg_expr(2);
+            let scale = arg_expr(3);
+            let disp = arg_expr(4);
+            let force = &model.meta.modrm_force_disp_base;
+            let force_toks: Vec<TokenStream> = force.iter().map(|&b| quote! { #b }).collect();
             Ok(quote! {
-                enc_lea_sib(sink, #dest.to_index(), #base.to_index(), #index.to_index(), *#scale, *#disp as i32);
+                let __rd = #dest;
+                let __base = #base;
+                let __index = #index;
+                let __scale = #scale;
+                let __disp = #disp as i32;
+                let __rex: u8 = 0x48
+                    | if (__rd & 0x8) != 0 { 0x04 } else { 0 }
+                    | if (__index & 0x8) != 0 { 0x02 } else { 0 }
+                    | if (__base & 0x8) != 0 { 0x01 } else { 0 };
+                sink.put1(__rex);
+                sink.put1(0x8Du8);
+                const FORCE_DISP: &[u8] = &[#(#force_toks),*];
+                let __scale_bits: u8 = match __scale { 1 => 0, 2 => 1, 4 => 2, 8 => 3, _ => 0 };
+                // index=4（RSP）是"无 index"哨兵；base=4（RSP）时 modrm.rm=4
+                // 也触发 SIB 期待（mod≠11 且 rm=100 → SIB）。两种情况都必须发
+                // SIB，否则 SIB 字节被 CPU 当作 disp8、真正的 disp 被吞进下一条
+                // 指令——指令流错位（栈参数 lea [rsp+disp] SEGV/SIGILL）。
+                let __no_index = (__index as u8 & 0x7) == 4;
+                let __base_is_rsp = (__base as u8 & 0x7) == 4;
+                let __has_sib = !__no_index || __base_is_rsp;
+                let __rm: u8 = if __has_sib { 4 } else { __base as u8 & 0x7 };
+                let __modrm = |m: u8| -> u8 { (m << 6) | ((__rd as u8 & 0x7) << 3) | __rm };
+                let __sib = |s: u8| -> u8 { (s << 6) | ((__index as u8 & 0x7) << 3) | (__base as u8 & 0x7) };
+                let __need_disp = __disp != 0 || FORCE_DISP.contains(&(__base as u8));
+                if !__need_disp {
+                    sink.put1(__modrm(0));
+                    if __has_sib { sink.put1(__sib(__scale_bits)); }
+                } else if (-128i32..=127i32).contains(&__disp) {
+                    sink.put1(__modrm(1));
+                    if __has_sib { sink.put1(__sib(__scale_bits)); }
+                    sink.put1(__disp as u8);
+                } else {
+                    sink.put1(__modrm(2));
+                    if __has_sib { sink.put1(__sib(__scale_bits)); }
+                    sink.put4(__disp as u32);
+                }
             })
         }
-        "shift_cl" => {
-            // x86 variable shift: count must be in CL (register index 1).
-            // CL=1 is an x86 ISA architectural constant (ModRM reg field).
-            let dest = arg_ident(0);
-            let src = arg_ident(1);
-            let op_ext = arg_expr(2);
+        "bswap_r" => {
+            // @bswap_r dest opsize — BSWAP r/m（0F C8+r；64 位加 REX.W + REX.B=dest[3]）
+            let reg = reg_expr(0);
+            let opsize = arg_expr(1);
             Ok(quote! {
-                const CL: u8 = 1; // x86 architectural constant
-                let cnt = #src.to_index();
-                if cnt != CL {
-                    if cnt >= 8 { sink.put1(0x49u8); } else { sink.put1(0x48u8); }
+                let __r = #reg;
+                let __opsize = #opsize as i64;
+                let __rex: u8 = if __opsize == 64 { 0x48 } else { 0x40 }
+                    | if (__r & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__r & 0x8) != 0 { sink.put1(__rex); }
+                sink.put1(0x0Fu8);
+                sink.put1(0xC8u8 | (__r as u8 & 0x7));
+            })
+        }
+
+        "shift_reg" => {
+            // @shift_reg count dest src ext opsize — 可变计数移位：count 为计数
+            // 寄存器物理编号（x86 CL=1，架构事实由 TOML 传入），dest 为
+            // 被移位寄存器（r/m 字段），ext 为 /digit 扩展码。
+            // 计数不在 count 寄存器时先 mov：REX.W + 8B + ModRM。
+            // opsize==64 才带 REX.W（32 位移位不得加，否则宽度错）。
+            let count = arg_expr(0);
+            let dest = reg_expr(1);
+            let src = reg_expr(2);
+            let op_ext = arg_expr(3);
+            let opsize = arg_expr(4);
+            Ok(quote! {
+                let __opsize = #opsize as i64;
+                let __cnt_reg = #count as u32;
+                let __cnt = #src;
+                if __cnt != __cnt_reg {
+                    // mov count-reg, cnt — REX.W + 0x8B + modrm(3, count_reg, cnt)
+                    let __rex: u8 = if (__cnt & 0x8) != 0 { 0x49 } else { 0x48 };
+                    sink.put1(__rex);
                     sink.put1(0x8Bu8);
-                    sink.put1(modrm(3, CL, cnt));
+                    sink.put1((3u8 << 6) | ((__cnt_reg as u8 & 0x7) << 3) | (__cnt as u8 & 0x7));
                 }
-                let __d = #dest.to_index();
-                // REX.W=1 required for 64-bit shift; REX.B set if dest ≥ 8
-                if __d >= 8 { sink.put1(0x49u8); } else { sink.put1(0x48u8); }
+                let __d = #dest;
+                // 64 位移位需 REX.W=1；32 位不得加；REX.B set if dest ≥ 8
+                let __rex: u8 = 0x40
+                    | if __opsize == 64 { 0x08 } else { 0 }
+                    | if (__d & 0x8) != 0 { 0x01 } else { 0 };
+                if __opsize == 64 || (__d & 0x8) != 0 { sink.put1(__rex); }
                 sink.put1(0xD3u8);
-                sink.put1(modrm(3, #op_ext as u8, __d & 7));
+                sink.put1((3u8 << 6) | ((#op_ext as u8 & 0x7) << 3) | (__d as u8 & 0x7));
             })
         }
         // Cross-function call — 32-bit instruction whose displacement lives in
@@ -1327,8 +1943,35 @@ fn gen_primitive(
                 );
             })
         }
+        // lea rd, [rip+disp32] — REX.W + 8D + ModRM(rm=101) + disp32,with a
+        // PC-relative reloc (RelocKind::Relative(4,-4) → PE IMAGE_REL_AMD64_REL32).
+        // PC-relative offsets are loader-independent (no .reloc entry needed),
+        // so global addresses survive ASLR — unlike the absolute movabs
+        // placeholder (box_write 0xC000001D root cause: the 5th movabs reloc
+        // landed beyond the .reloc VirtualSize and was never fixed up under ASLR).
+        "lea_rip_rel" => {
+            let dest = reg_expr(0);
+            let target = arg_ident(1);
+            Ok(quote! {
+                let __rd = #dest;
+                let __g = *(#target) as u32;
+                let __rex: u8 = 0x48 | if (__rd & 0x8) != 0 { 0x04 } else { 0 };
+                sink.put1(__rex);
+                sink.put1(0x8Du8);
+                // mod=00, reg=dest, rm=101 (RIP-relative)
+                sink.put1(((__rd as u8 & 0x7) << 3) | 0x05);
+                let __off = sink.offset();
+                sink.put4(0u32);
+                sink.add_reloc(
+                    __off,
+                    crate::RelocKind::Relative(4, -4),
+                    &format!("G{}", __g),
+                    0,
+                );
+            })
+        }
         _ => Err(format!(
-            "unknown encoding primitive '@{name}'. Available: @leb128, @sleb128, @leb128_reg, @lea_sib, @shift_cl, @call_reloc, @call_reloc32, @abs_reloc"
+            "unknown encoding primitive '@{name}'. Available: @leb128, @sleb128, @leb128_reg, @modrm, @modrm_mem, @op_rm, @modrm_imm32, @op_rm_imm32, @cmovcc, @sse_rr, @sse_rr_3a, @sse_rr_w, @sse_ps_rr, @sse_rr_imm8, @push_reg, @pop_reg, @mov_imm64, @setcc, @lea_sib, @lea_rbp_disp, @lea_rip_rel, @shift_reg, @call_reloc, @call_reloc32, @abs_reloc"
         )),
     }
 }
@@ -1578,5 +2221,81 @@ mod tests {
     #[test]
     fn test_unknown_fixup_is_error() {
         assert!(parse_encoding("{0xE9:[0;8]} !bad").is_err());
+    }
+}
+
+#[cfg(test)]
+mod memref_primitive_tests {
+    use super::*;
+    use crate::model::{FieldType, IsaModel};
+
+    /// @modrm_mem 的 rm 参数为 MemRef 字段时，生成代码从 mem.base/mem.offset 展开。
+    #[test]
+    fn test_modrm_mem_memref_field() {
+        let src = "[meta]\nname = \"t\"\nmodrm_force_disp_base = [5, 13]\n[reg.gpr64]\ncount = 16\nwidth = 64";
+        let model: IsaModel = toml::from_str(src).expect("parse");
+
+        let mut field_map: std::collections::HashMap<String, &FieldType> =
+            std::collections::HashMap::new();
+        field_map.insert("dest".into(), &FieldType::GprReg);
+        field_map.insert("mem".into(), &FieldType::MemRef);
+
+        let args: Vec<String> = ["64", "0x8B", "dest", "mem"]
+            .map(|s| s.to_string())
+            .to_vec();
+        let ts = gen_primitive("modrm_mem", &args, &field_map, &model).expect("gen");
+        let out = ts.to_string();
+        assert!(
+            out.contains("mem . base as u32"),
+            "MemRef 字段应展开 base: {out}"
+        );
+        assert!(
+            out.contains("mem . offset as i32"),
+            "MemRef 字段应展开 offset: {out}"
+        );
+        assert!(out.contains("as u8"), "opcode 应编码: {out}");
+    }
+
+    /// 普通寄存器 rm 参数保持原有行为（disp 转 i32）。
+    #[test]
+    fn test_modrm_mem_reg_field() {
+        let src = "[meta]\nname = \"t\"\nmodrm_force_disp_base = [5, 13]\n[reg.gpr64]\ncount = 16\nwidth = 64";
+        let model: IsaModel = toml::from_str(src).expect("parse");
+        let mut field_map: std::collections::HashMap<String, &FieldType> =
+            std::collections::HashMap::new();
+        field_map.insert("dest".into(), &FieldType::GprReg);
+        field_map.insert("src".into(), &FieldType::GprReg);
+
+        let args: Vec<String> = ["64", "0x8B", "dest", "src", "0"]
+            .map(|s| s.to_string())
+            .to_vec();
+        let ts = gen_primitive("modrm_mem", &args, &field_map, &model).expect("gen");
+        let out = ts.to_string();
+        assert!(out.contains("as i32"), "寄存器路径 disp 应转 i32: {out}");
+        assert!(!out.contains("mem . base"), "寄存器路径不应展开 MemRef");
+    }
+}
+
+#[cfg(test)]
+mod modrm_prefix_probe {
+    use super::*;
+    use crate::model::{FieldType, IsaModel};
+
+    #[test]
+    fn probe_f2_prefix() {
+        let src = "[meta]\nname = \"t\"\nmodrm_force_disp_base = [5, 13]\n[reg.gpr64]\ncount = 16\nwidth = 64\n[reg.fpr64]\ncount = 16\nwidth = 64";
+        let model: IsaModel = toml::from_str(src).expect("parse");
+        let mut field_map: std::collections::HashMap<String, &FieldType> =
+            std::collections::HashMap::new();
+        field_map.insert("dest".into(), &FieldType::XmmReg);
+        field_map.insert("mem".into(), &FieldType::MemRef);
+        let args: Vec<String> = ["32", "0x10", "dest", "mem", "0xF2", "0x0F"]
+            .map(|s| s.to_string())
+            .to_vec();
+        let ts = gen_primitive("modrm_mem", &args, &field_map, &model).expect("gen");
+        let out = ts.to_string();
+        eprintln!("QUOTE: {out}");
+        assert!(out.contains("242u64"), "prefix 0xF2(242) 缺失: {out}");
+        assert!(out.contains("15u64"), "escape 0x0F(15) 缺失: {out}");
     }
 }

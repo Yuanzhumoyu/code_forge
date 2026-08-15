@@ -9,6 +9,9 @@ mod codegen;
 mod model;
 mod parser;
 
+// 每 ISA 专属汇编语法生成器（模板 → lalrpop 语法 → parser 代码）
+mod asm_grammar;
+
 // Instruction resolver (shared with CST codegen)
 mod asm_resolver;
 
@@ -18,15 +21,15 @@ mod grammar_rule;
 // CST-based code generation using forge-grammar
 mod cst_codegen;
 
-fn compile_source(source: &str) -> Result<proc_macro2::TokenStream, CompileError> {
-    let mut model = parser::parse(source).map_err(CompileError::Parse)?;
-    model.validate().map_err(CompileError::Validation)?;
+fn compile_source(source: &str) -> Result<proc_macro2::TokenStream, DslError> {
+    let mut model = parser::parse(source).map_err(DslError::Parse)?;
+    model.validate().map_err(DslError::Validation)?;
+    model.expand_opcodes();
     model.expand_variants();
-    model
-        .validate_lowering()
-        .map_err(CompileError::Validation)?;
+    model.expand_templates();
+    model.validate_lowering().map_err(DslError::Validation)?;
 
-    let inner = codegen::generate(&model).map_err(CompileError::Codegen)?;
+    let inner = codegen::generate(&model).map_err(DslError::Codegen)?;
 
     let mod_name = syn::Ident::new(
         &model.meta.name.to_lowercase().replace('-', "_"),
@@ -44,7 +47,7 @@ fn compile_source(source: &str) -> Result<proc_macro2::TokenStream, CompileError
 }
 
 #[derive(Debug, thiserror::Error)]
-enum CompileError {
+enum DslError {
     #[error("parse: {0}")]
     Parse(String),
     #[error("validate: {0}")]
@@ -75,10 +78,21 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
     let path = lit.value();
-    let content = match std::fs::read_to_string(&path).or_else(|_| {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-        std::fs::read_to_string(std::path::PathBuf::from(&manifest_dir).join(&path))
-    }) {
+    let content = match std::fs::read_to_string(&path)
+        .or_else(|_| {
+            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+            std::fs::read_to_string(std::path::PathBuf::from(&manifest_dir).join(&path))
+        })
+        .or_else(|_| {
+            // 向上查找：workspace 布局下 crate 位于 crates/<layer>/<crate>/
+            //（如 crates/backend/forge-codegen → 上 3 级到 <root>/isa/...）。
+            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+            std::fs::read_to_string(
+                std::path::PathBuf::from(&manifest_dir)
+                    .join("../../..")
+                    .join(&path),
+            )
+        }) {
         Ok(c) => c,
         Err(e) => {
             return syn::Error::new(

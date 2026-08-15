@@ -162,6 +162,40 @@ impl ParsedTemplate {
             })
             .collect()
     }
+
+    /// Get each template field's operand shape, aligned with `field_order()`.
+    ///
+    /// 判定字段是否为内存操作数：模板中该字段紧跟在 `[` 之后（如 `xadd [{base}], {src}`
+    /// 的 base、`stp ..., [{rn}, #{imm}]!` 的 rn——前一个 Literal 片段以 `[` 结尾）。
+    /// lower 规则书写操作数时内存操作数必须带方括号（`[rs1]`），普通操作数禁止带
+    /// 方括号——DSL 据此校验，防止"碰巧按位置绑定但不符合 asm 编码格式"的写法。
+    pub fn operand_shapes(&self) -> Vec<OperandShape> {
+        let mut shapes = Vec::new();
+        for (i, frag) in self.frags.iter().enumerate() {
+            if matches!(frag, AsmFrag::Field { .. }) {
+                let prev_lit = self.frags[..i].iter().rev().find_map(|f| match f {
+                    AsmFrag::Lit(s) => Some(s.as_str()),
+                    _ => None,
+                });
+                let is_mem = prev_lit.is_some_and(|s| s.ends_with('['));
+                shapes.push(if is_mem {
+                    OperandShape::Memory
+                } else {
+                    OperandShape::Plain
+                });
+            }
+        }
+        shapes
+    }
+}
+
+/// 模板字段的操作数形状（与 `field_order()` 对齐）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperandShape {
+    /// `[field]`——内存操作数，lower 规则书写时必须带方括号（如 `[rs1]`）。
+    Memory,
+    /// `{field}`——普通操作数（寄存器/立即数），书写时禁止带方括号。
+    Plain,
 }
 
 // ============================================================
@@ -174,6 +208,9 @@ pub struct InstEntry {
     pub inst_name: String,
     /// Field order from the asm template (operand positions).
     pub template_order: Vec<(String, FieldType)>,
+    /// 每个模板字段的操作数形状（与 template_order 对齐）——lower/emit 书写时
+    /// 内存操作数必须带方括号，AsmResolver 据此校验格式一致性。
+    pub template_shapes: Vec<OperandShape>,
 }
 
 /// Result of resolving an asm call.
@@ -220,6 +257,7 @@ impl AsmResolver {
 
             let template = ParsedTemplate::parse(&inst.asm, &fields);
             let template_order = template.field_order();
+            let template_shapes = template.operand_shapes();
 
             if template.has_cond_field {
                 // Expand condition code mnemonics
@@ -246,12 +284,14 @@ impl AsmResolver {
                     .push(InstEntry {
                         inst_name: inst_name.clone(),
                         template_order,
+                        template_shapes: template_shapes.clone(),
                     });
             } else {
                 let mnemonic = template.mnemonic.clone();
                 mnemonic_table.entry(mnemonic).or_default().push(InstEntry {
                     inst_name: inst_name.clone(),
                     template_order,
+                    template_shapes,
                 });
             }
         }
@@ -339,7 +379,8 @@ impl AsmResolver {
         // 4. If unambiguous, use it
         if matching.len() == 1 {
             let entry = matching[0];
-            let bindings = Self::build_bindings(&entry.template_order, operands)?;
+            let bindings =
+                Self::build_bindings(&entry.template_order, &entry.template_shapes, operands)?;
             return Ok(ResolvedInst {
                 inst_name: entry.inst_name.clone(),
                 bindings,
@@ -592,7 +633,8 @@ impl AsmResolver {
             ));
         }
 
-        let bindings = Self::build_bindings(&entry.template_order, operands)?;
+        let bindings =
+            Self::build_bindings(&entry.template_order, &entry.template_shapes, operands)?;
         Ok(ResolvedInst {
             inst_name: entry.inst_name.clone(),
             bindings,
@@ -603,6 +645,7 @@ impl AsmResolver {
     /// decompose into multiple fields (base, index, scale, disp).
     fn build_bindings(
         template_order: &[(String, FieldType)],
+        shapes: &[OperandShape],
         operands: &[String],
     ) -> Result<Vec<(String, String)>, String> {
         let mut bindings: Vec<(String, String)> = Vec::new();
@@ -613,6 +656,21 @@ impl AsmResolver {
             let op = &operands[op_idx];
 
             if op.starts_with('[') {
+                // 形状校验：内存操作数必须落在模板的内存字段（[field]）。
+                if shapes.get(tpl_idx) != Some(&OperandShape::Memory) {
+                    return Err(format!(
+                        "operand '{}' is a bracketed memory operand, but template field \
+                         '{}' expects a plain operand",
+                        op, template_order[tpl_idx].0
+                    ));
+                }
+                // 单个 MemRef 字段：整个内存操作数绑定到该字段（不再拆 base/index/scale/disp）
+                if let Some((field_name, FieldType::MemRef)) = template_order.get(tpl_idx) {
+                    bindings.push((field_name.clone(), op.clone()));
+                    tpl_idx += 1;
+                    op_idx += 1;
+                    continue;
+                }
                 let mem = decompose_mem_operand(op)?;
                 // Consume template fields that match MemRef component names
                 while tpl_idx < template_order.len() {
@@ -640,6 +698,14 @@ impl AsmResolver {
                 }
                 op_idx += 1;
             } else {
+                // 形状校验：普通操作数不得落在模板的内存字段（[field]）。
+                if shapes.get(tpl_idx) == Some(&OperandShape::Memory) {
+                    return Err(format!(
+                        "operand '{}' must be a memory operand '[...]' per asm template \
+                         (field '{}' is bracketed)",
+                        op, template_order[tpl_idx].0
+                    ));
+                }
                 let (field_name, _) = &template_order[tpl_idx];
                 bindings.push((field_name.clone(), op.clone()));
                 tpl_idx += 1;
@@ -830,6 +896,8 @@ mod tests {
                 encoding: Some("$rex_modrm_rr 0x01 src dest".into()),
                 asm: "add {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -851,6 +919,8 @@ mod tests {
                 encoding: Some("$rex_modrm_rr 0x8B dest src".into()),
                 asm: "mov {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -872,6 +942,8 @@ mod tests {
                 encoding: Some("$rexw_modrm_rr 0x8B dest src".into()),
                 asm: "mov {dest}, {src}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -893,6 +965,8 @@ mod tests {
                 encoding: Some("$mov_imm64 reg imm".into()),
                 asm: "mov {reg}, 0x{imm:x}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -914,6 +988,8 @@ mod tests {
                 encoding: Some("{0x0F:[0;8]} {cond:[0;8]} !rel4".into()),
                 asm: "j{cond} .L{rel}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: Some(vec!["Branch".into()]),
             },
         );
@@ -935,6 +1011,8 @@ mod tests {
                 encoding: Some("$setcc dest cond".into()),
                 asm: "set{cond} {dest}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -949,6 +1027,8 @@ mod tests {
                 encoding: Some("$push_reg reg".into()),
                 asm: "push {reg}".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: Some(vec!["Write".into()]),
             },
         );
@@ -959,6 +1039,8 @@ mod tests {
                 encoding: Some("{0xC3:[0;8]}".into()),
                 asm: "ret".into(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: Some(vec!["Ret".into()]),
             },
         );
@@ -980,6 +1062,11 @@ mod tests {
                 capabilities: Default::default(),
                 no_default_lowering: true,
                 no_epilogue_label: false,
+                gpr_bank_order: vec![],
+                modrm_force_disp_base: vec![],
+                epilogue_jump_opcode: None,
+                default_fpr_width: None,
+                enable_pattern_isel: None,
             },
             reg: {
                 let mut m = BTreeMap::new();
@@ -998,6 +1085,7 @@ mod tests {
                             .collect(),
                         ),
                         prefix: None,
+                        base_index: None,
                     },
                 );
                 m
@@ -1350,6 +1438,7 @@ mod tests {
                     "RDI".into(),
                 ]),
                 prefix: None,
+                base_index: None,
             },
         );
         let model = IsaModel {
@@ -1364,6 +1453,11 @@ mod tests {
                 capabilities: Default::default(),
                 no_default_lowering: true,
                 no_epilogue_label: false,
+                gpr_bank_order: vec![],
+                modrm_force_disp_base: vec![],
+                epilogue_jump_opcode: None,
+                default_fpr_width: None,
+                enable_pattern_isel: None,
             },
             reg,
             abi: None,
@@ -1397,6 +1491,8 @@ mod tests {
                 encoding: None,
                 asm: String::new(),
                 variants: None,
+                opcodes: None,
+                implicit: None,
                 effect: None,
             },
         );
@@ -1417,6 +1513,7 @@ mod tests {
                     "RDI".into(),
                 ]),
                 prefix: None,
+                base_index: None,
             },
         );
         let model = IsaModel {
@@ -1431,6 +1528,11 @@ mod tests {
                 capabilities: Default::default(),
                 no_default_lowering: true,
                 no_epilogue_label: false,
+                gpr_bank_order: vec![],
+                modrm_force_disp_base: vec![],
+                epilogue_jump_opcode: None,
+                default_fpr_width: None,
+                enable_pattern_isel: None,
             },
             reg,
             abi: None,
@@ -1534,5 +1636,58 @@ mod tests {
         let m = decompose_mem_operand("[RSP+16]").unwrap();
         assert_eq!(m.base.as_deref(), Some("RSP"));
         assert_eq!(m.disp, 16);
+    }
+
+    #[test]
+    fn test_shape_check_missing_brackets() {
+        // 模板 'xadd [{base}], {src}'：内存操作数必须带方括号。
+        let mut m = make_model();
+        m.inst.insert(
+            "XADD_MEM_R".into(),
+            crate::model::Instruction {
+                fields: vec![
+                    InstField {
+                        role: None,
+                        name: "base".into(),
+                        field_type: FieldType::Ireg,
+                    },
+                    InstField {
+                        role: None,
+                        name: "src".into(),
+                        field_type: FieldType::Ireg,
+                    },
+                ],
+                encoding: Some("$rex_modrm_mem 0xC1 src base".into()),
+                asm: "xadd [{base}], {src}".into(),
+                variants: None,
+                opcodes: None,
+                implicit: None,
+                effect: None,
+            },
+        );
+        let resolver = AsmResolver::build(&m);
+
+        // 缺方括号 → 报错（防"碰巧编译但不符合 asm 格式"）
+        let err = resolver
+            .resolve("xadd", &["rs1".into(), "rs2".into()])
+            .unwrap_err();
+        assert!(err.contains("memory operand"), "应提示缺方括号: {err}");
+
+        // 正确形式 → base 绑定剥离方括号后的 rs1
+        let ok = resolver
+            .resolve("xadd", &["[rs1]".into(), "rs2".into()])
+            .unwrap();
+        assert_eq!(ok.bindings[0], ("base".into(), "rs1".into()));
+        assert_eq!(ok.bindings[1], ("src".into(), "rs2".into()));
+    }
+
+    #[test]
+    fn test_shape_check_extra_brackets() {
+        // 模板 'add {dest}, {src}'：普通操作数禁止方括号。
+        let resolver = AsmResolver::build(&make_model());
+        let err = resolver
+            .resolve("add", &["[rd]".into(), "rs1".into()])
+            .unwrap_err();
+        assert!(err.contains("plain operand"), "应提示禁止方括号: {err}");
     }
 }

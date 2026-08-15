@@ -15,3 +15,5 @@ syn = { version = "3.0.3", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 thiserror = "2"
+# proc-macro 展开时生成每 ISA 专属 lalrpop 语法并编译为 parser 代码
+lalrpop = "0.23.1"

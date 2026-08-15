@@ -575,7 +575,9 @@ pub fn lower_into_module(
     // parameters to the forge_ir entry-block parameters (function arguments)
     lowering.lower_graph_with_entry_and_params(graph, entry_block, &entry_params)?;
 
-    let func = builder.finish();
+    let func = builder
+        .finish()
+        .map_err(|e| HirError::Internal(e.to_string()))?;
     Ok(module.add_function(func))
 }
 
@@ -673,17 +675,16 @@ mod tests {
             .unwrap();
         graph.set_terminator(block, n4).unwrap();
 
-        // Lower
+        // Lower：不预创建 entry —— lower_graph 会把 graph 块 0 自动建成函数入口
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut builder = FunctionBuilder::new("test", ctx, sig);
-        builder.create_entry_block();
 
         let mut lowering = LoweringContext::new(&mut builder, &registry);
         lowering.lower_graph(&graph).unwrap();
         // Verify lowering succeeded (function is implicitly verified by finishing the builder)
         drop(lowering);
-        let _func = builder.finish();
+        let _func = builder.finish().expect("build");
     }
 
     #[test]
@@ -834,15 +835,14 @@ mod tests {
             .unwrap();
         graph.set_terminator(merge_blk, n_ret_term).unwrap();
 
-        // Lower
+        // Lower：不预创建 entry —— lower_graph 会把 graph 块 0 自动建成函数入口
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut builder = FunctionBuilder::new("test_if", ctx, sig);
-        builder.create_entry_block();
 
         let mut lowering = LoweringContext::new(&mut builder, &registry);
         lowering.lower_graph(&graph).unwrap();
         drop(lowering);
-        let _func = builder.finish();
+        let _func = builder.finish().expect("build");
     }
 }

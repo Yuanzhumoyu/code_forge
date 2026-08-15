@@ -4,7 +4,6 @@
 //! - `scalar::const_fold` — constant folding
 //! - `scalar::sccp` — sparse conditional constant propagation
 //! - `ipa::func_specialize` — function specialization
-//! - `support::interpreter` — IR interpreter
 
 use forge_ir::Big;
 use forge_ir::TypeId;

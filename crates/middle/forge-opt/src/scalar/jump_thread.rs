@@ -14,7 +14,7 @@
 //! 3. 对每个以 Jump 结尾的块，检查目标是否为仅含 Jump 的空块，重定向
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use smallvec::smallvec;
 
@@ -37,13 +37,13 @@ impl OptimizationPass for JumpThreadPass {
         "Folds chains of unconditional jumps and eliminates empty blocks"
     }
 
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         thread_jumps(func)
     }
 }
 
 /// 对函数执行跳转线程优化。
-pub fn thread_jumps(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     let block_count = func.dfg.blocks.len();
     let entry = func.entry_block.unwrap_or(Block(0));
@@ -58,7 +58,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, CompileError> {
         for bi in 0..block_count {
             let target_info = {
                 let block = &func.dfg.blocks[bi];
-                if let Terminator::Jump { target, args } = &block.terminator {
+                if let Terminator::Jump { target, args, .. } = &block.terminator {
                     if args.is_empty() {
                         // Check if target block is an empty block with only Jump
                         let target_block = &func.dfg.blocks[target.0 as usize];
@@ -69,6 +69,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, CompileError> {
                             if let Terminator::Jump {
                                 target: final_target,
                                 args: final_args,
+                                ..
                             } = &target_block.terminator
                             {
                                 Some((*target, *final_target, final_args.clone()))
@@ -90,6 +91,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, CompileError> {
                 func.dfg.blocks[bi].terminator = Terminator::Jump {
                     target: final_target,
                     args: final_args,
+                    metadata: smallvec::smallvec![],
                 };
                 changed = true;
                 result.blocks_removed += 1;
@@ -105,7 +107,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, CompileError> {
             let (is_empty_jump, jump_target, jump_args) = {
                 let block = &func.dfg.blocks[bi];
                 if block.inst_order.is_empty() && block.params.is_empty() {
-                    if let Terminator::Jump { target, args } = &block.terminator {
+                    if let Terminator::Jump { target, args, .. } = &block.terminator {
                         (true, *target, args.clone())
                     } else {
                         (false, Block(0), smallvec![])
@@ -116,53 +118,31 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, CompileError> {
             };
 
             if is_empty_jump {
-                // Get predecessors and redirect
+                // Get predecessors and redirect（用结构化 API：retarget + 整体替换 args）
                 let pred_list: Vec<Block> = preds.get(&block_id).cloned().unwrap_or_default();
                 for &pred_id in &pred_list {
                     let pred_block = &mut func.dfg.blocks[pred_id.0 as usize];
-                    match &mut pred_block.terminator {
+                    let target = jump_target;
+                    let new_args = jump_args.clone();
+                    // 原实现：then 与 else 都指向 block_id 时合并为 Jump（丢弃 cond）。
+                    // 保持该语义——否则 Branch 的两个分支都指向同一空 jump 块。
+                    let both_sides = matches!(
+                        &pred_block.terminator,
                         Terminator::Branch {
-                            then_block,
-                            else_block,
-                            then_args,
-                            else_args,
+                            then_block: t,
+                            else_block: e,
                             ..
-                        } => {
-                            let is_then = *then_block == block_id;
-                            let is_else = *else_block == block_id;
-                            if is_then && is_else {
-                                pred_block.terminator = Terminator::Jump {
-                                    target: jump_target,
-                                    args: jump_args.clone(),
-                                };
-                            } else if is_then {
-                                *then_block = jump_target;
-                                *then_args = jump_args.clone();
-                            } else if is_else {
-                                *else_block = jump_target;
-                                *else_args = jump_args.clone();
-                            }
-                        }
-                        Terminator::Jump { target, args } if *target == block_id => {
-                            *target = jump_target;
-                            *args = jump_args.clone();
-                        }
-                        Terminator::Switch {
-                            default_block,
-                            cases,
-                            ..
-                        } => {
-                            if *default_block == block_id {
-                                *default_block = jump_target;
-                            }
-                            for (_, case_target, case_args) in cases.iter_mut() {
-                                if *case_target == block_id {
-                                    *case_target = jump_target;
-                                    *case_args = jump_args.clone();
-                                }
-                            }
-                        }
-                        _ => {}
+                        } if *t == block_id && *e == block_id
+                    );
+                    pred_block.terminator.retarget(block_id, target);
+                    if both_sides {
+                        pred_block.terminator = Terminator::Jump {
+                            target,
+                            args: new_args,
+                            metadata: smallvec::smallvec![],
+                        };
+                    } else {
+                        pred_block.terminator.replace_args(target, new_args);
                     }
                 }
                 // Set empty block to Unreachable
@@ -178,6 +158,11 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, CompileError> {
     }
 
     result.changed = result.blocks_removed > 0;
+    if result.changed {
+        // 终止符/块已修改：失效分析缓存（前驱/后继/支配树），
+        // 避免后续 pass 复用 stale 的 CFG 分析。
+        func.analysis_mut().invalidate();
+    }
     Ok(result)
 }
 
@@ -209,7 +194,7 @@ mod tests {
         b.switch_to_block(b2);
         b.ret(&[]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = JumpThreadPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -249,7 +234,7 @@ mod tests {
         b.switch_to_block(b3);
         b.ret(&[]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = JumpThreadPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -281,7 +266,7 @@ mod tests {
         b.switch_to_block(b1);
         b.ret(&[]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = JumpThreadPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(!r.changed);

@@ -11,7 +11,7 @@
 //! 4. 若边界已知（icmp 比较），则可将 IV 的使用替换为闭合形式
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 
 #[derive(Default)]
@@ -30,29 +30,23 @@ impl OptimizationPass for IndVarSimplifyPass {
     fn description(&self) -> &'static str {
         "Detects and simplifies induction variables using block-param-based pattern matching"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         simplify_ind_vars(func)
     }
 }
 
 /// 检测到的归纳变量信息。
 /// Fields are stored for future strength reduction when block param addition is supported.
-#[allow(dead_code)]
 struct IndVar {
-    param_idx: usize,
-    header: Block,
-    step: i64,
-    /// The initial value (from outside-loop predecessor), if constant.
-    init_val: Option<i64>,
     /// The block param value for this IV.
     param_val: Value,
 }
 
 /// 归纳变量简化。
-pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let dt = DominatorTree::build(func);
-    let lf = LoopForest::build(func, &dt);
+    // LoopForest 由 Function 惰性缓存构建（clone 后独立可变）
+    let lf = func.loop_forest().clone();
     let preds = func.predecessors().clone();
 
     for loop_info in lf.all_loops() {
@@ -72,7 +66,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, CompileError
         };
 
         // Find the init predecessor (outside-loop predecessor)
-        let init_pred = preds
+        let _init_pred = preds
             .get(&header)
             .into_iter()
             .flatten()
@@ -93,7 +87,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, CompileError
             // Get the value from the latch's terminator (back edge arg)
             let latch_term = &func.dfg.blocks[latch.0 as usize].terminator;
             let back_edge_arg = match latch_term {
-                Terminator::Jump { target, args } if *target == header => args.get(pi).copied(),
+                Terminator::Jump { target, args, .. } if *target == header => args.get(pi).copied(),
                 Terminator::Branch {
                     then_block,
                     then_args,
@@ -142,21 +136,8 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, CompileError
                                 && let Some(step) = func.constants.resolve_int(cid)
                                 && step != 0
                             {
-                                // Find init value
-                                let init_val = init_pred
-                                    .and_then(|p| {
-                                        let t = &func.dfg.blocks[p.0 as usize].terminator;
-                                        get_arg_for_block(t, header, pi)
-                                    })
-                                    .and_then(|v| resolve_iconst_value(func, v));
-
-                                ind_vars.push(IndVar {
-                                    param_idx: pi,
-                                    header,
-                                    step,
-                                    init_val,
-                                    param_val,
-                                });
+                                // （init 值查询已随 IndVar.init_val 字段删除——38 轮）
+                                ind_vars.push(IndVar { param_val });
                             }
                         }
                     }
@@ -195,32 +176,6 @@ fn resolve_iconst_value(func: &Function, v: Value) -> Option<i64> {
         _ => None,
     }
 }
-
-/// Extract the argument at position `pi` for block `target` from a terminator.
-fn get_arg_for_block(term: &Terminator, target: Block, pi: usize) -> Option<Value> {
-    match term {
-        Terminator::Jump {
-            target: t, args, ..
-        } if *t == target => args.get(pi).copied(),
-        Terminator::Branch {
-            then_block,
-            then_args,
-            else_block,
-            else_args,
-            ..
-        } => {
-            if *then_block == target {
-                then_args.get(pi).copied()
-            } else if *else_block == target {
-                else_args.get(pi).copied()
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
 /// Perform IV-based simplifications in the loop body.
 ///
 /// Currently implements:
@@ -239,6 +194,8 @@ fn strength_reduce_ind_vars(
     _latch: Block,
 ) -> usize {
     let mut replaced = 0;
+    // 待删除的简化指令（循环后统一 kill）
+    let mut to_kill: Vec<Inst> = Vec::new();
 
     for iv in ind_vars {
         for &block in body.iter() {
@@ -303,16 +260,18 @@ fn strength_reduce_ind_vars(
                 };
 
                 if let Some(replacement) = simplified {
-                    func.use_lists.replace_all_uses(old_result, replacement);
-                    let inst_mut = &mut func.dfg.insts[inst_id.0 as usize];
-                    inst_mut.opcode = Opcode::Nop;
-                    inst_mut.operands.clear();
-                    inst_mut.immediates.clear();
-                    inst_mut.results.clear();
+                    // 原子 RAUW（DFG + use-lists 双更新）+ 延迟删除
+                    func.replace_all_uses(old_result, replacement);
+                    to_kill.push(inst_id);
                     replaced += 1;
                 }
             }
         }
+    }
+
+    // 原子删除被简化的指令（结果值已全部 RAUW）
+    for inst in to_kill {
+        func.kill_inst(inst);
     }
 
     replaced
@@ -330,7 +289,7 @@ mod tests {
         b.switch_to_block(entry);
         let v = b.iconst_i32(42);
         b.ret(&[v]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = IndVarSimplifyPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -368,7 +327,7 @@ mod tests {
         b.switch_to_block(exit);
         b.ret(&[iv]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = IndVarSimplifyPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         // Detection works but no identity patterns to eliminate
@@ -404,7 +363,7 @@ mod tests {
         b.switch_to_block(exit);
         b.ret(&[scaled]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = IndVarSimplifyPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed, "Should eliminate imul(iv, 1)");
@@ -441,7 +400,7 @@ mod tests {
         b.switch_to_block(exit);
         b.ret(&[zero_add]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = IndVarSimplifyPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed, "Should eliminate iadd(iv, 0)");

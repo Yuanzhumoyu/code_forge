@@ -19,7 +19,7 @@
 //! 4. 移除 Call 指令 (标记 Nop)
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -65,7 +65,7 @@ impl OptimizationPass for InlinePass {
     fn description(&self) -> &'static str {
         "Inlines small function bodies into call sites with cost-aware heuristics"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         inline_calls(func, &self.functions, self.threshold, self.max_depth)
     }
 }
@@ -76,14 +76,12 @@ pub fn inline_calls(
     functions: &HashMap<FuncRef, Function>,
     threshold: usize,
     max_depth: usize,
-) -> Result<PassResult, CompileError> {
+) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     let mut inline_count: usize = 0;
 
-    let loop_forest = {
-        let dt = DominatorTree::build(func);
-        LoopForest::build(func, &dt)
-    };
+    // 复用 Function 惰性分析缓存（clone 后独立可变，pass 内无借用冲突）
+    let loop_forest = func.loop_forest().clone();
     let _predecessors = func.predecessors().clone();
 
     // We iterate by block index because we may modify inst_order during inlining
@@ -155,12 +153,11 @@ pub fn inline_calls(
             // Identify callee return value from terminator
             let callee_ret_vals: SmallVec<[Value; 2]> =
                 match &callee.dfg.blocks[callee_entry.0 as usize].terminator {
-                    Terminator::Return { values } => values.clone(),
+                    Terminator::Return { values, .. } => values.clone(),
                     _ => continue,
                 };
 
             // Clone instructions from callee → caller
-            let old_inst_order_len = func.dfg.blocks[bi].inst_order.len();
             let mut new_inst_count = 0usize;
 
             for &callee_inst_id in &callee_entry_insts {
@@ -180,16 +177,13 @@ pub fn inline_calls(
                     new_operands.push(value_map.get(&op).copied().unwrap_or(op));
                 }
 
-                // Remap constants (callee pool → caller pool)
+                // Remap constants（callee 池 → caller 池：按 tag 全池重建，
+                // 不再只 resolve_big 后 fallback 原 cid——那会跨函数用错池）
                 let mut new_immediates: SmallVec<[Immediate; 4]> = SmallVec::new();
                 for imm in &ci.immediates {
                     match imm {
                         Immediate::Const(cid) => {
-                            let new_cid = if let Some(big) = callee.constants.resolve_big(*cid) {
-                                func.constants.insert_big(big)
-                            } else {
-                                *cid // keep original if resolution fails
-                            };
+                            let new_cid = func.constants.remap_from(&callee.constants, *cid);
                             new_immediates.push(Immediate::Const(new_cid));
                         }
                         other => new_immediates.push(*other),
@@ -203,15 +197,22 @@ pub fn inline_calls(
                     .map(|&v| callee.dfg.values[v.0 as usize].ty)
                     .collect();
 
-                // Create new instruction in caller
-                let new_inst = func.dfg.make_inst(
+                // Create new instruction in caller（保留全字段：flags/mem_flags/
+                // metadata/loc/isel_strategy）
+                let new_inst = func.dfg.make_inst_with_meta_and_loc(
                     ci.opcode,
                     block,
                     new_operands,
                     new_immediates,
                     &result_tys,
                     ci.flags,
+                    ci.mem_flags,
+                    ci.metadata.clone(),
+                    ci.loc.clone(),
                 );
+                if let Some(strategy) = ci.isel_strategy {
+                    func.dfg.insts[new_inst.0 as usize].isel_strategy = Some(strategy);
+                }
 
                 // Map old callee results → new caller values
                 let new_results = func.dfg.inst_results(new_inst).to_vec();
@@ -225,30 +226,23 @@ pub fn inline_calls(
             if let Some(ret_val) = callee_ret_vals.first()
                 && let Some(&mapped_ret) = value_map.get(ret_val)
             {
-                // Replace all uses of call_result with the mapped return value
-                func.use_lists.replace_all_uses(call_result, mapped_ret);
+                // Replace all uses of call_result（DFG + use-lists 双更新）
+                func.replace_all_uses(call_result, mapped_ret);
             }
 
             // Move the new instructions from end of inst_order to before the call
             if new_inst_count > 0 {
-                let block_data = &mut func.dfg.blocks[bi];
+                // 统一重组 API：末尾 new_inst_count 条移到 call 之前
                 let insert_pos = *call_pos;
-                // The new insts are currently at positions [old_inst_order_len .. old_inst_order_len + new_inst_count)
-                // We need to move them to position insert_pos
-                // Use rotate_right on the slice [insert_pos..]
-                let end = block_data.inst_order.len();
-                let rotate_by = end - old_inst_order_len;
-                block_data.inst_order[insert_pos..].rotate_right(rotate_by);
+                func.dfg.move_insts_to(block, insert_pos, new_inst_count);
 
                 // Remove the Call instruction (now shifted by new_inst_count)
                 let call_shifted_pos = insert_pos + new_inst_count;
-                let call_id = block_data.inst_order[call_shifted_pos];
-                func.use_lists.remove_inst(&func.dfg, call_id);
-                func.dfg.remove_inst(call_id);
+                let call_id = func.dfg.blocks[bi].inst_order[call_shifted_pos];
+                func.kill_inst(call_id);
             } else {
                 // Just remove the call
-                func.use_lists.remove_inst(&func.dfg, *call_inst_id);
-                func.dfg.remove_inst(*call_inst_id);
+                func.kill_inst(*call_inst_id);
             }
 
             inline_count += 1;
@@ -404,7 +398,7 @@ mod tests {
         let one = b.iconst_i32(1);
         let sum = b.iadd(params[0], one);
         b.ret(&[sum]);
-        b.finish()
+        b.finish().expect("build")
     }
 
     #[test]
@@ -422,7 +416,7 @@ mod tests {
         let ret = b.call(FuncRef(0), &[c41], &[TypeId::I32]);
         b.ret(&[ret[0]]);
 
-        let mut caller = b.finish();
+        let mut caller = b.finish().expect("build");
         let pass = InlinePass::new(funcs);
         let r = pass.run_on_function(&mut caller).unwrap();
         assert!(r.changed);
@@ -449,7 +443,7 @@ mod tests {
         let v4 = b.bor(v3, v1);
         let v5 = b.bxor(v4, v2);
         b.ret(&[v5]);
-        let callee = b.finish();
+        let callee = b.finish().expect("build");
         let callee_size = callee.dfg.blocks[0].inst_order.len();
         assert!(
             callee_size >= 5,
@@ -466,7 +460,7 @@ mod tests {
         let c = b2.iconst_i32(5);
         let ret = b2.call(FuncRef(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
-        let mut caller = b2.finish();
+        let mut caller = b2.finish().expect("build");
 
         // Build a fresh callee for the threshold test
         let sig3 = FunctionSignature::new(&[(TypeId::I32, "x")], &[TypeId::I32]);
@@ -480,7 +474,7 @@ mod tests {
         let v4_2 = b3.bor(v3_2, v1_2);
         let v5_2 = b3.bxor(v4_2, v2_2);
         b3.ret(&[v5_2]);
-        let callee2 = b3.finish();
+        let callee2 = b3.finish().expect("build");
 
         let mut funcs2 = HashMap::new();
         funcs2.insert(FuncRef(0), callee2);
@@ -507,7 +501,7 @@ mod tests {
         let doubled = b.iadd(ret[0], ret[0]);
         b.ret(&[doubled]);
 
-        let mut caller = b.finish();
+        let mut caller = b.finish().expect("build");
         let pass = InlinePass::new(funcs);
         let r = pass.run_on_function(&mut caller).unwrap();
         assert!(r.changed);
@@ -523,7 +517,7 @@ mod tests {
         let ret = b.call(FuncRef(99), &[c], &[TypeId::I32]); // not in table
         b.ret(&[ret[0]]);
 
-        let mut caller = b.finish();
+        let mut caller = b.finish().expect("build");
         let pass = InlinePass::new(HashMap::new());
         let r = pass.run_on_function(&mut caller).unwrap();
         assert!(!r.changed);
@@ -544,7 +538,7 @@ mod tests {
         let v6 = callee_builder.iadd(v5, v5);
         let v7 = callee_builder.imul(v6, v6);
         callee_builder.ret(&[v7]);
-        let mut callee = callee_builder.finish();
+        let mut callee = callee_builder.finish().expect("build");
         callee.attributes.set(FunctionAttributes::INLINE_ALWAYS);
 
         let mut funcs = HashMap::new();
@@ -557,7 +551,7 @@ mod tests {
         let c = b2.iconst_i32(5);
         let ret = b2.call(FuncRef(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
-        let mut caller = b2.finish();
+        let mut caller = b2.finish().expect("build");
 
         let pass = InlinePass::new(funcs);
         let r = pass.run_on_function(&mut caller).unwrap();
@@ -573,7 +567,7 @@ mod tests {
         let one = callee_builder.iconst_i32(1);
         let result = callee_builder.iadd(params[0], one);
         callee_builder.ret(&[result]);
-        let mut callee = callee_builder.finish();
+        let mut callee = callee_builder.finish().expect("build");
         callee.attributes.set(FunctionAttributes::INLINE_NEVER);
 
         let mut funcs = HashMap::new();
@@ -586,7 +580,7 @@ mod tests {
         let c = b2.iconst_i32(5);
         let ret = b2.call(FuncRef(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
-        let mut caller = b2.finish();
+        let mut caller = b2.finish().expect("build");
 
         let pass = InlinePass::new(funcs);
         let r = pass.run_on_function(&mut caller).unwrap();
@@ -606,7 +600,7 @@ mod tests {
         let c = b.iconst_i32(41);
         let ret = b.call(FuncRef(0), &[c], &[TypeId::I32]);
         b.ret(&[ret[0]]);
-        let mut caller = b.finish();
+        let mut caller = b.finish().expect("build");
 
         let mut pass = InlinePass::new(funcs);
         pass.with_threshold(5);
@@ -625,7 +619,7 @@ mod tests {
         let v1 = callee_builder.iadd(x, x);
         let v2 = callee_builder.imul(v1, v1);
         callee_builder.ret(&[v2]);
-        let callee = callee_builder.finish();
+        let callee = callee_builder.finish().expect("build");
 
         let mut funcs = HashMap::new();
         funcs.insert(FuncRef(0), callee);
@@ -652,7 +646,7 @@ mod tests {
         b.switch_to_block(exit_blk);
         b.ret(&[iv]);
 
-        let mut caller = b.finish();
+        let mut caller = b.finish().expect("build");
         let pass = InlinePass::new(funcs);
         let r = pass.run_on_function(&mut caller).unwrap();
         // With loop penalty (10x), the callee cost is 2*10=20 which may exceed threshold
@@ -668,7 +662,7 @@ mod tests {
         callee_builder.switch_to_block(entry);
         let ret = callee_builder.call(FuncRef(0), &[params[0]], &[TypeId::I32]);
         callee_builder.ret(&[ret[0]]);
-        let callee = callee_builder.finish();
+        let callee = callee_builder.finish().expect("build");
 
         let mut funcs = HashMap::new();
         funcs.insert(FuncRef(0), callee);
@@ -680,7 +674,7 @@ mod tests {
         let c = b.iconst_i32(1);
         let ret = b.call(FuncRef(0), &[c], &[TypeId::I32]);
         b.ret(&[ret[0]]);
-        let mut caller = b.finish();
+        let mut caller = b.finish().expect("build");
 
         let pass = InlinePass::new(funcs);
         let r = pass.run_on_function(&mut caller).unwrap();

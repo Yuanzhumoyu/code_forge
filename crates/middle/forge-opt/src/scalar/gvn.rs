@@ -28,8 +28,8 @@
 //! ```
 
 use super::cse::ExprKey;
-use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use crate::{ConstValue, OptimizationPass, PassResult};
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -52,13 +52,13 @@ impl OptimizationPass for GvnPass {
         "Global value numbering: eliminates duplicate computations across blocks using dominator tree, with constant folding and memory load GVN"
     }
 
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         global_value_numbering(func)
     }
 }
 
 /// 对单个函数执行全局值编号（含常量折叠和内存 load GVN）。
-pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError> {
     let n = func.dfg.blocks.len();
     if n == 0 {
         return Ok(PassResult::default());
@@ -77,6 +77,8 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, Compile
 
     let mut result = PassResult::default();
     let mut replacements: HashMap<Value, Value> = HashMap::new();
+    // 待删除的冗余表达式指令（循环后统一 kill）
+    let mut to_kill: Vec<Inst> = Vec::new();
     // Scope stack: top of stack is current block's scope
     let mut scopes: Vec<HashMap<ExprKey, Value>> = vec![];
     // Constant map: Value → (Big value, TypeId)
@@ -91,46 +93,23 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, Compile
         &mut scopes,
         &mut replacements,
         &mut const_map,
+        &mut to_kill,
         &mut result,
     );
 
-    // Apply replacements across all instructions
+    // Apply replacements across all instructions（同步 use-lists）
     if !replacements.is_empty() {
         result.values_replaced += replacements.len();
-        super::cse::apply_replacements(func, &replacements);
+        func.apply_replacements(&replacements);
+    }
+    // 原子删除被 GVN 消除的冗余指令
+    for inst in to_kill {
+        func.kill_inst(inst);
     }
 
     Ok(result)
 }
 
-/// Check if two values refer to the same memory location (conservative alias analysis).
-///
-/// Current implementation: values only don't alias if they're the same SSA Value.
-/// This is conservative but correct.
-#[allow(dead_code)]
-fn may_alias(v1: Value, v2: Value) -> bool {
-    v1 == v2
-}
-
-/// Truncate a Big value to fit within the type's bit width (signed interpretation).
-fn truncate_to_type(value: &Big, ty: TypeId) -> Big {
-    let bits = ty.bits();
-    if bits == 0 || bits >= 128 {
-        return value.clone();
-    }
-    value.truncate_to_bits_signed(bits)
-}
-
-/// Compute a bit mask of all-ones for the given bit width.
-fn bit_mask(bits: u32) -> Big {
-    if bits == 0 {
-        return Big::U_ZERO;
-    }
-    if bits >= 128 {
-        return Big::Unsigned(dashu::Natural::from(u128::MAX));
-    }
-    Big::Unsigned(dashu::Natural::from((1u128 << bits) - 1))
-}
 
 /// Attempt constant folding for an instruction. If all operands are known constants, evaluate.
 /// Returns `Some((big_value, ty))` if fold succeeded.
@@ -139,66 +118,27 @@ fn try_const_fold(
     mapped_operands: &[Value],
     const_map: &HashMap<Value, (Big, TypeId)>,
 ) -> Option<(Big, TypeId)> {
-    // Collect constant values for all operands
-    let const_ops: Vec<&(Big, TypeId)> = mapped_operands
+    // 第三十五轮:统一走 const_fold::fold_opcode 权威实现(sccp.rs:277 先例;
+    // 原 9 个 opcode 手写求值与 fold_opcode 逐行等价,truncate_to_type/
+    // bit_mask 双份 helper 消除)。除零:fold_opcode 返回 Err——统一为 None
+    // 保守跳过(与 gvn 原行为一致)。
+    let const_ops: smallvec::SmallVec<[ConstValue; 4]> = mapped_operands
         .iter()
-        .map(|v| const_map.get(v))
-        .collect::<Option<Vec<_>>>()?;
-
-    match opcode {
-        Opcode::Iadd => {
-            let val = const_ops[0].0.clone() + const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Isub => {
-            let val = const_ops[0].0.clone() - const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Imul => {
-            let val = const_ops[0].0.clone() * const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Band => {
-            let val = const_ops[0].0.clone() & const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Bor => {
-            let val = const_ops[0].0.clone() | const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Bxor => {
-            let val = const_ops[0].0.clone() ^ const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Udiv => {
-            if const_ops[1].0.is_zero() {
-                return None; // division by zero — skip conservatively
-            }
-            let val = const_ops[0].0.clone() / const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Sdiv => {
-            if const_ops[1].0.is_zero() {
-                return None;
-            }
-            let val = const_ops[0].0.clone() / const_ops[1].0.clone();
-            Some((truncate_to_type(&val, const_ops[0].1), const_ops[0].1))
-        }
-        Opcode::Bnot => {
-            if const_ops.is_empty() {
-                return None;
-            }
-            let ty = const_ops[0].1;
-            let bits = ty.bits();
-            if bits == 0 {
-                return Some((Big::S_ZERO, ty));
-            }
-            let unsigned_val = const_ops[0].0.truncate_to_bits(bits);
-            let mask = bit_mask(bits);
-            let result = mask ^ unsigned_val;
-            Some((truncate_to_type(&result, ty), ty))
-        }
-        _ => None,
+        .map(|v| {
+            let (big, ty) = const_map.get(v)?;
+            Some(ConstValue::Int(big.clone(), *ty))
+        })
+        .collect::<Option<smallvec::SmallVec<[ConstValue; 4]>>>()?;
+    let ty = const_ops.first().map(|c| match c {
+        ConstValue::Int(_, t) => *t,
+        ConstValue::Float(_, t) => *t,
+        ConstValue::Bool(_) => TypeId::I16,
+    })?;
+    let folded = super::const_fold::fold_opcode(opcode, &const_ops, ty).ok()??;
+    match folded {
+        ConstValue::Int(v, t) => Some((v, t)),
+        ConstValue::Float(v, t) => Some((v, t)),
+        ConstValue::Bool(_) => None,
     }
 }
 
@@ -213,6 +153,7 @@ fn gvn_lookup(scopes: &[HashMap<ExprKey, Value>], key: &ExprKey) -> Option<Value
 }
 
 /// DFS traverse the dominator tree, performing GVN within each block.
+#[allow(clippy::too_many_arguments)] // 遍历上下文参数组(dom 栈/替换表/常量表)——内部私有
 fn gvn_dfs(
     func: &mut Function,
     block_id: Block,
@@ -220,16 +161,17 @@ fn gvn_dfs(
     scopes: &mut Vec<HashMap<ExprKey, Value>>,
     replacements: &mut HashMap<Value, Value>,
     const_map: &mut HashMap<Value, (Big, TypeId)>,
+    to_kill: &mut Vec<Inst>,
     result: &mut PassResult,
 ) {
     // 1. Enter block: push new scope
     scopes.push(HashMap::new());
 
     // 2. Process all instructions in this block
-    let block = &func.dfg.blocks[block_id.0 as usize];
-    let inst_ids: Vec<Inst> = block.inst_order.clone();
+    // inst_ids 借用 blocks（insts 的 &mut 借用与其不冲突——dfg 字段级拆分）
+    let inst_ids = &func.dfg.blocks[block_id.0 as usize].inst_order;
 
-    for inst_id in &inst_ids {
+    for inst_id in inst_ids {
         let inst = &mut func.dfg.insts[inst_id.0 as usize];
 
         let inst_result = match inst.results.first().copied() {
@@ -277,7 +219,7 @@ fn gvn_dfs(
         }
 
         // Compute expression key (operands already mapped to replacement values)
-        let mapped_operands: Vec<Value> = inst
+        let mapped_operands: smallvec::SmallVec<[Value; 4]> = inst
             .operands
             .iter()
             .map(|v| replacements.get(v).copied().unwrap_or(*v))
@@ -308,10 +250,7 @@ fn gvn_dfs(
             // Load instructions: only GVN if no intervening store killed the expression
             if let Some(existing) = gvn_lookup(scopes, &key) {
                 replacements.insert(inst_result, existing);
-                inst.opcode = Opcode::Nop;
-                inst.operands.clear();
-                func.dfg.values[inst_result.0 as usize].ty = TypeId::VOID;
-                inst.results.clear();
+                to_kill.push(*inst_id);
                 result.instructions_removed += 1;
                 result.changed = true;
                 continue;
@@ -323,10 +262,7 @@ fn gvn_dfs(
         // === General GVN lookup ===
         if let Some(existing) = gvn_lookup(scopes, &key) {
             replacements.insert(inst_result, existing);
-            inst.opcode = Opcode::Nop;
-            inst.operands.clear();
-            func.dfg.values[inst_result.0 as usize].ty = TypeId::VOID;
-            inst.results.clear();
+            to_kill.push(*inst_id);
             result.instructions_removed += 1;
             result.changed = true;
         } else {
@@ -345,6 +281,7 @@ fn gvn_dfs(
                 scopes,
                 replacements,
                 const_map,
+                to_kill,
                 result,
             );
         }
@@ -395,7 +332,7 @@ mod tests {
         b.switch_to_block(merge);
         b.ret(&[sum]); // placeholder
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = GvnPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -428,7 +365,7 @@ mod tests {
         b.switch_to_block(merge);
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = GvnPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -447,7 +384,7 @@ mod tests {
         b.store(v, p); // NOT a duplicate — second store has distinct side effect
         b.ret(&[]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = GvnPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         // Should not eliminate the second store
@@ -466,7 +403,7 @@ mod tests {
         let not_v = b.bnot(v);
         b.ret(&[not_v]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = GvnPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed, "Bnot of constant should be folded");
@@ -489,7 +426,7 @@ mod tests {
         let sum = b.iadd(max_u32, one);
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = GvnPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed, "0xFFFFFFFF + 1 should be constant-folded to 0");
@@ -527,7 +464,7 @@ mod tests {
         b.switch_to_block(exit);
         b.ret(&[i]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = GvnPass::new();
         let _r = pass.run_on_function(&mut func).unwrap();
         // Just verify no crash

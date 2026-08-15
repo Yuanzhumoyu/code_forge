@@ -13,10 +13,11 @@
 //! 6. 移除 Call 指令
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::HashMap;
 
+#[doc(hidden)]
 pub struct FuncSpecializePass {
     const_functions: HashMap<FuncRef, Function>,
 }
@@ -34,7 +35,7 @@ impl OptimizationPass for FuncSpecializePass {
     fn description(&self) -> &'static str {
         "Specializes const functions with constant arguments by cloning and substituting at call site"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         specialize_calls(func, &self.const_functions)
     }
 }
@@ -43,7 +44,7 @@ impl OptimizationPass for FuncSpecializePass {
 pub fn specialize_calls(
     func: &mut Function,
     const_functions: &HashMap<FuncRef, Function>,
-) -> Result<PassResult, CompileError> {
+) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
 
     // Collect all Call instructions
@@ -108,17 +109,16 @@ pub fn specialize_calls(
         // Clone callee body into caller at call site
         let ret_vals = clone_callee_into_caller(func, callee_func, call_block, &call_operands)?;
 
-        // Replace call results with return values
+        // Replace call results with return values（DFG + use-lists 双更新）
         for (i, &call_result) in call_results.iter().enumerate() {
             if let Some(&ret_val) = ret_vals.get(i) {
-                func.use_lists.replace_all_uses(call_result, ret_val);
+                func.replace_all_uses(call_result, ret_val);
                 result.values_replaced += 1;
             }
         }
 
-        // Remove the Call instruction
-        func.use_lists.remove_inst(&func.dfg, call_inst);
-        func.dfg.remove_inst(call_inst);
+        // Remove the Call instruction（原子：use-lists + 墓碑化）
+        func.kill_inst(call_inst);
         result.instructions_removed += 1;
         result.changed = true;
     }
@@ -133,7 +133,7 @@ fn clone_callee_into_caller(
     callee: &Function,
     target_block: Block,
     call_args: &[Value],
-) -> Result<Vec<Value>, CompileError> {
+) -> Result<Vec<Value>, IrError> {
     let mut val_remap: HashMap<Value, Value> = HashMap::new();
 
     // Map callee params to call arguments
@@ -161,22 +161,13 @@ fn clone_callee_into_caller(
                 .map(|v| val_remap.get(v).copied().unwrap_or(*v))
                 .collect();
 
-            // Clone immediates (they reference callee's constants — copy them)
+            // Clone immediates（remap_from 按 tag 全池重建，替代手写三级 fallback）
             let new_immediates: smallvec::SmallVec<[Immediate; 4]> = inst
                 .immediates
                 .iter()
                 .map(|im| match im {
                     Immediate::Const(cid) => {
-                        // Resolve from callee's constant pool and insert into caller's
-                        if let Some(big) = callee.constants.resolve_big(*cid) {
-                            Immediate::Const(caller.constants.insert_big(big))
-                        } else if let Some(i) = callee.constants.resolve_int(*cid) {
-                            Immediate::Const(caller.constants.insert_int(i as i128, 64))
-                        } else if let Some(f) = callee.constants.resolve_float(*cid) {
-                            Immediate::Const(caller.constants.insert_float(f))
-                        } else {
-                            *im
-                        }
+                        Immediate::Const(caller.constants.remap_from(&callee.constants, *cid))
                     }
                     _ => *im,
                 })
@@ -197,14 +188,21 @@ fn clone_callee_into_caller(
                 // Let these pass through to create new values
             }
 
-            let new_inst = caller.dfg.make_inst(
+            // 保留全字段（flags/mem_flags/metadata/loc/isel_strategy）
+            let new_inst = caller.dfg.make_inst_with_meta_and_loc(
                 inst.opcode,
                 target_block,
                 new_operands,
                 new_immediates,
                 &result_tys,
                 inst.flags,
+                inst.mem_flags,
+                inst.metadata.clone(),
+                inst.loc.clone(),
             );
+            if let Some(strategy) = inst.isel_strategy {
+                caller.dfg.insts[new_inst.0 as usize].isel_strategy = Some(strategy);
+            }
 
             // Map old results to new results
             let new_results = &caller.dfg.insts[new_inst.0 as usize].results;
@@ -216,7 +214,7 @@ fn clone_callee_into_caller(
         }
 
         // Handle callee's Return terminator
-        if let Terminator::Return { values } = &callee_block.terminator {
+        if let Terminator::Return { values, .. } = &callee_block.terminator {
             for &v in values.iter() {
                 ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
             }
@@ -239,7 +237,7 @@ mod tests {
         let two = b.iconst_i32(2);
         let prod = b.imul(params[0], two);
         b.ret(&[prod]);
-        let mut cf = b.finish();
+        let mut cf = b.finish().expect("build");
         cf.is_const = true;
 
         let mut func_table = HashMap::new();
@@ -250,7 +248,7 @@ mod tests {
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
         b2.ret(&[]);
-        let mut caller = b2.finish();
+        let mut caller = b2.finish().expect("build");
 
         let pass = FuncSpecializePass::new(func_table);
         let r = pass.run_on_function(&mut caller);
@@ -267,7 +265,7 @@ mod tests {
         let two = b.iconst_i32(2);
         let prod = b.imul(params[0], two);
         b.ret(&[prod]);
-        let cf = b.finish();
+        let cf = b.finish().expect("build");
         let callee_ref = FuncRef(0);
 
         let mut func_table = HashMap::new();
@@ -281,7 +279,7 @@ mod tests {
         let five = b2.iconst_i32(5);
         let result = b2.call(callee_ref, &[five], &[TypeId::I32]);
         b2.ret(&[result[0]]);
-        let mut caller = b2.finish();
+        let mut caller = b2.finish().expect("build");
 
         let pass = FuncSpecializePass::new(func_table);
         let r = pass.run_on_function(&mut caller).unwrap();

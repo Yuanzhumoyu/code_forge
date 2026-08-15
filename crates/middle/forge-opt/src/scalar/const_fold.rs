@@ -1,3 +1,4 @@
+// 临时注释修正占位
 //! 常量折叠 pass。
 //!
 //! 采用 worklist-driven 算法：当一条指令的所有操作数都是编译时已知的常量时，
@@ -12,7 +13,7 @@
 //! 5. 返回 PassResult
 
 use crate::{ConstValue, OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use forge_ir::{Big, FloatFormat};
 use std::collections::HashMap;
@@ -87,12 +88,54 @@ fn bit_mask(bits: u32) -> Big {
 /// 对给定的操作码和常量操作数进行编译时求值。
 ///
 /// 返回 `Some(ConstValue)` 如果所有操作数已知且可求值。
+/// 折叠 `extractvalue` 聚合字面量（3.1：immediates = [idx, Agg(id), Type]）。
+/// 标量提取 → 标量 ConstValue；嵌套聚合结果不折叠（值语义）。
+fn fold_extract_value(
+    pool: &forge_ir::constant::ConstantPool,
+    immediates: &[Immediate],
+    result_ty: TypeId,
+) -> Result<Option<ConstValue>, IrError> {
+    use forge_ir::constant::AggChild;
+    let idx = match immediates.first() {
+        Some(Immediate::Uint(i)) => *i as usize,
+        _ => return Ok(None),
+    };
+    let agg = match immediates.get(1) {
+        Some(Immediate::Agg(id)) => *id,
+        _ => return Ok(None),
+    };
+    let agg_c = match pool.get_aggregate(agg) {
+        Some(a) => a,
+        None => return Ok(None),
+    };
+    let child = match agg_c.children.get(idx) {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    Ok(match child {
+        AggChild::Scalar(cid) => {
+            if let Some((v, _bits)) = pool.get_int(*cid) {
+                Some(ConstValue::Int(Big::from_i128(v), result_ty))
+            } else {
+                pool.get_float128(*cid).map(|bits| {
+                    ConstValue::Float(
+                        Big::from_f64(f64::from_bits(bits as u64)).unwrap_or(Big::F_ZERO),
+                        result_ty,
+                    )
+                })
+            }
+        }
+        // 嵌套聚合结果：不做标量折叠（值语义；codegen 仅折叠时读取）
+        AggChild::Agg(_) => None,
+    })
+}
+
 /// 返回 `None` 如果操作数不足或包含未知值。
 pub fn fold_opcode(
     opcode: &Opcode,
     operands: &[ConstValue],
     ty: TypeId,
-) -> Result<Option<ConstValue>, CompileError> {
+) -> Result<Option<ConstValue>, IrError> {
     match opcode {
         // === 整数算术 ===
         Opcode::Iadd => fold_binary_int(operands, ty, |a, b| a + b, |a, b| a.checked_add(b)),
@@ -105,9 +148,7 @@ pub fn fold_opcode(
             };
             match a.udiv(b) {
                 Ok(result) => Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty))),
-                Err(_) => Err(CompileError::Internal(
-                    "compile-time division by zero".into(),
-                )),
+                Err(_) => Err(IrError::Internal("compile-time division by zero".into())),
             }
         }
         Opcode::Sdiv => {
@@ -117,9 +158,7 @@ pub fn fold_opcode(
             };
             match a.sdiv(b) {
                 Ok(result) => Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty))),
-                Err(_) => Err(CompileError::Internal(
-                    "compile-time division by zero".into(),
-                )),
+                Err(_) => Err(IrError::Internal("compile-time division by zero".into())),
             }
         }
         Opcode::Urem => {
@@ -129,9 +168,7 @@ pub fn fold_opcode(
             };
             match a.urem(b) {
                 Ok(result) => Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty))),
-                Err(_) => Err(CompileError::Internal(
-                    "compile-time division by zero".into(),
-                )),
+                Err(_) => Err(IrError::Internal("compile-time division by zero".into())),
             }
         }
         Opcode::Srem => {
@@ -141,9 +178,7 @@ pub fn fold_opcode(
             };
             match a.srem(b) {
                 Ok(result) => Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty))),
-                Err(_) => Err(CompileError::Internal(
-                    "compile-time division by zero".into(),
-                )),
+                Err(_) => Err(IrError::Internal("compile-time division by zero".into())),
             }
         }
 
@@ -259,6 +294,15 @@ pub fn fold_opcode(
         Opcode::Uextend => fold_extend(operands, ty, false),
         Opcode::Ireduce => fold_ireduce(operands, ty),
         Opcode::Bitcast => fold_bitcast(operands, ty),
+        // 新增 LLVM 转换：暂不常量折叠（安全跳过，后续按需补语义）
+        Opcode::Fptrunc
+        | Opcode::Fpext
+        | Opcode::Fptosi
+        | Opcode::Sitofp
+        | Opcode::Fptoui
+        | Opcode::Uitofp
+        | Opcode::Ptrtoint
+        | Opcode::Inttoptr => Ok(None),
 
         // === 选择 ===
         Opcode::Select => {
@@ -282,7 +326,9 @@ pub fn fold_opcode(
 
         // === 不可折叠的操作码 ===
         Opcode::Load
+        | Opcode::Fload
         | Opcode::Store
+        | Opcode::Fstore
         | Opcode::StackAddr
         | Opcode::GlobalAddr
         | Opcode::Call
@@ -292,12 +338,16 @@ pub fn fold_opcode(
         | Opcode::Vmul
         | Opcode::Vextract
         | Opcode::Vinsert
+        | Opcode::Vsplit
+        | Opcode::Vconcat
         | Opcode::Nop
         | Opcode::Alloca
-        | Opcode::GetElementPtr => Ok(None),
+        | Opcode::GetElementPtr
+        | Opcode::AddrSpaceCast
+        | Opcode::VaArg => Ok(None),
 
-        // Iconst/Fconst 在此处不应出现（已在 scan 阶段处理）
-        Opcode::Iconst | Opcode::Fconst => Ok(None),
+        // Iconst/Fconst/Vconst 在此处不应出现（已在 scan 阶段处理）
+        Opcode::Iconst | Opcode::Fconst | Opcode::Vconst => Ok(None),
 
         // === 位操作 (6) ===
         Opcode::Clz => {
@@ -655,6 +705,8 @@ pub fn fold_opcode(
 
         // === Trap (1) — 副作用, 不可折叠 ===
         Opcode::Trap => Ok(None),
+        // === 异常（P1.1）— 副作用, 不可折叠 ===
+        Opcode::LandingPad => Ok(None),
     }
 }
 
@@ -695,7 +747,7 @@ fn fold_binary_int(
     ty: TypeId,
     op: fn(Big, Big) -> Big,
     op_small: fn(i64, i64) -> Option<i64>,
-) -> Result<Option<ConstValue>, CompileError> {
+) -> Result<Option<ConstValue>, IrError> {
     let (a, b) = match get_two_bigs(operands) {
         Some(v) => v,
         None => return Ok(None),
@@ -717,7 +769,7 @@ fn fold_binary_float(
     operands: &[ConstValue],
     ty: TypeId,
     op: fn(Big, Big) -> Big,
-) -> Result<Option<ConstValue>, CompileError> {
+) -> Result<Option<ConstValue>, IrError> {
     if operands.len() < 2 {
         return Ok(None);
     }
@@ -734,7 +786,7 @@ fn fold_icmp(
     operands: &[ConstValue],
     cond: IntCC,
     ty: TypeId,
-) -> Result<Option<ConstValue>, CompileError> {
+) -> Result<Option<ConstValue>, IrError> {
     let (a, b) = match get_two_bigs(operands) {
         Some(v) => v,
         None => return Ok(None),
@@ -775,7 +827,7 @@ fn fold_fcmp(
     operands: &[ConstValue],
     cond: FloatCC,
     _ty: TypeId,
-) -> Result<Option<ConstValue>, CompileError> {
+) -> Result<Option<ConstValue>, IrError> {
     if operands.len() < 2 {
         return Ok(None);
     }
@@ -807,7 +859,7 @@ fn fold_extend(
     operands: &[ConstValue],
     to_ty: TypeId,
     signed: bool,
-) -> Result<Option<ConstValue>, CompileError> {
+) -> Result<Option<ConstValue>, IrError> {
     if operands.is_empty() {
         return Ok(None);
     }
@@ -828,10 +880,7 @@ fn fold_extend(
     }
 }
 
-fn fold_ireduce(
-    operands: &[ConstValue],
-    to_ty: TypeId,
-) -> Result<Option<ConstValue>, CompileError> {
+fn fold_ireduce(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstValue>, IrError> {
     if operands.is_empty() {
         return Ok(None);
     }
@@ -841,10 +890,7 @@ fn fold_ireduce(
     }
 }
 
-fn fold_bitcast(
-    operands: &[ConstValue],
-    to_ty: TypeId,
-) -> Result<Option<ConstValue>, CompileError> {
+fn fold_bitcast(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstValue>, IrError> {
     if operands.is_empty() {
         return Ok(None);
     }
@@ -923,12 +969,29 @@ fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
                     uses.entry(*v).or_default().push((bi, usize::MAX));
                 }
             }
-            Terminator::Return { values } => {
+            Terminator::Return { values, .. } => {
                 for v in values {
                     uses.entry(*v).or_default().push((bi, usize::MAX));
                 }
             }
             Terminator::Unreachable => {}
+            Terminator::Invoke {
+                args,
+                normal_args,
+                unwind_args,
+                ..
+            } => {
+                for v in args
+                    .iter()
+                    .chain(normal_args.iter())
+                    .chain(unwind_args.iter())
+                {
+                    uses.entry(*v).or_default().push((bi, usize::MAX));
+                }
+            }
+            Terminator::Resume { value, .. } => {
+                uses.entry(*value).or_default().push((bi, usize::MAX));
+            }
             Terminator::Switch {
                 discriminant,
                 cases,
@@ -978,13 +1041,13 @@ impl OptimizationPass for ConstFoldPass {
         "Constant folding: evaluates operations with known operands at compile time"
     }
 
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         fold_function(func)
     }
 }
 
 /// 对单个函数执行常量折叠（公共入口，也可被 IrInterpreter 使用）。
-pub fn fold_function(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
 
     // ---- 一次性扫描：value → def 指令映射、已知常量、初始 worklist ----
@@ -1004,7 +1067,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, CompileError> {
             def_map.insert(v, inst_id);
 
             match &inst.opcode {
-                Opcode::Iconst | Opcode::Fconst => {
+                Opcode::Iconst | Opcode::Fconst | Opcode::Vconst => {
                     if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
                         && let Some(big) = func.constants.resolve_big(cid)
                     {
@@ -1040,8 +1103,8 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, CompileError> {
         };
         let inst_info = &func.dfg.insts[def_inst_id.0 as usize];
 
-        // 收集 operands 的常量值
-        let const_operands: Vec<ConstValue> = inst_info
+        // 收集 operands 的常量值（SmallVec：多数指令 1-3 个操作数，避免堆分配）
+        let const_operands: smallvec::SmallVec<[ConstValue; 4]> = inst_info
             .operands
             .iter()
             .filter_map(|v| known.get(v).cloned())
@@ -1059,8 +1122,12 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, CompileError> {
         // 获取此指令结果值的类型
         let result_ty = func.dfg.value_type(value).unwrap_or(TypeId::VOID);
 
-        // 尝试折叠
-        if let Some(folded) = fold_opcode(&inst_info.opcode, &const_operands, result_ty)? {
+        // 尝试折叠（ExtractValue 聚合字面量走专用路径——需要常量池）
+        if let Some(folded) = if matches!(inst_info.opcode, Opcode::ExtractValue) {
+            fold_extract_value(&func.constants, &inst_info.immediates, result_ty)?
+        } else {
+            fold_opcode(&inst_info.opcode, &const_operands, result_ty)?
+        } {
             // 替换指令为 Iconst/Fconst (插入常量池)
             let new_const_id = match &folded {
                 ConstValue::Int(v, _) => func.constants.insert_big(v.clone()),
@@ -1077,9 +1144,13 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, CompileError> {
                 ConstValue::Bool(_) => Opcode::Iconst, // bool → Iconst(0/1)
             };
 
-            // Update the instruction in-place
+            // Update the instruction in-place（同步 use-lists：清掉旧 operands）
+            if !func.dfg.insts[def_inst_id.0 as usize].operands.is_empty() {
+                func.use_lists.remove_inst(&func.dfg, def_inst_id);
+            }
             let inst = &mut func.dfg.insts[def_inst_id.0 as usize];
             inst.opcode = new_opcode;
+            inst.operands.clear();
             inst.immediates = smallvec::smallvec![Immediate::Const(new_const_id)];
             // Update result value type if bool was folded
             if matches!(folded, ConstValue::Bool(_))
@@ -1120,6 +1191,10 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, CompileError> {
     }
 
     result.changed = result.instructions_removed > 0 || result.blocks_removed > 0;
+    if result.changed {
+        // 指令/分支/死块已修改：失效分析缓存，避免后续 pass 复用 stale 数据。
+        func.analysis_mut().invalidate();
+    }
     Ok(result)
 }
 
@@ -1134,6 +1209,7 @@ fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> boo
             else_block,
             then_args,
             else_args,
+            ..
         } = &block.terminator
             && let Some(const_val) = known.get(cond)
             && let Some(is_true) = const_val.to_bool()
@@ -1144,7 +1220,11 @@ fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> boo
             } else {
                 (*else_block, else_args.clone())
             };
-            block.terminator = Terminator::Jump { target, args };
+            block.terminator = Terminator::Jump {
+                target,
+                args,
+                metadata: smallvec::smallvec![],
+            };
             changed = true;
         }
     }
@@ -1189,6 +1269,32 @@ mod tests {
     }
 
     #[test]
+    fn fold_extractvalue_agg_literal() {
+        // 3.1：extractvalue 聚合字面量常量折叠——标量提取折叠为常量
+        //（通过 parse 构建：semantics 把聚合字面量写入 ConstantPool）
+        let src = "define i32 @f() {
+  %e:
+    %c = extractvalue [2 x i32] [i32 1, i32 2], 1
+    ret i32 %c
+}";
+        let module = crate::ir_parser::parse_module(src).expect("parse");
+        let mut func = module.iter_functions().next().unwrap().clone();
+        let pass = ConstFoldPass::new();
+        let result = pass.run_on_function(&mut func).unwrap();
+        assert!(result.changed, "聚合字面量 extractvalue 应折叠（%c = 2）");
+        // %c 应为常量 2
+        let def = func.dfg.value_def(Value(2)).cloned();
+        if let Some(forge_ir::dfg::ValueDef::Inst(iid, _)) = def {
+            let inst = &func.dfg.insts[iid.0 as usize];
+            assert!(
+                matches!(inst.opcode, Opcode::Iconst),
+                "折叠后应为 Iconst，got {:?}",
+                inst.opcode
+            );
+        }
+    }
+
+    #[test]
     fn fold_iadd_constants() {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
@@ -1199,7 +1305,7 @@ mod tests {
         let sum = b.iadd(a, b_val);
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = ConstFoldPass::new();
         let result = pass.run_on_function(&mut func).unwrap();
 
@@ -1219,7 +1325,7 @@ mod tests {
         let sum = b.iadd(a, b_val);
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let mut pm = PassManager::new();
         pm.add_pass(Box::new(ConstFoldPass::new()), PassRunMode::Once);
         let result = pm.run_on_function(&mut func).unwrap();
@@ -1239,7 +1345,7 @@ mod tests {
         let sum = b.iadd(x, c);
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = ConstFoldPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         // 不应该折叠（x 不是常量）
@@ -1268,7 +1374,7 @@ mod tests {
         let v99 = b.iconst_i32(99);
         b.ret(&[v99]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = ConstFoldPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
 

@@ -3,7 +3,7 @@
 //! Hoists loop-invariant computations out of loops.
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -23,26 +23,27 @@ impl OptimizationPass for LicmPass {
     fn description(&self) -> &'static str {
         "Loop-invariant code motion"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         hoist_loop_invariants(func)
     }
 }
 
-pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let dt = DominatorTree::build(func);
-    let lf = LoopForest::build(func, &dt);
-    if lf.is_empty() {
+    // 使用函数上的惰性分析缓存（licm 只移动指令、不改变块结构，支配树/
+    // 循环森林无需重建）；无循环或循环体过小时快速返回。
+    let loops: Vec<(Block, HashSet<Block>)> = func
+        .loop_forest()
+        .all_loops()
+        .iter()
+        .filter(|li| li.blocks.len() > 1)
+        .map(|li| (li.header, li.blocks.iter().copied().collect()))
+        .collect();
+    if loops.is_empty() {
         return Ok(result);
     }
 
-    for loop_info in lf.all_loops() {
-        let body: HashSet<Block> = loop_info.blocks.iter().copied().collect();
-        if body.len() <= 1 {
-            continue;
-        }
-        let header = loop_info.header;
-
+    for (header, body) in loops {
         let outside_values = collect_values_outside(func, &body);
         let invariants = mark_invariants(func, &body, &outside_values);
         if invariants.is_empty() {
@@ -54,6 +55,10 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, CompileE
             result.instructions_removed += count;
             result.changed = true;
         }
+    }
+    if result.changed {
+        // 保守：改动后使分析缓存失效，后续 pass 使用新鲜分析
+        func.analysis_mut().invalidate();
     }
     Ok(result)
 }
@@ -140,13 +145,9 @@ fn mark_invariants(
     inv_insts
 }
 
-/// Pre-collected invariant instruction data (avoids borrow conflicts with DFG).
+/// Pre-collected invariant instruction IDs (avoids borrow conflicts with DFG).
 struct InvariantData {
     inst_id: Inst,
-    opcode: Opcode,
-    operands: smallvec::SmallVec<[Value; 4]>,
-    immediates: smallvec::SmallVec<[Immediate; 4]>,
-    result_tys: Vec<TypeId>,
     old_results: Vec<Value>,
 }
 
@@ -155,7 +156,7 @@ fn hoist_to_header(
     header: Block,
     invariants: &HashSet<(Block, Inst)>,
 ) -> usize {
-    // Phase 1: Collect invariant instruction data (immutable borrows)
+    // Phase 1: Collect invariant instruction IDs (immutable borrows)
     let mut hoist_data: Vec<InvariantData> = Vec::new();
     for bi in 0..func.dfg.blocks.len() {
         let bid = Block(bi as u32);
@@ -168,17 +169,8 @@ fn hoist_to_header(
             if inst.results.is_empty() {
                 continue;
             }
-            let result_tys: Vec<TypeId> = inst
-                .results
-                .iter()
-                .map(|&v| func.dfg.values[v.0 as usize].ty)
-                .collect();
             hoist_data.push(InvariantData {
                 inst_id,
-                opcode: inst.opcode,
-                operands: inst.operands.clone(),
-                immediates: inst.immediates.clone(),
-                result_tys,
                 old_results: inst.results.to_vec(),
             });
         }
@@ -188,55 +180,28 @@ fn hoist_to_header(
         return 0;
     }
 
-    // Phase 2: Clone invariants to header, remap uses, Nop-ify originals
+    // Phase 2: Clone invariants to header（保留全字段：flags/mem_flags/metadata/loc），
+    // 自动维护 val_remap（链式克隆把先前 hoist 的值重定向）
     let mut val_remap: HashMap<Value, Value> = HashMap::new();
     let mut count = 0;
 
     for hd in &hoist_data {
-        // Remap operands to use previously hoisted values
-        let new_operands: smallvec::SmallVec<[Value; 4]> = hd
-            .operands
-            .iter()
-            .map(|v| val_remap.get(v).copied().unwrap_or(*v))
-            .collect();
-
-        // Create new instruction in the header block
-        let new_inst = func.dfg.make_inst(
-            hd.opcode,
-            header,
-            new_operands,
-            hd.immediates.clone(),
-            &hd.result_tys,
-            InstFlags::default(),
-        );
-
-        // Map old results to new results
-        let new_results = func.dfg.insts[new_inst.0 as usize].results.clone();
-        for (i, &old_r) in hd.old_results.iter().enumerate() {
-            if i < new_results.len() {
-                val_remap.insert(old_r, new_results[i]);
-            }
-        }
-
+        func.dfg.clone_inst(hd.inst_id, header, &mut val_remap);
         count += 1;
     }
 
-    // Phase 3: Replace all uses of old values with hoisted values
+    // Phase 3: Replace all uses of old values with hoisted values（DFG + use-lists 双更新）
     for hd in &hoist_data {
         for &old_r in &hd.old_results {
             if let Some(&new_r) = val_remap.get(&old_r) {
-                func.use_lists.replace_all_uses(old_r, new_r);
+                func.replace_all_uses(old_r, new_r);
             }
         }
     }
 
-    // Phase 4: Nop-ify original invariant instructions
+    // Phase 4: 原子删除原 invariant 指令（kill_inst：墓碑化 + use-lists 清理）
     for hd in &hoist_data {
-        let inst = &mut func.dfg.insts[hd.inst_id.0 as usize];
-        inst.opcode = Opcode::Nop;
-        inst.operands.clear();
-        inst.immediates.clear();
-        inst.results.clear();
+        func.kill_inst(hd.inst_id);
     }
 
     count
@@ -267,7 +232,7 @@ mod tests {
         b.switch_to_block(entry);
         let v = b.iconst_i32(42);
         b.ret(&[v]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = LicmPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(!r.changed);
@@ -303,7 +268,7 @@ mod tests {
 
         b.switch_to_block(exit);
         b.ret(&[]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = LicmPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -346,7 +311,7 @@ mod tests {
 
         b.switch_to_block(exit);
         b.ret(&[]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = LicmPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -388,7 +353,7 @@ mod tests {
 
         b.switch_to_block(exit);
         b.ret(&[]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = LicmPass::new();
         let r = pass.run_on_function(&mut func).unwrap();

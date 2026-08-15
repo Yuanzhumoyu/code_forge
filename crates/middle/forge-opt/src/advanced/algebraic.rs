@@ -1,4 +1,4 @@
-//! e-graph optimization framework (Equality Saturation).
+//! 代数重写通道(单趟模式匹配重写;名保留 EGraphPass 以最小化 diff)。
 //!
 //! Provides 30+ algebraic identity rewrite rules + iterative saturation (fixed-point).
 //!
@@ -18,7 +18,7 @@
 //! Apply rules repeatedly until IR stops changing, handling cascading optimization chains.
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -39,7 +39,7 @@ impl OptimizationPass for EGraphPass {
         "Algebraic simplification using equality saturation (30+ rules, iterative)"
     }
 
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         apply_rewrite_rules(func)
     }
 }
@@ -129,7 +129,7 @@ enum ReplaceAction {
 // Core rewrite
 // ============================================================
 
-pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
     let mut total = PassResult::default();
 
     loop {
@@ -164,6 +164,8 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, CompileErr
             let block = &func.dfg.blocks[bi.0 as usize];
             let inst_id = block.inst_order[ii];
             {
+                // 同步 use-lists：清掉旧 operands 的使用记录
+                func.use_lists.remove_inst(&func.dfg, inst_id);
                 let inst = &mut func.dfg.insts[inst_id.0 as usize];
                 let result = inst.results.first().copied().unwrap_or(Value(0));
                 let ty = func.dfg.values[result.0 as usize].ty;
@@ -177,7 +179,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, CompileErr
                     }
                     ReplaceAction::Const { value } => {
                         let value = truncate_to_type(value, ty);
-                        let cid = func.constants.insert_int(value as i128, ty.bits() as u16);
+                        let cid = func.constants.insert_int(value as i128, ty.bits());
                         inst.opcode = Opcode::Iconst;
                         inst.operands.clear();
                         inst.immediates.clear();
@@ -188,6 +190,9 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, CompileErr
                     }
                 }
             }
+            // 记录新 operands 的使用（Copy 的 src 成为活跃使用）
+            func.use_lists
+                .record_inst(inst_id, &func.dfg.insts[inst_id.0 as usize].operands);
         }
     }
 
@@ -445,33 +450,6 @@ fn try_rewrite(inst: &Instruction, cache: &ConstCache, ty: TypeId) -> Option<Rep
 }
 
 // ============================================================
-// ISelPass — instruction selection via egraph
-// ============================================================
-
-#[derive(Default)]
-pub struct ISelPass;
-
-impl ISelPass {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl OptimizationPass for ISelPass {
-    fn name(&self) -> &'static str {
-        "isel-egraph"
-    }
-    fn description(&self) -> &'static str {
-        "Instruction selection using egraph-based pattern matching"
-    }
-
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
-        // Delegates to EGraphPass for algebraic simplification
-        apply_rewrite_rules(func)
-    }
-}
-
-// ============================================================
 // Tests
 // ============================================================
 
@@ -491,7 +469,7 @@ mod tests {
         let sum = b.iadd(x, zero); // x + 0 → x
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = EGraphPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -508,7 +486,7 @@ mod tests {
         let prod = b.imul(x, one); // x * 1 → x
         b.ret(&[prod]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = EGraphPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -524,7 +502,7 @@ mod tests {
         let diff = b.isub(x, x); // x - x → 0
         b.ret(&[diff]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = EGraphPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -546,7 +524,7 @@ mod tests {
         let sum = b.iadd(a, b_val); // 100+100=200, I8 truncation: 200 & 0xFF = 200
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = EGraphPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(

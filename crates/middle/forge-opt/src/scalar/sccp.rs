@@ -4,7 +4,7 @@
 //! Can discover constants missed by standard const-fold (e.g. through unreachable branches).
 
 use crate::{ConstValue, OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -24,13 +24,12 @@ impl OptimizationPass for SccpPass {
     fn description(&self) -> &'static str {
         "Sparse Conditional Constant Propagation"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         sccp(func)
     }
 }
 
 #[derive(Clone, Debug, Default)]
-#[allow(dead_code)]
 enum LatticeValue {
     #[default]
     Undefined,
@@ -38,7 +37,7 @@ enum LatticeValue {
     Top,
 }
 
-pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     if func.dfg.blocks.is_empty() {
         return Ok(result);
@@ -47,9 +46,13 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
     let mut lattice: HashMap<Value, LatticeValue> = HashMap::new();
     let mut reachable: HashSet<Block> = HashSet::new();
     let mut worklist: Vec<Block> = Vec::new();
+    // 去重入队标记：同一块可能被多个用户/分支重复加入 worklist，
+    // 重复 pop 会整块重扫（克隆 + 全指令 evaluate），是主要开销。
+    let mut in_queue: HashSet<Block> = HashSet::new();
     let entry = func.entry_block.unwrap_or(Block(0));
-    reachable.insert(entry);
-    worklist.push(entry);
+    if reachable.insert(entry) && in_queue.insert(entry) {
+        worklist.push(entry);
+    }
 
     // Init Iconst/Fconst
     for block in func.dfg.blocks.iter() {
@@ -80,13 +83,14 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
 
     // Worklist propagation
     while let Some(block_id) = worklist.pop() {
+        in_queue.remove(&block_id);
         let block = &func.dfg.blocks[block_id.0 as usize];
-        let inst_ids: Vec<Inst> = block.inst_order.clone();
+        let inst_ids = &block.inst_order;
 
-        for inst_id in &inst_ids {
+        for inst_id in inst_ids {
             let inst = &func.dfg.insts[inst_id.0 as usize];
             if let Some(v) = inst.results.first().copied() {
-                let old = lattice.get(&v).cloned();
+                let old = lattice.get(&v);
                 // Skip instructions that have already been constant-folded or
                 // that produce values from immediates rather than operands
                 // (Iconst, Fconst, StackAddr, GlobalAddr, etc.)
@@ -97,11 +101,11 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
                 }
                 let ty = func.dfg.values[v.0 as usize].ty;
                 let new = evaluate_lattice(&inst.opcode, &inst.operands, ty, &lattice);
-                if !lattice_eq(&old, &new) {
+                if !lattice_eq(old, &new) {
                     lattice.insert(v, new);
                     if let Some(users) = uses_map.get(&v) {
                         for &user_block in users {
-                            if reachable.contains(&user_block) {
+                            if reachable.contains(&user_block) && in_queue.insert(user_block) {
                                 worklist.push(user_block);
                             }
                         }
@@ -121,34 +125,36 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
             } => match lattice.get(cond) {
                 Some(LatticeValue::Constant(cv)) => match cv.to_bool() {
                     Some(true) => {
-                        if reachable.insert(*then_block) {
+                        if reachable.insert(*then_block) && in_queue.insert(*then_block) {
                             worklist.push(*then_block);
                         }
                     }
                     Some(false) => {
-                        if reachable.insert(*else_block) {
+                        if reachable.insert(*else_block) && in_queue.insert(*else_block) {
                             worklist.push(*else_block);
                         }
                     }
                     None => {
-                        if reachable.insert(*then_block) {
+                        if reachable.insert(*then_block) && in_queue.insert(*then_block) {
                             worklist.push(*then_block);
                         }
-                        if reachable.insert(*else_block) {
+                        if reachable.insert(*else_block) && in_queue.insert(*else_block) {
                             worklist.push(*else_block);
                         }
                     }
                 },
                 _ => {
-                    if reachable.insert(*then_block) {
+                    if reachable.insert(*then_block) && in_queue.insert(*then_block) {
                         worklist.push(*then_block);
                     }
-                    if reachable.insert(*else_block) {
+                    if reachable.insert(*else_block) && in_queue.insert(*else_block) {
                         worklist.push(*else_block);
                     }
                 }
             },
-            Terminator::Jump { target, .. } if reachable.insert(*target) => {
+            Terminator::Jump { target, .. }
+                if reachable.insert(*target) && in_queue.insert(*target) =>
+            {
                 worklist.push(*target);
             }
             Terminator::Switch {
@@ -156,11 +162,11 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
                 cases,
                 ..
             } => {
-                if reachable.insert(*default_block) {
+                if reachable.insert(*default_block) && in_queue.insert(*default_block) {
                     worklist.push(*default_block);
                 }
                 for (_, target, _) in cases {
-                    if reachable.insert(*target) {
+                    if reachable.insert(*target) && in_queue.insert(*target) {
                         worklist.push(*target);
                     }
                 }
@@ -177,28 +183,36 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
             continue;
         }
 
-        let inst_ids: Vec<Inst> = func.dfg.blocks[bi].inst_order.clone();
-        for inst_id in &inst_ids {
-            let inst = &mut func.dfg.insts[inst_id.0 as usize];
+        let inst_ids = &func.dfg.blocks[bi].inst_order;
+        // 收集常量改写（避免借用冲突），循环后统一应用并同步 use-lists
+        let mut rewrites: Vec<(Inst, Opcode, crate::entity::ConstId)> = Vec::new();
+        for inst_id in inst_ids {
+            let inst = &func.dfg.insts[inst_id.0 as usize];
             if let Some(v) = inst.results.first().copied()
                 && let Some(LatticeValue::Constant(cv)) = lattice.get(&v)
             {
                 match cv {
                     ConstValue::Int(big, _) | ConstValue::Float(big, _) => {
                         let cid = func.constants.insert_big(big.clone());
-                        inst.opcode = match cv {
+                        let new_op = match cv {
                             ConstValue::Int(..) => Opcode::Iconst,
                             _ => Opcode::Fconst,
                         };
-                        inst.operands.clear();
-                        inst.immediates.clear();
-                        inst.immediates.push(Immediate::Const(cid));
-                        result.instructions_removed += 1;
-                        result.changed = true;
+                        rewrites.push((*inst_id, new_op, cid));
                     }
                     _ => {}
                 }
             }
+        }
+        for (inst_id, new_op, cid) in rewrites {
+            // 同步 use-lists：清掉旧 operands 的使用记录再清字段
+            func.use_lists.remove_inst(&func.dfg, inst_id);
+            let inst = &mut func.dfg.insts[inst_id.0 as usize];
+            inst.opcode = new_op;
+            inst.operands.clear();
+            inst.immediates = smallvec::smallvec![Immediate::Const(cid)];
+            result.instructions_removed += 1;
+            result.changed = true;
         }
 
         // Fold constant branch conditions
@@ -215,12 +229,14 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, CompileError> {
                 block.terminator = Terminator::Jump {
                     target: *then_block,
                     args: smallvec::smallvec![],
+                    metadata: smallvec::smallvec![],
                 };
                 result.changed = true;
             } else if let Some(false) = cv.to_bool() {
                 block.terminator = Terminator::Jump {
                     target: *else_block,
                     args: smallvec::smallvec![],
+                    metadata: smallvec::smallvec![],
                 };
                 result.changed = true;
             }
@@ -248,7 +264,7 @@ fn evaluate_lattice(
     ty: TypeId,
     lattice: &HashMap<Value, LatticeValue>,
 ) -> LatticeValue {
-    let const_ops: Vec<ConstValue> = operands
+    let const_ops: smallvec::SmallVec<[ConstValue; 4]> = operands
         .iter()
         .filter_map(|v| match lattice.get(v)? {
             LatticeValue::Constant(cv) => Some(cv.clone()),
@@ -264,7 +280,7 @@ fn evaluate_lattice(
     }
 }
 
-fn lattice_eq(a: &Option<LatticeValue>, b: &LatticeValue) -> bool {
+fn lattice_eq(a: Option<&LatticeValue>, b: &LatticeValue) -> bool {
     match (a, b) {
         (None, _) => false,
         (Some(LatticeValue::Undefined), LatticeValue::Undefined) => true,
@@ -303,7 +319,7 @@ mod tests {
         let c2 = b.iconst_i32(5);
         let sum = b.iadd(c1, c2);
         b.ret(&[sum]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = SccpPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
 
@@ -328,7 +344,7 @@ mod tests {
         let one = b.iconst_i32(1);
         let sum = b.iadd(params[0], one);
         b.ret(&[sum]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = SccpPass::new();
         let r = pass.run_on_function(&mut func);
         assert!(r.is_ok());

@@ -11,7 +11,7 @@
 //! 4. 重新连接: peeled_body → cloned_body → ... → original_header
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -47,7 +47,7 @@ impl OptimizationPass for LoopUnrollPass {
     fn description(&self) -> &'static str {
         "Unrolls small counted loops using block-param-based trip count analysis"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         unroll_loops(func, self.factor, self.max_body_size)
     }
 }
@@ -57,29 +57,30 @@ pub fn unroll_loops(
     func: &mut Function,
     factor: usize,
     max_body_size: usize,
-) -> Result<PassResult, CompileError> {
+) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let dt = DominatorTree::build(func);
-    let lf = LoopForest::build(func, &dt);
+    // 使用函数上的惰性分析缓存（多 pass 共享）；无循环时快速返回。
+    // 展开会增删块，因此修改后使缓存失效。
+    let candidates: Vec<(forge_ir::LoopInfo, u64)> = func
+        .loop_forest()
+        .all_loops()
+        .iter()
+        .filter(|li| {
+            let body_size: usize = li
+                .blocks
+                .iter()
+                .map(|&b| func.dfg.blocks[b.0 as usize].inst_order.len())
+                .sum();
+            body_size <= max_body_size
+        })
+        .filter_map(|li| {
+            let tc = estimate_trip_count(func, li);
+            (tc >= 2).then(|| (li.clone(), tc.min(factor as u64)))
+        })
+        .collect();
 
-    for loop_info in lf.all_loops() {
-        let body_size: usize = loop_info
-            .blocks
-            .iter()
-            .map(|&b| func.dfg.blocks[b.0 as usize].inst_order.len())
-            .sum();
-
-        if body_size > max_body_size {
-            continue;
-        }
-
-        let trip_count = estimate_trip_count(func, loop_info);
-        if trip_count < 2 || trip_count > factor as u64 {
-            continue;
-        }
-
-        let unroll_count = trip_count.min(factor as u64);
-        let r = perform_unroll(func, loop_info, unroll_count);
+    for (loop_info, unroll_count) in candidates {
+        let r = perform_unroll(func, &loop_info, unroll_count);
         if r.changed {
             result.changed = true;
             result.instructions_added += r.instructions_added;
@@ -87,6 +88,10 @@ pub fn unroll_loops(
         }
     }
 
+    if result.changed {
+        // 展开克隆/重连了块：失效分析缓存，后续 pass 重建
+        func.analysis_mut().invalidate();
+    }
     Ok(result)
 }
 
@@ -205,17 +210,6 @@ fn collect_body_chain(
     chain
 }
 
-/// Pre-collected data for cloning an instruction (avoids borrow conflicts).
-struct InstTemplate {
-    /// Original instruction id — used to look up original results for value remapping.
-    inst_id: Inst,
-    opcode: Opcode,
-    operands: smallvec::SmallVec<[Value; 4]>,
-    immediates: smallvec::SmallVec<[Immediate; 4]>,
-    result_tys: Vec<TypeId>,
-    flags: InstFlags,
-}
-
 /// Clone a chain of body blocks. Returns (block_remap, value_remap).
 fn clone_body_chain(
     func: &mut Function,
@@ -231,7 +225,7 @@ fn clone_body_chain(
         block: Block,
         param_tys: Vec<TypeId>,
         param_values: Vec<Value>,
-        insts: Vec<InstTemplate>,
+        insts: Vec<Inst>,
         terminator: Terminator,
     }
 
@@ -242,29 +236,12 @@ fn clone_body_chain(
         let param_values: Vec<Value> = orig.param_values.iter().copied().collect();
 
         let orig_insts: Vec<Inst> = orig.inst_order.clone();
-        let mut inst_templates = Vec::new();
-        for &inst_id in &orig_insts {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
-            let result_tys: Vec<TypeId> = inst
-                .results
-                .iter()
-                .map(|&v| func.dfg.values[v.0 as usize].ty)
-                .collect();
-            inst_templates.push(InstTemplate {
-                inst_id,
-                opcode: inst.opcode,
-                operands: inst.operands.clone(),
-                immediates: inst.immediates.clone(),
-                result_tys,
-                flags: inst.flags,
-            });
-        }
 
         templates.push(BlockTemplate {
             block,
             param_tys,
             param_values,
-            insts: inst_templates,
+            insts: orig_insts,
             terminator: orig.terminator.clone(),
         });
     }
@@ -288,38 +265,14 @@ fn clone_body_chain(
         }
     }
 
-    // Phase 3: clone instructions (all blocks created, val_remap has params)
+    // Phase 3: clone instructions（clone_inst 保留全字段：flags/mem_flags/
+    // metadata/loc/isel_strategy，并自动维护 val_remap——块参数映射已在
+    // Phase 2 建立，克隆结果按顺序写入）
     for tmpl in &templates {
         let new_block = block_remap[&tmpl.block];
 
-        for inst_tmpl in &tmpl.insts {
-            // Remap operands
-            let new_operands: smallvec::SmallVec<[Value; 4]> = inst_tmpl
-                .operands
-                .iter()
-                .map(|v| val_remap.get(v).copied().unwrap_or(*v))
-                .collect();
-
-            // Remap immediates: FuncRef targets stay the same, Consts stay the same
-            let new_immediates: smallvec::SmallVec<[Immediate; 4]> = inst_tmpl.immediates.clone();
-
-            let new_inst = func.dfg.make_inst(
-                inst_tmpl.opcode,
-                new_block,
-                new_operands,
-                new_immediates,
-                &inst_tmpl.result_tys,
-                inst_tmpl.flags,
-            );
-
-            // Map old results to new results using stored inst_id
-            let orig_inst = &func.dfg.insts[inst_tmpl.inst_id.0 as usize];
-            let new_results = &func.dfg.insts[new_inst.0 as usize].results;
-            for (i, &old_r) in orig_inst.results.iter().enumerate() {
-                if i < new_results.len() {
-                    val_remap.insert(old_r, new_results[i]);
-                }
-            }
+        for &inst_id in &tmpl.insts {
+            func.dfg.clone_inst(inst_id, new_block, &mut val_remap);
         }
 
         // Clone terminator
@@ -337,7 +290,7 @@ fn clone_terminator(
     block_remap: &HashMap<Block, Block>,
 ) -> Terminator {
     match term {
-        Terminator::Jump { target, args } => {
+        Terminator::Jump { target, args, .. } => {
             let new_target = block_remap.get(target).copied().unwrap_or(*target);
             let new_args: smallvec::SmallVec<[Value; 2]> = args
                 .iter()
@@ -346,6 +299,7 @@ fn clone_terminator(
             Terminator::Jump {
                 target: new_target,
                 args: new_args,
+                metadata: smallvec::smallvec![],
             }
         }
         Terminator::Branch {
@@ -354,6 +308,7 @@ fn clone_terminator(
             then_args,
             else_block,
             else_args,
+            ..
         } => {
             let new_cond = val_remap.get(cond).copied().unwrap_or(*cond);
             let new_then = block_remap.get(then_block).copied().unwrap_or(*then_block);
@@ -372,14 +327,18 @@ fn clone_terminator(
                 then_args: new_then_args,
                 else_block: new_else,
                 else_args: new_else_args,
+                metadata: smallvec::smallvec![],
             }
         }
-        Terminator::Return { values } => {
+        Terminator::Return { values, .. } => {
             let new_vals: smallvec::SmallVec<[Value; 2]> = values
                 .iter()
                 .map(|v| val_remap.get(v).copied().unwrap_or(*v))
                 .collect();
-            Terminator::Return { values: new_vals }
+            Terminator::Return {
+                values: new_vals,
+                metadata: smallvec::smallvec![],
+            }
         }
         _ => term.clone(),
     }
@@ -395,6 +354,7 @@ fn redirect_branch_target(func: &mut Function, block: Block, old_target: Block, 
             then_args,
             else_block,
             else_args,
+            ..
         } => {
             let new_then = if *then_block == old_target {
                 new_target
@@ -412,6 +372,7 @@ fn redirect_branch_target(func: &mut Function, block: Block, old_target: Block, 
                 then_args: then_args.clone(),
                 else_block: new_else,
                 else_args: else_args.clone(),
+                metadata: smallvec::smallvec![],
             }
         }
         _ => return,
@@ -453,7 +414,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
         let init_arg = init_pred.and_then(|p| {
             let term = &func.dfg.blocks[p.0 as usize].terminator;
             match term {
-                Terminator::Jump { target, args } if *target == header => args.get(pi).copied(),
+                Terminator::Jump { target, args, .. } if *target == header => args.get(pi).copied(),
                 Terminator::Branch {
                     then_block,
                     then_args,
@@ -568,7 +529,7 @@ mod tests {
         b.switch_to_block(entry);
         let v = b.iconst_i32(42);
         b.ret(&[v]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = LoopUnrollPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -590,7 +551,7 @@ mod tests {
         let v3 = b.iadd(v1, v2); // 1 + 2 = 3
         let v4 = b.iadd(v3, v1); // 3 + 1 = 4
         b.ret(&[]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         // Clone the entry block's body
         let (block_remap, val_remap) =
@@ -635,7 +596,7 @@ mod tests {
 
         b.switch_to_block(exit_block);
         b.ret(&[]);
-        let func = b.finish();
+        let func = b.finish().expect("build");
 
         let dt = DominatorTree::build(&func);
         let lf = LoopForest::build(&func, &dt);
@@ -673,7 +634,7 @@ mod tests {
 
         b.switch_to_block(exit_block);
         b.ret(&[]);
-        let func = b.finish();
+        let func = b.finish().expect("build");
 
         let dt = DominatorTree::build(&func);
         let lf = LoopForest::build(&func, &dt);

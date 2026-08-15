@@ -175,20 +175,20 @@ fn test_e2e_simple_expression() {
     let mut builder = forge_ir::FunctionBuilder::new("add_42", ctx, sig);
 
     // The function has a parameter x (i32) — create entry block to get it
-    let (_entry_block, _entry_params) = builder.create_entry_block();
+    let (entry_block, entry_params) = builder.create_entry_block();
 
     let mut lowering = LoweringContext::new(&mut builder, &registry);
-    lowering.lower_graph(&graph).unwrap();
+    // 把 graph 块 0 映射到已创建的 entry 块，并把函数参数绑定到 graph 块参数
+    lowering
+        .lower_graph_with_entry_and_params(&graph, entry_block, &entry_params)
+        .unwrap();
 
-    // Map the block param: the IrGraph block param "x" maps to function param entry_params[0]
-    // (This mapping is handled by the user of the framework; LoweringContext only
-    //  maps block params within the IrGraph, not external function params)
-    let func = builder.finish();
+    let func = builder.finish().expect("build");
 
     // Verify the function exists and has the right structure
-    assert_eq!(func.name, "add_42");
-    assert_eq!(func.param_tys.len(), 1);
-    assert_eq!(func.param_tys[0], forge_ir::TypeId::I32);
+    assert_eq!(func.name.as_str(), "add_42");
+    assert_eq!(func.param_types().len(), 1);
+    assert_eq!(func.param_types()[0], forge_ir::TypeId::I32);
 }
 
 #[test]
@@ -383,17 +383,16 @@ fn test_e2e_if_else() {
         .unwrap();
     graph.set_terminator(merge_blk, nmr).unwrap();
 
-    // Lower
+    // Lower：不预创建 entry —— lower_graph 会把 graph 块 0 自动建成函数入口
     let ctx = forge_ir::TypeContext::new();
     let sig = forge_ir::FunctionSignature::new(&[], &[forge_ir::TypeId::I32]);
     let mut builder = forge_ir::FunctionBuilder::new("test_if", ctx, sig);
-    builder.create_entry_block();
 
     let mut lowering = LoweringContext::new(&mut builder, &registry);
     lowering.lower_graph(&graph).unwrap();
 
-    let func = builder.finish();
-    assert_eq!(func.name, "test_if");
+    let func = builder.finish().expect("build");
+    assert_eq!(func.name.as_str(), "test_if");
     // Should have 4 blocks
     assert!(func.dfg.block_count() >= 4);
 }

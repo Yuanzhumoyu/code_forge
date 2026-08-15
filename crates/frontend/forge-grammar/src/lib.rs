@@ -44,6 +44,9 @@ pub mod visit;
 pub mod ast;
 
 // ── NEW: 语义分析层 (Phase D+) ──
+// 第二十九轮:零外部调用(30KB NameResolver/SymbolTable/TypeChecker)——保留
+// 为公开 API(接入 mini_c 是产品决策),标注 #[doc(hidden)] 不在文档生成中突出。
+#[doc(hidden)]
 pub mod semantic;
 
 // Re-exports for convenience

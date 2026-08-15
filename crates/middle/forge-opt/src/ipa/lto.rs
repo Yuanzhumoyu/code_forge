@@ -11,7 +11,7 @@
 //! 4. 对于调用外部模块函数的 Call，克隆 callee body 并内联
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -32,7 +32,7 @@ impl LtoContext {
     }
 
     /// 从所有模块构建全局函数引用表。
-    pub fn build_ref_table(&self) -> HashMap<String, FuncRef> {
+    pub fn build_ref_table(&self) -> HashMap<ImmStr, FuncRef> {
         let mut table = HashMap::new();
         for module in &self.modules {
             for (fr, func) in module.iter_func_refs() {
@@ -70,6 +70,7 @@ impl Default for LtoContext {
 }
 
 /// LTO pass — 跨模块内联优化。
+#[doc(hidden)]
 pub struct LtoPass {
     context: LtoContext,
     threshold: usize,
@@ -95,7 +96,7 @@ impl OptimizationPass for LtoPass {
         false
     }
 
-    fn run_on_module(&self, module: &mut Module) -> Result<PassResult, CompileError> {
+    fn run_on_module(&self, module: &mut Module) -> Result<PassResult, IrError> {
         let mut result = PassResult::default();
 
         // Build lookup: FuncRef → callee function (only from OTHER modules)
@@ -162,16 +163,15 @@ impl OptimizationPass for LtoPass {
             // Clone callee body into caller
             let ret_vals = lto_inline_callee(caller, callee_func, call_block, &call_operands)?;
 
-            // Replace call results with return values
+            // Replace call results with return values（DFG + use-lists 双更新）
             for (i, &call_result) in call_results.iter().enumerate() {
                 if let Some(&ret_val) = ret_vals.get(i) {
-                    caller.use_lists.replace_all_uses(call_result, ret_val);
+                    caller.replace_all_uses(call_result, ret_val);
                 }
             }
 
-            // Remove Call instruction
-            caller.use_lists.remove_inst(&caller.dfg, site.call_inst);
-            caller.dfg.remove_inst(site.call_inst);
+            // Remove Call instruction（原子：use-lists + 墓碑化）
+            caller.kill_inst(site.call_inst);
             result.instructions_removed += 1;
             result.values_replaced += call_results.len();
             result.changed = true;
@@ -188,7 +188,7 @@ fn lto_inline_callee(
     callee: &Function,
     target_block: Block,
     call_args: &[Value],
-) -> Result<Vec<Value>, CompileError> {
+) -> Result<Vec<Value>, IrError> {
     let mut val_remap: HashMap<Value, Value> = HashMap::new();
 
     // Map callee params to call arguments
@@ -217,20 +217,13 @@ fn lto_inline_callee(
                 .collect();
 
             // Remap immediates: copy constants from callee pool to caller pool
+            //（remap_from 按 tag 全池重建，替代手写三级 fallback）
             let new_immediates: smallvec::SmallVec<[Immediate; 4]> = inst
                 .immediates
                 .iter()
                 .map(|im| match im {
                     Immediate::Const(cid) => {
-                        if let Some(big) = callee.constants.resolve_big(*cid) {
-                            Immediate::Const(caller.constants.insert_big(big))
-                        } else if let Some(i) = callee.constants.resolve_int(*cid) {
-                            Immediate::Const(caller.constants.insert_int(i as i128, 64))
-                        } else if let Some(f) = callee.constants.resolve_float(*cid) {
-                            Immediate::Const(caller.constants.insert_float(f))
-                        } else {
-                            *im
-                        }
+                        Immediate::Const(caller.constants.remap_from(&callee.constants, *cid))
                     }
                     _ => *im,
                 })
@@ -242,14 +235,21 @@ fn lto_inline_callee(
                 .map(|&v| callee.dfg.values[v.0 as usize].ty)
                 .collect();
 
-            let new_inst = caller.dfg.make_inst(
+            // 保留全字段（flags/mem_flags/metadata/loc/isel_strategy）
+            let new_inst = caller.dfg.make_inst_with_meta_and_loc(
                 inst.opcode,
                 target_block,
                 new_operands,
                 new_immediates,
                 &result_tys,
                 inst.flags,
+                inst.mem_flags,
+                inst.metadata.clone(),
+                inst.loc.clone(),
             );
+            if let Some(strategy) = inst.isel_strategy {
+                caller.dfg.insts[new_inst.0 as usize].isel_strategy = Some(strategy);
+            }
 
             // Map old results to new results
             let new_results = &caller.dfg.insts[new_inst.0 as usize].results;
@@ -261,7 +261,7 @@ fn lto_inline_callee(
         }
 
         // Handle Return
-        if let Terminator::Return { values } = &callee_block.terminator {
+        if let Terminator::Return { values, .. } = &callee_block.terminator {
             for &v in values.iter() {
                 ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
             }
@@ -290,7 +290,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         b.ret(&[]);
-        module.add_function(b.finish());
+        module.add_function(b.finish().expect("build"));
         ctx.add_module(module);
 
         assert_eq!(ctx.all_func_refs().len(), 1);
@@ -305,7 +305,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         b.ret(&[]);
-        module.add_function(b.finish());
+        module.add_function(b.finish().expect("build"));
 
         let pass = LtoPass::new(ctx);
         let r = pass.run_on_module(&mut module).unwrap();

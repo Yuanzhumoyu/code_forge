@@ -14,7 +14,7 @@
 //! 6. 遍历完成后，更新所有 Value 引用
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -40,7 +40,7 @@ impl OptimizationPass for CsePass {
         "Common subexpression elimination: removes duplicate computations within a block"
     }
 
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         eliminate_common_subexpressions(func)
     }
 }
@@ -51,7 +51,7 @@ impl OptimizationPass for CsePass {
 /// 类型不同的同操作码指令被视为不同的表达式。
 /// 对于交换律操作（Iadd/Imul/Fadd/Fmul/Band/Bor/Bxor），操作数排序后生成统一键。
 pub(crate) fn expr_key(opcode: &Opcode, operands: &[Value], ty: TypeId) -> ExprKey {
-    let mut ops = operands.to_vec();
+    let mut ops: smallvec::SmallVec<[Value; 4]> = operands.iter().copied().collect();
     if is_commutative(opcode) && ops.len() >= 2 {
         // 对交换律操作排序操作数，使 a+b 和 b+a 产生相同键
         ops.sort_by_key(|v| v.0);
@@ -105,8 +105,17 @@ pub(crate) fn opcode_discriminant(opcode: &Opcode) -> u8 {
         Opcode::Icmp { .. } => 23,
         Opcode::Fcmp { .. } => 24,
         Opcode::Load => 25, // Load from same address = same value (conservatively treated as pure)
+        Opcode::Fload => 25, // 浮点 load 同 Load 语义
         Opcode::Sextend => 26,
         Opcode::Uextend => 27,
+        Opcode::Fptrunc => 71,
+        Opcode::Fpext => 72,
+        Opcode::Fptosi => 73,
+        Opcode::Sitofp => 74,
+        Opcode::Fptoui => 75,
+        Opcode::Uitofp => 76,
+        Opcode::Ptrtoint => 77,
+        Opcode::Inttoptr => 78,
         Opcode::Ireduce => 28,
         Opcode::Bitcast => 29,
         Opcode::StackAddr => 30,
@@ -158,16 +167,22 @@ pub(crate) fn opcode_discriminant(opcode: &Opcode) -> u8 {
         Opcode::Vbroadcast => 70,
         // Non-CSE-able
         Opcode::Store
+        | Opcode::Fstore
         | Opcode::Call
         | Opcode::CallIndirect
         | Opcode::Iconst
         | Opcode::Fconst
+        | Opcode::Vconst
         | Opcode::Nop
         | Opcode::Vadd
         | Opcode::Vsub
         | Opcode::Vmul
         | Opcode::Vextract
+        | Opcode::AddrSpaceCast
+        | Opcode::VaArg
         | Opcode::Vinsert
+        | Opcode::Vsplit
+        | Opcode::Vconcat
         | Opcode::ShuffleVector
         | Opcode::AtomicRmw
         | Opcode::Cmpxchg
@@ -178,15 +193,18 @@ pub(crate) fn opcode_discriminant(opcode: &Opcode) -> u8 {
         | Opcode::GetElementPtr
         | Opcode::Poison
         | Opcode::Undef
-        | Opcode::Trap => 0,
+        | Opcode::Trap
+        | Opcode::LandingPad => 0,
     }
 }
 
 /// 表达式的哈希键。
+/// operands 用 SmallVec（≤4 操作数 inline，无堆分配）——
+/// 每指令一次 key 构造是 CSE/GVN/GVN-PRE 的每指令固定开销。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ExprKey {
     pub(crate) opcode: u8,
-    pub(crate) operands: Vec<Value>,
+    pub(crate) operands: smallvec::SmallVec<[Value; 4]>,
     pub(crate) ty: TypeId,
 }
 
@@ -196,21 +214,22 @@ pub(crate) fn is_cse_candidate(opcode: &Opcode) -> bool {
 }
 
 /// 对单个函数执行局部 CSE。
-pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     // Value → Value 替换映射（被消除的 result → 保留的 result）
     let mut replacements: HashMap<Value, Value> = HashMap::new();
+    // 待删除的重复表达式指令（循环后统一 kill，避免与借用冲突）
+    let mut to_kill: Vec<Inst> = Vec::new();
 
     let block_count = func.dfg.blocks.len();
     for bi in 0..block_count {
-        let block = &func.dfg.blocks[bi];
         // 每个块独立维护表达式表
         let mut expr_table: HashMap<ExprKey, Value> = HashMap::new();
 
-        // Collect inst IDs first to avoid borrow issues
-        let inst_ids: Vec<Inst> = block.inst_order.clone();
+        // 借用 inst_order（blocks 与 insts 为 dfg 不同字段，可拆分借用）
+        let inst_ids = &func.dfg.blocks[bi].inst_order;
 
-        for inst_id in &inst_ids {
+        for inst_id in inst_ids {
             let inst = &mut func.dfg.insts[inst_id.0 as usize];
 
             // 跳过无结果的指令
@@ -235,12 +254,9 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
             let key = expr_key(&inst.opcode, &mapped_operands, ty);
 
             if let Some(&existing_result) = expr_table.get(&key) {
-                // 找到重复表达式！消除当前指令
+                // 找到重复表达式！消除当前指令（延迟到循环后统一 kill）
                 replacements.insert(inst_result, existing_result);
-                inst.opcode = Opcode::Nop;
-                inst.operands.clear();
-                func.dfg.values[inst_result.0 as usize].ty = TypeId::VOID;
-                inst.results.clear();
+                to_kill.push(*inst_id);
                 result.instructions_removed += 1;
                 result.changed = true;
             } else {
@@ -250,83 +266,16 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
         }
     }
 
-    // 在所有指令中应用替换
+    // 应用替换（同步 use-lists），再原子删除重复表达式指令
     if !replacements.is_empty() {
-        apply_replacements(func, &replacements);
+        func.apply_replacements(&replacements);
         result.values_replaced = replacements.len();
+    }
+    for inst in to_kill {
+        func.kill_inst(inst);
     }
 
     Ok(result)
-}
-
-/// 在函数的所有指令和终止指令中应用 Value 替换。
-pub(crate) fn apply_replacements(func: &mut Function, replacements: &HashMap<Value, Value>) {
-    let inst_count = func.dfg.insts.len();
-    for inst_idx in 0..inst_count {
-        let inst = &mut func.dfg.insts[inst_idx];
-        if matches!(inst.opcode, Opcode::Nop) {
-            continue;
-        }
-        for operand in inst.operands.iter_mut() {
-            if let Some(&replacement) = replacements.get(operand) {
-                *operand = replacement;
-            }
-        }
-    }
-
-    let block_count = func.dfg.blocks.len();
-    for bi in 0..block_count {
-        let block = &mut func.dfg.blocks[bi];
-        // 更新终止指令
-        match &mut block.terminator {
-            Terminator::Branch {
-                cond,
-                then_args,
-                else_args,
-                ..
-            } => {
-                if let Some(&r) = replacements.get(cond) {
-                    *cond = r;
-                }
-                for v in then_args.iter_mut().chain(else_args.iter_mut()) {
-                    if let Some(&r) = replacements.get(v) {
-                        *v = r;
-                    }
-                }
-            }
-            Terminator::Jump { args, .. } => {
-                for v in args.iter_mut() {
-                    if let Some(&r) = replacements.get(v) {
-                        *v = r;
-                    }
-                }
-            }
-            Terminator::Return { values } => {
-                for v in values.iter_mut() {
-                    if let Some(&r) = replacements.get(v) {
-                        *v = r;
-                    }
-                }
-            }
-            Terminator::Switch {
-                discriminant,
-                cases,
-                ..
-            } => {
-                if let Some(&r) = replacements.get(discriminant) {
-                    *discriminant = r;
-                }
-                for (_, _, args) in cases.iter_mut() {
-                    for v in args.iter_mut() {
-                        if let Some(&r) = replacements.get(v) {
-                            *v = r;
-                        }
-                    }
-                }
-            }
-            Terminator::Unreachable => {}
-        }
-    }
 }
 
 // ============================================================
@@ -352,21 +301,24 @@ mod tests {
         let total = b.iadd(sum1, sum2);
         b.ret(&[total]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = CsePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
 
         assert!(r.changed);
         assert!(r.instructions_removed >= 1);
-        // sum2 should be Nop, and total should use sum1 twice
-        let mut found_nop = false;
-        for &inst_id in &func.dfg.blocks[0].inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
-            if matches!(inst.opcode, Opcode::Nop) {
-                found_nop = true;
-            }
-        }
-        assert!(found_nop, "Expected a Nop from eliminated duplicate");
+        // sum2 应被原子删除（kill_inst 从 inst_order 移除）：
+        // total 的两个操作数都变为 sum1，sum2 值 VOID
+        let ValueDef::Inst(total_inst, _) = func.dfg.value_def(total).unwrap() else {
+            panic!("total 应是指令定义")
+        };
+        let ops = &func.dfg.insts[total_inst.0 as usize].operands;
+        assert_eq!(ops.as_slice(), &[sum1, sum1], "total 应引用 sum1 两次");
+        assert_eq!(
+            func.dfg.value_type(sum2),
+            Some(TypeId::VOID),
+            "sum2 已被删除"
+        );
     }
 
     #[test]
@@ -388,7 +340,7 @@ mod tests {
         let total = b.iadd(sum1, sum2);
         b.ret(&[total]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = CsePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
 
@@ -407,7 +359,7 @@ mod tests {
         let result = b.bor(and1, and2);
         b.ret(&[result]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = CsePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -424,7 +376,7 @@ mod tests {
         b.store(params[1], params[0]); // second store — NOT a CSE candidate
         b.ret(&[]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = CsePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(!r.changed); // stores should not be affected
@@ -444,7 +396,7 @@ mod tests {
         let result = b.iadd(expr1, expr2);
         b.ret(&[result]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = CsePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -467,7 +419,7 @@ mod tests {
         let _prod2 = b.imul(sum1, sum1); // duplicate of prod1
 
         b.ret(&[prod1, prod1]); // use prod1 twice, prod2 should be dead
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = CsePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
@@ -486,7 +438,7 @@ mod tests {
         let r = b.iadd(e1, e2);
         b.ret(&[r]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let mut pm = PassManager::new();
         pm.add_pass(Box::new(CsePass::new()), PassRunMode::Once);

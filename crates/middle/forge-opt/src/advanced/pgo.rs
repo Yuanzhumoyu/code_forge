@@ -10,7 +10,7 @@
 //! 3. PgoOptimizePass: 按热度重排序块的发射顺序
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -45,6 +45,7 @@ impl PgoCounters {
 /// 在每个 block 起始处插入 StackAddr 计数器 + Load/Add/Store 递增。
 /// 每个 block 获得独立的 StackAddr 槽位，避免复杂的地址计算。
 #[derive(Default)]
+#[doc(hidden)]
 pub struct PgoInstrumentPass;
 
 impl PgoInstrumentPass {
@@ -60,7 +61,7 @@ impl OptimizationPass for PgoInstrumentPass {
     fn description(&self) -> &'static str {
         "Inserts per-block execution counter increments using StackAddr-allocated slots"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         instrument_function(func)
     }
 }
@@ -69,7 +70,7 @@ impl OptimizationPass for PgoInstrumentPass {
 ///
 /// 为每个 block 分配一个独立的 StackAddr 槽位 (8 bytes = i64 counter)。
 /// 在每个 block 起始处插入:  Load slot → Iadd 1 → Store slot
-fn instrument_function(func: &mut Function) -> Result<PassResult, CompileError> {
+fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     let block_count = func.dfg.blocks.len();
     if block_count == 0 {
@@ -153,12 +154,8 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, CompileError> 
         );
 
         // Rotate: move the 5 new insts (StackAddr, Load, Iconst, Iadd, Store) to front
-        let bd = &mut func.dfg.blocks[bi];
-        let new_inst_count = 5;
-        let total = bd.inst_order.len();
-        if total > new_inst_count {
-            bd.inst_order[..total].rotate_right(new_inst_count);
-        }
+        let block = Block(bi as u32);
+        func.dfg.move_insts_to(block, 0, 5);
 
         result.instructions_added += 5;
     }
@@ -186,7 +183,7 @@ impl OptimizationPass for PgoOptimizePass {
     fn description(&self) -> &'static str {
         "Reorders basic block emit order based on profile hotness data"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         let mut result = PassResult::default();
 
         // Compute block hotness
@@ -238,8 +235,8 @@ mod tests {
         b.switch_to_block(entry);
         let v = b.iconst_i32(42);
         b.ret(&[v]);
-        let mut func = b.finish();
-        let inst_before = func.dfg.live_inst_count();
+        let mut func = b.finish().expect("build");
+        let inst_before = func.dfg.inst_count();
 
         let pass = PgoInstrumentPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -248,7 +245,7 @@ mod tests {
             "Instrumentation should insert counter instructions"
         );
         assert!(
-            func.dfg.live_inst_count() > inst_before,
+            func.dfg.inst_count() > inst_before,
             "Should have more instructions after instrumentation"
         );
     }
@@ -261,7 +258,7 @@ mod tests {
         b.switch_to_block(entry);
         let v = b.iconst_i32(42);
         b.ret(&[v]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let mut counters = PgoCounters::new();
         counters.record_block(0, 100);

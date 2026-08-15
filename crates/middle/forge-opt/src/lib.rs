@@ -2,14 +2,14 @@
 //!
 //! # Pipeline (PassManager::for_level)
 //! - O1 (5 passes): const_fold, copy_prop, cse, dead_code, jump_thread
-//! - O2 (12 passes): O1 + gvn, gvn_pre, sccp, block_param_coalesce, licm, tail_call, egraph
-//! - O3 (16 passes): O2 + inline, mem2reg, ind_var_simplify, loop_unroll
+//! - O2 (13 passes): O1 + gvn, gvn_pre, sccp, block_param_coalesce, licm, tail_call, 代数重写, dce
+//! - O3 (17 passes): O2 + inline, mem2reg, ind_var_simplify, loop_unroll
 //!
 //! # Pass modules
 //! - scalar/ (10): block_param_coalesce, const_fold, copy_prop, cse, dead_code, gvn, gvn_pre, jump_thread, mem2reg, sccp
 //! - loops/ (3): ind_var_simplify, licm, loop_unroll
 //! - ipa/ (4): func_specialize, inline, lto, tail_call
-//! - advanced/ (2): egraph, pgo
+//! - advanced/ (2): 代数重写, pgo
 
 use forge_ir::*;
 
@@ -37,7 +37,7 @@ pub enum OptimizationLevel {
     O0,
     /// Basic scalar optimizations: const-fold, copy-prop, dead-code, CSE, jump-threading.
     O1,
-    /// O1 + GVN, GVN-PRE, SCCP, LICM, tail-call, egraph, block-param coalescing.
+    /// O1 + GVN, GVN-PRE, SCCP, LICM, tail-call, 代数重写, block-param coalescing.
     O2,
     /// O2 + inlining, mem2reg, ind-var simplify, loop unrolling.
     O3,
@@ -56,11 +56,11 @@ pub trait OptimizationPass: Send {
         true
     }
 
-    fn run_on_function(&self, _func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, _func: &mut Function) -> Result<PassResult, IrError> {
         Ok(PassResult::default())
     }
 
-    fn run_on_module(&self, _module: &mut Module) -> Result<PassResult, CompileError> {
+    fn run_on_module(&self, _module: &mut Module) -> Result<PassResult, IrError> {
         Ok(PassResult::default())
     }
 }
@@ -97,7 +97,7 @@ impl PassManager {
         self.passes.push((pass, mode));
     }
 
-    pub fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    pub fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         let mut total = PassResult::default();
         for (pass, mode) in &self.passes {
             if pass.is_function_pass() {
@@ -140,17 +140,26 @@ impl PassManager {
                         );
                     }
                 }
+
+                // 分析缓存失效：pass 可能修改 IR（删除块/指令/终结符），
+                // 统一在 pass 后失效，避免后续 pass 复用陈旧的前驱/支配树/循环分析。
+                func.analysis_mut().invalidate();
             }
         }
         Ok(total)
     }
 
-    pub fn run_on_module(&self, module: &mut Module) -> Result<PassResult, CompileError> {
+    pub fn run_on_module(&self, module: &mut Module) -> Result<PassResult, IrError> {
         let mut total = PassResult::default();
         for (pass, _mode) in &self.passes {
             if !pass.is_function_pass() {
                 let r = pass.run_on_module(module)?;
                 total.changed |= r.changed;
+                // 模块级 pass（IPA：inline/lto/func_specialize）可能改写函数体，
+                // 对所有函数统一失效分析缓存
+                for func in module.iter_functions_mut() {
+                    func.analysis_mut().invalidate();
+                }
             }
         }
         Ok(total)
@@ -253,11 +262,11 @@ impl PassManager {
                 PassRunMode::Once,
             );
             pm.add_pass(
-                Box::new(crate::advanced::egraph::EGraphPass::new()),
+                Box::new(crate::advanced::algebraic::EGraphPass::new()),
                 PassRunMode::Once,
             );
             // Trailing DCE: collapse instructions that became dead only after
-            // the O1 DCE position (GVN/CSE/SCCP/egraph leave both Nop
+            // the O1 DCE position (GVN/CSE/SCCP/代数重写 leave both Nop
             // tombstones and indirect dead code). Keeps the optimized IR clean
             // for whatever runs next (later O3 passes or codegen).
             pm.add_pass(
@@ -297,23 +306,6 @@ impl PassManager {
 }
 
 // ============================================================
-// ModulePass trait — cross-function optimization passes
-// ============================================================
-
-/// A pass that operates on a collection of functions (module-level).
-///
-/// Unlike [`OptimizationPass`], which processes one function at a time,
-/// `ModulePass` receives all functions at once, enabling inter-procedural
-/// optimizations like inlining and LTO.
-pub trait ModulePass: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn description(&self) -> &'static str {
-        ""
-    }
-    fn run_on_module(&self, functions: &mut [Function]) -> Result<PassResult, CompileError>;
-}
-
-// ============================================================
 // Optimization pass modules
 // ============================================================
 pub mod advanced;
@@ -322,7 +314,6 @@ pub mod ipa;
 pub mod loops;
 pub mod scalar;
 pub mod support;
-pub mod verify_ir;
 
 pub use const_value::ConstValue;
 
@@ -343,7 +334,7 @@ mod pipeline_tests {
         let one = b.iconst_i32(1);
         let sum = b.iadd(params[0], one);
         b.ret(&[sum]);
-        b.finish()
+        b.finish().expect("build")
     }
 
     /// Verify for_level_with_table populates the function table so
@@ -363,7 +354,7 @@ mod pipeline_tests {
         let c41 = b.iconst_i32(41);
         let ret = b.call(callee_ref, &[c41], &[TypeId::I32]);
         b.ret(&[ret[0]]);
-        let mut caller = b.finish();
+        let mut caller = b.finish().expect("build");
 
         // Build pipeline with function table → inline pass gets real table
         let pm = PassManager::for_level_with_table(OptimizationLevel::O3, fn_table);
@@ -384,7 +375,7 @@ mod pipeline_tests {
         let bv = b.iconst_i32(5);
         let sum = b.iadd(a, bv);
         b.ret(&[sum]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pm = PassManager::for_level(OptimizationLevel::O1);
         let r = pm.run_on_function(&mut func).unwrap();
@@ -416,7 +407,7 @@ mod pipeline_tests {
             acc = b.imul(acc, v1);
         }
         b.ret(&[acc]);
-        b.finish()
+        b.finish().expect("build")
     }
 
     /// Tombstone hygiene: the O2/O3 pipelines leave `Nop` instructions behind
@@ -448,7 +439,7 @@ mod pipeline_tests {
             b.jump(header, &[next_i, next_sum]);
             b.switch_to_block(exit);
             b.ret(&[sum]);
-            b.finish()
+            b.finish().expect("build")
         }
         type FunctionBuilderFn = fn() -> Function;
         let funcs: Vec<(&str, FunctionBuilderFn)> =

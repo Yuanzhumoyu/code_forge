@@ -14,7 +14,7 @@ token STRING = '"[^"]*"'
 # ── 标识符/寄存器 (默认定义，TOML 可覆盖) ──
 token IDENT = "[a-z_][a-zA-Z0-9_]*"
 token REG   = "[A-Z][A-Z0-9]*"
-token TEMP  = "%[a-zA-Z_][a-zA-Z0-9_]*"
+token TEMP  = "%[a-zA-Z_][a-zA-Z0-9_]*(:[a-zA-Z_][a-zA-Z0-9_]*)?"
 token LABEL = "\.[a-zA-Z_][a-zA-Z0-9_]*"
 token VREG  = "VReg\([0-9]+\)"
 

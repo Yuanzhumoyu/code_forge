@@ -3,7 +3,7 @@
 //! Detects `v = call f(args); return v` patterns and converts to Jump to callee entry.
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -24,7 +24,7 @@ impl OptimizationPass for TailCallPass {
     fn description(&self) -> &'static str {
         "Converts tail calls into jumps"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         optimize_tail_calls(func, &self.function_table)
     }
 }
@@ -32,14 +32,14 @@ impl OptimizationPass for TailCallPass {
 pub fn optimize_tail_calls(
     func: &mut Function,
     function_table: &HashMap<FuncRef, Function>,
-) -> Result<PassResult, CompileError> {
+) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     let block_count = func.dfg.blocks.len();
 
     for bi in 0..block_count {
         // Check if block ends with Return
         let return_values = match &func.dfg.blocks[bi].terminator {
-            Terminator::Return { values } => values.clone(),
+            Terminator::Return { values, .. } => values.clone(),
             _ => continue,
         };
         if return_values.is_empty() {
@@ -108,6 +108,7 @@ pub fn optimize_tail_calls(
         func.dfg.blocks[bi].terminator = Terminator::Jump {
             target: callee_entry,
             args,
+            metadata: smallvec::smallvec![],
         };
         result.instructions_removed += 1;
         result.changed = true;
@@ -126,7 +127,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
         b.ret(&[params[0]]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = TailCallPass::new(HashMap::new());
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(!r.changed);
@@ -143,7 +144,7 @@ mod tests {
         let one = b.iconst_i32(1);
         let result = b.iadd(params[0], one);
         b.ret(&[result]);
-        let callee_func = b.finish();
+        let callee_func = b.finish().expect("build");
         let callee_ref = FuncRef(0);
 
         let mut func_table = HashMap::new();
@@ -156,7 +157,7 @@ mod tests {
         b2.switch_to_block(entry2);
         let call_results = b2.call(callee_ref, &[params2[0]], &[TypeId::I32]);
         b2.ret(&[call_results[0]]);
-        let mut caller_func = b2.finish();
+        let mut caller_func = b2.finish().expect("build");
 
         let pass = TailCallPass::new(func_table);
         let r = pass.run_on_function(&mut caller_func).unwrap();

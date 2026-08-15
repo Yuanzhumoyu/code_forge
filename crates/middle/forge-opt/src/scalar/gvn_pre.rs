@@ -5,7 +5,7 @@
 
 use super::cse::{ExprKey, is_cse_candidate, opcode_discriminant};
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -20,12 +20,12 @@ impl OptimizationPass for PrePass {
     fn description(&self) -> &'static str {
         "Partial Redundancy Elimination"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         run_pre(func)
     }
 }
 
-pub fn run_pre(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     let n_blocks = func.dfg.blocks.len();
     if n_blocks <= 1 {
@@ -165,7 +165,7 @@ fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey
             {
                 let key = ExprKey {
                     opcode: opcode_discriminant(&inst.opcode),
-                    operands: inst.operands.to_vec(),
+                    operands: inst.operands.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
                 expr_to_id.entry(key.clone()).or_insert_with(|| {
@@ -199,7 +199,7 @@ fn compute_gen_kill(
             {
                 let key = ExprKey {
                     opcode: opcode_discriminant(&inst.opcode),
-                    operands: inst.operands.to_vec(),
+                    operands: inst.operands.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
                 if let Some(&id) = expr_to_id.get(&key) {
@@ -358,7 +358,7 @@ mod tests {
     fn test_pre_empty() {
         let sig = FunctionSignature::new(&[], &[]);
         let b = FunctionBuilder::new("empty", TypeContext::new(), sig);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let r = run_pre(&mut func).unwrap();
         assert!(!r.changed);
     }
@@ -373,7 +373,7 @@ mod tests {
         let bv = b.iconst_i32(2);
         let c = b.iadd(a, bv);
         b.ret(&[c]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let r = run_pre(&mut func).unwrap();
         assert!(!r.changed);
     }
@@ -410,7 +410,7 @@ mod tests {
         // The expression a+b is available from then_blk but not else_blk
         // PRE should insert a+b in else_blk
         b.ret(&[]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let r = run_pre(&mut func).unwrap();
         // PRE should find partially redundant a+b and hoist to else_blk
@@ -445,7 +445,7 @@ mod tests {
 
         b.switch_to_block(merge);
         b.ret(&[]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let r = run_pre(&mut func).unwrap();
         let _ = r; // Should not crash

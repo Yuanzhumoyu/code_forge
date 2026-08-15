@@ -332,10 +332,8 @@ impl SimpleRegex {
             SimpleRegex::Seq(items) => {
                 let mut p = pos;
                 for item in items {
-                    match item._match(chars, p) {
-                        Some(len) => p += len,
-                        None => return None,
-                    }
+                    let len = item._match(chars, p)?;
+                    p += len;
                 }
                 Some(p - pos)
             }

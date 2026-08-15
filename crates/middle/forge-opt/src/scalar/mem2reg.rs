@@ -12,7 +12,7 @@
 //! 4. 移除 Store/Load/StackAddr 指令
 
 use crate::{OptimizationPass, PassResult};
-use forge_ir::CompileError;
+use forge_ir::IrError;
 use forge_ir::*;
 
 #[derive(Default)]
@@ -31,12 +31,11 @@ impl OptimizationPass for Mem2RegPass {
     fn description(&self) -> &'static str {
         "Promotes stack-allocated variables to SSA values using Load/Store + StackAddr analysis"
     }
-    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, CompileError> {
+    fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
         promote_to_ssa(func)
     }
 }
 
-#[allow(dead_code)]
 struct SlotInfo {
     /// 产生 ptr 值的 StackAddr 指令
     stack_addr_inst: Inst,
@@ -49,9 +48,9 @@ struct SlotInfo {
 }
 
 /// 对函数执行 mem2reg 提升。
-pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, CompileError> {
+pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let dt = DominatorTree::build(func);
+    let dt = func.dominator_tree().clone();
 
     // Phase 1: 收集 StackAddr 候选
     let mut slots: Vec<SlotInfo> = Vec::new();
@@ -281,14 +280,26 @@ mod tests {
         let loaded = b.load(addr, TypeId::I32); // Load
         b.ret(&[loaded]);
 
-        let mut func = b.finish();
-        let inst_count_before = func.dfg.live_inst_count();
+        let mut func = b.finish().expect("build");
+        let live_before = func
+            .dfg
+            .insts
+            .iter()
+            .filter(|i| !matches!(i.opcode, crate::Opcode::Nop))
+            .count();
 
         let pass = Mem2RegPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed, "Should promote simple store/load");
+        // mem2reg 墓碑化删除的指令(Nop 不回收)——统计活指令验证减少
+        let live_after = func
+            .dfg
+            .insts
+            .iter()
+            .filter(|i| !matches!(i.opcode, crate::Opcode::Nop))
+            .count();
         assert!(
-            func.dfg.live_inst_count() < inst_count_before,
+            live_after < live_before,
             "Instructions should be removed"
         );
     }
@@ -305,7 +316,7 @@ mod tests {
         b.store(v42, addr);
         b.ret(&[v42]); // uses v42 directly, not loaded
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = Mem2RegPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         // No Load uses the ptr, so can't promote
@@ -320,7 +331,7 @@ mod tests {
         b.switch_to_block(entry);
         let v = b.iconst_i32(42);
         b.ret(&[v]);
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
 
         let pass = Mem2RegPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
@@ -341,7 +352,7 @@ mod tests {
         let loaded = b.load(addr, TypeId::I32);
         b.ret(&[loaded]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = Mem2RegPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed, "Should forward store→load in same block");
@@ -365,7 +376,7 @@ mod tests {
         let sum = b.iadd(load1, load2); // uses: 42 + 99 = 141
         b.ret(&[sum]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = Mem2RegPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         // Single-store case should promote the entire slot
@@ -392,7 +403,7 @@ mod tests {
         let loaded = b.load(addr, TypeId::I32);
         b.ret(&[loaded]);
 
-        let mut func = b.finish();
+        let mut func = b.finish().expect("build");
         let pass = Mem2RegPass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         // The second load should be forwarded (reaching def = v42)

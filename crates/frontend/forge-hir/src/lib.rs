@@ -35,6 +35,7 @@ pub mod atom;
 pub mod attr;
 pub mod block;
 pub mod builder;
+#[doc(hidden)]
 pub mod composite;
 pub mod ctx;
 pub mod error;

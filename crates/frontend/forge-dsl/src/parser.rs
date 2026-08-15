@@ -38,6 +38,17 @@ fn flatten_nested(table: &mut toml::Table, key: &str) {
                 let new_key = k.clone();
                 new_entries.push((new_key, v.clone()));
                 keys_to_remove.push(k.clone());
+            } else if sub.contains_key("template") {
+                // 模板规则（template + conditions）：不展平，保留 [lower.X] 结构
+                //（expand_templates 负责展开为 X.<Cond> 具体规则）
+                let new_key = k.clone();
+                new_entries.push((new_key, v.clone()));
+                keys_to_remove.push(k.clone());
+            } else if sub.contains_key("variants") {
+                // 宽度条件化规则（variants）：不展平，保留 [lower.X] 结构
+                let new_key = k.clone();
+                new_entries.push((new_key, v.clone()));
+                keys_to_remove.push(k.clone());
             } else {
                 // Deeper nesting: recurse-style flatten
                 for (sk, sv) in sub {
