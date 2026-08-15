@@ -624,7 +624,13 @@ fn create_jit_symfile(ptr: *mut u8, size: usize, name: &str) -> Vec<u8> {
     buf.push(0); // OS/ABI (System V)
     buf.extend_from_slice(&[0u8; 8]); // padding
     buf.extend_from_slice(&2u16.to_le_bytes()); // ET_EXEC
-    buf.extend_from_slice(&0x3Eu16.to_le_bytes()); // EM_X86_64
+    // e_machine 按宿主架构（P4：原硬编码 EM_X86_64——aarch64 宿主上 GDB 无法解析）
+    let e_machine: u16 = match crate::CpuFeatures::host_arch_name() {
+        "aarch64" => 183, // EM_AARCH64
+        "riscv64" => 243, // EM_RISCV
+        _ => 62,          // EM_X86_64（含未知架构回退——x86_64 与 aarch64 之外默认）
+    };
+    buf.extend_from_slice(&e_machine.to_le_bytes()); // e_machine
     buf.extend_from_slice(&1u32.to_le_bytes()); // EV_CURRENT
     buf.extend_from_slice(&0u64.to_le_bytes()); // entry point
     buf.extend_from_slice(&0u64.to_le_bytes()); // program header offset
