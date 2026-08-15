@@ -245,6 +245,7 @@ crates/frontend/forge-dsl/src/
 | --- | --- | --- |
 | **1** ✅ | v12 模型 + 严格解析 + 语义校验（meta/reg/conventions/operand_slots；forms/instructions/families/lowering/abi/emit 结构校验） | forge-dsl 166 测试全绿（含 v11 拒绝证明 + 序列化往返） |
 | **2** ✅ | 定宽编码生成（form R/I/S/U/B/J/SHIFT/OP/W32 → encode/decode/asm 从 bitfields 直接生成）；散布位段 + operand_fields；riscv64 全 76 指令迁移 | golden 逐字节对比 v11（42 GPR）+ 规范 oracle（F/分支/S 型）+ 全量往返 9/9 |
+| **3** ✅ | 变长语义键（modrm rr/ext、opsize auto/固定、prefix field、rex_w、imm）；encode→Vec<u8>、decode→(Inst,usize)；opsize 非文本操作数；x86 @modrm 24 + @modrm_imm32 6 + @sse_rr 23 | golden 30 GPR 对比 v11 + opsize 16/32/64 + SSE 规范 oracle + 全 53 条往返 7/7 |
 | 3 | 变长语义键（modrm/prefix/escape/rex）；x86 @modrm/@sse 家族迁移 ~65 条 | golden 字节等价 + decoder_smoke 扩展 |
 | 4 | VEX 语义键 + 指令族；结构化谓词求值接入 | 展开指令数一致 + forge-tests 全绿 |
 | 5 | lowering 符号化 + abi.arg_class 类别分类 + emit 保留 | mini_c 双后端 + forge-rustc e2e 不回归 |
@@ -337,3 +338,35 @@ crates/frontend/forge-dsl/src/
 **下一步（迭代 3）**：变长编码语义键（modrm/prefix/escape/rex）→ x86
 @modrm/@sse 家族迁移试点（~65 条）；`OperandRole::InOut` 在 x86 RMW 操作数
 落地。随后迭代 4（VEX + families + 结构化谓词）。
+
+## 12. 迭代 3 完成记录（2026-08）——变长语义键 + x86 @modrm/@sse 试点
+
+- **交付**：
+  - 模型扩展：`Form` 变长语义键——`modrm = "rr"|"ext"`（ModRM mod=11；
+    ext = fields.ext 固定扩展码）、`opsize = "auto"|8/16/32/64`（16 → 0x66
+    前缀、64 → REX.W；auto 需 opsize 操作数）、`prefix = "field"|数字`
+    （fields.prefix：SSE 66/F2/F3/0）、`rex_w = "auto"|"field"`（缺省随
+    opsize）、`imm = 32`（尾部 imm32）
+  - codegen：encode 统一返回 `Vec<u8>`、decode 统一返回 `Option<(Inst, usize)>`；
+    变长路径（前缀扫描 66/F2/F3/REX → escape → opcode → ModRM → imm）；
+    opsize 槽为**非文本操作数**（asm 无占位符，assemble 默认 64，disassemble
+    不渲染）；assemble 多形状**静默回退**（同 mnemonic 的不同形状按声明序
+    尝试，解析失败落到下一形状）
+  - `isa/x86_v12.toml`：**53 条指令**（@modrm 24 + @modrm_imm32 6 +
+    @sse_rr 简单 23），保持 v11 声明序
+  - `arch/x86_v12.rs` + `tests/x86_v12_tests.rs`（7 测试）
+- **验证**（7/7 全绿）：
+  - golden：30 条 GPR 指令与 v11 逐字节一致（含扩展寄存器 REX、imm32）
+  - opsize 16/32/64 直接构造对比 v11（66 前缀/REX.W）+ 硬编码字节
+  - SSE 规范字节 oracle（22 条；v11 的 FPR `16+i` 使 SSE 字节带多余 REX 且
+    不合规，v12 组内索引规范正确）
+  - 全 53 条字节级 decode 往返（含编码撞车的别名，声明序首匹配与 v11 一致）
+  - assemble/disassemble 往返（opsize 非文本默认 64）
+- **发现**：v11 自身歧义（"movzx"/"movsx" 两个重载同 mnemonic 时 v11 汇编器
+  Ambiguous；负 imm32 解析 TypeMismatch）——golden 对比规避，v12 无此问题
+- **门禁**：forge-dsl 166、forge-codegen 全量（98 lib + smoke/assembler/
+  decoder/packet + v12 9+7）、clippy 0 警告、fmt 干净
+
+**下一步（迭代 3b/4）**：@modrm_mem 内存寻址（SIB/disp，迭代 3b 收尾）；
+VEX 语义键 + families（opcodes 数组家族：SD_BIN/SS_FMOV/PS_BIN/PD_BIN/PI_BIN）
++ 结构化谓词（迭代 4）。随后迭代 5（lowering/abi/emit 迁移 + x86 全量）。

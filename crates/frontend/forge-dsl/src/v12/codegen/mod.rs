@@ -29,21 +29,28 @@ use quote::{format_ident, quote};
 // ─────────────────────────────── 入口 ───────────────────────────────
 
 pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
-    if model.meta.default_inst_width != Some(32) {
+    let variable = model.meta.variable_length;
+    if !variable && model.meta.default_inst_width != Some(32) {
         return Err(format!(
-            "v12 codegen (iteration 2) supports default_inst_width = 32 only, got {:?}",
+            "v12 codegen (iteration 2/3) supports default_inst_width = 32 or variable_length, got {:?}",
             model.meta.default_inst_width
         ));
     }
     let infos = collect_inst_infos(model)?;
     let reg_tables = gen_reg_tables(model, &infos)?;
     let inst_enum = gen_inst_enum(&infos);
-    let encode_fn = gen_encode(&infos, model)?;
-    let decode_fn = gen_decode(&infos, model)?;
+    let (encode_fn, decode_fn) = if variable {
+        (
+            gen_vlen_encode(&infos)?,
+            gen_vlen_decode(&infos)?,
+        )
+    } else {
+        (gen_encode(&infos, model)?, gen_decode(&infos, model)?)
+    };
     let disasm_fn = gen_disassemble(&infos);
     let asm_fn = gen_assemble(&infos)?;
     Ok(quote! {
-        // ── v12 生成模块（迭代 2：定宽 32 位自包含 encode/decode/asm）──
+        // ── v12 生成模块（迭代 2/3：自包含 encode/decode/asm）──
         #reg_tables
         #inst_enum
         #encode_fn
@@ -76,21 +83,18 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                     inst.name, inst.form
                 )
             })?;
-        if form.opcode_field.is_none() {
+        // 变长 form（无 opcode_field）不需要 operand_fields；定宽需要
+        if form.opcode_field.is_none() && form.operand_fields.is_some() {
             return Err(format!(
-                "[[instructions.{}]]: form '{}' lacks opcode_field (fixed-width required in iteration 2)",
+                "[[instructions.{}]]: form '{}' declares operand_fields without opcode_field (vlen forms use modrm semantic keys)",
                 inst.name, inst.form
             ));
         }
         if inst.opcode.is_none() {
             return Err(format!("[[instructions.{}]]: opcode required", inst.name));
         }
-        let of = form.operand_fields.as_deref().ok_or_else(|| {
-            format!(
-                "[[instructions.{}]]: form '{}' lacks operand_fields",
-                inst.name, inst.form
-            )
-        })?;
+        let of = form.operand_fields.as_deref();
+        let fixed = form.opcode_field.is_some();
         let mut operands = Vec::new();
         for (i, op) in inst.operands.iter().enumerate() {
             let slot = m
@@ -103,7 +107,13 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                         inst.name, op.slot
                     )
                 })?;
-            let field = op.field.clone().unwrap_or_else(|| of[i].clone());
+            // 字段名：定宽 → 位域名（operand_fields[i] 或 field 覆盖）；
+            // 变长 → 位置名 op{i}（无位域绑定；ModRM 语义由 form 键驱动）
+            let field = if fixed {
+                op.field.clone().unwrap_or_else(|| of.unwrap()[i].clone())
+            } else {
+                op.field.clone().unwrap_or_else(|| format!("op{i}"))
+            };
             let fid = format_ident!("{}", field);
             operands.push((field, fid, slot));
         }
@@ -203,6 +213,7 @@ fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
                     .map(|(_, fid, slot)| {
                         let ty = match slot.kind {
                             OperandKind::Reg => quote! { u32 },
+                            OperandKind::Opsize => quote! { u8 },
                             _ => quote! { i64 },
                         };
                         quote! { #fid: #ty }
@@ -258,9 +269,9 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             quote! { Inst::#vn { #(#ids),* } }
         };
         let out = if little {
-            quote! { Ok((__w as u32).to_le_bytes()) }
+            quote! { Ok((__w as u32).to_le_bytes().to_vec()) }
         } else {
-            quote! { Ok((__w as u32).to_be_bytes()) }
+            quote! { Ok((__w as u32).to_be_bytes().to_vec()) }
         };
         arms.push(quote! {
             #pat => {
@@ -271,8 +282,8 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
         });
     }
     Ok(quote! {
-        /// 编码单条指令为 4 字节（小端；32 位定宽）。
-        pub fn encode(inst: &Inst) -> Result<[u8; 4], String> {
+        /// 编码单条指令为字节（定宽：小端 4 字节；32 位定宽）。
+        pub fn encode(inst: &Inst) -> Result<Vec<u8>, String> {
             match inst { #(#arms,)* }
         }
     })
@@ -354,7 +365,7 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
         stmts.push(quote! {
             if #guard {
                 #(#binds)*
-                return Some(#ctor);
+                return Some((#ctor, 4));
             }
         });
     }
@@ -365,7 +376,8 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
     };
     Ok(quote! {
         /// 解码 4 字节为指令；声明序首匹配（与 v11 一致），无匹配 → None。
-        pub fn decode(bytes: &[u8]) -> Option<Inst> {
+        /// 返回 (指令, 消费字节数)。
+        pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
             if bytes.len() < 4 {
                 return None;
             }
@@ -374,6 +386,400 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             None
         }
     })
+}
+
+// ─────────────────────── 变长 encode/decode（迭代 3）───────────────────────
+
+/// 变长 form 的字段语义解析结果。
+struct VlenCtx {
+    /// 是否 opsize 语义（有 `opsize` 键：auto 或固定）。
+    has_opsize: bool,
+    /// opsize 值表达式（u64）：auto → 操作数；fixed → 常数。
+    opsize_expr: Option<TokenStream>,
+    /// 固定前缀字节表达式（u8）：fields.prefix / 数字 / 0。
+    prefix_expr: TokenStream,
+    /// REX.W 位表达式（u64）：auto（opsize==64）/ fields.w / 0。
+    rex_w_expr: TokenStream,
+    /// modrm reg 字段值表达式（u64）：rr → 操作数 0；ext → fields.ext。
+    reg_expr: Option<TokenStream>,
+    /// modrm rm 字段值表达式（u64）。
+    rm_expr: Option<TokenStream>,
+    /// 尾部立即数字节数（form.imm / 8）。
+    imm_bytes: usize,
+}
+
+fn vlen_ctx(info: &InstInfo) -> Result<VlenCtx, String> {
+    let form = info.form;
+    let fields = info.inst.fields.as_ref();
+    let field_val = |k: &str| fields.and_then(|f| f.get(k)).copied().unwrap_or(0);
+    // opsize
+    let (has_opsize, opsize_expr) = match form.opsize {
+        None => (false, None),
+        Some(OpsizeSpec::Auto(_)) => {
+            let fid = info
+                .operands
+                .iter()
+                .find(|(_, _, s)| s.kind == OperandKind::Opsize)
+                .map(|(_, fid, _)| fid.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "[[instructions.{}]]: form opsize=auto requires an opsize operand",
+                        info.inst.name
+                    )
+                })?;
+            (true, Some(quote! { *#fid as u64 }))
+        }
+        Some(OpsizeSpec::Fixed(v)) => (true, Some(quote! { #v })),
+    };
+    // 前缀
+    let prefix_expr: TokenStream = match form.prefix.as_deref() {
+        None => quote! { 0u8 },
+        Some("field") => {
+            let v = field_val("prefix");
+            quote! { #v as u8 }
+        }
+        Some(p) => {
+            let v = parse_u64(p).unwrap_or(0);
+            quote! { #v as u8 }
+        }
+    };
+    // REX.W：显式声明优先；有 opsize 语义且未声明 → 默认 opsize==64 驱动
+    let rex_w_expr: TokenStream = match form.rex_w.as_deref() {
+        Some("auto") => quote! { if __opsize == 64 { 1u64 } else { 0u64 } },
+        Some("field") => {
+            let v = field_val("w");
+            quote! { #v as u64 }
+        }
+        None if has_opsize => quote! { if __opsize == 64 { 1u64 } else { 0u64 } },
+        _ => quote! { 0u64 },
+    };
+    // modrm reg/rm
+    let (reg_expr, rm_expr) = match form.modrm.as_deref() {
+        Some("rr") => {
+            let r0 = info.operands[0].1.clone();
+            let r1 = info.operands[1].1.clone();
+            (Some(quote! { *#r0 as u64 }), Some(quote! { *#r1 as u64 }))
+        }
+        Some("ext") => {
+            let ext = field_val("ext");
+            let r0 = info.operands[0].1.clone();
+            (Some(quote! { #ext }), Some(quote! { *#r0 as u64 }))
+        }
+        other => {
+            return Err(format!(
+                "[[instructions.{}]]: form modrm key {:?} unsupported in iteration 3 (rr/ext)",
+                info.inst.name, other
+            ));
+        }
+    };
+    let imm_bytes = (form.imm.unwrap_or(0) / 8) as usize;
+    Ok(VlenCtx {
+        has_opsize,
+        opsize_expr,
+        prefix_expr,
+        rex_w_expr,
+        reg_expr,
+        rm_expr,
+        imm_bytes,
+    })
+}
+
+/// 变长 encode：字节流（prefix → REX → escape → opcode → ModRM → imm）。
+fn gen_vlen_encode(infos: &[InstInfo]) -> Result<TokenStream, String> {
+    let mut arms = Vec::new();
+    for info in infos {
+        let vn = &info.vn;
+        let ctx = vlen_ctx(info)?;
+        let mut stmts: Vec<TokenStream> = Vec::new();
+        let reg = ctx.reg_expr.as_ref().unwrap();
+        let rm = ctx.rm_expr.as_ref().unwrap();
+        // opsize → __opsize 局部（必须先于 66/REX 检查）
+        let opsize_bind = if let Some(oe) = &ctx.opsize_expr {
+            quote! { let __opsize = #oe; }
+        } else {
+            quote! { let __opsize = 0u64; }
+        };
+        stmts.push(opsize_bind);
+        if ctx.has_opsize {
+            stmts.push(quote! { if __opsize == 16 { __bytes.push(0x66u8); } });
+        }
+        let prefix_expr = &ctx.prefix_expr;
+        let prefix_push = quote! {
+            let __p = #prefix_expr;
+            if __p != 0 { __bytes.push(__p); }
+        };
+        stmts.push(prefix_push);
+        let rex_w = &ctx.rex_w_expr;
+        // REX 发出条件：有 opsize → opsize==64 或扩展寄存器；无 opsize（SSE）→ 扩展寄存器
+        let rex_cond = if ctx.has_opsize {
+            quote! { __opsize == 64 || (#reg & 8) != 0 || (#rm & 8) != 0 }
+        } else {
+            quote! { (#reg & 8) != 0 || (#rm & 8) != 0 }
+        };
+        stmts.push(quote! {
+            let __reg = #reg;
+            let __rm = #rm;
+            let __rex_w = #rex_w;
+            if #rex_cond {
+                let __rex: u8 = ((0x40u64 | (__rex_w << 3)
+                    | ((__reg >> 3) & 1) << 2 | ((__rm >> 3) & 1)) & 0xFF) as u8;
+                __bytes.push(__rex);
+            }
+        });
+        // escape + opcode
+        if let Some(esc) = &info.form.escape {
+            for e in esc {
+                stmts.push(quote! { __bytes.push(#e as u8); });
+            }
+        }
+        let opcode = info.inst.opcode.unwrap();
+        stmts.push(quote! { __bytes.push(#opcode as u8); });
+        // ModRM（mod=11）
+        stmts.push(quote! {
+            __bytes.push(((3u64 << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8);
+        });
+        // 尾部立即数（form.imm）
+        if ctx.imm_bytes > 0 {
+            let imm_fid = info
+                .operands
+                .iter()
+                .find(|(_, _, s)| s.kind == OperandKind::Imm)
+                .map(|(_, fid, _)| fid.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "[[instructions.{}]]: form imm requires an imm operand",
+                        info.inst.name
+                    )
+                })?;
+            let le_bytes = match ctx.imm_bytes {
+                1 => quote! { (*#imm_fid as u8).to_le_bytes().to_vec() },
+                2 => quote! { (*#imm_fid as u16).to_le_bytes().to_vec() },
+                4 => quote! { (*#imm_fid as u32).to_le_bytes().to_vec() },
+                8 => quote! { (*#imm_fid as u64).to_le_bytes().to_vec() },
+                n => return Err(format!("unsupported imm width {n} bytes")),
+            };
+            stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
+        }
+        let pat = if info.operands.is_empty() {
+            quote! { Inst::#vn }
+        } else {
+            let ids: Vec<_> = info
+                .operands
+                .iter()
+                .map(|(_, fid, _)| fid.clone())
+                .collect();
+            quote! { Inst::#vn { #(#ids),* } }
+        };
+        arms.push(quote! {
+            #pat => {
+                let mut __bytes: Vec<u8> = Vec::new();
+                #(#stmts)*
+                Ok(__bytes)
+            }
+        });
+    }
+    Ok(quote! {
+        /// 编码单条指令为字节序列（变长 ISA）。
+        pub fn encode(inst: &Inst) -> Result<Vec<u8>, String> {
+            match inst { #(#arms,)* }
+        }
+    })
+}
+
+/// 变长 decode：共享前缀扫描 + 声明序 arm 匹配。
+fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for info in infos {
+        let vn = &info.vn;
+        let ctx = vlen_ctx(info)?;
+        let form = info.form;
+        let mut conds: Vec<TokenStream> = Vec::new();
+        // 前缀匹配条件（SSE 固定前缀；@modrm 无前缀条件——66 已消费为 opsize）
+        let prefix_cond: Option<TokenStream> = match form.prefix.as_deref() {
+            None | Some("opsize") => None,
+            Some("field") => {
+                let v = info
+                    .inst
+                    .fields
+                    .as_ref()
+                    .and_then(|f| f.get("prefix"))
+                    .copied()
+                    .unwrap_or(0);
+                Some(prefix_cond_ts(v))
+            }
+            Some(p) => Some(prefix_cond_ts(parse_u64(p).unwrap_or(0))),
+        };
+        if let Some(c) = prefix_cond {
+            conds.push(c);
+        }
+        // escape + opcode 匹配
+        let mut off = 0usize;
+        if let Some(esc) = &form.escape {
+            for e in esc {
+                conds.push(quote! { bytes[__o + #off] == #e as u8 });
+                off += 1;
+            }
+        }
+        let opcode = info.inst.opcode.unwrap();
+        conds.push(quote! { bytes[__o + #off] == #opcode as u8 });
+        off += 1;
+        let modrm_idx = off; // modrm 在 bytes[__o + modrm_idx]
+        off += 1;
+        let total = off + ctx.imm_bytes;
+        let len = total;
+        // 字段提取
+        let mut binds: Vec<TokenStream> = Vec::new();
+        let mut ctor_fields: Vec<TokenStream> = Vec::new();
+        for (i, (fname, fid, slot)) in info.operands.iter().enumerate() {
+            let _ = fname;
+            let expr: TokenStream = match slot.kind {
+                // reg 语义：rr → op0=ModRM.reg 字段、op1=ModRM.rm 字段；
+                // ext → op0=ModRM.rm 字段（reg 位置是固定扩展码）
+                OperandKind::Reg => match (form.modrm.as_deref(), i) {
+                    (Some("rr"), 0) => quote! { ((__modrm >> 3) & 7) as u32 | (__rex_r << 3) },
+                    (Some("rr"), 1) => quote! { ((__modrm & 7) as u32) | (__rex_b << 3) },
+                    (Some("ext"), 0) => quote! { ((__modrm & 7) as u32) | (__rex_b << 3) },
+                    _ => {
+                        return Err(format!(
+                            "[[instructions.{}]]: reg operand {i} position unsupported",
+                            info.inst.name
+                        ));
+                    }
+                },
+                OperandKind::Opsize => quote! { __opsize as u8 },
+                OperandKind::Imm => {
+                    let raw = imm_read_ts(total - ctx.imm_bytes, ctx.imm_bytes);
+                    let signed = slot.signed.unwrap_or(false);
+                    let w = slot.width.unwrap_or(32);
+                    if signed {
+                        sign_extend_ts(raw, w)
+                    } else {
+                        quote! { #raw as i64 }
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "[[instructions.{}]]: operand kind {:?} unsupported in vlen decode",
+                        info.inst.name, slot.kind
+                    ));
+                }
+            };
+            binds.push(quote! { let #fid = #expr; });
+            ctor_fields.push(quote! { #fid });
+        }
+        let cond = if conds.is_empty() {
+            quote! { true }
+        } else {
+            quote! { #(#conds)&&* }
+        };
+        let ctor = if info.operands.is_empty() {
+            quote! { Inst::#vn }
+        } else {
+            quote! { Inst::#vn { #(#ctor_fields),* } }
+        };
+        // ext 形式：ModRM.reg 必须等于固定扩展码
+        let modrm_guard: TokenStream = if form.modrm.as_deref() == Some("ext") {
+            let ext = info
+                .inst
+                .fields
+                .as_ref()
+                .and_then(|f| f.get("ext"))
+                .copied()
+                .unwrap_or(0);
+            quote! { && ((__modrm >> 3) & 7) as u64 == #ext }
+        } else {
+            quote! {}
+        };
+        arms.push(quote! {
+            if __o + #total <= bytes.len() && #cond {
+                let __modrm = bytes[__o + #modrm_idx];
+                if (__modrm >> 6) == 3 #modrm_guard {
+                    #(#binds)*
+                    return Some((#ctor, __o + #len));
+                }
+            }
+        });
+    }
+    Ok(quote! {
+        /// 解码字节流开头的单条指令；声明序首匹配，无匹配 → None。
+        /// 返回 (指令, 消费字节数)。
+        pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
+            let mut __o = 0usize;
+            let mut __opsize: u32 = 32;
+            let mut __p66 = false;
+            let mut __pF2 = false;
+            let mut __pF3 = false;
+            let mut __rex_r: u32 = 0;
+            let mut __rex_b: u32 = 0;
+            while __o < bytes.len() {
+                let __b = bytes[__o];
+                if __b == 0x66 { __p66 = true; __opsize = 16; __o += 1; }
+                else if __b == 0xF2 { __pF2 = true; __o += 1; }
+                else if __b == 0xF3 { __pF3 = true; __o += 1; }
+                else if __b == 0x67 { __o += 1; }
+                else if (0x40..=0x4F).contains(&__b) {
+                    __rex_r = ((__b >> 2) & 1) as u32;
+                    __rex_b = (__b & 1) as u32;
+                    if (__b & 0x08) != 0 { __opsize = 64; }
+                    __o += 1;
+                } else { break; }
+            }
+            #(#arms)*
+            None
+        }
+    })
+}
+
+/// 固定前缀的匹配条件。
+fn prefix_cond_ts(v: u64) -> TokenStream {
+    match v {
+        0 => quote! { !__p66 && !__pF2 && !__pF3 },
+        0x66 => quote! { __p66 },
+        0xF2 => quote! { __pF2 },
+        0xF3 => quote! { __pF3 },
+        _ => quote! { false }, // 未知前缀不可达
+    }
+}
+
+/// 读取尾部立即数（LE 字节序，从 `__o + start` 起读 `bytes` 字节 → u64 原始值）。
+fn imm_read_ts(start: usize, bytes: usize) -> TokenStream {
+    match bytes {
+        1 => quote! { bytes[__o + #start] as u64 },
+        2 => quote! {
+            u16::from_le_bytes([bytes[__o + #start], bytes[__o + #start + 1]]) as u64
+        },
+        4 => quote! {
+            u32::from_le_bytes([
+                bytes[__o + #start],
+                bytes[__o + #start + 1],
+                bytes[__o + #start + 2],
+                bytes[__o + #start + 3],
+            ]) as u64
+        },
+        8 => quote! {
+            u64::from_le_bytes([
+                bytes[__o + #start],
+                bytes[__o + #start + 1],
+                bytes[__o + #start + 2],
+                bytes[__o + #start + 3],
+                bytes[__o + #start + 4],
+                bytes[__o + #start + 5],
+                bytes[__o + #start + 6],
+                bytes[__o + #start + 7],
+            ])
+        },
+        _ => quote! { 0u64 },
+    }
+}
+
+/// 解析 TOML 数值字符串（0x 十六进制或十进制）。
+fn parse_u64(s: &str) -> Option<u64> {
+    let t = s.trim();
+    if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        u64::from_str_radix(h, 16).ok()
+    } else {
+        t.parse::<u64>().ok()
+    }
 }
 
 // ─────────────────────────────── disassemble ───────────────────────────────
@@ -389,6 +795,10 @@ fn gen_disassemble(infos: &[InstInfo]) -> TokenStream {
             fmt.push(' ');
             let mut tpl = template.clone();
             for (i, (_, fid, slot)) in info.operands.iter().enumerate() {
+                // 非文本操作数（opsize）不渲染、无占位符
+                if !is_text_operand(slot) {
+                    continue;
+                }
                 let local = format_ident!("__o{i}");
                 let expr: TokenStream = match slot.kind {
                     OperandKind::Reg => {
@@ -543,27 +953,53 @@ fn shape_signature(info: &InstInfo) -> Result<String, String> {
     Ok(sigs.join("|"))
 }
 
-/// 单个指令的 assemble 尝试：token 数匹配 → 解析 → Ok(Inst)。
+/// 单个指令的 assemble 尝试：token 数匹配 → 全部解析成功 → Ok(Inst)。
+/// 任一解析失败静默跳过（同 mnemonic 的后续形状继续尝试）。
 fn gen_assemble_try(info: &InstInfo) -> Result<TokenStream, String> {
     let vn = &info.vn;
     let template = asm_template(info);
     if template.is_empty() {
-        return Ok(quote! { if __ops.is_empty() { return Ok(Inst::#vn); } });
+        // 无文本操作数：非文本操作数（opsize）取默认值
+        let defaults = default_nontext_binds(info);
+        if info.operands.is_empty() {
+            return Ok(quote! { if __ops.is_empty() { return Ok(Inst::#vn); } });
+        }
+        let fids: Vec<_> = info
+            .operands
+            .iter()
+            .map(|(_, fid, _)| fid.clone())
+            .collect();
+        return Ok(quote! {
+            if __ops.is_empty() {
+                #(#defaults)*
+                return Ok(Inst::#vn { #(#fids),* });
+            }
+        });
     }
     let tokens: Vec<&str> = template.split(", ").collect();
     let expected = tokens.len();
     let mut let_binds: Vec<TokenStream> = Vec::new(); // `let __tN = __ops[N];`
-    let mut pre: Vec<TokenStream> = Vec::new(); // 解析绑定语句（按 token 序）
-    let mut ops_done = vec![false; info.operands.len()];
+    let mut parse_binds: Vec<TokenStream> = Vec::new(); // `let __pN = <parse>;`
+    let mut tuple_pats: Vec<TokenStream> = Vec::new(); // `Ok(fid)` / `Ok((b, o))`
+    let mut tuple_exprs: Vec<TokenStream> = Vec::new(); // `__pN`
+    // 非文本操作数（opsize）视为已覆盖，取默认值
+    let mut ops_done: Vec<bool> = info
+        .operands
+        .iter()
+        .map(|(_, _, slot)| !is_text_operand(slot))
+        .collect();
     for (ti, tok) in tokens.iter().enumerate() {
         let tvar = format_ident!("__t{ti}");
+        let pvar = format_ident!("__p{ti}");
         let_binds.push(quote! { let #tvar = __ops[#ti]; });
         match classify_token(tok)? {
             TokenShape::Simple(n) => {
                 let slot = &info.operands[n].2;
                 let parse = operand_parse_expr(slot, quote! { #tvar })?;
                 let fid = info.operands[n].1.clone();
-                pre.push(quote! { let #fid = #parse; });
+                parse_binds.push(quote! { let #pvar = #parse; });
+                tuple_pats.push(quote! { Ok(#fid) });
+                tuple_exprs.push(quote! { #pvar });
                 ops_done[n] = true;
             }
             TokenShape::Mem { off, base } => {
@@ -575,11 +1011,9 @@ fn gen_assemble_try(info: &InstInfo) -> Result<TokenStream, String> {
                 let mem_fn = format_ident!("__parse_mem_{}", base_group);
                 let bfid = info.operands[base].1.clone();
                 let ofid = info.operands[off].1.clone();
-                pre.push(quote! {
-                    let (__b, __o) = #mem_fn(#tvar)?;
-                    let #bfid = __b;
-                    let #ofid = __o;
-                });
+                parse_binds.push(quote! { let #pvar = #mem_fn(#tvar); });
+                tuple_pats.push(quote! { Ok((#bfid, #ofid)) });
+                tuple_exprs.push(quote! { #pvar });
                 ops_done[base] = true;
                 ops_done[off] = true;
             }
@@ -591,13 +1025,19 @@ fn gen_assemble_try(info: &InstInfo) -> Result<TokenStream, String> {
                     .ok_or_else(|| format!("mem base operand {} missing class", base))?;
                 let mem_fn = format_ident!("__parse_mem_{}", base_group);
                 let bfid = info.operands[base].1.clone();
-                pre.push(quote! {
-                    let (__b, __o) = #mem_fn(#tvar)?;
-                    if __o != 0 {
-                        return Err(format!("expected (reg) with zero offset, got '{}'", #tvar));
+                // Mem0：offset 必须为 0（解析层强制 → Result<u32>）
+                let parse = quote! {
+                    match #mem_fn(#tvar) {
+                        Ok((__b, 0)) => Ok(__b),
+                        Ok((_, __o)) => Err(format!(
+                            "expected (reg) with zero offset, got '{}'", #tvar
+                        )),
+                        Err(__e) => Err(__e),
                     }
-                    let #bfid = __b;
-                });
+                };
+                parse_binds.push(quote! { let #pvar = #parse; });
+                tuple_pats.push(quote! { Ok(#bfid) });
+                tuple_exprs.push(quote! { #pvar });
                 ops_done[base] = true;
             }
         }
@@ -608,7 +1048,9 @@ fn gen_assemble_try(info: &InstInfo) -> Result<TokenStream, String> {
             info.inst.name
         ));
     }
-    // ctor 字段名按操作数序（值已由 pre 绑定，用字段简写）
+    // 非文本操作数默认值绑定
+    let defaults = default_nontext_binds(info);
+    // ctor 字段名按操作数序（值由 if-let 绑定，用字段简写）
     let fids: Vec<_> = info
         .operands
         .iter()
@@ -619,16 +1061,50 @@ fn gen_assemble_try(info: &InstInfo) -> Result<TokenStream, String> {
     } else {
         quote! { Inst::#vn { #(#fids),* } }
     };
+    if tuple_pats.is_empty() {
+        return Ok(quote! {
+            if __ops.len() == #expected {
+                #(#let_binds)*
+                #(#parse_binds)*
+                #(#defaults)*
+                return Ok(#ctor);
+            }
+        });
+    }
     Ok(quote! {
         if __ops.len() == #expected {
             #(#let_binds)*
-            #(#pre)*
-            return Ok(#ctor);
+            #(#parse_binds)*
+            #(#defaults)*
+            if let (#(#tuple_pats),*) = (#(#tuple_exprs),*) {
+                return Ok(#ctor);
+            }
         }
     })
 }
 
-/// 操作数解析表达式（按槽类别）。
+/// 非文本操作数（opsize）的默认值绑定语句（试点：64 位操作）。
+fn default_nontext_binds(info: &InstInfo) -> Vec<TokenStream> {
+    info.operands
+        .iter()
+        .filter(|(_, _, slot)| !is_text_operand(slot))
+        .map(|(_, fid, slot)| {
+            let v = match slot.kind {
+                OperandKind::Opsize => quote! { 64u8 },
+                _ => quote! { 0 },
+            };
+            quote! { let #fid = #v; }
+        })
+        .collect()
+}
+
+/// 文本操作数（asm 中可见）：非 Opsize 槽。
+fn is_text_operand(slot: &OperandSlot) -> bool {
+    !matches!(slot.kind, OperandKind::Opsize)
+}
+
+/// 操作数解析表达式（按槽类别）；返回 `Result<_, String>`（不带 `?`——
+/// assemble 多形状回退需要解析失败静默跳过）。
 fn operand_parse_expr(slot: &OperandSlot, tok: TokenStream) -> Result<TokenStream, String> {
     match slot.kind {
         OperandKind::Reg => {
@@ -637,9 +1113,9 @@ fn operand_parse_expr(slot: &OperandSlot, tok: TokenStream) -> Result<TokenStrea
                 .as_deref()
                 .ok_or_else(|| "reg slot missing class".to_string())?;
             let pfn = format_ident!("__parse_reg_{}", group);
-            Ok(quote! { #pfn(#tok)? })
+            Ok(quote! { #pfn(#tok) })
         }
-        OperandKind::Imm | OperandKind::Label => Ok(quote! { __parse_imm(#tok)? }),
+        OperandKind::Imm | OperandKind::Label => Ok(quote! { __parse_imm(#tok) }),
         other => Err(format!(
             "assemble: operand kind {other:?} unsupported in iteration 2"
         )),
@@ -804,13 +1280,17 @@ fn bf_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
 
 // ─────────────────────────────── asm 模板 ───────────────────────────────
 
-/// 操作数部分模板（不含 mnemonic）：缺省 `"{0}, {1}, ..."`。
+/// 操作数部分模板（不含 mnemonic）：缺省 `"{0}, {1}, ..."`，
+/// 跳过非文本操作数（opsize 槽无占位符）。
 fn asm_template(info: &InstInfo) -> String {
     if let Some(a) = &info.inst.asm {
         return a.clone();
     }
-    (0..info.operands.len())
-        .map(|i| format!("{{{i}}}"))
+    info.operands
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, _, slot))| is_text_operand(slot))
+        .map(|(i, _)| format!("{{{i}}}"))
         .collect::<Vec<_>>()
         .join(", ")
 }

@@ -336,8 +336,63 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
                 ));
             }
         }
+        // 变长语义键校验
+        if let Some(p) = &f.prefix
+            && p != "field"
+            && p != "opsize"
+            && parse_u64(p).is_none()
+        {
+            return Err(format!(
+                "[[forms.{}]].prefix must be \"field\", \"opsize\" or a byte literal, got '{p}'",
+                f.name
+            ));
+        }
+        if let Some(o) = &f.opsize {
+            match o {
+                super::model::OpsizeSpec::Auto(a) => {
+                    if a != "auto" {
+                        return Err(format!(
+                            "[[forms.{}]].opsize string must be \"auto\", got '{a}'",
+                            f.name
+                        ));
+                    }
+                }
+                super::model::OpsizeSpec::Fixed(v) => {
+                    if !matches!(v, 8 | 16 | 32 | 64) {
+                        return Err(format!(
+                            "[[forms.{}]].opsize must be 8/16/32/64, got {v}",
+                            f.name
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(w) = &f.rex_w
+            && w != "auto"
+            && w != "field"
+        {
+            return Err(format!(
+                "[[forms.{}]].rex_w must be \"auto\" or \"field\", got '{w}'",
+                f.name
+            ));
+        }
+        if let Some(imm) = f.imm
+            && imm == 0
+        {
+            return Err(format!("[[forms.{}]].imm must be > 0", f.name));
+        }
     }
     Ok(())
+}
+
+/// 解析 TOML 数值字符串（0x 十六进制或十进制）。
+fn parse_u64(s: &str) -> Option<u64> {
+    let t = s.trim();
+    if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        u64::from_str_radix(h, 16).ok()
+    } else {
+        t.parse::<u64>().ok()
+    }
 }
 
 fn slot_exists(m: &V12Model, name: &str) -> bool {
@@ -378,6 +433,13 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 of.len()
             ));
         }
+        // 定宽 form（opcode_field 存在）才要求 operand.field 是位域
+        let is_fixed = m
+            .forms
+            .iter()
+            .find(|f| f.name == inst.form)
+            .map(|f| f.opcode_field.is_some())
+            .unwrap_or(false);
         for op in &inst.operands {
             if !slot_exists(m, &op.slot) {
                 return Err(format!(
@@ -385,7 +447,8 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                     inst.name, op.slot
                 ));
             }
-            if let Some(f) = &op.field
+            if is_fixed
+                && let Some(f) = &op.field
                 && !m.conventions.bitfields.contains_key(f)
             {
                 return Err(format!(
@@ -394,7 +457,9 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 ));
             }
         }
-        if let Some(fields) = &inst.fields {
+        if let Some(fields) = &inst.fields
+            && is_fixed
+        {
             for k in fields.keys() {
                 if !m.conventions.bitfields.contains_key(k) {
                     return Err(format!(

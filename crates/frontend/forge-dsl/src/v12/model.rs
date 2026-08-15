@@ -243,18 +243,31 @@ pub struct Form {
     /// ModRM 结构之前的 opcode 字节数。
     #[serde(default)]
     pub opcode_bytes: Option<u8>,
-    /// ModRM 结构键（"rr" | "rm" | "r" | "m" | "mem" | ...）。
+    /// ModRM 结构键（迭代 3：`"rr"` reg=op0+rm=op1、`"ext"` reg=fields.ext
+    /// +rm=op0；迭代 3b+：`"rm_mem"` 等内存形式）。
     #[serde(default)]
     pub modrm: Option<String>,
     /// REX 发射策略（"auto" | "never" | ...）。
     #[serde(default)]
     pub rex: Option<String>,
-    /// VEX 结构（map/pp/l 来源）。
+    /// VEX 结构（map/pp/l 来源；迭代 4）。
     #[serde(default)]
     pub vex: Option<VexSpec>,
-    /// 前缀策略（"opsize" | "literal" | ...）。
+    /// 变长：固定前缀来源。`"field"` → fields.prefix（SSE 的 66/F2/F3/0）；
+    /// 数字字符串 → 固定字节。缺省无前缀。
     #[serde(default)]
     pub prefix: Option<String>,
+    /// 变长：编码宽度语义。`"auto"` → 指令有 opsize 操作数（16 → 0x66 前缀、
+    /// 64 → REX.W=1）；数字 → 固定 opsize（无 opsize 操作数）。
+    #[serde(default)]
+    pub opsize: Option<OpsizeSpec>,
+    /// 变长：REX.W 位来源。`"auto"` → opsize==64；`"field"` → fields.w。
+    /// 缺省恒 0（REX.W 仅在 reg/rm≥8 时随 REX 出现）。
+    #[serde(default)]
+    pub rex_w: Option<String>,
+    /// 变长：尾部立即数宽度（位；如 32）。指令最后操作数（imm 槽）编码于此。
+    #[serde(default)]
+    pub imm: Option<u32>,
     /// 强制 escape 字节（x86：[0x0F]）。
     #[serde(default)]
     pub escape: Option<Vec<u8>>,
@@ -283,6 +296,16 @@ pub struct VexSpec {
     /// VEX.L 来源。
     #[serde(default)]
     pub l: Option<String>,
+}
+
+/// 变长 form 的 opsize 语义：`"auto"`（指令有 opsize 操作数）或固定值。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OpsizeSpec {
+    /// `"auto"`：指令有 opsize 操作数。
+    Auto(String),
+    /// 固定 opsize（8/16/32/64）。
+    Fixed(u64),
 }
 
 // ──────────────────── [[instructions]] ────────────────────

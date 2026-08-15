@@ -547,12 +547,16 @@ operands = [{ slot = "nope" }]
 
 #[test]
 fn validation_instruction_unknown_field() {
+    // 定宽 form（opcode_field 存在）才检查 operand.field 位域引用
     let doc = r#"
 [meta]
 name = "x"
 [reg.gpr]
 width = 32
 count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 7 }
+rd = { offset = 7, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -560,9 +564,12 @@ class = "gpr"
 field_width = 3
 [[forms]]
 name = "R"
+opcode_field = "opcode"
+operand_fields = ["rd"]
 [[instructions]]
 name = "NOP"
 form = "R"
+opcode = 0x13
 operands = [{ slot = "g", field = "zzz" }]
 "#;
     let err = parse_and_validate(doc).unwrap_err();

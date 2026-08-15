@@ -140,6 +140,7 @@ pub use arch::riscv64;
 pub use arch::riscv64_v12;
 pub use arch::wasm32;
 pub use arch::x86_64;
+pub use arch::x86_v12;
 
 // ============================================================
 // 扩展（优化器、异常处理、调试）

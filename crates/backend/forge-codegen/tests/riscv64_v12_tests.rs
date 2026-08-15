@@ -23,7 +23,7 @@ fn v11_bytes(asm: &str) -> Vec<u8> {
         .unwrap_or_else(|e| panic!("v11 encode {inst:?}: {e:?}"))
 }
 
-fn v12_bytes(asm: &str) -> [u8; 4] {
+fn v12_bytes(asm: &str) -> Vec<u8> {
     let inst = assemble(asm).unwrap_or_else(|e| panic!("v12 assemble `{asm}`: {e}"));
     encode(&inst).unwrap_or_else(|e| panic!("v12 encode {inst:?}: {e}"))
 }
@@ -82,8 +82,7 @@ fn golden_gpr_matches_v11() {
         let vb = v11_bytes(c);
         let v12b = v12_bytes(c);
         assert_eq!(
-            v12b.to_vec(),
-            vb,
+            v12b, vb,
             "golden mismatch for `{c}` (v12 {v12b:02x?} vs v11 {vb:02x?})"
         );
     }
@@ -124,7 +123,7 @@ fn f_inst_spec_bytes() {
     ];
     for (asm, expected) in cases {
         let got = v12_bytes(asm);
-        assert_eq!(&got, expected, "spec mismatch for `{asm}`");
+        assert_eq!(got.as_slice(), expected, "spec mismatch for `{asm}`");
     }
 }
 
@@ -134,10 +133,18 @@ fn s_type_spec_bytes() {
     // v12 用规范布局（imm[4:0]→bit11:7，imm[11:5]→bit31:25）。
     // sd x1, 8(x2) 规范 = 0x00113423（与 GNU as 一致）
     let b = v12_bytes("sd X1, 8(X2)");
-    assert_eq!(b, [0x23, 0x34, 0x11, 0x00], "sd X1,8(X2) 规范字节");
+    assert_eq!(
+        b.as_slice(),
+        [0x23, 0x34, 0x11, 0x00],
+        "sd X1,8(X2) 规范字节"
+    );
     // 负位移：sd x1, -8(x2) → imm[4:0]=0x18, imm[11:5]=0x7F
     let b = v12_bytes("sd X1, -8(X2)");
-    assert_eq!(b, [0x23, 0x3C, 0x11, 0xFE], "sd X1,-8(X2) 规范字节");
+    assert_eq!(
+        b.as_slice(),
+        [0x23, 0x3C, 0x11, 0xFE],
+        "sd X1,-8(X2) 规范字节"
+    );
 }
 
 // ─────────────────── 全量 decode 往返（含分支/负立即数）───────────────────
@@ -207,7 +214,8 @@ fn decode_roundtrip_all() {
     for c in cases {
         let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));
         let bytes = encode(&inst).unwrap_or_else(|e| panic!("encode `{c}`: {e}"));
-        let dec = decode(&bytes).unwrap_or_else(|| panic!("decode `{c}` ({bytes:02x?})"));
+        let (dec, n) = decode(&bytes).unwrap_or_else(|| panic!("decode `{c}` ({bytes:02x?})"));
+        assert_eq!(n, bytes.len(), "decode `{c}` 消费字节数");
         assert_eq!(dec, inst, "round-trip `{c}`: dec {dec:?} != inst {inst:?}");
     }
 }
@@ -217,14 +225,14 @@ fn signed_immediate_sign_extension() {
     // v11 解码负立即数不做符号扩展（-1 → 4095）；v12 按槽宽度规范扩展。
     let inst = assemble("addi X1, X2, -1").unwrap();
     let bytes = encode(&inst).unwrap();
-    let dec = decode(&bytes).unwrap();
+    let (dec, _n) = decode(&bytes).unwrap();
     assert_eq!(dec, inst, "addi -1 往返（含符号扩展）");
     // 12 位有符号边界：-2048 / 2047
     for imm in [-2048i64, 2047] {
         let asm = format!("addi X1, X2, {imm}");
         let inst = assemble(&asm).unwrap();
         let bytes = encode(&inst).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), inst, "addi {imm}");
+        assert_eq!(decode(&bytes).unwrap().0, inst, "addi {imm}");
     }
 }
 
@@ -232,10 +240,10 @@ fn signed_immediate_sign_extension() {
 fn branch_scatter_layout() {
     // B 型散布布局（规范）：beq x1,x2,8 → imm[4:1]=4 置于 bit 11:8
     let b = v12_bytes("beq X1, X2, 8");
-    assert_eq!(b, [0x63, 0x84, 0x20, 0x00], "beq X1,X2,8 字节");
+    assert_eq!(b.as_slice(), [0x63, 0x84, 0x20, 0x00], "beq X1,X2,8 字节");
     // J 型：jal x1, 8 → imm[10:1]=4 置于 bit 30:21
     let b = v12_bytes("jal X1, 8");
-    assert_eq!(b, [0xEF, 0x00, 0x80, 0x00], "jal X1,8 字节");
+    assert_eq!(b.as_slice(), [0xEF, 0x00, 0x80, 0x00], "jal X1,8 字节");
 }
 
 // ─────────────────── assemble/disassemble 往返 ───────────────────

@@ -1,0 +1,534 @@
+# ============================================================
+# x86-64 — v12 变长语义键试点（迭代 3：ModRM/REX/opsize/SSE）
+# ============================================================
+#
+# 迁移范围（与 v11 golden 逐字节对比）：
+# - @modrm 家族 24 条（mod=11 寄存器形式；opsize 动态或固定 64）
+# - @modrm_imm32 6 条（81 /digit + imm32）
+# - @sse_rr 简单指令 23 条（0F escape + 固定前缀 + 固定 REX.W）
+# 未迁移：@modrm_mem（内存寻址/SIB，迭代 3b）、@sse_rr 家族（opcodes 数组，
+# 迭代 4 families）、VEX（迭代 4）、@op_rm/@cmovcc/@setcc/@mov_imm64 等。
+#
+# v12 变长 form 语义键（迭代 3）：
+# - modrm = "rr"（ModRM mod=11：reg=操作数 0、rm=操作数 1）| "ext"
+#   （reg=fields.ext 固定扩展码、rm=操作数 0）
+# - opsize = "auto"（指令有 opsize 操作数：16 → 0x66 前缀、64 → REX.W=1）
+#   | 数字（固定 opsize，无 opsize 操作数）
+# - prefix = "field"（fields.prefix：SSE 的 66/F2/F3/0）| 数字（固定）
+# - rex_w = "field"（fields.w 固定 REX.W 位）| "auto"（opsize==64）
+# - imm = 32（尾部 imm32，符号扩展按槽）
+# - 寄存器 = 组内索引 0-15（= x86 物理编号；REX.R/B 由索引高位自动推导）
+# 非文本操作数：opsize 槽（kind = "opsize"）asm 无占位符，assemble 默认 64。
+
+[meta]
+name = "x86_64_v12"
+version = "12.0"
+endian = "little"
+mode = 64
+variable_length = true
+max_inst_len = 15
+
+# ─────────────────────────── 寄存器组 ───────────────────────────
+
+[reg.gpr64]
+width = 64
+names = ["RAX","RCX","RDX","RBX","RSP","RBP","RSI","RDI",
+         "R8","R9","R10","R11","R12","R13","R14","R15"]
+
+[reg.xmm]
+width = 128
+names = ["XMM0","XMM1","XMM2","XMM3","XMM4","XMM5","XMM6","XMM7",
+         "XMM8","XMM9","XMM10","XMM11","XMM12","XMM13","XMM14","XMM15"]
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "gpr"
+kind = "reg"
+class = "gpr64"
+field_width = 4
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "fpr"
+kind = "reg"
+class = "xmm"
+field_width = 4
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "imm32"
+kind = "imm"
+signed = true
+width = 32
+
+[[operand_slots]]
+name = "opsize"
+kind = "opsize"
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "MRR"            # @modrm：reg=op0, rm=op1, opsize auto
+modrm = "rr"
+opsize = "auto"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
+modrm = "rr"
+opsize = 64
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_0F"         # @modrm + 0F escape
+modrm = "rr"
+opsize = "auto"
+escape = [0x0F]
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_0F_FIX64"
+modrm = "rr"
+opsize = 64
+escape = [0x0F]
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
+modrm = "ext"
+opsize = "auto"
+imm = 32
+opcode_bytes = 1
+
+[[forms]]
+name = "SSE_RR"         # @sse_rr：0F opcode /r，prefix=fields.prefix, w=fields.w
+modrm = "rr"
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+opcode_bytes = 1
+
+# ─────────────────── 指令（顺序 = v11 声明序）───────────────────
+
+# ── @modrm 家族 ──
+
+[[instructions]]
+name = "MOV_R_RM"
+form = "MRR"
+opcode = 0x8B
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "movrr"
+
+[[instructions]]
+name = "MOV_RM_R"
+mnemonic = "mov"
+form = "MRR"
+opcode = 0x89
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "MOVSXD_R_RM"
+form = "MRR_FIX64"
+opcode = 0x63
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "movsxd"
+
+[[instructions]]
+name = "MOVSXD_R_GPR"
+form = "MRR_FIX64"
+opcode = 0x63
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "movsxd_gpr"
+
+[[instructions]]
+name = "ADD_RM_R"
+mnemonic = "add"
+form = "MRR"
+opcode = 0x01
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "SUB_RM_R"
+mnemonic = "sub"
+form = "MRR"
+opcode = 0x29
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "IMUL_R_RM"
+mnemonic = "imul"
+form = "MRR_0F"
+opcode = 0xAF
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "XOR_RM_R"
+mnemonic = "xor"
+form = "MRR"
+opcode = 0x31
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "AND_RM_R"
+mnemonic = "and"
+form = "MRR"
+opcode = 0x21
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "OR_RM_R"
+mnemonic = "or"
+form = "MRR"
+opcode = 0x09
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "CMP_RM_R"
+mnemonic = "cmp"
+form = "MRR"
+opcode = 0x39
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "TEST_RM_R"
+mnemonic = "test"
+form = "MRR"
+opcode = 0x85
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "MOVZX_R8_RM"
+mnemonic = "movzx"
+form = "MRR_0F"
+opcode = 0xB6
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "MOVZX_R16_RM"
+mnemonic = "movzx"
+form = "MRR_0F"
+opcode = 0xB7
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "MOVSX_R8_RM"
+mnemonic = "movsx"
+form = "MRR_0F"
+opcode = 0xBE
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "MOVSX_R16_RM"
+mnemonic = "movsx"
+form = "MRR_0F"
+opcode = 0xBF
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "CMPXCHG_RM_R"
+mnemonic = "cmpxchg"
+form = "MRR_0F"
+opcode = 0xB1
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "XADD_RM_R"
+mnemonic = "xadd"
+form = "MRR_0F"
+opcode = 0xC1
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "BT_RM_R"
+mnemonic = "bt"
+form = "MRR_0F"
+opcode = 0xA3
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "BTS_RM_R"
+mnemonic = "bts"
+form = "MRR_0F"
+opcode = 0xAB
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "BTR_RM_R"
+mnemonic = "btr"
+form = "MRR_0F"
+opcode = 0xB3
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "BTC_RM_R"
+mnemonic = "btc"
+form = "MRR_0F"
+opcode = 0xBB
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "MOV_RM8_R64"
+form = "MRR"
+opcode = 0x89
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+mnemonic = "movrm"
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "MOV_R8_RM64"
+form = "MRR"
+opcode = 0x8B
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "movr8"
+
+# ── @modrm_imm32（81 /digit + imm32）──
+
+[[instructions]]
+name = "ADD_R_IMM32"
+mnemonic = "add"
+form = "MRR_EXT"
+opcode = 0x81
+fields = { ext = 0 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "OR_R_IMM32"
+mnemonic = "or"
+form = "MRR_EXT"
+opcode = 0x81
+fields = { ext = 1 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "AND_R_IMM32"
+mnemonic = "and"
+form = "MRR_EXT"
+opcode = 0x81
+fields = { ext = 4 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "SUB_R_IMM32"
+mnemonic = "sub"
+form = "MRR_EXT"
+opcode = 0x81
+fields = { ext = 5 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "XOR_R_IMM32"
+mnemonic = "xor"
+form = "MRR_EXT"
+opcode = 0x81
+fields = { ext = 6 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
+
+[[instructions]]
+name = "CMP_R_IMM32"
+mnemonic = "cmp"
+form = "MRR_EXT"
+opcode = 0x81
+fields = { ext = 7 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
+
+# ── @sse_rr 简单指令（prefix=field, w=0）──
+
+[[instructions]]
+name = "MOVZX_B"
+form = "SSE_RR"
+opcode = 0xB6
+fields = { prefix = 0, w = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "movzx_b"
+
+[[instructions]]
+name = "MOVZX_W"
+form = "SSE_RR"
+opcode = 0xB7
+fields = { prefix = 0, w = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "movzx_w"
+
+[[instructions]]
+name = "SQRTSD"
+form = "SSE_RR"
+opcode = 0x51
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "sqrtsd"
+
+[[instructions]]
+name = "SQRTSS"
+form = "SSE_RR"
+opcode = 0x51
+fields = { prefix = 0, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "sqrtss"
+
+[[instructions]]
+name = "CVTSI2SD"
+form = "SSE_RR"
+opcode = 0x2A
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "cvtsi2sd"
+
+[[instructions]]
+name = "CVTSD2SI"
+form = "SSE_RR"
+opcode = 0x2D
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "cvtsd2si"
+
+[[instructions]]
+name = "CVTTSD2SI"
+form = "SSE_RR"
+opcode = 0x2C
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "cvttsd2si"
+
+[[instructions]]
+name = "CVTSD2SS"
+form = "SSE_RR"
+opcode = 0x5A
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "cvtsd2ss"
+
+[[instructions]]
+name = "CVTSS2SD"
+form = "SSE_RR"
+opcode = 0x5A
+fields = { prefix = 0xF3, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "cvtss2sd"
+
+[[instructions]]
+name = "ANDPD"
+form = "SSE_RR"
+opcode = 0x54
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "andpd"
+
+[[instructions]]
+name = "XORPD"
+form = "SSE_RR"
+opcode = 0x57
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "xorpd"
+
+[[instructions]]
+name = "COMISD"
+form = "SSE_RR"
+opcode = 0x2F
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+mnemonic = "comisd"
+
+[[instructions]]
+name = "COMISS"
+form = "SSE_RR"
+opcode = 0x2F
+fields = { prefix = 0, w = 0 }
+operands = [{ slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+mnemonic = "comiss"
+
+[[instructions]]
+name = "MOVSD_XMM_FREG"
+form = "SSE_RR"
+opcode = 0x10
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "movsd_xf"
+
+[[instructions]]
+name = "MOVSD_FREG_XMM"
+form = "SSE_RR"
+opcode = 0x10
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "movsd_fx"
+
+[[instructions]]
+name = "CVTSI2SS"
+form = "SSE_RR"
+opcode = 0x2A
+fields = { prefix = 0xF3, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "cvtsi2ss"
+
+[[instructions]]
+name = "MOVD_FREG_IREG"
+form = "SSE_RR"
+opcode = 0x6E
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "movd"
+
+[[instructions]]
+name = "MOVD_IREG_FREG"
+form = "SSE_RR"
+opcode = 0x7E
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "in" }, { slot = "gpr", role = "out" }]
+mnemonic = "movd_fr"
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "PUNPCKLDQ"
+form = "SSE_RR"
+opcode = 0x62
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "punpckldq"
+
+[[instructions]]
+name = "PUNPCKLQDQ"
+form = "SSE_RR"
+opcode = 0x6C
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "punpcklqdq"
+
+[[instructions]]
+name = "PUNPCKHDQ"
+form = "SSE_RR"
+opcode = 0x6A
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "punpckhdq"
+
+[[instructions]]
+name = "MOVSS"
+form = "SSE_RR"
+opcode = 0x10
+fields = { prefix = 0xF3, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "movss"
+
+[[instructions]]
+name = "MOVSD_RR"
+form = "SSE_RR"
+opcode = 0x10
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "movsd"
