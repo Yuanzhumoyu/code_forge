@@ -367,9 +367,9 @@ float 206.7, mem 172.6, spill 64.5, big_loop 310.9.
    O2 pipeline (GVN/SCCP/egraph on top of O1) carries it. Throughput scaling is
    otherwise near-linear (see Throughput Scaling).
 5. **ISA lowering coverage: ZERO gaps.** `crates/tools/forge-tests/src/coverage.rs`
-   prints the full 75-opcode × 4-ISA matrix, and `coverage_all_isa_zero_gaps`
-   asserts all four backends (x86_64/aarch64/riscv64/wasm32) lower **0/75**
-   ops as unsupported. The ISA-gap pass added: aarch64 single-source int
+   prints the full 75-opcode × 3-ISA matrix, and `coverage_all_isa_zero_gaps`
+   asserts all three backends (x86_64/aarch64/riscv64) lower **0/75**
+   ops as unsupported（wasm32 无覆盖矩阵——仅字节码输出）。The ISA-gap pass added: aarch64 single-source int
    (CLZ/RBIT/REV64/ABS/BSWAP), rotate/min-max/CSEL, NEON float ops + FCMP/CSET,
    saturating ops; riscv64 Zbb bit ops (CLZ/CTZ/CPOP/REV8/ROL/ROR/MIN/MAX),
    software sequences (Abs/saturating/Fcopysign), LD-based load, AMOADD/FENCE;
@@ -384,8 +384,8 @@ float 206.7, mem 172.6, spill 64.5, big_loop 310.9.
    `comparison` group; e.g. compile many_ops 389.7 vs 92.7 µs; SCCP 72.5 vs
    179.6 µs). Use `comparison`/`code_size` for low-noise absolute numbers and
    `--save-baseline`/`--baseline` for cross-run comparisons. No
-   `TargetDecoder`/`TargetDisassembler` implementations exist, so no disasm
-   benchmark group (tracked in OPTIMIZATION.md §8).
+   字节→指令解码（`TargetDecoder`）实现存在——`TargetDisassembler` 为 DSL 生成的
+   Inst→文本格式化器（非字节解码），故无 disasm 基准组（tracked in OPTIMIZATION.md §8).
 
 ## ISA lowering coverage matrix
 
@@ -418,7 +418,7 @@ From `cargo test -p forge-tests --features "isa-x86_64,isa-aarch64,isa-riscv64" 
   clobbered the caller's RDI/RSI); (c) `@move_args` ran before `@push_callee`
   in the prologue, so argument moves into callee-saved registers overwrote the
   caller's values before they were saved. After the fixes,
-  `cargo test --release --test jit_integration` passes all 149 tests and
+  `cargo test -p forge-tests`（`isa/x86_64/jit.rs`，298 个 JIT 测试）全绿，
   `e2e_jit_execute` runs at ~12 µs (it previously hung/corrupted the heap).
 - **`Nop` lowering:** the codegen pipeline now skips `Opcode::Nop` instead of
   failing with `Unsupported("lower Nop")`, so O2-optimized IR compiles.
@@ -605,7 +605,7 @@ Implemented in the ISA-gap pass:
   so a clean rebuild can flip template binding order (e.g. MOV_RM8_R64
   dest/src) and produce machine code that crashes JIT execution
   (STATUS_ACCESS_VIOLATION in test_add). Recompiling usually lands on a good
-  seed (jit_integration 153 pass). Fix: make the model deterministic
+  seed (forge-tests jit.rs 298 pass). Fix: make the model deterministic
   (BTreeMap/ordered iteration in forge-dsl) — tracked as a separate task.
 
 - **GlobalAddr now real (x86).** `[lower.GlobalAddr]` emits `movabs rd, <g>`
@@ -652,7 +652,7 @@ Implemented in the ISA-gap pass:
   aarch64 SD_SETCC cond). Adapted the workaround templates (riscv64
   ADDI/XORI/SLTIU order, aarch64 SD_SETCC `rd, cond`, riscv64 Bnot,
   JALR/BNE/Return term templates, SD_R/LD_R restored). Verification:
-  `test_generate_is_deterministic` + forge-codegen 107 tests + jit 156 +
+  `test_generate_is_deterministic` + forge-codegen 107 tests + jit 298 +
   workspace 51 all pass. riscv64 back to 34 not-lowering (was 32; Fconst
   and CallIndirect deferred — lui+addi / JALR VReg variant recorded).
 
@@ -662,9 +662,9 @@ Implemented in the ISA-gap pass:
 
 | 级别 | 含义 | 载体 |
 | --- | --- | --- |
-| `compile-only` | 只验证 lowering 编译通过（不执行） | forge-tests `coverage!`/`coverage_all_isa_zero_gaps`（覆盖矩阵，4 ISA × 75 ops） |
-| `encode-golden` | 验证指令编码字节精确匹配 | `encoder_tests`（x86 29）+ `aarch64_encoder_tests`（28）+ `riscv64_encoder_tests`（35）= 92 断言 |
-| `exec-required` | 实际执行 JIT 编译产物并断言返回值 | `jit_integration`（156 测试，宿主 x86_64 Windows） |
+| `compile-only` | 只验证 lowering 编译通过（不执行） | forge-tests `coverage!`/`coverage_all_isa_zero_gaps`（覆盖矩阵，3 ISA × 75 ops：x86_64/aarch64/riscv64） |
+| `encode-golden` | 验证指令编码字节精确匹配 | forge-tests `encode_golden!`（x86_64 31）+ `aarch64`（32）+ `riscv64`（37）= 100 断言 |
+| `exec-required` | 实际执行 JIT 编译产物并断言返回值 | forge-tests `isa/x86_64/jit.rs`（298 测试，宿主 x86_64 Windows）+ `text_to_exec.rs`（1068 行） |
 
 **跨架构执行验证**（问题 1：宿主为 Intel，非宿主 ISA 无本机执行验证）：
 
@@ -680,7 +680,7 @@ Implemented in the ISA-gap pass:
 | --- | --- |
 | `isa-x86_64` / `isa-aarch64` / `isa-riscv64` | ISA 开关 |
 | `test-int` / `test-float` / `test-io` / `test-control` | 指令类型分组（默认全开） |
-| `exec-unicorn` | unicorn-engine 2.1.5 跨架构模拟执行（aarch64/riscv64） |
+| `exec-unicorn` | vendored unicorn（cmake 编译静态库）+ 手写 FFI 跨架构模拟执行（aarch64/riscv64） |
 | `nightly` | forge-rustc 后端测试 |
 
 **测试类型**（三级标注）：
@@ -689,11 +689,12 @@ Implemented in the ISA-gap pass:
 - `encode_golden!`（编码字节断言）
 - `exec!`（执行测试：本机 x86_64 NativeExecutor + unicorn 跨架构 UnicornExecutor）
 
-**跨架构执行**：unicorn-engine（Unicorn CPU 模拟器）execute-from-buffer 方式
-（mem_map 代码页+栈页 → mem_write 裸机器码 → emu_start → reg_read 返回值寄存器
-RAX/X0/X10），替代 WSL/QEMU 路径。构建前提：Windows 需 libclang（LIBCLANG_PATH）
-
-- cmake（unicorn-engine-sys 编译 C 源码）；wasm32 不在本框架范围（用户确认）。
+**跨架构执行**：vendored unicorn（`crates/tools/forge-tests/vendor/unicorn`，build.rs 用
+cmake 编译静态库）execute-from-buffer 方式（mem_map 代码页+栈页 → mem_write 裸机器码 →
+emu_start → reg_read 返回值寄存器 RAX/X0/X10），替代 WSL/QEMU 路径。构建前提：只需
+cmake + C 编译器（VS Build Tools / gcc / clang）——**无需 libclang / pkg-config /
+系统 unicorn / 预编译 DLL**。wasm32 不在本框架范围（无执行测试，仅 forge-codegen 内嵌
+compile-only 覆盖）。
 
 ---
 
@@ -730,7 +731,7 @@ IR 构建与解析公共热点做了一轮优化。方法：先跑全量基准�
 
 ### 验证
 
-- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 201、forge-opt 91、forge-codegen 116+12+15+8、forge-tests 140 含 156 条 JIT 执行用例迁移集等）。
+- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 235、forge-opt 91、forge-codegen 116+12+15+8、forge-tests 140 含 298 条 JIT 执行用例迁移集等）。
 - `cargo check -p forge-ir -p forge-opt -p forge-codegen`：无警告。
 
 ---

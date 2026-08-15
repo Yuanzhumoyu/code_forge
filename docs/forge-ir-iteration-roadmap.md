@@ -1,15 +1,17 @@
 # forge-ir 迭代路线图（LLVM IR 文本层对齐）
 
-> 状态：持续更新 · 最后修订：第六轮迭代完成后
+> 状态：持续更新 · 当前代码已达第 31 轮（六轮后的历轮执行记录见附录 §7 与
+> `forge-ir-iteration-checklist.md` §0.1 / `forge-ir-remaining-tasks.md` §5-§7）
 > 适用 crate：`crates/foundation/forge-ir`（及其依赖方 `forge-opt` / `forge-codegen` / `forge-hir`）
-> 基线：forge-ir `258+61+22+2` 全绿、workspace 44 suite 全绿、`cargo check --workspace` 0 error
+> 基线：LLVM Assembler 452 全收敛（198 正向 / 254 正确拒绝 / 0 误接受）、
+> roundtrip 0 缺口、workspace 48 suite 全绿、`cargo check --workspace` 0 error
 
 ---
 
 ## 0. 总览
 
 `forge-ir` 的文本层（`ir_parser`）以 **LLVM IR 文本为交换格式**，实现
-`text → parse → Module → display → text` 的双向 round-trip。六轮迭代已完成：
+`text → parse → Module → display → text` 的双向 round-trip。前六轮迭代记录：
 
 | 轮次 | 内容 |
 |---|---|
@@ -18,6 +20,11 @@
 | 4 | 类型定义（`%struct.X = type`）、call 实参属性、全局属性、declare 裸类型参数 |
 | 5 | call-site 属性 + attribute groups（`#0`）、metadata（`!dbg`）、向量 lane 指令、全局扩展（addrspace/thread_local） |
 | 6 | 类型定义引用、win64cc、visibility/comdat、聚合字面量 extractvalue、Vextract/Vinsert 变量 idx |
+
+> 六轮后的迭代（第七～三十二轮）逐轮记录于附录 §7 与配套文档
+> （`forge-ir-iteration-checklist.md` §0.1 / `forge-ir-remaining-tasks.md` §5-§7）；
+> 本文 §2/§3 各"待办"现状均已实现，状态标注见各节。官方语料已 452 全收敛
+> （198 正向 / 254 拒绝 / 0 误接受）。
 
 本清单按 **P0（近期、文本层高价值）/ P1（中期、需内部表示扩展）/ P2（测试与工具链）/ 性能** 分级，
 每项给出：现状引用、目标语法、难点、解决思路、代码演示、验收标准。
@@ -68,9 +75,13 @@
 
 ### 2.1 declare 尾部属性
 
-**现状**：`declare` 分支（grammar.lalrpop ~467-506）为 `Declare … RParen =>`，
+**状态：✅ 已实现**——`DeclareTail` 显式分支（grammar.lalrpop:1155-1271，Declare 各
+变体统一尾部 `<tail: DeclareTail>`，空 / attrs / attrs+#N / #N 四分支）；`declare i32
+@printf(ptr noundef, ...) nounwind` 等 round-trip 通过（第二十八轮复核确认）。
+
+**历史现状（实现前）**：`declare` 分支（grammar.lalrpop ~467-506）为 `Declare … RParen =>`，
 尾部只有 `FuncAttrs?` 被裁剪掉了——`declare i32 @printf(ptr noundef, ...) nounwind`
-是 clang 的**最常见输出**，当前无法 round-trip（`roundtrip_unnamed_declare_params`
+是 clang 的**最常见输出**，当时无法 round-trip（`roundtrip_unnamed_declare_params`
 测试只能写裸 declare）。
 
 **目标语法**：
@@ -105,14 +116,19 @@ DeclareDef: ParsedFunction = {
 > ⚠️ 第 6 轮实测：`DeclareTail?`（可空）与裸分支共存必冲突；必须让 DeclareTail
 > **必选**且空分支内含 `=> (vec![], vec![])`。若仍冲突，回退方案 1（lexer 预处理）。
 
-**验收**：`declare i32 @printf(ptr noundef, ...) nounwind` / `declare i32 @f(i32) #0` /
-`declare void @f() !dbg !0` 三例 round-trip；`roundtrip_unnamed_declare_params` 恢复 nounwind。
+**验收（✅ 已通过）**：`declare i32 @printf(ptr noundef, ...) nounwind` / `declare i32 @f(i32) #0` /
+`declare void @f() !dbg !0` 三例 round-trip 已通过；`roundtrip_unnamed_declare_params` 已恢复 nounwind。
 
 ---
 
 ### 2.2 命名 metadata（`!t = !{...}` + `!dbg !t`）
 
-**现状**：`ParsedItem::NamedMetadata(String, MetadataNodeDef)` 变体仍在 ast_items.rs:21，
+**状态：✅ 已实现**——grammar.lalrpop:301 `ParsedItem::NamedMetadata(name, node)`
+分支已恢复；lexer 以 `MetadataDefKw`（后跟 `=`）/`MetadataNameKw` 消歧（第二十一轮
+MetadataFieldTupleLit 合并 + DI 校验器加固）；`!t = !{...}` + `define … !dbg !t`
+round-trip 通过。
+
+**历史现状（实现前）**：`ParsedItem::NamedMetadata(String, MetadataNodeDef)` 变体仍在 ast_items.rs:21，
 但 grammar item 被移除（LALR 硬冲突）；`MetadataStore` 已预留
 `define_named`/`lookup_named`/`name_of`（metadata.rs）。
 
@@ -150,7 +166,11 @@ define void @f() !dbg !t { … }
 
 ### 2.3 通用指令 metadata 附加（`add …, !tbaa !0`）
 
-**现状**：通用分支（`Ident InstFlagSeq TypeOps?`）的 `<metas: MetadataAttach*>` 被移除；
+**状态：✅ 已实现**——BinaryOps/CmpOps/ExtractElement/ShuffleVector/Call/Fneg 等指令
+规则均以 `CommaAttach*` 接收尾 metadata（第二十八轮复核确认）；`add i32 %a, %b,
+!tbaa !0` round-trip 通过。
+
+**历史现状（实现前）**：通用分支（`Ident InstFlagSeq TypeOps?`）的 `<metas: MetadataAttach*>` 被移除；
 仅显式分支（call/load/store/函数头）支持 `, !dbg !N`。`!tbaa`/`!prof`/`!alias.scope`
 等**最常用 metadata 都挂在算术/比较/内存指令上**。
 
@@ -183,7 +203,11 @@ define void @f() !dbg !t { … }
 
 ### 2.4 终结符 metadata（`ret …, !range !0` / `br …, !prof !0`）
 
-**现状**：`Terminator` 枚举（terminator.rs:13）无 metadata 字段；
+**状态：✅ 已实现**——`Terminator` 各变体（Branch/Jump/Return/Switch/Invoke/Resume）均
+已带 `metadata: SmallVec<[AttachedMetadata; 2]>` 字段（terminator.rs:16-74；
+Unreachable 免）；`ret …, !range !0` / `br …, !prof !1` round-trip 通过。
+
+**历史现状（实现前）**：`Terminator` 枚举（terminator.rs:13）无 metadata 字段；
 `ParsedTerminator`（ast_items.rs:324）同样无。PGO 的 `!prof`、`!range` 无法保留。
 
 **目标语法**：
@@ -207,8 +231,13 @@ block_param_coalesce 等）+ codegen 的 `lower_terminator` 都要同步。
 
 ### 2.5 指令补全：`addrspacecast` / `va_arg`
 
-**现状**（opcode.rs 105 个）：`addrspacecast` 缺失（指针地址空间转换）、`va_arg` 缺失
-（可变参数读取）、`freeze` 已有 opcode + 文本映射（llvm_mapping.rs:95/294）、`select` 已支持。
+**状态：✅ 已实现**——`AddrSpaceCast`（opcode.rs:189）/`VaArg`（opcode.rs:191）/
+`LandingPad`（opcode.rs:193）已加入，llvm_mapping 双向映射齐全（现 opcode 共 109 个）；
+`addrspacecast`/`va_arg` 文本层 round-trip 通过。`va_arg` 的 ABI 布局语义仍属 P1
+（codegen 层），文本层存 `(Type, ptr)` 操作数。
+
+**历史现状（实现前）**（opcode.rs 105 个）：`addrspacecast` 缺失（指针地址空间转换）、
+`va_arg` 缺失（可变参数读取）、`freeze` 已有 opcode + 文本映射（llvm_mapping.rs:95/294）、`select` 已支持。
 
 **目标语法**：
 ```llvm
@@ -228,7 +257,12 @@ block_param_coalesce 等）+ codegen 的 `lower_terminator` 都要同步。
 
 ### 2.6 linkage / visibility / dll storage 补全
 
-**现状**：`Linkage` 枚举 12 种（symbol.rs:49：External/AvailableExternally/LinkOnceAny/
+**状态：✅ 已实现**——`DllImportKw`/`DllExport`/`AvailableExternallyKw` 等 lexer token
+（lexer.rs:197-201），`GlobalSymKw` 全展开（link/dso/unnamed/tls/vis/dll 维度，
+`SymbolInfo.dll_storage_class` 接通）；`weak hidden` 等组合 round-trip 通过
+（第二十八轮复核确认）。
+
+**历史现状（实现前）**：`Linkage` 枚举 12 种（symbol.rs:49：External/AvailableExternally/LinkOnceAny/
 LinkOnceOdr/WeakAny/WeakOdr/Appending/Internal/Private/ExternalWeak/Common…），
 但 grammar `GlobalSymKw`（grammar.lalrpop:311）只暴露 `private/internal/external`；
 `dllimport/dllexport`（`DllStorageClass`）无文本通道。
@@ -254,7 +288,12 @@ LinkOnceOdr/WeakAny/WeakOdr/Appending/Internal/Private/ExternalWeak/Common…）
 
 ### 2.7 参数 / 返回属性补全
 
-**现状**：`ParamAttributes` 14 字段（zeroext/signext/noalias/readonly/writeonly/byval/sret/
+**状态：✅ 已实现**——`ParamAttrs` 规则已扩（grammar.lalrpop:1395-1440：
+signext/zeroext/noalias/noundef/readonly/writeonly/nocapture/nonnull/inreg/byval/sret/
+align N + 带参开放属性 ParenAttrKw），`byval(%struct.S)`/`inreg`/`align 8` 组合
+round-trip 通过（第二十八轮复核确认）。
+
+**历史现状（实现前）**：`ParamAttributes` 14 字段（zeroext/signext/noalias/readonly/writeonly/byval/sret/
 inreg/nocapture/nonnull/align/noundef/…），grammar `ParamAttrs` 只认 8 个；
 `byval(Type)`/`sret(Type)`/`inreg`/`align N` 无文本通道。
 
@@ -277,6 +316,9 @@ call void @f(ptr nonnull align 8 %p, …)
 
 ### 2.8 模块级 item 补全（source_filename / module asm）
 
+**状态：✅ 已实现**——`SourceFilenameKw`/`ModuleAsmKw` 分支（grammar.lalrpop:325-326），
+`source_filename = "…"` / `module asm "…"` round-trip 通过。
+
 **目标语法**：
 ```llvm
 source_filename = "test.c"
@@ -294,7 +336,12 @@ module asm ".globl _start"
 
 ### 3.1 聚合常量 Value（嵌套提取 + insertvalue 聚合操作数）
 
-**现状**：`extractvalue [4 x i32] [i32 1, …], 2` 顶层标量提取已支持（第 6 轮，
+**状态：✅ 已实现**——`ConstantPool.aggregates: Vec<AggConst>`（constant.rs:56-57，
+`AggChild::Scalar(ConstId) | Agg(AggId)` 树形）；嵌套聚合字段提取已内存化
+（compiler.rs:270-277，第十轮 S1：帧槽 + 段 store + `agg_slots` 登记，两级提取
+参数/load 双路径端到端执行对照 clang）；`insertvalue` 聚合操作数 round-trip 通过。
+
+**历史现状（实现前）**：`extractvalue [4 x i32] [i32 1, …], 2` 顶层标量提取已支持（第 6 轮，
 序列化 tag 方案）；但**嵌套聚合元素**（`extractvalue [2 x [2 x i32]] […], 1` 的结果是
 `[2 x i32]` 聚合值）与 `insertvalue` 聚合操作数仍报错——forge 内部**无聚合常量 Value**。
 
@@ -320,8 +367,16 @@ module asm ".globl _start"
 
 ### 3.2 异常处理全套（invoke / landingpad / resume / catch 族）
 
-**现状**：opcode 列表无 invoke/landingpad/resume/catchpad/catchswitch/catchret/
-cleanuppad/cleanupret/indirectbr/callbr。这是**文本层最大的结构缺口**：
+**状态：✅ 文本层已实现（P1.1 完成）**——`Terminator::Invoke`（terminator.rs:53-63，
+正常边 + unwind 边）、`Opcode::LandingPad`（opcode.rs:193）、`Terminator::Resume`
+（terminator.rs:66）全链路（含 personality 透传、unwind 边 dominance 豁免，第二十八轮
+落地）；clang `-fexceptions` 典型输出 round-trip 通过。catch 族（catchpad/cleanuppad
+指令、catchswitch/cleanupret/catchret 终结符）**评估归档**——452 用例零命中、需 3 个
+Terminator 变体扩展、无目标平台语义（第三十二轮记录）。codegen 对含异常函数仍报
+`Unsupported`（P1.2 SjLj 属长期，见 §7）。
+
+**历史现状（实现前）**：opcode 列表无 invoke/landingpad/resume/catchpad/catchswitch/
+catchret/cleanuppad/cleanupret/indirectbr/callbr。这是**文本层最大的结构缺口**：
 clang `-fexceptions` 输出含 `invoke` + `landingpad` + `personality`。
 
 **目标语法**：
@@ -347,14 +402,19 @@ define void @f() personality ptr @__gxx_personality_v0 {
    `Unsupported`（明确错误）——保证"能读 clang -fexceptions 输出"；
 2. **SjLj 代码生成**（P1.2，长期）：`setjmp/longjmp` 模拟，绕开平台 EH ABI。
 
-**验收（P1.1）**：clang `-fexceptions -S -emit-llvm` 的典型输出 round-trip（含 personality）；
+**验收（P1.1 ✅ 已通过）**：clang `-fexceptions -S -emit-llvm` 的典型输出 round-trip（含 personality）；
 含 invoke 的函数 `compile` 报明确 Unsupported。
 
 ---
 
 ### 3.3 常量表达式（gep/ptrtoint/bitcast 折叠）
 
-**现状**：全局初始化只支持字面量/null/zeroinitializer/聚合字面量/cstring；
+**状态：✅ 已实现**——`GlobalInitVal` 常量表达式链（ptrtoint/inttoptr/bitcast/GEP）；
+GEP 字节偏移折叠第三十一轮补全（semantics.rs:1101-1119：数组/向量索引 × elem_size、
+结构按字段偏移累积，`size_of_parsed_type` helper）；`@g = global i32 ptrtoint (ptr @h
+to i32)` 两例 round-trip 通过。
+
+**历史现状（实现前）**：全局初始化只支持字面量/null/zeroinitializer/聚合字面量/cstring；
 `@g = global i32 ptrtoint (ptr @h to i32)` 这类**常量表达式**缺失。
 
 **目标语法**：
@@ -373,7 +433,12 @@ define void @f() personality ptr @__gxx_personality_v0 {
 
 ### 3.4 metadata kind 校验
 
-**现状**：`MetadataKind` 13 种（metadata.rs:91），但 semantics 对 attach 的
+**状态：✅ 已实现**——`MetadataKind` 现 14 种（metadata.rs:60-89，含 `Custom(ImmStr)`）；
+`validate_metadata_shapes`（semantics.rs:483）对 attach 做 kind×形状校验（`!dbg` →
+Named(DILocation)；`!tbaa` → 嵌套 tag 结构），非法组合（如 `!dbg !{i32 1}`）verify
+报错。
+
+**历史现状（实现前）**：`MetadataKind` 13 种（metadata.rs:91），但 semantics 对 attach 的
 `!name` 只按字符串存（`metadata_kind_of` 13 名映射），**不校验节点形状**——
 `!dbg` 指向 `!{i32 1}` 这种非法组合不会报错。
 
@@ -447,8 +512,8 @@ fn gen_inst(rng: &mut impl Rng, ctx: &mut GenCtx) -> String {
 | 冲突形态 | 触发构造 | 规避手段 | 状态 |
 |---|---|---|---|
 | `(X)* X` 2-lookahead | `CallArgList`/`ParamList`/`StructList` + `LocalId` 开头 | 元素保持 `ValueType`；Named 用独立规则 | ✅ 已收敛 |
-| epsilon 尾链 reduce/reduce | declare `FuncAttrs? grp? metas*` | 合并单非终结符或裁剪 | ⚠️ 裁剪中（2.1） |
-| shift/reduce 状态污染 | `!t` 模块 item vs attach | lexer lookahead 消歧 | ⏳ 计划（2.2） |
+| epsilon 尾链 reduce/reduce | declare `FuncAttrs? grp? metas*` | 合并单非终结符或裁剪 | ✅ 已实现（2.1 DeclareTail 显式分支） |
+| shift/reduce 状态污染 | `!t` 模块 item vs attach | lexer lookahead 消歧 | ✅ 已实现（2.2 MetadataDefKw/MetadataNameKw） |
 | InstFlagSeq 闭包 | `Ident InstFlagSeq TypeOps?` + LocalId | TypeOps 元素 ValueType | ✅ |
 | 模块 item first 膨胀 | TypeKw/TypeDef 加入 | 影响全局状态图——新增 token 后必全量回归 | ✅ 需保持警惕 |
 | 裸全局引用 init 2-lookahead | `@g = global i32 @h`（init）vs `@g = global i32\n@h = ...`（下一条） | **无 LALR 解**——`@h` 后 lookahead `=` 才知归属，LLVM 自身靠上下文；带类型形式 `ptr @h`（GlobalConstExpr）可行 | ❌ 长期排除（4.1） |
@@ -463,17 +528,21 @@ fn gen_inst(rng: &mut impl Rng, ctx: &mut GenCtx) -> String {
 （MetadataKw token 已拒）、autoupgrade 旧 intrinsic（`llvm.aarch64.thread.pointer`
 等）均按旧格式长期排除。
 
-- **内联汇编**（`call void asm sideeffect "…"`）：需 inline-asm 解析器 + 编码器集成——独立子项目。
+- **内联汇编**（`call void asm sideeffect "…"`）：文本层已支持（第十六轮 AsmKw 专用
+  token + call/tail/callbr 三种 asm 变体，约束串/副作用标识丢弃，+2 用例）；编码器
+  集成仍属独立子项目（不做）。
 - **`ret` 多返回值**（`ret { i32, i32 } %v`）：内部 `Return(Vec<Value>)` 已支持，
   文本层 `ret` 单值——多值语法（`ret i32 1, i32 2`）非 LLVM 标准，不做。
-- **`declare` 的 `...` 可变参数**：`printf(ptr noundef, ...)` 的 `...` 文本层
-  当前不支持（参数列表解析）——并入 2.1 的 declare 尾部属性一并处理。
+- **`declare` 的 `...` 可变参数**：✅ 已随 2.1 的 `DeclareTail` 一并支持——
+  `printf(ptr noundef, ...)` 参数列表可变参数 round-trip 通过。
 - **Windows SEH / ARM EH**：随 3.2 的 ABI 选择。
 - **裸全局引用 init**（`@p = global ptr @h`）：LALR(1) 下与"下一条模块级 global"
   本质 2-lookahead 歧义（见 §6），长期排除；`ptr @h` 带类型形式可行（GlobalConstExpr）。
-- **`<vscale x N x ty>` 可伸缩向量**：需 TypeId 扩展（aarch64 SVE 专用），文本层不做。
+- **`<vscale x N x ty>` 可伸缩向量**：文本层已实现（第十二轮 lexer 单 token，
+  lexer.rs:51-55——5-token 序列致 LALR 状态爆炸回滚后采用）；TypeId 扩展与
+  codegen（SVE/RVV）仍不做（独立子项目）。
 - **packed struct 语法补充说明**：`<{ i32, i32 }>` 已支持（2026-08 第四轮）；
-  aggregate-constant-values 用例剩余失败点为 vscale。
+  aggregate-constant-values 用例已全部通过（vscale 文本层已实现，非失败点）。
 - **DI debug info 字段语义校验**（~46 个 `invalid-di*` 负向用例）：LLVM DI 验证器
   独立工程；文本层已支持 distinct/key:value（含布尔、DWARF 枚举、`!N` 数字引用——
   MetadataValPrim 子集规避 LALR 状态膨胀）、`type:`/`align:` 等 key；字段值域/必填
@@ -481,8 +550,8 @@ fn gen_inst(rng: &mut impl Rng, ctx: &mut GenCtx) -> String {
 - **verify 语义校验**：值域（int ≤2^23 / addrspace <2^24 / align ≤2^30）、
   atomicrmw/cmpxchg 类型与序、bitcast 大小（size_bytes）、insertvalue 值类型、
   可见性冲突（internal+hidden）、alias 重复、metadata 前向引用、comdat 声明等已校验
-  （负向拒绝 208）；剩余单例缺口（getelementptr_struct 索引常量、global-init cast、
-  alias 前向引用等）未逐一补齐（4.3）。
+  （负向正确拒绝 208 → 第二十三轮终态 254）；单例缺口（getelementptr_struct 索引常量、
+  global-init cast、alias 前向引用）已由第十轮 S4.1-S4.3 补齐（见 checklist §0.1）。
 - **x86_64 聚合执行（2026-08 第五轮已解锁）**：`store {i32,i32} {...}` / `load` /
   `extractvalue` / `insertvalue`（≤8 字节，GPR 64 位域移位/掩码）端到端执行通过；
   `ret` 聚合（单/多元素按整数返回）与聚合传参（常量经打包展开、值经 GPR）全链路
@@ -504,15 +573,16 @@ fn gen_inst(rng: &mut impl Rng, ctx: &mut GenCtx) -> String {
   无符号处理。
 - **嵌套聚合字面量（2026-08 第六轮已修复）**：`[[i32 1, i32 2], ...]` /
   `{{i32 1}, i32 2}` parse 支持（GlobalAggElem 嵌套分支）+ pack_agg_init 递归打包；
-  嵌套字段的 extractvalue（字段类型是聚合）codegen 仍 Unsupported（elem 谓词
-  匹配不到 variant）——两级提取需先取内层聚合（当前不可用），记录。
+  嵌套字段的 extractvalue（字段类型是聚合）**第十轮 S1 已内存化**（compiler.rs:270-277：
+  帧槽 + 段 store + `agg_slots` 登记，两级提取端到端执行对照 clang）。
 - **聚合 >8 字节（2026-08 第七轮已支持函数内）**：`store {i64,i64} {...}` 分段展开
   （pack_agg_bytes 字节布局 → 8/4/2/1 段宽 store + Iadd 地址推进）；大聚合 load 值
   传播（expand_large_aggs：store 拷贝逐段 load+store、extractvalue 偏移+标量 load、
   load 标 Nop）；大聚合 + GEP 寻址组合（数组元素/字段累加循环）执行通过。
-  **残留**：嵌套大聚合字段提取（字段本身是聚合——跨段切片单值无法表达，compile 期
-  Unsupported）；load 快照语义（load 后内存被改写时重新 load 不保留旧值——常见
-  模式安全）。
+  **残留**：load 快照语义（load 后内存被改写时重新 load 不保留旧值——常见
+  模式安全；第十轮 S5.2 已在 expand_large_aggs 文档注释说明）。嵌套大聚合字段
+  提取（字段本身是聚合）**第十轮 S1 已内存化**（compiler.rs:270-277），不再
+  Unsupported。
 - **大聚合 ABI（2026-08 第八轮已支持 ≤16 字节）**：SysV 整数寄存器路径全链路——
   调用方 `expand_agg_call_args`（聚合实参拆 i64 段：AggConst 段常量 / load 结果
   段 load），被调方 `expand_large_agg_params`（签名拆开为 ceil(size/8) 个 i64 参数
@@ -555,10 +625,12 @@ fn gen_inst(rng: &mut impl Rng, ctx: &mut GenCtx) -> String {
   hex 路径同步改 f32 位模式）；Fsqrt/Fabs/Fneg F32 变体（sqrtss/andps 0x7FFFFFFF/
   xorps 0x80000000——SQRTSS 指令）。float 直接比较 1.5<2.5、fsqrt(2.25)=1.5f、
   fabs(-2.5f)=2.5f、fneg(1.5f)=-1.5f 执行对照位模式全对。
-- **残留（第九轮确认）**：嵌套聚合字段提取（字段是聚合——内存化方案待实现）；
-  TypeOps 单类型第二操作数（二元算术指令——block-labels/flags 卡点）；vscale/
-  opaque 类型；determinism 测试在 workspace 并行下偶发（单独跑必过——并行资源
-  干扰，未复现于串行）。
+- **残留（第九轮确认，均已落地）**：嵌套聚合字段提取——第十轮 S1 内存化
+  （compiler.rs:270-277）；TypeOps 单类型第二操作数——第十轮 BinaryOp/BinaryOps
+  专用规则（grammar.lalrpop:2814/2946）；vscale——第十二轮 lexer 单 token
+  （lexer.rs:52）；opaque 类型——第十轮 `TypeEntry::Opaque` 全链路。仅
+  determinism 测试在 workspace 并行下偶发一项已由第十轮 S5.1 定位（Windows 高
+  并行 cargo 链接/rmeta 竞争，`-j 4` 下全量稳定全绿）。
 - **operand 嵌套聚合字面量（2026-08 第七轮已修复）**：`store [2 x {i64,i64}]
   [{i64 1, i64 2}, ...]` 等 parse 支持（AggListElem 嵌套分支——非空嵌套；空 `{{}}`
   与"空 struct 类型+值"的 TypeOp 本质 LALR 歧义，排除）。

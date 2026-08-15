@@ -20,11 +20,15 @@
 
 ## §1 P1 内部表示扩展(远期工程,每项含解析与代码演示)
 
-### 1.1 异常处理全套 IR 表示(invoke 已通,landingpad/resume/catchpad 缺)
+### 1.1 异常处理全套 IR 表示（landingpad/resume 已实现；仅 catch 族缺，已归档）
 
-**问题解析**:invoke 终结符已解析(含 GC live);但 `landingpad`/`catchpad`/`cleanuppad`
-指令与 `catchswitch`/`cleanupret`/`catchret` 终结符的 IR 表示(Opcode/字段)
-不存在——`!llvm.eh.*` intrinsics 与函数 personality 属性仅文本层透传。
+**问题解析**：invoke 终结符、`landingpad` 指令（含 cleanup/catch/filter clause）与
+`resume` 终结符已实现（第二十八轮：`Opcode::LandingPad`=opcode.rs:193、
+`Terminator::Resume`=terminator.rs:66，grammar/semantics/display 全链）；
+`catchpad`/`cleanuppad` 指令与 `catchswitch`/`cleanupret`/`catchret` 终结符
+**评估归档**——452 用例零命中、需 3 个 `Terminator` 变体扩展（中-大工程）、
+无目标平台语义（Windows EH/Emscripten），与 metadata kind 白名单同理（无用例驱动，
+见 §7）。`!llvm.eh.*` intrinsics 与函数 personality 属性文本层透传。
 
 **代码演示**(opcode.rs + semantics.rs):
 
@@ -43,7 +47,9 @@ Catchswitch, Cleanupret, Catchret,  // 终结符
 ### 1.2 聚合常量深层折叠(extractvalue/insertvalue 常量操作数)
 
 **问题解析**:`extractvalue {i64, {i32, i32}} {...}, 1, 0` 的嵌套索引折叠——
-`fb.extract_value` 现有单层路径;AggConst 递归 child 定位缺深层索引。
+**parse 层深层索引已支持**（semantics.rs:2256，第二十九轮重建：链式
+extractvalue）；缺口仅在 **builder API**：`fb.extract_value` 现有单层路径,
+AggConst 递归 child 定位缺深层索引（fold/消费方）。
 
 **代码演示**(builder.rs):
 
@@ -56,10 +62,14 @@ pub fn extract_value(&mut self, agg: Value, idx: &[u32]) -> Value {
 
 **验收**:deep-extractvalue.ll 正向用例 + 常量折叠单测。**工作量:小-中**。
 
-### 1.3 常量表达式折叠补全(gep/ptrtoint/bitcast)
+### 1.3 常量表达式折叠补全(gep/ptrtoint/bitcast)——✅ 第三十一轮已完成
 
 **问题解析**:`@g = global ptr getelementptr(...)` 的 GEP 常量表达式折叠
 (gep 的 inbounds/结构索引 offset 计算)缺——现仅 trunc/inttoptr 等。
+
+**落地**:第三十一轮完成 GEP 字节偏移折叠（semantics.rs:1101-1119：数组/向量索引
+× elem_size、结构按字段偏移累积，`size_of_parsed_type` helper）；本条保留为历史
+记录。
 
 **代码演示**(semantics.rs to_type_result 常量路径):GEP 常量 → 计算字节偏移 →
 `ConstantPool::insert_int`(标量)或保留结构。**工作量:中**。

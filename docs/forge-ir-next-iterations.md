@@ -2,8 +2,9 @@
 
 > 定位：本文件是**前瞻迭代计划**（与 `forge-ir-iteration-roadmap.md` 的"历轮成果记录"
 > 互补）。每轮开工前从本文件挑选迭代项，完成后把成果回写 roadmap 附录 §7 与本文件
-> 状态列。最后更新：2026-08（第九轮后基线：workspace 49 suite 全绿、compat 57/452、
-> 负向误接受 47 全为 DI 类、parse 基准 ~57µs）。
+> 状态列。最后更新：2026-08（当前基线：compat 452 全收敛 198/254/0、roundtrip
+> 0 缺口、workspace 48 suite 全绿）。**本文件所列 S1-S6 与 L3-L5（文本层部分）已全部
+> 落地，§1 现为历史实现记录。**
 
 ---
 
@@ -11,20 +12,20 @@
 
 | # | 迭代项 | 档位 | 现状 | 依赖 |
 |---|--------|------|------|------|
-| S1 | 嵌套聚合字段提取（内存化） | 短期 | `compiler.rs:129` Unsupported | — |
-| S2 | TypeOps 单类型第二操作数 | 短期 | fcmp/icmp 已解锁（CmpScalarValue）；二元算术未解锁 | — |
-| S3 | 文本层剩余小项（opaque/属性组/global 尾 metadata/fpext-fptrunc） | 短期 | 逐项见 §1.3 | S2（部分） |
-| S4 | verify 语义校验剩余单例 | 短期 | roadmap §7 记录 3 个缺口 | — |
-| S5 | 工程稳健性（determinism 偶发、load 快照） | 短期 | determinism 并行偶发；快照语义已知 | — |
-| S6 | metadata 形状校验扩展（可选） | 短期 | !dbg/!tbaa/!range 已做 | — |
+| S1 | 嵌套聚合字段提取（内存化） | 短期 | ✅ 第十轮已实现（compiler.rs:270-277 内存化） | — |
+| S2 | TypeOps 单类型第二操作数 | 短期 | ✅ 第十轮已实现（grammar BinaryOp/BinaryOps 专用规则） | — |
+| S3 | 文本层剩余小项（opaque/属性组/global 尾 metadata/fpext-fptrunc） | 短期 | ✅ 第十轮全部落地（S3.1-S3.4，见 §1） | — |
+| S4 | verify 语义校验剩余单例 | 短期 | ✅ 第十轮已实现（S4.1-S4.3，见 §1） | — |
+| S5 | 工程稳健性（determinism 偶发、load 快照） | 短期 | ✅ 第十轮：determinism 定位为 cargo 链接竞争；快照语义记录说明 | — |
+| S6 | metadata 形状校验扩展（可选） | 短期 | ✅ 第十轮已实现（splat/浮点 hex/denormal_fpenv 等） | — |
 | M1 | grammar 拆分评估（5.1） | 中期 | 增量编译 5-10s 可接受，>15s 再议 | — |
 | M2 | 解析基准细化（5.2） | 中期 | ~57µs 基线已建 | — |
-| M3 | 官方用例正向扩充 57→80+ | 中期 | 卡在 S2/S3 | S2, S3 |
-| L1 | DI 验证器（~40-46 负向误接受） | 长期 | 明确不做（独立工程） | — |
+| M3 | 官方用例正向扩充 | 中期 | ✅ 已达成 **198/452**（第二十三轮收敛，误接受 0） | — |
+| L1 | DI 验证器（~40-46 负向误接受） | 长期 | 明确不做（独立工程）；终态误接受 0（DI 校验器收口） | — |
 | L2 | >16 字节聚合 ABI 栈传递 | 长期 | 需先定栈帧 ABI | — |
-| L3 | vscale 可伸缩向量 | 长期 | 需 TypeId 扩展 | — |
-| L4 | inline asm | 长期 | 独立子项目 | — |
-| L5 | callbr/token/statepoint/gc/blockaddress | 长期 | LLVM 专用特性 | — |
+| L3 | vscale 可伸缩向量 | 长期 | ✅ 文本层已实现（第十二轮 lexer 单 token）；TypeId/codegen 扩展仍不做 | — |
+| L4 | inline asm | 长期 | ✅ 文本层已实现（第十六轮 call/tail/callbr 三形态）；编码器集成仍不做 | — |
+| L5 | callbr/token/statepoint/gc/blockaddress | 长期 | callbr（十二轮）/token（十轮）/gc（十七轮）/blockaddress（十六轮）文本层已实现；statepoint 仍不做 | — |
 | L6 | 裸全局引用 init（`@p = global ptr @h`） | 长期 | LALR 本质歧义（附录 §6） | — |
 | L7 | SjLj 异常代码生成（3.2 P1.2） | 长期 | 文本层已完成 | — |
 | L8 | Windows SEH / ARM EH | 长期 | 随 ABI 选择 | — |
@@ -35,7 +36,11 @@
 
 ## §1 短期迭代项
 
-### S1 嵌套聚合字段提取（内存化方案）
+> ⚠️ **本章为历史实现记录**：S1-S6 已全部由第十轮落地（执行明细见
+> `forge-ir-iteration-checklist.md` §0.1 第十轮日志），以下问题解析/代码演示保留供
+> 维护参考，不再作为待办。
+
+### S1 嵌套聚合字段提取（内存化方案）——✅ 已实现（第十轮）
 
 **现状与失败现象**
 
@@ -104,7 +109,7 @@ Opcode::ExtractValue => {
 
 ---
 
-### S2 TypeOps 单类型第二操作数（最大兼容性拦路）
+### S2 TypeOps 单类型第二操作数（最大兼容性拦路）——✅ 已实现（第十轮）
 
 **现状与失败现象**
 
@@ -166,7 +171,7 @@ BinaryOps: (Vec<ParsedOperand>, Vec<(String, MetadataRef)>) = {
 
 ---
 
-### S3 文本层剩余小项
+### S3 文本层剩余小项——✅ 全部已实现（第十轮 S3.1-S3.4）
 
 #### S3.1 `opaque` 类型
 
@@ -229,7 +234,7 @@ lowering.rs 特判分派。）
 
 ---
 
-### S4 verify 语义校验剩余单例
+### S4 verify 语义校验剩余单例——✅ 已实现（第十轮 S4.1-S4.3）
 
 **现状**（roadmap §7）：`check_gep_indices` 已做（标量位置后续索引、struct
 i32 常量）；剩余 3 个缺口：
@@ -255,7 +260,7 @@ if let Some((name, _)) = &alias.target_name {
 
 ---
 
-### S5 工程稳健性
+### S5 工程稳健性——✅ 已处理（第十轮：S5.1 定位、S5.2 记录）
 
 #### S5.1 determinism 测试偶发
 
@@ -285,7 +290,7 @@ for i in $(seq 1 10); do cargo test --workspace --exclude forge-rustc -j 4 2>&1 
 
 ---
 
-### S6 metadata 形状校验扩展（可选）
+### S6 metadata 形状校验扩展（可选）——✅ 已实现（第十轮）
 
 **现状**（`semantics.rs:483-498`）：`!dbg` → 必须 `DILocation`；`!tbaa` →
 tuple tag 结构（`!{!{...}, i64 1}`）；`!range` → 整数区间形状。
@@ -325,12 +330,15 @@ lalrpop 0 冲突 + 增量编译计时。
 3. 热点分析（roadmap 5.2 候选）：`value_map` 查找、display 的
    `self.types.borrow()` 重复借用——收益不确定，按需推进。
 
-### M3 官方用例正向扩充 57→80+
+### M3 官方用例正向扩充 57→80+——✅ 已达成（198/452）
 
-**前置**：S2（TypeOps 单类型）解锁 block-labels/flags 类；S3（opaque/属性组）
+**结果**：第二十三轮收敛至 **198/452**（误接受 0、正确拒绝 254，452 全收敛）；
+中途各轮 +N 见 `forge-ir-iteration-checklist.md` §0.1 与 `forge-ir-remaining-iterations.md` §5。
+
+**历史前置**：S2（TypeOps 单类型）解锁 block-labels/flags 类；S3（opaque/属性组）
 解锁 auto_upgrade 类。
 
-**推进方式**：
+**历史推进方式**：
 1. 重跑失败清单（`--nocapture` 打印 `FAIL xxx: 错误`）；
 2. 按错误 token 聚类（每类 ≥1 个用例通过即算解锁）；
 3. 每类补语法 → `cargo test -p forge-ir` 回归 → compat 统计更新 → 文件头
@@ -361,23 +369,26 @@ Unsupported（栈传递未实现）。
 
 ### L3 vscale 可伸缩向量
 
-**现状**：`<vscale x N x ty>` 需 TypeId 扩展（aarch64 SVE 专用），文本层不做。
+**现状**：✅ 文本层已实现（第十二轮 `<vscale x N x T>` 单 token，lexer.rs:51-55——
+5-token 序列致 LALR 状态爆炸回滚后采用）；TypeId 扩展与指令选择仍不做。
 
 **启动前置**：TypeId 加 vscale 维度 + `size_bytes` 动态化（运行时 xlen 查询）+
 指令选择（SVE 指令族）——独立子项目。
 
 ### L4 inline asm（`call void asm sideeffect "..."`）
 
-**现状**：需 inline-asm 解析器 + 编码器集成——独立子项目。
+**现状**：✅ 文本层已实现（第十六轮 AsmKw 专用 token + call/tail/callbr 三种 asm
+变体）；编码器集成仍不做。
 
-**启动前置**：无（建议在文本层基本完备后再评估）。
+**启动前置**：无（文本层已完备；编码器集成若启动需 inline-asm 解析 + 指令编码）。
 
 ### L5 callbr / token / statepoint / gc / blockaddress
 
-**现状**：LLVM 专用特性，文本层未支持。
+**现状**：callbr（第十二轮）、token 类型（第十轮）、gc 子句（第十七轮）、
+blockaddress（第十六轮，`ptr blockaddress(@f, %label)`）文本层均已实现；仅
+**statepoint** 仍未支持（依赖 intrinsics 体系）。
 
-**启动前置**：callbr（间接跳转+异常边）需 `Terminator` 扩展；token 类型需
-TypeId 扩展；statepoint/gc 依赖 intrinsics 体系——均无近期计划。
+**启动前置**：statepoint 需 intrinsics 体系扩展——无近期计划。
 
 ### L6 裸全局引用 init（`@p = global ptr @h`）
 
@@ -431,7 +442,7 @@ cargo test -p forge-ir
 
 # compat 统计 + 失败清单（每轮开工/收尾跑一次）
 cargo test -p forge-ir --test llvm_assembler_compat -- --nocapture
-#   输出示例：parse ok 57/452（负向正确拒绝 210，误接受 47）
+#   输出示例：parse ok 198/452（负向正确拒绝 254，误接受 0）
 #   FAIL xxx.ll: parse error: ...（按错误 token 聚类推进 S3/M3）
 
 # 负向语义校验（verify_negative 新增回归测试）
@@ -466,12 +477,13 @@ cargo check -p forge-ir   # 冲突会以 build 错误报出（Local ambiguity / 
 4. 基准变化更新 `docs/bench_baseline.md`；
 5. 新增 LALR 冲突形态 → 附录 §6 备忘表加行。
 
-### 已知长期基线（第九轮）
+### 已知长期基线（当前，452 全收敛后）
 
 | 指标 | 基线 |
 |------|------|
-| workspace suite | 49 全绿（determinism 并行偶发，单独跑必过） |
-| compat 正向 | 57/452 |
-| compat 负向 | 正确拒绝 210、误接受 47（全为 DI 类） |
+| workspace suite | 48 全绿（第三十三轮移除 wasm32/minimal_sd 测试模块） |
+| compat 正向 | 198/452 |
+| compat 负向 | 正确拒绝 254、误接受 0 |
+| roundtrip | 0 缺口（198 checked / 254 skip，常规回归） |
 | parse 基准 | parse_medium_module ~57µs、roundtrip ~148µs |
 | 增量编译 | 5-10s（lalrpop 单文件） |

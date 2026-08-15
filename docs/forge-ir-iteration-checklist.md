@@ -12,13 +12,13 @@
 
 | 指标 | 基线 |
 | ------ | ------ |
-| workspace suite | 49 全绿（determinism 并行偶发，单独跑必过） |
+| workspace suite | 48 全绿（第三十三轮移除 wasm32/minimal_sd 测试模块；determinism 并行偶发已定位为 cargo 链接竞争，第十轮 S5.1） |
 | compat 正向 | 57/452 |
-| compat 负向 | 正确拒绝 210、误接受 47（全为 DI 类） |
+| compat 负向 | 正确拒绝 210、误接受 47（其中 7 个非 DI，见第十轮收尾；终态已收口为 254 拒绝 / 0 误接受） |
 | parse 基准 | `parse_medium_module` ~57µs、roundtrip ~148µs |
 | 增量编译 | 5-10s（lalrpop 单文件 ~2000 行） |
 
-**建议开工顺序（依赖驱动）**
+**建议开工顺序（依赖驱动）**（注：该顺序已被第十轮实际执行完成，见 §0.1 与 §1 状态标注）
 
 ```text
 主线（文本层正向扩充）：S2 → S3.1/S3.2/S3.3 → M3
@@ -41,16 +41,17 @@
 | S3.2 属性组引用变体 | ✅ | captures(none)/ret:none；callee-type 前缀 metadata 因与 DeclareTail MetadataAttach+ 状态合并冲突回滚（LALR 本质，附录 §6） |
 | S3.3 global 尾 metadata | ✅ | 全局字符串属性对 `"key" = "value"`；dso_local ifunc 因 LinkageSeq 冲突回滚 |
 | S3.4 fpext/fptrunc lowering | ✅ | x86_v10.toml `[lower.Fptrunc]`（movsd+cvtsd2ss）/`[lower.Fpext]`（movss+cvtss2sd）+ CVTSD2SS/CVTSS2SD 模板（F2/F3 0F 5A）；test_fptrunc/test_fpext 端到端执行通过 |
-| M3 官方用例扩充 | ✅（57→74） | 目标 80+ 未完全达成：剩余 DI 验证器类（L1 明确不做）、atomicrmw 前向值引用（语义层两遍构建）、vscale（L3）、inline asm（L4）等；本轮 +17（atomic 全形态/常量折叠表达式/命名调用约定/splat/浮点 hex 字面量族） |
+| M3 官方用例扩充 | ✅（57→71） | 目标 80+ 未完全达成：剩余 DI 验证器类（L1 明确不做）、atomicrmw 前向值引用（语义层两遍构建）、vscale（L3）、inline asm（L4）等；本轮 +14（atomic 全形态/常量折叠表达式/命名调用约定/splat/浮点 hex 字面量族） |
 | S1 嵌套聚合字段提取 | ✅ 完整验收 | `agg_slots: HashMap<Value,(addr,ty)>` 映射方案（非 backlog 草图的 ValueDef::SlotAddr——实测无该变体）；参数路径 alloca+段 store 内存化、load 路径地址链登记、内层提取递归队列；`{{i32,i32},i32}` 两级提取参数/load 双路径端到端 = 9（对照 clang）；非对齐字段（off%8!=0）按时间盒口径保持 Unsupported |
 | S4 verify 三缺口 | ✅ | S4.1 struct 非常量索引报错（含回归测试）；S4.2 global-init cast 链校验（ptrtoint/inttoptr 类型匹配——invalid_cast4 修回正确拒绝）；S4.3 alias 前向引用确认现状已支持（名字延迟解析） |
 | S6 metadata 扩展 | ✅ | splat 常量表达式（global init/指令操作数）、浮点 hex 字面量（0xH/0xR/0xK/0xL/0xM/0xJ/f0x）、x86_fp80/ppc_fp128 类型宽松、ExprValue True/False、CmpScalarValue 常量表达式、GlobalInit 带类型前缀表达式 |
 | S5.1 determinism 偶发 | ✅ 定位 | 偶发为 Windows 高并行 cargo 链接/rmeta 竞争（`link.exe 1102`/`only metadata stub found`）——`-j 4` 下 workspace 全量稳定全绿；forge-dsl determinism 测试进程内确定性已验证（与模型迭代序无关） |
 | S5.2 load 快照语义 | ✅ | 已在 expand_large_aggs 文档注释中说明"load 后内存被改写时重新 load 不保留快照语义（常见模式安全）" |
 
-**第十轮收尾状态**：compat 正向 74/452、负向正确拒绝 210/误接受 47（非 DI 7 个）；workspace 全量（-j 4）全绿；lalrpop 0 冲突。
+**第十轮收尾状态**：compat 正向 71/452、负向正确拒绝 210/误接受 47（非 DI 7 个）；workspace 全量（-j 4）全绿；lalrpop 0 冲突。
+（注：正向数按 `llvm_assembler_compat.rs:29` 测试头 57→71 为准；本文件旧版误记 74。）
 
-**第十一轮执行结果（2026-08，已完成）**——compat 74→**127/452**（+53）、负向正确拒绝 197/误接受 60、workspace 全量全绿、lalrpop 0 冲突：
+**第十一轮执行结果（2026-08，已完成）**——compat 71→**127/452**（+56）、负向正确拒绝 197/误接受 60、workspace 全量全绿、lalrpop 0 冲突：
 
 | 迭代项 | 状态 | 结果 |
 | -------- | ------ | ------ |
@@ -145,6 +146,12 @@
 与负向纪律规则见 **`docs/forge-ir-remaining-iterations.md`**（§1 逐项清单 / §2 冲突
 案例集 / §3 纪律规则 / §5 建议执行顺序）。
 
+**第十八～二十三轮记录断档说明**：第十七轮后的负向计数在
+`docs/forge-ir-remaining-iterations.md` §5 逐轮记录。其中第二十一轮的**判定修正**
+把部分用例在正向/负向桶间重判（该轮 +8 正向与误接受 67→6 同源），使正确拒绝计数
+在该轮前后**非单调**（修正前曾达 257，修正后收敛 254）；终态以 remaining-iterations
+的 **198/452、254 正确拒绝、0 误接受**（=452 全收敛）为准。
+
 **第十七轮新增已知失败**：elementtype 函数类型内嵌形态（LR 冲突）；其余与历轮归档一致。
 
 **第十六轮新增已知失败**：ptrauth-const（4 参数 vs 负向纪律）、max-inttype（位宽全链）、masked-load/skip-value-numbers-globals/opaque-ptr-intrinsic-remangling（未定位）。
@@ -165,7 +172,10 @@
 
 ## §1 短期迭代项
 
-### S1 嵌套聚合字段提取（内存化方案）
+> ⚠️ **本章为历史规划记录**：S1-S6 已全部由第十轮落地（见 §0.1 第十轮执行结果），
+> 以下问题解析/改造演示保留供维护参考，不再作为待办。
+
+### S1 嵌套聚合字段提取（内存化方案）——✅ 已实现（第十轮）
 
 **一句话目标**：`extractvalue` 的字段类型本身是聚合时（如 `{{i32, i32}, i32}` 取字段 0），不再报 Unsupported，而是内存化后继续提取。
 
@@ -317,8 +327,9 @@ if let Some(slot) = agg_slots.get(&operands[0]) {
 
 #### 1.4 边界与风险（含对 backlog 草图的核对）
 
-- ⚠ **`ValueDef::SlotAddr` 不存在**：`dfg.rs:28-36` 的 `ValueDef` 只有
-  `Inst / Param / AggConst` 三个变体。backlog 草图写"def 记为槽地址（复用
+- ⚠ **`ValueDef::SlotAddr` 不存在**：`dfg.rs:28-39` 的 `ValueDef` 有
+  `Inst / Param / AggConst / UndefNamed` 四个变体（第二十九轮新增 `UndefNamed`——
+  前向引用占位保留名字）。backlog 草图写"def 记为槽地址（复用
   ValueDef 的地址语义）"是**示意**——真加变体要同步 display、verify、regalloc
   等所有消费方。推荐落地形态是 1.3 的**映射表方案**（仿 `LoadInfo`），
   零 IR 结构改动；`ValueDef` 扩展留作备选。
@@ -345,7 +356,7 @@ if let Some(slot) = agg_slots.get(&operands[0]) {
 
 ---
 
-### S2 TypeOps 单类型第二操作数（最大兼容性拦路）
+### S2 TypeOps 单类型第二操作数（最大兼容性拦路）——✅ 已实现（第十轮）
 
 **一句话目标**：支持 LLVM 现代语法 `add i32 %a, %b`（第二操作数无类型，
 类型从第一操作数推导）。
@@ -472,7 +483,7 @@ BinaryOps: (Vec<ParsedOperand>, Vec<(String, MetadataRef)>) = {
 
 ---
 
-### S3 文本层剩余小项
+### S3 文本层剩余小项——✅ 全部已实现（第十轮 S3.1-S3.4）
 
 #### S3.1 `opaque` 类型
 
@@ -561,7 +572,7 @@ cvtsd2ss 转换后结果在 rd 低 32 位，与 rd==32 的 opsize 匹配）。�
 
 ---
 
-### S4 verify 语义校验剩余单例
+### S4 verify 语义校验剩余单例——✅ 已实现（第十轮 S4.1-S4.3）
 
 **一句话目标**：补 3 个负向校验缺口，让对应"误接受"转"正确拒绝"。
 
@@ -664,7 +675,7 @@ for alias in module.iter_global_aliases() {
 
 ---
 
-### S5 工程稳健性
+### S5 工程稳健性——✅ 已处理（第十轮：S5.1 定位、S5.2 记录）
 
 #### S5.1 determinism 测试偶发
 
@@ -696,7 +707,7 @@ load 地址时插入显式拷贝（≤8 字节小聚合可整值拷贝）。无�
 
 ---
 
-### S6 metadata 形状校验扩展（可选）
+### S6 metadata 形状校验扩展（可选）——✅ 已实现（第十轮）
 
 **现状**：`validate_metadata_shapes`（`semantics.rs:483-524`）已做：
 `!dbg` → 必须 `DILocation`；`!tbaa` → tuple tag 结构；`!range` → 整数区间
@@ -746,12 +757,15 @@ token 集合（S2 的专用 token 化反而会**膨胀**状态，需权衡）或
    借用——收益不确定，先用 `cargo bench -p forge-ir --bench ir_parse` 出
    profile 再决定。
 
-### M3 官方用例正向扩充 57→80+
+### M3 官方用例正向扩充 57→80+——✅ 已达成（198/452）
 
-**前置**：S2（解锁 block-labels/flags 类）、S3（opaque/属性组解锁
+**结果**：第二十三轮收敛至 **198/452**（误接受 0、正确拒绝 254）；逐轮增量见
+`forge-ir-remaining-iterations.md` §5。
+
+**历史前置**：S2（解锁 block-labels/flags 类）、S3（opaque/属性组解锁
 auto_upgrade 类）。
 
-**推进方式**（每轮重复直到收敛）：
+**历史推进方式**（每轮重复直到收敛）：
 
 1. `cargo test -p forge-ir --test llvm_assembler_compat -- --nocapture`
    重跑失败清单；
@@ -769,9 +783,9 @@ auto_upgrade 类）。
 | --- | -------- | ---------- | ------ |
 | L1 | DI 验证器（~40-46 负向误接受） | 无（明确不做） | DINode 字段校验是独立工程，工作量大收益低 |
 | L2 | >16 字节聚合 ABI 栈传递 | 栈帧 ABI 设计（参数区布局、16 字节对齐、调用方/被调方职责） | 现 ≤16 字节走 SysV 整数寄存器；`compiler.rs:300-303` 报 Unsupported |
-| L3 | vscale 可伸缩向量 | TypeId 加 vscale 维度 + `size_bytes` 动态化（运行时 xlen）+ SVE 指令选择 | 独立子项目 |
-| L4 | inline asm（`call void asm sideeffect`） | 无（文本层基本完备后再评估） | 需 inline-asm 解析器 + 编码器集成 |
-| L5 | callbr / token / statepoint / gc / blockaddress | callbr 需 `Terminator` 扩展；token 需 TypeId 扩展；statepoint/gc 依赖 intrinsics | 均无近期计划 |
+| L3 | vscale 可伸缩向量 | TypeId 加 vscale 维度 + `size_bytes` 动态化（运行时 xlen）+ SVE 指令选择 | ✅ 文本层已实现（第十二轮 lexer 单 token）；TypeId/codegen 仍不做 |
+| L4 | inline asm（`call void asm sideeffect`） | 编码器集成（若启动） | ✅ 文本层已实现（第十六轮 call/tail/callbr 三形态）；编码器集成仍不做 |
+| L5 | callbr / token / statepoint / gc / blockaddress | statepoint 需 intrinsics 体系 | callbr（十二轮）/token（十轮）/gc（十七轮）/blockaddress（十六轮）文本层已实现；仅 statepoint 未支持 |
 | L6 | 裸全局引用 init（`@p = global ptr @h`） | 无（语法本质不可解） | LALR(1) 2-lookahead 歧义；用 `ptr @h` 带类型形式 |
 | L7 | SjLj 异常代码生成 | `setjmp/longjmp` 模拟 + libc 链接 + 帧展开设计 | 文本层已完成（invoke/landingpad/resume/personality 全链路） |
 | L8 | Windows SEH / ARM EH | 平台 ABI 工程（`.xdata`/`.pdata` 或 `.ARM.exidx`） | 随 ABI 选择 |

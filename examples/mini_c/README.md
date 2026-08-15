@@ -37,7 +37,7 @@ cargo test -p mini_c
 - `for (int i = init; cond; update) { ... }`
 - `break;` / `continue;`
 - `enum Name { A, B, C=10, D };` — enum defs (auto-increment, explicit values, hex)
-- `struct Name { int x; int y; };` — struct definitions (parsing/schema done; runtime WIP)
+- `struct Name { int x; int y; };` — struct definitions（解析/运行期均已支持）
 
 ### Expressions
 
@@ -54,12 +54,10 @@ cargo test -p mini_c
 ### Not Supported
 
 - Pointers, arrays, floats, `char` type, `void`
-- Struct field access at runtime (parsing + schema complete)
-- Named struct types (e.g. `struct Point` — parsing + schema complete)
 - `switch`, `goto`, labels
 - Ternary conditional `?:`
 - Comma operator
-- Nested/multi-call expressions and recursive function calls
+- Recursive function calls（调用经 AST 级内联实现，递归会无限内联）
 - Multi-file, preprocessor directives
 
 ## Architecture
@@ -143,9 +141,11 @@ examples/mini_c/
    relocation 解析。mini_c 的 `add(2,3)` 跨函数调用测试通过
    （`test_hir_e2e_params`）。
 
-3. **Struct field access**: Parsing and schema are fully implemented, but
-   `load`/`store` after `iadd` on pointers doesn't produce correct x86 code
-   for field offsets (returns pointer value instead of loaded data).
+3. ~~**Struct field access**~~ **已支持（2026-08）**。旧实现依赖
+   `load`/`store` 在 `iadd(ptr, offset)` 后的 x86 编码（返回指针值而非数据）；
+   现改为**每字段独立栈槽**（`alloc_struct_fields`，src/codegen.rs），字段访问
+   不再依赖指针算术。9 个 struct 集成测试 + `dual_backend_tests::both_structs`
+   双后端一致通过。
 
 4. **`alloca` not supported**: Uses `stack_addr(0) + iadd` for local variable
    stack allocation instead of the `alloca` IR instruction.

@@ -37,14 +37,16 @@ code-forge (root umbrella)
 ├── forge-ir          (no internal deps)
 ├── forge-mem         (no internal deps)
 ├── forge-opt         → forge-ir
-├── forge-codegen     → forge-ir, forge-opt, forge-mem, forge-dsl, forge-grammar, forge-asm
-├── forge-dsl         → forge-grammar (proc-macro)
+├── forge-codegen     → forge-ir, forge-opt, forge-mem, forge-dsl, forge-asm
+├── forge-dsl         → forge-grammar (proc-macro; forge-grammar 经此传递使用)
 ├── forge-grammar     (no internal deps)
-├── forge-asm         (zero deps)
+├── forge-hir-macro   (no internal deps)
+├── forge-hir         → forge-ir, forge-grammar, forge-hir-macro
+├── forge-asm         (零内部依赖；外部依赖 logos/lalrpop-util)
 ├── forge-object      → forge-ir, forge-codegen
 ├── forge-plugin      → forge-codegen
-├── forge-rustc       → code-forge
-└── forge-tests       → code-forge
+├── forge-rustc       → code-forge (强制 object-file/plugins features)
+└── forge-tests       → code-forge, forge-rustc(optional, nightly feature)
 ```
 
 ### Key Architecture Rules
@@ -61,23 +63,14 @@ code-forge (root umbrella)
 
 ```rust
 // crates/backend/forge-codegen/src/my_isa.rs
-use crate::Registry;
-use crate::register_backend;
-
 forge_dsl::isa_from_file!("isa/my_isa.toml");
-
-pub type MyIsa = self::my_isa::Isa;
-pub type MyInst = self::my_isa::Inst;
-
-pub fn ensure_registered() {
-    static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    INIT.get_or_init(|| {
-        if !Registry::global().contains("my_isa") {
-            register_backend!(MyIsa);
-        }
-    });
-}
+pub use self::my_isa::*; // 生成 TargetMachine / Inst / IsaInfo 等全套组件
+// 注册由 DSL 生成的 ensure_registered() 完成（OnceLock 注册 Registry + reloc patcher），
+// 无需手写——见 arch/x86_64.rs 的实际形态。
 ```
+
+> 注：生成模块导出的是 `TargetMachine`（组合 RegInfo/ABI/Lowering/Encoder/
+> FrameLowering/Disassembler/Assembler），**没有 `Isa` 类型**；无 `register_backend!` 宏。
 
 ### Frontend Pipeline (forge-grammar v21)
 

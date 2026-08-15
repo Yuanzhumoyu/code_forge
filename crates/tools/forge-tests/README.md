@@ -1,7 +1,8 @@
 # forge-tests — 通用 ISA 测试框架
 
-`forge-tests` 为 code-forge 的 ISA 后端（内置 x86_64 / aarch64 / riscv64(wasm32 测试模块第三十三轮已移除)，
-以及**用户自定义指令集**如 minimal_sd）提供统一的测试框架：覆盖矩阵（compile-only）、
+`forge-tests` 为 code-forge 的 ISA 后端（内置 x86_64 / aarch64 / riscv64；wasm32 测试模块已移除，
+编译覆盖在 forge-codegen 的 `arch/wasm32.rs` 内嵌测试；用户自定义 ISA 接入示例见 forge-codegen
+的 `arch/minimal_sd_test.rs`）提供统一的测试框架：覆盖矩阵（compile-only）、
 编码断言（encode-golden）、反汇编断言（disasm）、执行测试（本机 / unicorn 跨架构模拟）、
 性质测试（确定性 / 恒等式 / 边界值），全部通过 Cargo features 按 ISA 与指令类型开关。
 
@@ -46,17 +47,15 @@ src/
 │                     # disasm! / exec! / exec_f64! / exec_args! 宏 + nightly 模块
 ├── coverage.rs       # 75 ops 覆盖矩阵（compile-only）+ capability 守卫 + 全清零断言
 ├── isa/
-│   ├── mod.rs        # ISA 模块门控（isa-* feature；wasm32/minimal_sd 始终启用）
+│   ├── mod.rs        # ISA 模块门控（isa-* feature）
 │   ├── cross_arch_exec.rs  # 跨架构模拟执行（exec-unicorn）
 │   ├── x86_64/
 │   │   ├── mod.rs    # 指令类型模块门控（test-* feature）
 │   │   ├── int.rs / float.rs / io.rs / control.rs  # 本机执行测试
 │   │   ├── encode.rs # 编码 golden（encode_golden! 宏 + 迁移自根 encoder_tests）
 │   │   ├── disasm.rs # 反汇编断言（disasm! 宏）
-│   │   └── jit.rs    # JIT 集成测试（156 条，迁移自根 jit_integration）
+│   │   └── jit.rs    # JIT 集成测试（298 条，迁移自根 jit_integration）
 │   ├── aarch64/ riscv64/   # 同 x86_64 结构（compile-only；执行经 exec-unicorn）
-│   ├── wasm32/       # compile-only：coverage + 编码 + 反汇编
-│   └── minimal_sd.rs # DSL 生成示例 ISA（用户自定义 ISA 接入示例）
 └── exec/
     ├── harness.rs    # 统一 harness：build → compile → exec（run_i32/i64/f64/args_i64、compile_ok）
     ├── executor.rs   # Executor trait（本机 NativeExecutor + unicorn）
@@ -75,16 +74,14 @@ src/
 ```rust
 // crates/backend/forge-codegen/src/my_isa.rs
 forge_dsl::isa_from_file!("isa/my_isa.toml");
-pub type MyIsa = self::my_isa::Isa;
-pub fn ensure_registered() {
-    static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    INIT.get_or_init(|| {
-        if !Registry::global().contains("my_isa") {
-            register_backend!(MyIsa);
-        }
-    });
-}
+pub use self::my_isa::*; // 生成 TargetMachine / Inst / IsaInfo 等全套组件
+// 注册由 DSL 生成的 ensure_registered() 完成（Registry + reloc patcher OnceLock）
 ```
+
+> 注：生成的顶层类型是 `TargetMachine`（组合 RegInfo/ABI/Lowering/Encoder/
+> FrameLowering/Disassembler/Assembler 组件），不是 `Isa`；注册走
+> `Registry::global().register_backend(...)`（DSL 生成的 `ensure_registered()` 内），
+> 无 `register_backend!` 宏。
 
 ### 2. 接入各类测试（宏）
 

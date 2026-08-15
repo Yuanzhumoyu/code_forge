@@ -94,13 +94,13 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 # 端到端真值测试（编译→链接→执行→校验退出码）
 cargo test -p forge-rustc --test e2e
 
-# PowerShell 集成测试（等价）
+# PowerShell 集成测试（简化版，11 个标量用例子集；完整覆盖见 e2e）
 powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 ```
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 硬断言，55 用例全部非 known 全绿 + cargo 集成；另有 2 个 known_failure 显式清单：vec_push / vec_string——见下方限制表）
+### ✅ 已验证（e2e 硬断言，56 用例全部非 known 全绿 + cargo 集成；共 58 项，另有 2 个 known_failure 显式清单：vec_push / vec_string——见下方限制表）
 
 | 类别 | 内容 |
 | ------ | ------ |
@@ -108,7 +108,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 | 控制流 | if/else、while、loop+break、match（SwitchInt 多分支含 otherwise）、早期返回 |
 | 函数调用 | 直接调用、递归、跨 crate 泛型单态化（如 `core` 的 `wrapping_add`）、`i64`/`f64` 返回值 |
 | 调用约定 | Windows x64：参数按位置分类（前 4 位置寄存器/第 5+ 压栈，栈参数地址虚拟 XReg 参与分配）、浮点 XMM0-3（FPR→XMM 用 movsd，0F 6E 的 rm 是 GPR 命名空间会读到 GPR 垃圾）、32 字节 shadow space、sret（经 sret 指针参数）、**返回值 RAX 传递方向正确** |
-| FFI | `extern "C"` 外部符号 → UNDEF 重定位 + 系统库链接（验证：`ExitProcess`/`GetCurrentProcessId`）；diverging call（`-> !`）后发 unreachable 终结符 |
+| FFI | `extern "C"` 外部符号 → UNDEF 重定位 + 系统库链接（验证：`ExitProcess`）；diverging call（`-> !`）后发 unreachable 终结符 |
 | 聚合类型 | 结构体/元组构造与字段读写、嵌套结构体、可变字段、引用（`&`/`&mut`/解引用）、数组多索引 |
 | 浮点/混合参数 | 纯浮点参数、整数+浮点混合参数；浮点常量经 `Fconst` 加载到 FPR（iconst 走 GPR）、比较按 `is_fp` 分派 `fcmp`、`Fload`/`Fstore` 按类型分派（MOVSD_RM/MR）——f64 值全程 FPR，不再走 GPR 位模式 |
 | 内存模型 | 局部变量栈槽（layout 驱动大小）、`stack_addr`+`load/store`、帧布局（spill+locals） |
@@ -161,7 +161,7 @@ rustc (codegen_crate)
 
 - **无 phi**：forge-ir 无 phi 节点，循环回边重定义靠栈槽内存模型（重新 load）保证正确。
 - **失败即报错**：任何不支持的 MIR 构造 → `tcx.dcx().err(...)` 使编译失败，绝不产出桩函数。
-- **`overflow-checks=off`**：checked 算术的元组结果未实现，测试统一关闭溢出检查。
+- **`overflow-checks=off`**：常规 `+`/`-`/`*` 的溢出 Assert 分支未覆盖（checked 元组结果本身已实现——见支持矩阵），测试统一关闭溢出检查。
 - **单对象文件**：所有实例合并进一个 `.o`（多 CGU 场景由 rustc 接受），`join_codegen` 提供 WorkProduct 元数据支持增量缓存。
 
 ## 路线图（远期，P4.7/P4.8 评估结论）

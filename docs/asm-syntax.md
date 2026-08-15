@@ -91,8 +91,8 @@ forge-codegen
 ## 用法
 
 ```rust
-use code_forge::machine::assembler::TargetAssembler;
-use code_forge::x86_64::Assembler;
+use code_forge::backend::machine::assembler::TargetAssembler;
+use code_forge::backend::x86_64::Assembler;
 
 let asm = Assembler;
 let insts = asm.parse_insts("mov RAX, RBX\nadd RAX, 5\n")?;      // Vec<Inst>
@@ -103,8 +103,8 @@ let lines = asm.parse_lines("mov rd, rs1\n")?;                    // 中间表�
 
 - **标签地址为字节偏移**：占位绑定（rel=0）后经每 ISA `Encoder::encoded_size`
   计算逐条指令长度，标签回填为字节偏移（rel 固定宽度，占位不影响长度）。
-- `MemRef` 绑定支持 `[base ± disp]`（x86 spill 模板形态，`MemRef` 类型仅含
-  base/offset）；SIB 展开式（`lea` 的 `[base+index*scale+disp]`）按独立字段
+- `MemRef` 绑定支持 `[base ± disp]`（x86 spill 模板形态，`MemRef` 类型含
+  base/offset/width 三字段）；SIB 展开式（`lea` 的 `[base+index*scale+disp]`）按独立字段
   绑定——这是 `MemRef` 类型的能力边界，非解析器限制。
 - 模板字面写死的标识符（如 `[RBP+…]`）会作为保留字 token，但 Reg 规则显式
   接受全部保留字，`mov RBP, …` 等写法不受影响。

@@ -12,7 +12,7 @@
 | WA-02 | backend.rs `collect_instances` | alloc crate 的 `__rust_alloc` 等 shim 实例若编译，与手写 shim（alloc_runtime.rs）重复定义 → LNK2005 | `collect_instances` 过滤 alloc_shims 名单 | 无（设计取舍：手写 shim 绕过 Layout/Alignment lowering） |
 | WA-03 | backend.rs `MonoItem::GlobalAsm` | global_asm 无实现 | 直接 `dcx().err`（编译失败而非静默） | 主库：GlobalAsm → 对象文件段支持 |
 | WA-04 | README（用法） | `-Zshare-generics=yes` 下 core/alloc 泛型实例的辅助函数（`is_null`/`precondition_check`）LLVM 侧未生成 → LNK2019 | 依赖 LLVM 侧生成；文档列为已知残余 | 主库：补生成"被引用但上游未生成的实例" |
-| WA-05 | README（用法） | checked 算术的元组结果（overflow）未实现 | 测试统一 `-C overflow-checks=off` | 主库：`sadd_overflow` 等已有 API，rustc 侧补 tuple 拆写完整路径 |
+| WA-05 | README（用法） | 常规 `+`/`-`/`*` 的溢出 Assert 分支未覆盖（checked 元组结果本身已实现：`sadd_overflow` 等 API + tuple 拆写完整路径） | 测试统一 `-C overflow-checks=off` | 主库：常规算术溢出 Assert 语义（checked 路径已通） |
 
 ## 布局/降级层
 
@@ -32,4 +32,4 @@
 | --- | --- | --- |
 | WA-12 | README 用法 | `no_main` + `#[no_mangle] extern "C" fn main() -> i32` 走 MSVC 默认入口，无需 `/ENTRY` |
 | WA-13 | tests/e2e.rs | 诊断输出全部 `FORGE_TRACE_*` env 门控（trace.rs 登记），不污染正常 stderr |
-| WA-14 | lower/intrinsics.rs `write_bytes` + 主库 lowering `mem_opsize_from_type` + forge-rustc `rvalue.rs` cast mask | write_bytes 内联循环越界读写（e2e `write_bytes_loop`） | **2026-08 已修并转正**：①块参数传参两层（map_terminator 复用 arg 映射 + pre_allocate 顺序）；②**窄类型宽度**——主库 Load/Store 用真实内存宽度（u8 读/写 1 字节不再越界 4 字节，`mem_opsize_from_type` 不枚举不截断、自定义非常规宽度原样传递）+ forge-rustc IntToInt cast 对 u8/u16 无符号源零扩展 mask——`write_bytes_loop` PASS exit=342（e2e 55/57） | 已关闭 |
+| WA-14 | lower/intrinsics.rs `write_bytes` + 主库 lowering `mem_opsize_from_type` + forge-rustc `rvalue.rs` cast mask | write_bytes 内联循环越界读写（e2e `write_bytes_loop`） | **2026-08 已修并转正**：①块参数传参两层（map_terminator 复用 arg 映射 + pre_allocate 顺序）；②**窄类型宽度**——主库 Load/Store 用真实内存宽度（u8 读/写 1 字节不再越界 4 字节，`mem_opsize_from_type` 不枚举不截断、自定义非常规宽度原样传递）+ forge-rustc IntToInt cast 对 u8/u16 无符号源零扩展 mask——`write_bytes_loop` PASS exit=342（e2e 56/58） | 已关闭 |

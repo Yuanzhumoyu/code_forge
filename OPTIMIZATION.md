@@ -4,7 +4,7 @@
 12th Gen i9-12900H / Windows 11）得出的编译管线热点分析与优化清单。
 
 运行基准：`cargo bench --bench compile_bench -- '^(ir_build|ir_parse|opt_|pipeline_breakdown|codegen|verify|module|throughput|code_size|comparison|e2e_compile_)'`
-（`e2e_jit_execute` 在 release 下已知挂起，单独排除）。
+（`e2e_jit_execute` 已纳入默认运行——JIT 正确性修复后不再挂起，见 BENCHMARKS.md）。
 
 时间均为 criterion median（µs，除注明 ms）。
 
@@ -14,17 +14,17 @@
 
 | 优先级 | 项 | 现象（实测） | 状态 |
 | --- | --- | --- | --- |
-| **P0** | forge-grammar 解析 O(n³) 病态 | 2 条指令 13.0 ms → 8 条 100 ms → 300 条 ≈ 5.6 h | 需评估（大改） |
-| **P1** | SCCP 单 pass 最贵 | 72.5 µs @ many_ops（const_fold 的 2.5×） | 可实施 |
+| **P0** | forge-grammar 解析 O(n³) 病态 | 2 条指令 13.0 ms → 8 条 100 ms → 300 条 ≈ 5.6 h | **已修复（2026-08-03）**：根因为 lexer O(n²)，零拷贝 + match_here 后 simple_add 13ms→317µs；再经 logos+lalrpop 重写 → 9.34µs（见 §9） |
+| **P1** | SCCP 单 pass 最贵 | 72.5 µs @ many_ops（const_fold 的 2.5×） | **已部分实施**：小整数快路径（§9，-12%） |
 | **P1** | codegen_mem 最贵 | 451.9 µs（x86），e2e 172.6 µs | 需分析 |
 | **P1** | codegen_big_loop | 1.14 ms（x86），e2e 310.9 µs | 需分析 |
-| **P1** | Nop tombstone 残留 | O2/O3 管线留下 Nop，拖入 codegen | **可实施（简单）** |
+| **P1** | Nop tombstone 残留 | O2/O3 管线留下 Nop，拖入 codegen | **已实施（2026-08-03）**：O2/O3 末尾追加 DeadCodeElim，e2e_compile_loop -36% |
 | **P2** | const_fold（O1 最贵） | 28.9 µs @ many_ops | 可实施 |
 | **P2** | codegen_float | 251.7 µs；e2e 206.7 µs | 需分析 |
 | **P2** | 测量环境不稳定 | 同输入跨组 2–4× 差异 | 文档/流程 |
 | **P2** | 小函数 prologue 开销 | codegen_simple_add 6.9 µs vs ir_build 1.9 µs | 可实施（需谨慎） |
 | **P3** | verify 成本 | verify_many_ops 24 µs | 观察 |
-| **P3** | 反汇编/解码器缺失 | 无后端实现 decoder/disassembler，无法基准化 | 记录 |
+| **P3** | 字节→指令解码器缺失 | `TargetDecoder` 无实现（`TargetDisassembler` 为 DSL 生成的 Inst→文本格式化器） | 记录 |
 
 ---
 

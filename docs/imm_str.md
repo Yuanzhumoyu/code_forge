@@ -6,7 +6,7 @@
 
 项目中存在大量字符串克隆与重复分配：
 
-- `forge-ir` 的 `Function.name`、`GlobalVariable.name`、`Comdat.name`、`Alias.name`、
+- `forge-ir` 的 `Function.name`、`GlobalVariable.name`、`Comdat.name`、`GlobalAlias.name`、
   `SymbolInfo.section`、`TargetTriple` 四字段、`DebugInfo.file` 等均为 `String`，
   `Module` 维护三张 `HashMap<String, _>` 符号索引表，每次 `add_function` 都要
   `name.to_string()` 克隆一份堆字符串；
@@ -192,16 +192,16 @@ trait 实现：
 
 ### P0 — 符号名 + Module 索引表
 
-- [x] `Function.name: String → ImmStr`（function.rs:193）
-- [x] `GlobalVariable.name: String → ImmStr`（function.rs:464）
-- [x] `Comdat.name: String → ImmStr`（symbol.rs:207）
-- [x] `Alias.name: String → ImmStr`（symbol.rs:308）
-- [x] `SymbolInfo.section: Option<String> → Option<ImmStr>`（symbol.rs:227）
+- [x] `Function.name: String → ImmStr`（function.rs:200）
+- [x] `GlobalVariable.name: String → ImmStr`（function.rs:645）
+- [x] `Comdat.name: String → ImmStr`（symbol.rs:174）
+- [x] `GlobalAlias.name: String → ImmStr`（function.rs:668——原 `Alias` 已并入 `GlobalAlias`）
+- [x] `SymbolInfo.section: Option<String> → Option<ImmStr>`（symbol.rs:194）
 - [x] `Module` 三张索引表 `HashMap<String,_> → HashMap<ImmStr,_>`
-  （`func_names`/`global_names`/`comdat_names`，function.rs:523-534；
+  （`func_names`/`global_names`/`comdat_names`，function.rs:741-754；
   `Borrow<str>` 令 `find_function(&str)` 等查询零克隆）
 - [x] `Function::new` 签名 `name: String → name: impl Into<ImmStr>`
-  （builder.rs:53、semantics.rs、jit.rs 等调用方同步）
+  （builder.rs:133、semantics.rs、jit.rs 等调用方同步）
 
 ### P0 — 显示热路径
 
@@ -212,11 +212,11 @@ trait 实现：
 ### P1 — 结构数据
 
 - [x] `TargetTriple.{arch,vendor,os,environment}: String → ImmStr`
-  （data_layout.rs:468-476，parse 切片直转，短字段零分配）
-- [x] `SourceLocation.file: Option<String> → Option<ImmStr>`（debug_info.rs:12）
-- [x] `DebugInfo.function_name: Option<String> → Option<ImmStr>`（debug_info.rs:56）
+  （data_layout.rs:472-480，parse 切片直转，短字段零分配）
+- [x] `SourceLocation.file: Option<String> → Option<ImmStr>`（debug_info.rs:13）
+- [x] `DebugInfo.function_name: Option<String> → Option<ImmStr>`（debug_info.rs:57）
 - [x] `FunctionSignature.params: Vec<(TypeId, String)> → Vec<(TypeId, ImmStr)>`
-  （types.rs:552）
+  （types.rs:678）
 
 ### P1 — 字面量 + 解析器
 

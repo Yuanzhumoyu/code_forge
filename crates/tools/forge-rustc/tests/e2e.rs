@@ -2,9 +2,9 @@
 //! 运行产物并校验退出码（入口函数返回值 = 进程退出码）。
 //!
 //! 这是本 crate 的**统一测试体系**（P4.5）：
-//! - 用例清单即 `CASES` 数组（57 项，含 `known_failure` + `reason` 回归探针）
+//! - 用例清单即 `CASES` 数组（58 项，含 `known_failure` + `reason` 回归探针）
 //! - 旧的 `stage_a.rs` / `run_tests.sh` / `test_runner.sh` 已并入本文件并删除
-//! - `rustc_integration_test.ps1` 为等价的 PowerShell 入口（README 引用）
+//! - `rustc_integration_test.ps1` 为简化版 PowerShell 入口（11 个标量用例子集；README 引用）
 //! - 未支持清单（global_asm 等）见 WORKAROUNDS.md（[WA-NN] 编号）
 //!
 //! 前置条件：
