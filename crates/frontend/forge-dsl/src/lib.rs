@@ -1,6 +1,11 @@
-//! forge-dsl — ISA-DSL v11: TOML-driven ISA code generator.
+//! forge-dsl — ISA-DSL: TOML-driven ISA code generator.
 //!
 //! Proc macros: `isa!` and `isa_from_file!`.
+//!
+//! - v11（现行）：`parser`/`model`/`bitstring` —— 编码字符串 + `@原语` 语法，
+//!   由 `isa_from_file!` 消费。
+//! - v12（迭代中，`v12` 模块）：唯一 DSL 语法（严格 TOML，不兼容 v11），
+//!   迭代 1 已含模型 + 解析 + 语义校验；代码生成接入随迭代 2+ 进行。
 
 use proc_macro::TokenStream;
 
@@ -8,6 +13,9 @@ mod bitstring;
 mod codegen;
 mod model;
 mod parser;
+
+// v12 唯一语法：严格 TOML 模型 + 解析 + 校验（迭代 1；生成接入随迭代 2+）。
+mod v12;
 
 // 每 ISA 专属汇编语法生成器（模板 → lalrpop 语法 → parser 代码）
 mod asm_grammar;
