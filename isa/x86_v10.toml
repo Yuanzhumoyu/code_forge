@@ -1660,24 +1660,64 @@ insts = [
 ]
 
 # ── Fcmp ──（每条件一条：F32 → comiss / F64 → comisd——按元素类型分派）
+# UCOMISS 标志语义：uno→(ZF=1,PF=1,CF=1)、olt→(0,0,1)、oeq→(1,0,0)、ogt→(0,0,0)。
+# `o*` 有序条件必须 ∧ !PF（NaN 排除）；`u*` 无序-or 条件直接对应单一 setcc 或 ∨ 组合。
+# 2026-08 P1 修正：原 Equal/LessThan/LessThanOrEqual 直接 sete/setb/setbe 对 NaN 返回 1
+# （实际是 ueq/ult/ule），现补 setnp 修正为真 oeq/olt/ole；并补全 16 个 LLVM 条件。
+[lower.Fcmp.False]
+variants = [{ when = "elem==F32", insts = ["xor rd, rd"] }]
+insts = ["xor rd, rd"]
+[lower.Fcmp.True]
+variants = [{ when = "elem==F32", insts = ["mov_imm rd, 1"] }]
+insts = ["mov_imm rd, 1"]
 [lower.Fcmp.Equal]
-variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "sete rd"] }]
-insts = ["xor rd, rd", "comisd rs1, rs2", "sete rd"]
+# oeq = ZF ∧ !PF
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setnp rd", "sete %t", "and rd, %t"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setnp rd", "sete %t", "and rd, %t"]
 [lower.Fcmp.NotEqual]
+# one = !ZF（NaN 时 ZF=1 被排除）
 variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setne rd"] }]
 insts = ["xor rd, rd", "comisd rs1, rs2", "setne rd"]
 [lower.Fcmp.LessThan]
-variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setb rd"] }]
-insts = ["xor rd, rd", "comisd rs1, rs2", "setb rd"]
+# olt = CF ∧ !PF
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setnp rd", "setb %t", "and rd, %t"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setnp rd", "setb %t", "and rd, %t"]
 [lower.Fcmp.LessThanOrEqual]
-variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setbe rd"] }]
-insts = ["xor rd, rd", "comisd rs1, rs2", "setbe rd"]
+# ole = (CF ∨ ZF) ∧ !PF
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setnp rd", "setbe %t", "and rd, %t"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setnp rd", "setbe %t", "and rd, %t"]
 [lower.Fcmp.GreaterThan]
+# ogt = !CF ∧ !ZF（NaN 时 CF=ZF=1 被排除）
 variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "seta rd"] }]
 insts = ["xor rd, rd", "comisd rs1, rs2", "seta rd"]
 [lower.Fcmp.GreaterThanOrEqual]
+# oge = !CF（NaN 时 CF=1 被排除）
 variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setae rd"] }]
 insts = ["xor rd, rd", "comisd rs1, rs2", "setae rd"]
+[lower.Fcmp.Ueq]
+# ueq = ZF（= oeq ∪ uno）
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "sete rd"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "sete rd"]
+[lower.Fcmp.Ult]
+# ult = CF（= olt ∪ uno）
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setb rd"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setb rd"]
+[lower.Fcmp.Ule]
+# ule = CF ∨ ZF（= olt ∪ oeq ∪ uno）
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setbe rd"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setbe rd"]
+[lower.Fcmp.Ugt]
+# ugt = PF ∨ (CF=0 ∧ ZF=0)（= uno ∪ ogt）
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setp rd", "seta %t", "or rd, %t"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setp rd", "seta %t", "or rd, %t"]
+[lower.Fcmp.Uge]
+# uge = PF ∨ !CF（= uno ∪ ogt ∪ oeq）
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setp rd", "setae %t", "or rd, %t"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setp rd", "setae %t", "or rd, %t"]
+[lower.Fcmp.Une]
+# une = PF ∨ !ZF（= uno ∪ one）
+variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setp rd", "setne %t", "or rd, %t"] }]
+insts = ["xor rd, rd", "comisd rs1, rs2", "setp rd", "setne %t", "or rd, %t"]
 [lower.Fcmp.Unordered]
 variants = [{ when = "elem==F32", insts = ["xor rd, rd", "comiss rs1, rs2", "setp rd"] }]
 insts = ["xor rd, rd", "comisd rs1, rs2", "setp rd"]

@@ -246,6 +246,7 @@ pub fn fold_opcode(
         Opcode::Fsub => fold_binary_float(operands, ty, |a, b| a - b),
         Opcode::Fmul => fold_binary_float(operands, ty, |a, b| a * b),
         Opcode::Fdiv => fold_binary_float(operands, ty, |a, b| a / b),
+        Opcode::Frem => fold_binary_float(operands, ty, |a, b| a % b),
         Opcode::Freeze => {
             // Freeze 阻止常量折叠 — 值不能跨 Freeze 被推断
             Ok(None)
@@ -840,6 +841,8 @@ fn fold_fcmp(
             let b_is_nan = b_f.is_nan();
 
             let result = match cond {
+                FloatCC::False => false,
+                FloatCC::True => true,
                 FloatCC::Ordered => !a_is_nan && !b_is_nan,
                 FloatCC::Unordered => a_is_nan || b_is_nan,
                 FloatCC::Equal => a_f == b_f,
@@ -848,6 +851,12 @@ fn fold_fcmp(
                 FloatCC::LessThanOrEqual => a_f <= b_f,
                 FloatCC::GreaterThan => a_f > b_f,
                 FloatCC::GreaterThanOrEqual => a_f >= b_f,
+                FloatCC::Ueq => a_is_nan || b_is_nan || a_f == b_f,
+                FloatCC::Ugt => a_is_nan || b_is_nan || a_f > b_f,
+                FloatCC::Uge => a_is_nan || b_is_nan || a_f >= b_f,
+                FloatCC::Ult => a_is_nan || b_is_nan || a_f < b_f,
+                FloatCC::Ule => a_is_nan || b_is_nan || a_f <= b_f,
+                FloatCC::Une => a_is_nan || b_is_nan || a_f != b_f,
             };
             Ok(Some(ConstValue::Bool(result)))
         }

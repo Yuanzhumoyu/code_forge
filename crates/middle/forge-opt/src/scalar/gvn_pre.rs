@@ -132,6 +132,7 @@ fn discriminant_to_opcode(disc: u8) -> Option<Opcode> {
         9 => Some(Opcode::Fsub),
         10 => Some(Opcode::Fmul),
         11 => Some(Opcode::Fdiv),
+        90 => Some(Opcode::Frem),
         16 => Some(Opcode::Band),
         17 => Some(Opcode::Bor),
         18 => Some(Opcode::Bxor),

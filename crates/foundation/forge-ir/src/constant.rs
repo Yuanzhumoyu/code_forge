@@ -1,10 +1,11 @@
 //! 常量池 — 存储编译时常量值，通过 `ConstId` 索引引用。
 //!
-//! 支持四类常量:
+//! 支持五类常量:
 //! - 整数常量 (i128 + 位宽，自动去重)
 //! - 浮点常量 (IEEE 754 bits，自动去重)
 //! - 任意精度常量 (Big 值，基于哈希去重)
-//! - 聚合常量（树形：标量/嵌套聚合，3.1 聚合常量 Value）
+//! - 向量常量 (扁平字节池 + 段端序，insert_vector / insert_vector_with_endian)
+//! - 聚合常量（树形：标量/嵌套聚合，AggConst）
 
 use super::entity::{AggId, ConstId, Endianness};
 use crate::big::Big;

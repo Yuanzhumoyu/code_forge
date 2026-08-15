@@ -91,6 +91,7 @@ pub(crate) fn opcode_discriminant(opcode: &Opcode) -> u8 {
         Opcode::Fsub => 9,
         Opcode::Fmul => 10,
         Opcode::Fdiv => 11,
+        Opcode::Frem => 90,
         Opcode::Freeze => 12,
         Opcode::Fneg => 13,
         Opcode::Fabs => 14,

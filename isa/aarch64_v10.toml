@@ -865,22 +865,36 @@ insts = ["neon_frintn rd, rs1"]
 insts = ["neon_fabs rd, rs1"]
 
 [lower.Fcmp.Equal]
+# oeq = EQ（Z=1；NaN 时 Z=0 天然排除）
 insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 0"]
 
 [lower.Fcmp.NotEqual]
-insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 1"]
+# one = NE ∧ VC（!Z ∧ !V；NaN 时 V=1 被排除，P1 修正）
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 1", "SD_CSET %t, 7", "SD_AND rd, rd, %t"]
 
 [lower.Fcmp.LessThan]
+# olt = LO（C=0；NaN/equal/greater 时 C=1 天然排除）
 insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 3"]
 
 [lower.Fcmp.LessThanOrEqual]
-insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 13"]
+# ole = LS（C=0 ∨ Z=1；NaN 时 C=1,Z=0 → 0，P1 修正：原 LE(13) 含 NaN）
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 9"]
 
 [lower.Fcmp.GreaterThan]
+# ogt = GT（Z=0 ∧ N=V；NaN 时 N≠V 天然排除）
 insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 12"]
 
 [lower.Fcmp.GreaterThanOrEqual]
+# oge = GE（N=V；NaN 时 N=0,V=1 天然排除）
 insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 10"]
+
+[lower.Fcmp.Unordered]
+# uno = VS（V=1）
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 6"]
+
+[lower.Fcmp.Ordered]
+# ord = VC（V=0）
+insts = ["SD_FCMP rs1, rs2", "SD_CSET rd, 7"]
 
 [lower.IsNull]
 insts = ["SD_CMP_IMM rs1, 0", "SD_CSET rd, 0"]

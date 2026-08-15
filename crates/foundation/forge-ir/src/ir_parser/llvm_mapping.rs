@@ -23,8 +23,8 @@ pub fn opcode(name: &str) -> Result<Opcode, IrError> {
         "fsub" => Opcode::Fsub,
         "fmul" => Opcode::Fmul,
         "fdiv" => Opcode::Fdiv,
-        // frem 宽松映射 Fdiv（forge 无浮点取模；第十三轮 parse 通过优先）
-        "frem" => Opcode::Fdiv,
+        // frem 独立 opcode（FloatRemainder；旧版宽松映射 Fdiv 已废弃）
+        "frem" => Opcode::Frem,
         "fneg" => Opcode::Fneg,
         "fabs" => Opcode::Fabs,
         "fsqrt" => Opcode::Fsqrt,
@@ -150,11 +150,12 @@ pub fn int_cc(name: &str) -> Result<IntCC, IrError> {
     })
 }
 
-/// LLVM fcmp 条件 → forge FloatCC。
-/// forge FloatCC 仅 8 个有序语义条件；其余 8 个 LLVM 条件（false/ueq/ugt/
-/// uge/ult/ule/une/true）无对应，报语义错误。
+/// LLVM fcmp 条件 → forge FloatCC（全 16，LLVM LangRef 语义）。
+/// `o*` = ordered（无 NaN 才有真）、`u*` = unordered-or（NaN 也算真）。
 pub fn float_cc(name: &str) -> Result<FloatCC, IrError> {
     Ok(match name {
+        "false" => FloatCC::False,
+        "true" => FloatCC::True,
         "oeq" => FloatCC::Equal,
         "one" => FloatCC::NotEqual,
         "olt" => FloatCC::LessThan,
@@ -163,6 +164,12 @@ pub fn float_cc(name: &str) -> Result<FloatCC, IrError> {
         "oge" => FloatCC::GreaterThanOrEqual,
         "ord" => FloatCC::Ordered,
         "uno" => FloatCC::Unordered,
+        "ueq" => FloatCC::Ueq,
+        "ugt" => FloatCC::Ugt,
+        "uge" => FloatCC::Uge,
+        "ult" => FloatCC::Ult,
+        "ule" => FloatCC::Ule,
+        "une" => FloatCC::Une,
         _ => {
             return Err(IrError::UnknownFloatCc(name.to_string()));
         }
@@ -199,6 +206,7 @@ pub fn llvm_mnemonic(op: &Opcode) -> String {
         Opcode::Fsub => "fsub",
         Opcode::Fmul => "fmul",
         Opcode::Fdiv => "fdiv",
+        Opcode::Frem => "frem",
         Opcode::Fneg => "fneg",
         Opcode::Fabs => "fabs",
         Opcode::Fsqrt => "fsqrt",

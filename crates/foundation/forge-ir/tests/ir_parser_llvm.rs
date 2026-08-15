@@ -337,11 +337,27 @@ fn fcmp_ordered() {
 
 #[test]
 fn fcmp_unsupported_condition() {
-    // forge FloatCC 无 ueq/true 等——报语义错误
+    // P1：LLVM 16 个 fcmp 条件全支持（false/oeq/ogt/oge/olt/ole/one/ord/uno/ueq/ugt/uge/ult/ule/une/true）
+    for cond in [
+        "false", "oeq", "ogt", "oge", "olt", "ole", "one", "ord", "uno", "ueq", "ugt", "uge",
+        "ult", "ule", "une", "true",
+    ] {
+        let src = format!(
+            "define i1 @f(double %a, double %b) {{\n  %e:\n    %r = fcmp {cond} double %a, double %b\n    ret i1 %r\n}}\n"
+        );
+        let f = parse_function(&src)
+            .unwrap_or_else(|e| panic!("fcmp {cond} 应解析成功: {e}"));
+        let inst = &f.dfg.insts[0];
+        assert!(
+            matches!(inst.opcode, Opcode::Fcmp { .. }),
+            "fcmp {cond}: 期望 Fcmp opcode"
+        );
+    }
+    // 伪条件仍报错
     let r = parse_function(
-        "define i1 @f(double %a, double %b) {\n  %e:\n    %r = fcmp ueq double %a, double %b\n    ret i1 %r\n}\n",
+        "define i1 @f(double %a, double %b) {\n  %e:\n    %r = fcmp bogus double %a, double %b\n    ret i1 %r\n}\n",
     );
-    assert!(r.is_err());
+    assert!(r.is_err(), "伪条件 bogus 应报错");
 }
 
 // ── 内存 ──

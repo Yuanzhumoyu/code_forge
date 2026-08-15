@@ -590,6 +590,7 @@ impl Verifier {
                 | Opcode::Fsub
                 | Opcode::Fmul
                 | Opcode::Fdiv
+                | Opcode::Frem
                 | Opcode::Fmin
                 | Opcode::Fmax
                 | Opcode::Fcopysign
@@ -1106,6 +1107,7 @@ impl Verifier {
                         | Opcode::Fsub
                         | Opcode::Fmul
                         | Opcode::Fdiv
+                        | Opcode::Frem
                         | Opcode::Fsqrt
                         | Opcode::Fma
                         | Opcode::Fmin

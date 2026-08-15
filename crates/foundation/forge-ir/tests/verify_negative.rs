@@ -280,10 +280,17 @@ fn parse_rejects_unknown_icmp_predicate() {
 
 #[test]
 fn parse_rejects_unknown_fcmp_predicate() {
+    // P1：ueq 等 16 个 LLVM 条件现全部支持（正例）
     assert!(
         parse_module("define i1 @f() {\n  %e:\n    %r = fcmp ueq f64 1.0, 2.0\n    ret i1 %r\n}")
+            .is_ok(),
+        "ueq 现为合法 fcmp 条件（P1 全 16 条件）"
+    );
+    // 伪谓词仍必须拒绝
+    assert!(
+        parse_module("define i1 @f() {\n  %e:\n    %r = fcmp bogus f64 1.0, 2.0\n    ret i1 %r\n}")
             .is_err(),
-        "unknown fcmp predicate (ueq 无 forge FloatCC) must be rejected"
+        "unknown fcmp predicate (bogus) must be rejected"
     );
 }
 

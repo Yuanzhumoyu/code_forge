@@ -1592,7 +1592,7 @@ InstBody: ParsedInst = {
     // 比较（带条件）：icmp <cond> <ty> <a>, <ty> <b> [, !prof !N]
     // CmpOps 固定 2 操作数 + CommaAttach——TypeOps 闭包 `(TypeOp Comma)*` 吃不下
     // 尾逗号 `, !prof`（2-lookahead：Comma 后是 TypeOp 还是 MetadataNameKw）。
-    <op: CompareOp> <cond: Ident> <args: CmpOps> => ParsedInst {
+    <op: CompareOp> <cond: CondName> <args: CmpOps> => ParsedInst {
         endian: false,
         volatile: false,
         align: 0,
@@ -1607,7 +1607,7 @@ InstBody: ParsedInst = {
         flags: vec![],
     },
     // `icmp samesign ult i32 %a, %b`（M3 标志类——samesign 在 cond 前）
-    <op: CompareOp> Samesign <cond: Ident> <args: CmpOps> => ParsedInst {
+    <op: CompareOp> Samesign <cond: CondName> <args: CmpOps> => ParsedInst {
         endian: false,
         volatile: false,
         align: 0,
@@ -2807,6 +2807,15 @@ InstFlag: String = {
 CompareOp: String = {
     Icmp => "icmp".to_string(),
     Fcmp => "fcmp".to_string(),
+};
+
+// icmp/fcmp 条件名：`false`/`true` 被词法器特判为布尔字面量 token（priority 2），
+// 不能走 Ident——显式并入（P1：fcmp false/true 全 16 条件）。后续紧跟 TypeOp，
+// 与操作数位置的 True/False（在 Comma 后）由 lookahead 区分，无 LALR 冲突。
+CondName: String = {
+    <i: Ident> => i,
+    False => "false".to_string(),
+    True => "true".to_string(),
 };
 
 // 二元指令 opcode 集（S2 专用 token——见 lexer.rs；与 Ident 分离以支持

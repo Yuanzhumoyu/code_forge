@@ -661,10 +661,13 @@ insts = ["ADDI rd, rs1, 0"]
 
 # ── Icmp（SLT/SLTU + XOR/SEQZ 组合；VReg250=X0 零代理）──
 # ── Fcmp（FLT/FLE/FEQ——dest Ireg、src Freg）──
+# FEQ/FLT/FLE 对 NaN 返回 0（有序语义天然正确）；NotEqual 需显式排除 NaN
+# （FEQ+取反对 NaN 返回 1，P1 修正）；ord/uno 用 FEQ 自反性判定（x==x ⟺ 非 NaN）。
 [lower.Fcmp.Equal]
 insts = ["FEQ_S rd, rs1, rs2"]
 [lower.Fcmp.NotEqual]
-insts = ["FEQ_S rd, rs1, rs2", "XORI rd, rd, -1"]
+# one = !FEQ ∧ ord(rs1) ∧ ord(rs2)（排除 NaN）
+insts = ["FEQ_S %t, rs1, rs1", "FEQ_S rd, rs2, rs2", "AND rd, rd, %t", "FEQ_S %t, rs1, rs2", "XORI %t, %t, -1", "AND rd, rd, %t"]
 [lower.Fcmp.LessThan]
 insts = ["FLT_S rd, rs1, rs2"]
 [lower.Fcmp.LessThanOrEqual]
@@ -673,6 +676,12 @@ insts = ["FLE_S rd, rs1, rs2"]
 insts = ["FLT_S rd, rs2, rs1"]
 [lower.Fcmp.GreaterThanOrEqual]
 insts = ["FLE_S rd, rs2, rs1"]
+[lower.Fcmp.Unordered]
+# uno = !(ord(rs1) ∧ ord(rs2))
+insts = ["FEQ_S %t, rs1, rs1", "FEQ_S rd, rs2, rs2", "AND rd, rd, %t", "XORI rd, rd, -1"]
+[lower.Fcmp.Ordered]
+# ord = ord(rs1) ∧ ord(rs2)（x==x ⟺ 非 NaN）
+insts = ["FEQ_S %t, rs1, rs1", "FEQ_S rd, rs2, rs2", "AND rd, rd, %t"]
 
 # ── Icmp（SLT/SLTU + XOR 组合）──
 [lower.Icmp.Equal]

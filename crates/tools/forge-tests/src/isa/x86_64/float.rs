@@ -91,3 +91,59 @@ fn test_fpr_spill_20_values() {
             .join(" ")
     );
 }
+
+/// 构建 fcmp(cond, a, b) 并 JIT 执行，返回 I1 扩展为 I64 的结果。
+fn run_fcmp_i64(name: &str, cond: FloatCC, a: f64, b: f64) -> i64 {
+    let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+    let mut fb = FunctionBuilder::new(name, TypeContext::new(), sig);
+    fb.create_block_here();
+    let av = fb.fconst_f64(a);
+    let bv = fb.fconst_f64(b);
+    let c = fb.fcmp(cond, av, bv);
+    let ext = fb.uextend(c, TypeId::I64);
+    fb.ret(&[ext]);
+    let func = fb.finish().expect("build");
+    let compiled = crate::exec::harness::compile_x86_64(name, &func);
+    assert!(!compiled.code.is_empty(), "{name}: empty code");
+    let mem = code_forge::mem::ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
+    let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).unwrap() };
+    f()
+}
+
+/// fcmp NaN 语义回归（P1）：UCOMISS 对 NaN 置 ZF=PF=CF=1。
+/// `o*` 有序条件必须排除 NaN（结果为 0）；`u*` 无序-or 条件 NaN 为真（结果为 1）。
+/// 曾 bug：Equal/LessThan/LessThanOrEqual 直接 sete/setb/setbe 对 NaN 返回 1
+/// （实际是 ueq/ult/ule 语义）——测试固定 NaN 输入验证修正。
+#[test]
+fn test_fcmp_nan_semantics() {
+    let nan = f64::NAN;
+    let one = 1.0f64;
+
+    // 有序条件：NaN 参与 → 0
+    assert_eq!(run_fcmp_i64("fcmp_nan_oeq", FloatCC::Equal, nan, one), 0);
+    assert_eq!(run_fcmp_i64("fcmp_nan_olt", FloatCC::LessThan, nan, one), 0);
+    assert_eq!(run_fcmp_i64("fcmp_nan_ole", FloatCC::LessThanOrEqual, nan, one), 0);
+    assert_eq!(run_fcmp_i64("fcmp_nan_ogt", FloatCC::GreaterThan, nan, one), 0);
+    assert_eq!(run_fcmp_i64("fcmp_nan_oge", FloatCC::GreaterThanOrEqual, nan, one), 0);
+    assert_eq!(run_fcmp_i64("fcmp_nan_one", FloatCC::NotEqual, nan, one), 0);
+    assert_eq!(run_fcmp_i64("fcmp_nan_ord", FloatCC::Ordered, nan, one), 0);
+
+    // 无序-or 条件：NaN 参与 → 1
+    assert_eq!(run_fcmp_i64("fcmp_nan_uno", FloatCC::Unordered, nan, one), 1);
+    assert_eq!(run_fcmp_i64("fcmp_nan_ueq", FloatCC::Ueq, nan, one), 1);
+    assert_eq!(run_fcmp_i64("fcmp_nan_une", FloatCC::Une, nan, one), 1);
+    assert_eq!(run_fcmp_i64("fcmp_nan_ult", FloatCC::Ult, nan, one), 1);
+    assert_eq!(run_fcmp_i64("fcmp_nan_ule", FloatCC::Ule, nan, one), 1);
+    assert_eq!(run_fcmp_i64("fcmp_nan_ugt", FloatCC::Ugt, nan, one), 1);
+    assert_eq!(run_fcmp_i64("fcmp_nan_uge", FloatCC::Uge, nan, one), 1);
+
+    // 常量条件
+    assert_eq!(run_fcmp_i64("fcmp_false", FloatCC::False, nan, one), 0);
+    assert_eq!(run_fcmp_i64("fcmp_true", FloatCC::True, nan, one), 1);
+
+    // 正常值 sanity：oeq(1,1)=1、ult(0.5,1)=1、NaN vs NaN
+    assert_eq!(run_fcmp_i64("fcmp_oeq_ok", FloatCC::Equal, 1.0, 1.0), 1);
+    assert_eq!(run_fcmp_i64("fcmp_ult_ok", FloatCC::Ult, 0.5, 1.0), 1);
+    assert_eq!(run_fcmp_i64("fcmp_nan_nan_oeq", FloatCC::Equal, nan, nan), 0);
+    assert_eq!(run_fcmp_i64("fcmp_nan_nan_ueq", FloatCC::Ueq, nan, nan), 1);
+}

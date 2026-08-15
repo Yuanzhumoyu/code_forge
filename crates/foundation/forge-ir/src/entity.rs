@@ -57,8 +57,8 @@ pub struct FuncRef(pub u32);
 ///
 /// ## Encoding
 ///
-/// ConstId packs a 2-bit type tag to disambiguate int/float/big pools:
-/// - bits 31..30: tag (0 = int, 1 = float, 2 = big)
+/// ConstId packs a 2-bit type tag to disambiguate int/float/big/vec pools:
+/// - bits 31..30: tag (0 = int, 1 = float, 2 = big, 3 = vec)
 /// - bits 29..0:  index (30 bits, up to ~1B entries per category)
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct ConstId(pub u32);

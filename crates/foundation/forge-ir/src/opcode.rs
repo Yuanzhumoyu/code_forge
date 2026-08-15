@@ -18,11 +18,13 @@ pub enum Opcode {
     Urem,
     Srem,
 
-    // === 浮点算术 (7) ===
+    // === 浮点算术 (8) ===
     Fadd,
     Fsub,
     Fmul,
     Fdiv,
+    /// 浮点取模（LLVM `frem`；x87 FPREM 语义，按 IEEE 754 remainder）
+    Frem,
     Fneg,
     Fabs,
     Fsqrt,
@@ -278,6 +280,7 @@ impl Opcode {
             Opcode::Fsub => "fsub",
             Opcode::Fmul => "fmul",
             Opcode::Fdiv => "fdiv",
+            Opcode::Frem => "frem",
             Opcode::Fneg => "fneg",
             Opcode::Fabs => "fabs",
             Opcode::Fsqrt => "fsqrt",
@@ -397,6 +400,7 @@ impl Opcode {
             | Opcode::Fsub
             | Opcode::Fmul
             | Opcode::Fdiv
+            | Opcode::Frem
             | Opcode::Band
             | Opcode::Bor
             | Opcode::Bxor
@@ -547,14 +551,38 @@ impl IntCC {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FloatCC {
+    /// Ordered (no NaN operands).
     Ordered,
+    /// Unordered (at least one NaN operand).
     Unordered,
+    /// Ordered and equal (`oeq`).
     Equal,
+    /// Ordered and not equal (`one`).
     NotEqual,
+    /// Ordered and less than (`olt`).
     LessThan,
+    /// Ordered and less than or equal (`ole`).
     LessThanOrEqual,
+    /// Ordered and greater than (`ogt`).
     GreaterThan,
+    /// Ordered and greater than or equal (`oge`).
     GreaterThanOrEqual,
+    /// Always false.
+    False,
+    /// Always true.
+    True,
+    /// Unordered or equal (`ueq`).
+    Ueq,
+    /// Unordered or greater than (`ugt`).
+    Ugt,
+    /// Unordered or greater than or equal (`uge`).
+    Uge,
+    /// Unordered or less than (`ult`).
+    Ult,
+    /// Unordered or less than or equal (`ule`).
+    Ule,
+    /// Unordered or not equal (`une`).
+    Une,
 }
 
 impl FloatCC {
@@ -568,6 +596,14 @@ impl FloatCC {
             FloatCC::LessThanOrEqual => "ole",
             FloatCC::GreaterThan => "ogt",
             FloatCC::GreaterThanOrEqual => "oge",
+            FloatCC::False => "false",
+            FloatCC::True => "true",
+            FloatCC::Ueq => "ueq",
+            FloatCC::Ugt => "ugt",
+            FloatCC::Uge => "uge",
+            FloatCC::Ult => "ult",
+            FloatCC::Ule => "ule",
+            FloatCC::Une => "une",
         }
     }
 }
@@ -720,6 +756,14 @@ mod tests {
             FloatCC::LessThanOrEqual,
             FloatCC::GreaterThan,
             FloatCC::GreaterThanOrEqual,
+            FloatCC::False,
+            FloatCC::True,
+            FloatCC::Ueq,
+            FloatCC::Ugt,
+            FloatCC::Uge,
+            FloatCC::Ult,
+            FloatCC::Ule,
+            FloatCC::Une,
         ];
         for cc in &conds {
             let m = cc.mnemonic();
@@ -743,6 +787,7 @@ mod tests {
             Opcode::Fsub,
             Opcode::Fmul,
             Opcode::Fdiv,
+            Opcode::Frem,
             Opcode::Fneg,
             Opcode::Fabs,
             Opcode::Fsqrt,

@@ -3,7 +3,7 @@
 //! # Pipeline (PassManager::for_level)
 //! - O1 (5 passes): const_fold, copy_prop, cse, dead_code, jump_thread
 //! - O2 (13 passes): O1 + gvn, gvn_pre, sccp, block_param_coalesce, licm, tail_call, 代数重写, dce
-//! - O3 (17 passes): O2 + inline, mem2reg, ind_var_simplify, loop_unroll
+//! - O3 (18 passes): O2 + inline, mem2reg, ind_var_simplify, loop_unroll + 尾部 DCE
 //!
 //! # Pass modules
 //! - scalar/ (10): block_param_coalesce, const_fold, copy_prop, cse, dead_code, gvn, gvn_pre, jump_thread, mem2reg, sccp

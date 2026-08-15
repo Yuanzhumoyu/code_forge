@@ -288,6 +288,8 @@ pub fn icmp_cond_byte(cond_name: &str) -> Option<u8> {
 }
 
 /// Maps FloatCC variant name to standard condition code byte.
+/// 序号即 SD_SETCC 的 cond 立即数（minimal_sd 等标准指令集的约定）。
+/// 0-7 为有序/无序基础条件；8-15 为 LLVM 扩展条件（false/true/u* 系列）。
 pub fn fcmp_cond_byte(cond_name: &str) -> Option<u8> {
     match cond_name {
         "Equal" => Some(0),
@@ -298,6 +300,14 @@ pub fn fcmp_cond_byte(cond_name: &str) -> Option<u8> {
         "GreaterThanOrEqual" => Some(5),
         "Unordered" => Some(6),
         "Ordered" => Some(7),
+        "False" => Some(8),
+        "True" => Some(9),
+        "Ueq" => Some(10),
+        "Ugt" => Some(11),
+        "Uge" => Some(12),
+        "Ult" => Some(13),
+        "Ule" => Some(14),
+        "Une" => Some(15),
         _ => None,
     }
 }
@@ -316,16 +326,24 @@ pub const ICMP_CONDS: &[&str] = &[
     "UnsignedGreaterThanOrEqual",
 ];
 
-/// All FloatCC condition names in enum order.
+/// All FloatCC condition names in enum order (LLVM 16 条件全量)。
 pub const FCMP_CONDS: &[&str] = &[
+    "Ordered",
+    "Unordered",
     "Equal",
     "NotEqual",
     "LessThan",
     "LessThanOrEqual",
     "GreaterThan",
     "GreaterThanOrEqual",
-    "Unordered",
-    "Ordered",
+    "False",
+    "True",
+    "Ueq",
+    "Ugt",
+    "Uge",
+    "Ult",
+    "Ule",
+    "Une",
 ];
 
 // ============================================================
