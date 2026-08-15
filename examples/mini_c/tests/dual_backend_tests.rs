@@ -7,22 +7,13 @@
 //! the direct backend to HIR.
 //!
 //! Notes:
-//! - Cases whose correctness depends on conditional branches *inside* loops
-//!   are excluded — a known x86-backend limitation (see `integration_tests.rs`
-//!   header), inherited by both backends.
+//! - 历史排除项已全部转正（2026-08 P2 验证）：循环内条件分支、真条件
+//!   while/do-while、do-while 双栈变量——Direct/Hir 双后端现均正确（x86
+//!   `lower_term.Branch` 编码错误与 do-while 单迭代退出 bug 已随 break SEGV
+//!   根治（b87f0b7）与后续修复消除），见本文件 `both_loop_cond_branch` 等测试。
 //! - Division/modulo is covered (the x86 `Sdiv`/`Srem` lowering was fixed:
 //!   isa/x86_v10.toml — `movsxd` the dividend, `cqo` after the mov, divisor
 //!   staged in `R11`).
-//! - `while` loops with a real condition are covered (codegen.rs no longer
-//!   sextends the branch condition to i32, which the x86 `lower_term.Branch`
-//!   mis-encoded).
-//! - `do-while` loops with TWO stack variables remain excluded: the direct
-//!   backend exits after one iteration (returns garbage). HIR handles them
-//!   correctly — see `codegen_hir.rs` `test_hir_e2e_loops`.
-//! - `while`/`do-while` loops with a real condition are excluded: the direct
-//!   backend returns garbage for them (README: "x86 后端条件分支编码错误
-//!   (if/while 受影响)"). The HIR backend handles them correctly — see
-//!   `codegen_hir.rs` `test_hir_e2e_loops`.
 
 use mini_c::compiler::{Backend, compile_and_run, compile_and_run_with};
 
@@ -216,5 +207,38 @@ fn both_structs() {
     assert_both(
         "int main() { struct P { int x; int y; }; struct P p = {10, 20}; p.x = 99; return p.y; }",
         20,
+    );
+}
+
+// ── 历史排除项转正（P2 验证：Direct/Hir 双后端均正确）──
+
+#[test]
+fn both_loop_cond_branch() {
+    // 循环内条件分支（曾排除：x86 lower_term.Branch 编码错误）
+    assert_both(
+        "int main() { int s = 0; for (int i = 0; i < 10; i = i + 1) { if (i == 5) { s = s + 100; } s = s + 1; } return s; }",
+        110,
+    );
+    assert_both(
+        "int main() { int x = 0; for (int i = 0; i < 100; i = i + 1) { if (i == 3) { break; } x = x + 1; } return x; }",
+        3,
+    );
+}
+
+#[test]
+fn both_while_real_cond() {
+    // 真条件 while（头部注释曾自相矛盾：一说覆盖、一说排除）
+    assert_both(
+        "int main() { int s = 0; int i = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }",
+        55,
+    );
+}
+
+#[test]
+fn both_dowhile_two_locals() {
+    // do-while 双栈变量（曾排除：Direct 后端单迭代退出）
+    assert_both(
+        "int main() { int s = 0; int i = 1; do { int t = s + i; s = t; i = i + 1; } while (i <= 10); return s; }",
+        55,
     );
 }

@@ -1148,9 +1148,9 @@ mod tests {
 
     #[test]
     fn test_hir_e2e_break() {
-        // NOTE: conditional branch inside loops is a known x86-backend
-        // limitation (README: "x86 后端条件分支编码错误"), so we only test
-        // the unconditional-break patterns the direct backend also covers.
+        // NOTE（2026-08 P2 更新）：x86 后端条件分支编码错误已随 break SEGV 根治
+        // （b87f0b7）与后续修复消除——循环内条件分支现可正常测试，见
+        // `tests/dual_backend_tests.rs` `both_loop_cond_branch`（双后端一致）。
         assert_eq!(
             run_hir(
                 "int main() { int x = 0; for (int i = 0; i < 100; i = i + 1) { x = 42; break; } return x; }"
