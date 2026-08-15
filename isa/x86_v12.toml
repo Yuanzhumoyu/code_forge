@@ -71,6 +71,12 @@ name = "mem"
 kind = "mem"
 class = "gpr64"
 
+[[operand_slots]]
+name = "imm8"
+kind = "imm"
+signed = false
+width = 8
+
 # ─────────────────────────── 编码形式 ───────────────────────────
 
 [[forms]]
@@ -115,6 +121,32 @@ rex_w = "field"
 opcode_bytes = 1
 
 # ── 内存寻址（迭代 3b：@modrm_mem）──
+
+[[forms]]
+name = "VEX_RRV"        # VEX 三操作数：reg=op0, rm=op1, vvvv=~op2（有源）
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr"
+opcode_bytes = 1
+
+[[forms]]
+name = "VEX_RR"         # VEX 两操作数：vvvv=0x0F（无源）
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr"
+opcode_bytes = 1
+
+[[forms]]
+name = "VEX_RRV_IMM"    # VEX 三操作数 + imm8
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr"
+imm = 8
+opcode_bytes = 1
+
+[[forms]]
+name = "VEX_RR_IMM"     # VEX 两操作数 + imm8（VEXTRACTF128）
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr"
+imm = 8
+opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM"          # [reg 基址 + disp 0]；无 escape（XCHG/MOV_R_MEM/STORE_MEM_R）
@@ -847,3 +879,290 @@ fields = { prefix = 0xF2 }
 operands = [{ slot = "fpr", role = "in" }, { slot = "mem", role = "in" }]
 mnemonic = "movsd_mr"
 asm = "movsd_mr {1}, {0}"
+
+# ── SSE 家族（v11 opcodes 数组 → families）──
+
+[[families]]
+name = "SD_BIN"
+form = "SSE_RR"
+fields = { prefix = 0xF2, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+[[families.variants]]
+name = "MOVSD"
+opcode = 0x10
+mnemonic = "movsd"
+[[families.variants]]
+name = "MINSD"
+opcode = 0x5D
+mnemonic = "minsd"
+[[families.variants]]
+name = "MAXSD"
+opcode = 0x5F
+mnemonic = "maxsd"
+[[families.variants]]
+name = "ADDSD"
+opcode = 0x58
+mnemonic = "addsd"
+[[families.variants]]
+name = "SUBSD"
+opcode = 0x5C
+mnemonic = "subsd"
+[[families.variants]]
+name = "MULSD"
+opcode = 0x59
+mnemonic = "mulsd"
+[[families.variants]]
+name = "DIVSD"
+opcode = 0x5E
+mnemonic = "divsd"
+
+[[families]]
+name = "SS_FMOV"
+form = "SSE_RR"
+fields = { prefix = 0xF3, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+[[families.variants]]
+name = "ADDSS"
+opcode = 0x58
+mnemonic = "addss"
+[[families.variants]]
+name = "SUBSS"
+opcode = 0x5C
+mnemonic = "subss"
+[[families.variants]]
+name = "MULSS"
+opcode = 0x59
+mnemonic = "mulss"
+[[families.variants]]
+name = "DIVSS"
+opcode = 0x5E
+mnemonic = "divss"
+
+[[families]]
+name = "PS_BIN"
+form = "SSE_RR"
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+[[families.variants]]
+name = "MOVAPS"
+opcode = 0x28
+mnemonic = "movaps"
+[[families.variants]]
+name = "ADDPS"
+opcode = 0x58
+mnemonic = "addps"
+[[families.variants]]
+name = "SUBPS"
+opcode = 0x5C
+mnemonic = "subps"
+[[families.variants]]
+name = "MULPS"
+opcode = 0x59
+mnemonic = "mulps"
+[[families.variants]]
+name = "DIVPS"
+opcode = 0x5E
+mnemonic = "divps"
+[[families.variants]]
+name = "XORPS"
+opcode = 0x57
+mnemonic = "xorps"
+[[families.variants]]
+name = "ANDPS"
+opcode = 0x54
+mnemonic = "andps"
+[[families.variants]]
+name = "ORPS"
+opcode = 0x56
+mnemonic = "orps"
+
+[[families]]
+name = "PD_BIN"
+form = "SSE_RR"
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+[[families.variants]]
+name = "ADDPD"
+opcode = 0x58
+mnemonic = "addpd"
+[[families.variants]]
+name = "SUBPD"
+opcode = 0x5C
+mnemonic = "subpd"
+[[families.variants]]
+name = "MULPD"
+opcode = 0x59
+mnemonic = "mulpd"
+[[families.variants]]
+name = "DIVPD"
+opcode = 0x5E
+mnemonic = "divpd"
+
+[[families]]
+name = "PI_BIN"
+form = "SSE_RR"
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+[[families.variants]]
+name = "PADDD"
+opcode = 0xFE
+mnemonic = "paddd"
+[[families.variants]]
+name = "PSUBD"
+opcode = 0xFA
+mnemonic = "psubd"
+[[families.variants]]
+name = "PADDQ"
+opcode = 0xD4
+mnemonic = "paddq"
+[[families.variants]]
+name = "PSUBQ"
+opcode = 0xFB
+mnemonic = "psubq"
+
+# ── VEX 家族（256 位向量，三操作数）──
+
+[[families]]
+name = "PS_BIN_V"
+form = "VEX_RRV"
+fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "{mnemonic} {0}, {2}, {1}"
+[[families.variants]]
+name = "VADDPS"
+opcode = 0x58
+mnemonic = "vaddps"
+[[families.variants]]
+name = "VSUBPS"
+opcode = 0x5C
+mnemonic = "vsubps"
+[[families.variants]]
+name = "VMULPS"
+opcode = 0x59
+mnemonic = "vmulps"
+[[families.variants]]
+name = "VDIVPS"
+opcode = 0x5E
+mnemonic = "vdivps"
+[[families.variants]]
+name = "VXORPS"
+opcode = 0x57
+mnemonic = "vxorps"
+[[families.variants]]
+name = "VANDPS"
+opcode = 0x54
+mnemonic = "vandps"
+
+[[families]]
+name = "PD_BIN_V"
+form = "VEX_RRV"
+fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "{mnemonic} {0}, {2}, {1}"
+[[families.variants]]
+name = "VADDPD"
+opcode = 0x58
+mnemonic = "vaddpd"
+[[families.variants]]
+name = "VSUBPD"
+opcode = 0x5C
+mnemonic = "vsubpd"
+[[families.variants]]
+name = "VMULPD"
+opcode = 0x59
+mnemonic = "vmulpd"
+[[families.variants]]
+name = "VDIVPD"
+opcode = 0x5E
+mnemonic = "vdivpd"
+
+# ── VEX 单指令（无源/立即数）──
+
+[[instructions]]
+name = "VMOVAPS"
+form = "VEX_RR"
+opcode = 0x28
+fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "vmovaps"
+
+[[instructions]]
+name = "VBROADCASTSS"
+form = "VEX_RR"
+opcode = 0x18
+fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "vbroadcastss"
+
+[[instructions]]
+name = "VBROADCASTSD"
+form = "VEX_RR"
+opcode = 0x19
+fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "vbroadcastsd"
+
+[[instructions]]
+name = "VPXOR"
+form = "VEX_RRV"
+opcode = 0xEF
+fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "vpxor {0}, {2}, {1}"
+
+[[instructions]]
+name = "VPADDD"
+form = "VEX_RRV"
+opcode = 0xFE
+fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "vpaddd {0}, {2}, {1}"
+
+[[instructions]]
+name = "VPSUBD"
+form = "VEX_RRV"
+opcode = 0xFA
+fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "vpsubd {0}, {2}, {1}"
+
+[[instructions]]
+name = "VPADDQ"
+form = "VEX_RRV"
+opcode = 0xD4
+fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "vpaddq {0}, {2}, {1}"
+
+[[instructions]]
+name = "VPSUBQ"
+form = "VEX_RRV"
+opcode = 0xFB
+fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "vpsubq {0}, {2}, {1}"
+
+[[instructions]]
+name = "VPMULLD"
+form = "VEX_RRV"
+opcode = 0x40
+fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
+asm = "vpmulld {0}, {2}, {1}"
+
+[[instructions]]
+name = "VEXTRACTF128"
+form = "VEX_RR_IMM"
+opcode = 0x19
+fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "in" }, { slot = "fpr", role = "out" }, { slot = "imm8", role = "in" }]
+mnemonic = "vextractf128"
+asm = "vextractf128 {1}, {0}, {2}"
+
+[[instructions]]
+name = "VINSERTF128"
+form = "VEX_RRV_IMM"
+opcode = 0x18
+fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
+mnemonic = "vinsertf128"
+asm = "vinsertf128 {0}, {2}, {1}, {3}"

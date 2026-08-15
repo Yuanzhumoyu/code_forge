@@ -210,6 +210,65 @@ fn mem_spec_bytes() {
     }
 }
 
+// ─────────────────── 家族（SSE）与 VEX 规范字节（迭代 4）───────────────────
+
+#[test]
+fn family_sse_spec_bytes() {
+    // SSE 家族展开：v11 的 FPR 16+i 使字节带多余 REX，v12 组内索引规范正确
+    let cases: &[(&str, &[u8])] = &[
+        ("addsd XMM0, XMM1", &[0xF2, 0x0F, 0x58, 0xC1]),
+        ("minsd XMM0, XMM1", &[0xF2, 0x0F, 0x5D, 0xC1]),
+        ("maxsd XMM0, XMM1", &[0xF2, 0x0F, 0x5F, 0xC1]),
+        ("addss XMM0, XMM1", &[0xF3, 0x0F, 0x58, 0xC1]),
+        ("divss XMM0, XMM1", &[0xF3, 0x0F, 0x5E, 0xC1]),
+        ("movaps XMM0, XMM1", &[0x0F, 0x28, 0xC1]),
+        ("addps XMM0, XMM1", &[0x0F, 0x58, 0xC1]),
+        ("orps XMM0, XMM1", &[0x0F, 0x56, 0xC1]),
+        ("addpd XMM0, XMM1", &[0x66, 0x0F, 0x58, 0xC1]),
+        ("paddd XMM0, XMM1", &[0x66, 0x0F, 0xFE, 0xC1]),
+        ("psubq XMM0, XMM1", &[0x66, 0x0F, 0xFB, 0xC1]),
+    ];
+    for (asm, expected) in cases {
+        let got = v12_bytes(asm);
+        assert_eq!(got.as_slice(), *expected, "family SSE mismatch for `{asm}`");
+    }
+}
+
+#[test]
+fn vex_spec_bytes() {
+    // VEX 规范字节（组内索引；v11 的 16+i 使 VEX 字节非规范）
+    let cases: &[(&str, &[u8])] = &[
+        // vaddps ymm0, ymm1, ymm2：reg=0, rm=2, vvvv=~1=0xE, L=1, pp=0
+        ("vaddps XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x74, 0x58, 0xC2]),
+        // vsubps
+        ("vsubps XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x74, 0x5C, 0xC2]),
+        // vmovaps ymm1, ymm2（无源 vvvv=0xF, L=1）
+        ("vmovaps XMM1, XMM2", &[0xC4, 0xE1, 0x7C, 0x28, 0xCA]),
+        // vaddpd（pp=1）
+        ("vaddpd XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x75, 0x58, 0xC2]),
+        // vpxor（pp=1）
+        ("vpxor XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x75, 0xEF, 0xC2]),
+        // vbroadcastss（map=2, pp=1, 无源）
+        ("vbroadcastss XMM0, XMM1", &[0xC4, 0xE2, 0x7D, 0x18, 0xC1]),
+        // 扩展寄存器 → R/B 反位（reg=8→R=0, rm=10→B=0, vvvv=~9=6）
+        ("vaddps XMM8, XMM9, XMM10", &[0xC4, 0x41, 0x34, 0x58, 0xC2]),
+        // vextractf128 xmm1, ymm2, 0：reg=src(2), rm=dest(1), imm8
+        (
+            "vextractf128 XMM1, XMM2, 0",
+            &[0xC4, 0xE3, 0x7D, 0x19, 0xD1, 0x00],
+        ),
+        // vinsertf128 ymm0, ymm1, xmm2, 1：reg=0, rm=2, vvvv=~1=0xE
+        (
+            "vinsertf128 XMM0, XMM1, XMM2, 1",
+            &[0xC4, 0xE3, 0x75, 0x18, 0xC2, 0x01],
+        ),
+    ];
+    for (asm, expected) in cases {
+        let got = v12_bytes(asm);
+        assert_eq!(got.as_slice(), *expected, "VEX mismatch for `{asm}`");
+    }
+}
+
 // ─────────────────── 字节级 decode 往返 ───────────────────
 
 /// 全部指令的代表性 Inst 值（含别名——字节级往返不要求变体相等）。
@@ -485,6 +544,134 @@ fn all_insts() -> Vec<Inst> {
             op0: 0,
             op1: MemRef { base: 2, disp: 0 },
         },
+        // 家族展开（SSE 5 家族）
+        Movsd { op0: 0, op1: 1 },
+        Minsd { op0: 8, op1: 9 },
+        Maxsd { op0: 0, op1: 1 },
+        Addsd { op0: 0, op1: 1 },
+        Subsd { op0: 0, op1: 1 },
+        Mulsd { op0: 0, op1: 1 },
+        Divsd { op0: 0, op1: 1 },
+        Addss { op0: 0, op1: 1 },
+        Subss { op0: 0, op1: 1 },
+        Mulss { op0: 0, op1: 1 },
+        Divss { op0: 0, op1: 1 },
+        Movaps { op0: 0, op1: 1 },
+        Addps { op0: 0, op1: 1 },
+        Subps { op0: 0, op1: 1 },
+        Mulps { op0: 0, op1: 1 },
+        Divps { op0: 0, op1: 1 },
+        Xorps { op0: 0, op1: 1 },
+        Andps { op0: 0, op1: 1 },
+        Orps { op0: 0, op1: 1 },
+        Addpd { op0: 0, op1: 1 },
+        Subpd { op0: 0, op1: 1 },
+        Mulpd { op0: 0, op1: 1 },
+        Divpd { op0: 0, op1: 1 },
+        Paddd { op0: 0, op1: 1 },
+        Psubd { op0: 0, op1: 1 },
+        Paddq { op0: 0, op1: 1 },
+        Psubq { op0: 0, op1: 1 },
+        // VEX（三操作数/无源/imm）
+        Vaddps {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vaddps {
+            op0: 8,
+            op1: 9,
+            op2: 10,
+        },
+        Vsubps {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vmulps {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vdivps {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vxorps {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vandps {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vaddpd {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vsubpd {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vmulpd {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vdivpd {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vmovaps { op0: 0, op1: 1 },
+        Vbroadcastss { op0: 0, op1: 1 },
+        Vbroadcastsd { op0: 0, op1: 1 },
+        Vpxor {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vpaddd {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vpsubd {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vpaddq {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vpsubq {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vpmulld {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+        },
+        Vextractf128 {
+            op0: 2,
+            op1: 0,
+            op2: 0,
+        },
+        Vinsertf128 {
+            op0: 0,
+            op1: 2,
+            op2: 1,
+            op3: 1,
+        },
     ]
 }
 
@@ -576,6 +763,22 @@ fn assemble_disassemble_roundtrip() {
         "movd xmm0, rax",
         "punpcklqdq xmm0, xmm1",
         "movzx_b rax, rbx",
+        // 家族展开（SSE）
+        "addsd xmm0, xmm1",
+        "addss xmm0, xmm1",
+        "movaps xmm0, xmm1",
+        "addpd xmm0, xmm1",
+        "paddd xmm0, xmm1",
+        // VEX 三操作数（asm 模板重排 dest, src1, src2）
+        "vaddps xmm0, xmm1, xmm2",
+        "vaddpd xmm0, xmm1, xmm2",
+        "vpxor xmm0, xmm1, xmm2",
+        // VEX 无源
+        "vmovaps xmm0, xmm1",
+        "vbroadcastss xmm0, xmm1",
+        // VEX imm
+        "vextractf128 xmm1, xmm2, 0",
+        "vinsertf128 xmm0, xmm1, xmm2, 1",
     ];
     for c in cases {
         let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));

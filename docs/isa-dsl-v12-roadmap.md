@@ -247,6 +247,7 @@ crates/frontend/forge-dsl/src/
 | **2** ✅ | 定宽编码生成（form R/I/S/U/B/J/SHIFT/OP/W32 → encode/decode/asm 从 bitfields 直接生成）；散布位段 + operand_fields；riscv64 全 76 指令迁移 | golden 逐字节对比 v11（42 GPR）+ 规范 oracle（F/分支/S 型）+ 全量往返 9/9 |
 | **3** ✅ | 变长语义键（modrm rr/ext、opsize auto/固定、prefix field、rex_w、imm）；encode→Vec<u8>、decode→(Inst,usize)；opsize 非文本操作数；x86 @modrm 24 + @modrm_imm32 6 + @sse_rr 23 | golden 30 GPR 对比 v11 + opsize 16/32/64 + SSE 规范 oracle + 全 53 条往返 7/7 |
 | **3b** ✅ | 内存寻址（modrm rm_mem/rm_memref、MemRef 槽、SIB/force_disp_base/disp、LOCK F0、`[{n}]` 形状）；x86 @modrm_mem 14 + MOV64_RR | golden 内存对比 v11 + mem_spec_bytes 10 条 + 全 68 条往返 8/8 |
+| **4** ✅ | families codegen（Family 展开：fields 共享 + {mnemonic} 模板，7 家族 37 变体）；VEX 语义键（C4 + vex2/3 + vvvv，4 forms + 10 指令）；结构化谓词框架（pred.rs） | 家族 SSE 规范 11 + VEX 规范 9 + 全 106 条往返 10/10 |
 | 3 | 变长语义键（modrm/prefix/escape/rex）；x86 @modrm/@sse 家族迁移 ~65 条 | golden 字节等价 + decoder_smoke 扩展 |
 | 4 | VEX 语义键 + 指令族；结构化谓词求值接入 | 展开指令数一致 + forge-tests 全绿 |
 | 5 | lowering 符号化 + abi.arg_class 类别分类 + emit 保留 | mini_c 双后端 + forge-rustc e2e 不回归 |
@@ -430,3 +431,30 @@ x86 全量收官）。
 全量、clippy 0 警告、fmt 干净
 
 **下一步（迭代 4）**：VEX 语义键 + families（opcodes 数组家族）+ 结构化谓词。
+
+## 15. 迭代 4 完成记录（2026-08）——families + VEX 语义键 + 结构化谓词框架
+
+- **families codegen**：
+  - Family 加 `fields`（共享固定字段，如 SSE 的 prefix/w）与 `asm`（家族模板，
+    `{mnemonic}` 占位符替换为变体 mnemonic）；collect_inst_infos 展开为
+    owned 合成指令（InstInfo.inst 改 owned）
+  - 迁移 7 个家族（v11 opcodes 数组）：SD_BIN（7）、SS_FMOV（4）、PS_BIN（8）、
+    PD_BIN（4）、PI_BIN（4）、PS_BIN_V（6）、PD_BIN_V（4）→ 37 变体
+  - SHIFT_BIN（@shift_reg 多指令序列）留待后续
+- **VEX 语义键**：
+  - VexSpec 加 `w` + map/pp/w/l 来源（数字或 `"field"` → fields.vex_*）；
+    vvvv 语义 = 操作数 ≥3 且第 3 个是 reg → ~op2，否则 0x0F（无源）——无需
+    显式 has_src 参数
+  - 编码：C4 + vex2（R/X/B 反位 + map）+ vex3（W/vvvv/L/pp）+ opcode + ModRM
+  - 解码：独立 arm（C4 + map/pp/w/l guard + R/B/vvvv 提取）
+  - forms：VEX_RRV / VEX_RR / VEX_RRV_IMM / VEX_RR_IMM；迁移 10 条 VEX 单指令
+    + 2 个 VEX 家族 → x86_v12.toml 共 **106 指令**
+- **结构化谓词框架**（v12/pred.rs）：`{ and/or/not }` + `{ eq/ne/lt/le/gt/ge
+  = [attr, value] }` 解析 + 求值（未知属性 false）；lowering 接入在迭代 5
+- **验证**：forge-dsl 175（+3 pred）、x86_v12 10/10（家族 SSE 规范字节 11 条、
+  VEX 规范字节 9 条、全 106 条往返、assemble/disassemble 家族+VEX）、
+  riscv 9/9、forge-codegen 全量、clippy 0 警告、fmt 干净
+
+**下一步（迭代 5）**：lowering/abi/emit 迁移（符号化操作数 + abi.arg_class
+by-ref 为 YMM 铺路）+ 结构化谓词接入 lowering + x86 全量收官（@op_rm/
+@cmovcc/@setcc/@mov_imm64/@sse_rr_imm8/PSHUFD 等 + SHIFT_BIN）。

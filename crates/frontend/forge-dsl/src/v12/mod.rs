@@ -18,6 +18,7 @@
 pub(crate) mod codegen;
 pub(crate) mod model;
 mod parse;
+mod pred;
 mod validate;
 
 #[cfg(test)]

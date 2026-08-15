@@ -283,16 +283,23 @@ pub struct Form {
     pub operand_slots: Option<Vec<String>>,
 }
 
-/// VEX 字段来源声明。
+/// VEX 字段来源声明（迭代 4）。
+///
+/// map/pp/w/l 每个值为：数字（固定）或 `"field"`（取指令 `fields.vex_map`/
+/// `vex_pp`/`vex_w`/`vex_l`，缺省 0）。vvvv 语义由操作数数量决定：
+/// 3 操作数（VEX_RRV 类）→ vvvv = ~op2；2 操作数 → vvvv = 0x0F（无源）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VexSpec {
-    /// VEX.mmmmm 来源（"inst" → 指令级覆盖）。
+    /// VEX.mmmmm 来源（数字或 "field"）。
     #[serde(default)]
     pub map: Option<String>,
     /// VEX.pp 来源。
     #[serde(default)]
     pub pp: Option<String>,
+    /// VEX.W 来源。
+    #[serde(default)]
+    pub w: Option<String>,
     /// VEX.L 来源。
     #[serde(default)]
     pub l: Option<String>,
@@ -360,6 +367,12 @@ pub struct OperandUse {
 pub struct Family {
     pub name: String,
     pub form: String,
+    /// 家族共享固定字段（如 SSE 的 prefix/w）；variant.fields 覆盖/追加。
+    #[serde(default)]
+    pub fields: Option<BTreeMap<String, u64>>,
+    /// 家族共享 asm 模板（完整格式；`{mnemonic}` 占位符替换为变体 mnemonic）。
+    #[serde(default)]
+    pub asm: Option<String>,
     #[serde(default)]
     pub operands: Vec<OperandUse>,
     pub variants: Vec<FamilyVariant>,
