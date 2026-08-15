@@ -69,8 +69,9 @@ pub use self::my_isa::*; // 生成 TargetMachine / Inst / IsaInfo 等全套组�
 // 无需手写——见 arch/x86_64.rs 的实际形态。
 ```
 
-> 注：生成模块导出的是 `TargetMachine`（组合 RegInfo/ABI/Lowering/Encoder/
-> FrameLowering/Disassembler/Assembler），**没有 `Isa` 类型**；无 `register_backend!` 宏。
+> 注：生成模块导出的是 `TargetMachine`（组合 IsaInfo/RegInfo/ABI/Lowering/Encoder/
+> FrameLowering/Disassembler/Assembler/**Decoder**——P2 DSL 生成字节→指令反解，定宽编码
+> Phase 1、变长原语 Phase 2），**没有 `Isa` 类型**；无 `register_backend!` 宏。
 
 ### Frontend Pipeline (forge-grammar v21)
 
