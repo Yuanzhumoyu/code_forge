@@ -9,10 +9,9 @@ pub mod int;
 #[cfg(feature = "test-io")]
 pub mod io;
 
-// 临时禁用：字段 Reg 化后的测试改造未完成
-// /// 编码 golden 断言 + 编码集成测试。
+// 编码 golden 断言 + 编码集成测试（字段 Reg 化改造后已恢复启用）。
 pub mod encode;
-// /// 反汇编测试。
+// 反汇编测试。
 pub mod disasm;
 
 /// 多宽度寄存器类（[reg_classes.*] 暴露 + 分配配置）。
