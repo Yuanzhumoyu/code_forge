@@ -12,7 +12,7 @@
 //! [`CodeSink::finish`]) and cross-function symbol relocations (resolved by
 //! the JIT/object layers), keeping the encoding logic in one place.
 
-use crate::{CompileError, RelocKind};
+use crate::{IrError, RelocKind};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -30,7 +30,7 @@ pub trait RelocPatcher: Send + Sync {
         kind: RelocKind,
         target: u64,
         site: u64,
-    ) -> Result<(), CompileError>;
+    ) -> Result<(), IrError>;
 }
 
 /// Per-ISA registration table. Backends register their patcher in
@@ -87,7 +87,7 @@ impl RelocPatcher for X86RelocPatcher {
         kind: RelocKind,
         target: u64,
         site: u64,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         match kind {
             RelocKind::Relative(w, adj) => {
                 let v = (target as i64 - site as i64 + adj as i64) as u64;
@@ -128,10 +128,10 @@ impl RelocPatcher for AArch64RelocPatcher {
         kind: RelocKind,
         target: u64,
         site: u64,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         if let RelocKind::Relative(4, _adj) = kind {
             if offset + 4 > code.len() {
-                return Err(CompileError::Emit("aarch64 reloc out of bounds".into()));
+                return Err(IrError::Emit("aarch64 reloc out of bounds".into()));
             }
             let mut word = u32::from_le_bytes(code[offset..offset + 4].try_into().unwrap());
             let delta = target as i64 - site as i64 - 4;
@@ -168,10 +168,10 @@ impl RelocPatcher for RiscvRelocPatcher {
         kind: RelocKind,
         target: u64,
         site: u64,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         if let RelocKind::Relative(4, _adj) = kind {
             if offset + 4 > code.len() {
-                return Err(CompileError::Emit("riscv reloc out of bounds".into()));
+                return Err(IrError::Emit("riscv reloc out of bounds".into()));
             }
             let mut word = u32::from_le_bytes(code[offset..offset + 4].try_into().unwrap());
             let opcode = word & 0x7F;

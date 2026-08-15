@@ -9,11 +9,13 @@ forge-ir = { path = "../../foundation/forge-ir" }
 forge-opt = { path = "../../middle/forge-opt" }
 forge-mem = { path = "../../foundation/forge-mem" }
 forge-dsl = { path = "../../frontend/forge-dsl" }
-forge-grammar = { path = "../../frontend/forge-grammar" }
 forge-asm = { path = "../../tools/forge-asm" }
 smallvec = "1"
 thiserror = "2"
 log = "0.4"
+# DSL 生成的每 ISA 汇编 lexer/parser 依赖（token 枚举 logos derive + lalrpop 生成代码）
+logos = "0.16.1"
+lalrpop-util = "0.23"
 
 # Optional dependencies
 rayon = { version = "1", optional = true }
@@ -21,3 +23,6 @@ rayon = { version = "1", optional = true }
 [features]
 default = []
 parallel = ["dep:rayon", "forge-opt/parallel"]
+
+[lints.clippy.type_complexity]
+level = "allow"

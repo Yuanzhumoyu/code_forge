@@ -149,6 +149,24 @@ fields = { dest = "Freg", src1 = "Freg", src2 = "Freg" }
 encoding = "32 {dest:7:5}{2:12:3}{src1:15:5}{src2:20:5}{0x10:25:7}{0x53:0:7}"
 asm = "fsgnjx.s {dest}, {src1}, {src2}"
 
+# FCVT.W.S rd, fs1, rm — 浮点→整数转换（funct7=0x60，funct3=rm：000=RNE/001=RTZ）。
+# RTZ（toward zero）= Ftrunc 语义；RNE（round-to-nearest-even）= Fround 语义。
+[inst.FCVT_W_S_RTZ]
+fields = { dest = "Ireg", src1 = "Freg" }
+encoding = "32 {dest:7:5}{1:12:3}{src1:15:5}{0:20:5}{0x60:25:7}{0x53:0:7}"
+asm = "fcvt.w.s {dest}, {src1}"
+
+[inst.FCVT_W_S_RNE]
+fields = { dest = "Ireg", src1 = "Freg" }
+encoding = "32 {dest:7:5}{0:12:3}{src1:15:5}{0:20:5}{0x60:25:7}{0x53:0:7}"
+asm = "fcvt.w.s {dest}, {src1}"
+
+# FCVT.S.W fd, rs1, rm — 整数→浮点转换（funct7=0x68，rs1 为整数源，RNE）。
+[inst.FCVT_S_W]
+fields = { dest = "Freg", src1 = "Ireg" }
+encoding = "32 {dest:7:5}{0:12:3}{src1:15:5}{0:20:5}{0x68:25:7}{0x53:0:7}"
+asm = "fcvt.s.w {dest}, {src1}"
+
 # Float compares (funct7=0x20): FLT=0x4, FEQ=0x5, FLE=0x6 — dest is Ireg
 # ── Zbb 位操作扩展（RV64）──
 
@@ -769,6 +787,9 @@ insts = ["FENCE"]
 [lower.Freeze]
 insts = ["ADDI rd, rs1, 0"]
 [lower.Select]
+# TODO(2026-08)：与 x86/aarch64 同类 bug（"ADDI rd, rs2, 0" 无条件复制 args[1]
+# true 臂）。riscv64 无 csel，需用 beq/bne 分支序列或算术 select（未端到端验证，
+# 暂保持现状避免破坏——见 README 支持矩阵）。
 insts = ["ADDI rd, rs2, 0"]
 [lower.Alloca]
 insts = ["ADDI rd, rs1, 0"]
@@ -790,10 +811,12 @@ insts = ["FSGNJX_S rd, rs1, rs2"]
 insts = ["FSGNJX_S rd, rs1, rs1"]
 [lower.Fceil]
 insts = ["FSGNJX_S rd, rs1, rs1"]
+# Ftrunc: truncate toward zero（FCVT.W.S RTZ + 转回浮点）。
+# 修复历史缺陷：FSGNJX_S 是符号位合并（copysign 语义），非截断。
 [lower.Ftrunc]
-insts = ["FSGNJX_S rd, rs1, rs1"]
+insts = ["FCVT_W_S_RTZ %t, rd", "FCVT_S_W rd, %t"]
 [lower.Fround]
-insts = ["FSGNJX_S rd, rs1, rs1"]
+insts = ["FCVT_W_S_RNE %t, rd", "FCVT_S_W rd, %t"]
 
 
 [lower.StackAddr]

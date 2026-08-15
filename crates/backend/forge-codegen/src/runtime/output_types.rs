@@ -1,5 +1,7 @@
 //! Compilation output types — result of the code generation pipeline.
 
+use forge_ir::ImmStr;
+
 /// A compiled function with its machine code and relocation information.
 #[derive(Debug, Clone)]
 pub struct CompiledFunction {
@@ -13,7 +15,7 @@ pub struct CompiledFunction {
 pub struct Relocation {
     pub offset: usize,
     pub kind: RelocKind,
-    pub symbol: String,
+    pub symbol: ImmStr,
     pub addend: i64,
 }
 

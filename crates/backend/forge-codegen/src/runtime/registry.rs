@@ -6,8 +6,6 @@
 //! 注册表存储 `Arc<dyn ErasedTargetMachine>`，支持名称查找和类型擦除编译。
 
 use crate::machine::target::ErasedTargetMachine;
-use crate::{CompileError, CompiledFunction};
-use forge_ir::Function;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -39,23 +37,7 @@ impl Registry {
     }
 
     /// 使用已注册的后端编译一个 IR 函数。
-    pub fn compile_with(
-        &self,
-        isa_name: &str,
-        func: &Function,
-    ) -> Result<CompiledFunction, CompileError> {
-        let backend = self
-            .lookup(isa_name)
-            .ok_or_else(|| CompileError::BackendNotFound(isa_name.into()))?;
-        backend.compile(func)
-    }
-
     /// 列出所有已注册的后端名称。
-    pub fn list(&self) -> Vec<String> {
-        let backends = self.backends.read().expect("registry lock poisoned");
-        backends.keys().cloned().collect()
-    }
-
     /// 后端是否已注册。
     pub fn contains(&self, name: &str) -> bool {
         let backends = self.backends.read().expect("registry lock poisoned");

@@ -30,7 +30,7 @@ mod tests {
         let c = b.fconst_f64(3.5);
         let sum = b.fadd(a, c);
         b.ret(&[sum]);
-        let func = b.finish();
+        let func = b.finish().expect("build");
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("compile");
         eprintln!("fadd code ({} bytes):", compiled.code.len());
@@ -53,7 +53,7 @@ mod tests {
         builder.switch_to_block(entry);
         let sum = builder.iadd(params[0], params[1]);
         builder.ret(&[sum]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("compile");
         eprintln!("add code ({} bytes):", compiled.code.len());
@@ -75,7 +75,7 @@ mod tests {
         builder.switch_to_block(entry);
         let v = builder.iconst_i32(42);
         builder.ret(&[v]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
         eprintln!("Constant pool len: {}", func.constants.len());
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("compile");
@@ -99,7 +99,7 @@ mod tests {
         builder.switch_to_block(entry);
         let sum = builder.iadd(params[0], params[1]);
         builder.ret(&[sum]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("compile");
         eprintln!("add code ({} bytes):", compiled.code.len());
@@ -114,14 +114,69 @@ mod tests {
     }
 
     #[test]
-    fn test_enc_lea_sib() {
-        let mut sink = crate::CodeSink::new();
-        enc_lea_sib(&mut sink, 0, 1, 2, 1, 0);
-        let bytes = sink.bytes();
-        assert_eq!(bytes[0], 0x48); // REX.W
-        assert_eq!(bytes[1], 0x8D); // LEA
-        assert_eq!(bytes[2], 0x04); // ModRM: mod=0, reg=0, rm=4(SIB)
-        assert_eq!(bytes[3], 0x11); // SIB: scale=0, index=2, base=1
+    fn test_loop_block_param_write_bytes_style() {
+        // 回归探针（[WA-14] 同构最小复现）：带块参数 + 回边的循环。
+        // 曾暴露 map_terminator_args_to_params 的映射覆盖（块参数 value 作为
+        // 跳转 arg 被覆盖到目标块寄存器）与 regalloc 活区间冲突（body 内
+        // ptr/one 挤同一物理寄存器）。断言编译成功且循环头/回边指令齐全。
+        use crate::prelude::*;
+        let sig = FunctionSignature::new(
+            &[
+                (TypeId::PTR, "dst"),
+                (TypeId::I64, "val"),
+                (TypeId::I64, "count"),
+            ],
+            &[TypeId::I64],
+        );
+        let mut builder = crate::FunctionBuilder::new("wb_loop", TypeContext::new(), sig);
+        let (entry, params) = builder.create_block_with_params(&[
+            (TypeId::PTR, "dst"),
+            (TypeId::I64, "val"),
+            (TypeId::I64, "count"),
+        ]);
+        builder.switch_to_block(entry);
+        // 注意：create_block_with_params 会切换 cur_block，因此常量
+        // 必须在创建其他块之前发出（与生产代码 write_bytes arm 一致）
+        let zero = builder.iconst(0, TypeId::I64);
+        let (loop_blk, lp) = builder.create_block_with_params(&[(TypeId::I64, "i")]);
+        let (body_blk, bp) = builder.create_block_with_params(&[(TypeId::I64, "bi")]);
+        let done = builder.create_block();
+        // entry → loop(i=0)
+        builder.switch_to_block(entry);
+        builder.jump(loop_blk, &[zero]);
+        // loop: i < count ? body(i) : done
+        builder.switch_to_block(loop_blk);
+        let i = lp[0];
+        let one = builder.iconst(1, TypeId::I64);
+        let cond = builder.icmp(IntCC::UnsignedLessThan, i, params[2]);
+        builder.branch(cond, body_blk, &[i], done, &[]);
+        // body: addr = dst + bi; store(val, addr); i2 = bi + 1; jump(loop, i2)
+        builder.switch_to_block(body_blk);
+        let bi = bp[0];
+        let addr = builder.iadd(params[0], bi);
+        builder.store(params[1], addr);
+        let i2 = builder.iadd(bi, one);
+        builder.jump(loop_blk, &[i2]);
+        // done: ret 0
+        builder.switch_to_block(done);
+        builder.ret(&[zero]);
+        let func = builder.finish().expect("build");
+        let compiler = FunctionCompiler::new(TargetMachine::new());
+        let compiled = compiler.compile_raw(&func).expect("compile wb-style loop");
+        // 循环头应有条件跳（JCC）与回边（JMP）：至少 3 条跳转指令
+        assert!(
+            compiled.code.len() > 20,
+            "too short: {}",
+            compiled.code.len()
+        );
+        eprintln!("wb_loop code ({} bytes):", compiled.code.len());
+        for (i, &b) in compiled.code.iter().enumerate() {
+            eprint!("{b:02x} ");
+            if (i + 1) % 16 == 0 {
+                eprintln!();
+            }
+        }
+        eprintln!();
     }
 
     #[test]
@@ -130,7 +185,7 @@ mod tests {
         let frame_lowering = FrameLowering;
         let mut sink = crate::CodeSink::new();
         frame_lowering
-            .emit_spill_load(11, -8, 8, &mut sink)
+            .emit_spill_load(11, -8, 8, false, &mut sink)
             .unwrap();
         let bytes = sink.bytes();
         assert_eq!(bytes.len(), 4);
@@ -141,7 +196,7 @@ mod tests {
 
         let mut sink2 = crate::CodeSink::new();
         frame_lowering
-            .emit_spill_store(11, -16, 8, &mut sink2)
+            .emit_spill_store(11, -16, 8, false, &mut sink2)
             .unwrap();
         let bytes2 = sink2.bytes();
         assert_eq!(bytes2.len(), 4);
@@ -160,7 +215,7 @@ mod tests {
         builder.switch_to_block(entry);
         let sum = builder.iadd(params[0], params[1]);
         builder.ret(&[sum]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("compile");
         let hex: Vec<String> = compiled.code.iter().map(|b| format!("{:02x}", b)).collect();

@@ -1,3 +1,6 @@
+//! ⚠️ 第三十七轮状态:全部 ISA 关闭 enable_pattern_isel(标签零消费、写回已禁用)。
+//! 待接通:统一 DSL lower_pattern 命名与手写标签后重新启用(见 docs/forge-ir-code-quality-audit.md)。
+
 //! 基于模式的指令选择 — 在 lowering 之前匹配 IR 模式以生成更优的机器码。
 //!
 //! ## 设计理念
@@ -19,16 +22,16 @@
 //!
 //! ```ignore
 //! let mut matcher = PatternMatcher::new();
-//! matcher.register_x86_standard_patterns();
+//! matcher.register_standard_patterns();
 //! // 在 lowering 期间对每个基本块应用：
 //! let optimized_insts = matcher.apply(&block_instructions);
 //! ```
 
+use crate::Immediate;
 use forge_ir::Big;
 use forge_ir::Instruction;
 use forge_ir::Opcode;
 use smallvec::SmallVec;
-
 // ============================================================
 // Pattern — 一条匹配并替换的规则
 // ============================================================
@@ -186,40 +189,67 @@ impl PatternMatcher {
         matches
     }
 
-    /// 对指令序列应用模式——返回优化后的指令列表。
+    /// 对指令序列就地应用模式——返回匹配（标记）的序列数。
     ///
-    /// 不匹配模式的指令直接透传。匹配到的指令会被替换策略消费
-    ///（实际的重写由 ISA 在 lowering 期间处理；这里我们只标记匹配）。
+    /// 匹配的模式在代表指令上打 `isel_strategy` 标签（操作数/opcode 不变，
+    /// 语义零影响）；lowering 读取标签后发射融合机器序列
+    ///（Imul+Iadd → LEA、Icmp+Select → CMOV、Fmul+Fadd → FMA）。
     ///
-    /// `constants` 为可选的常量池引用。
-    /// 返回原始位置仍然需要的 `Vec<Instruction>`。
-    /// 调用方负责使用匹配信息在 lowering 过程中重写代码。
-    pub fn apply<'a>(
-        &self,
-        insts: &'a [Instruction],
-        constants: Option<&[Big]>,
-    ) -> Vec<(usize, &'a Instruction)> {
+    /// `constants` 为可选的常量池引用（供条件函数查询）。
+    pub fn apply(&self, insts: &mut [Instruction], constants: Option<&[Big]>) -> usize {
         let matches = self.find_all_matches(insts, constants);
-        let mut result = Vec::with_capacity(insts.len());
-        let mut m_idx = 0;
-        let mut pos = 0;
-
-        while pos < insts.len() {
-            if m_idx < matches.len() && matches[m_idx].pos == pos {
-                // 跳过匹配的指令（保持位置用于重写）
-                let m = &matches[m_idx];
-                for i in 0..m.consumed {
-                    result.push((pos + i, &insts[pos + i]));
-                }
-                pos += m.consumed;
-                m_idx += 1;
-            } else {
-                result.push((pos, &insts[pos]));
-                pos += 1;
-            }
+        let n = matches.len();
+        for m in &matches {
+            self.tag_match(insts, m);
         }
+        n
+    }
 
-        result
+    /// 给匹配的代表指令打上 isel_strategy 标签（不修改操作数/opcode，
+    /// 保证标记前后语义一致；lowering 负责按标签发射融合序列）。
+    fn tag_match(&self, insts: &mut [Instruction], m: &PatternMatch) {
+        if m.pos + m.consumed > insts.len() || m.consumed < 2 {
+            return;
+        }
+        let first = &insts[m.pos];
+        let tag = match m.replacement {
+            "lea_sib" => {
+                // %t = Imul(idx, scale); %r = Iadd(base, %t)
+                // → Iadd 标记 "lea_sib:scale"（lowering 发射 base + idx*scale）
+                let scale = insts.iter().find_map(|ins| {
+                    if ins.opcode == Opcode::Iconst
+                        && ins.results.first().copied() == first.operands.get(1).copied()
+                    {
+                        ins.immediates.first().and_then(|imm| match imm {
+                            Immediate::Uint(v) => Some(v.to_string()),
+                            Immediate::Int(v) => Some(v.to_string()),
+                            _ => None,
+                        })
+                    } else {
+                        None
+                    }
+                });
+                match scale {
+                    Some(_s) => Some("lea_sib"),
+                    None => Some("lea_sib"),
+                }
+            }
+            "fused_cmp_select" => {
+                let cond = match first.opcode {
+                    Opcode::Icmp { cond } => Some(cond),
+                    _ => None,
+                };
+                Some(match cond {
+                    Some(_c) => "cmovcc",
+                    None => "cmovcc",
+                })
+            }
+            "fma" => Some("fma"),
+            _ => None,
+        };
+        if let Some(t) = tag {
+            insts[m.pos + 1].isel_strategy = Some(t);
+        }
     }
 }
 
@@ -230,7 +260,7 @@ impl PatternMatcher {
 impl PatternMatcher {
     /// 注册 x86 标准模式，在 lowering 过程中捕获常见 IR 模式并
     /// 映射到更优的指令序列。
-    pub fn register_x86_standard_patterns(&mut self) {
+    pub fn register_standard_patterns(&mut self) {
         // ---- LEA 合并: Iadd(base, Imul(index, const)) ----
         // 当 detect 到 Iadd 后跟 Imul（常用于地址计算）时，可以
         // 替换为单条 `lea` 指令。Imul 操作数必须是 2/4/8 的小常数。
@@ -323,15 +353,20 @@ impl PatternMatcher {
             }),
         });
     }
+}
 
-    /// 为 RISC-V 后端注册标准模式。
-    #[allow(dead_code)]
-    pub fn register_riscv_standard_patterns(&mut self) {
-        // RISC-V 特定模式可以在此添加：
-        // - lui+addiw 融合为单条加载-upper-immediate
-        // - slli+add 融合为缩放索引寻址
-        // - auipc+jalr 融合为单条间接跳转
-    }
+/// 全局架构中立标准模式匹配器（lea/cmp-select/fma 融合）。
+/// 由声明了 `[meta].enable_pattern_isel = true` 的 ISA 通过
+/// `TargetMachine::pattern_matcher()` 使用；进程内只初始化一次。
+/// 第二十七轮:全部 ISA 关闭该开关(标签零消费 + Box::leak 泄漏),
+/// 匹配器保留供后续接通。
+pub fn standard_matcher() -> &'static PatternMatcher {
+    static MATCHER: std::sync::OnceLock<PatternMatcher> = std::sync::OnceLock::new();
+    MATCHER.get_or_init(|| {
+        let mut m = PatternMatcher::new();
+        m.register_standard_patterns();
+        m
+    })
 }
 
 // ============================================================
@@ -340,9 +375,102 @@ impl PatternMatcher {
 
 #[cfg(test)]
 mod tests {
-    // Tests temporarily disabled during v14 IR migration
+    use super::*;
+    use forge_ir::mem_flags::MemFlags;
+    use forge_ir::{Block, InstFlags, Opcode, Value};
+
+    fn mk_inst(
+        opcode: Opcode,
+        operands: &[u32],
+        results: &[u32],
+        imm: Option<Immediate>,
+    ) -> Instruction {
+        Instruction {
+            opcode,
+            block: Block(0),
+            pos: 0,
+            results: results.iter().map(|&r| Value(r)).collect(),
+            operands: operands.iter().map(|&o| Value(o)).collect(),
+            immediates: imm.into_iter().collect(),
+            flags: InstFlags::NONE,
+            mem_flags: MemFlags::NONE,
+            metadata: Default::default(),
+            loc: None,
+            isel_strategy: None,
+            param_attrs: Default::default(),
+            fn_attrs: Default::default(),
+        }
+    }
+
+    /// Imul+Iadd 地址计算模式应被标记为 lea_sib 策略，且操作数/opcode 不变
+    ///（标记不改语义——lowering 未读标签时行为与标记前一致）。
+    #[test]
+    fn test_lea_fusion_tags_strategy() {
+        let mut matcher = PatternMatcher::new();
+        matcher.register_standard_patterns();
+        assert!(matcher.pattern_count() >= 3);
+
+        let mut insts = vec![
+            // %2 = Imul %1, %7   （%1=index, %7=scale——condition 在无常量池时放宽）
+            mk_inst(Opcode::Imul, &[1, 7], &[2], None),
+            // %3 = Iadd %2, %0  （imul 结果在前，%0=base）
+            mk_inst(Opcode::Iadd, &[2, 0], &[3], None),
+        ];
+        let n = matcher.apply(&mut insts, None);
+        assert_eq!(n, 1, "Imul+Iadd 应匹配一次");
+
+        // 代表指令（Iadd）打上策略标签；Imul 保持原样
+        assert_eq!(insts[0].opcode, Opcode::Imul, "Imul 不得被改写");
+        assert_eq!(
+            insts[0].operands.as_slice(),
+            [Value(1), Value(7)].as_slice(),
+            "Imul 操作数不变"
+        );
+        assert_eq!(insts[1].opcode, Opcode::Iadd, "Iadd 不得被改写");
+        assert_eq!(
+            insts[1].operands.as_slice(),
+            [Value(2), Value(0)].as_slice(),
+            "Iadd 操作数不变"
+        );
+        assert_eq!(
+            insts[1].isel_strategy,
+            Some("lea_sib"),
+            "Iadd 应带 lea_sib 标签"
+        );
+
+        // 带 Iconst scale 时策略串携带缩放因子
+        let mut insts2 = vec![
+            mk_inst(Opcode::Iconst, &[], &[2], Some(Immediate::Uint(4))),
+            mk_inst(Opcode::Imul, &[1, 2], &[3], None),
+            mk_inst(Opcode::Iadd, &[3, 0], &[4], None),
+        ];
+        let n2 = matcher.apply(&mut insts2, None);
+        assert_eq!(n2, 1);
+        assert_eq!(
+            insts2[2].isel_strategy,
+            Some("lea_sib"),
+            "第二十七轮:pattern_isel 关闭,标签改静态(不再编码 scale——消除 Box::leak 泄漏)"
+        );
+    }
+
+    /// 不匹配的序列（无 def-use 链）不被标记。
+    #[test]
+    fn test_non_matching_sequence_untouched() {
+        let mut matcher = PatternMatcher::new();
+        matcher.register_standard_patterns();
+        // Imul 结果未被 Iadd 使用
+        let mut insts = vec![
+            mk_inst(Opcode::Imul, &[1], &[2], None),
+            mk_inst(Opcode::Iadd, &[0, 5], &[3], None),
+        ];
+        let n = matcher.apply(&mut insts, None);
+        assert_eq!(n, 0);
+        assert_eq!(insts[1].isel_strategy, None);
+    }
+
     #[test]
     fn test_pattern_matcher_compiles() {
-        // placeholder
+        let m = PatternMatcher::new();
+        assert_eq!(m.pattern_count(), 0);
     }
 }

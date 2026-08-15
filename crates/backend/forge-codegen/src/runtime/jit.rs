@@ -28,11 +28,12 @@
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::FunctionCompiler;
 use crate::{CompiledFunction, RelocKind, Relocation};
-use forge_ir::{CompileError, FuncRef, FunctionBuilder, FunctionSignature, Module, TypeContext};
+use forge_ir::ImmStr;
+use forge_ir::{FuncRef, FunctionBuilder, FunctionSignature, IrError, Module, TypeContext};
 use forge_mem::{ExecutableMemory, MemError};
 
-fn mem_to_compile_err(e: MemError) -> CompileError {
-    CompileError::Emit(e.0)
+fn mem_to_compile_err(e: MemError) -> IrError {
+    IrError::Emit(e.0)
 }
 
 /// Resolve a symbol against the host process's dynamic symbols.
@@ -100,11 +101,11 @@ pub struct JitCompiler<M: TargetMachine> {
     /// 目标机器（用于构造 FunctionCompiler）。
     machine: M,
     /// 已编译函数的可执行内存（按名称索引）。
-    compiled: HashMap<String, (CompiledFunction, ExecutableMemory)>,
+    compiled: HashMap<ImmStr, (CompiledFunction, ExecutableMemory)>,
     /// 符号表：函数名 → 入口地址（用于跨函数调用解析）。
-    symbols: HashMap<String, u64>,
+    symbols: HashMap<ImmStr, u64>,
     /// 待应用的跨函数重定位。
-    pending_relocs: Vec<(String, Relocation)>,
+    pending_relocs: Vec<(ImmStr, Relocation)>,
     /// 全局变量的数据段（每全局一个堆分配——地址稳定，Drop 时释放）。
     data_segments: Vec<Box<[u8]>>,
     /// 用户提供的符号解析回调（可选）— 在注册表之后、平台符号之前查询。
@@ -144,11 +145,11 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
         name: &str,
         signature: &FunctionSignature,
         build_fn: impl FnOnce(&mut FunctionBuilder),
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         let store = TypeContext::new();
         let mut builder = FunctionBuilder::new(name, store, signature.clone());
         build_fn(&mut builder);
-        let func = builder.finish();
+        let func = builder.finish()?;
 
         let mut compiled = {
             let compiler = FunctionCompiler::new(self.machine().clone());
@@ -163,9 +164,9 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
 
         // 记录符号
         let entry_addr = mem.as_ptr() as u64;
-        self.symbols.insert(name.to_string(), entry_addr);
+        self.symbols.insert(ImmStr::from(name), entry_addr);
 
-        self.compiled.insert(name.to_string(), (compiled, mem));
+        self.compiled.insert(ImmStr::from(name), (compiled, mem));
 
         // 重新解析之前未能解析的重定位
         self.resolve_pending()?;
@@ -174,36 +175,89 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
     }
 
     /// 编译 Module 中的所有函数。
-    pub fn compile_module(&mut self, module: &Module) -> Result<(), CompileError> {
+    ///
+    /// 自适应并行：函数数 ≥ 8 时用 `std::thread::scope` 并行编译（每个函数
+    /// 的 compile_raw 相互独立、无共享可变状态），随后串行应用 relocations
+    /// 与符号注册（保持 func_ref 顺序，保证跨函数 Call 的符号可见性）；
+    /// 小模块保持串行——线程创建开销（~50µs）超过 2-4 个函数的编译时间。
+    pub fn compile_module(&mut self, module: &Module) -> Result<(), IrError> {
         // Register global variables first (allocate a data segment per global
         // and register both the name and "G{id}") so GlobalAddr @abs_reloc
         // patches resolve eagerly during apply_relocations_to.
         for (gid, global) in module.iter_globals() {
-            let init = global.init.clone().unwrap_or_default();
+            // init 字节缺失（如 `zeroinitializer` 文本层 init=None）时按类型
+            // 大小生成零段——否则数据段为空（dangling 指针），store/load 写
+            // 未映射地址 → 随机 SEGV（曾因 {i32,i32} zeroinitializer 崩溃）。
+            let init: Vec<u8> = match global.init.clone() {
+                Some(bytes) => bytes,
+                None => {
+                    let size = module.types.borrow().size_bytes(global.ty) as usize;
+                    vec![0u8; size]
+                }
+            };
             let seg: Box<[u8]> = init.into_boxed_slice();
             let addr = seg.as_ptr() as u64;
             self.symbols.insert(global.name.clone(), addr);
-            self.symbols.insert(format!("G{}", gid.0), addr);
+            self.symbols
+                .insert(ImmStr::from(format!("G{}", gid.0)), addr);
             self.data_segments.push(seg);
         }
-        for (i, _func) in module.iter_functions().enumerate() {
-            let func_ref = FuncRef(i as u32);
-            let func = module.get_function(func_ref);
-            let mut compiled = {
-                let compiler = FunctionCompiler::new(self.machine().clone());
-                compiler.compile_raw(func)?
-            };
 
-            self.apply_relocations_to(&func.name, &mut compiled)?;
+        let func_count = module.function_count();
+        if func_count >= 8 {
+            // ── 并行路径：编译阶段无共享可变状态，仅借用 module（scoped）──
+            let compiled: Vec<(ImmStr, CompiledFunction)> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..func_count)
+                    .map(|i| {
+                        let fr = FuncRef(i as u32);
+                        let func = module.get_function(fr);
+                        let machine = self.machine().clone();
+                        s.spawn(move || {
+                            let compiler = FunctionCompiler::new(machine);
+                            compiler.compile_raw(func).map(|cf| (func.name.clone(), cf))
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| {
+                        h.join()
+                            .map_err(|_| IrError::Internal("compile thread panicked".into()))?
+                    })
+                    .collect::<Result<Vec<_>, IrError>>()
+            })?;
+            // ── 串行收尾：按 func_ref 顺序注册符号，跨函数 Call 可见 ──
+            for (i, (name, mut compiled)) in compiled.into_iter().enumerate() {
+                self.apply_relocations_to(name.as_str(), &mut compiled)?;
+                let mem = ExecutableMemory::new(&compiled.code).map_err(mem_to_compile_err)?;
+                let entry_addr = mem.as_ptr() as u64;
+                self.symbols.insert(name.clone(), entry_addr);
+                self.symbols
+                    .insert(ImmStr::from(format!("@{i}")), entry_addr);
+                self.compiled.insert(name, (compiled, mem));
+            }
+        } else {
+            // ── 串行路径：小模块，避免线程创建开销 ──
+            for (i, _func) in module.iter_functions().enumerate() {
+                let func_ref = FuncRef(i as u32);
+                let func = module.get_function(func_ref);
+                let mut compiled = {
+                    let compiler = FunctionCompiler::new(self.machine().clone());
+                    compiler.compile_raw(func)?
+                };
 
-            let mem = ExecutableMemory::new(&compiled.code).map_err(mem_to_compile_err)?;
-            let entry_addr = mem.as_ptr() as u64;
-            let name = func.name.clone();
-            // Register both the human-readable name and the FuncRef-keyed
-            // symbol ("@N") so cross-function `Call` relocations resolve.
-            self.symbols.insert(name.clone(), entry_addr);
-            self.symbols.insert(format!("@{i}"), entry_addr);
-            self.compiled.insert(name, (compiled, mem));
+                self.apply_relocations_to(&func.name, &mut compiled)?;
+
+                let mem = ExecutableMemory::new(&compiled.code).map_err(mem_to_compile_err)?;
+                let entry_addr = mem.as_ptr() as u64;
+                let name = func.name.clone();
+                // Register both the human-readable name and the FuncRef-keyed
+                // symbol ("@N") so cross-function `Call` relocations resolve.
+                self.symbols.insert(name.clone(), entry_addr);
+                self.symbols
+                    .insert(ImmStr::from(format!("@{i}")), entry_addr);
+                self.compiled.insert(name, (compiled, mem));
+            }
         }
         self.resolve_pending()?;
         Ok(())
@@ -212,10 +266,11 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
     /// 注册外部符号（例如 libc 函数）。
     ///
     /// 当 JIT 代码调用 `Call` 指令引用这些符号时，地址会在编译时被 patch。
-    pub fn register_external(&mut self, name: &str, addr: u64) {
-        self.symbols.insert(name.to_string(), addr);
-        // 重新解析待处理的重定位
-        let _ = self.resolve_pending();
+    /// 第二十九轮:错误透传(原静默吞错)——重定位解析失败不再被忽略。
+    pub fn register_external(&mut self, name: &str, addr: u64) -> Result<(), IrError> {
+        self.symbols.insert(ImmStr::from(name), addr);
+        // 重新解析待处理的重定位(错误透传)
+        self.resolve_pending()
     }
 
     /// 获取已编译函数的类型安全函数指针。
@@ -224,9 +279,9 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
     ///
     /// # Panics
     /// 如果找不到 `name` 对应的函数。
-    pub fn get_fn<F>(&self, name: &str) -> Result<F, CompileError> {
+    pub fn get_fn<F>(&self, name: &str) -> Result<F, IrError> {
         let (_, mem) = self.compiled.get(name).ok_or_else(|| {
-            CompileError::Internal(format!("function '{}' not found in JIT cache", name))
+            IrError::Internal(format!("function '{}' not found in JIT cache", name))
         })?;
         // SAFETY: `mem` is a valid `ExecutableMemory` allocation. The symbol lookup
         // above guarantees the requested function exists at offset 0. The returned
@@ -245,28 +300,6 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
             .or_else(|| platform_symbol_lookup(name))
     }
 
-    /// 将已编译的机器码作为命名函数直接加载（跳过 IR 编译阶段）。
-    ///
-    /// 用于汇编器等外部工具将预编译的 `CompiledFunction` 注入 JIT 缓存，
-    /// 之后可通过 `get_fn::<F>(name)` 获取类型安全的函数指针。
-    pub fn add_compiled(
-        &mut self,
-        name: &str,
-        compiled: CompiledFunction,
-    ) -> Result<(), CompileError> {
-        let mem = ExecutableMemory::new(&compiled.code).map_err(mem_to_compile_err)?;
-        let entry_addr = mem.as_ptr() as u64;
-        self.symbols.insert(name.to_string(), entry_addr);
-        self.compiled.insert(name.to_string(), (compiled, mem));
-        self.resolve_pending()?;
-        Ok(())
-    }
-
-    /// 列出所有已编译的函数名。
-    pub fn function_names(&self) -> Vec<&str> {
-        self.compiled.keys().map(|s| s.as_str()).collect()
-    }
-
     /// 返回已编译函数的数量。
     pub fn len(&self) -> usize {
         self.compiled.len()
@@ -275,7 +308,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
         self.compiled.is_empty()
-    }
+}
 
     // --- 内部方法 ---
 
@@ -301,7 +334,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
         &mut self,
         caller: &str,
         compiled: &mut CompiledFunction,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         let mut unresolved = Vec::new();
         for reloc in &compiled.relocations {
             if let Some(&target_addr) = self.symbols.get(&reloc.symbol) {
@@ -309,7 +342,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
                 match reloc.kind {
                     RelocKind::Relative(_, _) => {
                         // PC-relative 重定位依赖最终加载地址，延迟到 resolve_pending 处理
-                        unresolved.push((caller.to_string(), reloc.clone()));
+                        unresolved.push((ImmStr::from(caller), reloc.clone()));
                     }
                     RelocKind::Absolute(w) => {
                         let n = w as usize;
@@ -317,20 +350,23 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
                             compiled.code[offset..offset + n]
                                 .copy_from_slice(&target_addr.to_le_bytes()[..n]);
                         } else {
-                            unresolved.push((caller.to_string(), reloc.clone()));
+                            unresolved.push((ImmStr::from(caller), reloc.clone()));
                         }
                     }
                 }
             } else {
-                unresolved.push((caller.to_string(), reloc.clone()));
+                unresolved.push((ImmStr::from(caller), reloc.clone()));
             }
         }
-        self.pending_relocs = unresolved;
+        // 追加而非覆盖：多函数模块中每个 caller 的 pending relocation 都要保留，
+        // 否则后编译的无 reloc 函数会把前面函数的待解析列表清空（8+ 函数模块中
+        // 中间函数的跨函数 call 会丢失 patch，执行返回垃圾值）。
+        self.pending_relocs.extend(unresolved);
         Ok(())
     }
 
     /// 重新解析待处理的重定位，在已装入的可执行内存中 patch。
-    fn resolve_pending(&mut self) -> Result<(), CompileError> {
+    fn resolve_pending(&mut self) -> Result<(), IrError> {
         if self.pending_relocs.is_empty() {
             return Ok(());
         }
@@ -343,7 +379,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
                     let reloc_offset = reloc.offset;
                     let kind = reloc.kind;
                     let site_addr = mem.as_ptr() as u64 + reloc.offset as u64;
-                    let mut patch_err: Result<(), CompileError> = Ok(());
+                    let mut patch_err: Result<(), IrError> = Ok(());
                     // SAFETY: `mem.modify` temporarily switches the page to
                     // RW, runs the closure on the code buffer, then re-seals
                     // and flushes the icache. `reloc.offset` was validated
@@ -415,7 +451,7 @@ mod tests {
     #[test]
     fn test_jit_register_external() {
         let mut jit = JitCompiler::new(x86_64::TargetMachine::new());
-        jit.register_external("malloc", 0xDEAD_BEEF);
+        jit.register_external("malloc", 0xDEAD_BEEF).unwrap();
         assert_eq!(jit.lookup_symbol("malloc"), Some(0xDEAD_BEEF));
     }
 
@@ -423,8 +459,8 @@ mod tests {
     fn test_jit_function_names() {
         let mut jit = JitCompiler::new(x86_64::TargetMachine::new());
         // 注册符号（不实际编译）
-        jit.register_external("foo", 0x1000);
-        jit.register_external("bar", 0x2000);
+        jit.register_external("foo", 0x1000).unwrap();
+        jit.register_external("bar", 0x2000).unwrap();
         assert_eq!(jit.symbols.len(), 2);
     }
 
@@ -432,7 +468,7 @@ mod tests {
     fn test_jit_symbol_resolver_chain() {
         let mut jit = JitCompiler::new(x86_64::TargetMachine::new());
         // 1. 注册表优先
-        jit.register_external("registered", 0x1111);
+        jit.register_external("registered", 0x1111).unwrap();
         assert_eq!(jit.lookup_symbol("registered"), Some(0x1111));
         // 2. 用户回调次之
         jit.set_symbol_resolver(|name| {
@@ -474,6 +510,63 @@ mod tests {
 
         let answer: extern "C" fn() -> i32 = jit.get_fn("answer").expect("get_fn");
         assert_eq!(answer(), 42);
+    }
+
+    /// E2E: 编译 8+ 函数 Module（触发 compile_module 的并行路径——每个函数
+    /// 独立线程编译），含一个跨函数 `call @0`，验证并行编译后 relocation
+    /// 与符号注册正确、执行结果一致。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_parallel_module_compile() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, Module, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut m = Module::new();
+        {
+            let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+            let mut b = FunctionBuilder::new("callee", TypeContext::new(), sig);
+            b.create_block_here();
+            let v = b.iconst_i32(42);
+            b.ret(&[v]);
+            m.add_function(b.finish().expect("build"));
+        }
+        {
+            let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+            let mut b = FunctionBuilder::new("caller", TypeContext::new(), sig);
+            b.create_block_here();
+            let rets = b.call(forge_ir::FuncRef(0), &[], &[TypeId::I32]);
+            b.ret(&rets);
+            m.add_function(b.finish().expect("build"));
+        }
+        let mut jit = JitCompiler::new(x86_64::TargetMachine::new());
+        jit.compile_module(&m).expect("module compile");
+        let f: extern "C" fn() -> i32 = jit.get_fn("caller").expect("caller");
+        assert_eq!(f(), 42, "cross-function JIT call should return callee's 42");
+
+        // ── 并行路径（≥8 函数）：f0 常量 + f1 调 f0 + f2..f7 常量 ──
+        let mut m = Module::new();
+        for i in 0..8 {
+            let name = format!("f{i}");
+            let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+            let mut b = FunctionBuilder::new(name.as_str(), TypeContext::new(), sig);
+            b.create_block_here();
+            if i == 1 {
+                let r = b.call(forge_ir::FuncRef(0), &[], &[TypeId::I32]);
+                b.ret(&r);
+            } else {
+                let v = b.iconst_i32(10 * (i + 1));
+                b.ret(&[v]);
+            }
+            m.add_function(b.finish().expect("build"));
+        }
+        let mut jit = JitCompiler::new(x86_64::TargetMachine::new());
+        jit.compile_module(&m).expect("parallel module compile");
+        let f0: extern "C" fn() -> i32 = jit.get_fn("f0").expect("f0");
+        assert_eq!(f0(), 10, "f0");
+        let f1: extern "C" fn() -> i32 = jit.get_fn("f1").expect("f1");
+        assert_eq!(f1(), 10, "f1 calls f0");
+        let f7: extern "C" fn() -> i32 = jit.get_fn("f7").expect("f7");
+        assert_eq!(f7(), 80, "f7");
     }
 
     /// E2E: 编译 `fn add(a: i32, b: i32) -> i32 { a + b }` 并通过 JitCompiler 调用。

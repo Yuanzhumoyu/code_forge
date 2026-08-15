@@ -3,7 +3,7 @@
 //! 负责 prologue/epilogue 生成和栈帧布局。
 //! 与 TargetABI 分离：ABI 描述调用约定，FrameLowering 实现栈帧操作。
 
-use crate::{AllocResult, CodeSink, CompileError}; // AllocResult = AllocResult (type alias)
+use crate::{AllocResult, CodeSink, IrError}; // AllocResult = AllocResult (type alias)
 
 /// 函数级栈帧管理。
 pub trait TargetFrameLowering: Send + Sync + 'static {
@@ -25,7 +25,7 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         frame_size: u32,
         reg_map: &AllocResult,
         sink: &mut CodeSink,
-    ) -> Result<(), CompileError>;
+    ) -> Result<(), IrError>;
 
     /// 发射函数尾声：恢复 callee-saved 寄存器、释放栈帧、返回。
     fn emit_epilogue(
@@ -33,7 +33,7 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         frame_size: u32,
         reg_map: &AllocResult,
         sink: &mut CodeSink,
-    ) -> Result<(), CompileError>;
+    ) -> Result<(), IrError>;
 
     /// Emit a jump to the epilogue label (used at end of return blocks).
     fn emit_epilogue_jump(
@@ -42,37 +42,40 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         _reg_map: &AllocResult,
         _epilogue_block: forge_ir::Block,
         _sink: &mut CodeSink,
-    ) -> Result<(), CompileError> {
+    ) -> Result<(), IrError> {
         // 默认实现：未覆盖的 ISA 报错而非 panic（错误优雅传播）
-        Err(CompileError::Unimplemented(
+        Err(IrError::Unimplemented(
             "TargetFrameLowering::emit_epilogue_jump must be overridden per ISA".into(),
         ))
     }
 
     /// Emit a spill load: load a spilled value from stack into `dst_reg`.
-    /// `width` is the size in bytes of the spilled value.
+    /// `width` is the size in bytes of the spilled value; `is_fp` 区分 FPR/XMM
+    /// 与 GPR（8 字节 FPR 与 GPR 宽度相同，必须按类选加载指令）。
     fn emit_spill_load(
         &self,
-        _dst_reg: u8,
+        _dst_reg: u32,
         _offset: i32,
         _width: u8,
+        _is_fp: bool,
         _sink: &mut CodeSink,
-    ) -> Result<(), CompileError> {
-        Err(CompileError::Unimplemented(
+    ) -> Result<(), IrError> {
+        Err(IrError::Unimplemented(
             "TargetFrameLowering::emit_spill_load must be overridden per ISA".into(),
         ))
     }
 
     /// Emit a spill store: store `src_reg` to spilled stack slot.
-    /// `width` is the size in bytes of the spilled value.
+    /// `width` is the size in bytes of the spilled value; `is_fp` 同上。
     fn emit_spill_store(
         &self,
-        _src_reg: u8,
+        _src_reg: u32,
         _offset: i32,
         _width: u8,
+        _is_fp: bool,
         _sink: &mut CodeSink,
-    ) -> Result<(), CompileError> {
-        Err(CompileError::Unimplemented(
+    ) -> Result<(), IrError> {
+        Err(IrError::Unimplemented(
             "TargetFrameLowering::emit_spill_store must be overridden per ISA".into(),
         ))
     }

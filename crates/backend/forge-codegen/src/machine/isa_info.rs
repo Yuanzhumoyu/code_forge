@@ -25,25 +25,6 @@ pub struct IsaCapabilities {
     pub max_inst_len: u8,
 }
 
-impl IsaCapabilities {
-    pub fn is_fixed_width(&self) -> bool {
-        !self.variable_length
-    }
-    pub fn is_variable_width(&self) -> bool {
-        self.variable_length
-    }
-    pub fn has_simd(&self) -> bool {
-        !self.simd_widths.is_empty()
-    }
-    pub fn has_prefixes(&self) -> bool {
-        self.prefix_layers > 0
-    }
-    pub fn has_mask_registers(&self) -> bool {
-        self.mask_registers
-    }
-}
-
-// ============================================================
 // FormatInfo — 指令格式运行时信息
 // ============================================================
 
@@ -74,6 +55,8 @@ pub struct RegisterClassInfo {
     pub width: u16,
     pub prefix: &'static str,
     pub reg_class: forge_ir::RegClass,
+    /// 可分配的物理寄存器索引（[reg_classes.X.allocatable]；空 = 该组全部）。
+    pub allocatable: Vec<u32>,
 }
 
 // ============================================================
@@ -119,11 +102,13 @@ mod tests {
             count: 16,
             width: 8,
             prefix: "r",
-            reg_class: forge_ir::RegClass::GPR,
+            reg_class: forge_ir::RegClass::GPR64,
+            allocatable: (0..16).collect(),
         };
         assert_eq!(info.name, "GPR");
         assert_eq!(info.count, 16);
         assert_eq!(info.width, 8);
+        assert_eq!(info.allocatable.len(), 16);
     }
 
     #[test]

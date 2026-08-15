@@ -7,6 +7,7 @@
 use crate::machine::reloc_patcher::RelocPatcher;
 use crate::runtime::output_types::{RelocKind, Relocation};
 use forge_ir::Block;
+use forge_ir::ImmStr;
 use std::sync::Arc;
 
 /// Byte-level code emission buffer with label fixup support.
@@ -88,7 +89,7 @@ impl CodeSink {
         self.relocs.push(Relocation {
             offset,
             kind,
-            symbol: symbol.to_string(),
+            symbol: ImmStr::from(symbol),
             addend,
         });
     }
@@ -103,7 +104,7 @@ impl CodeSink {
     /// Resolve all pending label fixups and produce the final bytecode.
     ///
     /// Returns an error if a referenced label was never bound.
-    /// Errors are returned as `String` for use with `CompileError::Emit`.
+    /// Errors are returned as `String` for use with `IrError::Emit`.
     pub fn finish(mut self) -> Result<Vec<u8>, String> {
         for (patch_offset, label, kind) in &self.pending {
             let target = self.labels.get(label).ok_or_else(|| {
@@ -130,7 +131,7 @@ impl CodeSink {
                 self.relocs.push(Relocation {
                     offset: *patch_offset,
                     kind: *kind,
-                    symbol: String::new(),
+                    symbol: ImmStr::default(),
                     addend: *target as i64,
                 });
                 continue;
@@ -142,7 +143,7 @@ impl CodeSink {
                     self.relocs.push(Relocation {
                         offset: *patch_offset,
                         kind: *kind,
-                        symbol: String::new(),
+                        symbol: ImmStr::default(),
                         addend: *target as i64,
                     });
                     match bits {
@@ -156,7 +157,7 @@ impl CodeSink {
                     self.relocs.push(Relocation {
                         offset: *patch_offset,
                         kind: *kind,
-                        symbol: String::new(),
+                        symbol: ImmStr::default(),
                         addend: rel_target,
                     });
                     match bits {

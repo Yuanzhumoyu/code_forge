@@ -25,6 +25,12 @@ pub trait TargetABI: Send + Sync + 'static {
         16
     }
 
+    /// 帧布局的额外栈填充（字节）：x86 = 8（align/2，SysV/Windows x64
+    /// red-zone 约束）；其他 ABI 缺省 0。架构事实由 TOML 的 `[abi].frame_padding` 声明。
+    fn frame_padding(&self) -> i32 {
+        0
+    }
+
     /// 红区大小。`Some(n)` 表示栈指针以下 n 字节不被信号处理程序破坏。
     fn red_zone(&self) -> Option<u32> {
         None

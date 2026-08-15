@@ -169,7 +169,7 @@ impl LiveInterval {
 /// Spill weight 使用循环深度加权（循环内 ×10）。
 pub fn compute_live_intervals<I: crate::MachineInst>(
     vcode: &crate::VCode<I>,
-    xreg_map: &[smallvec::SmallVec<[(XReg, u8); 2]>],
+    xreg_map: &[smallvec::SmallVec<[(XReg, u8, bool); 2]>],
     param_xregs: &[XReg],
 ) -> HashMap<XReg, LiveInterval> {
     // ── 阶段 0: 循环检测 ──
@@ -221,16 +221,27 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         for (inst_idx, _inst) in block.instructions.iter().enumerate() {
             let inst_u32 = inst_idx as u32;
             let use_point = ProgPoint::inst_start(block_u32, inst_u32);
+            let def_point = ProgPoint::inst_end(block_u32, inst_u32);
 
-            // 该指令的寄存器字段对应的 XReg（由指令包 xreg_map 聚合提供）
+            // 该指令的寄存器字段对应的 XReg（由指令包 xreg_map 聚合提供）。
+            // use 字段的 XReg 在 inst_start 活跃（读旧值），def 字段的 XReg 在
+            // inst_end 活跃（写新值）——区分两者是活区间正确性的关键：
+            // 若 def 的 XReg 也记 inst_start，其区间起点提前，regalloc 会把
+            // 该 XReg 当作"指令执行前已活跃"，与同指令 use 的 XReg 冲突
+            // （lea/load 链中 load 的 dest 与 base 被分配同一寄存器）。
             if let Some(slot) = xreg_map.get(global_inst) {
-                for &(xreg, _fi) in slot.iter() {
+                for &(xreg, _fi, is_def) in slot.iter() {
                     let interval = intervals
                         .entry(xreg)
                         .or_insert_with(|| LiveInterval::new(xreg, xreg.class()));
                     interval.weight += w;
-                    interval.add_use(use_point);
-                    interval.cover(use_point);
+                    if is_def {
+                        interval.add_def(def_point);
+                        interval.cover(def_point);
+                    } else {
+                        interval.add_use(use_point);
+                        interval.cover(use_point);
+                    }
                 }
             }
             global_inst += 1;
@@ -248,9 +259,20 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         }
     }
 
+    // [调试] FORGE_TRACE_LIVE：dump 所有活区间（定位循环块参数/常量断裂）
+    if std::env::var_os("FORGE_TRACE_LIVE").is_some() {
+        let mut v: Vec<_> = intervals.iter().collect();
+        v.sort_by_key(|(x, _)| x.index());
+        for (x, i) in &v {
+            eprintln!(
+                "[live] {x:?} weight={} defs={:?} uses={:?}",
+                i.weight, i.defs, i.uses
+            );
+        }
+    }
+
     let mut global_inst_map = 0usize;
-    // ── 阶段 2: 跨块数据流分析 ──
-    // 构建 per-block 后继列表（branch targets + fallthrough）
+    // ── 阶段 2: 跨块数据流分析 ──    // 构建 per-block 后继列表（branch targets + fallthrough）
     let mut block_succs: Vec<Vec<usize>> = vec![Vec::new(); num_blocks];
     for (block_idx, block) in blocks.iter().enumerate() {
         // 收集显式 branch targets
@@ -280,9 +302,11 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     for (block_idx, block) in blocks.iter().enumerate() {
         for _inst in block.instructions.iter() {
             if let Some(slot) = xreg_map.get(global_inst_map) {
-                for &(xreg, _fi) in slot.iter() {
+                for &(xreg, _fi, is_def) in slot.iter() {
                     block_uses[block_idx].insert(xreg);
-                    block_defs[block_idx].insert(xreg);
+                    if is_def {
+                        block_defs[block_idx].insert(xreg);
+                    }
                 }
             }
             global_inst_map += 1;
@@ -352,7 +376,7 @@ mod tests {
 
     /// 构造第 n 号 GPR 临时寄存器（测试辅助）。
     fn xgpr(n: u32) -> XReg {
-        XReg::new(n, RegClass::GPR, 8)
+        XReg::new(n, RegClass::GPR(8), 8)
     }
 
     #[test]
@@ -385,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_live_interval_cover() {
-        let mut interval = LiveInterval::new(xgpr(0), RegClass::GPR);
+        let mut interval = LiveInterval::new(xgpr(0), RegClass::GPR(8));
         interval.cover(ProgPoint(5));
         interval.cover(ProgPoint(6)); // extends
 

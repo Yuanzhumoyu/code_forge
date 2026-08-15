@@ -19,7 +19,7 @@ mod tests {
         let sum = builder.iadd(params[0], params[1]);
         let diff = builder.isub(sum, params[1]);
         builder.ret(&[diff]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let result = compiler.compile_raw(&func);
@@ -50,7 +50,7 @@ mod tests {
         let quot = builder.sdiv(prod, params[0]);
         let rem = builder.srem(quot, params[1]);
         builder.ret(&[rem]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("mul_div compile");
@@ -67,7 +67,7 @@ mod tests {
         let quot = builder.udiv(params[0], params[1]);
         let rem = builder.urem(quot, params[1]);
         builder.ret(&[rem]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("udiv_urem compile");
@@ -86,7 +86,7 @@ mod tests {
         let xor_val = builder.bxor(or_val, params[1]);
         let not_val = builder.bnot(xor_val);
         builder.ret(&[not_val]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("bitwise compile");
@@ -104,7 +104,7 @@ mod tests {
         let shr = builder.ushr(shl, params[1]);
         let sar = builder.sshr(shr, params[0]);
         builder.ret(&[sar]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("shifts compile");
@@ -129,14 +129,13 @@ mod tests {
         for (cc, name) in conditions {
             let sig =
                 FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I32]);
-            let mut builder =
-                FunctionBuilder::new(&format!("icmp_{name}"), TypeContext::new(), sig);
+            let mut builder = FunctionBuilder::new(format!("icmp_{name}"), TypeContext::new(), sig);
             let (entry, params) =
                 builder.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
             builder.switch_to_block(entry);
             let cond = builder.icmp(*cc, params[0], params[1]);
             builder.ret(&[cond]);
-            let func = builder.finish();
+            let func = builder.finish().expect("build");
 
             let compiler = FunctionCompiler::new(TargetMachine::new());
             let compiled = compiler
@@ -163,7 +162,7 @@ mod tests {
         builder.ret(&[one]);
         builder.switch_to_block(else_block);
         builder.ret(&[zero]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("branch compile");
@@ -200,7 +199,7 @@ mod tests {
         builder.jump(header, &[new_i, new_sum]);
         builder.switch_to_block(exit_block);
         builder.ret(&[sum]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("loop compile");
@@ -231,7 +230,7 @@ mod tests {
         builder.jump(merge_block, &[params[1]]);
         builder.switch_to_block(merge_block);
         builder.ret(&[merge_params[0]]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("if_else compile");
@@ -248,7 +247,7 @@ mod tests {
         builder.create_block_here();
         let v = builder.iconst_i64(i64::MAX);
         builder.ret(&[v]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
         let compiled = compiler.compile_raw(&func).expect("const_max compile");
         assert!(!compiled.code.is_empty());
     }
@@ -262,7 +261,7 @@ mod tests {
         let v = builder.copy(params[0]);
         let v2 = builder.bitcast(v, TypeId::I64);
         builder.ret(&[v2]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("copy_bitcast compile");
@@ -279,7 +278,7 @@ mod tests {
         builder.switch_to_block(entry);
         let v = builder.sextend(params[0], TypeId::I64);
         builder.ret(&[v]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
         let compiled = compiler.compile_raw(&func).expect("sext compile");
         assert!(!compiled.code.is_empty());
     }
@@ -307,7 +306,7 @@ mod tests {
         let cd = builder.iadd(params[2], params[3]);
         let sum = builder.iadd(ab, cd);
         builder.ret(&[sum]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("multi_param compile");
@@ -321,7 +320,7 @@ mod tests {
         builder.create_block_here();
         let v = builder.iconst_i64(42);
         builder.ret(&[v]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("probe compile");

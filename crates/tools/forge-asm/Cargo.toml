@@ -2,4 +2,10 @@
 name = "forge-asm"
 version = "0.1.0"
 edition = "2024"
-description = "Forge Assembler: runtime data types for DSL-generated assembler code — zero dependencies"
+description = "Forge Assembler: runtime assembly engine (logos lexer + type-checked operand IR) for DSL-generated assemblers"
+
+[dependencies]
+logos = "0.16.1"
+lalrpop-util = "0.23"
+
+[dev-dependencies]

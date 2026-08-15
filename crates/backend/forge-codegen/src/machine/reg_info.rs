@@ -11,13 +11,25 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     type Reg: PhysReg;
 
     /// 通用寄存器数量。
-    fn num_gp_regs(&self) -> u8;
+    fn num_gp_regs(&self) -> u32;
     /// 浮点/向量寄存器数量。
-    fn num_fp_regs(&self) -> u8;
+    fn num_fp_regs(&self) -> u32;
 
     /// 寄存器类元数据。
     fn register_classes(&self) -> &[super::isa_info::RegisterClassInfo] {
         &[]
+    }
+
+    /// ISA 默认整数值类（lowering 中 alloc_xreg 的默认目标类）。
+    /// 元数据驱动：由 DSL 从 [reg.gpr64]/[reg.gpr] 生成；缺省回退 GPR64。
+    fn default_gpr_class(&self) -> RegClass {
+        RegClass::GPR64
+    }
+
+    /// ISA 默认浮点值类（lowering 中浮点 alloc_xreg 的默认目标类）。
+    /// 元数据驱动：由 DSL 从 [meta].default_fpr_width 生成；缺省回退 FPR64。
+    fn default_fpr_class(&self) -> RegClass {
+        RegClass::FPR64
     }
 
     /// 寄存器类的字节宽度（从 ISA TOML [reg_classes] 读取）。
@@ -33,16 +45,16 @@ pub trait TargetRegInfo: Send + Sync + 'static {
 
     /// 通用寄存器分配优先级顺序（靠前的优先分配）。
     /// 排除 SP、FP 和被调用者保存寄存器。
-    fn allocatable_gp_order(&self) -> Vec<u8>;
+    fn allocatable_gp_order(&self) -> Vec<u32>;
 
     /// 浮点寄存器分配优先级顺序。
-    fn allocatable_fp_order(&self) -> Vec<u8>;
+    fn allocatable_fp_order(&self) -> Vec<u32>;
 
     /// 溢出代码可用的临时寄存器（不跨 spill load/emit/store 使用）。
-    fn scratch_regs(&self) -> Vec<u8>;
+    fn scratch_regs(&self) -> Vec<u32>;
 
     /// 被调用者保存的寄存器索引列表。
-    fn callee_saved(&self) -> Vec<u8>;
+    fn callee_saved(&self) -> Vec<u32>;
 
     /// Prologue 在帧指针上方 push 的字节数（帧指针保存槽，如 x86 `push rbp`
     /// = 8；aarch64/riscv64 `stp/sd fp,lr` = 16；wasm 无帧 = 0）。

@@ -29,7 +29,7 @@ mod tests {
         builder.switch_to_block(entry);
         let v = builder.iconst_i32(42);
         builder.ret(&[v]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let result = compiler.compile_raw(&func);
@@ -56,7 +56,7 @@ mod tests {
         builder.switch_to_block(entry);
         let sum = builder.iadd(params[0], params[1]);
         builder.ret(&[sum]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("wasm32 compile add");
@@ -73,7 +73,7 @@ mod tests {
         builder.switch_to_block(entry);
         let diff = builder.isub(params[0], params[1]);
         builder.ret(&[diff]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("wasm32 compile sub");
@@ -90,7 +90,7 @@ mod tests {
         builder.switch_to_block(entry);
         let prod = builder.imul(params[0], params[1]);
         builder.ret(&[prod]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("wasm32 compile mul");
@@ -107,7 +107,7 @@ mod tests {
         builder.switch_to_block(entry);
         let result = builder.band(params[0], params[1]);
         builder.ret(&[result]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("wasm32 compile and");
@@ -134,7 +134,7 @@ mod tests {
         builder.jump(merge_block, &[zero]);
         builder.switch_to_block(merge_block);
         builder.ret(&[merge_params[0]]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler.compile_raw(&func).expect("wasm32 compile branch");
@@ -154,7 +154,7 @@ mod tests {
         let v4 = builder.bxor(v3, params[0]);
         let v5 = builder.band(v4, params[0]);
         builder.ret(&[v5]);
-        let func = builder.finish();
+        let func = builder.finish().expect("build");
 
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let compiled = compiler

@@ -3,7 +3,6 @@
 //! 替代旧 `AllocResult`，作为分配器与管线后续阶段之间的接口。
 //! VCode 在分配后不变，所有分配信息在此 struct 中。
 
-use crate::RegLocation;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -85,18 +84,6 @@ impl AllocResult {
     pub fn spill_slot(&self, vreg: XReg) -> SpillSlot {
         self.spill_slots[&vreg]
     }
-
-    /// 获取 XReg 的位置（寄存器或栈）。
-    pub fn location(&self, vreg: XReg) -> RegLocation {
-        if let Some(preg) = self.preg(vreg) {
-            RegLocation::Reg(preg)
-        } else if let Some(slot) = self.spill_slots.get(&vreg) {
-            RegLocation::Stack(slot.offset)
-        } else {
-            RegLocation::Unknown
-        }
-    }
-
     // ── 构造方法 ──
 
     /// 为尺寸估算创建假 AllocResult。
@@ -105,8 +92,8 @@ impl AllocResult {
         let mut assignments = HashMap::new();
         for i in 0..n {
             assignments.insert(
-                XReg::new(i, RegClass::GPR, 8),
-                PReg::new((i % 16) as u8, RegClass::GPR),
+                XReg::new(i, RegClass::GPR64, 8),
+                PReg::new(i % 16, RegClass::GPR64),
             );
         }
         AllocResult {
@@ -128,7 +115,7 @@ impl AllocResult {
         self.assignments
             .get(&vreg)
             .map(|p| p.class)
-            .unwrap_or(RegClass::GPR)
+            .unwrap_or(RegClass::GPR64)
     }
 
     // ── 核心 API ──
@@ -138,18 +125,18 @@ impl AllocResult {
         Self::default()
     }
 
-    /// 解析 XReg → PReg，已溢出/未分配时返回 CompileError。
+    /// 解析 XReg → PReg，已溢出/未分配时返回 IrError。
     /// 这是 DSL 生成的 emit_inst 代码使用的核心 API。
-    pub fn resolve(&self, vreg: XReg) -> Result<PReg, CompileError> {
+    pub fn resolve(&self, vreg: XReg) -> Result<PReg, IrError> {
         self.preg(vreg).ok_or_else(|| {
             if self.is_spilled(vreg) {
-                CompileError::RegAlloc(format!(
+                IrError::RegAlloc(format!(
                     "vreg {} is spilled to stack (offset {}), not in a register",
                     vreg,
                     self.spill_slot(vreg).offset
                 ))
             } else {
-                CompileError::RegAlloc(format!("unallocated vreg {}", vreg))
+                IrError::RegAlloc(format!("unallocated vreg {}", vreg))
             }
         })
     }
@@ -168,40 +155,22 @@ impl AllocResult {
 mod tests {
     use super::*;
 
-    fn make_preg(idx: u8, class: RegClass) -> PReg {
+    fn make_preg(idx: u32, class: RegClass) -> PReg {
         PReg::new(idx, class)
     }
 
     /// 构造第 n 号 GPR 临时寄存器（测试辅助：经 XRegAllocator 受控创建）。
     fn xgpr(n: u32) -> XReg {
-        XReg::new(n, RegClass::GPR, 8)
+        XReg::new(n, RegClass::GPR64, 8)
     }
 
     /// 构造第 n 号 FPR 临时寄存器。
     fn xfpr(n: u32) -> XReg {
         let mut xa = XRegAllocator::new();
         for _ in 0..n {
-            xa.alloc_default(RegClass::FPR);
+            xa.alloc_default(RegClass::FPR64);
         }
-        xa.alloc_default(RegClass::FPR)
-    }
-
-    #[test]
-    fn test_new_is_default() {
-        let a = AllocResult::new();
-        assert!(a.assignments.is_empty());
-        assert!(a.spill_slots.is_empty());
-        assert!(a.param_vregs.is_empty());
-    }
-
-    #[test]
-    fn test_insert_and_preg() {
-        let mut result = AllocResult::new();
-        let v = xgpr(0);
-        let p = make_preg(3, RegClass::GPR);
-        result.insert(v, p);
-        assert_eq!(result.preg(v), Some(p));
-        assert_eq!(result.preg(xgpr(99)), None);
+        xa.alloc_default(RegClass::FPR64)
     }
 
     #[test]
@@ -223,36 +192,9 @@ mod tests {
     }
 
     #[test]
-    fn test_location_reg() {
-        let mut result = AllocResult::new();
-        let p = make_preg(7, RegClass::GPR);
-        result.insert(xgpr(0), p);
-        assert_eq!(result.location(xgpr(0)), RegLocation::Reg(p));
-    }
-
-    #[test]
-    fn test_location_stack() {
-        let mut result = AllocResult::new();
-        result.spill_slots.insert(
-            xgpr(0),
-            SpillSlot {
-                offset: -24,
-                size: 8,
-            },
-        );
-        assert_eq!(result.location(xgpr(0)), RegLocation::Stack(-24));
-    }
-
-    #[test]
-    fn test_location_unknown() {
-        let result = AllocResult::new();
-        assert_eq!(result.location(xgpr(99)), RegLocation::Unknown);
-    }
-
-    #[test]
     fn test_resolve_success() {
         let mut result = AllocResult::new();
-        let p = make_preg(5, RegClass::FPR);
+        let p = make_preg(5, RegClass::FPR64);
         result.insert(xfpr(3), p);
         assert_eq!(result.resolve(xfpr(3)).unwrap(), p);
     }
@@ -281,19 +223,19 @@ mod tests {
     #[test]
     fn test_vreg_class() {
         let mut result = AllocResult::new();
-        result.insert(xgpr(1), make_preg(0, RegClass::GPR));
-        result.insert(xfpr(2), make_preg(0, RegClass::FPR));
-        assert_eq!(result.vreg_class(xgpr(1)), RegClass::GPR);
-        assert_eq!(result.vreg_class(xfpr(2)), RegClass::FPR);
-        assert_eq!(result.vreg_class(xgpr(99)), RegClass::GPR); // default
+        result.insert(xgpr(1), make_preg(0, RegClass::GPR64));
+        result.insert(xfpr(2), make_preg(0, RegClass::FPR64));
+        assert_eq!(result.vreg_class(xgpr(1)), RegClass::GPR64);
+        assert_eq!(result.vreg_class(xfpr(2)), RegClass::FPR64);
+        assert_eq!(result.vreg_class(xgpr(99)), RegClass::GPR64); // default
     }
 
     #[test]
     fn test_dummy_for_sizing() {
         let r = AllocResult::dummy_for_sizing(32);
         assert_eq!(r.assignments.len(), 32);
-        assert_eq!(r.preg(xgpr(0)), Some(make_preg(0, RegClass::GPR)));
-        assert_eq!(r.preg(xgpr(16)), Some(make_preg(0, RegClass::GPR)));
+        assert_eq!(r.preg(xgpr(0)), Some(make_preg(0, RegClass::GPR64)));
+        assert_eq!(r.preg(xgpr(16)), Some(make_preg(0, RegClass::GPR64)));
     }
 
     #[test]

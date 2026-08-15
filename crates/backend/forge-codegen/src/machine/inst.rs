@@ -40,11 +40,6 @@ pub enum EffectKind {
 }
 
 impl EffectKind {
-    /// Whether this effect involves memory access.
-    pub fn is_memory_access(&self) -> bool {
-        matches!(self, Self::Read | Self::Write)
-    }
-
     /// Whether this effect modifies architectural state beyond destination registers.
     pub fn has_side_effects(&self) -> bool {
         !matches!(self, Self::Pure)
@@ -84,10 +79,10 @@ pub enum MemAccessKind {
 /// Implemented by ISA-DSL generated `Inst` enums or hand-written ISA types.
 pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
     /// Temporary registers (XReg) read by this instruction.
-    fn uses(&self) -> SmallVec<[u8; 4]>;
+    fn uses(&self) -> SmallVec<[u32; 4]>;
 
     /// Temporary registers (XReg) written by this instruction.
-    fn defs(&self) -> SmallVec<[u8; 2]>;
+    fn defs(&self) -> SmallVec<[u32; 2]>;
 
     /// Effect tags for this instruction (derived from DSL `effect` system).
     ///
@@ -141,18 +136,18 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
     }
 
     /// Register-to-register move information. Returns (dst, src) if it's a move.
-    fn is_move(&self) -> Option<(u8, u8)> {
+    fn is_move(&self) -> Option<(u32, u32)> {
         None
     }
 
     /// 读取第 `i` 个 Ireg/Freg 寄存器字段的物理索引（与 uses()/defs() 顺序一致）。
     /// 微指令构造时以默认寄存器占位，分配器分配后经 [`Self::set_reg_field`] 回填。
-    fn reg_field(&self, _i: usize) -> u8 {
+    fn reg_field(&self, _i: usize) -> u32 {
         0
     }
 
     /// 回写第 `i` 个 Ireg/Freg 寄存器字段的物理索引（寄存器分配后调用）。
-    fn set_reg_field(&mut self, _i: usize, _preg_idx: u8) {}
+    fn set_reg_field(&mut self, _i: usize, _preg_idx: u32) {}
 
     /// Whether this instruction is foldable (no side effects, can be deleted).
     fn is_foldable(&self) -> bool {
@@ -160,7 +155,7 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
     }
 
     /// Physical register indices clobbered by this instruction (used for calls).
-    fn clobbers(&self) -> &[u8] {
+    fn clobbers(&self) -> &[(u32, RegClass)] {
         &[]
     }
 
@@ -208,11 +203,11 @@ pub struct DummyInst {
 }
 
 impl MachineInst for DummyInst {
-    fn uses(&self) -> SmallVec<[u8; 4]> {
+    fn uses(&self) -> SmallVec<[u32; 4]> {
         SmallVec::new()
     }
 
-    fn defs(&self) -> SmallVec<[u8; 2]> {
+    fn defs(&self) -> SmallVec<[u32; 2]> {
         SmallVec::new()
     }
 

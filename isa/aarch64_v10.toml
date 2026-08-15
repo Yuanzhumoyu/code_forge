@@ -615,10 +615,11 @@ insts = ["SD_MOV rd, rs1"]
 # ── Memory ──
 
 [lower.Load]
-insts = ["SD_LOAD rd, rs1"]
+insts = ["SD_LOAD rd, [rs1]"]
 
 [lower.Store]
-insts = ["SD_STORE rs2, rs1"]
+# 操作数按 IR 约定：value=rs1、addr=rs2（模板字段序 val, addr）——内存操作数带方括号
+insts = ["SD_STORE rs1, [rs2]"]
 
 # ── Icmp — uses AArch64 condition codes (EQ=0, NE=1, HS=2, LO=3, HI=8, LS=9, GE=10, LT=11, GT=12, LE=13)
 # SD_SETCC fields in BTreeMap order: [cond, dest]; operands must match.
@@ -931,7 +932,10 @@ insts = ["SD_CALL rs1"]
 # ── Select / StackAddr ──
 
 [lower.Select]
-insts = ["SD_MOV rd, rs2"]
+# 2026-08 修复：原 "SD_MOV rd, rs2" 无条件复制 args[1]（true 臂）——与 x86
+# [lower.Select] 同类 bug。改为条件选择：cmp rs1,rs1 置标志（ZF=rs1==0），
+# csel NE（rs1≠0）→ rs2（then 臂），否则 rs3（else 臂）。
+insts = ["SD_CMP rs1, rs1", "SD_CSEL rd, rs2, rs3, 1"]
 
 [lower.StackAddr]
 insts = ["SD_MOV_IMM rd, 0"]
@@ -995,3 +999,22 @@ insts = [
     "ldp X29, X30, [SP], #16",
     "ret",
 ]
+
+# 条件码名称 (CC Names) — ARM 标准 cond 编码 → asm 后缀（b.{cond}/csel {cond} 展开）
+[cc_names]
+"0x0" = "eq"
+"0x1" = "ne"
+"0x2" = "cs"
+"0x3" = "cc"
+"0x4" = "mi"
+"0x5" = "pl"
+"0x6" = "vs"
+"0x7" = "vc"
+"0x8" = "hi"
+"0x9" = "ls"
+"0xA" = "ge"
+"0xB" = "lt"
+"0xC" = "gt"
+"0xD" = "le"
+"0xE" = "al"
+"0xF" = "nv"
