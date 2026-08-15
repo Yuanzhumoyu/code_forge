@@ -398,3 +398,35 @@ VEX 语义键 + families（opcodes 数组家族：SD_BIN/SS_FMOV/PS_BIN/PD_BIN/P
 **下一步（迭代 4）**：VEX 语义键（C4/C5 + mmmmm/pp/W/vvvv/L）+ families
 （opcodes 数组家族）+ 结构化谓词。随后迭代 5（lowering/abi/emit 迁移 +
 x86 全量收官）。
+
+## 14. 结构完善（2026-08）——通用汇编模板段 + asm 完整格式
+
+针对评审意见的两项结构完善（迭代 4 前置）：
+
+**A. asm 完整格式（含 mnemonic，直观性）**
+- `asm` 语义变更：**完整汇编格式**，首词即 mnemonic（`asm = "ld {0}, {2}({1})"`、
+  `asm = "amoadd.w.aqrl {0}, {2}, ({1})"`）；缺省 = `mnemonic` + 默认操作数模板
+- `mnemonic` 字段保留；asm 存在时从 asm 推导并与字段**交叉校验**（不一致报错，
+  单一事实来源）——validate + codegen 双重检查
+- 迁移：x86_v12.toml 29 条 + riscv64_v12.toml 9 条 asm 改为完整格式（脚本
+  校验首词 == mnemonic，0 不一致）
+
+**B. 通用模板段解析（替换封闭 TokenShape）**
+- **删除** TokenShape/classify_token/parse_idx/Bracket/Mem/Mem0 特殊逻辑
+- 新 `Seg = Lit(String) | Op(usize)` 段模型：操作数模板 = 字面段与占位符交替
+- 渲染（disassemble）：段序列逐段输出（字面原样 + 占位符按槽渲染）
+- 解析（assemble）：逐段消费文本——字面段前缀匹配；占位符段提取到**下一字面
+  段首次出现**为止的文本，按槽解析（reg/imm/mem）；任一失败静默回退（保持
+  同 mnemonic 多形状机制）
+- 校验：占位符越界、非文本操作数（opsize）被引用、**连续占位符无字面分隔**
+  （歧义）→ codegen 报错
+- 效果：`[{n}]`/`{off}({base})`/`({n})` 自动成为字面段组合；**任意字面格式**
+  （`byte ptr [{n}]`、SIB 风格等）无需改生成器
+- 删除 `__parse_mem_{group}` helpers（`{off}({base})` 段拆分为 imm+reg 解析）；
+  `__parse_mem_ref`（mem 槽）保留
+
+**验证**：forge-dsl 172（+6 结构测试：asm 提取/默认模板/mnemonic 不一致/通用
+段/相邻占位符拒绝/越界拒绝）、riscv 9/9 + x86 8/8 行为不变、forge-codegen
+全量、clippy 0 警告、fmt 干净
+
+**下一步（迭代 4）**：VEX 语义键 + families（opcodes 数组家族）+ 结构化谓词。

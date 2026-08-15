@@ -469,6 +469,21 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 }
             }
         }
+        // asm 完整格式：首词即 mnemonic，与 `mnemonic` 字段交叉校验（单一事实来源）
+        if let Some(a) = &inst.asm {
+            let first = a
+                .split_whitespace()
+                .next()
+                .ok_or_else(|| format!("[[instructions.{}]]: asm must not be empty", inst.name))?;
+            if let Some(mf) = &inst.mnemonic
+                && mf != first
+            {
+                return Err(format!(
+                    "[[instructions.{}]]: asm mnemonic '{first}' != mnemonic field '{mf}'",
+                    inst.name
+                ));
+            }
+        }
     }
     Ok(())
 }

@@ -164,7 +164,9 @@ operand_fields = []
 # ─────────────────────────── 指令（顺序 = v11 声明序）───────────────────────────
 
 # ADDI 复制（@move_args 用）；与 ADDI 同编码（imm=0），解码首匹配
+
 [[instructions]]
+
 name = "MOV_RM8_R64"
 form = "I"
 opcode = 0x13
@@ -174,105 +176,135 @@ mnemonic = "mv"
 
 # ── R 型整数（opcode 0x33）──
 
+
 [[instructions]]
+
 name = "ADD"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "SUB"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x20 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "SLL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "SLT"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 2, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "SLTU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 3, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "XOR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 4, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "SRL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "SRA"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x20 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "OR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 6, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "AND"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 7, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "MUL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x01 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "DIV"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 4, funct7 = 0x01 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "DIVU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x01 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "REM"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 6, funct7 = 0x01 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "REMU"
 form = "R"
 opcode = 0x33
@@ -281,7 +313,9 @@ operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slo
 
 # ── R 型浮点（opcode 0x53）──
 
+
 [[instructions]]
+
 name = "FADD_S"
 form = "R"
 opcode = 0x53
@@ -289,7 +323,9 @@ fields = { funct3 = 0, funct7 = 0x00 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fadd.s"
 
+
 [[instructions]]
+
 name = "FSUB_S"
 form = "R"
 opcode = 0x53
@@ -297,7 +333,9 @@ fields = { funct3 = 0, funct7 = 0x04 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fsub.s"
 
+
 [[instructions]]
+
 name = "FMUL_S"
 form = "R"
 opcode = 0x53
@@ -305,7 +343,9 @@ fields = { funct3 = 0, funct7 = 0x08 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fmul.s"
 
+
 [[instructions]]
+
 name = "FDIV_S"
 form = "R"
 opcode = 0x53
@@ -313,7 +353,9 @@ fields = { funct3 = 0, funct7 = 0x0C }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fdiv.s"
 
+
 [[instructions]]
+
 name = "FSQRT_S"
 form = "R"
 opcode = 0x53
@@ -321,7 +363,9 @@ fields = { funct3 = 0, funct7 = 0x2C }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
 mnemonic = "fsqrt.s"
 
+
 [[instructions]]
+
 name = "FSGNJ_S"
 form = "R"
 opcode = 0x53
@@ -329,7 +373,9 @@ fields = { funct3 = 0, funct7 = 0x10 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fsgnj.s"
 
+
 [[instructions]]
+
 name = "FSGNJN_S"
 form = "R"
 opcode = 0x53
@@ -337,7 +383,9 @@ fields = { funct3 = 1, funct7 = 0x10 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fsgnjn.s"
 
+
 [[instructions]]
+
 name = "FSGNJX_S"
 form = "R"
 opcode = 0x53
@@ -345,7 +393,9 @@ fields = { funct3 = 2, funct7 = 0x10 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fsgnjx.s"
 
+
 [[instructions]]
+
 name = "FCVT_W_S_RTZ"
 form = "R"
 opcode = 0x53
@@ -353,7 +403,9 @@ fields = { funct3 = 1, funct7 = 0x60 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
 mnemonic = "fcvt.w.s"
 
+
 [[instructions]]
+
 name = "FCVT_W_S_RNE"
 form = "R"
 opcode = 0x53
@@ -361,7 +413,9 @@ fields = { funct3 = 0, funct7 = 0x60 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
 mnemonic = "fcvt.w.s"
 
+
 [[instructions]]
+
 name = "FCVT_S_W"
 form = "R"
 opcode = 0x53
@@ -369,7 +423,9 @@ fields = { funct3 = 0, funct7 = 0x68 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
 mnemonic = "fcvt.s.w"
 
+
 [[instructions]]
+
 name = "FLT_S"
 form = "R"
 opcode = 0x53
@@ -377,7 +433,9 @@ fields = { funct3 = 4, funct7 = 0x20 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "flt.s"
 
+
 [[instructions]]
+
 name = "FEQ_S"
 form = "R"
 opcode = 0x53
@@ -385,7 +443,9 @@ fields = { funct3 = 5, funct7 = 0x20 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "feq.s"
 
+
 [[instructions]]
+
 name = "FLE_S"
 form = "R"
 opcode = 0x53
@@ -393,7 +453,9 @@ fields = { funct3 = 6, funct7 = 0x20 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fle.s"
 
+
 [[instructions]]
+
 name = "FMIN_S"
 form = "R"
 opcode = 0x53
@@ -401,7 +463,9 @@ fields = { funct3 = 0, funct7 = 0x14 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fmin.s"
 
+
 [[instructions]]
+
 name = "FMAX_S"
 form = "R"
 opcode = 0x53
@@ -409,7 +473,9 @@ fields = { funct3 = 1, funct7 = 0x14 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
 mnemonic = "fmax.s"
 
+
 [[instructions]]
+
 name = "FMV_W_X"
 form = "R"
 opcode = 0x53
@@ -417,7 +483,9 @@ fields = { funct3 = 0, funct7 = 0x78 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
 mnemonic = "fmv.w.x"
 
+
 [[instructions]]
+
 name = "FMV_X_W"
 form = "R"
 opcode = 0x53
@@ -427,62 +495,78 @@ mnemonic = "fmv.x.w"
 
 # ── 内存浮点 ──
 
+
 [[instructions]]
+
 name = "FLW"
 form = "I"
 opcode = 0x07
 fields = { funct3 = 2 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 mnemonic = "flw"
-asm = "{0}, {2}({1})"
+asm = "flw {0}, {2}({1})"
+
 
 [[instructions]]
+
 name = "FSW"
 form = "S"
 opcode = 0x27
 fields = { funct3 = 2 }
 operands = [{ slot = "fpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 mnemonic = "fsw"
-asm = "{0}, {2}({1})"
+asm = "fsw {0}, {2}({1})"
 
 # ── I 型整数（opcode 0x13）──
 
+
 [[instructions]]
+
 name = "ADDI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
+
 [[instructions]]
+
 name = "SLTI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 2 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
+
 [[instructions]]
+
 name = "SLTIU"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 3 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
+
 [[instructions]]
+
 name = "XORI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 4 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
+
 [[instructions]]
+
 name = "ORI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 6 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
+
 [[instructions]]
+
 name = "ANDI"
 form = "I"
 opcode = 0x13
@@ -491,21 +575,27 @@ operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slo
 
 # ── 移位立即数（RV64：shamt 6 位 + funct6）──
 
+
 [[instructions]]
+
 name = "SLLI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 1, funct6 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "shamt", role = "in" }]
 
+
 [[instructions]]
+
 name = "SRLI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 5, funct6 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "shamt", role = "in" }]
 
+
 [[instructions]]
+
 name = "SRAI"
 form = "SHIFT"
 opcode = 0x13
@@ -514,7 +604,9 @@ operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slo
 
 # ── U 型 LUI ──
 
+
 [[instructions]]
+
 name = "LUI"
 form = "U"
 opcode = 0x37
@@ -522,67 +614,85 @@ operands = [{ slot = "gpr", role = "out" }, { slot = "imm20", role = "in" }]
 
 # ── 加载/存储 ──
 
+
 [[instructions]]
+
 name = "LD"
 form = "I"
 opcode = 0x03
 fields = { funct3 = 3 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-asm = "{0}, {2}({1})"
+asm = "ld {0}, {2}({1})"
+
 
 [[instructions]]
+
 name = "SD"
 form = "S"
 opcode = 0x23
 fields = { funct3 = 3 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-asm = "{0}, {2}({1})"
+asm = "sd {0}, {2}({1})"
 
 # ── 控制流 ──
 
+
 [[instructions]]
+
 name = "JAL"
 form = "J"
 opcode = 0x6F
 operands = [{ slot = "gpr", role = "out" }, { slot = "off_j", role = "in" }]
 
+
 [[instructions]]
+
 name = "JALR"
 form = "I"
 opcode = 0x67
 fields = { funct3 = 0 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-asm = "{0}, {2}({1})"
+asm = "jalr {0}, {2}({1})"
+
 
 [[instructions]]
+
 name = "BEQ"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 0 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
+
 [[instructions]]
+
 name = "BNE"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 1 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
+
 [[instructions]]
+
 name = "BLT"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 4 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
+
 [[instructions]]
+
 name = "BGE"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 5 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
+
 [[instructions]]
+
 name = "BLTU"
 form = "B"
 opcode = 0x63
@@ -591,25 +701,31 @@ operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot
 
 # ── 帧管理（与上同编码的 GprReg 形式；asm 别名取首个声明）──
 
+
 [[instructions]]
+
 name = "SD_R"
 form = "S"
 opcode = 0x23
 fields = { funct3 = 3 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 mnemonic = "sd"
-asm = "{0}, {2}({1})"
+asm = "sd {0}, {2}({1})"
+
 
 [[instructions]]
+
 name = "LD_R"
 form = "I"
 opcode = 0x03
 fields = { funct3 = 3 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 mnemonic = "ld"
-asm = "{0}, {2}({1})"
+asm = "ld {0}, {2}({1})"
+
 
 [[instructions]]
+
 name = "ADDI_R"
 form = "I"
 opcode = 0x13
@@ -617,7 +733,9 @@ fields = { funct3 = 0 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 mnemonic = "addi"
 
+
 [[instructions]]
+
 name = "MV_RV"
 form = "R"
 opcode = 0x33
@@ -625,7 +743,9 @@ fields = { funct3 = 0, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 mnemonic = "mv"
 
+
 [[instructions]]
+
 name = "MV_VR"
 form = "R"
 opcode = 0x33
@@ -633,16 +753,20 @@ fields = { funct3 = 0, funct7 = 0x00 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 mnemonic = "mv"
 
+
 [[instructions]]
+
 name = "JALR_R"
 form = "I"
 opcode = 0x67
 fields = { funct3 = 0 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 mnemonic = "jalr"
-asm = "{0}, {1}, {2}"
+asm = "jalr {0}, {1}, {2}"
+
 
 [[instructions]]
+
 name = "JAL_IMM"
 form = "J"
 opcode = 0x6F
@@ -652,98 +776,126 @@ mnemonic = "jal"
 
 # ── 系统 ──
 
+
 [[instructions]]
+
 name = "NOP"
 form = "OP"
 opcode = 0x13
 
+
 [[instructions]]
+
 name = "ECALL"
 form = "OP"
 opcode = 0x73
 
 # ── Zbb 位操作（RV64）──
 
+
 [[instructions]]
+
 name = "CLZ"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x30 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "CTZ"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 1 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "CPOP"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 2 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "REV8"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x34, rs2 = 8 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "ROL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x30 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "ROR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x31 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "MIN"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x14 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "MAX"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x15 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "MINU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x16 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "MAXU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x17 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
+
 [[instructions]]
+
 name = "AMOADD"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 2 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 mnemonic = "amoadd.w.aqrl"
-asm = "{0}, {2}, ({1})"
+asm = "amoadd.w.aqrl {0}, {2}, ({1})"
+
 
 [[instructions]]
+
 name = "FENCE"
 form = "W32"
 opcode = 0x0FF0000F

@@ -822,3 +822,191 @@ operands = []
         "generation must be deterministic"
     );
 }
+
+// ───────────────── 结构完善：asm 完整格式 + 通用模板段 ─────────────────
+
+/// 定宽最小模型（供 codegen 测试）。
+fn gen_min_model(inst_body: &str) -> super::model::V12Model {
+    let doc = format!(
+        r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr]
+width = 32
+count = 8
+[conventions.bitfields]
+opcode = {{ offset = 0, width = 7 }}
+rd = {{ offset = 7, width = 3 }}
+rs1 = {{ offset = 15, width = 3 }}
+imm12 = {{ offset = 20, width = 12 }}
+funct3 = {{ offset = 12, width = 3 }}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+field_width = 3
+[[operand_slots]]
+name = "i"
+kind = "imm"
+signed = true
+width = 12
+[[forms]]
+name = "I"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "imm12"]
+{inst_body}
+"#
+    );
+    parse_and_validate(&doc).unwrap()
+}
+
+#[test]
+fn asm_full_format_extracts_mnemonic() {
+    // asm = 完整格式：首词即 mnemonic；disassemble 直接含完整格式
+    let model = gen_min_model(
+        r#"
+[[instructions]]
+name = "ADDI"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 0 }
+operands = [{ slot = "g", role = "out" }, { slot = "g", role = "in" }, { slot = "i", role = "in" }]
+asm = "addi {0}, {1}, {2}"
+"#,
+    );
+    let ts = super::codegen::generate(&model).unwrap();
+    let s = ts.to_string();
+    // disassemble 渲染完整格式（mnemonic + 段）
+    assert!(
+        s.contains(r#""addi {__o0}, {__o1}, {__o2}""#),
+        "disassemble 应含完整格式：{s}"
+    );
+    // assemble 按 mnemonic 匹配
+    assert!(
+        s.contains(r#""addi" =>"#),
+        "assemble 应匹配 mnemonic 'addi'"
+    );
+}
+
+#[test]
+fn asm_full_default_template() {
+    // 无 asm：默认 = mnemonic（字段或指令名小写）+ "{0}, {1}, ..."
+    let model = gen_min_model(
+        r#"
+[[instructions]]
+name = "ADDI"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 0 }
+operands = [{ slot = "g", role = "out" }, { slot = "g", role = "in" }, { slot = "i", role = "in" }]
+"#,
+    );
+    let ts = super::codegen::generate(&model).unwrap();
+    let s = ts.to_string();
+    assert!(
+        s.contains(r#""addi {__o0}, {__o1}, {__o2}""#),
+        "默认模板应含 mnemonic 'addi'：{s}"
+    );
+}
+
+#[test]
+fn validate_asm_mnemonic_mismatch() {
+    // mnemonic 字段与 asm 首词不一致 → 校验错误（单一事实来源）
+    let doc = r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr]
+width = 32
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 7 }
+rd = { offset = 7, width = 3 }
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+field_width = 3
+[[forms]]
+name = "R"
+opcode_field = "opcode"
+operand_fields = ["rd"]
+[[instructions]]
+name = "FOO"
+form = "R"
+opcode = 0x13
+mnemonic = "sub"
+asm = "add {0}"
+operands = [{ slot = "g", field = "rd" }]
+"#;
+    let err = parse_and_validate(doc).unwrap_err();
+    match err {
+        V12Error::Validation(msg) => {
+            assert!(msg.contains("!= mnemonic field 'sub'"), "msg: {msg}");
+        }
+        other => panic!("expected Validation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn generic_template_segments() {
+    // 通用模板：任意字面片段（byte ptr / 括号 / 方括号）作为段组合
+    let model = gen_min_model(
+        r#"
+[[instructions]]
+name = "LDB"
+form = "I"
+opcode = 0x03
+fields = { funct3 = 0 }
+operands = [{ slot = "g", role = "out" }, { slot = "g", role = "in" }, { slot = "i", role = "in" }]
+asm = "ldb {0}, byte ptr [{1}+{2}]"
+"#,
+    );
+    let ts = super::codegen::generate(&model).unwrap();
+    let s = ts.to_string();
+    // 字面段原样输出
+    assert!(
+        s.contains(r#""ldb {__o0}, byte ptr [{__o1}+{__o2}]""#),
+        "通用字面段应原样渲染：{s}"
+    );
+    // 段解析：字面段原样进入生成的匹配/输出（token 流转字符串含空格，放宽匹配）
+    assert!(s.contains("byte ptr ["), "通用字面段应进入生成的代码：{s}");
+    assert!(s.contains('['), "占位符方括号字面段");
+}
+
+#[test]
+fn generic_template_adjacent_placeholder_rejected() {
+    // 连续占位符无字面分隔 → 歧义，codegen 报错
+    let model = gen_min_model(
+        r#"
+[[instructions]]
+name = "BAD"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 0 }
+operands = [{ slot = "g", role = "out" }, { slot = "g", role = "in" }, { slot = "i", role = "in" }]
+asm = "bad {0}{1} {2}"
+"#,
+    );
+    let err = super::codegen::generate(&model).unwrap_err();
+    assert!(err.contains("adjacent placeholders"), "err: {err}");
+}
+
+#[test]
+fn generic_template_out_of_range_rejected() {
+    // 占位符索引越界 → codegen 报错
+    let model = gen_min_model(
+        r#"
+[[instructions]]
+name = "BAD"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 0 }
+operands = [{ slot = "g", role = "out" }, { slot = "g", role = "in" }, { slot = "i", role = "in" }]
+asm = "bad {0}, {3}"
+"#,
+    );
+    let err = super::codegen::generate(&model).unwrap_err();
+    assert!(err.contains("out of range"), "err: {err}");
+}

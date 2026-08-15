@@ -45,7 +45,7 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     } else {
         (gen_encode(&infos, model)?, gen_decode(&infos, model)?)
     };
-    let disasm_fn = gen_disassemble(&infos);
+    let disasm_fn = gen_disassemble(&infos)?;
     let asm_fn = gen_assemble(&infos)?;
     Ok(quote! {
         // ── v12 生成模块（迭代 2/3/3b：自包含 encode/decode/asm）──
@@ -174,10 +174,27 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
             let fid = format_ident!("{}", field);
             operands.push((field, fid, slot));
         }
-        let mnemonic = inst
-            .mnemonic
-            .clone()
-            .unwrap_or_else(|| inst.name.to_lowercase());
+        // mnemonic：asm 存在时从 asm 首词推导（与 mnemonic 字段交叉校验，
+        // 单一事实来源）；否则 mnemonic 字段或指令名小写。
+        let mnemonic = if let Some(a) = &inst.asm {
+            let first = a
+                .split_whitespace()
+                .next()
+                .ok_or_else(|| format!("[[instructions.{}]]: asm must not be empty", inst.name))?;
+            if let Some(mf) = &inst.mnemonic
+                && mf != first
+            {
+                return Err(format!(
+                    "[[instructions.{}]]: asm mnemonic '{first}' != mnemonic field '{mf}'",
+                    inst.name
+                ));
+            }
+            first.to_string()
+        } else {
+            inst.mnemonic
+                .clone()
+                .unwrap_or_else(|| inst.name.to_lowercase())
+        };
         out.push(InstInfo {
             inst,
             form,
@@ -1025,34 +1042,31 @@ fn parse_u64(s: &str) -> Option<u64> {
 
 // ─────────────────────────────── disassemble ───────────────────────────────
 
-fn gen_disassemble(infos: &[InstInfo]) -> TokenStream {
+fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String> {
     let mut arms = Vec::new();
     for info in infos {
         let vn = &info.vn;
-        let mut fmt = info.mnemonic.clone();
-        let template = asm_template(info);
+        let mut fmt = String::new();
         let mut locals: Vec<TokenStream> = Vec::new();
-        if !template.is_empty() {
+        // 完整格式 = mnemonic + 操作数模板（段序列渲染）
+        fmt.push_str(&info.mnemonic);
+        let ops = ops_template(info);
+        if !ops.is_empty() {
             fmt.push(' ');
-            let mut tpl = template.clone();
-            for (i, (_, fid, slot)) in info.operands.iter().enumerate() {
-                // 非文本操作数（opsize）不渲染、无占位符
-                if !is_text_operand(slot) {
-                    continue;
-                }
-                let local = format_ident!("__o{i}");
-                let expr: TokenStream = match slot.kind {
-                    OperandKind::Reg => {
-                        let gname = format_ident!("{}_name", slot.class.as_deref().unwrap_or(""));
-                        quote! { #gname(*#fid).unwrap_or("?").to_string() }
+            let segs = parse_template(&ops)?;
+            validate_segs(&segs, info)?;
+            for seg in segs {
+                match seg {
+                    Seg::Lit(l) => fmt.push_str(&l),
+                    Seg::Op(n) => {
+                        let (_, fid, slot) = &info.operands[n];
+                        let local = format_ident!("__o{n}");
+                        let expr = render_expr(slot, fid);
+                        locals.push(quote! { let #local = #expr; });
+                        fmt.push_str(&format!("{{__o{n}}}"));
                     }
-                    OperandKind::Mem => quote! { __render_mem(#fid) },
-                    _ => quote! { #fid.to_string() },
-                };
-                locals.push(quote! { let #local = #expr; });
-                tpl = tpl.replace(&format!("{{{i}}}"), &format!("{{__o{i}}}"));
+                }
             }
-            fmt.push_str(&tpl);
         }
         let fmt_lit = syn::LitStr::new(&fmt, proc_macro2::Span::call_site());
         let pat = if info.operands.is_empty() {
@@ -1067,32 +1081,150 @@ fn gen_disassemble(infos: &[InstInfo]) -> TokenStream {
         };
         arms.push(quote! { #pat => { #(#locals)* format!(#fmt_lit) } });
     }
-    quote! {
+    Ok(quote! {
         /// 反汇编为汇编文本。
         pub fn disassemble(inst: &Inst) -> String {
             match inst { #(#arms,)* }
         }
+    })
+}
+
+/// 操作数渲染表达式（disassemble 用）。
+fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
+    match slot.kind {
+        OperandKind::Reg => {
+            let gname = format_ident!("{}_name", slot.class.as_deref().unwrap_or(""));
+            quote! { #gname(*#fid).unwrap_or("?").to_string() }
+        }
+        OperandKind::Mem => quote! { __render_mem(#fid) },
+        _ => quote! { #fid.to_string() },
+    }
+}
+
+// ─────────────────────── 通用汇编模板段模型 ───────────────────────
+
+/// 操作数模板的段：字面片段或操作数占位符（`{n}`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Seg {
+    /// 字面文本（分隔符/方括号/括号/关键字等，原样匹配与输出）。
+    Lit(String),
+    /// 操作数占位符 `{n}`（索引 = 指令操作数位置）。
+    Op(usize),
+}
+
+/// 解析操作数模板为段序列（字面与占位符交替，任意字面格式）。
+///
+/// 替换迭代 3b 的封闭 TokenShape（Simple/Bracket/Mem/Mem0）：`[{n}]`、
+/// `{off}({base})`、`byte ptr [{n}]` 等都是字面段的自然组合，用户模板自由。
+fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
+    if tpl.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut segs = Vec::new();
+    let mut lit = String::new();
+    let mut chars = tpl.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let mut num = String::new();
+            while let Some(&d) = chars.peek() {
+                if d == '}' {
+                    break;
+                }
+                num.push(d);
+                chars.next();
+            }
+            if chars.next() != Some('}') {
+                return Err(format!("unterminated '{{' in asm template '{tpl}'"));
+            }
+            let n: usize = num
+                .parse()
+                .map_err(|_| format!("bad placeholder '{{{num}}}' in asm template '{tpl}'"))?;
+            if !lit.is_empty() {
+                segs.push(Seg::Lit(std::mem::take(&mut lit)));
+            }
+            segs.push(Seg::Op(n));
+        } else {
+            lit.push(c);
+        }
+    }
+    if !lit.is_empty() {
+        segs.push(Seg::Lit(lit));
+    }
+    if segs.is_empty() {
+        return Err(format!("empty asm template '{tpl}'"));
+    }
+    Ok(segs)
+}
+
+/// 校验段序列：占位符索引越界、非文本操作数被引用、连续占位符无字面分隔。
+fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
+    let ctx = || format!("[[instructions.{}]] asm", info.inst.name);
+    let mut prev_op = false;
+    for seg in segs {
+        match seg {
+            Seg::Lit(l) => {
+                if l.is_empty() {
+                    return Err(format!("{}: empty literal segment", ctx()));
+                }
+                prev_op = false;
+            }
+            Seg::Op(n) => {
+                if *n >= info.operands.len() {
+                    return Err(format!("{}: placeholder {{{n}}} out of range", ctx()));
+                }
+                if !is_text_operand(info.operands[*n].2) {
+                    return Err(format!(
+                        "{}: placeholder {{{n}}} references non-text operand (opsize)",
+                        ctx()
+                    ));
+                }
+                if prev_op {
+                    return Err(format!(
+                        "{}: adjacent placeholders need a literal separator (ambiguity)",
+                        ctx()
+                    ));
+                }
+                prev_op = true;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 完整汇编格式（含 mnemonic）：`asm` 字段或 `mnemonic + 默认操作数模板`。
+fn asm_full(info: &InstInfo) -> String {
+    if let Some(a) = &info.inst.asm {
+        return a.clone();
+    }
+    let ops = info
+        .operands
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, _, slot))| is_text_operand(slot))
+        .map(|(i, _)| format!("{{{i}}}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ops.is_empty() {
+        info.mnemonic.clone()
+    } else {
+        format!("{} {ops}", info.mnemonic)
+    }
+}
+
+/// 操作数模板（完整格式去掉 mnemonic 前缀）。
+fn ops_template(info: &InstInfo) -> String {
+    let full = asm_full(info);
+    match full.split_once(char::is_whitespace) {
+        Some((_, r)) => r.trim().to_string(),
+        None => String::new(),
     }
 }
 
 // ─────────────────────────────── assemble ───────────────────────────────
 
-/// asm 模板 token 形状（按 ", " 切分后的每个操作数 token）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum TokenShape {
-    /// 单个占位符 `{n}`。
-    Simple(usize),
-    /// 方括号寄存器 `[{n}]`（内存基址寄存器形式）。
-    Bracket(usize),
-    /// 内存形式 `{off}({base})`。
-    Mem { off: usize, base: usize },
-    /// 无位移内存形式 `({base})`（offset 恒 0）。
-    Mem0 { base: usize },
-}
-
 fn gen_assemble(infos: &[InstInfo]) -> Result<TokenStream, String> {
     let mut arms: Vec<TokenStream> = Vec::new();
-    // 按 mnemonic 分组（保持声明序）；同 mnemonic 内按形状去重（首个形状胜出）
+    // 按 mnemonic 分组（保持声明序）；同 mnemonic 内按模板段签名去重
     let mut handled: Vec<(String, Vec<String>)> = Vec::new();
     for info in infos {
         let mn = &info.mnemonic;
@@ -1155,156 +1287,140 @@ fn gen_assemble(infos: &[InstInfo]) -> Result<TokenStream, String> {
             }
         }
     };
-    let mem_helpers = gen_mem_helpers(infos)?;
 
     Ok(quote! {
-        /// 汇编文本 → 指令。`mnemonic op0, op1, ...`；内存形式 `imm(reg)` / `(reg)`。
+        /// 汇编文本 → 指令。`mnemonic` + 操作数按 asm 模板逐段解析
+        /// （字面段原样匹配，占位符段按槽解析；任一失败回退下一形状）。
         pub fn assemble(text: &str) -> Result<Inst, String> {
             let s = text.trim();
             let (mnemonic, rest) = match s.split_once(|c: char| c.is_whitespace()) {
                 Some((m, r)) => (m.trim(), r.trim()),
                 None => (s, ""),
             };
-            let __ops: Vec<&str> = rest
-                .split(',')
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-                .collect();
             match mnemonic.to_ascii_lowercase().as_str() {
                 #(#arms,)*
                 _ => Err(format!("unknown mnemonic '{mnemonic}'")),
             }
         }
         #parse_imm
-        #mem_helpers
     })
 }
 
-/// 形状签名：token 形状序列（用于同 mnemonic 去重）。
+/// 模板段签名（同 mnemonic 去重）：字面段长度 + 占位符索引与槽类型。
 fn shape_signature(info: &InstInfo) -> Result<String, String> {
-    let template = asm_template(info);
-    if template.is_empty() {
-        return Ok(String::new());
+    let segs = parse_template(&ops_template(info))?;
+    validate_segs(&segs, info)?;
+    let mut s = String::new();
+    for seg in &segs {
+        match seg {
+            Seg::Lit(l) => s.push_str(&format!("L{}", l.len())),
+            Seg::Op(n) => {
+                let kind = match info.operands[*n].2.kind {
+                    OperandKind::Reg => "r",
+                    OperandKind::Mem => "m",
+                    OperandKind::Imm => "i",
+                    OperandKind::Label => "l",
+                    _ => "?",
+                };
+                s.push_str(&format!("O{n}:{kind}"));
+            }
+        }
     }
-    let mut sigs = Vec::new();
-    for tok in template.split(", ") {
-        sigs.push(match classify_token(tok)? {
-            TokenShape::Simple(n) => format!("S{n}"),
-            TokenShape::Bracket(n) => format!("B{n}"),
-            TokenShape::Mem { off, base } => format!("M{off},{base}"),
-            TokenShape::Mem0 { base } => format!("Z{base}"),
-        });
-    }
-    Ok(sigs.join("|"))
+    Ok(s)
 }
 
-/// 单个指令的 assemble 尝试：token 数匹配 → 全部解析成功 → Ok(Inst)。
+/// 单个指令的 assemble 尝试：逐段消费操作数文本 → 全部解析成功 → Ok(Inst)。
 /// 任一解析失败静默跳过（同 mnemonic 的后续形状继续尝试）。
 fn gen_assemble_try(info: &InstInfo) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    let template = asm_template(info);
-    if template.is_empty() {
-        // 无文本操作数：非文本操作数（opsize）取默认值
-        let defaults = default_nontext_binds(info);
-        if info.operands.is_empty() {
-            return Ok(quote! { if __ops.is_empty() { return Ok(Inst::#vn); } });
-        }
+    let ops = ops_template(info);
+    let segs = parse_template(&ops)?;
+    validate_segs(&segs, info)?;
+    let defaults = default_nontext_binds(info);
+    let has_op = segs.iter().any(|s| matches!(s, Seg::Op(_)));
+    if !has_op {
+        // 无操作数占位符：文本必须为空（或有非文本操作数默认值）
         let fids: Vec<_> = info
             .operands
             .iter()
             .map(|(_, fid, _)| fid.clone())
             .collect();
         return Ok(quote! {
-            if __ops.is_empty() {
-                #(#defaults)*
-                return Ok(Inst::#vn { #(#fids),* });
+            {
+                let __rest = rest;
+                if __rest.is_empty() {
+                    #(#defaults)*
+                    return Ok(Inst::#vn { #(#fids),* });
+                }
             }
         });
     }
-    let tokens: Vec<&str> = template.split(", ").collect();
-    let expected = tokens.len();
-    let mut let_binds: Vec<TokenStream> = Vec::new(); // `let __tN = __ops[N];`
-    let mut parse_binds: Vec<TokenStream> = Vec::new(); // `let __pN = <parse>;`
-    let mut tuple_pats: Vec<TokenStream> = Vec::new(); // `Ok(fid)` / `Ok((b, o))`
-    let mut tuple_exprs: Vec<TokenStream> = Vec::new(); // `__pN`
-    // 非文本操作数（opsize）视为已覆盖，取默认值
-    let mut ops_done: Vec<bool> = info
-        .operands
-        .iter()
-        .map(|(_, _, slot)| !is_text_operand(slot))
-        .collect();
-    for (ti, tok) in tokens.iter().enumerate() {
-        let tvar = format_ident!("__t{ti}");
-        let pvar = format_ident!("__p{ti}");
-        let_binds.push(quote! { let #tvar = __ops[#ti]; });
-        match classify_token(tok)? {
-            TokenShape::Simple(n) => {
-                let slot = &info.operands[n].2;
-                let parse = operand_parse_expr(slot, quote! { #tvar })?;
-                let fid = info.operands[n].1.clone();
-                parse_binds.push(quote! { let #pvar = #parse; });
-                tuple_pats.push(quote! { Ok(#fid) });
-                tuple_exprs.push(quote! { #pvar });
-                ops_done[n] = true;
-            }
-            TokenShape::Bracket(n) => {
-                let slot = &info.operands[n].2;
-                let parse = operand_bracket_parse_expr(slot, quote! { #tvar })?;
-                let fid = info.operands[n].1.clone();
-                parse_binds.push(quote! { let #pvar = #parse; });
-                tuple_pats.push(quote! { Ok(#fid) });
-                tuple_exprs.push(quote! { #pvar });
-                ops_done[n] = true;
-            }
-            TokenShape::Mem { off, base } => {
-                let base_group = info.operands[base]
-                    .2
-                    .class
-                    .as_deref()
-                    .ok_or_else(|| format!("mem base operand {} missing class", base))?;
-                let mem_fn = format_ident!("__parse_mem_{}", base_group);
-                let bfid = info.operands[base].1.clone();
-                let ofid = info.operands[off].1.clone();
-                parse_binds.push(quote! { let #pvar = #mem_fn(#tvar); });
-                tuple_pats.push(quote! { Ok((#bfid, #ofid)) });
-                tuple_exprs.push(quote! { #pvar });
-                ops_done[base] = true;
-                ops_done[off] = true;
-            }
-            TokenShape::Mem0 { base } => {
-                let base_group = info.operands[base]
-                    .2
-                    .class
-                    .as_deref()
-                    .ok_or_else(|| format!("mem base operand {} missing class", base))?;
-                let mem_fn = format_ident!("__parse_mem_{}", base_group);
-                let bfid = info.operands[base].1.clone();
-                // Mem0：offset 必须为 0（解析层强制 → Result<u32>）
-                let parse = quote! {
-                    match #mem_fn(#tvar) {
-                        Ok((__b, 0)) => Ok(__b),
-                        Ok((_, __o)) => Err(format!(
-                            "expected (reg) with zero offset, got '{}'", #tvar
-                        )),
-                        Err(__e) => Err(__e),
+    // 逐段生成：字面段匹配 + 操作数段文本提取
+    let mut stmts: Vec<TokenStream> = Vec::new();
+    let mut text_vars: Vec<(usize, syn::Ident)> = Vec::new();
+    for (i, seg) in segs.iter().enumerate() {
+        match seg {
+            Seg::Lit(l) => {
+                let l_lit = syn::LitStr::new(l, proc_macro2::Span::call_site());
+                stmts.push(quote! {
+                    if __ok && __rest[__pos..].starts_with(#l_lit) {
+                        __pos += #l_lit.len();
+                    } else {
+                        __ok = false;
                     }
-                };
-                parse_binds.push(quote! { let #pvar = #parse; });
-                tuple_pats.push(quote! { Ok(#bfid) });
-                tuple_exprs.push(quote! { #pvar });
-                ops_done[base] = true;
+                });
+            }
+            Seg::Op(n) => {
+                // 操作数文本 = 到下一字面段首次出现（或末尾）为止
+                let next_lit = segs[i + 1..].iter().find_map(|s| match s {
+                    Seg::Lit(l) => Some(l.clone()),
+                    _ => None,
+                });
+                let tvar = format_ident!("__text{n}");
+                // Rust if/else 分支的 let 不共享作用域——先声明再赋值
+
+                match next_lit {
+                    Some(nl) => {
+                        let nl_lit = syn::LitStr::new(&nl, proc_macro2::Span::call_site());
+                        stmts.push(quote! {
+                            let #tvar: &str;
+                            if __ok {
+                                let __end = __rest[__pos..]
+                                    .find(#nl_lit)
+                                    .map(|i| __pos + i)
+                                    .unwrap_or(__rest.len());
+                                #tvar = &__rest[__pos..__end];
+                                __pos = __end;
+                            } else {
+                                #tvar = "";
+                            }
+                        });
+                    }
+                    None => {
+                        stmts.push(quote! {
+                            let #tvar: &str;
+                            if __ok {
+                                #tvar = &__rest[__pos..];
+                                __pos = __rest.len();
+                            } else {
+                                #tvar = "";
+                            }
+                        });
+                    }
+                }
+                text_vars.push((*n, tvar));
             }
         }
     }
-    if let Some(i) = ops_done.iter().position(|d| !d) {
-        return Err(format!(
-            "asm template '{template}' of {}: operand {i} not covered by any token",
-            info.inst.name
-        ));
+    // 统一解析（if-let 全部 Ok 才构造）
+    let mut pats: Vec<TokenStream> = Vec::new();
+    let mut exprs: Vec<TokenStream> = Vec::new();
+    for (n, tvar) in &text_vars {
+        let (_, fid, slot) = &info.operands[*n];
+        let parse = operand_parse_expr(slot, quote! { #tvar })?;
+        pats.push(quote! { Ok(#fid) });
+        exprs.push(parse);
     }
-    // 非文本操作数默认值绑定
-    let defaults = default_nontext_binds(info);
-    // ctor 字段名按操作数序（值由 if-let 绑定，用字段简写）
     let fids: Vec<_> = info
         .operands
         .iter()
@@ -1315,23 +1431,17 @@ fn gen_assemble_try(info: &InstInfo) -> Result<TokenStream, String> {
     } else {
         quote! { Inst::#vn { #(#fids),* } }
     };
-    if tuple_pats.is_empty() {
-        return Ok(quote! {
-            if __ops.len() == #expected {
-                #(#let_binds)*
-                #(#parse_binds)*
-                #(#defaults)*
-                return Ok(#ctor);
-            }
-        });
-    }
     Ok(quote! {
-        if __ops.len() == #expected {
-            #(#let_binds)*
-            #(#parse_binds)*
-            #(#defaults)*
-            if let (#(#tuple_pats),*) = (#(#tuple_exprs),*) {
-                return Ok(#ctor);
+        {
+            let __rest = rest;
+            let mut __pos = 0usize;
+            let mut __ok = true;
+            #(#stmts)*
+            if __ok && __pos == __rest.len() {
+                if let (#(#pats),*) = (#(#exprs),*) {
+                    #(#defaults)*
+                    return Ok(#ctor);
+                }
             }
         }
     })
@@ -1371,85 +1481,9 @@ fn operand_parse_expr(slot: &OperandSlot, tok: TokenStream) -> Result<TokenStrea
         }
         OperandKind::Mem => Ok(quote! { __parse_mem_ref(#tok) }),
         OperandKind::Imm | OperandKind::Label => Ok(quote! { __parse_imm(#tok) }),
-        other => Err(format!(
-            "assemble: operand kind {other:?} unsupported in iteration 2/3b"
-        )),
+        other => Err(format!("assemble: operand kind {other:?} unsupported")),
     }
 }
-
-/// 方括号寄存器 token `[{n}]` 的解析（剥括号后按 reg 槽解析）。
-fn operand_bracket_parse_expr(slot: &OperandSlot, tok: TokenStream) -> Result<TokenStream, String> {
-    if slot.kind != OperandKind::Reg {
-        return Err("bracket token only supports reg slot".into());
-    }
-    let group = slot
-        .class
-        .as_deref()
-        .ok_or_else(|| "reg slot missing class".to_string())?;
-    let pfn = format_ident!("__parse_reg_{}", group);
-    Ok(quote! {
-        match #tok.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            Some(inner) => #pfn(inner),
-            None => Err(format!("expected [reg], got '{}'", #tok)),
-        }
-    })
-}
-
-/// 每个 mem 基址组生成 `__parse_mem_{group}`：`imm(reg)` / `(reg)` → (base, offset)。
-/// 只生成模板中实际出现 Mem/Mem0 形状的组，避免无用函数警告。
-fn gen_mem_helpers(infos: &[InstInfo]) -> Result<TokenStream, String> {
-    let mut groups: Vec<String> = Vec::new();
-    for info in infos {
-        let template = asm_template(info);
-        if template.is_empty() {
-            continue;
-        }
-        for tok in template.split(", ") {
-            let shape = classify_token(tok)?;
-            let base = match shape {
-                TokenShape::Mem { base, .. } | TokenShape::Mem0 { base } => base,
-                TokenShape::Simple(_) | TokenShape::Bracket(_) => continue,
-            };
-            let group = info.operands[base].2.class.clone().ok_or_else(|| {
-                format!(
-                    "mem base operand {base} of {} missing class",
-                    info.inst.name
-                )
-            })?;
-            if !groups.contains(&group) {
-                groups.push(group);
-            }
-        }
-    }
-    let helpers: Vec<_> = groups
-        .iter()
-        .map(|g| {
-            let fn_name = format_ident!("__parse_mem_{}", g);
-            let reg_fn = format_ident!("__parse_reg_{}", g);
-            quote! {
-                fn #fn_name(s: &str) -> Result<(u32, i64), String> {
-                    let t = s.trim();
-                    let Some(open) = t.find('(') else {
-                        return Err(format!("expected memory operand 'imm(reg)', got '{s}'"));
-                    };
-                    let Some(close) = t.rfind(')') else {
-                        return Err(format!("expected memory operand 'imm(reg)', got '{s}'"));
-                    };
-                    if !t[close + 1..].is_empty() {
-                        return Err(format!("trailing text after ')' in '{s}'"));
-                    }
-                    let off_s = t[..open].trim();
-                    let reg_s = t[open + 1..close].trim();
-                    let off = if off_s.is_empty() { 0 } else { __parse_imm(off_s)? };
-                    let base = #reg_fn(reg_s)?;
-                    Ok((base, off))
-                }
-            }
-        })
-        .collect();
-    Ok(quote! { #(#helpers)* })
-}
-
 // ─────────────────────────────── 位域助手 ───────────────────────────────
 
 fn get_bf<'a>(m: &'a V12Model, name: &str) -> Result<&'a Bitfield, String> {
@@ -1549,66 +1583,4 @@ fn bf_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
         }
         Some(ps) => ps.iter().map(|p| (p.offset, p.offset + p.width)).collect(),
     }
-}
-
-// ─────────────────────────────── asm 模板 ───────────────────────────────
-
-/// 操作数部分模板（不含 mnemonic）：缺省 `"{0}, {1}, ..."`，
-/// 跳过非文本操作数（opsize 槽无占位符）。
-fn asm_template(info: &InstInfo) -> String {
-    if let Some(a) = &info.inst.asm {
-        return a.clone();
-    }
-    info.operands
-        .iter()
-        .enumerate()
-        .filter(|(_, (_, _, slot))| is_text_operand(slot))
-        .map(|(i, _)| format!("{{{i}}}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// 分类单个 token 模板。
-fn classify_token(tok: &str) -> Result<TokenShape, String> {
-    if let Some(rest) = tok.strip_prefix('(') {
-        let inner = rest
-            .strip_suffix(')')
-            .ok_or_else(|| format!("unsupported asm token '{tok}' (expected '({{n}})' form)"))?;
-        return Ok(TokenShape::Mem0 {
-            base: parse_idx(inner, tok)?,
-        });
-    }
-    if let Some(open) = tok.find("({") {
-        // `{I}({J})`：head=`{I}`，tail（'(' 之后）=`{J})`
-        let head = &tok[..open];
-        let tail = &tok[open + 1..];
-        let off = parse_idx(head, tok)?;
-        let base_s = tail
-            .strip_suffix(')')
-            .ok_or_else(|| format!("bad mem token '{tok}'"))?;
-        let base = parse_idx(base_s, tok)?;
-        return Ok(TokenShape::Mem { off, base });
-    }
-    if tok.contains('(') || tok.contains(')') {
-        return Err(format!("unsupported asm token '{tok}'"));
-    }
-    // 方括号寄存器 `[{n}]`（内存基址寄存器形式）
-    if tok.starts_with('[') && tok.ends_with(']') {
-        let inner = &tok[1..tok.len() - 1];
-        let n = parse_idx(inner, tok)?;
-        return Ok(TokenShape::Bracket(n));
-    }
-    let idx = parse_idx(tok, tok)?;
-    Ok(TokenShape::Simple(idx))
-}
-
-fn parse_idx(s: &str, ctx: &str) -> Result<usize, String> {
-    let t = s.trim();
-    let inner = t
-        .strip_prefix('{')
-        .and_then(|r| r.strip_suffix('}'))
-        .ok_or_else(|| format!("unsupported asm token '{ctx}'"))?;
-    inner
-        .parse::<usize>()
-        .map_err(|_| format!("unsupported asm token '{ctx}'"))
 }
