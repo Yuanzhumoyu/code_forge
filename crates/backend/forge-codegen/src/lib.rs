@@ -137,6 +137,7 @@ pub mod arch;
 pub use arch::aarch64;
 pub use arch::minimal_sd_test;
 pub use arch::riscv64;
+pub use arch::riscv64_v12;
 pub use arch::wasm32;
 pub use arch::x86_64;
 

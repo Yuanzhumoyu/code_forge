@@ -111,14 +111,62 @@ fn validate_regs(m: &V12Model) -> Result<(), String> {
 fn validate_conventions(m: &V12Model) -> Result<(), String> {
     let conv = &m.conventions;
     for (name, bf) in &conv.bitfields {
-        if bf.width == 0 {
-            return Err(format!("[conventions.bitfields.{name}].width must be > 0"));
-        }
-        if bf.offset + bf.width > 64 {
-            return Err(format!(
-                "[conventions.bitfields.{name}]: offset {} + width {} exceeds 64 bits",
-                bf.offset, bf.width
-            ));
+        match (&bf.offset, &bf.width, &bf.pieces) {
+            (Some(off), Some(w), None) => {
+                if *w == 0 {
+                    return Err(format!("[conventions.bitfields.{name}].width must be > 0"));
+                }
+                if off + w > 64 {
+                    return Err(format!(
+                        "[conventions.bitfields.{name}]: offset {off} + width {w} exceeds 64 bits"
+                    ));
+                }
+            }
+            (None, None, Some(pieces)) => {
+                if pieces.is_empty() {
+                    return Err(format!(
+                        "[conventions.bitfields.{name}].pieces must not be empty"
+                    ));
+                }
+                // 字位域 [offset, offset+width) 两两不重叠 + 值位域 [shift, shift+width) 两两不重叠
+                let mut word_ranges: Vec<(u32, u32)> = Vec::new();
+                let mut value_ranges: Vec<(u32, u32)> = Vec::new();
+                for (i, p) in pieces.iter().enumerate() {
+                    if p.width == 0 {
+                        return Err(format!(
+                            "[conventions.bitfields.{name}].pieces[{i}].width must be > 0"
+                        ));
+                    }
+                    if p.offset + p.width > 64 || p.shift + p.width > 64 {
+                        return Err(format!(
+                            "[conventions.bitfields.{name}].pieces[{i}]: offset/shift + width exceeds 64 bits"
+                        ));
+                    }
+                    if word_ranges
+                        .iter()
+                        .any(|(s, e)| p.offset < *e && p.offset + p.width > *s)
+                    {
+                        return Err(format!(
+                            "[conventions.bitfields.{name}].pieces: word-bit ranges overlap at piece {i}"
+                        ));
+                    }
+                    if value_ranges
+                        .iter()
+                        .any(|(s, e)| p.shift < *e && p.shift + p.width > *s)
+                    {
+                        return Err(format!(
+                            "[conventions.bitfields.{name}].pieces: value-bit ranges overlap at piece {i}"
+                        ));
+                    }
+                    word_ranges.push((p.offset, p.offset + p.width));
+                    value_ranges.push((p.shift, p.shift + p.width));
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "[conventions.bitfields.{name}]: declare either {{ offset, width }} or {{ pieces = [...] }}, not both/neither"
+                ));
+            }
         }
     }
     if let Some(modrm) = &conv.modrm {
@@ -266,6 +314,16 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
                 f.name
             ));
         }
+        if let Some(of) = &f.operand_fields {
+            for (i, bf) in of.iter().enumerate() {
+                if !m.conventions.bitfields.contains_key(bf) {
+                    return Err(format!(
+                        "[[forms.{}]].operand_fields[{i}] '{bf}' is not declared in [conventions.bitfields]",
+                        f.name
+                    ));
+                }
+            }
+        }
         if let Some(esc) = &f.escape {
             if esc.is_empty() {
                 return Err(format!("[[forms.{}]].escape must not be empty", f.name));
@@ -305,6 +363,19 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
             return Err(format!(
                 "[[instructions.{}]]: form '{}' is not declared in [[forms]]",
                 inst.name, inst.form
+            ));
+        }
+        // 操作数数量 ≤ form.operand_fields（多余的位域位置由 fields/隐式 0 填充）
+        if let Some(form) = m.forms.iter().find(|f| f.name == inst.form)
+            && let Some(of) = &form.operand_fields
+            && inst.operands.len() > of.len()
+        {
+            return Err(format!(
+                "[[instructions.{}]]: {} operands exceed form '{}' operand_fields count {}",
+                inst.name,
+                inst.operands.len(),
+                inst.form,
+                of.len()
             ));
         }
         for op in &inst.operands {

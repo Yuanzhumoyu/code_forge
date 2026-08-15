@@ -9,7 +9,7 @@
 ## 已完成的迭代（git 提交可追溯）
 
 | 阶段 | 内容 | 验证 |
-|---|---|---|
+| --- | --- | --- |
 | **P0 固化** | WIP 分块提交×5（forge-ir 语料/后端管线/前端/工具链/文档）；roundtrip 失败清单自愈（display_llvm 自删过期记录）；mini_c 残余回归测试（loops got 1 / params SEGV 确认已修复）；integration_tests 注释对齐 | 48 段全绿 |
 | **P1 IR 层** | FloatCC 全 16 条件（补 false/true/ueq/ugt/uge/ult/ule/une）+ **x86/aarch64/riscv NaN 语义修正**（UCOMISS 对 NaN 置 ZF=PF=CF=1，原 oeq/olt/ole 实为 ueq/ult/ule）；Frem 独立 opcode（废弃 frem→Fdiv 映射）；fcmp 文法 CondName（false/true 词法歧义） | NaN JIT 测试 + 16 条件解析测试 |
 | **P2 解码器** | DSL 生成 TargetDecoder 完整收官：Phase 1 定宽（riscv64/aarch64/minimal_sd）+ Phase 2/2b/2c/2d/2e x86 变长（@modrm/@op_rm/@cmovcc/push/pop/mov_imm64/setcc + SSE 族 7 + @modrm_mem 内存 + VEX 族 3 + LEA 族 3） | decoder_smoke 12/12 往返 |

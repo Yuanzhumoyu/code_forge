@@ -15,6 +15,7 @@
 
 #![cfg_attr(not(test), allow(dead_code))]
 
+pub(crate) mod codegen;
 pub(crate) mod model;
 mod parse;
 mod validate;

@@ -129,11 +129,32 @@ pub struct Conventions {
 }
 
 /// 命名位域：定宽 ISA 的编码单元。
+///
+/// 二选一（校验强制）：
+/// - 单一位段：`{ offset, width }`；
+/// - 散布位段：`{ pieces = [ { offset, width, shift }, ... ] }` —— 立即数分段
+///   放置（S/U/B/J 型）。编码：`word |= ((value >> shift) & mask) << offset`；
+///   解码：`value |= ((word >> offset) & mask) << shift`（可逆）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bitfield {
+    #[serde(default)]
+    pub offset: Option<u32>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub pieces: Option<Vec<BitfieldPiece>>,
+}
+
+/// 散布位段的一块：`value >> shift` 取 `width` 位，放置于 `offset`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BitfieldPiece {
     pub offset: u32,
     pub width: u32,
+    /// 放置前的右移（缺省 0）。
+    #[serde(default)]
+    pub shift: u32,
 }
 
 /// ModRM 约定（表存在即启用）。
@@ -240,6 +261,10 @@ pub struct Form {
     /// 定宽：主 opcode 所在位域名。
     #[serde(default)]
     pub opcode_field: Option<String>,
+    /// 定宽：按操作数位置绑定位域名（第 i 个操作数 → bitfields[i]）。
+    /// 操作数少于该列表时，多余位域取 `fields` 固定值或隐式 0。
+    #[serde(default)]
+    pub operand_fields: Option<Vec<String>>,
     /// 该形式接受的操作数槽（编码顺序）。
     #[serde(default)]
     pub operand_slots: Option<Vec<String>>,

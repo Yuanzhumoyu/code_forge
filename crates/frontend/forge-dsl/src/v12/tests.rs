@@ -68,8 +68,8 @@ fn parse_minimal_riscv_style() {
     assert_eq!(m.reg["gpr"].width, 64);
     assert_eq!(m.reg["gpr"].names.as_ref().unwrap().len(), 32);
     assert_eq!(m.conventions.bitfields.len(), 6);
-    assert_eq!(m.conventions.bitfields["rd"].offset, 7);
-    assert_eq!(m.conventions.bitfields["rd"].width, 5);
+    assert_eq!(m.conventions.bitfields["rd"].offset, Some(7));
+    assert_eq!(m.conventions.bitfields["rd"].width, Some(5));
     assert_eq!(m.operand_slots.len(), 2);
     assert_eq!(m.operand_slots[0].kind, OperandKind::Reg);
     assert_eq!(m.operand_slots[0].class.as_deref(), Some("gpr"));
@@ -713,4 +713,105 @@ field_width = 3
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
+}
+
+// ─────────────────────── 迭代 2：codegen ───────────────────────
+
+#[test]
+fn codegen_scatter_pieces_rejected_in_single_contexts() {
+    // 散布位段用于 opcode_field → codegen 报错（迭代 2 约束）
+    let doc = r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr]
+width = 32
+count = 8
+[conventions.bitfields]
+rd     = { offset = 7,  width = 3 }
+opcode = { pieces = [ { offset = 0, width = 7, shift = 0 } ] }
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+field_width = 3
+[[forms]]
+name = "R"
+opcode_field = "opcode"
+operand_fields = ["rd"]
+[[instructions]]
+name = "FOO"
+form = "R"
+opcode = 0x33
+operands = [{ slot = "g", role = "out", field = "rd" }]
+"#;
+    let model = parse_and_validate(doc).unwrap();
+    let err = super::codegen::generate(&model).unwrap_err();
+    assert!(err.contains("scattered"), "err: {err}");
+}
+
+#[test]
+fn codegen_generates_core_surface() {
+    // 定宽模型 → 生成模块含 Inst/encode/decode/disassemble/assemble
+    let doc = r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr]
+width = 32
+count = 8
+[conventions.bitfields]
+rd     = { offset = 7,  width = 3 }
+rs1    = { offset = 15, width = 3 }
+opcode = { offset = 0,  width = 7 }
+funct3 = { offset = 12, width = 3 }
+imm12  = { offset = 20, width = 12 }
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+field_width = 3
+[[operand_slots]]
+name = "i"
+kind = "imm"
+signed = true
+width = 12
+[[forms]]
+name = "I"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "imm12"]
+[[instructions]]
+name = "ADDI"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 0 }
+operands = [{ slot = "g", role = "out" }, { slot = "g", role = "in" }, { slot = "i", role = "in" }]
+[[instructions]]
+name = "NOP"
+form = "I"
+opcode = 0x13
+operands = []
+"#;
+    let model = parse_and_validate(doc).unwrap();
+    let ts = super::codegen::generate(&model).unwrap();
+    let s = ts.to_string();
+    for needle in [
+        "pub enum Inst",
+        "Inst :: Addi",
+        "pub fn encode",
+        "pub fn decode",
+        "pub fn disassemble",
+        "pub fn assemble",
+        "Addi {",
+        "imm12",
+    ] {
+        assert!(s.contains(needle), "generated code missing '{needle}'");
+    }
+    // 确定性：两次生成一致
+    let ts2 = super::codegen::generate(&model).unwrap();
+    assert_eq!(
+        ts.to_string(),
+        ts2.to_string(),
+        "generation must be deterministic"
+    );
 }

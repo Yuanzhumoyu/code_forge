@@ -15,7 +15,7 @@
 ## 2. 参考方案
 
 | 方案 | 借鉴点 |
-|---|---|
+| --- | --- |
 | Ghidra SLEIGH | 命名位域 token 模型：位域一次声明，指令引用 |
 | nML（MicroTESK） | 操作三属性分离（语法/编码/语义）+ 宽度模式 |
 | LLVM TableGen | 类继承（form）+ 参数化族（family） |
@@ -24,7 +24,7 @@
 
 ## 3. 架构（无 v11 层，直接消费 v12 结构化模型）
 
-```
+```text
 用户 TOML（v12：conventions/forms/instructions/families/lowering/abi）
    ↓ 严格 TOML 解析 + 语义校验
 v12 结构化模型（无字符串编码描述）
@@ -36,6 +36,7 @@ v12 结构化模型（无字符串编码描述）
 `@原语` 字符串白名单、紧凑 fields 串、when 谓词串、asm 隐式魔法名（rd/rs1）。
 
 **转变**：
+
 - `@modrm/@vex_rrvvv/...` 原语字符串 → **form 语义键**（结构化配置），实现为内部 Rust 函数
 - decoder 从 **form + bitfields 结构化描述**生成（替代基于 ParsedEncoding 字符串解析的 gen_decoder）
 - 位域位置从 `conventions.bitfields` 推导，指令不再写位偏移
@@ -219,7 +220,7 @@ insts = ["push RBP", "mov64rr RBP, RSP", "@push_callee", "@frame_alloc"]
 
 ## 5. forge-dsl 重构（v11 语法层移除）
 
-```
+```text
 crates/frontend/forge-dsl/src/
 ├── v12/
 │   ├── mod.rs         # 模块入口 + V12Error + parse_and_validate
@@ -241,9 +242,9 @@ crates/frontend/forge-dsl/src/
 ## 6. 迭代序列（9 迭代）
 
 | # | 内容 | 验证 |
-|---|---|---|
-| **1** ✅ | v12 模型 + 严格解析 + 语义校验（meta/reg/conventions/operand_slots；forms/instructions/families/lowering/abi/emit 结构校验） | forge-dsl 164 测试全绿（含 v11 拒绝证明 + 序列化往返） |
-| 2 | 定宽编码生成（form "R"/"I" → encoder/decoder 从 bitfields 直接生成）；riscv64 76 指令迁移 | encode golden + decoder 往返 + assemble |
+| --- | --- | --- |
+| **1** ✅ | v12 模型 + 严格解析 + 语义校验（meta/reg/conventions/operand_slots；forms/instructions/families/lowering/abi/emit 结构校验） | forge-dsl 166 测试全绿（含 v11 拒绝证明 + 序列化往返） |
+| **2** ✅ | 定宽编码生成（form R/I/S/U/B/J/SHIFT/OP/W32 → encode/decode/asm 从 bitfields 直接生成）；散布位段 + operand_fields；riscv64 全 76 指令迁移 | golden 逐字节对比 v11（42 GPR）+ 规范 oracle（F/分支/S 型）+ 全量往返 9/9 |
 | 3 | 变长语义键（modrm/prefix/escape/rex）；x86 @modrm/@sse 家族迁移 ~65 条 | golden 字节等价 + decoder_smoke 扩展 |
 | 4 | VEX 语义键 + 指令族；结构化谓词求值接入 | 展开指令数一致 + forge-tests 全绿 |
 | 5 | lowering 符号化 + abi.arg_class 类别分类 + emit 保留 | mini_c 双后端 + forge-rustc e2e 不回归 |
@@ -261,13 +262,14 @@ crates/frontend/forge-dsl/src/
 ## 8. 风险与决策点
 
 | 风险 | 缓解 |
-|---|---|
+| --- | --- |
 | form 语义键表达力不足 | 语义键是开放可扩展集合，新增键 = 新增内部实现函数 |
 | decoder 从 form 生成的正确性 | 每步 golden + 往返验证；decoder_smoke 12/12 作回归基准 |
 | 迁移回归（x86 124 指令） | 分家族迁移 + golden 对比 + 全量门禁 |
 | 结构化谓词冗长 | TOML 内联简写（单条件直接 `{ eq = [...] }`） |
 
 **执行期决策点**（遇到时暂停询问）：
+
 1. 语义键集合边界（迭代 3/4：modrm/vex/sib/prefix/escape/imm/reloc/leb128...）
 2. 谓词字段集合（rs1_width/elem/rd/opsize...，迭代 4）
 3. C1/C2 与 DSL 迁移的先后（建议迭代 5 后启动）
@@ -300,5 +302,38 @@ crates/frontend/forge-dsl/src/
   文档序诊断，需自定义 deserializer（迭代 8 可选项）
 - **门禁**：forge-dsl clippy 0 警告、fmt 干净、workspace check 通过
 
-**下一步**：迭代 2 —— 定宽编码生成（form "R"/"I" 语义 → encoder/decoder 直接从
-bitfields 生成），riscv64 全 76 指令迁移试点。
+## 11. 迭代 2 完成记录（2026-08）——定宽编码生成 + riscv64 迁移试点
+
+- **交付**：
+  - `crates/frontend/forge-dsl/src/v12/codegen/mod.rs`（新）：自包含模块生成器
+    （Inst 枚举 / encode / decode / disassemble / assemble，仅依赖 std）
+  - 模型扩展：`Bitfield` 支持散布位段（`pieces = [{offset,width,shift}]`，编码
+    `(v>>shift & mask)<<offset`、解码反向 OR——表达 S/U/B/J 立即数布局）；
+    `Form.operand_fields`（定宽按位置绑定位域，操作数不足时隐式 0）
+  - 新 proc 宏 `isa_v12_from_file!`（模块名 = 文件 stem；`read_isa_file` 与
+    v11 宏共享）
+  - `isa/riscv64_v12.toml`：全 **76 指令** v12 迁移（保持 v11 声明序）
+  - `crates/backend/forge-codegen/src/arch/riscv64_v12.rs` + `lib.rs`/`arch/mod.rs`
+    注册；`tests/riscv64_v12_tests.rs` 9 个验证测试
+- **验证**（9/9 全绿）：
+  - golden：42 条 GPR 指令字节与 v11 后端**逐字节一致**（汇编→编码对比）
+  - 规范字节：F 指令按 RISC-V 规范独立 oracle 计算（v11 的 FPR `16+i` 索引
+    不合规，v12 用组内索引修正）
+  - 全量 decode 往返（含 v11 不可解码的分支/负立即数）；分支散布布局、
+    S 型规范字节、负立即数符号扩展（v11 解码不扩展）、assemble/disassemble
+    往返、Inst 枚举形状
+- **发现并修复的 v11 缺陷**（v12 规范正确）：
+  1. **riscv64 S 型散布移位反了**（v11 `[7;5;5]`+`[25;7]` 应为 `[7;5;0]`+
+     `[25;7;5]`）→ v11 的 sd/FSW 字节非规范（如 `sd x1,8(x2)` v11=0x10113023
+     规范=0x00113423）
+  2. FPR 编码 `16+i` 使 F 指令字节不合规（仅内部往返一致）
+  3. 解码负立即数不符号扩展（v12 按槽宽度规范扩展）
+- **生成器要点**：解码 guard = opcode/fields 值 + **覆盖补集零位**（统一处理
+  纯 opcode 形式 NOP/ECALL、隐式 0 位域、FENCE 全字常量）；有符号槽按槽宽度
+  符号扩展；asm 模板驱动（simple / `{I}({J})` / `({J})` 三种形状）
+- **门禁**：forge-dsl 166 测试、forge-codegen 全量（lib 98 + smoke/assembler/
+  decoder/packet + v12 pilot 9）、clippy 0 警告、fmt 干净
+
+**下一步（迭代 3）**：变长编码语义键（modrm/prefix/escape/rex）→ x86
+@modrm/@sse 家族迁移试点（~65 条）；`OperandRole::InOut` 在 x86 RMW 操作数
+落地。随后迭代 4（VEX + families + 结构化谓词）。
