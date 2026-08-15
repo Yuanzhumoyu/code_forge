@@ -43,11 +43,9 @@ pub mod visit;
 // ── NEW: AST 层 (Phase A+) ──
 pub mod ast;
 
-// ── NEW: 语义分析层 (Phase D+) ──
-// 第二十九轮:零外部调用(30KB NameResolver/SymbolTable/TypeChecker)——保留
-// 为公开 API(接入 mini_c 是产品决策),标注 #[doc(hidden)] 不在文档生成中突出。
-#[doc(hidden)]
-pub mod semantic;
+// ── 语义分析层（Phase D+）已移除 ──
+// 第二十九轮起 NameResolver/SymbolTable/TypeChecker 零外部调用（mini_c 用自研
+// SymTable）——审计 P3 决策：删除死代码（语义层仅被自身测试引用）。
 
 // Re-exports for convenience
 pub use cst::{CstBuilder, CstNode, CstWalker};
@@ -66,13 +64,8 @@ pub use ast::lower::lower_cst;
 pub use ast::node::{Ident, Literal, Seq};
 pub use ast::{AstArena, AstId, AstNodeData, AstRef, AstWalker, FieldValue, TypedAst};
 
-// Semantic re-exports (note: scope::Symbol and schema::Symbol are different types)
+// Semantic re-exports (note: schema::Symbol is the AST interner)
 pub use ast::schema::{
     AstSchema, EnumBuilder, FieldDef, FieldType, NodeDef, NodeKind, SchemaError, StructBuilder,
     Symbol, VariantDef,
 };
-pub use semantic::resolve::{NameResolver, ResolutionMap};
-pub use semantic::scope::Symbol as ScopeSymbol; // Disambiguate from schema::Symbol
-pub use semantic::scope::{Scope, ScopeKind, SymbolKind, SymbolTable, TypeInfo};
-pub use semantic::types::TypeChecker;
-pub use semantic::{AnalysisContext, SemanticDiagnostic};

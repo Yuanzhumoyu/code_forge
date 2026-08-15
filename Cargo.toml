@@ -40,7 +40,8 @@ forge-plugin = { path = "crates/tools/forge-plugin", optional = true }
 
 [features]
 default = ["jit"]
-jit = []
+# JIT 运行时 gate：转发到 forge-codegen/jit（JitCompiler 模块 + 根门面 re-export）
+jit = ["forge-codegen/jit"]
 object-file = ["dep:forge-object"]
 plugins = ["dep:forge-plugin"]
 

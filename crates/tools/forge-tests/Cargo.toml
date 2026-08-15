@@ -6,7 +6,8 @@ description = "Forge Tests: generic integration test framework for ISA backends 
 build = "build.rs"
 
 [dependencies]
-code-forge = { path = "../../.." }
+# 执行测试依赖 JitCompiler——显式启用 jit feature（默认构建即含）
+code-forge = { path = "../../..", features = ["jit"] }
 forge-rustc = { path = "../forge-rustc", optional = true }
 
 [build-dependencies]

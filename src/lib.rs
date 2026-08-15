@@ -61,6 +61,7 @@ pub use smallvec;
 pub use forge_asm as assembler;
 pub use forge_codegen::EncodeError;
 pub use forge_codegen::encode;
+#[cfg(feature = "jit")]
 pub use forge_codegen::jit;
 pub use forge_codegen::{AllocResult, CompiledFunction, RelocKind, Relocation};
 

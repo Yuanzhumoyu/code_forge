@@ -13,5 +13,6 @@ name = "mini_c"
 path = "src/main.rs"
 
 [dependencies]
-code-forge = { path = "../.." }
+# mini_c 是 JIT 演示——显式启用 jit feature（即使根 crate 以 --no-default-features 构建）
+code-forge = { path = "../..", features = ["jit"] }
 forge-hir = { path = "../../crates/frontend/forge-hir" }

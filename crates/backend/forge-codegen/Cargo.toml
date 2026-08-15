@@ -23,6 +23,8 @@ rayon = { version = "1", optional = true }
 [features]
 default = []
 parallel = ["dep:rayon", "forge-opt/parallel"]
+# JIT 运行时（JitCompiler + 符号解析）——关闭时仅剩 compile_raw 静态编译路径
+jit = []
 
 [lints.clippy.type_complexity]
 level = "allow"

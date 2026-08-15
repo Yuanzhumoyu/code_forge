@@ -1079,18 +1079,22 @@ fn build_test_module() -> forge_ir::Module {
 /// exercises module-level relocation resolution (unlike single-function
 /// `compile_raw`, which emits a placeholder displacement).
 fn bench_module_compile(c: &mut Criterion) {
-    ensure_registered();
-    c.bench_function("module_compile_cross_call", |b| {
-        b.iter_batched(
-            build_test_module,
-            |m| {
-                let mut jit = code_forge::jit::JitCompiler::new(TargetMachine::new());
-                jit.compile_module(&m).unwrap();
-                black_box(jit);
-            },
-            BatchSize::SmallInput,
-        );
-    });
+    // JIT 运行时在 `jit` feature 下才编译（JitCompiler）——关闭时该基准跳过
+    #[cfg(feature = "jit")]
+    {
+        ensure_registered();
+        c.bench_function("module_compile_cross_call", |b| {
+            b.iter_batched(
+                build_test_module,
+                |m| {
+                    let mut jit = code_forge::jit::JitCompiler::new(TargetMachine::new());
+                    jit.compile_module(&m).unwrap();
+                    black_box(jit);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
 }
 
 /// IPA passes with a real (non-empty) function table — the old benchmarks ran

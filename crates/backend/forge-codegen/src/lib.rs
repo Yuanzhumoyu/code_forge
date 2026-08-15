@@ -150,6 +150,7 @@ pub mod ext;
 // ============================================================
 pub use ext::pattern_isel;
 pub use pipeline::vcode;
+#[cfg(feature = "jit")]
 pub use runtime::jit;
 pub use runtime::output_types;
 pub use runtime::registry;
