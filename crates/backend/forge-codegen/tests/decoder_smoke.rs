@@ -205,6 +205,13 @@ fn x86_lea_roundtrip() {
         forge_codegen::x86_64::Assembler,
         "lea_off RAX, [RBP+8]",
     );
+    // @lea_rip_rel：RIP 相对 disp32
+    roundtrip_asm(
+        "x86_lea_rip",
+        forge_codegen::x86_64::TargetMachine::new(),
+        forge_codegen::x86_64::Assembler,
+        "lea_rip RAX, [rip+16]",
+    );
 }
 
 // ── minimal_sd：编码不含寄存器字段 → 无可解码变体（负例）──

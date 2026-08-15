@@ -1430,6 +1430,8 @@ where
                 let __mod = __modrm >> 6;
                 if __mod == 3 { return None; }
                 let mut __base: u64 = ((__modrm & 7) as u64) | (__rex_b << 3) as u64;
+                // mod=00+rm=101(1101) = RIP-relative——本原语发射端不产生（force_disp_base），拒绝
+                if __mod == 0 && (__modrm & 7) == 5 { return None; }
                 if (__modrm & 7) == 4 {
                     // SIB：仅支持 index=100（无 index，MemRef 无法表达 index/scale）
                     if __o >= bytes.len() { return None; }
@@ -1668,6 +1670,9 @@ where
                 let __mod = __modrm >> 6;
                 if __mod == 3 { return None; }
                 let __rm = __modrm & 7;
+                // mod=00+rm=101(或 1101) 是 RIP-relative——本原语发射端因
+                // force_disp_base 永不产生，解码拒绝让 @lea_rip_rel 认领
+                if __mod == 0 && (__rm == 5 || __rm == 13) { return None; }
                 let mut __base: u64 = (__rm as u64) | (__rex_b << 3) as u64;
                 let mut __index: u64 = 4u64 | (__rex_x << 3) as u64; // RSP 哨兵（无 index）
                 let mut __scale: u64 = 1;
@@ -1750,6 +1755,33 @@ where
                 field_exprs.insert(base_arg.to_string(), quote! { (__modrm & 7) as u64 });
             }
             field_exprs.insert(disp_arg.to_string(), quote! { __disp as u64 });
+        }
+        // @lea_rip_rel dest global — REX.W + 8D + ModRM(00, rm=101) + disp32
+        // （global 字段语义为符号引用，解码给出 raw disp32——字节往返一致）
+        "lea_rip_rel" => {
+            let dest_arg = arg(0);
+            let disp_arg = arg(1);
+            if !field_map.contains_key(dest_arg) || !field_map.contains_key(disp_arg) {
+                return Ok(None);
+            }
+            prelude.push(quote! {
+                if bytes.len() < 7 { return None; }
+                let __rex = bytes[0];
+                if (__rex & 0xF8) != 0x48 { return None; }
+                let __rex_r: u32 = ((__rex >> 2) & 1) as u32;
+                if bytes[1] != 0x8D { return None; }
+                let __modrm = bytes[2];
+                if (__modrm >> 6) != 0 || (__modrm & 7) != 5 { return None; }
+                let __o = 7usize;
+            });
+            field_exprs.insert(
+                dest_arg.to_string(),
+                quote! { (((__modrm >> 3) & 7) as u64) | (__rex_r << 3) as u64 },
+            );
+            field_exprs.insert(
+                disp_arg.to_string(),
+                quote! { i32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]) as u64 },
+            );
         }
         _ => return Ok(None),
     }
