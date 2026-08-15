@@ -186,8 +186,11 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 inst.name, inst.form
             ));
         }
-        if inst.opcode.is_none() {
-            return Err(format!("[[instructions.{}]]: opcode required", inst.name));
+        if inst.opcode.is_none() && form.opcode_reg.is_none() {
+            return Err(format!(
+                "[[instructions.{}]]: opcode required (or form opcode_reg for +r forms)",
+                inst.name
+            ));
         }
         let of = form.operand_fields.as_deref();
         let fixed = form.opcode_field.is_some();
@@ -514,8 +517,8 @@ struct VlenCtx {
     prefix_expr: TokenStream,
     /// REX.W 位表达式（u64）：auto（opsize==64）/ fields.w / 0。
     rex_w_expr: TokenStream,
-    /// ModRM 语义。
-    modrm: ModrmKind,
+    /// ModRM 语义（`+r` 形式为 None）。
+    modrm: Option<ModrmKind>,
     /// modrm reg 字段值表达式（u64）：rr → 操作数 0；ext → fields.ext。
     reg_expr: Option<TokenStream>,
     /// modrm rm 字段值表达式（u64；内存形式 = 基址）。
@@ -526,6 +529,10 @@ struct VlenCtx {
     imm_bytes: usize,
     /// VEX 语义（form.vex 存在时）：map/pp/w/l 值表达式（u64）。
     vex: Option<VexCtx>,
+    /// `+r` 形式 opcode 基值（50/58/B8/C8...）；None = 普通 opcode。
+    opcode_reg: Option<u64>,
+    /// rex_w = "always"：恒发 REX.W（+r 的 mov_imm64/bswap）。
+    rex_w_always: bool,
 }
 
 /// VEX 编码上下文（迭代 4）。
@@ -611,43 +618,49 @@ fn vlen_ctx(info: &InstInfo) -> Result<VlenCtx, String> {
         None if has_opsize => quote! { if __opsize == 64 { 1u64 } else { 0u64 } },
         _ => quote! { 0u64 },
     };
-    // modrm reg/rm/disp
-    let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
-        format!(
-            "[[instructions.{}]]: form modrm key {:?} unsupported (rr/ext/rm_mem/rm_memref)",
-            info.inst.name, form.modrm
-        )
-    })?;
-    let (reg_expr, rm_expr, disp_expr): (TokenStream, TokenStream, Option<TokenStream>) =
-        match modrm {
-            ModrmKind::RR => {
-                let r0 = info.operands[0].1.clone();
-                let r1 = info.operands[1].1.clone();
-                (quote! { *#r0 as u64 }, quote! { *#r1 as u64 }, None)
-            }
-            ModrmKind::Ext => {
-                let ext = field_val("ext");
-                let r0 = info.operands[0].1.clone();
-                (quote! { #ext }, quote! { *#r0 as u64 }, None)
-            }
-            ModrmKind::MemReg => {
-                let r0 = info.operands[0].1.clone();
-                let b = info.operands[1].1.clone();
-                (
-                    quote! { *#r0 as u64 },
-                    quote! { *#b as u64 },
-                    Some(quote! { 0i64 }),
+    // modrm reg/rm/disp：`+r` 形式无 ModRM（opcode 内嵌 reg）
+    let (modrm, reg_expr, rm_expr, disp_expr) =
+        if form.opcode_reg.is_some() {
+            (None, None, None, None)
+        } else {
+            let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
+                format!(
+                    "[[instructions.{}]]: form modrm key {:?} unsupported (rr/ext/rm_mem/rm_memref)",
+                    info.inst.name, form.modrm
                 )
-            }
-            ModrmKind::MemRefOp => {
-                let r0 = info.operands[0].1.clone();
-                let m = info.operands[1].1.clone();
-                (
-                    quote! { *#r0 as u64 },
-                    quote! { #m.base as u64 },
-                    Some(quote! { #m.disp }),
-                )
-            }
+            })?;
+            let (reg_expr, rm_expr, disp_expr): (TokenStream, TokenStream, Option<TokenStream>) =
+                match modrm {
+                    ModrmKind::RR => {
+                        let r0 = info.operands[0].1.clone();
+                        let r1 = info.operands[1].1.clone();
+                        (quote! { *#r0 as u64 }, quote! { *#r1 as u64 }, None)
+                    }
+                    ModrmKind::Ext => {
+                        let ext = field_val("ext");
+                        let r0 = info.operands[0].1.clone();
+                        (quote! { #ext }, quote! { *#r0 as u64 }, None)
+                    }
+                    ModrmKind::MemReg => {
+                        let r0 = info.operands[0].1.clone();
+                        let b = info.operands[1].1.clone();
+                        (
+                            quote! { *#r0 as u64 },
+                            quote! { *#b as u64 },
+                            Some(quote! { 0i64 }),
+                        )
+                    }
+                    ModrmKind::MemRefOp => {
+                        let r0 = info.operands[0].1.clone();
+                        let m = info.operands[1].1.clone();
+                        (
+                            quote! { *#r0 as u64 },
+                            quote! { #m.base as u64 },
+                            Some(quote! { #m.disp }),
+                        )
+                    }
+                };
+            (Some(modrm), Some(reg_expr), Some(rm_expr), disp_expr)
         };
     let imm_bytes = (form.imm.unwrap_or(0) / 8) as usize;
     // VEX 语义（form.vex 存在时）：map/pp/w/l 来源数字或 fields.vex_*（缺省 0）
@@ -679,11 +692,13 @@ fn vlen_ctx(info: &InstInfo) -> Result<VlenCtx, String> {
         prefix_expr,
         rex_w_expr,
         modrm,
-        reg_expr: Some(reg_expr),
-        rm_expr: Some(rm_expr),
+        reg_expr,
+        rm_expr,
         disp_expr,
         imm_bytes,
         vex,
+        opcode_reg: form.opcode_reg,
+        rex_w_always: form.rex_w.as_deref() == Some("always"),
     })
 }
 
@@ -706,16 +721,52 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         let vn = &info.vn;
         let ctx = vlen_ctx(info)?;
         let mut stmts: Vec<TokenStream> = Vec::new();
-        let reg = ctx.reg_expr.as_ref().unwrap();
-        let rm = ctx.rm_expr.as_ref().unwrap();
         // opsize → __opsize 局部（必须先于 66/REX 检查）
         let opsize_bind = if let Some(oe) = &ctx.opsize_expr {
             quote! { let __opsize = #oe; }
         } else {
             quote! { let __opsize = 0u64; }
         };
-        // VEX 前缀（替换 prefix/REX/escape）：C4 + vex2 + vex3 + opcode
-        if let Some(vex) = &ctx.vex {
+        // `+r` 形式（50+r/push、58+r/pop、B8+r/mov_imm64、C8+r/bswap）：
+        // REX（always → 0x48|B；否则 reg≥8 → 0x41）+ [escape] + opcode|reg&7 + imm
+        if let Some(base) = ctx.opcode_reg {
+            let reg0 = info.operands[0].1.clone();
+            let rex_always = ctx.rex_w_always;
+            stmts.push(quote! {
+                let __reg = *#reg0 as u64;
+                if #rex_always {
+                    __bytes.push((0x48u64 | ((__reg >> 3) & 1)) as u8);
+                } else if (__reg & 8) != 0 {
+                    __bytes.push(0x41u8);
+                }
+            });
+            if let Some(esc) = &info.form.escape {
+                for e in esc {
+                    stmts.push(quote! { __bytes.push(#e as u8); });
+                }
+            }
+            stmts.push(quote! { __bytes.push((#base | (__reg & 7)) as u8); });
+            if ctx.imm_bytes > 0 {
+                let imm_fid = info
+                    .operands
+                    .iter()
+                    .find(|(_, _, s)| s.kind == OperandKind::Imm)
+                    .map(|(_, fid, _)| fid.clone())
+                    .ok_or_else(|| {
+                        format!("[[instructions.{}]]: form imm requires an imm operand", info.inst.name)
+                    })?;
+                let le_bytes = match ctx.imm_bytes {
+                    1 => quote! { (*#imm_fid as u8).to_le_bytes().to_vec() },
+                    2 => quote! { (*#imm_fid as u16).to_le_bytes().to_vec() },
+                    4 => quote! { (*#imm_fid as u32).to_le_bytes().to_vec() },
+                    8 => quote! { (*#imm_fid as u64).to_le_bytes().to_vec() },
+                    n => return Err(format!("unsupported imm width {n} bytes")),
+                };
+                stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
+            }
+        } else if let Some(vex) = &ctx.vex {
+            let reg = ctx.reg_expr.as_ref().unwrap();
+            let rm = ctx.rm_expr.as_ref().unwrap();
             let vopcode = info.inst.opcode.unwrap();
             let map = &vex.map_expr;
             let pp = &vex.pp_expr;
@@ -767,6 +818,8 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                 stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
             }
         } else {
+            let reg = ctx.reg_expr.as_ref().unwrap();
+            let rm = ctx.rm_expr.as_ref().unwrap();
             stmts.push(opsize_bind);
             if ctx.has_opsize {
                 stmts.push(quote! { if __opsize == 16 { __bytes.push(0x66u8); } });
@@ -803,7 +856,7 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             let opcode = info.inst.opcode.unwrap();
             stmts.push(quote! { __bytes.push(#opcode as u8); });
             // ModRM：mod=11（rr/ext）或内存（rm_mem/rm_memref）
-            if ctx.modrm.is_mem() {
+            if ctx.modrm.unwrap().is_mem() {
                 let force = mem_force_disp(model, info)?;
                 let force_toks: Vec<TokenStream> = force.iter().map(|&b| quote! { #b }).collect();
                 let disp = ctx.disp_expr.as_ref().unwrap();
@@ -881,6 +934,72 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         /// 编码单条指令为字节序列（变长 ISA）。
         pub fn encode(inst: &Inst) -> Result<Vec<u8>, String> {
             match inst { #(#arms,)* }
+        }
+    })
+}
+
+/// `+r` 形式解码 arm：REX 扫描后 [escape] `opcode_reg|reg&7` [imm]。
+fn gen_vlen_opcode_reg_decode_arm(
+    info: &InstInfo,
+    ctx: &VlenCtx,
+    base: u64,
+) -> Result<TokenStream, String> {
+    let vn = &info.vn;
+    let imm_bytes = ctx.imm_bytes;
+    let mut off = 0usize;
+    let mut conds: Vec<TokenStream> = Vec::new();
+    if let Some(esc) = &info.form.escape {
+        for e in esc {
+            conds.push(quote! { bytes[__o + #off] == #e as u8 });
+            off += 1;
+        }
+    }
+    // opcode 高 5 位匹配（低 3 位 = reg）
+    conds.push(quote! { (bytes[__o + #off] & 0xF8) == ((#base & 0xF8) as u8) });
+    let opcode_off = off;
+    let total = off + 1 + imm_bytes;
+    // 字段提取：op0 = reg（opcode&7 | REX.B<<3）；后续 imm 操作数
+    let mut binds: Vec<TokenStream> = Vec::new();
+    let mut ctor_fields: Vec<TokenStream> = Vec::new();
+    for (i, (_, fid, slot)) in info.operands.iter().enumerate() {
+        let expr: TokenStream = match slot.kind {
+            OperandKind::Reg if i == 0 => {
+                quote! { ((bytes[__o + #opcode_off] & 7) as u32) | (__rex_b << 3) }
+            }
+            OperandKind::Imm => {
+                let raw = imm_read_ts(opcode_off + 1, imm_bytes);
+                let signed = slot.signed.unwrap_or(false);
+                let w = slot.width.unwrap_or(64);
+                if signed {
+                    sign_extend_ts(raw, w)
+                } else {
+                    quote! { #raw as i64 }
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "[[instructions.{}]]: +r operand {i} kind {:?} unsupported",
+                    info.inst.name, slot.kind
+                ));
+            }
+        };
+        binds.push(quote! { let #fid = #expr; });
+        ctor_fields.push(quote! { #fid });
+    }
+    let ctor = if info.operands.is_empty() {
+        quote! { Inst::#vn }
+    } else {
+        quote! { Inst::#vn { #(#ctor_fields),* } }
+    };
+    let cond = if conds.is_empty() {
+        quote! { true }
+    } else {
+        quote! { #(#conds)&&* }
+    };
+    Ok(quote! {
+        if __o + #total <= bytes.len() && #cond {
+            #(#binds)*
+            return Some((#ctor, __o + #total));
         }
     })
 }
@@ -985,6 +1104,11 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
             arms.push(gen_vlen_vex_decode_arm(info, &ctx)?);
             continue;
         }
+        // `+r` 形式：opcode 含 reg 低 3 位（50/58/B8/C8...）
+        if let Some(base) = ctx.opcode_reg {
+            arms.push(gen_vlen_opcode_reg_decode_arm(info, &ctx, base)?);
+            continue;
+        }
         let form = info.form;
         let mut conds: Vec<TokenStream> = Vec::new();
         // 前缀匹配条件：66/F2/F3 → 扫描标志（无长度）；其他（LOCK 0xF0 等）→
@@ -1031,7 +1155,7 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
             let reg_field = quote! { ((__modrm >> 3) & 7) as u32 | (__rex_r << 3) };
             let rm_field = quote! { ((__modrm & 7) as u32) | (__rex_b << 3) };
             match slot.kind {
-                OperandKind::Reg => match (ctx.modrm, i) {
+                OperandKind::Reg => match (ctx.modrm.unwrap(), i) {
                     (ModrmKind::RR, 0) | (ModrmKind::MemReg, 0) | (ModrmKind::MemRefOp, 0) => {
                         Ok(reg_field)
                     }
@@ -1042,7 +1166,7 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
                         info.inst.name, ctx.modrm
                     )),
                 },
-                OperandKind::Mem => match (ctx.modrm, i) {
+                OperandKind::Mem => match (ctx.modrm.unwrap(), i) {
                     (ModrmKind::MemRefOp, 1) => {
                         Ok(quote! { MemRef { base: __base, disp: __disp } })
                     }
@@ -1081,7 +1205,7 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
             quote! { Inst::#vn { #(#ctor_fields),* } }
         };
         // ext 形式：ModRM.reg 必须等于固定扩展码
-        let modrm_guard: TokenStream = if ctx.modrm == ModrmKind::Ext {
+        let modrm_guard: TokenStream = if ctx.modrm.unwrap() == ModrmKind::Ext {
             let ext = info
                 .inst
                 .fields
@@ -1093,16 +1217,16 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
         } else {
             quote! {}
         };
-        if ctx.modrm.is_mem() {
+        if ctx.modrm.unwrap().is_mem() {
             // 内存形式：mod≠3 + SIB（index=4 无 index）+ disp8/disp32 + RIP-rel 拒绝。
             // MemReg（无 disp 语义）只接受 mod∈{0,1} 且 mod=1 时 disp==0
             //（force_disp_base 的 disp8=0）；MemRefOp 接受 mod∈{0,1,2}。
-            let mod_guard: TokenStream = if ctx.modrm == ModrmKind::MemReg {
+            let mod_guard: TokenStream = if ctx.modrm.unwrap() == ModrmKind::MemReg {
                 quote! { __mod != 3 && __mod != 2 }
             } else {
                 quote! { __mod != 3 }
             };
-            let disp_zero_check: TokenStream = if ctx.modrm == ModrmKind::MemReg {
+            let disp_zero_check: TokenStream = if ctx.modrm.unwrap() == ModrmKind::MemReg {
                 quote! {
                     if __mod == 1 {
                         __disp = (bytes[__o2] as i8) as i64;

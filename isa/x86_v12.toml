@@ -77,6 +77,12 @@ kind = "imm"
 signed = false
 width = 8
 
+[[operand_slots]]
+name = "imm64"
+kind = "imm"
+signed = false
+width = 64
+
 # ─────────────────────────── 编码形式 ───────────────────────────
 
 [[forms]]
@@ -146,6 +152,52 @@ name = "VEX_RR_IMM"     # VEX 两操作数 + imm8（VEXTRACTF128）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr"
 imm = 8
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
+modrm = "ext"
+opsize = "auto"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_EXT64_IMM32"  # @op_rm_imm32：REX.W + 81 /digit + imm32（64 位专用）
+modrm = "ext"
+opsize = 64
+imm = 32
+opcode_bytes = 1
+
+[[forms]]
+name = "SSE_RR_IMM8"      # @sse_rr_imm8：prefix + 0F + opcode + /r + imm8
+modrm = "rr"
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
+opcode_bytes = 1
+
+[[forms]]
+name = "PUSH_REG"         # 50+r（push r64；reg≥8 → REX.B 41）
+opcode_reg = 0x50
+opcode_bytes = 1
+
+[[forms]]
+name = "POP_REG"          # 58+r
+opcode_reg = 0x58
+opcode_bytes = 1
+
+[[forms]]
+name = "MOV_IMM64"        # REX.W + B8+r + imm64
+opcode_reg = 0xB8
+rex_w = "always"
+imm = 64
+opcode_bytes = 1
+
+[[forms]]
+name = "BSWAP_R"          # REX.W + 0F C8+r
+opcode_reg = 0xC8
+rex_w = "always"
+escape = [0x0F]
 opcode_bytes = 1
 
 [[forms]]
@@ -1166,3 +1218,97 @@ fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
 mnemonic = "vinsertf128"
 asm = "vinsertf128 {0}, {2}, {1}, {3}"
+# ── 收官：@op_rm / @op_rm_imm32 / @sse_rr_imm8 / +r 形式 ──
+
+[[instructions]]
+name = "NOT_RM"
+form = "MRR_EXT_OP"
+opcode = 0xF7
+fields = { ext = 2 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+mnemonic = "not"
+
+[[instructions]]
+name = "NEG_RM"
+form = "MRR_EXT_OP"
+opcode = 0xF7
+fields = { ext = 3 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
+mnemonic = "neg"
+
+[[instructions]]
+name = "DIV_RM"
+form = "MRR_EXT_OP"
+opcode = 0xF7
+fields = { ext = 6 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "div"
+
+[[instructions]]
+name = "IDIV_RM"
+form = "MRR_EXT_OP"
+opcode = 0xF7
+fields = { ext = 7 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "idiv"
+
+[[instructions]]
+name = "SUB64_R_IMM32"
+form = "MRR_EXT64_IMM32"
+opcode = 0x81
+fields = { ext = 5 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }]
+mnemonic = "sub"
+asm = "sub {0}, {1}"
+
+[[instructions]]
+name = "ADD64_R_IMM32"
+form = "MRR_EXT64_IMM32"
+opcode = 0x81
+fields = { ext = 0 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }]
+mnemonic = "add"
+asm = "add {0}, {1}"
+
+[[instructions]]
+name = "PSHUFD"
+form = "SSE_RR_IMM8"
+opcode = 0x70
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
+mnemonic = "pshufd"
+asm = "pshufd {0}, {1}, {2}"
+
+[[instructions]]
+name = "SHUFPS"
+form = "SSE_RR_IMM8"
+opcode = 0xC6
+fields = { prefix = 0, w = 0 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
+mnemonic = "shufps"
+asm = "shufps {0}, {1}, {2}"
+
+[[instructions]]
+name = "PUSH"
+form = "PUSH_REG"
+operands = [{ slot = "gpr", role = "in" }]
+mnemonic = "push"
+
+[[instructions]]
+name = "POP"
+form = "POP_REG"
+operands = [{ slot = "gpr", role = "out" }]
+mnemonic = "pop"
+
+[[instructions]]
+name = "MOV_REG_IMM64"
+form = "MOV_IMM64"
+operands = [{ slot = "gpr", role = "out" }, { slot = "imm64", role = "in" }]
+mnemonic = "mov_imm"
+asm = "mov_imm {0}, {1}"
+
+[[instructions]]
+name = "BSWAP_R"
+form = "BSWAP_R"
+operands = [{ slot = "gpr", role = "inout" }]
+mnemonic = "bswap"

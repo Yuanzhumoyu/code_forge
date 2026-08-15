@@ -370,9 +370,10 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
         if let Some(w) = &f.rex_w
             && w != "auto"
             && w != "field"
+            && w != "always"
         {
             return Err(format!(
-                "[[forms.{}]].rex_w must be \"auto\" or \"field\", got '{w}'",
+                "[[forms.{}]].rex_w must be \"auto\"/\"field\"/\"always\", got '{w}'",
                 f.name
             ));
         }

@@ -141,6 +141,68 @@ fn opsize_prefix_and_rex_w() {
     }
 }
 
+// ─────────────────── `+r` 形式（push/pop/bswap/mov_imm64，迭代 5）───────────────────
+
+#[test]
+fn r_forms_golden() {
+    // golden：与 v11 逐字节一致（v11 @push_reg/@pop_reg/@bswap_r/@mov_imm64）
+    let cases = [
+        "push RAX",
+        "push R8",
+        "pop RBX",
+        "pop R9",
+        "bswap RAX",
+        "bswap R12",
+        "mov_imm RAX, 0x1234",
+    ];
+    for c in cases {
+        let vb = v11_bytes(c);
+        let v12b = v12_bytes(c);
+        assert_eq!(
+            v12b, vb,
+            "golden mismatch for `{c}` (v12 {v12b:02x?} vs v11 {vb:02x?})"
+        );
+    }
+    // 直接构造对比（v11 asm 语法不支持负 imm）
+    use forge_codegen::machine::target::TargetMachine;
+    let tm = forge_codegen::x86_64::TargetMachine::new();
+    let rm = forge_codegen::AllocResult::new();
+    let vb = tm
+        .encoder()
+        .encode_to_bytes(
+            &forge_codegen::x86_64::Inst::MovRegImm64 {
+                reg: forge_codegen::x86_64::Reg::R8,
+                imm: -1,
+            },
+            &rm,
+        )
+        .unwrap();
+    let v12b = encode(&Inst::MovRegImm64 { op0: 8, op1: -1 }).unwrap();
+    assert_eq!(
+        v12b, vb,
+        "mov_imm R8, -1: v12 {v12b:02x?} vs v11 {vb:02x?}"
+    );
+}
+
+#[test]
+fn r_forms_spec_bytes() {
+    // 规范 oracle：+r 编码（REX 仅扩展寄存器；mov_imm64/bswap 恒 REX.W）
+    let cases: &[(&str, &[u8])] = &[
+        ("push RAX", &[0x50]),
+        ("push R8", &[0x41, 0x50]),
+        ("pop RBX", &[0x5B]),
+        ("pop R9", &[0x41, 0x59]),
+        ("bswap RAX", &[0x48, 0x0F, 0xC8]),
+        ("bswap R12", &[0x49, 0x0F, 0xCC]),
+        ("mov_imm RAX, 0x1234", &[0x48, 0xB8, 0x34, 0x12, 0, 0, 0, 0, 0, 0]),
+        ("mov_imm R8, -1", &[0x49, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+    ];
+    for (asm, expected) in cases {
+        let got = v12_bytes(asm);
+        assert_eq!(got.as_slice(), *expected, "+r spec mismatch for `{asm}`");
+    }
+}
+
 // ─────────────────── SSE 规范字节（v11 的 16+i 索引不合规）───────────────────
 
 #[test]
@@ -672,6 +734,15 @@ fn all_insts() -> Vec<Inst> {
             op2: 1,
             op3: 1,
         },
+        // `+r` 形式（迭代 5）
+        Push { op0: 0 },
+        Push { op0: 8 },
+        Pop { op0: 3 },
+        Pop { op0: 9 },
+        MovRegImm64 { op0: 0, op1: 0x1234 },
+        MovRegImm64 { op0: 8, op1: -1 },
+        BswapR { op0: 0 },
+        BswapR { op0: 12 },
     ]
 }
 
@@ -779,6 +850,14 @@ fn assemble_disassemble_roundtrip() {
         // VEX imm
         "vextractf128 xmm1, xmm2, 0",
         "vinsertf128 xmm0, xmm1, xmm2, 1",
+        // `+r` 形式
+        "push rax",
+        "push r8",
+        "pop rbx",
+        "pop r9",
+        "bswap rax",
+        "bswap r12",
+        "mov_imm rax, 0x1234",
     ];
     for c in cases {
         let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));

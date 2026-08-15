@@ -261,10 +261,16 @@ pub struct Form {
     /// 64 → REX.W=1）；数字 → 固定 opsize（无 opsize 操作数）。
     #[serde(default)]
     pub opsize: Option<OpsizeSpec>,
-    /// 变长：REX.W 位来源。`"auto"` → opsize==64；`"field"` → fields.w。
+    /// 变长：REX.W 位来源。`"auto"` → opsize==64；`"field"` → fields.w；
+    /// `"always"` → 恒发 REX.W（+r 形式的 mov_imm64/bswap）。
     /// 缺省恒 0（REX.W 仅在 reg/rm≥8 时随 REX 出现）。
     #[serde(default)]
     pub rex_w: Option<String>,
+    /// 变长：opcode 含寄存器低 3 位（`+r` 形式：50+r/push、58+r/pop、
+    /// B8+r/mov_imm64、C8+r/bswap）。opcode 字节 = 基值 | (op0 & 7)；
+    /// REX.B = op0>>3；无 ModRM。
+    #[serde(default)]
+    pub opcode_reg: Option<u64>,
     /// 变长：尾部立即数宽度（位；如 32）。指令最后操作数（imm 槽）编码于此。
     #[serde(default)]
     pub imm: Option<u32>,
