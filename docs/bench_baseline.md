@@ -40,22 +40,22 @@ optimization conclusions use same-configuration before/after comparison.
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| pipeline_breakdown/o2_block_param_coalesce | 1.50 |
-| pipeline_breakdown/o1_jump_thread | 1.67 |
-| pipeline_breakdown/o2_gvn_pre | 2.97 |
-| pipeline_breakdown/o2_tail_call | 3.16 |
-| pipeline_breakdown/o1_copy_prop | 3.34 |
-| pipeline_breakdown/o3_inline | 3.92 |
-| pipeline_breakdown/o3_loop_unroll | 5.00 |
-| pipeline_breakdown/o3_mem2reg | 5.05 |
-| pipeline_breakdown/o3_ind_var_simplify | 5.10 |
-| pipeline_breakdown/o1_dead_code | 6.14 |
-| pipeline_breakdown/o2_licm | 7.41 |
-| pipeline_breakdown/o2_egraph | 8.33 |
-| pipeline_breakdown/o1_cse | 8.78 |
-| pipeline_breakdown/o2_gvn | 13.27 |
-| pipeline_breakdown/o2_sccp | 24.47 |
-| pipeline_breakdown/o1_const_fold | 26.88 |
+| pipeline_breakdown/o2/block_param_coalesce | 1.50 |
+| pipeline_breakdown/o1/jump_thread | 1.67 |
+| pipeline_breakdown/o2/gvn_pre | 2.97 |
+| pipeline_breakdown/o2/tail_call | 3.16 |
+| pipeline_breakdown/o1/copy_prop | 3.34 |
+| pipeline_breakdown/o3/inline | 3.92 |
+| pipeline_breakdown/o3/loop_unroll | 5.00 |
+| pipeline_breakdown/o3/mem2reg | 5.05 |
+| pipeline_breakdown/o3/ind_var_simplify | 5.10 |
+| pipeline_breakdown/o1/dead_code | 6.14 |
+| pipeline_breakdown/o2/licm | 7.41 |
+| pipeline_breakdown/o2/algebraic | 8.33 |
+| pipeline_breakdown/o1/cse | 8.78 |
+| pipeline_breakdown/o2/gvn | 13.27 |
+| pipeline_breakdown/o2/sccp | 24.47 |
+| pipeline_breakdown/o1/const_fold | 26.88 |
 
 ## codegen
 
@@ -217,7 +217,7 @@ owner——**无实际泄漏**。`pop_free` 丢弃冲突 preg 为防御性清理
 
 | 项 | 内容 | 收益 |
 | --- | --- | --- |
-| analysis.rs compute_idom | 一次构建前驱映射（替代每轮每 block 线性扫全函数），O(轮数×n²)→O(轮数×n) | licm -7.8%、loop_unroll -10.6%（vs 上轮） |
+| forge-ir/src/analysis.rs compute_idom | 一次构建前驱映射（替代每轮每 block 线性扫全函数），O(轮数×n²)→O(轮数×n)；注：位于 forge-ir 非 forge-opt | licm -7.8%、loop_unroll -10.6%（vs 上轮） |
 | liverange 数据流 | 增量式收敛（live_in 以 uses 为初值 + insert 返回值检测，消除每轮重建与 O(集合) 比较） | codegen -3%~-13%（vs 上轮） |
 | const_fold | const_operands → SmallVec（worklist 增量版确认） | 微 |
 | sccp | Big 深拷贝消除评估：fold_opcode 泛型化侵入 20+ match 分支，收益有限，不实施（记录） | — |

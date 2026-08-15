@@ -109,5 +109,5 @@ immediates，故未暴露）：
 2. `StackAddr`/`GlobalAddr`/`Alloca`：立即数（offset/大小）未输出——现按
    `Immediate::Int/Uint/Const` 输出（如 `stack_addr -4`）
 
-**验证**：forge-ir 201 lib + 14 display_llvm + 22 ir_parser_llvm 全过；
-`cargo test --workspace --exclude forge-rustc` 41 组 ok、0 FAILED。
+**验证**（2026-08-08 实测）：forge-ir 235 lib + 89 display_llvm + 24 ir_parser_llvm 全过；
+`cargo test --workspace --exclude forge-rustc` 48 组 ok、0 FAILED。
