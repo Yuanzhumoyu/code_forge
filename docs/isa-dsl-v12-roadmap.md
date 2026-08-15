@@ -246,6 +246,7 @@ crates/frontend/forge-dsl/src/
 | **1** ✅ | v12 模型 + 严格解析 + 语义校验（meta/reg/conventions/operand_slots；forms/instructions/families/lowering/abi/emit 结构校验） | forge-dsl 166 测试全绿（含 v11 拒绝证明 + 序列化往返） |
 | **2** ✅ | 定宽编码生成（form R/I/S/U/B/J/SHIFT/OP/W32 → encode/decode/asm 从 bitfields 直接生成）；散布位段 + operand_fields；riscv64 全 76 指令迁移 | golden 逐字节对比 v11（42 GPR）+ 规范 oracle（F/分支/S 型）+ 全量往返 9/9 |
 | **3** ✅ | 变长语义键（modrm rr/ext、opsize auto/固定、prefix field、rex_w、imm）；encode→Vec<u8>、decode→(Inst,usize)；opsize 非文本操作数；x86 @modrm 24 + @modrm_imm32 6 + @sse_rr 23 | golden 30 GPR 对比 v11 + opsize 16/32/64 + SSE 规范 oracle + 全 53 条往返 7/7 |
+| **3b** ✅ | 内存寻址（modrm rm_mem/rm_memref、MemRef 槽、SIB/force_disp_base/disp、LOCK F0、`[{n}]` 形状）；x86 @modrm_mem 14 + MOV64_RR | golden 内存对比 v11 + mem_spec_bytes 10 条 + 全 68 条往返 8/8 |
 | 3 | 变长语义键（modrm/prefix/escape/rex）；x86 @modrm/@sse 家族迁移 ~65 条 | golden 字节等价 + decoder_smoke 扩展 |
 | 4 | VEX 语义键 + 指令族；结构化谓词求值接入 | 展开指令数一致 + forge-tests 全绿 |
 | 5 | lowering 符号化 + abi.arg_class 类别分类 + emit 保留 | mini_c 双后端 + forge-rustc e2e 不回归 |
@@ -370,3 +371,30 @@ crates/frontend/forge-dsl/src/
 **下一步（迭代 3b/4）**：@modrm_mem 内存寻址（SIB/disp，迭代 3b 收尾）；
 VEX 语义键 + families（opcodes 数组家族：SD_BIN/SS_FMOV/PS_BIN/PD_BIN/PI_BIN）
 + 结构化谓词（迭代 4）。随后迭代 5（lowering/abi/emit 迁移 + x86 全量）。
+
+## 13. 迭代 3b 完成记录（2026-08）——@modrm_mem 内存寻址
+
+- **交付**：
+  - 模型：`modrm = "rm_mem"`（reg=op0、rm=op1 基址寄存器、disp 恒 0）与
+    `"rm_memref"`（reg=op0、rm=op1 mem 槽 → base/disp）；`OperandKind::Mem`
+    槽（值类型 = 生成的自包含 `MemRef { base: u32, disp: i64 }`）
+  - codegen：内存 ModRM 编码（mod 计算、base&7==4 自动 SIB、force_disp_base
+    → mod=01+disp8=0、disp8/disp32）；变长解码内存形式（mod∈{0,1,2} + SIB
+    index=4 + disp 符号扩展 + RIP-rel 拒绝）；**MemReg 只接受 mod∈{0,1} 且
+    disp==0**（无 disp 语义，与 MemRef 形式解码区分）；前缀扫描加入 F0（LOCK，
+    夹在 66/REX 之间）；asm 新增 `[{n}]` 方括号寄存器形状 + mem 槽渲染
+    `[RAX]`/`[RAX+8]`/`[RAX-8]` 与解析
+  - `isa/x86_v12.toml`：+15 条（XADD/XCHG/SUB/AND/OR/XOR_MEM_R、MOV_R_MEM、
+    STORE_MEM_R、MOVSD_R_MEM、MOVSD_MEM_R、MOV64_RR/RM/MR、MOVSD_RM/MR）
+    → **共 68 条**
+- **验证**（x86_v12 8/8 全绿）：
+  - golden：内存指令与 v11 逐字节一致（含 RSP SIB、R8/R9 REX）
+  - mem_spec_bytes：10 条规范字节（SIB、LOCK、force_disp_base、disp8 符号）
+  - 全 68 条字节级 decode 往返
+- **修正的 v11 缺陷**：locksub/lockand/lockor/lockxor 带多余 `0x0F` escape
+  （F0 48 0F 29 非规范）→ v12 规范（F0 48 29）
+- **门禁**：forge-dsl 166、forge-codegen 全量、clippy 0 警告、fmt 干净
+
+**下一步（迭代 4）**：VEX 语义键（C4/C5 + mmmmm/pp/W/vvvv/L）+ families
+（opcodes 数组家族）+ 结构化谓词。随后迭代 5（lowering/abi/emit 迁移 +
+x86 全量收官）。

@@ -66,6 +66,11 @@ width = 32
 name = "opsize"
 kind = "opsize"
 
+[[operand_slots]]
+name = "mem"
+kind = "mem"
+class = "gpr64"
+
 # ─────────────────────────── 编码形式 ───────────────────────────
 
 [[forms]]
@@ -107,6 +112,51 @@ modrm = "rr"
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
+opcode_bytes = 1
+
+# ── 内存寻址（迭代 3b：@modrm_mem）──
+
+[[forms]]
+name = "MRR_MEM"          # [reg 基址 + disp 0]；无 escape（XCHG/MOV_R_MEM/STORE_MEM_R）
+modrm = "rm_mem"
+opsize = "auto"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_MEM_0F"       # 内存 + 0F escape + prefix=field（XADD 0F C1 双字节）
+modrm = "rm_mem"
+opsize = "auto"
+escape = [0x0F]
+prefix = "field"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_MEM_PRE"      # 内存 + prefix=field、无 escape（LOCK 原子族 29/21/09/31）
+modrm = "rm_mem"
+opsize = "auto"
+prefix = "field"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_MEM_0F_FIX32" # 内存 + 0F + prefix=field + opsize 32（MOVSD 内存标量）
+modrm = "rm_mem"
+opsize = 32
+escape = [0x0F]
+prefix = "field"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
+modrm = "rm_memref"
+opsize = 64
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_MEMREF_F2"    # MemRef + F2 0F + opsize 32（MOVSD_RM/MR）
+modrm = "rm_memref"
+opsize = 32
+escape = [0x0F]
+prefix = "field"
 opcode_bytes = 1
 
 # ─────────────────── 指令（顺序 = v11 声明序）───────────────────
@@ -532,3 +582,132 @@ opcode = 0x10
 fields = { prefix = 0xF2, w = 0 }
 operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
 mnemonic = "movsd"
+
+# ── 内存寻址（迭代 3b：@modrm_mem；顺序 = v11 声明序）──
+
+[[instructions]]
+name = "XADD_MEM_R"
+form = "MRR_MEM_0F"
+opcode = 0xC1
+fields = { prefix = 0xF0 }
+operands = [{ slot = "gpr", role = "inout" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "xadd"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "XCHG_MEM_R"
+form = "MRR_MEM"
+opcode = 0x87
+operands = [{ slot = "gpr", role = "inout" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "xchg"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "SUB_MEM_R"
+form = "MRR_MEM_PRE"
+opcode = 0x29
+fields = { prefix = 0xF0 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "locksub"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "AND_MEM_R"
+form = "MRR_MEM_PRE"
+opcode = 0x21
+fields = { prefix = 0xF0 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "lockand"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "OR_MEM_R"
+form = "MRR_MEM_PRE"
+opcode = 0x09
+fields = { prefix = 0xF0 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "lockor"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "XOR_MEM_R"
+form = "MRR_MEM_PRE"
+opcode = 0x31
+fields = { prefix = 0xF0 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "lockxor"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "MOV_R_MEM"
+form = "MRR_MEM"
+opcode = 0x8B
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "mov_mem"
+asm = "{0}, [{1}]"
+
+[[instructions]]
+name = "STORE_MEM_R"
+form = "MRR_MEM"
+opcode = 0x89
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "mov_sto"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "MOVSD_R_MEM"
+form = "MRR_MEM_0F_FIX32"
+opcode = 0x10
+fields = { prefix = 0xF2 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "movsd_mem"
+asm = "{0}, [{1}]"
+
+[[instructions]]
+name = "MOVSD_MEM_R"
+form = "MRR_MEM_0F_FIX32"
+opcode = 0x11
+fields = { prefix = 0xF2 }
+operands = [{ slot = "fpr", role = "in" }, { slot = "gpr", role = "in" }]
+mnemonic = "movsd_sto"
+asm = "[{1}], {0}"
+
+[[instructions]]
+name = "MOV64_RR"
+form = "MRR_FIX64"
+opcode = 0x89
+operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }]
+mnemonic = "mov64rr"
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "MOV64_RM"
+form = "MRR_MEMREF"
+opcode = 0x8B
+operands = [{ slot = "gpr", role = "out" }, { slot = "mem", role = "in" }]
+mnemonic = "mov64rm"
+
+[[instructions]]
+name = "MOV64_MR"
+form = "MRR_MEMREF"
+opcode = 0x89
+operands = [{ slot = "gpr", role = "in" }, { slot = "mem", role = "in" }]
+mnemonic = "mov64mr"
+asm = "{1}, {0}"
+
+[[instructions]]
+name = "MOVSD_RM"
+form = "MRR_MEMREF_F2"
+opcode = 0x10
+fields = { prefix = 0xF2 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "mem", role = "in" }]
+mnemonic = "movsd_rm"
+
+[[instructions]]
+name = "MOVSD_MR"
+form = "MRR_MEMREF_F2"
+opcode = 0x11
+fields = { prefix = 0xF2 }
+operands = [{ slot = "fpr", role = "in" }, { slot = "mem", role = "in" }]
+mnemonic = "movsd_mr"
+asm = "{1}, {0}"

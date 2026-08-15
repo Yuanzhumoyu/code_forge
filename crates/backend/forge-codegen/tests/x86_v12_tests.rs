@@ -10,7 +10,7 @@
 //!   MOVZX_R8_RM——声明序首匹配，与 v11 一致）。
 //! - **assemble/disassemble** 往返（opsize 操作数非文本，默认 64）。
 
-use forge_codegen::x86_v12::{Inst, assemble, decode, disassemble, encode};
+use forge_codegen::x86_v12::{Inst, MemRef, assemble, decode, disassemble, encode};
 
 fn v11_bytes(asm: &str) -> Vec<u8> {
     use forge_codegen::machine::assembler::TargetAssembler;
@@ -65,6 +65,16 @@ fn golden_gpr_matches_v11() {
         "xor RAX, 42",
         "cmp RAX, 42",
         "add R8, 42", // 扩展寄存器
+        // 内存寻址（@modrm_mem）
+        "xadd [RAX], RBX",
+        "xadd [R8], R9",
+        "xchg [RAX], RBX",
+        "xchg [RSP], RBX", // base=RSP → SIB
+        // 注：locksub/lockand/lockor/lockxor 不在 golden——v11 带多余 0F escape
+        //（F0 48 0F 29 非规范），v12 规范修正（F0 48 29），见 mem_spec_bytes。
+        "mov_mem RAX, [RBX]",
+        "mov_sto [RAX], RBX",
+        "mov64rr RAX, RBX",
     ];
     for c in cases {
         let vb = v11_bytes(c);
@@ -168,7 +178,39 @@ fn sse_spec_bytes() {
     }
 }
 
-// ─────────────────── 字节级 decode 往返（全 53 条）───────────────────
+// ─────────────────── 内存寻址规范字节（@modrm_mem，迭代 3b）───────────────────
+
+#[test]
+fn mem_spec_bytes() {
+    let cases: &[(&str, &[u8])] = &[
+        // xchg [rax], rbx — 48 87 /r（mod=00）
+        ("xchg [RAX], RBX", &[0x48, 0x87, 0x18]),
+        // xchg [rsp], rbx — base=RSP → SIB（index=4 无 index）
+        ("xchg [RSP], RBX", &[0x48, 0x87, 0x1C, 0x24]),
+        // xadd [rax], rbx — F0 LOCK + 48 0F C1 /r
+        ("xadd [RAX], RBX", &[0xF0, 0x48, 0x0F, 0xC1, 0x18]),
+        // locksub [rax], rbx — F0 48 29 /r（v11 带多余 0F escape 非规范，v12 修正）
+        ("locksub [RAX], RBX", &[0xF0, 0x48, 0x29, 0x18]),
+        // mov_mem rax, [rbx] — 48 8B /r
+        ("mov_mem RAX, [RBX]", &[0x48, 0x8B, 0x03]),
+        // mov_sto [rax], rbx — 48 89 /r
+        ("mov_sto [RAX], RBX", &[0x48, 0x89, 0x18]),
+        // movsd xmm0, [rax] — F2 48?? 不——F2 0F 10（64 位无 REX.W；base=RAX<8）
+        ("movsd_mem XMM0, [RAX]", &[0xF2, 0x0F, 0x10, 0x00]),
+        // mov64rr rax, rbx — 48 89 /r（reg=src=3, rm=dest=0）
+        ("mov64rr RAX, RBX", &[0x48, 0x89, 0xD8]),
+        // mov64rm rax, [rbp+8] — RBP ∈ force_disp_base → mod=01 + disp8
+        ("mov64rm RAX, [RBP+8]", &[0x48, 0x8B, 0x45, 0x08]),
+        // mov64rm rax, [rbx-8] — mod=01 + disp8=-8
+        ("mov64rm RAX, [RBX-8]", &[0x48, 0x8B, 0x43, 0xF8]),
+    ];
+    for (asm, expected) in cases {
+        let got = v12_bytes(asm);
+        assert_eq!(got.as_slice(), *expected, "mem spec mismatch for `{asm}`");
+    }
+}
+
+// ─────────────────── 字节级 decode 往返 ───────────────────
 
 /// 全部指令的代表性 Inst 值（含别名——字节级往返不要求变体相等）。
 /// 变长 form 的操作数字段名 = 位置名 op0/op1/op2（ModRM 语义由 form 键驱动）。
@@ -369,6 +411,80 @@ fn all_insts() -> Vec<Inst> {
         Punpckhdq { op0: 0, op1: 1 },
         Movss { op0: 0, op1: 1 },
         MovsdRr { op0: 0, op1: 1 },
+        // @modrm_mem（迭代 3b）
+        XaddMemR {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        XaddMemR {
+            op0: 8,
+            op1: 9,
+            op2: 64,
+        },
+        XchgMemR {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        XchgMemR {
+            op0: 1,
+            op1: 4,
+            op2: 64,
+        }, // base=RSP → SIB
+        SubMemR {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        AndMemR {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        OrMemR {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        XorMemR {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        MovRMem {
+            op0: 0,
+            op1: 2,
+            op2: 64,
+        },
+        StoreMemR {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        MovsdRMem { op0: 0, op1: 2 },
+        MovsdMemR { op0: 0, op1: 2 },
+        Mov64Rr { op0: 1, op1: 0 },
+        Mov64Rm {
+            op0: 0,
+            op1: MemRef { base: 2, disp: 0 },
+        },
+        Mov64Rm {
+            op0: 8,
+            op1: MemRef { base: 4, disp: -8 },
+        },
+        Mov64Mr {
+            op0: 1,
+            op1: MemRef { base: 2, disp: 0 },
+        },
+        MovsdRm {
+            op0: 0,
+            op1: MemRef { base: 2, disp: 8 },
+        },
+        MovsdMr {
+            op0: 0,
+            op1: MemRef { base: 2, disp: 0 },
+        },
     ]
 }
 
