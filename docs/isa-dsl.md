@@ -1123,18 +1123,19 @@ impl TargetDecoder for Decoder {
   对非 16 GPR 的 ISA 无法逆映射）。
 - **排除变体**：fixup（分支目标需 CFG）、`BlockTarget`/`MemRef`/`F32`/`F64` 字段
   （Phase 2）；`Opsize` 隐式字段豁免（不占编码位）。
-- **Phase 2/2b/2c（已实现）**：x86 变长原语——`@modrm`/`@op_rm`/`@cmovcc`
+- **Phase 2/2b/2c/2d（已实现）**：x86 变长原语——`@modrm`/`@op_rm`/`@cmovcc`
   （mod=11 寄存器形式）、`@push_reg`/`@pop_reg`、`@mov_imm64`、`@setcc`、
   `@modrm_mem`（内存寻址 mod=00/01/10 + SIB 无 index 形式 + disp8/disp32，
-  MemRef 字段恢复 offset）、**SSE 族**（`@sse_rr`/`@sse_rr_3a`/`@sse_rr_38`/
-  `@sse_rr_opsize`/`@sse_rr_imm8`/`@sse_rr_w`/`@sse_ps_rr`）。Freg 字段用
-  **裸索引**（ModRM 3 位 + REX 扩展）映射 FPR 变体。剩余 Phase 2d：
-  `@vex_*`（AVX 三操作数 VEX 前缀）、`@lea_sib`/`@lea_rip_rel`、`@leb128`/
-  `@call_reloc` 等原语——这些编码 decode 报
+  MemRef 字段恢复 offset）、**SSE 族**（7 个 `@sse_*`）、**VEX 族**
+  （`@vex_rrvvv`/`@vex_rrvvv_avx2`/`@vex_rrvvv_imm`：C4 + VEX2/3 + opcode +
+  ModRM [imm8]，R/B 反相恢复高寄存器、vvvv=~src1）。Freg 字段用**裸索引**映射
+  FPR 变体。剩余 Phase 2e：`@lea_sib`/`@lea_rip_rel`（index/scale 字段）、
+  `@leb128`（wasm32）、`@call_reloc*`/`@abs_reloc`（重定位占位——分支/调用目标
+  需 CFG/链接上下文，解码正确排除）——这些编码 decode 报
   `DecodeError::Other("no matching instruction")`。
 - 回归测试：`crates/backend/forge-codegen/tests/decoder_smoke.rs`（riscv64 addi/add/fadd.s、
-  aarch64 mov、x86 movrr(REX 扩展)/mov_imm/push/pop/addsd/movzx_b/xchg[mem] 的
-  encode→decode→encode 字节往返 + minimal_sd 负例）。
+  aarch64 mov、x86 movrr(REX 扩展)/mov_imm/push/pop/addsd/movzx_b/xchg[mem]/
+  vmovaps/vaddps 的 encode→decode→encode 字节往返 + minimal_sd 负例）。
 
 - `Disassembler::disassemble(&Inst) -> String`：按 `asm` 模板格式化
   （`{field}` → Debug、`{field:x}` → 小写十六进制；`Unknown` → `"<unknown>"`）。
