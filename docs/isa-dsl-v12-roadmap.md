@@ -649,7 +649,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     shift+循环 + spill 高压组合下与地址/计数寄存器交互，emission 修复
     解决 spill 重写覆盖，但 regalloc 的 use/def 活跃性仍需专门调试
     （v11 同用例通过，v12 特有）
-- **6n（commit 待填）regalloc clobber 点 use 占用者修复**：
+- **6n（commit 90ef94c）regalloc clobber 点 use 占用者修复**：
   - **根因**：clobber 处理（regalloc 1.5 阶段）对写死物理寄存器（如 shift
     的 RCX）的占用者无条件 spill——但 **spill_vreg 只标记槽并释放寄存器，
     不 store 当前寄存器值**，随后 reload_from_stack 从空槽读到垃圾。
