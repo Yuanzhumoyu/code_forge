@@ -595,7 +595,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
   - allocatable_gp_order 排除 [abi].scratch（R10/R11）——regalloc 不能
     占用 spill load/store 专用寄存器，否则 spill 往返覆盖变量值
   - 验证：while/for 循环在排除后正确（此前排除触发 spill 暴露冲突）
-- **6j（commit 待填）do-while/break/continue + 8 位寄存器 REX 修复**：
+- **6j（commit 8bc3aa0）do-while/break/continue + 8 位寄存器 REX 修复**：
   - **8 位寄存器 REX bug（用户 do-while 测试暴露）**：SETCC_RM8 目标
     索引 4-7（spl/bpl/sil/dil）无 REX 前缀时 x86 解码为 ah/ch/dh/bh——
     `setne sil`（`0f 95 c6`）实为 `setne dh`，test rsi,rsi 永远为 0 致
