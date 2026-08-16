@@ -1293,12 +1293,14 @@ name = "PUSH"
 form = "PUSH_REG"
 operands = [{ slot = "gpr", role = "in" }]
 mnemonic = "push"
+effect = ["Write"]
 
 [[instructions]]
 name = "POP"
 form = "POP_REG"
 operands = [{ slot = "gpr", role = "out" }]
 mnemonic = "pop"
+effect = ["Read"]
 
 [[instructions]]
 name = "MOV_REG_IMM64"
@@ -1312,3 +1314,56 @@ name = "BSWAP_R"
 form = "BSWAP_R"
 operands = [{ slot = "gpr", role = "inout" }]
 mnemonic = "bswap"
+
+# ============================================================
+# 调用约定（迭代 5 声明层：arg_class 类别分类，为 YMM by-ref 铺路）
+# ============================================================
+
+[abi]
+stack_align = 16
+
+[[abi.arg_class]]
+class = "int"
+regs = ["RCX", "RDX", "R8", "R9"]
+
+[[abi.arg_class]]
+class = "float"
+regs = ["XMM0", "XMM1", "XMM2", "XMM3"]
+
+[[abi.arg_class]]
+class = "vector"
+strategy = "by-ref"
+limit = 128
+
+# ============================================================
+# 指令选择（迭代 5 声明层：符号化操作数 {out}/{0}/{1}）
+# ============================================================
+
+# ADD_RM_R 语义 add {1}, {0}：dest=op1(inout)、src=op0(in)
+[[lowering]]
+op = "Iadd"
+insts = ["MOV_R_RM {out}, {0}", "ADD_RM_R {0}, {out}"]
+
+[[lowering]]
+op = "Isub"
+insts = ["MOV_R_RM {out}, {0}", "SUB_RM_R {0}, {out}"]
+
+[[lowering]]
+op = "Band"
+insts = ["MOV_R_RM {out}, {0}", "AND_RM_R {0}, {out}"]
+
+[[lowering]]
+op = "Bor"
+insts = ["MOV_R_RM {out}, {0}", "OR_RM_R {0}, {out}"]
+
+[[lowering]]
+op = "Bxor"
+insts = ["MOV_R_RM {out}, {0}", "XOR_RM_R {0}, {out}"]
+
+[[lowering]]
+op = "Imul"
+insts = ["MOV_R_RM {out}, {0}", "IMUL_R_RM {out}, {1}"]
+
+[[lowering]]
+op = "Icmp"
+insts = ["MOV_R_RM {out}, {0}", "CMP_RM_R {0}, {out}"]

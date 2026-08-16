@@ -26,6 +26,8 @@ use super::model::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+pub(crate) mod integration;
+
 // ─────────────────────────────── 入口 ───────────────────────────────
 
 pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
@@ -47,6 +49,9 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     };
     let disasm_fn = gen_disassemble(&infos)?;
     let asm_fn = gen_assemble(&infos)?;
+    // 迭代 5：TargetMachine 集成层（MachineInst/Encoder/Decoder/ABI/
+    // FrameLowering/Lowering/TargetMachine 组装）。
+    let integration = integration::gen_integration(&infos, model)?;
     Ok(quote! {
         // ── v12 生成模块（迭代 2/3/3b：自包含 encode/decode/asm）──
         #reg_tables
@@ -56,6 +61,8 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
         #decode_fn
         #disasm_fn
         #asm_fn
+        // ── v12 TargetMachine 集成层（迭代 5）──
+        #integration
     })
 }
 
@@ -119,7 +126,7 @@ fn gen_mem_support(infos: &[InstInfo]) -> Result<TokenStream, String> {
 
 /// 单条指令的生成信息：form 解析 + 操作数→位域绑定 + mnemonic/asm 模板。
 /// `inst` 为 owned（families 展开后每个 variant 是一条合成指令）。
-struct InstInfo<'a> {
+pub(crate) struct InstInfo<'a> {
     inst: Instruction,
     form: &'a Form,
     vn: syn::Ident,
@@ -164,6 +171,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 asm,
                 when: var.when.clone(),
                 vex: None,
+                effect: Vec::new(),
             });
         }
     }
@@ -619,49 +627,48 @@ fn vlen_ctx(info: &InstInfo) -> Result<VlenCtx, String> {
         _ => quote! { 0u64 },
     };
     // modrm reg/rm/disp：`+r` 形式无 ModRM（opcode 内嵌 reg）
-    let (modrm, reg_expr, rm_expr, disp_expr) =
-        if form.opcode_reg.is_some() {
-            (None, None, None, None)
-        } else {
-            let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
-                format!(
-                    "[[instructions.{}]]: form modrm key {:?} unsupported (rr/ext/rm_mem/rm_memref)",
-                    info.inst.name, form.modrm
-                )
-            })?;
-            let (reg_expr, rm_expr, disp_expr): (TokenStream, TokenStream, Option<TokenStream>) =
-                match modrm {
-                    ModrmKind::RR => {
-                        let r0 = info.operands[0].1.clone();
-                        let r1 = info.operands[1].1.clone();
-                        (quote! { *#r0 as u64 }, quote! { *#r1 as u64 }, None)
-                    }
-                    ModrmKind::Ext => {
-                        let ext = field_val("ext");
-                        let r0 = info.operands[0].1.clone();
-                        (quote! { #ext }, quote! { *#r0 as u64 }, None)
-                    }
-                    ModrmKind::MemReg => {
-                        let r0 = info.operands[0].1.clone();
-                        let b = info.operands[1].1.clone();
-                        (
-                            quote! { *#r0 as u64 },
-                            quote! { *#b as u64 },
-                            Some(quote! { 0i64 }),
-                        )
-                    }
-                    ModrmKind::MemRefOp => {
-                        let r0 = info.operands[0].1.clone();
-                        let m = info.operands[1].1.clone();
-                        (
-                            quote! { *#r0 as u64 },
-                            quote! { #m.base as u64 },
-                            Some(quote! { #m.disp }),
-                        )
-                    }
-                };
-            (Some(modrm), Some(reg_expr), Some(rm_expr), disp_expr)
-        };
+    let (modrm, reg_expr, rm_expr, disp_expr) = if form.opcode_reg.is_some() {
+        (None, None, None, None)
+    } else {
+        let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
+            format!(
+                "[[instructions.{}]]: form modrm key {:?} unsupported (rr/ext/rm_mem/rm_memref)",
+                info.inst.name, form.modrm
+            )
+        })?;
+        let (reg_expr, rm_expr, disp_expr): (TokenStream, TokenStream, Option<TokenStream>) =
+            match modrm {
+                ModrmKind::RR => {
+                    let r0 = info.operands[0].1.clone();
+                    let r1 = info.operands[1].1.clone();
+                    (quote! { *#r0 as u64 }, quote! { *#r1 as u64 }, None)
+                }
+                ModrmKind::Ext => {
+                    let ext = field_val("ext");
+                    let r0 = info.operands[0].1.clone();
+                    (quote! { #ext }, quote! { *#r0 as u64 }, None)
+                }
+                ModrmKind::MemReg => {
+                    let r0 = info.operands[0].1.clone();
+                    let b = info.operands[1].1.clone();
+                    (
+                        quote! { *#r0 as u64 },
+                        quote! { *#b as u64 },
+                        Some(quote! { 0i64 }),
+                    )
+                }
+                ModrmKind::MemRefOp => {
+                    let r0 = info.operands[0].1.clone();
+                    let m = info.operands[1].1.clone();
+                    (
+                        quote! { *#r0 as u64 },
+                        quote! { #m.base as u64 },
+                        Some(quote! { #m.disp }),
+                    )
+                }
+            };
+        (Some(modrm), Some(reg_expr), Some(rm_expr), disp_expr)
+    };
     let imm_bytes = (form.imm.unwrap_or(0) / 8) as usize;
     // VEX 语义（form.vex 存在时）：map/pp/w/l 来源数字或 fields.vex_*（缺省 0）
     let vex = if let Some(vs) = &form.vex {
@@ -753,7 +760,10 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                     .find(|(_, _, s)| s.kind == OperandKind::Imm)
                     .map(|(_, fid, _)| fid.clone())
                     .ok_or_else(|| {
-                        format!("[[instructions.{}]]: form imm requires an imm operand", info.inst.name)
+                        format!(
+                            "[[instructions.{}]]: form imm requires an imm operand",
+                            info.inst.name
+                        )
                     })?;
                 let le_bytes = match ctx.imm_bytes {
                     1 => quote! { (*#imm_fid as u8).to_le_bytes().to_vec() },
@@ -1306,6 +1316,7 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
     Ok(quote! {
         /// 解码字节流开头的单条指令；声明序首匹配，无匹配 → None。
         /// 返回 (指令, 消费字节数)。
+        #[allow(clippy::int_plus_one)]
         pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
             let mut __o = 0usize;
             let mut __opsize: u32 = 32;

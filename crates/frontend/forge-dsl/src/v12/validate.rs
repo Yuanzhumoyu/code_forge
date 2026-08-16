@@ -566,9 +566,10 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
         if !seen.insert(ac.class.clone()) {
             return Err(format!("[abi.arg_class]: duplicate class '{}'", ac.class));
         }
-        if ac.regs.is_empty() {
+        // regs 为空仅当有传参策略（by-ref 等按引用策略不占用寄存器）。
+        if ac.regs.is_empty() && ac.strategy.is_none() {
             return Err(format!(
-                "[abi.arg_class.{}]: regs must not be empty",
+                "[abi.arg_class.{}]: regs must not be empty (or declare a strategy)",
                 ac.class
             ));
         }

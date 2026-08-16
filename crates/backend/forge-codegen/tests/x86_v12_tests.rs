@@ -178,10 +178,7 @@ fn r_forms_golden() {
         )
         .unwrap();
     let v12b = encode(&Inst::MovRegImm64 { op0: 8, op1: -1 }).unwrap();
-    assert_eq!(
-        v12b, vb,
-        "mov_imm R8, -1: v12 {v12b:02x?} vs v11 {vb:02x?}"
-    );
+    assert_eq!(v12b, vb, "mov_imm R8, -1: v12 {v12b:02x?} vs v11 {vb:02x?}");
 }
 
 #[test]
@@ -194,8 +191,14 @@ fn r_forms_spec_bytes() {
         ("pop R9", &[0x41, 0x59]),
         ("bswap RAX", &[0x48, 0x0F, 0xC8]),
         ("bswap R12", &[0x49, 0x0F, 0xCC]),
-        ("mov_imm RAX, 0x1234", &[0x48, 0xB8, 0x34, 0x12, 0, 0, 0, 0, 0, 0]),
-        ("mov_imm R8, -1", &[0x49, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+        (
+            "mov_imm RAX, 0x1234",
+            &[0x48, 0xB8, 0x34, 0x12, 0, 0, 0, 0, 0, 0],
+        ),
+        (
+            "mov_imm R8, -1",
+            &[0x49, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+        ),
     ];
     for (asm, expected) in cases {
         let got = v12_bytes(asm);
@@ -739,7 +742,10 @@ fn all_insts() -> Vec<Inst> {
         Push { op0: 8 },
         Pop { op0: 3 },
         Pop { op0: 9 },
-        MovRegImm64 { op0: 0, op1: 0x1234 },
+        MovRegImm64 {
+            op0: 0,
+            op1: 0x1234,
+        },
         MovRegImm64 { op0: 8, op1: -1 },
         BswapR { op0: 0 },
         BswapR { op0: 12 },

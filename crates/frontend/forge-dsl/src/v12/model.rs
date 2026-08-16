@@ -216,6 +216,20 @@ pub enum OperandKind {
     Opsize,
 }
 
+impl OperandKind {
+    /// 人类可读名称（错误消息用）。
+    pub fn kind_name(self) -> &'static str {
+        match self {
+            OperandKind::Reg => "reg",
+            OperandKind::Imm => "imm",
+            OperandKind::Mem => "mem",
+            OperandKind::Label => "label",
+            OperandKind::Cond => "cond",
+            OperandKind::Opsize => "opsize",
+        }
+    }
+}
+
 /// 操作数角色。
 ///
 /// - `in`：只读源
@@ -349,6 +363,10 @@ pub struct Instruction {
     /// 指令级 VEX 字段覆盖。
     #[serde(default)]
     pub vex: Option<VexSpec>,
+    /// 效果标签（Pure/Read/Write/Branch/Jump/Call/Ret；缺省 Pure）。
+    /// 驱动 MachineInst::effects/is_branch/is_call/is_ret（TargetMachine 集成）。
+    #[serde(default)]
+    pub effect: Vec<String>,
 }
 
 /// 操作数使用：槽 + 角色 + （定宽）位域绑定。
