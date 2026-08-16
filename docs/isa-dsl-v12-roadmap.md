@@ -595,6 +595,22 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
   - allocatable_gp_order 排除 [abi].scratch（R10/R11）——regalloc 不能
     占用 spill load/store 专用寄存器，否则 spill 往返覆盖变量值
   - 验证：while/for 循环在排除后正确（此前排除触发 spill 暴露冲突）
+- **6j（commit 待填）do-while/break/continue + 8 位寄存器 REX 修复**：
+  - **8 位寄存器 REX bug（用户 do-while 测试暴露）**：SETCC_RM8 目标
+    索引 4-7（spl/bpl/sil/dil）无 REX 前缀时 x86 解码为 ah/ch/dh/bh——
+    `setne sil`（`0f 95 c6`）实为 `setne dh`，test rsi,rsi 永远为 0 致
+    循环只执行一次。REX 条件原先只覆盖 reg/rm ≥8（0x41），未覆盖
+    8 位低编号 4-7。修复：OperandSlot 新增 `byte_reg` 标记（gpr8 槽，
+    SETCC_RM8/MOVZX_R8_RM/MOVSX_R8_RM 使用），vlen_ctx 记录 reg/rm
+    是否 8 位，REX 条件增加 `(idx & 7) >= 4` 强制前缀（0x40 起）
+  - do-while 2 个测试（i<5 循环、先执行后判断）全过；break/continue
+    2 个测试全过（continue 用 while——mini_c 的 for-continue 跳过
+    update 死循环，属前端既有语义）
+  - 新增 v12_unary_logical / v12_logical_and_or（&&/|| = icmp+band/bor
+    +sextend）/ v12_enum_const / v12_inlined_call（AST 内联）测试
+  - mini_c v12 19/19（嵌套循环 ignored）；workspace 全量
+    `cargo test --workspace --exclude forge-rustc` 无 FAILED；
+    clippy/fmt 干净
 
 **下一步（迭代 6 续）**：嵌套循环（内层作用域 + 多块 spill 交互——
 s 累加跨内层循环丢失）；Call/函数调用 → mini_c 全量；x86 124 指令 +

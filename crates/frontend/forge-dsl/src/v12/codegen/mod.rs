@@ -532,6 +532,10 @@ struct VlenCtx {
     reg_expr: Option<TokenStream>,
     /// modrm rm 字段值表达式（u64；内存形式 = 基址）。
     rm_expr: Option<TokenStream>,
+    /// modrm reg 操作数是否 8 位寄存器（sil/dil/spl/bpl 需 REX 前缀才能编码）。
+    reg_is_byte: bool,
+    /// modrm rm 操作数是否 8 位寄存器（同上）。
+    rm_is_byte: bool,
     /// 内存形式位移表达式（i64；rr/ext 为 None）。
     disp_expr: Option<TokenStream>,
     /// 尾部立即数字节数（form.imm / 8）。
@@ -628,51 +632,70 @@ fn vlen_ctx(info: &InstInfo) -> Result<VlenCtx, String> {
         _ => quote! { 0u64 },
     };
     // modrm reg/rm/disp：`+r` 形式与无 ModRM 形式（REL32/NOOP）为 None
-    let (modrm, reg_expr, rm_expr, disp_expr) = if form.opcode_reg.is_some() || form.modrm.is_none()
-    {
-        (None, None, None, None)
-    } else {
-        let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
+    let (modrm, reg_expr, rm_expr, disp_expr, reg_is_byte, rm_is_byte) =
+        if form.opcode_reg.is_some() || form.modrm.is_none() {
+            (None, None, None, None, false, false)
+        } else {
+            let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
             format!(
                 "[[instructions.{}]]: form modrm key {:?} unsupported (rr/ext/rm_mem/rm_memref)",
                 info.inst.name, form.modrm
             )
         })?;
-        let (reg_expr, rm_expr, disp_expr): (TokenStream, TokenStream, Option<TokenStream>) =
-            match modrm {
-                ModrmKind::RR => {
-                    let r0 = info.operands[0].1.clone();
-                    let r1 = info.operands[1].1.clone();
-                    (quote! { *#r0 as u64 }, quote! { *#r1 as u64 }, None)
-                }
-                ModrmKind::Ext => {
-                    let ext = field_val("ext");
-                    let r0 = info.operands[0].1.clone();
-                    (quote! { #ext }, quote! { *#r0 as u64 }, None)
-                }
-                ModrmKind::MemReg => {
-                    let r0 = info.operands[0].1.clone();
-                    let b = info.operands[1].1.clone();
-                    (
-                        quote! { *#r0 as u64 },
-                        quote! { *#b as u64 },
-                        Some(quote! { 0i64 }),
-                    )
-                }
-                ModrmKind::MemRefOp => {
-                    let r0 = info.operands[0].1.clone();
-                    let m = info.operands[1].1.clone();
-                    (
-                        quote! { *#r0 as u64 },
-                        quote! { #m.base as u64 },
-                        Some(quote! { #m.disp }),
-                    )
-                }
+            let (reg_expr, rm_expr, disp_expr): (TokenStream, TokenStream, Option<TokenStream>) =
+                match modrm {
+                    ModrmKind::RR => {
+                        let r0 = info.operands[0].1.clone();
+                        let r1 = info.operands[1].1.clone();
+                        (quote! { *#r0 as u64 }, quote! { *#r1 as u64 }, None)
+                    }
+                    ModrmKind::Ext => {
+                        let ext = field_val("ext");
+                        let r0 = info.operands[0].1.clone();
+                        (quote! { #ext }, quote! { *#r0 as u64 }, None)
+                    }
+                    ModrmKind::MemReg => {
+                        let r0 = info.operands[0].1.clone();
+                        let b = info.operands[1].1.clone();
+                        (
+                            quote! { *#r0 as u64 },
+                            quote! { *#b as u64 },
+                            Some(quote! { 0i64 }),
+                        )
+                    }
+                    ModrmKind::MemRefOp => {
+                        let r0 = info.operands[0].1.clone();
+                        let m = info.operands[1].1.clone();
+                        (
+                            quote! { *#r0 as u64 },
+                            quote! { #m.base as u64 },
+                            Some(quote! { #m.disp }),
+                        )
+                    }
+                };
+            // 8 位寄存器标记：reg=op0（RR/Mem*/MemRefOp）、rm=op1（RR）或 op0（Ext）。
+            // x86 8 位寄存器索引 4-7（spl/bpl/sil/dil）无 REX 前缀编码为 ah/ch/dh/bh，
+            // 故这类操作数必须强制 REX（即使索引 <8）。
+            let slot_byte =
+                |s: &OperandSlot| s.kind == OperandKind::Reg && s.byte_reg == Some(true);
+            let (reg_is_byte, rm_is_byte) = match modrm {
+                ModrmKind::RR => (
+                    slot_byte(&info.operands[0].2),
+                    slot_byte(&info.operands[1].2),
+                ),
+                ModrmKind::Ext => (false, slot_byte(&info.operands[0].2)),
+                _ => (false, false),
             };
-        (Some(modrm), Some(reg_expr), Some(rm_expr), disp_expr)
-    };
+            (
+                Some(modrm),
+                Some(reg_expr),
+                Some(rm_expr),
+                disp_expr,
+                reg_is_byte,
+                rm_is_byte,
+            )
+        };
     let imm_bytes = (form.imm.unwrap_or(0) / 8) as usize;
-    // VEX 语义（form.vex 存在时）：map/pp/w/l 来源数字或 fields.vex_*（缺省 0）
     let vex = if let Some(vs) = &form.vex {
         let f = |k: &str, key: &str| -> TokenStream {
             match vs_value(vs, k) {
@@ -703,6 +726,8 @@ fn vlen_ctx(info: &InstInfo) -> Result<VlenCtx, String> {
         modrm,
         reg_expr,
         rm_expr,
+        reg_is_byte,
+        rm_is_byte,
         disp_expr,
         imm_bytes,
         vex,
@@ -892,11 +917,22 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             };
             stmts.push(prefix_push);
             let rex_w = &ctx.rex_w_expr;
-            // REX 发出条件：有 opsize → opsize==64 或扩展寄存器；无 opsize（SSE）→ 扩展寄存器
+            // REX 发出条件：有 opsize → opsize==64 或扩展寄存器；无 opsize（SSE）→ 扩展寄存器。
+            // 8 位寄存器索引 4-7（spl/bpl/sil/dil）无 REX 编码为 ah/ch/dh/bh → 强制 REX。
             let rex_cond = if ctx.has_opsize {
-                quote! { __opsize == 64 || (#reg & 8) != 0 || (#rm & 8) != 0 }
+                let b8 = if ctx.reg_is_byte || ctx.rm_is_byte {
+                    quote! { || (#reg & 7) >= 4 || (#rm & 7) >= 4 }
+                } else {
+                    quote! {}
+                };
+                quote! { __opsize == 64 || (#reg & 8) != 0 || (#rm & 8) != 0 #b8 }
             } else {
-                quote! { (#reg & 8) != 0 || (#rm & 8) != 0 }
+                let b8 = if ctx.reg_is_byte || ctx.rm_is_byte {
+                    quote! { || (#reg & 7) >= 4 || (#rm & 7) >= 4 }
+                } else {
+                    quote! {}
+                };
+                quote! { (#reg & 8) != 0 || (#rm & 8) != 0 #b8 }
             };
             stmts.push(quote! {
                 let __reg = #reg;

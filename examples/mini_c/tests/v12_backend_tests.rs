@@ -158,3 +158,80 @@ fn v12_division() {
     assert_v12_matches_v11("int main() { int x = 100; int y = 7; return x / y; }", 14);
     assert_v12_matches_v11("int main() { int x = 100; int y = 7; return x % y; }", 2);
 }
+
+#[test]
+fn v12_inlined_call() {
+    // AST 内联调用（mini_c 的 Call 在 AST 层内联，不生成 CALL 指令）
+    assert_v12_matches_v11(
+        "int add(int a, int b) { return a + b; } int main() { return add(2, 3); }",
+        5,
+    );
+    assert_v12_matches_v11(
+        "int add(int a, int b) { return a + b; } int main() { return add(add(10, 20), 12); }",
+        42,
+    );
+}
+
+#[test]
+fn v12_unary_logical() {
+    // 单目（-5、!x）+ 逻辑（icmp + sextend）
+    assert_v12_matches_v11("int main() { return -5; }", -5);
+    assert_v12_matches_v11("int main() { int x = 0; return !x; }", 1);
+    assert_v12_matches_v11("int main() { int x = 1; return !x; }", 0);
+    assert_v12_matches_v11("int main() { int x = 7; int y = (x != 0); return y; }", 1);
+}
+
+#[test]
+fn v12_logical_and_or() {
+    // && / ||：icmp(NotEqual) + band/bor + sextend（非短路求值）
+    assert_v12_matches_v11("int main() { return 1 && 1; }", 1);
+    assert_v12_matches_v11("int main() { return 1 && 0; }", 0);
+    assert_v12_matches_v11("int main() { return 0 && 1; }", 0);
+    assert_v12_matches_v11("int main() { return 0 || 1; }", 1);
+    assert_v12_matches_v11("int main() { return 0 || 0; }", 0);
+    assert_v12_matches_v11(
+        "int main() { int x = 3; int y = 5; return (x < y) && (y > 2); }",
+        1,
+    );
+    assert_v12_matches_v11(
+        "int main() { int x = 3; int y = 5; return (x > y) || (y == 5); }",
+        1,
+    );
+}
+
+#[test]
+fn v12_enum_const() {
+    // 枚举常量（符号表解析为数字，需在函数体内声明）
+    assert_v12_matches_v11(
+        "int main() { enum Color { RED, GREEN, BLUE }; return BLUE; }",
+        2,
+    );
+    assert_v12_matches_v11("int main() { enum X { A = 5, B }; return B; }", 6);
+}
+
+#[test]
+fn v12_do_while() {
+    // do-while：先执行后判断（cond 在 body 之后，jmp 后向）
+    assert_v12_matches_v11(
+        "int main() { int i = 0; do { i = i + 1; } while (i < 5); return i; }",
+        5,
+    );
+    assert_v12_matches_v11(
+        "int main() { int i = 10; do { i = i + 1; } while (i < 5); return i; }",
+        11,
+    );
+}
+
+#[test]
+fn v12_break_continue() {
+    // break 提前退出 + continue 跳过本次迭代（有界循环；continue 用 while——
+    // mini_c 的 for-continue 会跳过 update 导致死循环，属前端既有语义）
+    assert_v12_matches_v11(
+        "int main() { int i = 0; while (i < 100) { i = i + 1; if (i >= 3) { break; } } return i; }",
+        3,
+    );
+    assert_v12_matches_v11(
+        "int main() { int s = 0; int i = 0; while (i < 5) { i = i + 1; if (i == 3) { continue; } s = s + i; } return s; }",
+        12,
+    );
+}

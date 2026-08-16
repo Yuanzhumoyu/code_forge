@@ -199,6 +199,10 @@ pub struct OperandSlot {
     /// reg：编码宽度（位）。
     #[serde(default)]
     pub field_width: Option<u32>,
+    /// reg：8 位寄存器操作数（spl/bpl/sil/dil 无 REX 时编码为 ah/ch/dh/bh，
+    /// 索引 4-7 必须强制 REX 前缀）。
+    #[serde(default)]
+    pub byte_reg: Option<bool>,
     /// imm：值宽度（位）。
     #[serde(default)]
     pub width: Option<u32>,

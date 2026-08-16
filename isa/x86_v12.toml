@@ -54,6 +54,16 @@ class = "gpr64"
 field_width = 4
 roles = ["in", "out"]
 
+# 8 位寄存器操作数（SETCC 目标等）：索引 4-7（spl/bpl/sil/dil）无 REX 前缀
+# 会被解码为 ah/ch/dh/bh，必须强制 REX（见 codegen REX 条件）。
+[[operand_slots]]
+name = "gpr8"
+kind = "reg"
+class = "gpr64"
+field_width = 4
+byte_reg = true
+roles = ["in", "out"]
+
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
@@ -429,7 +439,7 @@ name = "MOVZX_R8_RM"
 mnemonic = "movzx"
 form = "MRR_0F"
 opcode = 0xB6
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr8", role = "in" }, { slot = "opsize", role = "in" }]
 
 
 [[instructions]]
@@ -447,7 +457,7 @@ name = "MOVSX_R8_RM"
 mnemonic = "movsx"
 form = "MRR_0F"
 opcode = 0xBE
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr8", role = "in" }, { slot = "opsize", role = "in" }]
 
 
 [[instructions]]
@@ -1455,7 +1465,7 @@ name = "SETCC_RM8"
 form = "EXT_0F"
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
 fields = { ext = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "cond", role = "in" }]
+operands = [{ slot = "gpr8", role = "out" }, { slot = "cond", role = "in" }]
 mnemonic = "setcc"
 asm = "setcc {0}, {1}"
 effect = ["Pure"]
