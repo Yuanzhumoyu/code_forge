@@ -689,7 +689,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     struct+shift 全部崩溃场景通过；mini_c v12 24/24 全绿（含新增
     回归）；x86_v12 14/14、集成 12/12、forge-codegen 100/100；
     clippy/fmt 干净
-- **6p（commit 待填）implicit_regs 声明修复除法循环除零**：
+- **6p（commit 96cd2d9）implicit_regs 声明修复除法循环除零**：
   - **根因**：CQO/IDIV_RM/DIV_RM 隐式读写 RAX/RDX（cqo 符号扩展、
     idiv 128 位被除数/商/余数），但 v12 未声明 → regalloc 可把除法
     的除数 {t} 分配到 RDX，被 CQO 覆盖 → `while (x>0){x=x/2;}` 除零
