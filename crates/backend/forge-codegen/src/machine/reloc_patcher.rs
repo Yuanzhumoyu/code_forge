@@ -64,7 +64,7 @@ pub fn register_default_reloc_patcher(isa: &str) {
         return;
     }
     let patcher: Arc<dyn RelocPatcher> = match isa {
-        "x86_64" => Arc::new(X86RelocPatcher),
+        "x86_64" | "x86_64_v12" => Arc::new(X86RelocPatcher),
         "aarch64" => Arc::new(AArch64RelocPatcher),
         "riscv64" => Arc::new(RiscvRelocPatcher),
         _ => return,

@@ -134,14 +134,15 @@ fn lowering_iadd_packet() {
     assert_eq!(pack.insts.len(), 2, "Iadd → 2 条微指令");
     assert!(matches!(pack.insts[0], Inst::MovRRm { .. }));
     assert!(matches!(pack.insts[1], Inst::AddRmR { .. }));
-    // xreg_map：MovRRm(def=rd idx0, use=rs1 idx1)；AddRmR(use=rs1, def=rd)
+    // xreg_map：MovRRm(def=rd idx0, use=a idx1)；AddRmR(use=b idx0, def=rd idx1)
+    // —— ADD_RM_R {1}, {out}：src=op0←{1}=b、dest=op1←{out}=rd
     assert_eq!(pack.xreg_map.len(), 2);
     let m0 = &pack.xreg_map[0];
     assert_eq!(m0.len(), 2);
     assert_eq!(m0[0], (out, 0u8, true), "MovRRm field0 = out(def)");
     assert_eq!(m0[1], (a, 1u8, false), "MovRRm field1 = a(use)");
     let m1 = &pack.xreg_map[1];
-    assert_eq!(m1[0], (a, 0u8, false), "AddRmR field0 = a(use)");
+    assert_eq!(m1[0], (b, 0u8, false), "AddRmR field0 = b(use)");
     assert_eq!(m1[1], (out, 1u8, true), "AddRmR field1 = out(def)");
     // 占位字段 = 0（regalloc 前）
     match &pack.insts[0] {
@@ -220,12 +221,13 @@ fn frame_epilogue_bytes() {
     fl.emit_epilogue(0, &rm, &mut sink).expect("epilogue");
     let bytes = sink.bytes();
     // mov64rr rsp, rbp(48 89 ec: reg=src=rbp=5、rm=dest=rsp=4 → 0xEC) +
-    // add rsp, 56(48 81 c4 38 00 00 00) + pop r15..rbx + pop rbp(5d) + ret(c3)
+    // sub rsp, 56(48 81 ec 38 00 00 00：rsp=rbp-56 到 callee-saved 区) +
+    // pop r15..rbx + pop rbp(5d) + ret(c3)
     assert_eq!(&bytes[0..3], &[0x48, 0x89, 0xEC], "mov64rr rsp, rbp");
     assert_eq!(
         &bytes[3..10],
-        &[0x48, 0x81, 0xC4, 0x38, 0x00, 0x00, 0x00],
-        "add rsp, 56"
+        &[0x48, 0x81, 0xEC, 0x38, 0x00, 0x00, 0x00],
+        "sub rsp, 56"
     );
     assert_eq!(bytes[bytes.len() - 2], 0x5D, "pop rbp");
     assert_eq!(bytes[bytes.len() - 1], 0xC3, "ret");
@@ -276,10 +278,14 @@ fn terminator_return_packet() {
         .lowering()
         .lower_terminator(&term, &vmap, &std::collections::HashMap::new(), &mut ctx)
         .expect("lower Return");
-    // MOV_RM8_R64(0x89: reg=src=val、rm=dest=RAX) + RET
-    assert_eq!(pack.insts.len(), 2, "Return → 2 条微指令");
+    // MOV_RM8_R64(0x89: reg=src=val、rm=dest=RAX)——与 v11 一致：不生成 RET，
+    // return block 经 epilogue_jump 跳到 epilogue 统一恢复。
+    assert_eq!(
+        pack.insts.len(),
+        1,
+        "Return → 1 条微指令（ret 在 epilogue）"
+    );
     assert!(matches!(pack.insts[0], Inst::MovRm8R64 { .. }));
-    assert!(matches!(pack.insts[1], Inst::Ret));
     // val → 字段 0(use)
     let m0 = &pack.xreg_map[0];
     assert_eq!(m0.len(), 1);

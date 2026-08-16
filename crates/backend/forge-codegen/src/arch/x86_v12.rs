@@ -41,4 +41,79 @@ mod tests {
         assert!(compiled.code.contains(&0x55), "prologue push rbp");
         assert!(compiled.code.contains(&0xC3), "ret");
     }
+
+    /// 编译 const42 并打印字节（不执行——用于调试 JIT 崩溃）。
+    #[test]
+    fn e2e_compile_const_print() {
+        use forge_ir::{Module, TypeId};
+        ensure_registered();
+        let mut m = Module::new();
+        {
+            let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+            let mut b = crate::FunctionBuilder::new("const42", TypeContext::new(), sig);
+            b.create_block_here();
+            let v = b.iconst_i64(42);
+            b.ret(&[v]);
+            m.add_function(b.finish().expect("build"));
+        }
+        let jit = crate::jit::JitCompiler::new(TargetMachine::new());
+        let _ = jit;
+        let compiler = FunctionCompiler::new(TargetMachine::new());
+        let func = m.get_function(forge_ir::FuncRef(0));
+        let cf = compiler.compile_raw(func).expect("compile const42");
+        eprintln!("const42 code ({} bytes):", cf.code.len());
+        for (i, &byte) in cf.code.iter().enumerate() {
+            eprint!("{byte:02x} ");
+            if (i + 1) % 16 == 0 {
+                eprintln!();
+            }
+        }
+        eprintln!();
+    }
+
+    /// 端到端 + JIT 执行：v12 后端编译并运行 fn const42() -> i64 { 42 }。
+    #[cfg(all(target_arch = "x86_64", feature = "jit"))]
+    #[test]
+    fn e2e_jit_run_const() {
+        use forge_ir::{Module, TypeId};
+        ensure_registered();
+        let mut m = Module::new();
+        {
+            let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+            let mut b = crate::FunctionBuilder::new("const42", TypeContext::new(), sig);
+            b.create_block_here();
+            let v = b.iconst_i64(42);
+            b.ret(&[v]);
+            m.add_function(b.finish().expect("build"));
+        }
+        let mut jit = crate::jit::JitCompiler::new(TargetMachine::new());
+        jit.compile_module(&m).expect("v12 module compile");
+        let f: extern "C" fn() -> i64 = jit.get_fn("const42").expect("const42");
+        assert_eq!(f(), 42, "v12 JIT 执行 const42 应返回 42");
+    }
+
+    /// 端到端 + JIT 执行：fn add(a: i64, b: i64) -> i64 { a + b }。
+    #[cfg(all(target_arch = "x86_64", feature = "jit"))]
+    #[test]
+    fn e2e_jit_run_add() {
+        use forge_ir::{Module, TypeId};
+        ensure_registered();
+        let mut m = Module::new();
+        {
+            let sig =
+                FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
+            let mut b = crate::FunctionBuilder::new("add", TypeContext::new(), sig);
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+            b.switch_to_block(entry);
+            let sum = b.iadd(params[0], params[1]);
+            b.ret(&[sum]);
+            m.add_function(b.finish().expect("build"));
+        }
+        let mut jit = crate::jit::JitCompiler::new(TargetMachine::new());
+        jit.compile_module(&m).expect("v12 module compile");
+        let f: extern "C" fn(i64, i64) -> i64 = jit.get_fn("add").expect("add");
+        assert_eq!(f(2, 3), 5, "v12 JIT add(2,3) 应返回 5");
+        assert_eq!(f(-7, 100), 93, "v12 JIT add(-7,100) 应返回 93");
+    }
 }

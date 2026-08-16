@@ -1402,35 +1402,41 @@ base = "RBP"
 # 序言/尾声（模板按指令操作数序绑定：MOV64_RR op0=src、op1=dest；
 # MOV64_RR RSP, RBP = mov64rr rbp←rsp）
 [emit.prologue]
-insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@frame_alloc"]
+insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@move_args", "@frame_alloc"]
 
 [emit.epilogue]
-insts = ["MOV64_RR RBP, RSP", "ADD64_R_IMM32 RSP, 56", "@pop_callee", "POP RBP", "RET"]
+insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, 56", "@pop_callee", "POP RBP", "RET"]
 
 # ============================================================
 # 指令选择（迭代 5 声明层：符号化操作数 {out}/{0}/{1}）
 # ============================================================
 
-# ADD_RM_R 语义 add {1}, {0}：dest=op1(inout)、src=op0(in)
+# 常量：MOV_REG_IMM64 {out}, {iconst}——{iconst} 从常量池解析（index → 值）。
+[[lowering]]
+op = "Iconst"
+insts = ["MOV_REG_IMM64 {out}, {iconst}"]
+
+# ADD_RM_R 语义 add {1}, {0}：dest=op1(inout)、src=op0(in)。
+# Iadd:out = a + b → mov out,a; add out,b（{1} = 第二个 IR 操作数）
 [[lowering]]
 op = "Iadd"
-insts = ["MOV_R_RM {out}, {0}", "ADD_RM_R {0}, {out}"]
+insts = ["MOV_R_RM {out}, {0}", "ADD_RM_R {1}, {out}"]
 
 [[lowering]]
 op = "Isub"
-insts = ["MOV_R_RM {out}, {0}", "SUB_RM_R {0}, {out}"]
+insts = ["MOV_R_RM {out}, {0}", "SUB_RM_R {1}, {out}"]
 
 [[lowering]]
 op = "Band"
-insts = ["MOV_R_RM {out}, {0}", "AND_RM_R {0}, {out}"]
+insts = ["MOV_R_RM {out}, {0}", "AND_RM_R {1}, {out}"]
 
 [[lowering]]
 op = "Bor"
-insts = ["MOV_R_RM {out}, {0}", "OR_RM_R {0}, {out}"]
+insts = ["MOV_R_RM {out}, {0}", "OR_RM_R {1}, {out}"]
 
 [[lowering]]
 op = "Bxor"
-insts = ["MOV_R_RM {out}, {0}", "XOR_RM_R {0}, {out}"]
+insts = ["MOV_R_RM {out}, {0}", "XOR_RM_R {1}, {out}"]
 
 [[lowering]]
 op = "Imul"

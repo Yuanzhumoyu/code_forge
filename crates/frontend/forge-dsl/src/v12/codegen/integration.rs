@@ -747,6 +747,48 @@ fn gen_emit_pseudo(model: &V12Model, name: &str) -> Result<TokenStream, String> 
             }
             Ok(quote! { #(#stmts)* })
         }
+        "move_args" => {
+            // 收参：把 [abi.arg_class].int 类的寄存器值 mov 到参数 XReg 的
+            // 分配物理寄存器。整数参数按序取 int 类 regs[gi]（v11 语义）。
+            let Some(abi) = &model.abi else {
+                return Ok(quote! {});
+            };
+            let int_regs: Vec<&String> = abi
+                .arg_class
+                .iter()
+                .find(|ac| ac.class == "int")
+                .map(|ac| ac.regs.iter().collect())
+                .unwrap_or_default();
+            if int_regs.is_empty() {
+                return Ok(quote! {});
+            }
+            let regs: Vec<syn::Ident> = int_regs.iter().map(|r| format_ident!("{r}")).collect();
+            let n = regs.len();
+            // MOV_RM8_R64 src=arg_reg、dest=param 分配寄存器（0x89: reg=src、rm=dest）
+            let mov_vn = crate::codegen::pascal_ident("MOV_RM8_R64");
+            Ok(quote! {
+                let mut __gi = 0usize;
+                for &__pv in __rm.param_vregs.iter() {
+                    if !__rm.assignments.contains_key(&__pv) {
+                        continue;
+                    }
+                    let __dest = match __rm.preg(__pv) {
+                        Some(p) => p.num,
+                        None => continue,
+                    };
+                    if __gi < #n {
+                        let __src = [#(Reg::#regs),*][__gi];
+                        __gi += 1;
+                        let __bytes = encode(&Inst::#mov_vn {
+                            op0: __src.to_index(),
+                            op1: __dest,
+                            op2: 64,
+                        }).map_err(|e| crate::IrError::Emit(e))?;
+                        __sink.put_bytes(&__bytes);
+                    }
+                }
+            })
+        }
         "frame_alloc" => {
             let Some(abi) = &model.abi else {
                 return Ok(quote! {});
@@ -914,9 +956,10 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
     let has_jmp = infos.iter().any(|i| i.inst.name == "JMP_REL32");
     let has_mov_rax = infos.iter().any(|i| i.inst.name == "MOV_RM8_R64");
 
-    // Return：MOV_RM8_R64 val, RAX（reg=src=val、rm=dest=RAX → 0x89 方向）
-    // + RET。val 是返回值 XReg（占位 0 + map 到字段 0）。
-    let return_body: TokenStream = if has_ret && has_mov_rax {
+    // Return：MOV_RM8_R64 val, RAX（reg=src=val、rm=dest=RAX → 0x89 方向）。
+    // 与 v11 一致：**不生成 RET**——return block 经 emit_epilogue_jump 跳到
+    // epilogue 统一恢复 callee-saved 后 ret（否则栈不平衡崩溃）。
+    let return_body: TokenStream = if has_mov_rax {
         quote! {
             let val = values.first().copied()
                 .and_then(|x| value_to_xreg.get(&x)).copied()
@@ -925,14 +968,14 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
                 op0: 0,
                 op1: 0,
                 op2: 64,
-            });            __pack.map_reg_field(val, __idx, 0u8, false);
-            __pack.push_inst(Inst::Ret);
+            });
+            __pack.map_reg_field(val, __idx, 0u8, false);
             Ok(__pack)
         }
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported("v12 return lowering (RET/MOV_RM8_R64 missing)".into()))
+            Err(crate::prelude::IrError::Unsupported("v12 return lowering (MOV_RM8_R64 missing)".into()))
         }
     };
     // Jump：JMP_REL32 target（块号 → rel 字段）。
@@ -1066,6 +1109,17 @@ fn gen_lowering_insts(
                     "{0}" => (quote! { 0u32 }, quote! { rs1 }),
                     "{1}" => (quote! { 0u32 }, quote! { rs2 }),
                     "{2}" => (quote! { 0u32 }, quote! { rs3 }),
+                    "{iconst}" if slot.kind == OperandKind::Imm => {
+                        // 常量池解析（Iconst 的 index → 值；v11 语义一致）
+                        (
+                            quote! {
+                                ctx.constant_pool.as_ref()
+                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                    .unwrap_or(0)
+                            },
+                            quote! { 0u32 },
+                        )
+                    }
                     other if slot.kind == OperandKind::Reg => {
                         // 物理寄存器名（RAX 等）→ Reg 枚举 → 物理索引（立即写死）
                         let reg = format_ident!("{other}");
