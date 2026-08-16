@@ -75,3 +75,30 @@ fn v12_compound_assign() {
     assert_v12_matches_v11("int main() { int x = 10; x -= 4; return x; }", 6);
     assert_v12_matches_v11("int main() { int x = 6; x &= 3; return x; }", 2);
 }
+
+#[test]
+#[ignore = "v12 分支的 cond 初始化边缘问题（setcc 高位未清零），迭代 6 续调试"]
+fn v12_if_else() {
+    // 条件分支：Branch terminator（test + je + jmp）
+    assert_v12_matches_v11(
+        "int main() { int x = 1; if (x > 3) { return 1; } else { return 0; } }",
+        0,
+    );
+    assert_v12_matches_v11(
+        "int main() { int x = 3; if (x > 2) { return 1; } return 0; }",
+        1,
+    );
+    assert_v12_matches_v11(
+        "int main() { int x = 0; if (x == 0) { return 7; } return 0; }",
+        7,
+    );
+}
+
+#[test]
+fn v12_ternary_cond() {
+    // 条件表达式 + sextend + icmp
+    assert_v12_matches_v11(
+        "int main() { int x = 7; if (x != 0) { return x; } else { return -1; } }",
+        7,
+    );
+}

@@ -184,6 +184,12 @@ opsize = "auto"
 opcode_bytes = 1
 
 [[forms]]
+name = "EXT_0F"           # ext + 0F escape（SETCC 0F 90+cc /r）
+modrm = "ext"
+escape = [0x0F]
+opcode_bytes = 1
+
+[[forms]]
 name = "MRR_EXT64_IMM32"  # @op_rm_imm32：REX.W + 81 /digit + imm32（64 位专用）
 modrm = "ext"
 opsize = 64
@@ -1442,7 +1448,7 @@ effect = ["Branch"]
 
 [[instructions]]
 name = "SETCC_RM8"
-form = "OP_EXT"
+form = "EXT_0F"
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
 fields = { ext = 0 }
 operands = [{ slot = "gpr", role = "out" }, { slot = "cond", role = "in" }]
@@ -1672,7 +1678,7 @@ insts = ["MOV_R_RM {out}, {0}", "IMUL_R_RM {out}, {1}"]
 
 [[lowering]]
 op = "Icmp"
-insts = ["MOV_R_RM {out}, {0}", "CMP_RM_R {0}, {out}"]
+insts = ["XOR_RM_R {out}, {out}", "CMP_RM_R {0}, {1}", "SETCC_RM8 {out}, {cc}"]
 
 # ── mini_c 核心（迭代 6 续：load/store/copy/extend/not）──
 

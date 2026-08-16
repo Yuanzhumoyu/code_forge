@@ -202,6 +202,7 @@ fn gen_machine_inst(infos: &[InstInfo]) -> Result<TokenStream, String> {
     let mut ret_arms = Vec::new();
     let mut move_arms = Vec::new();
     let mut effects_arms = Vec::new();
+    let mut branch_targets_arms = Vec::new();
 
     for info in infos {
         let vn = &info.vn;
@@ -294,6 +295,18 @@ fn gen_machine_inst(infos: &[InstInfo]) -> Result<TokenStream, String> {
         if eff.iter().any(|e| e == "Ret") {
             ret_arms.push(quote! { Inst::#vn { .. } => true });
         }
+        // branch_targets：effect Branch/Jump 且有 Label 槽 → 提取为 Block
+        if (eff.iter().any(|e| e == "Branch" || e == "Jump"))
+            && let Some(fid) = info
+                .operands
+                .iter()
+                .find(|(_, _, s)| s.kind == OperandKind::Label)
+                .map(|(_, fid, _)| fid)
+        {
+            branch_targets_arms.push(quote! {
+                Inst::#vn { #fid, .. } => smallvec::smallvec![crate::prelude::Block(*#fid as u32)]
+            });
+        }
         let eff_kinds: Vec<TokenStream> = eff
             .iter()
             .map(|e| match e.as_str() {
@@ -348,7 +361,7 @@ fn gen_machine_inst(infos: &[InstInfo]) -> Result<TokenStream, String> {
                 match self { #(#branch_arms,)* _ => false }
             }
             fn branch_targets(&self) -> smallvec::SmallVec<[crate::prelude::Block; 2]> {
-                smallvec::smallvec![]
+                match self { #(#branch_targets_arms,)* _ => smallvec::smallvec![] }
             }
             fn is_call(&self) -> bool {
                 match self { #(#call_arms,)* _ => false }
@@ -371,7 +384,38 @@ fn gen_machine_inst(infos: &[InstInfo]) -> Result<TokenStream, String> {
 
 // ─────────────────────── TargetEncoder ───────────────────────
 
-fn gen_encoder(_infos: &[InstInfo], _model: &V12Model) -> Result<TokenStream, String> {
+fn gen_encoder(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStream, String> {
+    // 含 Label 槽的指令：encode 后对 fixup 位置 use_label_at（块号 → 实际偏移）。
+    // Label 槽在字节流的位置 = 指令总长 - imm_bytes（REL32 form：末尾 4 字节）。
+    let mut label_arms: Vec<TokenStream> = Vec::new();
+    for info in infos {
+        let vn = &info.vn;
+        // 找 Label 槽的操作数 (位置, fid)
+        if let Some(fid) = info
+            .operands
+            .iter()
+            .find(|(_, _, s)| s.kind == OperandKind::Label)
+            .map(|(_, fid, _)| fid)
+        {
+            let imm_bytes = (info.form.imm.unwrap_or(0) / 8) as usize;
+            label_arms.push(quote! {
+                Inst::#vn { .. } => {
+                    let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
+                    let rel = match inst {
+                        Inst::#vn { #fid, .. } => *#fid,
+                        _ => unreachable!(),
+                    };
+                    let __base = sink.offset();
+                    let total = bytes.len();
+                    let fixup = __base + total - #imm_bytes;
+                    sink.put_bytes(&bytes);
+                    sink.use_label_at(fixup, forge_ir::Block(rel as u32), crate::RelocKind::REL4);
+                    Ok(())
+                }
+            });
+        }
+    }
+    let label_arms = label_arms;
     Ok(quote! {
         pub struct Encoder;
 
@@ -384,9 +428,14 @@ fn gen_encoder(_infos: &[InstInfo], _model: &V12Model) -> Result<TokenStream, St
                 _reg_map: &crate::AllocResult,
                 sink: &mut crate::CodeSink,
             ) -> Result<(), crate::EncodeError> {
-                let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
-                sink.put_bytes(&bytes);
-                Ok(())
+                match inst {
+                    #(#label_arms)*
+                    _ => {
+                        let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
+                        sink.put_bytes(&bytes);
+                        Ok(())
+                    }
+                }
             }
 
             fn encode_to_bytes(
@@ -941,10 +990,32 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
             Some(_) => quote! { /* when 谓词：由 pipeline 上下文求值（迭代 5 接线） */ },
             None => quote! {},
         };
+        // Icmp 特殊：__cc = 条件码（setcc 用；其他 op 恒 0）
+        let cc_bind: TokenStream = if rule.op == "Icmp" {
+            quote! {
+                let __cc: u8 = match op {
+                    crate::prelude::Opcode::Icmp { cond } => {
+                        use crate::prelude::IntCC::*;
+                        match cond {
+                            Equal => 4, NotEqual => 5,
+                            SignedLessThan => 12, SignedLessThanOrEqual => 14,
+                            SignedGreaterThan => 15, SignedGreaterThanOrEqual => 13,
+                            UnsignedLessThan => 2, UnsignedLessThanOrEqual => 6,
+                            UnsignedGreaterThan => 7, UnsignedGreaterThanOrEqual => 3,
+                            _ => 4,
+                        }
+                    }
+                    _ => 0,
+                };
+            }
+        } else {
+            quote! { let __cc: u8 = 0; }
+        };
         arms.push(quote! {
             crate::prelude::Opcode::#op_ident { .. } => {
                 let mut __pack = crate::prelude::InstPacket::new();
                 #when_guard
+                #cc_bind
                 #(#inst_toks)*
                 Ok(__pack)
             }
@@ -955,6 +1026,8 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
     let has_ret = infos.iter().any(|i| i.inst.name == "RET");
     let has_jmp = infos.iter().any(|i| i.inst.name == "JMP_REL32");
     let has_mov_rax = infos.iter().any(|i| i.inst.name == "MOV_RM8_R64");
+    let has_test = infos.iter().any(|i| i.inst.name == "TEST_RM_R");
+    let has_jcc = infos.iter().any(|i| i.inst.name == "JCC_REL32");
 
     // Return：MOV_RM8_R64 val, RAX（reg=src=val、rm=dest=RAX → 0x89 方向）。
     // 与 v11 一致：**不生成 RET**——return block 经 emit_epilogue_jump 跳到
@@ -990,9 +1063,36 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
             Err(crate::prelude::IrError::Unsupported("v12 jump lowering (JMP_REL32 missing)".into()))
         }
     };
+    // Branch：test cond,cond → je false_block → jmp true_block（v11 语义）
+    let branch_body: TokenStream = if has_test && has_jcc && has_jmp {
+        quote! {
+            let cond = value_to_xreg.get(cond_val).copied()
+                .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+            let true_block = then_block.0 as i64;
+            let false_block = else_block.0 as i64;
+            // TEST cond, cond（85 /r：reg=op0、rm=op1）
+            let __idx = __pack.push_inst(Inst::TestRmR {
+                op0: 0,
+                op1: 0,
+                op2: 64,
+            });
+            __pack.map_reg_field(cond, __idx, 0u8, false);
+            __pack.map_reg_field(cond, __idx, 1u8, false);
+            // je false_block（cond=4=e）
+            __pack.push_inst(Inst::JccRel32 { op0: 4, op1: false_block });
+            // jmp true_block
+            __pack.push_inst(Inst::JmpRel32 { op0: true_block });
+            Ok(__pack)
+        }
+    } else {
+        quote! {
+            let _ = __pack;
+            Err(crate::prelude::IrError::Unsupported("v12 branch lowering (TEST/JCC/JMP missing)".into()))
+        }
+    };
 
     // 无任何 terminator 指令（riscv 等）→ 直接 Err 版本（避免 __pack 未使用/不可达）
-    let term_impl: TokenStream = if has_ret || has_jmp {
+    let term_impl: TokenStream = if has_ret || has_jmp || has_jcc {
         quote! {
             #[allow(unreachable_code)]
             fn lower_terminator(
@@ -1010,6 +1110,14 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
                     }
                     crate::prelude::Terminator::Jump { target, .. } => {
                         #jump_body
+                    }
+                    crate::prelude::Terminator::Branch {
+                        cond: cond_val,
+                        then_block,
+                        else_block,
+                        ..
+                    } => {
+                        #branch_body
                     }
                     _ => Err(crate::prelude::IrError::Unsupported("v12 terminator lowering".into())),
                 }
@@ -1123,6 +1231,10 @@ fn gen_lowering_insts(
                     "{off}" if slot.kind == OperandKind::Imm => {
                         // StackAddr 的帧偏移（v11 的 `lea_off rd, offset` 语义）
                         (quote! { ctx.current_offset }, quote! { 0u32 })
+                    }
+                    "{cc}" if slot.kind == OperandKind::Cond => {
+                        // Icmp 条件码（__cc 由 Icmp arm 设置）
+                        (quote! { __cc }, quote! { 0u32 })
                     }
                     other if slot.kind == OperandKind::Reg => {
                         // 物理寄存器名（RAX 等）→ Reg 枚举 → 物理索引（立即写死）
