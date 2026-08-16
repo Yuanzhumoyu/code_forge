@@ -40,6 +40,11 @@ width = 128
 names = ["XMM0","XMM1","XMM2","XMM3","XMM4","XMM5","XMM6","XMM7",
          "XMM8","XMM9","XMM10","XMM11","XMM12","XMM13","XMM14","XMM15"]
 
+# ModRM 约定：RBP(5)/R13(13) 作为基址在 mod=00 时是 RIP-rel/无基址——
+# 强制 disp8=0 编码（与 v11 一致）
+[conventions.modrm]
+force_disp_base = [5, 13]
+
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
@@ -1668,3 +1673,29 @@ insts = ["MOV_R_RM {out}, {0}", "IMUL_R_RM {out}, {1}"]
 [[lowering]]
 op = "Icmp"
 insts = ["MOV_R_RM {out}, {0}", "CMP_RM_R {0}, {out}"]
+
+# ── mini_c 核心（迭代 6 续：load/store/copy/extend/not）──
+
+[[lowering]]
+op = "Load"
+insts = ["MOV_R_MEM {out}, {0}"]
+
+[[lowering]]
+op = "Store"
+insts = ["STORE_MEM_R {0}, {1}"]
+
+[[lowering]]
+op = "Copy"
+insts = ["MOV_R_RM {out}, {0}"]
+
+[[lowering]]
+op = "Sextend"
+insts = ["MOVSXD_R_GPR {out}, {0}"]
+
+[[lowering]]
+op = "Bnot"
+insts = ["MOV_R_RM {out}, {0}", "NOT_RM {out}"]
+
+[[lowering]]
+op = "StackAddr"
+insts = ["LEA_R64_SIB {out}, [RBP+{off}]"]

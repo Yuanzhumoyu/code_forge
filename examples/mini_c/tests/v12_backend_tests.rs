@@ -55,3 +55,23 @@ fn v12_const_arith_chain() {
     assert_v12_matches_v11("int main() { return 1 + 2 + 3 + 4 + 5; }", 15);
     assert_v12_matches_v11("int main() { return 100 - 20 - 30; }", 50);
 }
+
+#[test]
+fn v12_bitwise_not() {
+    assert_v12_matches_v11("int main() { int x = 5; return ~x; }", !5);
+    assert_v12_matches_v11("int main() { int x = 0; return ~x; }", !0);
+}
+
+#[test]
+fn v12_local_load_store() {
+    // 局部变量：store 到栈槽 + load 回来
+    assert_v12_matches_v11("int main() { int x = 7; return x; }", 7);
+    assert_v12_matches_v11("int main() { int x = 3; int y = 4; return x + y; }", 7);
+}
+
+#[test]
+fn v12_compound_assign() {
+    assert_v12_matches_v11("int main() { int x = 5; x += 3; return x; }", 8);
+    assert_v12_matches_v11("int main() { int x = 10; x -= 4; return x; }", 6);
+    assert_v12_matches_v11("int main() { int x = 6; x &= 3; return x; }", 2);
+}

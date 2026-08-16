@@ -171,7 +171,7 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
         }
     }
     if let Some(modrm) = &conv.modrm {
-        for f in [&modrm.reg_field, &modrm.rm_field] {
+        for f in [&modrm.reg_field, &modrm.rm_field].into_iter().flatten() {
             if !conv.bitfields.contains_key(f) {
                 return Err(format!(
                     "[conventions.modrm]: bitfield '{f}' is not declared in [conventions.bitfields]"

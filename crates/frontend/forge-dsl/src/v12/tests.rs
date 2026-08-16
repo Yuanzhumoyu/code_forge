@@ -157,8 +157,8 @@ fn parse_x86_conventions() {
     assert_eq!(m.reg["xmm"].prefix.as_deref(), Some("XMM"));
     // ModRM 约定
     let modrm = m.conventions.modrm.as_ref().expect("modrm present");
-    assert_eq!(modrm.reg_field, "modrm_reg");
-    assert_eq!(modrm.rm_field, "modrm_rm");
+    assert_eq!(modrm.reg_field.as_deref(), Some("modrm_reg"));
+    assert_eq!(modrm.rm_field.as_deref(), Some("modrm_rm"));
     assert_eq!(modrm.force_disp_base, vec![5, 13]);
     // REX 约定
     assert_eq!(m.conventions.rex.as_ref().unwrap().w_opsize, Some(64));

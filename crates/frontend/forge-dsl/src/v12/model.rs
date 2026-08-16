@@ -164,10 +164,12 @@ pub struct BitfieldPiece {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModrmConvention {
-    /// 持有 ModRM.reg（3 位）的位域名。
-    pub reg_field: String,
-    /// 持有 ModRM.rm（3 位，+REX.X 扩展第 4 位）的位域名。
-    pub rm_field: String,
+    /// 持有 ModRM.reg（3 位）的位域名（定宽 ISA）。
+    #[serde(default)]
+    pub reg_field: Option<String>,
+    /// 持有 ModRM.rm（3 位，+REX.X 扩展第 4 位）的位域名（定宽 ISA）。
+    #[serde(default)]
+    pub rm_field: Option<String>,
     /// 必须强制带位移的 base 寄存器号（mod=00+rm=101 是 RIP-relative，
     /// 无法表达 [base]；x86 = [5, 13]）。
     #[serde(default)]

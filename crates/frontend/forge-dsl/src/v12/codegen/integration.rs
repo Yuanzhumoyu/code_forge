@@ -1120,10 +1120,19 @@ fn gen_lowering_insts(
                             quote! { 0u32 },
                         )
                     }
+                    "{off}" if slot.kind == OperandKind::Imm => {
+                        // StackAddr 的帧偏移（v11 的 `lea_off rd, offset` 语义）
+                        (quote! { ctx.current_offset }, quote! { 0u32 })
+                    }
                     other if slot.kind == OperandKind::Reg => {
                         // 物理寄存器名（RAX 等）→ Reg 枚举 → 物理索引（立即写死）
                         let reg = format_ident!("{other}");
                         (quote! { Reg::#reg.to_index() }, quote! { 0u32 })
+                    }
+                    other if slot.kind == OperandKind::Mem => {
+                        // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）
+                        let m = parse_mem_template(other, "lowering 模板")?;
+                        (quote! { #m }, quote! { 0u32 })
                     }
                     other if slot.kind == OperandKind::Imm => {
                         let v: i64 = other
@@ -1147,12 +1156,17 @@ fn gen_lowering_insts(
                 bindings.push((fid.to_string(), ctor_expr, xreg_expr));
             }
         }
-        // 非文本操作数（Opsize）缺省 64（v11 约定 "所有 lowering 规则默认为 opsize=64"）
+        // 非文本操作数（Opsize）缺省 ctx.default_opsize（按 IR 类型：
+        // i32 → 32、i64 → 64；v11 语义一致）
         for (fid, _, slot) in info.operands.iter() {
             if slot.kind == OperandKind::Opsize
                 && !bindings.iter().any(|(f, _, _)| f == &fid.to_string())
             {
-                bindings.push((fid.to_string(), quote! { 64u8 }, quote! { 0u32 }));
+                bindings.push((
+                    fid.to_string(),
+                    quote! { ctx.default_opsize },
+                    quote! { 0u32 },
+                ));
             }
         }
         // 构造 Inst 变体（Reg 字段占位 0；物理寄存器/imm 直接写死）
@@ -1343,6 +1357,19 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
         .map(|i| quote! { #i })
         .collect();
     let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
+    // callee_saved：从 [abi].callee_saved.gpr 解析物理索引（顺序 = prologue push 序）。
+    let callee_saved: Vec<TokenStream> = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.callee_saved.as_ref())
+        .map(|cs| {
+            cs.gpr
+                .iter()
+                .filter_map(|n| name_to_idx.get(n.as_str()).copied())
+                .map(|i| quote! { #i })
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(quote! {
         pub struct RegInfo;
 
@@ -1369,7 +1396,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
                 vec![]
             }
             fn callee_saved(&self) -> Vec<u32> {
-                vec![]
+                vec![#(#callee_saved),*]
             }
             fn frame_pointer_overhead(&self) -> u32 { 8 }
         }
@@ -1442,4 +1469,34 @@ fn gen_target_machine(model: &V12Model) -> Result<TokenStream, String> {
             });
         }
     })
+}
+
+/// 解析 lowering/emit 模板中的内存操作数文本 → MemRef 构造表达式。
+/// 支持 `{base}+{off}`（base = 物理寄存器名或 `{off}` 偏移符号）。
+fn parse_mem_template(text: &str, ctx: &str) -> Result<TokenStream, String> {
+    let t = text.trim().trim_start_matches('[').trim_end_matches(']');
+    let (base_part, disp_part) = match t.split_once('+') {
+        Some((b, d)) => (b.trim().to_string(), Some(d.trim().to_string())),
+        None => match t.split_once('-') {
+            Some((b, d)) => (b.trim().to_string(), Some(format!("-{d}"))),
+            None => (t.trim().to_string(), None),
+        },
+    };
+    let base: TokenStream = if base_part == "{off}" {
+        quote! { ctx.current_offset as u32 }
+    } else {
+        let reg = format_ident!("{base_part}");
+        quote! { Reg::#reg.to_index() }
+    };
+    let disp: TokenStream = match disp_part {
+        Some(d) if d == "{off}" => quote! { ctx.current_offset },
+        Some(d) => {
+            let v: i64 = d
+                .parse()
+                .map_err(|_| format!("{ctx}: mem disp '{d}' 无法解析"))?;
+            quote! { #v }
+        }
+        None => quote! { 0i64 },
+    };
+    Ok(quote! { MemRef { base: #base, disp: #disp } })
 }
