@@ -674,7 +674,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     （evict 活跃 use 值时生成 store）或提前 spill（def 后立即 spill，
     让 emission 在 def 后 store）——均属较大架构改动（v12 特有，v11
     同用例通过）
-- **6o（commit 待填）排除 spill scratch 修复 t+= 崩溃（真根因）**：
+- **6o（commit 5f9462d）排除 spill scratch 修复 t+= 崩溃（真根因）**：
   - **真根因（objdump 执行级定位）**：spill scratch（[abi].scratch =
     R10/R11）**仍可被 regalloc 分配**——emission 的 spill load/store 用
     scratch 寄存器，若 regalloc 把活跃 XReg（如循环变量 i 的地址）分配
