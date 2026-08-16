@@ -611,7 +611,21 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
   - mini_c v12 19/19（嵌套循环 ignored）；workspace 全量
     `cargo test --workspace --exclude forge-rustc` 无 FAILED；
     clippy/fmt 干净
+- **6k（commit 待填）嵌套循环修复——locals 槽深计入 max_stack_bytes**：
+  - **根因**：mini_c 的 `alloc_slot` 生成 `stack_addr(0) + iadd(iconst(-N))`
+    模式，StackAddr 本身 immediate=0 不贡献深度，真正的槽偏移在 iconst 里。
+    预扫描只统计 StackAddr immediate → `max_stack_bytes=0`，locals 区不
+    参与 frame 计算，spill 槽从过浅位置分配并覆盖局部变量（嵌套循环
+    s 累加丢失返回 0 / 死循环的根因；v11 靠 spill 更深的布局碰巧避开，
+    属同源隐患）
+  - **修复**（forge-codegen lowering.rs 预扫描）：识别 `Iadd` 操作数之一
+    为 StackAddr 值、另一为负 Iconst 的模式，把 `-v + 8` 深度并入
+    `max_stack_bytes`（与主循环 StackAddr immediate 处理一致）
+  - 验证：v12_nested_loop 移除 ignore 并扩展 3 个用例（双重 while、
+    外层累加+内层独立计数、3 层嵌套）全过；v12 后端 20/20 全绿，
+    v11 dual_backend 19/19 无回归；workspace 全量无 FAILED；clippy/fmt
+    干净
 
-**下一步（迭代 6 续）**：嵌套循环（内层作用域 + 多块 spill 交互——
-s 累加跨内层循环丢失）；Call/函数调用 → mini_c 全量；x86 124 指令 +
-115 lower 全量 v12；v11 语法层物理删除。
+**下一步（迭代 6 续）**：Call/函数调用 → mini_c 全量（AST 内联已支持，
+直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层
+物理删除。

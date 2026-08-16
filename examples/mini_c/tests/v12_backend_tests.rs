@@ -139,12 +139,22 @@ fn v12_for_loop() {
 }
 
 #[test]
-#[ignore = "v12 嵌套循环（内层作用域变量 spill 交互）待调试"]
 fn v12_nested_loop() {
-    // 嵌套循环：双重 while
+    // 嵌套循环：双重 while（修复：mini_c stack_addr(0)+iadd 模式的槽深计入
+    // max_stack_bytes，spill 槽不再覆盖内层作用域局部变量）
     assert_v12_matches_v11(
         "int main() { int s = 0; int i = 0; while (i < 3) { int j = 0; while (j < 3) { s = s + 1; j = j + 1; } i = i + 1; } return s; }",
         9,
+    );
+    // 外层累加 + 内层独立计数（内层不触碰 s）
+    assert_v12_matches_v11(
+        "int main() { int s = 0; int i = 0; while (i < 3) { int j = 0; while (j < 2) { j = j + 1; } s = s + 1; i = i + 1; } return s; }",
+        3,
+    );
+    // 深层嵌套（3 层）+ 内层累加
+    assert_v12_matches_v11(
+        "int main() { int s = 0; int i = 0; while (i < 2) { int j = 0; while (j < 2) { int k = 0; while (k < 2) { s = s + 1; k = k + 1; } j = j + 1; } i = i + 1; } return s; }",
+        8,
     );
 }
 

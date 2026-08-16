@@ -229,6 +229,61 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 前段固定的 StackAddr 偏移（Immediate::Int，-4/-8...）重叠。
         let mut stackaddr_depth: i64 = 0;
         let mut allocas: Vec<(Inst, u32)> = Vec::new(); // (指令, 槽字节数)
+        // 预扫描第二遍：识别 `Iadd(stack_addr(0), iconst(-N))` 模式——mini_c 的
+        // alloc_slot 生成 `stack_addr(0) + iadd(iconst(offset))`,StackAddr 本身
+        // immediate=0 不贡献深度,真正的槽偏移在 iconst 里。若不把这些负偏移
+        // 计入 stackaddr_depth,locals 区不参与 frame 计算,spill 槽会从更浅的
+        // 位置分配并覆盖局部变量(嵌套循环 s 累加丢失/死循环的根因)。
+        let dfg = &func.dfg;
+        let mut iadd_stack_offsets: Vec<i64> = Vec::new();
+        for (_, bd) in dfg.blocks() {
+            for &ii in &bd.inst_order {
+                let inst = &dfg.insts[ii.0 as usize];
+                if inst.opcode != Opcode::Iadd {
+                    continue;
+                }
+                // Iadd 的操作数之一必须是 StackAddr 的值,另一个是负 Iconst。
+                let mut has_stack = false;
+                let mut const_val: i64 = 0;
+                let mut has_const = false;
+                for &op in &inst.operands {
+                    let Some(val) = dfg.values.get(op.0 as usize) else {
+                        continue;
+                    };
+                    let forge_ir::dfg::ValueDef::Inst(def_ii, _) = val.def else {
+                        continue;
+                    };
+                    let def = &dfg.insts[def_ii.0 as usize];
+                    match def.opcode {
+                        Opcode::StackAddr => has_stack = true,
+                        Opcode::Iconst => {
+                            if let Some(Immediate::Const(cid)) = def.immediates.first() {
+                                if let Some((v, _)) = self
+                                    .ctx
+                                    .constant_pool
+                                    .as_ref()
+                                    .and_then(|cp| cp.get_int(*cid))
+                                {
+                                    const_val = v as i64;
+                                    has_const = true;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if has_stack && has_const && const_val < 0 {
+                    iadd_stack_offsets.push(const_val);
+                }
+            }
+        }
+        for v in iadd_stack_offsets {
+            let depth = -v + 8;
+            stackaddr_depth = stackaddr_depth.max(depth);
+            // 与主循环 StackAddr immediate 的处理一致：负偏移槽深计入 locals
+            // 帧需求（否则 spill 槽从过浅位置分配覆盖局部变量）。
+            self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(depth as u32);
+        }
         for (_, bd) in func.dfg.blocks() {
             for &ii in &bd.inst_order {
                 let inst = &func.dfg.insts[ii.0 as usize];
