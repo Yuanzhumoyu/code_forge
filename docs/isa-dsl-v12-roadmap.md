@@ -700,6 +700,15 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
   - 验证：除法循环（x/2 直至 0）、条件除法（i%2==0）、混合除法+移位
     全过；mini_c v12 24/24（含新增回归）；x86_v12 14/14、集成 12/12、
     forge-codegen 100/100；clippy/fmt 干净
+- **6q（commit 待填）集成风格覆盖 + 覆盖完备性确认**：
+  - 新增 v12_integration_style：多运算/循环/调用混合用例（阶乘、
+    max 函数、i*i 累加、复合赋值链等）全过
+  - **覆盖完备性确认**：v12 指令 204 条（已超 v11 124）；v10 独有的
+    lowering op 均为向量/浮点/溢出/饱和（mini_c 不用），mini_c 相关的
+    Rotl/Rotr/Select/Alloca/Call（AST 内联）不影响；v12 与 v11 在
+    mini_c 全特性上结果一致
+  - mini_c v12 25/25 全绿；forge-codegen 100/100、dual_backend 19/19；
+    fmt 干净
 
 **下一步（迭代 6 续）**：Call/函数调用 → mini_c 全量（AST 内联已支持，
 直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层

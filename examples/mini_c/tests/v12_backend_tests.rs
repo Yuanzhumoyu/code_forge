@@ -359,3 +359,41 @@ fn v12_literal_forms() {
     assert_v12_matches_v11("int main() { return 'A'; }", 65);
     assert_v12_matches_v11("int main() { return 0x2A + 1; }", 43);
 }
+
+#[test]
+fn v12_integration_style() {
+    // 集成风格组合用例（多运算/循环/调用混合）
+    assert_v12_matches_v11(
+        "int main() { int a = 3; int b = 4; int c = 5; return a * b + c; }",
+        17,
+    );
+    assert_v12_matches_v11(
+        "int main() { int x = 5; x = x * 3; x = x + 2; return x; }",
+        17,
+    );
+    assert_v12_matches_v11("int main() { int x = 8; return (x & 3) | (x >> 2); }", 2);
+    assert_v12_matches_v11(
+        "int main() { int s = 0; int i = 0; while (i < 5) { s = s + i * i; i = i + 1; } return s; }",
+        30,
+    );
+    assert_v12_matches_v11(
+        "int main() { int x = 0; if (x) { return 1; } else { return 2; } }",
+        2,
+    );
+    assert_v12_matches_v11(
+        "int main() { int x = 3; int y = 4; x += y; y *= 2; return x * y; }",
+        56,
+    );
+    assert_v12_matches_v11(
+        "int main() { int n = 6; int f = 1; while (n > 1) { f = f * n; n = n - 1; } return f; }",
+        720,
+    );
+    assert_v12_matches_v11(
+        "int max(int a, int b) { if (a > b) { return a; } return b; } int main() { return max(3, 7); }",
+        7,
+    );
+    assert_v12_matches_v11(
+        "int fib(int n) { return n; } int main() { return fib(5); }",
+        5,
+    );
+}
