@@ -625,7 +625,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     外层累加+内层独立计数、3 层嵌套）全过；v12 后端 20/20 全绿，
     v11 dual_backend 19/19 无回归；workspace 全量无 FAILED；clippy/fmt
     干净
-- **6l（commit 待填）移位指令 + mini_c 覆盖扩展**：
+- **6l（commit e0a2a13）移位指令 + mini_c 覆盖扩展**：
   - 新增 form `MRR_EXT_OP_FIX64`（D3 /digit、opsize 固定 64 → REX.W）+
     SHL_RM_CL/SHR_RM_CL/SAR_RM_CL（ext=4/5/7，CL 隐式计数）
   - lowering：Ishl/Ushr/Sshr——计数搬 RCX（MOV_R_RM RCX, {1}，CL 低 8
