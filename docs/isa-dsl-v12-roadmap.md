@@ -544,3 +544,31 @@ lower 全量 v12；v11 语法层物理删除。
 
 **下一步（迭代 6 续）**：v12 lowering 扩展（load/store/icmp/br/Jcc/Call →
 mini_c 全量）；x86 124 指令 + 115 lower 全量 v12；v11 语法层物理删除。
+
+## 18. 迭代 6 续完成记录（2026-08）——mini_c 局部变量/内存/分支
+
+- **6d（commit 60d6bab）x86 指令补齐**：23 条缺失迁移（94→117 指令）——
+  NOP/UD2/MFENCE/CQO/CALL_RM/JCC_REL32/SETCC_RM8/LEA 系/CMOVCC/ROUNDSD/
+  PMULLD/MOVQ 系/MOVAPS_MR/LZCNT/TZCNT/POPCNT/MOVABS；新 forms（NOOP_ESC/
+  REL32_ESC/OP_EXT/MRR_0F38/MRR_0F_FIX64）；**Cond 操作数**（opcode 低 4 位：
+  encode OR + decode 提取 + __parse_cond/__render_cond + 高 4 位 guard）
+- **6e（commit e782591）mini_c 局部变量 + 内存读写（7/7 测试通过）**：
+  - Lowering：Load/Store/Copy/Sextend/Bnot/StackAddr（{off}→current_offset、
+    mem 槽 [base+off] 模板、opsize 缺省 ctx.default_opsize 按 IR 类型）
+  - [conventions.modrm] force_disp_base=[5,13]（RBP/R13 基址 RIP-rel 陷阱）；
+    RegInfo::callee_saved() 从 [abi] 解析（StackAddr 基准 rbp-callee_saved_bytes）
+  - mini_c v12 后端真实执行含栈槽程序：`int x=3; int y=4; return x+y`=7、
+    compound assign、bitwise not
+- **6f（commit eba280f）条件/分支基础（8/9 测试通过）**：
+  - Icmp 重构：xor+cmp+setcc（{cc} 从 Icmp{cond} 映射）；SETCC_RM8 用
+    EXT_0F（0F escape）；Branch terminator（test+je+jmp）；
+    MachineInst::branch_targets() 从 Label 槽提取；Encoder label fixup 加
+    sink 基址（修复分支目标错位/死循环）
+  - if-else 基本工作；`if (x>3)` 嵌套 icmp 边缘 case（cond 高位未清零）
+    ignored 待调试
+- **验证**：x86_v12 14/14、riscv 9/9、集成 12/12、forge-dsl 175、mini_c
+  v12 8/9、workspace 52 套件全绿、clippy/fmt 干净
+
+**下一步（迭代 6 续）**：分支边缘 case 修复（setcc 高位清零/嵌套 icmp）；
+Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令 +
+115 lower 全量 v12；v11 语法层物理删除。
