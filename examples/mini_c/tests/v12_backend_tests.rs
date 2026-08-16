@@ -263,52 +263,57 @@ fn v12_break_continue() {
 }
 
 #[test]
-fn probe_more() {
-    for (src, exp) in [
-        ("int main() { return 1 << 4; }", 16),
-        ("int main() { return 32 >> 2; }", 8),
-        ("int main() { return 0x2A; }", 42),
-        ("int main() { return 0x2a; }", 42),
-        ("int main() { return 077; }", 63),
-        ("int main() { return 'A'; }", 65),
-        (
-            "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.y = 4; return p.x + p.y; }",
-            7,
-        ),
-        (
-            "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.x = p.x + 2; return p.x; }",
-            5,
-        ),
-        ("int main() { int x = 8; x <<= 2; return x; }", 32),
-        ("int main() { int x = 32; x >>= 3; return x; }", 4),
-    ] {
-        let v11 = mini_c::compiler::compile_and_run(src).expect("v11 failed");
-        let v12 = mini_c::compiler::compile_and_run_with(src, mini_c::compiler::Backend::V12)
-            .expect("v12 failed");
-        println!("PROBE_MORE [{src}] exp={exp} v11={v11} v12={v12}");
-    }
+fn v12_struct_field() {
+    // struct 定义 + 字段访问（struct_decl + member_access → load/store）
+    assert_v12_matches_v11(
+        "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.y = 4; return p.x + p.y; }",
+        7,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.x = p.x + 2; return p.x; }",
+        5,
+    );
 }
+
 #[test]
-fn probe_more2() {
-    let cases: Vec<(&str, i32)> = vec![
-        ("int main() { return 1 << 4; }", 16),
-        ("int main() { return 32 >> 2; }", 8),
-        ("int main() { return 0x2A; }", 42),
-        ("int main() { return 077; }", 63),
-        ("int main() { return 'A'; }", 65),
-        (
-            "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.y = 4; return p.x + p.y; }",
-            7,
-        ),
-        ("int main() { int x = 8; x <<= 2; return x; }", 32),
-    ];
-    for (src, exp) in cases {
-        let r11 = mini_c::compiler::compile_and_run(src)
-            .map(|v| format!("{v}"))
-            .unwrap_or_else(|e| format!("ERR {e}"));
-        let r12 = mini_c::compiler::compile_and_run_with(src, mini_c::compiler::Backend::V12)
-            .map(|v| format!("{v}"))
-            .unwrap_or_else(|e| format!("ERR {e}"));
-        println!("PROBE2 [{src}] exp={exp} v11={r11} v12={r12}");
-    }
+fn v12_struct_init_list() {
+    // struct 初始化列表 {v1, v2, ...}：按字段序 store
+    assert_v12_matches_v11(
+        "int main() { struct Point { int x; int y; }; struct Point p = {10, 20}; return p.x; }",
+        10,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct Point { int x; int y; }; struct Point p = {10, 42}; return p.y; }",
+        42,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct Point { int x; int y; }; struct Point p = {0, 0}; p.x = 42; return p.x; }",
+        42,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct Point { int x; int y; }; struct Point p = {10, 20}; p.x = 99; return p.y; }",
+        20,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct P { int a; int b; int c; }; struct P p = {1, 2, 3}; return p.a + p.b + p.c; }",
+        6,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct P { int a; int b; }; struct P p = {7, 8}; struct P q = {3, 4}; return p.a + q.b; }",
+        11,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct Dir { int n; int e; int s; int w; }; struct Dir d = {1, 2, 3, 4}; return d.n + d.e + d.s + d.w; }",
+        10,
+    );
+}
+
+#[test]
+fn v12_literal_forms() {
+    // hex / octal / char 字面量
+    assert_v12_matches_v11("int main() { return 0x2A; }", 42);
+    assert_v12_matches_v11("int main() { return 0x2a; }", 42);
+    assert_v12_matches_v11("int main() { return 077; }", 63);
+    assert_v12_matches_v11("int main() { return 'A'; }", 65);
+    assert_v12_matches_v11("int main() { return 0x2A + 1; }", 43);
 }

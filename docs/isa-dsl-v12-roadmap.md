@@ -635,7 +635,21 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     负数算术右移、hex 字面量全过
   - mini_c v12 23/23 全绿（嵌套循环 + shift）；workspace/clippy/fmt
     干净
+- **6m（commit 待填）emission spill 字段回写修复 + struct/字面量覆盖**：
+  - **emission.rs 物理字段错位修复**：`emit_inst_with_spills` 的 spill
+    重写用 enumerate 位置（fi）而非 xreg_map 的 field_idx——指令含物理
+    寄存器字段（如 `MOV_R_RM RCX` 的 op0）时 xreg_map 跳过该字段，记录
+    位置与字段序号错位，spill 重写会把物理字段覆盖成 scratch。改用
+    field_idx（map_reg_field 传入的指令内 Reg 位置序）
+  - 新增 v12_struct_field / v12_struct_init_list（init 列表、多 struct、
+    4 字段 struct）/ v12_literal_forms（hex/octal/char）测试全过
+  - mini_c v12 24/24 全绿；workspace/clippy/fmt 干净
+  - **已知限制**：shift 结果在循环内参与累加（`t += v << i` / 
+    `int s = v << i` 后丢弃）仍 ACCESS_VIOLATION——物理 RCX 字段在
+    shift+循环 + spill 高压组合下与地址/计数寄存器交互，emission 修复
+    解决 spill 重写覆盖，但 regalloc 的 use/def 活跃性仍需专门调试
+    （v11 同用例通过，v12 特有）
 
-**下一步（迭代 6 续）**：Call/函数调用 → mini_c 全量（AST 内联已支持，
-直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层
-物理删除。
+**下一步（迭代 6 续）**：shift+循环累加崩溃（regalloc 活跃性，v12 特有）；
+Call/函数调用 → mini_c 全量（AST 内联已支持，直呼 CALL 指令待定）；
+x86 124 指令 + 115 lower 全量 v12；v11 语法层物理删除。

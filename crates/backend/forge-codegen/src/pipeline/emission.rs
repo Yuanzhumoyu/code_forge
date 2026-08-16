@@ -79,6 +79,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     xreg_map.get(gi).map(|s| s.as_slice()).unwrap_or(&[]);
                 let inst_xregs: smallvec::SmallVec<[XReg; 8]> =
                     slot.iter().map(|(x, ..)| *x).collect();
+                let inst_field_idx: smallvec::SmallVec<[u8; 8]> =
+                    slot.iter().map(|(_, f, _)| *f).collect();
                 Self::emit_inst_with_spills(
                     inst,
                     encoder.as_ref(),
@@ -89,6 +91,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     sink,
                     callee_saved_bytes,
                     &inst_xregs,
+                    &inst_field_idx,
                     _func.name.as_str(),
                 )?;
             }
@@ -168,6 +171,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         sink: &mut CodeSink,
         callee_saved_bytes: i32,
         inst_xregs: &[XReg],
+        inst_field_idx: &[u8],
         fname: &str,
     ) -> Result<(), IrError> {
         // 去重收集 spilled XReg（同一 XReg 的 use/def 共用一个 scratch 寄存器）
@@ -239,9 +243,12 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // Emit 前把 spilled 字段重设为 scratch 寄存器：
         // 分配阶段回写的旧寄存器（如 reload 后的 R9）与 scratch 不一致，
         // 会导致 store 存回错误寄存器。重设后 emit 与 store 使用同一寄存器。
-        for (fi, &xreg) in inst_xregs.iter().enumerate() {
+        // 用 xreg_map 的 field_idx（而非 enumerate 位置）：指令含物理寄存器
+        // 字段（如 `MOV_R_RM RCX` 的 op0）时 xreg_map 跳过该字段，记录位置
+        // 与字段序号错位——用位置会把物理字段覆盖成 scratch（shift 崩溃）。
+        for (i, &xreg) in inst_xregs.iter().enumerate() {
             if let Some(preg) = xreg_preg(xreg) {
-                inst.set_reg_field(fi, preg.num);
+                inst.set_reg_field(inst_field_idx[i] as usize, preg.num);
             }
         }
 
