@@ -250,9 +250,8 @@ crates/frontend/forge-dsl/src/
 | **4** ✅ | families codegen（Family 展开：fields 共享 + {mnemonic} 模板，7 家族 37 变体）；VEX 语义键（C4 + vex2/3 + vvvv，4 forms + 10 指令）；结构化谓词框架（pred.rs） | 家族 SSE 规范 11 + VEX 规范 9 + 全 106 条往返 10/10 |
 | 3 | 变长语义键（modrm/prefix/escape/rex）；x86 @modrm/@sse 家族迁移 ~65 条 | golden 字节等价 + decoder_smoke 扩展 |
 | 4 | VEX 语义键 + 指令族；结构化谓词求值接入 | 展开指令数一致 + forge-tests 全绿 |
-| 5 | lowering 符号化 + abi.arg_class 类别分类 + emit 保留 | mini_c 双后端 + forge-rustc e2e 不回归 |
-| 6 | x86 124 指令 + 115 lower 全量 v12；**1733 → <800 行**；v11 语法层物理删除 | 全量 golden + 门禁 |
-| 7 | 全 ISA 迁移 + 新 ISA（ARM32 子集）不改生成器证明 | 新 ISA 全链路 |
+| **5** ✅ | lowering 符号化 + abi.arg_class 类别分类 + emit 保留 | mini_c 双后端 + forge-rustc e2e 不回归 |
+| 6 | x86 124 指令 + 115 lower 全量 v12；**1733 → <800 行**；v11 语法层物理删除 | 全量 golden + 门禁 || 7 | 全 ISA 迁移 + 新 ISA（ARM32 子集）不改生成器证明 | 新 ISA 全链路 |
 | 8 | 生成器深度清理（bitstring 残留/死代码） | 全量测试 + forge-dsl 行数下降 |
 | 9 | 文档 v12 重写（isa-dsl.md/encoding-guide） | 文档-代码一致性核对 |
 
@@ -508,3 +507,40 @@ by-ref 为 YMM 铺路）+ 结构化谓词接入 lowering + x86 全量收官（@o
 **下一步（迭代 6）**：v12 后端跑通 mini_c 双后端（补 JMP/CALL/RET 指令 +
 terminator lowering + [emit] prologue/epilogue + spill）；x86 124 指令 + 115
 lower 全量 v12；v11 语法层物理删除。
+
+## 17. 迭代 6 完成记录（2026-08）——v12 后端端到端执行 + mini_c 双后端
+
+**里程碑**：v12 后端从『能编译』到『能真实执行 mini_c 源码』。
+
+- **6a（commit 30cabd3）控制流 + FrameLowering 完整 + terminator**：
+  - x86_v12.toml：JMP_REL32（E9 rel32）/CALL_RIP_REL（E8 rel32）/RET（C3）
+    + REL32/NOOP form 键 + rel（label）槽；控制流 spec/roundtrip 测试
+  - v12 codegen：无 ModRM 变长形式（prefix+escape+opcode+imm）encode/decode
+    支持（modrm 条件化经 if-let）
+  - 模型：Abi 加 frame/callee_saved；顶层加 [spill.*] 模板
+  - FrameLowering 完整：[emit] prologue/epilogue 模板展开（指令名 + 物理
+    寄存器/imm + @push_callee/@pop_callee/@frame_alloc/@frame_free）+ spill
+    load/store + emit_epilogue_jump + needs_epilogue_label
+  - lower_terminator：Return→MOV_RM8_R64 RAX,val；Jump→JMP_REL32
+  - 端到端：arch::x86_v12 编译 fn add 全链路（IR→lowering→regalloc→frame→encode）
+- **6b（commit 8bf23ff）JIT 端到端执行成功**：
+  - Iconst lowering：{iconst} 从常量池解析
+  - @move_args：prologue 把 [abi].arg_class.int 寄存器值 mov 到参数 XReg
+  - **Return 修正：不生成 RET**（return block 经 epilogue_jump 统一恢复——
+    否则栈不平衡 SEGV）；epilogue 用 sub rsp, 56（非 add）
+  - Iadd 等操作数修正：ADD_RM_R {1}, {out}（src=第二个 IR 操作数）
+  - reloc_patcher：x86_64_v12 → X86RelocPatcher（epilogue_jump REL4 正确 patch）
+  - 验证：e2e_jit_run_const（42）+ e2e_jit_run_add（add(2,3)=5、add(-7,100)=93）
+    真实执行
+- **6c（commit 9dbbb70）mini_c 双后端**：
+  - compiler.rs：Backend::V12 选项（前端复用 Direct，JIT 用 x86_v12 TM；
+    JitRunner 抽象消除 v11/v12 泛型差异）
+  - v12_backend_tests 4 个：同一源码 v11/v12 后端执行结果一致
+    （Iconst/Iadd/Isub/Band/Bor/Bxor/多步算术链；含 `return 1+2+3+4+5`）
+  - mini_c 全绿（21+19+90+4）
+- **验证**：forge-dsl 175、x86_v12 14/14、riscv 9/9、集成 12/12、e2e 4/4、
+  mini_c 4/4（v12）+ 134 既有全绿、workspace 51 套件全绿、clippy 0 真实
+  警告、fmt 干净
+
+**下一步（迭代 6 续）**：v12 lowering 扩展（load/store/icmp/br/Jcc/Call →
+mini_c 全量）；x86 124 指令 + 115 lower 全量 v12；v11 语法层物理删除。
