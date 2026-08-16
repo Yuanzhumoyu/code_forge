@@ -591,6 +591,11 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
 - **验证**：mini_c v12 13/13（嵌套循环 ignored：内层作用域 spill 交互
   待调）；x86_v12 14/14、riscv 9/9、集成 12/12、forge-dsl 175；
   clippy/fmt 干净
+- **6i（commit 0bb3c6f）allocatable 排除 spill scratch**：
+  - allocatable_gp_order 排除 [abi].scratch（R10/R11）——regalloc 不能
+    占用 spill load/store 专用寄存器，否则 spill 往返覆盖变量值
+  - 验证：while/for 循环在排除后正确（此前排除触发 spill 暴露冲突）
 
-**下一步（迭代 6 续）**：嵌套循环（内层作用域 spill）；Call/函数调用 →
-mini_c 全量；x86 124 指令 + 115 lower 全量 v12；v11 语法层物理删除。
+**下一步（迭代 6 续）**：嵌套循环（内层作用域 + 多块 spill 交互——
+s 累加跨内层循环丢失）；Call/函数调用 → mini_c 全量；x86 124 指令 +
+115 lower 全量 v12；v11 语法层物理删除。
