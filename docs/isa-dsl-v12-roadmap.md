@@ -572,3 +572,25 @@ mini_c 全量）；x86 124 指令 + 115 lower 全量 v12；v11 语法层物理�
 **下一步（迭代 6 续）**：分支边缘 case 修复（setcc 高位清零/嵌套 icmp）；
 Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令 +
 115 lower 全量 v12；v11 语法层物理删除。
+
+## 19. 迭代 6 续2 完成记录（2026-08）——条件分支全绿 + 除法
+
+- **6g（commit 15b58ca）条件分支完整（if-else 10/10 全绿）**：
+  - CMP_RM_R 方向修正的完整验证：icmp 直测 + if-else 全部通过
+    （setg/setne 真实执行正确）
+  - 取消 if_else 的 ignore（此前因 cmp 方向反致 setg 恒 0）
+- **6h（commit b7f9a76）除法 + 指令定义修正（用户审查指出）**：
+  - **CQO 定义错误**：应为 48 99（REX.W + 99，无 0F escape），原定义
+    NOOP_ESC + fields.w=0 生成 0f 99（setnle 语义错误）；新增 NOOP_REXW
+    form + no_modrm 分支 rex_w=always 支持
+  - **物理寄存器 field 序号**：lowering 中 RAX/RDX 等物理寄存器跳过
+    map_reg_field 时 reg_field_i 不递增，后续操作数 set_reg_field 序号
+    错位（movsxd RAX 被 regalloc 重分配）；改为序号仍递增（v11 一致）
+  - Sdiv/Srem/Udiv/Urem：{t} 临时 + movsxd RAX + cqo + idiv + clobber
+  - 除法 6 个测试全过（10/3、10%3、-10/3、-10%3、100/7、100%7）
+- **验证**：mini_c v12 13/13（嵌套循环 ignored：内层作用域 spill 交互
+  待调）；x86_v12 14/14、riscv 9/9、集成 12/12、forge-dsl 175；
+  clippy/fmt 干净
+
+**下一步（迭代 6 续）**：嵌套循环（内层作用域 spill）；Call/函数调用 →
+mini_c 全量；x86 124 指令 + 115 lower 全量 v12；v11 语法层物理删除。
