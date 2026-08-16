@@ -102,3 +102,13 @@ fn v12_ternary_cond() {
         7,
     );
 }
+
+#[test]
+fn v12_icmp_result_direct() {
+    // icmp 结果直接返回（不经 Branch），隔离 setcc 正确性
+    assert_v12_matches_v11("int main() { int x = 5; int y = (x > 3); return y; }", 1);
+    assert_v12_matches_v11("int main() { int x = 1; int y = (x > 3); return y; }", 0);
+    assert_v12_matches_v11("int main() { int x = 3; int y = (x > 3); return y; }", 0);
+    assert_v12_matches_v11("int main() { int x = 5; int y = (x == 5); return y; }", 1);
+    assert_v12_matches_v11("int main() { int x = 4; int y = (x == 5); return y; }", 0);
+}

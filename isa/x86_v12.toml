@@ -1678,7 +1678,7 @@ insts = ["MOV_R_RM {out}, {0}", "IMUL_R_RM {out}, {1}"]
 
 [[lowering]]
 op = "Icmp"
-insts = ["XOR_RM_R {out}, {out}", "CMP_RM_R {0}, {1}", "SETCC_RM8 {out}, {cc}"]
+insts = ["XOR_RM_R {out}, {out}", "CMP_RM_R {1}, {0}", "SETCC_RM8 {out}, {cc}"]
 
 # ── mini_c 核心（迭代 6 续：load/store/copy/extend/not）──
 
