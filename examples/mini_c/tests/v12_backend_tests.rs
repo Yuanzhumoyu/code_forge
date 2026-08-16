@@ -170,6 +170,22 @@ fn v12_division() {
 }
 
 #[test]
+fn v12_shift() {
+    // 移位：Ishl/Ushr/Sshr（计数搬 RCX → D3 /digit；CL 隐式计数）
+    assert_v12_matches_v11("int main() { return 1 << 4; }", 16);
+    assert_v12_matches_v11("int main() { return 1 << 10; }", 1024);
+    assert_v12_matches_v11("int main() { return 32 >> 2; }", 8);
+    assert_v12_matches_v11("int main() { int x = 256; return x >> 4; }", 16);
+    assert_v12_matches_v11("int main() { return -16 >> 2; }", -4);
+    assert_v12_matches_v11("int main() { return 0x80 >> 4; }", 8);
+    // 变量计数
+    assert_v12_matches_v11("int main() { int x = 1; int n = 5; return x << n; }", 32);
+    // 复合赋值
+    assert_v12_matches_v11("int main() { int x = 8; x <<= 2; return x; }", 32);
+    assert_v12_matches_v11("int main() { int x = 32; x >>= 3; return x; }", 4);
+}
+
+#[test]
 fn v12_inlined_call() {
     // AST 内联调用（mini_c 的 Call 在 AST 层内联，不生成 CALL 指令）
     assert_v12_matches_v11(
@@ -244,4 +260,55 @@ fn v12_break_continue() {
         "int main() { int s = 0; int i = 0; while (i < 5) { i = i + 1; if (i == 3) { continue; } s = s + i; } return s; }",
         12,
     );
+}
+
+#[test]
+fn probe_more() {
+    for (src, exp) in [
+        ("int main() { return 1 << 4; }", 16),
+        ("int main() { return 32 >> 2; }", 8),
+        ("int main() { return 0x2A; }", 42),
+        ("int main() { return 0x2a; }", 42),
+        ("int main() { return 077; }", 63),
+        ("int main() { return 'A'; }", 65),
+        (
+            "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.y = 4; return p.x + p.y; }",
+            7,
+        ),
+        (
+            "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.x = p.x + 2; return p.x; }",
+            5,
+        ),
+        ("int main() { int x = 8; x <<= 2; return x; }", 32),
+        ("int main() { int x = 32; x >>= 3; return x; }", 4),
+    ] {
+        let v11 = mini_c::compiler::compile_and_run(src).expect("v11 failed");
+        let v12 = mini_c::compiler::compile_and_run_with(src, mini_c::compiler::Backend::V12)
+            .expect("v12 failed");
+        println!("PROBE_MORE [{src}] exp={exp} v11={v11} v12={v12}");
+    }
+}
+#[test]
+fn probe_more2() {
+    let cases: Vec<(&str, i32)> = vec![
+        ("int main() { return 1 << 4; }", 16),
+        ("int main() { return 32 >> 2; }", 8),
+        ("int main() { return 0x2A; }", 42),
+        ("int main() { return 077; }", 63),
+        ("int main() { return 'A'; }", 65),
+        (
+            "int main() { struct Point { int x; int y; }; struct Point p; p.x = 3; p.y = 4; return p.x + p.y; }",
+            7,
+        ),
+        ("int main() { int x = 8; x <<= 2; return x; }", 32),
+    ];
+    for (src, exp) in cases {
+        let r11 = mini_c::compiler::compile_and_run(src)
+            .map(|v| format!("{v}"))
+            .unwrap_or_else(|e| format!("ERR {e}"));
+        let r12 = mini_c::compiler::compile_and_run_with(src, mini_c::compiler::Backend::V12)
+            .map(|v| format!("{v}"))
+            .unwrap_or_else(|e| format!("ERR {e}"));
+        println!("PROBE2 [{src}] exp={exp} v11={r11} v12={r12}");
+    }
 }

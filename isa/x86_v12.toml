@@ -194,6 +194,12 @@ opsize = "auto"
 opcode_bytes = 1
 
 [[forms]]
+name = "MRR_EXT_OP_FIX64" # @shift_reg：D3 /digit（rm=op0），opsize 固定 64（REX.W）
+modrm = "ext"
+opsize = 64
+opcode_bytes = 1
+
+[[forms]]
 name = "EXT_0F"           # ext + 0F escape（SETCC 0F 90+cc /r）
 modrm = "ext"
 escape = [0x0F]
@@ -1297,6 +1303,35 @@ fields = { ext = 2 }
 operands = [{ slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
 mnemonic = "not"
 
+# ── 移位（D3 /digit，CL 隐式计数；opsize 固定 64 → REX.W）──
+
+[[instructions]]
+name = "SHL_RM_CL"
+form = "MRR_EXT_OP_FIX64"
+opcode = 0xD3
+fields = { ext = 4 }
+operands = [{ slot = "gpr", role = "inout" }]
+mnemonic = "shl"
+asm = "shl {0}, cl"
+
+[[instructions]]
+name = "SHR_RM_CL"
+form = "MRR_EXT_OP_FIX64"
+opcode = 0xD3
+fields = { ext = 5 }
+operands = [{ slot = "gpr", role = "inout" }]
+mnemonic = "shr"
+asm = "shr {0}, cl"
+
+[[instructions]]
+name = "SAR_RM_CL"
+form = "MRR_EXT_OP_FIX64"
+opcode = 0xD3
+fields = { ext = 7 }
+operands = [{ slot = "gpr", role = "inout" }]
+mnemonic = "sar"
+asm = "sar {0}, cl"
+
 [[instructions]]
 name = "NEG_RM"
 form = "MRR_EXT_OP"
@@ -1722,6 +1757,32 @@ insts = ["MOV_R_RM {out}, {0}", "NOT_RM {out}"]
 [[lowering]]
 op = "StackAddr"
 insts = ["LEA_R64_SIB {out}, [RBP+{off}]"]
+
+# ── 移位（v11 语义：计数搬 RCX（CL 隐式计数）→ D3 /digit）──
+
+[[lowering]]
+op = "Ishl"
+insts = [
+    "MOV_R_RM {out}, {0}",
+    "MOV_R_RM RCX, {1}",
+    "SHL_RM_CL {out}",
+]
+
+[[lowering]]
+op = "Ushr"
+insts = [
+    "MOV_R_RM {out}, {0}",
+    "MOV_R_RM RCX, {1}",
+    "SHR_RM_CL {out}",
+]
+
+[[lowering]]
+op = "Sshr"
+insts = [
+    "MOVSXD_R_GPR {out}, {0}",
+    "MOV_R_RM RCX, {1}",
+    "SAR_RM_CL {out}",
+]
 
 # ── 除法（v11 语义：movsxd RAX,rs1 + cqo + idiv %t + mov rd,RAX/RDX）──
 

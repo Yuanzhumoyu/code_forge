@@ -625,6 +625,16 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     外层累加+内层独立计数、3 层嵌套）全过；v12 后端 20/20 全绿，
     v11 dual_backend 19/19 无回归；workspace 全量无 FAILED；clippy/fmt
     干净
+- **6l（commit 待填）移位指令 + mini_c 覆盖扩展**：
+  - 新增 form `MRR_EXT_OP_FIX64`（D3 /digit、opsize 固定 64 → REX.W）+
+    SHL_RM_CL/SHR_RM_CL/SAR_RM_CL（ext=4/5/7，CL 隐式计数）
+  - lowering：Ishl/Ushr/Sshr——计数搬 RCX（MOV_R_RM RCX, {1}，CL 低 8
+    位即计数；RCX 由 clobber 收集 regalloc 避开）；Sshr 首步 movsxd
+    符号扩展（否则 32 位值 64 位 sar 得到无符号右移结果）
+  - 新增 v12_shift 测试：常量/变量计数、复合赋值（<<= / >>=）、
+    负数算术右移、hex 字面量全过
+  - mini_c v12 23/23 全绿（嵌套循环 + shift）；workspace/clippy/fmt
+    干净
 
 **下一步（迭代 6 续）**：Call/函数调用 → mini_c 全量（AST 内联已支持，
 直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层
