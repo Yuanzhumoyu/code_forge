@@ -83,6 +83,12 @@ kind = "imm"
 signed = false
 width = 64
 
+[[operand_slots]]
+name = "rel"
+kind = "label"
+signed = true
+width = 32
+
 # ─────────────────────────── 编码形式 ───────────────────────────
 
 [[forms]]
@@ -241,6 +247,15 @@ modrm = "rm_memref"
 opsize = 32
 escape = [0x0F]
 prefix = "field"
+opcode_bytes = 1
+
+[[forms]]
+name = "REL32"            # 直接相对跳转/调用：opcode + rel32（无 ModRM）
+imm = 32
+opcode_bytes = 1
+
+[[forms]]
+name = "NOOP"             # 无操作数：单字节 opcode（RET 0xC3 等）
 opcode_bytes = 1
 
 # ─────────────────── 指令（顺序 = v11 声明序）───────────────────
@@ -1315,6 +1330,33 @@ form = "BSWAP_R"
 operands = [{ slot = "gpr", role = "inout" }]
 mnemonic = "bswap"
 
+# ── 控制流（迭代 6：JMP/CALL/RET + rel32）──
+
+[[instructions]]
+name = "RET"
+form = "NOOP"
+opcode = 0xC3
+mnemonic = "ret"
+effect = ["Ret"]
+
+[[instructions]]
+name = "JMP_REL32"
+form = "REL32"
+opcode = 0xE9
+operands = [{ slot = "rel", role = "in" }]
+mnemonic = "jmp"
+asm = "jmp {0}"
+effect = ["Jump"]
+
+[[instructions]]
+name = "CALL_RIP_REL"
+form = "REL32"
+opcode = 0xE8
+operands = [{ slot = "rel", role = "in" }]
+mnemonic = "call"
+asm = "call {0}"
+effect = ["Call"]
+
 # ============================================================
 # 调用约定（迭代 5 声明层：arg_class 类别分类，为 YMM by-ref 铺路）
 # ============================================================
@@ -1334,6 +1376,36 @@ regs = ["XMM0", "XMM1", "XMM2", "XMM3"]
 class = "vector"
 strategy = "by-ref"
 limit = 128
+
+[abi.frame]
+sp = "RSP"
+fp = "RBP"
+alloc_inst = "SUB64_R_IMM32"
+free_inst = "ADD64_R_IMM32"
+fp_push_bytes = 8
+
+[abi.callee_saved]
+gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
+xmm = []
+
+# 溢出模板（基址 = RBP 帧指针）
+[spill.GPR]
+load = "MOV64_RM {0}, {1}"
+store = "MOV64_MR {0}, {1}"
+base = "RBP"
+
+[spill.FPR]
+load = "MOVSD_RM {0}, {1}"
+store = "MOVSD_MR {0}, {1}"
+base = "RBP"
+
+# 序言/尾声（模板按指令操作数序绑定：MOV64_RR op0=src、op1=dest；
+# MOV64_RR RSP, RBP = mov64rr rbp←rsp）
+[emit.prologue]
+insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@frame_alloc"]
+
+[emit.epilogue]
+insts = ["MOV64_RR RBP, RSP", "ADD64_R_IMM32 RSP, 56", "@pop_callee", "POP RBP", "RET"]
 
 # ============================================================
 # 指令选择（迭代 5 声明层：符号化操作数 {out}/{0}/{1}）

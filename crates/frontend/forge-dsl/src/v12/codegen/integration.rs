@@ -26,13 +26,14 @@ pub fn gen_integration(infos: &[InstInfo], model: &V12Model) -> Result<TokenStre
     let disasm = gen_disasm(infos)?;
     let assembler = gen_assembler();
     let abi = gen_abi(model)?;
-    let frame = gen_frame_lowering(model)?;
+    let frame = gen_frame_lowering(infos, model)?;
     let lowering = gen_lowering(infos, model)?;
     let isa_info = gen_isa_info(model, infos)?;
     let reg_info = gen_reg_info(model)?;
     let target_machine = gen_target_machine(model)?;
     Ok(quote! {
-        // ── v12 TargetMachine 集成层（迭代 5）──
+        // ── v12 TargetMachine 集成层（迭代 5/6）──
+        use forge_ir::PhysReg;
         #reg_enum
         #machine_inst
         #encoder
@@ -490,35 +491,383 @@ fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
 
 // ─────────────────────── TargetFrameLowering ───────────────────────
 
-fn gen_frame_lowering(_model: &V12Model) -> Result<TokenStream, String> {
-    // 迭代 5：先给最小实现（无 prologue/epilogue 序列 → 默认 no-op），
-    // [emit] 指令序列接入在 lowering 层完成后补（见 roadmap 迭代 5 记录）。
+fn gen_frame_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
+    // 指令名 → InstInfo（[emit]/[spill] 模板用大写指令名引用）。
+    let prologue_toks = gen_emit_block(infos, model, true)?;
+    let epilogue_toks = gen_emit_block(infos, model, false)?;
+
+    // spill load/store：`{0}` = 寄存器、`{1}` = 帧偏移、基址来自模板 base。
+    let spill_gpr = model.spill.get("GPR");
+    let spill_fpr = model.spill.get("FPR");
+    let gpr_load = gen_spill_stmt(infos, spill_gpr, true)?;
+    let gpr_store = gen_spill_stmt(infos, spill_gpr, false)?;
+    let fpr_load = gen_spill_stmt(infos, spill_fpr, true)?;
+    let fpr_store = gen_spill_stmt(infos, spill_fpr, false)?;
+
     Ok(quote! {
         pub struct FrameLowering;
 
         impl crate::machine::frame::TargetFrameLowering for FrameLowering {
             type Inst = Inst;
 
+            fn needs_epilogue_label(&self) -> bool { true }
+
+            fn emit_epilogue_jump(
+                &self,
+                _encoder: &std::sync::Arc<dyn crate::machine::encoder::TargetEncoder<Inst = Self::Inst>>,
+                _reg_map: &crate::AllocResult,
+                epilogue_block: forge_ir::Block,
+                sink: &mut crate::CodeSink,
+            ) -> Result<(), crate::IrError> {
+                // JMP rel32（0xE9 + 占位）+ label 记录（链接期回填）。
+                sink.put1(0xE9);
+                let fixup = sink.offset();
+                sink.put4(0u32);
+                sink.use_label_at(fixup, epilogue_block, crate::RelocKind::REL4);
+                Ok(())
+            }
+
             fn emit_prologue(
                 &self,
                 frame_size: u32,
-                _reg_map: &crate::AllocResult,
-                _sink: &mut crate::CodeSink,
+                reg_map: &crate::AllocResult,
+                sink: &mut crate::CodeSink,
             ) -> Result<(), crate::IrError> {
-                let _ = frame_size;
+                let __frame_size = frame_size;
+                let __rm = reg_map;
+                let __sink = sink;
+                #prologue_toks
                 Ok(())
             }
 
             fn emit_epilogue(
                 &self,
                 frame_size: u32,
-                _reg_map: &crate::AllocResult,
-                _sink: &mut crate::CodeSink,
+                reg_map: &crate::AllocResult,
+                sink: &mut crate::CodeSink,
             ) -> Result<(), crate::IrError> {
-                let _ = frame_size;
+                let __frame_size = frame_size;
+                let __rm = reg_map;
+                let __sink = sink;
+                #epilogue_toks
+                Ok(())
+            }
+
+            fn emit_spill_load(
+                &self,
+                dst_reg: u32,
+                offset: i32,
+                width: u8,
+                is_fp: bool,
+                sink: &mut crate::CodeSink,
+            ) -> Result<(), crate::IrError> {
+                let __dst = dst_reg;
+                let __off = offset as i64;
+                let __sink = sink;
+                if is_fp {
+                    #fpr_load
+                } else {
+                    #gpr_load
+                }
+                let _ = width;
+                Ok(())
+            }
+
+            fn emit_spill_store(
+                &self,
+                src_reg: u32,
+                offset: i32,
+                width: u8,
+                is_fp: bool,
+                sink: &mut crate::CodeSink,
+            ) -> Result<(), crate::IrError> {
+                let __dst = src_reg;
+                let __off = offset as i64;
+                let __sink = sink;
+                if is_fp {
+                    #fpr_store
+                } else {
+                    #gpr_store
+                }
+                let _ = width;
                 Ok(())
             }
         }
+    })
+}
+
+/// 展开 [emit] prologue/epilogue 模板为编码语句序列。
+///
+/// 模板行：`INST op0, op1, ...`（物理寄存器/数字立即数）或 `@伪指令`
+/// （@push_callee/@pop_callee/@frame_alloc/@frame_free）。emit 模式：
+/// 无 XReg 映射——物理寄存器写死物理索引，imm 写死值，直接编码进 sink。
+fn gen_emit_block(
+    infos: &[InstInfo],
+    model: &V12Model,
+    is_prologue: bool,
+) -> Result<TokenStream, String> {
+    let Some(emit) = &model.emit else {
+        return Ok(quote! {});
+    };
+    let block = if is_prologue {
+        emit.prologue.as_ref()
+    } else {
+        emit.epilogue.as_ref()
+    };
+    let Some(block) = block else {
+        return Ok(quote! {});
+    };
+    let mut out: Vec<TokenStream> = Vec::new();
+    for t in &block.insts {
+        let trimmed = t.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // @ 伪指令
+        if let Some(name) = trimmed.strip_prefix('@') {
+            out.push(gen_emit_pseudo(model, name)?);
+            continue;
+        }
+        let stmts = gen_emit_inst(infos, trimmed)?;
+        out.extend(stmts);
+    }
+    Ok(quote! { #(#out)* })
+}
+
+/// 单个 emit 指令行 → 构造 + 编码语句（emit 模式）。
+fn gen_emit_inst(infos: &[InstInfo], line: &str) -> Result<Vec<TokenStream>, String> {
+    let (inst_name, ops) = match line.split_once(char::is_whitespace) {
+        Some((n, rest)) => (n.trim(), rest.trim()),
+        None => (line.trim(), ""),
+    };
+    let info = inst_info_by_name(infos, inst_name)
+        .ok_or_else(|| format!("emit 模板引用了未知指令 '{inst_name}'（行: {line}）"))?;
+    let vn = &info.vn;
+    let mut bindings: Vec<(String, TokenStream)> = Vec::new();
+    if !ops.is_empty() {
+        for (i, op) in ops.split(',').map(|s| s.trim()).enumerate() {
+            if op.is_empty() {
+                continue;
+            }
+            let fid = info
+                .operands
+                .get(i)
+                .map(|(_, fid, _)| fid.clone())
+                .ok_or_else(|| format!("emit 模板操作数 {i} 超出指令 {inst_name}（行: {line}）"))?;
+            let slot = &info.operands[i].2;
+            let expr: TokenStream = match op {
+                other if slot.kind == OperandKind::Reg => {
+                    // 物理寄存器名 → 物理索引（emit 模式直接写死）
+                    let reg = format_ident!("{other}");
+                    quote! { Reg::#reg.to_index() }
+                }
+                other if slot.kind == OperandKind::Imm || slot.kind == OperandKind::Label => {
+                    let v: i64 = other
+                        .parse()
+                        .map_err(|_| format!("emit 模板立即数 '{other}' 无法解析"))?;
+                    quote! { #v }
+                }
+                other if slot.kind == OperandKind::Opsize => {
+                    let v: u64 = other
+                        .parse()
+                        .map_err(|_| format!("emit 模板 opsize '{other}' 无法解析"))?;
+                    quote! { #v as u8 }
+                }
+                other => {
+                    return Err(format!(
+                        "emit 模板操作数 '{other}' 不支持（指令 {inst_name} 槽 {}）",
+                        slot.kind.kind_name()
+                    ));
+                }
+            };
+            bindings.push((fid.to_string(), expr));
+        }
+    }
+    // 非文本操作数（Opsize）缺省 64
+    for (fid, _, slot) in info.operands.iter() {
+        if slot.kind == OperandKind::Opsize && !bindings.iter().any(|(f, _)| f == &fid.to_string())
+        {
+            bindings.push((fid.to_string(), quote! { 64u8 }));
+        }
+    }
+    let fields: Vec<TokenStream> = info
+        .operands
+        .iter()
+        .map(|(fid, _, _)| {
+            let fid_ident = format_ident!("{fid}");
+            let expr = bindings
+                .iter()
+                .find(|(f, _)| f == &fid.to_string())
+                .map(|(_, e)| e.clone())
+                .unwrap_or_else(|| quote! { 0 });
+            quote! { #fid_ident: #expr }
+        })
+        .collect();
+    let ctor = if info.operands.is_empty() {
+        quote! { Inst::#vn }
+    } else {
+        quote! { Inst::#vn { #(#fields),* } }
+    };
+    Ok(vec![quote! {
+        let __bytes = encode(&#ctor).map_err(|e| crate::IrError::Emit(e))?;
+        __sink.put_bytes(&__bytes);
+    }])
+}
+
+/// 按指令名查找 InstInfo（emit/spill 模板用）。
+fn inst_info_by_name<'a>(infos: &'a [InstInfo<'a>], name: &str) -> Option<&'a InstInfo<'a>> {
+    infos.iter().find(|i| i.inst.name == name)
+}
+
+/// emit @ 伪指令（push_callee/pop_callee/frame_alloc/frame_free）。
+fn gen_emit_pseudo(model: &V12Model, name: &str) -> Result<TokenStream, String> {
+    match name {
+        "push_callee" | "pop_callee" => {
+            let Some(abi) = &model.abi else {
+                return Ok(quote! {});
+            };
+            let Some(callee) = &abi.callee_saved else {
+                return Ok(quote! {});
+            };
+            let regs: Vec<String> = if name == "push_callee" {
+                callee.gpr.clone()
+            } else {
+                callee.gpr.iter().rev().cloned().collect()
+            };
+            let push_pop = if name == "push_callee" { "PUSH" } else { "POP" };
+            let vn = crate::codegen::pascal_ident(push_pop);
+            let mut stmts = Vec::new();
+            for r in &regs {
+                let reg = format_ident!("{r}");
+                stmts.push(quote! {
+                    let __bytes = encode(&Inst::#vn { op0: Reg::#reg.to_index() })
+                        .map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
+                });
+            }
+            Ok(quote! { #(#stmts)* })
+        }
+        "frame_alloc" => {
+            let Some(abi) = &model.abi else {
+                return Ok(quote! {});
+            };
+            let Some(frame) = &abi.frame else {
+                return Ok(quote! {});
+            };
+            let inst = frame
+                .alloc_inst
+                .as_deref()
+                .ok_or_else(|| "[abi.frame].alloc_inst required for @frame_alloc".to_string())?;
+            // 帧分配指令：SUB RSP, frame_size —— sp 是第 0 操作数、imm 是第 1。
+            let sp = format_ident!("{}", frame.sp);
+            let vn = crate::codegen::pascal_ident(inst);
+            Ok(quote! {
+                if __frame_size != 0 {
+                    let __bytes = encode(&Inst::#vn {
+                        op0: Reg::#sp.to_index(),
+                        op1: __frame_size as i64,
+                    }).map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
+                }
+            })
+        }
+        "frame_free" => {
+            let Some(abi) = &model.abi else {
+                return Ok(quote! {});
+            };
+            let Some(frame) = &abi.frame else {
+                return Ok(quote! {});
+            };
+            let inst = frame
+                .free_inst
+                .as_deref()
+                .ok_or_else(|| "[abi.frame].free_inst required for @frame_free".to_string())?;
+            let sp = format_ident!("{}", frame.sp);
+            let vn = crate::codegen::pascal_ident(inst);
+            Ok(quote! {
+                if __frame_size != 0 {
+                    let __bytes = encode(&Inst::#vn {
+                        op0: Reg::#sp.to_index(),
+                        op1: __frame_size as i64,
+                    }).map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
+                }
+            })
+        }
+        other => Err(format!("unknown emit pseudo '@{other}'")),
+    }
+}
+
+/// spill 模板 → 单条 load/store 语句（`{0}` = 寄存器、`{1}` = 偏移、基址 = base）。
+fn gen_spill_stmt(
+    infos: &[InstInfo],
+    tpl: Option<&SpillTemplate>,
+    is_load: bool,
+) -> Result<TokenStream, String> {
+    let Some(t) = tpl else {
+        return Ok(quote! {
+            let _ = (__dst, __off);
+        });
+    };
+    let template = if is_load { &t.load } else { &t.store };
+    // 指令名 = 模板首词；其余操作数按位置绑定。
+    let (inst_name, ops) = match template.split_once(char::is_whitespace) {
+        Some((n, rest)) => (n.trim(), rest.trim()),
+        None => (template.trim(), ""),
+    };
+    let info = inst_info_by_name(infos, inst_name)
+        .ok_or_else(|| format!("spill 模板引用了未知指令 '{inst_name}'"))?;
+    let base_name = t.base.clone().unwrap_or_else(|| "RBP".to_string());
+    let base = format_ident!("{base_name}");
+    let mut bindings: Vec<(String, TokenStream)> = Vec::new();
+    if !ops.is_empty() {
+        for (i, op) in ops.split(',').map(|s| s.trim()).enumerate() {
+            if op.is_empty() {
+                continue;
+            }
+            let fid = info
+                .operands
+                .get(i)
+                .map(|(_, fid, _)| fid.clone())
+                .ok_or_else(|| format!("spill 模板操作数 {i} 超出指令 {inst_name}"))?;
+            let slot = &info.operands[i].2;
+            let expr: TokenStream = match op {
+                "{0}" if slot.kind == OperandKind::Reg => quote! { __dst },
+                "{1}" if slot.kind == OperandKind::Mem => {
+                    quote! { MemRef { base: Reg::#base.to_index(), disp: __off } }
+                }
+                other => {
+                    return Err(format!(
+                        "spill 模板操作数 '{other}' 不支持（指令 {inst_name} 槽 {}）",
+                        slot.kind.kind_name()
+                    ));
+                }
+            };
+            bindings.push((fid.to_string(), expr));
+        }
+    }
+    let fields: Vec<TokenStream> = info
+        .operands
+        .iter()
+        .map(|(fid, _, _)| {
+            let fid_ident = format_ident!("{fid}");
+            let expr = bindings
+                .iter()
+                .find(|(f, _)| f == &fid.to_string())
+                .map(|(_, e)| e.clone())
+                .unwrap_or_else(|| quote! { 0 });
+            quote! { #fid_ident: #expr }
+        })
+        .collect();
+    let vn = crate::codegen::pascal_ident(inst_name);
+    let ctor = if info.operands.is_empty() {
+        quote! { Inst::#vn }
+    } else {
+        quote! { Inst::#vn { #(#fields),* } }
+    };
+    Ok(quote! {
+        let __bytes = encode(&#ctor).map_err(|e| crate::IrError::Emit(e))?;
+        __sink.put_bytes(&__bytes);
     })
 }
 
@@ -560,6 +909,83 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
         });
     }
 
+    // terminator 指令引用（按名查找，缺失 → 该终结符 Unsupported）
+    let has_ret = infos.iter().any(|i| i.inst.name == "RET");
+    let has_jmp = infos.iter().any(|i| i.inst.name == "JMP_REL32");
+    let has_mov_rax = infos.iter().any(|i| i.inst.name == "MOV_RM8_R64");
+
+    // Return：MOV_RM8_R64 val, RAX（reg=src=val、rm=dest=RAX → 0x89 方向）
+    // + RET。val 是返回值 XReg（占位 0 + map 到字段 0）。
+    let return_body: TokenStream = if has_ret && has_mov_rax {
+        quote! {
+            let val = values.first().copied()
+                .and_then(|x| value_to_xreg.get(&x)).copied()
+                .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+            let __idx = __pack.push_inst(Inst::MovRm8R64 {
+                op0: 0,
+                op1: 0,
+                op2: 64,
+            });            __pack.map_reg_field(val, __idx, 0u8, false);
+            __pack.push_inst(Inst::Ret);
+            Ok(__pack)
+        }
+    } else {
+        quote! {
+            let _ = __pack;
+            Err(crate::prelude::IrError::Unsupported("v12 return lowering (RET/MOV_RM8_R64 missing)".into()))
+        }
+    };
+    // Jump：JMP_REL32 target（块号 → rel 字段）。
+    let jump_body: TokenStream = if has_jmp {
+        quote! {
+            __pack.push_inst(Inst::JmpRel32 { op0: target.0 as i64 });
+            Ok(__pack)
+        }
+    } else {
+        quote! {
+            let _ = __pack;
+            Err(crate::prelude::IrError::Unsupported("v12 jump lowering (JMP_REL32 missing)".into()))
+        }
+    };
+
+    // 无任何 terminator 指令（riscv 等）→ 直接 Err 版本（避免 __pack 未使用/不可达）
+    let term_impl: TokenStream = if has_ret || has_jmp {
+        quote! {
+            #[allow(unreachable_code)]
+            fn lower_terminator(
+                &self,
+                term: &crate::prelude::Terminator,
+                value_to_xreg: &std::collections::HashMap<crate::prelude::Value, crate::prelude::XReg>,
+                _block_to_vblock: &std::collections::HashMap<crate::prelude::Block, crate::prelude::VBlockId>,
+                ctx: &mut crate::prelude::LowerCtx,
+            ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
+                let mut __pack: crate::prelude::InstPacket<Self::Inst> =
+                    crate::prelude::InstPacket::new();
+                match term {
+                    crate::prelude::Terminator::Return { values, .. } => {
+                        #return_body
+                    }
+                    crate::prelude::Terminator::Jump { target, .. } => {
+                        #jump_body
+                    }
+                    _ => Err(crate::prelude::IrError::Unsupported("v12 terminator lowering".into())),
+                }
+            }
+        }
+    } else {
+        quote! {
+            fn lower_terminator(
+                &self,
+                _term: &crate::prelude::Terminator,
+                _value_to_xreg: &std::collections::HashMap<crate::prelude::Value, crate::prelude::XReg>,
+                _block_to_vblock: &std::collections::HashMap<crate::prelude::Block, crate::prelude::VBlockId>,
+                _ctx: &mut crate::prelude::LowerCtx,
+            ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
+                Err(crate::prelude::IrError::Unsupported("v12 terminator lowering".into()))
+            }
+        }
+    };
+
     Ok(quote! {
         pub struct Lowering;
 
@@ -580,15 +1006,7 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
                 match op { #(#arms,)* _ => Err(crate::prelude::IrError::Unsupported("v12 lowering".into())) }
             }
 
-            fn lower_terminator(
-                &self,
-                _term: &crate::prelude::Terminator,
-                _value_to_xreg: &std::collections::HashMap<crate::prelude::Value, crate::prelude::XReg>,
-                _block_to_vblock: &std::collections::HashMap<crate::prelude::Block, crate::prelude::VBlockId>,
-                _ctx: &mut crate::prelude::LowerCtx,
-            ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
-                Err(crate::prelude::IrError::Unsupported("v12 terminator lowering".into()))
-            }
+            #term_impl
         }
     })
 }

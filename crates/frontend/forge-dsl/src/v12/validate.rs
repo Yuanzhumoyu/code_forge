@@ -16,6 +16,7 @@ pub fn validate(m: &V12Model) -> Result<(), String> {
     validate_lowering(m)?;
     validate_abi(m)?;
     validate_emit(m)?;
+    validate_spill(m)?;
     Ok(())
 }
 
@@ -574,6 +575,22 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
             ));
         }
     }
+    // [abi.frame]：sp 必填且非空；alloc/free 指令名非空。
+    if let Some(f) = &abi.frame {
+        if f.sp.trim().is_empty() {
+            return Err("[abi.frame].sp must not be empty".into());
+        }
+        if let Some(a) = &f.alloc_inst
+            && a.trim().is_empty()
+        {
+            return Err("[abi.frame].alloc_inst must not be empty".into());
+        }
+        if let Some(a) = &f.free_inst
+            && a.trim().is_empty()
+        {
+            return Err("[abi.frame].free_inst must not be empty".into());
+        }
+    }
     Ok(())
 }
 
@@ -592,6 +609,20 @@ fn validate_emit(m: &V12Model) -> Result<(), String> {
         && e.insts.is_empty()
     {
         return Err("[emit.epilogue].insts must not be empty".into());
+    }
+    Ok(())
+}
+
+// ───────────────────────── [spill.*] ─────────────────────────
+
+fn validate_spill(m: &V12Model) -> Result<(), String> {
+    for (name, s) in &m.spill {
+        if s.load.trim().is_empty() {
+            return Err(format!("[spill.{name}].load must not be empty"));
+        }
+        if s.store.trim().is_empty() {
+            return Err(format!("[spill.{name}].store must not be empty"));
+        }
     }
     Ok(())
 }

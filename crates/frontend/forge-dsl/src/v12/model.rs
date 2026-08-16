@@ -42,6 +42,9 @@ pub struct V12Model {
     /// 序言/尾声（`[emit]`）。
     #[serde(default)]
     pub emit: Option<EmitSection>,
+    /// 溢出模板（`[spill.GPR]`/`[spill.FPR]`：load/store 指令 + 基址寄存器）。
+    #[serde(default)]
+    pub spill: BTreeMap<String, SpillTemplate>,
 }
 
 // ─────────────────────────── [meta] ───────────────────────────
@@ -443,6 +446,42 @@ pub struct Abi {
     pub stack_align: Option<u32>,
     #[serde(default)]
     pub arg_class: Vec<ArgClass>,
+    /// 帧布局（sp/fp 寄存器名、帧分配/释放指令名）。
+    #[serde(default)]
+    pub frame: Option<AbiFrame>,
+    /// 被调用者保存寄存器（prologue push / epilogue pop 顺序）。
+    #[serde(default)]
+    pub callee_saved: Option<CalleeSaved>,
+}
+
+/// 帧布局配置（[abi.frame]）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbiFrame {
+    /// 栈指针寄存器名（"RSP"）。
+    pub sp: String,
+    /// 帧指针寄存器名（"RBP"；None = 无帧指针）。
+    #[serde(default)]
+    pub fp: Option<String>,
+    /// 帧分配指令（SUB RSP, imm）——[emit] 的 @frame_alloc 展开用。
+    #[serde(default)]
+    pub alloc_inst: Option<String>,
+    /// 帧释放指令（ADD RSP, imm）——@frame_free 用。
+    #[serde(default)]
+    pub free_inst: Option<String>,
+    /// prologue 在帧指针上方 push 的字节数（帧指针保存槽；x86 = 8）。
+    #[serde(default)]
+    pub fp_push_bytes: Option<u32>,
+}
+
+/// 被调用者保存寄存器（[abi.callee_saved]）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalleeSaved {
+    #[serde(default)]
+    pub gpr: Vec<String>,
+    #[serde(default)]
+    pub xmm: Vec<String>,
 }
 
 /// 类型类别 → 传参寄存器/策略。
@@ -477,4 +516,19 @@ pub struct EmitSection {
 #[serde(deny_unknown_fields)]
 pub struct EmitBlock {
     pub insts: Vec<String>,
+}
+
+// ───────────────────────── [spill.*] ─────────────────────────
+
+/// 溢出槽模板：load/store 指令 + 基址寄存器。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpillTemplate {
+    /// 加载指令模板（`{0}` = 目标寄存器，`{1}` = 帧偏移——spill 生成时替换）。
+    pub load: String,
+    /// 存储指令模板（`{0}` = 源寄存器，`{1}` = 帧偏移）。
+    pub store: String,
+    /// 基址寄存器名（"RBP"）。
+    #[serde(default)]
+    pub base: Option<String>,
 }

@@ -626,8 +626,9 @@ fn vlen_ctx(info: &InstInfo) -> Result<VlenCtx, String> {
         None if has_opsize => quote! { if __opsize == 64 { 1u64 } else { 0u64 } },
         _ => quote! { 0u64 },
     };
-    // modrm reg/rm/disp：`+r` 形式无 ModRM（opcode 内嵌 reg）
-    let (modrm, reg_expr, rm_expr, disp_expr) = if form.opcode_reg.is_some() {
+    // modrm reg/rm/disp：`+r` 形式与无 ModRM 形式（REL32/NOOP）为 None
+    let (modrm, reg_expr, rm_expr, disp_expr) = if form.opcode_reg.is_some() || form.modrm.is_none()
+    {
         (None, None, None, None)
     } else {
         let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
@@ -827,7 +828,45 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                 };
                 stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
             }
-        } else {
+        } else if ctx.modrm.is_none() {
+            // 无 ModRM 的变长形式（JMP/CALL rel32、RET 等）：prefix + escape +
+            // opcode + imm（无 REX、无 ModRM）。
+            stmts.push(opsize_bind);
+            let prefix_expr = &ctx.prefix_expr;
+            stmts.push(quote! {
+                let __p = #prefix_expr;
+                if __p != 0 { __bytes.push(__p); }
+            });
+            if let Some(esc) = &info.form.escape {
+                for e in esc {
+                    stmts.push(quote! { __bytes.push(#e as u8); });
+                }
+            }
+            let opcode = info.inst.opcode.unwrap();
+            stmts.push(quote! { __bytes.push(#opcode as u8); });
+            // 尾部立即数（form.imm：rel32 等）
+            if ctx.imm_bytes > 0 {
+                let imm_fid = info
+                    .operands
+                    .iter()
+                    .find(|(_, _, s)| s.kind == OperandKind::Imm || s.kind == OperandKind::Label)
+                    .map(|(_, fid, _)| fid.clone())
+                    .ok_or_else(|| {
+                        format!(
+                            "[[instructions.{}]]: form imm requires an imm/label operand",
+                            info.inst.name
+                        )
+                    })?;
+                let le_bytes = match ctx.imm_bytes {
+                    1 => quote! { (*#imm_fid as u8).to_le_bytes().to_vec() },
+                    2 => quote! { (*#imm_fid as u16).to_le_bytes().to_vec() },
+                    4 => quote! { (*#imm_fid as u32).to_le_bytes().to_vec() },
+                    8 => quote! { (*#imm_fid as u64).to_le_bytes().to_vec() },
+                    n => return Err(format!("unsupported imm width {n} bytes")),
+                };
+                stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
+            }
+        } else if let Some(modrm) = ctx.modrm {
             let reg = ctx.reg_expr.as_ref().unwrap();
             let rm = ctx.rm_expr.as_ref().unwrap();
             stmts.push(opsize_bind);
@@ -866,7 +905,7 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             let opcode = info.inst.opcode.unwrap();
             stmts.push(quote! { __bytes.push(#opcode as u8); });
             // ModRM：mod=11（rr/ext）或内存（rm_mem/rm_memref）
-            if ctx.modrm.unwrap().is_mem() {
+            if modrm.is_mem() {
                 let force = mem_force_disp(model, info)?;
                 let force_toks: Vec<TokenStream> = force.iter().map(|&b| quote! { #b }).collect();
                 let disp = ctx.disp_expr.as_ref().unwrap();
@@ -1151,8 +1190,13 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
         let opcode = info.inst.opcode.unwrap();
         conds.push(quote! { bytes[__o + #off] == #opcode as u8 });
         off += 1;
-        let modrm_idx = off; // modrm 在 bytes[__o + modrm_idx]
-        off += 1;
+        // 无 ModRM 形式（JMP/CALL rel32、RET）：imm/label 紧接 opcode；
+        // 有 ModRM 形式：modrm 在 opcode 之后。
+        let no_modrm = ctx.modrm.is_none();
+        let modrm_idx = off; // modrm 在 bytes[__o + modrm_idx]（无 modrm 时无用）
+        if !no_modrm {
+            off += 1;
+        }
         let total = off + ctx.imm_bytes;
         let len = total;
         let cond = if conds.is_empty() {
@@ -1161,6 +1205,7 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
             quote! { #(#conds)&&* }
         };
         // 字段提取表达式：modrm 语义决定 reg/rm/base/mem 的来源
+        let imm_start = total - ctx.imm_bytes;
         let field_expr = |i: usize, slot: &OperandSlot| -> Result<TokenStream, String> {
             let reg_field = quote! { ((__modrm >> 3) & 7) as u32 | (__rex_r << 3) };
             let rm_field = quote! { ((__modrm & 7) as u32) | (__rex_b << 3) };
@@ -1186,8 +1231,8 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
                     )),
                 },
                 OperandKind::Opsize => Ok(quote! { __opsize as u8 }),
-                OperandKind::Imm => {
-                    let raw = imm_read_ts(total - ctx.imm_bytes, ctx.imm_bytes);
+                OperandKind::Imm | OperandKind::Label => {
+                    let raw = imm_read_ts(imm_start, ctx.imm_bytes);
                     let signed = slot.signed.unwrap_or(false);
                     let w = slot.width.unwrap_or(32);
                     if signed {
@@ -1215,7 +1260,9 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
             quote! { Inst::#vn { #(#ctor_fields),* } }
         };
         // ext 形式：ModRM.reg 必须等于固定扩展码
-        let modrm_guard: TokenStream = if ctx.modrm.unwrap() == ModrmKind::Ext {
+        let modrm_guard: TokenStream = if no_modrm {
+            quote! {}
+        } else if ctx.modrm.unwrap() == ModrmKind::Ext {
             let ext = info
                 .inst
                 .fields
@@ -1227,7 +1274,15 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
         } else {
             quote! {}
         };
-        if ctx.modrm.unwrap().is_mem() {
+        if no_modrm {
+            // 无 ModRM：opcode（+imm）直接匹配，无 reg/rm 提取。
+            arms.push(quote! {
+                if __o + #total <= bytes.len() && #cond {
+                    #(#binds)*
+                    return Some((#ctor, __o + #len));
+                }
+            });
+        } else if ctx.modrm.unwrap().is_mem() {
             // 内存形式：mod≠3 + SIB（index=4 无 index）+ disp8/disp32 + RIP-rel 拒绝。
             // MemReg（无 disp 语义）只接受 mod∈{0,1} 且 mod=1 时 disp==0
             //（force_disp_base 的 disp8=0）；MemRefOp 接受 mod∈{0,1,2}。

@@ -206,6 +206,50 @@ fn r_forms_spec_bytes() {
     }
 }
 
+// ─────────────────── 控制流（JMP/CALL/RET，迭代 6）───────────────────
+
+#[test]
+fn control_flow_spec_bytes() {
+    let cases: &[(&str, &[u8])] = &[
+        // ret — C3
+        ("ret", &[0xC3]),
+        // jmp rel32 — E9 + rel（直接编码目标值）
+        ("jmp 0", &[0xE9, 0x00, 0x00, 0x00, 0x00]),
+        ("jmp 42", &[0xE9, 0x2A, 0x00, 0x00, 0x00]),
+        // call rel32 — E8 + rel
+        ("call 0", &[0xE8, 0x00, 0x00, 0x00, 0x00]),
+        ("call -1", &[0xE8, 0xFF, 0xFF, 0xFF, 0xFF]),
+    ];
+    for (asm, expected) in cases {
+        let got = v12_bytes(asm);
+        assert_eq!(
+            got.as_slice(),
+            *expected,
+            "control-flow spec mismatch for `{asm}`"
+        );
+    }
+}
+
+#[test]
+fn control_flow_roundtrip() {
+    use Inst::*;
+    let insts = vec![
+        Ret,
+        JmpRel32 { op0: 0 },
+        JmpRel32 { op0: 42 },
+        JmpRel32 { op0: -1 },
+        CallRipRel { op0: 0 },
+        CallRipRel { op0: 0x1234 },
+    ];
+    for inst in insts {
+        let b = encode(&inst).unwrap();
+        let (dec, n) = decode(&b).unwrap();
+        assert_eq!(n, b.len(), "{inst:?}: 解码消费 {n} != {} 字节", b.len());
+        let b2 = encode(&dec).unwrap();
+        assert_eq!(b2, b, "{inst:?}: decode→encode 往返字节不一致");
+    }
+}
+
 // ─────────────────── SSE 规范字节（v11 的 16+i 索引不合规）───────────────────
 
 #[test]

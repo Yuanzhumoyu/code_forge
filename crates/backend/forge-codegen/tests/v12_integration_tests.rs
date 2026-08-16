@@ -162,3 +162,159 @@ fn lowering_unknown_op_unsupported() {
     let r = tm.lowering().lower_inst(&Opcode::Fadd, &[], &[], &mut ctx);
     assert!(r.is_err(), "未声明的 op 应 Unsupported");
 }
+
+// ─────────────────── FrameLowering（[emit] prologue/epilogue + spill）───────────────────
+
+#[test]
+fn frame_prologue_bytes() {
+    let tm = forge_codegen::x86_v12::TargetMachine::new();
+    let fl = tm.frame_lowering();
+    let rm = forge_codegen::AllocResult::new();
+    let mut sink = forge_codegen::CodeSink::default();
+    fl.emit_prologue(0, &rm, &mut sink).expect("prologue");
+    // push rbp(55) + mov64rr rbp, rsp(48 89 e5) + push rbx(53) + push rdi(57)
+    // + push rsi(56) + push r12(41 54) + push r13(41 55) + push r14(41 56)
+    // + push r15(41 57) —— frame_size=0 时无 @frame_alloc
+    let bytes = sink.bytes();
+    assert_eq!(
+        bytes,
+        &[
+            0x55, // push rbp
+            0x48, 0x89, 0xE5, // mov64rr rbp, rsp
+            0x53, // push rbx
+            0x57, // push rdi
+            0x56, // push rsi
+            0x41, 0x54, // push r12
+            0x41, 0x55, // push r13
+            0x41, 0x56, // push r14
+            0x41, 0x57, // push r15
+        ],
+        "prologue bytes (frame_size=0): {bytes:02x?}"
+    );
+}
+
+#[test]
+fn frame_prologue_with_alloc() {
+    let tm = forge_codegen::x86_v12::TargetMachine::new();
+    let fl = tm.frame_lowering();
+    let rm = forge_codegen::AllocResult::new();
+    let mut sink = forge_codegen::CodeSink::default();
+    fl.emit_prologue(32, &rm, &mut sink).expect("prologue");
+    let bytes = sink.bytes();
+    // 末尾应有 @frame_alloc：sub rsp, 32 → 48 81 EC 20 00 00 00
+    //（81 /5 = sub、reg=ext=5、rm=rsp=4 → modrm 0xEC；imm32）
+    assert_eq!(
+        &bytes[bytes.len() - 7..],
+        &[0x48, 0x81, 0xEC, 0x20, 0x00, 0x00, 0x00],
+        "frame_alloc (sub rsp, 32) tail: {:02x?}",
+        &bytes[bytes.len() - 9..]
+    );
+}
+
+#[test]
+fn frame_epilogue_bytes() {
+    let tm = forge_codegen::x86_v12::TargetMachine::new();
+    let fl = tm.frame_lowering();
+    let rm = forge_codegen::AllocResult::new();
+    let mut sink = forge_codegen::CodeSink::default();
+    fl.emit_epilogue(0, &rm, &mut sink).expect("epilogue");
+    let bytes = sink.bytes();
+    // mov64rr rsp, rbp(48 89 ec: reg=src=rbp=5、rm=dest=rsp=4 → 0xEC) +
+    // add rsp, 56(48 81 c4 38 00 00 00) + pop r15..rbx + pop rbp(5d) + ret(c3)
+    assert_eq!(&bytes[0..3], &[0x48, 0x89, 0xEC], "mov64rr rsp, rbp");
+    assert_eq!(
+        &bytes[3..10],
+        &[0x48, 0x81, 0xC4, 0x38, 0x00, 0x00, 0x00],
+        "add rsp, 56"
+    );
+    assert_eq!(bytes[bytes.len() - 2], 0x5D, "pop rbp");
+    assert_eq!(bytes[bytes.len() - 1], 0xC3, "ret");
+}
+
+#[test]
+fn frame_spill_bytes() {
+    let tm = forge_codegen::x86_v12::TargetMachine::new();
+    let fl = tm.frame_lowering();
+    let mut sink = forge_codegen::CodeSink::default();
+    // spill store: mov64mr [rbp-8], rax → 48 89 45 F8
+    fl.emit_spill_store(0, -8, 8, false, &mut sink)
+        .expect("spill store");
+    assert_eq!(
+        sink.bytes(),
+        &[0x48, 0x89, 0x45, 0xF8],
+        "mov64mr [rbp-8], rax"
+    );
+    let mut sink2 = forge_codegen::CodeSink::default();
+    // spill load: mov64rm rax, [rbp-8] → 48 8B 45 F8
+    fl.emit_spill_load(0, -8, 8, false, &mut sink2)
+        .expect("spill load");
+    assert_eq!(
+        sink2.bytes(),
+        &[0x48, 0x8B, 0x45, 0xF8],
+        "mov64rm rax, [rbp-8]"
+    );
+}
+
+// ─────────────────── terminator lowering（Return/Jump）───────────────────
+
+#[test]
+fn terminator_return_packet() {
+    use forge_codegen::prelude::{LowerCtx, Terminator, Value};
+    use forge_codegen::x86_v12::Inst;
+    use smallvec::smallvec;
+
+    let tm = forge_codegen::x86_v12::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    let ret_val = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
+    let mut vmap = std::collections::HashMap::new();
+    vmap.insert(Value(7), ret_val);
+    let term = Terminator::Return {
+        values: smallvec![Value(7)],
+        metadata: smallvec![],
+    };
+    let pack = tm
+        .lowering()
+        .lower_terminator(&term, &vmap, &std::collections::HashMap::new(), &mut ctx)
+        .expect("lower Return");
+    // MOV_RM8_R64(0x89: reg=src=val、rm=dest=RAX) + RET
+    assert_eq!(pack.insts.len(), 2, "Return → 2 条微指令");
+    assert!(matches!(pack.insts[0], Inst::MovRm8R64 { .. }));
+    assert!(matches!(pack.insts[1], Inst::Ret));
+    // val → 字段 0(use)
+    let m0 = &pack.xreg_map[0];
+    assert_eq!(m0.len(), 1);
+    assert_eq!(
+        m0[0],
+        (ret_val, 0u8, false),
+        "MOV_RM8_R64 field0 = val(use)"
+    );
+}
+
+#[test]
+fn terminator_jump_packet() {
+    use forge_codegen::prelude::{Block, LowerCtx, Terminator};
+    use forge_codegen::x86_v12::Inst;
+    use smallvec::smallvec;
+
+    let tm = forge_codegen::x86_v12::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    let term = Terminator::Jump {
+        target: Block(3),
+        args: smallvec![],
+        metadata: smallvec![],
+    };
+    let pack = tm
+        .lowering()
+        .lower_terminator(
+            &term,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut ctx,
+        )
+        .expect("lower Jump");
+    assert_eq!(pack.insts.len(), 1);
+    match &pack.insts[0] {
+        Inst::JmpRel32 { op0 } => assert_eq!(*op0, 3, "jmp 目标块号"),
+        other => panic!("expected JmpRel32, got {other:?}"),
+    }
+}
