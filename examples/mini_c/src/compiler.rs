@@ -22,6 +22,8 @@ pub enum Backend {
     Direct,
     /// forge-hir pipeline (`codegen_hir.rs`): IrGraph + HirCtx + lowering.
     Hir,
+    /// v12 DSL 后端（`x86_v12` TargetMachine）：实验性，仅支持算术/返回子集。
+    V12,
 }
 
 /// Walk the AST expression tree to find a constant NUMBER/CHAR token and parse its value.
@@ -115,7 +117,9 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
     for func_node in &funcs {
         let name = func_node.get_text("name").unwrap_or("_").to_string();
         let func_ref = match backend {
-            Backend::Direct => codegen_function(&mut module, *func_node, &mut syms, &ast, source),
+            Backend::Direct | Backend::V12 => {
+                codegen_function(&mut module, *func_node, &mut syms, &ast, source)
+            }
             Backend::Hir => codegen_function_hir(&mut module, *func_node, &mut syms, &ast, source),
         }
         .map_err(|e| format!("codegen error in '{}': {}", name, e))?;
@@ -124,17 +128,52 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
 
     // 6. JIT compile the entire module (handles cross-function relocations)
     ensure_registered();
-    let tm = x86_64::TargetMachine::new();
-    let mut jit = JitCompiler::new(tm);
+    let mut jit: Box<dyn JitRunner> = match backend {
+        Backend::V12 => {
+            code_forge::backend::x86_v12::ensure_registered();
+            Box::new(JitRunnerImpl::V12(JitCompiler::new(
+                code_forge::backend::x86_v12::TargetMachine::new(),
+            )))
+        }
+        _ => Box::new(JitRunnerImpl::V11(JitCompiler::new(
+            x86_64::TargetMachine::new(),
+        ))),
+    };
     jit.compile_module(&module)
         .map_err(|e| format!("JIT compile error: {}", e))?;
 
     // 7. Call main()
     let main_fn: extern "C" fn() -> i32 = jit
-        .get_fn("main")
+        .get_main()
         .map_err(|e| format!("JIT get_fn error: {}", e))?;
 
     Ok(main_fn())
+}
+
+/// JIT 运行器抽象（v11/v12 TargetMachine 泛型不同，用 enum 消除）。
+enum JitRunnerImpl {
+    V11(JitCompiler<code_forge::backend::x86_64::TargetMachine>),
+    V12(JitCompiler<code_forge::backend::x86_v12::TargetMachine>),
+}
+
+trait JitRunner {
+    fn compile_module(&mut self, module: &Module) -> Result<(), String>;
+    fn get_main(&self) -> Result<extern "C" fn() -> i32, String>;
+}
+
+impl JitRunner for JitRunnerImpl {
+    fn compile_module(&mut self, module: &Module) -> Result<(), String> {
+        match self {
+            JitRunnerImpl::V11(j) => j.compile_module(module).map_err(|e| e.to_string()),
+            JitRunnerImpl::V12(j) => j.compile_module(module).map_err(|e| e.to_string()),
+        }
+    }
+    fn get_main(&self) -> Result<extern "C" fn() -> i32, String> {
+        match self {
+            JitRunnerImpl::V11(j) => j.get_fn("main").map_err(|e| e.to_string()),
+            JitRunnerImpl::V12(j) => j.get_fn("main").map_err(|e| e.to_string()),
+        }
+    }
 }
 
 /// Print the AST structure for debugging.
