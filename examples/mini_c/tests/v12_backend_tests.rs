@@ -193,6 +193,24 @@ fn v12_shift() {
         "int main() { int v = 1; int t = 0; int i = 0; while (i < 4) { int s = v << i; i = i + 1; } return t; }",
         0,
     );
+    // 回归：t += shift 结果 + 循环（spill scratch R10/R11 曾可被 regalloc 分配，
+    // emission 的 spill load 用 scratch 覆盖活跃值 → 崩溃；现已排除 scratch）
+    assert_v12_matches_v11(
+        "int main() { int v = 1; int t = 0; int i = 0; while (i < 4) { t += v << i; i = i + 1; } return t; }",
+        15,
+    );
+    assert_v12_matches_v11(
+        "int main() { int v = 1; int t = 0; int i = 0; while (i < 4) { int s = v << i; t += s; i = i + 1; } return t; }",
+        15,
+    );
+    assert_v12_matches_v11(
+        "int main() { int v = 1; int t = 0; int i = 0; while (i < 4) { int s = v << i; t = t + 1; i = i + 1; } return t; }",
+        4,
+    );
+    assert_v12_matches_v11(
+        "int main() { struct S { int v; }; struct S s = {1}; int t = 0; int i = 0; while (i < 4) { t += s.v << i; i = i + 1; } return t; }",
+        15,
+    );
 }
 
 #[test]

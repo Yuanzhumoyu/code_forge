@@ -674,8 +674,22 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     （evict 活跃 use 值时生成 store）或提前 spill（def 后立即 spill，
     让 emission 在 def 后 store）——均属较大架构改动（v12 特有，v11
     同用例通过）
+- **6o（commit 待填）排除 spill scratch 修复 t+= 崩溃（真根因）**：
+  - **真根因（objdump 执行级定位）**：spill scratch（[abi].scratch =
+    R10/R11）**仍可被 regalloc 分配**——emission 的 spill load/store 用
+    scratch 寄存器，若 regalloc 把活跃 XReg（如循环变量 i 的地址）分配
+    到 scratch，spill 重写会用 scratch load 覆盖其值 → 后续用该地址
+    崩溃（`d9: mov -0x78(%rbp),%r11` 覆盖 r11=i 地址，后续
+    `mov (%r11),%r10d` 读垃圾地址 → SEGV）
+  - **修复**：allocatable_gp_order 排除 [abi].scratch（R10/R11）——
+    6i 曾尝试排除但触发循环 spill 暴露 v12 spill bug；6k（嵌套循环
+    locals 槽深）/6m（emission field_idx）/6n（clobber use 占用者）
+    修复后重新排除，spill 机制不再被 scratch 覆盖
+  - 验证：`t += v << i`、`int s = v << i; t += s`、`t = t + 1`、
+    struct+shift 全部崩溃场景通过；mini_c v12 24/24 全绿（含新增
+    回归）；x86_v12 14/14、集成 12/12、forge-codegen 100/100；
+    clippy/fmt 干净
 
-**下一步（迭代 6 续）**：`t += v << i` 的 evict-spill store 语义（regalloc
-spill 决策与 emission store 时机协调）；Call/函数调用 → mini_c 全量
-（AST 内联已支持，直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量
-v12；v11 语法层物理删除。
+**下一步（迭代 6 续）**：Call/函数调用 → mini_c 全量（AST 内联已支持，
+直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层
+物理删除。

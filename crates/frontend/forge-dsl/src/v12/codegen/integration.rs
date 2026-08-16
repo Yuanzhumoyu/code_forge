@@ -1496,13 +1496,24 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
                 .collect()
         })
         .unwrap_or_default();
-    // allocatable：全量 0..count（排除 SP/FP）。callee-saved 暂允许分配
-    //（prologue push 后 regalloc 覆盖保存值会破坏调用者，但单函数 JIT 测试
-    // 下工作；完整 ABI 需后续排除——见 roadmap 已知限制）。
-    // 注：spill scratch（R10/R11）暂允许分配——排除会触发循环 spill 暴露
-    // v12 spill 实现 bug（见 roadmap 已知限制）；spill 修复后再排除。
+    // allocatable：全量 0..count（排除 SP/FP + spill scratch）。
+    // spill scratch（[abi].scratch = R10/R11）必须排除——emission 的 spill
+    // load/store 用 scratch 寄存器，若 regalloc 把活跃 XReg 分配到 scratch，
+    // spill 重写会覆盖其值（t+= 循环崩溃：i 地址在 R11 被 spill load 覆盖）。
+    // 6i 曾尝试排除但触发循环 spill 暴露 v12 spill bug；6k/6m/6n 修复后
+    // 重新排除（scatch 全时保留给 spill 机制）。
+    let scratch_idx: std::collections::HashSet<u32> = model
+        .abi
+        .as_ref()
+        .map(|a| {
+            a.scratch
+                .iter()
+                .filter_map(|n| name_to_idx.get(n.as_str()).copied())
+                .collect()
+        })
+        .unwrap_or_default();
     let gp_alloc: Vec<TokenStream> = (0..gpr_count)
-        .filter(|&i| i != sp_idx && i != fp_idx)
+        .filter(|&i| i != sp_idx && i != fp_idx && !scratch_idx.contains(&i))
         .map(|i| quote! { #i })
         .collect();
     let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
