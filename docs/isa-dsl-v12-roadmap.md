@@ -635,7 +635,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     负数算术右移、hex 字面量全过
   - mini_c v12 23/23 全绿（嵌套循环 + shift）；workspace/clippy/fmt
     干净
-- **6m（commit 待填）emission spill 字段回写修复 + struct/字面量覆盖**：
+- **6m（commit daa5959）emission spill 字段回写修复 + struct/字面量覆盖**：
   - **emission.rs 物理字段错位修复**：`emit_inst_with_spills` 的 spill
     重写用 enumerate 位置（fi）而非 xreg_map 的 field_idx——指令含物理
     寄存器字段（如 `MOV_R_RM RCX` 的 op0）时 xreg_map 跳过该字段，记录
