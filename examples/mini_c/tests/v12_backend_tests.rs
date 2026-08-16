@@ -183,6 +183,16 @@ fn v12_shift() {
     // 复合赋值
     assert_v12_matches_v11("int main() { int x = 8; x <<= 2; return x; }", 32);
     assert_v12_matches_v11("int main() { int x = 32; x >>= 3; return x; }", 4);
+    // 回归：shift 结果赋局部变量 + 循环（RCX clobber 点 use 占用者曾被错误
+    // spill 致崩溃——spill_vreg 不 store 当前值，reload 读空槽垃圾）
+    assert_v12_matches_v11(
+        "int main() { int v = 1; int i = 0; while (i < 4) { int s = v << i; i = i + 1; } return 7; }",
+        7,
+    );
+    assert_v12_matches_v11(
+        "int main() { int v = 1; int t = 0; int i = 0; while (i < 4) { int s = v << i; i = i + 1; } return t; }",
+        0,
+    );
 }
 
 #[test]

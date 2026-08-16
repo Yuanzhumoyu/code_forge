@@ -649,7 +649,25 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     shift+循环 + spill 高压组合下与地址/计数寄存器交互，emission 修复
     解决 spill 重写覆盖，但 regalloc 的 use/def 活跃性仍需专门调试
     （v11 同用例通过，v12 特有）
+- **6n（commit 待填）regalloc clobber 点 use 占用者修复**：
+  - **根因**：clobber 处理（regalloc 1.5 阶段）对写死物理寄存器（如 shift
+    的 RCX）的占用者无条件 spill——但 **spill_vreg 只标记槽并释放寄存器，
+    不 store 当前寄存器值**，随后 reload_from_stack 从空槽读到垃圾。
+    shift 场景：v 被分配到 RCX（load 时 RCX 可用），shift 的
+    `MOV_R_RM RCX, {1}`（mov rcx, 计数）clobber RCX，处理 spill v，
+    后续 reload v 读到垃圾 → 崩溃
+  - **修复**：clobber 处理跳过**本指令 use** 的占用者——use 在寄存器中
+    读旧值（clobber 写坏发生在指令写入阶段，use 在读旧值阶段），之后
+    该 XReg 若再活跃，后续指令的 phys_conflicts 会避开已 clobber 的
+    寄存器。非 use 占用者照常 spill
+  - 新增 v12_shift 回归用例：`int s = v << i` + 循环 + 读取其他局部变量
+    全过；更新 clobber_map 测试（use 占用者不 spill 的新语义）
+  - mini_c v12 24/24 全绿；forge-codegen 100/clippy/fmt 干净
+  - **剩余限制**：`t += v << i`（shift 结果跨指令存活到 Iadd 累加）仍
+    ACCESS_VIOLATION——shift 结果的 interval 跨指令 + clobber 交互，需
+    interval 级 clobber 传播或计数 Fixed(RCX) 约束（v12 特有）
 
-**下一步（迭代 6 续）**：shift+循环累加崩溃（regalloc 活跃性，v12 特有）；
-Call/函数调用 → mini_c 全量（AST 内联已支持，直呼 CALL 指令待定）；
-x86 124 指令 + 115 lower 全量 v12；v11 语法层物理删除。
+**下一步（迭代 6 续）**：`t += v << i` 跨指令 shift 结果崩溃（interval 级
+clobber 或 Fixed 约束）；Call/函数调用 → mini_c 全量（AST 内联已支持，
+直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层
+物理删除。

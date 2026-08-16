@@ -231,6 +231,17 @@ impl<'a> BtState<'a> {
             };
             for &clobber_reg in &clobbers {
                 if let Some(victim) = self.phys_owner(clobber_reg) {
+                    // 占用者若是本指令的 use（值需在寄存器被读取），不能直接
+                    // spill——spill_vreg 只标记槽并释放寄存器，不 store 当前
+                    // 寄存器值，随后 reload_from_stack 会从空槽读到垃圾
+                    // （shift 的 RCX clobber 场景：v 在 RCX 且是 MOV_R_RM
+                    // {out},{0} 的 use，被 spill 后 reload 读到垃圾 → 崩溃）。
+                    // 跳过：use 在寄存器中读旧值（clobber 写坏发生在指令
+                    // 写入阶段，use 在读旧值阶段），之后该 XReg 若再活跃，
+                    // 后续指令的 phys_conflicts 会避开已 clobber 的寄存器。
+                    if inst_xregs.contains(&victim) {
+                        continue;
+                    }
                     self.spill_vreg(victim)?;
                 }
             }
@@ -913,15 +924,16 @@ mod clobber_map_tests {
         vcode
     }
 
-    /// 1.5 阶段溢出路径：XReg 在 clobber 点前已分配 RAX(0)，clobber 点必须溢出。
+    /// clobber 点占用者若同时是本指令 use：值保留在寄存器（不 spill）——
+    /// spill_vreg 不 store 当前寄存器值，reload 会读空槽垃圾。
     #[test]
-    fn test_clobber_spills_existing_owner() {
+    fn test_clobber_use_owner_not_spilled() {
         let mut config = make_config(16, 16);
         config
             .classes
             .get_mut(&RegClass::GPR64)
             .unwrap()
-            .allocatable = vec![0]; // 仅 RAX
+            .allocatable = vec![0, 1]; // RAX + RCX
         let x0 = xgpr(0);
         let vcode = clobber_vcode();
         let xreg_map = vec![
@@ -934,10 +946,11 @@ mod clobber_map_tests {
         let alloc = BacktrackingAllocator::new();
         let result = alloc
             .allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map)
-            .expect("alloc should succeed via spill");
+            .expect("alloc should succeed");
+        // x0 在 clobber 点被使用（值需在寄存器）→ 不应被 spill
         assert!(
-            result.spill_slots.contains_key(&x0),
-            "clobber RAX 处 x0 必须被溢出"
+            !result.spill_slots.contains_key(&x0),
+            "clobber 点 use 的占用者不应 spill（值保留在寄存器）"
         );
     }
 
