@@ -664,10 +664,18 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     全过；更新 clobber_map 测试（use 占用者不 spill 的新语义）
   - mini_c v12 24/24 全绿；forge-codegen 100/clippy/fmt 干净
   - **剩余限制**：`t += v << i`（shift 结果跨指令存活到 Iadd 累加）仍
-    ACCESS_VIOLATION——shift 结果的 interval 跨指令 + clobber 交互，需
-    interval 级 clobber 传播或计数 Fixed(RCX) 约束（v12 特有）
+    ACCESS_VIOLATION。**根因（6n 后深调定位）**：非 clobber 触发的
+    **evict 路径**——t 的 load 结果（v13898）被分配到 RCX（其 interval
+    从 load 点起，不含 shift 的 RCX clobber 点，分配合法），后续指令
+    evict_and_assign 选它为 victim 时，`spill_vreg` 只标记槽不 store
+    当前寄存器值，reload 读 t 局部槽的旧值（0）→ 累加基于错误值。
+    与 6n 修复的 clobber 路径同源（spill_vreg 不 store），但触发点是
+    **evict** 而非 clobber。完整修复需 regalloc 的 spill-store 协调
+    （evict 活跃 use 值时生成 store）或提前 spill（def 后立即 spill，
+    让 emission 在 def 后 store）——均属较大架构改动（v12 特有，v11
+    同用例通过）
 
-**下一步（迭代 6 续）**：`t += v << i` 跨指令 shift 结果崩溃（interval 级
-clobber 或 Fixed 约束）；Call/函数调用 → mini_c 全量（AST 内联已支持，
-直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层
-物理删除。
+**下一步（迭代 6 续）**：`t += v << i` 的 evict-spill store 语义（regalloc
+spill 决策与 emission store 时机协调）；Call/函数调用 → mini_c 全量
+（AST 内联已支持，直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量
+v12；v11 语法层物理删除。
