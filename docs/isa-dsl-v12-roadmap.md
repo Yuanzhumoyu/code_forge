@@ -611,7 +611,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
   - mini_c v12 19/19（嵌套循环 ignored）；workspace 全量
     `cargo test --workspace --exclude forge-rustc` 无 FAILED；
     clippy/fmt 干净
-- **6k（commit 待填）嵌套循环修复——locals 槽深计入 max_stack_bytes**：
+- **6k（commit 1007409）嵌套循环修复——locals 槽深计入 max_stack_bytes**：
   - **根因**：mini_c 的 `alloc_slot` 生成 `stack_addr(0) + iadd(iconst(-N))`
     模式，StackAddr 本身 immediate=0 不贡献深度，真正的槽偏移在 iconst 里。
     预扫描只统计 StackAddr immediate → `max_stack_bytes=0`，locals 区不
