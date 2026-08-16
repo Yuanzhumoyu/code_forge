@@ -830,9 +830,12 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                 stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
             }
         } else if ctx.modrm.is_none() {
-            // 无 ModRM 的变长形式（JMP/CALL rel32、RET 等）：prefix + escape +
-            // opcode + imm（无 REX、无 ModRM）。
+            // 无 ModRM 的变长形式（JMP/CALL rel32、RET、CQO 等）：
+            // [REX.W] + prefix + escape + opcode + imm。
             stmts.push(opsize_bind);
+            if ctx.rex_w_always {
+                stmts.push(quote! { __bytes.push(0x48u8); });
+            }
             let prefix_expr = &ctx.prefix_expr;
             stmts.push(quote! {
                 let __p = #prefix_expr;

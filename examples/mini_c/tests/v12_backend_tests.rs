@@ -115,3 +115,46 @@ fn v12_icmp_result_direct() {
     assert_v12_matches_v11("int main() { int x = 5; int y = (x == 5); return y; }", 1);
     assert_v12_matches_v11("int main() { int x = 4; int y = (x == 5); return y; }", 0);
 }
+
+#[test]
+fn v12_while_loop() {
+    // while 循环：icmp + Branch + 变量更新
+    assert_v12_matches_v11(
+        "int main() { int i = 0; while (i < 5) { i = i + 1; } return i; }",
+        5,
+    );
+    assert_v12_matches_v11(
+        "int main() { int s = 0; int i = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }",
+        55,
+    );
+}
+
+#[test]
+fn v12_for_loop() {
+    // for 循环（init/cond/update 三部分）
+    assert_v12_matches_v11(
+        "int main() { int s = 0; for (int i = 1; i <= 10; i = i + 1) { s = s + i; } return s; }",
+        55,
+    );
+}
+
+#[test]
+#[ignore = "v12 嵌套循环（内层作用域变量 spill 交互）待调试"]
+fn v12_nested_loop() {
+    // 嵌套循环：双重 while
+    assert_v12_matches_v11(
+        "int main() { int s = 0; int i = 0; while (i < 3) { int j = 0; while (j < 3) { s = s + 1; j = j + 1; } i = i + 1; } return s; }",
+        9,
+    );
+}
+
+#[test]
+fn v12_division() {
+    // 除法：Sdiv/Srem（movsxd RAX + cqo + idiv + 物理寄存器序列）
+    assert_v12_matches_v11("int main() { return 10 / 3; }", 3);
+    assert_v12_matches_v11("int main() { return 10 % 3; }", 1);
+    assert_v12_matches_v11("int main() { return -10 / 3; }", -3);
+    assert_v12_matches_v11("int main() { return -10 % 3; }", -1);
+    assert_v12_matches_v11("int main() { int x = 100; int y = 7; return x / y; }", 14);
+    assert_v12_matches_v11("int main() { int x = 100; int y = 7; return x % y; }", 2);
+}

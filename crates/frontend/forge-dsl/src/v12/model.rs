@@ -454,6 +454,9 @@ pub struct Abi {
     /// 被调用者保存寄存器（prologue push / epilogue pop 顺序）。
     #[serde(default)]
     pub callee_saved: Option<CalleeSaved>,
+    /// 溢出 scratch 寄存器（spill load/store 用；x86 R10/R11）。
+    #[serde(default)]
+    pub scratch: Vec<String>,
 }
 
 /// 帧布局配置（[abi.frame]）。

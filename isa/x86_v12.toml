@@ -282,6 +282,11 @@ name = "NOOP"             # 无操作数：单字节 opcode（RET 0xC3 等）
 opcode_bytes = 1
 
 [[forms]]
+name = "NOOP_REXW"        # 无操作数 + 恒 REX.W（CQO 48 99）
+rex_w = "always"
+opcode_bytes = 1
+
+[[forms]]
 name = "NOOP_ESC"         # 无操作数 + escape（NOP 0F 0B、MFENCE 0F AE F0、CQO 48 99）
 escape = [0x0F]
 opcode_bytes = 1
@@ -1421,9 +1426,8 @@ effect = ["Write"]
 
 [[instructions]]
 name = "CQO"
-form = "NOOP_ESC"
+form = "NOOP_REXW"
 opcode = 0x99
-fields = { prefix = 0, w = 0 }
 mnemonic = "cqo"
 effect = ["Write"]
 
@@ -1597,6 +1601,8 @@ effect = ["Pure"]
 
 [abi]
 stack_align = 16
+# 溢出 scratch（spill load/store 用；R10/R11）
+scratch = ["R10", "R11"]
 
 [[abi.arg_class]]
 class = "int"
@@ -1617,6 +1623,7 @@ fp = "RBP"
 alloc_inst = "SUB64_R_IMM32"
 free_inst = "ADD64_R_IMM32"
 fp_push_bytes = 8
+
 
 [abi.callee_saved]
 gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
@@ -1705,3 +1712,43 @@ insts = ["MOV_R_RM {out}, {0}", "NOT_RM {out}"]
 [[lowering]]
 op = "StackAddr"
 insts = ["LEA_R64_SIB {out}, [RBP+{off}]"]
+
+# ── 除法（v11 语义：movsxd RAX,rs1 + cqo + idiv %t + mov rd,RAX/RDX）──
+
+[[lowering]]
+op = "Sdiv"
+insts = [
+    "MOV_R_RM {t}, {1}",
+    "MOVSXD_R_GPR RAX, {0}",
+    "CQO",
+    "IDIV_RM {t}",
+    "MOV_R_RM {out}, RAX",
+]
+
+[[lowering]]
+op = "Srem"
+insts = [
+    "MOV_R_RM {t}, {1}",
+    "MOVSXD_R_GPR RAX, {0}",
+    "CQO",
+    "IDIV_RM {t}",
+    "MOV_R_RM {out}, RDX",
+]
+
+[[lowering]]
+op = "Udiv"
+insts = [
+    "XOR_RM_R RDX, RDX",
+    "MOV_R_RM RAX, {0}",
+    "DIV_RM {1}",
+    "MOV_R_RM {out}, RAX",
+]
+
+[[lowering]]
+op = "Urem"
+insts = [
+    "XOR_RM_R RDX, RDX",
+    "MOV_R_RM RAX, {0}",
+    "DIV_RM {1}",
+    "MOV_R_RM {out}, RDX",
+]

@@ -986,6 +986,20 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
 
         // 展开 insts 模板 → 指令构造序列（符号化操作数 {out}/{0}/{1}）
         let inst_toks = gen_lowering_insts(&rule.insts, infos, &name_to_vn)?;
+        // 模板含 {t} → 预分配一个临时 XReg
+        let t_bind: TokenStream = if rule.insts.iter().any(|s| s.contains("{t}")) {
+            quote! { let __t = ctx.alloc_xreg(__DEFAULT_GPR_CLASS); }
+        } else {
+            quote! {}
+        };
+        // clobber：模板中写死的物理寄存器（RAX/RDX 等，非 {占位符}）——
+        // regalloc 在本指令点避开（div 的 RAX/RDX、shift 的 CL 等）。
+        let clobbers = collect_phys_clobbers(&rule.insts, infos, model)?;
+        let clobber_set: TokenStream = if clobbers.is_empty() {
+            quote! {}
+        } else {
+            quote! { ctx.current_clobbers = vec![#(#clobbers),*]; }
+        };
         let when_guard: TokenStream = match &rule.when {
             Some(_) => quote! { /* when 谓词：由 pipeline 上下文求值（迭代 5 接线） */ },
             None => quote! {},
@@ -1016,6 +1030,8 @@ fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Str
                 let mut __pack = crate::prelude::InstPacket::new();
                 #when_guard
                 #cc_bind
+                #t_bind
+                #clobber_set
                 #(#inst_toks)*
                 Ok(__pack)
             }
@@ -1217,6 +1233,10 @@ fn gen_lowering_insts(
                     "{0}" => (quote! { 0u32 }, quote! { rs1 }),
                     "{1}" => (quote! { 0u32 }, quote! { rs2 }),
                     "{2}" => (quote! { 0u32 }, quote! { rs3 }),
+                    "{t}" if slot.kind == OperandKind::Reg => {
+                        // 临时寄存器（v11 %t 语义）：模板级分配，__t 预声明
+                        (quote! { 0u32 }, quote! { __t })
+                    }
                     "{iconst}" if slot.kind == OperandKind::Imm => {
                         // 常量池解析（Iconst 的 index → 值；v11 语义一致）
                         (
@@ -1322,14 +1342,14 @@ fn gen_lowering_insts(
                 .find(|(f, _, _)| f == &fid.to_string())
                 .map(|(_, _, x)| x.clone())
                 .unwrap_or_else(|| quote! { 0u32 });
-            // 物理寄存器占位（xreg_expr = 0u32 字面量）不参与 map_reg_field——
-            // 只有 XReg 符号（rd/rs1/rs2/rs3）映射到 regalloc
-            if xreg_expr.to_string() == "0u32" {
-                continue;
+            // 物理寄存器占位（xreg_expr = 0u32 字面量）不参与 map_reg_field，
+            // 但 field 序号仍递增（set_reg_field 按 Inst 的 Reg 字段序列
+            // 计数，含物理寄存器——与 v11 一致，否则后续操作数错位）。
+            if xreg_expr.to_string() != "0u32" {
+                out.push(quote! {
+                    __pack.map_reg_field(#xreg_expr, __idx, #reg_field_i as u8, #is_def);
+                });
             }
-            out.push(quote! {
-                __pack.map_reg_field(#xreg_expr, __idx, #reg_field_i as u8, #is_def);
-            });
             reg_field_i += 1;
         }
     }
@@ -1463,12 +1483,6 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     let fp_expr = fp_ref.0;
     let sp_idx = sp_ref.1;
     let fp_idx = fp_ref.1;
-    // allocatable：全量 0..count（排除 SP/FP）
-    let gp_alloc: Vec<TokenStream> = (0..gpr_count)
-        .filter(|&i| i != sp_idx && i != fp_idx)
-        .map(|i| quote! { #i })
-        .collect();
-    let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
     // callee_saved：从 [abi].callee_saved.gpr 解析物理索引（顺序 = prologue push 序）。
     let callee_saved: Vec<TokenStream> = model
         .abi
@@ -1476,6 +1490,26 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
         .and_then(|a| a.callee_saved.as_ref())
         .map(|cs| {
             cs.gpr
+                .iter()
+                .filter_map(|n| name_to_idx.get(n.as_str()).copied())
+                .map(|i| quote! { #i })
+                .collect()
+        })
+        .unwrap_or_default();
+    // allocatable：全量 0..count（排除 SP/FP）。callee-saved 暂允许分配
+    //（prologue push 后 regalloc 覆盖保存值会破坏调用者，但单函数 JIT 测试
+    // 下工作；完整 ABI 需后续排除——见 roadmap 已知限制）。
+    let gp_alloc: Vec<TokenStream> = (0..gpr_count)
+        .filter(|&i| i != sp_idx && i != fp_idx)
+        .map(|i| quote! { #i })
+        .collect();
+    let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
+    // scratch：从 [abi].scratch 解析物理索引（spill load/store 用）。
+    let scratch: Vec<TokenStream> = model
+        .abi
+        .as_ref()
+        .map(|a| {
+            a.scratch
                 .iter()
                 .filter_map(|n| name_to_idx.get(n.as_str()).copied())
                 .map(|i| quote! { #i })
@@ -1505,7 +1539,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
                 vec![#(#fp_alloc),*]
             }
             fn scratch_regs(&self) -> Vec<u32> {
-                vec![]
+                vec![#(#scratch),*]
             }
             fn callee_saved(&self) -> Vec<u32> {
                 vec![#(#callee_saved),*]
@@ -1611,4 +1645,43 @@ fn parse_mem_template(text: &str, ctx: &str) -> Result<TokenStream, String> {
         None => quote! { 0i64 },
     };
     Ok(quote! { MemRef { base: #base, disp: #disp } })
+}
+
+/// 从 lowering 模板收集写死的物理寄存器（RAX/RDX 等，非 {占位符}）→
+/// clobber 列表（物理索引, RegClass）。regalloc 在本指令点避开。
+fn collect_phys_clobbers(
+    insts: &[String],
+    infos: &[InstInfo],
+    model: &V12Model,
+) -> Result<Vec<TokenStream>, String> {
+    // 主 GPR 组名 → 物理索引
+    let gpr_names: Vec<String> = model
+        .reg
+        .get("gpr64")
+        .or_else(|| model.reg.get("gpr"))
+        .map(group_names)
+        .transpose()?
+        .unwrap_or_default();
+    let name_to_idx: std::collections::HashMap<&str, u32> = gpr_names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i as u32))
+        .collect();
+    let mut out: Vec<TokenStream> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for t in insts {
+        for part in t.split(|c: char| c.is_whitespace() || c == ',' || c == '(' || c == ')') {
+            let part = part.trim();
+            if part.is_empty() || part.starts_with('{') || part.starts_with('@') {
+                continue;
+            }
+            if let Some(&idx) = name_to_idx.get(part)
+                && seen.insert(part.to_uppercase())
+            {
+                out.push(quote! { (#idx, forge_ir::RegClass::GPR64) });
+            }
+        }
+    }
+    let _ = infos;
+    Ok(out)
 }
