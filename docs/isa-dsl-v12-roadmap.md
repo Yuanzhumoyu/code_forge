@@ -458,3 +458,53 @@ x86 全量收官）。
 **下一步（迭代 5）**：lowering/abi/emit 迁移（符号化操作数 + abi.arg_class
 by-ref 为 YMM 铺路）+ 结构化谓词接入 lowering + x86 全量收官（@op_rm/
 @cmovcc/@setcc/@mov_imm64/@sse_rr_imm8/PSHUFD 等 + SHIFT_BIN）。
+
+## 16. 迭代 5 完成记录（2026-08）——TargetMachine 集成层 + x86 终结
+
+**分支决策**：用户选择「直接集成 TargetMachine」（vs 声明层先行）——v12
+自包含模块之上生成 forge-codegen 组件，不再停留于纯自包含。
+
+- **5a（commit fb34785）x86 终结 +r 形式**：
+  - 新 form 键 `opcode_reg`（50+r/push、58+r/pop、B8+r/mov_imm64、C8+r/bswap）：
+    encode = REX（always → 0x48|B；否则 reg≥8 → 0x41）+ [escape] + opcode|reg&7
+    + imm；decode = 独立 arm（高 5 位匹配 + REX.B<<3 提取）
+  - vlen_ctx 的 modrm 条件化（`+r` 形式无 ModRM，Option<ModrmKind>）
+  - asm mnemonic 前缀修正：脚本改用 `mnemonic` 字段而非 name 小写
+    （sub/add 家族 + VEX family `{mnemonic}` 模板）
+  - x86_v12.toml +12 条：NOT/NEG/DIV/IDIV（MRR_EXT_OP）、SUB64/ADD64_R_IMM32
+    （MRR_EXT64_IMM32）、PSHUFD/SHUFPS（SSE_RR_IMM8）、PUSH/POP（PUSH_REG/
+    POP_REG）、MOV_REG_IMM64（MOV_IMM64）、BSWAP_R → 共 **118 指令**
+  - 测试：+r golden 与 v11 逐字节一致 + 规范字节 + roundtrip + asm 往返
+    （x86_v12_tests 10→12）
+- **5b（commit 50a1e86）TargetMachine 集成层**：
+  - `v12/codegen/integration.rs`（新）：自包含模块之上生成 forge-codegen 组件
+    - **Reg 物理寄存器枚举** + PhysReg impl + `__DEFAULT_GPR/FPR_CLASS`
+      （v12 组内索引语义；x86 gpr64 0..15、xmm 0..15）
+    - **MachineInst impl**：uses/defs/reg_field/set_reg_field/effects/
+      is_branch/is_call/is_ret/is_move——每变体一条 arm，Reg 操作数按操作数序
+      编号（与 lowering map_reg_field 对齐）；effect 标签驱动分支/调用/返回
+    - **TargetEncoder/Decoder/Disassembler/Assembler**：包装自包含
+      encode/decode/disassemble/assemble（操作数物理索引，regalloc 回填后
+      直接编码——与 v11 的 set_reg_field 回填语义一致）
+    - **TargetABI**：`[abi]` arg_class 类别分类 → arg_regs（int 类在前，
+      float/vector 依次）；stack_align；vector by-ref 策略为 YMM 铺路
+    - **TargetFrameLowering**：最小实现（prologue/epilogue no-op；[emit]
+      指令序列接入与 spill 在迭代 6 补齐）
+    - **TargetLowering**：`[[lowering]]` 符号化操作数 `{out}`/`{0}`/`{1}`
+      展开 → InstPacket（Reg 字段占位 0 + map_reg_field，regalloc 回填；
+      opsize 缺省 64；物理寄存器/imm 直接写死；`when` 谓词解析校验）
+    - **IsaInfo/RegInfo**（sp/fp/allocatable 顺序按寄存器名解析，缺失回退
+      from_index）+ **TargetMachine struct** + ensure_registered
+  - 模型：`Instruction` 加 `effect` 字段（Pure/Read/Write/Branch/Jump/Call/Ret）
+  - validate：arg_class `regs` 可空（by-ref 策略类不占寄存器）
+  - x86_v12.toml：effect（PUSH/POP）+ `[abi]`（stack_align 16 + int/float/
+    vector by-ref arg_class）+ 7 条 `[[lowering]]`（Iadd/Isub/Band/Bor/Bxor/
+    Imul/Icmp）
+  - 测试：`v12_integration_tests` 6 个（TM 组装 / MachineInst 查询 / encoder-
+    decoder 经 TM / lowering Iadd 包结构 / 未知 op Unsupported / riscv TM）；
+    forge-dsl 175 全绿、x86_v12 12/12、riscv64_v12 9/9、workspace 51 套件全绿、
+    clippy 0 真实警告、fmt 干净
+
+**下一步（迭代 6）**：v12 后端跑通 mini_c 双后端（补 JMP/CALL/RET 指令 +
+terminator lowering + [emit] prologue/epilogue + spill）；x86 124 指令 + 115
+lower 全量 v12；v11 语法层物理删除。
