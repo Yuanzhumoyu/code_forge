@@ -1499,6 +1499,8 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     // allocatable：全量 0..count（排除 SP/FP）。callee-saved 暂允许分配
     //（prologue push 后 regalloc 覆盖保存值会破坏调用者，但单函数 JIT 测试
     // 下工作；完整 ABI 需后续排除——见 roadmap 已知限制）。
+    // 注：spill scratch（R10/R11）暂允许分配——排除会触发循环 spill 暴露
+    // v12 spill 实现 bug（见 roadmap 已知限制）；spill 修复后再排除。
     let gp_alloc: Vec<TokenStream> = (0..gpr_count)
         .filter(|&i| i != sp_idx && i != fp_idx)
         .map(|i| quote! { #i })
