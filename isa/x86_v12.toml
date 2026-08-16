@@ -89,6 +89,11 @@ kind = "label"
 signed = true
 width = 32
 
+[[operand_slots]]
+name = "cond"
+kind = "cond"
+width = 8
+
 # ─────────────────────────── 编码形式 ───────────────────────────
 
 [[forms]]
@@ -111,10 +116,17 @@ escape = [0x0F]
 opcode_bytes = 1
 
 [[forms]]
-name = "MRR_0F_FIX64"
+name = "MRR_0F_FIX64"   # @modrm + 0F escape + opsize 固定 64（MOVQ 系列）
 modrm = "rr"
 opsize = 64
 escape = [0x0F]
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_0F38"       # @modrm + 0F 38 escape（PMULLD 等）
+modrm = "rr"
+opsize = 64
+escape = [0x0F, 0x38]
 opcode_bytes = 1
 
 [[forms]]
@@ -256,6 +268,22 @@ opcode_bytes = 1
 
 [[forms]]
 name = "NOOP"             # 无操作数：单字节 opcode（RET 0xC3 等）
+opcode_bytes = 1
+
+[[forms]]
+name = "NOOP_ESC"         # 无操作数 + escape（NOP 0F 0B、MFENCE 0F AE F0、CQO 48 99）
+escape = [0x0F]
+opcode_bytes = 1
+
+[[forms]]
+name = "REL32_ESC"        # rel32 + escape（JCC_REL32: 0F cond rel32）
+escape = [0x0F]
+imm = 32
+opcode_bytes = 1
+
+[[forms]]
+name = "OP_EXT"           # FF /digit（CALL_RM FF /2: modrm.ext=2、rm=op0）
+modrm = "ext"
 opcode_bytes = 1
 
 # ─────────────────── 指令（顺序 = v11 声明序）───────────────────
@@ -1356,6 +1384,201 @@ operands = [{ slot = "rel", role = "in" }]
 mnemonic = "call"
 asm = "call {0}"
 effect = ["Call"]
+
+# ── 缺失指令补齐（迭代 6 收官，对齐 v11 124 条）──
+
+[[instructions]]
+name = "NOP"
+form = "NOOP"
+opcode = 0x90
+mnemonic = "nop"
+
+[[instructions]]
+name = "UD2"
+form = "NOOP_ESC"
+opcode = 0x0B
+mnemonic = "ud2"
+effect = ["Trap"]
+
+[[instructions]]
+name = "MFENCE"
+form = "NOOP_ESC"
+opcode = 0xAE
+fields = { prefix = 0, w = 0 }
+mnemonic = "mfence"
+effect = ["Write"]
+
+[[instructions]]
+name = "CQO"
+form = "NOOP_ESC"
+opcode = 0x99
+fields = { prefix = 0, w = 0 }
+mnemonic = "cqo"
+effect = ["Write"]
+
+[[instructions]]
+name = "CALL_RM"
+form = "OP_EXT"
+opcode = 0xFF
+fields = { ext = 2 }
+operands = [{ slot = "gpr", role = "in" }]
+mnemonic = "call_rm"
+asm = "call_rm {0}"
+effect = ["Call"]
+
+[[instructions]]
+name = "JCC_REL32"
+form = "REL32_ESC"
+opcode = 0x80            # 条件码 = opcode 低 4 位（0x80..0x8F）
+operands = [{ slot = "cond", role = "in" }, { slot = "rel", role = "in" }]
+mnemonic = "jcc"
+asm = "jcc {0}, {1}"
+effect = ["Branch"]
+
+[[instructions]]
+name = "SETCC_RM8"
+form = "OP_EXT"
+opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
+fields = { ext = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "cond", role = "in" }]
+mnemonic = "setcc"
+asm = "setcc {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "LEA_R64_SIB"
+form = "MRR_MEMREF"
+opcode = 0x8D
+operands = [{ slot = "gpr", role = "out" }, { slot = "mem", role = "in" }]
+mnemonic = "lea"
+asm = "lea {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "LEA_RBP_OFF"
+form = "MRR_MEMREF"
+opcode = 0x8D
+operands = [{ slot = "gpr", role = "out" }, { slot = "mem", role = "in" }]
+mnemonic = "lea_rbp"
+asm = "lea_rbp {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVABS_GLOBAL"
+form = "MOV_IMM64"
+operands = [{ slot = "gpr", role = "out" }, { slot = "imm64", role = "in" }]
+mnemonic = "movabs"
+asm = "movabs {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "CMOVCC_R_RM"
+form = "MRR_0F"
+opcode = 0x40            # 条件码 = opcode 低 4 位（0x40..0x4F）
+operands = [{ slot = "gpr", role = "inout" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "cmovcc"
+asm = "cmovcc {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "ROUNDSD_I"
+form = "SSE_RR_IMM8"
+opcode = 0x0A
+fields = { prefix = 0x66, w = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
+mnemonic = "roundsd"
+asm = "roundsd {0}, {1}, {2}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "PMULLD"
+form = "MRR_0F38"
+opcode = 0x40
+fields = { prefix = 0x66, w = 0 }
+operands = [{ slot = "fpr", role = "inout" }, { slot = "fpr", role = "in" }]
+mnemonic = "pmulld"
+asm = "pmulld {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVQ_XMM_R64"
+form = "MRR_0F_FIX64"
+opcode = 0x6E
+fields = { prefix = 0x66, w = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
+mnemonic = "movq_xmm"
+asm = "movq_xmm {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVQ_R64_XMM"
+form = "MRR_0F_FIX64"
+opcode = 0x7E
+fields = { prefix = 0x66, w = 1 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "movq_r64"
+asm = "movq_r64 {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVQ_XMM_FREG"
+form = "MRR_0F_FIX64"
+opcode = 0x6E
+fields = { prefix = 0x66, w = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "movq_xmm_f"
+asm = "movq_xmm_f {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVQ_FREG_XMM"
+form = "MRR_0F_FIX64"
+opcode = 0x7E
+fields = { prefix = 0x66, w = 1 }
+operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+mnemonic = "movq_freg"
+asm = "movq_freg {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVAPS_MR"
+form = "MRR_0F_FIX64"
+opcode = 0x29
+fields = { prefix = 0, w = 0 }
+operands = [{ slot = "gpr", role = "in" }, { slot = "fpr", role = "in" }]
+mnemonic = "movaps_mr"
+asm = "movaps_mr {0}, {1}"
+effect = ["Write"]
+
+[[instructions]]
+name = "LZCNT_R"
+form = "MRR_0F"
+opcode = 0xBD
+fields = { prefix = 0xF3, w = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "lzcnt"
+asm = "lzcnt {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "TZCNT_R"
+form = "MRR_0F"
+opcode = 0xBC
+fields = { prefix = 0xF3, w = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "tzcnt"
+asm = "tzcnt {0}, {1}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "POPCNT_R"
+form = "MRR_0F"
+opcode = 0xB8
+fields = { prefix = 0xF3, w = 0 }
+operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+mnemonic = "popcnt"
+asm = "popcnt {0}, {1}"
+effect = ["Pure"]
 
 # ============================================================
 # 调用约定（迭代 5 声明层：arg_class 类别分类，为 YMM by-ref 铺路）

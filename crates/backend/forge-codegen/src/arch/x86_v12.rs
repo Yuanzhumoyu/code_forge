@@ -56,8 +56,6 @@ mod tests {
             b.ret(&[v]);
             m.add_function(b.finish().expect("build"));
         }
-        let jit = crate::jit::JitCompiler::new(TargetMachine::new());
-        let _ = jit;
         let compiler = FunctionCompiler::new(TargetMachine::new());
         let func = m.get_function(forge_ir::FuncRef(0));
         let cf = compiler.compile_raw(func).expect("compile const42");

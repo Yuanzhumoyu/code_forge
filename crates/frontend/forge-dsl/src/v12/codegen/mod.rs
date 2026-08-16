@@ -338,6 +338,7 @@ fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
                         let ty = match slot.kind {
                             OperandKind::Reg => quote! { u32 },
                             OperandKind::Opsize => quote! { u8 },
+                            OperandKind::Cond => quote! { u8 },
                             OperandKind::Mem => quote! { MemRef },
                             _ => quote! { i64 },
                         };
@@ -843,7 +844,15 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                 }
             }
             let opcode = info.inst.opcode.unwrap();
-            stmts.push(quote! { __bytes.push(#opcode as u8); });
+            if let Some((_, cond_fid, _)) = info
+                .operands
+                .iter()
+                .find(|(_, _, s)| s.kind == OperandKind::Cond)
+            {
+                stmts.push(quote! { __bytes.push((#opcode | (*#cond_fid as u64 & 0xF)) as u8); });
+            } else {
+                stmts.push(quote! { __bytes.push(#opcode as u8); });
+            }
             // 尾部立即数（form.imm：rel32 等）
             if ctx.imm_bytes > 0 {
                 let imm_fid = info
@@ -896,14 +905,22 @@ fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                     __bytes.push(__rex);
                 }
             });
-            // escape + opcode
+            // escape + opcode（cond 操作数 → opcode 低 4 位：JCC/SETCC/CMOVCC）
             if let Some(esc) = &info.form.escape {
                 for e in esc {
                     stmts.push(quote! { __bytes.push(#e as u8); });
                 }
             }
             let opcode = info.inst.opcode.unwrap();
-            stmts.push(quote! { __bytes.push(#opcode as u8); });
+            if let Some((_, cond_fid, _)) = info
+                .operands
+                .iter()
+                .find(|(_, _, s)| s.kind == OperandKind::Cond)
+            {
+                stmts.push(quote! { __bytes.push((#opcode | (*#cond_fid as u64 & 0xF)) as u8); });
+            } else {
+                stmts.push(quote! { __bytes.push(#opcode as u8); });
+            }
             // ModRM：mod=11（rr/ext）或内存（rm_mem/rm_memref）
             if modrm.is_mem() {
                 let force = mem_force_disp(model, info)?;
@@ -1188,7 +1205,16 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
             }
         }
         let opcode = info.inst.opcode.unwrap();
-        conds.push(quote! { bytes[__o + #off] == #opcode as u8 });
+        if info
+            .operands
+            .iter()
+            .any(|(_, _, s)| s.kind == OperandKind::Cond)
+        {
+            // 条件码在 opcode 低 4 位：guard 匹配高 4 位（JCC/SETCC/CMOVCC）
+            conds.push(quote! { (bytes[__o + #off] & 0xF0) == (#opcode & 0xF0) as u8 });
+        } else {
+            conds.push(quote! { bytes[__o + #off] == #opcode as u8 });
+        }
         off += 1;
         // 无 ModRM 形式（JMP/CALL rel32、RET）：imm/label 紧接 opcode；
         // 有 ModRM 形式：modrm 在 opcode 之后。
@@ -1231,6 +1257,12 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
                     )),
                 },
                 OperandKind::Opsize => Ok(quote! { __opsize as u8 }),
+                OperandKind::Cond => {
+                    // 条件码 = opcode 字节低 4 位（JCC/SETCC/CMOVCC）；
+                    // opcode 在 modrm_idx - 1（modrm_idx = opcode 后位置）
+                    let cond_off = modrm_idx.saturating_sub(1);
+                    Ok(quote! { (bytes[__o + #cond_off] & 0x0F) as u8 })
+                }
                 OperandKind::Imm | OperandKind::Label => {
                     let raw = imm_read_ts(imm_start, ctx.imm_bytes);
                     let signed = slot.signed.unwrap_or(false);
@@ -1241,10 +1273,6 @@ fn gen_vlen_decode(infos: &[InstInfo]) -> Result<TokenStream, String> {
                         Ok(quote! { #raw as i64 })
                     }
                 }
-                _ => Err(format!(
-                    "[[instructions.{}]]: operand kind {:?} unsupported in vlen decode",
-                    info.inst.name, slot.kind
-                )),
             }
         };
         let mut binds: Vec<TokenStream> = Vec::new();
@@ -1522,6 +1550,7 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
             quote! { #gname(*#fid).unwrap_or("?").to_string() }
         }
         OperandKind::Mem => quote! { __render_mem(#fid) },
+        OperandKind::Cond => quote! { __render_cond(*#fid as u8) },
         _ => quote! { #fid.to_string() },
     }
 }
@@ -1709,6 +1738,27 @@ fn gen_assemble(infos: &[InstInfo]) -> Result<TokenStream, String> {
                 v.checked_neg().ok_or_else(|| format!("immediate out of range '{s}'"))
             } else {
                 Ok(v)
+            }
+        }
+        fn __parse_cond(s: &str) -> Result<u8, String> {
+            match s.trim().to_ascii_lowercase().as_str() {
+                "o" => Ok(0), "no" => Ok(1), "b" | "c" | "nae" => Ok(2),
+                "ae" | "nb" | "nc" => Ok(3), "e" | "z" => Ok(4),
+                "ne" | "nz" => Ok(5), "be" | "na" => Ok(6),
+                "a" | "nbe" => Ok(7), "s" => Ok(8), "ns" => Ok(9),
+                "p" | "pe" => Ok(10), "np" | "po" => Ok(11),
+                "l" | "nge" => Ok(12), "ge" | "nl" => Ok(13),
+                "le" | "ng" => Ok(14), "g" | "nle" => Ok(15),
+                other => Err(format!("unknown condition code '{other}'")),
+            }
+        }
+        fn __render_cond(c: u8) -> String {
+            match c & 0xF {
+                0 => "o".into(), 1 => "no".into(), 2 => "b".into(), 3 => "ae".into(),
+                4 => "e".into(), 5 => "ne".into(), 6 => "be".into(), 7 => "a".into(),
+                8 => "s".into(), 9 => "ns".into(), 10 => "p".into(), 11 => "np".into(),
+                12 => "l".into(), 13 => "ge".into(), 14 => "le".into(), 15 => "g".into(),
+                _ => "?".into(),
             }
         }
     };
@@ -1906,6 +1956,7 @@ fn operand_parse_expr(slot: &OperandSlot, tok: TokenStream) -> Result<TokenStrea
         }
         OperandKind::Mem => Ok(quote! { __parse_mem_ref(#tok) }),
         OperandKind::Imm | OperandKind::Label => Ok(quote! { __parse_imm(#tok) }),
+        OperandKind::Cond => Ok(quote! { __parse_cond(#tok) }),
         other => Err(format!("assemble: operand kind {other:?} unsupported")),
     }
 }

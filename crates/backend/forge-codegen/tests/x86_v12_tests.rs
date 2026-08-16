@@ -793,6 +793,57 @@ fn all_insts() -> Vec<Inst> {
         MovRegImm64 { op0: 8, op1: -1 },
         BswapR { op0: 0 },
         BswapR { op0: 12 },
+        // 控制流（迭代 6）
+        Ret,
+        JmpRel32 { op0: 0 },
+        JmpRel32 { op0: 42 },
+        CallRipRel { op0: 0 },
+        // 新增指令（迭代 6 收官）
+        Nop,
+        Ud2,
+        Mfence,
+        Cqo,
+        CallRm { op0: 3 },
+        JccRel32 { op0: 4, op1: 0 },
+        JccRel32 { op0: 15, op1: -1 },
+        SetccRm8 { op0: 2, op1: 5 },
+        LeaR64Sib {
+            op0: 0,
+            op1: MemRef { base: 5, disp: 8 },
+        },
+        LeaRbpOff {
+            op0: 0,
+            op1: MemRef { base: 5, disp: -8 },
+        },
+        CmovccRRm {
+            op0: 1,
+            op1: 2,
+            op2: 64,
+        },
+        RoundsdI {
+            op0: 0,
+            op1: 1,
+            op2: 3,
+        },
+        Pmulld { op0: 0, op1: 1 },
+        MovqXmmR64 { op0: 0, op1: 1 },
+        MovqR64Xmm { op0: 1, op1: 0 },
+        MovapsMr { op0: 1, op1: 0 },
+        LzcntR {
+            op0: 0,
+            op1: 1,
+            op2: 64,
+        },
+        TzcntR {
+            op0: 0,
+            op1: 1,
+            op2: 32,
+        },
+        PopcntR {
+            op0: 0,
+            op1: 1,
+            op2: 64,
+        },
     ]
 }
 
