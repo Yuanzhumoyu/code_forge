@@ -689,6 +689,17 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
     struct+shift 全部崩溃场景通过；mini_c v12 24/24 全绿（含新增
     回归）；x86_v12 14/14、集成 12/12、forge-codegen 100/100；
     clippy/fmt 干净
+- **6p（commit 待填）implicit_regs 声明修复除法循环除零**：
+  - **根因**：CQO/IDIV_RM/DIV_RM 隐式读写 RAX/RDX（cqo 符号扩展、
+    idiv 128 位被除数/商/余数），但 v12 未声明 → regalloc 可把除法
+    的除数 {t} 分配到 RDX，被 CQO 覆盖 → `while (x>0){x=x/2;}` 除零
+    （STATUS_INTEGER_DIVIDE_BY_ZERO）
+  - **修复**：Instruction 新增 `implicit_regs`（物理寄存器名列表），
+    gen_machine_inst 生成 MachineInst::clobbers()（与 v11 implicit 等价）；
+    CQO 声明 RDX、IDIV_RM/DIV_RM 声明 RAX/RDX
+  - 验证：除法循环（x/2 直至 0）、条件除法（i%2==0）、混合除法+移位
+    全过；mini_c v12 24/24（含新增回归）；x86_v12 14/14、集成 12/12、
+    forge-codegen 100/100；clippy/fmt 干净
 
 **下一步（迭代 6 续）**：Call/函数调用 → mini_c 全量（AST 内联已支持，
 直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层

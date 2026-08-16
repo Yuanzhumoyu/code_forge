@@ -20,7 +20,7 @@ use quote::{format_ident, quote};
 /// Assembler + ABI + FrameLowering + Lowering + TargetMachine）。
 pub fn gen_integration(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
     let reg_enum = gen_reg_enum(model)?;
-    let machine_inst = gen_machine_inst(infos)?;
+    let machine_inst = gen_machine_inst(infos, model)?;
     let encoder = gen_encoder(infos, model)?;
     let decoder = gen_decoder();
     let disasm = gen_disasm(infos)?;
@@ -190,7 +190,7 @@ fn group_names(g: &RegGroup) -> Result<Vec<String>, String> {
 
 // ─────────────────────── MachineInst impl ───────────────────────
 
-fn gen_machine_inst(infos: &[InstInfo]) -> Result<TokenStream, String> {
+fn gen_machine_inst(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
     let mut use_arms = Vec::new();
     let mut def_arms = Vec::new();
     let mut use_c_arms = Vec::new();
@@ -203,9 +203,35 @@ fn gen_machine_inst(infos: &[InstInfo]) -> Result<TokenStream, String> {
     let mut move_arms = Vec::new();
     let mut effects_arms = Vec::new();
     let mut branch_targets_arms = Vec::new();
+    let mut implicit_arms: Vec<TokenStream> = Vec::new();
+    // 物理寄存器名 → 索引（implicit_regs 解析用）。
+    let gpr_names: Vec<String> = model
+        .reg
+        .get("gpr64")
+        .or_else(|| model.reg.get("gpr"))
+        .map(group_names)
+        .transpose()?
+        .unwrap_or_default();
+    let name_to_idx: std::collections::HashMap<&str, u32> = gpr_names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i as u32))
+        .collect();
 
     for info in infos {
         let vn = &info.vn;
+        // implicit_regs：指令隐式破坏的物理寄存器（cqo 的 RDX、idiv 的
+        // RAX/RDX）→ MachineInst::clobbers（regalloc 在本指令点避开）。
+        if let Some(implicit) = &info.inst.implicit_regs {
+            let entries: Vec<TokenStream> = implicit
+                .iter()
+                .filter_map(|r| name_to_idx.get(r.as_str()).copied())
+                .map(|idx| quote! { (#idx, forge_ir::RegClass::GPR64) })
+                .collect();
+            if !entries.is_empty() {
+                implicit_arms.push(quote! { Inst::#vn { .. } => &[#(#entries),*] });
+            }
+        }
 
         // Reg 操作数按操作数序收集角色（操作数级 role 优先，缺省 In）。
         // 与 v11 一致：每变体一条 arm，模式列出全部 use/def 字段 + `..`；
@@ -368,6 +394,9 @@ fn gen_machine_inst(infos: &[InstInfo]) -> Result<TokenStream, String> {
             }
             fn is_ret(&self) -> bool {
                 match self { #(#ret_arms,)* _ => false }
+            }
+            fn clobbers(&self) -> &[(u32, forge_ir::RegClass)] {
+                match self { #(#implicit_arms,)* _ => &[] }
             }
             fn is_move(&self) -> Option<(u32, u32)> {
                 match self { #(#move_arms,)* _ => None }

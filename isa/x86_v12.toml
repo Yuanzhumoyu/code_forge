@@ -1347,6 +1347,9 @@ opcode = 0xF7
 fields = { ext = 6 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
 mnemonic = "div"
+effect = ["Write"]
+# div 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
+implicit_regs = ["RAX", "RDX"]
 
 [[instructions]]
 name = "IDIV_RM"
@@ -1355,6 +1358,9 @@ opcode = 0xF7
 fields = { ext = 7 }
 operands = [{ slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
 mnemonic = "idiv"
+effect = ["Write"]
+# idiv 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
+implicit_regs = ["RAX", "RDX"]
 
 [[instructions]]
 name = "SUB64_R_IMM32"
@@ -1475,6 +1481,8 @@ form = "NOOP_REXW"
 opcode = 0x99
 mnemonic = "cqo"
 effect = ["Write"]
+# cqo 把 RAX 符号扩展到 RDX：RDX 隐式破坏（regalloc 在本指令点避开）
+implicit_regs = ["RDX"]
 
 [[instructions]]
 name = "CALL_RM"

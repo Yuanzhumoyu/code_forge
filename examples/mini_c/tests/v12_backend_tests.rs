@@ -167,6 +167,20 @@ fn v12_division() {
     assert_v12_matches_v11("int main() { return -10 % 3; }", -1);
     assert_v12_matches_v11("int main() { int x = 100; int y = 7; return x / y; }", 14);
     assert_v12_matches_v11("int main() { int x = 100; int y = 7; return x % y; }", 2);
+    // 回归：除法在循环内（除数 {t} 曾被 cqo 隐式写 RDX 污染 → 除零崩溃；
+    // CQO/IDIV/DIV 声明 implicit_regs 后 regalloc 避开 RDX）
+    assert_v12_matches_v11(
+        "int main() { int x = 100; while (x > 0) { x = x / 2; } return x; }",
+        0,
+    );
+    assert_v12_matches_v11(
+        "int main() { int s = 0; for (int i = 1; i <= 5; i = i + 1) { if (i % 2 == 0) { s = s + i; } } return s; }",
+        6,
+    );
+    assert_v12_matches_v11(
+        "int main() { int x = 7; int y = 3; return (x / y) + (x % y) + (x << 1) - (y >> 1); }",
+        16,
+    );
 }
 
 #[test]

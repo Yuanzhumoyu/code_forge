@@ -172,6 +172,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 when: var.when.clone(),
                 vex: None,
                 effect: Vec::new(),
+                implicit_regs: None,
             });
         }
     }

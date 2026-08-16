@@ -376,6 +376,11 @@ pub struct Instruction {
     /// 驱动 MachineInst::effects/is_branch/is_call/is_ret（TargetMachine 集成）。
     #[serde(default)]
     pub effect: Vec<String>,
+    /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
+    /// 在本指令点避开（MachineInst::clobbers）。与 lowering 模板的显式物理
+    /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
+    #[serde(default)]
+    pub implicit_regs: Option<Vec<String>>,
 }
 
 /// 操作数使用：槽 + 角色 + （定宽）位域绑定。
