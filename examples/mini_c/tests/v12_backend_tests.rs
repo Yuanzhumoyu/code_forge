@@ -238,6 +238,39 @@ fn v12_inlined_call() {
         "int add(int a, int b) { return a + b; } int main() { return add(add(10, 20), 12); }",
         42,
     );
+    // 调用组合：多参/多函数链/表达式参数/嵌套调用
+    assert_v12_matches_v11(
+        "int add(int a, int b) { return a + b; } int main() { return add(40, 2); }",
+        42,
+    );
+    assert_v12_matches_v11(
+        "int answer() { return 42; } int main() { return answer(); }",
+        42,
+    );
+    assert_v12_matches_v11(
+        "int square(int x) { return x * x; } int main() { return square(6 + 1); }",
+        49,
+    );
+    assert_v12_matches_v11(
+        "int sum3(int a, int b, int c) { return a + b + c; } int main() { return sum3(10, 20, 12); }",
+        42,
+    );
+    assert_v12_matches_v11(
+        "int f(int x) { return x + 1; } int g(int x) { return f(x) + 1; } int h(int x) { return g(x) + 1; } int main() { return h(10); }",
+        13,
+    );
+    assert_v12_matches_v11(
+        "int add(int a, int b) { return a + b; } int main() { int x = 10; return add(x, add(x, x)); }",
+        30,
+    );
+    assert_v12_matches_v11(
+        "int f(int x) { return x - 1; } int main() { int r = f(10); return r + f(r); }",
+        17,
+    );
+    assert_v12_matches_v11(
+        "int neg(int x) { return 0 - x; } int main() { return neg(7); }",
+        -7,
+    );
 }
 
 #[test]
