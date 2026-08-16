@@ -77,9 +77,12 @@ fn v12_compound_assign() {
 }
 
 #[test]
-#[ignore = "v12 分支的 cond 初始化边缘问题（setcc 高位未清零），迭代 6 续调试"]
 fn v12_if_else() {
     // 条件分支：Branch terminator（test + je + jmp）
+    assert_v12_matches_v11(
+        "int main() { int x = 5; if (x > 3) { return 1; } else { return 0; } }",
+        1,
+    );
     assert_v12_matches_v11(
         "int main() { int x = 1; if (x > 3) { return 1; } else { return 0; } }",
         0,
