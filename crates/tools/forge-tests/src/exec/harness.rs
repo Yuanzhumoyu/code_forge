@@ -37,10 +37,10 @@ pub fn build_func_args(
     b.finish().expect("build")
 }
 
-/// 用 x86_64 后端编译。
+/// 用 x86_v12 后端编译。
 pub fn compile_x86_64(name: &str, func: &Function) -> CompiledFunction {
-    code_forge::backend::x86_64::ensure_registered();
-    FunctionCompiler::new(code_forge::backend::x86_64::TargetMachine::new())
+    code_forge::backend::x86_v12::ensure_registered();
+    FunctionCompiler::new(code_forge::backend::x86_v12::TargetMachine::new())
         .compile_raw(func)
         .unwrap_or_else(|e| panic!("{name}: compile: {e:?}"))
 }

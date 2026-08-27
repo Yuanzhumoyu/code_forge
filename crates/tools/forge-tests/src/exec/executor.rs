@@ -1,9 +1,9 @@
 //! Executor trait — 统一的 JIT 产物执行抽象。
 //!
 //! - 本机（x86_64）：`ExecutableMemory` + extern "C" 调用（真实执行）
-//! - unicorn（aarch64/riscv64，exec-unicorn feature）：模拟执行
+//! - riscv64（QEMU system-mode + semihosting）：见 `super::qemu`
 //!
-//! 返回值寄存器映射与 `[abi.ret_regs]` 一致：x86 RAX / aarch64 X0 / riscv64 X10。
+//! 返回值寄存器映射与 `[abi.ret_regs]` 一致：x86 RAX、riscv a0。
 
 use code_forge::backend::CompiledFunction;
 
@@ -11,7 +11,6 @@ use code_forge::backend::CompiledFunction;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecArch {
     X86_64,
-    Aarch64,
     Riscv64,
 }
 
@@ -19,7 +18,6 @@ impl ExecArch {
     pub fn name(&self) -> &'static str {
         match self {
             ExecArch::X86_64 => "x86_64",
-            ExecArch::Aarch64 => "aarch64",
             ExecArch::Riscv64 => "riscv64",
         }
     }
@@ -32,6 +30,20 @@ pub trait Executor {
 
     /// 执行编译产物（无参 → i64 返回值）。
     fn exec(&self, compiled: &CompiledFunction, args: &[u64]) -> u64;
+
+    /// 执行多函数模块（跨函数 Call/递归路径）。默认不支持（x86 走 JIT
+    /// 内存执行；riscv QEMU 覆盖）。`funcs` 为 FuncRef 序。
+    fn exec_module(
+        &self,
+        _funcs: &[(String, CompiledFunction)],
+        _main: &str,
+        _args: &[u64],
+    ) -> u64 {
+        panic!(
+            "exec_module not supported by {} (use JitCompiler for native)",
+            self.arch().name()
+        )
+    }
 }
 
 /// 本机执行器（x86_64：ExecutableMemory + extern "C" 调用）。
@@ -75,41 +87,40 @@ impl Executor for NativeExecutor {
     }
 }
 
-/// unicorn 执行器（aarch64/riscv64 模拟；x86_64 也可经 unicorn 执行）。
-#[cfg(feature = "exec-unicorn")]
-pub struct UnicornExecutor {
-    arch: ExecArch,
+/// QEMU riscv64 执行器（system-mode + sifive_test；见 `super::qemu`）。
+/// 本机无 QEMU 时 `exec` panic（调用方应先用 `qemu_riscv64_path()` 探测）。
+pub struct QemuRiscv64Executor;
+
+/// sifive_test 退出码 = `(value >> 16) & 0xFFFF`（**16 位**，实测 QEMU
+/// 11.0.92：a0=-1 → 65535、a0=-42 → 65494；Windows 保留 16 位退出码）。
+/// 返回 i64 前按 **有符号 16 位**符号扩展（0xFFD6 → -42），与用例期望对齐。
+fn sign_extend_exit(raw: u64) -> u64 {
+    (raw as u16 as i16 as i64) as u64
 }
 
-#[cfg(feature = "exec-unicorn")]
-impl UnicornExecutor {
-    pub fn new(arch: ExecArch) -> Self {
-        Self { arch }
-    }
-}
-
-#[cfg(feature = "exec-unicorn")]
-impl Executor for UnicornExecutor {
+impl Executor for QemuRiscv64Executor {
     fn arch(&self) -> ExecArch {
-        self.arch
+        ExecArch::Riscv64
     }
 
     fn exec(&self, compiled: &CompiledFunction, args: &[u64]) -> u64 {
-        crate::exec::unicorn::exec_code(self.arch.name(), &compiled.code, args)
+        let raw = super::qemu::exec_riscv64(compiled, args)
+            .unwrap_or_else(|e| panic!("QemuRiscv64Executor: {e}"));
+        sign_extend_exit(raw)
+    }
+
+    fn exec_module(&self, funcs: &[(String, CompiledFunction)], main: &str, args: &[u64]) -> u64 {
+        let raw = super::qemu::exec_riscv64_module(funcs, main, args)
+            .unwrap_or_else(|e| panic!("QemuRiscv64Executor::exec_module: {e}"));
+        sign_extend_exit(raw)
     }
 }
 
-/// 便捷入口：按架构选择执行器并执行。
+/// 便捷入口：按架构选择执行器。
 pub fn run(arch: ExecArch, compiled: &CompiledFunction, args: &[u64]) -> u64 {
     match arch {
         ExecArch::X86_64 => NativeExecutor.exec(compiled, args),
-        #[cfg(feature = "exec-unicorn")]
-        ExecArch::Aarch64 | ExecArch::Riscv64 => UnicornExecutor::new(arch).exec(compiled, args),
-        #[cfg(not(feature = "exec-unicorn"))]
-        other => panic!(
-            "exec: arch {:?} requires the `exec-unicorn` feature (unicorn engine)",
-            other
-        ),
+        ExecArch::Riscv64 => QemuRiscv64Executor.exec(compiled, args),
     }
 }
 
@@ -126,7 +137,7 @@ mod tests {
         let s = b.iadd(params[0], params[1]);
         b.ret(&[s]);
         let func = b.finish().expect("build");
-        FunctionCompiler::new(code_forge::backend::x86_64::TargetMachine::new())
+        FunctionCompiler::new(code_forge::backend::x86_v12::TargetMachine::new())
             .compile_raw(&func)
             .expect("compile add")
     }

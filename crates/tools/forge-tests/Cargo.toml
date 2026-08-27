@@ -2,43 +2,15 @@
 name = "forge-tests"
 version = "0.1.0"
 edition = "2024"
-description = "Forge Tests: generic integration test framework for ISA backends (coverage / encode-golden / exec), feature-gated by ISA and instruction category"
-build = "build.rs"
+description = "Forge Tests: generic integration test framework for ISA backends (coverage / exec), v12-only (x86_v12)"
 
 [dependencies]
 # 执行测试依赖 JitCompiler——显式启用 jit feature（默认构建即含）
 code-forge = { path = "../../..", features = ["jit"] }
 forge-rustc = { path = "../forge-rustc", optional = true }
 
-[build-dependencies]
-# 编译 vendored unicorn C 源码（vendor/unicorn）为静态库。
-# 唯一外部构建依赖：cmake + C 编译器（VS Build Tools / gcc / clang）。
-cmake = "0.1.58"
-
 [features]
-default = [
-    "isa-x86_64",
-    "test-int",
-    "test-float",
-    "test-io",
-    "test-control",
-]
+default = []
 
-# ── ISA 开关：打开对应指令集的测试 ──
-isa-x86_64 = []
-isa-aarch64 = []
-isa-riscv64 = []
-
-# ── 指令类型分组：按类别拆分测试（默认全开，可裁剪）──
-test-int = []
-test-float = []
-test-io = []
-test-control = []
-
-# ── 执行引擎：unicorn 跨架构模拟执行（aarch64/riscv64）──
-# 用 build.rs + vendored C 源码（cmake 编译静态库）+ 手写 FFI 绑定——
-# 无需 libclang / pkg-config / 系统 unicorn / 预编译 DLL。
-exec-unicorn = []
-
-# ── 旧功能 ──
+# ── nightly：forge-rustc 后端集成测试（rustc_private，需 nightly + rustc-dev）──
 nightly = ["forge-rustc"]

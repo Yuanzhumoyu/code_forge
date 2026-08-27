@@ -1,9 +1,9 @@
 //! ISA lowering coverage matrix — 迁移自根 `tests/isa_lowering_coverage.rs`。
 //!
 //! 对每个代表性 IR opcode × 每个后端，构建最小函数并 `compile_raw`，
-//! 记录 lowering 是否成功。coverage! 宏按 ISA 断言；`coverage_all_isa_zero_gaps`
-//! 断言四 ISA 全 0/75。运行：
-//!   cargo test -p forge-tests --features "isa-x86_64,isa-aarch64,isa-riscv64" -- --nocapture
+//! 记录 lowering 是否成功。v11 后端已删除，本文件只覆盖 v12 唯一后端
+//! （x86_v12）；零缺口断言以 v12 TOML 实际声明的 lowering op 集为准。
+//! 运行：cargo test -p forge-tests -- --nocapture
 
 use code_forge::backend::FunctionCompiler;
 use code_forge::backend::TargetMachine;
@@ -320,22 +320,46 @@ pub fn check_isa<M: TargetMachine>(machine: impl Fn() -> M) -> Vec<(String, Stri
 }
 
 // ═══════════════════════════════════════════════
-// 矩阵打印测试（--nocapture 可见；feature 门控）
+// 矩阵打印测试（--nocapture 可见）
 // ═══════════════════════════════════════════════
 
-/// 打印四 ISA 的 lowering 覆盖矩阵（迁移自根 lowering_coverage 测试）。
-/// 各 ISA 的 coverage! 测试（isa/<isa>/mod.rs）已断言并打印单 ISA 矩阵；
-/// 此处打印 per-ISA 汇总供 --nocapture 查看。
+/// x86_v12 在 TOML 中实际声明的 lowering op 集（零缺口断言的基准；
+/// 均存在于 COVERAGE_OPS 矩阵中）。
+pub const V12_LOWERING_OPS: [&str; 20] = [
+    "Iadd",
+    "Isub",
+    "Imul",
+    "Udiv",
+    "Sdiv",
+    "Urem",
+    "Srem",
+    "Band",
+    "Bor",
+    "Bxor",
+    "Ishl",
+    "Ushr",
+    "Sshr",
+    "Bnot",
+    "Icmp",
+    "Sextend",
+    "Copy",
+    "Load",
+    "StackAddr",
+    "Iconst",
+];
+
+/// 打印 x86_v12 的 lowering 覆盖矩阵（--nocapture 查看 75 ops 全表）。
 #[cfg(test)]
 mod coverage_matrix_tests {
     use super::*;
 
     #[test]
     fn lowering_coverage_matrix() {
-        eprintln!("=== ISA lowering coverage matrix (forge-tests) ===");
-        // 矩阵详情由各 ISA 的 coverage! 测试（all_ops_compile）打印：
-        //   cargo test -p forge-tests --features "isa-x86_64,isa-aarch64,isa-riscv64" -- --nocapture
-        let _ = COVERAGE_OPS;
+        eprintln!("=== ISA lowering coverage matrix (forge-tests / x86_v12) ===");
+        let results = check_isa(code_forge::backend::x86_v12::TargetMachine::new);
+        for (op, outcome) in results {
+            eprintln!("{op}: {outcome}");
+        }
     }
 }
 
@@ -343,7 +367,7 @@ mod coverage_matrix_tests {
 // 回归守卫测试（迁移自根 capability_regression_guard）
 // ═══════════════════════════════════════════════
 
-/// 关键能力回归守卫：固定后端的指定 opcode 必须编译通过。
+/// 关键能力回归守卫：x86_v12 的指定 opcode 必须编译通过。
 #[cfg(test)]
 mod capability_tests {
     use super::*;
@@ -354,29 +378,13 @@ mod capability_tests {
 
     #[test]
     fn capability_regression_guard() {
-        let must_ok: &[(&str, &[&str])] = &[
-            ("x86_64", &["Call", "CallIndirect"]),
-            (
-                "aarch64",
-                &["Fadd", "Fsub", "Fmul", "Fconst", "Call", "CallIndirect"],
-            ),
-            ("riscv64", &["Fadd", "Fsub", "Fmul", "Fdiv", "Fsqrt"]),
-        ];
-
+        let results = run_isa(code_forge::backend::x86_v12::TargetMachine::new);
         let mut failures: Vec<String> = Vec::new();
-        for (isa, ops) in must_ok.iter() {
-            let results = match *isa {
-                "x86_64" => run_isa(code_forge::backend::x86_64::TargetMachine::new),
-                "aarch64" => run_isa(code_forge::backend::aarch64::TargetMachine::new),
-                "riscv64" => run_isa(code_forge::backend::riscv64::TargetMachine::new),
-                _ => panic!("unknown isa"),
-            };
-            for op_name in ops.iter() {
-                if let Some((_, outcome)) = results.iter().find(|(n, _)| n == op_name)
-                    && outcome != "ok"
-                {
-                    failures.push(format!("{isa} {op_name}: {outcome}"));
-                }
+        for op_name in V12_LOWERING_OPS {
+            if let Some((_, outcome)) = results.iter().find(|(n, _)| n == op_name)
+                && outcome != "ok"
+            {
+                failures.push(format!("x86_v12 {op_name}: {outcome}"));
             }
         }
         assert!(
@@ -389,40 +397,24 @@ mod capability_tests {
 }
 
 // ═══════════════════════════════════════════════
-// 全清零断言（迁移自根 coverage_all_isa_zero_gaps）
+// 零缺口断言（以 v12 TOML 声明集为基准）
 // ═══════════════════════════════════════════════
 
-/// 覆盖矩阵全清零断言：x86_64/aarch64/riscv64/wasm32 全部 75 个 opcode 必须 lowering ok。
+/// v12 声明的 lowering op 全部必须 lowering ok（其余 75-20 个 op 为
+/// 向量/浮点/溢出/饱和等 v10 独有，v12 未声明 → 允许缺口）。
 #[cfg(test)]
 mod zero_gaps_tests {
     use super::*;
 
-    fn run_isa<M: TargetMachine>(machine: impl Fn() -> M) -> Vec<(String, String)> {
-        check_isa(machine)
-    }
-
     #[test]
-    fn coverage_all_isa_zero_gaps() {
+    fn v12_declared_ops_zero_gaps() {
+        let results = check_isa(code_forge::backend::x86_v12::TargetMachine::new);
         let mut failures: Vec<String> = Vec::new();
-        let isas: [(&str, Vec<(String, String)>); 3] = [
-            (
-                "x86_64",
-                run_isa(code_forge::backend::x86_64::TargetMachine::new),
-            ),
-            (
-                "aarch64",
-                run_isa(code_forge::backend::aarch64::TargetMachine::new),
-            ),
-            (
-                "riscv64",
-                run_isa(code_forge::backend::riscv64::TargetMachine::new),
-            ),
-        ];
-        for (isa, results) in isas {
-            for (op, outcome) in results.iter() {
-                if outcome != "ok" {
-                    failures.push(format!("{isa} {op}: {outcome}"));
-                }
+        for op_name in V12_LOWERING_OPS {
+            if let Some((_, outcome)) = results.iter().find(|(n, _)| n == op_name)
+                && outcome != "ok"
+            {
+                failures.push(format!("x86_v12 {op_name}: {outcome}"));
             }
         }
         assert!(

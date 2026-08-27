@@ -63,8 +63,11 @@ macro_rules! backend_tests {
 /// ISA 测试模块 — 按 ISA/指令类型 feature 门控（覆盖矩阵、编码断言、执行测试）。
 pub mod isa;
 
+/// 架构无关 JIT 集成测试矩阵（IR 级用例 + 能力集门控，防重复编写）。
+pub mod jit_matrix;
+
 pub mod coverage;
-/// 执行引擎模块（exec-unicorn：unicorn 跨架构模拟执行）。
+/// 执行引擎模块（本机 x86_64 JIT 执行）。
 pub mod exec;
 
 /// compile-only 覆盖矩阵宏：对 ops 列表逐个构建最小函数并 compile_raw，
@@ -314,16 +317,16 @@ pub mod prelude {
     pub use TypeId as Type;
 }
 
-/// 为 x86_64 后端运行全链路测试
+/// 为 x86_v12 后端运行全链路测试
 pub fn run_x86_64_pipeline_tests() {
-    use code_forge::backend::arch::x86_64::{self, ensure_registered};
+    use code_forge::backend::arch::x86_v12::{self, ensure_registered};
     use code_forge::backend::{FunctionCompiler, Registry};
     use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
     ensure_registered();
     assert!(
-        Registry::global().contains("x86_64"),
-        "x86_64 ISA should be registered"
+        Registry::global().contains("x86_64_v12"),
+        "x86_64_v12 ISA should be registered"
     );
 
     // 测试完整编译管线：iconst + return
@@ -336,7 +339,7 @@ pub fn run_x86_64_pipeline_tests() {
         fb.ret(&[v]);
         fb.finish().expect("build")
     };
-    let compiler = FunctionCompiler::new(x86_64::TargetMachine::new());
+    let compiler = FunctionCompiler::new(x86_v12::TargetMachine::new());
     let compiled = compiler
         .compile_raw(&func)
         .expect("full pipeline compile should succeed");
@@ -356,11 +359,11 @@ pub mod nightly {
         forge_rustc::auto_register_isa_for_target("x86_64-unknown-linux-gnu");
         forge_rustc::auto_register_isa_for_target("amd64");
         use code_forge::backend::Registry;
-        assert!(Registry::global().contains("x86_64"));
-        assert_eq!(forge_rustc::isa_name_for_target("amd64"), "x86_64");
+        assert!(Registry::global().contains("x86_64_v12"));
+        assert_eq!(forge_rustc::isa_name_for_target("amd64"), "x86_64_v12");
         assert_eq!(
             forge_rustc::isa_name_for_target("x86_64-unknown-linux-gnu"),
-            "x86_64"
+            "x86_64_v12"
         );
     }
 
@@ -390,14 +393,14 @@ mod tests {
     #[test]
     fn isa_registration_idempotent() {
         use code_forge::backend::Registry;
-        use code_forge::backend::arch::x86_64::ensure_registered;
+        use code_forge::backend::arch::x86_v12::ensure_registered;
 
         ensure_registered();
-        assert!(Registry::global().contains("x86_64"));
+        assert!(Registry::global().contains("x86_64_v12"));
 
         // 多次调用应不会 panic
         ensure_registered();
-        assert!(Registry::global().contains("x86_64"));
+        assert!(Registry::global().contains("x86_64_v12"));
     }
 
     #[cfg(feature = "nightly")]

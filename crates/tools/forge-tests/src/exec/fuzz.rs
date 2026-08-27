@@ -8,12 +8,12 @@
 #![cfg(test)]
 
 use code_forge::backend::FunctionCompiler;
-use code_forge::backend::arch::x86_64::{self, TargetMachine};
+use code_forge::backend::arch::x86_v12::{self, TargetMachine};
 use code_forge::mem::ExecutableMemory;
 use code_forge::prelude::*;
 /// 编译并通过 JIT 执行一个返回 I64 的函数。
 fn jit_execute(func: &Function) -> Result<i64, String> {
-    x86_64::ensure_registered();
+    x86_v12::ensure_registered();
     let compiled = FunctionCompiler::new(TargetMachine::new())
         .compile_raw(func)
         .map_err(|e| format!("compile: {e}"))?;
