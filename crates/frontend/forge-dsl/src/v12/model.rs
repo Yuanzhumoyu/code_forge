@@ -9,8 +9,13 @@
 //!   ModRM/REX/VEX 等 x86 机制降级为 form 的**语义键**（`modrm = "rr"` 等），
 //!   实现为 forge-dsl 内部函数，语义键集合在迭代 3/4 定型。
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use quote::quote;
+use serde::{Deserialize, Serialize, de::Visitor};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Display},
+    str::FromStr,
+};
 
 /// v12 顶层模型。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -18,7 +23,7 @@ use std::collections::BTreeMap;
 pub struct V12Model {
     pub meta: Meta,
     /// 寄存器组（`[reg.NAME]`）。
-    pub reg: BTreeMap<String, RegGroup>,
+    pub reg: BTreeMap<RegClass, RegGroup>,
     /// ISA 约定（位域/ModRM/REX/操作数宽度前缀）。
     #[serde(default)]
     pub conventions: Conventions,
@@ -71,6 +76,52 @@ pub struct Meta {
     /// 变长 ISA 最大指令长度（x86 = 15）。
     #[serde(default)]
     pub max_inst_len: Option<u8>,
+    /// 控制寄存器解析是否大小写不敏感。
+    #[serde(default)]
+    pub case_insensitive_regs: Option<bool>,
+    /// 行注释起始字符（缺省 "#"）。
+    #[serde(default = "default_comment_char")]
+    pub comment_char: String,
+    /// 标签定义后缀（缺省 ":"；如 "foo:"）。
+    #[serde(default = "default_label_suffix")]
+    pub label_suffix: String,
+    /// 助记符大小写策略（缺省 insensitive）。
+    #[serde(default)]
+    pub mnemonic_case: MnemonicCase,
+    /// 立即数前缀（缺省无；x86 AT&T 可设 "$"，ARM 可设 "#"）。
+    #[serde(default)]
+    pub imm_prefix: Option<String>,
+    /// 伪指令前缀（缺省 "."）。
+    #[serde(default = "default_directive_prefix")]
+    pub directive_prefix: String,
+    /// 缺省 opsize（位；如 32/64）。无显式 opsize 语义的 form 在 decode 时
+    /// 的 `__opsize` 初始值（影响 REX.W/宽度 guard 的缺省判定）。缺省 None
+    /// = 现状（decode 初始 4 = 32 位）。
+    #[serde(default)]
+    pub default_opsize: Option<u8>,
+}
+
+fn default_comment_char() -> String {
+    "#".into()
+}
+
+fn default_label_suffix() -> String {
+    ":".into()
+}
+
+fn default_directive_prefix() -> String {
+    ".".into()
+}
+
+/// 助记符大小写策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MnemonicCase {
+    /// 大小写不敏感（缺省；assemble 时统一小写匹配）。
+    #[default]
+    Insensitive,
+    /// 大小写敏感（精确匹配模板首词）。
+    Sensitive,
 }
 
 fn default_endian() -> Endian {
@@ -89,13 +140,130 @@ pub enum Endian {
 }
 
 // ─────────────────────────── [reg.*] ───────────────────────────
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RegClass {
+    /// 通用整数寄存器，payload = 字节宽度（任意 ISA 自定义宽度）。
+    GPR(u16),
+    /// 浮点寄存器，payload = 字节宽度。
+    FPR(u16),
+    /// 向量寄存器，payload = 字节宽度。
+    VEC(u16),
+    /// 掩码寄存器（如 x86 AVX-512 k0-k7），payload = 字节宽度。
+    KReg(u16),
+}
+
+impl RegClass {
+    pub fn width(&self) -> u16 {
+        match self {
+            RegClass::GPR(w) | RegClass::FPR(w) | RegClass::VEC(w) | RegClass::KReg(w) => *w,
+        }
+    }
+}
+
+impl FromStr for RegClass {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(width) = s.strip_prefix("gpr") {
+            if width.is_empty() {
+                return Ok(RegClass::GPR(4));
+            }
+            let width: u16 = width
+                .parse()
+                .map_err(|e: std::num::ParseIntError| e.to_string())?;
+            Ok(RegClass::GPR(width))
+        } else if let Some(width) = s.strip_prefix("fpr") {
+            if width.is_empty() {
+                return Ok(RegClass::FPR(4));
+            }
+            let width: u16 = width
+                .parse()
+                .map_err(|e: std::num::ParseIntError| e.to_string())?;
+            Ok(RegClass::FPR(width))
+        } else if let Some(width) = s.strip_prefix("vec") {
+            let width: u16 = width
+                .parse()
+                .map_err(|e: std::num::ParseIntError| e.to_string())?;
+            Ok(RegClass::VEC(width))
+        } else if let Some(width) = s.strip_prefix("kreg") {
+            if width.is_empty() {
+                return Ok(RegClass::KReg(8));
+            }
+            let width: u16 = width
+                .parse()
+                .map_err(|e: std::num::ParseIntError| e.to_string())?;
+            Ok(RegClass::KReg(width))
+        } else {
+            Err("invalid reg class".to_string())
+        }
+    }
+}
+
+impl fmt::Display for RegClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RegClass::GPR(width) => write!(f, "gpr{}", width),
+            RegClass::FPR(width) => write!(f, "fpr{}", width),
+            RegClass::VEC(width) => write!(f, "vec{}", width),
+            RegClass::KReg(width) => write!(f, "kreg{}", width),
+        }
+    }
+}
+
+impl Serialize for RegClass {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+struct RegClassVisitor;
+
+impl<'de> Visitor<'de> for RegClassVisitor {
+    type Value = RegClass;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a string like 'gpr2', 'fpr4', 'vec8', or 'kreg8'")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        // We use our FromStr implementation to parse the string.
+        RegClass::from_str(value)
+            .map_err(|_| E::custom(format!("invalid format for RegClass: '{}'", value)))
+    }
+}
+
+impl<'de> Deserialize<'de> for RegClass {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(RegClassVisitor)
+    }
+}
+
+impl quote::ToTokens for RegClass {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let class = match self {
+            RegClass::GPR(w) => quote! { forge_ir::RegClass::GPR(#w)},
+            RegClass::FPR(w) => quote! { forge_ir::RegClass::FPR(#w)},
+            RegClass::VEC(w) => quote! { forge_ir::RegClass::VEC(#w)},
+            RegClass::KReg(w) => quote! { forge_ir::RegClass::KReg(#w)},
+        };
+        tokens.extend(class);
+    }
+}
 
 /// 寄存器组。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegGroup {
-    /// 寄存器宽度（位）。
-    pub width: u32,
     /// 显式寄存器名；缺省时由 `prefix` + 序号生成。
     #[serde(default)]
     pub names: Option<Vec<String>>,
@@ -129,6 +297,28 @@ pub struct Conventions {
     /// 键为数字字符串（TOML 裸整数键），校验时解析为 u32。
     #[serde(default)]
     pub opsize_prefix: Option<BTreeMap<String, u64>>,
+    /// 条件码表（name → 编码值）。cond 槽必须引用本表；缺省 = x86 16 项
+    /// （o/no/b/ae/e/ne/be/a/s/ns/p/np/l/ge/le/g ↔ 0..15）。
+    #[serde(default)]
+    pub cond: Option<BTreeMap<String, u64>>,
+    /// 变长解码前缀扫描表：条目 = 单字节或范围 + 效果集
+    /// （"opsize16"/"lock"/"repe"/"repne"/"addr16"/"rex"）。缺省 = x86 扫描集。
+    #[serde(default)]
+    pub prefix_scan: Option<Vec<PrefixScanEntry>>,
+}
+
+/// 前缀扫描条目：`byte`（单字节）与 `range`（如 "0x40..0x4F"）二选一。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrefixScanEntry {
+    #[serde(default)]
+    pub byte: Option<u64>,
+    /// "0x40..0x4F" / "0x40..=0x4F"（闭区间）。
+    #[serde(default)]
+    pub range: Option<String>,
+    /// 效果："opsize16"（66 → opsize=2）、"lock"、"repe"、"repne"、
+    /// "addr16"、"rex"（40-4F：REX.R/B/W 位）。
+    pub effects: Vec<String>,
 }
 
 /// 命名位域：定宽 ISA 的编码单元。
@@ -193,9 +383,13 @@ pub struct RexConvention {
 pub struct OperandSlot {
     pub name: String,
     pub kind: OperandKind,
-    /// reg：所属 [reg.*] 组名。
+    /// reg：所属 [reg.*] 组名（单类型糖，等价于 `classes = ["gpr8"]`）。
     #[serde(default)]
-    pub class: Option<String>,
+    pub class: Option<RegClass>,
+    /// reg：可接纳的寄存器组集合（多宽度/多类型）。`class` 为单元素糖；
+    /// 两者皆无 = 任意寄存器类（不推荐，会吞掉更具体的重载形式）。
+    #[serde(default)]
+    pub classes: Option<Vec<RegClass>>,
     /// reg：编码宽度（位）。
     #[serde(default)]
     pub field_width: Option<u32>,
@@ -209,9 +403,49 @@ pub struct OperandSlot {
     /// imm：有符号（缺省 false）。
     #[serde(default)]
     pub signed: Option<bool>,
+    /// imm：允许浮点立即数（IEEE-754 位模式存储）。
+    #[serde(default)]
+    pub float: Option<bool>,
+    /// imm：最小值约束（缺省 = 按 width/signed 推导）。
+    #[serde(default)]
+    pub min: Option<i64>,
+    /// imm：最大值约束（缺省 = 按 width/signed 推导）。
+    #[serde(default)]
+    pub max: Option<i64>,
+    /// imm：允许的枚举值集合。
+    #[serde(default)]
+    pub values: Option<Vec<i64>>,
     /// 该槽可承担的角色；缺省 ["in"]。"inout" = 读改写（in 且 out）。
     #[serde(default)]
     pub roles: Option<Vec<OperandRole>>,
+}
+
+impl OperandSlot {
+    /// 规范化寄存器约束集：`classes` 优先；否则 `class` → 单元素；两者皆无 → None
+    /// （任意寄存器类）。
+    pub fn classes(&self) -> Option<Vec<RegClass>> {
+        if let Some(cs) = &self.classes {
+            return Some(cs.clone());
+        }
+        self.class.map(|c| vec![c])
+    }
+
+    /// 立即数/标签槽的值域：(min, max)。缺省由 width/signed 推导。
+    pub fn imm_range(&self) -> Option<(i64, i64)> {
+        if self.kind != OperandKind::Imm && self.kind != OperandKind::Label {
+            return None;
+        }
+        let w = self.width.unwrap_or(64);
+        let (lo, hi) = if self.signed.unwrap_or(false) && w < 64 {
+            let half = 1i64 << (w - 1);
+            (-half, half - 1)
+        } else if w >= 64 {
+            (i64::MIN, i64::MAX)
+        } else {
+            (0, (1i64 << w) - 1)
+        };
+        Some((self.min.unwrap_or(lo), self.max.unwrap_or(hi)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,7 +456,6 @@ pub enum OperandKind {
     Mem,
     Label,
     Cond,
-    Opsize,
 }
 
 impl OperandKind {
@@ -234,7 +467,6 @@ impl OperandKind {
             OperandKind::Mem => "mem",
             OperandKind::Label => "label",
             OperandKind::Cond => "cond",
-            OperandKind::Opsize => "opsize",
         }
     }
 }
@@ -270,20 +502,29 @@ pub struct Form {
     /// +rm=op0；迭代 3b+：`"rm_mem"` 等内存形式）。
     #[serde(default)]
     pub modrm: Option<String>,
+    /// 固定 ModRM 字节（无操作数指令如 MFENCE 0F AE F0：mod=11/reg/rm 全固定）。
+    #[serde(default)]
+    pub modrm_fixed: Option<u64>,
     /// REX 发射策略（"auto" | "never" | ...）。
     #[serde(default)]
     pub rex: Option<String>,
     /// VEX 结构（map/pp/l 来源；迭代 4）。
     #[serde(default)]
     pub vex: Option<VexSpec>,
+    /// EVEX 结构（AVX-512；复用 [`VexSpec`] 数据键 map/pp/w/l，l=0/1/2 →
+    /// L'L=128/256/512 位；最小集：reg-reg、无 opmask/broadcast）。
+    #[serde(default)]
+    pub evex: Option<VexSpec>,
     /// 变长：固定前缀来源。`"field"` → fields.prefix（SSE 的 66/F2/F3/0）；
     /// 数字字符串 → 固定字节。缺省无前缀。
     #[serde(default)]
     pub prefix: Option<String>,
-    /// 变长：编码宽度语义。`"auto"` → 指令有 opsize 操作数（16 → 0x66 前缀、
-    /// 64 → REX.W=1）；数字 → 固定 opsize（无 opsize 操作数）。
+    /// 变长：编码宽度语义。`opsize = <操作数序号>`：宽度由该操作数的寄存器
+    /// 自动推导（RAX→64 发 REX.W、EAX→32 无前缀、AX→16 发 0x66）；缺省 =
+    /// 第一个 Reg 槽操作数。槽声明固定宽度组（如 `[gpr64]`）时推导恒为该值
+    /// 并在 encode 期校验操作数寄存器宽度匹配（严格类型检测）。
     #[serde(default)]
-    pub opsize: Option<OpsizeSpec>,
+    pub opsize: Option<Opsize>,
     /// 变长：REX.W 位来源。`"auto"` → opsize==64；`"field"` → fields.w；
     /// `"always"` → 恒发 REX.W（+r 形式的 mov_imm64/bswap）。
     /// 缺省恒 0（REX.W 仅在 reg/rm≥8 时随 REX 出现）。
@@ -312,11 +553,82 @@ pub struct Form {
     pub operand_slots: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Opsize {
+    Slot(u16),
+    Reg(u16),
+}
+
+impl Default for Opsize {
+    fn default() -> Self {
+        Self::Slot(0)
+    }
+}
+
+impl FromStr for Opsize {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let n = s[1..].parse::<u16>().map_err(|e| e.to_string())?;
+        match s.chars().next() {
+            Some('s') => Ok(Self::Slot(n)),
+            Some('r') => Ok(Self::Reg(n)),
+            _ => Err("opsize must start with 's' or 'r'".to_string()),
+        }
+    }
+}
+
+impl Display for Opsize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Opsize::Slot(idx) => write!(f, "s{}", idx),
+            Opsize::Reg(width) => write!(f, "r{}", width),
+        }
+    }
+}
+
+impl Serialize for Opsize {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+struct OpsizeVisitor;
+
+impl<'de> Visitor<'de> for OpsizeVisitor {
+    type Value = Opsize;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "an opsize")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Self::Value::from_str(v).map_err(|e| E::custom(format!("invalid opsize: {}", e)))
+    }
+}
+
+impl<'de> Deserialize<'de> for Opsize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(OpsizeVisitor)
+    }
+}
+
 /// VEX 字段来源声明（迭代 4）。
 ///
 /// map/pp/w/l 每个值为：数字（固定）或 `"field"`（取指令 `fields.vex_map`/
 /// `vex_pp`/`vex_w`/`vex_l`，缺省 0）。vvvv 语义由操作数数量决定：
 /// 3 操作数（VEX_RRV 类）→ vvvv = ~op2；2 操作数 → vvvv = 0x0F（无源）。
+/// EVEX 复用本结构（`form.evex`），额外键 b（broadcast）与 disp_scale
+/// （压缩位移缩放 N）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VexSpec {
@@ -329,19 +641,19 @@ pub struct VexSpec {
     /// VEX.W 来源。
     #[serde(default)]
     pub w: Option<String>,
-    /// VEX.L 来源。
+    /// VEX.L 来源（EVEX：L'L 值 0/1/2 → 128/256/512 位）。
     #[serde(default)]
     pub l: Option<String>,
-}
-
-/// 变长 form 的 opsize 语义：`"auto"`（指令有 opsize 操作数）或固定值。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum OpsizeSpec {
-    /// `"auto"`：指令有 opsize 操作数。
-    Auto(String),
-    /// 固定 opsize（8/16/32/64）。
-    Fixed(u64),
+    /// EVEX 专用：broadcast 位（"0"/"1" 或 "field" → fields.evex_b）。
+    #[serde(default)]
+    pub b: Option<String>,
+    /// EVEX 专用：零掩码位 z（"0"/"1" 或 "field" → fields.evex_z；P2 bit7）。
+    #[serde(default)]
+    pub z: Option<String>,
+    /// EVEX 专用：压缩位移缩放 N（"1"/"2"/"4"/"8"/"16"/"32"/"64"；
+    /// "field" → fields.evex_disp_scale；缺省 1 = 不缩放）。
+    #[serde(default)]
+    pub disp_scale: Option<String>,
 }
 
 // ──────────────────── [[instructions]] ────────────────────
@@ -350,6 +662,7 @@ pub enum OpsizeSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Instruction {
+    /// 内部 Rust 标识符（Inst 变体名；与汇编助记符解耦，可含语义后缀）。
     pub name: String,
     pub form: String,
     /// 主 opcode（值或首个 opcode 字节）。
@@ -358,20 +671,24 @@ pub struct Instruction {
     /// 固定字段值（funct3/funct7/前缀字节...），按位域名引用。
     #[serde(default)]
     pub fields: Option<BTreeMap<String, u64>>,
-    #[serde(default)]
-    pub operands: Vec<OperandUse>,
-    /// 汇编助记符（缺省 = 指令名小写）。
-    #[serde(default)]
-    pub mnemonic: Option<String>,
-    /// 汇编模板：`"{mnemonic} {0}, {1}"`（严格 TOML 字符串，占位符语法见文档）。
-    #[serde(default)]
-    pub asm: Option<String>,
+    /// 汇编模板（必填，完整格式）：`"add {0:[gpr:in]}, {1:[gpr:inout]}"`。
+    /// 首词 = 汇编助记符（唯一事实来源，替代已删除的 mnemonic 字段）；
+    /// 操作数占位符 `{i:[槽:角色]}` 内联声明操作数（角色缺省 in）。
+    pub asm: String,
     /// 结构化谓词（迭代 4 定型：{ and = [...], eq = [...] }）。
     #[serde(default)]
     pub when: Option<toml::Value>,
     /// 指令级 VEX 字段覆盖。
     #[serde(default)]
     pub vex: Option<VexSpec>,
+    /// 指令级 opsize 覆盖（form 的 opsize 优先级低）：`opsize = <操作数序号>`
+    /// ——宽度由该操作数寄存器自动推导（REX.W/66 前缀驱动）。多宽度合并
+    /// （cvtsi2sd 32/64 源）用：同助记符 + opsize 驱动 REX.W 自动分发。
+    #[serde(default)]
+    pub opsize: Option<Opsize>,
+    /// 指令级 rex_w 覆盖（form 的 rex_w 优先级低）："auto" → opsize==64。
+    #[serde(default)]
+    pub rex_w: Option<String>,
     /// 效果标签（Pure/Read/Write/Branch/Jump/Call/Ret；缺省 Pure）。
     /// 驱动 MachineInst::effects/is_branch/is_call/is_ret（TargetMachine 集成）。
     #[serde(default)]
@@ -408,11 +725,9 @@ pub struct Family {
     /// 家族共享固定字段（如 SSE 的 prefix/w）；variant.fields 覆盖/追加。
     #[serde(default)]
     pub fields: Option<BTreeMap<String, u64>>,
-    /// 家族共享 asm 模板（完整格式；`{mnemonic}` 占位符替换为变体 mnemonic）。
-    #[serde(default)]
-    pub asm: Option<String>,
-    #[serde(default)]
-    pub operands: Vec<OperandUse>,
+    /// 家族共享 asm 模板（完整格式；`{name}` 占位符替换为变体名小写 =
+    /// 变体助记符；操作数占位符内联声明，如 `"addps {0:[fpr:out]}, ..."`）。
+    pub asm: String,
     pub variants: Vec<FamilyVariant>,
 }
 
@@ -424,8 +739,7 @@ pub struct FamilyVariant {
     pub opcode: Option<u64>,
     #[serde(default)]
     pub fields: Option<BTreeMap<String, u64>>,
-    #[serde(default)]
-    pub mnemonic: Option<String>,
+    /// 变体级 asm 覆盖（罕见；缺省用家族模板 `{name}` 展开）。
     #[serde(default)]
     pub asm: Option<String>,
     #[serde(default)]
@@ -466,6 +780,36 @@ pub struct Abi {
     /// 溢出 scratch 寄存器（spill load/store 用；x86 R10/R11）。
     #[serde(default)]
     pub scratch: Vec<String>,
+    /// `@move_args` 收参移动指令名（缺省 "MOV_RM8_R64"——x86 语义；demo 等
+    /// 定宽 ISA 可声明自己的 mov 指令名，如 "MOV64"）。
+    #[serde(default)]
+    pub move_inst: Option<String>,
+    /// Return 返回值→返回寄存器移动指令名（缺省 "MOV_RM8_R64"）。
+    #[serde(default)]
+    pub ret_mov_inst: Option<String>,
+    /// 返回寄存器（物理名；如 riscv "X10"=a0）。缺省空 = index 0（x86 RAX
+    /// 语义）。Return/Call lowering 的返回值移动目标用此列表首项。
+    #[serde(default)]
+    pub ret_regs: Vec<String>,
+    /// Call 调用指令名（缺省 "CALL_RIP_REL"=x86）。riscv 声明 "JAL"：
+    /// 定宽 label 槽 = -(FuncRef+1)（encoder 转 "@N" 符号 reloc），
+    /// 其余 Reg 槽填 `call_ret_reg`（返回地址寄存器）。
+    #[serde(default)]
+    pub call_inst: Option<String>,
+    /// Call 的返回地址寄存器（缺省 "X1"=riscv ra）。
+    #[serde(default)]
+    pub call_ret_reg: Option<String>,
+    /// Call 点被调用方可能破坏的寄存器（物理名）——regalloc 的 call clobber
+    /// 集。缺省 = 整数参数寄存器 + 返回寄存器（x86 语义）。定宽 ISA 无
+    /// callee-saved 保存序列（如 riscv 当前 callee_saved=[]）时，callee 会
+    /// 破坏全部 caller-saved（临时）寄存器 → 必须把 t0-t6 等也列入，否则
+    /// 跨调用存活值留在寄存器被覆盖（实测递归 fib 死循环）。
+    #[serde(default)]
+    pub call_clobbers: Option<Vec<String>>,
+    /// regalloc 不可分配的寄存器（物理名；如 riscv 的 X0=zero 不可写、
+    /// X1=ra 返回地址被 prologue/call 占用、X3/X4=gp/tp）。缺省空。
+    #[serde(default)]
+    pub reserved: Vec<String>,
 }
 
 /// 帧布局配置（[abi.frame]）。
@@ -486,6 +830,27 @@ pub struct AbiFrame {
     /// prologue 在帧指针上方 push 的字节数（帧指针保存槽；x86 = 8）。
     #[serde(default)]
     pub fp_push_bytes: Option<u32>,
+    /// @frame_alloc 的立即数取负（riscv `addi sp, sp, -N`：ADDI 是加法指令、
+    /// 帧分配需负偏移；x86 用 SUB 语义不需要）。缺省 false。
+    #[serde(default)]
+    pub alloc_neg: bool,
+    /// 帧最小字节数（riscv 的 ra/fp 保存槽需帧 ≥ 固定值；缺省 0）。
+    #[serde(default)]
+    pub min_frame_bytes: Option<u32>,
+    /// callee-saved 区字节数覆盖（缺省 = frame_pointer_overhead +
+    /// callee_saved×宽——x86 语义：push 在帧外/fp 上方）。riscv 的
+    /// callee_saved 保存槽在**帧内顶部**（@push_callee 的 SD 到
+    /// [sp+frame-16-k*8]，min_frame_bytes 覆盖）→ 覆盖为 0：spill 槽
+    /// sp_base = -(frame)（帧内底部）、StackAddr 平移 0（栈槽帧内），
+    /// 否则 spill 槽落在帧外与递归帧重叠（实测 fib 死循环）。
+    #[serde(default)]
+    pub callee_saved_bytes_override: Option<u32>,
+    /// 栈槽（StackAddr/Alloca）的帧顶平移字节数（riscv = fp_push_bytes=16：
+    /// 栈槽基准 fp-16，避开 ra/fp 保存槽且递归各帧独立；缺省 None = 回退
+    /// callee_saved_bytes——x86 语义）。独立于 callee_saved_bytes_override
+    ///（后者管 spill 布局、前者管栈槽平移）。
+    #[serde(default)]
+    pub stack_slot_shift: Option<i32>,
 }
 
 /// 被调用者保存寄存器（[abi.callee_saved]）。
@@ -524,6 +889,15 @@ pub struct EmitSection {
     pub prologue: Option<EmitBlock>,
     #[serde(default)]
     pub epilogue: Option<EmitBlock>,
+    /// `.align N` 伪指令的填充字节（缺省 0x00）。
+    #[serde(default)]
+    pub align_pad: Option<u8>,
+    /// 是否生成独立尾声标签 + return 块的 epilogue 跳转（缺省 true =
+    /// x86 语义：return block 经 epilogue_jump 跳到统一尾声）。定宽 ISA
+    /// 无 JMP 指令时可设 false：return block 直接 fall-through 到尾声
+    /// （仅单 return block 函数安全）。
+    #[serde(default)]
+    pub epilogue_label: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

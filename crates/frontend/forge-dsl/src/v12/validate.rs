@@ -45,6 +45,20 @@ fn validate_meta(m: &V12Model) -> Result<(), String> {
     {
         return Err("[meta].max_inst_len must be > 0".into());
     }
+    if m.meta.comment_char.chars().count() != 1 {
+        return Err("[meta].comment_char must be exactly one char".into());
+    }
+    if m.meta.label_suffix.is_empty() {
+        return Err("[meta].label_suffix must not be empty".into());
+    }
+    if let Some(p) = &m.meta.imm_prefix
+        && p.chars().count() != 1
+    {
+        return Err("[meta].imm_prefix must be exactly one char or absent".into());
+    }
+    if m.meta.directive_prefix.is_empty() {
+        return Err("[meta].directive_prefix must not be empty".into());
+    }
     Ok(())
 }
 
@@ -66,7 +80,7 @@ fn validate_regs(m: &V12Model) -> Result<(), String> {
         return Err("missing [reg.*] sections: at least one register group is required".into());
     }
     for (gname, g) in &m.reg {
-        if g.width == 0 {
+        if gname.width() == 0 {
             return Err(format!("[reg.{gname}].width must be > 0"));
         }
         match &g.names {
@@ -207,6 +221,30 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             }
         }
     }
+    if let Some(ps) = &conv.prefix_scan {
+        const KNOWN: [&str; 6] = ["opsize16", "lock", "repe", "repne", "addr16", "rex"];
+        for (i, e) in ps.iter().enumerate() {
+            let path = format!("[conventions.prefix_scan][{i}]");
+            if e.byte.is_none() && e.range.is_none() {
+                return Err(format!("{path}: entry needs `byte` or `range`"));
+            }
+            if e.byte.is_some() && e.range.is_some() {
+                return Err(format!("{path}: `byte` and `range` are mutually exclusive"));
+            }
+            if let Some(b) = e.byte
+                && b > 0xFF
+            {
+                return Err(format!("{path}: byte 0x{b:x} exceeds one byte"));
+            }
+            for fx in &e.effects {
+                if !KNOWN.contains(&fx.as_str()) {
+                    return Err(format!(
+                        "{path}: unknown effect '{fx}' (opsize16/lock/repe/repne/addr16/rex)"
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -230,15 +268,21 @@ fn validate_operand_slots(m: &V12Model) -> Result<(), String> {
         }
         match s.kind {
             OperandKind::Reg => {
-                let Some(class) = &s.class else {
-                    return Err(format!(
-                        "{path}: reg slot requires `class` (a [reg.*] group name)"
-                    ));
-                };
-                if !m.reg.contains_key(class) {
-                    return Err(format!(
-                        "{path}: class '{class}' is not a declared [reg.*] group"
-                    ));
+                // class/classes 可省略 → 任意寄存器类（不推荐，会吞掉更具体的
+                // 重载形式）。指定时必须是已声明的 [reg.*] 组（悬空引用报错）。
+                let mut all = Vec::new();
+                if let Some(c) = &s.class {
+                    all.push(*c);
+                }
+                if let Some(cs) = &s.classes {
+                    all.extend(cs.iter().cloned());
+                }
+                for c in &all {
+                    if !m.reg.contains_key(c) {
+                        return Err(format!(
+                            "{path}: class '{c}' is not a declared [reg.*] group"
+                        ));
+                    }
                 }
                 match s.field_width {
                     None => {
@@ -262,6 +306,21 @@ fn validate_operand_slots(m: &V12Model) -> Result<(), String> {
                 _ => {}
             },
             _ => {}
+        }
+        // 立即数约束一致性：min ≤ max；枚举值在 [min, max] 内（若都声明）。
+        if let (Some(lo), Some(hi)) = (s.min, s.max) {
+            if lo > hi {
+                return Err(format!("{path}: min ({lo}) > max ({hi})"));
+            }
+            if let Some(vs) = &s.values {
+                for v in vs {
+                    if *v < lo || *v > hi {
+                        return Err(format!(
+                            "{path}: enum value {v} outside [min, max] = [{lo}, {hi}]"
+                        ));
+                    }
+                }
+            }
         }
         if let Some(roles) = &s.roles {
             if roles.is_empty() {
@@ -349,24 +408,9 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
             ));
         }
         if let Some(o) = &f.opsize {
-            match o {
-                super::model::OpsizeSpec::Auto(a) => {
-                    if a != "auto" {
-                        return Err(format!(
-                            "[[forms.{}]].opsize string must be \"auto\", got '{a}'",
-                            f.name
-                        ));
-                    }
-                }
-                super::model::OpsizeSpec::Fixed(v) => {
-                    if !matches!(v, 8 | 16 | 32 | 64) {
-                        return Err(format!(
-                            "[[forms.{}]].opsize must be 8/16/32/64, got {v}",
-                            f.name
-                        ));
-                    }
-                }
-            }
+            // v12.1：opsize = 操作数序号（宽度由该操作数寄存器推导）；
+            // 范围/类型校验在 codegen（vlen_ctx 需指令操作数解析后）。
+            let _ = o;
         }
         if let Some(w) = &f.rex_w
             && w != "auto"
@@ -375,6 +419,12 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
         {
             return Err(format!(
                 "[[forms.{}]].rex_w must be \"auto\"/\"field\"/\"always\", got '{w}'",
+                f.name
+            ));
+        }
+        if f.vex.is_some() && f.evex.is_some() {
+            return Err(format!(
+                "[[forms.{}]]: `vex` and `evex` are mutually exclusive",
                 f.name
             ));
         }
@@ -422,40 +472,61 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 inst.name, inst.form
             ));
         }
-        // 操作数数量 ≤ form.operand_fields（多余的位域位置由 fields/隐式 0 填充）
-        if let Some(form) = m.forms.iter().find(|f| f.name == inst.form)
-            && let Some(of) = &form.operand_fields
-            && inst.operands.len() > of.len()
-        {
+        if inst.asm.trim().is_empty() {
             return Err(format!(
-                "[[instructions.{}]]: {} operands exceed form '{}' operand_fields count {}",
-                inst.name,
-                inst.operands.len(),
-                inst.form,
-                of.len()
+                "[[instructions.{}]]: asm must not be empty",
+                inst.name
             ));
         }
-        // 定宽 form（opcode_field 存在）才要求 operand.field 是位域
+        // 操作数声明（asm 占位符内联）：解析 + 槽存在/角色合法/序号连续校验
+        let (_, uses) = super::codegen::parse_asm_decl(&inst.asm, &inst.name)?;
+        for op in &uses {
+            if !slot_exists(m, &op.slot) {
+                return Err(format!(
+                    "[[instructions.{}]]: operand slot '{}' is not declared in [[operand_slots]] (asm '{}')",
+                    inst.name, op.slot, inst.asm
+                ));
+            }
+            if let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot)
+                && let (Some(r), Some(roles)) = (op.role, &slot.roles)
+            {
+                // 兼容性：InOut 槽支持 in/out/inout（读改写能力的子集）；
+                // In 槽仅 in、Out 槽仅 out。
+                let ok = roles.iter().any(|x| match x {
+                    OperandRole::InOut => true,
+                    OperandRole::In => r == OperandRole::In,
+                    OperandRole::Out => r == OperandRole::Out,
+                });
+                if !ok {
+                    return Err(format!(
+                        "[[instructions.{}]]: operand role {:?} not allowed by slot '{}' roles {:?}",
+                        inst.name, r, op.slot, roles
+                    ));
+                }
+            }
+        }
+        // 定宽 form（opcode_field 存在）要求操作数数量 ≤ operand_fields
         let is_fixed = m
             .forms
             .iter()
             .find(|f| f.name == inst.form)
             .map(|f| f.opcode_field.is_some())
             .unwrap_or(false);
-        for op in &inst.operands {
-            if !slot_exists(m, &op.slot) {
+        if is_fixed {
+            let of_len = m
+                .forms
+                .iter()
+                .find(|f| f.name == inst.form)
+                .and_then(|f| f.operand_fields.as_ref())
+                .map(|f| f.len())
+                .unwrap_or(0);
+            if uses.len() > of_len {
                 return Err(format!(
-                    "[[instructions.{}]]: operand slot '{}' is not declared in [[operand_slots]]",
-                    inst.name, op.slot
-                ));
-            }
-            if is_fixed
-                && let Some(f) = &op.field
-                && !m.conventions.bitfields.contains_key(f)
-            {
-                return Err(format!(
-                    "[[instructions.{}]]: operand field '{f}' is not declared in [conventions.bitfields]",
-                    inst.name
+                    "[[instructions.{}]]: {} operands exceed form '{}' operand_fields count {}",
+                    inst.name,
+                    uses.len(),
+                    inst.form,
+                    of_len
                 ));
             }
         }
@@ -469,21 +540,6 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                         inst.name
                     ));
                 }
-            }
-        }
-        // asm 完整格式：首词即 mnemonic，与 `mnemonic` 字段交叉校验（单一事实来源）
-        if let Some(a) = &inst.asm {
-            let first = a
-                .split_whitespace()
-                .next()
-                .ok_or_else(|| format!("[[instructions.{}]]: asm must not be empty", inst.name))?;
-            if let Some(mf) = &inst.mnemonic
-                && mf != first
-            {
-                return Err(format!(
-                    "[[instructions.{}]]: asm mnemonic '{first}' != mnemonic field '{mf}'",
-                    inst.name
-                ));
             }
         }
     }

@@ -1,117 +1,23 @@
 //! forge-dsl — ISA-DSL: TOML-driven ISA code generator.
 //!
-//! Proc macros: `isa!` and `isa_from_file!`.
-//!
-//! - v11（现行）：`parser`/`model`/`bitstring` —— 编码字符串 + `@原语` 语法，
-//!   由 `isa_from_file!` 消费。
-//! - v12（迭代中，`v12` 模块）：唯一 DSL 语法（严格 TOML，不兼容 v11），
-//!   迭代 1 已含模型 + 解析 + 语义校验；代码生成接入随迭代 2+ 进行。
+//! Proc macro: `isa_from_file!`（v12 唯一语法，严格 TOML，不兼容已删除的
+//! v11 字符串编码层）。v11 语法层（`encoding` 字符串 + `@原语`、紧凑
+//! `fields` 串、`when` 谓词串、asm 隐式魔法名）已整体移除——无兼容层、
+//! 无转换工具、无逃生门。模型/解析/校验/生成见 `v12` 模块。
 
 use proc_macro::TokenStream;
 
-mod bitstring;
-mod codegen;
-mod model;
-mod parser;
-
-// v12 唯一语法：严格 TOML 模型 + 解析 + 校验（迭代 1；生成接入随迭代 2+）。
+// v12 唯一语法：严格 TOML 模型 + 解析 + 校验 + 代码生成。
+// `assembler` = v12 asm 规范层（token 模型/参考词法/参考操作数解析），
+// 生成器镜像其语义；v11 死代码（generic/enc 引擎）已删除。
+mod assembler;
 mod v12;
 
-// 每 ISA 专属汇编语法生成器（模板 → lalrpop 语法 → parser 代码）
-mod asm_grammar;
-
-// Instruction resolver (shared with CST codegen)
-mod asm_resolver;
-
-// Grammar rule expression parser (used by build_grammar_from_model)
-mod grammar_rule;
-
-// CST-based code generation using forge-grammar
-mod cst_codegen;
-
-fn compile_source(source: &str) -> Result<proc_macro2::TokenStream, DslError> {
-    let mut model = parser::parse(source).map_err(DslError::Parse)?;
-    model.validate().map_err(DslError::Validation)?;
-    model.expand_opcodes();
-    model.expand_variants();
-    model.expand_templates();
-    model.validate_lowering().map_err(DslError::Validation)?;
-
-    let inner = codegen::generate(&model).map_err(DslError::Codegen)?;
-
-    let mod_name = syn::Ident::new(
-        &model.meta.name.to_lowercase().replace('-', "_"),
-        proc_macro2::Span::call_site(),
-    );
-
-    Ok(quote::quote! {
-        // 生成代码：允许 DSL 产出的手写等价模式（? 重写 / range contains / 多余引用）
-        #[allow(clippy::question_mark, clippy::manual_range_contains, clippy::needless_borrow)]
-        pub mod #mod_name {
-            use crate::prelude::*;
-            #inner
-        }
-    })
-}
-
-#[derive(Debug, thiserror::Error)]
-enum DslError {
-    #[error("parse: {0}")]
-    Parse(String),
-    #[error("validate: {0}")]
-    Validation(String),
-    #[error("codegen: {0}")]
-    Codegen(String),
-}
-
-/// `isa!{ ... }` — inline TOML ISA definition.
-/// Input is raw TOML text (not a string literal).
-#[proc_macro]
-pub fn isa(input: TokenStream) -> TokenStream {
-    compile_source(&input.to_string())
-        .map(Into::into)
-        .unwrap_or_else(|e| {
-            syn::Error::new(proc_macro2::Span::call_site(), e.to_string())
-                .to_compile_error()
-                .into()
-        })
-}
-
-/// `isa_from_file!("path/to/arch.toml")` — load ISA from file.
-/// Input is a string literal (parsed with syn::LitStr).
+/// `isa_from_file!("path/to/arch.toml")` — v12 唯一语法 ISA：生成自包含
+/// encode/decode/asm 模块 + TargetMachine 集成层。生成模块名 = 文件 stem
+/// （非 meta.name；v12 文档化约定）。
 #[proc_macro]
 pub fn isa_from_file(input: TokenStream) -> TokenStream {
-    let lit: syn::LitStr = match syn::parse(input) {
-        Ok(lit) => lit,
-        Err(e) => return e.to_compile_error().into(),
-    };
-    let path = lit.value();
-    let content = match read_isa_file(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            return syn::Error::new(proc_macro2::Span::call_site(), e)
-                .to_compile_error()
-                .into();
-        }
-    };
-    compile_source(&content)
-        .inspect(|ts| dump_generated(&path, ts))
-        .map(Into::into)
-        .unwrap_or_else(|e| {
-            syn::Error::new(
-                proc_macro2::Span::call_site(),
-                format!("ISA-DSL error in '{path}':\n{e}"),
-            )
-            .to_compile_error()
-            .into()
-        })
-}
-
-/// `isa_v12_from_file!("path/to/arch.toml")` — v12 唯一语法 ISA（迭代 2：
-/// 定宽 32 位自包含 encode/decode/asm 模块）。生成模块名 = 文件 stem
-/// （与 v11 用 meta.name 不同；避免双嵌套与命名冲突，v12 文档化约定）。
-#[proc_macro]
-pub fn isa_v12_from_file(input: TokenStream) -> TokenStream {
     let lit: syn::LitStr = match syn::parse(input) {
         Ok(lit) => lit,
         Err(e) => return e.to_compile_error().into(),
@@ -134,17 +40,22 @@ pub fn isa_v12_from_file(input: TokenStream) -> TokenStream {
             .replace('-', "_"),
         proc_macro2::Span::call_site(),
     );
-    compile_source_v12(&content, &mod_name)
+    let a: TokenStream = compile_source_v12(&content, &mod_name)
         .inspect(|ts| dump_generated(&path, ts))
         .map(Into::into)
         .unwrap_or_else(|e| {
             syn::Error::new(
                 proc_macro2::Span::call_site(),
-                format!("ISA-DSL v12 error in '{path}':\n{e}"),
+                format!("ISA-DSL error in '{path}':\n{e}"),
             )
             .to_compile_error()
             .into()
-        })
+        });
+    let _ = std::fs::write(
+        format!(r"D:\Program\rust_main\code_forge\target\tmp\t_{mod_name}.rs"),
+        a.to_string(),
+    );
+    a
 }
 
 /// v12 编译入口：严格解析 + 校验 → v12 生成器 → `pub mod <name>`（name = 文件 stem）。

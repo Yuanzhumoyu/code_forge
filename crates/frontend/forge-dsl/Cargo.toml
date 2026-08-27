@@ -2,18 +2,18 @@
 name = "forge-dsl"
 version = "0.2.0"
 edition = "2024"
-description = "ISA-DSL v10: TOML-driven ISA code generator with proc macros"
+description = "ISA-DSL v12: TOML-driven ISA code generator with proc macros (strict TOML, no v11 string layer)"
 
 [lib]
 proc-macro = true
 
 [dependencies]
-forge-grammar = { path = "../forge-grammar" }
 toml = "1.1.3"
 serde = { version = "1", features = ["derive"] }
 syn = { version = "3.0.3", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 thiserror = "2"
-# proc-macro 展开时生成每 ISA 专属 lalrpop 语法并编译为 parser 代码
-lalrpop = "0.23.1"
+logos = "0.16.1"
+unicode-segmentation = "1.13.2"
+bitvec = "1"
