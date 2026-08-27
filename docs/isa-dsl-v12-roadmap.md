@@ -218,26 +218,27 @@ limit = 128
 insts = ["push RBP", "mov64rr RBP, RSP", "@push_callee", "@frame_alloc"]
 ```
 
-## 5. forge-dsl 重构（v11 语法层移除）
+## 5. forge-dsl 重构（v11 语法层移除——已完成，见 §22）
 
 ```text
 crates/frontend/forge-dsl/src/
-├── v12/
-│   ├── mod.rs         # 模块入口 + V12Error + parse_and_validate
-│   ├── model.rs       # v12 模型（唯一模型，deny_unknown_fields）
-│   ├── parse.rs       # 严格 TOML 解析
-│   ├── validate.rs    # 语义校验（引用完整/位域越界/重复声明/类型约束）
-│   └── pred.rs        # 结构化谓词求值（迭代 4）
-├── codegen/
-│   ├── mod.rs          # 从 v12 模型生成（直接，无字符串中间层；迭代 2+）
-│   ├── emit_gen.rs     # encoder 生成（form 语义键 → 发射代码）
-│   ├── decoder_gen.rs  # decoder 生成（form+bitfields 结构化 → 解码逻辑）
-│   └── components.rs   # TargetMachine 组装（保留）
-├── asm_grammar.rs      # assembler 生成（保留，从 asm 模板 + operand_slots）
-├── cst_codegen.rs      # 保留
-├── lib.rs              # 入口：v12 TOML → 校验 → 生成（迭代 2 切换）
-└── (删除) bitstring.rs 字符串解析层、旧 model 的 encoding 字符串路径
+├── lib.rs              # 唯一入口：isa_from_file!（v12）→ v12 解析/校验/生成
+└── v12/
+    ├── mod.rs          # 模块入口 + V12Error + parse_and_validate
+    ├── model.rs        # v12 模型（唯一模型，deny_unknown_fields）
+    ├── parse.rs        # 严格 TOML 解析
+    ├── validate.rs     # 语义校验（引用完整/位域越界/重复声明/类型约束）
+    ├── pred.rs         # 结构化谓词求值
+    ├── tests.rs        # 模型/解析/校验测试（含 v11 风格拒绝证明）
+    └── codegen/
+        ├── mod.rs      # 生成器：Inst/encode/decode/disassemble/assemble（自包含）
+        └── integration.rs  # TargetMachine 集成层（MachineInst/Encoder/Decoder/ABI/...）
 ```
+
+已删除：`bitstring.rs` 字符串解析层、v11 `model.rs`/`parser.rs`/`codegen/`、
+`asm_grammar.rs`（lalrpop 语法生成）、`asm_resolver.rs`、`grammar_rule.rs`、
+`cst_codegen.rs`、`standard_insts.rs`、`isa!`/`isa_from_file!`（v11 版）宏。
+
 
 ## 6. 迭代序列（9 迭代）
 
@@ -713,3 +714,103 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
 **下一步（迭代 6 续）**：Call/函数调用 → mini_c 全量（AST 内联已支持，
 直呼 CALL 指令待定）；x86 124 指令 + 115 lower 全量 v12；v11 语法层
 物理删除。
+
+## 22. v11 语法层物理删除完成记录（2026-08）
+
+**决策**：v12 已完备（mini_c 25/25、204 指令 > v11 124），按已批准路线图
+执行 v11 语法层物理删除——无兼容层、无转换工具、无逃生门。
+
+**删除清单（全部已执行）**：
+
+- **forge-dsl v11 语法层**：`bitstring.rs`、`model.rs`、`parser.rs`、
+  `standard_insts.rs`、`codegen/mod.rs`、`codegen/components.rs`、
+  `asm_grammar.rs`、`asm_resolver.rs`、`grammar_rule.rs`、`cst_codegen.rs`；
+  `lib.rs` 删除 `isa!`/`isa_from_file!`（v11 版）与 `compile_source`，
+  v12 宏 `isa_v12_from_file!` **改名为 `isa_from_file!`**（唯一语法不再带
+  版本后缀）；Cargo.toml 删除 `lalrpop`/`forge-grammar` 依赖
+- **v11 arch 后端 + TOML**：`arch/{x86_64,aarch64,riscv64,wasm32,
+  minimal_sd_test}.rs` 与 `isa/{x86_v10,aarch64_v10,riscv64_v10,
+  wasm32_v10,minimal_sd}.toml`；`arch/mod.rs`/`lib.rs` 接线清理（保留
+  `riscv64_v12`/`x86_v12`）
+- **forge-codegen**：删 v11 测试（all_isa_smoke/assembler_smoke/packet_syntax），
+  重写 decoder_smoke/unsupported_inst_negative 为 x86_v12；jit.rs/compiler.rs
+  单测与 x86_v12_tests/riscv64_v12_tests 的 v11 golden 对比改为**硬编码规范
+  oracle 字节**；删除 v11-only 运行时（`encode/`、`primitives/`、
+  `machine/assembler.rs` 的 parse_lines/bind、reloc_patcher 的
+  aarch64/riscv64 分支）；Cargo.toml 删除 `forge-asm`/`logos`/`lalrpop-util`
+- **mini_c**：Direct/Hir/V12 三后端统一 x86_v12 TargetMachine（JitRunnerImpl
+  单变体）；codegen_hir 单测同步
+- **forge-rustc**：注册/查找名 x86_64 → `x86_64_v12`；aarch64/riscv64 目标
+  分支删除（无 v12 对应后端）
+- **forge-tests**：删 x86_64/aarch64/riscv64 套件、cross_arch_exec、
+  exec-unicorn（unicorn.rs/unicorn_ffi.rs/build.rs/vendor/531 文件）；
+  exec/coverage 重定向 x86_v12；零缺口断言以 v12 TOML 声明集（20 op）为基准
+- **根 crate + forge-asm**：workspace 成员删除 `crates/tools/forge-asm`
+  （v11 汇编运行时，已无使用者）；根 `src/lib.rs` 删除 `pub use forge_asm`/
+  `assembler`/`encode`；benches/compile_bench 与 examples/jit_demo 重定向
+- **CI + 文档**：ci.yml 删 forge-tests-matrix/forge-tests-unicorn 两个 job；
+  删 `docs/{isa-dsl-v10,encoding-guide,asm-syntax}.md`；`docs/isa-dsl.md`
+  重写为 v12 规范；roadmap-status/README/CLAUDE 同步
+
+**验证**：`cargo check --workspace --exclude forge-rustc --all-targets` 全绿；
+`cargo test --workspace --exclude forge-rustc` 全绿（mini_c v12 25/25、
+dual_backend 19/19、x86_v12 14/14、riscv64_v12 9/9、集成 12/12、
+forge-codegen 100/100）；clippy/fmt 干净；全仓 grep 零残留
+（`isa_from_file!` v11 版 / `arch::x86_64` / `forge_asm` / `bitstring` /
+`x86_v10` 等）。
+
+## 23. Phase 1-7 执行记录（2026-08）——类型化重构 + 架构无关 JIT 矩阵 + 全指令补齐
+
+**已批准路线图**（7 阶段）：类型化重构 → 矩阵骨架 → when 接线+整数 →
+浮点+ABI → Call+reloc → 向量 → 收尾。每阶段门禁全绿；矩阵用例**架构无关
+一次编写**（零 ISA 引用，ISA 只存在于薄 runner + 能力集），riscv64 未来
+接入复用。
+
+- **Phase 1 类型化重构**：生成代码全面类型化——`Reg` 物理寄存器枚举
+  （非裸 u32）、`Inst` 变体操作数字段名（`inst_fids` 按指令名取字段 ident，
+  消除各处硬编码 `op{i}`）；`InstPacket::map_reg_field` 以字段序定位。
+- **Phase 2 矩阵骨架**（`forge-tests/src/jit_matrix.rs`）：
+  - `Runner<M: TargetMachine + Clone> { machine: fn() -> M, caps }`、
+    `Case { name, ops, kind }`、`CaseKind::{I32/I64/F64/Bool/Block/Args/
+    F64Args/Module/CompileOnly}`、`Outcome::{Pass/Skip/Fail}`
+  - 用例零 ISA 引用；`ops` 未覆盖 → Skip（不失败，实现后自动转绿）；
+    `Module`（JIT `compile_module` + 多函数 Call）、`F64Args`（XMM 传参
+    runner，`extern "C" fn(f64..) -> i64`）、外部函数 `ext_add42`/
+    `EXT_ADD42`（CallIndirect）
+- **Phase 3 when 接线 + 整数补齐**：lowering `when` 谓词接入
+  `gen_lowering_attrs`——`rd`/`rs1_width`/`rs2_width`（标量 bits；向量经
+  `type_ctx.size_bytes()*8`）、`elem`（`elem_id_of`）、`cond`
+  （fcmp_id/icmp_id）、`imm0`（Vextract/Vinsert/Vsplit lane 索引、
+  AtomicRmw op 判别）；整数全量 lowering（含 Sdiv/Udiv/Srem/Urem/SaddSat/
+  UaddSat/Rotl/Rotr/Clz/Ctz/Bswap 等序列）→ **107 用例全绿**
+- **Phase 4 浮点 + ABI**：标量浮点全量（Fadd..Fdiv/Fneg/Fabs/Fsqrt/
+  Fmin/Fmax/Fcopysign/Ffloor/Fceil/Ftrunc/Fround/Fptosi/Sitofp/Fptoui/
+  Uitofp/Cvtsi2sd 等）；浮点 return→XMM0、`move_args` 浮点分派
+  （param_is_float）、`F64Args` runner（浮点参数经 XMM 传参）→ **148 用例**
+- **Phase 5 Call + reloc**：`gen_call_lowering`（参数→ABI 寄存器、返回值
+  移动、函数符号 reloc）；CALL 的 Label 槽 `rel<0` → `CodeSink::add_reloc`
+  (CALL, "@N")，JIT 符号表按 FuncRef 序注册 → **152 用例**
+- **Phase 6 向量**：V64/V128/V256 全量 lowering（vadd/vsub/vmul/vdiv/
+  vneg/vabs/vbitcast/vextract/vinsert/vbroadcast/vsplit/vconcat/
+  shuffle_vector/vconst 系列）；AVX 门控（`avx_available()` 时 caps 插入
+  "AVX" 伪能力，V256 用例无 AVX 机器自动 Skip）；VEX 三操作数
+  modrm="rr_src2"（reg=dest、rm=src2、vvvv=~src1）→ **165 用例**
+- **Phase 7 收尾（缺口全补齐，182 用例全绿）**：
+  - **SsubSat**（SUB + 溢出方向 clamp）、**Ptrtoint/Inttoptr**（MOV 直拷）、
+    **Undef/Poison**（XOR 清零）
+  - **GlobalAddr**：`MOVABS_GLOBAL {out}, {global}`（新 `{global}` token，
+    imm<0 编码 GlobalId）→ encoder 特判 arm 转 `RelocKind::ABS8`
+    "G{id}"（JIT 按全局变量注册符号 + 数据段），非 JIT 后端同样可用
+  - **Frem**：`a - b*trunc(a/b)` 序列（ROUNDS{S,D} imm8=3 向零截断）
+  - **原子**：AtomicRmw 按 `imm0` 谓词分派——Xchg=0（XCHG_MEM_R，隐式
+    LOCK）、Add=1（XADD_MEM_R）、Sub=2（NEG+XADD）；其余 op（And/Or/Xor/
+    Nand/Max/Min/Umax/Umin/Fadd/Fsub）需 CMPXCHG 循环或软件序列 → 编译期
+    Unsupported（文档记录）。**Cmpxchg**：RAX 隐式累加器 + 新
+    `CMPXCHG_MEM_R`（LOCK 0F B1，MRR_MEM_0F）→ 旧值回 RAX
+  - **Nop**（NOP 指令）；**GetElementPtr** 无需 TOML 规则——编译期
+    `expand_geps` 已展开为 Copy+Imul+Iadd（compiler.rs，常量索引折叠、
+    动态索引 mul/add）
+  - **矩阵 182 passed / 0 skipped / 0 failed**
+- **验证**：每阶段 `cargo test --workspace --exclude forge-rustc
+  --all-features` + clippy -D warnings + fmt 全绿；TOML 改动 touch
+  `arch/x86_v12.rs` 触发宏重展开；`FGE_DEBUG_GEN=1` dump 生成代码调试
