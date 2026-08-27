@@ -257,16 +257,15 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     match def.opcode {
                         Opcode::StackAddr => has_stack = true,
                         Opcode::Iconst => {
-                            if let Some(Immediate::Const(cid)) = def.immediates.first() {
-                                if let Some((v, _)) = self
+                            if let Some(Immediate::Const(cid)) = def.immediates.first()
+                                && let Some((v, _)) = self
                                     .ctx
                                     .constant_pool
                                     .as_ref()
                                     .and_then(|cp| cp.get_int(*cid))
-                                {
-                                    const_val = v as i64;
-                                    has_const = true;
-                                }
+                            {
+                                const_val = v as i64;
+                                has_const = true;
                             }
                         }
                         _ => {}
@@ -475,7 +474,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             // lea 基准 rbp - callee_saved_bytes）。
             if matches!(inst.opcode, Opcode::Alloca) {
                 let off = self.alloca_offsets.get(&ii).copied().unwrap_or(-8);
-                self.ctx.current_alloca_offset = off - self.ctx.callee_saved_bytes as i64;
+                self.ctx.current_alloca_offset = off - self.ctx.stack_slot_shift as i64;
             }
 
             if let Some(Immediate::Const(cid)) = inst.immediates.first() {
@@ -541,18 +540,20 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 self.ctx.current_global = Some(*g);
             }
             if let Some(Immediate::Int(v)) = inst.immediates.first() {
-                // StackAddr 偏移平移：lea 基准从 rbp 改为 rbp - callee_saved_bytes，
-                // 避免局部变量写在 callee-saved push 槽上（覆盖调用者寄存器）。
+                // StackAddr 偏移平移：lea 基准从 rbp 改为 rbp - 栈槽平移
+                //（stack_slot_shift：x86 = callee_saved_bytes；riscv =
+                // fp_push_bytes），避免局部变量写在 callee-saved push 槽上
+                //（覆盖调用者寄存器保存值）。
                 // v 是负数（-4, -8, ...），槽深 = -v + 槽宽（8 字节对齐）；记录
                 // 最大需求供 calculate_frame_size 分配（否则槽落在 rsp 之下）。
                 if crate::pipeline::trace_enabled("FORGE_TRACE_STACK") {
                     eprintln!(
-                        "[forge] StackAddr v={v} callee_saved={} -> lea rbp{:+}",
-                        self.ctx.callee_saved_bytes,
-                        v - self.ctx.callee_saved_bytes as i64
+                        "[forge] StackAddr v={v} shift={} -> lea rbp{:+}",
+                        self.ctx.stack_slot_shift,
+                        v - self.ctx.stack_slot_shift as i64
                     );
                 }
-                self.ctx.current_offset = *v - self.ctx.callee_saved_bytes as i64;
+                self.ctx.current_offset = *v - self.ctx.stack_slot_shift as i64;
                 // 正偏移（rbp 上方）不是本函数局部变量槽，不参与 locals 帧计算；
                 // 负偏移槽深 = -v + 槽宽（8 字节对齐）。直接 (-v as u32) 对正偏移
                 // 会下溢成巨大值导致帧大小溢出崩溃（io_stack_addr_distinct_offsets）。

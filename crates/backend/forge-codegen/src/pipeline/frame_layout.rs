@@ -4,14 +4,20 @@
 //! ABI/register metadata of the target machine.
 
 use crate::AllocResult;
-use crate::machine::reg_info::TargetRegInfo;
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileState;
 
 /// callee-saved 区字节数：fp 保存槽 + callee-saved 寄存器 × 主 GPR 类宽度。
 /// 帧布局公式的唯一来源（compiler.rs 的 LowerCtx 与 emission.rs 共用）——
 /// 主类宽度取 `default_gpr_class()`（元数据驱动，不再假设 GPR64）。
-pub(crate) fn callee_saved_bytes<R: TargetRegInfo + ?Sized>(ri: &R) -> i32 {
+/// `[abi.frame].callee_saved_bytes_override` 可覆盖（riscv：callee_saved
+/// 保存槽在帧内顶部、min_frame_bytes 覆盖 → 覆盖 0 使 spill 槽 sp_base =
+/// -(frame) 留在帧内，否则 spill 槽落帧外与递归帧重叠——fib 死循环）。
+pub(crate) fn callee_saved_bytes<M: TargetMachine + ?Sized>(machine: &M) -> i32 {
+    if let Some(v) = machine.abi().callee_saved_bytes_override() {
+        return v as i32;
+    }
+    let ri = machine.reg_info();
     (ri.frame_pointer_overhead() as i32)
         + (ri.callee_saved().len() as i32) * (ri.reg_class_width(ri.default_gpr_class()) as i32)
 }
@@ -36,6 +42,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 导致局部变量被垃圾地址覆盖——forge-rustc w2 无限循环即此 bug）。
         let size = spill.saturating_add(locals);
         let align = machine.abi().stack_align();
+        // 最小帧（[abi.frame].min_frame_bytes）：riscv 的 ra/fp 保存槽需帧
+        // ≥ 固定值，否则 emit 模板的 {frame_size_mN} 偏移为负（写坏 sp 下方）。
+        let min_frame = machine.abi().min_frame_bytes();
+        let size = size.max(min_frame);
         // 栈填充（x86 = 8 = align/2）：prologue push rbp + callee-saved 后
         // rsp%16==8（入口 rsp%16==8 由 call 压入的返回地址造成），sub rsp 必须
         // 使 call 前 rsp%16==0（SysV/Windows x64 ABI）。spill 区 size 是 16 的

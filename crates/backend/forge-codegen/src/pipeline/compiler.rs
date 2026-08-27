@@ -1670,9 +1670,11 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         func: &Function,
     ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
         let _cf_t0 = std::time::Instant::now();
-        // V256+（>128 位）向量参数/返回：ABI 传参仅 128 位 XMM 寄存器，
-        // 宽向量会静默只传低 128 位——显式拒绝（本机 JIT 内可用 vconcat/
-        // vsplit 在函数内组合，或后续扩展 ABI）。
+        // 宽向量参数/返回（>16 字节）ABI：
+        // - 若 ISA 声明 `vector by-ref limit`（如 x86 limit=128 位）→ 宽向量按
+        //   引用传参（调用方栈拷贝 + 传指针 GPR；被调方入口从 [ptr] 加载）。
+        // - 否则拒绝（ABI 仅寄存器传值，宽向量会静默截断）。
+        let by_ref_limit = self.machine.abi().vector_by_ref_limit();
         let types = &func.types;
         let param_tys = func.param_types();
         let return_tys = func.return_types();
@@ -1685,9 +1687,25 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             })
             .copied();
         if let Some(ty) = wide {
-            return Err(IrError::Unsupported(format!(
-                "SIMD 参数/返回 >128 位暂不支持（ABI 仅 128 位 XMM 传参）：type {ty:?}"
-            )));
+            let s = types.borrow();
+            let bytes = s.size_bytes(ty);
+            match by_ref_limit {
+                Some(lim) if bytes <= lim => {
+                    // 在寄存器传值范围内（≤16 字节）：走现有 XMM/GPR 传参路径。
+                }
+                Some(lim) => {
+                    // 超过阈值：by-ref 传参（调用方栈拷贝 + 传指针；被调方入口
+                    // 从 [ptr] 加载）。入口守卫通过——move_args/call lowering
+                    // 的 by-ref 路径处理。V512（64 字节）等超宽向量若 ISA 未
+                    // 声明足够 limit 时由 encode 侧能力决定（avx512 检测）。
+                    let _ = lim;
+                }
+                None => {
+                    return Err(IrError::Unsupported(format!(
+                        "SIMD 参数/返回 {bytes} 字节暂不支持（ABI 未声明 vector by-ref；type {ty:?}）"
+                    )));
+                }
+            }
         }
         // 聚合参数/返回 >8 字节：由 expand_agg_call_args / expand_large_agg_params /
         // expand_large_agg_ret 处理（≤16 字节拆段；>16 字节在 pass 内拒绝）。
@@ -1858,8 +1876,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
         //（覆盖调用者寄存器保存值 → mini_c JIT SEGV/逻辑错误）。
-        ctx.callee_saved_bytes =
-            crate::pipeline::frame_layout::callee_saved_bytes(machine.reg_info().as_ref());
+        ctx.callee_saved_bytes = crate::pipeline::frame_layout::callee_saved_bytes(machine);
+        // 栈槽帧顶平移：[abi.frame].stack_slot_shift（riscv=16）或回退
+        // callee_saved_bytes（x86 语义）。
+        ctx.stack_slot_shift = machine
+            .abi()
+            .stack_slot_shift()
+            .unwrap_or(ctx.callee_saved_bytes);
         ctx.is_float_return = func
             .return_types()
             .iter()
@@ -1928,6 +1951,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             RegClass::GPR(2),
             RegClass::GPR(1),
             RegClass::FPR(4),
+            RegClass::FPR(8),
             RegClass::FPR(16),
             RegClass::VEC(16),
             RegClass::VEC(32),
@@ -1946,6 +1970,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                             RegClass::GPR(w) => (0, *w),
                             RegClass::FPR(w) => (1, *w),
                             RegClass::VEC(w) => (2, *w),
+                            RegClass::KReg(w) => (3, *w),
                         }
                     }
                     rank(a).cmp(&rank(b))
@@ -2014,7 +2039,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
 #[cfg(test)]
 mod alloc_integration_tests {
     use super::*;
-    use crate::arch::x86_64;
+    use crate::arch::x86_v12;
 
     fn build_sig(params: &[TypeId], ret: TypeId) -> FunctionSignature {
         FunctionSignature::new(&params.iter().map(|t| (*t, "")).collect::<Vec<_>>(), &[ret])
@@ -2023,7 +2048,7 @@ mod alloc_integration_tests {
     /// Phase 4.2：builder 构造 IR 走完整管线，断言 AllocResult.assignments 非空且合法。
     #[test]
     fn test_alloc_result_assignments() {
-        x86_64::ensure_registered();
+        x86_v12::ensure_registered();
         let mut b = FunctionBuilder::new(
             "alloc_test",
             TypeContext::new(),
@@ -2035,7 +2060,7 @@ mod alloc_integration_tests {
         let s = b.imul(a, c);
         b.ret(&[s]);
         let func = b.finish().expect("build");
-        let machine = x86_64::TargetMachine::new();
+        let machine = x86_v12::TargetMachine::new();
         let (cf, alloc) = FunctionCompiler::new(machine)
             .compile_with_alloc(&func)
             .expect("compile_with_alloc");
@@ -2056,7 +2081,7 @@ mod alloc_integration_tests {
     /// Phase 4.3：参数 ABI 分配——f(i64×4) 的前 4 参数 XReg 分配到 RCX/RDX/R8/R9。
     #[test]
     fn test_param_abi_allocation() {
-        x86_64::ensure_registered();
+        x86_v12::ensure_registered();
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(
             &[
@@ -2075,7 +2100,7 @@ mod alloc_integration_tests {
         let s2 = b.iadd(s1, params[3]);
         b.ret(&[s2]);
         let func = b.finish().expect("build");
-        let machine = x86_64::TargetMachine::new();
+        let machine = x86_v12::TargetMachine::new();
         let (_cf, alloc) = FunctionCompiler::new(machine)
             .compile_with_alloc(&func)
             .expect("compile_with_alloc");
@@ -2114,7 +2139,7 @@ mod alloc_integration_tests {
     /// 分配层完整性：每个分配/溢出的 XReg 都有合法去向。
     #[test]
     fn test_div_clobber_alloc_integrity() {
-        x86_64::ensure_registered();
+        x86_v12::ensure_registered();
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[ctx.i64_ty()]);
         let mut b = FunctionBuilder::new("div_clobber_alloc", ctx, sig);
@@ -2128,7 +2153,7 @@ mod alloc_integration_tests {
         }
         b.ret(&[acc]);
         let func = b.finish().expect("build");
-        let machine = x86_64::TargetMachine::new();
+        let machine = x86_v12::TargetMachine::new();
         let (cf, alloc) = FunctionCompiler::new(machine)
             .compile_with_alloc(&func)
             .expect("div + clobber 压力下编译必须成功（无 RegAlloc 错误）");

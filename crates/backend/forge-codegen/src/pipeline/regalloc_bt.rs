@@ -76,6 +76,7 @@ impl BacktrackingAllocator {
                 let constraint = OperandConstraint::Any;
                 let class = state.vreg_class(vreg);
                 let preg = state.assign_reg(vreg, constraint, class, &[])?;
+                state.active.insert(vreg, preg); // 将预分配的参数 XReg 添加到 active 列表中
                 if crate::pipeline::trace_enabled("FORGE_TRACE_REGALLOC") {
                     eprintln!("[pre] v{} class={class:?} -> {preg:?}", vreg.index());
                 }
@@ -688,8 +689,28 @@ impl<'a> BtState<'a> {
                 // free_regs 池序跨进程随机 → pop() 取到的寄存器随机 → 分配/
                 // spill 决策连锁非确定（EP/函数布局每次编译不同）。pop 前按
                 // PReg index 排序，取最大者——确定性分配（跨进程一致）。
-                pool.sort_by_key(|p| p.num);
-                pool.pop()
+                //
+                // **callee-saved 优先**：跨调用存活的 vreg 必须落在被保存的
+                // 寄存器上（否则 call 点被 clobber 强制 spill，参数/长命值丢
+                // 失——riscv fib 递归：参数 n 先分到 t 系（高编号 caller-
+                // saved）→ spill → @move_args 写的寄存器值与 emission 从槽
+                // 重载不一致 → 递归结果错）。x86 的 callee-saved 恰在高编号
+                // （R15-R12），纯 max 优先天然命中；riscv 的 callee-saved
+                //（X9/X18-X27）与 caller-saved 交错（X28-X31 更高）→ 需显式
+                // 优先 callee_saved。非跨调用 vreg 用 callee-saved 无害（函数
+                // 自身保存）。
+                if let Some(max_cs) = pool
+                    .iter()
+                    .filter(|p| self.config.callee_saved.contains(&p.num))
+                    .max_by_key(|p| p.num)
+                    .copied()
+                {
+                    pool.retain(|p| *p != max_cs);
+                    Some(max_cs)
+                } else {
+                    pool.sort_by_key(|p| p.num);
+                    pool.pop()
+                }
             }?;
             // 跳过已被占用的寄存器（spill/驱逐可能把已占寄存器残留进空闲池）
             // 跨宽度类重叠（GPR(4) vs GPR(8) 同编号）也视为占用。
@@ -743,6 +764,12 @@ impl<'a> BtState<'a> {
                 .param_xregs
                 .iter()
                 .map(|v| v.class().is_fp())
+                .collect(),
+            param_by_ref: self
+                .config
+                .param_xregs
+                .iter()
+                .map(|v| v.class().is_fp() && v.width() > 16)
                 .collect(),
             param_is_32: self
                 .config

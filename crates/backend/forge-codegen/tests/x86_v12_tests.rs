@@ -1,185 +1,100 @@
-//! x86-64 v12 pilot 验证（迭代 3：变长语义键）。
+//! x86-64 v12 验证（迭代 3+：变长语义键）。v11 后端已删除，golden 全部为
+//! 硬编码 x86 规范 oracle 字节（v12 组内寄存器索引，无 v11 的 `16+i` 偏差）。
 //!
-//! - **golden**：GPR 指令（@modrm 24 + @modrm_imm32 6）字节与 v11 逐字节一致
-//!   （汇编→编码对比）；opsize 16/32/64 用直接 Inst 构造对比（v11 的 66 前缀/
-//!   REX.W 由 opsize 字段驱动）。
-//! - **规范字节**：SSE 指令按 x86 规范硬编码 oracle（v11 的 FPR `16+i` 索引
-//!   使 SSE 字节带多余 REX 且不合规；v12 组内索引规范正确）。
+//! - **规范字节**：GPR/imm32/内存/VEX/SSE 指令按 x86 规范硬编码 oracle
+//!   （v11 对比曾验证 v12 与其 GPR 字节一致；SSE 字节 v11 带多余 REX 不合规，
+//!   v12 组内索引规范正确——以规范为准）。
 //! - **字节级往返**：decode(encode(X)) 再 encode 字节一致（含编码撞车的别名
 //!   指令，如 MOVSXD_R_GPR vs MOVSXD_R_RM、MOVSD 三胞胎、MOVZX_B vs
-//!   MOVZX_R8_RM——声明序首匹配，与 v11 一致）。
+//!   MOVZX_R8_RM——声明序首匹配）。
 //! - **assemble/disassemble** 往返（opsize 操作数非文本，默认 64）。
 
-use forge_codegen::x86_v12::{Inst, MemRef, assemble, decode, disassemble, encode};
-
-fn v11_bytes(asm: &str) -> Vec<u8> {
-    use forge_codegen::machine::assembler::TargetAssembler;
-    use forge_codegen::machine::target::TargetMachine;
-    let tm = forge_codegen::x86_64::TargetMachine::new();
-    let asm_ = forge_codegen::x86_64::Assembler;
-    let insts = asm_
-        .parse_insts(asm)
-        .unwrap_or_else(|e| panic!("v11 parse `{asm}`: {e:?}"));
-    let inst = insts.into_iter().next().expect("one inst");
-    tm.encoder()
-        .encode_to_bytes(&inst, &forge_codegen::AllocResult::new())
-        .unwrap_or_else(|e| panic!("v11 encode {inst:?}: {e:?}"))
-}
+use forge_codegen::x86_v12::{Inst, MemRef, Reg, assemble, decode, disassemble, encode};
+use forge_ir::{PhysReg, RegClass};
 
 fn v12_bytes(asm: &str) -> Vec<u8> {
     let inst = assemble(asm).unwrap_or_else(|e| panic!("v12 assemble `{asm}`: {e}"));
     encode(&inst).unwrap_or_else(|e| panic!("v12 encode {inst:?}: {e}"))
 }
 
-// ─────────────────── golden：GPR @modrm/@modrm_imm32 与 v11 一致 ───────────────────
+// ─────────────────── 规范字节：GPR @modrm/@modrm_imm32/内存 ───────────────────
 
 #[test]
-fn golden_gpr_matches_v11() {
-    let cases = [
-        "movrr RAX, RBX",
-        "movrr R8, R9", // REX.R/B 扩展
-        "mov RAX, RBX", // 0x89 MR 方向
-        "mov R8, R9",
-        "movsxd RAX, RBX",
-        "add RAX, RBX",
-        "sub RAX, RBX",
-        "imul RAX, RBX",
-        "xor RAX, RBX",
-        "and RAX, RBX",
-        "or RAX, RBX",
-        "cmp RAX, RBX",
-        "test RAX, RBX",
-        "cmpxchg RAX, RBX",
-        "xadd RAX, RBX",
-        "bt RAX, RBX",
-        "bts RAX, RBX",
-        "btr RAX, RBX",
-        "btc RAX, RBX",
-        "movrm RAX, RBX", // 0x89
-        "movr8 RAX, RBX", // 0x8B
+fn golden_gpr_spec_bytes() {
+    let cases: &[(&str, &[u8])] = &[
+        // v13：movrr/mov32/mov64rr 已合并为 `mov`（类型签名自动分发）。
+        // mov EAX,EBX → MOV_R_RM（8B，32 位无前缀）；mov RAX,RBX → MOV_RM_R（89）。
+        ("mov EAX, EBX", &[0x8B, 0xC3]),
+        ("mov R8D, R9D", &[0x45, 0x8B, 0xC1]), // REX.R/B 扩展（32 位无 W）
+        ("mov RAX, RBX", &[0x48, 0x89, 0xD8]), // 0x89 MR 方向
+        ("mov R8, R9", &[0x4D, 0x89, 0xC8]),
+        ("movsxd RAX, RBX", &[0x48, 0x63, 0xC3]),
+        ("add RAX, RBX", &[0x48, 0x01, 0xD8]),
+        ("sub RAX, RBX", &[0x48, 0x29, 0xD8]),
+        ("imul RAX, RBX", &[0x48, 0x0F, 0xAF, 0xC3]),
+        ("xor RAX, RBX", &[0x48, 0x31, 0xD8]),
+        ("and RAX, RBX", &[0x48, 0x21, 0xD8]),
+        ("or RAX, RBX", &[0x48, 0x09, 0xD8]),
+        ("cmp RAX, RBX", &[0x48, 0x39, 0xD8]),
+        ("test RAX, RBX", &[0x48, 0x85, 0xD8]),
+        ("cmpxchg RAX, RBX", &[0x48, 0x0F, 0xB1, 0xD8]),
+        ("xadd RAX, RBX", &[0x48, 0x0F, 0xC1, 0xD8]),
+        ("bt RAX, RBX", &[0x48, 0x0F, 0xA3, 0xD8]),
+        ("bts RAX, RBX", &[0x48, 0x0F, 0xAB, 0xD8]),
+        ("btr RAX, RBX", &[0x48, 0x0F, 0xB3, 0xD8]),
+        ("btc RAX, RBX", &[0x48, 0x0F, 0xBB, 0xD8]),
+        ("mov RAX, RBX", &[0x48, 0x89, 0xD8]), // movrm 已合并进 mov（真重复）
+        ("movr8 RAX, RBX", &[0x48, 0x8B, 0xC3]),
         // imm32 形式（81 /digit + imm32）
-        "add RAX, 42",
-        "sub RAX, 42",
-        "and RAX, 42",
-        "or RAX, 42",
-        "xor RAX, 42",
-        "cmp RAX, 42",
-        "add R8, 42", // 扩展寄存器
+        ("add RAX, 42", &[0x48, 0x81, 0xC0, 0x2A, 0x00, 0x00, 0x00]),
+        ("sub RAX, 42", &[0x48, 0x81, 0xE8, 0x2A, 0x00, 0x00, 0x00]),
+        ("and RAX, 42", &[0x48, 0x81, 0xE0, 0x2A, 0x00, 0x00, 0x00]),
+        ("or RAX, 42", &[0x48, 0x81, 0xC8, 0x2A, 0x00, 0x00, 0x00]),
+        ("xor RAX, 42", &[0x48, 0x81, 0xF0, 0x2A, 0x00, 0x00, 0x00]),
+        ("cmp RAX, 42", &[0x48, 0x81, 0xF8, 0x2A, 0x00, 0x00, 0x00]),
+        ("add R8, 42", &[0x49, 0x81, 0xC0, 0x2A, 0x00, 0x00, 0x00]), // 扩展寄存器
         // 内存寻址（@modrm_mem）
-        "xadd [RAX], RBX",
-        "xadd [R8], R9",
-        "xchg [RAX], RBX",
-        "xchg [RSP], RBX", // base=RSP → SIB
+        ("xadd [RAX], RBX", &[0xF0, 0x48, 0x0F, 0xC1, 0x18]),
+        ("xadd [R8], R9", &[0xF0, 0x4D, 0x0F, 0xC1, 0x08]),
+        ("xchg [RAX], RBX", &[0x48, 0x87, 0x18]),
+        ("xchg [RSP], RBX", &[0x48, 0x87, 0x1C, 0x24]), // base=RSP → SIB
         // 注：locksub/lockand/lockor/lockxor 不在 golden——v11 带多余 0F escape
         //（F0 48 0F 29 非规范），v12 规范修正（F0 48 29），见 mem_spec_bytes。
-        "mov_mem RAX, [RBX]",
-        "mov_sto [RAX], RBX",
-        "mov64rr RAX, RBX",
+        ("mov_mem RAX, [RBX]", &[0x48, 0x8B, 0x03]),
+        ("mov_sto [RAX], RBX", &[0x48, 0x89, 0x18]),
     ];
-    for c in cases {
-        let vb = v11_bytes(c);
-        let v12b = v12_bytes(c);
-        assert_eq!(
-            v12b, vb,
-            "golden mismatch for `{c}` (v12 {v12b:02x?} vs v11 {vb:02x?})"
-        );
+    for (c, expected) in cases {
+        let got = v12_bytes(c);
+        assert_eq!(got.as_slice(), *expected, "spec mismatch for `{c}`");
     }
 }
 
 #[test]
 fn opsize_prefix_and_rex_w() {
-    // 直接构造对比 v11（v11 的 66 前缀/REX.W 由 opsize 字段驱动）
-    use forge_codegen::machine::target::TargetMachine;
-    let tm = forge_codegen::x86_64::TargetMachine::new();
-    let rm = forge_codegen::AllocResult::new();
-    let v11e = |inst: &forge_codegen::x86_64::Inst| {
-        tm.encoder()
-            .encode_to_bytes(inst, &rm)
-            .unwrap_or_else(|e| panic!("v11 encode {inst:?}: {e:?}"))
-    };
-    let cases: &[(u8, u32, u32, &[u8])] = &[
-        // opsize → 期望字节（v11 与 v12 应一致；索引 = 物理编号，RAX=0 RCX=1）
-        (16, 0, 1, &[0x66, 0x8B, 0xC1]), // movrr ax, cx
-        (32, 0, 1, &[0x8B, 0xC1]),       // movrr eax, ecx
-        (64, 0, 1, &[0x48, 0x8B, 0xC1]), // movrr rax, rcx
-        (64, 8, 9, &[0x4D, 0x8B, 0xC1]), // movrr r8, r9（REX.W+R+B）
-        (64, 1, 8, &[0x49, 0x8B, 0xC8]), // movrr rcx, r8（REX.W+B）
+    // v12.1：opsize 由寄存器宽度视图推导——AX→0x66 前缀、EAX→无、RAX→REX.W。
+    // from_index_grp 按组名构造视图（gpr16/gpr32/gpr64 共享物理编号 0-15）。
+    let cases: &[(RegClass, u32, u32, &[u8])] = &[
+        (RegClass::GPR(2), 0, 1, &[0x66, 0x8B, 0xC1]), // movrr ax, cx
+        (RegClass::GPR(4), 0, 1, &[0x8B, 0xC1]),       // movrr eax, ecx
+        (RegClass::GPR(8), 0, 1, &[0x48, 0x8B, 0xC1]), // movrr RAX, rcx
+        (RegClass::GPR(8), 8, 9, &[0x4D, 0x8B, 0xC1]), // movrr R8, r9（REX.W+R+B）
+        (RegClass::GPR(8), 1, 8, &[0x49, 0x8B, 0xC8]), // movrr rcx, r8（REX.W+B）
     ];
-    for (opsize, dest, src, expected) in cases {
-        let d0 = match dest {
-            0 => forge_codegen::x86_64::Reg::RAX,
-            1 => forge_codegen::x86_64::Reg::RCX,
-            8 => forge_codegen::x86_64::Reg::R8,
-            _ => panic!("bad dest"),
-        };
-        let s0 = match src {
-            1 => forge_codegen::x86_64::Reg::RCX,
-            8 => forge_codegen::x86_64::Reg::R8,
-            9 => forge_codegen::x86_64::Reg::R9,
-            _ => panic!("bad src"),
-        };
-        let vb = v11e(&forge_codegen::x86_64::Inst::MovRRm {
-            dest: d0,
-            src: s0,
-            opsize: *opsize,
-        });
+    for (gpr, dest, src, expected) in cases {
         let v12b = encode(&Inst::MovRRm {
-            op0: *dest,
-            op1: *src,
-            op2: *opsize,
+            dest: Reg::from_index(*dest, *gpr),
+            src: Reg::from_index(*src, *gpr),
         })
         .unwrap();
         assert_eq!(
             v12b.as_slice(),
             *expected,
-            "opsize={opsize} dest={dest} src={src}"
-        );
-        assert_eq!(
-            v12b, vb,
-            "opsize={opsize} dest={dest} src={src} 与 v11 不一致"
+            "grp: {gpr} dest: {dest} src: {src}"
         );
     }
 }
 
 // ─────────────────── `+r` 形式（push/pop/bswap/mov_imm64，迭代 5）───────────────────
-
-#[test]
-fn r_forms_golden() {
-    // golden：与 v11 逐字节一致（v11 @push_reg/@pop_reg/@bswap_r/@mov_imm64）
-    let cases = [
-        "push RAX",
-        "push R8",
-        "pop RBX",
-        "pop R9",
-        "bswap RAX",
-        "bswap R12",
-        "mov_imm RAX, 0x1234",
-    ];
-    for c in cases {
-        let vb = v11_bytes(c);
-        let v12b = v12_bytes(c);
-        assert_eq!(
-            v12b, vb,
-            "golden mismatch for `{c}` (v12 {v12b:02x?} vs v11 {vb:02x?})"
-        );
-    }
-    // 直接构造对比（v11 asm 语法不支持负 imm）
-    use forge_codegen::machine::target::TargetMachine;
-    let tm = forge_codegen::x86_64::TargetMachine::new();
-    let rm = forge_codegen::AllocResult::new();
-    let vb = tm
-        .encoder()
-        .encode_to_bytes(
-            &forge_codegen::x86_64::Inst::MovRegImm64 {
-                reg: forge_codegen::x86_64::Reg::R8,
-                imm: -1,
-            },
-            &rm,
-        )
-        .unwrap();
-    let v12b = encode(&Inst::MovRegImm64 { op0: 8, op1: -1 }).unwrap();
-    assert_eq!(v12b, vb, "mov_imm R8, -1: v12 {v12b:02x?} vs v11 {vb:02x?}");
-}
 
 #[test]
 fn r_forms_spec_bytes() {
@@ -235,11 +150,11 @@ fn control_flow_roundtrip() {
     use Inst::*;
     let insts = vec![
         Ret,
-        JmpRel32 { op0: 0 },
-        JmpRel32 { op0: 42 },
-        JmpRel32 { op0: -1 },
-        CallRipRel { op0: 0 },
-        CallRipRel { op0: 0x1234 },
+        JmpRel32 { target: 0 },
+        JmpRel32 { target: 42 },
+        JmpRel32 { target: -1 },
+        CallRipRel { target: 0 },
+        CallRipRel { target: 0x1234 },
     ];
     for inst in insts {
         let b = encode(&inst).unwrap();
@@ -256,30 +171,35 @@ fn control_flow_roundtrip() {
 fn sse_spec_bytes() {
     // v12 组内索引 → 规范编码（无多余 REX）
     let cases: &[(&str, &[u8])] = &[
-        ("sqrtsd xmm0, xmm1", &[0xF2, 0x0F, 0x51, 0xC1]),
-        ("sqrtss xmm0, xmm1", &[0x0F, 0x51, 0xC1]),
-        ("cvtsi2sd xmm0, rax", &[0xF2, 0x0F, 0x2A, 0xC0]),
-        ("cvtsd2si rax, xmm0", &[0xF2, 0x0F, 0x2D, 0xC0]),
-        ("cvttsd2si rax, xmm0", &[0xF2, 0x0F, 0x2C, 0xC0]),
-        ("cvtsd2ss xmm0, xmm1", &[0xF2, 0x0F, 0x5A, 0xC1]),
-        ("cvtss2sd xmm0, xmm1", &[0xF3, 0x0F, 0x5A, 0xC1]),
-        ("andpd xmm0, xmm1", &[0x66, 0x0F, 0x54, 0xC1]),
-        ("xorpd xmm0, xmm1", &[0x66, 0x0F, 0x57, 0xC1]),
-        ("comisd xmm0, xmm1", &[0x66, 0x0F, 0x2F, 0xC1]),
-        ("comiss xmm0, xmm1", &[0x0F, 0x2F, 0xC1]),
-        ("cvtsi2ss xmm0, rax", &[0xF3, 0x0F, 0x2A, 0xC0]),
-        ("movd xmm0, rax", &[0x66, 0x0F, 0x6E, 0xC0]),
-        ("movd_fr rax, xmm0", &[0x66, 0x0F, 0x7E, 0xC0]),
-        ("punpckldq xmm0, xmm1", &[0x66, 0x0F, 0x62, 0xC1]),
-        ("punpcklqdq xmm0, xmm1", &[0x66, 0x0F, 0x6C, 0xC1]),
-        ("punpckhdq xmm0, xmm1", &[0x66, 0x0F, 0x6A, 0xC1]),
-        ("movss xmm0, xmm1", &[0xF3, 0x0F, 0x10, 0xC1]),
-        ("movsd xmm0, xmm1", &[0xF2, 0x0F, 0x10, 0xC1]),
+        ("sqrtsd XMM0, XMM1", &[0xF2, 0x0F, 0x51, 0xC1]),
+        ("sqrtss XMM0, XMM1", &[0x0F, 0x51, 0xC1]),
+        ("cvtsi2sd XMM0, RAX", &[0xF2, 0x48, 0x0F, 0x2A, 0xC0]), // v13 合并：RAX 64 位源 → REX.W
+        ("cvtsd2si RAX, XMM0", &[0xF2, 0x48, 0x0F, 0x2D, 0xC0]), // 64 位目的 → REX.W
+        ("cvttsd2si RAX, XMM0", &[0xF2, 0x48, 0x0F, 0x2C, 0xC0]),
+        ("cvtsd2ss XMM0, XMM1", &[0xF2, 0x0F, 0x5A, 0xC1]),
+        ("cvtss2sd XMM0, XMM1", &[0xF3, 0x0F, 0x5A, 0xC1]),
+        ("andpd XMM0, XMM1", &[0x66, 0x0F, 0x54, 0xC1]),
+        ("xorpd XMM0, XMM1", &[0x66, 0x0F, 0x57, 0xC1]),
+        ("comisd XMM0, XMM1", &[0x66, 0x0F, 0x2F, 0xC1]),
+        ("comiss XMM0, XMM1", &[0x0F, 0x2F, 0xC1]),
+        ("cvtsi2ss XMM0, RAX", &[0xF3, 0x48, 0x0F, 0x2A, 0xC0]), // v13 合并：RAX 64 位源 → REX.W
+        // v13 合并自动分发：32 位操作数 → 无 REX.W
+        ("cvtsi2sd XMM0, EAX", &[0xF2, 0x0F, 0x2A, 0xC0]),
+        ("cvtsi2ss XMM0, EAX", &[0xF3, 0x0F, 0x2A, 0xC0]),
+        ("cvtsd2si EAX, XMM0", &[0xF2, 0x0F, 0x2D, 0xC0]),
+        ("cvttsd2si EAX, XMM0", &[0xF2, 0x0F, 0x2C, 0xC0]),
+        ("movd XMM0, RAX", &[0x66, 0x0F, 0x6E, 0xC0]),
+        ("movd_fr RAX, XMM0", &[0x66, 0x0F, 0x7E, 0xC0]),
+        ("punpckldq XMM0, XMM1", &[0x66, 0x0F, 0x62, 0xC1]),
+        ("punpcklqdq XMM0, XMM1", &[0x66, 0x0F, 0x6C, 0xC1]),
+        ("punpckhdq XMM0, XMM1", &[0x66, 0x0F, 0x6A, 0xC1]),
+        ("movss XMM0, XMM1", &[0xF3, 0x0F, 0x10, 0xC1]),
+        ("movsd XMM0, XMM1", &[0xF2, 0x0F, 0x10, 0xC1]),
         // 扩展 XMM → REX.R/B
-        ("sqrtsd xmm8, xmm9", &[0xF2, 0x45, 0x0F, 0x51, 0xC1]),
-        // GPR-字段的 SSE_RR 形式（MOVZX_B）
-        ("movzx_b rax, rbx", &[0x0F, 0xB6, 0xC3]),
-        ("movzx_w rax, rbx", &[0x0F, 0xB7, 0xC3]),
+        ("sqrtsd XMM8, XMM9", &[0xF2, 0x45, 0x0F, 0x51, 0xC1]),
+        // GPR-字段的 SSE_RR 形式（合并后的 movzx：8 位源 AL → 48 B6、16 位源 AX → 66 48 B7）
+        ("movzx RAX, AL", &[0x48, 0x0F, 0xB6, 0xC0]),
+        ("movzx RAX, AX", &[0x66, 0x48, 0x0F, 0xB7, 0xC0]),
     ];
     for (asm, expected) in cases {
         let got = v12_bytes(asm);
@@ -292,25 +212,25 @@ fn sse_spec_bytes() {
 #[test]
 fn mem_spec_bytes() {
     let cases: &[(&str, &[u8])] = &[
-        // xchg [rax], rbx — 48 87 /r（mod=00）
+        // xchg [RAX], RBX — 48 87 /r（mod=00）
         ("xchg [RAX], RBX", &[0x48, 0x87, 0x18]),
-        // xchg [rsp], rbx — base=RSP → SIB（index=4 无 index）
+        // xchg [rsp], RBX — base=RSP → SIB（index=4 无 index）
         ("xchg [RSP], RBX", &[0x48, 0x87, 0x1C, 0x24]),
-        // xadd [rax], rbx — F0 LOCK + 48 0F C1 /r
+        // xadd [RAX], RBX — F0 LOCK + 48 0F C1 /r
         ("xadd [RAX], RBX", &[0xF0, 0x48, 0x0F, 0xC1, 0x18]),
-        // locksub [rax], rbx — F0 48 29 /r（v11 带多余 0F escape 非规范，v12 修正）
+        // locksub [RAX], RBX — F0 48 29 /r（v11 带多余 0F escape 非规范，v12 修正）
         ("locksub [RAX], RBX", &[0xF0, 0x48, 0x29, 0x18]),
-        // mov_mem rax, [rbx] — 48 8B /r
+        // mov_mem RAX, [RBX] — 48 8B /r
         ("mov_mem RAX, [RBX]", &[0x48, 0x8B, 0x03]),
-        // mov_sto [rax], rbx — 48 89 /r
+        // mov_sto [RAX], RBX — 48 89 /r
         ("mov_sto [RAX], RBX", &[0x48, 0x89, 0x18]),
-        // movsd xmm0, [rax] — F2 48?? 不——F2 0F 10（64 位无 REX.W；base=RAX<8）
+        // movsd XMM0, [RAX] — F2 48?? 不——F2 0F 10（64 位无 REX.W；base=RAX<8）
         ("movsd_mem XMM0, [RAX]", &[0xF2, 0x0F, 0x10, 0x00]),
-        // mov64rr rax, rbx — 48 89 /r（reg=src=3, rm=dest=0）
-        ("mov64rr RAX, RBX", &[0x48, 0x89, 0xD8]),
-        // mov64rm rax, [rbp+8] — RBP ∈ force_disp_base → mod=01 + disp8
+        // mov RAX, RBX — 48 89 /r（reg=src: 3, rm=dest: 0；mov64rr 已合并）
+        ("mov RAX, RBX", &[0x48, 0x89, 0xD8]),
+        // mov64rm RAX, [rbp+8] — RBP ∈ force_disp_base → mod=01 + disp8
         ("mov64rm RAX, [RBP+8]", &[0x48, 0x8B, 0x45, 0x08]),
-        // mov64rm rax, [rbx-8] — mod=01 + disp8=-8
+        // mov64rm RAX, [RBX-8] — mod=01 + disp8=-8
         ("mov64rm RAX, [RBX-8]", &[0x48, 0x8B, 0x43, 0xF8]),
     ];
     for (asm, expected) in cases {
@@ -361,12 +281,12 @@ fn vex_spec_bytes() {
         ("vbroadcastss XMM0, XMM1", &[0xC4, 0xE2, 0x7D, 0x18, 0xC1]),
         // 扩展寄存器 → R/B 反位（reg=8→R=0, rm=10→B=0, vvvv=~9=6）
         ("vaddps XMM8, XMM9, XMM10", &[0xC4, 0x41, 0x34, 0x58, 0xC2]),
-        // vextractf128 xmm1, ymm2, 0：reg=src(2), rm=dest(1), imm8
+        // vextractf128 XMM1, ymm2, 0：reg=src(2), rm=dest(1), imm8
         (
             "vextractf128 XMM1, XMM2, 0",
             &[0xC4, 0xE3, 0x7D, 0x19, 0xD1, 0x00],
         ),
-        // vinsertf128 ymm0, ymm1, xmm2, 1：reg=0, rm=2, vvvv=~1=0xE
+        // vinsertf128 ymm0, ymm1, XMM2, 1：reg=0, rm=2, vvvv=~1=0xE
         (
             "vinsertf128 XMM0, XMM1, XMM2, 1",
             &[0xC4, 0xE3, 0x75, 0x18, 0xC2, 0x01],
@@ -387,462 +307,664 @@ fn all_insts() -> Vec<Inst> {
     vec![
         // @modrm（opsize 各值）
         MovRRm {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            op0: 8,
-            op1: 9,
-            op2: 64,
+            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(9, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            op0: 0,
-            op1: 1,
-            op2: 16,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            op0: 0,
-            op1: 1,
-            op2: 32,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            op0: 2,
-            op1: 3,
-            op2: 64,
+            dest: Reg::from_index(2, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(3, forge_ir::RegClass::GPR64),
         },
-        MovsxdRRm { op0: 0, op1: 1 },
-        MovsxdRGpr { op0: 0, op1: 1 },
+        MovsxdRRm {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
+        MovsxdRGpr {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
         AddRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         SubRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         ImulRRm {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         XorRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         AndRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         OrRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         CmpRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         TestRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovzxR8Rm {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR(1)),
         },
         MovzxR16Rm {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR(2)),
         },
         MovsxR8Rm {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR(1)),
         },
         MovsxR16Rm {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR(2)),
         },
         CmpxchgRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         XaddRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         BtRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         BtsRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         BtrRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         BtcRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovRm8R64 {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovR8Rm64 {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         // @modrm_imm32
         AddRImm32 {
-            op0: 0,
-            op1: 42,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 42,
         },
         AddRImm32 {
-            op0: 8,
-            op1: -1,
-            op2: 64,
+            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            imm: -1,
         },
         OrRImm32 {
-            op0: 0,
-            op1: 42,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 42,
         },
         AndRImm32 {
-            op0: 0,
-            op1: 42,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 42,
         },
         SubRImm32 {
-            op0: 0,
-            op1: 42,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 42,
         },
         XorRImm32 {
-            op0: 0,
-            op1: 42,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 42,
         },
         CmpRImm32 {
-            op0: 0,
-            op1: 42,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 42,
         },
         CmpRImm32 {
-            op0: 0,
-            op1: -2048,
-            op2: 16,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: -2048,
         },
-        // @sse_rr
-        MovzxB { op0: 0, op1: 1 },
-        MovzxW { op0: 0, op1: 1 },
-        Sqrtsd { op0: 0, op1: 1 },
-        Sqrtsd { op0: 8, op1: 9 },
-        Sqrtss { op0: 0, op1: 1 },
-        Cvtsi2sd { op0: 0, op1: 1 },
-        Cvtsd2si { op0: 0, op1: 1 },
-        Cvttsd2si { op0: 0, op1: 1 },
-        Cvtsd2ss { op0: 0, op1: 1 },
-        Cvtss2sd { op0: 0, op1: 1 },
-        Andpd { op0: 0, op1: 1 },
-        Xorpd { op0: 0, op1: 1 },
-        Comisd { op0: 0, op1: 1 },
-        Comiss { op0: 0, op1: 1 },
-        MovsdXmmFreg { op0: 0, op1: 1 },
-        MovsdFregXmm { op0: 0, op1: 1 },
-        Cvtsi2ss { op0: 0, op1: 1 },
-        MovdFregIreg { op0: 0, op1: 1 },
-        MovdIregFreg { op0: 0, op1: 1 },
-        Punpckldq { op0: 0, op1: 1 },
-        Punpcklqdq { op0: 0, op1: 1 },
-        Punpckhdq { op0: 0, op1: 1 },
-        Movss { op0: 0, op1: 1 },
-        MovsdRr { op0: 0, op1: 1 },
+        // @sse_rr / 合并后的 movzx（MOVZX_R8_RM/R16_RM；v13 删除了重复的
+        // MOVZX_B/MOVZX_W 变体）。源是 8/16 位寄存器（gpr1/gpr2 类）。
+        MovzxR8Rm {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR(1)),
+        },
+        MovzxR16Rm {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR(2)),
+        },
+        Sqrtsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Sqrtsd {
+            dest: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(7, forge_ir::RegClass::FPR(16)),
+        },
+        Sqrtss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Cvtsi2sd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
+        Cvtsd2si {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Cvttsd2si {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Cvtsd2ss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Cvtss2sd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Andpd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Xorpd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Comisd {
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Comiss {
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        MovsdXmmFreg {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        MovsdFregXmm {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Cvtsi2ss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
+        MovdFregIreg {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
+        MovdIregFreg {
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
+        Punpckldq {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Punpcklqdq {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Punpckhdq {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Movss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Movsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
         // @modrm_mem（迭代 3b）
         XaddMemR {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         XaddMemR {
-            op0: 8,
-            op1: 9,
-            op2: 64,
+            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(9, forge_ir::RegClass::GPR64),
         },
         XchgMemR {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         XchgMemR {
-            op0: 1,
-            op1: 4,
-            op2: 64,
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(4, forge_ir::RegClass::GPR64),
         }, // base=RSP → SIB
         SubMemR {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         AndMemR {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         OrMemR {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         XorMemR {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         MovRMem {
-            op0: 0,
-            op1: 2,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         StoreMemR {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
-        MovsdRMem { op0: 0, op1: 2 },
-        MovsdMemR { op0: 0, op1: 2 },
-        Mov64Rr { op0: 1, op1: 0 },
-        Mov64Rm {
-            op0: 0,
-            op1: MemRef { base: 2, disp: 0 },
+        MovsdRMem {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::GPR64),
+        },
+        MovsdMemR {
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
+        },
+        Mov64Rr {
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
         },
         Mov64Rm {
-            op0: 8,
-            op1: MemRef { base: 4, disp: -8 },
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            mem: MemRef {
+                base: Reg::from_index(2, forge_ir::RegClass::GPR64),
+                disp: 0,
+                index: None,
+                scale: 1,
+            },
+        },
+        Mov64Rm {
+            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            mem: MemRef {
+                base: Reg::from_index(4, forge_ir::RegClass::GPR64),
+                disp: -8,
+                index: None,
+                scale: 1,
+            },
         },
         Mov64Mr {
-            op0: 1,
-            op1: MemRef { base: 2, disp: 0 },
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            mem: MemRef {
+                base: Reg::from_index(2, forge_ir::RegClass::GPR64),
+                disp: 0,
+                index: None,
+                scale: 1,
+            },
         },
         MovsdRm {
-            op0: 0,
-            op1: MemRef { base: 2, disp: 8 },
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            mem: MemRef {
+                base: Reg::from_index(2, forge_ir::RegClass::GPR64),
+                disp: 8,
+                index: None,
+                scale: 1,
+            },
         },
         MovsdMr {
-            op0: 0,
-            op1: MemRef { base: 2, disp: 0 },
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            mem: MemRef {
+                base: Reg::from_index(2, forge_ir::RegClass::GPR64),
+                disp: 0,
+                index: None,
+                scale: 1,
+            },
         },
         // 家族展开（SSE 5 家族）
-        Movsd { op0: 0, op1: 1 },
-        Minsd { op0: 8, op1: 9 },
-        Maxsd { op0: 0, op1: 1 },
-        Addsd { op0: 0, op1: 1 },
-        Subsd { op0: 0, op1: 1 },
-        Mulsd { op0: 0, op1: 1 },
-        Divsd { op0: 0, op1: 1 },
-        Addss { op0: 0, op1: 1 },
-        Subss { op0: 0, op1: 1 },
-        Mulss { op0: 0, op1: 1 },
-        Divss { op0: 0, op1: 1 },
-        Movaps { op0: 0, op1: 1 },
-        Addps { op0: 0, op1: 1 },
-        Subps { op0: 0, op1: 1 },
-        Mulps { op0: 0, op1: 1 },
-        Divps { op0: 0, op1: 1 },
-        Xorps { op0: 0, op1: 1 },
-        Andps { op0: 0, op1: 1 },
-        Orps { op0: 0, op1: 1 },
-        Addpd { op0: 0, op1: 1 },
-        Subpd { op0: 0, op1: 1 },
-        Mulpd { op0: 0, op1: 1 },
-        Divpd { op0: 0, op1: 1 },
-        Paddd { op0: 0, op1: 1 },
-        Psubd { op0: 0, op1: 1 },
-        Paddq { op0: 0, op1: 1 },
-        Psubq { op0: 0, op1: 1 },
+        Movsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Minsd {
+            dest: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(7, forge_ir::RegClass::FPR(16)),
+        },
+        Maxsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Addsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Subsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Mulsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Divsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Addss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Subss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Mulss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Divss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Movaps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Addps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Subps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Mulps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Divps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Xorps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Andps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Orps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Addpd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Subpd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Mulpd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Divpd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Paddd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Psubd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Paddq {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Psubq {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
         // VEX（三操作数/无源/imm）
         Vaddps {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vaddps {
-            op0: 8,
-            op1: 9,
-            op2: 10,
+            dest: Reg::from_index(5, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(7, forge_ir::RegClass::FPR(16)),
         },
         Vsubps {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vmulps {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vdivps {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vxorps {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vandps {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vaddpd {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vsubpd {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vmulpd {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vdivpd {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
-        Vmovaps { op0: 0, op1: 1 },
-        Vbroadcastss { op0: 0, op1: 1 },
-        Vbroadcastsd { op0: 0, op1: 1 },
+        Vmovaps {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Vbroadcastss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Vbroadcastsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
         Vpxor {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpaddd {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpsubd {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpaddq {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpsubq {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpmulld {
-            op0: 0,
-            op1: 2,
-            op2: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vextractf128 {
-            op0: 2,
-            op1: 0,
-            op2: 0,
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            imm: 0,
         },
         Vinsertf128 {
-            op0: 0,
-            op1: 2,
-            op2: 1,
-            op3: 1,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+            imm: 1,
         },
         // `+r` 形式（迭代 5）
-        Push { op0: 0 },
-        Push { op0: 8 },
-        Pop { op0: 3 },
-        Pop { op0: 9 },
-        MovRegImm64 {
-            op0: 0,
-            op1: 0x1234,
+        Push {
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
         },
-        MovRegImm64 { op0: 8, op1: -1 },
-        BswapR { op0: 0 },
-        BswapR { op0: 12 },
+        Push {
+            src: Reg::from_index(8, forge_ir::RegClass::GPR64),
+        },
+        Pop {
+            dest: Reg::from_index(3, forge_ir::RegClass::GPR64),
+        },
+        Pop {
+            dest: Reg::from_index(9, forge_ir::RegClass::GPR64),
+        },
+        MovRegImm64 {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 0x1234,
+        },
+        MovRegImm64 {
+            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            imm: -1,
+        },
+        BswapR {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+        },
+        BswapR {
+            dest: Reg::from_index(12, forge_ir::RegClass::GPR64),
+        },
         // 控制流（迭代 6）
         Ret,
-        JmpRel32 { op0: 0 },
-        JmpRel32 { op0: 42 },
-        CallRipRel { op0: 0 },
+        JmpRel32 { target: 0 },
+        JmpRel32 { target: 42 },
+        CallRipRel { target: 0 },
         // 新增指令（迭代 6 收官）
         Nop,
         Ud2,
         Mfence,
         Cqo,
-        CallRm { op0: 3 },
-        JccRel32 { op0: 4, op1: 0 },
-        JccRel32 { op0: 15, op1: -1 },
-        SetccRm8 { op0: 2, op1: 5 },
+        CallRm {
+            src: Reg::from_index(3, forge_ir::RegClass::GPR64),
+        },
+        JccRel32 { cond: 4, target: 0 },
+        JccRel32 {
+            cond: 15,
+            target: -1,
+        },
+        SetccRm8 {
+            dest: Reg::from_index(2, forge_ir::RegClass::GPR64),
+            cond: 5,
+        },
         LeaR64Sib {
-            op0: 0,
-            op1: MemRef { base: 5, disp: 8 },
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            mem: MemRef {
+                base: Reg::from_index(5, forge_ir::RegClass::GPR64),
+                disp: 8,
+                index: None,
+                scale: 1,
+            },
         },
         LeaRbpOff {
-            op0: 0,
-            op1: MemRef { base: 5, disp: -8 },
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            mem: MemRef {
+                base: Reg::from_index(5, forge_ir::RegClass::GPR64),
+                disp: -8,
+                index: None,
+                scale: 1,
+            },
         },
         CmovccRRm {
-            op0: 1,
-            op1: 2,
-            op2: 64,
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(2, forge_ir::RegClass::GPR64),
+            cond: 5,
         },
         RoundsdI {
-            op0: 0,
-            op1: 1,
-            op2: 3,
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+            imm: 3,
         },
-        Pmulld { op0: 0, op1: 1 },
-        MovqXmmR64 { op0: 0, op1: 1 },
-        MovqR64Xmm { op0: 1, op1: 0 },
-        MovapsMr { op0: 1, op1: 0 },
+        Pmulld {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        MovqXmmR64 {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
+        MovqR64Xmm {
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+        },
+        MovapsMr {
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+        },
         LzcntR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         TzcntR {
-            op0: 0,
-            op1: 1,
-            op2: 32,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         PopcntR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
     ]
 }
@@ -866,47 +988,61 @@ fn decode_identity_canonical() {
     // 规范指令（非别名）：decode(encode(X)) == X
     let canonical = [
         Inst::MovRRm {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::MovRRm {
-            op0: 8,
-            op1: 9,
-            op2: 16,
+            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(9, forge_ir::RegClass::GPR64),
         },
-        Inst::MovsxdRRm { op0: 0, op1: 1 },
+        Inst::MovsxdRRm {
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
         Inst::AddRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::ImulRRm {
-            op0: 0,
-            op1: 1,
-            op2: 32,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::CmpRmR {
-            op0: 0,
-            op1: 1,
-            op2: 64,
+            src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::AddRImm32 {
-            op0: 0,
-            op1: 42,
-            op2: 64,
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            imm: 42,
         },
         Inst::CmpRImm32 {
-            op0: 8,
-            op1: -1,
-            op2: 64,
+            src: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            imm: -1,
         },
-        Inst::Sqrtsd { op0: 0, op1: 1 },
-        Inst::Cvtsi2sd { op0: 0, op1: 1 },
-        Inst::Andpd { op0: 0, op1: 1 },
-        Inst::Comiss { op0: 0, op1: 1 },
-        Inst::Movss { op0: 0, op1: 1 },
-        Inst::Punpcklqdq { op0: 0, op1: 1 },
+        Inst::Sqrtsd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Inst::Cvtsi2sd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+        },
+        Inst::Andpd {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Inst::Comiss {
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Inst::Movss {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
+        Inst::Punpcklqdq {
+            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+        },
     ];
     for inst in canonical {
         let b = encode(&inst).unwrap();
@@ -920,45 +1056,47 @@ fn decode_identity_canonical() {
 #[test]
 fn assemble_disassemble_roundtrip() {
     let cases = [
-        "movrr rax, rbx",
-        "movrr r8, r9",
-        "add rax, rbx",
-        "add rax, 42",
-        "cmp r8, -1",
-        "movzx rax, rbx",
-        "movsxd rax, rbx",
-        "imul rax, rbx",
-        "sqrtsd xmm0, xmm1",
-        "cvtsi2sd xmm0, rax",
-        "andpd xmm0, xmm1",
-        "comiss xmm0, xmm1",
-        "movd xmm0, rax",
-        "punpcklqdq xmm0, xmm1",
-        "movzx_b rax, rbx",
+        "mov RAX, RBX",
+        "mov R8, R9",
+        "mov EAX, EBX",
+        "mov AX, BX",
+        "add RAX, RBX",
+        "add RAX, 42",
+        "cmp R8, -1",
+        "movzx RAX, AL",
+        "movzx RAX, AX",
+        "movsxd RAX, RBX",
+        "imul RAX, RBX",
+        "sqrtsd XMM0, XMM1",
+        "cvtsi2sd XMM0, RAX",
+        "andpd XMM0, XMM1",
+        "comiss XMM0, XMM1",
+        "movd XMM0, RAX",
+        "punpcklqdq XMM0, XMM1",
         // 家族展开（SSE）
-        "addsd xmm0, xmm1",
-        "addss xmm0, xmm1",
-        "movaps xmm0, xmm1",
-        "addpd xmm0, xmm1",
-        "paddd xmm0, xmm1",
+        "addsd XMM0, XMM1",
+        "addss XMM0, XMM1",
+        "movaps XMM0, XMM1",
+        "addpd XMM0, XMM1",
+        "paddd XMM0, XMM1",
         // VEX 三操作数（asm 模板重排 dest, src1, src2）
-        "vaddps xmm0, xmm1, xmm2",
-        "vaddpd xmm0, xmm1, xmm2",
-        "vpxor xmm0, xmm1, xmm2",
+        "vaddps XMM0, XMM1, XMM2",
+        "vaddpd XMM0, XMM1, XMM2",
+        "vpxor XMM0, XMM1, XMM2",
         // VEX 无源
-        "vmovaps xmm0, xmm1",
-        "vbroadcastss xmm0, xmm1",
+        "vmovaps XMM0, XMM1",
+        "vbroadcastss XMM0, XMM1",
         // VEX imm
-        "vextractf128 xmm1, xmm2, 0",
-        "vinsertf128 xmm0, xmm1, xmm2, 1",
+        "vextractf128 XMM1, XMM2, 0",
+        "vinsertf128 XMM0, XMM1, XMM2, 1",
         // `+r` 形式
-        "push rax",
-        "push r8",
-        "pop rbx",
-        "pop r9",
-        "bswap rax",
-        "bswap r12",
-        "mov_imm rax, 0x1234",
+        "push RAX",
+        "push R8",
+        "pop RBX",
+        "pop R9",
+        "bswap RAX",
+        "bswap R12",
+        "mov_imm RAX, 0x1234",
     ];
     for c in cases {
         let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));
@@ -971,8 +1109,8 @@ fn assemble_disassemble_roundtrip() {
 #[test]
 fn disassemble_known_texts() {
     assert_eq!(
-        disassemble(&assemble("movrr RAX, RBX").unwrap()),
-        "movrr RAX, RBX"
+        disassemble(&assemble("mov RAX, RBX").unwrap()),
+        "mov RAX, RBX"
     );
     assert_eq!(
         disassemble(&assemble("add RAX, 42").unwrap()),

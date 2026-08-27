@@ -3,7 +3,7 @@
 //! # 架构
 //!
 //! 组件化 trait 体系，通过 [`machine::target::TargetMachine`] 组合成一个完整的 ISA 后端。
-//! DSL (`isa_from_file!`) 从 TOML 文件自动生成所有组件实现。
+//! DSL (`isa_from_file!`，v12 唯一语法) 从 TOML 文件自动生成所有组件实现。
 //!
 //! ## 核心组件
 //!
@@ -29,11 +29,6 @@ use std::collections::HashMap;
 // ISA TOML 变更探针：build.rs 生成，内容含 isa/*.toml 的修改时间——
 // TOML 变化会触发本 crate 重编（否则 proc-macro 读文件不触发，见 build.rs）。
 include!(concat!(env!("OUT_DIR"), "/isa_probe.rs"));
-
-// ============================================================
-// Assembler runtime types (from forge-asm, consumed by DSL-generated code)
-// ============================================================
-pub use forge_asm as assembler;
 
 // ============================================================
 // Prelude — types needed by DSL-generated code (isa_from_file!)
@@ -110,14 +105,9 @@ pub mod prelude {
 pub mod machine;
 
 // ============================================================
-// ISA-agnostic encoding primitives (v19)
 // ============================================================
-pub mod primitives;
-
+// 编码子系统 (v12 DSL 生成代码内联实现 encode/decode；无需运行时辅助模块)
 // ============================================================
-// 编码子系统 (x86 runtime helpers — called by DSL-generated code)
-// ============================================================
-pub mod encode;
 
 // ============================================================
 // lowering → VCode → emit 管线 + 寄存器分配
@@ -131,15 +121,11 @@ pub mod runtime;
 pub use runtime::output_types::{CompiledFunction, RelocKind, Relocation};
 
 // ============================================================
-// 架构后端 (DSL 生成)
+// 架构后端 (DSL 生成；v12 唯一语法)
 // ============================================================
 pub mod arch;
-pub use arch::aarch64;
-pub use arch::minimal_sd_test;
-pub use arch::riscv64;
+pub use arch::demo_v12;
 pub use arch::riscv64_v12;
-pub use arch::wasm32;
-pub use arch::x86_64;
 pub use arch::x86_v12;
 
 // ============================================================
@@ -166,7 +152,6 @@ pub use pipeline::vcode::{VBlockId, VCode, VCodeBlock};
 // ============================================================
 // Machine re-exports (v19 — primary API)
 // ============================================================
-pub use encode::packer::BitField;
 pub use machine::encoder::EncodeError;
 pub use machine::encoder::TargetEncoder;
 pub use machine::inst::{EffectKind, MachineInst};
@@ -174,6 +159,7 @@ pub use machine::isa_info::IsaCapabilities;
 pub use machine::isa_info::IsaInfo;
 pub use machine::isa_info::RegisterClassInfo;
 pub use machine::lowering::InstPacket;
+pub use machine::reloc_patcher::{RelocPatcher, RiscvRelocPatcher, X86RelocPatcher};
 pub use machine::simulator::SimulationState;
 pub use machine::target::{ErasedTargetMachine, TargetMachine};
 pub use pipeline::alloc_config::RegAllocConfig;
@@ -225,6 +211,12 @@ pub struct LowerCtx {
     pub current_alloca_offset: i64,
     /// prologue 压入的 callee-saved 寄存器总字节数（局部变量 lea 的基准平移）。
     pub callee_saved_bytes: i32,
+    /// 栈槽（StackAddr/Alloca）的帧顶平移字节数。x86 = callee_saved_bytes
+    ///（槽在 rbp - callee_saved 之下）；riscv = fp_push_bytes（16，槽在
+    /// fp - 16 之下，避开 ra/fp 保存槽）。独立于 callee_saved_bytes——
+    /// riscv 的 spill 布局需 callee_saved_bytes=0（spill 槽帧内底部）而
+    /// 栈槽平移需 16（fp 基准）。
+    pub stack_slot_shift: i32,
     /// StackAddr 局部变量区需求（从 callee-saved 区底向下到最深槽的字节数）。
     /// calculate_frame_size 必须把它算进 sub rsp 的帧大小，否则局部槽落在
     /// rsp 之下（Windows 无 red zone）→ 写栈越界 SEGV（mini_c 参数内联场景）。
@@ -296,6 +288,7 @@ impl LowerCtx {
             current_offset: 0,
             current_alloca_offset: 0,
             callee_saved_bytes: 0,
+            stack_slot_shift: 0,
             max_stack_bytes: 0,
             vreg_classes: HashMap::new(),
             vreg_types: HashMap::new(),

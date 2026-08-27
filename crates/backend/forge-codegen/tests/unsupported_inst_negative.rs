@@ -1,6 +1,6 @@
 //! codegen 负向测试：无机器指令映射的 IR 指令必须被编译期拒绝（报错而非 panic/静默错码）。
 
-use forge_codegen::arch::x86_64::{TargetMachine, ensure_registered};
+use forge_codegen::arch::x86_v12::{TargetMachine, ensure_registered};
 use forge_codegen::pipeline::compiler::FunctionCompiler;
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::types::{FunctionSignature, TypeContext};

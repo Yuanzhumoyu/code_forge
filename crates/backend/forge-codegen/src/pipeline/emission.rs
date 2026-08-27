@@ -34,8 +34,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // spill area starts at rbp - callee_saved_bytes - frame_size.
         // (Old code counted only callee-saved bytes, shifting locals/spills
         // 8 bytes into the pushed registers.)
-        let callee_saved_bytes =
-            crate::pipeline::frame_layout::callee_saved_bytes(machine.reg_info().as_ref());
+        let callee_saved_bytes = crate::pipeline::frame_layout::callee_saved_bytes(machine);
 
         // Stage 8: Prologue
         frame_lowering.emit_prologue(frame_size, alloc_result, &mut sink)?;

@@ -20,6 +20,9 @@ pub struct AllocResult {
     pub param_vregs: Vec<XReg>,
     /// 每个参数的浮点标记（与 param_vregs 对齐）——@move_args 类型分类收参用
     pub param_is_float: Vec<bool>,
+    /// 每个参数是否按引用传参（by-ref：宽向量 >16 字节，ABI 传指针；
+    /// 被调方入口从 [ptr] 加载到向量寄存器）——@move_args 收参用。
+    pub param_by_ref: Vec<bool>,
     /// 参数是否为 32 位整数（i32/u32——收参需符号扩展 movsxd）。
     pub param_is_32: Vec<bool>,
     /// 需要在序言中保存的 callee-saved 物理寄存器（按 push 顺序）
@@ -54,6 +57,7 @@ impl Default for AllocResult {
             spill_slots: HashMap::new(),
             param_vregs: Vec::new(),
             param_is_float: Vec::new(),
+            param_by_ref: Vec::new(),
             param_is_32: Vec::new(),
             callee_saved_to_save: Vec::new(),
             frame_info: FrameInfo {
@@ -101,6 +105,7 @@ impl AllocResult {
             spill_slots: HashMap::new(),
             param_vregs: Vec::new(),
             param_is_float: Vec::new(),
+            param_by_ref: Vec::new(),
             param_is_32: Vec::new(),
             callee_saved_to_save: Vec::new(),
             frame_info: FrameInfo {

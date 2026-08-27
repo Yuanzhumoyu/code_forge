@@ -1,90 +1,70 @@
-//! riscv64 v12 pilot 验证（迭代 2）。
+//! riscv64 v12 验证。v11 后端已删除，golden 全部为硬编码 RISC-V 规范 oracle
+//! 字节（v12 组内寄存器索引；v11 的 FPR `16+i` 索引与 S 型散布曾非规范）。
 //!
-//! - **golden**：GPR 指令字节与 v11 后端一致（汇编→编码对比）。
-//! - **规范字节**：F 指令按 RISC-V 规范独立 oracle 计算（v11 的 FPR 索引
-//!   `16+i` 使字节不合规且仅内部往返一致；v12 用组内索引，规范合规）。
-//! - **全量往返**：decode(encode(X)) == X（含 v11 不可解码的分支/负立即数；
-//!   v11 对负立即数解码不符号扩展，v12 按槽宽度规范扩展）。
+//! - **规范字节**：GPR/F 指令按 RISC-V 规范硬编码 oracle。
+//! - **全量往返**：decode(encode(X)) == X（含分支/负立即数；负立即数按槽
+//!   宽度规范符号扩展）。
 //! - **assemble/disassemble** 往返。
 
-use forge_codegen::riscv64_v12::{Inst, assemble, decode, disassemble, encode};
-
-fn v11_bytes(asm: &str) -> Vec<u8> {
-    use forge_codegen::machine::assembler::TargetAssembler;
-    use forge_codegen::machine::target::TargetMachine;
-    let tm = forge_codegen::riscv64::TargetMachine::new();
-    let asm_ = forge_codegen::riscv64::Assembler;
-    let insts = asm_
-        .parse_insts(asm)
-        .unwrap_or_else(|e| panic!("v11 parse `{asm}`: {e:?}"));
-    let inst = insts.into_iter().next().expect("one inst");
-    tm.encoder()
-        .encode_to_bytes(&inst, &forge_codegen::AllocResult::new())
-        .unwrap_or_else(|e| panic!("v11 encode {inst:?}: {e:?}"))
-}
+use forge_codegen::riscv64_v12::{Inst, Reg, assemble, decode, disassemble, encode};
 
 fn v12_bytes(asm: &str) -> Vec<u8> {
     let inst = assemble(asm).unwrap_or_else(|e| panic!("v12 assemble `{asm}`: {e}"));
     encode(&inst).unwrap_or_else(|e| panic!("v12 encode {inst:?}: {e}"))
 }
 
-// ─────────────────────── golden：GPR 与 v11 一致 ───────────────────────
+// ─────────────────────── 规范字节：GPR ───────────────────────
 
 #[test]
-fn golden_gpr_matches_v11() {
-    let cases = [
-        "add X1, X2, X3",
-        "sub X1, X2, X3",
-        "sll X1, X2, X3",
-        "slt X1, X2, X3",
-        "sltu X1, X2, X3",
-        "xor X1, X2, X3",
-        "srl X1, X2, X3",
-        "sra X1, X2, X3",
-        "or X1, X2, X3",
-        "and X1, X2, X3",
-        "mul X1, X2, X3",
-        "div X1, X2, X3",
-        "divu X1, X2, X3",
-        "rem X1, X2, X3",
-        "remu X1, X2, X3",
-        "addi X1, X2, 5",
-        "addi X1, X2, -5",
-        "slti X1, X2, 5",
-        "sltiu X1, X2, 5",
-        "xori X1, X2, 5",
-        "ori X1, X2, 5",
-        "andi X1, X2, 5",
-        "slli X1, X2, 3",
-        "srli X1, X2, 3",
-        "srai X1, X2, 3",
-        "lui X1, 4096",
-        "ld X1, 8(X2)",
-        // 注：sd/FSW 等 S 型不在 golden 列表——v11 的 S 型散布移位反了
-        //（[7;5;5]/[25;7] 应为 [7;5;0]/[25;7;5]），字节非规范；v12 规范正确，
-        // 见 `s_type_spec_bytes`。
-        "jalr X1, 8(X2)",
-        "ecall",
-        "fence",
-        "clz X1, X2",
-        "ctz X1, X2",
-        "cpop X1, X2",
-        "rev8 X1, X2",
-        "rol X1, X2, X3",
-        "ror X1, X2, X3",
-        "min X1, X2, X3",
-        "max X1, X2, X3",
-        "minu X1, X2, X3",
-        "maxu X1, X2, X3",
-        "amoadd.w.aqrl X1, X2, (X3)",
+fn golden_gpr_spec_bytes() {
+    let cases: &[(&str, &[u8])] = &[
+        ("add X1, X2, X3", &[0xB3, 0x00, 0x31, 0x00]),
+        ("sub X1, X2, X3", &[0xB3, 0x00, 0x31, 0x40]),
+        ("sll X1, X2, X3", &[0xB3, 0x10, 0x31, 0x00]),
+        ("slt X1, X2, X3", &[0xB3, 0x20, 0x31, 0x00]),
+        ("sltu X1, X2, X3", &[0xB3, 0x30, 0x31, 0x00]),
+        ("xor X1, X2, X3", &[0xB3, 0x40, 0x31, 0x00]),
+        ("srl X1, X2, X3", &[0xB3, 0x50, 0x31, 0x00]),
+        ("sra X1, X2, X3", &[0xB3, 0x50, 0x31, 0x40]),
+        ("or X1, X2, X3", &[0xB3, 0x60, 0x31, 0x00]),
+        ("and X1, X2, X3", &[0xB3, 0x70, 0x31, 0x00]),
+        ("mul X1, X2, X3", &[0xB3, 0x00, 0x31, 0x02]),
+        ("div X1, X2, X3", &[0xB3, 0x40, 0x31, 0x02]),
+        ("divu X1, X2, X3", &[0xB3, 0x50, 0x31, 0x02]),
+        ("rem X1, X2, X3", &[0xB3, 0x60, 0x31, 0x02]),
+        ("remu X1, X2, X3", &[0xB3, 0x70, 0x31, 0x02]),
+        ("addi X1, X2, 5", &[0x93, 0x00, 0x51, 0x00]),
+        ("addi X1, X2, -5", &[0x93, 0x00, 0xB1, 0xFF]),
+        ("slti X1, X2, 5", &[0x93, 0x20, 0x51, 0x00]),
+        ("sltiu X1, X2, 5", &[0x93, 0x30, 0x51, 0x00]),
+        ("xori X1, X2, 5", &[0x93, 0x40, 0x51, 0x00]),
+        ("ori X1, X2, 5", &[0x93, 0x60, 0x51, 0x00]),
+        ("andi X1, X2, 5", &[0x93, 0x70, 0x51, 0x00]),
+        ("slli X1, X2, 3", &[0x93, 0x10, 0x31, 0x00]),
+        ("srli X1, X2, 3", &[0x93, 0x50, 0x31, 0x00]),
+        ("srai X1, X2, 3", &[0x93, 0x50, 0x31, 0x40]),
+        ("lui X1, 4096", &[0xB7, 0x10, 0x00, 0x00]),
+        ("ld X1, 8(X2)", &[0x83, 0x30, 0x81, 0x00]),
+        // 注：sd/FSW 等 S 型——v11 的 S 型散布移位反了（[7;5;5]/[25;7] 应为
+        // [7;5;0]/[25;7;5]），字节非规范；v12 规范正确，见 `s_type_spec_bytes`。
+        ("jalr X1, 8(X2)", &[0xE7, 0x00, 0x81, 0x00]),
+        ("ecall", &[0x73, 0x00, 0x00, 0x00]),
+        ("fence", &[0x0F, 0x00, 0xF0, 0x0F]),
+        ("clz X1, X2", &[0x93, 0x10, 0x01, 0x60]),
+        ("ctz X1, X2", &[0x93, 0x10, 0x11, 0x60]),
+        ("cpop X1, X2", &[0x93, 0x10, 0x21, 0x60]),
+        ("rev8 X1, X2", &[0x93, 0x10, 0x81, 0x68]),
+        ("rol X1, X2, X3", &[0xB3, 0x00, 0x31, 0x60]),
+        ("ror X1, X2, X3", &[0xB3, 0x00, 0x31, 0x62]),
+        ("min X1, X2, X3", &[0xB3, 0x00, 0x31, 0x28]),
+        ("max X1, X2, X3", &[0xB3, 0x00, 0x31, 0x2A]),
+        ("minu X1, X2, X3", &[0xB3, 0x00, 0x31, 0x2C]),
+        ("maxu X1, X2, X3", &[0xB3, 0x00, 0x31, 0x2E]),
+        ("amoadd.w.aqrl X1, X2, (X3)", &[0xAF, 0x80, 0x21, 0x04]),
     ];
-    for c in cases {
-        let vb = v11_bytes(c);
-        let v12b = v12_bytes(c);
-        assert_eq!(
-            v12b, vb,
-            "golden mismatch for `{c}` (v12 {v12b:02x?} vs v11 {vb:02x?})"
-        );
+    for (asm, expected) in cases {
+        let got = v12_bytes(asm);
+        assert_eq!(got.as_slice(), *expected, "spec mismatch for `{asm}`");
     }
 }
 
@@ -108,7 +88,7 @@ fn f_inst_spec_bytes() {
         ("fsgnj.s F1, F2, F3", r_type(0x10, 3, 2, 0, 1, 0x53)),
         ("fsgnjn.s F1, F2, F3", r_type(0x10, 3, 2, 1, 1, 0x53)),
         ("fsgnjx.s F1, F2, F3", r_type(0x10, 3, 2, 2, 1, 0x53)),
-        ("fcvt.w.s X1, F2", r_type(0x60, 0, 2, 1, 1, 0x53)),
+        ("fcvt.w.s.rtz X1, F2", r_type(0x60, 0, 2, 1, 1, 0x53)),
         ("fcvt.s.w F1, X2", r_type(0x68, 0, 2, 0, 1, 0x53)),
         ("flt.s X1, F2, F3", r_type(0x20, 3, 2, 4, 1, 0x53)),
         ("feq.s X1, F2, F3", r_type(0x20, 3, 2, 5, 1, 0x53)),
@@ -292,22 +272,22 @@ fn disassemble_known_texts() {
 
 #[test]
 fn inst_enum_shapes() {
-    // Inst 字段类型：reg → u32，imm/label → i64（枚举形状抽查）
+    // Inst 字段类型：reg → Reg 枚举，imm/label → i64（枚举形状抽查）
     let add = assemble("add X1, X2, X3").unwrap();
     assert_eq!(
         add,
         Inst::Add {
-            rd: 1,
-            rs1: 2,
-            rs2: 3
+            rd: Reg::X1,
+            rs1: Reg::X2,
+            rs2: Reg::X3
         }
     );
     let addi = assemble("addi X1, X2, -1").unwrap();
     assert_eq!(
         addi,
         Inst::Addi {
-            rd: 1,
-            rs1: 2,
+            rd: Reg::X1,
+            rs1: Reg::X2,
             imm12: -1
         }
     );
@@ -315,8 +295,8 @@ fn inst_enum_shapes() {
     assert_eq!(
         sd,
         Inst::Sd {
-            rs2: 1,
-            rs1: 2,
+            rs2: Reg::X1,
+            rs1: Reg::X2,
             imm_s: 8
         }
     );
@@ -324,15 +304,27 @@ fn inst_enum_shapes() {
     assert_eq!(
         beq,
         Inst::Beq {
-            rs1: 1,
-            rs2: 2,
+            rs1: Reg::X1,
+            rs2: Reg::X2,
             imm_b: 8
         }
     );
     let jal = assemble("jal X1, 8").unwrap();
-    assert_eq!(jal, Inst::Jal { rd: 1, imm_j: 8 });
+    assert_eq!(
+        jal,
+        Inst::Jal {
+            rd: Reg::X1,
+            imm_j: 8
+        }
+    );
     let lui = assemble("lui X1, 4096").unwrap();
-    assert_eq!(lui, Inst::Lui { rd: 1, imm20: 4096 });
+    assert_eq!(
+        lui,
+        Inst::Lui {
+            rd: Reg::X1,
+            imm20: 4096
+        }
+    );
     assert_eq!(assemble("fence").unwrap(), Inst::Fence);
     assert_eq!(assemble("nop").unwrap(), Inst::Nop);
 }

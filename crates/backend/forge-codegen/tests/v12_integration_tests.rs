@@ -3,6 +3,8 @@
 //! set_reg_field/effects)、Encoder/Decoder/Disassembler/Assembler 组件可用。
 use forge_codegen::machine::inst::MachineInst;
 use forge_codegen::machine::target::TargetMachine as _;
+use forge_codegen::x86_v12::Reg;
+use forge_ir::PhysReg;
 
 #[test]
 fn target_machine_assembles() {
@@ -24,12 +26,10 @@ fn target_machine_assembles() {
 #[test]
 fn machine_inst_queries() {
     use forge_codegen::x86_v12::{Inst, Reg};
-    use forge_ir::PhysReg;
     // movrr rax, rbx:op0=dest(out)=RAX, op1=src(in)=RBX, op2=opsize
     let inst = Inst::MovRRm {
-        op0: 0,
-        op1: 3,
-        op2: 64,
+        dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+        src: Reg::from_index(3, forge_ir::RegClass::GPR64),
     };
     let uses: smallvec::SmallVec<[u32; 4]> = inst.uses();
     let defs: smallvec::SmallVec<[u32; 2]> = inst.defs();
@@ -45,9 +45,9 @@ fn machine_inst_queries() {
     m.set_reg_field(0, 8);
     m.set_reg_field(1, 9);
     match m {
-        Inst::MovRRm { op0, op1, .. } => {
-            assert_eq!(op0, 8);
-            assert_eq!(op1, 9);
+        Inst::MovRRm { dest, src, .. } => {
+            assert_eq!(dest.to_index(), 8);
+            assert_eq!(src.to_index(), 9);
         }
         _ => panic!("expected MovRRm"),
     }
@@ -63,9 +63,8 @@ fn encoder_decoder_via_tm() {
     use forge_codegen::x86_v12::Inst;
     let tm = forge_codegen::x86_v12::TargetMachine::new();
     let inst = Inst::MovRRm {
-        op0: 0,
-        op1: 3,
-        op2: 64,
+        dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+        src: Reg::from_index(3, forge_ir::RegClass::GPR64),
     };
     let mut sink = forge_codegen::CodeSink::default();
     tm.encoder()
@@ -82,22 +81,30 @@ fn encoder_decoder_via_tm() {
     assert_eq!(
         dec,
         Inst::MovRRm {
-            op0: 0,
-            op1: 3,
-            op2: 64
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            src: Reg::from_index(3, forge_ir::RegClass::GPR64),
         }
     );
-    // disassembler / assembler
+    // disassembler / assembler（v13：movrr 已合并为 mov）
     let d = tm.disassembler().expect("disasm");
-    assert_eq!(d.disassemble(&inst), "movrr RAX, RBX");
+    assert_eq!(d.disassemble(&inst), "mov RAX, RBX");
     let a = tm.assembler().expect("asm");
-    let insts = a.parse_insts("movrr rax, rbx").expect("assemble");
+    // "mov rax, rbx"（64 位）→ 类型签名分发到 MOV_RM_R（0x89 MR 方向）
+    let insts = a.parse_insts("mov rax, rbx").expect("assemble");
+    assert_eq!(
+        insts,
+        vec![Inst::MovRmR {
+            src: Reg::from_index(3, forge_ir::RegClass::GPR64),
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+        }]
+    );
+    // "mov eax, ebx"（32 位）→ MOV_R_RM（0x8B 方向）
+    let insts = a.parse_insts("mov eax, ebx").expect("assemble 32 位");
     assert_eq!(
         insts,
         vec![Inst::MovRRm {
-            op0: 0,
-            op1: 3,
-            op2: 64
+            dest: Reg::from_index(0, forge_ir::RegClass::GPR(4)),
+            src: Reg::from_index(3, forge_ir::RegClass::GPR(4)),
         }]
     );
 }
@@ -135,7 +142,7 @@ fn lowering_iadd_packet() {
     assert!(matches!(pack.insts[0], Inst::MovRRm { .. }));
     assert!(matches!(pack.insts[1], Inst::AddRmR { .. }));
     // xreg_map：MovRRm(def=rd idx0, use=a idx1)；AddRmR(use=b idx0, def=rd idx1)
-    // —— ADD_RM_R {1}, {out}：src=op0←{1}=b、dest=op1←{out}=rd
+    // —— ADD_RM_R {1}, {out}：src: op0←{1}=b、dest: op1←{out}=rd
     assert_eq!(pack.xreg_map.len(), 2);
     let m0 = &pack.xreg_map[0];
     assert_eq!(m0.len(), 2);
@@ -144,12 +151,11 @@ fn lowering_iadd_packet() {
     let m1 = &pack.xreg_map[1];
     assert_eq!(m1[0], (b, 0u8, false), "AddRmR field0 = b(use)");
     assert_eq!(m1[1], (out, 1u8, true), "AddRmR field1 = out(def)");
-    // 占位字段 = 0（regalloc 前）
+    // 占位字段 = from_index(0)（regalloc 前）
     match &pack.insts[0] {
-        Inst::MovRRm { op0, op1, op2 } => {
-            assert_eq!(*op0, 0);
-            assert_eq!(*op1, 0);
-            assert_eq!(*op2, 64, "opsize 缺省 64");
+        Inst::MovRRm { dest, src, .. } => {
+            assert_eq!(dest.to_index(), 0);
+            assert_eq!(src.to_index(), 0);
         }
         _ => unreachable!(),
     }
@@ -160,7 +166,10 @@ fn lowering_unknown_op_unsupported() {
     use forge_codegen::prelude::{LowerCtx, Opcode};
     let tm = forge_codegen::x86_v12::TargetMachine::new();
     let mut ctx = LowerCtx::default();
-    let r = tm.lowering().lower_inst(&Opcode::Fadd, &[], &[], &mut ctx);
+    // GetElementPtr 尚未实现（Phase 5）——保持 Unsupported
+    let r = tm
+        .lowering()
+        .lower_inst(&Opcode::GetElementPtr, &[], &[], &mut ctx);
     assert!(r.is_err(), "未声明的 op 应 Unsupported");
 }
 
@@ -220,7 +229,7 @@ fn frame_epilogue_bytes() {
     let mut sink = forge_codegen::CodeSink::default();
     fl.emit_epilogue(0, &rm, &mut sink).expect("epilogue");
     let bytes = sink.bytes();
-    // mov64rr rsp, rbp(48 89 ec: reg=src=rbp=5、rm=dest=rsp=4 → 0xEC) +
+    // mov64rr rsp, rbp(48 89 ec: reg=src: rbp=5、rm=dest: rsp=4 → 0xEC) +
     // sub rsp, 56(48 81 ec 38 00 00 00：rsp=rbp-56 到 callee-saved 区) +
     // pop r15..rbx + pop rbp(5d) + ret(c3)
     assert_eq!(&bytes[0..3], &[0x48, 0x89, 0xEC], "mov64rr rsp, rbp");
@@ -278,7 +287,7 @@ fn terminator_return_packet() {
         .lowering()
         .lower_terminator(&term, &vmap, &std::collections::HashMap::new(), &mut ctx)
         .expect("lower Return");
-    // MOV_RM8_R64(0x89: reg=src=val、rm=dest=RAX)——与 v11 一致：不生成 RET，
+    // MOV_RM8_R64(0x89: reg=src: val、rm=dest: RAX)——与 v11 一致：不生成 RET，
     // return block 经 epilogue_jump 跳到 epilogue 统一恢复。
     assert_eq!(
         pack.insts.len(),
@@ -320,7 +329,7 @@ fn terminator_jump_packet() {
         .expect("lower Jump");
     assert_eq!(pack.insts.len(), 1);
     match &pack.insts[0] {
-        Inst::JmpRel32 { op0 } => assert_eq!(*op0, 3, "jmp 目标块号"),
+        Inst::JmpRel32 { target } => assert_eq!(*target, 3, "jmp 目标块号"),
         other => panic!("expected JmpRel32, got {other:?}"),
     }
 }

@@ -1,13 +1,11 @@
-//! x86-64 v12 试点 — 迭代 3：变长语义键（ModRM/REX/opsize/SSE）。
+//! x86-64 v12 — v12 唯一语法生成的变长 encode/decode/asm 自包含模块 +
+//! TargetMachine 集成层（MachineInst/Encoder/Decoder/ABI/FrameLowering/
+//! Lowering/TargetMachine）。v11 后端已删除；golden 见
+//! `tests/x86_v12_tests.rs`、`tests/v12_integration_tests.rs`。
 //!
-//! v12 唯一语法生成的变长 encode/decode/asm 自包含模块 + TargetMachine
-//! 集成层（迭代 5/6：MachineInst/Encoder/Decoder/ABI/FrameLowering/
-//! Lowering/TargetMachine）。与 v11 `x86_64` 后端并存用于 golden 字节
-//! 对比（见 `tests/x86_v12_tests.rs`、`tests/v12_integration_tests.rs`）。
-//!
-//! 模块名 = 文件 stem（v12 约定）；不 glob 导出以免与 v11 x86_64 冲突。
+//! 模块名 = 文件 stem（v12 约定）。
 
-forge_dsl::isa_v12_from_file!("isa/x86_v12.toml");
+forge_dsl::isa_from_file!("isa/x86_v12.toml");
 pub use self::x86_v12::*;
 
 #[cfg(test)]
@@ -115,3 +113,9 @@ mod tests {
         assert_eq!(f(-7, 100), 93, "v12 JIT add(-7,100) 应返回 93");
     }
 }
+// touch
+// touch2
+// touch3
+// touch4
+// touch5
+// touch6
