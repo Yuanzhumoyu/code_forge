@@ -56,7 +56,7 @@ fn bench_parse_medium_module(c: &mut Criterion) {
     c.bench_function("parse_medium_module", |b| {
         b.iter(|| {
             let m = parse_module(MEDIUM_MODULE).expect("parse");
-            criterion::black_box(m);
+            std::hint::black_box(m);
         });
     });
 }
@@ -67,7 +67,7 @@ fn bench_parse_display_roundtrip(c: &mut Criterion) {
             let m = parse_module(MEDIUM_MODULE).expect("parse");
             let text = m.to_string();
             let m2 = parse_module(&text).expect("reparse");
-            criterion::black_box(m2);
+            std::hint::black_box(m2);
         });
     });
 }

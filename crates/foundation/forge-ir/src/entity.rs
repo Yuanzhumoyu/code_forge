@@ -3,7 +3,7 @@
 //! 所有实体都是 Copy + Eq + Hash，作为 PrimaryMap/SecondaryMap 的键。
 //! 实体本身不携带数据，数据存储在 DataFlowGraph 的对应表中。
 
-use std::fmt;
+use std::fmt::{self, Display};
 
 // ============================================================
 // 实体定义
@@ -371,7 +371,7 @@ impl TypeId {
 ///
 /// VEC128 (XMM) 与 FPR 共享物理寄存器文件。
 /// VEC256 (YMM) 包含 VEC128 子寄存器。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RegClass {
     /// 通用整数寄存器，payload = 字节宽度（任意 ISA 自定义宽度）。
     GPR(u16),
@@ -379,6 +379,8 @@ pub enum RegClass {
     FPR(u16),
     /// 向量寄存器，payload = 字节宽度。
     VEC(u16),
+    /// 掩码寄存器（如 x86 AVX-512 k0-k7），payload = 字节宽度。
+    KReg(u16),
 }
 
 /// 向后兼容别名与便捷常量。
@@ -406,11 +408,13 @@ impl RegClass {
     pub const VEC128: Self = Self::VEC(16);
     /// 256 位向量（32 字节，如 x86 YMM）。
     pub const VEC256: Self = Self::VEC(32);
+    /// 64 位掩码寄存器（8 字节，如 x86 k0-k7）。
+    pub const KREG64: Self = Self::KReg(8);
 
     /// 此类寄存器的宽度（字节）—— 由 payload 决定，支持任意 ISA 宽度。
     pub fn width(self) -> u16 {
         match self {
-            Self::GPR(w) | Self::FPR(w) | Self::VEC(w) => w,
+            Self::GPR(w) | Self::FPR(w) | Self::VEC(w) | Self::KReg(w) => w,
         }
     }
 
@@ -429,9 +433,15 @@ impl RegClass {
         matches!(self, Self::FPR(_) | Self::VEC(_))
     }
 
+    /// 是否为掩码寄存器类（KReg 族）。
+    pub fn is_mask(self) -> bool {
+        matches!(self, Self::KReg(_))
+    }
+
     /// 两个类是否有重叠的物理寄存器（决定 interference）。
     /// - GPR 族内始终重叠（共享 GPR 寄存器文件，如 RAX=EAX=AX=AL 同编号）
     /// - FPR/VEC 之间始终重叠（共享向量寄存器文件，如 x86 XMM）
+    /// - KReg 族内始终重叠（共享掩码寄存器文件，如 x86 k0-k7）
     pub fn overlaps(self, other: RegClass) -> bool {
         if self == other {
             return true;
@@ -440,6 +450,9 @@ impl RegClass {
             return true;
         }
         if self.is_fp() && other.is_fp() {
+            return true;
+        }
+        if self.is_mask() && other.is_mask() {
             return true;
         }
         false
@@ -472,12 +485,35 @@ impl RegClass {
     }
 }
 
+impl Display for RegClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GPR(w) => write!(f, "gpr{}", w),
+            Self::FPR(w) => write!(f, "fpr{}", w),
+            Self::VEC(w) => write!(f, "vec{}", w),
+            Self::KReg(w) => write!(f, "kreg{}", w),
+        }
+    }
+}
+
 /// 帧/栈指针访问模式。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameAccess<R: PhysReg> {
     Register(R),
     StackOffset(i32),
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RegRef {
+    pub class: RegClass,
+    pub id: u32,
+}
+
+impl RegRef {
+    pub const fn new(class: RegClass, id: u32) -> Self {
+        Self { class, id }
+    }
 }
 
 impl<R: PhysReg> FrameAccess<R> {
@@ -495,6 +531,11 @@ pub trait PhysReg: Copy + Clone + core::fmt::Debug + PartialEq + Send + Sync + '
     fn to_index(self) -> u32;
     fn from_index(idx: u32, class: RegClass) -> Self;
     fn class(self) -> RegClass;
+    /// 寄存器宽度（位）。多宽度视图 ISA（x86 的 EAX/RAX）返回各自位宽；
+    /// 无宽度概念的 ISA 用默认 0（不参与 opsize 推导）。
+    fn width(self) -> u16 {
+        0
+    }
 }
 
 // ============================================================
@@ -869,6 +910,14 @@ mod tests {
         assert!(RegClass::VEC256.is_fp());
         assert!(!RegClass::FPR64.is_int());
         assert!(!RegClass::VEC128.is_int());
+
+        // 掩码寄存器：既非 int 也非 fp，但 is_mask
+        assert!(RegClass::KREG64.is_mask());
+        assert!(RegClass::KReg(4).is_mask());
+        assert!(!RegClass::KREG64.is_int());
+        assert!(!RegClass::KREG64.is_fp());
+        assert!(!RegClass::GPR64.is_mask());
+        assert_eq!(RegClass::KREG64.width(), 8);
     }
 
     #[test]
@@ -886,6 +935,11 @@ mod tests {
         assert!(!RegClass::GPR64.overlaps(RegClass::FPR64));
         assert!(!RegClass::GPR8.overlaps(RegClass::VEC128));
         assert!(!RegClass::GPR32.overlaps(RegClass::VEC256));
+        // KReg 族内重叠、与其他类不重叠
+        assert!(RegClass::KREG64.overlaps(RegClass::KReg(4)));
+        assert!(RegClass::KReg(4).overlaps(RegClass::KREG64));
+        assert!(!RegClass::KREG64.overlaps(RegClass::GPR64));
+        assert!(!RegClass::KREG64.overlaps(RegClass::VEC128));
     }
 
     #[test]

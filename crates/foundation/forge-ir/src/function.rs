@@ -817,6 +817,12 @@ impl Module {
         func_ref
     }
 
+    /// 按 FuncRef 替换函数体（保留名称/索引——预注册占位后填真实体用；
+    /// 递归函数编译期需要自己的 FuncRef 生成自调用 Call）。
+    pub fn replace_function(&mut self, fr: FuncRef, func: Function) {
+        self.functions[fr.0 as usize] = func;
+    }
+
     pub fn get_function(&self, fr: FuncRef) -> &Function {
         &self.functions[fr.0 as usize]
     }

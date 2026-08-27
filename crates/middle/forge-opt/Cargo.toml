@@ -7,7 +7,7 @@ description = "Forge Optimizer: extensible IR optimization framework with 15+ pa
 [dependencies]
 forge-ir = { path = "../../foundation/forge-ir" }
 smallvec = "1"
-dashu = "0.5.0"
+dashu = "0.6.0"
 log = "0.4"
 rayon = { version = "1", optional = true }
 

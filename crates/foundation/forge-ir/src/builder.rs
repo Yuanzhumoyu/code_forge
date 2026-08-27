@@ -494,6 +494,7 @@ impl FunctionBuilder {
     float_binop!(fsub, Fsub);
     float_binop!(fmul, Fmul);
     float_binop!(fdiv, Fdiv);
+    float_binop!(frem, Frem);
     unop_float!(fneg, Fneg);
     unop_float!(fabs, Fabs);
     unop_float!(fsqrt, Fsqrt);

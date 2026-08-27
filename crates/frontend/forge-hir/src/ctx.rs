@@ -35,6 +35,8 @@ pub struct HirCtx<'a, S> {
     pub return_slot: Option<GraphValue>,
     /// Inlining: block to jump to on return. None = emit a real ret.
     pub return_block: Option<BlockId>,
+    /// 当前内联链（函数名集合）——递归检测：callee 已在链中 → 拒绝内联。
+    pub inlining: Vec<String>,
 }
 
 impl<'a, S> HirCtx<'a, S> {
@@ -55,6 +57,7 @@ impl<'a, S> HirCtx<'a, S> {
             next_offset: -4,
             return_slot: None,
             return_block: None,
+            inlining: Vec::new(),
         }
     }
 
