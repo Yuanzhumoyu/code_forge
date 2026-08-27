@@ -25,10 +25,11 @@
 //! ## Quick Start
 //!
 //! ```ignore
-//! use code_forge::prelude::*;
-//! use code_forge::backend::x86_64::X86Isa;
+//! use code_forge::backend::jit::JitCompiler;
+//! use code_forge::ir::*;
 //!
-//! let mut jit = JitCompiler::<X86Isa>::new();
+//! code_forge::backend::x86_v12::ensure_registered();
+//! let mut jit = JitCompiler::new(code_forge::backend::x86_v12::TargetMachine::new());
 //! jit.add_function("add", &FunctionSignature::new(
 //!     &[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::I32]
 //! ), |b| {
@@ -47,7 +48,6 @@
 // ============================================================
 // Re-export all forge-* crates
 // ============================================================
-pub use forge_asm;
 pub use forge_codegen as backend;
 pub use forge_dsl;
 pub use forge_grammar;
@@ -56,14 +56,13 @@ pub use forge_mem as mem;
 pub use forge_opt as optimize;
 pub use smallvec;
 
-// Module re-exports for isa_from_file! compatibility
-// The DSL-generated code uses crate::encode::*, crate::assembler::*, etc.
-pub use forge_asm as assembler;
+// Module re-exports for DSL-generated code (v12 唯一语法；encode/asm 由
+// v12 生成模块内联实现，无需 forge-asm 运行时)
 pub use forge_codegen::EncodeError;
-pub use forge_codegen::encode;
 #[cfg(feature = "jit")]
 pub use forge_codegen::jit;
 pub use forge_codegen::{AllocResult, CompiledFunction, RelocKind, Relocation};
+pub use forge_codegen::{RelocPatcher, RiscvRelocPatcher, X86RelocPatcher};
 
 // Optional tools
 #[cfg(feature = "object-file")]
