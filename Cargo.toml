@@ -9,7 +9,6 @@ members = [
     "crates/frontend/forge-hir-macro",
     "crates/middle/forge-opt",
     "crates/backend/forge-codegen",
-    "crates/tools/forge-asm",
     "crates/tools/forge-object",
     "crates/tools/forge-plugin",
     "crates/tools/forge-rustc",
@@ -31,7 +30,6 @@ forge-opt = { path = "crates/middle/forge-opt" }
 forge-codegen = { path = "crates/backend/forge-codegen" }
 forge-dsl = { path = "crates/frontend/forge-dsl" }
 forge-grammar = { path = "crates/frontend/forge-grammar" }
-forge-asm = { path = "crates/tools/forge-asm" }
 smallvec = "1.15.2"
 
 # Optional tools crates

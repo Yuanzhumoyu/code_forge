@@ -8,7 +8,7 @@
 //! - IR verification (forge_ir::verify::Verifier)
 //! - Module-level compilation (cross-function call relocation) and IPA passes
 //!   with a real function table
-//! - Code generation (lowering + register allocation + emit for x86_64)
+//! - Code generation (lowering + register allocation + emit for x86_v12)
 //! - End-to-end compilation (optimize + compile, and JIT execution)
 //! - Throughput (parameterized scaling with function size)
 //! - Code size metrics (compiled byte counts)
@@ -31,7 +31,7 @@
 //! lexer matching — near-linear now); `ir_parse_big_text_256` samples the
 //! scaled-up input.
 
-use code_forge::backend::x86_64::{TargetMachine, ensure_registered};
+use code_forge::backend::x86_v12::{TargetMachine, ensure_registered};
 use code_forge::backend::{CompiledFunction, FunctionCompiler};
 use code_forge::ir::*;
 use code_forge::optimize::*;
@@ -873,7 +873,7 @@ fn bench_pipeline_breakdown(c: &mut Criterion) {
 }
 
 // ============================================================
-// Group 4: Code Generation Benchmarks (x86_64)
+// Group 4: Code Generation Benchmarks (x86_v12)
 // ============================================================
 
 fn compile_fn(func: &Function) -> CompiledFunction {
@@ -927,16 +927,6 @@ fn bench_codegen_mem(c: &mut Criterion) {
     bench_codegen(c, "codegen_mem", &func);
 }
 
-// Direct call compiles now: x86 lowers Call to CALL rel32 with a placeholder
-// displacement (0) — cross-function targets are not resolved in a
-// single-function compile, so the emitted code is a stub. JIT execution of a
-// call function is NOT supported.
-fn bench_codegen_call(c: &mut Criterion) {
-    ensure_registered();
-    let func = build_call_func();
-    bench_codegen(c, "codegen_call", &func);
-}
-
 fn bench_codegen_spill_pressure(c: &mut Criterion) {
     ensure_registered();
     let func = build_spill_pressure();
@@ -947,77 +937,6 @@ fn bench_codegen_big_loop(c: &mut Criterion) {
     ensure_registered();
     let func = build_big_loop();
     bench_codegen(c, "codegen_big_loop", &func);
-}
-
-/// Codegen benchmarks for the other backends (aarch64 / riscv64 / wasm32),
-/// compiled with the same representative functions as x86_64.
-fn bench_codegen_other_isa(c: &mut Criterion) {
-    // aarch64 now lowers scalar float (Fadd/Fsub/Fmul/Fconst via NEON + FMOV),
-    // so it covers the float `complex` case too. riscv64/wasm32: riscv64 lacks
-    // F-extension instructions still, so complex stays x86_64/aarch64/wasm32.
-    let aarch64_funcs: Vec<(&str, Function)> = vec![
-        ("simple_add", build_simple_add()),
-        ("many_ops", build_many_ops()),
-        ("multi_block", build_multi_block_function()),
-        ("complex", build_complex_function()),
-    ];
-    // riscv64 now has the F extension (Fadd/Fsub/Fmul/Fdiv/Fconst), so it
-    // covers complex too.
-    let riscv64_funcs: Vec<(&str, Function)> = vec![
-        ("simple_add", build_simple_add()),
-        ("many_ops", build_many_ops()),
-        ("multi_block", build_multi_block_function()),
-        ("complex", build_complex_function()),
-    ];
-    let common: Vec<(&str, Function)> = vec![
-        ("simple_add", build_simple_add()),
-        ("many_ops", build_many_ops()),
-        ("multi_block", build_multi_block_function()),
-    ];
-    let _ = &common;
-    // Function is not Clone, so build the wasm list separately.
-    let wasm_funcs: Vec<(&str, Function)> = vec![
-        ("simple_add", build_simple_add()),
-        ("many_ops", build_many_ops()),
-        ("multi_block", build_multi_block_function()),
-        ("complex", build_complex_function()),
-    ];
-
-    code_forge::backend::aarch64::ensure_registered();
-    codegen_isa_group(c, "aarch64", &aarch64_funcs, || {
-        code_forge::backend::aarch64::TargetMachine::new()
-    });
-    code_forge::backend::riscv64::ensure_registered();
-    codegen_isa_group(c, "riscv64", &riscv64_funcs, || {
-        code_forge::backend::riscv64::TargetMachine::new()
-    });
-    code_forge::backend::wasm32::ensure_registered();
-    codegen_isa_group(c, "wasm32", &wasm_funcs, || {
-        code_forge::backend::wasm32::TargetMachine::new()
-    });
-}
-
-/// Compile `funcs` with a generic ISA backend into a `codegen/{isa}/*` group.
-fn codegen_isa_group<M: code_forge::backend::TargetMachine>(
-    c: &mut Criterion,
-    isa: &str,
-    funcs: &[(&str, Function)],
-    machine: impl Fn() -> M,
-) {
-    for (name, func) in funcs {
-        let mut g = c.benchmark_group(format!("codegen/{isa}"));
-        g.bench_function(*name, |b| {
-            b.iter(|| {
-                let compiled = black_box(
-                    FunctionCompiler::new(machine())
-                        .compile_raw(func)
-                        .unwrap_or_else(|e| panic!("{isa} {}: {e}", name)),
-                );
-                black_box(compiled);
-            });
-        });
-        g.finish();
-    }
 }
 
 // ============================================================
@@ -1064,26 +983,36 @@ fn build_callee() -> Function {
     b.finish().unwrap()
 }
 
-/// Small module: `callee_double` (FuncRef 0) then `caller` (FuncRef 1, whose
-/// body is `call @0; iadd`). `Module::add_function` assigns FuncRef in
-/// insertion order, so `build_call_func`'s hardcoded `call FuncRef(0)` targets
-/// the callee during module-level compilation.
+/// Small module：两个常量函数（f0/f1）。直接 `Opcode::Call` 的 v12 lowering
+/// 尚未落地（mini_c 用 AST 内联），故模块编译基准不再构造跨函数 call。
 fn build_test_module() -> forge_ir::Module {
     let mut m = forge_ir::Module::new();
-    m.add_function(build_callee());
-    m.add_function(build_call_func());
+    {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("f0", TypeContext::new(), sig);
+        b.create_block_here();
+        let v = b.iconst(42, TypeId::I32);
+        b.ret(&[v]);
+        m.add_function(b.finish().unwrap());
+    }
+    {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("f1", TypeContext::new(), sig);
+        b.create_block_here();
+        let v = b.iconst(7, TypeId::I32);
+        b.ret(&[v]);
+        m.add_function(b.finish().unwrap());
+    }
     m
 }
 
-/// JIT module compile: two functions, one with a cross-function `call @0` —
-/// exercises module-level relocation resolution (unlike single-function
-/// `compile_raw`, which emits a placeholder displacement).
+/// JIT module compile：两个函数的模块（多函数并行编译路径）。
 fn bench_module_compile(c: &mut Criterion) {
     // JIT 运行时在 `jit` feature 下才编译（JitCompiler）——关闭时该基准跳过
     #[cfg(feature = "jit")]
     {
         ensure_registered();
-        c.bench_function("module_compile_cross_call", |b| {
+        c.bench_function("module_compile", |b| {
             b.iter_batched(
                 build_test_module,
                 |m| {
@@ -1497,13 +1426,11 @@ criterion_group!(
         bench_codegen_multi_block,
         bench_codegen_float,
         bench_codegen_mem,
-        bench_codegen_call,
         bench_codegen_spill_pressure,
         bench_codegen_big_loop,
         bench_codegen_with_o1,
         bench_codegen_with_o2,
         bench_codegen_with_o2_complex,
-        bench_codegen_other_isa,
 );
 
 criterion_group!(

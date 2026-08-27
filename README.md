@@ -31,25 +31,25 @@
 | `forge-ir` | Foundation | SSA IR types, function/module, constant pool, LLVM-IR 文本 parser（logos+lalrpop）、verifier、display |
 | `forge-mem` | Foundation | Executable memory (W^X), CPU feature detection, GDB JIT |
 | `forge-opt` | Middle | Optimization pipeline (O1=5 / O2=13 / O3=18 passes), LTO, PGO |
-| `forge-codegen` | Backend | ISA lowering, register allocation, emit, JIT, x86/RISC-V/AArch64/WASM 后端 |
-| `forge-dsl` | Frontend | `isa_from_file!` proc-macro: TOML ISA 定义 → 全套后端组件代码 |
+| `forge-codegen` | Backend | ISA lowering, register allocation, emit, JIT, x86_64 v12 后端 |
+| `forge-dsl` | Frontend | `isa_from_file!` proc-macro（v12 唯一语法）: TOML ISA 定义 → 自包含 encode/decode/asm + TargetMachine 组件 |
 | `forge-grammar` | Frontend | EBNF 解析、CST 构造、schema 驱动 AST 降级（AstSchema/TypedAst/AstVisitor） |
 | `forge-hir` | Frontend | 手写 AST→IR 降级层（IrGraph + HirCtx + lower_into_module） |
 | `forge-hir-macro` | Frontend | `define_lowering!` proc-macro（atom → Opcode 映射声明） |
-| `forge-asm` | Tools | 汇编器运行时类型（零内部依赖；外部依赖 logos/lalrpop-util） |
 | `forge-object` | Tools | ELF/PE/Mach-O object file writer |
 | `forge-plugin` | Tools | Dynamic ISA backend loader (.dll/.so/.dylib) |
 | `forge-rustc` | Tools | rustc codegen backend（Windows x64 no_std；需 nightly + rustc-dev） |
-| `forge-tests` | Tools | Integration test macros、ISA 编码 golden、unicorn 跨架构执行 |
+| `forge-tests` | Tools | Integration test macros、ISA 编码 golden、JIT 执行/模糊测试（x86_v12） |
 
 ## Quick Start
 
 ```rust
-use code_forge::backend::arch::x86_64;
+use code_forge::backend::arch::x86_v12::{self, ensure_registered};
 use code_forge::backend::jit::JitCompiler;
 use code_forge::ir::*;
 
-let tm = x86_64::TargetMachine::new();
+ensure_registered();
+let tm = x86_v12::TargetMachine::new();
 let mut jit = JitCompiler::new(tm);
 
 let sig = FunctionSignature::new(&[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::I32]);
@@ -70,11 +70,11 @@ assert_eq!(unsafe { add(3, 4) }, 7);
 
 | ISA | Status | File |
 | ------- | -------- | ------ |
-| x86_64 | ✅ 完整后端（编码+寄存器分配+JIT 执行闭环；16 个 fcmp 条件全支持） | `isa/x86_v10.toml` |
-| RISC-V64 | ✅ 完整后端（编码+汇编；执行经可选 `exec-unicorn` feature） | `isa/riscv64_v10.toml` |
-| AArch64 | ✅ 完整后端（编码+lowering；复杂用例 unicorn compile-only） | `isa/aarch64_v10.toml` |
-| WASM32 | ✅ 编译后端（仅字节码输出，**不可运行**：无 prologue/reloc patch/validator） | `isa/wasm32_v10.toml` |
-| Minimal SD | ✅ 验证 only（默认 lowering 与汇编器） | `isa/minimal_sd.toml` |
+| x86_64 (v12) | ✅ 完整后端（204 条指令、编码+解码+汇编+寄存器分配+JIT 执行闭环；mini_c 全特性 25/25） | `isa/x86_v12.toml` |
+| RISC-V64 (v12) | ✅ 自包含 encode/decode/asm 试点（未接 TargetMachine） | `isa/riscv64_v12.toml` |
+
+> v11 语法层（`encoding` 字符串 + `@原语`）与 v11 后端（x86_v10/aarch64/riscv64/
+> wasm32/minimal_sd）已物理删除——v12 是唯一 DSL 语法，无兼容层。
 
 ## Build
 

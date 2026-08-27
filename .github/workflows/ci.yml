@@ -89,34 +89,6 @@ jobs:
           components: rustc-dev, rust-src
       - run: cargo test -p forge-rustc --test e2e
 
-  # forge-tests feature 矩阵（单 ISA / 单类别组合，验证 feature 门控）
-  forge-tests-matrix:
-    name: forge-tests (feature matrix)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        features:
-          - --no-default-features --features isa-x86_64,test-int
-          - --no-default-features --features isa-x86_64,test-float,test-io,test-control
-          - --no-default-features --features isa-aarch64,isa-riscv64,test-float
-          - --no-default-features --features isa-aarch64,test-io
-          - --no-default-features --features isa-riscv64,test-int
-          - --features isa-x86_64,isa-aarch64,isa-riscv64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo test -p forge-tests ${{ matrix.features }}
-
-  # forge-tests 跨架构模拟执行（vendored unicorn 由 build.rs 用 cmake 编译静态库）
-  forge-tests-unicorn:
-    name: forge-tests (exec-unicorn)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo test -p forge-tests --features exec-unicorn
-
   # forge-tests nightly（forge-rustc 后端集成；需 nightly + rustc-dev 组件）
   forge-tests-nightly:
     name: forge-tests (nightly / forge-rustc)
