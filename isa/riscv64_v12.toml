@@ -17,15 +17,20 @@
 
 [meta]
 name = "riscv64_v12"
-version = "12.0"
+version = "13.0"
 endian = "little"
 mode = 64
 default_inst_width = 32
+case_insensitive_regs = true
+# v13 语法键（显式化；缺省值一致）
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+directive_prefix = "."
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
 
-[reg.gpr]
-width = 64
+[reg.gpr8]
 names = [
     "X0","X1","X2","X3","X4","X5","X6","X7",
     "X8","X9","X10","X11","X12","X13","X14","X15",
@@ -33,8 +38,7 @@ names = [
     "X24","X25","X26","X27","X28","X29","X30","X31",
 ]
 
-[reg.fpr]
-width = 32
+[reg.fpr4]
 names = [
     "F0","F1","F2","F3","F4","F5","F6","F7",
     "F8","F9","F10","F11","F12","F13","F14","F15",
@@ -53,6 +57,7 @@ funct7 = { offset = 25, width = 7 }
 funct5 = { offset = 25, width = 5 }   # AMOADD aq/rl 位恒 0
 funct6 = { offset = 26, width = 6 }   # 移位立即数高位（SLLI/SRLI/SRAI）
 shamt6 = { offset = 20, width = 6 }
+shamt5 = { offset = 20, width = 5 }   # W 变体移位（RV64：shamt 5 位，bit25 归 funct7）
 opcode = { offset = 0,  width = 7 }
 word   = { offset = 0,  width = 32 }  # FENCE 全字常量
 imm12  = { offset = 20, width = 12 }  # I 型
@@ -68,14 +73,14 @@ imm_j  = { pieces = [ { offset = 31, width = 1, shift = 20 }, { offset = 21, wid
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
-class = "gpr"
+class = "gpr8"
 field_width = 5
 roles = ["in", "out"]
 
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
-class = "fpr"
+class = "fpr4"
 field_width = 5
 roles = ["in", "out"]
 
@@ -147,6 +152,11 @@ opcode_field = "opcode"
 operand_fields = ["rd", "rs1", "shamt6"]
 
 [[forms]]
+name = "SHIFT5"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "shamt5"]
+
+[[forms]]
 name = "ZBB"
 opcode_field = "opcode"
 operand_fields = ["rd", "rs1", "rs2"]
@@ -171,340 +181,319 @@ name = "MOV_RM8_R64"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "mv"
 
 # ── R 型整数（opcode 0x33）──
 
 
+asm = "mv {0:[gpr:out]}, {1:[gpr:in]}"
 [[instructions]]
 
 name = "ADD"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "add {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "SUB"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x20 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "sub {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "SLL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "sll {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "SLT"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 2, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "slt {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "SLTU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 3, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "sltu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "XOR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 4, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "xor {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "SRL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "srl {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "SRA"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x20 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "sra {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "OR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 6, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "or {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "AND"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 7, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "and {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "MUL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x01 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "mul {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "DIV"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 4, funct7 = 0x01 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "div {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "DIVU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x01 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "divu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "REM"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 6, funct7 = 0x01 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "rem {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "REMU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 7, funct7 = 0x01 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 # ── R 型浮点（opcode 0x53）──
 
 
+asm = "remu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "FADD_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x00 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fadd.s"
 
 
+asm = "fadd.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FSUB_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x04 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fsub.s"
 
 
+asm = "fsub.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FMUL_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x08 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fmul.s"
 
 
+asm = "fmul.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FDIV_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x0C }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fdiv.s"
 
 
+asm = "fdiv.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FSQRT_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x2C }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "fsqrt.s"
 
 
+asm = "fsqrt.s {0:[fpr:out]}, {1:[fpr:in]}"
 [[instructions]]
 
 name = "FSGNJ_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x10 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fsgnj.s"
 
 
+asm = "fsgnj.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FSGNJN_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x10 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fsgnjn.s"
 
 
+asm = "fsgnjn.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FSGNJX_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 2, funct7 = 0x10 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fsgnjx.s"
 
 
+asm = "fsgnjx.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FCVT_W_S_RTZ"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x60 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "fcvt.w.s"
 
 
+asm = "fcvt.w.s.rtz {0:[gpr:out]}, {1:[fpr:in]}"
 [[instructions]]
 
 name = "FCVT_W_S_RNE"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x60 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "fcvt.w.s"
 
 
+asm = "fcvt.w.s {0:[gpr:out]}, {1:[fpr:in]}"
 [[instructions]]
 
 name = "FCVT_S_W"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x68 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "fcvt.s.w"
 
 
+asm = "fcvt.s.w {0:[fpr:out]}, {1:[gpr:in]}"
 [[instructions]]
 
 name = "FLT_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 4, funct7 = 0x20 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "flt.s"
 
 
+asm = "flt.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FEQ_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 5, funct7 = 0x20 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "feq.s"
 
 
+asm = "feq.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FLE_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 6, funct7 = 0x20 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fle.s"
 
 
+asm = "fle.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FMIN_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x14 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fmin.s"
 
 
+asm = "fmin.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FMAX_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x14 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "fmax.s"
 
 
+asm = "fmax.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[instructions]]
 
 name = "FMV_W_X"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x78 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "fmv.w.x"
 
 
+asm = "fmv.w.x {0:[fpr:out]}, {1:[gpr:in]}"
 [[instructions]]
 
 name = "FMV_X_W"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x70 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "fmv.x.w"
 
 # ── 内存浮点 ──
 
 
+asm = "fmv.x.w {0:[gpr:out]}, {1:[fpr:in]}"
 [[instructions]]
 
 name = "FLW"
 form = "I"
 opcode = 0x07
 fields = { funct3 = 2 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-mnemonic = "flw"
-asm = "flw {0}, {2}({1})"
+asm = "flw {0:[fpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
 
 
 [[instructions]]
@@ -513,9 +502,7 @@ name = "FSW"
 form = "S"
 opcode = 0x27
 fields = { funct3 = 2 }
-operands = [{ slot = "fpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-mnemonic = "fsw"
-asm = "fsw {0}, {2}({1})"
+asm = "fsw {0:[fpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
 
 # ── I 型整数（opcode 0x13）──
 
@@ -526,103 +513,102 @@ name = "ADDI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
 
+asm = "addi {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
 [[instructions]]
 
 name = "SLTI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 2 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
 
+asm = "slti {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
 [[instructions]]
 
 name = "SLTIU"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 3 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
 
+asm = "sltiu {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
 [[instructions]]
 
 name = "XORI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 4 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
 
+asm = "xori {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
 [[instructions]]
 
 name = "ORI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 6 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
 
+asm = "ori {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
 [[instructions]]
 
 name = "ANDI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 7 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
 
 # ── 移位立即数（RV64：shamt 6 位 + funct6）──
 
 
+asm = "andi {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
 [[instructions]]
 
 name = "SLLI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 1, funct6 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "shamt", role = "in" }]
 
 
+asm = "slli {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
 [[instructions]]
 
 name = "SRLI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 5, funct6 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "shamt", role = "in" }]
 
 
+asm = "srli {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
 [[instructions]]
 
 name = "SRAI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 5, funct6 = 0x10 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "shamt", role = "in" }]
 
 # ── U 型 LUI ──
 
 
+asm = "srai {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
 [[instructions]]
 
 name = "LUI"
 form = "U"
 opcode = 0x37
-operands = [{ slot = "gpr", role = "out" }, { slot = "imm20", role = "in" }]
 
 # ── 加载/存储 ──
 
 
+asm = "lui {0:[gpr:out]}, {1:[imm20:in]}"
 [[instructions]]
 
 name = "LD"
 form = "I"
 opcode = 0x03
 fields = { funct3 = 3 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-asm = "ld {0}, {2}({1})"
+asm = "ld {0:[gpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
 
 
 [[instructions]]
@@ -631,8 +617,7 @@ name = "SD"
 form = "S"
 opcode = 0x23
 fields = { funct3 = 3 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-asm = "sd {0}, {2}({1})"
+asm = "sd {0:[gpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
 
 # ── 控制流 ──
 
@@ -642,17 +627,16 @@ asm = "sd {0}, {2}({1})"
 name = "JAL"
 form = "J"
 opcode = 0x6F
-operands = [{ slot = "gpr", role = "out" }, { slot = "off_j", role = "in" }]
 
 
+asm = "jal {0:[gpr:out]}, {1:[off_j:in]}"
 [[instructions]]
 
 name = "JALR"
 form = "I"
 opcode = 0x67
 fields = { funct3 = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-asm = "jalr {0}, {2}({1})"
+asm = "jalr {0:[gpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
 
 
 [[instructions]]
@@ -661,122 +645,58 @@ name = "BEQ"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 0 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
 
+asm = "beq {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
 [[instructions]]
 
 name = "BNE"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 1 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
 
+asm = "bne {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
 [[instructions]]
 
 name = "BLT"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 4 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
 
+asm = "blt {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
 [[instructions]]
 
 name = "BGE"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 5 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
 
+asm = "bge {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
 [[instructions]]
 
 name = "BLTU"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 6 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "off_b", role = "in" }]
 
 # ── 帧管理（与上同编码的 GprReg 形式；asm 别名取首个声明）──
 
 
-[[instructions]]
-
-name = "SD_R"
-form = "S"
-opcode = 0x23
-fields = { funct3 = 3 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-mnemonic = "sd"
-asm = "sd {0}, {2}({1})"
-
-
-[[instructions]]
-
-name = "LD_R"
-form = "I"
-opcode = 0x03
-fields = { funct3 = 3 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-mnemonic = "ld"
-asm = "ld {0}, {2}({1})"
-
-
-[[instructions]]
-
-name = "ADDI_R"
-form = "I"
-opcode = 0x13
-fields = { funct3 = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-mnemonic = "addi"
-
-
-[[instructions]]
-
-name = "MV_RV"
-form = "R"
-opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "mv"
-
-
-[[instructions]]
-
-name = "MV_VR"
-form = "R"
-opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x00 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "mv"
-
-
-[[instructions]]
-
-name = "JALR_R"
-form = "I"
-opcode = 0x67
-fields = { funct3 = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "imm12", role = "in" }]
-mnemonic = "jalr"
-asm = "jalr {0}, {1}, {2}"
-
-
+asm = "bltu {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
 [[instructions]]
 
 name = "JAL_IMM"
 form = "J"
 opcode = 0x6F
 fields = { rd = 1 }
-operands = [{ slot = "off_j", role = "in", field = "imm_j" }]
-mnemonic = "jal"
 
 # ── 系统 ──
 
 
+asm = "jal"
 [[instructions]]
 
 name = "NOP"
@@ -784,6 +704,7 @@ form = "OP"
 opcode = 0x13
 
 
+asm = "nop"
 [[instructions]]
 
 name = "ECALL"
@@ -793,105 +714,104 @@ opcode = 0x73
 # ── Zbb 位操作（RV64）──
 
 
+asm = "ecall"
 [[instructions]]
 
 name = "CLZ"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x30 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
 
+asm = "clz {0:[gpr:out]}, {1:[gpr:in]}"
 [[instructions]]
 
 name = "CTZ"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 1 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
 
+asm = "ctz {0:[gpr:out]}, {1:[gpr:in]}"
 [[instructions]]
 
 name = "CPOP"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 2 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
 
+asm = "cpop {0:[gpr:out]}, {1:[gpr:in]}"
 [[instructions]]
 
 name = "REV8"
 form = "ZBB"
 opcode = 0x13
 fields = { funct3 = 1, funct7 = 0x34, rs2 = 8 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
 
 
+asm = "rev8 {0:[gpr:out]}, {1:[gpr:in]}"
 [[instructions]]
 
 name = "ROL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x30 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "rol {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "ROR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x31 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "ror {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "MIN"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x14 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "min {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "MAX"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x15 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "max {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "MINU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x16 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "minu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "MAXU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x17 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
 
 
+asm = "maxu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 [[instructions]]
 
 name = "AMOADD"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 2 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }]
-mnemonic = "amoadd.w.aqrl"
-asm = "amoadd.w.aqrl {0}, {2}, ({1})"
+asm = "amoadd.w.aqrl {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
 
 
 [[instructions]]
@@ -899,3 +819,311 @@ asm = "amoadd.w.aqrl {0}, {2}, ({1})"
 name = "FENCE"
 form = "W32"
 opcode = 0x0FF0000F
+asm = "fence"
+# ────────────────────── W 变体（RV64 32 位语义；opcode 0x3B）──────────────────────
+
+[[instructions]]
+name = "ADDW"
+form = "R"
+opcode = 0x3B
+fields = { funct3 = 0, funct7 = 0x00 }
+asm = "addw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+
+[[instructions]]
+name = "SUBW"
+form = "R"
+opcode = 0x3B
+fields = { funct3 = 0, funct7 = 0x20 }
+asm = "subw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+
+[[instructions]]
+name = "SLLW"
+form = "SHIFT5"
+opcode = 0x3B
+fields = { funct3 = 1, funct7 = 0x00 }
+asm = "sllw {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+
+[[instructions]]
+name = "SRLW"
+form = "SHIFT5"
+opcode = 0x3B
+fields = { funct3 = 5, funct7 = 0x00 }
+asm = "srlw {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+
+[[instructions]]
+name = "SRAW"
+form = "SHIFT5"
+opcode = 0x3B
+fields = { funct3 = 5, funct7 = 0x20 }
+asm = "sraw {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+
+[[instructions]]
+name = "MULW"
+form = "R"
+opcode = 0x3B
+fields = { funct3 = 0, funct7 = 0x01 }
+asm = "mulw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+
+[[instructions]]
+name = "DIVW"
+form = "R"
+opcode = 0x3B
+fields = { funct3 = 4, funct7 = 0x01 }
+asm = "divw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+
+[[instructions]]
+name = "DIVUW"
+form = "R"
+opcode = 0x3B
+fields = { funct3 = 5, funct7 = 0x01 }
+asm = "divuw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+
+[[instructions]]
+name = "REMW"
+form = "R"
+opcode = 0x3B
+fields = { funct3 = 6, funct7 = 0x01 }
+asm = "remw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+
+[[instructions]]
+name = "REMUW"
+form = "R"
+opcode = 0x3B
+fields = { funct3 = 7, funct7 = 0x01 }
+asm = "remuw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+
+# 32 位加载/存储（LW/SW；opcode 0x03/0x23，funct3=2）
+[[instructions]]
+name = "LW"
+form = "I"
+opcode = 0x03
+fields = { funct3 = 2 }
+asm = "lw {0:[gpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
+
+[[instructions]]
+name = "SW"
+form = "S"
+opcode = 0x23
+fields = { funct3 = 2 }
+asm = "sw {0:[gpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
+
+# RET = jalr x0, 0(x1)（form I 全固定位域）
+[[instructions]]
+name = "RET"
+form = "I"
+opcode = 0x67
+fields = { funct3 = 0, rd = 0, rs1 = 1, imm12 = 0 }
+asm = "ret"
+
+# ════════════════════════════════════════════════════════════
+# B2：接入 TargetMachine（SysV rv64 子集 + 帧 + lowering）
+# ════════════════════════════════════════════════════════════
+
+[abi]
+stack_align = 16
+scratch = ["X5", "X6"]
+# regalloc 不可分配：X0=zero（写入无效）、X1=ra（prologue 保存 + call 返回
+# 地址）、X3/X4=gp/tp（固定用途）——不排除会分配出垃圾（实测 subw x0）。
+reserved = ["X0", "X1", "X3", "X4"]
+
+# 返回寄存器（a0）；Return/Call lowering 的返回值移动目标
+ret_regs = ["X10"]
+
+# Call 调用指令（jal ra, @N；label 槽 = -(FuncRef+1)，RiscvRelocPatcher 编码 UJ 位段）
+call_inst = "JAL"
+call_ret_reg = "X1"
+
+# Call 点被调用方破坏的寄存器（regalloc clobber 集）：ra(X1) + 参数 a0-a7
+# (X10-X17) + 临时 t0-t2(X5-X7)/t3-t6(X28-X31) + 固定用途 X3/X4。
+# s 系（X9/X18-X27）由 @push_callee 保存 → 不在 clobber 集（跨调用存活
+# 值留在 s 系安全）。X5/X6 是 spill scratch（regalloc 不可分配）。
+call_clobbers = ["X1", "X3", "X4", "X7", "X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17", "X28", "X29", "X30", "X31"]
+
+[[abi.arg_class]]
+class = "int"
+regs = ["X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17"]
+
+[abi.frame]
+sp = "X2"          # sp
+fp = "X8"          # s0/fp
+alloc_inst = "ADDI"
+free_inst = "ADDI"
+alloc_neg = true   # addi sp, sp, -frame_size
+fp_push_bytes = 16 # ra + fp 两个保存槽
+# 帧 ≥ callee_saved_bytes（16 + 11×8 = 104）：@push_callee 的 SD 槽偏移
+# frame - 16 - (k+1)*8 非负（k 最大 10 → 104-16-88=0）。
+min_frame_bytes = 104
+# callee_saved 保存槽在帧内顶部（min_frame_bytes 覆盖）→ 帧布局不再额外减
+# callee_saved_bytes：spill 槽 sp_base = -(frame) 留在帧内、StackAddr 平移 0。
+# 否则 spill 槽落帧外（sp 下方更深处），递归时与 callee 帧/栈槽绝对地址
+# 重叠（实测 fib 死循环）。
+callee_saved_bytes_override = 0
+# 栈槽（StackAddr）帧顶平移 = fp_push_bytes(16)：栈槽基准 fp-16（避开 ra/fp
+# 保存槽），相对 fp 递归各帧独立。
+stack_slot_shift = 16
+
+[abi.callee_saved]
+# s 系（X9, X18-X27）：@push_callee/@pop_callee 用 [spill.GPR] store/load
+# 模板（SD/LD）保存到帧槽 [sp + frame - 16 - (k+1)*8]（min_frame_bytes
+# 覆盖）。regalloc 把跨调用存活 vreg 分配到这里，递归/跨函数调用安全。
+gpr = ["X9", "X18", "X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27"]
+
+[spill.GPR]
+# base = X8（fp = 入口 sp，等价 x86 rbp）：emission 的 sp_base =
+# -(frame) - callee_saved_bytes 是**相对帧指针**的偏移。base 用 X2（sp）会
+# 双重减 frame（spill 槽落帧外更深处），递归时与 callee 帧重叠（ra 槽被
+# 覆盖 → ret 跳 0，实测 fault_fetch epc=0）。base = fp → spill 槽
+# [fp - frame + off] = [sp + off] 帧内底部，递归帧在下方不重叠。
+load = "LD {0}, X8, {1}"
+store = "SD {0}, X8, {1}"
+base = "X8"
+
+[emit]
+align_pad = 0
+# return block 经 emit_epilogue_jump（jal x0, epilogue_label）跳到统一尾声：
+# 多 return block 函数（fib 双 return）安全；label 槽块号 → 定宽 fixup。
+epilogue_label = true
+
+[emit.prologue]
+insts = ["@frame_alloc", "SD X1, X2, {frame_size_m8}", "SD X8, X2, {frame_size_m16}", "ADDI X8, X2, {frame_size}", "@push_callee", "@move_args"]
+
+[emit.epilogue]
+insts = ["@pop_callee", "LD X1, X2, {frame_size_m8}", "LD X8, X2, {frame_size_m16}", "@frame_free", "RET"]
+
+# ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
+
+[[lowering]]
+op = "Iadd"
+when = { eq = ["rs1_width", 32] }
+insts = ["addw {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Iadd"
+insts = ["add {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Isub"
+when = { eq = ["rs1_width", 32] }
+insts = ["subw {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Isub"
+insts = ["sub {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Imul"
+when = { eq = ["rs1_width", 32] }
+insts = ["mulw {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Imul"
+insts = ["mul {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Iconst"
+insts = ["lui {out}, {iconst_hi20}", "addi {out}, {out}, {iconst_lo12}"]
+
+[[lowering]]
+op = "Load"
+insts = ["ld {out}, {0}, 0"]
+
+[[lowering]]
+op = "Store"
+insts = ["sd {0}, {1}, 0"]
+
+[[lowering]]
+op = "StackAddr"
+# 基准 X8（fp = 入口 sp，帧顶固定）：栈槽相对 fp（偏移 = v - 16，
+# stack_slot_shift）→ 递归各帧独立（相对 sp 的 -4 跨帧重叠——fib_slot
+# 结果错）；且避开 ra/fp 保存槽 [fp-16, fp)。
+insts = ["addi {out}, X8, {off}"]
+
+[[lowering]]
+op = "Copy"
+insts = ["mv {out}, {0}"]
+# ── 补全 lowering（B2 遗留：位运算/移位/比较/调用）──
+
+[[lowering]]
+op = "Band"
+insts = ["and {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Bor"
+insts = ["or {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Bxor"
+insts = ["xor {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Bnot"
+insts = ["xori {out}, {0}, -1"]
+
+[[lowering]]
+op = "Ishl"
+insts = ["sll {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Ushr"
+insts = ["srl {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Sshr"
+insts = ["sra {out}, {0}, {1}"]
+
+# Icmp：按 IntCC（icmp_id 1-10）分派。riscv 无 setcc——用 slt/sltu/xor/
+# sltiu/xori 序列产生 0/1（矩阵 i1 语义）。eq = (a==b) = sltiu(xor(a,b),1)
+#（xor==0 → 1）；ne = 其取反；sle/sge/ule/uge = 反向 slt/sltu 取反。
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 1] } # Equal
+insts = ["xor {t}, {0}, {1}", "sltiu {out}, {t}, 1"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 2] } # NotEqual
+insts = ["xor {t}, {0}, {1}", "sltiu {t}, {t}, 1", "xori {out}, {t}, 1"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 3] } # SignedLessThan
+insts = ["slt {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 4] } # SignedLessThanOrEqual = !(b < a)
+insts = ["slt {t}, {1}, {0}", "xori {out}, {t}, 1"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 5] } # SignedGreaterThan = b < a
+insts = ["slt {out}, {1}, {0}"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 6] } # SignedGreaterThanOrEqual = !(a < b)
+insts = ["slt {t}, {0}, {1}", "xori {out}, {t}, 1"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 7] } # UnsignedLessThan
+insts = ["sltu {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 8] } # UnsignedLessThanOrEqual = !(b <u a)
+insts = ["sltu {t}, {1}, {0}", "xori {out}, {t}, 1"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 9] } # UnsignedGreaterThan = b <u a
+insts = ["sltu {out}, {1}, {0}"]
+
+[[lowering]]
+op = "Icmp"
+when = { eq = ["cond", 10] } # UnsignedGreaterThanOrEqual = !(a <u b)
+insts = ["sltu {t}, {0}, {1}", "xori {out}, {t}, 1"]
+
+# Call：jal ra, @N（跨函数符号；RiscvRelocPatcher 编码 UJ 位段）
+# 注意：Call 是 terminator 级 lowering（gen_call_lowering），不走此表——
+# 该规则仅占位声明，实际接线见 integration.rs 的 call_inst 泛化。

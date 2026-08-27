@@ -22,55 +22,191 @@
 
 [meta]
 name = "x86_64_v12"
-version = "12.0"
+version = "13.0"
 endian = "little"
 mode = 64
 variable_length = true
 max_inst_len = 15
+case_insensitive_regs = true
+# v13 语法键（缺省值与显式声明一致，此处显式化供文档/校验）
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+directive_prefix = "."
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
+# GPR 四宽度视图共用物理编号 0-15（base_index=0）：同一物理寄存器的
+# 8/16/32/64 位视图。opsize 由操作数寄存器宽度自动推导（Phase 2 起）。
+# gpr8 不含 AH/CH/DH/BH（v12 byte_reg 强制 REX，索引 4-7 恒为 SPL/BPL/SIL/DIL）。
 
-[reg.gpr64]
-width = 64
+[reg.gpr8]
 names = ["RAX","RCX","RDX","RBX","RSP","RBP","RSI","RDI",
          "R8","R9","R10","R11","R12","R13","R14","R15"]
 
-[reg.xmm]
-width = 128
+[reg.gpr4]
+base_index = 0
+names = ["EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI",
+         "R8D","R9D","R10D","R11D","R12D","R13D","R14D","R15D"]
+
+[reg.gpr2]
+base_index = 0
+names = ["AX","CX","DX","BX","SP","BP","SI","DI",
+         "R8W","R9W","R10W","R11W","R12W","R13W","R14W","R15W"]
+
+[reg.gpr1]
+base_index = 0
+names = ["AL","CL","DL","BL","SPL","BPL","SIL","DIL",
+         "R8B","R9B","R10B","R11B","R12B","R13B","R14B","R15B"]
+
+[reg.fpr8]
+base_index = 0
+names = ["MM0","MM1","MM2","MM3","MM4","MM5","MM6","MM7"]
+
+[reg.fpr16]
 names = ["XMM0","XMM1","XMM2","XMM3","XMM4","XMM5","XMM6","XMM7",
          "XMM8","XMM9","XMM10","XMM11","XMM12","XMM13","XMM14","XMM15"]
 
 # ModRM 约定：RBP(5)/R13(13) 作为基址在 mod=00 时是 RIP-rel/无基址——
 # 强制 disp8=0 编码（与 v11 一致）
+
+[reg.fpr32]
+names = ["ZMM0","ZMM1","ZMM2","ZMM3","ZMM4","ZMM5","ZMM6","ZMM7",
+         "ZMM8","ZMM9","ZMM10","ZMM11","ZMM12","ZMM13","ZMM14","ZMM15",
+         "ZMM16","ZMM17","ZMM18","ZMM19","ZMM20","ZMM21","ZMM22","ZMM23",
+         "ZMM24","ZMM25","ZMM26","ZMM27","ZMM28","ZMM29","ZMM30","ZMM31"]
+
+# AVX-512 掩码寄存器（opmask，k0-k7；EVEX P2 aaa 位）
+[reg.kreg8]
+names = ["K0","K1","K2","K3","K4","K5","K6","K7"]
 [conventions.modrm]
 force_disp_base = [5, 13]
+
+# v13：条件码表（缺省即此表；jcc/setcc/cmovcc 的 cond 槽查表）
+[conventions.cond]
+o = 0
+no = 1
+b = 2
+c = 2
+nae = 2
+ae = 3
+nb = 3
+nc = 3
+e = 4
+z = 4
+ne = 5
+nz = 5
+be = 6
+na = 6
+a = 7
+nbe = 7
+s = 8
+ns = 9
+p = 10
+pe = 10
+np = 11
+po = 11
+l = 12
+nge = 12
+ge = 13
+nl = 13
+le = 14
+ng = 14
+g = 15
+nle = 15
+
+# v13：变长解码前缀扫描表（缺省即此表；66/F0/F2/F3/67/REX 扫描集）
+[[conventions.prefix_scan]]
+byte = 0x66
+effects = ["opsize16"]
+[[conventions.prefix_scan]]
+byte = 0xF0
+effects = ["lock"]
+[[conventions.prefix_scan]]
+byte = 0xF2
+effects = ["repne"]
+[[conventions.prefix_scan]]
+byte = 0xF3
+effects = ["repe"]
+[[conventions.prefix_scan]]
+byte = 0x67
+effects = ["addr16"]
+[[conventions.prefix_scan]]
+range = "0x40..0x4F"
+effects = ["rex"]
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
-class = "gpr64"
+class = "gpr8"
 field_width = 4
-roles = ["in", "out"]
+roles = ["in", "out", "inout"]
 
 # 8 位寄存器操作数（SETCC 目标等）：索引 4-7（spl/bpl/sil/dil）无 REX 前缀
 # 会被解码为 ah/ch/dh/bh，必须强制 REX（见 codegen REX 条件）。
 [[operand_slots]]
+name = "gpr32"
+kind = "reg"
+class = "gpr4"
+field_width = 4
+roles = ["in", "out", "inout"]
+
+[[operand_slots]]
+name = "gprx"
+kind = "reg"
+# 多宽度视图（16/32/64 位）——类型签名分发的核心：一个槽接纳宽度集合，
+# 实际宽度由操作数寄存器决定（opsize auto 推导 66/REX.W 前缀）。
+# 显式排除 8 位（gpr1）：8 位 mov 是不同 opcode（88 vs 8B），应声明为
+# 独立 form 而非经由 gprx 误编码（garbage 防护）。
+classes = ["gpr2", "gpr4", "gpr8"]
+field_width = 4
+roles = ["in", "out", "inout"]
+
+[[operand_slots]]
 name = "gpr8"
 kind = "reg"
-class = "gpr64"
+class = "gpr8"
+field_width = 4
+byte_reg = true
+roles = ["in", "out", "inout"]
+
+# 16 位寄存器操作数（movzx/movsx 16 位源等）
+[[operand_slots]]
+name = "gpr2"
+kind = "reg"
+class = "gpr2"
+field_width = 4
+roles = ["in", "out"]
+
+
+[[operand_slots]]
+name = "gpr1b"
+kind = "reg"
+class = "gpr1"
 field_width = 4
 byte_reg = true
 roles = ["in", "out"]
-
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
-class = "xmm"
+class = "fpr16"
+field_width = 4
+roles = ["in", "out", "inout"]
+
+
+[[operand_slots]]
+name = "fpr32"
+kind = "reg"
+class = "fpr32"
 field_width = 4
 roles = ["in", "out"]
-
+[[operand_slots]]
+name = "kreg"
+kind = "reg"
+class = "kreg8"
+field_width = 4
+roles = ["in", "out"]
 [[operand_slots]]
 name = "imm32"
 kind = "imm"
@@ -78,13 +214,9 @@ signed = true
 width = 32
 
 [[operand_slots]]
-name = "opsize"
-kind = "opsize"
-
-[[operand_slots]]
 name = "mem"
 kind = "mem"
-class = "gpr64"
+class = "gpr8"
 
 [[operand_slots]]
 name = "imm8"
@@ -114,40 +246,77 @@ width = 8
 [[forms]]
 name = "MRR"            # @modrm：reg=op0, rm=op1, opsize auto
 modrm = "rr"
-opsize = "auto"
+opsize = "s0"
 opcode_bytes = 1
 
 [[forms]]
+name = "MRR_FIX32"      # @modrm + opsize 固定 32（MOV_R_RM32 零扩展）
+modrm = "rr"
+opsize = "r4"
+opcode_bytes = 1
+
+
+[[forms]]
+name = "MRR_BYTE"       # 8 位 mov：8A /r（reg=op0=dest、rm=op1=src）；byte_reg 强制 REX
+modrm = "rr"
+opcode_bytes = 1
+[[forms]]
 name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
 modrm = "rr"
-opsize = 64
+opsize = "r8"
 opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F"         # @modrm + 0F escape
 modrm = "rr"
-opsize = "auto"
+opsize = "s0"
 escape = [0x0F]
 opcode_bytes = 1
 
 [[forms]]
-name = "MRR_0F_FIX64"   # @modrm + 0F escape + opsize 固定 64（MOVQ 系列）
+name = "MRR_0F_NOOS"    # @modrm + 0F escape + 无 opsize（movzx/movsx：dest/src
+                        # 宽度不同合法——8/16 位源零/符号扩展到 64，不做一致性检查）
 modrm = "rr"
-opsize = 64
+prefix = "field"
+rex_w = "field"
 escape = [0x0F]
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_0F_FIX64"   # @modrm + 0F escape + opsize 固定 64（MOVQ 系列；prefix=field）
+modrm = "rr"
+opsize = "r8"
+escape = [0x0F]
+prefix = "field"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_0F_FIX64_REV" # @modrm + 0F escape + opsize 固定 64，reg=op1、rm=op0（MOVQ r64, xmm）
+modrm = "rr_rev"
+opsize = "r8"
+escape = [0x0F]
+prefix = "field"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_0F_PREFIX"  # @modrm + 0F escape + 指令级 prefix（LZCNT/TZCNT/POPCNT 的 F3）
+modrm = "rr"
+opsize = "s0"
+escape = [0x0F]
+prefix = "field"
 opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F38"       # @modrm + 0F 38 escape（PMULLD 等）
 modrm = "rr"
-opsize = 64
+opsize = "r8"
 escape = [0x0F, 0x38]
 opcode_bytes = 1
 
 [[forms]]
 name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
 modrm = "ext"
-opsize = "auto"
+opsize = "s0"
 imm = 32
 opcode_bytes = 1
 
@@ -159,12 +328,37 @@ prefix = "field"
 rex_w = "field"
 opcode_bytes = 1
 
+[[forms]]
+name = "SSE_RR_REV"     # @sse_rr_rev：0F opcode /r，reg=op1、rm=op0（MOVD r, xmm）
+modrm = "rr_rev"
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+opcode_bytes = 1
+
 # ── 内存寻址（迭代 3b：@modrm_mem）──
 
 [[forms]]
-name = "VEX_RRV"        # VEX 三操作数：reg=op0, rm=op1, vvvv=~op2（有源）
-vex = { map = "field", pp = "field", w = "field", l = "field" }
+name = "EVEX_RR_MEMREF"   # EVEX 内存：reg=op0、MemRef op1；压缩位移 ×evex_disp_scale
+evex = { map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" }
+modrm = "rm_memref"
+opcode_bytes = 1
+
+[[forms]]
+name = "EVEX_RR"         # EVEX 两操作数：reg=op0、rm=op1（vmovaps zmm, zmm）
+evex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr"
+opcode_bytes = 1
+
+[[forms]]
+name = "EVEX_RRV"        # EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
+evex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr_src2"
+opcode_bytes = 1
+[[forms]]
+name = "VEX_RRV"        # VEX 三操作数：reg=op0(dest)、rm=op2(src2)、vvvv=~op1(src1)
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr_src2"
 opcode_bytes = 1
 
 [[forms]]
@@ -174,9 +368,9 @@ modrm = "rr"
 opcode_bytes = 1
 
 [[forms]]
-name = "VEX_RRV_IMM"    # VEX 三操作数 + imm8
+name = "VEX_RRV_IMM"    # VEX 三操作数 + imm8：reg=op0(dest)、rm=op2(src2)（VINSERTF128）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr"
+modrm = "rr_src2"
 imm = 8
 opcode_bytes = 1
 
@@ -188,15 +382,21 @@ imm = 8
 opcode_bytes = 1
 
 [[forms]]
+name = "VEX_RR_MEMREF"  # VEX 内存形式：reg=op0(dest)、MemRef base/disp=op1（vmovaps xmm, [rax+disp]）
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rm_memref"
+opcode_bytes = 1
+
+[[forms]]
 name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
 modrm = "ext"
-opsize = "auto"
+opsize = "s0"
 opcode_bytes = 1
 
 [[forms]]
 name = "MRR_EXT_OP_FIX64" # @shift_reg：D3 /digit（rm=op0），opsize 固定 64（REX.W）
 modrm = "ext"
-opsize = 64
+opsize = "r8"
 opcode_bytes = 1
 
 [[forms]]
@@ -208,14 +408,23 @@ opcode_bytes = 1
 [[forms]]
 name = "MRR_EXT64_IMM32"  # @op_rm_imm32：REX.W + 81 /digit + imm32（64 位专用）
 modrm = "ext"
-opsize = 64
+opsize = "r8"
 imm = 32
 opcode_bytes = 1
 
 [[forms]]
-name = "SSE_RR_IMM8"      # @sse_rr_imm8：prefix + 0F + opcode + /r + imm8
+name = "SSE_RR_IMM8"      # @sse_rr_imm8：prefix + 0F + opcode + /r + imm8（PSHUFD/SHUFPS）
 modrm = "rr"
 escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
+opcode_bytes = 1
+
+[[forms]]
+name = "SSE_RR_3A_IMM8"   # @sse_rr_3a_imm8：prefix + 0F 3A + opcode + /r + imm8（ROUNDSD/ROUNDSS）
+modrm = "rr"
+escape = [0x0F, 0x3A]
 prefix = "field"
 rex_w = "field"
 imm = 8
@@ -248,13 +457,13 @@ opcode_bytes = 1
 [[forms]]
 name = "MRR_MEM"          # [reg 基址 + disp 0]；无 escape（XCHG/MOV_R_MEM/STORE_MEM_R）
 modrm = "rm_mem"
-opsize = "auto"
+opsize = "s0"
 opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM_0F"       # 内存 + 0F escape + prefix=field（XADD 0F C1 双字节）
 modrm = "rm_mem"
-opsize = "auto"
+opsize = "s0"
 escape = [0x0F]
 prefix = "field"
 opcode_bytes = 1
@@ -262,14 +471,14 @@ opcode_bytes = 1
 [[forms]]
 name = "MRR_MEM_PRE"      # 内存 + prefix=field、无 escape（LOCK 原子族 29/21/09/31）
 modrm = "rm_mem"
-opsize = "auto"
+opsize = "s0"
 prefix = "field"
 opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM_0F_FIX32" # 内存 + 0F + prefix=field + opsize 32（MOVSD 内存标量）
 modrm = "rm_mem"
-opsize = 32
+opsize = "r4"
 escape = [0x0F]
 prefix = "field"
 opcode_bytes = 1
@@ -277,13 +486,13 @@ opcode_bytes = 1
 [[forms]]
 name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
 modrm = "rm_memref"
-opsize = 64
+opsize = "r8"
 opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEMREF_F2"    # MemRef + F2 0F + opsize 32（MOVSD_RM/MR）
 modrm = "rm_memref"
-opsize = 32
+opsize = "r4"
 escape = [0x0F]
 prefix = "field"
 opcode_bytes = 1
@@ -308,6 +517,12 @@ escape = [0x0F]
 opcode_bytes = 1
 
 [[forms]]
+name = "NOOP_ESC_FIXED"   # 无操作数 + escape + 固定 ModRM 字节（MFENCE 0F AE F0）
+escape = [0x0F]
+modrm_fixed = 0xF0
+opcode_bytes = 1
+
+[[forms]]
 name = "REL32_ESC"        # rel32 + escape（JCC_REL32: 0F cond rel32）
 escape = [0x0F]
 imm = 32
@@ -324,688 +539,575 @@ opcode_bytes = 1
 
 
 [[instructions]]
-
 name = "MOV_R_RM"
 form = "MRR"
 opcode = 0x8B
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "movrr"
-
+# v13：与 MOV_RM_R/MOV_R_RM_32/MOV64_RR 合并为同一助记符 `mov`——
+# 16/32/64 位寄存器版本按实际类型自动分发（mov EAX,EBX → 8B 32 位无前缀、
+# mov RAX,RBX → 89 D8、mov AX,BX → 66 8B）。gprx 显式排除 8 位（见槽声明）。
+asm = "mov {0:[gprx:out]}, {1:[gprx:in]}"
 
 [[instructions]]
+name = "MOV_R_RM_32"
+form = "MRR_FIX32"
+opcode = 0x8B
+# 与 MOV_R_RM 同模板同槽类型（真重复）→ 保留独立助记符 mov32：FIX32 语义对 32 位 lowering 承重（固定 32 位 opsize，不随操作数宽度推导）。
+asm = "mov32 {0:[gprx:out]}, {1:[gprx:in]}"
 
+[[instructions]]
+name = "MOV_R8_RM8"
+form = "MRR_BYTE"
+opcode = 0x8A
+# v13：8 位 mov——gpr1b 槽（byte_reg 强制 REX：spl/bpl/sil/dil）。与 16/32/64 位
+# 共享助记符 `mov`（`mov al, bl` → 8A C3）。gprx 显式排除 gpr1（防 8B 误编码）。
+asm = "mov {0:[gpr1b:out]}, {1:[gpr1b:in]}"
+
+[[instructions]]
 name = "MOV_RM_R"
-mnemonic = "mov"
 form = "MRR"
 opcode = 0x89
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "mov {1}, {0}"
-
+asm = "mov {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "MOVSXD_R_RM"
 form = "MRR_FIX64"
 opcode = 0x63
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "movsxd"
-
+asm = "movsxd {0:[gpr:out]}, {1:[gpr:in]}"
 
 [[instructions]]
-
 name = "MOVSXD_R_GPR"
 form = "MRR_FIX64"
 opcode = 0x63
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "movsxd_gpr"
-
+asm = "movsxd {0:[gpr:out]}, {1:[gpr:in]}"   # v13：与 MOVSXD_R_RM 合并（真重复）
 
 [[instructions]]
-
 name = "ADD_RM_R"
-mnemonic = "add"
 form = "MRR"
 opcode = 0x01
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "add {1}, {0}"
-
+asm = "add {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
+name = "ADD_RM_R_32"
+form = "MRR"
+opcode = 0x01
+asm = "add {1:[gpr32:inout]}, {0:[gpr32:in]}"
 
+[[instructions]]
 name = "SUB_RM_R"
-mnemonic = "sub"
 form = "MRR"
 opcode = 0x29
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "sub {1}, {0}"
-
+asm = "sub {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
+name = "SUB_RM_R_32"
+form = "MRR"
+opcode = 0x29
+asm = "sub {1:[gpr32:inout]}, {0:[gpr32:in]}"
 
+[[instructions]]
 name = "IMUL_R_RM"
-mnemonic = "imul"
 form = "MRR_0F"
 opcode = 0xAF
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-
+asm = "imul {0:[gpr:out]}, {1:[gpr:in]}"
 
 [[instructions]]
+name = "IMUL_R_RM_32"
+form = "MRR_0F"
+opcode = 0xAF
+asm = "imul {0:[gpr32:out]}, {1:[gpr32:in]}"
 
+[[instructions]]
 name = "XOR_RM_R"
-mnemonic = "xor"
 form = "MRR"
 opcode = 0x31
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "xor {1}, {0}"
-
+asm = "xor {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
+name = "XOR_RM_R_32"
+form = "MRR"
+opcode = 0x31
+asm = "xor {1:[gpr32:inout]}, {0:[gpr32:in]}"
 
+[[instructions]]
 name = "AND_RM_R"
-mnemonic = "and"
 form = "MRR"
 opcode = 0x21
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "and {1}, {0}"
-
+asm = "and {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
+name = "AND_RM_R_32"
+form = "MRR"
+opcode = 0x21
+asm = "and {1:[gpr32:inout]}, {0:[gpr32:in]}"
 
+[[instructions]]
 name = "OR_RM_R"
-mnemonic = "or"
 form = "MRR"
 opcode = 0x09
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "or {1}, {0}"
-
+asm = "or {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "CMP_RM_R"
-mnemonic = "cmp"
 form = "MRR"
 opcode = 0x39
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-asm = "cmp {1}, {0}"
-
+asm = "cmp {1:[gpr:in]}, {0:[gpr:in]}"
 
 [[instructions]]
+name = "CMP_RM_R_32"
+form = "MRR"
+opcode = 0x39
+asm = "cmp {1:[gpr32:in]}, {0:[gpr32:in]}"
 
+[[instructions]]
 name = "TEST_RM_R"
-mnemonic = "test"
 form = "MRR"
 opcode = 0x85
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-asm = "test {1}, {0}"
-
+asm = "test {1:[gpr:in]}, {0:[gpr:in]}"
 
 [[instructions]]
+name = "TEST_RM_R_32"
+form = "MRR"
+opcode = 0x85
+asm = "test {1:[gpr32:in]}, {0:[gpr32:in]}"
 
+# movzx：8 位源（REX.W + 0F B6）与 16 位源（66 REX.W 0F B7）合并助记符——
+# 源槽宽度自动分发（gpr1b → B6、gpr2 → B7）。REX.W 保证 64 位 dest 全零扩展。
+[[instructions]]
 name = "MOVZX_R8_RM"
-mnemonic = "movzx"
-form = "MRR_0F"
+form = "MRR_0F_NOOS"
 opcode = 0xB6
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr8", role = "in" }, { slot = "opsize", role = "in" }]
-
+fields = { prefix = 0, w = 1 }
+asm = "movzx {0:[gpr:out]}, {1:[gpr1b:in]}"
 
 [[instructions]]
-
 name = "MOVZX_R16_RM"
-mnemonic = "movzx"
-form = "MRR_0F"
+form = "MRR_0F_NOOS"
 opcode = 0xB7
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
+fields = { prefix = 0x66, w = 1 }
+asm = "movzx {0:[gpr:out]}, {1:[gpr2:in]}"
 
-
+# movsx：8 位源（REX.W + 0F BE）与 16 位源（66 REX.W 0F BF）合并助记符。
 [[instructions]]
-
 name = "MOVSX_R8_RM"
-mnemonic = "movsx"
-form = "MRR_0F"
+form = "MRR_0F_NOOS"
 opcode = 0xBE
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr8", role = "in" }, { slot = "opsize", role = "in" }]
-
+fields = { prefix = 0, w = 1 }
+asm = "movsx {0:[gpr:out]}, {1:[gpr1b:in]}"
 
 [[instructions]]
-
 name = "MOVSX_R16_RM"
-mnemonic = "movsx"
-form = "MRR_0F"
+form = "MRR_0F_NOOS"
 opcode = 0xBF
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-
+fields = { prefix = 0x66, w = 1 }
+asm = "movsx {0:[gpr:out]}, {1:[gpr2:in]}"
 
 [[instructions]]
-
 name = "CMPXCHG_RM_R"
-mnemonic = "cmpxchg"
 form = "MRR_0F"
 opcode = 0xB1
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "cmpxchg {1}, {0}"
-
+asm = "cmpxchg {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "XADD_RM_R"
-mnemonic = "xadd"
 form = "MRR_0F"
 opcode = 0xC1
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-asm = "xadd {1}, {0}"
-
+asm = "xadd {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "BT_RM_R"
-mnemonic = "bt"
 form = "MRR_0F"
 opcode = 0xA3
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-asm = "bt {1}, {0}"
-
+asm = "bt {1:[gpr:in]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "BTS_RM_R"
-mnemonic = "bts"
 form = "MRR_0F"
 opcode = 0xAB
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-asm = "bts {1}, {0}"
-
+asm = "bts {1:[gpr:in]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "BTR_RM_R"
-mnemonic = "btr"
 form = "MRR_0F"
 opcode = 0xB3
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-asm = "btr {1}, {0}"
-
+asm = "btr {1:[gpr:in]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "BTC_RM_R"
-mnemonic = "btc"
 form = "MRR_0F"
 opcode = 0xBB
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-asm = "btc {1}, {0}"
-
+asm = "btc {1:[gpr:in]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "MOV_RM8_R64"
 form = "MRR"
 opcode = 0x89
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-mnemonic = "movrm"
-asm = "movrm {1}, {0}"
-
+asm = "mov {1:[gpr:inout]}, {0:[gpr:in]}"   # v13：与 MOV_RM_R 合并（真重复，生成期去重保留首个）
 
 [[instructions]]
-
 name = "MOV_R8_RM64"
 form = "MRR"
 opcode = 0x8B
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "movr8"
-
-# ── @modrm_imm32（81 /digit + imm32）──
-
+asm = "movr8 {0:[gpr:out]}, {1:[gpr:in]}"
 
 [[instructions]]
-
 name = "ADD_R_IMM32"
-mnemonic = "add"
 form = "MRR_EXT"
 opcode = 0x81
 fields = { ext = 0 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
-
+asm = "add {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
-
 name = "OR_R_IMM32"
-mnemonic = "or"
 form = "MRR_EXT"
 opcode = 0x81
 fields = { ext = 1 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
-
+asm = "or {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
-
 name = "AND_R_IMM32"
-mnemonic = "and"
 form = "MRR_EXT"
 opcode = 0x81
 fields = { ext = 4 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
-
+asm = "and {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
-
 name = "SUB_R_IMM32"
-mnemonic = "sub"
 form = "MRR_EXT"
 opcode = 0x81
 fields = { ext = 5 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
-
+asm = "sub {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
-
 name = "XOR_R_IMM32"
-mnemonic = "xor"
 form = "MRR_EXT"
 opcode = 0x81
 fields = { ext = 6 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
-
+asm = "xor {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
-
 name = "CMP_R_IMM32"
-mnemonic = "cmp"
 form = "MRR_EXT"
 opcode = 0x81
 fields = { ext = 7 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "imm32", role = "in" }, { slot = "opsize", role = "in" }]
+asm = "cmp {0:[gpr:in]}, {1:[imm32:in]}"
 
 # ── @sse_rr 简单指令（prefix=field, w=0）──
 
-
 [[instructions]]
-
-name = "MOVZX_B"
-form = "SSE_RR"
-opcode = 0xB6
-fields = { prefix = 0, w = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "movzx_b"
-
-
-[[instructions]]
-
-name = "MOVZX_W"
-form = "SSE_RR"
-opcode = 0xB7
-fields = { prefix = 0, w = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "movzx_w"
-
-
-[[instructions]]
-
 name = "SQRTSD"
 form = "SSE_RR"
 opcode = 0x51
 fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "sqrtsd"
-
+asm = "sqrtsd {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "SQRTSS"
 form = "SSE_RR"
 opcode = 0x51
 fields = { prefix = 0, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "sqrtss"
+asm = "sqrtss {0:[fpr:out]}, {1:[fpr:in]}"
 
-
+# cvtsi2sd：32 位源（w=0）与 64 位源（w=1）合并——源槽多类 gprx + opsize=s1
+# 驱动 REX.W（eax → 0、rax → 1），汇编器按操作数实际宽度自动分发。
 [[instructions]]
-
 name = "CVTSI2SD"
 form = "SSE_RR"
 opcode = 0x2A
-fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "cvtsi2sd"
-
-
-[[instructions]]
-
-name = "CVTSD2SI"
-form = "SSE_RR"
-opcode = 0x2D
-fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "cvtsd2si"
-
+fields = { prefix = 0xF2 }
+opsize = "s1"
+rex_w = "auto"
+asm = "cvtsi2sd {0:[fpr:out]}, {1:[gprx:in]}"
 
 [[instructions]]
-
-name = "CVTTSD2SI"
-form = "SSE_RR"
-opcode = 0x2C
-fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "cvttsd2si"
-
-
-[[instructions]]
-
 name = "CVTSD2SS"
 form = "SSE_RR"
 opcode = 0x5A
 fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "cvtsd2ss"
-
+asm = "cvtsd2ss {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "CVTSS2SD"
 form = "SSE_RR"
 opcode = 0x5A
 fields = { prefix = 0xF3, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "cvtss2sd"
-
+asm = "cvtss2sd {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "ANDPD"
 form = "SSE_RR"
 opcode = 0x54
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "andpd"
-
+asm = "andpd {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "XORPD"
 form = "SSE_RR"
 opcode = 0x57
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "xorpd"
-
+asm = "xorpd {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "COMISD"
 form = "SSE_RR"
 opcode = 0x2F
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "comisd"
-
+asm = "comisd {0:[fpr:in]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "COMISS"
 form = "SSE_RR"
 opcode = 0x2F
 fields = { prefix = 0, w = 0 }
-operands = [{ slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "comiss"
-
+asm = "comiss {0:[fpr:in]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "MOVSD_XMM_FREG"
 form = "SSE_RR"
 opcode = 0x10
 fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "movsd_xf"
-
+asm = "movsd_xf {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "MOVSD_FREG_XMM"
 form = "SSE_RR"
 opcode = 0x10
 fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "movsd_fx"
+asm = "movsd_fx {0:[fpr:out]}, {1:[fpr:in]}"
 
-
+# cvtsi2ss：32 位源（w=0）与 64 位源（w=1）合并——源槽多类 gprx + opsize=s1
+# 驱动 REX.W（eax → 0、rax → 1），按操作数实际宽度自动分发。
 [[instructions]]
-
 name = "CVTSI2SS"
 form = "SSE_RR"
 opcode = 0x2A
-fields = { prefix = 0xF3, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "cvtsi2ss"
-
+fields = { prefix = 0xF3 }
+opsize = "s1"
+rex_w = "auto"
+asm = "cvtsi2ss {0:[fpr:out]}, {1:[gprx:in]}"
 
 [[instructions]]
-
 name = "MOVD_FREG_IREG"
 form = "SSE_RR"
 opcode = 0x6E
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "movd"
-
+asm = "movd {0:[fpr:out]}, {1:[gpr:in]}"
 
 [[instructions]]
-
 name = "MOVD_IREG_FREG"
-form = "SSE_RR"
+form = "SSE_RR_REV"
 opcode = 0x7E
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "in" }, { slot = "gpr", role = "out" }]
-mnemonic = "movd_fr"
-asm = "movd_fr {1}, {0}"
-
+asm = "movd_fr {0:[gpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "PUNPCKLDQ"
 form = "SSE_RR"
 opcode = 0x62
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "punpckldq"
-
+asm = "punpckldq {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "PUNPCKLQDQ"
 form = "SSE_RR"
 opcode = 0x6C
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "punpcklqdq"
-
+asm = "punpcklqdq {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "PUNPCKHDQ"
 form = "SSE_RR"
 opcode = 0x6A
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "punpckhdq"
-
+asm = "punpckhdq {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
 name = "MOVSS"
 form = "SSE_RR"
 opcode = 0x10
 fields = { prefix = 0xF3, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "movss"
-
+asm = "movss {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
-
-name = "MOVSD_RR"
-form = "SSE_RR"
-opcode = 0x10
-fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "movsd"
-
-# ── 内存寻址（迭代 3b：@modrm_mem；顺序 = v11 声明序）──
-
-
-[[instructions]]
-
 name = "XADD_MEM_R"
 form = "MRR_MEM_0F"
 opcode = 0xC1
 fields = { prefix = 0xF0 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "xadd"
-asm = "xadd [{1}], {0}"
-
+asm = "xadd [{1:[gpr:in]}], {0:[gpr:inout]}"
 
 [[instructions]]
-
 name = "XCHG_MEM_R"
 form = "MRR_MEM"
 opcode = 0x87
-operands = [{ slot = "gpr", role = "inout" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "xchg"
-asm = "xchg [{1}], {0}"
-
+asm = "xchg [{1:[gpr:in]}], {0:[gpr:inout]}"
 
 [[instructions]]
+name = "CMPXCHG_MEM_R"
+form = "MRR_MEM_0F"
+opcode = 0xB1
+fields = { prefix = 0xF0 }
+asm = "lockcmpxchg [{1:[gpr:in]}], {0:[gpr:in]}"
+effect = ["Write"]
 
+[[instructions]]
 name = "SUB_MEM_R"
 form = "MRR_MEM_PRE"
 opcode = 0x29
 fields = { prefix = 0xF0 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "locksub"
-asm = "locksub [{1}], {0}"
-
+asm = "locksub [{1:[gpr:in]}], {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "AND_MEM_R"
 form = "MRR_MEM_PRE"
 opcode = 0x21
 fields = { prefix = 0xF0 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "lockand"
-asm = "lockand [{1}], {0}"
-
+asm = "lockand [{1:[gpr:in]}], {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "OR_MEM_R"
 form = "MRR_MEM_PRE"
 opcode = 0x09
 fields = { prefix = 0xF0 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "lockor"
-asm = "lockor [{1}], {0}"
-
+asm = "lockor [{1:[gpr:in]}], {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "XOR_MEM_R"
 form = "MRR_MEM_PRE"
 opcode = 0x31
 fields = { prefix = 0xF0 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "lockxor"
-asm = "lockxor [{1}], {0}"
-
+asm = "lockxor [{1:[gpr:in]}], {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "MOV_R_MEM"
 form = "MRR_MEM"
 opcode = 0x8B
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "mov_mem"
-asm = "mov_mem {0}, [{1}]"
-
+asm = "mov_mem {0:[gpr:out]}, [{1:[gpr:in]}]"
 
 [[instructions]]
+name = "MOV_R_MEM_32"
+form = "MRR_MEM"
+opcode = 0x8B
+asm = "mov_mem32 {0:[gpr32:out]}, [{1:[gpr:in]}]"
 
+[[instructions]]
 name = "STORE_MEM_R"
 form = "MRR_MEM"
 opcode = 0x89
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "mov_sto"
-asm = "mov_sto [{1}], {0}"
-
+asm = "mov_sto [{1:[gpr:in]}], {0:[gpr:in]}"
 
 [[instructions]]
+name = "STORE_MEM_R_32"
+form = "MRR_MEM"
+opcode = 0x89
+asm = "mov_sto32 [{1:[gpr32:in]}], {0:[gpr32:in]}"
 
+[[instructions]]
 name = "MOVSD_R_MEM"
 form = "MRR_MEM_0F_FIX32"
 opcode = 0x10
 fields = { prefix = 0xF2 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "movsd_mem"
-asm = "movsd_mem {0}, [{1}]"
-
+asm = "movsd_mem {0:[fpr:out]}, [{1:[gpr:in]}]"
 
 [[instructions]]
-
 name = "MOVSD_MEM_R"
 form = "MRR_MEM_0F_FIX32"
 opcode = 0x11
 fields = { prefix = 0xF2 }
-operands = [{ slot = "fpr", role = "in" }, { slot = "gpr", role = "in" }]
-mnemonic = "movsd_sto"
-asm = "movsd_sto [{1}], {0}"
-
+asm = "movsd_sto [{1:[gpr:in]}], {0:[fpr:in]}"
 
 [[instructions]]
-
 name = "MOV64_RR"
 form = "MRR_FIX64"
 opcode = 0x89
-operands = [{ slot = "gpr", role = "in" }, { slot = "gpr", role = "inout" }]
-mnemonic = "mov64rr"
-asm = "mov64rr {1}, {0}"
-
+# 与 MOV_RM_R（mov {1}, {0}）同模板同槽类型 → 生成期去重跳过（64 位经 MOV_RM_R 分发）。
+asm = "mov {1:[gpr:inout]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "MOV64_RM"
 form = "MRR_MEMREF"
 opcode = 0x8B
-operands = [{ slot = "gpr", role = "out" }, { slot = "mem", role = "in" }]
-mnemonic = "mov64rm"
-
+asm = "mov64rm {0:[gpr:out]}, {1:[mem:in]}"
 
 [[instructions]]
-
 name = "MOV64_MR"
 form = "MRR_MEMREF"
 opcode = 0x89
-operands = [{ slot = "gpr", role = "in" }, { slot = "mem", role = "in" }]
-mnemonic = "mov64mr"
-asm = "mov64mr {1}, {0}"
-
+asm = "mov64mr {1:[mem:in]}, {0:[gpr:in]}"
 
 [[instructions]]
-
 name = "MOVSD_RM"
 form = "MRR_MEMREF_F2"
 opcode = 0x10
 fields = { prefix = 0xF2 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "mem", role = "in" }]
-mnemonic = "movsd_rm"
-
+asm = "movsd_rm {0:[fpr:out]}, {1:[mem:in]}"
 
 [[instructions]]
-
 name = "MOVSD_MR"
 form = "MRR_MEMREF_F2"
 opcode = 0x11
 fields = { prefix = 0xF2 }
-operands = [{ slot = "fpr", role = "in" }, { slot = "mem", role = "in" }]
-mnemonic = "movsd_mr"
-asm = "movsd_mr {1}, {0}"
+asm = "movsd_mr {1:[mem:in]}, {0:[fpr:in]}"
+
+# ── 标量浮点补齐（Phase 4：F32 内存标量、F32→整数、64 位转换、极值、舍入）──
+
+[[instructions]]
+name = "MOVSS_R_MEM"
+form = "MRR_MEM_0F_FIX32"
+opcode = 0x10
+fields = { prefix = 0xF3 }
+asm = "movss_mem {0:[fpr:out]}, [{1:[gpr:in]}]"
+
+[[instructions]]
+name = "MOVSS_MEM_R"
+form = "MRR_MEM_0F_FIX32"
+opcode = 0x11
+fields = { prefix = 0xF3 }
+asm = "movss_sto [{1:[gpr:in]}], {0:[fpr:in]}"
+
+# cvtss2si：32 位目的（w=0）与 64 位目的（w=1）合并——目的槽多类 gprx +
+# opsize=s0 驱动 REX.W（eax → 0、rax → 1），按操作数实际宽度自动分发。
+[[instructions]]
+name = "CVTSS2SI"
+form = "SSE_RR"
+opcode = 0x2D
+fields = { prefix = 0xF3 }
+opsize = "s0"
+rex_w = "auto"
+asm = "cvtss2si {0:[gprx:out]}, {1:[fpr:in]}"
+
+[[instructions]]
+name = "CVTTSS2SI"
+form = "SSE_RR"
+opcode = 0x2C
+fields = { prefix = 0xF3, w = 0 }
+asm = "cvttss2si {0:[gpr:out]}, {1:[fpr:in]}"
+
+# cvtsd2si：32 位目的（w=0）与 64 位目的（w=1）合并——目的槽多类 gprx +
+# opsize=s0 驱动 REX.W，按操作数实际宽度自动分发。
+[[instructions]]
+name = "CVTSD2SI"
+form = "SSE_RR"
+opcode = 0x2D
+fields = { prefix = 0xF2 }
+opsize = "s0"
+rex_w = "auto"
+asm = "cvtsd2si {0:[gprx:out]}, {1:[fpr:in]}"
+
+[[instructions]]
+name = "CVTTSD2SI"
+form = "SSE_RR"
+opcode = 0x2C
+fields = { prefix = 0xF2 }
+opsize = "s0"
+rex_w = "auto"
+asm = "cvttsd2si {0:[gprx:out]}, {1:[fpr:in]}"
+
+[[instructions]]
+name = "ROUNDSS_I"
+form = "SSE_RR_3A_IMM8"
+opcode = 0x0A
+fields = { prefix = 0x66, w = 0 }
+asm = "roundss {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
+effect = ["Pure"]
 
 # ── SSE 家族（v11 opcodes 数组 → families）──
 
@@ -1013,138 +1115,116 @@ asm = "movsd_mr {1}, {0}"
 name = "SD_BIN"
 form = "SSE_RR"
 fields = { prefix = 0xF2, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+asm = "{name} {0:[fpr:out]}, {1:[fpr:in]}"
 [[families.variants]]
 name = "MOVSD"
 opcode = 0x10
-mnemonic = "movsd"
 [[families.variants]]
 name = "MINSD"
 opcode = 0x5D
-mnemonic = "minsd"
 [[families.variants]]
 name = "MAXSD"
 opcode = 0x5F
-mnemonic = "maxsd"
 [[families.variants]]
 name = "ADDSD"
 opcode = 0x58
-mnemonic = "addsd"
 [[families.variants]]
 name = "SUBSD"
 opcode = 0x5C
-mnemonic = "subsd"
 [[families.variants]]
 name = "MULSD"
 opcode = 0x59
-mnemonic = "mulsd"
 [[families.variants]]
 name = "DIVSD"
 opcode = 0x5E
-mnemonic = "divsd"
 
 [[families]]
 name = "SS_FMOV"
 form = "SSE_RR"
 fields = { prefix = 0xF3, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+asm = "{name} {0:[fpr:out]}, {1:[fpr:in]}"
 [[families.variants]]
 name = "ADDSS"
 opcode = 0x58
-mnemonic = "addss"
 [[families.variants]]
 name = "SUBSS"
 opcode = 0x5C
-mnemonic = "subss"
 [[families.variants]]
 name = "MULSS"
 opcode = 0x59
-mnemonic = "mulss"
 [[families.variants]]
 name = "DIVSS"
 opcode = 0x5E
-mnemonic = "divss"
+[[families.variants]]
+name = "MINSS"
+opcode = 0x5D
+[[families.variants]]
+name = "MAXSS"
+opcode = 0x5F
 
 [[families]]
 name = "PS_BIN"
 form = "SSE_RR"
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+asm = "{name} {0:[fpr:out]}, {1:[fpr:in]}"
 [[families.variants]]
 name = "MOVAPS"
 opcode = 0x28
-mnemonic = "movaps"
 [[families.variants]]
 name = "ADDPS"
 opcode = 0x58
-mnemonic = "addps"
 [[families.variants]]
 name = "SUBPS"
 opcode = 0x5C
-mnemonic = "subps"
 [[families.variants]]
 name = "MULPS"
 opcode = 0x59
-mnemonic = "mulps"
 [[families.variants]]
 name = "DIVPS"
 opcode = 0x5E
-mnemonic = "divps"
 [[families.variants]]
 name = "XORPS"
 opcode = 0x57
-mnemonic = "xorps"
 [[families.variants]]
 name = "ANDPS"
 opcode = 0x54
-mnemonic = "andps"
 [[families.variants]]
 name = "ORPS"
 opcode = 0x56
-mnemonic = "orps"
-
 [[families]]
 name = "PD_BIN"
 form = "SSE_RR"
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+asm = "{name} {0:[fpr:out]}, {1:[fpr:in]}"
 [[families.variants]]
 name = "ADDPD"
 opcode = 0x58
-mnemonic = "addpd"
 [[families.variants]]
 name = "SUBPD"
 opcode = 0x5C
-mnemonic = "subpd"
 [[families.variants]]
 name = "MULPD"
 opcode = 0x59
-mnemonic = "mulpd"
 [[families.variants]]
 name = "DIVPD"
 opcode = 0x5E
-mnemonic = "divpd"
 
 [[families]]
 name = "PI_BIN"
 form = "SSE_RR"
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
+asm = "{name} {0:[fpr:out]}, {1:[fpr:in]}"
 [[families.variants]]
 name = "PADDD"
 opcode = 0xFE
-mnemonic = "paddd"
 [[families.variants]]
 name = "PSUBD"
 opcode = 0xFA
-mnemonic = "psubd"
 [[families.variants]]
 name = "PADDQ"
 opcode = 0xD4
-mnemonic = "paddq"
 [[families.variants]]
 name = "PSUBQ"
 opcode = 0xFB
-mnemonic = "psubq"
 
 # ── VEX 家族（256 位向量，三操作数）──
 
@@ -1152,55 +1232,166 @@ mnemonic = "psubq"
 name = "PS_BIN_V"
 form = "VEX_RRV"
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "{mnemonic} {0}, {2}, {1}"
+asm = "{name} {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[families.variants]]
 name = "VADDPS"
 opcode = 0x58
-mnemonic = "vaddps"
 [[families.variants]]
 name = "VSUBPS"
 opcode = 0x5C
-mnemonic = "vsubps"
 [[families.variants]]
 name = "VMULPS"
 opcode = 0x59
-mnemonic = "vmulps"
 [[families.variants]]
 name = "VDIVPS"
 opcode = 0x5E
-mnemonic = "vdivps"
 [[families.variants]]
 name = "VXORPS"
 opcode = 0x57
-mnemonic = "vxorps"
 [[families.variants]]
 name = "VANDPS"
 opcode = 0x54
-mnemonic = "vandps"
 
 [[families]]
 name = "PD_BIN_V"
 form = "VEX_RRV"
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "{mnemonic} {0}, {2}, {1}"
+asm = "{name} {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 [[families.variants]]
 name = "VADDPD"
 opcode = 0x58
-mnemonic = "vaddpd"
 [[families.variants]]
 name = "VSUBPD"
 opcode = 0x5C
-mnemonic = "vsubpd"
 [[families.variants]]
 name = "VMULPD"
 opcode = 0x59
-mnemonic = "vmulpd"
 [[families.variants]]
 name = "VDIVPD"
 opcode = 0x5E
-mnemonic = "vdivpd"
+
+# ── EVEX（AVX-512）三操作数（512 位 ZMM；L'L=2）──
+# 助记符与 VEX 版共享（vaddps zmm0,... → EVEX；vaddps xmm0,... → VEX）——
+# 按操作数实际寄存器类（fpr32 vs fpr）自动分发。
+[[families]]
+name = "PS_BIN_EV"
+form = "EVEX_RRV"
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
+asm = "{name} {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VADDPS_ZMM"
+opcode = 0x58
+asm = "vaddps {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VSUBPS_ZMM"
+opcode = 0x5C
+asm = "vsubps {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VMULPS_ZMM"
+opcode = 0x59
+asm = "vmulps {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VDIVPS_ZMM"
+opcode = 0x5E
+asm = "vdivps {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+
+
+# EVEX 双精度（pd，pp=1）
+[[families]]
+name = "PD_BIN_EV"
+form = "EVEX_RRV"
+fields = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }
+asm = "{name} {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VADDPD_ZMM"
+opcode = 0x58
+asm = "vaddpd {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VSUBPD_ZMM"
+opcode = 0x5C
+asm = "vsubpd {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VMULPD_ZMM"
+opcode = 0x59
+asm = "vmulpd {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VDIVPD_ZMM"
+opcode = 0x5E
+asm = "vdivpd {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+
+# EVEX 整数（vpaddd/vpsubd/vpaddq/vpsubq，pp=1）
+[[families]]
+name = "INT_BIN_EV"
+form = "EVEX_RRV"
+fields = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }
+asm = "{name} {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VPADDD_ZMM"
+opcode = 0xFE
+asm = "vpaddd {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VPSUBD_ZMM"
+opcode = 0xFA
+asm = "vpsubd {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VPADDQ_ZMM"
+opcode = 0xD4
+fields = { evex_w = 1 }   # EVEX 下 W 位区分 dword/qword（vpaddd=W0、vpaddq=W1）
+asm = "vpaddq {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+[[families.variants]]
+name = "VPSUBQ_ZMM"
+opcode = 0xFB
+fields = { evex_w = 1 }
+asm = "vpsubq {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
+
+# EVEX 无源（2 操作数）：vmovaps zmm, zmm
+[[instructions]]
+name = "VMOVAPS_ZMM"
+form = "EVEX_RR"
+opcode = 0x28
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
+asm = "vmovaps {0:[fpr32:out]}, {1:[fpr32:in]}"
+[[instructions]]
+name = "VMOVAPS_ZMM_MEM"
+form = "EVEX_RR_MEMREF"
+opcode = 0x28
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+# v13：EVEX 内存形式（512 位，压缩位移 scale=64）——vmovaps zmm, [rax±disp]
+asm = "vmovaps {0:[fpr32:out]}, {1:[mem:in]}"
+
+# 非对齐 512 位 load（by-ref 传参用；EVEX 0x10 + disp_scale=64）
+[[instructions]]
+name = "VMOVUPS_ZMM_MEM"
+form = "EVEX_RR_MEMREF"
+opcode = 0x10
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+asm = "vmovups {0:[fpr32:out]}, {1:[mem:in]}"
+
+# 非对齐 512 位 store（by-ref 调用方侧副本）
+[[instructions]]
+name = "VMOVUPS_ZMM_MR"
+form = "EVEX_RR_MEMREF"
+opcode = 0x11
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+asm = "vmovups {0:[fpr32:in]}, {1:[mem:out]}"
+
+# ── EVEX opmask（掩码写合并，z=0）：vaddps zmm, zmm, zmm, k1 ──
+# 与 3 操作数 VADDPS_ZMM 同助记符自动分发（类型签名 O3 不同）；第 4 操作数
+# kreg 类槽 → P2 aaa = 掩码寄存器索引。
+[[instructions]]
+name = "VADDPS_ZMM_MASK"
+form = "EVEX_RRV"
+opcode = 0x58
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
+asm = "vaddps {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}, {3:[kreg:in]}"
+
+# EVEX 零掩码（z=1）：vaddpsz zmm, zmm, zmm, k1（P2 z 位 = 1）
+[[instructions]]
+name = "VADDPS_ZMM_MASKZ"
+form = "EVEX_RRV"
+opcode = 0x58
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_z = 1 }
+asm = "vaddpsz {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}, {3:[kreg:in]}"
 
 # ── VEX 单指令（无源/立即数）──
 
@@ -1209,90 +1400,100 @@ name = "VMOVAPS"
 form = "VEX_RR"
 opcode = 0x28
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "vmovaps"
+asm = "vmovaps {0:[fpr:out]}, {1:[fpr:in]}"
+
+[[instructions]]
+name = "VMOVAPS_RM"
+form = "VEX_RR_MEMREF"
+opcode = 0x28
+fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+asm = "vmovaps {0:[fpr:out]}, {1:[mem:in]}"
+
+# 非对齐向量 load（by-ref 传参用——指针未必 32 字节对齐，vmovups 无对齐要求）
+[[instructions]]
+name = "VMOVUPS_RM"
+form = "VEX_RR_MEMREF"
+opcode = 0x10
+fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+asm = "vmovups {0:[fpr:out]}, {1:[mem:in]}"
+
+# 非对齐向量 store（by-ref 调用方侧：实参 → 栈上副本）
+[[instructions]]
+name = "VMOVUPS_MR"
+form = "VEX_RR_MEMREF"
+opcode = 0x11
+fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+asm = "vmovups {0:[fpr:in]}, {1:[mem:out]}"
 
 [[instructions]]
 name = "VBROADCASTSS"
 form = "VEX_RR"
 opcode = 0x18
 fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "vbroadcastss"
+asm = "vbroadcastss {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
 name = "VBROADCASTSD"
 form = "VEX_RR"
 opcode = 0x19
 fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "vbroadcastsd"
+asm = "vbroadcastsd {0:[fpr:out]}, {1:[fpr:in]}"
 
 [[instructions]]
 name = "VPXOR"
 form = "VEX_RRV"
 opcode = 0xEF
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "vpxor {0}, {2}, {1}"
+asm = "vpxor {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 
 [[instructions]]
 name = "VPADDD"
 form = "VEX_RRV"
 opcode = 0xFE
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "vpaddd {0}, {2}, {1}"
+asm = "vpaddd {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 
 [[instructions]]
 name = "VPSUBD"
 form = "VEX_RRV"
 opcode = 0xFA
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "vpsubd {0}, {2}, {1}"
+asm = "vpsubd {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 
 [[instructions]]
 name = "VPADDQ"
 form = "VEX_RRV"
 opcode = 0xD4
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "vpaddq {0}, {2}, {1}"
+asm = "vpaddq {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 
 [[instructions]]
 name = "VPSUBQ"
 form = "VEX_RRV"
 opcode = 0xFB
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "vpsubq {0}, {2}, {1}"
+asm = "vpsubq {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 
 [[instructions]]
 name = "VPMULLD"
 form = "VEX_RRV"
 opcode = 0x40
 fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }]
-asm = "vpmulld {0}, {2}, {1}"
+asm = "vpmulld {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 
 [[instructions]]
 name = "VEXTRACTF128"
 form = "VEX_RR_IMM"
 opcode = 0x19
 fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "in" }, { slot = "fpr", role = "out" }, { slot = "imm8", role = "in" }]
-mnemonic = "vextractf128"
-asm = "vextractf128 {1}, {0}, {2}"
+asm = "vextractf128 {1:[fpr:out]}, {0:[fpr:in]}, {2:[imm8:in]}"
 
 [[instructions]]
 name = "VINSERTF128"
 form = "VEX_RRV_IMM"
 opcode = 0x18
 fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
-mnemonic = "vinsertf128"
-asm = "vinsertf128 {0}, {2}, {1}, {3}"
+asm = "vinsertf128 {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}, {3:[imm8:in]}"
 # ── 收官：@op_rm / @op_rm_imm32 / @sse_rr_imm8 / +r 形式 ──
 
 [[instructions]]
@@ -1300,8 +1501,7 @@ name = "NOT_RM"
 form = "MRR_EXT_OP"
 opcode = 0xF7
 fields = { ext = 2 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-mnemonic = "not"
+asm = "not {0:[gpr:inout]}"
 
 # ── 移位（D3 /digit，CL 隐式计数；opsize 固定 64 → REX.W）──
 
@@ -1310,146 +1510,127 @@ name = "SHL_RM_CL"
 form = "MRR_EXT_OP_FIX64"
 opcode = 0xD3
 fields = { ext = 4 }
-operands = [{ slot = "gpr", role = "inout" }]
-mnemonic = "shl"
-asm = "shl {0}, cl"
+asm = "shl {0:[gpr:inout]}, cl"
 
 [[instructions]]
 name = "SHR_RM_CL"
 form = "MRR_EXT_OP_FIX64"
 opcode = 0xD3
 fields = { ext = 5 }
-operands = [{ slot = "gpr", role = "inout" }]
-mnemonic = "shr"
-asm = "shr {0}, cl"
+asm = "shr {0:[gpr:inout]}, cl"
 
 [[instructions]]
 name = "SAR_RM_CL"
 form = "MRR_EXT_OP_FIX64"
 opcode = 0xD3
 fields = { ext = 7 }
-operands = [{ slot = "gpr", role = "inout" }]
-mnemonic = "sar"
-asm = "sar {0}, cl"
+asm = "sar {0:[gpr:inout]}, cl"
 
 [[instructions]]
 name = "NEG_RM"
 form = "MRR_EXT_OP"
 opcode = 0xF7
 fields = { ext = 3 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "opsize", role = "in" }]
-mnemonic = "neg"
+asm = "neg {0:[gpr:inout]}"
+
+[[instructions]]
+name = "NEG_RM_32"
+form = "MRR_EXT_OP"
+opcode = 0xF7
+fields = { ext = 3 }
+asm = "neg {0:[gpr32:inout]}"
 
 [[instructions]]
 name = "DIV_RM"
 form = "MRR_EXT_OP"
 opcode = 0xF7
 fields = { ext = 6 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "div"
 effect = ["Write"]
 # div 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
+asm = "div {0:[gpr:in]}"
 
 [[instructions]]
 name = "IDIV_RM"
 form = "MRR_EXT_OP"
 opcode = 0xF7
 fields = { ext = 7 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "idiv"
 effect = ["Write"]
 # idiv 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
+asm = "idiv {0:[gpr:in]}"
 
 [[instructions]]
 name = "SUB64_R_IMM32"
 form = "MRR_EXT64_IMM32"
 opcode = 0x81
 fields = { ext = 5 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }]
-mnemonic = "sub"
-asm = "sub {0}, {1}"
+asm = "sub {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
 name = "ADD64_R_IMM32"
 form = "MRR_EXT64_IMM32"
 opcode = 0x81
 fields = { ext = 0 }
-operands = [{ slot = "gpr", role = "inout" }, { slot = "imm32", role = "in" }]
-mnemonic = "add"
-asm = "add {0}, {1}"
+asm = "add {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
 name = "PSHUFD"
 form = "SSE_RR_IMM8"
 opcode = 0x70
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
-mnemonic = "pshufd"
-asm = "pshufd {0}, {1}, {2}"
+asm = "pshufd {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
 
 [[instructions]]
 name = "SHUFPS"
 form = "SSE_RR_IMM8"
 opcode = 0xC6
 fields = { prefix = 0, w = 0 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
-mnemonic = "shufps"
-asm = "shufps {0}, {1}, {2}"
+asm = "shufps {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
 
 [[instructions]]
 name = "PUSH"
 form = "PUSH_REG"
-operands = [{ slot = "gpr", role = "in" }]
-mnemonic = "push"
 effect = ["Write"]
+asm = "push {0:[gpr:in]}"
 
 [[instructions]]
 name = "POP"
 form = "POP_REG"
-operands = [{ slot = "gpr", role = "out" }]
-mnemonic = "pop"
 effect = ["Read"]
+asm = "pop {0:[gpr:out]}"
 
 [[instructions]]
 name = "MOV_REG_IMM64"
 form = "MOV_IMM64"
-operands = [{ slot = "gpr", role = "out" }, { slot = "imm64", role = "in" }]
-mnemonic = "mov_imm"
-asm = "mov_imm {0}, {1}"
+asm = "mov_imm {0:[gpr:out]}, {1:[imm64:in]}"
 
 [[instructions]]
 name = "BSWAP_R"
 form = "BSWAP_R"
-operands = [{ slot = "gpr", role = "inout" }]
-mnemonic = "bswap"
 
 # ── 控制流（迭代 6：JMP/CALL/RET + rel32）──
 
+asm = "bswap {0:[gpr:inout]}"
 [[instructions]]
 name = "RET"
 form = "NOOP"
 opcode = 0xC3
-mnemonic = "ret"
 effect = ["Ret"]
+asm = "ret"
 
 [[instructions]]
 name = "JMP_REL32"
 form = "REL32"
 opcode = 0xE9
-operands = [{ slot = "rel", role = "in" }]
-mnemonic = "jmp"
-asm = "jmp {0}"
+asm = "jmp {0:[rel:in]}"
 effect = ["Jump"]
 
 [[instructions]]
 name = "CALL_RIP_REL"
 form = "REL32"
 opcode = 0xE8
-operands = [{ slot = "rel", role = "in" }]
-mnemonic = "call"
-asm = "call {0}"
+asm = "call {0:[rel:in]}"
 effect = ["Call"]
 
 # ── 缺失指令补齐（迭代 6 收官，对齐 v11 124 条）──
@@ -1458,49 +1639,45 @@ effect = ["Call"]
 name = "NOP"
 form = "NOOP"
 opcode = 0x90
-mnemonic = "nop"
+asm = "nop"
 
 [[instructions]]
 name = "UD2"
 form = "NOOP_ESC"
 opcode = 0x0B
-mnemonic = "ud2"
 effect = ["Trap"]
+asm = "ud2"
 
 [[instructions]]
 name = "MFENCE"
-form = "NOOP_ESC"
+form = "NOOP_ESC_FIXED"
 opcode = 0xAE
 fields = { prefix = 0, w = 0 }
-mnemonic = "mfence"
 effect = ["Write"]
+asm = "mfence"
 
 [[instructions]]
 name = "CQO"
 form = "NOOP_REXW"
 opcode = 0x99
-mnemonic = "cqo"
 effect = ["Write"]
 # cqo 把 RAX 符号扩展到 RDX：RDX 隐式破坏（regalloc 在本指令点避开）
 implicit_regs = ["RDX"]
+asm = "cqo"
 
 [[instructions]]
 name = "CALL_RM"
 form = "OP_EXT"
 opcode = 0xFF
 fields = { ext = 2 }
-operands = [{ slot = "gpr", role = "in" }]
-mnemonic = "call_rm"
-asm = "call_rm {0}"
+asm = "call_rm {0:[gpr:in]}"
 effect = ["Call"]
 
 [[instructions]]
 name = "JCC_REL32"
 form = "REL32_ESC"
 opcode = 0x80            # 条件码 = opcode 低 4 位（0x80..0x8F）
-operands = [{ slot = "cond", role = "in" }, { slot = "rel", role = "in" }]
-mnemonic = "jcc"
-asm = "jcc {0}, {1}"
+asm = "jcc {0:[cond:in]}, {1:[rel:in]}"
 effect = ["Branch"]
 
 [[instructions]]
@@ -1508,54 +1685,42 @@ name = "SETCC_RM8"
 form = "EXT_0F"
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
 fields = { ext = 0 }
-operands = [{ slot = "gpr8", role = "out" }, { slot = "cond", role = "in" }]
-mnemonic = "setcc"
-asm = "setcc {0}, {1}"
+asm = "setcc {0:[gpr8:out]}, {1:[cond:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "LEA_R64_SIB"
 form = "MRR_MEMREF"
 opcode = 0x8D
-operands = [{ slot = "gpr", role = "out" }, { slot = "mem", role = "in" }]
-mnemonic = "lea"
-asm = "lea {0}, {1}"
+asm = "lea {0:[gpr:out]}, {1:[mem:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "LEA_RBP_OFF"
 form = "MRR_MEMREF"
 opcode = 0x8D
-operands = [{ slot = "gpr", role = "out" }, { slot = "mem", role = "in" }]
-mnemonic = "lea_rbp"
-asm = "lea_rbp {0}, {1}"
+asm = "lea_rbp {0:[gpr:out]}, {1:[mem:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "MOVABS_GLOBAL"
 form = "MOV_IMM64"
-operands = [{ slot = "gpr", role = "out" }, { slot = "imm64", role = "in" }]
-mnemonic = "movabs"
-asm = "movabs {0}, {1}"
+asm = "movabs {0:[gpr:out]}, {1:[imm64:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "CMOVCC_R_RM"
-form = "MRR_0F"
-opcode = 0x40            # 条件码 = opcode 低 4 位（0x40..0x4F）
-operands = [{ slot = "gpr", role = "inout" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "cmovcc"
-asm = "cmovcc {0}, {1}"
+form = "MRR_0F_FIX64"            # 固定 64 位（REX.W）；cond 编码进 opcode 低 4 位
+opcode = 0x40                    # 条件码 = opcode 低 4 位（0x40..0x4F）
+asm = "cmovcc {0:[gpr:inout]}, {1:[gpr:in]}, {2:[cond:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "ROUNDSD_I"
-form = "SSE_RR_IMM8"
-opcode = 0x0A
+form = "SSE_RR_3A_IMM8"
+opcode = 0x0B            # ROUNDSD = 66 0F 3A 0B /r ib（0A 是 ROUNDSS）
 fields = { prefix = 0x66, w = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }, { slot = "imm8", role = "in" }]
-mnemonic = "roundsd"
-asm = "roundsd {0}, {1}, {2}"
+asm = "roundsd {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -1563,9 +1728,7 @@ name = "PMULLD"
 form = "MRR_0F38"
 opcode = 0x40
 fields = { prefix = 0x66, w = 0 }
-operands = [{ slot = "fpr", role = "inout" }, { slot = "fpr", role = "in" }]
-mnemonic = "pmulld"
-asm = "pmulld {0}, {1}"
+asm = "pmulld {0:[fpr:inout]}, {1:[fpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -1573,19 +1736,15 @@ name = "MOVQ_XMM_R64"
 form = "MRR_0F_FIX64"
 opcode = 0x6E
 fields = { prefix = 0x66, w = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "gpr", role = "in" }]
-mnemonic = "movq_xmm"
-asm = "movq_xmm {0}, {1}"
+asm = "movq_xmm {0:[fpr:out]}, {1:[gpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "MOVQ_R64_XMM"
-form = "MRR_0F_FIX64"
+form = "MRR_0F_FIX64_REV"
 opcode = 0x7E
 fields = { prefix = 0x66, w = 1 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "movq_r64"
-asm = "movq_r64 {0}, {1}"
+asm = "movq_r64 {0:[gpr:out]}, {1:[fpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -1593,9 +1752,7 @@ name = "MOVQ_XMM_FREG"
 form = "MRR_0F_FIX64"
 opcode = 0x6E
 fields = { prefix = 0x66, w = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "movq_xmm_f"
-asm = "movq_xmm_f {0}, {1}"
+asm = "movq_xmm_f {0:[fpr:out]}, {1:[fpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -1603,9 +1760,7 @@ name = "MOVQ_FREG_XMM"
 form = "MRR_0F_FIX64"
 opcode = 0x7E
 fields = { prefix = 0x66, w = 1 }
-operands = [{ slot = "fpr", role = "out" }, { slot = "fpr", role = "in" }]
-mnemonic = "movq_freg"
-asm = "movq_freg {0}, {1}"
+asm = "movq_freg {0:[fpr:out]}, {1:[fpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -1613,40 +1768,57 @@ name = "MOVAPS_MR"
 form = "MRR_0F_FIX64"
 opcode = 0x29
 fields = { prefix = 0, w = 0 }
-operands = [{ slot = "gpr", role = "in" }, { slot = "fpr", role = "in" }]
-mnemonic = "movaps_mr"
-asm = "movaps_mr {0}, {1}"
+asm = "movaps_mr {0:[gpr:in]}, {1:[fpr:in]}"
 effect = ["Write"]
 
 [[instructions]]
 name = "LZCNT_R"
-form = "MRR_0F"
+form = "MRR_0F_PREFIX"
 opcode = 0xBD
 fields = { prefix = 0xF3, w = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "lzcnt"
-asm = "lzcnt {0}, {1}"
+asm = "lzcnt {0:[gpr:out]}, {1:[gpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "TZCNT_R"
-form = "MRR_0F"
+form = "MRR_0F_PREFIX"
 opcode = 0xBC
 fields = { prefix = 0xF3, w = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "tzcnt"
-asm = "tzcnt {0}, {1}"
+asm = "tzcnt {0:[gpr:out]}, {1:[gpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "POPCNT_R"
-form = "MRR_0F"
+form = "MRR_0F_PREFIX"
 opcode = 0xB8
 fields = { prefix = 0xF3, w = 0 }
-operands = [{ slot = "gpr", role = "out" }, { slot = "gpr", role = "in" }, { slot = "opsize", role = "in" }]
-mnemonic = "popcnt"
-asm = "popcnt {0}, {1}"
+asm = "popcnt {0:[gpr:out]}, {1:[gpr:in]}"
 effect = ["Pure"]
+
+# ── 旋转（迭代 6 续：D3 /0 /1，CL 隐式计数；宽度按结果类型 32/64）──
+
+[[instructions]]
+name = "ROL_RM"
+form = "MRR_EXT_OP"
+opcode = 0xD3
+fields = { ext = 0 }
+effect = ["Pure"]
+asm = "rol {0:[gpr:inout]}"
+
+[[instructions]]
+name = "ROL_RM_32"
+form = "MRR_EXT_OP"
+opcode = 0xD3
+fields = { ext = 0 }
+asm = "rol {0:[gpr32:inout]}"
+
+[[instructions]]
+name = "ROR_RM"
+form = "MRR_EXT_OP"
+opcode = 0xD3
+fields = { ext = 1 }
+effect = ["Pure"]
+asm = "ror {0:[gpr:inout]}"
 
 # ============================================================
 # 调用约定（迭代 5 声明层：arg_class 类别分类，为 YMM by-ref 铺路）
@@ -1695,6 +1867,9 @@ base = "RBP"
 
 # 序言/尾声（模板按指令操作数序绑定：MOV64_RR op0=src、op1=dest；
 # MOV64_RR RSP, RBP = mov64rr rbp←rsp）
+[emit]
+align_pad = 0x90   # `.align` 伪指令填充字节 = NOP
+
 [emit.prologue]
 insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@move_args", "@frame_alloc"]
 
@@ -1706,90 +1881,117 @@ insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, 56", "@pop_callee", "POP RBP",
 # ============================================================
 
 # 常量：MOV_REG_IMM64 {out}, {iconst}——{iconst} 从常量池解析（index → 值）。
+
+[[instructions]]
+
+name = "ROR_RM_32"
+form = "MRR_EXT_OP"
+opcode = 0xD3
+fields = { ext = 1 }
+asm = "ror {0:[gpr32:inout]}"
 [[lowering]]
 op = "Iconst"
-insts = ["MOV_REG_IMM64 {out}, {iconst}"]
+insts = ["mov_imm {out}, {iconst}"]
 
 # ADD_RM_R 语义 add {1}, {0}：dest=op1(inout)、src=op0(in)。
 # Iadd:out = a + b → mov out,a; add out,b（{1} = 第二个 IR 操作数）
 [[lowering]]
 op = "Iadd"
-insts = ["MOV_R_RM {out}, {0}", "ADD_RM_R {1}, {out}"]
+insts = ["mov {out}, {0}", "add {1}, {out}"]
 
 [[lowering]]
 op = "Isub"
-insts = ["MOV_R_RM {out}, {0}", "SUB_RM_R {1}, {out}"]
+insts = ["mov {out}, {0}", "sub {1}, {out}"]
 
 [[lowering]]
 op = "Band"
-insts = ["MOV_R_RM {out}, {0}", "AND_RM_R {1}, {out}"]
+insts = ["mov {out}, {0}", "and {1}, {out}"]
 
 [[lowering]]
 op = "Bor"
-insts = ["MOV_R_RM {out}, {0}", "OR_RM_R {1}, {out}"]
+insts = ["mov {out}, {0}", "or {1}, {out}"]
 
 [[lowering]]
 op = "Bxor"
-insts = ["MOV_R_RM {out}, {0}", "XOR_RM_R {1}, {out}"]
+insts = ["mov {out}, {0}", "xor {1}, {out}"]
 
 [[lowering]]
 op = "Imul"
-insts = ["MOV_R_RM {out}, {0}", "IMUL_R_RM {out}, {1}"]
+insts = ["mov {out}, {0}", "imul {out}, {1}"]
 
 [[lowering]]
 op = "Icmp"
-insts = ["XOR_RM_R {out}, {out}", "CMP_RM_R {1}, {0}", "SETCC_RM8 {out}, {cc}"]
+when = { eq = ["rs1_width", 32] }
+insts = ["xor {out}, {out}", "cmp {1}, {0}", "setcc {out}, {cc}"]
+
+[[lowering]]
+op = "Icmp"
+insts = ["xor {out}, {out}", "cmp {1}, {0}", "setcc {out}, {cc}"]
 
 # ── mini_c 核心（迭代 6 续：load/store/copy/extend/not）──
+# Load/Store 按宽度分派（i32 → 32 位，i64 → 64 位）：栈槽按 i32 4 字节排列，
+# 64 位 load/store 会读/写相邻槽（曾致 params/loop/除法 5 用例失败）。
+# v13：32 位 load 用独立助记符 mov_mem32（与 64 位 mov_mem 区分——候选选择
+# 无歧义；REX.W 由 dest 槽宽度驱动：gpr32 → 0、gpr → 1）。
 
 [[lowering]]
 op = "Load"
-insts = ["MOV_R_MEM {out}, {0}"]
+when = { eq = ["rd", 32] }
+insts = ["mov_mem32 {out}, [{0}]"]
+
+[[lowering]]
+op = "Load"
+insts = ["mov_mem {out}, [{0}]"]
 
 [[lowering]]
 op = "Store"
-insts = ["STORE_MEM_R {0}, {1}"]
+when = { eq = ["rs1_width", 32] }
+insts = ["mov_sto32 [{0}], {1}"]
+
+[[lowering]]
+op = "Store"
+insts = ["mov_sto [{0}], {1}"]
 
 [[lowering]]
 op = "Copy"
-insts = ["MOV_R_RM {out}, {0}"]
+insts = ["mov {out}, {0}"]
 
 [[lowering]]
 op = "Sextend"
-insts = ["MOVSXD_R_GPR {out}, {0}"]
+insts = ["movsxd {out}, {0}"]
 
 [[lowering]]
 op = "Bnot"
-insts = ["MOV_R_RM {out}, {0}", "NOT_RM {out}"]
+insts = ["mov {out}, {0}", "not {out}"]
 
 [[lowering]]
 op = "StackAddr"
-insts = ["LEA_R64_SIB {out}, [RBP+{off}]"]
+insts = ["lea {out}, [RBP+{off}]"]
 
 # ── 移位（v11 语义：计数搬 RCX（CL 隐式计数）→ D3 /digit）──
 
 [[lowering]]
 op = "Ishl"
 insts = [
-    "MOV_R_RM {out}, {0}",
-    "MOV_R_RM RCX, {1}",
-    "SHL_RM_CL {out}",
+    "mov {out}, {0}",
+    "mov RCX, {1}",
+    "shl {out}",
 ]
 
 [[lowering]]
 op = "Ushr"
 insts = [
-    "MOV_R_RM {out}, {0}",
-    "MOV_R_RM RCX, {1}",
-    "SHR_RM_CL {out}",
+    "mov {out}, {0}",
+    "mov RCX, {1}",
+    "shr {out}",
 ]
 
 [[lowering]]
 op = "Sshr"
 insts = [
-    "MOVSXD_R_GPR {out}, {0}",
-    "MOV_R_RM RCX, {1}",
-    "SAR_RM_CL {out}",
+    "movsxd {out}, {0}",
+    "mov RCX, {1}",
+    "sar {out}",
 ]
 
 # ── 除法（v11 语义：movsxd RAX,rs1 + cqo + idiv %t + mov rd,RAX/RDX）──
@@ -1797,37 +1999,1573 @@ insts = [
 [[lowering]]
 op = "Sdiv"
 insts = [
-    "MOV_R_RM {t}, {1}",
-    "MOVSXD_R_GPR RAX, {0}",
-    "CQO",
-    "IDIV_RM {t}",
-    "MOV_R_RM {out}, RAX",
+    "mov {t}, {1}",
+    "movsxd RAX, {0}",
+    "cqo",
+    "idiv {t}",
+    "mov {out}, RAX",
 ]
 
 [[lowering]]
 op = "Srem"
 insts = [
-    "MOV_R_RM {t}, {1}",
-    "MOVSXD_R_GPR RAX, {0}",
-    "CQO",
-    "IDIV_RM {t}",
-    "MOV_R_RM {out}, RDX",
+    "mov {t}, {1}",
+    "movsxd RAX, {0}",
+    "cqo",
+    "idiv {t}",
+    "mov {out}, RDX",
 ]
 
 [[lowering]]
 op = "Udiv"
 insts = [
-    "XOR_RM_R RDX, RDX",
-    "MOV_R_RM RAX, {0}",
-    "DIV_RM {1}",
-    "MOV_R_RM {out}, RAX",
+    "xor RDX, RDX",
+    "mov RAX, {0}",
+    "div {1}",
+    "mov {out}, RAX",
 ]
 
 [[lowering]]
 op = "Urem"
 insts = [
-    "XOR_RM_R RDX, RDX",
-    "MOV_R_RM RAX, {0}",
-    "DIV_RM {1}",
-    "MOV_R_RM {out}, RDX",
+    "xor RDX, RDX",
+    "mov RAX, {0}",
+    "div {1}",
+    "mov {out}, RDX",
+]
+
+# ════════════════════════════════════════════════════════════════
+# 迭代 6 续（JIT 矩阵补齐）——整数全量 lowering
+# ════════════════════════════════════════════════════════════════
+
+# ── Select(cond, then, else) = cond ? then : else（v11 修复版）──
+
+[[lowering]]
+op = "Select"
+insts = [
+    "test {0}, {0}",
+    "mov {out}, {2}",
+    "cmovcc {out}, {1}, 5",
+]
+
+# ── Uextend：按源宽分派（movzx 合并助记符，源槽 gpr1b/gpr2 自动分发）──
+
+[[lowering]]
+op = "Uextend"
+when = { eq = ["rs1_width", 8] }
+insts = ["movzx {out}, {0}"]
+
+[[lowering]]
+op = "Uextend"
+when = { eq = ["rs1_width", 16] }
+insts = ["movzx {out}, {0}"]
+
+[[lowering]]
+op = "Uextend"
+insts = ["mov {out}, {0}"]
+
+# ── Ireduce：截断（32 位写自动零扩展高位）──
+
+[[lowering]]
+op = "Ireduce"
+when = { eq = ["rd", 32] }
+insts = ["mov32 {out}, {0}"]
+
+[[lowering]]
+op = "Ireduce"
+insts = ["mov {out}, {0}"]
+
+# ── 旋转（CL 隐式计数）──
+
+[[lowering]]
+op = "Rotl"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "mov32 {out}, {0}",
+    "mov RCX, {1}",
+    "rol {out}",
+]
+
+[[lowering]]
+op = "Rotl"
+insts = [
+    "mov {out}, {0}",
+    "mov RCX, {1}",
+    "rol {out}",
+]
+
+[[lowering]]
+op = "Rotr"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "mov32 {out}, {0}",
+    "mov RCX, {1}",
+    "ror {out}",
+]
+
+[[lowering]]
+op = "Rotr"
+insts = [
+    "mov {out}, {0}",
+    "mov RCX, {1}",
+    "ror {out}",
+]
+
+# ── 极值（cmp + cmov；ge=13/le=14/ae=3/be=6）──
+
+[[lowering]]
+op = "Smin"
+insts = ["mov {out}, {0}", "cmp {1}, {0}", "cmovcc {out}, {1}, 13"]
+
+[[lowering]]
+op = "Smax"
+insts = ["mov {out}, {0}", "cmp {1}, {0}", "cmovcc {out}, {1}, 14"]
+
+[[lowering]]
+op = "Umin"
+insts = ["mov {out}, {0}", "cmp {1}, {0}", "cmovcc {out}, {1}, 3"]
+
+[[lowering]]
+op = "Umax"
+insts = ["mov {out}, {0}", "cmp {1}, {0}", "cmovcc {out}, {1}, 6"]
+
+# ── Abs：rd = |rs1|（neg + cmovl=12）──
+
+[[lowering]]
+op = "Abs"
+insts = [
+    "mov {t}, {0}",
+    "neg {t}",
+    "mov {out}, {0}",
+    "test {0}, {0}",
+    "cmovcc {out}, {t}, 12",
+]
+
+# ── 前导/尾随零、popcount、字节交换 ──
+
+[[lowering]]
+op = "Clz"
+insts = ["mov {out}, {0}", "lzcnt {out}, {0}"]
+
+[[lowering]]
+op = "Ctz"
+insts = ["mov {out}, {0}", "tzcnt {out}, {0}"]
+
+[[lowering]]
+op = "Popcnt"
+insts = ["mov {out}, {0}", "popcnt {out}, {0}"]
+
+[[lowering]]
+op = "Bswap"
+insts = ["mov {out}, {0}", "bswap {out}"]
+
+# ── 空指针判断 / Freeze / Trap / Fence ──
+
+[[lowering]]
+op = "IsNull"
+insts = ["xor {out}, {out}", "test {0}, {0}", "setcc {out}, 4"]
+
+[[lowering]]
+op = "IsNotNull"
+insts = ["xor {out}, {out}", "test {0}, {0}", "setcc {out}, 5"]
+
+[[lowering]]
+op = "Freeze"
+insts = ["mov {out}, {0}"]
+
+[[lowering]]
+op = "Trap"
+insts = ["ud2"]
+
+[[lowering]]
+op = "Fence"
+insts = ["mfence"]
+
+# ── Alloca：栈槽地址（current_alloca_offset）──
+
+[[lowering]]
+op = "Alloca"
+insts = ["lea {out}, [RBP+{alloca}]"]
+
+# ── 溢出 6 条：{out}=值、{out2}=flag（seto=0/setb=2）──
+
+[[lowering]]
+op = "SaddOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "xor {out2}, {out2}",
+    "mov32 {out}, {0}",
+    "add {1}, {out}",
+    "setcc {out2}, 0",
+]
+
+[[lowering]]
+op = "SaddOverflow"
+insts = [
+    "xor {out2}, {out2}",
+    "mov {out}, {0}",
+    "add {1}, {out}",
+    "setcc {out2}, 0",
+]
+
+[[lowering]]
+op = "UaddOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "xor {out2}, {out2}",
+    "mov32 {out}, {0}",
+    "add {1}, {out}",
+    "setcc {out2}, 2",
+]
+
+[[lowering]]
+op = "UaddOverflow"
+insts = [
+    "xor {out2}, {out2}",
+    "mov {out}, {0}",
+    "add {1}, {out}",
+    "setcc {out2}, 2",
+]
+
+[[lowering]]
+op = "SsubOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "xor {out2}, {out2}",
+    "mov32 {out}, {0}",
+    "sub {1}, {out}",
+    "setcc {out2}, 0",
+]
+
+[[lowering]]
+op = "SsubOverflow"
+insts = [
+    "xor {out2}, {out2}",
+    "mov {out}, {0}",
+    "sub {1}, {out}",
+    "setcc {out2}, 0",
+]
+
+[[lowering]]
+op = "UsubOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "xor {out2}, {out2}",
+    "mov32 {out}, {0}",
+    "sub {1}, {out}",
+    "setcc {out2}, 2",
+]
+
+[[lowering]]
+op = "UsubOverflow"
+insts = [
+    "xor {out2}, {out2}",
+    "mov {out}, {0}",
+    "sub {1}, {out}",
+    "setcc {out2}, 2",
+]
+
+[[lowering]]
+op = "SmulOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "xor {out2}, {out2}",
+    "mov32 {out}, {0}",
+    "imul {out}, {1}",
+    "setcc {out2}, 0",
+]
+
+[[lowering]]
+op = "SmulOverflow"
+insts = [
+    "xor {out2}, {out2}",
+    "mov {out}, {0}",
+    "imul {out}, {1}",
+    "setcc {out2}, 0",
+]
+
+[[lowering]]
+op = "UmulOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "mov32 {out}, {0}",
+    "imul {out}, {1}",
+    "xor {out2}, {out2}",
+    "cmp {0}, {out}",
+    "setcc {out2}, 2",
+    "xor {t}, {t}",
+    "test {1}, {1}",
+    "setcc {t}, 5",
+    "and {t}, {out2}",
+]
+
+[[lowering]]
+op = "UmulOverflow"
+insts = [
+    "mov {out}, {0}",
+    "imul {out}, {1}",
+    "xor {out2}, {out2}",
+    "cmp {0}, {out}",
+    "setcc {out2}, 2",
+    "xor {t}, {t}",
+    "test {1}, {1}",
+    "setcc {t}, 5",
+    "and {t}, {out2}",
+]
+
+# ── 饱和 4 条（clamp 序列；t1..t4 临时）──
+
+[[lowering]]
+op = "SaddSat"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "mov32 {out}, {0}",
+    "add {1}, {out}",
+    "setcc {t1}, 0",
+    "mov_imm {t2}, 0x7FFFFFFF",
+    "mov_imm {t3}, 0x80000000",
+    "test {0}, {0}",
+    "cmovcc {t4}, {t2}, 9",
+    "cmovcc {t4}, {t3}, 8",
+    "test {t1}, {t1}",
+    "cmovcc {out}, {t4}, 5",
+]
+
+[[lowering]]
+op = "SaddSat"
+when = { eq = ["rs1_width", 64] }
+insts = [
+    "mov {out}, {0}",
+    "add {1}, {out}",
+    "setcc {t1}, 0",
+    "mov_imm {t2}, 0x7FFFFFFFFFFFFFFF",
+    "mov_imm {t3}, 0x8000000000000000",
+    "test {0}, {0}",
+    "cmovcc {t4}, {t2}, 9",
+    "cmovcc {t4}, {t3}, 8",
+    "test {t1}, {t1}",
+    "cmovcc {out}, {t4}, 5",
+]
+
+[[lowering]]
+op = "UaddSat"
+insts = [
+    "mov {out}, {0}",
+    "add {1}, {out}",
+    "setcc {t1}, 2",
+    "mov_imm {t2}, 0xFFFFFFFFFFFFFFFF",
+    "test {t1}, {t1}",
+    "cmovcc {out}, {t2}, 5",
+]
+
+[[lowering]]
+op = "UsubSat"
+insts = [
+    "mov {out}, {0}",
+    "sub {1}, {out}",
+    "setcc {t1}, 2",
+    "xor {t2}, {t2}",
+    "test {t1}, {t1}",
+    "cmovcc {out}, {t2}, 5",
+]
+
+# ── Bitreverse：Hacker's Delight 64 位反转（n=1/2/4 掩码移位 + bswap）──
+
+[[lowering]]
+op = "Bitreverse"
+insts = [
+    "mov {out}, {0}",
+    "mov_imm {t1}, 1",
+    "mov_imm {t2}, 0x5555555555555555",
+    "mov {t3}, {out}",
+    "mov RCX, {t1}",
+    "shr {t3}",
+    "and {t2}, {t3}",
+    "mov {t4}, {out}",
+    "and {t2}, {t4}",
+    "mov RCX, {t1}",
+    "shl {t4}",
+    "or {t4}, {t3}",
+    "mov_imm {t1}, 2",
+    "mov_imm {t2}, 0x3333333333333333",
+    "mov {t5}, {t3}",
+    "mov RCX, {t1}",
+    "shr {t5}",
+    "and {t2}, {t5}",
+    "mov {t4}, {t3}",
+    "and {t2}, {t4}",
+    "mov RCX, {t1}",
+    "shl {t4}",
+    "or {t4}, {t5}",
+    "mov_imm {t1}, 4",
+    "mov_imm {t2}, 0x0F0F0F0F0F0F0F0F",
+    "mov {t3}, {t5}",
+    "mov RCX, {t1}",
+    "shr {t3}",
+    "and {t2}, {t3}",
+    "mov {t4}, {t5}",
+    "and {t2}, {t4}",
+    "mov RCX, {t1}",
+    "shl {t4}",
+    "or {t4}, {t3}",
+    "mov {out}, {t3}",
+    "bswap {out}",
+]
+
+# ════════════════════════════════════════════════════════════
+# 迭代 7（Phase 4）——标量浮点全量 lowering
+# ════════════════════════════════════════════════════════════
+# 谓词属性：elem = 结果类型 id（F32=1、F64=2、I32=3、I64=4）、
+# rs1_width = 源 1 宽度（位）、cond = Fcmp 条件 id（见 fcmp_id 映射）。
+
+# ── Fadd/Fsub/Fmul/Fdiv（F32 → SS 族 / F64 → SD 族）──
+
+[[lowering]]
+op = "Fadd"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "addss {out}, {1}"]
+
+[[lowering]]
+op = "Fadd"
+insts = ["movsd {out}, {0}", "addsd {out}, {1}"]
+
+[[lowering]]
+op = "Fsub"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "subss {out}, {1}"]
+
+[[lowering]]
+op = "Fsub"
+insts = ["movsd {out}, {0}", "subsd {out}, {1}"]
+
+[[lowering]]
+op = "Fmul"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "mulss {out}, {1}"]
+
+[[lowering]]
+op = "Fmul"
+insts = ["movsd {out}, {0}", "mulsd {out}, {1}"]
+
+[[lowering]]
+op = "Fdiv"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "divss {out}, {1}"]
+
+[[lowering]]
+op = "Fdiv"
+insts = ["movsd {out}, {0}", "divsd {out}, {1}"]
+
+# ── Fneg / Fabs（符号位掩码：XORPS/ANDPD 与 XORPD/ANDPD）──
+
+[[lowering]]
+op = "Fneg"
+when = { eq = ["elem", 1] }
+insts = [
+    "movss {out}, {0}",
+    "mov_imm {t}, 0x80000000",
+    "movq_xmm {t_f}, {t}",
+    "xorps {out}, {t_f}",
+]
+
+[[lowering]]
+op = "Fneg"
+insts = [
+    "movsd {out}, {0}",
+    "mov_imm {t}, 0x8000000000000000",
+    "movq_xmm {t_f}, {t}",
+    "xorpd {out}, {t_f}",
+]
+
+[[lowering]]
+op = "Fabs"
+when = { eq = ["elem", 1] }
+insts = [
+    "movss {out}, {0}",
+    "mov_imm {t}, 0x7FFFFFFF",
+    "movq_xmm {t_f}, {t}",
+    "andps {out}, {t_f}",
+]
+
+[[lowering]]
+op = "Fabs"
+insts = [
+    "movsd {out}, {0}",
+    "mov_imm {t}, 0x7FFFFFFFFFFFFFFF",
+    "movq_xmm {t_f}, {t}",
+    "andpd {out}, {t_f}",
+]
+
+# ── Fsqrt ──
+
+[[lowering]]
+op = "Fsqrt"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "sqrtss {out}, {0}"]
+
+[[lowering]]
+op = "Fsqrt"
+insts = ["movsd {out}, {0}", "sqrtsd {out}, {0}"]
+
+# ── Fmin / Fmax ──
+
+[[lowering]]
+op = "Fmin"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "minss {out}, {1}"]
+
+[[lowering]]
+op = "Fmin"
+insts = ["movsd {out}, {0}", "minsd {out}, {1}"]
+
+[[lowering]]
+op = "Fmax"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "maxss {out}, {1}"]
+
+[[lowering]]
+op = "Fmax"
+insts = ["movsd {out}, {0}", "maxsd {out}, {1}"]
+
+# ── Fma：a*b + c（mul + add 序列）──
+
+[[lowering]]
+op = "Fma"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "mulss {out}, {1}", "addss {out}, {2}"]
+
+[[lowering]]
+op = "Fma"
+insts = ["movsd {out}, {0}", "mulsd {out}, {1}", "addsd {out}, {2}"]
+
+# ── 舍入（ROUNDSD/ROUNDSS：0=near, 1=floor, 2=ceil）──
+
+[[lowering]]
+op = "Ffloor"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "roundss {out}, {0}, 1"]
+
+[[lowering]]
+op = "Ffloor"
+insts = ["movsd {out}, {0}", "roundsd {out}, {0}, 1"]
+
+[[lowering]]
+op = "Fceil"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "roundss {out}, {0}, 2"]
+
+[[lowering]]
+op = "Fceil"
+insts = ["movsd {out}, {0}", "roundsd {out}, {0}, 2"]
+
+[[lowering]]
+op = "Fround"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "roundss {out}, {0}, 0"]
+
+[[lowering]]
+op = "Fround"
+insts = ["movsd {out}, {0}", "roundsd {out}, {0}, 0"]
+
+# ── Ftrunc：截断到 0（cvtt 无条件截断 + 往返；64 位整数域）──
+
+[[lowering]]
+op = "Ftrunc"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {0}", "cvttss2si {t}, {0}", "cvtsi2ss {out}, {t}"]
+
+[[lowering]]
+op = "Ftrunc"
+insts = ["movsd {out}, {0}", "cvttsd2si {t}, {0}", "cvtsi2sd {out}, {t}"]
+
+# ── Fpext（f32 → f64）/ Fptrunc（f64 → f32）──
+
+[[lowering]]
+op = "Fpext"
+insts = ["movss {out}, {0}", "cvtss2sd {out}, {0}"]
+
+[[lowering]]
+op = "Fptrunc"
+insts = ["movsd {out}, {0}", "cvtsd2ss {out}, {0}"]
+
+# ── Fconst：常量池浮点位模式 → GPR → XMM ──
+
+[[lowering]]
+op = "Fconst"
+insts = ["mov_imm {t}, {fconst}", "movq_xmm {out}, {t}"]
+
+# ── Fload / Fstore（按元素类型分派 MOVSS/MOVSD 内存版；base=地址寄存器）──
+
+[[lowering]]
+op = "Fload"
+when = { eq = ["elem", 1] }
+insts = ["movss_mem {out}, [{0}]"]
+
+[[lowering]]
+op = "Fload"
+insts = ["movsd_mem {out}, [{0}]"]
+
+[[lowering]]
+op = "Fstore"
+when = { eq = ["elem", 1] }
+insts = ["movss_sto [{0}], {1}"]
+
+[[lowering]]
+op = "Fstore"
+insts = ["movsd_sto [{0}], {1}"]
+
+# ── 转换：Sitofp（整数 → 浮点；rs1_width 源宽度、elem 结果类型）──
+
+[[lowering]]
+op = "Sitofp"
+when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 2] } ] }
+insts = ["cvtsi2sd {out}, {0}"]
+
+[[lowering]]
+op = "Sitofp"
+when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 2] } ] }
+insts = ["cvtsi2sd {out}, {0}"]
+
+[[lowering]]
+op = "Sitofp"
+when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
+insts = ["cvtsi2ss {out}, {0}"]
+
+[[lowering]]
+op = "Sitofp"
+when = { eq = ["rs1_width", 64] }
+insts = ["cvtsi2ss {out}, {0}"]
+
+# ── Fptosi（浮点 → 整数，截断向零；elem 结果整数类型）──
+
+[[lowering]]
+op = "Fptosi"
+when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 4] } ] }
+insts = ["cvttsd2si {out}, {0}"]
+
+[[lowering]]
+op = "Fptosi"
+when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 3] } ] }
+insts = ["cvttsd2si {out}, {0}"]
+
+[[lowering]]
+op = "Fptosi"
+when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 4] } ] }
+insts = ["cvttss2si {out}, {0}"]
+
+[[lowering]]
+op = "Fptosi"
+when = { eq = ["rs1_width", 32] }
+insts = ["cvttss2si {out}, {0}"]
+
+# ── Fptoui / Uitofp（无符号；32 位域精确，u64 ≥ 2^63 边界 Phase 7）──
+
+[[lowering]]
+op = "Fptoui"
+when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 3] } ] }
+insts = ["cvttsd2si {out}, {0}"]
+
+[[lowering]]
+op = "Fptoui"
+when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 4] } ] }
+insts = ["cvttsd2si {out}, {0}"]
+
+[[lowering]]
+op = "Fptoui"
+when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 3] } ] }
+insts = ["cvttss2si {out}, {0}"]
+
+[[lowering]]
+op = "Fptoui"
+when = { eq = ["rs1_width", 32] }
+insts = ["cvttss2si {out}, {0}"]
+
+[[lowering]]
+op = "Uitofp"
+when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 2] } ] }
+insts = ["mov32 {t}, {0}", "cvtsi2sd {out}, {t}"]
+
+[[lowering]]
+op = "Uitofp"
+when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
+insts = ["mov32 {t}, {0}", "cvtsi2ss {out}, {t}"]
+
+[[lowering]]
+op = "Uitofp"
+when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 2] } ] }
+insts = ["cvtsi2sd {out}, {0}"]
+
+[[lowering]]
+op = "Uitofp"
+when = { eq = ["rs1_width", 64] }
+insts = ["cvtsi2ss {out}, {0}"]
+
+# ── Fcopysign：GPR 位操作（F32 → 32 位掩码 / F64 → 64 位掩码；
+#    F32 结果只取低 32 位，高 32 位无定义）──
+
+[[lowering]]
+op = "Fcopysign"
+when = { eq = ["elem", 1] }
+insts = [
+    "movq_r64 {t}, {0}",
+    "movq_r64 {t2}, {1}",
+    "mov_imm {t3}, 0x80000000",
+    "mov {t4}, {t3}",
+    "not {t4}",
+    "and {t4}, {t}",
+    "and {t3}, {t2}",
+    "or {t2}, {t}",
+    "movq_xmm {out}, {t}",
+]
+
+[[lowering]]
+op = "Fcopysign"
+insts = [
+    "movq_r64 {t}, {0}",
+    "movq_r64 {t2}, {1}",
+    "mov_imm {t3}, 0x8000000000000000",
+    "mov {t4}, {t3}",
+    "not {t4}",
+    "and {t4}, {t}",
+    "and {t3}, {t2}",
+    "or {t2}, {t}",
+    "movq_xmm {out}, {t}",
+]
+
+# ── Fcmp：cond 属性（fcmp_id）分派 16 条件 × F32/F64 ──
+# COMISD/COMISS 标志：ZF=相等、CF=a<b、PF=无序（NaN）。
+# o* 有序条件须 ∧ !PF（setnp）；u* 无序-or 条件 = 单 setcc 或 ∨ 组合。
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 1] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 1] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 2] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 2] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 3] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {t}, 4", "and {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 3] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {t}, 4", "and {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 4] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 5"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 4] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 5"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 5] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {t}, 2", "and {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 5] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {t}, 2", "and {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 6] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {t}, 6", "and {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 6] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {t}, 6", "and {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 7] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 7"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 7] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 7"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 8] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 3"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 8] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 3"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 9] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 9] }
+insts = ["xor {out}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 10] }, { eq = ["elem", 1] } ] }
+insts = ["mov_imm {out}, 1"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 10] }
+insts = ["mov_imm {out}, 1"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 11] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 4"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 11] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 4"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 12] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {t}, 7", "or {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 12] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {t}, 7", "or {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 13] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {t}, 3", "or {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 13] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {t}, 3", "or {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 14] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 2"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 14] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 2"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 15] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 6"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 15] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 6"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 16] }, { eq = ["elem", 1] } ] }
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {t}, 5", "or {t}, {out}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { eq = ["cond", 16] }
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {t}, 5", "or {t}, {out}"]
+
+# ════════════════════════════════════════════════════════════
+# 迭代 9（Phase 6）——向量全量（V64/V128/V256）
+# ════════════════════════════════════════════════════════════
+# 谓词：rd = 结果向量位宽（64/128/256）、elem = 元素类型 id（F32=1/F64=2/
+# I32=3/I64=4）、imm0 = Vextract/Vinsert/Vsplit 的 lane/片段索引。
+# V256 需 AVX/AVX2（avx_available 检查在 encode 侧）。
+
+# ── Vadd ──
+
+[[lowering]]
+op = "Vadd"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = ["vaddps {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vadd"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = ["movaps {out}, {0}", "addps {out}, {1}"]
+
+[[lowering]]
+op = "Vadd"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
+insts = ["vaddpd {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vadd"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 2] } ] }
+insts = ["movaps {out}, {0}", "addpd {out}, {1}"]
+
+[[lowering]]
+op = "Vadd"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
+insts = ["vpaddd {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vadd"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 3] } ] }
+insts = ["movaps {out}, {0}", "paddd {out}, {1}"]
+
+[[lowering]]
+op = "Vadd"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] } ] }
+insts = ["vpaddq {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vadd"
+when = { le = ["rd", 128] }
+insts = ["movaps {out}, {0}", "paddq {out}, {1}"]
+
+# ── Vsub ──
+
+[[lowering]]
+op = "Vsub"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = ["vsubps {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vsub"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = ["movaps {out}, {0}", "subps {out}, {1}"]
+
+[[lowering]]
+op = "Vsub"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
+insts = ["vsubpd {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vsub"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 2] } ] }
+insts = ["movaps {out}, {0}", "subpd {out}, {1}"]
+
+[[lowering]]
+op = "Vsub"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
+insts = ["vpsubd {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vsub"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 3] } ] }
+insts = ["movaps {out}, {0}", "psubd {out}, {1}"]
+
+[[lowering]]
+op = "Vsub"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] } ] }
+insts = ["vpsubq {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vsub"
+when = { le = ["rd", 128] }
+insts = ["movaps {out}, {0}", "psubq {out}, {1}"]
+
+# ── Vmul（浮点全宽度；i32 → PMULLD/VPMULLD；i64 无 SIMD 指令 → 兜底）──
+
+[[lowering]]
+op = "Vmul"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = ["vmulps {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vmul"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = ["movaps {out}, {0}", "mulps {out}, {1}"]
+
+[[lowering]]
+op = "Vmul"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
+insts = ["vmulpd {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vmul"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 2] } ] }
+insts = ["movaps {out}, {0}", "mulpd {out}, {1}"]
+
+[[lowering]]
+op = "Vmul"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
+insts = ["vpmulld {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vmul"
+when = { le = ["rd", 128] }
+insts = ["movaps {out}, {0}", "pmulld {out}, {1}"]
+
+# ── Vdiv（仅浮点）──
+
+[[lowering]]
+op = "Vdiv"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = ["vdivps {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vdiv"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = ["movaps {out}, {0}", "divps {out}, {1}"]
+
+[[lowering]]
+op = "Vdiv"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
+insts = ["vdivpd {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Vdiv"
+when = { le = ["rd", 128] }
+insts = ["movaps {out}, {0}", "divpd {out}, {1}"]
+
+# ── Vneg（0 - x）──
+
+[[lowering]]
+op = "Vneg"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = ["vxorps {out}, {out}, {out}", "vsubps {out}, {out}, {0}"]
+
+[[lowering]]
+op = "Vneg"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
+insts = ["vxorps {out}, {out}, {out}", "vsubpd {out}, {out}, {0}"]
+
+[[lowering]]
+op = "Vneg"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
+insts = ["vpxor {out}, {out}, {out}", "vpsubd {out}, {out}, {0}"]
+
+[[lowering]]
+op = "Vneg"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] } ] }
+insts = ["vpxor {out}, {out}, {out}", "vpsubq {out}, {out}, {0}"]
+
+[[lowering]]
+op = "Vneg"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = ["xorps {out}, {out}", "subps {out}, {0}"]
+
+[[lowering]]
+op = "Vneg"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 2] } ] }
+insts = ["xorps {out}, {out}", "subpd {out}, {0}"]
+
+[[lowering]]
+op = "Vneg"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 3] } ] }
+insts = ["xorps {out}, {out}", "psubd {out}, {0}"]
+
+[[lowering]]
+op = "Vneg"
+when = { le = ["rd", 128] }
+insts = ["xorps {out}, {out}", "psubq {out}, {0}"]
+
+# ── Vabs（清符号位掩码 0x7FFFFFFF×4/×8）──
+
+[[lowering]]
+op = "Vabs"
+when = { eq = ["rd", 256] }
+insts = [
+    "mov_imm {t1}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {t_f2}, {t2}",
+    "punpckldq {t_f1}, {t_f2}",
+    "movaps {t_f3}, {t_f1}",
+    "vinsertf128 {t_f1}, {t_f1}, {t_f3}, 1",
+    "vandps {out}, {0}, {t_f1}",
+]
+
+[[lowering]]
+op = "Vabs"
+insts = [
+    "movaps {out}, {0}",
+    "mov_imm {t1}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {t_f2}, {t2}",
+    "punpckldq {t_f1}, {t_f2}",
+    "andps {out}, {t_f1}",
+]
+
+# ── Vbitcast（同宽位重解释）──
+
+[[lowering]]
+op = "Vbitcast"
+when = { eq = ["rd", 256] }
+insts = ["vmovaps {out}, {0}"]
+
+[[lowering]]
+op = "Vbitcast"
+insts = ["movaps {out}, {0}"]
+
+# ── Vextract（标量元素提取；imm0 = lane 索引）──
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 1] } ] }
+insts = ["movss {out}, {0}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 3] } ] }
+insts = ["movd_fr {out}, {0}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 2] } ] }
+insts = ["movsd {out}, {0}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 4] } ] }
+insts = ["movq_r64 {out}, {0}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] }, { le = ["imm0", 3] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, {imm0}", "movss {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] }, { ge = ["imm0", 4] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, {imm0_sub4}", "movss {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] }, { le = ["imm0", 3] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, {imm0}", "movd_fr {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] }, { ge = ["imm0", 4] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, {imm0_sub4}", "movd_fr {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { le = ["imm0", 1] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, 78", "movsd {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { eq = ["imm0", 2] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 1", "movsd {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { ge = ["imm0", 3] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, 78", "movsd {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { le = ["imm0", 1] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, 78", "movq_r64 {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { eq = ["imm0", 2] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 1", "movq_r64 {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { ge = ["imm0", 3] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, 78", "movq_r64 {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["elem", 1] }, { ne = ["imm0", 0] } ] }
+insts = ["pshufd {t_f1}, {0}, {imm0}", "movss {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["elem", 3] }, { ne = ["imm0", 0] } ] }
+insts = ["pshufd {t_f1}, {0}, {imm0}", "movd_fr {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { and = [ { eq = ["elem", 2] }, { ne = ["imm0", 0] } ] }
+insts = ["pshufd {t_f1}, {0}, 78", "movsd {out}, {t_f1}"]
+
+[[lowering]]
+op = "Vextract"
+when = { eq = ["elem", 4] }
+insts = ["pshufd {t_f1}, {0}, 78", "movq_r64 {out}, {t_f1}"]
+
+# ── Vinsert（标量写入 lane0；V256 拆低半修改后拼回）──
+
+[[lowering]]
+op = "Vinsert"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "movss {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+
+[[lowering]]
+op = "Vinsert"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "movss {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+
+[[lowering]]
+op = "Vinsert"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = ["movaps {out}, {0}", "movss {out}, {1}"]
+
+[[lowering]]
+op = "Vinsert"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 3] } ] }
+insts = ["movaps {out}, {0}", "movss {out}, {1}"]
+
+[[lowering]]
+op = "Vinsert"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "movsd {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+
+[[lowering]]
+op = "Vinsert"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] } ] }
+insts = ["vextractf128 {0}, {t_f1}, 0", "movsd {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+
+[[lowering]]
+op = "Vinsert"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 2] } ] }
+insts = ["movaps {out}, {0}", "movsd {out}, {1}"]
+
+[[lowering]]
+op = "Vinsert"
+when = { le = ["rd", 128] }
+insts = ["movaps {out}, {0}", "movsd {out}, {1}"]
+
+# ── Vbroadcast（标量广播）──
+
+[[lowering]]
+op = "Vbroadcast"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = ["vbroadcastss {out}, {0}"]
+
+[[lowering]]
+op = "Vbroadcast"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = ["movss {out}, {0}", "punpckldq {out}, {out}", "punpckldq {out}, {out}"]
+
+[[lowering]]
+op = "Vbroadcast"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
+insts = ["vbroadcastss {out}, {0}"]
+
+[[lowering]]
+op = "Vbroadcast"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 3] } ] }
+insts = ["movss {out}, {0}", "punpckldq {out}, {out}", "punpckldq {out}, {out}"]
+
+[[lowering]]
+op = "Vbroadcast"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
+insts = ["vbroadcastsd {out}, {0}"]
+
+[[lowering]]
+op = "Vbroadcast"
+when = { and = [ { le = ["rd", 128] }, { eq = ["elem", 2] } ] }
+insts = ["movsd {out}, {0}", "punpcklqdq {out}, {out}"]
+
+[[lowering]]
+op = "Vbroadcast"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] } ] }
+insts = ["vbroadcastsd {out}, {0}"]
+
+[[lowering]]
+op = "Vbroadcast"
+when = { le = ["rd", 128] }
+insts = ["movsd {out}, {0}", "punpcklqdq {out}, {out}"]
+
+# ── Vsplit（宽向量 → 128 位片段）/ Vconcat（128×2 → 宽向量）──
+
+[[lowering]]
+op = "Vsplit"
+when = { eq = ["imm0", 0] }
+insts = ["vextractf128 {0}, {out}, 0"]
+
+[[lowering]]
+op = "Vsplit"
+when = { eq = ["imm0", 1] }
+insts = ["vextractf128 {0}, {out}, 1"]
+
+[[lowering]]
+op = "Vconcat"
+insts = ["vinsertf128 {out}, {0}, {1}, 1"]
+
+# ── ShuffleVector（SHUFPS 双源重排；V256 拆半）──
+
+[[lowering]]
+op = "ShuffleVector"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = [
+    "vextractf128 {0}, {t_f1}, 0",
+    "vextractf128 {1}, {t_f2}, 0",
+    "shufps {t_f1}, {t_f2}, {shufps_imm8}",
+    "vextractf128 {0}, {t_f3}, 1",
+    "vextractf128 {1}, {t_f4}, 1",
+    "shufps {t_f3}, {t_f4}, {shufps_imm8_hi}",
+    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+]
+
+[[lowering]]
+op = "ShuffleVector"
+when = { eq = ["elem", 1] }
+insts = ["movaps {out}, {0}", "shufps {out}, {1}, {shufps_imm8}"]
+
+# ── Vconst（常量池 lane 恢复 → XMM/YMM）──
+
+[[lowering]]
+op = "Vconst"
+when = { eq = ["rd", 64] }
+insts = ["mov_imm {t}, {vconst_lo2}", "movq_xmm {out}, {t}"]
+
+[[lowering]]
+op = "Vconst"
+when = { and = [ { eq = ["rd", 128] }, { eq = ["elem", 1] } ] }
+insts = [
+    "mov_imm {t1}, {vconst_lo}",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, {vconst_hi}",
+    "movq_xmm {t_f2}, {t2}",
+    "punpckldq {t_f1}, {t_f2}",
+    "movaps {out}, {t_f1}",
+]
+
+[[lowering]]
+op = "Vconst"
+when = { and = [ { eq = ["rd", 128] }, { eq = ["elem", 3] } ] }
+insts = [
+    "mov_imm {t1}, {vconst_lo}",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, {vconst_hi}",
+    "movq_xmm {t_f2}, {t2}",
+    "punpckldq {t_f1}, {t_f2}",
+    "movaps {out}, {t_f1}",
+]
+
+[[lowering]]
+op = "Vconst"
+when = { eq = ["rd", 128] }
+insts = [
+    "mov_imm {t1}, {vconst_lo}",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, {vconst_hi}",
+    "movq_xmm {t_f2}, {t2}",
+    "punpcklqdq {t_f1}, {t_f2}",
+    "movaps {out}, {t_f1}",
+]
+
+[[lowering]]
+op = "Vconst"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
+insts = [
+    "mov_imm {t1}, {vconst_lo}",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, {vconst_hi}",
+    "movq_xmm {t_f2}, {t2}",
+    "punpckldq {t_f1}, {t_f2}",
+    "mov_imm {t3}, {vconst_lo_hi}",
+    "movq_xmm {t_f3}, {t3}",
+    "mov_imm {t4}, {vconst_hi_hi}",
+    "movq_xmm {t_f4}, {t4}",
+    "punpckldq {t_f3}, {t_f4}",
+    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+]
+
+[[lowering]]
+op = "Vconst"
+when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
+insts = [
+    "mov_imm {t1}, {vconst_lo}",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, {vconst_hi}",
+    "movq_xmm {t_f2}, {t2}",
+    "punpckldq {t_f1}, {t_f2}",
+    "mov_imm {t3}, {vconst_lo_hi}",
+    "movq_xmm {t_f3}, {t3}",
+    "mov_imm {t4}, {vconst_hi_hi}",
+    "movq_xmm {t_f4}, {t4}",
+    "punpckldq {t_f3}, {t_f4}",
+    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+]
+
+[[lowering]]
+op = "Vconst"
+when = { eq = ["rd", 256] }
+insts = [
+    "mov_imm {t1}, {vconst_lo}",
+    "movq_xmm {t_f1}, {t1}",
+    "mov_imm {t2}, {vconst_hi}",
+    "movq_xmm {t_f2}, {t2}",
+    "punpcklqdq {t_f1}, {t_f2}",
+    "mov_imm {t3}, {vconst_lo_hi}",
+    "movq_xmm {t_f3}, {t3}",
+    "mov_imm {t4}, {vconst_hi_hi}",
+    "movq_xmm {t_f4}, {t4}",
+    "punpcklqdq {t_f3}, {t_f4}",
+    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+]
+
+# ════════════════════════════════════════════════════════════
+# 迭代 10（Phase 7 收尾）——缺口补齐
+# ════════════════════════════════════════════════════════════
+
+# ── SsubSat（饱和减：SUB + 溢出方向 clamp；SaddSat 的 SUB 变体）──
+
+[[lowering]]
+op = "SsubSat"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "mov32 {out}, {0}",
+    "sub {1}, {out}",
+    "setcc {t1}, 0",
+    "mov_imm {t2}, 0x7FFFFFFF",
+    "mov_imm {t3}, 0x80000000",
+    "test {0}, {0}",
+    "cmovcc {t4}, {t2}, 9",
+    "cmovcc {t4}, {t3}, 8",
+    "test {t1}, {t1}",
+    "cmovcc {out}, {t4}, 5",
+]
+
+[[lowering]]
+op = "SsubSat"
+when = { eq = ["rs1_width", 64] }
+insts = [
+    "mov {out}, {0}",
+    "sub {1}, {out}",
+    "setcc {t1}, 0",
+    "mov_imm {t2}, 0x7FFFFFFFFFFFFFFF",
+    "mov_imm {t3}, 0x8000000000000000",
+    "test {0}, {0}",
+    "cmovcc {t4}, {t2}, 9",
+    "cmovcc {t4}, {t3}, 8",
+    "test {t1}, {t1}",
+    "cmovcc {out}, {t4}, 5",
+]
+
+# ── Ptrtoint / Inttoptr：x86 指针 = i64，直拷 ──
+
+[[lowering]]
+op = "Ptrtoint"
+insts = ["mov {out}, {0}"]
+
+[[lowering]]
+op = "Inttoptr"
+insts = ["mov {out}, {0}"]
+
+# ── Undef / Poison：清零（Poison 语义为 deferred UB，任意值可接受）──
+
+[[lowering]]
+op = "Undef"
+insts = ["xor {out}, {out}"]
+
+[[lowering]]
+op = "Poison"
+insts = ["xor {out}, {out}"]
+
+# ── GlobalAddr：movabs 符号地址 + ABS8 重定位（JIT 符号表按 "G{id}" 注册；
+#    编码层 imm<0 表示 GlobalId，encoder 转 ABS8 reloc，非 JIT 后端同样可用）──
+
+[[lowering]]
+op = "GlobalAddr"
+insts = ["movabs {out}, {global}"]
+
+# ── 原子（Phase 7）：AtomicRmw 的 op 判别值 = immediates[0]（imm0 谓词：
+#    Xchg=0、Add=1、Sub=2；And/Or/Xor/Nand/Max/Min/Umax/Umin/Fadd/Fsub 需
+#    CMPXCHG 循环或软件序列 → 编译期 Unsupported）。
+#    XADD/XCHG 均返回旧值（dest 寄存器 ← 旧内存值），正好是 AtomicRmw 语义。
+
+[[lowering]]
+op = "AtomicRmw"
+when = { eq = ["imm0", 0] }
+insts = [
+    "mov {t1}, {1}",
+    "xchg {t1}, [{0}]",
+    "mov {out}, {t1}",
+]
+
+[[lowering]]
+op = "AtomicRmw"
+when = { eq = ["imm0", 1] }
+insts = [
+    "mov {t1}, {1}",
+    "xadd {t1}, [{0}]",
+    "mov {out}, {t1}",
+]
+
+[[lowering]]
+op = "AtomicRmw"
+when = { eq = ["imm0", 2] }
+insts = [
+    "mov {t1}, {1}",
+    "neg {t1}",
+    "xadd {t1}, [{0}]",
+    "mov {out}, {t1}",
+]
+
+# ── Cmpxchg：RAX = 期望值（隐式累加器）→ LOCK CMPXCHG [ptr], new →
+#    RAX = 旧值（不相等时写回 RAX）。单结果（旧值）；成功标志未展开
+#    （IR 层 struct 展开走 extractvalue，x86 后端暂不支持）。──
+
+[[lowering]]
+op = "Cmpxchg"
+insts = [
+    "mov RAX, {1}",
+    "lockcmpxchg {2}, {0}",
+    "mov {out}, RAX",
+]
+
+# ── Nop：无操作（GetElementPtr 已在编译期 expand_geps 展开为 Copy+mul+add，
+#    无需 TOML 规则——见 compiler.rs expand_geps）──
+
+[[lowering]]
+op = "Nop"
+insts = ["nop"]
+
+# ── Frem（fmod = a - b*trunc(a/b)；ROUNDS{S,D} imm8=3 是向零截断）──
+
+[[lowering]]
+op = "Frem"
+when = { eq = ["elem", 1] }
+insts = [
+    "movss {t_f1}, {0}",
+    "divss {t_f1}, {1}",
+    "roundss {t_f1}, {t_f1}, 3",
+    "mulss {t_f1}, {1}",
+    "movss {out}, {0}",
+    "subss {out}, {t_f1}",
+]
+
+[[lowering]]
+op = "Frem"
+insts = [
+    "movsd {t_f1}, {0}",
+    "divsd {t_f1}, {1}",
+    "roundsd {t_f1}, {t_f1}, 3",
+    "mulsd {t_f1}, {1}",
+    "movsd {out}, {0}",
+    "subsd {out}, {t_f1}",
 ]
