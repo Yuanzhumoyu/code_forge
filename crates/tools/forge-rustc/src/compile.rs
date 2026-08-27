@@ -16,8 +16,8 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
     body: &'tcx Body<'tcx>,
     func_refs: &'f mut FuncRefTable,
 ) -> Result<CompiledFunction, ForgeError> {
-    // 按目标三元组选择 ISA 后端（当前宿主为 x86_64；aarch64/riscv64 已注册
-    // 但调用约定/指令覆盖未经端到端验证，见 README 支持矩阵）
+    // 按目标三元组选择 ISA 后端（仅 x86_64 支持——v12 唯一后端；
+    // aarch64/riscv64 v11 后端已随 v11 语法层删除）
     crate::trace::set_panic_context(Some(format!(
         "lowering {} [{}]",
         tcx.def_path_str(instance.def_id()),
@@ -33,7 +33,7 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
         );
     }
     let func = lctx.lower_body(body)?;
-    code_forge::backend::arch::x86_64::ensure_registered();
+    code_forge::backend::x86_v12::ensure_registered();
     let r = compile_with_isa(&func, isa_name);
     crate::trace::set_panic_context(None);
     r
@@ -42,25 +42,20 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
 // ISA 后端选择
 // ============================================================
 
-/// 根据目标三元组自动注册对应的 ISA 后端。
+/// 根据目标三元组自动注册对应的 ISA 后端（仅 x86_64/amd64 → x86_v12）。
 pub fn auto_register_isa_for_target(target_triple: &str) {
     if target_triple.contains("x86_64") || target_triple.contains("amd64") {
-        code_forge::backend::arch::x86_64::ensure_registered();
-    } else if target_triple.contains("aarch64") {
-        code_forge::backend::arch::aarch64::ensure_registered();
-    } else if target_triple.contains("riscv64") {
-        code_forge::backend::arch::riscv64::ensure_registered();
+        code_forge::backend::x86_v12::ensure_registered();
     }
 }
 
-/// 从目标三元组确定 ISA 名称。
+/// 从目标三元组确定 ISA 名称（Registry 注册名 = v12 meta.name "x86_64_v12"）。
 pub fn isa_name_for_target(target_triple: &str) -> &'static str {
     if target_triple.contains("x86_64") || target_triple.contains("amd64") {
-        "x86_64"
-    } else if target_triple.contains("aarch64") {
-        "aarch64"
+        "x86_64_v12"
     } else {
-        "x86_64"
+        // 非 x86 目标无 v12 后端：回落宿主路径（与旧 x86_64 回落一致）
+        "x86_64_v12"
     }
 }
 

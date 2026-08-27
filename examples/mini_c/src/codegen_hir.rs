@@ -73,6 +73,9 @@ pub fn codegen_function_hir(
     // Phase 1: codegen the body into the IrGraph
     {
         let mut ctx = HirCtx::new(&mut graph, ast, source, syms);
+        // 当前函数视为"已内联"——函数体内调用自身 = 递归（HIR 无真实 Call
+        // 支持，明确拒绝而非无限内联栈溢出）。
+        ctx.inlining.push(name.clone());
         ctx.next_offset = -4; // first param slot at -4
 
         // Store each parameter into a stack slot, then register the slot.
@@ -855,6 +858,16 @@ fn lower_member_access(
 fn lower_call(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphValue, HirError> {
     let name = node.get_text("name").unwrap_or("_");
 
+    // 递归检测：callee 已在内联链中（含当前函数自身）→ 无法内联（无限展开）。
+    // HIR 后端暂无真实 Call 指令支持（IrGraph 无 call 原子）——明确报错，
+    // 后续迭代补 Call 原子后改为运行时递归。
+    if ctx.inlining.iter().any(|f| f == name) {
+        return Err(HirError::Lowering(format!(
+            "recursive call to '{}' unsupported in HIR backend (no real Call yet); use Backend::V12/Direct",
+            name
+        )));
+    }
+
     // Look up the callee's func_def AST node for inlining
     let callee_id = *ctx
         .syms
@@ -908,6 +921,7 @@ fn lower_call(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphV
     let after_blk = ctx.graph.create_block(&[]);
     ctx.return_slot = Some(ret_slot);
     ctx.return_block = Some(after_blk);
+    ctx.inlining.push(name.to_string());
 
     let body = callee_node
         .get_child("body")
@@ -928,6 +942,7 @@ fn lower_call(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphV
     // Restore inlining context and continue in after block
     ctx.return_slot = old_return_slot;
     ctx.return_block = old_return_block;
+    ctx.inlining.pop();
     ctx.graph.set_current_block(after_blk);
 
     // Restore shadowed caller locals
@@ -953,7 +968,7 @@ mod tests {
         use crate::codegen::SymTable;
         use crate::grammar::build_grammar;
         use crate::schema::build_schema;
-        use code_forge::backend::arch::x86_64::{self, ensure_registered};
+        use code_forge::backend::arch::x86_v12::{self, ensure_registered};
         use code_forge::backend::jit::JitCompiler;
         use code_forge::forge_grammar::Parser;
 
@@ -979,7 +994,7 @@ mod tests {
         }
 
         ensure_registered();
-        let tm = x86_64::TargetMachine::new();
+        let tm = x86_v12::TargetMachine::new();
         let mut jit = JitCompiler::new(tm);
         jit.compile_module(&module).unwrap();
         let main_fn: extern "C" fn() -> i32 = jit.get_fn("main").unwrap();
@@ -1012,7 +1027,7 @@ mod tests {
     /// Verify HIR lowering → JIT execution works end-to-end.
     #[test]
     fn test_hir_jit_iconst_ret() {
-        use code_forge::backend::arch::x86_64::{self, ensure_registered};
+        use code_forge::backend::arch::x86_v12::{self, ensure_registered};
         use code_forge::backend::jit::JitCompiler;
         use forge_hir::{BrickRegistry, IrGraph, lower_into_module};
 
@@ -1030,7 +1045,7 @@ mod tests {
         let _ = lower_into_module(&graph, &registry, &mut module, "test_hir_jit", sig).unwrap();
 
         ensure_registered();
-        let tm = x86_64::TargetMachine::new();
+        let tm = x86_v12::TargetMachine::new();
         let mut jit = JitCompiler::new(tm);
         jit.compile_module(&module).unwrap();
 
@@ -1041,7 +1056,7 @@ mod tests {
     /// Control: JIT execution of direct FunctionBuilder (no HIR).
     #[test]
     fn test_direct_jit_iconst_ret() {
-        use code_forge::backend::arch::x86_64::{self, ensure_registered};
+        use code_forge::backend::arch::x86_v12::{self, ensure_registered};
         use code_forge::backend::jit::JitCompiler;
         use code_forge::ir::FunctionBuilder;
 
@@ -1058,7 +1073,7 @@ mod tests {
         module.add_function(func);
 
         ensure_registered();
-        let tm = x86_64::TargetMachine::new();
+        let tm = x86_v12::TargetMachine::new();
         let mut jit = JitCompiler::new(tm);
         jit.compile_module(&module).unwrap();
 
@@ -1231,6 +1246,45 @@ mod tests {
                 "int main() { struct P { int x; int y; }; struct P p; p.x = 3; p.y = 4; return p.x + p.y; }"
             ),
             7
+        );
+    }
+
+    /// 递归函数：HIR 后端用 AST 内联实现调用——递归无法内联，应报清晰错误
+    /// （而非无限展开栈溢出）。Direct/V12 后端支持递归（真实 Call）。
+    #[test]
+    fn test_hir_recursive_rejected() {
+        use crate::codegen::SymTable;
+        use crate::grammar::build_grammar;
+        use crate::schema::build_schema;
+        use code_forge::forge_grammar::Parser;
+
+        let source = "int fib(int n) { if(n <= 1){ return n; }  return fib(n-1) + fib(n-2); } int main() { return fib(3); }";
+        let grammar = build_grammar();
+        let schema = build_schema();
+        let parser = Parser::build(grammar);
+        let ast = parser.parse_to_ast(source, &schema).unwrap();
+        let funcs: Vec<_> = ast.root_ref().find_all("func_def");
+
+        let mut module = code_forge::ir::Module::new();
+        let mut syms = SymTable::new();
+        for func_node in &funcs {
+            let name = func_node.get_text("name").unwrap_or("_").to_string();
+            syms.func_defs.insert(name, func_node.id);
+        }
+        // main 调 fib（内联 fib），fib 体内 fib(n-1) 递归 → 应报"recursive call"
+        let mut err: Option<String> = None;
+        for func_node in &funcs {
+            if let Err(e) =
+                super::codegen_function_hir(&mut module, *func_node, &mut syms, &ast, source)
+            {
+                err = Some(e.to_string());
+                break;
+            }
+        }
+        let msg = err.unwrap_or_default();
+        assert!(
+            msg.contains("recursive"),
+            "HIR 递归应报清晰错误，实际: {msg:?}"
         );
     }
 }

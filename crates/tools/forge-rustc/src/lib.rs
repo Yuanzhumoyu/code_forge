@@ -8,6 +8,17 @@
 
 #![feature(rustc_private)]
 #![feature(box_patterns)]
+// forge-rustc 排除在 workspace clippy 门禁之外（--exclude forge-rustc）——
+// 但 forge-tests `nightly` feature 经 --all-features 会把它作为依赖拉进
+// 构建，clippy 会连带 lint 它。这些是既有代码的风格性 lint（非本次改动），
+// 用 crate 级 allow 避免门禁被依赖侧放倒。
+#![allow(
+    clippy::needless_borrow,
+    clippy::collapsible_if,
+    clippy::type_complexity,
+    clippy::clone_on_copy,
+    clippy::needless_lifetimes
+)]
 
 extern crate rustc_abi;
 extern crate rustc_codegen_ssa;

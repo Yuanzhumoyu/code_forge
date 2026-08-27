@@ -5,8 +5,8 @@
 //! source string, compiles all functions to x86_64 machine code, calls `main()`,
 //! and returns its exit code.
 
-use code_forge::backend::arch::x86_64::{self, ensure_registered};
 use code_forge::backend::jit::JitCompiler;
+use code_forge::backend::x86_v12::ensure_registered;
 use code_forge::forge_grammar::{AstVisitor, Parser};
 use code_forge::ir::Module;
 
@@ -22,7 +22,8 @@ pub enum Backend {
     Direct,
     /// forge-hir pipeline (`codegen_hir.rs`): IrGraph + HirCtx + lowering.
     Hir,
-    /// v12 DSL 后端（`x86_v12` TargetMachine）：实验性，仅支持算术/返回子集。
+    /// v12 DSL 后端（`x86_v12` TargetMachine）。Direct/Hir 均用同一 v12 机器
+    /// 编译（v11 语法层已删除），区别仅在 IR 构建路径。
     V12,
 }
 
@@ -113,12 +114,39 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
         syms.func_defs.insert(name, func_node.id);
     }
 
+    // 预注册：为每个函数创建占位 Function（仅 ret 0），拿 FuncRef 填入
+    // syms.funcs——递归函数编译体时需要用自身 FuncRef 生成自调用 Call
+    //（内联检测到递归 → 真实 Call）。占位体随后被 codegen_function 覆盖。
+    use code_forge::ir::FunctionSignature;
+    for func_node in &funcs {
+        let name = func_node.get_text("name").unwrap_or("_").to_string();
+        // 参数列表（i32 全部；占位体参数名占位 "_"——真实体覆盖时重命名）
+        let params: Vec<(code_forge::ir::TypeId, String)> = func_node
+            .get_children("params")
+            .iter()
+            .map(|p| {
+                let pname = p.get_text("name").unwrap_or("_").to_string();
+                (code_forge::ir::TypeId::I32, pname)
+            })
+            .collect();
+        let params_refs: Vec<(code_forge::ir::TypeId, &str)> =
+            params.iter().map(|(t, n)| (*t, n.as_str())).collect();
+        let sig = FunctionSignature::new(&params_refs, &[code_forge::ir::TypeId::I32]);
+        let mut b = code_forge::ir::FunctionBuilder::new(name.as_str(), module.types.clone(), sig);
+        b.create_block_here();
+        let zero = b.iconst_i32(0);
+        b.ret(&[zero]);
+        let fr = module.add_function(b.finish().expect("placeholder"));
+        syms.funcs.insert(name, fr);
+    }
+
     // Second pass: codegen each function
     for func_node in &funcs {
         let name = func_node.get_text("name").unwrap_or("_").to_string();
+        let pre = syms.funcs.get(&name).copied();
         let func_ref = match backend {
             Backend::Direct | Backend::V12 => {
-                codegen_function(&mut module, *func_node, &mut syms, &ast, source)
+                codegen_function(&mut module, *func_node, &mut syms, &ast, source, pre)
             }
             Backend::Hir => codegen_function_hir(&mut module, *func_node, &mut syms, &ast, source),
         }
@@ -128,17 +156,9 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
 
     // 6. JIT compile the entire module (handles cross-function relocations)
     ensure_registered();
-    let mut jit: Box<dyn JitRunner> = match backend {
-        Backend::V12 => {
-            code_forge::backend::x86_v12::ensure_registered();
-            Box::new(JitRunnerImpl::V12(JitCompiler::new(
-                code_forge::backend::x86_v12::TargetMachine::new(),
-            )))
-        }
-        _ => Box::new(JitRunnerImpl::V11(JitCompiler::new(
-            x86_64::TargetMachine::new(),
-        ))),
-    };
+    let mut jit: Box<dyn JitRunner> = Box::new(JitRunnerImpl(JitCompiler::new(
+        code_forge::backend::x86_v12::TargetMachine::new(),
+    )));
     jit.compile_module(&module)
         .map_err(|e| format!("JIT compile error: {}", e))?;
 
@@ -150,11 +170,8 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
     Ok(main_fn())
 }
 
-/// JIT 运行器抽象（v11/v12 TargetMachine 泛型不同，用 enum 消除）。
-enum JitRunnerImpl {
-    V11(JitCompiler<code_forge::backend::x86_64::TargetMachine>),
-    V12(JitCompiler<code_forge::backend::x86_v12::TargetMachine>),
-}
+/// JIT 运行器 — v12 唯一后端（x86_v12 TargetMachine）。
+struct JitRunnerImpl(JitCompiler<code_forge::backend::x86_v12::TargetMachine>);
 
 trait JitRunner {
     fn compile_module(&mut self, module: &Module) -> Result<(), String>;
@@ -163,16 +180,10 @@ trait JitRunner {
 
 impl JitRunner for JitRunnerImpl {
     fn compile_module(&mut self, module: &Module) -> Result<(), String> {
-        match self {
-            JitRunnerImpl::V11(j) => j.compile_module(module).map_err(|e| e.to_string()),
-            JitRunnerImpl::V12(j) => j.compile_module(module).map_err(|e| e.to_string()),
-        }
+        self.0.compile_module(module).map_err(|e| e.to_string())
     }
     fn get_main(&self) -> Result<extern "C" fn() -> i32, String> {
-        match self {
-            JitRunnerImpl::V11(j) => j.get_fn("main").map_err(|e| e.to_string()),
-            JitRunnerImpl::V12(j) => j.get_fn("main").map_err(|e| e.to_string()),
-        }
+        self.0.get_fn("main").map_err(|e| e.to_string())
     }
 }
 

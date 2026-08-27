@@ -1,16 +1,16 @@
 //! JIT 集成演示 — 检测每一条指令能通过编译→JIT→执行的完整管线。
 //!
-//! 每个测试编译一个 IR 函数 → 生成 x86_64 机器码 → JIT 执行 → 验证结果。
+//! 每个测试编译一个 IR 函数 → 生成 x86_v12 机器码 → JIT 执行 → 验证结果。
 
-use code_forge::backend::arch::x86_64::{self, ensure_registered};
+use code_forge::backend::arch::x86_v12::{self, ensure_registered};
 use code_forge::backend::{FunctionCompiler, Registry};
 use code_forge::mem::ExecutableMemory;
 use code_forge::prelude::*;
 
 fn main() {
     ensure_registered();
-    assert!(Registry::global().contains("x86_64"));
-    println!("=== x86_64 JIT Integration Demo ===\n");
+    assert!(Registry::global().contains("x86_64_v12"));
+    println!("=== x86_64 (v12) JIT Integration Demo ===\n");
 
     let mut passed = 0u32;
     let mut failed = 0u32;
@@ -136,7 +136,7 @@ fn run_test(build: fn(&mut FunctionBuilder)) -> Result<i64, String> {
     b.create_block_here();
     build(&mut b);
     let func = b.finish().expect("build");
-    let compiled = FunctionCompiler::new(x86_64::TargetMachine::new())
+    let compiled = FunctionCompiler::new(x86_v12::TargetMachine::new())
         .compile_raw(&func)
         .map_err(|e| format!("{}", e))?;
     let mem = ExecutableMemory::new(&compiled.code).map_err(|e| format!("alloc: {}", e))?;

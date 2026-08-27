@@ -71,6 +71,9 @@ pub struct CodegenCtx<'a> {
     pub return_slot: Option<Value>,
     /// Inlining: block to jump to on return. None = not inlining.
     pub return_block: Option<Block>,
+    /// 当前内联链（函数名集合）——递归检测：callee 已在链中 → 改用真实 Call。
+    /// 递归函数的 FuncRef 由编译器预注册（`syms.funcs`），否则无法生成自调用。
+    pub inlining: Vec<String>,
 }
 
 impl<'a> CodegenCtx<'a> {
@@ -90,6 +93,7 @@ impl<'a> CodegenCtx<'a> {
             terminated: false,
             return_slot: None,
             return_block: None,
+            inlining: Vec::new(),
         }
     }
 
@@ -133,12 +137,17 @@ impl<'a> CodegenCtx<'a> {
 
 /// Lower one `func_def` AST node into a forge-ir `Function`, add it to `module`,
 /// and return its `FuncRef`.
+///
+/// `pre_registered`：若为 Some(fr)，函数体已预注册占位（递归检测用——递归
+/// 函数在编译体时需要自己的 FuncRef 生成自调用 Call），编译完成后用
+/// [`Module::replace_function`] 覆盖占位体。
 pub fn codegen_function(
     module: &mut Module,
     func_node: AstRef<'_>,
     syms: &mut SymTable,
     ast: &TypedAst,
     source: &str,
+    pre_registered: Option<FuncRef>,
 ) -> Result<FuncRef, String> {
     let name = func_node
         .get_text("name")
@@ -187,6 +196,9 @@ pub fn codegen_function(
     {
         let param_count = func_node.get_children("params").len() as i32;
         let mut cg = CodegenCtx::new(&mut b, syms, ast, source);
+        // 当前函数视为"已内联"——函数体内调用自身 = 递归（真实 Call），
+        // 否则 fib 编译时 fib(n-1) 会再次内联 fib → 无限展开。
+        cg.inlining.push(name.clone());
         cg.next_offset = -4 * (param_count + 1); // start after params
         codegen_block(&mut cg, body);
 
@@ -198,7 +210,14 @@ pub fn codegen_function(
     } // cg dropped — borrow on b released
 
     let func = b.finish().expect("build");
-    Ok(module.add_function(func))
+    match pre_registered {
+        Some(fr) => {
+            // 预注册占位：用真实体覆盖（保留 FuncRef——递归 Call 的 target 不变）
+            module.replace_function(fr, func);
+            Ok(fr)
+        }
+        None => Ok(module.add_function(func)),
+    }
 }
 
 // ============================================================
@@ -1039,13 +1058,43 @@ fn codegen_unary_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 fn codegen_call(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let name = node.get_text("name").unwrap_or("_");
 
-    // Look up the callee's func_def AST node for inlining
+    // 真实 Call 判定：
+    // 1. callee 是递归函数（函数体内含对自身的调用）——内联会无限展开，
+    //    任何调用点都改真实 Call（运行时递归）。
+    // 2. callee 已在本函数的内联链中（互递归/深层内联）→ 真实 Call。
     let callee_id = *cg
         .syms
         .func_defs
         .get(name)
         .unwrap_or_else(|| panic!("undefined function: {}", name));
     let callee_node = cg.ast.ref_to(callee_id);
+    let callee_is_recursive = callee_is_self_calling(callee_node, name);
+
+    if callee_is_recursive || cg.inlining.iter().any(|f| f == name) {
+        // Evaluate call arguments
+        let arg_vals: Vec<Value> = match node.get_optional("args") {
+            Some(Some(arg_list)) => {
+                let items = arg_list.get_children("items");
+                let mut vals = Vec::new();
+                for a in &items {
+                    vals.push(codegen_expr(cg, *a));
+                }
+                vals
+            }
+            _ => vec![],
+        };
+        let func_ref = *cg.syms.funcs.get(name).unwrap_or_else(|| {
+            panic!(
+                "recursive call to '{}' but FuncRef not pre-registered",
+                name
+            )
+        });
+        let r = cg.builder.call(func_ref, &arg_vals, &[TypeId::I32]);
+        return r
+            .first()
+            .copied()
+            .unwrap_or_else(|| cg.builder.iconst_i32(0));
+    }
 
     // Evaluate call arguments
     let arg_vals: Vec<Value> = match node.get_optional("args") {
@@ -1092,6 +1141,7 @@ fn codegen_call(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let after_blk = cg.builder.create_block();
     cg.return_slot = Some(ret_slot);
     cg.return_block = Some(after_blk);
+    cg.inlining.push(name.to_string());
 
     let body = callee_node.get_child("body").expect("callee missing body");
     codegen_block(cg, body);
@@ -1107,6 +1157,7 @@ fn codegen_call(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     cg.return_slot = old_return_slot;
     cg.return_block = old_return_block;
     cg.terminated = false;
+    cg.inlining.pop();
     cg.builder.switch_to_block(after_blk);
 
     // Restore shadowed caller locals
@@ -1116,4 +1167,17 @@ fn codegen_call(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 
     // Load and return the inlined function's return value
     cg.builder.load(ret_slot, TypeId::I32)
+}
+
+/// 判断函数是否递归：函数体内存在对自身的调用（`call` 节点的 name == self）。
+/// 递归函数无法安全内联（无限展开），任何调用点都应改真实 Call。
+fn callee_is_self_calling(func_node: AstRef<'_>, self_name: &str) -> bool {
+    // 遍历函数体找 call 节点，检查其 name 是否等于自身
+    let body = match func_node.get_child("body") {
+        Some(b) => b,
+        None => return false,
+    };
+    body.find_all("call")
+        .iter()
+        .any(|c| c.get_text("name").map(|n| n == self_name).unwrap_or(false))
 }

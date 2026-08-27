@@ -430,3 +430,29 @@ fn v12_integration_style() {
         5,
     );
 }
+
+#[test]
+fn test_fibonacci() {
+    assert_v12_matches_v11(
+        "int fib(int n) { if(n <= 1){ return n; }  return fib(n-1) + fib(n-2); } int main() { return fib(5); }",
+        5,
+    );
+}
+
+#[test]
+fn test_recursive_depth2() {
+    // 深度 2 递归：f(2) = f(1) + 1 = 1
+    assert_v12_matches_v11(
+        "int f(int n) { if(n <= 1){ return n; }  return f(n-1) + 1; } int main() { return f(2); }",
+        2,
+    );
+}
+
+#[test]
+fn test_recursive_fib3() {
+    // fib(3) = fib(2) + fib(1) = 1 + 1 = 2
+    assert_v12_matches_v11(
+        "int fib(int n) { if(n <= 1){ return n; }  return fib(n-1) + fib(n-2); } int main() { return fib(3); }",
+        2,
+    );
+}
