@@ -404,6 +404,16 @@ fields = { funct3 = 1, funct7 = 0x60 }
 
 
 asm = "fcvt.w.s.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+
+[[instructions]]
+
+name = "FCVT_WU_S_RTZ"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x60, rs2 = 1 }
+
+
+asm = "fcvt.wu.s.rtz {0:[gpr:out]}, {1:[fpr:in]}"
 [[instructions]]
 
 name = "FCVT_W_S_RNE"
@@ -427,7 +437,7 @@ asm = "fcvt.s.w {0:[fpr:out]}, {1:[gpr:in]}"
 name = "FLT_S"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 4, funct7 = 0x20 }
+fields = { funct3 = 1, funct7 = 0x50 }
 
 
 asm = "flt.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
@@ -436,7 +446,7 @@ asm = "flt.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 name = "FEQ_S"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 5, funct7 = 0x20 }
+fields = { funct3 = 2, funct7 = 0x50 }
 
 
 asm = "feq.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
@@ -445,7 +455,7 @@ asm = "feq.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 name = "FLE_S"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 6, funct7 = 0x20 }
+fields = { funct3 = 0, funct7 = 0x50 }
 
 
 asm = "fle.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
@@ -487,6 +497,205 @@ fields = { funct3 = 0, funct7 = 0x70 }
 
 
 asm = "fmv.x.w {0:[gpr:out]}, {1:[fpr:in]}"
+# ── F64（D 变体）：funct7 = S | 0x01（LLVM 对照：fadd.d=0x01、feq.d=0x51）──
+
+[[instructions]]
+
+name = "FADD_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x01 }
+
+
+asm = "fadd.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FSUB_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x05 }
+
+
+asm = "fsub.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FMUL_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x09 }
+
+
+asm = "fmul.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FDIV_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x0D }
+
+
+asm = "fdiv.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FSQRT_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x2D }
+
+
+asm = "fsqrt.d {0:[fpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FLE_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x51 }
+
+
+asm = "fle.d {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FLT_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x51 }
+
+
+asm = "flt.d {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FEQ_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 2, funct7 = 0x51 }
+
+
+asm = "feq.d {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FMIN_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x15 }
+
+
+asm = "fmin.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FMAX_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x15 }
+
+
+asm = "fmax.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+[[instructions]]
+
+name = "FCVT_W_D_RTZ"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x61 }
+
+
+asm = "fcvt.w.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FCVT_WU_D_RTZ"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x61, rs2 = 1 }
+
+
+asm = "fcvt.wu.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FCVT_L_D_RTZ"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x61, rs2 = 2 }
+
+
+asm = "fcvt.l.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FCVT_LU_D_RTZ"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x61, rs2 = 3 }
+
+
+asm = "fcvt.lu.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FCVT_D_W"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x69 }
+
+
+asm = "fcvt.d.w {0:[fpr:out]}, {1:[gpr:in]}"
+[[instructions]]
+
+name = "FCVT_D_WU"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 1, funct7 = 0x69 }
+
+
+asm = "fcvt.d.wu {0:[fpr:out]}, {1:[gpr:in]}"
+[[instructions]]
+
+name = "FCVT_S_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x20 }
+
+
+asm = "fcvt.s.d {0:[fpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FCVT_D_S"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x21 }
+
+
+asm = "fcvt.d.s {0:[fpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FMV_D_X"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x79 }
+
+
+asm = "fmv.d.x {0:[fpr:out]}, {1:[gpr:in]}"
+[[instructions]]
+
+name = "FMV_X_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x71 }
+
+
+asm = "fmv.x.d {0:[gpr:out]}, {1:[fpr:in]}"
+[[instructions]]
+
+name = "FLD"
+form = "I"
+opcode = 0x07
+fields = { funct3 = 3 }
+asm = "fld {0:[fpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
+
+
+[[instructions]]
+
+name = "FSD"
+form = "S"
+opcode = 0x27
+fields = { funct3 = 3 }
+asm = "fsd {0:[fpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
+
 [[instructions]]
 
 name = "FLW"
@@ -1427,6 +1636,152 @@ insts = [
     "srli {t3}, {out}, 32",
     "sltu {out2}, X0, {t3}",
 ]
+
+
+# ── 浮点（可验证部分）：Fconst 位模式加载、Fcmp 条件、Fptosi/Fptoui 转换。
+#    f64 用 D 变体、f32 用 S 变体（rs1_width 分派）；QEMU 默认 RV64GC 含 F/D。──
+
+[[lowering]]
+op = "Fconst"
+when = { eq = ["rd", 64] }
+insts = [
+    "lui {t1}, {fconst_hi32_hi20}",
+    "addi {t1}, {t1}, {fconst_hi32_lo12}",
+    "slli {t1}, {t1}, 32",
+    "lui {t2}, {fconst_lo32_hi20}",
+    # 低 32 位 LUI 立即数 bit19=1 时符号扩展污染高 32 位（如 -42.7 的
+    # 0x9999A → 0xFFFFFFFF9999A000）→ slli32+srli32 截断为零扩展
+    "slli {t2}, {t2}, 32",
+    "srli {t2}, {t2}, 32",
+    "addi {t2}, {t2}, {fconst_lo32_lo12}",
+    "or {t1}, {t1}, {t2}",
+    "fmv.d.x {out}, {t1}",
+]
+
+[[lowering]]
+op = "Fconst"
+insts = [
+    "lui {t1}, {fconst_lo32_hi20}",
+    # 同上：低 32 位 LUI bit19=1 符号扩展 → 截断（fmv.w.x 只取低 32 位，
+    # 但高位污染会带进 NaN-box 语义）
+    "slli {t1}, {t1}, 32",
+    "srli {t1}, {t1}, 32",
+    "addi {t1}, {t1}, {fconst_lo32_lo12}",
+    "fmv.w.x {out}, {t1}",
+]
+
+# Fcmp：riscv feq/flt/fle 直接给 GPR 0/1；Ordered/Unordered 用 feq(a,a)&feq(b,b)。
+# 注意：**每条规则必须带显式宽度谓词**（64 位规则也要标 rs1_width=64）——生成器
+# 按 TOML 顺序生成 if-else 链，无宽度规则的 `cond=N` 会截胡后面的 32 位规则
+#（实测 f32 用例被 feq.d/flt.d 抢走 → QEMU NaN-box 语义下结果错）。
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 3] }, { eq = ["rs1_width", 64] } ] }
+insts = ["feq.d {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 3] }, { eq = ["rs1_width", 32] } ] }
+insts = ["feq.s {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 4] }, { eq = ["rs1_width", 64] } ] }
+insts = ["feq.d {out}, {0}, {1}", "xori {out}, {out}, 1"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 4] }, { eq = ["rs1_width", 32] } ] }
+insts = ["feq.s {out}, {0}, {1}", "xori {out}, {out}, 1"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 5] }, { eq = ["rs1_width", 64] } ] }
+insts = ["flt.d {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 5] }, { eq = ["rs1_width", 32] } ] }
+insts = ["flt.s {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 6] }, { eq = ["rs1_width", 64] } ] }
+insts = ["fle.d {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 6] }, { eq = ["rs1_width", 32] } ] }
+insts = ["fle.s {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 7] }, { eq = ["rs1_width", 64] } ] }
+insts = ["flt.d {out}, {1}, {0}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 7] }, { eq = ["rs1_width", 32] } ] }
+insts = ["flt.s {out}, {1}, {0}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 8] }, { eq = ["rs1_width", 64] } ] }
+insts = ["fle.d {out}, {1}, {0}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 8] }, { eq = ["rs1_width", 32] } ] }
+insts = ["fle.s {out}, {1}, {0}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 1] }, { eq = ["rs1_width", 64] } ] }
+insts = ["feq.d {t}, {0}, {0}", "feq.d {t2}, {1}, {1}", "and {out}, {t}, {t2}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 1] }, { eq = ["rs1_width", 32] } ] }
+insts = ["feq.s {t}, {0}, {0}", "feq.s {t2}, {1}, {1}", "and {out}, {t}, {t2}"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 2] }, { eq = ["rs1_width", 64] } ] }
+insts = ["feq.d {t}, {0}, {0}", "feq.d {t2}, {1}, {1}", "and {t}, {t}, {t2}", "xori {out}, {t}, 1"]
+
+[[lowering]]
+op = "Fcmp"
+when = { and = [ { eq = ["cond", 2] }, { eq = ["rs1_width", 32] } ] }
+insts = ["feq.s {t}, {0}, {0}", "feq.s {t2}, {1}, {1}", "and {t}, {t}, {t2}", "xori {out}, {t}, 1"]
+
+# Fptosi/Fptoui：向零截断（rtz）
+[[lowering]]
+op = "Fptosi"
+when = { eq = ["rs1_width", 32] }
+insts = ["fcvt.w.s.rtz {out}, {0}"]
+
+[[lowering]]
+op = "Fptosi"
+when = { eq = ["rd", 32] }
+insts = ["fcvt.w.d.rtz {out}, {0}"]
+
+[[lowering]]
+op = "Fptosi"
+insts = ["fcvt.l.d.rtz {out}, {0}"]
+
+[[lowering]]
+op = "Fptoui"
+when = { eq = ["rs1_width", 32] }
+insts = ["fcvt.wu.s.rtz {out}, {0}"]
+
+[[lowering]]
+op = "Fptoui"
+when = { eq = ["rd", 32] }
+insts = ["fcvt.wu.d.rtz {out}, {0}"]
+
+[[lowering]]
+op = "Fptoui"
+insts = ["fcvt.lu.d.rtz {out}, {0}"]
 
 # ── 饱和（32 位）：UaddSat 进位时 = 0xFFFFFFFF；UsubSat 借位时 = 0 ──
 

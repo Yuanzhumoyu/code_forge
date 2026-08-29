@@ -43,3 +43,4 @@ pub use self::riscv64_v12::*;
 // touch-A10b
 // touch-A10c
 // touch-A11
+// touch-fp-scalar

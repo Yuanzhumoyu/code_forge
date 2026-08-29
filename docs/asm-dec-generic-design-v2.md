@@ -541,11 +541,15 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 | 35 | **B2+**：riscv 整数补全（除法/minmax/旋转/扩展/Abs/Select/空指针/Alloca/溢出/饱和） | ✅ | isa/riscv64_v12.toml lowering + CAPS |
 | 36 | **B2+**：Zbb 编码修正（v10 迁移的 0x13/0x14 值错，LLVM 对齐规范） | ✅ | 同上（MIN funct7=0x05、CLZ 0x33 等） |
 | 37 | **B2+**：`{iconst_hi20}` 双重右移修复（大常量 lui 字节规范） | ✅ | gen_lowering_attrs |
+| 38 | **B2+**：riscv 标量浮点（Fconst 位模式 / Fcmp 条件 / Fptosi / Fptoui，f32+f64） | ✅ | isa/riscv64_v12.toml lowering + CAPS |
+| 39 | **B2+**：浮点编码修正（LLVM 对齐）——FLE/FLT/FEQ funct3=0/1/2、fcvt D 变体 funct7=0x61、FCVT_S_D=0x20/FCVT_D_S=0x21 | ✅ | 同上（原值 funct3=6/4/5、funct7=0x60 错） |
+| 40 | **B2+**：QEMU crt0 置 mstatus.FS=Dirty（`csrrs x0,mstatus,t0`，0x3002A073；原错码 0x3002F073 是 CSRRC 清位） | ✅ | exec/qemu.rs |
+| 41 | **B2+**：Fcmp/Fconst 宽度谓词显式化（无宽度 `cond=N` 规则截胡 32 位分支）+ lo32 LUI 符号扩展截断（bit19=1 → slli32+srli32） | ✅ | isa/riscv64_v12.toml lowering |
 
 ### 已知限制（诚实记录）
 
-- riscv 矩阵 **94 passed / 92 skipped / 0 failed**（值域 ±32767 过滤大值；
-  浮点/向量/SaddSat/SsubSat/Clz/Ctz/Bitreverse/GlobalAddr/原子未实现 → Skip）。
+- riscv 矩阵 **106 passed / 80 skipped / 0 failed**（值域 ±32767 过滤大值；
+  SaddSat/SsubSat/Clz/Ctz/Bitreverse/GlobalAddr/原子/向量未实现 → Skip）。
   执行链：`exec_riscv64(_module)` → 裸机 ELF + sifive_test（16 位退出码，
   `sign_extend_exit` 符号扩展回 i64）。
 - **QEMU 11.1.0-rc2（v11.0.92）的 TCG 对特定 and/xori/and/or 寄存器序列有 bug**
@@ -564,5 +568,11 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 - clz/ctz/cpop 与 rol/ror 编码重叠（clz rd,rs = rol rd,rs,x0 别名）——
   decode 按声明序/叶优先返回 rol（roundtrip 语义歧义，测试不列入；
   编码正确性由 golden 覆盖）。
+- **浮点 QEMU 调试实录**（供后续阶段参考）：QEMU 复位 mstatus.FS=Off →
+  浮点指令非法且 TCG 表现为**挂起**（fault 循环），crt0 必须显式置 FS=Dirty；
+  浮点比较/转换一律用 LLVM（clang+llvm-objdump）对照编码——funct3
+  （FLE/FLT/FEQ=0/1/2，非 6/4/5）与 D 变体 funct7（S|1，fcvt.w.d=0x61）是
+  两个易错点；低 32 位 LUI 立即数 bit19=1 时符号扩展污染高 32 位
+  （-42.7 的 0x9999A → NaN），fconst 需 slli32+srli32 截断。
 - G/H 未开工（见任务清单：G = forge-rustc 向量、H = aarch64_v12 定宽 +
   demo_be 大端）。

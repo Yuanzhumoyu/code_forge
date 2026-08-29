@@ -137,6 +137,14 @@ fn gen_crt0(args: &[u64], main_off: usize) -> Vec<u8> {
     crt0.extend(inst_lui(2, (STACK_TOP >> 12) & 0xFFFFF));
     crt0.extend(inst_slli(2, 2, 32));
     crt0.extend(inst_srli(2, 2, 32));
+    // mstatus.FS = Dirty（bits 14:13 = 11）：QEMU 复位 FS=Off → 浮点指令
+    // 非法（fadd/feq/fmv/fcvt 等）→ 挂起。crt0 显式置位：
+    //   lui t0, 6（0x6000 >> 12 = 6）；csrrs x0, mstatus(0x300), t0
+    // 编码：csr 0x300<<20 | rs1 t0(5)<<15 | funct3 010<<12 | rd x0<<7 | 0x73
+    //   = 0x3002_A073（注意 funct3 必须是 010=CSRRS；0x3002_F073 是 CSRRC
+    //   清位，FS 设不上 → 浮点仍非法 → QEMU 挂起——曾用该错值排查数小时）
+    crt0.extend(inst_lui(5, 6));
+    crt0.extend(0x3002_A073u32.to_le_bytes()); // csrrs x0, mstatus, t0(x5)
     // 参数 li a0..a3（最多 4 个；测试参数均为小值，inst_li64 32 位分支足够）
     for (i, &arg) in args.iter().take(4).enumerate() {
         crt0.extend(inst_li64(10 + i as u32, arg as i64));
