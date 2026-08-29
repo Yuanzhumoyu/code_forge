@@ -1,9 +1,0 @@
-riscv v12: 阶段 G——@push_callee 按需保存（callee_saved_to_save）
-
-- regalloc：callee_saved_to_save 只收集**实际分配到的** s 系（不再全量
-  11 个）；**class 通配**——i32 值以 GPR(4) 类分配时按 num 计入（否则
-  fib 递归覆盖 s11 → got -15）
-- gen_emit_pseudo：push/pop_callee 运行时遍历 callee_saved_to_save
-  （Reg::from_index 动态构造；push 正向槽 k、pop 逆序 + 槽 n-1-k）
-- SD/LD 指令数从全量 13（11 s 系 + ra/fp）降到实际分配数（add 5 个）
-- tm_compile_add 断言更新为按需语义；矩阵 126 passed 无回归
