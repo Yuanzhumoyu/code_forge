@@ -135,7 +135,7 @@ and lands on a leaf that carries the instruction's `operands`/`len`/`asm`. Every
 constant prefix is handled by the per-ISA **operand reader** (a single strategy, not per-instruction
 arms).
 
-```
+```text
 root ── 0x0F ── 0x38 ── 0xC0 ──(leaf: PMULLD)     // multi-byte opcode
      ├─ 0x0F ── 0x51 ──(leaf: SQRTSD/SQRTSS)      // prefix decided later
      ├─ 0x8B ──(leaf: MOV_R_RM, subset of ModRM)

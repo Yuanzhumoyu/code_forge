@@ -538,12 +538,21 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 | 32 | **B2+**：`[abi.frame].callee_saved_bytes_override`/`stack_slot_shift` | ✅ | frame_layout/lowering（spill 帧内 + 栈槽 fp 基准） |
 | 33 | **B2+**：定宽 `@push_callee`/`@pop_callee`（SD/LD 帧槽） | ✅ | gen_emit_pseudo |
 | 34 | **B2+**：regalloc callee-saved 优先（跨调用值安全） | ✅ | regalloc_bt pop_free |
+| 35 | **B2+**：riscv 整数补全（除法/minmax/旋转/扩展/Abs/Select/空指针/Alloca/溢出/饱和） | ✅ | isa/riscv64_v12.toml lowering + CAPS |
+| 36 | **B2+**：Zbb 编码修正（v10 迁移的 0x13/0x14 值错，LLVM 对齐规范） | ✅ | 同上（MIN funct7=0x05、CLZ 0x33 等） |
+| 37 | **B2+**：`{iconst_hi20}` 双重右移修复（大常量 lui 字节规范） | ✅ | gen_lowering_attrs |
 
 ### 已知限制（诚实记录）
 
-- riscv 矩阵 **50 passed / 136 skipped / 0 failed**（值域 ±32767 过滤大值；
-  浮点/向量/溢出/位操作变体未实现 → Skip）。执行链：`exec_riscv64(_module)`
-  → 裸机 ELF + sifive_test（16 位退出码，`sign_extend_exit` 符号扩展回 i64）。
+- riscv 矩阵 **94 passed / 92 skipped / 0 failed**（值域 ±32767 过滤大值；
+  浮点/向量/SaddSat/SsubSat/Clz/Ctz/Bitreverse/GlobalAddr/原子未实现 → Skip）。
+  执行链：`exec_riscv64(_module)` → 裸机 ELF + sifive_test（16 位退出码，
+  `sign_extend_exit` 符号扩展回 i64）。
+- **QEMU 11.1.0-rc2（v11.0.92）的 TCG 对特定 and/xori/and/or 寄存器序列有 bug**
+  （Select 首版实测 s8=0；`-singlestep` 下结果不同）——**Select 用掩码法
+  （slli/srai 全 0/全 1 掩码）规避**；Zbb 指令（MIN/CLZ 等）在该版本默认 CPU
+  与显式属性（zbb=on/max/rva23u64）下均 illegal（LLVM 验证编码规范，
+  QEMU rc TCG 未接）→ min/max/rot 用基础指令序列实现。
 - riscv 跨函数 Call/递归（call_cross_function=42、call_recursive_fib=5、
   call_recursive_fib_slot=2、call_chain）QEMU 真执行全绿；`RelocPatcher`
   对 encoder 占位 imm（-(FuncRef+1)）先清零位段再写新值（OR 会恒跳 -1）。
@@ -552,5 +561,8 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
   （min_frame_bytes=104 覆盖）。
 - `call_clobbers` 全量列 caller-saved（ra/参数/临时 + 固定用途）——
   跨调用存活值在 call 点 spill；s 系跨调用安全（@push_callee）。
+- clz/ctz/cpop 与 rol/ror 编码重叠（clz rd,rs = rol rd,rs,x0 别名）——
+  decode 按声明序/叶优先返回 rol（roundtrip 语义歧义，测试不列入；
+  编码正确性由 golden 覆盖）。
 - G/H 未开工（见任务清单：G = forge-rustc 向量、H = aarch64_v12 定宽 +
   demo_be 大端）。

@@ -11,19 +11,30 @@
 
 ## 目录
 
-1. [快速开始](#快速开始)
-2. [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
-3. [`[conventions]` — ISA 约定](#conventions--isa-约定)
-4. [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
-5. [`[[forms]]` — 编码形式（语义键）](#forms--编码形式语义键)
-6. [`[[instructions]]` — 指令](#instructions--指令)
-7. [`[[families]]` — 参数化指令族](#families--参数化指令族)
-8. [结构化谓词](#结构化谓词)
-9. [`[[lowering]]` — 指令选择](#lowering--指令选择)
-10. [`[abi]` — 调用约定](#abi--调用约定)
-11. [`[emit]` — 序言/尾声](#emit--序言尾声)
-12. [asm 模板](#asm-模板)
-13. [代码生成输出](#代码生成输出)
+- [ISA-DSL v12 — 语法规范（唯一 DSL 语法）](#isa-dsl-v12--语法规范唯一-dsl-语法)
+  - [目录](#目录)
+  - [快速开始](#快速开始)
+  - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
+  - [`[conventions]` — ISA 约定](#conventions--isa-约定)
+  - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
+  - [`[[forms]]` — 编码形式（语义键）](#forms--编码形式语义键)
+  - [`[[instructions]]` — 指令](#instructions--指令)
+  - [`[[families]]` — 参数化指令族](#families--参数化指令族)
+  - [结构化谓词](#结构化谓词)
+  - [`[[lowering]]` — 指令选择](#lowering--指令选择)
+  - [`[abi]` — 调用约定](#abi--调用约定)
+  - [`[emit]` — 序言/尾声](#emit--序言尾声)
+  - [asm 模板](#asm-模板)
+  - [代码生成输出](#代码生成输出)
+  - [迭代记录（B3/B2/D/E：TargetMachine 接入、QEMU 验证、汇编器/解码器增强）](#迭代记录b3b2detargetmachine-接入qemu-验证汇编器解码器增强)
+    - [`[meta].default_opsize`（E）](#metadefault_opsizee)
+    - [`[abi]` 新键（B3/B2）](#abi-新键b3b2)
+    - [`[abi.frame]` 新键（B2/B2+）](#abiframe-新键b2b2)
+    - [`[emit]` 新键（B2/B3）](#emit-新键b2b3)
+    - [`[spill.*]` 新形态（B2）](#spill-新形态b2)
+    - [解码器增强（E）](#解码器增强e)
+    - [汇编器增强（D）](#汇编器增强d)
+    - [指令级 opsize/rex\_w 覆盖（已随 EVEX 迭代落地）](#指令级-opsizerex_w-覆盖已随-evex-迭代落地)
 
 ---
 
@@ -457,4 +468,3 @@ name = "Cvtsi2sd"
 opsize = "s1"          # 指令级覆盖 form 级 opsize
 rex_w = "auto"
 ```
-
