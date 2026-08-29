@@ -711,16 +711,26 @@ name = "ECALL"
 form = "OP"
 opcode = 0x73
 
-# ── Zbb 位操作（RV64）──
+# ── Zbb 位操作（RV64；规范编码：R 型 0x33，funct7/funct3/rs2 按指令区分——
+#    v10 迁移的 0x13/0x14-0x17 等值为错（QEMU illegal），本表已修正）──
 
 
 asm = "ecall"
 [[instructions]]
 
+name = "EBREAK"
+form = "OP"
+opcode = 0x73
+fields = { imm12 = 1 }
+
+
+asm = "ebreak"
+[[instructions]]
+
 name = "CLZ"
 form = "ZBB"
-opcode = 0x13
-fields = { funct3 = 1, funct7 = 0x30 }
+opcode = 0x33
+fields = { funct3 = 1, funct7 = 0x30, rs2 = 0 }
 
 
 asm = "clz {0:[gpr:out]}, {1:[gpr:in]}"
@@ -728,7 +738,7 @@ asm = "clz {0:[gpr:out]}, {1:[gpr:in]}"
 
 name = "CTZ"
 form = "ZBB"
-opcode = 0x13
+opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 1 }
 
 
@@ -737,7 +747,7 @@ asm = "ctz {0:[gpr:out]}, {1:[gpr:in]}"
 
 name = "CPOP"
 form = "ZBB"
-opcode = 0x13
+opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 2 }
 
 
@@ -746,8 +756,8 @@ asm = "cpop {0:[gpr:out]}, {1:[gpr:in]}"
 
 name = "REV8"
 form = "ZBB"
-opcode = 0x13
-fields = { funct3 = 1, funct7 = 0x34, rs2 = 8 }
+opcode = 0x33
+fields = { funct3 = 5, funct7 = 0x68, rs2 = 8 }
 
 
 asm = "rev8 {0:[gpr:out]}, {1:[gpr:in]}"
@@ -756,7 +766,7 @@ asm = "rev8 {0:[gpr:out]}, {1:[gpr:in]}"
 name = "ROL"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x30 }
+fields = { funct3 = 1, funct7 = 0x30 }
 
 
 asm = "rol {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
@@ -765,7 +775,7 @@ asm = "rol {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 name = "ROR"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x31 }
+fields = { funct3 = 5, funct7 = 0x30 }
 
 
 asm = "ror {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
@@ -774,7 +784,7 @@ asm = "ror {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 name = "MIN"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x14 }
+fields = { funct3 = 0, funct7 = 0x05 }
 
 
 asm = "min {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
@@ -783,7 +793,7 @@ asm = "min {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 name = "MAX"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x15 }
+fields = { funct3 = 1, funct7 = 0x05 }
 
 
 asm = "max {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
@@ -792,7 +802,7 @@ asm = "max {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 name = "MINU"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x16 }
+fields = { funct3 = 4, funct7 = 0x05 }
 
 
 asm = "minu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
@@ -801,7 +811,7 @@ asm = "minu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
 name = "MAXU"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0x17 }
+fields = { funct3 = 5, funct7 = 0x05 }
 
 
 asm = "maxu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
@@ -1025,7 +1035,17 @@ insts = ["lui {out}, {iconst_hi20}", "addi {out}, {out}, {iconst_lo12}"]
 
 [[lowering]]
 op = "Load"
+when = { eq = ["rd", 32] }
+insts = ["lw {out}, {0}, 0"]
+
+[[lowering]]
+op = "Load"
 insts = ["ld {out}, {0}, 0"]
+
+[[lowering]]
+op = "Store"
+when = { eq = ["rs1_width", 32] }
+insts = ["sw {0}, {1}, 0"]
 
 [[lowering]]
 op = "Store"
@@ -1127,3 +1147,319 @@ insts = ["sltu {t}, {0}, {1}", "xori {out}, {t}, 1"]
 # Call：jal ra, @N（跨函数符号；RiscvRelocPatcher 编码 UJ 位段）
 # 注意：Call 是 terminator 级 lowering（gen_call_lowering），不走此表——
 # 该规则仅占位声明，实际接线见 integration.rs 的 call_inst 泛化。
+
+# ── 除法/取模（32 位 W 变体按 rs1_width 分派）──
+
+[[lowering]]
+op = "Sdiv"
+when = { eq = ["rs1_width", 32] }
+insts = ["divw {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Sdiv"
+insts = ["div {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Udiv"
+when = { eq = ["rs1_width", 32] }
+insts = ["divuw {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Udiv"
+insts = ["divu {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Srem"
+when = { eq = ["rs1_width", 32] }
+insts = ["remw {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Srem"
+insts = ["rem {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Urem"
+when = { eq = ["rs1_width", 32] }
+insts = ["remuw {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Urem"
+insts = ["remu {out}, {0}, {1}"]
+
+# ── min/max（基础指令序列，不依赖 Zbb——QEMU 11.0.92 默认/显式 CPU 均不
+#    译码 Zbb 的 min/max（LLVM 确认编码规范，QEMU rc 版 TCG 未接）；用
+#    `slt + neg + xor + and + xor` 算术选择：min(a,b) = b ^ ((a^b) & -(a<b))）──
+
+[[lowering]]
+op = "Smin"
+insts = [
+    "slt {t}, {0}, {1}",
+    "sub {t}, X0, {t}",
+    "xor {t2}, {0}, {1}",
+    "and {t}, {t2}, {t}",
+    "xor {out}, {1}, {t}",
+]
+
+[[lowering]]
+op = "Smax"
+insts = [
+    "slt {t}, {0}, {1}",
+    "sub {t}, X0, {t}",
+    "xor {t2}, {0}, {1}",
+    "and {t}, {t2}, {t}",
+    "xor {out}, {0}, {t}",
+]
+
+[[lowering]]
+op = "Umin"
+insts = [
+    "sltu {t}, {0}, {1}",
+    "sub {t}, X0, {t}",
+    "xor {t2}, {0}, {1}",
+    "and {t}, {t2}, {t}",
+    "xor {out}, {1}, {t}",
+]
+
+[[lowering]]
+op = "Umax"
+insts = [
+    "sltu {t}, {0}, {1}",
+    "sub {t}, X0, {t}",
+    "xor {t2}, {0}, {1}",
+    "and {t}, {t2}, {t}",
+    "xor {out}, {0}, {t}",
+]
+
+# ── 旋转（基础序列，不依赖 Zbb）：rol(a,n) = (a<<n)|(a>>(64-n))；
+#    `sub X0, n` 取 -n（移位量低 6 位 = 64-n；n=0 时 srl 移位 0 正确）──
+
+[[lowering]]
+op = "Rotl"
+insts = [
+    "sll {t}, {0}, {1}",
+    "sub {t3}, X0, {1}",
+    "srl {t2}, {0}, {t3}",
+    "or {out}, {t}, {t2}",
+]
+
+[[lowering]]
+op = "Rotr"
+insts = [
+    "srl {t}, {0}, {1}",
+    "sub {t3}, X0, {1}",
+    "sll {t2}, {0}, {t3}",
+    "or {out}, {t}, {t2}",
+]
+
+# ── 扩展/截断：riscv 的 i32 值经 W 变体/ADDI 天然 64 位符号扩展 →
+#    Sextend(i32→i64) = mv；Uextend 按源宽 andi 掩码（8/16）或
+#    slli+srli 清零高 32 位（32→64）；Ireduce 按结果宽截断──
+
+[[lowering]]
+op = "Sextend"
+insts = ["mv {out}, {0}"]
+
+[[lowering]]
+op = "Uextend"
+when = { eq = ["rs1_width", 8] }
+insts = ["andi {out}, {0}, 255"]
+
+[[lowering]]
+op = "Uextend"
+when = { eq = ["rs1_width", 16] }
+insts = ["andi {out}, {0}, 65535"]
+
+[[lowering]]
+op = "Uextend"
+insts = ["slli {out}, {0}, 32", "srli {out}, {out}, 32"]
+
+[[lowering]]
+op = "Ireduce"
+when = { eq = ["rd", 8] }
+insts = ["andi {out}, {0}, 255"]
+
+[[lowering]]
+op = "Ireduce"
+when = { eq = ["rd", 16] }
+insts = ["andi {out}, {0}, 65535"]
+
+[[lowering]]
+op = "Ireduce"
+insts = ["slli {out}, {0}, 32", "srli {out}, {out}, 32"]
+
+# ── Abs：|x| = (x ^ (x>>63)) - (x>>63)（64 位；i32 值符号扩展后正确）──
+
+[[lowering]]
+op = "Abs"
+insts = [
+    "srai {t}, {0}, 63",
+    "xor {out}, {0}, {t}",
+    "sub {out}, {out}, {t}",
+]
+
+# ── Select(cond, then, else)：cond 为 0/1 → (cond & then) | (!cond & else) ──
+# 掩码法：c<<63>>63 得全0/全1 掩码（QEMU 11.1.0-rc2 的 TCG 对直接
+# and/xori/and/or 序列有 host 寄存器 bug——实测 s8=0；掩码法规避）。
+
+[[lowering]]
+op = "Select"
+insts = [
+    "slli {t1}, {0}, 63",
+    "srai {t1}, {t1}, 63",
+    "and {t2}, {t1}, {1}",
+    "xori {t3}, {t1}, -1",
+    "and {t4}, {t3}, {2}",
+    "or {out}, {t2}, {t4}",
+]
+
+# ── 空指针判断 / Freeze / Trap / Fence ──
+
+[[lowering]]
+op = "IsNull"
+insts = ["sltiu {out}, {0}, 1"]
+
+[[lowering]]
+op = "IsNotNull"
+insts = ["sltu {out}, X0, {0}"]
+
+[[lowering]]
+op = "Freeze"
+insts = ["mv {out}, {0}"]
+
+[[lowering]]
+op = "Trap"
+insts = ["ebreak"]
+
+[[lowering]]
+op = "Fence"
+insts = ["fence"]
+
+# ── Alloca：栈槽地址（current_alloca_offset；基准 X8 = fp 与 StackAddr 一致）──
+
+[[lowering]]
+op = "Alloca"
+insts = ["addi {out}, X8, {alloca}"]
+
+# ── 溢出 6 条（{out}=值、{out2}=flag；32 位用例）。riscv 无标志位 →
+#    比较序列。i32 值符号扩展后 bit63 = bit31，64 位 slti 检测 32 位符号 ✓。──
+
+[[lowering]]
+op = "UaddOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "slli {t1}, {0}, 32",
+    "srli {t1}, {t1}, 32",
+    "slli {t2}, {1}, 32",
+    "srli {t2}, {t2}, 32",
+    "add {out}, {t1}, {t2}",
+    "srli {t3}, {out}, 32",
+    "sltu {out2}, X0, {t3}",
+]
+
+[[lowering]]
+op = "UsubOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "sub {out}, {0}, {1}",
+    "sltu {out2}, {0}, {1}",
+]
+
+[[lowering]]
+op = "SaddOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "addw {out}, {0}, {1}",
+    "slli {t1}, {out}, 32",
+    "srli {t1}, {t1}, 63",
+    "slli {t2}, {0}, 32",
+    "srli {t2}, {t2}, 63",
+    "slli {t3}, {1}, 32",
+    "srli {t3}, {t3}, 63",
+    "or {t4}, {t2}, {t3}",
+    "xori {t4}, {t4}, 1",
+    "and {t4}, {t4}, {t1}",
+    "and {t5}, {t2}, {t3}",
+    "xori {t1}, {t1}, 1",
+    "and {t5}, {t5}, {t1}",
+    "or {out2}, {t4}, {t5}",
+]
+
+[[lowering]]
+op = "SsubOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "subw {out}, {0}, {1}",
+    "slli {t1}, {out}, 32",
+    "srli {t1}, {t1}, 63",
+    "slli {t2}, {0}, 32",
+    "srli {t2}, {t2}, 63",
+    "slli {t3}, {1}, 32",
+    "srli {t3}, {t3}, 63",
+    "xori {t4}, {t2}, 1",
+    "and {t4}, {t4}, {t3}",
+    "and {t4}, {t4}, {t1}",
+    "xori {t5}, {t3}, 1",
+    "and {t5}, {t2}, {t5}",
+    "xori {t1}, {t1}, 1",
+    "and {t5}, {t5}, {t1}",
+    "or {out2}, {t4}, {t5}",
+]
+
+[[lowering]]
+op = "SmulOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "mulw {out}, {0}, {1}",
+    "mul {t1}, {0}, {1}",
+    "sub {t2}, {t1}, {out}",
+    "sltu {out2}, X0, {t2}",
+]
+
+[[lowering]]
+op = "UmulOverflow"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "slli {t1}, {0}, 32",
+    "srli {t1}, {t1}, 32",
+    "slli {t2}, {1}, 32",
+    "srli {t2}, {t2}, 32",
+    "mul {out}, {t1}, {t2}",
+    "srli {t3}, {out}, 32",
+    "sltu {out2}, X0, {t3}",
+]
+
+# ── 饱和（32 位）：UaddSat 进位时 = 0xFFFFFFFF；UsubSat 借位时 = 0 ──
+
+[[lowering]]
+op = "UaddSat"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "slli {t1}, {0}, 32",
+    "srli {t1}, {t1}, 32",
+    "slli {t2}, {1}, 32",
+    "srli {t2}, {t2}, 32",
+    "add {t3}, {t1}, {t2}",
+    "srli {t4}, {t3}, 32",
+    "sltu {t4}, X0, {t4}",
+    "slli {t4}, {t4}, 63",
+    "srai {t4}, {t4}, 63",
+    "xori {t5}, {t4}, -1",
+    "and {t5}, {t5}, {t3}",
+    "or {out}, {t4}, {t5}",
+    "slli {out}, {out}, 32",
+    "srli {out}, {out}, 32",
+]
+
+[[lowering]]
+op = "UsubSat"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "sub {t1}, {0}, {1}",
+    "sltu {t2}, {0}, {1}",
+    "slli {t2}, {t2}, 63",
+    "srai {t2}, {t2}, 63",
+    "xori {t3}, {t2}, -1",
+    "and {out}, {t3}, {t1}",
+    "slli {out}, {out}, 32",
+    "srli {out}, {out}, 32",
+]

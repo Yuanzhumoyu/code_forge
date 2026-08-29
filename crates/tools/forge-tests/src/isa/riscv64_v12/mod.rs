@@ -8,7 +8,8 @@
 //! 产物不可本机执行）→ 此时矩阵全 Skip（qemu_exec 冒烟测试独立降级）。
 
 /// riscv64_v12 的矩阵能力集：与 TOML `[[lowering]]` 实际实现的 op 对齐
-/// （整数基础 + 内存 + 常量 + Call/递归 + 分支；无浮点/向量/溢出/位操作变体）。
+/// （整数基础 + 内存 + 常量 + Call/递归 + 分支 + 除法/取模；无浮点/向量/
+/// 溢出/位操作变体）。
 pub const CAPS: &[&str] = &[
     "Iconst",
     "Iadd",
@@ -22,6 +23,35 @@ pub const CAPS: &[&str] = &[
     "Sshr",
     "Bnot",
     "Icmp",
+    "Sdiv",
+    "Udiv",
+    "Srem",
+    "Urem",
+    "Smin",
+    "Smax",
+    "Umin",
+    "Umax",
+    "Rotl",
+    "Rotr",
+    "Sextend",
+    "Uextend",
+    "Ireduce",
+    "Abs",
+    "Fence",
+    "Trap",
+    "Freeze",
+    "IsNull",
+    "IsNotNull",
+    "Alloca",
+    "Select",
+    "SaddOverflow",
+    "UaddOverflow",
+    "SsubOverflow",
+    "UsubOverflow",
+    "SmulOverflow",
+    "UmulOverflow",
+    "UaddSat",
+    "UsubSat",
     "Copy",
     "Load",
     "Store",

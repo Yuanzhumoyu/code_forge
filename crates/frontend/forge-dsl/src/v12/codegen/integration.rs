@@ -3130,15 +3130,19 @@ fn gen_lowering_insts(
                         )
                     }
                     "{iconst_hi20}" if slot.kind == OperandKind::Imm => {
-                        // RISC-V LUI 高 20 位：值 >> 12（带符号舍入；addi 的低 12 位
-                        // 有符号，若低 12 位 >= 0x800 则高 20 位需 +1 避免双符号）
+                        // RISC-V LUI 高 20 位：imm20 位域（LUI 槽）的散布 piece
+                        // 是 `((v >> 12) & 0xFFFFF) << 12`（提取 v 的 bits 31:12）——
+                        // 此处**只做 +0x800 舍入**（addi 的低 12 位有符号，若低
+                        // 12 位 >= 0x800 则高 20 位需 +1 避免双符号），右移交给
+                        // piece。此前表达式自带 >>12 造成双重右移（i32::MAX 的
+                        // hi20=0x80000 被错编为 0x80 → lui 0x80000 而非 0x80000000）。
                         (
                             quote! {
                                 ({
                                     let __v = ctx.constant_pool.as_ref()
                                         .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
                                         .unwrap_or(0);
-                                    (((__v + 0x800) >> 12) & 0xFFFFF) as i64
+                                    __v + 0x800
                                 })
                             },
                             quote! { 0u32 },
