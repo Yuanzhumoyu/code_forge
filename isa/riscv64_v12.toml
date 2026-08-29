@@ -2191,3 +2191,76 @@ insts = [
 ]
 
 
+
+# ── Nop / Undef / Poison / Bitreverse ──
+# Undef/Poison 语义自由 → 返回 0（xor 清零，与 x86 一致）。
+
+[[lowering]]
+op = "Nop"
+insts = ["nop"]
+
+[[lowering]]
+op = "Undef"
+insts = ["xor {out}, {out}, {out}"]
+
+[[lowering]]
+op = "Poison"
+insts = ["xor {out}, {out}, {out}"]
+
+# Bitreverse：SWAR 分治（Hacker's Delight）——每步 (x & mask)<<k | (x>>k) & mask，
+# 掩码逐次构造用完即弃（不长期占用临时）。5 级 + 32 位交换。
+
+[[lowering]]
+op = "Bitreverse"
+insts = [
+    "srli {t1}, {0}, 1",
+    "lui {t2}, 0x55555000",
+    "addi {t2}, {t2}, 0x555",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "slli {t3}, {0}, 1",
+    "and {t3}, {t3}, {t2}",
+    "or {t}, {t1}, {t3}",
+    "srli {t1}, {t}, 2",
+    "lui {t2}, 0x33333000",
+    "addi {t2}, {t2}, 0x333",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "slli {t3}, {t}, 2",
+    "and {t3}, {t3}, {t2}",
+    "or {t}, {t1}, {t3}",
+    "srli {t1}, {t}, 4",
+    "lui {t2}, 0xf0f1000",
+    "addi {t2}, {t2}, -0xf1",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "slli {t3}, {t}, 4",
+    "and {t3}, {t3}, {t2}",
+    "or {t}, {t1}, {t3}",
+    "srli {t1}, {t}, 8",
+    "lui {t2}, 0x0ff0000",
+    "addi {t2}, {t2}, 0xff",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "slli {t3}, {t}, 8",
+    "and {t3}, {t3}, {t2}",
+    "or {t}, {t1}, {t3}",
+    "srli {t1}, {t}, 16",
+    # mask = 0x0000FFFF0000FFFF：0x0000FFFF = lui 0x10 + addi -1
+    # （0xFFFF 低 12 位 0xFFF 有符号 = -1，lui 需 +1 进位 0x10000）
+    "lui {t2}, 0x10000",
+    "addi {t2}, {t2}, -1",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "slli {t3}, {t}, 16",
+    "and {t3}, {t3}, {t2}",
+    "or {t}, {t1}, {t3}",
+    "srli {t1}, {t}, 32",
+    "slli {t}, {t}, 32",
+    "or {out}, {t}, {t1}",
+]

@@ -552,11 +552,12 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 | 46 | **D**：GetElementPtr（expand_geps 编译期展开为 mul+add，无需 TOML 规则）+ SaddSat/SsubSat（复用溢出检测 + 掩码饱和值选择） | ✅ | compiler.rs expand_geps + lowering |
 | 47 | **D**：Iconst i64 完整 64 位路径（新增 {iconst_hi32_hi20/lo12}/{iconst_lo32_hi20/lo12}；原 lui+addi 只支持 32 位，大 i64 常量错编） | ✅ | gen_lowering_attrs + lowering |
 | 48 | **F**：Clz/Ctz/Popcnt SWAR 软件序列（Hacker's Delight；QEMU rc 无 Zbb） | ✅ | lowering（lui/addi/slli/or 掩码 + 分治计数） |
+| 49 | **F+**：Nop/Undef/Poison（xor 清零）+ Bitreverse（SWAR 分治 5 级 + 32 位交换） | ✅ | lowering |
 
 ### 已知限制（诚实记录）
 
-- riscv 矩阵 **122 passed / 64 skipped / 0 failed**（值域 ±32767 过滤大值；
-  Bswap/Bitreverse/向量未实现 → Skip）。
+- riscv 矩阵 **126 passed / 60 skipped / 0 failed**（值域 ±32767 过滤大值；
+  向量/Bswap/CallIndirect 未实现 → Skip）。
   执行链：`exec_riscv64(_module)` → 裸机 ELF + sifive_test（16 位退出码，
   `sign_extend_exit` 符号扩展回 i64）。
 - **QEMU 11.1.0-rc2（v11.0.92）的 TCG 对特定 and/xori/and/or 寄存器序列有 bug**

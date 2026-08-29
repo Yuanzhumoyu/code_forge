@@ -1,0 +1,6 @@
+riscv v12: Nop/Undef/Poison + Bitreverse（SWAR 分治）
+
+- Nop/Undef/Poison lowering（xor 清零；RISC-V XOR 三操作数）
+- Bitreverse：SWAR 分治 5 级掩码 + 32 位高低交换（Hacker's Delight）
+- 掩码构造修正：0x0000FFFF = lui 0x10000 + addi -1（0xFFF 有符号进位）
+- 矩阵 122→126 passed（+4：nop/undef/poison/bitreverse_msb）
