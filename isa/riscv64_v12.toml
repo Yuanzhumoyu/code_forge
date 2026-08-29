@@ -1318,6 +1318,21 @@ insts = ["mul {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Iconst"
+when = { eq = ["rd", 64] }
+insts = [
+    "lui {t1}, {iconst_hi32_hi20}",
+    "addi {t1}, {t1}, {iconst_hi32_lo12}",
+    "slli {t1}, {t1}, 32",
+    "lui {t2}, {iconst_lo32_hi20}",
+    # lo32 LUI bit19=1 符号扩展污染高 32 位 → slli32+srli32 截断
+    "slli {t2}, {t2}, 32",
+    "srli {t2}, {t2}, 32",
+    "addi {t2}, {t2}, {iconst_lo32_lo12}",
+    "or {out}, {t1}, {t2}",
+]
+
+[[lowering]]
+op = "Iconst"
 insts = ["lui {out}, {iconst_hi20}", "addi {out}, {out}, {iconst_lo12}"]
 
 [[lowering]]
@@ -1983,3 +1998,196 @@ insts = [
     "sc.w {t5}, {0}, {t4}",
     "mv {out}, {t}",
 ]
+
+# ── 有符号饱和（32 位）：溢出检测（addw/subw 截断 + 符号位逻辑）+
+#    掩码选择饱和值（正溢出 → 0x7FFFFFFF、负溢出 → 0x80000000 符号扩展）。
+#    a 的符号位决定饱和方向：a_sign=0（正）→ 正饱和、a_sign=1 → 负饱和。
+#    与 SaddOverflow/SsubOverflow 同源的位逻辑（slli32+srli63 取 bit31）。
+[[lowering]]
+op = "SaddSat"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "addw {t}, {0}, {1}",
+    "slli {t1}, {t}, 32",
+    "srli {t1}, {t1}, 63",
+    "slli {t2}, {0}, 32",
+    "srli {t2}, {t2}, 63",
+    "slli {t3}, {1}, 32",
+    "srli {t3}, {t3}, 63",
+    "xor {t4}, {t2}, {t3}",
+    "xori {t4}, {t4}, 1",
+    "xor {t5}, {t1}, {t2}",
+    "and {t4}, {t4}, {t5}",
+    "slli {t4}, {t4}, 63",
+    "srai {t4}, {t4}, 63",
+    "lui {t3}, 0x80000",
+    "xori {t5}, {t3}, -1",
+    "slli {t2}, {t2}, 63",
+    "srai {t2}, {t2}, 63",
+    "and {t3}, {t3}, {t2}",
+    "xori {t2}, {t2}, -1",
+    "and {t5}, {t5}, {t2}",
+    "or {t3}, {t3}, {t5}",
+    "and {t3}, {t3}, {t4}",
+    "xori {t4}, {t4}, -1",
+    "and {t}, {t}, {t4}",
+    "or {out}, {t}, {t3}",
+]
+
+[[lowering]]
+op = "SsubSat"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "subw {t}, {0}, {1}",
+    "slli {t1}, {t}, 32",
+    "srli {t1}, {t1}, 63",
+    "slli {t2}, {0}, 32",
+    "srli {t2}, {t2}, 63",
+    "slli {t3}, {1}, 32",
+    "srli {t3}, {t3}, 63",
+    "xor {t4}, {t2}, {t3}",
+    "xor {t5}, {t1}, {t2}",
+    "and {t4}, {t4}, {t5}",
+    "slli {t4}, {t4}, 63",
+    "srai {t4}, {t4}, 63",
+    "lui {t3}, 0x80000",
+    "xori {t5}, {t3}, -1",
+    "slli {t2}, {t2}, 63",
+    "srai {t2}, {t2}, 63",
+    "and {t3}, {t3}, {t2}",
+    "xori {t2}, {t2}, -1",
+    "and {t5}, {t5}, {t2}",
+    "or {t3}, {t3}, {t5}",
+    "and {t3}, {t3}, {t4}",
+    "xori {t4}, {t4}, -1",
+    "and {t}, {t}, {t4}",
+    "or {out}, {t}, {t3}",
+]
+
+# ── 位操作软件序列（RV64GC 无 Zbb；SWAR 无分支）──
+# Popcnt：分治计数（Hacker's Delight）。
+# Clz：先把最高位 1 向下传播（t |= t>>1..32）→ popcnt(t) = 64 - clz。
+# Ctz：ctz(x) = popcnt((x & -x) - 1)。
+
+[[lowering]]
+op = "Popcnt"
+insts = [
+    "add {t}, {0}, X0",
+    "srli {t1}, {t}, 1",
+    "lui {t2}, 0x55555000",
+    "addi {t2}, {t2}, 0x555",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "sub {t}, {t}, {t1}",
+    "lui {t2}, 0x33333000",
+    "addi {t2}, {t2}, 0x333",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t}, {t2}",
+    "srli {t3}, {t}, 2",
+    "and {t3}, {t3}, {t2}",
+    "add {t}, {t1}, {t3}",
+    "lui {t2}, 0xf0f1000",
+    "addi {t2}, {t2}, 0xf0f",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "srli {t1}, {t}, 4",
+    "add {t}, {t}, {t1}",
+    "and {t}, {t}, {t2}",
+    "srli {t1}, {t}, 8",
+    "add {t}, {t}, {t1}",
+    "srli {t1}, {t}, 16",
+    "add {t}, {t}, {t1}",
+    "srli {t1}, {t}, 32",
+    "add {t}, {t}, {t1}",
+    "andi {out}, {t}, 0x7F",
+]
+
+[[lowering]]
+op = "Clz"
+insts = [
+    "add {t}, {0}, X0",
+    "srli {t1}, {t}, 1",
+    "or {t}, {t}, {t1}",
+    "srli {t1}, {t}, 2",
+    "or {t}, {t}, {t1}",
+    "srli {t1}, {t}, 4",
+    "or {t}, {t}, {t1}",
+    "srli {t1}, {t}, 8",
+    "or {t}, {t}, {t1}",
+    "srli {t1}, {t}, 16",
+    "or {t}, {t}, {t1}",
+    "srli {t1}, {t}, 32",
+    "or {t}, {t}, {t1}",
+    "srli {t1}, {t}, 1",
+    "lui {t2}, 0x55555000",
+    "addi {t2}, {t2}, 0x555",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "sub {t}, {t}, {t1}",
+    "lui {t2}, 0x33333000",
+    "addi {t2}, {t2}, 0x333",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t}, {t2}",
+    "srli {t3}, {t}, 2",
+    "and {t3}, {t3}, {t2}",
+    "add {t}, {t1}, {t3}",
+    "lui {t2}, 0xf0f1000",
+    "addi {t2}, {t2}, 0xf0f",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "srli {t1}, {t}, 4",
+    "add {t}, {t}, {t1}",
+    "and {t}, {t}, {t2}",
+    "srli {t1}, {t}, 8",
+    "add {t}, {t}, {t1}",
+    "srli {t1}, {t}, 16",
+    "add {t}, {t}, {t1}",
+    "srli {t1}, {t}, 32",
+    "add {t}, {t}, {t1}",
+    "andi {t}, {t}, 0x7F",
+    "addi {t1}, X0, 64",
+    "sub {out}, {t1}, {t}",
+]
+
+[[lowering]]
+op = "Ctz"
+insts = [
+    "sub {t}, X0, {0}",
+    "and {t}, {0}, {t}",
+    "addi {t}, {t}, -1",
+    "srli {t1}, {t}, 1",
+    "lui {t2}, 0x55555000",
+    "addi {t2}, {t2}, 0x555",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t1}, {t2}",
+    "sub {t}, {t}, {t1}",
+    "lui {t2}, 0x33333000",
+    "addi {t2}, {t2}, 0x333",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "and {t1}, {t}, {t2}",
+    "srli {t3}, {t}, 2",
+    "and {t3}, {t3}, {t2}",
+    "add {t}, {t1}, {t3}",
+    "lui {t2}, 0xf0f1000",
+    "addi {t2}, {t2}, 0xf0f",
+    "slli {t3}, {t2}, 32",
+    "or {t2}, {t2}, {t3}",
+    "srli {t1}, {t}, 4",
+    "add {t}, {t}, {t1}",
+    "and {t}, {t}, {t2}",
+    "srli {t1}, {t}, 8",
+    "add {t}, {t}, {t1}",
+    "srli {t1}, {t}, 16",
+    "add {t}, {t}, {t1}",
+    "srli {t1}, {t}, 32",
+    "add {t}, {t}, {t1}",
+    "andi {out}, {t}, 0x7F",
+]
+
+

@@ -549,11 +549,14 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 | 43 | **C**：QEMU module 打包布局数据段（globals init 字节 + "G{id}" 符号；**data_off 8 对齐**——AMO 自然对齐，代码长非 8 倍数时 misaligned_store 挂起） | ✅ | exec_riscv64_module + executor.exec_module 签名扩展 |
 | 44 | **C**：原子族——AMOADD/AMOSWAP（funct5=0/1 修正；v10 迁移的 offset25 错把 aq/rl 包进 funct5 → offset27）+ AtomicRmw（imm0 分派 Xchg/Add/Sub=neg+amoadd） | ✅ | isa/riscv64_v12.toml + lowering |
 | 45 | **C**：Cmpxchg **无分支** LR/SC 序列（掩码选择写入值；单线程 QEMU sc 不失败无需重试循环，模板层无函数内 label） | ✅ | lowering（lr.d/xor/sltu/slli/srai/xori/and/or/sc.d） |
+| 46 | **D**：GetElementPtr（expand_geps 编译期展开为 mul+add，无需 TOML 规则）+ SaddSat/SsubSat（复用溢出检测 + 掩码饱和值选择） | ✅ | compiler.rs expand_geps + lowering |
+| 47 | **D**：Iconst i64 完整 64 位路径（新增 {iconst_hi32_hi20/lo12}/{iconst_lo32_hi20/lo12}；原 lui+addi 只支持 32 位，大 i64 常量错编） | ✅ | gen_lowering_attrs + lowering |
+| 48 | **F**：Clz/Ctz/Popcnt SWAR 软件序列（Hacker's Delight；QEMU rc 无 Zbb） | ✅ | lowering（lui/addi/slli/or 掩码 + 分治计数） |
 
 ### 已知限制（诚实记录）
 
-- riscv 矩阵 **113 passed / 73 skipped / 0 failed**（值域 ±32767 过滤大值；
-  SaddSat/SsubSat/Clz/Ctz/Bitreverse/向量未实现 → Skip）。
+- riscv 矩阵 **122 passed / 64 skipped / 0 failed**（值域 ±32767 过滤大值；
+  Bswap/Bitreverse/向量未实现 → Skip）。
   执行链：`exec_riscv64(_module)` → 裸机 ELF + sifive_test（16 位退出码，
   `sign_extend_exit` 符号扩展回 i64）。
 - **QEMU 11.1.0-rc2（v11.0.92）的 TCG 对特定 and/xori/and/or 寄存器序列有 bug**
@@ -584,5 +587,10 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
   v10 迁移写成 offset 25 会吞掉 aq/rl 位）；QEMU 对 AMO 未对齐地址报
   misaligned_store（挂起）→ 数据段必须 8 字节对齐；Cmpxchg 用无分支
   LR/SC（模板层无函数内 label；单线程 QEMU 下 sc 不失败）。
+- **位操作调试实录**：TOML 里 LUI 字面量**必须写预移位值**（imm20<<12，
+  如 0x55555 → 0x55555000）——imm20 piece 自带 shift=12，写裸 imm20 会被
+  右移错编（0x55555 → 0x55000）；lo12 超出 ±2047 时 lui 需 +1 进位
+  （0x0F0F0F0F 用 lui 0xF0F1 + addi -0xF1）；i64 常量需 64 位 Iconst 路径
+  （lui/addi/slli/lui/addi/or，lo32 LUI bit19=1 符号扩展截断）。
 - G/H 未开工（见任务清单：G = forge-rustc 向量、H = aarch64_v12 定宽 +
   demo_be 大端）。

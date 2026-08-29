@@ -1,0 +1,13 @@
+riscv v12: 阶段 D+F——GEP + 有符号饱和 + Iconst i64 + Clz/Ctz/Popcnt SWAR
+
+- GetElementPtr：expand_geps 编译期展开（无需 TOML 规则，CAPS 接入）
+- SaddSat/SsubSat（32 位）：复用溢出检测位逻辑 + 掩码饱和值选择
+  （正溢出 0x7FFFFFFF / 负溢出 0x80000000 符号扩展，无分支）
+- Iconst i64 完整 64 位路径：新增 {iconst_hi32_hi20/lo12}/
+  {iconst_lo32_hi20/lo12} 占位符（原 lui+addi 只支持 32 位，大 i64
+  常量错编——popcnt 用例的 0x0F0F.. 被编成 0x0F0F0F0F）
+- Clz/Ctz/Popcnt：SWAR 分治软件序列（无 Zbb）；Clz=传播+popcnt、
+  Ctz=popcnt((x&-x)-1)
+- LUI 字面量预移位修正：imm20 piece 自带 shift=12，0x55555 须写
+  0x55555000；lo12 超 ±2047 时 lui +1 进位（0x0F0F0F0F → lui 0xF0F1）
+- 矩阵 113→122 passed（+9：GEP 2 + 饱和 2 + clz 2 + ctz 2 + popcnt 1）

@@ -3199,6 +3199,64 @@ fn gen_lowering_insts(
                             quote! { 0u32 },
                         )
                     }
+                    "{iconst_hi32_hi20}" if slot.kind == OperandKind::Imm => {
+                        // Iconst i64 高 32 位的 LUI 高 20 位（+0x800 舍入；
+                        // 右移交给 imm20 piece（shift=12），同 {iconst_hi20}）
+                        (
+                            quote! {
+                                ({
+                                    let __v = ctx.constant_pool.as_ref()
+                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                        .unwrap_or(0);
+                                    ((__v >> 32) as i64) + 0x800
+                                })
+                            },
+                            quote! { 0u32 },
+                        )
+                    }
+                    "{iconst_hi32_lo12}" if slot.kind == OperandKind::Imm => {
+                        (
+                            quote! {
+                                ({
+                                    let __v = ctx.constant_pool.as_ref()
+                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                        .unwrap_or(0);
+                                    let __hi32 = (__v >> 32) as i64;
+                                    let __lo = (__hi32 << 52 >> 52) as i32;
+                                    (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
+                                })
+                            },
+                            quote! { 0u32 },
+                        )
+                    }
+                    "{iconst_lo32_hi20}" if slot.kind == OperandKind::Imm => {
+                        (
+                            quote! {
+                                ({
+                                    let __v = ctx.constant_pool.as_ref()
+                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                        .unwrap_or(0);
+                                    (__v as i64 & 0xFFFFFFFF) + 0x800
+                                })
+                            },
+                            quote! { 0u32 },
+                        )
+                    }
+                    "{iconst_lo32_lo12}" if slot.kind == OperandKind::Imm => {
+                        (
+                            quote! {
+                                ({
+                                    let __v = ctx.constant_pool.as_ref()
+                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                        .unwrap_or(0);
+                                    let __lo32 = (__v as i64 & 0xFFFFFFFF);
+                                    let __lo = (__lo32 << 52 >> 52) as i32;
+                                    (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
+                                })
+                            },
+                            quote! { 0u32 },
+                        )
+                    }
                     "{fconst}" if slot.kind == OperandKind::Imm => {
                         // 常量池浮点位模式（Fconst；u64 位模式 → movabs 立即数）
                         (
@@ -3527,7 +3585,9 @@ fn lowering_token_kind(op: &str) -> &'static str {
         }
         // 常量/立即数 token
         "{iconst}" | "{fconst}" | "{off}" | "{alloca}" | "{global}" | "{imm0}" | "{imm0_sub4}"
-        | "{iconst_hi20}" | "{iconst_lo12}" | "{fconst_hi32_hi20}" | "{fconst_hi32_lo12}"
+        | "{iconst_hi20}" | "{iconst_lo12}" | "{iconst_hi32_hi20}" | "{iconst_hi32_lo12}"
+        | "{iconst_lo32_hi20}" | "{iconst_lo32_lo12}"
+        | "{fconst_hi32_hi20}" | "{fconst_hi32_lo12}"
         | "{fconst_lo32_hi20}" | "{fconst_lo32_lo12}" => "imm",
         _ if inner.starts_with("{shufps") || inner.starts_with("{vconst") => "imm",
         // 条件码
