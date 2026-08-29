@@ -1682,31 +1682,37 @@ fn gen_emit_pseudo(
                         ));
                     }
                 };
-                let regs: Vec<String> = if name == "push_callee" {
-                    callee.gpr.clone()
+                // **按需保存**（阶段 G）：只 push/pop 实际分配到的 callee-saved
+                //（regalloc 的 callee_saved_to_save；不再全量保存 TOML 列表）。
+                // 槽偏移按正向声明序：push 正向遍历（saved[k]→槽 k）；
+                // pop **逆序遍历 + 槽 n-1-k**：恢复的寄存器 = 正向[n-1-k]，
+                // 槽也必须 = n-1-k（reg 与槽同源）——否则 pop 读错槽
+                //（实测返回值错/挂起）。
+                let push = name == "push_callee";
+                let (iter, k_expr) = if push {
+                    (quote! { __saved.iter() }, quote! { __k as i64 })
                 } else {
-                    callee.gpr.iter().rev().cloned().collect()
+                    (
+                        quote! { __saved.iter().rev() },
+                        quote! { __n as i64 - 1 - __k as i64 },
+                    )
                 };
-                let n = callee.gpr.len();
-                let mut stmts = Vec::new();
-                for (k, r) in regs.iter().enumerate() {
-                    let reg = format_ident!("{r}");
-                    // 偏移按**正向声明序**（push 第 k 个 ↔ 槽 k；pop 逆序恢复
-                    // 时第 k 个 = 正向第 n-1-k 个）——否则 pop 读错槽。
-                    let idx = if name == "push_callee" { k } else { n - 1 - k };
-                    let off_val: i64 = ((idx + 1) * 8) as i64;
-                    let off = quote! { __frame_size as i64 - #fp_push - #off_val };
-                    stmts.push(quote! {
+                return Ok(quote! {
+                    let __saved = __rm.callee_saved_to_save.clone();
+                    let __n = __saved.len();
+                    for (__k, __preg) in #iter.enumerate() {
+                        let __reg = Reg::from_index(__preg.num, __preg.class);
+                        let __off_val: i64 = (#k_expr + 1) * 8;
+                        let __off = __frame_size as i64 - #fp_push - __off_val;
                         let __bytes = encode(&Inst::#vn {
-                            #f_reg: Reg::#reg,
+                            #f_reg: __reg,
                             #f_base: Reg::#sp,
-                            #f_imm: #off,
+                            #f_imm: __off,
                         })
                         .map_err(|e| crate::IrError::Emit(e))?;
                         __sink.put_bytes(&__bytes);
-                    });
-                }
-                return Ok(quote! { #(#stmts)* });
+                    }
+                });
             }
             let regs: Vec<String> = if name == "push_callee" {
                 callee.gpr.clone()

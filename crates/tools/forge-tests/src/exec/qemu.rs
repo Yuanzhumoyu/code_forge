@@ -235,6 +235,14 @@ fn run_qemu(elf: &[u8], label: &str) -> Result<u64, String> {
     if let Ok(dump) = std::env::var("FORGE_QEMU_DUMP") {
         let _ = std::fs::write(&dump, elf);
     }
+    if let Ok(dp) = std::env::var("FGE_QEMU_DUMP") {
+        let dir = std::env::temp_dir();
+        static S2: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = S2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let p = dir.join(format!("fge3_{label}_{}_{}.elf", std::process::id(), n));
+        let _ = std::fs::write(&p, elf);
+        let _ = dp;
+    }
     let dir = std::env::temp_dir();
     // 并行测试线程可能同 pid + 同 label → 文件名冲突互相覆盖；加原子序号。
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

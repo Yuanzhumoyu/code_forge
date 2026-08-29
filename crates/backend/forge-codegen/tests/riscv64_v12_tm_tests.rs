@@ -54,17 +54,25 @@ fn tm_compile_add() {
     eprintln!("add code ({} bytes): {:02x?}", cf.code.len(), cf.code);
     assert!(!cf.code.is_empty());
     // prologue: addi sp, sp, -112（min_frame_bytes=104 覆盖 callee_saved
-    // 保存区 + @push_callee 11 个 s 系保存）→ 指令字 0xF9010113
+    // 保存区 + @push_callee 按需保存）→ 指令字 0xF9010113
     assert!(
         find_word(&cf.code, 0xF901_0113),
         "prologue addi sp,sp,-112: {:02x?}",
         cf.code
     );
-    // callee_saved 保存：sd x9, 88(sp) → 0x13C4 邻 88：sw 位段 imm=88
-    //（0x40: 04913c23 = sd x9, 88(x2)）——按位段校验：rs2=9(x9)、imm=88
+    // **按需保存**（阶段 G）：callee_saved 只保存实际分配到的 s 系——
+    // add(a,b) 参数被 regalloc 分配到 s 系（跨 epilogue j 跳转存活）→
+    // 保存 ra/fp + 3 个 s 系（s9/s10/s11，视分配而定）共 ≤5 个 SD。
+    // 全量 11 个 s 系时代的 13 个 SD（+ra/fp）断言已失效；此处校验
+    // **SD 数量显著少于全量**（按需保存生效）。
+    let sd_count = cf
+        .code
+        .windows(4)
+        .filter(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & 0x7F == 0x23)
+        .count();
     assert!(
-        find_word(&cf.code, 0x0491_3C23),
-        "应保存 x9: {:02x?}",
+        (4..=8).contains(&sd_count),
+        "按需保存：SD 应在 4-8 之间（ra/fp + 少量 s 系，< 全量 13），实际 {sd_count}: {:02x?}",
         cf.code
     );
     // ADD 指令（opcode 0x33）应存在

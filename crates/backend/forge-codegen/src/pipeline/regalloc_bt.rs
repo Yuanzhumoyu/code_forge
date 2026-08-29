@@ -741,7 +741,11 @@ impl<'a> BtState<'a> {
             0
         };
 
-        // 收集 callee-saved 寄存器
+        // 收集 callee-saved 寄存器：**只列实际分配到的**（assignments 中出现
+        // 的 callee-saved，按声明序）——否则每函数全量保存 11 个 s 系，
+        // 小函数帧也 ≥104B（阶段 G 按需保存；未用的 s 系无需 push/pop）。
+        // **class 通配**：i32 值以 GPR(4) 类分配（num 仍 27=s11），过滤只看
+        // num——否则 GPR(4) 的 s11 漏保存 → 递归覆盖（fib 实测 got -15）。
         let callee_saved_pregs: Vec<PReg> = self
             .config
             .classes
@@ -750,6 +754,7 @@ impl<'a> BtState<'a> {
                 cfg.allocatable
                     .iter()
                     .filter(|r| self.config.callee_saved.contains(r))
+                    .filter(|r| self.assignments.values().any(|p| p.num == **r))
                     .map(|&r| PReg::new(r, self.config.main_gpr_class))
                     .collect()
             })

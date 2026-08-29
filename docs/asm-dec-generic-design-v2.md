@@ -553,6 +553,7 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 | 47 | **D**：Iconst i64 完整 64 位路径（新增 {iconst_hi32_hi20/lo12}/{iconst_lo32_hi20/lo12}；原 lui+addi 只支持 32 位，大 i64 常量错编） | ✅ | gen_lowering_attrs + lowering |
 | 48 | **F**：Clz/Ctz/Popcnt SWAR 软件序列（Hacker's Delight；QEMU rc 无 Zbb） | ✅ | lowering（lui/addi/slli/or 掩码 + 分治计数） |
 | 49 | **F+**：Nop/Undef/Poison（xor 清零）+ Bitreverse（SWAR 分治 5 级 + 32 位交换） | ✅ | lowering |
+| 50 | **G**：@push_callee **按需保存**（regalloc 的 callee_saved_to_save 只列实际分配的 s 系；SD/LD 从 13 个降到实际数；**class 通配**——i32 值以 GPR(4) 分配仍按 num 计入，否则 fib 递归 got -15） | ✅ | regalloc_bt + gen_emit_pseudo（运行时遍历） |
 
 ### 已知限制（诚实记录）
 
@@ -568,9 +569,9 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 - riscv 跨函数 Call/递归（call_cross_function=42、call_recursive_fib=5、
   call_recursive_fib_slot=2、call_chain）QEMU 真执行全绿；`RelocPatcher`
   对 encoder 占位 imm（-(FuncRef+1)）先清零位段再写新值（OR 会恒跳 -1）。
-- riscv 每函数 prologue 全量保存 11 个 s 系（@push_callee 无条件）——性能
-  优化（按需保存）留待后续；callee_saved 保存槽在帧内顶部
-  （min_frame_bytes=104 覆盖）。
+- riscv 每函数 prologue **按需保存** callee-saved（阶段 G：regalloc 的
+  `callee_saved_to_save` 只含实际分配的 s 系；帧仍 min_frame_bytes=104 保守）。
+  跨调用存活值放 callee-saved 策略不变；递归（fib 等）真执行全绿。
 - `call_clobbers` 全量列 caller-saved（ra/参数/临时 + 固定用途）——
   跨调用存活值在 call 点 spill；s 系跨调用安全（@push_callee）。
 - clz/ctz/cpop 与 rol/ror 编码重叠（clz rd,rs = rol rd,rs,x0 别名）——
