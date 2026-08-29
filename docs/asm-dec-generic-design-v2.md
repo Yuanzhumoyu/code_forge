@@ -545,11 +545,15 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
 | 39 | **B2+**：浮点编码修正（LLVM 对齐）——FLE/FLT/FEQ funct3=0/1/2、fcvt D 变体 funct7=0x61、FCVT_S_D=0x20/FCVT_D_S=0x21 | ✅ | 同上（原值 funct3=6/4/5、funct7=0x60 错） |
 | 40 | **B2+**：QEMU crt0 置 mstatus.FS=Dirty（`csrrs x0,mstatus,t0`，0x3002A073；原错码 0x3002F073 是 CSRRC 清位） | ✅ | exec/qemu.rs |
 | 41 | **B2+**：Fcmp/Fconst 宽度谓词显式化（无宽度 `cond=N` 规则截胡 32 位分支）+ lo32 LUI 符号扩展截断（bit19=1 → slli32+srli32） | ✅ | isa/riscv64_v12.toml lowering |
+| 42 | **C**：GlobalAddr（auipc+addi PC-relative；encoder 特判 AUIPC_GLOBAL/ADDI_GLOBAL imm<0 → "G{id}" reloc，patcher 按 opcode 0x17/0x13 分写 hi20/lo12） | ✅ | gen_encoder + RiscvRelocPatcher |
+| 43 | **C**：QEMU module 打包布局数据段（globals init 字节 + "G{id}" 符号；**data_off 8 对齐**——AMO 自然对齐，代码长非 8 倍数时 misaligned_store 挂起） | ✅ | exec_riscv64_module + executor.exec_module 签名扩展 |
+| 44 | **C**：原子族——AMOADD/AMOSWAP（funct5=0/1 修正；v10 迁移的 offset25 错把 aq/rl 包进 funct5 → offset27）+ AtomicRmw（imm0 分派 Xchg/Add/Sub=neg+amoadd） | ✅ | isa/riscv64_v12.toml + lowering |
+| 45 | **C**：Cmpxchg **无分支** LR/SC 序列（掩码选择写入值；单线程 QEMU sc 不失败无需重试循环，模板层无函数内 label） | ✅ | lowering（lr.d/xor/sltu/slli/srai/xori/and/or/sc.d） |
 
 ### 已知限制（诚实记录）
 
-- riscv 矩阵 **106 passed / 80 skipped / 0 failed**（值域 ±32767 过滤大值；
-  SaddSat/SsubSat/Clz/Ctz/Bitreverse/GlobalAddr/原子/向量未实现 → Skip）。
+- riscv 矩阵 **113 passed / 73 skipped / 0 failed**（值域 ±32767 过滤大值；
+  SaddSat/SsubSat/Clz/Ctz/Bitreverse/向量未实现 → Skip）。
   执行链：`exec_riscv64(_module)` → 裸机 ELF + sifive_test（16 位退出码，
   `sign_extend_exit` 符号扩展回 i64）。
 - **QEMU 11.1.0-rc2（v11.0.92）的 TCG 对特定 and/xori/and/or 寄存器序列有 bug**
@@ -574,5 +578,11 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
   （FLE/FLT/FEQ=0/1/2，非 6/4/5）与 D 变体 funct7（S|1，fcvt.w.d=0x61）是
   两个易错点；低 32 位 LUI 立即数 bit19=1 时符号扩展污染高 32 位
   （-42.7 的 0x9999A → NaN），fconst 需 slli32+srli32 截断。
+- **GlobalAddr/原子调试实录**：riscv psABI 的 %pcrel_hi/%pcrel_lo **同以
+  auipc 指令地址为分母**——addi 的 site 比 auipc 大 4，patcher 需 +4 对齐
+  （否则目标偏 4 字节）；AMO 的 funct5 位段是 **bits 31:27**（offset 27，
+  v10 迁移写成 offset 25 会吞掉 aq/rl 位）；QEMU 对 AMO 未对齐地址报
+  misaligned_store（挂起）→ 数据段必须 8 字节对齐；Cmpxchg 用无分支
+  LR/SC（模板层无函数内 label；单线程 QEMU 下 sc 不失败）。
 - G/H 未开工（见任务清单：G = forge-rustc 向量、H = aarch64_v12 定宽 +
   demo_be 大端）。

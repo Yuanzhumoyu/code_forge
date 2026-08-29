@@ -298,17 +298,20 @@ pub fn exec_riscv64(compiled: &CompiledFunction, args: &[u64]) -> Result<u64, St
 /// 运行多函数模块（QEMU riscv64）。
 ///
 /// `funcs` 为 (函数名, CompiledFunction) 的 **FuncRef 序**（0..n）；
-/// crt0 的 main 经 `main_name` 定位（jal 目标 = 该函数入口）。
-/// 跨函数 reloc（符号 `@N` = 函数序号）在打包时用 `RiscvRelocPatcher`
-/// 直接 patch（目标 = ENTRY + 函数布局偏移）。
+/// `globals` 为 (名字, init 字节) 序——打包时在镜像尾部（栈前）布局
+/// 数据段，符号 "G{id}" 与全局名均指向其地址（GlobalAddr 的 PC-relative
+/// reloc 在打包时 patch）。crt0 的 main 经 `main_name` 定位（jal 目标 =
+/// 该函数入口）。跨函数 reloc（符号 `@N` = 函数序号）在打包时用
+/// `RiscvRelocPatcher` 直接 patch（目标 = ENTRY + 函数布局偏移）。
 pub fn exec_riscv64_module(
     funcs: &[(String, CompiledFunction)],
+    globals: &[(String, Vec<u8>)],
     main_name: &str,
     args: &[u64],
 ) -> Result<u64, String> {
     use code_forge::{RelocPatcher, RiscvRelocPatcher};
 
-    // 1. 布局：crt0 在前，函数顺序排列，末尾栈区。
+    // 1. 布局：crt0 在前，函数顺序排列，数据段（globals）随后，末尾栈区。
     let placeholder = gen_crt0(args, 0);
     let crt0_len = placeholder.len();
     let mut layout: Vec<(String, usize)> = Vec::new(); // name -> 镜像内偏移
@@ -322,24 +325,58 @@ pub fn exec_riscv64_module(
         .find(|(n, _)| n == main_name)
         .map(|(_, o)| *o)
         .ok_or_else(|| format!("main 函数 '{main_name}' 不在模块中"))?;
+    // 数据段：每个 global 顺序排布（对齐 8 字节）。符号 = 绝对地址
+    // ENTRY + data_off。函数地址 ≤ data_off，auipc/addi PC-relative
+    // 距离在 ±2GiB 内（QEMU virt RAM 128MB）→ 单对 auipc/addi 足够。
+    // **data_off 必须 8 字节对齐**：AMO（lr/sc/amoadd.d）要求自然对齐，
+    // 函数代码长度非 8 倍数时 misaligned_store → 挂起（实测 0xD4）。
+    let data_off = (off + 7) & !7;
+    let mut data: Vec<u8> = Vec::new();
+    let mut global_addrs: Vec<(String, u64)> = Vec::new();
+    for (name, init) in globals {
+        let a = data.len();
+        global_addrs.push((name.clone(), ENTRY + (data_off + a) as u64));
+        data.extend_from_slice(init);
+        // 对齐 8
+        while data.len() % 8 != 0 {
+            data.push(0);
+        }
+    }
 
-    // 2. crt0（jal 目标 = main 布局偏移）+ 所有函数代码
+    // 2. crt0（jal 目标 = main 布局偏移）+ 所有函数代码 + 数据段
+    //    **对齐 padding**：data_off 已 8 对齐，image 里数据段必须从 data_off
+    //    开始（否则符号地址错位 → 读 padding 0，实测 globaladdr got 0）。
     let mut image: Vec<u8> = gen_crt0(args, main_off);
     debug_assert_eq!(image.len(), crt0_len);
     for (_, cf) in funcs {
         image.extend_from_slice(&cf.code);
     }
+    debug_assert_eq!(image.len(), off);
+    image.extend(vec![0u8; data_off - off]);
+    debug_assert_eq!(image.len(), data_off);
+    image.extend_from_slice(&data);
 
-    // 3. 符号表：@N（FuncRef 序）与函数名 → 绝对地址
+    // 3. 符号表：@N（FuncRef 序）与函数名 → 绝对地址；G{id} 与全局名 →
+    //    数据段地址。
     let symbol_addr = |sym: &str| -> Option<u64> {
         if let Some(n) = sym.strip_prefix('@') {
             let idx: usize = n.parse().ok()?;
             layout.get(idx).map(|(_, o)| ENTRY + *o as u64)
+        } else if let Some(n) = sym.strip_prefix('G') {
+            // GlobalAddr 的 reloc 符号 "G{id}"（id = 全局变量序号）
+            let idx: usize = n.parse().ok()?;
+            global_addrs.get(idx).map(|(_, a)| *a)
         } else {
             layout
                 .iter()
                 .find(|(name, _)| name == sym)
                 .map(|(_, o)| ENTRY + *o as u64)
+                .or_else(|| {
+                    global_addrs
+                        .iter()
+                        .find(|(name, _)| name == sym)
+                        .map(|(_, a)| *a)
+                })
         }
     };
 
@@ -439,7 +476,7 @@ mod tests {
         }
 
         let funcs = vec![compile("callee", 99), compile("main", 42)];
-        let r = exec_riscv64_module(&funcs, "main", &[]);
+        let r = exec_riscv64_module(&funcs, &[], "main", &[]);
         // 无 QEMU → Err（含 "未找到"）；有 QEMU → 42
         match r {
             Ok(code) => assert_eq!(code, 42, "模块执行 main 应返回 42"),
@@ -464,7 +501,7 @@ mod tests {
             .compile_raw(&func)
             .expect("compile");
         let funcs = vec![("only".to_string(), cf)];
-        let err = exec_riscv64_module(&funcs, "missing", &[]).unwrap_err();
+        let err = exec_riscv64_module(&funcs, &[], "missing", &[]).unwrap_err();
         assert!(err.contains("main 函数"), "err: {err}");
     }
 
@@ -509,7 +546,7 @@ mod tests {
             })
             .collect();
 
-        let r = exec_riscv64_module(&funcs, "main", &[]);
+        let r = exec_riscv64_module(&funcs, &[], "main", &[]);
         match r {
             Ok(code) => assert_eq!(code, 42, "跨函数 Call 模块应返回 42"),
             Err(e) if e.contains("未找到") => {

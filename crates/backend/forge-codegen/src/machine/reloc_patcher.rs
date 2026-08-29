@@ -127,8 +127,9 @@ impl RelocPatcher for RiscvRelocPatcher {
         }
         let diff = target as i64 - site as i64;
         let word = u32::from_le_bytes(code[offset..offset + 4].try_into().unwrap());
-        // 由 opcode 判定 J 型（0x6F）还是 B 型（0x63）：其余立即数槽（I/S/U）
-        // 不是 label 槽（本 patcher 只服务 encoder 的 label fixup）。
+        // 由 opcode 判定 J 型（0x6F）、B 型（0x63）、U 型 auipc（0x17）还是
+        // I 型 addi（0x13）：前两者是 label/函数符号槽，后两者是 GlobalAddr
+        // 的 PC-relative 对（auipc 写 hi20 [31:12]、addi 写 lo12 [31:20]）。
         // 注意：写入前必须先清零 imm 位段——encoder 的占位值（如 Call 的
         // label 槽 = -(FuncRef+1)，可能 = -1 使 imm 位段全 1）与新 enc 是
         // **OR 关系**，不清零会永远保持占位值（实测 jal 恒跳 -1）。
@@ -136,6 +137,22 @@ impl RelocPatcher for RiscvRelocPatcher {
         let (mask, enc) = match opcode {
             0x6F => (0xFFFF_F000u32, Self::uj_imm20(diff)), // JAL：imm20 位段
             0x63 => (0xFE00_0F80u32, Self::b_imm13(diff)),  // B 型：imm13 位段
+            // auipc：rd = pc + (imm20 << 12)；hi20 = (diff + 0x800) >> 12
+            0x17 => {
+                let hi20 = ((diff + 0x800) >> 12) as u32 & 0xFFFFF;
+                (0xFFFF_F000u32, hi20 << 12)
+            }
+            // addi：rd += sext(imm12)；lo12 = (diff + 4) 低 12 位（有符号修正）。
+            // 关键：hi20/lo12 都必须相对 **auipc 指令地址**（RISC-V psABI
+            // %pcrel_hi/%pcrel_lo 同分母）——addi 紧跟 auipc（定宽 4 字节），
+            // 它的 site 比 auipc 大 4，故 +4 对齐（否则地址偏 4，实测 store
+            // 写错位）。
+            0x13 => {
+                let diff = diff + 4;
+                let lo12 = (diff & 0xFFF) as u32;
+                let lo12 = if lo12 >= 0x800 { lo12 - 0x1000 } else { lo12 };
+                (0xFFF0_0000u32, (lo12 & 0xFFF) << 20)
+            }
             _ => {
                 return Err(IrError::Internal(format!(
                     "riscv reloc: unexpected opcode 0x{opcode:02x} at {offset}"

@@ -54,7 +54,7 @@ rs1    = { offset = 15, width = 5 }
 rs2    = { offset = 20, width = 5 }
 funct3 = { offset = 12, width = 3 }
 funct7 = { offset = 25, width = 7 }
-funct5 = { offset = 25, width = 5 }   # AMOADD aq/rl 位恒 0
+funct5 = { offset = 27, width = 5 }   # AMO 的 funct5（bits 31:27；aq=26、rl=25）
 funct6 = { offset = 26, width = 6 }   # 移位立即数高位（SLLI/SRLI/SRAI）
 shamt6 = { offset = 20, width = 6 }
 shamt5 = { offset = 20, width = 5 }   # W 变体移位（RV64：shamt 5 位，bit25 归 funct7）
@@ -1024,13 +1024,91 @@ fields = { funct3 = 5, funct7 = 0x05 }
 
 
 asm = "maxu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
-[[instructions]]
+# ── 原子（A 扩展，opcode 0x2F）：funct5 规范值（LLVM 对照）──
+# amoadd=0、amoswap=1、lr=2、sc=3、amoxor=4、amoor=8、amoand=12、
+# amomin=16、amomax=20、amominu=24、amomaxu=28；aq/rl 恒 0（单线程 QEMU）。
+# R 型 operand_fields=[rd,rs1,rs2]，AMO 语义 rd=旧值、rs1=地址、rs2=src。
+# 32 位（W）funct3=2；64 位（D）funct3=3。
+# 注意 v10 迁移时的 funct5=2/funct3=0 是错的（LLVM：amoadd.w=0x00b6252f
+# funct5=0 funct3=2；golden 曾断言 0x042180af 非规范）。
 
-name = "AMOADD"
+[[instructions]]
+name = "AMOADD_W"
 form = "R"
 opcode = 0x2F
-fields = { funct5 = 2 }
-asm = "amoadd.w.aqrl {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+fields = { funct5 = 0, funct3 = 2 }
+asm = "amoadd.w {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "AMOADD_D"
+form = "R"
+opcode = 0x2F
+fields = { funct5 = 0, funct3 = 3 }
+asm = "amoadd.d {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "AMOSWAP_W"
+form = "R"
+opcode = 0x2F
+fields = { funct5 = 1, funct3 = 2 }
+asm = "amoswap.w {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "AMOSWAP_D"
+form = "R"
+opcode = 0x2F
+fields = { funct5 = 1, funct3 = 3 }
+asm = "amoswap.d {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "LR_W"
+form = "R"
+opcode = 0x2F
+fields = { funct5 = 2, funct3 = 2, rs2 = 0 }
+asm = "lr.w {0:[gpr:out]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "LR_D"
+form = "R"
+opcode = 0x2F
+fields = { funct5 = 2, funct3 = 3, rs2 = 0 }
+asm = "lr.d {0:[gpr:out]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "SC_W"
+form = "R"
+opcode = 0x2F
+fields = { funct5 = 3, funct3 = 2 }
+asm = "sc.w {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "SC_D"
+form = "R"
+opcode = 0x2F
+fields = { funct5 = 3, funct3 = 3 }
+asm = "sc.d {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+
+[[instructions]]
+name = "AUIPC"
+form = "U"
+opcode = 0x17
+asm = "auipc {0:[gpr:out]}, {1:[imm20:in]}"
+
+# GlobalAddr 专用：auipc+addi PC-relative 对（encoder 特判 imm<0 →
+# Relative(4,0) "G{id}" reloc；RiscvRelocPatcher 按 opcode 0x17/0x13
+# 分写 hi20/lo12 位段）。普通 AUIPC/ADDI 无 reloc 不受影响。
+[[instructions]]
+name = "AUIPC_GLOBAL"
+form = "U"
+opcode = 0x17
+asm = "auipc.g {0:[gpr:out]}, {1:[imm20:in]}"
+
+[[instructions]]
+name = "ADDI_GLOBAL"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 0 }
+asm = "addi.g {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
 
 
 [[instructions]]
@@ -1817,4 +1895,91 @@ insts = [
     "and {out}, {t3}, {t1}",
     "slli {out}, {out}, 32",
     "srli {out}, {out}, 32",
+]
+
+# ── GlobalAddr：auipc+addi PC-relative（encoder 特判 AUIPC_GLOBAL/
+#    ADDI_GLOBAL 的 imm<0 → Relative(4,0) "G{id}" reloc；patcher 按
+#    opcode 0x17=auipc 写 hi20、0x13=addi 写 lo12）──
+
+[[lowering]]
+op = "GlobalAddr"
+insts = [
+    "auipc.g {out}, {global}",
+    "addi.g {out}, {out}, {global}",
+]
+
+# ── 原子：AtomicRmw op 判别值 = immediates[0]（Xchg=0、Add=1、Sub=2）──
+# AMO 语义 rd=旧内存值，正合 AtomicRmw 返回值。Sub 无规范 amosub →
+# neg（sub X0）+ amoadd。aq/rl=0（单线程 QEMU 无并发序需要）。
+# 模板按 R 型 operand_fields=[rd,rs1,rs2] **位置**绑定：{out}→rd、
+# {0}=addr→rs1、{1}/src→rs2（不能用括号——括号 token 判 mem 类型）。
+
+[[lowering]]
+op = "AtomicRmw"
+when = { and = [ { eq = ["imm0", 0] }, { eq = ["rs1_width", 64] } ] }
+insts = ["amoswap.d {out}, {0}, {1}"]
+
+[[lowering]]
+op = "AtomicRmw"
+when = { and = [ { eq = ["imm0", 0] }, { eq = ["rs1_width", 32] } ] }
+insts = ["amoswap.w {out}, {0}, {1}"]
+
+[[lowering]]
+op = "AtomicRmw"
+when = { and = [ { eq = ["imm0", 1] }, { eq = ["rs1_width", 64] } ] }
+insts = ["amoadd.d {out}, {0}, {1}"]
+
+[[lowering]]
+op = "AtomicRmw"
+when = { and = [ { eq = ["imm0", 1] }, { eq = ["rs1_width", 32] } ] }
+insts = ["amoadd.w {out}, {0}, {1}"]
+
+[[lowering]]
+op = "AtomicRmw"
+when = { and = [ { eq = ["imm0", 2] }, { eq = ["rs1_width", 64] } ] }
+insts = ["sub {t}, X0, {1}", "amoadd.d {out}, {0}, {t}"]
+
+[[lowering]]
+op = "AtomicRmw"
+when = { and = [ { eq = ["imm0", 2] }, { eq = ["rs1_width", 32] } ] }
+insts = ["sub {t}, X0, {1}", "amoadd.w {out}, {0}, {t}"]
+
+# ── Cmpxchg：**无分支** LR/SC 序列（单线程 QEMU 下 sc.d 不失败，无需
+#    重试循环；模板层无函数内 label）──
+#    lr.d 读旧值 → 与期望比较 → 掩码选择写入值（匹配→new、不匹配→old
+#    即无操作写回）→ sc.d；结果 = 旧值。32 位用 lr.w/sc.w + 掩码截断。
+#    sc.d {out0}, {0}, {t4}：rd=成功标志（丢弃）、rs1=addr、rs2=写入值。
+
+[[lowering]]
+op = "Cmpxchg"
+when = { eq = ["rs1_width", 64] }
+insts = [
+    "lr.d {t}, {0}",
+    "xor {t1}, {t}, {1}",
+    "sltu {t2}, X0, {t1}",
+    "slli {t2}, {t2}, 63",
+    "srai {t2}, {t2}, 63",
+    "xori {t3}, {t2}, -1",
+    "and {t4}, {2}, {t3}",
+    "and {t2}, {t}, {t2}",
+    "or {t4}, {t4}, {t2}",
+    "sc.d {t5}, {0}, {t4}",
+    "mv {out}, {t}",
+]
+
+[[lowering]]
+op = "Cmpxchg"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "lr.w {t}, {0}",
+    "xor {t1}, {t}, {1}",
+    "sltu {t2}, X0, {t1}",
+    "slli {t2}, {t2}, 63",
+    "srai {t2}, {t2}, 63",
+    "xori {t3}, {t2}, -1",
+    "and {t4}, {2}, {t3}",
+    "and {t2}, {t}, {t2}",
+    "or {t4}, {t4}, {t2}",
+    "sc.w {t5}, {0}, {t4}",
+    "mv {out}, {t}",
 ]

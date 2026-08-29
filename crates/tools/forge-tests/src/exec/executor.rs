@@ -32,10 +32,12 @@ pub trait Executor {
     fn exec(&self, compiled: &CompiledFunction, args: &[u64]) -> u64;
 
     /// 执行多函数模块（跨函数 Call/递归路径）。默认不支持（x86 走 JIT
-    /// 内存执行；riscv QEMU 覆盖）。`funcs` 为 FuncRef 序。
+    /// 内存执行；riscv QEMU 覆盖）。`funcs` 为 FuncRef 序；`globals` 为
+    /// (名字, init 字节) 序（QEMU 裸机打包布局数据段；x86 JIT 自管）。
     fn exec_module(
         &self,
         _funcs: &[(String, CompiledFunction)],
+        _globals: &[(String, Vec<u8>)],
         _main: &str,
         _args: &[u64],
     ) -> u64 {
@@ -109,8 +111,14 @@ impl Executor for QemuRiscv64Executor {
         sign_extend_exit(raw)
     }
 
-    fn exec_module(&self, funcs: &[(String, CompiledFunction)], main: &str, args: &[u64]) -> u64 {
-        let raw = super::qemu::exec_riscv64_module(funcs, main, args)
+    fn exec_module(
+        &self,
+        funcs: &[(String, CompiledFunction)],
+        globals: &[(String, Vec<u8>)],
+        main: &str,
+        args: &[u64],
+    ) -> u64 {
+        let raw = super::qemu::exec_riscv64_module(funcs, globals, main, args)
             .unwrap_or_else(|e| panic!("QemuRiscv64Executor::exec_module: {e}"));
         sign_extend_exit(raw)
     }

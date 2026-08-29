@@ -464,8 +464,19 @@ fn run_module<M: TargetMachine + Clone>(
                 Ok((func.name.as_str().to_string(), compiled))
             })
             .collect::<Result<_, String>>()?;
+        // globals：名字 + init 字节（QEMU 裸机打包布局数据段）
+        let globals: Vec<(String, Vec<u8>)> = module
+            .iter_globals()
+            .map(|(_, gv)| {
+                let init = gv
+                    .init
+                    .clone()
+                    .unwrap_or_else(|| vec![0u8; module.types.borrow().size_bytes(gv.ty) as usize]);
+                (gv.name.as_str().to_string(), init)
+            })
+            .collect();
         let main_name = module.get_function(main_ref).name.as_str().to_string();
-        return Ok(ex.exec_module(&funcs, &main_name, &[]) as i64);
+        return Ok(ex.exec_module(&funcs, &globals, &main_name, &[]) as i64);
     }
     let mut jit = code_forge::jit::JitCompiler::new((r.machine)());
     jit.compile_module(&module)

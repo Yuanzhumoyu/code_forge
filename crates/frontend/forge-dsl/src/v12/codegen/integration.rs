@@ -695,6 +695,42 @@ fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Stri
             });
         }
     }
+    // riscv GlobalAddr 的 PC-relative 对：AUIPC_GLOBAL/ADDI_GLOBAL 的 imm
+    // 槽 < 0（GlobalId 负编码）→ Relative(4,0) "G{id}"（定宽 4 字节，
+    // fixup = 指令起始；patcher 按 opcode 0x17/0x13 分写 hi20/lo12）。
+    for info in infos {
+        if info.inst.name == "AUIPC_GLOBAL" || info.inst.name == "ADDI_GLOBAL" {
+            let vn = &info.vn;
+            let imm_fid = info
+                .operands
+                .iter()
+                .find(|(_, _, s, _)| s.kind == OperandKind::Imm)
+                .map(|(_, fid, _, _)| fid.clone())
+                .unwrap_or_else(|| format_ident!("imm"));
+            global_arms.push(quote! {
+                Inst::#vn { .. } => {
+                    let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
+                    let imm = match inst {
+                        Inst::#vn { #imm_fid, .. } => *#imm_fid,
+                        _ => unreachable!(),
+                    };
+                    let __base = sink.offset();
+                    sink.put_bytes(&bytes);
+                    if imm < 0 {
+                        // GlobalAddr 的 {global} 槽 → -(id+1)；reloc 符号
+                        // "G{id}"（JIT/QEMU 打包按全局变量注册）。
+                        sink.add_reloc(
+                            __base,
+                            crate::RelocKind::Relative(4, 0),
+                            &format!("G{}", -imm - 1),
+                            0,
+                        );
+                    }
+                    Ok(())
+                }
+            });
+        }
+    }
     let global_arms = global_arms;
     Ok(quote! {
         pub struct Encoder;

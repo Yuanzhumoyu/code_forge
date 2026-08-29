@@ -60,7 +60,7 @@ fn golden_gpr_spec_bytes() {
         ("max X1, X2, X3", &[0xB3, 0x10, 0x31, 0x0A]),
         ("minu X1, X2, X3", &[0xB3, 0x40, 0x31, 0x0A]),
         ("maxu X1, X2, X3", &[0xB3, 0x50, 0x31, 0x0A]),
-        ("amoadd.w.aqrl X1, X2, (X3)", &[0xAF, 0x80, 0x21, 0x04]),
+        ("amoadd.w X1, X2, (X3)", &[0xAF, 0xA0, 0x21, 0x00]),
     ];
     for (asm, expected) in cases {
         let got = v12_bytes(asm);
@@ -181,7 +181,7 @@ fn decode_roundtrip_all() {
         "max X1, X2, X3",
         "minu X1, X2, X3",
         "maxu X1, X2, X3",
-        "amoadd.w.aqrl X1, X2, (X3)",
+        "amoadd.w X1, X2, (X3)",
         "fadd.s F1, F2, F3",
         "fsub.s F1, F2, F3",
         "fsqrt.s F1, F2",
@@ -241,7 +241,7 @@ fn assemble_disassemble_roundtrip() {
         "lui x1, 4096",
         "fadd.s f1, f2, f3",
         "flw f1, 8(x2)",
-        "amoadd.w.aqrl x1, x2, (x3)",
+        "amoadd.w x1, x2, (x3)",
         "fence",
         "ecall",
     ];
@@ -265,8 +265,8 @@ fn disassemble_known_texts() {
         "ld X1, 8(X2)"
     );
     assert_eq!(
-        disassemble(&assemble("amoadd.w.aqrl X1, X2, (X3)").unwrap()),
-        "amoadd.w.aqrl X1, X2, (X3)"
+        disassemble(&assemble("amoadd.w X1, X2, (X3)").unwrap()),
+        "amoadd.w X1, X2, (X3)"
     );
 }
 
@@ -328,3 +328,4 @@ fn inst_enum_shapes() {
     assert_eq!(assemble("fence").unwrap(), Inst::Fence);
     assert_eq!(assemble("nop").unwrap(), Inst::Nop);
 }
+
