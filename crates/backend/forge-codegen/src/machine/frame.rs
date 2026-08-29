@@ -56,7 +56,7 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         &self,
         _dst_reg: u32,
         _offset: i32,
-        _width: u8,
+        _width: u16,
         _is_fp: bool,
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {
@@ -71,7 +71,7 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         &self,
         _src_reg: u32,
         _offset: i32,
-        _width: u8,
+        _width: u16,
         _is_fp: bool,
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {

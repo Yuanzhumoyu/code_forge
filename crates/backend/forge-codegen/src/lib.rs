@@ -326,8 +326,8 @@ impl LowerCtx {
     }
 
     /// 分配一个指定宽度（8/16/32/64）的临时寄存器。
-    pub fn alloc_xreg_with_width(&mut self, class: RegClass, width: u8) -> XReg {
-        self.xregs.alloc(class, width)
+    pub fn alloc_xreg_with_width(&mut self, class: RegClass) -> XReg {
+        self.xregs.alloc(class)
     }
 
     /// 分配或复用零值临时寄存器（用于比较零值）。
@@ -341,7 +341,7 @@ impl LowerCtx {
     }
 
     /// 查询 XReg 的字节宽度（位宽内嵌在值上）。
-    pub fn xreg_width(&self, x: XReg) -> u8 {
+    pub fn xreg_width(&self, x: XReg) -> u16 {
         x.width()
     }
 

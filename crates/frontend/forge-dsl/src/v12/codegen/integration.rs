@@ -338,23 +338,9 @@ fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
     })
 }
 
-/// 组寄存器名列表（names 或 prefix+count 生成；count-only → 默认 "R" 前缀，
-/// 与 codegen/mod.rs 的 group_names 一致）。
-fn group_names(g: &RegGroup) -> Result<Vec<String>, String> {
-    if let Some(names) = &g.names {
-        if names.is_empty() {
-            return Err("reg group must have at least one name".into());
-        }
-        return Ok(names.clone());
-    }
-    let prefix = g.prefix.clone().unwrap_or_else(|| "R".to_string());
-    let count = g
-        .count
-        .ok_or_else(|| "reg group needs `names` or `count`".to_string())?;
-    Ok((0..count as usize)
-        .map(|i| format!("{prefix}{i}"))
-        .collect())
-}
+/// 组寄存器名列表（共享实现见 `super::super::shared::group_names`；
+/// 此处 re-export 保持调用点不变）。
+use super::super::shared::group_names;
 
 // ─────────────────────── MachineInst impl ───────────────────────
 
@@ -1461,7 +1447,7 @@ fn gen_frame_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStrea
                 &self,
                 dst_reg: u32,
                 offset: i32,
-                width: u8,
+                width: u16,
                 is_fp: bool,
                 sink: &mut crate::CodeSink,
             ) -> Result<(), crate::IrError> {
@@ -1481,7 +1467,7 @@ fn gen_frame_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStrea
                 &self,
                 src_reg: u32,
                 offset: i32,
-                width: u8,
+                width: u16,
                 is_fp: bool,
                 sink: &mut crate::CodeSink,
             ) -> Result<(), crate::IrError> {
@@ -1789,7 +1775,7 @@ fn gen_emit_pseudo(
             // 优先非对齐 VMOVUPS（指针未必 32 字节对齐）；缺省回退 VMOVAPS。
             // 宽度由参数 XReg 决定：32 字节（V256）→ VMOVUPS_RM（VEX ymm）；
             // 64 字节（V512）→ VMOVUPS_ZMM_MEM（EVEX zmm）。
-            let byref_loads: Vec<(&str, &str, u8)> = vec![
+            let byref_loads: Vec<(&str, &str, u16)> = vec![
                 ("VMOVUPS_RM", "VMOVAPS_RM", 32),
                 ("VMOVUPS_ZMM_MEM", "VMOVAPS_ZMM_MEM", 64),
             ];

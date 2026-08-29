@@ -96,7 +96,7 @@ impl AllocResult {
         let mut assignments = HashMap::new();
         for i in 0..n {
             assignments.insert(
-                XReg::new(i, RegClass::GPR64, 8),
+                XReg::new(i, RegClass::GPR64),
                 PReg::new(i % 16, RegClass::GPR64),
             );
         }
@@ -166,7 +166,7 @@ mod tests {
 
     /// 构造第 n 号 GPR 临时寄存器（测试辅助：经 XRegAllocator 受控创建）。
     fn xgpr(n: u32) -> XReg {
-        XReg::new(n, RegClass::GPR64, 8)
+        XReg::new(n, RegClass::GPR64)
     }
 
     /// 构造第 n 号 FPR 临时寄存器。

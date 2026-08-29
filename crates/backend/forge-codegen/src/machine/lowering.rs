@@ -99,7 +99,7 @@ impl<I> InstPacket<I> {
         }
         let remap = |x: &mut XReg| {
             if x.index() < count {
-                *x = XReg::new(x.index() + base, x.class(), x.width());
+                *x = XReg::new(x.index() + base, x.class());
             }
         };
         for slot in self.xreg_map.iter_mut() {

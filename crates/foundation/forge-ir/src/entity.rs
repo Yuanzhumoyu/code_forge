@@ -135,7 +135,6 @@ impl fmt::Display for VReg {
 pub struct XReg {
     index: u32,
     class: RegClass,
-    width: u8,
 }
 
 impl XReg {
@@ -144,12 +143,8 @@ impl XReg {
     /// `#[doc(hidden)]`：非公开 API。业务代码应经 [`XRegAllocator::alloc`] /
     /// `LowerCtx::alloc_xreg` 获取 XReg；此处仅供 DSL 生成代码与分配器内部使用。
     #[doc(hidden)]
-    pub fn new(index: u32, class: RegClass, width: u8) -> Self {
-        Self {
-            index,
-            class,
-            width,
-        }
+    pub fn new(index: u32, class: RegClass) -> Self {
+        Self { index, class }
     }
 
     /// 该临时寄存器的编号（无符号语义，仅用于调试/展示）。
@@ -163,13 +158,13 @@ impl XReg {
     }
 
     /// 位宽（字节数，如 2=16 位、4=32 位、8=64 位）。
-    pub fn width(&self) -> u8 {
-        self.width
+    pub fn width(&self) -> u16 {
+        self.class.width()
     }
 
     /// 位宽（bit，如 16/32/64）。
     pub fn bits(&self) -> u16 {
-        (self.width as u16) * 8
+        self.width() * 8
     }
 }
 
@@ -212,15 +207,15 @@ impl XRegAllocator {
     /// 分配一个指定类型与位宽的新临时寄存器（被动语义：只能由后续指令 def 赋予值）。
     ///
     /// `width` 为字节数（1=8 位、2=16 位、4=32 位、8=64 位等）。
-    pub fn alloc(&mut self, class: RegClass, width: u8) -> XReg {
-        let x = XReg::new(self.next, class, width);
+    pub fn alloc(&mut self, class: RegClass) -> XReg {
+        let x = XReg::new(self.next, class);
         self.next += 1;
         x
     }
 
     /// 分配一个默认位宽的临时寄存器（按类型默认宽度）。
     pub fn alloc_default(&mut self, class: RegClass) -> XReg {
-        self.alloc(class, class.default_width())
+        self.alloc(class)
     }
 
     /// 当前已分配的临时寄存器数量（下一个 index）。

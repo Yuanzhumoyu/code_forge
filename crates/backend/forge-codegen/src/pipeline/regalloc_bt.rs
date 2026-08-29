@@ -856,8 +856,8 @@ mod tests {
         let gpr4 = PReg::new(0, RegClass::GPR(4));
         let gpr8 = PReg::new(0, RegClass::GPR(8));
         let fpr8 = PReg::new(0, RegClass::FPR(8));
-        let v4 = XReg::new(512, RegClass::GPR(4), 4);
-        let v8 = XReg::new(513, RegClass::GPR(8), 8);
+        let v4 = XReg::new(512, RegClass::GPR(4));
+        let v8 = XReg::new(513, RegClass::GPR(8));
 
         assert!(!state.phys_conflicts(gpr4));
         state.set_reg_owner(gpr4, v4);

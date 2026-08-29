@@ -36,7 +36,7 @@ pub trait TargetEncoder: Send + Sync + 'static {
     fn encoded_size(&self, inst: &Self::Inst) -> Result<usize, EncodeError> {
         let mut rm = crate::pipeline::alloc_result::AllocResult::dummy_for_sizing(16);
         for &vreg in inst.uses().iter().chain(inst.defs().iter()) {
-            let xreg = forge_ir::XReg::new(vreg, forge_ir::RegClass::GPR64, 8);
+            let xreg = forge_ir::XReg::new(vreg, forge_ir::RegClass::GPR64);
             if !rm.assignments.contains_key(&xreg) {
                 rm.insert(
                     xreg,

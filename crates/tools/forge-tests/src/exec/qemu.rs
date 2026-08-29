@@ -346,7 +346,7 @@ pub fn exec_riscv64_module(
         global_addrs.push((name.clone(), ENTRY + (data_off + a) as u64));
         data.extend_from_slice(init);
         // 对齐 8
-        while data.len() % 8 != 0 {
+        while !data.len().is_multiple_of(8) {
             data.push(0);
         }
     }

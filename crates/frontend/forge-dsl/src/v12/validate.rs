@@ -3,6 +3,7 @@
 //! 错误信息带 TOML 路径（如 `[[instructions.MOV_R_RM]]`），便于定位。
 
 use super::model::*;
+use super::shared::parse_u64;
 use std::collections::BTreeSet;
 
 pub fn validate(m: &V12Model) -> Result<(), String> {
@@ -435,16 +436,6 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// 解析 TOML 数值字符串（0x 十六进制或十进制）。
-fn parse_u64(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(h, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
-    }
 }
 
 fn slot_exists(m: &V12Model, name: &str) -> bool {

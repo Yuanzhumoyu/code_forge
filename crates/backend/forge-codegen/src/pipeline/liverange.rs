@@ -376,7 +376,7 @@ mod tests {
 
     /// 构造第 n 号 GPR 临时寄存器（测试辅助）。
     fn xgpr(n: u32) -> XReg {
-        XReg::new(n, RegClass::GPR(8), 8)
+        XReg::new(n, RegClass::GPR(8))
     }
 
     #[test]

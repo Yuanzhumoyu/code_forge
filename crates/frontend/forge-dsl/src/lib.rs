@@ -51,10 +51,6 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
             .to_compile_error()
             .into()
         });
-    let _ = std::fs::write(
-        format!(r"D:\Program\rust_main\code_forge\target\tmp\t_{mod_name}.rs"),
-        a.to_string(),
-    );
     a
 }
 

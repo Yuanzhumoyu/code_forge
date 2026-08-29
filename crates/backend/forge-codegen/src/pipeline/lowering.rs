@@ -32,14 +32,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 // 按类型分派到多宽度类（I32→GPR(4) 池、F32/F64→FPR(8) 池、
                 // 动态 vector → 位宽感知 VEC）
                 let class = self.ctx.reg_class_for(param_ty);
-                // 位宽内嵌：i32 参数按 4 字节（32 位）——分配器与编码按宽度匹配，
-                // 比较/算术指令按 32 位语义（如 cmp eax / setg 基于 32 位 SF/OF）。
-                let width = if matches!(*param_ty, crate::prelude::TypeId::I32) {
-                    4
-                } else {
-                    class.default_width()
-                };
-                let xreg = self.ctx.alloc_xreg_with_width(class, width);
+                let xreg = self.ctx.alloc_xreg_with_width(class);
                 self.ctx.xreg_types.insert(xreg, *param_ty);
 
                 self.param_xregs.push(xreg);

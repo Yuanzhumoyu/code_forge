@@ -18,11 +18,9 @@
 //!
 //! 迭代 2 范围：`meta.default_inst_width == 32` 的定宽 ISA（riscv64 试点）；
 //! 变长 form（modrm/vex 语义键）与 64/16 位定宽在迭代 3+ 支持。
-//!
-//! 迭代 2 范围：`meta.default_inst_width == 32` 的定宽 ISA（riscv64 试点）；
-//! 变长 form（modrm/vex 语义键）与 64/16 位定宽在迭代 3+ 支持。
 
 use super::model::*;
+use super::shared::parse_u64;
 use crate::assembler::{Tok, tokenize};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -501,18 +499,9 @@ fn gen_reg_tables(model: &V12Model) -> Result<TokenStream, String> {
     Ok(quote! { #(#fns)* })
 }
 
-fn group_names(g: &RegGroup) -> Result<Vec<String>, String> {
-    if let Some(ns) = &g.names {
-        return Ok(ns.clone());
-    }
-    let prefix = g.prefix.clone().unwrap_or_else(|| "R".into());
-    let count = g
-        .count
-        .ok_or_else(|| "reg group needs `names` or `count`".to_string())?;
-    Ok((0..count as usize)
-        .map(|i| format!("{prefix}{i}"))
-        .collect())
-}
+/// 组寄存器名列表（共享实现见 `super::shared::group_names`；
+/// 此处 re-export 保持调用点不变）。
+use super::shared::group_names;
 
 // ─────────────────────────────── Inst 枚举 ───────────────────────────────
 
@@ -3017,16 +3006,6 @@ fn imm_read_ts(start: usize, bytes: usize, endian: Endian) -> TokenStream {
             }
         }
         _ => quote! { 0u64 },
-    }
-}
-
-/// 解析 TOML 数值字符串（0x 十六进制或十进制）。
-fn parse_u64(s: &str) -> Option<u64> {
-    let t = s.trim();
-    if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(h, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
     }
 }
 
