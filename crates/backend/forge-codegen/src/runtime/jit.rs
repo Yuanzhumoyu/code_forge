@@ -947,6 +947,77 @@ mod tests {
         assert_eq!(got, 1, "lane0 f32 1.5 → fptosi → 1（by-ref 栈拷贝往返）");
     }
 
+    /// S2: 宽向量返回（sret）——被调方结果 store 到 [sret_ptr]（首 int
+    /// 槽 RCX）。extern "C" fn(*mut f32) 调用后读内存验证全 lane。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v256_byref_return() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 8)
+        };
+        let sig = FunctionSignature::new(&[], &[vt]);
+        jit.add_function("v256_ret", &sig, |b| {
+            let entry = b.create_block();
+            b.switch_to_block(entry);
+            let v = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+            b.ret(&[v]);
+        })
+        .expect("compile v256_ret");
+        // sret_ptr 在 RCX：extern "C" fn(*mut f32)，被调方 vmovups [rcx], ymm
+        let f: extern "C" fn(*mut f32) = jit.get_fn("v256_ret").expect("get_fn");
+        let mut data = [0f32; 8];
+        f(data.as_mut_ptr());
+        assert_eq!(
+            data,
+            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            "宽向量返回 sret 应写入调用者缓冲"
+        );
+    }
+
+    /// S2: IR Call 宽向量返回（sret）端到端——main 调 callee（返回 v256），
+    /// 结果回读 + vextract lane0 → 验证。调用方侧：sret 槽 + RCX + 结果 load。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_wide_vector_call_sret() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 8)
+        };
+        // callee: () -> v256（sret：store 到 [RCX]）
+        let sig_c = FunctionSignature::new(&[], &[vt]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let blk = bc.create_block();
+        bc.switch_to_block(blk);
+        let v = bc.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        bc.ret(&[v]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: () -> i32 { vextract(callee(), 0) → fptosi }
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let r = bm.call(callee_ref, &[], &[vt]);
+        let idx = bm.iconst_i32(0);
+        let lane = bm.vextract(r[0], idx);
+        let wide = bm.fpext(lane, TypeId::F64);
+        let int = bm.fptosi(wide, TypeId::I32);
+        bm.ret(&[int]);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 1, "sret 返回 lane0 f32 1.5 → fptosi → 1");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]

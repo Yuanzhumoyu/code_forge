@@ -238,6 +238,21 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     } else {
         (format_ident!("cond"), format_ident!("target"))
     };
+    // S2：宽向量 sret 需要的指令存在性（x86 有 VMOVUPS_MR/ZMM_MR；
+    // riscv 等无向量 ISA → Unsupported）与 sret_ptr 所在 int 参数槽序列。
+    let has_byref_insts = inst_exists(infos, "VMOVUPS_MR")
+        && inst_exists(infos, "VMOVUPS_ZMM_MR")
+        && inst_exists(infos, "LEA_RBP_OFF");
+    let int_regs: Vec<syn::Ident> = model
+        .abi
+        .as_ref()
+        .and_then(|a| {
+            a.arg_class
+                .iter()
+                .find(|ac| ac.class == "int")
+                .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
+        })
+        .unwrap_or_default();
 
     // Return：整数值 → RAX（MOV_RM8_R64）、浮点值 → XMM0（MOVSD/MOVSS）。
     // 与 v11 一致：**不生成 RET**——return block 经 emit_epilogue_jump 跳到
@@ -296,12 +311,66 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 quote! { Reg::#ident }
             })
             .unwrap_or_else(|| quote! { Reg::from_index(0, forge_ir::RegClass::GPR64) });
+        // S2：宽向量返回值（>16 字节）sret——结果 store 到 [sret_ptr]，
+        // sret_ptr = 首个 GPR 参数槽（Windows x64：隐藏 sret 参数占 RCX）。
+        // 生成期门控：ISA 未声明 VMOVUPS_MR（riscv）→ Unsupported。
+        let sret_return_body: TokenStream = if has_byref_insts {
+            quote! {
+                // sret_ptr 来自首 int 参数槽（x86 arg_class int 首项 = RCX）
+                let __sret = Reg::from_index(
+                    [#(Reg::#int_regs),*][0].to_index(),
+                    forge_ir::RegClass::GPR64,
+                );
+                let __vbytes = ctx
+                    .xreg_types
+                    .get(&val)
+                    .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                    .unwrap_or(32)
+                    .max(32);
+                let __sidx = __pack.push_inst(if __vbytes == 64 {
+                    Inst::VmovupsZmmMr {
+                        src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        mem: MemRef {
+                            base: __sret,
+                            disp: 0,
+                            index: None,
+                            scale: 1,
+                        },
+                    }
+                } else {
+                    Inst::VmovupsMr {
+                        src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        mem: MemRef {
+                            base: __sret,
+                            disp: 0,
+                            index: None,
+                            scale: 1,
+                        },
+                    }
+                });
+                __pack.map_reg_field(val, __sidx, 0u8, false);
+            }
+        } else {
+            quote! {
+                let _ = __pack;
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 wide vector return needs VMOVUPS_MR (sret)".into(),
+                ));
+            }
+        };
         quote! {
             let val = values.first().copied()
                 .and_then(|x| value_to_xreg.get(&x)).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
             if ctx.xreg_types.get(&val).is_some_and(|t| t.is_float()) {
                 #fpr_return_body
+            } else if ctx.xreg_types.get(&val).is_some_and(|t| {
+                ctx.type_ctx.as_ref().is_some_and(|tc| {
+                    let s = tc.borrow();
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
+                })
+            }) {
+                #sret_return_body
             } else {
                 let __idx = __pack.push_inst(Inst::#ret_vn {
                     #mov_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
@@ -650,6 +719,11 @@ fn gen_call_lowering(
     };
     let has_ss = fids(&fpr_mov32).len() >= 2;
     let has_fpr_mov = sd_f.len() >= 2 && has_ss;
+    // S1/S2：宽向量 by-ref/sret 栈拷贝指令存在性（x86 有 VMOVUPS_MR/
+    // VMOVUPS_ZMM_MR/LEA_RBP_OFF；riscv 等无向量 ISA → Unsupported）。
+    let has_byref_insts = inst_exists(infos, "VMOVUPS_MR")
+        && inst_exists(infos, "VMOVUPS_ZMM_MR")
+        && inst_exists(infos, "LEA_RBP_OFF");
     // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
     let ret_src_expr: TokenStream = abi
         .ret_regs
@@ -725,10 +799,55 @@ fn gen_call_lowering(
             ));
         }
     };
+    // S2：宽向量返回值（>16 字节）sret 结果回读——call 后从 [sret_off] load
+    // 到结果 XReg（VMOVUPS_RM/ZMM_MEM）。生成期门控：ISA 无这些指令
+    // （riscv）→ 宽向量返回在编译入口守卫（compiler.rs）已拒绝，此处仅
+    // 防御性 Unsupported。
+    let sret_load_stmt: TokenStream = if has_byref_insts {
+        quote! {
+            let __vbytes = ctx
+                .xreg_types
+                .get(&__r)
+                .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                .unwrap_or(32)
+                .max(32);
+            let __ridx = __pack.push_inst(if __vbytes == 64 {
+                Inst::VmovupsZmmMem {
+                    dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    mem: MemRef {
+                        base: Reg::RBP,
+                        disp: __sret_off,
+                        index: None,
+                        scale: 1,
+                    },
+                }
+            } else {
+                Inst::VmovupsRm {
+                    dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    mem: MemRef {
+                        base: Reg::RBP,
+                        disp: __sret_off,
+                        index: None,
+                        scale: 1,
+                    },
+                }
+            });
+            // 结果 vreg 是 dest（load 指令的唯一 Reg 操作数，序号 0）
+            __pack.map_reg_field(__r, __ridx, 0u8, true);
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 wide vector return load needs VMOVUPS_RM".into(),
+            ));
+        }
+    };
     let ret_move: TokenStream = quote! {
         if let Some(&__r) = results.first() {
             if ctx.xreg_types.get(&__r).is_some_and(|t| t.is_float()) {
                 #fpr_ret_stmt
+            } else if __sret {
+                #sret_load_stmt
             } else {
                 let __idx = __pack.push_inst(Inst::#mov_vn {
                     #m_src: #ret_src_expr,
@@ -851,6 +970,33 @@ fn gen_call_lowering(
             }
         }
     };
+    // S2：sret 槽地址 → 首 int 参数槽（RCX）。生成期门控（LEA_RBP_OFF 存在）。
+    let sret_setup: TokenStream = if has_byref_insts {
+        quote! {
+            if __sret {
+                let __sp = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
+                let __lidx = __pack.push_inst(Inst::LeaRbpOff {
+                    dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    mem: MemRef {
+                        base: Reg::RBP,
+                        disp: __sret_off,
+                        index: None,
+                        scale: 1,
+                    },
+                });
+                __pack.map_reg_field(__sp, __lidx, 0u8, true);
+                let __midx = __pack.push_inst(Inst::#mov_vn {
+                    #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #m_dest: [#(Reg::#int_regs),*][0],
+                });
+                __pack.map_reg_field(__sp, __midx, #m_src_idx, false);
+                // 帧需求（sret 槽 64B 对齐间距）
+                ctx.max_stack_bytes = ctx.max_stack_bytes.max(72);
+            }
+        }
+    } else {
+        quote! {}
+    };
     let arg_loop = arg_move_loop(
         op_name,
         &n,
@@ -864,11 +1010,8 @@ fn gen_call_lowering(
         &f_src,
         has_ss,
         has_fpr_mov,
-        // S1：宽向量 by-ref 栈拷贝指令存在性（x86 有 VMOVUPS_MR/
-        // VMOVUPS_ZMM_MR/LEA_RBP_OFF；riscv 等无向量 ISA 缺省 Unsupported）
-        inst_exists(infos, "VMOVUPS_MR")
-            && inst_exists(infos, "VMOVUPS_ZMM_MR")
-            && inst_exists(infos, "LEA_RBP_OFF"),
+        // S1：宽向量 by-ref 栈拷贝指令存在性（x86；riscv 缺省 Unsupported）
+        has_byref_insts,
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,
@@ -893,6 +1036,24 @@ fn gen_call_lowering(
                     #(#gpr_clobbers),*,
                     #(#fpr_clobbers),*,
                 ];
+                // S2：宽向量返回值（>16 字节）sret——隐藏 sret 指针参数占
+                // 首 int 槽（RCX），其余实参顺延（arg_loop 的 __gi 从 1 起）。
+                // sret 槽 = 帧内 [RBP-8-shift]（与 by-ref 实参槽共用空间，
+                // call 间天然死）。
+                let __sret = results.first().copied().is_some_and(|r| {
+                    ctx.xreg_types.get(&r).is_some_and(|t| {
+                        ctx.type_ctx.as_ref().is_some_and(|tc| {
+                            let s = tc.borrow();
+                            (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
+                        })
+                    })
+                });
+                let __sret_off: i64 = if __sret {
+                    -8i64 - ctx.stack_slot_shift as i64
+                } else {
+                    0
+                };
+                #sret_setup
                 #arg_loop
                 #call_body
                 #ret_move
@@ -1080,9 +1241,11 @@ fn arg_move_loop(
     };
     if op_name == "CallIndirect" {
         quote! {
-            let mut __gi = 0usize;
+            // S2：sret 隐藏参数占首 int 槽（RCX）与 sret 槽（槽 0）——
+            // 实参从下一个 int 槽 / 下一个槽位起。
+            let mut __gi = if __sret { 1usize } else { 0usize };
             let mut __fi = 0usize;
-            let mut __bi = 0usize;
+            let mut __bi = if __sret { 1usize } else { 0usize };
             for (__i, &__a) in args.iter().enumerate() {
                 if __i == 0 { continue; }
                 #stmt
@@ -1090,9 +1253,9 @@ fn arg_move_loop(
         }
     } else {
         quote! {
-            let mut __gi = 0usize;
+            let mut __gi = if __sret { 1usize } else { 0usize };
             let mut __fi = 0usize;
-            let mut __bi = 0usize;
+            let mut __bi = if __sret { 1usize } else { 0usize };
             for &__a in args.iter() {
                 #stmt
             }
