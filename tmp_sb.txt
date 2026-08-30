@@ -1,0 +1,13 @@
+refactor(forge-dsl): Step B——剩余框架特判模型化
+
+- is_move 声明化：Instruction 加 `move_inst: Option<bool>`——显式声明优先，
+  缺省回退 MOV_/MOVR 前缀启发式（riscv 的 MOV_RM8_R64 已满足前缀，无需改）
+- 尾声跳转键：`[emit].epilogue_jump_inst: Option<String>`——显式指令名
+  优先，缺省按 JMP_REL32/JAL 存在性自动检测（行为不变）
+- spill base 键：gen_spill_stmt 缺省 base 从 `[abi.frame].fp` 取（x86 RBP /
+  riscv X8，正是帧指针语义），再回退 "RBP"
+- 浮点 Call 路径（MOVSD/MOVSS/VMOVUPS 硬编码）评估后保留并集中文档化：
+  riscv 无浮点 Call，仅 x86 触发，完全模型化收益 < 风险
+
+等价验证：forge-dsl 46、forge-codegen jit 全套无 FAILED（golden）、
+forge-tests 无 FAILED（riscv 矩阵）、clippy 0。

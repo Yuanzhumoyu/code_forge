@@ -121,8 +121,22 @@ pub(crate) fn gen_frame_lowering(infos: &[InstInfo], model: &V12Model) -> Result
     // 尾声跳转指令选择：x86 JMP_REL32（0xE9 rel32）手写；定宽（riscv）
     // JAL x0, epilogue_label（label 槽 = 块号 → encoder 定宽 fixup
     // Relative(4,0)，位段由 RiscvRelocPatcher 编码）。
-    let has_jmp_f = infos.iter().any(|i| i.inst.name == "JMP_REL32");
-    let has_jal_f = infos.iter().any(|i| i.inst.name == "JAL");
+    // 显式 `[emit].epilogue_jump_inst` 优先；缺省按指令存在性自动检测。
+    let explicit_jump = model
+        .emit
+        .as_ref()
+        .and_then(|e| e.epilogue_jump_inst.clone());
+    let jump_inst = explicit_jump
+        .as_deref()
+        .unwrap_or(if infos.iter().any(|i| i.inst.name == "JMP_REL32") {
+            "JMP_REL32"
+        } else if infos.iter().any(|i| i.inst.name == "JAL") {
+            "JAL"
+        } else {
+            ""
+        });
+    let has_jmp_f = jump_inst == "JMP_REL32";
+    let has_jal_f = jump_inst == "JAL";
     let jal_f = inst_fids(infos, "JAL");
     let (jal_dest, jal_target) = if jal_f.len() >= 2 {
         (jal_f[0].clone(), jal_f[1].clone())
@@ -160,12 +174,20 @@ pub(crate) fn gen_frame_lowering(infos: &[InstInfo], model: &V12Model) -> Result
     };
 
     // spill load/store：`{0}` = 寄存器、`{1}` = 帧偏移、基址来自模板 base。
+    // 模板未声明 base 时缺省取 [abi.frame].fp（x86 RBP / riscv X8）——
+    // 二者正是帧指针语义；再回退 "RBP"。
+    let default_base = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.frame.as_ref())
+        .and_then(|fr| fr.fp.clone())
+        .unwrap_or_else(|| "RBP".to_string());
     let spill_gpr = model.spill.get("GPR");
     let spill_fpr = model.spill.get("FPR");
-    let gpr_load = gen_spill_stmt(infos, spill_gpr, true)?;
-    let gpr_store = gen_spill_stmt(infos, spill_gpr, false)?;
-    let fpr_load = gen_spill_stmt(infos, spill_fpr, true)?;
-    let fpr_store = gen_spill_stmt(infos, spill_fpr, false)?;
+    let gpr_load = gen_spill_stmt(infos, spill_gpr, true, &default_base)?;
+    let gpr_store = gen_spill_stmt(infos, spill_gpr, false, &default_base)?;
+    let fpr_load = gen_spill_stmt(infos, spill_fpr, true, &default_base)?;
+    let fpr_store = gen_spill_stmt(infos, spill_fpr, false, &default_base)?;
 
     Ok(quote! {
         pub struct FrameLowering;
@@ -748,6 +770,7 @@ fn gen_spill_stmt(
     infos: &[InstInfo],
     tpl: Option<&SpillTemplate>,
     is_load: bool,
+    default_base: &str,
 ) -> Result<TokenStream, String> {
     let Some(t) = tpl else {
         return Ok(quote! {
@@ -762,7 +785,7 @@ fn gen_spill_stmt(
     };
     let info = inst_info_by_name(infos, inst_name)
         .ok_or_else(|| format!("spill 模板引用了未知指令 '{inst_name}'"))?;
-    let base_name = t.base.clone().unwrap_or_else(|| "RBP".to_string());
+    let base_name = t.base.clone().unwrap_or_else(|| default_base.to_string());
     let base = format_ident!("{base_name}");
     let mut bindings: Vec<(String, TokenStream)> = Vec::new();
     if !ops.is_empty() {

@@ -5,6 +5,14 @@
 //! gen_lowering_attrs/strip_placeholder_decls/lowering_token_kind/
 //! parse_mem_template/collect_phys_clobbers/inst_reg_imm_fids）与
 //! codegen 的 pascal_ident、model 类型。
+//!
+//! ## x86 浮点 Call 路径硬编码（保留原因）
+//! Return/Call/arg_move_loop 的浮点路径直接引用 `Inst::Movss`/`Inst::Movsd`
+//! 变体（f32/f64 移动）与 by-ref 向量 `VMOVUPS*`。这些指令名与字段角色
+//! 已硬编码在生成代码中（非配置字符串）——riscv 无浮点 Call（浮点参数/
+//! 返回经 GPR 位模式或降级 Unsupported），仅 x86 触发。完全模型化需把
+//! "浮点移动指令 + 字段角色"抽象为 ABI 键 + 运行时查表，收益 < 风险，
+//! 故保留并在此集中标注（新增浮点 Call 的 ISA 需按此路径扩展）。
 
 use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};

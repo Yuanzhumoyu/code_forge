@@ -303,11 +303,11 @@ pub(crate) fn gen_machine_inst(infos: &[InstInfo], model: &V12Model) -> Result<T
             effects_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![#(#eff_kinds),*] });
         }
 
-        // is_move：MOV 类（1 use + 1 def Reg）
+        // is_move：显式 `move = true/false` 优先（riscv 的 `mv` 等非 MOV
+        // 前缀移动指令需声明 true）；缺省按指令名前缀启发式（`MOV_`/`MOVR`）。
         let upper = info.inst.name.to_uppercase();
-        if (upper.starts_with("MOV_") || upper.starts_with("MOVR"))
-            && def_fids.len() == 1
-            && use_fids.len() == 1
+        let name_is_mov = upper.starts_with("MOV_") || upper.starts_with("MOVR");
+        if info.inst.move_inst.unwrap_or(name_is_mov) && def_fids.len() == 1 && use_fids.len() == 1
         {
             let d = def_fids[0];
             let u = use_fids[0];
