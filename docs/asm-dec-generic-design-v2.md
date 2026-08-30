@@ -603,3 +603,32 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
   → `global_reloc` 字段（abs8/pcrel_hi/pcrel_lo）；is_move 支持显式
   `move_inst` 声明；尾声跳转 `[emit].epilogue_jump_inst` 键；spill base
   缺省从 `[abi.frame].fp` 取。全部等价变换（golden 字节不变）。
+- **第三轮破坏性重构（2026-08，v14 分支）——语义显式声明，彻底清除
+  指令名判断**：生成器不再以指令名（前缀/存在性探测）作判断依据，
+  全部语义经 effect 标签与 ABI 键显式声明（参考 LLVM TableGen flags 与
+  gem5 ISA DSL 的声明式设计）：
+  - **Step 1a（02f0f53）effect 标签统一**：`Instruction.effect` 值域
+    Pure/Read/Write/Branch/Jump/Call/Ret/Trap/Move；`is_move`/`is_branch`/
+    `is_call`/`is_ret` 全从标签派生（删 `MOV_`/`MOVR` 前缀启发式）；x86
+    12 条纯 copy 指令标 `effect=["Move"]`、riscv `mv` 标 Move、`EBREAK`
+    标 Trap。
+  - **Step 1b（7ddc3fe）ABI 指令键 + 结构迭代**：`[abi]` 新增
+    ret_inst/jump_inst/branch_inst/test_inst/push_inst/pop_inst/
+    fpr_mov_inst/fpr_mov_inst32/call_indirect_inst 键（缺省固定值，不做
+    按名存在性猜测）；尾声跳转统一走 encoder（变长 REL4 / 定宽
+    Relative(4,0) fixup，删 `jump_inst == "JMP_REL32"` 名判断）；Call/
+    CallIndirect 按操作数槽结构迭代（Label→-(FuncRef+1)、Out/InOut Reg
+    →call_ret_reg、In Reg→callee，删 `call_inst=="CALL_RIP_REL"` 与
+    `fids("CALL_RM")` 硬编码）。修复 `inst_exists`（指令存在性与操作数
+    无关——RET/NOP 无操作数时 `has_ret` 曾误判 false 致
+    demo_v12_tm_tests 3 失败）。
+  - **Step 2（0182e87）占位符注册表 + 编号动态化**：新建
+    `v12/codegen/placeholder.rs` 单一注册表（name/kind/token_kind/temp/
+    temp_class/xreg/ctor），4 处消费（gen_lowering_insts 的 32+ ctor arm、
+    lowering_token_kind 分类表、temp 预声明清单、xreg 绑定）全部从表
+    派生；删重复死 arm。**操作数/临时数量不封顶**：`{N}` 编号操作数
+    任意上限（{0}→rs1、{N}→rs{N+1}，预绑定 rs1..=rsN 按模板最大编号
+    动态生成）；临时改 `{gN}`（GPR）/`{fN}`（FPR，与 PhTemp 对应，
+    废弃 `{t}/{tN}/{t_f}/{t_fN}` 旧样式）；`gen_spill_stmt` 任意 `{N}`
+    按槽类型绑定 + 字面立即数（4+ 操作数 spill 指令可表达）。全部
+    等价变换：x86/riscv golden 字节断言与 riscv 矩阵 126 全绿。
