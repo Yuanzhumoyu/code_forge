@@ -420,32 +420,28 @@ impl<'a> BtState<'a> {
     /// 指令间的微间隙，因此从 (0,0) 查找 next_use 已经足够可靠。
     fn evict_and_assign(&mut self, vreg: XReg, class: RegClass) -> Result<PReg, IrError> {
         let current_point = self.current_point;
-        // active 是 HashMap，iter 顺序跨进程随机；max_by_key 在平局时返回
-        // 先遇到的元素 → 偶发不同的驱逐决策。用 max_by + 确定性 tie-breaker
-        // （next_use_after 相同按 vreg index 递增），保证跨进程确定性。
+        // 驱逐候选的 next_use 预计算（2026-08-31）：active 是 HashMap，iter
+        // 顺序跨进程随机；max_by_key 在平局时返回先遇到的元素 → 偶发不同的
+        // 驱逐决策。预收集 (next_use, vreg) 再用 max_by_key + 确定性
+        // tie-breaker（next_use_after 相同按 vreg index 递增），保证跨进程
+        // 确定性；且每个候选只查一次 next_use（max_by 的惰性比较是 O(active²)
+        // 次查询，预计算降为 O(active) 次）。
         let victim = self
             .active
             .iter()
             .filter(|(_, p)| p.class == class || p.class.overlaps(class))
             .filter(|(victim, _)| **victim != vreg)
-            .max_by(|(a_vreg, _), (b_vreg, _)| {
-                let ka = self
+            .map(|(&v, &p)| {
+                let next_use = self
                     .intervals
-                    .get(*a_vreg)
+                    .get(&v)
                     .and_then(|iv| iv.next_use_after(current_point))
                     .unwrap_or(ProgPoint::MAX);
-                let kb = self
-                    .intervals
-                    .get(*b_vreg)
-                    .and_then(|iv| iv.next_use_after(current_point))
-                    .unwrap_or(ProgPoint::MAX);
-                ka.cmp(&kb)
-                    .then_with(|| a_vreg.index().cmp(&b_vreg.index()))
-            });
+                (next_use, v, p)
+            })
+            .max_by_key(|&(next_use, v, _)| (next_use, v.index()));
 
-        if let Some((victim_vreg, victim_preg)) = victim {
-            let victim_vreg = *victim_vreg;
-            let victim_preg = *victim_preg;
+        if let Some((_, victim_vreg, victim_preg)) = victim {
             if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
                 || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
             {
@@ -687,8 +683,9 @@ impl<'a> BtState<'a> {
                 // 2026-08 确定性修复：入池路径（expire_dead 的 active.retain
                 // HashMap 随机 iter → freed 批量 push；spill/evict 的 push）使
                 // free_regs 池序跨进程随机 → pop() 取到的寄存器随机 → 分配/
-                // spill 决策连锁非确定（EP/函数布局每次编译不同）。pop 前按
-                // PReg index 排序，取最大者——确定性分配（跨进程一致）。
+                // spill 决策连锁非确定（EP/函数布局每次编译不同）。取号前按
+                // PReg index 确定性选择：callee-saved 优先（见下），否则取
+                // 最大编号——跨进程一致。
                 //
                 // **callee-saved 优先**：跨调用存活的 vreg 必须落在被保存的
                 // 寄存器上（否则 call 点被 clobber 强制 spill，参数/长命值丢
@@ -699,6 +696,10 @@ impl<'a> BtState<'a> {
                 //（X9/X18-X27）与 caller-saved 交错（X28-X31 更高）→ 需显式
                 // 优先 callee_saved。非跨调用 vreg 用 callee-saved 无害（函数
                 // 自身保存）。
+                //
+                // 有序池优化（2026-08-31）：不再每次 sort_by_key（O(n log n)，
+                // 每指令分配都触发）——callee-saved 与最大编号均用单次线性
+                // 扫描（O(n)，n = 池大小 ≤ 寄存器数 16，常数级），确定性保持。
                 if let Some(max_cs) = pool
                     .iter()
                     .filter(|p| self.config.callee_saved.contains(&p.num))
@@ -707,9 +708,12 @@ impl<'a> BtState<'a> {
                 {
                     pool.retain(|p| *p != max_cs);
                     Some(max_cs)
+                } else if let Some((max_idx, _)) =
+                    pool.iter().enumerate().max_by_key(|(_, p)| p.num)
+                {
+                    Some(pool.swap_remove(max_idx))
                 } else {
-                    pool.sort_by_key(|p| p.num);
-                    pool.pop()
+                    None
                 }
             }?;
             // 跳过已被占用的寄存器（spill/驱逐可能把已占寄存器残留进空闲池）

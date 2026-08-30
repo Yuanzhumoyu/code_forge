@@ -141,8 +141,13 @@ impl LiveInterval {
     }
 
     /// 在 point 之后的第一个使用点（用于 spill 启发式）。
+    ///
+    /// `uses` 按程序点升序（阶段 1 按块/指令遍历序 `add_use`，每个 use 点
+    /// 唯一）→ 二分查找 O(log n)，替代线性 find（regalloc 的 evict 对每个
+    /// active 候选调用，spill 密集函数的 hot path）。
     pub fn next_use_after(&self, point: ProgPoint) -> Option<ProgPoint> {
-        self.uses.iter().copied().find(|&u| u > point)
+        let idx = self.uses.partition_point(|&u| u <= point);
+        self.uses.get(idx).copied()
     }
 
     /// 最后的活跃程序点。
@@ -204,7 +209,11 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     }
 
     // ── 阶段 1: 计算 LiveInterval（带循环权重）──
-    let mut intervals: HashMap<XReg, LiveInterval> = HashMap::new();
+    // 预分配容量：vreg 数 ≤ 参数数 + xreg_map 总字段数（上界，免去重
+    // 开销；HashMap 容量稍大无害）。避免阶段 1 反复 resize。
+    let est_vregs: usize = param_xregs.len()
+        + xreg_map.iter().map(|slot| slot.len()).sum::<usize>();
+    let mut intervals: HashMap<XReg, LiveInterval> = HashMap::with_capacity(est_vregs);
 
     const LOOP_WEIGHT: f32 = 10.0;
     const NORMAL_WEIGHT: f32 = 1.0;
