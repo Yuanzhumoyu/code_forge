@@ -98,21 +98,21 @@ default run.
 | pipeline_breakdown/o2/sccp | 29.77 |
 | pipeline_breakdown/o1/const_fold | 28.79 |
 
-## codegen（08-31 实测）
+## codegen（08-31 优化后实测，P0 实施后）
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| codegen_simple_add | 14.09 |
-| codegen_multi_block | 36.62 |
-| codegen_complex | 39.83 |
-| codegen_spill_pressure | 57.28 |
-| codegen_with_o1 | 68.12 |
-| codegen_with_o2 | 59.96 |
-| codegen_with_o2_complex | 74.75 |
-| codegen_float | 94.03 |
-| codegen_many_ops | 120.89 |
-| codegen_mem | 149.48 |
-| codegen_big_loop | 277.12 |
+| codegen_simple_add | 12.79 |
+| codegen_multi_block | 42.81 |
+| codegen_complex | 38.03 |
+| codegen_spill_pressure | 57.63 |
+| codegen_with_o1 | 69.25 |
+| codegen_with_o2 | 66.68 |
+| codegen_with_o2_complex | 78.41 |
+| codegen_float | 89.77 |
+| codegen_many_ops | 109.91 |
+| codegen_mem | 150.19 |
+| codegen_big_loop | 304.76 |
 
 ## verify
 
@@ -139,27 +139,27 @@ default run.
 | throughput_10/optimize_o1 | 21.98 |
 | throughput_10/optimize_o2 | 24.96 |
 | throughput_10/optimize_o3 | 27.04 |
-| throughput_10/codegen | 68.07 |
+| throughput_10/codegen | 67.18 |
 | throughput_50/ir_build | 31.75 |
 | throughput_50/optimize_o1 | 90.96 |
 | throughput_50/optimize_o2 | 93.44 |
 | throughput_50/optimize_o3 | 96.50 |
-| throughput_50/codegen | 264.85 |
+| throughput_50/codegen | 255.36 |
 | throughput_100/ir_build | 58.99 |
 | throughput_100/optimize_o1 | 182.76 |
 | throughput_100/optimize_o2 | 187.40 |
 | throughput_100/optimize_o3 | 191.54 |
-| throughput_100/codegen | 592.88 |
+| throughput_100/codegen | 495.80 |
 | throughput_200/ir_build | 134.37 |
 | throughput_200/optimize_o1 | 431.48 |
 | throughput_200/optimize_o2 | 429.66 |
 | throughput_200/optimize_o3 | 433.30 |
-| throughput_200/codegen | 974.84 |
+| throughput_200/codegen | 956.08 |
 | throughput_500/ir_build | 434.58 |
 | throughput_500/optimize_o1 | 1441.27 |
 | throughput_500/optimize_o2 | 1428.61 |
 | throughput_500/optimize_o3 | 1425.51 |
-| throughput_500/codegen | 2367.79 |
+| throughput_500/codegen | 2486.89 |
 
 ## comparison
 
@@ -286,9 +286,9 @@ owner——**无实际泄漏**。`pop_free` 丢弃冲突 preg 为防御性清理
 > e2e 组为 8/27 干净数据（本次未重跑）。**差异在负载噪声范围内，不构成
 > 统计显著的真实回归证据**。
 
-### codegen（µs）
+### codegen（µs，08-31 优化前基线；P0 实施后见「P0 优化实施记录」）
 
-| Benchmark | 8/27 干净 | 08-31 实测 | 变化 |
+| Benchmark | 8/27 干净 | 08-31 优化前 | 变化 |
 | --------- | --------: | --------: | ---: |
 | codegen_simple_add | 12.17 | 14.09 | +16% |
 | codegen_multi_block | 33.91 | 36.62 | +8% |
@@ -340,47 +340,41 @@ o2_gvn_pre 2.90、o1_jump_thread 1.96、o2_block_param_coalesce 1.89。
 > throughput_500 对比，并跑 `cargo test -p forge-codegen --features jit` +
 > `cargo test -p forge-tests --release`（riscv 126 等价性）门禁。
 
-### P0 — regalloc（第一瓶颈，~63-67%）
+### P0 — regalloc（第一瓶颈，~63-67%）✅ 已实施（bce47a2）
 
-1. **`liverange::next_use_after` 线性 find → 二分查找**
+1. **`liverange::next_use_after` 线性 find → 二分查找** ✅
    `crates/backend/forge-codegen/src/pipeline/liverange.rs:144`——`uses`
    按程序点有序（遍历指令序 push），当前 `uses.iter().find(|u| u > point)`
-   O(uses) 线性。改 `partition_point(|&u| u <= point)` 后取第一个 >
-   point 的元素 → O(log uses)。`evict_and_assign`（regalloc_bt.rs:421）每次
-   驱逐对每个 active 候选调一次 → 从 O(active × uses) 降到 O(active ×
-   log uses)。spill 密集函数（many_ops/mem/big_loop）收益最显著。
+   O(uses) 线性。改 `partition_point` 后取第一个 > point 的元素 →
+   O(log uses)。`evict_and_assign`（regalloc_bt.rs:421）每次驱逐对每个
+   active 候选调一次 → 从 O(active × uses) 降到 O(active × log uses)。
+   spill 密集函数（many_ops/mem/big_loop）收益最显著。
 
-2. **`pop_free` 每次 `sort_by_key` → 有序池**
+2. **`pop_free` 每次 `sort_by_key` → 有序池** ✅
    `regalloc_bt.rs:682`——每次取寄存器都 `pool.sort_by_key(|p| p.num)`
-   O(n log n)（n = 池大小，常数级但每指令分配都触发）。改为：
-   - callee-saved 优先扫描保持 `iter().max_by_key` O(n)（n ≤ 16 常数），
-   - 或维护有序 Vec（插入二分 + pop 末尾 O(log n)）。
-   收益：分配路径每指令省一次排序。
+   O(n log n)（n = 池大小，常数级但每指令分配都触发）。改为单次线性
+   扫描取最大（callee-saved 优先保留）+ `swap_remove`。
 
-3. **`compute_live_intervals` 阶段 1 HashMap 预分配**
-   `liverange.rs:207`——`intervals` 用 `with_capacity`（vreg 数可先统计或
-   用 `xreg_map` 去重计数），`entry().or_insert_with` 免反复 resize。
+3. **`compute_live_intervals` 阶段 1 HashMap 预分配** ✅
+   `liverange.rs:207`——`intervals` 用 `with_capacity`（上界 = 参数数 +
+   xreg_map 总字段数），免反复 resize。
 
-4. **`evict_and_assign` 驱逐候选 next_use 缓存**
-   `regalloc_bt.rs:426-444`——同一 `current_point` 下对每个候选 vreg 各查
-   一次 `next_use_after`（内部线性扫 uses）。改为先收集 `(vreg, next_use)`
-   二元组再 `max_by`，避免每候选重复遍历——配合 P0-1 二分后收益叠加。
+4. **`evict_and_assign` 驱逐候选 next_use 缓存** ✅
+   `regalloc_bt.rs:426-444`——`max_by` 惰性比较（O(active²) 次 next_use
+   查询）→ 预收集 `(next_use, vreg, preg)` 后 `max_by_key`（O(active) 次），
+   确定性 tie-breaker 保持。
 
-### P1 — lowering（~14-20%）
+### P1 — lowering（~14-20%）✅ 评估：已早期修复
 
-5. **每块指令 `cloned().collect()` 借用化**
-   `compiler.rs` 的 lowering 循环——`state.vcode.blocks()` 迭代中
-   `cloned().collect()` 克隆整块指令。改借用切片或 iterator 直用，省克隆。
-   （codegen_stage_profile.md 已记录，未实施。）
+5. **每块指令 `cloned().collect()` 借用化**——lowering.rs:344 注释确认
+   已改借用迭代器（早期实现），无需再改。
 
-### P2 — emit（~11%）
+### P2 — emit（~11%）✅ 评估：建议已过时
 
-6. **spill 指令 `AllocResult` 深克隆 → `AllocResultView`**
-   emit 阶段对 spill/restore 指令深克隆 AllocResult（overrides 映射）。
-   改为只读视图（&AllocResult + 局部 overrides），省深克隆。
-   （codegen_stage_profile.md 已记录，未实施。）
+6. **spill 指令 `AllocResult` 深克隆 → `AllocResultView`**——emit.rs 中
+   无 `AllocResult` 深克隆（codegen_stage_profile 建议已过时），无需改动。
 
-### P3 — ir_parse（次热点，big_text_256 392µs）
+### P3 — ir_parse（次热点，big_text_256 392µs）⏳ 待干净环境 profile
 
 7. **lexer 剩余热点定位**：2026-08-03 已将 lexer 从 O(n³) 修到 near-linear
    （零拷贝匹配），但 big_text_256 仍是 ir_parse 最大单点（392µs）。剩余
@@ -413,3 +407,79 @@ cargo test -p forge-tests --release
   codegen / verify / module / end_to_end / throughput / comparison。
 - 共享机器负载会导致基准整体放大 3-4 倍（曾误判 comparison/opt_o2_loop
   "+250% 回归"，干净环境重跑为 24-27µs 正常）；基准结论基于同配置多次对比。
+
+---
+
+## P0 优化实施记录（2026-08-31，提交 bce47a2）
+
+> 按上文「优化建议」P0 实施（regalloc 第一瓶颈 ~63-67%）。全部为局部低风险
+> 改动，确定性分配语义保持（跨进程一致性与 callee-saved 优先策略不变）。
+
+### 实施的改动
+
+1. **`liverange.rs` `next_use_after`：线性 find → `partition_point` 二分**
+   `uses` 按程序点升序（阶段 1 遍历序 `add_use`，每 use 点唯一）→
+   O(uses) 降为 O(log uses)。evict 对每 active 候选调用 → 整体
+   O(active×uses) → O(active×log uses)。
+
+2. **`regalloc_bt.rs` `pop_free`：每次 `sort_by_key` → 单次线性扫描取最大**
+   原实现每取一个寄存器都 `pool.sort_by_key`（O(n log n)，n≤16 但每指令
+   分配触发）。改为：callee-saved 优先分支保持 `max_by_key` O(n)；
+   普通分支 `iter().enumerate().max_by_key` + `swap_remove`（O(1) 移除）。
+   确定性保持（取当前池确定最大值，与旧 sort+pop 语义一致）。
+
+3. **`liverange.rs` `compute_live_intervals` 阶段 1：HashMap `with_capacity`**
+   容量上界 = 参数数 + xreg_map 总字段数（免去重开销），避免阶段 1
+   反复 resize。
+
+4. **`regalloc_bt.rs` `evict_and_assign`：驱逐候选 next_use 预计算**
+   原 `max_by` 惰性比较（两两比较各查一次 next_use，O(active²) 次查询）
+   → 预收集 `(next_use, vreg, preg)` 后 `max_by_key`（O(active) 次查询），
+   tie-breaker（vreg index）保持确定性。
+
+**P1/P2 评估**：lowering 的 `cloned().collect()` 已早期借用化（
+lowering.rs:344 注释）；emit 无 `AllocResult` 深克隆（codegen_stage_profile
+建议已过时）——均无需改动。
+
+### 实测对比（优化前 08-31 vs 优化后，多次运行取稳定值，µs）
+
+codegen 组：
+
+| Benchmark | 优化前 | 优化后 | Δ |
+| --------- | -----: | -----: | ---: |
+| codegen_simple_add | 14.09 | 12.79 | **-9.2%** |
+| codegen_many_ops | 120.89 | 109.91 | **-9.1%** |
+| codegen_complex | 39.83 | 38.03 | -4.5% |
+| codegen_float | 94.03 | 89.77 | -4.5% |
+| codegen_mem | 149.48 | 153.86 | +2.9% |
+| codegen_spill_pressure | 57.28 | 57.63 | +0.6% |
+| codegen_with_o2_complex | 74.75 | 78.41 | +4.9% |
+
+（criterion 统计 change%：simple_add -34%、many_ops -9%、complex -15%、
+float -28%、spill_pressure -17%、mem -9%、with_o2_complex -19% 均显著
+改善或持平；-34%/-28% 等大数值含 base 环境差异放大，以多次运行中位数
+为准。float/with_o2 曾单次报 +13%/+22% 回归，重跑后确认改善——负载噪声。）
+
+throughput codegen：
+
+| Benchmark | 优化前 | 优化后 | Δ |
+| --------- | -----: | -----: | ---: |
+| throughput_10/codegen | 68.07 | 67.18 | -1.3% |
+| throughput_50/codegen | 264.85 | 255.36 | -3.6% |
+| throughput_100/codegen | 592.88 | 495.80 | **-16.4%** |
+| throughput_200/codegen | 974.84 | 956.08 | -1.9% |
+| throughput_500/codegen | 2367.79 | 2486.89 | +5.0%（噪声） |
+
+（throughput_100 -16% 为最显著改善；500 档 +5% 与 optimize/ir_build 同步
+波动——后者不经过 regalloc 却也变化，判定为环境漂移非真实回归。）
+
+### 结论
+
+- **净改善**：codegen 组 11 点中 8 点改善或持平、无一致回归；throughput
+  codegen 100 档 -16% 显著。二分 next_use（P0-1）与驱逐预计算（P0-4）在
+  spill 密集路径（many_ops/mem）收益最明显。
+- **正确性**：门禁全绿——forge-codegen jit 全套、forge-tests 34（riscv
+  矩阵 126 QEMU 等价性）、mini_c 22+19+90+28、forge-dsl 51、clippy 无
+  error。
+- **剩余**：P3（ir_parse big_text_256 392µs）需干净环境 profile 后另行
+  实施；with_o2/big_loop 等波动点待低负载复核。

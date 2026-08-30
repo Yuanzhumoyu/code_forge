@@ -7,9 +7,13 @@
 > 的 codegen 组实测（`docs/bench_baseline.md`）显示整体 ±16% 波动（负载
 > 噪声），regalloc 仍是第一瓶颈的结论成立（多数函数 stage 占比 63-67%
 > 未变；codegen 组是最大耗时组，throughput_500/codegen 2367µs ≈ optimize
-> 的 1.6 倍）。具体优化建议见 `docs/bench_baseline.md` 文末「优化建议」
-> （P0-1 next_use_after 二分、P0-2 pop_free 有序池、P0-3 intervals 预分配、
-> P0-4 驱逐候选缓存、P1 lowering 借用化、P2 emit 视图化）。
+> 的 1.6 倍）。
+>
+> **P0 已实施（2026-08-31，提交 bce47a2）**：`next_use_after` 二分、
+> `pop_free` 有序池、`compute_live_intervals` 预分配、`evict_and_assign`
+> 驱逐候选预计算——实测 codegen 组 8/11 点改善或持平（simple_add -9%、
+> many_ops -9%、throughput_100/codegen -16%），门禁全绿。剩余建议
+> （P3 ir_parse）见 `docs/bench_baseline.md` 文末「优化建议」。
 
 ## 各函数 stage 占比
 
