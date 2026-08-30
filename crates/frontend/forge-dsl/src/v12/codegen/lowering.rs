@@ -474,6 +474,29 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         }
     };
 
+    // Unreachable terminator（rustc 死代码/oom shim）：按 effect=Trap 标签
+    // 收集指令（语义驱动，不做按名探测）——x86 UD2 / riscv EBREAK；
+    // 取无操作数形态；缺失 → Unsupported。
+    let unreachable_body: TokenStream =
+        match infos
+            .iter()
+            .find(|i| i.inst.effect.iter().any(|e| e == "Trap") && i.operands.is_empty())
+        {
+            Some(info) => {
+                let vn = &info.vn;
+                quote! {
+                    __pack.push_inst(Inst::#vn);
+                    Ok(__pack)
+                }
+            }
+            None => quote! {
+                let _ = __pack;
+                Err(crate::prelude::IrError::Unsupported(
+                    "v12 unreachable lowering (no trap inst with effect=Trap)".into(),
+                ))
+            },
+        };
+
     // 无任何 terminator 指令（riscv 等）→ 直接 Err 版本（避免 __pack 未使用/不可达）
     let term_impl: TokenStream = if has_ret || has_jmp || has_jcc {
         quote! {
@@ -501,6 +524,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                         ..
                     } => {
                         #branch_body
+                    }
+                    crate::prelude::Terminator::Unreachable => {
+                        #unreachable_body
                     }
                     _ => Err(crate::prelude::IrError::Unsupported("v12 terminator lowering".into())),
                 }

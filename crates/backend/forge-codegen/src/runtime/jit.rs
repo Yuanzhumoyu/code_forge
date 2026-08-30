@@ -1135,8 +1135,8 @@ mod tests {
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
         let v = bm.vconst(vec![
-            1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0,
-            15.0, 16.0,
+            1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+            16.0,
         ]);
         let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
         bm.ret(&r);
@@ -1153,9 +1153,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_select_cmov_path() {
-        use forge_ir::{
-            FunctionBuilder, FunctionSignature, IntCC, TypeContext, TypeId,
-        };
+        use forge_ir::{FunctionSignature, IntCC, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1192,6 +1190,75 @@ mod tests {
         let g: extern "C" fn(i32) -> i32 = jit.get_fn("sel_i32").expect("get_fn");
         assert_eq!(g(5), 42, "i32 cond=true → 42");
         assert_eq!(g(0), 9, "i32 cond=false → 9");
+    }
+
+    /// Unreachable terminator → trap 指令（effect=Trap 标签，x86 ud2）——
+    /// 编译通过（不再 Unsupported）；不执行（ud2 非法指令）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_unreachable_terminator() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        jit.add_function("unreach_fn", &sig, |b| {
+            let e = b.create_block();
+            b.switch_to_block(e);
+            b.unreachable();
+        })
+        .expect("compile unreachable terminator");
+        // 编译通过即验证（执行会触发 ud2 崩溃——预期行为，不在此执行）
+    }
+
+    /// e2e 值错隔离：递归调用（fib）——主库侧验证 call lowering
+    /// （e2e 的 fib_recursive 值错在 nightly 漂移下；此处直接验证
+    /// 递归 call + 返回值的 forge-codegen 路径）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_fib_recursive_call() {
+        use forge_ir::{
+            FunctionBuilder, FunctionSignature, FuncRef, IntCC, TypeContext, TypeId,
+        };
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // fib(n) = n<2 ? n : fib(n-1)+fib(n-2)
+        let sig = FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("fib", TypeContext::new(), sig.clone());
+        let (entry, p) = b.create_block_with_params(&[(TypeId::I64, "n")]);
+        b.switch_to_block(entry);
+        let two = b.iconst_i64(2);
+        let lt = b.icmp(IntCC::SignedLessThan, p[0], two);
+        let rec = b.create_block();
+        let (done, dp) = b.create_block_with_params(&[(TypeId::I64, "r")]);
+        b.switch_to_block(entry);
+        b.branch(lt, done, &[p[0]], rec, &[]);
+        b.switch_to_block(rec);
+        let one = b.iconst_i64(1);
+        let nm1 = b.isub(p[0], one);
+        let r1 = b.call(FuncRef(0), &[nm1], &[TypeId::I64]);
+        let nm2 = b.isub(p[0], two);
+        let r2 = b.call(FuncRef(0), &[nm2], &[TypeId::I64]);
+        let sum = b.iadd(r1[0], r2[0]);
+        b.jump(done, &[sum]);
+        b.switch_to_block(done);
+        b.ret(&[dp[0]]);
+        let f = b.finish().expect("build fib");
+        // 递归 call 的 FuncRef(0) 需要在 module 中解析——用 module 方式
+        let mut module = Module::new();
+        let fib_ref = module.add_function(f);
+        // main: fib(10) = 55
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let ten = bm.iconst_i64(10);
+        let r = bm.call(fib_ref, &[ten], &[TypeId::I64]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("compile fib module");
+        let f: extern "C" fn(i64) -> i64 = jit.get_fn("fib").expect("get_fn fib");
+        assert_eq!(f(10), 55, "fib(10) = 55（递归 call lowering）");
     }
 
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
