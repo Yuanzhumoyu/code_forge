@@ -602,3 +602,58 @@ p<0.05，379.55µs 中位数）——2026-08-03 的 lexer 零拷贝修复持续�
 （vs 8/06 基线）：codegen_many_ops 100.7→110µs（负载波动）、
 throughput_500/codegen 2364→2386µs（持平）——优化主要改善 spill 密集与
 多指令函数（mem/big_loop/with_o1/o2 累计 -10~-20%）。
+
+---
+
+## P1 批次实施记录（审查优化方案执行，2026-09 系列提交）
+
+> 全项目审查（3 subagent）P0 22 项已全部实施（P0 批次 14+ 提交，见
+> git log）；以下为 P1 高价值项实施记录（分支 v14-forge-ir-redesign）。
+> 门禁口径：forge-dsl 51 / forge-opt 91 / forge-ir 242 / forge-codegen jit
+> 全套 / forge-tests 36（riscv 矩阵 126 QEMU 真执行）/ mini_c 全套 /
+> clippy 0 error。
+
+| 项 | 内容 | 提交 | 验证 |
+| --- | --- | --- | --- |
+| P1-15 | forge-tests native 执行 target_arch 门控（macOS arm64 CI 免 SIGILL） | 2059ada | CI |
+| P1-10 | DominatorTree 补 idom/depth/ncd 查询 | 9a593c4 | forge-ir 242 |
+| P1-3 | LoopInfo 补 latches/preheader 字段 | 51c0b18 | licm/ind_var/unroll 消费 |
+| P1-2 | LICM 外提目标 = preheader（有则用之，无则回退 header） | 51c0b18 | licm 测试 |
+| P1-1 | DSL def 约束生成 ReuseInput（InOut 操作数复用 use 寄存器；两地址基础设施） | c4db8d0 + 8a4b3f6 | regalloc 已有消费路径 |
+| P1-5 | 最小别名分析（栈槽/全局/alloca/未知）+ load CSE/GVN/LICM 接线 | 1d8aa77 | forge-ir +2 / forge-opt +5 测试 |
+| P1-16 | 能力集从 TOML 生成（SUPPORTED_OPS 取代手写 CAPS） | 85de805 | forge-tests +2 一致性 |
+| P1-18 | 编码器/解码器 fuzz（随机字节鲁棒 + 截断 + 往返）；**修复 MemReg disp8 越界 panic** | 720fe25 | forge-codegen +3 fuzz |
+| P1-插 | insert_preheader pass（多循环外 pred 的循环插入规范 preheader） | e7d10ae | forge-opt +2、O2 管线 LICM 前置 |
+| P1-诊 | 前端诊断升级：lowering 错误带行/列 + 行预览 + 指示线 | 82e0ece | mini_c +3 诊断测试 |
+
+### 关键设计决策（延续"语义显式声明、不以名称启发"原则）
+
+1. **P1-5 别名分析**：`MemoryLocation{Stack/Global/Alloca/Unknown}` +
+   `AliasResult{NoAlias/MayAlias/MustAlias}`；沿 GEP/Bitcast 惰性 memo 追
+   基址。**is_cse_candidate 白名单不含 Load**——GVN-PRE 的 block-level
+   kill 模型 + 无 mem_flags 的 ExprKey 不适合 load PRE（volatile 语义风险），
+   CSE/GVN 各自走专用 load 路径。CSE/GVN 的 kill 从"任何写 kill 全部 load"
+   精化为"只 kill may-alias 的 load"（异槽/异全局/栈 vs 全局互不干扰）；
+   LICM 允许地址不变 + 循环内无 may-alias 写的 load 外提到 preheader。
+2. **P1-16 CAPS**：`[[lowering]].op` 唯一集生成 `SUPPORTED_OPS`；无 lowering
+   条目的 op（Call/CallIndirect 走 ABI 专用路径、GEP 内联、Module 伪能力）
+   由各 ISA 的 `CAPS_EXTRA` 补充声明 + 不相交一致性测试守门——TOML 新增
+   lowering op 后矩阵用例自动转绿，不再手写同步（删 184 行）。
+3. **P1-18 fuzz**：xorshift64 固定种子可复现；100k 随机字节 × 3 解码器
+   0.07s。**首跑即抓真 bug**：`[89 72]`（mov r/m64 + ModRM mod=1 需
+   disp8 且缓冲不足）→ x86 解码器 index-out-of-bounds。根因：vlen.rs
+   生成的 MemReg 分支读 `bytes[__o2]` 无边界检查（MemRefOp/VEX/EVEX
+   分支均有）——修复后全绿。
+4. **insert_preheader**：ph 参数 = header 参数；循环外 pred 边
+   `Terminator::retarget`（args 保留）→ ph；ph jump header 转发参数；
+   重建后 LoopInfo.preheader == ph，LICM 不再回退 header。
+5. **前端诊断**：HirError::Located{line,col,line_text} + HirCtx
+   last_span/set_span/locate；mini_c 仅改 3 个分发入口
+   （lower_block/lower_stmt/lower_expr）——深层错误定位到最内层
+   stmt/expr 节点；已定位错误不重复包装。
+
+### 剩余（记录在案）
+
+- HIR 收缩方案（设计文档）、DSL 宽度/原子/ABI 修正（P1-8~12）、
+  CI 环境钉版 nightly（本机 rustup 权限限制无法实施）。
+
