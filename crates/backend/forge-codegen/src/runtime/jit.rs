@@ -908,11 +908,11 @@ mod tests {
         assert_eq!(got, 1, "lane0 f32 1.5 → fptosi → 1");
     }
 
-    /// B1: IR Call 传宽向量实参（>16 字节）——调用方侧栈拷贝尚未落地，
-    /// 必须显式拒绝（防静默截断成 GPR/XMM 低位）。
+    /// B1: IR Call 传宽向量实参（>16 字节）——调用方侧 by-ref 栈拷贝 + 传
+    /// 指针（S1），callee 收参 + lane0 提取 → 结果值验证。
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn test_jit_wide_vector_call_arg_rejected() {
+    fn test_jit_wide_vector_call_byref() {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
@@ -921,7 +921,7 @@ mod tests {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
         };
-        // callee: (v256) -> i32（被调方 by-ref 收参可用）
+        // callee: (v256) -> i32（被调方 by-ref 收参：从 [ptr] load 到 YMM）
         let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
@@ -933,19 +933,18 @@ mod tests {
         bc.ret(&[int]);
         let mut module = Module::new();
         let callee_ref = module.add_function(bc.finish().expect("callee"));
-        // main: () -> i32 { callee(vconst(...)) } —— 宽向量实参 → 拒绝
+        // main: () -> i32 { callee(vconst(...)) } —— 宽向量实参 by-ref 栈拷贝
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.vconst(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
-        let err = jit.compile_module(&module).err();
-        assert!(
-            err.is_some(),
-            "IR Call 传宽向量实参应显式拒绝（防静默截断），实际编译成功"
-        );
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 1, "lane0 f32 1.5 → fptosi → 1（by-ref 栈拷贝往返）");
     }
 
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。

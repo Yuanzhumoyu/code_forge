@@ -864,6 +864,11 @@ fn gen_call_lowering(
         &f_src,
         has_ss,
         has_fpr_mov,
+        // S1：宽向量 by-ref 栈拷贝指令存在性（x86 有 VMOVUPS_MR/
+        // VMOVUPS_ZMM_MR/LEA_RBP_OFF；riscv 等无向量 ISA 缺省 Unsupported）
+        inst_exists(infos, "VMOVUPS_MR")
+            && inst_exists(infos, "VMOVUPS_ZMM_MR")
+            && inst_exists(infos, "LEA_RBP_OFF"),
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,
@@ -901,6 +906,8 @@ fn gen_call_lowering(
 /// 参数 → ABI 寄存器移动语句（浮点参数按类型分派 XMM；整数按序 GPR）。
 /// 整数 mov 指令名按 [abi].ret_mov_inst 泛化；浮点指令缺失时该分支
 /// Unsupported（防引用不存在的 Inst 变体）。
+/// `has_byref`：ISA 是否声明宽向量 by-ref 栈拷贝指令（VMOVUPS_MR/
+/// VMOVUPS_ZMM_MR/LEA_RBP_OFF）——缺省该分支 Unsupported。
 #[allow(clippy::too_many_arguments)]
 fn arg_move_loop(
     op_name: &str,
@@ -915,6 +922,7 @@ fn arg_move_loop(
     f_src: &syn::Ident,
     has_ss: bool,
     has_fpr_mov: bool,
+    has_byref: bool,
     mov_vn: &syn::Ident,
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
@@ -965,6 +973,88 @@ fn arg_move_loop(
             ));
         }
     };
+    // S1：宽向量实参（>16 字节）by-ref——栈上副本 + 传 GPR 指针。
+    // 调用方侧 temp 槽（帧内 [RBP-off]，32 字节对齐间距 64），向量值
+    // store 到槽（VMOVUPS_MR/ZMM_MR），LEA 槽地址到地址 XReg，再 mov 到
+    // int 参数槽。所有 call 复用同一组槽（call 间 temp 槽天然死，顺序
+    // 执行无重叠 live 区间）。**生成期门控**：ISA 未声明这些指令
+    // （riscv 等无向量 ISA）→ 直接 Unsupported，不引用不存在的变体。
+    let byref_stmt: TokenStream = if has_byref {
+        quote! {
+            let __vbytes = ctx
+                .xreg_types
+                .get(&__a)
+                .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                .unwrap_or(32)
+                .max(32);
+            let __off = -((8 + 64 * __bi) as i64);
+            __bi += 1;
+            // 地址平移：局部槽基准 = RBP - stack_slot_shift（x86 callee-saved
+            // 区 64B；与 StackAddr 的 current_offset = v - shift 同构——否则
+            // 覆盖 callee-saved push 槽）。
+            let __addr = __off - ctx.stack_slot_shift as i64;
+            // 1) 向量 → 栈槽（宽度分派：32B → VMOVUPS_MR（VEX ymm）、
+            //    64B → VMOVUPS_ZMM_MR（EVEX zmm）；缺省 32B 兜底）
+            let __vidx = __pack.push_inst(if __vbytes == 64 {
+                Inst::VmovupsZmmMr {
+                    src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    mem: MemRef {
+                        base: Reg::RBP,
+                        disp: __addr,
+                        index: None,
+                        scale: 1,
+                    },
+                }
+            } else {
+                Inst::VmovupsMr {
+                    src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    mem: MemRef {
+                        base: Reg::RBP,
+                        disp: __addr,
+                        index: None,
+                        scale: 1,
+                    },
+                }
+            });
+            // 参数 vreg 是 src（store 指令的唯一 Reg 操作数，序号 0）
+            __pack.map_reg_field(__a, __vidx, 0u8, false);
+            // 2) 槽地址 → 地址 XReg（LEA_RBP_OFF：dest 序号 0 = 结果）
+            let __ptr = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
+            let __lidx = __pack.push_inst(Inst::LeaRbpOff {
+                dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                mem: MemRef {
+                    base: Reg::RBP,
+                    disp: __addr,
+                    index: None,
+                    scale: 1,
+                },
+            });
+            __pack.map_reg_field(__ptr, __lidx, 0u8, true);
+            // 3) 地址 → GPR 参数槽（by-ref 参数占 1 个 int 槽）
+            if __gi < #n {
+                let __dst = [#(Reg::#int_regs),*][__gi];
+                __gi += 1;
+                let __midx = __pack.push_inst(Inst::#mov_vn {
+                    #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #m_dest: __dst,
+                });
+                __pack.map_reg_field(__ptr, __midx, #m_src_idx, false);
+            } else {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: integer arg register exhausted (by-ref wide vector)".into(),
+                ));
+            }
+            // 4) 帧需求：槽深并入 max_stack_bytes（frame_layout 的 sub rsp 大小；
+            //    与 StackAddr 的 depth = -v + 8 同构——不含 shift，帧内统一平移）
+            ctx.max_stack_bytes = ctx.max_stack_bytes.max((8 + 64 * __bi) as u32);
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: wide vector arg (>16B) by-ref needs VMOVUPS_MR/LEA_RBP_OFF".into(),
+            ));
+        }
+    };
     let stmt = quote! {
         if ctx.xreg_types.get(&__a).is_some_and(|t| {
             ctx.type_ctx.as_ref().is_some_and(|tc| {
@@ -972,11 +1062,7 @@ fn arg_move_loop(
                 (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
             })
         }) {
-            // 宽向量实参（>16 字节）按引用传参：调用方需栈上副本 + 传指针。
-            // 调用方侧栈拷贝尚未落地——显式拒绝（防静默截断成 GPR/XMM 低位）。
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: wide vector arg (>16B) by-ref caller-side copy not yet supported".into(),
-            ));
+            #byref_stmt
         } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
             #fpr_stmt
         } else if __gi < #n {
@@ -996,6 +1082,7 @@ fn arg_move_loop(
         quote! {
             let mut __gi = 0usize;
             let mut __fi = 0usize;
+            let mut __bi = 0usize;
             for (__i, &__a) in args.iter().enumerate() {
                 if __i == 0 { continue; }
                 #stmt
@@ -1005,6 +1092,7 @@ fn arg_move_loop(
         quote! {
             let mut __gi = 0usize;
             let mut __fi = 0usize;
+            let mut __bi = 0usize;
             for &__a in args.iter() {
                 #stmt
             }
