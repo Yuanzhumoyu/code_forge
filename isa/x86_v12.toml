@@ -1845,6 +1845,10 @@ asm = "ror {0:[gpr:inout]}"
 
 [abi]
 stack_align = 16
+# 帧填充 8（align/2）：prologue push rbp + 7 callee-saved 后 rsp%16==8，
+# sub rsp 必须使 call 前 rsp%16==0（Windows x64 ABI）——缺省 0 会让系统
+# DLL（如 kernel32!ExitProcess 内部 movdqa）在未对齐栈上 SEGV（0xC0000005）。
+frame_padding = 8
 # Windows x64：int/float 参数共享位置计数（参数 i → GPR{i}/XMM{i}）
 arg_slot = "by-position"
 # 溢出 scratch（spill load/store 用；R10/R11）

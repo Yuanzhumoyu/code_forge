@@ -41,6 +41,11 @@ pub struct ObjectWriter<'a> {
     written_symbols: std::collections::HashSet<ImmStr>,
     /// 已声明的外部符号名 -> SymbolId 映射（避免重复创建 UNDEF 条目）。
     declared_externs: std::collections::HashMap<ImmStr, SymbolId>,
+    /// 已定义的符号名 -> SymbolId（本文件内 add_function/add_data 定义；
+    /// reloc 引用同文件符号时复用定义而非重复声明 UNDEF——否则 COFF
+    /// 符号表同名定义+UNDEF 重复，链接器不解析内部 reloc → call/jmp
+    /// rel32 留 0 → 死循环。跨函数 call（monomorphized core 函数）触发）。
+    defined_symbols: std::collections::HashMap<ImmStr, SymbolId>,
 }
 
 impl<'a> ObjectWriter<'a> {
@@ -80,7 +85,49 @@ impl<'a> ObjectWriter<'a> {
             arch,
             written_symbols: std::collections::HashSet::new(),
             declared_externs: std::collections::HashMap::new(),
+            defined_symbols: std::collections::HashMap::new(),
         })
+    }
+
+    /// 创建或升级符号为定义（Text/Data）：
+    /// - 已定义（defined_symbols）→ 复用（防御；add_function 前有 duplicate 检查）；
+    /// - 已声明 UNDEF（declared_externs，reloc 先引用）→ **升级复用**（改
+    ///   section/kind/size），避免 COFF 同名定义+UNDEF 重复；
+    /// - 否则新建定义符号。
+    fn define_symbol(
+        &mut self,
+        name: &str,
+        section: SectionId,
+        kind: SymbolKind,
+        size: u64,
+    ) -> SymbolId {
+        let key = ImmStr::from(name);
+        if let Some(&id) = self.defined_symbols.get(&key) {
+            return id;
+        }
+        let id = match self.declared_externs.remove(&key) {
+            Some(id) => {
+                let s = self.obj.symbol_mut(id);
+                s.section = SymbolSection::Section(section);
+                s.kind = kind;
+                s.size = size;
+                s.value = 0;
+                s.scope = SymbolScope::Linkage;
+                id
+            }
+            None => self.obj.add_symbol(Symbol {
+                name: name.as_bytes().to_vec(),
+                value: 0,
+                size,
+                kind,
+                scope: SymbolScope::Linkage,
+                section: SymbolSection::Section(section),
+                flags: SymbolFlags::None,
+                weak: false,
+            }),
+        };
+        self.defined_symbols.insert(key, id);
+        id
     }
 
     /// 添加一个已编译函数到对象文件的 `.text` 段。
@@ -103,17 +150,9 @@ impl<'a> ObjectWriter<'a> {
             )));
         }
 
-        // 创建符号（value/size 占位，后续由 add_symbol_data 更新）
-        let sym_id = self.obj.add_symbol(Symbol {
-            name: name.as_bytes().to_vec(),
-            value: 0,
-            size: func.code.len() as u64,
-            kind: SymbolKind::Text,
-            scope: SymbolScope::Linkage,
-            section: SymbolSection::Section(self.text_section),
-            flags: SymbolFlags::None,
-            weak: false,
-        });
+        // 创建符号（value/size 占位，后续由 add_symbol_data 更新）——
+        // 已声明 UNDEF（reloc 先引用）则升级复用，避免同名定义+UNDEF 重复
+        let sym_id = self.define_symbol(name, self.text_section, SymbolKind::Text, func.code.len() as u64);
 
         // add_symbol_data 追加数据到 section，返回数据在 section 内的偏移量，
         // 同时自动更新符号的 value/size/section 字段
@@ -142,16 +181,7 @@ impl<'a> ObjectWriter<'a> {
             IrError::Emit("rodata section not available (use new() not new_text_only())".into())
         })?;
 
-        let sym_id = self.obj.add_symbol(Symbol {
-            name: name.as_bytes().to_vec(),
-            value: 0,
-            size: data.len() as u64,
-            kind: SymbolKind::Data,
-            scope: SymbolScope::Linkage,
-            section: SymbolSection::Section(section),
-            flags: SymbolFlags::None,
-            weak: false,
-        });
+        let sym_id = self.define_symbol(name, section, SymbolKind::Data, data.len() as u64);
         let offset = self.obj.add_symbol_data(sym_id, section, data, alignment);
         self.written_symbols.insert(ImmStr::from(name));
         let _ = offset;
@@ -177,16 +207,7 @@ impl<'a> ObjectWriter<'a> {
             IrError::Emit("data section not available (use new() not new_text_only())".into())
         })?;
 
-        let sym_id = self.obj.add_symbol(Symbol {
-            name: name.as_bytes().to_vec(),
-            value: 0,
-            size: data.len() as u64,
-            kind: SymbolKind::Data,
-            scope: SymbolScope::Linkage,
-            weak: false,
-            section: SymbolSection::Section(section),
-            flags: SymbolFlags::None,
-        });
+        let sym_id = self.define_symbol(name, section, SymbolKind::Data, data.len() as u64);
 
         let actual_offset = self.obj.add_symbol_data(sym_id, section, data, alignment);
 
@@ -238,13 +259,45 @@ impl<'a> ObjectWriter<'a> {
 
         let flags = map_reloc_flags(kind, self.format, self.arch);
 
-        // COFF REL32 的 addend 补偿：object crate 写 COFF 时对
-        // IMAGE_REL_AMD64_REL32 自动执行 addend += 4（coff_adjust_addend，
-        // 适配 MSVC 链接器 target = S + A - (P+4) 公式），若不反向补偿 -4，
-        // 链接后的 call 目标会指向符号起始 +4 字节（跳过函数 prologue）。
-        let addend = if self.format == BinaryFormat::Coff
-            && matches!(flags, RelocationFlags::Coff { typ } if typ == object::pe::IMAGE_REL_AMD64_REL32)
-        {
+        // COFF 重定位的 addend 是**隐式**的——存在被重定位字段的原始数据里
+        // （链接器按 S + A - P 系列公式计算，A 取字段初值）。我们的编码器在
+        // 重定位槽写入占位值（call/jmp 的 rel32 槽 = -(f+1)；GlobalAddr 的
+        // imm64 槽 = -(g+1)；均为 -1 量级），该占位会作为隐式 addend 残留：
+        // - REL32：目标偏 -1（实测 0x10d0 vs wrapping_add 实际 0x10d1）；
+        // - ADDR64：符号地址偏 -1（实测 0x140002fff vs .rodata 起始 0x3000）。
+        //
+        // 修复分两步（对 COFF 重定位统一清零字段 + 补偿 addend）：
+        // 1. 清零被重定位字段（覆盖编码器占位，使隐式 addend = 0）；
+        // 2. REL32 传 addend-4 给 object crate：其 coff_adjust_addend 对 REL32
+        //    自动 +4（适配 MSVC target = S + A - (P+4) 公式），净 addend = 0 →
+        //    不覆盖字段（write_relocation_addend 仅在 addend != 0 时写）→ 字段
+        //    保持 0。若不反向补偿 -4，addend=4 会被写入，链接目标偏 +4。
+        //    ADDR64/ADDR32 的 coff_adjust 为 0 → addend 不变（0）→ 同样不覆盖。
+        let coff_flags = if self.format == BinaryFormat::Coff {
+            match flags {
+                RelocationFlags::Coff { typ } => Some(typ),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(typ) = coff_flags {
+            let bytes = match typ {
+                object::pe::IMAGE_REL_AMD64_REL32 => Some(4),
+                object::pe::IMAGE_REL_AMD64_ADDR64 => Some(8),
+                object::pe::IMAGE_REL_AMD64_ADDR32 => Some(4),
+                _ => None,
+            };
+            if let Some(n) = bytes {
+                let section = self.obj.section_mut(section);
+                let data = section.data_mut();
+                let start = offset as usize;
+                if start + n <= data.len() {
+                    data[start..start + n].copy_from_slice(&vec![0u8; n]);
+                }
+            }
+        }
+        let addend = if coff_flags == Some(object::pe::IMAGE_REL_AMD64_REL32) {
             addend - 4
         } else {
             addend
@@ -266,7 +319,13 @@ impl<'a> ObjectWriter<'a> {
 
     fn find_or_declare_symbol(&mut self, name: &str) -> SymbolId {
         use std::collections::hash_map::Entry;
-        match self.declared_externs.entry(ImmStr::from(name)) {
+        let key = ImmStr::from(name);
+        // 本文件已定义的符号（add_function/add_data）→ 复用定义，
+        // 不重复声明 UNDEF（否则 COFF 同名定义+UNDEF → 链接器不解析内部 reloc）
+        if let Some(&id) = self.defined_symbols.get(&key) {
+            return id;
+        }
+        match self.declared_externs.entry(key) {
             Entry::Occupied(entry) => *entry.get(), // 已存在，复用 SymbolId
             Entry::Vacant(entry) => {
                 let sym_id = self.obj.add_symbol(Symbol {
@@ -550,6 +609,107 @@ mod tests {
 
         let flags = map_reloc_flags(&RelocKind::REL4, BinaryFormat::Coff, Architecture::X86_64);
         assert!(matches!(flags, RelocationFlags::Coff { .. }));
+    }
+
+    /// 构造一个模拟 x86 call 的函数：`e8 ?? ?? ?? ??`（rel32 槽占位 -1，
+    /// 即编码器对函数符号写入的 -(f+1)）+ 一条 reloc（offset 1，REL4，
+    /// 指向 callee 符号，addend 0）。
+    fn make_call_func(callee: &str) -> forge_codegen::CompiledFunction {
+        forge_codegen::CompiledFunction {
+            code: vec![0xe8, 0xff, 0xff, 0xff, 0xff, 0xc3],
+            relocations: vec![forge_codegen::Relocation {
+                offset: 1,
+                kind: RelocKind::REL4,
+                symbol: ImmStr::from(callee),
+                addend: 0,
+            }],
+            code_size: 0,
+        }
+    }
+
+    #[test]
+    fn test_coff_rel32_clears_placeholder_addend() {
+        // 回归测试（2026-09 e2e i64_wrapping_add 值错）：COFF REL32 的 addend
+        // 是**隐式**的——存在被重定位字段（rel32 槽）的原始数据里。编码器在
+        // rel32 槽写入占位 -(f+1)（本测试 -1），若不显式清零，该占位作为隐式
+        // addend 残留，链接后 call 目标偏 -1（实测 0x10d0 vs wrapping_add 实际
+        // 0x10d1）。修复：add_relocation_to_section 对 COFF REL32 显式清零槽。
+        let config = crate::target::TargetConfig::from_triple("x86_64-pc-windows-msvc")
+            .expect("valid triple");
+
+        let mut writer = ObjectWriter::new(&config).expect("create writer");
+        // callee 先定义（作为 .text 第一个函数），caller 后添加（其 rel32 槽
+        // 相对 callee 偏移固定，便于断言）
+        writer
+            .add_function("callee", &make_test_func(vec![0x90, 0xc3]))
+            .expect("add callee");
+        writer
+            .add_function("caller", &make_call_func("callee"))
+            .expect("add caller");
+
+        // 读取 .text 段数据 + 重定位表，验证 rel32 槽被清零
+        let text = writer.obj.section(writer.text_section);
+        let data = text.data();
+        let caller_start = data.len() - 6; // caller 是最后一个函数：6 字节
+        // caller: e8 ?? ?? ?? ?? c3 —— rel32 槽（caller_start+1..+5）必须为 0
+        assert_eq!(
+            &data[caller_start + 1..caller_start + 5],
+            &[0, 0, 0, 0],
+            "COFF REL32 槽应被清零（隐式 addend = 0），而非编码器占位 -1"
+        );
+
+        // 序列化后解析回读，验证 rel32 槽仍为 0 且 reloc 类型为 REL32
+        let data = writer.write_to_vec().expect("write to vec");
+        use object::Object;
+        use object::ObjectSection;
+        let parsed = object::read::File::parse(&*data).expect("parse COFF");
+        let text = parsed.section_by_name(".text").expect(".text section");
+        assert_eq!(
+            &text.data().unwrap()[caller_start + 1..caller_start + 5],
+            &[0, 0, 0, 0],
+            "序列化后 rel32 槽仍为 0（补偿 -4 未被 object crate 覆盖）"
+        );
+        let rel32_count = text
+            .relocations()
+            .filter(|(_off, r)| {
+                matches!(
+                    r.flags(),
+                    RelocationFlags::Coff { typ } if typ == object::pe::IMAGE_REL_AMD64_REL32
+                )
+            })
+            .count();
+        assert_eq!(rel32_count, 1, "应恰好一条 REL32 重定位");
+    }
+
+    #[test]
+    fn test_coff_rel32_addend_compensation_passes_neg4() {
+        // 补偿验证：COFF REL32 必须传 addend-4 给 object crate（其 coff_adjust
+        // +4 抵消后净 0，避免 write_relocation_addend 覆盖已清零的槽）。
+        let config = crate::target::TargetConfig::from_triple("x86_64-pc-windows-msvc")
+            .expect("valid triple");
+        let mut writer = ObjectWriter::new(&config).expect("create writer");
+        writer
+            .add_function("callee", &make_test_func(vec![0x90, 0xc3]))
+            .expect("add callee");
+        writer
+            .add_function("caller", &make_call_func("callee"))
+            .expect("add caller");
+        let data = writer.write_to_vec().expect("write to vec");
+        // 序列化后解析回来，rel32 槽仍应为 0（addend 净 0 → 不覆盖）
+        use object::Object;
+        use object::ObjectSection;
+        let parsed = object::read::File::parse(&*data).expect("parse COFF");
+        let text = parsed
+            .section_by_name(".text")
+            .expect(".text section")
+            .data()
+            .unwrap_or(&[]);
+        let caller_start = text.len() - 6;
+        assert_eq!(
+            &text[caller_start + 1..caller_start + 5],
+            &[0, 0, 0, 0],
+            "序列化后 rel32 槽仍为 0（补偿 -4 未被 object crate 覆盖）"
+        );
     }
 
     #[test]

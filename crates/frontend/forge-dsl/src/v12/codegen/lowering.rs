@@ -390,6 +390,19 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
 
                 });
                 __pack.map_reg_field(val, __idx, #mov_src_idx_lit as u8, false);
+                // ScalarPair 双返回（如 overflowing_add 的 (i32, bool)）：
+                // values[1] → 第二个返回寄存器（GPR64 index 1 = x86 RDX）。
+                // 被调方 Return 与调用方 ret_move 必须对称（否则 RDX 垃圾 →
+                // bool 部分读错 → checked_destructure 返回 0）。
+                if let Some(&__r2) = values.get(1)
+                    && let Some(&__v2) = value_to_xreg.get(&__r2)
+                {
+                    let __idx2 = __pack.push_inst(Inst::#ret_vn {
+                        #mov_src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+                        #mov_dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+                    });
+                    __pack.map_reg_field(__v2, __idx2, #mov_src_idx_lit as u8, false);
+                }
             }
             Ok(__pack)
         }
@@ -911,6 +924,18 @@ fn gen_call_lowering(
                 // riscv mv dest=op0=0）——按角色泛化，防定宽方向反。
                 __pack.map_reg_field(__r, __idx, #m_dest_idx, true);
             }
+        }
+        // ScalarPair 双返回（如 overflowing_add 的 (i32, bool)）：结果
+        // results[1] 从第二个返回寄存器（GPR64 index 1 = x86 RDX）读取。
+        // 与 Return lowering 的对称 mov 配对（否则 RDX 垃圾 → bool 读错）。
+        if let Some(&__r2) = results.get(1)
+            && !ctx.xreg_types.get(&__r2).is_some_and(|t| t.is_float())
+        {
+            let __idx2 = __pack.push_inst(Inst::#mov_vn {
+                #m_src: Reg::from_index(1, forge_ir::RegClass::GPR64),
+                #m_dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            });
+            __pack.map_reg_field(__r2, __idx2, #m_dest_idx, true);
         }
     };
     // Call：CALL_RIP_REL target = -(FuncRef+1)；指令缺失 → Unsupported。

@@ -99,7 +99,7 @@ impl CodegenBackend for CodegenLibBackend {
                             // GlobalAddr 重定位 "G{N}" → 真实数据符号名
                             if crate::trace::trace_enabled("GLOBAL") {
                                 for r in &compiled_func.relocations {
-                                    eprintln!("[forge] reloc pre={} @{}", r.symbol, r.offset);
+                                    eprintln!("[forge] reloc pre={} @{} addend={}", r.symbol, r.offset, r.addend);
                                 }
                             }
                             func_ref_table.resolve_global_relocs(&mut compiled_func);
@@ -111,6 +111,9 @@ impl CodegenBackend for CodegenLibBackend {
                                 }
                             }
                             let _ = object_writer.add_function(&sym_name, &compiled_func);
+                            if crate::trace::trace_enabled("GLOBAL") {
+                                eprintln!("[forge] add_function sym={sym_name}");
+                            }
                             // main 函数需要 C 名称别名（链接器入口点）。
                             // 用 def_path_str 而非 item_name——闭包/内部 shim 的 DefId
                             // 无 item_name（对 closure DefId 调用会 ICE）

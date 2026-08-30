@@ -17,6 +17,11 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
     // [abi] → arg_regs（按 arg_class 顺序：int 类在前，其余 class 依次）。
     // ret_regs：缺省空（v12 声明层暂不区分返回寄存器——后续迭代扩展）。
     let stack_align = model.abi.as_ref().and_then(|a| a.stack_align).unwrap_or(16);
+    let frame_padding = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.frame_padding)
+        .unwrap_or(0);
     let mut arg_regs: Vec<TokenStream> = Vec::new();
     let mut by_ref_limit: Option<u32> = None;
     if let Some(abi) = &model.abi {
@@ -91,6 +96,7 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
                 vec![#(#ret_regs),*]
             }
             fn stack_align(&self) -> u32 { #stack_align }
+            fn frame_padding(&self) -> i32 { #frame_padding }
             fn vector_by_ref_limit(&self) -> Option<u32> { #by_ref_toks }
             fn min_frame_bytes(&self) -> u32 { #min_frame }
             fn callee_saved_bytes_override(&self) -> Option<u32> { #csb_toks }

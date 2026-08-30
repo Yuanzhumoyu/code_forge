@@ -788,6 +788,11 @@ pub struct Lowering {
 pub struct Abi {
     #[serde(default)]
     pub stack_align: Option<u32>,
+    /// 帧布局的额外栈填充（字节）：x86 = 8（align/2，SysV/Windows x64
+    /// ABI：prologue push rbp + callee-saved 后 rsp%16==8，sub rsp 需使
+    /// call 前 rsp%16==0）。缺省 0。
+    #[serde(default)]
+    pub frame_padding: Option<i32>,
     #[serde(default)]
     pub arg_class: Vec<ArgClass>,
     /// 帧布局（sp/fp 寄存器名、帧分配/释放指令名）。
