@@ -1101,3 +1101,129 @@ asm = "bad {0:[g:out]}, {3:[g:in]}"
         other => panic!("expected Validation error, got {other:?}"),
     }
 }
+
+// ─────────────────────── global_reloc（P2 模型化字段）───────────────────────
+
+/// `global_reloc = "pcrel_hi"` 合法解析。
+#[test]
+fn global_reloc_pcrel_parses() {
+    let doc = r#"
+[meta]
+name = "t"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+field_width = 3
+[[operand_slots]]
+name = "imm20"
+kind = "imm"
+width = 20
+[conventions.bitfields]
+rd = { offset = 7, width = 5 }
+opcode = { offset = 0, width = 7 }
+imm20 = { pieces = [ { offset = 12, width = 20, shift = 12 } ] }
+[[forms]]
+name = "U"
+opcode_field = "opcode"
+operand_fields = ["rd", "imm20"]
+[[instructions]]
+name = "AUIPC_GLOBAL"
+form = "U"
+opcode = 0x17
+asm = "auipc.g {0:[g:out]}, {1:[imm20:in]}"
+global_reloc = "pcrel_hi"
+"#;
+    let m = parse_and_validate(doc).expect("valid doc with global_reloc must parse");
+    let inst = m
+        .instructions
+        .iter()
+        .find(|i| i.name == "AUIPC_GLOBAL")
+        .expect("instruction present");
+    assert_eq!(inst.global_reloc.as_deref(), Some("pcrel_hi"));
+}
+
+/// `global_reloc = "bogus"` → 校验拒绝。
+#[test]
+fn global_reloc_invalid_rejected() {
+    let doc = r#"
+[meta]
+name = "t"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+field_width = 3
+[[operand_slots]]
+name = "imm20"
+kind = "imm"
+width = 20
+[conventions.bitfields]
+rd = { offset = 7, width = 5 }
+opcode = { offset = 0, width = 7 }
+imm20 = { pieces = [ { offset = 12, width = 20, shift = 12 } ] }
+[[forms]]
+name = "U"
+opcode_field = "opcode"
+operand_fields = ["rd", "imm20"]
+[[instructions]]
+name = "BAD"
+form = "U"
+opcode = 0x17
+asm = "bad {0:[g:out]}, {1:[imm20:in]}"
+global_reloc = "bogus"
+"#;
+    let err = parse_and_validate(doc).unwrap_err();
+    match err {
+        V12Error::Validation(msg) => {
+            assert!(msg.contains("global_reloc"), "msg: {msg}");
+        }
+        other => panic!("expected Validation error, got {other:?}"),
+    }
+}
+
+/// `move_inst = true` 显式声明解析。
+#[test]
+fn move_inst_flag_parses() {
+    let doc = r#"
+[meta]
+name = "t"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+field_width = 3
+[conventions.bitfields]
+rd = { offset = 7, width = 5 }
+rs1 = { offset = 15, width = 5 }
+rs2 = { offset = 20, width = 5 }
+opcode = { offset = 0, width = 7 }
+funct3 = { offset = 12, width = 3 }
+funct7 = { offset = 25, width = 7 }
+[[forms]]
+name = "R"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "rs2"]
+[[instructions]]
+name = "MY_MOV"
+form = "R"
+opcode = 0x33
+fields = { funct3 = 0, funct7 = 0 }
+asm = "mymov {0:[g:out]}, {1:[g:in]}, {2:[g:in]}"
+move_inst = true
+"#;
+    let m = parse_and_validate(doc).expect("doc with move flag must parse");
+    let inst = m.instructions.iter().find(|i| i.name == "MY_MOV").unwrap();
+    assert_eq!(inst.move_inst, Some(true));
+}
+
+

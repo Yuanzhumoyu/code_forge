@@ -596,3 +596,10 @@ meta = { writes=["rd"], reads=["rs1","rs2"] }
   （lui/addi/slli/lui/addi/or，lo32 LUI bit19=1 符号扩展截断）。
 - G/H 未开工（见任务清单：G = forge-rustc 向量、H = aarch64_v12 定宽 +
   demo_be 大端）。
+- **forge-dsl 重构记录（2026-08）**：codegen 从 2 个巨型文件（mod.rs 4264 +
+  integration.rs 4000）拆为 7 个职责模块（mod 927 / integration 712 /
+  machine 1030 / frame 827 / vlen 2244 / lowering 1485 / asm 1141 行）；
+  `group_names`/`parse_u64` 单点化（shared.rs）；GlobalAddr 从指令名特判
+  → `global_reloc` 字段（abs8/pcrel_hi/pcrel_lo）；is_move 支持显式
+  `move_inst` 声明；尾声跳转 `[emit].epilogue_jump_inst` 键；spill base
+  缺省从 `[abi.frame].fp` 取。全部等价变换（golden 字节不变）。
