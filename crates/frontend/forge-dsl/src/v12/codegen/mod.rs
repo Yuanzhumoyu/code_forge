@@ -265,6 +265,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 rex_w: None,
                 effect: Vec::new(),
                 implicit_regs: None,
+                global_reloc: None,
             });
         }
     }

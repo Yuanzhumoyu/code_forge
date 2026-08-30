@@ -463,6 +463,14 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 inst.name, inst.form
             ));
         }
+        if let Some(gr) = &inst.global_reloc
+            && !matches!(gr.as_str(), "abs8" | "pcrel_hi" | "pcrel_lo")
+        {
+            return Err(format!(
+                "[[instructions.{}]]: global_reloc '{gr}' unsupported (abs8 | pcrel_hi | pcrel_lo)",
+                inst.name
+            ));
+        }
         if inst.asm.trim().is_empty() {
             return Err(format!(
                 "[[instructions.{}]]: asm must not be empty",

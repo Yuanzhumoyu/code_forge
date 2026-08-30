@@ -1707,6 +1707,7 @@ name = "MOVABS_GLOBAL"
 form = "MOV_IMM64"
 asm = "movabs {0:[gpr:out]}, {1:[imm64:in]}"
 effect = ["Pure"]
+global_reloc = "abs8"
 
 [[instructions]]
 name = "CMOVCC_R_RM"

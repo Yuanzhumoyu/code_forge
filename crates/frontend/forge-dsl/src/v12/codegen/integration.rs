@@ -654,69 +654,62 @@ fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, Stri
         }
     }
     let label_arms = label_arms;
-    // MOVABS_GLOBAL：imm 槽 < 0 时编码 GlobalId（-(id+1)）→ ABS8 重定位
-    // "G{id}"（JIT 按全局变量注册）；>= 0 时是普通 64 位立即数。符号位于
-    // 指令末尾 8 字节（imm64）。
+    // GlobalAddr 专用指令（TOML 声明 `global_reloc`）：imm 槽 < 0 时编码
+    // GlobalId（-(id+1)）→ 重定位 "G{id}"（JIT/QEMU 打包按全局变量注册）；
+    // >= 0 时是普通立即数。三种语义：
+    // - "abs8"（x86 MOVABS_GLOBAL）：符号在指令末尾 8 字节（imm64），
+    //   reloc = ABS8；
+    // - "pcrel_hi"/"pcrel_lo"（riscv AUIPC_GLOBAL/ADDI_GLOBAL）：定宽 4 字节，
+    //   fixup = 指令起始，reloc = Relative(4,0)；patcher 按 opcode 0x17/0x13
+    //   分写 hi20/lo12 位段。
     let mut global_arms: Vec<TokenStream> = Vec::new();
     for info in infos {
-        if info.inst.name == "MOVABS_GLOBAL" {
-            let imm_fid = info
-                .operands
-                .get(1)
-                .map(|(_, fid, _, _)| fid.clone())
-                .unwrap_or_else(|| format_ident!("imm"));
-            global_arms.push(quote! {
-                Inst::MovabsGlobal { .. } => {
-                    let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
-                    let imm = match inst {
-                        Inst::MovabsGlobal { #imm_fid, .. } => *#imm_fid,
-                        _ => unreachable!(),
-                    };
-                    let fixup = sink.offset() + bytes.len() - 8;
-                    sink.put_bytes(&bytes);
-                    if imm < 0 {
-                        sink.add_reloc(fixup, crate::RelocKind::ABS8, &format!("G{}", -imm - 1), 0);
-                    }
-                    Ok(())
+        let Some(kind) = info.inst.global_reloc.as_deref() else {
+            continue;
+        };
+        let vn = &info.vn;
+        // 指令的 imm 槽字段（MOVABS_GLOBAL 是第 2 操作数；riscv 对是唯一 imm）
+        let imm_fid = info
+            .operands
+            .iter()
+            .find(|(_, _, s, _)| s.kind == OperandKind::Imm)
+            .map(|(_, fid, _, _)| fid.clone())
+            .unwrap_or_else(|| format_ident!("imm"));
+        let body = match kind {
+            "abs8" => quote! {
+                let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
+                let imm = match inst {
+                    Inst::#vn { #imm_fid, .. } => *#imm_fid,
+                    _ => unreachable!(),
+                };
+                let fixup = sink.offset() + bytes.len() - 8;
+                sink.put_bytes(&bytes);
+                if imm < 0 {
+                    sink.add_reloc(fixup, crate::RelocKind::ABS8, &format!("G{}", -imm - 1), 0);
                 }
-            });
-        }
-    }
-    // riscv GlobalAddr 的 PC-relative 对：AUIPC_GLOBAL/ADDI_GLOBAL 的 imm
-    // 槽 < 0（GlobalId 负编码）→ Relative(4,0) "G{id}"（定宽 4 字节，
-    // fixup = 指令起始；patcher 按 opcode 0x17/0x13 分写 hi20/lo12）。
-    for info in infos {
-        if info.inst.name == "AUIPC_GLOBAL" || info.inst.name == "ADDI_GLOBAL" {
-            let vn = &info.vn;
-            let imm_fid = info
-                .operands
-                .iter()
-                .find(|(_, _, s, _)| s.kind == OperandKind::Imm)
-                .map(|(_, fid, _, _)| fid.clone())
-                .unwrap_or_else(|| format_ident!("imm"));
-            global_arms.push(quote! {
-                Inst::#vn { .. } => {
-                    let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
-                    let imm = match inst {
-                        Inst::#vn { #imm_fid, .. } => *#imm_fid,
-                        _ => unreachable!(),
-                    };
-                    let __base = sink.offset();
-                    sink.put_bytes(&bytes);
-                    if imm < 0 {
-                        // GlobalAddr 的 {global} 槽 → -(id+1)；reloc 符号
-                        // "G{id}"（JIT/QEMU 打包按全局变量注册）。
-                        sink.add_reloc(
-                            __base,
-                            crate::RelocKind::Relative(4, 0),
-                            &format!("G{}", -imm - 1),
-                            0,
-                        );
-                    }
-                    Ok(())
+                Ok(())
+            },
+            "pcrel_hi" | "pcrel_lo" => quote! {
+                let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
+                let imm = match inst {
+                    Inst::#vn { #imm_fid, .. } => *#imm_fid,
+                    _ => unreachable!(),
+                };
+                let __base = sink.offset();
+                sink.put_bytes(&bytes);
+                if imm < 0 {
+                    sink.add_reloc(
+                        __base,
+                        crate::RelocKind::Relative(4, 0),
+                        &format!("G{}", -imm - 1),
+                        0,
+                    );
                 }
-            });
-        }
+                Ok(())
+            },
+            _ => unreachable!("validated: {kind}"),
+        };
+        global_arms.push(quote! { Inst::#vn { .. } => { #body } });
     }
     let global_arms = global_arms;
     Ok(quote! {

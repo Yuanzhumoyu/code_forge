@@ -1102,6 +1102,7 @@ name = "AUIPC_GLOBAL"
 form = "U"
 opcode = 0x17
 asm = "auipc.g {0:[gpr:out]}, {1:[imm20:in]}"
+global_reloc = "pcrel_hi"
 
 [[instructions]]
 name = "ADDI_GLOBAL"
@@ -1109,6 +1110,7 @@ form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
 asm = "addi.g {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+global_reloc = "pcrel_lo"
 
 
 [[instructions]]
