@@ -218,19 +218,24 @@ impl AstArena {
     }
 
     /// 获取节点的所有直接子节点（从字段中收集）。
+    /// P0-12 修复：按字段名排序保证确定性（fields 是 HashMap，原实现遍历
+    /// 随机序 → 生成顺序跨进程漂移、回归不可复现）。
     pub fn children(&self, id: AstId) -> Vec<AstId> {
         let mut result = Vec::new();
         if let Some(node) = self.get(id) {
-            for value in node.fields.values() {
-                match value {
-                    FieldValue::Text(_) => {}
-                    FieldValue::Child(child_id) => result.push(*child_id),
-                    FieldValue::Children(child_ids) => result.extend(child_ids),
-                    FieldValue::OptionalChild(opt) => {
+            let mut field_names: Vec<&String> = node.fields.keys().collect();
+            field_names.sort();
+            for field_name in field_names {
+                match node.fields.get(field_name) {
+                    Some(FieldValue::Text(_)) => {}
+                    Some(FieldValue::Child(child_id)) => result.push(*child_id),
+                    Some(FieldValue::Children(child_ids)) => result.extend(child_ids),
+                    Some(FieldValue::OptionalChild(opt)) => {
                         if let Some(child_id) = opt {
                             result.push(*child_id);
                         }
                     }
+                    None => {}
                 }
             }
         }
@@ -238,25 +243,29 @@ impl AstArena {
     }
 
     /// 获取节点的所有直接子节点（包括其字段名，便于调试）。
+    /// P0-12 修复：按字段名排序保证确定性。
     pub fn children_named(&self, id: AstId) -> Vec<(String, AstId)> {
         let mut result = Vec::new();
         if let Some(node) = self.get(id) {
-            for (field_name, value) in &node.fields {
-                match value {
-                    FieldValue::Text(_) => {}
-                    FieldValue::Child(child_id) => {
+            let mut field_names: Vec<&String> = node.fields.keys().collect();
+            field_names.sort();
+            for field_name in field_names {
+                match node.fields.get(field_name) {
+                    Some(FieldValue::Text(_)) => {}
+                    Some(FieldValue::Child(child_id)) => {
                         result.push((field_name.clone(), *child_id));
                     }
-                    FieldValue::Children(child_ids) => {
+                    Some(FieldValue::Children(child_ids)) => {
                         for child_id in child_ids {
                             result.push((field_name.clone(), *child_id));
                         }
                     }
-                    FieldValue::OptionalChild(opt) => {
+                    Some(FieldValue::OptionalChild(opt)) => {
                         if let Some(child_id) = opt {
                             result.push((field_name.clone(), *child_id));
                         }
                     }
+                    None => {}
                 }
             }
         }
