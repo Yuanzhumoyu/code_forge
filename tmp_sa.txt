@@ -1,0 +1,12 @@
+refactor(forge-dsl): Step A——integration.rs 再拆 machine/frame
+
+- integration.rs 2545 → 712 行（工具 + 入口 gen_integration + IsaInfo/
+  RegInfo/TargetMachine）
+- 新增 machine.rs（1030 行）：Reg 枚举 + MachineInst + Encoder/Decoder/
+  Disasm/Assembler（原 236-1257 区；外部依赖仅 group_names/InstInfo）
+- 新增 frame.rs（827 行）：TargetABI + TargetFrameLowering + gen_emit_*
+  （原 1258-2069 区；gen_emit_block/inst/pseudo/spill_stmt 仅本区用）
+- 工具函数标 pub(crate)，子模块 super 路径引用
+
+等价变换：forge-dsl lib 46、forge-codegen jit 全套无 FAILED、
+forge-tests 无 FAILED、clippy 0。

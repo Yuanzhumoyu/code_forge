@@ -27,9 +27,14 @@ use quote::{format_ident, quote};
 use std::collections::BTreeMap;
 
 pub(crate) mod asm;
+/// TargetFrameLowering/TargetABI/emit（integration.rs 拆分）。
+pub(crate) mod frame;
 pub(crate) mod integration;
 /// TargetLowering 生成（integration.rs 拆分；依赖 integration 的工具函数）。
 pub(crate) mod lowering;
+/// Reg 枚举 / MachineInst / Encoder / Decoder / Disasm / Assembler
+/// （integration.rs 拆分）。
+pub(crate) mod machine;
 /// 变长（VEX/EVEX/前缀扫描）encode/decode——x86 专用机制，独立文件组织。
 pub(crate) mod vlen;
 
