@@ -578,6 +578,15 @@ pub fn lower_into_module(
     let func = builder
         .finish()
         .map_err(|e| HirError::Internal(e.to_string()))?;
+    // P0-14：接入 forge-ir 验证器——HIR 降级产物必须通过 IR 一致性校验
+    // （入口/类型/use/块参数/终结符/支配）。此前 2580 行 Verifier 在 HIR
+    // 路径零调用，图级缺陷（块参数不匹配、悬空 use）变成未初始化寄存器读。
+    let mut verifier = forge_ir::verify::Verifier::new();
+    if let Err(errors) = verifier.verify(&func) {
+        return Err(HirError::Internal(format!(
+            "HIR lowered function '{name}' failed IR verification: {errors:?}"
+        )));
+    }
     Ok(module.add_function(func))
 }
 

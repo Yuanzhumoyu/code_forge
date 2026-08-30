@@ -422,11 +422,16 @@ impl Verifier {
         // Check for multiple entry blocks: blocks with no predecessors
         // that aren't the designated entry block.复用 Function 的惰性
         // predecessors 缓存（避免每块全函数线性扫描的 O(B²)）。
+        //
+        // P0-14 修复：仅报"无前驱且**带参数**"的块为多入口——无前驱的
+        // 空块（无参数，如 if-else 双方都 return 时结构化的空 merge 块）
+        // 是合法不可达死块（LLVM 亦允许 unreachable 块）；带参数的无前驱
+        // 块才真正异常（参数永不初始化 → 读未初始化值）。
         let preds = func.predecessors();
         let mut no_pred_blocks: Vec<Block> = Vec::new();
-        for (block, _) in func.dfg.blocks() {
+        for (block, block_data) in func.dfg.blocks() {
             let has_preds = preds.get(&block).is_some_and(|p| !p.is_empty());
-            if !has_preds {
+            if !has_preds && !block_data.param_values.is_empty() {
                 no_pred_blocks.push(block);
             }
         }
@@ -1563,9 +1568,17 @@ impl Verifier {
             }
         }
 
-        for (block, _) in func.dfg.blocks() {
+        for (block, block_data) in func.dfg.blocks() {
             if !reachable.contains(&block) {
-                self.errors.push(VerifyError::UnreachableBlock { block });
+                // P0-14 修复：豁免**近空**不可达块——结构化控制流（if-else
+                // 双方 return）合法产生死 merge 块（至多 1 条内部指令/无参数，
+                // LLVM 亦允许 unreachable 块）。多条指令的不可达块才是可疑
+                // 产物（死代码泄漏 / 未初始化）。
+                let is_dead_merge = block_data.inst_order.len() <= 1
+                    && block_data.param_values.is_empty();
+                if !is_dead_merge {
+                    self.errors.push(VerifyError::UnreachableBlock { block });
+                }
             }
         }
     }
@@ -2122,8 +2135,12 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let entry = fb.create_block();
         let orphan = fb.create_block(); // created but never targeted
-        // 孤儿块也必须显式终结（finish() 校验），显式 unreachable 保持其不可达语义
+        // 孤儿块带指令（非空死块——P0-14 后只有近空死 merge 豁免，
+        // 带指令的不可达块仍是错误）
         fb.switch_to_block(orphan);
+        let dead1 = fb.iconst_i32(1);
+        let dead2 = fb.iconst_i32(2);
+        let _ = (dead1, dead2);
         fb.unreachable();
 
         fb.switch_to_block(entry);
@@ -2487,7 +2504,9 @@ mod tests {
         fb.ret(&[v]);
 
         fb.switch_to_block(floating);
-        let r = fb.iconst_i32(0);
+        let r1 = fb.iconst_i32(0);
+        let r2 = fb.iconst_i32(1);
+        let r = fb.iadd(r1, r2);
         fb.ret(&[r]);
         let func = fb.finish().expect("build");
 
