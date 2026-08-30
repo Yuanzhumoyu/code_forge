@@ -952,7 +952,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_v256_byref_return() {
-        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+        use forge_ir::{FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1145,6 +1145,53 @@ mod tests {
         let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
         let got = f();
         assert_eq!(got, 1, "V512 by-ref lane0 1.5 → 1（EVEX 栈拷贝）");
+    }
+
+    /// E2 主库侧：Select cmovne 路径（[lower.Select] test+cmovcc）——
+    /// cond 位宽验证（BOOL icmp 结果 + I32 cond），回应 rvalue.rs 注释的
+    /// "cond 位宽/cmovne 路径未达预期"。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_select_cmov_path() {
+        use forge_ir::{
+            FunctionBuilder, FunctionSignature, IntCC, TypeContext, TypeId,
+        };
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // f(x: i64) -> i64 = select(x != 0, 100, 7)（cond = icmp → BOOL）
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("sel_bool", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let zero = b.iconst_i64(0);
+            let cond = b.icmp(IntCC::NotEqual, params[0], zero);
+            let c100 = b.iconst_i64(100);
+            let c7 = b.iconst_i64(7);
+            let sel = b.select(cond, c100, c7);
+            b.ret(&[sel]);
+        })
+        .expect("compile sel_bool");
+        let f: extern "C" fn(i64) -> i64 = jit.get_fn("sel_bool").expect("get_fn");
+        assert_eq!(f(1), 100, "cond=true（x≠0）→ then 臂 100");
+        assert_eq!(f(0), 7, "cond=false（x==0）→ else 臂 7");
+
+        // g(x: i32) -> i32 = select(x != 0, 42, 9)——I32 cond
+        let sig2 = FunctionSignature::new(&[(TypeId::I32, "x")], &[TypeId::I32]);
+        jit.add_function("sel_i32", &sig2, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
+            b.switch_to_block(entry);
+            let zero = b.iconst_i32(0);
+            let cond = b.icmp(IntCC::NotEqual, params[0], zero);
+            let c42 = b.iconst_i32(42);
+            let c9 = b.iconst_i32(9);
+            let sel = b.select(cond, c42, c9);
+            b.ret(&[sel]);
+        })
+        .expect("compile sel_i32");
+        let g: extern "C" fn(i32) -> i32 = jit.get_fn("sel_i32").expect("get_fn");
+        assert_eq!(g(5), 42, "i32 cond=true → 42");
+        assert_eq!(g(0), 9, "i32 cond=false → 9");
     }
 
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
