@@ -1402,6 +1402,52 @@ mod tests {
         assert_eq!(f(1.0, 1.0), 0, "1.0+1.0=2.0 ≤ 3.0 → 0");
     }
 
+    /// e2e float_args 完整组合：fconst 常量实参 + branch callee
+    ///（e2e 的 f(1.5, 2.0) 形态——单项测试各自通过，组合验证）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_fconst_args_branch_callee() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // callee: (f64, f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }（branch 版）
+        let sig_c = FunctionSignature::new(
+            &[(TypeId::F64, "a"), (TypeId::F64, "b")],
+            &[TypeId::I32],
+        );
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
+        bc.switch_to_block(blk);
+        let sum = bc.fadd(p[0], p[1]);
+        let three = bc.fconst_f64(3.0f64);
+        let gt = bc.fcmp(FloatCC::GreaterThan, sum, three);
+        let then_b = bc.create_block();
+        let else_b = bc.create_block();
+        bc.switch_to_block(blk);
+        bc.branch(gt, then_b, &[], else_b, &[]);
+        bc.switch_to_block(then_b);
+        let c1 = bc.iconst_i32(1);
+        bc.ret(&[c1]);
+        bc.switch_to_block(else_b);
+        let c0 = bc.iconst_i32(0);
+        bc.ret(&[c0]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: callee(1.5, 2.0) → 1（fconst 实参 → XMM0/XMM1 by-position）
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v1 = bm.fconst_f64(1.5f64);
+        let v2 = bm.fconst_f64(2.0f64);
+        let r = bm.call(callee_ref, &[v1, v2], &[TypeId::I32]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("compile main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        assert_eq!(f(), 1, "callee(1.5, 2.0)：3.5 > 3.0 → 1（fconst 实参+branch）");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]
