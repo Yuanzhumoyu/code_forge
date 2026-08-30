@@ -237,7 +237,7 @@ pub(crate) fn gen_machine_inst(
                     match use_pos.get(*f) {
                         // InOut def：复用对应 use 寄存器
                         Some(&idx) => {
-                            quote! { crate::machine::inst::OperandConstraint::ReuseInput(#idx as usize) }
+                            quote! { crate::machine::inst::OperandConstraint::ReuseInput(#idx) }
                         }
                         // 纯 Out def：Any
                         None => quote! { crate::machine::inst::OperandConstraint::Any },
