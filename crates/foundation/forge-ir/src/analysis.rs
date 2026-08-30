@@ -30,6 +30,11 @@ pub struct DominatorTree {
     /// O(n) 空间（替代原 dom_sets 的每块全套支配者 HashSet，O(n²) 空间）。
     tin: HashMap<Block, u32>,
     tout: HashMap<Block, u32>,
+    /// 立即支配者（entry 为自身；P1-10 新增——循环分析/块参数 coalesce/
+    /// SCEV 需要 idom/depth/NCD 查询）。
+    idom: HashMap<Block, Block>,
+    /// 支配深度（entry=0，子块=父+1）。
+    depth: HashMap<Block, u32>,
     block_count: usize,
 }
 
@@ -48,12 +53,27 @@ impl DominatorTree {
         let idom = compute_idom(func, entry, &postorder, &postorder_rank);
         let children = compute_children(&idom);
         let (tin, tout) = compute_intervals(entry, &children);
+        // 从 idom 推导深度：entry=0，沿 idom 链累加（O(n) 每块沿链到根，
+        // 总 O(n·depth) —— 对典型 CFG 足够；深链退化可改 BFS 优化）。
+        let mut depth: HashMap<Block, u32> = HashMap::new();
+        depth.insert(entry, 0);
+        for &b in &postorder {
+            if b == entry {
+                continue;
+            }
+            if let Some(&parent) = idom.get(&b) {
+                let d = depth.get(&parent).copied().unwrap_or(0) + 1;
+                depth.insert(b, d);
+            }
+        }
 
         Self {
             entry,
             children,
             tin,
             tout,
+            idom,
+            depth,
             block_count,
         }
     }
@@ -64,6 +84,8 @@ impl DominatorTree {
             children: HashMap::new(),
             tin: HashMap::new(),
             tout: HashMap::new(),
+            idom: HashMap::new(),
+            depth: HashMap::new(),
             block_count: 0,
         }
     }
@@ -88,6 +110,37 @@ impl DominatorTree {
 
     pub fn children(&self, block: Block) -> &[Block] {
         self.children.get(&block).map_or(&[], |v| v.as_slice())
+    }
+
+    /// 立即支配者（P1-10）：entry 的 idom 是自身。
+    pub fn idom(&self, block: Block) -> Option<Block> {
+        self.idom.get(&block).copied()
+    }
+
+    /// 支配深度（P1-10）：entry=0。
+    pub fn depth(&self, block: Block) -> u32 {
+        self.depth.get(&block).copied().unwrap_or(0)
+    }
+
+    /// 最近公共支配者（P1-10）：沿 idom 链求交（浅者优先）。
+    /// 用深度对齐后同步上升——O(depth) 查询。
+    pub fn ncd(&self, a: Block, b: Block) -> Option<Block> {
+        let mut x = a;
+        let mut y = b;
+        loop {
+            let dx = self.depth(x);
+            let dy = self.depth(y);
+            if dx > dy {
+                x = self.idom(x)?;
+            } else if dy > dx {
+                y = self.idom(y)?;
+            } else if x == y {
+                return Some(x);
+            } else {
+                x = self.idom(x)?;
+                y = self.idom(y)?;
+            }
+        }
     }
 
     pub fn block_count(&self) -> usize {
@@ -266,5 +319,55 @@ mod tests {
         let func = fb.finish().expect("build");
         let dt = DominatorTree::build(&func);
         assert!(dt.dominates(entry, merge_blk));
+    }
+
+    /// P1-10：idom/depth/ncd 查询（if-else 汇合：entry idom 自身、then/else
+    /// 的 idom 是 entry、merge 的 idom 是 entry、ncd(then, else)=entry）。
+    #[test]
+    fn test_idom_depth_ncd() {
+        let ctx = TypeContext::new();
+        let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
+        let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
+        let (entry, _) = fb.create_entry_block();
+        let then_blk = fb.create_block();
+        let else_blk = fb.create_block();
+        let (merge_blk, _) = fb.create_block_with_params(&[(TypeId::I32, "r")]);
+        {
+            fb.switch_to_block(entry);
+            let c = fb.iconst_i32(1);
+            fb.branch(c, then_blk, &[], else_blk, &[]);
+        }
+        {
+            fb.switch_to_block(then_blk);
+            let v = fb.iconst_i32(42);
+            fb.jump(merge_blk, &[v]);
+        }
+        {
+            fb.switch_to_block(else_blk);
+            let v = fb.iconst_i32(0);
+            fb.jump(merge_blk, &[v]);
+        }
+        {
+            fb.switch_to_block(merge_blk);
+            let params = fb.func.dfg.block_param_values(merge_blk).to_vec();
+            fb.ret(&[params[0]]);
+        }
+        let func = fb.finish().expect("build");
+        let dt = DominatorTree::build(&func);
+
+        // idom：entry 自身
+        assert_eq!(dt.idom(entry), Some(entry));
+        // then/else 的 idom 是 entry
+        assert_eq!(dt.idom(then_blk), Some(entry));
+        assert_eq!(dt.idom(else_blk), Some(entry));
+        // depth：entry=0、then/else=1、merge=1
+        assert_eq!(dt.depth(entry), 0);
+        assert_eq!(dt.depth(then_blk), 1);
+        assert_eq!(dt.depth(else_blk), 1);
+        assert_eq!(dt.depth(merge_blk), 1);
+        // ncd(then, else) = entry
+        assert_eq!(dt.ncd(then_blk, else_blk), Some(entry));
+        // ncd 自反
+        assert_eq!(dt.ncd(then_blk, then_blk), Some(then_blk));
     }
 }
