@@ -16,8 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -27,8 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: clippy, rustc-dev
       - run: cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings
 
@@ -38,8 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: rustc-dev
       # P0-18：安装 QEMU（qemu-system-misc 含 riscv64 模拟器）——riscv 矩阵
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
@@ -53,8 +59,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: rustc-dev
       - run: cargo test --workspace --exclude forge-rustc --all-features
 
@@ -64,8 +72,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: rustc-dev
       - run: cargo test --workspace --exclude forge-rustc --all-features
 
@@ -75,8 +85,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: rustc-dev
       - run: cargo check -p forge-rustc
 
@@ -88,8 +100,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: rustc-dev, rust-src
       # P0-21：先构建 wrapper（e2e.rs 断言 wrapper.exe 存在；此前 CI
       # fresh checkout 无此产物 → job 必红）。
@@ -103,8 +117,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-07
+          override: true
           components: rustc-dev
       - run: cargo test -p forge-tests --features nightly
 
@@ -114,7 +130,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-07
+          override: true
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -125,7 +144,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-07
+          override: true
       - run: cargo bench --no-run --workspace --exclude forge-rustc
 
   # Code coverage via cargo-tarpaulin
@@ -134,7 +156,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-07
+          override: true
       - uses: taiki-e/install-action@cargo-tarpaulin
       - name: Generate coverage
         run: cargo tarpaulin --out xml --all-features --workspace --exclude forge-rustc
@@ -143,3 +168,5 @@ jobs:
         with:
           files: cobertura.xml
           fail_ci_if_error: false
+
+
