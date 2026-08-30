@@ -119,6 +119,16 @@ impl Lexer {
         self.pos = 0;
         self.line = 0;
         self.col = 0;
+        // P0-11 修复：Span 从 char 索引转字节偏移（下游 `&src[span.start..span.end]`
+        // 按字节切片；char 索引对非 ASCII 会 char-boundary panic）。
+        // 每 char 的字节起始位置：chars[i] 的字节偏移 = 前 i 个 char 的字节和。
+        let mut char_to_byte = Vec::with_capacity(self.chars.len() + 1);
+        let mut acc = 0usize;
+        for &c in &self.chars {
+            char_to_byte.push(acc);
+            acc += c.len_utf8();
+        }
+        char_to_byte.push(acc); // EOF 位置（源末尾字节偏移）
 
         let mut tokens = Vec::new();
         loop {
@@ -129,7 +139,7 @@ impl Lexer {
             self.skip_whitespace_and_comments();
 
             if self.pos >= self.chars.len() {
-                tokens.push(Token::eof(self.pos));
+                tokens.push(Token::eof(char_to_byte[self.pos]));
                 break;
             }
 
@@ -139,6 +149,11 @@ impl Lexer {
                     if token.span.start == 0 && token.span.end == 0 {
                         token.span = Span::new(start_pos, self.pos, start_line, start_col);
                     }
+                    // char 索引 → 字节偏移
+                    let s = token.span.start.min(char_to_byte.len() - 1);
+                    let e = token.span.end.min(char_to_byte.len() - 1);
+                    token.span.start = char_to_byte[s];
+                    token.span.end = char_to_byte[e];
                     tokens.push(token);
                 }
                 Ok(None) => {
@@ -711,5 +726,28 @@ mod tests {
             let _re = SimpleRegex::compile(p);
             // Should not panic
         }
+    }
+
+    /// P0-11：Unicode 源文本的 Span 必须是字节偏移（下游按字节切片；
+    /// char 索引会 char-boundary panic）。
+    #[test]
+    fn test_unicode_span_byte_offsets() {
+        use crate::grammar::parse_grammar;
+        let grammar_src = "token IDENT = \"[a-z]+\"\nskip \"[ \\t\\n]+\"\nskip \"#[^\\n]*\"\nstart ::= IDENT*\n";
+        let grammar = match parse_grammar(grammar_src) {
+            Ok(g) => g,
+            Err(e) => panic!("grammar parse failed: {e:?}"),
+        };
+        // 含多字节字符的源（中文注释在前，IDENT 在后）
+        let src = "# 中文注释\nabc # 尾部注释\n";
+        let mut lexer = Lexer::build(&grammar);
+        let tokens = match lexer.tokenize(src) {
+            Ok(t) => t,
+            Err(e) => panic!("tokenize failed: {e:?}"),
+        };
+        let ident = tokens.iter().find(|t| t.kind == "IDENT").expect("IDENT token");
+        // 字节切片不应 panic（char 索引会在这里崩）；内容应为 "abc"
+        let text = &src[ident.span.start..ident.span.end];
+        assert_eq!(text, "abc", "Span 必须是字节偏移（P0-11 回归）");
     }
 }
