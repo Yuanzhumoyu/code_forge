@@ -41,6 +41,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustc-dev
+      # P0-18：安装 QEMU（qemu-system-misc 含 riscv64 模拟器）——riscv 矩阵
+      # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
+      - name: Install QEMU (riscv64)
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
       - run: cargo test --workspace --exclude forge-rustc --all-features
 
   # Tests on Windows

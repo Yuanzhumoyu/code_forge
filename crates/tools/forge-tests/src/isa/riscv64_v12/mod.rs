@@ -123,6 +123,15 @@ fn jit_matrix_riscv64_v12() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+    // P0-18：QEMU 存在时矩阵必须真实执行（非全 Skip）——否则 CI 上
+    // riscv 执行正确性回归无人守门（Skip 掩盖实现倒退）。
+    if runner.exec.is_some() {
+        assert!(
+            pass > 0,
+            "jit_matrix riscv64: QEMU 已安装但全部 Skip（{} skip）——执行验证未发生",
+            skip
+        );
+    }
 }
 
 // ─────────────────────── QEMU 直接执行冒烟 ───────────────────────
