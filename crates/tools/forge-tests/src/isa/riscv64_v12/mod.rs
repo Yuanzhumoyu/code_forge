@@ -7,81 +7,22 @@
 //! 缺失时 exec 为 None → 单函数用例经本机 ExecutableMemory 会崩溃（riscv
 //! 产物不可本机执行）→ 此时矩阵全 Skip（qemu_exec 冒烟测试独立降级）。
 
-/// riscv64_v12 的矩阵能力集：与 TOML `[[lowering]]` 实际实现的 op 对齐
-/// （整数基础 + 内存 + 常量 + Call/递归 + 分支 + 除法/取模；无浮点/向量/
-/// 溢出/位操作变体）。
-pub const CAPS: &[&str] = &[
-    "Iconst",
-    "Iadd",
-    "Isub",
-    "Imul",
-    "Band",
-    "Bor",
-    "Bxor",
-    "Ishl",
-    "Ushr",
-    "Sshr",
-    "Bnot",
-    "Icmp",
-    "Sdiv",
-    "Udiv",
-    "Srem",
-    "Urem",
-    "Smin",
-    "Smax",
-    "Umin",
-    "Umax",
-    "Rotl",
-    "Rotr",
-    "Sextend",
-    "Uextend",
-    "Ireduce",
-    "Abs",
-    "Fence",
-    "Trap",
-    "Freeze",
-    "IsNull",
-    "IsNotNull",
-    "Alloca",
-    "Select",
-    "SaddOverflow",
-    "UaddOverflow",
-    "SsubOverflow",
-    "UsubOverflow",
-    "SmulOverflow",
-    "UmulOverflow",
-    "UaddSat",
-    "UsubSat",
-    "SaddSat",
-    "SsubSat",
-    "Clz",
-    "Ctz",
-    "Popcnt",
-    "Bitreverse",
-    "Nop",
-    "Undef",
-    "Poison",
-    "GetElementPtr",
-    "Fconst",
-    "Fcmp",
-    "Fptosi",
-    "Fptoui",
-    "GlobalAddr",
-    "AtomicRmw",
-    "Cmpxchg",
-    "Copy",
-    "Load",
-    "Store",
-    "StackAddr",
-    "Call",
-    "Module",
-];
+/// 无 `[[lowering]]` 条目的 op（P1-16 补充声明；与生成的 SUPPORTED_OPS 并集
+/// 构成完整能力集）：
+/// - GetElementPtr：地址计算在 lowering 内联展开，无独立规则；
+/// - Call：ABI 专用生成路径（gen_call_lowering）；
+/// - Module：多函数模块用例（跨函数 Call）的伪能力。
+pub const CAPS_EXTRA: &[&str] = &["GetElementPtr", "Call", "Module"];
 
 /// 运行全部矩阵用例；断言无 Fail（Skip 仅报告）。
 #[test]
 fn jit_matrix_riscv64_v12() {
     use crate::jit_matrix::{Capabilities, Outcome, Runner};
-    let caps = Capabilities::new(CAPS);
+    // P1-16：能力集 = TOML 生成的 SUPPORTED_OPS ∪ CAPS_EXTRA（非 lowering 路径）
+    let mut caps = Capabilities::new(code_forge::backend::riscv64_v12::SUPPORTED_OPS);
+    for extra in CAPS_EXTRA {
+        caps.ops.insert(extra);
+    }
     let runner = Runner {
         machine: code_forge::backend::riscv64_v12::TargetMachine::new,
         caps,
@@ -130,6 +71,19 @@ fn jit_matrix_riscv64_v12() {
             pass > 0,
             "jit_matrix riscv64: QEMU 已安装但全部 Skip（{} skip）——执行验证未发生",
             skip
+        );
+    }
+}
+
+/// P1-16 一致性：CAPS_EXTRA 与 TOML 生成的 SUPPORTED_OPS 必须不相交
+/// （重合 → 补充声明多余应删除；漏声明 → 矩阵用例误 Skip 丢覆盖）。
+#[test]
+fn caps_extra_disjoint_from_supported_ops() {
+    let generated = code_forge::backend::riscv64_v12::SUPPORTED_OPS;
+    for extra in CAPS_EXTRA {
+        assert!(
+            !generated.contains(extra),
+            "CAPS_EXTRA '{extra}' 已存在于 TOML SUPPORTED_OPS——应删除补充声明"
         );
     }
 }

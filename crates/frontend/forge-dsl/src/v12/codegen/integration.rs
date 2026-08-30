@@ -228,6 +228,7 @@ pub fn gen_integration(infos: &[InstInfo], model: &V12Model) -> Result<TokenStre
     let isa_info = gen_isa_info(model, infos)?;
     let reg_info = gen_reg_info(model)?;
     let target_machine = gen_target_machine(model)?;
+    let supported_ops = gen_supported_ops(model);
     Ok(quote! {
         // ── v12 TargetMachine 集成层（迭代 5/6）──
         use forge_ir::PhysReg;
@@ -243,7 +244,27 @@ pub fn gen_integration(infos: &[InstInfo], model: &V12Model) -> Result<TokenStre
         #isa_info
         #reg_info
         #target_machine
+        #supported_ops
     })
+}
+
+// ─────────────────────── 能力集（P1-16）───────────────────────
+
+/// P1-16：能力集单一事实源——`[[lowering]].op` 唯一集（排序去重）。
+///
+/// forge-tests 的 `Capabilities` 由此派生（不再手写同步）；TOML 新增
+/// lowering op 后矩阵用例自动转绿。Call/CallIndirect（ABI 专用生成路径）
+/// 与 GEP 等无 `[[lowering]]` 条目的 op 由消费方补充声明。
+fn gen_supported_ops(model: &V12Model) -> TokenStream {
+    let mut ops: Vec<&str> = model.lowering.iter().map(|l| l.op.as_str()).collect();
+    ops.sort_unstable();
+    ops.dedup();
+    let items: Vec<TokenStream> = ops.iter().map(|op| quote! { #op }).collect();
+    quote! {
+        /// 本 ISA TOML 声明的 lowering op 集（`[[lowering]].op` 唯一集；
+        /// 排序去重）。能力集单一事实源——矩阵 `Capabilities` 由此派生。
+        pub const SUPPORTED_OPS: &[&str] = &[#(#items),*];
+    }
 }
 
 // ─────────────────────── IsaInfo / RegInfo ───────────────────────
