@@ -115,6 +115,9 @@ pub const CAPS: &[&str] = &[
 ];
 
 /// 运行全部矩阵用例；断言无 Fail（Skip 仅报告）。
+/// P1-15：x86 矩阵依赖本机 ExecutableMemory 执行 x86 机器码——仅在
+/// x86_64 宿主运行（macOS arm64 CI runner 上会 SIGILL）。
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn jit_matrix_x86_v12() {
     use crate::jit_matrix::{Capabilities, Outcome, Runner};

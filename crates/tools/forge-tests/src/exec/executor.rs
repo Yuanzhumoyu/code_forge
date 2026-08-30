@@ -57,33 +57,47 @@ impl Executor for NativeExecutor {
     }
 
     fn exec(&self, compiled: &CompiledFunction, args: &[u64]) -> u64 {
-        assert!(
-            args.len() <= 4,
-            "native x64 executor supports at most 4 integer args"
-        );
-        let mem =
-            code_forge::mem::ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
-        match args.len() {
-            0 => {
-                let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).unwrap() };
-                f() as u64
-            }
-            1 => {
-                let f: extern "C" fn(i64) -> i64 = unsafe { mem.get_fn(0).unwrap() };
-                f(args[0] as i64) as u64
-            }
-            2 => {
-                let f: extern "C" fn(i64, i64) -> i64 = unsafe { mem.get_fn(0).unwrap() };
-                f(args[0] as i64, args[1] as i64) as u64
-            }
-            _ => {
-                let f: extern "C" fn(i64, i64, i64, i64) -> i64 = unsafe { mem.get_fn(0).unwrap() };
-                f(
-                    args[0] as i64,
-                    args[1] as i64,
-                    args[2] as i64,
-                    args[3] as i64,
-                ) as u64
+        // P1-15：native x86_64 执行仅在 x86_64 宿主可用（ExecutableMemory +
+        // extern "C" 调用 x86 机器码）——macOS arm64 CI runner 上会 SIGILL。
+        // 非 x86_64 时显式 panic（调用方应改用 QEMU/CompileOnly）。
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            panic!(
+                "NativeExecutor 仅在 x86_64 宿主可用（当前 {}）——请用 QEMU 或 CompileOnly",
+                std::env::consts::ARCH
+            );
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(
+                args.len() <= 4,
+                "native x64 executor supports at most 4 integer args"
+            );
+            let mem =
+                code_forge::mem::ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
+            match args.len() {
+                0 => {
+                    let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).unwrap() };
+                    f() as u64
+                }
+                1 => {
+                    let f: extern "C" fn(i64) -> i64 = unsafe { mem.get_fn(0).unwrap() };
+                    f(args[0] as i64) as u64
+                }
+                2 => {
+                    let f: extern "C" fn(i64, i64) -> i64 = unsafe { mem.get_fn(0).unwrap() };
+                    f(args[0] as i64, args[1] as i64) as u64
+                }
+                _ => {
+                    let f: extern "C" fn(i64, i64, i64, i64) -> i64 =
+                        unsafe { mem.get_fn(0).unwrap() };
+                    f(
+                        args[0] as i64,
+                        args[1] as i64,
+                        args[2] as i64,
+                        args[3] as i64,
+                    ) as u64
+                }
             }
         }
     }
