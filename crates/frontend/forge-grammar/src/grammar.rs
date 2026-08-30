@@ -964,17 +964,31 @@ impl GrammarParser {
     fn expr_starts_with_rule(expr: &Expr, rule_name: &str) -> bool {
         match expr {
             Expr::Seq(items) => {
-                if let Some(first) = items.first() {
-                    Self::expr_starts_with_rule(first, rule_name)
-                } else {
-                    false
+                // P0-10 修复：穿透可空前缀——`b? a` 中 b? 为空时 a 在最前。
+                // 逐项检查：可空项跳过（其内部另查），直到不可空项。
+                let mut first_non_nullable: Option<&Expr> = None;
+                for item in items {
+                    if Self::expr_starts_with_rule(item, rule_name) {
+                        return true;
+                    }
+                    if !Self::nullable(item) {
+                        first_non_nullable = Some(item);
+                        break;
+                    }
                 }
+                // 全部可空：看最后一项（如 `a? b?` 中 a 可空到末尾）
+                let _ = first_non_nullable;
+                false
             }
             Expr::Alt(items) => items
                 .iter()
                 .any(|e| Self::expr_starts_with_rule(e, rule_name)),
             Expr::Rule(name) => name == rule_name,
-            Expr::ZeroOrMore(_) | Expr::OneOrMore(_) | Expr::Opt(_) => false,
+            // P0-10 修复：Opt/ZeroOrMore/OneOrMore 可空——`a ::= b? a` 中
+            // `b?` 为空时 `a` 实际在最前 → 左递归。递归检查内部。
+            Expr::Opt(inner) | Expr::ZeroOrMore(inner) | Expr::OneOrMore(inner) => {
+                Self::expr_starts_with_rule(inner, rule_name)
+            }
             Expr::Token(_) | Expr::Lit(_) | Expr::Epsilon | Expr::NotLookahead(_) => false,
         }
     }
@@ -999,11 +1013,13 @@ impl GrammarParser {
             Expr::Rule(name) => {
                 result.push(name.clone());
             }
-            Expr::ZeroOrMore(_)
-            | Expr::OneOrMore(_)
-            | Expr::Opt(_)
-            | Expr::Epsilon
-            | Expr::NotLookahead(_) => {}
+            // P0-10 修复：Opt/ZeroOrMore/OneOrMore 可空——first 集必须
+            // 穿透到内部（`a ::= b? a` 中 b? 为空时 a 在前缀）。否则
+            // 可空包装器掩盖左递归（运行时无限递归）。
+            Expr::ZeroOrMore(inner) | Expr::OneOrMore(inner) | Expr::Opt(inner) => {
+                result.extend(Self::first_rules(inner));
+            }
+            Expr::Epsilon | Expr::NotLookahead(_) => {}
             Expr::Token(_) | Expr::Lit(_) => {}
         }
         result
@@ -1186,6 +1202,24 @@ expr ::= expr "+" IDENT | IDENT
         let result = parse_grammar(src);
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("left recursion"));
+    }
+
+    /// P0-10 负向：可空包装器掩盖的左递归必须被拒绝——
+    /// `a ::= b? a`（b? 为空时 a 在前缀）旧检测漏检 → 运行时无限递归。
+    #[test]
+    fn test_left_recursion_nullable_prefix_detected() {
+        let src = r#"
+token IDENT = "[a-z]+"
+skip "[ \t]+"
+
+a ::= b? a
+b ::= IDENT
+"#;
+        let result = parse_grammar(src);
+        assert!(
+            result.is_err(),
+            "可空前缀 b? 掩盖的左递归必须被检测（P0-10 回归）"
+        );
     }
 
     #[test]
