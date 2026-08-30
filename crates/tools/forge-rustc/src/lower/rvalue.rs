@@ -296,6 +296,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // 浮点常量：位模式经 Fconst 加载到 FPR——iconst 走 GPR
                     // mov_imm，fadd/fcmp 等 FPR 运算会读到 GPR 里的垃圾值
                     let bits = scalar.map(|s| s.to_bits(s.size())).unwrap_or(0);
+                    if crate::trace::trace_enabled("CONST") {
+                        eprintln!("[forge] fconst ty={ty} bits={bits:#x} scalar={scalar:?}");
+                    }
                     return Ok(self.builder.fconst(bits as u64, ty));
                 }
                 let val = scalar
@@ -309,6 +312,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         }
                     })
                     .unwrap_or(0);
+                if crate::trace::trace_enabled("CONST") {
+                    eprintln!("[forge] iconst ty={ty} val={val} scalar={scalar:?}");
+                }
                 Ok(self.builder.iconst(val, ty))
             }
             Operand::RuntimeChecks(_) => Ok(self.builder.iconst_i32(0)),
