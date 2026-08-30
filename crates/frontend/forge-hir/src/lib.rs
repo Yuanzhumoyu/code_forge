@@ -42,6 +42,7 @@ pub mod error;
 pub mod graph;
 pub mod lowering;
 pub mod registry;
+pub mod span;
 
 // Re-export the proc-macro (so users only need one dependency)
 pub use forge_hir_macro::define_lowering;
@@ -65,3 +66,4 @@ pub use error::HirError;
 pub use graph::{GraphValue, IrGraph, NodeId};
 pub use lowering::{LoweringContext, lower_into_module};
 pub use registry::BrickRegistry;
+pub use span::SourceSpan;
