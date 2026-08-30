@@ -26,7 +26,7 @@
 ## 2. 现成库调研对比
 
 | 库 | 内部表示 | 内联容量 | size_of | Clone 语义 | &'static str 零拷贝 | Send+Sync | 结论 |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | **compact_str** | 24B 全内联 / 独占堆缓冲（tag 藏指针低位） | 24 B | 24 B | **深拷贝 O(n)**（明确拒绝 COW） | 不支持 | ✅ | ❌ 排除：克隆深拷贝，违背核心目标 |
 | **smol_str** | union{ Inline{len:u8,[u8;23]}, Arc\<str\> } | 23 B | 24 B | O(1)（Arc refcount++） | 长串会拷入 Arc | ✅ | ◑ 最接近，但**无 Static 借用变体** |
 | **kstring** | Static \| Inline \| (Box\|Arc) | 15 B（max_inline 22 B） | ~24 B | Static/Arc O(1)；Box/Inline 拷贝 | ✅ 原生保留 | ✅ | ◑ 变体结构可借鉴；默认 Box 深拷贝、内联小 |
@@ -79,7 +79,7 @@ pub const INLINE_CAP: usize = 22;
 
 布局推导（64 位）：
 
-```
+```text
 InlineStr = [u8;22] + u8        = 23 B，对齐 1
 Arc<str>                        = 16 B
 枚举 = max(23, 16, 16) + 判别 1 = 24 B，对齐 8 → 24 B
@@ -90,7 +90,7 @@ Arc<str>                        = 16 B
 ### 变体选择规则
 
 | 输入 | 短（≤22 B） | 长（>22 B） |
-|---|---|---|
+| --- | --- | --- |
 | `&'static str`（经 `from_static`，const） | `Inline`（memcpy 进栈） | `Static`（零拷贝借用） |
 | `String` | `Inline`（搬移字节） | `Shared`（`Arc::from(s)` 零拷贝 move） |
 | `&str`（通用借用，含非 static） | `Inline` | `Shared`（必须拷贝——借用无法区分 'static） |
@@ -108,7 +108,7 @@ Arc<str>                        = 16 B
 ## 4. 克隆语义与复杂度
 
 | 变体 | Clone 行为 | 复杂度 |
-|---|---|---|
+| --- | --- | --- |
 | `Inline` | 23 字节 memcpy（常数） | O(1) |
 | `Static` | 复制胖指针 | O(1) |
 | `Shared` | `Arc` 原子 refcount+1，共享同一堆 buffer | O(1) |
@@ -155,7 +155,7 @@ trait 实现：
 ## 6. 与 InternedStr / StringPool 的关系
 
 | | `InternedStr` | `ImmStr` |
-|---|---|---|
+| --- | --- | --- |
 | 存储 | 全局池句柄（u32），内容在 `StringPool` 内 | 自包含值，内容随值走 |
 | Clone | Copy（零开销） | O(1)（memcpy / refcount） |
 | 生命周期 | 依赖 pool 存活（借用语义） | 自持所有权，无外部依赖 |

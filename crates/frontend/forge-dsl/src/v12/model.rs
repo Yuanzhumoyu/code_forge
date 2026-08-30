@@ -702,6 +702,7 @@ pub struct Instruction {
     /// - `"abs8"`：imm 槽 < 0 编码 GlobalId → ABS8 "G{id}"（x86 MOVABS_GLOBAL）
     /// - `"pcrel_hi"`/`"pcrel_lo"`：PC-relative hi20/lo12 对（riscv
     ///   AUIPC_GLOBAL/ADDI_GLOBAL；patcher 按 opcode 分写位段）
+    ///
     /// 生成器按此字段生成 encoder reloc arm——替代按指令名特判。
     #[serde(default)]
     pub global_reloc: Option<String>,

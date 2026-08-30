@@ -134,7 +134,7 @@
 **第十七轮执行结果（2026-08，已完成）**——compat 177→**178/452**（+1）、负向正确拒绝 177/误接受 80（上限）、workspace 全量全绿、lalrpop 0 冲突：
 
 | 迭代项 | 状态 | 结果 |
-|--------|------|------|
+| -------- | ------ | ------ |
 | masked-load | ✅ | `<8  x i1>` 数字后双空格——向量 regex `+x +` 再放宽 |
 | gc 子句 | ✅ | `gc "statepoint-example"`（GcKw + 6 处 Define，顺序 gc→personality） |
 | skip-value-numbers-globals | ✅ 确认 | 十六轮引号名修复顺带解锁 |

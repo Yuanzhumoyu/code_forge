@@ -244,20 +244,20 @@ crates/frontend/forge-dsl/src/
 `asm_grammar.rs`（lalrpop 语法生成）、`asm_resolver.rs`、`grammar_rule.rs`、
 `cst_codegen.rs`、`standard_insts.rs`、`isa!`/`isa_from_file!`（v11 版）宏。
 
-
 ## 6. 迭代序列（9 迭代）
 
 | # | 内容 | 验证 |
 | --- | --- | --- |
 | **1** ✅ | v12 模型 + 严格解析 + 语义校验（meta/reg/conventions/operand_slots；forms/instructions/families/lowering/abi/emit 结构校验） | forge-dsl 166 测试全绿（含 v11 拒绝证明 + 序列化往返） |
 | **2** ✅ | 定宽编码生成（form R/I/S/U/B/J/SHIFT/OP/W32 → encode/decode/asm 从 bitfields 直接生成）；散布位段 + operand_fields；riscv64 全 76 指令迁移 | golden 逐字节对比 v11（42 GPR）+ 规范 oracle（F/分支/S 型）+ 全量往返 9/9 |
-| **3** ✅ | 变长语义键（modrm rr/ext、opsize auto/固定、prefix field、rex_w、imm）；encode→Vec<u8>、decode→(Inst,usize)；opsize 非文本操作数；x86 @modrm 24 + @modrm_imm32 6 + @sse_rr 23 | golden 30 GPR 对比 v11 + opsize 16/32/64 + SSE 规范 oracle + 全 53 条往返 7/7 |
+| **3** ✅ | 变长语义键（modrm rr/ext、opsize auto/固定、prefix field、rex_w、imm）；encode→Vec< u8 >、decode→(Inst,usize)；opsize 非文本操作数；x86 @modrm 24 + @modrm_imm32 6 + @sse_rr 23 | golden 30 GPR 对比 v11 + opsize 16/32/64 + SSE 规范 oracle + 全 53 条往返 7/7 |
 | **3b** ✅ | 内存寻址（modrm rm_mem/rm_memref、MemRef 槽、SIB/force_disp_base/disp、LOCK F0、`[{n}]` 形状）；x86 @modrm_mem 14 + MOV64_RR | golden 内存对比 v11 + mem_spec_bytes 10 条 + 全 68 条往返 8/8 |
 | **4** ✅ | families codegen（Family 展开：fields 共享 + {mnemonic} 模板，7 家族 37 变体）；VEX 语义键（C4 + vex2/3 + vvvv，4 forms + 10 指令）；结构化谓词框架（pred.rs） | 家族 SSE 规范 11 + VEX 规范 9 + 全 106 条往返 10/10 |
 | 3 | 变长语义键（modrm/prefix/escape/rex）；x86 @modrm/@sse 家族迁移 ~65 条 | golden 字节等价 + decoder_smoke 扩展 |
 | 4 | VEX 语义键 + 指令族；结构化谓词求值接入 | 展开指令数一致 + forge-tests 全绿 |
 | **5** ✅ | lowering 符号化 + abi.arg_class 类别分类 + emit 保留 | mini_c 双后端 + forge-rustc e2e 不回归 |
-| 6 | x86 124 指令 + 115 lower 全量 v12；**1733 → <800 行**；v11 语法层物理删除 | 全量 golden + 门禁 || 7 | 全 ISA 迁移 + 新 ISA（ARM32 子集）不改生成器证明 | 新 ISA 全链路 |
+| 6 | x86 124 指令 + 115 lower 全量 v12；**1733 → <800 行**；v11 语法层物理删除 | 全量 golden + 门禁 |
+| 7 | 全 ISA 迁移 + 新 ISA（ARM32 子集）不改生成器证明 | 新 ISA 全链路 |
 | 8 | 生成器深度清理（bitstring 残留/死代码） | 全量测试 + forge-dsl 行数下降 |
 | 9 | 文档 v12 重写（isa-dsl.md/encoding-guide） | 文档-代码一致性核对 |
 
@@ -375,8 +375,7 @@ crates/frontend/forge-dsl/src/
   decoder/packet + v12 9+7）、clippy 0 警告、fmt 干净
 
 **下一步（迭代 3b/4）**：@modrm_mem 内存寻址（SIB/disp，迭代 3b 收尾）；
-VEX 语义键 + families（opcodes 数组家族：SD_BIN/SS_FMOV/PS_BIN/PD_BIN/PI_BIN）
-+ 结构化谓词（迭代 4）。随后迭代 5（lowering/abi/emit 迁移 + x86 全量）。
+VEX 语义键 + families（opcodes 数组家族：SD_BIN/SS_FMOV/PS_BIN/PD_BIN/PI_BIN）+ 结构化谓词（迭代 4）。随后迭代 5（lowering/abi/emit 迁移 + x86 全量）。
 
 ## 13. 迭代 3b 完成记录（2026-08）——@modrm_mem 内存寻址
 
@@ -409,7 +408,8 @@ x86 全量收官）。
 
 针对评审意见的两项结构完善（迭代 4 前置）：
 
-**A. asm 完整格式（含 mnemonic，直观性）**
+> **A. asm 完整格式（含 mnemonic，直观性）**
+
 - `asm` 语义变更：**完整汇编格式**，首词即 mnemonic（`asm = "ld {0}, {2}({1})"`、
   `asm = "amoadd.w.aqrl {0}, {2}, ({1})"`）；缺省 = `mnemonic` + 默认操作数模板
 - `mnemonic` 字段保留；asm 存在时从 asm 推导并与字段**交叉校验**（不一致报错，
@@ -417,7 +417,8 @@ x86 全量收官）。
 - 迁移：x86_v12.toml 29 条 + riscv64_v12.toml 9 条 asm 改为完整格式（脚本
   校验首词 == mnemonic，0 不一致）
 
-**B. 通用模板段解析（替换封闭 TokenShape）**
+> **B. 通用模板段解析（替换封闭 TokenShape）**
+
 - **删除** TokenShape/classify_token/parse_idx/Bracket/Mem/Mem0 特殊逻辑
 - 新 `Seg = Lit(String) | Op(usize)` 段模型：操作数模板 = 字面段与占位符交替
 - 渲染（disassemble）：段序列逐段输出（字面原样 + 占位符按槽渲染）
@@ -452,8 +453,7 @@ x86 全量收官）。
     显式 has_src 参数
   - 编码：C4 + vex2（R/X/B 反位 + map）+ vex3（W/vvvv/L/pp）+ opcode + ModRM
   - 解码：独立 arm（C4 + map/pp/w/l guard + R/B/vvvv 提取）
-  - forms：VEX_RRV / VEX_RR / VEX_RRV_IMM / VEX_RR_IMM；迁移 10 条 VEX 单指令
-    + 2 个 VEX 家族 → x86_v12.toml 共 **106 指令**
+  - forms：VEX_RRV / VEX_RR / VEX_RRV_IMM / VEX_RR_IMM；迁移 10 条 VEX 单指令 + 2 个 VEX 家族 → x86_v12.toml 共 **106 指令**
 - **结构化谓词框架**（v12/pred.rs）：`{ and/or/not }` + `{ eq/ne/lt/le/gt/ge
   = [attr, value] }` 解析 + 求值（未知属性 false）；lowering 接入在迭代 5
 - **验证**：forge-dsl 175（+3 pred）、x86_v12 10/10（家族 SSE 规范字节 11 条、
@@ -471,9 +471,8 @@ by-ref 为 YMM 铺路）+ 结构化谓词接入 lowering + x86 全量收官（@o
 
 - **5a（commit fb34785）x86 终结 +r 形式**：
   - 新 form 键 `opcode_reg`（50+r/push、58+r/pop、B8+r/mov_imm64、C8+r/bswap）：
-    encode = REX（always → 0x48|B；否则 reg≥8 → 0x41）+ [escape] + opcode|reg&7
-    + imm；decode = 独立 arm（高 5 位匹配 + REX.B<<3 提取）
-  - vlen_ctx 的 modrm 条件化（`+r` 形式无 ModRM，Option<ModrmKind>）
+    encode = REX（always → 0x48|B；否则 reg≥8 → 0x41）+ [escape] + opcode|reg&7 + imm；decode = 独立 arm（高 5 位匹配 + REX.B<<3 提取）
+  - vlen_ctx 的 modrm 条件化（`+r` 形式无 ModRM，Option< ModrmKind >）
   - asm mnemonic 前缀修正：脚本改用 `mnemonic` 字段而非 name 小写
     （sub/add 家族 + VEX family `{mnemonic}` 模板）
   - x86_v12.toml +12 条：NOT/NEG/DIV/IDIV（MRR_EXT_OP）、SUB64/ADD64_R_IMM32
@@ -519,8 +518,7 @@ lower 全量 v12；v11 语法层物理删除。
 **里程碑**：v12 后端从『能编译』到『能真实执行 mini_c 源码』。
 
 - **6a（commit 30cabd3）控制流 + FrameLowering 完整 + terminator**：
-  - x86_v12.toml：JMP_REL32（E9 rel32）/CALL_RIP_REL（E8 rel32）/RET（C3）
-    + REL32/NOOP form 键 + rel（label）槽；控制流 spec/roundtrip 测试
+  - x86_v12.toml：JMP_REL32（E9 rel32）/CALL_RIP_REL（E8 rel32）/RET（C3）+ REL32/NOOP form 键 + rel（label）槽；控制流 spec/roundtrip 测试
   - v12 codegen：无 ModRM 变长形式（prefix+escape+opcode+imm）encode/decode
     支持（modrm 条件化经 if-let）
   - 模型：Abi 加 frame/callee_saved；顶层加 [spill.*] 模板
@@ -650,8 +648,8 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
   - 新增 v12_struct_field / v12_struct_init_list（init 列表、多 struct、
     4 字段 struct）/ v12_literal_forms（hex/octal/char）测试全过
   - mini_c v12 24/24 全绿；workspace/clippy/fmt 干净
-  - **已知限制**：shift 结果在循环内参与累加（`t += v << i` / 
-    `int s = v << i` 后丢弃）仍 ACCESS_VIOLATION——物理 RCX 字段在
+  - **已知限制**：shift 结果在循环内参与累加（`t += v << i`
+    / `int s = v << i` 后丢弃）仍 ACCESS_VIOLATION——物理 RCX 字段在
     shift+循环 + spill 高压组合下与地址/计数寄存器交互，emission 修复
     解决 spill 重写覆盖，但 regalloc 的 use/def 活跃性仍需专门调试
     （v11 同用例通过，v12 特有）

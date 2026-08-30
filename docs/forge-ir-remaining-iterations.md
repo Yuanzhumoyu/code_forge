@@ -13,7 +13,7 @@
 ## §0 现状总览
 
 | 指标 | 值 |
-|---|---|
+| --- | --- |
 | 正向 parse 通过 | 198/452 |
 | 负向正确拒绝 | 254 |
 | 负向误接受 | **0**（上限——断言 `neg_ok <= 80`） |
@@ -155,10 +155,11 @@ AddrSpaceVal: i64 = { <n: IntLit> => n, <_s: StrLit> => 0 };  // 辅助规则
 
 ### 2.3 裸 GlobalId 的模块级歧义（T3——第二十一轮 lexer 合并解决）
 
-```
+```text
 GlobalInit = GlobalId        // `global ptr @h`
 GlobalDef  = GlobalId Eq ... // 下一行 `@h = ...`
 ```
+
 GlobalId 后 lookahead=Eq vs 换行/Eof——LALR(1) 无法区分。**解法**：lexer 合并
 `global ptr [addrspace(N)] @ref` 单 token（形态限定 ptr,无误吞）。
 
@@ -201,7 +202,7 @@ LBrace 冲突。**解法**：lexer 合并 `ident: {...}` 整段 token。
 
 ### 2.11 #dbg 参数 grammar 化（21 轮新例）
 
-#dbg 整行 lexer 合并时参数形状校验不可行;拆 6 个前缀 token + 参数化 grammar
+ #dbg 整行 lexer 合并时参数形状校验不可行;拆 6 个前缀 token + 参数化 grammar
 分支——正向 declare_value/assign 7 参形态需完整覆盖（两轮回归教训）。
 
 ### 2.12 TargetArgList 首参 StrLit 双分支冲突（23 轮新例）
@@ -239,7 +240,7 @@ cargo test --workspace --exclude forge-rustc -j 4         # workspace 全量（�
 ## §5 最终状态
 
 | 轮次 | 内容 | 净效果 |
-|---|---|---|
+| --- | --- | --- |
 | 第十八轮 | T1-1 位宽 u32 全链、T2-1/2/3 | +5 |
 | 第十九轮 | T4-3 ptrauth、T5-1/2 TypedPtrKw、P3 校验 | +3、误接受 -7 |
 | 第二十轮 | T4-1 large-comdat、T4-2 CommaAttach、递归/前向校验 | +2、误接受 -4 |

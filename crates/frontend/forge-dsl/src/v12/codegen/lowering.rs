@@ -18,7 +18,8 @@ use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
 use super::integration::{
     collect_phys_clobbers, compile_pred_guard, gen_lowering_attrs, inst_exists, inst_fids,
-    inst_move_role, lowering_token_kind, parse_i64_lit, parse_mem_template, strip_placeholder_decls,
+    inst_move_role, lowering_token_kind, parse_i64_lit, parse_mem_template,
+    strip_placeholder_decls,
 };
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;

@@ -1244,7 +1244,13 @@ fn placeholder_registry_lookup() {
         assert!(p.loose, "{name} 应 loose（任何槽可用）");
     }
     // 编号操作数 {N}：动态解析，任意上限（不只 {0}/{1}/{2}）
-    for (name, idx) in [("{0}", 0usize), ("{1}", 1), ("{2}", 2), ("{3}", 3), ("{7}", 7)] {
+    for (name, idx) in [
+        ("{0}", 0usize),
+        ("{1}", 1),
+        ("{2}", 2),
+        ("{3}", 3),
+        ("{7}", 7),
+    ] {
         let n = super::codegen::placeholder::numbered_operand(name)
             .unwrap_or_else(|| panic!("{name} 必须按编号操作数解析"));
         assert_eq!(n, idx, "{name} 编号");
@@ -1255,10 +1261,7 @@ fn placeholder_registry_lookup() {
         );
     }
     // 临时（静态表：{g}/{f}；编号 {gN}/{fN} 动态）
-    for (name, var, cls) in [
-        ("{g}", "__g", PhTemp::Gpr),
-        ("{f}", "__f", PhTemp::Fpr),
-    ] {
+    for (name, var, cls) in [("{g}", "__g", PhTemp::Gpr), ("{f}", "__f", PhTemp::Fpr)] {
         let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
         assert_eq!(p.temp, Some(var), "{name} 临时变量名");
         assert_eq!(p.temp_class, Some(cls), "{name} 临时类别");
@@ -1296,7 +1299,9 @@ fn placeholder_registry_lookup() {
         );
     }
     // 常量/立即数
-    for name in ["{iconst}", "{fconst}", "{off}", "{alloca}", "{global}", "{imm0}"] {
+    for name in [
+        "{iconst}", "{fconst}", "{off}", "{alloca}", "{global}", "{imm0}",
+    ] {
         let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
         assert_eq!(p.kind, PhKind::Imm, "{name} 槽类别");
     }
@@ -1304,7 +1309,10 @@ fn placeholder_registry_lookup() {
     assert_eq!(cc.kind, PhKind::Cond, "cc 槽类别");
     // token 分类委托
     assert_eq!(super::codegen::placeholder::token_kind("{out}"), "reg");
-    assert_eq!(super::codegen::placeholder::token_kind("{iconst_hi20}"), "imm");
+    assert_eq!(
+        super::codegen::placeholder::token_kind("{iconst_hi20}"),
+        "imm"
+    );
     assert_eq!(super::codegen::placeholder::token_kind("{cc}"), "cond");
     assert_eq!(super::codegen::placeholder::token_kind("RAX"), "reg");
     assert_eq!(super::codegen::placeholder::token_kind("16"), "num");

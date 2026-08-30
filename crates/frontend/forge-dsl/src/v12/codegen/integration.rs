@@ -27,6 +27,7 @@
 //!   （[emit].epilogue_label 覆盖）
 //! - 条件码表/前缀扫描缺省 = x86 集（`cond_default`/`x86_scan_default`，
 //!   见 codegen/asm.rs 与 codegen/vlen.rs）
+//!
 //! 新增 ISA 时若这些指令不存在，调用/参数/尾声路径会按缺省名查找失败并
 //! 报错（或降级 Unsupported）——优先在 TOML 显式声明。
 

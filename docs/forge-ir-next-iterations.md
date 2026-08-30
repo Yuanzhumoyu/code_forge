@@ -11,7 +11,7 @@
 ## §0 迭代项总览
 
 | # | 迭代项 | 档位 | 现状 | 依赖 |
-|---|--------|------|------|------|
+| --- | -------- | ------ | ------ | ------ |
 | S1 | 嵌套聚合字段提取（内存化） | 短期 | ✅ 第十轮已实现（compiler.rs:270-277 内存化） | — |
 | S2 | TypeOps 单类型第二操作数 | 短期 | ✅ 第十轮已实现（grammar BinaryOp/BinaryOps 专用规则） | — |
 | S3 | 文本层剩余小项（opaque/属性组/global 尾 metadata/fpext-fptrunc） | 短期 | ✅ 第十轮全部落地（S3.1-S3.4，见 §1） | — |
@@ -42,7 +42,7 @@
 
 ### S1 嵌套聚合字段提取（内存化方案）——✅ 已实现（第十轮）
 
-**现状与失败现象**
+>**现状与失败现象**
 
 `extractvalue` 的字段类型本身是聚合时（如 `{{i32, i32}, i32}` 取字段 0），
 `rewrite_agg_value_uses` 直接报 Unsupported：
@@ -61,7 +61,7 @@ if ts.is_aggregate(seg_ty) {
 
 同类：聚合常量打包处 `compiler.rs:1220`（"聚合常量打包：嵌套聚合缺失"）。
 
-**解决思路（4 步，全 ISA 通用）**
+>**解决思路（4 步，全 ISA 通用）**
 
 1. **外层提取**：字段类型为聚合时不再按"段值"展开，改为分配一个 alloca 帧槽
    （复用 `StackAddr`/`lea_off` 帧槽机制，按 `size_bytes` 对齐），把字段的各段
@@ -73,7 +73,7 @@ if ts.is_aggregate(seg_ty) {
 4. **内层提取**：`extractvalue` 的 operands[0] 为槽地址时——标量字段走
    GEP（`field_offset`）+ load；聚合字段递归走步骤 1。
 
-**代码演示（rewrite 分支改造草图）**
+>**代码演示（rewrite 分支改造草图）**
 
 ```rust
 // rewrite_agg_value_uses 的 ExtractValue 分支（compiler.rs:110 附近）

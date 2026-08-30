@@ -8,7 +8,7 @@
 ## §0 已实现确认(路线图 P0,历轮迭代覆盖——本轮复核)
 
 | 路线图项 | 状态 | 证据 |
-|---|---|---|
+| --- | --- | --- |
 | 2.1 declare 尾部属性 | ✅ | DeclareTail 的 FuncAttrs(含 Alwaysinline,grammar:1336) |
 | 2.2 命名 metadata | ✅ | 第二十一轮 MetadataFieldTupleLit/DI 校验器 |
 | 2.3 指令 metadata 附加 | ✅ | BinaryOps/CmpOps/ExtractElement/ShuffleVector/Call/Fneg 等均 CommaAttach* |
@@ -77,13 +77,13 @@ pub fn extract_value(&mut self, agg: Value, idx: &[u32]) -> Value {
 ### 1.4 metadata kind 白名单校验 —— ⚠️ 评估后不做
 
 **问题解析**:LLVM 对未知 metadata kind 报错;但当前误接受已 0(无带非法
-kind 的负向用例),白名单只防未来用例;而正向用例 kind 面广(!llvm.* 前缀
-+ 自定义),漏一个即破坏 452 收敛。**结论:记录不做**(除非引入新负向用例子集)。
+kind 的负向用例),白名单只防未来用例;而正向用例 kind 面广(!llvm.* 前缀 +
+自定义),漏一个即破坏 452 收敛。**结论:记录不做**(除非引入新负向用例子集)。
 
 ## §2 P2 测试与工具链强化(远期)
 
 | 项 | 说明 | 状态 |
-|---|---|---|
+| --- | --- | --- |
 | 4.1 round-trip fuzz | display_llvm 测试已有 roundtrip 基础;规模化随机用例(display→parse 往返) | ✅ 第三十一轮:452 全量 roundtrip 常规回归(解除 ignore,198 checked 0 failures);随机 fuzz 化延后 |
 | 4.2 负向测试 | 已全(254 拒绝);扩充随官方子集 | 基线已强 |
 | 4.3 LLVM 官方 Assembler 子集 | 452 用例已收敛;下一批:Exceptions/Features/Attributes 目录 | 中量(需逐例判 RUN) |
@@ -92,7 +92,7 @@ kind 的负向用例),白名单只防未来用例;而正向用例 kind 面广(!l
 ## §3 审计遗留(评估结论)
 
 | 项 | 结论 |
-|---|---|
+| --- | --- |
 | make_inst 三层收敛 | ✅ 本轮:中间层 make_inst_with_meta 删除(仅 1 处转发),clone_inst 补写保留(已封装) |
 | egraph→algebraic 改名 | ✅ 本轮:改名 + 模块引用/注释修正(EGraphPass 名保留最小化 diff) |
 | isel_strategy 标签接通 | ⚠️ 记录:DSL lower_pattern arm 名(lea-merge-iadd-imul-*)与手写标签(lea_sib)两套体系对接会改变指令序列(第二十七轮 agg_ret_abi 教训)——作为功能开发项,需专项验证 |

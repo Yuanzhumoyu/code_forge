@@ -79,120 +79,417 @@ pub(crate) fn placeholders() -> &'static [Ph] {
         // ── 符号化寄存器（loose：任何槽都按占位符处理，原语义无守卫）──
         // 注意：`{N}`（{0}/{1}/{2}/…）是**动态编号操作数**，不在此静态表——
         // 见 `numbered_operand`（支持任意多操作数指令，不只 3 个）。
-        Ph { name: "{out}",  kind: PhKind::Reg,  loose: true,  token_kind: "reg", temp: None, temp_class: None, xreg: "rd",  ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })) },
-        Ph { name: "{out2}", kind: PhKind::Reg,  loose: true,  token_kind: "reg", temp: None, temp_class: None, xreg: "rd2", ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })) },
+        Ph {
+            name: "{out}",
+            kind: PhKind::Reg,
+            loose: true,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "rd",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
+        Ph {
+            name: "{out2}",
+            kind: PhKind::Reg,
+            loose: true,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "rd2",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
         // ── 临时寄存器（模板级预声明）──
         // 命名：`{g}`/`{gN}` = 整数（GPR，变量 __g/__gN）、`{f}`/`{fN}` =
         // 浮点（FPR，变量 __f/__fN）——与 PhTemp::{Gpr,Fpr} 一一对应，且与
         // 其余占位符（{out}/{iconst}/{cc}…）无前缀冲突（{g}≠{global}、
         // {f}≠{fconst}：精确匹配，编号临时仅认 `{g`/`{f` + 数字）。
-        Ph { name: "{g}", kind: PhKind::Reg,  loose: false, token_kind: "reg", temp: Some("__g"), temp_class: Some(PhTemp::Gpr), xreg: "__g", ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })) },
-        Ph { name: "{f}", kind: PhKind::Reg,  loose: false, token_kind: "reg", temp: Some("__f"), temp_class: Some(PhTemp::Fpr), xreg: "__f", ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })) },
+        Ph {
+            name: "{g}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: Some("__g"),
+            temp_class: Some(PhTemp::Gpr),
+            xreg: "__g",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
+        Ph {
+            name: "{f}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: Some("__f"),
+            temp_class: Some(PhTemp::Fpr),
+            xreg: "__f",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
         // ── 帧/地址语义 ──
-        Ph { name: "{off}",    kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { ctx.current_offset }) },
-        Ph { name: "{alloca}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { ctx.current_alloca_offset as i64 }) },
-        Ph { name: "{global}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { ctx.current_global.map(|g| -(g.0 as i64) - 1).unwrap_or(0) }) },
+        Ph {
+            name: "{off}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ctx.current_offset }),
+        },
+        Ph {
+            name: "{alloca}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ctx.current_alloca_offset as i64 }),
+        },
+        Ph {
+            name: "{global}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ctx.current_global.map(|g| -(g.0 as i64) - 1).unwrap_or(0) }),
+        },
         // ── 整数常量（常量池解析）──
-        Ph { name: "{iconst}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0)
-        }) },
-        Ph { name: "{iconst_hi20}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0); __v + 0x800 })
-        }) },
-        Ph { name: "{iconst_lo12}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               let __lo = (__v << 52 >> 52) as i32;
-               (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
-        }) },
-        Ph { name: "{iconst_hi32_hi20}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               ((__v >> 32) as i64) + 0x800 })
-        }) },
-        Ph { name: "{iconst_hi32_lo12}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               let __hi32 = (__v >> 32) as i64;
-               let __lo = (__hi32 << 52 >> 52) as i32;
-               (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
-        }) },
-        Ph { name: "{iconst_lo32_hi20}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               (__v as i64 & 0xFFFFFFFF) + 0x800 })
-        }) },
-        Ph { name: "{iconst_lo32_lo12}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               let __lo32 = (__v as i64 & 0xFFFFFFFF);
-               let __lo = (__lo32 << 52 >> 52) as i32;
-               (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
-        }) },
+        Ph {
+            name: "{iconst}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0)
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_hi20}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0); __v + 0x800 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_lo12}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       let __lo = (__v << 52 >> 52) as i32;
+                       (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_hi32_hi20}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       ((__v >> 32) as i64) + 0x800 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_hi32_lo12}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       let __hi32 = (__v >> 32) as i64;
+                       let __lo = (__hi32 << 52 >> 52) as i32;
+                       (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_lo32_hi20}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       (__v as i64 & 0xFFFFFFFF) + 0x800 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_lo32_lo12}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       let __lo32 = (__v as i64 & 0xFFFFFFFF);
+                       let __lo = (__lo32 << 52 >> 52) as i32;
+                       (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
+                }
+            }),
+        },
         // ── 浮点常量（常量池位模式）──
-        Ph { name: "{fconst}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0) as i64
-        }) },
-        Ph { name: "{fconst_hi32_hi20}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               ((__v >> 32) as i64) + 0x800 })
-        }) },
-        Ph { name: "{fconst_hi32_lo12}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               let __hi32 = (__v >> 32) as i64;
-               let __lo = (__hi32 << 52 >> 52) as i32;
-               (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
-        }) },
-        Ph { name: "{fconst_lo32_hi20}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               (__v as i64 & 0xFFFFFFFF) + 0x800 })
-        }) },
-        Ph { name: "{fconst_lo32_lo12}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            ({ let __v = ctx.constant_pool.as_ref()
-                .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                .unwrap_or(0);
-               let __lo32 = (__v as i64 & 0xFFFFFFFF);
-               let __lo = (__lo32 << 52 >> 52) as i32;
-               (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
-        }) },
+        Ph {
+            name: "{fconst}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0) as i64
+                }
+            }),
+        },
+        Ph {
+            name: "{fconst_hi32_hi20}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       ((__v >> 32) as i64) + 0x800 })
+                }
+            }),
+        },
+        Ph {
+            name: "{fconst_hi32_lo12}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       let __hi32 = (__v >> 32) as i64;
+                       let __lo = (__hi32 << 52 >> 52) as i32;
+                       (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
+                }
+            }),
+        },
+        Ph {
+            name: "{fconst_lo32_hi20}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       (__v as i64 & 0xFFFFFFFF) + 0x800 })
+                }
+            }),
+        },
+        Ph {
+            name: "{fconst_lo32_lo12}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       let __lo32 = (__v as i64 & 0xFFFFFFFF);
+                       let __lo = (__lo32 << 52 >> 52) as i32;
+                       (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
+                }
+            }),
+        },
         // ── 立即数语义（imm0 / lane / shuffle）──
-        Ph { name: "{imm0}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { ctx.current_immediates.first().copied().unwrap_or(0) as i64 }) },
-        Ph { name: "{imm0_sub4}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { ctx.current_immediates.first().copied().unwrap_or(0).saturating_sub(4) as i64 }) },
-        Ph { name: "{shufps_imm8}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { __shufps_imm8(ctx.current_immediates.as_slice(), 0usize) }) },
-        Ph { name: "{shufps_imm8_hi}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { __shufps_imm8(ctx.current_immediates.as_slice(), 4usize) }) },
+        Ph {
+            name: "{imm0}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ctx.current_immediates.first().copied().unwrap_or(0) as i64 }),
+        },
+        Ph {
+            name: "{imm0_sub4}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(
+                |_| quote! { ctx.current_immediates.first().copied().unwrap_or(0).saturating_sub(4) as i64 },
+            ),
+        },
+        Ph {
+            name: "{shufps_imm8}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __shufps_imm8(ctx.current_immediates.as_slice(), 0usize) }),
+        },
+        Ph {
+            name: "{shufps_imm8_hi}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __shufps_imm8(ctx.current_immediates.as_slice(), 4usize) }),
+        },
         // ── 向量常量（lane 恢复）──
-        Ph { name: "{vconst_lo2}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { __vconst_raw64(ctx.constant_pool.as_ref(), ctx.current_const_index) }) },
-        Ph { name: "{vconst_lo}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 0usize, false, __vconst_elem_bits(ctx, results) == 64)
-        }) },
-        Ph { name: "{vconst_hi}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 0usize, true, __vconst_elem_bits(ctx, results) == 64)
-        }) },
-        Ph { name: "{vconst_lo_hi}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 1usize, false, __vconst_elem_bits(ctx, results) == 64)
-        }) },
-        Ph { name: "{vconst_hi_hi}", kind: PhKind::Imm, loose: false, token_kind: "imm", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! {
-            __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 1usize, true, __vconst_elem_bits(ctx, results) == 64)
-        }) },
+        Ph {
+            name: "{vconst_lo2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(
+                |_| quote! { __vconst_raw64(ctx.constant_pool.as_ref(), ctx.current_const_index) },
+            ),
+        },
+        Ph {
+            name: "{vconst_lo}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 0usize, false, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 0usize, true, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
+        Ph {
+            name: "{vconst_lo_hi}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 1usize, false, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi_hi}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 1usize, true, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
         // ── 条件码 ──
-        Ph { name: "{cc}", kind: PhKind::Cond, loose: false, token_kind: "cond", temp: None, temp_class: None, xreg: "0u32", ctor: Some(|_| quote! { __cc }) },
+        Ph {
+            name: "{cc}",
+            kind: PhKind::Cond,
+            loose: false,
+            token_kind: "cond",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __cc }),
+        },
     ]
 }
 
@@ -213,10 +510,10 @@ pub(crate) fn numbered_temp(name: &str) -> Option<(String, PhTemp)> {
     // 区分 {gN} 与 {fN}：前缀 g → GPR、f → FPR
     let (cls, digits) = match body.strip_prefix('g') {
         Some(d) => (PhTemp::Gpr, d),
-        None => match body.strip_prefix('f') {
-            Some(d) => (PhTemp::Fpr, d),
-            None => return None,
-        },
+        None => {
+            let d = body.strip_prefix('f')?;
+            (PhTemp::Fpr, d)
+        }
     };
     if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
         return None;
@@ -295,14 +592,15 @@ pub(crate) fn collect_temps(templates: &[String]) -> Vec<(String, PhTemp)> {
     for t in templates {
         for tok in brace_tokens(t) {
             let entry: Option<(String, PhTemp)> = if let Some(p) = lookup(tok) {
-                p.temp.map(|tv| (tv.to_string(), p.temp_class.unwrap_or(PhTemp::Gpr)))
+                p.temp
+                    .map(|tv| (tv.to_string(), p.temp_class.unwrap_or(PhTemp::Gpr)))
             } else {
                 numbered_temp(tok)
             };
-            if let Some((var, cls)) = entry {
-                if !out.iter().any(|(v, _)| *v == var) {
-                    out.push((var, cls));
-                }
+            if let Some((var, cls)) = entry
+                && !out.iter().any(|(v, _)| *v == var)
+            {
+                out.push((var, cls));
             }
         }
     }
@@ -315,13 +613,13 @@ fn brace_tokens(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'{' {
-            if let Some(end) = s[i + 1..].find('}') {
-                let end = i + 1 + end;
-                out.push(&s[i..=end]);
-                i = end + 1;
-                continue;
-            }
+        if bytes[i] == b'{'
+            && let Some(end) = s[i + 1..].find('}')
+        {
+            let end = i + 1 + end;
+            out.push(&s[i..=end]);
+            i = end + 1;
+            continue;
         }
         i += 1;
     }
@@ -400,17 +698,12 @@ pub(crate) fn assert_unique() -> Result<(), String> {
             if p.name == q.name {
                 return Err(format!("占位符重名: {}", p.name));
             }
-            if let (Some(a), Some(b)) = (p.temp, q.temp) {
-                if a == b {
-                    return Err(format!("临时变量冲突: {a}（{} 与 {}）", p.name, q.name));
-                }
+            if let (Some(a), Some(b)) = (p.temp, q.temp)
+                && a == b
+            {
+                return Err(format!("临时变量冲突: {a}（{} 与 {}）", p.name, q.name));
             }
         }
     }
     Ok(())
-}
-
-/// 注册表条目数（测试用）。
-pub(crate) fn len() -> usize {
-    placeholders().len()
 }

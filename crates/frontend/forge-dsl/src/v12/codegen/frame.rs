@@ -129,19 +129,14 @@ pub(crate) fn gen_frame_lowering(
         .emit
         .as_ref()
         .and_then(|e| e.epilogue_jump_inst.clone());
-    let abi_jump = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.jump_inst.clone());
-    let jump_inst = explicit_jump
-        .or(abi_jump)
-        .unwrap_or_else(|| {
-            if model.meta.variable_length {
-                "JMP_REL32".to_string()
-            } else {
-                "JAL".to_string()
-            }
-        });
+    let abi_jump = model.abi.as_ref().and_then(|a| a.jump_inst.clone());
+    let jump_inst = explicit_jump.or(abi_jump).unwrap_or_else(|| {
+        if model.meta.variable_length {
+            "JMP_REL32".to_string()
+        } else {
+            "JAL".to_string()
+        }
+    });
     // 尾声跳转统一走 encoder：jump_inst 指令存在即可（`inst_exists`，
     // 与操作数无关）。变长（x86 JMP_REL32）label 槽 = 尾部 imm → encoder
     // 发 REL4 fixup（与旧手写 0xE9+use_label_at 字节等价）；定宽（riscv
@@ -442,10 +437,7 @@ fn gen_emit_pseudo(
             // 帧槽 [sp + frame - fp_push - (k+1)*8]（frame_alloc 之后执行，
             // 槽在已分配帧顶部 fp_push 区域之下；min_frame_bytes 需覆盖）。
             // `[abi].push_inst`/`pop_inst` 键驱动（缺省按 PUSH/POP 存在性检测）。
-            let push_inst = abi
-                .push_inst
-                .clone()
-                .unwrap_or_else(|| "PUSH".to_string());
+            let push_inst = abi.push_inst.clone().unwrap_or_else(|| "PUSH".to_string());
             let pop_inst = abi.pop_inst.clone().unwrap_or_else(|| "POP".to_string());
             let has_hw_push = inst_exists(infos, &push_inst) && inst_exists(infos, &pop_inst);
             if !has_hw_push {
@@ -594,8 +586,7 @@ fn gen_emit_pseudo(
                 .and_then(|a| a.fpr_mov_inst32.clone())
                 .unwrap_or_else(|| "MOVSS".to_string());
             let fpr_fids = inst_fids(infos, &fpr_mov64);
-            let has_fpr_mov =
-                fpr_fids.len() >= 2 && inst_fids(infos, &fpr_mov32).len() >= 2;
+            let has_fpr_mov = fpr_fids.len() >= 2 && inst_fids(infos, &fpr_mov32).len() >= 2;
             let (f_dest, f_src) = if fpr_fids.len() >= 2 {
                 (fpr_fids[0].clone(), fpr_fids[1].clone())
             } else {
@@ -847,7 +838,8 @@ fn gen_spill_stmt(
                 .ok_or_else(|| format!("spill 模板操作数 {i} 超出指令 {inst_name}"))?;
             let slot = &info.operands[i].2;
             // `{N}` 编号操作数（任意 N）：按槽类型绑定语义
-            let is_numbered = op.strip_prefix('{')
+            let is_numbered = op
+                .strip_prefix('{')
                 .and_then(|r| r.strip_suffix('}'))
                 .is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()));
             let expr: TokenStream = if is_numbered {

@@ -8,6 +8,7 @@
 > （display_llvm.rs:1685-1691），当前 0 失败故文件不存在）。
 
 ## 已修复（第二十九轮,21 项明细）
+
 1-16:见前版(16 项基线:lane/alloca/zeroinit8B/custom kind/空洞/datalayout/vector-ptr/distinct/metadata 类型/MetadataKw/asm 全链/ifunc IR/ptr null/denormal/向量 zeroinit/Vector 去重)
 17. atomicrmw/cmpxchg 操作数类型去重(字面量自带类型前缀,原双输出致 `ptr ptr undef`/`i32 i32 1`)
 18. 常量表达式 Binary 类型前缀(operand_text 带 op_ty + 操作数同类型,原 `add (5, -5)` 丢类型)
