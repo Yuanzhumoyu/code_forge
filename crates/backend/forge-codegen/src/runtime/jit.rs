@@ -1485,6 +1485,42 @@ mod tests {
         assert_eq!(f(2.0), 0, "2.0 ≤ 3.0 → 0");
     }
 
+    /// e2e i64_wrapping_add 隔离：**int 常量实参** + 跨函数 call
+    ///（rustc 未内联 wrapping_add——Call 到辅助函数；f64 常量实参
+    /// 已测，int（iconst）常量实参路径未测）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_i64_const_arg_call() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // callee: (i64, i64) -> i64 = a + b
+        let sig_c = FunctionSignature::new(
+            &[(TypeId::I64, "a"), (TypeId::I64, "b")],
+            &[TypeId::I64],
+        );
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+        bc.switch_to_block(blk);
+        let sum = bc.iadd(p[0], p[1]);
+        bc.ret(&[sum]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: callee(5, 2995) → 3000（iconst 常量实参 → GPR 槽）
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let five = bm.iconst_i64(5);
+        let big = bm.iconst_i64(2995);
+        let r = bm.call(callee_ref, &[five, big], &[TypeId::I64]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("compile main+callee");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn main");
+        assert_eq!(f(), 3000, "callee(5, 2995) = 3000（iconst 常量实参）");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]
