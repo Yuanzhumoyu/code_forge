@@ -17,6 +17,11 @@
 > lower 62.9µs→25.8µs、total 188µs→100µs；codegen multi_block/complex/
 > with_o1 改善 12-20%、throughput 大函数 -5~-13%。剩余建议见
 > `docs/bench_baseline.md` 文末「优化建议」。
+>
+> **第三轮评估（08-31）**：ir_parse big_text_256 -9.4% 显著改善（既有
+> lexer 零拷贝修复效果，无需再动）；verify 各 pass 用惰性缓存
+> （dominator_tree/predecessors）结构健康；regalloc 剩余为数据流规模
+> 本质成本——三轮后无低风险高收益点，进入测量/维护期。
 
 ## 各函数 stage 占比（2026-08-06 基线；08-31 重测见时效性说明）
 

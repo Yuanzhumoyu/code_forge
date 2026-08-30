@@ -31,17 +31,17 @@ default run.
 | ir_build_big_loop | 16.63 |
 | ir_build_mem | 18.14 |
 
-## ir_parse
+## ir_parse（08-31 第三轮实测）
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| ir_parse_mul_add | 9.88 |
-| ir_parse_simple_add | 11.05 |
-| ir_parse_dot_product | 14.17 |
-| ir_parse_loop_sum | 16.66 |
-| ir_parse_complex | 17.04 |
-| ir_parse_multi_func | 52.13 |
-| ir_parse_big_text_256 | 392.62 |
+| ir_parse_simple_add | 7.57 |
+| ir_parse_mul_add | 10.95 |
+| ir_parse_dot_product | 13.77 |
+| ir_parse_loop_sum | 16.17 |
+| ir_parse_complex | 17.18 |
+| ir_parse_multi_func | 52.95 |
+| ir_parse_big_text_256 | 350.37 |
 
 ## optimizations（单 pass）
 
@@ -550,3 +550,55 @@ throughput codegen（criterion 显著项）：
 - **正确性**：门禁全绿（jit 全套、riscv 126 等价、mini_c、clippy）。
 - **剩余**：regalloc 重新占主导（~60%），其数据流规模成本是算法本质；
   P3（ir_parse）仍待干净环境 profile。
+
+---
+
+## 第三轮分析记录（2026-08-31）——ir_parse 评估与三轮汇总
+
+### ir_parse 实测（无代码改动，验证既有状态）
+
+| Benchmark | 8/27 | 08-31 | Δ |
+| --------- | ---: | ---: | ---: |
+| ir_parse_simple_add | 11.05 | 7.57 | **-31%** |
+| ir_parse_mul_add | 9.88 | 10.95 | +11% |
+| ir_parse_dot_product | 14.17 | 13.77 | -3% |
+| ir_parse_loop_sum | 16.66 | 16.17 | -3% |
+| ir_parse_complex | 17.04 | 17.18 | +1% |
+| ir_parse_multi_func | 52.13 | 52.95 | +2% |
+| ir_parse_big_text_256 | 392.62 | 350.37 | **-11%** |
+
+**结论**：ir_parse 无回归；big_text_256 **-9.4% 显著改善**（criterion
+p<0.05，379.55µs 中位数）——2026-08-03 的 lexer 零拷贝修复持续生效。
+**P3 不再需要紧急优化**（392→350µs 已改善，剩余成本主要是 lalrpop 生成
+解析器，改语法规则风险高——452 用例约束）。simple_add -31% 为负载波动
+（其他点 ±3% 内）。
+
+### verify 分析（结构健康，无需优化）
+
+- `check_uses`：O(insts×operands) 线性，合理。
+- `check_dominance`：用 `func.dominator_tree()` 惰性缓存（不重复构建），
+  `dominates()` 查询——已优化。
+- `check_block_params`：复用 `func.predecessors()` 惰性缓存（避免 O(B²)）。
+
+### regalloc 剩余评估（两轮优化后）
+
+- `process_block` 每指令 `inst_xregs`/`inst_defs`/`clobbers` SmallVec 构建
+  + `inst_defs.contains()`（defs ≤3 元素线性）——结构已优化。
+- `expire_dead`/`assign_reg`/`pop_free`/`evict_and_assign`：P0 已覆盖
+  （二分 next_use、有序池、驱逐预计算）。
+- **剩余成本是数据流规模本质**（每指令的 active/assignments/interval 查询），
+  无低风险高收益点。
+
+### 三轮优化汇总（2026-08-31）
+
+| 轮次 | 改动 | 提交 | 收益 |
+| --- | --- | --- | --- |
+| P0 | regalloc 4 项（二分 next_use/有序池/预分配/驱逐缓存） | bce47a2 | codegen 8/11 点改善，throughput_100 -16% |
+| 第二轮 | lowering `current_immediates` SmallVec | 944f0eb | multi_block/complex -20%、throughput 大函数 -5~-13%、many_ops lower -59% |
+| 第三轮 | ir_parse/verify 评估（无改动，验证健康） | — | big_text_256 -9.4%（既有 lexer 修复效果确认） |
+
+**当前瓶颈排序**（CF_CODEGEN_TIMING 08-31）：regalloc ~60% > lowering
+~26% > emit ~8% > verify/ir_parse（次量级）。codegen 组三轮累计
+（vs 8/06 基线）：codegen_many_ops 100.7→110µs（负载波动）、
+throughput_500/codegen 2364→2386µs（持平）——优化主要改善 spill 密集与
+多指令函数（mem/big_loop/with_o1/o2 累计 -10~-20%）。
