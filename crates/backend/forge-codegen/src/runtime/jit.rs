@@ -1365,6 +1365,43 @@ mod tests {
         assert_eq!(f(), 0, "callee(2.5)：2.5 ≤ 3.0 → 0（fconst 实参路径）");
     }
 
+    /// e2e float_args 隔离：fcmp → **branch**（rustc 的 if 生成 switchInt →
+    /// forge-rustc 降级 branch 链；此前主库只测过 select 路径）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_fcmp_branch_if_else() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // f(a: f64, b: f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }（branch 版）
+        let sig = FunctionSignature::new(
+            &[(TypeId::F64, "a"), (TypeId::F64, "b")],
+            &[TypeId::I32],
+        );
+        jit.add_function("f_branch", &sig, |b| {
+            let (entry, p) = b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
+            b.switch_to_block(entry);
+            let sum = b.fadd(p[0], p[1]);
+            let three = b.fconst_f64(3.0f64);
+            let gt = b.fcmp(FloatCC::GreaterThan, sum, three);
+            let then_b = b.create_block();
+            let else_b = b.create_block();
+            b.switch_to_block(entry);
+            b.branch(gt, then_b, &[], else_b, &[]);
+            b.switch_to_block(then_b);
+            let c1 = b.iconst_i32(1);
+            b.ret(&[c1]);
+            b.switch_to_block(else_b);
+            let c0 = b.iconst_i32(0);
+            b.ret(&[c0]);
+        })
+        .expect("compile f_branch");
+        let f: extern "C" fn(f64, f64) -> i32 = jit.get_fn("f_branch").expect("get_fn");
+        assert_eq!(f(1.5, 2.0), 1, "1.5+2.0=3.5 > 3.0 → 1（fcmp→branch）");
+        assert_eq!(f(1.0, 1.0), 0, "1.0+1.0=2.0 ≤ 3.0 → 0");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]

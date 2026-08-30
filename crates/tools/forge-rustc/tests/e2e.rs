@@ -785,6 +785,13 @@ fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
             stderr.lines().take(10).collect::<Vec<_>>().join("\n")
         ));
     }
+    // 诊断：FORGE_E2E_TRACE=1 时编译成功也打印 stderr（FORGE_TRACE_* 输出）
+    if std::env::var_os("FORGE_E2E_TRACE").is_some() {
+        let stderr = String::from_utf8_lossy(&compile.stderr);
+        if !stderr.trim().is_empty() {
+            eprintln!("--- {} trace ---\n{stderr}\n--- end ---", case.name);
+        }
+    }
 
     // 运行并取退出码（带超时：panic handler 是 loop{}，assert 失败会挂起）
     let mut child = Command::new(&exe)
