@@ -112,3 +112,52 @@ README 限制区⑧ `probe_n n=5`（~40 行）最小复现。gdb 断点 +
 **先 E1 定位（1 天）→ E2 验证 Select 原生化（最大嫌疑，1-2 天）→ 未转正则
 E3 查 sret spill（regalloc 侧）→ E4 riscv 交叉定界 → E5 转正回归**。
 E2 成功概率最高（嵌套 niche 修复后残留问题与 select 路径敏感性吻合）。
+
+---
+
+## 7. 诊断进展（2026-09 补充）
+
+> e2e 环境已打通（`RUSTUP_HOME=target\rustup_home` junction + 
+> `FORGE_E2E_NIGHTLY` 覆盖；`.rustup\tmp` 被 Defender 拦截的解法）。
+> 工具：`FORGE_E2E_ONLY=用例名`（单用例）+ `FORGE_E2E_TRACE=1`（编译成功
+> 也打印 stderr）+ `FORGE_TRACE_MIR/STMT/TERM/CALL/ABI/SLOT/STORE/LOAD/
+> LOWER/CONST`（全链路降级 trace）。
+
+### 已排除（主库全部验证正确，jit 79 绿）
+
+| 路径 | 验证 |
+| --- | --- |
+| f64/fconst 常量实参 + XMM 槽 | test_jit_f64_const_arg_call ✓ |
+| **i64/iconst 常量实参 + GPR 槽 + 跨函数 call** | test_jit_i64_const_arg_call ✓ |
+| mixed int/float by-position 槽位 | test_jit_mixed_int_float_args ✓ |
+| fcmp → select / branch / if-else | test_jit_fcmp_branch_if_else ✓ |
+| f64 参数栈槽中转（Fstore/Fload） | test_jit_f64_param_via_stack_slot ✓ |
+| 完整组合（fconst 实参 + branch callee） | test_jit_fconst_args_branch_callee ✓ |
+| fib 递归 call / Select cmov（BOOL/I32 cond） | ✓ |
+| Unreachable terminator（Trap 标签驱动） | test_jit_unreachable_terminator ✓ |
+
+**主库 ABI 真 bug 已修**：Windows x64 by-position 槽位（int/float 共享
+位置计数——`[abi].arg_slot = "by-position"`，588708a）。
+
+### 当前定位
+
+e2e 剩余 26 个值错（fib_recursive/multi_call_chain/nested_calls/float_args/
+i64_wrapping_add/checked_tuple/alloc_* 等）+ vec_push compile failed——
+**MIR/lowering 全链路 trace 显示降级形态正常**（fadd/fcmp/switchInt→branch/
+iconst 常量实参/Fstore 栈槽中转全对），主库等价 IR 全部执行正确 → **值错
+收敛为 forge-rustc 与 rustc-2026-08-07 的 MIR 常量/ABI 交互细节**
+（rustc 内部漂移，非主库）。
+
+### 下一步候选（按优先级）
+
+1. **rustc 常量位模式**：`rvalue.rs:298` 的 `scalar.to_bits(s.size())`——
+   rustc nightly 的 ScalarSize/API 变化 → fconst/iconst 位模式错
+   （`FORGE_TRACE_CONST` 目前无输出——常量求值路径未触达，需在
+   `try_to_scalar_int` 处补 trace）；
+2. **FnAbi 参数布局**：rustc 2026-08-07 的 FnAbi 对混合/聚合参数的
+   位置分配变化 → forge-rustc 的 arg_class 打包错位
+   （`FORGE_TRACE_ABI` 对比 FnAbi 与打包结果）；
+3. **入口参数/返回槽**：mainCRTStartup 的 `_0 = copy _1 as i32`
+   （IntToInt）路径与返回槽初始化（trace 见 XReg(512) 未定义值嫌疑）。
+
+E1-E5（grow 链定位/Select 恢复/sret spill/转正）在此线之后执行。
