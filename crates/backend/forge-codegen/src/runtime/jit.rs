@@ -1448,6 +1448,43 @@ mod tests {
         assert_eq!(f(), 1, "callee(1.5, 2.0)：3.5 > 3.0 → 1（fconst 实参+branch）");
     }
 
+    /// e2e float_args 最后隔离：f64 参数经**栈槽中转**（rustc MIR 的
+    /// 参数→槽→Fload 形态——主库测试此前参数直接用 XReg，未走栈槽）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_f64_param_via_stack_slot() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // f(a: f64) -> i32 = if a > 3.0 { 1 } else { 0 }
+        // 参数存槽 (-16) → Fload → fcmp（模拟 rustc 的 local 槽形态）
+        let sig = FunctionSignature::new(&[(TypeId::F64, "a")], &[TypeId::I32]);
+        jit.add_function("f_slot", &sig, |b| {
+            let (entry, p) = b.create_block_with_params(&[(TypeId::F64, "a")]);
+            b.switch_to_block(entry);
+            let slot = b.stack_addr(-16);
+            b.fstore(p[0], slot);
+            let v = b.fload(slot, TypeId::F64);
+            let three = b.fconst_f64(3.0f64);
+            let gt = b.fcmp(FloatCC::GreaterThan, v, three);
+            let then_b = b.create_block();
+            let else_b = b.create_block();
+            b.switch_to_block(entry);
+            b.branch(gt, then_b, &[], else_b, &[]);
+            b.switch_to_block(then_b);
+            let c1 = b.iconst_i32(1);
+            b.ret(&[c1]);
+            b.switch_to_block(else_b);
+            let c0 = b.iconst_i32(0);
+            b.ret(&[c0]);
+        })
+        .expect("compile f_slot");
+        let f: extern "C" fn(f64) -> i32 = jit.get_fn("f_slot").expect("get_fn");
+        assert_eq!(f(4.0), 1, "4.0 > 3.0 → 1（Fstore/Fload 栈槽中转）");
+        assert_eq!(f(2.0), 0, "2.0 ≤ 3.0 → 0");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]
