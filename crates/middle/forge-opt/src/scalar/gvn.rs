@@ -86,6 +86,8 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
 
     // DFS from entry block
     let entry_id = func.entry_block.unwrap_or(Block(0));
+    // P1-5：别名分析（load 消重的 kill 精度）
+    let alias = AliasAnalysis::new();
     gvn_dfs(
         func,
         entry_id,
@@ -95,6 +97,7 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
         &mut const_map,
         &mut to_kill,
         &mut result,
+        &alias,
     );
 
     // Apply replacements across all instructions（同步 use-lists）
@@ -162,6 +165,7 @@ fn gvn_dfs(
     const_map: &mut HashMap<Value, (Big, TypeId)>,
     to_kill: &mut Vec<Inst>,
     result: &mut PassResult,
+    alias: &AliasAnalysis,
 ) {
     // 1. Enter block: push new scope
     scopes.push(HashMap::new());
@@ -171,27 +175,34 @@ fn gvn_dfs(
     let inst_ids = &func.dfg.blocks[block_id.0 as usize].inst_order;
 
     for inst_id in inst_ids {
-        let inst = &mut func.dfg.insts[inst_id.0 as usize];
-
-        let inst_result = match inst.results.first().copied() {
+        // P1-5：只读快照（kill 分支做别名查询时不得持有 dfg.insts 的 &mut）
+        let (snap_opcode, snap_result) = {
+            let inst = &func.dfg.insts[inst_id.0 as usize];
+            (inst.opcode, inst.results.first().copied())
+        };
+        let inst_result = match snap_result {
             Some(v) => v,
             None => {
-                // 无结果指令：内存写（store/调用/原子）kill 全部 load 表达式。
+                // 无结果指令：内存写 kill load 表达式。
                 // P0-4：kill 集合覆盖全部 may-write（Fstore/Call/CallIndirect/
                 // AtomicRmw/Cmpxchg），不只 Store。
-                if matches!(
-                    inst.opcode,
+                // P1-5：store/原子按别名精化（只 kill may-alias load）；
+                // 调用可能写任意内存 → kill 全部 load。
+                if matches!(snap_opcode, Opcode::Call | Opcode::CallIndirect) {
+                    for scope in scopes.iter_mut() {
+                        scope.retain(|key, _| !super::cse::is_load_op(&key.opcode));
+                    }
+                } else if matches!(
+                    snap_opcode,
                     Opcode::Store
                         | Opcode::Fstore
-                        | Opcode::Call
-                        | Opcode::CallIndirect
                         | Opcode::AtomicRmw
                         | Opcode::Cmpxchg
                 ) {
-                    // Conservative: any memory write kills all load expressions in scope stack
+                    let wloc = alias.location_of_access(func, &func.dfg.insts[inst_id.0 as usize]);
                     for scope in scopes.iter_mut() {
                         scope.retain(|key, _| {
-                            !matches!(key.opcode, Opcode::Load | Opcode::Fload)
+                            !super::cse::killed_by_write(key, wloc, alias, func)
                         });
                     }
                 }
@@ -199,6 +210,7 @@ fn gvn_dfs(
             }
         };
 
+        let inst = &mut func.dfg.insts[inst_id.0 as usize];
         let ty = func.dfg.values[inst_result.0 as usize].ty;
 
         // Handle Iconst / Fconst: record in constant map
@@ -229,14 +241,16 @@ fn gvn_dfs(
         }
 
         // P0-3：volatile load 不参与 GVN（可观察语义）。
-        if matches!(inst.opcode, Opcode::Load | Opcode::Fload)
+        if super::cse::is_load_op(&inst.opcode)
             && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
         {
             continue;
         }
 
-        // Skip non-GVN-able instructions
-        if !super::cse::is_cse_candidate(&inst.opcode) {
+        // Skip non-GVN-able instructions（P1-5：load 在 kill 精化下可消重）
+        if !super::cse::is_cse_candidate(&inst.opcode)
+            && !super::cse::is_load_op(&inst.opcode)
+        {
             continue;
         }
 
@@ -248,7 +262,7 @@ fn gvn_dfs(
             .collect();
 
         // === Constant folding ===
-        if !matches!(inst.opcode, Opcode::Load)
+        if !super::cse::is_load_op(&inst.opcode)
             && let Some((folded_val, folded_ty)) =
                 try_const_fold(&inst.opcode, &mapped_operands, const_map)
         {
@@ -267,8 +281,9 @@ fn gvn_dfs(
 
         let key = super::cse::expr_key(&inst.opcode, &mapped_operands, ty);
 
-        // === Memory Load GVN ===
-        if matches!(inst.opcode, Opcode::Load) {
+        // === Memory Load GVN ===（P1-5：Load/Fload——kill 精化后真正生效；
+        // 跨块复用前提：地址为同一 SSA 值且支配，且无中间 may-alias 写）
+        if super::cse::is_load_op(&inst.opcode) {
             // Load instructions: only GVN if no intervening store killed the expression
             if let Some(existing) = gvn_lookup(scopes, &key) {
                 replacements.insert(inst_result, existing);
@@ -305,6 +320,7 @@ fn gvn_dfs(
                 const_map,
                 to_kill,
                 result,
+                alias,
             );
         }
     }
@@ -490,5 +506,46 @@ mod tests {
         let pass = GvnPass::new();
         let _r = pass.run_on_function(&mut func).unwrap();
         // Just verify no crash
+    }
+
+    /// P1-5 正向：跨块 load 复用——entry 定义 p + `l1 = load p`，分支块的
+    /// `l2 = load p`（同一地址 SSA 值、被 entry 支配、无中间写）→ l2 消除复用 l1。
+    /// （旧行为：load 不在 GVN 候选 → 永不消重。）
+    #[test]
+    fn p1_5_gvn_load_reuse_across_blocks() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let entry = b.create_block();
+        let then_blk = b.create_block();
+        let else_blk = b.create_block();
+        let merge = b.create_block();
+
+        b.switch_to_block(entry);
+        let p = b.stack_addr(0);
+        let l1 = b.load(p, TypeId::I32);
+        let one = b.iconst_i32(1);
+        let zero = b.iconst_i32(0);
+        let cond = b.icmp(IntCC::NotEqual, one, zero);
+        b.branch(cond, then_blk, &[], else_blk, &[]);
+
+        b.switch_to_block(then_blk);
+        let l2 = b.load(p, TypeId::I32); // 复用 l1（同地址、支配、无中间写）
+        b.jump(merge, &[l2]);
+
+        b.switch_to_block(else_blk);
+        b.jump(merge, &[l1]);
+
+        b.switch_to_block(merge);
+        b.ret(&[l1]);
+        let mut func = b.finish().expect("build");
+
+        let pass = GvnPass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        assert!(r.changed, "GVN 应跨块复用 load（P1-5）");
+        assert_eq!(
+            func.dfg.value_type(l2),
+            Some(TypeId::VOID),
+            "l2 应被消除并复用 l1"
+        );
     }
 }

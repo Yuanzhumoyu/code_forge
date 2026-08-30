@@ -30,9 +30,11 @@ impl OptimizationPass for LicmPass {
 
 pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
+    // P1-5：别名分析（load 外提判定：循环内无 may-alias 写才可外提）
+    let alias = AliasAnalysis::new();
     // 使用函数上的惰性分析缓存（licm 只移动指令、不改变块结构，支配树/
     // 循环森林无需重建）；无循环或循环体过小时快速返回。
-    let loops: Vec<(Block, Block, HashSet<Block>)> = func
+    let loops: Vec<(Block, Block, HashSet<Block>, Vec<MemoryLocation>)> = func
         .loop_forest()
         .all_loops()
         .iter()
@@ -40,15 +42,25 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError>
         // P1-2/P1-3：外提目标 = preheader（若有——header 唯一循环外 pred，
         // 每迭代只执行一次的真正不变量位置）；无 preheader 时回退 header
         //（旧行为；insert_preheader pass 正规化后可全量走 preheader）。
-        .map(|li| (li.header, li.preheader.unwrap_or(li.header), li.blocks.iter().copied().collect()))
+        .map(|li| {
+            let body: HashSet<Block> = li.blocks.iter().copied().collect();
+            let write_locs = collect_loop_writes(func, &body, &alias);
+            (
+                li.header,
+                li.preheader.unwrap_or(li.header),
+                body,
+                write_locs,
+            )
+        })
         .collect();
     if loops.is_empty() {
         return Ok(result);
     }
 
-    for (header, target, body) in loops {
+    for (header, target, body, write_locs) in loops {
         let outside_values = collect_values_outside(func, &body);
-        let invariants = mark_invariants(func, &body, &outside_values);
+        let invariants =
+            mark_invariants(func, &body, &outside_values, &alias, &write_locs);
         if invariants.is_empty() {
             continue;
         }
@@ -64,6 +76,34 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError>
         func.analysis_mut().invalidate();
     }
     Ok(result)
+}
+
+/// P1-5：循环体内全部 may-write 的位置（调用 → Unknown，与任何 load MayAlias）。
+fn collect_loop_writes(
+    func: &Function,
+    body: &HashSet<Block>,
+    alias: &AliasAnalysis,
+) -> Vec<MemoryLocation> {
+    let mut writes = Vec::new();
+    for bi in 0..func.dfg.blocks.len() {
+        let bid = Block(bi as u32);
+        if !body.contains(&bid) {
+            continue;
+        }
+        for &inst_id in &func.dfg.blocks[bi].inst_order {
+            let inst = &func.dfg.insts[inst_id.0 as usize];
+            match inst.opcode {
+                Opcode::Call | Opcode::CallIndirect => writes.push(MemoryLocation::Unknown),
+                Opcode::Store | Opcode::Fstore | Opcode::AtomicRmw | Opcode::Cmpxchg => {
+                    if let Some(loc) = alias.location_of_access(func, inst) {
+                        writes.push(loc);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    writes
 }
 
 fn collect_values_outside(func: &Function, body: &HashSet<Block>) -> HashSet<Value> {
@@ -91,6 +131,8 @@ fn mark_invariants(
     func: &Function,
     body: &HashSet<Block>,
     outside: &HashSet<Value>,
+    alias: &AliasAnalysis,
+    write_locs: &[MemoryLocation],
 ) -> HashSet<(Block, Inst)> {
     let mut inv_values: HashSet<Value> = HashSet::new();
     let mut inv_insts: HashSet<(Block, Inst)> = HashSet::new();
@@ -129,7 +171,23 @@ fn mark_invariants(
                 if inst.results.is_empty() {
                     continue;
                 }
-                if has_side_effects(&inst.opcode) {
+                // P1-5：load 在「地址不变 + 循环内无 may-alias 写」时可外提
+                // （每迭代读同一位置 → 提前到 preheader 只读一次等价）。
+                // volatile / 原子 load 保留可观察语义，不外提。
+                if crate::scalar::cse::is_load_op(&inst.opcode) {
+                    if inst.mem_flags.is_volatile() {
+                        continue;
+                    }
+                    let Some(loc) = alias.location_of_access(func, inst) else {
+                        continue;
+                    };
+                    if write_locs
+                        .iter()
+                        .any(|&w| alias.alias(loc, w) != AliasResult::NoAlias)
+                    {
+                        continue;
+                    }
+                } else if has_side_effects(&inst.opcode) {
                     continue;
                 }
                 if inst
@@ -213,10 +271,12 @@ fn hoist_to_header(
 fn has_side_effects(opcode: &Opcode) -> bool {
     matches!(
         opcode,
+        // P1-5：Load/Fload 不再整体视为副作用（load 外提判定单独处理）；
+        // Fstore 补入写集合（此前缺失）。
         Opcode::Store
+            | Opcode::Fstore
             | Opcode::Call
             | Opcode::CallIndirect
-            | Opcode::Load
             | Opcode::AtomicRmw
             | Opcode::Cmpxchg
             | Opcode::Fence
@@ -368,5 +428,107 @@ mod tests {
             r.changed || r.instructions_removed == 0,
             "Only Iconst(5) is invariant; Iadd(i,5) depends on loop-varying i"
         );
+    }
+
+    /// P1-5 正向：循环体 load 栈槽（地址在外、循环内无 may-alias 写）→ 外提到
+    /// preheader；循环体不再含 load。
+    #[test]
+    fn p1_5_licm_hoist_invariant_load() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let preheader = b.create_block();
+        b.switch_to_block(preheader);
+        let p = b.stack_addr(0); // 地址在循环外
+        let zero = b.iconst_i32(0);
+        let header = b.create_block();
+        b.switch_to_block(preheader);
+        b.jump(header, &[]);
+
+        b.switch_to_block(header);
+        let n = b.iconst_i32(10);
+        let cond = b.icmp(IntCC::SignedLessThan, zero, n);
+        let body_blk = b.create_block();
+        let exit = b.create_block();
+        b.switch_to_block(header);
+        b.branch(cond, body_blk, &[], exit, &[]);
+
+        b.switch_to_block(body_blk);
+        let v = b.load(p, TypeId::I32); // 循环不变 load（无写 → 可外提）
+        let one = b.iconst_i32(1);
+        let _used = b.iadd(v, one);
+        b.jump(header, &[]);
+
+        b.switch_to_block(exit);
+        b.ret(&[]);
+        let mut func = b.finish().expect("build");
+
+        let pass = LicmPass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        assert!(r.changed, "LICM 应外提不变 load");
+
+        // 全函数只剩 1 条 load，且不在循环体
+        let mut loads: Vec<Block> = Vec::new();
+        for (bi, blk) in func.dfg.blocks.iter().enumerate() {
+            for &inst_id in &blk.inst_order {
+                let inst = &func.dfg.insts[inst_id.0 as usize];
+                if matches!(inst.opcode, Opcode::Load) {
+                    loads.push(Block(bi as u32));
+                }
+            }
+        }
+        assert_eq!(loads.len(), 1, "load 应被外提（只剩 1 条）");
+        assert_ne!(loads[0], body_blk, "load 不应留在循环体");
+    }
+
+    /// P1-5 负向：循环体对同一槽 store + load → load 与 store MayAlias，
+    /// 不得外提（load 仍留在循环体）。
+    #[test]
+    fn p1_5_licm_no_hoist_load_with_alias_store() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let preheader = b.create_block();
+        b.switch_to_block(preheader);
+        let p = b.stack_addr(0);
+        let zero = b.iconst_i32(0);
+        let header = b.create_block();
+        b.switch_to_block(preheader);
+        b.jump(header, &[]);
+
+        b.switch_to_block(header);
+        let n = b.iconst_i32(10);
+        let cond = b.icmp(IntCC::SignedLessThan, zero, n);
+        let body_blk = b.create_block();
+        let exit = b.create_block();
+        b.switch_to_block(header);
+        b.branch(cond, body_blk, &[], exit, &[]);
+
+        b.switch_to_block(body_blk);
+        let sv = b.iconst_i32(7);
+        b.store(sv, p); // 写同一槽 —— MayAlias
+        let v = b.load(p, TypeId::I32); // 读到的值被 store 决定 → 不可外提
+        let one = b.iconst_i32(1);
+        let _used = b.iadd(v, one);
+        b.jump(header, &[]);
+
+        b.switch_to_block(exit);
+        b.ret(&[]);
+        let mut func = b.finish().expect("build");
+
+        let pass = LicmPass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+
+        // load 必须仍留在循环体
+        let mut loads_in_body = 0;
+        for &inst_id in &func.dfg.blocks[body_blk.0 as usize].inst_order {
+            let inst = &func.dfg.insts[inst_id.0 as usize];
+            if matches!(inst.opcode, Opcode::Load) {
+                loads_in_body += 1;
+            }
+        }
+        assert_eq!(
+            loads_in_body, 1,
+            "MayAlias store 在循环内 → load 不得外提（P1-5 负向）"
+        );
+        let _ = r;
     }
 }

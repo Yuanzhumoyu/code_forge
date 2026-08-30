@@ -28,6 +28,7 @@ pub mod debug_info;
 // ============================================================
 // New module declarations
 // ============================================================
+pub mod alias;
 pub mod analysis;
 pub mod builder;
 pub mod constant;
@@ -85,6 +86,7 @@ pub use builder::*;
 // Display (nothing to re-export, just Display impls)
 
 // Analysis
+pub use alias::*;
 pub use analysis::*;
 pub use loop_info::*;
 

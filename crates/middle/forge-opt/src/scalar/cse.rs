@@ -77,6 +77,41 @@ fn is_commutative(opcode: &Opcode) -> bool {
     )
 }
 
+/// 是否为内存读指令（Load/Fload）。
+///
+/// P1-5：load 在满足「无中间 may-alias 写」的前提下可参与 CSE/GVN 消重
+/// （消重键 = opcode + 地址操作数 + 类型），volatile/原子访问由调用方排除。
+/// 不并入 `is_cse_candidate` 白名单——GVN-PRE 的 block-level kill 模型与
+/// 无 mem_flags 的 ExprKey 不适合 load PRE，保持 PRE 不编号 load。
+pub(crate) fn is_load_op(opcode: &Opcode) -> bool {
+    matches!(opcode, Opcode::Load | Opcode::Fload)
+}
+
+/// P1-5：load 表项是否被写位置 `wloc` kill（位置 MayAlias）。
+///
+/// 用于 CSE/GVN 的内存写 kill 精化：store 只 kill may-alias 的 load
+/// （不同栈槽 / 不同全局 / 栈 vs 全局互不干扰）。无法判定写位置时
+/// （`None`，防御性）保守返回 true。
+pub(crate) fn killed_by_write(
+    key: &ExprKey,
+    wloc: Option<MemoryLocation>,
+    alias: &AliasAnalysis,
+    func: &Function,
+) -> bool {
+    if !is_load_op(&key.opcode) {
+        return false;
+    }
+    let Some(wloc) = wloc else {
+        return true;
+    };
+    let lloc = key
+        .operands
+        .first()
+        .map(|&a| alias.location_of_addr(func, a))
+        .unwrap_or(MemoryLocation::Unknown);
+    alias.alias(lloc, wloc) != AliasResult::NoAlias
+}
+
 /// 获取操作码的判别值（用于哈希）。
 pub(crate) fn opcode_discriminant(opcode: &Opcode) -> u8 {
     match opcode {
@@ -278,6 +313,8 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
     let mut replacements: HashMap<Value, Value> = HashMap::new();
     // 待删除的重复表达式指令（循环后统一 kill，避免与借用冲突）
     let mut to_kill: Vec<Inst> = Vec::new();
+    // P1-5：别名分析（load 消重的 kill 精度）
+    let alias = AliasAnalysis::new();
 
     let block_count = func.dfg.blocks.len();
     for bi in 0..block_count {
@@ -288,23 +325,26 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
         let inst_ids = &func.dfg.blocks[bi].inst_order;
 
         for inst_id in inst_ids {
-            let inst = &mut func.dfg.insts[inst_id.0 as usize];
+            // 只读借用（CSE 不改指令；别名查询需要 &func，不可持 &mut）
+            let inst = &func.dfg.insts[inst_id.0 as usize];
 
-            // P0-3：内存写指令（store/调用/原子）kill 全部 load 表达式——
-            // 否则 `load p; store v,p; load p` 第二个 load 被错误消除。
+            // P0-3：内存写指令 kill load 表达式——否则 `load p; store v,p;
+            // load p` 第二个 load 被错误消除。
             // P0-4：kill 集合覆盖全部 may-write（Fstore/Call/CallIndirect/
             // AtomicRmw/Cmpxchg），不只 Store。
+            // P1-5：store/原子按别名精化——只 kill may-alias 的 load
+            // （不同栈槽 / 全局互不干扰）；调用可能写任意内存 → kill 全部。
             if matches!(
                 inst.opcode,
-                Opcode::Store
-                    | Opcode::Fstore
-                    | Opcode::Call
-                    | Opcode::CallIndirect
-                    | Opcode::AtomicRmw
-                    | Opcode::Cmpxchg
+                Opcode::Store | Opcode::Fstore | Opcode::AtomicRmw | Opcode::Cmpxchg
             ) {
-                expr_table.retain(|key, _| !matches!(key.opcode, Opcode::Load | Opcode::Fload));
+                let wloc = alias.location_of_access(func, inst);
+                expr_table.retain(|key, _| !killed_by_write(key, wloc, &alias, func));
                 continue; // 这些指令本身不参与消重（有副作用/内存）
+            }
+            if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect) {
+                expr_table.retain(|key, _| !is_load_op(&key.opcode));
+                continue;
             }
 
             // 跳过无结果的指令
@@ -320,14 +360,14 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
             }
 
             // P0-3：volatile load 不参与 CSE（可观察语义）。
-            if matches!(inst.opcode, Opcode::Load | Opcode::Fload)
+            if is_load_op(&inst.opcode)
                 && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
             {
                 continue;
             }
 
-            // 跳过不可 CSE 的指令
-            if !is_cse_candidate(&inst.opcode) {
+            // 跳过不可 CSE 的指令（P1-5：load 在 kill 精化下可消重）
+            if !is_cse_candidate(&inst.opcode) && !is_load_op(&inst.opcode) {
                 continue;
             }
 
@@ -610,6 +650,64 @@ mod tests {
         assert!(
             !r.changed,
             "多结果指令不应被 CSE（P0-6 回归：overflow flag 悬空）"
+        );
+    }
+
+    /// P1-5 正向：`load p0; store v,p1; load p0`（p0/p1 为不同栈槽）——
+    /// store 写 p1 不 kill p0 的 load，第二个 load 被消除。
+    /// （旧行为：任何 store kill 全部 load → 无法消重。）
+    #[test]
+    fn p1_5_cse_loads_across_non_alias_store() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let entry = b.create_block();
+        b.switch_to_block(entry);
+        let p0 = b.stack_addr(0);
+        let p1 = b.stack_addr(1);
+        let l1 = b.load(p0, TypeId::I32);
+        let sv = b.iconst_i32(7);
+        b.store(sv, p1); // 写 slot1 —— 与 slot0 NoAlias
+        let l2 = b.load(p0, TypeId::I32); // 可复用 l1
+        let sum = b.iadd(l1, l2);
+        b.ret(&[sum]);
+
+        let mut func = b.finish().expect("build");
+        let pass = CsePass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        assert!(
+            r.changed,
+            "不同栈槽的 store 不应 kill load（P1-5：别名精化 kill）"
+        );
+        // sum 的两个操作数都应指向 l1（l2 被消除）
+        let ValueDef::Inst(sum_inst, _) = func.dfg.value_def(sum).unwrap() else {
+            panic!("sum 应是指令定义")
+        };
+        let ops = &func.dfg.insts[sum_inst.0 as usize].operands;
+        assert_eq!(ops.as_slice(), &[l1, l1], "l2 应被消除并复用 l1");
+    }
+
+    /// P1-5 负向：`load p0; store v,p0; load p0`（同栈槽）——store 与 load
+    /// MayAlias → 第二个 load 必须保留。
+    #[test]
+    fn p1_5_cse_load_killed_by_same_slot_store() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let entry = b.create_block();
+        b.switch_to_block(entry);
+        let p0 = b.stack_addr(0);
+        let l1 = b.load(p0, TypeId::I32);
+        let sv = b.iconst_i32(7);
+        b.store(sv, p0); // 写同一槽 —— MayAlias
+        let l2 = b.load(p0, TypeId::I32);
+        let sum = b.iadd(l1, l2);
+        b.ret(&[sum]);
+
+        let mut func = b.finish().expect("build");
+        let pass = CsePass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        assert!(
+            !r.changed,
+            "同槽 store 必须 kill load（P1-5 负向：MayAlias 不消重）"
         );
     }
 }
