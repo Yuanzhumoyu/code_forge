@@ -806,11 +806,13 @@ fn gen_emit_pseudo(
 
 /// spill 模板 → 单条 load/store 语句。
 ///
-/// 两种形态：
-/// - x86 式 2 操作数 + Mem 槽：`MOV64_RM {0}, {1}`（{0}=寄存器、{1}=MemRef
-///   {base, __off}，base 来自模板 base 键）。
-/// - riscv 式 3 操作数 reg+reg+imm：`LD {0}, X2, {1}`（{0}=寄存器、字面
-///   物理寄存器 = 基址、{1}=__off 立即数）。
+/// 模板操作数按位置绑定指令操作数槽；每个 token 的绑定语义：
+/// - `{N}`（任意编号，不限于 {0}/{1}——指令 3+ 操作数照常支持）：
+///   - Reg 槽 → 数据寄存器（`__dst`：load 目标 / store 源）
+///   - Mem 槽 → MemRef{base, __off}（x86 式基址在模板 base 键）
+///   - Imm/Label 槽 → `__off as i64`（riscv 式：基址在字面操作数）
+/// - 字面物理寄存器（Reg 槽）→ `Reg::#reg`（riscv `LD {0}, X8, {1}` 基址）
+/// - 字面立即数（Imm/Label 槽）→ 数字字面量（若 {N} 语义用尽后仍需固定值）
 fn gen_spill_stmt(
     infos: &[InstInfo],
     tpl: Option<&SpillTemplate>,
@@ -844,26 +846,40 @@ fn gen_spill_stmt(
                 .map(|(_, fid, _, _)| fid.clone())
                 .ok_or_else(|| format!("spill 模板操作数 {i} 超出指令 {inst_name}"))?;
             let slot = &info.operands[i].2;
-            let expr: TokenStream = match op {
-                "{0}" if slot.kind == OperandKind::Reg => field_ctor_expr(slot, quote! { __dst }),
-                "{1}" if slot.kind == OperandKind::Mem => {
-                    quote! { MemRef { base: Reg::#base, disp: __off, index: None, scale: 1 } }
+            // `{N}` 编号操作数（任意 N）：按槽类型绑定语义
+            let is_numbered = op.strip_prefix('{')
+                .and_then(|r| r.strip_suffix('}'))
+                .is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()));
+            let expr: TokenStream = if is_numbered {
+                match slot.kind {
+                    OperandKind::Reg => field_ctor_expr(slot, quote! { __dst }),
+                    OperandKind::Mem => {
+                        quote! { MemRef { base: Reg::#base, disp: __off, index: None, scale: 1 } }
+                    }
+                    OperandKind::Imm | OperandKind::Label => {
+                        quote! { __off as i64 }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "spill 模板操作数 '{op}'（指令 {inst_name} 槽 {}）不支持编号绑定",
+                            slot.kind.kind_name()
+                        ));
+                    }
                 }
-                "{1}" if slot.kind == OperandKind::Imm || slot.kind == OperandKind::Label => {
-                    // riscv 式：`LD {0}, X2, {1}`——基址在字面操作数、偏移在 {1}
-                    quote! { __off as i64 }
-                }
-                other if slot.kind == OperandKind::Reg => {
-                    // 字面物理寄存器名 = 基址（riscv `LD {0}, X2, {1}`）
-                    let reg = format_ident!("{other}");
-                    quote! { Reg::#reg }
-                }
-                other => {
-                    return Err(format!(
-                        "spill 模板操作数 '{other}' 不支持（指令 {inst_name} 槽 {}）",
-                        slot.kind.kind_name()
-                    ));
-                }
+            } else if slot.kind == OperandKind::Reg {
+                // 字面物理寄存器名 = 基址（riscv `LD {0}, X8, {1}`）
+                let reg = format_ident!("{op}");
+                quote! { Reg::#reg }
+            } else if slot.kind == OperandKind::Imm || slot.kind == OperandKind::Label {
+                // 字面立即数（固定偏移/掩码等）
+                let v: i64 = super::integration::parse_i64_lit(op)
+                    .map_err(|_| format!("spill 模板立即数 '{op}' 无法解析（指令 {inst_name}）"))?;
+                quote! { #v }
+            } else {
+                return Err(format!(
+                    "spill 模板操作数 '{op}' 不支持（指令 {inst_name} 槽 {}）",
+                    slot.kind.kind_name()
+                ));
             };
             bindings.push((fid.to_string(), expr));
         }

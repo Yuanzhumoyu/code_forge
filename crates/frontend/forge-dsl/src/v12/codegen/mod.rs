@@ -34,6 +34,8 @@ pub(crate) mod lowering;
 pub(crate) mod machine;
 /// 变长（VEX/EVEX/前缀扫描）encode/decode——x86 专用机制，独立文件组织。
 pub(crate) mod vlen;
+/// 占位符注册表——lowering 模板 `{...}` token 的唯一事实源（第三轮重构）。
+pub(crate) mod placeholder;
 
 // ─────────────────────────────── 共享工具 ───────────────────────────────
 

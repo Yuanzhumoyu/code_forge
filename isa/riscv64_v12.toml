@@ -1139,15 +1139,15 @@ insts = ["mul {out}, {0}, {1}"]
 op = "Iconst"
 when = { eq = ["rd", 64] }
 insts = [
-    "lui {t1}, {iconst_hi32_hi20}",
-    "addi {t1}, {t1}, {iconst_hi32_lo12}",
-    "slli {t1}, {t1}, 32",
-    "lui {t2}, {iconst_lo32_hi20}",
+    "lui {g1}, {iconst_hi32_hi20}",
+    "addi {g1}, {g1}, {iconst_hi32_lo12}",
+    "slli {g1}, {g1}, 32",
+    "lui {g2}, {iconst_lo32_hi20}",
     # lo32 LUI bit19=1 符号扩展污染高 32 位 → slli32+srli32 截断
-    "slli {t2}, {t2}, 32",
-    "srli {t2}, {t2}, 32",
-    "addi {t2}, {t2}, {iconst_lo32_lo12}",
-    "or {out}, {t1}, {t2}",
+    "slli {g2}, {g2}, 32",
+    "srli {g2}, {g2}, 32",
+    "addi {g2}, {g2}, {iconst_lo32_lo12}",
+    "or {out}, {g1}, {g2}",
 ]
 
 [[lowering]]
@@ -1218,12 +1218,12 @@ insts = ["sra {out}, {0}, {1}"]
 [[lowering]]
 op = "Icmp"
 when = { eq = ["cond", 1] } # Equal
-insts = ["xor {t}, {0}, {1}", "sltiu {out}, {t}, 1"]
+insts = ["xor {g}, {0}, {1}", "sltiu {out}, {g}, 1"]
 
 [[lowering]]
 op = "Icmp"
 when = { eq = ["cond", 2] } # NotEqual
-insts = ["xor {t}, {0}, {1}", "sltiu {t}, {t}, 1", "xori {out}, {t}, 1"]
+insts = ["xor {g}, {0}, {1}", "sltiu {g}, {g}, 1", "xori {out}, {g}, 1"]
 
 [[lowering]]
 op = "Icmp"
@@ -1233,7 +1233,7 @@ insts = ["slt {out}, {0}, {1}"]
 [[lowering]]
 op = "Icmp"
 when = { eq = ["cond", 4] } # SignedLessThanOrEqual = !(b < a)
-insts = ["slt {t}, {1}, {0}", "xori {out}, {t}, 1"]
+insts = ["slt {g}, {1}, {0}", "xori {out}, {g}, 1"]
 
 [[lowering]]
 op = "Icmp"
@@ -1243,7 +1243,7 @@ insts = ["slt {out}, {1}, {0}"]
 [[lowering]]
 op = "Icmp"
 when = { eq = ["cond", 6] } # SignedGreaterThanOrEqual = !(a < b)
-insts = ["slt {t}, {0}, {1}", "xori {out}, {t}, 1"]
+insts = ["slt {g}, {0}, {1}", "xori {out}, {g}, 1"]
 
 [[lowering]]
 op = "Icmp"
@@ -1253,7 +1253,7 @@ insts = ["sltu {out}, {0}, {1}"]
 [[lowering]]
 op = "Icmp"
 when = { eq = ["cond", 8] } # UnsignedLessThanOrEqual = !(b <u a)
-insts = ["sltu {t}, {1}, {0}", "xori {out}, {t}, 1"]
+insts = ["sltu {g}, {1}, {0}", "xori {out}, {g}, 1"]
 
 [[lowering]]
 op = "Icmp"
@@ -1263,7 +1263,7 @@ insts = ["sltu {out}, {1}, {0}"]
 [[lowering]]
 op = "Icmp"
 when = { eq = ["cond", 10] } # UnsignedGreaterThanOrEqual = !(a <u b)
-insts = ["sltu {t}, {0}, {1}", "xori {out}, {t}, 1"]
+insts = ["sltu {g}, {0}, {1}", "xori {out}, {g}, 1"]
 
 # Call：jal ra, @N（跨函数符号；RiscvRelocPatcher 编码 UJ 位段）
 # 注意：Call 是 terminator 级 lowering（gen_call_lowering），不走此表——
@@ -1314,41 +1314,41 @@ insts = ["remu {out}, {0}, {1}"]
 [[lowering]]
 op = "Smin"
 insts = [
-    "slt {t}, {0}, {1}",
-    "sub {t}, X0, {t}",
-    "xor {t2}, {0}, {1}",
-    "and {t}, {t2}, {t}",
-    "xor {out}, {1}, {t}",
+    "slt {g}, {0}, {1}",
+    "sub {g}, X0, {g}",
+    "xor {g2}, {0}, {1}",
+    "and {g}, {g2}, {g}",
+    "xor {out}, {1}, {g}",
 ]
 
 [[lowering]]
 op = "Smax"
 insts = [
-    "slt {t}, {0}, {1}",
-    "sub {t}, X0, {t}",
-    "xor {t2}, {0}, {1}",
-    "and {t}, {t2}, {t}",
-    "xor {out}, {0}, {t}",
+    "slt {g}, {0}, {1}",
+    "sub {g}, X0, {g}",
+    "xor {g2}, {0}, {1}",
+    "and {g}, {g2}, {g}",
+    "xor {out}, {0}, {g}",
 ]
 
 [[lowering]]
 op = "Umin"
 insts = [
-    "sltu {t}, {0}, {1}",
-    "sub {t}, X0, {t}",
-    "xor {t2}, {0}, {1}",
-    "and {t}, {t2}, {t}",
-    "xor {out}, {1}, {t}",
+    "sltu {g}, {0}, {1}",
+    "sub {g}, X0, {g}",
+    "xor {g2}, {0}, {1}",
+    "and {g}, {g2}, {g}",
+    "xor {out}, {1}, {g}",
 ]
 
 [[lowering]]
 op = "Umax"
 insts = [
-    "sltu {t}, {0}, {1}",
-    "sub {t}, X0, {t}",
-    "xor {t2}, {0}, {1}",
-    "and {t}, {t2}, {t}",
-    "xor {out}, {0}, {t}",
+    "sltu {g}, {0}, {1}",
+    "sub {g}, X0, {g}",
+    "xor {g2}, {0}, {1}",
+    "and {g}, {g2}, {g}",
+    "xor {out}, {0}, {g}",
 ]
 
 # ── 旋转（基础序列，不依赖 Zbb）：rol(a,n) = (a<<n)|(a>>(64-n))；
@@ -1357,19 +1357,19 @@ insts = [
 [[lowering]]
 op = "Rotl"
 insts = [
-    "sll {t}, {0}, {1}",
-    "sub {t3}, X0, {1}",
-    "srl {t2}, {0}, {t3}",
-    "or {out}, {t}, {t2}",
+    "sll {g}, {0}, {1}",
+    "sub {g3}, X0, {1}",
+    "srl {g2}, {0}, {g3}",
+    "or {out}, {g}, {g2}",
 ]
 
 [[lowering]]
 op = "Rotr"
 insts = [
-    "srl {t}, {0}, {1}",
-    "sub {t3}, X0, {1}",
-    "sll {t2}, {0}, {t3}",
-    "or {out}, {t}, {t2}",
+    "srl {g}, {0}, {1}",
+    "sub {g3}, X0, {1}",
+    "sll {g2}, {0}, {g3}",
+    "or {out}, {g}, {g2}",
 ]
 
 # ── 扩展/截断：riscv 的 i32 值经 W 变体/ADDI 天然 64 位符号扩展 →
@@ -1413,9 +1413,9 @@ insts = ["slli {out}, {0}, 32", "srli {out}, {out}, 32"]
 [[lowering]]
 op = "Abs"
 insts = [
-    "srai {t}, {0}, 63",
-    "xor {out}, {0}, {t}",
-    "sub {out}, {out}, {t}",
+    "srai {g}, {0}, 63",
+    "xor {out}, {0}, {g}",
+    "sub {out}, {out}, {g}",
 ]
 
 # ── Select(cond, then, else)：cond 为 0/1 → (cond & then) | (!cond & else) ──
@@ -1425,12 +1425,12 @@ insts = [
 [[lowering]]
 op = "Select"
 insts = [
-    "slli {t1}, {0}, 63",
-    "srai {t1}, {t1}, 63",
-    "and {t2}, {t1}, {1}",
-    "xori {t3}, {t1}, -1",
-    "and {t4}, {t3}, {2}",
-    "or {out}, {t2}, {t4}",
+    "slli {g1}, {0}, 63",
+    "srai {g1}, {g1}, 63",
+    "and {g2}, {g1}, {1}",
+    "xori {g3}, {g1}, -1",
+    "and {g4}, {g3}, {2}",
+    "or {out}, {g2}, {g4}",
 ]
 
 # ── 空指针判断 / Freeze / Trap / Fence ──
@@ -1468,13 +1468,13 @@ insts = ["addi {out}, X8, {alloca}"]
 op = "UaddOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "slli {t1}, {0}, 32",
-    "srli {t1}, {t1}, 32",
-    "slli {t2}, {1}, 32",
-    "srli {t2}, {t2}, 32",
-    "add {out}, {t1}, {t2}",
-    "srli {t3}, {out}, 32",
-    "sltu {out2}, X0, {t3}",
+    "slli {g1}, {0}, 32",
+    "srli {g1}, {g1}, 32",
+    "slli {g2}, {1}, 32",
+    "srli {g2}, {g2}, 32",
+    "add {out}, {g1}, {g2}",
+    "srli {g3}, {out}, 32",
+    "sltu {out2}, X0, {g3}",
 ]
 
 [[lowering]]
@@ -1490,19 +1490,19 @@ op = "SaddOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "addw {out}, {0}, {1}",
-    "slli {t1}, {out}, 32",
-    "srli {t1}, {t1}, 63",
-    "slli {t2}, {0}, 32",
-    "srli {t2}, {t2}, 63",
-    "slli {t3}, {1}, 32",
-    "srli {t3}, {t3}, 63",
-    "or {t4}, {t2}, {t3}",
-    "xori {t4}, {t4}, 1",
-    "and {t4}, {t4}, {t1}",
-    "and {t5}, {t2}, {t3}",
-    "xori {t1}, {t1}, 1",
-    "and {t5}, {t5}, {t1}",
-    "or {out2}, {t4}, {t5}",
+    "slli {g1}, {out}, 32",
+    "srli {g1}, {g1}, 63",
+    "slli {g2}, {0}, 32",
+    "srli {g2}, {g2}, 63",
+    "slli {g3}, {1}, 32",
+    "srli {g3}, {g3}, 63",
+    "or {g4}, {g2}, {g3}",
+    "xori {g4}, {g4}, 1",
+    "and {g4}, {g4}, {g1}",
+    "and {g5}, {g2}, {g3}",
+    "xori {g1}, {g1}, 1",
+    "and {g5}, {g5}, {g1}",
+    "or {out2}, {g4}, {g5}",
 ]
 
 [[lowering]]
@@ -1510,20 +1510,20 @@ op = "SsubOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "subw {out}, {0}, {1}",
-    "slli {t1}, {out}, 32",
-    "srli {t1}, {t1}, 63",
-    "slli {t2}, {0}, 32",
-    "srli {t2}, {t2}, 63",
-    "slli {t3}, {1}, 32",
-    "srli {t3}, {t3}, 63",
-    "xori {t4}, {t2}, 1",
-    "and {t4}, {t4}, {t3}",
-    "and {t4}, {t4}, {t1}",
-    "xori {t5}, {t3}, 1",
-    "and {t5}, {t2}, {t5}",
-    "xori {t1}, {t1}, 1",
-    "and {t5}, {t5}, {t1}",
-    "or {out2}, {t4}, {t5}",
+    "slli {g1}, {out}, 32",
+    "srli {g1}, {g1}, 63",
+    "slli {g2}, {0}, 32",
+    "srli {g2}, {g2}, 63",
+    "slli {g3}, {1}, 32",
+    "srli {g3}, {g3}, 63",
+    "xori {g4}, {g2}, 1",
+    "and {g4}, {g4}, {g3}",
+    "and {g4}, {g4}, {g1}",
+    "xori {g5}, {g3}, 1",
+    "and {g5}, {g2}, {g5}",
+    "xori {g1}, {g1}, 1",
+    "and {g5}, {g5}, {g1}",
+    "or {out2}, {g4}, {g5}",
 ]
 
 [[lowering]]
@@ -1531,22 +1531,22 @@ op = "SmulOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "mulw {out}, {0}, {1}",
-    "mul {t1}, {0}, {1}",
-    "sub {t2}, {t1}, {out}",
-    "sltu {out2}, X0, {t2}",
+    "mul {g1}, {0}, {1}",
+    "sub {g2}, {g1}, {out}",
+    "sltu {out2}, X0, {g2}",
 ]
 
 [[lowering]]
 op = "UmulOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "slli {t1}, {0}, 32",
-    "srli {t1}, {t1}, 32",
-    "slli {t2}, {1}, 32",
-    "srli {t2}, {t2}, 32",
-    "mul {out}, {t1}, {t2}",
-    "srli {t3}, {out}, 32",
-    "sltu {out2}, X0, {t3}",
+    "slli {g1}, {0}, 32",
+    "srli {g1}, {g1}, 32",
+    "slli {g2}, {1}, 32",
+    "srli {g2}, {g2}, 32",
+    "mul {out}, {g1}, {g2}",
+    "srli {g3}, {out}, 32",
+    "sltu {out2}, X0, {g3}",
 ]
 
 
@@ -1557,29 +1557,29 @@ insts = [
 op = "Fconst"
 when = { eq = ["rd", 64] }
 insts = [
-    "lui {t1}, {fconst_hi32_hi20}",
-    "addi {t1}, {t1}, {fconst_hi32_lo12}",
-    "slli {t1}, {t1}, 32",
-    "lui {t2}, {fconst_lo32_hi20}",
+    "lui {g1}, {fconst_hi32_hi20}",
+    "addi {g1}, {g1}, {fconst_hi32_lo12}",
+    "slli {g1}, {g1}, 32",
+    "lui {g2}, {fconst_lo32_hi20}",
     # 低 32 位 LUI 立即数 bit19=1 时符号扩展污染高 32 位（如 -42.7 的
     # 0x9999A → 0xFFFFFFFF9999A000）→ slli32+srli32 截断为零扩展
-    "slli {t2}, {t2}, 32",
-    "srli {t2}, {t2}, 32",
-    "addi {t2}, {t2}, {fconst_lo32_lo12}",
-    "or {t1}, {t1}, {t2}",
-    "fmv.d.x {out}, {t1}",
+    "slli {g2}, {g2}, 32",
+    "srli {g2}, {g2}, 32",
+    "addi {g2}, {g2}, {fconst_lo32_lo12}",
+    "or {g1}, {g1}, {g2}",
+    "fmv.d.x {out}, {g1}",
 ]
 
 [[lowering]]
 op = "Fconst"
 insts = [
-    "lui {t1}, {fconst_lo32_hi20}",
+    "lui {g1}, {fconst_lo32_hi20}",
     # 同上：低 32 位 LUI bit19=1 符号扩展 → 截断（fmv.w.x 只取低 32 位，
     # 但高位污染会带进 NaN-box 语义）
-    "slli {t1}, {t1}, 32",
-    "srli {t1}, {t1}, 32",
-    "addi {t1}, {t1}, {fconst_lo32_lo12}",
-    "fmv.w.x {out}, {t1}",
+    "slli {g1}, {g1}, 32",
+    "srli {g1}, {g1}, 32",
+    "addi {g1}, {g1}, {fconst_lo32_lo12}",
+    "fmv.w.x {out}, {g1}",
 ]
 
 # Fcmp：riscv feq/flt/fle 直接给 GPR 0/1；Ordered/Unordered 用 feq(a,a)&feq(b,b)。
@@ -1649,22 +1649,22 @@ insts = ["fle.s {out}, {1}, {0}"]
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 1] }, { eq = ["rs1_width", 64] } ] }
-insts = ["feq.d {t}, {0}, {0}", "feq.d {t2}, {1}, {1}", "and {out}, {t}, {t2}"]
+insts = ["feq.d {g}, {0}, {0}", "feq.d {g2}, {1}, {1}", "and {out}, {g}, {g2}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 1] }, { eq = ["rs1_width", 32] } ] }
-insts = ["feq.s {t}, {0}, {0}", "feq.s {t2}, {1}, {1}", "and {out}, {t}, {t2}"]
+insts = ["feq.s {g}, {0}, {0}", "feq.s {g2}, {1}, {1}", "and {out}, {g}, {g2}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 2] }, { eq = ["rs1_width", 64] } ] }
-insts = ["feq.d {t}, {0}, {0}", "feq.d {t2}, {1}, {1}", "and {t}, {t}, {t2}", "xori {out}, {t}, 1"]
+insts = ["feq.d {g}, {0}, {0}", "feq.d {g2}, {1}, {1}", "and {g}, {g}, {g2}", "xori {out}, {g}, 1"]
 
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 2] }, { eq = ["rs1_width", 32] } ] }
-insts = ["feq.s {t}, {0}, {0}", "feq.s {t2}, {1}, {1}", "and {t}, {t}, {t2}", "xori {out}, {t}, 1"]
+insts = ["feq.s {g}, {0}, {0}", "feq.s {g2}, {1}, {1}", "and {g}, {g}, {g2}", "xori {out}, {g}, 1"]
 
 # Fptosi/Fptoui：向零截断（rtz）
 [[lowering]]
@@ -1701,18 +1701,18 @@ insts = ["fcvt.lu.d.rtz {out}, {0}"]
 op = "UaddSat"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "slli {t1}, {0}, 32",
-    "srli {t1}, {t1}, 32",
-    "slli {t2}, {1}, 32",
-    "srli {t2}, {t2}, 32",
-    "add {t3}, {t1}, {t2}",
-    "srli {t4}, {t3}, 32",
-    "sltu {t4}, X0, {t4}",
-    "slli {t4}, {t4}, 63",
-    "srai {t4}, {t4}, 63",
-    "xori {t5}, {t4}, -1",
-    "and {t5}, {t5}, {t3}",
-    "or {out}, {t4}, {t5}",
+    "slli {g1}, {0}, 32",
+    "srli {g1}, {g1}, 32",
+    "slli {g2}, {1}, 32",
+    "srli {g2}, {g2}, 32",
+    "add {g3}, {g1}, {g2}",
+    "srli {g4}, {g3}, 32",
+    "sltu {g4}, X0, {g4}",
+    "slli {g4}, {g4}, 63",
+    "srai {g4}, {g4}, 63",
+    "xori {g5}, {g4}, -1",
+    "and {g5}, {g5}, {g3}",
+    "or {out}, {g4}, {g5}",
     "slli {out}, {out}, 32",
     "srli {out}, {out}, 32",
 ]
@@ -1721,12 +1721,12 @@ insts = [
 op = "UsubSat"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "sub {t1}, {0}, {1}",
-    "sltu {t2}, {0}, {1}",
-    "slli {t2}, {t2}, 63",
-    "srai {t2}, {t2}, 63",
-    "xori {t3}, {t2}, -1",
-    "and {out}, {t3}, {t1}",
+    "sub {g1}, {0}, {1}",
+    "sltu {g2}, {0}, {1}",
+    "slli {g2}, {g2}, 63",
+    "srai {g2}, {g2}, 63",
+    "xori {g3}, {g2}, -1",
+    "and {out}, {g3}, {g1}",
     "slli {out}, {out}, 32",
     "srli {out}, {out}, 32",
 ]
@@ -1771,51 +1771,51 @@ insts = ["amoadd.w {out}, {0}, {1}"]
 [[lowering]]
 op = "AtomicRmw"
 when = { and = [ { eq = ["imm0", 2] }, { eq = ["rs1_width", 64] } ] }
-insts = ["sub {t}, X0, {1}", "amoadd.d {out}, {0}, {t}"]
+insts = ["sub {g}, X0, {1}", "amoadd.d {out}, {0}, {g}"]
 
 [[lowering]]
 op = "AtomicRmw"
 when = { and = [ { eq = ["imm0", 2] }, { eq = ["rs1_width", 32] } ] }
-insts = ["sub {t}, X0, {1}", "amoadd.w {out}, {0}, {t}"]
+insts = ["sub {g}, X0, {1}", "amoadd.w {out}, {0}, {g}"]
 
 # ── Cmpxchg：**无分支** LR/SC 序列（单线程 QEMU 下 sc.d 不失败，无需
 #    重试循环；模板层无函数内 label）──
 #    lr.d 读旧值 → 与期望比较 → 掩码选择写入值（匹配→new、不匹配→old
 #    即无操作写回）→ sc.d；结果 = 旧值。32 位用 lr.w/sc.w + 掩码截断。
-#    sc.d {out0}, {0}, {t4}：rd=成功标志（丢弃）、rs1=addr、rs2=写入值。
+#    sc.d {out0}, {0}, {g4}：rd=成功标志（丢弃）、rs1=addr、rs2=写入值。
 
 [[lowering]]
 op = "Cmpxchg"
 when = { eq = ["rs1_width", 64] }
 insts = [
-    "lr.d {t}, {0}",
-    "xor {t1}, {t}, {1}",
-    "sltu {t2}, X0, {t1}",
-    "slli {t2}, {t2}, 63",
-    "srai {t2}, {t2}, 63",
-    "xori {t3}, {t2}, -1",
-    "and {t4}, {2}, {t3}",
-    "and {t2}, {t}, {t2}",
-    "or {t4}, {t4}, {t2}",
-    "sc.d {t5}, {0}, {t4}",
-    "mv {out}, {t}",
+    "lr.d {g}, {0}",
+    "xor {g1}, {g}, {1}",
+    "sltu {g2}, X0, {g1}",
+    "slli {g2}, {g2}, 63",
+    "srai {g2}, {g2}, 63",
+    "xori {g3}, {g2}, -1",
+    "and {g4}, {2}, {g3}",
+    "and {g2}, {g}, {g2}",
+    "or {g4}, {g4}, {g2}",
+    "sc.d {g5}, {0}, {g4}",
+    "mv {out}, {g}",
 ]
 
 [[lowering]]
 op = "Cmpxchg"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "lr.w {t}, {0}",
-    "xor {t1}, {t}, {1}",
-    "sltu {t2}, X0, {t1}",
-    "slli {t2}, {t2}, 63",
-    "srai {t2}, {t2}, 63",
-    "xori {t3}, {t2}, -1",
-    "and {t4}, {2}, {t3}",
-    "and {t2}, {t}, {t2}",
-    "or {t4}, {t4}, {t2}",
-    "sc.w {t5}, {0}, {t4}",
-    "mv {out}, {t}",
+    "lr.w {g}, {0}",
+    "xor {g1}, {g}, {1}",
+    "sltu {g2}, X0, {g1}",
+    "slli {g2}, {g2}, 63",
+    "srai {g2}, {g2}, 63",
+    "xori {g3}, {g2}, -1",
+    "and {g4}, {2}, {g3}",
+    "and {g2}, {g}, {g2}",
+    "or {g4}, {g4}, {g2}",
+    "sc.w {g5}, {0}, {g4}",
+    "mv {out}, {g}",
 ]
 
 # ── 有符号饱和（32 位）：溢出检测（addw/subw 截断 + 符号位逻辑）+
@@ -1826,61 +1826,61 @@ insts = [
 op = "SaddSat"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "addw {t}, {0}, {1}",
-    "slli {t1}, {t}, 32",
-    "srli {t1}, {t1}, 63",
-    "slli {t2}, {0}, 32",
-    "srli {t2}, {t2}, 63",
-    "slli {t3}, {1}, 32",
-    "srli {t3}, {t3}, 63",
-    "xor {t4}, {t2}, {t3}",
-    "xori {t4}, {t4}, 1",
-    "xor {t5}, {t1}, {t2}",
-    "and {t4}, {t4}, {t5}",
-    "slli {t4}, {t4}, 63",
-    "srai {t4}, {t4}, 63",
-    "lui {t3}, 0x80000",
-    "xori {t5}, {t3}, -1",
-    "slli {t2}, {t2}, 63",
-    "srai {t2}, {t2}, 63",
-    "and {t3}, {t3}, {t2}",
-    "xori {t2}, {t2}, -1",
-    "and {t5}, {t5}, {t2}",
-    "or {t3}, {t3}, {t5}",
-    "and {t3}, {t3}, {t4}",
-    "xori {t4}, {t4}, -1",
-    "and {t}, {t}, {t4}",
-    "or {out}, {t}, {t3}",
+    "addw {g}, {0}, {1}",
+    "slli {g1}, {g}, 32",
+    "srli {g1}, {g1}, 63",
+    "slli {g2}, {0}, 32",
+    "srli {g2}, {g2}, 63",
+    "slli {g3}, {1}, 32",
+    "srli {g3}, {g3}, 63",
+    "xor {g4}, {g2}, {g3}",
+    "xori {g4}, {g4}, 1",
+    "xor {g5}, {g1}, {g2}",
+    "and {g4}, {g4}, {g5}",
+    "slli {g4}, {g4}, 63",
+    "srai {g4}, {g4}, 63",
+    "lui {g3}, 0x80000",
+    "xori {g5}, {g3}, -1",
+    "slli {g2}, {g2}, 63",
+    "srai {g2}, {g2}, 63",
+    "and {g3}, {g3}, {g2}",
+    "xori {g2}, {g2}, -1",
+    "and {g5}, {g5}, {g2}",
+    "or {g3}, {g3}, {g5}",
+    "and {g3}, {g3}, {g4}",
+    "xori {g4}, {g4}, -1",
+    "and {g}, {g}, {g4}",
+    "or {out}, {g}, {g3}",
 ]
 
 [[lowering]]
 op = "SsubSat"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "subw {t}, {0}, {1}",
-    "slli {t1}, {t}, 32",
-    "srli {t1}, {t1}, 63",
-    "slli {t2}, {0}, 32",
-    "srli {t2}, {t2}, 63",
-    "slli {t3}, {1}, 32",
-    "srli {t3}, {t3}, 63",
-    "xor {t4}, {t2}, {t3}",
-    "xor {t5}, {t1}, {t2}",
-    "and {t4}, {t4}, {t5}",
-    "slli {t4}, {t4}, 63",
-    "srai {t4}, {t4}, 63",
-    "lui {t3}, 0x80000",
-    "xori {t5}, {t3}, -1",
-    "slli {t2}, {t2}, 63",
-    "srai {t2}, {t2}, 63",
-    "and {t3}, {t3}, {t2}",
-    "xori {t2}, {t2}, -1",
-    "and {t5}, {t5}, {t2}",
-    "or {t3}, {t3}, {t5}",
-    "and {t3}, {t3}, {t4}",
-    "xori {t4}, {t4}, -1",
-    "and {t}, {t}, {t4}",
-    "or {out}, {t}, {t3}",
+    "subw {g}, {0}, {1}",
+    "slli {g1}, {g}, 32",
+    "srli {g1}, {g1}, 63",
+    "slli {g2}, {0}, 32",
+    "srli {g2}, {g2}, 63",
+    "slli {g3}, {1}, 32",
+    "srli {g3}, {g3}, 63",
+    "xor {g4}, {g2}, {g3}",
+    "xor {g5}, {g1}, {g2}",
+    "and {g4}, {g4}, {g5}",
+    "slli {g4}, {g4}, 63",
+    "srai {g4}, {g4}, 63",
+    "lui {g3}, 0x80000",
+    "xori {g5}, {g3}, -1",
+    "slli {g2}, {g2}, 63",
+    "srai {g2}, {g2}, 63",
+    "and {g3}, {g3}, {g2}",
+    "xori {g2}, {g2}, -1",
+    "and {g5}, {g5}, {g2}",
+    "or {g3}, {g3}, {g5}",
+    "and {g3}, {g3}, {g4}",
+    "xori {g4}, {g4}, -1",
+    "and {g}, {g}, {g4}",
+    "or {out}, {g}, {g3}",
 ]
 
 # ── 位操作软件序列（RV64GC 无 Zbb；SWAR 无分支）──
@@ -1891,122 +1891,122 @@ insts = [
 [[lowering]]
 op = "Popcnt"
 insts = [
-    "add {t}, {0}, X0",
-    "srli {t1}, {t}, 1",
-    "lui {t2}, 0x55555000",
-    "addi {t2}, {t2}, 0x555",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "sub {t}, {t}, {t1}",
-    "lui {t2}, 0x33333000",
-    "addi {t2}, {t2}, 0x333",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t}, {t2}",
-    "srli {t3}, {t}, 2",
-    "and {t3}, {t3}, {t2}",
-    "add {t}, {t1}, {t3}",
-    "lui {t2}, 0xf0f1000",
-    "addi {t2}, {t2}, 0xf0f",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "srli {t1}, {t}, 4",
-    "add {t}, {t}, {t1}",
-    "and {t}, {t}, {t2}",
-    "srli {t1}, {t}, 8",
-    "add {t}, {t}, {t1}",
-    "srli {t1}, {t}, 16",
-    "add {t}, {t}, {t1}",
-    "srli {t1}, {t}, 32",
-    "add {t}, {t}, {t1}",
-    "andi {out}, {t}, 0x7F",
+    "add {g}, {0}, X0",
+    "srli {g1}, {g}, 1",
+    "lui {g2}, 0x55555000",
+    "addi {g2}, {g2}, 0x555",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "sub {g}, {g}, {g1}",
+    "lui {g2}, 0x33333000",
+    "addi {g2}, {g2}, 0x333",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g}, {g2}",
+    "srli {g3}, {g}, 2",
+    "and {g3}, {g3}, {g2}",
+    "add {g}, {g1}, {g3}",
+    "lui {g2}, 0xf0f1000",
+    "addi {g2}, {g2}, 0xf0f",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "srli {g1}, {g}, 4",
+    "add {g}, {g}, {g1}",
+    "and {g}, {g}, {g2}",
+    "srli {g1}, {g}, 8",
+    "add {g}, {g}, {g1}",
+    "srli {g1}, {g}, 16",
+    "add {g}, {g}, {g1}",
+    "srli {g1}, {g}, 32",
+    "add {g}, {g}, {g1}",
+    "andi {out}, {g}, 0x7F",
 ]
 
 [[lowering]]
 op = "Clz"
 insts = [
-    "add {t}, {0}, X0",
-    "srli {t1}, {t}, 1",
-    "or {t}, {t}, {t1}",
-    "srli {t1}, {t}, 2",
-    "or {t}, {t}, {t1}",
-    "srli {t1}, {t}, 4",
-    "or {t}, {t}, {t1}",
-    "srli {t1}, {t}, 8",
-    "or {t}, {t}, {t1}",
-    "srli {t1}, {t}, 16",
-    "or {t}, {t}, {t1}",
-    "srli {t1}, {t}, 32",
-    "or {t}, {t}, {t1}",
-    "srli {t1}, {t}, 1",
-    "lui {t2}, 0x55555000",
-    "addi {t2}, {t2}, 0x555",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "sub {t}, {t}, {t1}",
-    "lui {t2}, 0x33333000",
-    "addi {t2}, {t2}, 0x333",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t}, {t2}",
-    "srli {t3}, {t}, 2",
-    "and {t3}, {t3}, {t2}",
-    "add {t}, {t1}, {t3}",
-    "lui {t2}, 0xf0f1000",
-    "addi {t2}, {t2}, 0xf0f",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "srli {t1}, {t}, 4",
-    "add {t}, {t}, {t1}",
-    "and {t}, {t}, {t2}",
-    "srli {t1}, {t}, 8",
-    "add {t}, {t}, {t1}",
-    "srli {t1}, {t}, 16",
-    "add {t}, {t}, {t1}",
-    "srli {t1}, {t}, 32",
-    "add {t}, {t}, {t1}",
-    "andi {t}, {t}, 0x7F",
-    "addi {t1}, X0, 64",
-    "sub {out}, {t1}, {t}",
+    "add {g}, {0}, X0",
+    "srli {g1}, {g}, 1",
+    "or {g}, {g}, {g1}",
+    "srli {g1}, {g}, 2",
+    "or {g}, {g}, {g1}",
+    "srli {g1}, {g}, 4",
+    "or {g}, {g}, {g1}",
+    "srli {g1}, {g}, 8",
+    "or {g}, {g}, {g1}",
+    "srli {g1}, {g}, 16",
+    "or {g}, {g}, {g1}",
+    "srli {g1}, {g}, 32",
+    "or {g}, {g}, {g1}",
+    "srli {g1}, {g}, 1",
+    "lui {g2}, 0x55555000",
+    "addi {g2}, {g2}, 0x555",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "sub {g}, {g}, {g1}",
+    "lui {g2}, 0x33333000",
+    "addi {g2}, {g2}, 0x333",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g}, {g2}",
+    "srli {g3}, {g}, 2",
+    "and {g3}, {g3}, {g2}",
+    "add {g}, {g1}, {g3}",
+    "lui {g2}, 0xf0f1000",
+    "addi {g2}, {g2}, 0xf0f",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "srli {g1}, {g}, 4",
+    "add {g}, {g}, {g1}",
+    "and {g}, {g}, {g2}",
+    "srli {g1}, {g}, 8",
+    "add {g}, {g}, {g1}",
+    "srli {g1}, {g}, 16",
+    "add {g}, {g}, {g1}",
+    "srli {g1}, {g}, 32",
+    "add {g}, {g}, {g1}",
+    "andi {g}, {g}, 0x7F",
+    "addi {g1}, X0, 64",
+    "sub {out}, {g1}, {g}",
 ]
 
 [[lowering]]
 op = "Ctz"
 insts = [
-    "sub {t}, X0, {0}",
-    "and {t}, {0}, {t}",
-    "addi {t}, {t}, -1",
-    "srli {t1}, {t}, 1",
-    "lui {t2}, 0x55555000",
-    "addi {t2}, {t2}, 0x555",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "sub {t}, {t}, {t1}",
-    "lui {t2}, 0x33333000",
-    "addi {t2}, {t2}, 0x333",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t}, {t2}",
-    "srli {t3}, {t}, 2",
-    "and {t3}, {t3}, {t2}",
-    "add {t}, {t1}, {t3}",
-    "lui {t2}, 0xf0f1000",
-    "addi {t2}, {t2}, 0xf0f",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "srli {t1}, {t}, 4",
-    "add {t}, {t}, {t1}",
-    "and {t}, {t}, {t2}",
-    "srli {t1}, {t}, 8",
-    "add {t}, {t}, {t1}",
-    "srli {t1}, {t}, 16",
-    "add {t}, {t}, {t1}",
-    "srli {t1}, {t}, 32",
-    "add {t}, {t}, {t1}",
-    "andi {out}, {t}, 0x7F",
+    "sub {g}, X0, {0}",
+    "and {g}, {0}, {g}",
+    "addi {g}, {g}, -1",
+    "srli {g1}, {g}, 1",
+    "lui {g2}, 0x55555000",
+    "addi {g2}, {g2}, 0x555",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "sub {g}, {g}, {g1}",
+    "lui {g2}, 0x33333000",
+    "addi {g2}, {g2}, 0x333",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g}, {g2}",
+    "srli {g3}, {g}, 2",
+    "and {g3}, {g3}, {g2}",
+    "add {g}, {g1}, {g3}",
+    "lui {g2}, 0xf0f1000",
+    "addi {g2}, {g2}, 0xf0f",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "srli {g1}, {g}, 4",
+    "add {g}, {g}, {g1}",
+    "and {g}, {g}, {g2}",
+    "srli {g1}, {g}, 8",
+    "add {g}, {g}, {g1}",
+    "srli {g1}, {g}, 16",
+    "add {g}, {g}, {g1}",
+    "srli {g1}, {g}, 32",
+    "add {g}, {g}, {g1}",
+    "andi {out}, {g}, 0x7F",
 ]
 
 
@@ -2032,54 +2032,54 @@ insts = ["xor {out}, {out}, {out}"]
 [[lowering]]
 op = "Bitreverse"
 insts = [
-    "srli {t1}, {0}, 1",
-    "lui {t2}, 0x55555000",
-    "addi {t2}, {t2}, 0x555",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "slli {t3}, {0}, 1",
-    "and {t3}, {t3}, {t2}",
-    "or {t}, {t1}, {t3}",
-    "srli {t1}, {t}, 2",
-    "lui {t2}, 0x33333000",
-    "addi {t2}, {t2}, 0x333",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "slli {t3}, {t}, 2",
-    "and {t3}, {t3}, {t2}",
-    "or {t}, {t1}, {t3}",
-    "srli {t1}, {t}, 4",
-    "lui {t2}, 0xf0f1000",
-    "addi {t2}, {t2}, -0xf1",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "slli {t3}, {t}, 4",
-    "and {t3}, {t3}, {t2}",
-    "or {t}, {t1}, {t3}",
-    "srli {t1}, {t}, 8",
-    "lui {t2}, 0x0ff0000",
-    "addi {t2}, {t2}, 0xff",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "slli {t3}, {t}, 8",
-    "and {t3}, {t3}, {t2}",
-    "or {t}, {t1}, {t3}",
-    "srli {t1}, {t}, 16",
+    "srli {g1}, {0}, 1",
+    "lui {g2}, 0x55555000",
+    "addi {g2}, {g2}, 0x555",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "slli {g3}, {0}, 1",
+    "and {g3}, {g3}, {g2}",
+    "or {g}, {g1}, {g3}",
+    "srli {g1}, {g}, 2",
+    "lui {g2}, 0x33333000",
+    "addi {g2}, {g2}, 0x333",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "slli {g3}, {g}, 2",
+    "and {g3}, {g3}, {g2}",
+    "or {g}, {g1}, {g3}",
+    "srli {g1}, {g}, 4",
+    "lui {g2}, 0xf0f1000",
+    "addi {g2}, {g2}, -0xf1",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "slli {g3}, {g}, 4",
+    "and {g3}, {g3}, {g2}",
+    "or {g}, {g1}, {g3}",
+    "srli {g1}, {g}, 8",
+    "lui {g2}, 0x0ff0000",
+    "addi {g2}, {g2}, 0xff",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "slli {g3}, {g}, 8",
+    "and {g3}, {g3}, {g2}",
+    "or {g}, {g1}, {g3}",
+    "srli {g1}, {g}, 16",
     # mask = 0x0000FFFF0000FFFF：0x0000FFFF = lui 0x10 + addi -1
     # （0xFFFF 低 12 位 0xFFF 有符号 = -1，lui 需 +1 进位 0x10000）
-    "lui {t2}, 0x10000",
-    "addi {t2}, {t2}, -1",
-    "slli {t3}, {t2}, 32",
-    "or {t2}, {t2}, {t3}",
-    "and {t1}, {t1}, {t2}",
-    "slli {t3}, {t}, 16",
-    "and {t3}, {t3}, {t2}",
-    "or {t}, {t1}, {t3}",
-    "srli {t1}, {t}, 32",
-    "slli {t}, {t}, 32",
-    "or {out}, {t}, {t1}",
+    "lui {g2}, 0x10000",
+    "addi {g2}, {g2}, -1",
+    "slli {g3}, {g2}, 32",
+    "or {g2}, {g2}, {g3}",
+    "and {g1}, {g1}, {g2}",
+    "slli {g3}, {g}, 16",
+    "and {g3}, {g3}, {g2}",
+    "or {g}, {g1}, {g3}",
+    "srli {g1}, {g}, 32",
+    "slli {g}, {g}, 32",
+    "or {out}, {g}, {g1}",
 ]

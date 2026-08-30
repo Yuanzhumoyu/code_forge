@@ -65,31 +65,26 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             // 展开 insts 模板 → 指令构造序列（符号化操作数 {out}/{0}/{1}）
             let inst_toks =
                 gen_lowering_insts(&rule.insts, infos, &name_to_vn, lowering_width_hint(rule))?;
-            // 模板含 {t}/{t1}..{t5} → 预分配临时 XReg（GPR）
-            let mut temps: Vec<TokenStream> = Vec::new();
-            for s in &rule.insts {
-                for cap in ["{t}", "{t1}", "{t2}", "{t3}", "{t4}", "{t5}"] {
-                    if s.contains(cap) && !temps.iter().any(|t| t.to_string().contains(cap)) {
-                        let tid = format_ident!("__{}", cap.trim_matches(['{', '}']));
-                        temps.push(quote! { let #tid = ctx.alloc_xreg(__DEFAULT_GPR_CLASS); });
+            // 模板临时寄存器预声明：从占位符注册表收集（{g}/{gN} → GPR、
+            // {f}/{fN} → FPR）。新增临时占位符只改 placeholder.rs。
+            let mut t_binds: Vec<TokenStream> = Vec::new();
+            let mut tf_binds: Vec<TokenStream> = Vec::new();
+            for (var, cls) in super::placeholder::collect_temps(&rule.insts) {
+                let vid = format_ident!("{var}");
+                match cls {
+                    super::placeholder::PhTemp::Gpr => {
+                        t_binds.push(quote! { let #vid = ctx.alloc_xreg(__DEFAULT_GPR_CLASS); });
+                    }
+                    super::placeholder::PhTemp::Fpr => {
+                        tf_binds.push(quote! { let #vid = ctx.alloc_xreg(__DEFAULT_FPR_CLASS); });
                     }
                 }
             }
-            let t_bind: TokenStream = if temps.is_empty() {
+            let t_bind: TokenStream = if t_binds.is_empty() {
                 quote! {}
             } else {
-                quote! { #(#temps)* }
+                quote! { #(#t_binds)* }
             };
-            let mut tf_binds: Vec<TokenStream> = Vec::new();
-            if rule.insts.iter().any(|s| s.contains("{t_f}")) {
-                tf_binds.push(quote! { let __tf = ctx.alloc_xreg(__DEFAULT_FPR_CLASS); });
-            }
-            for cap in ["{t_f1}", "{t_f2}", "{t_f3}", "{t_f4}"] {
-                if rule.insts.iter().any(|s| s.contains(cap)) {
-                    let tid = format_ident!("__{}", cap.trim_matches(['{', '}']));
-                    tf_binds.push(quote! { let #tid = ctx.alloc_xreg(__DEFAULT_FPR_CLASS); });
-                }
-            }
             let tf_bind: TokenStream = if tf_binds.is_empty() {
                 quote! {}
             } else {
@@ -443,6 +438,29 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         }
     };
 
+    // 操作数符号预绑定：收集所有模板用到的 `{N}` 最大编号，生成
+    // `let rs1..=rsN = args.get(..)…`（任意多操作数指令；不再硬编码 3 个）。
+    let max_op_idx: usize = model
+        .lowering
+        .iter()
+        .flat_map(|r| &r.insts)
+        .flat_map(|t| {
+            t.split(['{', '}'])
+                .skip(1)
+                .step_by(2)
+                .filter_map(|tok| tok.parse::<usize>().ok())
+        })
+        .max()
+        .unwrap_or(0);
+    let op_binds: TokenStream = (0..=max_op_idx)
+        .map(|i| {
+            let rsn = format_ident!("rs{}", i + 1);
+            quote! {
+                let #rsn = args.get(#i).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+            }
+        })
+        .collect();
+
     Ok(quote! {
         /// 谓词属性 `elem` 的数值映射（标量类型；向量元素在 Phase 6 扩展）。
         fn elem_id_of(t: crate::prelude::TypeId) -> i64 {
@@ -565,9 +583,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
                 let rd = results.first().copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
                 let rd2 = results.get(1).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-                let rs1 = args.first().copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-                let rs2 = args.get(1).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-                let rs3 = args.get(2).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+                #op_binds
                 match op { #(#arms,)* _ => Err(crate::prelude::IrError::Unsupported("v12 lowering".into())) }
             }
 
@@ -1012,8 +1028,9 @@ fn gen_lowering_insts(
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        // `{out} = INST op0, op1` 或 `INST op0, op1`
-        let (lhs, rhs) = match trimmed.split_once('=') {
+        // `{out} = INST op0, op1` 或 `INST op0, op1`（lhs 仅为文档性语法；
+        // 结果 XReg 绑定由占位符注册表 {out}→rd 派生，无需单独消费 lhs）
+        let (_lhs, rhs) = match trimmed.split_once('=') {
             Some((l, r)) => (Some(l.trim()), r.trim()),
             None => (None, trimmed),
         };
@@ -1157,361 +1174,39 @@ fn gen_lowering_insts(
                 } else {
                     op
                 };
-                let (ctor_expr, xreg_expr) = match op {
-                    "{out}" => {
-                        let _ = lhs;
-                        (field_ctor_expr(slot, quote! { 0u32 }), quote! { rd })
-                    }
-                    "{0}" => (field_ctor_expr(slot, quote! { 0u32 }), quote! { rs1 }),
-                    "{1}" => (field_ctor_expr(slot, quote! { 0u32 }), quote! { rs2 }),
-                    "{2}" => (field_ctor_expr(slot, quote! { 0u32 }), quote! { rs3 }),
-                    "{out2}" => {
-                        // 第二结果（溢出/饱和的 flag 等；rd2 由 arm 预绑定）
-                        (field_ctor_expr(slot, quote! { 0u32 }), quote! { rd2 })
-                    }
-                    "{t}" if slot.kind == OperandKind::Reg => {
-                        // 临时寄存器（v11 %t 语义）：模板级分配，__t 预声明
-                        (field_ctor_expr(slot, quote! { 0u32 }), quote! { __t })
-                    }
-                    "{t_f}" if slot.kind == OperandKind::Reg => {
-                        // 浮点临时寄存器（__tf 预声明，__DEFAULT_FPR_CLASS）
-                        (field_ctor_expr(slot, quote! { 0u32 }), quote! { __tf })
-                    }
-                    other
-                        if slot.kind == OperandKind::Reg
-                            && (other == "{t_f1}"
-                                || other == "{t_f2}"
-                                || other == "{t_f3}"
-                                || other == "{t_f4}") =>
-                    {
-                        // 编号浮点临时 {t_f1}..{t_f4}（向量常量 lane 恢复等多 FPR 序列）
-                        let tid = format_ident!("__{}", other.trim_matches(['{', '}']));
-                        (field_ctor_expr(slot, quote! { 0u32 }), quote! { #tid })
-                    }
-                    other
-                        if slot.kind == OperandKind::Reg
-                            && other.starts_with("{t")
-                            && other.ends_with('}') =>
-                    {
-                        // 编号临时 {t1}..{t5}（饱和/位反转等多临时序列）
-                        let tid = format_ident!("__{}", other.trim_matches(['{', '}']));
-                        (field_ctor_expr(slot, quote! { 0u32 }), quote! { #tid })
-                    }
-                    "{alloca}" if slot.kind == OperandKind::Imm => {
-                        // Alloca 的栈槽偏移（v11 `lea_off rd, alloca_offset`）
-                        (quote! { ctx.current_alloca_offset as i64 }, quote! { 0u32 })
-                    }
-                    "{iconst}" if slot.kind == OperandKind::Imm => {
-                        // 常量池解析（Iconst 的 index → 值；v11 语义一致）
-                        (
-                            quote! {
-                                ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0)
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{iconst_hi20}" if slot.kind == OperandKind::Imm => {
-                        // RISC-V LUI 高 20 位：imm20 位域（LUI 槽）的散布 piece
-                        // 是 `((v >> 12) & 0xFFFFF) << 12`（提取 v 的 bits 31:12）——
-                        // 此处**只做 +0x800 舍入**（addi 的低 12 位有符号，若低
-                        // 12 位 >= 0x800 则高 20 位需 +1 避免双符号），右移交给
-                        // piece。此前表达式自带 >>12 造成双重右移（i32::MAX 的
-                        // hi20=0x80000 被错编为 0x80 → lui 0x80000 而非 0x80000000）。
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    __v + 0x800
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{iconst_lo12}" if slot.kind == OperandKind::Imm => {
-                        // RISC-V ADDI 低 12 位（有符号；配合 hi20 的 +0x800 舍入）
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    let __lo = (__v << 52 >> 52) as i32;
-                                    (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{iconst_hi32_hi20}" if slot.kind == OperandKind::Imm => {
-                        // Iconst i64 高 32 位的 LUI 高 20 位（+0x800 舍入；
-                        // 右移交给 imm20 piece（shift=12），同 {iconst_hi20}）
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    ((__v >> 32) as i64) + 0x800
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{iconst_hi32_lo12}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            ({
-                                let __v = ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0);
-                                let __hi32 = (__v >> 32) as i64;
-                                let __lo = (__hi32 << 52 >> 52) as i32;
-                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                            })
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{iconst_lo32_hi20}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            ({
-                                let __v = ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0);
-                                (__v as i64 & 0xFFFFFFFF) + 0x800
-                            })
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{iconst_lo32_lo12}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            ({
-                                let __v = ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0);
-                                let __lo32 = (__v as i64 & 0xFFFFFFFF);
-                                let __lo = (__lo32 << 52 >> 52) as i32;
-                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                            })
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{fconst}" if slot.kind == OperandKind::Imm => {
-                        // 常量池浮点位模式（Fconst；u64 位模式 → movabs 立即数）
-                        (
-                            quote! {
-                                ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0) as i64
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{fconst_hi32_hi20}" if slot.kind == OperandKind::Imm => {
-                        // Fconst f64 位模式高 32 位的 LUI 高 20 位（+0x800 舍入；
-                        // 右移交给 imm20 piece（shift=12），与 {iconst_hi20} 一致）
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    ((__v >> 32) as i64) + 0x800
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{fconst_hi32_lo12}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            ({
-                                let __v = ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0);
-                                let __hi32 = (__v >> 32) as i64;
-                                let __lo = (__hi32 << 52 >> 52) as i32;
-                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                            })
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{fconst_lo32_hi20}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            ({
-                                let __v = ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0);
-                                (__v as i64 & 0xFFFFFFFF) + 0x800
-                            })
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{fconst_lo32_lo12}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            ({
-                                let __v = ctx.constant_pool.as_ref()
-                                    .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                    .unwrap_or(0);
-                                let __lo32 = (__v as i64 & 0xFFFFFFFF);
-                                let __lo = (__lo32 << 52 >> 52) as i32;
-                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                            })
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{off}" if slot.kind == OperandKind::Imm => {
-                        // StackAddr 的帧偏移（v11 的 `lea_off rd, offset` 语义）
-                        (quote! { ctx.current_offset }, quote! { 0u32 })
-                    }
-                    "{global}" if slot.kind == OperandKind::Imm => {
-                        // GlobalAddr 的全局变量 id（负编码 -(id+1)；encoder 对
-                        // MOVABS_GLOBAL 的 imm<0 转 ABS8 重定位 "G{id}"）
-                        (
-                            quote! { ctx.current_global.map(|g| -(g.0 as i64) - 1).unwrap_or(0) },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{imm0}" if slot.kind == OperandKind::Imm => {
-                        // Vextract/Vinsert/Vsplit 的 lane 索引（常量折叠后的 immediates[0]）
-                        (
-                            quote! { ctx.current_immediates.first().copied().unwrap_or(0) as i64 },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{imm0_sub4}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            ctx.current_immediates.first().copied().unwrap_or(0).saturating_sub(4) as i64
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{shufps_imm8}" if slot.kind == OperandKind::Imm => {
-                        // ShuffleVector 掩码 → SHUFPS imm8（每 2 位一个输入索引 0-7）
-                        (
-                            quote! {
-                                __shufps_imm8(ctx.current_immediates.as_slice(), 0usize)
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{shufps_imm8_hi}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            __shufps_imm8(ctx.current_immediates.as_slice(), 4usize)
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{vconst_lo2}" if slot.kind == OperandKind::Imm => {
-                        // V64：向量字节低 8 字节直取（2×32 位 lane）
-                        (
-                            quote! { __vconst_raw64(ctx.constant_pool.as_ref(), ctx.current_const_index) },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{vconst_lo}" if slot.kind == OperandKind::Imm => {
-                        // V128/V256 低半低 64 位：32 位元素交错（lane0|lane2<<32）/ 64 位直取
-                        (
-                            quote! {
-                                __vconst_half(
-                                    ctx.constant_pool.as_ref(),
-                                    ctx.current_const_index,
-                                    0usize,
-                                    false,
-                                    __vconst_elem_bits(ctx, results) == 64,
-                                )
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{vconst_hi}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            __vconst_half(
-                                ctx.constant_pool.as_ref(),
-                                ctx.current_const_index,
-                                0usize,
-                                true,
-                                __vconst_elem_bits(ctx, results) == 64,
-                            )
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{vconst_lo_hi}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            __vconst_half(
-                                ctx.constant_pool.as_ref(),
-                                ctx.current_const_index,
-                                1usize,
-                                false,
-                                __vconst_elem_bits(ctx, results) == 64,
-                            )
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{vconst_hi_hi}" if slot.kind == OperandKind::Imm => (
-                        quote! {
-                            __vconst_half(
-                                ctx.constant_pool.as_ref(),
-                                ctx.current_const_index,
-                                1usize,
-                                true,
-                                __vconst_elem_bits(ctx, results) == 64,
-                            )
-                        },
-                        quote! { 0u32 },
-                    ),
-                    "{cc}" if slot.kind == OperandKind::Cond => {
-                        // Icmp 条件码（__cc 由 Icmp arm 设置）
-                        (quote! { __cc }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Cond => {
-                        // 字面条件码（seto=0/setb=2/…，模板直接写死）
-                        let v: u8 = other
-                            .parse()
-                            .map_err(|_| format!("lowering 模板条件码 '{other}' 无法解析"))?;
-                        (quote! { #v }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Reg => {
-                        // 物理寄存器名（RAX 等）→ Reg 枚举（类型化字段直接写入）
-                        let reg = format_ident!("{other}");
-                        (quote! { Reg::#reg }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Mem => {
-                        // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）
-                        let m = parse_mem_template(other, "lowering 模板")?;
-                        (quote! { #m }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Imm => {
-                        let v: i64 = parse_i64_lit(other)
-                            .map_err(|_| format!("lowering 模板立即数 '{other}' 无法解析"))?;
-                        (quote! { #v }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Cond => {
-                        // 字面条件码（seto=0/setb=2/…，模板直接写死）
-                        let v: u8 = other
-                            .parse()
-                            .map_err(|_| format!("lowering 模板条件码 '{other}' 无法解析"))?;
-                        (quote! { #v }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Reg => {
-                        // 物理寄存器名（RAX 等）→ Reg 枚举（类型化字段直接写入）
-                        let reg = format_ident!("{other}");
-                        (quote! { Reg::#reg }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Mem => {
-                        // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）
-                        let m = parse_mem_template(other, "lowering 模板")?;
-                        (quote! { #m }, quote! { 0u32 })
-                    }
-                    other if slot.kind == OperandKind::Imm => {
-                        let v: i64 = parse_i64_lit(other)
-                            .map_err(|_| format!("lowering 模板立即数 '{other}' 无法解析"))?;
-                        (quote! { #v }, quote! { 0u32 })
-                    }
-                    other => {
-                        return Err(format!(
-                            "lowering 模板操作数 '{other}' 不支持（指令 {inst_name} 槽 {}）",
-                            slot.kind.kind_name()
-                        ));
+                let (ctor_expr, xreg_expr) = if super::placeholder::kind_matches(op, slot.kind) {
+                    // 注册表占位符（{out}/{iconst}/{g}…）：ctor 由注册表闭包
+                    // 构建，xreg 绑定来自注册表。新增占位符只改 placeholder.rs。
+                    let ctor = super::placeholder::ctor_for(op, slot)
+                        .expect("kind_matches 为真但 ctor_for 返回 None（注册表不一致）");
+                    let xreg = super::placeholder::xreg_for(op);
+                    (ctor, xreg)
+                } else {
+                    // 字面量 fallback（非占位符 token）：
+                    // 条件码/物理寄存器/MemRef/立即数——按槽类型解析。
+                    match slot.kind {
+                        OperandKind::Cond => {
+                            // 字面条件码（seto=0/setb=2/…，模板直接写死）
+                            let v: u8 = op
+                                .parse()
+                                .map_err(|_| format!("lowering 模板条件码 '{op}' 无法解析"))?;
+                            (quote! { #v }, quote! { 0u32 })
+                        }
+                        OperandKind::Reg => {
+                            // 物理寄存器名（RAX 等）→ Reg 枚举（类型化字段直接写入）
+                            let reg = format_ident!("{op}");
+                            (quote! { Reg::#reg }, quote! { 0u32 })
+                        }
+                        OperandKind::Mem => {
+                            // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）
+                            let m = parse_mem_template(op, "lowering 模板")?;
+                            (quote! { #m }, quote! { 0u32 })
+                        }
+                        OperandKind::Imm | OperandKind::Label => {
+                            let v: i64 = parse_i64_lit(op)
+                                .map_err(|_| format!("lowering 模板立即数 '{op}' 无法解析"))?;
+                            (quote! { #v }, quote! { 0u32 })
+                        }
                     }
                 };
                 bindings.push((fid.to_string(), ctor_expr, xreg_expr));

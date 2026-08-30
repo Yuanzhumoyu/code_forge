@@ -1225,3 +1225,92 @@ effect = ["Move"]
     let inst = m.instructions.iter().find(|i| i.name == "MY_MOV").unwrap();
     assert!(inst.effect.iter().any(|e| e == "Move"));
 }
+
+/// 占位符注册表唯一性：无重名 token、无重复临时变量（第三轮重构核心——
+/// 4 处消费（ctor/token_kind/临时声明/xreg 绑定）都从该表派生，表必须一致）。
+#[test]
+fn placeholder_registry_unique() {
+    super::codegen::placeholder::assert_unique().expect("占位符注册表必须唯一");
+}
+
+/// 占位符注册表关键条目可查（防止重构误删符号寄存器/临时/常量 token）。
+#[test]
+fn placeholder_registry_lookup() {
+    use super::codegen::placeholder::{PhKind, PhTemp, lookup};
+    // 符号寄存器（静态表：out/out2；{N} 是动态编号操作数）
+    for name in ["{out}", "{out2}"] {
+        let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
+        assert_eq!(p.token_kind, "reg", "{name} token_kind");
+        assert!(p.loose, "{name} 应 loose（任何槽可用）");
+    }
+    // 编号操作数 {N}：动态解析，任意上限（不只 {0}/{1}/{2}）
+    for (name, idx) in [("{0}", 0usize), ("{1}", 1), ("{2}", 2), ("{3}", 3), ("{7}", 7)] {
+        let n = super::codegen::placeholder::numbered_operand(name)
+            .unwrap_or_else(|| panic!("{name} 必须按编号操作数解析"));
+        assert_eq!(n, idx, "{name} 编号");
+        assert_eq!(
+            super::codegen::placeholder::token_kind(name),
+            "reg",
+            "{name} token_kind"
+        );
+    }
+    // 临时（静态表：{g}/{f}；编号 {gN}/{fN} 动态）
+    for (name, var, cls) in [
+        ("{g}", "__g", PhTemp::Gpr),
+        ("{f}", "__f", PhTemp::Fpr),
+    ] {
+        let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
+        assert_eq!(p.temp, Some(var), "{name} 临时变量名");
+        assert_eq!(p.temp_class, Some(cls), "{name} 临时类别");
+    }
+    // 编号临时 {gN}/{fN}：动态解析，任意上限；g=GPR、f=FPR 与 PhTemp 对应
+    for (name, var, cls) in [
+        ("{g1}", "__g1", PhTemp::Gpr),
+        ("{g5}", "__g5", PhTemp::Gpr),
+        ("{g6}", "__g6", PhTemp::Gpr),
+        ("{f1}", "__f1", PhTemp::Fpr),
+        ("{f4}", "__f4", PhTemp::Fpr),
+        ("{f9}", "__f9", PhTemp::Fpr),
+    ] {
+        let (v, c) = super::codegen::placeholder::numbered_temp(name)
+            .unwrap_or_else(|| panic!("{name} 必须按编号临时解析"));
+        assert_eq!(v, var, "{name} 变量名");
+        assert_eq!(c, cls, "{name} 类别");
+    }
+    // 旧样式 {t}/{tN}/{t_f}/{t_fN} 已废弃：必须解析失败（防止误用回退）
+    for name in ["{t}", "{t1}", "{t_f}", "{t_f1}"] {
+        assert!(
+            super::codegen::placeholder::lookup(name).is_none(),
+            "{name} 旧样式必须不在静态表"
+        );
+        assert!(
+            super::codegen::placeholder::numbered_temp(name).is_none(),
+            "{name} 旧样式必须不可按编号临时解析"
+        );
+    }
+    // 与既有占位符无前缀冲突：{g}≠{global}、{f}≠{fconst}（精确匹配）
+    for name in ["{global}", "{fconst}", "{fconst_hi32_hi20}", "{iconst}"] {
+        assert!(
+            super::codegen::placeholder::lookup(name).is_some(),
+            "{name} 静态条目必须仍在"
+        );
+    }
+    // 常量/立即数
+    for name in ["{iconst}", "{fconst}", "{off}", "{alloca}", "{global}", "{imm0}"] {
+        let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
+        assert_eq!(p.kind, PhKind::Imm, "{name} 槽类别");
+    }
+    let cc = lookup("{cc}").unwrap();
+    assert_eq!(cc.kind, PhKind::Cond, "cc 槽类别");
+    // token 分类委托
+    assert_eq!(super::codegen::placeholder::token_kind("{out}"), "reg");
+    assert_eq!(super::codegen::placeholder::token_kind("{iconst_hi20}"), "imm");
+    assert_eq!(super::codegen::placeholder::token_kind("{cc}"), "cond");
+    assert_eq!(super::codegen::placeholder::token_kind("RAX"), "reg");
+    assert_eq!(super::codegen::placeholder::token_kind("16"), "num");
+    assert_eq!(
+        super::codegen::placeholder::token_kind("{0}+8"),
+        "mem",
+        "内存表达式保持 mem"
+    );
+}

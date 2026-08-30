@@ -276,49 +276,9 @@ pub(crate) fn strip_placeholder_decls(asm: &str) -> String {
 }
 
 /// lowering 模板操作数 token → 槽类型签名（形状消歧用）。
-/// `[{n}]` 方括号内的寄存器是内存基址（槽为 reg），按内部 token 判定。
+/// 委托占位符注册表（placeholder.rs）——分类、临时、xreg、ctor 单一事实源。
 pub(crate) fn lowering_token_kind(op: &str) -> &'static str {
-    // 剥掉外层方括号(内存基址写法 [{n}])
-    let inner = if let Some(op) = op.strip_circumfix('[', ']') {
-        op
-    } else {
-        op
-    };
-    match inner {
-        // 符号化寄存器
-        "{out}" | "{out2}" | "{t}" | "{0}" | "{1}" | "{2}" => "reg",
-        // 编号临时
-        _ if inner.starts_with("{t") && inner.ends_with('}') => "reg",
-        // 物理寄存器（RAX 等）
-        _ if inner.starts_with('{')
-            && inner.ends_with('}')
-            && inner[1..inner.len() - 1]
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) =>
-        {
-            "reg"
-        }
-        // 常量/立即数 token
-        "{iconst}" | "{fconst}" | "{off}" | "{alloca}" | "{global}" | "{imm0}" | "{imm0_sub4}"
-        | "{iconst_hi20}" | "{iconst_lo12}" | "{iconst_hi32_hi20}" | "{iconst_hi32_lo12}"
-        | "{iconst_lo32_hi20}" | "{iconst_lo32_lo12}" | "{fconst_hi32_hi20}"
-        | "{fconst_hi32_lo12}" | "{fconst_lo32_hi20}" | "{fconst_lo32_lo12}" => "imm",
-        _ if inner.starts_with("{shufps") || inner.starts_with("{vconst") => "imm",
-        // 条件码
-        "{cc}" => "cond",
-        // 数字立即数（含 0x 十六进制；兼容 imm/cond 槽——setcc/cmovcc 条件码是数字）
-        _ if parse_i64_lit(inner).is_ok() => "num",
-        // 真正的内存操作数（MemRef 槽模板 [base+off]）
-        _ if inner.contains('+')
-            || inner.contains('-')
-            || inner.contains('(')
-            || inner.contains(')') =>
-        {
-            "mem"
-        }
-        // 其他（字面量等）→ 视为 reg（物理寄存器名）
-        _ => "reg",
-    }
+    super::placeholder::token_kind(op)
 }
 
 fn gen_isa_info(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStream, String> {

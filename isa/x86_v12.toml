@@ -2013,20 +2013,20 @@ insts = [
 [[lowering]]
 op = "Sdiv"
 insts = [
-    "mov {t}, {1}",
+    "mov {g}, {1}",
     "movsxd RAX, {0}",
     "cqo",
-    "idiv {t}",
+    "idiv {g}",
     "mov {out}, RAX",
 ]
 
 [[lowering]]
 op = "Srem"
 insts = [
-    "mov {t}, {1}",
+    "mov {g}, {1}",
     "movsxd RAX, {0}",
     "cqo",
-    "idiv {t}",
+    "idiv {g}",
     "mov {out}, RDX",
 ]
 
@@ -2148,11 +2148,11 @@ insts = ["mov {out}, {0}", "cmp {1}, {0}", "cmovcc {out}, {1}, 6"]
 [[lowering]]
 op = "Abs"
 insts = [
-    "mov {t}, {0}",
-    "neg {t}",
+    "mov {g}, {0}",
+    "neg {g}",
     "mov {out}, {0}",
     "test {0}, {0}",
-    "cmovcc {out}, {t}, 12",
+    "cmovcc {out}, {g}, 12",
 ]
 
 # ── 前导/尾随零、popcount、字节交换 ──
@@ -2307,10 +2307,10 @@ insts = [
     "xor {out2}, {out2}",
     "cmp {0}, {out}",
     "setcc {out2}, 2",
-    "xor {t}, {t}",
+    "xor {g}, {g}",
     "test {1}, {1}",
-    "setcc {t}, 5",
-    "and {t}, {out2}",
+    "setcc {g}, 5",
+    "and {g}, {out2}",
 ]
 
 [[lowering]]
@@ -2321,10 +2321,10 @@ insts = [
     "xor {out2}, {out2}",
     "cmp {0}, {out}",
     "setcc {out2}, 2",
-    "xor {t}, {t}",
+    "xor {g}, {g}",
     "test {1}, {1}",
-    "setcc {t}, 5",
-    "and {t}, {out2}",
+    "setcc {g}, 5",
+    "and {g}, {out2}",
 ]
 
 # ── 饱和 4 条（clamp 序列；t1..t4 临时）──
@@ -2335,14 +2335,14 @@ when = { eq = ["rs1_width", 32] }
 insts = [
     "mov32 {out}, {0}",
     "add {1}, {out}",
-    "setcc {t1}, 0",
-    "mov_imm {t2}, 0x7FFFFFFF",
-    "mov_imm {t3}, 0x80000000",
+    "setcc {g1}, 0",
+    "mov_imm {g2}, 0x7FFFFFFF",
+    "mov_imm {g3}, 0x80000000",
     "test {0}, {0}",
-    "cmovcc {t4}, {t2}, 9",
-    "cmovcc {t4}, {t3}, 8",
-    "test {t1}, {t1}",
-    "cmovcc {out}, {t4}, 5",
+    "cmovcc {g4}, {g2}, 9",
+    "cmovcc {g4}, {g3}, 8",
+    "test {g1}, {g1}",
+    "cmovcc {out}, {g4}, 5",
 ]
 
 [[lowering]]
@@ -2351,14 +2351,14 @@ when = { eq = ["rs1_width", 64] }
 insts = [
     "mov {out}, {0}",
     "add {1}, {out}",
-    "setcc {t1}, 0",
-    "mov_imm {t2}, 0x7FFFFFFFFFFFFFFF",
-    "mov_imm {t3}, 0x8000000000000000",
+    "setcc {g1}, 0",
+    "mov_imm {g2}, 0x7FFFFFFFFFFFFFFF",
+    "mov_imm {g3}, 0x8000000000000000",
     "test {0}, {0}",
-    "cmovcc {t4}, {t2}, 9",
-    "cmovcc {t4}, {t3}, 8",
-    "test {t1}, {t1}",
-    "cmovcc {out}, {t4}, 5",
+    "cmovcc {g4}, {g2}, 9",
+    "cmovcc {g4}, {g3}, 8",
+    "test {g1}, {g1}",
+    "cmovcc {out}, {g4}, 5",
 ]
 
 [[lowering]]
@@ -2366,10 +2366,10 @@ op = "UaddSat"
 insts = [
     "mov {out}, {0}",
     "add {1}, {out}",
-    "setcc {t1}, 2",
-    "mov_imm {t2}, 0xFFFFFFFFFFFFFFFF",
-    "test {t1}, {t1}",
-    "cmovcc {out}, {t2}, 5",
+    "setcc {g1}, 2",
+    "mov_imm {g2}, 0xFFFFFFFFFFFFFFFF",
+    "test {g1}, {g1}",
+    "cmovcc {out}, {g2}, 5",
 ]
 
 [[lowering]]
@@ -2377,10 +2377,10 @@ op = "UsubSat"
 insts = [
     "mov {out}, {0}",
     "sub {1}, {out}",
-    "setcc {t1}, 2",
-    "xor {t2}, {t2}",
-    "test {t1}, {t1}",
-    "cmovcc {out}, {t2}, 5",
+    "setcc {g1}, 2",
+    "xor {g2}, {g2}",
+    "test {g1}, {g1}",
+    "cmovcc {out}, {g2}, 5",
 ]
 
 # ── Bitreverse：Hacker's Delight 64 位反转（n=1/2/4 掩码移位 + bswap）──
@@ -2389,40 +2389,40 @@ insts = [
 op = "Bitreverse"
 insts = [
     "mov {out}, {0}",
-    "mov_imm {t1}, 1",
-    "mov_imm {t2}, 0x5555555555555555",
-    "mov {t3}, {out}",
-    "mov RCX, {t1}",
-    "shr {t3}",
-    "and {t2}, {t3}",
-    "mov {t4}, {out}",
-    "and {t2}, {t4}",
-    "mov RCX, {t1}",
-    "shl {t4}",
-    "or {t4}, {t3}",
-    "mov_imm {t1}, 2",
-    "mov_imm {t2}, 0x3333333333333333",
-    "mov {t5}, {t3}",
-    "mov RCX, {t1}",
-    "shr {t5}",
-    "and {t2}, {t5}",
-    "mov {t4}, {t3}",
-    "and {t2}, {t4}",
-    "mov RCX, {t1}",
-    "shl {t4}",
-    "or {t4}, {t5}",
-    "mov_imm {t1}, 4",
-    "mov_imm {t2}, 0x0F0F0F0F0F0F0F0F",
-    "mov {t3}, {t5}",
-    "mov RCX, {t1}",
-    "shr {t3}",
-    "and {t2}, {t3}",
-    "mov {t4}, {t5}",
-    "and {t2}, {t4}",
-    "mov RCX, {t1}",
-    "shl {t4}",
-    "or {t4}, {t3}",
-    "mov {out}, {t3}",
+    "mov_imm {g1}, 1",
+    "mov_imm {g2}, 0x5555555555555555",
+    "mov {g3}, {out}",
+    "mov RCX, {g1}",
+    "shr {g3}",
+    "and {g2}, {g3}",
+    "mov {g4}, {out}",
+    "and {g2}, {g4}",
+    "mov RCX, {g1}",
+    "shl {g4}",
+    "or {g4}, {g3}",
+    "mov_imm {g1}, 2",
+    "mov_imm {g2}, 0x3333333333333333",
+    "mov {g5}, {g3}",
+    "mov RCX, {g1}",
+    "shr {g5}",
+    "and {g2}, {g5}",
+    "mov {g4}, {g3}",
+    "and {g2}, {g4}",
+    "mov RCX, {g1}",
+    "shl {g4}",
+    "or {g4}, {g5}",
+    "mov_imm {g1}, 4",
+    "mov_imm {g2}, 0x0F0F0F0F0F0F0F0F",
+    "mov {g3}, {g5}",
+    "mov RCX, {g1}",
+    "shr {g3}",
+    "and {g2}, {g3}",
+    "mov {g4}, {g5}",
+    "and {g2}, {g4}",
+    "mov RCX, {g1}",
+    "shl {g4}",
+    "or {g4}, {g3}",
+    "mov {out}, {g3}",
     "bswap {out}",
 ]
 
@@ -2477,18 +2477,18 @@ op = "Fneg"
 when = { eq = ["elem", 1] }
 insts = [
     "movss {out}, {0}",
-    "mov_imm {t}, 0x80000000",
-    "movq_xmm {t_f}, {t}",
-    "xorps {out}, {t_f}",
+    "mov_imm {g}, 0x80000000",
+    "movq_xmm {f}, {g}",
+    "xorps {out}, {f}",
 ]
 
 [[lowering]]
 op = "Fneg"
 insts = [
     "movsd {out}, {0}",
-    "mov_imm {t}, 0x8000000000000000",
-    "movq_xmm {t_f}, {t}",
-    "xorpd {out}, {t_f}",
+    "mov_imm {g}, 0x8000000000000000",
+    "movq_xmm {f}, {g}",
+    "xorpd {out}, {f}",
 ]
 
 [[lowering]]
@@ -2496,18 +2496,18 @@ op = "Fabs"
 when = { eq = ["elem", 1] }
 insts = [
     "movss {out}, {0}",
-    "mov_imm {t}, 0x7FFFFFFF",
-    "movq_xmm {t_f}, {t}",
-    "andps {out}, {t_f}",
+    "mov_imm {g}, 0x7FFFFFFF",
+    "movq_xmm {f}, {g}",
+    "andps {out}, {f}",
 ]
 
 [[lowering]]
 op = "Fabs"
 insts = [
     "movsd {out}, {0}",
-    "mov_imm {t}, 0x7FFFFFFFFFFFFFFF",
-    "movq_xmm {t_f}, {t}",
-    "andpd {out}, {t_f}",
+    "mov_imm {g}, 0x7FFFFFFFFFFFFFFF",
+    "movq_xmm {f}, {g}",
+    "andpd {out}, {f}",
 ]
 
 # ── Fsqrt ──
@@ -2586,11 +2586,11 @@ insts = ["movsd {out}, {0}", "roundsd {out}, {0}, 0"]
 [[lowering]]
 op = "Ftrunc"
 when = { eq = ["elem", 1] }
-insts = ["movss {out}, {0}", "cvttss2si {t}, {0}", "cvtsi2ss {out}, {t}"]
+insts = ["movss {out}, {0}", "cvttss2si {g}, {0}", "cvtsi2ss {out}, {g}"]
 
 [[lowering]]
 op = "Ftrunc"
-insts = ["movsd {out}, {0}", "cvttsd2si {t}, {0}", "cvtsi2sd {out}, {t}"]
+insts = ["movsd {out}, {0}", "cvttsd2si {g}, {0}", "cvtsi2sd {out}, {g}"]
 
 # ── Fpext（f32 → f64）/ Fptrunc（f64 → f32）──
 
@@ -2606,7 +2606,7 @@ insts = ["movsd {out}, {0}", "cvtsd2ss {out}, {0}"]
 
 [[lowering]]
 op = "Fconst"
-insts = ["mov_imm {t}, {fconst}", "movq_xmm {out}, {t}"]
+insts = ["mov_imm {g}, {fconst}", "movq_xmm {out}, {g}"]
 
 # ── Fload / Fstore（按元素类型分派 MOVSS/MOVSD 内存版；base=地址寄存器）──
 
@@ -2697,12 +2697,12 @@ insts = ["cvttss2si {out}, {0}"]
 [[lowering]]
 op = "Uitofp"
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 2] } ] }
-insts = ["mov32 {t}, {0}", "cvtsi2sd {out}, {t}"]
+insts = ["mov32 {g}, {0}", "cvtsi2sd {out}, {g}"]
 
 [[lowering]]
 op = "Uitofp"
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
-insts = ["mov32 {t}, {0}", "cvtsi2ss {out}, {t}"]
+insts = ["mov32 {g}, {0}", "cvtsi2ss {out}, {g}"]
 
 [[lowering]]
 op = "Uitofp"
@@ -2721,29 +2721,29 @@ insts = ["cvtsi2ss {out}, {0}"]
 op = "Fcopysign"
 when = { eq = ["elem", 1] }
 insts = [
-    "movq_r64 {t}, {0}",
-    "movq_r64 {t2}, {1}",
-    "mov_imm {t3}, 0x80000000",
-    "mov {t4}, {t3}",
-    "not {t4}",
-    "and {t4}, {t}",
-    "and {t3}, {t2}",
-    "or {t2}, {t}",
-    "movq_xmm {out}, {t}",
+    "movq_r64 {g}, {0}",
+    "movq_r64 {g2}, {1}",
+    "mov_imm {g3}, 0x80000000",
+    "mov {g4}, {g3}",
+    "not {g4}",
+    "and {g4}, {g}",
+    "and {g3}, {g2}",
+    "or {g2}, {g}",
+    "movq_xmm {out}, {g}",
 ]
 
 [[lowering]]
 op = "Fcopysign"
 insts = [
-    "movq_r64 {t}, {0}",
-    "movq_r64 {t2}, {1}",
-    "mov_imm {t3}, 0x8000000000000000",
-    "mov {t4}, {t3}",
-    "not {t4}",
-    "and {t4}, {t}",
-    "and {t3}, {t2}",
-    "or {t2}, {t}",
-    "movq_xmm {out}, {t}",
+    "movq_r64 {g}, {0}",
+    "movq_r64 {g2}, {1}",
+    "mov_imm {g3}, 0x8000000000000000",
+    "mov {g4}, {g3}",
+    "not {g4}",
+    "and {g4}, {g}",
+    "and {g3}, {g2}",
+    "or {g2}, {g}",
+    "movq_xmm {out}, {g}",
 ]
 
 # ── Fcmp：cond 属性（fcmp_id）分派 16 条件 × F32/F64 ──
@@ -2773,12 +2773,12 @@ insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10"]
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 3] }, { eq = ["elem", 1] } ] }
-insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {t}, 4", "and {t}, {out}"]
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {g}, 4", "and {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { eq = ["cond", 3] }
-insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {t}, 4", "and {t}, {out}"]
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {g}, 4", "and {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
@@ -2793,22 +2793,22 @@ insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 5"]
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 5] }, { eq = ["elem", 1] } ] }
-insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {t}, 2", "and {t}, {out}"]
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {g}, 2", "and {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { eq = ["cond", 5] }
-insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {t}, 2", "and {t}, {out}"]
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {g}, 2", "and {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 6] }, { eq = ["elem", 1] } ] }
-insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {t}, 6", "and {t}, {out}"]
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 11", "setcc {g}, 6", "and {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { eq = ["cond", 6] }
-insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {t}, 6", "and {t}, {out}"]
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 11", "setcc {g}, 6", "and {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
@@ -2863,22 +2863,22 @@ insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 4"]
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 12] }, { eq = ["elem", 1] } ] }
-insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {t}, 7", "or {t}, {out}"]
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {g}, 7", "or {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { eq = ["cond", 12] }
-insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {t}, 7", "or {t}, {out}"]
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {g}, 7", "or {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 13] }, { eq = ["elem", 1] } ] }
-insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {t}, 3", "or {t}, {out}"]
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {g}, 3", "or {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { eq = ["cond", 13] }
-insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {t}, 3", "or {t}, {out}"]
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {g}, 3", "or {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
@@ -2903,12 +2903,12 @@ insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 6"]
 [[lowering]]
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 16] }, { eq = ["elem", 1] } ] }
-insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {t}, 5", "or {t}, {out}"]
+insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, 10", "setcc {g}, 5", "or {g}, {out}"]
 
 [[lowering]]
 op = "Fcmp"
 when = { eq = ["cond", 16] }
-insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {t}, 5", "or {t}, {out}"]
+insts = ["xor {out}, {out}", "comisd {0}, {1}", "setcc {out}, 10", "setcc {g}, 5", "or {g}, {out}"]
 
 # ════════════════════════════════════════════════════════════
 # 迭代 9（Phase 6）——向量全量（V64/V128/V256）
@@ -3103,26 +3103,26 @@ insts = ["xorps {out}, {out}", "psubq {out}, {0}"]
 op = "Vabs"
 when = { eq = ["rd", 256] }
 insts = [
-    "mov_imm {t1}, 0x7FFFFFFF7FFFFFFF",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, 0x7FFFFFFF7FFFFFFF",
-    "movq_xmm {t_f2}, {t2}",
-    "punpckldq {t_f1}, {t_f2}",
-    "movaps {t_f3}, {t_f1}",
-    "vinsertf128 {t_f1}, {t_f1}, {t_f3}, 1",
-    "vandps {out}, {0}, {t_f1}",
+    "mov_imm {g1}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {f2}, {g2}",
+    "punpckldq {f1}, {f2}",
+    "movaps {f3}, {f1}",
+    "vinsertf128 {f1}, {f1}, {f3}, 1",
+    "vandps {out}, {0}, {f1}",
 ]
 
 [[lowering]]
 op = "Vabs"
 insts = [
     "movaps {out}, {0}",
-    "mov_imm {t1}, 0x7FFFFFFF7FFFFFFF",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, 0x7FFFFFFF7FFFFFFF",
-    "movq_xmm {t_f2}, {t2}",
-    "punpckldq {t_f1}, {t_f2}",
-    "andps {out}, {t_f1}",
+    "mov_imm {g1}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, 0x7FFFFFFF7FFFFFFF",
+    "movq_xmm {f2}, {g2}",
+    "punpckldq {f1}, {f2}",
+    "andps {out}, {f1}",
 ]
 
 # ── Vbitcast（同宽位重解释）──
@@ -3161,84 +3161,84 @@ insts = ["movq_r64 {out}, {0}"]
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] }, { le = ["imm0", 3] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, {imm0}", "movss {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 0", "pshufd {f1}, {f1}, {imm0}", "movss {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] }, { ge = ["imm0", 4] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, {imm0_sub4}", "movss {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 1", "pshufd {f1}, {f1}, {imm0_sub4}", "movss {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] }, { le = ["imm0", 3] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, {imm0}", "movd_fr {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 0", "pshufd {f1}, {f1}, {imm0}", "movd_fr {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] }, { ge = ["imm0", 4] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, {imm0_sub4}", "movd_fr {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 1", "pshufd {f1}, {f1}, {imm0_sub4}", "movd_fr {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { le = ["imm0", 1] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, 78", "movsd {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 0", "pshufd {f1}, {f1}, 78", "movsd {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { eq = ["imm0", 2] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 1", "movsd {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 1", "movsd {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { ge = ["imm0", 3] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, 78", "movsd {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 1", "pshufd {f1}, {f1}, 78", "movsd {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { le = ["imm0", 1] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "pshufd {t_f1}, {t_f1}, 78", "movq_r64 {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 0", "pshufd {f1}, {f1}, 78", "movq_r64 {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { eq = ["imm0", 2] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 1", "movq_r64 {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 1", "movq_r64 {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { ge = ["imm0", 3] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 1", "pshufd {t_f1}, {t_f1}, 78", "movq_r64 {out}, {t_f1}"]
+insts = ["vextractf128 {0}, {f1}, 1", "pshufd {f1}, {f1}, 78", "movq_r64 {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["elem", 1] }, { ne = ["imm0", 0] } ] }
-insts = ["pshufd {t_f1}, {0}, {imm0}", "movss {out}, {t_f1}"]
+insts = ["pshufd {f1}, {0}, {imm0}", "movss {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["elem", 3] }, { ne = ["imm0", 0] } ] }
-insts = ["pshufd {t_f1}, {0}, {imm0}", "movd_fr {out}, {t_f1}"]
+insts = ["pshufd {f1}, {0}, {imm0}", "movd_fr {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { and = [ { eq = ["elem", 2] }, { ne = ["imm0", 0] } ] }
-insts = ["pshufd {t_f1}, {0}, 78", "movsd {out}, {t_f1}"]
+insts = ["pshufd {f1}, {0}, 78", "movsd {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
 when = { eq = ["elem", 4] }
-insts = ["pshufd {t_f1}, {0}, 78", "movq_r64 {out}, {t_f1}"]
+insts = ["pshufd {f1}, {0}, 78", "movq_r64 {out}, {f1}"]
 
 # ── Vinsert（标量写入 lane0；V256 拆低半修改后拼回）──
 
 [[lowering]]
 op = "Vinsert"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "movss {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+insts = ["vextractf128 {0}, {f1}, 0", "movss {f1}, {1}", "vinsertf128 {out}, {0}, {f1}, 0"]
 
 [[lowering]]
 op = "Vinsert"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "movss {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+insts = ["vextractf128 {0}, {f1}, 0", "movss {f1}, {1}", "vinsertf128 {out}, {0}, {f1}, 0"]
 
 [[lowering]]
 op = "Vinsert"
@@ -3253,12 +3253,12 @@ insts = ["movaps {out}, {0}", "movss {out}, {1}"]
 [[lowering]]
 op = "Vinsert"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "movsd {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+insts = ["vextractf128 {0}, {f1}, 0", "movsd {f1}, {1}", "vinsertf128 {out}, {0}, {f1}, 0"]
 
 [[lowering]]
 op = "Vinsert"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] } ] }
-insts = ["vextractf128 {0}, {t_f1}, 0", "movsd {t_f1}, {1}", "vinsertf128 {out}, {0}, {t_f1}, 0"]
+insts = ["vextractf128 {0}, {f1}, 0", "movsd {f1}, {1}", "vinsertf128 {out}, {0}, {f1}, 0"]
 
 [[lowering]]
 op = "Vinsert"
@@ -3334,13 +3334,13 @@ insts = ["vinsertf128 {out}, {0}, {1}, 1"]
 op = "ShuffleVector"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
 insts = [
-    "vextractf128 {0}, {t_f1}, 0",
-    "vextractf128 {1}, {t_f2}, 0",
-    "shufps {t_f1}, {t_f2}, {shufps_imm8}",
-    "vextractf128 {0}, {t_f3}, 1",
-    "vextractf128 {1}, {t_f4}, 1",
-    "shufps {t_f3}, {t_f4}, {shufps_imm8_hi}",
-    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+    "vextractf128 {0}, {f1}, 0",
+    "vextractf128 {1}, {f2}, 0",
+    "shufps {f1}, {f2}, {shufps_imm8}",
+    "vextractf128 {0}, {f3}, 1",
+    "vextractf128 {1}, {f4}, 1",
+    "shufps {f3}, {f4}, {shufps_imm8_hi}",
+    "vinsertf128 {out}, {f1}, {f3}, 1",
 ]
 
 [[lowering]]
@@ -3353,93 +3353,93 @@ insts = ["movaps {out}, {0}", "shufps {out}, {1}, {shufps_imm8}"]
 [[lowering]]
 op = "Vconst"
 when = { eq = ["rd", 64] }
-insts = ["mov_imm {t}, {vconst_lo2}", "movq_xmm {out}, {t}"]
+insts = ["mov_imm {g}, {vconst_lo2}", "movq_xmm {out}, {g}"]
 
 [[lowering]]
 op = "Vconst"
 when = { and = [ { eq = ["rd", 128] }, { eq = ["elem", 1] } ] }
 insts = [
-    "mov_imm {t1}, {vconst_lo}",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, {vconst_hi}",
-    "movq_xmm {t_f2}, {t2}",
-    "punpckldq {t_f1}, {t_f2}",
-    "movaps {out}, {t_f1}",
+    "mov_imm {g1}, {vconst_lo}",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, {vconst_hi}",
+    "movq_xmm {f2}, {g2}",
+    "punpckldq {f1}, {f2}",
+    "movaps {out}, {f1}",
 ]
 
 [[lowering]]
 op = "Vconst"
 when = { and = [ { eq = ["rd", 128] }, { eq = ["elem", 3] } ] }
 insts = [
-    "mov_imm {t1}, {vconst_lo}",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, {vconst_hi}",
-    "movq_xmm {t_f2}, {t2}",
-    "punpckldq {t_f1}, {t_f2}",
-    "movaps {out}, {t_f1}",
+    "mov_imm {g1}, {vconst_lo}",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, {vconst_hi}",
+    "movq_xmm {f2}, {g2}",
+    "punpckldq {f1}, {f2}",
+    "movaps {out}, {f1}",
 ]
 
 [[lowering]]
 op = "Vconst"
 when = { eq = ["rd", 128] }
 insts = [
-    "mov_imm {t1}, {vconst_lo}",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, {vconst_hi}",
-    "movq_xmm {t_f2}, {t2}",
-    "punpcklqdq {t_f1}, {t_f2}",
-    "movaps {out}, {t_f1}",
+    "mov_imm {g1}, {vconst_lo}",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, {vconst_hi}",
+    "movq_xmm {f2}, {g2}",
+    "punpcklqdq {f1}, {f2}",
+    "movaps {out}, {f1}",
 ]
 
 [[lowering]]
 op = "Vconst"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
 insts = [
-    "mov_imm {t1}, {vconst_lo}",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, {vconst_hi}",
-    "movq_xmm {t_f2}, {t2}",
-    "punpckldq {t_f1}, {t_f2}",
-    "mov_imm {t3}, {vconst_lo_hi}",
-    "movq_xmm {t_f3}, {t3}",
-    "mov_imm {t4}, {vconst_hi_hi}",
-    "movq_xmm {t_f4}, {t4}",
-    "punpckldq {t_f3}, {t_f4}",
-    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+    "mov_imm {g1}, {vconst_lo}",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, {vconst_hi}",
+    "movq_xmm {f2}, {g2}",
+    "punpckldq {f1}, {f2}",
+    "mov_imm {g3}, {vconst_lo_hi}",
+    "movq_xmm {f3}, {g3}",
+    "mov_imm {g4}, {vconst_hi_hi}",
+    "movq_xmm {f4}, {g4}",
+    "punpckldq {f3}, {f4}",
+    "vinsertf128 {out}, {f1}, {f3}, 1",
 ]
 
 [[lowering]]
 op = "Vconst"
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
 insts = [
-    "mov_imm {t1}, {vconst_lo}",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, {vconst_hi}",
-    "movq_xmm {t_f2}, {t2}",
-    "punpckldq {t_f1}, {t_f2}",
-    "mov_imm {t3}, {vconst_lo_hi}",
-    "movq_xmm {t_f3}, {t3}",
-    "mov_imm {t4}, {vconst_hi_hi}",
-    "movq_xmm {t_f4}, {t4}",
-    "punpckldq {t_f3}, {t_f4}",
-    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+    "mov_imm {g1}, {vconst_lo}",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, {vconst_hi}",
+    "movq_xmm {f2}, {g2}",
+    "punpckldq {f1}, {f2}",
+    "mov_imm {g3}, {vconst_lo_hi}",
+    "movq_xmm {f3}, {g3}",
+    "mov_imm {g4}, {vconst_hi_hi}",
+    "movq_xmm {f4}, {g4}",
+    "punpckldq {f3}, {f4}",
+    "vinsertf128 {out}, {f1}, {f3}, 1",
 ]
 
 [[lowering]]
 op = "Vconst"
 when = { eq = ["rd", 256] }
 insts = [
-    "mov_imm {t1}, {vconst_lo}",
-    "movq_xmm {t_f1}, {t1}",
-    "mov_imm {t2}, {vconst_hi}",
-    "movq_xmm {t_f2}, {t2}",
-    "punpcklqdq {t_f1}, {t_f2}",
-    "mov_imm {t3}, {vconst_lo_hi}",
-    "movq_xmm {t_f3}, {t3}",
-    "mov_imm {t4}, {vconst_hi_hi}",
-    "movq_xmm {t_f4}, {t4}",
-    "punpcklqdq {t_f3}, {t_f4}",
-    "vinsertf128 {out}, {t_f1}, {t_f3}, 1",
+    "mov_imm {g1}, {vconst_lo}",
+    "movq_xmm {f1}, {g1}",
+    "mov_imm {g2}, {vconst_hi}",
+    "movq_xmm {f2}, {g2}",
+    "punpcklqdq {f1}, {f2}",
+    "mov_imm {g3}, {vconst_lo_hi}",
+    "movq_xmm {f3}, {g3}",
+    "mov_imm {g4}, {vconst_hi_hi}",
+    "movq_xmm {f4}, {g4}",
+    "punpcklqdq {f3}, {f4}",
+    "vinsertf128 {out}, {f1}, {f3}, 1",
 ]
 
 # ════════════════════════════════════════════════════════════
@@ -3454,14 +3454,14 @@ when = { eq = ["rs1_width", 32] }
 insts = [
     "mov32 {out}, {0}",
     "sub {1}, {out}",
-    "setcc {t1}, 0",
-    "mov_imm {t2}, 0x7FFFFFFF",
-    "mov_imm {t3}, 0x80000000",
+    "setcc {g1}, 0",
+    "mov_imm {g2}, 0x7FFFFFFF",
+    "mov_imm {g3}, 0x80000000",
     "test {0}, {0}",
-    "cmovcc {t4}, {t2}, 9",
-    "cmovcc {t4}, {t3}, 8",
-    "test {t1}, {t1}",
-    "cmovcc {out}, {t4}, 5",
+    "cmovcc {g4}, {g2}, 9",
+    "cmovcc {g4}, {g3}, 8",
+    "test {g1}, {g1}",
+    "cmovcc {out}, {g4}, 5",
 ]
 
 [[lowering]]
@@ -3470,14 +3470,14 @@ when = { eq = ["rs1_width", 64] }
 insts = [
     "mov {out}, {0}",
     "sub {1}, {out}",
-    "setcc {t1}, 0",
-    "mov_imm {t2}, 0x7FFFFFFFFFFFFFFF",
-    "mov_imm {t3}, 0x8000000000000000",
+    "setcc {g1}, 0",
+    "mov_imm {g2}, 0x7FFFFFFFFFFFFFFF",
+    "mov_imm {g3}, 0x8000000000000000",
     "test {0}, {0}",
-    "cmovcc {t4}, {t2}, 9",
-    "cmovcc {t4}, {t3}, 8",
-    "test {t1}, {t1}",
-    "cmovcc {out}, {t4}, 5",
+    "cmovcc {g4}, {g2}, 9",
+    "cmovcc {g4}, {g3}, 8",
+    "test {g1}, {g1}",
+    "cmovcc {out}, {g4}, 5",
 ]
 
 # ── Ptrtoint / Inttoptr：x86 指针 = i64，直拷 ──
@@ -3516,28 +3516,28 @@ insts = ["movabs {out}, {global}"]
 op = "AtomicRmw"
 when = { eq = ["imm0", 0] }
 insts = [
-    "mov {t1}, {1}",
-    "xchg {t1}, [{0}]",
-    "mov {out}, {t1}",
+    "mov {g1}, {1}",
+    "xchg {g1}, [{0}]",
+    "mov {out}, {g1}",
 ]
 
 [[lowering]]
 op = "AtomicRmw"
 when = { eq = ["imm0", 1] }
 insts = [
-    "mov {t1}, {1}",
-    "xadd {t1}, [{0}]",
-    "mov {out}, {t1}",
+    "mov {g1}, {1}",
+    "xadd {g1}, [{0}]",
+    "mov {out}, {g1}",
 ]
 
 [[lowering]]
 op = "AtomicRmw"
 when = { eq = ["imm0", 2] }
 insts = [
-    "mov {t1}, {1}",
-    "neg {t1}",
-    "xadd {t1}, [{0}]",
-    "mov {out}, {t1}",
+    "mov {g1}, {1}",
+    "neg {g1}",
+    "xadd {g1}, [{0}]",
+    "mov {out}, {g1}",
 ]
 
 # ── Cmpxchg：RAX = 期望值（隐式累加器）→ LOCK CMPXCHG [ptr], new →
@@ -3565,21 +3565,21 @@ insts = ["nop"]
 op = "Frem"
 when = { eq = ["elem", 1] }
 insts = [
-    "movss {t_f1}, {0}",
-    "divss {t_f1}, {1}",
-    "roundss {t_f1}, {t_f1}, 3",
-    "mulss {t_f1}, {1}",
+    "movss {f1}, {0}",
+    "divss {f1}, {1}",
+    "roundss {f1}, {f1}, 3",
+    "mulss {f1}, {1}",
     "movss {out}, {0}",
-    "subss {out}, {t_f1}",
+    "subss {out}, {f1}",
 ]
 
 [[lowering]]
 op = "Frem"
 insts = [
-    "movsd {t_f1}, {0}",
-    "divsd {t_f1}, {1}",
-    "roundsd {t_f1}, {t_f1}, 3",
-    "mulsd {t_f1}, {1}",
+    "movsd {f1}, {0}",
+    "divsd {f1}, {1}",
+    "roundsd {f1}, {f1}, 3",
+    "mulsd {f1}, {1}",
     "movsd {out}, {0}",
-    "subsd {out}, {t_f1}",
+    "subsd {out}, {f1}",
 ]
