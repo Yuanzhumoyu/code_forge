@@ -693,6 +693,17 @@ pub struct Instruction {
     /// 驱动 MachineInst::effects/is_branch/is_call/is_ret（TargetMachine 集成）。
     #[serde(default)]
     pub effect: Vec<String>,
+    /// 语义标签（开放集合，TOML 显式声明）——生成器按标签做语义派发，
+    /// **不做按指令名的存在性/前缀探测**（第三轮重构原则）。消费方：
+    /// - `wide_vec_store_32`/`wide_vec_store_64`：宽向量 by-ref 调用方栈
+    ///   拷贝 store（VMOVUPS_MR / VMOVUPS_ZMM_MR）；
+    /// - `wide_vec_load_32`/`wide_vec_load_64`：宽向量 by-ref/sret 收参与
+    ///   回读 load（VMOVUPS_RM / VMOVUPS_ZMM_MEM）；
+    /// - `frame_rbp_addr`：帧内 [RBP+disp] 地址计算（LEA_RBP_OFF——sret/
+    ///   by-ref temp 槽地址）。
+    /// 未知标签无消费方（安全）；缺失标签 → 对应 ABI 能力 Unsupported。
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
     /// 在本指令点避开（MachineInst::clobbers）。与 lowering 模板的显式物理
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。

@@ -192,6 +192,9 @@ pub struct LowerCtx {
     pub vreg_widths: HashMap<VReg, u8>,
     /// 是否为浮点返回值（影响 Return 降低时使用 RetVal 还是 RetValFloat）。
     pub is_float_return: bool,
+    /// 是否 sret 返回（函数返回宽向量 >16 字节——隐藏 sret 指针参数占首
+    /// int 槽，move_args 收参从第 2 个 int 槽起；调用方 sret 约定）。
+    pub is_sret_return: bool,
     /// 当前指令的默认操作数宽度 (8/16/32/64)，由 IR 类型推导。
     pub default_opsize: u8,
     /// 当前指令的常量索引 (从 Instruction.immediates 中提取)。
@@ -284,6 +287,7 @@ impl LowerCtx {
             call_conv: CallConv::Default,
             constant_pool: None,
             is_float_return: false,
+            is_sret_return: false,
             current_const_index: 0,
             current_immediates: SmallVec::new(),
             current_func_ref: None,

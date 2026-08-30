@@ -6,13 +6,18 @@
 //! parse_mem_template/collect_phys_clobbers/inst_reg_imm_fids）与
 //! codegen 的 pascal_ident、model 类型。
 //!
-//! ## x86 浮点 Call 路径硬编码（保留原因）
+//! ## x86 浮点 Call 路径（历史硬编码与标签驱动并存）
 //! Return/Call/arg_move_loop 的浮点路径直接引用 `Inst::Movss`/`Inst::Movsd`
-//! 变体（f32/f64 移动）与 by-ref 向量 `VMOVUPS*`。这些指令名与字段角色
-//! 已硬编码在生成代码中（非配置字符串）——riscv 无浮点 Call（浮点参数/
-//! 返回经 GPR 位模式或降级 Unsupported），仅 x86 触发。完全模型化需把
-//! "浮点移动指令 + 字段角色"抽象为 ABI 键 + 运行时查表，收益 < 风险，
-//! 故保留并在此集中标注（新增浮点 Call 的 ISA 需按此路径扩展）。
+//! 变体（f32/f64 移动）——这些指令名与字段角色已硬编码在生成代码中
+//! （非配置字符串）——riscv 无浮点 Call（浮点参数/返回经 GPR 位模式或
+//! 降级 Unsupported），仅 x86 触发。完全模型化需把"浮点移动指令 + 字段
+//! 角色"抽象为 ABI 键 + 运行时查表，收益 < 风险，故保留并在此集中标注
+//! （新增浮点 Call 的 ISA 需按此路径扩展）。
+//!
+//! **宽向量 by-ref/sret 栈拷贝（S1/S2）不走名字探测**——按 TOML `tags`
+//! 语义标签收集（`wide_vec_store_32/64`、`wide_vec_load_32/64`、
+//! `frame_rbp_addr`），从指令结构派生 vn/字段名（`insts_by_tag`/
+//! `reg_mem_fids`/`collect_byref_insts`），不引用具体指令名。
 
 use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
@@ -238,11 +243,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     } else {
         (format_ident!("cond"), format_ident!("target"))
     };
-    // S2：宽向量 sret 需要的指令存在性（x86 有 VMOVUPS_MR/ZMM_MR；
-    // riscv 等无向量 ISA → Unsupported）与 sret_ptr 所在 int 参数槽序列。
-    let has_byref_insts = inst_exists(infos, "VMOVUPS_MR")
-        && inst_exists(infos, "VMOVUPS_ZMM_MR")
-        && inst_exists(infos, "LEA_RBP_OFF");
+    // S2：宽向量 sret 需要的指令（按语义标签收集）与 sret_ptr 所在
+    // int 参数槽序列。
+    let (_byref_insts, has_byref_insts) = collect_byref_insts(infos);
     let int_regs: Vec<syn::Ident> = model
         .abi
         .as_ref()
@@ -313,8 +316,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             .unwrap_or_else(|| quote! { Reg::from_index(0, forge_ir::RegClass::GPR64) });
         // S2：宽向量返回值（>16 字节）sret——结果 store 到 [sret_ptr]，
         // sret_ptr = 首个 GPR 参数槽（Windows x64：隐藏 sret 参数占 RCX）。
-        // 生成期门控：ISA 未声明 VMOVUPS_MR（riscv）→ Unsupported。
+        // 生成期门控：语义标签缺失（riscv）→ Unsupported。
         let sret_return_body: TokenStream = if has_byref_insts {
+            let (vn_s32, f_s32, m_s32, i_s32) =
+                _byref_insts.get("wide_vec_store_32").expect("tag store32").clone();
+            let (vn_s64, f_s64, m_s64, i_s64) =
+                _byref_insts.get("wide_vec_store_64").expect("tag store64").clone();
             quote! {
                 // sret_ptr 来自首 int 参数槽（x86 arg_class int 首项 = RCX）
                 let __sret = Reg::from_index(
@@ -328,9 +335,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                     .unwrap_or(32)
                     .max(32);
                 let __sidx = __pack.push_inst(if __vbytes == 64 {
-                    Inst::VmovupsZmmMr {
-                        src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                        mem: MemRef {
+                    Inst::#vn_s64 {
+                        #f_s64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #m_s64: MemRef {
                             base: __sret,
                             disp: 0,
                             index: None,
@@ -338,9 +345,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                         },
                     }
                 } else {
-                    Inst::VmovupsMr {
-                        src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                        mem: MemRef {
+                    Inst::#vn_s32 {
+                        #f_s32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #m_s32: MemRef {
                             base: __sret,
                             disp: 0,
                             index: None,
@@ -348,13 +355,18 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                         },
                     }
                 });
-                __pack.map_reg_field(val, __sidx, 0u8, false);
+                __pack.map_reg_field(
+                    val,
+                    __sidx,
+                    if __vbytes == 64 { #i_s64 } else { #i_s32 },
+                    false,
+                );
             }
         } else {
             quote! {
                 let _ = __pack;
                 return Err(crate::prelude::IrError::Unsupported(
-                    "v12 wide vector return needs VMOVUPS_MR (sret)".into(),
+                    "v12 wide vector return needs wide_vec_store tags (sret)".into(),
                 ));
             }
         };
@@ -719,11 +731,12 @@ fn gen_call_lowering(
     };
     let has_ss = fids(&fpr_mov32).len() >= 2;
     let has_fpr_mov = sd_f.len() >= 2 && has_ss;
-    // S1/S2：宽向量 by-ref/sret 栈拷贝指令存在性（x86 有 VMOVUPS_MR/
-    // VMOVUPS_ZMM_MR/LEA_RBP_OFF；riscv 等无向量 ISA → Unsupported）。
-    let has_byref_insts = inst_exists(infos, "VMOVUPS_MR")
-        && inst_exists(infos, "VMOVUPS_ZMM_MR")
-        && inst_exists(infos, "LEA_RBP_OFF");
+    // S1/S2：宽向量 by-ref/sret 栈拷贝指令——**按语义标签收集**（TOML
+    // `tags` 显式声明；不做按指令名/前缀的存在性探测）。缺失任意标签 →
+    // 对应 ABI 能力 Unsupported（riscv 等无向量 ISA 天然缺标签）。
+    // 从指令结构派生 vn/字段名（semantic_operand_name），不硬编码。
+    let (byref_insts, has_byref_insts) = collect_byref_insts(infos);
+    let byref = |tag: &str| byref_insts.get(tag).cloned();
     // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
     let ret_src_expr: TokenStream = abi
         .ret_regs
@@ -800,10 +813,11 @@ fn gen_call_lowering(
         }
     };
     // S2：宽向量返回值（>16 字节）sret 结果回读——call 后从 [sret_off] load
-    // 到结果 XReg（VMOVUPS_RM/ZMM_MEM）。生成期门控：ISA 无这些指令
-    // （riscv）→ 宽向量返回在编译入口守卫（compiler.rs）已拒绝，此处仅
-    // 防御性 Unsupported。
+    // 到结果 XReg（tag `wide_vec_load_32/64` 指令）。生成期门控：标签缺失
+    // （riscv）→ 编译入口守卫（compiler.rs）已拒绝，此处防御性 Unsupported。
     let sret_load_stmt: TokenStream = if has_byref_insts {
+        let (vn_l32, f_l32, m_l32, i_l32) = byref("wide_vec_load_32").expect("tag load32");
+        let (vn_l64, f_l64, m_l64, i_l64) = byref("wide_vec_load_64").expect("tag load64");
         quote! {
             let __vbytes = ctx
                 .xreg_types
@@ -812,9 +826,9 @@ fn gen_call_lowering(
                 .unwrap_or(32)
                 .max(32);
             let __ridx = __pack.push_inst(if __vbytes == 64 {
-                Inst::VmovupsZmmMem {
-                    dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    mem: MemRef {
+                Inst::#vn_l64 {
+                    #f_l64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #m_l64: MemRef {
                         base: Reg::RBP,
                         disp: __sret_off,
                         index: None,
@@ -822,9 +836,9 @@ fn gen_call_lowering(
                     },
                 }
             } else {
-                Inst::VmovupsRm {
-                    dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    mem: MemRef {
+                Inst::#vn_l32 {
+                    #f_l32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #m_l32: MemRef {
                         base: Reg::RBP,
                         disp: __sret_off,
                         index: None,
@@ -832,13 +846,18 @@ fn gen_call_lowering(
                     },
                 }
             });
-            // 结果 vreg 是 dest（load 指令的唯一 Reg 操作数，序号 0）
-            __pack.map_reg_field(__r, __ridx, 0u8, true);
+            // 结果 vreg 是 load 指令的 Reg 字段（序号按宽度分派）
+            __pack.map_reg_field(
+                __r,
+                __ridx,
+                if __vbytes == 64 { #i_l64 } else { #i_l32 },
+                true,
+            );
         }
     } else {
         quote! {
             return Err(crate::prelude::IrError::Unsupported(
-                "v12 wide vector return load needs VMOVUPS_RM".into(),
+                "v12 wide vector return load needs wide_vec_load tags".into(),
             ));
         }
     };
@@ -970,21 +989,23 @@ fn gen_call_lowering(
             }
         }
     };
-    // S2：sret 槽地址 → 首 int 参数槽（RCX）。生成期门控（LEA_RBP_OFF 存在）。
+    // S2：sret 槽地址 → 首 int 参数槽（RCX）。生成期门控（frame_rbp_addr
+    // 标签存在）。
     let sret_setup: TokenStream = if has_byref_insts {
+        let (vn_lea, f_lea, m_lea, i_lea) = byref("frame_rbp_addr").expect("tag lea");
         quote! {
             if __sret {
                 let __sp = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
-                let __lidx = __pack.push_inst(Inst::LeaRbpOff {
-                    dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
-                    mem: MemRef {
+                let __lidx = __pack.push_inst(Inst::#vn_lea {
+                    #f_lea: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #m_lea: MemRef {
                         base: Reg::RBP,
                         disp: __sret_off,
                         index: None,
                         scale: 1,
                     },
                 });
-                __pack.map_reg_field(__sp, __lidx, 0u8, true);
+                __pack.map_reg_field(__sp, __lidx, #i_lea, true);
                 let __midx = __pack.push_inst(Inst::#mov_vn {
                     #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
                     #m_dest: [#(Reg::#int_regs),*][0],
@@ -996,6 +1017,97 @@ fn gen_call_lowering(
         }
     } else {
         quote! {}
+    };
+    // S1：宽向量实参（>16 字节）by-ref——栈上副本 + 传 GPR 指针。
+    // 调用方侧 temp 槽（帧内 [RBP-off]，32 字节对齐间距 64），向量值
+    // store 到槽（tag `wide_vec_store_32/64` 指令），LEA 槽地址到地址
+    // XReg（tag `frame_rbp_addr`），再 mov 到 int 参数槽。所有 call 复用
+    // 同一组槽（call 间 temp 槽天然死，顺序执行无重叠 live 区间）。
+    // **生成期门控**：标签缺失（riscv 等无向量 ISA）→ 直接 Unsupported，
+    // 不引用不存在的变体。
+    let byref_stmt: TokenStream = if has_byref_insts {
+        let (vn_s32, f_s32, m_s32, i_s32) = byref("wide_vec_store_32").expect("tag store32");
+        let (vn_s64, f_s64, m_s64, i_s64) = byref("wide_vec_store_64").expect("tag store64");
+        let (vn_lea, f_lea, m_lea, i_lea) = byref("frame_rbp_addr").expect("tag lea");
+        quote! {
+            let __vbytes = ctx
+                .xreg_types
+                .get(&__a)
+                .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                .unwrap_or(32)
+                .max(32);
+            let __off = -((8 + 64 * __bi) as i64);
+            __bi += 1;
+            // 地址平移：局部槽基准 = RBP - stack_slot_shift（x86 callee-saved
+            // 区 64B；与 StackAddr 的 current_offset = v - shift 同构——否则
+            // 覆盖 callee-saved push 槽）。
+            let __addr = __off - ctx.stack_slot_shift as i64;
+            // 1) 向量 → 栈槽（宽度分派：32B → store_32 指令、64B →
+            //    store_64 指令；缺省 32B 兜底）
+            let __vidx = __pack.push_inst(if __vbytes == 64 {
+                Inst::#vn_s64 {
+                    #f_s64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #m_s64: MemRef {
+                        base: Reg::RBP,
+                        disp: __addr,
+                        index: None,
+                        scale: 1,
+                    },
+                }
+            } else {
+                Inst::#vn_s32 {
+                    #f_s32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #m_s32: MemRef {
+                        base: Reg::RBP,
+                        disp: __addr,
+                        index: None,
+                        scale: 1,
+                    },
+                }
+            });
+            // 参数 vreg 是 store 指令的 Reg 字段（序号按宽度分派）
+            __pack.map_reg_field(
+                __a,
+                __vidx,
+                if __vbytes == 64 { #i_s64 } else { #i_s32 },
+                false,
+            );
+            // 2) 槽地址 → 地址 XReg（frame_rbp_addr 指令的 Reg 字段 = 结果）
+            let __ptr = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
+            let __lidx = __pack.push_inst(Inst::#vn_lea {
+                #f_lea: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #m_lea: MemRef {
+                    base: Reg::RBP,
+                    disp: __addr,
+                    index: None,
+                    scale: 1,
+                },
+            });
+            __pack.map_reg_field(__ptr, __lidx, #i_lea, true);
+            // 3) 地址 → GPR 参数槽（by-ref 参数占 1 个 int 槽）
+            if __gi < #n {
+                let __dst = [#(Reg::#int_regs),*][__gi];
+                __gi += 1;
+                let __midx = __pack.push_inst(Inst::#mov_vn {
+                    #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #m_dest: __dst,
+                });
+                __pack.map_reg_field(__ptr, __midx, #m_src_idx, false);
+            } else {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: integer arg register exhausted (by-ref wide vector)".into(),
+                ));
+            }
+            // 4) 帧需求：槽深并入 max_stack_bytes（frame_layout 的 sub rsp 大小；
+            //    与 StackAddr 的 depth = -v + 8 同构——不含 shift，帧内统一平移）
+            ctx.max_stack_bytes = ctx.max_stack_bytes.max((8 + 64 * __bi) as u32);
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: wide vector arg (>16B) by-ref needs wide_vec_store/frame_rbp_addr tags".into(),
+            ));
+        }
     };
     let arg_loop = arg_move_loop(
         op_name,
@@ -1010,8 +1122,8 @@ fn gen_call_lowering(
         &f_src,
         has_ss,
         has_fpr_mov,
-        // S1：宽向量 by-ref 栈拷贝指令存在性（x86；riscv 缺省 Unsupported）
-        has_byref_insts,
+        // S1：宽向量 by-ref 栈拷贝（生成期拼好的语句；标签缺失 → Unsupported）
+        &byref_stmt,
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,
@@ -1067,8 +1179,8 @@ fn gen_call_lowering(
 /// 参数 → ABI 寄存器移动语句（浮点参数按类型分派 XMM；整数按序 GPR）。
 /// 整数 mov 指令名按 [abi].ret_mov_inst 泛化；浮点指令缺失时该分支
 /// Unsupported（防引用不存在的 Inst 变体）。
-/// `has_byref`：ISA 是否声明宽向量 by-ref 栈拷贝指令（VMOVUPS_MR/
-/// VMOVUPS_ZMM_MR/LEA_RBP_OFF）——缺省该分支 Unsupported。
+/// `byref_stmt`：宽向量 by-ref 栈拷贝语句（gen_call_lowering 按语义标签
+/// 生成期拼好；标签缺失 → Unsupported）。
 #[allow(clippy::too_many_arguments)]
 fn arg_move_loop(
     op_name: &str,
@@ -1083,7 +1195,7 @@ fn arg_move_loop(
     f_src: &syn::Ident,
     has_ss: bool,
     has_fpr_mov: bool,
-    has_byref: bool,
+    byref_stmt: &TokenStream,
     mov_vn: &syn::Ident,
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
@@ -1134,88 +1246,6 @@ fn arg_move_loop(
             ));
         }
     };
-    // S1：宽向量实参（>16 字节）by-ref——栈上副本 + 传 GPR 指针。
-    // 调用方侧 temp 槽（帧内 [RBP-off]，32 字节对齐间距 64），向量值
-    // store 到槽（VMOVUPS_MR/ZMM_MR），LEA 槽地址到地址 XReg，再 mov 到
-    // int 参数槽。所有 call 复用同一组槽（call 间 temp 槽天然死，顺序
-    // 执行无重叠 live 区间）。**生成期门控**：ISA 未声明这些指令
-    // （riscv 等无向量 ISA）→ 直接 Unsupported，不引用不存在的变体。
-    let byref_stmt: TokenStream = if has_byref {
-        quote! {
-            let __vbytes = ctx
-                .xreg_types
-                .get(&__a)
-                .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
-                .unwrap_or(32)
-                .max(32);
-            let __off = -((8 + 64 * __bi) as i64);
-            __bi += 1;
-            // 地址平移：局部槽基准 = RBP - stack_slot_shift（x86 callee-saved
-            // 区 64B；与 StackAddr 的 current_offset = v - shift 同构——否则
-            // 覆盖 callee-saved push 槽）。
-            let __addr = __off - ctx.stack_slot_shift as i64;
-            // 1) 向量 → 栈槽（宽度分派：32B → VMOVUPS_MR（VEX ymm）、
-            //    64B → VMOVUPS_ZMM_MR（EVEX zmm）；缺省 32B 兜底）
-            let __vidx = __pack.push_inst(if __vbytes == 64 {
-                Inst::VmovupsZmmMr {
-                    src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    mem: MemRef {
-                        base: Reg::RBP,
-                        disp: __addr,
-                        index: None,
-                        scale: 1,
-                    },
-                }
-            } else {
-                Inst::VmovupsMr {
-                    src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    mem: MemRef {
-                        base: Reg::RBP,
-                        disp: __addr,
-                        index: None,
-                        scale: 1,
-                    },
-                }
-            });
-            // 参数 vreg 是 src（store 指令的唯一 Reg 操作数，序号 0）
-            __pack.map_reg_field(__a, __vidx, 0u8, false);
-            // 2) 槽地址 → 地址 XReg（LEA_RBP_OFF：dest 序号 0 = 结果）
-            let __ptr = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
-            let __lidx = __pack.push_inst(Inst::LeaRbpOff {
-                dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
-                mem: MemRef {
-                    base: Reg::RBP,
-                    disp: __addr,
-                    index: None,
-                    scale: 1,
-                },
-            });
-            __pack.map_reg_field(__ptr, __lidx, 0u8, true);
-            // 3) 地址 → GPR 参数槽（by-ref 参数占 1 个 int 槽）
-            if __gi < #n {
-                let __dst = [#(Reg::#int_regs),*][__gi];
-                __gi += 1;
-                let __midx = __pack.push_inst(Inst::#mov_vn {
-                    #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-                    #m_dest: __dst,
-                });
-                __pack.map_reg_field(__ptr, __midx, #m_src_idx, false);
-            } else {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: integer arg register exhausted (by-ref wide vector)".into(),
-                ));
-            }
-            // 4) 帧需求：槽深并入 max_stack_bytes（frame_layout 的 sub rsp 大小；
-            //    与 StackAddr 的 depth = -v + 8 同构——不含 shift，帧内统一平移）
-            ctx.max_stack_bytes = ctx.max_stack_bytes.max((8 + 64 * __bi) as u32);
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: wide vector arg (>16B) by-ref needs VMOVUPS_MR/LEA_RBP_OFF".into(),
-            ));
-        }
-    };
     let stmt = quote! {
         if ctx.xreg_types.get(&__a).is_some_and(|t| {
             ctx.type_ctx.as_ref().is_some_and(|tc| {
@@ -1261,6 +1291,72 @@ fn arg_move_loop(
             }
         }
     }
+}
+
+/// 按语义标签收集指令——标签在 TOML `tags` 显式声明（第三轮重构原则：
+/// **不做按指令名/前缀的存在性探测**，语义由标签驱动）。无匹配 → 空。
+pub(crate) fn insts_by_tag<'a, 'b>(infos: &'a [InstInfo<'a>], tag: &'b str) -> Vec<&'a InstInfo<'a>> {
+    infos
+        .iter()
+        .filter(|i| i.inst.tags.iter().any(|t| t == tag))
+        .collect()
+}
+
+/// 从指令操作数结构提取语义化字段名 + Reg 操作数序号：
+/// 返回 (Reg 字段名, Mem 字段名, Reg 字段序号)。字段名由
+/// `semantic_operand_name` 生成（Reg in→src/out→dest、Mem→mem），
+/// 从结构派生——不硬编码指令名/字段名。
+fn reg_mem_fids(info: &InstInfo) -> (Option<syn::Ident>, Option<syn::Ident>, u8) {
+    let mut reg: Option<syn::Ident> = None;
+    let mut mem: Option<syn::Ident> = None;
+    let mut seen_regs = 0u8;
+    let mut reg_idx = 0u8;
+    for (_, fid, slot, _) in &info.operands {
+        match slot.kind {
+            OperandKind::Reg => {
+                if reg.is_none() {
+                    reg = Some((*fid).clone());
+                    reg_idx = seen_regs;
+                }
+                seen_regs += 1;
+            }
+            OperandKind::Mem => {
+                if mem.is_none() {
+                    mem = Some((*fid).clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    (reg, mem, reg_idx)
+}
+
+/// 收集宽向量 by-ref/sret 栈拷贝指令——按语义标签（TOML `tags` 显式声明，
+/// 不做按指令名探测）。返回 (tag → (vn, Reg 字段名, Mem 字段名, Reg 序号),
+/// 是否五标签齐全)。缺失 → 对应 ABI 能力 Unsupported。
+pub(crate) fn collect_byref_insts(
+    infos: &[InstInfo],
+) -> (
+    std::collections::HashMap<&'static str, (syn::Ident, syn::Ident, syn::Ident, u8)>,
+    bool,
+) {
+    const TAGS: [&str; 5] = [
+        "wide_vec_store_32",
+        "wide_vec_store_64",
+        "wide_vec_load_32",
+        "wide_vec_load_64",
+        "frame_rbp_addr",
+    ];
+    let mut m = std::collections::HashMap::new();
+    for tag in TAGS {
+        if let Some(info) = insts_by_tag(infos, tag).first()
+            && let (Some(reg), Some(mem), idx) = reg_mem_fids(info)
+        {
+            m.insert(tag, (info.vn.clone(), reg, mem, idx));
+        }
+    }
+    let ok = m.len() == TAGS.len();
+    (m, ok)
 }
 
 /// 展开一条 lowering 模板（符号化操作数）为指令构造语句序列。

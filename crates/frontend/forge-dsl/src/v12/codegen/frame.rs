@@ -667,7 +667,9 @@ fn gen_emit_pseudo(
                 }
             };
             Ok(quote! {
-                let mut __gi = 0usize;
+                // S2：sret 隐藏参数占首 int 槽（RCX）——收参从第 2 个 int 槽
+                // 起（__gi=1），与调用方 sret 约定一致（AllocResult.sret）。
+                let mut __gi = if __rm.sret { 1usize } else { 0usize };
                 let mut __fi = 0usize;
                 for (__i, &__pv) in __rm.param_vregs.iter().enumerate() {
                     if !__rm.assignments.contains_key(&__pv) {

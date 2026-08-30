@@ -795,6 +795,8 @@ impl<'a> BtState<'a> {
                 .iter()
                 .map(|v| v.class().is_fp() && v.width() > 16)
                 .collect(),
+            // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）
+            sret: false,
             param_is_32: self
                 .config
                 .param_xregs

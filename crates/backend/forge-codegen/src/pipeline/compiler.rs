@@ -1920,6 +1920,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
             .return_types()
             .iter()
             .any(|t| ctx.reg_class_for(t).is_fp());
+        // S2：sret 隐藏参数——函数返回宽向量（>16 字节）→ 首 int 槽被
+        // sret 指针占用（move_args 收参 __gi 从 1 起；调用方 sret 约定）。
+        ctx.is_sret_return = func.return_types().iter().any(|t| {
+            let s = func.types.borrow();
+            (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
+        });
         ctx.constant_pool = Some(func.constants.clone());
 
         Self {
@@ -2049,6 +2055,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
             &self.xreg_map,
             &self.inst_clobbers,
         )?;
+
+        // S2：sret 隐藏参数标记（move_args 收参跳过首 int 槽）——
+        // 由 CompileState::new 的 LowerCtx.is_sret_return 预计算。
+        let mut alloc_result = alloc_result;
+        alloc_result.sret = self.ctx.is_sret_return;
 
         // 分配后回写：按 xreg_map 把 XReg 的分配结果填入微指令寄存器字段（物理 Reg）
         let mut global_inst = 0usize;

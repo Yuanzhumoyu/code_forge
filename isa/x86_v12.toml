@@ -1379,6 +1379,7 @@ form = "EVEX_RR_MEMREF"
 opcode = 0x10
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 asm = "vmovups {0:[fpr32:out]}, {1:[mem:in]}"
+tags = ["wide_vec_load_64"]
 
 # 非对齐 512 位 store（by-ref 调用方侧副本）
 [[instructions]]
@@ -1387,6 +1388,7 @@ form = "EVEX_RR_MEMREF"
 opcode = 0x11
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 asm = "vmovups {0:[fpr32:in]}, {1:[mem:out]}"
+tags = ["wide_vec_store_64"]
 
 # ── EVEX opmask（掩码写合并，z=0）：vaddps zmm, zmm, zmm, k1 ──
 # 与 3 操作数 VADDPS_ZMM 同助记符自动分发（类型签名 O3 不同）；第 4 操作数
@@ -1429,6 +1431,7 @@ form = "VEX_RR_MEMREF"
 opcode = 0x10
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 asm = "vmovups {0:[fpr:out]}, {1:[mem:in]}"
+tags = ["wide_vec_load_32"]
 
 # 非对齐向量 store（by-ref 调用方侧：实参 → 栈上副本）
 [[instructions]]
@@ -1437,6 +1440,7 @@ form = "VEX_RR_MEMREF"
 opcode = 0x11
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 asm = "vmovups {0:[fpr:in]}, {1:[mem:out]}"
+tags = ["wide_vec_store_32"]
 
 [[instructions]]
 name = "VBROADCASTSS"
@@ -1714,6 +1718,7 @@ form = "MRR_MEMREF"
 opcode = 0x8D
 asm = "lea_rbp {0:[gpr:out]}, {1:[mem:in]}"
 effect = ["Pure"]
+tags = ["frame_rbp_addr"]
 
 [[instructions]]
 name = "MOVABS_GLOBAL"

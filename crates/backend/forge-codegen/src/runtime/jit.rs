@@ -1018,6 +1018,90 @@ mod tests {
         assert_eq!(got, 1, "sret 返回 lane0 f32 1.5 → fptosi → 1");
     }
 
+    /// S3: 标量 + by-ref 实参混合——callee(i32, v256) -> i32：
+    /// i32→RCX、v256 by-ref→RDX（__gi 顺延）；callee 收参后 lane0+标量和。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_mixed_scalar_and_byref_args() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 8)
+        };
+        // callee: (i32, v256) -> i32（v256 by-ref 占 RDX——RCX 给标量）
+        let sig_c = FunctionSignature::new(&[(TypeId::I32, "a"), (vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(TypeId::I32, "a"), (vt, "v")]);
+        bc.switch_to_block(blk);
+        let idx = bc.iconst_i32(0);
+        let lane = bc.vextract(p[1], idx);
+        let wide = bc.fpext(lane, TypeId::F64);
+        let int = bc.fptosi(wide, TypeId::I32);
+        let sum = bc.iadd(p[0], int);
+        bc.ret(&[sum]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: () -> i32 { callee(10, vconst([1.5, ...])) } → 10 + 1 = 11
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let ten = bm.iconst_i32(10);
+        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let r = bm.call(callee_ref, &[ten, v], &[TypeId::I32]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 11, "标量 RCX + by-ref v256 RDX 混合槽位");
+    }
+
+    /// S3: sret + by-ref 实参混合——callee(v256) -> v256：
+    /// sret→RCX、v256 by-ref→RDX；callee 原样返回（by-ref 收参 → sret 输出），
+    /// main 回读 lane0 验证值往返。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_sret_with_byref_arg() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 8)
+        };
+        // callee: (v256) -> v256：原样返回（by-ref 收参 [RDX] → sret store [RCX]）
+        let sig_c = FunctionSignature::new(&[(vt, "v")], &[vt]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
+        bc.switch_to_block(blk);
+        bc.ret(&[p[0]]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: () -> i32 { vextract(callee(vconst([1.5,...])), 0) → fptosi }
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let r = bm.call(callee_ref, &[v], &[vt]);
+        let idx = bm.iconst_i32(0);
+        let lane = bm.vextract(r[0], idx);
+        let wide = bm.fpext(lane, TypeId::F64);
+        let int = bm.fptosi(wide, TypeId::I32);
+        bm.ret(&[int]);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(
+            got, 1,
+            "sret(RCX) + by-ref(RDX) 混合：输入 lane0 1.5 往返 → 1"
+        );
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]
