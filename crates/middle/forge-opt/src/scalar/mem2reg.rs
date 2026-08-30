@@ -133,7 +133,10 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                             .copied()
                             .collect();
                         for lr in load_results {
-                            func.use_lists.replace_all_uses(lr, stored_val);
+                            // P0-7 修复：用 Function::replace_all_uses（更新 DFG
+                            // 操作数 + 终结符参数），原 use_lists.replace_all_uses
+                            // 只改 use-list 侧 → remove_inst 后引用悬空。
+                            func.replace_all_uses(lr, stored_val);
                         }
                         // Mark load as Nop
                         func.use_lists.remove_inst(&func.dfg, load_inst);
@@ -174,7 +177,8 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                             .copied()
                             .collect();
                         for lr in load_results {
-                            func.use_lists.replace_all_uses(lr, first_val);
+                            // P0-7 修复：Function::replace_all_uses 同步 DFG。
+                            func.replace_all_uses(lr, first_val);
                         }
                         func.use_lists.remove_inst(&func.dfg, load_inst);
                         func.dfg.remove_inst(load_inst);
@@ -236,7 +240,10 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                             .copied()
                             .collect();
                         for lr in load_results {
-                            func.use_lists.replace_all_uses(lr, stored_val);
+                            // P0-7 修复：用 Function::replace_all_uses（更新 DFG
+                            // 操作数 + 终结符参数），原 use_lists.replace_all_uses
+                            // 只改 use-list 侧 → remove_inst 后引用悬空。
+                            func.replace_all_uses(lr, stored_val);
                         }
                         func.use_lists.remove_inst(&func.dfg, load_inst);
                         func.dfg.remove_inst(load_inst);

@@ -3,7 +3,7 @@
 //! Runs dataflow analysis to find partially redundant expressions and
 //! marks insertion points to make them fully redundant (for GVN to eliminate).
 
-use super::cse::{ExprKey, is_cse_candidate, opcode_discriminant};
+use super::cse::{ExprKey, is_cse_candidate};
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
 use forge_ir::*;
@@ -101,8 +101,9 @@ fn insert_expression(func: &mut Function, block: Block, expr_key: &ExprKey) -> O
     // Build operands from ExprKey
     let operands: smallvec::SmallVec<[Value; 4]> = expr_key.operands.iter().copied().collect();
 
-    // Map opcode discriminant back to an Opcode
-    let opcode = discriminant_to_opcode(expr_key.opcode)?;
+    // P0-2 修复：expr_key.opcode 直接是 Opcode（含 icmp/fcmp cond 载荷），
+    // 不再经 discriminant_to_opcode 往返（旧实现把任何 icmp 重建为 Equal）。
+    let opcode = expr_key.opcode.clone();
 
     // Create the instruction
     let new_inst = func.dfg.make_inst(
@@ -117,43 +118,6 @@ fn insert_expression(func: &mut Function, block: Block, expr_key: &ExprKey) -> O
     func.dfg.insts[new_inst.0 as usize].results.first().copied()
 }
 
-/// Map an opcode discriminant back to its Opcode variant.
-/// Must stay in sync with `opcode_discriminant()` in cse.rs.
-fn discriminant_to_opcode(disc: u8) -> Option<Opcode> {
-    match disc {
-        1 => Some(Opcode::Iadd),
-        2 => Some(Opcode::Isub),
-        3 => Some(Opcode::Imul),
-        4 => Some(Opcode::Udiv),
-        5 => Some(Opcode::Sdiv),
-        6 => Some(Opcode::Urem),
-        7 => Some(Opcode::Srem),
-        8 => Some(Opcode::Fadd),
-        9 => Some(Opcode::Fsub),
-        10 => Some(Opcode::Fmul),
-        11 => Some(Opcode::Fdiv),
-        90 => Some(Opcode::Frem),
-        16 => Some(Opcode::Band),
-        17 => Some(Opcode::Bor),
-        18 => Some(Opcode::Bxor),
-        19 => Some(Opcode::Bnot),
-        20 => Some(Opcode::Ishl),
-        21 => Some(Opcode::Ushr),
-        22 => Some(Opcode::Sshr),
-        23 => Some(Opcode::Icmp { cond: IntCC::Equal }),
-        25 => Some(Opcode::Load),
-        26 => Some(Opcode::Sextend),
-        27 => Some(Opcode::Uextend),
-        28 => Some(Opcode::Ireduce),
-        29 => Some(Opcode::Bitcast),
-        30 => Some(Opcode::StackAddr),
-        31 => Some(Opcode::GlobalAddr),
-        32 => Some(Opcode::Select),
-        33 => Some(Opcode::Copy),
-        _ => None,
-    }
-}
-
 fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey>) {
     let mut expr_to_id = HashMap::new();
     let mut id_to_expr = Vec::new();
@@ -165,7 +129,7 @@ fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey
                 && let Some(v) = inst.results.first().copied()
             {
                 let key = ExprKey {
-                    opcode: opcode_discriminant(&inst.opcode),
+                    opcode: inst.opcode.clone(),
                     operands: inst.operands.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
@@ -199,7 +163,7 @@ fn compute_gen_kill(
                 && let Some(v) = inst.results.first().copied()
             {
                 let key = ExprKey {
-                    opcode: opcode_discriminant(&inst.opcode),
+                    opcode: inst.opcode.clone(),
                     operands: inst.operands.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
@@ -208,12 +172,18 @@ fn compute_gen_kill(
                 }
             }
 
+            // P0-4：内存写 kill 集合覆盖全部 may-write（Fstore/Call/原子）。
             if matches!(
                 inst.opcode,
-                Opcode::Store | Opcode::Call | Opcode::CallIndirect
+                Opcode::Store
+                    | Opcode::Fstore
+                    | Opcode::Call
+                    | Opcode::CallIndirect
+                    | Opcode::AtomicRmw
+                    | Opcode::Cmpxchg
             ) {
                 for (key, &id) in expr_to_id {
-                    if key.opcode == opcode_discriminant(&Opcode::Load) {
+                    if matches!(key.opcode, Opcode::Load | Opcode::Fload) {
                         kill.insert(id);
                     }
                 }

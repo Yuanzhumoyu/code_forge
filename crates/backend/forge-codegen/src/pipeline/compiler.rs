@@ -1640,6 +1640,11 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
 pub struct FunctionCompiler<M: TargetMachine> {
     machine: M,
     reg_alloc: BacktrackingAllocator,
+    /// IR 级优化级别（None = 不优化，直接编译——与历史 compile_raw 行为
+    /// 一致）。Some(level) 时 `compile()`/`compile_with_alloc()` 先对函数
+    /// 克隆体跑对应 PassManager 管线再 lower。P0-1：把 forge-opt 优化
+    /// 管线接入生产编译（此前 PassManager 是死代码，全部 pass 缺陷潜伏）。
+    opt_level: Option<forge_opt::OptimizationLevel>,
 }
 
 impl<M: TargetMachine> FunctionCompiler<M> {
@@ -1648,15 +1653,29 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         Self {
             machine,
             reg_alloc: BacktrackingAllocator,
+            opt_level: None,
         }
     }
 
-    /// Compile an IR function (full pipeline).
-    pub fn compile(&self, func: &Function) -> Result<CompiledFunction, IrError> {
-        self.compile_raw(func)
+    /// 启用 IR 级优化（compile/compile_with_alloc 前跑对应 O 级别管线）。
+    pub fn with_opt_level(mut self, level: forge_opt::OptimizationLevel) -> Self {
+        self.opt_level = Some(level);
+        self
     }
 
-    /// Compile an IR function (raw, no IR-level optimization passes).
+    /// 当前优化级别（None = 未启用）。
+    pub fn opt_level(&self) -> Option<forge_opt::OptimizationLevel> {
+        self.opt_level
+    }
+
+    /// Compile an IR function (full pipeline，含 IR 级优化若已启用
+    /// `with_opt_level`)。无优化时与 compile_raw 等价。
+    pub fn compile(&self, func: &Function) -> Result<CompiledFunction, IrError> {
+        self.compile_with_alloc(func).map(|(cf, _)| cf)
+    }
+
+    /// Compile an IR function (raw, no IR-level optimization passes)。
+    /// 显式绕过优化管线（即使设置了 opt_level）。
     /// 公共 API 面：只返回编译产物；分配明细经 [`Self::compile_with_alloc`]。
     pub fn compile_raw(&self, func: &Function) -> Result<CompiledFunction, IrError> {
         self.compile_with_alloc(func).map(|(cf, _)| cf)
@@ -1669,6 +1688,20 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         &self,
         func: &Function,
     ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
+        // P0-1：IR 级优化管线接入——若启用，克隆函数跑对应 O 级别管线，
+        // 用优化后的克隆体继续编译（原 func 不被修改；PassManager 需要
+        // &mut Function）。此前 compile()→compile_raw() 直接编译，forge-opt
+        // 的全部 pass 在生产路径是死代码。未启用时不克隆（零开销）。
+        let mut owned: Function;
+        let func: &Function = if let Some(level) = self.opt_level {
+            owned = func.clone();
+            let pm = forge_opt::PassManager::for_level(level);
+            pm.run_on_function(&mut owned)?;
+            &owned
+        } else {
+            func
+        };
+
         let _cf_t0 = std::time::Instant::now();
         // 宽向量参数/返回（>16 字节）ABI：
         // - 若 ISA 声明 `vector by-ref limit`（如 x86 limit=128 位）→ 宽向量按
@@ -2168,5 +2201,42 @@ mod alloc_integration_tests {
                 "spill 槽大小非法: {xreg:?} -> {slot:?}"
             );
         }
+    }
+
+    /// P0-1 集成：`with_opt_level` 编译常量折叠函数——O1 管线把
+    /// `iconst(21)*iconst(2)` 折叠为常量，编译产物仍正确（此前优化管线
+    /// 在生产路径是死代码）。
+    #[test]
+    fn p0_compile_with_opt_level() {
+        x86_v12::ensure_registered();
+        let mut b = FunctionBuilder::new(
+            "opt_const_fold",
+            TypeContext::new(),
+            build_sig(&[], TypeId::I64),
+        );
+        b.create_block_here();
+        let a = b.iconst_i64(21);
+        let c = b.iconst_i64(2);
+        let s = b.imul(a, c);
+        b.ret(&[s]);
+        let func = b.finish().expect("build");
+
+        let machine = x86_v12::TargetMachine::new();
+        // 无优化编译（对照）
+        let (cf0, _) = FunctionCompiler::new(machine.clone())
+            .compile_with_alloc(&func)
+            .expect("compile 无优化");
+        // O1 优化编译（常量折叠 21*2 → 42）
+        let (cf1, _) = FunctionCompiler::new(machine.clone())
+            .with_opt_level(forge_opt::OptimizationLevel::O1)
+            .compile_with_alloc(&func)
+            .expect("compile 带 O1");
+        assert!(!cf0.code.is_empty(), "无优化产物非空");
+        assert!(!cf1.code.is_empty(), "O1 产物非空");
+        // O1 常量折叠后指令更少（movabs 42 而非 movabs 21 + movabs 2 + imul）
+        assert!(
+            cf1.code.len() <= cf0.code.len(),
+            "O1 常量折叠应不增大代码（P0-1 回归：优化管线未生效）"
+        );
     }
 }

@@ -176,12 +176,22 @@ fn gvn_dfs(
         let inst_result = match inst.results.first().copied() {
             Some(v) => v,
             None => {
-                // Instructions without results: track stores (kill load expressions)
-                if matches!(inst.opcode, Opcode::Store) {
-                    // Conservative: any store kills all load expressions in scope stack
+                // 无结果指令：内存写（store/调用/原子）kill 全部 load 表达式。
+                // P0-4：kill 集合覆盖全部 may-write（Fstore/Call/CallIndirect/
+                // AtomicRmw/Cmpxchg），不只 Store。
+                if matches!(
+                    inst.opcode,
+                    Opcode::Store
+                        | Opcode::Fstore
+                        | Opcode::Call
+                        | Opcode::CallIndirect
+                        | Opcode::AtomicRmw
+                        | Opcode::Cmpxchg
+                ) {
+                    // Conservative: any memory write kills all load expressions in scope stack
                     for scope in scopes.iter_mut() {
                         scope.retain(|key, _| {
-                            key.opcode != super::cse::opcode_discriminant(&Opcode::Load)
+                            !matches!(key.opcode, Opcode::Load | Opcode::Fload)
                         });
                     }
                 }
@@ -210,6 +220,19 @@ fn gvn_dfs(
                 continue;
             }
             _ => {}
+        }
+
+        // P0-6：多结果指令（overflow 系）不进消重表——只映射 results[0]，
+        // results[1]（flag）会悬空指向被 kill 的指令。
+        if inst.results.len() > 1 {
+            continue;
+        }
+
+        // P0-3：volatile load 不参与 GVN（可观察语义）。
+        if matches!(inst.opcode, Opcode::Load | Opcode::Fload)
+            && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+        {
+            continue;
         }
 
         // Skip non-GVN-able instructions

@@ -91,6 +91,14 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
                 continue;
             }
 
+            // P0-3/P0-5：volatile load 不可消除（可观察语义——读可能改变
+            // 外部状态，如 MMIO）。
+            if matches!(inst.opcode, Opcode::Load | Opcode::Fload)
+                && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+            {
+                continue;
+            }
+
             // 检查是否有使用者
             if let Some(result_val) = inst.results.first().copied() {
                 let count = use_counts.get(&result_val).copied().unwrap_or(0);
@@ -138,8 +146,25 @@ fn build_use_counts(func: &Function) -> HashMap<Value, usize> {
 }
 
 /// 判断指令是否有副作用（不可消除）。
+///
+/// P0-5 修复：覆盖全部 may-write/may-fault 指令——原实现仅
+/// Store/Call/CallIndirect，漏了 AtomicRmw/Cmpxchg（有结果）→ 结果未用
+/// 即被删除，**原子副作用丢失**；也漏了可 fault 的 load（改变崩溃语义）。
 fn has_side_effects(opcode: &Opcode) -> bool {
-    matches!(opcode, Opcode::Store | Opcode::Call | Opcode::CallIndirect)
+    matches!(
+        opcode,
+        Opcode::Store
+            | Opcode::Fstore
+            | Opcode::Call
+            | Opcode::CallIndirect
+            | Opcode::AtomicRmw
+            | Opcode::Cmpxchg
+            // Load 恒视为潜在副作用（可 fault）——保守：只有 volatile 显式
+            // 处理（见主循环），普通 load 无 use 时删除安全（值未用、不写
+            // 内存），但 NOTRAP 保证外的 load 保守保留。
+            | Opcode::Load
+            | Opcode::Fload
+    )
 }
 
 /// 阶段 2: 消除不可达基本块。
@@ -303,5 +328,36 @@ mod tests {
         assert!(r.blocks_removed >= 1);
         let dead = &func.dfg.blocks[1];
         assert!(dead.inst_order.is_empty() || matches!(dead.terminator, Terminator::Unreachable));
+    }
+
+    /// P0-5 负向：原子指令（AtomicRmw）结果未用也**不可**删除——
+    /// 旧 has_side_effects 仅 Store/Call/CallIndirect，原子副作用丢失。
+    #[test]
+    fn p0_atomic_not_dead() {
+        let sig = FunctionSignature::new(&[(TypeId::PTR, "p")], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let (entry, params) = b.create_block_with_params(&[(TypeId::PTR, "p")]);
+        b.switch_to_block(entry);
+        let p = params[0];
+        let one = b.iconst_i32(1);
+        // AtomicRmw 结果未用（旧值丢弃）——但原子写副作用必须保留
+        let _rmw = b.atomic_rmw(forge_ir::AtomicRmwOp::Add, p, one, forge_ir::Ordering::SequentiallyConsistent);
+        b.ret(&[]);
+
+        let mut func = b.finish().expect("build");
+        let pass = DeadCodeElimPass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+
+        // 原子指令必须保留（有副作用）——DCE 不应移除任何东西
+        assert_eq!(
+            r.instructions_removed, 0,
+            "原子指令结果未用也不可删除（P0-5 回归：原子副作用丢失）"
+        );
+        let atomic_present = func
+            .dfg
+            .insts
+            .iter()
+            .any(|i| matches!(i.opcode, Opcode::AtomicRmw));
+        assert!(atomic_present, "原子指令应保留");
     }
 }

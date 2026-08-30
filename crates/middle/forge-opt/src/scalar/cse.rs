@@ -57,7 +57,7 @@ pub(crate) fn expr_key(opcode: &Opcode, operands: &[Value], ty: TypeId) -> ExprK
         ops.sort_by_key(|v| v.0);
     }
     ExprKey {
-        opcode: opcode_discriminant(opcode),
+        opcode: opcode.clone(),
         operands: ops,
         ty,
     }
@@ -202,16 +202,73 @@ pub(crate) fn opcode_discriminant(opcode: &Opcode) -> u8 {
 /// 表达式的哈希键。
 /// operands 用 SmallVec（≤4 操作数 inline，无堆分配）——
 /// 每指令一次 key 构造是 CSE/GVN/GVN-PRE 的每指令固定开销。
+///
+/// `opcode` 直接存 `Opcode`（含 Icmp/Fcmp 的 cond 载荷）而非判别 u8——
+/// 修复 P0-2：`icmp eq a,b` 与 `icmp ne a,b` 此前共用判别值 23 被错误
+/// 互相替换。Opcode 已实现 Eq+Hash（cond 参与哈希）。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ExprKey {
-    pub(crate) opcode: u8,
+    pub(crate) opcode: Opcode,
     pub(crate) operands: smallvec::SmallVec<[Value; 4]>,
     pub(crate) ty: TypeId,
 }
 
 /// 判断指令是否可以被 CSE（纯指令，无副作用，产生结果）。
+///
+/// 显式纯指令白名单（不用判别值 != 0）：多结果指令（SaddOverflow 等
+/// overflow 系）不进消重表——CSE 只映射 results[0]，results[1]（flag）
+/// 会悬空指向被 kill 的指令（P0-6）；volatile/原子/副作用指令不参与
+/// （P0-3/P0-5 语义）。
 pub(crate) fn is_cse_candidate(opcode: &Opcode) -> bool {
-    opcode_discriminant(opcode) != 0
+    // 纯算术/逻辑/转换（无内存、无副作用、单结果）——白名单显式列出，
+    // 避免判别值漏项或混入 Load/原子。
+    matches!(
+        opcode,
+        Opcode::Iadd
+            | Opcode::Isub
+            | Opcode::Imul
+            | Opcode::Udiv
+            | Opcode::Sdiv
+            | Opcode::Urem
+            | Opcode::Srem
+            | Opcode::Fadd
+            | Opcode::Fsub
+            | Opcode::Fmul
+            | Opcode::Fdiv
+            | Opcode::Frem
+            | Opcode::Freeze
+            | Opcode::Fneg
+            | Opcode::Fabs
+            | Opcode::Fsqrt
+            | Opcode::Band
+            | Opcode::Bor
+            | Opcode::Bxor
+            | Opcode::Bnot
+            | Opcode::Ishl
+            | Opcode::Ushr
+            | Opcode::Sshr
+            | Opcode::Icmp { .. }
+            | Opcode::Fcmp { .. }
+            | Opcode::Sextend
+            | Opcode::Uextend
+            | Opcode::Fptrunc
+            | Opcode::Fpext
+            | Opcode::Fptosi
+            | Opcode::Sitofp
+            | Opcode::Fptoui
+            | Opcode::Uitofp
+            | Opcode::Ptrtoint
+            | Opcode::Inttoptr
+            | Opcode::Ireduce
+            | Opcode::Bitcast
+            | Opcode::Select
+            | Opcode::Copy
+            | Opcode::Clz
+            | Opcode::Ctz
+            | Opcode::Popcnt
+            | Opcode::Bswap
+            | Opcode::Abs
+    )
 }
 
 /// 对单个函数执行局部 CSE。
@@ -233,11 +290,41 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
         for inst_id in inst_ids {
             let inst = &mut func.dfg.insts[inst_id.0 as usize];
 
+            // P0-3：内存写指令（store/调用/原子）kill 全部 load 表达式——
+            // 否则 `load p; store v,p; load p` 第二个 load 被错误消除。
+            // P0-4：kill 集合覆盖全部 may-write（Fstore/Call/CallIndirect/
+            // AtomicRmw/Cmpxchg），不只 Store。
+            if matches!(
+                inst.opcode,
+                Opcode::Store
+                    | Opcode::Fstore
+                    | Opcode::Call
+                    | Opcode::CallIndirect
+                    | Opcode::AtomicRmw
+                    | Opcode::Cmpxchg
+            ) {
+                expr_table.retain(|key, _| !matches!(key.opcode, Opcode::Load | Opcode::Fload));
+                continue; // 这些指令本身不参与消重（有副作用/内存）
+            }
+
             // 跳过无结果的指令
             let inst_result = match inst.results.first().copied() {
                 Some(v) => v,
                 None => continue,
             };
+
+            // P0-6：多结果指令（overflow 系）不进消重表——CSE 只映射
+            // results[0]，results[1]（flag）会悬空指向被 kill 的指令。
+            if inst.results.len() > 1 {
+                continue;
+            }
+
+            // P0-3：volatile load 不参与 CSE（可观察语义）。
+            if matches!(inst.opcode, Opcode::Load | Opcode::Fload)
+                && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+            {
+                continue;
+            }
 
             // 跳过不可 CSE 的指令
             if !is_cse_candidate(&inst.opcode) {
@@ -445,5 +532,84 @@ mod tests {
         pm.add_pass(Box::new(CsePass::new()), PassRunMode::Once);
         let result = pm.run_on_function(&mut func).unwrap();
         assert!(result.changed);
+    }
+
+    /// P0-2 负向：`icmp eq a,b` 与 `icmp ne a,b` 必须**不**互相消除
+    /// （旧 opcode_discriminant 把 Icmp 统一映射 23，二者被错误合并 → 错值）。
+    #[test]
+    fn p0_icmp_cond_distinct() {
+        let sig = FunctionSignature::new(&[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::BOOL]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "a"), (TypeId::I32, "b")]);
+        b.switch_to_block(entry);
+        let a = params[0];
+        let bv = params[1];
+        let eq = b.icmp(forge_ir::IntCC::Equal, a, bv);
+        let ne = b.icmp(forge_ir::IntCC::NotEqual, a, bv);
+        let and = b.band(eq, ne);
+        b.ret(&[and]);
+
+        let mut func = b.finish().expect("build");
+        let pass = CsePass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        // eq 与 ne 是不同的表达式 → CSE 必须不消除任何一条
+        assert!(
+            !r.changed,
+            "icmp eq/ne 不应互相消除（P0-2 回归：eq 与 ne 必须区分）"
+        );
+    }
+
+    /// P0-3 负向：`load p; store v,p; load p`——第二个 load 必须保留
+    /// （旧 CSE 块内 expr_table 全程保留，store 不 kill load → 错值）。
+    #[test]
+    fn p0_store_kills_load() {
+        let sig = FunctionSignature::new(&[(TypeId::I32, "p"), (TypeId::I32, "v")], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "p"), (TypeId::I32, "v")]);
+        b.switch_to_block(entry);
+        let p = params[0];
+        let v = params[1];
+        let l1 = b.load(p, TypeId::I32);
+        b.store(v, p); // 写 p——必须 kill 前面的 load 表达式
+        let l2 = b.load(p, TypeId::I32);
+        let sum = b.iadd(l1, l2);
+        b.ret(&[sum]);
+
+        let mut func = b.finish().expect("build");
+        let pass = CsePass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        // store 在 l1 与 l2 之间 → l2 依赖 store 后的新值，不可消除
+        assert!(
+            !r.changed,
+            "store 必须 kill load 表达式（P0-3 回归：load 不能被错误消除）"
+        );
+    }
+
+    /// P0-6 负向：多结果指令（SaddOverflow）不参与 CSE——results[1]
+    /// （overflow flag）若悬空指向被 kill 的指令会错值。
+    #[test]
+    fn p0_multi_result_not_cse() {
+        // 单返回（无签名约束）：只验证两条 sadd_overflow 都不被 CSE。
+        let sig = FunctionSignature::new(
+            &[(TypeId::I32, "a"), (TypeId::I32, "b")],
+            &[TypeId::I32],
+        );
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "a"), (TypeId::I32, "b")]);
+        b.switch_to_block(entry);
+        let a = params[0];
+        let bv = params[1];
+        let (s1, _of1) = b.sadd_overflow(a, bv);
+        let (s2, _of2) = b.sadd_overflow(a, bv); // 重复——但多结果，不可消
+        let sum = b.iadd(s1, s2);
+        b.ret(&[sum]);
+
+        let mut func = b.finish().expect("build");
+        let pass = CsePass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        assert!(
+            !r.changed,
+            "多结果指令不应被 CSE（P0-6 回归：overflow flag 悬空）"
+        );
     }
 }
