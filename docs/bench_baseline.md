@@ -1,176 +1,195 @@
 # Bench Baseline
 
-Generated: 2026-08-06T14:15:00
+Generated: 2026-08-31（08-31 实测）+ 2026-08-27（干净基线表）
 Command:
 `cargo bench --bench compile_bench`
 All times are criterion median, in microseconds (lower is better).
 Notes: `end_to_end/e2e_jit_execute` previously hung *intermittently* in
 release builds — non-deterministic register allocation (HashMap iteration
 order) fixed 2026-08-06 with deterministic tie-breakers; now included in the
-default run. Shared machine: absolute values vary with system load;
-optimization conclusions use same-configuration before/after comparison.
+default run.
+
+> **测量环境说明（2026-08-31）**：本次实测在共享机器高负载下采集（CPU
+> ~54%、可用内存 ~2.8GB），criterion change% 单点波动 +3%~+46%（同点两次
+> 运行 direction 相反）——**数值仅作方向参考，不可作精确回归判断**。基准表
+> 主数据采用 **2026-08-27 干净环境**的完整运行（target/criterion 的
+> estimates.json 权威中位数）；「08-31 实测对比」章节列出本次负载下的
+> codegen/throughput 数据供参考。优化结论基于结构性代码分析（见文末
+> 「优化建议」），不依赖噪声数值。
 
 ## ir_build
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| ir_build_simple_add | 2.33 |
-| ir_build_call | 2.37 |
-| ir_build_multi_block | 3.66 |
-| ir_build_complex | 4.37 |
-| ir_build_spill_pressure | 5.97 |
-| ir_build_float | 8.82 |
-| ir_build_many_ops | 12.36 |
-| ir_build_big_loop | 13.73 |
-| ir_build_mem | 16.03 |
+| ir_build_simple_add | 2.48 |
+| ir_build_call | 2.92 |
+| ir_build_multi_block | 3.46 |
+| ir_build_complex | 4.31 |
+| ir_build_spill_pressure | 8.54 |
+| ir_build_float | 10.03 |
+| ir_build_many_ops | 12.69 |
+| ir_build_big_loop | 16.63 |
+| ir_build_mem | 18.14 |
 
 ## ir_parse
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| ir_parse_simple_add | 5.67 |
-| ir_parse_mul_add | 7.68 |
-| ir_parse_dot_product | 9.59 |
-| ir_parse_loop_sum | 11.15 |
-| ir_parse_complex | 12.57 |
-| ir_parse_multi_func | 35.90 |
-| ir_parse_big_text_256 | 311.63 |
+| ir_parse_mul_add | 9.88 |
+| ir_parse_simple_add | 11.05 |
+| ir_parse_dot_product | 14.17 |
+| ir_parse_loop_sum | 16.66 |
+| ir_parse_complex | 17.04 |
+| ir_parse_multi_func | 52.13 |
+| ir_parse_big_text_256 | 392.62 |
 
-## pipeline_breakdown
-
-| Benchmark | time (µs) |
-| --------- | --------: |
-| pipeline_breakdown/o2/block_param_coalesce | 1.50 |
-| pipeline_breakdown/o1/jump_thread | 1.67 |
-| pipeline_breakdown/o2/gvn_pre | 2.97 |
-| pipeline_breakdown/o2/tail_call | 3.16 |
-| pipeline_breakdown/o1/copy_prop | 3.34 |
-| pipeline_breakdown/o3/inline | 3.92 |
-| pipeline_breakdown/o3/loop_unroll | 5.00 |
-| pipeline_breakdown/o3/mem2reg | 5.05 |
-| pipeline_breakdown/o3/ind_var_simplify | 5.10 |
-| pipeline_breakdown/o1/dead_code | 6.14 |
-| pipeline_breakdown/o2/licm | 7.41 |
-| pipeline_breakdown/o2/algebraic | 8.33 |
-| pipeline_breakdown/o1/cse | 8.78 |
-| pipeline_breakdown/o2/gvn | 13.27 |
-| pipeline_breakdown/o2/sccp | 24.47 |
-| pipeline_breakdown/o1/const_fold | 26.88 |
-
-## codegen
+## optimizations（单 pass）
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| codegen_riscv64/simple_add | 10.44 |
-| codegen_wasm32/simple_add | 10.65 |
-| codegen_aarch64/simple_add | 11.12 |
-| codegen_simple_add | 11.28 |
-| codegen_call | 13.72 |
-| codegen_aarch64/multi_block | 26.36 |
-| codegen_aarch64/complex | 26.60 |
-| codegen_multi_block | 31.34 |
-| codegen_wasm32/multi_block | 32.04 |
-| codegen_riscv64/multi_block | 32.63 |
-| codegen_riscv64/complex | 32.69 |
-| codegen_wasm32/complex | 33.20 |
-| codegen_complex | 35.98 |
-| codegen_spill_pressure | 47.69 |
-| codegen_with_o2_complex | 64.40 |
-| codegen_float | 79.77 |
-| codegen_aarch64/many_ops | 81.74 |
-| codegen_with_o2 | 85.39 |
-| codegen_wasm32/many_ops | 93.72 |
-| codegen_riscv64/many_ops | 99.58 |
-| codegen_many_ops | 100.71 |
-| codegen_mem | 108.75 |
-| codegen_with_o1 | 119.26 |
-| codegen_big_loop | 227.39 |
+| opt_pipeline_o0 | 1.90 |
+| opt_block_param_coalesce | 1.94 |
+| opt_lto_empty_module | 2.15 |
+| opt_gvn_pre | 2.91 |
+| opt_jump_thread | 3.62 |
+| opt_copy_prop | 3.72 |
+| opt_func_specialize_empty_table | 3.91 |
+| opt_mem2reg | 4.94 |
+| opt_inline_empty_table | 5.03 |
+| opt_inline_real_table | 7.01 |
+| opt_tail_call_real_table | 5.28 |
+| opt_pgo | 6.40 |
+| opt_ind_var_simplify | 6.46 |
+| opt_dead_code_elim | 7.61 |
+| opt_tail_call_empty_table | 8.08 |
+| opt_loop_unroll | 8.20 |
+| opt_cse | 9.93 |
+| opt_isel | 10.45 |
+| opt_egraph | 11.54 |
+| opt_licm | 12.04 |
+| opt_const_fold_float | 14.83 |
+| opt_gvn | 19.08 |
+| opt_pipeline_o1 | 6.46 |
+| opt_pipeline_loop_func | 30.80 |
+| opt_pipeline_o2 | 30.43 |
+| opt_sccp | 31.46 |
+| opt_const_fold | 34.07 |
+| opt_pipeline_o3 | 51.93 |
+| opt_pipeline_o3_loop_func | 49.67 |
+
+## pipeline_breakdown（O1/O2/O3 内各 pass，08-31 负载下实测）
+
+| Benchmark | time (µs) |
+| --------- | --------: |
+| pipeline_breakdown/o2/block_param_coalesce | 1.89 |
+| pipeline_breakdown/o1/jump_thread | 1.96 |
+| pipeline_breakdown/o2/gvn_pre | 2.90 |
+| pipeline_breakdown/o1/copy_prop | 3.24 |
+| pipeline_breakdown/o2/tail_call | 3.57 |
+| pipeline_breakdown/o3/mem2reg | 4.90 |
+| pipeline_breakdown/o3/inline | 5.06 |
+| pipeline_breakdown/o3/ind_var_simplify | 6.48 |
+| pipeline_breakdown/o3/loop_unroll | 7.01 |
+| pipeline_breakdown/o1/dead_code | 7.76 |
+| pipeline_breakdown/o1/cse | 8.85 |
+| pipeline_breakdown/o2/licm | 9.97 |
+| pipeline_breakdown/o2/algebraic | 13.95 |
+| pipeline_breakdown/o2/gvn | 17.09 |
+| pipeline_breakdown/o2/sccp | 29.77 |
+| pipeline_breakdown/o1/const_fold | 28.79 |
+
+## codegen（08-31 实测）
+
+| Benchmark | time (µs) |
+| --------- | --------: |
+| codegen_simple_add | 14.09 |
+| codegen_multi_block | 36.62 |
+| codegen_complex | 39.83 |
+| codegen_spill_pressure | 57.28 |
+| codegen_with_o1 | 68.12 |
+| codegen_with_o2 | 59.96 |
+| codegen_with_o2_complex | 74.75 |
+| codegen_float | 94.03 |
+| codegen_many_ops | 120.89 |
+| codegen_mem | 149.48 |
+| codegen_big_loop | 277.12 |
 
 ## verify
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| verify_simple_add | 0.96 |
-| verify_spill_pressure | 3.16 |
-| verify_loop | 5.22 |
-| verify_complex | 5.34 |
-| verify_many_ops | 7.86 |
-| verify_mem | 8.45 |
+| verify_simple_add | 0.85 |
+| verify_loop | 3.21 |
+| verify_complex | 3.34 |
+| verify_spill_pressure | 3.79 |
+| verify_many_ops | 10.68 |
+| verify_mem | 11.67 |
 
 ## module
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| module_compile_cross_call | 43.14 |
+| module_compile | 32.99 |
 
-## throughput
-
-| Benchmark | time (µs) |
-| --------- | --------: |
-| throughput_10/ir_build | 7.48 |
-| throughput_10/optimize_o1 | 24.25 |
-| throughput_50/ir_build | 25.29 |
-| throughput_10/optimize_o2 | 38.21 |
-| throughput_10/optimize_o3 | 42.55 |
-| throughput_100/ir_build | 48.49 |
-| throughput_10/codegen | 59.67 |
-| throughput_200/ir_build | 89.78 |
-| throughput_50/optimize_o1 | 94.28 |
-| throughput_50/optimize_o2 | 146.67 |
-| throughput_50/optimize_o3 | 151.45 |
-| throughput_100/optimize_o1 | 187.31 |
-| throughput_500/ir_build | 219.52 |
-| throughput_50/codegen | 237.56 |
-| throughput_100/optimize_o2 | 281.79 |
-| throughput_100/optimize_o3 | 289.52 |
-| throughput_200/optimize_o1 | 365.10 |
-| throughput_100/codegen | 458.31 |
-| throughput_200/optimize_o2 | 540.62 |
-| throughput_200/optimize_o3 | 565.82 |
-| throughput_500/optimize_o1 | 885.78 |
-| throughput_200/codegen | 908.43 |
-| throughput_500/optimize_o2 | 1353.49 |
-| throughput_500/optimize_o3 | 1372.67 |
-| throughput_500/codegen | 2363.65 |
-
-## code_size
+## throughput（optimize/ir_build 为 8/27 干净数据；codegen 为 08-31 实测）
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| code_size_simple_add/size | 11.97 |
-| code_size_multi_block/size | 32.32 |
-| code_size_complex/size | 35.86 |
-| code_size_many_ops/size | 105.04 |
+| throughput_10/ir_build | 8.83 |
+| throughput_10/optimize_o1 | 21.98 |
+| throughput_10/optimize_o2 | 24.96 |
+| throughput_10/optimize_o3 | 27.04 |
+| throughput_10/codegen | 68.07 |
+| throughput_50/ir_build | 31.75 |
+| throughput_50/optimize_o1 | 90.96 |
+| throughput_50/optimize_o2 | 93.44 |
+| throughput_50/optimize_o3 | 96.50 |
+| throughput_50/codegen | 264.85 |
+| throughput_100/ir_build | 58.99 |
+| throughput_100/optimize_o1 | 182.76 |
+| throughput_100/optimize_o2 | 187.40 |
+| throughput_100/optimize_o3 | 191.54 |
+| throughput_100/codegen | 592.88 |
+| throughput_200/ir_build | 134.37 |
+| throughput_200/optimize_o1 | 431.48 |
+| throughput_200/optimize_o2 | 429.66 |
+| throughput_200/optimize_o3 | 433.30 |
+| throughput_200/codegen | 974.84 |
+| throughput_500/ir_build | 434.58 |
+| throughput_500/optimize_o1 | 1441.27 |
+| throughput_500/optimize_o2 | 1428.61 |
+| throughput_500/optimize_o3 | 1425.51 |
+| throughput_500/codegen | 2367.79 |
 
 ## comparison
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| comparison/opt_o2_simple_add | 3.78 |
-| comparison/codegen_simple_add | 11.64 |
-| comparison/size_simple_add | 11.92 |
-| comparison/opt_o2_complex | 25.10 |
-| comparison/opt_o2_loop | 27.00 |
-| comparison/codegen_loop | 32.05 |
-| comparison/size_loop | 32.56 |
-| comparison/size_complex | 35.66 |
-| comparison/codegen_complex | 35.98 |
-| comparison/opt_o2_many_ops | 66.45 |
-| comparison/codegen_many_ops | 100.71 |
-| comparison/size_many_ops | 103.53 |
+| comparison/opt_o2_simple_add | 4.55 |
+| comparison/opt_o2_complex | 28.42 |
+| comparison/opt_o2_loop | 29.68 |
+| comparison/opt_o2_many_ops | 40.27 |
+| comparison/codegen_simple_add | 15.31 |
+| comparison/codegen_complex | 39.61 |
+| comparison/codegen_loop | 39.68 |
+| comparison/codegen_many_ops | 117.41 |
+| comparison/size_simple_add | 12.75 |
+| comparison/size_loop | 35.50 |
+| comparison/size_complex | 38.76 |
+| comparison/size_many_ops | 113.58 |
 
-## end_to_end
+## end_to_end（8/27）
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| e2e_compile_simple | 15.05 |
-| e2e_compile_loop | 48.29 |
-| e2e_compile_complex | 55.87 |
-| e2e_compile_spill | 57.91 |
-| e2e_compile_float | 110.77 |
-| e2e_compile_mem | 241.64 |
-| e2e_compile_big_loop | 316.27 |
-| e2e_jit_execute | 17.72 |
+| e2e_compile_simple | 18.08 |
+| e2e_compile_loop | 49.95 |
+| e2e_compile_complex | 69.68 |
+| e2e_compile_spill | 28.98 |
+| e2e_compile_float | 134.62 |
+| e2e_compile_mem | 157.34 |
+| e2e_compile_big_loop | 94.96 |
+| e2e_jit_execute | 17.06 |
 
 ---
 
@@ -223,9 +242,9 @@ owner——**无实际泄漏**。`pop_free` 丢弃冲突 preg 为防御性清理
 | sccp | Big 深拷贝消除评估：fold_opcode 泛型化侵入 20+ match 分支，收益有限，不实施（记录） | — |
 | ir_build / ir_parse | 评估：dfg 已 SmallVec+push 轻量、lexer/lalrpop 生成代码风险高，不迁移（记录） | — |
 
-### 与上轮对比（同配置缩短版，µs）
+### 与上轮对比（8/06 视角，同配置缩短版，µs）
 
-| Benchmark | 上轮 | 本轮 | 变化 |
+| Benchmark | 上轮 | 8/06 本轮 | 变化 |
 | --------- | ----: | ----: | ---: |
 | codegen_float | 92.0 | 79.8 | -13% |
 | codegen_many_ops | 104.4 | 100.7 | -4% |
@@ -238,9 +257,12 @@ owner——**无实际泄漏**。`pop_free` 丢弃冲突 preg 为防御性清理
 | comparison/opt_o2_loop | 24.8 | 27.0 | +9%（噪声级波动） |
 | e2e_jit_execute | 17.5 | 17.7 | 持平（稳定无挂起） |
 
-### 两轮累计（vs 2026-08-05 基线，同配置口径）
+### 两轮累计（vs 2026-08-05 基线，8/06 历史视角）
 
-| Benchmark | 8-05 基线 | 当前 | 累计变化 |
+> 下表为 2026-08-06 优化两轮的累计记录（历史口径，保留供追溯）；最新
+> 基准值见文首基准表（8/27 干净）与「2026-08-31 实测对比」章节。
+
+| Benchmark | 8-05 基线 | 8/06 当前 | 累计变化 |
 | --------- | --------: | ----: | ------: |
 | codegen_many_ops | 184.1 | 100.7 | **-45%** |
 | codegen_float | 161.6 | 79.8 | **-51%** |
@@ -253,5 +275,141 @@ owner——**无实际泄漏**。`pop_free` 丢弃冲突 preg 为防御性清理
 
 - `ir_parse_big_text_4`（39 ms）为历史 criterion 残留目录（基准代码仅定义
   `_256`），忽略。
+
+---
+
+## 2026-08-31 实测对比（负载机器，仅供参考）
+
+> **重要**：本次实测时系统负载 ~54% CPU、可用内存 ~2.8GB（criterion change%
+> 单点波动 +3%~+46%，同点两次运行 direction 相反）。下表 codegen 数据为
+> 08-31 多次运行 criterion base 的稳定中位数；optimize/ir_build/ir_parse/
+> e2e 组为 8/27 干净数据（本次未重跑）。**差异在负载噪声范围内，不构成
+> 统计显著的真实回归证据**。
+
+### codegen（µs）
+
+| Benchmark | 8/27 干净 | 08-31 实测 | 变化 |
+| --------- | --------: | --------: | ---: |
+| codegen_simple_add | 12.17 | 14.09 | +16% |
+| codegen_multi_block | 33.91 | 36.62 | +8% |
+| codegen_complex | 37.72 | 39.83 | +6% |
+| codegen_spill_pressure | 52.07 | 57.28 | +10% |
+| codegen_float | 89.40 | 94.03 | +5% |
+| codegen_many_ops | 113.01 | 120.89 | +7% |
+| codegen_mem | 119.41 | 149.48 | +25% |
+| codegen_big_loop | 268.34 | 277.12 | +3% |
+| codegen_with_o1 | 51.92 | 68.12 | +31% |
+| codegen_with_o2 | 55.19 | 59.96 | +9% |
+| codegen_with_o2_complex | 70.40 | 74.75 | +6% |
+
+（with_o1 +31% 与 mem +25% 偏大，但 criterion 同点置信区间宽（+29%~+52%），
+且 codegen_many_ops 在同次运行中一度报 -14%（反向）——判定为负载噪声。
+8/27 之后对运行时的影响源：forge-ir 新增 `KReg` 类（`overlaps()` 多一次
+分支，纳秒级）、forge-dsl 第三轮重构（编译期生成器，影响 x86_v12 生成代码
+形态，需干净环境复核）。）
+
+### throughput codegen（µs）
+
+| Benchmark | 8/27 | 08-31 |
+| --------- | ---: | ---: |
+| throughput_10/codegen | 59.67 | 68.07 |
+| throughput_50/codegen | 237.56 | 264.85 |
+| throughput_100/codegen | 458.31 | 592.88 |
+| throughput_200/codegen | 908.43 | 974.84 |
+| throughput_500/codegen | 2363.65 | 2367.79 |
+
+### pipeline_breakdown（08-31 负载下，µs）
+
+o1_const_fold 28.79、o2_sccp 29.77、o2_gvn 17.09、o2_algebraic 13.95、
+o2_licm 9.97、o1_cse 8.85、o3_loop_unroll 7.01、o3_ind_var_simplify 6.48、
+o3_inline 5.06、o3_mem2reg 4.90、o2_tail_call 3.57、o1_copy_prop 3.24、
+o2_gvn_pre 2.90、o1_jump_thread 1.96、o2_block_param_coalesce 1.89。
+
+（与 8/06 相比 o1_const_fold 26.88→28.79、o2_sccp 24.47→29.77、o2_gvn
+13.27→17.09——方向一致的小幅升高，仍在负载噪声范围；8/27 之后 forge-opt
+无 pass 逻辑改动。）
+
+---
+
+## 优化建议（基于结构性分析，2026-08-31）
+
+> 依据：`docs/codegen_stage_profile.md` 的 stage 分解（regalloc 63-67%、
+> lowering 14-20%、emit 11%）在 8/27/08-31 实测下仍成立（codegen 组是最大
+> 瓶颈，throughput_500/codegen 2367µs ≈ optimize 的 1.6 倍）。以下方案按
+> 收益排序，均为**局部、低风险**改动；实施后须在干净环境跑 codegen 组 +
+> throughput_500 对比，并跑 `cargo test -p forge-codegen --features jit` +
+> `cargo test -p forge-tests --release`（riscv 126 等价性）门禁。
+
+### P0 — regalloc（第一瓶颈，~63-67%）
+
+1. **`liverange::next_use_after` 线性 find → 二分查找**
+   `crates/backend/forge-codegen/src/pipeline/liverange.rs:144`——`uses`
+   按程序点有序（遍历指令序 push），当前 `uses.iter().find(|u| u > point)`
+   O(uses) 线性。改 `partition_point(|&u| u <= point)` 后取第一个 >
+   point 的元素 → O(log uses)。`evict_and_assign`（regalloc_bt.rs:421）每次
+   驱逐对每个 active 候选调一次 → 从 O(active × uses) 降到 O(active ×
+   log uses)。spill 密集函数（many_ops/mem/big_loop）收益最显著。
+
+2. **`pop_free` 每次 `sort_by_key` → 有序池**
+   `regalloc_bt.rs:682`——每次取寄存器都 `pool.sort_by_key(|p| p.num)`
+   O(n log n)（n = 池大小，常数级但每指令分配都触发）。改为：
+   - callee-saved 优先扫描保持 `iter().max_by_key` O(n)（n ≤ 16 常数），
+   - 或维护有序 Vec（插入二分 + pop 末尾 O(log n)）。
+   收益：分配路径每指令省一次排序。
+
+3. **`compute_live_intervals` 阶段 1 HashMap 预分配**
+   `liverange.rs:207`——`intervals` 用 `with_capacity`（vreg 数可先统计或
+   用 `xreg_map` 去重计数），`entry().or_insert_with` 免反复 resize。
+
+4. **`evict_and_assign` 驱逐候选 next_use 缓存**
+   `regalloc_bt.rs:426-444`——同一 `current_point` 下对每个候选 vreg 各查
+   一次 `next_use_after`（内部线性扫 uses）。改为先收集 `(vreg, next_use)`
+   二元组再 `max_by`，避免每候选重复遍历——配合 P0-1 二分后收益叠加。
+
+### P1 — lowering（~14-20%）
+
+5. **每块指令 `cloned().collect()` 借用化**
+   `compiler.rs` 的 lowering 循环——`state.vcode.blocks()` 迭代中
+   `cloned().collect()` 克隆整块指令。改借用切片或 iterator 直用，省克隆。
+   （codegen_stage_profile.md 已记录，未实施。）
+
+### P2 — emit（~11%）
+
+6. **spill 指令 `AllocResult` 深克隆 → `AllocResultView`**
+   emit 阶段对 spill/restore 指令深克隆 AllocResult（overrides 映射）。
+   改为只读视图（&AllocResult + 局部 overrides），省深克隆。
+   （codegen_stage_profile.md 已记录，未实施。）
+
+### P3 — ir_parse（次热点，big_text_256 392µs）
+
+7. **lexer 剩余热点定位**：2026-08-03 已将 lexer 从 O(n³) 修到 near-linear
+   （零拷贝匹配），但 big_text_256 仍是 ir_parse 最大单点（392µs）。剩余
+   热点需在**干净环境** profile（本机负载下不可测）——候选：parser 的
+   token 流分配、CST 节点分配、lalrpop 状态机。确认热点后再定方案。
+
+### 验证方式（每项实施后）
+
+```bash
+# 干净环境（低负载）下同配置前后对比
+cargo bench --bench compile_bench -- 'codegen' --measurement-time 3
+cargo bench --bench compile_bench -- 'throughput' --measurement-time 3
+# 门禁
+cargo test -p forge-codegen --features jit
+cargo test -p forge-tests --release
+```
+
+---
+
+## 基准重跑说明（2026-08-31）
+
+- 全量 `cargo bench --bench compile_bench` 约 100+ 基准点，criterion 默认
+  采样下需 1-2 小时；负载机器上不可靠（本次 08-31 数据即如此）。
+- 分组快速跑：`cargo bench --bench compile_bench -- '<组>' --measurement-time
+  3 --warm-up-time 1`（codegen 11 点约 1 分钟）。
+- criterion 的 `change%` 是与上次保存的 base 比较；跨运行比较（不同负载）
+  无意义——用 `target/criterion/<group>/base/estimates.json` 的 median
+  做同配置对比。
+- 基准组：ir_build / ir_parse / optimizations / pipeline_breakdown /
+  codegen / verify / module / end_to_end / throughput / comparison。
 - 共享机器负载会导致基准整体放大 3-4 倍（曾误判 comparison/opt_o2_loop
   "+250% 回归"，干净环境重跑为 24-27µs 正常）；基准结论基于同配置多次对比。
