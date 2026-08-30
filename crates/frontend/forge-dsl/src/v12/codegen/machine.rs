@@ -9,6 +9,7 @@ use super::super::shared::group_names;
 use super::InstInfo;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::HashMap;
 
 // ─────────────────────── Reg 枚举（物理寄存器）───────────────────────
 
@@ -225,9 +226,23 @@ pub(crate) fn gen_machine_inst(
             def_c_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
         } else {
             let vals: Vec<_> = def_fids.iter().map(|f| quote! { #f.to_index() }).collect();
+            // P1-1：InOut 角色的 def 约束 = ReuseInput(对应 use 序号)——两地址
+            // 指令（add dst, src → dst 复用 src 寄存器）。use 序号 = use_fids
+            // 中该字段的位置（InOut 同时出现在 use 与 def）。
+            let use_pos: HashMap<&syn::Ident, usize> =
+                use_fids.iter().enumerate().map(|(i, f)| (*f, i)).collect();
             let any: Vec<_> = def_fids
                 .iter()
-                .map(|_| quote! { crate::machine::inst::OperandConstraint::Any })
+                .map(|f| {
+                    match use_pos.get(*f) {
+                        // InOut def：复用对应 use 寄存器
+                        Some(&idx) => {
+                            quote! { crate::machine::inst::OperandConstraint::ReuseInput(#idx as usize) }
+                        }
+                        // 纯 Out def：Any
+                        None => quote! { crate::machine::inst::OperandConstraint::Any },
+                    }
+                })
                 .collect();
             def_arms.push(
                 quote! { Inst::#vn { #(#def_fids),*, .. } => smallvec::smallvec![#(#vals),*] },
