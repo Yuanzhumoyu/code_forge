@@ -216,6 +216,64 @@ fn signed_immediate_sign_extension() {
     }
 }
 
+/// P1 宽度修正：散布位域（S 型 imm_s）的立即数范围检查——
+/// store 偏移超 imm12 范围必须报错（此前 encode 静默截断为错值）。
+#[test]
+fn scattered_imm_range_check() {
+    // 合法边界：assemble + encode 都通过
+    for imm in [-2048i64, 2047] {
+        let asm = format!("sw X1, {imm}(X2)");
+        let inst = assemble(&asm).unwrap_or_else(|e| panic!("assemble `{asm}`: {e}"));
+        assert!(encode(&inst).is_ok(), "sw 偏移 {imm} 应在 [-2048, 2047] 内");
+    }
+    // 越界：asm 层 __imm 范围检查已拒绝（"operand mismatch"）——
+    // 不静默截断
+    for imm in [-2049i64, 2048, 3000, -3000] {
+        let asm = format!("sw X1, {imm}(X2)");
+        assert!(
+            assemble(&asm).is_err(),
+            "sw 偏移 {imm} 超 imm12 范围应在 assemble 层拒绝"
+        );
+    }
+}
+
+/// P1 宽度修正：encode 层直接构造越界 store 偏移 → 报错
+/// （绕过 asm 层兜底，验证 P0-16 检查对散布位域生效）。
+#[test]
+fn scattered_imm_encode_range_check() {
+    // 合法：encode 通过
+    let ok = Inst::Sw {
+        rs2: Reg::X1,
+        rs1: Reg::X2,
+        imm_s: 2047,
+    };
+    assert!(encode(&ok).is_ok(), "imm_s=2047 应可编码");
+    // 越界：encode 报错（不静默截断）
+    for imm in [-2049i64, 2048, 3000, -3000] {
+        let inst = Inst::Sw {
+            rs2: Reg::X1,
+            rs1: Reg::X2,
+            imm_s: imm,
+        };
+        assert!(
+            encode(&inst).is_err(),
+            "imm_s={imm} 超 [-2048, 2047] 应报错（P0-16 散布位域检查）"
+        );
+    }
+}
+
+/// P1 宽度修正：预移位散布位域（LUI imm20 存左移 12 的值）不误报——
+/// fconst hi20 场景（完整 32 位值域）保持可编码。
+#[test]
+fn preshifted_imm_not_range_checked() {
+    // LUI 槽存预移位值（lui X1, 4096 = 1<<12）——越界位宽内任意值合法
+    for imm in [4096i64, 0xFFFFF, 0x80000] {
+        let asm = format!("lui X1, {imm}");
+        let inst = assemble(&asm).unwrap();
+        assert!(encode(&inst).is_ok(), "lui 预移位值 {imm:#x} 不应误报");
+    }
+}
+
 #[test]
 fn branch_scatter_layout() {
     // B 型散布布局（规范）：beq x1,x2,8 → imm[4:1]=4 置于 bit 11:8

@@ -582,17 +582,20 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             // 仅在**真用户立即数**（Imm 槽、无 global_reloc 负编码语义、非
             // 预移位散布位域）时检查：
             // - global_reloc 指令的负编码（-(id+1)）是链接期内部值，跳过；
-            // - 散布 piece 带 shift（riscv imm20=imm20<<12 预移位——LUI 存
-            //   预移位值，值域是完整 32 位）跳过，否则 fconst hi20 误报；
+            // - **预移位**散布位域（如 riscv LUI 的 imm20：
+            //   `{offset=12,width=20,shift=12}`——槽存的是已左移 12 位的
+            //   值，值域为完整 32 位）跳过，否则 fconst hi20 误报；
+            // - **标准散布**（S 型 imm_s：`{offset=7,shift=0}`+
+            //   `{offset=25,shift=5}`——槽存真实值，值域 = 位段总宽）**要
+            //   检查**——store 偏移超 imm12 范围此前静默截断为错值；
             // - label 槽的块号/函数引用占位（-(f+1)）跳过。
-            let is_shifted_pieces = bf
-                .pieces
-                .as_ref()
-                .is_some_and(|ps| ps.iter().any(|p| p.shift > 0));
+            let is_preshifted_pieces = bf.pieces.as_ref().is_some_and(|ps| {
+                !ps.is_empty() && ps.iter().all(|p| p.offset == p.shift)
+            });
             let is_global_encoded = info.inst.global_reloc.is_some();
             if slot.kind == OperandKind::Imm
                 && !is_global_encoded
-                && !is_shifted_pieces
+                && !is_preshifted_pieces
                 && let Some((lo, hi)) = slot.imm_range()
             {
                 let lo = lo as i64;
