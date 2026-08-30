@@ -19,8 +19,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: rustfmt
+      - run: rustup override set nightly-2026-08-07
       - run: cargo fmt --all -- --check
 
   # Clippy (exclude forge-rustc which needs rustc_private)
@@ -32,8 +32,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: clippy, rustc-dev
+      - run: rustup override set nightly-2026-08-07
       - run: cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings
 
   # Tests on Linux (exclude forge-rustc)
@@ -45,8 +45,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: rustc-dev
+      - run: rustup override set nightly-2026-08-07
       # P0-18：安装 QEMU（qemu-system-misc 含 riscv64 模拟器）——riscv 矩阵
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
       - name: Install QEMU (riscv64)
@@ -62,8 +62,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: rustc-dev
+      - run: rustup override set nightly-2026-08-07
       - run: cargo test --workspace --exclude forge-rustc --all-features
 
   # Tests on macOS
@@ -75,8 +75,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: rustc-dev
+      - run: rustup override set nightly-2026-08-07
       - run: cargo test --workspace --exclude forge-rustc --all-features
 
   # forge-rustc 编译检查（rustc_private 依赖 nightly + rustc-dev；P4.6 纳入 CI）
@@ -88,8 +88,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: rustc-dev
+      - run: rustup override set nightly-2026-08-07
       - run: cargo check -p forge-rustc
 
   # forge-rustc 端到端真值测试（Windows：需 MSVC 链接器；rust-src 供
@@ -103,8 +103,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: rustc-dev, rust-src
+      - run: rustup override set nightly-2026-08-07
       # P0-21：先构建 wrapper（e2e.rs 断言 wrapper.exe 存在；此前 CI
       # fresh checkout 无此产物 → job 必红）。
       - name: Build forge-rustc-wrapper
@@ -120,8 +120,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
           components: rustc-dev
+      - run: rustup override set nightly-2026-08-07
       - run: cargo test -p forge-tests --features nightly
 
   # Docs check
@@ -133,7 +133,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
+      - run: rustup override set nightly-2026-08-07
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -147,7 +147,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
+      - run: rustup override set nightly-2026-08-07
       - run: cargo bench --no-run --workspace --exclude forge-rustc
 
   # Code coverage via cargo-tarpaulin
@@ -159,7 +159,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-08-07
-          override: true
+      - run: rustup override set nightly-2026-08-07
       - uses: taiki-e/install-action@cargo-tarpaulin
       - name: Generate coverage
         run: cargo tarpaulin --out xml --all-features --workspace --exclude forge-rustc

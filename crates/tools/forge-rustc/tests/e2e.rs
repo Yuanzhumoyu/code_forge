@@ -21,6 +21,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// 钉版 nightly 工具链（与 `.github/workflows/ci.yml` 的
+/// `toolchain: nightly-2026-08-07` 单点同步；bump 时两处一起改）。
+/// `cargo +nightly` 显式 channel 不受 rustup override 影响，必须用钉版
+/// 字面量保证 CI/本地一致（rustc_compat.rs 适配层按此版本维护）。
+const NIGHTLY: &str = "nightly-2026-08-07";
+
 /// 用例：程序体（i32 表达式）+ 期望退出码。
 struct Case {
     name: &'static str,
@@ -899,12 +905,15 @@ fn e2e_cargo_template_workflow() {
     );
 
     // 编译模板工程（build-std=core：系统 crate 用 LLVM，用户 crate 用 forge）
+    // P0-22：工具链钉版与 CI 一致（.github/workflows/ci.yml 单点同步）——
+    // `+nightly` 显式 channel 不受 rustup override 影响，必须用钉版字面量。
+    let toolchain = format!("+{NIGHTLY}");
     let build = Command::new("cargo")
         .current_dir(&hello_dir)
         .env("CARGO_TARGET_DIR", &target_dir)
         .env("RUSTC_WRAPPER", &wrapper)
         .env("RUSTFLAGS", &rustflags)
-        .args(["+nightly", "-Z", "build-std=core", "build"])
+        .args([toolchain.as_str(), "-Z", "build-std=core", "build"])
         .output()
         .map_err(|e| format!("failed to spawn cargo: {e}"))
         .expect("cargo spawn");
