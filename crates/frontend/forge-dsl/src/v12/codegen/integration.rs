@@ -13,6 +13,22 @@
 //!   的活区间由 pipeline 聚合的 `xreg_map` 驱动（见 pipeline/liverange.rs），
 //!   MachineInst::uses/defs 仅作辅助查询。
 //! - effect 标签（指令 `effect` 键）驱动 is_branch/is_call/is_ret/effects。
+//!
+//! ## x86 缺省语义（其他 ISA 应显式覆盖）
+//! 下列 ABI/集成键的缺省值 = x86 指令名/语义。x86 是参考实现，缺省合理；
+//! riscv/demo 等已在 TOML `[abi]` 显式声明自己的指令（如 `move_inst =
+//! "MV"`、`call_inst = "JAL"`、`ret_mov_inst = "MV"`）。缺省清单：
+//! - `[abi].move_inst` 缺省 `"MOV_RM8_R64"`（整数收参/返参移动）
+//! - `[abi].ret_mov_inst` 缺省 `"MOV_RM8_R64"`
+//! - `[abi].call_inst` 缺省 `"CALL_RIP_REL"`（rel32 函数符号调用）
+//! - 浮点参数/返回移动硬编码 `MOVSD`/`MOVSS`（f64/f32；缺失 → 浮点路径
+//!   降级 Unsupported）
+//! - 尾声跳转：变长 ISA 缺省 `JMP_REL32`（0xE9 rel32）；定宽缺省 JAL
+//!   （[emit].epilogue_label 覆盖）
+//! - 条件码表/前缀扫描缺省 = x86 集（`cond_default`/`x86_scan_default`，
+//!   见 codegen/asm.rs 与 codegen/vlen.rs）
+//! 新增 ISA 时若这些指令不存在，调用/参数/尾声路径会按缺省名查找失败并
+//! 报错（或降级 Unsupported）——优先在 TOML 显式声明。
 
 use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
