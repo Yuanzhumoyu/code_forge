@@ -1857,9 +1857,14 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
             let disp_zero_check: TokenStream = if ctx.modrm.unwrap() == ModrmKind::MemReg {
                 quote! {
                     if __mod == 1 {
-                        __disp = (bytes[__o2] as i8) as i64;
-                        __o2 += 1;
-                        if __disp != 0 {
+                        // P1-18：disp8 读取必须边界检查（越界 → 不匹配而非 panic）
+                        if __o2 < bytes.len() {
+                            __disp = (bytes[__o2] as i8) as i64;
+                            __o2 += 1;
+                            if __disp != 0 {
+                                __disp_ok = false;
+                            }
+                        } else {
                             __disp_ok = false;
                         }
                     }
