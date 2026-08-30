@@ -145,19 +145,27 @@ e2e 剩余 26 个值错（fib_recursive/multi_call_chain/nested_calls/float_args
 i64_wrapping_add/checked_tuple/alloc_* 等）+ vec_push compile failed——
 **MIR/lowering 全链路 trace 显示降级形态正常**（fadd/fcmp/switchInt→branch/
 iconst 常量实参/Fstore 栈槽中转全对），主库等价 IR 全部执行正确 → **值错
-收敛为 forge-rustc 与 rustc-2026-08-07 的 MIR 常量/ABI 交互细节**
-（rustc 内部漂移，非主库）。
+收敛为 forge-rustc 与 rustc-2026-08-07 的 monomorphized core 函数
+（wrapping_add/alloc 等）符号/链接交互**（rustc 内部漂移，非主库——
+主库 80 测试全绿，全部调用/常量/分支/栈槽路径排除）。
+
+### 已排除清单（主库 80 测试全绿）
+
+| 路径 | 验证 |
+| --- | --- |
+| i64/iconst 常量实参 + GPR 槽 + 跨函数 call | test_jit_i64_const_arg_call ✓ |
+| **i64 参数 Store/Load 栈槽中转** | test_jit_i64_param_via_stack_slot ✓ |
+| f64 参数栈槽中转（Fstore/Fload） | test_jit_f64_param_via_stack_slot ✓ |
+| fconst 实参 / mixed by-position / fcmp→branch / 组合 / fib / select | ✓ |
 
 ### 下一步候选（按优先级）
 
-1. **rustc 常量位模式**：`rvalue.rs:298` 的 `scalar.to_bits(s.size())`——
-   rustc nightly 的 ScalarSize/API 变化 → fconst/iconst 位模式错
-   （`FORGE_TRACE_CONST` 目前无输出——常量求值路径未触达，需在
-   `try_to_scalar_int` 处补 trace）；
-2. **FnAbi 参数布局**：rustc 2026-08-07 的 FnAbi 对混合/聚合参数的
-   位置分配变化 → forge-rustc 的 arg_class 打包错位
-   （`FORGE_TRACE_ABI` 对比 FnAbi 与打包结果）；
-3. **入口参数/返回槽**：mainCRTStartup 的 `_0 = copy _1 as i32`
-   （IntToInt）路径与返回槽初始化（trace 见 XReg(512) 未定义值嫌疑）。
+1. **monomorphized core 函数符号/链接**：`core::num::wrapping_add` 实例的
+   符号生成/解析与链接（值错 1164775489 疑为未初始化/错符号调用——反汇编
+   e2e 产物验证 call 目标）；
+2. **rustc 常量位模式**：`rvalue.rs:298` 的 `scalar.to_bits(s.size())`——
+   CONST trace 已加（wrapping_add 常量 1000/2000 正确，暂排除）；
+3. **FnAbi 参数布局**：`FORGE_TRACE_ABI` 对比 rustc FnAbi 与打包
+   （wrapping_add 2×i64 Direct 正确，暂排除）。
 
 E1-E5（grow 链定位/Select 恢复/sret spill/转正）在此线之后执行。
