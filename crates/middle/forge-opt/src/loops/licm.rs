@@ -32,25 +32,28 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError>
     let mut result = PassResult::default();
     // 使用函数上的惰性分析缓存（licm 只移动指令、不改变块结构，支配树/
     // 循环森林无需重建）；无循环或循环体过小时快速返回。
-    let loops: Vec<(Block, HashSet<Block>)> = func
+    let loops: Vec<(Block, Block, HashSet<Block>)> = func
         .loop_forest()
         .all_loops()
         .iter()
         .filter(|li| li.blocks.len() > 1)
-        .map(|li| (li.header, li.blocks.iter().copied().collect()))
+        // P1-2/P1-3：外提目标 = preheader（若有——header 唯一循环外 pred，
+        // 每迭代只执行一次的真正不变量位置）；无 preheader 时回退 header
+        //（旧行为；insert_preheader pass 正规化后可全量走 preheader）。
+        .map(|li| (li.header, li.preheader.unwrap_or(li.header), li.blocks.iter().copied().collect()))
         .collect();
     if loops.is_empty() {
         return Ok(result);
     }
 
-    for (header, body) in loops {
+    for (header, target, body) in loops {
         let outside_values = collect_values_outside(func, &body);
         let invariants = mark_invariants(func, &body, &outside_values);
         if invariants.is_empty() {
             continue;
         }
 
-        let count = hoist_to_header(func, header, &invariants);
+        let count = hoist_to_header(func, target, &invariants);
         if count > 0 {
             result.instructions_removed += count;
             result.changed = true;

@@ -12,6 +12,12 @@ pub struct LoopInfo {
     pub depth: u32,
     pub parent_loop: Option<usize>,
     pub exit_blocks: Vec<Block>,
+    /// 回边源块（P1-3：latch——循环末尾跳回 header 的块；while 循环
+    /// 即条件分支块）。licm/ind_var/loop_unroll 用它定位循环体入口。
+    pub latches: Vec<Block>,
+    /// 前驱块（P1-3：唯一的循环外 pred；无 preheader 时为 None——
+    /// 需 insert_preheader pass 插入，LICM 外提的目标）。
+    pub preheader: Option<Block>,
 }
 
 #[derive(Clone, Debug)]
@@ -32,6 +38,10 @@ impl LoopForest {
                 if dom_tree.dominates(succ, pred) {
                     let header = succ;
                     if let Some(&idx) = header_to_loop.get(&header) {
+                        // P1-3：记录 latch（回边源块）
+                        if !loops[idx].latches.contains(&pred) {
+                            loops[idx].latches.push(pred);
+                        }
                         collect_loop_body(preds_map, pred, header, &mut loops[idx].blocks);
                     } else {
                         let mut blocks = vec![header];
@@ -43,9 +53,28 @@ impl LoopForest {
                             depth: 1,
                             parent_loop: None,
                             exit_blocks: Vec::new(),
+                            latches: vec![pred],
+                            preheader: None,
                         });
                         header_to_loop.insert(header, idx);
                     }
+                }
+            }
+        }
+
+        // P1-3：计算 preheader——header 的唯一循环外 pred（该 pred 的所有
+        // 后继都是 header，即"降落"到循环的块；不支配任何循环块）。多循环
+        // 外 pred（如 if 两边都进循环）→ None（需 insert_preheader 正规化）。
+        for l in &mut loops {
+            let block_set: HashSet<Block> = l.blocks.iter().copied().collect();
+            if let Some(preds) = preds_map.get(&l.header) {
+                let outside: Vec<Block> = preds
+                    .iter()
+                    .copied()
+                    .filter(|p| !block_set.contains(p))
+                    .collect();
+                if outside.len() == 1 {
+                    l.preheader = Some(outside[0]);
                 }
             }
         }
