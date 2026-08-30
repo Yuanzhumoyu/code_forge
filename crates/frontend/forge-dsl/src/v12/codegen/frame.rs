@@ -5,7 +5,7 @@
 //! inst_reg_imm_fids）以及 model 类型。
 
 use super::super::model::*;
-use super::integration::{inst_fids, inst_move_role, inst_reg_imm_fids};
+use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -120,46 +120,61 @@ pub(crate) fn gen_frame_lowering(
         .and_then(|e| e.epilogue_label)
         .unwrap_or(true);
 
-    // 尾声跳转指令选择：x86 JMP_REL32（0xE9 rel32）手写；定宽（riscv）
-    // JAL x0, epilogue_label（label 槽 = 块号 → encoder 定宽 fixup
-    // Relative(4,0)，位段由 RiscvRelocPatcher 编码）。
-    // 显式 `[emit].epilogue_jump_inst` 优先；缺省按指令存在性自动检测。
+    // 尾声跳转指令选择：`[emit].epilogue_jump_inst` 或 `[abi].jump_inst`
+    // 键；缺省按 ISA 形态固定（变长 x86 → JMP_REL32 0xE9 rel32 手写；
+    // 定宽 riscv → JAL x0, epilogue_label——label 槽 = 块号 → encoder 定宽
+    // fixup Relative(4,0)，位段由 RiscvRelocPatcher 编码）。
+    // **不做按名存在性猜测**：指令不存在时 inst_fids 查找报错。
     let explicit_jump = model
         .emit
         .as_ref()
         .and_then(|e| e.epilogue_jump_inst.clone());
-    let jump_inst =
-        explicit_jump
-            .as_deref()
-            .unwrap_or(if infos.iter().any(|i| i.inst.name == "JMP_REL32") {
-                "JMP_REL32"
-            } else if infos.iter().any(|i| i.inst.name == "JAL") {
-                "JAL"
+    let abi_jump = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.jump_inst.clone());
+    let jump_inst = explicit_jump
+        .or(abi_jump)
+        .unwrap_or_else(|| {
+            if model.meta.variable_length {
+                "JMP_REL32".to_string()
             } else {
-                ""
-            });
-    let has_jmp_f = jump_inst == "JMP_REL32";
-    let has_jal_f = jump_inst == "JAL";
-    let jal_f = inst_fids(infos, "JAL");
-    let (jal_dest, jal_target) = if jal_f.len() >= 2 {
-        (jal_f[0].clone(), jal_f[1].clone())
+                "JAL".to_string()
+            }
+        });
+    // 尾声跳转统一走 encoder：jump_inst 指令存在即可（`inst_exists`，
+    // 与操作数无关）。变长（x86 JMP_REL32）label 槽 = 尾部 imm → encoder
+    // 发 REL4 fixup（与旧手写 0xE9+use_label_at 字节等价）；定宽（riscv
+    // JAL）label 槽 = 位段 → Relative(4,0) fixup（patcher 重排）。**不按
+    // 指令名判断形态**——变长/定宽由 `[meta].variable_length` 决定。
+    let jump_f = inst_fids(infos, &jump_inst);
+    let has_jump = inst_exists(infos, &jump_inst);
+    let jump_vn = crate::v12::codegen::pascal_ident(&jump_inst);
+    let jmp_rel = jump_f
+        .first()
+        .map(|f| (*f).clone())
+        .unwrap_or_else(|| format_ident!("target"));
+    let (jal_dest, jal_target) = if jump_f.len() >= 2 {
+        (jump_f[0].clone(), jump_f[1].clone())
     } else {
         (format_ident!("dest"), format_ident!("target"))
     };
-    let epilogue_jump_body: TokenStream = if has_jmp_f {
+    let epilogue_jump_body: TokenStream = if has_jump && model.meta.variable_length {
         quote! {
-            // JMP rel32（0xE9 + 占位）+ label 记录（链接期回填）。
-            sink.put1(0xE9);
-            let fixup = sink.offset();
-            sink.put4(0u32);
-            sink.use_label_at(fixup, epilogue_block, crate::RelocKind::REL4);
+            // 变长（x86 JMP_REL32 语义）：label 槽 = 块号 → encoder 编码 +
+            // use_label_at（REL4 fixup = 指令末尾 rel32 占位）。
+            let inst = Inst::#jump_vn { #jmp_rel: epilogue_block.0 as i64 };
+            encoder.encode(&inst, reg_map, sink).map_err(|e| {
+                crate::IrError::Internal(format!("epilogue jump encode: {e}"))
+            })?;
             Ok(())
         }
-    } else if has_jal_f {
+    } else if has_jump {
         quote! {
-            // jal x0, epilogue_block——label 槽 = 块号 → encoder 编码时
-            // use_label_at（定宽 fixup = 指令起始；位段重排由 patcher）。
-            let inst = Inst::Jal {
+            // 定宽（riscv JAL 语义）：jal x0, epilogue_block——label 槽 = 块号
+            // → encoder 编码时 use_label_at（定宽 fixup = 指令起始；位段重排
+            // 由 patcher）。
+            let inst = Inst::#jump_vn {
                 #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
                 #jal_target: epilogue_block.0 as i64,
             };
@@ -171,7 +186,7 @@ pub(crate) fn gen_frame_lowering(
     } else {
         quote! {
             Err(crate::IrError::Unsupported(
-                "epilogue jump: need JMP_REL32 or JAL".into(),
+                "epilogue jump: no jump_inst ([abi].jump_inst / [emit].epilogue_jump_inst)".into(),
             ))
         }
     };
@@ -426,7 +441,14 @@ fn gen_emit_pseudo(
             // 指令（riscv）→ 用 [spill.GPR] store/load 模板指令（SD/LD）存到
             // 帧槽 [sp + frame - fp_push - (k+1)*8]（frame_alloc 之后执行，
             // 槽在已分配帧顶部 fp_push 区域之下；min_frame_bytes 需覆盖）。
-            if inst_fids(infos, "PUSH").is_empty() && inst_fids(infos, "POP").is_empty() {
+            // `[abi].push_inst`/`pop_inst` 键驱动（缺省按 PUSH/POP 存在性检测）。
+            let push_inst = abi
+                .push_inst
+                .clone()
+                .unwrap_or_else(|| "PUSH".to_string());
+            let pop_inst = abi.pop_inst.clone().unwrap_or_else(|| "POP".to_string());
+            let has_hw_push = inst_exists(infos, &push_inst) && inst_exists(infos, &pop_inst);
+            if !has_hw_push {
                 let Some(frame) = &abi.frame else {
                     return Err(
                         "@push_callee: 定宽 ISA 需要 [abi.frame]（sp/fp_push_bytes）".into(),
@@ -498,7 +520,11 @@ fn gen_emit_pseudo(
             } else {
                 callee.gpr.iter().rev().cloned().collect()
             };
-            let push_pop = if name == "push_callee" { "PUSH" } else { "POP" };
+            let push_pop = if name == "push_callee" {
+                &push_inst
+            } else {
+                &pop_inst
+            };
             let vn = crate::v12::codegen::pascal_ident(push_pop);
             // 单操作数 +r 形式：PUSH→src（in）、POP→dest（out）——字段名取操作数 0
             let f0 = inst_fids(infos, push_pop)
@@ -555,14 +581,30 @@ fn gen_emit_pseudo(
                 .ok_or_else(|| {
                     format!("[{move_inst}] must have In(src)/Out|InOut(dest) reg operands")
                 })?;
-            // 浮点参数移动：MOVSD/MOVSS（fpr out, fpr in；reg=dest、rm=src）
-            let fpr_fids = inst_fids(infos, "MOVSD");
-            let has_fpr_mov = fpr_fids.len() >= 2 && inst_fids(infos, "MOVSS").len() >= 2;
+            // 浮点参数移动：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键
+            //（缺省 "MOVSD"/"MOVSS"；fpr out, fpr in）。
+            let fpr_mov64 = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.fpr_mov_inst.clone())
+                .unwrap_or_else(|| "MOVSD".to_string());
+            let fpr_mov32 = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.fpr_mov_inst32.clone())
+                .unwrap_or_else(|| "MOVSS".to_string());
+            let fpr_fids = inst_fids(infos, &fpr_mov64);
+            let has_fpr_mov =
+                fpr_fids.len() >= 2 && inst_fids(infos, &fpr_mov32).len() >= 2;
             let (f_dest, f_src) = if fpr_fids.len() >= 2 {
                 (fpr_fids[0].clone(), fpr_fids[1].clone())
             } else {
                 (format_ident!("dest"), format_ident!("src"))
             };
+            // 变体名按键派生（fpr_mov_inst/fpr_mov_inst32），不硬编码
+            // Inst::Movsd/Inst::Movss。
+            let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
+            let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
             // by-ref 向量 load：宽向量参数（>16 字节）按引用传参——ABI 传 GPR
             // 指针（int 槽位），收参时从 [ptr] load 到目标向量寄存器。
             // 优先非对齐 VMOVUPS（指针未必 32 字节对齐）；缺省回退 VMOVAPS。
@@ -614,12 +656,12 @@ fn gen_emit_pseudo(
                         let __src = [#(Reg::#float_regs),*][__fi];
                         __fi += 1;
                         let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
-                            Inst::Movss {
+                            Inst::#fpr_mov32_vn {
                                 #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
                                 #f_src: __src,
                             }
                         } else {
-                            Inst::Movsd {
+                            Inst::#fpr_mov64_vn {
                                 #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
                                 #f_src: __src,
                             }

@@ -149,6 +149,13 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
     }
 }
 
+/// 指令存在性（按 name 精确匹配，**与操作数无关**——RET/NOP 等无操作数
+/// 指令存在性必须可判定；`inst_fids` 返回空 vec 仅表示无字段，不表示
+/// 指令不存在）。
+pub(crate) fn inst_exists(infos: &[InstInfo], name: &str) -> bool {
+    infos.iter().any(|i| i.inst.name == name)
+}
+
 /// 按指令名取操作数序字段 ident（集成层硬编码构造 Inst 用；字段名随
 /// 类型化重构变化，避免各处硬编码 op{i}）。
 pub(crate) fn inst_fids<'a>(infos: &'a [InstInfo], name: &str) -> Vec<&'a syn::Ident> {

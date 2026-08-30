@@ -803,6 +803,37 @@ pub struct Abi {
     /// 其余 Reg 槽填 `call_ret_reg`（返回地址寄存器）。
     #[serde(default)]
     pub call_inst: Option<String>,
+    /// CallIndirect 调用指令名（缺省 "CALL_RM"=x86 FF /2）。定宽 ISA 可
+    /// 声明 "JALR"（rs1 = 目标地址、imm = 0、out Reg 槽 = call_ret_reg）。
+    #[serde(default)]
+    pub call_indirect_inst: Option<String>,
+    /// Return 指令名（terminator lowering 用；缺省 "RET"）。
+    #[serde(default)]
+    pub ret_inst: Option<String>,
+    /// 无条件跳转指令名（epilogue/block jump；缺省变长 "JMP_REL32"、
+    /// 定宽 "JAL"——按存在性回退）。
+    #[serde(default)]
+    pub jump_inst: Option<String>,
+    /// 条件分支指令名（Branch lowering；缺省 "JCC_REL32"/定宽 "BEQ"）。
+    #[serde(default)]
+    pub branch_inst: Option<String>,
+    /// 条件测试指令名（Branch 的 test-cond 序列；缺省 "TEST_RM_R"）。
+    #[serde(default)]
+    pub test_inst: Option<String>,
+    /// 硬件 push/pop 指令名（@push_callee 用；缺省 "PUSH"/"POP"——
+    /// 不存在时回退 [spill.GPR] store/load 模板）。
+    #[serde(default)]
+    pub push_inst: Option<String>,
+    /// 硬件 pop 指令名（@pop_callee 用；缺省 "POP"）。
+    #[serde(default)]
+    pub pop_inst: Option<String>,
+    /// 浮点返回/参数移动指令名（f64；缺省 "MOVSD"）。
+    /// 生成代码直接构造该指令变体（fpr out, fpr in）。
+    #[serde(default)]
+    pub fpr_mov_inst: Option<String>,
+    /// 浮点返回/参数移动指令名（f32；缺省 "MOVSS"）。
+    #[serde(default)]
+    pub fpr_mov_inst32: Option<String>,
     /// Call 的返回地址寄存器（缺省 "X1"=riscv ra）。
     #[serde(default)]
     pub call_ret_reg: Option<String>,

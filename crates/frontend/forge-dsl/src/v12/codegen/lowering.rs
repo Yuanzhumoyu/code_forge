@@ -17,8 +17,8 @@
 use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
 use super::integration::{
-    collect_phys_clobbers, compile_pred_guard, gen_lowering_attrs, inst_fids, inst_move_role,
-    lowering_token_kind, parse_i64_lit, parse_mem_template, strip_placeholder_decls,
+    collect_phys_clobbers, compile_pred_guard, gen_lowering_attrs, inst_exists, inst_fids,
+    inst_move_role, lowering_token_kind, parse_i64_lit, parse_mem_template, strip_placeholder_decls,
 };
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
@@ -152,20 +152,56 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         });
     }
 
-    // terminator 指令引用（按名查找，缺失 → 该终结符 Unsupported）
-    let has_ret = infos.iter().any(|i| i.inst.name == "RET");
-    let has_jmp = infos.iter().any(|i| i.inst.name == "JMP_REL32");
+    // terminator 指令引用：`[abi]` 键驱动（ret_inst/jump_inst/branch_inst/
+    // test_inst）。**缺省值是固定默认名**（按 ISA 形态：变长 x86 → 相对
+    // 跳转、定宽 riscv → JAL/BEQ），**不做"按名字存在性"猜测**——指令
+    // 不存在时由 inst_fids 查找报错（用户用其他名字必须显式声明键）。
+    let abi_cfg = model.abi.as_ref();
+    let ret_inst = abi_cfg
+        .and_then(|a| a.ret_inst.clone())
+        .unwrap_or_else(|| "RET".to_string());
+    let jump_inst = abi_cfg
+        .and_then(|a| a.jump_inst.clone())
+        .unwrap_or_else(|| {
+            if model.meta.variable_length {
+                "JMP_REL32".to_string()
+            } else {
+                "JAL".to_string()
+            }
+        });
+    let branch_inst = abi_cfg
+        .and_then(|a| a.branch_inst.clone())
+        .unwrap_or_else(|| {
+            if model.meta.variable_length {
+                "JCC_REL32".to_string()
+            } else {
+                "BEQ".to_string()
+            }
+        });
+    let test_inst = abi_cfg
+        .and_then(|a| a.test_inst.clone())
+        .unwrap_or_else(|| "TEST_RM_R".to_string());
+    // 指令存在性：终结符指令必须声明（缺失 → 该终结符 Unsupported，
+    // 生成代码引用不存在的变体是编译错误；用查找失败兜底报错信息）。
+    // 存在性 = `inst_exists`（与操作数无关——RET/NOP 无操作数，不能
+    // 用 `inst_fids` 空 vec 判断）。
+    let has_ret = inst_exists(infos, &ret_inst);
+    let has_jmp = inst_exists(infos, &jump_inst);
+    let has_jcc = inst_exists(infos, &branch_inst);
+    let has_test = inst_exists(infos, &test_inst);
+    // 定宽跳转（JAL 语义）：jump_inst 指令存在即启用（非按 ISA 形态猜——
+    // demo 等无跳转指令的定宽 ISA 自然降级，不生成不存在的变体引用）。
+    let has_jal = has_jmp && !model.meta.variable_length;
     // 定宽（riscv）跳转：JAL x0（rd=index0、label 槽 = 块号 → encoder 定宽
     // fixup Relative(4,0)）。JAL 字段 = [dest(gpr out), target(label)]。
-    let has_jal = infos.iter().any(|i| i.inst.name == "JAL");
-    let jal_f = inst_fids(infos, "JAL");
+    let jal_f = inst_fids(infos, &jump_inst);
     let (jal_dest, jal_target) = if jal_f.len() >= 2 {
         (jal_f[0].clone(), jal_f[1].clone())
     } else {
         (format_ident!("dest"), format_ident!("target"))
     };
     // 定宽条件分支（riscv）：BEQ 字段 = [src, src2, target(label)]。
-    let beq_f = inst_fids(infos, "BEQ");
+    let beq_f = inst_fids(infos, &branch_inst);
     let (b_src, b_src2, b_target) = if beq_f.len() >= 3 {
         (beq_f[0].clone(), beq_f[1].clone(), beq_f[2].clone())
     } else {
@@ -176,14 +212,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         )
     };
     // 返回移动指令名可配置（[abi].ret_mov_inst，缺省 "MOV_RM8_R64"）。
-    let ret_mov_inst = model
-        .abi
-        .as_ref()
+    let ret_mov_inst = abi_cfg
         .and_then(|a| a.ret_mov_inst.clone())
         .unwrap_or_else(|| "MOV_RM8_R64".to_string());
-    let has_mov_rax = infos.iter().any(|i| i.inst.name == ret_mov_inst);
-    let has_test = infos.iter().any(|i| i.inst.name == "TEST_RM_R");
-    let has_jcc = infos.iter().any(|i| i.inst.name == "JCC_REL32");
+    let has_mov_rax = inst_exists(infos, &ret_mov_inst);
     let ret_vn = crate::v12::codegen::pascal_ident(&ret_mov_inst);
     let ret_move = inst_move_role(infos, &ret_mov_inst);
     // 类型化字段名（按指令名查，缺省 op0/op1/op2 兜底——集成层构造用）
@@ -193,18 +225,18 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         Some((s, si, d, _di)) => (s.clone(), *si, d.clone(), 0u8),
         None => (format_ident!("src"), 0u8, format_ident!("dest"), 0u8),
     };
-    let jmp_f = fids("JMP_REL32");
+    let jmp_f = fids(&jump_inst);
     let jmp_rel = jmp_f
         .first()
         .cloned()
         .unwrap_or_else(|| format_ident!("target"));
-    let test_f = fids("TEST_RM_R");
+    let test_f = fids(&test_inst);
     let (t_a, t_b) = if test_f.len() == 2 {
         (test_f[0].clone(), test_f[1].clone())
     } else {
         (format_ident!("src"), format_ident!("src2"))
     };
-    let jcc_f = fids("JCC_REL32");
+    let jcc_f = fids(&branch_inst);
     let (jcc_cond, jcc_rel) = if jcc_f.len() == 2 {
         (jcc_f[0].clone(), jcc_f[1].clone())
     } else {
@@ -214,8 +246,18 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // Return：整数值 → RAX（MOV_RM8_R64）、浮点值 → XMM0（MOVSD/MOVSS）。
     // 与 v11 一致：**不生成 RET**——return block 经 emit_epilogue_jump 跳到
     // epilogue 统一恢复 callee-saved 后 ret（否则栈不平衡崩溃）。
-    let fpr_mov_fids = inst_fids(infos, "MOVSD");
-    let has_fpr_mov = fpr_mov_fids.len() >= 2 && inst_fids(infos, "MOVSS").len() >= 2;
+    // 浮点移动指令由 `[abi].fpr_mov_inst`/`fpr_mov_inst32` 键指定
+    //（缺省 "MOVSD"/"MOVSS"），变体名与字段均按键派生——不做名判断。
+    let fpr_mov64 = abi_cfg
+        .and_then(|a| a.fpr_mov_inst.clone())
+        .unwrap_or_else(|| "MOVSD".to_string());
+    let fpr_mov32 = abi_cfg
+        .and_then(|a| a.fpr_mov_inst32.clone())
+        .unwrap_or_else(|| "MOVSS".to_string());
+    let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
+    let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
+    let fpr_mov_fids = inst_fids(infos, &fpr_mov64);
+    let has_fpr_mov = fpr_mov_fids.len() >= 2 && inst_fids(infos, &fpr_mov32).len() >= 2;
     let fpr_mov_src: syn::Ident = match fpr_mov_fids.get(1) {
         Some(f) => (*f).clone(),
         None => format_ident!("src"),
@@ -226,14 +268,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     };
     let fpr_return_body: TokenStream = if has_fpr_mov {
         quote! {
-            // 浮点返回值 → XMM0（f32 → MOVSS / f64 → MOVSD）
+            // 浮点返回值 → XMM0（f32 → fpr_mov32 / f64 → fpr_mov64）
             let __fidx = __pack.push_inst(if ctx.xreg_types.get(&val).map(|t| t.bits()).unwrap_or(64) == 32 {
-                Inst::Movss {
+                Inst::#fpr_mov32_vn {
                     #fpr_mov_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #fpr_mov_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                 }
             } else {
-                Inst::Movsd {
+                Inst::#fpr_mov64_vn {
                     #fpr_mov_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #fpr_mov_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                 }
@@ -243,7 +285,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     } else {
         quote! {
             let _ = __pack;
-            return Err(crate::prelude::IrError::Unsupported("v12 float return (MOVSD/MOVSS missing)".into()));
+            return Err(crate::prelude::IrError::Unsupported("v12 float return (fpr_mov_inst missing)".into()));
         }
     };
     let return_body: TokenStream = if has_mov_rax {
@@ -280,19 +322,20 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             Err(crate::prelude::IrError::Unsupported("v12 return lowering (ret mov inst missing)".into()))
         }
     };
-    // Jump：JMP_REL32 target（块号 → rel 字段）；定宽（riscv）→ JAL x0,
-    // target（label 槽 = 块号 → encoder 定宽 fixup）。
-    let jump_body: TokenStream = if has_jmp {
+    // Jump：跳转指令（[abi].jump_inst 键；缺省 JMP_REL32/JAL 存在性回退）
+    // 变体名按键派生，避免硬编码 Inst::JmpRel32/Inst::Jal。
+    let jump_vn = crate::v12::codegen::pascal_ident(&jump_inst);
+    let jump_body: TokenStream = if has_jal {
         quote! {
-            __pack.push_inst(Inst::JmpRel32 { #jmp_rel: target.0 as i64 });
-            Ok(__pack)
-        }
-    } else if has_jal {
-        quote! {
-            __pack.push_inst(Inst::Jal {
+            __pack.push_inst(Inst::#jump_vn {
                 #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
                 #jal_target: target.0 as i64,
             });
+            Ok(__pack)
+        }
+    } else if has_jmp {
+        quote! {
+            __pack.push_inst(Inst::#jump_vn { #jmp_rel: target.0 as i64 });
             Ok(__pack)
         }
     } else {
@@ -303,7 +346,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     };
     // Branch：x86 = test cond,cond → je false → jmp true（v11 语义）；
     // 定宽（riscv）= beq cond, X0, false → jal x0, true（X0 恒零 → cond==0
-    // 走 false；label 槽块号 → 定宽 fixup）。
+    // 走 false；label 槽块号 → 定宽 fixup）。变体名按键派生。
+    let test_vn = crate::v12::codegen::pascal_ident(&test_inst);
+    let branch_vn = crate::v12::codegen::pascal_ident(&branch_inst);
+    let beq_vn = crate::v12::codegen::pascal_ident(&branch_inst);
     let branch_body: TokenStream = if has_test && has_jcc && has_jmp {
         quote! {
             let cond = value_to_xreg.get(cond_val).copied()
@@ -311,7 +357,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             let true_block = then_block.0 as i64;
             let false_block = else_block.0 as i64;
             // TEST cond, cond（85 /r：reg=op0、rm=op1）
-            let __idx = __pack.push_inst(Inst::TestRmR {
+            let __idx = __pack.push_inst(Inst::#test_vn {
                 #t_a: Reg::from_index(0, forge_ir::RegClass::GPR64),
                 #t_b: Reg::from_index(0, forge_ir::RegClass::GPR64),
 
@@ -319,9 +365,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             __pack.map_reg_field(cond, __idx, 0u8, false);
             __pack.map_reg_field(cond, __idx, 1u8, false);
             // je false_block（cond=4=e）
-            __pack.push_inst(Inst::JccRel32 { #jcc_cond: 4u8, #jcc_rel: false_block });
+            __pack.push_inst(Inst::#branch_vn { #jcc_cond: 4u8, #jcc_rel: false_block });
             // jmp true_block
-            __pack.push_inst(Inst::JmpRel32 { #jmp_rel: true_block });
+            __pack.push_inst(Inst::#jump_vn { #jmp_rel: true_block });
             Ok(__pack)
         }
     } else if has_jal && !beq_f.is_empty() {
@@ -331,14 +377,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             let true_block = then_block.0 as i64;
             let false_block = else_block.0 as i64;
             // beq cond, X0, false_block（cond==0 → false）
-            let __idx = __pack.push_inst(Inst::Beq {
+            let __idx = __pack.push_inst(Inst::#beq_vn {
                 #b_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
                 #b_src2: Reg::from_index(0, forge_ir::RegClass::GPR64),
                 #b_target: false_block,
             });
             __pack.map_reg_field(cond, __idx, 0u8, false);
             // jal x0, true_block
-            __pack.push_inst(Inst::Jal {
+            __pack.push_inst(Inst::#jump_vn {
                 #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
                 #jal_target: true_block,
             });
@@ -564,15 +610,28 @@ fn gen_call_lowering(
         inst_move_role(infos, &mov_inst).ok_or_else(|| {
             format!("Call lowering: [{mov_inst}] must have In(src)/Out|InOut(dest) reg operands")
         })?;
-    // MOVSD/MOVSS（浮点移动）——缺失 → 浮点路径 Unsupported（防生成
-    // 代码引用不存在的 Inst 变体；demo 等无浮点 ISA 的 Call 整体降级）。
-    let sd_f = fids("MOVSD");
+    // 浮点移动指令：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键（缺省
+    // "MOVSD"/"MOVSS"）——缺失 → 浮点路径 Unsupported（防生成代码引用
+    // 不存在的 Inst 变体；demo 等无浮点 ISA 的 Call 整体降级）。
+    let fpr_mov64 = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.fpr_mov_inst.clone())
+        .unwrap_or_else(|| "MOVSD".to_string());
+    let fpr_mov32 = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.fpr_mov_inst32.clone())
+        .unwrap_or_else(|| "MOVSS".to_string());
+    let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
+    let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
+    let sd_f = fids(&fpr_mov64);
     let (f_dest, f_src) = if sd_f.len() >= 2 {
         (sd_f[0].clone(), sd_f[1].clone())
     } else {
         (format_ident!("dest"), format_ident!("src"))
     };
-    let has_ss = fids("MOVSS").len() >= 2;
+    let has_ss = fids(&fpr_mov32).len() >= 2;
     let has_fpr_mov = sd_f.len() >= 2 && has_ss;
     // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
     let ret_src_expr: TokenStream = abi
@@ -636,16 +695,16 @@ fn gen_call_lowering(
     let fpr_ret_stmt: TokenStream = if has_fpr_mov {
         quote! {
             let __idx = __pack.push_inst(if ctx.xreg_types.get(&__r).map(|t| t.bits()).unwrap_or(64) == 32 && #has_ss {
-                Inst::Movss { #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS), #f_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS) }
+                Inst::#fpr_mov32_vn { #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS), #f_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS) }
             } else {
-                Inst::Movsd { #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS), #f_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS) }
+                Inst::#fpr_mov64_vn { #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS), #f_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS) }
             });
             __pack.map_reg_field(__r, __idx, 0u8, true);
         }
     } else {
         quote! {
             return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: float return move (MOVSD/MOVSS missing)".into(),
+                "v12 call: float return move (fpr_mov_inst missing)".into(),
             ));
         }
     };
@@ -674,49 +733,41 @@ fn gen_call_lowering(
         .unwrap_or_else(|| "CALL_RIP_REL".to_string());
     let call_f = fids(&call_inst);
     let mut call_is_err = false;
+    // Call 字段构造（结构迭代，不按指令名判断形态）：
+    // - Label 槽（x86 rel32 / riscv off_j）= -(FuncRef+1)（encoder 转 "@N"
+    //   符号 reloc——变长 CALL 或定宽 JAL 统一）；
+    // - Out/InOut Reg 槽 = [abi].call_ret_reg（返回地址寄存器；x86 无此槽）；
+    // - 其余槽（in Reg / imm）置 0。
     let call_body: TokenStream = if op_name == "Call" {
         match call_f.first() {
-            Some(call_target) => {
-                let call_target = (*call_target).clone();
-                if call_inst == "CALL_RIP_REL" {
-                    // x86：CALL_RIP_REL 的 rel32 字段 = -(FuncRef+1)
-                    quote! {
-                        let __f = ctx.current_func_ref
-                            .ok_or_else(|| crate::prelude::IrError::Unsupported("v12 call: missing func ref".into()))?;
-                        __pack.push_inst(Inst::CallRipRel { #call_target: -(__f.0 as i64 + 1) });
-                    }
-                } else {
-                    // 定宽（riscv JAL）：label 槽 = -(FuncRef+1)；其余 Reg 槽
-                    //（rd 返回地址寄存器）填 [abi].call_ret_reg（riscv X1）。
-                    // 角色解析：label 槽 = call_target；out/in Reg 槽 = ret reg。
-                    let ret_reg = abi.call_ret_reg.clone().unwrap_or_else(|| "X1".to_string());
-                    let ret_ident = format_ident!("{ret_reg}");
-                    let info = infos
-                        .iter()
-                        .find(|i| i.inst.name == call_inst)
-                        .ok_or_else(|| format!("call_inst '{call_inst}' 不存在"))?;
-                    let fields: Vec<TokenStream> = info
-                        .operands
-                        .iter()
-                        .map(|(_, fid, slot, role)| {
-                            let fid_ident = format_ident!("{fid}");
-                            if slot.kind == OperandKind::Label {
-                                quote! { #fid_ident: -(__f.0 as i64 + 1) }
-                            } else if slot.kind == OperandKind::Reg {
-                                // 返回地址寄存器（riscv ra=X1）；恒零/其他固定
-                                let _ = role;
-                                quote! { #fid_ident: Reg::#ret_ident }
-                            } else {
-                                quote! { #fid_ident: 0u32 }
-                            }
-                        })
-                        .collect();
-                    let vn = crate::v12::codegen::pascal_ident(&call_inst);
-                    quote! {
-                        let __f = ctx.current_func_ref
-                            .ok_or_else(|| crate::prelude::IrError::Unsupported("v12 call: missing func ref".into()))?;
-                        __pack.push_inst(Inst::#vn { #(#fields),* });
-                    }
+            Some(_) => {
+                let ret_reg = abi.call_ret_reg.clone().unwrap_or_else(|| "X1".to_string());
+                let ret_ident = format_ident!("{ret_reg}");
+                let info = infos
+                    .iter()
+                    .find(|i| i.inst.name == call_inst)
+                    .ok_or_else(|| format!("call_inst '{call_inst}' 不存在"))?;
+                let fields: Vec<TokenStream> = info
+                    .operands
+                    .iter()
+                    .map(|(_, fid, slot, role)| {
+                        let fid_ident = format_ident!("{fid}");
+                        if slot.kind == OperandKind::Label {
+                            quote! { #fid_ident: -(__f.0 as i64 + 1) }
+                        } else if slot.kind == OperandKind::Reg
+                            && matches!(role, OperandRole::Out | OperandRole::InOut)
+                        {
+                            quote! { #fid_ident: Reg::#ret_ident }
+                        } else {
+                            quote! { #fid_ident: 0u32 }
+                        }
+                    })
+                    .collect();
+                let vn = crate::v12::codegen::pascal_ident(&call_inst);
+                quote! {
+                    let __f = ctx.current_func_ref
+                        .ok_or_else(|| crate::prelude::IrError::Unsupported("v12 call: missing func ref".into()))?;
+                    __pack.push_inst(Inst::#vn { #(#fields),* });
                 }
             }
             None => {
@@ -729,23 +780,55 @@ fn gen_call_lowering(
             }
         }
     } else {
-        // CallIndirect：CALL_RM args[0]（函数指针）；指令缺失 → Unsupported。
-        let cr_f = fids("CALL_RM");
-        match cr_f.first() {
-            Some(cr_src) => {
-                let cr_src = (*cr_src).clone();
+        // CallIndirect：[abi].call_indirect_inst 键（缺省 "CALL_RM"=x86
+        // FF /2；定宽可声明 "JALR"）。结构迭代：In Reg 槽 = 目标地址
+        //（args[0]，map_reg_field 绑 vreg）；Out/InOut Reg 槽 =
+        // call_ret_reg；imm/label 槽置 0。
+        let ci_inst = abi
+            .call_indirect_inst
+            .clone()
+            .unwrap_or_else(|| "CALL_RM".to_string());
+        let ci_f = fids(&ci_inst);
+        match ci_f.first() {
+            Some(_) => {
+                let ret_reg = abi.call_ret_reg.clone().unwrap_or_else(|| "X1".to_string());
+                let ret_ident = format_ident!("{ret_reg}");
+                let info = infos
+                    .iter()
+                    .find(|i| i.inst.name == ci_inst)
+                    .ok_or_else(|| format!("call_indirect_inst '{ci_inst}' 不存在"))?;
+                let mut ctor: Vec<TokenStream> = Vec::new();
+                let mut binds: Vec<TokenStream> = Vec::new();
+                for (idx, (_, fid, slot, role)) in info.operands.iter().enumerate() {
+                    let fid_ident = format_ident!("{fid}");
+                    match (slot.kind, role) {
+                        (OperandKind::Reg, OperandRole::In) => {
+                            ctor.push(quote! { #fid_ident: Reg::from_index(0, forge_ir::RegClass::GPR64) });
+                            binds.push(quote! {
+                                __pack.map_reg_field(__callee, __idx, #idx as u8, false);
+                            });
+                        }
+                        (OperandKind::Reg, OperandRole::Out | OperandRole::InOut) => {
+                            ctor.push(quote! { #fid_ident: Reg::#ret_ident });
+                        }
+                        _ => {
+                            ctor.push(quote! { #fid_ident: 0u32 });
+                        }
+                    }
+                }
+                let vn = crate::v12::codegen::pascal_ident(&ci_inst);
                 quote! {
                     let __callee = args.first().copied()
                         .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-                    let __idx = __pack.push_inst(Inst::CallRm { #cr_src: Reg::from_index(0, forge_ir::RegClass::GPR64) });
-                    __pack.map_reg_field(__callee, __idx, 0u8, false);
+                    let __idx = __pack.push_inst(Inst::#vn { #(#ctor),* });
+                    #(#binds)*
                 }
             }
             None => {
                 call_is_err = true;
                 quote! {
                     return Err(crate::prelude::IrError::Unsupported(
-                        "v12 call_indirect lowering (CALL_RM missing)".into(),
+                        "v12 call_indirect lowering (call_indirect_inst missing)".into(),
                     ));
                 }
             }
@@ -765,6 +848,8 @@ fn gen_call_lowering(
         has_ss,
         has_fpr_mov,
         &mov_vn,
+        &fpr_mov32_vn,
+        &fpr_mov64_vn,
     );
     let op_ident = format_ident!("{op_name}");
     // call_body 为 Unsupported（return Err）时，其后不再生成 arg_loop/ret_move
@@ -814,6 +899,8 @@ fn arg_move_loop(
     has_ss: bool,
     has_fpr_mov: bool,
     mov_vn: &syn::Ident,
+    fpr_mov32_vn: &syn::Ident,
+    fpr_mov64_vn: &syn::Ident,
 ) -> TokenStream {
     let n = *n;
     let fn_ = *fn_;
@@ -834,9 +921,9 @@ fn arg_move_loop(
                     let __dst = [#(Reg::#fpr_regs),*][__fi];
                     __fi += 1;
                     let __idx = __pack.push_inst(if ctx.xreg_types.get(&__a).map(|t| t.bits()).unwrap_or(64) == 32 && #has_ss {
-                        Inst::Movss { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
+                        Inst::#fpr_mov32_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
                     } else {
-                        Inst::Movsd { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
+                        Inst::#fpr_mov64_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
                     });
                     __pack.map_reg_field(__a, __idx, 1u8, false);
                 }
