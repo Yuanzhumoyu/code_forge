@@ -7,7 +7,7 @@
 
 use super::super::model::*;
 use super::super::shared::parse_u64;
-use super::{field_ctor_expr, field_ctor_expr_view, sign_extend_ts, InstInfo};
+use super::{InstInfo, field_ctor_expr, field_ctor_expr_view, sign_extend_ts};
 use proc_macro2::TokenStream;
 use quote::quote;
 

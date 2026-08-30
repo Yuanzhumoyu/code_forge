@@ -181,6 +181,7 @@ name = "MOV_RM8_R64"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
+effect = ["Move"]
 
 # ── R 型整数（opcode 0x33）──
 
@@ -931,6 +932,7 @@ name = "EBREAK"
 form = "OP"
 opcode = 0x73
 fields = { imm12 = 1 }
+effect = ["Trap"]
 
 
 asm = "ebreak"

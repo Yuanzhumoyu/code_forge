@@ -20,11 +20,8 @@
 //! 变长 form（modrm/vex 语义键）与 64/16 位定宽在迭代 3+ 支持。
 
 use super::model::*;
-use super::shared::parse_u64;
-use crate::assembler::{Tok, tokenize};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::BTreeMap;
 
 pub(crate) mod asm;
 /// TargetFrameLowering/TargetABI/emit（integration.rs 拆分）。
@@ -111,7 +108,11 @@ pub(crate) fn field_ctor_expr(slot: &OperandSlot, v: TokenStream) -> TokenStream
 /// `view` = 槽 class 组的固定宽度（Some）；None = 多态（按 __opsize 选
 /// gpr16/32/64——assemble 与 encode 已按实际寄存器宽度还原，decode 反向）。
 /// `pub(crate)`：变长模块（vlen.rs）复用。
-pub(crate) fn field_ctor_expr_view(slot: &OperandSlot, v: TokenStream, view: Option<u16>) -> TokenStream {
+pub(crate) fn field_ctor_expr_view(
+    slot: &OperandSlot,
+    v: TokenStream,
+    view: Option<u16>,
+) -> TokenStream {
     if slot.kind != OperandKind::Reg {
         return v;
     }
@@ -271,7 +272,6 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 effect: Vec::new(),
                 implicit_regs: None,
                 global_reloc: None,
-                move_inst: None,
             });
         }
     }
@@ -923,6 +923,3 @@ fn bf_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
         Some(ps) => ps.iter().map(|p| (p.offset, p.offset + p.width)).collect(),
     }
 }
-
-// DecTrie 测试随变长模块移至 vlen.rs（同文件内测试模块）。
-

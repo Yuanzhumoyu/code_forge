@@ -134,7 +134,10 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
 
 // ─────────────────────── MachineInst impl ───────────────────────
 
-pub(crate) fn gen_machine_inst(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
+pub(crate) fn gen_machine_inst(
+    infos: &[InstInfo],
+    model: &V12Model,
+) -> Result<TokenStream, String> {
     let mut use_arms = Vec::new();
     let mut def_arms = Vec::new();
     let mut use_c_arms = Vec::new();
@@ -294,6 +297,8 @@ pub(crate) fn gen_machine_inst(infos: &[InstInfo], model: &V12Model) -> Result<T
                 "Jump" => quote! { crate::prelude::EffectKind::Jump },
                 "Call" => quote! { crate::prelude::EffectKind::Call },
                 "Ret" => quote! { crate::prelude::EffectKind::Ret },
+                "Trap" => quote! { crate::prelude::EffectKind::Trap },
+                "Move" => quote! { crate::prelude::EffectKind::Pure }, // Move 是纯运算
                 _ => quote! { crate::prelude::EffectKind::Custom(0) },
             })
             .collect();
@@ -303,12 +308,11 @@ pub(crate) fn gen_machine_inst(infos: &[InstInfo], model: &V12Model) -> Result<T
             effects_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![#(#eff_kinds),*] });
         }
 
-        // is_move：显式 `move = true/false` 优先（riscv 的 `mv` 等非 MOV
-        // 前缀移动指令需声明 true）；缺省按指令名前缀启发式（`MOV_`/`MOVR`）。
-        let upper = info.inst.name.to_uppercase();
-        let name_is_mov = upper.starts_with("MOV_") || upper.starts_with("MOVR");
-        if info.inst.move_inst.unwrap_or(name_is_mov) && def_fids.len() == 1 && use_fids.len() == 1
-        {
+        // is_move：effect 含 "Move"（纯寄存器移动，TOML 显式声明）且
+        // 1 def + 1 use。**删除指令名前缀启发式**（MOV_/MOVR）——语义由
+        // effect 标签表达，与指令名解耦（LLVM TableGen flags 同思路）。
+        let is_move_decl = eff.iter().any(|e| e == "Move");
+        if is_move_decl && def_fids.len() == 1 && use_fids.len() == 1 {
             let d = def_fids[0];
             let u = use_fids[0];
             if d != u {
@@ -1027,4 +1031,3 @@ pub(crate) fn gen_assembler(model: &V12Model) -> TokenStream {
         }
     }
 }
-

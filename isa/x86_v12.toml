@@ -546,14 +546,14 @@ opcode = 0x8B
 # 16/32/64 位寄存器版本按实际类型自动分发（mov EAX,EBX → 8B 32 位无前缀、
 # mov RAX,RBX → 89 D8、mov AX,BX → 66 8B）。gprx 显式排除 8 位（见槽声明）。
 asm = "mov {0:[gprx:out]}, {1:[gprx:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "MOV_R_RM_32"
 form = "MRR_FIX32"
 opcode = 0x8B
 # 与 MOV_R_RM 同模板同槽类型（真重复）→ 保留独立助记符 mov32：FIX32 语义对 32 位 lowering 承重（固定 32 位 opsize，不随操作数宽度推导）。
 asm = "mov32 {0:[gprx:out]}, {1:[gprx:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "MOV_R8_RM8"
 form = "MRR_BYTE"
@@ -561,13 +561,13 @@ opcode = 0x8A
 # v13：8 位 mov——gpr1b 槽（byte_reg 强制 REX：spl/bpl/sil/dil）。与 16/32/64 位
 # 共享助记符 `mov`（`mov al, bl` → 8A C3）。gprx 显式排除 gpr1（防 8B 误编码）。
 asm = "mov {0:[gpr1b:out]}, {1:[gpr1b:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "MOV_RM_R"
 form = "MRR"
 opcode = 0x89
 asm = "mov {1:[gpr:inout]}, {0:[gpr:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "MOVSXD_R_RM"
 form = "MRR_FIX64"
@@ -742,13 +742,13 @@ name = "MOV_RM8_R64"
 form = "MRR"
 opcode = 0x89
 asm = "mov {1:[gpr:inout]}, {0:[gpr:in]}"   # v13：与 MOV_RM_R 合并（真重复，生成期去重保留首个）
-
+effect = ["Move"]
 [[instructions]]
 name = "MOV_R8_RM64"
 form = "MRR"
 opcode = 0x8B
 asm = "movr8 {0:[gpr:out]}, {1:[gpr:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "ADD_R_IMM32"
 form = "MRR_EXT"
@@ -866,7 +866,7 @@ form = "SSE_RR"
 opcode = 0x10
 fields = { prefix = 0xF2, w = 0 }
 asm = "movsd_xf {0:[fpr:out]}, {1:[fpr:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "MOVSD_FREG_XMM"
 form = "SSE_RR"
@@ -876,6 +876,7 @@ asm = "movsd_fx {0:[fpr:out]}, {1:[fpr:in]}"
 
 # cvtsi2ss：32 位源（w=0）与 64 位源（w=1）合并——源槽多类 gprx + opsize=s1
 # 驱动 REX.W（eax → 0、rax → 1），按操作数实际宽度自动分发。
+effect = ["Move"]
 [[instructions]]
 name = "CVTSI2SS"
 form = "SSE_RR"
@@ -926,7 +927,7 @@ form = "SSE_RR"
 opcode = 0x10
 fields = { prefix = 0xF3, w = 0 }
 asm = "movss {0:[fpr:out]}, {1:[fpr:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "XADD_MEM_R"
 form = "MRR_MEM_0F"
@@ -1020,7 +1021,7 @@ form = "MRR_FIX64"
 opcode = 0x89
 # 与 MOV_RM_R（mov {1}, {0}）同模板同槽类型 → 生成期去重跳过（64 位经 MOV_RM_R 分发）。
 asm = "mov {1:[gpr:inout]}, {0:[gpr:in]}"
-
+effect = ["Move"]
 [[instructions]]
 name = "MOV64_RM"
 form = "MRR_MEMREF"

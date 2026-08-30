@@ -5,9 +5,8 @@
 //! inst_reg_imm_fids）以及 model 类型。
 
 use super::super::model::*;
-use super::super::shared::parse_u64;
 use super::integration::{inst_fids, inst_move_role, inst_reg_imm_fids};
-use super::{field_ctor_expr, pascal_ident, InstInfo};
+use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -103,7 +102,10 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
 // ─────────────────────── TargetFrameLowering ───────────────────────
 
 /// 入口：`pub(crate)` 由 `integration::gen_integration()` 调用。
-pub(crate) fn gen_frame_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
+pub(crate) fn gen_frame_lowering(
+    infos: &[InstInfo],
+    model: &V12Model,
+) -> Result<TokenStream, String> {
     // 指令名 → InstInfo（[emit]/[spill] 模板用大写指令名引用）。
     let prologue_toks = gen_emit_block(infos, model, true)?;
     let epilogue_toks = gen_emit_block(infos, model, false)?;
@@ -126,15 +128,16 @@ pub(crate) fn gen_frame_lowering(infos: &[InstInfo], model: &V12Model) -> Result
         .emit
         .as_ref()
         .and_then(|e| e.epilogue_jump_inst.clone());
-    let jump_inst = explicit_jump
-        .as_deref()
-        .unwrap_or(if infos.iter().any(|i| i.inst.name == "JMP_REL32") {
-            "JMP_REL32"
-        } else if infos.iter().any(|i| i.inst.name == "JAL") {
-            "JAL"
-        } else {
-            ""
-        });
+    let jump_inst =
+        explicit_jump
+            .as_deref()
+            .unwrap_or(if infos.iter().any(|i| i.inst.name == "JMP_REL32") {
+                "JMP_REL32"
+            } else if infos.iter().any(|i| i.inst.name == "JAL") {
+                "JAL"
+            } else {
+                ""
+            });
     let has_jmp_f = jump_inst == "JMP_REL32";
     let has_jal_f = jump_inst == "JAL";
     let jal_f = inst_fids(infos, "JAL");
@@ -847,4 +850,3 @@ fn gen_spill_stmt(
         __sink.put_bytes(&__bytes);
     })
 }
-

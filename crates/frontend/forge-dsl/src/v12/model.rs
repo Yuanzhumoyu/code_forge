@@ -705,12 +705,6 @@ pub struct Instruction {
     /// 生成器按此字段生成 encoder reloc arm——替代按指令名特判。
     #[serde(default)]
     pub global_reloc: Option<String>,
-    /// 是否纯寄存器移动（MachineInst::is_move；regalloc 的 copy 传播/折叠
-    /// 依赖）。缺省 None = 按指令名前缀启发式（`MOV_`/`MOVR`）；
-    /// 显式 `true`/`false` 覆盖（riscv 的 `mv` 等非 MOV 前缀的移动指令
-    /// 需声明 `move = true`）。
-    #[serde(default)]
-    pub move_inst: Option<bool>,
 }
 
 /// 操作数使用：槽 + 角色 + （定宽）位域绑定。

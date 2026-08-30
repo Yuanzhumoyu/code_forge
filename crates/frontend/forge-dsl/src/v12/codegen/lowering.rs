@@ -18,10 +18,9 @@ use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
 use super::integration::{
     collect_phys_clobbers, compile_pred_guard, gen_lowering_attrs, inst_fids, inst_move_role,
-    inst_reg_imm_fids, parse_i64_lit, parse_mem_template, strip_placeholder_decls,
-    lowering_token_kind,
+    lowering_token_kind, parse_i64_lit, parse_mem_template, strip_placeholder_decls,
 };
-use super::{field_ctor_expr, pascal_ident, InstInfo};
+use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -1175,49 +1174,43 @@ fn gen_lowering_insts(
                             quote! { 0u32 },
                         )
                     }
-                    "{iconst_hi32_lo12}" if slot.kind == OperandKind::Imm => {
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    let __hi32 = (__v >> 32) as i64;
-                                    let __lo = (__hi32 << 52 >> 52) as i32;
-                                    (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{iconst_lo32_hi20}" if slot.kind == OperandKind::Imm => {
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    (__v as i64 & 0xFFFFFFFF) + 0x800
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{iconst_lo32_lo12}" if slot.kind == OperandKind::Imm => {
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    let __lo32 = (__v as i64 & 0xFFFFFFFF);
-                                    let __lo = (__lo32 << 52 >> 52) as i32;
-                                    (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
+                    "{iconst_hi32_lo12}" if slot.kind == OperandKind::Imm => (
+                        quote! {
+                            ({
+                                let __v = ctx.constant_pool.as_ref()
+                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                    .unwrap_or(0);
+                                let __hi32 = (__v >> 32) as i64;
+                                let __lo = (__hi32 << 52 >> 52) as i32;
+                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
+                            })
+                        },
+                        quote! { 0u32 },
+                    ),
+                    "{iconst_lo32_hi20}" if slot.kind == OperandKind::Imm => (
+                        quote! {
+                            ({
+                                let __v = ctx.constant_pool.as_ref()
+                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                    .unwrap_or(0);
+                                (__v as i64 & 0xFFFFFFFF) + 0x800
+                            })
+                        },
+                        quote! { 0u32 },
+                    ),
+                    "{iconst_lo32_lo12}" if slot.kind == OperandKind::Imm => (
+                        quote! {
+                            ({
+                                let __v = ctx.constant_pool.as_ref()
+                                    .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                                    .unwrap_or(0);
+                                let __lo32 = (__v as i64 & 0xFFFFFFFF);
+                                let __lo = (__lo32 << 52 >> 52) as i32;
+                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
+                            })
+                        },
+                        quote! { 0u32 },
+                    ),
                     "{fconst}" if slot.kind == OperandKind::Imm => {
                         // 常量池浮点位模式（Fconst；u64 位模式 → movabs 立即数）
                         (
@@ -1244,49 +1237,43 @@ fn gen_lowering_insts(
                             quote! { 0u32 },
                         )
                     }
-                    "{fconst_hi32_lo12}" if slot.kind == OperandKind::Imm => {
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    let __hi32 = (__v >> 32) as i64;
-                                    let __lo = (__hi32 << 52 >> 52) as i32;
-                                    (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{fconst_lo32_hi20}" if slot.kind == OperandKind::Imm => {
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    (__v as i64 & 0xFFFFFFFF) + 0x800
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
-                    "{fconst_lo32_lo12}" if slot.kind == OperandKind::Imm => {
-                        (
-                            quote! {
-                                ({
-                                    let __v = ctx.constant_pool.as_ref()
-                                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
-                                        .unwrap_or(0);
-                                    let __lo32 = (__v as i64 & 0xFFFFFFFF);
-                                    let __lo = (__lo32 << 52 >> 52) as i32;
-                                    (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
-                                })
-                            },
-                            quote! { 0u32 },
-                        )
-                    }
+                    "{fconst_hi32_lo12}" if slot.kind == OperandKind::Imm => (
+                        quote! {
+                            ({
+                                let __v = ctx.constant_pool.as_ref()
+                                    .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                                    .unwrap_or(0);
+                                let __hi32 = (__v >> 32) as i64;
+                                let __lo = (__hi32 << 52 >> 52) as i32;
+                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
+                            })
+                        },
+                        quote! { 0u32 },
+                    ),
+                    "{fconst_lo32_hi20}" if slot.kind == OperandKind::Imm => (
+                        quote! {
+                            ({
+                                let __v = ctx.constant_pool.as_ref()
+                                    .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                                    .unwrap_or(0);
+                                (__v as i64 & 0xFFFFFFFF) + 0x800
+                            })
+                        },
+                        quote! { 0u32 },
+                    ),
+                    "{fconst_lo32_lo12}" if slot.kind == OperandKind::Imm => (
+                        quote! {
+                            ({
+                                let __v = ctx.constant_pool.as_ref()
+                                    .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                                    .unwrap_or(0);
+                                let __lo32 = (__v as i64 & 0xFFFFFFFF);
+                                let __lo = (__lo32 << 52 >> 52) as i32;
+                                (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64
+                            })
+                        },
+                        quote! { 0u32 },
+                    ),
                     "{off}" if slot.kind == OperandKind::Imm => {
                         // StackAddr 的帧偏移（v11 的 `lea_off rd, offset` 语义）
                         (quote! { ctx.current_offset }, quote! { 0u32 })
@@ -1490,4 +1477,3 @@ fn gen_lowering_insts(
     }
     Ok(out)
 }
-

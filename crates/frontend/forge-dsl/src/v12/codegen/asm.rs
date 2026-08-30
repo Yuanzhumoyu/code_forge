@@ -1138,4 +1138,3 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &V12Model) -> Result<Token
         }
     })
 }
-

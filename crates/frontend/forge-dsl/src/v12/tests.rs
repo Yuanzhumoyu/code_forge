@@ -1188,9 +1188,9 @@ global_reloc = "bogus"
     }
 }
 
-/// `move_inst = true` 显式声明解析。
+/// `effect = ["Move"]` 语义标签解析（is_move 声明，替代指令名前缀启发式）。
 #[test]
-fn move_inst_flag_parses() {
+fn effect_move_label_parses() {
     let doc = r#"
 [meta]
 name = "t"
@@ -1219,11 +1219,9 @@ form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0 }
 asm = "mymov {0:[g:out]}, {1:[g:in]}, {2:[g:in]}"
-move_inst = true
+effect = ["Move"]
 "#;
-    let m = parse_and_validate(doc).expect("doc with move flag must parse");
+    let m = parse_and_validate(doc).expect("doc with Move effect must parse");
     let inst = m.instructions.iter().find(|i| i.name == "MY_MOV").unwrap();
-    assert_eq!(inst.move_inst, Some(true));
+    assert!(inst.effect.iter().any(|e| e == "Move"));
 }
-
-

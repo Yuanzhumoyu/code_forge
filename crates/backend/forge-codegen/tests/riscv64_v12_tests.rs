@@ -328,4 +328,3 @@ fn inst_enum_shapes() {
     assert_eq!(assemble("fence").unwrap(), Inst::Fence);
     assert_eq!(assemble("nop").unwrap(), Inst::Nop);
 }
-

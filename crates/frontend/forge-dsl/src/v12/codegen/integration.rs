@@ -30,11 +30,12 @@
 //! 新增 ISA 时若这些指令不存在，调用/参数/尾声路径会按缺省名查找失败并
 //! 报错（或降级 Unsupported）——优先在 TOML 显式声明。
 
+use crate::v12::pred::CmpOp;
+
 use super::super::model::*;
-use super::super::pred::{self, CmpOp, Pred};
+use super::super::pred::Pred;
 use super::super::shared::group_names;
 use super::InstInfo;
-use super::field_ctor_expr;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -165,7 +166,10 @@ pub(crate) fn inst_fids<'a>(infos: &'a [InstInfo], name: &str) -> Vec<&'a syn::I
 /// 调用方用 src/dest **序号**做 map_reg_field（vreg 绑定字段），不可硬编码
 /// 0/1——那按 x86 方向写死在定宽 ISA（dest=op0）上会把参数移动反成
 /// `mv vreg, x0`、返回值接收反成 `mv x0, src`。
-pub(crate) fn inst_move_role(infos: &[InstInfo], name: &str) -> Option<(syn::Ident, u8, syn::Ident, u8)> {
+pub(crate) fn inst_move_role(
+    infos: &[InstInfo],
+    name: &str,
+) -> Option<(syn::Ident, u8, syn::Ident, u8)> {
     let info = infos.iter().find(|i| i.inst.name == name)?;
     let src = info
         .operands
@@ -290,9 +294,8 @@ pub(crate) fn lowering_token_kind(op: &str) -> &'static str {
         // 常量/立即数 token
         "{iconst}" | "{fconst}" | "{off}" | "{alloca}" | "{global}" | "{imm0}" | "{imm0_sub4}"
         | "{iconst_hi20}" | "{iconst_lo12}" | "{iconst_hi32_hi20}" | "{iconst_hi32_lo12}"
-        | "{iconst_lo32_hi20}" | "{iconst_lo32_lo12}"
-        | "{fconst_hi32_hi20}" | "{fconst_hi32_lo12}"
-        | "{fconst_lo32_hi20}" | "{fconst_lo32_lo12}" => "imm",
+        | "{iconst_lo32_hi20}" | "{iconst_lo32_lo12}" | "{fconst_hi32_hi20}"
+        | "{fconst_hi32_lo12}" | "{fconst_lo32_hi20}" | "{fconst_lo32_lo12}" => "imm",
         _ if inner.starts_with("{shufps") || inner.starts_with("{vconst") => "imm",
         // 条件码
         "{cc}" => "cond",
