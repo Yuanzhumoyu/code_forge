@@ -821,8 +821,15 @@ fn e2e_stage_a_scalar_cases() {
     let mut passed = 0;
     let mut known_failures = Vec::new();
     let mut unexpected_failures = Vec::new();
+    // 单用例调试：FORGE_E2E_ONLY=用例名 只跑一个（配合 FORGE_TRACE_*）
+    let only = std::env::var("FORGE_E2E_ONLY").ok();
 
     for case in CASES {
+        if let Some(ref only_name) = only
+            && only_name != case.name
+        {
+            continue;
+        }
         match run_case(case, &workdir) {
             Ok(code) if code == case.expected => {
                 // P0-20：known_failure 转正必须显式翻转标记——否则 bug 修复

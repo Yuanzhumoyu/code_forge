@@ -1330,6 +1330,41 @@ mod tests {
         assert_eq!(f(1, 0.1, 2), 3, "b=0.1≤0.5 → 1+2+0");
     }
 
+    /// e2e float_args 隔离：f64 常量实参传参（f(1.5, 2.0) 的 fconst 实参
+    /// 路径——手写 IR 测试此前只用参数变量，未覆盖常量实参）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_f64_const_arg_call() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // callee: (f64) -> i32 = b > 3.0 ? 1 : 0
+        let sig_c = FunctionSignature::new(&[(TypeId::F64, "b")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(TypeId::F64, "b")]);
+        bc.switch_to_block(blk);
+        let three = bc.fconst_f64(3.0f64);
+        let gt = bc.fcmp(FloatCC::GreaterThan, p[0], three);
+        let c1 = bc.iconst_i32(1);
+        let c0 = bc.iconst_i32(0);
+        let sel = bc.select(gt, c1, c0);
+        bc.ret(&[sel]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: callee(2.5) → 0（fconst 常量实参 → XMM 槽）
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v = bm.fconst_f64(2.5f64);
+        let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("compile main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        assert_eq!(f(), 0, "callee(2.5)：2.5 ≤ 3.0 → 0（fconst 实参路径）");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]
