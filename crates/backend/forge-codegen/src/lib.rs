@@ -24,6 +24,7 @@
 
 use forge_ir::IrError;
 use forge_ir::*;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 // ISA TOML 变更探针：build.rs 生成，内容含 isa/*.toml 的修改时间——
@@ -197,7 +198,10 @@ pub struct LowerCtx {
     pub current_const_index: u32,
     /// 当前指令的全部 immediates 值（Uint/Int/Const 提取后的 u64 列表；
     /// ShuffleVector 的 mask、Vextract/Vinsert 的 index 等使用）。
-    pub current_immediates: Vec<u64>,
+    /// SmallVec<[u64; 4]>：大多数指令 immediates ≤ 4 个，免每指令堆分配
+    /// （lowering 主循环每指令重建——第二轮基准 CF_CODEGEN_TIMING 显示
+    /// lowering 占 codegen 33%，分配是主要开销之一）。
+    pub current_immediates: SmallVec<[u64; 4]>,
     /// 当前指令引用的函数 (Call 的 Immediate::Func；供 lowering 生成
     /// cross-function relocation 的符号名 "@N")。
     pub current_func_ref: Option<FuncRef>,
@@ -281,7 +285,7 @@ impl LowerCtx {
             constant_pool: None,
             is_float_return: false,
             current_const_index: 0,
-            current_immediates: Vec::new(),
+            current_immediates: SmallVec::new(),
             current_func_ref: None,
             current_atomic_op: None,
             current_global: None,
