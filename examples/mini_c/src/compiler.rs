@@ -22,9 +22,6 @@ pub enum Backend {
     Direct,
     /// forge-hir pipeline (`codegen_hir.rs`): IrGraph + HirCtx + lowering.
     Hir,
-    /// v12 DSL 后端（`x86_v12` TargetMachine）。Direct/Hir 均用同一 v12 机器
-    /// 编译（v11 语法层已删除），区别仅在 IR 构建路径。
-    V12,
 }
 
 /// Walk the AST expression tree to find a constant NUMBER/CHAR token and parse its value.
@@ -145,7 +142,7 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
         let name = func_node.get_text("name").unwrap_or("_").to_string();
         let pre = syms.funcs.get(&name).copied();
         let func_ref = match backend {
-            Backend::Direct | Backend::V12 => {
+            Backend::Direct => {
                 codegen_function(&mut module, *func_node, &mut syms, &ast, source, pre)
             }
             Backend::Hir => codegen_function_hir(&mut module, *func_node, &mut syms, &ast, source),
