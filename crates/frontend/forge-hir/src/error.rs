@@ -32,6 +32,26 @@ pub enum HirError {
     Lowering(String),
     /// Internal error.
     Internal(String),
+    /// 带源位置上下文的前端错误（诊断升级：行/列 + 行文本预览）。
+    Located {
+        error: Box<HirError>,
+        /// 1-based 行号。
+        line: usize,
+        /// 1-based 列号。
+        col: usize,
+        /// 该行文本（无换行）。
+        line_text: String,
+    },
+}
+
+impl HirError {
+    /// 提取底层错误（剥掉 Located 外壳；嵌套时递归）。
+    pub fn underlying(&self) -> &HirError {
+        match self {
+            HirError::Located { error, .. } => error.underlying(),
+            other => other,
+        }
+    }
 }
 
 impl fmt::Display for HirError {
@@ -78,6 +98,16 @@ impl fmt::Display for HirError {
             }
             HirError::Lowering(msg) => write!(f, "lowering error: {}", msg),
             HirError::Internal(msg) => write!(f, "internal error: {}", msg),
+            HirError::Located {
+                error,
+                line,
+                col,
+                line_text,
+            } => {
+                writeln!(f, "{error} at {line}:{col}")?;
+                writeln!(f, "  | {line_text}")?;
+                write!(f, "  | {}^", " ".repeat(col.saturating_sub(1)))
+            }
         }
     }
 }

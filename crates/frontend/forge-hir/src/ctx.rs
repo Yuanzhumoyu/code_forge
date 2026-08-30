@@ -10,7 +10,7 @@
 use crate::block::BlockId;
 use crate::error::HirError;
 use crate::graph::{GraphValue, IrGraph};
-use forge_grammar::TypedAst;
+use forge_grammar::{AstRef, TypedAst};
 use std::collections::HashMap;
 
 /// Unified lowering context.
@@ -37,6 +37,8 @@ pub struct HirCtx<'a, S> {
     pub return_block: Option<BlockId>,
     /// 当前内联链（函数名集合）——递归检测：callee 已在链中 → 拒绝内联。
     pub inlining: Vec<String>,
+    /// 最近 lower 的 AST 节点 span（字节偏移）——错误定位用（诊断升级）。
+    pub last_span: Option<(usize, usize)>,
 }
 
 impl<'a, S> HirCtx<'a, S> {
@@ -58,6 +60,7 @@ impl<'a, S> HirCtx<'a, S> {
             return_slot: None,
             return_block: None,
             inlining: Vec::new(),
+            last_span: None,
         }
     }
 
@@ -77,5 +80,48 @@ impl<'a, S> HirCtx<'a, S> {
             .get(name)
             .copied()
             .ok_or_else(|| HirError::Lowering(format!("undefined variable: {}", name)))
+    }
+
+    /// 记录当前 AST 节点的 span（字节偏移）——lowering 分发函数入口调用，
+    /// 深层错误经 [`HirCtx::locate`] 附加最近节点的源位置。
+    pub fn set_span(&mut self, node: AstRef<'_>) {
+        let s = node.span();
+        self.last_span = Some((s.start, s.end));
+    }
+
+    /// 把错误附加最近节点的源位置（1-based 行/列 + 行文本预览）。
+    /// 已定位的错误（内层更精确）原样返回，不重复包装；无节点上下文
+    /// 时原样返回。
+    pub fn locate(&self, err: HirError) -> HirError {
+        if matches!(err, HirError::Located { .. }) {
+            return err;
+        }
+        let Some((start, _end)) = self.last_span else {
+            return err;
+        };
+        // 行/列换算（1-based；line_start 是行首字节偏移）
+        let mut line = 1usize;
+        let mut line_start = 0usize;
+        for (i, b) in self.source.bytes().enumerate() {
+            if i >= start {
+                break;
+            }
+            if b == b'\n' {
+                line += 1;
+                line_start = i + 1;
+            }
+        }
+        let col = start - line_start + 1;
+        let line_text = self.source[line_start..]
+            .split('\n')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        HirError::Located {
+            error: Box::new(err),
+            line,
+            col,
+            line_text,
+        }
     }
 }

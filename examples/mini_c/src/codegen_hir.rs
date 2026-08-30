@@ -113,21 +113,27 @@ pub fn codegen_function_hir(
 // ============================================================
 
 fn lower_block(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirError> {
-    for item in node.get_children("items") {
-        let cur = ctx
-            .graph
-            .current_block()
-            .ok_or_else(|| HirError::Internal("no current block".into()))?;
-        if ctx.graph.has_terminator(cur) {
-            break;
+    // 诊断升级：记录块节点位置；错误经 locate 附加源位置
+    ctx.set_span(node);
+    let result = (|| {
+        for item in node.get_children("items") {
+            let cur = ctx
+                .graph
+                .current_block()
+                .ok_or_else(|| HirError::Internal("no current block".into()))?;
+            if ctx.graph.has_terminator(cur) {
+                break;
+            }
+            lower_stmt(ctx, item)?;
         }
-        lower_stmt(ctx, item)?;
-    }
-    Ok(())
+        Ok(())
+    })();
+    result.map_err(|e| ctx.locate(e))
 }
 
 fn lower_stmt(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirError> {
-    match node.kind() {
+    ctx.set_span(node);
+    let result = match node.kind() {
         "return_stmt" => lower_return(ctx, node),
         "if_stmt" => lower_if(ctx, node),
         "while_stmt" => lower_while(ctx, node),
@@ -151,7 +157,8 @@ fn lower_stmt(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), Hi
         "struct_decl" => lower_struct_decl(ctx, node),
         "struct_init" => lower_struct_init(ctx, node),
         other => Err(HirError::Lowering(format!("unknown stmt: {}", other))),
-    }
+    };
+    result.map_err(|e| ctx.locate(e))
 }
 
 // ── return_stmt ──
@@ -515,7 +522,9 @@ fn lower_for_update(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<
 // ============================================================
 
 fn lower_expr(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphValue, HirError> {
-    match node.kind() {
+    // 诊断升级：记录表达式节点位置（错误定位到最内层节点）
+    ctx.set_span(node);
+    let result = match node.kind() {
         // ── Terminals ──
         "NUMBER" => {
             let text = node.text().unwrap_or("0");
@@ -573,7 +582,8 @@ fn lower_expr(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphV
                 Err(HirError::Lowering(format!("unknown expr kind: {}", other)))
             }
         }
-    }
+    };
+    result.map_err(|e| ctx.locate(e))
 }
 
 /// Flatten transparent wrappers (rep, opt, seq) from AST children.
