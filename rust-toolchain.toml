@@ -1,2 +1,5 @@
 [toolchain]
-channel = "nightly"
+# P0-22：钉版 nightly（浮动 nightly + rustc_private 不可复现——同一 commit
+# 昨天绿今天红且无法重放）。forge-rustc 用 rustc_private（13 个 extern
+# rustc_*），rustc API 漂移由 rustc_compat.rs 适配层兜底；钉版 + 定期 bump。
+channel = "nightly-2026-08-07"
