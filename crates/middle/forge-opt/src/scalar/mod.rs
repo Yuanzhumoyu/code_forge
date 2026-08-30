@@ -3,6 +3,7 @@ pub mod const_fold;
 pub mod copy_prop;
 pub mod cse;
 pub mod dead_code;
+pub mod dead_store;
 pub mod gvn;
 pub mod gvn_pre;
 pub mod jump_thread;

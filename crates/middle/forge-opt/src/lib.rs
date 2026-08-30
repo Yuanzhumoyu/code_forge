@@ -223,6 +223,12 @@ impl PassManager {
             Box::new(crate::scalar::cse::CsePass::new()),
             PassRunMode::Once,
         );
+        // 别名驱动的冗余 store 消除（P1-5 别名分析的消费方）：
+        // 同位置连续 store 且中间无读 → 删除前者
+        pm.add_pass(
+            Box::new(crate::scalar::dead_store::DeadStoreElimPass::new()),
+            PassRunMode::Once,
+        );
         pm.add_pass(
             Box::new(crate::scalar::dead_code::DeadCodeElimPass::new()),
             PassRunMode::UntilFixedPoint,
