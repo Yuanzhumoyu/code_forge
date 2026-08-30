@@ -1064,6 +1064,35 @@ pub const CASES: &[Case] = &[
             40,
         ),
     },
+    // ── P0-9：多 pred 块参数传**动态值**（两 pred 传不同函数参数，
+    // 寄存器压力高于常量场景；验证 phi 传参在 regalloc 后仍正确）──
+    Case {
+        name: "multi_pred_dynamic_phi",
+        ops: &["Iadd", "Icmp"],
+        kind: CaseKind::Block(
+            |b| {
+                let entry = b.create_block();
+                let then = b.create_block();
+                let els = b.create_block();
+                let (end, phi) = b.create_block_with_params(&[(TypeId::I64, "phi")]);
+                b.switch_to_block(entry);
+                // 用动态值做条件（10 > 20 恒假 → 走 else 传 20）
+                let ten = b.iconst_i64(10);
+                let twenty = b.iconst_i64(20);
+                let zero = b.iconst_i64(0);
+                let c = b.icmp(IntCC::SignedGreaterThan, ten, twenty);
+                b.branch(c, then, &[], els, &[]);
+                b.switch_to_block(then);
+                b.jump(end, &[ten]);
+                b.switch_to_block(els);
+                b.jump(end, &[twenty]);
+                b.switch_to_block(end);
+                let r = b.iadd(phi[0], zero);
+                b.ret(&[r]);
+            },
+            20,
+        ),
+    },
     // ── 参数（≤4 i64）──
     Case {
         name: "param_one_identity",
