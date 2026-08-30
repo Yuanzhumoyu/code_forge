@@ -1521,6 +1521,37 @@ mod tests {
         assert_eq!(f(), 3000, "callee(5, 2995) = 3000（iconst 常量实参）");
     }
 
+    /// e2e wrapping_add 最后隔离：i64 参数经**栈槽中转**（rustc MIR 的
+    /// 参数→槽→Load 形态——f64 栈槽中转已测，int（Store/Load）未测）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_i64_param_via_stack_slot() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // callee(a: i64, b: i64) -> i64：参数存槽 (-16/-24) → Load → iadd
+        let sig = FunctionSignature::new(
+            &[(TypeId::I64, "a"), (TypeId::I64, "b")],
+            &[TypeId::I64],
+        );
+        jit.add_function("i64_slot", &sig, |b| {
+            let (entry, p) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+            b.switch_to_block(entry);
+            let s1 = b.stack_addr(-16);
+            b.store(p[0], s1);
+            let s2 = b.stack_addr(-24);
+            b.store(p[1], s2);
+            let v1 = b.load(s1, TypeId::I64);
+            let v2 = b.load(s2, TypeId::I64);
+            let sum = b.iadd(v1, v2);
+            b.ret(&[sum]);
+        })
+        .expect("compile i64_slot");
+        let f: extern "C" fn(i64, i64) -> i64 = jit.get_fn("i64_slot").expect("get_fn");
+        assert_eq!(f(1000, 2000), 3000, "i64 参数 Store/Load 栈槽中转");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]
