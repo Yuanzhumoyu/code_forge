@@ -1102,6 +1102,51 @@ mod tests {
         );
     }
 
+    /// S4: V512（64 字节）by-ref 传参——EVEX 指令需 AVX-512F，无则跳过。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v512_byref_param() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        if !crate::avx512_available() {
+            eprintln!("[jit] 无 AVX-512F——跳过 V512 by-ref 测试");
+            return;
+        }
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 16)
+        };
+        // callee: (v512) -> i32（lane0 提取）
+        let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
+        bc.switch_to_block(blk);
+        let idx = bc.iconst_i32(0);
+        let lane = bc.vextract(p[0], idx);
+        let wide = bc.fpext(lane, TypeId::F64);
+        let int = bc.fptosi(wide, TypeId::I32);
+        bc.ret(&[int]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: call callee(vconst([1.5, ...16])) → lane0 = 1
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v = bm.vconst(vec![
+            1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0,
+            15.0, 16.0,
+        ]);
+        let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 1, "V512 by-ref lane0 1.5 → 1（EVEX 栈拷贝）");
+    }
+
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。
     #[cfg(target_arch = "x86_64")]
     #[test]

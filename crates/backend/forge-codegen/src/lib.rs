@@ -278,6 +278,22 @@ pub fn avx2_available() -> bool {
     })
 }
 
+/// AVX-512F 可用性（64 字节 ZMM 向量、EVEX 编码的前提——V512 by-ref/sret
+/// 栈拷贝与收参）。非 x86_64 或检测失败 → false。
+pub fn avx512_available() -> bool {
+    static AVX512: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVX512.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::arch::is_x86_feature_detected!("avx512f")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    })
+}
+
 impl LowerCtx {
     pub fn new() -> Self {
         Self {

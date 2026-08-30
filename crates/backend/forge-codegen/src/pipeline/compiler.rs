@@ -1722,6 +1722,13 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         if let Some(ty) = wide {
             let s = types.borrow();
             let bytes = s.size_bytes(ty);
+            // S4：V512（64 字节）需 AVX-512F（EVEX 编码前提）——无则拒绝，
+            // 防 EVEX 指令在非 AVX-512 机器非法指令崩溃。
+            if bytes > 32 && !crate::avx512_available() {
+                return Err(IrError::Unsupported(format!(
+                    "SIMD 参数/返回 {bytes} 字节需 AVX-512F（当前机器不支持；type {ty:?}）"
+                )));
+            }
             match by_ref_limit {
                 Some(lim) if bytes <= lim => {
                     // 在寄存器传值范围内（≤16 字节）：走现有 XMM/GPR 传参路径。
