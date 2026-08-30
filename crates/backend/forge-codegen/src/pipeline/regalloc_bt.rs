@@ -426,7 +426,15 @@ impl<'a> BtState<'a> {
         // tie-breaker（next_use_after 相同按 vreg index 递增），保证跨进程
         // 确定性；且每个候选只查一次 next_use（max_by 的惰性比较是 O(active²)
         // 次查询，预计算降为 O(active) 次）。
-        let victim = self
+        //
+        // P0-8 修复（spill store 语义）：`spill_vreg` 只分配槽并释放寄存器，
+        // **不把寄存器当前值 store 进槽**（emission 的 load/store 只围绕
+        // 指令自身操作数）。因此只能驱逐 **next_use == MAX（无真实未来
+        // 使用）的死值**——驱逐带活值的 victim 会在其下次 use 时从空槽读
+        // 垃圾（长命值被驱逐后直接 use 的组合，此前靠 callee-saved 优先
+        // 取号规避而非根治）。若所有候选都有真实 next_use，则 spill 当前
+        // vreg 自己（emission 会正确 store 当前指令的 spilled def）。
+        let mut dead_victims: Vec<(ProgPoint, XReg, PReg)> = self
             .active
             .iter()
             .filter(|(_, p)| p.class == class || p.class.overlaps(class))
@@ -439,7 +447,11 @@ impl<'a> BtState<'a> {
                     .unwrap_or(ProgPoint::MAX);
                 (next_use, v, p)
             })
-            .max_by_key(|&(next_use, v, _)| (next_use, v.index()));
+            .collect();
+        // 只保留死值（无未来使用）；按 (next_use, vreg index) 确定性取最大。
+        dead_victims.retain(|&(next_use, _, _)| next_use == ProgPoint::MAX);
+        dead_victims.sort_by_key(|&(nu, v, _)| (nu, v.index()));
+        let victim = dead_victims.pop().map(|(_, v, p)| (ProgPoint::MAX, v, p));
 
         if let Some((_, victim_vreg, victim_preg)) = victim {
             if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
@@ -468,10 +480,13 @@ impl<'a> BtState<'a> {
             self.active.remove(&victim_vreg);
             Ok(victim_preg)
         } else {
-            // 无法驱逐 — 溢出当前 XReg
-            self.spill_vreg(vreg)?;
+            // 无法驱逐死值（所有候选都有真实 next_use）——不能 spill 当前
+            // vreg（若它是 use，emission 会从空槽 load 读垃圾；若它是 def
+            // 可 spill，但分配器无法在此区分）。保守终止编译——不产出
+            // 错误代码。P0-8：旧代码驱逐"next_use 最大"的活 victim 不 store
+            // → 读垃圾；现在只驱逐死值，无可驱逐时显式报错。
             Err(IrError::RegAlloc(format!(
-                "vreg {} spilled: no evictable register in class {:?}",
+                "vreg {} spilled: no dead (unused) register to evict in class {:?}",
                 vreg, class
             )))
         }
