@@ -860,6 +860,13 @@ pub struct Abi {
     /// X1=ra 返回地址被 prologue/call 占用、X3/X4=gp/tp）。缺省空。
     #[serde(default)]
     pub reserved: Vec<String>,
+    /// 参数槽位分配规则（语义显式声明）：
+    /// - `"by-class"`（缺省，riscv SysV）：int/float 各自独立推进
+    ///   （int 序列 RCX/RDX/… 与 float 序列 XMM0/… 分开计数）；
+    /// - `"by-position"`（Windows x64）：int/float 共享位置计数——
+    ///   参数 i 用 GPR{i}/XMM{i}（第 2 参数即使第 1 是整数也用 XMM1）。
+    #[serde(default)]
+    pub arg_slot: Option<String>,
 }
 
 /// 帧布局配置（[abi.frame]）。

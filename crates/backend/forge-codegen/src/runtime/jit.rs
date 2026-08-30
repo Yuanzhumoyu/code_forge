@@ -1197,7 +1197,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_unreachable_terminator() {
-        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+        use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1259,6 +1259,75 @@ mod tests {
         jit.compile_module(&module).expect("compile fib module");
         let f: extern "C" fn(i64) -> i64 = jit.get_fn("fib").expect("get_fn fib");
         assert_eq!(f(10), 55, "fib(10) = 55（递归 call lowering）");
+    }
+
+    /// e2e 值错隔离：float_args 主库等价——f64 参数（XMM 传参）+ fadd +
+    /// fcmp + 分支（e2e 的 float_args 值错在 nightly 漂移下；此处直接
+    /// 验证 forge-codegen 的浮点路径）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_float_args_fcmp_branch() {
+        use forge_ir::{FunctionSignature, FloatCC, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // f(a: f64, b: f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }
+        let sig = FunctionSignature::new(
+            &[(TypeId::F64, "a"), (TypeId::F64, "b")],
+            &[TypeId::I32],
+        );
+        jit.add_function("float_gt", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
+            b.switch_to_block(entry);
+            let sum = b.fadd(params[0], params[1]);
+            let three = b.fconst_f64(3.0f64);
+            let gt = b.fcmp(FloatCC::GreaterThan, sum, three);
+            let c1 = b.iconst_i32(1);
+            let c0 = b.iconst_i32(0);
+            let sel = b.select(gt, c1, c0);
+            b.ret(&[sel]);
+        })
+        .expect("compile float_gt");
+        let f: extern "C" fn(f64, f64) -> i32 = jit.get_fn("float_gt").expect("get_fn");
+        assert_eq!(f(1.5, 2.0), 1, "1.5+2.0=3.5 > 3.0 → 1");
+        assert_eq!(f(1.0, 1.0), 0, "1.0+1.0=2.0 ≤ 3.0 → 0");
+    }
+
+    /// e2e 值错隔离：mixed_args 主库等价——int/float 混合参数（by-position
+    /// 槽位：参数 i → GPR{i}/XMM{i}，Windows x64 共享位置计数）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_mixed_int_float_args() {
+        use forge_ir::{FunctionSignature, FloatCC, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        // f(a: i32, b: f64, c: i32) -> i32 = a + c + (b > 0.5 ? 10 : 0)
+        // by-position：a→RCX(位置0)、b→XMM1(位置1)、c→R8(位置2)
+        let sig = FunctionSignature::new(
+            &[(TypeId::I32, "a"), (TypeId::F64, "b"), (TypeId::I32, "c")],
+            &[TypeId::I32],
+        );
+        jit.add_function("mixed", &sig, |b| {
+            let (entry, p) = b.create_block_with_params(&[
+                (TypeId::I32, "a"),
+                (TypeId::F64, "b"),
+                (TypeId::I32, "c"),
+            ]);
+            b.switch_to_block(entry);
+            let sum = b.iadd(p[0], p[2]);
+            let half = b.fconst_f64(0.5f64);
+            let gt = b.fcmp(FloatCC::GreaterThan, p[1], half);
+            let ten = b.iconst_i32(10);
+            let zero = b.iconst_i32(0);
+            let bonus = b.select(gt, ten, zero);
+            let r = b.iadd(sum, bonus);
+            b.ret(&[r]);
+        })
+        .expect("compile mixed");
+        let f: extern "C" fn(i32, f64, i32) -> i32 = jit.get_fn("mixed").expect("get_fn");
+        assert_eq!(f(1, 1.0, 2), 13, "b=1.0>0.5 → 1+2+10（XMM1 位置槽读对）");
+        assert_eq!(f(1, 0.1, 2), 3, "b=0.1≤0.5 → 1+2+0");
     }
 
     /// 调试：uextend_i16_to_i64（movzx 16 位合并验证）——ireduce I16 后 uextend I64。

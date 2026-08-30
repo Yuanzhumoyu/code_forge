@@ -607,6 +607,16 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
     let Some(abi) = &m.abi else {
         return Ok(());
     };
+    // arg_slot 值域：by-class（缺省，int/float 独立推进）/ by-position
+    //（Windows x64，共享位置计数）。
+    if let Some(slot) = &abi.arg_slot
+        && slot != "by-class"
+        && slot != "by-position"
+    {
+        return Err(format!(
+            "[abi].arg_slot must be \"by-class\" or \"by-position\", got \"{slot}\""
+        ));
+    }
     if let Some(align) = abi.stack_align
         && (align == 0 || align % 8 != 0)
     {

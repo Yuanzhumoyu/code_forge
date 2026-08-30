@@ -174,11 +174,12 @@ pub fn parse_opcode_name(name: &str) -> Opcode {
 
 /// 构建一个最小函数，执行 `op`（带 i32/i64/f64 参数 a/b/x/y）。
 pub fn build_min(op: Opcode) -> Function {
+    // 4 参数（≤ Windows x64 by-position 寄存器容量——第 5 参数栈传未实现）：
+    // a→RCX(0)、b→RDX(1)、x→XMM2(2)、y→XMM3(3)
     let sig = FunctionSignature::new(
         &[
             (TypeId::I32, "a"),
             (TypeId::I32, "b"),
-            (TypeId::I64, "c"),
             (TypeId::F64, "x"),
             (TypeId::F64, "y"),
         ],
@@ -188,12 +189,11 @@ pub fn build_min(op: Opcode) -> Function {
     let (entry, p) = b.create_block_with_params(&[
         (TypeId::I32, "a"),
         (TypeId::I32, "b"),
-        (TypeId::I64, "c"),
         (TypeId::F64, "x"),
         (TypeId::F64, "y"),
     ]);
     b.switch_to_block(entry);
-    let (a, bv, _c, x, y) = (p[0], p[1], p[2], p[3], p[4]);
+    let (a, bv, x, y) = (p[0], p[1], p[2], p[3]);
 
     let r: Value = match op {
         // ── integer binary ──

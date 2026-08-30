@@ -763,6 +763,14 @@ fn gen_call_lowering(
     // 从指令结构派生 vn/字段名（semantic_operand_name），不硬编码。
     let (byref_insts, has_byref_insts) = collect_byref_insts(infos);
     let byref = |tag: &str| byref_insts.get(tag).cloned();
+    // ABI 槽位规则（[abi].arg_slot）：by-position（Windows x64——
+    // int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）/ by-class
+    //（缺省 riscv SysV——int/float 独立推进）。
+    let by_position = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.arg_slot.as_deref())
+        == Some("by-position");
     // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
     let ret_src_expr: TokenStream = abi
         .ret_regs
@@ -1051,6 +1059,13 @@ fn gen_call_lowering(
     // 同一组槽（call 间 temp 槽天然死，顺序执行无重叠 live 区间）。
     // **生成期门控**：标签缺失（riscv 等无向量 ISA）→ 直接 Unsupported，
     // 不引用不存在的变体。
+    // 槽位变量：by-position（x86）用 __pi（int/float 共享位置计数）、
+    // by-class（riscv）用 __gi（int 序列独立推进）。
+    let slot_var: TokenStream = if by_position {
+        quote! { __pi }
+    } else {
+        quote! { __gi }
+    };
     let byref_stmt: TokenStream = if has_byref_insts {
         let (vn_s32, f_s32, m_s32, i_s32) = byref("wide_vec_store_32").expect("tag store32");
         let (vn_s64, f_s64, m_s64, i_s64) = byref("wide_vec_store_64").expect("tag store64");
@@ -1110,10 +1125,11 @@ fn gen_call_lowering(
                 },
             });
             __pack.map_reg_field(__ptr, __lidx, #i_lea, true);
-            // 3) 地址 → GPR 参数槽（by-ref 参数占 1 个 int 槽）
-            if __gi < #n {
-                let __dst = [#(Reg::#int_regs),*][__gi];
-                __gi += 1;
+            // 3) 地址 → GPR 参数槽（by-ref 参数占 1 个 int 槽；槽位变量
+            //    按 ABI 规则：by-position → __pi、by-class → __gi）
+            if #slot_var < #n {
+                let __dst = [#(Reg::#int_regs),*][#slot_var];
+                #slot_var += 1;
                 let __midx = __pack.push_inst(Inst::#mov_vn {
                     #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
                     #m_dest: __dst,
@@ -1150,6 +1166,8 @@ fn gen_call_lowering(
         has_fpr_mov,
         // S1：宽向量 by-ref 栈拷贝（生成期拼好的语句；标签缺失 → Unsupported）
         &byref_stmt,
+        // ABI 槽位规则：by-position（Windows x64，int/float 共享位置计数）
+        model.abi.as_ref().and_then(|a| a.arg_slot.as_deref()) == Some("by-position"),
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,
@@ -1207,6 +1225,9 @@ fn gen_call_lowering(
 /// Unsupported（防引用不存在的 Inst 变体）。
 /// `byref_stmt`：宽向量 by-ref 栈拷贝语句（gen_call_lowering 按语义标签
 /// 生成期拼好；标签缺失 → Unsupported）。
+/// `by_position`：ABI 槽位规则——true = int/float 共享位置计数
+/// （Windows x64，参数 i 用 GPR{i}/XMM{i}）；false = by-class 独立推进
+/// （riscv SysV）。
 #[allow(clippy::too_many_arguments)]
 fn arg_move_loop(
     op_name: &str,
@@ -1222,6 +1243,7 @@ fn arg_move_loop(
     has_ss: bool,
     has_fpr_mov: bool,
     byref_stmt: &TokenStream,
+    by_position: bool,
     mov_vn: &syn::Ident,
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
@@ -1272,46 +1294,125 @@ fn arg_move_loop(
             ));
         }
     };
-    let stmt = quote! {
-        if ctx.xreg_types.get(&__a).is_some_and(|t| {
-            ctx.type_ctx.as_ref().is_some_and(|tc| {
-                let s = tc.borrow();
-                (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
-            })
-        }) {
-            #byref_stmt
-        } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
-            #fpr_stmt
-        } else if __gi < #n {
-            let __dst = [#(Reg::#int_regs),*][__gi];
-            __gi += 1;
+    // by-position 版（Windows x64）：int/float 共享位置计数 __pi——
+    // 参数 i 用 GPR{i}（int）/ XMM{i}（float）；by-ref 也占位置。
+    let fpr_stmt_pos: TokenStream = if has_fpr_mov && !float_regs.is_empty() {
+        let fpr_regs = float_regs;
+        quote! {
+            if __pi < #fn_ {
+                let __dst = [#(Reg::#fpr_regs),*][__pi];
+                __pi += 1;
+                let __idx = __pack.push_inst(if ctx.xreg_types.get(&__a).map(|t| t.bits()).unwrap_or(64) == 32 && #has_ss {
+                    Inst::#fpr_mov32_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
+                } else {
+                    Inst::#fpr_mov64_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
+                });
+                __pack.map_reg_field(__a, __idx, 1u8, false);
+            } else {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: float arg register exhausted (stack args not yet supported)".into(),
+                ));
+            }
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: float arg move (MOVSD/MOVSS missing)".into(),
+            ));
+        }
+    };
+    let int_stmt_pos = quote! {
+        if __pi < #n {
+            let __dst = [#(Reg::#int_regs),*][__pi];
+            __pi += 1;
             #int_stmt
         } else {
-            // P0-17 修复：整数实参寄存器耗尽（x86 int 类仅 4 个）——
-            // 原实现静默丢弃第 5+ 实参（f(1,2,3,4,5) 丢 5 → 静默错结果）。
-            // 显式拒绝（栈上溢参/按引用传参为后续迭代）。
             return Err(crate::prelude::IrError::Unsupported(
                 "v12 call: integer arg register exhausted (stack args not yet supported)".into(),
             ));
         }
     };
-    if op_name == "CallIndirect" {
+    let stmt = if by_position {
         quote! {
-            // S2：sret 隐藏参数占首 int 槽（RCX）与 sret 槽（槽 0）——
-            // 实参从下一个 int 槽 / 下一个槽位起。
-            let mut __gi = if __sret { 1usize } else { 0usize };
-            let mut __fi = 0usize;
-            let mut __bi = if __sret { 1usize } else { 0usize };
+            if ctx.xreg_types.get(&__a).is_some_and(|t| {
+                ctx.type_ctx.as_ref().is_some_and(|tc| {
+                    let s = tc.borrow();
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
+                })
+            }) {
+                #byref_stmt
+                // by-ref 参数占一个位置（by-position：GPR{pos} 由 byref_stmt
+                // 内的 #slot_var（=__pi）推进，此处 __pi 同步
+                __pi += 1;
+            } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
+                #fpr_stmt_pos
+            } else {
+                #int_stmt_pos
+            }
+        }
+    } else {
+        quote! {
+            if ctx.xreg_types.get(&__a).is_some_and(|t| {
+                ctx.type_ctx.as_ref().is_some_and(|tc| {
+                    let s = tc.borrow();
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
+                })
+            }) {
+                #byref_stmt
+            } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
+                #fpr_stmt
+            } else if __gi < #n {
+                let __dst = [#(Reg::#int_regs),*][__gi];
+                __gi += 1;
+                #int_stmt
+            } else {
+                // P0-17 修复：整数实参寄存器耗尽（x86 int 类仅 4 个）——
+                // 原实现静默丢弃第 5+ 实参（f(1,2,3,4,5) 丢 5 → 静默错结果）。
+                // 显式拒绝（栈上溢参/按引用传参为后续迭代）。
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: integer arg register exhausted (stack args not yet supported)".into(),
+                ));
+            }
+        }
+    };
+    if op_name == "CallIndirect" {
+        let head = if by_position {
+            quote! {
+                // by-position：int/float 共享位置计数（sret 占位置 0）
+                let mut __pi = if __sret { 1usize } else { 0usize };
+                let mut __bi = if __sret { 1usize } else { 0usize };
+            }
+        } else {
+            quote! {
+                // S2：sret 隐藏参数占首 int 槽（RCX）与 sret 槽（槽 0）——
+                // 实参从下一个 int 槽 / 下一个槽位起。
+                let mut __gi = if __sret { 1usize } else { 0usize };
+                let mut __fi = 0usize;
+                let mut __bi = if __sret { 1usize } else { 0usize };
+            }
+        };
+        quote! {
+            #head
             for (__i, &__a) in args.iter().enumerate() {
                 if __i == 0 { continue; }
                 #stmt
             }
         }
     } else {
+        let head = if by_position {
+            quote! {
+                let mut __pi = if __sret { 1usize } else { 0usize };
+                let mut __bi = if __sret { 1usize } else { 0usize };
+            }
+        } else {
+            quote! {
+                let mut __gi = if __sret { 1usize } else { 0usize };
+                let mut __fi = 0usize;
+                let mut __bi = if __sret { 1usize } else { 0usize };
+            }
+        };
         quote! {
-            let mut __gi = if __sret { 1usize } else { 0usize };
-            let mut __fi = 0usize;
-            let mut __bi = if __sret { 1usize } else { 0usize };
+            #head
             for &__a in args.iter() {
                 #stmt
             }

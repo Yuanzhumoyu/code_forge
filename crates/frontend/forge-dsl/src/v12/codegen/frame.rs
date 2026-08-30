@@ -666,11 +666,108 @@ fn gen_emit_pseudo(
                     return Err(crate::IrError::Emit("v12 float args (MOVSD/MOVSS missing)".into()));
                 }
             };
+            // ABI 槽位规则：by-position（Windows x64——int/float 共享位置
+            // 计数，参数 i 用 GPR{i}/XMM{i}）/ by-class（缺省，独立推进）。
+            let by_position = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.arg_slot.as_deref())
+                == Some("by-position");
+            let (head, fpr_stmt_use, int_stmt_use, byref_stmt_use): (
+                TokenStream,
+                TokenStream,
+                TokenStream,
+                TokenStream,
+            ) = if by_position {
+                // by-position：位置 = 参数序号 + sret 偏移；int 用 GPR{pos}、
+                // float 用 XMM{pos}、by-ref 指针用 GPR{pos}。
+                (
+                    quote! {},
+                    // 浮点收参：float_regs[__pos]（位置索引）
+                    quote! {
+                        let __pos = __i + if __rm.sret { 1usize } else { 0usize };
+                        if __pos < #fn_ {
+                            let __src = [#(Reg::#float_regs),*][__pos];
+                            let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
+                                Inst::#fpr_mov32_vn {
+                                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                                    #f_src: __src,
+                                }
+                            } else {
+                                Inst::#fpr_mov64_vn {
+                                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                                    #f_src: __src,
+                                }
+                            }).map_err(|e| crate::IrError::Emit(e))?;
+                            __sink.put_bytes(&__bytes);
+                        } else {
+                            return Err(crate::IrError::Emit(
+                                "v12 move_args: float arg position out of range".into(),
+                            ));
+                        }
+                    },
+                    // 整数收参：int_regs[__pos]
+                    quote! {
+                        let __pos = __i + if __rm.sret { 1usize } else { 0usize };
+                        if __pos < #n {
+                            let __src = [#(Reg::#regs),*][__pos];
+                            let __bytes = encode(&Inst::#mov_vn {
+                                #m_src: __src,
+                                #m_dest: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
+
+                            }).map_err(|e| crate::IrError::Emit(e))?;
+                            __sink.put_bytes(&__bytes);
+                        } else {
+                            return Err(crate::IrError::Emit(
+                                "v12 move_args: int arg position out of range".into(),
+                            ));
+                        }
+                    },
+                    // by-ref 指针收参：int_regs[__pos]（指针从 GPR 槽取）
+                    quote! {
+                        let __pos = __i + if __rm.sret { 1usize } else { 0usize };
+                        if __pos < #n {
+                            let __src = [#(Reg::#regs),*][__pos];
+                            #byref_stmt
+                        } else {
+                            return Err(crate::IrError::Emit(
+                                "v12 move_args: by-ref arg position out of range".into(),
+                            ));
+                        }
+                    },
+                )
+            } else {
+                (
+                    // by-class：__gi（int）/ __fi（float）独立推进
+                    quote! {
+                        let mut __gi = if __rm.sret { 1usize } else { 0usize };
+                        let mut __fi = 0usize;
+                    },
+                    quote! { #fpr_stmt },
+                    quote! {
+                        if __gi < #n {
+                            let __src = [#(Reg::#regs),*][__gi];
+                            __gi += 1;
+                            let __bytes = encode(&Inst::#mov_vn {
+                                #m_src: __src,
+                                #m_dest: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
+
+                            }).map_err(|e| crate::IrError::Emit(e))?;
+                            __sink.put_bytes(&__bytes);
+                        }
+                    },
+                    quote! {
+                        if __gi < #n {
+                            let __src = [#(Reg::#regs),*][__gi];
+                            __gi += 1;
+                            #byref_stmt
+                        }
+                    },
+                )
+            };
+            let _ = byref_stmt_use;
             Ok(quote! {
-                // S2：sret 隐藏参数占首 int 槽（RCX）——收参从第 2 个 int 槽
-                // 起（__gi=1），与调用方 sret 约定一致（AllocResult.sret）。
-                let mut __gi = if __rm.sret { 1usize } else { 0usize };
-                let mut __fi = 0usize;
+                #head
                 for (__i, &__pv) in __rm.param_vregs.iter().enumerate() {
                     if !__rm.assignments.contains_key(&__pv) {
                         continue;
@@ -682,22 +779,11 @@ fn gen_emit_pseudo(
                     if __rm.param_by_ref.get(__i) == Some(&true) {
                         // by-ref：宽向量参数按引用传——GPR 槽位是数据指针，
                         // 从 [ptr] load 到向量寄存器（VMOVAPS_RM/ZMM_MEM）。
-                        if __gi < #n {
-                            let __src = [#(Reg::#regs),*][__gi];
-                            __gi += 1;
-                            #byref_stmt
-                        }
+                        #byref_stmt_use
                     } else if __rm.param_is_float.get(__i) == Some(&true) {
-                        #fpr_stmt
-                    } else if __gi < #n {
-                        let __src = [#(Reg::#regs),*][__gi];
-                        __gi += 1;
-                        let __bytes = encode(&Inst::#mov_vn {
-                            #m_src: __src,
-                            #m_dest: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
-
-                        }).map_err(|e| crate::IrError::Emit(e))?;
-                        __sink.put_bytes(&__bytes);
+                        #fpr_stmt_use
+                    } else {
+                        #int_stmt_use
                     }
                 }
             })

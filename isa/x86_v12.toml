@@ -1845,6 +1845,8 @@ asm = "ror {0:[gpr:inout]}"
 
 [abi]
 stack_align = 16
+# Windows x64：int/float 参数共享位置计数（参数 i → GPR{i}/XMM{i}）
+arg_slot = "by-position"
 # 溢出 scratch（spill load/store 用；R10/R11）
 scratch = ["R10", "R11"]
 
