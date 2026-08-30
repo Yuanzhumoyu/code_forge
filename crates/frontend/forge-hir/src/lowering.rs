@@ -232,6 +232,40 @@ impl<'a> LoweringContext<'a> {
         operands: &[Value],
         attrs: &HashMap<Symbol, AttrValue>,
     ) -> Result<Vec<Value>, HirError> {
+        // P0-13：arity 校验——operands[i] 直接下标在操作数不足时越界 panic
+        //（前端 bug / 降级表不一致 = 编译进程崩溃）。expected_operand_count
+        // 返回 0 表示变长（Call 等）或未声明——变长跳过，固定长度严格校验。
+        let expected = opcode.expected_operand_count();
+        if expected > 0 && operands.len() != expected {
+            return Err(HirError::Internal(format!(
+                "opcode {opcode:?} expects {expected} operands, got {}",
+                operands.len()
+            )));
+        }
+        // 双操作数指令但只给 1 个（expected 未覆盖的边角）——防御性下限检查
+        if operands.len() < 2 && matches!(
+            *opcode,
+            Opcode::Iadd
+                | Opcode::Isub
+                | Opcode::Imul
+                | Opcode::Udiv
+                | Opcode::Sdiv
+                | Opcode::Urem
+                | Opcode::Srem
+                | Opcode::Band
+                | Opcode::Bor
+                | Opcode::Bxor
+                | Opcode::Ishl
+                | Opcode::Ushr
+                | Opcode::Sshr
+                | Opcode::Icmp { .. }
+                | Opcode::Fcmp { .. }
+        ) {
+            return Err(HirError::Internal(format!(
+                "opcode {opcode:?} requires ≥2 operands, got {}",
+                operands.len()
+            )));
+        }
         let results = match *opcode {
             // === Integer arithmetic (7) ===
             Opcode::Iadd => vec![self.builder.iadd(operands[0], operands[1])],
