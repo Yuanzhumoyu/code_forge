@@ -1388,7 +1388,9 @@ insts = ["andi {out}, {0}, 255"]
 [[lowering]]
 op = "Uextend"
 when = { eq = ["rs1_width", 16] }
-insts = ["andi {out}, {0}, 65535"]
+# 0xFFFF 超出 imm12 有符号范围 ±2047（旧 andi 65535 依赖掩码截断侥幸
+# 正确）——用 slli/srli 清零高 48 位（与 32 位路径同模式）
+insts = ["slli {out}, {0}, 48", "srli {out}, {out}, 48"]
 
 [[lowering]]
 op = "Uextend"
@@ -1402,7 +1404,9 @@ insts = ["andi {out}, {0}, 255"]
 [[lowering]]
 op = "Ireduce"
 when = { eq = ["rd", 16] }
-insts = ["andi {out}, {0}, 65535"]
+# 0xFFFF 超出 imm12 有符号范围 ±2047（旧 andi 65535 依赖掩码截断侥幸
+# 正确）——用 slli/srli 清零高 48 位
+insts = ["slli {out}, {0}, 48", "srli {out}, {out}, 48"]
 
 [[lowering]]
 op = "Ireduce"
@@ -1908,7 +1912,7 @@ insts = [
     "and {g3}, {g3}, {g2}",
     "add {g}, {g1}, {g3}",
     "lui {g2}, 0xf0f1000",
-    "addi {g2}, {g2}, 0xf0f",
+    "addi {g2}, {g2}, -0xf1",
     "slli {g3}, {g2}, 32",
     "or {g2}, {g2}, {g3}",
     "srli {g1}, {g}, 4",
@@ -1955,7 +1959,7 @@ insts = [
     "and {g3}, {g3}, {g2}",
     "add {g}, {g1}, {g3}",
     "lui {g2}, 0xf0f1000",
-    "addi {g2}, {g2}, 0xf0f",
+    "addi {g2}, {g2}, -0xf1",
     "slli {g3}, {g2}, 32",
     "or {g2}, {g2}, {g3}",
     "srli {g1}, {g}, 4",
@@ -1994,7 +1998,7 @@ insts = [
     "and {g3}, {g3}, {g2}",
     "add {g}, {g1}, {g3}",
     "lui {g2}, 0xf0f1000",
-    "addi {g2}, {g2}, 0xf0f",
+    "addi {g2}, {g2}, -0xf1",
     "slli {g3}, {g2}, 32",
     "or {g2}, {g2}, {g3}",
     "srli {g1}, {g}, 4",

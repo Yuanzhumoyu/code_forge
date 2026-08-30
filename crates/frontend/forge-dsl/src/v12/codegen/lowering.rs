@@ -943,6 +943,12 @@ fn arg_move_loop(
                         Inst::#fpr_mov64_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
                     });
                     __pack.map_reg_field(__a, __idx, 1u8, false);
+                } else {
+                    // P0-17：浮点实参寄存器耗尽（x86 float 类 XMM0-3 仅 4 个）——
+                    // 显式拒绝，防静默丢弃。
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 call: float arg register exhausted (stack args not yet supported)".into(),
+                    ));
                 }
             }
         } else {
@@ -977,6 +983,13 @@ fn arg_move_loop(
             let __dst = [#(Reg::#int_regs),*][__gi];
             __gi += 1;
             #int_stmt
+        } else {
+            // P0-17 修复：整数实参寄存器耗尽（x86 int 类仅 4 个）——
+            // 原实现静默丢弃第 5+ 实参（f(1,2,3,4,5) 丢 5 → 静默错结果）。
+            // 显式拒绝（栈上溢参/按引用传参为后续迭代）。
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: integer arg register exhausted (stack args not yet supported)".into(),
+            ));
         }
     };
     if op_name == "CallIndirect" {

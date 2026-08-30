@@ -44,3 +44,7 @@ pub use self::riscv64_v12::*;
 // touch-A10c
 // touch-A11
 // touch-fp-scalar
+
+// touch: isa/riscv64_v12.toml updated (imm range fixes)
+
+// touch: isa/riscv64_v12.toml (Ireduce 16-bit fix)

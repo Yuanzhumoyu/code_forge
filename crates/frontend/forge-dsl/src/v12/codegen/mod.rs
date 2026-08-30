@@ -575,8 +575,38 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             }
         }
         // 操作数
-        for (fname, fid, _, _) in &info.operands {
+        for (fname, fid, slot, _) in &info.operands {
             let bf = get_bf(m, fname)?;
+            // P0-16：立即数槽 encode 前范围检查——原实现 `value & mask`
+            // 静默截断溢出（riscv imm12 传 -3000 → 掩码后错值，大帧栈错位）。
+            // 仅在**真用户立即数**（Imm 槽、无 global_reloc 负编码语义、非
+            // 预移位散布位域）时检查：
+            // - global_reloc 指令的负编码（-(id+1)）是链接期内部值，跳过；
+            // - 散布 piece 带 shift（riscv imm20=imm20<<12 预移位——LUI 存
+            //   预移位值，值域是完整 32 位）跳过，否则 fconst hi20 误报；
+            // - label 槽的块号/函数引用占位（-(f+1)）跳过。
+            let is_shifted_pieces = bf
+                .pieces
+                .as_ref()
+                .is_some_and(|ps| ps.iter().any(|p| p.shift > 0));
+            let is_global_encoded = info.inst.global_reloc.is_some();
+            if slot.kind == OperandKind::Imm
+                && !is_global_encoded
+                && !is_shifted_pieces
+                && let Some((lo, hi)) = slot.imm_range()
+            {
+                let lo = lo as i64;
+                let hi = hi as i64;
+                stmts.push(quote! {
+                    let __v = *#fid as i64;
+                    if __v < #lo || __v > #hi {
+                        return Err(format!(
+                            "{}: immediate {} out of range [{}, {}]",
+                            stringify!(#vn), __v, #lo, #hi
+                        ));
+                    }
+                });
+            }
             stmts.extend(place_ts(quote! { *#fid as u64 }, bf));
         }
         // 未覆盖位域天然为 0（__w 初始 0）——无需显式置零
