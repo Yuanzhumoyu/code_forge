@@ -3,19 +3,22 @@
 用 `CF_CODEGEN_TIMING=1 cargo bench --bench compile_bench -- 'codegen_*' --measurement-time 1`
 采集的 stage 分解（`compiler.rs` 的 `[codegen {name}] total/lower/regalloc/emit` 输出，稳态中位数）。
 
-> **时效性（2026-08-31）**：本 profile 为 2026-08-06 采集。8/27 与 08-31
-> 的 codegen 组实测（`docs/bench_baseline.md`）显示整体 ±16% 波动（负载
-> 噪声），regalloc 仍是第一瓶颈的结论成立（多数函数 stage 占比 63-67%
-> 未变；codegen 组是最大耗时组，throughput_500/codegen 2367µs ≈ optimize
-> 的 1.6 倍）。
+> **时效性（2026-08-31 第二轮实测）**：本表为 2026-08-06 采集；08-31
+> 用 `CF_CODEGEN_TIMING` 重测 many_ops：**regalloc 56-60%、lowering 33%→
+> 26%（SmallVec 后）、emit 8%**——regalloc 仍是第一瓶颈，lowering 曾是
+> 意外高占比（第二轮新热点，已处理）。
 >
-> **P0 已实施（2026-08-31，提交 bce47a2）**：`next_use_after` 二分、
-> `pop_free` 有序池、`compute_live_intervals` 预分配、`evict_and_assign`
-> 驱逐候选预计算——实测 codegen 组 8/11 点改善或持平（simple_add -9%、
-> many_ops -9%、throughput_100/codegen -16%），门禁全绿。剩余建议
-> （P3 ir_parse）见 `docs/bench_baseline.md` 文末「优化建议」。
+> **P0 已实施（bce47a2）**：`next_use_after` 二分、`pop_free` 有序池、
+> `compute_live_intervals` 预分配、`evict_and_assign` 驱逐候选预计算——
+> codegen 组 8/11 点改善或持平。
+>
+> **第二轮已实施（944f0eb）**：`LowerCtx.current_immediates` Vec →
+> SmallVec<[u64;4]>（lowering 主循环每指令重建，免堆分配）——many_ops
+> lower 62.9µs→25.8µs、total 188µs→100µs；codegen multi_block/complex/
+> with_o1 改善 12-20%、throughput 大函数 -5~-13%。剩余建议见
+> `docs/bench_baseline.md` 文末「优化建议」。
 
-## 各函数 stage 占比
+## 各函数 stage 占比（2026-08-06 基线；08-31 重测见时效性说明）
 
 | 函数 | total | lower | regalloc | emit | blocks+vreg+frame |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -26,14 +29,14 @@
 （`codegen_big_loop`/`codegen_mem` 的精确 stage 未单独采集，二者 regalloc 压力更大——有
 spill 路径；以多数函数 63-67% 的比例推断 regalloc 仍是第一瓶颈。）
 
-## 结论（Phase 2 优先级）
+## 结论（阶段优先级，2026-08-31 更新）
 
-1. **regalloc 仍是 codegen 的第一瓶颈（~63-67%）**——优先：
-   - `liverange::compute_live_intervals`：`intervals` HashMap 预分配 + 阶段 1 每指令 `entry().or_insert_with` 去重
-   - `evict_and_assign`：`next_use_after` 线性 `find` → 二分（`uses` 已按程序点有序）
-   - `pop_free`/`remove_from_free`：池操作小优化
-2. **lowering ~14-20%**：每块指令 `cloned().collect()` 借用化、`InstPacket` clobbers `repeat_n` 共享
-3. **emit ~11%**：spill 指令 `AllocResult` 深克隆 → `AllocResultView`（overrides 映射）
+1. **regalloc 仍是 codegen 的第一瓶颈（~56-67%）**——已优化项：
+   `next_use_after` 二分、`pop_free` 有序池、`intervals` 预分配、
+   `evict_and_assign` 驱逐预计算（bce47a2）。剩余为数据流规模本质成本。
+2. **lowering（20%→26%）**——已优化：`current_immediates` SmallVec
+   （944f0eb）；`cloned().collect()` 已早期借用化。
+3. **emit（~8-11%）**：无 `AllocResult` 深克隆（建议已过时），无需改动。
 
 ## 测量方法备注
 

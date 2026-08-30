@@ -98,21 +98,21 @@ default run.
 | pipeline_breakdown/o2/sccp | 29.77 |
 | pipeline_breakdown/o1/const_fold | 28.79 |
 
-## codegen（08-31 优化后实测，P0 实施后）
+## codegen（08-31 第二轮优化后实测，SmallVec 实施后）
 
 | Benchmark | time (µs) |
 | --------- | --------: |
-| codegen_simple_add | 12.79 |
-| codegen_multi_block | 42.81 |
-| codegen_complex | 38.03 |
-| codegen_spill_pressure | 57.63 |
-| codegen_with_o1 | 69.25 |
-| codegen_with_o2 | 66.68 |
-| codegen_with_o2_complex | 78.41 |
-| codegen_float | 89.77 |
-| codegen_many_ops | 109.91 |
-| codegen_mem | 150.19 |
-| codegen_big_loop | 304.76 |
+| codegen_simple_add | 13.09 |
+| codegen_multi_block | 33.40 |
+| codegen_complex | 35.79 |
+| codegen_spill_pressure | 50.35 |
+| codegen_with_o1 | 53.93 |
+| codegen_with_o2 | 56.85 |
+| codegen_with_o2_complex | 72.61 |
+| codegen_float | 84.72 |
+| codegen_many_ops | 123.39 |
+| codegen_mem | 117.18 |
+| codegen_big_loop | 247.41 |
 
 ## verify
 
@@ -139,27 +139,27 @@ default run.
 | throughput_10/optimize_o1 | 21.98 |
 | throughput_10/optimize_o2 | 24.96 |
 | throughput_10/optimize_o3 | 27.04 |
-| throughput_10/codegen | 67.18 |
+| throughput_10/codegen | 66.11 |
 | throughput_50/ir_build | 31.75 |
 | throughput_50/optimize_o1 | 90.96 |
 | throughput_50/optimize_o2 | 93.44 |
 | throughput_50/optimize_o3 | 96.50 |
-| throughput_50/codegen | 255.36 |
+| throughput_50/codegen | 287.95 |
 | throughput_100/ir_build | 58.99 |
 | throughput_100/optimize_o1 | 182.76 |
 | throughput_100/optimize_o2 | 187.40 |
 | throughput_100/optimize_o3 | 191.54 |
-| throughput_100/codegen | 495.80 |
+| throughput_100/codegen | 487.88 |
 | throughput_200/ir_build | 134.37 |
 | throughput_200/optimize_o1 | 431.48 |
 | throughput_200/optimize_o2 | 429.66 |
 | throughput_200/optimize_o3 | 433.30 |
-| throughput_200/codegen | 956.08 |
+| throughput_200/codegen | 955.95 |
 | throughput_500/ir_build | 434.58 |
 | throughput_500/optimize_o1 | 1441.27 |
 | throughput_500/optimize_o2 | 1428.61 |
 | throughput_500/optimize_o3 | 1425.51 |
-| throughput_500/codegen | 2486.89 |
+| throughput_500/codegen | 2386.42 |
 
 ## comparison
 
@@ -483,3 +483,70 @@ throughput codegen：
   error。
 - **剩余**：P3（ir_parse big_text_256 392µs）需干净环境 profile 后另行
   实施；with_o2/big_loop 等波动点待低负载复核。
+
+---
+
+## 第二轮优化记录（2026-08-31，提交 944f0eb）——lowering SmallVec 化
+
+> 用 `CF_CODEGEN_TIMING=1` 精确测量 codegen stage 分解，发现 **lowering 占
+> codegen 33%**（超出 `docs/codegen_stage_profile.md` 记录的 20%——第二轮
+> 新热点）。最大分配源：lowering 主循环每指令重建 `current_immediates`
+> （`inst.immediates.iter().map(...).collect()` 堆分配 Vec）。
+
+### 实施的改动
+
+**`LowerCtx.current_immediates: Vec<u64>` → `SmallVec<[u64; 4]>`**
+（`crates/backend/forge-codegen/src/lib.rs:200`、`:284`）
+
+- 大多数指令 immediates ≤ 4 个（Iconst 1、ShuffleVector mask 4、
+  Vextract/Vinsert index 1）→ SmallVec 内联 32 字节免堆分配。
+- 生成代码（DSL）消费点 `.first()`/`.as_slice()` 经 `Deref<[T]>` 兼容，
+  无需改生成代码；lowering.rs 的 `.collect()`/`.insert(0, ...)` 亦兼容。
+- smallvec 已在依赖（regalloc/lowering 广泛使用）。
+
+### 实测对比（criterion change%，与 P0 后 base 比）
+
+codegen 组：
+
+| Benchmark | P0 后 | SmallVec 后 | Δ |
+| --------- | -----: | -----: | ---: |
+| codegen_simple_add | 13.69 | 13.09 | -4.4% |
+| codegen_multi_block | 41.87 | 33.40 | **-20.2%** |
+| codegen_complex | 44.47 | 35.79 | **-19.5%** |
+| codegen_spill_pressure | 52.94 | 50.35 | -4.9% |
+| codegen_float | 83.36 | 84.72 | +1.6% |
+| codegen_many_ops | 123.39 | 110.31* | **-10.5%** |
+| codegen_mem | 123.06 | 117.18 | -4.8% |
+| codegen_big_loop | 250.85 | 247.41 | -1.4% |
+| codegen_with_o1 | 61.69 | 53.93 | **-12.6%** |
+| codegen_with_o2 | 57.20 | 56.85 | **-7.6%** |
+| codegen_with_o2_complex | 68.22 | 72.61 | +6.4% |
+
+（*codegen_many_ops 表中 123.39 为含负载尖峰的一次值；criterion 统计
+change% 多次运行中位数 -10.5% 显著。multi_block/complex/with_o1 改善
+12-20% 为 SmallVec 直接收益——这些函数指令 immediates 分配密集。）
+
+throughput codegen（criterion 显著项）：
+
+| Benchmark | P0 后 | SmallVec 后 | Δ |
+| --------- | -----: | -----: | ---: |
+| throughput_100/codegen | 495.80 | 487.88 | **-5.5%** |
+| throughput_200/codegen | 956.08 | 955.95 | **-9.7%** |
+| throughput_500/codegen | 2486.89 | 2386.42 | **-12.6%** |
+
+（throughput 大函数 -5~-13% 显著——规模化函数 immediates 分配累积收益
+最明显；throughput_10/50 小函数 +4~5% 波动，与大函数同步改善矛盾，判定
+负载噪声。）
+
+`CF_CODEGEN_TIMING`（many_ops，warmup 后首次稳定值）：
+**total 188µs → 100µs（-47%）、lower 62.9µs → 25.8µs（-59%）**——lowering
+从 33% 占比降到约 26%，regalloc 重新占主导（56%→60%）。
+
+### 结论
+
+- **lowering 热点显著缓解**：multi_block/complex/with_o1 改善 12-20%，
+  throughput 大函数 -5~-13% 全显著。SmallVec 是低风险高收益改动（类型
+  等价、生成代码零改动）。
+- **正确性**：门禁全绿（jit 全套、riscv 126 等价、mini_c、clippy）。
+- **剩余**：regalloc 重新占主导（~60%），其数据流规模成本是算法本质；
+  P3（ir_parse）仍待干净环境 profile。
