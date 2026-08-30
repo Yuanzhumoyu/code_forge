@@ -260,6 +260,12 @@ impl PassManager {
                 Box::new(crate::scalar::block_param_coalesce::BlockParamCoalescePass::new()),
                 PassRunMode::UntilFixedPoint,
             );
+            // P1 剩余项：规范 preheader——多循环外 pred 的循环插入独立
+            // preheader 块，LICM 外提目标不再回退 header。
+            pm.add_pass(
+                Box::new(crate::loops::insert_preheader::InsertPreheaderPass::new()),
+                PassRunMode::Once,
+            );
             pm.add_pass(
                 Box::new(crate::loops::licm::LicmPass::new()),
                 PassRunMode::Once,

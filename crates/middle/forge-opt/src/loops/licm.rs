@@ -57,7 +57,7 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError>
         return Ok(result);
     }
 
-    for (header, target, body, write_locs) in loops {
+    for (_header, target, body, write_locs) in loops {
         let outside_values = collect_values_outside(func, &body);
         let invariants =
             mark_invariants(func, &body, &outside_values, &alias, &write_locs);

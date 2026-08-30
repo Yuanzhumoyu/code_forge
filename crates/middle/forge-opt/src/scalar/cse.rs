@@ -57,7 +57,7 @@ pub(crate) fn expr_key(opcode: &Opcode, operands: &[Value], ty: TypeId) -> ExprK
         ops.sort_by_key(|v| v.0);
     }
     ExprKey {
-        opcode: opcode.clone(),
+        opcode: *opcode,
         operands: ops,
         ty,
     }
@@ -110,128 +110,6 @@ pub(crate) fn killed_by_write(
         .map(|&a| alias.location_of_addr(func, a))
         .unwrap_or(MemoryLocation::Unknown);
     alias.alias(lloc, wloc) != AliasResult::NoAlias
-}
-
-/// 获取操作码的判别值（用于哈希）。
-pub(crate) fn opcode_discriminant(opcode: &Opcode) -> u8 {
-    match opcode {
-        Opcode::Iadd => 1,
-        Opcode::Isub => 2,
-        Opcode::Imul => 3,
-        Opcode::Udiv => 4,
-        Opcode::Sdiv => 5,
-        Opcode::Urem => 6,
-        Opcode::Srem => 7,
-        Opcode::Fadd => 8,
-        Opcode::Fsub => 9,
-        Opcode::Fmul => 10,
-        Opcode::Fdiv => 11,
-        Opcode::Frem => 90,
-        Opcode::Freeze => 12,
-        Opcode::Fneg => 13,
-        Opcode::Fabs => 14,
-        Opcode::Fsqrt => 15,
-        Opcode::Band => 16,
-        Opcode::Bor => 17,
-        Opcode::Bxor => 18,
-        Opcode::Bnot => 19,
-        Opcode::Ishl => 20,
-        Opcode::Ushr => 21,
-        Opcode::Sshr => 22,
-        Opcode::Icmp { .. } => 23,
-        Opcode::Fcmp { .. } => 24,
-        Opcode::Load => 25, // Load from same address = same value (conservatively treated as pure)
-        Opcode::Fload => 25, // 浮点 load 同 Load 语义
-        Opcode::Sextend => 26,
-        Opcode::Uextend => 27,
-        Opcode::Fptrunc => 71,
-        Opcode::Fpext => 72,
-        Opcode::Fptosi => 73,
-        Opcode::Sitofp => 74,
-        Opcode::Fptoui => 75,
-        Opcode::Uitofp => 76,
-        Opcode::Ptrtoint => 77,
-        Opcode::Inttoptr => 78,
-        Opcode::Ireduce => 28,
-        Opcode::Bitcast => 29,
-        Opcode::StackAddr => 30,
-        Opcode::GlobalAddr => 31,
-        Opcode::Select => 32,
-        Opcode::Copy => 33,
-        // Bit manipulation (CSE-able)
-        Opcode::Clz => 34,
-        Opcode::Ctz => 35,
-        Opcode::Popcnt => 36,
-        Opcode::Bitreverse => 37,
-        Opcode::Rotl => 38,
-        Opcode::Rotr => 39,
-        // Integer extended (CSE-able)
-        Opcode::Abs => 40,
-        Opcode::Smin => 41,
-        Opcode::Smax => 42,
-        Opcode::Umin => 43,
-        Opcode::Umax => 44,
-        Opcode::SaddSat => 45,
-        Opcode::SsubSat => 46,
-        Opcode::UaddSat => 47,
-        Opcode::UsubSat => 48,
-        Opcode::Bswap => 49,
-        // Float extended (CSE-able)
-        Opcode::Fma => 50,
-        Opcode::Fmin => 51,
-        Opcode::Fmax => 52,
-        Opcode::Fcopysign => 53,
-        Opcode::Ffloor => 54,
-        Opcode::Fceil => 55,
-        Opcode::Ftrunc => 56,
-        Opcode::Fround => 57,
-        // Pointer predicates (CSE-able)
-        Opcode::IsNull => 58,
-        Opcode::IsNotNull => 59,
-        // Overflow arithmetic (CSE-able but produce 2 results)
-        Opcode::SaddOverflow => 60,
-        Opcode::UaddOverflow => 61,
-        Opcode::SsubOverflow => 62,
-        Opcode::UsubOverflow => 63,
-        Opcode::SmulOverflow => 64,
-        Opcode::UmulOverflow => 65,
-        // SIMD extended (CSE-able)
-        Opcode::Vdiv => 66,
-        Opcode::Vneg => 67,
-        Opcode::Vabs => 68,
-        Opcode::Vbitcast => 69,
-        Opcode::Vbroadcast => 70,
-        // Non-CSE-able
-        Opcode::Store
-        | Opcode::Fstore
-        | Opcode::Call
-        | Opcode::CallIndirect
-        | Opcode::Iconst
-        | Opcode::Fconst
-        | Opcode::Vconst
-        | Opcode::Nop
-        | Opcode::Vadd
-        | Opcode::Vsub
-        | Opcode::Vmul
-        | Opcode::Vextract
-        | Opcode::AddrSpaceCast
-        | Opcode::VaArg
-        | Opcode::Vinsert
-        | Opcode::Vsplit
-        | Opcode::Vconcat
-        | Opcode::ShuffleVector
-        | Opcode::AtomicRmw
-        | Opcode::Cmpxchg
-        | Opcode::Fence
-        | Opcode::ExtractValue
-        | Opcode::InsertValue
-        | Opcode::Alloca
-        | Opcode::GetElementPtr
-        | Opcode::Poison
-        | Opcode::Undef
-        | Opcode::Trap
-        | Opcode::LandingPad => 0,
-    }
 }
 
 /// 表达式的哈希键。

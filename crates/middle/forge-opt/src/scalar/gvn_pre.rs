@@ -103,7 +103,7 @@ fn insert_expression(func: &mut Function, block: Block, expr_key: &ExprKey) -> O
 
     // P0-2 修复：expr_key.opcode 直接是 Opcode（含 icmp/fcmp cond 载荷），
     // 不再经 discriminant_to_opcode 往返（旧实现把任何 icmp 重建为 Equal）。
-    let opcode = expr_key.opcode.clone();
+    let opcode = expr_key.opcode;
 
     // Create the instruction
     let new_inst = func.dfg.make_inst(
@@ -129,7 +129,7 @@ fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey
                 && let Some(v) = inst.results.first().copied()
             {
                 let key = ExprKey {
-                    opcode: inst.opcode.clone(),
+                    opcode: inst.opcode,
                     operands: inst.operands.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
@@ -163,7 +163,7 @@ fn compute_gen_kill(
                 && let Some(v) = inst.results.first().copied()
             {
                 let key = ExprKey {
-                    opcode: inst.opcode.clone(),
+                    opcode: inst.opcode,
                     operands: inst.operands.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
