@@ -811,6 +811,14 @@ fn e2e_stage_a_scalar_cases() {
     for case in CASES {
         match run_case(case, &workdir) {
             Ok(code) if code == case.expected => {
+                // P0-20：known_failure 转正必须显式翻转标记——否则 bug 修复
+                // 后无人更新（known_failure 永不 assert，CI 照绿）。
+                if case.known_failure {
+                    panic!(
+                        "KNOWN-FAILURE TURNED PASS: `{}` now exits {} (expected)——请移除 known_failure 标记并更新 reason",
+                        case.name, code
+                    );
+                }
                 println!("PASS  {:<16} exit={}", case.name, code);
                 passed += 1;
             }

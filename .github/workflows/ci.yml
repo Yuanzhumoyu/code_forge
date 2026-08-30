@@ -91,6 +91,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustc-dev, rust-src
+      # P0-21：先构建 wrapper（e2e.rs 断言 wrapper.exe 存在；此前 CI
+      # fresh checkout 无此产物 → job 必红）。
+      - name: Build forge-rustc-wrapper
+        run: cargo build --manifest-path tools/forge-rustc-wrapper/Cargo.toml
       - run: cargo test -p forge-rustc --test e2e
 
   # forge-tests nightly（forge-rustc 后端集成；需 nightly + rustc-dev 组件）
