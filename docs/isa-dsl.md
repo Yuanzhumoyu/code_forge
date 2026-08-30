@@ -166,6 +166,7 @@ name = "MOV_R_RM"              # 指令名（PascalCase；生成 Inst 枚举变�
 form = "RR"
 opcode = 0x8B
 asm = "movrr {0:[gprx:out]}, {1:[gprx:in]}"   # 必填；操作数声明内联在 asm 中
+effect = ["Move"]              # 语义标签（见下）
 
 [[instructions]]
 name = "ADD"                   # riscv R-type（定宽位域绑定）
@@ -173,13 +174,33 @@ form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0 }   # 固定字段值，按位域名引用
 asm = "add {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"   # 操作数按 form.operand_fields 位置绑定位域
+effect = ["Pure"]
 
 [[instructions]]
 name = "CQO"                   # 隐式寄存器破坏声明（物理寄存器名）
 form = "NOOP_REXW"
 opcode = 0x99
 implicit_regs = ["RDX"]        # cqo 写 RDX：regalloc 据此避开
+
+[[instructions]]
+name = "EBREAK"                # 陷阱（riscv）
+form = "I"
+opcode = 0x73
+fields = { funct3 = 0, imm12 = 1 }
+asm = "ebreak"
+effect = ["Trap"]
 ```
+
+**`effect` 语义标签**（第三轮重构核心）：`Instruction.effect: Vec<String>`，
+值域 `Pure` / `Read` / `Write` / `Branch` / `Jump` / `Call` / `Ret` / `Trap` /
+`Move`。`MachineInst::is_branch/is_call/is_ret/is_move` 与 `effects()` **全部从
+effect 标签派生**——生成器**不以指令名作判断依据**（无 `MOV_`/`MOVR` 前缀
+启发式、无 `.any(name == "X")` 存在性探测）。语义必须显式声明：
+
+- `Move`：纯 reg→reg copy（x86 12 条 `MOV_R_RM`/`MOV_RM_R`/`MOVSD_XMM_FREG`…
+  与 riscv `mv` 均标 `effect = ["Move"]`）。
+- `Trap`：陷阱指令（x86 `UD2`、riscv `EBREAK`）。
+- 缺省 `Pure`（无 effect 键时）。
 
 **asm 占位符语法**：`{n:[槽:角色]}` 内联操作数声明——`n` 为操作数序号
 （0 起连续），`槽` 引用 `[[operand_slots]]` 名，`角色` 为 `in`（缺省）/
@@ -225,7 +246,7 @@ Unsupported）。
 [[lowering]]
 op = "AtomicRmw"
 when = { eq = ["imm0", 1] }      # Add → LOCK XADD
-insts = ["movrr {t1}, {1}", "xadd [{0}], {t1}", "movrr {out}, {t1}"]
+insts = ["movrr {g1}, {1}", "xadd [{0}], {g1}", "movrr {out}, {g1}"]
 ```
 
 ## `[[lowering]]` — 指令选择
@@ -264,9 +285,9 @@ if-else-if 链分派，无 when 的规则 = 无条件兜底）：
 | token | 语义 |
 | --- | --- |
 | `{out}` / `{out2}` | 结果（out2 = 第二结果，如溢出 flag；rd2 预绑定） |
-| `{0}`/`{1}`/`{2}` | 第 0/1/2 个 IR 操作数（rs1/rs2/rs3） |
-| `{t}`、`{t1}`..`{t5}` | 临时 GPR XReg（模板级预分配） |
-| `{t_f}`、`{t_f1}`..`{t_f4}` | 临时 FPR XReg |
+| `{N}` | 第 N+1 个 IR 操作数（`{0}`→rs1、`{N}`→rs{N+1}）——**动态编号，任意上限**，3+ 操作数指令照常支持（lowering 预绑定 rs1..=rsN 按模板实际最大编号生成） |
+| `{g}`、`{gN}` | 临时 GPR XReg（模板级预分配，变量 `__g`/`__gN`） |
+| `{f}`、`{fN}` | 临时 FPR XReg（变量 `__f`/`__fN`） |
 | `{iconst}` / `{fconst}` | 常量池整数/浮点位模式（`current_const_index`） |
 | `{off}` | `ctx.current_offset`（StackAddr 帧偏移，已平移 callee_saved） |
 | `{alloca}` | `ctx.current_alloca_offset`（Alloca 栈槽偏移） |
@@ -276,9 +297,15 @@ if-else-if 链分派，无 when 的规则 = 无条件兜底）：
 | `{cc}` | Icmp 条件码（`__cc`） |
 | `{global}` | `ctx.current_global` 的 GlobalId（**负编码 -(id+1)**，配 `MOVABS_GLOBAL` → ABS8 重定位） |
 
+> **占位符单一注册表**（第三轮重构）：所有占位符的 token 分类、临时声明、
+> xreg 绑定、ctor 表达式统一收敛于 `v12/codegen/placeholder.rs`——**新增
+> 占位符只改注册表一处**。临时命名 `g`/`f` 与 `PhTemp::{Gpr,Fpr}` 一一对应，
+> 且与既有 token 无前缀冲突（`{g}`≠`{global}`、`{f}`≠`{fconst}`，精确匹配）。
+> 旧样式 `{t}`/`{tN}`/`{t_f}`/`{t_fN}` 已废弃（TOML 全量迁移，解析即报错）。
+
 物理寄存器名（`RAX`/`RCX`/`XMM0` 等）直接写死为 `Reg::*` 并自动收集为
 clobber（regalloc 本点避开）；`opsize` 槽缺省 `ctx.default_opsize`（按 IR
-类型 32/64）；数字立即数/条件码直接写（如 `ROUNDSD_I {t_f1}, {t_f1}, 3`）。
+类型 32/64）；数字立即数/条件码直接写（如 `ROUNDSD_I {f1}, {f1}, 3`）。
 
 **符号重定位（JIT）**：
 
@@ -295,6 +322,17 @@ clobber（regalloc 本点避开）；`opsize` 槽缺省 `ctx.default_opsize`（�
 [abi]
 stack_align = 16
 scratch = ["R10", "R11"]       # spill load/store 专用（须排除 allocatable）
+# 指令选择键（第三轮重构：缺省固定值，不做按名存在性猜测；指令不存在时
+# 由 inst_exists 判定并降级 Unsupported）
+ret_inst = "RET"               # Return 指令（缺省 "RET"）
+jump_inst = "JMP_REL32"        # 无条件跳转（缺省变长 "JMP_REL32" / 定宽 "JAL"）
+branch_inst = "JCC_REL32"      # 条件分支（缺省变长 "JCC_REL32" / 定宽 "BEQ"）
+test_inst = "TEST_RM_R"        # 条件测试（Branch 的 test-cond 序列；缺省 "TEST_RM_R"）
+push_inst = "PUSH"             # 硬件 push（@push_callee；缺省 "PUSH"——不存在回退 spill 模板）
+pop_inst = "POP"               # 硬件 pop（缺省 "POP"）
+fpr_mov_inst = "MOVSD"         # 浮点返回/参数移动（f64；缺省 "MOVSD"）
+fpr_mov_inst32 = "MOVSS"       # 浮点移动（f32；缺省 "MOVSS"）
+call_indirect_inst = "CALL_RM" # CallIndirect 调用（缺省 "CALL_RM"=x86 FF /2；定宽可声明 "JALR"）
 [[abi.arg_class]]
 class = "int"
 regs = ["RCX", "RDX", "R8", "R9"]
@@ -306,6 +344,15 @@ class = "vector"
 strategy = "by-ref"            # >limit 位按引用传参（YMM ABI 铺路）
 limit = 128
 ```
+
+> **ABI 指令键设计原则**（第三轮重构）：`ret_inst`/`jump_inst`/`branch_inst`/
+> `test_inst`/`push_inst`/`pop_inst`/`fpr_mov_inst`/`fpr_mov_inst32`/
+> `call_indirect_inst` 均为 `Option<String>` 键——缺省为**固定值**（按 ISA
+> 形态：变长 x86 → 相对跳转、定宽 riscv → JAL/BEQ），**不做"按名字存在性
+> 猜测"**。指令存在性由 `inst_exists`（与操作数无关——RET/NOP 无操作数也能
+> 判定）检查，缺失 → 该终结符/路径 Unsupported（demo 等无跳转指令的定宽
+> ISA 自然降级）。尾声跳转统一走 encoder（变长 REL4 fixup / 定宽
+> Relative(4,0)），不按指令名判断形态。
 
 ## `[emit]` — 序言/尾声
 
@@ -343,12 +390,15 @@ asm 完整格式：**首词 = mnemonic**，后续为逗号分隔操作数；支�
   `MachineInst`（uses/defs/reg_field/set_reg_field/effects/branch_targets/
   clobbers）、`ensure_registered()`（注册 Registry + reloc patcher）。
 
-已有 ISA 文件：`isa/x86_v12.toml`（204 条指令，变长语义键）与
-`isa/riscv64_v12.toml`（76 条，定宽试点，仅自包含模块未接 TargetMachine）。
+已有 ISA 文件：`isa/x86_v12.toml`（146 条指令，变长语义键）与
+`isa/riscv64_v12.toml`（117 条，定宽试点）——**二者均已接 TargetMachine**；
+riscv 经 QEMU 真执行验证（jit 矩阵 126 用例全绿：整数/浮点/跨函数 Call/
+递归/原子/向量）。另有 `isa/demo_v12.toml`（12 条，同助记符多宽度自动
+分发演示基线）。
 
 ---
 
-## 迭代记录（B3/B2/D/E：TargetMachine 接入、QEMU 验证、汇编器/解码器增强）
+## 迭代记录（B3/B2/D/E：TargetMachine 接入、QEMU 验证、汇编器/解码器增强、第三轮重构）
 
 ### `[meta].default_opsize`（E）
 
@@ -360,7 +410,7 @@ asm 完整格式：**首词 = mnemonic**，后续为逗号分隔操作数；支�
 default_opsize = 64
 ```
 
-### `[abi]` 新键（B3/B2）
+### `[abi]` 新键（B3/B2 + 第三轮）
 
 ```toml
 [abi]
@@ -371,6 +421,16 @@ call_inst = "JAL"          # Call 调用指令（缺省 "CALL_RIP_REL"=x86）
 call_ret_reg = "X1"        # Call 的返回地址寄存器（缺省 "X1"=riscv ra）
 call_clobbers = ["X1", "X7", "X10", "X28"]  # Call 点被调用方破坏的寄存器
 reserved = ["X0", "X1", "X3", "X4"]         # regalloc 不可分配寄存器
+# ── 第三轮新增：终结符/移动指令选择键（缺省固定值，不做按名猜测）──
+ret_inst = "RET"           # Return 指令
+jump_inst = "JAL"          # 无条件跳转（缺省变长 "JMP_REL32"/定宽 "JAL"）
+branch_inst = "BEQ"        # 条件分支（缺省变长 "JCC_REL32"/定宽 "BEQ"）
+test_inst = "TEST_RM_R"    # 条件测试（缺省 "TEST_RM_R"）
+push_inst = "PUSH"         # 硬件 push（缺省 "PUSH"；不存在回退 spill 模板）
+pop_inst = "POP"           # 硬件 pop（缺省 "POP"）
+fpr_mov_inst = "MOVSD"     # 浮点移动 f64（缺省 "MOVSD"）
+fpr_mov_inst32 = "MOVSS"   # 浮点移动 f32（缺省 "MOVSS"）
+call_indirect_inst = "JALR"  # CallIndirect（缺省 "CALL_RM"=x86）
 ```
 
 - `move_inst`/`ret_mov_inst`：生成器按**角色**解析 src/dest（In=src、
@@ -386,6 +446,14 @@ reserved = ["X0", "X1", "X3", "X4"]         # regalloc 不可分配寄存器
 - `reserved`：regalloc 不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被
   prologue/call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 `subw x0`
   结果丢失）。
+- **第三轮终结符键**（`ret_inst`/`jump_inst`/`branch_inst`/`test_inst`）：
+  terminator lowering 从 `[abi]` 键取指令名，变体名与字段均**按键派生**
+  （`Inst::#ret_vn`/`Inst::#jump_vn`…），不再硬编码 `Inst::JmpRel32`/
+  `Inst::Jal`/`Inst::Beq`；指令缺失 → 该终结符 Unsupported（demo 等无
+  JAL/BEQ 的定宽 ISA 自然降级，仍可用 fall-through 尾声）。
+- **浮点移动键**（`fpr_mov_inst`/`fpr_mov_inst32`）：Return/Call/arg_move_loop
+  的浮点路径变体名按键派生（`Inst::#fpr_mov64_vn`/`#fpr_mov32_vn`），不硬编码
+  `Inst::Movsd`/`Inst::Movss`；缺失 → 浮点路径 Unsupported。
 
 ### `[abi.frame]` 新键（B2/B2+）
 
@@ -430,12 +498,18 @@ riscv 式三操作数（reg + reg + imm，无 Mem 槽）：
 
 ```toml
 [spill.GPR]
-load = "LD {0}, X2, {1}"    # {0}=目标寄存器、字面 X2=基址、{1}=__off 立即数
-store = "SD {0}, X2, {1}"
-base = "X2"
+load = "LD {0}, X8, {1}"    # {0}=目标寄存器、字面 X8=基址、{1}=__off 立即数
+store = "SD {0}, X8, {1}"
+base = "X8"
 ```
 
 （x86 式 `MOV64_RM {0}, {1}`（{1}=MemRef）仍支持。）
+
+> **spill 模板操作数绑定**（第三轮放宽）：`{N}` 为**任意编号**（不限于
+> `{0}`/`{1}`——4+ 操作数 spill 指令照常支持），按槽类型绑定语义：
+> Reg 槽 → `__dst`（load 目标 / store 源）、Mem 槽 → MemRef{base, __off}、
+> Imm/Label 槽 → `__off as i64`；字面物理寄存器 → 基址（riscv `X8`）；
+> 字面立即数 → 固定值。
 
 ### 解码器增强（E）
 

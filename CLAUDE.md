@@ -72,8 +72,8 @@ pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
 > 注：生成模块导出的是 `TargetMachine`（组合 IsaInfo/RegInfo/ABI/Lowering/Encoder/
 > FrameLowering/Disassembler/Assembler/**Decoder**），**没有 `Isa` 类型**；
 > 无 `register_backend!` 宏。v11 后端（x86_64/aarch64/riscv64/wasm32/minimal_sd）
-> 已随 v11 语法层删除——现仅 `arch/x86_v12.rs` 与 `arch/riscv64_v12.rs`（定宽试点，
-> 仅自包含模块）。
+> 已随 v11 语法层删除——现仅 `arch/x86_v12.rs` 与 `arch/riscv64_v12.rs`，二者均
+> 已接 TargetMachine（riscv 定宽试点，QEMU 真执行矩阵 126 用例全绿）。
 
 ### Frontend Pipeline (forge-grammar v21)
 

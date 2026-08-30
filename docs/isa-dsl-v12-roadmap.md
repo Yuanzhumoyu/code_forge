@@ -1,9 +1,14 @@
 # ISA-DSL v12 路线图（唯一语法，不兼容 v11，允许重构）
 
-> 状态：**迭代 1 已完成**（2026-08）。本文档持久化已批准的 v12 方案，供后续迭代参考。
+> 状态：**迭代 1-6 + Phase 1-7 + 第三轮破坏性重构均已完成**（2026-08）。
+> 本文档持久化已批准的 v12 方案，供后续迭代参考。
 > 已定决策：**v12 是唯一 DSL 语法**。v11 语法层（`encoding` 字符串 + `@原语`、紧凑
 > `fields` 串、`when` 谓词串、asm 隐式魔法）**整体移除**，无兼容层、无转换工具、
 > 无逃生门。forge-dsl 内部重构为直接消费 v12 结构化模型。
+> 当前实现基线：x86_v12 146 条 / riscv64_v12 117 条指令；forge-dsl 51 测试、
+> forge-codegen jit 全套、forge-tests 34（riscv 矩阵 126 QEMU 真执行）、
+> mini_c 全绿。语法规范见 [`docs/isa-dsl.md`](./isa-dsl.md)；第三轮重构
+> 详细记录见 [`docs/asm-dec-generic-design-v2.md`](./asm-dec-generic-design-v2.md)。
 
 ## 1. 现状诊断（实测数据）
 
@@ -814,3 +819,29 @@ forge-codegen 100/100）；clippy/fmt 干净；全仓 grep 零残留
 - **验证**：每阶段 `cargo test --workspace --exclude forge-rustc
   --all-features` + clippy -D warnings + fmt 全绿；TOML 改动 touch
   `arch/x86_v12.rs` 触发宏重展开；`FGE_DEBUG_GEN=1` dump 生成代码调试
+
+## 24. 第三轮破坏性重构（2026-08）——语义显式声明，清除指令名判断
+
+生成器不再以指令名（前缀/存在性探测）作判断依据，全部语义经 effect 标签
+与 ABI 键显式声明（参考 LLVM TableGen flags / gem5 ISA DSL 的声明式设计）。
+提交：`02f0f53`（Step 1a）、`7ddc3fe`（Step 1b）、`0182e87`（Step 2）、
+`ee3d49e`（docs）。三项：
+
+1. **effect 语义标签**（Step 1a）：`Instruction.effect: Vec<String>` 值域
+   Pure/Read/Write/Branch/Jump/Call/Ret/Trap/Move；`is_move`/`is_branch`/
+   `is_call`/`is_ret` 全从标签派生，删 `MOV_`/`MOVR` 前缀启发式；x86 12 条
+   纯 copy 指令标 `Move`、riscv `mv` 标 Move、`EBREAK` 标 Trap。
+2. **ABI 指令键 + 结构迭代**（Step 1b）：`[abi]` 新增
+   ret_inst/jump_inst/branch_inst/test_inst/push_inst/pop_inst/
+   fpr_mov_inst/fpr_mov_inst32/call_indirect_inst 键（缺省固定值，不做按名
+   存在性猜测）；尾声跳转统一走 encoder；Call/CallIndirect 按操作数槽结构
+   迭代。新增 `inst_exists`（指令存在性与操作数无关——修复 RET/NOP 无
+   操作数时 `has_ret` 误判致 demo_v12_tm_tests 3 失败）。
+3. **占位符注册表 + 编号动态化**（Step 2）：新建 `v12/codegen/placeholder.rs`
+   单一注册表（name/kind/token_kind/temp/xreg/ctor），4 处消费
+   （ctor arm/token 分类/临时声明/xreg 绑定）从表派生；`{N}` 编号操作数
+   任意上限（3+ 操作数指令照常）、临时改 `{gN}`（GPR）/`{fN}`（FPR）——
+   废弃 `{t}/{tN}/{t_f}/{t_fN}` 旧样式（TOML 全量迁移）；`gen_spill_stmt`
+   任意 `{N}` 按槽类型绑定。
+
+全部等价变换：x86/riscv golden 字节断言与 riscv 矩阵 126 全绿。

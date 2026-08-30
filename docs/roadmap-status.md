@@ -3,10 +3,14 @@
 > 本文档记录审查路线图（P0-P5）的执行状态与剩余事项的技术路径，供后续迭代/决策参考。
 > 所有状态均以代码为准（非文档承诺），生成自实际提交历史与全量测试验证。
 >
-> **新工作线**：ISA-DSL v12（唯一语法，不兼容 v11）已完成迭代 1-6（含
-> mini_c v12 全特性端到端 25/25）；**v11 语法层已物理删除**（forge-dsl v11
-> 实现、v11 arch 后端 x86_64/aarch64/riscv64/wasm32/minimal_sd、forge-asm、
-> exec-unicorn），详见 `docs/isa-dsl-v12-roadmap.md` §22。
+> **新工作线**：ISA-DSL v12（唯一语法，不兼容 v11）已完成迭代 1-6、Phase 1-7
+> 与**第三轮破坏性重构**（effect 语义标签统一、ABI 指令键、占位符注册表
+> `placeholder.rs`、编号操作数/临时动态化——见 `docs/isa-dsl.md` 与
+> `docs/asm-dec-generic-design-v2.md` 第三轮记录）；**v11 语法层已物理删除**
+> （forge-dsl v11 实现、v11 arch 后端 x86_64/aarch64/riscv64/wasm32/minimal_sd、
+> forge-asm、exec-unicorn），详见 `docs/isa-dsl-v12-roadmap.md` §22。
+> 当前基线：forge-dsl 51 测试、forge-codegen jit 全套、forge-tests 34
+> （riscv 矩阵 126 QEMU 真执行）、mini_c 全绿。
 
 ## 已完成的迭代（git 提交可追溯）
 
@@ -21,8 +25,9 @@
 | **回归增强** | mini_c dual_backend 历史排除项转正（循环内条件分支/真条件 while/do-while 双栈变量 +3 测试）；decoder_smoke 12 测试 | 全绿 |
 
 **当前基线**：`cargo test --workspace --exclude forge-rustc` 全绿（v12 唯一
-后端；mini_c v12 25/25、dual_backend 19/19、x86_v12 14/14、riscv64_v12 9/9、
-集成 12/12、forge-codegen 100/100）。
+后端；forge-dsl 51、forge-codegen jit 全套（63+13+10+5+20+15+3+9+4+3+12+13）、
+forge-tests 34（含 riscv 矩阵 126 QEMU 真执行）、mini_c 22+19+90+28、
+demo_v12 3）。
 
 ## 剩余事项（需投入决策，技术路径如下）
 
