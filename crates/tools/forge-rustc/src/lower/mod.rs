@@ -212,6 +212,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 break;
             }
             let ty = body.local_decls[local].ty;
+            // P4.6：跳过 ZST/Ignore 参数（RangeFull、Global 等）——与 entry_args
+            // 构建的 layout>0 filter 对称。ZST 在有效参数之前时（如
+            // <RangeFull as SliceIndex<[u8]>>::index(self: RangeFull, slice: &[u8])）
+            // 若不跳过，lo(ptr) 被存进 ZST 槽、slice 只收到 hi(len) →
+            // &[u8] 槽 = len 垃圾（vecfrom/slicelen 的 fat ptr 错位根因）。
+            if layout_bytes(self.tcx, ty) == 0 {
+                if crate::trace::trace_enabled("ARGS") {
+                    eprintln!("[forge] entry skip ZST arg local={} ty={ty}", local.index());
+                }
+                continue;
+            }
             if is_scalar_pair_abi(self.tcx, ty) && pi + 1 < entry_params.len() {
                 // 聚合参数拆两个标量：按 pair 内存偏移写槽（重排后非固定 0/8）
                 let slot = &self.locals[&local];

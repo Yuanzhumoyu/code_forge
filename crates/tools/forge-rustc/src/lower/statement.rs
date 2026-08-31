@@ -244,6 +244,33 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let eight = self.builder.iconst(8, TypeId::I64);
                                     let hi_addr = self.builder.iadd(dst, eight);
                                     self.builder.store(hi, hi_addr);
+                                } else if matches!(dyn_ty.kind(), ty::TyKind::Slice(_)) {
+                                    // &[T; N] → &[T]：构造 fat pointer。
+                                    // lo = 源数组指针、hi = N（数组长度，编译期常量）。
+                                    // 否则 len 槽不写 → 收参方 ScalarPair 拆 hi 读到
+                                    // 垃圾/0（vecfrom：Vec::from(&[1,2,3][..]) len=0）。
+                                    let lo = self.load_place(&src.clone())?;
+                                    let src_pointee = match src_ty.kind() {
+                                        ty::TyKind::Ref(_, t, _) => *t,
+                                        _ => src_ty,
+                                    };
+                                    let n = match src_pointee.kind() {
+                                        rustc_middle::ty::TyKind::Array(_, len) => len
+                                            .try_to_target_usize(self.tcx)
+                                            .unwrap_or(0),
+                                        _ => 0,
+                                    };
+                                    if crate::trace::trace_enabled("CAST") {
+                                        eprintln!(
+                                            "[forge] unsize array->slice n={n} src={src_ty} dst={to_ty}"
+                                        );
+                                    }
+                                    let dst = self.place_addr(place);
+                                    self.builder.store(lo, dst);
+                                    let eight = self.builder.iconst(8, TypeId::I64);
+                                    let hi_addr = self.builder.iadd(dst, eight);
+                                    let hi = self.builder.iconst(n as i64, TypeId::I64);
+                                    self.builder.store(hi, hi_addr);
                                 } else {
                                     let val = self.lower_rvalue(rvalue)?;
                                     self.store_place(place, val);
@@ -339,6 +366,57 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let eight = self.builder.iconst(8, TypeId::I64);
                                     let hi = self.builder.iadd(base, eight);
                                     self.builder.store(lenv, hi);
+                                    return Ok(());
+                                }
+                                // Unevaluated 引用（如 promoted 数组
+                                // `&[1,2,3]` = const promoted[0]，&[T;N] thin 引用）：
+                                // eval 后 Ptr → global_addr 写 8B 槽（eval_const_bytes
+                                // 对 Ptr 返回 0）。类型守卫：仅引用/指针类型。
+                                use rustc_middle::ty::TyKind;
+                                let is_ref_ty = matches!(
+                                    p_ty.kind(),
+                                    TyKind::Ref(..) | TyKind::RawPtr(..)
+                                );
+                                if is_ref_ty
+                                    && let rustc_middle::mir::Const::Unevaluated(..) = ct.const_
+                                    && let Ok(rustc_middle::mir::ConstValue::Scalar(
+                                        rustc_middle::mir::interpret::Scalar::Ptr(ptr, _),
+                                    )) = ct.const_.eval(
+                                        self.tcx,
+                                        ty::TypingEnv::fully_monomorphized(),
+                                        rustc_span::DUMMY_SP,
+                                    )
+                                {
+                                    if crate::trace::trace_enabled("CONST") {
+                                        eprintln!(
+                                            "[forge] stmt Unevaluated ref alloc={:?}",
+                                            ptr.provenance.alloc_id()
+                                        );
+                                    }
+                                    let alloc_id = ptr.provenance.alloc_id();
+                                    let g =
+                                        if let rustc_middle::mir::interpret::GlobalAlloc::Memory(
+                                            alloc,
+                                        ) = self.tcx.global_alloc(alloc_id)
+                                        {
+                                            let inner = &*alloc.0;
+                                            let size = inner.size().bytes_usize();
+                                            let bytes = inner
+                                                .inspect_with_uninit_and_ptr_outside_interpreter(
+                                                    0..size,
+                                                )
+                                                .to_vec();
+                                            let align = inner.align.bytes();
+                                            let sym = self.slice_sym(alloc_id);
+                                            self.func_refs
+                                                .intern_promoted(alloc_id, &sym, bytes, align)
+                                        } else {
+                                            let sym = self.slice_sym(alloc_id);
+                                            self.func_refs.intern_global(alloc_id, &sym)
+                                        };
+                                    let base = self.place_addr(place);
+                                    let ptrv = self.builder.global_addr(GlobalId(g));
+                                    self.builder.store(ptrv, base);
                                     return Ok(());
                                 }
                                 if p_sz > 8

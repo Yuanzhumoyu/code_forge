@@ -244,7 +244,54 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 // 符号经 "G{N}" 重定位解析）。
                 // 两种形态：ConstValue::Indirect{..}（旧）或
                 // ConstValue::Scalar(Scalar::Ptr(..))（新 nightly）
-                let alloc_id = match constant.const_ {
+                // 类型守卫：仅引用/指针类型走 static/promoted global_addr——
+                // Layout 等聚合值（Indirect）必须保持字节求值（否则 vec_push
+                // 的 LAYOUT 被当 promoted 引用 → 值错回归）。
+                use rustc_middle::ty::TyKind;
+                let is_ref_ty = matches!(
+                    constant.const_.ty().kind(),
+                    TyKind::Ref(..) | TyKind::RawPtr(..)
+                );
+                // Unevaluated（如 promoted 数组 `&[1,2,3]` = const promoted[0]）：
+                // 先求值再按形态提取（引用类型的 promoted 是 Ptr/Indirect）
+                let eval_cv = if is_ref_ty {
+                    match constant.const_ {
+                        rustc_middle::mir::Const::Unevaluated(..) => {
+                            let r = constant.const_.eval(
+                                self.tcx,
+                                ty::TypingEnv::fully_monomorphized(),
+                                rustc_span::DUMMY_SP,
+                            );
+                            if crate::trace::trace_enabled("CONST") {
+                                eprintln!(
+                                    "[forge] operand Unevaluated eval -> {:?}",
+                                    r.as_ref().map(|v| format!("{v:?}"))
+                                );
+                            }
+                            r.ok()
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let alloc_id = if is_ref_ty {
+                    match eval_cv {
+                        Some(rustc_middle::mir::ConstValue::Indirect { alloc_id, .. }) => {
+                            if crate::trace::trace_enabled("GLOBAL") {
+                                eprintln!("[forge] const Indirect alloc={alloc_id:?}");
+                            }
+                            Some(alloc_id)
+                        }
+                        Some(rustc_middle::mir::ConstValue::Scalar(
+                            rustc_middle::mir::interpret::Scalar::Ptr(ptr, _),
+                        )) => {
+                            if crate::trace::trace_enabled("GLOBAL") {
+                                eprintln!("[forge] const Ptr prov={:?}", ptr.provenance);
+                            }
+                            Some(ptr.provenance.alloc_id())
+                        }
+                        _ => match constant.const_ {
                     rustc_middle::mir::Const::Val(
                         rustc_middle::mir::ConstValue::Indirect { alloc_id, .. },
                         _,
@@ -266,25 +313,55 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         Some(ptr.provenance.alloc_id())
                     }
                     _ => None,
+                }
+                    }
+                } else {
+                    None
                 };
                 if let Some(alloc_id) = alloc_id {
-                    // alloc_id → static 符号名
-                    if let rustc_middle::mir::interpret::GlobalAlloc::Static(def_id) =
-                        self.tcx.global_alloc(alloc_id)
-                    {
-                        let instantiating_crate = if def_id.is_local() {
-                            rustc_hir::def_id::LOCAL_CRATE
-                        } else {
-                            def_id.krate
-                        };
-                        let sym = rustc_symbol_mangling::symbol_name_for_instance_in_crate(
-                            self.tcx,
-                            rustc_middle::ty::Instance::mono(self.tcx, def_id),
-                            instantiating_crate,
-                        );
-                        let g = self.func_refs.intern_global(alloc_id, &sym);
+                    // alloc_id → 数据段符号：promoted/slice 字面量是
+                    // GlobalAlloc::Memory（intern_promoted 落盘 .rodata）、
+                    // static 是 GlobalAlloc::Static（intern_global 落盘 .data）。
+                    // 其余（Function 等）不在此路径，落到下方标量求值。
+                    let g = match self.tcx.global_alloc(alloc_id) {
+                        rustc_middle::mir::interpret::GlobalAlloc::Memory(alloc) => {
+                            let inner = &*alloc.0;
+                            let size = inner.size().bytes_usize();
+                            let bytes = inner
+                                .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
+                                .to_vec();
+                            let align = inner.align.bytes();
+                            let sym = self.slice_sym(alloc_id);
+                            if crate::trace::trace_enabled("GLOBAL") {
+                                eprintln!(
+                                    "[forge] promoted alloc={alloc_id:?} size={size} -> sym={sym}"
+                                );
+                            }
+                            Some(self.func_refs.intern_promoted(alloc_id, &sym, bytes, align))
+                        }
+                        rustc_middle::mir::interpret::GlobalAlloc::Static(def_id) => {
+                            let instantiating_crate = if def_id.is_local() {
+                                rustc_hir::def_id::LOCAL_CRATE
+                            } else {
+                                def_id.krate
+                            };
+                            let sym = rustc_symbol_mangling::symbol_name_for_instance_in_crate(
+                                self.tcx,
+                                rustc_middle::ty::Instance::mono(self.tcx, def_id),
+                                instantiating_crate,
+                            );
+                            Some(self.func_refs.intern_global(alloc_id, &sym))
+                        }
+                        _ => {
+                            if crate::trace::trace_enabled("GLOBAL") {
+                                eprintln!("[forge] const alloc={alloc_id:?} non-data, skip");
+                            }
+                            None
+                        }
+                    };
+                    if let Some(g) = g {
                         if crate::trace::trace_enabled("GLOBAL") {
-                            eprintln!("[forge] global_addr alloc={alloc_id:?} -> G{g} sym={sym}");
+                            eprintln!("[forge] global_addr alloc={alloc_id:?} -> G{g}");
                         }
                         return Ok(self.builder.global_addr(GlobalId(g)));
                     }
@@ -518,6 +595,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         };
         if !is_fat {
             return None;
+        }
+        if crate::trace::trace_enabled("META") {
+            eprintln!("[forge] fat_ptr_metadata ty={ty} place={place:?}");
         }
         let base = self.place_addr(place);
         let eight = self.builder.iconst(8, TypeId::I64);

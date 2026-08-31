@@ -547,6 +547,16 @@ const CASES: &[Case] = &[
         reason: "2026-09 转正：Slice 常量落盘（&str 字面量 ConstValue::Slice → rodata 数据段 + 写槽 ptr@0/len@8，statement.rs + mod.rs 实参拆 lo/hi）+ PtrMetadata（fat pointer 的 len，rvalue.rs fat_ptr_metadata）——String::from(\"hi\") 的 &str 实参正确传 ptr+len",
     },
     Case {
+        name: "vec_from_slice",
+        body: "let v = alloc::vec::Vec::from(&[1u8, 2, 3][..]); v.len() as i32",
+        expected: 3,
+        extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
+        entry: "mainCRTStartup",
+        known_failure: false,
+        phase: "P6 alloc",
+        reason: "2026-09 转正：promoted 数组引用（&[1,2,3] = const promoted[0]，Unevaluated eval → GlobalAlloc::Memory → intern_promoted 落盘 rodata，statement.rs 写 8B 槽）+ Unsize cast &[T;N]→&[T] 生成 len 元数据（statement.rs slice 分支 hi=N）+ 收参跳过 ZST 参数（mod.rs P4.6：RangeFull 在有效参数前时 fat ptr 拆包错位根因）——Vec::from 的 &[u8] 实参正确传 ptr+len",
+    },
+    Case {
         name: "dyn_trait_call",
         body: "let d = Dog; let s: &dyn Speak = &d; s.speak()",
         expected: 7,
