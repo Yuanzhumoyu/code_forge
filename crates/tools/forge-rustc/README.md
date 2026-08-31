@@ -164,9 +164,26 @@ rustc (codegen_crate)
 - **`overflow-checks=off`**：常规 `+`/`-`/`*` 的溢出 Assert 分支未覆盖（checked 元组结果本身已实现——见支持矩阵），测试统一关闭溢出检查。
 - **单对象文件**：所有实例合并进一个 `.o`（多 CGU 场景由 rustc 接受），`join_codegen` 提供 WorkProduct 元数据支持增量缓存。
 
+## 调试信息（`-C debuginfo=1`，C1 line-tables-only）
+
+**已实现（2026-09）**：`-C debuginfo=1` 生成最小 DWARF 并入对象文件：
+
+- `.debug_line`：行号程序（单 CU 单文件），每函数一个条目
+  （`set_address` + `advance_line` + `copy` + `end_sequence`）
+- `.debug_info`：单编译单元（`DW_TAG_compile_unit`：producer/
+  name/language=Rust）+ 每函数 `DW_TAG_subprogram`（name/low_pc/decl_line）
+- `.debug_abbrev`：缩写表（字符串属性用 `DW_FORM_string` 内联）
+
+实现：`src/dwarf.rs`（生成）+ forge-object `add_dwarf`（COFF 调试段）。
+行号表来源：`LowerCtxt` 采集每个函数的 `body.span` 起始行 →
+`FuncRefTable.line_entries` → backend.rs 写盘前生成。
+**已知限制**：low_pc 地址为 0 占位（reloc 待 object crate 的
+`DebugSectionReloc` 完善）——`llvm-objdump` 可见段结构与行号条目，
+gdb 断点定位需地址 reloc 后可用（后续）。`-C debuginfo=0` 零开销
+（不生成段）。e2e `debuginfo_line_tables` 用例守护。
+
 ## 路线图（远期，P4.7/P4.8 评估结论）
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
-| **DebugInfo（`-C debuginfo`）** | 主库侧工程：forge-object 目前**无 DWARF 段生成**（grep 无 debug_info 支持），需从零实现或引入第三方 DWARF writer（CGCL 参考：debuginfo 模块 7 文件约 2000 行 + cranelift-object 的 DWARF 基础）。forge-rustc 侧需实现 `DebugInfoMethods`（DILocation/DICompileUnit 回调）。估数周 | 主库 forge-object DWARF |
 | **并行 CGU（`-Z codegen-units=N`）** | 中工程量：当前单对象文件（backend.rs 合并输出）。并行化需 FuncRefTable 并发化（`intern`/`intern_global` 加锁或 thread-local）+ 每 CGU 独立 ObjectWriter + `join_codegen` 多模块归并 | 主库 ObjectWriter 并发支持 |
