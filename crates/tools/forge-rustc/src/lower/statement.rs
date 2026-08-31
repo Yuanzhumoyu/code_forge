@@ -153,12 +153,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             };
                             let f_ty = f.ty(&self.body.local_decls, self.tcx);
                             let f_sz = layout_bytes(self.tcx, f_ty);
-                            // 嵌套聚合字段（如 Vec 的 buf/RawVec——16 字节）：按 size 整值复制，
-                            // 否则只写 8 字节（ptr）→ cap/len 槽垃圾
+                            // 嵌套聚合字段（如 Vec 的 buf/RawVec——16 字节、结构体
+                            // 字段数组 [i32; 3]——12 字节）：按 size 整值复制，
+                            // 否则只写 8 字节（ptr）→ cap/len 槽垃圾；数组字段
+                            // 曾漏判（仅 Adt/Tuple）→ 第 3 元素丢失（struct_array
+                            // field_sum 读 xs[2]=0 回归实证）。
                             if f_sz > 8
                                 && matches!(
                                     f_ty.kind(),
-                                    ty::TyKind::Adt(..) | ty::TyKind::Tuple(..)
+                                    ty::TyKind::Adt(..)
+                                        | ty::TyKind::Tuple(..)
+                                        | ty::TyKind::Array(..)
                                 )
                                 && let Operand::Move(p) | Operand::Copy(p) = f
                             {

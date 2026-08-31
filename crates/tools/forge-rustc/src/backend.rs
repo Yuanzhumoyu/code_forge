@@ -292,6 +292,16 @@ fn collect_instances<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<MonoItem<'tcx>> {
             _ => true,
         })
         .collect();
+    // E1 说明（WA-04 LNK2019）：裸 rustc 场景下，forge 编译的用户实例
+    // （如 slice::iter::Iter::next）引用 core 泛型辅助函数（如
+    // unchecked_sub::precondition_check），但 rustc collect 认为 core 由
+    // 预编译 rlib 提供（rlib 无该符号）→ LNK2019。尝试沿调用图补生成
+    // 失败：裸 rustc 下 core rlib 只有优化码，`instance_mir` 查询 core
+    // 实例触发 ICE（"does not have optimized_mir"，panic_nounwind_fmt）。
+    // 根治路径：README 已记录的 `-Zshare-generics=yes`（cargo build-std
+    // 场景 LLVM 生成 core 实例）——裸 rustc 场景受 rustc 后端架构限制，
+    // 无法用当前 CodegenBackend trait 干预 collect 阶段。slice_iter 类
+    // 用例标记 known_failure（WA-19）。
     // A1：稳定排序——GlobalAsm 排最后（会报错终止），其余按 mangled 符号名。
     items.sort_by(|a, b| mono_item_sort_key(tcx, *a).cmp(&mono_item_sort_key(tcx, *b)));
     items

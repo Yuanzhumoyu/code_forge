@@ -729,7 +729,7 @@ const CASES: &[Case] = &[
         reason: "",
     },
     Case {
-        name: "static_mut_counter",
+        name: "static_mut_counter_overflow_off",
         body: "unsafe { CNT += 1; CNT }",
         expected: 1,
         extra: "static mut CNT: i32 = 0;",
@@ -851,6 +851,33 @@ const CASES: &[Case] = &[
         phase: "P9 niche",
         reason: "",
     },
+    // ── A3 overflow-checks=on（默认）：普通 + 生成 AddWithOverflow +
+    //    Assert（checked 算术已支持）。运行期输入（black_box 防 const
+    //    折叠）验证不溢出路径；常量溢出在 const-eval 拦截（编译期错误）。──
+    Case {
+        name: "overflow_checks_on",
+        body: "let a = core::hint::black_box(1000i32); let b = core::hint::black_box(2000i32); a + b",
+        expected: 3000,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "A3 overflow",
+        reason: "",
+    },
+    Case {
+        name: "overflow_checks_on_mul",
+        body: "let a = core::hint::black_box(7i32); let b = core::hint::black_box(6i32); a * b",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "A3 overflow",
+        reason: "",
+    },
     // ── 聚合 f32 字段构造（B2 回归保护）：数组 [f32; 4] 字面量的逐字段
     //    store 曾走 builder.store（GPR 语义）→ 把地址寄存器低 32 位写进
     //    槽（SIMD3 反汇编实证 movl %r15d,(%r15)）。修复：Aggregate 分支
@@ -923,6 +950,103 @@ const CASES: &[Case] = &[
         phase: "D intrinsics",
         reason: "编译期拒绝：主库 AtomicRmw regalloc spill 缺失（原子 RMW 会 xadd [0] 崩溃）；主库根治后移除门控转硬断言",
     },
+    // ── F1 扩编：迭代器 / 字符串 / 数组 of 结构体 / 聚合传参──
+    Case {
+        name: "slice_iter_sum",
+        body: "let a = [1i32, 2, 3, 4]; let mut s = 0; for x in a.iter() { s += *x; } s",
+        expected: 10,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "F1 iter",
+        reason: "WA-19/WA-04：slice::iter::Iter::next 引用 core::num::unchecked_sub::precondition_check（core 泛型辅助），裸 rustc 场景 rlib 无该符号 → LNK2019（E1 补生成受 rustc 后端限制：core rlib 无 MIR 查询路径 ICE）——cargo build-std 场景可解（README share-generics）",
+    },
+    Case {
+        name: "vec_iter_enumerate",
+        body: "let mut v = alloc::vec::Vec::new(); v.push(10); v.push(20); v.push(30); let mut s = 0; for (i, x) in v.iter().enumerate() { s += i as i32 * x; } s",
+        expected: 80, // 0*10 + 1*20 + 2*30
+        extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "F1 iter",
+        reason: "WA-19/WA-04：同 slice_iter_sum（Iter::next 的 precondition_check 符号缺失 LNK2019）",
+    },
+    Case {
+        name: "string_concat_len",
+        body: "let mut s = alloc::string::String::from(\"ab\"); s.push('c'); s.push('d'); s.len() as i32",
+        expected: 4,
+        extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "F1 string",
+        reason: "",
+    },
+    Case {
+        name: "array_of_struct",
+        body: "struct P { x: i32, y: i32 } let a = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]; a[0].x + a[1].y",
+        expected: 5,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "F1 agg",
+        reason: "",
+    },
+    Case {
+        name: "struct_array_field_sum",
+        body: "struct P { xs: [i32; 3] } let p = P { xs: [10, 20, 30] }; p.xs[0] + p.xs[2]",
+        expected: 40,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "F1 agg",
+        reason: "",
+    },
+    Case {
+        name: "fn_agg_arg_return",
+        body: "struct Pair { a: i32, b: i64 } fn sum(p: Pair) -> i64 { p.a as i64 + p.b } sum(Pair { a: 7, b: 35 })",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "F1 agg",
+        reason: "16 字节非 ScalarPair 聚合参数（{i32,i64} 布局重排 b@0/a@8）→ 间接传参路径待验证",
+    },
+    Case {
+        name: "nested_loop_break_outer",
+        body: "let mut total = 0; 'outer: for i in 0..4 { for j in 0..4 { if i * j == 9 { break 'outer; } total += 1; } } total",
+        expected: 12, // i=0:4, i=1:4, i=2:4, i=3: 遇 9 前 0 次(3*3=9 第一个) → 12
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "F1 control",
+        reason: "Range 迭代器 + 嵌套 labeled break：Range::next 内部经 Iterator trait（可能触发 WA-04 precondition_check 缺失）或挂起",
+    },
+    Case {
+        name: "match_str_result",
+        body: "fn pick(n: i32) -> Result<i32, &'static str> { if n > 0 { Ok(n * 2) } else { Err(\"neg\") } } match pick(21) { Ok(v) => v, Err(_) => 0 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "F1 enum",
+        reason: "",
+    },
 ];
 
 /// 生成 no_std 程序源码。
@@ -956,24 +1080,30 @@ fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
     std::fs::write(&src, make_source(case.body, case.extra, case.entry))
         .map_err(|e| e.to_string())?;
 
-    // 编译：no_std + no_main + panic=abort + overflow-checks=off（当前后端不支持
-    // checked 算术的 (value, bool) 元组结果，见 Phase 3 聚合布局计划）
+    // 编译：no_std + no_main + panic=abort。overflow-checks 默认 on——checked
+    // 算术（AddWithOverflow → (value,bool) 元组 + Assert）已支持（A3 验证：
+    // 运行期输入不溢出路径正确），`overflow_checks_on` 用例守护；个别历史
+    // 用例依赖 wrapping 语义（如 i64 边界）保留 off 编译。
     // entry=="main"（fn main 形态）：不指定 /ENTRY，MSVC 默认入口自动转调 main
     let entry_args = if case.entry == "main" {
         "/SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib".to_string()
     } else {
         "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib".to_string()
     };
+    let mut rustc_args = vec![
+        "-Zcodegen-backend=".to_string() + &backend_dll().display().to_string(),
+        "-C".to_string(),
+        "panic=abort".to_string(),
+        "--edition".to_string(),
+        "2024".to_string(),
+    ];
+    // 用例级溢出开关：`overflow_off` 用例（需要 wrapping 语义的）显式关闭。
+    if case.name.contains("overflow_off") {
+        rustc_args.push("-C".to_string());
+        rustc_args.push("overflow-checks=off".to_string());
+    }
     let compile = Command::new("rustc")
-        .arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
-        .args([
-            "-C",
-            "panic=abort",
-            "-C",
-            "overflow-checks=off",
-            "--edition",
-            "2024",
-        ])
+        .args(&rustc_args)
         .arg("-C")
         .arg(format!("link-args={entry_args}"))
         .arg(&src)
