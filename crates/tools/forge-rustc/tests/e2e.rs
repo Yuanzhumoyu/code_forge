@@ -1059,7 +1059,7 @@ const CASES: &[Case] = &[
         expect_compile_err: "",
         known_failure: true,
         phase: "F1 control",
-        reason: "2026-08 定性：Range 迭代的 spec_next 里 `_5 = copy (*_1).0` 的 store_place 值被 regalloc spill 到深槽（-0x90）但 _5 槽（-0x70）的 store 缺失 → `Some(copy _5)` 读预零 0（val 恒 0）/主循环死循环（sentinel 0xDEAD 实证）——判别层（switchInt 枚举判别 + ScalarPair tag 宽度）已修，剩 store 值 spill 与槽写缺失的 regalloc 交互（待主库/emission 深挖）",
+        reason: "WA-20（主库 regalloc 同块 def/use 重叠）：spec_next 的 `_5 = copy (*_1).0` 中 load(start) 结果与 store 目标 lea 同寄存器 r15，lea 覆盖 start 后 store 存地址值 → _5 槽恒 0 → 解包 val 恒 0/主循环死循环（判别层已修，剩 regalloc 重叠；JIT 探针 test_jit_store_load_value_under_pressure 未触发）",
     },
     Case {
         name: "match_str_result",

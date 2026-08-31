@@ -1633,4 +1633,51 @@ mod tests {
         assert_eq!(r, 50, "sum of old + 0..9");
         assert_eq!(x, 8, "atomic write");
     }
+
+    /// Range::spec_next 形态复现：`val = load(ptr)` → `store(val, 槽A)` →
+    /// val 复用 + 大量存活值（spill 压力）→ `load(槽A)`。forge-rustc 侧
+    /// 反汇编实证：spec_next 的 load(start) 结果与 store 目标 lea 分配到
+    /// 同一寄存器 r15——lea 覆盖 start 后 store 存了地址值（_5 槽恒 0）
+    /// ——主库 regalloc 同块 def/use 重叠（WA-17 同源）。JIT 层尽力复现
+    /// 主库；此处简单形态通过（主库基本 store 路径正确）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_store_load_value_under_pressure() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // f(ptr: *mut i64) -> i64：
+        //   val = load(ptr)          // spec_next 的 start
+        //   store(val, 槽A)          // store_place(_5)
+        //   10 个存活常量（spill 压力）+ val 复用
+        //   back = load(槽A)         // Some(copy _5) 读 _5 槽
+        //   返回 acc + back（back 必须 = val，否则槽写错位）
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
+        jit.add_function("store_spill", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let val = b.load(p, TypeId::I64);
+            let slot_a = b.stack_addr(-16);
+            b.store(val, slot_a);
+            // 10 个存活常量（占寄存器，制造 spill 压力）
+            let mut acc = val;
+            for i in 0..10 {
+                let c = b.iconst(i as i64, TypeId::I64);
+                acc = b.iadd(acc, c);
+            }
+            let back = b.load(slot_a, TypeId::I64);
+            let r = b.iadd(acc, back);
+            b.ret(&[r]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i64) -> i64 = jit.get_fn("store_spill").expect("get_fn");
+        let mut x: i64 = 100;
+        let r = f(&mut x);
+        // val(100) + 0+1+...+9(45) + back(100) = 245
+        assert_eq!(r, 245, "val 被 store 后 load 回必须 = val（槽写错位则 back≠100）");
+    }
 }
