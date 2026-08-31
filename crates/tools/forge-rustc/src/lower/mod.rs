@@ -374,6 +374,36 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 kind
                             );
                         }
+                        // &str/&[T] 字面量实参（ConstValue::Slice）：ptr = rodata
+                        // 地址（global_addr + intern_promoted 落盘）、meta = len。
+                        // 拆 lo(ptr) / hi(len) 两个标量传（eval_const_bytes 对
+                        // Slice 返回 None，退化 0 会传空指针）。
+                        if let Operand::Constant(ct) = &arg.node
+                            && let rustc_middle::mir::Const::Val(
+                                rustc_middle::mir::ConstValue::Slice { alloc_id, meta },
+                                _,
+                            ) = ct.const_
+                        {
+                            let g = if let rustc_middle::mir::interpret::GlobalAlloc::Memory(
+                                alloc,
+                            ) = self.tcx.global_alloc(alloc_id)
+                            {
+                                let inner = &*alloc.0;
+                                let size = inner.size().bytes_usize();
+                                let bytes = inner
+                                    .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
+                                    .to_vec();
+                                let align = inner.align.bytes();
+                                let sym = self.slice_sym(alloc_id);
+                                self.func_refs.intern_promoted(alloc_id, &sym, bytes, align)
+                            } else {
+                                let sym = self.slice_sym(alloc_id);
+                                self.func_refs.intern_global(alloc_id, &sym)
+                            };
+                            call_args.push(self.builder.global_addr(GlobalId(g)));
+                            call_args.push(self.builder.iconst(meta as i64, TypeId::I64));
+                            continue;
+                        }
                         // ScalarPair 聚合常量实参（如 Layout 常量
                         // <i32 as SizedTypeProperties>::LAYOUT）：eval 字节拆
                         // lo/hi 两个标量传（lower_operand 的 const 分支只处理

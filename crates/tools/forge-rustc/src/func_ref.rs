@@ -21,6 +21,9 @@ pub struct FuncRefTable {
     /// (数据内偏移, reloc, 符号, addend) 列表, 对齐)——主流程统一写 .data
     /// （[WA-01] MSVC 链接器不应用 .rodata 的 ADDR64 重定位，见 backend.rs）。
     vtables: Vec<(String, Vec<u8>, Vec<(usize, RelocKind, String, i64)>, u64)>,
+    /// promoted/slice 常量数据段（`&[1,2,3]`、`&"str"` 字面量 rodata 副本）：
+    /// (符号名, 字节, 对齐)——backend.rs 统一写 .rodata。
+    promoted: Vec<(String, Vec<u8>, u64)>,
 }
 
 impl FuncRefTable {
@@ -101,5 +104,30 @@ impl FuncRefTable {
     /// 已注册的 vtable 数据段（供 codegen_crate 写对象文件时统一落盘）。
     pub fn vtables(&self) -> &[(String, Vec<u8>, Vec<(usize, RelocKind, String, i64)>, u64)] {
         &self.vtables
+    }
+
+    /// 登记 promoted/slice 常量数据段（`&"str"`、`&[1,2,3]` 字面量的
+    /// rodata 副本）并返回 GlobalId。幂等：同一 alloc_id 复用。
+    pub fn intern_promoted(
+        &mut self,
+        alloc_id: rustc_middle::mir::interpret::AllocId,
+        sym: &str,
+        bytes: Vec<u8>,
+        align: u64,
+    ) -> u32 {
+        if let Some(&id) = self.global_by_alloc.get(&alloc_id) {
+            return id;
+        }
+        let id = self.global_next;
+        self.global_next += 1;
+        self.global_by_alloc.insert(alloc_id, id);
+        self.global_by_idx.insert(id, sym.to_string());
+        self.promoted.push((sym.to_string(), bytes, align));
+        id
+    }
+
+    /// 已注册的 promoted/slice 常量数据段（供 codegen_crate 写 .rodata）。
+    pub fn promoted(&self) -> &[(String, Vec<u8>, u64)] {
+        &self.promoted
     }
 }

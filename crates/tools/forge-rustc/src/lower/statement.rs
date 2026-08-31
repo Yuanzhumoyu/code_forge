@@ -2,6 +2,10 @@
 use super::*;
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
+    /// slice 常量（&str/&[T] 字面量）的 rodata 符号名：alloc_id 唯一。
+    pub(crate) fn slice_sym(&self, alloc_id: rustc_middle::mir::interpret::AllocId) -> String {
+        format!("{}::slice[{:?}]", self.fn_name, alloc_id)
+    }
     pub(crate) fn lower_statement(
         &mut self,
         stmt: &rustc_middle::mir::Statement<'tcx>,
@@ -293,6 +297,50 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             if let Rvalue::Use(Operand::Constant(ct), _) = rvalue {
                                 let p_ty = place.ty(&self.body.local_decls, self.tcx).ty;
                                 let p_sz = layout_bytes(self.tcx, p_ty);
+                                // &str/&[T] 字面量：ConstValue::Slice{alloc, meta}。
+                                // ptr 指向 rodata（global_addr + intern_promoted 落盘）、
+                                // meta = len——写槽 ptr@0 + len@8（ScalarPair）。
+                                if let rustc_middle::mir::Const::Val(
+                                    rustc_middle::mir::ConstValue::Slice { alloc_id, meta },
+                                    _,
+                                ) = ct.const_
+                                {
+                                    if crate::trace::trace_enabled("CONST") {
+                                        eprintln!(
+                                            "[forge] stmt const Slice alloc={alloc_id:?} meta={meta}"
+                                        );
+                                    }
+                                    // 登记 slice 字节（intern_promoted 幂等，返回唯一
+                                    // G 索引——与 global_addr 引用一致）
+                                    let g =
+                                        if let rustc_middle::mir::interpret::GlobalAlloc::Memory(
+                                            alloc,
+                                        ) = self.tcx.global_alloc(alloc_id)
+                                        {
+                                            let inner = &*alloc.0;
+                                            let size = inner.size().bytes_usize();
+                                            let bytes = inner
+                                                .inspect_with_uninit_and_ptr_outside_interpreter(
+                                                    0..size,
+                                                )
+                                                .to_vec();
+                                            let align = inner.align.bytes();
+                                            let sym = self.slice_sym(alloc_id);
+                                            self.func_refs
+                                                .intern_promoted(alloc_id, &sym, bytes, align)
+                                        } else {
+                                            let sym = self.slice_sym(alloc_id);
+                                            self.func_refs.intern_global(alloc_id, &sym)
+                                        };
+                                    let base = self.place_addr(place);
+                                    let ptr = self.builder.global_addr(GlobalId(g));
+                                    self.builder.store(ptr, base);
+                                    let lenv = self.builder.iconst(meta as i64, TypeId::I64);
+                                    let eight = self.builder.iconst(8, TypeId::I64);
+                                    let hi = self.builder.iadd(base, eight);
+                                    self.builder.store(lenv, hi);
+                                    return Ok(());
+                                }
                                 if p_sz > 8
                                     && let Some(bytes) = self.eval_const_bytes(ct.const_)
                                 {

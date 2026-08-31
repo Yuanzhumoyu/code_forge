@@ -210,6 +210,28 @@ const**（含 Layout 聚合），LAYOUT 被当 promoted 引用处理 → 值错�
 验证（vec_push 转正后回退，e2e 保 57/58；vec_string 修复留待专项，
 改动需在 vec_push 用例上先行回归）。
 
+### ✅ vec_string 转正（69afd24 后续，e2e 58/58）
+
+**最终修复（三处，均为类型守卫 + 落盘）**：
+1. **Slice 落盘（statement.rs）**：`_x = const "hi"`（`ConstValue::Slice`）
+   → 写槽 `ptr@[base]=global_addr(alloc)`、`len@[base+8]=iconst(meta)`，
+   并 `intern_promoted` 登记 alloc 字节到 rodata（backend.rs 落盘）。
+2. **Slice 实参（mod.rs）**：`String::from("hi")` 的 &str 实参是 Slice
+   → 拆 `global_addr(ptr)` + `iconst(len)` 两个标量传（eval_const_bytes
+   对 Slice 返回 None，退化 0 会传空指针）。
+3. **PtrMetadata（rvalue.rs）**：`str::len` 的 `_0 = PtrMetadata(_2)` →
+   `fat_ptr_metadata(place)` 读 fat ptr 槽 [base+8]（&str/&[T] 的 len）。
+
+**验证**：vec_string=2 ✓、vec_push=2 ✓（类型守卫避免 Layout 误判）、
+strlen=2 ✓；jit 80 / forge-dsl 51 / forge-tests 36 / mini_c 162 全绿。
+
+**vecfrom 残留**（`Vec::from(&[1u8,2,3][..])`，exit=0 want 3）：`[1,2,3]`
+是 **promoted 数组引用**（`_3 = const mainCRTStartup::promoted[0]`，
+&[u8;3] → Index → &[u8]）——Unevaluated 常量的 promoted 路径未走
+（statement.rs 的 Slice 分支只匹配 Slice；promoted 引用是 Ptr/Indirect
+且 Unevaluated 需先 eval）。下一轮：处理 Unevaluated 引用的
+promoted/static 路径。
+
 ### ✅ 已修复（2026-09 reloc/对齐/双返回三连击，e2e 30→51/58）
 | 根因 | 修复 | 提交 |
 | --- | --- | --- |

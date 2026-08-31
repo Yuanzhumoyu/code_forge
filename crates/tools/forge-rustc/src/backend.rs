@@ -179,6 +179,12 @@ impl CodegenBackend for CodegenLibBackend {
             let _ = object_writer.add_data_with_relocs(sym, bytes, &reloc_refs, *align);
         }
 
+        // promoted/slice 常量（`&"str"`、`&[1,2,3]` 字面量）：纯数据无重定位，
+        // 落 .rodata（无 [WA-01] ADDR64 限制）。
+        for (sym, bytes, align) in func_ref_table.promoted() {
+            let _ = object_writer.add_rodata(sym, bytes, *align);
+        }
+
         // 写入对象文件到磁盘
         let obj_path = outdir.join("forge_codegen_output.o");
         match object_writer.write_to_file(&obj_path) {

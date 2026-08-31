@@ -542,9 +542,9 @@ const CASES: &[Case] = &[
         expected: 2,
         extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
         entry: "mainCRTStartup",
-        known_failure: true,
+        known_failure: false,
         phase: "P2",
-        reason: "len 读错 (exit=0): String 的 cap/len 槽运行期值错，与 vec_push 同源（[WA-11] 活区间问题）",
+        reason: "2026-09 转正：Slice 常量落盘（&str 字面量 ConstValue::Slice → rodata 数据段 + 写槽 ptr@0/len@8，statement.rs + mod.rs 实参拆 lo/hi）+ PtrMetadata（fat pointer 的 len，rvalue.rs fat_ptr_metadata）——String::from(\"hi\") 的 &str 实参正确传 ptr+len",
     },
     Case {
         name: "dyn_trait_call",

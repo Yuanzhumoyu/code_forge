@@ -15,6 +15,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.lower_binary_op(*bin_op, lhs, rhs, signed, op1_ty)
             }
             Rvalue::UnaryOp(un_op, op) => {
+                // PtrMetadata（fat pointer 元数据）：&str/&[T] 的 len。
+                // 单独处理——lower_operand 返回 ptr 单值，metadata 需从
+                // place 槽读（fat ptr = ptr@0 + metadata@8）。
+                if *un_op == mir::UnOp::PtrMetadata {
+                    if let Operand::Copy(p) | Operand::Move(p) = op {
+                        if let Some(meta) = self.fat_ptr_metadata(p) {
+                            return Ok(meta);
+                        }
+                    }
+                }
                 let val = self.lower_operand(op)?;
                 let is_bool = op.ty(&self.body.local_decls, self.tcx).is_bool();
                 self.lower_unary_op(*un_op, val, is_bool)
@@ -490,6 +500,31 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             ))),
         }
     }
+    /// fat pointer 的 metadata（len）：读 place 槽 [base+8]（fat ptr 布局
+    /// ptr@0 + metadata@8）。仅当 place 类型是 fat pointer（&str/&[T]/
+    /// dyn Trait）时调用；thin 指针返回 None（PtrMetadata 恒 0）。
+    pub(crate) fn fat_ptr_metadata(
+        &mut self,
+        place: &mir::Place<'tcx>,
+    ) -> Option<Value> {
+        use rustc_middle::ty::TyKind;
+        let ty = place.ty(&self.body.local_decls, self.tcx).ty;
+        let is_fat = match ty.kind() {
+            TyKind::Ref(_, t, _) | TyKind::RawPtr(t, _) => matches!(
+                t.kind(),
+                TyKind::Slice(..) | TyKind::Dynamic(..) | TyKind::Str
+            ),
+            _ => false,
+        };
+        if !is_fat {
+            return None;
+        }
+        let base = self.place_addr(place);
+        let eight = self.builder.iconst(8, TypeId::I64);
+        let hi = self.builder.iadd(base, eight);
+        Some(self.builder.load(hi, TypeId::I64))
+    }
+
     pub(crate) fn lower_unary_op(
         &mut self,
         op: mir::UnOp,
