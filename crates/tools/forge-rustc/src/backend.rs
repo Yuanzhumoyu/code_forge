@@ -275,9 +275,19 @@ fn collect_instances<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<MonoItem<'tcx>> {
             MonoItem::Fn(instance) => {
                 let def_id = instance.def_id();
                 // 跳过 alloc crate 的 allocator shim（extern "C" 声明，C 符号名，
-                // 会与手写 shim 重复定义；rustc 版内部依赖 Layout/Alignment lowering）
+                // 会与手写 shim 重复定义；rustc 版内部依赖 Layout/Alignment lowering）。
+                // 注意：闭包 DefId 无 item_name（ICE），用 def_path_str 兜底——
+                // allocator shim 是普通 fn，def_path_str 以 "__rust_alloc" 结尾。
                 let in_alloc = tcx.crate_name(def_id.krate).as_str() == "alloc";
-                !(in_alloc && alloc_shims.contains(&tcx.item_name(def_id).as_str()))
+                if !in_alloc {
+                    return true;
+                }
+                let name = if let Some(n) = tcx.opt_item_name(def_id) {
+                    n.as_str().to_string()
+                } else {
+                    tcx.def_path_str(def_id)
+                };
+                !alloc_shims.contains(&name.as_str())
             }
             _ => true,
         })
