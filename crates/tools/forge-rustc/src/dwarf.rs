@@ -20,10 +20,14 @@ const DW_LNE_SET_ADDRESS: u8 = 0x02;
 ///
 /// 每函数条目：`DW_LNE_set_address <addr>` + `DW_LNS_set_file` +
 /// `DW_LNS_advance_line` + `DW_LNS_copy` + `DW_LNE_end_sequence`。
-/// addr 是相对地址（0 占位，reloc 补）。
+/// addr 是相对地址（0 占位，reloc 补）。file_names[0] = 源文件/库名
+///（C2：当前为空串——调试器按文件索引回溯行号，真实文件名提高可用性）。
 ///
 /// 返回 (段字节, reloc: (数据内偏移, 符号名))。
-pub fn gen_debug_line(entries: &[(String, u32)]) -> (Vec<u8>, Vec<(usize, String)>) {
+pub fn gen_debug_line(
+    entries: &[(String, u32)],
+    file_name: &str,
+) -> (Vec<u8>, Vec<(usize, String)>) {
     let mut buf: Vec<u8> = Vec::new();
     let unit_len_pos = 0usize;
     buf.extend_from_slice(&0u32.to_le_bytes()); // unit_length 占位
@@ -38,7 +42,8 @@ pub fn gen_debug_line(entries: &[(String, u32)]) -> (Vec<u8>, Vec<(usize, String
     // standard_opcode_lengths（opcode_base-1 = 0 个）
     // include_directories：空（单个目录 ""）
     buf.push(0);
-    // file_names：file[0] = 空字符串
+    // file_names：file[0] = 源文件/库名（DW_FORM_string 变长）
+    buf.extend_from_slice(file_name.as_bytes());
     buf.push(0);
     let header_end = buf.len();
     let hl = header_end - (hl_pos + 4);
@@ -151,7 +156,7 @@ pub fn build_dwarf_sections(
     producer: &str,
     cu_name: &str,
 ) -> Vec<(String, Vec<u8>, Vec<(usize, String)>)> {
-    let (line_bytes, line_relocs) = gen_debug_line(entries);
+    let (line_bytes, line_relocs) = gen_debug_line(entries, cu_name);
     let (info_bytes, info_relocs) = gen_debug_info(entries, producer, cu_name);
     vec![
         (".debug_line".to_string(), line_bytes, line_relocs),
@@ -183,10 +188,15 @@ mod tests {
             ("main".to_string(), 10u32),
             ("helper".to_string(), 20u32),
         ];
-        let (bytes, relocs) = gen_debug_line(&entries);
+        let (bytes, relocs) = gen_debug_line(&entries, "test_crate");
         assert!(bytes.len() > 24, "line program too small");
         assert_eq!(relocs.len(), 2, "one reloc per function");
         assert_eq!(relocs[0].1, "main");
+        // file_names[0] = 库名（非空——C2 增强）
+        assert!(
+            bytes.windows(10).any(|w| w == b"test_crate"),
+            "file_names[0] should contain crate name"
+        );
         // unit_length 非 0
         let unit_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert_eq!(unit_len as usize, bytes.len() - 4);
