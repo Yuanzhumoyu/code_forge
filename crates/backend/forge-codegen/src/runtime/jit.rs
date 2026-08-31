@@ -1680,4 +1680,169 @@ mod tests {
         // val(100) + 0+1+...+9(45) + back(100) = 245
         assert_eq!(r, 245, "val 被 store 后 load 回必须 = val（槽写错位则 back≠100）");
     }
+
+    /// Range::next 跨调用写回复现：callee(ptr) 修改 [ptr]，main 两次调用
+    /// callee 同一 ptr——第二次 callee 必须读到第一次写入的新值。
+    /// forge-rustc 侧实证（nex3）：0..1 的第二次 next 返回 Some(0)（应
+    /// None）——spec_next 的写回 movl→[Range 指针] 存在但运行期 start
+    /// 不递增——疑似主库跨调用写回不生效。JIT 层隔离主库。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cross_call_writeback() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee(ptr: *mut i64) -> i64：val = load(ptr); store(val+1, ptr); ret(val)
+        let sig_c = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
+        let mut callee_fn = FunctionBuilder::new("callee", TypeContext::new(), sig_c.clone());
+        let (ce, cp) = callee_fn.create_block_with_params(&[(TypeId::I64, "ptr")]);
+        callee_fn.switch_to_block(ce);
+        let val = callee_fn.load(cp[0], TypeId::I64);
+        let one = callee_fn.iconst(1, TypeId::I64);
+        let nv = callee_fn.iadd(val, one);
+        callee_fn.store(nv, cp[0]);
+        callee_fn.ret(&[val]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(callee_fn.finish().expect("callee"));
+
+        // main() -> i64：x 槽 = 0；a = callee(&x); b = callee(&x); ret(a*100+b)
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m.clone());
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let x_slot = main_fn.stack_addr(-16);
+        let zero = main_fn.iconst(0, TypeId::I64);
+        main_fn.store(zero, x_slot);
+        let x_addr = main_fn.stack_addr(-16);
+        let a = main_fn.call(callee_ref, &[x_addr], &[TypeId::I64])[0];
+        let b = main_fn.call(callee_ref, &[x_addr], &[TypeId::I64])[0];
+        let hundred = main_fn.iconst(100, TypeId::I64);
+        let a100 = main_fn.imul(a, hundred);
+        let r = main_fn.iadd(a100, b);
+        main_fn.ret(&[r]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        let got = f();
+        // a = 0（x=0 返回 0、写 1）、b = 1（x=1 返回 1、写 2）→ 0*100+1 = 1
+        assert_eq!(got, 1, "callee 第二次调用必须读到第一次写入的新值（跨调用写回）");
+    }
+
+    /// 两层调用链写回复现（next 包装 → spec_next 形态）：callee2 写 [ptr]，
+    /// callee1 调 callee2，main 两次调 callee1 同一 ptr。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cross_call_writeback_two_level() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee2(ptr: *mut i64) -> i64：val = load(ptr); store(val+1, ptr); ret(val)
+        let sig2 = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
+        let mut f2 = FunctionBuilder::new("callee2", TypeContext::new(), sig2.clone());
+        let (e2, p2) = f2.create_block_with_params(&[(TypeId::I64, "ptr")]);
+        f2.switch_to_block(e2);
+        let val2 = f2.load(p2[0], TypeId::I64);
+        let one2 = f2.iconst(1, TypeId::I64);
+        let nv2 = f2.iadd(val2, one2);
+        f2.store(nv2, p2[0]);
+        f2.ret(&[val2]);
+        let mut module = Module::new();
+        let callee2_ref = module.add_function(f2.finish().expect("callee2"));
+
+        // callee1(ptr) -> i64：调 callee2(ptr) 返回结果（next 包装形态）
+        let sig1 = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
+        let mut f1 = FunctionBuilder::new("callee1", TypeContext::new(), sig1.clone());
+        let (e1, p1) = f1.create_block_with_params(&[(TypeId::I64, "ptr")]);
+        f1.switch_to_block(e1);
+        let r1 = f1.call(callee2_ref, &[p1[0]], &[TypeId::I64])[0];
+        f1.ret(&[r1]);
+        let callee1_ref = module.add_function(f1.finish().expect("callee1"));
+
+        // main() -> i64：x 槽 = 0；a = callee1(&x); b = callee1(&x); ret(a*100+b)
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m.clone());
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let x_slot = main_fn.stack_addr(-16);
+        let zero = main_fn.iconst(0, TypeId::I64);
+        main_fn.store(zero, x_slot);
+        let x_addr = main_fn.stack_addr(-16);
+        let a = main_fn.call(callee1_ref, &[x_addr], &[TypeId::I64])[0];
+        let b = main_fn.call(callee1_ref, &[x_addr], &[TypeId::I64])[0];
+        let hundred = main_fn.iconst(100, TypeId::I64);
+        let a100 = main_fn.imul(a, hundred);
+        let r = main_fn.iadd(a100, b);
+        main_fn.ret(&[r]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        let got = f();
+        // a = 0、b = 1 → 1
+        assert_eq!(got, 1, "两层调用链跨调用写回");
+    }
+
+    /// spec_next 形态精确化：callee2 内部有**中间调用**（模拟
+    /// forward_unchecked）——值/地址被 spill 后与调用栈交互。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_writeback_with_inner_call() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee3(x: i64) -> i64：x + 1000（clobber 用）
+        let sig3 = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        let mut f3 = FunctionBuilder::new("callee3", TypeContext::new(), sig3.clone());
+        let (e3, p3) = f3.create_block_with_params(&[(TypeId::I64, "x")]);
+        f3.switch_to_block(e3);
+        let t = f3.iconst(1000, TypeId::I64);
+        let r3 = f3.iadd(p3[0], t);
+        f3.ret(&[r3]);
+        let mut module = Module::new();
+        let callee3_ref = module.add_function(f3.finish().expect("callee3"));
+
+        // callee2(ptr: *mut i64) -> i64：val = load(ptr); _ = callee3(val);
+        // store(val+1, ptr); ret(val)（中间调用模拟 forward_unchecked）
+        let sig2 = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
+        let mut f2 = FunctionBuilder::new("callee2", TypeContext::new(), sig2.clone());
+        let (e2, p2) = f2.create_block_with_params(&[(TypeId::I64, "ptr")]);
+        f2.switch_to_block(e2);
+        let val2 = f2.load(p2[0], TypeId::I64);
+        let _junk = f2.call(callee3_ref, &[val2], &[TypeId::I64])[0];
+        let one2 = f2.iconst(1, TypeId::I64);
+        let nv2 = f2.iadd(val2, one2);
+        f2.store(nv2, p2[0]);
+        f2.ret(&[val2]);
+        let callee2_ref = module.add_function(f2.finish().expect("callee2"));
+
+        // main() -> i64：x = 0；a = callee2(&x); b = callee2(&x); ret(a*100+b)
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m.clone());
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let x_slot = main_fn.stack_addr(-16);
+        let zero = main_fn.iconst(0, TypeId::I64);
+        main_fn.store(zero, x_slot);
+        let x_addr = main_fn.stack_addr(-16);
+        let a = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
+        let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
+        let hundred = main_fn.iconst(100, TypeId::I64);
+        let a100 = main_fn.imul(a, hundred);
+        let r = main_fn.iadd(a100, b);
+        main_fn.ret(&[r]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        let got = f();
+        // a = 0、b = 1 → 1（中间调用不得破坏跨调用写回）
+        assert_eq!(got, 1, "内部中间调用后跨调用写回");
+    }
 }
