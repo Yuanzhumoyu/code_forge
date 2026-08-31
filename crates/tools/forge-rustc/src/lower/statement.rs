@@ -444,7 +444,64 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 }
             }
             StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
-            _ => {}
+            // rustc 把 intrinsics::copy_nonoverlapping 在 monomorphize 后展开
+            // 成 MIR 专用语句 `Intrinsic(NonDivergingIntrinsic::CopyNonOverlapping
+            // { src, dst, count })`（wrapper 的 bb3）——此前未处理落入 `_ => {}`
+            // 忽略 → 复制不执行（buf[4] 恒 0）。内联逐 8 字节复制循环。
+            StatementKind::Intrinsic(box rustc_middle::mir::NonDivergingIntrinsic::CopyNonOverlapping(
+                rustc_middle::mir::CopyNonOverlapping { src, dst, count },
+            )) => {
+                if crate::trace::trace_enabled("STMT") {
+                    eprintln!(
+                        "[forge] stmt intrinsic CopyNonOverlapping src={src:?} dst={dst:?} count={count:?}"
+                    );
+                }
+                let src_v = self.lower_operand(src)?;
+                let dst_v = self.lower_operand(dst)?;
+                let count_v = self.lower_operand(count)?;
+                // 元素大小从 src 操作数的类型取（pointee）
+                let src_ty = src.ty(&self.body.local_decls, self.tcx);
+                let elem = self.pointee_ty(src_ty);
+                let sz = layout_bytes(self.tcx, elem) as i64;                let cur = self.builder.current_block();
+                let (loop_blk, lp) =
+                    self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
+                let (body_blk, bp) =
+                    self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
+                let done = self.builder.create_block();
+                self.builder.switch_to_block(cur);
+                let zero = self.builder.iconst(0, TypeId::I64);
+                let one = self.builder.iconst(1, TypeId::I64);
+                self.builder.jump(loop_blk, &[zero]);
+                self.builder.switch_to_block(loop_blk);
+                let i = lp[0];
+                let cond = self.builder.icmp(IntCC::UnsignedLessThan, i, count_v);
+                self.builder.branch(cond, body_blk, &[i], done, &[]);
+                self.builder.switch_to_block(body_blk);
+                let bi = bp[0];
+                let off = if sz == 1 {
+                    bi
+                } else {
+                    let szv = self.builder.iconst(sz, TypeId::I64);
+                    self.builder.imul(bi, szv)
+                };
+                let saddr = self.builder.iadd(src_v, off);
+                let v = self.builder.load(saddr, TypeId::I64);
+                let daddr = self.builder.iadd(dst_v, off);
+                self.builder.store(v, daddr);
+                let i2 = self.builder.iadd(bi, one);
+                self.builder.jump(loop_blk, &[i2]);
+                self.builder.switch_to_block(done);
+            }
+            StatementKind::Intrinsic(kind) => {
+                if crate::trace::trace_enabled("STMT") {
+                    eprintln!("[forge] stmt intrinsic (unhandled): {kind:?}");
+                }
+            }
+            _ => {
+                if crate::trace::trace_enabled("STMT") {
+                    eprintln!("[forge] stmt unhandled kind: {:?}", stmt.kind);
+                }
+            }
         }
         Ok(())
     }

@@ -1061,6 +1061,33 @@ const CASES: &[Case] = &[
         phase: "C1 dwarf",
         reason: "",
     },
+    // ── D 组补充：copy_nonoverlapping（rustc 展开成
+    //    StatementKind::Intrinsic(CopyNonOverlapping)——曾落入 `_ => {}`
+    //    忽略 → 复制不执行；statement.rs 内联循环后转正）。──
+    Case {
+        name: "copy_nonoverlapping_stmt",
+        body: "let mut buf = [0u8; 8]; unsafe { core::ptr::write_volatile(buf.as_mut_ptr(), 42u8) }; unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), buf.as_mut_ptr().add(4), 1) }; buf[4] as i32",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    Case {
+        name: "copy_nonoverlapping_multi",
+        body: "let mut src = [1u32, 2]; let mut dst = [0u32; 2]; unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 2) }; dst[0] as i32 + dst[1] as i32",
+        expected: 3,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
     // ── F2 负向测试：编译失败断言（失败即报错）──
     Case {
         name: "neg_global_asm",

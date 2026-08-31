@@ -28,6 +28,32 @@ impl CodegenBackend for CodegenLibBackend {
         auto_register_isa_for_target(&target_triple);
 
         let mut compiled_modules = Vec::new();
+
+        // G5：panic=unwind 明确拒绝（当前后端仅支持 panic=abort——无
+        // unwind/异常表，unwind 会产生未定义行为/链接错误）。用
+        // dcx().err 使编译失败而非静默产出错误程序。
+        let panic_abort = tcx.sess.panic_strategy() == rustc_target::spec::PanicStrategy::Abort;
+        if !panic_abort {
+            tcx.dcx().err(
+                "code-forge: panic=unwind 暂不支持——仅 panic=abort（请加 -C panic=abort）",
+            );
+            compiled_modules.push(CompiledModule {
+                name: "empty".to_string(),
+                kind: ModuleKind::Regular,
+                object: None,
+                global_asm_object: None,
+                dwarf_object: None,
+                bytecode: None,
+                assembly: None,
+                llvm_ir: None,
+                links_from_incr_cache: Vec::new(),
+            });
+            return Box::new(CompiledModules {
+                modules: compiled_modules,
+                allocator_module: None,
+            });
+        }
+
         let outdir = tcx.output_filenames(()).with_extension("").to_path_buf();
         let outdir = outdir
             .parent()
