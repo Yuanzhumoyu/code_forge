@@ -324,7 +324,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     } else {
                                         base
                                     };
-                                    self.builder.store(f, f_addr);
+                                    // WA-22：flag（bool）store 宽度必须窄——主库对
+                                    // BOOL 值的 store 在 (i32,bool) 聚合邻槽场景写 8 字节
+                                    //（movq），覆盖相邻局部槽（bump1 实证：flag@+4 的
+                                    // movq 覆盖 _1 参数槽 -0x50 的 p → 写回 store [0]
+                                    // SEGV）。显式 ireduce 到 I32（4 字节，槽内不越界），
+                                    // 解构读 bool 只取低字节不受影响。
+                                    let f32 = self.builder.ireduce(f, TypeId::I32);
+                                    self.builder.store(f32, f_addr);
                                     return Ok(());
                                 }
                             }

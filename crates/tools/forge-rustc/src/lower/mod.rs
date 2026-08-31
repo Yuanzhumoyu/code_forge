@@ -63,6 +63,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         // 保证重定义可见；聚合类型（结构体/元组/数组）的槽按真实大小分配。
         let mut locals = HashMap::new();
         let mut next_offset = 0i32;
+        let args_set: std::collections::HashSet<mir::Local> = body.args_iter().collect();
         for (i, local_decl) in body.local_decls.iter().enumerate() {
             let local = mir::Local::from_usize(i);
             let ty = map_type(local_decl.ty, tcx).unwrap_or(TypeId::I32);
@@ -74,9 +75,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 // 短路处理（load 返回 0、store no-op），不产生实际内存访问。
                 next_offset -= 8;
                 if crate::trace::trace_enabled("SLOT") {
+                    let kind = if i == 0 { "ret" } else if args_set.contains(&local) { "arg" } else { "loc" };
                     eprintln!(
-                        "[forge] slot _{} size=8 offset={} ty={} (void placeholder)",
-                        i, next_offset, local_decl.ty
+                        "[forge] slot _{} [{}] size=8 offset={} ty={} (void placeholder)",
+                        i, kind, next_offset, local_decl.ty
                     );
                 }
                 locals.insert(
@@ -91,9 +93,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             let size = layout_size(tcx, local_decl.ty);
             next_offset -= size as i32;
             if crate::trace::trace_enabled("SLOT") {
+                let kind = if i == 0 { "ret" } else if args_set.contains(&local) { "arg" } else { "loc" };
                 eprintln!(
-                    "[forge] slot _{} size={} offset={} ty={}",
-                    i, size, next_offset, local_decl.ty
+                    "[forge] slot _{} [{}] size={} offset={} ty={}",
+                    i, kind, size, next_offset, local_decl.ty
                 );
             }
             locals.insert(

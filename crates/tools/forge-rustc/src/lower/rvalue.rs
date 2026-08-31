@@ -681,6 +681,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         }
     }
     pub(crate) fn load_ty(&mut self, addr: Value, ty: TypeId) -> Value {
+        if ty == TypeId::BOOL {
+            // WA-22 读侧对称：主库对 BOOL 的 Load 无窄规则（TOML 仅 32/64
+            // 两档，BOOL bits=1 走默认 64 位 mov_mem）——聚合内字段（如
+            // (i32,bool) 的 flag@+4）8 字节读越界到相邻槽（bump1 实证：
+            // 读 -0x54..-0x4d 混入 _1 参数槽的 p → testq 非零误判溢出 →
+            // 走 panic 路径 call panic_handler 死循环）。显式 32 位读
+            // （写侧已 ireduce 到 I32 + mov_sto32，槽内 4 字节恒 0/1）
+            // 再 ireduce 回 BOOL，语义与窄读等价且不越界。
+            let v32 = self.builder.load(addr, TypeId::I32);
+            return self.builder.ireduce(v32, TypeId::BOOL);
+        }
         if ty.is_float() {
             self.builder.fload(addr, ty)
         } else {

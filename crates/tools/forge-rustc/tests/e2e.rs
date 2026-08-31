@@ -996,9 +996,9 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "D intrinsics",
-        reason: "WA-21：`_1 = const {&X}` 的 store 指令存在（movabs→-0x50）但运行期 _1 槽读垃圾（0x7ff6… → 写 [垃圾] SEGV；固定基址仍崩）——机制待查",
+        reason: "",
     },
     // ── Range 迭代（WA-20）──
     Case {
