@@ -2,7 +2,7 @@
 //! 运行产物并校验退出码（入口函数返回值 = 进程退出码）。
 //!
 //! 这是本 crate 的**统一测试体系**（P4.5）：
-//! - 用例清单即 `CASES` 数组（58 项，含 `known_failure` + `reason` 回归探针）
+//! - 用例清单即 `CASES` 数组（81 项，含 `known_failure` + `reason` 回归探针）
 //! - 旧的 `stage_a.rs` / `run_tests.sh` / `test_runner.sh` 已并入本文件并删除
 //! - `rustc_integration_test.ps1` 为简化版 PowerShell 入口（11 个标量用例子集；README 引用）
 //! - 未支持清单（global_asm 等）见 WORKAROUNDS.md（[WA-NN] 编号）
@@ -936,19 +936,45 @@ const CASES: &[Case] = &[
         phase: "D intrinsics",
         reason: "",
     },
-    // 原子 RMW 门控（D 组负向）：主库 AtomicRmw regalloc spill 缺失
-    // （ptr 被 spill 未写回 → xadd [0] 崩溃），未根治前编译期拒绝。
+    // 原子 RMW 转正（D 组，2026-08）：主库 AtomicRmw 经 JIT 高压测试
+    // 验证（jit.rs test_jit_atomic_rmw_basic/spill_pressure）推翻原
+    // "regalloc spill 缺失"假设——解除编译期门控，Xchg/Add/Sub 可用
+    // （And/Or/.../Cmpxchg 仍拒绝，见 intrinsics.rs）。
     Case {
-        name: "atomic_rmw_gated",
-        body: "static A: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(5); A.fetch_add(3, core::sync::atomic::Ordering::Relaxed); A.load(core::sync::atomic::Ordering::Relaxed)",
-        expected: -1,
+        name: "atomic_fetch_add",
+        body: "static A: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(5); let old = A.fetch_add(3, core::sync::atomic::Ordering::Relaxed); (if old == 5 { 1000000 } else { 0 }) + A.load(core::sync::atomic::Ordering::Relaxed)",
+        expected: 1000008, // old=5（返回旧值）+ 内存=8（新值）
         extra: "",
         entry: "mainCRTStartup",
-        expect_compile_fail: true,
-        expect_compile_err: "原子 RMW intrinsic",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "D intrinsics",
-        reason: "编译期拒绝：主库 AtomicRmw regalloc spill 缺失（原子 RMW 会 xadd [0] 崩溃）；主库根治后移除门控转硬断言",
+        reason: "",
+    },
+    Case {
+        name: "atomic_xchg",
+        body: "static B: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(100); let old = B.swap(7, core::sync::atomic::Ordering::SeqCst); (if old == 100 { 1000 } else { 0 }) + B.load(core::sync::atomic::Ordering::Relaxed) as i32",
+        expected: 1007, // old=100、内存=7
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    Case {
+        name: "atomic_fetch_sub",
+        body: "static C: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(42); let old = C.fetch_sub(2, core::sync::atomic::Ordering::AcqRel); old - C.load(core::sync::atomic::Ordering::Relaxed)",
+        expected: 2, // old=42、内存=40 → 42-40
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
     },
     // ── F1 扩编：迭代器 / 字符串 / 数组 of 结构体 / 聚合传参──
     Case {

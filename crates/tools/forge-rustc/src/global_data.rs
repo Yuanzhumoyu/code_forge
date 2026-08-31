@@ -44,10 +44,18 @@ pub(crate) fn build_static_data<'tcx>(
         .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
         .to_vec();
     let align = inner.align.bytes();
+    // 可变性判定：`static mut`（is_mutable_static）**或内部可变**（UnsafeCell——
+    // layout.is_freeze=false，如 `static A: AtomicI32`）。只查语法 mut 会把
+    // 内部可变 static 落 .rodata → 写访问（原子 xadd/xchg、&mut 写入）写只读
+    // 页 SEGV（di_atom 反汇编实证：xaddq %r10, (%r11) 且 r11=&A 在 .rodata
+    // RVA 0x3000）。与 rustc_codegen_ssa 的 static 落段判定一致。
+    let static_ty = tcx.type_of(def_id).skip_binder();
+    let interior_mut = !static_ty.is_freeze(tcx, ty::TypingEnv::fully_monomorphized());
+    let mutable = tcx.is_mutable_static(def_id) || interior_mut;
     Ok(StaticData {
         sym,
         data,
         align,
-        mutable: tcx.is_mutable_static(def_id),
+        mutable,
     })
 }

@@ -411,15 +411,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 }
                 vec![]
             }
-            // 原子 RMW（atomic_xchg/xadd/xsub/fetch_*/cxchg）：主库 AtomicRmw
-            // 的 lowering 在高压寄存器场景存在 regalloc spill 缺失（ptr
-            // operand 被 spill 但 store 未生成 → xaddq [0] 崩溃，di_atom
-            // 实证）。未根治前编译期拒绝（失败即报错，不产静默错值）——
-            // 与 B3 向量 ABI 门控同策略；atomic_load/store 走普通 load/store
-            // 语义（无 rmw 的 spill 问题），保留。
+            // 原子 RMW（atomic_xchg/xadd/xsub/fetch_*）：主库 AtomicRmw 已由
+            // JIT 高压测试转正（forge-codegen jit.rs test_jit_atomic_rmw_basic /
+            // test_jit_atomic_rmw_spill_pressure——10 存活值 + atomic_rmw 通过，
+            // 推翻原"regalloc spill 缺失"假设，WA-18 主库侧关闭）。
+            // ordering 忽略（当前后端单线程语义，与 Relaxed 等价——同
+            // atomic_load/store 注释）。XADD/XCHG 返回旧值（dest ← 旧内存值），
+            // 正是 AtomicRmw 语义；opsize 由 val 宽度推导（i32→xaddl、i64→xaddq）。
+            // And/Or/Xor/Nand/Max/Min/Umax/Umin 需 CMPXCHG 循环（TOML 注释），
+            // cxchg/cxchgweak 需 cmpxchg 指令扩展——均编译期拒绝（失败即报错）。
             "atomic_xchg" | "atomic_xchg_acqrel" | "atomic_xchg_acquire"
-            | "atomic_xchg_release" | "atomic_xchg_relaxed"
-            | "atomic_xchg_seqcst"
+            | "atomic_xchg_release" | "atomic_xchg_relaxed" | "atomic_xchg_seqcst"
             | "atomic_xadd" | "atomic_xadd_acqrel" | "atomic_xadd_acquire"
             | "atomic_xadd_release" | "atomic_xadd_relaxed" | "atomic_xadd_seqcst"
             | "atomic_xsub" | "atomic_xsub_acqrel" | "atomic_xsub_acquire"
@@ -427,7 +429,26 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             | "atomic_fetch_add" | "atomic_fetch_add_acqrel" | "atomic_fetch_add_acquire"
             | "atomic_fetch_add_release" | "atomic_fetch_add_relaxed"
             | "atomic_fetch_sub" | "atomic_fetch_sub_acqrel" | "atomic_fetch_sub_acquire"
-            | "atomic_fetch_sub_release" | "atomic_fetch_sub_relaxed"
+            | "atomic_fetch_sub_release" | "atomic_fetch_sub_relaxed" => {
+                let op = if name.starts_with("atomic_xchg") {
+                    AtomicRmwOp::Xchg
+                } else if name.starts_with("atomic_xadd")
+                    || name.starts_with("atomic_fetch_add")
+                {
+                    AtomicRmwOp::Add
+                } else {
+                    AtomicRmwOp::Sub
+                };
+                let ptr = args
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                let val = args
+                    .get(1)
+                    .copied()
+                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                vec![self.builder.atomic_rmw(op, ptr, val, Ordering::Monotonic)]
+            }
             | "atomic_fetch_and" | "atomic_fetch_and_acqrel" | "atomic_fetch_and_acquire"
             | "atomic_fetch_and_release" | "atomic_fetch_and_relaxed"
             | "atomic_fetch_or" | "atomic_fetch_or_acqrel" | "atomic_fetch_or_acquire"
@@ -442,8 +463,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             | "atomic_cxchgweak_release" | "atomic_cxchgweak_relaxed" => {
                 return Err(ForgeError::Message(format!(
                     "{}: 原子 RMW intrinsic {name} 暂不支持——主库 AtomicRmw \
-                     regalloc spill 缺失（ptr 被 spill 未写回 → xadd [0] 崩溃）；\
-                     主库根治后解除。atomic_load/store 可用",
+                     lowering 仅覆盖 Xchg/Add/Sub（imm0 0/1/2，xadd/xchg 直接 \
+                     返回旧值）；And/Or/Xor/Nand/Max/Min/Umax/Umin 需 CMPXCHG \
+                     循环、cxchg/cxchgweak 需 cmpxchg 指令扩展（均未实现）。\
+                     atomic_load/store/xchg/xadd/xsub/fetch_add/fetch_sub 可用",
                     self.fn_name
                 )));
             }

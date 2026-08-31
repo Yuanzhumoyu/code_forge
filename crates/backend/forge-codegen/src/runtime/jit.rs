@@ -1563,4 +1563,74 @@ mod tests {
         let got = f(0xFFFFFFFFFFFF1234u64 as i64);
         assert_eq!(got, 0x1234, "movzx 16 位源应零扩展到 0x1234");
     }
+
+    /// WA-18 最小复现：AtomicRmw 的 ptr operand 在 regalloc 中被 spill 但
+    /// store 缺失（forge-rustc 的 fetch_add SEGV 反汇编实证 xaddq [r11]
+    /// 且 r11 从未写槽读）。这里直接 builder 构造，隔离主库 vs 调用链。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_atomic_rmw_basic() {
+        use forge_ir::{AtomicRmwOp, Ordering};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // f(ptr: *mut i32) -> i32：atomic_rmw(Add, ptr, 3) 返回旧值
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
+        jit.add_function("atomic_add", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let three = b.iconst(3, TypeId::I64);
+            let old = b.atomic_rmw(AtomicRmwOp::Add, p, three, Ordering::Monotonic);
+            let old32 = b.ireduce(old, TypeId::I32);
+            b.ret(&[old32]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("atomic_add").expect("get_fn");
+        let mut x: i32 = 5;
+        let old = f(&mut x);
+        assert_eq!(old, 5, "atomic_add returns old value");
+        assert_eq!(x, 8, "atomic_add writes new value");
+    }
+
+    /// WA-18 高压寄存器复现：10 个存活值 + atomic_rmw（触发 ptr spill）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_atomic_rmw_spill_pressure() {
+        use forge_ir::{AtomicRmwOp, Ordering};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
+        jit.add_function("atomic_spill", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            // 10 个存活标量（占寄存器，制造 spill 压力）
+            let mut vals = Vec::new();
+            for i in 0..10 {
+                vals.push(b.iconst(i as i64, TypeId::I64));
+            }
+            let three = b.iconst(3, TypeId::I64);
+            let old = b.atomic_rmw(AtomicRmwOp::Add, p, three, Ordering::Monotonic);
+            // 消费所有存活值 + old（防死代码消除）
+            let mut acc = old;
+            for v in vals {
+                acc = b.iadd(acc, v);
+            }
+            let acc32 = b.ireduce(acc, TypeId::I32);
+            b.ret(&[acc32]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("atomic_spill").expect("get_fn");
+        let mut x: i32 = 5;
+        let r = f(&mut x);
+        // old(5) + 0+1+...+9(45) = 50；x 应 = 8
+        assert_eq!(r, 50, "sum of old + 0..9");
+        assert_eq!(x, 8, "atomic write");
+    }
 }
