@@ -998,7 +998,32 @@ const CASES: &[Case] = &[
         expect_compile_err: "",
         known_failure: true,
         phase: "D intrinsics",
-        reason: "WA-21：`_1 = const {&X}` 的 store_place(_1) 缺失（_1 槽读垃圾 0x7ff6… → 写 [垃圾] SEGV；固定基址仍崩）——主库 store 值处理在高压/多分支形态缺失（与 WA-20 同源）",
+        reason: "WA-21：`_1 = const {&X}` 的 store 指令存在（movabs→-0x50）但运行期 _1 槽读垃圾（0x7ff6… → 写 [垃圾] SEGV；固定基址仍崩）——机制待查",
+    },
+    // ── Range 迭代（WA-20）──
+    Case {
+        name: "range_next_once",
+        body: "let mut r = 0i32..4; let v = r.next().unwrap(); (if v == 0 { 42 } else { 0 })",
+        expected: 42, // 单次 next 正确（WA-20 基线：0..4 第一次返回 Some(0)）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "F1 iter",
+        reason: "",
+    },
+    Case {
+        name: "range_next_twice",
+        body: "let mut r = 0i32..4; let _ = r.next(); let v = r.next().unwrap(); (if v == 1 { 42 } else { 0 })",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "F1 iter",
+        reason: "WA-20：多次 next 的 start 不递增（0..4 第二次 next 返回 Some(0) 应 Some(1)；0..1 第二次应 None 却 Some(0)）——spec_next/next 链反汇编正确但运行期写回不生效（主库 regalloc/emission 微妙 bug，需运行期单步）",
     },
     // ── F1 扩编：迭代器 / 字符串 / 数组 of 结构体 / 聚合传参──
     Case {
