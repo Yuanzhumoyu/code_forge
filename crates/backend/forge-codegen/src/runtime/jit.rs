@@ -1845,4 +1845,69 @@ mod tests {
         // a = 0、b = 1 → 1（中间调用不得破坏跨调用写回）
         assert_eq!(got, 1, "内部中间调用后跨调用写回");
     }
+
+    /// spec_next 精确形态：ptr（参数）在**中间调用前后各 deref 一次**
+    ///（模拟 lt 的 &start + 写回地址的重新 load）——若第二次 load 读到
+    /// 错值则复现 start 不递增。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_double_deref_across_call() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee3(x: i64) -> i64：x + 1000（clobber 用）
+        let sig3 = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        let mut f3 = FunctionBuilder::new("callee3", TypeContext::new(), sig3.clone());
+        let (e3, p3) = f3.create_block_with_params(&[(TypeId::I64, "x")]);
+        f3.switch_to_block(e3);
+        let t = f3.iconst(1000, TypeId::I64);
+        let r3 = f3.iadd(p3[0], t);
+        f3.ret(&[r3]);
+        let mut module = Module::new();
+        let callee3_ref = module.add_function(f3.finish().expect("callee3"));
+
+        // callee2(ptr: *mut i64) -> i64：
+        //   v1 = load(ptr)          // 第一次 deref（模拟 lt 的 &start）
+        //   _ = callee3(v1)         // 中间调用
+        //   v2 = load(ptr)          // 第二次 deref（模拟写回地址重取）
+        //   store(v2+1, ptr)        // 写回
+        //   ret(v1)
+        let sig2 = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
+        let mut f2 = FunctionBuilder::new("callee2", TypeContext::new(), sig2.clone());
+        let (e2, p2) = f2.create_block_with_params(&[(TypeId::I64, "ptr")]);
+        f2.switch_to_block(e2);
+        let v1 = f2.load(p2[0], TypeId::I64);
+        let _junk = f2.call(callee3_ref, &[v1], &[TypeId::I64])[0];
+        let v2 = f2.load(p2[0], TypeId::I64);
+        let one2 = f2.iconst(1, TypeId::I64);
+        let nv2 = f2.iadd(v2, one2);
+        f2.store(nv2, p2[0]);
+        f2.ret(&[v1]);
+        let callee2_ref = module.add_function(f2.finish().expect("callee2"));
+
+        // main() -> i64：x = 0；a = callee2(&x); b = callee2(&x); ret(a*100+b)
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m.clone());
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let x_slot = main_fn.stack_addr(-16);
+        let zero = main_fn.iconst(0, TypeId::I64);
+        main_fn.store(zero, x_slot);
+        let x_addr = main_fn.stack_addr(-16);
+        let a = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
+        let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
+        let hundred = main_fn.iconst(100, TypeId::I64);
+        let a100 = main_fn.imul(a, hundred);
+        let r = main_fn.iadd(a100, b);
+        main_fn.ret(&[r]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        let got = f();
+        // a = 0、b = 1 → 1（中间调用前后两次 deref 必须一致）
+        assert_eq!(got, 1, "中间调用前后两次 deref 一致性");
+    }
 }
