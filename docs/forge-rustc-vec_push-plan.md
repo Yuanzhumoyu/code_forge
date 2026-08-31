@@ -199,6 +199,27 @@ mixed_args 全部转正。剩余 2 known：vec_push（exit=-1073741819，运行�
   grow_impl_runtime 内 **Result<NonNull, AllocError> sret 返回**（16B
   聚合 + 栈参数混合场景）。
 
+### 🔬 E1 深挖（gdb 崩溃现场，2026-09 续）
+
+**崩溃现场**（vecpush.exe，ASLR 基址 0x7ff71bff0000）：
+- 崩溃指令：`mov %r10,(%r11)`，r11=0（写 [0]）——**copy 目标指针为 0**
+- 寄存器：r13=0x540000（**HEAP 静态数组基址**）、r14=0x15f008（栈）、
+  rdi=4（Alignment=4）、rcx=0x10、r12=0x15f0c0（栈）、r8=0x540000
+- 崩溃函数：0x5a5b 起的巨型函数（~0x2DA2 字节，含 grow_impl_runtime
+  及其内联的 copy_nonoverlapping/write_bytes/UB 检查）
+- 反汇编显示：`mov -0x6e0(%rbp),%r10; mov -0x500(%rbp),%r11; mov %r10,(%r11)`
+  ——r11 从深栈槽读出=0 → **dst 指针槽值错**（应为新分配 0x540000+）
+
+**推断**：grow_impl_runtime 内 copy_nonoverlapping 的 **dst = 新分配
+指针**（0x540000 附近），但读出 0——new_ptr 未正确传播。候选：
+① `__rust_realloc` 返回值（新 ptr）经 sret/双返回接收错位；
+② Layout 参数（ScalarPair lo/hi）在函数体内 field 投影偏移错；
+③ def-spill 的槽地址计算（sp_base 含 stack_args 后与 emission 不一致）。
+
+**E1 验证已做**：参数形态等价用例（f(i32,Layout,i32)=7、f(5参数双Layout
++bool)=9）全对 → **参数传递层排除**，bug 在 grow_impl_runtime 函数体内
+的指针/返回值传播逻辑。
+
 ### 下一步候选（按优先级）
 
 1. **vec_push E1 启动**（阻塞线已通）：跨函数 call reloc 已修，grow 链
