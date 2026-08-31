@@ -220,6 +220,29 @@ mixed_args 全部转正。剩余 2 known：vec_push（exit=-1073741819，运行�
 +bool)=9）全对 → **参数传递层排除**，bug 在 grow_impl_runtime 函数体内
 的指针/返回值传播逻辑。
 
+### 🎯 E1 根因锁定（2026-09，写死 RAX × def-spill 交互）
+
+**FORGE_TRACE_ALLOC 决定性证据**：grow 链指令大量形如
+`LeaR64Sib { dest: RAX, mem: [RBP-256] }`、`MovRMem { dest: RAX }`、
+`StoreMemR { src: RAX }`——**dest/src 写死物理 RAX**（clobber），且
+xregs/defs 绑定普通 vreg（v154313 等）。regalloc 每指令驱逐 RAX 占用者
+（victim next_use=None）→ **def vreg 反复 spill 到深槽**（slot 1144 等）。
+
+**机制**：emission 对 spilled def 用 scratch 覆盖指令的 dest 字段
+（set_reg_field），但**写死 RAX 的指令 encode 忽略字段、恒用 RAX** →
+store 用 scratch（垃圾）→ **spill 槽写入垃圾**（崩溃槽 [-0x500]=1144
+值 0 = v312692 def-spill）。Call 结果/地址计算链全部受影响。
+
+**修复方向（下一轮）**：
+1. **写死物理寄存器的指令不应把 dest 当普通 vreg def**——clobber_map
+   已声明 RAX clobber，但 dest 字段的 vreg 绑定导致 spill 覆盖失效；
+   lowering 层对 `Reg::from_index(0)` 绑定的 dest 应显式 precolored
+   （vreg→RAX 固定，regalloc 不 spill）；
+2. 或 emission 对**含写死物理字段的指令**禁用 scratch 覆盖（detect
+   物理字段 + spilled vreg → 直接报错而非写垃圾）；
+3. 或 def-spill 返回占位后，Call/LEA 等固定寄存器指令强制 result 在
+   寄存器（不 spill）。
+
 ### 下一步候选（按优先级）
 
 1. **vec_push E1 启动**（阻塞线已通）：跨函数 call reloc 已修，grow 链
