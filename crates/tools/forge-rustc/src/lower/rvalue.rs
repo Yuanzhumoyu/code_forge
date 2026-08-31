@@ -149,7 +149,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 layout.layout.size().bytes()
                             );
                         }
-                        Ok(self.builder.load(addr, TypeId::I32))
+                        // 返回 I64（rustc discriminant 语义是 isize）：Direct tag 是
+                        // I32 load，若不扩展到 I64，store 到 isize 槽只写低 4 字节，
+                        // switchInt 读 8 字节时高 4 字节靠槽预零侥幸为 0——若槽被
+                        // 覆盖（spill/重用）则 case 判错。uextend 后 store 8 字节，
+                        // 与 switchInt 的 8 字节比较一致（fetch_add 5 case 实证）。
+                        let tag = self.builder.load(addr, TypeId::I32);
+                        Ok(self.builder.uextend(tag, TypeId::I64))
                     }
                     rustc_abi::Variants::Multiple {
                         tag_encoding:
@@ -184,7 +190,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 .iconst(untagged_variant.index() as i64, TypeId::I32);
                             let scaled = self.builder.imul(is_eq, ut);
                             let r = self.builder.isub(ut, scaled);
-                            Ok(r)
+                            // 同 Direct：扩展 I32 → I64（isize 语义，防 switchInt
+                            // 8 字节比较读到槽高 4 字节垃圾）
+                            Ok(self.builder.uextend(r, TypeId::I64))
                         } else {
                             // rustc codegen_get_discr 的算术公式（规避主库
                             // [lower.Select]="mov rd,rs2" 无条件返回 true 臂的
@@ -219,10 +227,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let not_niche = self.builder.isub(one, is_niche);
                             let t1 = self.builder.imul(tagged, is_niche);
                             let t2 = self.builder.imul(untagged_v, not_niche);
-                            Ok(self.builder.iadd(t1, t2))
+                            let disc = self.builder.iadd(t1, t2);
+                            Ok(self.builder.uextend(disc, TypeId::I64))
                         }
                     }
-                    _ => Ok(self.builder.load(addr, TypeId::I32)),
+                    _ => {
+                        let tag = self.builder.load(addr, TypeId::I32);
+                        Ok(self.builder.uextend(tag, TypeId::I64))
+                    }
                 }
             }
             Rvalue::Repeat(op, _len) => self.lower_operand(op),
