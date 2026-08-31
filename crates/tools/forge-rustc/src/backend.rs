@@ -197,16 +197,13 @@ impl CodegenBackend for CodegenLibBackend {
                 .crate_name(rustc_hir::def_id::LOCAL_CRATE)
                 .to_string();
             let sections = crate::dwarf::build_dwarf_sections(&entries, &producer, &cu_name);
-            let mut dwarf_sections: Vec<(&str, Vec<u8>)> = Vec::new();
-            for (name, bytes, relocs) in &sections {
-                dwarf_sections.push((name.as_str(), bytes.clone()));
-                // 段内 reloc：地址占位 → 函数符号（ADDR64）
-                let _ = relocs;
-            }
-            // 先写段（不含 reloc 的简单路径）；reloc 因 object crate 的
-            // 调试段 reloc 需 DebugSectionReloc 专用 API，当前最小可行
-            // 省略（地址 0 占位——llvm-dwarfdump 可见行号条目结构，
-            // 地址待后续 DebugSectionReloc 完善）。
+            // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——
+            // object crate 对 COFF 调试段发射 ADDR64 reloc，链接器解析
+            // 为函数真实地址（low_pc/行号 set_address 可用）。
+            let dwarf_sections: Vec<(&str, Vec<u8>, Vec<(usize, String)>)> = sections
+                .iter()
+                .map(|(n, b, r)| (n.as_str(), b.clone(), r.clone()))
+                .collect();
             if let Err(e) = object_writer.add_dwarf(&dwarf_sections) {
                 tcx.dcx()
                     .warn(format!("code-forge: dwarf emission failed: {e}"));

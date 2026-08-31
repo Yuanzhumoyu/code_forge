@@ -31,6 +31,8 @@ pub(crate) struct LowerCtxt<'tcx, 'f> {
     pub(crate) body: &'tcx Body<'tcx>,
     /// 函数显示名(def_path_str),FORGE_TRACE_FN 诊断用。
     pub(crate) fn_name: String,
+    /// mangled 符号名（对象文件符号，DWARF reloc 目标）。
+    pub(crate) sym_name: String,
     pub(crate) builder: FunctionBuilder,
     /// MIR local → 栈槽。SSA 寄存器模型没有 phi，无法处理循环回边重定义，
     /// 因此所有局部变量都落在栈上，读写走 load/store。
@@ -105,10 +107,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         // 聚合常量实参临时槽（32 字节，覆盖最大 16 字节聚合 + 对齐）
         next_offset -= 32;
         let temp_arg_off = Some(next_offset);
+        // mangled 符号名（与 backend.rs add_function 的对象符号一致）
+        let sym_name = mono_symbol_of(tcx, instance);
         LowerCtxt {
             tcx,
             body,
             fn_name: name.clone(),
+            sym_name,
             builder: FunctionBuilder::new(name.as_str(), TypeContext::new(), sig),
             locals,
             blocks: HashMap::new(),
@@ -125,11 +130,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             eprintln!("[forge] MIR body dump:\n{body:?}");
         }
         // C1 DebugInfo line-tables-only：记录函数起始源码行（body.span 的
-        // 起始行；闭包/内部 shim 的 span 可能为空 → 0 跳过）。backend.rs
-        // 在 -C debuginfo 开启时生成 .debug_line/.debug_info。
+        // 起始行；闭包/内部 shim 的 span 可能为空 → 0 跳过）。符号用
+        // mangled 名（与 add_function 的对象符号一致，DWARF reloc 指向）。
+        // backend.rs 在 -C debuginfo 开启时生成 .debug_line/.debug_info。
         let lo = body.span.lo();
         if let Ok(sfl) = self.tcx.sess.source_map().lookup_line(lo) {
-            self.func_refs.add_line_entry(&self.fn_name, (sfl.line + 1) as u32);
+            self.func_refs
+                .add_line_entry(&self.sym_name, (sfl.line + 1) as u32);
         }
         // B3 门控：向量类型（V64/V128/V256）参与跨函数 ABI（参数/返回）
         // 依赖主库向量 ABI（ymm-abi-plan 的 S1-S5）——当前主库 Call 返回
@@ -717,17 +724,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         self.builder.finish().map_err(ForgeError::from)
     }
     pub(crate) fn mono_symbol(&self, instance: &Instance<'tcx>) -> String {
-        let def_id = instance.def_id();
-        let instantiating_crate = if def_id.is_local() {
-            rustc_hir::def_id::LOCAL_CRATE
-        } else {
-            def_id.krate
-        };
-        rustc_symbol_mangling::symbol_name_for_instance_in_crate(
-            self.tcx,
-            *instance,
-            instantiating_crate,
-        )
+        mono_symbol_of(self.tcx, instance)
     }
     pub(crate) fn field_offset(&self, ty: Ty<'tcx>, idx: usize) -> i64 {
         if let ty::TyKind::Adt(def, _) = ty.kind()
@@ -824,6 +821,21 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             _ => ty,
         }
     }
+}
+
+/// 实例的 mangled 符号名（与 backend.rs add_function 的对象符号一致）。
+pub(crate) fn mono_symbol_of<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) -> String {
+    let def_id = instance.def_id();
+    let instantiating_crate = if def_id.is_local() {
+        rustc_hir::def_id::LOCAL_CRATE
+    } else {
+        def_id.krate
+    };
+    rustc_symbol_mangling::symbol_name_for_instance_in_crate(
+        tcx,
+        *instance,
+        instantiating_crate,
+    )
 }
 
 fn build_signature<'tcx>(

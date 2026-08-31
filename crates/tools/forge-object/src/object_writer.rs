@@ -237,18 +237,44 @@ impl<'a> ObjectWriter<'a> {
 
     /// 添加 DWARF 段（C1 DebugInfo line-tables-only）。
     ///
-    /// `sections` 为 `(段名, 数据)` 列表（如 `.debug_line`/`.debug_info`/
-    /// `.debug_abbrev`/`.debug_str`）。使用 `SectionKind::Debug*` 让
-    /// object crate 按 COFF/ELF 规则发射调试段（COFF: `.debug_*` 段类型
-    /// IMAGE_SCN_CNT_DEBUG；ELF: 标准 `.debug_*` 命名）。不生成符号（调试
-    /// 段无符号）；行号 reloc 由调用方预先写入数据（相对地址 + addend）。
-    pub fn add_dwarf(&mut self, sections: &[(&str, Vec<u8>)]) -> Result<(), IrError> {
-        for (name, data) in sections {
-            // object 0.39 的 SectionKind 只有 Debug（COFF 映射 .debug_* →
-            // IMAGE_SCN_CNT_DEBUG 段特征）；_str/_line 细分在写侧不区分。
+    /// `sections` 为 `(段名, 数据, reloc: (段内偏移, 符号名))` 列表。
+    /// 调试段的地址属性（low_pc/行号 set_address）占位 0 + ADDR64 重定位
+    /// 到函数符号——object crate 的 `add_relocation` 对 COFF 调试段同样
+    /// 发射 section reloc（IMAGE_REL_AMD64_ADDR64），链接器解析为函数
+    /// 地址。符号必须已定义（add_function 已登记）。
+    pub fn add_dwarf(
+        &mut self,
+        sections: &[(&str, Vec<u8>, Vec<(usize, String)>)],
+    ) -> Result<(), IrError> {
+        for (name, data, relocs) in sections {
             let seg = self.obj.segment_name(StandardSegment::Data).to_vec();
-            let id = self.obj.add_section(seg, name.as_bytes().to_vec(), SectionKind::Debug);
-            self.obj.append_section_data(id, data, 1);
+            let id =
+                self.obj.add_section(seg, name.as_bytes().to_vec(), SectionKind::Debug);
+            let offset = self.obj.append_section_data(id, data, 1);
+            for (off, sym) in relocs {
+                let sym_id = self.defined_symbols.get(&ImmStr::from(sym.as_str())).copied();
+                let Some(sym_id) = sym_id else {
+                    return Err(IrError::Emit(format!(
+                        "add_dwarf: symbol '{sym}' not defined (add_function first)"
+                    )));
+                };
+                self.obj.add_relocation(
+                    id,
+                    Relocation {
+                        offset: offset + *off as u64,
+                        symbol: sym_id,
+                        addend: 0,
+                        flags: RelocationFlags::Generic {
+                            kind: ObjRelocKind::Absolute,
+                            encoding: RelocationEncoding::Generic,
+                            size: 64,
+                        },
+                    },
+                )
+                .map_err(|e| {
+                    IrError::Emit(format!("add_dwarf reloc for '{sym}': {e}"))
+                })?;
+            }
         }
         Ok(())
     }
