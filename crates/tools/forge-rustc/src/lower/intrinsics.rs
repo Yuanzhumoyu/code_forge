@@ -69,6 +69,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             ],
             // 冷路径标记（UB 检查）：不返回（!）
             "cold_path" => vec![],
+            // UB 不变式断言（B2：core::simd 库内部调用）：编译器期检查，
+            // codegen 阶段是 no-op（CGCL 同款处理——断言已在 const eval /
+            // 类型检查期验证，运行期无需代码）。
+            "assert_inhabited"
+            | "assert_zero_valid"
+            | "assert_mem_uninitialized_valid"
+            | "assert_uninit_valid"
+            | "assert_inhabited_dyn" => vec![],
             // memset(ptr, val, count)：逐字节循环写
             "write_bytes" => {
                 if args.len() >= 3 {
@@ -108,6 +116,30 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .copied()
                     .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64)),
             ],
+            // SIMD（B2）：simd_extract(vec, idx) -> elem、simd_insert(vec, idx, elem)。
+            // `#[repr(simd)]` 的元素访问被 rustc 禁止直接投影（MCP#838），
+            // 必须经这两个 intrinsic。vec 是向量值（V64/V128/V256），
+            // idx 是编译期常量。返回/参数是元素标量（vextract/vinsert 已
+            // 按 lane 语义处理 f32/f64/i32 等）。
+            "simd_extract" => {
+                if args.len() >= 2 {
+                    let vec = args[0];
+                    let idx = args[1];
+                    vec![self.builder.vextract(vec, idx)]
+                } else {
+                    vec![]
+                }
+            }
+            "simd_insert" => {
+                if args.len() >= 3 {
+                    let vec = args[0];
+                    let idx = args[1];
+                    let elem = args[2];
+                    vec![self.builder.vinsert(vec, elem, idx)]
+                } else {
+                    vec![]
+                }
+            }
             // arith_offset(ptr, count)：count 是 T 元素数，
             // 字节偏移 = count * size_of::<T>()（Vec into_iter
             // 的 ptr.add 走此 intrinsic）。

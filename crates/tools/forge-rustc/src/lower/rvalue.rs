@@ -33,9 +33,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let mut val = self.lower_operand(op)?;
                 let to_type = map_type(*to_ty, self.tcx)?;
                 match cast_kind {
-                    rustc_middle::mir::CastKind::IntToInt
-                    | rustc_middle::mir::CastKind::FloatToInt
-                    | rustc_middle::mir::CastKind::IntToFloat => {
+                    // FloatToInt（f32/f64 → i32/i64）：必须走 Fptosi（XMM →
+                    // GPR，cvttss2si/cvttsd2si）——曾与 IntToInt 一起走
+                    // ireduce（GPR 语义），f32 值在 XMM 却被整数截断 →
+                    // 垃圾（float_array_construct 反汇编实证 movl %r15d）。
+                    rustc_middle::mir::CastKind::FloatToInt => {
+                        Ok(self.builder.fptosi(val, to_type))
+                    }
+                    // IntToFloat（i32/i64 → f32/f64）：Sitofp（GPR → XMM）。
+                    rustc_middle::mir::CastKind::IntToFloat => {
+                        Ok(self.builder.sitofp(val, to_type))
+                    }
+                    rustc_middle::mir::CastKind::IntToInt => {
                         // 窄类型零扩展 mask（u8/u16/bool → 更宽）：
                         // 主库 load/算术按 32 位"寄存器安全"宽度（opsize 折中），
                         // u8 值的高 24 位是栈槽残留垃圾（write_bytes_loop 曾把

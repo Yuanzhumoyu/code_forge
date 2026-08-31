@@ -10,7 +10,7 @@ pub(crate) use crate::layout::{
 };
 use crate::prelude::*;
 pub(crate) use crate::rustc_compat::substs_first_ty;
-pub(crate) use crate::types::map_type;
+pub(crate) use crate::types::{is_vector_abi, map_type};
 
 pub(crate) mod const_eval;
 pub(crate) mod intrinsics;
@@ -123,6 +123,37 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         }
         if crate::trace::trace_enabled("MIR") {
             eprintln!("[forge] MIR body dump:\n{body:?}");
+        }
+        // B3 门控：向量类型（V64/V128/V256）参与跨函数 ABI（参数/返回）
+        // 依赖主库向量 ABI（ymm-abi-plan 的 S1-S5）——当前主库 Call 返回
+        // 只发 RAX 标量（V128 高 64 位丢失 → 静默错值）。未就绪前编译期
+        // 拒绝，绝不产出静默错误结果（失败即报错原则）。
+        {
+            let mut vec_abi = None;
+            if let Ok(ret_t) = map_type(body.return_ty(), self.tcx)
+                && is_vector_abi(ret_t)
+            {
+                vec_abi = Some(format!("return {}", body.return_ty()));
+            }
+            if vec_abi.is_none() {
+                for local in body.args_iter() {
+                    let a_ty = body.local_decls[local].ty;
+                    if layout_bytes(self.tcx, a_ty) > 0
+                        && let Ok(t) = map_type(a_ty, self.tcx)
+                        && is_vector_abi(t)
+                    {
+                        vec_abi = Some(format!("arg {a_ty}"));
+                        break;
+                    }
+                }
+            }
+            if let Some(what) = vec_abi {
+                return Err(ForgeError::Message(format!(
+                    "{}: 向量 ABI（{what}）暂不支持——主库向量调用约定 \
+                     （ymm-abi-plan S1-S5）未就绪；请改用标量传递",
+                    self.fn_name
+                )));
+            }
         }
         // 1. 为入口块创建带参数（函数参数）的 block
         // 聚合参数（≤16 字节、2 标量——ScalarPair ABI）拆两个整数寄存器收参，

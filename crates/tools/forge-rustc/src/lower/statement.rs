@@ -169,7 +169,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 if crate::trace::trace_enabled("AGG") {
                                     eprintln!("[forge] agg store val={fval:?} addr={faddr:?}");
                                 }
-                                self.builder.store(fval, faddr);
+                                // B2：浮点/向量字段必须走 fstore/store_ty（XMM/向量
+                                // 语义）——builder.store 是 GPR 语义，f32 字段会
+                                // 把地址寄存器低 32 位写进槽（SIMD3 数组构造
+                                // `[const 1f32,..]` 反汇编实证 movl %r15d,(%r15)）。
+                                let f_codegen = map_type(f_ty, self.tcx).unwrap_or(TypeId::I32);
+                                self.store_ty(fval, faddr, f_codegen);
                             }
                         }
                     }

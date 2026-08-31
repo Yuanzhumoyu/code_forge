@@ -45,6 +45,11 @@ struct Case {
     /// 入口符号名："mainCRTStartup"（默认）或 "main"（fn main 形态）。
     entry: &'static str,
     expected: i32,
+    /// 期望编译失败（负向用例，A4/B3 门控）：编译必须报错而非产出
+    /// 错误结果 exe。断言 stderr 含 `expect_compile_err` 关键词（为空
+    /// 则只断言编译失败）。
+    expect_compile_fail: bool,
+    expect_compile_err: &'static str,
     /// 已知失败（当前后端限制），仅记录不失败。
     known_failure: bool,
     /// 已知失败的阶段归属（Phase 2 = 调用语义）。
@@ -60,6 +65,8 @@ const CASES: &[Case] = &[
         expected: 42,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -70,6 +77,8 @@ const CASES: &[Case] = &[
         expected: 3,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -80,6 +89,8 @@ const CASES: &[Case] = &[
         expected: 2,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -90,6 +101,8 @@ const CASES: &[Case] = &[
         expected: 12,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -100,6 +113,8 @@ const CASES: &[Case] = &[
         expected: 3,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -110,6 +125,8 @@ const CASES: &[Case] = &[
         expected: 1,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -120,6 +137,8 @@ const CASES: &[Case] = &[
         expected: 1,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -130,6 +149,8 @@ const CASES: &[Case] = &[
         expected: 10,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -140,6 +161,8 @@ const CASES: &[Case] = &[
         expected: 3,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -150,6 +173,8 @@ const CASES: &[Case] = &[
         expected: 1,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -160,6 +185,8 @@ const CASES: &[Case] = &[
         expected: 10,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -171,6 +198,8 @@ const CASES: &[Case] = &[
         expected: 3000,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -181,6 +210,8 @@ const CASES: &[Case] = &[
         expected: 55,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -191,6 +222,8 @@ const CASES: &[Case] = &[
         expected: 12,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -201,6 +234,8 @@ const CASES: &[Case] = &[
         expected: 120,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -212,6 +247,8 @@ const CASES: &[Case] = &[
         expected: 15,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2 abi",
         reason: "",
@@ -222,6 +259,8 @@ const CASES: &[Case] = &[
         expected: 36,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2 abi",
         reason: "",
@@ -232,6 +271,8 @@ const CASES: &[Case] = &[
         expected: 1,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         // 已修复（P5.1 验证）：`if a + b > 3.0 { 1 } else { 0 }` 最小用例
         // f(1.5, 2.0) 实测 exit=1 通过——浮点比较/分支链在 Fload/Fstore +
         // fcmp is_fp 分派修复后已正确（比较结果经 Setcc 后分支返回 1）。
@@ -246,6 +287,8 @@ const CASES: &[Case] = &[
         expected: 1,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -257,6 +300,8 @@ const CASES: &[Case] = &[
         extra: "#[link(name = \"kernel32\")]\nunsafe extern \"C\" { fn ExitProcess(code: u32) -> !; }",
         expected: 42,
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2 ffi",
         reason: "",
@@ -268,6 +313,8 @@ const CASES: &[Case] = &[
         expected: 5,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -278,6 +325,8 @@ const CASES: &[Case] = &[
         expected: 7,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -288,6 +337,8 @@ const CASES: &[Case] = &[
         expected: 3,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -298,6 +349,8 @@ const CASES: &[Case] = &[
         expected: 12,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -308,6 +361,8 @@ const CASES: &[Case] = &[
         expected: 6,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -318,6 +373,8 @@ const CASES: &[Case] = &[
         expected: 6,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -328,6 +385,8 @@ const CASES: &[Case] = &[
         expected: 2,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 regalloc",
         reason: "",
@@ -340,6 +399,8 @@ const CASES: &[Case] = &[
         expected: 3,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -351,6 +412,8 @@ const CASES: &[Case] = &[
         expected: 300,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.2",
         reason: "",
@@ -362,6 +425,8 @@ const CASES: &[Case] = &[
         extra: "",
         // Phase 5.1 翻转：返回值 RAX 传递方向修复（[lower_term.Return] movr8）
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -374,6 +439,8 @@ const CASES: &[Case] = &[
         expected: 149,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -385,6 +452,8 @@ const CASES: &[Case] = &[
         expected: 2,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -395,6 +464,8 @@ const CASES: &[Case] = &[
         expected: 42,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -405,6 +476,8 @@ const CASES: &[Case] = &[
         expected: 7,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -415,6 +488,8 @@ const CASES: &[Case] = &[
         expected: 9,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -425,6 +500,8 @@ const CASES: &[Case] = &[
         expected: 10,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -437,6 +514,8 @@ const CASES: &[Case] = &[
         expected: 6,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -451,6 +530,8 @@ const CASES: &[Case] = &[
         expected: 42,
         extra: "unsafe extern \"C\" { fn __rust_alloc(size: usize, align: usize) -> *mut u8; }",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P6 alloc",
         reason: "",
@@ -461,6 +542,8 @@ const CASES: &[Case] = &[
         expected: 0x68,
         extra: "unsafe extern \"C\" { fn memcpy(d: *mut u8, s: *const u8, n: usize) -> *mut u8; }",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P6 alloc",
         reason: "",
@@ -478,6 +561,8 @@ const CASES: &[Case] = &[
         expected: 0xAB + 0xAB,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P7 intrinsics",
         reason: "",
@@ -490,6 +575,8 @@ const CASES: &[Case] = &[
         expected: 42,
         extra: "extern crate alloc;\nuse alloc::boxed::Box;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 4096] = [0; 4096];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P6 alloc",
         reason: "",
@@ -500,6 +587,8 @@ const CASES: &[Case] = &[
         expected: 42,
         extra: "extern crate alloc;\nuse alloc::boxed::Box;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 4096] = [0; 4096];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         // 深入定位（六轮）：编译通过但曾 0xC000001D 稳定失败。关键进展与修正：
         // ① 填栈实验有 artifacts：填 0x00/0x55/0xCC/0x1111 到 locals 区都会覆盖"已写
         //    槽"（b 槽 rbp-0x50 等）导致崩——不能证明 locals 未初始化；
@@ -532,6 +621,8 @@ const CASES: &[Case] = &[
         expected: 2,
         extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2",
         reason: "2026-09 转正：Windows x64 栈参数（5dba34b）+ spilled 寄存器参数收参到 spill 槽（move_args 的 #spilled_int_receive——mod.rs 210 写槽依赖 entry vreg 值）——grow 链（RawVec grow_amortized/finish_grow/Global::grow_impl_runtime）在栈参数 + 高压 spill 下正确执行，exit=2",
@@ -542,6 +633,8 @@ const CASES: &[Case] = &[
         expected: 2,
         extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2",
         reason: "2026-09 转正：Slice 常量落盘（&str 字面量 ConstValue::Slice → rodata 数据段 + 写槽 ptr@0/len@8，statement.rs + mod.rs 实参拆 lo/hi）+ PtrMetadata（fat pointer 的 len，rvalue.rs fat_ptr_metadata）——String::from(\"hi\") 的 &str 实参正确传 ptr+len",
@@ -552,6 +645,8 @@ const CASES: &[Case] = &[
         expected: 3,
         extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P6 alloc",
         reason: "2026-09 转正：promoted 数组引用（&[1,2,3] = const promoted[0]，Unevaluated eval → GlobalAlloc::Memory → intern_promoted 落盘 rodata，statement.rs 写 8B 槽）+ Unsize cast &[T;N]→&[T] 生成 len 元数据（statement.rs slice 分支 hi=N）+ 收参跳过 ZST 参数（mod.rs P4.6：RangeFull 在有效参数前时 fat ptr 拆包错位根因）——Vec::from 的 &[u8] 实参正确传 ptr+len",
@@ -562,6 +657,8 @@ const CASES: &[Case] = &[
         expected: 7,
         extra: "trait Speak { fn speak(&self) -> i32; }\nstruct Dog;\nimpl Speak for Dog { fn speak(&self) -> i32 { 7 } }",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         // 动态分发（vtable 数据段）已完整实现：
         // ① unsize cast（&Dog → &dyn Speak）生成 vtable 数据段（.data——8 字节指针表：
         //    drop_in_place/size/align/方法指针），方法符号 ADDR64 重定位（.rodata 的
@@ -584,6 +681,8 @@ const CASES: &[Case] = &[
         expected: 10,
         extra: "",
         entry: "main",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P2 main",
         reason: "",
@@ -596,6 +695,8 @@ const CASES: &[Case] = &[
         expected: 12,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P4 closure",
         reason: "",
@@ -606,6 +707,8 @@ const CASES: &[Case] = &[
         expected: 7,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P4 closure",
         reason: "",
@@ -619,6 +722,8 @@ const CASES: &[Case] = &[
         expected: 42,
         extra: "static COUNT: i32 = 42;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P4 static",
         reason: "",
@@ -629,6 +734,8 @@ const CASES: &[Case] = &[
         expected: 1,
         extra: "static mut CNT: i32 = 0;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P4 static",
         reason: "",
@@ -639,6 +746,8 @@ const CASES: &[Case] = &[
         expected: 42,
         extra: "static A: i32 = 7; static B: i32 = 35;",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P4 static",
         reason: "",
@@ -651,6 +760,8 @@ const CASES: &[Case] = &[
         expected: 7,
         extra: "struct D { v: i32 } impl Drop for D { fn drop(&mut self) { self.v = 0; } }",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P4 drop",
         reason: "",
@@ -663,6 +774,8 @@ const CASES: &[Case] = &[
         expected: 300,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 checked",
         reason: "",
@@ -673,6 +786,8 @@ const CASES: &[Case] = &[
         expected: 1,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 checked",
         reason: "",
@@ -686,6 +801,8 @@ const CASES: &[Case] = &[
         expected: 20,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P3 checked",
         reason: "",
@@ -697,6 +814,8 @@ const CASES: &[Case] = &[
         expected: 3,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1 agg",
         reason: "",
@@ -707,6 +826,8 @@ const CASES: &[Case] = &[
         expected: 43,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P1 agg",
         reason: "",
@@ -724,9 +845,41 @@ const CASES: &[Case] = &[
         expected: 7,
         extra: "",
         entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "P9 niche",
         reason: "",
+    },
+    // ── 聚合 f32 字段构造（B2 回归保护）：数组 [f32; 4] 字面量的逐字段
+    //    store 曾走 builder.store（GPR 语义）→ 把地址寄存器低 32 位写进
+    //    槽（SIMD3 反汇编实证 movl %r15d,(%r15)）。修复：Aggregate 分支
+    //    按字段类型分派 store_ty（f32 → fstore/movss 语义）。──
+    Case {
+        name: "float_array_construct",
+        body: "let a = [1.5f32, 2.5, 3.5, 4.5]; (a[0] as i32) + (a[2] as i32)",
+        expected: 4, // 1.5→1、3.5→3、sum=4
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "P1 agg",
+        reason: "",
+    },
+    // ── SIMD 门控（B3 前置）：向量参与跨函数 ABI（参数/返回）在主库
+    //    ymm-abi-plan 就绪前编译期拒绝，绝不产出静默错值 exe。──
+    Case {
+        name: "simd_abi_gated",
+        body: "let v = core::simd::Simd::<f32, 4>::from_array([1.0, 2.0, 3.0, 4.0]); v[0] as i32",
+        expected: -1, // 编译失败：向量 ABI 门控（期望 compile error，非运行结果）
+        extra: "#![feature(portable_simd)]",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "向量 ABI",
+        known_failure: false,
+        phase: "B3 simd",
+        reason: "编译期拒绝：Simd 返回/参数依赖主库向量调用约定（ymm-abi-plan S1-S5），未就绪前 lower_body 门控报错（失败即报错，不产静默错值）",
     },
 ];
 
@@ -789,10 +942,28 @@ fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
 
     if !compile.status.success() {
         let stderr = String::from_utf8_lossy(&compile.stderr);
+        // 负向用例（expect_compile_fail）：编译失败是预期结果——校验 stderr
+        // 含 expect_compile_err 关键词（A4/B3 门控断言）。
+        if case.expect_compile_fail {
+            let want = case.expect_compile_err;
+            if !want.is_empty() && !stderr.contains(want) {
+                return Err(format!(
+                    "compile failed but stderr lacks expected error {:?}:\n{}",
+                    want,
+                    stderr.lines().take(10).collect::<Vec<_>>().join("\n")
+                ));
+            }
+            return Err("__EXPECTED_COMPILE_FAIL__".to_string());
+        }
         return Err(format!(
             "compile failed: {}\n{}",
             compile.status,
             stderr.lines().take(10).collect::<Vec<_>>().join("\n")
+        ));
+    }
+    if case.expect_compile_fail {
+        return Err(format!(
+            "expected compile failure but compilation succeeded (门控失效)"
         ));
     }
     // 诊断：FORGE_E2E_TRACE=1 时编译成功也打印 stderr（FORGE_TRACE_* 输出）
@@ -858,6 +1029,11 @@ fn e2e_stage_a_scalar_cases() {
                     );
                 }
                 println!("PASS  {:<16} exit={}", case.name, code);
+                passed += 1;
+            }
+            // 负向用例（A4/B3）：编译失败哨兵 = PASS
+            Err(e) if e == "__EXPECTED_COMPILE_FAIL__" => {
+                println!("PASS  {:<16} compile-fail (gated)", case.name);
                 passed += 1;
             }
             Ok(code) => {
@@ -972,3 +1148,4 @@ fn e2e_cargo_template_workflow() {
     let _ = std::fs::remove_dir_all(&target_dir);
     println!("PASS  cargo_template_workflow exit=45");
 }
+

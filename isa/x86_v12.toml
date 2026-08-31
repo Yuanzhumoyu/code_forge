@@ -2639,7 +2639,11 @@ insts = ["movsd_mem {out}, [{0}]"]
 
 [[lowering]]
 op = "Fstore"
-when = { eq = ["elem", 1] }
+# Fstore 无结果指令——`elem`（取 results）恒 None，会永远落 movsd
+# （F32 存 8 字节 → 覆盖相邻槽；float_array_construct/SIMD 反汇编实证
+# movsd 而非 movss）。改按 rs1_width（args.first() = 被存值，F32 → 32）
+# 分派，与 Fload 的 elem（结果类型）语义对称。
+when = { eq = ["rs1_width", 32] }
 insts = ["movss_sto [{0}], {1}"]
 
 [[lowering]]

@@ -9,7 +9,7 @@
 use crate::prelude::IrError;
 use crate::prelude::*;
 
-pub fn map_type(ty: rustc_middle::ty::Ty<'_>, tcx: TyCtxt<'_>) -> Result<TypeId, IrError> {
+pub fn map_type<'tcx>(ty: rustc_middle::ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Result<TypeId, IrError> {
     match ty.kind() {
         ty::TyKind::Bool => Ok(TypeId::BOOL),
         ty::TyKind::Int(ty::IntTy::I8) => Ok(TypeId::I8),
@@ -35,6 +35,64 @@ pub fn map_type(ty: rustc_middle::ty::Ty<'_>, tcx: TyCtxt<'_>) -> Result<TypeId,
         ty::TyKind::Char => Ok(TypeId::I32),
         ty::TyKind::Ref(..) | ty::TyKind::RawPtr(..) => Ok(TypeId::PTR),
         ty::TyKind::FnDef(..) | ty::TyKind::FnPtr(..) => Ok(TypeId::PTR),
+        // SIMD 向量（B1）：`#[repr(simd)]` 结构体在 rustc 中是 Adt 且
+        // `ty.is_simd()` 为真。仅支持内置 f32×2/4/8 → V64/V128/V256——
+        // 这些是 TypeStore 预填充的固定索引（TypeId 13/14/15），跨
+        // TypeContext 一致（每函数一个 TypeContext，动态 intern 的向量
+        // TypeId 会随函数不同而错位——ABI 跨函数传参会读到错误类型）。
+        // 其余 SIMD 形态（i32×4 等）编译期 Unsupported（失败即报错），
+        // 后续按 ymm-abi-plan 的主库向量 ABI 就绪后扩展。
+        _ if ty.is_simd() => {
+            // Adt 的 SIMD：`#[repr(simd)]` 结构体只有一个字段 [T; N]。
+            // 元素类型 = 该字段的数组元素类型（字段本身是 [T; N] Array，
+            // 需解包取 T）；长度 = size / elem_size。
+            let elem = match ty.kind() {
+                rustc_middle::ty::TyKind::Adt(def, substs) => {
+                    let variant = def.non_enum_variant();
+                    if variant.fields.is_empty() {
+                        return Err(IrError::Unsupported(format!(
+                            "SIMD type {ty}: no fields (repr(simd) requires [T; N])"
+                        )));
+                    }
+                    let f_ty = variant.fields.raw[0].ty(tcx, substs).skip_normalization();
+                    // [T; N] → T
+                    if let rustc_middle::ty::TyKind::Array(elem, _) = f_ty.kind() {
+                        *elem
+                    } else {
+                        f_ty
+                    }
+                }
+                _ => {
+                    return Err(IrError::Unsupported(format!(
+                        "SIMD type {ty}: not an Adt"
+                    )));
+                }
+            };
+            let elem_ty = map_type(elem, tcx)?;
+            let total = tcx
+                .layout_of(ty::PseudoCanonicalInput {
+                    typing_env: ty::TypingEnv::fully_monomorphized(),
+                    value: ty,
+                })
+                .map(|l| l.layout.size().bytes() as u32)
+                .unwrap_or(0);
+            let elem_sz = crate::layout::layout_bytes(tcx, elem);
+            if elem_sz == 0 {
+                return Err(IrError::Unsupported(format!(
+                    "SIMD type {ty}: zero-sized element"
+                )));
+            }
+            let n = total / elem_sz;
+            match (elem_ty, n) {
+                (TypeId::F32, 2) => Ok(TypeId::V64),
+                (TypeId::F32, 4) => Ok(TypeId::V128),
+                (TypeId::F32, 8) => Ok(TypeId::V256),
+                _ => Err(IrError::Unsupported(format!(
+                    "SIMD type <{n} x {elem}> (elem_ty={elem_ty:?}): only f32×2/4/8 \
+                     (V64/V128/V256) are supported by the x86_v12 backend"
+                ))),
+            }
+        }
         ty::TyKind::Tuple(tys) if tys.is_empty() => Ok(TypeId::VOID),
         ty::TyKind::Never => Ok(TypeId::VOID),
         // 零大小类型用 I8 占位（不占栈空间，仅用于类型系统）
@@ -46,6 +104,12 @@ pub fn map_type(ty: rustc_middle::ty::Ty<'_>, tcx: TyCtxt<'_>) -> Result<TypeId,
             }
         }
     }
+}
+
+/// 是否为向量 ABI 类型（V64/V128/V256）——参与跨函数 ABI 时需主库
+/// 向量调用约定（B3 门控；ymm-abi-plan 就绪前编译期拒绝）。
+pub fn is_vector_abi(t: TypeId) -> bool {
+    matches!(t, TypeId::V64 | TypeId::V128 | TypeId::V256)
 }
 
 /// debug-only 类型兼容自检（P2.5）。
