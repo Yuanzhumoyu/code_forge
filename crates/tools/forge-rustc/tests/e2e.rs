@@ -1039,15 +1039,15 @@ const CASES: &[Case] = &[
     },
     Case {
         name: "fn_agg_arg_return",
-        body: "struct Pair { a: i32, b: i64 } fn sum(p: Pair) -> i64 { p.a as i64 + p.b } sum(Pair { a: 7, b: 35 })",
+        body: "struct Pair { a: i32, b: i64 } fn sum(p: Pair) -> i64 { p.a as i64 + p.b } sum(Pair { a: 7, b: 35 }) as i32",
         expected: 42,
         extra: "",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "F1 agg",
-        reason: "16 字节非 ScalarPair 聚合参数（{i32,i64} 布局重排 b@0/a@8）→ 间接传参路径待验证",
+        reason: "2026-08 转正：{i32,i64} 是 ScalarPair（2 标量）→ 拆 lo/hi 传参路径正确（旧 reason 的\"16 字节非 ScalarPair\"过时；用例原 body 返回 i64 与入口 i32 不匹配属用例自身错误）",
     },
     Case {
         name: "nested_loop_break_outer",
@@ -1059,7 +1059,7 @@ const CASES: &[Case] = &[
         expect_compile_err: "",
         known_failure: true,
         phase: "F1 control",
-        reason: "Range 迭代器 + 嵌套 labeled break：Range::next 内部经 Iterator trait（可能触发 WA-04 precondition_check 缺失）或挂起",
+        reason: "2026-08 定性：Range 迭代的 spec_next 里 `_5 = copy (*_1).0` 的 store_place 值被 regalloc spill 到深槽（-0x90）但 _5 槽（-0x70）的 store 缺失 → `Some(copy _5)` 读预零 0（val 恒 0）/主循环死循环（sentinel 0xDEAD 实证）——判别层（switchInt 枚举判别 + ScalarPair tag 宽度）已修，剩 store 值 spill 与槽写缺失的 regalloc 交互（待主库/emission 深挖）",
     },
     Case {
         name: "match_str_result",

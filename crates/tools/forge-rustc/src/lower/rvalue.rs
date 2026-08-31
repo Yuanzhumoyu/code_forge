@@ -149,12 +149,28 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 layout.layout.size().bytes()
                             );
                         }
-                        // 返回 I64（rustc discriminant 语义是 isize）：Direct tag 是
-                        // I32 load，若不扩展到 I64，store 到 isize 槽只写低 4 字节，
-                        // switchInt 读 8 字节时高 4 字节靠槽预零侥幸为 0——若槽被
-                        // 覆盖（spill/重用）则 case 判错。uextend 后 store 8 字节，
-                        // 与 switchInt 的 8 字节比较一致（fetch_add 5 case 实证）。
-                        let tag = self.builder.load(addr, TypeId::I32);
+                        // tag 宽度 = ScalarPair 第 1 标量（tag）的真实位宽
+                        //（u8/u16/u32）：discriminant_ty 返回"判别值类型"（无
+                        // repr 枚举可能是 isize 8 字节），load 8 字节会读 tag 槽
+                        // 后相邻内存（垃圾高位 → case 判错 → unreachable/ud2，
+                        // enum_payload 实证）；固定 I32 读会带 ScalarPair 的
+                        // pad 字节（Option<i32> tag u8@0 + pad@1..4，pad 是
+                        // 返回寄存器残留垃圾 → nested_loop_break_outer 挂起
+                        // 实证）。非 ScalarPair（普通 enum tag 紧凑无 pad）
+                        // fallback I32（保持既有行为）。
+                        let tag_bits = match &layout.layout.backend_repr {
+                            rustc_abi::BackendRepr::ScalarPair { a, .. } => {
+                                a.primitive().size(&self.tcx).bits()
+                            }
+                            _ => 32,
+                        };
+                        let tag_t = match tag_bits {
+                            8 => TypeId::I8,
+                            16 => TypeId::I16,
+                            32 => TypeId::I32,
+                            _ => TypeId::I64,
+                        };
+                        let tag = self.builder.load(addr, tag_t);
                         Ok(self.builder.uextend(tag, TypeId::I64))
                     }
                     rustc_abi::Variants::Multiple {
@@ -232,7 +248,19 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         }
                     }
                     _ => {
-                        let tag = self.builder.load(addr, TypeId::I32);
+                        let tag_bits = match &layout.layout.backend_repr {
+                            rustc_abi::BackendRepr::ScalarPair { a, .. } => {
+                                a.primitive().size(&self.tcx).bits()
+                            }
+                            _ => 32,
+                        };
+                        let tag_t = match tag_bits {
+                            8 => TypeId::I8,
+                            16 => TypeId::I16,
+                            32 => TypeId::I32,
+                            _ => TypeId::I64,
+                        };
+                        let tag = self.builder.load(addr, tag_t);
                         Ok(self.builder.uextend(tag, TypeId::I64))
                     }
                 }

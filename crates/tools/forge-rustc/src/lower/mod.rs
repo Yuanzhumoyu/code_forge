@@ -122,6 +122,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             temp_arg_off,
         }
     }
+    /// switchInt 的判别值：枚举（Adt）discr 先读判别（switchInt 的 case 是
+    /// 变体索引）——rustc 的 MIR 有时直接 switchInt 枚举值本身而不先
+    /// `discriminant` rvalue（如 Range::next 的 `switchInt(move _7)` 判别
+    /// Option<i32>，nested_loop_break_outer 挂起实证：直接 load 整个
+    /// ScalarPair（8 字节）与 case 0/1 比较永不匹配 → otherwise
+    /// unreachable → panic handler 死循环）。与 rustc codegen 的隐式
+    /// discriminant 一致；非枚举（bool/整数）走原 lower_operand。
+    fn lower_switch_discr(&mut self, discr: &Operand<'tcx>) -> Result<Value, ForgeError> {
+        if let Operand::Move(p) | Operand::Copy(p) = discr {
+            let ty = p.ty(&self.body.local_decls, self.tcx).ty;
+            if matches!(ty.kind(), ty::TyKind::Adt(adt, _) if adt.is_enum()) {
+                return self.lower_rvalue(&Rvalue::Discriminant(p.clone()));
+            }
+        }
+        self.lower_operand(discr)
+    }
     pub(crate) fn lower_body(mut self, body: &Body<'tcx>) -> Result<Function, ForgeError> {
         if crate::trace::trace_enabled("FN") {
             eprintln!("[forge] === fn: {}", self.fn_name);
@@ -347,7 +363,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     self.builder.jump(tgt, &[]);
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
-                    let discr_val = self.lower_operand(discr)?;
+                    let discr_val = self.lower_switch_discr(discr)?;
                     let otherwise = targets.otherwise();
                     let targets_vec: Vec<_> = targets.iter().collect();
 
@@ -365,7 +381,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         let mut cur_blk = block_id;
                         for &(value, tgt_bb) in &targets_vec {
                             self.builder.switch_to_block(cur_blk);
-                            let d = self.lower_operand(discr)?;
+                            let d = self.lower_switch_discr(discr)?;
                             let const_val = self.builder.iconst_i32(value as i32);
                             let eq = self.builder.icmp(IntCC::Equal, d, const_val);
                             let tgt_blk = self.blocks[&tgt_bb];
