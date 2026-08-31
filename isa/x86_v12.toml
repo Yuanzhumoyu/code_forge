@@ -551,6 +551,7 @@ opcode = 0x8B
 # mov RAX,RBX → 89 D8、mov AX,BX → 66 8B）。gprx 显式排除 8 位（见槽声明）。
 asm = "mov {0:[gprx:out]}, {1:[gprx:in]}"
 effect = ["Move"]
+
 [[instructions]]
 name = "MOV_R_RM_32"
 form = "MRR_FIX32"
@@ -1802,6 +1803,17 @@ fields = { prefix = 0xF3, w = 0 }
 asm = "lzcnt {0:[gpr:out]}, {1:[gpr:in]}"
 effect = ["Pure"]
 
+# LZCNT/TZCNT/POPCNT 的 32 位变体（gpr32 类 → 无 REX.W → lzcntl 等）。
+# 缺省 [gpr] 是 64 位类，恒加 REX.W → 32 位输入的 leading_zeros 返回
+# 63 而非 31（u32::leading_zeros 错值）。
+[[instructions]]
+name = "LZCNT_R32"
+form = "MRR_0F_PREFIX"
+opcode = 0xBD
+fields = { prefix = 0xF3, w = 0 }
+asm = "lzcnt {0:[gpr32:out]}, {1:[gpr32:in]}"
+effect = ["Pure"]
+
 [[instructions]]
 name = "TZCNT_R"
 form = "MRR_0F_PREFIX"
@@ -1811,11 +1823,27 @@ asm = "tzcnt {0:[gpr:out]}, {1:[gpr:in]}"
 effect = ["Pure"]
 
 [[instructions]]
+name = "TZCNT_R32"
+form = "MRR_0F_PREFIX"
+opcode = 0xBC
+fields = { prefix = 0xF3, w = 0 }
+asm = "tzcnt {0:[gpr32:out]}, {1:[gpr32:in]}"
+effect = ["Pure"]
+
+[[instructions]]
 name = "POPCNT_R"
 form = "MRR_0F_PREFIX"
 opcode = 0xB8
 fields = { prefix = 0xF3, w = 0 }
 asm = "popcnt {0:[gpr:out]}, {1:[gpr:in]}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "POPCNT_R32"
+form = "MRR_0F_PREFIX"
+opcode = 0xB8
+fields = { prefix = 0xF3, w = 0 }
+asm = "popcnt {0:[gpr32:out]}, {1:[gpr32:in]}"
 effect = ["Pure"]
 
 # ── 旋转（迭代 6 续：D3 /0 /1，CL 隐式计数；宽度按结果类型 32/64）──
@@ -2177,11 +2205,28 @@ insts = [
 
 [[lowering]]
 op = "Clz"
+# 32 位输入用 lzcntl（gpr32 类）；否则 64 位 lzcntq——否则 32 位输入
+# 被零扩展后 lzcntq 返回 63 而非 31（u32::leading_zeros 错值）。
+when = { eq = ["rs1_width", 32] }
+insts = ["mov32 {out}, {0}", "lzcnt {out}, {0}"]
+
+[[lowering]]
+op = "Clz"
 insts = ["mov {out}, {0}", "lzcnt {out}, {0}"]
 
 [[lowering]]
 op = "Ctz"
+when = { eq = ["rs1_width", 32] }
+insts = ["mov32 {out}, {0}", "tzcnt {out}, {0}"]
+
+[[lowering]]
+op = "Ctz"
 insts = ["mov {out}, {0}", "tzcnt {out}, {0}"]
+
+[[lowering]]
+op = "Popcnt"
+when = { eq = ["rs1_width", 32] }
+insts = ["mov32 {out}, {0}", "popcnt {out}, {0}"]
 
 [[lowering]]
 op = "Popcnt"
@@ -2401,7 +2446,54 @@ insts = [
     "cmovcc {out}, {g2}, 5",
 ]
 
-# ── Bitreverse：Hacker's Delight 64 位反转（n=1/2/4 掩码移位 + bswap）──
+# ── Bitreverse：64 位（Hacker's Delight n=1/2/4 掩码移位 + bswap）──
+# ── Bitreverse：32 位输入用 32 位掩码 SWAR + bswap（64 位掩码对 u32
+#    会反转高位垃圾 → 结果错值；u32::reverse_bits 回归实证）──
+
+[[lowering]]
+op = "Bitreverse"
+when = { eq = ["rs1_width", 32] }
+insts = [
+    "mov32 {out}, {0}",
+    "mov_imm {g1}, 1",
+    "mov_imm {g2}, 0x55555555",
+    "mov {g3}, {out}",
+    "mov RCX, {g1}",
+    "shr {g3}",
+    "and {g2}, {g3}",
+    "mov {g4}, {out}",
+    "and {g2}, {g4}",
+    "mov RCX, {g1}",
+    "shl {g4}",
+    "or {g4}, {g3}",
+    "mov_imm {g1}, 2",
+    "mov_imm {g2}, 0x33333333",
+    "mov {g5}, {g3}",
+    "mov RCX, {g1}",
+    "shr {g5}",
+    "and {g2}, {g5}",
+    "mov {g4}, {g3}",
+    "and {g2}, {g4}",
+    "mov RCX, {g1}",
+    "shl {g4}",
+    "or {g4}, {g5}",
+    "mov_imm {g1}, 4",
+    "mov_imm {g2}, 0x0F0F0F0F",
+    "mov {g3}, {g5}",
+    "mov RCX, {g1}",
+    "shr {g3}",
+    "and {g2}, {g3}",
+    "mov {g4}, {g5}",
+    "and {g2}, {g4}",
+    "mov RCX, {g1}",
+    "shl {g4}",
+    "or {g4}, {g3}",
+    "mov {out}, {g3}",
+    "bswap {out}",
+    "mov_imm {g1}, 32",
+    "mov RCX, {g1}",
+    "shr {out}",
+]
 
 [[lowering]]
 op = "Bitreverse"

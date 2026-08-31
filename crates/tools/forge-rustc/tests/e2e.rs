@@ -881,6 +881,48 @@ const CASES: &[Case] = &[
         phase: "B3 simd",
         reason: "编译期拒绝：Simd 返回/参数依赖主库向量调用约定（ymm-abi-plan S1-S5），未就绪前 lower_body 门控报错（失败即报错，不产静默错值）",
     },
+    // ── D 组 intrinsics（2026-09 转正）：rotate/cttz/ctlz/bitreverse/volatile。
+    //    主库修复：lzcnt/tzcnt/popcnt 32 位变体（gpr32 类，否则 64 位
+    //    lzcntq 对 u32 返回 63 非 31）；Bitreverse 32 位掩码 SWAR（64 位
+    //    掩码反转高位垃圾）。──
+    Case {
+        name: "intrinsics_bit_ops",
+        body: "let mut acc = 0i32; let r = 0x10001u32.rotate_left(4); acc += (r == 0x100010) as i32 * 100; acc += (0x80u32.trailing_zeros() == 7) as i32 * 10; acc += (1u32.leading_zeros() == 31) as i32; acc += (0x1u32.reverse_bits() == 0x8000_0000) as i32 * 1000; acc",
+        expected: 1111,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    Case {
+        name: "intrinsics_volatile",
+        body: "let mut buf = [0u8; 8]; unsafe { core::ptr::write_volatile(buf.as_mut_ptr(), 42u8) }; let v = unsafe { core::ptr::read_volatile(buf.as_ptr()) }; v as i32 * 10000",
+        expected: 420000,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    // 原子 RMW 门控（D 组负向）：主库 AtomicRmw regalloc spill 缺失
+    // （ptr 被 spill 未写回 → xadd [0] 崩溃），未根治前编译期拒绝。
+    Case {
+        name: "atomic_rmw_gated",
+        body: "static A: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(5); A.fetch_add(3, core::sync::atomic::Ordering::Relaxed); A.load(core::sync::atomic::Ordering::Relaxed)",
+        expected: -1,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "原子 RMW intrinsic",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "编译期拒绝：主库 AtomicRmw regalloc spill 缺失（原子 RMW 会 xadd [0] 崩溃）；主库根治后移除门控转硬断言",
+    },
 ];
 
 /// 生成 no_std 程序源码。
