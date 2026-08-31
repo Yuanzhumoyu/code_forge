@@ -38,6 +38,7 @@ mod abi;
 mod alloc_runtime;
 mod backend;
 mod compile;
+mod dwarf;
 mod error;
 mod func_ref;
 mod global_data;

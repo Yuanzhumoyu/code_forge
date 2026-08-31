@@ -124,6 +124,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         if crate::trace::trace_enabled("MIR") {
             eprintln!("[forge] MIR body dump:\n{body:?}");
         }
+        // C1 DebugInfo line-tables-only：记录函数起始源码行（body.span 的
+        // 起始行；闭包/内部 shim 的 span 可能为空 → 0 跳过）。backend.rs
+        // 在 -C debuginfo 开启时生成 .debug_line/.debug_info。
+        let lo = body.span.lo();
+        if let Ok(sfl) = self.tcx.sess.source_map().lookup_line(lo) {
+            self.func_refs.add_line_entry(&self.fn_name, (sfl.line + 1) as u32);
+        }
         // B3 门控：向量类型（V64/V128/V256）参与跨函数 ABI（参数/返回）
         // 依赖主库向量 ABI（ymm-abi-plan 的 S1-S5）——当前主库 Call 返回
         // 只发 RAX 标量（V128 高 64 位丢失 → 静默错值）。未就绪前编译期

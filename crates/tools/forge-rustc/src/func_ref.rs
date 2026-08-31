@@ -24,6 +24,10 @@ pub struct FuncRefTable {
     /// promoted/slice 常量数据段（`&[1,2,3]`、`&"str"` 字面量 rodata 副本）：
     /// (符号名, 字节, 对齐)——backend.rs 统一写 .rodata。
     promoted: Vec<(String, Vec<u8>, u64)>,
+    /// 行号表（C1 DebugInfo line-tables-only）：(符号名, 源码行号 1-based)。
+    /// 每函数一个条目（函数起始地址 → 函数定义行）——`-C debuginfo=1`
+    /// 的最小语义：调试器可定位当前函数/行（粗粒度）。
+    line_entries: Vec<(String, u32)>,
 }
 
 impl FuncRefTable {
@@ -129,5 +133,15 @@ impl FuncRefTable {
     /// 已注册的 promoted/slice 常量数据段（供 codegen_crate 写 .rodata）。
     pub fn promoted(&self) -> &[(String, Vec<u8>, u64)] {
         &self.promoted
+    }
+
+    /// 登记函数行号条目（C1：符号名 → 源码行号 1-based）。
+    pub fn add_line_entry(&mut self, sym: &str, line: u32) {
+        self.line_entries.push((sym.to_string(), line));
+    }
+
+    /// 已登记的 (符号, 行号) 列表（供 codegen_crate 生成 .debug_line）。
+    pub fn line_entries(&self) -> &[(String, u32)] {
+        &self.line_entries
     }
 }

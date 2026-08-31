@@ -186,6 +186,33 @@ impl CodegenBackend for CodegenLibBackend {
             let _ = object_writer.add_rodata(sym, bytes, *align);
         }
 
+        // C1 DebugInfo line-tables-only：`-C debuginfo` 非 None 时生成
+        // DWARF 段（.debug_line/.debug_info/.debug_abbrev）并入主对象。
+        // 行号表：函数符号 → 起始源码行（lower_body 采集）。
+        let debuginfo_on = tcx.sess.opts.debuginfo != rustc_session::config::DebugInfo::None;
+        if debuginfo_on && !func_ref_table.line_entries().is_empty() {
+            let entries = func_ref_table.line_entries().to_vec();
+            let producer = format!("code-forge {} (rustc {})", env!("CARGO_PKG_VERSION"), option_env!("CFG_VERSION").unwrap_or(""));
+            let cu_name = tcx
+                .crate_name(rustc_hir::def_id::LOCAL_CRATE)
+                .to_string();
+            let sections = crate::dwarf::build_dwarf_sections(&entries, &producer, &cu_name);
+            let mut dwarf_sections: Vec<(&str, Vec<u8>)> = Vec::new();
+            for (name, bytes, relocs) in &sections {
+                dwarf_sections.push((name.as_str(), bytes.clone()));
+                // 段内 reloc：地址占位 → 函数符号（ADDR64）
+                let _ = relocs;
+            }
+            // 先写段（不含 reloc 的简单路径）；reloc 因 object crate 的
+            // 调试段 reloc 需 DebugSectionReloc 专用 API，当前最小可行
+            // 省略（地址 0 占位——llvm-dwarfdump 可见行号条目结构，
+            // 地址待后续 DebugSectionReloc 完善）。
+            if let Err(e) = object_writer.add_dwarf(&dwarf_sections) {
+                tcx.dcx()
+                    .warn(format!("code-forge: dwarf emission failed: {e}"));
+            }
+        }
+
         // 写入对象文件到磁盘
         let obj_path = outdir.join("forge_codegen_output.o");
         match object_writer.write_to_file(&obj_path) {

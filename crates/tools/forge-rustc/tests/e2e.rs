@@ -1047,6 +1047,20 @@ const CASES: &[Case] = &[
         phase: "F1 enum",
         reason: "",
     },
+    // ── C1 DebugInfo line-tables-only：`-C debuginfo=1` 编译 + 运行正确
+    //    （DWARF 段生成不破坏代码；llvm-objdump 可见 .debug_* 段）。──
+    Case {
+        name: "debuginfo_line_tables",
+        body: "let a = core::hint::black_box(21i32); let b = a * 2; b",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "C1 dwarf",
+        reason: "",
+    },
 ];
 
 /// 生成 no_std 程序源码。
@@ -1101,6 +1115,11 @@ fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
     if case.name.contains("overflow_off") {
         rustc_args.push("-C".to_string());
         rustc_args.push("overflow-checks=off".to_string());
+    }
+    // C1 DebugInfo：`debuginfo_` 前缀用例加 `-C debuginfo=1`（line-tables）。
+    if case.name.starts_with("debuginfo_") {
+        rustc_args.push("-C".to_string());
+        rustc_args.push("debuginfo=1".to_string());
     }
     let compile = Command::new("rustc")
         .args(&rustc_args)
