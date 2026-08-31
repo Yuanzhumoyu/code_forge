@@ -187,6 +187,29 @@ RCX，但 **sret 地址 vreg 与参数搬移 vreg 被 regalloc 分配同寄存�
 range 跨搬移未保持）。修复方向：sret 地址 vreg 的 live range 修复或
 move_args 前强制存活（与 #spilled_int_receive 同思路）。
 
+### 🔬 vec_string 深挖（2026-09 续：Slice 常量 + PtrMetadata）
+
+**strlen 最小反例**：`let s = "hi"; s.len()` → exit=0（want 2）。两步根因：
+1. **Slice 常量未落盘**：`_2 = const "hi"`（`ConstValue::Slice{alloc, meta}`）
+   是 &str 字面量——statement.rs 的聚合分支 `eval_const_bytes`（16B 字节
+   展开）对 Slice 求值失败 → 0。**修复**：Slice 分支写槽
+   `ptr@[base] = global_addr(alloc)`、`len@[base+8] = iconst(meta)`，并登记
+   alloc 字节到 rodata（FuncRefTable::intern_promoted + backend.rs 落盘）。
+   验证：strlen=2 ✓（连同 statement.rs 的 is_ref_const 引用守卫）。
+2. **PtrMetadata 恒 0**：`str::len` 的 MIR 是 `_0 = PtrMetadata(_2)`——
+   rvalue.rs 的 UnOp::PtrMetadata 恒返回 0（注释"thin 指针"）——fat
+   pointer（&str）的 metadata 是 len。**修复**：`fat_ptr_metadata(place)`
+   读槽 [base+8]。验证：strlen=2 ✓。
+
+**⚠️ 回归教训（vec_push）**：Slice/promoted 落盘改动（func_ref.rs
+intern_promoted + backend.rs 落盘 + rvalue.rs promoted 分支的
+`GlobalAlloc::Memory` 拦截）**导致 vec_push 回归**（grow 链挂起，编译
+>10min）——`GlobalAlloc::Memory` 分支过宽：拦截了**所有非 Static 的
+const**（含 Layout 聚合），LAYOUT 被当 promoted 引用处理 → 值错。
+需加**类型守卫**（仅 `TyKind::Ref/RawPtr` 走 static/promoted）并逐个
+验证（vec_push 转正后回退，e2e 保 57/58；vec_string 修复留待专项，
+改动需在 vec_push 用例上先行回归）。
+
 ### ✅ 已修复（2026-09 reloc/对齐/双返回三连击，e2e 30→51/58）
 | 根因 | 修复 | 提交 |
 | --- | --- | --- |
