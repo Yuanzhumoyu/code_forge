@@ -174,6 +174,19 @@ iconst 常量实参/Fstore 栈槽中转全对），主库等价 IR 全部执行�
 sret 返回（String=Vec<u8> 24B）+ ScalarPair &str 参数——to_vec::<Global>
 sret 返回链为下一候选。
 
+### 🔬 vec_string/vecfrom 定位（2026-09 续，sret_ptr 传 0）
+
+**vecfrom 最小反例**：`Vec::from(&[1u8,2,3][..])` → exit=0（want 3）。
+反汇编：mainCRTStartup 调 to_vec（sret 返回 Vec）时 **sret_ptr 传 0**
+——`mov r14→rcx` 其中 r14=[-0x70] 的值（0），而非 `lea [-0x70(%rbp)]`
+（槽地址）。
+
+**候选**：sret_setup（lowering.rs 1052-1078）生成 LEA 槽地址 → MOV 到
+RCX，但 **sret 地址 vreg 与参数搬移 vreg 被 regalloc 分配同寄存器 r14
+→ 顺序覆盖**（与 vec_push 的 spilled 参数同类：sret 地址 vreg 的 live
+range 跨搬移未保持）。修复方向：sret 地址 vreg 的 live range 修复或
+move_args 前强制存活（与 #spilled_int_receive 同思路）。
+
 ### ✅ 已修复（2026-09 reloc/对齐/双返回三连击，e2e 30→51/58）
 | 根因 | 修复 | 提交 |
 | --- | --- | --- |
