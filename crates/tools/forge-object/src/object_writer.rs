@@ -152,7 +152,12 @@ impl<'a> ObjectWriter<'a> {
 
         // 创建符号（value/size 占位，后续由 add_symbol_data 更新）——
         // 已声明 UNDEF（reloc 先引用）则升级复用，避免同名定义+UNDEF 重复
-        let sym_id = self.define_symbol(name, self.text_section, SymbolKind::Text, func.code.len() as u64);
+        let sym_id = self.define_symbol(
+            name,
+            self.text_section,
+            SymbolKind::Text,
+            func.code.len() as u64,
+        );
 
         // add_symbol_data 追加数据到 section，返回数据在 section 内的偏移量，
         // 同时自动更新符号的 value/size/section 字段

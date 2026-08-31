@@ -1574,8 +1574,8 @@ impl Verifier {
                 // 双方 return）合法产生死 merge 块（至多 1 条内部指令/无参数，
                 // LLVM 亦允许 unreachable 块）。多条指令的不可达块才是可疑
                 // 产物（死代码泄漏 / 未初始化）。
-                let is_dead_merge = block_data.inst_order.len() <= 1
-                    && block_data.param_values.is_empty();
+                let is_dead_merge =
+                    block_data.inst_order.len() <= 1 && block_data.param_values.is_empty();
                 if !is_dead_merge {
                     self.errors.push(VerifyError::UnreachableBlock { block });
                 }

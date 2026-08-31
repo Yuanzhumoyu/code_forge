@@ -94,7 +94,9 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
             // P0-3/P0-5：volatile load 不可消除（可观察语义——读可能改变
             // 外部状态，如 MMIO）。
             if matches!(inst.opcode, Opcode::Load | Opcode::Fload)
-                && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+                && inst
+                    .mem_flags
+                    .contains(forge_ir::mem_flags::MemFlags::VOLATILE)
             {
                 continue;
             }
@@ -341,7 +343,12 @@ mod tests {
         let p = params[0];
         let one = b.iconst_i32(1);
         // AtomicRmw 结果未用（旧值丢弃）——但原子写副作用必须保留
-        let _rmw = b.atomic_rmw(forge_ir::AtomicRmwOp::Add, p, one, forge_ir::Ordering::SequentiallyConsistent);
+        let _rmw = b.atomic_rmw(
+            forge_ir::AtomicRmwOp::Add,
+            p,
+            one,
+            forge_ir::Ordering::SequentiallyConsistent,
+        );
         b.ret(&[]);
 
         let mut func = b.finish().expect("build");

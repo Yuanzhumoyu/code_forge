@@ -23,10 +23,7 @@ fn assert_located(msg: &str) {
         msg.contains("  | "),
         "错误消息应含行文本预览，实际：\n{msg}"
     );
-    assert!(
-        msg.contains('^'),
-        "错误消息应含指示线 ^，实际：\n{msg}"
-    );
+    assert!(msg.contains('^'), "错误消息应含指示线 ^，实际：\n{msg}");
 }
 
 /// 未定义变量：错误定位到引用该变量的行/列（Hir 后端 lookup 路径）。
@@ -62,17 +59,13 @@ fn nested_expr_error_reports_innermost_line() {
         "错误类型应明确：\n{msg}"
     );
     assert_located(&msg);
-    assert!(
-        msg.contains(" at 3:"),
-        "应定位到第 3 行，实际：\n{msg}"
-    );
+    assert!(msg.contains(" at 3:"), "应定位到第 3 行，实际：\n{msg}");
 }
 
 /// 正常程序不回归：Hir 后端编译成功不受诊断改动影响。
 #[test]
 fn valid_program_still_compiles() {
     let src = "int main() { int x = 40; return x + 2; }";
-    let r = compile_and_run_with(src, Backend::Hir)
-        .expect("合法程序应编译成功");
+    let r = compile_and_run_with(src, Backend::Hir).expect("合法程序应编译成功");
     assert_eq!(r, 42);
 }

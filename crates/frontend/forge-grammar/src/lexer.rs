@@ -733,7 +733,8 @@ mod tests {
     #[test]
     fn test_unicode_span_byte_offsets() {
         use crate::grammar::parse_grammar;
-        let grammar_src = "token IDENT = \"[a-z]+\"\nskip \"[ \\t\\n]+\"\nskip \"#[^\\n]*\"\nstart ::= IDENT*\n";
+        let grammar_src =
+            "token IDENT = \"[a-z]+\"\nskip \"[ \\t\\n]+\"\nskip \"#[^\\n]*\"\nstart ::= IDENT*\n";
         let grammar = match parse_grammar(grammar_src) {
             Ok(g) => g,
             Err(e) => panic!("grammar parse failed: {e:?}"),
@@ -745,7 +746,10 @@ mod tests {
             Ok(t) => t,
             Err(e) => panic!("tokenize failed: {e:?}"),
         };
-        let ident = tokens.iter().find(|t| t.kind == "IDENT").expect("IDENT token");
+        let ident = tokens
+            .iter()
+            .find(|t| t.kind == "IDENT")
+            .expect("IDENT token");
         // 字节切片不应 panic（char 索引会在这里崩）；内容应为 "abc"
         let text = &src[ident.span.start..ident.span.end];
         assert_eq!(text, "abc", "Span 必须是字节偏移（P0-11 回归）");

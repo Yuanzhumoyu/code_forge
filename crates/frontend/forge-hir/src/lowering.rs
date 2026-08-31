@@ -243,24 +243,26 @@ impl<'a> LoweringContext<'a> {
             )));
         }
         // 双操作数指令但只给 1 个（expected 未覆盖的边角）——防御性下限检查
-        if operands.len() < 2 && matches!(
-            *opcode,
-            Opcode::Iadd
-                | Opcode::Isub
-                | Opcode::Imul
-                | Opcode::Udiv
-                | Opcode::Sdiv
-                | Opcode::Urem
-                | Opcode::Srem
-                | Opcode::Band
-                | Opcode::Bor
-                | Opcode::Bxor
-                | Opcode::Ishl
-                | Opcode::Ushr
-                | Opcode::Sshr
-                | Opcode::Icmp { .. }
-                | Opcode::Fcmp { .. }
-        ) {
+        if operands.len() < 2
+            && matches!(
+                *opcode,
+                Opcode::Iadd
+                    | Opcode::Isub
+                    | Opcode::Imul
+                    | Opcode::Udiv
+                    | Opcode::Sdiv
+                    | Opcode::Urem
+                    | Opcode::Srem
+                    | Opcode::Band
+                    | Opcode::Bor
+                    | Opcode::Bxor
+                    | Opcode::Ishl
+                    | Opcode::Ushr
+                    | Opcode::Sshr
+                    | Opcode::Icmp { .. }
+                    | Opcode::Fcmp { .. }
+            )
+        {
             return Err(HirError::Internal(format!(
                 "opcode {opcode:?} requires ≥2 operands, got {}",
                 operands.len()

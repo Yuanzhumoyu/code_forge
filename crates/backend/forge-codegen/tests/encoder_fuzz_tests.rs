@@ -62,12 +62,13 @@ fn assert_truncation_robust<D: TargetDecoder>(dec: &D, samples: &[&[u8]]) {
     for sample in samples {
         for len in 0..=sample.len() {
             let prefix = &sample[..len];
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                dec.decode(prefix)
-            }));
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dec.decode(prefix)));
             match res {
                 Ok(Ok((_, consumed))) => {
-                    assert!(consumed <= prefix.len(), "truncated consumed overrun: {prefix:02x?}")
+                    assert!(
+                        consumed <= prefix.len(),
+                        "truncated consumed overrun: {prefix:02x?}"
+                    )
                 }
                 Ok(Err(_)) => {}
                 Err(_) => panic!("decode panicked on truncated prefix {prefix:02x?}"),
@@ -81,40 +82,40 @@ fn assert_truncation_robust<D: TargetDecoder>(dec: &D, samples: &[&[u8]]) {
 /// x86_v12 已知编码语料（REX/前缀/imm/ModRM 各形态；错误猜测无害——
 /// decode Err 直接跳过，只对能解码的样本做往返）。
 const X86_SAMPLES: &[&[u8]] = &[
-    &[0x90],                         // nop
-    &[0xC3],                         // ret
-    &[0x50],                         // push rax
-    &[0x58],                         // pop rax
-    &[0x31, 0xC0],                   // xor eax, eax
-    &[0x48, 0x31, 0xC0],             // xor rax, rax (REX.W)
-    &[0x48, 0x89, 0xC0],             // mov rax, rax (REX.W)
-    &[0x48, 0x89, 0xD8],             // mov rax, rbx
-    &[0x48, 0x83, 0xC0, 0x01],       // add rax, 1 (imm8)
-    &[0x48, 0x05, 0x78, 0x56, 0x34, 0x12], // add rax, 0x12345678 (imm32)
+    &[0x90],                                           // nop
+    &[0xC3],                                           // ret
+    &[0x50],                                           // push rax
+    &[0x58],                                           // pop rax
+    &[0x31, 0xC0],                                     // xor eax, eax
+    &[0x48, 0x31, 0xC0],                               // xor rax, rax (REX.W)
+    &[0x48, 0x89, 0xC0],                               // mov rax, rax (REX.W)
+    &[0x48, 0x89, 0xD8],                               // mov rax, rbx
+    &[0x48, 0x83, 0xC0, 0x01],                         // add rax, 1 (imm8)
+    &[0x48, 0x05, 0x78, 0x56, 0x34, 0x12],             // add rax, 0x12345678 (imm32)
     &[0x48, 0x2B, 0x04, 0x25, 0x78, 0x56, 0x34, 0x12], // sub rax, [0x12345678]
-    &[0xEB, 0x00],                   // jmp +0
-    &[0xE8, 0x00, 0x00, 0x00, 0x00], // call +0
-    &[0x66, 0x66, 0x90],             // 66 66 nop
-    &[0x48, 0x8B, 0x44, 0x24, 0x08], // mov rax, [rsp+8]
-    &[0x0F, 0x1F, 0x00],             // nop dword ptr [rax]
-    &[0x48, 0x0F, 0xAF, 0xC1],       // imul rax, rcx
-    &[0x48, 0x39, 0xC8],             // cmp rax, rcx
-    &[0x48, 0x01, 0xC8],             // add rax, rcx
-    &[0x48, 0x29, 0xC8],             // sub rax, rcx
+    &[0xEB, 0x00],                                     // jmp +0
+    &[0xE8, 0x00, 0x00, 0x00, 0x00],                   // call +0
+    &[0x66, 0x66, 0x90],                               // 66 66 nop
+    &[0x48, 0x8B, 0x44, 0x24, 0x08],                   // mov rax, [rsp+8]
+    &[0x0F, 0x1F, 0x00],                               // nop dword ptr [rax]
+    &[0x48, 0x0F, 0xAF, 0xC1],                         // imul rax, rcx
+    &[0x48, 0x39, 0xC8],                               // cmp rax, rcx
+    &[0x48, 0x01, 0xC8],                               // add rax, rcx
+    &[0x48, 0x29, 0xC8],                               // sub rax, rcx
 ];
 
 /// riscv64_v12（定宽 32 位）已知编码语料。
 const RISCV_SAMPLES: &[&[u8]] = &[
-    &[0x13, 0x00, 0x00, 0x00],       // addi x0, x0, 0 (nop)
-    &[0x93, 0x80, 0xA0, 0x02],       // addi x1, x0, 42
-    &[0x33, 0x00, 0x00, 0x00],       // add x0, x0, x0
-    &[0x33, 0x84, 0x00, 0x00],       // add x8, x0, x0
-    &[0x83, 0x80, 0x00, 0x00],       // lw x1, 0(x0)
-    &[0x23, 0x80, 0x00, 0x00],       // sw x0, 0(x0)
-    &[0x63, 0x00, 0x00, 0x00],       // beq x0, x0, 0
-    &[0x67, 0x80, 0x00, 0x00],       // jalr x1, 0(x0)
-    &[0x6F, 0x00, 0x00, 0x00],       // jal x0, 0
-    &[0x37, 0x00, 0x00, 0x00],       // lui x0, 0
+    &[0x13, 0x00, 0x00, 0x00], // addi x0, x0, 0 (nop)
+    &[0x93, 0x80, 0xA0, 0x02], // addi x1, x0, 42
+    &[0x33, 0x00, 0x00, 0x00], // add x0, x0, x0
+    &[0x33, 0x84, 0x00, 0x00], // add x8, x0, x0
+    &[0x83, 0x80, 0x00, 0x00], // lw x1, 0(x0)
+    &[0x23, 0x80, 0x00, 0x00], // sw x0, 0(x0)
+    &[0x63, 0x00, 0x00, 0x00], // beq x0, x0, 0
+    &[0x67, 0x80, 0x00, 0x00], // jalr x1, 0(x0)
+    &[0x6F, 0x00, 0x00, 0x00], // jal x0, 0
+    &[0x37, 0x00, 0x00, 0x00], // lui x0, 0
 ];
 
 /// demo_v12（定宽 32 位）已知编码语料。
@@ -169,7 +170,9 @@ fn fuzz_roundtrip_decode_encode_decode() {
     use forge_codegen::machine::encoder::TargetEncoder;
 
     for sample in X86_SAMPLES {
-        let Ok((inst, n)) = x86.decode(sample) else { continue };
+        let Ok((inst, n)) = x86.decode(sample) else {
+            continue;
+        };
         assert_eq!(n, sample.len(), "x86 语料应整段消费: {sample:02x?}");
         let bytes = x86_enc
             .encode_to_bytes(&inst, &rm)
@@ -184,7 +187,9 @@ fn fuzz_roundtrip_decode_encode_decode() {
     }
 
     for sample in RISCV_SAMPLES {
-        let Ok((inst, n)) = riscv.decode(sample) else { continue };
+        let Ok((inst, n)) = riscv.decode(sample) else {
+            continue;
+        };
         assert_eq!(n, 4, "riscv 定宽应消费 4 字节: {sample:02x?}");
         let bytes = riscv_enc
             .encode_to_bytes(&inst, &rm)

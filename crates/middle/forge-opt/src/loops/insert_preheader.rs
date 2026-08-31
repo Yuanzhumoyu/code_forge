@@ -87,7 +87,9 @@ pub fn insert_preheaders(func: &mut Function) -> Result<PassResult, IrError> {
         let (ph, ph_params) = func.dfg.make_block_with_params(&param_tys);
         // 循环外 pred 的边改指 ph（retarget 保留原 args——现在成为 ph 的参数实参）
         for p in &outside {
-            func.dfg.blocks[p.0 as usize].terminator.retarget(header, ph);
+            func.dfg.blocks[p.0 as usize]
+                .terminator
+                .retarget(header, ph);
         }
         // ph → header：转发自身参数
         func.dfg.set_terminator(
@@ -169,10 +171,10 @@ mod tests {
         let header = Block(3);
         let mut ph = None;
         for (bi, blk) in func.dfg.blocks.iter().enumerate() {
-            if let Terminator::Jump { target, .. } = &blk.terminator {
-                if *target == header {
-                    ph = Some(Block(bi as u32));
-                }
+            if let Terminator::Jump { target, .. } = &blk.terminator
+                && *target == header
+            {
+                ph = Some(Block(bi as u32));
             }
         }
         let ph = ph.expect("应存在跳 header 的新 preheader 块");
@@ -234,7 +236,9 @@ mod tests {
         let mut func = b.finish().expect("build");
 
         // insert_preheader → licm（管线同序）
-        InsertPreheaderPass::new().run_on_function(&mut func).unwrap();
+        InsertPreheaderPass::new()
+            .run_on_function(&mut func)
+            .unwrap();
         let licm = LicmPass::new();
         let r = licm.run_on_function(&mut func).unwrap();
         assert!(r.changed, "LICM 应外提不变 load");

@@ -590,20 +590,19 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             //   `{offset=25,shift=5}`——槽存真实值，值域 = 位段总宽）**要
             //   检查**——store 偏移超 imm12 范围此前静默截断为错值；
             // - label 槽的块号/函数引用占位（-(f+1)）跳过。
-            let is_preshifted_pieces = bf.pieces.as_ref().is_some_and(|ps| {
-                !ps.is_empty() && ps.iter().all(|p| p.offset == p.shift)
-            });
+            let is_preshifted_pieces = bf
+                .pieces
+                .as_ref()
+                .is_some_and(|ps| !ps.is_empty() && ps.iter().all(|p| p.offset == p.shift));
             let is_global_encoded = info.inst.global_reloc.is_some();
             if slot.kind == OperandKind::Imm
                 && !is_global_encoded
                 && !is_preshifted_pieces
                 && let Some((lo, hi)) = slot.imm_range()
             {
-                let lo = lo as i64;
-                let hi = hi as i64;
                 stmts.push(quote! {
                     let __v = *#fid as i64;
-                    if __v < #lo || __v > #hi {
+                    if !(#lo..=#hi).contains(&__v) {
                         return Err(format!(
                             "{}: immediate {} out of range [{}, {}]",
                             stringify!(#vn), __v, #lo, #hi

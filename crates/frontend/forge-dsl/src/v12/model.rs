@@ -701,6 +701,7 @@ pub struct Instruction {
     ///   回读 load（VMOVUPS_RM / VMOVUPS_ZMM_MEM）；
     /// - `frame_rbp_addr`：帧内 [RBP+disp] 地址计算（LEA_RBP_OFF——sret/
     ///   by-ref temp 槽地址）。
+    ///
     /// 未知标签无消费方（安全）；缺失标签 → 对应 ABI 能力 Unsupported。
     #[serde(default)]
     pub tags: Vec<String>,

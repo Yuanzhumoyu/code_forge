@@ -230,12 +230,10 @@ impl AstArena {
                     Some(FieldValue::Text(_)) => {}
                     Some(FieldValue::Child(child_id)) => result.push(*child_id),
                     Some(FieldValue::Children(child_ids)) => result.extend(child_ids),
-                    Some(FieldValue::OptionalChild(opt)) => {
-                        if let Some(child_id) = opt {
-                            result.push(*child_id);
-                        }
+                    Some(FieldValue::OptionalChild(Some(child_id))) => {
+                        result.push(*child_id);
                     }
-                    None => {}
+                    _ => {}
                 }
             }
         }
@@ -260,12 +258,10 @@ impl AstArena {
                             result.push((field_name.clone(), *child_id));
                         }
                     }
-                    Some(FieldValue::OptionalChild(opt)) => {
-                        if let Some(child_id) = opt {
-                            result.push((field_name.clone(), *child_id));
-                        }
+                    Some(FieldValue::OptionalChild(Some(child_id))) => {
+                        result.push((field_name.clone(), *child_id));
                     }
-                    None => {}
+                    _ => {}
                 }
             }
         }

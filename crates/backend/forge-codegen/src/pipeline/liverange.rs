@@ -211,8 +211,8 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     // ── 阶段 1: 计算 LiveInterval（带循环权重）──
     // 预分配容量：vreg 数 ≤ 参数数 + xreg_map 总字段数（上界，免去重
     // 开销；HashMap 容量稍大无害）。避免阶段 1 反复 resize。
-    let est_vregs: usize = param_xregs.len()
-        + xreg_map.iter().map(|slot| slot.len()).sum::<usize>();
+    let est_vregs: usize =
+        param_xregs.len() + xreg_map.iter().map(|slot| slot.len()).sum::<usize>();
     let mut intervals: HashMap<XReg, LiveInterval> = HashMap::with_capacity(est_vregs);
 
     const LOOP_WEIGHT: f32 = 10.0;

@@ -239,7 +239,9 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
 
             // P0-3：volatile load 不参与 CSE（可观察语义）。
             if is_load_op(&inst.opcode)
-                && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+                && inst
+                    .mem_flags
+                    .contains(forge_ir::mem_flags::MemFlags::VOLATILE)
             {
                 continue;
             }
@@ -456,7 +458,8 @@ mod tests {
     /// （旧 opcode_discriminant 把 Icmp 统一映射 23，二者被错误合并 → 错值）。
     #[test]
     fn p0_icmp_cond_distinct() {
-        let sig = FunctionSignature::new(&[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::BOOL]);
+        let sig =
+            FunctionSignature::new(&[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::BOOL]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "a"), (TypeId::I32, "b")]);
         b.switch_to_block(entry);
@@ -508,10 +511,7 @@ mod tests {
     #[test]
     fn p0_multi_result_not_cse() {
         // 单返回（无签名约束）：只验证两条 sadd_overflow 都不被 CSE。
-        let sig = FunctionSignature::new(
-            &[(TypeId::I32, "a"), (TypeId::I32, "b")],
-            &[TypeId::I32],
-        );
+        let sig = FunctionSignature::new(&[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "a"), (TypeId::I32, "b")]);
         b.switch_to_block(entry);

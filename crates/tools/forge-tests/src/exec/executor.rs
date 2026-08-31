@@ -73,8 +73,8 @@ impl Executor for NativeExecutor {
                 args.len() <= 4,
                 "native x64 executor supports at most 4 integer args"
             );
-            let mem =
-                code_forge::mem::ExecutableMemory::new(&compiled.code).expect("ExecutableMemory::new");
+            let mem = code_forge::mem::ExecutableMemory::new(&compiled.code)
+                .expect("ExecutableMemory::new");
             match args.len() {
                 0 => {
                     let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).unwrap() };

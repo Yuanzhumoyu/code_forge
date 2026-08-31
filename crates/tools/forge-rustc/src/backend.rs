@@ -99,7 +99,10 @@ impl CodegenBackend for CodegenLibBackend {
                             // GlobalAddr 重定位 "G{N}" → 真实数据符号名
                             if crate::trace::trace_enabled("GLOBAL") {
                                 for r in &compiled_func.relocations {
-                                    eprintln!("[forge] reloc pre={} @{} addend={}", r.symbol, r.offset, r.addend);
+                                    eprintln!(
+                                        "[forge] reloc pre={} @{} addend={}",
+                                        r.symbol, r.offset, r.addend
+                                    );
                                 }
                             }
                             func_ref_table.resolve_global_relocs(&mut compiled_func);

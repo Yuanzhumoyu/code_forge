@@ -40,6 +40,7 @@ pub struct Parser<'a> {
     pos: usize,
 }
 
+#[allow(dead_code)]
 impl<'a> Parser<'a> {
     pub fn new(toks: &'a [Tok]) -> Self {
         Self { toks, pos: 0 }

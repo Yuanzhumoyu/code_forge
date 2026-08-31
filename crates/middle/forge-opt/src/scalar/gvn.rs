@@ -194,16 +194,11 @@ fn gvn_dfs(
                     }
                 } else if matches!(
                     snap_opcode,
-                    Opcode::Store
-                        | Opcode::Fstore
-                        | Opcode::AtomicRmw
-                        | Opcode::Cmpxchg
+                    Opcode::Store | Opcode::Fstore | Opcode::AtomicRmw | Opcode::Cmpxchg
                 ) {
                     let wloc = alias.location_of_access(func, &func.dfg.insts[inst_id.0 as usize]);
                     for scope in scopes.iter_mut() {
-                        scope.retain(|key, _| {
-                            !super::cse::killed_by_write(key, wloc, alias, func)
-                        });
+                        scope.retain(|key, _| !super::cse::killed_by_write(key, wloc, alias, func));
                     }
                 }
                 continue;
@@ -242,15 +237,15 @@ fn gvn_dfs(
 
         // P0-3：volatile load 不参与 GVN（可观察语义）。
         if super::cse::is_load_op(&inst.opcode)
-            && inst.mem_flags.contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+            && inst
+                .mem_flags
+                .contains(forge_ir::mem_flags::MemFlags::VOLATILE)
         {
             continue;
         }
 
         // Skip non-GVN-able instructions（P1-5：load 在 kill 精化下可消重）
-        if !super::cse::is_cse_candidate(&inst.opcode)
-            && !super::cse::is_load_op(&inst.opcode)
-        {
+        if !super::cse::is_cse_candidate(&inst.opcode) && !super::cse::is_load_op(&inst.opcode) {
             continue;
         }
 

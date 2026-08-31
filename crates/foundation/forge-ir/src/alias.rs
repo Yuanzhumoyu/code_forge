@@ -127,10 +127,9 @@ impl AliasAnalysis {
             (MemoryLocation::Alloca(x), MemoryLocation::Alloca(y)) => same_base(x == y),
             // 栈槽 / alloca 与全局互不重叠；不同类别间 NoAlias
             (MemoryLocation::Stack(_) | MemoryLocation::Alloca(_), MemoryLocation::Global(_))
-            | (
-                MemoryLocation::Global(_),
-                MemoryLocation::Stack(_) | MemoryLocation::Alloca(_),
-            ) => AliasResult::NoAlias,
+            | (MemoryLocation::Global(_), MemoryLocation::Stack(_) | MemoryLocation::Alloca(_)) => {
+                AliasResult::NoAlias
+            }
             (MemoryLocation::Stack(_), MemoryLocation::Alloca(_))
             | (MemoryLocation::Alloca(_), MemoryLocation::Stack(_)) => AliasResult::NoAlias,
         }
@@ -190,7 +189,10 @@ mod tests {
         assert_eq!(aa.alias(l0, l1), AliasResult::NoAlias);
         assert_eq!(aa.alias(l0, lg), AliasResult::MayAlias);
         assert_eq!(aa.alias(l0, lgo), AliasResult::NoAlias);
-        assert_eq!(aa.alias(lgo, MemoryLocation::Global(1)), AliasResult::NoAlias);
+        assert_eq!(
+            aa.alias(lgo, MemoryLocation::Global(1)),
+            AliasResult::NoAlias
+        );
         assert_eq!(aa.alias(l0, la), AliasResult::NoAlias);
         assert_eq!(aa.alias(la, lgo), AliasResult::NoAlias);
         // 未知与一切 MayAlias

@@ -1217,9 +1217,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_fib_recursive_call() {
-        use forge_ir::{
-            FunctionBuilder, FunctionSignature, FuncRef, IntCC, TypeContext, TypeId,
-        };
+        use forge_ir::{FuncRef, FunctionBuilder, FunctionSignature, IntCC, TypeContext, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1267,17 +1265,15 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_float_args_fcmp_branch() {
-        use forge_ir::{FunctionSignature, FloatCC, TypeId};
+        use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
         // f(a: f64, b: f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }
-        let sig = FunctionSignature::new(
-            &[(TypeId::F64, "a"), (TypeId::F64, "b")],
-            &[TypeId::I32],
-        );
+        let sig = FunctionSignature::new(&[(TypeId::F64, "a"), (TypeId::F64, "b")], &[TypeId::I32]);
         jit.add_function("float_gt", &sig, |b| {
-            let (entry, params) = b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
             b.switch_to_block(entry);
             let sum = b.fadd(params[0], params[1]);
             let three = b.fconst_f64(3.0f64);
@@ -1298,7 +1294,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_mixed_int_float_args() {
-        use forge_ir::{FunctionSignature, FloatCC, TypeId};
+        use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1335,7 +1331,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_f64_const_arg_call() {
-        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+        use forge_ir::{FloatCC, FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1370,15 +1366,12 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_fcmp_branch_if_else() {
-        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+        use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
         // f(a: f64, b: f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }（branch 版）
-        let sig = FunctionSignature::new(
-            &[(TypeId::F64, "a"), (TypeId::F64, "b")],
-            &[TypeId::I32],
-        );
+        let sig = FunctionSignature::new(&[(TypeId::F64, "a"), (TypeId::F64, "b")], &[TypeId::I32]);
         jit.add_function("f_branch", &sig, |b| {
             let (entry, p) = b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
             b.switch_to_block(entry);
@@ -1407,15 +1400,13 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_fconst_args_branch_callee() {
-        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+        use forge_ir::{FloatCC, FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
         // callee: (f64, f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }（branch 版）
-        let sig_c = FunctionSignature::new(
-            &[(TypeId::F64, "a"), (TypeId::F64, "b")],
-            &[TypeId::I32],
-        );
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::F64, "a"), (TypeId::F64, "b")], &[TypeId::I32]);
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
         bc.switch_to_block(blk);
@@ -1445,7 +1436,11 @@ mod tests {
         module.add_function(bm.finish().expect("main"));
         jit.compile_module(&module).expect("compile main+callee");
         let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
-        assert_eq!(f(), 1, "callee(1.5, 2.0)：3.5 > 3.0 → 1（fconst 实参+branch）");
+        assert_eq!(
+            f(),
+            1,
+            "callee(1.5, 2.0)：3.5 > 3.0 → 1（fconst 实参+branch）"
+        );
     }
 
     /// e2e float_args 最后隔离：f64 参数经**栈槽中转**（rustc MIR 的
@@ -1453,7 +1448,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_f64_param_via_stack_slot() {
-        use forge_ir::{FunctionBuilder, FunctionSignature, FloatCC, TypeContext, TypeId};
+        use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1496,10 +1491,8 @@ mod tests {
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
         // callee: (i64, i64) -> i64 = a + b
-        let sig_c = FunctionSignature::new(
-            &[(TypeId::I64, "a"), (TypeId::I64, "b")],
-            &[TypeId::I64],
-        );
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
         bc.switch_to_block(blk);
@@ -1526,15 +1519,12 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_i64_param_via_stack_slot() {
-        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+        use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
         // callee(a: i64, b: i64) -> i64：参数存槽 (-16/-24) → Load → iadd
-        let sig = FunctionSignature::new(
-            &[(TypeId::I64, "a"), (TypeId::I64, "b")],
-            &[TypeId::I64],
-        );
+        let sig = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
         jit.add_function("i64_slot", &sig, |b| {
             let (entry, p) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
             b.switch_to_block(entry);

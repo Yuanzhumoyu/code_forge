@@ -674,11 +674,8 @@ fn gen_emit_pseudo(
             };
             // ABI 槽位规则：by-position（Windows x64——int/float 共享位置
             // 计数，参数 i 用 GPR{i}/XMM{i}）/ by-class（缺省，独立推进）。
-            let by_position = model
-                .abi
-                .as_ref()
-                .and_then(|a| a.arg_slot.as_deref())
-                == Some("by-position");
+            let by_position =
+                model.abi.as_ref().and_then(|a| a.arg_slot.as_deref()) == Some("by-position");
             let (head, fpr_stmt_use, int_stmt_use, byref_stmt_use): (
                 TokenStream,
                 TokenStream,

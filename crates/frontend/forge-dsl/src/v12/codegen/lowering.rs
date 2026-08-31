@@ -318,10 +318,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         // sret_ptr = 首个 GPR 参数槽（Windows x64：隐藏 sret 参数占 RCX）。
         // 生成期门控：语义标签缺失（riscv）→ Unsupported。
         let sret_return_body: TokenStream = if has_byref_insts {
-            let (vn_s32, f_s32, m_s32, i_s32) =
-                _byref_insts.get("wide_vec_store_32").expect("tag store32").clone();
-            let (vn_s64, f_s64, m_s64, i_s64) =
-                _byref_insts.get("wide_vec_store_64").expect("tag store64").clone();
+            let (vn_s32, f_s32, m_s32, i_s32) = _byref_insts
+                .get("wide_vec_store_32")
+                .expect("tag store32")
+                .clone();
+            let (vn_s64, f_s64, m_s64, i_s64) = _byref_insts
+                .get("wide_vec_store_64")
+                .expect("tag store64")
+                .clone();
             quote! {
                 // sret_ptr 来自首 int 参数槽（x86 arg_class int 首项 = RCX）
                 let __sret = Reg::from_index(
@@ -490,25 +494,24 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // Unreachable terminator（rustc 死代码/oom shim）：按 effect=Trap 标签
     // 收集指令（语义驱动，不做按名探测）——x86 UD2 / riscv EBREAK；
     // 取无操作数形态；缺失 → Unsupported。
-    let unreachable_body: TokenStream =
-        match infos
-            .iter()
-            .find(|i| i.inst.effect.iter().any(|e| e == "Trap") && i.operands.is_empty())
-        {
-            Some(info) => {
-                let vn = &info.vn;
-                quote! {
-                    __pack.push_inst(Inst::#vn);
-                    Ok(__pack)
-                }
+    let unreachable_body: TokenStream = match infos
+        .iter()
+        .find(|i| i.inst.effect.iter().any(|e| e == "Trap") && i.operands.is_empty())
+    {
+        Some(info) => {
+            let vn = &info.vn;
+            quote! {
+                __pack.push_inst(Inst::#vn);
+                Ok(__pack)
             }
-            None => quote! {
-                let _ = __pack;
-                Err(crate::prelude::IrError::Unsupported(
-                    "v12 unreachable lowering (no trap inst with effect=Trap)".into(),
-                ))
-            },
-        };
+        }
+        None => quote! {
+            let _ = __pack;
+            Err(crate::prelude::IrError::Unsupported(
+                "v12 unreachable lowering (no trap inst with effect=Trap)".into(),
+            ))
+        },
+    };
 
     // 无任何 terminator 指令（riscv 等）→ 直接 Err 版本（避免 __pack 未使用/不可达）
     let term_impl: TokenStream = if has_ret || has_jmp || has_jcc {
@@ -779,11 +782,7 @@ fn gen_call_lowering(
     // ABI 槽位规则（[abi].arg_slot）：by-position（Windows x64——
     // int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）/ by-class
     //（缺省 riscv SysV——int/float 独立推进）。
-    let by_position = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.arg_slot.as_deref())
-        == Some("by-position");
+    let by_position = model.abi.as_ref().and_then(|a| a.arg_slot.as_deref()) == Some("by-position");
     // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
     let ret_src_expr: TokenStream = abi
         .ret_regs
@@ -1447,7 +1446,7 @@ fn arg_move_loop(
 
 /// 按语义标签收集指令——标签在 TOML `tags` 显式声明（第三轮重构原则：
 /// **不做按指令名/前缀的存在性探测**，语义由标签驱动）。无匹配 → 空。
-pub(crate) fn insts_by_tag<'a, 'b>(infos: &'a [InstInfo<'a>], tag: &'b str) -> Vec<&'a InstInfo<'a>> {
+pub(crate) fn insts_by_tag<'a>(infos: &'a [InstInfo<'a>], tag: &str) -> Vec<&'a InstInfo<'a>> {
     infos
         .iter()
         .filter(|i| i.inst.tags.iter().any(|t| t == tag))
@@ -1472,10 +1471,8 @@ fn reg_mem_fids(info: &InstInfo) -> (Option<syn::Ident>, Option<syn::Ident>, u8)
                 }
                 seen_regs += 1;
             }
-            OperandKind::Mem => {
-                if mem.is_none() {
-                    mem = Some((*fid).clone());
-                }
+            OperandKind::Mem if mem.is_none() => {
+                mem = Some((*fid).clone());
             }
             _ => {}
         }
@@ -1486,6 +1483,7 @@ fn reg_mem_fids(info: &InstInfo) -> (Option<syn::Ident>, Option<syn::Ident>, u8)
 /// 收集宽向量 by-ref/sret 栈拷贝指令——按语义标签（TOML `tags` 显式声明，
 /// 不做按指令名探测）。返回 (tag → (vn, Reg 字段名, Mem 字段名, Reg 序号),
 /// 是否五标签齐全)。缺失 → 对应 ABI 能力 Unsupported。
+#[allow(clippy::type_complexity)]
 pub(crate) fn collect_byref_insts(
     infos: &[InstInfo],
 ) -> (
