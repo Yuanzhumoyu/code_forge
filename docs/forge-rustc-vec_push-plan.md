@@ -157,8 +157,24 @@ iconst 常量实参/Fstore 栈槽中转全对），主库等价 IR 全部执行�
 | f64 参数栈槽中转（Fstore/Fload） | test_jit_f64_param_via_stack_slot ✓ |
 | fconst 实参 / mixed by-position / fcmp→branch / 组合 / fib / select | ✓ |
 
-### ✅ 已修复（2026-09 reloc/对齐/双返回三连击，e2e 30→51/58）
+### ✅ vec_push 转正（54399c9，2026-09）——e2e 57/58
 
+**根因（E3 定位）**：ScalarPair 拆分 + 高压 spill 下，entry vreg 无 preg
+（被 spill）时 move_args 跳过收参（`!assignments.contains_key → continue`）
+——但 mod.rs 210-234 仍用 entry_params 写 locals 槽 → 槽读垃圾（grow
+链 new_cap/指针值错 → copy dst=0 崩溃）。
+
+**修复**：move_args 对 spilled 的寄存器参数（位置 < n，int 类）显式收参
+到 spill 槽（load ABI 寄存器 → scratch → store 槽，`#spilled_int_receive`，
+与栈参数中转同构）；`__pos` 移循环开头统一计算（sret 偏移一致）。
+
+**验证**：vec_push（Vec::new+2 push 触发 grow）exit=2 转正（known_failure
+移除）；jit 80 / forge-dsl 51 / forge-tests 36 / mini_c 162 全绿。
+**vec_string 仍 known**（exit=0，len 读错）：`String::from(&str)` 走
+sret 返回（String=Vec<u8> 24B）+ ScalarPair &str 参数——to_vec::<Global>
+sret 返回链为下一候选。
+
+### ✅ 已修复（2026-09 reloc/对齐/双返回三连击，e2e 30→51/58）
 | 根因 | 修复 | 提交 |
 | --- | --- | --- |
 | **COFF reloc 隐式 addend**：编码器占位 -(f+1)/-(g+1) 作为隐式 addend 残留 → call 目标偏 -1（0x10d0 vs wrapping_add 0x10d1）、GlobalAddr 符号地址偏 -1（movabs 0x2fff vs .rodata 0x3000） | object_writer.rs：REL32/ADDR64/ADDR32 在 add_relocation 前清零被重定位字段；REL32 保持 addend-4 补偿（coff_adjust_addend +4 净 0 不覆盖） | 16bec80 |
