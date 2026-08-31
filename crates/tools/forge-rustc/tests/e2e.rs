@@ -1061,6 +1061,31 @@ const CASES: &[Case] = &[
         phase: "C1 dwarf",
         reason: "",
     },
+    // ── F2 负向测试：编译失败断言（失败即报错）──
+    Case {
+        name: "neg_global_asm",
+        body: "42",
+        expected: -1,
+        extra: "core::arch::global_asm!(\"nop\");",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "global_asm",
+        known_failure: false,
+        phase: "F2 neg",
+        reason: "MonoItem::GlobalAsm → dcx().err（WA-03）",
+    },
+    Case {
+        name: "neg_std_program",
+        body: "let s = String::from(\"hi\"); s.len() as i32",
+        expected: -1,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "F2 neg",
+        reason: "std 程序（no_std 上下文用 String）→ 编译失败（std 未链接/未声明 extern crate std）",
+    },
 ];
 
 /// 生成 no_std 程序源码。
