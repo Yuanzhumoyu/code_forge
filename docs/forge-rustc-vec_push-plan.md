@@ -243,6 +243,46 @@ store 用 scratch（垃圾）→ **spill 槽写入垃圾**（崩溃槽 [-0x500]=
 3. 或 def-spill 返回占位后，Call/LEA 等固定寄存器指令强制 result 在
    寄存器（不 spill）。
 
+### 🔬 E2 反例（2026-09 续，locals × 栈参数交互）
+
+**five_wb 反例**：`f(g: i64, p: i64, l1: Layout, l2: Layout, z: bool)` +
+函数体局部数组 `buf: [u8; 16]` + write_bytes(buf, 0xAB, l1.size()) +
+返回 buf[0] + l2.size() → **实测 171（want 179）**：l1.size()=8 对
+（write_bytes 写 8 字节 ✓）、**l2.size()=0 错**（+8 缺失）。
+
+**对照**：f=9 用例（同签名、无 locals）→ l2.size()=4 正确 ✓。
+
+**结论**：**被调方有 locals（StackAddr）时，栈参数（位置 ≥ n）的
+ScalarPair 值错**（l2 是第二个 Layout，位置 5/6 走栈）——locals 与
+栈参数收参/帧布局交互（候选：move_args 的栈参数 load 地址、或
+locals 槽与栈参数区在 frame 内重叠）。这与 vec_push 的
+grow_impl_runtime（大量 locals + 双 Layout 栈参数）崩溃同源。
+
+**下一步**：用 five_wb 最小反例（已可复现 171≠179）逐指令对比
+l2.size() 的读取链（反汇编 f 的 prologue 栈参数收参 + l2 投影）。
+
+### 🔬 E3 定位（2026-09 续，move_args 收参不完整）
+
+**f 的反汇编**（five_wb，0x108d 起）：prologue 只收 2 个寄存器参数
+（`mov rcx→r15; mov rdx→r14`）——**r8/r9（l1_lo/l1_hi）和栈参数
+（l2_lo/l2_hi/z）完全未收**。f 有 7 个位置参数（ScalarPair 拆分），
+但 move_args 只处理了前 2 个。
+
+**原因链**：
+1. `param_vregs`（entry XReg，ScalarPair 拆分后 7 项）与
+   `param_is_float`/`param_by_ref`（按 param_xregs 构建，7 项）**长度
+   一致** ✓；
+2. 但 move_args 外层循环 `if !assignments.contains_key(&__pv) → continue`
+   ——**entry vreg 无 preg（被 spill 或 dead）时跳过收参**；
+3. f 内 l1_lo/l1_hi 的 entry vreg 被 spill（寄存器压力）→ 跳过 →
+   **但 mod.rs 210-234 仍用 entry_params 写槽** → 槽读垃圾；
+4. **l2（位置 4/5 栈参数）依赖 move_args 的栈 load**——若该 vreg 也无
+   preg → 栈 load 分支（要求 spill_slots 有槽）可能走或不走。
+
+**待解问题**：为何 l1（寄存器，r8/r9）值对而 l2（栈）值错？以及
+spill 的 entry vreg 如何正确收参（move_args 需把 ABI 值写入 spill 槽，
+而非跳过）。
+
 ### 下一步候选（按优先级）
 
 1. **vec_push E1 启动**（阻塞线已通）：跨函数 call reloc 已修，grow 链

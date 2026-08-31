@@ -532,9 +532,9 @@ const CASES: &[Case] = &[
         expected: 2,
         extra: "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;",
         entry: "mainCRTStartup",
-        known_failure: true,
+        known_failure: false,
         phase: "P2",
-        reason: "2026-08 复验（十九轮深挖）：**maxmin 实验推翻上轮假设**——`Ord::max/min` 本身降级正确（0.max(1)=1、0.min(1)=0，maxmin=10 PASS）——**cap=0 不是 max 分支 merge 错**；cap 槽=0 根因收敛为 **grow_amortized 的 new_cap 计算/实参错**（两个 max 调用（dest=12/16）+ `_17=const 8/4/1` 候选——required_cap（len+additional）或 cap*2 的实参值错）；**新现象**：vecwc2（with_capacity(2)+2 push 触发 grow）**挂起 124**（死循环）——grow 链「值错（cap=0/len=5）与挂起」输入敏感交替——grow 链内部多路径错误（需 gdb 断点/指令级逐路径定位）",
+        reason: "2026-09 转正：Windows x64 栈参数（5dba34b）+ spilled 寄存器参数收参到 spill 槽（move_args 的 #spilled_int_receive——mod.rs 210 写槽依赖 entry vreg 值）——grow 链（RawVec grow_amortized/finish_grow/Global::grow_impl_runtime）在栈参数 + 高压 spill 下正确执行，exit=2",
     },
     Case {
         name: "vec_string",

@@ -902,7 +902,6 @@ fn gen_emit_pseudo(
                     // spill 槽（regalloc 强制 spill 保证有槽；即使分配了 preg
                     // 也不走寄存器分支——否则与低位置参数共享寄存器时，批量
                     // 收参顺序覆盖（a→r15 后 e→r15，a 值丢）→ five_args 14）。
-                    let __pos = __i + if __rm.sret { 1usize } else { 0usize };
                     if let Some(__shadow) = #stack_shadow_ref
                         && __pos >= #n
                         && __rm.spill_slots.contains_key(&__pv)
@@ -938,6 +937,45 @@ fn gen_emit_pseudo(
             } else {
                 quote! {}
             };
+            // spilled 的寄存器参数（位置 < n）收参到 spill 槽：ABI 寄存器
+            // 值 → scratch → spill 槽。需要 MOV 指令（int_stack_load 是
+            // mem→reg，这里 reg→reg 用 mov_vn）+ stack_arg_store（reg→mem）。
+            // 无栈参数 ISA（riscv/demo）也有 spilled 参数 → 用通用 mov/spill
+            // 模板（inst 存在性检查兜底：无 mov 时跳过）。
+            let has_mov_inst = inst_exists(infos, "MOV_RM8_R64");
+            let spilled_int_receive: TokenStream = if has_stack_arg && has_mov_inst {
+                quote! {
+                    // 位置 < n 的 spilled 寄存器参数：load ABI 寄存器 → scratch
+                    // → spill 槽（mod.rs 210 写槽依赖 entry vreg 值正确）
+                    if __pos < #n
+                        && !__rm.param_is_float.get(__i).copied().unwrap_or(false)
+                        && __rm.spill_slots.contains_key(&__pv)
+                    {
+                        let __src = [#(Reg::#regs),*][__pos];
+                        let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
+                        let __slot_off = __rm.spill_slot(__pv).offset as i64;
+                        // ABI 寄存器 → scratch（用参数移动指令 mov_vn）
+                        let __lbytes = encode(&Inst::#mov_vn {
+                            #m_src: __src,
+                            #m_dest: __scratch0,
+                        }).map_err(|e| crate::IrError::Emit(e))?;
+                        __sink.put_bytes(&__lbytes);
+                        // scratch → spill 槽
+                        let __sbytes = encode(&Inst::#int_stack_store {
+                            #is_mem: MemRef {
+                                base: Reg::RBP,
+                                disp: __sp_base + __slot_off,
+                                index: None,
+                                scale: 1,
+                            },
+                            #is_reg: __scratch0,
+                        }).map_err(|e| crate::IrError::Emit(e))?;
+                        __sink.put_bytes(&__sbytes);
+                    }
+                }
+            } else {
+                quote! {}
+            };
             let stack_arg_prologue: TokenStream = if has_stack_arg {
                 quote! {
                     let __scratch0 = Reg::#scratch0;
@@ -952,8 +990,15 @@ fn gen_emit_pseudo(
                 // 字节数（sp_base 计算）——仅 shadow 声明时使用
                 #stack_arg_prologue
                 for (__i, &__pv) in __rm.param_vregs.iter().enumerate() {
+                    // 位置（sret 时首槽被隐藏指针占用）
+                    let __pos = __i + if __rm.sret { 1usize } else { 0usize };
                     #stack_arg_receive
                     if !__rm.assignments.contains_key(&__pv) {
+                        // spilled 的寄存器参数（位置 < n，int 类）：move_args
+                        // 必须把 ABI 寄存器值写入 spill 槽（否则 mod.rs 210 写
+                        // 槽读垃圾 → l1/l2.size() 值错）。与栈参数中转同构：
+                        // load ABI 寄存器 → scratch → store spill 槽。
+                        #spilled_int_receive
                         continue;
                     }
                     let __dest = match __rm.preg(__pv) {
