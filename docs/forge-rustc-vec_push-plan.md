@@ -185,6 +185,20 @@ mixed_args 全部转正。剩余 2 known：vec_push（exit=-1073741819，运行�
 =0x10，空指针偏移）——grow_amortized 的 LAYOUT 聚合常量实参（ScalarPair
 16B）传参路径为下一候选（`Alignment` 新 nightly 类型交互）。
 
+### ✅ E1 增量（2026-09 栈参数后）
+
+- **参数形态已排除**：f(i32, Layout, i32)=7 ✓、f(i64, i64, Layout, Layout,
+  bool)=9 ✓——ScalarPair Layout 参数 + 栈参数组合完全正确（grow_impl_
+  runtime 的 5 参数形态等价验证通过）。
+- **崩溃收敛到函数体内**：grow_impl_runtime 调 __rust_realloc 后写
+  [r11]，r11 从深栈槽 [-0x500(%rbp)] 读出为 0/0x10（垃圾值，运行间不同）
+  ——**栈槽被写坏或读未初始化**。bt 显示返回地址栈被破坏。
+- **下一候选**：regalloc **def-spill 占位 PReg(0)**（RAX）——emission 对
+  spilled def 用 scratch 写入本应安全，但占位返回值与 active/assignment
+  交互可能产生错位（需 FORGE_TRACE_SPILL 逐 spill 点核对槽地址）；或
+  grow_impl_runtime 内 **Result<NonNull, AllocError> sret 返回**（16B
+  聚合 + 栈参数混合场景）。
+
 ### 下一步候选（按优先级）
 
 1. **vec_push E1 启动**（阻塞线已通）：跨函数 call reloc 已修，grow 链
