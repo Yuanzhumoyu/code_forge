@@ -165,9 +165,25 @@ iconst 常量实参/Fstore 栈槽中转全对），主库等价 IR 全部执行�
 | **Windows x64 栈 16 字节对齐**：prologue push rbp+7 callee-saved 后 rsp%16==8，sub rsp 需 ≡8(mod16)；缺省 padding 0 → 系统 DLL 内 movdqa 未对齐 SEGV（ffi_exit_process 0xC0000005） | `[abi].frame_padding = 8`（模型+生成器+TOML 声明） | 16bec80 |
 | **ScalarPair 双返回**：Return/Call 只处理 results.first()（RAX），RDX 从未 mov → overflowing_add 的 (i32,bool) bool 读垃圾 → checked_destructure 返回 0 | lowering.rs：Return values[1]→RDX、Call results[1]←RDX（GPR64 index 1） | 16bec80 |
 
-**e2e 现状 51/58**：剩余 5 compile failed 均为预期限制（five_args_stack/
-eight_args_stack/mixed_args = Windows x64 第 5+ 参数栈传未实现；box_value/
-box_write = 依赖 #[global_allocator] 前端语义）+ 2 known（vec_push/vec_string）。
+**e2e 现状 56/58**：栈参数实现（5dba34b）后 five_args_stack/eight_args_stack/
+mixed_args 全部转正。剩余 2 known：vec_push（exit=-1073741819，运行期崩溃
+——**阻塞线打通：从 compile failed 变为真实执行到 grow 链崩溃点**，E1 可
+直接指令级定位）+ vec_string（exit=0，同源）。
+
+### ✅ 栈参数（P2 ABI，5dba34b）——vec_push 阻塞线打通
+
+| 组件 | 实现 |
+| --- | --- |
+| TOML | `[abi].stack_arg_shadow = 32` + MOV64_RM/MR 加 `stack_arg_load/store` 标签 |
+| 调用方 | 第 5+ 参数 store [rsp+shadow+(k-n)*8]（标签驱动，不用指令名） |
+| 被调方 | 从 [rbp+16+shadow+(k-n)*8] load 到 spill 槽（无条件，防共享寄存器批量覆盖） |
+| 帧布局 | frame_size 并入栈参数区；spill 槽起始上移 stack_args |
+| regalloc | 栈参数强制 spill（param_reg_count）；def 无死值可驱逐时 spill 自己（emission scratch 写入） |
+| ArgClassKind | ArgClass.class String → 枚举（int/float/vector/other，serde lowercase） |
+
+**vec_push 当前崩溃点（E1 起点）**：grow 链写 [0x10]（r11 从深栈槽读出
+=0x10，空指针偏移）——grow_amortized 的 LAYOUT 聚合常量实参（ScalarPair
+16B）传参路径为下一候选（`Alignment` 新 nightly 类型交互）。
 
 ### 下一步候选（按优先级）
 
