@@ -976,6 +976,30 @@ const CASES: &[Case] = &[
         phase: "D intrinsics",
         reason: "",
     },
+    Case {
+        name: "atomic_i64",
+        body: "static A: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(100); let old = A.fetch_add(50, core::sync::atomic::Ordering::Relaxed); (if old == 100 { 1000 } else { 0 }) + A.load(core::sync::atomic::Ordering::Relaxed) as i32",
+        expected: 1150, // old=100、内存=150（i64 原子路径，opsize 64）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    Case {
+        name: "static_mut_write",
+        body: "static mut X: i32 = 5; unsafe { X += 7; X }",
+        expected: 12,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "D intrinsics",
+        reason: "WA-21：`_1 = const {&X}` 的 store_place(_1) 缺失（_1 槽读垃圾 0x7ff6… → 写 [垃圾] SEGV；固定基址仍崩）——主库 store 值处理在高压/多分支形态缺失（与 WA-20 同源）",
+    },
     // ── F1 扩编：迭代器 / 字符串 / 数组 of 结构体 / 聚合传参──
     Case {
         name: "slice_iter_sum",
@@ -1059,7 +1083,7 @@ const CASES: &[Case] = &[
         expect_compile_err: "",
         known_failure: true,
         phase: "F1 control",
-        reason: "WA-20（主库 regalloc 同块 def/use 重叠）：spec_next 的 `_5 = copy (*_1).0` 中 load(start) 结果与 store 目标 lea 同寄存器 r15，lea 覆盖 start 后 store 存地址值 → _5 槽恒 0 → 解包 val 恒 0/主循环死循环（判别层已修，剩 regalloc 重叠；JIT 探针 test_jit_store_load_value_under_pressure 未触发）",
+        reason: "WA-20（Range 迭代链未初始化值）：sentinel 实证 mainCRTStartup 循环 >1000 次（0xDEAD）；spec_next 反汇编正确（当前 dll）；常量/变量 ExitProcess 参数产物行为分叉（非确定）——判别层已修，疑似 next 包装返回/pack_sp 解包偏移未初始化，待查",
     },
     Case {
         name: "match_str_result",
