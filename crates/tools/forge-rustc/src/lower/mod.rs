@@ -254,7 +254,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             self.builder.switch_to_block(block_id);
 
             for stmt in &bb_data.statements {
-                self.lower_statement(stmt)?;
+                // A4：错误增强——附函数名 + bb 序号 + 语句 Debug（否则深层
+                // lowering 的裸错误无法定位到具体 MIR 语句）。
+                self.lower_statement(stmt).map_err(|e| {
+                    ForgeError::Message(format!(
+                        "{} bb{bb_idx}: {} [stmt: {stmt:?}]",
+                        self.fn_name, e
+                    ))
+                })?;
             }
 
             if crate::trace::trace_enabled("TERM") {
@@ -545,17 +552,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         args.first().copied().map(|a| vec![a]).unwrap_or_default();
                                     self.builder.call_indirect(fn_ptr, &method_args, &ret_tys)
                                 } else {
-                                    // P4.1 一致性校验：直接调用实例的传参展开
-                                    // 数与 rustc FnAbi 精确形态一致（debug 构建）
                                     // P4.1：按 rustc FnAbi 补齐参数（track_caller
-                                    // 隐藏 &Location 等），否则被调方收参错位
+                                    // 隐藏 &Location 等），否则被调方收参错位。
+                                    // A2：补齐后做 arg count 一致性校验（release
+                                    // 也生效，FORGE_STRICT_ABI=0 可关闭）。
                                     let args = crate::abi::pad_call_args(
                                         self.tcx,
                                         &instance,
                                         args,
                                         || self.builder.iconst(0, TypeId::I64),
                                     );
-                                    #[cfg(debug_assertions)]
                                     crate::abi::check_arg_count_consistency(
                                         self.tcx,
                                         &instance,

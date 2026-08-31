@@ -162,15 +162,19 @@ pub(crate) fn fn_abi_kinds<'tcx>(
     Some((args, ret))
 }
 
-/// debug-only 一致性校验（P4.1）：本后端按类型判定的参数展开数
-/// 必须与 rustc FnAbi 精确形态一致。不一致即 panic（开发期捕获 ABI 漂移）。
-#[cfg(debug_assertions)]
+/// ABI 一致性校验（A2）：本后端按类型判定的参数展开数必须与 rustc FnAbi
+/// 精确形态一致。不一致即 panic（编译期捕获 ABI 漂移——release 构建同样
+/// 生效，不再仅 debug）。可用 `FORGE_STRICT_ABI=0` 关闭（不推荐，仅供
+/// 上游 API 漂移过渡期绕过）。
 pub(crate) fn check_arg_count_consistency<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: &Instance<'tcx>,
     actual_arg_count: usize,
     ctx: &str,
 ) {
+    if std::env::var_os("FORGE_STRICT_ABI").map_or(false, |v| v == "0") {
+        return;
+    }
     let Some((kinds, ret_kind)) = fn_abi_kinds(tcx, instance) else {
         return;
     };
@@ -189,7 +193,7 @@ pub(crate) fn check_arg_count_consistency<'tcx>(
         // 误报 "expects 3, packs 4"。
         expected += 1;
     }
-    debug_assert_eq!(
+    assert_eq!(
         expected, actual_arg_count,
         "[forge] ABI arg count mismatch in {ctx} for {instance:?}: \
          rustc FnAbi expects {expected} (modes {kinds:?}), forge packs {actual_arg_count}"

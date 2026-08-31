@@ -147,7 +147,8 @@ impl CodegenBackend for CodegenLibBackend {
                     }
                 }
                 MonoItem::GlobalAsm(_) => {
-                    tcx.dcx().err("code-forge: global_asm not supported");
+                    // A4：报错附 WA 编号（WORKAROUNDS.md 机读清单）。
+                    tcx.dcx().err("code-forge: global_asm not supported [WA-03]");
                 }
             }
         }
@@ -248,6 +249,9 @@ impl CodegenBackend for CodegenLibBackend {
 }
 
 /// 使用 rustc 单态化收集所有需要代码生成的实例（函数 + 静态数据）。
+/// 返回按符号名排序的实例列表（A1 确定性：消除 rustc CGU 顺序/内部
+/// HashMap 遍历对函数布局与 FuncRef 序号分配的影响——同一输入两次
+/// 编译除地址外产物一致，便于回归比对与可复现调试）。
 fn collect_instances<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<MonoItem<'tcx>> {
     let partitions = tcx.collect_and_partition_mono_items(());
 
@@ -263,7 +267,7 @@ fn collect_instances<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<MonoItem<'tcx>> {
         "__rust_realloc",
         "__rust_alloc_zeroed",
     ];
-    partitions
+    let mut items: Vec<MonoItem<'tcx>> = partitions
         .codegen_units
         .iter()
         .flat_map(|cgu| cgu.items().iter().map(|(item, _)| *item))
@@ -277,5 +281,42 @@ fn collect_instances<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<MonoItem<'tcx>> {
             }
             _ => true,
         })
-        .collect()
+        .collect();
+    // A1：稳定排序——GlobalAsm 排最后（会报错终止），其余按 mangled 符号名。
+    items.sort_by(|a, b| mono_item_sort_key(tcx, *a).cmp(&mono_item_sort_key(tcx, *b)));
+    items
+}
+
+/// MonoItem 的确定性排序键：mangled 符号名（GlobalAsm 恒排最后）。
+fn mono_item_sort_key<'tcx>(tcx: TyCtxt<'tcx>, item: MonoItem<'tcx>) -> String {
+    match item {
+        MonoItem::Fn(instance) => {
+            let def_id = instance.def_id();
+            let instantiating_crate = if def_id.is_local() {
+                rustc_hir::def_id::LOCAL_CRATE
+            } else {
+                def_id.krate
+            };
+            rustc_symbol_mangling::symbol_name_for_instance_in_crate(
+                tcx,
+                instance,
+                instantiating_crate,
+            )
+            .to_string()
+        }
+        MonoItem::Static(def_id) => {
+            let instantiating_crate = if def_id.is_local() {
+                rustc_hir::def_id::LOCAL_CRATE
+            } else {
+                def_id.krate
+            };
+            rustc_symbol_mangling::symbol_name_for_instance_in_crate(
+                tcx,
+                ty::Instance::mono(tcx, def_id),
+                instantiating_crate,
+            )
+            .to_string()
+        }
+        MonoItem::GlobalAsm(_) => "\u{10ffff}".to_string(),
+    }
 }

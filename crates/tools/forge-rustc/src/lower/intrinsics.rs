@@ -149,8 +149,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 }
             }
             _ => {
+                // A4：unsupported intrinsic 报错附函数名（定位到具体调用点）。
                 return Err(ForgeError::Message(format!(
-                    "unsupported intrinsic: {name}"
+                    "{}: unsupported intrinsic: {name}",
+                    self.fn_name
                 )));
             }
         };
