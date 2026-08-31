@@ -17,6 +17,13 @@ pub trait TargetABI: Send + Sync + 'static {
     /// 参数传递寄存器（按顺序）。
     fn arg_regs(&self) -> Vec<Self::Reg>;
 
+    /// 寄存器参数位置上限（by-position：int/float 共享位置计数，位置
+    /// < 此值走寄存器、≥ 此值走栈——Windows x64 = 4 个 int 槽）。缺省
+    /// = arg_regs().len()（全部参数寄存器传参，无栈参数）。
+    fn int_arg_slot_count(&self) -> usize {
+        self.arg_regs().len()
+    }
+
     /// 返回值寄存器（按顺序）。
     fn ret_regs(&self) -> Vec<Self::Reg>;
 

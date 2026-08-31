@@ -228,6 +228,10 @@ pub struct LowerCtx {
     /// calculate_frame_size 必须把它算进 sub rsp 的帧大小，否则局部槽落在
     /// rsp 之下（Windows 无 red zone）→ 写栈越界 SEGV（mini_c 参数内联场景）。
     pub max_stack_bytes: u32,
+    /// 栈参数区需求（shadow space + 第 5+ 参数槽字节数）：调用方在 call 前
+    /// 把超寄存器参数 store 到 [rsp+shadow+off]，帧底之上必须预留该区域
+    ///（frame_size 并入；否则写穿 rsp 之下 → SEGV）。缺省 0（无栈参数）。
+    pub max_stack_arg_bytes: u32,
     /// 临时 VReg 集合（替代 VReg(96-100) 硬编码）。
     pub temp_vregs: HashSet<VReg>,
     /// 零值 VReg（复用，避免重复分配）。
@@ -314,6 +318,7 @@ impl LowerCtx {
             callee_saved_bytes: 0,
             stack_slot_shift: 0,
             max_stack_bytes: 0,
+            max_stack_arg_bytes: 0,
             vreg_classes: HashMap::new(),
             vreg_types: HashMap::new(),
             vreg_widths: HashMap::new(),

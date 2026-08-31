@@ -1039,12 +1039,16 @@ name = "MOV64_RM"
 form = "MRR_MEMREF"
 opcode = 0x8B
 asm = "mov64rm {0:[gpr:out]}, {1:[mem:in]}"
+# 被调方栈参数 load（[abi].stack_arg_shadow 启用时从 [rbp+off] 收第 5+ 参数）
+tags = ["stack_arg_load"]
 
 [[instructions]]
 name = "MOV64_MR"
 form = "MRR_MEMREF"
 opcode = 0x89
 asm = "mov64mr {1:[mem:in]}, {0:[gpr:in]}"
+# 调用方栈参数 store（[abi].stack_arg_shadow 启用时第 5+ 参数写 [rsp+off]）
+tags = ["stack_arg_store"]
 
 [[instructions]]
 name = "MOVSD_RM"
@@ -1851,6 +1855,9 @@ stack_align = 16
 frame_padding = 8
 # Windows x64：int/float 参数共享位置计数（参数 i → GPR{i}/XMM{i}）
 arg_slot = "by-position"
+# Windows x64 shadow space（caller 在 call 前预留 32 字节；被调方
+# 第 5+ 参数在 [rbp+0x30+(k-4)*8]，调用方写 [rsp+0x20+(k-4)*8]）
+stack_arg_shadow = 32
 # 溢出 scratch（spill load/store 用；R10/R11）
 scratch = ["R10", "R11"]
 

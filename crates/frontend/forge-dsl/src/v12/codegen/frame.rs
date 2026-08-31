@@ -22,6 +22,24 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
         .as_ref()
         .and_then(|a| a.frame_padding)
         .unwrap_or(0);
+    // 寄存器参数位置上限：int arg_class 的寄存器个数（Windows x64 = 4；
+    // 位置 ≥ 此值走栈）。by-class（riscv）无栈参数 → 全部 arg_regs 数。
+    let int_arg_slot_count = model
+        .abi
+        .as_ref()
+        .and_then(|a| {
+            a.arg_class
+                .iter()
+                .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
+                .map(|ac| ac.regs.len())
+        })
+        .unwrap_or_else(|| {
+            model
+                .abi
+                .as_ref()
+                .map(|a| a.arg_class.iter().map(|ac| ac.regs.len()).sum())
+                .unwrap_or(0)
+        });
     let mut arg_regs: Vec<TokenStream> = Vec::new();
     let mut by_ref_limit: Option<u32> = None;
     if let Some(abi) = &model.abi {
@@ -38,7 +56,7 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
                 if bits % 8 != 0 {
                     return Err(format!(
                         "[abi.arg_class.{}]: by-ref limit {bits} 不是 8 的倍数（应为位宽）",
-                        ac.class
+                        ac.class.name()
                     ));
                 }
                 by_ref_limit = Some(bits / 8);
@@ -101,6 +119,7 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
             fn min_frame_bytes(&self) -> u32 { #min_frame }
             fn callee_saved_bytes_override(&self) -> Option<u32> { #csb_toks }
             fn stack_slot_shift(&self) -> Option<i32> { #sss_toks }
+            fn int_arg_slot_count(&self) -> usize { #int_arg_slot_count }
         }
     })
 }
@@ -427,6 +446,24 @@ fn gen_emit_pseudo(
     model: &V12Model,
     name: &str,
 ) -> Result<TokenStream, String> {
+    // callee-saved 区字节数（生成期常量，与 frame_layout::callee_saved_bytes
+    // 一致：fp 保存槽 + callee-saved × 8）——move_args 收 spilled 栈参数时
+    // 计算 spill 槽地址 sp_base = -(frame) - callee_saved + stack_arg_bytes。
+    let callee_saved_bytes_lit: i64 = {
+        let fp_push = model
+            .abi
+            .as_ref()
+            .and_then(|a| a.frame.as_ref())
+            .and_then(|f| f.fp_push_bytes)
+            .unwrap_or(8) as i64;
+        let cs = model
+            .abi
+            .as_ref()
+            .and_then(|a| a.callee_saved.as_ref())
+            .map(|c| c.gpr.len() as i64 * 8)
+            .unwrap_or(0);
+        fp_push + cs
+    };
     match name {
         "push_callee" | "pop_callee" => {
             let Some(abi) = &model.abi else {
@@ -549,7 +586,7 @@ fn gen_emit_pseudo(
             let int_regs: Vec<&String> = abi
                 .arg_class
                 .iter()
-                .find(|ac| ac.class == "int")
+                .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
                 .map(|ac| ac.regs.iter().collect())
                 .unwrap_or_default();
             if int_regs.is_empty() {
@@ -561,7 +598,7 @@ fn gen_emit_pseudo(
             let float_regs: Vec<syn::Ident> = abi
                 .arg_class
                 .iter()
-                .find(|ac| ac.class == "float")
+                .find(|ac| ac.class == crate::v12::model::ArgClassKind::Float)
                 .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
                 .unwrap_or_default();
             let fn_ = float_regs.len();
@@ -579,6 +616,79 @@ fn gen_emit_pseudo(
                 .ok_or_else(|| {
                     format!("[{move_inst}] must have In(src)/Out|InOut(dest) reg operands")
                 })?;
+            // Windows x64 栈参数 load：按语义标签 `stack_arg_load` 收集
+            //（TOML 显式声明，不做按指令名探测——第三轮重构原则）。
+            // 生成期门控：shadow 已声明但标签缺失 → Unsupported。
+            let stack_shadow_ref: TokenStream = match model.abi.as_ref().and_then(|a| a.stack_arg_shadow) {
+                Some(v) => quote! { Some(#v) },
+                None => quote! { None },
+            };
+            let stack_load_tagged = crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_load");
+            let stack_store_tagged = crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_store");
+            let (int_stack_load, il_mem, il_reg) =
+                if model.abi.as_ref().and_then(|a| a.stack_arg_shadow).is_some() {
+                    match stack_load_tagged.first() {
+                        Some(info) => {
+                            let (reg, mem, _reg_idx) =
+                                crate::v12::codegen::lowering::reg_mem_fids(info);
+                            match (reg, mem) {
+                                (Some(r), Some(m)) => (
+                                    crate::v12::codegen::pascal_ident(&info.inst.name),
+                                    m,
+                                    r,
+                                ),
+                                _ => {
+                                    return Err("move_args: [stack_arg_load] tag must be on Reg+Mem inst".into())
+                                }
+                            }
+                        }
+                        None => {
+                            return Err(
+                                "move_args: stack_arg_shadow declared but [stack_arg_load] tag missing"
+                                    .into(),
+                            )
+                        }
+                    }
+                } else {
+                    (format_ident!("Mov64Rm"), format_ident!("mem"), format_ident!("dest"))
+                };
+            // spilled 栈参数 store（ABI 槽 → spill 槽中转用 MOV64_MR：
+            // Reg 槽 op0、Mem 槽 op1，与调用方 store 同标签）
+            let (int_stack_store, is_mem, is_reg) =
+                if model.abi.as_ref().and_then(|a| a.stack_arg_shadow).is_some() {
+                    match stack_store_tagged.first() {
+                        Some(info) => {
+                            let (reg, mem, _reg_idx) =
+                                crate::v12::codegen::lowering::reg_mem_fids(info);
+                            match (reg, mem) {
+                                (Some(r), Some(m)) => (
+                                    crate::v12::codegen::pascal_ident(&info.inst.name),
+                                    m,
+                                    r,
+                                ),
+                                _ => {
+                                    return Err("move_args: [stack_arg_store] tag must be on Reg+Mem inst".into())
+                                }
+                            }
+                        }
+                        None => {
+                            return Err(
+                                "move_args: stack_arg_shadow declared but [stack_arg_store] tag missing"
+                                    .into(),
+                            )
+                        }
+                    }
+                } else {
+                    (format_ident!("Mov64Mr"), format_ident!("mem"), format_ident!("src"))
+                };
+            // 栈参数收参的 scratch 寄存器（[abi].scratch 首项，缺省 R10）
+            // 与 callee-saved 区字节数（sp_base 计算常量）。
+            let scratch0 = abi
+                .scratch
+                .first()
+                .map(|s| format_ident!("{s}"))
+                .unwrap_or_else(|| format_ident!("R10"));
+            let cs_bytes = callee_saved_bytes_lit;
             // 浮点参数移动：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键
             //（缺省 "MOVSD"/"MOVSS"；fpr out, fpr in）。
             let fpr_mov64 = model
@@ -709,7 +819,9 @@ fn gen_emit_pseudo(
                             ));
                         }
                     },
-                    // 整数收参：int_regs[__pos]
+                    // 整数收参：int_regs[__pos]；位置 ≥ 寄存器数 → 栈参数
+                    //（[rbp + 16 + shadow + (pos-n)*8]：入口 rsp 指向返回地址，
+                    // 返回地址 8 + shadow 之后是第 n 个栈参数）
                     quote! {
                         let __pos = __i + if __rm.sret { 1usize } else { 0usize };
                         if __pos < #n {
@@ -718,6 +830,18 @@ fn gen_emit_pseudo(
                                 #m_src: __src,
                                 #m_dest: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
 
+                            }).map_err(|e| crate::IrError::Emit(e))?;
+                            __sink.put_bytes(&__bytes);
+                        } else if let Some(__shadow) = #stack_shadow_ref {
+                            let __off = (16i64 + __shadow as i64) + (__pos - #n) as i64 * 8;
+                            let __bytes = encode(&Inst::#int_stack_load {
+                                #il_mem: MemRef {
+                                    base: Reg::RBP,
+                                    disp: __off,
+                                    index: None,
+                                    scale: 1,
+                                },
+                                #il_reg: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
                             }).map_err(|e| crate::IrError::Emit(e))?;
                             __sink.put_bytes(&__bytes);
                         } else {
@@ -769,15 +893,74 @@ fn gen_emit_pseudo(
                 )
             };
             let _ = byref_stmt_use;
+            // shadow 未声明（riscv/demo 无栈参数）→ 栈参数收参分支整体不生成
+            //（否则分支体引用 RBP/R10/MOV64_RM 等不存在的 Reg/Inst 变体）。
+            let has_stack_arg = model.abi.as_ref().and_then(|a| a.stack_arg_shadow).is_some();
+            let stack_arg_receive: TokenStream = if has_stack_arg {
+                quote! {
+                    // 栈参数（位置 ≥ 寄存器数且 shadow 声明）**无条件**收参到
+                    // spill 槽（regalloc 强制 spill 保证有槽；即使分配了 preg
+                    // 也不走寄存器分支——否则与低位置参数共享寄存器时，批量
+                    // 收参顺序覆盖（a→r15 后 e→r15，a 值丢）→ five_args 14）。
+                    let __pos = __i + if __rm.sret { 1usize } else { 0usize };
+                    if let Some(__shadow) = #stack_shadow_ref
+                        && __pos >= #n
+                        && __rm.spill_slots.contains_key(&__pv)
+                    {
+                        let __off = (16i64 + __shadow as i64) + (__pos - #n) as i64 * 8;
+                        let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
+                        let __slot_off = __rm.spill_slot(__pv).offset as i64;
+                        // load ABI 槽 → scratch
+                        let __lbytes = encode(&Inst::#int_stack_load {
+                            #il_mem: MemRef {
+                                base: Reg::RBP,
+                                disp: __off,
+                                index: None,
+                                scale: 1,
+                            },
+                            #il_reg: __scratch0,
+                        }).map_err(|e| crate::IrError::Emit(e))?;
+                        __sink.put_bytes(&__lbytes);
+                        // store scratch → spill 槽
+                        let __sbytes = encode(&Inst::#int_stack_store {
+                            #is_mem: MemRef {
+                                base: Reg::RBP,
+                                disp: __sp_base + __slot_off,
+                                index: None,
+                                scale: 1,
+                            },
+                            #is_reg: __scratch0,
+                        }).map_err(|e| crate::IrError::Emit(e))?;
+                        __sink.put_bytes(&__sbytes);
+                        continue;
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            let stack_arg_prologue: TokenStream = if has_stack_arg {
+                quote! {
+                    let __scratch0 = Reg::#scratch0;
+                    let __cs_bytes = #cs_bytes;
+                }
+            } else {
+                quote! {}
+            };
             Ok(quote! {
                 #head
+                // 栈参数收参的 scratch（[abi].scratch 首项）与 callee-saved
+                // 字节数（sp_base 计算）——仅 shadow 声明时使用
+                #stack_arg_prologue
                 for (__i, &__pv) in __rm.param_vregs.iter().enumerate() {
+                    #stack_arg_receive
                     if !__rm.assignments.contains_key(&__pv) {
                         continue;
                     }
                     let __dest = match __rm.preg(__pv) {
                         Some(p) => p.num,
-                        None => continue,
+                        None => {
+                            continue;
+                        }
                     };
                     if __rm.param_by_ref.get(__i) == Some(&true) {
                         // by-ref：宽向量参数按引用传——GPR 槽位是数据指针，

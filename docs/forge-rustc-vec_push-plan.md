@@ -49,8 +49,7 @@ push → grow_one → grow_amortized(len, additional=1)
 
 ### E1：最小复现指令级定位（前置，1 天）
 
-README 限制区⑧ `probe_n n=5`（~40 行）最小复现。gdb 断点 + 
-`FORGE_TRACE_LOWER/TERM/VCODE` 逐 MIR 语句比对：
+README 限制区⑧ `probe_n n=5`（~40 行）最小复现。gdb 断点 + `FORGE_TRACE_LOWER/TERM/VCODE` 逐 MIR 语句比对：
 
 - 在 `grow_amortized` 的两个 `max` 调用（dest=12/16）处断点，打印
   `cap`/`len`/`additional`/`required_cap`/`cap*2` 各实参的实际值；
@@ -158,14 +157,26 @@ iconst 常量实参/Fstore 栈槽中转全对），主库等价 IR 全部执行�
 | f64 参数栈槽中转（Fstore/Fload） | test_jit_f64_param_via_stack_slot ✓ |
 | fconst 实参 / mixed by-position / fcmp→branch / 组合 / fib / select | ✓ |
 
+### ✅ 已修复（2026-09 reloc/对齐/双返回三连击，e2e 30→51/58）
+
+| 根因 | 修复 | 提交 |
+| --- | --- | --- |
+| **COFF reloc 隐式 addend**：编码器占位 -(f+1)/-(g+1) 作为隐式 addend 残留 → call 目标偏 -1（0x10d0 vs wrapping_add 0x10d1）、GlobalAddr 符号地址偏 -1（movabs 0x2fff vs .rodata 0x3000） | object_writer.rs：REL32/ADDR64/ADDR32 在 add_relocation 前清零被重定位字段；REL32 保持 addend-4 补偿（coff_adjust_addend +4 净 0 不覆盖） | 16bec80 |
+| **Windows x64 栈 16 字节对齐**：prologue push rbp+7 callee-saved 后 rsp%16==8，sub rsp 需 ≡8(mod16)；缺省 padding 0 → 系统 DLL 内 movdqa 未对齐 SEGV（ffi_exit_process 0xC0000005） | `[abi].frame_padding = 8`（模型+生成器+TOML 声明） | 16bec80 |
+| **ScalarPair 双返回**：Return/Call 只处理 results.first()（RAX），RDX 从未 mov → overflowing_add 的 (i32,bool) bool 读垃圾 → checked_destructure 返回 0 | lowering.rs：Return values[1]→RDX、Call results[1]←RDX（GPR64 index 1） | 16bec80 |
+
+**e2e 现状 51/58**：剩余 5 compile failed 均为预期限制（five_args_stack/
+eight_args_stack/mixed_args = Windows x64 第 5+ 参数栈传未实现；box_value/
+box_write = 依赖 #[global_allocator] 前端语义）+ 2 known（vec_push/vec_string）。
+
 ### 下一步候选（按优先级）
 
-1. **monomorphized core 函数符号/链接**：`core::num::wrapping_add` 实例的
-   符号生成/解析与链接（值错 1164775489 疑为未初始化/错符号调用——反汇编
-   e2e 产物验证 call 目标）；
-2. **rustc 常量位模式**：`rvalue.rs:298` 的 `scalar.to_bits(s.size())`——
-   CONST trace 已加（wrapping_add 常量 1000/2000 正确，暂排除）；
-3. **FnAbi 参数布局**：`FORGE_TRACE_ABI` 对比 rustc FnAbi 与打包
-   （wrapping_add 2×i64 Direct 正确，暂排除）。
+1. **vec_push E1 启动**（阻塞线已通）：跨函数 call reloc 已修，grow 链
+   的 monomorphized core 函数（RawVec::grow_amortized 等）现在能正确链接
+   执行——按 §3 E1 最小复现指令级定位 grow 链值错/挂起；
+2. **Windows x64 栈参数**（P2 ABI）：five_args_stack/eight_args_stack/
+   mixed_args 转正（第 5+ 整数参数走栈 + shadow space）；
+3. **box_value/box_write**：#[global_allocator] 语义（后端注入 __rust_alloc
+   无法替代前端要求）。
 
 E1-E5（grow 链定位/Select 恢复/sret spill/转正）在此线之后执行。

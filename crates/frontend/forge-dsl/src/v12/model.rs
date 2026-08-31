@@ -794,6 +794,13 @@ pub struct Abi {
     /// call 前 rsp%16==0）。缺省 0。
     #[serde(default)]
     pub frame_padding: Option<i32>,
+    /// 调用方 call 前预留的 shadow space 字节数（Windows x64 = 0x20）。
+    /// Some(n) 启用栈参数：第 5+ 个参数（寄存器耗尽后）由调用方 store 到
+    /// [rsp+n+(k-nregs)*8]、被调方从 [rbp+n+8+(k-nregs)*8] load。
+    /// None = 不支持栈参数（超寄存器参数 → Unsupported）。riscv 缺省 None
+    ///（8 个 GPR + 8 个 FPR 足够，SysV 无 shadow space）。
+    #[serde(default)]
+    pub stack_arg_shadow: Option<u32>,
     #[serde(default)]
     pub arg_class: Vec<ArgClass>,
     /// 帧布局（sp/fp 寄存器名、帧分配/释放指令名）。
@@ -926,12 +933,41 @@ pub struct CalleeSaved {
     pub xmm: Vec<String>,
 }
 
+/// 传参类别：arg_class 的类型语义（决定传参寄存器族与策略）。
+/// serde 用小写字符串（"int"/"float"/"vector"/...），未知类别 → 解析失败
+///（deny_unknown 语义提前到反序列化层，validate 不再做字符串自由检查）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ArgClassKind {
+    /// 整数/指针参数（GPR 族）。
+    Int,
+    /// 浮点标量参数（FPR 族）。
+    Float,
+    /// 向量参数（VEC 族；可配 by-ref 策略）。
+    Vector,
+    /// 其他自定义类别（KReg/掩码等）——生成器按通用寄存器槽处理。
+    #[serde(rename = "other")]
+    Other,
+}
+
+impl ArgClassKind {
+    /// 人类可读名（错误消息用）。
+    pub fn name(self) -> &'static str {
+        match self {
+            ArgClassKind::Int => "int",
+            ArgClassKind::Float => "float",
+            ArgClassKind::Vector => "vector",
+            ArgClassKind::Other => "other",
+        }
+    }
+}
+
 /// 类型类别 → 传参寄存器/策略。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArgClass {
-    /// 类别名（"int" | "float" | "vector" | ...）。
-    pub class: String,
+    /// 传参类别（int/float/vector/other——枚举，语义显式）。
+    pub class: ArgClassKind,
     #[serde(default)]
     pub regs: Vec<String>,
     /// 传参策略："by-ref"（>limit 位向量按引用，YMM ABI）等。

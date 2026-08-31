@@ -252,7 +252,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         .and_then(|a| {
             a.arg_class
                 .iter()
-                .find(|ac| ac.class == "int")
+                .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
                 .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
         })
         .unwrap_or_default();
@@ -750,6 +750,43 @@ fn gen_call_lowering(
         inst_move_role(infos, &mov_inst).ok_or_else(|| {
             format!("Call lowering: [{mov_inst}] must have In(src)/Out|InOut(dest) reg operands")
         })?;
+    // Windows x64 栈参数 store 指令：按语义标签 `stack_arg_store` 收集
+    //（TOML 显式声明，不做按指令名探测——第三轮重构原则）。
+    // 生成期门控：`[abi].stack_arg_shadow` 已声明但标签缺失 → Unsupported
+    //（防引用不存在的变体；未声明 shadow 则不生成栈参数路径，标签随意）。
+    let stack_store_tagged = insts_by_tag(infos, "stack_arg_store");
+    let (stack_store_vn, stack_store_mem_fid, stack_store_reg_fid, stack_store_reg_idx) =
+        if abi.stack_arg_shadow.is_some() {
+            match stack_store_tagged.first() {
+                Some(info) => {
+                    let vn = vn(&info.inst.name);
+                    let (reg, mem, reg_idx) = reg_mem_fids(info);
+                    match (reg, mem) {
+                        (Some(r), Some(m)) => (vn, m, r, reg_idx),
+                        _ => {
+                            return Err(
+                                "Call lowering: [stack_arg_store] tag must be on Reg+Mem inst".into()
+                            )
+                        }
+                    }
+                }
+                None => {
+                    return Err(
+                        "Call lowering: stack_arg_shadow declared but [stack_arg_store] tag missing"
+                            .into(),
+                    )
+                }
+            }
+        } else {
+            // shadow 未声明：栈参数路径不生成（arg_move_loop 的 else 分支
+            // 仍 Unsupported），占位字段不会被引用。
+            (
+                format_ident!("Mov64Mr"),
+                format_ident!("mem"),
+                format_ident!("src"),
+                0u8,
+            )
+        };
     // 浮点移动指令：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键（缺省
     // "MOVSD"/"MOVSS"）——缺失 → 浮点路径 Unsupported（防生成代码引用
     // 不存在的 Inst 变体；demo 等无浮点 ISA 的 Call 整体降级）。
@@ -797,13 +834,13 @@ fn gen_call_lowering(
     let int_regs: Vec<syn::Ident> = abi
         .arg_class
         .iter()
-        .find(|ac| ac.class == "int")
+        .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
         .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
         .unwrap_or_default();
     let float_regs: Vec<syn::Ident> = abi
         .arg_class
         .iter()
-        .find(|ac| ac.class == "float")
+        .find(|ac| ac.class == crate::v12::model::ArgClassKind::Float)
         .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
         .unwrap_or_default();
     let n = int_regs.len();
@@ -1195,6 +1232,13 @@ fn gen_call_lowering(
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,
+        // Windows x64 栈参数（shadow space）——[abi].stack_arg_shadow
+        &abi.stack_arg_shadow,
+        // 栈参数 store 指令（MOV64_MR：Mem 槽 op1、Reg 槽 op0）
+        &stack_store_vn,
+        &stack_store_mem_fid,
+        &stack_store_reg_fid,
+        stack_store_reg_idx,
     );
     let op_ident = format_ident!("{op_name}");
     // call_body 为 Unsupported（return Err）时，其后不再生成 arg_loop/ret_move
@@ -1271,9 +1315,21 @@ fn arg_move_loop(
     mov_vn: &syn::Ident,
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
+    // Windows x64 栈参数：Option<u32>（shadow space 字节）→ 生成代码里的
+    // 引用（`&Some(0x20)` 之类）。None = 不支持栈参数。
+    stack_shadow: &Option<u32>,
+    // 栈参数 store 指令（MOV64_MR）的 (Mem 字段名, Reg 字段名, Reg 序号)。
+    int_stack_store: &syn::Ident,
+    is_mem: &syn::Ident,
+    is_reg: &syn::Ident,
+    is_reg_idx: u8,
 ) -> TokenStream {
     let n = *n;
     let fn_ = *fn_;
+    let stack_shadow_ref: TokenStream = match stack_shadow {
+        Some(v) => quote! { Some(#v) },
+        None => quote! { None },
+    };
     let int_stmt = quote! {
         let __idx = __pack.push_inst(Inst::#mov_vn {
             #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
@@ -1350,6 +1406,24 @@ fn arg_move_loop(
             let __dst = [#(Reg::#int_regs),*][__pi];
             __pi += 1;
             #int_stmt
+        } else if let Some(__shadow) = #stack_shadow_ref {
+            // Windows x64 栈参数：第 5+ 个 int 参数 store 到 [rsp+shadow+(k-n)*8]
+            let __off = __shadow as i64 + (__pi - #n) as i64 * 8;
+            __pi += 1;
+            let __idx = __pack.push_inst(Inst::#int_stack_store {
+                #is_mem: MemRef {
+                    base: Reg::RSP,
+                    disp: __off,
+                    index: None,
+                    scale: 1,
+                },
+                #is_reg: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            });
+            __pack.map_reg_field(__a, __idx, #is_reg_idx, false);
+            // 帧需求：栈参数区 = shadow + 已用栈槽
+            ctx.max_stack_arg_bytes = ctx
+                .max_stack_arg_bytes
+                .max(__shadow + (__pi - #n) as u32 * 8);
         } else {
             return Err(crate::prelude::IrError::Unsupported(
                 "v12 call: integer arg register exhausted (stack args not yet supported)".into(),
@@ -1457,7 +1531,7 @@ pub(crate) fn insts_by_tag<'a>(infos: &'a [InstInfo<'a>], tag: &str) -> Vec<&'a 
 /// 返回 (Reg 字段名, Mem 字段名, Reg 字段序号)。字段名由
 /// `semantic_operand_name` 生成（Reg in→src/out→dest、Mem→mem），
 /// 从结构派生——不硬编码指令名/字段名。
-fn reg_mem_fids(info: &InstInfo) -> (Option<syn::Ident>, Option<syn::Ident>, u8) {
+pub(crate) fn reg_mem_fids(info: &InstInfo) -> (Option<syn::Ident>, Option<syn::Ident>, u8) {
     let mut reg: Option<syn::Ident> = None;
     let mut mem: Option<syn::Ident> = None;
     let mut seen_regs = 0u8;

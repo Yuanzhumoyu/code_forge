@@ -54,17 +54,29 @@ impl BacktrackingAllocator {
         let _ = ctx; // AllocContext 预留（将来约束上下文）
         let mut state = BtState::new(config, intervals);
 
-        // 3. 预分配所有参数 XReg，确保它们在函数入口处有不同的寄存器。
-        // 序言 (gen_move_args) 在函数体执行之前批量复制 ABI 参数寄存器
-        // → 参数 XReg。如果两个参数共享同一物理寄存器，第二个 MOV 会覆盖
-        // 第一个参数的值。通过在此处（早于任何指令处理）分配所有参数，
-        // 分配器将它们视为在 ProgPoint(0,0) 同时活跃，从而分配不同寄存器。
+        // 3. 预分配前 param_reg_count 个参数 XReg，确保它们在函数入口处有
+        // 不同的寄存器。序言 (gen_move_args) 在函数体执行之前批量复制 ABI
+        // 参数寄存器 → 参数 XReg。如果两个参数共享同一物理寄存器，第二个
+        // MOV 会覆盖第一个参数的值。通过在此处（早于任何指令处理）分配
+        // 这些参数，分配器将它们视为在 ProgPoint(0,0) 同时活跃，从而分配
+        // 不同寄存器。
         // 注意：dead 参数（函数体无 use 的 XReg）区间为 [0,0]，与活参数的重叠
         // 判定（end > start）不成立，会被复用活参数的寄存器——但 @move_args
         // 的收参 mov 实际写入该寄存器，在活参数 store 前覆盖其值（混合参数
         // 场景：f(i32, f64) 的 b 覆盖 a → a=0）。因此 dead 参数不预分配，
         // gen_move_args 依 assignments 跳过其收参 mov。
-        for &vreg in &config.param_xregs {
+        // 栈参数（下标 ≥ param_reg_count，Windows x64 第 5+）不预分配寄存器：
+        // 直接 spill 到栈槽（gen_move_args 从 ABI 栈槽 load 到 spill 槽），
+        // 避免参数占满寄存器 → 函数体无寄存器可驱逐（grow_impl_runtime
+        // 7 参数 regalloc 失败）。AllocResult.spill_slot 可查其槽偏移。
+        for (pi, &vreg) in config.param_xregs.iter().enumerate() {
+            if pi >= config.param_reg_count {
+                // 栈参数：强制 spill（分配槽 + 不占寄存器）
+                if !state.spill_slots.contains_key(&vreg) {
+                    let _ = state.spill_vreg(vreg);
+                }
+                continue;
+            }
             if !state.assignments.contains_key(&vreg) {
                 let live = state.intervals.get(&vreg);
                 let is_dead = live
@@ -75,7 +87,7 @@ impl BacktrackingAllocator {
                 }
                 let constraint = OperandConstraint::Any;
                 let class = state.vreg_class(vreg);
-                let preg = state.assign_reg(vreg, constraint, class, &[])?;
+                let preg = state.assign_reg(vreg, constraint, class, &[], true)?;
                 state.active.insert(vreg, preg); // 将预分配的参数 XReg 添加到 active 列表中
                 if crate::pipeline::trace_enabled("FORGE_TRACE_REGALLOC") {
                     eprintln!("[pre] v{} class={class:?} -> {preg:?}", vreg.index());
@@ -277,12 +289,13 @@ impl<'a> BtState<'a> {
                             );
                         }
                     }
-                    // 首次遇到此 XReg
+                    // 首次遇到此 XReg（use：读旧值）
                     self.assign_reg(
                         vreg,
                         OperandConstraint::Any,
                         self.vreg_class(vreg),
                         inst_uses,
+                        false,
                     )?;
                 }
             }
@@ -297,6 +310,7 @@ impl<'a> BtState<'a> {
                         OperandConstraint::Any,
                         self.vreg_class(vreg),
                         inst_uses,
+                        true,
                     )?;
                 }
             }
@@ -322,6 +336,7 @@ impl<'a> BtState<'a> {
         constraint: OperandConstraint,
         class: RegClass,
         inst_uses: &[XReg],
+        is_def: bool,
     ) -> Result<PReg, IrError> {
         // 如果已分配，直接返回
         if let Some(&preg) = self.assignments.get(&vreg) {
@@ -352,7 +367,7 @@ impl<'a> BtState<'a> {
                         self.current_point
                     );
                 }
-                self.evict_and_assign(vreg, class)
+                self.evict_and_assign(vreg, class, is_def)
             }
 
             OperandConstraint::Fixed(required_preg) => {
@@ -386,7 +401,7 @@ impl<'a> BtState<'a> {
                     self.set_reg_owner(preg, vreg);
                     return Ok(preg);
                 }
-                self.evict_and_assign(vreg, class)
+                self.evict_and_assign(vreg, class, is_def)
             }
 
             OperandConstraint::Stack => {
@@ -418,7 +433,7 @@ impl<'a> BtState<'a> {
     /// current_point 会错误地将它们设为 MAX（"永不使用"）。
     /// 注意：segment 模型通过 cover() 的 point.before() 合并修复了相邻
     /// 指令间的微间隙，因此从 (0,0) 查找 next_use 已经足够可靠。
-    fn evict_and_assign(&mut self, vreg: XReg, class: RegClass) -> Result<PReg, IrError> {
+    fn evict_and_assign(&mut self, vreg: XReg, class: RegClass, is_def: bool) -> Result<PReg, IrError> {
         let current_point = self.current_point;
         // 驱逐候选的 next_use 预计算（2026-08-31）：active 是 HashMap，iter
         // 顺序跨进程随机；max_by_key 在平局时返回先遇到的元素 → 偶发不同的
@@ -479,12 +494,51 @@ impl<'a> BtState<'a> {
             // 从 active 移除 victim
             self.active.remove(&victim_vreg);
             Ok(victim_preg)
+        } else if is_def {
+            // 无死值可驱逐，但当前 vreg 是本指令的 **def**（写新值）：
+            // spill 自己安全——emission 的 emit_inst_with_spills 对 spilled
+            // 字段用 scratch 寄存器写入（set_reg_field 覆盖为 scratch），
+            // 指令执行后把 def 结果 store 回槽；后续 use 经 reload_from_stack
+            // 从槽 load。因此 spilled def **不需要真实寄存器分配**。
+            self.spill_vreg(vreg)?;
+            if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
+                || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
+            {
+                eprintln!(
+                    "[spill-def] v{} at {:?} -> spilled (def, slot={:?})",
+                    vreg.index(),
+                    self.current_point,
+                    self.spill_slots.get(&vreg).map(|s| s.offset)
+                );
+            }
+            // 返回占位 PReg（不 insert assignments——emission 对 spilled
+            // 字段用 scratch 覆盖，该值仅满足 Result 签名）。若 free 池有
+            // 空闲则正常分配（后续指令少一次 reload）。
+            if let Some(preg) = self.pop_free(class) {
+                self.assignments.insert(vreg, preg);
+                self.set_reg_owner(preg, vreg);
+                self.active.insert(vreg, preg);
+                Ok(preg)
+            } else {
+                Ok(PReg::new(0, class))
+            }
         } else {
             // 无法驱逐死值（所有候选都有真实 next_use）——不能 spill 当前
             // vreg（若它是 use，emission 会从空槽 load 读垃圾；若它是 def
             // 可 spill，但分配器无法在此区分）。保守终止编译——不产出
             // 错误代码。P0-8：旧代码驱逐"next_use 最大"的活 victim 不 store
             // → 读垃圾；现在只驱逐死值，无可驱逐时显式报错。
+            if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
+                || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
+            {
+                eprintln!(
+                    "[evict-fail] v{} class={:?} free={:?} active={}",
+                    vreg.index(),
+                    class,
+                    self.free_regs.get(&class).map(|v| v.len()),
+                    self.active.len()
+                );
+            }
             Err(IrError::RegAlloc(format!(
                 "vreg {} spilled: no dead (unused) register to evict in class {:?}",
                 vreg, class
@@ -797,6 +851,7 @@ impl<'a> BtState<'a> {
                 .collect(),
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）
             sret: false,
+            stack_arg_bytes: 0,
             param_is_32: self
                 .config
                 .param_xregs
@@ -1023,9 +1078,17 @@ mod clobber_map_tests {
         let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let result = alloc.allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map);
+        // 2026-09 语义变更：def（写新值）在唯一寄存器被 clobber 时**spill 到栈**
+        // 而非报错——emission 的 emit_inst_with_spills 用 scratch 写入 def、
+        // 随后 store 回槽，后续 use 经 reload_from_stack 从槽 load，值正确。
+        // 这只对 def 安全（写新值，不读旧寄存器）；use 场景仍保守报错。
         assert!(
-            result.is_err(),
-            "唯一寄存器被 clobber 时新分配应失败（phys_conflicts 避开）"
+            result.is_ok(),
+            "def 在 clobber 时 spill 到栈（emission scratch 写入）"
+        );
+        assert!(
+            result.unwrap().spill_slots.contains_key(&x0),
+            "def 应被 spill 到栈槽"
         );
     }
 

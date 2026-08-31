@@ -2051,6 +2051,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .map(|&n| PReg::new(n, RegClass::GPR64))
                 .collect(),
             param_xregs: self.param_xregs.clone(),
+            // 寄存器参数数 = ABI int 参数槽上限（Windows x64 = 4；其余
+            // 参数走栈——regalloc 强制 spill，move_args 从 ABI 栈槽收参）。
+            param_reg_count: machine.abi().int_arg_slot_count(),
         };
 
         let ctx = crate::pipeline::alloc_config::AllocContext {};
@@ -2067,6 +2070,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 由 CompileState::new 的 LowerCtx.is_sret_return 预计算。
         let mut alloc_result = alloc_result;
         alloc_result.sret = self.ctx.is_sret_return;
+        // 栈参数区字节数（move_args 收栈参数时计算 spill 槽地址）
+        alloc_result.stack_arg_bytes = self.ctx.max_stack_arg_bytes;
 
         // 分配后回写：按 xreg_map 把 XReg 的分配结果填入微指令寄存器字段（物理 Reg）
         let mut global_inst = 0usize;

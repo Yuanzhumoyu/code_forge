@@ -35,6 +35,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // (Old code counted only callee-saved bytes, shifting locals/spills
         // 8 bytes into the pushed registers.)
         let callee_saved_bytes = crate::pipeline::frame_layout::callee_saved_bytes(machine);
+        // 栈参数区（shadow space + 第 5+ 参数槽）：调用方 store 到帧底之上，
+        // spill 槽起始需上移该字节数（见 emit_inst_with_spills）。
+        let stack_args = self.ctx.max_stack_arg_bytes as i32;
 
         // Stage 8: Prologue
         frame_lowering.emit_prologue(frame_size, alloc_result, &mut sink)?;
@@ -89,6 +92,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     frame_lowering.as_ref(),
                     sink,
                     callee_saved_bytes,
+                    stack_args,
                     &inst_xregs,
                     &inst_field_idx,
                     _func.name.as_str(),
@@ -169,6 +173,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         frame_lowering: &dyn crate::machine::frame::TargetFrameLowering<Inst = I>,
         sink: &mut CodeSink,
         callee_saved_bytes: i32,
+        stack_args: i32,
         inst_xregs: &[XReg],
         inst_field_idx: &[u8],
         fname: &str,
@@ -223,7 +228,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // saves), so callee_saved_bytes must NOT include it — otherwise spills
         // land 8 bytes below rsp and can hit an unmapped stack page in release
         // builds (test_spill_high_pressure / e2e_jit_execute hang).
-        let sp_base: i32 = -(frame_size as i32) - callee_saved_bytes;
+        // 栈参数区（Windows x64 第 5+ 参数）在帧底之上 [rsp, rsp+stack_args)：
+        // spill 槽起始必须上移 stack_args，否则与调用方 store 的栈参数重叠
+        //（five_args_stack 场景 spill 覆盖已写入的参数槽 → 值错）。
+        let sp_base: i32 = -(frame_size as i32) - callee_saved_bytes + stack_args;
 
         // Load spilled operands into scratch registers (width-aware).
         // 纯 def 的 XReg 也 load（其值会被指令覆盖，无害但保证 use/def 语义统一）。

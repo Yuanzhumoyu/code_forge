@@ -26,6 +26,10 @@ pub struct AllocResult {
     /// 是否 sret 返回（宽向量 >16 字节）——首 int 槽被 sret 指针占用，
     /// @move_args 收参 __gi 从 1 起（Windows x64 隐藏 sret 参数约定）。
     pub sret: bool,
+    /// 栈参数区字节数（shadow space + 第 5+ 参数槽，见 LowerCtx.
+    /// max_stack_arg_bytes）：move_args 收栈参数时计算 spill 槽地址
+    ///（sp_base = -(frame) - callee_saved + stack_arg_bytes）需用它。
+    pub stack_arg_bytes: u32,
     /// 参数是否为 32 位整数（i32/u32——收参需符号扩展 movsxd）。
     pub param_is_32: Vec<bool>,
     /// 需要在序言中保存的 callee-saved 物理寄存器（按 push 顺序）
@@ -62,6 +66,7 @@ impl Default for AllocResult {
             param_is_float: Vec::new(),
             param_by_ref: Vec::new(),
             sret: false,
+            stack_arg_bytes: 0,
             param_is_32: Vec::new(),
             callee_saved_to_save: Vec::new(),
             frame_info: FrameInfo {
@@ -111,6 +116,7 @@ impl AllocResult {
             param_is_float: Vec::new(),
             param_by_ref: Vec::new(),
             sret: false,
+            stack_arg_bytes: 0,
             param_is_32: Vec::new(),
             callee_saved_to_save: Vec::new(),
             frame_info: FrameInfo {

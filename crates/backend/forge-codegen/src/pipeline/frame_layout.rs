@@ -41,6 +41,11 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 槽会写进另一方的区域（stack_addr 多槽 + regalloc spill 并存时互相覆盖，
         // 导致局部变量被垃圾地址覆盖——forge-rustc w2 无限循环即此 bug）。
         let size = spill.saturating_add(locals);
+        // 栈参数区（Windows x64 第 5+ 参数 + shadow space）：调用方在 call
+        // 前把超寄存器参数 store 到 [rsp+shadow+off]，帧底之上必须预留该
+        // 区域——否则 store 写穿 rsp 之下（无 red zone）→ SEGV。
+        let stack_args = self.ctx.max_stack_arg_bytes;
+        let size = size.saturating_add(stack_args);
         let align = machine.abi().stack_align();
         // 最小帧（[abi.frame].min_frame_bytes）：riscv 的 ra/fp 保存槽需帧
         // ≥ 固定值，否则 emit 模板的 {frame_size_mN} 偏移为负（写坏 sp 下方）。

@@ -624,19 +624,27 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
             "[abi].stack_align must be a positive multiple of 8, got {align}"
         ));
     }
-    let mut seen = BTreeSet::new();
+    // stack_arg_shadow：>0 且 8 的倍数（栈参数槽 8 字节对齐）。
+    if let Some(shadow) = abi.stack_arg_shadow
+        && (shadow == 0 || shadow % 8 != 0)
+    {
+        return Err(format!(
+            "[abi].stack_arg_shadow must be a positive multiple of 8, got {shadow}"
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
     for ac in &abi.arg_class {
-        if ac.class.trim().is_empty() {
-            return Err("[abi.arg_class]: class must not be empty".into());
-        }
-        if !seen.insert(ac.class.clone()) {
-            return Err(format!("[abi.arg_class]: duplicate class '{}'", ac.class));
+        if !seen.insert(ac.class) {
+            return Err(format!(
+                "[abi.arg_class]: duplicate class '{}'",
+                ac.class.name()
+            ));
         }
         // regs 为空仅当有传参策略（by-ref 等按引用策略不占用寄存器）。
         if ac.regs.is_empty() && ac.strategy.is_none() {
             return Err(format!(
                 "[abi.arg_class.{}]: regs must not be empty (or declare a strategy)",
-                ac.class
+                ac.class.name()
             ));
         }
     }

@@ -34,6 +34,11 @@ pub struct RegAllocConfig {
 
     /// 函数参数 XReg（live range 需从程序点 0 开始）
     pub param_xregs: Vec<XReg>,
+    /// 前 `param_reg_count` 个参数在函数入口分配物理寄存器（ABI 寄存器
+    /// 传参）；其余参数（栈参数，Windows x64 第 5+）不预分配寄存器——
+    /// 强制 spill 到栈槽，避免参数占满寄存器导致函数体无寄存器可驱逐
+    ///（grow_impl_runtime 7 参数 regalloc 失败）。0 = 全部按普通值处理。
+    pub param_reg_count: usize,
 }
 
 /// 单个寄存器类的配置。
@@ -71,6 +76,7 @@ impl RegAllocConfig {
             precolored: HashMap::new(),
             scratch_regs: Vec::new(),
             param_xregs: Vec::new(),
+            param_reg_count: 0,
             main_gpr_class: RegClass::GPR64,
             main_fpr_class: RegClass::FPR64,
         }
