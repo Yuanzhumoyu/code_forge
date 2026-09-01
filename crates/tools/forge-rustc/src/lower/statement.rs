@@ -90,10 +90,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     // 通常为小值（u8 tag 场景 ≤255），I32 写入低
                                     // 字节即正确（高字节为 0）。
                                     let nv = self.builder.iconst(niche_value as i64, TypeId::I32);
-                                    // tag 位置（通常 offset 0；通用按 tag_field 偏移）
-                                    let tag_off =
-                                        layout.layout.fields().offset(tag_field.index()).bytes()
-                                            as i64;
+                                    // tag 位置（通常 offset 0；通用按 tag_field 偏移）。
+                                    // WA-28：ScalarPair niche（如 Option<(usize,&i32)> 的
+                                    // tag 是指针 &i32，在 payload 第 2 标量 offset 8）——
+                                    // fields().offset(tag_field) 对重排/聚合 payload 给
+                                    // 错偏移（写 offset 0 而判别读 b_offset=8，不一致 →
+                                    // None 后 &i32 残留旧值 → main 误判 Some 解引用）。
+                                    let tag_off = match &layout.layout.backend_repr {
+                                        rustc_abi::BackendRepr::ScalarPair { b, b_offset, .. } => {
+                                            let is_ptr = matches!(
+                                                b.primitive(),
+                                                rustc_abi::Primitive::Pointer(_)
+                                            );
+                                            if is_ptr { b_offset.bytes() as i64 } else { 0 }
+                                        }
+                                        _ => 0,
+                                    };
                                     if tag_off == 0 {
                                         self.builder.store(nv, base);
                                     } else {
