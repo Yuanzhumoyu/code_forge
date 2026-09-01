@@ -2058,4 +2058,71 @@ mod tests {
         // b 的 v1 = a 的 v1 + 1（双中间调用 + 参数槽中转后写回仍生效）
         assert_eq!(got, 1, "双中间调用 + 参数槽中转跨调用写回");
     }
+
+    /// WA-23 回归探针：ScalarPair 窄字段（Option<i32> 形态）的字段读写
+    /// 按标量宽度（4 字节）——pack_sp 的 hi 字段（value@4）8 字节写会
+    /// 越界覆盖相邻槽（forge-rustc 收 next() 返回实证：写 -0x6c..-0x65
+    /// 覆盖 Range.start → 循环不终止）。本探针在主库层面验证窄字段写
+    /// 不越界：相邻槽（guard）在 hi 写后保持原值。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_scalar_pair_narrow_field_no_clobber() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // main() -> i64：
+        //   guard 槽（-32，放 0xDEADBEEF 哨兵）——紧邻聚合槽下方，验证
+        //   窄字段写不越界
+        //   聚合槽（-24..-16：8 字节 (i32,bool) 形态）
+        //   base = stack_addr(-24)
+        //   store(0x11223344, base)          // value 字段
+        //   off4 = base + 4
+        //   store(1, off4)                    // flag 字段（4 字节窄写）
+        //   g = load(stack_addr(-32))         // guard 原值
+        //   ret(g)
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m.clone());
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+
+        // guard 槽 -32（聚合槽之上，越界写会覆盖它）
+        let guard = main_fn.stack_addr(-32);
+        let sentinel = main_fn.iconst(0xDEAD_BEEF, TypeId::I64);
+        main_fn.store(sentinel, guard);
+
+        // 聚合槽 -24..-16：value@0 + flag@4（各 4 字节，总 8 字节）
+        let base = main_fn.stack_addr(-24);
+        let value = main_fn.iconst(0x1122_3344, TypeId::I64);
+        main_fn.store(value, base);
+        let four = main_fn.iconst(4, TypeId::I64);
+        let flag_addr = main_fn.iadd(base, four);
+        let flag = main_fn.iconst(1, TypeId::I64);
+        main_fn.store(flag, flag_addr);
+
+        // 读回 value（32 位读——窄字段语义，验证窄写后低 32 位仍正确）
+        let v = main_fn.load(base, TypeId::I32);
+        let masked = main_fn.uextend(v, TypeId::I64);
+        // 读 guard——若 flag 写 8 字节越界到 -32 则 sentinel 被覆盖
+        let g = main_fn.load(guard, TypeId::I64);
+        let g_eq = main_fn.icmp(forge_ir::IntCC::Equal, g, sentinel);
+        let g_i = main_fn.uextend(g_eq, TypeId::I64);
+        // 结果 = (value 正确 ? 1 : 0) * 4 + (guard 未破坏 ? 1 : 0)
+        let want_v = main_fn.iconst(0x1122_3344, TypeId::I64);
+        let v_eq = main_fn.icmp(forge_ir::IntCC::Equal, masked, want_v);
+        let v_i = main_fn.uextend(v_eq, TypeId::I64);
+        let four2 = main_fn.iconst(4, TypeId::I64);
+        let v4 = main_fn.imul(v_i, four2);
+        let res = main_fn.iadd(v4, g_i);
+        main_fn.ret(&[res]);
+        let mut module = Module::new();
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        let got = f();
+        // value 正确（v_i=1 → 4）+ guard 未破坏（g_i=1）→ 5
+        assert_eq!(got, 5, "ScalarPair 窄字段写不得越界覆盖相邻槽（WA-23 回归）");
+    }
 }
