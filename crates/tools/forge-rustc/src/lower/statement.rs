@@ -11,7 +11,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         stmt: &rustc_middle::mir::Statement<'tcx>,
     ) -> Result<(), ForgeError> {
         match &stmt.kind {
-            StatementKind::Assign(box (place, rvalue)) => {
+            StatementKind::Assign((place, rvalue)) => {
                 if crate::trace::trace_enabled("STMT") {
                     eprintln!("[forge] stmt: {:?} = {:?}", place, rvalue);
                 }
@@ -24,6 +24,24 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 && enum_def.is_enum()
                             {
                                 let base = self.place_addr(place);
+                                // 枚举构造诊断：无条件打印 variant/布局（WA-28 根因排查）
+                                if crate::trace::trace_enabled("DISCR") {
+                                    let lv = self.tcx.layout_of(ty::PseudoCanonicalInput {
+                                        typing_env: ty::TypingEnv::fully_monomorphized(),
+                                        value: ty,
+                                    });
+                                    let vnames = enum_def
+                                        .variants()
+                                        .iter()
+                                        .map(|v| v.name.to_string())
+                                        .collect::<Vec<_>>();
+                                    eprintln!(
+                                        "[forge] ENUM CONSTRUCT {ty} variant_idx={} variant_names={vnames:?} backend_repr={:?} variants={:?}",
+                                        variant_idx.index(),
+                                        lv.as_ref().map(|l| l.layout.backend_repr.clone()),
+                                        lv.as_ref().map(|l| l.layout.variants().clone()),
+                                    );
+                                }
                                 // variant 字段：按 for_variant 布局写
                                 let layout = self
                                     .tcx
@@ -65,7 +83,6 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                             niche_start,
                                             ..
                                         },
-                                    tag_field,
                                     ..
                                 } = layout.layout.variants()
                                     && variant_idx != *untagged_variant
@@ -73,6 +90,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let k = variant_idx.as_u32() - niche_variants.start.as_u32();
                                     let niche_value = (k as u128).wrapping_add(*niche_start);
                                     if crate::trace::trace_enabled("DISCR") {
+                                        // WA-28 诊断：None 构造 tag 写入偏移全貌
+                                        eprintln!(
+                                            "[forge] Niche CONSTRUCT-DETAIL variant_idx_raw={} place_ty={ty} backend_repr={:?} variants={:?}",
+                                            variant_idx.index(),
+                                            layout.layout.backend_repr,
+                                            layout.layout.variants(),
+                                        );
                                         eprintln!(
                                             "[forge] Niche CONSTRUCT {ty} variant_idx={} untagged={} niche_variants={:?} start={} niche_value={niche_value}",
                                             variant_idx.index(),
@@ -89,7 +113,31 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     // unsigned_int_max）；forge 简化——niche_value
                                     // 通常为小值（u8 tag 场景 ≤255），I32 写入低
                                     // 字节即正确（高字节为 0）。
-                                    let nv = self.builder.iconst(niche_value as i64, TypeId::I32);
+                                    // WA-29：写入宽度必须匹配 tag 标量宽度——
+                                    // 判别读（rvalue.rs）按 I64（8 字节）load +
+                                    // uextend（指针 tag 的 niche 值 = null），若
+                                    // 这里恒 I32（movl 32 位）写，8 字节指针 tag
+                                    // 的高 4 字节残留栈上旧值 → 读出的"null"
+                                    // ≠ 0 → 判别误判 untagged（enumerate None
+                                    // 路径 SEGV 根因：Enumerate::next 的 None
+                                    // 构造 movl 写 _0+8，判别读 8 字节含残留
+                                    // 高位 → main 误判 Some → **x 解引用 null）。
+                                    let tag_w = match &layout.layout.backend_repr {
+                                        rustc_abi::BackendRepr::Scalar(s) => {
+                                            s.primitive().size(&self.tcx).bytes() as u32
+                                        }
+                                        rustc_abi::BackendRepr::ScalarPair { b, .. } => {
+                                            b.primitive().size(&self.tcx).bytes() as u32
+                                        }
+                                        _ => 4,
+                                    };
+                                    let nv = if tag_w >= 8 {
+                                        self.builder
+                                            .iconst(niche_value as i64, TypeId::I64)
+                                    } else {
+                                        self.builder
+                                            .iconst(niche_value as i64, TypeId::I32)
+                                    };
                                     // tag 位置（通常 offset 0；通用按 tag_field 偏移）。
                                     // WA-28：ScalarPair niche（如 Option<(usize,&i32)> 的
                                     // tag 是指针 &i32，在 payload 第 2 标量 offset 8）——
@@ -346,7 +394,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         } else {
                             // checked 算术（AddWithOverflow 等）：结果是 (value, bool)
                             // 二元组——用 forge-ir overflow API 拆写 place 的 0/8 偏移
-                            if let Rvalue::BinaryOp(bin_op, box (op1, op2)) = rvalue
+                            if let Rvalue::BinaryOp(bin_op, (op1, op2)) = rvalue
                                 && matches!(
                                     *bin_op,
                                     mir::BinOp::AddWithOverflow
@@ -509,7 +557,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // 成 MIR 专用语句 `Intrinsic(NonDivergingIntrinsic::CopyNonOverlapping
             // { src, dst, count })`（wrapper 的 bb3）——此前未处理落入 `_ => {}`
             // 忽略 → 复制不执行（buf[4] 恒 0）。内联逐 8 字节复制循环。
-            StatementKind::Intrinsic(box rustc_middle::mir::NonDivergingIntrinsic::CopyNonOverlapping(
+            StatementKind::Intrinsic(rustc_middle::mir::NonDivergingIntrinsic::CopyNonOverlapping(
                 rustc_middle::mir::CopyNonOverlapping { src, dst, count },
             )) => {
                 if crate::trace::trace_enabled("STMT") {

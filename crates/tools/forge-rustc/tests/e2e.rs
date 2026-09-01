@@ -1046,9 +1046,9 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "F1 iter",
-        reason: "WA-19/WA-04：同 slice_iter_sum（Iter::next 的 precondition_check 符号缺失 LNK2019）",
+        reason: "2026-09 转正：WA-29（Niche CONSTRUCT 写入宽度按 tag 标量宽度——8 字节指针 tag 恒 movl 32 位写残留高 4 字节，判别读 I64 读出垃圾 → None 误判 Some → **x 解引用 null SEGV）",
     },
     Case {
         name: "string_concat_len",

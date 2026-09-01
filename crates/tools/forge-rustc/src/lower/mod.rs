@@ -685,7 +685,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 self.lower_intrinsic(name, args, substs, fty, block_id)?
                             } else if self
                                 .tcx
-                                .is_lang_item(*def_id, rustc_hir::LangItem::DropGlue)
+                                .is_lang_item(*def_id, rustc_hir::attrs::lang_items::LangItem::DropGlue)
                                 && !substs_first_ty(&substs)
                                     .unwrap_or_else(|| self.tcx.types.unit)
                                     .needs_drop(self.tcx, ty::TypingEnv::fully_monomorphized())

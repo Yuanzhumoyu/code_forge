@@ -333,6 +333,20 @@ struct FunctionDisplay<'a> {
     module: Option<&'a Module>,
 }
 
+/// 单函数 IR 文本（诊断用）：用函数自身的 TypeContext（与 Module Display 同款
+/// 格式；module 上下文省略——元数据名回退为数值 id）。forge-rustc 的
+/// FORGE_TRACE_IR 用它 dump 降级产物，核对 StackAddr/Store 槽偏移。
+pub fn function_to_string(func: &Function) -> String {
+    format!(
+        "{}",
+        FunctionDisplay {
+            func,
+            store: &func.types,
+            module: None,
+        }
+    )
+}
+
 impl<'a> FunctionDisplay<'a> {
     /// 函数头后缀：`[nounwind noinline ...]`（函数属性；调用约定在返回类型前）。
     fn fmt_func_head(f: &mut fmt::Formatter<'_>, func: &Function) -> fmt::Result {

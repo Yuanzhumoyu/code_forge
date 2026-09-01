@@ -89,10 +89,16 @@ impl CodegenBackend for CodegenLibBackend {
         // 模块级 FuncRef 表：直接调用的 "@N" 重定位 → 真实符号名
         let mut func_ref_table = FuncRefTable::default();
 
-        for item in &instances {
+        for (item_i, item) in instances.iter().enumerate() {
             match item {
                 MonoItem::Fn(instance) => {
                     let def_id = instance.def_id();
+                    if crate::trace::trace_enabled("FN") {
+                        eprintln!(
+                            "[forge] emit#{item_i} {}",
+                            tcx.def_path_str(def_id),
+                        );
+                    }
 
                     // 获取符号名 — 使用定义 crate 的 CrateNum 以确保
                     // 外部实例（如跨 crate 单态化的泛型）的哈希与 rlib 一致
@@ -142,6 +148,18 @@ impl CodegenBackend for CodegenLibBackend {
                             let _ = object_writer.add_function(&sym_name, &compiled_func);
                             if crate::trace::trace_enabled("GLOBAL") {
                                 eprintln!("[forge] add_function sym={sym_name}");
+                            }
+                            if crate::trace::trace_enabled("FN") {
+                                let code = compiled_func.code.len();
+                                let head: Vec<String> = compiled_func.code
+                                    .iter()
+                                    .take(8)
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect();
+                                eprintln!(
+                                    "[forge] size#{item_i} {sym_name} code_bytes={code} head=[{}]",
+                                    head.join(" ")
+                                );
                             }
                             // main 函数需要 C 名称别名（链接器入口点）。
                             // 用 def_path_str 而非 item_name——闭包/内部 shim 的 DefId

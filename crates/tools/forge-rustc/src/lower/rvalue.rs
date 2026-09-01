@@ -5,7 +5,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     pub(crate) fn lower_rvalue(&mut self, rvalue: &Rvalue<'tcx>) -> Result<Value, ForgeError> {
         match rvalue {
             Rvalue::Use(op, _) => self.lower_operand(op),
-            Rvalue::BinaryOp(bin_op, box (op1, op2)) => {
+            Rvalue::BinaryOp(bin_op, (op1, op2)) => {
                 let lhs = self.lower_operand(op1)?;
                 let rhs = self.lower_operand(op2)?;
                 // 符号性决定 sdiv/udiv、srem/urem、sshr/ushr 的选择
@@ -221,8 +221,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let naddr = self.builder.iadd(addr, off_v);
                             self.builder.load(naddr, TypeId::I64)
                         };
-                        // 常见单 niche（count==1 且 niche 值 0）：判别 = untagged - is_eq*untagged
-                        //（算术避免 select 两臂常量的 XReg 重叠分配——regalloc 已知问题）
+                        // 常见单 niche（count==1 且 niche 值 0）：判别 = is_eq ? 0 : untagged
+                        //（原生 Select：主库 [lower.Select] test+mov+cmovcc 已由
+                        // test_jit_select_strict_matrix 严格矩阵验证无 bug——
+                        // 变量臂/任意 cond/链式/多 XReg 压力全过，2026-08-31 nightly）
                         let niche_count = niche_variants.clone().into_iter().count();
                         if niche_count == 1 && *niche_start == 0 {
                             let z = self.builder.iconst(0, TypeId::I64);
@@ -230,15 +232,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let ut = self
                                 .builder
                                 .iconst(untagged_variant.index() as i64, TypeId::I32);
-                            let scaled = self.builder.imul(is_eq, ut);
-                            let r = self.builder.isub(ut, scaled);
+                            let z32 = self.builder.iconst(0, TypeId::I32);
+                            let disc = self.builder.select(is_eq, z32, ut);
                             // 同 Direct：扩展 I32 → I64（isize 语义，防 switchInt
                             // 8 字节比较读到槽高 4 字节垃圾）
-                            Ok(self.builder.uextend(r, TypeId::I64))
+                            Ok(self.builder.uextend(disc, TypeId::I64))
                         } else {
-                            // rustc codegen_get_discr 的算术公式（规避主库
-                            // [lower.Select]="mov rd,rs2" 无条件返回 true 臂的
-                            // bug——niche 通用循环的 select 在 cf5 全错）：
+                            // rustc codegen_get_discr 的公式：
                             //   relative = raw - niche_start（wrapping）
                             //   is_niche = relative ule relative_max
                             //   discr = is_niche ? (relative + variants.start) : untagged
@@ -260,16 +260,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let untagged_v = self
                                 .builder
                                 .iconst(untagged_variant.index() as i64, TypeId::I32);
-                            // 2026-08：尝试恢复原生 Select（builder.select）验证主库
-                            // [lower.Select] 修复（test+cmovne）——nested_enum_break
-                            // 仍 SEGV（cond 位宽/cmovne 路径未达预期），回滚算术公式
-                            // 规避；Select 修复保留在 isa TOML（框架正确性），待 Phase 1
-                            // 继续调查 cmovne 路径后再恢复。
-                            let one = self.builder.iconst(1, TypeId::I32);
-                            let not_niche = self.builder.isub(one, is_niche);
-                            let t1 = self.builder.imul(tagged, is_niche);
-                            let t2 = self.builder.imul(untagged_v, not_niche);
-                            let disc = self.builder.iadd(t1, t2);
+                            // 原生 Select（2026-08-31 恢复）：主库 [lower.Select]
+                            // 严格矩阵验证通过（变量臂/任意 cond/链式/多 XReg）。
+                            let disc = self.builder.select(is_niche, tagged, untagged_v);
                             Ok(self.builder.uextend(disc, TypeId::I64))
                         }
                     }

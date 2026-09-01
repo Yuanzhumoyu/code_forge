@@ -2125,4 +2125,133 @@ mod tests {
         // value 正确（v_i=1 → 4）+ guard 未破坏（g_i=1）→ 5
         assert_eq!(got, 5, "ScalarPair 窄字段写不得越界覆盖相邻槽（WA-23 回归）");
     }
+
+    /// E2 严格 Select 矩阵：验证 [lower.Select]（test+mov+cmovcc NE）在
+    /// forge-rustc 真实场景的形态下是否可用——
+    /// 1. 变量臂（then/else 是寄存器而非立即数）；
+    /// 2. cond 是运行时 I64 任意值（非 0/1，如枚举判别 isize）；
+    /// 3. I32 cond + I32 臂；
+    /// 4. 链式 select（前一个 select 结果作下一个的臂）；
+    /// 5. select 结果参与算术（长活区间跨 use）。
+    /// 此前 rvalue.rs 的 niche 判别因 nested_enum_break SEGV 回滚算术公式
+    /// （疑 cond 位宽/cmovne 路径），主库侧从未独立验证变量臂形态。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_select_strict_matrix() {
+        use forge_ir::{FunctionSignature, IntCC, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // 1. f(x, y, c: i64) -> i64 = (c != 0) ? x : y——变量臂 + 运行时 cond
+        let sig = FunctionSignature::new(
+            &[(TypeId::I64, "x"), (TypeId::I64, "y"), (TypeId::I64, "c")],
+            &[TypeId::I64],
+        );
+        jit.add_function("sel_var", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x"), (TypeId::I64, "y"), (TypeId::I64, "c")]);
+            b.switch_to_block(entry);
+            let zero = b.iconst_i64(0);
+            let cond = b.icmp(IntCC::NotEqual, params[2], zero);
+            let sel = b.select(cond, params[0], params[1]);
+            b.ret(&[sel]);
+        })
+        .expect("compile sel_var");
+        let f: extern "C" fn(i64, i64, i64) -> i64 = jit.get_fn("sel_var").expect("get_fn");
+        assert_eq!(f(100, 7, 1), 100, "cond=true → then（x）");
+        assert_eq!(f(100, 7, 0), 7, "cond=false → else（y）");
+        assert_eq!(f(100, 7, -1), 100, "cond=负值 → then（test 非零）");
+
+        // 2. g(x, y, c: i32) -> i32 = (c != 0) ? x : y——I32 cond + 变量臂
+        let sig2 = FunctionSignature::new(
+            &[(TypeId::I32, "x"), (TypeId::I32, "y"), (TypeId::I32, "c")],
+            &[TypeId::I32],
+        );
+        jit.add_function("sel_i32v", &sig2, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x"), (TypeId::I32, "y"), (TypeId::I32, "c")]);
+            b.switch_to_block(entry);
+            let zero = b.iconst_i32(0);
+            let cond = b.icmp(IntCC::NotEqual, params[2], zero);
+            let sel = b.select(cond, params[0], params[1]);
+            b.ret(&[sel]);
+        })
+        .expect("compile sel_i32v");
+        let g: extern "C" fn(i32, i32, i32) -> i32 = jit.get_fn("sel_i32v").expect("get_fn");
+        assert_eq!(g(42, 9, 5), 42, "i32 cond=true → then");
+        assert_eq!(g(42, 9, 0), 9, "i32 cond=false → else");
+
+        // 3. h(a, b: i64) -> i64 = select(a != 0, select(b != 0, 3, 4), 5)
+        //    ——链式：内层 select 结果作外层 then 臂
+        let sig3 = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
+        jit.add_function("sel_chain", &sig3, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+            b.switch_to_block(entry);
+            let zero = b.iconst_i64(0);
+            let cb = b.icmp(IntCC::NotEqual, params[1], zero);
+            let c3 = b.iconst_i64(3);
+            let c4 = b.iconst_i64(4);
+            let inner = b.select(cb, c3, c4);
+            let ca = b.icmp(IntCC::NotEqual, params[0], zero);
+            let c5 = b.iconst_i64(5);
+            let outer = b.select(ca, inner, c5);
+            b.ret(&[outer]);
+        })
+        .expect("compile sel_chain");
+        let h: extern "C" fn(i64, i64) -> i64 = jit.get_fn("sel_chain").expect("get_fn");
+        assert_eq!(h(1, 1), 3, "a≠0,b≠0 → 3");
+        assert_eq!(h(1, 0), 4, "a≠0,b==0 → 4");
+        assert_eq!(h(0, 1), 5, "a==0 → 5（外层 else）");
+        assert_eq!(h(0, 0), 5, "a==0,b==0 → 5");
+
+        // 4. k(x, c: i64) -> i64 = (c != 0 ? 100 : 7) + x——select 结果参与算术
+        let sig4 = FunctionSignature::new(&[(TypeId::I64, "x"), (TypeId::I64, "c")], &[TypeId::I64]);
+        jit.add_function("sel_arith", &sig4, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x"), (TypeId::I64, "c")]);
+            b.switch_to_block(entry);
+            let zero = b.iconst_i64(0);
+            let cond = b.icmp(IntCC::NotEqual, params[1], zero);
+            let c100 = b.iconst_i64(100);
+            let c7 = b.iconst_i64(7);
+            let sel = b.select(cond, c100, c7);
+            let sum = b.iadd(sel, params[0]);
+            b.ret(&[sum]);
+        })
+        .expect("compile sel_arith");
+        let k: extern "C" fn(i64, i64) -> i64 = jit.get_fn("sel_arith").expect("get_fn");
+        assert_eq!(k(1, 1), 101, "100+1");
+        assert_eq!(k(1, 0), 8, "7+1");
+
+        // 5. m(x: i64) -> i64 = select(x & 1, 10, 20) * select(x & 2, 30, 40)
+        //    ——两个独立 select，结果相乘（多 XReg 压力）
+        let sig5 = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("sel_pressure", &sig5, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let one = b.iconst_i64(1);
+            let two = b.iconst_i64(2);
+            let a1 = b.band(params[0], one);
+            let z1 = b.iconst_i64(0);
+            let c1 = b.icmp(IntCC::NotEqual, a1, z1);
+            let c10 = b.iconst_i64(10);
+            let c20 = b.iconst_i64(20);
+            let s1 = b.select(c1, c10, c20);
+            let a2 = b.band(params[0], two);
+            let c2 = b.icmp(IntCC::NotEqual, a2, z1);
+            let c30 = b.iconst_i64(30);
+            let c40 = b.iconst_i64(40);
+            let s2 = b.select(c2, c30, c40);
+            let prod = b.imul(s1, s2);
+            b.ret(&[prod]);
+        })
+        .expect("compile sel_pressure");
+        let m: extern "C" fn(i64) -> i64 = jit.get_fn("sel_pressure").expect("get_fn");
+        // x=3: bit0=1 → 10；bit1=1 → 30 → 300
+        assert_eq!(m(3), 300, "x=3 → 10*30");
+        // x=1: bit0=1 → 10；bit1=0 → 40 → 400
+        assert_eq!(m(1), 400, "x=1 → 10*40");
+        // x=2: bit0=0 → 20；bit1=1 → 30 → 600
+        assert_eq!(m(2), 600, "x=2 → 20*30");
+        // x=0: 20*40 → 800
+        assert_eq!(m(0), 800, "x=0 → 20*40");
+    }
 }

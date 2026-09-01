@@ -207,6 +207,38 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     vec![self.builder.udiv(a, b)]
                 }
             }
+            // integer_min/integer_max（1.100 新增，GlobalAlloc::realloc 等使用）：
+            // "signed or unsigned depending on T"（core::intrinsics::integer_min 文档）——
+            // 比较符号性必须随 T（uN/iN/usize/isize），恒 Signed 对无符号 T 错值。
+            // 用原生 Select（主库 [lower.Select] test+mov+cmovcc 已由
+            // test_jit_select_strict_matrix 严格矩阵验证无 bug，2026-08-31 nightly）。
+            // 语义对齐 fallback 定义：min = a < b ? a : b；max = a < b ? b : a。
+            "integer_min" | "min" => {
+                let (a, b) = (args[0], args[1]);
+                let signed = substs_first_ty(&substs)
+                    .map(|t| t.is_signed())
+                    .unwrap_or(true);
+                let cc = if signed {
+                    IntCC::SignedLessThan
+                } else {
+                    IntCC::UnsignedLessThan
+                };
+                let is_lt = self.builder.icmp(cc, a, b);
+                vec![self.builder.select(is_lt, a, b)]
+            }
+            "integer_max" | "max" => {
+                let (a, b) = (args[0], args[1]);
+                let signed = substs_first_ty(&substs)
+                    .map(|t| t.is_signed())
+                    .unwrap_or(true);
+                let cc = if signed {
+                    IntCC::SignedLessThan
+                } else {
+                    IntCC::UnsignedLessThan
+                };
+                let is_lt = self.builder.icmp(cc, a, b);
+                vec![self.builder.select(is_lt, b, a)]
+            }
             "rotate_left" | "rotate_right" => {
                 let (a, b) = (args[0], args[1]);
                 if name == "rotate_left" {

@@ -7,7 +7,7 @@
 //! ```
 
 #![feature(rustc_private)]
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 // forge-rustc 排除在 workspace clippy 门禁之外（--exclude forge-rustc）——
 // 但 forge-tests `nightly` feature 经 --all-features 会把它作为依赖拉进
 // 构建，clippy 会连带 lint 它。这些是既有代码的风格性 lint（非本次改动），

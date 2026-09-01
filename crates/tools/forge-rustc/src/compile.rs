@@ -33,6 +33,23 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
         );
     }
     let func = lctx.lower_body(body)?;
+    // IR 层诊断（用户建议：先确认后端 IR 是否正确，再查字节码）：
+    // FORGE_TRACE_IR=1 时 dump forge-ir（LLVM 风格）——确认 StackAddr/Store
+    // 的槽偏移与构造/判别的一致性（enumerate None 路径错位排查）。
+    if crate::trace::trace_enabled("IR") {
+        eprintln!(
+            "[forge] === IR dump: {} ===\n{}",
+            tcx.def_path_str(instance.def_id()),
+            code_forge::ir::display::function_to_string(&func)
+        );
+        // ret values 数诊断（ScalarPair 双返回：被调方 Return 的 values 数
+        // 决定是否生成 RDX 返回 mov——enumerate None 路径 r3.b 残留排查）
+        for (bi, bd) in func.dfg.blocks.iter().enumerate() {
+            if let Terminator::Return { values, .. } = &bd.terminator {
+                eprintln!("[forge] IR ret b{bi} values={}", values.len());
+            }
+        }
+    }
     code_forge::backend::x86_v12::ensure_registered();
     let r = compile_with_isa(&func, isa_name);
     crate::trace::set_panic_context(None);
@@ -69,5 +86,21 @@ pub(crate) fn compile_with_isa(
     let compiler = registry
         .lookup(isa_name)
         .ok_or_else(|| ForgeError::BackendNotFound(isa_name.into()))?;
-    Ok(compiler.compile(func)?)
+    let cf = compiler.compile(func)?;
+    // 字节码层诊断（用户建议：IR 层确认后查字节码）：
+    // FORGE_TRACE_BC=1 时 hex dump 机器码 + reloc（配 llvm-objdump 反汇编对照）。
+    if crate::trace::trace_enabled("BC") {
+        let hex: Vec<String> = cf.code.iter().take(4096).map(|b| format!("{b:02x}")).collect();
+        eprintln!(
+            "[forge] BC {} code_size={} relocs={} bytes=[{}]",
+            func.name,
+            cf.code_size,
+            cf.relocations.len(),
+            hex.join(" ")
+        );
+        for r in &cf.relocations {
+            eprintln!("[forge] BC reloc {} @0x{:x} addend={}", r.symbol, r.offset, r.addend);
+        }
+    }
+    Ok(cf)
 }
