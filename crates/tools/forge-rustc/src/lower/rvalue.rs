@@ -643,6 +643,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             _ => false,
         };
         if !is_fat {
+            if crate::trace::trace_enabled("META") {
+                eprintln!("[forge] fat_ptr_metadata NOT-FAT ty={ty} place={place:?}");
+            }
             return None;
         }
         if crate::trace::trace_enabled("META") {

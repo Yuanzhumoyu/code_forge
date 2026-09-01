@@ -142,6 +142,81 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         }
         self.lower_operand(discr)
     }
+
+    /// WA-24：const 判别求值——switchInt 判别为编译期常量（Operand::Constant
+    /// 可求值，或 RuntimeChecks 恒 0）时返回 Some(值)。供 const 折叠与
+    /// 可达性分析共用（与 TerminatorKind::SwitchInt 的折叠分支一致）。
+    fn const_switch_discr(&self, discr: &Operand<'tcx>) -> Option<i128> {
+        match discr {
+            Operand::Constant(c) => {
+                let scalar = c
+                    .const_
+                    .try_to_scalar_int()
+                    .or_else(|| {
+                        c.const_.try_eval_scalar_int(
+                            self.tcx,
+                            ty::TypingEnv::fully_monomorphized(),
+                        )
+                    });
+                scalar.map(|s| {
+                    let bits = s.to_bits(s.size());
+                    match s.size().bytes() {
+                        1 => (bits as u8) as i128,
+                        2 => (bits as u16) as i128,
+                        4 => (bits as u32) as i128,
+                        _ => bits as i128,
+                    }
+                })
+            }
+            Operand::RuntimeChecks(_) => Some(0),
+            _ => None,
+        }
+    }
+
+    /// WA-24：可达基本块集合——从 entry 出发 BFS，switchInt 按 const 判别
+    /// 折叠只取目标分支；不可达块（UbChecks=false 时的 precondition_check
+    /// 调用块等）不 lower（否则其 Call 引用 core rlib 缺失符号 → LNK2019）。
+    fn reachable_blocks(&self) -> std::collections::HashSet<mir::BasicBlock> {
+        use rustc_middle::mir::TerminatorKind;
+        let body = self.body;
+        let mut reachable = std::collections::HashSet::new();
+        let mut queue = vec![mir::START_BLOCK];
+        while let Some(bb) = queue.pop() {
+            if !reachable.insert(bb) {
+                continue;
+            }
+            let Some(bb_data) = body.basic_blocks.get(bb) else {
+                continue;
+            };
+            match &bb_data.terminator().kind {
+                TerminatorKind::Goto { target } => queue.push(*target),
+                TerminatorKind::SwitchInt { discr, targets } => {
+                    if let Some(v) = self.const_switch_discr(discr) {
+                        // 折叠：只推目标分支
+                        let tgt = targets
+                            .iter()
+                            .find(|(cv, _)| *cv as i128 == v)
+                            .map(|(_, bb)| bb)
+                            .unwrap_or_else(|| targets.otherwise());
+                        queue.push(tgt);
+                    } else {
+                        queue.extend(targets.iter().map(|(_, bb)| bb));
+                        queue.push(targets.otherwise());
+                    }
+                }
+                TerminatorKind::Call { target, .. } => {
+                    if let Some(t) = target {
+                        queue.push(*t);
+                    }
+                }
+                TerminatorKind::Assert { target, .. } => queue.push(*target),
+                TerminatorKind::Drop { target, .. } => queue.push(*target),
+                TerminatorKind::FalseEdge { real_target, .. } => queue.push(*real_target),
+                _ => {}
+            }
+        }
+        reachable
+    }
     pub(crate) fn lower_body(mut self, body: &Body<'tcx>) -> Result<Function, ForgeError> {
         if crate::trace::trace_enabled("FN") {
             eprintln!("[forge] === fn: {}", self.fn_name);
@@ -228,9 +303,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         );
         self.blocks.insert(entry_bb, entry_blk);
 
-        // 2. 为其他 MIR 基本块创建 block
+        // 2. 为其他 MIR 基本块创建 block——跳过不可达块（WA-24：const 判别
+        // 折叠使部分块不可达；若预创建且不 lower，finish 断言"块无终结符"）
+        let reachable = self.reachable_blocks();
         for (bb_idx, _) in body.basic_blocks.iter().enumerate().skip(1) {
             let bb = mir::BasicBlock::from_usize(bb_idx);
+            if !reachable.contains(&bb) {
+                if crate::trace::trace_enabled("BLOCK") {
+                    eprintln!("[forge] pre-skip unreachable bb{bb_idx}");
+                }
+                continue;
+            }
             if !self.blocks.contains_key(&bb) {
                 let blk = self.builder.create_block();
                 self.blocks.insert(bb, blk);
@@ -309,9 +392,20 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
         }
 
-        // 4. 翻译基本块
+        // 4. 翻译基本块——仅遍历可达块（WA-24：const 判别折叠使部分 MIR
+        // 块不可达，如 UbChecks=false 时 precondition_check 调用块 bb10；
+        // 若仍 lower 不可达块，其调用引用 core rlib 缺失符号 → LNK2019）。
+        // 可达性 BFS 复用 const-fold 判定：Goto/SwitchInt(折叠)/Call/Assert 的
+        // 后继块。
+        let reachable = self.reachable_blocks();
         for (bb_idx, bb_data) in body.basic_blocks.iter().enumerate() {
             let bb = mir::BasicBlock::from_usize(bb_idx);
+            if !reachable.contains(&bb) {
+                if crate::trace::trace_enabled("BLOCK") {
+                    eprintln!("[forge] skip unreachable bb{bb_idx}");
+                }
+                continue;
+            }
             let block_id = self.blocks[&bb];
             if crate::trace::trace_enabled("BLOCK") {
                 eprintln!("[forge] lower block bb{bb_idx} -> {:?}", block_id);
@@ -367,6 +461,33 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     self.builder.jump(tgt, &[]);
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
+                    // WA-24：const 判别折叠——判别本身是编译期常量（含
+                    // UbChecks 的 RuntimeChecks）时只生成目标分支的 jump，
+                    // 跳过不可达分支。slice_iter_sum 实证：`switchInt(UbChecks)
+                    // -> [0: bb11, otherwise: bb10]`（UbChecks = core::intrinsics::
+                    // ub_checks 的 const 求值，runtime 语义恒 false，rvalue.rs 的
+                    // RuntimeChecks → iconst(0)）若两分支都生成，bb10 的
+                    // `unchecked_sub::precondition_check` 调用引用 core rlib（LLVM
+                    // 预编译）缺失符号 → LNK2019；对齐 rustc 官方 PR #122282
+                    // （非标准后端消除 UbCheck 分支）。仅折叠"判别本身是 const"
+                    // 的 switchInt——枚举判别（lower_switch_discr 的 Adt 分支读
+                    // 运行时 discriminant）不受影响。
+                    let const_discr = self.const_switch_discr(discr);
+                    if let Some(discr_val) = const_discr {
+                        let tgt = targets
+                            .iter()
+                            .find(|&(v, _)| v as i128 == discr_val)
+                            .map(|(_, bb)| bb)
+                            .unwrap_or_else(|| targets.otherwise());
+                        if crate::trace::trace_enabled("TERM") {
+                            eprintln!(
+                                "[forge] switchInt const fold: discr={discr_val} -> bb{}",
+                                tgt.index()
+                            );
+                        }
+                        let tgt_blk = self.blocks[&tgt];
+                        self.builder.jump(tgt_blk, &[]);
+                    } else {
                     let discr_val = self.lower_switch_discr(discr)?;
                     let otherwise = targets.otherwise();
                     let targets_vec: Vec<_> = targets.iter().collect();
@@ -398,6 +519,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         let otherwise_blk = self.blocks[&otherwise];
                         self.builder.switch_to_block(cur_blk);
                         self.builder.jump(otherwise_blk, &[]);
+                    }
                     }
                 }
                 TerminatorKind::Call {

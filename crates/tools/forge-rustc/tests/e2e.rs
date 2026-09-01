@@ -1034,9 +1034,9 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "F1 iter",
-        reason: "WA-19/WA-04：slice::iter::Iter::next 引用 core::num::unchecked_sub::precondition_check（core 泛型辅助），裸 rustc 场景 rlib 无该符号 → LNK2019（E1 补生成受 rustc 后端限制：core rlib 无 MIR 查询路径 ICE）——cargo build-std 场景可解（README share-generics）",
+        reason: "2026-08 转正：WA-24（switchInt const 判别折叠）——Iter::next 的 `switchInt(UbChecks)` 判别是编译期常量（core::intrinsics::ub_checks 求值 false），折叠后只生成目标分支，不可达的 precondition_check 调用块不再 lower → 无 LNK2019",
     },
     Case {
         name: "vec_iter_enumerate",

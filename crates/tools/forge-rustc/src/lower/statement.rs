@@ -204,7 +204,29 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     _ => {
                         let ty = place.ty(&self.body.local_decls, self.tcx).ty;
                         let size = layout_bytes(self.tcx, ty);
+                        // WA-25：fat pointer 的 Ref（`&*fat_ptr`）——目标类型
+                        // 是 &[T]/&str/&dyn（16 字节 ScalarPair），语义是复制
+                        // fat pointer 值本身（ptr@0 + len/vtable@8），而非槽地址。
+                        // deref 链实证：`_0 = &(*_2)`（_2: *const [i32]）若走
+                        // lower_rvalue 的 Rvalue::Ref→place_addr 只写 8 字节
+                        // ptr，len 半区不写 → PtrMetadata 读 len=0（Vec deref
+                        // 后 slice.len()=0）。按 size 整值复制（与 Use/Cast 的
+                        // 聚合复制一致）。
                         if size > 8
+                            && let Rvalue::Ref(_, _, p) = rvalue
+                            && (matches!(
+                                ty.kind(),
+                                rustc_middle::ty::TyKind::Ref(
+                                    _,
+                                    _,
+                                    _
+                                )
+                            ))
+                        {
+                            let dst = self.place_addr(place);
+                            let src = self.place_addr(p);
+                            self.copy_agg(dst, src, size);
+                        } else if size > 8
                             && let Rvalue::Use(op, _) = rvalue
                             && let Operand::Move(src) | Operand::Copy(src) = op
                         {
