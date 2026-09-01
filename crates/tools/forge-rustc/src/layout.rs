@@ -45,9 +45,16 @@ pub fn scalar_pair_offsets<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (i64, i64) 
         // niche/单字段 ScalarPair（Option<i32>、Result<(), E> 等）：
         // fields()/variants 可能缺字段（tag_field 越界、空 variant——实测
         // rustc_abi:1688 越界 panic）——优先用 BackendRepr::ScalarPair 的
-        // 标量宽度（第 1 标量@0、第 2 标量紧随其后），不依赖 fields。
-        if let rustc_abi::BackendRepr::ScalarPair { a, .. } = l.backend_repr {
-            return (0, a.primitive().size(&tcx).bytes() as i64);
+        // 标量宽度。**注意**：第 2 标量偏移必须用 b_offset（2026 nightly
+        // ScalarPair struct 的显式字段）——payload 是聚合（如 (usize,&i32)
+        // 16 字节）时对齐后不在 tag 之后立即（mn2 实证：Option<(usize,&i32)>
+        // 的 payload 在 offset 8，旧 (0, a.size)= (0,1) 错位 → 返回垃圾判别）。
+        if let rustc_abi::BackendRepr::ScalarPair { a, b_offset, .. } = l.backend_repr {
+            let b_off = b_offset.bytes() as i64;
+            if crate::trace::trace_enabled("PAIR") {
+                eprintln!("[forge] pair_offsets niche a_size={} b_off={b_off} ty={ty}", a.primitive().size(&tcx).bytes());
+            }
+            return (0, b_off);
         }
         if let Variants::Multiple {
             tag_field,
@@ -82,6 +89,9 @@ pub fn scalar_pair_offsets<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (i64, i64) 
     }
     let f0 = l.fields().offset(0).bytes() as i64;
     let f1 = l.fields().offset(1).bytes() as i64;
+    if crate::trace::trace_enabled("PAIR") {
+        eprintln!("[forge] pair_offsets fields (f0={f0}, f1={f1}) ty={ty} n={n}");
+    }
     (f0, f1)
 }
 

@@ -153,6 +153,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             };
                             let f_ty = f.ty(&self.body.local_decls, self.tcx);
                             let f_sz = layout_bytes(self.tcx, f_ty);
+                            if crate::trace::trace_enabled("AGG") {
+                                eprintln!(
+                                    "[forge] agg field ty={ty} i={i} f_ty={f_ty} f_sz={f_sz} kind={:?}",
+                                    f_ty.kind()
+                                );
+                            }
                             // 嵌套聚合字段（如 Vec 的 buf/RawVec——16 字节、结构体
                             // 字段数组 [i32; 3]——12 字节）：按 size 整值复制，
                             // 否则只写 8 字节（ptr）→ cap/len 槽垃圾；数组字段
@@ -223,8 +229,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 )
                             ))
                         {
+                            if crate::trace::trace_enabled("CAST") {
+                                eprintln!(
+                                    "[forge] WA-25 fat Ref copy dst={place:?} src={p:?} size={size} ty={ty}"
+                                );
+                            }
                             let dst = self.place_addr(place);
-                            let src = self.place_addr(p);
+                            // WA-25 修正：复制源必须跳过 Deref 投影——`&(*_5)`
+                            // 的语义是复制 fat pointer 值（ptr@0 + len@8），
+                            // place_addr((*_5)) 会解引用读 8 字节 ptr（HEAP
+                            // 数据地址）→ 从 HEAP 复制 16 字节 → len 半区是
+                            // 堆数据垃圾（frp 实证：from_raw_parts 后
+                            // sl.len()=0）。源 = 纯 local 槽（去掉 Deref）。
+                            let src = self.place_addr(&mir::Place {
+                                local: p.local,
+                                projection: ty::List::empty(),
+                            });
                             self.copy_agg(dst, src, size);
                         } else if size > 8
                             && let Rvalue::Use(op, _) = rvalue

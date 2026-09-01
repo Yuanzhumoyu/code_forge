@@ -194,7 +194,33 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     .collect::<Vec<_>>()
                             );
                         }
-                        let raw = self.builder.load(addr, TypeId::I64);
+                        // WA-26：niche 判别读的字段偏移——niche 值在 payload 的
+                        // 标量中（通常第 2 标量，如 Option<(usize,&i32)> 的 &i32
+                        // 在 offset 8）。恒读 offset 0 会读到非 niche 标量
+                        // （usize=0 → 误判 None，mn2 实证：判别恒 0 → 走 None
+                        // 分支）。仅当 ScalarPair 的 b 是指针类（niche 在 b，
+                        // 如 &i32/&T/ptr 用 null 做判别）时用 b_offset；
+                        // 其他 niche（单标量或 b 非指针）读 offset 0——否则
+                        // Result/ControlFlow 等非指针 niche 被错读（vl3 实证：
+                        // grow 链 Result<_, TryReserveError> 的 niche 不在
+                        // b_offset，读错 → 解引用垃圾 SEGV）。
+                        let niche_off = match &layout.layout.backend_repr {
+                            rustc_abi::BackendRepr::ScalarPair { b, b_offset, .. } => {
+                                let is_ptr = matches!(
+                                    b.primitive(),
+                                    rustc_abi::Primitive::Pointer(_)
+                                );
+                                if is_ptr { b_offset.bytes() as i64 } else { 0 }
+                            }
+                            _ => 0,
+                        };
+                        let raw = if niche_off == 0 {
+                            self.builder.load(addr, TypeId::I64)
+                        } else {
+                            let off_v = self.builder.iconst(niche_off, TypeId::I64);
+                            let naddr = self.builder.iadd(addr, off_v);
+                            self.builder.load(naddr, TypeId::I64)
+                        };
                         // 常见单 niche（count==1 且 niche 值 0）：判别 = untagged - is_eq*untagged
                         //（算术避免 select 两臂常量的 XReg 重叠分配——regalloc 已知问题）
                         let niche_count = niche_variants.clone().into_iter().count();
