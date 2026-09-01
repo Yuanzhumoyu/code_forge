@@ -1021,9 +1021,9 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "F1 iter",
-        reason: "WA-20：多次 next 的 start 不递增（0..4 第二次 next 返回 Some(0) 应 Some(1)；0..1 第二次应 None 却 Some(0)）——spec_next/next 链反汇编正确但运行期写回不生效（主库 regalloc/emission 微妙 bug，需运行期单步）",
+        reason: "2026-08 转正：WA-23（ScalarPair pack_sp/unpack_sp 按标量宽度读写）——Option<i32> 的 hi 字段 8 字节写越界覆盖相邻 Range.start 槽 → start 不递增；修复后第二次 next 正确返回 Some(1)",
     },
     // ── F1 扩编：迭代器 / 字符串 / 数组 of 结构体 / 聚合传参──
     Case {
@@ -1101,14 +1101,14 @@ const CASES: &[Case] = &[
     Case {
         name: "nested_loop_break_outer",
         body: "let mut total = 0; 'outer: for i in 0..4 { for j in 0..4 { if i * j == 9 { break 'outer; } total += 1; } } total",
-        expected: 12, // i=0:4, i=1:4, i=2:4, i=3: 遇 9 前 0 次(3*3=9 第一个) → 12
+        expected: 15, // i=0:4, i=1:4, i=2:4, i=3: j=0..2 累加 3 次后 j=3 遇 3*3=9 break → 4+4+4+3=15
         extra: "",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "F1 control",
-        reason: "WA-20（Range 迭代链未初始化值）：sentinel 实证 mainCRTStartup 循环 >1000 次（0xDEAD）；spec_next 反汇编正确（当前 dll）；常量/变量 ExitProcess 参数产物行为分叉（非确定）——判别层已修，疑似 next 包装返回/pack_sp 解包偏移未初始化，待查",
+        reason: "2026-08 转正：WA-23（pack_sp/unpack_sp 宽度）修复 Range 迭代链后循环正确终止；LLVM 实证真实语义为 15（原 expected=12 注释手算错误：i=3 时 j=0,1,2 三次 3*0/3*1/3*2≠9 均累加，j=3 才 break 'outer）",
     },
     Case {
         name: "match_str_result",

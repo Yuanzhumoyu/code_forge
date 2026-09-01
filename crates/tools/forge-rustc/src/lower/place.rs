@@ -30,30 +30,45 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     }
     pub(crate) fn unpack_sp(&mut self, addr: Value, ty: Ty<'tcx>) -> (Value, Value) {
         let (o0, o1) = scalar_pair_offsets(self.tcx, ty);
+        let (w0, w1) = scalar_pair_widths(self.tcx, ty);
+        let t0 = scalar_width_type(w0);
+        let t1 = scalar_width_type(w1);
         let a0 = if o0 == 0 {
             addr
         } else {
             let off = self.builder.iconst(o0, TypeId::I64);
             self.builder.iadd(addr, off)
         };
-        let lo = self.builder.load(a0, TypeId::I64);
+        // WA-23：按 ScalarPair 标量真实宽度读——恒 I64 会对窄字段读 8 字节
+        //（Option<i32> 的 value@4 读 -0x44..-0x3d 混入相邻槽垃圾高位，pack
+        // 写回时带进相邻槽 → Range.start 被覆盖 → for 循环不终止）。
+        let lo = self.builder.load(a0, t0);
+        let lo = self.builder.uextend(lo, TypeId::I64);
         let off1 = self.builder.iconst(o1, TypeId::I64);
         let a1 = self.builder.iadd(addr, off1);
-        let hi = self.builder.load(a1, TypeId::I64);
+        let hi = self.builder.load(a1, t1);
+        let hi = self.builder.uextend(hi, TypeId::I64);
         (lo, hi)
     }
     pub(crate) fn pack_sp(&mut self, addr: Value, lo: Value, hi: Value, ty: Ty<'tcx>) {
         let (o0, o1) = scalar_pair_offsets(self.tcx, ty);
+        let (w0, w1) = scalar_pair_widths(self.tcx, ty);
+        let t0 = scalar_width_type(w0);
+        let t1 = scalar_width_type(w1);
         let a0 = if o0 == 0 {
             addr
         } else {
             let off = self.builder.iconst(o0, TypeId::I64);
             self.builder.iadd(addr, off)
         };
-        self.builder.store(lo, a0);
+        // WA-23：按标量宽度写——窄字段（如 Option<i32> 的 value@4）8 字节写
+        // 越界覆盖相邻槽（range1 实证：hi 写 -0x6c..-0x65 覆盖 _4.start）。
+        let lo_n = self.builder.ireduce(lo, t0);
+        self.builder.store(lo_n, a0);
         let off1 = self.builder.iconst(o1, TypeId::I64);
         let a1 = self.builder.iadd(addr, off1);
-        self.builder.store(hi, a1);
+        let hi_n = self.builder.ireduce(hi, t1);
+        self.builder.store(hi_n, a1);
     }
     pub(crate) fn agg_const_bytes(&mut self, addr: Value, bytes: &[u8]) {
         for (i, chunk) in bytes.chunks(8).enumerate() {

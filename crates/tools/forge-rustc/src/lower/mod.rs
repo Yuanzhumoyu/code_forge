@@ -7,6 +7,7 @@ pub(crate) use crate::error::ForgeError;
 pub(crate) use crate::func_ref::FuncRefTable;
 pub(crate) use crate::layout::{
     is_agg_mem, is_scalar_pair_abi, layout_bytes, layout_size, scalar_pair_offsets,
+    scalar_pair_widths, scalar_width_type,
 };
 use crate::prelude::*;
 pub(crate) use crate::rustc_compat::substs_first_ty;

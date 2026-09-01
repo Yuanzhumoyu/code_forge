@@ -100,6 +100,31 @@ pub fn layout_size<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> u32 {
     layout_bytes(tcx, ty).max(8).div_ceil(8) * 8
 }
 
+/// ScalarPair 两个标量在内存中的真实字节宽度。pack_sp/unpack_sp 按此宽度
+/// 做字段 load/store——恒用 I64（8 字节）会对窄字段越界（Option<i32> 的
+/// value@4 8 字节写覆盖相邻槽，range1 for 循环挂起实证：main 收 next 返回
+/// pack_sp 的 hi 8 字节写 -0x6c..-0x65 覆盖 _4 槽 -0x68 的 start → 循环不终止）。
+pub fn scalar_pair_widths<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (u32, u32) {
+    if let Ok(l) = tcx.layout_of(ty::PseudoCanonicalInput {
+        typing_env: ty::TypingEnv::fully_monomorphized(),
+        value: ty,
+    }) && let rustc_abi::BackendRepr::ScalarPair { a, b, .. } = l.layout.backend_repr
+    {
+        let wa = a.primitive().size(&tcx).bytes() as u32;
+        let wb = b.primitive().size(&tcx).bytes() as u32;
+        return (wa.max(1), wb.max(1));
+    }
+    (8, 8)
+}
+
+/// ScalarPair 标量字节宽度 → forge-ir 整数类型（8/16/32/64，其他回退 I64）。
+pub fn scalar_width_type(w: u32) -> TypeId {
+    match w {
+        1 | 2 | 4 => TypeId::I32, // 窄标量按 I32 域处理（写侧 ireduce 到 I32 不越界）
+        _ => TypeId::I64,
+    }
+}
+
 /// 该类型是否按 ScalarPair ABI 传参/返回（两个标量，如 (i64,i64) 结构体）。
 ///
 /// 判断依据是 rustc 布局的 `backend_repr`，而非字节大小区间——8 字节的
