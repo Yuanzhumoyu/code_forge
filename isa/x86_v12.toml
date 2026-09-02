@@ -967,6 +967,18 @@ effect = ["Write"]
 implicit_regs = ["RAX"]
 
 [[instructions]]
+name = "CMPXCHG_MEM_R_32"
+form = "MRR_MEM_0F"
+opcode = 0xB1
+fields = { prefix = 0xF0 }
+# 固定 32 位变体（MOV_R_MEM_32/STORE_MEM_R_32/NEG_RM_32 同款惯例——rm_mem
+# 形式宽度编码恒取寄存器侧 64；数据宽度按 IR 类型的 auto 分发是 DSL 层
+# 修法（见 WA-35），落地前窄原子用固定 _32 变体）。
+asm = "lockcmpxchg32 [{1:[gpr:in]}], {0:[gpr32:in]}"
+effect = ["Write"]
+implicit_regs = ["RAX"]
+
+[[instructions]]
 name = "SUB_MEM_R"
 form = "MRR_MEM_PRE"
 opcode = 0x29
@@ -3661,7 +3673,18 @@ insts = [
 
 # ── Cmpxchg：RAX = 期望值（隐式累加器）→ LOCK CMPXCHG [ptr], new →
 #    RAX = 旧值（不相等时写回 RAX）。单结果（旧值）；成功标志未展开
-#    （IR 层 struct 展开走 extractvalue，x86 后端暂不支持）。──
+#    （IR 层 struct 展开走 extractvalue，x86 后端暂不支持）。
+#    32 位数据（rs2=cmp 宽度 32）走 CMPXCHG_MEM_R_32（gpr32 —— 无 REX.W；
+#    否则 64 位 cmpxchg 对 4 字节原子越界且比较错误——WA-35）。
+
+[[lowering]]
+op = "Cmpxchg"
+when = { eq = ["rs2_width", 32] }
+insts = [
+    "mov RAX, {1}",
+    "lockcmpxchg32 {2}, {0}",
+    "mov {out}, RAX",
+]
 
 [[lowering]]
 op = "Cmpxchg"

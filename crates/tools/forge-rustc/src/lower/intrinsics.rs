@@ -481,24 +481,89 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
                 vec![self.builder.atomic_rmw(op, ptr, val, Ordering::Monotonic)]
             }
+            // 原子 RMW 的 CMPXCHG 循环族（And/Or/Xor/Nand/Max/Min/Umax/Umin）：
+            // x86 无"返回旧值"的 lock and/or/xor——LOCK CMPXCHG 重试循环。
+            // rustc 1.100 fetch_* 发射裸 intrinsic（atomic_and 等，2 运行时
+            // 参数 + const ORD，均需旧值——AtomicU32::fetch_and 实证）。
+            // 宽度 = val 类型（i32→CMPXCHG_MEM_R_32 4 字节、i64→64 位——
+            // WA-35 主库固定 32 变体修复后窄域正确）；bool/u8/u16 等 1/2
+            // 字节待字节宽度内存原子扩展。
+            "atomic_and" | "atomic_and_acqrel" | "atomic_and_acquire"
+            | "atomic_and_release" | "atomic_and_relaxed"
             | "atomic_fetch_and" | "atomic_fetch_and_acqrel" | "atomic_fetch_and_acquire"
             | "atomic_fetch_and_release" | "atomic_fetch_and_relaxed"
+            | "atomic_or" | "atomic_or_acqrel" | "atomic_or_acquire"
+            | "atomic_or_release" | "atomic_or_relaxed"
             | "atomic_fetch_or" | "atomic_fetch_or_acqrel" | "atomic_fetch_or_acquire"
             | "atomic_fetch_or_release" | "atomic_fetch_or_relaxed"
+            | "atomic_xor" | "atomic_xor_acqrel" | "atomic_xor_acquire"
+            | "atomic_xor_release" | "atomic_xor_relaxed"
             | "atomic_fetch_xor" | "atomic_fetch_xor_acqrel" | "atomic_fetch_xor_acquire"
             | "atomic_fetch_xor_release" | "atomic_fetch_xor_relaxed"
-            | "atomic_and" | "atomic_or" | "atomic_xor" | "atomic_nand" | "atomic_max"
-            | "atomic_min" | "atomic_umax" | "atomic_umin"
-            | "atomic_cxchg" | "atomic_cxchg_acqrel" | "atomic_cxchg_acquire"
+            | "atomic_nand" | "atomic_nand_acqrel" | "atomic_nand_acquire"
+            | "atomic_nand_release" | "atomic_nand_relaxed"
+            | "atomic_fetch_nand" | "atomic_fetch_nand_acqrel" | "atomic_fetch_nand_acquire"
+            | "atomic_fetch_nand_release" | "atomic_fetch_nand_relaxed"
+            | "atomic_max" | "atomic_max_acqrel" | "atomic_max_acquire"
+            | "atomic_max_release" | "atomic_max_relaxed"
+            | "atomic_fetch_max" | "atomic_fetch_max_acqrel" | "atomic_fetch_max_acquire"
+            | "atomic_fetch_max_release" | "atomic_fetch_max_relaxed"
+            | "atomic_min" | "atomic_min_acqrel" | "atomic_min_acquire"
+            | "atomic_min_release" | "atomic_min_relaxed"
+            | "atomic_fetch_min" | "atomic_fetch_min_acqrel" | "atomic_fetch_min_acquire"
+            | "atomic_fetch_min_release" | "atomic_fetch_min_relaxed"
+            | "atomic_umax" | "atomic_umax_acqrel" | "atomic_umax_acquire"
+            | "atomic_umax_release" | "atomic_umax_relaxed"
+            | "atomic_umin" | "atomic_umin_acqrel" | "atomic_umin_acquire"
+            | "atomic_umin_release" | "atomic_umin_relaxed" => {
+                let w = layout_bytes(self.tcx, substs_first_ty(&substs).unwrap_or(fty));
+                if w != 4 && w != 8 {
+                    return Err(ForgeError::Message(format!(
+                        "{}: 原子 intrinsic {name}: {w} 字节原子（bool/u8/u16 等）\
+                         需 1/2 字节内存原子操作支持——当前 CMPXCHG 循环仅 \
+                         4/8 字节（i32/i64/usize/isize；AtomicBool/AtomicI8 \
+                         待字节宽度内存操作扩展）",
+                        self.fn_name
+                    )));
+                }
+                let ptr = args
+                    .first()
+                    .copied()
+                    .ok_or_else(|| ForgeError::Message(format!("{name}: missing ptr arg")))?;
+                let val = args
+                    .get(1)
+                    .copied()
+                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                let kind = if name.contains("nand") {
+                    RmwLoop::Nand
+                } else if name.contains("umax") {
+                    RmwLoop::Umax
+                } else if name.contains("umin") {
+                    RmwLoop::Umin
+                } else if name.contains("max") {
+                    RmwLoop::SMax
+                } else if name.contains("min") {
+                    RmwLoop::SMin
+                } else if name.contains("and") {
+                    RmwLoop::And
+                } else if name.contains("or") {
+                    RmwLoop::Or
+                } else {
+                    RmwLoop::Xor
+                };
+                vec![self.atomic_rmw_loop(kind, ptr, val)?]
+            }
+            // cxchg/cxchgweak（compare_exchange）：需返回 (旧值, 成功标志)
+            // 双值——IR Cmpxchg 目前单结果（成功标志未展开），仍拒绝。
+            "atomic_cxchg" | "atomic_cxchg_acqrel" | "atomic_cxchg_acquire"
             | "atomic_cxchg_release" | "atomic_cxchg_relaxed"
             | "atomic_cxchgweak" | "atomic_cxchgweak_acqrel" | "atomic_cxchgweak_acquire"
             | "atomic_cxchgweak_release" | "atomic_cxchgweak_relaxed" => {
                 return Err(ForgeError::Message(format!(
-                    "{}: 原子 RMW intrinsic {name} 暂不支持——主库 AtomicRmw \
-                     lowering 仅覆盖 Xchg/Add/Sub（imm0 0/1/2，xadd/xchg 直接 \
-                     返回旧值）；And/Or/Xor/Nand/Max/Min/Umax/Umin 需 CMPXCHG \
-                     循环、cxchg/cxchgweak 需 cmpxchg 指令扩展（均未实现）。\
-                     atomic_load/store/xchg/xadd/xsub/fetch_add/fetch_sub 可用",
+                    "{}: 原子 intrinsic {name} 暂不支持——compare_exchange 需 \
+                     (旧值, 成功标志) 双结果（IR Cmpxchg 单结果、成功标志未展开）；\
+                     atomic_load/store/xchg/xadd/xsub/fetch_add/fetch_sub + \
+                     and/or/xor/nand/max/min/umax/umin（CMPXCHG 循环）可用",
                     self.fn_name
                 )));
             }
@@ -575,6 +640,76 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
         };
         Ok(r)
+    }
+}
+
+/// CMPXCHG 循环 RMW 的操作种类（intrinsics.rs 内部）。
+#[derive(Clone, Copy, PartialEq)]
+enum RmwLoop {
+    And,
+    Or,
+    Xor,
+    Nand,
+    SMax,
+    SMin,
+    Umax,
+    Umin,
+}
+
+impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
+    /// LOCK CMPXCHG 重试循环原子 RMW（返回旧值）：
+    /// 入口块：old0 = load(ptr, t)；jump 循环
+    /// 循环块（param old: t）：new = op(old, val)；actual = cmpxchg(ptr,
+    /// old, new)（lockcmpxchg 写回实际旧值）；actual == old → exit(actual)，
+    /// 否则循环(old=actual) 重试。t = val 的域宽度（i32→32 位
+    /// lockcmpxchg32、i64→64 位——WA-35 主库固定 32 变体后窄域正确，
+    /// 4 字节原子不再越界）。
+    /// create_block_with_tys 会切换当前块——先建块再切回 orig 发入口。
+    fn atomic_rmw_loop(&mut self, kind: RmwLoop, ptr: Value, val: Value) -> Result<Value, ForgeError> {
+        let t = self.builder.value_type(val).unwrap_or(TypeId::I64);
+        let orig = self.builder.current_block();
+        let (loop_b, loop_args) = self.builder.create_block_with_tys(&[t]);
+        let (exit_b, exit_args) = self.builder.create_block_with_tys(&[t]);
+        self.builder.switch_to_block(orig);
+        // 入口：读旧值 → 进循环
+        let old0 = self.builder.load(ptr, t);
+        self.builder.jump(loop_b, &[old0]);
+        self.builder.switch_to_block(loop_b);
+        let old = loop_args[0];
+        let new = match kind {
+            RmwLoop::And => self.builder.band(old, val),
+            RmwLoop::Or => self.builder.bor(old, val),
+            RmwLoop::Xor => self.builder.bxor(old, val),
+            RmwLoop::Nand => {
+                let a = self.builder.band(old, val);
+                let ones = self.builder.iconst(-1, t);
+                self.builder.bxor(a, ones)
+            }
+            // fetch_max/min 语义：写 max(old,val)（有符号/无符号 cc）
+            RmwLoop::SMax => {
+                let gt = self.builder.icmp(IntCC::SignedGreaterThan, old, val);
+                self.builder.select(gt, old, val)
+            }
+            RmwLoop::SMin => {
+                let lt = self.builder.icmp(IntCC::SignedLessThan, old, val);
+                self.builder.select(lt, old, val)
+            }
+            RmwLoop::Umax => {
+                let gt = self.builder.icmp(IntCC::UnsignedGreaterThan, old, val);
+                self.builder.select(gt, old, val)
+            }
+            RmwLoop::Umin => {
+                let lt = self.builder.icmp(IntCC::UnsignedLessThan, old, val);
+                self.builder.select(lt, old, val)
+            }
+        };
+        let actual = self
+            .builder
+            .cmpxchg(ptr, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+        let ok = self.builder.icmp(IntCC::Equal, actual, old);
+        self.builder.branch(ok, exit_b, &[actual], loop_b, &[actual]);
+        self.builder.switch_to_block(exit_b);
+        Ok(exit_args[0])
     }
 }
 

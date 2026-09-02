@@ -1641,6 +1641,152 @@ mod tests {
         assert_eq!(x, 8, "fetch_and writes new value");
     }
 
+    /// WA-35 收尾：I32 域 cmpxchg 重试循环（fetch_and 形态）——CMPXCHG_MEM_R_32
+    /// 修复后应通过（此前 icmp 自比较/64 位越界写丢失——见 WA-35）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cmpxchg_and_loop() {
+        use forge_ir::{IntCC, Ordering};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // f(ptr: *mut i32) -> i32：cmpxchg 循环 fetch_and(ptr, 0b1010)
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
+        jit.add_function("cmpxchg_and", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let val = b.iconst(0b1010, TypeId::I32);
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I32]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I32]);
+            b.switch_to_block(entry);
+            let old0 = b.load(p, TypeId::I32);
+            b.jump(loop_b, &[old0]);
+            b.switch_to_block(loop_b);
+            let old = la[0];
+            let new = b.band(old, val);
+            let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+            let ok = b.icmp(IntCC::Equal, actual, old);
+            b.branch(ok, exit_b, &[actual], loop_b, &[actual]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("cmpxchg_and").expect("get_fn");
+        // 邻字节哨兵：越界 64 位写会破坏 buf[1]
+        let mut buf = [12i32, 0x55555555];
+        let old = f(&mut buf[0]);
+        assert_eq!(old, 12, "fetch_and returns old value");
+        assert_eq!(buf[0], 8, "fetch_and writes new value");
+        assert_eq!(buf[1], 0x55555555, "no 64-bit overrun into neighbor");
+    }
+
+    /// WA-35 类型系统验证：单发 I32 cmpxchg，val 作 **i32 参数**（真 32 位
+    /// 值流、无 const 物化污染）——若 auto 宽度分发自洽则应通过（无 _32
+    /// 变体需求）；const 版失败说明问题在 const 物化宽度。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cmpxchg_i32_param() {
+        use forge_ir::Ordering;
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // f(ptr: *mut i32, val: i32)：old=12（load），cmpxchg(12 → val & old)
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr"), (TypeId::I32, "val")], &[TypeId::I32]);
+        jit.add_function("cmpxchg_param32", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr"), (TypeId::I32, "val")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let val = params[1];
+            let old = b.load(p, TypeId::I32);
+            let new = b.band(old, val);
+            let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+            let ok = b.icmp(forge_ir::IntCC::Equal, actual, old);
+            let z = b.iconst(0, TypeId::I32);
+            let o = b.iconst(1, TypeId::I32);
+            let pick = b.select(ok, z, o);
+            b.ret(&[pick]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i32, i32) -> i32 = jit.get_fn("cmpxchg_param32").expect("get_fn");
+        let mut buf = [12i32, 0x55555555];
+        let r = f(&mut buf[0], 0b1010);
+        assert_eq!(r, 0, "compare 成功（12 → 12&10）");
+        assert_eq!(buf[0], 8, "cmpxchg writes new on match");
+        assert_eq!(buf[1], 0x55555555, "no overrun");
+    }
+
+    /// WA-35 细分定位：单发（无循环）I32 cmpxchg——记忆 12→8 是否生效。
+    /// 通过 = bug 在循环/块参数；失败 = cmpxchg 窄域降级本身。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cmpxchg_i32_single() {
+        use forge_ir::Ordering;
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // f(ptr: *mut i32) -> i32：old=12, new=8 单发 cmpxchg
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
+        jit.add_function("cmpxchg_single32", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let old = b.iconst(12, TypeId::I32);
+            let new = b.iconst(8, TypeId::I32);
+            let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+            b.ret(&[actual]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("cmpxchg_single32").expect("get_fn");
+        let mut buf = [12i32, 0x55555555];
+        let old = f(&mut buf[0]);
+        assert_eq!(old, 12, "cmpxchg returns old");
+        assert_eq!(buf[0], 8, "cmpxchg writes new on match");
+        assert_eq!(buf[1], 0x55555555, "no overrun");
+    }
+
+    /// WA-35 细分定位：单发 I32 cmpxchg（old 从内存 load）——
+    /// 记忆 12→8（load 出的 old 参与比较）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cmpxchg_i32_single_load() {
+        use forge_ir::Ordering;
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
+        jit.add_function("cmpxchg_single32l", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let old = b.load(p, TypeId::I32);
+            let mask = b.iconst(0b1010, TypeId::I32);
+            let new = b.band(old, mask);
+            let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+            let ok = b.icmp(forge_ir::IntCC::Equal, actual, old);
+            // 用 ok 选择返回值（防止 dead code 消除把比较消掉）
+            let z = b.iconst(0, TypeId::I32);
+            let o = b.iconst(1, TypeId::I32);
+            let pick = b.select(ok, z, o);
+            b.ret(&[pick]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("cmpxchg_single32l").expect("get_fn");
+        let mut buf = [12i32, 0x55555555];
+        let r = f(&mut buf[0]);
+        assert_eq!(r, 0, "ok=1 → select(1→0): 比较应成功");
+        assert_eq!(buf[0], 8, "cmpxchg writes new on match");
+        assert_eq!(buf[1], 0x55555555, "no overrun");
+    }
+
     /// WA-18 高压寄存器复现：10 个存活值 + atomic_rmw（触发 ptr spill）。
     #[cfg(target_arch = "x86_64")]
     #[test]
