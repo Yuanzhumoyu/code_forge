@@ -182,13 +182,24 @@ set_address / .debug_info 的 low_pc）随段数据发射 ADDR64 reloc，链接�
 解析为函数真实地址（此前"low_pc=0 占位待 reloc"说法已过时）。
 `-C debuginfo=0` 零开销（不生成段）。e2e `debuginfo_line_tables` 用例守护。
 
-**C2（变量级 debuginfo，路线图中）**：per-statement 行号细化 +
-`DW_TAG_variable`/`formal_parameter`（var_debug_info → DW_OP_fbreg）+ 
-base_type/类型 DIE（复用 `rustc_codegen_ssa::debuginfo::type_names`）。
+**C2 变量级 debuginfo（-C debuginfo=2 full，2026-09 已实现）**：
+lower 从 rustc `body.var_debug_info` 采集源变量（无投影 local——forge 全
+栈槽模型，fbreg = 实际槽相对 rbp 的偏移，含主库 callee-saved shift 64）
+→ `VarEntry`/`FnVarEntries` 结构体 → dwarf.rs 生成：
+- `DW_TAG_subprogram` 加 `DW_AT_frame_base`（DW_OP_reg6 = rbp）
+- 参数 `DW_TAG_formal_parameter` / 局部 `DW_TAG_variable`（name/type/
+  location=DW_OP_fbreg/decl_line）
+- `DW_TAG_base_type`（标量：name/byte_size/encoding——i8..i128/u8..u128/
+  f32/f64/bool/char/usize/isize；聚合/引用 C2 首版不设 type）
+效果：gdb/windbg `info args`/`info locals`/`print x` 可看参数与标量局部
+变量值。`type_names` 调研结论：ssa 写入层耦合 BuilderMethods 不可接入
+（cranelift 同构自研），scope/类型私有——自研采集 + 标量类型表。
+e2e `debuginfo_full` + dwarf 单测守护。**待续**：per-statement 行号细化
+（需主库 emission 位置追踪）；投影变量（字段/解引用）；引用/聚合类型 DIE。
 
 ## 路线图（远期，P4.7/P4.8 评估结论）
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
-| **C2 DebugInfo 变量级** | 中工程量（阶段 B：per-statement 行号 → 变量/参数 DIE → base_type）——调研确认 ssa 写入层耦合 BuilderMethods 不可接入（cranelift 同构自研），但 `type_names`/`body.var_debug_info`/forge-ir `SourceLocation` 均可复用 | 无（rustc_middle pub API） |
+| **per-statement 行号（B1 续）** | 中工程量：forge-ir `DebugInfo`/`SourceLocation` 已就位（未用）；需主库 emission 按指令收集 (机器码偏移, 行)——InstPacket/vcode/CompiledFunction 加位置字段 | 主库 emission 位置追踪（用户已授权完善主库） |
 | **并行 CGU（`-Z codegen-units=N`）** | 中工程量：当前单对象文件（backend.rs 合并输出）。并行化需 FuncRefTable 并发化（`intern`/`intern_global` 加锁或 thread-local）+ 每 CGU 独立 ObjectWriter + `join_codegen` 多模块归并 | 主库 ObjectWriter 并发支持 |
