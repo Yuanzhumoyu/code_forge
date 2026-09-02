@@ -100,7 +100,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 硬断言，56 用例全部非 known 全绿 + cargo 集成；共 58 项，另有 2 个 known_failure 显式清单：vec_push / vec_string——见下方限制表）
+### ✅ 已验证（e2e 硬断言，85 用例全绿——2026-09 WA-29 后 vec_iter_enumerate 转正，known_failure 清零）
 
 | 类别 | 内容 |
 | ------ | ------ |
@@ -119,7 +119,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 | 闭包 | 捕获、`FnOnce`/`FnMut` 调用（`closure_capture`/`closure_fnmut`） |
 | Drop | `DropInPlace` shim 编译 + 显式/作用域末 drop 调用（`drop_glue`） |
 | static 数据段 | `MonoItem::Static` → `.data`/`.rodata` 符号 + `const{allocN}` 指针 → `global_addr`；只读（`static_read`/`static_two_fields`）与 `static mut` 写回（`static_mut_counter`） |
-| Box 封装层 | `Unique`/`NonNull` 聚合 + `ptr::write` + 解引用读（`box_value`，需 `#[global_allocator]`）；写回 `*b = 42` 的 deref 检查链回归中（见限制区） |
+| Box 封装层 | `Unique`/`NonNull` 聚合 + `ptr::write` + 解引用读/写回（`box_value`/`box_write`，需 `#[global_allocator]`） |
 | 链接/增量 | 多 codegen unit 合并、`-C incremental` 增量缓存、MSVC 链接器（`/DEFAULTLIB:vcruntime.lib` 提供 `__CxxFrameHandler3`） |
 
 ### ⚠️ 已知限制（记录为待办）
@@ -129,7 +129,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 | 限制 | 原因 |
 | ------ | ------ |
 | 动态分发（trait object） | **已修复（转正）**：`&Dog → &dyn Speak` 的 unsize cast 完整实现——① vtable 数据段生成（`tcx.vtable_allocation` + `vtable_entries`→VtblEntry 列表→8 字节指针表：drop_in_place/size/align/方法指针；**MSVC 链接器不应用 .rodata 的 ADDR64 重定位（实测全 0），必须放 .data 段**——object_writer 新增 `add_data_with_relocs`）；② self 类型传具体类型（`&Dog → Dog`，否则 `<&Dog as Speak>::speak` 实例解析 ICE）；③ **间接调用返回值修复**：`[lower.CallIndirect]` 缺 `MOV_RM8_R64 rd, RAX`（直接调用 `[lower.Call]` 有）——结果 XReg 被 regalloc 乱分配读到垃圾（曾返回 vtable+24）。新增 e2e 用例 `dyn_trait_call`（exit=7 稳定）；最小用例 3 次运行确认。遗留：trait upcasting（TraitVPtr 槽占位 0） |
-| Vec/String 完整运行 | **known_failure（e2e 显式清单：`vec_push` SEGV / `vec_string` len 错）**：十二轮深挖最终定性——**嵌套 niche 传播**（rustc 的 niche 布局传播：外层枚举判别与内层 payload 判别共享/嵌入字节——LLVM 级特性）：grow 链（Result/ControlFlow/TryReserveError 错误传播）与最小复现 cf5（`CF::Break(Err(5u8))` 应=7 现=1）同源；已落库修复：field_offset Primitive 防护（嵌套枚举投影编译 ICE→正确）+ 窄类型宽度（write_bytes_loop 转正）+ 编译层（sret 计数/Ignore 参数）；[WA-11]。**诊断注意：编译非确定性**（HashMap 顺序影响函数布局；reloc 用符号名不受影响）。诊断 env FORGE_TRACE_ABI/CALL/TERM/VCODE/LOWER 保留 |
+| Vec/String 完整运行 | **已转正（2026-09，e2e 全绿）**：`vec_push`/`vec_string`/`vec_from_slice`/`string_concat_len` 均 PASS。历史定性为**嵌套 niche 传播**（grow 链 Result/ControlFlow/TryReserveError 错误传播）与最小复现 cf5（`CF::Break(Err(5u8))`）同源；累积修复：field_offset Primitive 防护 + 窄类型宽度（write_bytes_loop）+ 编译层（sret 计数/Ignore 参数）+ **WA-29**（Niche CONSTRUCT 写入宽度按 tag 标量——8 字节指针 tag 恒 movl 残留高 4 字节 → 判别误判，vec_iter_enumerate 由此转正）。[WA-11] 收尾。[WA-29] 已关闭。**诊断注意：编译非确定性**（HashMap 顺序影响函数布局；reloc 用符号名不受影响）。诊断 env FORGE_TRACE_ABI/CALL/TERM/VCODE/LOWER 保留 |
 | ~~write_bytes 内联循环（count>1）~~ | **已转正（PASS exit=342）**：两层块参数传参修复（映射覆盖 + pre_allocate 顺序）+ **窄类型宽度修复**（主库 Load/Store 真实内存宽度 `mem_opsize_from_type`——u8 读/写 1 字节不再越界 4 字节、位宽不枚举不截断自定义非常规宽度原样传递；forge-rustc IntToInt cast 对 u8/u16 无符号源零扩展 mask）——`write_bytes_loop` 移除 known_failure 转硬断言，[WA-14] 已关闭。最小复现回归测试 `test_loop_block_param_write_bytes_style`（forge-codegen lib） |
 | Assert 失败路径 | **已修复**：assert 失败不再裸 ud2，改走 panic_handler（`rust_begin_unwind`，lang_items().panic_impl() 解析符号；占位 &PanicInfo=0）——失败可观测（panic loop 挂起，与 e2e 超时判挂起对齐）；成功路径不受影响。**注意**：当前传空指针占位，panic_handler 内不得解引用 `info`（e2e 用例的 handler 为 `loop {}`，安全） |
 | 浮点比较分支（float_args） | **已修复**：`if a + b > 3.0 { 1 } else { 0 }` 最小用例 f(1.5, 2.0) 实测 exit=1 通过——Fcmp 模板（xor rd,rd; comisd rs1,rs2; set$CC rd）的 rd 类别/Setcc 宽度/分支链均正确，known_failure 为过时标志，已移除（float_args 转 PASS） |
@@ -177,13 +177,18 @@ rustc (codegen_crate)
 实现：`src/dwarf.rs`（生成）+ forge-object `add_dwarf`（COFF 调试段）。
 行号表来源：`LowerCtxt` 采集每个函数的 `body.span` 起始行 →
 `FuncRefTable.line_entries` → backend.rs 写盘前生成。
-**已知限制**：low_pc 地址为 0 占位（reloc 待 object crate 的
-`DebugSectionReloc` 完善）——`llvm-objdump` 可见段结构与行号条目，
-gdb 断点定位需地址 reloc 后可用（后续）。`-C debuginfo=0` 零开销
-（不生成段）。e2e `debuginfo_line_tables` 用例守护。
+**地址 reloc 已应用（2026-09 验证）**：段内地址占位（.debug_line 的
+set_address / .debug_info 的 low_pc）随段数据发射 ADDR64 reloc，链接器
+解析为函数真实地址（此前"low_pc=0 占位待 reloc"说法已过时）。
+`-C debuginfo=0` 零开销（不生成段）。e2e `debuginfo_line_tables` 用例守护。
+
+**C2（变量级 debuginfo，路线图中）**：per-statement 行号细化 +
+`DW_TAG_variable`/`formal_parameter`（var_debug_info → DW_OP_fbreg）+ 
+base_type/类型 DIE（复用 `rustc_codegen_ssa::debuginfo::type_names`）。
 
 ## 路线图（远期，P4.7/P4.8 评估结论）
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
+| **C2 DebugInfo 变量级** | 中工程量（阶段 B：per-statement 行号 → 变量/参数 DIE → base_type）——调研确认 ssa 写入层耦合 BuilderMethods 不可接入（cranelift 同构自研），但 `type_names`/`body.var_debug_info`/forge-ir `SourceLocation` 均可复用 | 无（rustc_middle pub API） |
 | **并行 CGU（`-Z codegen-units=N`）** | 中工程量：当前单对象文件（backend.rs 合并输出）。并行化需 FuncRefTable 并发化（`intern`/`intern_global` 加锁或 thread-local）+ 每 CGU 独立 ObjectWriter + `join_codegen` 多模块归并 | 主库 ObjectWriter 并发支持 |
