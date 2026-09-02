@@ -960,6 +960,11 @@ opcode = 0xB1
 fields = { prefix = 0xF0 }
 asm = "lockcmpxchg [{1:[gpr:in]}], {0:[gpr:in]}"
 effect = ["Write"]
+# cmpxchg 隐式读 RAX（期望值）并写 RAX（旧值）——regalloc 需知 RAX 在本
+# 指令点被破坏，否则会把期望值的 SSA 值留在 RAX 跨过本指令（后续 icmp
+# 读 RAX = 旧值 → 与自身比较恒真 → 循环提前退出、写不生效——fetch_and
+# 类 CMPXCHG 循环回归实证）。div/idiv 同款建模（见 WA-35）。
+implicit_regs = ["RAX"]
 
 [[instructions]]
 name = "SUB_MEM_R"
