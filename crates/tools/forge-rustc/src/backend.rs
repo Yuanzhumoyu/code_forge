@@ -297,6 +297,7 @@ impl CodegenBackend for CodegenLibBackend {
                 &src_file,
                 code_span,
                 &fn_sizes,
+                func_ref_table.enum_types(),
                 debuginfo_full,
             );
             // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——

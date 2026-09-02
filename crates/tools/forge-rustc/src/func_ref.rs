@@ -31,6 +31,9 @@ pub struct FuncRefTable {
     /// C2 DebugInfo 变量表（-C debuginfo=2 full）：(函数符号, 变量列表)。
     /// 见 `crate::dwarf::VarEntry`（名/槽偏移/类型/参数标志/声明行）。
     var_entries: Vec<crate::dwarf::FnVarEntries>,
+    /// C2 聚合类型注册表（-C debuginfo=2）：C-like 枚举（unit 变体）。
+    /// 见 `crate::dwarf::EnumTypeEntry`。
+    enum_types: Vec<crate::dwarf::EnumTypeEntry>,
 }
 
 impl FuncRefTable {
@@ -159,5 +162,17 @@ impl FuncRefTable {
     /// 已登记的 (符号, 变量表) 列表（供 codegen_crate 生成 .debug_info）。
     pub fn var_entries(&self) -> &[crate::dwarf::FnVarEntries] {
         &self.var_entries
+    }
+
+    /// C2 debuginfo：登记 C-like 枚举类型（desc 去重）。
+    pub fn add_enum_type(&mut self, e: crate::dwarf::EnumTypeEntry) {
+        if !self.enum_types.iter().any(|x| x.desc == e.desc) {
+            self.enum_types.push(e);
+        }
+    }
+
+    /// 已登记的枚举类型表（供 codegen_crate 生成 .debug_info）。
+    pub fn enum_types(&self) -> &[crate::dwarf::EnumTypeEntry] {
+        &self.enum_types
     }
 }

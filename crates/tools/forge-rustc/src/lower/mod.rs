@@ -285,6 +285,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .unwrap_or_default(),
                     size: layout_bytes(self.tcx, body.local_decls[local].ty),
                 });
+                // C-like 枚举（unit 变体）登记到聚合类型注册表（dwarf 生成
+                // DW_TAG_enumeration_type + enumerator）
+                if let Some(variants) = crate::layout::enum_variants(self.tcx, body.local_decls[local].ty)
+                {
+                    self.func_refs.add_enum_type(crate::dwarf::EnumTypeEntry {
+                        desc: format!("{:?}", body.local_decls[local].ty),
+                        size: layout_bytes(self.tcx, body.local_decls[local].ty),
+                        variants,
+                    });
+                }
             }
             if !vars.is_empty() {
                 self.func_refs.add_var_entries(&self.sym_name, vars);

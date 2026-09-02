@@ -80,6 +80,19 @@ pub struct FnVarEntries {
     pub vars: Vec<VarEntry>,
 }
 
+/// C-like 枚举类型（全部 unit 变体，无 payload）：DW_TAG_enumeration_type
+/// + DW_TAG_enumerator 子项（name + const_value）。lower 采集判别值
+///（rustc `adt.discriminants`），注册到 FuncRefTable 供 dwarf 生成。
+#[derive(Clone, Debug)]
+pub struct EnumTypeEntry {
+    /// 类型（rustc Debug 形态，如 "varprobe::Color"）。
+    pub desc: String,
+    /// 字节大小（layout）。
+    pub size: u32,
+    /// (变体名, 判别值)。
+    pub variants: Vec<(String, u64)>,
+}
+
 /// 生成 `.debug_line` 段（单 CU、单文件、多函数条目）。
 ///
 /// 每函数条目：`DW_LNE_set_address <addr>` + `DW_LNS_set_file 1` +
@@ -224,6 +237,7 @@ pub fn gen_debug_info(
     cu_name: &str,
     code_span: u64,
     fn_sizes: &std::collections::HashMap<String, u64>,
+    enums: &[EnumTypeEntry],
     full: bool,
 ) -> (Vec<u8>, Vec<(usize, String)>) {
     let mut buf: Vec<u8> = Vec::new();
@@ -407,6 +421,22 @@ pub fn gen_debug_info(
             }
             buf.push(0); // structure children terminator
         }
+        // enumeration_type：C-like 枚举（注册表）。名称 = desc 末段。
+        for e in enums {
+            type_off_by_desc.insert(e.desc.clone(), buf.len() as u32);
+            buf.push(10); // abbrev code 10: DW_TAG_enumeration_type
+            let simple = e.desc.rsplit("::").next().unwrap_or(e.desc.as_str());
+            buf.extend_from_slice(simple.as_bytes());
+            buf.push(0);
+            buf.extend_from_slice(&e.size.to_le_bytes()); // byte_size data4
+            for (vn, val) in &e.variants {
+                buf.push(11); // abbrev code 11: DW_TAG_enumerator
+                buf.extend_from_slice(vn.as_bytes());
+                buf.push(0);
+                buf.extend_from_slice(&val.to_le_bytes()); // const_value data8
+            }
+            buf.push(0); // enumeration children terminator
+        }
         // 回填变量/参数 DIE 的类型引用
         for (tpos, desc) in &type_ref_patches {
             if let Some(&off4) = type_off_by_desc.get(desc) {
@@ -571,6 +601,21 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0x49); buf.push(0x06); // type → ref4
     buf.push(0x38); buf.push(0x06); // data_member_location → data4
     buf.push(0); buf.push(0);
+    // code 10：enumeration_type，children yes（C-like 枚举——name/byte_size
+    // data4 + DW_TAG_enumerator 子项）
+    buf.push(10);
+    buf.push(0x04); // DW_TAG_enumeration_type
+    buf.push(1);
+    buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x0b); buf.push(0x06); // byte_size → data4
+    buf.push(0); buf.push(0);
+    // code 11：enumerator，children no（name + const_value data8）
+    buf.push(11);
+    buf.push(0x28); // DW_TAG_enumerator
+    buf.push(0);
+    buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x1c); buf.push(0x07); // const_value → data8
+    buf.push(0); buf.push(0);
     buf.push(0); // 整个 abbrev 表终止
     buf
 }
@@ -621,6 +666,7 @@ pub fn build_dwarf_sections(
     src_file: &str,
     code_span: u64,
     fn_sizes: &std::collections::HashMap<String, u64>,
+    enums: &[EnumTypeEntry],
     full: bool,
 ) -> Vec<(String, Vec<u8>, Vec<(usize, String)>)> {
     let entries: Vec<(String, u32)> = fns.iter().map(|(s, l, _)| (s.clone(), *l)).collect();
@@ -628,7 +674,7 @@ pub fn build_dwarf_sections(
     let first_sym = entries.first().map(|(s, _)| s.as_str());
     let (line_bytes, line_relocs) = gen_debug_line(fns);
     let (info_bytes, info_relocs) =
-        gen_debug_info(&entries, vars, producer, src_file, span, fn_sizes, full);
+        gen_debug_info(&entries, vars, producer, src_file, span, fn_sizes, enums, full);
     let (ar_bytes, ar_relocs) = gen_debug_aranges(first_sym, span);
     vec![
         (".debug_line".to_string(), line_bytes, line_relocs),
@@ -691,7 +737,7 @@ mod tests {
     #[test]
     fn info_has_cu_and_subprograms() {
         let entries = vec![("f".to_string(), 5u32)];
-        let (bytes, relocs) = gen_debug_info(&entries, &[], "forge", "test", 0x30, &Default::default(), false);
+        let (bytes, relocs) = gen_debug_info(&entries, &[], "forge", "test", 0x30, &Default::default(), &[], false);
         // relocs：CU low_pc(1) + subprogram low_pc(1)
         assert_eq!(relocs.len(), 2);
         assert_eq!(relocs[0].1, "f", "CU low_pc reloc → first fn");
@@ -739,7 +785,7 @@ mod tests {
                 },
             ],
         }];
-        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), true);
+        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), &[], true);
         assert_eq!(relocs.len(), 2, "CU low_pc + fn low_pc relocs");
         // base_type "i32"（code 6 在 CU 后）出现——字节里含 "i32\0"
         assert!(
@@ -786,7 +832,7 @@ mod tests {
                 },
             ],
         }];
-        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), true);
+        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), &[], true);
         assert_eq!(relocs.len(), 2, "CU low_pc + fn low_pc relocs");
 
         let mut p = 0usize;
@@ -1163,6 +1209,119 @@ mod tests {
         assert_eq!(&bytes[p..p + 8], &[0u8; 8], "terminator len 0");
         assert_eq!(p + 8, bytes.len(), "exact end");
     }
+
+    #[test]
+    fn enum_info_structurally_parses() {
+        // C-like 枚举：enumeration_type（code 10：name/byte_size）+ 
+        // enumerator 子项（code 11：name/const_value data8）；枚举变量 DIE
+        // 的 type ref 指向枚举 DIE（占位回填）。
+        let entries = vec![("f".to_string(), 5u32)];
+        let vars = vec![FnVarEntries {
+            sym: "f".to_string(),
+            vars: vec![VarEntry {
+                name: "c".to_string(),
+                slot_offset: -16,
+                ty_desc: "varprobe::Color".to_string(),
+                is_arg: false,
+                decl_line: 9,
+                members: vec![],
+                size: 1,
+            }],
+        }];
+        let enums = vec![EnumTypeEntry {
+            desc: "varprobe::Color".to_string(),
+            size: 1,
+            variants: vec![
+                ("Red".to_string(), 0u64),
+                ("Green".to_string(), 1u64),
+                ("Blue".to_string(), 2u64),
+            ],
+        }];
+        let (bytes, relocs) =
+            gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), &enums, true);
+        assert_eq!(relocs.len(), 2, "CU + fn relocs");
+        // 枚举 DIE：code 10 段含 name "Color" + byte_size 1
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("Color\u{0}\u{01}\u{00}\u{00}\u{00}"), "enum Color byte_size 1");
+        assert!(s.contains("Red\u{0}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}"), "enumerator Red const 0");
+        assert!(s.contains("Blue\u{0}\u{02}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}"), "enumerator Blue const 2");
+        // 结构走查：CU → subprogram code 3（child c）→ 枚举区 code 10
+        let mut p = 12usize; // v5 头 12 字节
+        assert_eq!(bytes[p], 1, "CU abbrev");
+        p += 1;
+        // 跳 producer/name 串 + language + low/high/stmt_list
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1;
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1;
+        p += 2 + 8 + 8 + 4; // language + low_pc + high_pc + stmt_list
+        assert_eq!(bytes[p], 3, "subprogram code 3");
+        p += 1;
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1;
+        p += 1 + 8 + 8 + 4; // decl_file + low + high + decl_line
+        // frame_base exprloc [1, 0x56]
+        assert_eq!(bytes[p], 1);
+        p += 1;
+        assert_eq!(bytes[p], 0x56);
+        p += 1;
+        // child c：code 5（variable）
+        assert_eq!(bytes[p], 5);
+        p += 1;
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1;
+        p += 1; // decl_file
+        let enum_ref = u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap());
+        p += 4;
+        // location exprloc + decl_line data4
+        let loc_len = bytes[p] as usize;
+        p += 1 + loc_len;
+        p += 4;
+        assert_eq!(bytes[p], 0, "children terminator");
+        p += 1;
+        // 类型区：枚举 code 10
+        assert_eq!(bytes[p], 10, "enumeration_type");
+        let enum_start = p; // abbrev 码位置 = DIE 起点
+        p += 1;
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1;
+        let e_size = u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap());
+        p += 4;
+        assert_eq!(e_size, 1, "enum byte_size");
+        assert_eq!(enum_start as usize, enum_ref as usize, "var ref → enum DIE 起点");
+        for (vn, vv) in [("Red", 0u64), ("Green", 1u64), ("Blue", 2u64)] {
+            assert_eq!(bytes[p], 11, "enumerator");
+            p += 1;
+            let nm = {
+                let s0 = p;
+                while bytes[p] != 0 {
+                    p += 1;
+                }
+                String::from_utf8_lossy(&bytes[s0..p]).into_owned()
+            };
+            p += 1;
+            let val = u64::from_le_bytes(bytes[p..p + 8].try_into().unwrap());
+            p += 8;
+            assert_eq!(nm, vn);
+            assert_eq!(val, vv);
+        }
+        assert_eq!(bytes[p], 0, "enum children terminator");
+        p += 1;
+        assert_eq!(bytes[p], 0, "CU children terminator");
+        p += 1;
+        assert_eq!(p, bytes.len(), "exact end");
+    }
 }
+
 
 

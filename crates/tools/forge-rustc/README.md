@@ -212,6 +212,11 @@ lower 从 rustc `body.var_debug_info` 采集源变量（无投影 local——for
   类型（嵌套 struct/enum 字段）= 0 占位（递归结构待续）。rustc 2026
   field.ty Debug 形态带 "Unnormalized { value: X, .. }" 包装——layout.rs
   `normalize_ty_debug` 剥壳与变量侧 ty_desc 对齐（WA-34）。
+- **`DW_TAG_enumeration_type` + `DW_TAG_enumerator`（C-like 枚举，2026-09）**：
+  unit 变体枚举（无 payload）→ enumeration_type（name/byte_size）+
+  enumerator 子项（name/const_value data8，判别值取 rustc
+  `adt.discriminants`）。枚举变量 type ref 同样占位回填。带 payload 变体
+  （discriminant+payload 布局）V1 不设类型。
 
 **验证路径（2026-09）**：objdump `--dwarf=info/decodedline/rawline` 全
 解析干净（类型/变量/fbreg/行号正确）；**w64devkit gdb 16.2 实证**：源码

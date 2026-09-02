@@ -196,3 +196,28 @@ fn normalize_ty_debug(d: &str) -> String {
     }
     d.to_string()
 }
+
+/// C-like 枚举（全部 unit 变体）的 (变体名, 判别值) 列表；带 payload 的
+/// 枚举/非枚举返回 None（V1 不设 DW_TAG_enumeration_type）。
+pub fn enum_variants<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+) -> Option<Vec<(String, u64)>> {
+    use rustc_middle::ty::TyKind;
+    let TyKind::Adt(adt, _) = ty.kind() else {
+        return None;
+    };
+    if !adt.is_enum() || !adt.variants().iter().all(|v| v.fields.is_empty()) {
+        return None; // 非枚举 / 带 payload 变体（discriminant+payload 布局）V1 跳过
+    }
+    let mut out = Vec::new();
+    for (idx, d) in adt.discriminants(tcx) {
+        let name = adt.variants()[idx].name.to_string();
+        let val = d.val;
+        let Ok(v) = u64::try_from(val) else {
+            return None; // 判别值超 u64：不设类型
+        };
+        out.push((name, v));
+    }
+    Some(out)
+}
