@@ -208,20 +208,25 @@ lower 从 rustc `body.var_debug_info` 采集源变量（无投影 local——for
 解析干净（类型/变量/fbreg/行号正确）；**w64devkit gdb 16.2 实证**：源码
 断点（`break dbgprobe.rs:8`）设点/命中/`list`/`next` 单步 ✓；function
 block 带范围（high_pc）；变量符号 + fbreg 位置正确（`info scope` 显
-`y at frame base reg $rbp offset -80`；原始内存读 `x/wd $rbp-80` = 42 =
-add2(40,2) 端到端正确）。**注意**：①MSVC link.exe 截断 COFF 段名
+`y at frame base reg $rbp offset -80`；原始内存读 `x/wd $rbp-80` = 42；
+**`set language c` 后 `p (int)y` = 42**——强制转型路径完整读出变量值，
+证明位置语义端到端正确）。**注意**：①MSVC link.exe 截断 COFF 段名
 （`.debug_l`）gdb 读不到——验证用 `-C linker=lld-link`（保留完整段名）
 或 GNU ld（另含 COFF 符号表，但其 `__end__`/`___tls_*` 伪符号压到
 .text 起点 0x1000 与首函数冲突——GNU ld 会话里首函数入口断点命中后
 帧名显示 `__end__`，其余函数正常；lld-link 无符号表 → 名称断点走
 cooked index 可设但命中帧同受 0x1000 冲突影响）；②gdb-PE 残余：
-ref4 类型跟随失败（`print y` 显示 "<unknown type>"——`ptype i32` 正常、
-typedef 已注册、`info scope` 位置正确）与每函数序列**终端行**解码为
-line 0（行断点/单步在非终端行正常）——疑似 gdb 16.2 PE DWARF5 读取器
-边界问题，待续（见路线图）；③类型/行号语义以 objdump 解码 + dwarf
-结构单测（7 个：逐字节解析 info/line/aranges）为准。e2e `debuginfo_full`
-+ dwarf 单测守护。**待续**：投影变量（字段/解引用）；gdb-PE 类型打印/
-终端行（可能需 .debug_frame CFI 对齐 gcc 形态）；聚合类型 DIE 补全。
+**ref4 类型跟随失败**（`p y` 显示 "<unknown type>"——但 `ptype i32`/
+`info types` 正常、typedef 已注册、`info scope` 位置正确、**`set language
+c` 后 `p (int)y` = 42**（转型路径读出变量值））与每函数序列**终端行**
+解码为 line 0（行断点/单步在非终端行正常）。对照实验排除：decl_file/
+类型前向引用/字符串形式/类型名/base_type 顺序/lld-vs-GNU-ld 均非因；
+gcc v4 被同 gdb 全拒、gcc v5 全好——判定为 gdb 16.2 PE-DWARF5 读取器
+对迷你单 CU 的边界行为（objdump 权威解码全净，发射正确），待续（见
+路线图）；③类型/行号语义以 objdump 解码 + dwarf 结构单测（7 个：逐字节
+解析 info/line/aranges）为准。e2e `debuginfo_full` + dwarf 单测守护。
+**待续**：投影变量（字段/解引用）；gdb-PE 类型打印/终端行（可能需
+.debug_frame CFI 对齐 gcc 形态）；聚合类型 DIE 补全。
 
 ## 路线图（远期，P4.7/P4.8 评估结论）
 
