@@ -278,6 +278,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     ty_desc: format!("{:?}", body.local_decls[local].ty),
                     is_arg,
                     decl_line: line,
+                    members: crate::layout::struct_members(
+                        self.tcx,
+                        body.local_decls[local].ty,
+                    )
+                    .unwrap_or_default(),
+                    size: layout_bytes(self.tcx, body.local_decls[local].ty),
                 });
             }
             if !vars.is_empty() {

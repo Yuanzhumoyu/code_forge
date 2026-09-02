@@ -203,6 +203,15 @@ lower 从 rustc `body.var_debug_info` 采集源变量（无投影 local——for
 - `DW_TAG_base_type`（标量：name/byte_size/encoding——i8..i128/u8..u128/
   f32/f64/bool/char/usize/isize）+ `DW_TAG_pointer_type`（&T/*const T，
   指向内层标量 base_type；聚合/嵌套指针 = 0 占位）
+- **`DW_TAG_structure_type` + `DW_TAG_member`（聚合类型，2026-09）**：
+  lower 对命名 struct 变量采集成员清单（layout `fields().offset(i)` 实测
+  字节偏移——含 repr/对齐重排，与槽内布局一致）→ structure_type DIE
+  （name/byte_size）+ member 子项（name/type ref4/data_member_location）。
+  类型区顺序 base → pointer → structure（成员反指前两类），变量/成员
+  type ref4 占位统一回填。V1：仅非 enum/union 的命名 struct；成员聚合
+  类型（嵌套 struct/enum 字段）= 0 占位（递归结构待续）。rustc 2026
+  field.ty Debug 形态带 "Unnormalized { value: X, .. }" 包装——layout.rs
+  `normalize_ty_debug` 剥壳与变量侧 ty_desc 对齐（WA-34）。
 
 **验证路径（2026-09）**：objdump `--dwarf=info/decodedline/rawline` 全
 解析干净（类型/变量/fbreg/行号正确）；**w64devkit gdb 16.2 实证**：源码
@@ -225,8 +234,9 @@ gcc v4 被同 gdb 全拒、gcc v5 全好——判定为 gdb 16.2 PE-DWARF5 读�
 对迷你单 CU 的边界行为（objdump 权威解码全净，发射正确），待续（见
 路线图）；③类型/行号语义以 objdump 解码 + dwarf 结构单测（7 个：逐字节
 解析 info/line/aranges）为准。e2e `debuginfo_full` + dwarf 单测守护。
-**待续**：投影变量（字段/解引用）；gdb-PE 类型打印/终端行（可能需
-.debug_frame CFI 对齐 gcc 形态）；聚合类型 DIE 补全。
+**待续**：结构成员类型递归/枚举变体（DW_TAG_enumeration_type/variant）；
+嵌套聚合字段类型；gdb-PE 类型打印/终端行（可能需 .debug_frame CFI 对齐
+gcc 形态）。
 
 ## 路线图（远期，P4.7/P4.8 评估结论）
 

@@ -148,3 +148,51 @@ pub fn is_scalar_pair_abi<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     }
     r
 }
+
+/// 命名 struct 的成员清单（C2 聚合类型 DIE 输入）：非 enum/union 的 ADT
+/// 且 layout 可解析时返回 (字段名, 类型 desc, 字节偏移)——偏移取 layout
+/// `fields().offset(i)`（含 repr/对齐重排，与槽内布局一致）。枚举/联合/
+/// 泛型未解析 V1 返回 None（变量类型回落 type=0 占位）。
+pub fn struct_members<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+) -> Option<Vec<crate::dwarf::VarMember>> {
+    use rustc_middle::ty::TyKind;
+    let TyKind::Adt(adt, substs) = ty.kind() else {
+        return None;
+    };
+    if !adt.is_struct() {
+        return None; // enum/union V1 跳过（niche/变体布局后续扩展）
+    }
+    let layout = tcx
+        .layout_of(ty::PseudoCanonicalInput {
+            typing_env: ty::TypingEnv::fully_monomorphized(),
+            value: ty,
+        })
+        .ok()?
+        .layout;
+    let variant = adt.non_enum_variant();
+    let mut out = Vec::new();
+    for (i, f) in variant.fields.iter().enumerate() {
+        let off = layout.fields().offset(i).bytes() as u32;
+        out.push(crate::dwarf::VarMember {
+            name: f.name.to_string(),
+            // rustc 2026 的 field.ty 可能带未归一化包装（Debug 形如
+            // "Unnormalized { value: i32, .. }"）——剥掉取内层类型名，
+            // 与变量侧 ty_desc（"i32"）对齐才能命中 base_type/pointer DIE。
+            ty_desc: normalize_ty_debug(&format!("{:?}", f.ty(tcx, substs))),
+            byte_off: off,
+        });
+    }
+    Some(out)
+}
+
+/// rustc 2026 Ty Debug 形态归一化：`Unnormalized { value: X, .. }` → `X`。
+fn normalize_ty_debug(d: &str) -> String {
+    if let Some(rest) = d.strip_prefix("Unnormalized { value: ") {
+        if let Some(end) = rest.find(", ") {
+            return rest[..end].to_string();
+        }
+    }
+    d.to_string()
+}

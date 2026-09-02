@@ -42,12 +42,33 @@ pub struct VarEntry {
     /// 栈槽实际偏移（相对 rbp——含主库 callee-saved shift，直接作
     /// DW_OP_fbreg 操作数）。
     pub slot_offset: i32,
-    /// 类型（rustc Debug 形态，如 "i32"/"&i32"，供 base_type 名匹配）。
+    /// 类型（rustc Debug 形态，如 "i32"/"&i32"/"varprobe::Point"，
+    /// 供 base_type/pointer_type/structure_type 名匹配）。
     pub ty_desc: String,
     /// 是否函数参数（决定 DW_TAG_formal_parameter vs DW_TAG_variable）。
     pub is_arg: bool,
     /// 声明源码行（1-based，DW_AT_decl_line）。
     pub decl_line: u32,
+    /// 聚合（struct）类型成员：非空 = 该变量类型是有名成员 ADT，dwarf
+    /// 生成 DW_TAG_structure_type（code 8）+ DW_TAG_member 子项（code 9），
+    /// 成员 byte_off 直接作 data_member_location（与槽内布局一致——
+    /// forge 全栈槽模型，聚合整体存槽内，字段 = 槽 + 字段偏移）。
+    /// 标量/指针变量 = 空。V1：仅非 enum/union 的命名 struct。
+    pub members: Vec<VarMember>,
+    /// 类型字节大小（structure_type 的 DW_AT_byte_size；标量/指针 = 实际
+    /// 宽度，当前未用于 base_type——byte_size 来自 scalar_base_type）。
+    pub size: u32,
+}
+
+/// 聚合类型成员（structure_type 的 DW_TAG_member 输入）。
+#[derive(Clone, Debug)]
+pub struct VarMember {
+    /// 字段名。
+    pub name: String,
+    /// 字段类型（rustc Debug 形态，标量/指针可解析；嵌套聚合 = 0 占位）。
+    pub ty_desc: String,
+    /// 字段相对结构体起点的字节偏移（layout fields 实测——含 repr 重排）。
+    pub byte_off: u32,
 }
 
 /// C2 debuginfo：单函数的源变量表（按函数符号聚合）。
@@ -245,13 +266,24 @@ pub fn gen_debug_info(
     // 先写占位，类型区生成后统一回填（ref4 = 段内偏移）。
     let mut type_off_by_desc: std::collections::HashMap<String, u32> = Default::default();
     let mut type_ref_patches: Vec<(usize, String)> = Vec::new(); // (占位位, desc)
+    // descs：标量/指针类型（base/pointer DIE）；struct_descs：带成员信息的
+    // 聚合变量类型（structure_type DIE）。成员的标量/指针类型也要入 descs
+    //（否则结构体字段引用解析不到 DIE）。
     let mut descs: Vec<String> = Vec::new();
+    let mut struct_descs: Vec<String> = Vec::new();
     if full {
-        // 收集唯一 ty_desc（可分类为标量/指针的）
         for fv in vars {
             for v in &fv.vars {
                 if ty_kind(&v.ty_desc).is_some() && !descs.contains(&v.ty_desc) {
                     descs.push(v.ty_desc.clone());
+                }
+                if !v.members.is_empty() && !struct_descs.contains(&v.ty_desc) {
+                    struct_descs.push(v.ty_desc.clone());
+                }
+                for m in &v.members {
+                    if ty_kind(&m.ty_desc).is_some() && !descs.contains(&m.ty_desc) {
+                        descs.push(m.ty_desc.clone());
+                    }
                 }
             }
         }
@@ -316,8 +348,8 @@ pub fn gen_debug_info(
         }
     }
 
-    // 类型区（CU 子项，subprogram 之后——前向引用）：base_type 第一遍
-    //（标量 desc），pointer_type 第二遍（引用 base），再回填占位。
+    // 类型区（CU 子项，subprogram 之后——前向引用）：base_type →
+    // pointer_type → structure_type（成员引用 base/pointer），再回填占位。
     if full {
         for desc in &descs {
             if let Some((_, size, enc)) = scalar_base_type(desc) {
@@ -342,6 +374,38 @@ pub fn gen_debug_info(
                     buf[tpos..tpos + 4].copy_from_slice(&po.to_le_bytes());
                 }
             }
+        }
+        // structure_type：取每个 struct desc 的（首）变量成员/大小。
+        // DW_AT_name = 类型名（desc 去掉 crate/module 前缀后的末段——
+        // DWARF 惯例是裸标识符，路径由 namespace DIE 表达——V1 简化）。
+        for desc in &struct_descs {
+            let src: Option<&VarEntry> = vars.iter().flat_map(|fv| fv.vars.iter()).find(|v| v.ty_desc == *desc);
+            let Some(entry) = src else { continue };
+            type_off_by_desc.insert(desc.clone(), buf.len() as u32);
+            buf.push(8); // abbrev code 8: DW_TAG_structure_type
+            let simple = desc.rsplit("::").next().unwrap_or(desc.as_str());
+            buf.extend_from_slice(simple.as_bytes());
+            buf.push(0);
+            buf.extend_from_slice(&entry.size.to_le_bytes()); // byte_size data4
+            if std::env::var("FORGE_TRACE_DW").is_ok() {
+                eprintln!(
+                    "[dw-struct] desc={desc} size={} members={:?}",
+                    entry.size,
+                    entry.members.iter().map(|m| (&m.name, &m.ty_desc, m.byte_off)).collect::<Vec<_>>()
+                );
+            }
+            for m in &entry.members {
+                buf.push(9); // abbrev code 9: DW_TAG_member
+                buf.extend_from_slice(m.name.as_bytes());
+                buf.push(0);
+                let tpos = buf.len();
+                buf.extend_from_slice(&0u32.to_le_bytes()); // type 占位
+                if let Some(&po) = type_off_by_desc.get(&m.ty_desc) {
+                    buf[tpos..tpos + 4].copy_from_slice(&po.to_le_bytes());
+                }
+                buf.extend_from_slice(&m.byte_off.to_le_bytes()); // data_member_location
+            }
+            buf.push(0); // structure children terminator
         }
         // 回填变量/参数 DIE 的类型引用
         for (tpos, desc) in &type_ref_patches {
@@ -490,6 +554,23 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0x0b); buf.push(0x0b); // byte_size → data1
     buf.push(0x49); buf.push(0x06); // type → ref4
     buf.push(0); buf.push(0);
+    // code 8：structure_type，children yes（聚合变量类型——DW_AT_name/
+    // byte_size(data4，结构可 >255) + DW_TAG_member 子项）
+    buf.push(8);
+    buf.push(0x13); // DW_TAG_structure_type
+    buf.push(1);
+    buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x0b); buf.push(0x06); // byte_size → data4
+    buf.push(0); buf.push(0);
+    // code 9：member，children no（DW_AT_name/type ref4/
+    // data_member_location data4 = 字节偏移）
+    buf.push(9);
+    buf.push(0x0d); // DW_TAG_member
+    buf.push(0);
+    buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x49); buf.push(0x06); // type → ref4
+    buf.push(0x38); buf.push(0x06); // data_member_location → data4
+    buf.push(0); buf.push(0);
     buf.push(0); // 整个 abbrev 表终止
     buf
 }
@@ -635,6 +716,8 @@ mod tests {
                     ty_desc: "i32".to_string(),
                     is_arg: false,
                     decl_line: 7,
+                    members: vec![],
+                    size: 4,
                 },
                 VarEntry {
                     name: "a".to_string(),
@@ -642,6 +725,8 @@ mod tests {
                     ty_desc: "i32".to_string(),
                     is_arg: true,
                     decl_line: 6,
+                    members: vec![],
+                    size: 4,
                 },
                 VarEntry {
                     name: "b".to_string(),
@@ -649,6 +734,8 @@ mod tests {
                     ty_desc: "&i32".to_string(),
                     is_arg: true,
                     decl_line: 6,
+                    members: vec![],
+                    size: 8,
                 },
             ],
         }];
@@ -682,9 +769,21 @@ mod tests {
         let vars = vec![FnVarEntries {
             sym: "f".to_string(),
             vars: vec![
-                VarEntry { name: "x".to_string(), slot_offset: -24, ty_desc: "i32".to_string(), is_arg: false, decl_line: 7 },
-                VarEntry { name: "a".to_string(), slot_offset: -32, ty_desc: "i32".to_string(), is_arg: true, decl_line: 6 },
-                VarEntry { name: "b".to_string(), slot_offset: -16, ty_desc: "&i32".to_string(), is_arg: true, decl_line: 6 },
+                VarEntry { name: "x".to_string(), slot_offset: -24, ty_desc: "i32".to_string(), is_arg: false, decl_line: 7, members: vec![], size: 4 },
+                VarEntry { name: "a".to_string(), slot_offset: -32, ty_desc: "i32".to_string(), is_arg: true, decl_line: 6, members: vec![], size: 4 },
+                VarEntry { name: "b".to_string(), slot_offset: -16, ty_desc: "&i32".to_string(), is_arg: true, decl_line: 6, members: vec![], size: 8 },
+                VarEntry {
+                    name: "p".to_string(),
+                    slot_offset: -40,
+                    ty_desc: "varprobe::Point".to_string(),
+                    is_arg: false,
+                    decl_line: 8,
+                    members: vec![
+                        VarMember { name: "y".to_string(), ty_desc: "i32".to_string(), byte_off: 4 },
+                        VarMember { name: "x".to_string(), ty_desc: "i32".to_string(), byte_off: 0 },
+                    ],
+                    size: 8,
+                },
             ],
         }];
         let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), true);
@@ -737,10 +836,15 @@ mod tests {
         p += 8;
         assert_eq!(hi, 0x30, "high_pc = code_span");
         rd_u32(&mut p); // stmt_list data4 = 0
-        // CU 子项：base_type(6) / pointer_type(7) / subprogram(2|3)，0 终止
+        // CU 子项：base_type(6) / pointer_type(7) / structure_type(8) /
+        // subprogram(2|3)，0 终止（类型区在 subprogram 后——前向引用）
         let mut found_base = false;
         let mut found_ptr = false;
         let mut found_sub = false;
+        let mut found_struct = false;
+        let mut member_offs: Vec<(String, u32)> = Vec::new();
+        let mut struct_mem_types: Vec<u32> = Vec::new();
+        let mut base_off: Option<u32> = None;
         let mut fbreg_offsets: Vec<i64> = Vec::new();
         loop {
             let code = bytes[p];
@@ -752,7 +856,11 @@ mod tests {
             match code {
                 6 => {
                     // base_type：name str / byte_size d1 / encoding d1
-                    rd_str(&mut p);
+                    let die_start = (p - 1) as u32; // abbrev 码位置 = DIE 起点
+                    let bname = rd_str(&mut p);
+                    if bname == "i32" {
+                        base_off = Some(die_start);
+                    }
                     p += 2;
                     found_base = true;
                 }
@@ -761,6 +869,29 @@ mod tests {
                     p += 1;
                     rd_u32(&mut p);
                     found_ptr = true;
+                }
+                8 => {
+                    // structure_type：name str / byte_size data4 + 子项 code 9
+                    let nm = rd_str(&mut p);
+                    let sz = rd_u32(&mut p);
+                    assert!(nm.ends_with("Point"), "structure name = Point，got {nm}");
+                    assert_eq!(sz, 8, "byte_size");
+                    let mut mem_types: Vec<u32> = Vec::new();
+                    loop {
+                        let c = bytes[p];
+                        if c == 0 {
+                            p += 1;
+                            break;
+                        }
+                        p += 1;
+                        assert_eq!(c, 9, "member abbrev 9, got {c}");
+                        let mn = rd_str(&mut p);
+                        mem_types.push(rd_u32(&mut p)); // member type ref4
+                        let off = rd_u32(&mut p); // data_member_location
+                        member_offs.push((mn, off));
+                    }
+                    found_struct = true;
+                    struct_mem_types = mem_types;
                 }
                 2 => {
                     // subprogram：name str / decl_file d1 / low_pc addr8 /
@@ -809,11 +940,21 @@ mod tests {
             }
         }
         assert_eq!(p, bytes.len(), "DIE stream must parse to exact end");
-        assert!(found_base && found_ptr && found_sub, "all DIE kinds present");
-        // fbreg 偏移（sleb128，x = slot_offset）：x=-32 / b=-16 / a=-24
+        assert!(found_base && found_ptr && found_sub && found_struct, "all DIE kinds present");
+        // structure_type 成员（x@0 / y@4——layout 实测偏移，与槽内一致）
+        member_offs.sort_by_key(|(_, o)| *o);
+        assert_eq!(
+            member_offs,
+            vec![("x".to_string(), 0u32), ("y".to_string(), 4u32)],
+            "struct members with byte offsets"
+        );
+        // 成员 type ref 指向 i32 base_type（非 0）
+        let bo = base_off.expect("i32 base_type present");
+        assert_eq!(struct_mem_types, vec![bo, bo], "member type refs → i32 base");
+        // fbreg 偏移（sleb128，x = slot_offset）：x=-32 / p=-40 / b=-16 / a=-24
         let mut offs = fbreg_offsets;
         offs.sort_unstable();
-        assert_eq!(offs, vec![-32, -24, -16], "fbreg offsets from slot offsets");
+        assert_eq!(offs, vec![-40, -32, -24, -16], "fbreg offsets from slot offsets");
     }
 
     fn decode_sleb(mut v: &[u8]) -> i64 {
@@ -1023,4 +1164,5 @@ mod tests {
         assert_eq!(p + 8, bytes.len(), "exact end");
     }
 }
+
 
