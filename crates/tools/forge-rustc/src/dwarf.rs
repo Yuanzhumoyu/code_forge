@@ -155,28 +155,47 @@ pub fn gen_debug_info(
     buf.push(0);
     buf.extend_from_slice(&0x1cu16.to_le_bytes()); // DW_LANG_Rust
 
-    // B3：base_type DIE（CU children，subprogram 之前——DW_AT_type(ref4)
-    // 记录各 base_type 的段内偏移供 subprogram 变量引用）。
-    let mut type_off_by_name: std::collections::HashMap<String, u32> = Default::default();
+    // 类型 DIE（CU children，subprogram 之前——DW_AT_type(ref4) 记录各
+    // 类型 DIE 的段内偏移供 subprogram 变量引用）。顺序：base_type 先
+    //（pointer 引用它们），pointer_type 后。key = 变量 ty_desc（去重）。
+    let mut type_off_by_desc: std::collections::HashMap<String, u32> = Default::default();
     if full {
-        let mut seen: Vec<String> = Vec::new();
+        // 收集唯一 ty_desc（可分类为标量/指针的）
+        let mut descs: Vec<String> = Vec::new();
         for fv in vars {
             for v in &fv.vars {
-                if let Some((dn, ..)) = scalar_base_type(&v.ty_desc)
-                    && !seen.contains(&dn)
-                {
-                    seen.push(dn.clone());
+                if ty_kind(&v.ty_desc).is_some() && !descs.contains(&v.ty_desc) {
+                    descs.push(v.ty_desc.clone());
                 }
             }
         }
-        for dn in &seen {
-            let (_, size, enc) = scalar_base_type(dn).unwrap_or((dn.clone(), 8, 7));
-            type_off_by_name.insert(dn.clone(), buf.len() as u32);
-            buf.push(6); // abbrev code 6: DW_TAG_base_type
-            buf.extend_from_slice(dn.as_bytes()); // DW_AT_name (string)
-            buf.push(0);
-            buf.push(size); // DW_AT_byte_size (data1)
-            buf.push(enc); // DW_AT_encoding (data1)
+        // 第一遍：base_type（标量 desc——scalar_base_type 直接命中）
+        for desc in &descs {
+            if let Some((_, size, enc)) = scalar_base_type(desc) {
+                type_off_by_desc.insert(desc.clone(), buf.len() as u32);
+                buf.push(6); // abbrev code 6: DW_TAG_base_type
+                buf.extend_from_slice(desc.as_bytes()); // DW_AT_name
+                buf.push(0);
+                buf.push(size); // byte_size
+                buf.push(enc); // encoding
+            }
+        }
+        // 第二遍：pointer_type（&T / &mut T / *const T / *mut T——byte_size 8，
+        // DW_AT_type 指向内层标量的 base_type；内层非标量（聚合/嵌套指针）
+        // = 0 占位，后续扩展）
+        for desc in &descs {
+            if let Some(TyKind::Ptr { pointee }) = ty_kind(desc) {
+                type_off_by_desc.insert(desc.clone(), buf.len() as u32);
+                buf.push(7); // abbrev code 7: DW_TAG_pointer_type
+                buf.push(8); // DW_AT_byte_size (data1)
+                let tpos = buf.len();
+                buf.extend_from_slice(&0u32.to_le_bytes()); // DW_AT_type 占位
+                if let Some(pn) = pointee
+                    && let Some(&po) = type_off_by_desc.get(&pn)
+                {
+                    buf[tpos..tpos + 4].copy_from_slice(&po.to_le_bytes());
+                }
+            }
         }
     }
 
@@ -213,12 +232,10 @@ pub fn gen_debug_info(
                 // DW_AT_name (0x03) → string
                 buf.extend_from_slice(v.name.as_bytes());
                 buf.push(0);
-                // DW_AT_type (0x49) → ref4（base_type 段内偏移；无匹配 = 0）
+                // DW_AT_type (0x49) → ref4（类型 DIE 段内偏移；无匹配 = 0）
                 let tpos = buf.len();
                 buf.extend_from_slice(&0u32.to_le_bytes());
-                if let Some((dn, ..)) = scalar_base_type(&v.ty_desc)
-                    && let Some(&off4) = type_off_by_name.get(&dn)
-                {
+                if let Some(&off4) = type_off_by_desc.get(&v.ty_desc) {
                     buf[tpos..tpos + 4].copy_from_slice(&off4.to_le_bytes());
                 }
                 // DW_AT_location (0x02) → exprloc：DW_OP_fbreg <sleb128 offset>
@@ -266,6 +283,39 @@ fn scalar_base_type(desc: &str) -> Option<(String, u8, u8)> {
         _ => return None,
     };
     Some((name.to_string(), size, enc))
+}
+
+/// 变量类型的 DWARF 表示分类（用于类型 DIE 区生成）：
+/// - `Scalar` 由 `scalar_base_type` 命中（base_type DIE）
+/// - `Ptr { pointee }`：&T / &mut T / *const T / *mut T → pointer_type
+///   （byte_size 8），pointee = 内层标量的 base 名（其 base_type DIE 已
+///   生成，pointer 的 DW_AT_type 引用）；内层非标量（聚合/嵌套指针）=
+///   None（pointer 无 DW_AT_type，后续扩展）
+/// - 其余（聚合/元组/切片等）= None（C2 首版无 type）
+#[derive(Clone, Debug)]
+enum TyKind {
+    Scalar,
+    Ptr { pointee: Option<String> },
+}
+
+fn ty_kind(desc: &str) -> Option<TyKind> {
+    let d = desc.trim();
+    if scalar_base_type(d).is_some() {
+        return Some(TyKind::Scalar);
+    }
+    // 指针/引用前缀（&mut 需在 & 前匹配；生命周期 erased 无 "&'a" 形态）
+    let pointee_of = |inner: &str| {
+        // 内层标量名（其 base_type 区已生成——pointee 引用）
+        scalar_base_type(inner.trim()).map(|(n, _, _)| n)
+    };
+    for pre in ["*const ", "*mut ", "&mut ", "&"] {
+        if let Some(inner) = d.strip_prefix(pre) {
+            return Some(TyKind::Ptr {
+                pointee: pointee_of(inner),
+            });
+        }
+    }
+    None
 }
 
 /// 生成 `.debug_abbrev` 段（C1 + C2 的码）。
@@ -323,6 +373,14 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0x03); buf.push(0x08); // name → string
     buf.push(0x0b); buf.push(0x0b); // byte_size → data1
     buf.push(0x3e); buf.push(0x0b); // encoding → data1
+    buf.push(0); buf.push(0);
+    // code 7：pointer_type，children no（byte_size 8；type ref4 指向内层
+    // base_type——聚合/引用内层为 0 占位，后续扩展）
+    buf.push(7);
+    buf.push(0x0f);
+    buf.push(0);
+    buf.push(0x0b); buf.push(0x0b); // byte_size → data1
+    buf.push(0x49); buf.push(0x06); // type → ref4
     buf.push(0); buf.push(0);
     buf.push(0); // 整个 abbrev 表终止
     buf
@@ -452,6 +510,11 @@ mod tests {
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("x\u{0}"), "variable name x present");
         assert!(s.contains("a\u{0}"), "param name a present");
+        // pointer_type（&i32 的 b——code 7 + byte_size 8）出现
+        assert!(
+            bytes.windows(2).any(|w| w == [7, 8]),
+            "pointer_type (abbrev 7, byte_size 8) present for &i32"
+        );
         // fbreg 表达式（0x91 = DW_OP_fbreg）出现
         assert!(bytes.windows(1).any(|w| w[0] == 0x91), "DW_OP_fbreg present");
     }
