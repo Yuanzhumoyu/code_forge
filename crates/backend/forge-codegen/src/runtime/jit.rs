@@ -1595,6 +1595,52 @@ mod tests {
         assert_eq!(x, 8, "atomic_add writes new value");
     }
 
+    /// WA-35 复现：IR cmpxchg 重试循环（fetch_and 形态，**全 I64**——排除
+    /// 宽度混用干扰，纯隔离"成功比较"问题）。
+    /// IR 层正确（icmp 比较 cmpxchg 结果与期望值）——若 x86 Cmpxchg 降级
+    /// 寄存器处理有缺陷（期望值 SSA 在 cmpxchg 后丢失 → icmp 自比较恒真 →
+    /// 循环首轮后即退出，写不生效），此处必现。
+    /// 注：32 位（i32 load + I32 域）同形态测试必失败（icmp 自比较/写丢失——
+    /// 主库 Cmpxchg 窄域降级 bug，见 WA-35；I64 域通过 = 循环方案本身有效，
+    /// 主库窄域修复后可开 4 字节原子）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cmpxchg_and_loop_i64() {
+        use forge_ir::{IntCC, Ordering};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // f(ptr: *mut i64) -> i64：cmpxchg 循环 fetch_and(ptr, 0b1010)
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
+        jit.add_function("cmpxchg_and64", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let val = b.iconst(0b1010, TypeId::I64);
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
+            b.switch_to_block(entry);
+            let old0 = b.load(p, TypeId::I64);
+            b.jump(loop_b, &[old0]);
+            b.switch_to_block(loop_b);
+            let old = la[0];
+            let new = b.band(old, val);
+            let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+            let ok = b.icmp(IntCC::Equal, actual, old);
+            b.branch(ok, exit_b, &[actual], loop_b, &[actual]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut i64) -> i64 = jit.get_fn("cmpxchg_and64").expect("get_fn");
+        let mut x: i64 = 12;
+        let old = f(&mut x);
+        assert_eq!(old, 12, "fetch_and returns old value");
+        assert_eq!(x, 8, "fetch_and writes new value");
+    }
+
     /// WA-18 高压寄存器复现：10 个存活值 + atomic_rmw（触发 ptr spill）。
     #[cfg(target_arch = "x86_64")]
     #[test]
