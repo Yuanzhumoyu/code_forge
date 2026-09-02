@@ -166,35 +166,38 @@ rustc (codegen_crate)
 
 ## 调试信息（`-C debuginfo=1`，C1 line-tables-only）
 
-**已实现（2026-09）**：`-C debuginfo=1` 生成 DWARF（v4）并入对象文件：
+**已实现（2026-09）**：`-C debuginfo=1` 生成 DWARF **v5** 并入对象文件：
 
-- `.debug_line`：行号程序（DWARF4 头：max_ops_per_inst/opcode_base=13 +
-  standard_opcode_lengths/line_base=-5；文件表 = 真实源文件路径 + dir/
-  mtime/length 字段）。每函数：函数级条目 + **per-statement 条目**
-  （B1：主库 emission 逐指令收集 (机器码偏移, 行)，行号按语句细化——
-  每条目自成一个 sequence：`set_address`(reloc) + `set_file 1` +
-  `advance_line(L-1)` + `copy` + `end_sequence`）
-- `.debug_info`：单编译单元（producer/name=**源文件路径**/language=Rust/
-  **low_pc+high_pc**（代码范围，reloc 首函数 + data8 总长）/stmt_list）
-  + 每函数 `DW_TAG_subprogram`（name/low_pc/decl_line）
+- `.debug_line`：行号程序（v5 头：opcode_base=13 + standard_opcode_lengths/
+  line_base=-5；文件表 [DW_LNCT_path→DW_FORM_line_strp] **两条同串条目**
+  （0/1 基读者 hack），路径存 `.debug_line_str`）。**每函数一个 sequence**
+  （gcc/clang 布局——每行一个 sequence 会让行零跨度，gdb 丢弃零长度行）：
+  函数级条目 + **per-statement 条目**（B1：主库 emission 逐指令收集
+  (机器码偏移, 行)，逐行 set_address reloc + advance_line 累加）
+- `.debug_info`：单编译单元（v5 头 unit_type/address_size；
+  producer/name=**源文件路径**/language=Rust/low_pc+high_pc（代码范围，
+  reloc 首函数 + data8 总长）/stmt_list）+ 每函数 `DW_TAG_subprogram`
+  （name/low_pc/**high_pc=函数代码字节**/decl_line）
 - `.debug_aranges`：单 CU 地址范围（gdb 16 cooked index 的 pc→CU 映射）
 - `.debug_abbrev`：缩写表（字符串属性用 `DW_FORM_string` 内联）
 
+**版本必须是 v5**：w64devkit gdb 16.2 对 PE 只支持 DWARF5——gcc 同源代码
+`-gdwarf-4` 编译后 gdb 同样全失效（断点不解析/无行号，对照实证）。
 实现：`src/dwarf.rs`（生成）+ forge-object `add_dwarf`（COFF 调试段）。
 行号表来源：`LowerCtxt` 每语句 `set_current_loc`（stmt span → 行）→
 forge-ir `Instruction.loc` → 主库 vcode `inst_lines` → emission
 `CompiledFunction.line_entries` → `FuncRefTable` → backend.rs 写盘前生成。
-**地址 reloc 已应用（2026-09 验证）**：段内地址占位（.debug_line 的
-set_address / .debug_info 的 low_pc / aranges）随段数据发射 ADDR64 reloc，
-链接器解析为函数真实地址。`-C debuginfo=0` 零开销（不生成段）。
-e2e `debuginfo_line_tables` 用例守护。
+地址 reloc（set_address/low_pc/aranges）ADDR64 发射，链接器解析为函数
+真实地址。`-C debuginfo=0` 零开销。e2e `debuginfo_line_tables` 用例守护。
 
 **C2 变量级 debuginfo（-C debuginfo=2 full，2026-09 已实现）**：
 lower 从 rustc `body.var_debug_info` 采集源变量（无投影 local——forge 全
 栈槽模型，fbreg = 实际槽相对 rbp 的偏移，含主库 callee-saved shift 64）
 → `VarEntry`/`FnVarEntries` 结构体 → dwarf.rs 生成：
 
-- `DW_TAG_subprogram` 加 `DW_AT_frame_base`（DW_OP_reg6 = rbp）
+- `DW_TAG_subprogram` 加 `DW_AT_frame_base`（DW_OP_reg6 = rbp）+
+  `DW_AT_high_pc`（函数代码字节——**gdb 需函数结束地址建 function
+  block，缺则变量 DIE 全部被丢**，对照 gcc 实证）
 - 参数 `DW_TAG_formal_parameter` / 局部 `DW_TAG_variable`（name/type/
   location=DW_OP_fbreg/decl_line）
 - `DW_TAG_base_type`（标量：name/byte_size/encoding——i8..i128/u8..u128/
@@ -202,20 +205,27 @@ lower 从 rustc `body.var_debug_info` 采集源变量（无投影 local——for
   指向内层标量 base_type；聚合/嵌套指针 = 0 占位）
 
 **验证路径（2026-09）**：objdump `--dwarf=info/decodedline/rawline` 全
-解析干净（类型/变量/fbreg/行号正确）；w64devkit gdb 16.2 能读符号
-（`dbgprobe::add2` 反修饰）、设断点命中、`list` 显示源码、bt 出函数名。
-**注意**：①MSVC link.exe 截断 COFF 段名（`.debug_l`）gdb 读不到——
-验证用 `-C linker=lld-link`（保留完整段名）或 GNU ld（另含 COFF 符号表）；
-②gdb 交互式 `info args/locals`/单步在 PE 上仍未打通（需 .debug_frame
-CFI + 规范行序列 + lld-link 不产 COFF 符号表导致 gdb 无 minsym 的连带
-问题——**待续**，见路线图）；③类型/行号语义以 objdump 解码 + dwarf 结构
-单测（7 个：逐字节解析 info/line/aranges）为准。e2e `debuginfo_full` +
-dwarf 单测守护。**待续**：投影变量（字段/解引用）；gdb-on-PE 交互打通
-（CFI）；引用/聚合类型 DIE 补全。
+解析干净（类型/变量/fbreg/行号正确）；**w64devkit gdb 16.2 实证**：源码
+断点（`break dbgprobe.rs:8`）设点/命中/`list`/`next` 单步 ✓；function
+block 带范围（high_pc）；变量符号 + fbreg 位置正确（`info scope` 显
+`y at frame base reg $rbp offset -80`；原始内存读 `x/wd $rbp-80` = 42 =
+add2(40,2) 端到端正确）。**注意**：①MSVC link.exe 截断 COFF 段名
+（`.debug_l`）gdb 读不到——验证用 `-C linker=lld-link`（保留完整段名）
+或 GNU ld（另含 COFF 符号表，但其 `__end__`/`___tls_*` 伪符号压到
+.text 起点 0x1000 与首函数冲突——GNU ld 会话里首函数入口断点命中后
+帧名显示 `__end__`，其余函数正常；lld-link 无符号表 → 名称断点走
+cooked index 可设但命中帧同受 0x1000 冲突影响）；②gdb-PE 残余：
+ref4 类型跟随失败（`print y` 显示 "<unknown type>"——`ptype i32` 正常、
+typedef 已注册、`info scope` 位置正确）与每函数序列**终端行**解码为
+line 0（行断点/单步在非终端行正常）——疑似 gdb 16.2 PE DWARF5 读取器
+边界问题，待续（见路线图）；③类型/行号语义以 objdump 解码 + dwarf
+结构单测（7 个：逐字节解析 info/line/aranges）为准。e2e `debuginfo_full`
++ dwarf 单测守护。**待续**：投影变量（字段/解引用）；gdb-PE 类型打印/
+终端行（可能需 .debug_frame CFI 对齐 gcc 形态）；聚合类型 DIE 补全。
 
 ## 路线图（远期，P4.7/P4.8 评估结论）
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
-| **gdb-on-PE 交互打通** | 中工程量：DWARF 段已被 gdb 解析（符号/源码/断点命中）；`info args/locals`/单步仍失败——疑似缺 .debug_frame CFI + gdb PE 路径对 per-row sequence 行表的 pc→行映射限制；另 lld-link 不产 COFF 符号表（gdb 无 minsym，入口地址与 `__end__` 冲突） | 主库 emission：DWARF CFI（.debug_frame/.eh_frame） |
+| **gdb-PE 类型打印/终端行** | 中工程量：DWARF5 已被 gdb 完整读入（源码断点/单步/function block/fbreg 槽位全实证，y=42@rbp-80）；残余：ref4 类型跟随失败（`print y` → "<unknown type>"，`ptype i32` 正常）+ 每函数序列终端行 line 0——疑似 gdb 16.2 PE DWARF5 读取器对迷你 CU 形态的边界问题；备选：.debug_frame CFI 对齐 gcc 形态、.debug_str/comp_dir、subprogram external/decl_file | 主库 emission：DWARF CFI（.debug_frame/.eh_frame） |
 | **并行 CGU（`-Z codegen-units=N`）** | 中工程量：当前单对象文件（backend.rs 合并输出）。并行化需 FuncRefTable 并发化（`intern`/`intern_global` 加锁或 thread-local）+ 每 CGU 独立 ObjectWriter + `join_codegen` 多模块归并 | 主库 ObjectWriter 并发支持 |

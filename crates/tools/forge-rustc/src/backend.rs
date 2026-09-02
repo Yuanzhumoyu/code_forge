@@ -93,6 +93,9 @@ impl CodegenBackend for CodegenLibBackend {
         // CU high_pc：所有发射函数的代码总字节（含 main 别名副本——见下方
         // add_function("main")），dwarf CU DIE 范围用（gdb pc→CU 映射）。
         let mut code_span: u64 = 0;
+        // 每函数代码字节（subprogram DW_AT_high_pc——gdb 需函数结束地址才能
+        // 建 function block，缺则变量 DIE 被丢（对照 gcc 实证））。
+        let mut fn_sizes: std::collections::HashMap<String, u64> = Default::default();
 
         for (item_i, item) in instances.iter().enumerate() {
             match item {
@@ -152,6 +155,7 @@ impl CodegenBackend for CodegenLibBackend {
                             }
                             let _ = object_writer.add_function(&sym_name, &compiled_func);
                             code_span += compiled_func.code.len() as u64;
+                            fn_sizes.insert(sym_name.clone(), compiled_func.code.len() as u64);
                             // B1：收集该函数的 per-statement 行号表（主库 emission
                             // 输出 (机器码偏移, 行)）——debuginfo 开启时 dwarf.rs
                             // 生成 .debug_line 的每语句条目。
@@ -292,6 +296,7 @@ impl CodegenBackend for CodegenLibBackend {
                 &producer,
                 &src_file,
                 code_span,
+                &fn_sizes,
                 debuginfo_full,
             );
             // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——

@@ -1,21 +1,32 @@
-//! DWARF v4 生成（C1 line-tables-only + C2 full 变量级）。
+//! DWARF v5 生成（C1 line-tables-only + C2 full 变量级）。
+//!
+//! **版本必须是 v5**：w64devkit gdb 16.2 对 PE 只支持 DWARF5——gcc 同源
+//! 代码 -gdwarf-4 编译后 gdb 同样全失效（对照实证），默认 v5 正常。
 //!
 //! 段：
-//! - `.debug_line`：行号程序（v4 头，clang `--dwarf=rawline` 对照：
-//!   opcode_base=13 + standard_opcode_lengths；每函数函数级条目 +
-//!   per-statement 条目（B1）——每条目自成一个 sequence）
-//! - `.debug_info`：单 CU（name=源文件路径、low_pc/high_pc/stmt_list）
-//!   + 每函数 `DW_TAG_subprogram`（C2：frame_base + 变量/参数 DIE +
-//!   base_type/pointer_type）
+//! - `.debug_line`：行号程序（v5 头：version u16/address_size/
+//!   segment_selector/opcode_base=13 + standard_opcode_lengths；目录表
+//!   format_count=0+count=0；文件表 [DW_LNCT_path→DW_FORM_line_strp]，
+//!   **两条同串条目**（gcc hack：file 号 1 在 0 基/1 基读者下都命中）；
+//!   line_strp 偏移 4 字节。每函数**一个 sequence**（gcc/clang 布局——
+//!   每行一个 sequence 会让行零跨度，gdb 丢弃零长度行）；函数级 +
+//!   per-statement 行（B1，逐行 set_address reloc + advance_line 累加）
+//! - `.debug_line_str`：路径字符串池（file 经 line_strp 偏移 0 引用）
+//! - `.debug_info`：单 CU（v5 头：unit_type/address_size；name=源文件
+//!   路径、low_pc/high_pc/stmt_list） + 每函数 `DW_TAG_subprogram`
+//!   （name/low_pc/high_pc=函数代码字节/decl_line；C2：frame_base +
+//!   变量/参数 DIE + base_type/pointer_type）
 //! - `.debug_aranges`：单 CU 地址范围（gdb 16 cooked index 的 pc→CU 映射）
 //! - `.debug_abbrev`：缩写表（字符串属性用 DW_FORM_string 内联，无 strp）
 //!
 //! 地址属性（low_pc/set_address/aranges）用相对占位 + reloc，由
 //! codegen_crate 在对象写入时按函数符号解析（ADDR64 重定位）。
 //! 结构错误历史（WA-31）：version u16、DIE 值流误写属性名、行程序
-//! 头不合法（opcode_base）、CU 范围/aranges 缺失、文件条目缺字段等。
+//! 头不合法（opcode_base/advance_line 漏发/set_file 0）、文件条目缺字段、
+//! CU 范围/aranges/stmt_list 缺失、subprogram 缺 high_pc（gdb 建不了
+//! function block → 变量 DIE 全丢）、每行一 sequence（零跨度）。
 
-/// DWARF 行号程序操作码（DWARF v4）。
+/// DWARF 行号程序操作码（DWARF v5）。
 const DW_LNS_COPY: u8 = 0x01;
 const DW_LNS_ADVANCE_LINE: u8 = 0x03;
 const DW_LNS_SET_FILE: u8 = 0x04;
@@ -53,15 +64,18 @@ pub struct FnVarEntries {
 /// 每函数条目：`DW_LNE_set_address <addr>` + `DW_LNS_set_file 1` +
 /// `DW_LNS_advance_line` + `DW_LNS_copy` + `DW_LNE_end_sequence`。
 /// addr 是相对地址占位（reloc 补——COFF addend 隐式：占位字节即偏移，
-/// 链接后 = 符号地址 + 占位值）。file_names[1] = 源文件/库名。
+/// 链接后 = 符号地址 + 占位值）。file[1] = 源文件（路径存 .debug_line_str，
+/// 条目经 DW_FORM_line_strp 引用，偏移 0）。
 /// 每个函数：(符号, 函数声明行, per-statement (指令偏移, 行) 列表——
 /// B1 行号细化：每语句一个 set_address(偏移) + 行条目，调试器可精确
 /// 行断点/单步；空列表 = 仅函数级条目（C1 兼容）。
 ///
-/// 头部布局与 clang -gdwarf 对齐（DWARF4 line v4，`objdump --dwarf=rawline`
-/// 对照验证）：version u16、min_inst/max_ops/is_stmt、line_base=-5（有符号
-/// 字节 0xfb，clang 同款——bfd 按有符号字节读）、line_range=14、
-/// opcode_base=13 + 12 个 standard_opcode_lengths（opcode 1..12）。
+/// **DWARF v5 头**（gdb 16.2 对 PE 只支持 v5——gcc -gdwarf-4 对照实证）：
+/// unit_length | version=5 u16 | address_size | segment_selector_size |
+/// header_length | min_inst/max_ops/is_stmt | line_base=-5(0xfb) |
+/// line_range=14 | opcode_base=13 + 12 个 standard_opcode_lengths。
+/// 目录表 format_count=0（空）；文件表 format_count=1：[DW_LNCT_path=1 →
+/// DW_FORM_line_strp=0x1f]，count=1，entry = line_strp 偏移 0。
 /// opcode_base 若 < 5，copy/advance_line/set_file（opcode 1/3/4）会被当
 /// special opcode 解码（行/地址错乱）；每条目自成一个 sequence——
 /// end_sequence 后行寄存器复位为 1，故每行 advance_line 目标 = L - 1。
@@ -69,65 +83,94 @@ pub struct FnVarEntries {
 /// 返回 (段字节, reloc: (数据内偏移, 符号名))。
 pub fn gen_debug_line(
     fns: &[(String, u32, Vec<(u32, u32)>)],
-    file_name: &str,
 ) -> (Vec<u8>, Vec<(usize, String)>) {
     let mut buf: Vec<u8> = Vec::new();
     let unit_len_pos = 0usize;
     buf.extend_from_slice(&0u32.to_le_bytes()); // unit_length 占位
-    // version 是 u16——只写 1 字节会让高位吃到 header_length 首字节。
-    buf.push(4); // version（DWARF v4）
-    buf.push(0); // version 高位
+    buf.push(5); // version（DWARF v5）lo
+    buf.push(0); // version hi（u16——只写 1 字节会错位）
+    buf.push(8); // address_size
+    buf.push(0); // segment_selector_size
     let hl_pos = buf.len();
     buf.extend_from_slice(&0u32.to_le_bytes()); // header_length 占位
     buf.push(1); // minimum_instruction_length
-    buf.push(1); // maximum_ops_per_instruction（DWARF v4）
+    buf.push(1); // maximum_operations_per_instruction
     buf.push(1); // default_is_stmt
-    buf.push(0xfb); // line_base = -5（sleb128 单字节，有符号读）
+    buf.push(0xfb); // line_base = -5（有符号字节读）
     buf.push(14); // line_range
     buf.push(13); // opcode_base——standard opcodes 1..12
     // standard_opcode_lengths（opcode 1..12）：
     // copy0 advance_pc1 advance_line1 set_file1 set_column1 negate0
     // basic_block0 const_add_pc0 fixed_advance_pc1 prologue0 epilogue0 set_isa1
     buf.extend_from_slice(&[0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1]);
-    // include_directories：空（目录表终止符 = 1 个 NUL）
+    // 目录表：format_count = 0 + dir_count = 0（v5 表 count 前缀——只写
+    // format_count=0 会让读者把下一字段当目录 count 读：dir_count=0 空表
+    // 才自洽；objdump "format count is zero but table is not empty"）
     buf.push(0);
-    // file_names：file[1] = 源文件/库名。每文件条目 = name\0 +
-    // dir_index(uleb) + mtime(uleb) + length(uleb)，表终止符 = 1 个 NUL。
-    // 缺 dir/mtime/length 会让读者把行程序操作码当文件元数据顺序消费
-    //（v4 头无 padding 可跳）——行号错乱/段错位。
-    buf.extend_from_slice(file_name.as_bytes());
     buf.push(0);
-    buf.push(0); // dir_index = 0（""，无目录表条目）
-    buf.push(0); // last_modification_time = 0
-    buf.push(0); // length = 0
-    buf.push(0); // file_names 表终止符
+    // 文件表：format_count = 1，[DW_LNCT_path → DW_FORM_line_strp]。
+    // **两个相同条目**（gcc 同款 hack）：file 号 1 在 0 基读者（binutils
+    // v5）与 1 基读者（寄存器初值 1）下都解析到同一文件——单条目 +
+    // set_file 1 会被 binutils 判 "index 1 >= count 1" 拒。
+    buf.push(1);
+    buf.push(1); // DW_LNCT_path = 1
+    buf.push(0x1f); // DW_FORM_line_strp = 0x1f
+    buf.push(2); // file_names_count = 2
+    // line_strp 偏移是 **4 字节**（非 uleb——gcc 字节实证 56 00 00 00）；
+    // 两条目同指 .debug_line_str 偏移 0（gcc 同款 1 基/0 基 hack）
+    buf.extend_from_slice(&0u32.to_le_bytes()); // file[0] strp 偏移 0
+    buf.extend_from_slice(&0u32.to_le_bytes()); // file[1] strp 偏移 0
     let header_end = buf.len();
     let hl = header_end - (hl_pos + 4);
     buf[hl_pos..hl_pos + 4].copy_from_slice(&(hl as u32).to_le_bytes());
 
     let mut relocs: Vec<(usize, String)> = Vec::new();
     for (sym, line, stmts) in fns {
-        // 函数起点条目（reloc 占位 0 = 符号基址）
-        push_line_entry(&mut buf, &mut relocs, sym, 0, *line as i64);
-        // per-statement：set_address(指令偏移) + 行
-        for (off, ln) in stmts {
-            push_line_entry(&mut buf, &mut relocs, sym, *off as i64, *ln as i64);
+        // 每函数一个 sequence（gcc/clang 布局——**每行一个 sequence 会让
+        // 每行零跨度，gdb 丢弃零长度行 → 行号全空**）：函数起点行 + 每
+        // 语句行（set_address 逐行 reloc），最后 end_sequence。
+        // 行寄存器 sequence 起点 = 1：首行 delta = L - 1；同 sequence 内
+        // 后续行 delta = L - 上一行（寄存器持续累加，不复位）。
+        let mut prev_line = 1i64;
+        let mut first = true;
+        for (addr, ln) in std::iter::once((0i64, *line as i64))
+            .chain(stmts.iter().map(|(o, l)| (*o as i64, *l as i64)))
+        {
+            if !first {
+                push_line_row(&mut buf, &mut relocs, sym, addr, ln - prev_line);
+            } else {
+                push_line_row(&mut buf, &mut relocs, sym, addr, ln - 1);
+                first = false;
+            }
+            prev_line = ln;
         }
+        // end_sequence（sequence 终止；行寄存器复位 1）
+        buf.push(0); // extended
+        buf.push(1);
+        buf.push(DW_LNE_END_SEQUENCE);
     }
     let unit_len = buf.len() - (unit_len_pos + 4);
     buf[unit_len_pos..unit_len_pos + 4].copy_from_slice(&(unit_len as u32).to_le_bytes());
     (buf, relocs)
 }
 
-/// 追加一个行号条目（自成一个 sequence）：set_address(addr 占位 + reloc)
-/// + set_file 1 + advance_line(L-1) + copy + end_sequence。行寄存器在
-/// end_sequence 后复位为 1，故每个新 sequence 的首行 delta = L - 1。
-fn push_line_entry(
+/// 生成 `.debug_line_str`：file 路径字符串池（file[1] 经 line_strp 引用，
+/// 偏移 0——当前单文件 CU，池内只有一个串）。
+pub fn gen_debug_line_str(file_name: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(file_name.as_bytes());
+    buf.push(0);
+    buf
+}
+
+/// 追加一行（同 sequence 内）：set_address(addr 占位 + reloc) + set_file 1
+/// + advance_line(delta) + copy。delta 由调用方按行寄存器当前值计算。
+fn push_line_row(
     buf: &mut Vec<u8>,
     relocs: &mut Vec<(usize, String)>,
     sym: &str,
     addr: i64,
-    line: i64,
+    delta: i64,
 ) {
     buf.push(0); // extended
     buf.push(1 + 8); // operand length
@@ -137,20 +180,17 @@ fn push_line_entry(
     buf.extend_from_slice(&(addr as u64).to_le_bytes());
     relocs.push((addr_pos, sym.to_string()));
     buf.push(DW_LNS_SET_FILE);
-    buf.push(1); // file[1]——DWARF 文件号从 1 开始，0 非法
+    buf.push(1); // file[1]（v5 0 基 / 1 基 hack：文件表两条同串，均命中）
     buf.push(DW_LNS_ADVANCE_LINE);
-    encode_sleb128(buf, line - 1); // 行寄存器 sequence 起点 = 1 → 目标 L
+    encode_sleb128(buf, delta);
     buf.push(DW_LNS_COPY);
-    buf.push(0); // extended
-    buf.push(1);
-    buf.push(DW_LNE_END_SEQUENCE);
 }
 
 /// 生成 `.debug_info` 段：单 CU（DW_TAG_compile_unit）+ 每函数一个
 /// `DW_TAG_subprogram`。字符串属性用 DW_FORM_string（内联，无 strp）。
-/// CU DIE 带 low_pc/high_pc（代码范围，reloc 到首函数符号 + data8 总长）——
-/// gdb 无 .debug_aranges 时靠 CU 级范围把 pc 映射到 CU（缺则帧解析落回
-/// COFF 符号 "__end__"，info args/locals 全空）。
+/// CU DIE 带 low_pc/high_pc（代码范围，reloc 到首函数符号 + data8 总长）。
+/// subprogram 带 DW_AT_high_pc（data8 = 函数代码字节，gdb 需函数结束地址
+/// 建 function block——缺则 children 变量 DIE 被丢，对照 gcc 实证）。
 /// `full=true`（-C debuginfo=2）时 subprogram 带 children：
 /// - DW_TAG_formal_parameter / DW_TAG_variable（DW_AT_location =
 ///   DW_OP_fbreg <槽偏移>，槽相对 rbp——frame base = rbp）
@@ -162,17 +202,21 @@ pub fn gen_debug_info(
     producer: &str,
     cu_name: &str,
     code_span: u64,
+    fn_sizes: &std::collections::HashMap<String, u64>,
     full: bool,
 ) -> (Vec<u8>, Vec<(usize, String)>) {
     let mut buf: Vec<u8> = Vec::new();
     let unit_len_pos = 0usize;
     buf.extend_from_slice(&0u32.to_le_bytes()); // unit_length 占位
-    buf.push(4); // version（DWARF v4）
-    buf.push(0); // version 高位（DWARF version 是 u16——只写 1 字节会让
-                 // abbrev_offset 字段错位：addr_size 的 08 混入 → gdb/
-                 // objdump 报 bad offset 0x8000000）
-    buf.extend_from_slice(&0u32.to_le_bytes()); // debug_abbrev_offset = 0
+    // DWARF v5 头：unit_length | version(u16) | unit_type(1) | address_size(1)
+    // | debug_abbrev_offset(4)。**必须 v5**：w64devkit gdb 16.2 对 PE 只
+    // 支持 DWARF5——gcc 同源代码 -gdwarf-4 编译后 gdb 同样全失效（断点不
+    // 解析/无行号），默认 v5 完全正常（对照实证）。
+    buf.push(5); // version lo
+    buf.push(0); // version hi（u16——只写 1 字节会让后续字段错位）
+    buf.push(1); // unit_type = DW_UT_compile
     buf.push(8); // address_size
+    buf.extend_from_slice(&0u32.to_le_bytes()); // debug_abbrev_offset = 0
 
     let mut relocs: Vec<(usize, String)> = Vec::new();
 
@@ -259,6 +303,10 @@ pub fn gen_debug_info(
         let lp = buf.len();
         buf.extend_from_slice(&0u64.to_le_bytes());
         relocs.push((lp, sym.clone()));
+        // DW_AT_high_pc (0x12) → data8：相对 low_pc 的偏移 = 函数代码字节
+        //（gdb 建 function block 需要结束地址——缺则变量 DIE 全部被丢）
+        let fn_size = fn_sizes.get(sym).copied().unwrap_or(0);
+        buf.extend_from_slice(&fn_size.to_le_bytes());
         // DW_AT_decl_line (0x3b) → data4
         buf.extend_from_slice(&line.to_le_bytes());
         if !fn_vars.is_empty() {
@@ -381,6 +429,7 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0);
     buf.push(0x03); buf.push(0x08); // name → string
     buf.push(0x11); buf.push(0x01); // low_pc → addr
+    buf.push(0x12); buf.push(0x07); // high_pc → data8（函数代码字节）
     buf.push(0x3b); buf.push(0x06); // decl_line → data4
     buf.push(0); buf.push(0);
     // code 3：subprogram，children yes（有变量）
@@ -389,6 +438,7 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(1);
     buf.push(0x03); buf.push(0x08); // name → string
     buf.push(0x11); buf.push(0x01); // low_pc → addr
+    buf.push(0x12); buf.push(0x07); // high_pc → data8
     buf.push(0x3b); buf.push(0x06); // decl_line → data4
     buf.push(0x40); buf.push(0x18); // frame_base → exprloc（DW_FORM_exprloc=0x18）
     buf.push(0); buf.push(0);
@@ -467,6 +517,7 @@ pub fn gen_debug_aranges(
 /// 源码断点需要真实文件名，crate 名匹配不到磁盘文件）。
 /// `code_span`：CU 代码总字节（high_pc 偏移；+0x200 边距盖过函数间
 /// 对齐填充与 main 别名副本——单 CU 超范围无害）。
+/// `fn_sizes`：符号 → 函数代码字节（subprogram high_pc）。
 /// 返回 (段名, 字节, 段内 reloc: (偏移, 符号名)) 列表。
 pub fn build_dwarf_sections(
     fns: &[(String, u32, Vec<(u32, u32)>)],
@@ -474,16 +525,19 @@ pub fn build_dwarf_sections(
     producer: &str,
     src_file: &str,
     code_span: u64,
+    fn_sizes: &std::collections::HashMap<String, u64>,
     full: bool,
 ) -> Vec<(String, Vec<u8>, Vec<(usize, String)>)> {
     let entries: Vec<(String, u32)> = fns.iter().map(|(s, l, _)| (s.clone(), *l)).collect();
     let span = code_span + 0x200;
     let first_sym = entries.first().map(|(s, _)| s.as_str());
-    let (line_bytes, line_relocs) = gen_debug_line(fns, src_file);
-    let (info_bytes, info_relocs) = gen_debug_info(&entries, vars, producer, src_file, span, full);
+    let (line_bytes, line_relocs) = gen_debug_line(fns);
+    let (info_bytes, info_relocs) =
+        gen_debug_info(&entries, vars, producer, src_file, span, fn_sizes, full);
     let (ar_bytes, ar_relocs) = gen_debug_aranges(first_sym, span);
     vec![
         (".debug_line".to_string(), line_bytes, line_relocs),
+        (".debug_line_str".to_string(), gen_debug_line_str(src_file), vec![]),
         (".debug_info".to_string(), info_bytes, info_relocs),
         (".debug_aranges".to_string(), ar_bytes, ar_relocs),
         (".debug_abbrev".to_string(), gen_debug_abbrev(), vec![]),
@@ -513,16 +567,14 @@ mod tests {
             ("main".to_string(), 10u32, vec![]),
             ("helper".to_string(), 20u32, vec![(4u32, 21u32), (12u32, 22u32)]),
         ];
-        let (bytes, relocs) = gen_debug_line(&fns, "test_crate");
+        let (bytes, relocs) = gen_debug_line(&fns);
         assert!(bytes.len() > 24, "line program too small");
         // 函数级 2 + helper 的 2 个 per-statement = 4 个 reloc
         assert_eq!(relocs.len(), 4, "reloc per line entry");
         assert_eq!(relocs[0].1, "main");
-        // file_names[0] = 库名（非空）
-        assert!(
-            bytes.windows(10).any(|w| w == b"test_crate"),
-            "file_names[0] should contain crate name"
-        );
+        // .debug_line_str 串池：gen_debug_line_str 携带源路径
+        let strs = gen_debug_line_str("test_crate");
+        assert!(strs.windows(10).any(|w| w == b"test_crate"), "line_str 池含路径");
         // unit_length 非 0
         let unit_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert_eq!(unit_len as usize, bytes.len() - 4);
@@ -533,7 +585,7 @@ mod tests {
         // B1：per-statement 行号的 set_address 占位应写指令偏移（COFF
         // addend 隐式）——helper 的第 2 个条目占位 = 12。
         let fns = vec![("helper".to_string(), 20u32, vec![(12u32, 22u32)])];
-        let (bytes, relocs) = gen_debug_line(&fns, "c");
+        let (bytes, relocs) = gen_debug_line(&fns);
         assert_eq!(relocs.len(), 2);
         // 第 2 个 reloc 的占位（relocs[1].0 处 8 字节）= 12
         let off = relocs[1].0;
@@ -544,14 +596,13 @@ mod tests {
     #[test]
     fn info_has_cu_and_subprograms() {
         let entries = vec![("f".to_string(), 5u32)];
-        let (bytes, relocs) = gen_debug_info(&entries, &[], "forge", "test", 0x30, false);
+        let (bytes, relocs) = gen_debug_info(&entries, &[], "forge", "test", 0x30, &Default::default(), false);
         // relocs：CU low_pc(1) + subprogram low_pc(1)
         assert_eq!(relocs.len(), 2);
         assert_eq!(relocs[0].1, "f", "CU low_pc reloc → first fn");
-        // header：unit_length(4) + version(2) + abbr_off(4) + addr_size(1) = 11
-        // CU DIE abbrev code = 1 在 index 11（version 是 u16——只写 1 字节会
-        // 错位，见 WA-31）
-        assert_eq!(bytes[11], 1);
+        // header：unit_length(4) + version(2) + unit_type(1) + addr_size(1)
+        // + abbr_off(4) = 12——CU DIE abbrev code = 1 在 index 12（v5）
+        assert_eq!(bytes[12], 1);
         // CU 后子项 terminator(1) + subprogram abbrev code = 2
         assert!(bytes.windows(1).any(|w| w[0] == 2), "subprogram abbrev 2 present");
     }
@@ -587,7 +638,7 @@ mod tests {
                 },
             ],
         }];
-        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, true);
+        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), true);
         assert_eq!(relocs.len(), 2, "CU low_pc + fn low_pc relocs");
         // base_type "i32"（code 6 在 CU 后）出现——字节里含 "i32\0"
         assert!(
@@ -622,7 +673,7 @@ mod tests {
                 VarEntry { name: "b".to_string(), slot_offset: -16, ty_desc: "&i32".to_string(), is_arg: true, decl_line: 6 },
             ],
         }];
-        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, true);
+        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), true);
         assert_eq!(relocs.len(), 2, "CU low_pc + fn low_pc relocs");
 
         let mut p = 0usize;
@@ -656,9 +707,10 @@ mod tests {
         };
 
         let _unit_len = rd_u32(&mut p);
-        p += 2; // version
-        p += 4; // debug_abbrev_offset
+        p += 2; // version (5)
+        p += 1; // unit_type
         p += 1; // address_size
+        p += 4; // debug_abbrev_offset
         // CU DIE（code 1）：producer str / name str / language data2 /
         // low_pc addr8（reloc 占位）/ high_pc data8 / stmt_list data4
         assert_eq!(bytes[p], 1, "CU abbrev code");
@@ -697,17 +749,20 @@ mod tests {
                     found_ptr = true;
                 }
                 2 => {
-                    // subprogram：name str / low_pc addr8 / decl_line data4
+                    // subprogram：name str / low_pc addr8 / high_pc data8 /
+                    // decl_line data4
                     rd_str(&mut p);
                     p += 8;
+                    p += 8; // high_pc data8（测试用空 fn_sizes = 0）
                     rd_u32(&mut p);
                     found_sub = true;
                 }
                 3 => {
-                    // subprogram（children yes）：name / low_pc / decl_line /
-                    // frame_base exprloc + children（4/5）至 0
+                    // subprogram（children yes）：name / low_pc / high_pc /
+                    // decl_line / frame_base exprloc + children（4/5）至 0
                     rd_str(&mut p);
                     p += 8;
+                    p += 8; // high_pc data8
                     rd_u32(&mut p);
                     let fb_len = rd_uleb(&mut p) as usize;
                     assert_eq!(&bytes[p..p + fb_len], &[0x56], "frame_base = DW_OP_reg6");
@@ -774,7 +829,7 @@ mod tests {
             ("main".to_string(), 10u32, vec![(4u32, 11u32), (12u32, 12u32)]),
             ("helper".to_string(), 20u32, vec![]),
         ];
-        let (bytes, relocs) = gen_debug_line(&fns, "test_crate");
+        let (bytes, relocs) = gen_debug_line(&fns);
         // 头部 reloc 数 = 4 条目（main + 2 stmt + helper）
         assert_eq!(relocs.len(), 4);
 
@@ -784,7 +839,7 @@ mod tests {
             *p += 4;
             v
         };
-        let mut rd_uleb = |p: &mut usize| {
+        let rd_uleb = |p: &mut usize| {
             let mut v = 0u64;
             let mut sh = 0;
             loop {
@@ -800,14 +855,19 @@ mod tests {
         };
         let unit_len = rd_u32(&mut p);
         assert_eq!(unit_len as usize, bytes.len() - 4, "unit_length covers section");
-        assert_eq!(bytes[p], 4, "line version lo");
+        // v5：version u16 / address_size / segment_selector_size / header_length
+        assert_eq!(bytes[p], 5, "line version lo");
         assert_eq!(bytes[p + 1], 0, "line version hi");
         p += 2;
+        assert_eq!(bytes[p], 8, "address_size");
+        p += 1;
+        assert_eq!(bytes[p], 0, "segment_selector_size");
+        p += 1;
         let hl = rd_u32(&mut p);
         let header_end = p + hl as usize;
         assert_eq!(bytes[p], 1, "min_inst_length");
         p += 1;
-        assert_eq!(bytes[p], 1, "max_ops_per_inst (v4)");
+        assert_eq!(bytes[p], 1, "max_ops_per_inst");
         p += 1;
         assert_eq!(bytes[p], 1, "default_is_stmt");
         p += 1;
@@ -819,52 +879,65 @@ mod tests {
         p += 1;
         assert_eq!(opcode_base, 13, "opcode_base covers std opcodes 1..12");
         p += (opcode_base - 1) as usize; // standard_opcode_lengths
-        // 目录表：空 = 1 个 NUL
-        assert_eq!(bytes[p], 0);
+        // v5：目录表 format_count = 0 + dir_count = 0（空表）
+        assert_eq!(bytes[p], 0, "dir format count 0");
         p += 1;
-        // 文件表：name\0 + dir + mtime + size + 终止符
-        while bytes[p] != 0 {
-            p += 1;
-        }
+        assert_eq!(bytes[p], 0, "dir count 0");
         p += 1;
-        assert_eq!(&bytes[p..p + 4], &[0, 0, 0, 0], "dir/mtime/size + terminator");
+        // 文件表：format_count = 1，[DW_LNCT_path → DW_FORM_line_strp]，
+        // count = 1，entry = line_strp 偏移 0
+        assert_eq!(bytes[p], 1, "file format count 1");
+        p += 1;
+        assert_eq!(bytes[p], 1, "DW_LNCT_path");
+        p += 1;
+        assert_eq!(bytes[p], 0x1f, "DW_FORM_line_strp");
+        p += 1;
+        assert_eq!(rd_uleb(&mut p), 2, "file_names_count 2（gcc hack：0/1 基读者皆命中）");
+        // line_strp 偏移 4 字节
+        assert_eq!(&bytes[p..p + 4], &[0, 0, 0, 0], "file[0] strp 偏移 0");
+        p += 4;
+        assert_eq!(&bytes[p..p + 4], &[0, 0, 0, 0], "file[1] strp 偏移 0（同串）");
         p += 4;
         assert_eq!(p, header_end, "header ends exactly at header_length");
 
-        // 行程序：每条目一个 sequence
-        let mut expected: Vec<(u32, i64)> = Vec::new();
-        for (sym, line, stmts) in &fns {
-            expected.push((0, *line as i64));
-            for (off, ln) in stmts {
-                expected.push((*off, *ln as i64));
-            }
-            let _ = sym;
-        }
-        let mut lines_found: Vec<i64> = Vec::new();
+        // 行程序：每函数一个 sequence（decl 行 + stmt 行 + end_sequence）——
+        // 行寄存器 sequence 起点 = 1，同 sequence 内累加（delta 相对上一行）。
+        let mut ops: Vec<i64> = Vec::new(); // 每行 advance_line 操作数
         let mut addrs_found: Vec<u64> = Vec::new();
-        for _ in 0..expected.len() {
-            assert_eq!(bytes[p], 0, "extended opcode");
-            p += 1;
-            assert_eq!(bytes[p], 9, "set_address operand len");
-            p += 1;
-            assert_eq!(bytes[p], 2, "DW_LNE_set_address");
-            p += 1;
-            addrs_found.push(u64::from_le_bytes(bytes[p..p + 8].try_into().unwrap()));
-            p += 8;
-            assert_eq!(bytes[p], 4, "DW_LNS_set_file");
-            p += 1;
-            assert_eq!(bytes[p], 1, "file index 1");
-            p += 1;
-            assert_eq!(bytes[p], 3, "DW_LNS_advance_line");
-            p += 1;
-            let s0 = p;
-            while bytes[p] & 0x80 != 0 {
+        let mut want_rows: Vec<(u32, i64)> = Vec::new(); // (addr, 目标行)
+        for (_sym, line, stmts) in &fns {
+            let mut fn_rows: Vec<(u32, i64)> = vec![(0, *line as i64)];
+            for (off, ln) in stmts {
+                fn_rows.push((*off, *ln as i64));
+            }
+            want_rows.extend(fn_rows.iter().copied());
+            // 该函数序列的行记录
+            for _ in 0..fn_rows.len() {
+                // 行记录（set_address + set_file + advance_line + copy）
+                assert_eq!(bytes[p], 0, "extended opcode");
+                p += 1;
+                assert_eq!(bytes[p], 9, "set_address operand len");
+                p += 1;
+                assert_eq!(bytes[p], 2, "DW_LNE_set_address");
+                p += 1;
+                addrs_found.push(u64::from_le_bytes(bytes[p..p + 8].try_into().unwrap()));
+                p += 8;
+                assert_eq!(bytes[p], 4, "DW_LNS_set_file");
+                p += 1;
+                assert_eq!(bytes[p], 1, "file index 1");
+                p += 1;
+                assert_eq!(bytes[p], 3, "DW_LNS_advance_line");
+                p += 1;
+                let s0 = p;
+                while bytes[p] & 0x80 != 0 {
+                    p += 1;
+                }
+                p += 1; // sleb 末字节
+                ops.push(decode_sleb(&bytes[s0..p]));
+                assert_eq!(bytes[p], 1, "DW_LNS_copy");
                 p += 1;
             }
-            p += 1; // sleb 末字节
-            lines_found.push(decode_sleb(&bytes[s0..p]));
-            assert_eq!(bytes[p], 1, "DW_LNS_copy");
-            p += 1;
+            // end_sequence
             assert_eq!(bytes[p], 0, "extended");
             p += 1;
             assert_eq!(bytes[p], 1, "end_sequence len");
@@ -873,11 +946,27 @@ mod tests {
             p += 1;
         }
         assert_eq!(p, bytes.len(), "program consumed to exact end");
-        // 行寄存器每 sequence 起点 = 1 → 行 = 1 + advance_line 操作数 = L
-        let row_lines: Vec<i64> = lines_found.iter().map(|op| 1 + op).collect();
-        let want_lines: Vec<i64> = expected.iter().map(|(_, l)| *l).collect();
-        assert_eq!(row_lines, want_lines, "每 sequence 行 = 目标行");
-        let want_addrs: Vec<u64> = expected.iter().map(|(a, _)| *a as u64).collect();
+        // 解码行：行寄存器在 end_sequence 后复位为 1（每函数序列起点 1）——
+        // 按函数分组累加 delta 得目标行。
+        let mut want_lines: Vec<i64> = Vec::new();
+        let mut got_lines: Vec<i64> = Vec::new();
+        let mut reg = 1i64;
+        let mut op_i = 0usize;
+        for (_sym, line, stmts) in &fns {
+            want_lines.push(*line as i64);
+            reg += ops[op_i];
+            got_lines.push(reg);
+            op_i += 1;
+            for (_, ln) in stmts {
+                want_lines.push(*ln as i64);
+                reg += ops[op_i];
+                got_lines.push(reg);
+                op_i += 1;
+            }
+            reg = 1; // end_sequence 复位
+        }
+        assert_eq!(got_lines, want_lines, "每 sequence 行 = 目标行");
+        let want_addrs: Vec<u64> = want_rows.iter().map(|(a, _)| *a as u64).collect();
         assert_eq!(addrs_found, want_addrs, "占位 = 指令偏移");
     }
 
@@ -917,3 +1006,4 @@ mod tests {
         assert_eq!(p + 8, bytes.len(), "exact end");
     }
 }
+
