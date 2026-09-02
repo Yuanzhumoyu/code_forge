@@ -239,45 +239,19 @@ pub fn gen_debug_info(
     // gdb 按此定位行号程序）
     buf.extend_from_slice(&0u32.to_le_bytes());
 
-    // 类型 DIE（CU children，subprogram 之前——DW_AT_type(ref4) 记录各
-    // 类型 DIE 的段内偏移供 subprogram 变量引用）。顺序：base_type 先
-    //（pointer 引用它们），pointer_type 后。key = 变量 ty_desc（去重）。
+    // 类型 DIE 放 **subprogram 之后**（gcc 形态：前向引用——类型紧跟首个
+    // 使用者之后）。顺序：base_type 先（pointer 引用它们），pointer_type
+    // 后。key = 变量 ty_desc（去重）；subprogram/变量 DIE 的 DW_AT_type
+    // 先写占位，类型区生成后统一回填（ref4 = 段内偏移）。
     let mut type_off_by_desc: std::collections::HashMap<String, u32> = Default::default();
+    let mut type_ref_patches: Vec<(usize, String)> = Vec::new(); // (占位位, desc)
+    let mut descs: Vec<String> = Vec::new();
     if full {
         // 收集唯一 ty_desc（可分类为标量/指针的）
-        let mut descs: Vec<String> = Vec::new();
         for fv in vars {
             for v in &fv.vars {
                 if ty_kind(&v.ty_desc).is_some() && !descs.contains(&v.ty_desc) {
                     descs.push(v.ty_desc.clone());
-                }
-            }
-        }
-        // 第一遍：base_type（标量 desc——scalar_base_type 直接命中）
-        for desc in &descs {
-            if let Some((_, size, enc)) = scalar_base_type(desc) {
-                type_off_by_desc.insert(desc.clone(), buf.len() as u32);
-                buf.push(6); // abbrev code 6: DW_TAG_base_type
-                buf.extend_from_slice(desc.as_bytes()); // DW_AT_name
-                buf.push(0);
-                buf.push(size); // byte_size
-                buf.push(enc); // encoding
-            }
-        }
-        // 第二遍：pointer_type（&T / &mut T / *const T / *mut T——byte_size 8，
-        // DW_AT_type 指向内层标量的 base_type；内层非标量（聚合/嵌套指针）
-        // = 0 占位，后续扩展）
-        for desc in &descs {
-            if let Some(TyKind::Ptr { pointee }) = ty_kind(desc) {
-                type_off_by_desc.insert(desc.clone(), buf.len() as u32);
-                buf.push(7); // abbrev code 7: DW_TAG_pointer_type
-                buf.push(8); // DW_AT_byte_size (data1)
-                let tpos = buf.len();
-                buf.extend_from_slice(&0u32.to_le_bytes()); // DW_AT_type 占位
-                if let Some(pn) = pointee
-                    && let Some(&po) = type_off_by_desc.get(&pn)
-                {
-                    buf[tpos..tpos + 4].copy_from_slice(&po.to_le_bytes());
                 }
             }
         }
@@ -299,20 +273,21 @@ pub fn gen_debug_info(
         // DW_AT_name (0x03) → string
         buf.extend_from_slice(sym.as_bytes());
         buf.push(0);
+        // DW_AT_decl_file (0x3a) → data1 = 1（文件表 file[1]）
+        buf.push(1);
         // DW_AT_low_pc (0x11) → addr（占位 + reloc）
         let lp = buf.len();
         buf.extend_from_slice(&0u64.to_le_bytes());
         relocs.push((lp, sym.clone()));
-        // DW_AT_high_pc (0x12) → data8：相对 low_pc 的偏移 = 函数代码字节
-        //（gdb 建 function block 需要结束地址——缺则变量 DIE 全部被丢）
+        // DW_AT_high_pc (0x12) → data8：相对 low_pc 的偏移 = 函数代码
+        // 字节（gdb 建 function block 需要结束地址——缺则变量全丢）
         let fn_size = fn_sizes.get(sym).copied().unwrap_or(0);
         buf.extend_from_slice(&fn_size.to_le_bytes());
         // DW_AT_decl_line (0x3b) → data4
         buf.extend_from_slice(&line.to_le_bytes());
         if !fn_vars.is_empty() {
-            // DW_AT_frame_base → exprloc：DW_OP_reg6（x86 rbp）。属性名 0x40
-            // 只存在于 abbrev code 3——DIE 值流不写属性名，否则读者把 0x40
-            // 当 exprloc 长度 64，吞掉后续全部字节（变量 DIE 错位）。
+            // DW_AT_frame_base → exprloc：DW_OP_reg6（x86 rbp）。属性名
+            // 只存在于 abbrev——DIE 值流不写属性名。
             buf.push(1); // exprloc length
             buf.push(0x56); // DW_OP_reg6（0x50 + reg6）
             for v in fn_vars {
@@ -321,14 +296,14 @@ pub fn gen_debug_info(
                 // DW_AT_name (0x03) → string
                 buf.extend_from_slice(v.name.as_bytes());
                 buf.push(0);
-                // DW_AT_type (0x49) → ref4（类型 DIE 段内偏移；无匹配 = 0）
+                // DW_AT_decl_file (0x3a) → data1 = 1
+                buf.push(1);
+                // DW_AT_type (0x49) → ref4 占位（类型区生成后回填）
                 let tpos = buf.len();
                 buf.extend_from_slice(&0u32.to_le_bytes());
-                if let Some(&off4) = type_off_by_desc.get(&v.ty_desc) {
-                    buf[tpos..tpos + 4].copy_from_slice(&off4.to_le_bytes());
-                }
+                type_ref_patches.push((tpos, v.ty_desc.clone()));
                 // DW_AT_location（属性名在 abbrev code 4/5 中）→ exprloc：
-                // DW_OP_fbreg <sleb128 offset>——同样不写 0x02 属性名。
+                // DW_OP_fbreg <sleb128 offset>——不写 0x02 属性名。
                 let mut expr: Vec<u8> = Vec::new();
                 expr.push(0x91); // DW_OP_fbreg
                 encode_sleb128(&mut expr, v.slot_offset as i64);
@@ -338,6 +313,41 @@ pub fn gen_debug_info(
                 buf.extend_from_slice(&v.decl_line.to_le_bytes());
             }
             buf.push(0); // children terminator
+        }
+    }
+
+    // 类型区（CU 子项，subprogram 之后——前向引用）：base_type 第一遍
+    //（标量 desc），pointer_type 第二遍（引用 base），再回填占位。
+    if full {
+        for desc in &descs {
+            if let Some((_, size, enc)) = scalar_base_type(desc) {
+                type_off_by_desc.insert(desc.clone(), buf.len() as u32);
+                buf.push(6); // abbrev code 6: DW_TAG_base_type
+                buf.extend_from_slice(desc.as_bytes()); // DW_AT_name
+                buf.push(0);
+                buf.push(size); // byte_size
+                buf.push(enc); // encoding
+            }
+        }
+        for desc in &descs {
+            if let Some(TyKind::Ptr { pointee }) = ty_kind(desc) {
+                type_off_by_desc.insert(desc.clone(), buf.len() as u32);
+                buf.push(7); // abbrev code 7: DW_TAG_pointer_type
+                buf.push(8); // DW_AT_byte_size (data1)
+                let tpos = buf.len();
+                buf.extend_from_slice(&0u32.to_le_bytes()); // DW_AT_type 占位
+                if let Some(pn) = pointee
+                    && let Some(&po) = type_off_by_desc.get(&pn)
+                {
+                    buf[tpos..tpos + 4].copy_from_slice(&po.to_le_bytes());
+                }
+            }
+        }
+        // 回填变量/参数 DIE 的类型引用
+        for (tpos, desc) in &type_ref_patches {
+            if let Some(&off4) = type_off_by_desc.get(desc) {
+                buf[*tpos..*tpos + 4].copy_from_slice(&off4.to_le_bytes());
+            }
         }
     }
     buf.push(0); // CU children terminator
@@ -428,6 +438,7 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0x2e);
     buf.push(0);
     buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x3a); buf.push(0x0b); // decl_file → data1（gcc 形态）
     buf.push(0x11); buf.push(0x01); // low_pc → addr
     buf.push(0x12); buf.push(0x07); // high_pc → data8（函数代码字节）
     buf.push(0x3b); buf.push(0x06); // decl_line → data4
@@ -437,6 +448,7 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0x2e);
     buf.push(1);
     buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x3a); buf.push(0x0b); // decl_file → data1
     buf.push(0x11); buf.push(0x01); // low_pc → addr
     buf.push(0x12); buf.push(0x07); // high_pc → data8
     buf.push(0x3b); buf.push(0x06); // decl_line → data4
@@ -447,6 +459,7 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0x05);
     buf.push(0);
     buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x3a); buf.push(0x0b); // decl_file → data1
     buf.push(0x49); buf.push(0x06); // type → ref4
     buf.push(0x02); buf.push(0x18); // location → exprloc（DW_FORM_exprloc=0x18）
     buf.push(0x3b); buf.push(0x06); // decl_line → data4
@@ -456,6 +469,7 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
     buf.push(0x34);
     buf.push(0);
     buf.push(0x03); buf.push(0x08); // name → string
+    buf.push(0x3a); buf.push(0x0b); // decl_file → data1
     buf.push(0x49); buf.push(0x06); // type → ref4
     buf.push(0x02); buf.push(0x18); // location → exprloc（DW_FORM_exprloc=0x18）
     buf.push(0x3b); buf.push(0x06); // decl_line → data4
@@ -749,18 +763,20 @@ mod tests {
                     found_ptr = true;
                 }
                 2 => {
-                    // subprogram：name str / low_pc addr8 / high_pc data8 /
-                    // decl_line data4
+                    // subprogram：name str / decl_file d1 / low_pc addr8 /
+                    // high_pc data8 / decl_line data4
                     rd_str(&mut p);
+                    p += 1; // decl_file
                     p += 8;
                     p += 8; // high_pc data8（测试用空 fn_sizes = 0）
                     rd_u32(&mut p);
                     found_sub = true;
                 }
                 3 => {
-                    // subprogram（children yes）：name / low_pc / high_pc /
-                    // decl_line / frame_base exprloc + children（4/5）至 0
+                    // subprogram（children yes）：name / decl_file / low_pc /
+                    // high_pc / decl_line / frame_base exprloc + children（4/5）至 0
                     rd_str(&mut p);
+                    p += 1; // decl_file
                     p += 8;
                     p += 8; // high_pc data8
                     rd_u32(&mut p);
@@ -776,6 +792,7 @@ mod tests {
                         p += 1;
                         assert!(c == 4 || c == 5, "child abbrev 4/5, got {c}");
                         rd_str(&mut p);
+                        p += 1; // decl_file
                         rd_u32(&mut p); // type ref4
                         let loc_len = rd_uleb(&mut p) as usize;
                         assert_eq!(bytes[p], 0x91, "location starts DW_OP_fbreg");
