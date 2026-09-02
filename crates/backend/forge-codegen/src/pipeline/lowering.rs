@@ -611,8 +611,11 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 pack_clobbers,
                 machine_insts.insts.len(),
             ));
+            // B1：同一条 IR 指令展开的多条微指令共享源码行（Instruction.loc
+            // ——forge-rustc 每条 MIR statement 前设 current_loc）。
+            let pack_line = inst.loc.as_ref().and_then(|l| l.line);
             for mi in machine_insts.insts {
-                self.vcode.push_inst(mi);
+                self.vcode.push_inst_line(mi, pack_line);
             }
         }
 

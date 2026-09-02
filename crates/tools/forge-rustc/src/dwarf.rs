@@ -46,12 +46,15 @@ pub struct FnVarEntries {
 ///
 /// 每函数条目：`DW_LNE_set_address <addr>` + `DW_LNS_set_file` +
 /// `DW_LNS_advance_line` + `DW_LNS_copy` + `DW_LNE_end_sequence`。
-/// addr 是相对地址（0 占位，reloc 补）。file_names[0] = 源文件/库名
-///（C2：当前为空串——调试器按文件索引回溯行号，真实文件名提高可用性）。
+/// addr 是相对地址占位（reloc 补——COFF addend 隐式：占位字节即偏移，
+/// 链接后 = 符号地址 + 占位值）。file_names[0] = 源文件/库名。
+/// 每个函数：(符号, 函数声明行, per-statement (指令偏移, 行) 列表——
+/// B1 行号细化：每语句一个 set_address(偏移) + 行条目，调试器可精确
+/// 行断点/单步；空列表 = 仅函数级条目（C1 兼容）。
 ///
 /// 返回 (段字节, reloc: (数据内偏移, 符号名))。
 pub fn gen_debug_line(
-    entries: &[(String, u32)],
+    fns: &[(String, u32, Vec<(u32, u32)>)],
     file_name: &str,
 ) -> (Vec<u8>, Vec<(usize, String)>) {
     let mut buf: Vec<u8> = Vec::new();
@@ -78,35 +81,47 @@ pub fn gen_debug_line(
     let mut relocs: Vec<(usize, String)> = Vec::new();
     let mut first = true;
     let mut prev_line = 0u64;
-    for (sym, line) in entries {
-        // set_address（extended opcode）
-        buf.push(0); // extended
-        buf.push(1 + 8); // operand length
-        buf.push(DW_LNE_SET_ADDRESS);
-        let addr_pos = buf.len();
-        buf.extend_from_slice(&0u64.to_le_bytes()); // 占位（reloc 补）
-        relocs.push((addr_pos, sym.clone()));
-        // set_file 0
-        buf.push(DW_LNS_SET_FILE);
-        buf.push(0);
-        // advance_line：相对上一函数行（delta）
-        let delta = if first {
-            *line as i64
-        } else {
-            (*line as i64) - (prev_line as i64)
-        };
-        encode_sleb128(&mut buf, delta);
-        buf.push(DW_LNS_COPY);
-        // end_sequence（extended）
-        buf.push(0);
-        buf.push(1);
-        buf.push(DW_LNE_END_SEQUENCE);
-        prev_line = *line as u64;
-        first = false;
+    for (sym, line, stmts) in fns {
+        // 函数起点条目（reloc 占位 0 = 符号基址）
+        push_line_entry(&mut buf, &mut relocs, sym, 0, *line as i64, &mut first, &mut prev_line);
+        // per-statement：set_address(指令偏移) + 行
+        for (off, ln) in stmts {
+            push_line_entry(&mut buf, &mut relocs, sym, *off as i64, *ln as i64, &mut first, &mut prev_line);
+        }
     }
     let unit_len = buf.len() - (unit_len_pos + 4);
     buf[unit_len_pos..unit_len_pos + 4].copy_from_slice(&(unit_len as u32).to_le_bytes());
     (buf, relocs)
+}
+
+/// 追加一个行号条目：set_address(addr 占位 + reloc) + set_file 0 +
+/// advance_line(delta) + copy + end_sequence。
+fn push_line_entry(
+    buf: &mut Vec<u8>,
+    relocs: &mut Vec<(usize, String)>,
+    sym: &str,
+    addr: i64,
+    line: i64,
+    first: &mut bool,
+    prev_line: &mut u64,
+) {
+    buf.push(0); // extended
+    buf.push(1 + 8); // operand length
+    buf.push(DW_LNE_SET_ADDRESS);
+    let addr_pos = buf.len();
+    // 占位写 addr（COFF addend 隐式——链接后 = 符号地址 + addr）
+    buf.extend_from_slice(&(addr as u64).to_le_bytes());
+    relocs.push((addr_pos, sym.to_string()));
+    buf.push(DW_LNS_SET_FILE);
+    buf.push(0);
+    let delta = if *first { line } else { line - (*prev_line as i64) };
+    encode_sleb128(buf, delta);
+    buf.push(DW_LNS_COPY);
+    buf.push(0);
+    buf.push(1);
+    buf.push(DW_LNE_END_SEQUENCE);
+    *prev_line = line as u64;
+    *first = false;
 }
 
 /// 生成 `.debug_info` 段：单 CU（DW_TAG_compile_unit）+ 每函数一个
@@ -316,14 +331,15 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
 /// 生成全部 DWARF 段。
 /// 返回 (段名, 字节, 段内 reloc: (偏移, 符号名)) 列表。
 pub fn build_dwarf_sections(
-    entries: &[(String, u32)],
+    fns: &[(String, u32, Vec<(u32, u32)>)],
     vars: &[FnVarEntries],
     producer: &str,
     cu_name: &str,
     full: bool,
 ) -> Vec<(String, Vec<u8>, Vec<(usize, String)>)> {
-    let (line_bytes, line_relocs) = gen_debug_line(entries, cu_name);
-    let (info_bytes, info_relocs) = gen_debug_info(entries, vars, producer, cu_name, full);
+    let entries: Vec<(String, u32)> = fns.iter().map(|(s, l, _)| (s.clone(), *l)).collect();
+    let (line_bytes, line_relocs) = gen_debug_line(fns, cu_name);
+    let (info_bytes, info_relocs) = gen_debug_info(&entries, vars, producer, cu_name, full);
     vec![
         (".debug_line".to_string(), line_bytes, line_relocs),
         (".debug_info".to_string(), info_bytes, info_relocs),
@@ -350,15 +366,16 @@ mod tests {
 
     #[test]
     fn line_program_basic() {
-        let entries = vec![
-            ("main".to_string(), 10u32),
-            ("helper".to_string(), 20u32),
+        let fns = vec![
+            ("main".to_string(), 10u32, vec![]),
+            ("helper".to_string(), 20u32, vec![(4u32, 21u32), (12u32, 22u32)]),
         ];
-        let (bytes, relocs) = gen_debug_line(&entries, "test_crate");
+        let (bytes, relocs) = gen_debug_line(&fns, "test_crate");
         assert!(bytes.len() > 24, "line program too small");
-        assert_eq!(relocs.len(), 2, "one reloc per function");
+        // 函数级 2 + helper 的 2 个 per-statement = 4 个 reloc
+        assert_eq!(relocs.len(), 4, "reloc per line entry");
         assert_eq!(relocs[0].1, "main");
-        // file_names[0] = 库名（非空——C2 增强）
+        // file_names[0] = 库名（非空）
         assert!(
             bytes.windows(10).any(|w| w == b"test_crate"),
             "file_names[0] should contain crate name"
@@ -366,6 +383,19 @@ mod tests {
         // unit_length 非 0
         let unit_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert_eq!(unit_len as usize, bytes.len() - 4);
+    }
+
+    #[test]
+    fn per_statement_offsets_in_placeholders() {
+        // B1：per-statement 行号的 set_address 占位应写指令偏移（COFF
+        // addend 隐式）——helper 的第 2 个条目占位 = 12。
+        let fns = vec![("helper".to_string(), 20u32, vec![(12u32, 22u32)])];
+        let (bytes, relocs) = gen_debug_line(&fns, "c");
+        assert_eq!(relocs.len(), 2);
+        // 第 2 个 reloc 的占位（relocs[1].0 处 8 字节）= 12
+        let off = relocs[1].0;
+        let v = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        assert_eq!(v, 12, "per-statement set_address placeholder = instr offset");
     }
 
     #[test]

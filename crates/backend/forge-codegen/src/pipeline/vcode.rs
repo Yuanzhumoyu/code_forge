@@ -17,6 +17,9 @@ pub struct VCodeBlock<I> {
     pub ir_block: Block,
     /// 块内指令序列。
     pub instructions: Vec<I>,
+    /// 每条指令的源码行（与 instructions 平行；None = 无位置）。B1
+    /// per-statement line-tables：emission 据此输出 (机器码偏移, 行)。
+    pub inst_lines: Vec<Option<u32>>,
     /// 是否为返回块（terminator 是 Return）。
     pub is_return_block: bool,
 }
@@ -27,6 +30,7 @@ impl<I> VCodeBlock<I> {
             id,
             ir_block,
             instructions: Vec::new(),
+            inst_lines: Vec::new(),
             is_return_block: false,
         }
     }
@@ -70,9 +74,19 @@ impl<I> VCode<I> {
     }
 
     /// 向当前块添加一条机器指令。
+    /// `line`（可选源码行）与指令平行存储——emission 阶段据此生成
+    /// (机器码偏移, 行) 行号表（B1 per-statement line-tables）。
     pub fn push_inst(&mut self, inst: I) {
+        self.push_inst_line(inst, None);
+    }
+
+    /// 向当前块添加一条机器指令（带源码行——同一条 IR 指令展开的多条
+    /// 微指令共享该行；None = 无源码位置，跳过行号表）。
+    pub fn push_inst_line(&mut self, inst: I, line: Option<u32>) {
         let block_id = self.current_block.expect("no current VCode block");
-        self.blocks[block_id.0 as usize].instructions.push(inst);
+        let b = &mut self.blocks[block_id.0 as usize];
+        b.instructions.push(inst);
+        b.inst_lines.push(line);
     }
 
     /// 迭代所有块。

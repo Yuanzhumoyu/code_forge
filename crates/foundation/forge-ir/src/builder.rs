@@ -147,6 +147,14 @@ impl FunctionBuilder {
         &self.ctx
     }
 
+    /// 设置后续发射指令的源码位置（B1 per-statement line-tables：
+    /// forge-rustc 每条 MIR statement lower 前调用，loc 附加到每条
+    /// forge-ir 指令（Instruction.loc），主库 emission 据此生成
+    /// (机器码偏移, 行) 行号表）。
+    pub fn set_current_loc(&mut self, loc: Option<SourceLocation>) {
+        self.current_loc = loc;
+    }
+
     /// 返回 Value 的代码生成类型（该值不存在时返回 `None`）。
     ///
     /// 跨 crate 查询值类型的唯一公开入口——外部不得直接访问

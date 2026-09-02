@@ -71,7 +71,11 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
         // Helper: emit one block (bind label, instructions, optional epilogue JMP)
         // 闭包不捕获 self：只捕获 xreg_map 的借用 + 其余局部引用。
-        let emit_one = |sink: &mut CodeSink,
+        // line_tables：debuginfo 开启（func 有行号或 line_entries 非空要求）
+        // 时逐指令收集 (机器码偏移, 行)（同一条 IR 指令展开的微指令共享行，
+        // 相邻同行合并）。
+        let mut line_tables: Vec<(u32, u32)> = Vec::new();
+        let mut emit_one = |sink: &mut CodeSink,
                         vb: &mut VCodeBlock<I>,
                         vcode_idx: usize|
          -> Result<(), IrError> {
@@ -83,6 +87,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     slot.iter().map(|(x, ..)| *x).collect();
                 let inst_field_idx: smallvec::SmallVec<[u8; 8]> =
                     slot.iter().map(|(_, f, _)| *f).collect();
+                let inst_local_idx = gi - block_starts[vcode_idx];
+                let line = vb.inst_lines.get(inst_local_idx).copied().flatten();
+                let start_off = sink.offset() as u32;
                 Self::emit_inst_with_spills(
                     inst,
                     encoder.as_ref(),
@@ -97,6 +104,14 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     &inst_field_idx,
                     _func.name.as_str(),
                 )?;
+                if let Some(ln) = line {
+                    // 相邻同源指令行合并（同一条语句的多条微指令 / 相邻
+                    // 同语句行）——只记行变化处（每行起点）。
+                    match line_tables.last() {
+                        Some(&(_, last_line)) if last_line == ln => {}
+                        _ => line_tables.push((start_off, ln)),
+                    }
+                }
             }
             if vb.is_return_block && frame_lowering.needs_epilogue_label() {
                 frame_lowering.emit_epilogue_jump(
@@ -140,6 +155,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             code_size: code.len(),
             code,
             relocations,
+            line_entries: line_tables,
         })
     }
 

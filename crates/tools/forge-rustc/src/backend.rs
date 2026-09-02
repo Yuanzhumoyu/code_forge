@@ -88,6 +88,8 @@ impl CodegenBackend for CodegenLibBackend {
 
         // 模块级 FuncRef 表：直接调用的 "@N" 重定位 → 真实符号名
         let mut func_ref_table = FuncRefTable::default();
+        // B1：per-function per-statement 行号表（(符号, [(机器码偏移, 行)])）
+        let mut fn_line_tables: Vec<(String, Vec<(u32, u32)>)> = Vec::new();
 
         for (item_i, item) in instances.iter().enumerate() {
             match item {
@@ -146,6 +148,12 @@ impl CodegenBackend for CodegenLibBackend {
                                 }
                             }
                             let _ = object_writer.add_function(&sym_name, &compiled_func);
+                            // B1：收集该函数的 per-statement 行号表（主库 emission
+                            // 输出 (机器码偏移, 行)）——debuginfo 开启时 dwarf.rs
+                            // 生成 .debug_line 的每语句条目。
+                            if !compiled_func.line_entries.is_empty() {
+                                fn_line_tables.push((sym_name.clone(), compiled_func.line_entries.clone()));
+                            }
                             if crate::trace::trace_enabled("GLOBAL") {
                                 eprintln!("[forge] add_function sym={sym_name}");
                             }
@@ -240,12 +248,26 @@ impl CodegenBackend for CodegenLibBackend {
         if debuginfo_on && !func_ref_table.line_entries().is_empty() {
             let entries = func_ref_table.line_entries().to_vec();
             let vars = func_ref_table.var_entries().to_vec();
+            // B1：entries（每函数声明行）+ fn_line_tables（per-statement）→
+            // fns: (符号, 声明行, [(指令偏移, 行)])——dwarf gen_debug_line
+            // 生成函数级 + 每语句行号条目（COFF addend 隐式：占位写偏移）。
+            let fns: Vec<(String, u32, Vec<(u32, u32)>)> = entries
+                .iter()
+                .map(|(s, l)| {
+                    let stmts = fn_line_tables
+                        .iter()
+                        .find(|(fs, _)| fs == s)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    (s.clone(), *l, stmts)
+                })
+                .collect();
             let producer = format!("code-forge {} (rustc {})", env!("CARGO_PKG_VERSION"), option_env!("CFG_VERSION").unwrap_or(""));
             let cu_name = tcx
                 .crate_name(rustc_hir::def_id::LOCAL_CRATE)
                 .to_string();
             let sections =
-                crate::dwarf::build_dwarf_sections(&entries, &vars, &producer, &cu_name, debuginfo_full);
+                crate::dwarf::build_dwarf_sections(&fns, &vars, &producer, &cu_name, debuginfo_full);
             // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——
             // object crate 对 COFF 调试段发射 ADDR64 reloc，链接器解析
             // 为函数真实地址（low_pc/行号 set_address 可用）。

@@ -464,6 +464,24 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             self.builder.switch_to_block(block_id);
 
             for stmt in &bb_data.statements {
+                // B1（per-statement line-tables）：每条语句前设置后续 forge-ir
+                // 指令的源码行（stmt.source_info.span → 行号）——Instruction.loc
+                // 附带行号，主库 emission 生成 (机器码偏移, 行) 行号表。
+                // debuginfo 关闭时仍设（开销 = 每语句一次 source_map 查询 +
+                // loc clone，量级可忽略）——由主库按 -C debuginfo 决定是否输出。
+                if crate::trace::trace_enabled("LOC") {
+                    let _ = stmt;
+                }
+                let stmt_line = self
+                    .tcx
+                    .sess
+                    .source_map()
+                    .lookup_line(stmt.source_info.span.lo())
+                    .ok()
+                    .map(|sfl| (sfl.line + 1) as u32);
+                self.builder.set_current_loc(
+                    stmt_line.map(|ln| crate::prelude::SourceLocation::line_only(ln)),
+                );
                 // A4：错误增强——附函数名 + bb 序号 + 语句 Debug（否则深层
                 // lowering 的裸错误无法定位到具体 MIR 语句）。
                 self.lower_statement(stmt).map_err(|e| {

@@ -8,6 +8,10 @@ pub struct CompiledFunction {
     pub code: Vec<u8>,
     pub relocations: Vec<Relocation>,
     pub code_size: usize,
+    /// 行号表（B1 per-statement line-tables，debuginfo 开启时收集）：
+    /// (机器码偏移, 源码行 1-based)。forge-rustc 按 -C debuginfo 决定是否
+    /// 生成 .debug_line 的 per-statement 条目。
+    pub line_entries: Vec<(u32, u32)>,
 }
 
 /// A relocation record within compiled code.
