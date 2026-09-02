@@ -1136,6 +1136,21 @@ const CASES: &[Case] = &[
         phase: "C1 dwarf",
         reason: "",
     },
+    // ── C2 DebugInfo full：`-C debuginfo=2` 编译 + 运行正确（变量/参数
+    //    DIE 生成 + fbreg 位置不破坏代码；变量名/类型检查在 dwarf 单测，
+    //    此处守护编译与运行路径）。──
+    Case {
+        name: "debuginfo_full",
+        body: "fn add2(a: i32, b: i32) -> i32 { let c = a + b; c } let x = core::hint::black_box(40i32); let y = add2(x, 2); y",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "C2 dwarf",
+        reason: "",
+    },
     // ── D 组补充：copy_nonoverlapping（rustc 展开成
     //    StatementKind::Intrinsic(CopyNonOverlapping)——曾落入 `_ => {}`
     //    忽略 → 复制不执行；statement.rs 内联循环后转正）。──
@@ -1243,8 +1258,12 @@ fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
         rustc_args.push("-C".to_string());
         rustc_args.push("overflow-checks=off".to_string());
     }
-    // C1 DebugInfo：`debuginfo_` 前缀用例加 `-C debuginfo=1`（line-tables）。
-    if case.name.starts_with("debuginfo_") {
+    // C1/C2 DebugInfo：`debuginfo_line_tables` 加 `-C debuginfo=1`
+    //（line-tables）；`debuginfo_full` 加 `-C debuginfo=2`（full——变量 DIE）。
+    if case.name == "debuginfo_full" {
+        rustc_args.push("-C".to_string());
+        rustc_args.push("debuginfo=2".to_string());
+    } else if case.name.starts_with("debuginfo_") {
         rustc_args.push("-C".to_string());
         rustc_args.push("debuginfo=1".to_string());
     }

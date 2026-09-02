@@ -230,17 +230,22 @@ impl CodegenBackend for CodegenLibBackend {
             let _ = object_writer.add_rodata(sym, bytes, *align);
         }
 
-        // C1 DebugInfo line-tables-only：`-C debuginfo` 非 None 时生成
-        // DWARF 段（.debug_line/.debug_info/.debug_abbrev）并入主对象。
-        // 行号表：函数符号 → 起始源码行（lower_body 采集）。
+        // C1/C2 DebugInfo：`-C debuginfo` 非 None 时生成 DWARF 段
+        // （.debug_line/.debug_info/.debug_abbrev）并入主对象。
+        // C1（=1 line-tables）：每函数行号；C2（=2 full）：+ 变量/参数 DIE
+        //（lower_body 采集的 var_entries：名/槽偏移/类型/参数标志/行）。
         let debuginfo_on = tcx.sess.opts.debuginfo != rustc_session::config::DebugInfo::None;
+        let debuginfo_full =
+            tcx.sess.opts.debuginfo == rustc_session::config::DebugInfo::Full;
         if debuginfo_on && !func_ref_table.line_entries().is_empty() {
             let entries = func_ref_table.line_entries().to_vec();
+            let vars = func_ref_table.var_entries().to_vec();
             let producer = format!("code-forge {} (rustc {})", env!("CARGO_PKG_VERSION"), option_env!("CFG_VERSION").unwrap_or(""));
             let cu_name = tcx
                 .crate_name(rustc_hir::def_id::LOCAL_CRATE)
                 .to_string();
-            let sections = crate::dwarf::build_dwarf_sections(&entries, &producer, &cu_name);
+            let sections =
+                crate::dwarf::build_dwarf_sections(&entries, &vars, &producer, &cu_name, debuginfo_full);
             // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——
             // object crate 对 COFF 调试段发射 ADDR64 reloc，链接器解析
             // 为函数真实地址（low_pc/行号 set_address 可用）。

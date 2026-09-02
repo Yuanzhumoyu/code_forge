@@ -28,6 +28,9 @@ pub struct FuncRefTable {
     /// 每函数一个条目（函数起始地址 → 函数定义行）——`-C debuginfo=1`
     /// 的最小语义：调试器可定位当前函数/行（粗粒度）。
     line_entries: Vec<(String, u32)>,
+    /// C2 DebugInfo 变量表（-C debuginfo=2 full）：(函数符号, 变量列表)。
+    /// 见 `crate::dwarf::VarEntry`（名/槽偏移/类型/参数标志/声明行）。
+    var_entries: Vec<crate::dwarf::FnVarEntries>,
 }
 
 impl FuncRefTable {
@@ -143,5 +146,18 @@ impl FuncRefTable {
     /// 已登记的 (符号, 行号) 列表（供 codegen_crate 生成 .debug_line）。
     pub fn line_entries(&self) -> &[(String, u32)] {
         &self.line_entries
+    }
+
+    /// C2 debuginfo：登记函数的源变量表（函数符号 + 变量列表）。
+    pub fn add_var_entries(&mut self, sym: &str, vars: Vec<crate::dwarf::VarEntry>) {
+        self.var_entries.push(crate::dwarf::FnVarEntries {
+            sym: sym.to_string(),
+            vars,
+        });
+    }
+
+    /// 已登记的 (符号, 变量表) 列表（供 codegen_crate 生成 .debug_info）。
+    pub fn var_entries(&self) -> &[crate::dwarf::FnVarEntries] {
+        &self.var_entries
     }
 }

@@ -233,6 +233,57 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             self.func_refs
                 .add_line_entry(&self.sym_name, (sfl.line + 1) as u32);
         }
+        // C2 debuginfo 调研：dump rustc 的 var_debug_info（源变量清单：
+        // name/place/scope）——LLVM/cranelift 的变量 DIE 都从它出发。
+        if crate::trace::trace_enabled("VAR") {
+            for (vi, vdi) in body.var_debug_info.iter().enumerate() {
+                eprintln!("[forge] var#{vi} {vdi:?}");
+            }
+            eprintln!("[forge] source_scopes: {:?}", body.source_scopes);
+        }
+        // C2 DebugInfo（full）：登记源变量 → (名, 槽偏移, 类型, 是否参数, 行)。
+        // 变量位置 = 无投影 place 的 local 栈槽（forge 全栈槽模型——fbreg
+        // 直接 = 实际槽相对 rbp 的偏移）；const 变量（x = const）与带投影
+        // place（字段/解引用）暂跳过（C2 首版标量/局部）。
+        // fbreg 基准：LowerCtxt 槽偏移是"相对 rbp 的逻辑偏移"，主库发射时
+        // 平移 callee_saved 区（stack_slot_shift = fp_push 8 + 7 callee-saved
+        // ×8 = 64，x86 v12 [abi.callee_saved]/[abi.frame] 固定）——实际槽 =
+        // rbp + (slot.offset - 64)，故 fbreg = slot.offset - 64。
+        {
+            use rustc_middle::mir::VarDebugInfoContents;
+            const X86_STACK_SLOT_SHIFT: i32 = 64; // x86 callee_saved_bytes
+            let mut vars: Vec<crate::dwarf::VarEntry> = Vec::new();
+            for vdi in &body.var_debug_info {
+                let VarDebugInfoContents::Place(p) = &vdi.value else {
+                    continue;
+                };
+                if !p.projection.is_empty() {
+                    continue;
+                }
+                let local = p.local;
+                let Some(slot) = self.locals.get(&local) else {
+                    continue;
+                };
+                let is_arg = body.args_iter().any(|a| a == local);
+                let line = self
+                    .tcx
+                    .sess
+                    .source_map()
+                    .lookup_line(body.local_decls[local].source_info.span.lo())
+                    .map(|sfl| (sfl.line + 1) as u32)
+                    .unwrap_or(0);
+                vars.push(crate::dwarf::VarEntry {
+                    name: vdi.name.to_string(),
+                    slot_offset: slot.offset - X86_STACK_SLOT_SHIFT,
+                    ty_desc: format!("{:?}", body.local_decls[local].ty),
+                    is_arg,
+                    decl_line: line,
+                });
+            }
+            if !vars.is_empty() {
+                self.func_refs.add_var_entries(&self.sym_name, vars);
+            }
+        }
         // B3 门控：向量类型（V64/V128/V256）参与跨函数 ABI（参数/返回）
         // 依赖主库向量 ABI（ymm-abi-plan 的 S1-S5）——当前主库 Call 返回
         // 只发 RAX 标量（V128 高 64 位丢失 → 静默错值）。未就绪前编译期
