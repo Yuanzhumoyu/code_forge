@@ -151,6 +151,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             eprintln!("[code] ({:02x?})", code);
         }
 
+        if std::env::var("FORGE_LINE_ROWS").is_ok() {
+            eprintln!("[lines] {} {:?}", _func.name.as_str(), line_tables);
+        }
         Ok(CompiledFunction {
             code_size: code.len(),
             code,

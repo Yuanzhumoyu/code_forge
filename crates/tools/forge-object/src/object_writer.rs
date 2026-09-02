@@ -542,6 +542,7 @@ mod tests {
             code,
             relocations: Vec::new(),
             code_size: 0,
+            line_entries: Vec::new(),
         }
     }
 

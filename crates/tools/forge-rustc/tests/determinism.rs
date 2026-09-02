@@ -95,7 +95,7 @@ fn normalize(line: &str) -> Option<String> {
     }
     // 冒号后 = 字节列 + 助记符 + 操作数
     let rest = line.split(':').nth(1)?;
-    let mut inst: Vec<&str> = rest
+    let inst: Vec<&str> = rest
         .split_whitespace()
         .filter(|t| !is_hex_bytes(t)) // 跳过 2 位十六进制字节列
         .collect();

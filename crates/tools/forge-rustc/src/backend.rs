@@ -90,6 +90,9 @@ impl CodegenBackend for CodegenLibBackend {
         let mut func_ref_table = FuncRefTable::default();
         // B1：per-function per-statement 行号表（(符号, [(机器码偏移, 行)])）
         let mut fn_line_tables: Vec<(String, Vec<(u32, u32)>)> = Vec::new();
+        // CU high_pc：所有发射函数的代码总字节（含 main 别名副本——见下方
+        // add_function("main")），dwarf CU DIE 范围用（gdb pc→CU 映射）。
+        let mut code_span: u64 = 0;
 
         for (item_i, item) in instances.iter().enumerate() {
             match item {
@@ -148,6 +151,7 @@ impl CodegenBackend for CodegenLibBackend {
                                 }
                             }
                             let _ = object_writer.add_function(&sym_name, &compiled_func);
+                            code_span += compiled_func.code.len() as u64;
                             // B1：收集该函数的 per-statement 行号表（主库 emission
                             // 输出 (机器码偏移, 行)）——debuginfo 开启时 dwarf.rs
                             // 生成 .debug_line 的每语句条目。
@@ -174,6 +178,7 @@ impl CodegenBackend for CodegenLibBackend {
                             // 无 item_name（对 closure DefId 调用会 ICE）
                             if tcx.def_path_str(def_id).ends_with("::main") {
                                 let _ = object_writer.add_function("main", &compiled_func);
+                                code_span += compiled_func.code.len() as u64;
                             }
                         }
                         Err(e) => {
@@ -263,11 +268,32 @@ impl CodegenBackend for CodegenLibBackend {
                 })
                 .collect();
             let producer = format!("code-forge {} (rustc {})", env!("CARGO_PKG_VERSION"), option_env!("CFG_VERSION").unwrap_or(""));
-            let cu_name = tcx
-                .crate_name(rustc_hir::def_id::LOCAL_CRATE)
-                .to_string();
-            let sections =
-                crate::dwarf::build_dwarf_sections(&fns, &vars, &producer, &cu_name, debuginfo_full);
+            // 源文件名：CU DW_AT_name + .debug_line file 条目必须指向磁盘上的
+            // 真实源文件（gdb `list`/源码断点按此打开文件；crate 名匹配不到
+            // .rs 文件）。取本地 crate 根模块所在文件。
+            // rustc_span::FileName 无 Display（1.100 已移除）；Real 变体经
+            // local_path() 取磁盘路径。gdb `list`/源码断点按此打开文件。
+            let root_name = tcx
+                .sess
+                .source_map()
+                .lookup_source_file(tcx.def_span(rustc_hir::def_id::LOCAL_CRATE.as_def_id()).lo())
+                .name
+                .clone();
+            let src_file = match &root_name {
+                rustc_span::FileName::Real(rf) => rf
+                    .local_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string()),
+                _ => "<unknown>".to_string(),
+            };
+            let sections = crate::dwarf::build_dwarf_sections(
+                &fns,
+                &vars,
+                &producer,
+                &src_file,
+                code_span,
+                debuginfo_full,
+            );
             // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——
             // object crate 对 COFF 调试段发射 ADDR64 reloc，链接器解析
             // 为函数真实地址（low_pc/行号 set_address 可用）。
