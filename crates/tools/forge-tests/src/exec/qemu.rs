@@ -435,6 +435,7 @@ mod tests {
             code: vec![0x67, 0x80, 0x00, 0x00], // ret
             code_size: 4,
             relocations: vec![],
+            line_entries: vec![],
         };
         let elf = build_riscv_elf(&cf.code, &[]);
         assert_eq!(&elf[0..4], &[0x7F, b'E', b'L', b'F']);

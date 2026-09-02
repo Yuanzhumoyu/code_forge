@@ -673,6 +673,7 @@ mod tests {
                 addend: 0,
             }],
             code_size: 0,
+            line_entries: vec![],
         }
     }
 
