@@ -952,6 +952,33 @@ const CASES: &[Case] = &[
         phase: "D intrinsics",
         reason: "",
     },
+    // i32 快路径哨兵：AtomicRmw {g1}→{out} 后 fetch_add/swap 的 i32 走
+    // xadd/xchg 32 位（原 {g1} 恒 64 位池 8 字节越界——v13 单 static 侥幸，
+    // 数组相邻必炸）。A[1]/A[2] 哨兵验证 4 字节写不越界。
+    Case {
+        name: "atomic_i32_fetch_add_arr",
+        body: "static A: [core::sync::atomic::AtomicI32; 3] = [core::sync::atomic::AtomicI32::new(5), core::sync::atomic::AtomicI32::new(0x15555555), core::sync::atomic::AtomicI32::new(0x0A0A0A0A)]; let old = A[0].fetch_add(3, core::sync::atomic::Ordering::Relaxed); (if old == 5 { 1000 } else { 0 }) + A[0].load(core::sync::atomic::Ordering::Relaxed) + (A[1].load(core::sync::atomic::Ordering::Relaxed) >> 4) + (A[2].load(core::sync::atomic::Ordering::Relaxed) & 0xF)",
+        expected: 1000 + 8 + (0x15555555 >> 4) + (0x0A0A0A0A & 0xF), // 哨兵保留（xadd 32 位不越界）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    Case {
+        name: "atomic_i32_swap_arr",
+        body: "static A: [core::sync::atomic::AtomicI32; 2] = [core::sync::atomic::AtomicI32::new(77), core::sync::atomic::AtomicI32::new(0x12345678)]; let old = A[0].swap(99, core::sync::atomic::Ordering::SeqCst); (if old == 77 { 100 } else { 0 }) + A[0].load(core::sync::atomic::Ordering::Relaxed) + (A[1].load(core::sync::atomic::Ordering::Relaxed) & 0xFFFF)",
+        expected: 100 + 99 + (0x12345678 & 0xFFFF), // old=77、mem=99、A[1] 哨兵保留（xchg 32 位）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
     Case {
         name: "atomic_xchg",
         body: "static B: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(100); let old = B.swap(7, core::sync::atomic::Ordering::SeqCst); (if old == 100 { 1000 } else { 0 }) + B.load(core::sync::atomic::Ordering::Relaxed) as i32",

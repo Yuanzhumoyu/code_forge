@@ -501,13 +501,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .get(1)
                     .copied()
                     .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
-                // 宽度分派：i64/usize（8 字节）走 XADD/XCHG 指令快路径（AtomicRmw
-                // lowering 的 {g1} 恒 64 位池——8 字节无越界）；窄域（1/2/4 字节
-                // i8/u8/i16/u16/i32）改走 CMPXCHG 重试循环（xadd/xchg 指令若对
-                // 窄原子会 8 字节越界——v13 单 static 侥幸掩盖，多 static 相邻
-                // 必炸；循环宽度由 val 类型驱动，8 位 lockcmpxchg 就绪——v14）。
+                // 宽度分派：≥4 字节（i32/i64/usize）走 XADD/XCHG 指令快路径
+                //（AtomicRmw lowering 用结果 {out} 承载 dest——out 有 IR 类型
+                // 登记，gprx 回填按类型宽度：i32→32 位 xadd/xchg 无越界）；
+                // 窄域（1/2 字节 i8/u8/i16/u16）走 CMPXCHG 重试循环（无
+                // 8/16 位 xadd/xchg opcode——0F C0/C1 与 66 前缀需字节指令）。
                 let w = layout_bytes(self.tcx, substs_first_ty(&substs).unwrap_or(fty));
-                if w == 8 {
+                if w >= 4 {
                     vec![self.builder.atomic_rmw(op, ptr, val, Ordering::Monotonic)]
                 } else {
                     let kind = match op {
