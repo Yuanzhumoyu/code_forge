@@ -144,7 +144,7 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
     // Reg 操作数宽度取最大（无目的槽的同宽指令——CMP/TEST，见 `Opsize::Max`）；
     // 缺省 = 第一个 Reg 槽操作数。指令级覆盖（Instruction.opsize）优先于 form 级。
     let form_opsize = info.inst.opsize.or(form.opsize);
-    let rex_w_override = info.inst.rex_w.as_deref().or(form.rex_w.as_deref());
+    let rex_w_override = info.inst.rex_w.or(form.rex_w);
     let (has_opsize, opsize_expr) = match form_opsize {
         Some(o) => match o {
             Opsize::Reg(width) => (true, Some(quote! { #width })),
@@ -195,7 +195,7 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
     // 指令级覆盖优先（cvtsi2sd 合并：opsize=s1 驱动 REX.W）。
     // 多类槽（reg_view=None）且 opsize=Slot：w 位 = REX.W = (__opsize==8)。
     let rex_w_key = rex_w_override;
-    let (decode_width_guard, decode_width_neq64) = if rex_w_key == Some("field") {
+    let (decode_width_guard, decode_width_neq64) = if rex_w_key == Some(RexW::Field) {
         let w0 = fields.and_then(|f| f.get("w")).copied() == Some(0);
         (None, w0)
     } else if !has_opsize {
@@ -240,8 +240,8 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
     // REX.W：显式声明优先；有 opsize 语义且未声明 → 默认 opsize==64 驱动。
     // 指令级覆盖（Instruction.rex_w）优先于 form 级。
     let rex_w_expr: TokenStream = match rex_w_override {
-        Some("auto") => quote! { if __opsize == 8 { 1u64 } else { 0u64 } },
-        Some("field") => {
+        Some(RexW::Auto) => quote! { if __opsize == 8 { 1u64 } else { 0u64 } },
+        Some(RexW::Field) => {
             let v = field_val("w");
             quote! { #v as u64 }
         }
@@ -452,7 +452,7 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
         vex,
         evex,
         opcode_reg: form.opcode_reg,
-        rex_w_always: form.rex_w.as_deref() == Some("always"),
+        rex_w_always: form.rex_w == Some(RexW::Always) || info.inst.rex_w == Some(RexW::Always),
         reg_view,
         decode_width_guard,
         decode_width_neq64,

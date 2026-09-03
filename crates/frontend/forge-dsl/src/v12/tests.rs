@@ -33,7 +33,6 @@ funct7 = { offset = 25, width = 7 }
 name = "gpr"
 kind = "reg"
 class = "gpr8"
-field_width = 5
 roles = ["in", "out"]
 
 [[operand_slots]]
@@ -105,23 +104,15 @@ reg_field = "modrm_reg"
 rm_field = "modrm_rm"
 force_disp_base = [5, 13]
 
-[conventions.rex]
-w_opsize = 64
-
-[conventions.opsize_prefix]
-16 = 0x66
-
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
 class = "gpr8"
-field_width = 4
 
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
 class = "fpr16"
-field_width = 4
 
 [[operand_slots]]
 name = "imm32"
@@ -133,8 +124,6 @@ width = 32
 name = "RR"
 modrm = "rr"
 rex = "auto"
-opcode_bytes = 1
-operand_slots = ["gpr", "gpr"]
 "#;
 
 #[test]
@@ -150,24 +139,10 @@ fn parse_x86_conventions() {
     assert_eq!(modrm.reg_field.as_deref(), Some("modrm_reg"));
     assert_eq!(modrm.rm_field.as_deref(), Some("modrm_rm"));
     assert_eq!(modrm.force_disp_base, vec![5, 13]);
-    // REX 约定
-    assert_eq!(m.conventions.rex.as_ref().unwrap().w_opsize, Some(64));
-    // 操作数宽度前缀：TOML 裸整数键 "16" → 0x66
-    let p = m
-        .conventions
-        .opsize_prefix
-        .as_ref()
-        .expect("opsize_prefix present");
-    assert_eq!(p.get("16"), Some(&0x66));
     // 形式语义键
     let form = &m.forms[0];
     assert_eq!(form.modrm.as_deref(), Some("rr"));
     assert_eq!(form.rex.as_deref(), Some("auto"));
-    assert_eq!(form.opcode_bytes, Some(1));
-    assert_eq!(
-        form.operand_slots.as_ref().unwrap(),
-        &vec!["gpr".to_string(), "gpr".to_string()]
-    );
 }
 
 #[test]
@@ -181,7 +156,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 "#;
     let m = parse_and_validate(doc).expect("valid");
     assert_eq!(m.meta.endian, Endian::Little);
@@ -201,10 +175,10 @@ fn roundtrip_serialize() {
     let text = toml::to_string(&m1).expect("serialize");
     let m2 = parse(&text).expect("reparse");
     assert_eq!(m1, m2, "serialize → parse round-trip must be lossless");
-    // 往返后 opsize_prefix 内容不变（键可能带引号，解析等价）
+    // 往返后 modrm 约定内容不变
     assert_eq!(
-        m2.conventions.opsize_prefix.as_ref().unwrap().get("16"),
-        Some(&0x66)
+        m2.conventions.modrm.as_ref().unwrap().force_disp_base,
+        vec![5, 13]
     );
 }
 
@@ -220,7 +194,6 @@ count = 8
 name = "rm"
 kind = "reg"
 class = "gpr"
-field_width = 3
 roles = ["inout"]
 [[forms]]
 name = "RM"
@@ -257,7 +230,7 @@ count = 8
 "#;
     let err = parse(doc).unwrap_err();
     match err {
-        V12Error::Parse(msg) => {
+        V12Error::Parse { msg, .. } => {
             assert!(msg.contains("bogus"), "msg: {msg}");
             assert!(msg.contains("unknown field"), "msg: {msg}");
         }
@@ -276,7 +249,7 @@ count = 8
 "#;
     let err = parse(doc).unwrap_err();
     match err {
-        V12Error::Parse(msg) => assert!(msg.contains("no_default_lowering"), "msg: {msg}"),
+        V12Error::Parse { msg, .. } => assert!(msg.contains("no_default_lowering"), "msg: {msg}"),
         other => panic!("expected Parse error, got {other:?}"),
     }
 }
@@ -292,12 +265,11 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 garbage = 1
 "#;
     let err = parse(doc).unwrap_err();
     match err {
-        V12Error::Parse(msg) => {
+        V12Error::Parse { msg, .. } => {
             assert!(msg.contains("garbage"), "msg: {msg}");
             assert!(msg.contains("unknown field"), "msg: {msg}");
         }
@@ -318,7 +290,7 @@ kind = "float"
 "#;
     let err = parse(doc).unwrap_err();
     match err {
-        V12Error::Parse(msg) => assert!(msg.contains("float"), "msg: {msg}"),
+        V12Error::Parse { msg, .. } => assert!(msg.contains("float"), "msg: {msg}"),
         other => panic!("expected Parse error, got {other:?}"),
     }
 }
@@ -341,7 +313,7 @@ encoding = "@modrm 0x01 /r"
 "#;
     let err = parse(v11).expect_err("v11 file must NOT parse under v12");
     match err {
-        V12Error::Parse(msg) => {
+        V12Error::Parse { msg, .. } => {
             assert!(msg.contains("unknown field"), "msg: {msg}");
         }
         other => panic!("expected Parse error, got {other:?}"),
@@ -361,7 +333,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 {extra}
 "#
     )
@@ -377,10 +348,9 @@ name = "x"
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 "#;
     match parse(no_reg).unwrap_err() {
-        V12Error::Parse(msg) => assert!(msg.contains("missing field `reg`"), "msg: {msg}"),
+        V12Error::Parse { msg, .. } => assert!(msg.contains("missing field `reg`"), "msg: {msg}"),
         other => panic!("expected Parse error, got {other:?}"),
     }
     let no_slots = r#"
@@ -390,7 +360,7 @@ name = "x"
 count = 8
 "#;
     match parse(no_slots).unwrap_err() {
-        V12Error::Parse(msg) => {
+        V12Error::Parse { msg, .. } => {
             assert!(msg.contains("missing field `operand_slots`"), "msg: {msg}");
         }
         other => panic!("expected Parse error, got {other:?}"),
@@ -408,11 +378,10 @@ name = "x"
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => assert!(msg.contains("missing [reg.*]"), "msg: {msg}"),
+        V12Error::Validation { msg, .. } => assert!(msg.contains("missing [reg.*]"), "msg: {msg}"),
         other => panic!("expected Validation error, got {other:?}"),
     }
 }
@@ -429,7 +398,7 @@ count = 8
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("[[operand_slots]]"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -441,7 +410,7 @@ fn validation_bitfield_overflow() {
     let doc = slot_doc("[conventions.bitfields]\nbig = { offset = 63, width = 2 }");
     let err = parse_and_validate(&doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("exceeds 64 bits"), "msg: {msg}");
             assert!(msg.contains("big"), "msg: {msg}");
         }
@@ -462,7 +431,7 @@ rm_field = "foo"
     );
     let err = parse_and_validate(&doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("'nope'"), "msg: {msg}");
             assert!(msg.contains("bitfield"), "msg: {msg}");
         }
@@ -481,7 +450,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 [[instructions]]
@@ -491,7 +459,7 @@ asm = "nop"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("form 'ZZZ'"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -509,7 +477,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 [[instructions]]
@@ -519,7 +486,7 @@ asm = "nop {0:[nope:out]}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("'nope'"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -541,7 +508,6 @@ rd = { offset = 7, width = 3 }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 opcode_field = "opcode"
@@ -554,7 +520,7 @@ asm = "foo {0:[g:out]}, {1:[g:in]}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("exceed form"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -572,7 +538,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 [[instructions]]
@@ -586,7 +551,7 @@ asm = "nop"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(
                 msg.contains("duplicate instruction name 'NOP'"),
                 "msg: {msg}"
@@ -607,7 +572,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 [[families]]
@@ -619,7 +583,7 @@ name = "V1"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(
                 msg.contains("variant needs `opcode` or `fields`"),
                 "msg: {msg}"
@@ -640,11 +604,10 @@ names = ["R0", "R0"]
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("duplicate 'R0'"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -664,11 +627,10 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(
                 msg.contains("conflicts with `variable_length = true`"),
                 "msg: {msg}"
@@ -689,11 +651,10 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("not a valid ISA name"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -719,7 +680,6 @@ opcode = { offset = 0, width = 7 }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 opcode_field = "opcode"
@@ -756,7 +716,6 @@ rd = { offset = 7, width = 3 }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 opcode_field = "opcode"
@@ -801,7 +760,6 @@ opcode = { pieces = [ { offset = 0, width = 7, shift = 0 } ] }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 opcode_field = "opcode"
@@ -836,7 +794,6 @@ imm12  = { offset = 20, width = 12 }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[operand_slots]]
 name = "i"
 kind = "imm"
@@ -903,7 +860,6 @@ funct3 = {{ offset = 12, width = 3 }}
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[operand_slots]]
 name = "i"
 kind = "imm"
@@ -962,7 +918,6 @@ rd = { offset = 7, width = 3 }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 opcode_field = "opcode"
@@ -975,7 +930,7 @@ opcode = 0x13
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         // asm 缺失在 TOML 反序列化层报错（必填字段）
-        V12Error::Parse(msg) => {
+        V12Error::Parse { msg, .. } => {
             assert!(msg.contains("missing field `asm`"), "msg: {msg}");
         }
         other => panic!("expected Parse error, got {other:?}"),
@@ -997,7 +952,6 @@ rd = { offset = 7, width = 3 }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[forms]]
 name = "R"
 opcode_field = "opcode"
@@ -1010,7 +964,7 @@ asm = "{bad {0:[g:out]}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("mnemonic"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -1076,7 +1030,6 @@ imm12 = { offset = 20, width = 12 }
 name = "g"
 kind = "reg"
 class = "gpr"
-field_width = 3
 [[operand_slots]]
 name = "i"
 kind = "imm"
@@ -1095,7 +1048,7 @@ asm = "bad {0:[g:out]}, {3:[g:in]}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
-        V12Error::Validation(msg) => {
+        V12Error::Validation { msg, .. } => {
             assert!(msg.contains("contiguous"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
@@ -1117,7 +1070,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr4"
-field_width = 3
 [[operand_slots]]
 name = "imm20"
 kind = "imm"
@@ -1143,7 +1095,7 @@ global_reloc = "pcrel_hi"
         .iter()
         .find(|i| i.name == "AUIPC_GLOBAL")
         .expect("instruction present");
-    assert_eq!(inst.global_reloc.as_deref(), Some("pcrel_hi"));
+    assert_eq!(inst.global_reloc, Some(crate::v12::model::GlobalReloc::PcrelHi));
 }
 
 /// `global_reloc = "bogus"` → 校验拒绝。
@@ -1159,7 +1111,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr4"
-field_width = 3
 [[operand_slots]]
 name = "imm20"
 kind = "imm"
@@ -1180,11 +1131,15 @@ asm = "bad {0:[g:out]}, {1:[imm20:in]}"
 global_reloc = "bogus"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
+    // S1：global_reloc 改枚举后由 serde 在反序列化期拒绝——错误更早、且自带
+    // 候选列表与 TOML 行号（原先是手写 validate 分支）。
     match err {
-        V12Error::Validation(msg) => {
-            assert!(msg.contains("global_reloc"), "msg: {msg}");
+        V12Error::Parse { msg, line, .. } => {
+            assert!(msg.contains("bogus"), "msg: {msg}");
+            assert!(msg.contains("abs8"), "需列出候选: {msg}");
+            assert_eq!(line, 28, "行号指向 global_reloc 那一行");
         }
-        other => panic!("expected Validation error, got {other:?}"),
+        other => panic!("expected Parse error, got {other:?}"),
     }
 }
 
@@ -1201,7 +1156,6 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr4"
-field_width = 3
 [conventions.bitfields]
 rd = { offset = 7, width = 5 }
 rs1 = { offset = 15, width = 5 }
@@ -1223,7 +1177,7 @@ effect = ["Move"]
 "#;
     let m = parse_and_validate(doc).expect("doc with Move effect must parse");
     let inst = m.instructions.iter().find(|i| i.name == "MY_MOV").unwrap();
-    assert!(inst.effect.iter().any(|e| e == "Move"));
+    assert!(inst.effect.contains(&crate::v12::model::Effect::Move));
 }
 
 /// 占位符注册表唯一性：无重名 token、无重复临时变量（第三轮重构核心——
@@ -1321,4 +1275,100 @@ fn placeholder_registry_lookup() {
         "mem",
         "内存表达式保持 mem"
     );
+}
+
+// ─────────────── [[lowering]] 校验（S1 补齐：三类静默失效） ───────────────
+
+/// 带一条完整 lowering 的最小 ISA，`{extra}` 处插入待测规则片段。
+fn lowering_doc(rule: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = {{ offset = 0, width = 8 }}
+rd = {{ offset = 8, width = 3 }}
+rs1 = {{ offset = 11, width = 3 }}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+[[forms]]
+name = "RR"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1"]
+[[instructions]]
+name = "MOV"
+form = "RR"
+opcode = 1
+asm = "mov {{0:[g:out]}}, {{1:[g:in]}}"
+{rule}
+"#
+    )
+}
+
+fn lowering_err(rule: &str) -> String {
+    match parse_and_validate(&lowering_doc(rule)).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn lowering_accepts_declared_mnemonic() {
+    let doc = lowering_doc("[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]");
+    parse_and_validate(&doc).expect("已声明助记符 + 已知占位符必须通过");
+}
+
+#[test]
+fn lowering_rejects_unknown_mnemonic() {
+    let msg = lowering_err("[[lowering]]\nop = \"Copy\"\ninsts = [\"movv {out}, {0}\"]");
+    assert!(msg.contains("未声明的助记符 'movv'"), "msg: {msg}");
+    assert!(msg.contains("[[lowering.Copy]]"), "msg 需带声明路径: {msg}");
+}
+
+#[test]
+fn lowering_rejects_unknown_placeholder() {
+    // `{iconst_lo}` 少了 `12`：过去落 fallback 装成字面量，生成能编译但语义错的代码
+    let msg = lowering_err("[[lowering]]\nop = \"Iconst\"\ninsts = [\"mov {out}, {iconst_lo}\"]");
+    assert!(msg.contains("未知占位符 '{iconst_lo}'"), "msg: {msg}");
+}
+
+#[test]
+fn lowering_rejects_unknown_when_attr() {
+    // 未知属性 → pred::eval 恒假 → 规则永不命中（既不报错也不生效）
+    let msg = lowering_err(
+        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_widht\", 32] }\ninsts = [\"mov {out}, {0}\"]",
+    );
+    assert!(msg.contains("未知属性 'rs1_widht'"), "msg: {msg}");
+    assert!(msg.contains("rs1_width"), "需列出可用属性: {msg}");
+}
+
+#[test]
+fn lowering_rejects_exact_duplicate() {
+    let rule = "[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]\n\
+                [[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]";
+    let msg = lowering_err(rule);
+    assert!(msg.contains("完全重复"), "msg: {msg}");
+}
+
+/// 同 op 同 insts 但 when 不同 → 合法（宽度/条件分派的正常形态）。
+#[test]
+fn lowering_allows_same_insts_with_different_when() {
+    let rule = "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_width\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
+                [[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]";
+    parse_and_validate(&lowering_doc(rule)).expect("when 不同不算重复");
+}
+
+/// families 展开出的助记符也算已声明（`{name}` → 变体名小写）。
+#[test]
+fn lowering_accepts_family_mnemonic() {
+    let rule = "[[families]]\nname = \"F\"\nform = \"RR\"\nasm = \"{name} {0:[g:out]}, {1:[g:in]}\"\n\
+                [[families.variants]]\nname = \"NEG\"\nopcode = 9\n\
+                [[lowering]]\nop = \"Ineg\"\ninsts = [\"neg {out}, {0}\"]";
+    parse_and_validate(&lowering_doc(rule)).expect("family 变体助记符必须被识别");
 }

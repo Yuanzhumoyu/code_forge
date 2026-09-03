@@ -295,17 +295,18 @@ pub(crate) fn gen_machine_inst(
 
         // effect → is_branch/is_call/is_ret/effects
         let eff = &info.inst.effect;
-        if eff.iter().any(|e| e == "Branch" || e == "Jump") {
+        let is_jumpy = |e: &&Effect| matches!(e, Effect::Branch | Effect::Jump);
+        if eff.iter().any(|e| is_jumpy(&e)) {
             branch_arms.push(quote! { Inst::#vn { .. } => true });
         }
-        if eff.iter().any(|e| e == "Call") {
+        if eff.contains(&Effect::Call) {
             call_arms.push(quote! { Inst::#vn { .. } => true });
         }
-        if eff.iter().any(|e| e == "Ret") {
+        if eff.contains(&Effect::Ret) {
             ret_arms.push(quote! { Inst::#vn { .. } => true });
         }
         // branch_targets：effect Branch/Jump 且有 Label 槽 → 提取为 Block
-        if (eff.iter().any(|e| e == "Branch" || e == "Jump"))
+        if eff.iter().any(|e| is_jumpy(&e))
             && let Some(fid) = info
                 .operands
                 .iter()
@@ -318,17 +319,16 @@ pub(crate) fn gen_machine_inst(
         }
         let eff_kinds: Vec<TokenStream> = eff
             .iter()
-            .map(|e| match e.as_str() {
-                "Pure" => quote! { crate::prelude::EffectKind::Pure },
-                "Read" => quote! { crate::prelude::EffectKind::Read },
-                "Write" => quote! { crate::prelude::EffectKind::Write },
-                "Branch" => quote! { crate::prelude::EffectKind::Branch },
-                "Jump" => quote! { crate::prelude::EffectKind::Jump },
-                "Call" => quote! { crate::prelude::EffectKind::Call },
-                "Ret" => quote! { crate::prelude::EffectKind::Ret },
-                "Trap" => quote! { crate::prelude::EffectKind::Trap },
-                "Move" => quote! { crate::prelude::EffectKind::Pure }, // Move 是纯运算
-                _ => quote! { crate::prelude::EffectKind::Custom(0) },
+            .map(|e| match e {
+                Effect::Pure => quote! { crate::prelude::EffectKind::Pure },
+                Effect::Read => quote! { crate::prelude::EffectKind::Read },
+                Effect::Write => quote! { crate::prelude::EffectKind::Write },
+                Effect::Branch => quote! { crate::prelude::EffectKind::Branch },
+                Effect::Jump => quote! { crate::prelude::EffectKind::Jump },
+                Effect::Call => quote! { crate::prelude::EffectKind::Call },
+                Effect::Ret => quote! { crate::prelude::EffectKind::Ret },
+                Effect::Trap => quote! { crate::prelude::EffectKind::Trap },
+                Effect::Move => quote! { crate::prelude::EffectKind::Pure }, // Move 是纯运算
             })
             .collect();
         if eff_kinds.is_empty() {
@@ -340,7 +340,7 @@ pub(crate) fn gen_machine_inst(
         // is_move：effect 含 "Move"（纯寄存器移动，TOML 显式声明）且
         // 1 def + 1 use。**删除指令名前缀启发式**（MOV_/MOVR）——语义由
         // effect 标签表达，与指令名解耦（LLVM TableGen flags 同思路）。
-        let is_move_decl = eff.iter().any(|e| e == "Move");
+        let is_move_decl = eff.contains(&Effect::Move);
         if is_move_decl && def_fids.len() == 1 && use_fids.len() == 1 {
             let d = def_fids[0];
             let u = use_fids[0];
@@ -486,7 +486,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
     //   分写 hi20/lo12 位段。
     let mut global_arms: Vec<TokenStream> = Vec::new();
     for info in infos {
-        let Some(kind) = info.inst.global_reloc.as_deref() else {
+        let Some(kind) = info.inst.global_reloc else {
             continue;
         };
         let vn = &info.vn;
@@ -498,7 +498,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
             .map(|(_, fid, _, _)| fid.clone())
             .unwrap_or_else(|| format_ident!("imm"));
         let body = match kind {
-            "abs8" => quote! {
+            GlobalReloc::Abs8 => quote! {
                 let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
                 let imm = match inst {
                     Inst::#vn { #imm_fid, .. } => *#imm_fid,
@@ -511,7 +511,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                 }
                 Ok(())
             },
-            "pcrel_hi" | "pcrel_lo" => quote! {
+            GlobalReloc::PcrelHi | GlobalReloc::PcrelLo => quote! {
                 let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
                 let imm = match inst {
                     Inst::#vn { #imm_fid, .. } => *#imm_fid,
@@ -529,7 +529,6 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                 }
                 Ok(())
             },
-            _ => unreachable!("validated: {kind}"),
         };
         global_arms.push(quote! { Inst::#vn { .. } => { #body } });
     }

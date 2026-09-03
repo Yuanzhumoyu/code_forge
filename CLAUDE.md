@@ -135,9 +135,9 @@ let name = node.get_text("name")?;
   自动 Skip。`CaseKind::{I32/I64/F64/Bool/Block/Args/F64Args/Module/
   CompileOnly}`；`ops` 未覆盖 → Skip（不失败，实现后自动转绿）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。
-- **TOML 改动门禁**：改 `isa/*.toml` 后必须 touch
-  `crates/backend/forge-codegen/src/arch/x86_v12.rs`（proc 宏缓存）才触发
-  重编译；`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
+- **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
+  `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
+  `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
 
 ## SIMD 支持矩阵（x86_64，isa/x86_v12.toml）
 

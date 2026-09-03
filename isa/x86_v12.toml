@@ -140,7 +140,6 @@ effects = ["rex"]
 name = "gpr"
 kind = "reg"
 class = "gpr8"
-field_width = 4
 roles = ["in", "out", "inout"]
 
 # 8 位寄存器操作数（SETCC 目标等）：索引 4-7（spl/bpl/sil/dil）无 REX 前缀
@@ -149,7 +148,6 @@ roles = ["in", "out", "inout"]
 name = "gpr32"
 kind = "reg"
 class = "gpr4"
-field_width = 4
 roles = ["in", "out", "inout"]
 
 [[operand_slots]]
@@ -160,14 +158,12 @@ kind = "reg"
 # 显式排除 8 位（gpr1）：8 位 mov 是不同 opcode（88 vs 8B），应声明为
 # 独立 form 而非经由 gprx 误编码（garbage 防护）。
 classes = ["gpr2", "gpr4", "gpr8"]
-field_width = 4
 roles = ["in", "out", "inout"]
 
 [[operand_slots]]
 name = "gpr8"
 kind = "reg"
 class = "gpr8"
-field_width = 4
 byte_reg = true
 roles = ["in", "out", "inout"]
 
@@ -176,7 +172,6 @@ roles = ["in", "out", "inout"]
 name = "gpr2"
 kind = "reg"
 class = "gpr2"
-field_width = 4
 roles = ["in", "out"]
 
 
@@ -184,14 +179,12 @@ roles = ["in", "out"]
 name = "gpr1b"
 kind = "reg"
 class = "gpr1"
-field_width = 4
 byte_reg = true
 roles = ["in", "out"]
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
 class = "fpr16"
-field_width = 4
 roles = ["in", "out", "inout"]
 
 
@@ -199,14 +192,12 @@ roles = ["in", "out", "inout"]
 name = "fpr32"
 kind = "reg"
 class = "fpr32"
-field_width = 4
 roles = ["in", "out"]
 
 [[operand_slots]]
 name = "kreg"
 kind = "reg"
 class = "kreg8"
-field_width = 4
 roles = ["in", "out"]
 
 [[operand_slots]]
@@ -249,32 +240,21 @@ width = 8
 name = "MRR"            # @modrm：reg=op0, rm=op1, opsize auto
 modrm = "rr"
 opsize = "s0"
-opcode_bytes = 1
-
-[[forms]]
-name = "MRR_FIX32"      # @modrm + opsize 固定 32（MOV_R_RM32 零扩展）
-modrm = "rr"
-opsize = "r4"
-opcode_bytes = 1
-
 
 [[forms]]
 name = "MRR_BYTE"       # 8 位 mov：8A /r（reg=op0=dest、rm=op1=src）；byte_reg 强制 REX
 modrm = "rr"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
 modrm = "rr"
 opsize = "r8"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F"         # @modrm + 0F escape
 modrm = "rr"
 opsize = "s0"
 escape = [0x0F]
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F_NOOS"    # @modrm + 0F escape + 无 opsize（movzx/movsx：dest/src
@@ -283,7 +263,6 @@ modrm = "rr"
 prefix = "field"
 rex_w = "field"
 escape = [0x0F]
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F_FIX64"   # @modrm + 0F escape + opsize 固定 64（MOVQ 系列；prefix=field）
@@ -291,7 +270,6 @@ modrm = "rr"
 opsize = "r8"
 escape = [0x0F]
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F_FIX64_REV" # @modrm + 0F escape + opsize 固定 64，reg=op1、rm=op0（MOVQ r64, xmm）
@@ -299,7 +277,6 @@ modrm = "rr_rev"
 opsize = "r8"
 escape = [0x0F]
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F_PREFIX"  # @modrm + 0F escape + 指令级 prefix（LZCNT/TZCNT/POPCNT 的 F3）
@@ -307,21 +284,18 @@ modrm = "rr"
 opsize = "s0"
 escape = [0x0F]
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F38"       # @modrm + 0F 38 escape（PMULLD 等）
 modrm = "rr"
 opsize = "r8"
 escape = [0x0F, 0x38]
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
 modrm = "ext"
 opsize = "s0"
 imm = 32
-opcode_bytes = 1
 
 [[forms]]
 name = "SSE_RR"         # @sse_rr：0F opcode /r，prefix=fields.prefix, w=fields.w
@@ -329,7 +303,6 @@ modrm = "rr"
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "SSE_RR_REV"     # @sse_rr_rev：0F opcode /r，reg=op1、rm=op0（MOVD r, xmm）
@@ -337,7 +310,6 @@ modrm = "rr_rev"
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
-opcode_bytes = 1
 
 # ── 内存寻址（迭代 3b：@modrm_mem）──
 
@@ -345,76 +317,64 @@ opcode_bytes = 1
 name = "EVEX_RR_MEMREF"   # EVEX 内存：reg=op0、MemRef op1；压缩位移 ×evex_disp_scale
 evex = { map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" }
 modrm = "rm_memref"
-opcode_bytes = 1
 
 [[forms]]
 name = "EVEX_RR"         # EVEX 两操作数：reg=op0、rm=op1（vmovaps zmm, zmm）
 evex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr"
-opcode_bytes = 1
 
 [[forms]]
 name = "EVEX_RRV"        # EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
 evex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr_src2"
-opcode_bytes = 1
 
 [[forms]]
 name = "VEX_RRV"        # VEX 三操作数：reg=op0(dest)、rm=op2(src2)、vvvv=~op1(src1)
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr_src2"
-opcode_bytes = 1
 
 [[forms]]
 name = "VEX_RR"         # VEX 两操作数：vvvv=0x0F（无源）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr"
-opcode_bytes = 1
 
 [[forms]]
 name = "VEX_RRV_IMM"    # VEX 三操作数 + imm8：reg=op0(dest)、rm=op2(src2)（VINSERTF128）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr_src2"
 imm = 8
-opcode_bytes = 1
 
 [[forms]]
 name = "VEX_RR_IMM"     # VEX 两操作数 + imm8（VEXTRACTF128）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr"
 imm = 8
-opcode_bytes = 1
 
 [[forms]]
 name = "VEX_RR_MEMREF"  # VEX 内存形式：reg=op0(dest)、MemRef base/disp=op1（vmovaps xmm, [rax+disp]）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rm_memref"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
 modrm = "ext"
 opsize = "s0"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_EXT_OP_FIX64" # @shift_reg：D3 /digit（rm=op0），opsize 固定 64（REX.W）
 modrm = "ext"
 opsize = "r8"
-opcode_bytes = 1
 
 [[forms]]
 name = "EXT_0F"           # ext + 0F escape（SETCC 0F 90+cc /r）
 modrm = "ext"
 escape = [0x0F]
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_EXT64_IMM32"  # @op_rm_imm32：REX.W + 81 /digit + imm32（64 位专用）
 modrm = "ext"
 opsize = "r8"
 imm = 32
-opcode_bytes = 1
 
 [[forms]]
 name = "SSE_RR_IMM8"      # @sse_rr_imm8：prefix + 0F + opcode + /r + imm8（PSHUFD/SHUFPS）
@@ -423,7 +383,6 @@ escape = [0x0F]
 prefix = "field"
 rex_w = "field"
 imm = 8
-opcode_bytes = 1
 
 [[forms]]
 name = "SSE_RR_3A_IMM8"   # @sse_rr_3a_imm8：prefix + 0F 3A + opcode + /r + imm8（ROUNDSD/ROUNDSS）
@@ -432,43 +391,36 @@ escape = [0x0F, 0x3A]
 prefix = "field"
 rex_w = "field"
 imm = 8
-opcode_bytes = 1
 
 [[forms]]
 name = "PUSH_REG"         # 50+r（push r64；reg≥8 → REX.B 41）
 opcode_reg = 0x50
-opcode_bytes = 1
 
 [[forms]]
 name = "POP_REG"          # 58+r
 opcode_reg = 0x58
-opcode_bytes = 1
 
 [[forms]]
 name = "MOV_IMM64"        # REX.W + B8+r + imm64
 opcode_reg = 0xB8
 rex_w = "always"
 imm = 64
-opcode_bytes = 1
 
 [[forms]]
 name = "BSWAP_R"          # REX.W + 0F C8+r
 opcode_reg = 0xC8
 rex_w = "always"
 escape = [0x0F]
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM"          # [reg 基址 + disp 0]；无 escape（XCHG/MOV_R_MEM/STORE_MEM_R）
 modrm = "rm_mem"
 opsize = "s0"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM_BYTE"    # 8 位内存 mov/store（8A/88）：无 opsize——8 位宽由
                           # opcode 自身决定（无 66/REX.W 语义；gprx 排除 gpr1）。
 modrm = "rm_mem"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_0F_NOOS_MEM"  # movzx/movsx 内存源（8/16 位 load 零/符号扩展读）：
@@ -478,7 +430,6 @@ modrm = "rm_mem"
 prefix = "field"
 rex_w = "field"
 escape = [0x0F]
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM_0F_NOOS"  # 内存 + 0F + prefix=field + 无 opsize（8 位原子
@@ -486,7 +437,6 @@ name = "MRR_MEM_0F_NOOS"  # 内存 + 0F + prefix=field + 无 opsize（8 位原�
 modrm = "rm_mem"
 escape = [0x0F]
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM_0F"       # 内存 + 0F escape + prefix=field（XADD 0F C1 双字节）
@@ -494,14 +444,12 @@ modrm = "rm_mem"
 opsize = "s0"
 escape = [0x0F]
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM_PRE"      # 内存 + prefix=field、无 escape（LOCK 原子族 29/21/09/31）
 modrm = "rm_mem"
 opsize = "s0"
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEM_0F_FIX32" # 内存 + 0F + prefix=field + opsize 32（MOVSD 内存标量）
@@ -509,13 +457,11 @@ modrm = "rm_mem"
 opsize = "r4"
 escape = [0x0F]
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
 modrm = "rm_memref"
 opsize = "r8"
-opcode_bytes = 1
 
 [[forms]]
 name = "MRR_MEMREF_F2"    # MemRef + F2 0F + opsize 32（MOVSD_RM/MR）
@@ -523,43 +469,35 @@ modrm = "rm_memref"
 opsize = "r4"
 escape = [0x0F]
 prefix = "field"
-opcode_bytes = 1
 
 [[forms]]
 name = "REL32"            # 直接相对跳转/调用：opcode + rel32（无 ModRM）
 imm = 32
-opcode_bytes = 1
 
 [[forms]]
 name = "NOOP"             # 无操作数：单字节 opcode（RET 0xC3 等）
-opcode_bytes = 1
 
 [[forms]]
 name = "NOOP_REXW"        # 无操作数 + 恒 REX.W（CQO 48 99）
 rex_w = "always"
-opcode_bytes = 1
 
 [[forms]]
 name = "NOOP_ESC"         # 无操作数 + escape（NOP 0F 0B、MFENCE 0F AE F0、CQO 48 99）
 escape = [0x0F]
-opcode_bytes = 1
 
 [[forms]]
 name = "NOOP_ESC_FIXED"   # 无操作数 + escape + 固定 ModRM 字节（MFENCE 0F AE F0）
 escape = [0x0F]
 modrm_fixed = 0xF0
-opcode_bytes = 1
 
 [[forms]]
 name = "REL32_ESC"        # rel32 + escape（JCC_REL32: 0F cond rel32）
 escape = [0x0F]
 imm = 32
-opcode_bytes = 1
 
 [[forms]]
 name = "OP_EXT"           # FF /digit（CALL_RM FF /2: modrm.ext=2、rm=op0）
 modrm = "ext"
-opcode_bytes = 1
 
 # ─────────────────── 指令（顺序 = v11 声明序）───────────────────
 

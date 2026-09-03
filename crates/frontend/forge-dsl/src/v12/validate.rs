@@ -207,21 +207,6 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             }
         }
     }
-    if let Some(p) = &conv.opsize_prefix {
-        for (k, v) in p {
-            let parsed: u32 = k.parse().map_err(|_| {
-                format!("[conventions.opsize_prefix]: key '{k}' is not an integer operand size")
-            })?;
-            if parsed == 0 {
-                return Err("[conventions.opsize_prefix]: operand size must be > 0".into());
-            }
-            if *v > 0xFF {
-                return Err(format!(
-                    "[conventions.opsize_prefix.{k}]: prefix byte 0x{v:x} exceeds one byte"
-                ));
-            }
-        }
-    }
     if let Some(ps) = &conv.prefix_scan {
         const KNOWN: [&str; 6] = ["opsize16", "lock", "repe", "repne", "addr16", "rex"];
         for (i, e) in ps.iter().enumerate() {
@@ -285,17 +270,6 @@ fn validate_operand_slots(m: &V12Model) -> Result<(), String> {
                         ));
                     }
                 }
-                match s.field_width {
-                    None => {
-                        return Err(format!(
-                            "{path}: reg slot requires `field_width` (encoding bits)"
-                        ));
-                    }
-                    Some(0) => {
-                        return Err(format!("{path}: field_width must be > 0"));
-                    }
-                    _ => {}
-                }
             }
             OperandKind::Imm => match s.width {
                 None => {
@@ -308,20 +282,11 @@ fn validate_operand_slots(m: &V12Model) -> Result<(), String> {
             },
             _ => {}
         }
-        // 立即数约束一致性：min ≤ max；枚举值在 [min, max] 内（若都声明）。
-        if let (Some(lo), Some(hi)) = (s.min, s.max) {
-            if lo > hi {
-                return Err(format!("{path}: min ({lo}) > max ({hi})"));
-            }
-            if let Some(vs) = &s.values {
-                for v in vs {
-                    if *v < lo || *v > hi {
-                        return Err(format!(
-                            "{path}: enum value {v} outside [min, max] = [{lo}, {hi}]"
-                        ));
-                    }
-                }
-            }
+        // 立即数约束一致性：min ≤ max。
+        if let (Some(lo), Some(hi)) = (s.min, s.max)
+            && lo > hi
+        {
+            return Err(format!("{path}: min ({lo}) > max ({hi})"));
         }
         if let Some(roles) = &s.roles {
             if roles.is_empty() {
@@ -348,24 +313,6 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
         }
         if !seen.insert(f.name.clone()) {
             return Err(format!("[[forms]]: duplicate form name '{}'", f.name));
-        }
-        if let Some(n) = f.opcode_bytes
-            && (n == 0 || n > 4)
-        {
-            return Err(format!(
-                "[[forms.{}]].opcode_bytes must be in 1..=4, got {n}",
-                f.name
-            ));
-        }
-        if let Some(slots) = &f.operand_slots {
-            for s in slots {
-                if !slot_exists(m, s) {
-                    return Err(format!(
-                        "[[forms.{}]]: operand slot '{s}' is not declared in [[operand_slots]]",
-                        f.name
-                    ));
-                }
-            }
         }
         if let Some(bf) = &f.opcode_field
             && !m.conventions.bitfields.contains_key(bf)
@@ -413,16 +360,7 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
             // 范围/类型校验在 codegen（vlen_ctx 需指令操作数解析后）。
             let _ = o;
         }
-        if let Some(w) = &f.rex_w
-            && w != "auto"
-            && w != "field"
-            && w != "always"
-        {
-            return Err(format!(
-                "[[forms.{}]].rex_w must be \"auto\"/\"field\"/\"always\", got '{w}'",
-                f.name
-            ));
-        }
+        // rex_w 值域由 `RexW` 枚举在反序列化期强制（未知值 → serde 报错 + 候选列表）
         if f.vex.is_some() && f.evex.is_some() {
             return Err(format!(
                 "[[forms.{}]]: `vex` and `evex` are mutually exclusive",
@@ -463,14 +401,7 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 inst.name, inst.form
             ));
         }
-        if let Some(gr) = &inst.global_reloc
-            && !matches!(gr.as_str(), "abs8" | "pcrel_hi" | "pcrel_lo")
-        {
-            return Err(format!(
-                "[[instructions.{}]]: global_reloc '{gr}' unsupported (abs8 | pcrel_hi | pcrel_lo)",
-                inst.name
-            ));
-        }
+        // global_reloc 值域由 `GlobalReloc` 枚举在反序列化期强制
         if inst.asm.trim().is_empty() {
             return Err(format!(
                 "[[instructions.{}]]: asm must not be empty",
@@ -589,16 +520,113 @@ fn validate_families(m: &V12Model) -> Result<(), String> {
 
 // ──────────────────────── [[lowering]] ────────────────────────
 
+/// 全部已声明的汇编助记符（`asm` 首词）——含 families 展开（`{name}` → 变体名
+/// 小写）。lowering/emit 模板的行首必须命中其一。
+fn declared_mnemonics(m: &V12Model) -> BTreeSet<String> {
+    let head = |asm: &str| {
+        asm.trim()
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut out: BTreeSet<String> = m.instructions.iter().map(|i| head(&i.asm)).collect();
+    for f in &m.families {
+        for v in &f.variants {
+            let asm = v.asm.as_deref().unwrap_or(&f.asm);
+            out.insert(head(&asm.replace("{name}", &v.name.to_lowercase())));
+        }
+    }
+    out.remove("");
+    out
+}
+
+/// `[[lowering]]` 校验。
+///
+/// 历史状态：本函数只查 `op`/`insts` 非空（14 行），于是三类写错**静默通过**：
+/// 1. 助记符打错 → 直到 codegen 才报，且消息无位置；
+/// 2. 占位符打错（`{iconst_lo}` 少 `12`）→ 落 fallback 装成字面量 0，
+///    生成能编译但语义错的代码；
+/// 3. `when` 属性名打错 → `pred::eval` 对未知属性返回 false，规则**永不命中**，
+///    既不报错也不生效（最难查的一类）。
+/// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测。
 fn validate_lowering(m: &V12Model) -> Result<(), String> {
+    let mnemonics = declared_mnemonics(m);
+    // (op, 规范化 when, insts) → 首次出现的下标；用于重复检测
+    let mut seen: std::collections::HashMap<(String, String, Vec<String>), usize> =
+        std::collections::HashMap::new();
     for (i, l) in m.lowering.iter().enumerate() {
         if l.op.trim().is_empty() {
             return Err(format!("[[lowering]] #{i}: op must not be empty"));
         }
+        let path = format!("[[lowering.{}]]", l.op);
         if l.insts.is_empty() {
-            return Err(format!("[[lowering.{}]]: insts must not be empty", l.op));
+            return Err(format!("{path}: insts must not be empty"));
+        }
+        for t in &l.insts {
+            let trimmed = t.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            // `{out} = INST …` 的 lhs 仅文档性，取 `=` 右侧
+            let rhs = trimmed.split_once('=').map_or(trimmed, |(_, r)| r.trim());
+            let head = rhs.split_whitespace().next().unwrap_or("");
+            if !head.starts_with('@') && !mnemonics.contains(head) {
+                return Err(format!(
+                    "{path}: insts 引用了未声明的助记符 '{head}'（行: {trimmed}）"
+                ));
+            }
+            for tok in placeholder_tokens(trimmed) {
+                if !crate::v12::codegen::placeholder::is_known(&tok) {
+                    return Err(format!(
+                        "{path}: 未知占位符 '{tok}'（行: {trimmed}）"
+                    ));
+                }
+            }
+        }
+        let when_key = match &l.when {
+            None => String::new(),
+            Some(v) => {
+                let p = super::pred::parse(v).map_err(|e| format!("{path}.when: {e}"))?;
+                let mut attrs = Vec::new();
+                super::pred::attrs_of(&p, &mut attrs);
+                for a in &attrs {
+                    if !super::pred::PRED_ATTRS.contains(&a.as_str()) {
+                        return Err(format!(
+                            "{path}.when: 未知属性 '{a}'（可用：{}）——未知属性恒为假，规则永不命中",
+                            super::pred::PRED_ATTRS.join("/")
+                        ));
+                    }
+                }
+                format!("{p:?}")
+            }
+        };
+        let key = (l.op.clone(), when_key, l.insts.clone());
+        if let Some(first) = seen.insert(key, i) {
+            return Err(format!(
+                "{path}: 与 #{first} 完全重复（同 op、同 when、同 insts）——删掉一条"
+            ));
         }
     }
     Ok(())
+}
+
+/// 抽出模板里的 `{…}` token（含花括号）。
+fn placeholder_tokens(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if let Some(end) = line[i..].find('}') {
+                out.push(line[i..i + end + 1].to_string());
+                i += end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 // ───────────────────────── [abi] ─────────────────────────
@@ -607,16 +635,7 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
     let Some(abi) = &m.abi else {
         return Ok(());
     };
-    // arg_slot 值域：by-class（缺省，int/float 独立推进）/ by-position
-    //（Windows x64，共享位置计数）。
-    if let Some(slot) = &abi.arg_slot
-        && slot != "by-class"
-        && slot != "by-position"
-    {
-        return Err(format!(
-            "[abi].arg_slot must be \"by-class\" or \"by-position\", got \"{slot}\""
-        ));
-    }
+    // arg_slot / arg_class.strategy 的值域由枚举在反序列化期强制
     if let Some(align) = abi.stack_align
         && (align == 0 || align % 8 != 0)
     {

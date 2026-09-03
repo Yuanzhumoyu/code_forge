@@ -690,6 +690,14 @@ pub(crate) fn kind_matches(name: &str, slot_kind: OperandKind) -> bool {
     numbered_operand(name).is_some()
 }
 
+/// 该 `{…}` token 是否是本 DSL 认识的占位符：静态注册表 ∪ `{N}` 编号操作数
+/// ∪ `{gN}`/`{fN}` 编号临时。**校验期用**：模板里写错名字（`{iconst_lo}`
+/// 少个 `12`）今天会静默落到 fallback 分支，装出一个字面量 0 或物理寄存器，
+/// 生成能编译但语义错的代码——`validate_lowering` 据本函数提前拒绝。
+pub(crate) fn is_known(name: &str) -> bool {
+    lookup(name).is_some() || numbered_operand(name).is_some() || numbered_temp(name).is_some()
+}
+
 /// 唯一性断言（测试用）：注册表无重名、无重复临时变量。
 pub(crate) fn assert_unique() -> Result<(), String> {
     let ps = placeholders();

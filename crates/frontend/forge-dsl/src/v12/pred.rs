@@ -19,6 +19,41 @@ pub enum Pred {
     Cmp(CmpOp, String, i64),
 }
 
+/// 谓词可用的属性名——**与 `codegen/integration.rs::gen_lowering_attrs` 的
+/// `__attr` 分派表逐项对应**（唯一事实源在此，生成器与校验器同读一份）。
+///
+/// 校验意义：`eval` 对未知属性返回 false（保守），于是 `when` 里写错属性名的
+/// 规则**永远不命中**——既不报错也不生效。这类静默失效必须在编译期拒绝，
+/// 见 `validate_lowering`。
+pub const PRED_ATTRS: &[&str] = &[
+    "rd",
+    "rs1_width",
+    "rs2_width",
+    "rd_vec",
+    "rs1_vec",
+    "elem",
+    "cond",
+    "imm0",
+];
+
+/// 收集谓词里出现的全部属性名（校验用）。
+pub fn attrs_of(pred: &Pred, out: &mut Vec<String>) {
+    match pred {
+        Pred::And(ps) | Pred::Or(ps) => ps.iter().for_each(|p| attrs_of(p, out)),
+        Pred::Not(p) => attrs_of(p, out),
+        Pred::Cmp(_, a, _) => out.push(a.clone()),
+    }
+}
+
+/// 谓词叶子（比较）个数——特异性度量：叶子越多越具体。
+pub fn leaf_count(pred: &Pred) -> usize {
+    match pred {
+        Pred::And(ps) | Pred::Or(ps) => ps.iter().map(leaf_count).sum(),
+        Pred::Not(p) => leaf_count(p),
+        Pred::Cmp(..) => 1,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,

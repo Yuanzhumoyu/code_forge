@@ -74,14 +74,12 @@ imm_j  = { pieces = [ { offset = 31, width = 1, shift = 20 }, { offset = 21, wid
 name = "gpr"
 kind = "reg"
 class = "gpr8"
-field_width = 5
 roles = ["in", "out"]
 
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
 class = "fpr4"
-field_width = 5
 roles = ["in", "out"]
 
 [[operand_slots]]

@@ -23,7 +23,7 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
     let path = lit.value();
-    let content = match read_isa_file(&path) {
+    let (content, resolved) = match read_isa_file(&path) {
         Ok(c) => c,
         Err(e) => {
             return syn::Error::new(proc_macro2::Span::call_site(), e)
@@ -40,13 +40,15 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
             .replace('-', "_"),
         proc_macro2::Span::call_site(),
     );
-    let a: TokenStream = compile_source_v12(&content, &mod_name)
+    let a: TokenStream = compile_source_v12(&content, &mod_name, &resolved)
         .inspect(|ts| dump_generated(&path, ts))
         .map(Into::into)
         .unwrap_or_else(|e| {
+            // `路径:行:列: 消息`——终端与 IDE 均可点击跳到 TOML 出错处。
+            // proc 宏无法给出 TOML 内的 Span，故位置走消息前缀而非 rustc 诊断。
             syn::Error::new(
                 proc_macro2::Span::call_site(),
-                format!("ISA-DSL error in '{path}':\n{e}"),
+                format!("ISA-DSL error\n{}:{e}", resolved.display()),
             )
             .to_compile_error()
             .into()
@@ -55,33 +57,56 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
 }
 
 /// v12 编译入口：严格解析 + 校验 → v12 生成器 → `pub mod <name>`（name = 文件 stem）。
+///
+/// 生成模块首行嵌入 `include_bytes!(<TOML 绝对路径>)`：rustc 据此把 ISA 谱登记为
+/// 本 crate 的编译依赖，改 TOML 自动触发重编译。**这是"改谱后必须手动 touch
+/// arch/<isa>.rs"这条历史 workaround 的根治**——proc 宏自身无法声明依赖，
+/// `include_bytes!` 是 stable 上唯一的表达方式（`proc_macro::tracked_path`
+/// 至今 unstable）。常量匿名（`const _`）故不与生成模块任何名字冲突。
 fn compile_source_v12(
     source: &str,
     mod_name: &syn::Ident,
+    isa_path: &std::path::Path,
 ) -> Result<proc_macro2::TokenStream, String> {
     let model = v12::parse_and_validate(source).map_err(|e| e.to_string())?;
-    let inner = v12::codegen::generate(&model)?;
-    Ok(quote::quote! { pub mod #mod_name { #inner } })
+    let inner = v12::codegen::generate(&model).map_err(|e| v12::anchor_msg(source, &e))?;
+    let dep = isa_path.to_string_lossy().replace('\\', "/");
+    Ok(quote::quote! {
+        pub mod #mod_name {
+            const _: &[u8] = include_bytes!(#dep);
+            #inner
+        }
+    })
 }
 
 /// 读取 ISA 文件：相对当前目录 → CARGO_MANIFEST_DIR → workspace 根（上 3 级）。
-fn read_isa_file(path: &str) -> Result<String, String> {
-    std::fs::read_to_string(path)
-        .or_else(|_| {
-            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-            std::fs::read_to_string(std::path::PathBuf::from(&manifest_dir).join(path))
-        })
-        .or_else(|_| {
-            // 向上查找：workspace 布局下 crate 位于 crates/<layer>/<crate>/
-            //（如 crates/backend/forge-codegen → 上 3 级到 <root>/isa/...）。
-            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-            std::fs::read_to_string(
-                std::path::PathBuf::from(&manifest_dir)
-                    .join("../../..")
-                    .join(path),
-            )
-        })
-        .map_err(|e| format!("Cannot read ISA file '{path}': {e}"))
+/// 返回 (内容, **绝对**路径)——绝对路径供 `include_bytes!` 依赖跟踪与错误前缀用。
+fn read_isa_file(path: &str) -> Result<(String, std::path::PathBuf), String> {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let candidates = [
+        std::path::PathBuf::from(path),
+        std::path::PathBuf::from(&manifest_dir).join(path),
+        // workspace 布局下 crate 位于 crates/<layer>/<crate>/
+        //（如 crates/backend/forge-codegen → 上 3 级到 <root>/isa/...）。
+        std::path::PathBuf::from(&manifest_dir).join("../../..").join(path),
+    ];
+    let mut last = String::new();
+    for cand in candidates {
+        match std::fs::read_to_string(&cand) {
+            Ok(s) => {
+                let abs = std::fs::canonicalize(&cand)
+                    .map(|p| {
+                        // Windows 的 canonicalize 返回 \\?\ 前缀，include_bytes! 不接受
+                        let s = p.to_string_lossy().to_string();
+                        std::path::PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s).to_string())
+                    })
+                    .unwrap_or(cand);
+                return Ok((s, abs));
+            }
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(format!("Cannot read ISA file '{path}': {last}"))
 }
 
 /// 调试：FGE_DEBUG_GEN 时按文件 stem 导出生成代码。

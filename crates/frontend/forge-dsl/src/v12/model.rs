@@ -290,13 +290,6 @@ pub struct Conventions {
     /// ModRM 结构约定（x86 家族）。
     #[serde(default)]
     pub modrm: Option<ModrmConvention>,
-    /// REX 前缀约定（x86-64）。
-    #[serde(default)]
-    pub rex: Option<RexConvention>,
-    /// 操作数宽度 → 强制前缀字节（x86：16 → 0x66）。
-    /// 键为数字字符串（TOML 裸整数键），校验时解析为 u32。
-    #[serde(default)]
-    pub opsize_prefix: Option<BTreeMap<String, u64>>,
     /// 条件码表（name → 编码值）。cond 槽必须引用本表；缺省 = x86 16 项
     /// （o/no/b/ae/e/ne/be/a/s/ns/p/np/l/ge/le/g ↔ 0..15）。
     #[serde(default)]
@@ -366,15 +359,6 @@ pub struct ModrmConvention {
     pub force_disp_base: Vec<u8>,
 }
 
-/// REX 前缀约定。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RexConvention {
-    /// 触发 REX.W=1 的操作数宽度（位；x86 = 64）。
-    #[serde(default)]
-    pub w_opsize: Option<u32>,
-}
-
 // ──────────────────── [[operand_slots]] ────────────────────
 
 /// 操作数槽：指令操作数的抽象类别。
@@ -390,9 +374,6 @@ pub struct OperandSlot {
     /// 两者皆无 = 任意寄存器类（不推荐，会吞掉更具体的重载形式）。
     #[serde(default)]
     pub classes: Option<Vec<RegClass>>,
-    /// reg：编码宽度（位）。
-    #[serde(default)]
-    pub field_width: Option<u32>,
     /// reg：8 位寄存器操作数（spl/bpl/sil/dil 无 REX 时编码为 ah/ch/dh/bh，
     /// 索引 4-7 必须强制 REX 前缀）。
     #[serde(default)]
@@ -412,9 +393,6 @@ pub struct OperandSlot {
     /// imm：最大值约束（缺省 = 按 width/signed 推导）。
     #[serde(default)]
     pub max: Option<i64>,
-    /// imm：允许的枚举值集合。
-    #[serde(default)]
-    pub values: Option<Vec<i64>>,
     /// 该槽可承担的角色；缺省 ["in"]。"inout" = 读改写（in 且 out）。
     #[serde(default)]
     pub roles: Option<Vec<OperandRole>>,
@@ -495,9 +473,6 @@ pub enum OperandRole {
 #[serde(deny_unknown_fields)]
 pub struct Form {
     pub name: String,
-    /// ModRM 结构之前的 opcode 字节数。
-    #[serde(default)]
-    pub opcode_bytes: Option<u8>,
     /// ModRM 结构键（迭代 3：`"rr"` reg=op0+rm=op1、`"ext"` reg=fields.ext
     /// +rm=op0；迭代 3b+：`"rm_mem"` 等内存形式）。
     #[serde(default)]
@@ -526,11 +501,9 @@ pub struct Form {
     /// 该值并在 encode 期校验操作数寄存器宽度匹配（严格类型检测）。
     #[serde(default)]
     pub opsize: Option<Opsize>,
-    /// 变长：REX.W 位来源。`"auto"` → opsize==64；`"field"` → fields.w；
-    /// `"always"` → 恒发 REX.W（+r 形式的 mov_imm64/bswap）。
-    /// 缺省恒 0（REX.W 仅在 reg/rm≥8 时随 REX 出现）。
+    /// 变长：REX.W 位来源（枚举——未知值由 serde 报错并列出候选）。
     #[serde(default)]
-    pub rex_w: Option<String>,
+    pub rex_w: Option<RexW>,
     /// 变长：opcode 含寄存器低 3 位（`+r` 形式：50+r/push、58+r/pop、
     /// B8+r/mov_imm64、C8+r/bswap）。opcode 字节 = 基值 | (op0 & 7)；
     /// REX.B = op0>>3；无 ModRM。
@@ -549,9 +522,21 @@ pub struct Form {
     /// 操作数少于该列表时，多余位域取 `fields` 固定值或隐式 0。
     #[serde(default)]
     pub operand_fields: Option<Vec<String>>,
-    /// 该形式接受的操作数槽（编码顺序）。
-    #[serde(default)]
-    pub operand_slots: Option<Vec<String>>,
+}
+
+/// REX.W 位来源（x86-64）。
+///
+/// v14 前是自由字符串 + 手写 validate 分支；改枚举后未知值由 serde 直接报
+/// "unknown variant" 并列出候选，且带 TOML 行号。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RexW {
+    /// opsize == 64 位时置 1（多数算术/传送）。
+    Auto,
+    /// 取指令 `fields.w`（SSE/VEX 系：W 位是 opcode 的一部分）。
+    Field,
+    /// 恒置 1（`+r` 形式的 mov_imm64 / bswap）。
+    Always,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -707,13 +692,13 @@ pub struct Instruction {
     /// 比较族用 `"max"`（见 [`Opsize::Max`]）。
     #[serde(default)]
     pub opsize: Option<Opsize>,
-    /// 指令级 rex_w 覆盖（form 的 rex_w 优先级低）："auto" → opsize==64。
+    /// 指令级 rex_w 覆盖（form 的 rex_w 优先级低）。
     #[serde(default)]
-    pub rex_w: Option<String>,
-    /// 效果标签（Pure/Read/Write/Branch/Jump/Call/Ret；缺省 Pure）。
-    /// 驱动 MachineInst::effects/is_branch/is_call/is_ret（TargetMachine 集成）。
+    pub rex_w: Option<RexW>,
+    /// 效果标签（缺省空 = 无声明）。驱动 `MachineInst::effects` /
+    /// `is_branch` / `is_call` / `is_ret` / `is_move`（TargetMachine 集成）。
     #[serde(default)]
-    pub effect: Vec<String>,
+    pub effect: Vec<Effect>,
     /// 语义标签（开放集合，TOML 显式声明）——生成器按标签做语义派发，
     /// **不做按指令名的存在性/前缀探测**（第三轮重构原则）。消费方：
     /// - `wide_vec_store_32`/`wide_vec_store_64`：宽向量 by-ref 调用方栈
@@ -731,14 +716,48 @@ pub struct Instruction {
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
     #[serde(default)]
     pub implicit_regs: Option<Vec<String>>,
-    /// 全局地址重定位语义（GlobalAddr lowering 专用指令）：
-    /// - `"abs8"`：imm 槽 < 0 编码 GlobalId → ABS8 "G{id}"（x86 MOVABS_GLOBAL）
-    /// - `"pcrel_hi"`/`"pcrel_lo"`：PC-relative hi20/lo12 对（riscv
-    ///   AUIPC_GLOBAL/ADDI_GLOBAL；patcher 按 opcode 分写位段）
-    ///
-    /// 生成器按此字段生成 encoder reloc arm——替代按指令名特判。
+    /// 全局地址重定位语义（GlobalAddr lowering 专用指令）——生成器按此字段
+    /// 生成 encoder reloc arm，替代按指令名特判。
     #[serde(default)]
-    pub global_reloc: Option<String>,
+    pub global_reloc: Option<GlobalReloc>,
+}
+
+/// 指令效果标签。
+///
+/// v14 前是自由字符串，生成器 `match e.as_str()` 的兜底分支把打错的标签静默
+/// 变成 `EffectKind::Custom(0)`（既不报错也不生效）。改枚举后未知标签由 serde
+/// 直接拒绝并列出候选。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Effect {
+    /// 无副作用纯运算。
+    Pure,
+    /// 读内存。
+    Read,
+    /// 写内存。
+    Write,
+    /// 条件分支（+ Label 槽 → branch_targets）。
+    Branch,
+    /// 无条件跳转（+ Label 槽 → branch_targets）。
+    Jump,
+    /// 调用。
+    Call,
+    /// 返回。
+    Ret,
+    /// 陷入（ud2/ebreak——`Trap` lowering 取无操作数的那条）。
+    Trap,
+    /// 纯寄存器移动（regalloc 的 coalesce 依据；效果语义等同 `Pure`）。
+    Move,
+}
+
+/// 全局地址重定位语义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlobalReloc {    /// imm 槽 < 0 时编码 GlobalId → ABS8 `"G{id}"`（x86 MOVABS_GLOBAL）。
+    Abs8,
+    /// PC-relative hi20（riscv AUIPC_GLOBAL；patcher 按 opcode 分写位段）。
+    PcrelHi,
+    /// PC-relative lo12（riscv ADDI_GLOBAL）。
+    PcrelLo,
 }
 
 /// 操作数使用：槽 + 角色 + （定宽）位域绑定。
@@ -901,13 +920,22 @@ pub struct Abi {
     /// X1=ra 返回地址被 prologue/call 占用、X3/X4=gp/tp）。缺省空。
     #[serde(default)]
     pub reserved: Vec<String>,
-    /// 参数槽位分配规则（语义显式声明）：
-    /// - `"by-class"`（缺省，riscv SysV）：int/float 各自独立推进
-    ///   （int 序列 RCX/RDX/… 与 float 序列 XMM0/… 分开计数）；
-    /// - `"by-position"`（Windows x64）：int/float 共享位置计数——
-    ///   参数 i 用 GPR{i}/XMM{i}（第 2 参数即使第 1 是整数也用 XMM1）。
+    /// 参数槽位分配规则（语义显式声明，见 [`ArgSlot`]）。
     #[serde(default)]
-    pub arg_slot: Option<String>,
+    pub arg_slot: Option<ArgSlot>,
+}
+
+/// 参数槽位分配规则。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArgSlot {
+    /// 缺省（riscv SysV）：int/float 各自独立推进——int 序列 RCX/RDX/… 与
+    /// float 序列 XMM0/… 分开计数。
+    #[default]
+    ByClass,
+    /// Windows x64：int/float 共享位置计数——参数 i 用 GPR{i}/XMM{i}
+    /// （第 2 参数即使第 1 个是整数也用 XMM1）。
+    ByPosition,
 }
 
 /// 帧布局配置（[abi.frame]）。
@@ -998,12 +1026,20 @@ pub struct ArgClass {
     pub class: ArgClassKind,
     #[serde(default)]
     pub regs: Vec<String>,
-    /// 传参策略："by-ref"（>limit 位向量按引用，YMM ABI）等。
+    /// 传参策略（见 [`ArgStrategy`]）。
     #[serde(default)]
-    pub strategy: Option<String>,
+    pub strategy: Option<ArgStrategy>,
     /// 策略适用的大小上限（位）。
     #[serde(default)]
     pub limit: Option<u32>,
+}
+
+/// 传参策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArgStrategy {
+    /// 超过 `limit` 位的值按引用传（调用方栈拷贝 + 传指针；YMM/ZMM ABI）。
+    ByRef,
 }
 
 // ───────────────────────── [emit] ─────────────────────────
