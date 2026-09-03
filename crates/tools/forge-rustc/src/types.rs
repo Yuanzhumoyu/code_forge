@@ -107,8 +107,9 @@ pub fn map_type<'tcx>(
     }
 }
 
-/// 是否为向量 ABI 类型（V64/V128/V256）——参与跨函数 ABI 时需主库
-/// 向量调用约定（B3 门控；ymm-abi-plan 就绪前编译期拒绝）。
+/// 是否为向量 ABI 类型（V64/V128/V256）——参与跨函数 ABI 时走 B3 分级
+/// 门控（lower/mod.rs）：>16B（V256）Indirect 内存 ABI 放行；≤16B
+/// （V64/V128）按值 XMM 全宽缺口（WA-37 D3）前编译期拒绝。
 pub fn is_vector_abi(t: TypeId) -> bool {
     matches!(t, TypeId::V64 | TypeId::V128 | TypeId::V256)
 }

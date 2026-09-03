@@ -119,8 +119,18 @@ pub(crate) fn abi_kind_of_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> AbiKind {
     match l.backend_repr {
         rustc_abi::BackendRepr::ScalarPair { .. } => AbiKind::Pair,
         rustc_abi::BackendRepr::SimdVector { .. } => {
-            // 向量（含 128 位 __m128 等）在 Windows x64 走 XMM 寄存器
-            AbiKind::Direct
+            // 向量（含 128 位 __m128 等）在 Windows x64 ≤16B 走 XMM 寄存器
+            //（Direct——V64/V128 按值有 XMM 全宽缺口，B3 门控保护中）；
+            // >16B（V256 32B）无 YMM 参数寄存器：rustc/LLVM Win64 与主库
+            // by-ref/sret 均按内存间接传递（WA-37 D1 实证：LLVM Win64 把
+            // 32B 向量归类 MEMORY → PassMode::Indirect）→ AbiKind::Indirect，
+            // forge-rustc 走通用聚合槽路径（arg 指针 + 收参 copy_agg /
+            // sret ret 缓冲），向量值全程以内存建模、绝不物化向量寄存器值。
+            if l.size().bytes() > 16 {
+                AbiKind::Indirect
+            } else {
+                AbiKind::Direct
+            }
         }
         _ => {
             // Scalar / Aggregate：16 字节边界判定内存传递。注意 16 字节

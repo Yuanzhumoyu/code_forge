@@ -547,7 +547,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // rustc 把 intrinsics::copy_nonoverlapping 在 monomorphize 后展开
             // 成 MIR 专用语句 `Intrinsic(NonDivergingIntrinsic::CopyNonOverlapping
             // { src, dst, count })`（wrapper 的 bb3）——此前未处理落入 `_ => {}`
-            // 忽略 → 复制不执行（buf[4] 恒 0）。内联逐 8 字节复制循环。
+            // 忽略 → 复制不执行（buf[4] 恒 0）。内联逐元素复制（每个元素按
+            // 元素大小 sz 展开 8 字节块；sz>8 时全宽——WA-37 D2，见下）。
             StatementKind::Intrinsic(
                 rustc_middle::mir::NonDivergingIntrinsic::CopyNonOverlapping(
                     rustc_middle::mir::CopyNonOverlapping { src, dst, count },
@@ -585,10 +586,27 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let szv = self.builder.iconst(sz, TypeId::I64);
                     self.builder.imul(bi, szv)
                 };
-                let saddr = self.builder.iadd(src_v, off);
-                let v = self.builder.load(saddr, TypeId::I64);
-                let daddr = self.builder.iadd(dst_v, off);
-                self.builder.store(v, daddr);
+                // WA-37 D2：逐元素复制必须是**全宽**——元素 >8B（如
+                // portable_simd Simd::load 的 [f32; 8] 32B 元素，count=1）
+                // 时旧实现每元素只搬 8 字节（末 24 字节不写 → 槽残留垃圾/
+                // 零 → lane2.. 读 0，V256 探针错值根因）。按元素 sz 展开
+                // 8 字节块（sz/8 块，sz 编译期已知 → 静态展开；与 copy_agg
+                // 的整值复制约定一致）。sz≤8 时退化为单块（语义与旧行为
+                // 相同：u8 元素在 i*1 处 8 字节重叠复制收敛 memcpy）。
+                // 当前块 = body_blk（create_block_with_params 已切回，
+                // 下文 iadd/load/store 均留在本块，块末尾 jump 回 loop）。
+                for chunk in (0..sz).step_by(8) {
+                    let chunk_off = if chunk == 0 {
+                        off
+                    } else {
+                        let co = self.builder.iconst(chunk, TypeId::I64);
+                        self.builder.iadd(off, co)
+                    };
+                    let saddr = self.builder.iadd(src_v, chunk_off);
+                    let v = self.builder.load(saddr, TypeId::I64);
+                    let daddr = self.builder.iadd(dst_v, chunk_off);
+                    self.builder.store(v, daddr);
+                }
                 let i2 = self.builder.iadd(bi, one);
                 self.builder.jump(loop_blk, &[i2]);
                 self.builder.switch_to_block(done);
