@@ -40,10 +40,10 @@ fn machine_inst_queries() {
     // reg_field 顺序 = 操作数序(Reg 位置序):op0 → 0, op1 → 1
     assert_eq!(inst.reg_field(0), 0);
     assert_eq!(inst.reg_field(1), 3);
-    // set_reg_field 回填(regalloc 模拟)
+    // set_reg_field 回填(regalloc 模拟)：class 携带分配宽度
     let mut m = inst.clone();
-    m.set_reg_field(0, 8);
-    m.set_reg_field(1, 9);
+    m.set_reg_field(0, 8, forge_ir::RegClass::GPR64);
+    m.set_reg_field(1, 9, forge_ir::RegClass::GPR64);
     match m {
         Inst::MovRRm { dest, src, .. } => {
             assert_eq!(dest.to_index(), 8);

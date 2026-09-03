@@ -1641,8 +1641,9 @@ mod tests {
         assert_eq!(x, 8, "fetch_and writes new value");
     }
 
-    /// WA-35 收尾：I32 域 cmpxchg 重试循环（fetch_and 形态）——CMPXCHG_MEM_R_32
-    /// 修复后应通过（此前 icmp 自比较/64 位越界写丢失——见 WA-35）。
+    /// WA-35 收尾（v14）：I32 域 cmpxchg 重试循环（fetch_and 形态）——DSL
+    /// 回填缺口修复后单条 CMPXCHG_MEM_R（数据槽 gprx）按 IR 类型 auto 分发
+    /// 32 位（此前固定 _32 变体；更早是 64 位越界写丢失——见 WA-35）。
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_cmpxchg_and_loop() {
@@ -1683,9 +1684,9 @@ mod tests {
         assert_eq!(buf[1], 0x55555555, "no 64-bit overrun into neighbor");
     }
 
-    /// WA-35 类型系统验证：单发 I32 cmpxchg，val 作 **i32 参数**（真 32 位
-    /// 值流、无 const 物化污染）——若 auto 宽度分发自洽则应通过（无 _32
-    /// 变体需求）；const 版失败说明问题在 const 物化宽度。
+    /// WA-35/v14 类型系统验证：单发 I32 cmpxchg，val 作 **i32 参数**（真 32 位
+    /// 值流）——DSL 回填缺口修复后 auto 分发自洽（无 _32 变体需求）；此前
+    /// const 版失败说明问题在值 XReg 宽度（回填恒 64 位视图）。
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_cmpxchg_i32_param() {

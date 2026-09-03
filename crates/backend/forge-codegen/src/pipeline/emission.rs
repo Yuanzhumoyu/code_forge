@@ -273,7 +273,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 与字段序号错位——用位置会把物理字段覆盖成 scratch（shift 崩溃）。
         for (i, &xreg) in inst_xregs.iter().enumerate() {
             if let Some(preg) = xreg_preg(xreg) {
-                inst.set_reg_field(inst_field_idx[i] as usize, preg.num);
+                // class 传 XReg.class（IR 值宽度）而非 PReg.class（池宽 GPR(8)）
+                // ——同 compiler.rs 主回填路径；spill scratch 按 xreg.class()
+                // 分配，多类槽（gprx）回填后 encode 宽度仍正确。
+                inst.set_reg_field(inst_field_idx[i] as usize, preg.num, xreg.class());
             }
         }
 

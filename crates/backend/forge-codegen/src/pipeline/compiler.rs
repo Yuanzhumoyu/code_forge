@@ -2080,7 +2080,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 if let Some(slot) = self.xreg_map.get(global_inst) {
                     for &(xreg, field_idx, _is_def) in slot.iter() {
                         if let Some(preg) = alloc_result.preg(xreg) {
-                            inst.set_reg_field(field_idx as usize, preg.num);
+                            // class 传 XReg.class（IR 值宽度：I32→GPR(4)）——
+                            // 不是 regalloc 的 PReg.class（x86 统一 GPR(8) 池）。
+                            // DSL set_reg_field 单类槽用槽 class（指令声明宽度）、
+                            // 多类槽（gprx）用此 class（auto 宽度分发——见 WA-35）。
+                            inst.set_reg_field(field_idx as usize, preg.num, xreg.class());
                         }
                     }
                 }

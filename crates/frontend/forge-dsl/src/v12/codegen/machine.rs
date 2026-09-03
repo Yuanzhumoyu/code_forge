@@ -267,8 +267,19 @@ pub(crate) fn gen_machine_inst(
             let srf_arms: Vec<_> = reg_field_entries
                 .iter()
                 .map(|(idx, fid, slot)| {
-                    let cls = super::reg_class_expr(slot);
-                    quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, #cls) }
+                    if slot.class.is_some() {
+                        // 单类槽：宽度由指令声明（槽 class）——regalloc 的 PReg
+                        // 恒为池宽（x86 统一 GPR(8) 64 位池编号），窄槽指令（如
+                        // [gpr32]）的宽度必须在回填时按槽强制，不能取 PReg。
+                        let cls = super::reg_class_expr(slot);
+                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, #cls) }
+                    } else {
+                        // 多类槽（gprx：class=None，classes 列表）：宽度由
+                        // regalloc 传入的 class 决定（携带 IR 值宽度——I32 →
+                        // GPR(4)/EAX 视图）。若无此传导，回填退化 64 位视图、
+                        // encode opsize 恒 64（auto 宽度分发失效——WA-35）。
+                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, class) }
+                    }
                 })
                 .collect();
             reg_field_arms.push(quote! {
@@ -376,7 +387,7 @@ pub(crate) fn gen_machine_inst(
             fn reg_field(&self, i: usize) -> u32 {
                 match self { #(#reg_field_arms,)* Inst::Raw(_) => 0 }
             }
-            fn set_reg_field(&mut self, i: usize, preg: u32) {
+            fn set_reg_field(&mut self, i: usize, preg: u32, class: forge_ir::RegClass) {
                 match self { #(#set_reg_field_arms,)* Inst::Raw(_) => {} }
             }
         }

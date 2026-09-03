@@ -958,24 +958,16 @@ name = "CMPXCHG_MEM_R"
 form = "MRR_MEM_0F"
 opcode = 0xB1
 fields = { prefix = 0xF0 }
-asm = "lockcmpxchg [{1:[gpr:in]}], {0:[gpr:in]}"
+# v14：数据槽 gprx 多类——DSL 回填携带 IR 值宽度（I32→EAX 视图无 REX.W、
+# I64→RAX 视图 REX.W），rm_mem 宽度自动分发（16/32/64 同 opcode 0F B1 +
+# 66/REX.W；8 位是独立 opcode 0F B0，另行声明）。取代固定 _32 变体
+# （CMPXCHG_MEM_R_32 已删——见 WA-35/DSL 回填缺口修复）。
+asm = "lockcmpxchg [{1:[gpr:in]}], {0:[gprx:in]}"
 effect = ["Write"]
 # cmpxchg 隐式读 RAX（期望值）并写 RAX（旧值）——regalloc 需知 RAX 在本
 # 指令点被破坏，否则会把期望值的 SSA 值留在 RAX 跨过本指令（后续 icmp
 # 读 RAX = 旧值 → 与自身比较恒真 → 循环提前退出、写不生效——fetch_and
 # 类 CMPXCHG 循环回归实证）。div/idiv 同款建模（见 WA-35）。
-implicit_regs = ["RAX"]
-
-[[instructions]]
-name = "CMPXCHG_MEM_R_32"
-form = "MRR_MEM_0F"
-opcode = 0xB1
-fields = { prefix = 0xF0 }
-# 固定 32 位变体（MOV_R_MEM_32/STORE_MEM_R_32/NEG_RM_32 同款惯例——rm_mem
-# 形式宽度编码恒取寄存器侧 64；数据宽度按 IR 类型的 auto 分发是 DSL 层
-# 修法（见 WA-35），落地前窄原子用固定 _32 变体）。
-asm = "lockcmpxchg32 [{1:[gpr:in]}], {0:[gpr32:in]}"
-effect = ["Write"]
 implicit_regs = ["RAX"]
 
 [[instructions]]
@@ -3674,17 +3666,8 @@ insts = [
 # ── Cmpxchg：RAX = 期望值（隐式累加器）→ LOCK CMPXCHG [ptr], new →
 #    RAX = 旧值（不相等时写回 RAX）。单结果（旧值）；成功标志未展开
 #    （IR 层 struct 展开走 extractvalue，x86 后端暂不支持）。
-#    32 位数据（rs2=cmp 宽度 32）走 CMPXCHG_MEM_R_32（gpr32 —— 无 REX.W；
-#    否则 64 位 cmpxchg 对 4 字节原子越界且比较错误——WA-35）。
-
-[[lowering]]
-op = "Cmpxchg"
-when = { eq = ["rs2_width", 32] }
-insts = [
-    "mov RAX, {1}",
-    "lockcmpxchg32 {2}, {0}",
-    "mov {out}, RAX",
-]
+#    v14：数据宽度由 IR 类型经 gprx 槽 auto 分发（I32→无 REX.W 32 位、
+#    I64→REX.W 64 位——WA-35 DSL 回填缺口修复后 rm_mem 不再恒 64）。
 
 [[lowering]]
 op = "Cmpxchg"
