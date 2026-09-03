@@ -95,6 +95,10 @@ impl CodegenBackend for CodegenLibBackend {
         // 每函数代码字节（subprogram DW_AT_high_pc——gdb 需函数结束地址才能
         // 建 function block，缺则变量 DIE 被丢（对照 gcc 实证））。
         let mut fn_sizes: std::collections::HashMap<String, u64> = Default::default();
+        // M2：每函数 .debug_frame CFI（符号, 代码字节, 行集——emission 对
+        // x86 prologue 扫描产物；与 fn_sizes 同键控、同迭代序收集；无 CFI
+        //（非 x86/形态不符）不进表 → dwarf.rs 只对这些符号产 FDE）。
+        let mut fn_cfi: Vec<(String, u64, FunctionCfi)> = Vec::new();
 
         for (item_i, item) in instances.iter().enumerate() {
             match item {
@@ -152,6 +156,15 @@ impl CodegenBackend for CodegenLibBackend {
                             let _ = object_writer.add_function(&sym_name, &compiled_func);
                             code_span += compiled_func.code.len() as u64;
                             fn_sizes.insert(sym_name.clone(), compiled_func.code.len() as u64);
+                            // M2：CFI（x86 prologue scan 产物）——与 fn_sizes
+                            // 同键控收集，dwarf 生成 .debug_frame FDE
+                            if let Some(cfi) = &compiled_func.cfi {
+                                fn_cfi.push((
+                                    sym_name.clone(),
+                                    compiled_func.code.len() as u64,
+                                    cfi.clone(),
+                                ));
+                            }
                             // B1：收集该函数的 per-statement 行号表（主库 emission
                             // 输出 (机器码偏移, 行)）——debuginfo 开启时 dwarf.rs
                             // 生成 .debug_line 的每语句条目。
@@ -304,6 +317,7 @@ impl CodegenBackend for CodegenLibBackend {
                 &fn_sizes,
                 func_ref_table.enum_types(),
                 debuginfo_full,
+                &fn_cfi,
             );
             // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——
             // object crate 对 COFF 调试段发射 ADDR64 reloc，链接器解析

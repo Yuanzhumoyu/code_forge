@@ -10,7 +10,8 @@
 //!   **两条同串条目**（gcc hack：file 号 1 在 0 基/1 基读者下都命中）；
 //!   line_strp 偏移 4 字节。每函数**一个 sequence**（gcc/clang 布局——
 //!   每行一个 sequence 会让行零跨度，gdb 丢弃零长度行）；函数级 +
-//!   per-statement 行（B1，逐行 set_address reloc + advance_line 累加）
+//!   per-statement 行（B1，逐行 set_address reloc + advance_line 累加；
+//!   末行 copy 后 advance_pc 到函数真实末地址——终端行不再零跨度）
 //! - `.debug_line_str`：路径字符串池（file 经 line_strp 偏移 0 引用）
 //! - `.debug_info`：单 CU（v5 头：unit_type/address_size；name=源文件
 //!   路径、low_pc/high_pc/stmt_list） + 每函数 `DW_TAG_subprogram`
@@ -18,6 +19,10 @@
 //!   变量/参数 DIE + base_type/pointer_type）
 //! - `.debug_aranges`：单 CU 地址范围（gdb 16 cooked index 的 pc→CU 映射）
 //! - `.debug_abbrev`：缩写表（字符串属性用 DW_FORM_string 内联，无 strp）
+//! - `.debug_frame`（M2）：x86_64 CFI——CIE + 每函数 FDE（forge-codegen
+//!   对 prologue 扫描所得 `FunctionCfi` 行；initial_location 占位 + reloc
+//!   到函数符号）。gdb 16.2 amd64-windows 无 SEH(.pdata) 时落 dwarf2-frame
+//!   解 .debug_frame 建栈帧——无 CFI 则 bt/info args 全空（实证）
 //!
 //! 地址属性（low_pc/set_address/aranges）用相对占位 + reloc，由
 //! codegen_crate 在对象写入时按函数符号解析（ADDR64 重定位）。
@@ -26,12 +31,26 @@
 //! CU 范围/aranges/stmt_list 缺失、subprogram 缺 high_pc（gdb 建不了
 //! function block → 变量 DIE 全丢）、每行一 sequence（零跨度）。
 
+use code_forge::backend::pipeline::cfi::{CfiOp, FunctionCfi};
+
 /// DWARF 行号程序操作码（DWARF v5）。
 const DW_LNS_COPY: u8 = 0x01;
+const DW_LNS_ADVANCE_PC: u8 = 0x02;
 const DW_LNS_ADVANCE_LINE: u8 = 0x03;
 const DW_LNS_SET_FILE: u8 = 0x04;
 const DW_LNE_END_SEQUENCE: u8 = 0x01;
 const DW_LNE_SET_ADDRESS: u8 = 0x02;
+
+/// DW_CFA 操作码（DWARF5 §6.4.2；字节形态对照 mingw gcc -gdwarf-5 的
+/// .debug_frame 实证：version=1、aug=""、code_align=1、data_align=-8(0x78)、
+/// RA 列 uleb、`0c 07 08`=def_cfa rsp 8、`0x80|reg + uleb`=offset 保存槽）。
+const DW_CFA_DEF_CFA: u8 = 0x0c;
+const DW_CFA_DEF_CFA_REGISTER: u8 = 0x0d;
+const DW_CFA_DEF_CFA_OFFSET: u8 = 0x0e;
+const DW_CFA_ADVANCE_LOC: u8 = 0x40; // 主操作码：0x40|delta（delta < 64）
+const DW_CFA_OFFSET: u8 = 0x80; // 主操作码：0x80|reg（reg < 64）+ uleb 操作数
+const DW_CFA_ADVANCE_LOC1: u8 = 0x02; // delta 为 uleb（≥64 时的长形式）
+const DW_CFA_NOP: u8 = 0x00;
 
 /// C2 debuginfo（-C debuginfo=2 full）：单个源变量的 DIE 输入
 ///（lower 从 rustc `body.var_debug_info` 采集）。
@@ -115,7 +134,14 @@ pub struct EnumTypeEntry {
 /// end_sequence 后行寄存器复位为 1，故每行 advance_line 目标 = L - 1。
 ///
 /// 返回 (段字节, reloc: (数据内偏移, 符号名))。
-pub fn gen_debug_line(fns: &[(String, u32, Vec<(u32, u32)>)]) -> (Vec<u8>, Vec<(usize, String)>) {
+/// `fn_sizes`：符号 → 函数代码字节——末行 copy 后 `DW_LNS_advance_pc` 推进
+/// 到函数真实末地址（gcc decodedline 末行 end = fn end 对照），否则末行
+/// 区间 [X, X) 零跨度被 gdb 丢弃（终端行 line 0 根因）。缺失符号（未知
+/// 大小）跳过 advance（保持旧行为，安全）。
+pub fn gen_debug_line(
+    fns: &[(String, u32, Vec<(u32, u32)>)],
+    fn_sizes: &std::collections::HashMap<String, u64>,
+) -> (Vec<u8>, Vec<(usize, String)>) {
     let mut buf: Vec<u8> = Vec::new();
     let unit_len_pos = 0usize;
     buf.extend_from_slice(&0u32.to_le_bytes()); // unit_length 占位
@@ -175,6 +201,16 @@ pub fn gen_debug_line(fns: &[(String, u32, Vec<(u32, u32)>)]) -> (Vec<u8>, Vec<(
                 first = false;
             }
             prev_line = ln;
+        }
+        // 终端行修复（M2）：末行 copy 后直接 end_sequence → 末行零跨度
+        // [X, X)，gdb 丢弃零长度行 → 最后一行行号丢失（line 0）。对照
+        // gcc：末行延伸到函数真实末地址 = fn 起点 + fn_sizes。发一条
+        // advance_pc 把地址寄存器推到 fn_end（delta=0/大小未知则省略）。
+        let fn_end = fn_sizes.get(sym).copied().unwrap_or(0);
+        let last_addr = stmts.last().map(|(o, _)| *o as u64).unwrap_or(0);
+        if fn_end > last_addr {
+            buf.push(DW_LNS_ADVANCE_PC);
+            encode_uleb128(&mut buf, fn_end - last_addr);
         }
         // end_sequence（sequence 终止；行寄存器复位 1）
         buf.push(0); // extended
@@ -636,12 +672,155 @@ pub fn gen_debug_aranges(
     (buf, relocs)
 }
 
+// ============================================================
+// .debug_frame（M2：x86_64 CFI）
+// ============================================================
+
+/// 生成 `.debug_frame` 段（M2：DWARF CFI——gdb 16.2 amd64-windows 无
+/// SEH(.pdata) 时落 dwarf2-frame 解码本段建栈帧；无 CFI 则 bt / info args
+/// / info locals 全空，实证根因）。
+///
+/// 布局对照 mingw gcc -gdwarf-5（objdump --dwarf=frames 净解析，字节实证）：
+/// - **CIE**：version=1（.debug_frame 用 v1，不随 DWARF5 主版本）、
+///   augmentation=""（无 personality/LSDA）、code_align=1、data_align=-8、
+///   RA 列 = **16**（DWARF x86-64 约定；gcc mingw 用 32——PE 异常语义列号，
+///   gdb 经 CFA-8 读返回地址不依赖列号）；初始规则 = def_cfa rsp 8 +
+///   offset RA 列 @ CFA-8
+/// - **每函数一条 FDE**：length 回填 / CIE_pointer = 0 / initial_location
+///   占位 0 + ADDR64 reloc → 函数符号（与 CU low_pc 同款路径）/ address_range
+///   = 函数代码字节 / 行流 = `FunctionCfi.rows`（forge-codegen emission 对
+///   x86 prologue 扫描所得）：advance_loc 到行偏移 + def_cfa_offset /
+///   def_cfa_register / offset（保存槽 = CFA 之下 cfa_bytes，操作数 =
+///   cfa_bytes/8，data_align=-8 语义）
+/// - CIE/FDE 指令流以 DW_CFA_nop 补齐到 **条目总长 % 8 == 0**（gcc 同款：
+///   CIE length=20 → 条目 24；FDE length=36 → 条目 40）
+///
+/// 无 CFI 的函数**不产 FDE**（`fns` 只含 scan 命中的函数——非 x86 后端 /
+/// 非常规 prologue 不进本表，注释文档化）。debuginfo 关闭时整段不生成
+///（backend.rs 门控）。
+///
+/// 返回 (字节, relocs: (数据内偏移, 符号名))。
+pub fn gen_debug_frame(fns: &[(String, u64, FunctionCfi)]) -> (Vec<u8>, Vec<(usize, String)>) {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut relocs: Vec<(usize, String)> = Vec::new();
+
+    // ── CIE（一个，全段共用）──
+    let cie_pos = buf.len(); // length 字段起点
+    buf.extend_from_slice(&0u32.to_le_bytes()); // length 占位（写完回填）
+    buf.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // CIE id（32 位格式全 1）
+    buf.push(1); // version = 1
+    buf.push(0); // augmentation = ""（空字符串，含 NUL）
+    buf.push(1); // code_alignment_factor (uleb) = 1
+    buf.push(0x78); // data_alignment_factor (sleb) = -8
+    buf.push(16); // return_address_column (uleb) = 16（DWARF x86-64；
+                  // gcc mingw = 32 是 PE 异常列号，gdb 解栈不依赖）
+    buf.push(DW_CFA_DEF_CFA); // def_cfa rsp(7), 8——入口：CFA = rsp + 8
+    buf.push(7); // reg = rsp（DWARF 列 7）
+    buf.push(8); // offset = 8
+    buf.push(DW_CFA_OFFSET | 16); // offset RA 列（16 < 64 → 主操作码）
+    buf.push(1); // 操作数 uleb = 8/8（data_align -8 → CFA-8）
+    pad_frame_entry(&mut buf, cie_pos);
+    backfill_frame_length(&mut buf, cie_pos);
+
+    // ── FDE × 每函数（行按 code_offset 升序，advance_loc 到行点）──
+    for (sym, size, cfi) in fns {
+        let entry_pos = buf.len(); // length 字段起点
+        buf.extend_from_slice(&0u32.to_le_bytes()); // length 占位
+        buf.extend_from_slice(&0u32.to_le_bytes()); // CIE_pointer = 0
+        // initial_location 占位 0 + reloc → 函数符号（ADDR64，链接器解析
+        // 为函数真实地址；占位字节即 addend——此处 0 = 函数起点）
+        let loc_pos = buf.len();
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        relocs.push((loc_pos, sym.clone()));
+        // address_range = 函数代码字节（fn_sizes，与 .debug_info high_pc 同源）
+        buf.extend_from_slice(&size.to_le_bytes());
+        let mut prev = 0u64;
+        for (off, ops) in &cfi.rows {
+            debug_assert!(
+                u64::from(*off) >= prev,
+                "CFI rows must be ascending (scan guarantees)"
+            );
+            push_advance_loc(&mut buf, u64::from(*off) - prev);
+            prev = u64::from(*off);
+            for op in ops {
+                push_cfi_op(&mut buf, op);
+            }
+        }
+        // 尾声不产行（v1）：规则持续到函数末——尾声 pop 只读保存槽内存
+        // （槽内容未毁），尾声 PC 解栈仍正确。gcc 额外发 restore/def_cfa
+        // 行覆盖 ret 前的最后 1-2 字节，本实现省略（见 cfi.rs 文档）。
+        pad_frame_entry(&mut buf, entry_pos);
+        backfill_frame_length(&mut buf, entry_pos);
+    }
+    (buf, relocs)
+}
+
+/// DW_CFA_advance_loc：推到 delta 之后（delta 以 code_align=1 计字节）。
+fn push_advance_loc(buf: &mut Vec<u8>, delta: u64) {
+    if delta == 0 {
+        return;
+    }
+    if delta < 64 {
+        buf.push(DW_CFA_ADVANCE_LOC | delta as u8);
+    } else {
+        buf.push(DW_CFA_ADVANCE_LOC1);
+        encode_uleb128(buf, delta);
+    }
+}
+
+/// 编码一条 CFI 规则（DWARF5 §6.4.2 操作码）。
+fn push_cfi_op(buf: &mut Vec<u8>, op: &CfiOp) {
+    match op {
+        CfiOp::DefCfaOffset(v) => {
+            buf.push(DW_CFA_DEF_CFA_OFFSET);
+            encode_uleb128(buf, u64::from(*v));
+        }
+        CfiOp::DefCfaRegister(r) => {
+            buf.push(DW_CFA_DEF_CFA_REGISTER);
+            encode_uleb128(buf, u64::from(*r));
+        }
+        CfiOp::SaveReg { dw_reg, cfa_bytes } => {
+            // 保存槽在 CFA 之下：DW_CFA_offset 位置 = CFA + 操作数×(-8) =
+            // CFA - cfa_bytes → 操作数 = cfa_bytes / 8（uleb）。
+            debug_assert!(cfa_bytes % 8 == 0, "save slots are 8-byte aligned");
+            if *dw_reg < 64 {
+                buf.push(DW_CFA_OFFSET | dw_reg);
+            } else {
+                // 寄存器列 ≥ 64 需长形式（0x05 offset_extended + uleb reg）——
+                // x86 GPR 保存列均 < 64，此分支仅防御性。
+                buf.push(0x05);
+                encode_uleb128(buf, u64::from(*dw_reg));
+            }
+            encode_uleb128(buf, u64::from(cfa_bytes / 8));
+        }
+    }
+}
+
+/// 把 length 字段（entry_pos 起的 4 字节）补齐使**条目总长 % 8 == 0**
+///（gcc .debug_frame 同款对齐：长度值 ≡ 4 mod 8）。pad 字节 = DW_CFA_nop。
+fn pad_frame_entry(buf: &mut Vec<u8>, entry_pos: usize) {
+    let total = buf.len() - entry_pos;
+    let pad = (8 - (total % 8)) % 8;
+    for _ in 0..pad {
+        buf.push(DW_CFA_NOP);
+    }
+}
+
+/// 回填 CIE/FDE 的 length 字段（= 从 entry_pos 起除 length 外全部字节）。
+fn backfill_frame_length(buf: &mut Vec<u8>, entry_pos: usize) {
+    let len = (buf.len() - entry_pos - 4) as u32;
+    buf[entry_pos..entry_pos + 4].copy_from_slice(&len.to_le_bytes());
+}
+
 /// 生成全部 DWARF 段。
 /// `src_file`：源文件路径（CU 名 + .debug_line file 条目——gdb `list`/
 /// 源码断点需要真实文件名，crate 名匹配不到磁盘文件）。
 /// `code_span`：CU 代码总字节（high_pc 偏移；+0x200 边距盖过函数间
 /// 对齐填充与 main 别名副本——单 CU 超范围无害）。
-/// `fn_sizes`：符号 → 函数代码字节（subprogram high_pc）。
+/// `fn_sizes`：符号 → 函数代码字节（subprogram high_pc；行程序终端行
+/// advance 目标）。
+/// `fn_cfi`：符号 → (代码字节, CFI 行)——.debug_frame 的 FDE 清单（只含
+/// forge-codegen scan 命中的函数；无 CFI 的符号不在此列，不产 FDE）。
 /// 返回 (段名, 字节, 段内 reloc: (偏移, 符号名)) 列表。
 #[allow(clippy::too_many_arguments)]
 pub fn build_dwarf_sections(
@@ -653,11 +832,13 @@ pub fn build_dwarf_sections(
     fn_sizes: &std::collections::HashMap<String, u64>,
     enums: &[EnumTypeEntry],
     full: bool,
+    fn_cfi: &[(String, u64, FunctionCfi)],
 ) -> Vec<(String, Vec<u8>, Vec<(usize, String)>)> {
     let entries: Vec<(String, u32)> = fns.iter().map(|(s, l, _)| (s.clone(), *l)).collect();
     let span = code_span + 0x200;
     let first_sym = entries.first().map(|(s, _)| s.as_str());
-    let (line_bytes, line_relocs) = gen_debug_line(fns);
+    let (line_bytes, line_relocs) = gen_debug_line(fns, fn_sizes);
+    let (frame_bytes, frame_relocs) = gen_debug_frame(fn_cfi);
     let (info_bytes, info_relocs) = gen_debug_info(
         &entries, vars, producer, src_file, span, fn_sizes, enums, full,
     );
@@ -672,6 +853,7 @@ pub fn build_dwarf_sections(
         (".debug_info".to_string(), info_bytes, info_relocs),
         (".debug_aranges".to_string(), ar_bytes, ar_relocs),
         (".debug_abbrev".to_string(), gen_debug_abbrev(), vec![]),
+        (".debug_frame".to_string(), frame_bytes, frame_relocs),
     ]
 }
 
@@ -683,6 +865,18 @@ fn encode_sleb128(buf: &mut Vec<u8>, mut v: i64) {
         let done = (v == 0 && byte & 0x40 == 0) || (v == -1 && byte & 0x40 != 0);
         buf.push(byte | if done { 0 } else { 0x80 });
         if done {
+            break;
+        }
+    }
+}
+
+/// 编码 ULEB128（DW_CFA 操作数 / advance_pc delta 用）。
+fn encode_uleb128(buf: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        buf.push(byte | if v == 0 { 0 } else { 0x80 });
+        if v == 0 {
             break;
         }
     }
@@ -702,7 +896,11 @@ mod tests {
                 vec![(4u32, 21u32), (12u32, 22u32)],
             ),
         ];
-        let (bytes, relocs) = gen_debug_line(&fns);
+        // fn_sizes（终端行 advance 目标）：main 30B / helper 40B
+        let mut sizes = std::collections::HashMap::new();
+        sizes.insert("main".to_string(), 30u64);
+        sizes.insert("helper".to_string(), 40u64);
+        let (bytes, relocs) = gen_debug_line(&fns, &sizes);
         assert!(bytes.len() > 24, "line program too small");
         // 函数级 2 + helper 的 2 个 per-statement = 4 个 reloc
         assert_eq!(relocs.len(), 4, "reloc per line entry");
@@ -723,7 +921,9 @@ mod tests {
         // B1：per-statement 行号的 set_address 占位应写指令偏移（COFF
         // addend 隐式）——helper 的第 2 个条目占位 = 12。
         let fns = vec![("helper".to_string(), 20u32, vec![(12u32, 22u32)])];
-        let (bytes, relocs) = gen_debug_line(&fns);
+        let mut sizes = std::collections::HashMap::new();
+        sizes.insert("helper".to_string(), 40u64);
+        let (bytes, relocs) = gen_debug_line(&fns, &sizes);
         assert_eq!(relocs.len(), 2);
         // 第 2 个 reloc 的占位（relocs[1].0 处 8 字节）= 12
         let off = relocs[1].0;
@@ -1117,7 +1317,12 @@ mod tests {
             ),
             ("helper".to_string(), 20u32, vec![]),
         ];
-        let (bytes, relocs) = gen_debug_line(&fns);
+        // fn_sizes：终端行 advance 目标（main 末行 @12 → 推进 8 到 20；
+        // helper 仅 decl 行 @0 → 推进 24 到 24）
+        let mut sizes = std::collections::HashMap::new();
+        sizes.insert("main".to_string(), 20u64);
+        sizes.insert("helper".to_string(), 24u64);
+        let (bytes, relocs) = gen_debug_line(&fns, &sizes);
         // 头部 reloc 数 = 4 条目（main + 2 stmt + helper）
         assert_eq!(relocs.len(), 4);
 
@@ -1200,8 +1405,10 @@ mod tests {
         p += 4;
         assert_eq!(p, header_end, "header ends exactly at header_length");
 
-        // 行程序：每函数一个 sequence（decl 行 + stmt 行 + end_sequence）——
-        // 行寄存器 sequence 起点 = 1，同 sequence 内累加（delta 相对上一行）。
+        // 行程序：每函数一个 sequence（decl 行 + stmt 行 + 终端 advance +
+        // end_sequence）——行寄存器 sequence 起点 = 1，同 sequence 内累加
+        //（delta 相对上一行）。终端行（M2）：末行 copy 后 advance_pc 到
+        // fn_sizes（末行不再零跨度——否则 gdb 丢零长度行，行号丢失）。
         let mut ops: Vec<i64> = Vec::new(); // 每行 advance_line 操作数
         let mut addrs_found: Vec<u64> = Vec::new();
         let mut want_rows: Vec<(u32, i64)> = Vec::new(); // (addr, 目标行)
@@ -1236,6 +1443,18 @@ mod tests {
                 ops.push(decode_sleb(&bytes[s0..p]));
                 assert_eq!(bytes[p], 1, "DW_LNS_copy");
                 p += 1;
+            }
+            // 终端行 advance_pc：末行 copy 后推进到 fn_sizes[sym]
+            let want_advance = sizes.get(_sym.as_str()).copied().unwrap_or(0)
+                - fn_rows.last().unwrap().0 as u64;
+            if want_advance > 0 {
+                assert_eq!(bytes[p], 2, "DW_LNS_advance_pc");
+                p += 1;
+                assert_eq!(
+                    rd_uleb(&mut p),
+                    want_advance,
+                    "terminal advance to fn end ({_sym})"
+                );
             }
             // end_sequence
             assert_eq!(bytes[p], 0, "extended");
@@ -1436,5 +1655,193 @@ mod tests {
         assert_eq!(bytes[p], 0, "CU children terminator");
         p += 1;
         assert_eq!(p, bytes.len(), "exact end");
+    }
+
+    #[test]
+    fn frames_structurally_decodes() {
+        // .debug_frame（M2）：用 forge-codegen scan 的 prologue 产物驱动
+        // gen_debug_frame，结构解码整个段：CIE 头 + 每函数 FDE（reloc /
+        // address_range / 行流状态机）——指令流必须能精确消费到条目边界且
+        // 条目总长 8 对齐（gcc 同款）。解码器状态终点 = CFA=rbp+16 + 全部
+        // callee-saved 保存槽（对照 scan 行集的语义结果）。
+        let prefix: [u8; 15] = [
+            0x55, 0x48, 0x89, 0xE5, 0x53, 0x57, 0x56, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41,
+            0x57,
+        ];
+        let cfi_a = code_forge::backend::scan_x86_prologue(&prefix).expect("prologue rows");
+        let mut code_b = prefix.to_vec();
+        code_b.extend_from_slice(&[0x48, 0x81, 0xEC, 0x20, 0, 0, 0]); // sub rsp, 32
+        code_b.extend_from_slice(&[0xC3]); // ret
+        let cfi_b = code_forge::backend::scan_x86_prologue(&code_b).expect("rows w/ body");
+        assert_eq!(cfi_a, cfi_b, "scan stops right after the 7 pushes");
+        let fns: Vec<(String, u64, FunctionCfi)> = vec![
+            ("f_alpha".to_string(), 40u64, cfi_a),
+            ("f_beta".to_string(), 16u64, cfi_b),
+        ];
+        let (bytes, relocs) = gen_debug_frame(&fns);
+        assert_eq!(relocs.len(), 2, "one FDE reloc per fn");
+        assert_eq!(relocs[0].1, "f_alpha");
+        assert_eq!(relocs[1].1, "f_beta");
+
+        let mut p = 0usize;
+        let rd_u32 = |p: &mut usize| {
+            let v = u32::from_le_bytes(bytes[*p..*p + 4].try_into().unwrap());
+            *p += 4;
+            v
+        };
+        let rd_uleb = |p: &mut usize| {
+            let mut v = 0u64;
+            let mut sh = 0;
+            loop {
+                let b = bytes[*p];
+                *p += 1;
+                v |= ((b & 0x7f) as u64) << sh;
+                if b & 0x80 == 0 {
+                    break;
+                }
+                sh += 7;
+            }
+            v
+        };
+
+        // ── CIE ──
+        let cie_len = rd_u32(&mut p);
+        let cie_end = p + cie_len as usize;
+        assert_eq!(&bytes[p..p + 4], &[0xFF, 0xFF, 0xFF, 0xFF], "CIE id");
+        p += 4;
+        assert_eq!(bytes[p], 1, "version 1（gcc .debug_frame 同款）");
+        p += 1;
+        assert_eq!(bytes[p], 0, "augmentation empty");
+        p += 1;
+        assert_eq!(bytes[p], 1, "code_align = 1");
+        p += 1;
+        assert_eq!(bytes[p], 0x78, "data_align = -8（sleb）");
+        p += 1;
+        assert_eq!(rd_uleb(&mut p), 16, "RA column 16（DWARF x86-64；gcc=32）");
+        // 初始规则：def_cfa rsp 8 + offset RA 列（0x90）@ CFA-8（操作数 1）
+        assert_eq!(bytes[p], 0x0c, "DW_CFA_def_cfa");
+        p += 1;
+        assert_eq!(rd_uleb(&mut p), 7, "cfa reg rsp");
+        assert_eq!(rd_uleb(&mut p), 8, "cfa offset 8");
+        assert_eq!(bytes[p], 0x90, "DW_CFA_offset r16（0x80|16）");
+        p += 1;
+        assert_eq!(rd_uleb(&mut p), 1, "RA @ CFA-8");
+        // 对齐 pad（NOP）到条目总长 % 8 == 0
+        while p < cie_end {
+            assert_eq!(bytes[p], DW_CFA_NOP, "CIE pad nop");
+            p += 1;
+        }
+        assert_eq!(cie_end % 8, 0, "CIE entry 8-aligned（gcc 同款）");
+        assert_eq!(cie_len as usize, cie_end - 4, "length covers entry");
+
+        // ── FDE（每函数：length / cie_ptr / loc占位+reloc / range / 行流）──
+        // 解码器状态：继承 CIE 初始（cfa_reg=rsp, off=8），FDE 行流增量更新。
+        let mut cfa_reg = 7u8;
+        let mut cfa_off = 8u64;
+        let mut saves: std::collections::HashMap<u8, u64> = Default::default(); // reg → factor
+        for (i, (sym, want_size, _)) in fns.iter().enumerate() {
+            let fde_start = p;
+            let fde_len = rd_u32(&mut p);
+            let fde_end = p + fde_len as usize;
+            assert_eq!(rd_u32(&mut p), 0, "CIE_pointer = 0（首个 CIE）");
+            assert_eq!(
+                p,
+                relocs[i].0,
+                "initial_location placeholder 与 reloc 位置一致 ({sym})"
+            );
+            assert_eq!(&bytes[p..p + 8], &[0u8; 8], "initial_location 占位 0");
+            p += 8;
+            let range = u64::from_le_bytes(bytes[p..p + 8].try_into().unwrap());
+            p += 8;
+            assert_eq!(range, *want_size, "address_range = fn size ({sym})");
+            // 行流解码：advance_loc（主/长形式）+ def_cfa_offset（0x0e）/
+            // def_cfa_register（0x0d）/ offset（0x80|reg）——状态机直到条目尾
+            let mut loc = 0u64;
+            while p < fde_end {
+                let op = bytes[p];
+                p += 1;
+                match op {
+                    0x40..=0x7f => loc += u64::from(op & 0x3f),
+                    0x02 => loc += rd_uleb(&mut p), // advance_loc1
+                    0x0e => cfa_off = rd_uleb(&mut p),
+                    0x0d => cfa_reg = rd_uleb(&mut p) as u8,
+                    0x80..=0xbf => {
+                        let reg = op & 0x3f;
+                        saves.insert(reg, rd_uleb(&mut p));
+                    }
+                    0x05 => {
+                        // offset_extended（防御分支，scan 不会产）
+                        let reg = rd_uleb(&mut p) as u8;
+                        saves.insert(reg, rd_uleb(&mut p));
+                    }
+                    0x00 => break, // pad nop（对齐补丁，行流结束）
+                    other => panic!("unexpected CFA opcode {other:#x} at {p}"),
+                }
+            }
+            assert_eq!(loc, 15, "行流推进到 prologue 末（15）({sym})");
+            while p < fde_end {
+                assert_eq!(bytes[p], DW_CFA_NOP, "FDE pad nop");
+                p += 1;
+            }
+            assert_eq!(p, fde_end, "FDE 行流精确消费到条目边界");
+            assert_eq!((fde_end - fde_start) % 8, 0, "FDE entry 8-aligned");
+        }
+        assert_eq!(p, bytes.len(), "整个 .debug_frame 精确消费");
+        // 解码终态 = scan 行集的语义结果：CFA=rbp(6)+16；7 callee-saved +
+        // rbp 全部有保存槽（factor × data_align -8 = 槽位）
+        assert_eq!(cfa_reg, 6, "CFA = rbp");
+        assert_eq!(cfa_off, 16, "CFA = rbp + 16（8 返回 + 8 保存 rbp）");
+        let want_saves: std::collections::HashMap<u8, u64> = [
+            (6u8, 2u64), // rbp @ -16
+            (3, 3),      // rbx @ -24
+            (5, 4),      // rdi @ -32
+            (4, 5),      // rsi @ -40
+            (12, 6),     // r12 @ -48
+            (13, 7),     // r13 @ -56
+            (14, 8),     // r14 @ -64
+            (15, 9),     // r15 @ -72
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(saves, want_saves, "全部 callee-saved 保存槽到位");
+    }
+
+    #[test]
+    fn line_end_advance_to_fn_end() {
+        // 终端行（M2）：末行 copy 后、end_sequence 前必须 advance_pc 到
+        // fn_sizes（末行不再零跨度——gdb 丢零长度行 → 最后一行行号丢失）。
+        // 1) 单函数 decl@0 + stmt@4，size=20 → 末行(4)推进 16 → 20
+        let fns = vec![("f".to_string(), 10u32, vec![(4u32, 11u32)])];
+        let mut sizes = std::collections::HashMap::new();
+        sizes.insert("f".to_string(), 20u64);
+        let (bytes, _) = gen_debug_line(&fns, &sizes);
+        // 程序尾：advance_pc(2) uleb16(0x10) + end_sequence(0 1 1)
+        assert_eq!(
+            &bytes[bytes.len() - 5..],
+            &[DW_LNS_ADVANCE_PC, 0x10, 0, 1, DW_LNE_END_SEQUENCE],
+            "decl+1 stmt 的序列以 advance_pc 16 收尾"
+        );
+        // 2) 无 per-statement（仅 decl@0），size=20 → 推进 20（decl 行覆盖全函数）
+        let fns = vec![("f".to_string(), 10u32, vec![])];
+        let (bytes, _) = gen_debug_line(&fns, &sizes);
+        assert_eq!(
+            &bytes[bytes.len() - 5..],
+            &[DW_LNS_ADVANCE_PC, 0x14, 0, 1, DW_LNE_END_SEQUENCE],
+            "decl-only 序列以 advance_pc 20 收尾（decl 行覆盖全函数）"
+        );
+        // 3) fn_sizes 缺失（未知大小）→ 无 advance（保持旧行为，安全）
+        let fns = vec![("g".to_string(), 10u32, vec![(4u32, 11u32)])];
+        let (bytes, _) = gen_debug_line(&fns, &Default::default());
+        assert_eq!(
+            &bytes[bytes.len() - 3..],
+            &[0, 1, DW_LNE_END_SEQUENCE],
+            "大小未知：直接 end_sequence（无 advance）"
+        );
+        // 4) advance_pc 不发 reloc（行表 reloc 数 = 行数，不含终端 advance）
+        let (_, relocs) = gen_debug_line(&fns, &Default::default());
+        let fns = vec![("f".to_string(), 10u32, vec![(4u32, 11u32), (12u32, 12u32)])];
+        let (_, relocs2) = gen_debug_line(&fns, &sizes);
+        assert_eq!(relocs.len(), 2, "decl + stmt（无 reloc 变化）");
+        assert_eq!(relocs2.len(), 3, "advance_pc 不产 reloc");
     }
 }
