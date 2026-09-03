@@ -381,12 +381,16 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 inst.results.first().copied().map(|v| {
                     self.value_to_xreg.get(&v).copied().unwrap_or_else(|| {
                         let result_ty = dfg.value_type(v).unwrap_or(TypeId::VOID);
-                        // 与 args（上 355 行）/参数收参一致：按 IR 类型分派多宽度
-                        // 类（I32→GPR(4)、I8→GPR(1)……），不硬编码 GPR64——否则
-                        // 计算结果的 XReg 恒 64 位视图，gprx 多类槽回填后 encode
-                        // opsize 仍恒 64（auto 宽度分发失效——WA-35 DSL 缺口）。
-                        // vector/scalable 走 reg_class_for 的 type_ctx 位宽推导。
-                        let class = self.ctx.reg_class_for(&result_ty);
+                        // 值 XReg 保持池宽（int→GPR64、fp→FPR64）——spill/ABI/
+                        // ScalarPair 打包等下游按 64 位 GPR 值约定工作（按类型
+                        // 窄分配会破坏，e2e slice/vec 迭代回归实证）。宽度只在
+                        // set_reg_field 回填多类槽（gprx）时从 xreg_types 查
+                        // IR 类型推导（见 compiler.rs 回填处——WA-35 DSL 修复）。
+                        let class = if self.ctx.reg_class_for(&result_ty).is_fp() {
+                            RegClass::FPR64
+                        } else {
+                            RegClass::GPR64
+                        };
                         let xreg = self.ctx.alloc_xreg(class);
                         self.value_to_xreg.insert(v, xreg);
                         self.ctx.xreg_types.insert(xreg, result_ty);
