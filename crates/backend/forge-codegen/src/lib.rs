@@ -153,6 +153,7 @@ pub use pipeline::vcode::{VBlockId, VCode, VCodeBlock};
 // ============================================================
 // Machine re-exports (v19 — primary API)
 // ============================================================
+pub use machine::cfi::{CfiOp, FunctionCfi, scan_x86_prologue};
 pub use machine::encoder::EncodeError;
 pub use machine::encoder::TargetEncoder;
 pub use machine::inst::{EffectKind, MachineInst};
@@ -163,7 +164,6 @@ pub use machine::lowering::InstPacket;
 pub use machine::reloc_patcher::{RelocPatcher, RiscvRelocPatcher, X86RelocPatcher};
 pub use machine::simulator::SimulationState;
 pub use machine::target::{ErasedTargetMachine, TargetMachine};
-pub use machine::cfi::{CfiOp, FunctionCfi, scan_x86_prologue};
 pub use pipeline::alloc_config::RegAllocConfig;
 pub use pipeline::compiler::FunctionCompiler;
 pub use pipeline::regalloc_bt::BacktrackingAllocator;

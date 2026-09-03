@@ -1116,7 +1116,10 @@ mod tests {
         jit.compile_module(&module).expect("编译 main+callee");
         let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
         let got = f();
-        assert_eq!(got, 17, "V128 按值参数 lane3=4.5→4 与 13.5→13 两次往返（高半全宽）");
+        assert_eq!(
+            got, 17,
+            "V128 按值参数 lane3=4.5→4 与 13.5→13 两次往返（高半全宽）"
+        );
     }
 
     /// M1-D3：V128 按值返回——callee() -> v128（XMM0 全宽），main 提 lane3。
@@ -1858,7 +1861,12 @@ mod tests {
 
         // 对每个宽度 W 注册 f_w: fn(dst: *mut u8, val: i64)（写 W 字节）与
         // g_w: fn(src: *mut u8) -> i64（读 W 字节回）。
-        for (w, ty) in [(1u64, TypeId::I8), (2, TypeId::I16), (4, TypeId::I32), (8, TypeId::I64)] {
+        for (w, ty) in [
+            (1u64, TypeId::I8),
+            (2, TypeId::I16),
+            (4, TypeId::I32),
+            (8, TypeId::I64),
+        ] {
             let store_name = format!("sto_w{w}");
             let sig = FunctionSignature::new(&[(TypeId::I64, "dst"), (TypeId::I64, "val")], &[]);
             jit.add_function(&store_name, &sig, |b| {
@@ -1952,7 +1960,6 @@ mod tests {
         assert_eq!(buf[1], 0xAA, "no byte overrun into neighbor");
         assert_eq!(buf[2], 0xBB, "no overrun buf[2]");
     }
-
 
     /// v14 decode guard 对称修复守卫：encode(decode(x)) 往返——32 位形态
     /// （无 REX.W）与 64 位形态（REX.W）都能反解（固定 _32 变体删除后主

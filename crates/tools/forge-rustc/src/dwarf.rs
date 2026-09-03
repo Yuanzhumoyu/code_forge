@@ -713,7 +713,7 @@ pub fn gen_debug_frame(fns: &[(String, u64, FunctionCfi)]) -> (Vec<u8>, Vec<(usi
     buf.push(1); // code_alignment_factor (uleb) = 1
     buf.push(0x78); // data_alignment_factor (sleb) = -8
     buf.push(16); // return_address_column (uleb) = 16（DWARF x86-64；
-                  // gcc mingw = 32 是 PE 异常列号，gdb 解栈不依赖）
+    // gcc mingw = 32 是 PE 异常列号，gdb 解栈不依赖）
     buf.push(DW_CFA_DEF_CFA); // def_cfa rsp(7), 8——入口：CFA = rsp + 8
     buf.push(7); // reg = rsp（DWARF 列 7）
     buf.push(8); // offset = 8
@@ -807,7 +807,7 @@ fn pad_frame_entry(buf: &mut Vec<u8>, entry_pos: usize) {
 }
 
 /// 回填 CIE/FDE 的 length 字段（= 从 entry_pos 起除 length 外全部字节）。
-fn backfill_frame_length(buf: &mut Vec<u8>, entry_pos: usize) {
+fn backfill_frame_length(buf: &mut [u8], entry_pos: usize) {
     let len = (buf.len() - entry_pos - 4) as u32;
     buf[entry_pos..entry_pos + 4].copy_from_slice(&len.to_le_bytes());
 }
@@ -1445,8 +1445,8 @@ mod tests {
                 p += 1;
             }
             // 终端行 advance_pc：末行 copy 后推进到 fn_sizes[sym]
-            let want_advance = sizes.get(_sym.as_str()).copied().unwrap_or(0)
-                - fn_rows.last().unwrap().0 as u64;
+            let want_advance =
+                sizes.get(_sym.as_str()).copied().unwrap_or(0) - fn_rows.last().unwrap().0 as u64;
             if want_advance > 0 {
                 assert_eq!(bytes[p], 2, "DW_LNS_advance_pc");
                 p += 1;
@@ -1745,8 +1745,7 @@ mod tests {
             let fde_end = p + fde_len as usize;
             assert_eq!(rd_u32(&mut p), 0, "CIE_pointer = 0（首个 CIE）");
             assert_eq!(
-                p,
-                relocs[i].0,
+                p, relocs[i].0,
                 "initial_location placeholder 与 reloc 位置一致 ({sym})"
             );
             assert_eq!(&bytes[p..p + 8], &[0u8; 8], "initial_location 占位 0");

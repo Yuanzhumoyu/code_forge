@@ -109,9 +109,7 @@ pub fn scan_x86_prologue(code: &[u8]) -> Option<FunctionCfi> {
             },
             _ => break,
         };
-        let Some(dw) = dw_col_for_x86_enc(enc) else {
-            return None;
-        };
+        let dw = dw_col_for_x86_enc(enc)?;
         cursor += len;
         push_count += 1;
         if push_count > 7 {
@@ -141,14 +139,14 @@ pub fn scan_x86_prologue(code: &[u8]) -> Option<FunctionCfi> {
 /// 编码 8-15 → 列号同值。向量/非 GPR 编码 → None（本前缀只推 GPR）。
 fn dw_col_for_x86_enc(enc: u8) -> Option<u8> {
     Some(match enc {
-        0 => 0, // rax
-        1 => 1, // rcx
-        2 => 2, // rdx
-        3 => 3, // rbx
-        4 => 7, // rsp
-        5 => 6, // rbp
-        6 => 4, // rsi
-        7 => 5, // rdi
+        0 => 0,        // rax
+        1 => 1,        // rcx
+        2 => 2,        // rdx
+        3 => 3,        // rbx
+        4 => 7,        // rsp
+        5 => 6,        // rbp
+        6 => 4,        // rsi
+        7 => 5,        // rdi
         8..=15 => enc, // r8-r15
         _ => return None,
     })
@@ -332,7 +330,10 @@ mod tests {
         short.truncate(13);
         assert_eq!(scan_x86_prologue(&short), None);
         // riscv64 形态 prologue（addi sp, sp, -16 = 13 01 01 11 开头）→ None
-        assert_eq!(scan_x86_prologue(&[0x13, 0x01, 0x01, 0x11, 0x13, 0x81, 0x01, 0x02]), None);
+        assert_eq!(
+            scan_x86_prologue(&[0x13, 0x01, 0x01, 0x11, 0x13, 0x81, 0x01, 0x02]),
+            None
+        );
         // push 编码中有非 GPR 扩展前缀（如 41 后非 push）→ None
         let mut junk = PROLOGUE.to_vec();
         junk[8] = 0x90; // 破坏 41 54 的 54
@@ -346,7 +347,11 @@ mod tests {
             let want = scan_x86_prologue(&PROLOGUE).unwrap();
             assert_eq!(function_cfi_for(isa, &PROLOGUE), Some(want), "{isa}");
             // 即使 ISA 名命中，非 x86 前缀字节仍拒绝
-            assert_eq!(function_cfi_for(isa, &[0x13, 0x01, 0x01, 0x11]), None, "{isa}");
+            assert_eq!(
+                function_cfi_for(isa, &[0x13, 0x01, 0x01, 0x11]),
+                None,
+                "{isa}"
+            );
         }
         // 未注册 ISA → None（无 CFI，安全退化零回归）
         assert_eq!(function_cfi_for("riscv64_v12", &PROLOGUE), None);
