@@ -501,7 +501,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .get(1)
                     .copied()
                     .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
-                vec![self.builder.atomic_rmw(op, ptr, val, Ordering::Monotonic)]
+                // 宽度分派：i64/usize（8 字节）走 XADD/XCHG 指令快路径（AtomicRmw
+                // lowering 的 {g1} 恒 64 位池——8 字节无越界）；窄域（1/2/4 字节
+                // i8/u8/i16/u16/i32）改走 CMPXCHG 重试循环（xadd/xchg 指令若对
+                // 窄原子会 8 字节越界——v13 单 static 侥幸掩盖，多 static 相邻
+                // 必炸；循环宽度由 val 类型驱动，8 位 lockcmpxchg 就绪——v14）。
+                let w = layout_bytes(self.tcx, substs_first_ty(&substs).unwrap_or(fty));
+                if w == 8 {
+                    vec![self.builder.atomic_rmw(op, ptr, val, Ordering::Monotonic)]
+                } else {
+                    let kind = match op {
+                        AtomicRmwOp::Xchg => RmwLoop::Xchg,
+                        AtomicRmwOp::Add => RmwLoop::Add,
+                        _ => RmwLoop::Sub,
+                    };
+                    vec![self.atomic_rmw_loop(kind, ptr, val)?]
+                }
             }
             // 原子 RMW 的 CMPXCHG 循环族（And/Or/Xor/Nand/Max/Min/Umax/Umin）：
             // x86 无"返回旧值"的 lock and/or/xor——LOCK CMPXCHG 重试循环。
@@ -581,12 +596,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             | "atomic_umin_release"
             | "atomic_umin_relaxed" => {
                 let w = layout_bytes(self.tcx, substs_first_ty(&substs).unwrap_or(fty));
-                if w != 4 && w != 8 {
+                if w == 0 || w > 8 {
                     return Err(ForgeError::Message(format!(
-                        "{}: 原子 intrinsic {name}: {w} 字节原子（bool/u8/u16 等）\
-                         需 1/2 字节内存原子操作支持——当前 CMPXCHG 循环仅 \
-                         4/8 字节（i32/i64/usize/isize；AtomicBool/AtomicI8 \
-                         待字节宽度内存操作扩展）",
+                        "{}: 原子 intrinsic {name}: {w} 字节原子不支持（CMPXCHG 循环 \
+                         覆盖 1/2/4/8 字节——i8/u8/i16/u16/i32/i64/usize/isize/\
+                         AtomicBool(u8)）",
                         self.fn_name
                     )));
                 }
@@ -610,6 +624,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     RmwLoop::SMin
                 } else if name.contains("and") {
                     RmwLoop::And
+                } else if name.contains("xor") {
+                    // 必须先于 "or" 判别——"atomic_xor" 含 "or" 子串，
+                    // 否则 fetch_xor 错走 Or（0xA5|0x0F=0xAF 实证）。
+                    RmwLoop::Xor
                 } else if name.contains("or") {
                     RmwLoop::Or
                 } else {
@@ -716,6 +734,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
 /// CMPXCHG 循环 RMW 的操作种类（intrinsics.rs 内部）。
 #[derive(Clone, Copy, PartialEq)]
 enum RmwLoop {
+    Add,
+    Sub,
+    Xchg,
     And,
     Or,
     Xor,
@@ -752,6 +773,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         self.builder.switch_to_block(loop_b);
         let old = loop_args[0];
         let new = match kind {
+            // 窄域 fetch_add/sub/swap（1/2/4 字节）：xadd/xchg 指令数据槽经
+            // {g1} 恒 64 位池会越界——改 CMPXCHG 循环（wrapping 算术 =
+            // builder.iadd/isub 语义；Xchg new=val 恒定——swap 直到成功）。
+            RmwLoop::Add => self.builder.iadd(old, val),
+            RmwLoop::Sub => self.builder.isub(old, val),
+            RmwLoop::Xchg => val,
             RmwLoop::And => self.builder.band(old, val),
             RmwLoop::Or => self.builder.bor(old, val),
             RmwLoop::Xor => self.builder.bxor(old, val),

@@ -465,6 +465,30 @@ opsize = "s0"
 opcode_bytes = 1
 
 [[forms]]
+name = "MRR_MEM_BYTE"    # 8 位内存 mov/store（8A/88）：无 opsize——8 位宽由
+                          # opcode 自身决定（无 66/REX.W 语义；gprx 排除 gpr1）。
+modrm = "rm_mem"
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_0F_NOOS_MEM"  # movzx/movsx 内存源（8/16 位 load 零/符号扩展读）：
+                          # reg=op0(dest64)、rm=内存 1/2 字节源；无 opsize
+                          #（源宽由 opcode 前缀决定，dest 恒 REX.W 64 位）。
+modrm = "rm_mem"
+prefix = "field"
+rex_w = "field"
+escape = [0x0F]
+opcode_bytes = 1
+
+[[forms]]
+name = "MRR_MEM_0F_NOOS"  # 内存 + 0F + prefix=field + 无 opsize（8 位原子
+                          # 族：LOCK CMPXCHG 0F B0 / XADD 0F C0）
+modrm = "rm_mem"
+escape = [0x0F]
+prefix = "field"
+opcode_bytes = 1
+
+[[forms]]
 name = "MRR_MEM_0F"       # 内存 + 0F escape + prefix=field（XADD 0F C1 双字节）
 modrm = "rm_mem"
 opsize = "s0"
@@ -647,6 +671,23 @@ form = "MRR_0F_NOOS"
 opcode = 0xB7
 fields = { prefix = 0x66, w = 1 }
 asm = "movzx {0:[gpr:out]}, {1:[gpr2:in]}"
+
+# movzx 内存源（窄 load 零扩展读——窄值寄存器必须高位清零，否则后续
+# 32/64 位比较/算术带高位垃圾（u8 比较误判实证——v14 字节宽度修复）。
+# 8 位：REX.W 0F B6（源内存 1 字节）；16 位：66 REX.W 0F B7。
+[[instructions]]
+name = "MOVZX_R8_MEM"
+form = "MRR_0F_NOOS_MEM"
+opcode = 0xB6
+fields = { prefix = 0, w = 1 }
+asm = "movzx_mem {0:[gpr:out]}, [{1:[gprx:in]}]"
+
+[[instructions]]
+name = "MOVZX_R16_MEM"
+form = "MRR_0F_NOOS_MEM"
+opcode = 0xB7
+fields = { prefix = 0x66, w = 1 }
+asm = "movzx_mem16 {0:[gpr:out]}, [{1:[gprx:in]}]"
 
 # movsx：8 位源（REX.W + 0F BE）与 16 位源（66 REX.W 0F BF）合并助记符。
 [[instructions]]
@@ -895,34 +936,47 @@ asm = "movss {0:[fpr:out]}, {1:[fpr:in]}"
 effect = ["Move"]
 
 [[instructions]]
-name = "XADD_MEM_R"
-form = "MRR_MEM_0F"
-opcode = 0xC1
-fields = { prefix = 0xF0 }
-asm = "xadd [{1:[gpr:in]}], {0:[gpr:inout]}"
-
-[[instructions]]
-name = "XCHG_MEM_R"
-form = "MRR_MEM"
-opcode = 0x87
-asm = "xchg [{1:[gpr:in]}], {0:[gpr:inout]}"
-
-[[instructions]]
 name = "CMPXCHG_MEM_R"
 form = "MRR_MEM_0F"
 opcode = 0xB1
 fields = { prefix = 0xF0 }
-# v14：数据槽 gprx 多类——DSL 回填携带 IR 值宽度（I32→EAX 视图无 REX.W、
-# I64→RAX 视图 REX.W），rm_mem 宽度自动分发（16/32/64 同 opcode 0F B1 +
-# 66/REX.W；8 位是独立 opcode 0F B0，另行声明）。取代固定 _32 变体
-# （CMPXCHG_MEM_R_32 已删——见 WA-35/DSL 回填缺口修复）。
-asm = "lockcmpxchg [{1:[gpr:in]}], {0:[gprx:in]}"
+# v14：数据槽 gprx 多类——DSL 回填携带 IR 值宽度（I16→66 前缀、I32→无
+# REX.W、I64→RAX 视图 REX.W），rm_mem 宽度自动分发（16/32/64 同 opcode
+# 0F B1 + 66/REX.W；8 位是独立 opcode 0F B0——见 CMPXCHG_MEM_R_8）。
+# 取代固定 _32 变体（CMPXCHG_MEM_R_32 已删——见 WA-35/DSL 回填缺口修复）。
+asm = "lockcmpxchg [{1:[gprx:in]}], {0:[gprx:in]}"
 effect = ["Write"]
 # cmpxchg 隐式读 RAX（期望值）并写 RAX（旧值）——regalloc 需知 RAX 在本
 # 指令点被破坏，否则会把期望值的 SSA 值留在 RAX 跨过本指令（后续 icmp
 # 读 RAX = 旧值 → 与自身比较恒真 → 循环提前退出、写不生效——fetch_and
 # 类 CMPXCHG 循环回归实证）。div/idiv 同款建模（见 WA-35）。
 implicit_regs = ["RAX"]
+
+[[instructions]]
+name = "CMPXCHG_MEM_R_8"
+form = "MRR_MEM_0F_NOOS"
+opcode = 0xB0
+fields = { prefix = 0xF0 }
+# 8 位 LOCK CMPXCHG：0F B0（r/m8，隐式 AL——mov RAX 后 AL 即期望值低
+# 字节）。数据槽 gpr1b（byte_reg 强制 REX：spl/bpl/sil/dil）。
+asm = "lockcmpxchg8 [{1:[gprx:in]}], {0:[gpr1b:in]}"
+effect = ["Write"]
+implicit_regs = ["RAX"]
+
+[[instructions]]
+name = "XADD_MEM_R"
+form = "MRR_MEM_0F"
+opcode = 0xC1
+fields = { prefix = 0xF0 }
+# v14：数据槽 gprx（16/32/64 auto）——AtomicRmw Add/Sub lowering 的 {g1}
+# 临时恒 64 位池（窄域 Add/Sub 走 intrinsics cmpxchg 循环，i64 域用本指令）。
+asm = "xadd [{1:[gprx:in]}], {0:[gprx:inout]}"
+
+[[instructions]]
+name = "XCHG_MEM_R"
+form = "MRR_MEM"
+opcode = 0x87
+asm = "xchg [{1:[gprx:in]}], {0:[gprx:inout]}"
 
 [[instructions]]
 name = "SUB_MEM_R"
@@ -956,16 +1010,30 @@ asm = "lockxor [{1:[gpr:in]}], {0:[gpr:in]}"
 name = "MOV_R_MEM"
 form = "MRR_MEM"
 opcode = 0x8B
-# v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I8 待 8 位 opcode 8A、
-# I16→66、I32→无 REX.W、I64→REX.W）。固定 _32 变体已删（WA-35 DSL 修复）。
+# v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I16→66、I32→无
+# REX.W、I64→REX.W）。固定 _32 变体已删（WA-35 DSL 修复）。
 # 基址槽 gprx（assemble 兼容 EAX/RAX 视图；编码取同编号寻址）。
 asm = "mov_mem {0:[gprx:out]}, [{1:[gprx:in]}]"
+
+[[instructions]]
+name = "MOV_R_MEM_8"
+form = "MRR_MEM_BYTE"
+opcode = 0x8A
+# 8 位内存 load：独立 opcode 8A（gprx 显式排除 gpr1——8 位 mov 是 8A 非
+# 8B）。数据槽 gpr1b（byte_reg：spl/bpl/sil/dil 强制 REX）。
+asm = "mov_mem8 {0:[gpr1b:out]}, [{1:[gprx:in]}]"
 
 [[instructions]]
 name = "STORE_MEM_R"
 form = "MRR_MEM"
 opcode = 0x89
 asm = "mov_sto [{1:[gprx:in]}], {0:[gprx:in]}"
+
+[[instructions]]
+name = "STORE_MEM_R_8"
+form = "MRR_MEM_BYTE"
+opcode = 0x88
+asm = "mov_sto8 [{1:[gprx:in]}], {0:[gpr1b:in]}"
 
 [[instructions]]
 name = "MOVSD_R_MEM"
@@ -1897,14 +1965,30 @@ op = "Icmp"
 insts = ["xor {out}, {out}", "cmp {1}, {0}", "setcc {out}, {cc}"]
 
 # ── mini_c 核心（迭代 6 续：load/store/copy/extend/not）──
-# Load/Store 按内存宽度（i32 → 32 位、i64 → 64 位）：栈槽按 i32 4 字节排列，
-# 64 位 load/store 会读/写相邻槽（曾致 params/loop/除法 5 用例失败）。
-# v14：mov_mem/mov_sto 数据槽 gprx——内存宽度由 IR 类型 auto（I16→66、
-# I32→无 REX.W、I64→REX.W）。固定 _32 变体/分派规则已删（WA-35 DSL 修复）。
+# Load/Store 按内存宽度（u8 → 1 字节、i16 → 2、i32 → 4、i64 → 8）：宽
+# load/store 越界（曾致 params/loop/除法 5 用例失败；u8 曾 8 字节读侥幸）。
+# v14：窄 load（8/16 位）用 movzx 内存形式——零扩展写全 64 位寄存器（窄值
+# 高位约定 lib.rs），否则后续 32 位 cmp/算术带高位垃圾（u8 比较误判实证）；
+# mov_mem/mov_sto gprx auto 16/32/64；8 位 store 独立 opcode 88（gpr1b）。
+
+[[lowering]]
+op = "Load"
+when = { eq = ["rd", 8] }
+insts = ["movzx_mem {out}, [{0}]"]
+
+[[lowering]]
+op = "Load"
+when = { eq = ["rd", 16] }
+insts = ["movzx_mem16 {out}, [{0}]"]
 
 [[lowering]]
 op = "Load"
 insts = ["mov_mem {out}, [{0}]"]
+
+[[lowering]]
+op = "Store"
+when = { eq = ["rs1_width", 8] }
+insts = ["mov_sto8 [{0}], {1}"]
 
 [[lowering]]
 op = "Store"
@@ -3555,8 +3639,17 @@ insts = [
 # ── Cmpxchg：RAX = 期望值（隐式累加器）→ LOCK CMPXCHG [ptr], new →
 #    RAX = 旧值（不相等时写回 RAX）。单结果（旧值）；成功标志未展开
 #    （IR 层 struct 展开走 extractvalue，x86 后端暂不支持）。
-#    v14：数据宽度由 IR 类型经 gprx 槽 auto 分发（I32→无 REX.W 32 位、
-#    I64→REX.W 64 位——WA-35 DSL 回填缺口修复后 rm_mem 不再恒 64）。
+#    v14：16/32/64 数据宽度经 gprx 槽 auto（66/REX.W）；8 位独立 opcode
+#    0F B0（隐式 AL）按 rs2_width==8 分派。
+
+[[lowering]]
+op = "Cmpxchg"
+when = { eq = ["rs2_width", 8] }
+insts = [
+    "mov RAX, {1}",
+    "lockcmpxchg8 {2}, {0}",
+    "mov {out}, RAX",
+]
 
 [[lowering]]
 op = "Cmpxchg"

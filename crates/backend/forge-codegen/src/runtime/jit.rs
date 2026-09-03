@@ -1606,7 +1606,7 @@ mod tests {
 
         // 对每个宽度 W 注册 f_w: fn(dst: *mut u8, val: i64)（写 W 字节）与
         // g_w: fn(src: *mut u8) -> i64（读 W 字节回）。
-        for (w, ty) in [(2u64, TypeId::I16), (4, TypeId::I32), (8, TypeId::I64)] {
+        for (w, ty) in [(1u64, TypeId::I8), (2, TypeId::I16), (4, TypeId::I32), (8, TypeId::I64)] {
             let store_name = format!("sto_w{w}");
             let sig = FunctionSignature::new(&[(TypeId::I64, "dst"), (TypeId::I64, "val")], &[]);
             jit.add_function(&store_name, &sig, |b| {
@@ -1634,6 +1634,12 @@ mod tests {
 
         // 哨兵缓冲：两端填充 0x5A——越界写会破坏。
         let mut buf = [0x5Au8; 24];
+        // u8（8 位独立 opcode 8A/88——gprx 排除 gpr1，按 rd/rs1_width==8 分派）
+        let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w1").expect("sto_w1");
+        let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w1").expect("lod_w1");
+        store(buf[4..].as_mut_ptr(), 0xAB);
+        assert_eq!(load(buf[4..].as_ptr()), 0xAB, "i8 roundtrip");
+        assert_eq!(buf[5], 0x5A, "i8 store 1 字节不越界");
         let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w2").expect("sto_w2");
         let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w2").expect("lod_w2");
         store(buf[4..].as_mut_ptr(), 0x1234);
@@ -1650,6 +1656,51 @@ mod tests {
         assert_eq!(load(buf[4..].as_ptr()), 0x0123456789ABCDEF, "i64 roundtrip");
         assert_eq!(buf[12], 0x5A, "i64 store 8 字节不越界");
     }
+
+    /// v14 字节宽度：I8 域 cmpxchg 重试循环（AtomicU8::fetch_and 形态）——
+    /// CMPXCHG_MEM_R_8（0F B0，隐式 AL）按 rs2_width==8 分派。邻字节哨兵
+    /// 验证 1 字节写不越界（8 位 load/store 同族，mem_width 测试覆盖）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_cmpxchg_i8_loop() {
+        use forge_ir::{IntCC, Ordering};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // f(ptr: *mut u8) -> u8：cmpxchg 循环 fetch_and(ptr, 0b1010)
+        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I8]);
+        jit.add_function("cmpxchg_and8", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
+            b.switch_to_block(entry);
+            let p = params[0];
+            let val = b.iconst(0b1010, TypeId::I8);
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I8]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I8]);
+            b.switch_to_block(entry);
+            let old0 = b.load(p, TypeId::I8);
+            b.jump(loop_b, &[old0]);
+            b.switch_to_block(loop_b);
+            let old = la[0];
+            let new = b.band(old, val);
+            let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+            let ok = b.icmp(IntCC::Equal, actual, old);
+            b.branch(ok, exit_b, &[actual], loop_b, &[actual]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("compile");
+
+        let f: extern "C" fn(*mut u8) -> u8 = jit.get_fn("cmpxchg_and8").expect("get_fn");
+        // 邻字节哨兵：越界写会破坏 buf[1]
+        let mut buf = [12u8, 0xAA, 0xBB, 0xCC];
+        let old = f(&mut buf[0]);
+        assert_eq!(old, 12, "fetch_and returns old value");
+        assert_eq!(buf[0], 8, "fetch_and writes new value (12 & 10)");
+        assert_eq!(buf[1], 0xAA, "no byte overrun into neighbor");
+        assert_eq!(buf[2], 0xBB, "no overrun buf[2]");
+    }
+
 
     /// v14 decode guard 对称修复守卫：encode(decode(x)) 往返——32 位形态
     /// （无 REX.W）与 64 位形态（REX.W）都能反解（固定 _32 变体删除后主
