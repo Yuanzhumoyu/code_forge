@@ -619,68 +619,86 @@ fn gen_emit_pseudo(
             // Windows x64 栈参数 load：按语义标签 `stack_arg_load` 收集
             //（TOML 显式声明，不做按指令名探测——第三轮重构原则）。
             // 生成期门控：shadow 已声明但标签缺失 → Unsupported。
-            let stack_shadow_ref: TokenStream = match model.abi.as_ref().and_then(|a| a.stack_arg_shadow) {
-                Some(v) => quote! { Some(#v) },
-                None => quote! { None },
-            };
-            let stack_load_tagged = crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_load");
-            let stack_store_tagged = crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_store");
+            let stack_shadow_ref: TokenStream =
+                match model.abi.as_ref().and_then(|a| a.stack_arg_shadow) {
+                    Some(v) => quote! { Some(#v) },
+                    None => quote! { None },
+                };
+            let stack_load_tagged =
+                crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_load");
+            let stack_store_tagged =
+                crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_store");
             let (int_stack_load, il_mem, il_reg) =
-                if model.abi.as_ref().and_then(|a| a.stack_arg_shadow).is_some() {
+                if model
+                    .abi
+                    .as_ref()
+                    .and_then(|a| a.stack_arg_shadow)
+                    .is_some()
+                {
                     match stack_load_tagged.first() {
                         Some(info) => {
                             let (reg, mem, _reg_idx) =
                                 crate::v12::codegen::lowering::reg_mem_fids(info);
                             match (reg, mem) {
-                                (Some(r), Some(m)) => (
-                                    crate::v12::codegen::pascal_ident(&info.inst.name),
-                                    m,
-                                    r,
-                                ),
+                                (Some(r), Some(m)) => {
+                                    (crate::v12::codegen::pascal_ident(&info.inst.name), m, r)
+                                }
                                 _ => {
-                                    return Err("move_args: [stack_arg_load] tag must be on Reg+Mem inst".into())
+                                    return Err(
+                                        "move_args: [stack_arg_load] tag must be on Reg+Mem inst"
+                                            .into(),
+                                    );
                                 }
                             }
                         }
-                        None => {
-                            return Err(
-                                "move_args: stack_arg_shadow declared but [stack_arg_load] tag missing"
-                                    .into(),
-                            )
-                        }
+                        None => return Err(
+                            "move_args: stack_arg_shadow declared but [stack_arg_load] tag missing"
+                                .into(),
+                        ),
                     }
                 } else {
-                    (format_ident!("Mov64Rm"), format_ident!("mem"), format_ident!("dest"))
+                    (
+                        format_ident!("Mov64Rm"),
+                        format_ident!("mem"),
+                        format_ident!("dest"),
+                    )
                 };
             // spilled 栈参数 store（ABI 槽 → spill 槽中转用 MOV64_MR：
             // Reg 槽 op0、Mem 槽 op1，与调用方 store 同标签）
-            let (int_stack_store, is_mem, is_reg) =
-                if model.abi.as_ref().and_then(|a| a.stack_arg_shadow).is_some() {
-                    match stack_store_tagged.first() {
-                        Some(info) => {
-                            let (reg, mem, _reg_idx) =
-                                crate::v12::codegen::lowering::reg_mem_fids(info);
-                            match (reg, mem) {
-                                (Some(r), Some(m)) => (
-                                    crate::v12::codegen::pascal_ident(&info.inst.name),
-                                    m,
-                                    r,
-                                ),
-                                _ => {
-                                    return Err("move_args: [stack_arg_store] tag must be on Reg+Mem inst".into())
-                                }
+            let (int_stack_store, is_mem, is_reg) = if model
+                .abi
+                .as_ref()
+                .and_then(|a| a.stack_arg_shadow)
+                .is_some()
+            {
+                match stack_store_tagged.first() {
+                    Some(info) => {
+                        let (reg, mem, _reg_idx) =
+                            crate::v12::codegen::lowering::reg_mem_fids(info);
+                        match (reg, mem) {
+                            (Some(r), Some(m)) => {
+                                (crate::v12::codegen::pascal_ident(&info.inst.name), m, r)
+                            }
+                            _ => {
+                                return Err(
+                                    "move_args: [stack_arg_store] tag must be on Reg+Mem inst"
+                                        .into(),
+                                );
                             }
                         }
-                        None => {
-                            return Err(
-                                "move_args: stack_arg_shadow declared but [stack_arg_store] tag missing"
-                                    .into(),
-                            )
-                        }
                     }
-                } else {
-                    (format_ident!("Mov64Mr"), format_ident!("mem"), format_ident!("src"))
-                };
+                    None => return Err(
+                        "move_args: stack_arg_shadow declared but [stack_arg_store] tag missing"
+                            .into(),
+                    ),
+                }
+            } else {
+                (
+                    format_ident!("Mov64Mr"),
+                    format_ident!("mem"),
+                    format_ident!("src"),
+                )
+            };
             // 栈参数收参的 scratch 寄存器（[abi].scratch 首项，缺省 R10）
             // 与 callee-saved 区字节数（sp_base 计算常量）。
             let scratch0 = abi
@@ -895,7 +913,11 @@ fn gen_emit_pseudo(
             let _ = byref_stmt_use;
             // shadow 未声明（riscv/demo 无栈参数）→ 栈参数收参分支整体不生成
             //（否则分支体引用 RBP/R10/MOV64_RM 等不存在的 Reg/Inst 变体）。
-            let has_stack_arg = model.abi.as_ref().and_then(|a| a.stack_arg_shadow).is_some();
+            let has_stack_arg = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.stack_arg_shadow)
+                .is_some();
             let stack_arg_receive: TokenStream = if has_stack_arg {
                 quote! {
                     // 栈参数（位置 ≥ 寄存器数且 shadow 声明）**无条件**收参到

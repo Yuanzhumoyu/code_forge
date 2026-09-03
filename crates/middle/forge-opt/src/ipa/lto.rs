@@ -192,12 +192,9 @@ fn lto_inline_callee(
     let mut val_remap: HashMap<Value, Value> = HashMap::new();
 
     // Map callee params to call arguments
-    for bi in 0..callee.dfg.blocks.len() {
-        let callee_block = &callee.dfg.blocks[bi];
-        for (i, &pv) in callee_block.param_values.iter().enumerate() {
-            if i < call_args.len() {
-                val_remap.insert(pv, call_args[i]);
-            }
+    for callee_block in callee.dfg.blocks.iter() {
+        for (pv, arg) in callee_block.param_values.iter().zip(call_args.iter()) {
+            val_remap.insert(*pv, *arg);
         }
     }
 

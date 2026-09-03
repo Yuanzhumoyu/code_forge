@@ -132,11 +132,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         _ => 4,
                                     };
                                     let nv = if tag_w >= 8 {
-                                        self.builder
-                                            .iconst(niche_value as i64, TypeId::I64)
+                                        self.builder.iconst(niche_value as i64, TypeId::I64)
                                     } else {
-                                        self.builder
-                                            .iconst(niche_value as i64, TypeId::I32)
+                                        self.builder.iconst(niche_value as i64, TypeId::I32)
                                     };
                                     // tag 位置（通常 offset 0；通用按 tag_field 偏移）。
                                     // WA-28：ScalarPair niche（如 Option<(usize,&i32)> 的
@@ -145,7 +143,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     // 错偏移（写 offset 0 而判别读 b_offset=8，不一致 →
                                     // None 后 &i32 残留旧值 → main 误判 Some 解引用）。
                                     let tag_off = match &layout.layout.backend_repr {
-                                        rustc_abi::BackendRepr::ScalarPair { b, b_offset, .. } => {
+                                        rustc_abi::BackendRepr::ScalarPair {
+                                            b, b_offset, ..
+                                        } => {
                                             let is_ptr = matches!(
                                                 b.primitive(),
                                                 rustc_abi::Primitive::Pointer(_)
@@ -280,14 +280,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         // 聚合复制一致）。
                         if size > 8
                             && let Rvalue::Ref(_, _, p) = rvalue
-                            && (matches!(
-                                ty.kind(),
-                                rustc_middle::ty::TyKind::Ref(
-                                    _,
-                                    _,
-                                    _
-                                )
-                            ))
+                            && (matches!(ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, _)))
                         {
                             if crate::trace::trace_enabled("CAST") {
                                 eprintln!(
@@ -367,9 +360,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         _ => src_ty,
                                     };
                                     let n = match src_pointee.kind() {
-                                        rustc_middle::ty::TyKind::Array(_, len) => len
-                                            .try_to_target_usize(self.tcx)
-                                            .unwrap_or(0),
+                                        rustc_middle::ty::TyKind::Array(_, len) => {
+                                            len.try_to_target_usize(self.tcx).unwrap_or(0)
+                                        }
                                         _ => 0,
                                     };
                                     if crate::trace::trace_enabled("CAST") {
@@ -492,10 +485,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 // eval 后 Ptr → global_addr 写 8B 槽（eval_const_bytes
                                 // 对 Ptr 返回 0）。类型守卫：仅引用/指针类型。
                                 use rustc_middle::ty::TyKind;
-                                let is_ref_ty = matches!(
-                                    p_ty.kind(),
-                                    TyKind::Ref(..) | TyKind::RawPtr(..)
-                                );
+                                let is_ref_ty =
+                                    matches!(p_ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..));
                                 if is_ref_ty
                                     && let rustc_middle::mir::Const::Unevaluated(..) = ct.const_
                                     && let Ok(rustc_middle::mir::ConstValue::Scalar(
@@ -557,9 +548,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // 成 MIR 专用语句 `Intrinsic(NonDivergingIntrinsic::CopyNonOverlapping
             // { src, dst, count })`（wrapper 的 bb3）——此前未处理落入 `_ => {}`
             // 忽略 → 复制不执行（buf[4] 恒 0）。内联逐 8 字节复制循环。
-            StatementKind::Intrinsic(rustc_middle::mir::NonDivergingIntrinsic::CopyNonOverlapping(
-                rustc_middle::mir::CopyNonOverlapping { src, dst, count },
-            )) => {
+            StatementKind::Intrinsic(
+                rustc_middle::mir::NonDivergingIntrinsic::CopyNonOverlapping(
+                    rustc_middle::mir::CopyNonOverlapping { src, dst, count },
+                ),
+            ) => {
                 if crate::trace::trace_enabled("STMT") {
                     eprintln!(
                         "[forge] stmt intrinsic CopyNonOverlapping src={src:?} dst={dst:?} count={count:?}"
@@ -571,11 +564,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 // 元素大小从 src 操作数的类型取（pointee）
                 let src_ty = src.ty(&self.body.local_decls, self.tcx);
                 let elem = self.pointee_ty(src_ty);
-                let sz = layout_bytes(self.tcx, elem) as i64;                let cur = self.builder.current_block();
-                let (loop_blk, lp) =
-                    self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
-                let (body_blk, bp) =
-                    self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
+                let sz = layout_bytes(self.tcx, elem) as i64;
+                let cur = self.builder.current_block();
+                let (loop_blk, lp) = self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
+                let (body_blk, bp) = self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
                 let done = self.builder.create_block();
                 self.builder.switch_to_block(cur);
                 let zero = self.builder.iconst(0, TypeId::I64);

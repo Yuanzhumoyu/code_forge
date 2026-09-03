@@ -765,17 +765,16 @@ fn gen_call_lowering(
                         (Some(r), Some(m)) => (vn, m, r, reg_idx),
                         _ => {
                             return Err(
-                                "Call lowering: [stack_arg_store] tag must be on Reg+Mem inst".into()
-                            )
+                                "Call lowering: [stack_arg_store] tag must be on Reg+Mem inst"
+                                    .into(),
+                            );
                         }
                     }
                 }
-                None => {
-                    return Err(
-                        "Call lowering: stack_arg_shadow declared but [stack_arg_store] tag missing"
-                            .into(),
-                    )
-                }
+                None => return Err(
+                    "Call lowering: stack_arg_shadow declared but [stack_arg_store] tag missing"
+                        .into(),
+                ),
             }
         } else {
             // shadow 未声明：栈参数路径不生成（arg_move_loop 的 else 分支

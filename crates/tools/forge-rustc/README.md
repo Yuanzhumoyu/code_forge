@@ -230,7 +230,7 @@ block 带范围（high_pc）；变量符号 + fbreg 位置正确（`info scope` 
 .text 起点 0x1000 与首函数冲突——GNU ld 会话里首函数入口断点命中后
 帧名显示 `__end__`，其余函数正常；lld-link 无符号表 → 名称断点走
 cooked index 可设但命中帧同受 0x1000 冲突影响）；②gdb-PE 残余：
-**ref4 类型跟随失败**（`p y` 显示 "<unknown type>"——但 `ptype i32`/
+**ref4 类型跟随失败**（`p y` 显示 "< unknown type >"——但 `ptype i32`/
 `info types` 正常、typedef 已注册、`info scope` 位置正确、**`set language
 c` 后 `p (int)y` = 42**（转型路径读出变量值））与每函数序列**终端行**
 解码为 line 0（行断点/单步在非终端行正常）。对照实验排除：decl_file/
@@ -247,5 +247,5 @@ gcc 形态）。
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
-| **gdb-PE 类型打印/终端行** | 中工程量：DWARF5 已被 gdb 完整读入（源码断点/单步/function block/fbreg 槽位全实证，y=42@rbp-80）；残余：ref4 类型跟随失败（`print y` → "<unknown type>"，`ptype i32` 正常）+ 每函数序列终端行 line 0——疑似 gdb 16.2 PE DWARF5 读取器对迷你 CU 形态的边界问题；备选：.debug_frame CFI 对齐 gcc 形态、.debug_str/comp_dir、subprogram external/decl_file | 主库 emission：DWARF CFI（.debug_frame/.eh_frame） |
+| **gdb-PE 类型打印/终端行** | 中工程量：DWARF5 已被 gdb 完整读入（源码断点/单步/function block/fbreg 槽位全实证，y=42@rbp-80）；残余：ref4 类型跟随失败（`print y` → "< unknown type >"，`ptype i32` 正常）+ 每函数序列终端行 line 0——疑似 gdb 16.2 PE DWARF5 读取器对迷你 CU 形态的边界问题；备选：.debug_frame CFI 对齐 gcc 形态、.debug_str/comp_dir、subprogram external/decl_file | 主库 emission：DWARF CFI（.debug_frame/.eh_frame） |
 | **并行 CGU（`-Z codegen-units=N`）** | 中工程量：当前单对象文件（backend.rs 合并输出）。并行化需 FuncRefTable 并发化（`intern`/`intern_global` 加锁或 thread-local）+ 每 CGU 独立 ObjectWriter + `join_codegen` 多模块归并 | 主库 ObjectWriter 并发支持 |

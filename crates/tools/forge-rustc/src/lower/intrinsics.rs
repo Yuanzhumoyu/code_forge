@@ -125,7 +125,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // simd_splat<T>(x)：向量广播（vbroadcast——主库向量指令；
             // 仅当目标向量类型未被 ABI 门控拦截时可用）。
             "simd_splat" => {
-                let elem = args.first().copied().unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                let elem = args
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
                 let t = substs_first_ty(&substs).unwrap_or(fty);
                 let ty = map_type(t, self.tcx)?;
                 vec![self.builder.vbroadcast(elem, ty)]
@@ -139,7 +142,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
                     let (body_blk, bp) =
                         self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
-                    let (ret_blk, rp) = self.builder.create_block_with_params(&[(TypeId::I64, "r")]);
+                    let (ret_blk, rp) =
+                        self.builder.create_block_with_params(&[(TypeId::I64, "r")]);
                     let zero = self.builder.iconst(0, TypeId::I64);
                     let one = self.builder.iconst(1, TypeId::I64);
                     self.builder.switch_to_block(cur_block);
@@ -264,7 +268,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 vec![self.builder.bor(a, b)]
             }
             "cttz" | "ctlz" | "cttz_nonzero" | "ctlz_nonzero" => {
-                let x = args.first().copied().unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                let x = args
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
                 match name {
                     "cttz" | "cttz_nonzero" => vec![self.builder.ctz(x)],
                     _ => vec![self.builder.clz(x)],
@@ -428,8 +435,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let off = if sz == 1 {
                         bi
                     } else {
-                        let offv = self.builder.imul(bi, eight);
-                        offv
+                        self.builder.imul(bi, eight)
                     };
                     let aaddr = self.builder.iadd(a, off);
                     let baddr = self.builder.iadd(b, off);
@@ -452,21 +458,37 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // 正是 AtomicRmw 语义；opsize 由 val 宽度推导（i32→xaddl、i64→xaddq）。
             // And/Or/Xor/Nand/Max/Min/Umax/Umin 需 CMPXCHG 循环（TOML 注释），
             // cxchg/cxchgweak 需 cmpxchg 指令扩展——均编译期拒绝（失败即报错）。
-            "atomic_xchg" | "atomic_xchg_acqrel" | "atomic_xchg_acquire"
-            | "atomic_xchg_release" | "atomic_xchg_relaxed" | "atomic_xchg_seqcst"
-            | "atomic_xadd" | "atomic_xadd_acqrel" | "atomic_xadd_acquire"
-            | "atomic_xadd_release" | "atomic_xadd_relaxed" | "atomic_xadd_seqcst"
-            | "atomic_xsub" | "atomic_xsub_acqrel" | "atomic_xsub_acquire"
-            | "atomic_xsub_release" | "atomic_xsub_relaxed" | "atomic_xsub_seqcst"
-            | "atomic_fetch_add" | "atomic_fetch_add_acqrel" | "atomic_fetch_add_acquire"
-            | "atomic_fetch_add_release" | "atomic_fetch_add_relaxed"
-            | "atomic_fetch_sub" | "atomic_fetch_sub_acqrel" | "atomic_fetch_sub_acquire"
-            | "atomic_fetch_sub_release" | "atomic_fetch_sub_relaxed" => {
+            "atomic_xchg"
+            | "atomic_xchg_acqrel"
+            | "atomic_xchg_acquire"
+            | "atomic_xchg_release"
+            | "atomic_xchg_relaxed"
+            | "atomic_xchg_seqcst"
+            | "atomic_xadd"
+            | "atomic_xadd_acqrel"
+            | "atomic_xadd_acquire"
+            | "atomic_xadd_release"
+            | "atomic_xadd_relaxed"
+            | "atomic_xadd_seqcst"
+            | "atomic_xsub"
+            | "atomic_xsub_acqrel"
+            | "atomic_xsub_acquire"
+            | "atomic_xsub_release"
+            | "atomic_xsub_relaxed"
+            | "atomic_xsub_seqcst"
+            | "atomic_fetch_add"
+            | "atomic_fetch_add_acqrel"
+            | "atomic_fetch_add_acquire"
+            | "atomic_fetch_add_release"
+            | "atomic_fetch_add_relaxed"
+            | "atomic_fetch_sub"
+            | "atomic_fetch_sub_acqrel"
+            | "atomic_fetch_sub_acquire"
+            | "atomic_fetch_sub_release"
+            | "atomic_fetch_sub_relaxed" => {
                 let op = if name.starts_with("atomic_xchg") {
                     AtomicRmwOp::Xchg
-                } else if name.starts_with("atomic_xadd")
-                    || name.starts_with("atomic_fetch_add")
-                {
+                } else if name.starts_with("atomic_xadd") || name.starts_with("atomic_fetch_add") {
                     AtomicRmwOp::Add
                 } else {
                     AtomicRmwOp::Sub
@@ -488,34 +510,76 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // 宽度 = val 类型（i32→CMPXCHG_MEM_R_32 4 字节、i64→64 位——
             // WA-35 主库固定 32 变体修复后窄域正确）；bool/u8/u16 等 1/2
             // 字节待字节宽度内存原子扩展。
-            "atomic_and" | "atomic_and_acqrel" | "atomic_and_acquire"
-            | "atomic_and_release" | "atomic_and_relaxed"
-            | "atomic_fetch_and" | "atomic_fetch_and_acqrel" | "atomic_fetch_and_acquire"
-            | "atomic_fetch_and_release" | "atomic_fetch_and_relaxed"
-            | "atomic_or" | "atomic_or_acqrel" | "atomic_or_acquire"
-            | "atomic_or_release" | "atomic_or_relaxed"
-            | "atomic_fetch_or" | "atomic_fetch_or_acqrel" | "atomic_fetch_or_acquire"
-            | "atomic_fetch_or_release" | "atomic_fetch_or_relaxed"
-            | "atomic_xor" | "atomic_xor_acqrel" | "atomic_xor_acquire"
-            | "atomic_xor_release" | "atomic_xor_relaxed"
-            | "atomic_fetch_xor" | "atomic_fetch_xor_acqrel" | "atomic_fetch_xor_acquire"
-            | "atomic_fetch_xor_release" | "atomic_fetch_xor_relaxed"
-            | "atomic_nand" | "atomic_nand_acqrel" | "atomic_nand_acquire"
-            | "atomic_nand_release" | "atomic_nand_relaxed"
-            | "atomic_fetch_nand" | "atomic_fetch_nand_acqrel" | "atomic_fetch_nand_acquire"
-            | "atomic_fetch_nand_release" | "atomic_fetch_nand_relaxed"
-            | "atomic_max" | "atomic_max_acqrel" | "atomic_max_acquire"
-            | "atomic_max_release" | "atomic_max_relaxed"
-            | "atomic_fetch_max" | "atomic_fetch_max_acqrel" | "atomic_fetch_max_acquire"
-            | "atomic_fetch_max_release" | "atomic_fetch_max_relaxed"
-            | "atomic_min" | "atomic_min_acqrel" | "atomic_min_acquire"
-            | "atomic_min_release" | "atomic_min_relaxed"
-            | "atomic_fetch_min" | "atomic_fetch_min_acqrel" | "atomic_fetch_min_acquire"
-            | "atomic_fetch_min_release" | "atomic_fetch_min_relaxed"
-            | "atomic_umax" | "atomic_umax_acqrel" | "atomic_umax_acquire"
-            | "atomic_umax_release" | "atomic_umax_relaxed"
-            | "atomic_umin" | "atomic_umin_acqrel" | "atomic_umin_acquire"
-            | "atomic_umin_release" | "atomic_umin_relaxed" => {
+            "atomic_and"
+            | "atomic_and_acqrel"
+            | "atomic_and_acquire"
+            | "atomic_and_release"
+            | "atomic_and_relaxed"
+            | "atomic_fetch_and"
+            | "atomic_fetch_and_acqrel"
+            | "atomic_fetch_and_acquire"
+            | "atomic_fetch_and_release"
+            | "atomic_fetch_and_relaxed"
+            | "atomic_or"
+            | "atomic_or_acqrel"
+            | "atomic_or_acquire"
+            | "atomic_or_release"
+            | "atomic_or_relaxed"
+            | "atomic_fetch_or"
+            | "atomic_fetch_or_acqrel"
+            | "atomic_fetch_or_acquire"
+            | "atomic_fetch_or_release"
+            | "atomic_fetch_or_relaxed"
+            | "atomic_xor"
+            | "atomic_xor_acqrel"
+            | "atomic_xor_acquire"
+            | "atomic_xor_release"
+            | "atomic_xor_relaxed"
+            | "atomic_fetch_xor"
+            | "atomic_fetch_xor_acqrel"
+            | "atomic_fetch_xor_acquire"
+            | "atomic_fetch_xor_release"
+            | "atomic_fetch_xor_relaxed"
+            | "atomic_nand"
+            | "atomic_nand_acqrel"
+            | "atomic_nand_acquire"
+            | "atomic_nand_release"
+            | "atomic_nand_relaxed"
+            | "atomic_fetch_nand"
+            | "atomic_fetch_nand_acqrel"
+            | "atomic_fetch_nand_acquire"
+            | "atomic_fetch_nand_release"
+            | "atomic_fetch_nand_relaxed"
+            | "atomic_max"
+            | "atomic_max_acqrel"
+            | "atomic_max_acquire"
+            | "atomic_max_release"
+            | "atomic_max_relaxed"
+            | "atomic_fetch_max"
+            | "atomic_fetch_max_acqrel"
+            | "atomic_fetch_max_acquire"
+            | "atomic_fetch_max_release"
+            | "atomic_fetch_max_relaxed"
+            | "atomic_min"
+            | "atomic_min_acqrel"
+            | "atomic_min_acquire"
+            | "atomic_min_release"
+            | "atomic_min_relaxed"
+            | "atomic_fetch_min"
+            | "atomic_fetch_min_acqrel"
+            | "atomic_fetch_min_acquire"
+            | "atomic_fetch_min_release"
+            | "atomic_fetch_min_relaxed"
+            | "atomic_umax"
+            | "atomic_umax_acqrel"
+            | "atomic_umax_acquire"
+            | "atomic_umax_release"
+            | "atomic_umax_relaxed"
+            | "atomic_umin"
+            | "atomic_umin_acqrel"
+            | "atomic_umin_acquire"
+            | "atomic_umin_release"
+            | "atomic_umin_relaxed" => {
                 let w = layout_bytes(self.tcx, substs_first_ty(&substs).unwrap_or(fty));
                 if w != 4 && w != 8 {
                     return Err(ForgeError::Message(format!(
@@ -555,10 +619,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
             // cxchg/cxchgweak（compare_exchange）：需返回 (旧值, 成功标志)
             // 双值——IR Cmpxchg 目前单结果（成功标志未展开），仍拒绝。
-            "atomic_cxchg" | "atomic_cxchg_acqrel" | "atomic_cxchg_acquire"
-            | "atomic_cxchg_release" | "atomic_cxchg_relaxed"
-            | "atomic_cxchgweak" | "atomic_cxchgweak_acqrel" | "atomic_cxchgweak_acquire"
-            | "atomic_cxchgweak_release" | "atomic_cxchgweak_relaxed" => {
+            "atomic_cxchg"
+            | "atomic_cxchg_acqrel"
+            | "atomic_cxchg_acquire"
+            | "atomic_cxchg_release"
+            | "atomic_cxchg_relaxed"
+            | "atomic_cxchgweak"
+            | "atomic_cxchgweak_acqrel"
+            | "atomic_cxchgweak_acquire"
+            | "atomic_cxchgweak_release"
+            | "atomic_cxchgweak_relaxed" => {
                 return Err(ForgeError::Message(format!(
                     "{}: 原子 intrinsic {name} 暂不支持——compare_exchange 需 \
                      (旧值, 成功标志) 双结果（IR Cmpxchg 单结果、成功标志未展开）；\
@@ -665,7 +735,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     /// lockcmpxchg32、i64→64 位——WA-35 主库固定 32 变体后窄域正确，
     /// 4 字节原子不再越界）。
     /// create_block_with_tys 会切换当前块——先建块再切回 orig 发入口。
-    fn atomic_rmw_loop(&mut self, kind: RmwLoop, ptr: Value, val: Value) -> Result<Value, ForgeError> {
+    fn atomic_rmw_loop(
+        &mut self,
+        kind: RmwLoop,
+        ptr: Value,
+        val: Value,
+    ) -> Result<Value, ForgeError> {
         let t = self.builder.value_type(val).unwrap_or(TypeId::I64);
         let orig = self.builder.current_block();
         let (loop_b, loop_args) = self.builder.create_block_with_tys(&[t]);
@@ -703,13 +778,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.builder.select(lt, old, val)
             }
         };
-        let actual = self
-            .builder
-            .cmpxchg(ptr, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
+        let actual = self.builder.cmpxchg(
+            ptr,
+            old,
+            new,
+            Ordering::Monotonic,
+            Ordering::Monotonic,
+            false,
+        );
         let ok = self.builder.icmp(IntCC::Equal, actual, old);
-        self.builder.branch(ok, exit_b, &[actual], loop_b, &[actual]);
+        self.builder
+            .branch(ok, exit_b, &[actual], loop_b, &[actual]);
         self.builder.switch_to_block(exit_b);
         Ok(exit_args[0])
     }
 }
-

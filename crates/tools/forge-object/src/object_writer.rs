@@ -242,38 +242,42 @@ impl<'a> ObjectWriter<'a> {
     /// 到函数符号——object crate 的 `add_relocation` 对 COFF 调试段同样
     /// 发射 section reloc（IMAGE_REL_AMD64_ADDR64），链接器解析为函数
     /// 地址。符号必须已定义（add_function 已登记）。
+    #[allow(clippy::type_complexity)]
     pub fn add_dwarf(
         &mut self,
         sections: &[(&str, Vec<u8>, Vec<(usize, String)>)],
     ) -> Result<(), IrError> {
         for (name, data, relocs) in sections {
             let seg = self.obj.segment_name(StandardSegment::Data).to_vec();
-            let id =
-                self.obj.add_section(seg, name.as_bytes().to_vec(), SectionKind::Debug);
+            let id = self
+                .obj
+                .add_section(seg, name.as_bytes().to_vec(), SectionKind::Debug);
             let offset = self.obj.append_section_data(id, data, 1);
             for (off, sym) in relocs {
-                let sym_id = self.defined_symbols.get(&ImmStr::from(sym.as_str())).copied();
+                let sym_id = self
+                    .defined_symbols
+                    .get(&ImmStr::from(sym.as_str()))
+                    .copied();
                 let Some(sym_id) = sym_id else {
                     return Err(IrError::Emit(format!(
                         "add_dwarf: symbol '{sym}' not defined (add_function first)"
                     )));
                 };
-                self.obj.add_relocation(
-                    id,
-                    Relocation {
-                        offset: offset + *off as u64,
-                        symbol: sym_id,
-                        addend: 0,
-                        flags: RelocationFlags::Generic {
-                            kind: ObjRelocKind::Absolute,
-                            encoding: RelocationEncoding::Generic,
-                            size: 64,
+                self.obj
+                    .add_relocation(
+                        id,
+                        Relocation {
+                            offset: offset + *off as u64,
+                            symbol: sym_id,
+                            addend: 0,
+                            flags: RelocationFlags::Generic {
+                                kind: ObjRelocKind::Absolute,
+                                encoding: RelocationEncoding::Generic,
+                                size: 64,
+                            },
                         },
-                    },
-                )
-                .map_err(|e| {
-                    IrError::Emit(format!("add_dwarf reloc for '{sym}': {e}"))
-                })?;
+                    )
+                    .map_err(|e| IrError::Emit(format!("add_dwarf reloc for '{sym}': {e}")))?;
             }
         }
         Ok(())

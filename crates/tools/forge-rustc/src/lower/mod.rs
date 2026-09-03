@@ -76,7 +76,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 // 短路处理（load 返回 0、store no-op），不产生实际内存访问。
                 next_offset -= 8;
                 if crate::trace::trace_enabled("SLOT") {
-                    let kind = if i == 0 { "ret" } else if args_set.contains(&local) { "arg" } else { "loc" };
+                    let kind = if i == 0 {
+                        "ret"
+                    } else if args_set.contains(&local) {
+                        "arg"
+                    } else {
+                        "loc"
+                    };
                     eprintln!(
                         "[forge] slot _{} [{}] size=8 offset={} ty={} (void placeholder)",
                         i, kind, next_offset, local_decl.ty
@@ -94,7 +100,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             let size = layout_size(tcx, local_decl.ty);
             next_offset -= size as i32;
             if crate::trace::trace_enabled("SLOT") {
-                let kind = if i == 0 { "ret" } else if args_set.contains(&local) { "arg" } else { "loc" };
+                let kind = if i == 0 {
+                    "ret"
+                } else if args_set.contains(&local) {
+                    "arg"
+                } else {
+                    "loc"
+                };
                 eprintln!(
                     "[forge] slot _{} [{}] size={} offset={} ty={}",
                     i, kind, size, next_offset, local_decl.ty
@@ -149,15 +161,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     fn const_switch_discr(&self, discr: &Operand<'tcx>) -> Option<i128> {
         match discr {
             Operand::Constant(c) => {
-                let scalar = c
-                    .const_
-                    .try_to_scalar_int()
-                    .or_else(|| {
-                        c.const_.try_eval_scalar_int(
-                            self.tcx,
-                            ty::TypingEnv::fully_monomorphized(),
-                        )
-                    });
+                let scalar = c.const_.try_to_scalar_int().or_else(|| {
+                    c.const_
+                        .try_eval_scalar_int(self.tcx, ty::TypingEnv::fully_monomorphized())
+                });
                 scalar.map(|s| {
                     let bits = s.to_bits(s.size());
                     match s.size().bytes() {
@@ -204,10 +211,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         queue.push(targets.otherwise());
                     }
                 }
-                TerminatorKind::Call { target, .. } => {
-                    if let Some(t) = target {
-                        queue.push(*t);
-                    }
+                TerminatorKind::Call {
+                    target: Some(t), ..
+                } => {
+                    queue.push(*t);
                 }
                 TerminatorKind::Assert { target, .. } => queue.push(*target),
                 TerminatorKind::Drop { target, .. } => queue.push(*target),
@@ -278,16 +285,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     ty_desc: format!("{:?}", body.local_decls[local].ty),
                     is_arg,
                     decl_line: line,
-                    members: crate::layout::struct_members(
-                        self.tcx,
-                        body.local_decls[local].ty,
-                    )
-                    .unwrap_or_default(),
+                    members: crate::layout::struct_members(self.tcx, body.local_decls[local].ty)
+                        .unwrap_or_default(),
                     size: layout_bytes(self.tcx, body.local_decls[local].ty),
                 });
                 // C-like 枚举（unit 变体）登记到聚合类型注册表（dwarf 生成
                 // DW_TAG_enumeration_type + enumerator）
-                if let Some(variants) = crate::layout::enum_variants(self.tcx, body.local_decls[local].ty)
+                if let Some(variants) =
+                    crate::layout::enum_variants(self.tcx, body.local_decls[local].ty)
                 {
                     self.func_refs.add_enum_type(crate::dwarf::EnumTypeEntry {
                         desc: format!("{:?}", body.local_decls[local].ty),
@@ -495,9 +500,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .lookup_line(stmt.source_info.span.lo())
                     .ok()
                     .map(|sfl| (sfl.line + 1) as u32);
-                self.builder.set_current_loc(
-                    stmt_line.map(|ln| crate::prelude::SourceLocation::line_only(ln)),
-                );
+                self.builder
+                    .set_current_loc(stmt_line.map(crate::prelude::SourceLocation::line_only));
                 // A4：错误增强——附函数名 + bb 序号 + 语句 Debug（否则深层
                 // lowering 的裸错误无法定位到具体 MIR 语句）。
                 self.lower_statement(stmt).map_err(|e| {
@@ -573,38 +577,38 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         let tgt_blk = self.blocks[&tgt];
                         self.builder.jump(tgt_blk, &[]);
                     } else {
-                    let discr_val = self.lower_switch_discr(discr)?;
-                    let otherwise = targets.otherwise();
-                    let targets_vec: Vec<_> = targets.iter().collect();
+                        let discr_val = self.lower_switch_discr(discr)?;
+                        let otherwise = targets.otherwise();
+                        let targets_vec: Vec<_> = targets.iter().collect();
 
-                    if targets_vec.len() == 1 && targets_vec[0].0 == 0 {
-                        // 布尔条件：switchInt(_1) -> [0: false_bb, otherwise: true_bb]
-                        let false_blk = self.blocks[&targets_vec[0].1];
-                        let true_blk = self.blocks[&otherwise];
-                        self.builder
-                            .branch(discr_val, true_blk, &[], false_blk, &[]);
-                    } else {
-                        // 通用 case：if-else 链。每个 case 独立重新 lower discr 与
-                        // 常量（等价手工分支链）——discr_val 若跨比较块复用同一
-                        // XReg，其长活区间与多个 case 常量的 XReg 在 regalloc 中
-                        // 冲突（常量 XReg 重叠分配 → 运行时比较错乱）。
-                        let mut cur_blk = block_id;
-                        for &(value, tgt_bb) in &targets_vec {
+                        if targets_vec.len() == 1 && targets_vec[0].0 == 0 {
+                            // 布尔条件：switchInt(_1) -> [0: false_bb, otherwise: true_bb]
+                            let false_blk = self.blocks[&targets_vec[0].1];
+                            let true_blk = self.blocks[&otherwise];
+                            self.builder
+                                .branch(discr_val, true_blk, &[], false_blk, &[]);
+                        } else {
+                            // 通用 case：if-else 链。每个 case 独立重新 lower discr 与
+                            // 常量（等价手工分支链）——discr_val 若跨比较块复用同一
+                            // XReg，其长活区间与多个 case 常量的 XReg 在 regalloc 中
+                            // 冲突（常量 XReg 重叠分配 → 运行时比较错乱）。
+                            let mut cur_blk = block_id;
+                            for &(value, tgt_bb) in &targets_vec {
+                                self.builder.switch_to_block(cur_blk);
+                                let d = self.lower_switch_discr(discr)?;
+                                let const_val = self.builder.iconst_i32(value as i32);
+                                let eq = self.builder.icmp(IntCC::Equal, d, const_val);
+                                let tgt_blk = self.blocks[&tgt_bb];
+                                let next_blk = self.builder.create_block();
+                                // create_block() auto-switches cur_block, switch back
+                                self.builder.switch_to_block(cur_blk);
+                                self.builder.branch(eq, tgt_blk, &[], next_blk, &[]);
+                                cur_blk = next_blk;
+                            }
+                            let otherwise_blk = self.blocks[&otherwise];
                             self.builder.switch_to_block(cur_blk);
-                            let d = self.lower_switch_discr(discr)?;
-                            let const_val = self.builder.iconst_i32(value as i32);
-                            let eq = self.builder.icmp(IntCC::Equal, d, const_val);
-                            let tgt_blk = self.blocks[&tgt_bb];
-                            let next_blk = self.builder.create_block();
-                            // create_block() auto-switches cur_block, switch back
-                            self.builder.switch_to_block(cur_blk);
-                            self.builder.branch(eq, tgt_blk, &[], next_blk, &[]);
-                            cur_blk = next_blk;
+                            self.builder.jump(otherwise_blk, &[]);
                         }
-                        let otherwise_blk = self.blocks[&otherwise];
-                        self.builder.switch_to_block(cur_blk);
-                        self.builder.jump(otherwise_blk, &[]);
-                    }
                     }
                 }
                 TerminatorKind::Call {
@@ -674,22 +678,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 _,
                             ) = ct.const_
                         {
-                            let g = if let rustc_middle::mir::interpret::GlobalAlloc::Memory(
-                                alloc,
-                            ) = self.tcx.global_alloc(alloc_id)
-                            {
-                                let inner = &*alloc.0;
-                                let size = inner.size().bytes_usize();
-                                let bytes = inner
-                                    .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
-                                    .to_vec();
-                                let align = inner.align.bytes();
-                                let sym = self.slice_sym(alloc_id);
-                                self.func_refs.intern_promoted(alloc_id, &sym, bytes, align)
-                            } else {
-                                let sym = self.slice_sym(alloc_id);
-                                self.func_refs.intern_global(alloc_id, &sym)
-                            };
+                            let g =
+                                if let rustc_middle::mir::interpret::GlobalAlloc::Memory(alloc) =
+                                    self.tcx.global_alloc(alloc_id)
+                                {
+                                    let inner = &*alloc.0;
+                                    let size = inner.size().bytes_usize();
+                                    let bytes = inner
+                                        .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
+                                        .to_vec();
+                                    let align = inner.align.bytes();
+                                    let sym = self.slice_sym(alloc_id);
+                                    self.func_refs.intern_promoted(alloc_id, &sym, bytes, align)
+                                } else {
+                                    let sym = self.slice_sym(alloc_id);
+                                    self.func_refs.intern_global(alloc_id, &sym)
+                                };
                             call_args.push(self.builder.global_addr(GlobalId(g)));
                             call_args.push(self.builder.iconst(meta as i64, TypeId::I64));
                             continue;
@@ -768,12 +772,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             if let Some(intr) = self.tcx.intrinsic(*def_id) {
                                 let name = intr.name.as_str();
                                 self.lower_intrinsic(name, args, substs, fty, block_id)?
-                            } else if self
-                                .tcx
-                                .is_lang_item(*def_id, rustc_hir::attrs::lang_items::LangItem::DropGlue)
-                                && !substs_first_ty(&substs)
-                                    .unwrap_or_else(|| self.tcx.types.unit)
-                                    .needs_drop(self.tcx, ty::TypingEnv::fully_monomorphized())
+                            } else if self.tcx.is_lang_item(
+                                *def_id,
+                                rustc_hir::attrs::lang_items::LangItem::DropGlue,
+                            ) && !substs_first_ty(&substs)
+                                .unwrap_or_else(|| self.tcx.types.unit)
+                                .needs_drop(self.tcx, ty::TypingEnv::fully_monomorphized())
                             {
                                 // drop_in_place<T>：T 无需 drop 时为空操作（no-op），
                                 // 否则需编译 drop glue（collect_instances 会收集）
@@ -1058,11 +1062,7 @@ pub(crate) fn mono_symbol_of<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>)
     } else {
         def_id.krate
     };
-    rustc_symbol_mangling::symbol_name_for_instance_in_crate(
-        tcx,
-        *instance,
-        instantiating_crate,
-    )
+    rustc_symbol_mangling::symbol_name_for_instance_in_crate(tcx, *instance, instantiating_crate)
 }
 
 fn build_signature<'tcx>(

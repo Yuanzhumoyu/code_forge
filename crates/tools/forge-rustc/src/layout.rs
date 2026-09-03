@@ -52,7 +52,10 @@ pub fn scalar_pair_offsets<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (i64, i64) 
         if let rustc_abi::BackendRepr::ScalarPair { a, b_offset, .. } = l.backend_repr {
             let b_off = b_offset.bytes() as i64;
             if crate::trace::trace_enabled("PAIR") {
-                eprintln!("[forge] pair_offsets niche a_size={} b_off={b_off} ty={ty}", a.primitive().size(&tcx).bytes());
+                eprintln!(
+                    "[forge] pair_offsets niche a_size={} b_off={b_off} ty={ty}",
+                    a.primitive().size(&tcx).bytes()
+                );
             }
             return (0, b_off);
         }
@@ -199,10 +202,7 @@ fn normalize_ty_debug(d: &str) -> String {
 
 /// C-like 枚举（全部 unit 变体）的 (变体名, 判别值) 列表；带 payload 的
 /// 枚举/非枚举返回 None（V1 不设 DW_TAG_enumeration_type）。
-pub fn enum_variants<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    ty: Ty<'tcx>,
-) -> Option<Vec<(String, u64)>> {
+pub fn enum_variants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Vec<(String, u64)>> {
     use rustc_middle::ty::TyKind;
     let TyKind::Adt(adt, _) = ty.kind() else {
         return None;

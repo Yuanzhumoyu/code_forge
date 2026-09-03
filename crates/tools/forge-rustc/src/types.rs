@@ -9,7 +9,10 @@
 use crate::prelude::IrError;
 use crate::prelude::*;
 
-pub fn map_type<'tcx>(ty: rustc_middle::ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Result<TypeId, IrError> {
+pub fn map_type<'tcx>(
+    ty: rustc_middle::ty::Ty<'tcx>,
+    tcx: TyCtxt<'tcx>,
+) -> Result<TypeId, IrError> {
     match ty.kind() {
         ty::TyKind::Bool => Ok(TypeId::BOOL),
         ty::TyKind::Int(ty::IntTy::I8) => Ok(TypeId::I8),
@@ -63,9 +66,7 @@ pub fn map_type<'tcx>(ty: rustc_middle::ty::Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Resu
                     }
                 }
                 _ => {
-                    return Err(IrError::Unsupported(format!(
-                        "SIMD type {ty}: not an Adt"
-                    )));
+                    return Err(IrError::Unsupported(format!("SIMD type {ty}: not an Adt")));
                 }
             };
             let elem_ty = map_type(elem, tcx)?;

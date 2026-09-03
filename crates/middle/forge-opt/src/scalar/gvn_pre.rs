@@ -269,16 +269,15 @@ fn compute_ant(
     gen_map: &HashMap<Block, HashSet<ExprId>>,
 ) -> HashMap<Block, HashSet<ExprId>> {
     let n = func.dfg.blocks.len();
-    let mut ant_in = HashMap::new();
+    let mut ant_in = HashMap::with_capacity(n);
     for bi in 0..n {
         ant_in.insert(Block(bi as u32), HashSet::new());
     }
     let mut changed = true;
     while changed {
         changed = false;
-        for bi in 0..n {
+        for (bi, block) in func.dfg.blocks.iter().enumerate() {
             let b = Block(bi as u32);
-            let block = &func.dfg.blocks[bi];
             let succs: Vec<Block> = match &block.terminator {
                 Terminator::Branch {
                     then_block,

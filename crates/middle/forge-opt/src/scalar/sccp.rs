@@ -244,10 +244,8 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     }
 
     // Clear unreachable blocks
-    for bi in 0..block_count {
-        let block_id = Block(bi as u32);
-        if !reachable.contains(&block_id) {
-            let block = &mut func.dfg.blocks[bi];
+    for (bi, block) in func.dfg.blocks.iter_mut().enumerate() {
+        if !reachable.contains(&Block(bi as u32)) {
             block.inst_order.clear();
             block.terminator = Terminator::Unreachable;
             result.blocks_removed += 1;

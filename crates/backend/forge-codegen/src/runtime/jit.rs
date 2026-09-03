@@ -1695,9 +1695,13 @@ mod tests {
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
 
         // f(ptr: *mut i32, val: i32)：old=12（load），cmpxchg(12 → val & old)
-        let sig = FunctionSignature::new(&[(TypeId::I64, "ptr"), (TypeId::I32, "val")], &[TypeId::I32]);
+        let sig = FunctionSignature::new(
+            &[(TypeId::I64, "ptr"), (TypeId::I32, "val")],
+            &[TypeId::I32],
+        );
         jit.add_function("cmpxchg_param32", &sig, |b| {
-            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr"), (TypeId::I32, "val")]);
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "ptr"), (TypeId::I32, "val")]);
             b.switch_to_block(entry);
             let p = params[0];
             let val = params[1];
@@ -1870,7 +1874,10 @@ mod tests {
         let mut x: i64 = 100;
         let r = f(&mut x);
         // val(100) + 0+1+...+9(45) + back(100) = 245
-        assert_eq!(r, 245, "val 被 store 后 load 回必须 = val（槽写错位则 back≠100）");
+        assert_eq!(
+            r, 245,
+            "val 被 store 后 load 回必须 = val（槽写错位则 back≠100）"
+        );
     }
 
     /// Range::next 跨调用写回复现：callee(ptr) 修改 [ptr]，main 两次调用
@@ -1920,7 +1927,10 @@ mod tests {
         let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
         let got = f();
         // a = 0（x=0 返回 0、写 1）、b = 1（x=1 返回 1、写 2）→ 0*100+1 = 1
-        assert_eq!(got, 1, "callee 第二次调用必须读到第一次写入的新值（跨调用写回）");
+        assert_eq!(
+            got, 1,
+            "callee 第二次调用必须读到第一次写入的新值（跨调用写回）"
+        );
     }
 
     /// 两层调用链写回复现（next 包装 → spec_next 形态）：callee2 写 [ptr]，
@@ -2315,7 +2325,10 @@ mod tests {
         let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
         let got = f();
         // value 正确（v_i=1 → 4）+ guard 未破坏（g_i=1）→ 5
-        assert_eq!(got, 5, "ScalarPair 窄字段写不得越界覆盖相邻槽（WA-23 回归）");
+        assert_eq!(
+            got, 5,
+            "ScalarPair 窄字段写不得越界覆盖相邻槽（WA-23 回归）"
+        );
     }
 
     /// E2 严格 Select 矩阵：验证 [lower.Select]（test+mov+cmovcc NE）在
@@ -2325,6 +2338,7 @@ mod tests {
     /// 3. I32 cond + I32 臂；
     /// 4. 链式 select（前一个 select 结果作下一个的臂）；
     /// 5. select 结果参与算术（长活区间跨 use）。
+    ///
     /// 此前 rvalue.rs 的 niche 判别因 nested_enum_break SEGV 回滚算术公式
     /// （疑 cond 位宽/cmovne 路径），主库侧从未独立验证变量臂形态。
     #[cfg(target_arch = "x86_64")]
@@ -2341,7 +2355,11 @@ mod tests {
             &[TypeId::I64],
         );
         jit.add_function("sel_var", &sig, |b| {
-            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x"), (TypeId::I64, "y"), (TypeId::I64, "c")]);
+            let (entry, params) = b.create_block_with_params(&[
+                (TypeId::I64, "x"),
+                (TypeId::I64, "y"),
+                (TypeId::I64, "c"),
+            ]);
             b.switch_to_block(entry);
             let zero = b.iconst_i64(0);
             let cond = b.icmp(IntCC::NotEqual, params[2], zero);
@@ -2360,7 +2378,11 @@ mod tests {
             &[TypeId::I32],
         );
         jit.add_function("sel_i32v", &sig2, |b| {
-            let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x"), (TypeId::I32, "y"), (TypeId::I32, "c")]);
+            let (entry, params) = b.create_block_with_params(&[
+                (TypeId::I32, "x"),
+                (TypeId::I32, "y"),
+                (TypeId::I32, "c"),
+            ]);
             b.switch_to_block(entry);
             let zero = b.iconst_i32(0);
             let cond = b.icmp(IntCC::NotEqual, params[2], zero);
@@ -2374,9 +2396,11 @@ mod tests {
 
         // 3. h(a, b: i64) -> i64 = select(a != 0, select(b != 0, 3, 4), 5)
         //    ——链式：内层 select 结果作外层 then 臂
-        let sig3 = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
+        let sig3 =
+            FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
         jit.add_function("sel_chain", &sig3, |b| {
-            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
             b.switch_to_block(entry);
             let zero = b.iconst_i64(0);
             let cb = b.icmp(IntCC::NotEqual, params[1], zero);
@@ -2396,9 +2420,11 @@ mod tests {
         assert_eq!(h(0, 0), 5, "a==0,b==0 → 5");
 
         // 4. k(x, c: i64) -> i64 = (c != 0 ? 100 : 7) + x——select 结果参与算术
-        let sig4 = FunctionSignature::new(&[(TypeId::I64, "x"), (TypeId::I64, "c")], &[TypeId::I64]);
+        let sig4 =
+            FunctionSignature::new(&[(TypeId::I64, "x"), (TypeId::I64, "c")], &[TypeId::I64]);
         jit.add_function("sel_arith", &sig4, |b| {
-            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x"), (TypeId::I64, "c")]);
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "x"), (TypeId::I64, "c")]);
             b.switch_to_block(entry);
             let zero = b.iconst_i64(0);
             let cond = b.icmp(IntCC::NotEqual, params[1], zero);

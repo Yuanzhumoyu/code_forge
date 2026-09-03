@@ -90,7 +90,12 @@ pub(crate) fn compile_with_isa(
     // 字节码层诊断（用户建议：IR 层确认后查字节码）：
     // FORGE_TRACE_BC=1 时 hex dump 机器码 + reloc（配 llvm-objdump 反汇编对照）。
     if crate::trace::trace_enabled("BC") {
-        let hex: Vec<String> = cf.code.iter().take(4096).map(|b| format!("{b:02x}")).collect();
+        let hex: Vec<String> = cf
+            .code
+            .iter()
+            .take(4096)
+            .map(|b| format!("{b:02x}"))
+            .collect();
         eprintln!(
             "[forge] BC {} code_size={} relocs={} bytes=[{}]",
             func.name,
@@ -99,7 +104,10 @@ pub(crate) fn compile_with_isa(
             hex.join(" ")
         );
         for r in &cf.relocations {
-            eprintln!("[forge] BC reloc {} @0x{:x} addend={}", r.symbol, r.offset, r.addend);
+            eprintln!(
+                "[forge] BC reloc {} @0x{:x} addend={}",
+                r.symbol, r.offset, r.addend
+            );
         }
     }
     Ok(cf)

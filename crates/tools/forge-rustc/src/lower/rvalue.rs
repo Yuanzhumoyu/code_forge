@@ -206,10 +206,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         // b_offset，读错 → 解引用垃圾 SEGV）。
                         let niche_off = match &layout.layout.backend_repr {
                             rustc_abi::BackendRepr::ScalarPair { b, b_offset, .. } => {
-                                let is_ptr = matches!(
-                                    b.primitive(),
-                                    rustc_abi::Primitive::Pointer(_)
-                                );
+                                let is_ptr =
+                                    matches!(b.primitive(), rustc_abi::Primitive::Pointer(_));
                                 if is_ptr { b_offset.bytes() as i64 } else { 0 }
                             }
                             _ => 0,
@@ -360,28 +358,28 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             Some(ptr.provenance.alloc_id())
                         }
                         _ => match constant.const_ {
-                    rustc_middle::mir::Const::Val(
-                        rustc_middle::mir::ConstValue::Indirect { alloc_id, .. },
-                        _,
-                    ) => {
-                        if crate::trace::trace_enabled("GLOBAL") {
-                            eprintln!("[forge] const Indirect alloc={alloc_id:?}");
-                        }
-                        Some(alloc_id)
-                    }
-                    rustc_middle::mir::Const::Val(
-                        rustc_middle::mir::ConstValue::Scalar(
-                            rustc_middle::mir::interpret::Scalar::Ptr(ptr, _),
-                        ),
-                        _,
-                    ) => {
-                        if crate::trace::trace_enabled("GLOBAL") {
-                            eprintln!("[forge] const Ptr prov={:?}", ptr.provenance);
-                        }
-                        Some(ptr.provenance.alloc_id())
-                    }
-                    _ => None,
-                }
+                            rustc_middle::mir::Const::Val(
+                                rustc_middle::mir::ConstValue::Indirect { alloc_id, .. },
+                                _,
+                            ) => {
+                                if crate::trace::trace_enabled("GLOBAL") {
+                                    eprintln!("[forge] const Indirect alloc={alloc_id:?}");
+                                }
+                                Some(alloc_id)
+                            }
+                            rustc_middle::mir::Const::Val(
+                                rustc_middle::mir::ConstValue::Scalar(
+                                    rustc_middle::mir::interpret::Scalar::Ptr(ptr, _),
+                                ),
+                                _,
+                            ) => {
+                                if crate::trace::trace_enabled("GLOBAL") {
+                                    eprintln!("[forge] const Ptr prov={:?}", ptr.provenance);
+                                }
+                                Some(ptr.provenance.alloc_id())
+                            }
+                            _ => None,
+                        },
                     }
                 } else {
                     None
@@ -648,10 +646,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     /// fat pointer 的 metadata（len）：读 place 槽 [base+8]（fat ptr 布局
     /// ptr@0 + metadata@8）。仅当 place 类型是 fat pointer（&str/&[T]/
     /// dyn Trait）时调用；thin 指针返回 None（PtrMetadata 恒 0）。
-    pub(crate) fn fat_ptr_metadata(
-        &mut self,
-        place: &mir::Place<'tcx>,
-    ) -> Option<Value> {
+    pub(crate) fn fat_ptr_metadata(&mut self, place: &mir::Place<'tcx>) -> Option<Value> {
         use rustc_middle::ty::TyKind;
         let ty = place.ty(&self.body.local_decls, self.tcx).ty;
         let is_fat = match ty.kind() {

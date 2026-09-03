@@ -80,8 +80,8 @@ pub struct FnVarEntries {
     pub vars: Vec<VarEntry>,
 }
 
-/// C-like 枚举类型（全部 unit 变体，无 payload）：DW_TAG_enumeration_type
-/// + DW_TAG_enumerator 子项（name + const_value）。lower 采集判别值
+/// C-like 枚举类型（全部 unit 变体，无 payload）：DW_TAG_enumeration_type +
+///  DW_TAG_enumerator 子项（name + const_value）。lower 采集判别值
 ///（rustc `adt.discriminants`），注册到 FuncRefTable 供 dwarf 生成。
 #[derive(Clone, Debug)]
 pub struct EnumTypeEntry {
@@ -115,9 +115,7 @@ pub struct EnumTypeEntry {
 /// end_sequence 后行寄存器复位为 1，故每行 advance_line 目标 = L - 1。
 ///
 /// 返回 (段字节, reloc: (数据内偏移, 符号名))。
-pub fn gen_debug_line(
-    fns: &[(String, u32, Vec<(u32, u32)>)],
-) -> (Vec<u8>, Vec<(usize, String)>) {
+pub fn gen_debug_line(fns: &[(String, u32, Vec<(u32, u32)>)]) -> (Vec<u8>, Vec<(usize, String)>) {
     let mut buf: Vec<u8> = Vec::new();
     let unit_len_pos = 0usize;
     buf.extend_from_slice(&0u32.to_le_bytes()); // unit_length 占位
@@ -229,7 +227,9 @@ fn push_line_row(
 /// - DW_TAG_formal_parameter / DW_TAG_variable（DW_AT_location =
 ///   DW_OP_fbreg <槽偏移>，槽相对 rbp——frame base = rbp）
 /// - DW_TAG_base_type（标量类型：name/byte_size/encoding，B3）
+///
 /// 返回 (字节, relocs: (偏移, 符号名))。
+#[allow(clippy::too_many_arguments)]
 pub fn gen_debug_info(
     entries: &[(String, u32)],
     vars: &[FnVarEntries],
@@ -307,8 +307,7 @@ pub fn gen_debug_info(
     // code 3（有变量，children yes——variable/formal_parameter 作 children）
     for (sym, line) in entries {
         let fn_vars: Vec<&VarEntry> = if full {
-            vars
-                .iter()
+            vars.iter()
                 .find(|fv| fv.sym == *sym)
                 .map(|fv| fv.vars.iter().collect())
                 .unwrap_or_default()
@@ -393,7 +392,10 @@ pub fn gen_debug_info(
         // DW_AT_name = 类型名（desc 去掉 crate/module 前缀后的末段——
         // DWARF 惯例是裸标识符，路径由 namespace DIE 表达——V1 简化）。
         for desc in &struct_descs {
-            let src: Option<&VarEntry> = vars.iter().flat_map(|fv| fv.vars.iter()).find(|v| v.ty_desc == *desc);
+            let src: Option<&VarEntry> = vars
+                .iter()
+                .flat_map(|fv| fv.vars.iter())
+                .find(|v| v.ty_desc == *desc);
             let Some(entry) = src else { continue };
             type_off_by_desc.insert(desc.clone(), buf.len() as u32);
             buf.push(8); // abbrev code 8: DW_TAG_structure_type
@@ -405,7 +407,11 @@ pub fn gen_debug_info(
                 eprintln!(
                     "[dw-struct] desc={desc} size={} members={:?}",
                     entry.size,
-                    entry.members.iter().map(|m| (&m.name, &m.ty_desc, m.byte_off)).collect::<Vec<_>>()
+                    entry
+                        .members
+                        .iter()
+                        .map(|m| (&m.name, &m.ty_desc, m.byte_off))
+                        .collect::<Vec<_>>()
                 );
             }
             for m in &entry.members {
@@ -515,109 +521,87 @@ fn ty_kind(desc: &str) -> Option<TyKind> {
 /// code 1 CU(yes) / 2 subprogram(no) / 3 subprogram(yes) /
 /// 4 formal_parameter(no) / 5 variable(no) / 6 base_type(no)。
 pub fn gen_debug_abbrev() -> Vec<u8> {
-    let mut buf = Vec::new();
-    // code 1：CU，children yes
-    buf.push(1);
-    buf.push(0x11);
-    buf.push(1);
-    buf.push(0x25); buf.push(0x08); // producer → string
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x13); buf.push(0x05); // language → data2
-    buf.push(0x11); buf.push(0x01); // low_pc → addr（CU 代码范围起点）
-    buf.push(0x12); buf.push(0x07); // high_pc → data8（相对 low_pc 偏移）
-    buf.push(0x10); buf.push(0x06); // stmt_list → data4（.debug_line 偏移 0）
-    buf.push(0); buf.push(0);
-    // code 2：subprogram，children no（无变量函数——C1 兼容）
-    buf.push(2);
-    buf.push(0x2e);
-    buf.push(0);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x3a); buf.push(0x0b); // decl_file → data1（gcc 形态）
-    buf.push(0x11); buf.push(0x01); // low_pc → addr
-    buf.push(0x12); buf.push(0x07); // high_pc → data8（函数代码字节）
-    buf.push(0x3b); buf.push(0x06); // decl_line → data4
-    buf.push(0); buf.push(0);
-    // code 3：subprogram，children yes（有变量）
-    buf.push(3);
-    buf.push(0x2e);
-    buf.push(1);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x3a); buf.push(0x0b); // decl_file → data1
-    buf.push(0x11); buf.push(0x01); // low_pc → addr
-    buf.push(0x12); buf.push(0x07); // high_pc → data8
-    buf.push(0x3b); buf.push(0x06); // decl_line → data4
-    buf.push(0x40); buf.push(0x18); // frame_base → exprloc（DW_FORM_exprloc=0x18）
-    buf.push(0); buf.push(0);
-    // code 4：formal_parameter，children no
-    buf.push(4);
-    buf.push(0x05);
-    buf.push(0);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x3a); buf.push(0x0b); // decl_file → data1
-    buf.push(0x49); buf.push(0x06); // type → ref4
-    buf.push(0x02); buf.push(0x18); // location → exprloc（DW_FORM_exprloc=0x18）
-    buf.push(0x3b); buf.push(0x06); // decl_line → data4
-    buf.push(0); buf.push(0);
-    // code 5：variable，children no
-    buf.push(5);
-    buf.push(0x34);
-    buf.push(0);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x3a); buf.push(0x0b); // decl_file → data1
-    buf.push(0x49); buf.push(0x06); // type → ref4
-    buf.push(0x02); buf.push(0x18); // location → exprloc（DW_FORM_exprloc=0x18）
-    buf.push(0x3b); buf.push(0x06); // decl_line → data4
-    buf.push(0); buf.push(0);
-    // code 6：base_type，children no
-    buf.push(6);
-    buf.push(0x24);
-    buf.push(0);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x0b); buf.push(0x0b); // byte_size → data1
-    buf.push(0x3e); buf.push(0x0b); // encoding → data1
-    buf.push(0); buf.push(0);
-    // code 7：pointer_type，children no（byte_size 8；type ref4 指向内层
-    // base_type——聚合/引用内层为 0 占位，后续扩展）
-    buf.push(7);
-    buf.push(0x0f);
-    buf.push(0);
-    buf.push(0x0b); buf.push(0x0b); // byte_size → data1
-    buf.push(0x49); buf.push(0x06); // type → ref4
-    buf.push(0); buf.push(0);
-    // code 8：structure_type，children yes（聚合变量类型——DW_AT_name/
-    // byte_size(data4，结构可 >255) + DW_TAG_member 子项）
-    buf.push(8);
-    buf.push(0x13); // DW_TAG_structure_type
-    buf.push(1);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x0b); buf.push(0x06); // byte_size → data4
-    buf.push(0); buf.push(0);
-    // code 9：member，children no（DW_AT_name/type ref4/
-    // data_member_location data4 = 字节偏移）
-    buf.push(9);
-    buf.push(0x0d); // DW_TAG_member
-    buf.push(0);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x49); buf.push(0x06); // type → ref4
-    buf.push(0x38); buf.push(0x06); // data_member_location → data4
-    buf.push(0); buf.push(0);
-    // code 10：enumeration_type，children yes（C-like 枚举——name/byte_size
-    // data4 + DW_TAG_enumerator 子项）
-    buf.push(10);
-    buf.push(0x04); // DW_TAG_enumeration_type
-    buf.push(1);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x0b); buf.push(0x06); // byte_size → data4
-    buf.push(0); buf.push(0);
-    // code 11：enumerator，children no（name + const_value data8）
-    buf.push(11);
-    buf.push(0x28); // DW_TAG_enumerator
-    buf.push(0);
-    buf.push(0x03); buf.push(0x08); // name → string
-    buf.push(0x1c); buf.push(0x07); // const_value → data8
-    buf.push(0); buf.push(0);
-    buf.push(0); // 整个 abbrev 表终止
-    buf
+    vec![
+        // code 1：CU，children yes
+        1, 0x11, 1, //
+        0x25, 0x08, // producer → string
+        0x03, 0x08, // name → string
+        0x13, 0x05, // language → data2
+        0x11, 0x01, // low_pc → addr（CU 代码范围起点）
+        0x12, 0x07, // high_pc → data8（相对 low_pc 偏移）
+        0x10, 0x06, // stmt_list → data4（.debug_line 偏移 0）
+        0, 0, //
+        // code 2：subprogram，children no（无变量函数——C1 兼容）
+        2, 0x2e, 0, //
+        0x03, 0x08, // name → string
+        0x3a, 0x0b, // decl_file → data1（gcc 形态）
+        0x11, 0x01, // low_pc → addr
+        0x12, 0x07, // high_pc → data8（函数代码字节）
+        0x3b, 0x06, // decl_line → data4
+        0, 0, //
+        // code 3：subprogram，children yes（有变量）
+        3, 0x2e, 1, //
+        0x03, 0x08, // name → string
+        0x3a, 0x0b, // decl_file → data1
+        0x11, 0x01, // low_pc → addr
+        0x12, 0x07, // high_pc → data8
+        0x3b, 0x06, // decl_line → data4
+        0x40, 0x18, // frame_base → exprloc（DW_FORM_exprloc=0x18）
+        0, 0, //
+        // code 4：formal_parameter，children no
+        4, 0x05, 0, //
+        0x03, 0x08, // name → string
+        0x3a, 0x0b, // decl_file → data1
+        0x49, 0x06, // type → ref4
+        0x02, 0x18, // location → exprloc（DW_FORM_exprloc=0x18）
+        0x3b, 0x06, // decl_line → data4
+        0, 0, //
+        // code 5：variable，children no
+        5, 0x34, 0, //
+        0x03, 0x08, // name → string
+        0x3a, 0x0b, // decl_file → data1
+        0x49, 0x06, // type → ref4
+        0x02, 0x18, // location → exprloc（DW_FORM_exprloc=0x18）
+        0x3b, 0x06, // decl_line → data4
+        0, 0, //
+        // code 6：base_type，children no
+        6, 0x24, 0, //
+        0x03, 0x08, // name → string
+        0x0b, 0x0b, // byte_size → data1
+        0x3e, 0x0b, // encoding → data1
+        0, 0, //
+        // code 7：pointer_type，children no (byte_size 8；type ref4 指向内层
+        // base_type——聚合/引用内层为 0 占位，后续扩展)
+        7, 0x0f, 0, //
+        0x0b, 0x0b, // byte_size → data1
+        0x49, 0x06, // type → ref4
+        0, 0, //
+        // code 8：structure_type，children yes（聚合变量类型——DW_AT_name/
+        // byte_size(data4，结构可 >255) + DW_TAG_member 子项）
+        8, 0x13, 1, //
+        0x03, 0x08, // name → string
+        0x0b, 0x06, // byte_size → data4
+        0, 0, //
+        // code 9: member，children no（DW_AT_name/type ref4/
+        // data_member_location data4 = 字节偏移）
+        9, 0x0d, 0, //
+        0x03, 0x08, // name → string
+        0x49, 0x06, // type → ref4
+        0x38, 0x06, // data_member_location → data4
+        0, 0, //
+        // code 10：enumeration_type，children yes（C-like 枚举——name/byte_size
+        // data4 + DW_TAG_enumerator 子项）
+        10, 0x04, 1, //
+        0x03, 0x08, // name → string
+        0x0b, 0x06, // byte_size → data4
+        0, 0, //
+        // code 11：enumerator，children no（name + const_value data8）
+        11, 0x28, 0, //
+        0x03, 0x08, // name → string
+        0x1c, 0x07, // const_value → data8
+        0, 0, //
+        0, // 整个 abbrev 表终止
+    ]
 }
 
 /// 生成 `.debug_aranges`：单 CU 一个地址范围（low_pc 占位 + reloc 到首
@@ -635,7 +619,7 @@ pub fn gen_debug_aranges(
     buf.extend_from_slice(&0u32.to_le_bytes()); // debug_info_offset = 0（单 CU）
     buf.push(8); // address_size
     buf.push(0); // segment_size
-    while buf.len() % 16 != 0 {
+    while !buf.len().is_multiple_of(16) {
         buf.push(0); // 头补齐到 tuple 对齐（2×addr_size）
     }
     let mut relocs: Vec<(usize, String)> = Vec::new();
@@ -659,6 +643,7 @@ pub fn gen_debug_aranges(
 /// 对齐填充与 main 别名副本——单 CU 超范围无害）。
 /// `fn_sizes`：符号 → 函数代码字节（subprogram high_pc）。
 /// 返回 (段名, 字节, 段内 reloc: (偏移, 符号名)) 列表。
+#[allow(clippy::too_many_arguments)]
 pub fn build_dwarf_sections(
     fns: &[(String, u32, Vec<(u32, u32)>)],
     vars: &[FnVarEntries],
@@ -673,12 +658,17 @@ pub fn build_dwarf_sections(
     let span = code_span + 0x200;
     let first_sym = entries.first().map(|(s, _)| s.as_str());
     let (line_bytes, line_relocs) = gen_debug_line(fns);
-    let (info_bytes, info_relocs) =
-        gen_debug_info(&entries, vars, producer, src_file, span, fn_sizes, enums, full);
+    let (info_bytes, info_relocs) = gen_debug_info(
+        &entries, vars, producer, src_file, span, fn_sizes, enums, full,
+    );
     let (ar_bytes, ar_relocs) = gen_debug_aranges(first_sym, span);
     vec![
         (".debug_line".to_string(), line_bytes, line_relocs),
-        (".debug_line_str".to_string(), gen_debug_line_str(src_file), vec![]),
+        (
+            ".debug_line_str".to_string(),
+            gen_debug_line_str(src_file),
+            vec![],
+        ),
         (".debug_info".to_string(), info_bytes, info_relocs),
         (".debug_aranges".to_string(), ar_bytes, ar_relocs),
         (".debug_abbrev".to_string(), gen_debug_abbrev(), vec![]),
@@ -706,7 +696,11 @@ mod tests {
     fn line_program_basic() {
         let fns = vec![
             ("main".to_string(), 10u32, vec![]),
-            ("helper".to_string(), 20u32, vec![(4u32, 21u32), (12u32, 22u32)]),
+            (
+                "helper".to_string(),
+                20u32,
+                vec![(4u32, 21u32), (12u32, 22u32)],
+            ),
         ];
         let (bytes, relocs) = gen_debug_line(&fns);
         assert!(bytes.len() > 24, "line program too small");
@@ -715,7 +709,10 @@ mod tests {
         assert_eq!(relocs[0].1, "main");
         // .debug_line_str 串池：gen_debug_line_str 携带源路径
         let strs = gen_debug_line_str("test_crate");
-        assert!(strs.windows(10).any(|w| w == b"test_crate"), "line_str 池含路径");
+        assert!(
+            strs.windows(10).any(|w| w == b"test_crate"),
+            "line_str 池含路径"
+        );
         // unit_length 非 0
         let unit_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert_eq!(unit_len as usize, bytes.len() - 4);
@@ -731,13 +728,25 @@ mod tests {
         // 第 2 个 reloc 的占位（relocs[1].0 处 8 字节）= 12
         let off = relocs[1].0;
         let v = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-        assert_eq!(v, 12, "per-statement set_address placeholder = instr offset");
+        assert_eq!(
+            v, 12,
+            "per-statement set_address placeholder = instr offset"
+        );
     }
 
     #[test]
     fn info_has_cu_and_subprograms() {
         let entries = vec![("f".to_string(), 5u32)];
-        let (bytes, relocs) = gen_debug_info(&entries, &[], "forge", "test", 0x30, &Default::default(), &[], false);
+        let (bytes, relocs) = gen_debug_info(
+            &entries,
+            &[],
+            "forge",
+            "test",
+            0x30,
+            &Default::default(),
+            &[],
+            false,
+        );
         // relocs：CU low_pc(1) + subprogram low_pc(1)
         assert_eq!(relocs.len(), 2);
         assert_eq!(relocs[0].1, "f", "CU low_pc reloc → first fn");
@@ -745,7 +754,10 @@ mod tests {
         // + abbr_off(4) = 12——CU DIE abbrev code = 1 在 index 12（v5）
         assert_eq!(bytes[12], 1);
         // CU 后子项 terminator(1) + subprogram abbrev code = 2
-        assert!(bytes.windows(1).any(|w| w[0] == 2), "subprogram abbrev 2 present");
+        assert!(
+            bytes.windows(1).any(|w| w[0] == 2),
+            "subprogram abbrev 2 present"
+        );
     }
 
     #[test]
@@ -785,7 +797,16 @@ mod tests {
                 },
             ],
         }];
-        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), &[], true);
+        let (bytes, relocs) = gen_debug_info(
+            &entries,
+            &vars,
+            "forge",
+            "test",
+            0x30,
+            &Default::default(),
+            &[],
+            true,
+        );
         assert_eq!(relocs.len(), 2, "CU low_pc + fn low_pc relocs");
         // base_type "i32"（code 6 在 CU 后）出现——字节里含 "i32\0"
         assert!(
@@ -802,7 +823,10 @@ mod tests {
             "pointer_type (abbrev 7, byte_size 8) present for &i32"
         );
         // fbreg 表达式（0x91 = DW_OP_fbreg）出现
-        assert!(bytes.windows(1).any(|w| w[0] == 0x91), "DW_OP_fbreg present");
+        assert!(
+            bytes.windows(1).any(|w| w[0] == 0x91),
+            "DW_OP_fbreg present"
+        );
     }
 
     #[test]
@@ -815,9 +839,33 @@ mod tests {
         let vars = vec![FnVarEntries {
             sym: "f".to_string(),
             vars: vec![
-                VarEntry { name: "x".to_string(), slot_offset: -24, ty_desc: "i32".to_string(), is_arg: false, decl_line: 7, members: vec![], size: 4 },
-                VarEntry { name: "a".to_string(), slot_offset: -32, ty_desc: "i32".to_string(), is_arg: true, decl_line: 6, members: vec![], size: 4 },
-                VarEntry { name: "b".to_string(), slot_offset: -16, ty_desc: "&i32".to_string(), is_arg: true, decl_line: 6, members: vec![], size: 8 },
+                VarEntry {
+                    name: "x".to_string(),
+                    slot_offset: -24,
+                    ty_desc: "i32".to_string(),
+                    is_arg: false,
+                    decl_line: 7,
+                    members: vec![],
+                    size: 4,
+                },
+                VarEntry {
+                    name: "a".to_string(),
+                    slot_offset: -32,
+                    ty_desc: "i32".to_string(),
+                    is_arg: true,
+                    decl_line: 6,
+                    members: vec![],
+                    size: 4,
+                },
+                VarEntry {
+                    name: "b".to_string(),
+                    slot_offset: -16,
+                    ty_desc: "&i32".to_string(),
+                    is_arg: true,
+                    decl_line: 6,
+                    members: vec![],
+                    size: 8,
+                },
                 VarEntry {
                     name: "p".to_string(),
                     slot_offset: -40,
@@ -825,14 +873,31 @@ mod tests {
                     is_arg: false,
                     decl_line: 8,
                     members: vec![
-                        VarMember { name: "y".to_string(), ty_desc: "i32".to_string(), byte_off: 4 },
-                        VarMember { name: "x".to_string(), ty_desc: "i32".to_string(), byte_off: 0 },
+                        VarMember {
+                            name: "y".to_string(),
+                            ty_desc: "i32".to_string(),
+                            byte_off: 4,
+                        },
+                        VarMember {
+                            name: "x".to_string(),
+                            ty_desc: "i32".to_string(),
+                            byte_off: 0,
+                        },
                     ],
                     size: 8,
                 },
             ],
         }];
-        let (bytes, relocs) = gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), &[], true);
+        let (bytes, relocs) = gen_debug_info(
+            &entries,
+            &vars,
+            "forge",
+            "test",
+            0x30,
+            &Default::default(),
+            &[],
+            true,
+        );
         assert_eq!(relocs.len(), 2, "CU low_pc + fn low_pc relocs");
 
         let mut p = 0usize;
@@ -981,12 +1046,19 @@ mod tests {
                 }
                 other => panic!(
                     "unexpected abbrev code {other} at p={p}; bytes: {}",
-                    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+                    bytes
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 ),
             }
         }
         assert_eq!(p, bytes.len(), "DIE stream must parse to exact end");
-        assert!(found_base && found_ptr && found_sub && found_struct, "all DIE kinds present");
+        assert!(
+            found_base && found_ptr && found_sub && found_struct,
+            "all DIE kinds present"
+        );
         // structure_type 成员（x@0 / y@4——layout 实测偏移，与槽内一致）
         member_offs.sort_by_key(|(_, o)| *o);
         assert_eq!(
@@ -996,11 +1068,19 @@ mod tests {
         );
         // 成员 type ref 指向 i32 base_type（非 0）
         let bo = base_off.expect("i32 base_type present");
-        assert_eq!(struct_mem_types, vec![bo, bo], "member type refs → i32 base");
+        assert_eq!(
+            struct_mem_types,
+            vec![bo, bo],
+            "member type refs → i32 base"
+        );
         // fbreg 偏移（sleb128，x = slot_offset）：x=-32 / p=-40 / b=-16 / a=-24
         let mut offs = fbreg_offsets;
         offs.sort_unstable();
-        assert_eq!(offs, vec![-40, -32, -24, -16], "fbreg offsets from slot offsets");
+        assert_eq!(
+            offs,
+            vec![-40, -32, -24, -16],
+            "fbreg offsets from slot offsets"
+        );
     }
 
     fn decode_sleb(mut v: &[u8]) -> i64 {
@@ -1030,7 +1110,11 @@ mod tests {
         // + copy + end_sequence）。回归：version 单字节、opcode_base=1（标准
         // 操作码被当 special）、set_file 0、缺文件字段等错误在此暴露。
         let fns = vec![
-            ("main".to_string(), 10u32, vec![(4u32, 11u32), (12u32, 12u32)]),
+            (
+                "main".to_string(),
+                10u32,
+                vec![(4u32, 11u32), (12u32, 12u32)],
+            ),
             ("helper".to_string(), 20u32, vec![]),
         ];
         let (bytes, relocs) = gen_debug_line(&fns);
@@ -1058,7 +1142,11 @@ mod tests {
             v
         };
         let unit_len = rd_u32(&mut p);
-        assert_eq!(unit_len as usize, bytes.len() - 4, "unit_length covers section");
+        assert_eq!(
+            unit_len as usize,
+            bytes.len() - 4,
+            "unit_length covers section"
+        );
         // v5：version u16 / address_size / segment_selector_size / header_length
         assert_eq!(bytes[p], 5, "line version lo");
         assert_eq!(bytes[p + 1], 0, "line version hi");
@@ -1096,11 +1184,19 @@ mod tests {
         p += 1;
         assert_eq!(bytes[p], 0x1f, "DW_FORM_line_strp");
         p += 1;
-        assert_eq!(rd_uleb(&mut p), 2, "file_names_count 2（gcc hack：0/1 基读者皆命中）");
+        assert_eq!(
+            rd_uleb(&mut p),
+            2,
+            "file_names_count 2（gcc hack：0/1 基读者皆命中）"
+        );
         // line_strp 偏移 4 字节
         assert_eq!(&bytes[p..p + 4], &[0, 0, 0, 0], "file[0] strp 偏移 0");
         p += 4;
-        assert_eq!(&bytes[p..p + 4], &[0, 0, 0, 0], "file[1] strp 偏移 0（同串）");
+        assert_eq!(
+            &bytes[p..p + 4],
+            &[0, 0, 0, 0],
+            "file[1] strp 偏移 0（同串）"
+        );
         p += 4;
         assert_eq!(p, header_end, "header ends exactly at header_length");
 
@@ -1212,7 +1308,7 @@ mod tests {
 
     #[test]
     fn enum_info_structurally_parses() {
-        // C-like 枚举：enumeration_type（code 10：name/byte_size）+ 
+        // C-like 枚举：enumeration_type（code 10：name/byte_size）+
         // enumerator 子项（code 11：name/const_value data8）；枚举变量 DIE
         // 的 type ref 指向枚举 DIE（占位回填）。
         let entries = vec![("f".to_string(), 5u32)];
@@ -1237,14 +1333,31 @@ mod tests {
                 ("Blue".to_string(), 2u64),
             ],
         }];
-        let (bytes, relocs) =
-            gen_debug_info(&entries, &vars, "forge", "test", 0x30, &Default::default(), &enums, true);
+        let (bytes, relocs) = gen_debug_info(
+            &entries,
+            &vars,
+            "forge",
+            "test",
+            0x30,
+            &Default::default(),
+            &enums,
+            true,
+        );
         assert_eq!(relocs.len(), 2, "CU + fn relocs");
         // 枚举 DIE：code 10 段含 name "Color" + byte_size 1
         let s = String::from_utf8_lossy(&bytes);
-        assert!(s.contains("Color\u{0}\u{01}\u{00}\u{00}\u{00}"), "enum Color byte_size 1");
-        assert!(s.contains("Red\u{0}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}"), "enumerator Red const 0");
-        assert!(s.contains("Blue\u{0}\u{02}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}"), "enumerator Blue const 2");
+        assert!(
+            s.contains("Color\u{0}\u{01}\u{00}\u{00}\u{00}"),
+            "enum Color byte_size 1"
+        );
+        assert!(
+            s.contains("Red\u{0}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}"),
+            "enumerator Red const 0"
+        );
+        assert!(
+            s.contains("Blue\u{0}\u{02}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}\u{00}"),
+            "enumerator Blue const 2"
+        );
         // 结构走查：CU → subprogram code 3（child c）→ 枚举区 code 10
         let mut p = 12usize; // v5 头 12 字节
         assert_eq!(bytes[p], 1, "CU abbrev");
@@ -1298,7 +1411,10 @@ mod tests {
         let e_size = u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap());
         p += 4;
         assert_eq!(e_size, 1, "enum byte_size");
-        assert_eq!(enum_start as usize, enum_ref as usize, "var ref → enum DIE 起点");
+        assert_eq!(
+            enum_start as usize, enum_ref as usize,
+            "var ref → enum DIE 起点"
+        );
         for (vn, vv) in [("Red", 0u64), ("Green", 1u64), ("Blue", 2u64)] {
             assert_eq!(bytes[p], 11, "enumerator");
             p += 1;
@@ -1322,6 +1438,3 @@ mod tests {
         assert_eq!(p, bytes.len(), "exact end");
     }
 }
-
-
-

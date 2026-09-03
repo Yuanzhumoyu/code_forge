@@ -1504,4 +1504,3 @@ fn e2e_cargo_template_workflow() {
     let _ = std::fs::remove_dir_all(&target_dir);
     println!("PASS  cargo_template_workflow exit=45");
 }
-

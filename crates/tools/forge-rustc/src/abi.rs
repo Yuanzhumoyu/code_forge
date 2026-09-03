@@ -172,7 +172,7 @@ pub(crate) fn check_arg_count_consistency<'tcx>(
     actual_arg_count: usize,
     ctx: &str,
 ) {
-    if std::env::var_os("FORGE_STRICT_ABI").map_or(false, |v| v == "0") {
+    if std::env::var_os("FORGE_STRICT_ABI").is_some_and(|v| v == "0") {
         return;
     }
     let Some((kinds, ret_kind)) = fn_abi_kinds(tcx, instance) else {

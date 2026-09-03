@@ -433,7 +433,12 @@ impl<'a> BtState<'a> {
     /// current_point 会错误地将它们设为 MAX（"永不使用"）。
     /// 注意：segment 模型通过 cover() 的 point.before() 合并修复了相邻
     /// 指令间的微间隙，因此从 (0,0) 查找 next_use 已经足够可靠。
-    fn evict_and_assign(&mut self, vreg: XReg, class: RegClass, is_def: bool) -> Result<PReg, IrError> {
+    fn evict_and_assign(
+        &mut self,
+        vreg: XReg,
+        class: RegClass,
+        is_def: bool,
+    ) -> Result<PReg, IrError> {
         let current_point = self.current_point;
         // 驱逐候选的 next_use 预计算（2026-08-31）：active 是 HashMap，iter
         // 顺序跨进程随机；max_by_key 在平局时返回先遇到的元素 → 偶发不同的

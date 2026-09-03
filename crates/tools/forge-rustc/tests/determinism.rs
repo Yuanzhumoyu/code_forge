@@ -72,7 +72,11 @@ fn compile(workdir: &Path, name: &str) -> Result<PathBuf, String> {
         return Err(format!(
             "compile failed: {}\n{}",
             out.status,
-            String::from_utf8_lossy(&out.stderr).lines().take(10).collect::<Vec<_>>().join("\n")
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .take(10)
+                .collect::<Vec<_>>()
+                .join("\n")
         ));
     }
     Ok(exe)
@@ -113,7 +117,11 @@ fn normalize(line: &str) -> Option<String> {
 /// 提取反汇编指令序列：`mnemonic + 操作数模式`（地址/立即数/偏移归一化）。
 fn inst_seq(exe: &Path) -> Vec<String> {
     let objdump = std::env::var("FORGE_E2E_OBJDUMP").unwrap_or_else(|_| "llvm-objdump".to_string());
-    let out = Command::new(&objdump).arg("-d").arg(exe).output().expect("objdump spawn");
+    let out = Command::new(&objdump)
+        .arg("-d")
+        .arg(exe)
+        .output()
+        .expect("objdump spawn");
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(normalize)

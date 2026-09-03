@@ -34,9 +34,8 @@ impl CodegenBackend for CodegenLibBackend {
         // dcx().err 使编译失败而非静默产出错误程序。
         let panic_abort = tcx.sess.panic_strategy() == rustc_target::spec::PanicStrategy::Abort;
         if !panic_abort {
-            tcx.dcx().err(
-                "code-forge: panic=unwind 暂不支持——仅 panic=abort（请加 -C panic=abort）",
-            );
+            tcx.dcx()
+                .err("code-forge: panic=unwind 暂不支持——仅 panic=abort（请加 -C panic=abort）");
             compiled_modules.push(CompiledModule {
                 name: "empty".to_string(),
                 kind: ModuleKind::Regular,
@@ -102,10 +101,7 @@ impl CodegenBackend for CodegenLibBackend {
                 MonoItem::Fn(instance) => {
                     let def_id = instance.def_id();
                     if crate::trace::trace_enabled("FN") {
-                        eprintln!(
-                            "[forge] emit#{item_i} {}",
-                            tcx.def_path_str(def_id),
-                        );
+                        eprintln!("[forge] emit#{item_i} {}", tcx.def_path_str(def_id),);
                     }
 
                     // 获取符号名 — 使用定义 crate 的 CrateNum 以确保
@@ -160,14 +156,16 @@ impl CodegenBackend for CodegenLibBackend {
                             // 输出 (机器码偏移, 行)）——debuginfo 开启时 dwarf.rs
                             // 生成 .debug_line 的每语句条目。
                             if !compiled_func.line_entries.is_empty() {
-                                fn_line_tables.push((sym_name.clone(), compiled_func.line_entries.clone()));
+                                fn_line_tables
+                                    .push((sym_name.clone(), compiled_func.line_entries.clone()));
                             }
                             if crate::trace::trace_enabled("GLOBAL") {
                                 eprintln!("[forge] add_function sym={sym_name}");
                             }
                             if crate::trace::trace_enabled("FN") {
                                 let code = compiled_func.code.len();
-                                let head: Vec<String> = compiled_func.code
+                                let head: Vec<String> = compiled_func
+                                    .code
                                     .iter()
                                     .take(8)
                                     .map(|b| format!("{b:02x}"))
@@ -209,7 +207,8 @@ impl CodegenBackend for CodegenLibBackend {
                 }
                 MonoItem::GlobalAsm(_) => {
                     // A4：报错附 WA 编号（WORKAROUNDS.md 机读清单）。
-                    tcx.dcx().err("code-forge: global_asm not supported [WA-03]");
+                    tcx.dcx()
+                        .err("code-forge: global_asm not supported [WA-03]");
                 }
             }
         }
@@ -252,8 +251,7 @@ impl CodegenBackend for CodegenLibBackend {
         // C1（=1 line-tables）：每函数行号；C2（=2 full）：+ 变量/参数 DIE
         //（lower_body 采集的 var_entries：名/槽偏移/类型/参数标志/行）。
         let debuginfo_on = tcx.sess.opts.debuginfo != rustc_session::config::DebugInfo::None;
-        let debuginfo_full =
-            tcx.sess.opts.debuginfo == rustc_session::config::DebugInfo::Full;
+        let debuginfo_full = tcx.sess.opts.debuginfo == rustc_session::config::DebugInfo::Full;
         if debuginfo_on && !func_ref_table.line_entries().is_empty() {
             let entries = func_ref_table.line_entries().to_vec();
             let vars = func_ref_table.var_entries().to_vec();
@@ -271,7 +269,11 @@ impl CodegenBackend for CodegenLibBackend {
                     (s.clone(), *l, stmts)
                 })
                 .collect();
-            let producer = format!("code-forge {} (rustc {})", env!("CARGO_PKG_VERSION"), option_env!("CFG_VERSION").unwrap_or(""));
+            let producer = format!(
+                "code-forge {} (rustc {})",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("CFG_VERSION").unwrap_or("")
+            );
             // 源文件名：CU DW_AT_name + .debug_line file 条目必须指向磁盘上的
             // 真实源文件（gdb `list`/源码断点按此打开文件；crate 名匹配不到
             // .rs 文件）。取本地 crate 根模块所在文件。
@@ -280,7 +282,10 @@ impl CodegenBackend for CodegenLibBackend {
             let root_name = tcx
                 .sess
                 .source_map()
-                .lookup_source_file(tcx.def_span(rustc_hir::def_id::LOCAL_CRATE.as_def_id()).lo())
+                .lookup_source_file(
+                    tcx.def_span(rustc_hir::def_id::LOCAL_CRATE.as_def_id())
+                        .lo(),
+                )
                 .name
                 .clone();
             let src_file = match &root_name {
@@ -430,7 +435,7 @@ fn collect_instances<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<MonoItem<'tcx>> {
     // 无法用当前 CodegenBackend trait 干预 collect 阶段。slice_iter 类
     // 用例标记 known_failure（WA-19）。
     // A1：稳定排序——GlobalAsm 排最后（会报错终止），其余按 mangled 符号名。
-    items.sort_by(|a, b| mono_item_sort_key(tcx, *a).cmp(&mono_item_sort_key(tcx, *b)));
+    items.sort_by_key(|a| mono_item_sort_key(tcx, *a));
     items
 }
 

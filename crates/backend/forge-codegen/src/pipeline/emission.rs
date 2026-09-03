@@ -76,8 +76,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 相邻同行合并）。
         let mut line_tables: Vec<(u32, u32)> = Vec::new();
         let mut emit_one = |sink: &mut CodeSink,
-                        vb: &mut VCodeBlock<I>,
-                        vcode_idx: usize|
+                            vb: &mut VCodeBlock<I>,
+                            vcode_idx: usize|
          -> Result<(), IrError> {
             sink.bind_label(vb.ir_block);
             for (gi, inst) in (block_starts[vcode_idx]..).zip(vb.instructions.iter_mut()) {
@@ -181,7 +181,6 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     ///
     /// Each spilled VReg gets a scratch register of its correct class (Int or Float).
     /// If spilled operands exceed available scratch registers, returns an error.
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     fn emit_inst_with_spills(
         inst: &mut I,
