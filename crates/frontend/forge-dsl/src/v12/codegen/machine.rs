@@ -278,7 +278,10 @@ pub(crate) fn gen_machine_inst(
                         // regalloc 传入的 class 决定（携带 IR 值宽度——I32 →
                         // GPR(4)/EAX 视图）。若无此传导，回填退化 64 位视图、
                         // encode opsize 恒 64（auto 宽度分发失效——WA-35）。
-                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, class) }
+                        // 仅接受 GPR 族 class（gprx 只收 GPR）：浮点/向量值误配
+                        // 进 gprx 槽（如 F64 store 穷举）时回退 GPR(8)——传
+                        // FPR(w) 会给 fpr8(MM) 组 id 越界（coverage 实证）。
+                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, if class.is_int() { class } else { forge_ir::RegClass::GPR(8) }) }
                     }
                 })
                 .collect();

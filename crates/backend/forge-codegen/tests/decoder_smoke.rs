@@ -99,10 +99,9 @@ fn x86_byte_mov_roundtrip() {
     roundtrip_asm("x86_mov8", "mov AL, BL");
     roundtrip_asm("x86_mov8_high", "mov SIL, DIL"); // byte_reg → 强制 REX
     roundtrip_asm("x86_mov8_r8b", "mov R8B, AL"); // REX.R
-    // 内存 store 宽度：mov_sto（64 位）/ mov_sto32（32 位）独立助记符——
-    // 同助记符会让 lowering 模板无宽度 hint 时选 64 位变体（写 8 字节覆盖
-    // 相邻槽，mini_c 除法 got 0 根因）。
-    roundtrip_asm("x86_mov_sto32", "mov_sto32 [EAX], EBX");
+    // 内存 store 宽度：mov_sto 数据槽 gprx auto——32 位数据（EBX）→ 无
+    // REX.W 4 字节写；64 位数据（RBX）→ REX.W 8 字节写（v14：mov_sto32 已删）。
+    roundtrip_asm("x86_mov_sto32", "mov_sto [EAX], EBX");
     roundtrip_asm("x86_mov_sto64", "mov_sto [RAX], RBX");
 }
 

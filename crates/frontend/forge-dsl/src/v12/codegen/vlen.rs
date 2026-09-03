@@ -186,8 +186,11 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
         match n {
             Opsize::Reg(width) => (Some(width), false),
             Opsize::Slot(idx) => match reg_view.get(idx as usize).copied().flatten() {
-                // 多类槽：REX.W 由前缀扫描的 __opsize 判定（REX.W=1 → 8）
-                None => (Some(8), false),
+                // 多类槽（gprx）：宽度由前缀扫描的 __opsize 决定（字段按
+                // __opsize 视图构造）——decode guard 必须放宽（无条件），
+                // 否则无前缀 32 位形态（__opsize=4）被拒（固定 _32 变体
+                // 删除后主指令需自反解 16/32/64——DSL 回填修复对称缺口）。
+                None => (None, false),
                 Some(w) => (Some(w), false),
             },
         }

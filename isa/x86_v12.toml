@@ -546,18 +546,12 @@ opcode_bytes = 1
 name = "MOV_R_RM"
 form = "MRR"
 opcode = 0x8B
-# v13：与 MOV_RM_R/MOV_R_RM_32/MOV64_RR 合并为同一助记符 `mov`——
-# 16/32/64 位寄存器版本按实际类型自动分发（mov EAX,EBX → 8B 32 位无前缀、
-# mov RAX,RBX → 89 D8、mov AX,BX → 66 8B）。gprx 显式排除 8 位（见槽声明）。
+# v13-：与 MOV_RM_R/MOV64_RR 合并为同一助记符 `mov`——16/32/64 位寄存器
+# 版本按实际类型自动分发（mov EAX,EBX → 8B 32 位无前缀、mov RAX,RBX →
+# 89 D8、mov AX,BX → 66 8B）。gprx 显式排除 8 位（见槽声明）。
+# v14：DSL 回填修复后 32 位值（I32）回填 GPR(4) 视图 → auto 32 位；固定
+# 32 位变体 MOV_R_RM_32（mov32，FIX32 form）已删——32 位 lowering 统一走本指令。
 asm = "mov {0:[gprx:out]}, {1:[gprx:in]}"
-effect = ["Move"]
-
-[[instructions]]
-name = "MOV_R_RM_32"
-form = "MRR_FIX32"
-opcode = 0x8B
-# 与 MOV_R_RM 同模板同槽类型（真重复）→ 保留独立助记符 mov32：FIX32 语义对 32 位 lowering 承重（固定 32 位 opsize，不随操作数宽度推导）。
-asm = "mov32 {0:[gprx:out]}, {1:[gprx:in]}"
 effect = ["Move"]
 
 [[instructions]]
@@ -592,91 +586,51 @@ asm = "movsxd {0:[gpr:out]}, {1:[gpr:in]}"   # v13：与 MOVSXD_R_RM 合并（�
 name = "ADD_RM_R"
 form = "MRR"
 opcode = 0x01
-asm = "add {1:[gpr:inout]}, {0:[gpr:in]}"
-
-[[instructions]]
-name = "ADD_RM_R_32"
-form = "MRR"
-opcode = 0x01
-asm = "add {1:[gpr32:inout]}, {0:[gpr32:in]}"
+# v14：数据槽 gprx——宽度由 IR 类型 auto（I32→无 REX.W 32 位、I64→REX.W）。
+# 固定 _32 变体已删（DSL 回填修复后同 opcode 由 66/REX.W 前缀分发——WA-35）。
+asm = "add {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "SUB_RM_R"
 form = "MRR"
 opcode = 0x29
-asm = "sub {1:[gpr:inout]}, {0:[gpr:in]}"
-
-[[instructions]]
-name = "SUB_RM_R_32"
-form = "MRR"
-opcode = 0x29
-asm = "sub {1:[gpr32:inout]}, {0:[gpr32:in]}"
+asm = "sub {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "IMUL_R_RM"
 form = "MRR_0F"
 opcode = 0xAF
-asm = "imul {0:[gpr:out]}, {1:[gpr:in]}"
-
-[[instructions]]
-name = "IMUL_R_RM_32"
-form = "MRR_0F"
-opcode = 0xAF
-asm = "imul {0:[gpr32:out]}, {1:[gpr32:in]}"
+asm = "imul {0:[gprx:out]}, {1:[gprx:in]}"
 
 [[instructions]]
 name = "XOR_RM_R"
 form = "MRR"
 opcode = 0x31
-asm = "xor {1:[gpr:inout]}, {0:[gpr:in]}"
-
-[[instructions]]
-name = "XOR_RM_R_32"
-form = "MRR"
-opcode = 0x31
-asm = "xor {1:[gpr32:inout]}, {0:[gpr32:in]}"
+asm = "xor {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "AND_RM_R"
 form = "MRR"
 opcode = 0x21
-asm = "and {1:[gpr:inout]}, {0:[gpr:in]}"
-
-[[instructions]]
-name = "AND_RM_R_32"
-form = "MRR"
-opcode = 0x21
-asm = "and {1:[gpr32:inout]}, {0:[gpr32:in]}"
+asm = "and {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "OR_RM_R"
 form = "MRR"
 opcode = 0x09
-asm = "or {1:[gpr:inout]}, {0:[gpr:in]}"
+asm = "or {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "CMP_RM_R"
 form = "MRR"
 opcode = 0x39
-asm = "cmp {1:[gpr:in]}, {0:[gpr:in]}"
-
-[[instructions]]
-name = "CMP_RM_R_32"
-form = "MRR"
-opcode = 0x39
-asm = "cmp {1:[gpr32:in]}, {0:[gpr32:in]}"
+asm = "cmp {1:[gprx:in]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "TEST_RM_R"
 form = "MRR"
 opcode = 0x85
-asm = "test {1:[gpr:in]}, {0:[gpr:in]}"
-
-[[instructions]]
-name = "TEST_RM_R_32"
-form = "MRR"
-opcode = 0x85
-asm = "test {1:[gpr32:in]}, {0:[gpr32:in]}"
+asm = "test {1:[gprx:in]}, {0:[gprx:in]}"
 
 # movzx：8 位源（REX.W + 0F B6）与 16 位源（66 REX.W 0F B7）合并助记符——
 # 源槽宽度自动分发（gpr1b → B6、gpr2 → B7）。REX.W 保证 64 位 dest 全零扩展。
@@ -1002,25 +956,16 @@ asm = "lockxor [{1:[gpr:in]}], {0:[gpr:in]}"
 name = "MOV_R_MEM"
 form = "MRR_MEM"
 opcode = 0x8B
-asm = "mov_mem {0:[gpr:out]}, [{1:[gpr:in]}]"
-
-[[instructions]]
-name = "MOV_R_MEM_32"
-form = "MRR_MEM"
-opcode = 0x8B
-asm = "mov_mem32 {0:[gpr32:out]}, [{1:[gpr:in]}]"
+# v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I8 待 8 位 opcode 8A、
+# I16→66、I32→无 REX.W、I64→REX.W）。固定 _32 变体已删（WA-35 DSL 修复）。
+# 基址槽 gprx（assemble 兼容 EAX/RAX 视图；编码取同编号寻址）。
+asm = "mov_mem {0:[gprx:out]}, [{1:[gprx:in]}]"
 
 [[instructions]]
 name = "STORE_MEM_R"
 form = "MRR_MEM"
 opcode = 0x89
-asm = "mov_sto [{1:[gpr:in]}], {0:[gpr:in]}"
-
-[[instructions]]
-name = "STORE_MEM_R_32"
-form = "MRR_MEM"
-opcode = 0x89
-asm = "mov_sto32 [{1:[gpr32:in]}], {0:[gpr32:in]}"
+asm = "mov_sto [{1:[gprx:in]}], {0:[gprx:in]}"
 
 [[instructions]]
 name = "MOVSD_R_MEM"
@@ -1562,14 +1507,7 @@ name = "NEG_RM"
 form = "MRR_EXT_OP"
 opcode = 0xF7
 fields = { ext = 3 }
-asm = "neg {0:[gpr:inout]}"
-
-[[instructions]]
-name = "NEG_RM_32"
-form = "MRR_EXT_OP"
-opcode = 0xF7
-fields = { ext = 3 }
-asm = "neg {0:[gpr32:inout]}"
+asm = "neg {0:[gprx:inout]}"
 
 [[instructions]]
 name = "DIV_RM"
@@ -1809,18 +1747,9 @@ name = "LZCNT_R"
 form = "MRR_0F_PREFIX"
 opcode = 0xBD
 fields = { prefix = 0xF3, w = 0 }
-asm = "lzcnt {0:[gpr:out]}, {1:[gpr:in]}"
-effect = ["Pure"]
-
-# LZCNT/TZCNT/POPCNT 的 32 位变体（gpr32 类 → 无 REX.W → lzcntl 等）。
-# 缺省 [gpr] 是 64 位类，恒加 REX.W → 32 位输入的 leading_zeros 返回
-# 63 而非 31（u32::leading_zeros 错值）。
-[[instructions]]
-name = "LZCNT_R32"
-form = "MRR_0F_PREFIX"
-opcode = 0xBD
-fields = { prefix = 0xF3, w = 0 }
-asm = "lzcnt {0:[gpr32:out]}, {1:[gpr32:in]}"
+# v14：槽 gprx——宽度由 IR 类型 auto（I32 输入 → 无 REX.W lzcntl 返回 31
+# 位语义；I64 → REX.W lzcntq）。固定 _32 变体（LZCNT_R32）已删。
+asm = "lzcnt {0:[gprx:out]}, {1:[gprx:in]}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -1828,15 +1757,7 @@ name = "TZCNT_R"
 form = "MRR_0F_PREFIX"
 opcode = 0xBC
 fields = { prefix = 0xF3, w = 0 }
-asm = "tzcnt {0:[gpr:out]}, {1:[gpr:in]}"
-effect = ["Pure"]
-
-[[instructions]]
-name = "TZCNT_R32"
-form = "MRR_0F_PREFIX"
-opcode = 0xBC
-fields = { prefix = 0xF3, w = 0 }
-asm = "tzcnt {0:[gpr32:out]}, {1:[gpr32:in]}"
+asm = "tzcnt {0:[gprx:out]}, {1:[gprx:in]}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -1844,15 +1765,7 @@ name = "POPCNT_R"
 form = "MRR_0F_PREFIX"
 opcode = 0xB8
 fields = { prefix = 0xF3, w = 0 }
-asm = "popcnt {0:[gpr:out]}, {1:[gpr:in]}"
-effect = ["Pure"]
-
-[[instructions]]
-name = "POPCNT_R32"
-form = "MRR_0F_PREFIX"
-opcode = 0xB8
-fields = { prefix = 0xF3, w = 0 }
-asm = "popcnt {0:[gpr32:out]}, {1:[gpr32:in]}"
+asm = "popcnt {0:[gprx:out]}, {1:[gprx:in]}"
 effect = ["Pure"]
 
 # ── 旋转（迭代 6 续：D3 /0 /1，CL 隐式计数；宽度按结果类型 32/64）──
@@ -1863,14 +1776,7 @@ form = "MRR_EXT_OP"
 opcode = 0xD3
 fields = { ext = 0 }
 effect = ["Pure"]
-asm = "rol {0:[gpr:inout]}"
-
-[[instructions]]
-name = "ROL_RM_32"
-form = "MRR_EXT_OP"
-opcode = 0xD3
-fields = { ext = 0 }
-asm = "rol {0:[gpr32:inout]}"
+asm = "rol {0:[gprx:inout]}"
 
 [[instructions]]
 name = "ROR_RM"
@@ -1878,7 +1784,7 @@ form = "MRR_EXT_OP"
 opcode = 0xD3
 fields = { ext = 1 }
 effect = ["Pure"]
-asm = "ror {0:[gpr:inout]}"
+asm = "ror {0:[gprx:inout]}"
 
 # ============================================================
 # 调用约定（迭代 5 声明层：arg_class 类别分类，为 YMM by-ref 铺路）
@@ -1951,13 +1857,6 @@ insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, 56", "@pop_callee", "POP RBP",
 
 # 常量：MOV_REG_IMM64 {out}, {iconst}——{iconst} 从常量池解析（index → 值）。
 
-[[instructions]]
-
-name = "ROR_RM_32"
-form = "MRR_EXT_OP"
-opcode = 0xD3
-fields = { ext = 1 }
-asm = "ror {0:[gpr32:inout]}"
 [[lowering]]
 op = "Iconst"
 insts = ["mov_imm {out}, {iconst}"]
@@ -1998,24 +1897,14 @@ op = "Icmp"
 insts = ["xor {out}, {out}", "cmp {1}, {0}", "setcc {out}, {cc}"]
 
 # ── mini_c 核心（迭代 6 续：load/store/copy/extend/not）──
-# Load/Store 按宽度分派（i32 → 32 位，i64 → 64 位）：栈槽按 i32 4 字节排列，
+# Load/Store 按内存宽度（i32 → 32 位、i64 → 64 位）：栈槽按 i32 4 字节排列，
 # 64 位 load/store 会读/写相邻槽（曾致 params/loop/除法 5 用例失败）。
-# v13：32 位 load 用独立助记符 mov_mem32（与 64 位 mov_mem 区分——候选选择
-# 无歧义；REX.W 由 dest 槽宽度驱动：gpr32 → 0、gpr → 1）。
-
-[[lowering]]
-op = "Load"
-when = { eq = ["rd", 32] }
-insts = ["mov_mem32 {out}, [{0}]"]
+# v14：mov_mem/mov_sto 数据槽 gprx——内存宽度由 IR 类型 auto（I16→66、
+# I32→无 REX.W、I64→REX.W）。固定 _32 变体/分派规则已删（WA-35 DSL 修复）。
 
 [[lowering]]
 op = "Load"
 insts = ["mov_mem {out}, [{0}]"]
-
-[[lowering]]
-op = "Store"
-when = { eq = ["rs1_width", 32] }
-insts = ["mov_sto32 [{0}], {1}"]
 
 [[lowering]]
 op = "Store"
@@ -2138,7 +2027,7 @@ insts = ["mov {out}, {0}"]
 [[lowering]]
 op = "Ireduce"
 when = { eq = ["rd", 32] }
-insts = ["mov32 {out}, {0}"]
+insts = ["mov {out}, {0}"]
 
 [[lowering]]
 op = "Ireduce"
@@ -2150,7 +2039,7 @@ insts = ["mov {out}, {0}"]
 op = "Rotl"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "mov RCX, {1}",
     "rol {out}",
 ]
@@ -2167,7 +2056,7 @@ insts = [
 op = "Rotr"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "mov RCX, {1}",
     "ror {out}",
 ]
@@ -2217,7 +2106,7 @@ op = "Clz"
 # 32 位输入用 lzcntl（gpr32 类）；否则 64 位 lzcntq——否则 32 位输入
 # 被零扩展后 lzcntq 返回 63 而非 31（u32::leading_zeros 错值）。
 when = { eq = ["rs1_width", 32] }
-insts = ["mov32 {out}, {0}", "lzcnt {out}, {0}"]
+insts = ["mov {out}, {0}", "lzcnt {out}, {0}"]
 
 [[lowering]]
 op = "Clz"
@@ -2226,7 +2115,7 @@ insts = ["mov {out}, {0}", "lzcnt {out}, {0}"]
 [[lowering]]
 op = "Ctz"
 when = { eq = ["rs1_width", 32] }
-insts = ["mov32 {out}, {0}", "tzcnt {out}, {0}"]
+insts = ["mov {out}, {0}", "tzcnt {out}, {0}"]
 
 [[lowering]]
 op = "Ctz"
@@ -2235,7 +2124,7 @@ insts = ["mov {out}, {0}", "tzcnt {out}, {0}"]
 [[lowering]]
 op = "Popcnt"
 when = { eq = ["rs1_width", 32] }
-insts = ["mov32 {out}, {0}", "popcnt {out}, {0}"]
+insts = ["mov {out}, {0}", "popcnt {out}, {0}"]
 
 [[lowering]]
 op = "Popcnt"
@@ -2280,7 +2169,7 @@ op = "SaddOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "add {1}, {out}",
     "setcc {out2}, 0",
 ]
@@ -2299,7 +2188,7 @@ op = "UaddOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "add {1}, {out}",
     "setcc {out2}, 2",
 ]
@@ -2318,7 +2207,7 @@ op = "SsubOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "sub {1}, {out}",
     "setcc {out2}, 0",
 ]
@@ -2337,7 +2226,7 @@ op = "UsubOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "sub {1}, {out}",
     "setcc {out2}, 2",
 ]
@@ -2356,7 +2245,7 @@ op = "SmulOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "imul {out}, {1}",
     "setcc {out2}, 0",
 ]
@@ -2374,7 +2263,7 @@ insts = [
 op = "UmulOverflow"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "imul {out}, {1}",
     "xor {out2}, {out2}",
     "cmp {0}, {out}",
@@ -2405,7 +2294,7 @@ insts = [
 op = "SaddSat"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "add {1}, {out}",
     "setcc {g1}, 0",
     "mov_imm {g2}, 0x7FFFFFFF",
@@ -2463,7 +2352,7 @@ insts = [
 op = "Bitreverse"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "mov_imm {g1}, 1",
     "mov_imm {g2}, 0x55555555",
     "mov {g3}, {out}",
@@ -2820,12 +2709,12 @@ insts = ["cvttss2si {out}, {0}"]
 [[lowering]]
 op = "Uitofp"
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 2] } ] }
-insts = ["mov32 {g}, {0}", "cvtsi2sd {out}, {g}"]
+insts = ["mov {g}, {0}", "cvtsi2sd {out}, {g}"]
 
 [[lowering]]
 op = "Uitofp"
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
-insts = ["mov32 {g}, {0}", "cvtsi2ss {out}, {g}"]
+insts = ["mov {g}, {0}", "cvtsi2ss {out}, {g}"]
 
 [[lowering]]
 op = "Uitofp"
@@ -3575,7 +3464,7 @@ insts = [
 op = "SsubSat"
 when = { eq = ["rs1_width", 32] }
 insts = [
-    "mov32 {out}, {0}",
+    "mov {out}, {0}",
     "sub {1}, {out}",
     "setcc {g1}, 0",
     "mov_imm {g2}, 0x7FFFFFFF",

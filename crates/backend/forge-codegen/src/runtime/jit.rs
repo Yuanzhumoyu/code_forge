@@ -1595,6 +1595,86 @@ mod tests {
         assert_eq!(x, 8, "atomic_add writes new value");
     }
 
+    /// v14 宽度矩阵守卫：mov_mem/mov_sto 数据槽 gprx auto——I16 值 66 前缀
+    /// 2 字节写、I32 无 REX.W 4 字节写、I64 REX.W 8 字节写。邻字节哨兵
+    /// 验证各宽度不越界（v13 前窄 load/store 8 字节读写靠侥幸）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_mem_width_i16_i32_i64_neighbor() {
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // 对每个宽度 W 注册 f_w: fn(dst: *mut u8, val: i64)（写 W 字节）与
+        // g_w: fn(src: *mut u8) -> i64（读 W 字节回）。
+        for (w, ty) in [(2u64, TypeId::I16), (4, TypeId::I32), (8, TypeId::I64)] {
+            let store_name = format!("sto_w{w}");
+            let sig = FunctionSignature::new(&[(TypeId::I64, "dst"), (TypeId::I64, "val")], &[]);
+            jit.add_function(&store_name, &sig, |b| {
+                let (entry, params) =
+                    b.create_block_with_params(&[(TypeId::I64, "dst"), (TypeId::I64, "val")]);
+                b.switch_to_block(entry);
+                let d = params[0];
+                let v = b.ireduce(params[1], ty);
+                b.store(v, d);
+                b.ret(&[]);
+            })
+            .expect("compile store");
+
+            let load_name = format!("lod_w{w}");
+            let sig = FunctionSignature::new(&[(TypeId::I64, "src")], &[TypeId::I64]);
+            jit.add_function(&load_name, &sig, |b| {
+                let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "src")]);
+                b.switch_to_block(entry);
+                let v = b.load(params[0], ty);
+                let v64 = b.uextend(v, TypeId::I64);
+                b.ret(&[v64]);
+            })
+            .expect("compile load");
+        }
+
+        // 哨兵缓冲：两端填充 0x5A——越界写会破坏。
+        let mut buf = [0x5Au8; 24];
+        let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w2").expect("sto_w2");
+        let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w2").expect("lod_w2");
+        store(buf[4..].as_mut_ptr(), 0x1234);
+        assert_eq!(load(buf[4..].as_ptr()), 0x1234, "i16 roundtrip");
+        assert_eq!(buf[6], 0x5A, "i16 store 2 字节不越界");
+        let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w4").expect("sto_w4");
+        let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w4").expect("lod_w4");
+        store(buf[4..].as_mut_ptr(), 0x12345678);
+        assert_eq!(load(buf[4..].as_ptr()), 0x12345678, "i32 roundtrip");
+        assert_eq!(buf[8], 0x5A, "i32 store 4 字节不越界");
+        let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w8").expect("sto_w8");
+        let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w8").expect("lod_w8");
+        store(buf[4..].as_mut_ptr(), 0x0123456789ABCDEF);
+        assert_eq!(load(buf[4..].as_ptr()), 0x0123456789ABCDEF, "i64 roundtrip");
+        assert_eq!(buf[12], 0x5A, "i64 store 8 字节不越界");
+    }
+
+    /// v14 decode guard 对称修复守卫：encode(decode(x)) 往返——32 位形态
+    /// （无 REX.W）与 64 位形态（REX.W）都能反解（固定 _32 变体删除后主
+    /// 指令 gprx 多态自反解；asm_token/decoder_smoke 同族覆盖）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_width_auto_roundtrip_bytes() {
+        use crate::arch::x86_v12::{assemble, decode, encode};
+        // 32 位（无前缀）与 64 位（REX.W）rr mov / mem load 反解
+        // （mem 基址与数据同宽视图——assemble 一致性；编码按编号寻址）
+        for src in [
+            "mov EAX, EBX",
+            "mov RAX, RBX",
+            "mov_mem EAX, [EBX]",
+            "mov_mem RAX, [RBX]",
+            "mov_sto [EAX], EBX",
+            "mov_sto [RAX], RBX",
+        ] {
+            let bytes = encode(&assemble(src).expect(src)).expect("encode");
+            let (inst, _) = decode(&bytes).expect(src);
+            let bytes2 = encode(&inst).expect("re-encode");
+            assert_eq!(bytes2, bytes, "roundtrip {src}");
+        }
+    }
+
     /// WA-35 复现：IR cmpxchg 重试循环（fetch_and 形态，**全 I64**——排除
     /// 宽度混用干扰，纯隔离"成功比较"问题）。
     /// IR 层正确（icmp 比较 cmpxchg 结果与期望值）——若 x86 Cmpxchg 降级

@@ -81,30 +81,37 @@ fn byte_mov_width_dispatch() {
 }
 
 #[test]
-fn mov32_fixed_opsize() {
-    // mov32（独立助记符，FIX32）：32 位固定，64 位寄存器拒绝（防 32 位误编码）
-    assert!(assemble("mov32 RAX, RBX").is_err());
-    assert!(assemble("mov32 EAX, EBX").is_ok());
+fn mov_width_auto_dispatch() {
+    // v14：mov32（FIX32 独立助记符）已删——32 位语义由 mov gprx auto（操作数
+    // 宽度驱动）：mov EAX,EBX 合法（01 无 REX.W 形态）、mov RAX,RBX 合法
+    // （REX.W）。混宽仍拒绝（多类槽 encode 宽度一致性）。
+    assert!(assemble("mov EAX, EBX").is_ok());
+    assert!(assemble("mov RAX, RBX").is_ok());
+    assert!(assemble("mov AX, BX").is_ok());
+    assert!(assemble("mov RAX, EBX").is_err());
+    assert!(assemble("mov32 RAX, RBX").is_err()); // mov32 助记符已不存在
 }
 
 #[test]
 fn arithmetic_width_dispatch() {
-    // v13：add32/sub32/xor32/... 合并为 add/sub/xor/...——按操作数实际宽度自动分发
+    // v14：add/sub/xor/... 数据槽 gprx 多类——同变体按操作数实际宽度自动
+    // 分发（add EAX,EBX → 01 D8 无 REX.W；add RAX,RBX → 48 01 D8）。固定
+    // _32 变体（AddRmR32 等）已删（WA-35 DSL 回填修复）。
     use forge_codegen::x86_v12::{Inst, encode};
-    // add eax, ebx（32 位）→ ADD_RM_R_32：01 D8（Intel 语义 dst=eax）
+    // add eax, ebx（32 位）→ ADD_RM_R：01 D8（Intel 语义 dst=eax，无 REX.W）
     let inst = assemble("add EAX, EBX").unwrap();
-    assert!(matches!(inst, Inst::AddRmR32 { .. }));
+    assert!(matches!(inst, Inst::AddRmR { .. }));
     assert_eq!(encode(&inst).unwrap(), vec![0x01, 0xD8]);
-    // add rax, rbx（64 位）→ ADD_RM_R：48 01 D8
+    // add rax, rbx（64 位）→ ADD_RM_R：48 01 D8（REX.W 由操作数宽度）
     let inst = assemble("add RAX, RBX").unwrap();
     assert!(matches!(inst, Inst::AddRmR { .. }));
     assert_eq!(encode(&inst).unwrap(), vec![0x48, 0x01, 0xD8]);
     // 混宽拒绝
     assert!(assemble("add RAX, EBX").is_err());
-    // xor 同理
+    // xor 同理（同一变体，宽度 auto）
     assert!(matches!(
         assemble("xor EAX, EBX").unwrap(),
-        Inst::XorRmR32 { .. }
+        Inst::XorRmR { .. }
     ));
     assert!(matches!(
         assemble("xor RAX, RBX").unwrap(),
