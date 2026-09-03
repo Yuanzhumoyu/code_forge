@@ -305,38 +305,47 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.func_refs.add_var_entries(&self.sym_name, vars);
             }
         }
-        // B3 门控：向量类型（V64/V128/V256）参与跨函数 ABI 编译期拒绝。
-        // 2026-09 A-S1 诊断：主库宽向量 ABI（by-ref/sret，ed43103+）已就绪，
-        // 分级放行 V256 后编译通过但**运行 SEGV**（simd_v256 探针实证）——根因
-        // 不在 ABI 而在 forge-rustc 向量值基建：V256 local 槽（32B）构造/
-        // 全宽 store/load 缺失（statement/place/rvalue 只标量/聚合槽，
-        // WA-37 D2）。基建完成前保持全向量拒绝（绝不产崩溃/静默错值）。
+        // B3 门控（分级，2026-09 A-S1/WA-37 D2）：向量参与跨函数 ABI 时——
+        // - >16B 向量（V256 32B，SimdVector backend_repr）放行：abi.rs 已把
+        //   其归类 Indirect（Windows x64 无 YMM 参数寄存器，rustc/LLVM 按
+        //   内存间接传参），走通用聚合槽路径（arg 指针 + 收参 copy_agg /
+        //   sret ret 缓冲）——V256 值全程内存建模，无向量寄存器物化；
+        //   CopyNonOverlapping 已支持 >8B 元素全宽拷贝（Simd::load 的
+        //   32B memcpy）。simd_v256_local/simd_v256_call 探针转正验收。
+        // - ≤16B 向量（V64/V128）保持编译期拒绝：按值 XMM 全宽移动缺口
+        //   （WA-37 D3，MOVSD/MOVSS 8/4B 静默截断）——失败即报错，绝不
+        //   产出静默错值（simd_abi_gated 负向探针守护）。
         {
-            let mut vec_abi = None;
+            // 命中向量的 rustc 类型（放行判定用真实布局字节数 >16）。
+            let mut vec_what: Option<(String, Ty<'tcx>)> = None;
             if let Ok(ret_t) = map_type(body.return_ty(), self.tcx)
                 && is_vector_abi(ret_t)
             {
-                vec_abi = Some(format!("return {}", body.return_ty()));
+                vec_what = Some((format!("return {}", body.return_ty()), body.return_ty()));
             }
-            if vec_abi.is_none() {
+            if vec_what.is_none() {
                 for local in body.args_iter() {
                     let a_ty = body.local_decls[local].ty;
                     if layout_bytes(self.tcx, a_ty) > 0
                         && let Ok(t) = map_type(a_ty, self.tcx)
                         && is_vector_abi(t)
                     {
-                        vec_abi = Some(format!("arg {a_ty}"));
+                        vec_what = Some((format!("arg {a_ty}"), a_ty));
                         break;
                     }
                 }
             }
-            if let Some(what) = vec_abi {
-                return Err(ForgeError::Message(format!(
-                    "{}: 向量 ABI（{what}）暂不支持——forge-rustc 向量值基建 \
-                     （local 全宽 store/load）未就绪（WA-37 D2）；主库 by-ref/\
-                     sret 已可用，基建完成后按 A-S1 分级放行 V256",
-                    self.fn_name
-                )));
+            if let Some((what, v_ty)) = vec_what {
+                // 分级放行：>16B（V256）→ 内存间接 ABI 全链路已就绪；
+                // ≤16B（V64/V128）→ 保持门控。
+                if layout_bytes(self.tcx, v_ty) <= 16 {
+                    return Err(ForgeError::Message(format!(
+                        "{}: 向量 ABI（{what}）暂不支持——≤16B 向量（V64/V128）\
+                         按值 XMM 全宽移动缺口（WA-37 D3），门控保护；\
+                         >16B 向量（V256）走 by-ref/sret 已放行",
+                        self.fn_name
+                    )));
+                }
             }
         }
         // 1. 为入口块创建带参数（函数参数）的 block

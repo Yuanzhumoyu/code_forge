@@ -908,9 +908,15 @@ const CASES: &[Case] = &[
         phase: "B3 simd",
         reason: "编译期拒绝：≤16B 向量（V128）按值 XMM 全宽缺口（WA-37 D3），门控报错（失败即报错，不产静默错值）",
     },
-    // ── V256 跨函数 ABI（2026-09 A-S1）：>16 字节向量放行——主库 by-ref/sret
-    //    （ed43103+）接管。helper 收 V256 参数（by-ref [ptr]→YMM）+ lane0
-    //    返回；main from_array 构造 + 调用。──
+    // ── V256 跨函数 ABI（2026-09 A-S1 转正，WA-37 D2 基建）：>16B 向量
+    //    （V256 32B，rustc backend_repr=SimdVector）在 Windows x64 无 YMM
+    //    参数寄存器——abi.rs 归类 Indirect（by-ref 传参 + sret 返回），
+    //    值全程内存建模（local 槽按 layout_bytes 32B 分配 + copy_agg
+    //    整值拷贝），不再物化向量寄存器值。core 侧链：main → from_array
+    //    （sret）→ Simd::load（CopyNonOverlapping 32B memcpy，>8B 元素
+    //    全宽块拷贝已修）→ 局部 v 槽；v[0]/v[7] 经 portable_simd 的
+    //    Index（as_array → &[f32] 指针/标量读，不产生 simd_extract）。
+    //    helper 收 V256 参数（Indirect &实参槽 → 收参 copy_agg）。──
     Case {
         name: "simd_v256_call",
         body: "let v = core::simd::Simd::<f32, 8>::from_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]); (helper(v) as i32) * 1000 + (v[0] as i32)",
@@ -919,21 +925,21 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "B3 simd",
-        reason: "A-S1 诊断：V256 门控放行后编译通过但运行 SEGV——向量值 local 基建缺失（WA-37 D2），基建完成时转正",
+        reason: "V256 by-ref/sret + 内存值建模转正（WA-37 D2）；全 lane 抽查 87654321 亦绿",
     },
     Case {
         name: "simd_v256_local",
         body: "let v = core::simd::Simd::<f32, 8>::from_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]); (v[0] as i32) * 100 + (v[7] as i32)",
-        expected: 108, // 纯局部：构造 + 索引，不跨函数（诊断：SEGV = 基建非 ABI）
+        expected: 108, // 纯局部：构造 + 索引
         extra: "#![feature(portable_simd)]",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "B3 simd",
-        reason: "A-S1 诊断：纯局部 V256 构造/索引也 SEGV → 根因在向量值 local 基建非跨函数 ABI；基建完成时转正",
+        reason: "V256 向量值基建转正（WA-37 D2）：SimdVector>16B→Indirect + CopyNonOverlapping 全宽",
     },
     // ── D 组 intrinsics（2026-09 转正）：rotate/cttz/ctlz/bitreverse/volatile。
     //    主库修复：lzcnt/tzcnt/popcnt 32 位变体（gpr32 类，否则 64 位
