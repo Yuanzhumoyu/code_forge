@@ -894,19 +894,59 @@ const CASES: &[Case] = &[
         phase: "P1 agg",
         reason: "",
     },
-    // ── SIMD 门控（B3 前置）：≤16 字节向量（V128）跨函数 ABI 在 XMM 全宽
-    //    缺口（WA-37 D3）前编译期拒绝，绝不产出静默错值 exe。──
+    // ── ≤16B 向量按值 ABI（2026-09 转正，WA-37 D3）：V64/V128（rustc
+    //    SimdVector ≤16B）在 Windows x64 按值走 XMM（abi.rs Direct）——
+    //    主库 v14 DSL 对 VEC(16) 参数/返回/实参做全宽 128 位 XMM 移动
+    //    （MOVAPS；MOVSD/MOVSS 8/4B 静默截断为 D3 前形态，B3 门控已撤）。
+    //    lane3/lane1（高半）经 XMM 全宽往返不丢——旧 simd_abi_gated 负向
+    //    用例（编译期拒绝"向量 ABI"）已随门控删除。──
     Case {
-        name: "simd_abi_gated",
-        body: "let v = core::simd::Simd::<f32, 4>::from_array([1.0, 2.0, 3.0, 4.0]); v[0] as i32",
-        expected: -1, // 编译失败：≤16B 向量 ABI 门控（期望 compile error，非运行结果）
+        name: "simd_v128_local",
+        body: "let v = core::simd::Simd::<f32, 4>::from_array([1.0, 2.0, 3.0, 4.5]); (v[0] as i32) * 100 + (v[3] as i32)",
+        expected: 104, // 纯局部：构造（Direct XMM0 返回）+ Index 高半 lane3=4.5→4
         extra: "#![feature(portable_simd)]",
         entry: "mainCRTStartup",
-        expect_compile_fail: true,
-        expect_compile_err: "向量 ABI",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         known_failure: false,
         phase: "B3 simd",
-        reason: "编译期拒绝：≤16B 向量（V128）按值 XMM 全宽缺口（WA-37 D3），门控报错（失败即报错，不产静默错值）",
+        reason: "V128 局部按值链路转正（WA-37 D3）：Direct XMM 返回 + 全宽收参",
+    },
+    Case {
+        name: "simd_v128_call",
+        body: "let v = core::simd::Simd::<f32, 4>::from_array([1.0, 2.0, 3.0, 4.5]); (helper(v) as i32) * 1000 + (v[3] as i32)",
+        expected: 4004, // helper 收 V128 按值参数（XMM 全宽）→ lane3=4.5→4 → 4000+4
+        extra: "#![feature(portable_simd)]\nuse core::simd::Simd;\nfn helper(v: Simd<f32, 4>) -> f32 { v[3] }\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "B3 simd",
+        reason: "V128 按值参数跨函数往返转正（WA-37 D3）：高半 lane3 不截断",
+    },
+    Case {
+        name: "simd_v128_return",
+        body: "let r = make(); (r[3] as i32) * 10 + (r[0] as i32)",
+        expected: 71, // make 返回 V128（XMM0 全宽）→ lane3=7.5→7、lane0=1 → 71
+        extra: "#![feature(portable_simd)]\nuse core::simd::Simd;\nfn make() -> Simd<f32, 4> { core::simd::Simd::from_array([1.0, 2.0, 3.0, 7.5]) }\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "B3 simd",
+        reason: "V128 按值返回转正（WA-37 D3）：Direct XMM0 返回全宽",
+    },
+    Case {
+        name: "simd_v64_call",
+        body: "let v = core::simd::Simd::<f32, 2>::from_array([1.0, 5.5]); (helper(v) as i32) * 100 + (v[1] as i32)",
+        expected: 505, // V64 按值参数 lane1=5.5→5（修复前 lane1 槽位错位恒 0）
+        extra: "#![feature(portable_simd)]\nuse core::simd::Simd;\nfn helper(v: Simd<f32, 2>) -> f32 { v[1] }\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "B3 simd",
+        reason: "V64 按值参数/返回转正（WA-37 D3）",
     },
     // ── V256 跨函数 ABI（2026-09 A-S1 转正，WA-37 D2 基建）：>16B 向量
     //    （V256 32B，rustc backend_repr=SimdVector）在 Windows x64 无 YMM

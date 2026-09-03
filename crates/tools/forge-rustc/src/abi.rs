@@ -120,7 +120,8 @@ pub(crate) fn abi_kind_of_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> AbiKind {
         rustc_abi::BackendRepr::ScalarPair { .. } => AbiKind::Pair,
         rustc_abi::BackendRepr::SimdVector { .. } => {
             // 向量（含 128 位 __m128 等）在 Windows x64 ≤16B 走 XMM 寄存器
-            //（Direct——V64/V128 按值有 XMM 全宽缺口，B3 门控保护中）；
+            //（Direct——V64/V128 按值 XMM 全宽 2026-09 已放行，WA-37 D3：
+            // 主库 DSL vec_mov_inst=MOVAPS 全宽 128 位收参/传参/返回）；
             // >16B（V256 32B）无 YMM 参数寄存器：rustc/LLVM Win64 与主库
             // by-ref/sret 均按内存间接传递（WA-37 D1 实证：LLVM Win64 把
             // 32B 向量归类 MEMORY → PassMode::Indirect）→ AbiKind::Indirect，

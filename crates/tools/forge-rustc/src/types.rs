@@ -38,13 +38,12 @@ pub fn map_type<'tcx>(
         ty::TyKind::Char => Ok(TypeId::I32),
         ty::TyKind::Ref(..) | ty::TyKind::RawPtr(..) => Ok(TypeId::PTR),
         ty::TyKind::FnDef(..) | ty::TyKind::FnPtr(..) => Ok(TypeId::PTR),
-        // SIMD 向量（B1）：`#[repr(simd)]` 结构体在 rustc 中是 Adt 且
+        // SIMD 向量（B1/WA-37）：`#[repr(simd)]` 结构体在 rustc 中是 Adt 且
         // `ty.is_simd()` 为真。仅支持内置 f32×2/4/8 → V64/V128/V256——
         // 这些是 TypeStore 预填充的固定索引（TypeId 13/14/15），跨
         // TypeContext 一致（每函数一个 TypeContext，动态 intern 的向量
         // TypeId 会随函数不同而错位——ABI 跨函数传参会读到错误类型）。
-        // 其余 SIMD 形态（i32×4 等）编译期 Unsupported（失败即报错），
-        // 后续按 ymm-abi-plan 的主库向量 ABI 就绪后扩展。
+        // 其余 SIMD 形态（i32×4 等）编译期 Unsupported（失败即报错）。
         _ if ty.is_simd() => {
             // Adt 的 SIMD：`#[repr(simd)]` 结构体只有一个字段 [T; N]。
             // 元素类型 = 该字段的数组元素类型（字段本身是 [T; N] Array，
@@ -105,13 +104,6 @@ pub fn map_type<'tcx>(
             }
         }
     }
-}
-
-/// 是否为向量 ABI 类型（V64/V128/V256）——参与跨函数 ABI 时走 B3 分级
-/// 门控（lower/mod.rs）：>16B（V256）Indirect 内存 ABI 放行；≤16B
-/// （V64/V128）按值 XMM 全宽缺口（WA-37 D3）前编译期拒绝。
-pub fn is_vector_abi(t: TypeId) -> bool {
-    matches!(t, TypeId::V64 | TypeId::V128 | TypeId::V256)
 }
 
 /// debug-only 类型兼容自检（P2.5）。

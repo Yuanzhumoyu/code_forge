@@ -178,11 +178,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         }
         let cp = self.place(place)?;
         // P2.5 自检：8 字节标量/指针的读取宽度应为 I64/PTR（防错位读；
-        // float 走 XMM 宽度 F64，属特例不在此断言）
+        // float 走 XMM 宽度 F64、向量（V64 8B / V128 16B 按值 XMM/Direct，
+        // WA-37 D3）不在此断言）
         if !is_agg_mem(self.tcx, cp.ty)
             && !is_scalar_pair_abi(self.tcx, cp.ty)
             && layout_bytes(self.tcx, cp.ty) == 8
             && !matches!(cp.ty.kind(), ty::TyKind::Float(_))
+            && !matches!(cp.codegen_ty, TypeId::V64 | TypeId::V128 | TypeId::V256)
         {
             assert_assignable(cp.codegen_ty, TypeId::I64, &format!("load_place {}", cp.ty));
         }

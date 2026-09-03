@@ -11,7 +11,7 @@ pub(crate) use crate::layout::{
 };
 use crate::prelude::*;
 pub(crate) use crate::rustc_compat::substs_first_ty;
-pub(crate) use crate::types::{is_vector_abi, map_type};
+pub(crate) use crate::types::map_type;
 
 pub(crate) mod const_eval;
 pub(crate) mod intrinsics;
@@ -305,49 +305,15 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.func_refs.add_var_entries(&self.sym_name, vars);
             }
         }
-        // B3 门控（分级，2026-09 A-S1/WA-37 D2）：向量参与跨函数 ABI 时——
-        // - >16B 向量（V256 32B，SimdVector backend_repr）放行：abi.rs 已把
-        //   其归类 Indirect（Windows x64 无 YMM 参数寄存器，rustc/LLVM 按
-        //   内存间接传参），走通用聚合槽路径（arg 指针 + 收参 copy_agg /
-        //   sret ret 缓冲）——V256 值全程内存建模，无向量寄存器物化；
-        //   CopyNonOverlapping 已支持 >8B 元素全宽拷贝（Simd::load 的
-        //   32B memcpy）。simd_v256_local/simd_v256_call 探针转正验收。
-        // - ≤16B 向量（V64/V128）保持编译期拒绝：按值 XMM 全宽移动缺口
-        //   （WA-37 D3，MOVSD/MOVSS 8/4B 静默截断）——失败即报错，绝不
-        //   产出静默错值（simd_abi_gated 负向探针守护）。
-        {
-            // 命中向量的 rustc 类型（放行判定用真实布局字节数 >16）。
-            let mut vec_what: Option<(String, Ty<'tcx>)> = None;
-            if let Ok(ret_t) = map_type(body.return_ty(), self.tcx)
-                && is_vector_abi(ret_t)
-            {
-                vec_what = Some((format!("return {}", body.return_ty()), body.return_ty()));
-            }
-            if vec_what.is_none() {
-                for local in body.args_iter() {
-                    let a_ty = body.local_decls[local].ty;
-                    if layout_bytes(self.tcx, a_ty) > 0
-                        && let Ok(t) = map_type(a_ty, self.tcx)
-                        && is_vector_abi(t)
-                    {
-                        vec_what = Some((format!("arg {a_ty}"), a_ty));
-                        break;
-                    }
-                }
-            }
-            if let Some((what, v_ty)) = vec_what {
-                // 分级放行：>16B（V256）→ 内存间接 ABI 全链路已就绪；
-                // ≤16B（V64/V128）→ 保持门控。
-                if layout_bytes(self.tcx, v_ty) <= 16 {
-                    return Err(ForgeError::Message(format!(
-                        "{}: 向量 ABI（{what}）暂不支持——≤16B 向量（V64/V128）\
-                         按值 XMM 全宽移动缺口（WA-37 D3），门控保护；\
-                         >16B 向量（V256）走 by-ref/sret 已放行",
-                        self.fn_name
-                    )));
-                }
-            }
-        }
+        // 向量跨函数 ABI（WA-37 D2/D3 全线放行，2026-09）：SimdVector
+        // backend_repr 的 rustc 类型不再编译期门控——
+        // - >16B（V256 32B）：abi.rs 归类 Indirect（Windows x64 无 YMM
+        //   参数寄存器，rustc/LLVM 按内存间接传参），走通用聚合槽路径
+        //   （arg 指针 + 收参 copy_agg / sret ret 缓冲），值全程内存建模；
+        // - ≤16B（V64 8B/V128 16B）：rustc FnAbi Direct（按值 XMM）——
+        //   主库 v14 DSL 对 VEC(16) 类参数/返回/实参做全宽 128 位 XMM
+        //   移动（vec_mov_inst=MOVAPS，非 MOVSD/MOVSS 8/4B 截断）。
+        // simd_v128_*/simd_v64_* 探针（若存在）与 simd_v256_* 守护回归。
         // 1. 为入口块创建带参数（函数参数）的 block
         // 聚合参数（≤16 字节、2 标量——ScalarPair ABI）拆两个整数寄存器收参，
         // 否则 rustc 按 rcx/rdx 传值而我们只收 rcx（rdx 丢失 → 字段读 0/值当地址）
