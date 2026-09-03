@@ -810,14 +810,31 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let ones = self.builder.iconst(-1, t);
                 self.builder.bxor(a, ones)
             }
-            // fetch_max/min 语义：写 max(old,val)（有符号/无符号 cc）
+            // fetch_max/min 语义：写 max(old,val)（有符号/无符号 cc）。
+            // WA-36：窄域（I8/I16）signed 比较需先 sext——值侧 load 是
+            // movzx 零扩展（-50=0xCE → +206），32 位 cmp signed 误判；
+            // 比较用扩展值、select 保留原窄值（位模式写回正确）。
             RmwLoop::SMax => {
-                let gt = self.builder.icmp(IntCC::SignedGreaterThan, old, val);
-                self.builder.select(gt, old, val)
+                if matches!(t, TypeId::I8 | TypeId::I16) {
+                    let olde = self.builder.sextend(old, TypeId::I64);
+                    let vale = self.builder.sextend(val, TypeId::I64);
+                    let gt = self.builder.icmp(IntCC::SignedGreaterThan, olde, vale);
+                    self.builder.select(gt, old, val)
+                } else {
+                    let gt = self.builder.icmp(IntCC::SignedGreaterThan, old, val);
+                    self.builder.select(gt, old, val)
+                }
             }
             RmwLoop::SMin => {
-                let lt = self.builder.icmp(IntCC::SignedLessThan, old, val);
-                self.builder.select(lt, old, val)
+                if matches!(t, TypeId::I8 | TypeId::I16) {
+                    let olde = self.builder.sextend(old, TypeId::I64);
+                    let vale = self.builder.sextend(val, TypeId::I64);
+                    let lt = self.builder.icmp(IntCC::SignedLessThan, olde, vale);
+                    self.builder.select(lt, old, val)
+                } else {
+                    let lt = self.builder.icmp(IntCC::SignedLessThan, old, val);
+                    self.builder.select(lt, old, val)
+                }
             }
             RmwLoop::Umax => {
                 let gt = self.builder.icmp(IntCC::UnsignedGreaterThan, old, val);

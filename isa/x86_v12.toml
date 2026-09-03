@@ -1998,6 +1998,21 @@ insts = ["mov_sto [{0}], {1}"]
 op = "Copy"
 insts = ["mov {out}, {0}"]
 
+# ── Sextend：按源宽分派——8/16 位源 movsx（0F BE/BF，源槽 gpr1b/gpr2
+#    movsx 合并助记符自动分发），32 位源 movsxd。原实现恒 movsxd（读低
+#    32 符号扩展）——I8 源 0xCE(movzx 206) 被扩成 +206 而非 -50（WA-36
+#    i8 signed 值符号扩展实证）。──
+
+[[lowering]]
+op = "Sextend"
+when = { eq = ["rs1_width", 8] }
+insts = ["movsx {out}, {0}"]
+
+[[lowering]]
+op = "Sextend"
+when = { eq = ["rs1_width", 16] }
+insts = ["movsx {out}, {0}"]
+
 [[lowering]]
 op = "Sextend"
 insts = ["movsxd {out}, {0}"]

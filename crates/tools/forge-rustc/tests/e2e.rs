@@ -993,7 +993,7 @@ const CASES: &[Case] = &[
     //    8 位 lockcmpxchg8/16 位 66 前缀）；数组邻元素作越界哨兵。──
     Case {
         name: "atomic_u8_fetch_add_wrap",
-        body: "static A: [core::sync::atomic::AtomicU8; 3] = [core::sync::atomic::AtomicU8::new(250), core::sync::atomic::AtomicU8::new(7), core::sync::atomic::AtomicU8::new(9)]; let old = A[0].fetch_add(10, core::sync::atomic::Ordering::Relaxed); (if old as i32 == 250 { 1000 } else { 0 }) + (A[0].load(core::sync::atomic::Ordering::Relaxed) as i32) * 10 + A[1].load(core::sync::atomic::Ordering::Relaxed) as i32 + A[2].load(core::sync::atomic::Ordering::Relaxed) as i32",
+        body: "static A: [core::sync::atomic::AtomicU8; 3] = [core::sync::atomic::AtomicU8::new(250), core::sync::atomic::AtomicU8::new(7), core::sync::atomic::AtomicU8::new(9)]; let old = A[0].fetch_add(10, core::sync::atomic::Ordering::Relaxed); (if old == 250 { 1000 } else { 0 }) + (A[0].load(core::sync::atomic::Ordering::Relaxed) as i32) * 10 + A[1].load(core::sync::atomic::Ordering::Relaxed) as i32 + A[2].load(core::sync::atomic::Ordering::Relaxed) as i32",
         expected: 1000 + 40 + 7 + 9, // old=250、250+10 wrap=4（1 字节）、A[1]=7、A[2]=9（越界哨兵）
         extra: "",
         entry: "mainCRTStartup",
@@ -1005,8 +1005,8 @@ const CASES: &[Case] = &[
     },
     Case {
         name: "atomic_u8_fetch_and",
-        body: "static A: [core::sync::atomic::AtomicU8; 2] = [core::sync::atomic::AtomicU8::new(0xFC), core::sync::atomic::AtomicU8::new(0x55)]; let old = A[0].fetch_and(0x0F, core::sync::atomic::Ordering::AcqRel); (if old as i32 == 0xFC { 100 } else { 0 }) + (A[0].load(core::sync::atomic::Ordering::Relaxed) as i32) + (A[1].load(core::sync::atomic::Ordering::Relaxed) as i32) * 256",
-        expected: 100 + 0x0C + 0x55 * 256, // old=0xFC、内存=0x0C、A[1] 哨兵未动
+        body: "static A: [core::sync::atomic::AtomicU8; 2] = [core::sync::atomic::AtomicU8::new(0xFC), core::sync::atomic::AtomicU8::new(0x55)]; let old = A[0].fetch_and(0x0F, core::sync::atomic::Ordering::AcqRel); (if old == 0xFC { 100 } else { 0 }) + (A[0].load(core::sync::atomic::Ordering::Relaxed) as i32) + (A[1].load(core::sync::atomic::Ordering::Relaxed) as i32) * 256",
+        expected: 100 + 0x0C + 0x55 * 256, // old=0xFC、内存=0x0C、A[1] 哨兵（WA-36 常量 u8 直接比较修复后）
         extra: "",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
@@ -1017,8 +1017,8 @@ const CASES: &[Case] = &[
     },
     Case {
         name: "atomic_u8_fetch_xor",
-        body: "static A: [core::sync::atomic::AtomicU8; 2] = [core::sync::atomic::AtomicU8::new(0xA5), core::sync::atomic::AtomicU8::new(0x33)]; let old = A[0].fetch_xor(0x0F, core::sync::atomic::Ordering::Relaxed); (if old as i32 == 0xA5 { 100 } else { 0 }) + (A[0].load(core::sync::atomic::Ordering::Relaxed) as i32) + (A[1].load(core::sync::atomic::Ordering::Relaxed) as i32) * 256",
-        expected: 100 + (0xA5 ^ 0x0F) + 0x33 * 256, // old=0xA5、内存=0xAA、A[1] 哨兵（常量 0x0F 避 0xFF 符号特例）
+        body: "static A: [core::sync::atomic::AtomicU8; 2] = [core::sync::atomic::AtomicU8::new(0xA5), core::sync::atomic::AtomicU8::new(0x33)]; let old = A[0].fetch_xor(0x0F, core::sync::atomic::Ordering::Relaxed); (if old == 0xA5 { 100 } else { 0 }) + (A[0].load(core::sync::atomic::Ordering::Relaxed) as i32) + (A[1].load(core::sync::atomic::Ordering::Relaxed) as i32) * 256",
+        expected: 100 + (0xA5 ^ 0x0F) + 0x33 * 256, // old=0xA5、内存=0xAA、A[1] 哨兵
         extra: "",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
@@ -1030,14 +1030,14 @@ const CASES: &[Case] = &[
     Case {
         name: "atomic_i8_fetch_max",
         body: "static A: core::sync::atomic::AtomicI8 = core::sync::atomic::AtomicI8::new(-50); let old = A.fetch_max(20, core::sync::atomic::Ordering::Relaxed); (if old == -50 { 500 } else { 0 }) + A.load(core::sync::atomic::Ordering::Relaxed) as i32",
-        expected: 520,
+        expected: 520, // old=-50、max(-50,20)=20（signed 窄值 WA-36 修复后）
         extra: "",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "D intrinsics",
-        reason: "i8 signed 窄值 32 位域符号扩展缺口（WA-36）：-50(0xCE) 被 movzx 当 +206",
+        reason: "",
     },
     Case {
         name: "atomic_u16_fetch_or",

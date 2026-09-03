@@ -49,21 +49,31 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         // 主库 load/算术按 32 位"寄存器安全"宽度（opsize 折中），
                         // u8 值的高 24 位是栈槽残留垃圾（write_bytes_loop 曾把
                         // buf[0] 读成 0xABABABAB）。无符号源在参与 64 位运算前
-                        // mask 低 8/16 位清零高位；有符号源的符号扩展依赖
-                        // ireduce 后的使用（e2e 暂无 i8 直接扩展用例）。
+                        // mask 低 8/16 位清零高位。
+                        // WA-36：有符号窄源（i8/i16 → 更宽）必须**符号扩展**
+                        //（sextend，movsx 链）——原实现 ireduce 截断（i8 -50
+                        // 位 0xCE 被 movzx 表示 206 → cast 后仍 +206）；原注释
+                        // "符号扩展依赖 ireduce 后的使用"未实现（i8 max 实证）。
                         let src_ty = op.ty(&self.body.local_decls, self.tcx);
-                        if matches!(
+                        let is_int = matches!(
                             src_ty.kind(),
                             rustc_middle::ty::TyKind::Int(_)
                                 | rustc_middle::ty::TyKind::Uint(_)
                                 | rustc_middle::ty::TyKind::Bool
-                        ) && !src_ty.is_signed()
-                        {
+                        );
+                        if is_int && !src_ty.is_signed() {
                             let sz = src_ty.primitive_size(self.tcx);
                             if sz.bytes() < 4 {
                                 let mask = (1u64 << (sz.bytes() * 8)) - 1;
                                 let m = self.builder.iconst(mask as i64, TypeId::I64);
                                 val = self.builder.band(val, m);
+                            }
+                        }
+                        if is_int && src_ty.is_signed() {
+                            let src_w = src_ty.primitive_size(self.tcx).bytes() as u32;
+                            let to_w = layout_bytes(self.tcx, *to_ty);
+                            if src_w < to_w {
+                                return Ok(self.builder.sextend(val, to_type));
                             }
                         }
                         Ok(self.builder.ireduce(val, to_type))
@@ -457,9 +467,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let val = scalar
                     .map(|s| {
                         let bits = s.to_bits(s.size());
+                        // WA-36：按 rustc 类型符号性扩展窄常量——u8/u16 常量
+                        // 零扩展（位模式：0xFC→252），i8/i16 符号扩展（0xFC→-4）。
+                        // 原实现恒 signed sext：u8 常量 0xFC 变 -4（全 F），与
+                        // load（movzx 零扩展 252）icmp 不等（u8 高字节常量
+                        // 比较误判实证）。等宽（i32/i64）两侧扩展一致无差。
+                        let signed = constant.const_.ty().is_signed();
                         match s.size().bytes() {
-                            1 => (bits as u8 as i8) as i64,
-                            2 => (bits as u16 as i16) as i64,
+                            1 if signed => (bits as u8 as i8) as i64,
+                            1 => bits as u8 as i64,
+                            2 if signed => (bits as u16 as i16) as i64,
+                            2 => bits as u16 as i64,
                             4 => (bits as u32 as i32) as i64,
                             _ => bits as i64,
                         }
@@ -520,6 +538,44 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         op1_ty: Ty<'tcx>,
     ) -> Result<Value, ForgeError> {
         let is_fp = op1_ty.is_floating_point();
+        // WA-36：整数 icmp 窄域（rustc i8/u8/i16/u16）统一扩展——x86
+        // cmp 走 32/64 位域，未扩展窄位模式无法比较（i8 -50(0xCE) movzx
+        // 后 +206 被当正数、signed < 错；常量侧已按类型扩展，值侧 load
+        // 是 movzx 零扩展——两侧扩展方式不一致则 Eq/比较错）。比较前把
+        // 窄操作数按 signed 语义 sext/zext 到 64（movsx/movzx 链）。
+        let cmp_op = matches!(
+            op,
+            mir::BinOp::Eq
+                | mir::BinOp::Ne
+                | mir::BinOp::Lt
+                | mir::BinOp::Le
+                | mir::BinOp::Gt
+                | mir::BinOp::Ge
+        );
+        let (lhs, rhs) = if cmp_op && !is_fp {
+            let narrow_w = match op1_ty.kind() {
+                rustc_middle::ty::TyKind::Int(_) | rustc_middle::ty::TyKind::Uint(_) => {
+                    layout_bytes(self.tcx, op1_ty)
+                }
+                _ => 4,
+            };
+            if narrow_w < 4 {
+                let mut ext = |v: Value| -> Value {
+                    if signed {
+                        self.builder.sextend(v, TypeId::I64)
+                    } else {
+                        self.builder.uextend(v, TypeId::I64)
+                    }
+                };
+                let e1 = ext(lhs);
+                let e2 = ext(rhs);
+                (e1, e2)
+            } else {
+                (lhs, rhs)
+            }
+        } else {
+            (lhs, rhs)
+        };
         match op {
             mir::BinOp::Add | mir::BinOp::AddWithOverflow | mir::BinOp::AddUnchecked => {
                 if is_fp {
