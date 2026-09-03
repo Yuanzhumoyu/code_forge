@@ -186,8 +186,9 @@ rustc (codegen_crate)
   initial_location ADDR64 reloc→函数符号）。gdb 16.2 amd64-windows 无
   SEH(.pdata) 时落 dwarf2-frame 解 .debug_frame 建栈帧——**此前无 CFI 是
   bt / info args / info locals 全空的根因**（实证）；CFA=rbp+16 定帧 +
-  7 callee-saved 保存槽（forge-codegen 新 `pipeline/cfi.rs` 对发射机器码
-  前缀扫描自校验——非 x86/形态不符安全退化为无 CFI）
+  7 callee-saved 保存槽（forge-codegen 新 `machine/cfi.rs` 对发射机器码
+  前缀扫描——emission 经 `TargetMachine::function_cfi` 按 ISA 名派发，不
+  直接引用 ISA 专属代码；自校验安全退化）
 
 **版本必须是 v5**：w64devkit gdb 16.2 对 PE 只支持 DWARF5——gcc 同源代码
 `-gdwarf-4` 编译后 gdb 同样全失效（断点不解析/无行号，对照实证）。
@@ -254,5 +255,5 @@ dwarf 单测守护。
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
-| **gdb-PE 类型打印（ref4 类型跟随）** | **2026-09 M2 已落地 CFI + 终端行**（提交见 WORKAROUNDS WA-33）：`.debug_frame` 子系统全链——forge-codegen `pipeline/cfi.rs`（x86 prologue 前缀扫描，自校验安全退化）+ CompiledFunction.cfi + emission 填充 + dwarf.rs `gen_debug_frame`（CIE RA=16 + FDE；条目 8 对齐 gcc 同款）+ 行程序终端行 advance_pc 到 fn 末（零宽末行修复）。**gdb 16.2 实证：`bt 3` helper←mainCRTStartup 双帧 + info args/locals 列出变量**（此前无 CFI 全空）；objdump frames/decodedline 净。**残余**：类型打印 unknown type（ref4 类型跟随——gdb 读 PE DWARF5 的跨 DIE 引用失败，位置语义全对、转型路径可取值的"弱相关"项），待 M1-M10 对照矩阵（M10 gdb 自诊 + M1 字节 diff；全阴性则上报 gdb） | 无（CFI/终端行已落地） |
+| **gdb-PE 类型打印（ref4 类型跟随）** | **2026-09 M2 已落地 CFI + 终端行**（提交见 WORKAROUNDS WA-33）：`.debug_frame` 子系统全链——forge-codegen `machine/cfi.rs`（CFI 模型 + ISA prologue 扫描器注册表，emission 经 `TargetMachine::function_cfi` 按 ISA 名派发、x86 前缀自校验安全退化）+ CompiledFunction.cfi + dwarf.rs `gen_debug_frame`（CIE RA=16 + FDE；条目 8 对齐 gcc 同款）+ 行程序终端行 advance_pc 到 fn 末（零宽末行修复）。**gdb 16.2 实证：`bt 3` helper←mainCRTStartup 双帧 + info args/locals 列出变量**（此前无 CFI 全空）；objdump frames/decodedline 净。**残余**：类型打印 unknown type（ref4 类型跟随——gdb 读 PE DWARF5 的跨 DIE 引用失败，位置语义全对、转型路径可取值的"弱相关"项），待 M1-M10 对照矩阵（M10 gdb 自诊 + M1 字节 diff；全阴性则上报 gdb） | 无（CFI/终端行已落地） |
 | **并行 CGU（`-C codegen-units=N`）** | 2026-09 调研完成（flag 为 `-C` 非 `-Z`）：rustc 对自定义后端只调 codegen_crate 一次、**无按 CGU 回调接口**（逐 CGU 并行是 LLVM 在自己 codegen_crate 内实现，需 ExtraBackendMethods）→ 只能**自管 worker 池**。方案 Stage A（行为不变优先）：collect_instances 串行排序 → 函数粒度 `std::thread::scope` 分块并行（每任务私有 FuncRefTable——编号 `@N/G{N}` 每函数编译完就地 resolve 不跨函数逃逸，零加锁）+ 主线程单对象按符号序归并（vtable/promoted 按 alloc_id 去重；slice_sym 命名纯化）。Stage B（后续）：每 CGU 独立 ObjectWriter 多对象 + WorkProduct（dwarf 需 per-CGU CU 或 debuginfo 回退） | forge-rustc backend.rs 任务化 + func_ref drain；宿主需 parallel frontend（官方 nightly 2024-11 起默认；FORGE_CODEGEN_THREADS=1 逃生口） |

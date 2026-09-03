@@ -159,11 +159,13 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         if std::env::var("FORGE_LINE_ROWS").is_ok() {
             eprintln!("[lines] {} {:?}", _func.name.as_str(), line_tables);
         }
-        // M2：机器码完整后扫描 x86_64 固定 prologue → .debug_frame CFI 行。
-        // 字节开头 = Stage 8 的 prologue（emit_prologue 最先写 sink）——
-        // 仅 x86_64 v12 形态命中；riscv64/demo/非标准 prologue 返回 None
-        //（不产 CFI，零回归）。scan 只比较 15 字节常量前缀，开销可忽略。
-        let cfi = crate::pipeline::cfi::scan_x86_prologue(&code);
+        // M2：机器码完整后收集函数级 CFI（.debug_frame 行）。经 ISA 的
+        // TargetMachine::function_cfi 派发（machine::cfi 按 ISA 名查扫描器）
+        // ——本通用管线不引用任何 ISA 专属代码；x86_64 v12 命中固定 prologue
+        // 扫描（字节开头 = Stage 8 的 emit_prologue 最先写 sink），riscv64/
+        // demo/未注册 ISA → None（不产 CFI，零回归）。scan 只比较 15 字节
+        // 常量前缀，开销可忽略。
+        let cfi = machine.function_cfi(&code);
         Ok(CompiledFunction {
             code_size: code.len(),
             code,

@@ -1,6 +1,6 @@
 //! Compilation output types — result of the code generation pipeline.
 
-use crate::pipeline::cfi::FunctionCfi;
+use crate::machine::cfi::FunctionCfi;
 use forge_ir::ImmStr;
 
 /// A compiled function with its machine code and relocation information.
@@ -13,9 +13,9 @@ pub struct CompiledFunction {
     /// (机器码偏移, 源码行 1-based)。forge-rustc 按 -C debuginfo 决定是否
     /// 生成 .debug_line 的 per-statement 条目。
     pub line_entries: Vec<(u32, u32)>,
-    /// DWARF `.debug_frame` CFI 行（M2）：emission 完成后对完整机器码扫描
-    /// x86_64 固定 prologue 得到（`pipeline::cfi::scan_x86_prologue`）。
-    /// `None` = 非 x86_64 后端或 prologue 形态不符（安全退化，不产 CFI）。
+    /// DWARF `.debug_frame` CFI 行（M2）：emission 完成后经
+    /// `TargetMachine::function_cfi` 按 ISA 名派发扫描（machine::cfi——
+    /// x86_64 v12 命中；非 x86 后端/形态不符 → None，安全退化不产 CFI）。
     /// forge-rustc 在 debuginfo 开启时据此生成每函数一条 FDE（gdb 无 SEH
     /// 时靠 .debug_frame 解栈——bt/info args 的根因修复）。
     pub cfi: Option<FunctionCfi>,

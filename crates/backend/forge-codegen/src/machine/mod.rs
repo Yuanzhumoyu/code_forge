@@ -21,6 +21,7 @@
 
 pub mod abi;
 pub mod assembler;
+pub mod cfi;
 pub mod decoder;
 pub mod disasm;
 pub mod encoder;

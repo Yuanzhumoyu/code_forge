@@ -31,7 +31,7 @@
 //! CU 范围/aranges/stmt_list 缺失、subprogram 缺 high_pc（gdb 建不了
 //! function block → 变量 DIE 全丢）、每行一 sequence（零跨度）。
 
-use code_forge::backend::pipeline::cfi::{CfiOp, FunctionCfi};
+use code_forge::backend::{CfiOp, FunctionCfi};
 
 /// DWARF 行号程序操作码（DWARF v5）。
 const DW_LNS_COPY: u8 = 0x01;
