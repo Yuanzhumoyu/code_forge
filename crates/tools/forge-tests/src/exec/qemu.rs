@@ -436,6 +436,7 @@ mod tests {
             code_size: 4,
             relocations: vec![],
             line_entries: vec![],
+            cfi: None, // riscv 机器码无 x86 prologue——scan 必 None
         };
         let elf = build_riscv_elf(&cf.code, &[]);
         assert_eq!(&elf[0..4], &[0x7F, b'E', b'L', b'F']);

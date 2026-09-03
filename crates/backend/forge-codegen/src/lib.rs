@@ -164,6 +164,7 @@ pub use machine::reloc_patcher::{RelocPatcher, RiscvRelocPatcher, X86RelocPatche
 pub use machine::simulator::SimulationState;
 pub use machine::target::{ErasedTargetMachine, TargetMachine};
 pub use pipeline::alloc_config::RegAllocConfig;
+pub use pipeline::cfi::{CfiOp, FunctionCfi, scan_x86_prologue};
 pub use pipeline::compiler::FunctionCompiler;
 pub use pipeline::regalloc_bt::BacktrackingAllocator;
 

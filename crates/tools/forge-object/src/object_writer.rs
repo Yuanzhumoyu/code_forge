@@ -547,6 +547,7 @@ mod tests {
             relocations: Vec::new(),
             code_size: 0,
             line_entries: Vec::new(),
+            cfi: None,
         }
     }
 
@@ -679,6 +680,7 @@ mod tests {
             }],
             code_size: 0,
             line_entries: vec![],
+            cfi: None,
         }
     }
 
