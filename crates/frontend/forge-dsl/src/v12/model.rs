@@ -859,6 +859,13 @@ pub struct Abi {
     /// 浮点返回/参数移动指令名（f32；缺省 "MOVSS"）。
     #[serde(default)]
     pub fpr_mov_inst32: Option<String>,
+    /// 按值向量（≤16 字节，VEC(16) 类——V64/V128）跨 ABI 的全宽寄存器
+    /// 移动指令名（缺省 "MOVAPS"——x86 128 位 XMM 全宽 reg-reg 移动；
+    /// f32/f64 标量走 fpr_mov_inst*，本键仅向量 by-value 用）。缺失该
+    /// 指令的 ISA（riscv 等）→ 向量 by-value 路径 Unsupported（不引用
+    /// 不存在的变体）。
+    #[serde(default)]
+    pub vec_mov_inst: Option<String>,
     /// Call 的返回地址寄存器（缺省 "X1"=riscv ra）。
     #[serde(default)]
     pub call_ret_reg: Option<String>,

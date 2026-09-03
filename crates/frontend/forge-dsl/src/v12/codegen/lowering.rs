@@ -280,6 +280,23 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         Some(f) => (*f).clone(),
         None => format_ident!("dest"),
     };
+    // 按值向量（≤16 字节，VEC(16) 类）返回/参数用全宽 XMM 移动指令
+    //（缺省 "MOVAPS"；指令缺失的 ISA → 对应路径 Unsupported，不引用
+    // 不存在的变体——与 fpr_mov_inst 缺省门控同款）。
+    let vec_mov_inst = abi_cfg
+        .and_then(|a| a.vec_mov_inst.clone())
+        .unwrap_or_else(|| "MOVAPS".to_string());
+    let vec_mov_fids = inst_fids(infos, &vec_mov_inst);
+    let has_vec_mov = vec_mov_fids.len() >= 2;
+    let vec_mov_vn = crate::v12::codegen::pascal_ident(&vec_mov_inst);
+    let vec_mov_src: syn::Ident = match vec_mov_fids.get(1) {
+        Some(f) => (*f).clone(),
+        None => format_ident!("src"),
+    };
+    let vec_mov_dest: syn::Ident = match vec_mov_fids.first() {
+        Some(f) => (*f).clone(),
+        None => format_ident!("dest"),
+    };
     let fpr_return_body: TokenStream = if has_fpr_mov {
         quote! {
             // 浮点返回值 → XMM0（f32 → fpr_mov32 / f64 → fpr_mov64）
@@ -300,6 +317,24 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         quote! {
             let _ = __pack;
             return Err(crate::prelude::IrError::Unsupported("v12 float return (fpr_mov_inst missing)".into()));
+        }
+    };
+    // 按值向量（≤16 字节，V64/V128）返回体：结果 → XMM0 全宽 128 位移动
+    //（MOVAPS——MOVSD/MOVSS 只移 8/4 字节，高半截断，WA-37 D3）。
+    let vec_return_body: TokenStream = if has_vec_mov {
+        quote! {
+            let __vidx = __pack.push_inst(Inst::#vec_mov_vn {
+                #vec_mov_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                #vec_mov_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+            });
+            __pack.map_reg_field(val, __vidx, 1u8, false);
+        }
+    } else {
+        quote! {
+            let _ = __pack;
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 vector return (vec_mov_inst missing)".into(),
+            ));
         }
     };
     let return_body: TokenStream = if has_mov_rax {
@@ -380,6 +415,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
             if ctx.xreg_types.get(&val).is_some_and(|t| t.is_float()) {
                 #fpr_return_body
+            } else if ctx.xreg_types.get(&val).is_some_and(|t| {
+                ctx.type_ctx.as_ref().is_some_and(|tc| {
+                    let s = tc.borrow();
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
+                })
+            }) {
+                // ≤16B 向量（V64/V128）按值返回：XMM0 全宽
+                #vec_return_body
             } else if ctx.xreg_types.get(&val).is_some_and(|t| {
                 ctx.type_ctx.as_ref().is_some_and(|tc| {
                     let s = tc.borrow();
@@ -809,6 +852,21 @@ fn gen_call_lowering(
     };
     let has_ss = fids(&fpr_mov32).len() >= 2;
     let has_fpr_mov = sd_f.len() >= 2 && has_ss;
+    // 按值向量（≤16 字节，VEC(16) 类）参数/返回的全宽 XMM 移动指令
+    //（缺省 "MOVAPS"；指令缺失的 ISA → 对应路径 Unsupported）。
+    let vec_mov_inst = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.vec_mov_inst.clone())
+        .unwrap_or_else(|| "MOVAPS".to_string());
+    let vec_mov_fids = fids(&vec_mov_inst);
+    let has_vec_mov = vec_mov_fids.len() >= 2;
+    let (v_dest, v_src) = if vec_mov_fids.len() >= 2 {
+        (vec_mov_fids[0].clone(), vec_mov_fids[1].clone())
+    } else {
+        (format_ident!("dest"), format_ident!("src"))
+    };
+    let vec_mov_vn = vn(&vec_mov_inst);
     // S1/S2：宽向量 by-ref/sret 栈拷贝指令——**按语义标签收集**（TOML
     // `tags` 显式声明；不做按指令名/前缀的存在性探测）。缺失任意标签 →
     // 对应 ABI 能力 Unsupported（riscv 等无向量 ISA 天然缺标签）。
@@ -894,6 +952,22 @@ fn gen_call_lowering(
             ));
         }
     };
+    // 按值向量（≤16 字节）返回回读：XMM0（128 位全宽）→ 结果 XReg。
+    let vec_ret_stmt: TokenStream = if has_vec_mov {
+        quote! {
+            let __idx = __pack.push_inst(Inst::#vec_mov_vn {
+                #v_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                #v_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS),
+            });
+            __pack.map_reg_field(__r, __idx, 0u8, true);
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: vector return move (vec_mov_inst missing)".into(),
+            ));
+        }
+    };
     // S2：宽向量返回值（>16 字节）sret 结果回读——call 后从 [sret_off] load
     // 到结果 XReg（tag `wide_vec_load_32/64` 指令）。生成期门控：标签缺失
     // （riscv）→ 编译入口守卫（compiler.rs）已拒绝，此处防御性 Unsupported。
@@ -947,6 +1021,14 @@ fn gen_call_lowering(
         if let Some(&__r) = results.first() {
             if ctx.xreg_types.get(&__r).is_some_and(|t| t.is_float()) {
                 #fpr_ret_stmt
+            } else if ctx.xreg_types.get(&__r).is_some_and(|t| {
+                ctx.type_ctx.as_ref().is_some_and(|tc| {
+                    let s = tc.borrow();
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
+                })
+            }) {
+                // ≤16B 向量（V64/V128）按值返回：XMM0 全宽回读
+                #vec_ret_stmt
             } else if __sret {
                 #sret_load_stmt
             } else {
@@ -1224,6 +1306,11 @@ fn gen_call_lowering(
         &f_src,
         has_ss,
         has_fpr_mov,
+        // ≤16B 向量实参全宽移动（MOVAPS；缺失 → Unsupported 分支）
+        &vec_mov_vn,
+        &v_dest,
+        &v_src,
+        has_vec_mov,
         // S1：宽向量 by-ref 栈拷贝（生成期拼好的语句；标签缺失 → Unsupported）
         &byref_stmt,
         // ABI 槽位规则：by-position（Windows x64，int/float 共享位置计数）
@@ -1309,6 +1396,12 @@ fn arg_move_loop(
     f_src: &syn::Ident,
     has_ss: bool,
     has_fpr_mov: bool,
+    // ≤16B 向量（V64/V128）实参的全宽 XMM 移动指令（缺省 MOVAPS——
+    // 与标量 fpr 参数区分；指令缺失的 ISA → 该分支 Unsupported）。
+    vec_mov_vn: &syn::Ident,
+    v_dest: &syn::Ident,
+    v_src: &syn::Ident,
+    has_vec_mov: bool,
     byref_stmt: &TokenStream,
     by_position: bool,
     mov_vn: &syn::Ident,
@@ -1400,6 +1493,57 @@ fn arg_move_loop(
             ));
         }
     };
+    // ≤16B 向量（V64/V128）实参 → XMM{槽} 全宽 128 位移动（by-class：
+    // __fi 独立推进）。MOVSD/MOVSS 只移 8/4 字节 → 高半截断（WA-37 D3）。
+    let vec_stmt: TokenStream = if has_vec_mov && !float_regs.is_empty() {
+        let fpr_regs = float_regs;
+        quote! {
+            if __fi < #fn_ {
+                let __dst = [#(Reg::#fpr_regs),*][__fi];
+                __fi += 1;
+                let __idx = __pack.push_inst(Inst::#vec_mov_vn {
+                    #v_dest: __dst,
+                    #v_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                });
+                __pack.map_reg_field(__a, __idx, 1u8, false);
+            } else {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: vector arg register exhausted (stack args not yet supported)".into(),
+                ));
+            }
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: vector arg move (vec_mov_inst missing)".into(),
+            ));
+        }
+    };
+    // by-position 版（Windows x64）：向量实参占一个位置槽 __pi（XMM{__pi}）。
+    let vec_stmt_pos: TokenStream = if has_vec_mov && !float_regs.is_empty() {
+        let fpr_regs = float_regs;
+        quote! {
+            if __pi < #fn_ {
+                let __dst = [#(Reg::#fpr_regs),*][__pi];
+                __pi += 1;
+                let __idx = __pack.push_inst(Inst::#vec_mov_vn {
+                    #v_dest: __dst,
+                    #v_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                });
+                __pack.map_reg_field(__a, __idx, 1u8, false);
+            } else {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: vector arg register exhausted (stack args not yet supported)".into(),
+                ));
+            }
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: vector arg move (vec_mov_inst missing)".into(),
+            ));
+        }
+    };
     let int_stmt_pos = quote! {
         if __pi < #n {
             let __dst = [#(Reg::#int_regs),*][__pi];
@@ -1441,6 +1585,14 @@ fn arg_move_loop(
                 // by-ref 参数占一个位置（by-position：GPR{pos} 由 byref_stmt
                 // 内的 #slot_var（=__pi）推进，此处 __pi 同步
                 __pi += 1;
+            } else if ctx.xreg_types.get(&__a).is_some_and(|t| {
+                ctx.type_ctx.as_ref().is_some_and(|tc| {
+                    let s = tc.borrow();
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
+                })
+            }) {
+                // ≤16B 向量（V64/V128）按值实参：XMM{pos} 全宽移动
+                #vec_stmt_pos
             } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
                 #fpr_stmt_pos
             } else {
@@ -1456,6 +1608,13 @@ fn arg_move_loop(
                 })
             }) {
                 #byref_stmt
+            } else if ctx.xreg_types.get(&__a).is_some_and(|t| {
+                ctx.type_ctx.as_ref().is_some_and(|tc| {
+                    let s = tc.borrow();
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
+                })
+            }) {
+                #vec_stmt
             } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
                 #fpr_stmt
             } else if __gi < #n {

@@ -130,6 +130,29 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
                 elem_id_of(*t)
             }
         });
+        // 向量大小标记（字节）：结果/实参是向量类型 → Some(size_bytes)，否则
+        // None。Store 无结果（elem 恒 None）时据此区分向量 store 与标量
+        //（WA-37 D3：≤16B Direct 向量值的 Load/Store 需全宽向量内存移动）。
+        let __a_rd_vec = results.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+            ctx.type_ctx.as_ref().and_then(|tc| {
+                let s = tc.borrow();
+                if s.is_vector(*t) {
+                    Some(s.size_bytes(*t) as i64)
+                } else {
+                    None
+                }
+            })
+        });
+        let __a_rs1_vec = args.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+            ctx.type_ctx.as_ref().and_then(|tc| {
+                let s = tc.borrow();
+                if s.is_vector(*t) {
+                    Some(s.size_bytes(*t) as i64)
+                } else {
+                    None
+                }
+            })
+        });
         let __a_cond = match op {
             crate::prelude::Opcode::Fcmp { cond } => Some(fcmp_id(cond)),
             crate::prelude::Opcode::Icmp { cond } => Some(icmp_id(cond)),
@@ -141,6 +164,8 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
                 "rd" => __a_rd,
                 "rs1_width" => __a_rs1,
                 "rs2_width" => __a_rs2,
+                "rd_vec" => __a_rd_vec,
+                "rs1_vec" => __a_rs1_vec,
                 "elem" => __a_elem,
                 "cond" => __a_cond,
                 "imm0" => __a_imm0,

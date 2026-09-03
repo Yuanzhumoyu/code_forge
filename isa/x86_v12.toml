@@ -1087,6 +1087,25 @@ opcode = 0x11
 fields = { prefix = 0xF2 }
 asm = "movsd_mr {1:[mem:in]}, {0:[fpr:in]}"
 
+# ── 128 位 SSE 向量内存 load/store（≤16B Direct 向量（V128）值经栈槽
+#    往返用——WA-37 D3：V128 值在 XMM 全宽，8B movsd/movss 会截断）。
+#    MOVUPS：0F 10/11（无前缀，非对齐 16 字节）；register-indirect
+#    （addr 寄存器值，与 Load/Store lowering 的 mov_mem 形态一致——
+#    StackAddr 先 lea 地址到寄存器）。──
+[[instructions]]
+name = "MOVUPS_128_R_MEM"
+form = "MRR_MEM_0F_FIX32"
+opcode = 0x10
+fields = { prefix = 0 }
+asm = "movups128_mem {0:[fpr:out]}, [{1:[gpr:in]}]"
+
+[[instructions]]
+name = "MOVUPS_128_MEM_R"
+form = "MRR_MEM_0F_FIX32"
+opcode = 0x11
+fields = { prefix = 0 }
+asm = "movups128_sto [{1:[gpr:in]}], {0:[fpr:in]}"
+
 # ── 标量浮点补齐（Phase 4：F32 内存标量、F32→整数、64 位转换、极值、舍入）──
 
 [[instructions]]
@@ -1981,6 +2000,20 @@ op = "Load"
 when = { eq = ["rd", 16] }
 insts = ["movzx_mem16 {out}, [{0}]"]
 
+# ≤16B 向量（Direct XMM 值）内存 load——WA-37 D3 全宽往返：
+# V128（16B）→ movups128（0F 10 无前缀，16 字节非对齐）；V64（8B）
+# → movsd（低 64 位即 V64 全值；V64 高半无意义）。rd_vec = 结果向量
+# 类型字节数（非向量 None）——不误伤 64 位标量/I128 load。
+[[lowering]]
+op = "Load"
+when = { eq = ["rd_vec", 16] }
+insts = ["movups128_mem {out}, [{0}]"]
+
+[[lowering]]
+op = "Load"
+when = { eq = ["rd_vec", 8] }
+insts = ["movsd_mem {out}, [{0}]"]
+
 [[lowering]]
 op = "Load"
 insts = ["mov_mem {out}, [{0}]"]
@@ -1989,6 +2022,16 @@ insts = ["mov_mem {out}, [{0}]"]
 op = "Store"
 when = { eq = ["rs1_width", 8] }
 insts = ["mov_sto8 [{0}], {1}"]
+
+[[lowering]]
+op = "Store"
+when = { eq = ["rs1_vec", 16] }
+insts = ["movups128_sto [{0}], {1}"]
+
+[[lowering]]
+op = "Store"
+when = { eq = ["rs1_vec", 8] }
+insts = ["movsd_sto [{0}], {1}"]
 
 [[lowering]]
 op = "Store"

@@ -1018,6 +1018,258 @@ mod tests {
         assert_eq!(got, 1, "sret 返回 lane0 f32 1.5 → fptosi → 1");
     }
 
+    /// M1-D3：≤16B Direct 向量值经栈槽 store/load 全宽往返
+    ///（forge-rustc 值全程内存建模所需的向量 Load/Store 全宽路径——
+    ///  V128 movups128 16B / V64 movsd 8B；Load/Store 谓词 rd_vec/rs1_vec）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_vec_mem_slot_roundtrip() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt128 = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 4)
+        };
+        // main: () -> i32 = store V128 → 槽 -32; load 回; lane3 → fptosi
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        jit.add_function("v128_slot", &sig, |b| {
+            let entry = b.create_block();
+            b.switch_to_block(entry);
+            let addr = b.stack_addr(-32);
+            let v = b.vconst(vec![1.0f32, 2.0, 3.0, 7.5]);
+            b.store(v, addr);
+            let vl = b.load(addr, vt128);
+            let idx = b.iconst_i32(3);
+            let lane = b.vextract(vl, idx);
+            let wide = b.fpext(lane, TypeId::F64);
+            let int = b.fptosi(wide, TypeId::I32);
+            b.ret(&[int]);
+        })
+        .expect("compile v128_slot");
+        let f: extern "C" fn() -> i32 = jit.get_fn("v128_slot").expect("get_fn");
+        assert_eq!(f(), 7, "V128 store/load 栈槽全宽 lane3=7.5 → 7");
+
+        // V64 槽往返（8B movsd 全宽低 64）
+        let mut jit2 = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt64 = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 2)
+        };
+        let sig2 = FunctionSignature::new(&[], &[TypeId::I32]);
+        jit2.add_function("v64_slot", &sig2, |b| {
+            let entry = b.create_block();
+            b.switch_to_block(entry);
+            let addr = b.stack_addr(-24);
+            let v = b.vconst(vec![1.0f32, 6.5]);
+            b.store(v, addr);
+            let vl = b.load(addr, vt64);
+            let idx = b.iconst_i32(1);
+            let lane = b.vextract(vl, idx);
+            let wide = b.fpext(lane, TypeId::F64);
+            let int = b.fptosi(wide, TypeId::I32);
+            b.ret(&[int]);
+        })
+        .expect("compile v64_slot");
+        let g: extern "C" fn() -> i32 = jit2.get_fn("v64_slot").expect("get_fn");
+        assert_eq!(g(), 6, "V64 store/load 栈槽 lane1=6.5 → 6");
+    }
+
+    /// M1-D3（WA-37 D3）：V128（4×f32，≤16B）按值参数——XMM 全宽收参。
+    /// 两次调用传不同向量验证高半 lane3 不依赖寄存器遗留值（修复前收参走
+    /// MOVSD 8 字节 + 调用方 GPR 槽，值靠遗留 XMM 高半偶然存活）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v128_byval_param_lane3() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 4)
+        };
+        // callee: (v128) -> i32 = vextract lane3 → fptosi
+        let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
+        bc.switch_to_block(blk);
+        let idx = bc.iconst_i32(3);
+        let lane = bc.vextract(p[0], idx);
+        let wide = bc.fpext(lane, TypeId::F64);
+        let int = bc.fptosi(wide, TypeId::I32);
+        bc.ret(&[int]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: callee(v) 两次，不同值
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v1 = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.5]);
+        let r1 = bm.call(callee_ref, &[v1], &[TypeId::I32]);
+        let v2 = bm.vconst(vec![10.5f32, 11.0, 12.0, 13.5]);
+        let r2 = bm.call(callee_ref, &[v2], &[TypeId::I32]);
+        let s = bm.iadd(r1[0], r2[0]);
+        bm.ret(&[s]);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 17, "V128 按值参数 lane3=4.5→4 与 13.5→13 两次往返（高半全宽）");
+    }
+
+    /// M1-D3：V128 按值返回——callee() -> v128（XMM0 全宽），main 提 lane3。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v128_byval_return_lane3() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 4)
+        };
+        let sig_c = FunctionSignature::new(&[], &[vt]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let blk = bc.create_block();
+        bc.switch_to_block(blk);
+        let v = bc.vconst(vec![1.0f32, 2.0, 3.0, 7.5]);
+        bc.ret(&[v]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let r = bm.call(callee_ref, &[], &[vt]);
+        let idx = bm.iconst_i32(3);
+        let lane = bm.vextract(r[0], idx);
+        let wide = bm.fpext(lane, TypeId::F64);
+        let int = bm.fptosi(wide, TypeId::I32);
+        bm.ret(&[int]);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 7, "V128 按值返回 lane3=7.5 → 7（返回 XMM0 全宽）");
+    }
+
+    /// M1-D3：V64（2×f32）按值参数 lane1（修复前 lane1 恒 0——调用方把
+    /// 值塞进 GPR 槽而 callee 从 XMM0 收参，槽位错位）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v64_byval_param_lane1() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 2)
+        };
+        let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
+        bc.switch_to_block(blk);
+        let idx = bc.iconst_i32(1);
+        let lane = bc.vextract(p[0], idx);
+        let wide = bc.fpext(lane, TypeId::F64);
+        let int = bc.fptosi(wide, TypeId::I32);
+        bc.ret(&[int]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v = bm.vconst(vec![1.5f32, 6.5]);
+        let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 6, "V64 按值参数 lane1=6.5 → 6");
+    }
+
+    /// M1-D3：V64 按值返回——callee() -> v64，main 提 lane1。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v64_byval_return_lane1() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 2)
+        };
+        let sig_c = FunctionSignature::new(&[], &[vt]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let blk = bc.create_block();
+        bc.switch_to_block(blk);
+        let v = bc.vconst(vec![1.0f32, 8.5]);
+        bc.ret(&[v]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let r = bm.call(callee_ref, &[], &[vt]);
+        let idx = bm.iconst_i32(1);
+        let lane = bm.vextract(r[0], idx);
+        let wide = bm.fpext(lane, TypeId::F64);
+        let int = bm.fptosi(wide, TypeId::I32);
+        bm.ret(&[int]);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 8, "V64 按值返回 lane1=8.5 → 8");
+    }
+
+    /// M1-D3：混合位置——callee(i32, v128) -> i32：i32→RCX（位置 0）、
+    /// v128→XMM1（位置 1）；callee 读 lane2（XMM1 高半中间）验证按值
+    /// by-position 槽位与全宽收参。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v128_byval_mixed_int_pos() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 4)
+        };
+        // callee: (i32, v128) -> i32 = a + lane2
+        let sig_c = FunctionSignature::new(&[(TypeId::I32, "a"), (vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(TypeId::I32, "a"), (vt, "v")]);
+        bc.switch_to_block(blk);
+        let idx = bc.iconst_i32(2);
+        let lane = bc.vextract(p[1], idx);
+        let wide = bc.fpext(lane, TypeId::F64);
+        let int = bc.fptosi(wide, TypeId::I32);
+        let sum = bc.iadd(p[0], int);
+        bc.ret(&[sum]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("callee"));
+        // main: callee(10, [1.5, 2.0, 3.5, 4.0]) → 10 + 3 = 13
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let ten = bm.iconst_i32(10);
+        let v = bm.vconst(vec![1.5f32, 2.0, 3.5, 4.0]);
+        let r = bm.call(callee_ref, &[ten, v], &[TypeId::I32]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("main"));
+        jit.compile_module(&module).expect("编译 main+callee");
+        let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+        let got = f();
+        assert_eq!(got, 13, "i32(位置0)+v128(位置1) lane2=3.5→3 → 13");
+    }
+
     /// S3: 标量 + by-ref 实参混合——callee(i32, v256) -> i32：
     /// i32→RCX、v256 by-ref→RDX（__gi 顺延）；callee 收参后 lane0+标量和。
     #[cfg(target_arch = "x86_64")]

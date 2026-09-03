@@ -730,6 +730,47 @@ fn gen_emit_pseudo(
             // Inst::Movsd/Inst::Movss。
             let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
             let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
+            // 按值向量（≤16 字节，VEC(16)——V64/V128）收参用**全宽 XMM
+            // 寄存器移动**（128 位；缺省 "MOVAPS"——MOVSD/MOVSS 只移动
+            // 8/4 字节，高半被静默截断/依赖寄存器遗留值）。与标量浮点
+            //（fpr_mov_inst*）区分：参数类 VEC(16) → 全宽、FPR(8) →
+            // 标量。指令缺失的 ISA（riscv）→ 运行时 Unsupported（不引用
+            // 不存在的变体）。
+            let vec_mov = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.vec_mov_inst.clone())
+                .unwrap_or_else(|| "MOVAPS".to_string());
+            let vec_fids = inst_fids(infos, &vec_mov);
+            let has_vec_mov = vec_fids.len() >= 2;
+            let (v_dest, v_src) = if vec_fids.len() >= 2 {
+                (vec_fids[0].clone(), vec_fids[1].clone())
+            } else {
+                (format_ident!("dest"), format_ident!("src"))
+            };
+            let vec_mov_vn = crate::v12::codegen::pascal_ident(&vec_mov);
+            // 全宽向量收参语句（VEC(16) 参数分支）：movaps XMM_{dest}, XMM{slot}
+            let vec16_stmt: TokenStream = if has_vec_mov {
+                quote! {
+                    let __bytes = encode(&Inst::#vec_mov_vn {
+                        #v_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                        #v_src: __src,
+                    }).map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
+                }
+            } else {
+                quote! {
+                    return Err(crate::IrError::Emit(
+                        "v12 vector arg receive (vec_mov_inst missing)".into(),
+                    ));
+                }
+            };
+            let vec16_cond = quote! {
+                __rm.param_vregs
+                    .get(__i)
+                    .map(|x| x.class() == forge_ir::RegClass::VEC(16))
+                    .unwrap_or(false)
+            };
             // by-ref 向量 load：宽向量参数（>16 字节）按引用传参——ABI 传 GPR
             // 指针（int 槽位），收参时从 [ptr] load 到目标向量寄存器。
             // 优先非对齐 VMOVUPS（指针未必 32 字节对齐）；缺省回退 VMOVAPS。
@@ -780,18 +821,25 @@ fn gen_emit_pseudo(
                     if __fi < #fn_ {
                         let __src = [#(Reg::#float_regs),*][__fi];
                         __fi += 1;
-                        let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
-                            Inst::#fpr_mov32_vn {
-                                #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                                #f_src: __src,
-                            }
+                        if #vec16_cond {
+                            // ≤16B 向量（V64/V128，VEC(16) 类）按值参数：
+                            // 全宽 128 位 XMM 移动（MOVAPS）——MOVSD/MOVSS
+                            // 只移 8/4 字节，高半静默截断（WA-37 D3）。
+                            #vec16_stmt
                         } else {
-                            Inst::#fpr_mov64_vn {
-                                #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                                #f_src: __src,
-                            }
-                        }).map_err(|e| crate::IrError::Emit(e))?;
-                        __sink.put_bytes(&__bytes);
+                            let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
+                                Inst::#fpr_mov32_vn {
+                                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                                    #f_src: __src,
+                                }
+                            } else {
+                                Inst::#fpr_mov64_vn {
+                                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                                    #f_src: __src,
+                                }
+                            }).map_err(|e| crate::IrError::Emit(e))?;
+                            __sink.put_bytes(&__bytes);
+                        }
                     }
                 }
             } else {
@@ -819,18 +867,23 @@ fn gen_emit_pseudo(
                         let __pos = __i + if __rm.sret { 1usize } else { 0usize };
                         if __pos < #fn_ {
                             let __src = [#(Reg::#float_regs),*][__pos];
-                            let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
-                                Inst::#fpr_mov32_vn {
-                                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                                    #f_src: __src,
-                                }
+                            if #vec16_cond {
+                                // ≤16B 向量按值参数：全宽 XMM 移动
+                                #vec16_stmt
                             } else {
-                                Inst::#fpr_mov64_vn {
-                                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                                    #f_src: __src,
-                                }
-                            }).map_err(|e| crate::IrError::Emit(e))?;
-                            __sink.put_bytes(&__bytes);
+                                let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
+                                    Inst::#fpr_mov32_vn {
+                                        #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                                        #f_src: __src,
+                                    }
+                                } else {
+                                    Inst::#fpr_mov64_vn {
+                                        #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                                        #f_src: __src,
+                                    }
+                                }).map_err(|e| crate::IrError::Emit(e))?;
+                                __sink.put_bytes(&__bytes);
+                            }
                         } else {
                             return Err(crate::IrError::Emit(
                                 "v12 move_args: float arg position out of range".into(),
