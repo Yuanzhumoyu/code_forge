@@ -606,20 +606,30 @@ form = "MRR_FIX64"
 opcode = 0x63
 asm = "movsxd {0:[gpr:out]}, {1:[gpr:in]}"   # v13：与 MOVSXD_R_RM 合并（真重复）
 
+# RM_R 两地址算术/逻辑（ADD/SUB/XOR/AND/OR）：opsize 必须取 **inout 目的槽
+# （s1）**，不能用 form MRR 缺省的 s0。s0 是 modrm.reg = 源操作数——lowering
+# `add {1}, {out}` 把源绑定到 IR 的第二个操作数，其类型可比结果窄（forge-ir
+# `TypeId::upcast` 允许混宽：`iadd(PTR, I32) -> PTR`）。取源宽度会发 32 位
+# ADD，把 64 位指针高半清零 → 栈槽地址算术全线 SEGV（mini_c alloc_slot =
+# `iadd(stack_addr, iconst_i32(-4))` 实证）。目的槽 = IR 结果值 XReg，其
+# 类型恒为 upcast 结果（≥ 两操作数），故 s1 == 结果宽度 == 正确编码宽度。
 [[instructions]]
 name = "ADD_RM_R"
 form = "MRR"
 opcode = 0x01
 # v14：数据槽 gprx——宽度由 IR 类型 auto（I32→无 REX.W 32 位、I64→REX.W）。
 # 固定 _32 变体已删（DSL 回填修复后同 opcode 由 66/REX.W 前缀分发——WA-35）。
+opsize = "s1"
 asm = "add {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "SUB_RM_R"
 form = "MRR"
 opcode = 0x29
+opsize = "s1"
 asm = "sub {1:[gprx:inout]}, {0:[gprx:in]}"
 
+# IMUL 是 reg-form（目的 = op0 = modrm.reg）——form 缺省 s0 已是目的槽。
 [[instructions]]
 name = "IMUL_R_RM"
 form = "MRR_0F"
@@ -630,30 +640,40 @@ asm = "imul {0:[gprx:out]}, {1:[gprx:in]}"
 name = "XOR_RM_R"
 form = "MRR"
 opcode = 0x31
+opsize = "s1"
 asm = "xor {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "AND_RM_R"
 form = "MRR"
 opcode = 0x21
+opsize = "s1"
 asm = "and {1:[gprx:inout]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "OR_RM_R"
 form = "MRR"
 opcode = 0x09
+opsize = "s1"
 asm = "or {1:[gprx:inout]}, {0:[gprx:in]}"
 
+# CMP/TEST 只有两个源槽（没有 inout 目的槽可取宽度，IR 结果是 BOOL 不带操作数
+# 宽度）→ `opsize = "max"`：取两操作数宽度的宽者 = `TypeId::upcast` 结果宽度。
+# 取单槽（form MRR 缺省 s0 = modrm.reg）会按较窄者编码——`icmp(PTR, iconst_i32(0))`
+# 发 32 位 CMP 只比低半，高半非 0 的指针与 null 判等为真（空指针检查失效）。
+# 汇编文本仍要求两操作数同宽（`cmp RAX, EBX` 拒绝）——max 只放宽 IR 降级路径。
 [[instructions]]
 name = "CMP_RM_R"
 form = "MRR"
 opcode = 0x39
+opsize = "max"
 asm = "cmp {1:[gprx:in]}, {0:[gprx:in]}"
 
 [[instructions]]
 name = "TEST_RM_R"
 form = "MRR"
 opcode = 0x85
+opsize = "max"
 asm = "test {1:[gprx:in]}, {0:[gprx:in]}"
 
 # movzx：8 位源（REX.W + 0F B6）与 16 位源（66 REX.W 0F B7）合并助记符——

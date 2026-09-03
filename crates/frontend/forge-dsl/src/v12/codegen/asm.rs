@@ -929,8 +929,10 @@ fn operand_parse_tok(
                 Some(w) => quote! { Some(#w) },
                 None => quote! { None },
             };
-            // 一致性检查仅对 opsize=Slot 的多宽 GPR form（宽度由操作数推导）
-            let need_cls = matches!(op, Some(Opsize::Slot(_))) && gpr_only;
+            // 一致性检查对 opsize=Slot/Max 的多宽 GPR form（宽度由操作数推导）
+            // ——`max` 只放宽 IR 降级的混宽编码，汇编文本仍要求同宽
+            // （`cmp RAX, EBX` 拒绝）。
+            let need_cls = matches!(op, Some(Opsize::Slot(_) | Opsize::Max)) && gpr_only;
             let cb = if need_cls {
                 Some(format_ident!("__c{n}"))
             } else {
@@ -991,7 +993,7 @@ fn gen_assemble_try_tok(info: &InstInfo) -> Result<TokenStream, String> {
     }
     elems.push(quote! { it.eof() });
     pats.push(quote! { true });
-    // opsize=Slot 多宽 form：全部 GPR 操作数宽度一致性（`mov rax, ebx` → 拒绝）
+    // opsize=Slot/Max 多宽 form：全部 GPR 操作数宽度一致性（`mov rax, ebx` → 拒绝）
     let mut eqs: Vec<TokenStream> = Vec::new();
     for pair in cls_binds.windows(2) {
         let a = &pair[0];

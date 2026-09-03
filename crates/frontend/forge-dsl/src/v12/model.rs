@@ -520,9 +520,10 @@ pub struct Form {
     #[serde(default)]
     pub prefix: Option<String>,
     /// 变长：编码宽度语义。`opsize = <操作数序号>`：宽度由该操作数的寄存器
-    /// 自动推导（RAX→64 发 REX.W、EAX→32 无前缀、AX→16 发 0x66）；缺省 =
-    /// 第一个 Reg 槽操作数。槽声明固定宽度组（如 `[gpr64]`）时推导恒为该值
-    /// 并在 encode 期校验操作数寄存器宽度匹配（严格类型检测）。
+    /// 自动推导（RAX→64 发 REX.W、EAX→32 无前缀、AX→16 发 0x66）；`"max"` →
+    /// 取全部 Reg 操作数宽度的最大值（无目的槽的同宽指令，见 [`Opsize::Max`]）；
+    /// 缺省 = 第一个 Reg 槽操作数。槽声明固定宽度组（如 `[gpr64]`）时推导恒为
+    /// 该值并在 encode 期校验操作数寄存器宽度匹配（严格类型检测）。
     #[serde(default)]
     pub opsize: Option<Opsize>,
     /// 变长：REX.W 位来源。`"auto"` → opsize==64；`"field"` → fields.w；
@@ -557,6 +558,16 @@ pub struct Form {
 pub enum Opsize {
     Slot(u16),
     Reg(u16),
+    /// `opsize = "max"`：宽度 = 全部 Reg 操作数宽度的**最大值**。
+    ///
+    /// 用于两个源槽都不是"结果"的同宽指令（x86 CMP/TEST：`cmp r/m, r` 两操作数
+    /// 必须同宽，没有目的槽可取）。IR 层允许混宽（`TypeId::upcast`：
+    /// `icmp(PTR, I32)`），取任一单槽宽度都会按较窄者编码——32 位 CMP 只比低半，
+    /// 高半非 0 的指针与 0 判等为真。取宽者 = upcast 结果宽度 = 正确比较宽度。
+    ///
+    /// 汇编文本路径不受影响：多类 GPR 槽的宽度一致性检查同样对 `max` 生效
+    /// （`cmp RAX, EBX` 仍拒绝），只有 IR 降级产生的混宽组合走取宽语义。
+    Max,
 }
 
 impl Default for Opsize {
@@ -569,7 +580,14 @@ impl FromStr for Opsize {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let n = s[1..].parse::<u16>().map_err(|e| e.to_string())?;
+        if s == "max" {
+            return Ok(Self::Max);
+        }
+        let n = s
+            .get(1..)
+            .ok_or_else(|| "opsize must be \"max\" or s<N>/r<N>".to_string())?
+            .parse::<u16>()
+            .map_err(|e| e.to_string())?;
         match s.chars().next() {
             Some('s') => Ok(Self::Slot(n)),
             Some('r') => Ok(Self::Reg(n)),
@@ -583,6 +601,7 @@ impl Display for Opsize {
         match self {
             Opsize::Slot(idx) => write!(f, "s{}", idx),
             Opsize::Reg(width) => write!(f, "r{}", width),
+            Opsize::Max => write!(f, "max"),
         }
     }
 }
@@ -684,6 +703,8 @@ pub struct Instruction {
     /// 指令级 opsize 覆盖（form 的 opsize 优先级低）：`opsize = <操作数序号>`
     /// ——宽度由该操作数寄存器自动推导（REX.W/66 前缀驱动）。多宽度合并
     /// （cvtsi2sd 32/64 源）用：同助记符 + opsize 驱动 REX.W 自动分发。
+    /// 两地址 RM_R 族用 `"s1"`（inout 目的槽 = IR 结果宽度）；无目的槽的
+    /// 比较族用 `"max"`（见 [`Opsize::Max`]）。
     #[serde(default)]
     pub opsize: Option<Opsize>,
     /// 指令级 rex_w 覆盖（form 的 rex_w 优先级低）："auto" → opsize==64。

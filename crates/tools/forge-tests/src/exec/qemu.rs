@@ -100,21 +100,62 @@ fn inst_jal(rd: u32, imm: i64) -> [u8; 4] {
     w.to_le_bytes()
 }
 
-/// 64 位立即数 → 指令序列。覆盖 32 位有符号范围（[-2^31, 2^31)）用
-/// lui+addi；小值（±2047）单 addi。**超出 32 位有符号的值不支持**（调用方
-/// 应保证：crt0 的 sp 用专用序列、测试参数均 ≤32 位）。精确 64 位 li 的
-/// 多段展开留给后续迭代（当前用例无此需求）。
+/// `lui`+`addi` 的位段拆分：(hi20, lo12)。`addi` 加的是符号扩展 12 位，
+/// 故 hi20 需 `+0x800` 预补偿。
+fn li32_parts(v: i32) -> (u64, i64) {
+    let v = v as i64;
+    let hi = (((v + 0x800) >> 12) & 0xFFFFF) as u64;
+    let lo = v << 52 >> 52; // 低 12 位符号扩展（-2048..=2047）
+    (hi, lo)
+}
+
+/// `lui hi20; addi lo12` 在 RV64 上实际装入的 64 位值（`lui` 符号扩展）。
+/// 不是所有 i32 都可达：`+0x800` 预补偿在 `0x7FFF_F800..=0x7FFF_FFFF`
+/// 溢出到 hi20=0x80000（负），结果比目标少 2^32——这些值走分段路径。
+fn li32_eval(hi: u64, lo: i64) -> i64 {
+    ((((hi as u32) << 12) as i32) as i64).wrapping_add(lo)
+}
+
+/// 32 位有符号立即数 → `lui` + `addi`。RV64 上结果符号扩展到 64 位；
+/// 调用方需保证 `li32_eval` 精确，或只依赖低 32 位（见 `inst_li64` 分段路径）。
+fn inst_li32(rd: u32, v: i32) -> Vec<u8> {
+    let (hi, lo) = li32_parts(v);
+    let mut out = Vec::new();
+    out.extend(inst_lui(rd, hi));
+    out.extend(inst_addi(rd, rd, lo));
+    out
+}
+
+/// 64 位立即数 → 指令序列（精确，无静默截断）。
+///
+/// - 小值（±2047）→ 单 `addi`；
+/// - `lui`+`addi` 精确可达 → 两条；
+/// - 其余 → 高 32 位左移 32（`slli` 丢弃 `lui` 的符号扩展位）+ 低 32 位
+///   零扩展（`slli`/`srli` 对）后 `or` 合并，scratch 用 t0(x5)。分段路径
+///   只依赖各半的低 32 位，故不受 `li32_eval` 的不可达窗口影响。
+///
+/// 早期版本只有前两个分支且无精确性检查，>32 位的值被静默算成 0（`lui` 的
+/// hi20 被 `& 0xFFFFF` 截掉）——矩阵用例传 `0x2_0000_0000` 时实际收到 0，
+/// 断言拿到的是"比较 0 与 0"的结果而非被测语义（混宽 icmp 用例实证）。
 fn inst_li64(rd: u32, v: i64) -> Vec<u8> {
     let mut out = Vec::new();
     if (-2048..2048).contains(&v) {
         out.extend(inst_addi(rd, 0, v));
         return out;
     }
-    let hi = (((v + 0x800) >> 12) & 0xFFFFF) as u64;
-    let lo = (v << 52 >> 52) as i32;
-    let lo = if lo >= 0x800 { lo - 0x1000 } else { lo };
-    out.extend(inst_lui(rd, hi));
-    out.extend(inst_addi(rd, rd, lo as i64));
+    let (hi20, lo12) = li32_parts(v as i32);
+    if v == (v as i32) as i64 && li32_eval(hi20, lo12) == v {
+        out.extend(inst_li32(rd, v as i32));
+        return out;
+    }
+    const SCRATCH: u32 = 5; // t0——非参数寄存器，crt0 中无后续依赖
+    debug_assert_ne!(rd, SCRATCH, "li64 目标不能是 scratch t0");
+    out.extend(inst_li32(rd, (v >> 32) as i32));
+    out.extend(inst_slli(rd, rd, 32));
+    out.extend(inst_li32(SCRATCH, v as i32));
+    out.extend(inst_slli(SCRATCH, SCRATCH, 32));
+    out.extend(inst_srli(SCRATCH, SCRATCH, 32));
+    out.extend(inst_or(rd, rd, SCRATCH));
     out
 }
 
@@ -145,7 +186,7 @@ fn gen_crt0(args: &[u64], main_off: usize) -> Vec<u8> {
     //   清位，FS 设不上 → 浮点仍非法 → QEMU 挂起——曾用该错值排查数小时）
     crt0.extend(inst_lui(5, 6));
     crt0.extend(0x3002_A073u32.to_le_bytes()); // csrrs x0, mstatus, t0(x5)
-    // 参数 li a0..a3（最多 4 个；测试参数均为小值，inst_li64 32 位分支足够）
+    // 参数 li a0..a3（最多 4 个；inst_li64 精确装载任意 64 位值）
     for (i, &arg) in args.iter().take(4).enumerate() {
         crt0.extend(inst_li64(10 + i as u32, arg as i64));
     }
@@ -445,12 +486,74 @@ mod tests {
         assert!(elf.len() > 120);
     }
 
+    /// 解释 `inst_li64` 生成的序列（addi/lui/slli/srli/or 子集），返回 rd 的
+    /// 最终值。长度断言证明不了装载值正确——这里直接求值比对。
+    fn eval_li_seq(seq: &[u8], rd: u32) -> u64 {
+        let mut regs = [0u64; 32];
+        for c in seq.chunks_exact(4) {
+            let w = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+            let d = ((w >> 7) & 0x1F) as usize;
+            let f3 = (w >> 12) & 7;
+            let s1 = ((w >> 15) & 0x1F) as usize;
+            let val = match w & 0x7F {
+                // lui：imm20 << 12 后符号扩展到 64 位
+                0x37 => (w & 0xFFFF_F000) as i32 as i64 as u64,
+                0x13 => {
+                    let shamt = (w >> 20) & 0x3F;
+                    let imm12 = ((w as i32) >> 20) as i64; // 算术右移 → 符号扩展
+                    match f3 {
+                        0 => regs[s1].wrapping_add(imm12 as u64), // addi
+                        1 => regs[s1] << shamt,                   // slli
+                        5 => regs[s1] >> shamt,                   // srli
+                        _ => panic!("eval_li_seq: 未预期 funct3={f3}"),
+                    }
+                }
+                0x33 => {
+                    assert_eq!(f3, 6, "eval_li_seq: 只应出现 OR");
+                    regs[s1] | regs[((w >> 20) & 0x1F) as usize]
+                }
+                op => panic!("eval_li_seq: 未预期 opcode 0x{op:02x}"),
+            };
+            if d != 0 {
+                regs[d] = val;
+            }
+        }
+        regs[rd as usize]
+    }
+
     #[test]
     fn li64_sequences() {
+        // 三条路径的指令数：单 addi / lui+addi / 分段（li32×2 + slli×2 + srli + or）
         assert_eq!(inst_li64(10, 42).len(), 4);
         assert_eq!(inst_li64(10, 0x1234_5678).len(), 8);
-        // 超 32 位有符号的值不支持（文档说明；sp 用专用序列）
-        assert_eq!(inst_li64(10, 0x1234_5678_9ABC_DEF0).len(), 8);
+        assert_eq!(inst_li64(10, 0x1234_5678_9ABC_DEF0).len(), 32);
+        // 值精确性：小值 / 32 位边界 / lui+addi 不可达窗口 / 超 32 位 / 负值
+        for v in [
+            0i64,
+            42,
+            -42,
+            2047,
+            -2048,
+            4096,
+            0x1234_5678,
+            -0x1234_5678,
+            0x7FFF_F7FF,
+            0x7FFF_F800, // lui+addi 不可达窗口下界 → 分段路径
+            i32::MAX as i64,
+            i32::MIN as i64,
+            0x2_0000_0000, // 矩阵混宽用例实参
+            0x2_0000_00FF,
+            -0x2_0000_0000,
+            0x1234_5678_9ABC_DEF0,
+            i64::MAX,
+            i64::MIN,
+        ] {
+            assert_eq!(
+                eval_li_seq(&inst_li64(10, v), 10),
+                v as u64,
+                "li64({v:#x}) 装载值错误"
+            );
+        }
     }
 
     #[test]

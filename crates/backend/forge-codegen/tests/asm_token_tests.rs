@@ -129,6 +129,45 @@ fn opsize_slot_width_consistency() {
 }
 
 #[test]
+fn opsize_dest_slot_and_max_width_dispatch() {
+    // v14 修正：两地址 RM_R 族 opsize = s1（inout 目的槽 = IR 结果宽度）、
+    // CMP/TEST（无目的槽）opsize = "max"（取宽者）。两者都不改文本汇编语义
+    // ——汇编路径仍要求全 GPR 操作数同宽，且同宽时编码与 s0 逐字节一致。
+    use forge_codegen::x86_v12::{Inst, encode};
+    // s1：sub/and/or 同 add，32 位无 REX.W、64 位 REX.W
+    assert_eq!(
+        encode(&assemble("sub EAX, EBX").unwrap()).unwrap(),
+        vec![0x29, 0xD8]
+    );
+    assert_eq!(
+        encode(&assemble("sub RAX, RBX").unwrap()).unwrap(),
+        vec![0x48, 0x29, 0xD8]
+    );
+    assert!(assemble("sub RAX, EBX").is_err());
+    assert!(assemble("and RAX, EBX").is_err());
+    assert!(assemble("or RAX, EBX").is_err());
+    assert!(assemble("xor RAX, EBX").is_err());
+    // max：cmp/test 同宽仍按该宽度编码，混宽文本仍拒绝（max 只放宽 IR 降级）
+    let inst = assemble("cmp EAX, EBX").unwrap();
+    assert!(matches!(inst, Inst::CmpRmR { .. }));
+    assert_eq!(encode(&inst).unwrap(), vec![0x39, 0xD8]);
+    assert_eq!(
+        encode(&assemble("cmp RAX, RBX").unwrap()).unwrap(),
+        vec![0x48, 0x39, 0xD8]
+    );
+    assert!(assemble("cmp RAX, EBX").is_err());
+    assert_eq!(
+        encode(&assemble("test EAX, EBX").unwrap()).unwrap(),
+        vec![0x85, 0xD8]
+    );
+    assert_eq!(
+        encode(&assemble("test RAX, RBX").unwrap()).unwrap(),
+        vec![0x48, 0x85, 0xD8]
+    );
+    assert!(assemble("test RAX, EBX").is_err());
+}
+
+#[test]
 fn mem_bracket_whitespace_immune() {
     // Mem 槽 `[base±disp]` token 化：括号内空白免疫
     let a = assemble("mov64rm RAX, [RBX+8]").unwrap();

@@ -140,8 +140,9 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
         })
         .collect();
     // opsize（v12.1）：数字 ≥8 → 固定宽度；数字 <8 → 操作数序号（宽度由该
-    // 操作数寄存器推导，如 opsize=0 取 op0 的 RAX→64/EAX→32）；缺省 = 第一
-    // 个 Reg 槽操作数。指令级覆盖（Instruction.opsize）优先于 form 级。
+    // 操作数寄存器推导，如 opsize=0 取 op0 的 RAX→64/EAX→32）；`"max"` → 全部
+    // Reg 操作数宽度取最大（无目的槽的同宽指令——CMP/TEST，见 `Opsize::Max`）；
+    // 缺省 = 第一个 Reg 槽操作数。指令级覆盖（Instruction.opsize）优先于 form 级。
     let form_opsize = info.inst.opsize.or(form.opsize);
     let rex_w_override = info.inst.rex_w.as_deref().or(form.rex_w.as_deref());
     let (has_opsize, opsize_expr) = match form_opsize {
@@ -165,6 +166,23 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
                     ));
                 }
                 (true, Some(quote! { #fid.width() }))
+            }
+            // max：折叠成 `w0.max(w1)...`（Reg 槽逐个 `.width()`）。混宽 IR
+            // 降级（`icmp(PTR, I32)`）按宽者编码 = upcast 结果宽度。
+            Opsize::Max => {
+                let widths: Vec<TokenStream> = info
+                    .operands
+                    .iter()
+                    .filter(|(_, _, s, _)| s.kind == OperandKind::Reg)
+                    .map(|(_, fid, _, _)| quote! { #fid.width() })
+                    .collect();
+                let Some((first, rest)) = widths.split_first() else {
+                    return Err(format!(
+                        "[[instructions.{}]]: opsize = \"max\" needs at least one reg operand",
+                        info.inst.name
+                    ));
+                };
+                (true, Some(quote! { #first #(.max(#rest))* }))
             }
         },
         // 无 opsize 键 → 无 opsize 语义（SSE 等宽度由 fields.w 固定，不参与
@@ -193,6 +211,9 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
                 None => (None, false),
                 Some(w) => (Some(w), false),
             },
+            // max：编码宽度是运行期取宽的结果，非静态形态 → guard 无条件
+            // （同多类槽 Slot；字段按扫描出的 __opsize 视图构造，自反解 16/32/64）。
+            Opsize::Max => (None, false),
         }
     } else {
         (

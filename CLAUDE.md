@@ -128,9 +128,10 @@ let name = node.get_text("name")?;
 - `forge-rustc` tests require nightly Rust with `rustc-dev` component
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +
-  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **182 用例全绿
-  （0 skipped/0 failed）**：整数/浮点/调用/向量/饱和/指针转换/undef/poison/
-  GlobalAddr/原子（AtomicRmw/Cmpxchg）/GEP/Nop；V256 用例在无 AVX 机器
+  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 193 passed /
+  3 skipped、riscv64_v12 131 passed / 65 skipped，0 failed**：整数/浮点/调用/
+  向量/饱和/指针转换/undef/poison/GlobalAddr/原子（AtomicRmw/Cmpxchg）/GEP/Nop/
+  混宽整数算术与比较；V256 用例在无 AVX 机器
   自动 Skip。`CaseKind::{I32/I64/F64/Bool/Block/Args/F64Args/Module/
   CompileOnly}`；`ops` 未覆盖 → Skip（不失败，实现后自动转绿）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。

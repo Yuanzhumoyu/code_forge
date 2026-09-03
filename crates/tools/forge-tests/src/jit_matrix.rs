@@ -970,6 +970,26 @@ pub const CASES: &[Case] = &[
             7,
         ),
     },
+    // 帧槽地址算术（mini_c alloc_slot 形态）：`iadd(stack_addr(0), iconst_i32(-N))`
+    // ——指针（PTR）加窄常量（I32），结果按 `TypeId::upcast` 恒为 PTR。后端必须
+    // 按**结果**宽度编码加法：取窄操作数宽度会发 32 位 ADD 清零地址高半，栈位于
+    // 4 GiB 之上时 store/load 立即 SEGV（x86 ADD_RM_R 的 opsize 曾取 modrm.reg =
+    // 源槽，实证 mini_c 全量崩溃）。
+    Case {
+        name: "stack_addr_iadd_offset_store_load",
+        ops: &["StackAddr", "Load", "Store", "Iadd"],
+        kind: CaseKind::I32(
+            |b| {
+                let base = b.stack_addr(0);
+                let off = b.iconst_i32(-4);
+                let slot = b.iadd(base, off);
+                let v = b.iconst_i32(42);
+                b.store(v, slot);
+                b.load(slot, TypeId::I32)
+            },
+            42,
+        ),
+    },
     // ── 控制流（Branch/Jump/Block 参数）──
     Case {
         name: "conditional_branch",
@@ -1197,6 +1217,122 @@ pub const CASES: &[Case] = &[
                 b.iadd(s2, p[3])
             },
             expected: 42,
+        },
+    },
+    // ── 混宽整数二元运算（`TypeId::upcast`：I64 ⊕ I32 → I64）──
+    // 机器指令只有一个操作宽度，必须取**结果**宽度（= upcast，两操作数中较宽者）。
+    // 取窄操作数宽度会发 32 位运算清零结果高半——实参高半非 0（0x2_0000_0000）
+    // 即暴露，与栈地址是否在 4 GiB 之上无关（确定性守卫）。
+    // 窄常量在 64 位寄存器中按类型符号扩展（Iconst 语义），故 -4/-1 参与 64 位运算取值正确。
+    Case {
+        name: "iadd_i64_i32_mixed_width",
+        ops: &["Iadd"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_0000],
+            build: |b, p| {
+                let off = b.iconst_i32(-4);
+                b.iadd(p[0], off)
+            },
+            expected: 0x1_FFFF_FFFC,
+        },
+    },
+    Case {
+        name: "isub_i64_i32_mixed_width",
+        ops: &["Isub"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_0000],
+            build: |b, p| {
+                let off = b.iconst_i32(4);
+                b.isub(p[0], off)
+            },
+            expected: 0x1_FFFF_FFFC,
+        },
+    },
+    Case {
+        name: "bor_i64_i32_mixed_width",
+        ops: &["Bor"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_0000],
+            build: |b, p| {
+                let m = b.iconst_i32(42);
+                b.bor(p[0], m)
+            },
+            expected: 0x2_0000_002A,
+        },
+    },
+    Case {
+        name: "bxor_i64_i32_mixed_width",
+        ops: &["Bxor"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_0000],
+            build: |b, p| {
+                let m = b.iconst_i32(42);
+                b.bxor(p[0], m)
+            },
+            expected: 0x2_0000_002A,
+        },
+    },
+    Case {
+        name: "band_i64_i32_mixed_width",
+        ops: &["Band"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_00FF],
+            build: |b, p| {
+                let m = b.iconst_i32(-1); // 全 1 掩码：符号扩展后 64 位恒等
+                b.band(p[0], m)
+            },
+            expected: 0x2_0000_00FF,
+        },
+    },
+    // 混宽比较：`icmp` 结果是 BOOL，不带操作数宽度——比较宽度必须取两操作数的
+    // 宽者。按较窄者编码只比低半：高半非 0、低半为 0 的指针（0x2_0000_0000）
+    // 会与 `iconst_i32(0)` 判等为真，即空指针检查失效。
+    Case {
+        name: "icmp_eq_i64_i32_mixed_width",
+        ops: &["Icmp"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_0000],
+            build: |b, p| {
+                let z = b.iconst_i32(0);
+                let c = b.icmp(IntCC::Equal, p[0], z);
+                b.sextend(c, TypeId::I64)
+            },
+            expected: 0,
+        },
+    },
+    Case {
+        name: "icmp_ne_i64_i32_mixed_width",
+        ops: &["Icmp"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_0000],
+            build: |b, p| {
+                let z = b.iconst_i32(0);
+                let c = b.icmp(IntCC::NotEqual, p[0], z);
+                b.sextend(c, TypeId::I64)
+            },
+            expected: 1,
+        },
+    },
+    Case {
+        name: "icmp_slt_i64_i32_mixed_width",
+        ops: &["Icmp"],
+        kind: CaseKind::Args {
+            params: &[(TypeId::I64, "a")],
+            args: &[0x2_0000_0000],
+            build: |b, p| {
+                let one = b.iconst_i32(1);
+                // 0x2_0000_0000 < 1 为假；32 位比较只看低半（0 < 1）会误判为真
+                let c = b.icmp(IntCC::SignedLessThan, p[0], one);
+                b.sextend(c, TypeId::I64)
+            },
+            expected: 0,
         },
     },
     // ── 返回值形状 ──
