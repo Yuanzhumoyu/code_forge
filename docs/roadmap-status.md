@@ -31,18 +31,31 @@ demo_v12 3）。
 
 ## 剩余事项（需投入决策，技术路径如下）
 
-### 1. YMM ABI（>128 位向量传参）
+> **2026-09 更新**：本清单已大幅过期——YMM ABI 主库侧已实现（下 §1）；
+> vec_push/vec_string 已关闭（WA-11，e2e 全绿）。剩余开放项与 2026-09 方案的
+> 完整路径见 `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37）与
+> `crates/tools/forge-rustc/README.md` 路线图节（CFI/并行 CGU 两线调研完成）。
 
-- **现状**：`pipeline/compiler.rs:1673-1691` 编译入口守卫——向量参数/返回 >16 字节直接 `IrError::Unsupported`（避免静默只传低 128 位）。
-- **实现路径**（Windows x64 ABI）：>128 位向量**按引用传参**——调用方在栈上分配副本、传指针（GPR）；被调方入口经 `[abi.call].entry_*` 从 `[ptr]` 加载；返回走 sret 隐藏指针参数。需改动：① DSL 的 ABI 参数分类（TOML `[[abi.arg_class]]` 的 `strategy = "by-ref"` + `limit` 已就绪，见 `isa/x86_v12.toml` [abi]）；② `@move_args`/收参代码生成；③ call lowering 的栈拷贝；④ 返回路径。
-- **风险**：ABI 正确性跨调用链，历史多轮稳定化过——需在改动后跑全部 298 条 JIT 用例 + forge-rustc e2e。
+### 1. YMM ABI（>128 位向量传参）——✅ 主库已实现（2026-08-31）
 
-### 2. forge-rustc vec_push/vec_string（known_failure）
+- **现状**：S1-S5 已实现（提交 ed43103/e9e869a/33df6fa/4959474，早于 HEAD）——
+  >128 位向量 by-ref 传参（调用方 temp 槽 store + GPR 指针）+ sret 返回 +
+  混合槽位全链路；JIT 测试 7 个全绿（jit.rs v256/v512 byref param、
+  wide_vector_call byref/sret、mixed/sret_with_byref）。入口守卫
+  `compiler.rs` 由一律拒绝改为 by-ref 能力选择（≤16B 寄存器 / >16B by-ref /
+  >32B 需 avx512）。
+- **剩余缺口（D2-D6，见 docs/ymm-abi-plan.md 状态块与 WA-37）**：forge-rustc B3
+  门控分级解除（只解 V256，前置向量 local 全宽 load/store 基建）；≤16B 向量
+  按值 XMM 全宽移动（V64/V128 静默截断，B3 保护中）；V512 全 lane 验证；
+  第 5+ GPR 槽（建议不做）；CallIndirect 测试。主库 compiler/lowering/frame/
+  regalloc **无需再改**（现状即终态）。
 
-- **现状**：e2e 58 用例中 2 个预期失败（`vec_push` SEGV / `vec_string` len 错），WA-11 记录十二轮深挖。
-- **根因假设**（WA-11 收敛）：Vec grow 链（`grow_amortized` 的 new_cap 计算/实参错——两个 max 调用 + `_17=const 8/4/1` 候选）+ 嵌套 niche 传播（rustc 布局，`CF::Break(Err(5u8))` 应=7 现=1 同源）。
-- **技术路径**：`cargo test -p forge-rustc --test e2e` + `FORGE_TRACE_TERM/LOWER` 追踪 grow 路径 MIR→forge-ir 降级；主库侧 `[lower.Select]` 恢复原生（WA-17 已修规则层，regalloc 重叠检查后验证）。
-- **风险**：MIR 级调试，投入不确定（项目历史 12+ 轮），需用户决定投入预期。
+### 2. forge-rustc vec_push/vec_string —— ✅ 已关闭（WA-11）
+
+- **2026-09 状态**：grow 链（Result/ControlFlow/TryReserveError 嵌套 niche 错误
+  传播）累积修复收官——`vec_push`/`vec_string`/`vec_from_slice`/
+  `string_concat_len` 全部转正（e2e 全绿）；本段 2026-08 记录的"2 预期失败"
+  已不成立。
 
 ### 3. 解码器 Phase 2e 之后（低优先）
 

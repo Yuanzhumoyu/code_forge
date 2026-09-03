@@ -243,9 +243,9 @@ gcc v4 被同 gdb 全拒、gcc v5 全好——判定为 gdb 16.2 PE-DWARF5 读�
 嵌套聚合字段类型；gdb-PE 类型打印/终端行（可能需 .debug_frame CFI 对齐
 gcc 形态）。
 
-## 路线图（远期，P4.7/P4.8 评估结论）
+## 路线图（远期，2026-09 调研修订）
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
-| **gdb-PE 类型打印/终端行** | 中工程量：DWARF5 已被 gdb 完整读入（源码断点/单步/function block/fbreg 槽位全实证，y=42@rbp-80）；残余：ref4 类型跟随失败（`print y` → "< unknown type >"，`ptype i32` 正常）+ 每函数序列终端行 line 0——疑似 gdb 16.2 PE DWARF5 读取器对迷你 CU 形态的边界问题；备选：.debug_frame CFI 对齐 gcc 形态、.debug_str/comp_dir、subprogram external/decl_file | 主库 emission：DWARF CFI（.debug_frame/.eh_frame） |
-| **并行 CGU（`-Z codegen-units=N`）** | 中工程量：当前单对象文件（backend.rs 合并输出）。并行化需 FuncRefTable 并发化（`intern`/`intern_global` 加锁或 thread-local）+ 每 CGU 独立 ObjectWriter + `join_codegen` 多模块归并 | 主库 ObjectWriter 并发支持 |
+| **gdb-PE 类型打印/终端行 + .debug_frame CFI** | 2026-09 调研完成（方案已出）：CFI 空白是 bt/info args 不通的根因（gdb 16.2 amd64-windows 先 SEH .pdata、无条目落 dwarf2-frame .debug_frame——forge 两者皆无；gcc PE 对照实证产 .debug_frame 且 bt 正常）。方案：.debug_frame 子系统（CIE + 每函数 FDE，CFA=rbp+16 定帧、行与 frame_size 无关；forge-codegen 新 pipeline/cfi.rs 前缀扫描自校验 + CompiledFunction 加 cfi 字段 + forge-object add_dwarf 复用 + dwarf.rs gen_debug_frame）；**终端行 line 0 根因已定位**（end_sequence 前未 advance_pc 到 fn 末 → 零宽末行被 gdb 丢——修复=末行前发 DW_LNS_advance_pc）；类型打印 unknown type 与 CFI 弱相关，待 10 项对照矩阵 M1-M10（M10 gdb 自诊 + M1 字节 diff 先并行；全阴性则上报 gdb） | 主库 emission 帧信息收集（cfi.rs 新模块 + CompiledFunction 字段） |
+| **并行 CGU（`-C codegen-units=N`）** | 2026-09 调研完成（flag 为 `-C` 非 `-Z`）：rustc 对自定义后端只调 codegen_crate 一次、**无按 CGU 回调接口**（逐 CGU 并行是 LLVM 在自己 codegen_crate 内实现，需 ExtraBackendMethods）→ 只能**自管 worker 池**。方案 Stage A（行为不变优先）：collect_instances 串行排序 → 函数粒度 `std::thread::scope` 分块并行（每任务私有 FuncRefTable——编号 `@N/G{N}` 每函数编译完就地 resolve 不跨函数逃逸，零加锁）+ 主线程单对象按符号序归并（vtable/promoted 按 alloc_id 去重；slice_sym 命名纯化）。Stage B（后续）：每 CGU 独立 ObjectWriter 多对象 + WorkProduct（dwarf 需 per-CGU CU 或 debuginfo 回退） | forge-rustc backend.rs 任务化 + func_ref drain；宿主需 parallel frontend（官方 nightly 2024-11 起默认；FORGE_CODEGEN_THREADS=1 逃生口） |

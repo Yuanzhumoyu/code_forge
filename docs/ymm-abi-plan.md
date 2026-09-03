@@ -1,8 +1,23 @@
 # YMM ABI 完整改进方案（>128 位向量传参）
 
-> 对应 `docs/roadmap-status.md` 剩余事项 1。现状：**被调方 by-ref 收参已
-> 实现**（`move_args` by-ref 分支 + jit B1 测试），**调用方栈拷贝与返回
-> （sret）路径未实现**——IR Call 传宽向量实参目前编译期拒绝。
+> 对应 `docs/roadmap-status.md` 剩余事项 1。
+>
+> **状态更新（2026-09）**：主库 S1-S5 **已实现**（2026-08-31 提交 ed43103 S1 /
+> e9e869a S2 / 33df6fa 语义标签重构 / 4959474 S4-S5，均早于 HEAD 30780ae 且为其
+> 祖先）——>128 位向量 by-ref 传参（调用方 temp 槽 store + GPR 指针）+ sret
+> 返回 + 混合槽位全链路，JIT 测试 7 个全绿（jit.rs test_jit_v256_byref_param /
+> wide_vector_call_byref / v256_byref_return / wide_vector_call_sret /
+> mixed_scalar_and_byref_args / sret_with_byref_arg / v512_byref_param）。
+> 本文件 §1 现状盘点表大部分已过时（"调用方实参拒绝 / 返回 sret 未实现"两项
+> 已实现）；§2-3 设计已按此落地（作为实现蓝图）。**真实剩余缺口（D2-D6）**：
+> D2 forge-rustc B3 向量 ABI 门控分级解除（只解 V256，前置 = forge-rustc 向量
+> local 全宽 load/store 基建——statement/place/rvalue 现只标量/聚合槽；V64/V128
+> 保持门控）；D3 ≤16B 向量按值 XMM 全宽移动（V128 参数走 MOVSD/MOVSS 静默
+> 截断风险，被 B3 保护）；D4 宽向量第 5+ GPR 槽（两侧显式 Unsupported，自约定
+> 一致，建议不做）；D5 V512 全 lane 验证（reg_class_for >128 位一律 VEC(32) vs
+> 收参按 XReg width==64 分派——64B 参数可能只拷 32B，现测试只断言 lane0）；
+> D6 CallIndirect 宽参/宽返回测试。详见 crates/tools/forge-rustc/WORKAROUNDS.md
+> WA-37。
 
 ## 1. 现状盘点（代码为准）
 
