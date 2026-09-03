@@ -1075,6 +1075,45 @@ const CASES: &[Case] = &[
         phase: "D intrinsics",
         reason: "",
     },
+    // ── compare_exchange 双结果（v14 P4）：atomic_cxchg 返回 (T,bool)
+    //    tuple——intrinsics 派 2 值（old + icmp 派生 ok），ScalarPair
+    //    destination 走 pack_sp 写回；x86 单发 lockcmpxchg 即单次比较。──
+    Case {
+        name: "atomic_compare_exchange_ok",
+        body: "static A: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(42); match A.compare_exchange(42, 100, core::sync::atomic::Ordering::AcqRel, core::sync::atomic::Ordering::Acquire) { Ok(v) => { (if v == 42 { 1000 } else { 1 }) + (A.load(core::sync::atomic::Ordering::Relaxed) as i32) }, Err(_) => 0 }",
+        expected: 1100, // Ok(42)（期望命中）+ 内存 100
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    Case {
+        name: "atomic_compare_exchange_fail",
+        body: "static A: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(42); match A.compare_exchange(7, 100, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(_) => 0, Err(v) => { (if v == 42 { 200 } else { 2 }) + (A.load(core::sync::atomic::Ordering::Relaxed) as i32) } }",
+        expected: 242, // Err(42)（期望未命中，返回当前值）+ 内存保持 42
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
+    Case {
+        name: "atomic_compare_exchange_weak_u8",
+        body: "static A: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0x7F); match A.compare_exchange_weak(0x7F, 0x80, core::sync::atomic::Ordering::Relaxed, core::sync::atomic::Ordering::Relaxed) { Ok(v) => { (if v == 0x7F { 300 } else { 3 }) + (A.load(core::sync::atomic::Ordering::Relaxed) as i32) }, Err(_) => 0 }",
+        expected: 300 + 0x80, // Ok(0x7F) + 内存 0x80（u8 ScalarPair (u8,bool)）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "",
+    },
     Case {
         name: "static_mut_write",
         body: "static mut X: i32 = 5; unsafe { X += 7; X }",

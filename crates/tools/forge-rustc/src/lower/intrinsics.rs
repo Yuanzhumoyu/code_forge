@@ -635,8 +635,15 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 };
                 vec![self.atomic_rmw_loop(kind, ptr, val)?]
             }
-            // cxchg/cxchgweak（compare_exchange）：需返回 (旧值, 成功标志)
-            // 双值——IR Cmpxchg 目前单结果（成功标志未展开），仍拒绝。
+            // cxchg/cxchgweak（compare_exchange）：x86 单发 lockcmpxchg 即完成
+            // 单次 compare_exchange（无重试）——IR Cmpxchg 单结果=旧值（失败时
+            // RAX=实际内存值），成功标志 = icmp(eq, old, cmp)（失败必 actual≠
+            // cmp；implicit_regs=[RAX] 保证 cmp 不落 RAX 跨指令）。返回
+            // (old, ok) 双值——外层 Call 写回对 ScalarPair (T,bool) destination
+            // 走 pack_sp（mod.rs:861-870；checked 算术同形先例）。weak 语义：
+            // x86 无 spurious-fail 指令，返回精确结果（合法——weak 是"允许
+            // 偶发失败"上界）。rustc 1.100 只发裸名（atomic_cxchg 双 const
+            // AtomicOrdering 泛型），按序后缀名保留兼容。
             "atomic_cxchg"
             | "atomic_cxchg_acqrel"
             | "atomic_cxchg_acquire"
@@ -647,13 +654,29 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             | "atomic_cxchgweak_acquire"
             | "atomic_cxchgweak_release"
             | "atomic_cxchgweak_relaxed" => {
-                return Err(ForgeError::Message(format!(
-                    "{}: 原子 intrinsic {name} 暂不支持——compare_exchange 需 \
-                     (旧值, 成功标志) 双结果（IR Cmpxchg 单结果、成功标志未展开）；\
-                     atomic_load/store/xchg/xadd/xsub/fetch_add/fetch_sub + \
-                     and/or/xor/nand/max/min/umax/umin（CMPXCHG 循环）可用",
-                    self.fn_name
-                )));
+                let ptr = args
+                    .first()
+                    .copied()
+                    .ok_or_else(|| ForgeError::Message(format!("{name}: missing ptr arg")))?;
+                let cmp = args
+                    .get(1)
+                    .copied()
+                    .ok_or_else(|| ForgeError::Message(format!("{name}: missing expected arg")))?;
+                let new = args
+                    .get(2)
+                    .copied()
+                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                let weak = name.contains("weak");
+                let old = self.builder.cmpxchg(
+                    ptr,
+                    cmp,
+                    new,
+                    Ordering::Monotonic,
+                    Ordering::Monotonic,
+                    weak,
+                );
+                let ok = self.builder.icmp(IntCC::Equal, old, cmp);
+                vec![old, ok]
             }
             // SIMD（B2）：simd_extract(vec, idx) -> elem、simd_insert(vec, idx, elem)。
             // `#[repr(simd)]` 的元素访问被 rustc 禁止直接投影（MCP#838），
