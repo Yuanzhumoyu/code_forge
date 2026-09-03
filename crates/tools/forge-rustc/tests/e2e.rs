@@ -894,19 +894,46 @@ const CASES: &[Case] = &[
         phase: "P1 agg",
         reason: "",
     },
-    // ── SIMD 门控（B3 前置）：向量参与跨函数 ABI（参数/返回）在主库
-    //    ymm-abi-plan 就绪前编译期拒绝，绝不产出静默错值 exe。──
+    // ── SIMD 门控（B3 前置）：≤16 字节向量（V128）跨函数 ABI 在 XMM 全宽
+    //    缺口（WA-37 D3）前编译期拒绝，绝不产出静默错值 exe。──
     Case {
         name: "simd_abi_gated",
         body: "let v = core::simd::Simd::<f32, 4>::from_array([1.0, 2.0, 3.0, 4.0]); v[0] as i32",
-        expected: -1, // 编译失败：向量 ABI 门控（期望 compile error，非运行结果）
+        expected: -1, // 编译失败：≤16B 向量 ABI 门控（期望 compile error，非运行结果）
         extra: "#![feature(portable_simd)]",
         entry: "mainCRTStartup",
         expect_compile_fail: true,
         expect_compile_err: "向量 ABI",
         known_failure: false,
         phase: "B3 simd",
-        reason: "编译期拒绝：Simd 返回/参数依赖主库向量调用约定（ymm-abi-plan S1-S5），未就绪前 lower_body 门控报错（失败即报错，不产静默错值）",
+        reason: "编译期拒绝：≤16B 向量（V128）按值 XMM 全宽缺口（WA-37 D3），门控报错（失败即报错，不产静默错值）",
+    },
+    // ── V256 跨函数 ABI（2026-09 A-S1）：>16 字节向量放行——主库 by-ref/sret
+    //    （ed43103+）接管。helper 收 V256 参数（by-ref [ptr]→YMM）+ lane0
+    //    返回；main from_array 构造 + 调用。──
+    Case {
+        name: "simd_v256_call",
+        body: "let v = core::simd::Simd::<f32, 8>::from_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]); (helper(v) as i32) * 1000 + (v[0] as i32)",
+        expected: 1001, // helper(v)=lane0=1.0→1 → 1000*1 + v[0]=1 → 1001
+        extra: "#![feature(portable_simd)]\nuse core::simd::Simd;\nfn helper(v: Simd<f32, 8>) -> f32 { v[0] }\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "B3 simd",
+        reason: "A-S1 诊断：V256 门控放行后编译通过但运行 SEGV——向量值 local 基建缺失（WA-37 D2），基建完成时转正",
+    },
+    Case {
+        name: "simd_v256_local",
+        body: "let v = core::simd::Simd::<f32, 8>::from_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]); (v[0] as i32) * 100 + (v[7] as i32)",
+        expected: 108, // 纯局部：构造 + 索引，不跨函数（诊断：SEGV = 基建非 ABI）
+        extra: "#![feature(portable_simd)]",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: true,
+        phase: "B3 simd",
+        reason: "A-S1 诊断：纯局部 V256 构造/索引也 SEGV → 根因在向量值 local 基建非跨函数 ABI；基建完成时转正",
     },
     // ── D 组 intrinsics（2026-09 转正）：rotate/cttz/ctlz/bitreverse/volatile。
     //    主库修复：lzcnt/tzcnt/popcnt 32 位变体（gpr32 类，否则 64 位

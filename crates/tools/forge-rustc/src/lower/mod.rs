@@ -305,10 +305,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.func_refs.add_var_entries(&self.sym_name, vars);
             }
         }
-        // B3 门控：向量类型（V64/V128/V256）参与跨函数 ABI（参数/返回）
-        // 依赖主库向量 ABI（ymm-abi-plan 的 S1-S5）——当前主库 Call 返回
-        // 只发 RAX 标量（V128 高 64 位丢失 → 静默错值）。未就绪前编译期
-        // 拒绝，绝不产出静默错误结果（失败即报错原则）。
+        // B3 门控：向量类型（V64/V128/V256）参与跨函数 ABI 编译期拒绝。
+        // 2026-09 A-S1 诊断：主库宽向量 ABI（by-ref/sret，ed43103+）已就绪，
+        // 分级放行 V256 后编译通过但**运行 SEGV**（simd_v256 探针实证）——根因
+        // 不在 ABI 而在 forge-rustc 向量值基建：V256 local 槽（32B）构造/
+        // 全宽 store/load 缺失（statement/place/rvalue 只标量/聚合槽，
+        // WA-37 D2）。基建完成前保持全向量拒绝（绝不产崩溃/静默错值）。
         {
             let mut vec_abi = None;
             if let Ok(ret_t) = map_type(body.return_ty(), self.tcx)
@@ -330,8 +332,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
             if let Some(what) = vec_abi {
                 return Err(ForgeError::Message(format!(
-                    "{}: 向量 ABI（{what}）暂不支持——主库向量调用约定 \
-                     （ymm-abi-plan S1-S5）未就绪；请改用标量传递",
+                    "{}: 向量 ABI（{what}）暂不支持——forge-rustc 向量值基建 \
+                     （local 全宽 store/load）未就绪（WA-37 D2）；主库 by-ref/\
+                     sret 已可用，基建完成后按 A-S1 分级放行 V256",
                     self.fn_name
                 )));
             }
