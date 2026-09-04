@@ -123,7 +123,6 @@ width = 32
 
 [[forms]]
 name = "RR"
-modrm = "rr"
 rex = "auto"
 "#;
 
@@ -142,7 +141,7 @@ fn parse_x86_conventions() {
     assert_eq!(modrm.force_disp_base, vec![5, 13]);
     // 形式语义键
     let form = &m.forms[0];
-    assert_eq!(form.keys.modrm.as_deref(), Some("rr"));
+    
     assert_eq!(form.keys.rex.as_deref(), Some("auto"));
 }
 
@@ -198,10 +197,10 @@ class = "gpr"
 roles = ["inout"]
 [[forms]]
 name = "RM"
-modrm = "rm"
 [[instructions]]
 name = "ADD_RM_R"
 form = "RM"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x01
 ops = ["dst:rm:inout", "src:rm"]
 asm = "add {dst}, {src}"
@@ -1541,7 +1540,7 @@ class = "gpr8"
 roles = ["in", "out"]
 [[instructions]]
 name = "MOVQ_REV"
-modrm = "rr_rev"
+modrm = { reg = "src", rm = "dst" }
 opsize = 64
 escape = [0x0F]
 prefix = "field"
@@ -1553,7 +1552,7 @@ asm = "movq {dst}, {src}"
     let m = parse_and_validate(doc).expect("无 form 的指令必须合法");
     let inst = &m.instructions[0];
     assert!(inst.form.is_none(), "没有 form 引用");
-    assert_eq!(inst.enc.modrm.as_deref(), Some("rr_rev"));
+    assert!(inst.enc.modrm.is_some(), "modrm 映射已声明");
     assert_eq!(inst.enc.escape.as_deref(), Some(&[0x0Fu8][..]));
 }
 
@@ -1573,13 +1572,13 @@ class = "gpr8"
 roles = ["in", "out"]
 [[forms]]
 name = "MRR"
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 opsize = "s0"
 escape = [0x0F]
 [[instructions]]
 name = "I"
 form = "MRR"
-modrm = "rr_rev"
+modrm = { reg = "src", rm = "dst" }
 opcode = 1
 ops = ["dst:g:out", "src:g"]
 asm = "i {dst}, {src}"
@@ -1587,7 +1586,11 @@ asm = "i {dst}, {src}"
     let m = parse_and_validate(doc).expect("valid");
     let preset = &m.forms[0].keys;
     let enc = m.instructions[0].enc.over(preset);
-    assert_eq!(enc.modrm.as_deref(), Some("rr_rev"), "指令覆盖生效");
+    assert_eq!(
+        enc.modrm.as_ref().map(|m| m.rm.as_str()),
+        Some("dst"),
+        "指令覆盖生效"
+    );
     assert_eq!(enc.escape.as_deref(), Some(&[0x0Fu8][..]), "未覆盖的键继承预设");
     assert_eq!(enc.opsize, Some(crate::v12::model::Opsize::Slot(0)));
 }
@@ -1633,7 +1636,7 @@ class = "gpr8"
 roles = ["in", "out", "inout"]
 [[instructions]]
 name = "ADD_RM_R"
-modrm = "rr"
+modrm = { reg = "src", rm = "dst" }
 opsize = "dst"
 opcode = 0x01
 ops = ["src:gx", "dst:gx:inout"]
@@ -1704,7 +1707,7 @@ class = "gpr8"
 roles = ["in", "out", "inout"]
 [[instructions]]
 name = "I"
-modrm = "rr"
+modrm = {{ reg = "a", rm = "a" }}
 opcode = 1
 {body}
 "#
@@ -1716,4 +1719,69 @@ fn validation_msg(doc: &str) -> String {
         V12Error::Validation { msg, .. } => msg,
         other => panic!("expected Validation error, got {other:?}"),
     }
+}
+
+// ─────────── S3d：modrm 显式映射（取代六个魔法串） ───────────
+
+/// `{ reg = "名", rm = "名" }`：哪个操作数进哪个字段直接写出来。
+/// v14 的 `"rr"` 是位置隐含——同一个串在 ADD_RM_R 里 reg=源、在 MOV_R_RM 里
+/// reg=目的，读者必须回查生成器才知道。
+#[test]
+fn modrm_map_declares_field_sources() {
+    let m = parse_and_validate(&modrm_doc(r#"modrm = { reg = "src", rm = "dst" }"#))
+        .expect("映射形态必须合法");
+    let mm = m.instructions[0].enc.modrm.as_ref().unwrap();
+    assert_eq!(mm.reg, crate::v12::model::ModrmReg::Op("src".into()));
+    assert_eq!(mm.rm_operand(), (false, "dst"));
+}
+
+/// `reg = <整数>` = 固定扩展码（取代 `"ext"` + `fields.ext` 两处声明）。
+#[test]
+fn modrm_map_reg_integer_is_ext_code() {
+    let m = parse_and_validate(&modrm_doc(r#"modrm = { reg = 3, rm = "dst" }"#)).expect("valid");
+    let mm = m.instructions[0].enc.modrm.as_ref().unwrap();
+    assert_eq!(mm.reg, crate::v12::model::ModrmReg::Ext(3));
+}
+
+/// `rm = "[名]"` = 内存形式（与 asm 里的 `[{base}]` 同形）。
+#[test]
+fn modrm_map_bracket_means_memory() {
+    let m = parse_and_validate(&modrm_doc(r#"modrm = { reg = "src", rm = "[dst]" }"#))
+        .expect("valid");
+    let mm = m.instructions[0].enc.modrm.as_ref().unwrap();
+    assert_eq!(mm.rm_operand(), (true, "dst"));
+}
+
+/// 引用了没声明的操作数名 → 生成期报错（带 ops 清单）。
+#[test]
+fn modrm_map_rejects_unknown_operand_name() {
+    let m = parse_and_validate(&modrm_doc(r#"modrm = { reg = "nope", rm = "dst" }"#))
+        .expect("模型层合法");
+    let err = super::codegen::generate(&m).unwrap_err();
+    assert!(err.contains("'nope'"), "err: {err}");
+    assert!(err.contains("dst, src"), "需列出已声明的名字: {err}");
+}
+
+fn modrm_doc(modrm: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "x"
+variable_length = true
+[reg.gpr8]
+count = 16
+[[operand_slots]]
+name = "gx"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out", "inout"]
+[[instructions]]
+name = "I"
+{modrm}
+opsize = "dst"
+opcode = 1
+ops = ["dst:gx:inout", "src:gx"]
+asm = "i {{dst}}, {{src}}"
+"#
+    )
 }

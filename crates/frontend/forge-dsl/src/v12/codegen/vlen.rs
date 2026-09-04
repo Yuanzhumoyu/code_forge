@@ -24,7 +24,7 @@ struct VlenCtx {
     /// REX.W 位表达式（u64）：auto（opsize==64）/ fields.w / 0。
     rex_w_expr: TokenStream,
     /// ModRM 语义（`+r` 形式为 None）。
-    modrm: Option<ModrmKind>,
+    modrm: Option<Modrm>,
     /// 固定 ModRM 字节（无操作数：MFENCE 0F AE F0）；与 modrm 互斥。
     modrm_fixed: Option<u64>,
     /// modrm reg 字段值表达式（u64）：rr → 操作数 0；ext → fields.ext。
@@ -89,37 +89,68 @@ struct EvexCtx {
     has_src: bool,
 }
 
-/// ModRM 语义键（迭代 3/3b）。
+/// 解析后的 ModRM 映射（v15：来自 `modrm = { reg = …, rm = … }`）。
+///
+/// v14 的 `ModrmKind` 六变体把"哪个操作数进哪个字段"编在名字里，编码与解码
+/// 各写一张位置表（`(Kind, i) → 字段`）。现在只存索引，两个方向都由索引推出：
+/// `i == reg` → reg 字段、`i == rm` → rm 字段（内存形式则是 base/MemRef）、
+/// 其余 → VEX.vvvv。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ModrmKind {
-    /// mod=11：reg=op0, rm=op1。
-    RR,
-    /// mod=11：reg=op1, rm=op0（0F 7E 系：MOVD/MOVQ r, xmm 的 reg=源 xmm）。
-    RRRev,
-    /// mod=11：reg=op0, rm=op2（VEX imm 系：VINSERTF128 的 reg=dest、rm=src2）。
-    RRSrc2,
-    /// mod=11：reg=fields.ext（扩展码），rm=op0。
-    Ext,
-    /// 内存：reg=op0, base=op1（reg 槽），disp=0。
-    MemReg,
-    /// 内存：reg=op0, mem=op1（mem 槽 → base/disp）。
-    MemRefOp,
+struct Modrm {
+    /// ModRM.reg 的来源操作数索引；None = 固定扩展码。
+    reg: Option<usize>,
+    /// 固定扩展码（`reg` 为 None 时有效）。
+    ext: u64,
+    /// ModRM.rm 的来源操作数索引。
+    rm: usize,
+    /// rm 是内存形式（`"[名字]"`，mod≠11）。
+    mem: bool,
+    /// rm 槽是 `mem` 类（带 base/disp/index/scale）；false = `reg` 类，仅 `[base]`。
+    memref: bool,
 }
 
-impl ModrmKind {
-    fn parse(s: Option<&str>) -> Option<ModrmKind> {
-        match s {
-            Some("rr") => Some(ModrmKind::RR),
-            Some("rr_rev") => Some(ModrmKind::RRRev),
-            Some("rr_src2") => Some(ModrmKind::RRSrc2),
-            Some("ext") => Some(ModrmKind::Ext),
-            Some("rm_mem") => Some(ModrmKind::MemReg),
-            Some("rm_memref") => Some(ModrmKind::MemRefOp),
-            _ => None,
-        }
-    }
+impl Modrm {
     fn is_mem(self) -> bool {
-        matches!(self, ModrmKind::MemReg | ModrmKind::MemRefOp)
+        self.mem
+    }
+    /// 解析映射：操作数名 → 索引；方括号 → 内存形式；rm 槽 kind → memref 风味。
+    fn resolve(map: &ModrmMap, info: &InstInfo, names: &[String]) -> Result<Self, String> {
+        let ctx = || format!("[[instructions.{}]].modrm", info.inst.name);
+        let idx_of = |n: &str| -> Result<usize, String> {
+            names.iter().position(|x| x == n).ok_or_else(|| {
+                format!(
+                    "{}: '{n}' 不是已声明的操作数名（ops: {}）",
+                    ctx(),
+                    names.join(", ")
+                )
+            })
+        };
+        let (reg, ext) = match &map.reg {
+            ModrmReg::Ext(v) => (None, *v),
+            ModrmReg::Op(n) => (Some(idx_of(n)?), 0),
+        };
+        let (mem, rm_name) = map.rm_operand();
+        let rm = idx_of(rm_name)?;
+        let rm_kind = info
+            .operands
+            .get(rm)
+            .map(|(_, _, s, _)| s.kind)
+            .ok_or_else(|| format!("{}: rm 操作数 {rm} 越界", ctx()))?;
+        if mem && !matches!(rm_kind, OperandKind::Reg | OperandKind::Mem) {
+            return Err(format!(
+                "{}: rm = \"[{rm_name}]\" 指向 {} 槽——内存形式只能引用 reg（仅基址）\
+                 或 mem（base/disp/index/scale）槽",
+                ctx(),
+                rm_kind.kind_name()
+            ));
+        }
+        Ok(Self {
+            reg,
+            ext,
+            rm,
+            mem,
+            memref: mem && rm_kind == OperandKind::Mem,
+        })
     }
 }
 
@@ -264,77 +295,57 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
         if form.opcode_reg.is_some() || form.modrm.is_none() || form.modrm_fixed.is_some() {
             (None, None, None, None, false, false)
         } else {
-            let modrm = ModrmKind::parse(form.modrm.as_deref()).ok_or_else(|| {
-            format!(
-                "[[instructions.{}]]: form modrm key {:?} unsupported (rr/ext/rm_mem/rm_memref)",
-                info.inst.name, form.modrm
-            )
-        })?;
-            let (reg_expr, rm_expr, disp_expr): (TokenStream, TokenStream, Option<TokenStream>) =
-                match modrm {
-                    ModrmKind::RR => {
-                        let r0 = info.operands[0].1.clone();
-                        let r1 = info.operands[1].1.clone();
-                        (
-                            quote! { #r0.to_index() as u64 },
-                            quote! { #r1.to_index() as u64 },
-                            None,
-                        )
-                    }
-                    ModrmKind::RRRev => {
-                        // 0F 7E 系（MOVD/MOVQ r, xmm）：reg=op1（源 xmm）、rm=op0（目标 gpr）
-                        let r0 = info.operands[0].1.clone();
-                        let r1 = info.operands[1].1.clone();
-                        (
-                            quote! { #r1.to_index() as u64 },
-                            quote! { #r0.to_index() as u64 },
-                            None,
-                        )
-                    }
-                    ModrmKind::RRSrc2 => {
-                        // VEX imm 系（VINSERTF128）：reg=op0（dest）、rm=op2（src2）
-                        let r0 = info.operands[0].1.clone();
-                        let r2 = info.operands[2].1.clone();
-                        (
-                            quote! { #r0.to_index() as u64 },
-                            quote! { #r2.to_index() as u64 },
-                            None,
-                        )
-                    }
-                    ModrmKind::Ext => {
-                        let ext = field_val("ext");
-                        let r0 = info.operands[0].1.clone();
-                        (quote! { #ext }, quote! { #r0.to_index() as u64 }, None)
-                    }
-                    ModrmKind::MemReg => {
-                        let r0 = info.operands[0].1.clone();
-                        let b = info.operands[1].1.clone();
-                        (
-                            quote! { #r0.to_index() as u64 },
-                            quote! { #b.to_index() as u64 },
-                            Some(quote! { 0i64 }),
-                        )
-                    }
-                    ModrmKind::MemRefOp => {
-                        let r0 = info.operands[0].1.clone();
-                        let m = info.operands[1].1.clone();
-                        (
-                            quote! { #r0.to_index() as u64 },
-                            quote! { #m.base.to_index() as u64 },
-                            Some(quote! { #m.disp }),
-                        )
-                    }
-                };
-            // 8 位寄存器标记：reg=op0（RR/Mem*/MemRefOp）、rm=op1（RR）或 op0（Ext）。
-            // x86 8 位寄存器索引 4-7（spl/bpl/sil/dil）无 REX 前缀编码为 ah/ch/dh/bh，
-            // 故这类操作数必须强制 REX（即使索引 <8）。
-            let slot_byte =
-                |s: &OperandSlot| s.kind == OperandKind::Reg && s.byte_reg == Some(true);
-            let (reg_is_byte, rm_is_byte) = match modrm {
-                ModrmKind::RR => (slot_byte(info.operands[0].2), slot_byte(info.operands[1].2)),
-                ModrmKind::Ext => (false, slot_byte(info.operands[0].2)),
-                _ => (false, false),
+            let names: Vec<String> = info
+                .inst
+                .ops
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
+                .collect();
+            let modrm = Modrm::resolve(form.modrm.as_ref().unwrap(), info, &names)?;
+            let fid = |i: usize| -> Result<syn::Ident, String> {
+                info.operands
+                    .get(i)
+                    .map(|(_, f, _, _)| f.clone())
+                    .ok_or_else(|| {
+                        format!("[[instructions.{}]]: 操作数 {i} 越界", info.inst.name)
+                    })
             };
+            let reg_expr: TokenStream = match modrm.reg {
+                Some(i) => {
+                    let r = fid(i)?;
+                    quote! { #r.to_index() as u64 }
+                }
+                None => {
+                    let ext = modrm.ext;
+                    quote! { #ext }
+                }
+            };
+            let rm = fid(modrm.rm)?;
+            let (rm_expr, disp_expr): (TokenStream, Option<TokenStream>) = if modrm.memref {
+                // mem 槽：base + disp（index/scale 由 SIB 段单独发射）
+                (
+                    quote! { #rm.base.to_index() as u64 },
+                    Some(quote! { #rm.disp }),
+                )
+            } else if modrm.mem {
+                // reg 槽当基址：仅 [base]，disp 恒 0
+                (quote! { #rm.to_index() as u64 }, Some(quote! { 0i64 }))
+            } else {
+                (quote! { #rm.to_index() as u64 }, None)
+            };
+            // 8 位寄存器标记：索引 4-7（spl/bpl/sil/dil）无 REX 前缀会被解码成
+            // ah/ch/dh/bh，故这类操作数必须强制 REX（即使索引 <8）。内存形式的
+            // rm 是地址，不参与 8 位视图判定。
+            let slot_byte = |i: usize| {
+                info.operands
+                    .get(i)
+                    .map(|(_, _, s, _)| s.kind == OperandKind::Reg && s.byte_reg == Some(true))
+                    .unwrap_or(false)
+            };
+            let reg_is_byte = modrm.reg.map(slot_byte).unwrap_or(false);
+            let rm_is_byte = !modrm.mem && slot_byte(modrm.rm);
             (
                 Some(modrm),
                 Some(reg_expr),
@@ -559,7 +570,6 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             }
         } else if let Some(evex) = &ctx.evex {
             // EVEX（AVX-512）：62 + P0/P1/P2 + opcode + ModRM（reg-reg / 内存）。
-            let vform = &info.form;
             let reg = ctx.reg_expr.as_ref().unwrap();
             let rm = ctx.rm_expr.as_ref().unwrap();
             let vopcode = info.inst.opcode.unwrap();
@@ -577,7 +587,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             let has_src = evex.has_src;
             let is_mem = ctx.modrm.map(|k| k.is_mem()).unwrap_or(false);
             // 内存：MemRef 操作数 fid（SIB index/scale 用）
-            let mem_fid = if ctx.modrm == Some(ModrmKind::MemRefOp) {
+            let mem_fid = if ctx.modrm.map(|m| m.memref).unwrap_or(false) {
                 info.operands
                     .iter()
                     .find(|(_, _, s, _)| s.kind == OperandKind::Mem)
@@ -598,11 +608,13 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             } else {
                 quote! { let __idx: u8 = 4; let __sc: u8 = 0; }
             };
-            let vv_idx = if vform.modrm.as_deref() == Some("rr_src2") {
-                1
-            } else {
-                2
-            };
+            // vvvv = 既非 reg 也非 rm 的那个操作数（v14 的 rr → 2、rr_src2 → 1）
+            let vv_idx = ctx
+                .modrm
+                .and_then(|m| {
+                    (0..info.operands.len()).find(|i| Some(*i) != m.reg && *i != m.rm)
+                })
+                .unwrap_or(2);
             let vv_expr: TokenStream = if has_src {
                 let vv_fid = info.operands[vv_idx].1.clone();
                 quote! { (!((#vv_fid.to_index() as u64) as u8 & 0x0F)) & 0x0F }
@@ -702,11 +714,10 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
                 stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
             }
         } else if let Some(vex) = &ctx.vex {
-            let vform = &info.form;
             let reg = ctx.reg_expr.as_ref().unwrap();
             let rm = ctx.rm_expr.as_ref().unwrap();
             // VEX 内存（rm_memref）：MemRef 操作数 fid（SIB index/scale 用）。
-            let vex_mem_fid = if ctx.modrm == Some(ModrmKind::MemRefOp) {
+            let vex_mem_fid = if ctx.modrm.map(|m| m.memref).unwrap_or(false) {
                 info.operands
                     .iter()
                     .find(|(_, _, s, _)| s.kind == OperandKind::Mem)
@@ -735,11 +746,13 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             let has_src = vex.has_src;
             // vvvv 源：rr_src2（VINSERTF128 等）→ ~op1（src1）；其余 → ~op2（src2）。
             // x86：VINSERTF128 的 vvvv=~src1、VADDPS 的 vvvv=~src2。
-            let vv_idx = if vform.modrm.as_deref() == Some("rr_src2") {
-                1
-            } else {
-                2
-            };
+            // vvvv = 既非 reg 也非 rm 的那个操作数（v14 的 rr → 2、rr_src2 → 1）
+            let vv_idx = ctx
+                .modrm
+                .and_then(|m| {
+                    (0..info.operands.len()).find(|i| Some(*i) != m.reg && *i != m.rm)
+                })
+                .unwrap_or(2);
             let vv_expr: TokenStream = if has_src {
                 let vv_fid = info.operands[vv_idx].1.clone();
                 quote! { (!((#vv_fid.to_index() as u64) as u8 & 0x0F)) & 0x0F }
@@ -875,7 +888,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             let reg = ctx.reg_expr.as_ref().unwrap();
             let rm = ctx.rm_expr.as_ref().unwrap();
             // MemRefOp 形式的 MemRef 操作数 fid（SIB index/scale 用）。
-            let mem_fid = if modrm == ModrmKind::MemRefOp {
+            let mem_fid = if modrm.memref {
                 info.operands
                     .iter()
                     .find(|(_, _, s, _)| s.kind == OperandKind::Mem)
@@ -1121,7 +1134,6 @@ fn gen_vlen_vex_decode_arm(
     endian: Endian,
 ) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    let form = &info.form;
     let vex = ctx.vex.as_ref().unwrap();
     let opcode = info.inst.opcode.unwrap();
     let imm_bytes = ctx.imm_bytes;
@@ -1148,31 +1160,39 @@ fn gen_vlen_vex_decode_arm(
     // 字段提取：reg=op0（R 来自 vex2）、rm=op1（B 来自 vex2）、vvvv=op2（有源）。
     // rr_src2（VINSERTF128）：rm=op2（B）、vvvv=op1。
     // 内存形式（rm_memref）：op0=reg、op1=MemRef（base=rm|B、disp）。
-    let is_src2 = form.modrm.as_deref() == Some("rr_src2");
+    // 字段提取由**解析后的 modrm 索引**推出：i == reg → reg 字段（R 来自 vex2）、
+    // i == rm → rm 字段（B 来自 vex2；内存形式则是 base/MemRef）、其余 → vvvv。
+    // 这套推导同时覆盖 v14 的 rr（reg=0/rm=1/vvvv=2）与 rr_src2（rm=2/vvvv=1）。
+    let mm = ctx.modrm.ok_or_else(|| {
+        format!(
+            "[[instructions.{}]]: VEX form 需要 modrm 映射",
+            info.inst.name
+        )
+    })?;
     let mut binds: Vec<TokenStream> = Vec::new();
     let mut ctor_fields: Vec<TokenStream> = Vec::new();
     for (i, (_, fid, slot, _)) in info.operands.iter().enumerate() {
         let expr: TokenStream = match slot.kind {
-            OperandKind::Reg => match i {
-                0 => field_ctor_expr(slot, quote! { ((__modrm >> 3) & 7) as u32 | (__r << 3) }),
-                1 if is_src2 => field_ctor_expr(slot, quote! { __vvvv as u32 }),
-                1 if is_mem => {
-                    // VEX 内存：op1 是 Mem 槽（MemRefOp），由 __base/__disp 构造
+            OperandKind::Reg => {
+                if Some(i) == mm.reg {
+                    field_ctor_expr(slot, quote! { ((__modrm >> 3) & 7) as u32 | (__r << 3) })
+                } else if i == mm.rm {
+                    if is_mem {
+                        return Err(format!(
+                            "[[instructions.{}]]: VEX 内存形式的 rm 位置是 reg 槽（应为 mem 槽）",
+                            info.inst.name
+                        ));
+                    }
+                    field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) })
+                } else if has_src {
+                    field_ctor_expr(slot, quote! { __vvvv as u32 })
+                } else {
                     return Err(format!(
-                        "[[instructions.{}]]: VEX mem form with reg operand at position 1 (expected mem slot)",
+                        "[[instructions.{}]]: VEX reg 操作数 {i} 既非 reg/rm 也无 vvvv 可用",
                         info.inst.name
                     ));
                 }
-                1 => field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) }),
-                2 if is_src2 => field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) }),
-                2 if has_src => field_ctor_expr(slot, quote! { __vvvv as u32 }),
-                _ => {
-                    return Err(format!(
-                        "[[instructions.{}]]: VEX reg operand {i} position unsupported",
-                        info.inst.name
-                    ));
-                }
-            },
+            }
             OperandKind::Mem => {
                 if !is_mem {
                     return Err(format!(
@@ -1313,7 +1333,6 @@ fn gen_vlen_evex_decode_arm(
     endian: Endian,
 ) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    let form = &info.form;
     let evex = ctx.evex.as_ref().unwrap();
     let opcode = info.inst.opcode.unwrap();
     let imm_bytes = ctx.imm_bytes;
@@ -1338,7 +1357,7 @@ fn gen_vlen_evex_decode_arm(
     let scale = evex.disp_scale;
     let has_src = evex.has_src;
     let is_mem = ctx.modrm.map(|k| k.is_mem()).unwrap_or(false);
-    let is_src2 = form.modrm.as_deref() == Some("rr_src2");
+    
     // 是否有 opmask 操作数（kreg 类槽）：有 → 不要求 aaa==0，且提取 __aaa
     let has_mask = info.operands.iter().any(|(_, _, s, _)| {
         s.kind == OperandKind::Reg
@@ -1374,28 +1393,36 @@ fn gen_vlen_evex_decode_arm(
                 // opmask 掩码寄存器：取自 P2 的 aaa（bit2-0）
                 field_ctor_expr(slot, quote! { __aaa as u32 })
             }
-            OperandKind::Reg => match i {
-                0 => field_ctor_expr(
-                    slot,
-                    quote! { ((__modrm >> 3) & 7) as u32 | (__r << 3) | (__r4 << 4) },
-                ),
-                1 if is_src2 => field_ctor_expr(slot, quote! { __vvvv as u32 }),
-                1 if is_mem => {
+            OperandKind::Reg => {
+                // 同编码侧的索引推导（EVEX：reg 字段额外带 R'=__r4）
+                let mm = ctx.modrm.ok_or_else(|| {
+                    format!(
+                        "[[instructions.{}]]: EVEX form 需要 modrm 映射",
+                        info.inst.name
+                    )
+                })?;
+                if Some(i) == mm.reg {
+                    field_ctor_expr(
+                        slot,
+                        quote! { ((__modrm >> 3) & 7) as u32 | (__r << 3) | (__r4 << 4) },
+                    )
+                } else if i == mm.rm {
+                    if is_mem {
+                        return Err(format!(
+                            "[[instructions.{}]]: EVEX 内存形式的 rm 位置是 reg 槽（应为 mem 槽）",
+                            info.inst.name
+                        ));
+                    }
+                    field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) })
+                } else if has_src {
+                    field_ctor_expr(slot, quote! { __vvvv as u32 })
+                } else {
                     return Err(format!(
-                        "[[instructions.{}]]: EVEX mem form with reg operand at position 1 (expected mem slot)",
+                        "[[instructions.{}]]: EVEX reg 操作数 {i} 既非 reg/rm 也无 vvvv 可用",
                         info.inst.name
                     ));
                 }
-                1 => field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) }),
-                2 if is_src2 => field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) }),
-                2 if has_src => field_ctor_expr(slot, quote! { __vvvv as u32 }),
-                _ => {
-                    return Err(format!(
-                        "[[instructions.{}]]: EVEX reg operand {i} position unsupported",
-                        info.inst.name
-                    ));
-                }
-            },
+            }
             OperandKind::Mem => {
                 quote! { MemRef {
                     base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(8), __base)).unwrap(),
@@ -1781,37 +1808,49 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
         let field_expr = |i: usize, slot: &OperandSlot| -> Result<TokenStream, String> {
             let reg_field = quote! { ((__modrm >> 3) & 7) as u32 | (__rex_r << 3) };
             let rm_field = quote! { ((__modrm & 7) as u32) | (__rex_b << 3) };
-            // Reg 构造按宽度视图（固定宽度组 / 多态 __opsize）
+            // Reg 构造按宽度视图（固定宽度组 / 多态 __opsize）。
+            // modrm 只在 Reg/Mem 操作数上有意义——无 ModRM 形式（REL32/NOOP）
+            // 仍会走本闭包处理 imm/label/cond，故不能在这里无条件 unwrap。
+            let need_modrm = || {
+                ctx.modrm.ok_or_else(|| {
+                    format!(
+                        "[[instructions.{}]]: reg/mem 操作数需要 modrm 映射",
+                        info.inst.name
+                    )
+                })
+            };
             match slot.kind {
                 OperandKind::Reg => {
+                    let mm = need_modrm()?;
                     let view = ctx.reg_view.get(i).copied().flatten();
                     let fe = |v: TokenStream| field_ctor_expr_view(slot, v, view);
-                    match (ctx.modrm.unwrap(), i) {
-                        (ModrmKind::RR, 0) | (ModrmKind::MemReg, 0) | (ModrmKind::MemRefOp, 0) => {
-                            Ok(fe(reg_field))
-                        }
-                        (ModrmKind::RR, 1) | (ModrmKind::Ext, 0) => Ok(fe(rm_field)),
-                        (ModrmKind::RRRev, 1) => Ok(fe(reg_field)),
-                        (ModrmKind::RRRev, 0) => Ok(fe(rm_field)),
-                        (ModrmKind::RRSrc2, 0) => Ok(fe(reg_field)),
-                        (ModrmKind::RRSrc2, 1) => Ok(fe(quote! { __vvvv as u32 })),
-                        (ModrmKind::RRSrc2, 2) => Ok(fe(rm_field)),
-                        (ModrmKind::MemReg, 1) => Ok(fe(quote! { __base })),
-                        _ => Err(format!(
-                            "[[instructions.{}]]: reg operand {i} position unsupported for modrm {:?}",
-                            info.inst.name, ctx.modrm
-                        )),
+                    // 与编码侧同一套索引推导（v14 的 6 张位置表收敛成 3 条规则）
+                    if Some(i) == mm.reg {
+                        Ok(fe(reg_field))
+                    } else if i == mm.rm {
+                        // 内存形式的 rm 是基址寄存器；寄存器形式直接取 rm 字段
+                        Ok(fe(if mm.mem {
+                            quote! { __base }
+                        } else {
+                            rm_field
+                        }))
+                    } else {
+                        Ok(fe(quote! { __vvvv as u32 }))
                     }
                 }
-                OperandKind::Mem => match (ctx.modrm.unwrap(), i) {
-                    (ModrmKind::MemRefOp, 1) => Ok(
-                        quote! { MemRef { base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(8),__base)).unwrap(),  disp: __disp, index: __index_reg, scale: __scale } },
-                    ),
-                    _ => Err(format!(
-                        "[[instructions.{}]]: mem operand {i} position unsupported",
-                        info.inst.name
-                    )),
-                },
+                OperandKind::Mem => {
+                    let mm = need_modrm()?;
+                    if i == mm.rm && mm.memref {
+                        Ok(
+                            quote! { MemRef { base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(8),__base)).unwrap(),  disp: __disp, index: __index_reg, scale: __scale } },
+                        )
+                    } else {
+                        Err(format!(
+                            "[[instructions.{}]]: mem 操作数 {i} 不是 modrm.rm 指向的内存操作数",
+                            info.inst.name
+                        ))
+                    }
+                }
                 OperandKind::Cond => {
                     // 条件码 = opcode 字节低 4 位（JCC/SETCC/CMOVCC）；
                     // opcode 在 modrm_idx - 1（modrm_idx = opcode 后位置）
@@ -1845,14 +1884,9 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
         // ext 形式：ModRM.reg 必须等于固定扩展码
         let modrm_guard: TokenStream = if no_modrm {
             quote! {}
-        } else if ctx.modrm.unwrap() == ModrmKind::Ext {
-            let ext = info
-                .inst
-                .fields
-                .as_ref()
-                .and_then(|f| f.get("ext"))
-                .copied()
-                .unwrap_or(0);
+        } else if ctx.modrm.unwrap().reg.is_none() {
+            // 固定扩展码形式（`reg = <整数>`）：ModRM.reg 必须等于该码
+            let ext = ctx.modrm.unwrap().ext;
             quote! { && ((__modrm >> 3) & 7) as u64 == #ext }
         } else {
             quote! {}
@@ -1872,14 +1906,15 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
             // 内存形式：mod≠3 + SIB（index=4 无 index）+ disp8/disp32 + RIP-rel 拒绝。
             // MemReg（无 disp 语义）只接受 mod∈{0,1} 且 mod=1 时 disp==0
             //（force_disp_base 的 disp8=0）；MemRefOp 接受 mod∈{0,1,2}。
-            let mod_guard: TokenStream = if ctx.modrm.unwrap() == ModrmKind::MemReg {
+            let m = ctx.modrm.unwrap();
+            let mod_guard: TokenStream = if m.mem && !m.memref {
                 quote! { __mod != 3 && __mod != 2 }
             } else {
                 quote! { __mod != 3 }
             };
             // MemReg（rm_mem：[base] 仅基址语义）不接受 SIB index——否则会吞掉
             // MemRefOp 的索引寻址字节（如 8B 04 0B：mov_mem 先于 mov64rm 声明）。
-            let idx_reject: TokenStream = if ctx.modrm.unwrap() == ModrmKind::MemRefOp {
+            let idx_reject: TokenStream = if ctx.modrm.unwrap().memref {
                 quote! {}
             } else {
                 quote! {
@@ -1888,7 +1923,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
                     }
                 }
             };
-            let disp_zero_check: TokenStream = if ctx.modrm.unwrap() == ModrmKind::MemReg {
+            let disp_zero_check: TokenStream = if { let m = ctx.modrm.unwrap(); m.mem && !m.memref } {
                 quote! {
                     if __mod == 1 {
                         // P1-18：disp8 读取必须边界检查（越界 → 不匹配而非 panic）

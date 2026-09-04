@@ -271,7 +271,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 ops: fam.ops.clone(),
                 asm,
                 when: var.when.clone(),
-                enc: Default::default(),
+                enc: fam.enc.clone(),
                 effect: Vec::new(),
                 implicit_regs: None,
                 global_reloc: None,

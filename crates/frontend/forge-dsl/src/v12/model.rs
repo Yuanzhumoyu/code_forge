@@ -476,10 +476,16 @@ pub enum OperandRole {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EncKeys {
-    /// ModRM 结构键（`"rr"` reg=op0+rm=op1、`"ext"` reg=fields.ext+rm=op0、
-    /// `"rm_mem"` 等内存形式）。
+    /// ModRM 结构映射（v15）：`{ reg = <操作数名 | 固定扩展码>, rm = <操作数名> }`；
+    /// `rm` 加方括号（`"[base]"`）= 内存形式（mod≠11），与 asm 里 `[{base}]` 同形。
+    ///
+    /// 取代 v14 的六个魔法串（`rr`/`rr_rev`/`rr_src2`/`ext`/`rm_mem`/`rm_memref`）
+    /// ——它们把"哪个操作数进 reg 字段、哪个进 rm 字段"编进了一个不透明的名字，
+    /// 读者必须回查生成器才知道 `rr_src2` 是 reg=op0+rm=op2。现在直接写名字。
+    /// 内存形式的两种风味由 `rm` 引用的槽 kind 区分：`mem` 槽 → 带
+    /// base/disp/index/scale；`reg` 槽 → 仅 `[base]`（disp 恒 0）。
     #[serde(default)]
-    pub modrm: Option<String>,
+    pub modrm: Option<ModrmMap>,
     /// 固定 ModRM 字节（无操作数指令如 MFENCE 0F AE F0：mod=11/reg/rm 全固定）。
     #[serde(default)]
     pub modrm_fixed: Option<u64>,
@@ -556,6 +562,37 @@ pub struct Form {
     pub name: String,
     #[serde(flatten)]
     pub keys: EncKeys,
+}
+
+/// ModRM 映射：哪个操作数进 `reg` 字段、哪个进 `rm` 字段。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModrmMap {
+    /// `reg` 字段来源：操作数名，或固定扩展码（`/digit` 形式的整数）。
+    pub reg: ModrmReg,
+    /// `rm` 字段来源：操作数名；`"[名字]"` = 内存形式（mod≠11）。
+    pub rm: String,
+}
+
+impl ModrmMap {
+    /// `rm` 是否内存形式，以及去掉方括号后的操作数名。
+    pub fn rm_operand(&self) -> (bool, &str) {
+        let t = self.rm.trim();
+        match t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            Some(inner) => (true, inner.trim()),
+            None => (false, t),
+        }
+    }
+}
+
+/// `modrm.reg` 的两种来源。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModrmReg {
+    /// 固定扩展码（x86 的 `/0`..`/7`）——无操作数占用 reg 字段。
+    Ext(u64),
+    /// 操作数名。
+    Op(String),
 }
 
 /// REX.W 位来源（x86-64）。
@@ -879,9 +916,13 @@ pub struct Family {
     /// 家族共享固定字段（如 SSE 的 prefix/w）；variant.fields 覆盖/追加。
     #[serde(default)]
     pub fields: Option<BTreeMap<String, u64>>,
-    /// 家族共享命名操作数声明（同 [`Instruction::ops`]）；省略则回退 asm 内联声明。
+    /// 家族共享命名操作数声明（同 [`Instruction::ops`]）。
     #[serde(default)]
     pub ops: Option<Vec<String>>,
+    /// 家族共享编码键覆盖（同 [`Instruction::enc`]）——`modrm` 映射引用 `ops`
+    /// 的名字，family 内全部变体共用同一份声明，故可放在家族层。
+    #[serde(flatten)]
+    pub enc: EncKeys,
     /// 家族共享 asm 模板（完整格式；`{name}` 占位符替换为变体名小写 =
     /// 变体助记符）。
     pub asm: String,

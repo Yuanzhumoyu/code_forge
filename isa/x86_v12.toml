@@ -238,51 +238,43 @@ width = 8
 
 [[forms]]
 name = "MRR"            # @modrm：reg=op0, rm=op1, opsize auto
-modrm = "rr"
 opsize = "s0"
 
 [[forms]]
 name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
-modrm = "rr"
 opsize = 64
 
 [[forms]]
 name = "MRR_0F"         # @modrm + 0F escape
-modrm = "rr"
 opsize = "s0"
 escape = [0x0F]
 
 [[forms]]
 name = "MRR_0F_NOOS"    # @modrm + 0F escape + 无 opsize（movzx/movsx：dest/src
                         # 宽度不同合法——8/16 位源零/符号扩展到 64，不做一致性检查）
-modrm = "rr"
 prefix = "field"
 rex_w = "field"
 escape = [0x0F]
 
 [[forms]]
 name = "MRR_0F_FIX64"   # @modrm + 0F escape + opsize 固定 64（MOVQ 系列；prefix=field）
-modrm = "rr"
 opsize = 64
 escape = [0x0F]
 prefix = "field"
 
 [[forms]]
 name = "MRR_0F_PREFIX"  # @modrm + 0F escape + 指令级 prefix（LZCNT/TZCNT/POPCNT 的 F3）
-modrm = "rr"
 opsize = "s0"
 escape = [0x0F]
 prefix = "field"
 
 [[forms]]
 name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
-modrm = "ext"
 opsize = "s0"
 imm = 32
 
 [[forms]]
 name = "SSE_RR"         # @sse_rr：0F opcode /r，prefix=fields.prefix, w=fields.w
-modrm = "rr"
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
@@ -290,64 +282,54 @@ rex_w = "field"
 [[forms]]
 name = "EVEX_RR_MEMREF"   # EVEX 内存：reg=op0、MemRef op1；压缩位移 ×evex_disp_scale
 evex = { map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" }
-modrm = "rm_memref"
 
 [[forms]]
 name = "EVEX_RRV"        # EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
 evex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr_src2"
 
 [[forms]]
 name = "VEX_RRV"        # VEX 三操作数：reg=op0(dest)、rm=op2(src2)、vvvv=~op1(src1)
 vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr_src2"
 
 [[forms]]
 name = "VEX_RR"         # VEX 两操作数：vvvv=0x0F（无源）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr"
 
 [[forms]]
 name = "VEX_RR_MEMREF"  # VEX 内存形式：reg=op0(dest)、MemRef base/disp=op1（vmovaps xmm, [rax+disp]）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rm_memref"
 
 [[forms]]
 name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
-modrm = "ext"
 opsize = "s0"
 
 [[forms]]
 name = "MRR_EXT_OP_FIX64" # @shift_reg：D3 /digit（rm=op0），opsize 固定 64（REX.W）
-modrm = "ext"
 opsize = 64
 
 [[forms]]
 name = "MRR_MEM"          # [reg 基址 + disp 0]；无 escape（XCHG/MOV_R_MEM/STORE_MEM_R）
-modrm = "rm_mem"
 opsize = "s0"
 
 [[forms]]
 name = "MRR_MEM_PRE"      # 内存 + prefix=field、无 escape（LOCK 原子族 29/21/09/31）
-modrm = "rm_mem"
 opsize = "s0"
 prefix = "field"
 
 [[forms]]
 name = "MRR_MEM_0F_FIX32" # 内存 + 0F + prefix=field + opsize 32（MOVSD 内存标量）
-modrm = "rm_mem"
 opsize = 32
 escape = [0x0F]
 prefix = "field"
 
 [[forms]]
 name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
-modrm = "rm_memref"
 opsize = 64
 
 [[instructions]]
 name = "MOV_R_RM"
 form = "MRR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x8B
 # v13-：与 MOV_RM_R/MOV64_RR 合并为同一助记符 `mov`——16/32/64 位寄存器
 # 版本按实际类型自动分发（mov EAX,EBX → 8B 32 位无前缀、mov RAX,RBX →
@@ -360,7 +342,7 @@ effect = ["Move"]
 
 [[instructions]]
 name = "MOV_R8_RM8"
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x8A
 # v13：8 位 mov——gpr1b 槽（byte_reg 强制 REX：spl/bpl/sil/dil）。与 16/32/64 位
 # 共享助记符 `mov`（`mov al, bl` → 8A C3）。gprx 显式排除 gpr1（防 8B 误编码）。
@@ -371,6 +353,7 @@ effect = ["Move"]
 [[instructions]]
 name = "MOV_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x89
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "mov {dst}, {src}"
@@ -379,6 +362,7 @@ effect = ["Move"]
 [[instructions]]
 name = "MOVSXD_R_RM"
 form = "MRR_FIX64"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x63
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "movsxd {dst}, {src}"
@@ -386,6 +370,7 @@ asm = "movsxd {dst}, {src}"
 [[instructions]]
 name = "MOVSXD_R_GPR"
 form = "MRR_FIX64"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x63
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "movsxd {dst}, {src}"   # v13：与 MOVSXD_R_RM 合并（真重复）
@@ -400,6 +385,7 @@ asm = "movsxd {dst}, {src}"   # v13：与 MOVSXD_R_RM 合并（真重复）
 [[instructions]]
 name = "ADD_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x01
 # v14：数据槽 gprx——宽度由 IR 类型 auto（I32→无 REX.W 32 位、I64→REX.W）。
 # 固定 _32 变体已删（DSL 回填修复后同 opcode 由 66/REX.W 前缀分发——WA-35）。
@@ -410,6 +396,7 @@ asm = "add {dst}, {src}"
 [[instructions]]
 name = "SUB_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x29
 opsize = "dst"
 ops = ["src:gprx", "dst:gprx:inout"]
@@ -419,6 +406,7 @@ asm = "sub {dst}, {src}"
 [[instructions]]
 name = "IMUL_R_RM"
 form = "MRR_0F"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xAF
 ops = ["dst:gprx:out", "src:gprx"]
 asm = "imul {dst}, {src}"
@@ -426,6 +414,7 @@ asm = "imul {dst}, {src}"
 [[instructions]]
 name = "XOR_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x31
 opsize = "dst"
 ops = ["src:gprx", "dst:gprx:inout"]
@@ -434,6 +423,7 @@ asm = "xor {dst}, {src}"
 [[instructions]]
 name = "AND_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x21
 opsize = "dst"
 ops = ["src:gprx", "dst:gprx:inout"]
@@ -442,6 +432,7 @@ asm = "and {dst}, {src}"
 [[instructions]]
 name = "OR_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x09
 opsize = "dst"
 ops = ["src:gprx", "dst:gprx:inout"]
@@ -455,6 +446,7 @@ asm = "or {dst}, {src}"
 [[instructions]]
 name = "CMP_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0x39
 opsize = "max"
 ops = ["src:gprx", "src2:gprx"]
@@ -463,6 +455,7 @@ asm = "cmp {src2}, {src}"
 [[instructions]]
 name = "TEST_RM_R"
 form = "MRR"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0x85
 opsize = "max"
 ops = ["src:gprx", "src2:gprx"]
@@ -473,6 +466,7 @@ asm = "test {src2}, {src}"
 [[instructions]]
 name = "MOVZX_R8_RM"
 form = "MRR_0F_NOOS"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xB6
 fields = { prefix = 0, w = 1 }
 ops = ["dst:gpr:out", "src:gpr1b"]
@@ -481,6 +475,7 @@ asm = "movzx {dst}, {src}"
 [[instructions]]
 name = "MOVZX_R16_RM"
 form = "MRR_0F_NOOS"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xB7
 fields = { prefix = 0x66, w = 1 }
 ops = ["dst:gpr:out", "src:gpr2"]
@@ -491,7 +486,7 @@ asm = "movzx {dst}, {src}"
 # 8 位：REX.W 0F B6（源内存 1 字节）；16 位：66 REX.W 0F B7。
 [[instructions]]
 name = "MOVZX_R8_MEM"
-modrm = "rm_mem"
+modrm = { reg = "dst", rm = "[src]" }
 prefix = "field"
 rex_w = "field"
 escape = [0x0F]
@@ -502,7 +497,7 @@ asm = "movzx_mem {dst}, [{src}]"
 
 [[instructions]]
 name = "MOVZX_R16_MEM"
-modrm = "rm_mem"
+modrm = { reg = "dst", rm = "[src]" }
 prefix = "field"
 rex_w = "field"
 escape = [0x0F]
@@ -515,6 +510,7 @@ asm = "movzx_mem16 {dst}, [{src}]"
 [[instructions]]
 name = "MOVSX_R8_RM"
 form = "MRR_0F_NOOS"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xBE
 fields = { prefix = 0, w = 1 }
 ops = ["dst:gpr:out", "src:gpr1b"]
@@ -523,6 +519,7 @@ asm = "movsx {dst}, {src}"
 [[instructions]]
 name = "MOVSX_R16_RM"
 form = "MRR_0F_NOOS"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xBF
 fields = { prefix = 0x66, w = 1 }
 ops = ["dst:gpr:out", "src:gpr2"]
@@ -531,6 +528,7 @@ asm = "movsx {dst}, {src}"
 [[instructions]]
 name = "CMPXCHG_RM_R"
 form = "MRR_0F"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0xB1
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "cmpxchg {dst}, {src}"
@@ -538,6 +536,7 @@ asm = "cmpxchg {dst}, {src}"
 [[instructions]]
 name = "XADD_RM_R"
 form = "MRR_0F"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0xC1
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "xadd {dst}, {src}"
@@ -545,6 +544,7 @@ asm = "xadd {dst}, {src}"
 [[instructions]]
 name = "BT_RM_R"
 form = "MRR_0F"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0xA3
 ops = ["src:gpr", "src2:gpr"]
 asm = "bt {src2}, {src}"
@@ -552,6 +552,7 @@ asm = "bt {src2}, {src}"
 [[instructions]]
 name = "BTS_RM_R"
 form = "MRR_0F"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0xAB
 ops = ["src:gpr", "src2:gpr"]
 asm = "bts {src2}, {src}"
@@ -559,6 +560,7 @@ asm = "bts {src2}, {src}"
 [[instructions]]
 name = "BTR_RM_R"
 form = "MRR_0F"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0xB3
 ops = ["src:gpr", "src2:gpr"]
 asm = "btr {src2}, {src}"
@@ -566,6 +568,7 @@ asm = "btr {src2}, {src}"
 [[instructions]]
 name = "BTC_RM_R"
 form = "MRR_0F"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0xBB
 ops = ["src:gpr", "src2:gpr"]
 asm = "btc {src2}, {src}"
@@ -573,6 +576,7 @@ asm = "btc {src2}, {src}"
 [[instructions]]
 name = "MOV_RM8_R64"
 form = "MRR"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x89
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "mov {dst}, {src}"   # v13：与 MOV_RM_R 合并（真重复，生成期去重保留首个）
@@ -581,6 +585,7 @@ effect = ["Move"]
 [[instructions]]
 name = "MOV_R8_RM64"
 form = "MRR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x8B
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "movr8 {dst}, {src}"
@@ -589,48 +594,48 @@ effect = ["Move"]
 [[instructions]]
 name = "ADD_R_IMM32"
 form = "MRR_EXT"
+modrm = { reg = 0, rm = "dst" }
 opcode = 0x81
-fields = { ext = 0 }
 ops = ["dst:gpr:inout", "imm:imm32"]
 asm = "add {dst}, {imm}"
 
 [[instructions]]
 name = "OR_R_IMM32"
 form = "MRR_EXT"
+modrm = { reg = 1, rm = "dst" }
 opcode = 0x81
-fields = { ext = 1 }
 ops = ["dst:gpr:inout", "imm:imm32"]
 asm = "or {dst}, {imm}"
 
 [[instructions]]
 name = "AND_R_IMM32"
 form = "MRR_EXT"
+modrm = { reg = 4, rm = "dst" }
 opcode = 0x81
-fields = { ext = 4 }
 ops = ["dst:gpr:inout", "imm:imm32"]
 asm = "and {dst}, {imm}"
 
 [[instructions]]
 name = "SUB_R_IMM32"
 form = "MRR_EXT"
+modrm = { reg = 5, rm = "dst" }
 opcode = 0x81
-fields = { ext = 5 }
 ops = ["dst:gpr:inout", "imm:imm32"]
 asm = "sub {dst}, {imm}"
 
 [[instructions]]
 name = "XOR_R_IMM32"
 form = "MRR_EXT"
+modrm = { reg = 6, rm = "dst" }
 opcode = 0x81
-fields = { ext = 6 }
 ops = ["dst:gpr:inout", "imm:imm32"]
 asm = "xor {dst}, {imm}"
 
 [[instructions]]
 name = "CMP_R_IMM32"
 form = "MRR_EXT"
+modrm = { reg = 7, rm = "src" }
 opcode = 0x81
-fields = { ext = 7 }
 ops = ["src:gpr", "imm:imm32"]
 asm = "cmp {src}, {imm}"
 
@@ -639,6 +644,7 @@ asm = "cmp {src}, {imm}"
 [[instructions]]
 name = "SQRTSD"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x51
 fields = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -647,6 +653,7 @@ asm = "sqrtsd {dst}, {src}"
 [[instructions]]
 name = "SQRTSS"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x51
 fields = { prefix = 0, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -657,6 +664,7 @@ asm = "sqrtss {dst}, {src}"
 [[instructions]]
 name = "CVTSI2SD"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x2A
 fields = { prefix = 0xF2 }
 opsize = "src"
@@ -667,6 +675,7 @@ asm = "cvtsi2sd {dst}, {src}"
 [[instructions]]
 name = "CVTSD2SS"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x5A
 fields = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -675,6 +684,7 @@ asm = "cvtsd2ss {dst}, {src}"
 [[instructions]]
 name = "CVTSS2SD"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x5A
 fields = { prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -683,6 +693,7 @@ asm = "cvtss2sd {dst}, {src}"
 [[instructions]]
 name = "ANDPD"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x54
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -691,6 +702,7 @@ asm = "andpd {dst}, {src}"
 [[instructions]]
 name = "XORPD"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x57
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -699,6 +711,7 @@ asm = "xorpd {dst}, {src}"
 [[instructions]]
 name = "COMISD"
 form = "SSE_RR"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0x2F
 fields = { prefix = 0x66, w = 0 }
 ops = ["src:fpr", "src2:fpr"]
@@ -707,6 +720,7 @@ asm = "comisd {src}, {src2}"
 [[instructions]]
 name = "COMISS"
 form = "SSE_RR"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0x2F
 fields = { prefix = 0, w = 0 }
 ops = ["src:fpr", "src2:fpr"]
@@ -715,6 +729,7 @@ asm = "comiss {src}, {src2}"
 [[instructions]]
 name = "MOVSD_XMM_FREG"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x10
 fields = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -724,6 +739,7 @@ effect = ["Move"]
 [[instructions]]
 name = "MOVSD_FREG_XMM"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x10
 fields = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -735,6 +751,7 @@ effect = ["Move"]
 [[instructions]]
 name = "CVTSI2SS"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x2A
 fields = { prefix = 0xF3 }
 opsize = "src"
@@ -745,6 +762,7 @@ asm = "cvtsi2ss {dst}, {src}"
 [[instructions]]
 name = "MOVD_FREG_IREG"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x6E
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
@@ -752,7 +770,7 @@ asm = "movd {dst}, {src}"
 
 [[instructions]]
 name = "MOVD_IREG_FREG"
-modrm = "rr_rev"
+modrm = { reg = "src", rm = "dst" }
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
@@ -764,6 +782,7 @@ asm = "movd_fr {dst}, {src}"
 [[instructions]]
 name = "PUNPCKLDQ"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x62
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -772,6 +791,7 @@ asm = "punpckldq {dst}, {src}"
 [[instructions]]
 name = "PUNPCKLQDQ"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x6C
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -780,6 +800,7 @@ asm = "punpcklqdq {dst}, {src}"
 [[instructions]]
 name = "PUNPCKHDQ"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x6A
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -788,6 +809,7 @@ asm = "punpckhdq {dst}, {src}"
 [[instructions]]
 name = "MOVSS"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x10
 fields = { prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -796,7 +818,7 @@ effect = ["Move"]
 
 [[instructions]]
 name = "CMPXCHG_MEM_R"
-modrm = "rm_mem"
+modrm = { reg = "src", rm = "[src2]" }
 opsize = "src"
 escape = [0x0F]
 prefix = "field"
@@ -817,7 +839,7 @@ implicit_regs = ["RAX"]
 
 [[instructions]]
 name = "CMPXCHG_MEM_R_8"
-modrm = "rm_mem"
+modrm = { reg = "src", rm = "[src2]" }
 escape = [0x0F]
 prefix = "field"
 opcode = 0xB0
@@ -831,7 +853,7 @@ implicit_regs = ["RAX"]
 
 [[instructions]]
 name = "XADD_MEM_R"
-modrm = "rm_mem"
+modrm = { reg = "dst", rm = "[src]" }
 opsize = "dst"
 escape = [0x0F]
 prefix = "field"
@@ -845,6 +867,7 @@ asm = "xadd [{src}], {dst}"
 [[instructions]]
 name = "XCHG_MEM_R"
 form = "MRR_MEM"
+modrm = { reg = "dst", rm = "[src]" }
 opcode = 0x87
 ops = ["dst:gprx:inout", "src:gprx"]
 asm = "xchg [{src}], {dst}"
@@ -852,6 +875,7 @@ asm = "xchg [{src}], {dst}"
 [[instructions]]
 name = "SUB_MEM_R"
 form = "MRR_MEM_PRE"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x29
 fields = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
@@ -860,6 +884,7 @@ asm = "locksub [{src2}], {src}"
 [[instructions]]
 name = "AND_MEM_R"
 form = "MRR_MEM_PRE"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x21
 fields = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
@@ -868,6 +893,7 @@ asm = "lockand [{src2}], {src}"
 [[instructions]]
 name = "OR_MEM_R"
 form = "MRR_MEM_PRE"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x09
 fields = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
@@ -876,6 +902,7 @@ asm = "lockor [{src2}], {src}"
 [[instructions]]
 name = "XOR_MEM_R"
 form = "MRR_MEM_PRE"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x31
 fields = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
@@ -884,6 +911,7 @@ asm = "lockxor [{src2}], {src}"
 [[instructions]]
 name = "MOV_R_MEM"
 form = "MRR_MEM"
+modrm = { reg = "dst", rm = "[src]" }
 opcode = 0x8B
 # v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I16→66、I32→无
 # REX.W、I64→REX.W）。固定 _32 变体已删（WA-35 DSL 修复）。
@@ -893,7 +921,7 @@ asm = "mov_mem {dst}, [{src}]"
 
 [[instructions]]
 name = "MOV_R_MEM_8"
-modrm = "rm_mem"
+modrm = { reg = "dst", rm = "[src]" }
 opcode = 0x8A
 # 8 位内存 load：独立 opcode 8A（gprx 显式排除 gpr1——8 位 mov 是 8A 非
 # 8B）。数据槽 gpr1b（byte_reg：spl/bpl/sil/dil 强制 REX）。
@@ -903,13 +931,14 @@ asm = "mov_mem8 {dst}, [{src}]"
 [[instructions]]
 name = "STORE_MEM_R"
 form = "MRR_MEM"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x89
 ops = ["src:gprx", "src2:gprx"]
 asm = "mov_sto [{src2}], {src}"
 
 [[instructions]]
 name = "STORE_MEM_R_8"
-modrm = "rm_mem"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x88
 ops = ["src:gpr1b", "src2:gprx"]
 asm = "mov_sto8 [{src2}], {src}"
@@ -917,6 +946,7 @@ asm = "mov_sto8 [{src2}], {src}"
 [[instructions]]
 name = "MOVSD_R_MEM"
 form = "MRR_MEM_0F_FIX32"
+modrm = { reg = "dst", rm = "[src]" }
 opcode = 0x10
 fields = { prefix = 0xF2 }
 ops = ["dst:fpr:out", "src:gpr"]
@@ -925,6 +955,7 @@ asm = "movsd_mem {dst}, [{src}]"
 [[instructions]]
 name = "MOVSD_MEM_R"
 form = "MRR_MEM_0F_FIX32"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x11
 fields = { prefix = 0xF2 }
 ops = ["src:fpr", "src2:gpr"]
@@ -933,6 +964,7 @@ asm = "movsd_sto [{src2}], {src}"
 [[instructions]]
 name = "MOV64_RR"
 form = "MRR_FIX64"
+modrm = { reg = "src", rm = "dst" }
 opcode = 0x89
 # 与 MOV_RM_R（mov {1}, {0}）同模板同槽类型 → 生成期去重跳过（64 位经 MOV_RM_R 分发）。
 ops = ["src:gpr", "dst:gpr:inout"]
@@ -942,6 +974,7 @@ effect = ["Move"]
 [[instructions]]
 name = "MOV64_RM"
 form = "MRR_MEMREF"
+modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x8B
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "mov64rm {dst}, {mem}"
@@ -951,6 +984,7 @@ tags = ["stack_arg_load"]
 [[instructions]]
 name = "MOV64_MR"
 form = "MRR_MEMREF"
+modrm = { reg = "src", rm = "[mem]" }
 opcode = 0x89
 ops = ["src:gpr", "mem:mem"]
 asm = "mov64mr {mem}, {src}"
@@ -959,7 +993,7 @@ tags = ["stack_arg_store"]
 
 [[instructions]]
 name = "MOVSD_RM"
-modrm = "rm_memref"
+modrm = { reg = "dst", rm = "[mem]" }
 opsize = 32
 escape = [0x0F]
 prefix = "field"
@@ -970,7 +1004,7 @@ asm = "movsd_rm {dst}, {mem}"
 
 [[instructions]]
 name = "MOVSD_MR"
-modrm = "rm_memref"
+modrm = { reg = "src", rm = "[mem]" }
 opsize = 32
 escape = [0x0F]
 prefix = "field"
@@ -987,6 +1021,7 @@ asm = "movsd_mr {mem}, {src}"
 [[instructions]]
 name = "MOVUPS_128_R_MEM"
 form = "MRR_MEM_0F_FIX32"
+modrm = { reg = "dst", rm = "[src]" }
 opcode = 0x10
 fields = { prefix = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
@@ -995,6 +1030,7 @@ asm = "movups128_mem {dst}, [{src}]"
 [[instructions]]
 name = "MOVUPS_128_MEM_R"
 form = "MRR_MEM_0F_FIX32"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x11
 fields = { prefix = 0 }
 ops = ["src:fpr", "src2:gpr"]
@@ -1005,6 +1041,7 @@ asm = "movups128_sto [{src2}], {src}"
 [[instructions]]
 name = "MOVSS_R_MEM"
 form = "MRR_MEM_0F_FIX32"
+modrm = { reg = "dst", rm = "[src]" }
 opcode = 0x10
 fields = { prefix = 0xF3 }
 ops = ["dst:fpr:out", "src:gpr"]
@@ -1013,6 +1050,7 @@ asm = "movss_mem {dst}, [{src}]"
 [[instructions]]
 name = "MOVSS_MEM_R"
 form = "MRR_MEM_0F_FIX32"
+modrm = { reg = "src", rm = "[src2]" }
 opcode = 0x11
 fields = { prefix = 0xF3 }
 ops = ["src:fpr", "src2:gpr"]
@@ -1023,6 +1061,7 @@ asm = "movss_sto [{src2}], {src}"
 [[instructions]]
 name = "CVTSS2SI"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x2D
 fields = { prefix = 0xF3 }
 opsize = "dst"
@@ -1033,6 +1072,7 @@ asm = "cvtss2si {dst}, {src}"
 [[instructions]]
 name = "CVTTSS2SI"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x2C
 fields = { prefix = 0xF3, w = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
@@ -1043,6 +1083,7 @@ asm = "cvttss2si {dst}, {src}"
 [[instructions]]
 name = "CVTSD2SI"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x2D
 fields = { prefix = 0xF2 }
 opsize = "dst"
@@ -1053,6 +1094,7 @@ asm = "cvtsd2si {dst}, {src}"
 [[instructions]]
 name = "CVTTSD2SI"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x2C
 fields = { prefix = 0xF2 }
 opsize = "dst"
@@ -1062,7 +1104,7 @@ asm = "cvttsd2si {dst}, {src}"
 
 [[instructions]]
 name = "ROUNDSS_I"
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 escape = [0x0F, 0x3A]
 prefix = "field"
 rex_w = "field"
@@ -1078,6 +1120,7 @@ effect = ["Pure"]
 [[families]]
 name = "SD_BIN"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 fields = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "{name} {dst}, {src}"
@@ -1106,6 +1149,7 @@ opcode = 0x5E
 [[families]]
 name = "SS_FMOV"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 fields = { prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "{name} {dst}, {src}"
@@ -1131,6 +1175,7 @@ opcode = 0x5F
 [[families]]
 name = "PS_BIN"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "{name} {dst}, {src}"
 [[families.variants]]
@@ -1161,6 +1206,7 @@ opcode = 0x56
 [[families]]
 name = "PD_BIN"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "{name} {dst}, {src}"
@@ -1180,6 +1226,7 @@ opcode = 0x5E
 [[families]]
 name = "PI_BIN"
 form = "SSE_RR"
+modrm = { reg = "dst", rm = "src" }
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "{name} {dst}, {src}"
@@ -1201,6 +1248,7 @@ opcode = 0xFB
 [[families]]
 name = "PS_BIN_V"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "{name} {dst}, {src}, {src2}"
@@ -1226,6 +1274,7 @@ opcode = 0x54
 [[families]]
 name = "PD_BIN_V"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "{name} {dst}, {src}, {src2}"
@@ -1248,6 +1297,7 @@ opcode = 0x5E
 [[families]]
 name = "PS_BIN_EV"
 form = "EVEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr32:out", "src:fpr32", "src2:fpr32"]
 asm = "{name} {dst}, {src}, {src2}"
@@ -1272,6 +1322,7 @@ asm = "vdivps {dst}, {src}, {src2}"
 [[families]]
 name = "PD_BIN_EV"
 form = "EVEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 fields = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr32:out", "src:fpr32", "src2:fpr32"]
 asm = "{name} {dst}, {src}, {src2}"
@@ -1296,6 +1347,7 @@ asm = "vdivpd {dst}, {src}, {src2}"
 [[families]]
 name = "INT_BIN_EV"
 form = "EVEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 fields = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr32:out", "src:fpr32", "src2:fpr32"]
 asm = "{name} {dst}, {src}, {src2}"
@@ -1322,7 +1374,7 @@ asm = "vpsubq {dst}, {src}, {src2}"
 [[instructions]]
 name = "VMOVAPS_ZMM"
 evex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x28
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr32:out", "src:fpr32"]
@@ -1330,6 +1382,7 @@ asm = "vmovaps {dst}, {src}"
 [[instructions]]
 name = "VMOVAPS_ZMM_MEM"
 form = "EVEX_RR_MEMREF"
+modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x28
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 # v13：EVEX 内存形式（512 位，压缩位移 scale=64）——vmovaps zmm, [rax±disp]
@@ -1340,6 +1393,7 @@ asm = "vmovaps {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_ZMM_MEM"
 form = "EVEX_RR_MEMREF"
+modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x10
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["dst:fpr32:out", "mem:mem"]
@@ -1350,6 +1404,7 @@ tags = ["wide_vec_load_64"]
 [[instructions]]
 name = "VMOVUPS_ZMM_MR"
 form = "EVEX_RR_MEMREF"
+modrm = { reg = "src", rm = "[mem]" }
 opcode = 0x11
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["src:fpr32", "mem:mem:out"]
@@ -1362,6 +1417,7 @@ tags = ["wide_vec_store_64"]
 [[instructions]]
 name = "VADDPS_ZMM_MASK"
 form = "EVEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0x58
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr32:out", "src:fpr32", "src2:fpr32", "src3:kreg"]
@@ -1371,6 +1427,7 @@ asm = "vaddps {dst}, {src}, {src2}, {src3}"
 [[instructions]]
 name = "VADDPS_ZMM_MASKZ"
 form = "EVEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0x58
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_z = 1 }
 ops = ["dst:fpr32:out", "src:fpr32", "src2:fpr32", "src3:kreg"]
@@ -1381,6 +1438,7 @@ asm = "vaddpsz {dst}, {src}, {src2}, {src3}"
 [[instructions]]
 name = "VMOVAPS"
 form = "VEX_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x28
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -1389,6 +1447,7 @@ asm = "vmovaps {dst}, {src}"
 [[instructions]]
 name = "VMOVAPS_RM"
 form = "VEX_RR_MEMREF"
+modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x28
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "mem:mem"]
@@ -1398,6 +1457,7 @@ asm = "vmovaps {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_RM"
 form = "VEX_RR_MEMREF"
+modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x10
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "mem:mem"]
@@ -1408,6 +1468,7 @@ tags = ["wide_vec_load_32"]
 [[instructions]]
 name = "VMOVUPS_MR"
 form = "VEX_RR_MEMREF"
+modrm = { reg = "src", rm = "[mem]" }
 opcode = 0x11
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "mem:mem:out"]
@@ -1417,6 +1478,7 @@ tags = ["wide_vec_store_32"]
 [[instructions]]
 name = "VBROADCASTSS"
 form = "VEX_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x18
 fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -1425,6 +1487,7 @@ asm = "vbroadcastss {dst}, {src}"
 [[instructions]]
 name = "VBROADCASTSD"
 form = "VEX_RR"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x19
 fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -1433,6 +1496,7 @@ asm = "vbroadcastsd {dst}, {src}"
 [[instructions]]
 name = "VPXOR"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0xEF
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
@@ -1441,6 +1505,7 @@ asm = "vpxor {dst}, {src}, {src2}"
 [[instructions]]
 name = "VPADDD"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0xFE
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
@@ -1449,6 +1514,7 @@ asm = "vpaddd {dst}, {src}, {src2}"
 [[instructions]]
 name = "VPSUBD"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0xFA
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
@@ -1457,6 +1523,7 @@ asm = "vpsubd {dst}, {src}, {src2}"
 [[instructions]]
 name = "VPADDQ"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0xD4
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
@@ -1465,6 +1532,7 @@ asm = "vpaddq {dst}, {src}, {src2}"
 [[instructions]]
 name = "VPSUBQ"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0xFB
 fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
@@ -1473,6 +1541,7 @@ asm = "vpsubq {dst}, {src}, {src2}"
 [[instructions]]
 name = "VPMULLD"
 form = "VEX_RRV"
+modrm = { reg = "dst", rm = "src2" }
 opcode = 0x40
 fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
@@ -1481,7 +1550,7 @@ asm = "vpmulld {dst}, {src}, {src2}"
 [[instructions]]
 name = "VEXTRACTF128"
 vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr"
+modrm = { reg = "src", rm = "dst" }
 imm = 8
 opcode = 0x19
 fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
@@ -1491,7 +1560,7 @@ asm = "vextractf128 {dst}, {src}, {imm}"
 [[instructions]]
 name = "VINSERTF128"
 vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr_src2"
+modrm = { reg = "dst", rm = "src2" }
 imm = 8
 opcode = 0x18
 fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
@@ -1502,8 +1571,8 @@ asm = "vinsertf128 {dst}, {src}, {src2}, {imm}"
 [[instructions]]
 name = "NOT_RM"
 form = "MRR_EXT_OP"
+modrm = { reg = 2, rm = "dst" }
 opcode = 0xF7
-fields = { ext = 2 }
 ops = ["dst:gpr:inout"]
 asm = "not {dst}"
 
@@ -1512,40 +1581,40 @@ asm = "not {dst}"
 [[instructions]]
 name = "SHL_RM_CL"
 form = "MRR_EXT_OP_FIX64"
+modrm = { reg = 4, rm = "dst" }
 opcode = 0xD3
-fields = { ext = 4 }
 ops = ["dst:gpr:inout"]
 asm = "shl {dst}, cl"
 
 [[instructions]]
 name = "SHR_RM_CL"
 form = "MRR_EXT_OP_FIX64"
+modrm = { reg = 5, rm = "dst" }
 opcode = 0xD3
-fields = { ext = 5 }
 ops = ["dst:gpr:inout"]
 asm = "shr {dst}, cl"
 
 [[instructions]]
 name = "SAR_RM_CL"
 form = "MRR_EXT_OP_FIX64"
+modrm = { reg = 7, rm = "dst" }
 opcode = 0xD3
-fields = { ext = 7 }
 ops = ["dst:gpr:inout"]
 asm = "sar {dst}, cl"
 
 [[instructions]]
 name = "NEG_RM"
 form = "MRR_EXT_OP"
+modrm = { reg = 3, rm = "dst" }
 opcode = 0xF7
-fields = { ext = 3 }
 ops = ["dst:gprx:inout"]
 asm = "neg {dst}"
 
 [[instructions]]
 name = "DIV_RM"
 form = "MRR_EXT_OP"
+modrm = { reg = 6, rm = "src" }
 opcode = 0xF7
-fields = { ext = 6 }
 effect = ["Write"]
 # div 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
@@ -1555,8 +1624,8 @@ asm = "div {src}"
 [[instructions]]
 name = "IDIV_RM"
 form = "MRR_EXT_OP"
+modrm = { reg = 7, rm = "src" }
 opcode = 0xF7
-fields = { ext = 7 }
 effect = ["Write"]
 # idiv 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
@@ -1565,27 +1634,25 @@ asm = "idiv {src}"
 
 [[instructions]]
 name = "SUB64_R_IMM32"
-modrm = "ext"
+modrm = { reg = 5, rm = "dst" }
 opsize = 64
 imm = 0x20
 opcode = 0x81
-fields = { ext = 5 }
 ops = ["dst:gpr:inout", "imm:imm32"]
 asm = "sub {dst}, {imm}"
 
 [[instructions]]
 name = "ADD64_R_IMM32"
-modrm = "ext"
+modrm = { reg = 0, rm = "dst" }
 opsize = 64
 imm = 0x20
 opcode = 0x81
-fields = { ext = 0 }
 ops = ["dst:gpr:inout", "imm:imm32"]
 asm = "add {dst}, {imm}"
 
 [[instructions]]
 name = "PSHUFD"
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
@@ -1597,7 +1664,7 @@ asm = "pshufd {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SHUFPS"
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
@@ -1697,9 +1764,8 @@ asm = "cqo"
 
 [[instructions]]
 name = "CALL_RM"
-modrm = "ext"
+modrm = { reg = 2, rm = "src" }
 opcode = 0xFF
-fields = { ext = 2 }
 ops = ["src:gpr"]
 asm = "call_rm {src}"
 effect = ["Call"]
@@ -1715,10 +1781,9 @@ effect = ["Branch"]
 
 [[instructions]]
 name = "SETCC_RM8"
-modrm = "ext"
+modrm = { reg = 0, rm = "dst" }
 escape = [0x0F]
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
-fields = { ext = 0 }
 ops = ["dst:gpr8:out", "cc:cond"]
 asm = "setcc {dst}, {cc}"
 effect = ["Pure"]
@@ -1726,6 +1791,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "LEA_R64_SIB"
 form = "MRR_MEMREF"
+modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x8D
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "lea {dst}, {mem}"
@@ -1734,6 +1800,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "LEA_RBP_OFF"
 form = "MRR_MEMREF"
+modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x8D
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "lea_rbp {dst}, {mem}"
@@ -1752,7 +1819,8 @@ global_reloc = "abs8"
 
 [[instructions]]
 name = "CMOVCC_R_RM"
-form = "MRR_0F_FIX64"            # 固定 64 位（REX.W）；cond 编码进 opcode 低 4 位
+form = "MRR_0F_FIX64"
+modrm = { reg = "dst", rm = "src" }            # 固定 64 位（REX.W）；cond 编码进 opcode 低 4 位
 opcode = 0x40                    # 条件码 = opcode 低 4 位（0x40..0x4F）
 ops = ["dst:gpr:inout", "src:gpr", "cc:cond"]
 asm = "cmovcc {dst}, {src}, {cc}"
@@ -1760,7 +1828,7 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "ROUNDSD_I"
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 escape = [0x0F, 0x3A]
 prefix = "field"
 rex_w = "field"
@@ -1773,7 +1841,7 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "PMULLD"
-modrm = "rr"
+modrm = { reg = "dst", rm = "src" }
 opsize = 64
 escape = [0x0F, 0x38]
 opcode = 0x40
@@ -1785,6 +1853,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "MOVQ_XMM_R64"
 form = "MRR_0F_FIX64"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x6E
 fields = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
@@ -1793,7 +1862,7 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "MOVQ_R64_XMM"
-modrm = "rr_rev"
+modrm = { reg = "src", rm = "dst" }
 opsize = 64
 escape = [0x0F]
 prefix = "field"
@@ -1806,6 +1875,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "MOVQ_XMM_FREG"
 form = "MRR_0F_FIX64"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x6E
 fields = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -1815,6 +1885,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "MOVQ_FREG_XMM"
 form = "MRR_0F_FIX64"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0x7E
 fields = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
@@ -1824,6 +1895,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "MOVAPS_MR"
 form = "MRR_0F_FIX64"
+modrm = { reg = "src", rm = "src2" }
 opcode = 0x29
 fields = { prefix = 0, w = 0 }
 ops = ["src:gpr", "src2:fpr"]
@@ -1833,6 +1905,7 @@ effect = ["Write"]
 [[instructions]]
 name = "LZCNT_R"
 form = "MRR_0F_PREFIX"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xBD
 fields = { prefix = 0xF3, w = 0 }
 # v14：槽 gprx——宽度由 IR 类型 auto（I32 输入 → 无 REX.W lzcntl 返回 31
@@ -1844,6 +1917,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "TZCNT_R"
 form = "MRR_0F_PREFIX"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xBC
 fields = { prefix = 0xF3, w = 0 }
 ops = ["dst:gprx:out", "src:gprx"]
@@ -1853,6 +1927,7 @@ effect = ["Pure"]
 [[instructions]]
 name = "POPCNT_R"
 form = "MRR_0F_PREFIX"
+modrm = { reg = "dst", rm = "src" }
 opcode = 0xB8
 fields = { prefix = 0xF3, w = 0 }
 ops = ["dst:gprx:out", "src:gprx"]
@@ -1864,8 +1939,8 @@ effect = ["Pure"]
 [[instructions]]
 name = "ROL_RM"
 form = "MRR_EXT_OP"
+modrm = { reg = 0, rm = "dst" }
 opcode = 0xD3
-fields = { ext = 0 }
 effect = ["Pure"]
 ops = ["dst:gprx:inout"]
 asm = "rol {dst}"
@@ -1873,8 +1948,8 @@ asm = "rol {dst}"
 [[instructions]]
 name = "ROR_RM"
 form = "MRR_EXT_OP"
+modrm = { reg = 1, rm = "dst" }
 opcode = 0xD3
-fields = { ext = 1 }
 effect = ["Pure"]
 ops = ["dst:gprx:inout"]
 asm = "ror {dst}"

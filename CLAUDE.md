@@ -184,6 +184,17 @@ bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角�
 无兼容层。`collect_inst_infos` 把 `{名字}` 规范化成 `{序号}` 后交给下游，
 生成器（asm/machine/decode）只认索引、不感知命名。
 
+`modrm` 改显式映射（v15-S3d）：`modrm = { reg = "src", rm = "dst" }`——哪个命名
+操作数进 `reg` 字段、哪个进 `rm` 字段直接写出来。`reg = <整数>` = 固定扩展码
+（取代 `"ext"` + `fields.ext` 两处声明）；`rm = "[名]"` = 内存形式（mod≠11，与
+asm 里 `[{base}]` 同形），两种内存风味由 `rm` 引用的槽 kind 区分（`mem` 槽带
+base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
+（`rr`/`rr_rev`/`rr_src2`/`ext`/`rm_mem`/`rm_memref`）——它们是**位置隐含**的：
+同一个 `"rr"` 在 ADD_RM_R 里 reg=源、在 MOV_R_RM 里 reg=目的，读者必须回查生成器
+才知道。生成器侧编码与解码原先各有一张 `(Kind, 操作数序号) → 字段` 位置表，现在
+统一收敛成三条索引规则（`i == reg` / `i == rm` / 其余 → VEX.vvvv）。
+`modrm` 因此从 form 下移到指令/家族（form 只留非位置性的键）。
+
 ## Code Conventions
 
 - Edition 2024 throughout
