@@ -268,6 +268,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 } else {
                     Some(fields)
                 },
+                ops: fam.ops.clone(),
                 asm,
                 when: var.when.clone(),
                 enc: Default::default(),
@@ -293,7 +294,25 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 .keys
                 .clone(),
         };
-        let enc = inst.enc.over(&preset);
+        let mut enc = inst.enc.over(&preset);
+        // 从 asm 模板解析助记符 + 操作数声明（命名形态：ops 声明 + asm 引用）
+        let (mnemonic, uses, norm_asm) =
+            parse_asm_decl(&inst.asm, inst.ops.as_deref(), &inst.name)?;
+        // `opsize = "<操作数名>"` → 按声明序解析成位置索引（下游只见索引）
+        if let Some(Opsize::Named(n)) = &enc.opsize {
+            let names = inst.ops.as_deref().unwrap_or(&[]);
+            let idx = names
+                .iter()
+                .position(|e| e.split(':').next().map(str::trim) == Some(n.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "[[instructions.{}]].opsize: '{n}' 不是已声明的操作数名（ops: {}）",
+                        inst.name,
+                        names.join(", ")
+                    )
+                })?;
+            enc.opsize = Some(Opsize::Slot(idx as u16));
+        }
         let form = &enc;
         // 变长（无 opcode_field）不需要 operand_fields；定宽需要
         if form.opcode_field.is_none() && form.operand_fields.is_some() {
@@ -308,8 +327,6 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 inst.name
             ));
         }
-        // 从 asm 模板解析助记符 + 操作数声明（新语法：占位符内联槽/角色）
-        let (mnemonic, uses) = parse_asm_decl(&inst.asm, &inst.name)?;
         let of = form.operand_fields.as_deref();
         let fixed = form.opcode_field.is_some();
         let mut operands = Vec::new();
@@ -354,7 +371,12 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
             operands.push((field, fid, slot, role));
         }
         out.push(InstInfo {
-            inst: inst.clone(),
+            // asm 规范化：命名形态的 `{dst}` 已换成 `{1}`，下游（asm/machine/
+            // decode 生成）只认索引形态，无需感知命名。
+            inst: Instruction {
+                asm: norm_asm,
+                ..inst.clone()
+            },
             form: enc.clone(),
             vn: pascal_ident(&inst.name),
             mnemonic,
@@ -367,10 +389,98 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
 /// 从 asm 模板解析：首词 = 助记符；操作数占位符 `{i:[槽:角色]}` 内联声明。
 /// 返回 (助记符, 操作数声明表，按序号排序且连续)。
 /// validate.rs 也调用本函数做操作数校验（槽存在/角色合法/序号连续）。
+/// 解析 `ops = ["名字:槽[:角色]", …]`：返回 (名字表, 操作数用法表)，序即编码序。
+fn parse_ops_list(ops: &[String], inst_name: &str) -> Result<(Vec<String>, Vec<OperandUse>), String> {
+    let ctx = || format!("[[instructions.{inst_name}]].ops");
+    if ops.is_empty() {
+        return Err(format!("{}: 不能为空数组（省略该键即可）", ctx()));
+    }
+    let mut names = Vec::with_capacity(ops.len());
+    let mut uses = Vec::with_capacity(ops.len());
+    for (i, entry) in ops.iter().enumerate() {
+        let mut parts = entry.split(':').map(str::trim);
+        let name = parts.next().unwrap_or("");
+        let slot = parts.next().unwrap_or("");
+        let role = parts.next();
+        if parts.next().is_some() {
+            return Err(format!(
+                "{}[{i}] '{entry}': 形如 \"名字:槽\" 或 \"名字:槽:角色\"",
+                ctx()
+            ));
+        }
+        if name.is_empty() || slot.is_empty() {
+            return Err(format!("{}[{i}] '{entry}': 名字与槽都不能为空", ctx()));
+        }
+        if names.iter().any(|n| n == name) {
+            return Err(format!("{}[{i}]: 操作数名 '{name}' 重复", ctx()));
+        }
+        let role = match role {
+            None | Some("in") => OperandRole::In,
+            Some("out") => OperandRole::Out,
+            Some("inout") => OperandRole::InOut,
+            Some(other) => {
+                return Err(format!(
+                    "{}[{i}]: 角色 '{other}' 非法（in/out/inout）",
+                    ctx()
+                ));
+            }
+        };
+        names.push(name.to_string());
+        uses.push(OperandUse {
+            slot: slot.to_string(),
+            role: Some(role),
+            field: None,
+        });
+    }
+    Ok((names, uses))
+}
+
+/// 命名 asm 模板 → 索引形态：`{dst}` → `{1}`（按 `ops` 声明序）。
+///
+/// 规范化让下游（asm/machine/decode 生成）只认索引，完全不必感知命名——
+/// 命名只是**作者面**的语法。未知名字在此报错（拼错的占位符不会静默变字面量）。
+fn normalize_named_template(rest: &str, names: &[String], inst_name: &str) -> Result<String, String> {
+    let ctx = || format!("[[instructions.{inst_name}]] asm");
+    let mut out = String::with_capacity(rest.len());
+    let mut chars = rest.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c != '{' {
+            out.push(c);
+            continue;
+        }
+        let Some(end) = rest[i..].find('}') else {
+            return Err(format!("{}: 未闭合的 '{{'", ctx()));
+        };
+        let inner = rest[i + 1..i + end].trim();
+        let idx = names
+            .iter()
+            .position(|n| n == inner)
+            .ok_or_else(|| {
+                format!(
+                    "{}: 占位符 '{{{inner}}}' 不是已声明的操作数名（ops: {}）",
+                    ctx(),
+                    names.join(", ")
+                )
+            })?;
+        out.push_str(&format!("{{{idx}}}"));
+        for _ in 0..end - 1 {
+            chars.next();
+        }
+        chars.next(); // '}'
+    }
+    Ok(out)
+}
+
+/// 解析指令的助记符与操作数：`ops` 给声明，`asm` 只引用名字。
+///
+/// 返回 (助记符, 操作数用法表, **规范化后的 asm**)。规范化 = 把 `{名字}` 换成
+/// `{序号}`，于是下游（asm/machine/decode 生成）只认索引，完全不必感知命名——
+/// 命名只是作者面的语法。v14 的内联声明（`{i:[槽:角色]}`）已删除。
 pub(crate) fn parse_asm_decl(
     asm: &str,
+    ops: Option<&[String]>,
     inst_name: &str,
-) -> Result<(String, Vec<OperandUse>), String> {
+) -> Result<(String, Vec<OperandUse>, String), String> {
     let ctx = || format!("[[instructions.{inst_name}]] asm");
     let (mnemonic, rest) = asm
         .split_once(char::is_whitespace)
@@ -384,58 +494,37 @@ pub(crate) fn parse_asm_decl(
             ctx()
         ));
     }
-    let (segs, decls) = asm::parse_template_full(rest)?;
-    // 序号连续性校验：操作数 0..k 全部出现且有声明
-    let mut sorted: Vec<(usize, String, Option<String>)> = decls;
-    sorted.sort_by_key(|(n, _, _)| *n);
-    for (i, (n, slot, _role)) in sorted.iter().enumerate() {
-        if *n != i {
+    let Some(list) = ops else {
+        // 无操作数指令（ret/nop/…）不需要 ops；有占位符却没 ops = 缺声明
+        if rest.contains('{') {
             return Err(format!(
-                "{}: operand indices must be contiguous 0..k (found {{{}}})",
-                ctx(),
-                n
-            ));
-        }
-        if slot.is_empty() {
-            return Err(format!(
-                "{}: operand {{{n}}} missing slot declaration",
+                "{}: asm 引用了操作数但没有 `ops` 声明（v15：声明写在 ops，模板只引用名字）",
                 ctx()
             ));
         }
-        // 占位符在模板中出现次数 ≤1（重复引用同一操作数 → 歧义）
-        if segs
+        return Ok((mnemonic.to_string(), Vec::new(), asm.to_string()));
+    };
+    let (names, uses) = parse_ops_list(list, inst_name)?;
+    let norm_rest = normalize_named_template(rest, &names, inst_name)?;
+    let segs = asm::parse_template(&norm_rest)?;
+    for (n, name) in names.iter().enumerate() {
+        let refs = segs
             .iter()
-            .filter(|s| matches!(s, asm::Seg::Op(k) if *k == *n))
-            .count()
-            > 1
-        {
+            .filter(|s| matches!(s, asm::Seg::Op(k) if *k == n))
+            .count();
+        if refs > 1 {
             return Err(format!(
-                "{}: operand {{{n}}} referenced more than once in asm template",
+                "{}: 操作数 '{name}' 在模板里被引用 {refs} 次（歧义）",
                 ctx()
             ));
         }
     }
-    let mut uses = Vec::new();
-    for (n, slot, role) in sorted {
-        let role = match role.as_deref() {
-            None | Some("in") => OperandRole::In,
-            Some("out") => OperandRole::Out,
-            Some("inout") => OperandRole::InOut,
-            Some(other) => {
-                return Err(format!(
-                    "{}: operand {{{n}}} role '{other}' invalid (in/out/inout)",
-                    ctx()
-                ));
-            }
-        };
-        uses.push(OperandUse {
-            slot,
-            role: Some(role),
-            field: None,
-        });
-        let _ = n;
-    }
-    Ok((mnemonic.to_string(), uses))
+    let norm_asm = if norm_rest.is_empty() {
+        mnemonic.to_string()
+    } else {
+        format!("{mnemonic} {norm_rest}")
+    };
+    Ok((mnemonic.to_string(), uses, norm_asm))
 }
 
 // ─────────────────────────────── 寄存器表 ───────────────────────────────

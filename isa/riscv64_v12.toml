@@ -179,7 +179,8 @@ form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
 effect = ["Move"]
-asm = "mv {0:[gpr:out]}, {1:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "mv {dst}, {src}"
 
 # ── R 型整数（opcode 0x33）──
 
@@ -188,105 +189,120 @@ name = "ADD"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x00 }
-asm = "add {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SUB"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x20 }
-asm = "sub {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "sub {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SLL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x00 }
-asm = "sll {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "sll {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SLT"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 2, funct7 = 0x00 }
-asm = "slt {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "slt {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SLTU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 3, funct7 = 0x00 }
-asm = "sltu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "sltu {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "XOR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 4, funct7 = 0x00 }
-asm = "xor {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "xor {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SRL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x00 }
-asm = "srl {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "srl {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SRA"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x20 }
-asm = "sra {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "sra {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "OR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 6, funct7 = 0x00 }
-asm = "or {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "or {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "AND"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 7, funct7 = 0x00 }
-asm = "and {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "and {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MUL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x01 }
-asm = "mul {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "mul {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "DIV"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 4, funct7 = 0x01 }
-asm = "div {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "div {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "DIVU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x01 }
-asm = "divu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "divu {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "REM"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 6, funct7 = 0x01 }
-asm = "rem {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "rem {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "REMU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 7, funct7 = 0x01 }
-asm = "remu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "remu {dst}, {src}, {src2}"
 
 # ── R 型浮点（opcode 0x53）──
 
@@ -295,133 +311,152 @@ name = "FADD_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x00 }
-asm = "fadd.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fadd.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FSUB_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x04 }
-asm = "fsub.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fsub.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FMUL_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x08 }
-asm = "fmul.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fmul.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FDIV_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x0C }
-asm = "fdiv.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fdiv.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FSQRT_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x2C }
-asm = "fsqrt.s {0:[fpr:out]}, {1:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fsqrt.s {dst}, {src}"
 
 [[instructions]]
 name = "FSGNJ_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x10 }
-asm = "fsgnj.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fsgnj.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FSGNJN_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x10 }
-asm = "fsgnjn.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fsgnjn.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FSGNJX_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 2, funct7 = 0x10 }
-asm = "fsgnjx.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fsgnjx.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FCVT_W_S_RTZ"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x60 }
-asm = "fcvt.w.s.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.w.s.rtz {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_WU_S_RTZ"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x60, rs2 = 1 }
-asm = "fcvt.wu.s.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.wu.s.rtz {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_W_S_RNE"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x60 }
-asm = "fcvt.w.s {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.w.s {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_S_W"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x68 }
-asm = "fcvt.s.w {0:[fpr:out]}, {1:[gpr:in]}"
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.s.w {dst}, {src}"
 
 [[instructions]]
 name = "FLT_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x50 }
-asm = "flt.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
+asm = "flt.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FEQ_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 2, funct7 = 0x50 }
-asm = "feq.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
+asm = "feq.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FLE_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x50 }
-asm = "fle.s {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
+asm = "fle.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FMIN_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x14 }
-asm = "fmin.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fmin.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FMAX_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x14 }
-asm = "fmax.s {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fmax.s {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FMV_W_X"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x78 }
-asm = "fmv.w.x {0:[fpr:out]}, {1:[gpr:in]}"
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fmv.w.x {dst}, {src}"
 
 [[instructions]]
 name = "FMV_X_W"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x70 }
-asm = "fmv.x.w {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fmv.x.w {dst}, {src}"
 
 # ── 内存浮点 ──
 # ── F64（D 变体）：funct7 = S | 0x01（LLVM 对照：fadd.d=0x01、feq.d=0x51）──
@@ -431,168 +466,192 @@ name = "FADD_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x01 }
-asm = "fadd.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fadd.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FSUB_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x05 }
-asm = "fsub.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fsub.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FMUL_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x09 }
-asm = "fmul.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fmul.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FDIV_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x0D }
-asm = "fdiv.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fdiv.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FSQRT_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x2D }
-asm = "fsqrt.d {0:[fpr:out]}, {1:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fsqrt.d {dst}, {src}"
 
 [[instructions]]
 name = "FLE_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x51 }
-asm = "fle.d {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
+asm = "fle.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FLT_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x51 }
-asm = "flt.d {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
+asm = "flt.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FEQ_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 2, funct7 = 0x51 }
-asm = "feq.d {0:[gpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
+asm = "feq.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FMIN_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x15 }
-asm = "fmin.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fmin.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FMAX_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x15 }
-asm = "fmax.d {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fmax.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FCVT_W_D_RTZ"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x61 }
-asm = "fcvt.w.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.w.d.rtz {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_WU_D_RTZ"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x61, rs2 = 1 }
-asm = "fcvt.wu.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.wu.d.rtz {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_L_D_RTZ"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x61, rs2 = 2 }
-asm = "fcvt.l.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.l.d.rtz {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_LU_D_RTZ"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x61, rs2 = 3 }
-asm = "fcvt.lu.d.rtz {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.lu.d.rtz {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_D_W"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x69 }
-asm = "fcvt.d.w {0:[fpr:out]}, {1:[gpr:in]}"
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.d.w {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_D_WU"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 1, funct7 = 0x69 }
-asm = "fcvt.d.wu {0:[fpr:out]}, {1:[gpr:in]}"
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.d.wu {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_S_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x20 }
-asm = "fcvt.s.d {0:[fpr:out]}, {1:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fcvt.s.d {dst}, {src}"
 
 [[instructions]]
 name = "FCVT_D_S"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x21 }
-asm = "fcvt.d.s {0:[fpr:out]}, {1:[fpr:in]}"
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fcvt.d.s {dst}, {src}"
 
 [[instructions]]
 name = "FMV_D_X"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x79 }
-asm = "fmv.d.x {0:[fpr:out]}, {1:[gpr:in]}"
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fmv.d.x {dst}, {src}"
 
 [[instructions]]
 name = "FMV_X_D"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x71 }
-asm = "fmv.x.d {0:[gpr:out]}, {1:[fpr:in]}"
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fmv.x.d {dst}, {src}"
 
 [[instructions]]
 name = "FLD"
 form = "I"
 opcode = 0x07
 fields = { funct3 = 3 }
-asm = "fld {0:[fpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["dst:fpr:out", "src:gpr", "imm:imm12"]
+asm = "fld {dst}, {imm}({src})"
 
 [[instructions]]
 name = "FSD"
 form = "S"
 opcode = 0x27
 fields = { funct3 = 3 }
-asm = "fsd {0:[fpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["src:fpr", "src2:gpr", "imm:imm12"]
+asm = "fsd {src}, {imm}({src2})"
 
 [[instructions]]
 name = "FLW"
 form = "I"
 opcode = 0x07
 fields = { funct3 = 2 }
-asm = "flw {0:[fpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["dst:fpr:out", "src:gpr", "imm:imm12"]
+asm = "flw {dst}, {imm}({src})"
 
 [[instructions]]
 name = "FSW"
 form = "S"
 opcode = 0x27
 fields = { funct3 = 2 }
-asm = "fsw {0:[fpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["src:fpr", "src2:gpr", "imm:imm12"]
+asm = "fsw {src}, {imm}({src2})"
 
 # ── I 型整数（opcode 0x13）──
 
@@ -601,42 +660,48 @@ name = "ADDI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-asm = "addi {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "addi {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SLTI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 2 }
-asm = "slti {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "slti {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SLTIU"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 3 }
-asm = "sltiu {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "sltiu {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "XORI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 4 }
-asm = "xori {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "xori {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "ORI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 6 }
-asm = "ori {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "ori {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "ANDI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 7 }
-asm = "andi {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "andi {dst}, {src}, {imm}"
 
 # ── 移位立即数（RV64：shamt 6 位 + funct6）──
 
@@ -645,21 +710,24 @@ name = "SLLI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 1, funct6 = 0x00 }
-asm = "slli {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+asm = "slli {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SRLI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 5, funct6 = 0x00 }
-asm = "srli {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+asm = "srli {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SRAI"
 form = "SHIFT"
 opcode = 0x13
 fields = { funct3 = 5, funct6 = 0x10 }
-asm = "srai {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+asm = "srai {dst}, {src}, {imm}"
 
 # ── U 型 LUI ──
 
@@ -667,7 +735,8 @@ asm = "srai {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
 name = "LUI"
 form = "U"
 opcode = 0x37
-asm = "lui {0:[gpr:out]}, {1:[imm20:in]}"
+ops = ["dst:gpr:out", "imm:imm20"]
+asm = "lui {dst}, {imm}"
 
 # ── 加载/存储 ──
 
@@ -676,14 +745,16 @@ name = "LD"
 form = "I"
 opcode = 0x03
 fields = { funct3 = 3 }
-asm = "ld {0:[gpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "ld {dst}, {imm}({src})"
 
 [[instructions]]
 name = "SD"
 form = "S"
 opcode = 0x23
 fields = { funct3 = 3 }
-asm = "sd {0:[gpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["src:gpr", "src2:gpr", "imm:imm12"]
+asm = "sd {src}, {imm}({src2})"
 
 # ── 控制流 ──
 
@@ -691,49 +762,56 @@ asm = "sd {0:[gpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
 name = "JAL"
 form = "J"
 opcode = 0x6F
-asm = "jal {0:[gpr:out]}, {1:[off_j:in]}"
+ops = ["dst:gpr:out", "target:off_j"]
+asm = "jal {dst}, {target}"
 
 [[instructions]]
 name = "JALR"
 form = "I"
 opcode = 0x67
 fields = { funct3 = 0 }
-asm = "jalr {0:[gpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "jalr {dst}, {imm}({src})"
 
 [[instructions]]
 name = "BEQ"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 0 }
-asm = "beq {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
+ops = ["src:gpr", "src2:gpr", "target:off_b"]
+asm = "beq {src}, {src2}, {target}"
 
 [[instructions]]
 name = "BNE"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 1 }
-asm = "bne {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
+ops = ["src:gpr", "src2:gpr", "target:off_b"]
+asm = "bne {src}, {src2}, {target}"
 
 [[instructions]]
 name = "BLT"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 4 }
-asm = "blt {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
+ops = ["src:gpr", "src2:gpr", "target:off_b"]
+asm = "blt {src}, {src2}, {target}"
 
 [[instructions]]
 name = "BGE"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 5 }
-asm = "bge {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
+ops = ["src:gpr", "src2:gpr", "target:off_b"]
+asm = "bge {src}, {src2}, {target}"
 
 [[instructions]]
 name = "BLTU"
 form = "B"
 opcode = 0x63
 fields = { funct3 = 6 }
-asm = "bltu {0:[gpr:in]}, {1:[gpr:in]}, {2:[off_b:in]}"
+ops = ["src:gpr", "src2:gpr", "target:off_b"]
+asm = "bltu {src}, {src2}, {target}"
 
 # ── 帧管理（与上同编码的 GprReg 形式；asm 别名取首个声明）──
 
@@ -775,70 +853,80 @@ name = "CLZ"
 form = "ZBB"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 0 }
-asm = "clz {0:[gpr:out]}, {1:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "clz {dst}, {src}"
 
 [[instructions]]
 name = "CTZ"
 form = "ZBB"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 1 }
-asm = "ctz {0:[gpr:out]}, {1:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "ctz {dst}, {src}"
 
 [[instructions]]
 name = "CPOP"
 form = "ZBB"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x30, rs2 = 2 }
-asm = "cpop {0:[gpr:out]}, {1:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "cpop {dst}, {src}"
 
 [[instructions]]
 name = "REV8"
 form = "ZBB"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x68, rs2 = 8 }
-asm = "rev8 {0:[gpr:out]}, {1:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "rev8 {dst}, {src}"
 
 [[instructions]]
 name = "ROL"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x30 }
-asm = "rol {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "rol {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "ROR"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x30 }
-asm = "ror {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "ror {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MIN"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0x05 }
-asm = "min {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "min {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MAX"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 1, funct7 = 0x05 }
-asm = "max {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "max {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MINU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 4, funct7 = 0x05 }
-asm = "minu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "minu {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MAXU"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x05 }
-asm = "maxu {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "maxu {dst}, {src}, {src2}"
 # ── 原子（A 扩展，opcode 0x2F）：funct5 规范值（LLVM 对照）──
 # amoadd=0、amoswap=1、lr=2、sc=3、amoxor=4、amoor=8、amoand=12、
 # amomin=16、amomax=20、amominu=24、amomaxu=28；aq/rl 恒 0（单线程 QEMU）。
@@ -852,62 +940,71 @@ name = "AMOADD_W"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 0, funct3 = 2 }
-asm = "amoadd.w {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "amoadd.w {dst}, {src2}, ({src})"
 
 [[instructions]]
 name = "AMOADD_D"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 0, funct3 = 3 }
-asm = "amoadd.d {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "amoadd.d {dst}, {src2}, ({src})"
 
 [[instructions]]
 name = "AMOSWAP_W"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 1, funct3 = 2 }
-asm = "amoswap.w {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "amoswap.w {dst}, {src2}, ({src})"
 
 [[instructions]]
 name = "AMOSWAP_D"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 1, funct3 = 3 }
-asm = "amoswap.d {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "amoswap.d {dst}, {src2}, ({src})"
 
 [[instructions]]
 name = "LR_W"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 2, funct3 = 2, rs2 = 0 }
-asm = "lr.w {0:[gpr:out]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "lr.w {dst}, ({src})"
 
 [[instructions]]
 name = "LR_D"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 2, funct3 = 3, rs2 = 0 }
-asm = "lr.d {0:[gpr:out]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "lr.d {dst}, ({src})"
 
 [[instructions]]
 name = "SC_W"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 3, funct3 = 2 }
-asm = "sc.w {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "sc.w {dst}, {src2}, ({src})"
 
 [[instructions]]
 name = "SC_D"
 form = "R"
 opcode = 0x2F
 fields = { funct5 = 3, funct3 = 3 }
-asm = "sc.d {0:[gpr:out]}, {2:[gpr:in]}, ({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "sc.d {dst}, {src2}, ({src})"
 
 [[instructions]]
 name = "AUIPC"
 form = "U"
 opcode = 0x17
-asm = "auipc {0:[gpr:out]}, {1:[imm20:in]}"
+ops = ["dst:gpr:out", "imm:imm20"]
+asm = "auipc {dst}, {imm}"
 
 # GlobalAddr 专用：auipc+addi PC-relative 对（encoder 特判 imm<0 →
 # Relative(4,0) "G{id}" reloc；RiscvRelocPatcher 按 opcode 0x17/0x13
@@ -916,7 +1013,8 @@ asm = "auipc {0:[gpr:out]}, {1:[imm20:in]}"
 name = "AUIPC_GLOBAL"
 form = "U"
 opcode = 0x17
-asm = "auipc.g {0:[gpr:out]}, {1:[imm20:in]}"
+ops = ["dst:gpr:out", "imm:imm20"]
+asm = "auipc.g {dst}, {imm}"
 global_reloc = "pcrel_hi"
 
 [[instructions]]
@@ -924,7 +1022,8 @@ name = "ADDI_GLOBAL"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-asm = "addi.g {0:[gpr:out]}, {1:[gpr:in]}, {2:[imm12:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "addi.g {dst}, {src}, {imm}"
 global_reloc = "pcrel_lo"
 
 
@@ -941,70 +1040,80 @@ name = "ADDW"
 form = "R"
 opcode = 0x3B
 fields = { funct3 = 0, funct7 = 0x00 }
-asm = "addw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "addw {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SUBW"
 form = "R"
 opcode = 0x3B
 fields = { funct3 = 0, funct7 = 0x20 }
-asm = "subw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "subw {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SLLW"
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 1, funct7 = 0x00 }
-asm = "sllw {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+asm = "sllw {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SRLW"
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 5, funct7 = 0x00 }
-asm = "srlw {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+asm = "srlw {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SRAW"
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 5, funct7 = 0x20 }
-asm = "sraw {0:[gpr:out]}, {1:[gpr:in]}, {2:[shamt:in]}"
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+asm = "sraw {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "MULW"
 form = "R"
 opcode = 0x3B
 fields = { funct3 = 0, funct7 = 0x01 }
-asm = "mulw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "mulw {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "DIVW"
 form = "R"
 opcode = 0x3B
 fields = { funct3 = 4, funct7 = 0x01 }
-asm = "divw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "divw {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "DIVUW"
 form = "R"
 opcode = 0x3B
 fields = { funct3 = 5, funct7 = 0x01 }
-asm = "divuw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "divuw {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "REMW"
 form = "R"
 opcode = 0x3B
 fields = { funct3 = 6, funct7 = 0x01 }
-asm = "remw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "remw {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "REMUW"
 form = "R"
 opcode = 0x3B
 fields = { funct3 = 7, funct7 = 0x01 }
-asm = "remuw {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "remuw {dst}, {src}, {src2}"
 
 # 32 位加载/存储（LW/SW；opcode 0x03/0x23，funct3=2）
 [[instructions]]
@@ -1012,14 +1121,16 @@ name = "LW"
 form = "I"
 opcode = 0x03
 fields = { funct3 = 2 }
-asm = "lw {0:[gpr:out]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "lw {dst}, {imm}({src})"
 
 [[instructions]]
 name = "SW"
 form = "S"
 opcode = 0x23
 fields = { funct3 = 2 }
-asm = "sw {0:[gpr:in]}, {2:[imm12:in]}({1:[gpr:in]})"
+ops = ["src:gpr", "src2:gpr", "imm:imm12"]
+asm = "sw {src}, {imm}({src2})"
 
 # RET = jalr x0, 0(x1)（form I 全固定位域）
 [[instructions]]

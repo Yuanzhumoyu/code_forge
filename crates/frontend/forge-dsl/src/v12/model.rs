@@ -573,10 +573,16 @@ pub enum RexW {
     Always,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Opsize {
     Slot(u16),
     Reg(u16),
+    /// `opsize = "<操作数名>"`：取该命名操作数的寄存器宽度。
+    ///
+    /// 自解释形态，取代 `"s<N>"` 的位置引用——`opsize = "dst"` 一眼看出取的是
+    /// 目的操作数。`collect_inst_infos` 里按 `ops` 声明序解析成 [`Opsize::Slot`]，
+    /// 下游只见索引。
+    Named(String),
     /// `opsize = "max"`：宽度 = 全部 Reg 操作数宽度的**最大值**。
     ///
     /// 用于两个源槽都不是"结果"的同宽指令（x86 CMP/TEST：`cmp r/m, r` 两操作数
@@ -602,11 +608,18 @@ impl FromStr for Opsize {
         if s == "max" {
             return Ok(Self::Max);
         }
-        let n = s
-            .get(1..)
-            .ok_or_else(|| "opsize must be \"max\"、\"s<N>\" or a bit width (16/32/64)".to_string())?
-            .parse::<u16>()
-            .map_err(|e| e.to_string())?;
+        // "s<N>" / "r<N>" 是位置/字节形态；其余非空字符串 = 命名操作数引用
+        let digits = s.get(1..).unwrap_or("");
+        let n: u16 = match digits.parse() {
+            Ok(n) if !digits.is_empty() => n,
+            _ => {
+                return if s.is_empty() {
+                    Err("opsize must not be empty".to_string())
+                } else {
+                    Ok(Self::Named(s.to_string()))
+                };
+            }
+        };
         match s.chars().next() {
             Some('s') => Ok(Self::Slot(n)),
             // "r<字节>" 是 v14 及以前的写法（r8 = 8 字节 = 64 位），与
@@ -616,7 +629,7 @@ impl FromStr for Opsize {
                 "opsize = \"r{n}\" 是字节单位的旧写法，改写成位宽整数 opsize = {}",
                 n as u32 * 8
             )),
-            _ => Err("opsize must be \"max\"、\"s<N>\" or a bit width (16/32/64)".to_string()),
+            _ => Ok(Self::Named(s.to_string())),
         }
     }
 }
@@ -637,6 +650,7 @@ impl Display for Opsize {
             Opsize::Slot(idx) => write!(f, "s{}", idx),
             // 序列化回位宽整数形态（往返一致）
             Opsize::Reg(bytes) => write!(f, "{}", *bytes as u32 * 8),
+            Opsize::Named(n) => write!(f, "{n}"),
             Opsize::Max => write!(f, "max"),
         }
     }
@@ -753,9 +767,20 @@ pub struct Instruction {
     /// 固定字段值（funct3/funct7/前缀字节...），按位域名引用。
     #[serde(default)]
     pub fields: Option<BTreeMap<String, u64>>,
-    /// 汇编模板（必填，完整格式）：`"add {0:[gpr:in]}, {1:[gpr:inout]}"`。
-    /// 首词 = 汇编助记符（唯一事实来源，替代已删除的 mnemonic 字段）；
-    /// 操作数占位符 `{i:[槽:角色]}` 内联声明操作数（角色缺省 in）。
+    /// **命名操作数声明**（v15）：每项 `"名字:槽[:角色]"`，**数组序 = 编码序**
+    /// （modrm reg/rm、定宽位域绑定都按这个序）。角色缺省 `in`。
+    ///
+    /// 声明与打印从此分离：`asm` 只用 `{名字}` **引用**操作数，不再内联声明。
+    /// v14 的写法把两件事塞在一起——`asm = "add {1:[gprx:inout]}, {0:[gprx:in]}"`
+    /// 里索引与打印序解耦，读者无法从 `opsize = "s0"` 看出 s0 是源还是目的
+    /// （ADD_RM_R 里恰好是**源**，这正是 v14 那个 32 位截断指针 bug 的根源）。
+    /// 命名之后写 `opsize = "dst"`，自解释。
+    ///
+    /// 省略 `ops` 时回退 v14 的内联声明形态（迁移期并存）。
+    #[serde(default)]
+    pub ops: Option<Vec<String>>,
+    /// 汇编模板（必填，完整格式）。首词 = 助记符（唯一事实来源）。
+    /// 有 `ops` 时用 `{名字}` 引用；无 `ops` 时用 `{i:[槽:角色]}` 内联声明。
     pub asm: String,
     /// 结构化谓词（迭代 4 定型：{ and = [...], eq = [...] }）。
     #[serde(default)]
@@ -854,8 +879,11 @@ pub struct Family {
     /// 家族共享固定字段（如 SSE 的 prefix/w）；variant.fields 覆盖/追加。
     #[serde(default)]
     pub fields: Option<BTreeMap<String, u64>>,
+    /// 家族共享命名操作数声明（同 [`Instruction::ops`]）；省略则回退 asm 内联声明。
+    #[serde(default)]
+    pub ops: Option<Vec<String>>,
     /// 家族共享 asm 模板（完整格式；`{name}` 占位符替换为变体名小写 =
-    /// 变体助记符；操作数占位符内联声明，如 `"addps {0:[fpr:out]}, ..."`）。
+    /// 变体助记符）。
     pub asm: String,
     pub variants: Vec<FamilyVariant>,
 }

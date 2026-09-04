@@ -118,58 +118,67 @@ operand_fields = []
 name = "ADD16"
 form = "R"
 opcode = 0x10
-asm = "add {0:[r16:out]}, {1:[r16:in]}, {2:[r16:in]}"
+ops = ["dst:r16:out", "src:r16", "src2:r16"]
+asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "ADD32"
 form = "R"
 opcode = 0x11
-asm = "add {0:[r32:out]}, {1:[r32:in]}, {2:[r32:in]}"
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "ADD64"
 form = "R"
 opcode = 0x12
-asm = "add {0:[r64:out]}, {1:[r64:in]}, {2:[r64:in]}"
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "add {dst}, {src}, {src2}"
 
 # mov：同上，二操作数
 [[instructions]]
 name = "MOV16"
 form = "RR"
 opcode = 0x20
-asm = "mov {0:[r16:out]}, {1:[r16:in]}"
+ops = ["dst:r16:out", "src:r16"]
+asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV32"
 form = "RR"
 opcode = 0x21
-asm = "mov {0:[r32:out]}, {1:[r32:in]}"
+ops = ["dst:r32:out", "src:r32"]
+asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV64"
 form = "RR"
 opcode = 0x22
-asm = "mov {0:[r64:out]}, {1:[r64:in]}"
+ops = ["dst:r64:out", "src:r64"]
+asm = "mov {dst}, {src}"
 
 # mov 立即数（16 位常量；RI form rd = imm）
 [[instructions]]
 name = "MOV16_R_IMM16"
 form = "RI"
 opcode = 0x23
-asm = "mov {0:[r16:out]}, {1:[imm16:in]}"
+ops = ["dst:r16:out", "imm:imm16"]
+asm = "mov {dst}, {imm}"
 
 # 帧分配/释放（rd = rs1 ± imm8；B3 接入 TargetMachine 用）
 [[instructions]]
 name = "SUBI16"
 form = "RI"
 opcode = 0x40
-asm = "subi {0:[r16:out]}, {1:[r16:in]}, {2:[imm16:in]}"
+ops = ["dst:r16:out", "src:r16", "imm:imm16"]
+asm = "subi {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "ADDI16"
 form = "RI"
 opcode = 0x41
-asm = "addi {0:[r16:out]}, {1:[r16:in]}, {2:[imm16:in]}"
+ops = ["dst:r16:out", "src:r16", "imm:imm16"]
+asm = "addi {dst}, {src}, {imm}"
 
 # 返回（全字位域；word = 0x01，与 NOP 的 0 区分）
 [[instructions]]
@@ -185,7 +194,8 @@ name = "BRZ"
 form = "B"
 opcode = 0x30
 effect = ["Branch"]
-asm = "brz {0:[r32:in]}, {1:[lab:in]}"
+ops = ["src:r32", "target:lab"]
+asm = "brz {src}, {target}"
 
 # 无操作数（全字位域，避免与 opcode 0x10 撞车）
 [[instructions]]

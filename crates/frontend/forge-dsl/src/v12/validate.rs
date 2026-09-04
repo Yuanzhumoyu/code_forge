@@ -411,7 +411,8 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
             ));
         }
         // 操作数声明（asm 占位符内联）：解析 + 槽存在/角色合法/序号连续校验
-        let (_, uses) = super::codegen::parse_asm_decl(&inst.asm, &inst.name)?;
+        let (_, uses, _) =
+            super::codegen::parse_asm_decl(&inst.asm, inst.ops.as_deref(), &inst.name)?;
         for op in &uses {
             if !slot_exists(m, &op.slot) {
                 return Err(format!(

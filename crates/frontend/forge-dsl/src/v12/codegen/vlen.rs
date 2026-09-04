@@ -143,12 +143,13 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
     // 操作数寄存器推导，如 opsize=0 取 op0 的 RAX→64/EAX→32）；`"max"` → 全部
     // Reg 操作数宽度取最大（无目的槽的同宽指令——CMP/TEST，见 `Opsize::Max`）；
     // 缺省 = 第一个 Reg 槽操作数。指令级覆盖（Instruction.opsize）优先于 form 级。
-    let form_opsize = form.opsize;
+    let form_opsize = form.opsize.clone();
     let rex_w_override = form.rex_w;
-    let (has_opsize, opsize_expr) = match form_opsize {
+    let (has_opsize, opsize_expr) = match &form_opsize {
         Some(o) => match o {
             Opsize::Reg(width) => (true, Some(quote! { #width })),
             Opsize::Slot(idx) => {
+                let idx = *idx;
                 let (_, fid, slot, _) = info.operands.get(idx as usize).ok_or_else(|| {
                     format!(
                         "[[instructions.{}]]: form opsize slot ={} references missing operand {:?}",
@@ -166,6 +167,13 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
                     ));
                 }
                 (true, Some(quote! { #fid.width() }))
+            }
+            // Named 在 collect_inst_infos 已解析成 Slot（按 ops 声明序）
+            Opsize::Named(n) => {
+                return Err(format!(
+                    "[[instructions.{}]].opsize = \"{n}\": 未解析的操作数名（需要 ops 声明）",
+                    info.inst.name
+                ));
             }
             // max：折叠成 `w0.max(w1)...`（Reg 槽逐个 `.width()`）。混宽 IR
             // 降级（`icmp(PTR, I32)`）按宽者编码 = upcast 结果宽度。
@@ -200,10 +208,10 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
         (None, w0)
     } else if !has_opsize {
         (None, false)
-    } else if let Some(n) = form_opsize {
+    } else if let Some(n) = &form_opsize {
         match n {
-            Opsize::Reg(width) => (Some(width), false),
-            Opsize::Slot(idx) => match reg_view.get(idx as usize).copied().flatten() {
+            Opsize::Reg(width) => (Some(*width), false),
+            Opsize::Slot(idx) => match reg_view.get(*idx as usize).copied().flatten() {
                 // 多类槽（gprx）：宽度由前缀扫描的 __opsize 决定（字段按
                 // __opsize 视图构造）——decode guard 必须放宽（无条件），
                 // 否则无前缀 32 位形态（__opsize=4）被拒（固定 _32 变体
@@ -211,6 +219,8 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
                 None => (None, false),
                 Some(w) => (Some(w), false),
             },
+            // Named 已在 collect_inst_infos 解析（此分支不可达）
+            Opsize::Named(_) => (None, false),
             // max：编码宽度是运行期取宽的结果，非静态形态 → guard 无条件
             // （同多类槽 Slot；字段按扫描出的 __opsize 视图构造，自反解 16/32/64）。
             Opsize::Max => (None, false),

@@ -176,6 +176,14 @@ x86 forms 47 → 19，37 条指令直接内联编码键（不再有 `MRR_0F_NOOS
 与 `[conventions]` 的位单位矛盾，旧写法现在报错并给出迁移提示；
 `"s<N>"`（取第 N 个操作数的宽度）与 `"max"`（取全部 Reg 操作数的最大宽度）不变。
 
+命名操作数（v15-S3c）：`ops = ["src:gprx", "dst:gprx:inout"]` **数组序 = 编码序**
+（modrm reg/rm、定宽位域绑定都按这个序；角色缺省 `in`），`asm` 只用 `{名字}`
+**引用**——声明与打印彻底分离。`opsize` 因此能写 `opsize = "dst"`（自解释），
+取代 `"s1"` 这种"读者无法判断指哪个"的位置引用（v14 那个把 64 位指针截成 32 位的
+bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角色]}` **已删除**，
+无兼容层。`collect_inst_infos` 把 `{名字}` 规范化成 `{序号}` 后交给下游，
+生成器（asm/machine/decode）只认索引、不感知命名。
+
 ## Code Conventions
 
 - Edition 2024 throughout

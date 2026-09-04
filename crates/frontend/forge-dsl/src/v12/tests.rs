@@ -51,7 +51,8 @@ name = "ADD"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0 }
-asm = "add {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}"
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "add {dst}, {src}, {src2}"
 "#;
 
 #[test]
@@ -75,7 +76,7 @@ fn parse_minimal_riscv_style() {
     let add = &m.instructions[0];
     assert_eq!(add.opcode, Some(0x33));
     assert_eq!(add.fields.as_ref().unwrap()["funct3"], 0);
-    assert_eq!(add.asm, "add {0:[gpr:out]}, {1:[gpr:in]}, {2:[gpr:in]}");
+    assert_eq!(add.asm, "add {dst}, {src}, {src2}");
 }
 
 const X86_DOC: &str = r#"
@@ -202,7 +203,8 @@ modrm = "rm"
 name = "ADD_RM_R"
 form = "RM"
 opcode = 0x01
-asm = "add {0:[rm:inout]}, {1:[rm:in]}"
+ops = ["dst:rm:inout", "src:rm"]
+asm = "add {dst}, {src}"
 "#;
     let m = parse_and_validate(doc).expect("valid");
     // 槽能力声明：inout = 读改写
@@ -482,7 +484,8 @@ name = "R"
 [[instructions]]
 name = "NOP"
 form = "R"
-asm = "nop {0:[nope:out]}"
+ops = ["dst:nope:out"]
+asm = "nop {dst}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
@@ -516,7 +519,8 @@ operand_fields = ["rd"]
 name = "NOP"
 form = "R"
 opcode = 0x13
-asm = "foo {0:[g:out]}, {1:[g:in]}"
+ops = ["dst:g:out", "src:g"]
+asm = "foo {dst}, {src}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
@@ -577,7 +581,8 @@ name = "R"
 [[families]]
 name = "F"
 form = "R"
-asm = "f {0:[g:out]}"
+ops = ["dst:g:out"]
+asm = "f {dst}"
 [[families.variants]]
 name = "V1"
 "#;
@@ -688,7 +693,8 @@ operand_fields = ["rd"]
 name = "FOO"
 form = "R"
 opcode = 0x13
-asm = "foo {0:[g:out]}"
+ops = ["dst:g:out"]
+asm = "foo {dst}"
 "#;
     let model = parse_and_validate(doc).unwrap();
     let ts = super::codegen::generate(&model).unwrap();
@@ -726,7 +732,8 @@ align_pad = 0x90
 name = "FOO"
 form = "R"
 opcode = 0x13
-asm = "foo {0:[g:out]}"
+ops = ["dst:g:out"]
+asm = "foo {dst}"
 "#;
     let model = parse_and_validate(doc).unwrap();
     assert_eq!(model.emit.as_ref().unwrap().align_pad, Some(0x90));
@@ -768,7 +775,8 @@ operand_fields = ["rd"]
 name = "FOO"
 form = "R"
 opcode = 0x33
-asm = "foo {0:[g:out]}"
+ops = ["dst:g:out"]
+asm = "foo {dst}"
 "#;
     let model = parse_and_validate(doc).unwrap();
     let err = super::codegen::generate(&model).unwrap_err();
@@ -808,7 +816,8 @@ name = "ADDI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-asm = "addi {0:[g:out]}, {1:[g:in]}, {2:[i:in]}"
+ops = ["dst:g:out", "src:g", "src2:i"]
+asm = "addi {dst}, {src}, {src2}"
 [[instructions]]
 name = "NOP"
 form = "I"
@@ -885,7 +894,8 @@ name = "ADDI"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-asm = "addi {0:[g:out]}, {1:[g:in]}, {2:[i:in]}"
+ops = ["dst:g:out", "src:g", "src2:i"]
+asm = "addi {dst}, {src}, {src2}"
 "#,
     );
     let ts = super::codegen::generate(&model).unwrap();
@@ -960,7 +970,8 @@ operand_fields = ["rd"]
 name = "FOO"
 form = "R"
 opcode = 0x13
-asm = "{bad {0:[g:out]}"
+ops = ["dst:g:out"]
+asm = "{bad {dst}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
@@ -980,7 +991,8 @@ name = "LDB"
 form = "I"
 opcode = 0x03
 fields = { funct3 = 0 }
-asm = "ldb {0:[g:out]}, byte ptr [{1:[g:in]}+{2:[i:in]}]"
+ops = ["dst:g:out", "src:g", "src2:i"]
+asm = "ldb {dst}, byte ptr [{src}+{src2}]"
 "#,
     );
     let ts = super::codegen::generate(&model).unwrap();
@@ -1005,7 +1017,8 @@ name = "BAD"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-asm = "bad {0:[g:out]}{1:[g:in]} {2:[i:in]}"
+ops = ["dst:g:out", "src:g", "src2:i"]
+asm = "bad {dst}{src} {src2}"
 "#,
     );
     let err = super::codegen::generate(&model).unwrap_err();
@@ -1014,7 +1027,8 @@ asm = "bad {0:[g:out]}{1:[g:in]} {2:[i:in]}"
 
 #[test]
 fn generic_template_out_of_range_rejected() {
-    // 占位符索引不连续（{0}, {3}）→ validate 报错（操作数序号必须 0..k）
+    // v15：模板里的 `{名字}` 必须在 ops 里声明过——拼错的名字不再静默落
+    // fallback（v14 是索引不连续报错，命名之后错误更直接）
     let doc = r#"
 [meta]
 name = "x"
@@ -1044,12 +1058,14 @@ name = "BAD"
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
-asm = "bad {0:[g:out]}, {3:[g:in]}"
+ops = ["dst:g:out", "src:g"]
+asm = "bad {dst}, {srcc}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         V12Error::Validation { msg, .. } => {
-            assert!(msg.contains("contiguous"), "msg: {msg}");
+            assert!(msg.contains("'{srcc}'"), "msg: {msg}");
+            assert!(msg.contains("dst, src"), "需列出已声明的名字: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -1086,7 +1102,8 @@ operand_fields = ["rd", "imm20"]
 name = "AUIPC_GLOBAL"
 form = "U"
 opcode = 0x17
-asm = "auipc.g {0:[g:out]}, {1:[imm20:in]}"
+ops = ["dst:g:out", "imm:imm20"]
+asm = "auipc.g {dst}, {imm}"
 global_reloc = "pcrel_hi"
 "#;
     let m = parse_and_validate(doc).expect("valid doc with global_reloc must parse");
@@ -1127,7 +1144,8 @@ operand_fields = ["rd", "imm20"]
 name = "BAD"
 form = "U"
 opcode = 0x17
-asm = "bad {0:[g:out]}, {1:[imm20:in]}"
+ops = ["dst:g:out", "imm:imm20"]
+asm = "bad {dst}, {imm}"
 global_reloc = "bogus"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
@@ -1137,7 +1155,7 @@ global_reloc = "bogus"
         V12Error::Parse { msg, line, .. } => {
             assert!(msg.contains("bogus"), "msg: {msg}");
             assert!(msg.contains("abs8"), "需列出候选: {msg}");
-            assert_eq!(line, 28, "行号指向 global_reloc 那一行");
+            assert_eq!(line, 29, "行号指向 global_reloc 那一行");
         }
         other => panic!("expected Parse error, got {other:?}"),
     }
@@ -1172,7 +1190,8 @@ name = "MY_MOV"
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0 }
-asm = "mymov {0:[g:out]}, {1:[g:in]}, {2:[g:in]}"
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "mymov {dst}, {src}, {src2}"
 effect = ["Move"]
 "#;
     let m = parse_and_validate(doc).expect("doc with Move effect must parse");
@@ -1305,7 +1324,8 @@ operand_fields = ["rd", "rs1"]
 name = "MOV"
 form = "RR"
 opcode = 1
-asm = "mov {{0:[g:out]}}, {{1:[g:in]}}"
+ops = ["dst:g:out", "src:g"]
+asm = "mov {{dst}}, {{src}}"
 {rule}
 "#
     )
@@ -1367,7 +1387,8 @@ fn lowering_allows_same_insts_with_different_when() {
 /// families 展开出的助记符也算已声明（`{name}` → 变体名小写）。
 #[test]
 fn lowering_accepts_family_mnemonic() {
-    let rule = "[[families]]\nname = \"F\"\nform = \"RR\"\nasm = \"{name} {0:[g:out]}, {1:[g:in]}\"\n\
+    let rule = "[[families]]\nname = \"F\"\nform = \"RR\"\n\
+                ops = [\"dst:g:out\", \"src:g\"]\nasm = \"{name} {dst}, {src}\"\n\
                 [[families.variants]]\nname = \"NEG\"\nopcode = 9\n\
                 [[lowering]]\nop = \"Ineg\"\ninsts = [\"neg {out}, {0}\"]";
     parse_and_validate(&lowering_doc(rule)).expect("family 变体助记符必须被识别");
@@ -1526,7 +1547,8 @@ escape = [0x0F]
 prefix = "field"
 opcode = 0x7E
 fields = { prefix = 0x66, w = 1 }
-asm = "movq {0:[g:out]}, {1:[g:in]}"
+ops = ["dst:g:out", "src:g"]
+asm = "movq {dst}, {src}"
 "#;
     let m = parse_and_validate(doc).expect("无 form 的指令必须合法");
     let inst = &m.instructions[0];
@@ -1559,7 +1581,8 @@ name = "I"
 form = "MRR"
 modrm = "rr_rev"
 opcode = 1
-asm = "i {0:[g:out]}, {1:[g:in]}"
+ops = ["dst:g:out", "src:g"]
+asm = "i {dst}, {src}"
 "#;
     let m = parse_and_validate(doc).expect("valid");
     let preset = &m.forms[0].keys;
@@ -1590,4 +1613,107 @@ fn opsize_fixed_width_is_bits() {
     let old: Result<Opsize, _> = toml::Value::String("r8".into()).try_into();
     let msg = format!("{}", old.unwrap_err());
     assert!(msg.contains("opsize = 64"), "需给出位宽写法提示: {msg}");
+}
+
+// ─────────── S3c：命名操作数（ops 声明 + asm 引用） ───────────
+
+/// 最小命名形态：ops 声明序 = 编码序；asm 只引用名字；opsize 用名字。
+#[test]
+fn named_ops_declare_and_reference() {
+    let doc = r#"
+[meta]
+name = "x"
+variable_length = true
+[reg.gpr8]
+count = 16
+[[operand_slots]]
+name = "gx"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out", "inout"]
+[[instructions]]
+name = "ADD_RM_R"
+modrm = "rr"
+opsize = "dst"
+opcode = 0x01
+ops = ["src:gx", "dst:gx:inout"]
+asm = "add {dst}, {src}"
+"#;
+    let m = parse_and_validate(doc).expect("命名形态必须合法");
+    let inst = &m.instructions[0];
+    assert_eq!(
+        inst.ops.as_deref(),
+        Some(&["src:gx".to_string(), "dst:gx:inout".to_string()][..])
+    );
+    // opsize 保留名字形态到模型层，collect_inst_infos 才解析成位置
+    assert_eq!(
+        inst.enc.opsize,
+        Some(crate::v12::model::Opsize::Named("dst".into()))
+    );
+    // 打印序与编码序无关：asm 先打 dst（= 编码序 1）
+    assert_eq!(inst.asm, "add {dst}, {src}");
+}
+
+#[test]
+fn named_ops_reject_duplicate_name() {
+    let doc = ops_doc(r#"ops = ["a:gx", "a:gx"]
+asm = "i {a}, {a}""#);
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("重复"), "msg: {msg}");
+}
+
+#[test]
+fn named_ops_reject_bad_role() {
+    let doc = ops_doc(r#"ops = ["a:gx:sideways"]
+asm = "i {a}""#);
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("sideways"), "msg: {msg}");
+}
+
+#[test]
+fn named_ops_reject_double_reference() {
+    let doc = ops_doc(r#"ops = ["a:gx", "b:gx"]
+asm = "i {a}, {a}""#);
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("引用 2 次"), "msg: {msg}");
+}
+
+#[test]
+fn opsize_named_must_reference_declared_op() {
+    let doc = ops_doc(r#"opsize = "nope"
+ops = ["a:gx"]
+asm = "i {a}""#);
+    // opsize 名字解析在 codegen（collect_inst_infos）——校验期先过，生成期报错
+    let m = parse_and_validate(&doc).expect("模型层合法");
+    let err = super::codegen::generate(&m).unwrap_err();
+    assert!(err.contains("'nope'"), "err: {err}");
+}
+
+fn ops_doc(body: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "x"
+variable_length = true
+[reg.gpr8]
+count = 16
+[[operand_slots]]
+name = "gx"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out", "inout"]
+[[instructions]]
+name = "I"
+modrm = "rr"
+opcode = 1
+{body}
+"#
+    )
+}
+
+fn validation_msg(doc: &str) -> String {
+    match parse_and_validate(doc).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    }
 }

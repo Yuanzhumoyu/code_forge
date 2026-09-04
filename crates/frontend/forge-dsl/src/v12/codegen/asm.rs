@@ -95,25 +95,16 @@ pub(crate) enum Seg {
 ///
 /// 替换迭代 3b 的封闭 TokenShape（Simple/Bracket/Mem/Mem0）：`[{n}]`、
 /// `{off}({base})`、`byte ptr [{n}]` 等都是字面段的自然组合，用户模板自由。
-/// 模板解析产物：段序列 + 操作数声明表（序号, 槽名, 角色名）。
-type ParsedTemplate = (Vec<Seg>, Vec<(usize, String, Option<String>)>);
-
-fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
-    Ok(parse_template_full(tpl)?.0)
-}
-
-/// 解析操作数模板为段序列 + 操作数声明表。
 ///
-/// 占位符语法：`{n}`（兼容旧式）或 `{n:[槽]}` 或 `{n:[槽:角色]}`（v12.1：
-/// 操作数声明内联在 asm 中；角色缺省 "in"）。返回 (段序列, 声明表
-/// (序号, 槽名, 角色名))——序号可能乱序/跳号，由调用方校验连续性。
+/// v15 起模板里的占位符**只能是索引**（`{0}`/`{1}`…）——命名形态
+/// （`{dst}`）由 `collect_inst_infos` 按 `ops` 声明序规范化成索引后才进来；
+/// v14 的内联声明 `{i:[槽:角色]}` 已删除（声明归 `ops`，模板只负责引用）。
 /// `pub(crate)`：`collect_inst_infos`（mod.rs）复用。
-pub(crate) fn parse_template_full(tpl: &str) -> Result<ParsedTemplate, String> {
+pub(crate) fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
     if tpl.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok(Vec::new());
     }
     let mut segs = Vec::new();
-    let mut decls: Vec<(usize, String, Option<String>)> = Vec::new();
     let mut lit = String::new();
     let mut chars = tpl.chars().peekable();
     while let Some(c) = chars.next() {
@@ -129,36 +120,16 @@ pub(crate) fn parse_template_full(tpl: &str) -> Result<ParsedTemplate, String> {
             if chars.next() != Some('}') {
                 return Err(format!("unterminated '{{' in asm template '{tpl}'"));
             }
-            // inner = "n" | "n:[slot]" | "n:[slot:role]"
-            let mut parts = inner.split(':');
-            let n: usize = parts
-                .next()
-                .and_then(|p| p.trim().parse().ok())
-                .ok_or_else(|| format!("bad placeholder '{{{inner}}}' in asm template '{tpl}'"))?;
-            let slot = parts.next().map(|s| {
-                s.trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .to_string()
-            });
-            let role = parts.next().map(|r| {
-                r.trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .to_string()
-            });
-            if parts.next().is_some() {
-                return Err(format!(
-                    "bad placeholder '{{{inner}}}' (expected {{n:[slot:role]}}) in asm template '{tpl}'"
-                ));
-            }
+            let n: usize = inner.trim().parse().map_err(|_| {
+                format!(
+                    "bad placeholder '{{{inner}}}' in asm template '{tpl}'：\
+                     模板只能引用操作数序号（命名引用需在 `ops` 里声明）"
+                )
+            })?;
             if !lit.is_empty() {
                 segs.push(Seg::Lit(std::mem::take(&mut lit)));
             }
             segs.push(Seg::Op(n));
-            if let Some(s) = slot {
-                decls.push((n, s, role));
-            }
         } else {
             lit.push(c);
         }
@@ -169,7 +140,7 @@ pub(crate) fn parse_template_full(tpl: &str) -> Result<ParsedTemplate, String> {
     if segs.is_empty() {
         return Err(format!("empty asm template '{tpl}'"));
     }
-    Ok((segs, decls))
+    Ok(segs)
 }
 
 /// 校验段序列：占位符索引越界、连续占位符无字面分隔。
@@ -914,7 +885,7 @@ fn operand_parse_tok(
     // `PhysReg::width()` 返回组 payload（字节，如 gpr8 → 8）；Opsize::Reg(w)
     // 的 w 同为字节（r8 = 64 位）——同单位比较。**只作用于多类槽**：
     // 单类槽（含内存基址寄存器）已由 class 过滤保证宽度，不受 opsize 影响。
-    let op = info.form.opsize;
+    let op = info.form.opsize.clone();
     let wreq = match op {
         Some(Opsize::Reg(w)) if gpr_only && slot.classes().map(|c| c.len() > 1).unwrap_or(true) => {
             Some(w)
