@@ -2457,6 +2457,37 @@ pub const CASES: &[Case] = &[
             7.0,
         ),
     },
+    // S6 树型模式锚：Fadd(Fmul(a,b), c) → mul+add 融合（Fmul 单 use、同块）。
+    // 验证 [[pattern]] 预扫命中 + consumed 跳过 + lower_pattern 分发。
+    Case {
+        name: "fma_fadd_fmul_pattern_f64",
+        ops: &["Fadd", "Fmul", "Fconst"],
+        kind: CaseKind::F64(
+            |b| {
+                let a = b.fconst(2.0f64.to_bits(), TypeId::F64);
+                let c = b.fconst(3.0f64.to_bits(), TypeId::F64);
+                let d = b.fconst(4.0f64.to_bits(), TypeId::F64);
+                let t = b.fmul(a, c);
+                b.fadd(t, d)
+            },
+            10.0,
+        ),
+    },
+    Case {
+        name: "fma_fadd_fmul_pattern_f32",
+        ops: &["Fadd", "Fmul", "Fpext", "Fconst"],
+        kind: CaseKind::F64(
+            |b| {
+                let a = b.fconst(2.0f32.to_bits() as u64, TypeId::F32);
+                let c = b.fconst(3.0f32.to_bits() as u64, TypeId::F32);
+                let d = b.fconst(4.0f32.to_bits() as u64, TypeId::F32);
+                let t = b.fmul(a, c);
+                let s = b.fadd(t, d);
+                b.fpext(s, TypeId::F64)
+            },
+            10.0,
+        ),
+    },
     Case {
         name: "fcopysign_neg_to_pos",
         ops: &["Fcopysign", "Fconst"],

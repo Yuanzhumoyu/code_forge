@@ -6,10 +6,13 @@
 
 use crate::LowerCtx;
 use crate::machine::lowering::TargetLowering;
+use crate::machine::pattern::{
+    eval_pat_pred, type_elem_id, type_vec_bytes, type_width_bits, PatTerm, PatternSpec,
+};
 use crate::machine::peephole::TargetPeephole;
-use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::{CompileState, atomic_op_from_u64};
 use forge_ir::*;
+use std::collections::{HashMap, HashSet};
 
 impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     // ── Stage 1: Block Mapping ──
@@ -183,35 +186,6 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
     // ── Stage 4: Instruction Selection ──
 
-    /// Stage 3: IR 层模式融合（pattern isel）——按 ISA 门控的
-    /// PatternMatcher 就地重写匹配序列（Imul+Iadd→LEA 等）。
-    /// 消费指令标 Nop（不发射），代表指令带 isel_strategy 标签。
-    /// 基于模式的优化 lowering（pattern_isel 匹配后调用）。
-    pub(crate) fn run_pattern_matching<M: TargetMachine>(func: &mut Function, machine: &M) {
-        let Some(matcher) = machine.pattern_matcher() else {
-            return;
-        };
-        if matcher.pattern_count() == 0 {
-            return;
-        }
-        let total = 0;
-        for block_data in func.dfg.blocks.iter_mut() {
-            let order = block_data.inst_order.clone();
-            if order.is_empty() {
-                continue;
-            }
-            // 收集该 block 的指令（clone 后重写）——第三十五轮实验:禁用写回
-            let mut insts: Vec<Instruction> = order
-                .iter()
-                .map(|&i| func.dfg.insts[i.0 as usize].clone())
-                .collect();
-            let _ = matcher.apply(&mut insts, None);
-        }
-        if total > 0 && crate::pipeline::trace_enabled("FORGE_TRACE_ISEL") {
-            eprintln!("[isel] pattern-matched {total} sequences in {}", func.name);
-        }
-    }
-
     pub(crate) fn lower_all_blocks(
         &mut self,
         func: &Function,
@@ -325,7 +299,13 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         }
 
         for (i, block_data) in func.dfg.blocks.iter().enumerate() {
-            self.lower_block(Block(i as u32), block_data, &func.dfg, lowering)?;
+            self.lower_block(
+                Block(i as u32),
+                block_data,
+                &func.dfg,
+                &func.use_lists,
+                lowering,
+            )?;
         }
         Ok(())
     }
@@ -335,14 +315,36 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         block: Block,
         block_data: &BlockData,
         dfg: &DataFlowGraph,
+        use_lists: &UseLists,
         lowering: &dyn TargetLowering<Inst = I>,
     ) -> Result<(), IrError> {
         let vblock_id = self.block_map[&block];
         self.vcode.switch_to_block(vblock_id);
 
+        // S6：块内逆序预扫——匹配 [[pattern]]（内部节点单 use、同块），命中后
+        // 内部节点并入 consumed（前向循环跳过）、根指令记录 (模式名, 叶值)。
+        // 无 [[pattern]] 的 ISA 生成空表 → 此处零开销空转。
+        let patterns = lowering.patterns();
+        let mut consumed: HashSet<Inst> = HashSet::new();
+        let mut roots: HashMap<Inst, (String, Vec<Value>)> = HashMap::new();
+        if !patterns.is_empty() {
+            self.scan_patterns(
+                block,
+                block_data,
+                dfg,
+                use_lists,
+                patterns,
+                &mut consumed,
+                &mut roots,
+            );
+        }
+
         // block_inst_iter 返回借用迭代器（dfg 是函数参数，与 self 的 &mut 借用
         // 不冲突）——原实现 cloned().collect() 每块深克隆整块指令，纯浪费。
         for &ii in &block_data.inst_order {
+            if consumed.contains(&ii) {
+                continue; // 内部节点已并入命中模式（整棵子树 fused，不单独 lowering）
+            }
             let inst = &dfg.insts[ii.0 as usize];
             let args: smallvec::SmallVec<[XReg; 8]> = inst
                 .operands
@@ -594,8 +596,26 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             }
             // 每次 lowering 前清空写死寄存器（生成代码在 arm 尾部设置）
             self.ctx.current_clobbers.clear();
-            let mut machine_insts =
-                lowering.lower_inst(&inst.opcode, &args, &results, &mut self.ctx)?;
+            let mut machine_insts = if let Some((name, leaves)) = roots.get(&ii) {
+                // S6 pattern 命中：叶变量 → XReg（树 DFS 序），根结果 XReg 不变。
+                if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
+                    eprintln!(
+                        "[forge] pattern name={name} op={:?} leaves={leaves:?} results={results:?}",
+                        inst.opcode
+                    );
+                }
+                let leaf_xregs: smallvec::SmallVec<[XReg; 8]> = leaves
+                    .iter()
+                    .map(|v| {
+                        let ty = dfg.value_type(*v).unwrap_or(TypeId::VOID);
+                        let class = self.ctx.reg_class_for(&ty);
+                        self.get_or_alloc_xreg(*v, class)
+                    })
+                    .collect();
+                lowering.lower_pattern(name, &leaf_xregs, &results, &mut self.ctx)?
+            } else {
+                lowering.lower_inst(&inst.opcode, &args, &results, &mut self.ctx)?
+            };
             // 展开路径必须与 InstPacket::append 一致：若包内 XRegAllocator 分配过
             // 临时寄存器（编号从 0 起，与函数级 XReg 编号域重叠），先偏移重映射到
             // 函数级编号域的续接，再并入 xreg_map——否则包内 XReg 与函数级 XReg
@@ -667,11 +687,145 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         }
     }
 
+    // ── S6: [[pattern]] 树匹配（逆序预扫）──
+
+    /// 块内逆序预扫：对每条尚未 consumed 的指令，按 `patterns()` 的裁决序
+    /// （Op 节点数降 / when 叶子数降 / 声明序升）试匹配，首个结构 + `when`
+    /// 全中者生效。命中后内部节点指令并入 `consumed`（前向循环跳过）、
+    /// 根指令 → (模式名, 叶值 DFS 序) 写入 `roots` 供前向循环分发。
+    #[allow(clippy::too_many_arguments)]
+    fn scan_patterns(
+        &self,
+        block: Block,
+        block_data: &BlockData,
+        dfg: &DataFlowGraph,
+        use_lists: &UseLists,
+        patterns: &'static [PatternSpec],
+        consumed: &mut HashSet<Inst>,
+        roots: &mut HashMap<Inst, (String, Vec<Value>)>,
+    ) {
+        for &ii in block_data.inst_order.iter().rev() {
+            if consumed.contains(&ii) {
+                continue;
+            }
+            let inst = &dfg.insts[ii.0 as usize];
+            for spec in patterns {
+                if spec.op != inst.opcode || inst.operands.len() != spec.args.len() {
+                    continue;
+                }
+                let mut leaves: Vec<Option<Value>> = vec![None; spec.var_count as usize];
+                let mut internals: Vec<Inst> = Vec::new();
+                let matched = inst.operands.iter().zip(spec.args.iter()).all(
+                    |(&operand, term)| {
+                        match_pat_term(
+                            dfg,
+                            use_lists,
+                            block,
+                            operand,
+                            term,
+                            &mut leaves,
+                            &mut internals,
+                        )
+                    },
+                );
+                if !matched {
+                    continue;
+                }
+                // 根指令派生属性上的 `when`（与 lowering 规则 __attr 语义一致）。
+                if let Some(when) = spec.when {
+                    let attr = |name: &str| self.pattern_root_attr(dfg, inst, name);
+                    if !eval_pat_pred(when, &attr) {
+                        continue;
+                    }
+                }
+                consumed.extend(internals);
+                roots.insert(
+                    ii,
+                    (
+                        spec.name.to_string(),
+                        leaves.into_iter().map(|o| o.unwrap()).collect(),
+                    ),
+                );
+                break;
+            }
+        }
+    }
+
+    /// S6：根指令的派生属性（镜像生成器 `gen_lowering_attrs` 的 `__attr`）——
+    /// 类型从 IR 值推导（`dfg.value_type`，与生成代码经 `ctx.xreg_types`
+    /// 推导同值）。模式根为算术 op，`cond`/`imm0` 恒 None → 走 `_ => None`。
+    fn pattern_root_attr(
+        &self,
+        dfg: &DataFlowGraph,
+        inst: &Instruction,
+        name: &str,
+    ) -> Option<i64> {
+        let tc = self.ctx.type_ctx.as_ref();
+        let r0 = inst.results.first().and_then(|v| dfg.value_type(*v));
+        let o0 = inst.operands.first().and_then(|v| dfg.value_type(*v));
+        let o1 = inst.operands.get(1).and_then(|v| dfg.value_type(*v));
+        match name {
+            "rd" => r0.map(|t| type_width_bits(t, tc)),
+            "rs1_width" => o0.map(|t| type_width_bits(t, tc)),
+            "rs2_width" => o1.map(|t| type_width_bits(t, tc)),
+            "rd_vec" => r0.and_then(|t| type_vec_bytes(t, tc)),
+            "rs1_vec" => o0.and_then(|t| type_vec_bytes(t, tc)),
+            "elem" => r0.map(|t| type_elem_id(t, tc)),
+            _ => None,
+        }
+    }
+
     // ── Stage 5: Peephole ──
 
     pub(crate) fn run_peephole(&mut self, peephole: &dyn TargetPeephole<Inst = I>) {
         for block in self.vcode.blocks_mut() {
             peephole.optimize(&mut block.instructions);
+        }
+    }
+}
+
+/// S6：递归结构匹配一个 [`PatTerm`] 子树。
+///
+/// `PatTerm::Var(n)` 绑定叶变量；`PatTerm::Op{op,args}` 要求 `value` 由
+/// **同块、单 use** 的同 opcode 指令定义（内部节点），其操作数逐一下沉。
+/// 命中的内部节点指令句柄写入 `internals`（整棵匹配成功后由调用方并入
+/// consumed 集合——失败时不提交任何状态）。
+fn match_pat_term(
+    dfg: &DataFlowGraph,
+    use_lists: &UseLists,
+    block: Block,
+    value: Value,
+    term: &PatTerm,
+    leaves: &mut [Option<Value>],
+    internals: &mut Vec<Inst>,
+) -> bool {
+    match term {
+        PatTerm::Var(n) => {
+            leaves[*n as usize] = Some(value);
+            true
+        }
+        PatTerm::Op { op, args } => {
+            let Some(ValueDef::Inst(def_ii, _)) = dfg.value_def(value).copied() else {
+                return false;
+            };
+            let def = &dfg.insts[def_ii.0 as usize];
+            if def.block != block || def.opcode != *op {
+                return false;
+            }
+            // 内部节点强制单 use（否则融合会破坏其它使用点）
+            if use_lists.use_count(value) != 1 {
+                return false;
+            }
+            if def.operands.len() != args.len() {
+                return false;
+            }
+            for (&operand, subterm) in def.operands.iter().zip(args.iter()) {
+                if !match_pat_term(dfg, use_lists, block, operand, subterm, leaves, internals) {
+                    return false;
+                }
+            }
+            internals.push(def_ii);
+            true
         }
     }
 }

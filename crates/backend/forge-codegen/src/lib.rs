@@ -130,14 +130,8 @@ pub use arch::riscv64_v12;
 pub use arch::x86_v12;
 
 // ============================================================
-// 扩展（优化器、异常处理、调试）
-// ============================================================
-pub mod ext;
-
-// ============================================================
 // Module re-exports (for paths like code_forge::backend::pipeline::...)
 // ============================================================
-pub use ext::pattern_isel;
 pub use pipeline::vcode;
 #[cfg(feature = "jit")]
 pub use runtime::jit;

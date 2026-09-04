@@ -29,6 +29,7 @@ pub mod frame;
 pub mod inst;
 pub mod isa_info;
 pub mod lowering;
+pub mod pattern;
 pub mod peephole;
 pub mod reg_info;
 pub mod reloc_patcher;

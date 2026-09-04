@@ -15,6 +15,7 @@ pub fn validate(m: &V12Model) -> Result<(), String> {
     validate_instructions(m)?;
     validate_families(m)?;
     validate_lowering(m)?;
+    validate_patterns(m)?;
     validate_abi(m)?;
     validate_emit(m)?;
     validate_spill(m)?;
@@ -588,27 +589,7 @@ fn validate_lowering(m: &V12Model) -> Result<(), String> {
         if l.insts.is_empty() {
             return Err(format!("{path}: insts must not be empty"));
         }
-        for t in &l.insts {
-            let trimmed = t.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            // `{out} = INST …` 的 lhs 仅文档性，取 `=` 右侧
-            let rhs = trimmed.split_once('=').map_or(trimmed, |(_, r)| r.trim());
-            let head = rhs.split_whitespace().next().unwrap_or("");
-            if !head.starts_with('@') && !mnemonics.contains(head) {
-                return Err(format!(
-                    "{path}: insts 引用了未声明的助记符 '{head}'（行: {trimmed}）"
-                ));
-            }
-            for tok in placeholder_tokens(trimmed) {
-                if !crate::v12::codegen::placeholder::is_known(&tok) {
-                    return Err(format!(
-                        "{path}: 未知占位符 '{tok}'（行: {trimmed}）"
-                    ));
-                }
-            }
-        }
+        validate_inst_lines(&path, &l.insts, &mnemonics, &[])?;
         let when_key = match &l.when {
             None => String::new(),
             Some(v) => {
@@ -660,6 +641,101 @@ fn validate_lowering_order(m: &V12Model) -> Result<(), String> {
                          已覆盖它的全部取值域（priority 降 / 谓词叶子数降 / 声明序升）。\
                          删掉它，或给它更高的 priority",
                         j + 1
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 校验一段发射模板行：助记符已声明 + 占位符已知。`extra_known` 是额外允许
+/// 的 `{...}` token（pattern 的叶变量，codegen 会改写成 `{N}` 编号操作数）。
+fn validate_inst_lines(
+    path: &str,
+    insts: &[String],
+    mnemonics: &BTreeSet<String>,
+    extra_known: &[String],
+) -> Result<(), String> {
+    for t in insts {
+        let trimmed = t.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // `{out} = INST …` 的 lhs 仅文档性，取 `=` 右侧
+        let rhs = trimmed.split_once('=').map_or(trimmed, |(_, r)| r.trim());
+        let head = rhs.split_whitespace().next().unwrap_or("");
+        if !head.starts_with('@') && !mnemonics.contains(head) {
+            return Err(format!(
+                "{path}: insts 引用了未声明的助记符 '{head}'（行: {trimmed}）"
+            ));
+        }
+        for tok in placeholder_tokens(trimmed) {
+            let known = crate::v12::codegen::placeholder::is_known(&tok)
+                || extra_known.iter().any(|k| k == &tok);
+            if !known {
+                return Err(format!("{path}: 未知占位符 '{tok}'（行: {trimmed}）"));
+            }
+        }
+    }
+    Ok(())
+}
+
+// ──────────────────────── [[pattern]] ────────────────────────
+
+/// `[[pattern]]` 校验：匹配树解析 / Opcode 合法性（禁 payload 与特判 op）/
+/// 叶变量唯一 / insts 模板 / when 属性名。
+fn validate_patterns(m: &V12Model) -> Result<(), String> {
+    let mnemonics = declared_mnemonics(m);
+    for (i, p) in m.pattern.iter().enumerate() {
+        let path = format!("[[pattern]] #{i}");
+        let tree =
+            super::match_tree::parse(&p.r#match).map_err(|e| format!("{path}.match: {e}"))?;
+
+        // Opcode 合法性：仅单元变体可作匹配节点——Fcmp/Icmp 带 payload（运行期
+        // 按完整 Opcode 值比较，无法结构匹配）；Copy/Nop 在 forward 循环 pattern
+        // 分发之前就被 continue 特判。未知名交给 codegen `Opcode::#name` 报错。
+        let mut ops = Vec::new();
+        super::match_tree::op_names(&tree, &mut ops);
+        for op in &ops {
+            if matches!(op.as_str(), "Fcmp" | "Icmp" | "Copy" | "Nop") {
+                return Err(format!(
+                    "{path}.match: Op '{op}' 不能作模式节点（Fcmp/Icmp 带 payload，\
+                     Copy/Nop 被 forward 循环特判）"
+                ));
+            }
+        }
+
+        // 叶变量：非空 + 唯一（重复变量会让 {名字}→{N} 改写歧义）。
+        let mut vars = Vec::new();
+        super::match_tree::leaf_vars(&tree, &mut vars);
+        if vars.is_empty() {
+            return Err(format!("{path}.match: 匹配树没有叶变量（纯常量树无意义）"));
+        }
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for v in &vars {
+            if !seen.insert(v) {
+                return Err(format!("{path}.match: 叶变量 '{v}' 重复出现"));
+            }
+        }
+
+        // insts 非空 + 助记符 declared + 占位符已知（叶变量视为 {N} 改写后的编号操作数）。
+        if p.insts.is_empty() {
+            return Err(format!("{path}: insts must not be empty"));
+        }
+        let extra: Vec<String> = vars.iter().map(|v| format!("{{{v}}}")).collect();
+        validate_inst_lines(&path, &p.insts, &mnemonics, &extra)?;
+
+        // when 属性名 ∈ PRED_ATTRS（与 lowering 一致——未知属性恒假，模式永不命中）。
+        if let Some(w) = &p.when {
+            let pred = super::pred::parse(w).map_err(|e| format!("{path}.when: {e}"))?;
+            let mut attrs = Vec::new();
+            super::pred::attrs_of(&pred, &mut attrs);
+            for a in &attrs {
+                if !super::pred::PRED_ATTRS.contains(&a.as_str()) {
+                    return Err(format!(
+                        "{path}.when: 未知属性 '{a}'（可用：{}）",
+                        super::pred::PRED_ATTRS.join("/")
                     ));
                 }
             }

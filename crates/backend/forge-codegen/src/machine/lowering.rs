@@ -145,7 +145,12 @@ pub trait TargetLowering: Send + Sync + 'static {
         ctx: &mut LowerCtx,
     ) -> Result<InstPacket<Self::Inst>, IrError>;
 
-    /// 基于模式的优化 lowering（pattern_isel 匹配后调用）。
+    /// 树型多指令模式（[[pattern]]，S6）的发射入口：`pattern_name` 是
+    /// [`PatternSpec`](crate::machine::pattern::PatternSpec) 的 `name`，
+    /// `args` 是按树 DFS 序绑定的叶变量 XReg，`results` 是根指令的结果 XReg。
+    ///
+    /// lowering 驱动对无 `[[pattern]]` 的 ISA 永不调用（`patterns()` 空表 →
+    /// 预扫空转），缺省实现返回空包（防御性兜底，正常不可达）。
     fn lower_pattern(
         &self,
         _pattern_name: &str,
@@ -153,6 +158,14 @@ pub trait TargetLowering: Send + Sync + 'static {
         _results: &[XReg],
         _ctx: &mut LowerCtx,
     ) -> Result<InstPacket<Self::Inst>, IrError> {
-        Ok(InstPacket::new())
+        Err(IrError::Unsupported(format!(
+            "v12 lowering: 未声明的 [[pattern]] '{_pattern_name}'（无此模式的发射实现）"
+        )))
+    }
+
+    /// 已编译的模式规格表（S6）。已按（Op 节点数降, when 叶子数降, 声明序升）
+    /// 排序——驱动 per-root 首个结构+when 全中者生效。无 `[[pattern]]` → 空表。
+    fn patterns(&self) -> &'static [crate::machine::pattern::PatternSpec] {
+        &[]
     }
 }

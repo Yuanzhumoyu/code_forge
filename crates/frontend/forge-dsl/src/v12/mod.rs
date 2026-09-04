@@ -13,6 +13,7 @@
 
 pub(crate) mod codegen;
 pub(crate) mod diag;
+mod match_tree;
 pub(crate) mod model;
 mod parse;
 mod pred;

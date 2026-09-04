@@ -58,14 +58,6 @@ pub trait TargetMachine: Send + Sync + 'static {
     // ── 可选组件 ──
 
     /// 窥孔优化（可选）。
-    /// Optional IR-level pattern matcher (Stage 3). ISAs that support
-    /// instruction fusion (e.g. LEA / CMOV / FMA) return a matcher with
-    /// registered patterns; others return `None` and skip the pass.
-    fn pattern_matcher(&self) -> Option<&crate::ext::pattern_isel::PatternMatcher> {
-        None
-    }
-
-    /// Optional peephole pass (runs after instruction selection).
     fn peephole(&self) -> Option<&Arc<dyn TargetPeephole<Inst = Self::Inst>>> {
         None
     }

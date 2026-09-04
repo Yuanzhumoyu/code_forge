@@ -19,6 +19,7 @@
 //! `frame_rbp_addr`），从指令结构派生 vn/字段名（`insts_by_tag`/
 //! `reg_mem_fids`/`collect_byref_insts`），不引用具体指令名。
 
+use super::super::match_tree::{self, MatchNode};
 use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
 use super::integration::{
@@ -596,6 +597,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         })
         .collect();
 
+    // [[pattern]]（S6）：静态 PatternSpec 表 + patterns()/lower_pattern() 方法。
+    // 无 [[pattern]] → (空, 空)，impl 里不 splice 任何东西（trait 缺省兜底）。
+    let (pattern_statics, pattern_methods) = gen_patterns(infos, &name_to_vn, model)?;
+
     Ok(quote! {
         /// 谓词属性 `elem` 的数值映射（标量类型；向量元素在 Phase 6 扩展）。
         fn elem_id_of(t: crate::prelude::TypeId) -> i64 {
@@ -704,6 +709,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             u64::from_le_bytes(a) as i64
         }
 
+        #(#pattern_statics)*
+
         pub struct Lowering;
 
         impl crate::machine::lowering::TargetLowering for Lowering {
@@ -723,8 +730,344 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             }
 
             #term_impl
+
+            #pattern_methods
         }
     })
+}
+
+// ─────────────────────── [[pattern]]（S6）───────────────────────
+
+/// 单个 pattern 的静态数据引用（emit 完成后记录，供裁决序引用）。
+struct PatternEmit {
+    idx: usize,
+    root_op: syn::Ident,
+    root_args: syn::Ident,
+    when: Option<syn::Ident>,
+    var_count: u8,
+    nodes: u16,
+    guard_leaves: u8,
+    name_lit: syn::LitStr,
+    rewritten: Vec<String>,
+}
+
+/// `[[pattern]].when` 的宽度提示（与 lowering 规则同构：`eq = ["rs1_width", N]`）。
+fn pattern_width_hint(p: &Pattern) -> Option<u32> {
+    let pred = pred::parse(p.when.as_ref()?).ok()?;
+    pred_width_hint(&pred)
+}
+
+/// DSL `CmpOp` → 运行期 `PatCmp` 变体名。
+fn pat_cmp_ident(op: &CmpOp) -> syn::Ident {
+    let s = match op {
+        CmpOp::Eq => "Eq",
+        CmpOp::Ne => "Ne",
+        CmpOp::Lt => "Lt",
+        CmpOp::Le => "Le",
+        CmpOp::Gt => "Gt",
+        CmpOp::Ge => "Ge",
+    };
+    format_ident!("{s}")
+}
+
+/// DSL `Pred` → 运行期 `PatPred` 静态表达式（emit 静态项，返回其 ident）。
+fn emit_pat_pred(
+    pred: &Pred,
+    pfx: &str,
+    seq: &mut usize,
+    out: &mut Vec<TokenStream>,
+) -> syn::Ident {
+    let name = format_ident!("{pfx}_W{}", *seq);
+    *seq += 1;
+    match pred {
+        Pred::Cmp(op, attr, v) => {
+            let cmp = pat_cmp_ident(op);
+            let attr_lit = syn::LitStr::new(attr, proc_macro2::Span::call_site());
+            out.push(quote! {
+                static #name: crate::machine::pattern::PatPred =
+                    crate::machine::pattern::PatPred::Cmp {
+                        cmp: crate::machine::pattern::PatCmp::#cmp,
+                        attr: #attr_lit,
+                        v: #v,
+                    };
+            });
+        }
+        Pred::In(attr, vals) => {
+            let attr_lit = syn::LitStr::new(attr, proc_macro2::Span::call_site());
+            out.push(quote! {
+                static #name: crate::machine::pattern::PatPred =
+                    crate::machine::pattern::PatPred::In {
+                        attr: #attr_lit,
+                        vs: &[ #(#vals),* ],
+                    };
+            });
+        }
+        Pred::Not(p) => {
+            let sub = emit_pat_pred(p, pfx, seq, out);
+            out.push(quote! {
+                static #name: crate::machine::pattern::PatPred =
+                    crate::machine::pattern::PatPred::Not(&#sub);
+            });
+        }
+        Pred::And(ps) | Pred::Or(ps) => {
+            let subs: Vec<syn::Ident> =
+                ps.iter().map(|p| emit_pat_pred(p, pfx, seq, out)).collect();
+            let ctor = if matches!(pred, Pred::And(_)) {
+                quote! { crate::machine::pattern::PatPred::All(&[ #(#subs),* ]) }
+            } else {
+                quote! { crate::machine::pattern::PatPred::Any(&[ #(#subs),* ]) }
+            };
+            out.push(quote! {
+                static #name: crate::machine::pattern::PatPred = #ctor;
+            });
+        }
+    }
+    name
+}
+
+/// 匹配树 → 运行期 `PatTerm` 静态（emit 静态项，返回该 Op 节点的 args 切片 ident）。
+fn emit_pat_terms(
+    node: &MatchNode,
+    pfx: &str,
+    op_seq: &mut usize,
+    var_seq: &mut u8,
+    out: &mut Vec<TokenStream>,
+) -> syn::Ident {
+    let MatchNode::Op { name: _, args } = node else {
+        unreachable!("emit_pat_terms 仅对 Op 节点调用（根已由 validate 保证非 Var）");
+    };
+    let mut exprs: Vec<TokenStream> = Vec::new();
+    for child in args {
+        match child {
+            MatchNode::Var(_) => {
+                let n = *var_seq;
+                *var_seq += 1;
+                exprs.push(quote! { crate::machine::pattern::PatTerm::Var(#n) });
+            }
+            MatchNode::Op { name: sub, .. } => {
+                let sub_ident = format_ident!("{sub}");
+                let sub_args = emit_pat_terms(child, pfx, op_seq, var_seq, out);
+                exprs.push(quote! {
+                    crate::machine::pattern::PatTerm::Op {
+                        op: crate::prelude::Opcode::#sub_ident,
+                        args: #sub_args,
+                    }
+                });
+            }
+        }
+    }
+    let name = format_ident!("{pfx}_T{}", *op_seq);
+    *op_seq += 1;
+    out.push(quote! {
+        static #name: &'static [crate::machine::pattern::PatTerm] = &[ #(#exprs),* ];
+    });
+    name
+}
+
+/// `[[pattern]]` → 静态 PatternSpec 表 + `patterns()` / `lower_pattern()` 方法。
+///
+/// 无 `[[pattern]]` → 返回 (空, 空)：`patterns()`/`lower_pattern()` 走 trait 缺省
+/// （`&[]` / Unsupported），生成代码零开销。
+fn gen_patterns(
+    infos: &[InstInfo],
+    name_to_vn: &std::collections::HashMap<&str, Vec<&InstInfo>>,
+    model: &V12Model,
+) -> Result<(Vec<TokenStream>, TokenStream), String> {
+    if model.pattern.is_empty() {
+        return Ok((Vec::new(), TokenStream::new()));
+    }
+
+    let mut statics: Vec<TokenStream> = Vec::new();
+    let mut emitted: Vec<PatternEmit> = Vec::new();
+    let mut max_op_idx: usize = 0;
+
+    for (i, p) in model.pattern.iter().enumerate() {
+        let path = format!("[[pattern]] #{i}");
+        let tree = match_tree::parse(&p.r#match).map_err(|e| format!("{path}.match: {e}"))?;
+        let mut vars = Vec::new();
+        match_tree::leaf_vars(&tree, &mut vars);
+
+        // 叶变量 → 树 DFS 序 `{N}` 改写（`{a}`→`{0}`、`{b}`→`{1}`…）
+        let mut rewritten: Vec<String> = p.insts.clone();
+        for (vi, v) in vars.iter().enumerate() {
+            let needle = format!("{{{v}}}");
+            let repl = format!("{{{vi}}}");
+            for line in rewritten.iter_mut() {
+                if line.contains(&needle) {
+                    *line = line.replace(&needle, &repl);
+                }
+            }
+        }
+        // 该 pattern 用到的最大编号操作数（{0}/{1}/… → rs1/rs2/…）
+        for t in &rewritten {
+            for tok in t.split(['{', '}']).skip(1).step_by(2) {
+                if let Ok(n) = tok.parse::<usize>() {
+                    max_op_idx = max_op_idx.max(n);
+                }
+            }
+        }
+
+        let pfx = format!("__PAT_{i}");
+        let mut op_seq = 0usize;
+        let mut var_seq = 0u8;
+        let root_args = emit_pat_terms(&tree, &pfx, &mut op_seq, &mut var_seq, &mut statics);
+        let root_op = match &tree {
+            MatchNode::Op { name, .. } => format_ident!("{name}"),
+            MatchNode::Var(_) => unreachable!(),
+        };
+        let var_count = var_seq;
+        let nodes = op_seq as u16;
+        let (when, guard_leaves) = match &p.when {
+            None => (None, 0u8),
+            Some(v) => {
+                let pred = pred::parse(v).map_err(|e| format!("{path}.when: {e}"))?;
+                let gl = pred::leaf_count(&pred) as u8;
+                let mut wseq = 0usize;
+                let w = emit_pat_pred(&pred, &pfx, &mut wseq, &mut statics);
+                (Some(w), gl)
+            }
+        };
+
+        emitted.push(PatternEmit {
+            idx: i,
+            root_op,
+            root_args,
+            when,
+            var_count,
+            nodes,
+            guard_leaves,
+            name_lit: syn::LitStr::new(&format!("pattern_{i}"), proc_macro2::Span::call_site()),
+            rewritten,
+        });
+    }
+
+    // 裁决序：Op 节点数降 / when 叶子数降 / 声明序升（大者先试）。
+    let mut order: Vec<usize> = (0..emitted.len()).collect();
+    order.sort_by_key(|&i| {
+        let e = &emitted[i];
+        (-(e.nodes as i64), -(e.guard_leaves as i64), e.idx as i64)
+    });
+
+    // PatternSpec 表（按裁决序）。
+    let entries: Vec<TokenStream> = order
+        .iter()
+        .map(|&i| {
+            let e = &emitted[i];
+            let when = match &e.when {
+                Some(w) => quote! { Some(&#w) },
+                None => quote! { None },
+            };
+            let name = &e.name_lit;
+            let op = &e.root_op;
+            let args = &e.root_args;
+            let vc = e.var_count;
+            let nd = e.nodes;
+            let gl = e.guard_leaves;
+            quote! {
+                crate::machine::pattern::PatternSpec {
+                    name: #name,
+                    op: crate::prelude::Opcode::#op,
+                    args: #args,
+                    when: #when,
+                    var_count: #vc,
+                    nodes: #nd,
+                    guard_leaves: #gl,
+                }
+            }
+        })
+        .collect();
+    statics.push(quote! {
+        static __PATTERNS: &'static [crate::machine::pattern::PatternSpec] = &[ #(#entries),* ];
+    });
+
+    // lower_pattern 分派臂（按裁决序；名字 = 声明序 `pattern_{i}`）。
+    let arms: Vec<TokenStream> = order
+        .iter()
+        .map(|&i| {
+            let e = &emitted[i];
+            let name = &e.name_lit;
+            let inst_toks = gen_lowering_insts(
+                &e.rewritten,
+                infos,
+                name_to_vn,
+                pattern_width_hint(&model.pattern[e.idx]),
+            )?;
+            // 临时预声明 + clobber（与 lowering 规则 arm 同构）
+            let mut t_binds: Vec<TokenStream> = Vec::new();
+            let mut tf_binds: Vec<TokenStream> = Vec::new();
+            for (var, cls) in super::placeholder::collect_temps(&e.rewritten) {
+                let vid = format_ident!("{var}");
+                match cls {
+                    super::placeholder::PhTemp::Gpr => {
+                        t_binds.push(quote! { let #vid = ctx.alloc_xreg(__DEFAULT_GPR_CLASS); });
+                    }
+                    super::placeholder::PhTemp::Fpr => {
+                        tf_binds.push(quote! { let #vid = ctx.alloc_xreg(__DEFAULT_FPR_CLASS); });
+                    }
+                }
+            }
+            let t_bind: TokenStream = if t_binds.is_empty() {
+                quote! {}
+            } else {
+                quote! { #(#t_binds)* }
+            };
+            let tf_bind: TokenStream = if tf_binds.is_empty() {
+                quote! {}
+            } else {
+                quote! { #(#tf_binds)* }
+            };
+            let clobbers = collect_phys_clobbers(&e.rewritten, infos, model)?;
+            let clobber_set: TokenStream = if clobbers.is_empty() {
+                quote! {}
+            } else {
+                quote! { ctx.current_clobbers = vec![#(#clobbers),*]; }
+            };
+            Ok(quote! {
+                #name => {
+                    #t_bind
+                    #tf_bind
+                    #clobber_set
+                    #(#inst_toks)*
+                    Ok(__pack)
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    // 所有 pattern 模板用到的最大 {N} → rs1..rsN 预绑定。
+    let op_binds: TokenStream = (0..=max_op_idx)
+        .map(|i| {
+            let rsn = format_ident!("rs{}", i + 1);
+            quote! {
+                let #rsn = args.get(#i).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+            }
+        })
+        .collect();
+
+    let methods = quote! {
+        fn patterns(&self) -> &'static [crate::machine::pattern::PatternSpec] {
+            &__PATTERNS
+        }
+
+        fn lower_pattern(
+            &self,
+            pattern_name: &str,
+            args: &[crate::prelude::XReg],
+            results: &[crate::prelude::XReg],
+            ctx: &mut crate::prelude::LowerCtx,
+        ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
+            let rd = results.first().copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+            let rd2 = results.get(1).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+            #op_binds
+            let mut __pack = crate::prelude::InstPacket::new();
+            match pattern_name {
+                #(#arms,)*
+                _ => Err(crate::prelude::IrError::Unsupported("v12 lower_pattern: unknown pattern name".into())),
+            }
+        }
+    };
+
+    Ok((statics, methods))
 }
 
 /// Call/CallIndirect 专用 lowering（Phase 5）：

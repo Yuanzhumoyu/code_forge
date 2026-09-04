@@ -41,6 +41,10 @@ pub struct V12Model {
     /// 指令选择规则（`[[lowering]]`）。
     #[serde(default)]
     pub lowering: Vec<Lowering>,
+    /// 树型多指令匹配（`[[pattern]]`，S6，opt-in）：一根 IR 值被匹配进整棵
+    /// 子树后，整块子树合并成一段发射序列。空 = 无此能力（零开销）。
+    #[serde(default)]
+    pub pattern: Vec<Pattern>,
     /// 调用约定（`[abi]`，为 YMM by-ref 铺路）。
     #[serde(default)]
     pub abi: Option<Abi>,
@@ -1219,6 +1223,28 @@ impl Lowering {
         }
         Ok(out)
     }
+}
+
+// ───────────────────────── [[pattern]] ─────────────────────────
+
+/// 树型多指令匹配（S6）：声明一棵 IR **匹配树**（`match = "Fadd(Fmul(a,b),c)"`）
+/// 与一段发射序列（`insts`）。运行期 lowering 驱动在块内逆序预扫时，把命中
+/// 整棵子树的 IR 值合并成一次 `lower_pattern` 发射（叶变量按 DFS 序绑定为
+/// `{N}` 输入），跳过被 consumed 的内部节点。无 `[[pattern]]` 的 ISA 零开销。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pattern {
+    /// 匹配树字符串（根必须是 Op 调用，变量是裸标识符）。见
+    /// [`crate::v12::match_tree::parse`]。
+    #[serde(rename = "match")]
+    pub r#match: String,
+    /// 根指令派生属性上的结构化谓词（与 `[[lowering]].when` 同语法）——
+    /// 两个结构相同、只差守卫（如 f32 vs f64）的模式靠它区分。
+    #[serde(default)]
+    pub when: Option<toml::Value>,
+    /// 发射序列模板：叶变量 `{名字}` 与 `{out}`（codegen 把 `{名字}` 改写成
+    /// 树 DFS 序的 `{N}` 后交给 lowering 发射器）。
+    pub insts: Vec<String>,
 }
 
 // ───────────────────────── [abi] ─────────────────────────

@@ -1785,3 +1785,100 @@ asm = "i {{dst}}, {{src}}"
 "#
     )
 }
+
+/// 含一条助记符为 `i` 的指令（`asm = "i {dst}, {src}"`）的最小合法模型——
+/// `[[pattern]].insts` 用 `i …` 引用它（助记符已声明），叶变量 `{a}`/`{b}` 走
+/// extra_known 通道。
+const PATTERN_BASE: &str = r#"
+[meta]
+name = "x"
+variable_length = true
+[reg.gpr8]
+count = 16
+[[operand_slots]]
+name = "gx"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out", "inout"]
+[[instructions]]
+name = "I"
+modrm = { reg = "dst", rm = "src" }
+opsize = "dst"
+opcode = 1
+ops = ["dst:gx:inout", "src:gx"]
+asm = "i {dst}, {src}"
+"#;
+
+#[test]
+fn pattern_parses_and_validates() {
+    let doc = PATTERN_BASE.to_string()
+        + r#"
+[[pattern]]
+match = "Iadd(Imul(a, b), c)"
+insts = ["i {out}, {a}, {b}"]
+"#;
+    let m = parse_and_validate(&doc).expect("valid pattern");
+    assert_eq!(m.pattern.len(), 1);
+    assert_eq!(m.pattern[0].r#match, "Iadd(Imul(a, b), c)");
+    assert_eq!(m.pattern[0].insts, vec!["i {out}, {a}, {b}"]);
+}
+
+#[test]
+fn pattern_rejects_payload_op() {
+    let doc = PATTERN_BASE.to_string()
+        + r#"
+[[pattern]]
+match = "Fcmp(a, b)"
+insts = ["i {out}, {a}, {b}"]
+"#;
+    let err = parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("Fcmp"), "err: {err}");
+}
+
+#[test]
+fn pattern_rejects_duplicate_var() {
+    let doc = PATTERN_BASE.to_string()
+        + r#"
+[[pattern]]
+match = "Iadd(a, a)"
+insts = ["i {out}, {a}"]
+"#;
+    let err = parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("重复"), "err: {err}");
+}
+
+#[test]
+fn pattern_rejects_unknown_placeholder() {
+    let doc = PATTERN_BASE.to_string()
+        + r#"
+[[pattern]]
+match = "Iadd(a, b)"
+insts = ["i {out}, {nope}"]
+"#;
+    let err = parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("未知占位符"), "err: {err}");
+}
+
+#[test]
+fn codegen_emits_pattern_statics_and_lower_pattern() {
+    let doc = PATTERN_BASE.to_string()
+        + r#"
+[[pattern]]
+match = "Iadd(Imul(a, b), c)"
+insts = ["i {out}, {a}", "i {out}, {b}", "i {out}, {c}"]
+"#;
+    let model = parse_and_validate(&doc).expect("valid pattern model");
+    let ts = super::codegen::generate(&model).expect("codegen must succeed");
+    let s = ts.to_string();
+    for needle in [
+        "__PATTERNS",
+        "PatternSpec",
+        "fn patterns",
+        "fn lower_pattern",
+        "pattern_0",
+        "Opcode :: Iadd",
+        "Opcode :: Imul",
+    ] {
+        assert!(s.contains(needle), "generated code missing '{needle}'");
+    }
+}

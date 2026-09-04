@@ -1767,17 +1767,11 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                 ));
             }
         }
-        // 可变的 IR 副本：Stage 3 的 pattern isel 会就地重写指令序列。
-        // 只有声明了模式融合的 ISA（[meta].enable_pattern_isel）才会真正改写；
-        // 其余 ISA（如 x86_64）不克隆整个 Function（DFG 全量）。
-        let needs_pattern = self
-            .machine
-            .pattern_matcher()
-            .map(|m| m.pattern_count() > 0)
-            .unwrap_or(false);
+        // 可变的 IR 副本：聚合 store/参数展开（agg_expand）需要 &mut Function。
+        // 展开后读取 func_ref（Stage 4+ 全部只读原函数；S6 的树型 [[pattern]]
+        // 匹配发生在 lowering 驱动内逐块预扫，不需要在编译期克隆整个 Function）。
         let needs_agg_expand = crate::pipeline::agg_expand::has_any_agg(func);
-        let mut func_owned: Option<Function> =
-            (needs_pattern || needs_agg_expand).then(|| func.clone());
+        let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());
 
         // Stage 0.5: 聚合 store 展开（聚合字面量 → 打包 i64 常量 store；
         // >8 字节聚合显式 Unsupported）。必须在 CompileState 创建**之前**
@@ -1794,9 +1788,6 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             expand_large_agg_ret(f)?;
             expand_large_aggs(f, &mut agg_slots)?;
             expand_geps(f)?;
-            // Stage 3 提前：IR 层模式融合（lea/cmp-select/fma）。不依赖
-            // CompileState（自由函数），与展开共用独占可变借用。
-            CompileState::<M::Inst>::run_pattern_matching(f, &self.machine);
         }
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);

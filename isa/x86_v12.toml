@@ -2795,6 +2795,22 @@ insts = ["movss {out}, {0}", "mulss {out}, {1}", "addss {out}, {2}"]
 op = "Fma"
 insts = ["movsd {out}, {0}", "mulsd {out}, {1}", "addsd {out}, {2}"]
 
+# ── [[pattern]]（S6）：Fadd(Fmul(a,b), c) → mul+add 融合 ──
+# 树型多 op 匹配：内部节点 Fmul 要求单 use、同块，整棵子树 fused 成 3 条
+# 指令（movss/mulss/addss 或 movsd/mulsd/addsd）。与逐条 lowering（Fmul 2 条
+# + Fadd 2 条 = 4 条，且各带一条 mov 拷贝）相比省 1 条 mov。叶变量按树
+# DFS 序编号：{a}→0、{b}→1、{c}→2。
+
+[[pattern]]
+match = "Fadd(Fmul(a, b), c)"
+when = { eq = ["elem", 1] }
+insts = ["movss {out}, {a}", "mulss {out}, {b}", "addss {out}, {c}"]
+
+[[pattern]]
+match = "Fadd(Fmul(a, b), c)"
+when = { eq = ["elem", 2] }
+insts = ["movsd {out}, {a}", "mulsd {out}, {b}", "addsd {out}, {c}"]
+
 # ── 舍入（ROUNDSD/ROUNDSS：0=near, 1=floor, 2=ceil）──
 
 [[lowering]]
