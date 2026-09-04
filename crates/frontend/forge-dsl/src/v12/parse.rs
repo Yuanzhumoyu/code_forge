@@ -10,8 +10,11 @@ use super::diag;
 use super::model::V12Model;
 
 /// 解析 TOML 文本为 v12 模型（不做语义校验）。
+///
+/// 解析后立刻展开 `[[lowering]].vary` 行表：下游（validate/codegen）只看到
+/// 具体规则，两者不会因为"谁展开、怎么展开"而分叉。
 pub fn parse(source: &str) -> Result<V12Model, V12Error> {
-    toml::from_str(source).map_err(|e| {
+    let mut model: V12Model = toml::from_str(source).map_err(|e| {
         let (line, col) = e
             .span()
             .map(|s| diag::line_col(source, s.start))
@@ -23,5 +26,15 @@ pub fn parse(source: &str) -> Result<V12Model, V12Error> {
             col,
             msg: format!("TOML: {e}"),
         }
-    })
+    })?;
+    let mut expanded = Vec::with_capacity(model.lowering.len());
+    for rule in &model.lowering {
+        let rows = rule.expand_vary().map_err(|msg| {
+            let (line, col) = diag::anchor(source, &msg);
+            V12Error::Parse { line, col, msg }
+        })?;
+        expanded.extend(rows);
+    }
+    model.lowering = expanded;
+    Ok(model)
 }

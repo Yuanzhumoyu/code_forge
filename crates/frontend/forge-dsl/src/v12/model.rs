@@ -819,6 +819,171 @@ pub struct Lowering {
     /// 结构化谓词（宽度条件化 lowering）。
     #[serde(default)]
     pub when: Option<toml::Value>,
+    /// 参数化行表：各列表**等长**，按下标 zip 成行展开成多条具体规则。
+    ///
+    /// 键分两类：
+    /// - 名字在 [`crate::v12::pred::PRED_ATTRS`] 里 → 该行自动追加
+    ///   `eq = [键, 值]` 到 `when`，**且**可在模板里用 `{键}` 引用；
+    /// - 其余 → 纯替换变量（只在模板里用 `{键}`）。
+    ///
+    /// 消除"一个 op 一堆只差助记符的规则"：x86 `Vadd` 8 条（4 elem × 2 宽度）
+    /// → 2 条，`Fcmp` 32 条（16 cond × 2 elem）→ 4 条。
+    #[serde(default)]
+    pub vary: Option<BTreeMap<String, Vec<VaryValue>>>,
+    /// 显式优先级（缺省 0，大者先试）。规则**排序不依赖声明序**：
+    /// 按 (priority 降, 谓词叶子数降, 声明序升) 裁决。
+    ///
+    /// 只在"故意让更宽的规则赢过更具体的规则"时才需要——例如 x86 `Vextract`
+    /// 的 lane 0 快路径（`imm0 == 0` 两个约束）必须压过 V256 通路
+    /// （`rd/elem/imm0` 三个约束）。其余场合留空，让特异性自动裁决。
+    #[serde(default)]
+    pub priority: Option<i32>,
+}
+
+/// `vary` 的取值：整数（可作谓词值）或字符串（只作模板替换）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum VaryValue {
+    Int(i64),
+    Str(String),
+}
+
+impl VaryValue {
+    /// 模板替换用的文本。
+    pub fn as_text(&self) -> String {
+        match self {
+            VaryValue::Int(v) => v.to_string(),
+            VaryValue::Str(s) => s.clone(),
+        }
+    }
+    /// 谓词值（仅整数可用）。
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            VaryValue::Int(v) => Some(*v),
+            VaryValue::Str(_) => None,
+        }
+    }
+}
+
+impl V12Model {
+    /// 按 op 分组的 lowering 规则，**每组内按裁决序排好**：
+    /// `(priority 降, 谓词叶子数降, 声明序升)`。
+    ///
+    /// 排序取代"声明序首匹配"：作者不再需要记住"兜底规则必须写在最后"，
+    /// 也不会因为插入一条规则的位置不对而静默改变分派。校验器与生成器读同一
+    /// 个顺序（唯一事实源在此），故编译期报出的死规则就是运行期真的死规则。
+    /// op 之间保持首次出现的声明序（生成代码的 match arm 顺序稳定）。
+    pub fn lowering_by_op(&self) -> Vec<(&str, Vec<&Lowering>)> {
+        let mut by_op: Vec<(&str, Vec<(usize, &Lowering)>)> = Vec::new();
+        for (i, rule) in self.lowering.iter().enumerate() {
+            match by_op.iter_mut().find(|(op, _)| *op == rule.op.as_str()) {
+                Some((_, rules)) => rules.push((i, rule)),
+                None => by_op.push((rule.op.as_str(), vec![(i, rule)])),
+            }
+        }
+        by_op
+            .into_iter()
+            .map(|(op, mut rules)| {
+                rules.sort_by_key(|(i, r)| {
+                    let leaves = r
+                        .when
+                        .as_ref()
+                        .and_then(|v| crate::v12::pred::parse(v).ok())
+                        .map(|p| crate::v12::pred::leaf_count(&p))
+                        .unwrap_or(0);
+                    (
+                        -r.priority.unwrap_or(0) as i64,
+                        -(leaves as i64),
+                        *i as i64,
+                    )
+                });
+                (op, rules.into_iter().map(|(_, r)| r).collect())
+            })
+            .collect()
+    }
+}
+
+impl Lowering {
+    /// 展开 `vary` 行表 → 多条具体规则（无 `vary` 时返回自身单元素）。
+    ///
+    /// 每行：模板里 `{键}` 换成该行取值；键若是谓词属性（`PRED_ATTRS`）则
+    /// 额外把 `eq = [键, 值]` 合入 `when`（与原 `when` 取 `and`）。
+    pub fn expand_vary(&self) -> Result<Vec<Lowering>, String> {
+        let Some(vary) = &self.vary else {
+            return Ok(vec![self.clone()]);
+        };
+        let path = format!("[[lowering.{}]].vary", self.op);
+        if vary.is_empty() {
+            return Err(format!("{path}: 不能为空表"));
+        }
+        let rows = vary.values().next().map(Vec::len).unwrap_or(0);
+        if rows == 0 {
+            return Err(format!("{path}: 列表不能为空"));
+        }
+        for (k, v) in vary {
+            if v.len() != rows {
+                return Err(format!(
+                    "{path}: 各列表必须等长（按下标 zip 成行）——'{k}' 长 {} ≠ {rows}",
+                    v.len()
+                ));
+            }
+        }
+        let mut out = Vec::with_capacity(rows);
+        for row in 0..rows {
+            let mut insts = self.insts.clone();
+            let mut extra: Vec<toml::Value> = Vec::new();
+            for (k, vals) in vary {
+                let val = &vals[row];
+                let needle = format!("{{{k}}}");
+                let text = val.as_text();
+                for line in insts.iter_mut() {
+                    if line.contains(&needle) {
+                        *line = line.replace(&needle, &text);
+                    }
+                }
+                if crate::v12::pred::PRED_ATTRS.contains(&k.as_str()) {
+                    let iv = val.as_int().ok_or_else(|| {
+                        format!("{path}: '{k}' 是谓词属性，取值必须是整数，got {val:?}")
+                    })?;
+                    extra.push(toml::Value::Table(
+                        [(
+                            "eq".to_string(),
+                            toml::Value::Array(vec![
+                                toml::Value::String(k.clone()),
+                                toml::Value::Integer(iv),
+                            ]),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ));
+                }
+            }
+            let when = match (&self.when, extra.len()) {
+                (base, 0) => base.clone(),
+                (None, 1) => Some(extra.remove(0)),
+                (base, _) => {
+                    let mut all = Vec::with_capacity(extra.len() + 1);
+                    if let Some(b) = base {
+                        all.push(b.clone());
+                    }
+                    all.append(&mut extra);
+                    Some(toml::Value::Table(
+                        [("and".to_string(), toml::Value::Array(all))]
+                            .into_iter()
+                            .collect(),
+                    ))
+                }
+            };
+            out.push(Lowering {
+                op: self.op.clone(),
+                insts,
+                when,
+                vary: None,
+                priority: self.priority,
+            });
+        }
+        Ok(out)
+    }
 }
 
 // ───────────────────────── [abi] ─────────────────────────

@@ -608,6 +608,38 @@ fn validate_lowering(m: &V12Model) -> Result<(), String> {
             ));
         }
     }
+    validate_lowering_order(m)
+}
+
+/// 死规则检测：按**裁决序**（`V12Model::lowering_by_op`）逐对判断前序规则是否
+/// 已覆盖后序规则的全部取值域。
+///
+/// 意义：排序改为按特异性裁决后，"被前面更宽的规则完全吃掉"就成了纯粹的作者
+/// 错误（写了永不生效的规则）。判定域是每属性的闭区间集合（`eq/ne/lt/le/gt/ge/in`
+/// 都能归一化），含 `or`/`not` 的规则记为 Opaque 并跳过——保守，宁可漏报也不误报。
+fn validate_lowering_order(m: &V12Model) -> Result<(), String> {
+    for (op, rules) in m.lowering_by_op() {
+        let mut domains: Vec<super::pred::RuleDomain> = Vec::with_capacity(rules.len());
+        for r in &rules {
+            let pred = match &r.when {
+                None => None,
+                Some(v) => Some(super::pred::parse(v).map_err(|e| format!("[[lowering.{op}]]: {e}"))?),
+            };
+            domains.push(super::pred::domain_of(pred.as_ref()));
+        }
+        for (j, dj) in domains.iter().enumerate() {
+            for di in domains[..j].iter() {
+                if super::pred::subsumes(di, dj) {
+                    return Err(format!(
+                        "[[lowering.{op}]]: 第 {} 条规则是死规则——裁决序里排在它前面的规则\
+                         已覆盖它的全部取值域（priority 降 / 谓词叶子数降 / 声明序升）。\
+                         删掉它，或给它更高的 priority",
+                        j + 1
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
 }
 

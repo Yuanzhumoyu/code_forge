@@ -53,14 +53,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // 返回值移动）——动态参数数/类型分派无法用静态模板表达；无 TOML 规则。
     arms.push(gen_call_lowering("Call", infos, model)?);
     arms.push(gen_call_lowering("CallIndirect", infos, model)?);
-    // 按 op 分组（保持声明序）——同 op 多规则用 when 谓词 if-else-if 链分派。
-    let mut by_op: Vec<(&str, Vec<&Lowering>)> = Vec::new();
-    for rule in &model.lowering {
-        match by_op.iter_mut().find(|(op, _)| *op == rule.op.as_str()) {
-            Some((_, rules)) => rules.push(rule),
-            None => by_op.push((rule.op.as_str(), vec![rule])),
-        }
-    }
+    // 按 op 分组，组内按裁决序（priority 降 / 谓词叶子数降 / 声明序升）——
+    // 见 `V12Model::lowering_by_op`，与 validate 的死规则判定同读一份顺序。
+    let by_op = model.lowering_by_op();
     for (op_name, rules) in by_op {
         let op_ident = format_ident!("{op_name}");
         // 从最后一条规则向前构建 if-else 链（无 when 的规则 = 无条件兜底）

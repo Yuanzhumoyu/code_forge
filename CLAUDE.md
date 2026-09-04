@@ -150,10 +150,21 @@ let name = node.get_text("name")?;
 | ABI | **≤16B（V64/V128）按值 XMM 全宽 + >16B（V256）by-ref/sret 全线支持**（2026-09 D3 补齐 VEC(16) 全宽） | Windows x64 无 YMM 参数寄存器——>8B 非标量按引用传指针（占 GPR 槽）、返回 >64 位走首参 RCX 隐藏 sret；≤16B 向量（VEC(16) 类）按值进 XMM{pos}（by-position 槽）：收参/实参/返回用**全宽 128 位 MOVAPS**（ABI 键 `[abi].vec_mov_inst`，缺省 "MOVAPS"——MOVSD/MOVSS 只移 8/4B 会静默截断高半，WA-37 D3 修复）。Load/Store 谓词加 `rd_vec`/`rs1_vec`（向量类型字节数）→ V128 走 MOVUPS_128（0F 10/11 无前缀 16 字节）、V64 走 movsd 8B。jit 12+ 测试绿（v128/v64 byval param/return、mixed、wide byref/sret、v512）；forge-rustc B3 门控已撤、simd_v128/v64/v256 e2e 全绿。**残余**：宽向量第 5+ GPR 槽显式 Unsupported；V512 测试仅断言 lane0。见 forge-rustc WORKAROUNDS.md WA-37 |
 | 编码 | SSE（0F/0F38 前缀族）+ AVX（VEX C4 语义键）+ AVX2（VEX 族） | v12 生成器内联实现 ModRM/REX/VEX 发射（`v12/codegen/mod.rs` 的 VlenCtx）；VEX 三操作数 r/m=src2、vvvv=~src1；无源指令 vvvv 编码 1111；vextractf128 的 dest 在 r/m、src 在 reg；vzeroupper 无需（Windows x64 ABI 允许破坏 YMM 高半） |
 
-v12 结构化谓词：`rs1_width`/`rs2_width`/`elem`/`rd`/`cond`/`imm0` 属性 +
-`and/or/not/eq/ne/lt/le/gt/ge` 组合（`v12/pred.rs` 求值，纯 TOML 数据，无
-字符串）。`imm0` = `current_immediates[0]`（Vextract/Vinsert lane 索引、
-AtomicRmw op 判别值 Xchg=0/Add=1/Sub=2）。
+v12 结构化谓词：属性表 = `v12/pred.rs` 的 `PRED_ATTRS`（`rd`/`rs1_width`/
+`rs2_width`/`rd_vec`/`rs1_vec`/`elem`/`cond`/`imm0`，与生成器 `__attr` 分派表
+单点同步；写错属性名编译期报错——未知属性恒为假会让规则永不命中）+
+`and/or/not/in/eq/ne/lt/le/gt/ge` 组合（纯 TOML 数据，无字符串）。
+`imm0` = `current_immediates[0]`（Vextract/Vinsert lane 索引、AtomicRmw op
+判别值 Xchg=0/Add=1/Sub=2）。
+
+`[[lowering]]` 的两个消重/去序键（v15-S2）：
+- `vary = { attr = [...], name = [...] }`：各列表**等长**，按下标 zip 成行展开。
+  键在 `PRED_ATTRS` 里 → 该行自动追加 `eq = [键, 值]` 到 `when`；否则是模板里
+  `{键}` 的纯替换变量。x86 `Fcmp` 32 条 → 8 条、`Vadd`/`Vsub` 各 8 → 3。
+- 规则**不依赖声明序**：裁决序 = (`priority` 降, 谓词叶子数降, 声明序升)，
+  见 `V12Model::lowering_by_op`。被前序规则完全覆盖的规则 → 编译期报"死规则"
+  （判定域 = 每属性闭区间集合；含 `or`/`not` 记为 Opaque 跳过）。`priority`
+  只在"故意让更宽的规则赢"时用（x86 `Vextract` 的 lane 0 快路径）。
 
 ## Code Conventions
 

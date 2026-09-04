@@ -1372,3 +1372,131 @@ fn lowering_accepts_family_mnemonic() {
                 [[lowering]]\nop = \"Ineg\"\ninsts = [\"neg {out}, {0}\"]";
     parse_and_validate(&lowering_doc(rule)).expect("family 变体助记符必须被识别");
 }
+
+// ─────────── S2：vary 行表 / in 谓词 / 特异性裁决 / 死规则 ───────────
+
+#[test]
+fn vary_expands_rows_and_adds_predicates() {
+    // elem 是谓词属性 → 每行追加 eq[elem, 值]；m 不是 → 纯替换
+    let doc = lowering_doc(
+        "[[lowering]]\nop = \"Vadd\"\nwhen = { eq = [\"rd\", 256] }\n\
+         vary = { elem = [1, 2], m = [\"mov\", \"mov\"] }\ninsts = [\"{m} {out}, {0}\"]",
+    );
+    let m = parse_and_validate(&doc).expect("vary 必须展开");
+    let rs: Vec<_> = m.lowering.iter().filter(|r| r.op == "Vadd").collect();
+    assert_eq!(rs.len(), 2, "两行 → 两条具体规则");
+    for r in &rs {
+        assert!(r.vary.is_none(), "展开后 vary 必须清空");
+        assert_eq!(r.insts, vec!["mov {out}, {0}"], "{{m}} 已替换");
+    }
+    // 每条都带 rd + elem 两个谓词叶子
+    for r in &rs {
+        let p = super::pred::parse(r.when.as_ref().unwrap()).unwrap();
+        assert_eq!(super::pred::leaf_count(&p), 2, "base when 与行 eq 合并为 and");
+    }
+}
+
+#[test]
+fn vary_requires_equal_length_lists() {
+    let doc = lowering_doc(
+        "[[lowering]]\nop = \"Copy\"\nvary = { elem = [1, 2], m = [\"mov\"] }\ninsts = [\"{m} {out}, {0}\"]",
+    );
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Parse { msg, .. } => msg,
+        other => panic!("expected Parse error, got {other:?}"),
+    };
+    assert!(msg.contains("等长"), "msg: {msg}");
+}
+
+#[test]
+fn vary_predicate_attr_needs_integer() {
+    let doc = lowering_doc(
+        "[[lowering]]\nop = \"Copy\"\nvary = { elem = [\"f32\"] }\ninsts = [\"mov {out}, {0}\"]",
+    );
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Parse { msg, .. } => msg,
+        other => panic!("expected Parse error, got {other:?}"),
+    };
+    assert!(msg.contains("必须是整数"), "msg: {msg}");
+}
+
+#[test]
+fn in_predicate_parses_and_evals() {
+    use super::pred::{Pred, eval, parse as pparse};
+    let p = pparse(&toml::from_str(r#"in = ["elem", [1, 3]]"#).unwrap()).unwrap();
+    assert_eq!(p, Pred::In("elem".into(), vec![1, 3]));
+    let ctx = |a: &str| match a {
+        "elem" => Some(3),
+        _ => None,
+    };
+    assert!(eval(&p, &ctx));
+    let ctx2 = |a: &str| match a {
+        "elem" => Some(2),
+        _ => None,
+    };
+    assert!(!eval(&p, &ctx2));
+    // 空集合恒假 → 拒绝
+    assert!(pparse(&toml::from_str(r#"in = ["elem", []]"#).unwrap()).is_err());
+}
+
+#[test]
+fn lowering_order_is_specificity_then_priority() {
+    // 声明序：先兜底、后具体。裁决序必须把具体的排前面——作者不再需要记住
+    // "兜底必须写最后"，写反了也不会静默改变分派。
+    let doc = lowering_doc(
+        "[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {1}\"]",
+    );
+    let m = parse_and_validate(&doc).expect("声明序颠倒不再是错误");
+    let by_op = m.lowering_by_op();
+    let (_, rules) = by_op
+        .iter()
+        .find(|(op, _)| *op == "Copy")
+        .expect("Copy 组存在");
+    assert_eq!(
+        rules[0].insts,
+        vec!["mov {out}, {1}"],
+        "1 叶子的具体规则排在 0 叶子的兜底之前"
+    );
+    assert!(rules[1].when.is_none(), "兜底垫底");
+}
+
+#[test]
+fn priority_overrides_specificity() {
+    // 更宽的规则（1 叶子）用 priority 压过更具体的（2 叶子）——Vextract lane0 形态
+    let doc = lowering_doc(
+        "[[lowering]]\nop = \"Copy\"\npriority = 1\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"mov {out}, {1}\"]",
+    );
+    // prio 1 的规则覆盖了 prio 0 那条的全部取值域 → 后者是死规则
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    };
+    assert!(msg.contains("死规则"), "msg: {msg}");
+    // 反过来（不加 priority）则合法：具体的自动排前
+    let ok = lowering_doc(
+        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"mov {out}, {1}\"]",
+    );
+    parse_and_validate(&ok).expect("特异性自动裁决：2 叶子排前，1 叶子不再吃掉它");
+}
+
+#[test]
+fn disjoint_rules_are_not_dead() {
+    let doc = lowering_doc(
+        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 64] }\ninsts = [\"mov {out}, {1}\"]",
+    );
+    parse_and_validate(&doc).expect("互斥谓词不构成死规则");
+}
+
+#[test]
+fn or_not_predicates_skip_dead_check() {
+    // 含 or/not → RuleDomain::Opaque，放弃判定（保守，不误报）
+    let doc = lowering_doc(
+        "[[lowering]]\nop = \"Copy\"\nwhen = { or = [{ eq = [\"rd\", 32] }, { eq = [\"rd\", 64] }] }\ninsts = [\"mov {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {1}\"]",
+    );
+    parse_and_validate(&doc).expect("Opaque 谓词不参与死规则判定");
+}

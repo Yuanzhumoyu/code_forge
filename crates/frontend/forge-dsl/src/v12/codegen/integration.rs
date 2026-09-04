@@ -90,6 +90,10 @@ pub(crate) fn compile_pred_guard(pred: &Pred, attr: &syn::Ident) -> TokenStream 
             };
             quote! { #attr(#n).map_or(false, |__g| __g #f #want) }
         }
+        Pred::In(name, vals) => {
+            let n = syn::LitStr::new(name, proc_macro2::Span::call_site());
+            quote! { #attr(#n).map_or(false, |__g| [#(#vals),*].contains(&__g)) }
+        }
     }
 }
 
