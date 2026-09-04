@@ -830,18 +830,10 @@ pub struct Instruction {
     /// `is_branch` / `is_call` / `is_ret` / `is_move`（TargetMachine 集成）。
     #[serde(default)]
     pub effect: Vec<Effect>,
-    /// 语义标签（开放集合，TOML 显式声明）——生成器按标签做语义派发，
-    /// **不做按指令名的存在性/前缀探测**（第三轮重构原则）。消费方：
-    /// - `wide_vec_store_32`/`wide_vec_store_64`：宽向量 by-ref 调用方栈
-    ///   拷贝 store（VMOVUPS_MR / VMOVUPS_ZMM_MR）；
-    /// - `wide_vec_load_32`/`wide_vec_load_64`：宽向量 by-ref/sret 收参与
-    ///   回读 load（VMOVUPS_RM / VMOVUPS_ZMM_MEM）；
-    /// - `frame_rbp_addr`：帧内 [RBP+disp] 地址计算（LEA_RBP_OFF——sret/
-    ///   by-ref temp 槽地址）。
-    ///
-    /// 未知标签无消费方（安全）；缺失标签 → 对应 ABI 能力 Unsupported。
+    /// 语义角色（见 [`Role`]）——生成器按角色查指令，取代 `[abi]` 的 13 个
+    /// `*_inst` 名指针与 v14 的 `tags` 字符串标签。每个角色全 ISA 唯一。
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub roles: Vec<Role>,
     /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
     /// 在本指令点避开（MachineInst::clobbers）。与 lowering 模板的显式物理
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
@@ -851,6 +843,107 @@ pub struct Instruction {
     /// 生成 encoder reloc arm，替代按指令名特判。
     #[serde(default)]
     pub global_reloc: Option<GlobalReloc>,
+}
+
+/// 指令的**语义角色**（v15-S4）。
+///
+/// 生成器需要"某个语义位置上的指令"时按角色查表。v14 是反过来的：`[abi]` 里
+/// 13 个 `*_inst` 键存指令**名字**，生成器 `unwrap_or_else(|| "MOV_RM8_R64")`
+/// 兜底——共 16 处 x86 指令名硬编码，于是 x86 靠默认"恰好能跑"、非 x86 必须逐个
+/// 覆盖。角色化之后：指令自己声明担任什么角色，缺角色 → 明确的 `Unsupported`，
+/// 不会静默去查一个别的 ISA 的名字。`tags`（宽向量 by-ref 那几个）一并并入。
+///
+/// 每个角色全 ISA 唯一（validate 强制）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// 整数寄存器移动（收参 / Copy / 溢出前搬运）。
+    GprMov,
+    /// 返回值 → 返回寄存器的移动。
+    RetMov,
+    /// f64 标量寄存器移动。
+    FprMovF64,
+    /// f32 标量寄存器移动。
+    FprMovF32,
+    /// ≤16B 向量按值的**全宽**寄存器移动（x86 MOVAPS；缺则向量 by-value 不支持）。
+    VecMov,
+    /// 直接调用（函数符号 reloc）。
+    Call,
+    /// 间接调用（寄存器/内存目标）。
+    CallIndirect,
+    /// 返回。
+    Ret,
+    /// 无条件跳转。
+    Jump,
+    /// 条件分支。
+    Branch,
+    /// 条件测试（Branch 的 test-cond 序列）。
+    Test,
+    /// 硬件 push（callee-saved 保存；缺则回退 `[spill.*]` store 模板）。
+    Push,
+    /// 硬件 pop。
+    Pop,
+    /// 帧分配（`@frame_alloc`）。
+    FrameAlloc,
+    /// 帧释放（`@frame_free`）。
+    FrameFree,
+    /// 尾声跳转（缺省用 `jump`；需要不同指令时单独声明）。
+    EpilogueJump,
+    /// 宽向量 by-ref：调用方栈拷贝 store（32 字节）。
+    #[serde(rename = "wide_vec_store_32")]
+    WideVecStore32,
+    /// 宽向量 by-ref：调用方栈拷贝 store（64 字节）。
+    #[serde(rename = "wide_vec_store_64")]
+    WideVecStore64,
+    /// 宽向量 by-ref/sret：收参与回读 load（32 字节）。
+    #[serde(rename = "wide_vec_load_32")]
+    WideVecLoad32,
+    /// 宽向量 by-ref/sret：收参与回读 load（64 字节）。
+    #[serde(rename = "wide_vec_load_64")]
+    WideVecLoad64,
+    /// 帧内 `[FP+disp]` 地址计算（sret / by-ref 临时槽）。
+    FrameAddr,
+    /// 栈参数收参 load（第 5+ 个参数从 `[FP+shadow+…]` 取）。
+    StackArgLoad,
+    /// 栈参数传参 store（调用方把第 5+ 个参数写到 `[SP+shadow+…]`）。
+    StackArgStore,
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 与 serde 的 snake_case 命名一致（错误消息里直接给 TOML 写法）
+        let s = serde_json_name(self);
+        f.write_str(s)
+    }
+}
+
+/// 角色的 TOML 写法（snake_case）。
+fn serde_json_name(r: &Role) -> &'static str {
+    match r {
+        Role::GprMov => "gpr_mov",
+        Role::RetMov => "ret_mov",
+        Role::FprMovF64 => "fpr_mov_f64",
+        Role::FprMovF32 => "fpr_mov_f32",
+        Role::VecMov => "vec_mov",
+        Role::Call => "call",
+        Role::CallIndirect => "call_indirect",
+        Role::Ret => "ret",
+        Role::Jump => "jump",
+        Role::Branch => "branch",
+        Role::Test => "test",
+        Role::Push => "push",
+        Role::Pop => "pop",
+        Role::FrameAlloc => "frame_alloc",
+        Role::FrameFree => "frame_free",
+        Role::EpilogueJump => "epilogue_jump",
+        Role::WideVecStore32 => "wide_vec_store_32",
+        Role::WideVecStore64 => "wide_vec_store_64",
+        Role::WideVecLoad32 => "wide_vec_load_32",
+        Role::WideVecLoad64 => "wide_vec_load_64",
+        Role::FrameAddr => "frame_addr",
+        Role::StackArgLoad => "stack_arg_load",
+        Role::StackArgStore => "stack_arg_store",
+    }
 }
 
 /// 指令效果标签。
@@ -940,6 +1033,10 @@ pub struct FamilyVariant {
     /// 变体级 asm 覆盖（罕见；缺省用家族模板 `{name}` 展开）。
     #[serde(default)]
     pub asm: Option<String>,
+    /// 变体级语义角色（见 [`Role`]）——家族里只有个别变体担任 ABI 角色
+    /// （如 SSE 家族里 MOVSD 是 f64 移动、MOVAPS 是向量全宽移动）。
+    #[serde(default)]
+    pub roles: Vec<Role>,
     #[serde(default)]
     pub when: Option<toml::Value>,
 }
@@ -1155,60 +1252,10 @@ pub struct Abi {
     /// 溢出 scratch 寄存器（spill load/store 用；x86 R10/R11）。
     #[serde(default)]
     pub scratch: Vec<String>,
-    /// `@move_args` 收参移动指令名（缺省 "MOV_RM8_R64"——x86 语义；demo 等
-    /// 定宽 ISA 可声明自己的 mov 指令名，如 "MOV64"）。
-    #[serde(default)]
-    pub move_inst: Option<String>,
-    /// Return 返回值→返回寄存器移动指令名（缺省 "MOV_RM8_R64"）。
-    #[serde(default)]
-    pub ret_mov_inst: Option<String>,
     /// 返回寄存器（物理名；如 riscv "X10"=a0）。缺省空 = index 0（x86 RAX
     /// 语义）。Return/Call lowering 的返回值移动目标用此列表首项。
     #[serde(default)]
     pub ret_regs: Vec<String>,
-    /// Call 调用指令名（缺省 "CALL_RIP_REL"=x86）。riscv 声明 "JAL"：
-    /// 定宽 label 槽 = -(FuncRef+1)（encoder 转 "@N" 符号 reloc），
-    /// 其余 Reg 槽填 `call_ret_reg`（返回地址寄存器）。
-    #[serde(default)]
-    pub call_inst: Option<String>,
-    /// CallIndirect 调用指令名（缺省 "CALL_RM"=x86 FF /2）。定宽 ISA 可
-    /// 声明 "JALR"（rs1 = 目标地址、imm = 0、out Reg 槽 = call_ret_reg）。
-    #[serde(default)]
-    pub call_indirect_inst: Option<String>,
-    /// Return 指令名（terminator lowering 用；缺省 "RET"）。
-    #[serde(default)]
-    pub ret_inst: Option<String>,
-    /// 无条件跳转指令名（epilogue/block jump；缺省变长 "JMP_REL32"、
-    /// 定宽 "JAL"——按存在性回退）。
-    #[serde(default)]
-    pub jump_inst: Option<String>,
-    /// 条件分支指令名（Branch lowering；缺省 "JCC_REL32"/定宽 "BEQ"）。
-    #[serde(default)]
-    pub branch_inst: Option<String>,
-    /// 条件测试指令名（Branch 的 test-cond 序列；缺省 "TEST_RM_R"）。
-    #[serde(default)]
-    pub test_inst: Option<String>,
-    /// 硬件 push/pop 指令名（@push_callee 用；缺省 "PUSH"/"POP"——
-    /// 不存在时回退 [spill.GPR] store/load 模板）。
-    #[serde(default)]
-    pub push_inst: Option<String>,
-    /// 硬件 pop 指令名（@pop_callee 用；缺省 "POP"）。
-    #[serde(default)]
-    pub pop_inst: Option<String>,
-    /// 浮点返回/参数移动指令名（f64；缺省 "MOVSD"）。
-    /// 生成代码直接构造该指令变体（fpr out, fpr in）。
-    #[serde(default)]
-    pub fpr_mov_inst: Option<String>,
-    /// 浮点返回/参数移动指令名（f32；缺省 "MOVSS"）。
-    #[serde(default)]
-    pub fpr_mov_inst32: Option<String>,
-    /// 按值向量（≤16 字节，VEC(16) 类——V64/V128）跨 ABI 的全宽寄存器
-    /// 移动指令名（缺省 "MOVAPS"——x86 128 位 XMM 全宽 reg-reg 移动；
-    /// f32/f64 标量走 fpr_mov_inst*，本键仅向量 by-value 用）。缺失该
-    /// 指令的 ISA（riscv 等）→ 向量 by-value 路径 Unsupported（不引用
-    /// 不存在的变体）。
-    #[serde(default)]
-    pub vec_mov_inst: Option<String>,
     /// Call 的返回地址寄存器（缺省 "X1"=riscv ra）。
     #[serde(default)]
     pub call_ret_reg: Option<String>,
@@ -1250,12 +1297,6 @@ pub struct AbiFrame {
     /// 帧指针寄存器名（"RBP"；None = 无帧指针）。
     #[serde(default)]
     pub fp: Option<String>,
-    /// 帧分配指令（SUB RSP, imm）——[emit] 的 @frame_alloc 展开用。
-    #[serde(default)]
-    pub alloc_inst: Option<String>,
-    /// 帧释放指令（ADD RSP, imm）——@frame_free 用。
-    #[serde(default)]
-    pub free_inst: Option<String>,
     /// prologue 在帧指针上方 push 的字节数（帧指针保存槽；x86 = 8）。
     #[serde(default)]
     pub fp_push_bytes: Option<u32>,
@@ -1364,11 +1405,6 @@ pub struct EmitSection {
     /// （仅单 return block 函数安全）。
     #[serde(default)]
     pub epilogue_label: Option<bool>,
-    /// 尾声跳转指令名（`emit_epilogue_jump` 用；缺省 None = 自动检测
-    /// `JMP_REL32`（变长 x86，0xE9 rel32 手写）/ `JAL`（定宽 riscv，
-    /// label 槽 = 块号）。显式声明替代名称检测）。
-    #[serde(default)]
-    pub epilogue_jump_inst: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -148,35 +148,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         });
     }
 
-    // terminator 指令引用：`[abi]` 键驱动（ret_inst/jump_inst/branch_inst/
-    // test_inst）。**缺省值是固定默认名**（按 ISA 形态：变长 x86 → 相对
-    // 跳转、定宽 riscv → JAL/BEQ），**不做"按名字存在性"猜测**——指令
-    // 不存在时由 inst_fids 查找报错（用户用其他名字必须显式声明键）。
-    let abi_cfg = model.abi.as_ref();
-    let ret_inst = abi_cfg
-        .and_then(|a| a.ret_inst.clone())
-        .unwrap_or_else(|| "RET".to_string());
-    let jump_inst = abi_cfg
-        .and_then(|a| a.jump_inst.clone())
-        .unwrap_or_else(|| {
-            if model.meta.variable_length {
-                "JMP_REL32".to_string()
-            } else {
-                "JAL".to_string()
-            }
-        });
-    let branch_inst = abi_cfg
-        .and_then(|a| a.branch_inst.clone())
-        .unwrap_or_else(|| {
-            if model.meta.variable_length {
-                "JCC_REL32".to_string()
-            } else {
-                "BEQ".to_string()
-            }
-        });
-    let test_inst = abi_cfg
-        .and_then(|a| a.test_inst.clone())
-        .unwrap_or_else(|| "TEST_RM_R".to_string());
+    // terminator 指令引用：**按语义角色查表**（`roles = ["ret"|"jump"|
+    // "branch"|"test"]`）。v14 是按 `[abi].*_inst` 名指针 + 按 ISA 形态猜的
+    // 默认名（变长 → JMP_REL32、定宽 → JAL），x86 靠默认"恰好能跑"；
+    // 角色化后缺声明就是缺声明，对应终结符明确降级为 Unsupported。
+    let ret_inst = role_name(infos, Role::Ret).unwrap_or_default();
+    let jump_inst = role_name(infos, Role::Jump).unwrap_or_default();
+    let branch_inst = role_name(infos, Role::Branch).unwrap_or_default();
+    let test_inst = role_name(infos, Role::Test).unwrap_or_default();
     // 指令存在性：终结符指令必须声明（缺失 → 该终结符 Unsupported，
     // 生成代码引用不存在的变体是编译错误；用查找失败兜底报错信息）。
     // 存在性 = `inst_exists`（与操作数无关——RET/NOP 无操作数，不能
@@ -208,9 +187,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         )
     };
     // 返回移动指令名可配置（[abi].ret_mov_inst，缺省 "MOV_RM8_R64"）。
-    let ret_mov_inst = abi_cfg
-        .and_then(|a| a.ret_mov_inst.clone())
-        .unwrap_or_else(|| "MOV_RM8_R64".to_string());
+    let ret_mov_inst = role_name(infos, Role::RetMov)
+        .or_else(|_| role_name(infos, Role::GprMov))
+        .unwrap_or_default();
     let has_mov_rax = inst_exists(infos, &ret_mov_inst);
     let ret_vn = crate::v12::codegen::pascal_ident(&ret_mov_inst);
     let ret_move = inst_move_role(infos, &ret_mov_inst);
@@ -257,12 +236,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // epilogue 统一恢复 callee-saved 后 ret（否则栈不平衡崩溃）。
     // 浮点移动指令由 `[abi].fpr_mov_inst`/`fpr_mov_inst32` 键指定
     //（缺省 "MOVSD"/"MOVSS"），变体名与字段均按键派生——不做名判断。
-    let fpr_mov64 = abi_cfg
-        .and_then(|a| a.fpr_mov_inst.clone())
-        .unwrap_or_else(|| "MOVSD".to_string());
-    let fpr_mov32 = abi_cfg
-        .and_then(|a| a.fpr_mov_inst32.clone())
-        .unwrap_or_else(|| "MOVSS".to_string());
+    let fpr_mov64 = role_name(infos, Role::FprMovF64).unwrap_or_default();
+    let fpr_mov32 = role_name(infos, Role::FprMovF32).unwrap_or_default();
     let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
     let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
     let fpr_mov_fids = inst_fids(infos, &fpr_mov64);
@@ -278,9 +253,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // 按值向量（≤16 字节，VEC(16) 类）返回/参数用全宽 XMM 移动指令
     //（缺省 "MOVAPS"；指令缺失的 ISA → 对应路径 Unsupported，不引用
     // 不存在的变体——与 fpr_mov_inst 缺省门控同款）。
-    let vec_mov_inst = abi_cfg
-        .and_then(|a| a.vec_mov_inst.clone())
-        .unwrap_or_else(|| "MOVAPS".to_string());
+    let vec_mov_inst = role_name(infos, Role::VecMov).unwrap_or_default();
     let vec_mov_fids = inst_fids(infos, &vec_mov_inst);
     let has_vec_mov = vec_mov_fids.len() >= 2;
     let vec_mov_vn = crate::v12::codegen::pascal_ident(&vec_mov_inst);
@@ -311,7 +284,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     } else {
         quote! {
             let _ = __pack;
-            return Err(crate::prelude::IrError::Unsupported("v12 float return (fpr_mov_inst missing)".into()));
+            return Err(crate::prelude::IrError::Unsupported("v12 float return: 未声明 roles = [\"fpr_mov_f64\"]/[\"fpr_mov_f32\"]".into()));
         }
     };
     // 按值向量（≤16 字节，V64/V128）返回体：结果 → XMM0 全宽 128 位移动
@@ -777,12 +750,11 @@ fn gen_call_lowering(
             });
         }
     };
-    // 整数移动指令：按 [abi].ret_mov_inst（缺省 "MOV_RM8_R64"），字段按角色
-    // 解析（x86 op0=In=src/op1=InOut=dest；demo op0=Out=dest/op1=In=src）。
-    let mov_inst = abi
-        .ret_mov_inst
-        .clone()
-        .unwrap_or_else(|| "MOV_RM8_R64".to_string());
+    // 整数移动指令：角色 `ret_mov`（缺省回退 `gpr_mov`），字段按角色解析
+    //（x86 op0=In=src/op1=InOut=dest；demo op0=Out=dest/op1=In=src）。
+    let mov_inst = role_name(infos, Role::RetMov)
+        .or_else(|_| role_name(infos, Role::GprMov))
+        .unwrap_or_default();
     let mov_vn = vn(&mov_inst);
     let (m_src, m_src_idx, m_dest, m_dest_idx) =
         inst_move_role(infos, &mov_inst).ok_or_else(|| {
@@ -792,7 +764,7 @@ fn gen_call_lowering(
     //（TOML 显式声明，不做按指令名探测——第三轮重构原则）。
     // 生成期门控：`[abi].stack_arg_shadow` 已声明但标签缺失 → Unsupported
     //（防引用不存在的变体；未声明 shadow 则不生成栈参数路径，标签随意）。
-    let stack_store_tagged = insts_by_tag(infos, "stack_arg_store");
+    let stack_store_tagged = insts_by_role(infos, Role::StackArgStore);
     let (stack_store_vn, stack_store_mem_fid, stack_store_reg_fid, stack_store_reg_idx) =
         if abi.stack_arg_shadow.is_some() {
             match stack_store_tagged.first() {
@@ -827,16 +799,8 @@ fn gen_call_lowering(
     // 浮点移动指令：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键（缺省
     // "MOVSD"/"MOVSS"）——缺失 → 浮点路径 Unsupported（防生成代码引用
     // 不存在的 Inst 变体；demo 等无浮点 ISA 的 Call 整体降级）。
-    let fpr_mov64 = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.fpr_mov_inst.clone())
-        .unwrap_or_else(|| "MOVSD".to_string());
-    let fpr_mov32 = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.fpr_mov_inst32.clone())
-        .unwrap_or_else(|| "MOVSS".to_string());
+    let fpr_mov64 = role_name(infos, Role::FprMovF64).unwrap_or_default();
+    let fpr_mov32 = role_name(infos, Role::FprMovF32).unwrap_or_default();
     let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
     let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
     let sd_f = fids(&fpr_mov64);
@@ -849,11 +813,7 @@ fn gen_call_lowering(
     let has_fpr_mov = sd_f.len() >= 2 && has_ss;
     // 按值向量（≤16 字节，VEC(16) 类）参数/返回的全宽 XMM 移动指令
     //（缺省 "MOVAPS"；指令缺失的 ISA → 对应路径 Unsupported）。
-    let vec_mov_inst = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.vec_mov_inst.clone())
-        .unwrap_or_else(|| "MOVAPS".to_string());
+    let vec_mov_inst = role_name(infos, Role::VecMov).unwrap_or_default();
     let vec_mov_fids = fids(&vec_mov_inst);
     let has_vec_mov = vec_mov_fids.len() >= 2;
     let (v_dest, v_src) = if vec_mov_fids.len() >= 2 {
@@ -1053,10 +1013,7 @@ fn gen_call_lowering(
     // Call：CALL_RIP_REL target = -(FuncRef+1)；指令缺失 → Unsupported。
     // [abi].call_inst 可覆盖（riscv "JAL"：jal ra, @N——label 槽负值 →
     // encoder 转 Relative(4,0) "@N" 符号 reloc，RiscvRelocPatcher 编码 UJ 位段）。
-    let call_inst = abi
-        .call_inst
-        .clone()
-        .unwrap_or_else(|| "CALL_RIP_REL".to_string());
+    let call_inst = role_name(infos, Role::Call).unwrap_or_default();
     let call_f = fids(&call_inst);
     let mut call_is_err = false;
     // Call 字段构造（结构迭代，不按指令名判断形态）：
@@ -1110,10 +1067,7 @@ fn gen_call_lowering(
         // FF /2；定宽可声明 "JALR"）。结构迭代：In Reg 槽 = 目标地址
         //（args[0]，map_reg_field 绑 vreg）；Out/InOut Reg 槽 =
         // call_ret_reg；imm/label 槽置 0。
-        let ci_inst = abi
-            .call_indirect_inst
-            .clone()
-            .unwrap_or_else(|| "CALL_RM".to_string());
+        let ci_inst = role_name(infos, Role::CallIndirect).unwrap_or_default();
         let ci_f = fids(&ci_inst);
         match ci_f.first() {
             Some(_) => {
@@ -1671,12 +1625,26 @@ fn arg_move_loop(
     }
 }
 
-/// 按语义标签收集指令——标签在 TOML `tags` 显式声明（第三轮重构原则：
-/// **不做按指令名/前缀的存在性探测**，语义由标签驱动）。无匹配 → 空。
-pub(crate) fn insts_by_tag<'a>(infos: &'a [InstInfo<'a>], tag: &str) -> Vec<&'a InstInfo<'a>> {
+/// 按语义角色查指令（角色全 ISA 唯一，validate 已保证）。无声明 → None。
+///
+/// 取代 v14 的「`[abi].*_inst` 名指针 + 生成器里 x86 指令名硬编码兜底」：
+/// 缺角色时调用方给出带角色名的 `Unsupported`，不会静默去查别的 ISA 的名字。
+pub(crate) fn inst_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Option<&'a InstInfo<'a>> {
+    infos.iter().find(|i| i.inst.roles.contains(&role))
+}
+
+/// 角色对应的指令名；缺角色 → 带角色名的错误。
+pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String> {
+    inst_by_role(infos, role)
+        .map(|i| i.inst.name.clone())
+        .ok_or_else(|| format!("本 ISA 未声明 roles = [\"{role}\"] 的指令"))
+}
+
+/// 按语义角色收集指令（宽向量 by-ref 那几个角色，允许多条时取全部）。
+pub(crate) fn insts_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Vec<&'a InstInfo<'a>> {
     infos
         .iter()
-        .filter(|i| i.inst.tags.iter().any(|t| t == tag))
+        .filter(|i| i.inst.roles.contains(&role))
         .collect()
 }
 
@@ -1707,9 +1675,9 @@ pub(crate) fn reg_mem_fids(info: &InstInfo) -> (Option<syn::Ident>, Option<syn::
     (reg, mem, reg_idx)
 }
 
-/// 收集宽向量 by-ref/sret 栈拷贝指令——按语义标签（TOML `tags` 显式声明，
-/// 不做按指令名探测）。返回 (tag → (vn, Reg 字段名, Mem 字段名, Reg 序号),
-/// 是否五标签齐全)。缺失 → 对应 ABI 能力 Unsupported。
+/// 收集宽向量 by-ref/sret 栈拷贝指令——按语义角色（TOML `roles` 显式声明，
+/// 不做按指令名探测）。返回 (角色 → (vn, Reg 字段名, Mem 字段名, Reg 序号),
+/// 是否五个角色齐全)。缺失 → 对应 ABI 能力 Unsupported。
 #[allow(clippy::type_complexity)]
 pub(crate) fn collect_byref_insts(
     infos: &[InstInfo],
@@ -1717,22 +1685,22 @@ pub(crate) fn collect_byref_insts(
     std::collections::HashMap<&'static str, (syn::Ident, syn::Ident, syn::Ident, u8)>,
     bool,
 ) {
-    const TAGS: [&str; 5] = [
-        "wide_vec_store_32",
-        "wide_vec_store_64",
-        "wide_vec_load_32",
-        "wide_vec_load_64",
-        "frame_rbp_addr",
+    const ROLES: [(&str, Role); 5] = [
+        ("wide_vec_store_32", Role::WideVecStore32),
+        ("wide_vec_store_64", Role::WideVecStore64),
+        ("wide_vec_load_32", Role::WideVecLoad32),
+        ("wide_vec_load_64", Role::WideVecLoad64),
+        ("frame_rbp_addr", Role::FrameAddr),
     ];
     let mut m = std::collections::HashMap::new();
-    for tag in TAGS {
-        if let Some(info) = insts_by_tag(infos, tag).first()
+    for (key, role) in ROLES {
+        if let Some(info) = insts_by_role(infos, role).first()
             && let (Some(reg), Some(mem), idx) = reg_mem_fids(info)
         {
-            m.insert(tag, (info.vn.clone(), reg, mem, idx));
+            m.insert(key, (info.vn.clone(), reg, mem, idx));
         }
     }
-    let ok = m.len() == TAGS.len();
+    let ok = m.len() == ROLES.len();
     (m, ok)
 }
 

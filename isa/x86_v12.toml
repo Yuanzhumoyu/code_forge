@@ -454,6 +454,7 @@ asm = "cmp {src2}, {src}"
 
 [[instructions]]
 name = "TEST_RM_R"
+roles = ["test"]
 form = "MRR"
 modrm = { reg = "src", rm = "src2" }
 opcode = 0x85
@@ -575,6 +576,7 @@ asm = "btc {src2}, {src}"
 
 [[instructions]]
 name = "MOV_RM8_R64"
+roles = ["gpr_mov"]
 form = "MRR"
 modrm = { reg = "src", rm = "dst" }
 opcode = 0x89
@@ -808,6 +810,7 @@ asm = "punpckhdq {dst}, {src}"
 
 [[instructions]]
 name = "MOVSS"
+roles = ["fpr_mov_f32"]
 form = "SSE_RR"
 modrm = { reg = "dst", rm = "src" }
 opcode = 0x10
@@ -973,23 +976,23 @@ effect = ["Move"]
 
 [[instructions]]
 name = "MOV64_RM"
+roles = ["stack_arg_load"]
 form = "MRR_MEMREF"
 modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x8B
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "mov64rm {dst}, {mem}"
 # 被调方栈参数 load（[abi].stack_arg_shadow 启用时从 [rbp+off] 收第 5+ 参数）
-tags = ["stack_arg_load"]
 
 [[instructions]]
 name = "MOV64_MR"
+roles = ["stack_arg_store"]
 form = "MRR_MEMREF"
 modrm = { reg = "src", rm = "[mem]" }
 opcode = 0x89
 ops = ["src:gpr", "mem:mem"]
 asm = "mov64mr {mem}, {src}"
 # 调用方栈参数 store（[abi].stack_arg_shadow 启用时第 5+ 参数写 [rsp+off]）
-tags = ["stack_arg_store"]
 
 [[instructions]]
 name = "MOVSD_RM"
@@ -1126,6 +1129,7 @@ ops = ["dst:fpr:out", "src:fpr"]
 asm = "{name} {dst}, {src}"
 [[families.variants]]
 name = "MOVSD"
+roles = ["fpr_mov_f64"]
 opcode = 0x10
 [[families.variants]]
 name = "MINSD"
@@ -1180,6 +1184,7 @@ ops = ["dst:fpr:out", "src:fpr"]
 asm = "{name} {dst}, {src}"
 [[families.variants]]
 name = "MOVAPS"
+roles = ["vec_mov"]
 opcode = 0x28
 [[families.variants]]
 name = "ADDPS"
@@ -1392,24 +1397,24 @@ asm = "vmovaps {dst}, {mem}"
 # 非对齐 512 位 load（by-ref 传参用；EVEX 0x10 + disp_scale=64）
 [[instructions]]
 name = "VMOVUPS_ZMM_MEM"
+roles = ["wide_vec_load_64"]
 form = "EVEX_RR_MEMREF"
 modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x10
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["dst:fpr32:out", "mem:mem"]
 asm = "vmovups {dst}, {mem}"
-tags = ["wide_vec_load_64"]
 
 # 非对齐 512 位 store（by-ref 调用方侧副本）
 [[instructions]]
 name = "VMOVUPS_ZMM_MR"
+roles = ["wide_vec_store_64"]
 form = "EVEX_RR_MEMREF"
 modrm = { reg = "src", rm = "[mem]" }
 opcode = 0x11
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["src:fpr32", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
-tags = ["wide_vec_store_64"]
 
 # ── EVEX opmask（掩码写合并，z=0）：vaddps zmm, zmm, zmm, k1 ──
 # 与 3 操作数 VADDPS_ZMM 同助记符自动分发（类型签名 O3 不同）；第 4 操作数
@@ -1456,24 +1461,24 @@ asm = "vmovaps {dst}, {mem}"
 # 非对齐向量 load（by-ref 传参用——指针未必 32 字节对齐，vmovups 无对齐要求）
 [[instructions]]
 name = "VMOVUPS_RM"
+roles = ["wide_vec_load_32"]
 form = "VEX_RR_MEMREF"
 modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x10
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "vmovups {dst}, {mem}"
-tags = ["wide_vec_load_32"]
 
 # 非对齐向量 store（by-ref 调用方侧：实参 → 栈上副本）
 [[instructions]]
 name = "VMOVUPS_MR"
+roles = ["wide_vec_store_32"]
 form = "VEX_RR_MEMREF"
 modrm = { reg = "src", rm = "[mem]" }
 opcode = 0x11
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
-tags = ["wide_vec_store_32"]
 
 [[instructions]]
 name = "VBROADCASTSS"
@@ -1634,6 +1639,7 @@ asm = "idiv {src}"
 
 [[instructions]]
 name = "SUB64_R_IMM32"
+roles = ["frame_alloc"]
 modrm = { reg = 5, rm = "dst" }
 opsize = 64
 imm = 0x20
@@ -1643,6 +1649,7 @@ asm = "sub {dst}, {imm}"
 
 [[instructions]]
 name = "ADD64_R_IMM32"
+roles = ["frame_free"]
 modrm = { reg = 0, rm = "dst" }
 opsize = 64
 imm = 0x20
@@ -1676,6 +1683,7 @@ asm = "shufps {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "PUSH"
+roles = ["push"]
 opcode_reg = 0x50
 effect = ["Write"]
 ops = ["src:gpr"]
@@ -1683,6 +1691,7 @@ asm = "push {src}"
 
 [[instructions]]
 name = "POP"
+roles = ["pop"]
 opcode_reg = 0x58
 effect = ["Read"]
 ops = ["dst:gpr:out"]
@@ -1708,6 +1717,7 @@ ops = ["dst:gpr:inout"]
 asm = "bswap {dst}"
 [[instructions]]
 name = "RET"
+roles = ["ret"]
 
 opcode = 0xC3
 effect = ["Ret"]
@@ -1715,6 +1725,7 @@ asm = "ret"
 
 [[instructions]]
 name = "JMP_REL32"
+roles = ["jump"]
 imm = 0x20
 opcode = 0xE9
 ops = ["target:rel"]
@@ -1723,6 +1734,7 @@ effect = ["Jump"]
 
 [[instructions]]
 name = "CALL_RIP_REL"
+roles = ["call"]
 imm = 0x20
 opcode = 0xE8
 ops = ["target:rel"]
@@ -1764,6 +1776,7 @@ asm = "cqo"
 
 [[instructions]]
 name = "CALL_RM"
+roles = ["call_indirect"]
 modrm = { reg = 2, rm = "src" }
 opcode = 0xFF
 ops = ["src:gpr"]
@@ -1772,6 +1785,7 @@ effect = ["Call"]
 
 [[instructions]]
 name = "JCC_REL32"
+roles = ["branch"]
 escape = [0x0F]
 imm = 0x20
 opcode = 0x80            # 条件码 = opcode 低 4 位（0x80..0x8F）
@@ -1799,13 +1813,13 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "LEA_RBP_OFF"
+roles = ["frame_addr"]
 form = "MRR_MEMREF"
 modrm = { reg = "dst", rm = "[mem]" }
 opcode = 0x8D
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "lea_rbp {dst}, {mem}"
 effect = ["Pure"]
-tags = ["frame_rbp_addr"]
 
 [[instructions]]
 name = "MOVABS_GLOBAL"
@@ -1988,8 +2002,6 @@ limit = 128
 [abi.frame]
 sp = "RSP"
 fp = "RBP"
-alloc_inst = "SUB64_R_IMM32"
-free_inst = "ADD64_R_IMM32"
 fp_push_bytes = 8
 
 

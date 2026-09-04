@@ -152,6 +152,7 @@ asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV64"
+roles = ["gpr_mov"]
 form = "RR"
 opcode = 0x22
 ops = ["dst:r64:out", "src:r64"]
@@ -168,6 +169,7 @@ asm = "mov {dst}, {imm}"
 # 帧分配/释放（rd = rs1 ± imm8；B3 接入 TargetMachine 用）
 [[instructions]]
 name = "SUBI16"
+roles = ["frame_alloc"]
 form = "RI"
 opcode = 0x40
 ops = ["dst:r16:out", "src:r16", "imm:imm16"]
@@ -175,6 +177,7 @@ asm = "subi {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "ADDI16"
+roles = ["frame_free"]
 form = "RI"
 opcode = 0x41
 ops = ["dst:r16:out", "src:r16", "imm:imm16"]
@@ -183,6 +186,7 @@ asm = "addi {dst}, {src}, {imm}"
 # 返回（全字位域；word = 0x01，与 NOP 的 0 区分）
 [[instructions]]
 name = "RET"
+roles = ["ret"]
 form = "W"
 opcode = 1
 effect = ["Ret"]
@@ -212,8 +216,6 @@ asm = "nop"
 stack_align = 8
 # @move_args 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
 # 生成器按角色解析 src/dest，不依赖操作数序）
-move_inst = "MOV64"
-ret_mov_inst = "MOV64"
 
 # 参数寄存器：X0-X3（64 位视图，物理 0-3）
 [[abi.arg_class]]
@@ -223,8 +225,6 @@ regs = ["X0", "X1", "X2", "X3"]
 [abi.frame]
 sp = "X7"          # demo 无专用 SP；X7 作栈指针（frame_size=0 时不发射）
 fp = "X6"          # 帧指针占位（B3 最小集不 push）
-alloc_inst = "SUBI16"
-free_inst = "ADDI16"
 fp_push_bytes = 0
 
 [abi.callee_saved]

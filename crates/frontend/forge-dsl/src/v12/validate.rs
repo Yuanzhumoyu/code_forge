@@ -387,6 +387,32 @@ fn form_exists(m: &V12Model, name: &str) -> bool {
 // ──────────────────── [[instructions]] ────────────────────
 
 fn validate_instructions(m: &V12Model) -> Result<(), String> {
+    // 角色全 ISA 唯一：同一个语义位置有两条候选时生成器（collect_inst_infos
+    // 的 .find）只会取第一条，静默丢掉另一条——直接拒绝。[[instructions]] 与
+    // [[families.variants]] 展开后在同一命名空间（变体名 = 指令名），都要查。
+    let mut role_owner: std::collections::BTreeMap<Role, &str> = Default::default();
+    for inst in &m.instructions {
+        for r in &inst.roles {
+            if let Some(prev) = role_owner.insert(*r, inst.name.as_str()) {
+                return Err(format!(
+                    "[[instructions.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
+                    inst.name
+                ));
+            }
+        }
+    }
+    for fam in &m.families {
+        for var in &fam.variants {
+            for r in &var.roles {
+                if let Some(prev) = role_owner.insert(*r, var.name.as_str()) {
+                    return Err(format!(
+                        "[[families.variants.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
+                        var.name
+                    ));
+                }
+            }
+        }
+    }
     let mut seen = BTreeSet::new();
     for inst in &m.instructions {
         if !seen.insert(inst.name.clone()) {
@@ -702,16 +728,6 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
     if let Some(f) = &abi.frame {
         if f.sp.trim().is_empty() {
             return Err("[abi.frame].sp must not be empty".into());
-        }
-        if let Some(a) = &f.alloc_inst
-            && a.trim().is_empty()
-        {
-            return Err("[abi.frame].alloc_inst must not be empty".into());
-        }
-        if let Some(a) = &f.free_inst
-            && a.trim().is_empty()
-        {
-            return Err("[abi.frame].free_inst must not be empty".into());
         }
     }
     Ok(())

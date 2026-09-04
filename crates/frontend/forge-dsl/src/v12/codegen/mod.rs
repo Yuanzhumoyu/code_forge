@@ -275,7 +275,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 effect: Vec::new(),
                 implicit_regs: None,
                 global_reloc: None,
-                tags: Vec::new(),
+                roles: var.roles.clone(),
             });
         }
     }

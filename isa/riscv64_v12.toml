@@ -175,6 +175,7 @@ operand_fields = []
 
 [[instructions]]
 name = "MOV_RM8_R64"
+roles = ["gpr_mov"]
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
@@ -657,6 +658,7 @@ asm = "fsw {src}, {imm}({src2})"
 
 [[instructions]]
 name = "ADDI"
+roles = ["frame_alloc", "frame_free"]
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
@@ -760,6 +762,7 @@ asm = "sd {src}, {imm}({src2})"
 
 [[instructions]]
 name = "JAL"
+roles = ["call", "jump"]
 form = "J"
 opcode = 0x6F
 ops = ["dst:gpr:out", "target:off_j"]
@@ -775,6 +778,7 @@ asm = "jalr {dst}, {imm}({src})"
 
 [[instructions]]
 name = "BEQ"
+roles = ["branch"]
 form = "B"
 opcode = 0x63
 fields = { funct3 = 0 }
@@ -1135,6 +1139,7 @@ asm = "sw {src}, {imm}({src2})"
 # RET = jalr x0, 0(x1)（form I 全固定位域）
 [[instructions]]
 name = "RET"
+roles = ["ret"]
 form = "I"
 opcode = 0x67
 fields = { funct3 = 0, rd = 0, rs1 = 1, imm12 = 0 }
@@ -1155,7 +1160,6 @@ reserved = ["X0", "X1", "X3", "X4"]
 ret_regs = ["X10"]
 
 # Call 调用指令（jal ra, @N；label 槽 = -(FuncRef+1)，RiscvRelocPatcher 编码 UJ 位段）
-call_inst = "JAL"
 call_ret_reg = "X1"
 
 # Call 点被调用方破坏的寄存器（regalloc clobber 集）：ra(X1) + 参数 a0-a7
@@ -1171,8 +1175,6 @@ regs = ["X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17"]
 [abi.frame]
 sp = "X2"          # sp
 fp = "X8"          # s0/fp
-alloc_inst = "ADDI"
-free_inst = "ADDI"
 alloc_neg = true   # addi sp, sp, -frame_size
 fp_push_bytes = 16 # ra + fp 两个保存槽
 # 帧 ≥ callee_saved_bytes（16 + 11×8 = 104）：@push_callee 的 SD 槽偏移

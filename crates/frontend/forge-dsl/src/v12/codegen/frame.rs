@@ -5,6 +5,7 @@
 //! inst_reg_imm_fids）以及 model 类型。
 
 use super::super::model::*;
+use super::lowering::role_name;
 use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
@@ -145,23 +146,12 @@ pub(crate) fn gen_frame_lowering(
         .and_then(|e| e.epilogue_label)
         .unwrap_or(true);
 
-    // 尾声跳转指令选择：`[emit].epilogue_jump_inst` 或 `[abi].jump_inst`
-    // 键；缺省按 ISA 形态固定（变长 x86 → JMP_REL32 0xE9 rel32 手写；
-    // 定宽 riscv → JAL x0, epilogue_label——label 槽 = 块号 → encoder 定宽
-    // fixup Relative(4,0)，位段由 RiscvRelocPatcher 编码）。
-    // **不做按名存在性猜测**：指令不存在时 inst_fids 查找报错。
-    let explicit_jump = model
-        .emit
-        .as_ref()
-        .and_then(|e| e.epilogue_jump_inst.clone());
-    let abi_jump = model.abi.as_ref().and_then(|a| a.jump_inst.clone());
-    let jump_inst = explicit_jump.or(abi_jump).unwrap_or_else(|| {
-        if model.meta.variable_length {
-            "JMP_REL32".to_string()
-        } else {
-            "JAL".to_string()
-        }
-    });
+    // 尾声跳转指令：角色 `epilogue_jump`，缺省回退 `jump`（多数 ISA 两者同一条）。
+    // v14 是 `[emit].epilogue_jump_inst` / `[abi].jump_inst` 两个名指针 + 按 ISA
+    // 形态猜的默认名（变长 → JMP_REL32、定宽 → JAL）。
+    let jump_inst = role_name(infos, Role::EpilogueJump)
+        .or_else(|_| role_name(infos, Role::Jump))
+        .unwrap_or_default();
     // 尾声跳转统一走 encoder：jump_inst 指令存在即可（`inst_exists`，
     // 与操作数无关）。变长（x86 JMP_REL32）label 槽 = 尾部 imm → encoder
     // 发 REL4 fixup（与旧手写 0xE9+use_label_at 字节等价）；定宽（riscv
@@ -206,7 +196,7 @@ pub(crate) fn gen_frame_lowering(
     } else {
         quote! {
             Err(crate::IrError::Unsupported(
-                "epilogue jump: no jump_inst ([abi].jump_inst / [emit].epilogue_jump_inst)".into(),
+                "epilogue jump: 本 ISA 未声明 roles = [\"jump\"]/[\"epilogue_jump\"] 的指令".into(),
             ))
         }
     };
@@ -480,8 +470,8 @@ fn gen_emit_pseudo(
             // 帧槽 [sp + frame - fp_push - (k+1)*8]（frame_alloc 之后执行，
             // 槽在已分配帧顶部 fp_push 区域之下；min_frame_bytes 需覆盖）。
             // `[abi].push_inst`/`pop_inst` 键驱动（缺省按 PUSH/POP 存在性检测）。
-            let push_inst = abi.push_inst.clone().unwrap_or_else(|| "PUSH".to_string());
-            let pop_inst = abi.pop_inst.clone().unwrap_or_else(|| "POP".to_string());
+            let push_inst = role_name(infos, Role::Push).unwrap_or_default();
+            let pop_inst = role_name(infos, Role::Pop).unwrap_or_default();
             let has_hw_push = inst_exists(infos, &push_inst) && inst_exists(infos, &pop_inst);
             if !has_hw_push {
                 let Some(frame) = &abi.frame else {
@@ -606,11 +596,7 @@ fn gen_emit_pseudo(
             // 指令名可配置（[abi].move_inst，缺省 "MOV_RM8_R64"）——demo 等
             // 定宽 ISA 声明自己的 mov（如 "MOV64"）；字段按角色解析（In=src、
             // Out/InOut=dest），两种操作数序（x86 src/dest 与 demo dest/src）皆可。
-            let move_inst = model
-                .abi
-                .as_ref()
-                .and_then(|a| a.move_inst.clone())
-                .unwrap_or_else(|| "MOV_RM8_R64".to_string());
+            let move_inst = role_name(infos, Role::GprMov).unwrap_or_default();
             let mov_vn = crate::v12::codegen::pascal_ident(&move_inst);
             let (m_src, _m_src_idx, m_dest, _m_dest_idx) = inst_move_role(infos, &move_inst)
                 .ok_or_else(|| {
@@ -625,9 +611,9 @@ fn gen_emit_pseudo(
                     None => quote! { None },
                 };
             let stack_load_tagged =
-                crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_load");
+                crate::v12::codegen::lowering::insts_by_role(infos, Role::StackArgLoad);
             let stack_store_tagged =
-                crate::v12::codegen::lowering::insts_by_tag(infos, "stack_arg_store");
+                crate::v12::codegen::lowering::insts_by_role(infos, Role::StackArgStore);
             let (int_stack_load, il_mem, il_reg) =
                 if model
                     .abi
@@ -709,16 +695,8 @@ fn gen_emit_pseudo(
             let cs_bytes = callee_saved_bytes_lit;
             // 浮点参数移动：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键
             //（缺省 "MOVSD"/"MOVSS"；fpr out, fpr in）。
-            let fpr_mov64 = model
-                .abi
-                .as_ref()
-                .and_then(|a| a.fpr_mov_inst.clone())
-                .unwrap_or_else(|| "MOVSD".to_string());
-            let fpr_mov32 = model
-                .abi
-                .as_ref()
-                .and_then(|a| a.fpr_mov_inst32.clone())
-                .unwrap_or_else(|| "MOVSS".to_string());
+            let fpr_mov64 = role_name(infos, Role::FprMovF64).unwrap_or_default();
+            let fpr_mov32 = role_name(infos, Role::FprMovF32).unwrap_or_default();
             let fpr_fids = inst_fids(infos, &fpr_mov64);
             let has_fpr_mov = fpr_fids.len() >= 2 && inst_fids(infos, &fpr_mov32).len() >= 2;
             let (f_dest, f_src) = if fpr_fids.len() >= 2 {
@@ -736,11 +714,7 @@ fn gen_emit_pseudo(
             //（fpr_mov_inst*）区分：参数类 VEC(16) → 全宽、FPR(8) →
             // 标量。指令缺失的 ISA（riscv）→ 运行时 Unsupported（不引用
             // 不存在的变体）。
-            let vec_mov = model
-                .abi
-                .as_ref()
-                .and_then(|a| a.vec_mov_inst.clone())
-                .unwrap_or_else(|| "MOVAPS".to_string());
+            let vec_mov = role_name(infos, Role::VecMov).unwrap_or_default();
             let vec_fids = inst_fids(infos, &vec_mov);
             let has_vec_mov = vec_fids.len() >= 2;
             let (v_dest, v_src) = if vec_fids.len() >= 2 {
@@ -761,7 +735,7 @@ fn gen_emit_pseudo(
             } else {
                 quote! {
                     return Err(crate::IrError::Emit(
-                        "v12 vector arg receive (vec_mov_inst missing)".into(),
+                        "v12 vector arg receive: 未声明 roles = [\"vec_mov\"] 的指令".into(),
                     ));
                 }
             };
@@ -1101,10 +1075,9 @@ fn gen_emit_pseudo(
             let Some(frame) = &abi.frame else {
                 return Ok(quote! {});
             };
-            let inst = frame
-                .alloc_inst
-                .as_deref()
-                .ok_or_else(|| "[abi.frame].alloc_inst required for @frame_alloc".to_string())?;
+            let alloc = role_name(infos, Role::FrameAlloc)
+                .map_err(|e| format!("@frame_alloc: {e}"))?;
+            let inst = alloc.as_str();
             // 帧分配：所有 Reg 槽填 sp、所有 Imm/Label 槽填 frame_size。
             // x86 `SUB64_R_IMM32`（inout reg + imm32）；demo `SUBI16`
             //（out rd + in rs1 + imm8）两种形态皆可。
@@ -1152,10 +1125,9 @@ fn gen_emit_pseudo(
             let Some(frame) = &abi.frame else {
                 return Ok(quote! {});
             };
-            let inst = frame
-                .free_inst
-                .as_deref()
-                .ok_or_else(|| "[abi.frame].free_inst required for @frame_free".to_string())?;
+            let free = role_name(infos, Role::FrameFree)
+                .map_err(|e| format!("@frame_free: {e}"))?;
+            let inst = free.as_str();
             let sp = format_ident!("{}", frame.sp);
             let vn = crate::v12::codegen::pascal_ident(inst);
             let (reg_fids, imm_fids) = inst_reg_imm_fids(infos, inst)
