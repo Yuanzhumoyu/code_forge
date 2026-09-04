@@ -234,7 +234,9 @@ fn gen_mem_support(_infos: &[InstInfo]) -> Result<TokenStream, String> {
 /// `inst` 为 owned（families 展开后每个 variant 是一条合成指令）。
 pub(crate) struct InstInfo<'a> {
     inst: Instruction,
-    form: &'a Form,
+    /// **已解析的编码键**：`form` 预设 ⊕ 指令级逐键覆盖（`EncKeys::over`）。
+    /// 下游只读这一份，不再各自 `inst.x.or(form.x)`——覆盖语义单点实现。
+    form: EncKeys,
     vn: syn::Ident,
     mnemonic: String,
     /// 操作数绑定：(位域名, 字段标识, 槽, 角色)。
@@ -259,7 +261,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 .unwrap_or_else(|| fam.asm.replace("{name}", &var.name.to_lowercase()));
             insts.push(Instruction {
                 name: var.name.clone(),
-                form: fam.form.clone(),
+                form: Some(fam.form.clone()),
                 opcode: var.opcode,
                 fields: if fields.is_empty() {
                     None
@@ -268,9 +270,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 },
                 asm,
                 when: var.when.clone(),
-                vex: None,
-                opsize: None,
-                rex_w: None,
+                enc: Default::default(),
                 effect: Vec::new(),
                 implicit_regs: None,
                 global_reloc: None,
@@ -280,21 +280,26 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
     }
     let mut out = Vec::new();
     for inst in &insts {
-        let form = m
-            .forms
-            .iter()
-            .find(|f| f.name == inst.form)
-            .ok_or_else(|| {
-                format!(
-                    "[[instructions.{}]]: form '{}' missing",
-                    inst.name, inst.form
-                )
-            })?;
-        // 变长 form（无 opcode_field）不需要 operand_fields；定宽需要
+        // 编码键 = form 预设（可省略）⊕ 指令级逐键覆盖（指令优先）
+        let preset: EncKeys = match &inst.form {
+            None => EncKeys::default(),
+            Some(name) => m
+                .forms
+                .iter()
+                .find(|f| &f.name == name)
+                .ok_or_else(|| {
+                    format!("[[instructions.{}]]: form '{name}' missing", inst.name)
+                })?
+                .keys
+                .clone(),
+        };
+        let enc = inst.enc.over(&preset);
+        let form = &enc;
+        // 变长（无 opcode_field）不需要 operand_fields；定宽需要
         if form.opcode_field.is_none() && form.operand_fields.is_some() {
             return Err(format!(
-                "[[instructions.{}]]: form '{}' declares operand_fields without opcode_field (vlen forms use modrm semantic keys)",
-                inst.name, inst.form
+                "[[instructions.{}]]: operand_fields declared without opcode_field (vlen 形式用 modrm 语义键)",
+                inst.name
             ));
         }
         if inst.opcode.is_none() && form.opcode_reg.is_none() {
@@ -350,7 +355,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
         }
         out.push(InstInfo {
             inst: inst.clone(),
-            form,
+            form: enc.clone(),
             vn: pascal_ident(&inst.name),
             mnemonic,
             operands,

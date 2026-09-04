@@ -463,18 +463,21 @@ pub enum OperandRole {
     InOut,
 }
 
-// ──────────────────────── [[forms]] ────────────────────────
+// ──────────────────── [[forms]] / 编码语义键 ────────────────────
 
-/// 编码形式：语义键组合，替代 v11 编码字符串。
+/// 编码语义键集合——`[[forms]]`（预设）与 `[[instructions]]`（逐键覆盖）
+/// **共用同一组字段**。
 ///
-/// 语义键（modrm/rex/vex/prefix/escape）是**开放集合**：迭代 3/4 按需扩展
-/// （sib/leb128/reloc/...），每个键对应 forge-dsl 内部一个发射/解码实现。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// v14 之前 form 是"必须预先命名的组合点"，指令只能覆盖 opsize/rex_w/vex 三个
+/// 键，于是每出现一个新组合就得新起一个 form 名——x86 47 个 form 里 17 个只被
+/// 一条指令用，命名已到 `MRR_0F_NOOS_MEM` 与 `MRR_MEM_0F_NOOS` 并存（只差
+/// `rex_w`）的程度。v15 起 form 退化为**可选混入的预设**，任意键都能在指令上
+/// 覆盖，组合不再需要命名。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Form {
-    pub name: String,
-    /// ModRM 结构键（迭代 3：`"rr"` reg=op0+rm=op1、`"ext"` reg=fields.ext
-    /// +rm=op0；迭代 3b+：`"rm_mem"` 等内存形式）。
+pub struct EncKeys {
+    /// ModRM 结构键（`"rr"` reg=op0+rm=op1、`"ext"` reg=fields.ext+rm=op0、
+    /// `"rm_mem"` 等内存形式）。
     #[serde(default)]
     pub modrm: Option<String>,
     /// 固定 ModRM 字节（无操作数指令如 MFENCE 0F AE F0：mod=11/reg/rm 全固定）。
@@ -483,22 +486,18 @@ pub struct Form {
     /// REX 发射策略（"auto" | "never" | ...）。
     #[serde(default)]
     pub rex: Option<String>,
-    /// VEX 结构（map/pp/l 来源；迭代 4）。
+    /// VEX 结构（map/pp/l 来源）。
     #[serde(default)]
     pub vex: Option<VexSpec>,
     /// EVEX 结构（AVX-512；复用 [`VexSpec`] 数据键 map/pp/w/l，l=0/1/2 →
-    /// L'L=128/256/512 位；最小集：reg-reg、无 opmask/broadcast）。
+    /// L'L=128/256/512 位）。
     #[serde(default)]
     pub evex: Option<VexSpec>,
     /// 变长：固定前缀来源。`"field"` → fields.prefix（SSE 的 66/F2/F3/0）；
     /// 数字字符串 → 固定字节。缺省无前缀。
     #[serde(default)]
     pub prefix: Option<String>,
-    /// 变长：编码宽度语义。`opsize = <操作数序号>`：宽度由该操作数的寄存器
-    /// 自动推导（RAX→64 发 REX.W、EAX→32 无前缀、AX→16 发 0x66）；`"max"` →
-    /// 取全部 Reg 操作数宽度的最大值（无目的槽的同宽指令，见 [`Opsize::Max`]）；
-    /// 缺省 = 第一个 Reg 槽操作数。槽声明固定宽度组（如 `[gpr64]`）时推导恒为
-    /// 该值并在 encode 期校验操作数寄存器宽度匹配（严格类型检测）。
+    /// 变长：编码宽度语义（见 [`Opsize`]）。
     #[serde(default)]
     pub opsize: Option<Opsize>,
     /// 变长：REX.W 位来源（枚举——未知值由 serde 报错并列出候选）。
@@ -522,6 +521,41 @@ pub struct Form {
     /// 操作数少于该列表时，多余位域取 `fields` 固定值或隐式 0。
     #[serde(default)]
     pub operand_fields: Option<Vec<String>>,
+}
+
+impl EncKeys {
+    /// 逐键覆盖：`self`（指令级）优先，缺省取 `base`（form 预设）。
+    pub fn over(&self, base: &EncKeys) -> EncKeys {
+        macro_rules! pick {
+            ($f:ident) => {
+                self.$f.clone().or_else(|| base.$f.clone())
+            };
+        }
+        EncKeys {
+            modrm: pick!(modrm),
+            modrm_fixed: pick!(modrm_fixed),
+            rex: pick!(rex),
+            vex: pick!(vex),
+            evex: pick!(evex),
+            prefix: pick!(prefix),
+            opsize: pick!(opsize),
+            rex_w: pick!(rex_w),
+            opcode_reg: pick!(opcode_reg),
+            imm: pick!(imm),
+            escape: pick!(escape),
+            opcode_field: pick!(opcode_field),
+            operand_fields: pick!(operand_fields),
+        }
+    }
+}
+
+/// 编码形式预设（`[[forms]]`）：具名的 [`EncKeys`]，指令用 `form = "名字"` 混入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Form {
+    pub name: String,
+    #[serde(flatten)]
+    pub keys: EncKeys,
 }
 
 /// REX.W 位来源（x86-64）。
@@ -570,14 +604,30 @@ impl FromStr for Opsize {
         }
         let n = s
             .get(1..)
-            .ok_or_else(|| "opsize must be \"max\" or s<N>/r<N>".to_string())?
+            .ok_or_else(|| "opsize must be \"max\"、\"s<N>\" or a bit width (16/32/64)".to_string())?
             .parse::<u16>()
             .map_err(|e| e.to_string())?;
         match s.chars().next() {
             Some('s') => Ok(Self::Slot(n)),
-            Some('r') => Ok(Self::Reg(n)),
-            _ => Err("opsize must start with 's' or 'r'".to_string()),
+            // "r<字节>" 是 v14 及以前的写法（r8 = 8 字节 = 64 位），与
+            // `[conventions]` 的位单位互相矛盾。v15 起固定宽度写**裸整数位宽**
+            // （`opsize = 64`），这里保留读旧值的能力只为给出明确的迁移提示。
+            Some('r') => Err(format!(
+                "opsize = \"r{n}\" 是字节单位的旧写法，改写成位宽整数 opsize = {}",
+                n as u32 * 8
+            )),
+            _ => Err("opsize must be \"max\"、\"s<N>\" or a bit width (16/32/64)".to_string()),
         }
+    }
+}
+
+impl Opsize {
+    /// 裸整数 → 固定宽度（**位**；内部按字节存，与 `PhysReg::width()` 同单位）。
+    fn from_bits(bits: u64) -> Result<Self, String> {
+        if bits == 0 || bits % 8 != 0 {
+            return Err(format!("opsize = {bits} 必须是 8 的正整数倍（位宽）"));
+        }
+        Ok(Self::Reg((bits / 8) as u16))
     }
 }
 
@@ -585,7 +635,8 @@ impl Display for Opsize {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Opsize::Slot(idx) => write!(f, "s{}", idx),
-            Opsize::Reg(width) => write!(f, "r{}", width),
+            // 序列化回位宽整数形态（往返一致）
+            Opsize::Reg(bytes) => write!(f, "{}", *bytes as u32 * 8),
             Opsize::Max => write!(f, "max"),
         }
     }
@@ -596,7 +647,11 @@ impl Serialize for Opsize {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        // 固定宽度序列化为整数位宽（与 TOML 写法一致，往返无损）
+        match self {
+            Opsize::Reg(bytes) => serializer.serialize_u64(*bytes as u64 * 8),
+            other => serializer.serialize_str(&other.to_string()),
+        }
     }
 }
 
@@ -606,7 +661,10 @@ impl<'de> Visitor<'de> for OpsizeVisitor {
     type Value = Opsize;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "an opsize")
+        write!(
+            formatter,
+            r#"an opsize: bit width integer (16/32/64), "s<N>" (operand slot) or "max""#
+        )
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -615,6 +673,23 @@ impl<'de> Visitor<'de> for OpsizeVisitor {
     {
         Self::Value::from_str(v).map_err(|e| E::custom(format!("invalid opsize: {}", e)))
     }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Opsize::from_bits(v).map_err(|e| E::custom(format!("invalid opsize: {e}")))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        if v < 0 {
+            return Err(E::custom("invalid opsize: 位宽不能为负"));
+        }
+        self.visit_u64(v as u64)
+    }
 }
 
 impl<'de> Deserialize<'de> for Opsize {
@@ -622,7 +697,7 @@ impl<'de> Deserialize<'de> for Opsize {
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_str(OpsizeVisitor)
+        deserializer.deserialize_any(OpsizeVisitor)
     }
 }
 
@@ -668,7 +743,10 @@ pub struct VexSpec {
 pub struct Instruction {
     /// 内部 Rust 标识符（Inst 变体名；与汇编助记符解耦，可含语义后缀）。
     pub name: String,
-    pub form: String,
+    /// 编码预设名（`[[forms]]`）。**可省略**——省略时全部编码键由本指令的
+    /// [`EncKeys`] 直接给出（组合不需要预先命名一个 form）。
+    #[serde(default)]
+    pub form: Option<String>,
     /// 主 opcode（值或首个 opcode 字节）。
     #[serde(default)]
     pub opcode: Option<u64>,
@@ -682,19 +760,10 @@ pub struct Instruction {
     /// 结构化谓词（迭代 4 定型：{ and = [...], eq = [...] }）。
     #[serde(default)]
     pub when: Option<toml::Value>,
-    /// 指令级 VEX 字段覆盖。
-    #[serde(default)]
-    pub vex: Option<VexSpec>,
-    /// 指令级 opsize 覆盖（form 的 opsize 优先级低）：`opsize = <操作数序号>`
-    /// ——宽度由该操作数寄存器自动推导（REX.W/66 前缀驱动）。多宽度合并
-    /// （cvtsi2sd 32/64 源）用：同助记符 + opsize 驱动 REX.W 自动分发。
-    /// 两地址 RM_R 族用 `"s1"`（inout 目的槽 = IR 结果宽度）；无目的槽的
-    /// 比较族用 `"max"`（见 [`Opsize::Max`]）。
-    #[serde(default)]
-    pub opsize: Option<Opsize>,
-    /// 指令级 rex_w 覆盖（form 的 rex_w 优先级低）。
-    #[serde(default)]
-    pub rex_w: Option<RexW>,
+    /// **指令级编码键覆盖**（逐键压过 `form` 预设，见 [`EncKeys`]）。
+    /// 组合不再需要预先命名一个 form——直接在指令上写差异那一两个键。
+    #[serde(flatten)]
+    pub enc: EncKeys,
     /// 效果标签（缺省空 = 无声明）。驱动 `MachineInst::effects` /
     /// `is_branch` / `is_call` / `is_ret` / `is_move`（TargetMachine 集成）。
     #[serde(default)]

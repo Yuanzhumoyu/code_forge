@@ -166,6 +166,16 @@ v12 结构化谓词：属性表 = `v12/pred.rs` 的 `PRED_ATTRS`（`rd`/`rs1_wid
   （判定域 = 每属性闭区间集合；含 `or`/`not` 记为 Opaque 跳过）。`priority`
   只在"故意让更宽的规则赢"时用（x86 `Vextract` 的 lane 0 快路径）。
 
+编码键（v15-S3）：`[[forms]]` 与 `[[instructions]]` **共用同一组语义键**
+（`EncKeys`：modrm/modrm_fixed/rex/vex/evex/prefix/opsize/rex_w/opcode_reg/imm/
+escape/opcode_field/operand_fields）。form 退化为**可选的预设混入**，指令可逐键
+覆盖（`EncKeys::over`，指令优先），`form` 本身可省略——组合不再需要预先命名。
+x86 forms 47 → 19，37 条指令直接内联编码键（不再有 `MRR_0F_NOOS_MEM` 与
+`MRR_MEM_0F_NOOS` 这种把 4 个事实编进名字、且只差 `rex_w` 的并存命名）。
+`opsize` 固定宽度写**位宽整数**（`opsize = 64`）——v14 的 `"r8"` 是字节单位、
+与 `[conventions]` 的位单位矛盾，旧写法现在报错并给出迁移提示；
+`"s<N>"`（取第 N 个操作数的宽度）与 `"max"`（取全部 Reg 操作数的最大宽度）不变。
+
 ## Code Conventions
 
 - Edition 2024 throughout

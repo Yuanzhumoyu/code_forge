@@ -242,13 +242,9 @@ modrm = "rr"
 opsize = "s0"
 
 [[forms]]
-name = "MRR_BYTE"       # 8 位 mov：8A /r（reg=op0=dest、rm=op1=src）；byte_reg 强制 REX
-modrm = "rr"
-
-[[forms]]
 name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
 modrm = "rr"
-opsize = "r8"
+opsize = 64
 
 [[forms]]
 name = "MRR_0F"         # @modrm + 0F escape
@@ -267,14 +263,7 @@ escape = [0x0F]
 [[forms]]
 name = "MRR_0F_FIX64"   # @modrm + 0F escape + opsize 固定 64（MOVQ 系列；prefix=field）
 modrm = "rr"
-opsize = "r8"
-escape = [0x0F]
-prefix = "field"
-
-[[forms]]
-name = "MRR_0F_FIX64_REV" # @modrm + 0F escape + opsize 固定 64，reg=op1、rm=op0（MOVQ r64, xmm）
-modrm = "rr_rev"
-opsize = "r8"
+opsize = 64
 escape = [0x0F]
 prefix = "field"
 
@@ -284,12 +273,6 @@ modrm = "rr"
 opsize = "s0"
 escape = [0x0F]
 prefix = "field"
-
-[[forms]]
-name = "MRR_0F38"       # @modrm + 0F 38 escape（PMULLD 等）
-modrm = "rr"
-opsize = "r8"
-escape = [0x0F, 0x38]
 
 [[forms]]
 name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
@@ -305,23 +288,9 @@ prefix = "field"
 rex_w = "field"
 
 [[forms]]
-name = "SSE_RR_REV"     # @sse_rr_rev：0F opcode /r，reg=op1、rm=op0（MOVD r, xmm）
-modrm = "rr_rev"
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-
-# ── 内存寻址（迭代 3b：@modrm_mem）──
-
-[[forms]]
 name = "EVEX_RR_MEMREF"   # EVEX 内存：reg=op0、MemRef op1；压缩位移 ×evex_disp_scale
 evex = { map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" }
 modrm = "rm_memref"
-
-[[forms]]
-name = "EVEX_RR"         # EVEX 两操作数：reg=op0、rm=op1（vmovaps zmm, zmm）
-evex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr"
 
 [[forms]]
 name = "EVEX_RRV"        # EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
@@ -339,18 +308,6 @@ vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rr"
 
 [[forms]]
-name = "VEX_RRV_IMM"    # VEX 三操作数 + imm8：reg=op0(dest)、rm=op2(src2)（VINSERTF128）
-vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr_src2"
-imm = 8
-
-[[forms]]
-name = "VEX_RR_IMM"     # VEX 两操作数 + imm8（VEXTRACTF128）
-vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = "rr"
-imm = 8
-
-[[forms]]
 name = "VEX_RR_MEMREF"  # VEX 内存形式：reg=op0(dest)、MemRef base/disp=op1（vmovaps xmm, [rax+disp]）
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = "rm_memref"
@@ -363,87 +320,12 @@ opsize = "s0"
 [[forms]]
 name = "MRR_EXT_OP_FIX64" # @shift_reg：D3 /digit（rm=op0），opsize 固定 64（REX.W）
 modrm = "ext"
-opsize = "r8"
-
-[[forms]]
-name = "EXT_0F"           # ext + 0F escape（SETCC 0F 90+cc /r）
-modrm = "ext"
-escape = [0x0F]
-
-[[forms]]
-name = "MRR_EXT64_IMM32"  # @op_rm_imm32：REX.W + 81 /digit + imm32（64 位专用）
-modrm = "ext"
-opsize = "r8"
-imm = 32
-
-[[forms]]
-name = "SSE_RR_IMM8"      # @sse_rr_imm8：prefix + 0F + opcode + /r + imm8（PSHUFD/SHUFPS）
-modrm = "rr"
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-imm = 8
-
-[[forms]]
-name = "SSE_RR_3A_IMM8"   # @sse_rr_3a_imm8：prefix + 0F 3A + opcode + /r + imm8（ROUNDSD/ROUNDSS）
-modrm = "rr"
-escape = [0x0F, 0x3A]
-prefix = "field"
-rex_w = "field"
-imm = 8
-
-[[forms]]
-name = "PUSH_REG"         # 50+r（push r64；reg≥8 → REX.B 41）
-opcode_reg = 0x50
-
-[[forms]]
-name = "POP_REG"          # 58+r
-opcode_reg = 0x58
-
-[[forms]]
-name = "MOV_IMM64"        # REX.W + B8+r + imm64
-opcode_reg = 0xB8
-rex_w = "always"
-imm = 64
-
-[[forms]]
-name = "BSWAP_R"          # REX.W + 0F C8+r
-opcode_reg = 0xC8
-rex_w = "always"
-escape = [0x0F]
+opsize = 64
 
 [[forms]]
 name = "MRR_MEM"          # [reg 基址 + disp 0]；无 escape（XCHG/MOV_R_MEM/STORE_MEM_R）
 modrm = "rm_mem"
 opsize = "s0"
-
-[[forms]]
-name = "MRR_MEM_BYTE"    # 8 位内存 mov/store（8A/88）：无 opsize——8 位宽由
-                          # opcode 自身决定（无 66/REX.W 语义；gprx 排除 gpr1）。
-modrm = "rm_mem"
-
-[[forms]]
-name = "MRR_0F_NOOS_MEM"  # movzx/movsx 内存源（8/16 位 load 零/符号扩展读）：
-                          # reg=op0(dest64)、rm=内存 1/2 字节源；无 opsize
-                          #（源宽由 opcode 前缀决定，dest 恒 REX.W 64 位）。
-modrm = "rm_mem"
-prefix = "field"
-rex_w = "field"
-escape = [0x0F]
-
-[[forms]]
-name = "MRR_MEM_0F_NOOS"  # 内存 + 0F + prefix=field + 无 opsize（8 位原子
-                          # 族：LOCK CMPXCHG 0F B0 / XADD 0F C0）
-modrm = "rm_mem"
-escape = [0x0F]
-prefix = "field"
-
-[[forms]]
-name = "MRR_MEM_0F"       # 内存 + 0F escape + prefix=field（XADD 0F C1 双字节）
-modrm = "rm_mem"
-opsize = "s0"
-escape = [0x0F]
-prefix = "field"
 
 [[forms]]
 name = "MRR_MEM_PRE"      # 内存 + prefix=field、无 escape（LOCK 原子族 29/21/09/31）
@@ -454,55 +336,14 @@ prefix = "field"
 [[forms]]
 name = "MRR_MEM_0F_FIX32" # 内存 + 0F + prefix=field + opsize 32（MOVSD 内存标量）
 modrm = "rm_mem"
-opsize = "r4"
+opsize = 32
 escape = [0x0F]
 prefix = "field"
 
 [[forms]]
 name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
 modrm = "rm_memref"
-opsize = "r8"
-
-[[forms]]
-name = "MRR_MEMREF_F2"    # MemRef + F2 0F + opsize 32（MOVSD_RM/MR）
-modrm = "rm_memref"
-opsize = "r4"
-escape = [0x0F]
-prefix = "field"
-
-[[forms]]
-name = "REL32"            # 直接相对跳转/调用：opcode + rel32（无 ModRM）
-imm = 32
-
-[[forms]]
-name = "NOOP"             # 无操作数：单字节 opcode（RET 0xC3 等）
-
-[[forms]]
-name = "NOOP_REXW"        # 无操作数 + 恒 REX.W（CQO 48 99）
-rex_w = "always"
-
-[[forms]]
-name = "NOOP_ESC"         # 无操作数 + escape（NOP 0F 0B、MFENCE 0F AE F0、CQO 48 99）
-escape = [0x0F]
-
-[[forms]]
-name = "NOOP_ESC_FIXED"   # 无操作数 + escape + 固定 ModRM 字节（MFENCE 0F AE F0）
-escape = [0x0F]
-modrm_fixed = 0xF0
-
-[[forms]]
-name = "REL32_ESC"        # rel32 + escape（JCC_REL32: 0F cond rel32）
-escape = [0x0F]
-imm = 32
-
-[[forms]]
-name = "OP_EXT"           # FF /digit（CALL_RM FF /2: modrm.ext=2、rm=op0）
-modrm = "ext"
-
-# ─────────────────── 指令（顺序 = v11 声明序）───────────────────
-
-# ── @modrm 家族 ──
-
+opsize = 64
 
 [[instructions]]
 name = "MOV_R_RM"
@@ -518,7 +359,7 @@ effect = ["Move"]
 
 [[instructions]]
 name = "MOV_R8_RM8"
-form = "MRR_BYTE"
+modrm = "rr"
 opcode = 0x8A
 # v13：8 位 mov——gpr1b 槽（byte_reg 强制 REX：spl/bpl/sil/dil）。与 16/32/64 位
 # 共享助记符 `mov`（`mov al, bl` → 8A C3）。gprx 显式排除 gpr1（防 8B 误编码）。
@@ -635,14 +476,20 @@ asm = "movzx {0:[gpr:out]}, {1:[gpr2:in]}"
 # 8 位：REX.W 0F B6（源内存 1 字节）；16 位：66 REX.W 0F B7。
 [[instructions]]
 name = "MOVZX_R8_MEM"
-form = "MRR_0F_NOOS_MEM"
+modrm = "rm_mem"
+prefix = "field"
+rex_w = "field"
+escape = [0x0F]
 opcode = 0xB6
 fields = { prefix = 0, w = 1 }
 asm = "movzx_mem {0:[gpr:out]}, [{1:[gprx:in]}]"
 
 [[instructions]]
 name = "MOVZX_R16_MEM"
-form = "MRR_0F_NOOS_MEM"
+modrm = "rm_mem"
+prefix = "field"
+rex_w = "field"
+escape = [0x0F]
 opcode = 0xB7
 fields = { prefix = 0x66, w = 1 }
 asm = "movzx_mem16 {0:[gpr:out]}, [{1:[gprx:in]}]"
@@ -859,7 +706,10 @@ asm = "movd {0:[fpr:out]}, {1:[gpr:in]}"
 
 [[instructions]]
 name = "MOVD_IREG_FREG"
-form = "SSE_RR_REV"
+modrm = "rr_rev"
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
 opcode = 0x7E
 fields = { prefix = 0x66, w = 0 }
 asm = "movd_fr {0:[gpr:out]}, {1:[fpr:in]}"
@@ -895,7 +745,10 @@ effect = ["Move"]
 
 [[instructions]]
 name = "CMPXCHG_MEM_R"
-form = "MRR_MEM_0F"
+modrm = "rm_mem"
+opsize = "s0"
+escape = [0x0F]
+prefix = "field"
 opcode = 0xB1
 fields = { prefix = 0xF0 }
 # v14：数据槽 gprx 多类——DSL 回填携带 IR 值宽度（I16→66 前缀、I32→无
@@ -912,7 +765,9 @@ implicit_regs = ["RAX"]
 
 [[instructions]]
 name = "CMPXCHG_MEM_R_8"
-form = "MRR_MEM_0F_NOOS"
+modrm = "rm_mem"
+escape = [0x0F]
+prefix = "field"
 opcode = 0xB0
 fields = { prefix = 0xF0 }
 # 8 位 LOCK CMPXCHG：0F B0（r/m8，隐式 AL——mov RAX 后 AL 即期望值低
@@ -923,7 +778,10 @@ implicit_regs = ["RAX"]
 
 [[instructions]]
 name = "XADD_MEM_R"
-form = "MRR_MEM_0F"
+modrm = "rm_mem"
+opsize = "s0"
+escape = [0x0F]
+prefix = "field"
 opcode = 0xC1
 fields = { prefix = 0xF0 }
 # v14：数据槽 gprx（16/32/64 auto）——AtomicRmw Add/Sub lowering 的 {g1}
@@ -975,7 +833,7 @@ asm = "mov_mem {0:[gprx:out]}, [{1:[gprx:in]}]"
 
 [[instructions]]
 name = "MOV_R_MEM_8"
-form = "MRR_MEM_BYTE"
+modrm = "rm_mem"
 opcode = 0x8A
 # 8 位内存 load：独立 opcode 8A（gprx 显式排除 gpr1——8 位 mov 是 8A 非
 # 8B）。数据槽 gpr1b（byte_reg：spl/bpl/sil/dil 强制 REX）。
@@ -989,7 +847,7 @@ asm = "mov_sto [{1:[gprx:in]}], {0:[gprx:in]}"
 
 [[instructions]]
 name = "STORE_MEM_R_8"
-form = "MRR_MEM_BYTE"
+modrm = "rm_mem"
 opcode = 0x88
 asm = "mov_sto8 [{1:[gprx:in]}], {0:[gpr1b:in]}"
 
@@ -1033,14 +891,20 @@ tags = ["stack_arg_store"]
 
 [[instructions]]
 name = "MOVSD_RM"
-form = "MRR_MEMREF_F2"
+modrm = "rm_memref"
+opsize = 32
+escape = [0x0F]
+prefix = "field"
 opcode = 0x10
 fields = { prefix = 0xF2 }
 asm = "movsd_rm {0:[fpr:out]}, {1:[mem:in]}"
 
 [[instructions]]
 name = "MOVSD_MR"
-form = "MRR_MEMREF_F2"
+modrm = "rm_memref"
+opsize = 32
+escape = [0x0F]
+prefix = "field"
 opcode = 0x11
 fields = { prefix = 0xF2 }
 asm = "movsd_mr {1:[mem:in]}, {0:[fpr:in]}"
@@ -1120,7 +984,11 @@ asm = "cvttsd2si {0:[gprx:out]}, {1:[fpr:in]}"
 
 [[instructions]]
 name = "ROUNDSS_I"
-form = "SSE_RR_3A_IMM8"
+modrm = "rr"
+escape = [0x0F, 0x3A]
+prefix = "field"
+rex_w = "field"
+imm = 8
 opcode = 0x0A
 fields = { prefix = 0x66, w = 0 }
 asm = "roundss {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
@@ -1364,7 +1232,8 @@ asm = "vpsubq {0:[fpr32:out]}, {1:[fpr32:in]}, {2:[fpr32:in]}"
 # EVEX 无源（2 操作数）：vmovaps zmm, zmm
 [[instructions]]
 name = "VMOVAPS_ZMM"
-form = "EVEX_RR"
+evex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr"
 opcode = 0x28
 fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 asm = "vmovaps {0:[fpr32:out]}, {1:[fpr32:in]}"
@@ -1504,14 +1373,18 @@ asm = "vpmulld {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}"
 
 [[instructions]]
 name = "VEXTRACTF128"
-form = "VEX_RR_IMM"
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr"
+imm = 8
 opcode = 0x19
 fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
 asm = "vextractf128 {1:[fpr:out]}, {0:[fpr:in]}, {2:[imm8:in]}"
 
 [[instructions]]
 name = "VINSERTF128"
-form = "VEX_RRV_IMM"
+vex = { map = "field", pp = "field", w = "field", l = "field" }
+modrm = "rr_src2"
+imm = 8
 opcode = 0x18
 fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
 asm = "vinsertf128 {0:[fpr:out]}, {1:[fpr:in]}, {2:[fpr:in]}, {3:[imm8:in]}"
@@ -1576,73 +1449,89 @@ asm = "idiv {0:[gpr:in]}"
 
 [[instructions]]
 name = "SUB64_R_IMM32"
-form = "MRR_EXT64_IMM32"
+modrm = "ext"
+opsize = 64
+imm = 0x20
 opcode = 0x81
 fields = { ext = 5 }
 asm = "sub {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
 name = "ADD64_R_IMM32"
-form = "MRR_EXT64_IMM32"
+modrm = "ext"
+opsize = 64
+imm = 0x20
 opcode = 0x81
 fields = { ext = 0 }
 asm = "add {0:[gpr:inout]}, {1:[imm32:in]}"
 
 [[instructions]]
 name = "PSHUFD"
-form = "SSE_RR_IMM8"
+modrm = "rr"
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
 opcode = 0x70
 fields = { prefix = 0x66, w = 0 }
 asm = "pshufd {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
 
 [[instructions]]
 name = "SHUFPS"
-form = "SSE_RR_IMM8"
+modrm = "rr"
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
 opcode = 0xC6
 fields = { prefix = 0, w = 0 }
 asm = "shufps {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
 
 [[instructions]]
 name = "PUSH"
-form = "PUSH_REG"
+opcode_reg = 0x50
 effect = ["Write"]
 asm = "push {0:[gpr:in]}"
 
 [[instructions]]
 name = "POP"
-form = "POP_REG"
+opcode_reg = 0x58
 effect = ["Read"]
 asm = "pop {0:[gpr:out]}"
 
 [[instructions]]
 name = "MOV_REG_IMM64"
-form = "MOV_IMM64"
+opcode_reg = 0xB8
+rex_w = "always"
+imm = 0x40
 asm = "mov_imm {0:[gpr:out]}, {1:[imm64:in]}"
 
 [[instructions]]
 name = "BSWAP_R"
-form = "BSWAP_R"
+opcode_reg = 0xC8
+rex_w = "always"
+escape = [0x0F]
 
 # ── 控制流（迭代 6：JMP/CALL/RET + rel32）──
 
 asm = "bswap {0:[gpr:inout]}"
 [[instructions]]
 name = "RET"
-form = "NOOP"
+
 opcode = 0xC3
 effect = ["Ret"]
 asm = "ret"
 
 [[instructions]]
 name = "JMP_REL32"
-form = "REL32"
+imm = 0x20
 opcode = 0xE9
 asm = "jmp {0:[rel:in]}"
 effect = ["Jump"]
 
 [[instructions]]
 name = "CALL_RIP_REL"
-form = "REL32"
+imm = 0x20
 opcode = 0xE8
 asm = "call {0:[rel:in]}"
 effect = ["Call"]
@@ -1651,20 +1540,21 @@ effect = ["Call"]
 
 [[instructions]]
 name = "NOP"
-form = "NOOP"
+
 opcode = 0x90
 asm = "nop"
 
 [[instructions]]
 name = "UD2"
-form = "NOOP_ESC"
+escape = [0x0F]
 opcode = 0x0B
 effect = ["Trap"]
 asm = "ud2"
 
 [[instructions]]
 name = "MFENCE"
-form = "NOOP_ESC_FIXED"
+escape = [0x0F]
+modrm_fixed = 0xF0
 opcode = 0xAE
 fields = { prefix = 0, w = 0 }
 effect = ["Write"]
@@ -1672,7 +1562,7 @@ asm = "mfence"
 
 [[instructions]]
 name = "CQO"
-form = "NOOP_REXW"
+rex_w = "always"
 opcode = 0x99
 effect = ["Write"]
 # cqo 把 RAX 符号扩展到 RDX：RDX 隐式破坏（regalloc 在本指令点避开）
@@ -1681,7 +1571,7 @@ asm = "cqo"
 
 [[instructions]]
 name = "CALL_RM"
-form = "OP_EXT"
+modrm = "ext"
 opcode = 0xFF
 fields = { ext = 2 }
 asm = "call_rm {0:[gpr:in]}"
@@ -1689,14 +1579,16 @@ effect = ["Call"]
 
 [[instructions]]
 name = "JCC_REL32"
-form = "REL32_ESC"
+escape = [0x0F]
+imm = 0x20
 opcode = 0x80            # 条件码 = opcode 低 4 位（0x80..0x8F）
 asm = "jcc {0:[cond:in]}, {1:[rel:in]}"
 effect = ["Branch"]
 
 [[instructions]]
 name = "SETCC_RM8"
-form = "EXT_0F"
+modrm = "ext"
+escape = [0x0F]
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
 fields = { ext = 0 }
 asm = "setcc {0:[gpr8:out]}, {1:[cond:in]}"
@@ -1719,7 +1611,9 @@ tags = ["frame_rbp_addr"]
 
 [[instructions]]
 name = "MOVABS_GLOBAL"
-form = "MOV_IMM64"
+opcode_reg = 0xB8
+rex_w = "always"
+imm = 0x40
 asm = "movabs {0:[gpr:out]}, {1:[imm64:in]}"
 effect = ["Pure"]
 global_reloc = "abs8"
@@ -1733,7 +1627,11 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "ROUNDSD_I"
-form = "SSE_RR_3A_IMM8"
+modrm = "rr"
+escape = [0x0F, 0x3A]
+prefix = "field"
+rex_w = "field"
+imm = 8
 opcode = 0x0B            # ROUNDSD = 66 0F 3A 0B /r ib（0A 是 ROUNDSS）
 fields = { prefix = 0x66, w = 1 }
 asm = "roundsd {0:[fpr:out]}, {1:[fpr:in]}, {2:[imm8:in]}"
@@ -1741,7 +1639,9 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "PMULLD"
-form = "MRR_0F38"
+modrm = "rr"
+opsize = 64
+escape = [0x0F, 0x38]
 opcode = 0x40
 fields = { prefix = 0x66, w = 0 }
 asm = "pmulld {0:[fpr:inout]}, {1:[fpr:in]}"
@@ -1757,7 +1657,10 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "MOVQ_R64_XMM"
-form = "MRR_0F_FIX64_REV"
+modrm = "rr_rev"
+opsize = 64
+escape = [0x0F]
+prefix = "field"
 opcode = 0x7E
 fields = { prefix = 0x66, w = 1 }
 asm = "movq_r64 {0:[gpr:out]}, {1:[fpr:in]}"

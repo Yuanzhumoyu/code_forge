@@ -71,7 +71,7 @@ fn parse_minimal_riscv_style() {
     assert_eq!(m.operand_slots[1].signed, Some(true));
     let form = &m.forms[0];
     assert_eq!(form.name, "R");
-    assert_eq!(form.opcode_field.as_deref(), Some("opcode"));
+    assert_eq!(form.keys.opcode_field.as_deref(), Some("opcode"));
     let add = &m.instructions[0];
     assert_eq!(add.opcode, Some(0x33));
     assert_eq!(add.fields.as_ref().unwrap()["funct3"], 0);
@@ -141,8 +141,8 @@ fn parse_x86_conventions() {
     assert_eq!(modrm.force_disp_base, vec![5, 13]);
     // 形式语义键
     let form = &m.forms[0];
-    assert_eq!(form.modrm.as_deref(), Some("rr"));
-    assert_eq!(form.rex.as_deref(), Some("auto"));
+    assert_eq!(form.keys.modrm.as_deref(), Some("rr"));
+    assert_eq!(form.keys.rex.as_deref(), Some("auto"));
 }
 
 #[test]
@@ -521,7 +521,7 @@ asm = "foo {0:[g:out]}, {1:[g:in]}"
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         V12Error::Validation { msg, .. } => {
-            assert!(msg.contains("exceed form"), "msg: {msg}");
+            assert!(msg.contains("exceed operand_fields"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -1499,4 +1499,95 @@ fn or_not_predicates_skip_dead_check() {
          [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {1}\"]",
     );
     parse_and_validate(&doc).expect("Opaque 谓词不参与死规则判定");
+}
+
+// ─────────── S3：form 预设 ⊕ 指令级逐键覆盖 / opsize 位宽单位 ───────────
+
+/// 指令可省略 `form`，把全部编码键写在自己身上（组合不再需要命名）。
+#[test]
+fn instruction_without_form_carries_all_enc_keys() {
+    let doc = r#"
+[meta]
+name = "x"
+variable_length = true
+max_inst_len = 15
+[reg.gpr8]
+count = 16
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out"]
+[[instructions]]
+name = "MOVQ_REV"
+modrm = "rr_rev"
+opsize = 64
+escape = [0x0F]
+prefix = "field"
+opcode = 0x7E
+fields = { prefix = 0x66, w = 1 }
+asm = "movq {0:[g:out]}, {1:[g:in]}"
+"#;
+    let m = parse_and_validate(doc).expect("无 form 的指令必须合法");
+    let inst = &m.instructions[0];
+    assert!(inst.form.is_none(), "没有 form 引用");
+    assert_eq!(inst.enc.modrm.as_deref(), Some("rr_rev"));
+    assert_eq!(inst.enc.escape.as_deref(), Some(&[0x0Fu8][..]));
+}
+
+/// 指令级键逐个压过 form 预设；未覆盖的键继承预设。
+#[test]
+fn instruction_enc_keys_override_form_preset() {
+    let doc = r#"
+[meta]
+name = "x"
+variable_length = true
+[reg.gpr8]
+count = 16
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out"]
+[[forms]]
+name = "MRR"
+modrm = "rr"
+opsize = "s0"
+escape = [0x0F]
+[[instructions]]
+name = "I"
+form = "MRR"
+modrm = "rr_rev"
+opcode = 1
+asm = "i {0:[g:out]}, {1:[g:in]}"
+"#;
+    let m = parse_and_validate(doc).expect("valid");
+    let preset = &m.forms[0].keys;
+    let enc = m.instructions[0].enc.over(preset);
+    assert_eq!(enc.modrm.as_deref(), Some("rr_rev"), "指令覆盖生效");
+    assert_eq!(enc.escape.as_deref(), Some(&[0x0Fu8][..]), "未覆盖的键继承预设");
+    assert_eq!(enc.opsize, Some(crate::v12::model::Opsize::Slot(0)));
+}
+
+/// opsize 固定宽度写**位宽整数**；旧的 "rN"（字节）写法给出明确迁移提示。
+#[test]
+fn opsize_fixed_width_is_bits() {
+    use crate::v12::model::Opsize;
+    let bits: Opsize = toml::from_str::<toml::Value>("v = 64")
+        .unwrap()["v"]
+        .clone()
+        .try_into()
+        .expect("裸整数 = 位宽");
+    assert_eq!(bits, Opsize::Reg(8), "64 位 = 8 字节（内部单位）");
+    // 序列化回位宽整数（往返一致）
+    assert_eq!(toml::Value::try_from(Opsize::Reg(8)).unwrap().as_integer(), Some(64));
+    // 非 8 倍数拒绝
+    let bad: Result<Opsize, _> = toml::from_str::<toml::Value>("v = 12").unwrap()["v"]
+        .clone()
+        .try_into();
+    assert!(bad.is_err(), "12 位不是 8 的倍数");
+    // 旧字节写法带迁移提示
+    let old: Result<Opsize, _> = toml::Value::String("r8".into()).try_into();
+    let msg = format!("{}", old.unwrap_err());
+    assert!(msg.contains("opsize = 64"), "需给出位宽写法提示: {msg}");
 }

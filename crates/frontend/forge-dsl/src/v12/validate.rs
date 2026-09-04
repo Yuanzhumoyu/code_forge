@@ -314,7 +314,7 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
         if !seen.insert(f.name.clone()) {
             return Err(format!("[[forms]]: duplicate form name '{}'", f.name));
         }
-        if let Some(bf) = &f.opcode_field
+        if let Some(bf) = &f.keys.opcode_field
             && !m.conventions.bitfields.contains_key(bf)
         {
             return Err(format!(
@@ -322,7 +322,7 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
                 f.name
             ));
         }
-        if let Some(of) = &f.operand_fields {
+        if let Some(of) = &f.keys.operand_fields {
             for (i, bf) in of.iter().enumerate() {
                 if !m.conventions.bitfields.contains_key(bf) {
                     return Err(format!(
@@ -332,7 +332,7 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
                 }
             }
         }
-        if let Some(esc) = &f.escape {
+        if let Some(esc) = &f.keys.escape {
             if esc.is_empty() {
                 return Err(format!("[[forms.{}]].escape must not be empty", f.name));
             }
@@ -345,7 +345,7 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
             }
         }
         // 变长语义键校验
-        if let Some(p) = &f.prefix
+        if let Some(p) = &f.keys.prefix
             && p != "field"
             && p != "opsize"
             && parse_u64(p).is_none()
@@ -355,19 +355,19 @@ fn validate_forms(m: &V12Model) -> Result<(), String> {
                 f.name
             ));
         }
-        if let Some(o) = &f.opsize {
+        if let Some(o) = &f.keys.opsize {
             // v12.1：opsize = 操作数序号（宽度由该操作数寄存器推导）；
             // 范围/类型校验在 codegen（vlen_ctx 需指令操作数解析后）。
             let _ = o;
         }
         // rex_w 值域由 `RexW` 枚举在反序列化期强制（未知值 → serde 报错 + 候选列表）
-        if f.vex.is_some() && f.evex.is_some() {
+        if f.keys.vex.is_some() && f.keys.evex.is_some() {
             return Err(format!(
                 "[[forms.{}]]: `vex` and `evex` are mutually exclusive",
                 f.name
             ));
         }
-        if let Some(imm) = f.imm
+        if let Some(imm) = f.keys.imm
             && imm == 0
         {
             return Err(format!("[[forms.{}]].imm must be > 0", f.name));
@@ -395,10 +395,12 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 inst.name
             ));
         }
-        if !form_exists(m, &inst.form) {
+        if let Some(f) = &inst.form
+            && !form_exists(m, f)
+        {
             return Err(format!(
-                "[[instructions.{}]]: form '{}' is not declared in [[forms]]",
-                inst.name, inst.form
+                "[[instructions.{}]]: form '{f}' is not declared in [[forms]]",
+                inst.name
             ));
         }
         // global_reloc 值域由 `GlobalReloc` 枚举在反序列化期强制
@@ -435,27 +437,23 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
                 }
             }
         }
-        // 定宽 form（opcode_field 存在）要求操作数数量 ≤ operand_fields
-        let is_fixed = m
-            .forms
-            .iter()
-            .find(|f| f.name == inst.form)
-            .map(|f| f.opcode_field.is_some())
-            .unwrap_or(false);
+        // 定宽（opcode_field 存在）要求操作数数量 ≤ operand_fields。
+        // 键取 form 预设 ⊕ 指令级覆盖（与 codegen 的 `EncKeys::over` 同语义）。
+        let preset = inst
+            .form
+            .as_ref()
+            .and_then(|n| m.forms.iter().find(|f| &f.name == n))
+            .map(|f| f.keys.clone())
+            .unwrap_or_default();
+        let enc = inst.enc.over(&preset);
+        let is_fixed = enc.opcode_field.is_some();
         if is_fixed {
-            let of_len = m
-                .forms
-                .iter()
-                .find(|f| f.name == inst.form)
-                .and_then(|f| f.operand_fields.as_ref())
-                .map(|f| f.len())
-                .unwrap_or(0);
+            let of_len = enc.operand_fields.as_ref().map(|f| f.len()).unwrap_or(0);
             if uses.len() > of_len {
                 return Err(format!(
-                    "[[instructions.{}]]: {} operands exceed form '{}' operand_fields count {}",
+                    "[[instructions.{}]]: {} operands exceed operand_fields count {}",
                     inst.name,
                     uses.len(),
-                    inst.form,
                     of_len
                 ));
             }

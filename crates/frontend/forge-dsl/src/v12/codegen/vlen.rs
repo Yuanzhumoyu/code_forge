@@ -124,7 +124,7 @@ impl ModrmKind {
 }
 
 fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
-    let form = info.form;
+    let form = &info.form;
     let fields = info.inst.fields.as_ref();
     let field_val = |k: &str| fields.and_then(|f| f.get(k)).copied().unwrap_or(0);
     // 每个 Reg 操作数的固定宽度（槽 class 组宽度；class=None → 多态 None）
@@ -143,8 +143,8 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
     // 操作数寄存器推导，如 opsize=0 取 op0 的 RAX→64/EAX→32）；`"max"` → 全部
     // Reg 操作数宽度取最大（无目的槽的同宽指令——CMP/TEST，见 `Opsize::Max`）；
     // 缺省 = 第一个 Reg 槽操作数。指令级覆盖（Instruction.opsize）优先于 form 级。
-    let form_opsize = info.inst.opsize.or(form.opsize);
-    let rex_w_override = info.inst.rex_w.or(form.rex_w);
+    let form_opsize = form.opsize;
+    let rex_w_override = form.rex_w;
     let (has_opsize, opsize_expr) = match form_opsize {
         Some(o) => match o {
             Opsize::Reg(width) => (true, Some(quote! { #width })),
@@ -452,7 +452,7 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
         vex,
         evex,
         opcode_reg: form.opcode_reg,
-        rex_w_always: form.rex_w == Some(RexW::Always) || info.inst.rex_w == Some(RexW::Always),
+        rex_w_always: form.rex_w == Some(RexW::Always),
         reg_view,
         decode_width_guard,
         decode_width_neq64,
@@ -549,7 +549,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             }
         } else if let Some(evex) = &ctx.evex {
             // EVEX（AVX-512）：62 + P0/P1/P2 + opcode + ModRM（reg-reg / 内存）。
-            let vform = info.form;
+            let vform = &info.form;
             let reg = ctx.reg_expr.as_ref().unwrap();
             let rm = ctx.rm_expr.as_ref().unwrap();
             let vopcode = info.inst.opcode.unwrap();
@@ -692,7 +692,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
                 stmts.push(quote! { __bytes.extend_from_slice(&#le_bytes); });
             }
         } else if let Some(vex) = &ctx.vex {
-            let vform = info.form;
+            let vform = &info.form;
             let reg = ctx.reg_expr.as_ref().unwrap();
             let rm = ctx.rm_expr.as_ref().unwrap();
             // VEX 内存（rm_memref）：MemRef 操作数 fid（SIB index/scale 用）。
@@ -1111,7 +1111,7 @@ fn gen_vlen_vex_decode_arm(
     endian: Endian,
 ) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    let form = info.form;
+    let form = &info.form;
     let vex = ctx.vex.as_ref().unwrap();
     let opcode = info.inst.opcode.unwrap();
     let imm_bytes = ctx.imm_bytes;
@@ -1303,7 +1303,7 @@ fn gen_vlen_evex_decode_arm(
     endian: Endian,
 ) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    let form = info.form;
+    let form = &info.form;
     let evex = ctx.evex.as_ref().unwrap();
     let opcode = info.inst.opcode.unwrap();
     let imm_bytes = ctx.imm_bytes;
@@ -1697,7 +1697,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
             ));
             continue;
         }
-        let form = info.form;
+        let form = &info.form;
         let mut conds: Vec<TokenStream> = Vec::new();
         // 前缀匹配条件：66/F2/F3 → 扫描标志（无长度）；其他（LOCK 0xF0 等）→
         // 显式字节检查（占 1 字节，escape/opcode 偏移 +1）

@@ -914,7 +914,7 @@ fn operand_parse_tok(
     // `PhysReg::width()` 返回组 payload（字节，如 gpr8 → 8）；Opsize::Reg(w)
     // 的 w 同为字节（r8 = 64 位）——同单位比较。**只作用于多类槽**：
     // 单类槽（含内存基址寄存器）已由 class 过滤保证宽度，不受 opsize 影响。
-    let op = info.inst.opsize.or(info.form.opsize);
+    let op = info.form.opsize;
     let wreq = match op {
         Some(Opsize::Reg(w)) if gpr_only && slot.classes().map(|c| c.len() > 1).unwrap_or(true) => {
             Some(w)
