@@ -18,7 +18,12 @@ pub(crate) fn line_col(source: &str, offset: usize) -> (usize, usize) {
     let off = offset.min(source.len());
     let before = &source[..off];
     let line = before.matches('\n').count() + 1;
-    let col = before.rsplit('\n').next().map(|l| l.chars().count()).unwrap_or(0) + 1;
+    let col = before
+        .rsplit('\n')
+        .next()
+        .map(|l| l.chars().count())
+        .unwrap_or(0)
+        + 1;
     (line, col)
 }
 
@@ -34,9 +39,7 @@ fn declared_name(msg: &str) -> Option<&str> {
         return Some(&rest[open + 2..open + 2 + close]);
     }
     // `[[kind.NAME]]` / `[kind.NAME]` 形态
-    let body = msg
-        .strip_prefix("[[")
-        .or_else(|| msg.strip_prefix('['))?;
+    let body = msg.strip_prefix("[[").or_else(|| msg.strip_prefix('['))?;
     let end = body.find(']')?;
     let head = &body[..end];
     let (_kind, name) = head.split_once('.')?;

@@ -292,9 +292,9 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
     // modrm reg/rm/disp：`+r` 形式与无 ModRM 形式（REL32/NOOP）为 None；
     // modrm_fixed（无操作数固定 ModRM 字节）与 modrm 互斥。
     let (modrm, reg_expr, rm_expr, disp_expr, reg_is_byte, rm_is_byte) =
-        if form.opcode_reg.is_some() || form.modrm.is_none() || form.modrm_fixed.is_some() {
+        if form.opcode_reg.is_some() || form.modrm_fixed.is_some() {
             (None, None, None, None, false, false)
-        } else {
+        } else if let Some(modrm_form) = form.modrm.as_ref() {
             let names: Vec<String> = info
                 .inst
                 .ops
@@ -303,14 +303,12 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
                 .iter()
                 .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
                 .collect();
-            let modrm = Modrm::resolve(form.modrm.as_ref().unwrap(), info, &names)?;
+            let modrm = Modrm::resolve(modrm_form, info, &names)?;
             let fid = |i: usize| -> Result<syn::Ident, String> {
                 info.operands
                     .get(i)
                     .map(|(_, f, _, _)| f.clone())
-                    .ok_or_else(|| {
-                        format!("[[instructions.{}]]: 操作数 {i} 越界", info.inst.name)
-                    })
+                    .ok_or_else(|| format!("[[instructions.{}]]: 操作数 {i} 越界", info.inst.name))
             };
             let reg_expr: TokenStream = match modrm.reg {
                 Some(i) => {
@@ -354,6 +352,8 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
                 reg_is_byte,
                 rm_is_byte,
             )
+        } else {
+            (None, None, None, None, false, false)
         };
     let imm_bytes = (form.imm.unwrap_or(0) / 8) as usize;
     let vex = if let Some(vs) = &form.vex {
@@ -611,9 +611,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             // vvvv = 既非 reg 也非 rm 的那个操作数（v14 的 rr → 2、rr_src2 → 1）
             let vv_idx = ctx
                 .modrm
-                .and_then(|m| {
-                    (0..info.operands.len()).find(|i| Some(*i) != m.reg && *i != m.rm)
-                })
+                .and_then(|m| (0..info.operands.len()).find(|i| Some(*i) != m.reg && *i != m.rm))
                 .unwrap_or(2);
             let vv_expr: TokenStream = if has_src {
                 let vv_fid = info.operands[vv_idx].1.clone();
@@ -749,9 +747,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             // vvvv = 既非 reg 也非 rm 的那个操作数（v14 的 rr → 2、rr_src2 → 1）
             let vv_idx = ctx
                 .modrm
-                .and_then(|m| {
-                    (0..info.operands.len()).find(|i| Some(*i) != m.reg && *i != m.rm)
-                })
+                .and_then(|m| (0..info.operands.len()).find(|i| Some(*i) != m.reg && *i != m.rm))
                 .unwrap_or(2);
             let vv_expr: TokenStream = if has_src {
                 let vv_fid = info.operands[vv_idx].1.clone();
@@ -1357,7 +1353,7 @@ fn gen_vlen_evex_decode_arm(
     let scale = evex.disp_scale;
     let has_src = evex.has_src;
     let is_mem = ctx.modrm.map(|k| k.is_mem()).unwrap_or(false);
-    
+
     // 是否有 opmask 操作数（kreg 类槽）：有 → 不要求 aaa==0，且提取 __aaa
     let has_mask = info.operands.iter().any(|(_, _, s, _)| {
         s.kind == OperandKind::Reg
@@ -1923,7 +1919,8 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
                     }
                 }
             };
-            let disp_zero_check: TokenStream = if { let m = ctx.modrm.unwrap(); m.mem && !m.memref } {
+            let is_mem_not_ref = ctx.modrm.is_some_and(|m| m.mem && !m.memref);
+            let disp_zero_check: TokenStream = if is_mem_not_ref {
                 quote! {
                     if __mod == 1 {
                         // P1-18：disp8 读取必须边界检查（越界 → 不匹配而非 panic）

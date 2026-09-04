@@ -490,8 +490,8 @@ mod tests {
     /// 最终值。长度断言证明不了装载值正确——这里直接求值比对。
     fn eval_li_seq(seq: &[u8], rd: u32) -> u64 {
         let mut regs = [0u64; 32];
-        for c in seq.chunks_exact(4) {
-            let w = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        for c in seq.as_chunks::<4>().0 {
+            let w = u32::from_le_bytes(*c);
             let d = ((w >> 7) & 0x1F) as usize;
             let f3 = (w >> 12) & 7;
             let s1 = ((w >> 15) & 0x1F) as usize;

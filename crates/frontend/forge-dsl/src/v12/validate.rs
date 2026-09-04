@@ -549,13 +549,7 @@ fn validate_families(m: &V12Model) -> Result<(), String> {
 /// 全部已声明的汇编助记符（`asm` 首词）——含 families 展开（`{name}` → 变体名
 /// 小写）。lowering/emit 模板的行首必须命中其一。
 fn declared_mnemonics(m: &V12Model) -> BTreeSet<String> {
-    let head = |asm: &str| {
-        asm.trim()
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_string()
-    };
+    let head = |asm: &str| asm.split_whitespace().next().unwrap_or("").to_string();
     let mut out: BTreeSet<String> = m.instructions.iter().map(|i| head(&i.asm)).collect();
     for f in &m.families {
         for v in &f.variants {
@@ -575,6 +569,7 @@ fn declared_mnemonics(m: &V12Model) -> BTreeSet<String> {
 ///    生成能编译但语义错的代码；
 /// 3. `when` 属性名打错 → `pred::eval` 对未知属性返回 false，规则**永不命中**，
 ///    既不报错也不生效（最难查的一类）。
+///
 /// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测。
 fn validate_lowering(m: &V12Model) -> Result<(), String> {
     let mnemonics = declared_mnemonics(m);
@@ -629,7 +624,9 @@ fn validate_lowering_order(m: &V12Model) -> Result<(), String> {
         for r in &rules {
             let pred = match &r.when {
                 None => None,
-                Some(v) => Some(super::pred::parse(v).map_err(|e| format!("[[lowering.{op}]]: {e}"))?),
+                Some(v) => {
+                    Some(super::pred::parse(v).map_err(|e| format!("[[lowering.{op}]]: {e}"))?)
+                }
             };
             domains.push(super::pred::domain_of(pred.as_ref()));
         }
@@ -750,12 +747,12 @@ fn placeholder_tokens(line: &str) -> Vec<String> {
     let bytes = line.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'{' {
-            if let Some(end) = line[i..].find('}') {
-                out.push(line[i..i + end + 1].to_string());
-                i += end + 1;
-                continue;
-            }
+        if bytes[i] == b'{'
+            && let Some(end) = line[i..].find('}')
+        {
+            out.push(line[i..i + end + 1].to_string());
+            i += end + 1;
+            continue;
         }
         i += 1;
     }
@@ -801,10 +798,10 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
         }
     }
     // [abi.frame]：sp 必填且非空；alloc/free 指令名非空。
-    if let Some(f) = &abi.frame {
-        if f.sp.trim().is_empty() {
-            return Err("[abi.frame].sp must not be empty".into());
-        }
+    if let Some(f) = &abi.frame
+        && f.sp.trim().is_empty()
+    {
+        return Err("[abi.frame].sp must not be empty".into());
     }
     Ok(())
 }

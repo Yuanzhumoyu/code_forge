@@ -30,7 +30,7 @@ forge-opt = { path = "crates/middle/forge-opt" }
 forge-codegen = { path = "crates/backend/forge-codegen" }
 forge-dsl = { path = "crates/frontend/forge-dsl" }
 forge-grammar = { path = "crates/frontend/forge-grammar" }
-smallvec = "1.15.2"
+smallvec = "1.16.0"
 
 # Optional tools crates
 forge-object = { path = "crates/tools/forge-object", optional = true }

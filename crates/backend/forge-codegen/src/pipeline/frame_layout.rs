@@ -4,7 +4,7 @@
 //! ABI/register metadata of the target machine.
 
 use crate::AllocResult;
-use crate::machine::abi::{FrameLayoutKind};
+use crate::machine::abi::FrameLayoutKind;
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileState;
 
@@ -36,8 +36,8 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(machine: &M) -> Frame
     // 帧指针上方推入区 = fp 保存槽（frame_pointer_overhead）+ callee-saved ×
     // 主 GPR 类宽度（主类宽度取 default_gpr_class()，元数据驱动不再假设
     // GPR64）。
-    let cs_bytes = (ri.callee_saved().len() as i32)
-        * (ri.reg_class_width(ri.default_gpr_class()) as i32);
+    let cs_bytes =
+        (ri.callee_saved().len() as i32) * (ri.reg_class_width(ri.default_gpr_class()) as i32);
     let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
     match fl.kind {
         FrameLayoutKind::Outside => FrameLayoutInfo {

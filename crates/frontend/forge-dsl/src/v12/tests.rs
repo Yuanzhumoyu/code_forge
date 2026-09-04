@@ -141,7 +141,7 @@ fn parse_x86_conventions() {
     assert_eq!(modrm.force_disp_base, vec![5, 13]);
     // 形式语义键
     let form = &m.forms[0];
-    
+
     assert_eq!(form.keys.rex.as_deref(), Some("auto"));
 }
 
@@ -1111,7 +1111,10 @@ global_reloc = "pcrel_hi"
         .iter()
         .find(|i| i.name == "AUIPC_GLOBAL")
         .expect("instruction present");
-    assert_eq!(inst.global_reloc, Some(crate::v12::model::GlobalReloc::PcrelHi));
+    assert_eq!(
+        inst.global_reloc,
+        Some(crate::v12::model::GlobalReloc::PcrelHi)
+    );
 }
 
 /// `global_reloc = "bogus"` → 校验拒绝。
@@ -1412,7 +1415,11 @@ fn vary_expands_rows_and_adds_predicates() {
     // 每条都带 rd + elem 两个谓词叶子
     for r in &rs {
         let p = super::pred::parse(r.when.as_ref().unwrap()).unwrap();
-        assert_eq!(super::pred::leaf_count(&p), 2, "base when 与行 eq 合并为 and");
+        assert_eq!(
+            super::pred::leaf_count(&p),
+            2,
+            "base when 与行 eq 合并为 and"
+        );
     }
 }
 
@@ -1591,7 +1598,11 @@ asm = "i {dst}, {src}"
         Some("dst"),
         "指令覆盖生效"
     );
-    assert_eq!(enc.escape.as_deref(), Some(&[0x0Fu8][..]), "未覆盖的键继承预设");
+    assert_eq!(
+        enc.escape.as_deref(),
+        Some(&[0x0Fu8][..]),
+        "未覆盖的键继承预设"
+    );
     assert_eq!(enc.opsize, Some(crate::v12::model::Opsize::Slot(0)));
 }
 
@@ -1599,14 +1610,16 @@ asm = "i {dst}, {src}"
 #[test]
 fn opsize_fixed_width_is_bits() {
     use crate::v12::model::Opsize;
-    let bits: Opsize = toml::from_str::<toml::Value>("v = 64")
-        .unwrap()["v"]
+    let bits: Opsize = toml::from_str::<toml::Value>("v = 64").unwrap()["v"]
         .clone()
         .try_into()
         .expect("裸整数 = 位宽");
     assert_eq!(bits, Opsize::Reg(8), "64 位 = 8 字节（内部单位）");
     // 序列化回位宽整数（往返一致）
-    assert_eq!(toml::Value::try_from(Opsize::Reg(8)).unwrap().as_integer(), Some(64));
+    assert_eq!(
+        toml::Value::try_from(Opsize::Reg(8)).unwrap().as_integer(),
+        Some(64)
+    );
     // 非 8 倍数拒绝
     let bad: Result<Opsize, _> = toml::from_str::<toml::Value>("v = 12").unwrap()["v"]
         .clone()
@@ -1659,33 +1672,41 @@ asm = "add {dst}, {src}"
 
 #[test]
 fn named_ops_reject_duplicate_name() {
-    let doc = ops_doc(r#"ops = ["a:gx", "a:gx"]
-asm = "i {a}, {a}""#);
+    let doc = ops_doc(
+        r#"ops = ["a:gx", "a:gx"]
+asm = "i {a}, {a}""#,
+    );
     let msg = validation_msg(&doc);
     assert!(msg.contains("重复"), "msg: {msg}");
 }
 
 #[test]
 fn named_ops_reject_bad_role() {
-    let doc = ops_doc(r#"ops = ["a:gx:sideways"]
-asm = "i {a}""#);
+    let doc = ops_doc(
+        r#"ops = ["a:gx:sideways"]
+asm = "i {a}""#,
+    );
     let msg = validation_msg(&doc);
     assert!(msg.contains("sideways"), "msg: {msg}");
 }
 
 #[test]
 fn named_ops_reject_double_reference() {
-    let doc = ops_doc(r#"ops = ["a:gx", "b:gx"]
-asm = "i {a}, {a}""#);
+    let doc = ops_doc(
+        r#"ops = ["a:gx", "b:gx"]
+asm = "i {a}, {a}""#,
+    );
     let msg = validation_msg(&doc);
     assert!(msg.contains("引用 2 次"), "msg: {msg}");
 }
 
 #[test]
 fn opsize_named_must_reference_declared_op() {
-    let doc = ops_doc(r#"opsize = "nope"
+    let doc = ops_doc(
+        r#"opsize = "nope"
 ops = ["a:gx"]
-asm = "i {a}""#);
+asm = "i {a}""#,
+    );
     // opsize 名字解析在 codegen（collect_inst_infos）——校验期先过，生成期报错
     let m = parse_and_validate(&doc).expect("模型层合法");
     let err = super::codegen::generate(&m).unwrap_err();
@@ -1746,8 +1767,8 @@ fn modrm_map_reg_integer_is_ext_code() {
 /// `rm = "[名]"` = 内存形式（与 asm 里的 `[{base}]` 同形）。
 #[test]
 fn modrm_map_bracket_means_memory() {
-    let m = parse_and_validate(&modrm_doc(r#"modrm = { reg = "src", rm = "[dst]" }"#))
-        .expect("valid");
+    let m =
+        parse_and_validate(&modrm_doc(r#"modrm = { reg = "src", rm = "[dst]" }"#)).expect("valid");
     let mm = m.instructions[0].enc.modrm.as_ref().unwrap();
     assert_eq!(mm.rm_operand(), (true, "dst"));
 }

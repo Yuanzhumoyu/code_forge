@@ -5,8 +5,8 @@
 //! inst_reg_imm_fids）以及 model 类型。
 
 use super::super::model::*;
-use super::lowering::role_name;
 use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
+use super::lowering::role_name;
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -1100,8 +1100,8 @@ fn gen_emit_pseudo(
             let Some(frame) = &abi.frame else {
                 return Ok(quote! {});
             };
-            let alloc = role_name(infos, Role::FrameAlloc)
-                .map_err(|e| format!("@frame_alloc: {e}"))?;
+            let alloc =
+                role_name(infos, Role::FrameAlloc).map_err(|e| format!("@frame_alloc: {e}"))?;
             let inst = alloc.as_str();
             // 帧分配：所有 Reg 槽填 sp、所有 Imm/Label 槽填 frame_size。
             // x86 `SUB64_R_IMM32`（inout reg + imm32）；demo `SUBI16`
@@ -1150,8 +1150,8 @@ fn gen_emit_pseudo(
             let Some(frame) = &abi.frame else {
                 return Ok(quote! {});
             };
-            let free = role_name(infos, Role::FrameFree)
-                .map_err(|e| format!("@frame_free: {e}"))?;
+            let free =
+                role_name(infos, Role::FrameFree).map_err(|e| format!("@frame_free: {e}"))?;
             let inst = free.as_str();
             let sp = format_ident!("{}", frame.sp);
             let vn = crate::v12::codegen::pascal_ident(inst);

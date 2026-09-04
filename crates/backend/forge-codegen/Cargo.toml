@@ -9,9 +9,9 @@ forge-ir = { path = "../../foundation/forge-ir" }
 forge-opt = { path = "../../middle/forge-opt" }
 forge-mem = { path = "../../foundation/forge-mem" }
 forge-dsl = { path = "../../frontend/forge-dsl" }
-smallvec = "1"
-thiserror = "2"
-log = "0.4"
+smallvec = "1.16.0"
+thiserror = "2.0.20"
+log = "0.4.34"
 
 # Optional dependencies
 rayon = { version = "1", optional = true }

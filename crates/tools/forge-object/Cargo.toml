@@ -7,5 +7,5 @@ description = "Forge Object: ELF/PE/Mach-O object file writer for compiled funct
 [dependencies]
 forge-ir = { path = "../../foundation/forge-ir" }
 forge-codegen = { path = "../../backend/forge-codegen" }
-object = { version = "0.39.1", features = ["write"] }
+object = { version = "0.40.0", features = ["write"] }
 target-lexicon = "0.13.5"

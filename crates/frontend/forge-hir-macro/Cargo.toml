@@ -8,6 +8,6 @@ description = "Proc-macro crate for forge-hir: defines the `define_lowering!` DS
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
+syn = { version = "3.0.4", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"

@@ -678,7 +678,7 @@ impl FromStr for Opsize {
 impl Opsize {
     /// 裸整数 → 固定宽度（**位**；内部按字节存，与 `PhysReg::width()` 同单位）。
     fn from_bits(bits: u64) -> Result<Self, String> {
-        if bits == 0 || bits % 8 != 0 {
+        if bits == 0 || !bits.is_multiple_of(8) {
             return Err(format!("opsize = {bits} 必须是 8 的正整数倍（位宽）"));
         }
         Ok(Self::Reg((bits / 8) as u16))
@@ -980,7 +980,8 @@ pub enum Effect {
 /// 全局地址重定位语义。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GlobalReloc {    /// imm 槽 < 0 时编码 GlobalId → ABS8 `"G{id}"`（x86 MOVABS_GLOBAL）。
+pub enum GlobalReloc {
+    /// imm 槽 < 0 时编码 GlobalId → ABS8 `"G{id}"`（x86 MOVABS_GLOBAL）。
     Abs8,
     /// PC-relative hi20（riscv AUIPC_GLOBAL；patcher 按 opcode 分写位段）。
     PcrelHi,
@@ -1130,11 +1131,7 @@ impl V12Model {
                         .and_then(|v| crate::v12::pred::parse(v).ok())
                         .map(|p| crate::v12::pred::leaf_count(&p))
                         .unwrap_or(0);
-                    (
-                        -r.priority.unwrap_or(0) as i64,
-                        -(leaves as i64),
-                        *i as i64,
-                    )
+                    (-r.priority.unwrap_or(0) as i64, -(leaves as i64), *i as i64)
                 });
                 (op, rules.into_iter().map(|(_, r)| r).collect())
             })
@@ -1318,11 +1315,12 @@ pub enum ArgSlot {
 /// 其余帧数值（min_frame_bytes / callee_saved_bytes / stack_slot_shift）全部
 /// 由运行期从本模式 + fp_push_bytes + callee_saved 表**推导**（pipeline/
 /// frame_layout.rs::frame_layout_info），不再在 TOML 里手工写魔法数。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LayoutMode {
     /// fp-outside（缺省，x86/demo）：callee-saved 用硬件 push 在帧指针**上方**
     /// （帧外）。spill 槽 sp_base = -(frame) - callee_saved_bytes、栈槽基准
     /// fp - callee_saved_bytes。
+    #[default]
     #[serde(rename = "fp-outside")]
     FpOutside,
     /// fp-inside（riscv）：ra/fp/callee-saved 保存槽在帧**内顶部**
@@ -1330,12 +1328,6 @@ pub enum LayoutMode {
     /// 最小帧）。spill 槽 sp_base = -(frame)（帧内底部）、栈槽平移 = fp_push。
     #[serde(rename = "fp-inside")]
     FpInside,
-}
-
-impl Default for LayoutMode {
-    fn default() -> Self {
-        LayoutMode::FpOutside
-    }
 }
 
 /// 帧布局配置（[abi.frame]）。

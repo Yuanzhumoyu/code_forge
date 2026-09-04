@@ -88,7 +88,9 @@ fn read_isa_file(path: &str) -> Result<(String, std::path::PathBuf), String> {
         std::path::PathBuf::from(&manifest_dir).join(path),
         // workspace 布局下 crate 位于 crates/<layer>/<crate>/
         //（如 crates/backend/forge-codegen → 上 3 级到 <root>/isa/...）。
-        std::path::PathBuf::from(&manifest_dir).join("../../..").join(path),
+        std::path::PathBuf::from(&manifest_dir)
+            .join("../../..")
+            .join(path),
     ];
     let mut last = String::new();
     for cand in candidates {

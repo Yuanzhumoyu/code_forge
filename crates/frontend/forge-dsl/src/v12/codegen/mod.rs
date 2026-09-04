@@ -288,9 +288,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 .forms
                 .iter()
                 .find(|f| &f.name == name)
-                .ok_or_else(|| {
-                    format!("[[instructions.{}]]: form '{name}' missing", inst.name)
-                })?
+                .ok_or_else(|| format!("[[instructions.{}]]: form '{name}' missing", inst.name))?
                 .keys
                 .clone(),
         };
@@ -390,7 +388,10 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
 /// 返回 (助记符, 操作数声明表，按序号排序且连续)。
 /// validate.rs 也调用本函数做操作数校验（槽存在/角色合法/序号连续）。
 /// 解析 `ops = ["名字:槽[:角色]", …]`：返回 (名字表, 操作数用法表)，序即编码序。
-fn parse_ops_list(ops: &[String], inst_name: &str) -> Result<(Vec<String>, Vec<OperandUse>), String> {
+fn parse_ops_list(
+    ops: &[String],
+    inst_name: &str,
+) -> Result<(Vec<String>, Vec<OperandUse>), String> {
     let ctx = || format!("[[instructions.{inst_name}]].ops");
     if ops.is_empty() {
         return Err(format!("{}: 不能为空数组（省略该键即可）", ctx()));
@@ -439,7 +440,11 @@ fn parse_ops_list(ops: &[String], inst_name: &str) -> Result<(Vec<String>, Vec<O
 ///
 /// 规范化让下游（asm/machine/decode 生成）只认索引，完全不必感知命名——
 /// 命名只是**作者面**的语法。未知名字在此报错（拼错的占位符不会静默变字面量）。
-fn normalize_named_template(rest: &str, names: &[String], inst_name: &str) -> Result<String, String> {
+fn normalize_named_template(
+    rest: &str,
+    names: &[String],
+    inst_name: &str,
+) -> Result<String, String> {
     let ctx = || format!("[[instructions.{inst_name}]] asm");
     let mut out = String::with_capacity(rest.len());
     let mut chars = rest.char_indices().peekable();
@@ -452,16 +457,13 @@ fn normalize_named_template(rest: &str, names: &[String], inst_name: &str) -> Re
             return Err(format!("{}: 未闭合的 '{{'", ctx()));
         };
         let inner = rest[i + 1..i + end].trim();
-        let idx = names
-            .iter()
-            .position(|n| n == inner)
-            .ok_or_else(|| {
-                format!(
-                    "{}: 占位符 '{{{inner}}}' 不是已声明的操作数名（ops: {}）",
-                    ctx(),
-                    names.join(", ")
-                )
-            })?;
+        let idx = names.iter().position(|n| n == inner).ok_or_else(|| {
+            format!(
+                "{}: 占位符 '{{{inner}}}' 不是已声明的操作数名（ops: {}）",
+                ctx(),
+                names.join(", ")
+            )
+        })?;
         out.push_str(&format!("{{{idx}}}"));
         for _ in 0..end - 1 {
             chars.next();

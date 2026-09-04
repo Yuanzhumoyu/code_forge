@@ -5,12 +5,12 @@ edition = "2024"
 description = "Forge IR: SSA-form intermediate representation types, builder, parser, and analysis"
 
 [dependencies]
-smallvec = "1"
-thiserror = "2"
+smallvec = "1.16.0"
+thiserror = "2.0.20"
 dashu = "0.6.0"
-bitflags = "2"
+bitflags = "2.13.1"
 logos = "0.16.1"
-lalrpop-util = "0.23"
+lalrpop-util = "0.23.1"
 
 [build-dependencies]
 lalrpop = "0.23.1"

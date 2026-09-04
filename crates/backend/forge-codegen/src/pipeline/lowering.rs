@@ -7,7 +7,7 @@
 use crate::LowerCtx;
 use crate::machine::lowering::TargetLowering;
 use crate::machine::pattern::{
-    eval_pat_pred, type_elem_id, type_vec_bytes, type_width_bits, PatTerm, PatternSpec,
+    PatTerm, PatternSpec, eval_pat_pred, type_elem_id, type_vec_bytes, type_width_bits,
 };
 use crate::machine::peephole::TargetPeephole;
 use crate::pipeline::compiler::{CompileState, atomic_op_from_u64};
@@ -715,8 +715,11 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 }
                 let mut leaves: Vec<Option<Value>> = vec![None; spec.var_count as usize];
                 let mut internals: Vec<Inst> = Vec::new();
-                let matched = inst.operands.iter().zip(spec.args.iter()).all(
-                    |(&operand, term)| {
+                let matched = inst
+                    .operands
+                    .iter()
+                    .zip(spec.args.iter())
+                    .all(|(&operand, term)| {
                         match_pat_term(
                             dfg,
                             use_lists,
@@ -726,8 +729,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                             &mut leaves,
                             &mut internals,
                         )
-                    },
-                );
+                    });
                 if !matched {
                     continue;
                 }

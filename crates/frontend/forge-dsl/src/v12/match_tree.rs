@@ -23,10 +23,7 @@ pub fn parse(s: &str) -> Result<MatchNode, String> {
     let node = p.parse_node()?;
     p.skip_ws();
     if p.i != p.s.len() {
-        return Err(format!(
-            "匹配树末尾有多余字符 {:?}",
-            &p.s[p.i..]
-        ));
+        return Err(format!("匹配树末尾有多余字符 {:?}", &p.s[p.i..]));
     }
     if matches!(node, MatchNode::Var(_)) {
         return Err("匹配树根必须是 Op 调用（如 Fadd(Fmul(a,b),c)）".into());
