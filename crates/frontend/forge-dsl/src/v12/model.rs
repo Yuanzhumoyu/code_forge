@@ -1288,6 +1288,30 @@ pub enum ArgSlot {
     ByPosition,
 }
 
+/// 帧布局模式（[abi.frame].layout）：决定 callee-saved 保存槽相对帧的位置。
+/// 其余帧数值（min_frame_bytes / callee_saved_bytes / stack_slot_shift）全部
+/// 由运行期从本模式 + fp_push_bytes + callee_saved 表**推导**（pipeline/
+/// frame_layout.rs::frame_layout_info），不再在 TOML 里手工写魔法数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LayoutMode {
+    /// fp-outside（缺省，x86/demo）：callee-saved 用硬件 push 在帧指针**上方**
+    /// （帧外）。spill 槽 sp_base = -(frame) - callee_saved_bytes、栈槽基准
+    /// fp - callee_saved_bytes。
+    #[serde(rename = "fp-outside")]
+    FpOutside,
+    /// fp-inside（riscv）：ra/fp/callee-saved 保存槽在帧**内顶部**
+    /// （@push_callee 的 SD 到 [sp+frame-fp_push-(k+1)*8]，帧分配覆盖到固定
+    /// 最小帧）。spill 槽 sp_base = -(frame)（帧内底部）、栈槽平移 = fp_push。
+    #[serde(rename = "fp-inside")]
+    FpInside,
+}
+
+impl Default for LayoutMode {
+    fn default() -> Self {
+        LayoutMode::FpOutside
+    }
+}
+
 /// 帧布局配置（[abi.frame]）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1297,6 +1321,9 @@ pub struct AbiFrame {
     /// 帧指针寄存器名（"RBP"；None = 无帧指针）。
     #[serde(default)]
     pub fp: Option<String>,
+    /// 帧布局模式（见 [`LayoutMode`]；缺省 fp-outside）。
+    #[serde(default)]
+    pub layout: LayoutMode,
     /// prologue 在帧指针上方 push 的字节数（帧指针保存槽；x86 = 8）。
     #[serde(default)]
     pub fp_push_bytes: Option<u32>,
@@ -1304,23 +1331,6 @@ pub struct AbiFrame {
     /// 帧分配需负偏移；x86 用 SUB 语义不需要）。缺省 false。
     #[serde(default)]
     pub alloc_neg: bool,
-    /// 帧最小字节数（riscv 的 ra/fp 保存槽需帧 ≥ 固定值；缺省 0）。
-    #[serde(default)]
-    pub min_frame_bytes: Option<u32>,
-    /// callee-saved 区字节数覆盖（缺省 = frame_pointer_overhead +
-    /// callee_saved×宽——x86 语义：push 在帧外/fp 上方）。riscv 的
-    /// callee_saved 保存槽在**帧内顶部**（@push_callee 的 SD 到
-    /// [sp+frame-16-k*8]，min_frame_bytes 覆盖）→ 覆盖为 0：spill 槽
-    /// sp_base = -(frame)（帧内底部）、StackAddr 平移 0（栈槽帧内），
-    /// 否则 spill 槽落在帧外与递归帧重叠（实测 fib 死循环）。
-    #[serde(default)]
-    pub callee_saved_bytes_override: Option<u32>,
-    /// 栈槽（StackAddr/Alloca）的帧顶平移字节数（riscv = fp_push_bytes=16：
-    /// 栈槽基准 fp-16，避开 ra/fp 保存槽且递归各帧独立；缺省 None = 回退
-    /// callee_saved_bytes——x86 语义）。独立于 callee_saved_bytes_override
-    ///（后者管 spill 布局、前者管栈槽平移）。
-    #[serde(default)]
-    pub stack_slot_shift: Option<i32>,
 }
 
 /// 被调用者保存寄存器（[abi.callee_saved]）。

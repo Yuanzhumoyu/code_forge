@@ -2029,7 +2029,7 @@ align_pad = 0x90   # `.align` 伪指令填充字节 = NOP
 insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@move_args", "@frame_alloc"]
 
 [emit.epilogue]
-insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, 56", "@pop_callee", "POP RBP", "RET"]
+insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, {callee_saved_bytes}", "@pop_callee", "POP RBP", "RET"]
 
 # ============================================================
 # 指令选择（迭代 5 声明层：符号化操作数 {out}/{0}/{1}）

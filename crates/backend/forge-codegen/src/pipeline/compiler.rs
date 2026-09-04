@@ -1916,13 +1916,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
         //（覆盖调用者寄存器保存值 → mini_c JIT SEGV/逻辑错误）。
-        ctx.callee_saved_bytes = crate::pipeline::frame_layout::callee_saved_bytes(machine);
-        // 栈槽帧顶平移：[abi.frame].stack_slot_shift（riscv=16）或回退
-        // callee_saved_bytes（x86 语义）。
-        ctx.stack_slot_shift = machine
-            .abi()
-            .stack_slot_shift()
-            .unwrap_or(ctx.callee_saved_bytes);
+        // 帧布局三数值统一推导：min_frame / callee_saved_bytes / 栈槽平移
+        // 都由 frame_layout_info() 从 [abi.frame].layout + reg_info 算出
+        //（fp-inside：csb=0、栈槽平移=fp_push；fp-outside：csb=pushed、平移
+        // 回退 csb）。compiler.rs 的 LowerCtx 与 emission.rs 共用同一来源。
+        let fl = crate::pipeline::frame_layout::frame_layout_info(machine);
+        ctx.callee_saved_bytes = fl.callee_saved_bytes;
+        ctx.stack_slot_shift = fl.stack_slot_shift;
         ctx.is_float_return = func
             .return_types()
             .iter()

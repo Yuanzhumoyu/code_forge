@@ -4,22 +4,59 @@
 //! ABI/register metadata of the target machine.
 
 use crate::AllocResult;
+use crate::machine::abi::{FrameLayoutKind};
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileState;
 
-/// callee-saved 区字节数：fp 保存槽 + callee-saved 寄存器 × 主 GPR 类宽度。
-/// 帧布局公式的唯一来源（compiler.rs 的 LowerCtx 与 emission.rs 共用）——
-/// 主类宽度取 `default_gpr_class()`（元数据驱动，不再假设 GPR64）。
-/// `[abi.frame].callee_saved_bytes_override` 可覆盖（riscv：callee_saved
-/// 保存槽在帧内顶部、min_frame_bytes 覆盖 → 覆盖 0 使 spill 槽 sp_base =
-/// -(frame) 留在帧内，否则 spill 槽落帧外与递归帧重叠——fib 死循环）。
-pub(crate) fn callee_saved_bytes<M: TargetMachine + ?Sized>(machine: &M) -> i32 {
-    if let Some(v) = machine.abi().callee_saved_bytes_override() {
-        return v as i32;
-    }
+/// 帧布局三数值——从声明式 `[abi.frame]`（layout + fp_push_bytes）+ reg_info
+/// 推导，是 min_frame / callee_saved_bytes / stack_slot_shift 的唯一来源。
+/// 取代 v14 的 `[abi.frame].min_frame_bytes / callee_saved_bytes_override /
+/// stack_slot_shift` 三个魔法数键（riscv 的 104/0/16 全可由 fp_push_bytes +
+/// callee_saved 表推出）。
+///
+/// - **fp-outside**（x86/demo）：callee-saved 用硬件 push 在帧指针上方——
+///   spill 槽从 sp_base = -(frame) - callee_saved_bytes 起、栈槽基准
+///   fp - callee_saved_bytes。min_frame = 0（无固定下限）。
+/// - **fp-inside**（riscv）：ra/fp/callee-saved 保存槽在帧**内顶部**
+///   （@push_callee 的 SD 到 [sp+frame-fp_push-(k+1)*8]）→ 帧最小 =
+///   fp_push_bytes + Σcallee_saved×宽（否则 SD 偏移为负写坏 sp 下方）；
+///   callee_saved_bytes = 0（spill 槽 sp_base = -(frame) 留在帧内，否则落
+///   帧外与递归帧重叠——fib 死循环）；栈槽平移 = fp_push_bytes（基准
+///   fp-16 避开保存槽、递归各帧独立）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FrameLayoutInfo {
+    pub min_frame: u32,
+    pub callee_saved_bytes: i32,
+    pub stack_slot_shift: i32,
+}
+
+pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(machine: &M) -> FrameLayoutInfo {
+    let fl = machine.abi().frame_layout();
     let ri = machine.reg_info();
-    (ri.frame_pointer_overhead() as i32)
-        + (ri.callee_saved().len() as i32) * (ri.reg_class_width(ri.default_gpr_class()) as i32)
+    // 帧指针上方推入区 = fp 保存槽（frame_pointer_overhead）+ callee-saved ×
+    // 主 GPR 类宽度（主类宽度取 default_gpr_class()，元数据驱动不再假设
+    // GPR64）。
+    let cs_bytes = (ri.callee_saved().len() as i32)
+        * (ri.reg_class_width(ri.default_gpr_class()) as i32);
+    let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
+    match fl.kind {
+        FrameLayoutKind::Outside => FrameLayoutInfo {
+            min_frame: 0,
+            callee_saved_bytes: pushed,
+            stack_slot_shift: pushed,
+        },
+        FrameLayoutKind::Inside => FrameLayoutInfo {
+            min_frame: fl.fp_push_bytes + cs_bytes as u32,
+            callee_saved_bytes: 0,
+            stack_slot_shift: fl.fp_push_bytes as i32,
+        },
+    }
+}
+
+/// callee-saved 区字节数（帧指针上方的 push 区；fp-inside 布局 = 0）。
+/// compiler.rs 的 LowerCtx 与 emission.rs 共用。
+pub(crate) fn callee_saved_bytes<M: TargetMachine + ?Sized>(machine: &M) -> i32 {
+    frame_layout_info(machine).callee_saved_bytes
 }
 
 impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
@@ -47,9 +84,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         let stack_args = self.ctx.max_stack_arg_bytes;
         let size = size.saturating_add(stack_args);
         let align = machine.abi().stack_align();
-        // 最小帧（[abi.frame].min_frame_bytes）：riscv 的 ra/fp 保存槽需帧
-        // ≥ 固定值，否则 emit 模板的 {frame_size_mN} 偏移为负（写坏 sp 下方）。
-        let min_frame = machine.abi().min_frame_bytes();
+        // 最小帧（fp-inside 推导 = fp_push + callee_saved 区）：riscv 的
+        // ra/fp 保存槽需帧 ≥ 固定值，否则 emit 模板的 {frame_size_mN} 偏移
+        // 为负（写坏 sp 下方）。
+        let min_frame = frame_layout_info(machine).min_frame;
         let size = size.max(min_frame);
         // 栈填充（x86 = 8 = align/2）：prologue push rbp + callee-saved 后
         // rsp%16==8（入口 rsp%16==8 由 call 压入的返回地址造成），sub rsp 必须

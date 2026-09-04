@@ -68,30 +68,30 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
         Some(b) => quote! { Some(#b) },
         None => quote! { None },
     };
-    let min_frame = model
+    // 声明式帧布局：[abi.frame].layout（fp-inside/fp-outside）+ fp_push_bytes。
+    // min_frame_bytes / callee_saved_bytes / stack_slot_shift 不再在 TOML 声明
+    // ——由运行期 frame_layout_info() 从这两项 + reg_info 推导（见 pipeline/
+    // frame_layout.rs）。这里只把两个正交事实落进生成的 ABI。
+    let layout = model
         .abi
         .as_ref()
         .and_then(|a| a.frame.as_ref())
-        .and_then(|f| f.min_frame_bytes)
-        .unwrap_or(0);
-    let csb_override = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
-        .and_then(|f| f.callee_saved_bytes_override);
-    let csb_toks: TokenStream = match csb_override {
-        Some(v) => quote! { Some(#v) },
-        None => quote! { None },
+        .map(|f| f.layout)
+        .unwrap_or_default();
+    let layout_kind_toks: TokenStream = match layout {
+        crate::v12::model::LayoutMode::FpInside => {
+            quote! { crate::machine::abi::FrameLayoutKind::Inside }
+        }
+        crate::v12::model::LayoutMode::FpOutside => {
+            quote! { crate::machine::abi::FrameLayoutKind::Outside }
+        }
     };
-    let sss = model
+    let fp_push = model
         .abi
         .as_ref()
         .and_then(|a| a.frame.as_ref())
-        .and_then(|f| f.stack_slot_shift);
-    let sss_toks: TokenStream = match sss {
-        Some(v) => quote! { Some(#v) },
-        None => quote! { None },
-    };
+        .and_then(|f| f.fp_push_bytes)
+        .unwrap_or(8);
     // 返回寄存器：[abi].ret_regs（物理名）→ Reg::NAME；缺省空 = index 0
     //（x86 RAX 语义，由 Return/Call lowering 的 from_index(0) 兜底）。
     let mut ret_regs: Vec<TokenStream> = Vec::new();
@@ -117,9 +117,12 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
             fn stack_align(&self) -> u32 { #stack_align }
             fn frame_padding(&self) -> i32 { #frame_padding }
             fn vector_by_ref_limit(&self) -> Option<u32> { #by_ref_toks }
-            fn min_frame_bytes(&self) -> u32 { #min_frame }
-            fn callee_saved_bytes_override(&self) -> Option<u32> { #csb_toks }
-            fn stack_slot_shift(&self) -> Option<i32> { #sss_toks }
+            fn frame_layout(&self) -> crate::machine::abi::FrameLayout {
+                crate::machine::abi::FrameLayout {
+                    kind: #layout_kind_toks,
+                    fp_push_bytes: #fp_push,
+                }
+            }
             fn int_arg_slot_count(&self) -> usize { #int_arg_slot_count }
         }
     })
@@ -336,14 +339,18 @@ fn gen_emit_block(
             out.push(gen_emit_pseudo(infos, model, name)?);
             continue;
         }
-        let stmts = gen_emit_inst(infos, trimmed)?;
+        let stmts = gen_emit_inst(infos, model, trimmed)?;
         out.extend(stmts);
     }
     Ok(quote! { #(#out)* })
 }
 
 /// 单个 emit 指令行 → 构造 + 编码语句（emit 模式）。
-fn gen_emit_inst(infos: &[InstInfo], line: &str) -> Result<Vec<TokenStream>, String> {
+fn gen_emit_inst(
+    infos: &[InstInfo],
+    model: &V12Model,
+    line: &str,
+) -> Result<Vec<TokenStream>, String> {
     let (inst_name, ops) = match line.split_once(char::is_whitespace) {
         Some((n, rest)) => (n.trim(), rest.trim()),
         None => (line.trim(), ""),
@@ -381,6 +388,22 @@ fn gen_emit_inst(infos: &[InstInfo], line: &str) -> Result<Vec<TokenStream>, Str
                                 .parse()
                                 .map_err(|_| format!("emit 模板占位符 '{other}' 无法解析"))?;
                             quote! { (__frame_size as i64) - #n }
+                        }
+                        // @push_callee 推入的 callee-saved 寄存器区字节数
+                        //（[abi.callee_saved].gpr × GPR 宽，**不含** fp 保存槽）：
+                        // 尾声里把 rsp 从帧指针回退到 cs 槽底（x86 `SUB RSP, N`
+                        // 的 N = 7×8 = 56）。生成期常量——增删 callee_saved 后
+                        // 与 @push_callee 的 push 数自动同步，不再手改字面量。
+                        // 注意区别于 frame_layout_info 的 callee_saved_bytes
+                        //（后者含 fp 保存槽，是 spill 槽 sp_base 用的）。
+                        "{callee_saved_bytes}" => {
+                            let cs: i64 = model
+                                .abi
+                                .as_ref()
+                                .and_then(|a| a.callee_saved.as_ref())
+                                .map(|c| c.gpr.len() as i64 * 8)
+                                .unwrap_or(0);
+                            quote! { #cs }
                         }
                         _ => {
                             let v: i64 = other
@@ -468,8 +491,10 @@ fn gen_emit_pseudo(
             // x86：PUSH/POP（+r 形式，硬件递减 sp）。定宽 ISA 无 push/pop
             // 指令（riscv）→ 用 [spill.GPR] store/load 模板指令（SD/LD）存到
             // 帧槽 [sp + frame - fp_push - (k+1)*8]（frame_alloc 之后执行，
-            // 槽在已分配帧顶部 fp_push 区域之下；min_frame_bytes 需覆盖）。
-            // `[abi].push_inst`/`pop_inst` 键驱动（缺省按 PUSH/POP 存在性检测）。
+            // 槽在已分配帧顶部 fp_push 区域之下；fp-inside 推导的最小帧
+            // fp_push + Σcallee_saved×宽 保证 SD 偏移非负）。
+            // PUSH/POP 按 roles = ["push"]/["pop"] 查指令（缺省无 → 走 spill
+            // 分支）。
             let push_inst = role_name(infos, Role::Push).unwrap_or_default();
             let pop_inst = role_name(infos, Role::Pop).unwrap_or_default();
             let has_hw_push = inst_exists(infos, &push_inst) && inst_exists(infos, &pop_inst);

@@ -5,6 +5,35 @@
 
 use forge_ir::{CallConv, PhysReg};
 
+/// 帧布局模式（[abi.frame].layout）：callee-saved 保存槽相对帧的位置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameLayoutKind {
+    /// fp-outside（x86/demo）：callee-saved 用硬件 push 在帧指针上方（帧外）。
+    Outside,
+    /// fp-inside（riscv）：ra/fp/callee-saved 保存槽在帧内顶部。
+    Inside,
+}
+
+/// 声明式帧布局（[abi.frame] 的两个正交事实）。其余帧数值
+/// （min_frame / callee_saved_bytes / stack_slot_shift）由
+/// `pipeline::frame_layout::frame_layout_info` 从本结构 + reg_info 推导。
+#[derive(Debug, Clone, Copy)]
+pub struct FrameLayout {
+    /// 帧布局模式（缺省 fp-outside）。
+    pub kind: FrameLayoutKind,
+    /// prologue 在帧指针上方保存的帧指针槽字节数（x86 = 8、riscv 16）。
+    pub fp_push_bytes: u32,
+}
+
+impl Default for FrameLayout {
+    fn default() -> Self {
+        FrameLayout {
+            kind: FrameLayoutKind::Outside,
+            fp_push_bytes: 8,
+        }
+    }
+}
+
 /// 调用约定描述。
 pub trait TargetABI: Send + Sync + 'static {
     type Reg: PhysReg;
@@ -47,26 +76,12 @@ pub trait TargetABI: Send + Sync + 'static {
         0
     }
 
-    /// 帧最小字节数（[abi.frame].min_frame_bytes）：riscv 的 ra/fp 保存槽
-    /// 需要帧 ≥ 固定值（emit 模板的 `{frame_size_mN}` 偏移才非负）。缺省 0。
-    fn min_frame_bytes(&self) -> u32 {
-        0
-    }
-
-    /// callee-saved 区字节数覆盖（[abi.frame].callee_saved_bytes_override）。
-    /// None = 按 frame_pointer_overhead + callee_saved×宽 计算（x86 语义：
-    /// push 在帧外/fp 上方）。riscv 覆盖 0（保存槽在帧内顶部）→ spill 槽
-    /// sp_base = -(frame) 留在帧内（否则落帧外与递归帧重叠）。
-    fn callee_saved_bytes_override(&self) -> Option<u32> {
-        None
-    }
-
-    /// 栈槽（StackAddr/Alloca）的帧顶平移字节数（[abi.frame].
-    /// stack_slot_shift）。None = 回退 callee_saved_bytes（x86 语义）。
-    /// riscv = fp_push_bytes（16）——栈槽基准 fp - 16（避开 ra/fp 保存槽），
-    /// 递归时各帧栈槽独立（相对 sp 的 -4 会跨帧重叠——fib_slot 结果错）。
-    fn stack_slot_shift(&self) -> Option<i32> {
-        None
+    /// 声明式帧布局：`[abi.frame].layout`（fp-inside/fp-outside）+
+    /// `fp_push_bytes`。min_frame / callee_saved_bytes / stack_slot_shift
+    /// 三数值由 [`crate::pipeline::frame_layout::frame_layout_info`] 从本结构
+    /// + reg_info 推导，不再有 `min_frame_bytes` 等魔法数方法。
+    fn frame_layout(&self) -> FrameLayout {
+        FrameLayout::default()
     }
 
     /// 红区大小。`Some(n)` 表示栈指针以下 n 字节不被信号处理程序破坏。

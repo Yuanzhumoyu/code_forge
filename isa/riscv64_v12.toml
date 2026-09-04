@@ -1176,23 +1176,18 @@ regs = ["X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17"]
 sp = "X2"          # sp
 fp = "X8"          # s0/fp
 alloc_neg = true   # addi sp, sp, -frame_size
+# fp-inside：ra/fp/callee_saved 保存槽在帧内顶部 → min_frame_bytes(104 =
+# fp_push 16 + 11×8)、callee_saved_bytes_override(0)、stack_slot_shift(16)
+# 三个值全部由运行期推导（pipeline/frame_layout.rs::frame_layout_info），
+# 不再手写魔法数。
+layout = "fp-inside"
 fp_push_bytes = 16 # ra + fp 两个保存槽
-# 帧 ≥ callee_saved_bytes（16 + 11×8 = 104）：@push_callee 的 SD 槽偏移
-# frame - 16 - (k+1)*8 非负（k 最大 10 → 104-16-88=0）。
-min_frame_bytes = 104
-# callee_saved 保存槽在帧内顶部（min_frame_bytes 覆盖）→ 帧布局不再额外减
-# callee_saved_bytes：spill 槽 sp_base = -(frame) 留在帧内、StackAddr 平移 0。
-# 否则 spill 槽落帧外（sp 下方更深处），递归时与 callee 帧/栈槽绝对地址
-# 重叠（实测 fib 死循环）。
-callee_saved_bytes_override = 0
-# 栈槽（StackAddr）帧顶平移 = fp_push_bytes(16)：栈槽基准 fp-16（避开 ra/fp
-# 保存槽），相对 fp 递归各帧独立。
-stack_slot_shift = 16
 
 [abi.callee_saved]
 # s 系（X9, X18-X27）：@push_callee/@pop_callee 用 [spill.GPR] store/load
-# 模板（SD/LD）保存到帧槽 [sp + frame - 16 - (k+1)*8]（min_frame_bytes
-# 覆盖）。regalloc 把跨调用存活 vreg 分配到这里，递归/跨函数调用安全。
+# 模板（SD/LD）保存到帧槽 [sp + frame - 16 - (k+1)*8]（fp-inside 推导的最小
+# 帧 = fp_push 16 + 11×8 = 104 覆盖，SD 偏移非负）。regalloc 把跨调用存活
+# vreg 分配到这里，递归/跨函数调用安全。
 gpr = ["X9", "X18", "X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27"]
 
 [spill.GPR]
