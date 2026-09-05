@@ -395,51 +395,19 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     None
                 };
                 if let Some(alloc_id) = alloc_id {
-                    // alloc_id → 数据段符号：promoted/slice 字面量是
-                    // GlobalAlloc::Memory（intern_promoted 落盘 .rodata）、
-                    // static 是 GlobalAlloc::Static（intern_global 落盘 .data）。
+                    // alloc_id → 数据段符号（M5 稳定键统一入口 intern_const_data）：
+                    // promoted/slice 字面量是 GlobalAlloc::Memory（内容稳定名
+                    // `__slice_{hash}`，intern_promoted 落 .rodata）、static 是
+                    // GlobalAlloc::Static（真实符号名，intern_global 落 .data）。
                     // 其余（Function 等）不在此路径，落到下方标量求值。
-                    let g = match self.tcx.global_alloc(alloc_id) {
-                        rustc_middle::mir::interpret::GlobalAlloc::Memory(alloc) => {
-                            let inner = &*alloc.0;
-                            let size = inner.size().bytes_usize();
-                            let bytes = inner
-                                .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
-                                .to_vec();
-                            let align = inner.align.bytes();
-                            let sym = Self::slice_sym(alloc_id);
-                            if crate::trace::trace_enabled("GLOBAL") {
-                                eprintln!(
-                                    "[forge] promoted alloc={alloc_id:?} size={size} -> sym={sym}"
-                                );
-                            }
-                            Some(self.func_refs.intern_promoted(alloc_id, &sym, bytes, align))
-                        }
-                        rustc_middle::mir::interpret::GlobalAlloc::Static(def_id) => {
-                            let instantiating_crate = if def_id.is_local() {
-                                rustc_hir::def_id::LOCAL_CRATE
-                            } else {
-                                def_id.krate
-                            };
-                            let sym = rustc_symbol_mangling::symbol_name_for_instance_in_crate(
-                                self.tcx,
-                                rustc_middle::ty::Instance::mono(self.tcx, def_id),
-                                instantiating_crate,
-                            );
-                            Some(self.func_refs.intern_global(alloc_id, &sym))
-                        }
-                        _ => {
-                            if crate::trace::trace_enabled("GLOBAL") {
-                                eprintln!("[forge] const alloc={alloc_id:?} non-data, skip");
-                            }
-                            None
-                        }
-                    };
-                    if let Some(g) = g {
+                    if let Some(g) = self.intern_const_data(alloc_id) {
                         if crate::trace::trace_enabled("GLOBAL") {
                             eprintln!("[forge] global_addr alloc={alloc_id:?} -> G{g}");
                         }
                         return Ok(self.builder.global_addr(GlobalId(g)));
+                    }
+                    if crate::trace::trace_enabled("GLOBAL") {
+                        eprintln!("[forge] const alloc={alloc_id:?} non-data, skip");
                     }
                 }
                 // 求值标量常量：用 ScalarInt 自身位宽取位（s.size()），再按

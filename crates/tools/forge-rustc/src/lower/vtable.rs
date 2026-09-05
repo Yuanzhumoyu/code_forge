@@ -13,6 +13,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         .ok_or_else(|| ForgeError::Message("vtable for non-trait dyn type".into()))?;
 
         // 与 vtable_allocation_provider 一致：self_ty 化 + erase regions
+        let trait_def_id = trait_ref.def_id;
         let tr = trait_ref.with_self_ty(self.tcx, ty);
         let tr = self.tcx.erase_and_anonymize_regions(tr);
         let entries = self.tcx.vtable_entries(tr);
@@ -70,9 +71,43 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
         }
 
-        let sym = format!("__vtable_{:?}", alloc_id);
+        let sym = self.vtable_sym(&data, &relocs, trait_def_id);
         let g = self.func_refs.intern_vtable(alloc_id, &sym, data, relocs);
         Ok(g)
+    }
+
+    /// vtable 数据段符号名：**内容稳定键**（WA-38 残余 M5）。
+    ///
+    /// M4 及以前用 `__vtable_{alloc_id:?}`——alloc_id 由 rustc 全局
+    /// `AtomicU64` 按首次请求序分配，-Z threads 真并行下各函数任务的调度序
+    /// 不定 → 同一 vtable 内容跨运行符号名数值漂移（内容↔符号恒一致，仅
+    /// 名称非字节确定）。M5：64 位 FNV-1a 哈希规范化流 = 指针表 data +
+    /// 逐 reloc（offset / RelocKind / 目标符号 / addend）+ align（恒 8）+
+    /// **trait principal def_path**——跨运行与调度序无关；def_path 是
+    /// 语义鉴别键：两个不同 trait 的 vtable 即使指针表内容完全相同
+    /// （如零方法空 trait + 无 drop ZST）也保持不同名、各自独立数据段
+    /// （与 alloc_id 命名时代语义一致——rustc 按 (ty, principal) 各给独立
+    /// AllocId，不按内容去重）。同名必同内容（intern/merge debug_assert
+    /// 碰撞防护）。
+    pub(crate) fn vtable_sym(
+        &self,
+        data: &[u8],
+        relocs: &[(usize, RelocKind, String, i64)],
+        trait_def_id: rustc_hir::def_id::DefId,
+    ) -> String {
+        let mut canonical: Vec<u8> = Vec::with_capacity(data.len() + 64);
+        canonical.extend_from_slice(data);
+        canonical.extend_from_slice(&8u64.to_le_bytes()); // align（vtable 恒 8）
+        for (off, kind, sym, addend) in relocs {
+            canonical.extend_from_slice(&(*off as u64).to_le_bytes());
+            canonical.extend_from_slice(format!("{kind:?}").as_bytes());
+            canonical.push(0);
+            canonical.extend_from_slice(sym.as_bytes());
+            canonical.push(0);
+            canonical.extend_from_slice(&addend.to_le_bytes());
+        }
+        canonical.extend_from_slice(self.tcx.def_path_str(trait_def_id).as_bytes());
+        format!("__vtable_{:016x}", super::fnv1a64(&canonical))
     }
     pub(crate) fn enum_data_fields(
         &self,

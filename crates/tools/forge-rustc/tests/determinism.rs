@@ -48,6 +48,175 @@ pub extern "C" fn mainCRTStartup() -> i32 {
 fn panic(_info: &core::panic::PanicInfo) -> ! { loop {} }
 "#;
 
+/// M5（WA-38 残余关闭）符号稳定应力源：多 trait×struct 的 dyn vtable +
+/// 大量 str/int-slice 字面量 + 泛型单态化，制造 `-Z threads` 真并行下
+/// rustc 全局 AllocId（AtomicU64 首次请求序）的调度竞争——旧 alloc_id
+/// 命名（`__slice_alloc{N}` / `__vtable_alloc{N}`）在此源上跨并行运行
+/// 漂移（实测 6/6 运行符号表互异）。
+fn data_sym_stress_source() -> String {
+    let mut s = String::from("#![no_std]\n#![no_main]\n");
+    for t in 0..6 {
+        s.push_str(&format!(
+            "trait T{t} {{ fn m{t}(&self) -> i32; fn tag{t}(&self) -> &'static str; }}\n"
+        ));
+    }
+    for i in 0..6 {
+        s.push_str(&format!("struct S{i};\n"));
+        for t in 0..6 {
+            s.push_str(&format!(
+                "impl T{t} for S{i} {{\n  fn m{t}(&self) -> i32 {{ {i} }}\n\
+                 \x20 fn tag{t}(&self) -> &'static str {{ \"s{i}-t{t}-tag\" }}\n}}\n"
+            ));
+        }
+    }
+    let mut idx = 0;
+    for i in 0..6 {
+        for t in 0..6 {
+            idx += 1;
+            s.push_str(&format!(
+                "fn f{idx}(s: &S{i}) -> i32 {{\n  let d: &dyn T{t} = s;\n\
+                 \x20 let a: &str = \"fn{idx}-lit-{i}-{t}\";\n\
+                 \x20 let b: &[u8] = b\"fn{idx}-bytes-{t}-{i}\";\n\
+                 \x20 let c: &[i32] = &[{i}, {t}, {idx}];\n\
+                 \x20 d.m{t}() + a.len() as i32 + b.len() as i32 + c.len() as i32\n}}\n"
+            ));
+        }
+    }
+    s.push_str("fn pick<X: Copy>(x: X, k: i32) -> i32 { let z: &[X] = &[x, x]; z.len() as i32 * k + k }\n");
+    s.push_str("#[unsafe(no_mangle)]\npub extern \"C\" fn mainCRTStartup() -> i32 {\n");
+    s.push_str("    let mut acc = 0i32;\n");
+    let mut idx = 0;
+    for i in 0..6 {
+        for t in 0..6 {
+            idx += 1;
+            s.push_str(&format!("    acc += f{idx}(&S{i});\n"));
+        }
+    }
+    s.push_str(
+        "    acc += pick(1u64, 3) + pick(7u32, 5) + pick(2.5f64, 7) + pick(0.5f32, 11);\n    acc\n}\n",
+    );
+    s.push_str("#[panic_handler]\nfn panic(_info: &core::panic::PanicInfo) -> ! { loop {} }\n");
+    s
+}
+
+/// 编译到独立子目录并收集对象文件中内部数据符号名（`__slice_*`/`__vtable_*`，
+/// M5 内容稳定键）；rustc 默认链接后删除中间对象，`-C save-temps` 保留
+/// `forge_codegen_output.o`。
+fn compile_and_data_syms(
+    workdir: &Path,
+    run_dir: &str,
+    src_name: &str,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Vec<String>, String> {
+    let run = workdir.join(run_dir);
+    std::fs::create_dir_all(&run).map_err(|e| e.to_string())?;
+    let src = workdir.join(format!("{src_name}.rs"));
+    let exe = run.join(format!("{src_name}.exe"));
+    let mut cmd = Command::new("rustc");
+    cmd.arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
+        .args(["-C", "panic=abort", "-C", "overflow-checks=off", "--edition", "2024"])
+        .arg("-C")
+        .arg("save-temps=yes")
+        .args(extra)
+        .arg("-C")
+        .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .envs(envs.iter().copied());
+    let out = cmd.output().map_err(|e| format!("failed to spawn rustc: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "compile failed: {}\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .take(10)
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    let obj = run.join("forge_codegen_output.o");
+    if !obj.exists() {
+        return Err(format!("object not found: {}", obj.display()));
+    }
+    let nm = std::env::var("FORGE_E2E_NM").unwrap_or_else(|_| "llvm-nm".to_string());
+    let out = Command::new(&nm)
+        .arg(&obj)
+        .output()
+        .map_err(|e| format!("llvm-nm spawn: {e}"))?;
+    let names: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.contains("__slice_") || l.contains("__vtable_"))
+        .filter_map(|l| l.split_whitespace().next_back().map(|s| s.to_string()))
+        .collect();
+    Ok(names)
+}
+
+/// M5（WA-38 残余关闭）：内部数据符号名必须**跨运行与调度模式稳定**。
+///
+/// 旧 alloc_id 命名（`__slice_alloc{N}`/`__vtable_alloc{N}`）的 N 来自
+/// rustc 全局 AllocId `AtomicU64`（首次请求序）——-Z threads 真并行
+/// （FORGE_CODEGEN_THREADS>1 上 rustc 查询池）下调度序不定，同一内容
+/// 跨运行符号名数值漂移（内容↔符号恒一致、仅名称非字节确定）。M5 改为
+/// 内容稳定键（64 位 FNV-1a：`__slice_{hash}` / `__vtable_{hash}`，见
+/// lower/statement.rs `slice_sym` / lower/vtable.rs `vtable_sym`）——同一
+/// 源码不论串/并行、不论跑多少次，对象文件符号名集合必须逐字一致。
+#[test]
+fn stable_data_symbol_names_across_scheduling() {
+    let workdir = std::env::temp_dir().join(format!("forge_det_sym_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    std::fs::write(workdir.join("sym.rs"), data_sym_stress_source()).expect("write source");
+
+    // 三种模式各编译一次：串行 T=1；真并行 -Z threads=4 + 池并行；再次真并行。
+    let variants: [(&str, &[&str], &[(&str, &str)]); 4] = [
+        ("serial", &[], &[]),
+        (
+            "par_a",
+            &["-Z", "threads=4"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+        (
+            "par_b",
+            &["-Z", "threads=4"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+        (
+            "par_c",
+            &["-Z", "threads=4"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+    ];
+    let mut syms: Vec<(String, Vec<String>)> = Vec::new();
+    for (name, extra, envs) in variants {
+        let mut names = compile_and_data_syms(&workdir, name, "sym", extra, envs)
+            .map_err(|e| format!("{name}: {e}"))
+            .expect("compile variant");
+        assert!(
+            names.len() >= 20,
+            "{name}: only {} __slice/__vtable symbols — 应力源未触发数据段",
+            names.len()
+        );
+        names.sort();
+        syms.push((name.to_string(), names));
+    }
+    let _ = std::fs::remove_dir_all(&workdir);
+
+    let (base_name, base) = &syms[0];
+    for (name, names) in &syms[1..] {
+        assert_eq!(
+            base, names,
+            "internal data symbol names differ between {base_name} and {name} — \
+             M5 内容稳定键被破坏（WA-38 残余回归：alloc_id 调度序重新泄漏进符号名）"
+        );
+    }
+    println!(
+        "PASS  stable_data_symbol_names __slice/__vtable symbols={} variants=4 (serial + -Z threads x3)",
+        base.len()
+    );
+}
+
 /// 定位 backend dll（cargo test 构建产物）。
 fn backend_dll() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");

@@ -2,14 +2,62 @@
 use super::*;
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
-    /// slice 常量（&str/&[T] 字面量）的 rodata 符号名：alloc_id 唯一。
-    /// M3（并行 CGU Stage A）命名纯化：**不再带 fn_name 前缀**——同一
-    /// alloc_id（跨函数共享的 slice 字面量）可能被两个并行任务各自 lowering
-    /// 引用，符号名必须是 alloc_id 的纯函数（否则两任务登记同名不同内容或
-    /// 不同名同内容，任务间按 alloc_id 归并去重失效）。对照 vtable 的
-    /// `__vtable_{alloc_id:?}` 纯函数命名，统一为 `__slice_{alloc_id:?}`。
-    pub(crate) fn slice_sym(alloc_id: rustc_middle::mir::interpret::AllocId) -> String {
-        format!("__slice_{alloc_id:?}")
+    /// slice 常量（&str/&[T] 字面量）的 rodata 符号名：**内容稳定键**。
+    ///
+    /// M3/M4（并行 CGU Stage A）曾用 `__slice_{alloc_id:?}`（alloc_id 纯函数
+    /// 命名）——但 WA-38 残余（M5 关闭）：真并行（-Z threads +
+    /// FORGE_CODEGEN_THREADS>1）下 rustc 全局 AllocId 由 `AtomicU64` 按
+    /// **首次请求序**分配（mir/interpret/mod.rs `AllocMap::next_id`；内容
+    /// dedup 只保证同内容同 id，不保证同内容跨运行同**数值**）——各函数
+    /// 降级任务在池上调度序不定 → 同一内容跨运行符号名数值漂移。M5 改为
+    /// **（bytes, align）64 位 FNV-1a 内容哈希**：跨运行与调度序无关，
+    /// 同名必同内容（intern/merge 按内容去重 + debug_assert 碰撞防护）。
+    /// 命名仍是任务可独立计算的纯函数（无全局状态、不依赖 alloc_id）。
+    pub(crate) fn slice_sym(bytes: &[u8], align: u64) -> String {
+        let mut canonical = Vec::with_capacity(bytes.len() + 8);
+        canonical.extend_from_slice(bytes);
+        canonical.extend_from_slice(&align.to_le_bytes());
+        format!("__slice_{:016x}", super::fnv1a64(&canonical))
+    }
+
+    /// Slice/const 数据引用的数据段 GlobalId（M5 稳定键重构统一入口，
+    /// 替代各处内联的 global_alloc 分派）：
+    /// - `GlobalAlloc::Memory` → `intern_promoted`（rodata，内容稳定名）；
+    /// - `GlobalAlloc::Static(def_id)` → `intern_global`（真实 static 符号名，
+    ///   与 mono_symbol 一致——static 项符号不参与 alloc_id 编号）；
+    /// - 其他种类（Function/VTable/TypeId）→ `None`（调用方跳过；slice 常量
+    ///   引用路径上不应出现）。
+    pub(crate) fn intern_const_data(
+        &mut self,
+        alloc_id: rustc_middle::mir::interpret::AllocId,
+    ) -> Option<u32> {
+        let g = match self.tcx.global_alloc(alloc_id) {
+            rustc_middle::mir::interpret::GlobalAlloc::Memory(alloc) => {
+                let inner = &*alloc.0;
+                let size = inner.size().bytes_usize();
+                let bytes = inner
+                    .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
+                    .to_vec();
+                let align = inner.align.bytes();
+                let sym = Self::slice_sym(&bytes, align);
+                self.func_refs.intern_promoted(alloc_id, &sym, bytes, align)
+            }
+            rustc_middle::mir::interpret::GlobalAlloc::Static(def_id) => {
+                let instantiating_crate = if def_id.is_local() {
+                    rustc_hir::def_id::LOCAL_CRATE
+                } else {
+                    def_id.krate
+                };
+                let sym = rustc_symbol_mangling::symbol_name_for_instance_in_crate(
+                    self.tcx,
+                    rustc_middle::ty::Instance::mono(self.tcx, def_id),
+                    instantiating_crate,
+                );
+                self.func_refs.intern_global(alloc_id, &sym)
+            }
+            _ => return None,
+        };
+        Some(g)
     }
     pub(crate) fn lower_statement(
         &mut self,
@@ -454,28 +502,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                             "[forge] stmt const Slice alloc={alloc_id:?} meta={meta}"
                                         );
                                     }
-                                    // 登记 slice 字节（intern_promoted 幂等，返回唯一
-                                    // G 索引——与 global_addr 引用一致）
-                                    let g =
-                                        if let rustc_middle::mir::interpret::GlobalAlloc::Memory(
-                                            alloc,
-                                        ) = self.tcx.global_alloc(alloc_id)
-                                        {
-                                            let inner = &*alloc.0;
-                                            let size = inner.size().bytes_usize();
-                                            let bytes = inner
-                                                .inspect_with_uninit_and_ptr_outside_interpreter(
-                                                    0..size,
-                                                )
-                                                .to_vec();
-                                            let align = inner.align.bytes();
-                                            let sym = Self::slice_sym(alloc_id);
-                                            self.func_refs
-                                                .intern_promoted(alloc_id, &sym, bytes, align)
-                                        } else {
-                                            let sym = Self::slice_sym(alloc_id);
-                                            self.func_refs.intern_global(alloc_id, &sym)
-                                        };
+                                    // 登记 slice 字节（intern_const_data 内容去重幂等，
+                                    // 返回唯一 G 索引——与 global_addr 引用一致）
+                                    let Some(g) = self.intern_const_data(alloc_id) else {
+                                        // 不可达防御：Slice 字面量恒为 Memory/Static，
+                                        // 其余 GlobalAlloc 种类不应出现在此（见
+                                        // intern_const_data）。
+                                        return Ok(());
+                                    };
                                     let base = self.place_addr(place);
                                     let ptr = self.builder.global_addr(GlobalId(g));
                                     self.builder.store(ptr, base);
@@ -509,26 +543,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         );
                                     }
                                     let alloc_id = ptr.provenance.alloc_id();
-                                    let g =
-                                        if let rustc_middle::mir::interpret::GlobalAlloc::Memory(
-                                            alloc,
-                                        ) = self.tcx.global_alloc(alloc_id)
-                                        {
-                                            let inner = &*alloc.0;
-                                            let size = inner.size().bytes_usize();
-                                            let bytes = inner
-                                                .inspect_with_uninit_and_ptr_outside_interpreter(
-                                                    0..size,
-                                                )
-                                                .to_vec();
-                                            let align = inner.align.bytes();
-                                            let sym = Self::slice_sym(alloc_id);
-                                            self.func_refs
-                                                .intern_promoted(alloc_id, &sym, bytes, align)
-                                        } else {
-                                            let sym = Self::slice_sym(alloc_id);
-                                            self.func_refs.intern_global(alloc_id, &sym)
-                                        };
+                                    let Some(g) = self.intern_const_data(alloc_id) else {
+                                        // 不可达防御（见上）。
+                                        return Ok(());
+                                    };
                                     let base = self.place_addr(place);
                                     let ptrv = self.builder.global_addr(GlobalId(g));
                                     self.builder.store(ptrv, base);

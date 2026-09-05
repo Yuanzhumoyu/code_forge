@@ -647,31 +647,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             );
                         }
                         // &str/&[T] 字面量实参（ConstValue::Slice）：ptr = rodata
-                        // 地址（global_addr + intern_promoted 落盘）、meta = len。
-                        // 拆 lo(ptr) / hi(len) 两个标量传（eval_const_bytes 对
+                        // 地址（global_addr + intern_const_data 内容去重落盘）、
+                        // meta = len——拆 lo(ptr) / hi(len) 两个标量传（eval_const_bytes 对
                         // Slice 返回 None，退化 0 会传空指针）。
                         if let Operand::Constant(ct) = &arg.node
                             && let rustc_middle::mir::Const::Val(
                                 rustc_middle::mir::ConstValue::Slice { alloc_id, meta },
                                 _,
                             ) = ct.const_
+                            && let Some(g) = self.intern_const_data(alloc_id)
                         {
-                            let g =
-                                if let rustc_middle::mir::interpret::GlobalAlloc::Memory(alloc) =
-                                    self.tcx.global_alloc(alloc_id)
-                                {
-                                    let inner = &*alloc.0;
-                                    let size = inner.size().bytes_usize();
-                                    let bytes = inner
-                                        .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
-                                        .to_vec();
-                                    let align = inner.align.bytes();
-                                    let sym = Self::slice_sym(alloc_id);
-                                    self.func_refs.intern_promoted(alloc_id, &sym, bytes, align)
-                                } else {
-                                    let sym = Self::slice_sym(alloc_id);
-                                    self.func_refs.intern_global(alloc_id, &sym)
-                                };
                             call_args.push(self.builder.global_addr(GlobalId(g)));
                             call_args.push(self.builder.iconst(meta as i64, TypeId::I64));
                             continue;
@@ -1041,6 +1026,22 @@ pub(crate) fn mono_symbol_of<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>)
         def_id.krate
     };
     rustc_symbol_mangling::symbol_name_for_instance_in_crate(tcx, *instance, instantiating_crate)
+}
+
+/// FNV-1a 64 位哈希：内部数据符号（slice/vtable 常量）稳定键命名用。
+/// WA-38 残余（M5）——数据符号名不得含 rustc `AllocId` 数值（AtomicU64
+/// 首次请求序，-Z threads 真并行下随调度序漂移）；一律改为由记录内容
+/// （+ 语义鉴别键）的哈希派生 → 跨运行、跨串/并行调度序稳定；同名必同
+/// 内容（intern/merge 处 debug_assert 碰撞防护）。
+pub(crate) fn fnv1a64(data: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h = OFFSET;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(PRIME);
+    }
+    h
 }
 
 fn build_signature<'tcx>(
