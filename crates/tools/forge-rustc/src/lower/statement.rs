@@ -3,8 +3,13 @@ use super::*;
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     /// slice 常量（&str/&[T] 字面量）的 rodata 符号名：alloc_id 唯一。
-    pub(crate) fn slice_sym(&self, alloc_id: rustc_middle::mir::interpret::AllocId) -> String {
-        format!("{}::slice[{:?}]", self.fn_name, alloc_id)
+    /// M3（并行 CGU Stage A）命名纯化：**不再带 fn_name 前缀**——同一
+    /// alloc_id（跨函数共享的 slice 字面量）可能被两个并行任务各自 lowering
+    /// 引用，符号名必须是 alloc_id 的纯函数（否则两任务登记同名不同内容或
+    /// 不同名同内容，任务间按 alloc_id 归并去重失效）。对照 vtable 的
+    /// `__vtable_{alloc_id:?}` 纯函数命名，统一为 `__slice_{alloc_id:?}`。
+    pub(crate) fn slice_sym(alloc_id: rustc_middle::mir::interpret::AllocId) -> String {
+        format!("__slice_{alloc_id:?}")
     }
     pub(crate) fn lower_statement(
         &mut self,
@@ -464,11 +469,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                                 )
                                                 .to_vec();
                                             let align = inner.align.bytes();
-                                            let sym = self.slice_sym(alloc_id);
+                                            let sym = Self::slice_sym(alloc_id);
                                             self.func_refs
                                                 .intern_promoted(alloc_id, &sym, bytes, align)
                                         } else {
-                                            let sym = self.slice_sym(alloc_id);
+                                            let sym = Self::slice_sym(alloc_id);
                                             self.func_refs.intern_global(alloc_id, &sym)
                                         };
                                     let base = self.place_addr(place);
@@ -517,11 +522,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                                 )
                                                 .to_vec();
                                             let align = inner.align.bytes();
-                                            let sym = self.slice_sym(alloc_id);
+                                            let sym = Self::slice_sym(alloc_id);
                                             self.func_refs
                                                 .intern_promoted(alloc_id, &sym, bytes, align)
                                         } else {
-                                            let sym = self.slice_sym(alloc_id);
+                                            let sym = Self::slice_sym(alloc_id);
                                             self.func_refs.intern_global(alloc_id, &sym)
                                         };
                                     let base = self.place_addr(place);

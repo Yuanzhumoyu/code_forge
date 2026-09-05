@@ -666,10 +666,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
                                         .to_vec();
                                     let align = inner.align.bytes();
-                                    let sym = self.slice_sym(alloc_id);
+                                    let sym = Self::slice_sym(alloc_id);
                                     self.func_refs.intern_promoted(alloc_id, &sym, bytes, align)
                                 } else {
-                                    let sym = self.slice_sym(alloc_id);
+                                    let sym = Self::slice_sym(alloc_id);
                                     self.func_refs.intern_global(alloc_id, &sym)
                                 };
                             call_args.push(self.builder.global_addr(GlobalId(g)));

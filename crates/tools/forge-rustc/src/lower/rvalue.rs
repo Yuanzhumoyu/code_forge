@@ -407,7 +407,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 .inspect_with_uninit_and_ptr_outside_interpreter(0..size)
                                 .to_vec();
                             let align = inner.align.bytes();
-                            let sym = self.slice_sym(alloc_id);
+                            let sym = Self::slice_sym(alloc_id);
                             if crate::trace::trace_enabled("GLOBAL") {
                                 eprintln!(
                                     "[forge] promoted alloc={alloc_id:?} size={size} -> sym={sym}"

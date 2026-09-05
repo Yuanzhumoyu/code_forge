@@ -1,12 +1,37 @@
 //! 符号 ↔ FuncRef/GlobalId 序号 双向映射表。
 //!
 //! forge-ir 的 Call 指令把重定位符号记为 "@{FuncRef 序号}"（@call_reloc32）、
-//! 全局数据为 "G{N}"，写对象文件前必须替换为真实符号名；序号跨函数全局
-//! 唯一，由 codegen_crate 持有并在编译各实例时共享。
+//! 全局数据为 "G{N}"，写对象文件前必须替换为真实符号名。
+//!
+//! # M3（并行 CGU Stage A）编号作用域
+//! 序号**不需要跨函数全局唯一**：@N/G{N} 只以重定位符号留在各函数的机器码里，
+//! 每函数编译完经 [`FuncRefTable::resolve_relocs`]/[`resolve_global_relocs`]
+//! 就地换成真实符号名（本表只读查询），编号不跨函数逃逸。因此并行场景下
+//! **每个 worker 任务持有一张私有 FuncRefTable**（零加锁），任务结束时
+//! 登记条目（vtable/promoted/line/var/enum）经 [`FuncRefTable::merge_task_table`]
+//! 归并回主表：vtables/promoted 按 alloc_id 去重（命名纯化后同 alloc_id 必然
+//! 同名同字节，debug_assert 守护）、line/var 按任务序追加（= 全局函数序，
+//! 与旧串行首见序一致）、enum 按 desc 去重保留先见序。
 
 use crate::prelude::*;
 
+/// vtable 数据段记录：`(alloc_id, 符号名, 8 字节指针表字节,
+/// (数据内偏移, reloc, 符号, addend) 列表, 对齐)`——alloc_id 为任务间
+/// 归并去重键（见 [`FuncRefTable::merge_task_table`]）。
+pub type VtableRecord = (
+    rustc_middle::mir::interpret::AllocId,
+    String,
+    Vec<u8>,
+    Vec<(usize, RelocKind, String, i64)>,
+    u64,
+);
+/// promoted/slice 常量数据段记录：`(alloc_id, 符号名, 字节, 对齐)`。
+pub type PromotedRecord = (rustc_middle::mir::interpret::AllocId, String, Vec<u8>, u64);
+
 /// 模块级函数符号表：符号名 ↔ FuncRef 序号 双向映射。
+///
+/// 串行路径由 codegen_crate 持单例；并行路径每 worker 任务一个实例
+/// （编号任务内分配、任务内 resolve，见模块注释）。
 #[derive(Default)]
 pub struct FuncRefTable {
     next: u32,
@@ -17,13 +42,13 @@ pub struct FuncRefTable {
     global_next: u32,
     global_by_alloc: HashMap<rustc_middle::mir::interpret::AllocId, u32>,
     global_by_idx: HashMap<u32, String>,
-    /// vtable 数据段（unsize cast 生成）：(符号名, 8 字节指针表字节,
-    /// (数据内偏移, reloc, 符号, addend) 列表, 对齐)——主流程统一写 .data
-    /// （[WA-01] MSVC 链接器不应用 .rodata 的 ADDR64 重定位，见 backend.rs）。
-    vtables: Vec<(String, Vec<u8>, Vec<(usize, RelocKind, String, i64)>, u64)>,
+    /// vtable 数据段（unsize cast 生成）：记录见 [`VtableRecord`]——主流程
+    /// 统一写 .data（[WA-01] MSVC 链接器不应用 .rodata 的 ADDR64 重定位，
+    /// 见 backend.rs）。带 alloc_id 以支持任务间按 alloc_id 归并去重。
+    vtables: Vec<VtableRecord>,
     /// promoted/slice 常量数据段（`&[1,2,3]`、`&"str"` 字面量 rodata 副本）：
-    /// (符号名, 字节, 对齐)——backend.rs 统一写 .rodata。
-    promoted: Vec<(String, Vec<u8>, u64)>,
+    /// 记录见 [`PromotedRecord`]——backend.rs 统一写 .rodata。
+    promoted: Vec<PromotedRecord>,
     /// 行号表（C1 DebugInfo line-tables-only）：(符号名, 源码行号 1-based)。
     /// 每函数一个条目（函数起始地址 → 函数定义行）——`-C debuginfo=1`
     /// 的最小语义：调试器可定位当前函数/行（粗粒度）。
@@ -107,13 +132,19 @@ impl FuncRefTable {
         self.global_next += 1;
         self.global_by_alloc.insert(alloc_id, id);
         self.global_by_idx.insert(id, sym.to_string());
-        self.vtables.push((sym.to_string(), bytes, relocs, 8));
+        self.vtables
+            .push((alloc_id, sym.to_string(), bytes, relocs, 8));
         id
     }
 
     /// 已注册的 vtable 数据段（供 codegen_crate 写对象文件时统一落盘）。
-    pub fn vtables(&self) -> &[(String, Vec<u8>, Vec<(usize, RelocKind, String, i64)>, u64)] {
+    pub fn vtables(&self) -> &[VtableRecord] {
         &self.vtables
+    }
+
+    /// 取出全部 vtable 记录（并行任务归并用；serial 主表不必要）。
+    pub fn drain_vtables(&mut self) -> Vec<VtableRecord> {
+        std::mem::take(&mut self.vtables)
     }
 
     /// 登记 promoted/slice 常量数据段（`&"str"`、`&[1,2,3]` 字面量的
@@ -132,13 +163,19 @@ impl FuncRefTable {
         self.global_next += 1;
         self.global_by_alloc.insert(alloc_id, id);
         self.global_by_idx.insert(id, sym.to_string());
-        self.promoted.push((sym.to_string(), bytes, align));
+        self.promoted
+            .push((alloc_id, sym.to_string(), bytes, align));
         id
     }
 
     /// 已注册的 promoted/slice 常量数据段（供 codegen_crate 写 .rodata）。
-    pub fn promoted(&self) -> &[(String, Vec<u8>, u64)] {
+    pub fn promoted(&self) -> &[PromotedRecord] {
         &self.promoted
+    }
+
+    /// 取出全部 promoted 记录（并行任务归并用）。
+    pub fn drain_promoted(&mut self) -> Vec<PromotedRecord> {
+        std::mem::take(&mut self.promoted)
     }
 
     /// 登记函数行号条目（C1：符号名 → 源码行号 1-based）。
@@ -149,6 +186,11 @@ impl FuncRefTable {
     /// 已登记的 (符号, 行号) 列表（供 codegen_crate 生成 .debug_line）。
     pub fn line_entries(&self) -> &[(String, u32)] {
         &self.line_entries
+    }
+
+    /// 取出全部行号条目（并行任务归并用）。
+    pub fn drain_line_entries(&mut self) -> Vec<(String, u32)> {
+        std::mem::take(&mut self.line_entries)
     }
 
     /// C2 debuginfo：登记函数的源变量表（函数符号 + 变量列表）。
@@ -164,6 +206,11 @@ impl FuncRefTable {
         &self.var_entries
     }
 
+    /// 取出全部变量表（并行任务归并用）。
+    pub fn drain_var_entries(&mut self) -> Vec<crate::dwarf::FnVarEntries> {
+        std::mem::take(&mut self.var_entries)
+    }
+
     /// C2 debuginfo：登记 C-like 枚举类型（desc 去重）。
     pub fn add_enum_type(&mut self, e: crate::dwarf::EnumTypeEntry) {
         if !self.enum_types.iter().any(|x| x.desc == e.desc) {
@@ -174,5 +221,69 @@ impl FuncRefTable {
     /// 已登记的枚举类型表（供 codegen_crate 生成 .debug_info）。
     pub fn enum_types(&self) -> &[crate::dwarf::EnumTypeEntry] {
         &self.enum_types
+    }
+
+    /// 取出全部枚举类型（并行任务归并用）。
+    pub fn drain_enum_types(&mut self) -> Vec<crate::dwarf::EnumTypeEntry> {
+        std::mem::take(&mut self.enum_types)
+    }
+
+    /// M3（并行 CGU Stage A）：把一张任务私有表（编译完一个连续函数块的
+    /// worker 产出）的全部登记条目归并入本表。任务表的条目按任务内函数序
+    /// 登记，块间按任务序（= 函数块升序）调用本方法 → 归并后序 =
+    /// **全局函数首见序**，与旧串行路径（单表边编译边登记）完全一致：
+    /// - line/var：直接追加（每函数至多一条，符号不跨任务重复）；
+    /// - enum：按 desc 去重保留先见序；
+    /// - vtables/promoted：按 alloc_id 去重——同 alloc_id 在命名纯化
+    ///   （`__vtable_{alloc_id:?}` / `__slice_{alloc_id:?}`）后必然同名同
+    ///   字节同 relocs，debug_assert 守护（release 下以先见者为准）。
+    /// 不合并 by_sym/by_idx/global_* 编号映射：编号只用于任务内就地
+    /// resolve（函数已在任务内 resolve 完），主线程不再需要。
+    pub fn merge_task_table(&mut self, task: &mut FuncRefTable) {
+        self.line_entries.extend(task.drain_line_entries());
+        self.var_entries.extend(task.drain_var_entries());
+        for e in task.drain_enum_types() {
+            self.add_enum_type(e);
+        }
+        for rec in task.drain_vtables() {
+            let alloc_id = rec.0;
+            if let Some((_, old_sym, old_bytes, old_relocs, old_align)) =
+                self.vtables.iter().find(|(a, ..)| *a == alloc_id)
+            {
+                debug_assert_eq!(old_sym, &rec.1, "same alloc_id must have same vtable sym");
+                debug_assert_eq!(
+                    old_bytes, &rec.2,
+                    "same alloc_id must have same vtable bytes"
+                );
+                debug_assert_eq!(
+                    old_relocs, &rec.3,
+                    "same alloc_id must have same vtable relocs"
+                );
+                debug_assert_eq!(
+                    old_align, &rec.4,
+                    "same alloc_id must have same vtable align"
+                );
+            } else {
+                self.vtables.push(rec);
+            }
+        }
+        for rec in task.drain_promoted() {
+            let alloc_id = rec.0;
+            if let Some((_, old_sym, old_bytes, old_align)) =
+                self.promoted.iter().find(|(a, ..)| *a == alloc_id)
+            {
+                debug_assert_eq!(old_sym, &rec.1, "same alloc_id must have same promoted sym");
+                debug_assert_eq!(
+                    old_bytes, &rec.2,
+                    "same alloc_id must have same promoted bytes"
+                );
+                debug_assert_eq!(
+                    old_align, &rec.3,
+                    "same alloc_id must have same promoted align"
+                );
+            } else {
+                self.promoted.push(rec);
+            }
+        }
     }
 }
