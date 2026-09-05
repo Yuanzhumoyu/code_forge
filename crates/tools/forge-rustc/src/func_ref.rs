@@ -3,15 +3,16 @@
 //! forge-ir 的 Call 指令把重定位符号记为 "@{FuncRef 序号}"（@call_reloc32）、
 //! 全局数据为 "G{N}"，写对象文件前必须替换为真实符号名。
 //!
-//! # M3（并行 CGU Stage A）编号作用域
+//! # M3/M4（并行 CGU Stage A）编号作用域
 //! 序号**不需要跨函数全局唯一**：@N/G{N} 只以重定位符号留在各函数的机器码里，
 //! 每函数编译完经 [`FuncRefTable::resolve_relocs`]/[`resolve_global_relocs`]
 //! 就地换成真实符号名（本表只读查询），编号不跨函数逃逸。因此并行场景下
-//! **每个 worker 任务持有一张私有 FuncRefTable**（零加锁），任务结束时
-//! 登记条目（vtable/promoted/line/var/enum）经 [`FuncRefTable::merge_task_table`]
-//! 归并回主表：vtables/promoted 按 alloc_id 去重（命名纯化后同 alloc_id 必然
-//! 同名同字节，debug_assert 守护）、line/var 按任务序追加（= 全局函数序，
-//! 与旧串行首见序一致）、enum 按 desc 去重保留先见序。
+//! **每个函数任务持有一张私有 FuncRefTable**（零加锁——M4 起任务粒度 =
+//! 单函数，任务即 par_map 的一个元素），任务结束时登记条目
+//! （vtable/promoted/line/var/enum）经 [`FuncRefTable::merge_task_table`]
+//! 按任务序归并回主表：vtables/promoted 按 alloc_id 去重（命名纯化后同
+//! alloc_id 必然同名同字节，debug_assert 守护）、line/var 按任务序追加
+//! （= 全局函数序，与旧串行首见序一致）、enum 按 desc 去重保留先见序。
 
 use crate::prelude::*;
 
@@ -228,9 +229,9 @@ impl FuncRefTable {
         std::mem::take(&mut self.enum_types)
     }
 
-    /// M3（并行 CGU Stage A）：把一张任务私有表（编译完一个连续函数块的
-    /// worker 产出）的全部登记条目归并入本表。任务表的条目按任务内函数序
-    /// 登记，块间按任务序（= 函数块升序）调用本方法 → 归并后序 =
+    /// M3/M4（并行 CGU Stage A）：把一张任务私有表（编译完一个函数任务的
+    /// 产出）的全部登记条目归并入本表。任务按原实例序（= 全局函数首见序，
+    /// M4 par_map 保输入序、串行 map 天然保序）调用本方法 → 归并后序 =
     /// **全局函数首见序**，与旧串行路径（单表边编译边登记）完全一致：
     /// - line/var：直接追加（每函数至多一条，符号不跨任务重复）；
     /// - enum：按 desc 去重保留先见序；

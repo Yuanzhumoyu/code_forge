@@ -85,91 +85,82 @@ impl CodegenBackend for CodegenLibBackend {
 
         let mut object_writer = ObjectWriter::new(&config).expect("create object writer");
 
-        // ── M3 Stage A（并行 CGU，-C codegen-units=N）：函数粒度 worker 池 ──
+        // ── M3/M4 Stage A（并行 CGU，-C codegen-units=N）：函数降级任务
+        //    提交到 **rustc 查询池**（根治 WA-38 的 std::thread 限制）──
         // rustc 对 -Zcodegen-backend 只调 codegen_crate 一次、无按 CGU 回调
-        // （LLVM 在自己的 codegen_crate 内并行，forge 不可复用）→ 自管 worker
-        // 池：A1 排序实例表里的函数按符号序切 T 个连续块，每任务私有
+        // （LLVM 在自己的 codegen_crate 内并行，forge 不可复用）→ 函数粒度
+        // 任务化：A1 排序实例表里的**每个函数**是一个独立任务，任务私有
         // FuncRefTable（@N/G{N} 编号只以重定位符号留机器码、每函数编译完
         // 就地 resolve——不跨函数逃逸，任务私有零加锁）+ 任务内登记的
-        // vtable/promoted/line/var/enum 条目（merge_task_table 取回）。
-        // join 后按块序摊平（= 全局符号序），主线程按原实例序串行
-        // emission——单对象单模块语义不变、产物与旧串行路径逐字节一致、
+        // vtable/promoted/line/var/enum 条目（merge_task_table 归并取回，
+        // 按任务序=全局函数首见序，与旧串行路径一致）。主线程按原实例序
+        // 串行 emission——单对象单模块语义不变、产物与 T=1 逐字节一致、
         // 与 -C codegen-units 无关。Static/GlobalAsm/alloc_runtime/dwarf
         // 照旧主线程串行。
         //
-        // ⚠️ 宿主能力门控（WA-38）：rustc 1.99/1.100（2026-08/09 nightly）
-        // 已统一为 WorkerLocal 查询引擎——`TyCtxt` 非 Send，tcx 查询只能在
-        // rustc 注册的线程（其自身查询线程池）上执行，**自定义 std 线程无法
-        // 运行查询**（rustc 自家 codegen 后端也把 per-CGU rustc 侧 codegen
-        // 串行化在单线程，仅纯 LLVM 部分并行）。因此默认 T=1（串行，行为
-        // 恒等）；仅当显式设 FORGE_CODEGEN_THREADS>1 才尝试并行，且先用
-        // 真实函数做跨线程查询能力探针——探针失败自动回退串行（不报错）。
+        // ⚠️ 宿主线程上下文（WA-38，M4 根治）：rustc 1.99/1.100 查询引擎
+        // 统一为 WorkerLocal——tcx 查询只能在 rustc 自建池线程上执行
+        // （WorkerLocal registry / 作业 TLV ImplicitCtxt / per-thread
+        // SessionGlobals 三者只由 rustc 池线程持有且**无注册 API**）→ M3
+        // 的 `std::thread` 自建池 + WorkerPayload 能力探针方案是死路
+        // （2026-09 已删）。根治：直接复用 rustc 自家并行原语
+        // `rustc_data_structures::sync::par_map`——rustc_codegen_ssa 在
+        // -Z threads>=2（`sess.opts.jobs.frontend.is_some()`）时用同一原语
+        // 把 per-CGU 编译作为**嵌套池作业**并行（该原语与 LLVM 无关）。
+        // forge 的 codegen_crate 本身运行在 rustc 池作业线程上（可安全跑
+        // tcx 查询），par_map 的嵌套作业继承全套线程上下文 → 单函数任务
+        // 即为 par_map 的一个元素。par_* 在非并行模式（未设 -Z threads，
+        // sync mode 未置位）自动退化为**当前线程按输入序串行**——行为与
+        // 旧 T=1 恒等（默认路径与改造前逐字节一致）。
         let fn_positions: Vec<usize> = instances
             .iter()
             .enumerate()
             .filter(|(_, it)| matches!(it, MonoItem::Fn(_)))
             .map(|(i, _)| i)
             .collect();
-        let worker_count = codegen_worker_count(tcx, fn_positions.len());
-        let tasks: Vec<TaskOutcome> = if fn_positions.len() <= 1 || worker_count <= 1 {
-            // T=1：当前线程直跑同一任务体（= 旧串行路径，行为恒等）。
-            vec![compile_fn_task(tcx, &instances, &fn_positions)]
-        } else if !query_workers_capable(tcx, &instances, &fn_positions) {
-            // 宿主 nightly 查询引擎不支持跨线程查询（WA-38）：回退串行。
-            // 探针已静音运行（不产生 ICE 噪音）。
-            vec![compile_fn_task(tcx, &instances, &fn_positions)]
+        // M4 并行门控：env 显式要求并行（FORGE_CODEGEN_THREADS>1）&& rustc
+        // 前端并行池存在（-Z threads>=2 / --jobs-frontend——`jobs.frontend`
+        // 仅在 >1 时为 Some，interface.rs 据此 set_dyn_thread_safe_mode）
+        // && 函数数 >1。三条件缺一即走串行 map（非并行模式 par_* 也是
+        // 当前线程串行——两条路径共用同一单函数任务体，产物一致）。
+        let forge_threads = match std::env::var("FORGE_CODEGEN_THREADS") {
+            Ok(v) => v.trim().parse::<usize>().unwrap_or(0),
+            Err(_) => 0,
+        };
+        let rustc_pool = tcx.sess.opts.jobs.frontend.is_some();
+        let parallel = forge_threads > 1 && rustc_pool && fn_positions.len() > 1;
+        if parallel {
+            eprintln!(
+                "[forge] FORGE_CODEGEN_THREADS>1 + rustc 并行前端（-Z threads）：\
+                 {} 个函数降级任务提交到 rustc 查询池（par_map，确定序保序）",
+                fn_positions.len()
+            );
+        } else if forge_threads > 1 && !rustc_pool && fn_positions.len() > 1 {
+            // 仅提示不改行为：产物与串行路径一致（M4 后无"能力探针"可言——
+            // par_* 在非并行模式自动串行，此处保持同一代码路径）。
+            eprintln!(
+                "[forge] FORGE_CODEGEN_THREADS={forge_threads} 但 rustc 无并行前端\
+                 （-Z threads>=2，经 RUSTFLAGS 传入）——forge 函数并行需 rustc 查询池\
+                 （WA-38/M4），当前串行编译（产物不变）"
+            );
+        }
+        let tasks: Vec<TaskOutcome> = if parallel {
+            rustc_data_structures::sync::par_map(
+                fn_positions.iter().copied(),
+                |i| compile_fn_task_guarded(tcx, &instances, i),
+            )
         } else {
-            // TyCtxt/MonoItem 非 Send——经能力探针（query_workers_capable）
-            // 确认 host 支持跨线程查询后，仅以 WorkerPayload（raw 指针）
-            // 捕获送线程（WA-38）。载荷绑定在 scope 外，任务经共享引用
-            // 捕获（&WorkerPayload: Send），scope join 后才释放。
-            let payload = WorkerPayload::new(tcx, &instances);
-            std::thread::scope(|scope| {
-                let per = fn_positions.len().div_ceil(worker_count);
-                let mut handles = Vec::with_capacity(worker_count);
-                let payload = &payload;
-                for chunk in fn_positions.chunks(per) {
-                    let chunk = chunk.to_vec(); // 块独立送线程
-                    handles.push(scope.spawn(move || {
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            // SAFETY：scope 内 worker 使用；instances 存活至 join 后
-                            compile_fn_task(payload.tcx, unsafe { payload.instances() }, &chunk)
-                        }))
-                        .unwrap_or_else(|payload_| {
-                            // worker panic：块内函数全部记为错误，主线程统一
-                            // dcx 报告后编译失败——不 abort（trace.rs panic
-                            // hook 已打印现场上下文）。
-                            let msg = if let Some(s) = payload_.downcast_ref::<&str>() {
-                                (*s).to_string()
-                            } else if let Some(s) = payload_.downcast_ref::<String>() {
-                                s.clone()
-                            } else {
-                                "unknown worker panic".to_string()
-                            };
-                            TaskOutcome {
-                                fns: chunk
-                                    .iter()
-                                    .map(|&i| FnOutcome {
-                                        sym_name: format!("<worker panic @instance {i}>"),
-                                        result: Err(format!("codegen worker panic: {msg}")),
-                                    })
-                                    .collect(),
-                                table: FuncRefTable::default(),
-                            }
-                        })
-                    }));
-                }
-                handles
-                    .into_iter()
-                    .map(|h| {
-                        h.join()
-                            .unwrap_or_else(|_| unreachable!("catch_unwind 已兜底"))
-                    })
-                    .collect()
-            })
+            // 串行：同一单函数任务体按原实例序逐任务跑（= 旧 T=1 路径的
+            // 行为；par_map 非并行模式亦如此——此处显式走 map 使默认
+            // 编译不依赖 rustc 的 dyn_thread_safe 全局态，T=1 恒等）。
+            fn_positions
+                .iter()
+                .copied()
+                .map(|i| compile_fn_task_guarded(tcx, &instances, i))
+                .collect()
         };
 
-        // 模块级 FuncRef 表：任务条目归并（块序摊平 = 全局符号序）→
+        // 模块级 FuncRef 表：任务条目归并（任务按原实例序 = 全局符号序）→
         // alloc runtime 构建 + dwarf 读取共用。
         let mut func_ref_table = FuncRefTable::default();
         // B1：per-function per-statement 行号表（(符号, [(机器码偏移, 行)])）
@@ -196,8 +187,9 @@ impl CodegenBackend for CodegenLibBackend {
             "M3: worker 归并结果数必须等于函数实例数"
         );
 
-        // 单对象按原实例序串行 emission：Fn 消费预编译结果（块序摊平 =
-        // 全局符号序）、Static 现场求值——与旧串行路径逐条同序，产物不变。
+        // 单对象按原实例序串行 emission：Fn 消费预编译结果（任务归并序 =
+        // 原实例序 = 全局符号序）、Static 现场求值——与旧串行路径逐条
+        // 同序，产物不变。
         let mut fn_iter = fn_outcomes.into_iter();
         for item in instances.iter() {
             match item {
@@ -533,10 +525,10 @@ fn mono_item_sort_key<'tcx>(tcx: TyCtxt<'tcx>, item: MonoItem<'tcx>) -> String {
 }
 
 // ============================================================
-// M3 Stage A：并行 CGU worker 池（函数粒度）
+// M3/M4 Stage A：并行 CGU——函数降级任务（提交 rustc 查询池）
 // ============================================================
 
-/// 单个函数实例的编译产出（错误不中止块内后续函数——主线程统一报告）。
+/// 单个函数实例的编译产出（错误不中止后续函数——主线程统一报告）。
 struct FnOutcome {
     /// mangled 符号名（错误报告/发射用）。
     sym_name: String,
@@ -544,120 +536,62 @@ struct FnOutcome {
     result: Result<CompiledFunction, String>,
 }
 
-/// 一个 worker 任务（连续函数块）的产出：块内函数结果（块序 = 实例序）
-/// + 任务私有 FuncRefTable（登记条目待主线程 merge_task_table 归并）。
+/// 一个函数任务的产出：函数结果（任务序 = 原实例序）+ 任务私有
+/// FuncRefTable（登记条目待主线程 merge_task_table 归并）。
 struct TaskOutcome {
     fns: Vec<FnOutcome>,
     table: FuncRefTable,
 }
 
-/// TyCtxt / MonoItem 在本 rustc（1.99+ 统一 WorkerLocal 查询引擎）**均非
-/// Send/Sync**（内部链到 `GlobalCtxt → &WorkerLocal<Arena>`），tcx 查询只能
-/// 在 rustc 注册的线程（其自身查询线程池）上执行。此载荷只在
-/// [`query_workers_capable`] 探针实证 host 支持跨线程查询后才送线程；其余
-/// 路径从不跨线程使用 → unsafe Send/Sync 由实测门控保证 sound（WA-38）。
-struct WorkerPayload<'a, 'tcx> {
-    tcx: TyCtxt<'tcx>,
-    instances: *const [MonoItem<'tcx>],
-    marker: std::marker::PhantomData<&'a ()>,
-}
-unsafe impl Send for WorkerPayload<'_, '_> {}
-unsafe impl Sync for WorkerPayload<'_, '_> {}
-impl<'a, 'tcx> WorkerPayload<'a, 'tcx> {
-    fn new(tcx: TyCtxt<'tcx>, instances: &'a [MonoItem<'tcx>]) -> Self {
-        WorkerPayload {
-            tcx,
-            instances,
-            marker: std::marker::PhantomData,
-        }
-    }
-    /// SAFETY：载荷只在 std::thread::scope 内被 worker 使用；instances 引用
-    /// 在本调用帧存活至 scope join 之后（scope 语义保证 join 前不返回）。
-    unsafe fn instances(&self) -> &'a [MonoItem<'tcx>] {
-        unsafe { &*self.instances }
-    }
-}
-
-/// worker 数 T：
-/// - `FORGE_CODEGEN_THREADS=N` 显式设置（≥1）→ N 为上限请求（再按
-///   min(-C codegen-units 或默认, available_parallelism, 函数数) 收敛）；
-/// - 未设置 → **1（串行）**：rustc 1.99/1.100 查询引擎不支持自定义线程
-///   跨线程查询（WA-38），并行仅在 env 显式启用后由能力探针决定。
-fn codegen_worker_count<'tcx>(tcx: TyCtxt<'tcx>, n_fn: usize) -> usize {
-    let requested = match std::env::var("FORGE_CODEGEN_THREADS") {
-        Ok(v) => match v.trim().parse::<usize>() {
-            Ok(v) if v >= 1 => v,
-            _ => 1,
-        },
-        Err(_) => 1, // 默认串行（WA-38：host 查询引擎不支持跨线程查询）
-    };
-    if requested == 1 {
-        return 1;
-    }
-    let cgu = tcx.sess.opts.cg.codegen_units.unwrap_or(16).max(1);
-    let par = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    requested.min(cgu).min(par).min(n_fn.max(1))
-}
-
-/// 跨线程查询能力探针（WA-38）：在独立线程里真实编译第一个函数实例——
-/// 任何 tcx 查询（layout_of/instance_mir 等会触达查询引擎 TLS 与 arena）
-/// 在不受支持的主机上都会 panic。静音 panic hook（探针失败不产生 ICE
-/// 噪音）+ catch_unwind。通过 → 并行 worker 可安全运行；失败 → 调用方
-/// 回退串行（行为不变，仅单次 stderr 提示）。
-fn query_workers_capable<'tcx>(
+/// 单函数任务的带 panic 兜底入口（并行/串行两条路径共用同一任务体——
+/// par_map 每个元素、串行 map 每个函数各调一次）。panic（ICE 类）→ 该
+/// 函数记为 Err（不中止其它函数），主线程统一 dcx 报告后编译失败。
+fn compile_fn_task_guarded<'tcx>(
     tcx: TyCtxt<'tcx>,
     instances: &[MonoItem<'tcx>],
-    fn_positions: &[usize],
-) -> bool {
-    let first = &fn_positions[..1];
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {})); // 静音探针（主线程暂停，无并发 panic）
-    let payload = WorkerPayload::new(tcx, instances);
-    let ok = std::thread::scope(|scope| {
-        scope
-            .spawn(move || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    // SAFETY：scope 内 worker 使用；instances 存活至 join 后
-                    compile_fn_task(payload.tcx, unsafe { payload.instances() }, first)
-                }))
-                .is_ok()
-            })
-            .join()
-            .unwrap_or(false)
-    });
-    std::panic::set_hook(prev_hook);
-    if ok {
-        // 探针成功编译了首函数：丢弃其结果（并行路径会重新编译整块），
-        // 保证任务划分/编号与串行路径完全一致。
-        eprintln!(
-            "[forge] FORGE_CODEGEN_THREADS>1: host rustc 支持跨线程查询——并行 CGU worker 池启用"
-        );
-    } else {
-        eprintln!(
-            "[forge] FORGE_CODEGEN_THREADS>1 被忽略：host rustc（1.99+ WorkerLocal 查询引擎）\
-             不支持自定义线程跨线程执行 tcx 查询（WA-38），已回退串行编译（行为不变）"
-        );
-    }
-    ok
+    i: usize,
+) -> TaskOutcome {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compile_fn_task(tcx, instances, i)
+    }))
+    .unwrap_or_else(|payload| {
+        // worker panic：该函数记为错误，主线程统一 dcx 报告后编译失败——
+        // 不 abort（trace.rs panic hook 已打印现场上下文）。
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown worker panic".to_string()
+        };
+        TaskOutcome {
+            fns: vec![FnOutcome {
+                sym_name: format!("<worker panic @instance {i}>"),
+                result: Err(format!("codegen worker panic: {msg}")),
+            }],
+            table: FuncRefTable::default(),
+        }
+    })
 }
 
-/// 编译一块连续函数实例（A1 符号序内的区间）。任务内私有 FuncRefTable：
-/// @N/G{N} 编号由本表分配、每函数编译完就地 resolve 成真实符号名（本表
-/// 只读查询），编号不跨函数逃逸 → 无需任何跨任务共享/加锁。tcx 查询由
-/// rustc 查询引擎并行执行（host nightly 需 parallel frontend——官方
-/// 2024-11 起默认；逃生口 FORGE_CODEGEN_THREADS=1）。
+/// 编译第 `i` 个函数实例（`instances` 为 A1 符号序表；`i` 是其 Fn 下标）。
+/// 任务内私有 FuncRefTable：@N/G{N} 编号由本表分配、每函数编译完就地
+/// resolve 成真实符号名（本表只读查询），编号不跨函数逃逸 → 无需任何
+/// 跨任务共享/加锁。tcx 查询（instance_mir/layout_of/arena 分配）由 rustc
+/// 查询引擎执行——本函数可能运行在 rustc 查询池作业线程上（M4 par_map
+/// 并行分支），也可运行在主线程（串行分支/非并行模式），两处都是 rustc
+/// 注册线程（或主线程本身），查询 TLS 完整（WA-38/M4：自定义 std::thread
+/// 无此上下文——见 codegen_crate 注释）。
 fn compile_fn_task<'tcx>(
     tcx: TyCtxt<'tcx>,
     instances: &[MonoItem<'tcx>],
-    positions: &[usize],
+    i: usize,
 ) -> TaskOutcome {
     let mut table = FuncRefTable::default();
-    let mut fns = Vec::with_capacity(positions.len());
-    for &i in positions {
+    let mut fns = Vec::with_capacity(1);
+    {
         let MonoItem::Fn(instance) = &instances[i] else {
-            continue;
+            return TaskOutcome { fns, table };
         };
         let def_id = instance.def_id();
         if crate::trace::trace_enabled("FN") {
