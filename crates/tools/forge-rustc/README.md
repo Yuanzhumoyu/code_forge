@@ -1,4 +1,4 @@
-# forge-rustc
+﻿# forge-rustc
 
 将 `code-forge` 作为 rustc codegen backend（`-Zcodegen-backend`）使用，
 通过标准 rust 工具链把 Rust 代码编译为可执行文件。
@@ -178,7 +178,7 @@ rustc (codegen_crate)
 - **无 phi**：forge-ir 无 phi 节点，循环回边重定义靠栈槽内存模型（重新 load）保证正确。
 - **失败即报错**：任何不支持的 MIR 构造 → `tcx.dcx().err(...)` 使编译失败，绝不产出桩函数。
 - **`overflow-checks=off`**：常规 `+`/`-`/`*` 的溢出 Assert 分支未覆盖（checked 元组结果本身已实现——见支持矩阵），测试统一关闭溢出检查。
-- **单对象文件**：所有实例合并进一个 `.o`（多 CGU 场景由 rustc 接受），`join_codegen` 提供 WorkProduct 元数据支持增量缓存。
+- **对象文件形态（M6 Stage B）**：默认按 rustc 真 CGU 分区产出对象——rustc 分区出 >1 个 CGU 时**每 CGU 一个 `.o`**（`forge_codegen_output.<cgu>.o` + 每 CGU 一个 WorkProduct，CGU 级增量；debuginfo per-CGU CU）；单 CGU/`FORGE_SINGLE_OBJECT=1` = 单对象 `forge_codegen_output.o`（Stage A 锚，与旧产物逐字节一致）。详见上文「对象文件形态」节。
 - **M3/M4 并行 CGU（Stage A，2026-09）**：`-C codegen-units=N` 只影响 rustc 的 CGU 划分——forge 在 `collect_instances`（按符号名稳定排序）后把**每个函数**作为独立任务（任务私有 `FuncRefTable`：`@N/G{N}` 编号任务内分配、每函数编译完就地 resolve，零加锁）；`merge_task_table` 把任务登记条目（vtables/promoted 按 alloc_id 去重、line/var/enum 按全局函数序）归并回主表；主线程按原实例序串行 emission（单对象单模块，产物与 -C codegen-units 无关）。**并行机制（M4，根治 WA-38）**：rustc 1.99+ 的 tcx 查询只能在 rustc 自建查询池线程上执行（WorkerLocal registry / 作业 ImplicitCtxt / per-thread SessionGlobals，无注册 API）——forge 直接复用 rustc 自家并行原语 `rustc_data_structures::sync::par_map`（rustc_codegen_ssa 在 `-Z threads` 下同款），把函数降级任务作为**嵌套池作业**提交 rustc 查询池。启用 = `FORGE_CODEGEN_THREADS>1` + rustc `-Z threads>=2`（RUSTFLAGS；`--jobs-frontend` 亦可）+ 函数数>1；否则串行（`-Z threads` 缺失时 par_* 自动串行/显式 map——**默认 T=1 与旧路径逐字节一致**）。`FORGE_CODEGEN_THREADS>1` 但无 `-Z threads` 仅 stderr 提示。
 
 ## 调试信息（`-C debuginfo=1`，C1 line-tables-only）
@@ -267,10 +267,15 @@ c` 后 `p (int)y` = 42**（转型路径读出变量值））——与 CFI/行表
 dwarf 单测守护。
 **待续**：结构成员类型递归/枚举变体（DW_TAG_enumeration_type/variant）；
 嵌套聚合字段类型；gdb-PE 类型打印（ref4 类型跟随，M 对照矩阵）。
-
 ## 路线图（远期，2026-09 调研修订）
+
+> **已移除：并行 CGU（`-C codegen-units=N`）目标** —— 2026-09 M3→M6/B-v2 全链路
+> 已完成并关闭（提交 `b43ce8d`…`42bf37e`；task 化并行（M4 par_map 上 rustc 查询池）、
+> 每 CGU 独立对象 + 多 WorkProduct（M6 Stage B）、debuginfo per-CGU CU（B-v2）、
+> `-C incremental` 多 CGU 端到端；验证见 e2e/determinism 用例与 WORKAROUNDS
+> WA-38/WA-39，形态说明见上文「对象文件形态（M6 Stage B）」节）。
+> 本表仅余开放项（类型打印）。
 
 | 项 | 评估 | 前置依赖 |
 | --- | --- | --- |
 | **gdb-PE 类型打印（ref4 类型跟随）** | **2026-09 M2 已落地 CFI + 终端行**（提交见 WORKAROUNDS WA-33）：`.debug_frame` 子系统全链——forge-codegen `machine/cfi.rs`（CFI 模型 + ISA prologue 扫描器注册表，emission 经 `TargetMachine::function_cfi` 按 ISA 名派发、x86 前缀自校验安全退化）+ CompiledFunction.cfi + dwarf.rs `gen_debug_frame`（CIE RA=16 + FDE；条目 8 对齐 gcc 同款）+ 行程序终端行 advance_pc 到 fn 末（零宽末行修复）。**gdb 16.2 实证：`bt 3` helper←mainCRTStartup 双帧 + info args/locals 列出变量**（此前无 CFI 全空）；objdump frames/decodedline 净。**残余**：类型打印 unknown type（ref4 类型跟随——gdb 读 PE DWARF5 的跨 DIE 引用失败，位置语义全对、转型路径可取值的"弱相关"项），待 M1-M10 对照矩阵（M10 gdb 自诊 + M1 字节 diff；全阴性则上报 gdb） | 无（CFI/终端行已落地） |
-| **并行 CGU（`-C codegen-units=N`）** | **2026-09 M3 Stage A 落地 + M4 真并行根治（WA-38）+ M5 稳定键收官**：rustc 对自定义后端只调 codegen_crate 一次、**无按 CGU 回调接口**（逐 CGU 并行是 LLVM 在自己 codegen_crate 内实现，需 ExtraBackendMethods）→ 任务化编译按方案落地：A1 排序实例的**每个函数一个任务**（任务私有 FuncRefTable——编号 `@N/G{N}` 每函数编译完就地 resolve 不跨函数逃逸，零加锁）+ 任务登记条目 `merge_task_table` 归并（vtable 按 alloc_id 去重、promoted/slice 按内容去重、line/var/enum 按全局函数序）+ 主线程按原实例序串行 emission（单对象单模块、产物与 -C codegen-units 无关，determinism cgu=1/2/4 + zt2 交叉矩阵守护）。**宿主限制与根治（WA-38/M4）**：rustc 1.99/1.100（统一 WorkerLocal 查询引擎）`TyCtxt` 非 Send、查询只能在 rustc 自身查询池线程执行（自定义 std::thread 死路，无线程注册 API）→ M4 把函数任务经 `rustc_data_structures::sync::par_map` 作为**嵌套作业提交 rustc 查询池**（rustc_codegen_ssa 自家 `-Z threads` per-CGU 并行同一原语）。启用门控 = `FORGE_CODEGEN_THREADS>1 && -Z threads>=2 && 函数数>1`；默认（无 -Z threads）显式串行 map，**T=1 与旧路径逐字节一致**。**M5（WA-38 残余关闭）**：内部 slice/vtable 符号改**内容稳定键**（`__slice_{:016x}` / `__vtable_{:016x}`，64 位 FNV-1a 哈希）——旧 `__slice_alloc{N}` 的 N 是 rustc 全局 AllocId 首次请求序（AtomicU64），-Z threads 真并行下随调度序跨运行漂移；内容键跨运行/串并行逐字稳定（promoted 内容去重共享记录，determinism 新增符号表稳定性用例） | Stage B（后续）：每 CGU 独立 ObjectWriter 多对象 + WorkProduct（dwarf 需 per-CGU CU 或 debuginfo 回退） |
