@@ -1670,8 +1670,12 @@ fn e2e_cargo_template_workflow() {
 
     let target_dir =
         std::env::temp_dir().join(format!("forge_cargo_target_{}", std::process::id()));
+    // M3（并行 CGU Stage A）：显式 `-C codegen-units=4` 验证产物与 CGU
+    // 划分无关（宿主串行路径下亦守护确定性；宿主支持跨线程查询、且设
+    // FORGE_CODEGEN_THREADS>1 时经能力探针自动走多 worker 并行编译路径）
+    // ——cargo/build-std 端到端（core 由 LLVM 编译，用户 crate 经 forge）。
     let rustflags = format!(
-        "-Zcodegen-backend={} -C panic=abort -C overflow-checks=off -C link-arg=/SUBSYSTEM:CONSOLE -C link-arg=/DEFAULTLIB:kernel32.lib -C link-arg=/DEFAULTLIB:vcruntime.lib",
+        "-Zcodegen-backend={} -C panic=abort -C overflow-checks=off -C codegen-units=4 -C link-arg=/SUBSYSTEM:CONSOLE -C link-arg=/DEFAULTLIB:kernel32.lib -C link-arg=/DEFAULTLIB:vcruntime.lib",
         dll.display()
     );
 

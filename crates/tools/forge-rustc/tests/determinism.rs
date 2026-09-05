@@ -9,6 +9,14 @@
 //! 比对口径：llvm-objdump 反汇编，按"助记符 + 操作数模式"比较
 //! （地址、立即数、相对偏移一律归一化），避免链接器 ASLR/重定位差异
 //! 干扰。用例刻意包含多函数 + 聚合 + alloc（Vec/String）放大排序影响。
+//!
+//! M3（并行 CGU Stage A，-C codegen-units）：产物（剥离地址后指令序列）
+//! 必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——worker
+//! 分块编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变
+//! 优先）。当前宿主 rustc（1.99+ WorkerLocal 查询引擎，WA-38）默认串行
+//! （T=1）、env 显式启用并行时经能力探针自动回退串行——本矩阵因此主要
+//! 守护"不同 codegen-units / env 下产物一致"；宿主恢复跨线程查询支持后
+//! 同一矩阵自动转为真并行路径的确定性守护。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -54,18 +62,26 @@ fn backend_dll() -> PathBuf {
     dll
 }
 
-fn compile(workdir: &Path, name: &str) -> Result<PathBuf, String> {
+fn compile(
+    workdir: &Path,
+    name: &str,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<PathBuf, String> {
     let src = workdir.join(format!("{name}.rs"));
     let exe = workdir.join(format!("{name}.exe"));
     std::fs::write(&src, SRC).map_err(|e| e.to_string())?;
-    let out = Command::new("rustc")
-        .arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
+    let mut cmd = Command::new("rustc");
+    cmd.arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
         .args(["-C", "panic=abort", "-C", "overflow-checks=off", "--edition", "2024"])
+        .args(extra)
         .arg("-C")
         .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
         .arg(&src)
         .arg("-o")
         .arg(&exe)
+        .envs(envs.iter().copied());
+    let out = cmd
         .output()
         .map_err(|e| format!("failed to spawn rustc: {e}"))?;
     if !out.status.success() {
@@ -128,29 +144,80 @@ fn inst_seq(exe: &Path) -> Vec<String> {
         .collect()
 }
 
+fn assert_seq_eq(label_a: &str, a: &[String], label_b: &str, b: &[String]) {
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "instruction count differs between {label_a} and {label_b} (A={}, B={}) — determinism broken",
+        a.len(),
+        b.len()
+    );
+    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+        assert_eq!(
+            x, y,
+            "instruction sequence differs at #{i} between {label_a} and {label_b} — determinism broken (M3 worker 分块/归并不得改变产物)"
+        );
+    }
+}
+
 #[test]
 fn deterministic_output_across_runs() {
     let workdir = std::env::temp_dir().join(format!("forge_det_{}", std::process::id()));
     std::fs::create_dir_all(&workdir).expect("create workdir");
-    let exe_a = compile(&workdir, "det_a").expect("compile a");
-    let exe_b = compile(&workdir, "det_b").expect("compile b");
+    let exe_a = compile(&workdir, "det_a", &[], &[]).expect("compile a");
+    let exe_b = compile(&workdir, "det_b", &[], &[]).expect("compile b");
     let seq_a = inst_seq(&exe_a);
     let seq_b = inst_seq(&exe_b);
     let _ = std::fs::remove_dir_all(&workdir);
 
     assert!(!seq_a.is_empty(), "no instructions extracted from A");
-    assert_eq!(
-        seq_a.len(),
-        seq_b.len(),
-        "instruction count differs between two compiles (A={}, B={}) — A1 determinism broken",
-        seq_a.len(),
-        seq_b.len()
-    );
-    for (i, (a, b)) in seq_a.iter().zip(seq_b.iter()).enumerate() {
-        assert_eq!(
-            a, b,
-            "instruction sequence differs at #{i} between two compiles — A1 determinism broken (collect_instances must sort by symbol name)"
-        );
-    }
+    assert_seq_eq("compile A", &seq_a, "compile B", &seq_b);
     println!("PASS  determinism inst_seq_len={}", seq_a.len());
+}
+
+/// M3（并行 CGU Stage A，-C codegen-units=N）：产物（剥离地址后的指令序列）
+/// 必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——worker 分块
+/// 编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变优先）。
+/// 矩阵：cgu=1/2/4（T=1 串行 vs 多 worker 并行）+ THREADS=1 逃生口对照
+/// + cgu=1 下强制 4 线程（应回落 min(cgu,·)=1，与 cgu1 同产物）。
+#[test]
+fn deterministic_across_codegen_units_and_threads() {
+    let workdir = std::env::temp_dir().join(format!("forge_det_m3_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    let variants: [(&str, &[&str], &[(&str, &str)]); 5] = [
+        ("cgu1", &["-C", "codegen-units=1"], &[]),
+        ("cgu2", &["-C", "codegen-units=2"], &[]),
+        ("cgu4", &["-C", "codegen-units=4"], &[]),
+        // 逃生口：FORGE_CODEGEN_THREADS=1 强制串行（即使 cgu>1）
+        (
+            "cgu4_t1",
+            &["-C", "codegen-units=4"],
+            &[("FORGE_CODEGEN_THREADS", "1")],
+        ),
+        // cgu=1 时强制 4 线程（T 应回落 min(1,·)=1——与 cgu1 同产物）
+        (
+            "cgu1_t4",
+            &["-C", "codegen-units=1"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+    ];
+    let mut seqs: Vec<(String, Vec<String>)> = Vec::new();
+    for (name, extra, envs) in variants {
+        let exe = compile(&workdir, name, extra, envs)
+            .map_err(|e| format!("{name}: {e}"))
+            .expect("compile variant");
+        let seq = inst_seq(&exe);
+        assert!(!seq.is_empty(), "no instructions extracted from {name}");
+        seqs.push((name.to_string(), seq));
+    }
+    let _ = std::fs::remove_dir_all(&workdir);
+
+    let (base_name, base) = &seqs[0];
+    for (name, seq) in &seqs[1..] {
+        assert_seq_eq(base_name, base, name, seq);
+    }
+    println!(
+        "PASS  determinism_across_codegen_units inst_seq_len={} variants=5",
+        base.len()
+    );
 }
