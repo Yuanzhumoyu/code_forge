@@ -1457,6 +1457,18 @@ fn backend_dll() -> PathBuf {
 }
 
 fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
+    run_case_with(case, workdir, &[], &[])
+}
+
+/// run_case 的可注入变体（M4：真并行池验证用）：
+/// - `extra_rustc_args`：追加到 rustc 命令行（如 `["-Z", "threads=2"]`）；
+/// - `extra_envs`：追加到 rustc 子进程环境（如 `FORGE_CODEGEN_THREADS=4`）。
+fn run_case_with(
+    case: &Case,
+    workdir: &Path,
+    extra_rustc_args: &[&str],
+    extra_envs: &[(&str, &str)],
+) -> Result<i32, String> {
     let src = workdir.join(format!("{}.rs", case.name));
     let exe = workdir.join(format!("{}.exe", case.name));
     std::fs::write(&src, make_source(case.body, case.extra, case.entry))
@@ -1493,13 +1505,18 @@ fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
         rustc_args.push("-C".to_string());
         rustc_args.push("debuginfo=1".to_string());
     }
-    let compile = Command::new("rustc")
-        .args(&rustc_args)
+    // M4 注入：真并行池编译（-Z threads 开启 rustc 前端并行池 → forge 的
+    // par_map 函数任务才会上池，见 backend.rs 门控）。
+    rustc_args.extend(extra_rustc_args.iter().map(|s| s.to_string()));
+    let mut cmd = Command::new("rustc");
+    cmd.args(&rustc_args)
         .arg("-C")
         .arg(format!("link-args={entry_args}"))
         .arg(&src)
         .arg("-o")
         .arg(&exe)
+        .envs(extra_envs.iter().copied());
+    let compile = cmd
         .output()
         .map_err(|e| format!("failed to spawn rustc: {e}"))?;
 
@@ -1642,6 +1659,60 @@ fn e2e_stage_a_scalar_cases() {
     assert!(passed > 0, "no cases passed — backend broken");
 }
 
+/// M4（并行路径 A，根治 WA-38）：forge 函数降级任务提交 **rustc 查询池**
+/// （`-Z threads>=2` 开启 rustc 并行前端 → backend.rs 门控
+/// `FORGE_CODEGEN_THREADS>1 && jobs.frontend.is_some() && 函数数>1` 后以
+/// `rustc_data_structures::sync::par_map` 上池并行，见 WORKAROUNDS WA-38）。
+/// 这里抽复杂用例（alloc/Vec grow 链、SIMD V128/V256 ABI、递归、debuginfo）
+/// 逐一以两种方式编译并运行：
+/// - 无参编译（无 -Z threads → 旧 T=1 串行路径）；
+/// - `-Z threads=2` + `FORGE_CODEGEN_THREADS=4`（真并行池路径）。
+/// 两路径退出码必须一致且等于期望值（产物指令序列一致性由 determinism.rs
+/// 的 -Z threads 矩阵守护）。
+#[test]
+fn e2e_parallel_pool_threads() {
+    let workdir = std::env::temp_dir().join(format!("forge_rustc_e2e_par_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    println!("workdir: {}", workdir.display());
+    let names = [
+        "vec_push",
+        "vec_from_slice",
+        "fib_recursive",
+        "simd_v128_call",
+        "simd_v256_call",
+        "debuginfo_line_tables",
+        "debuginfo_full",
+    ];
+    for name in names {
+        let case = CASES
+            .iter()
+            .find(|c| c.name == name)
+            .expect("case exists");
+        let plain = run_case(case, &workdir)
+            .map_err(|e| format!("{name} (T=1): {e}"))
+            .expect("plain compile/run");
+        let par = run_case_with(
+            case,
+            &workdir,
+            &["-Z", "threads=2"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        )
+        .map_err(|e| format!("{name} (-Z threads=2 par_map): {e}"))
+        .expect("parallel compile/run");
+        assert_eq!(
+            plain, case.expected,
+            "{name}: T=1 退出码 {plain} ≠ 期望 {}",
+            case.expected
+        );
+        assert_eq!(
+            par, plain,
+            "{name}: 并行池退出码 {par} ≠ T=1 {plain}——par_map 路径产物行为漂移"
+        );
+        println!("PASS  parallel-pool {:<16} exit={} (T=1 == -Z threads=2)", name, par);
+    }
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
 /// cargo 工作流集成测试：用 rustc wrapper + build-std 编译模板工程并运行产物。
 /// 验证从 rust 工具链到 forge backend 的完整路径（cargo → rustc wrapper →
 /// build-std core(LLVM) + 用户 crate(forge) → 链接 → 运行）。
@@ -1670,12 +1741,13 @@ fn e2e_cargo_template_workflow() {
 
     let target_dir =
         std::env::temp_dir().join(format!("forge_cargo_target_{}", std::process::id()));
-    // M3（并行 CGU Stage A）：显式 `-C codegen-units=4` 验证产物与 CGU
-    // 划分无关（宿主串行路径下亦守护确定性；宿主支持跨线程查询、且设
-    // FORGE_CODEGEN_THREADS>1 时经能力探针自动走多 worker 并行编译路径）
+    // M3/M4（并行 CGU Stage A）：`-C codegen-units=4` 验证产物与 CGU 划分
+    // 无关；**M4 起 rustc 并行前端（RUSTFLAGS 注入 `-Z threads=2`）+
+    // FORGE_CODEGEN_THREADS=4** 使 forge 函数降级任务提交 rustc 查询池
+    // （par_map——WA-38 根治，无 -Z threads 时自动串行产物不变）。
     // ——cargo/build-std 端到端（core 由 LLVM 编译，用户 crate 经 forge）。
     let rustflags = format!(
-        "-Zcodegen-backend={} -C panic=abort -C overflow-checks=off -C codegen-units=4 -C link-arg=/SUBSYSTEM:CONSOLE -C link-arg=/DEFAULTLIB:kernel32.lib -C link-arg=/DEFAULTLIB:vcruntime.lib",
+        "-Zcodegen-backend={} -Z threads=2 -C panic=abort -C overflow-checks=off -C codegen-units=4 -C link-arg=/SUBSYSTEM:CONSOLE -C link-arg=/DEFAULTLIB:kernel32.lib -C link-arg=/DEFAULTLIB:vcruntime.lib",
         dll.display()
     );
 
@@ -1689,6 +1761,7 @@ fn e2e_cargo_template_workflow() {
         .env("CARGO_TARGET_DIR", &target_dir)
         .env("RUSTC_WRAPPER", &wrapper)
         .env("RUSTFLAGS", &rustflags)
+        .env("FORGE_CODEGEN_THREADS", "4")
         .args([toolchain.as_str(), "-Z", "build-std=core", "build"])
         .output()
         .map_err(|e| format!("failed to spawn cargo: {e}"))

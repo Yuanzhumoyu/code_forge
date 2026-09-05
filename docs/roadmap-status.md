@@ -33,8 +33,10 @@ demo_v12 3）。
 
 > **2026-09 更新**：本清单已大幅过期——YMM ABI 主库侧已实现（下 §1）；
 > vec_push/vec_string 已关闭（WA-11，e2e 全绿）；并行 CGU M3 Stage A 已
-> 落地（backend.rs 任务化 + func_ref drain，默认串行 + FORGE_CODEGEN_THREADS
-> 显式并行，WA-38 宿主限制）。剩余开放项与 2026-09 方案的完整路径见
+> 落地并由 **M4 根治 WA-38**（backend.rs 函数任务 + func_ref drain，
+> `rustc_data_structures::sync::par_map` 提交 rustc 查询池——`-Z threads>=2`
+> + FORGE_CODEGEN_THREADS>1 启用，默认 T=1 串行产物不变）。剩余开放项与
+> 2026-09 方案的完整路径见
 > `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37/WA-38）与
 > `crates/tools/forge-rustc/README.md` 路线图节。
 

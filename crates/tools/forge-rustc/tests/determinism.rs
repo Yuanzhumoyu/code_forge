@@ -10,13 +10,17 @@
 //! （地址、立即数、相对偏移一律归一化），避免链接器 ASLR/重定位差异
 //! 干扰。用例刻意包含多函数 + 聚合 + alloc（Vec/String）放大排序影响。
 //!
-//! M3（并行 CGU Stage A，-C codegen-units）：产物（剥离地址后指令序列）
-//! 必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——worker
-//! 分块编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变
-//! 优先）。当前宿主 rustc（1.99+ WorkerLocal 查询引擎，WA-38）默认串行
-//! （T=1）、env 显式启用并行时经能力探针自动回退串行——本矩阵因此主要
-//! 守护"不同 codegen-units / env 下产物一致"；宿主恢复跨线程查询支持后
-//! 同一矩阵自动转为真并行路径的确定性守护。
+//! M3/M4（并行 CGU Stage A，-C codegen-units）：产物（剥离地址后指令序列）
+//! 必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——任务化
+//! 编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变优先）。
+//! **M4（WA-38 根治）**：rustc 1.99+ WorkerLocal 查询引擎下 tcx 查询只能
+//! 在 rustc 自建池线程执行（std::thread 死路）——真并行改为把函数降级
+//! 任务以 `rustc_data_structures::sync::par_map` 提交 **rustc 查询池**
+//! （门控 = `FORGE_CODEGEN_THREADS>1 && -Z threads>=2`，即
+//! `jobs.frontend.is_some()`）；无 -Z threads 时走显式串行 map，行为与
+//! T=1 恒等。本矩阵：cgu=1/2/4 × THREADS=1/4（无 -Z threads，串行路径
+//! 产物一致）+ **cgu=1/4 × -Z threads=2 × THREADS=4**（真并行池路径——
+//! rustc 前端并行 + forge 函数任务上池并行，指令序列必须与串行一致）。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -175,16 +179,18 @@ fn deterministic_output_across_runs() {
     println!("PASS  determinism inst_seq_len={}", seq_a.len());
 }
 
-/// M3（并行 CGU Stage A，-C codegen-units=N）：产物（剥离地址后的指令序列）
-/// 必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——worker 分块
-/// 编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变优先）。
-/// 矩阵：cgu=1/2/4（T=1 串行 vs 多 worker 并行）+ THREADS=1 逃生口对照
-/// + cgu=1 下强制 4 线程（应回落 min(cgu,·)=1，与 cgu1 同产物）。
+/// M3/M4（并行 CGU Stage A，-C codegen-units=N）：产物（剥离地址后的指令
+/// 序列）必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——
+/// 任务化编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变
+/// 优先）。矩阵：cgu=1/2/4（T=1 串行 vs env 显式并行）+ THREADS=1 逃生口
+/// 对照 + cgu=1 下 THREADS=4 对照 + **M4 真并行池维**：
+/// `-Z threads=2`（rustc 前端并行池 + `jobs.frontend.is_some()` 门控）
+/// + `FORGE_CODEGEN_THREADS=4`（forge 函数任务 par_map 上池并行）。
 #[test]
 fn deterministic_across_codegen_units_and_threads() {
     let workdir = std::env::temp_dir().join(format!("forge_det_m3_{}", std::process::id()));
     std::fs::create_dir_all(&workdir).expect("create workdir");
-    let variants: [(&str, &[&str], &[(&str, &str)]); 5] = [
+    let variants: [(&str, &[&str], &[(&str, &str)]); 7] = [
         ("cgu1", &["-C", "codegen-units=1"], &[]),
         ("cgu2", &["-C", "codegen-units=2"], &[]),
         ("cgu4", &["-C", "codegen-units=4"], &[]),
@@ -194,10 +200,23 @@ fn deterministic_across_codegen_units_and_threads() {
             &["-C", "codegen-units=4"],
             &[("FORGE_CODEGEN_THREADS", "1")],
         ),
-        // cgu=1 时强制 4 线程（T 应回落 min(1,·)=1——与 cgu1 同产物）
+        // cgu=1 时 THREADS=4：无 -Z threads → 门控不满足，仍串行（与 cgu1
+        // 同产物；仅 stderr 提示"需 -Z threads"）
         (
             "cgu1_t4",
             &["-C", "codegen-units=1"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+        // M4 真并行池：rustc -Z threads=2（前端并行 + jobs.frontend=Some）
+        // + FORGE_CODEGEN_THREADS=4 → forge 函数任务 par_map 上池并行。
+        (
+            "cgu4_zt2_t4",
+            &["-C", "codegen-units=4", "-Z", "threads=2"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+        (
+            "cgu1_zt2_t4",
+            &["-C", "codegen-units=1", "-Z", "threads=2"],
             &[("FORGE_CODEGEN_THREADS", "4")],
         ),
     ];
@@ -217,7 +236,7 @@ fn deterministic_across_codegen_units_and_threads() {
         assert_seq_eq(base_name, base, name, seq);
     }
     println!(
-        "PASS  determinism_across_codegen_units inst_seq_len={} variants=5",
+        "PASS  determinism_across_codegen_units inst_seq_len={} variants=7 (incl. -Z threads 真并行池 x2)",
         base.len()
     );
 }
