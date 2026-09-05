@@ -1807,3 +1807,131 @@ fn e2e_cargo_template_workflow() {
     let _ = std::fs::remove_dir_all(&target_dir);
     println!("PASS  cargo_template_workflow exit=45");
 }
+
+/// M6（Stage B，每 CGU 独立对象文件）端到端：多模块 no_std crate +
+/// `-C codegen-units=4` → rustc 分区出多 CGU → forge 每 CGU 一个 .o
+///（链接器多 .obj）。验收：
+/// 1. 编译成功（无 LNK2005 重复强符号——数据 owner 归并 + 实例首 CGU 定义）；
+/// 2. 产物目录出现 ≥2 个 `forge_codegen_output.<cgu>.o`；
+/// 3. 跨对象引用（函数 call / vtable ADDR64 / promoted rodata）经链接器
+///    UNDEF 解析，运行退出码正确；
+/// 4. 串行（T=1）与真并行（-Z threads=2 + FORGE_CODEGEN_THREADS=4）退出码一致。
+///    （多模块是必要的：rustc 非增量默认会把小 CGU 合并成单 CGU——
+///    显式 codegen-units + 多模块才产生多分区。）
+#[test]
+fn e2e_multi_object_cgu_units() {
+    let workdir = std::env::temp_dir().join(format!("forge_rustc_e2e_m6_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    println!("workdir: {}", workdir.display());
+
+    // 多模块 + trait dyn + slice/str 数据 + 跨模块调用（mod alpha/beta/main 各成 CGU）
+    let extra = "mod alpha {\n\
+         pub fn fa(x: i32) -> i32 { x * 2 + 1 }\n\
+         pub fn fstr() -> &'static str { \"alpha-lit\" }\n\
+         }\n\
+         mod beta {\n\
+         pub struct SX(pub i32);\n\
+         impl SX { pub fn v(&self) -> i32 { self.0 + 2 } }\n\
+         pub fn fslice() -> &'static [u8] { b\"bb\" }\n\
+         }\n\
+         trait Speak { fn sp(&self) -> i32; }\n\
+         struct Dog;\n\
+         impl Speak for Dog { fn sp(&self) -> i32 { 8 } }\n";
+    let body = "let mut acc = 0i32; let mut i = 0; while i < 3 { acc += alpha::fa(i); i += 1; }\n\
+         let d = Dog; let sd: &dyn Speak = &d;\n\
+         acc + beta::SX(5).v() + alpha::fstr().len() as i32 + beta::fslice().len() as i32 + sd.sp()";
+    let src = make_source(body, extra, "mainCRTStartup");
+    let src_path = workdir.join("m6_multi.rs");
+    let exe = workdir.join("m6_multi.exe");
+    std::fs::write(&src_path, &src).expect("write source");
+    // alpha::fa(0..3)=1+3+5=9；SX(5).v()=7；fstr len=9；fslice len=2；sd.sp()=8 → 35
+    let expected = 35;
+
+    let compile_run = |rustc_args: &[String], envs: &[(&str, &str)]| -> Result<i32, String> {
+        let out_exe = workdir.join("m6_multi_run.exe");
+        let mut cmd = Command::new("rustc");
+        cmd.args(rustc_args)
+            .arg("-C")
+            .arg(format!(
+                "link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib"
+            ))
+            .arg(&src_path)
+            .arg("-o")
+            .arg(&out_exe)
+            .envs(envs.iter().copied());
+        let compile = cmd
+            .output()
+            .map_err(|e| format!("failed to spawn rustc: {e}"))?;
+        if !compile.status.success() {
+            let stderr = String::from_utf8_lossy(&compile.stderr);
+            return Err(format!(
+                "compile failed (LNK2005/多对象链接错误): {}\n{}",
+                compile.status,
+                stderr.lines().take(12).collect::<Vec<_>>().join("\n")
+            ));
+        }
+        // 运行取退出码
+        let status = Command::new(&out_exe)
+            .status()
+            .map_err(|e| format!("failed to run: {e}"))?;
+        Ok(status.code().unwrap_or(-1))
+    };
+
+    let mut base_args = vec![
+        "-Zcodegen-backend=".to_string() + &backend_dll().display().to_string(),
+        "-C".to_string(),
+        "panic=abort".to_string(),
+        "-C".to_string(),
+        "overflow-checks=off".to_string(),
+        "--edition".to_string(),
+        "2024".to_string(),
+        "-C".to_string(),
+        "codegen-units=4".to_string(),
+        "-C".to_string(),
+        "save-temps=yes".to_string(),
+    ];
+
+    // 串行 T=1
+    let serial_exit = compile_run(&base_args, &[])
+        .map_err(|e| format!("m6 multi-object (serial): {e}"))
+        .expect("serial multi-object compile/run");
+    assert_eq!(
+        serial_exit, expected,
+        "m6 multi-object serial exit={serial_exit} ≠ {expected}"
+    );
+
+    // 真并行（rustc 池 -Z threads=2 + forge 函数任务 par_map）
+    let mut par_args = base_args.clone();
+    par_args.push("-Z".to_string());
+    par_args.push("threads=2".to_string());
+    let par_exit = compile_run(&par_args, &[("FORGE_CODEGEN_THREADS", "4")])
+        .map_err(|e| format!("m6 multi-object (parallel): {e}"))
+        .expect("parallel multi-object compile/run");
+    assert_eq!(
+        par_exit, expected,
+        "m6 multi-object parallel exit={par_exit} ≠ {expected}（par_map 路径多对象漂移）"
+    );
+
+    // 多对象产物断言：≥2 个 forge_codegen_output.<cgu>.o（rustc 分区出多 CGU）
+    let objs: Vec<String> = std::fs::read_dir(&workdir)
+        .expect("read workdir")
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            (n.starts_with("forge_codegen_output") && n.ends_with(".o")).then_some(n)
+        })
+        .collect();
+    assert!(
+        objs.len() >= 2,
+        "m6 多对象预期 ≥2 个 .o（多模块 + codegen-units=4），实际 {}: {:?}",
+        objs.len(),
+        objs
+    );
+
+    let _ = std::fs::remove_dir_all(&workdir);
+    println!(
+        "PASS  e2e_multi_object_cgu_units exit={} (serial == -Z threads=2) objects={}",
+        serial_exit,
+        objs.len()
+    );
+}

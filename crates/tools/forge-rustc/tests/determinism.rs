@@ -1,26 +1,33 @@
-//! 编译确定性门禁（F3 / A1）：同一源码编译两次，剥离地址后的指令序列
-//! 必须一致。
+//! 编译确定性门禁（F3 / A1 / M5 / M6）：
+//! 同一源码重复编译的产物必须确定（对象文件逐字节稳定）。
 //!
-//! 背景：`collect_instances` 从 `collect_and_partition_mono_items` 收集实例，
-//! 其 CGU 顺序/内部遍历受 rustc 影响（历史上 HashMap 布局抖动导致函数
-//! 布局跨编译漂移，干扰回归比对与可复现调试）。A1 修复为按 mangled
-//! 符号名稳定排序——本测试守护该行为。
+//! 背景：`collect_instances`（Stage A）/ `build_plans`（M6 Stage B）从
+//! `collect_and_partition_mono_items` 收集实例，其 CGU 顺序/内部遍历受 rustc
+//! 影响（历史上 HashMap 布局抖动导致函数布局跨编译漂移）。A1 修复为按
+//! mangled 符号名稳定排序——本测试守护该行为。
 //!
 //! 比对口径：llvm-objdump 反汇编，按"助记符 + 操作数模式"比较
-//! （地址、立即数、相对偏移一律归一化），避免链接器 ASLR/重定位差异
-//! 干扰。用例刻意包含多函数 + 聚合 + alloc（Vec/String）放大排序影响。
+//!（地址、立即数、相对偏移一律归一化），避免链接器 ASLR/重定位差异干扰；
+//! 对象文件则直接逐字节比较（`-C save-temps` 保留 forge 写出的 .o）。
 //!
-//! M3/M4（并行 CGU Stage A，-C codegen-units）：产物（剥离地址后指令序列）
-//! 必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——任务化
-//! 编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变优先）。
-//! **M4（WA-38 根治）**：rustc 1.99+ WorkerLocal 查询引擎下 tcx 查询只能
-//! 在 rustc 自建池线程执行（std::thread 死路）——真并行改为把函数降级
-//! 任务以 `rustc_data_structures::sync::par_map` 提交 **rustc 查询池**
-//! （门控 = `FORGE_CODEGEN_THREADS>1 && -Z threads>=2`，即
-//! `jobs.frontend.is_some()`）；无 -Z threads 时走显式串行 map，行为与
-//! T=1 恒等。本矩阵：cgu=1/2/4 × THREADS=1/4（无 -Z threads，串行路径
-//! 产物一致）+ **cgu=1/4 × -Z threads=2 × THREADS=4**（真并行池路径——
-//! rustc 前端并行 + forge 函数任务上池并行，指令序列必须与串行一致）。
+//! # M6（Stage B，每 CGU 独立对象文件）口径更新
+//! Stage A 单对象：产物指令序列与 `-C codegen-units` 无关（跨 CGU 摊平 +
+//! 全局符号序，函数布局恒定）。Stage B 多对象：对象/布局由 **CGU 分区**
+//! 决定——不同 `codegen-units` 配置的函数分组/对象数/最终 .text 布局**有意
+//! 不同**（每 CGU .text 内仍按符号序、对象按 CGU 名字序——组内布局确定）。
+//! 因此确定性矩阵口径调整为：
+//! 1. **同配置重复编译**：逐对象字节全等 + 链接产物指令序列全等
+//!   （`-C codegen-units=1/4/16` 各两次；cgu=4 另加 `-Z threads=2` +
+//!   `FORGE_CODEGEN_THREADS=4` 真并行池——并行与串行的 .o 字节必须全等）；
+//! 2. **跨配置**：退出码/运行行为一致（对象布局可不同——不再比较指令序列）。
+//! M5 符号稳定测试改为跨全部对象聚合（`__slice_*`/`__vtable_*` 只定义一次，
+//! owner CGU 归属确定）。
+//!
+//! 注意：rustc 分区在**非增量 + 默认 codegen-units** 下会把小 CGU 合并
+//!（NON_INCR_MIN_CGU_SIZE，见 rustc_monomorphize::partitioning）——单模块
+//! 小 crate 通常只有 1 个 CGU → 单对象路径（Stage A 形态）；本文件的
+//! 多对象矩阵用**显式 `-C codegen-units`** + 多模块源码（每模块一个 CGU）
+//! 强制多 CGU，守护多对象确定性。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -47,6 +54,52 @@ pub extern "C" fn mainCRTStartup() -> i32 {
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! { loop {} }
 "#;
+
+/// M6 多对象应力源：多模块（每模块一个 CGU）+ static/static mut + trait
+/// dyn vtable + slice/promoted 数据段 + 泛型单态化——在显式
+/// `-C codegen-units=N` 下强制多 CGU 分区（rustc 对单模块小 crate 默认合并
+/// 成单 CGU）。返回退出码恒 75。
+fn m6_src() -> String {
+    r#"#![no_std]
+#![no_main]
+static GLOBAL: i32 = 7;
+static mut CNT: i32 = 0;
+trait T { fn tv(&self) -> i32; fn ts(&self) -> &'static str; }
+mod alpha {
+    use super::T;
+    pub struct SA(pub i32);
+    impl T for SA { fn tv(&self) -> i32 { self.0 } fn ts(&self) -> &'static str { "a" } }
+    pub fn fa(x: i32) -> i32 { x.wrapping_mul(3).wrapping_add(1) }
+    pub fn fstr() -> &'static str { "alpha-lit" }
+}
+mod beta {
+    use super::T;
+    pub struct SB(pub i32);
+    impl T for SB { fn tv(&self) -> i32 { self.0 * 2 } fn ts(&self) -> &'static str { "b" } }
+    pub fn fb(x: i32) -> i32 { x * x - 4 }
+    pub fn fslice() -> &'static [u8] { b"beta-bytes" }
+    pub fn generic<X: Copy>(x: X, k: i32) -> i32 { k + 1 }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn mainCRTStartup() -> i32 {
+    let a = alpha::SA(5);
+    let b = beta::SB(6);
+    let da: &dyn T = &a;
+    let db: &dyn T = &b;
+    let mut acc = 0i32;
+    let mut i = 0;
+    while i < 4 { acc += alpha::fa(i); acc += beta::fb(i); i += 1; }
+    unsafe { CNT += 1; }
+    acc + GLOBAL + unsafe { CNT } + da.tv() + db.tv()
+        + alpha::fstr().len() as i32
+        + beta::fslice().len() as i32
+        + beta::generic(9u64, 10)
+}
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! { loop {} }
+"#
+    .to_string()
+}
 
 /// M5（WA-38 残余关闭）符号稳定应力源：多 trait×struct 的 dyn vtable +
 /// 大量 str/int-slice 字面量 + 泛型单态化，制造 `-Z threads` 真并行下
@@ -99,124 +152,6 @@ fn data_sym_stress_source() -> String {
     s
 }
 
-/// 编译到独立子目录并收集对象文件中内部数据符号名（`__slice_*`/`__vtable_*`，
-/// M5 内容稳定键）；rustc 默认链接后删除中间对象，`-C save-temps` 保留
-/// `forge_codegen_output.o`。
-fn compile_and_data_syms(
-    workdir: &Path,
-    run_dir: &str,
-    src_name: &str,
-    extra: &[&str],
-    envs: &[(&str, &str)],
-) -> Result<Vec<String>, String> {
-    let run = workdir.join(run_dir);
-    std::fs::create_dir_all(&run).map_err(|e| e.to_string())?;
-    let src = workdir.join(format!("{src_name}.rs"));
-    let exe = run.join(format!("{src_name}.exe"));
-    let mut cmd = Command::new("rustc");
-    cmd.arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
-        .args(["-C", "panic=abort", "-C", "overflow-checks=off", "--edition", "2024"])
-        .arg("-C")
-        .arg("save-temps=yes")
-        .args(extra)
-        .arg("-C")
-        .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
-        .arg(&src)
-        .arg("-o")
-        .arg(&exe)
-        .envs(envs.iter().copied());
-    let out = cmd.output().map_err(|e| format!("failed to spawn rustc: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "compile failed: {}\n{}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr)
-                .lines()
-                .take(10)
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-    let obj = run.join("forge_codegen_output.o");
-    if !obj.exists() {
-        return Err(format!("object not found: {}", obj.display()));
-    }
-    let nm = std::env::var("FORGE_E2E_NM").unwrap_or_else(|_| "llvm-nm".to_string());
-    let out = Command::new(&nm)
-        .arg(&obj)
-        .output()
-        .map_err(|e| format!("llvm-nm spawn: {e}"))?;
-    let names: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| l.contains("__slice_") || l.contains("__vtable_"))
-        .filter_map(|l| l.split_whitespace().next_back().map(|s| s.to_string()))
-        .collect();
-    Ok(names)
-}
-
-/// M5（WA-38 残余关闭）：内部数据符号名必须**跨运行与调度模式稳定**。
-///
-/// 旧 alloc_id 命名（`__slice_alloc{N}`/`__vtable_alloc{N}`）的 N 来自
-/// rustc 全局 AllocId `AtomicU64`（首次请求序）——-Z threads 真并行
-/// （FORGE_CODEGEN_THREADS>1 上 rustc 查询池）下调度序不定，同一内容
-/// 跨运行符号名数值漂移（内容↔符号恒一致、仅名称非字节确定）。M5 改为
-/// 内容稳定键（64 位 FNV-1a：`__slice_{hash}` / `__vtable_{hash}`，见
-/// lower/statement.rs `slice_sym` / lower/vtable.rs `vtable_sym`）——同一
-/// 源码不论串/并行、不论跑多少次，对象文件符号名集合必须逐字一致。
-#[test]
-fn stable_data_symbol_names_across_scheduling() {
-    let workdir = std::env::temp_dir().join(format!("forge_det_sym_{}", std::process::id()));
-    std::fs::create_dir_all(&workdir).expect("create workdir");
-    std::fs::write(workdir.join("sym.rs"), data_sym_stress_source()).expect("write source");
-
-    // 三种模式各编译一次：串行 T=1；真并行 -Z threads=4 + 池并行；再次真并行。
-    let variants: [(&str, &[&str], &[(&str, &str)]); 4] = [
-        ("serial", &[], &[]),
-        (
-            "par_a",
-            &["-Z", "threads=4"],
-            &[("FORGE_CODEGEN_THREADS", "4")],
-        ),
-        (
-            "par_b",
-            &["-Z", "threads=4"],
-            &[("FORGE_CODEGEN_THREADS", "4")],
-        ),
-        (
-            "par_c",
-            &["-Z", "threads=4"],
-            &[("FORGE_CODEGEN_THREADS", "4")],
-        ),
-    ];
-    let mut syms: Vec<(String, Vec<String>)> = Vec::new();
-    for (name, extra, envs) in variants {
-        let mut names = compile_and_data_syms(&workdir, name, "sym", extra, envs)
-            .map_err(|e| format!("{name}: {e}"))
-            .expect("compile variant");
-        assert!(
-            names.len() >= 20,
-            "{name}: only {} __slice/__vtable symbols — 应力源未触发数据段",
-            names.len()
-        );
-        names.sort();
-        syms.push((name.to_string(), names));
-    }
-    let _ = std::fs::remove_dir_all(&workdir);
-
-    let (base_name, base) = &syms[0];
-    for (name, names) in &syms[1..] {
-        assert_eq!(
-            base, names,
-            "internal data symbol names differ between {base_name} and {name} — \
-             M5 内容稳定键被破坏（WA-38 残余回归：alloc_id 调度序重新泄漏进符号名）"
-        );
-    }
-    println!(
-        "PASS  stable_data_symbol_names __slice/__vtable symbols={} variants=4 (serial + -Z threads x3)",
-        base.len()
-    );
-}
-
 /// 定位 backend dll（cargo test 构建产物）。
 fn backend_dll() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -235,40 +170,108 @@ fn backend_dll() -> PathBuf {
     dll
 }
 
-fn compile(
+/// 目录下 forge 后端产出的对象文件（按文件名升序——对象按 CGU 名序稳定）。
+/// 单对象模式 = 1 个 `forge_codegen_output.o`；多对象模式 = 每个 CGU 一个
+/// `forge_codegen_output.<cgu 名>.o`。
+fn forge_objects(dir: &Path) -> Vec<PathBuf> {
+    let mut objs: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    let n = p
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    n.starts_with("forge_codegen_output") && n.ends_with(".o")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    objs.sort();
+    objs
+}
+
+/// 对象文件名 → 字节（同配置重复编译必须逐对象逐字节一致）。
+fn forge_object_bytes(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    forge_objects(dir)
+        .into_iter()
+        .filter_map(|p| {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            std::fs::read(&p).ok().map(|b| (name, b))
+        })
+        .collect()
+}
+
+/// 编译并收集产物：源码（`src`，目录内文件 `prog.rs`）在独立子目录
+/// `subdir` 内编译（`-C save-temps` 保留对象），返回 (对象文件字节, exe 路径)。
+fn compile_to_dir(
     workdir: &Path,
-    name: &str,
+    subdir: &str,
+    src: &str,
     extra: &[&str],
     envs: &[(&str, &str)],
-) -> Result<PathBuf, String> {
-    let src = workdir.join(format!("{name}.rs"));
-    let exe = workdir.join(format!("{name}.exe"));
-    std::fs::write(&src, SRC).map_err(|e| e.to_string())?;
+) -> Result<(Vec<(String, Vec<u8>)>, PathBuf), String> {
+    let run = workdir.join(subdir);
+    std::fs::create_dir_all(&run).map_err(|e| e.to_string())?;
+    std::fs::write(run.join("prog.rs"), src).map_err(|e| e.to_string())?;
+    let exe = run.join("prog.exe");
     let mut cmd = Command::new("rustc");
     cmd.arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
         .args(["-C", "panic=abort", "-C", "overflow-checks=off", "--edition", "2024"])
+        .arg("-C")
+        .arg("save-temps=yes")
         .args(extra)
         .arg("-C")
         .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
-        .arg(&src)
+        .arg(run.join("prog.rs"))
         .arg("-o")
         .arg(&exe)
         .envs(envs.iter().copied());
-    let out = cmd
-        .output()
-        .map_err(|e| format!("failed to spawn rustc: {e}"))?;
+    let out = cmd.output().map_err(|e| format!("failed to spawn rustc: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "compile failed: {}\n{}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
                 .lines()
-                .take(10)
+                .take(12)
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
     }
-    Ok(exe)
+    let objs = forge_object_bytes(&run);
+    Ok((objs, exe))
+}
+
+/// 运行产物并取退出码（panic handler 是 loop{}，超时保护）。
+fn run_exit(exe: &Path) -> i32 {
+    let mut child = Command::new(exe)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn exe");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        if let Some(status) = child.try_wait().expect("wait exe") {
+            return status.code().expect("exe exit code");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "exe timeout (挂起)"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// 编译 SRC 到独立子目录并收集对象文件（串行/并行变体共用）。
+fn compile(
+    workdir: &Path,
+    name: &str,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<PathBuf, String> {
+    compile_to_dir(workdir, name, SRC, extra, envs).map(|(_, exe)| exe)
 }
 
 /// 判断 token 是否为十六进制字节列（"48"、"89"、"e5" 等 2 位十六进制）。
@@ -328,8 +331,27 @@ fn assert_seq_eq(label_a: &str, a: &[String], label_b: &str, b: &[String]) {
     for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
         assert_eq!(
             x, y,
-            "instruction sequence differs at #{i} between {label_a} and {label_b} — determinism broken (M3 worker 分块/归并不得改变产物)"
+            "instruction sequence differs at #{i} between {label_a} and {label_b} — determinism broken"
         );
+    }
+}
+
+/// 对象字节表全等断言（同名对象必须逐字节一致）。
+fn assert_objects_eq(label_a: &str, a: &[(String, Vec<u8>)], label_b: &str, b: &[(String, Vec<u8>)]) {
+    let names_a: Vec<&str> = a.iter().map(|(n, _)| n.as_str()).collect();
+    let names_b: Vec<&str> = b.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names_a, names_b,
+        "object file sets differ between {label_a} ({}) and {label_b} ({}) — CGU 分区/对象命名不稳定",
+        names_a.len(),
+        names_b.len()
+    );
+    for ((na, ba), (nb, bb)) in a.iter().zip(b.iter()) {
+        assert_eq!(
+            ba, bb,
+            "object '{na}' bytes differ between {label_a} and {label_b} — 多对象逐字节确定被破坏"
+        );
+        let _ = nb;
     }
 }
 
@@ -348,64 +370,201 @@ fn deterministic_output_across_runs() {
     println!("PASS  determinism inst_seq_len={}", seq_a.len());
 }
 
-/// M3/M4（并行 CGU Stage A，-C codegen-units=N）：产物（剥离地址后的指令
-/// 序列）必须与 `-C codegen-units` 及 `FORGE_CODEGEN_THREADS` 无关——
-/// 任务化编译 + 单对象按符号序归并不得改变函数布局（验收核心：行为不变
-/// 优先）。矩阵：cgu=1/2/4（T=1 串行 vs env 显式并行）+ THREADS=1 逃生口
-/// 对照 + cgu=1 下 THREADS=4 对照 + **M4 真并行池维**：
-/// `-Z threads=2`（rustc 前端并行池 + `jobs.frontend.is_some()` 门控）
-/// + `FORGE_CODEGEN_THREADS=4`（forge 函数任务 par_map 上池并行）。
+/// M6（Stage B）多对象确定性矩阵。
+///
+/// 应力源 = 多模块（rustc 按模块生成 CGU；小 crate 默认合并成单 CGU 的
+/// 情况下用显式 `-C codegen-units` 强制多分区）。
+/// 矩阵：
+/// - cgu=1 ×2（单 CGU → 单对象，Stage A 回归锚）
+/// - cgu=4 ×2（多对象）
+/// - cgu=16 ×2（多对象——CGU 数由模块数定，≥2）
+/// - cgu=4 + `-Z threads=2` + FORGE_CODEGEN_THREADS=4（真并行池，M4 机制
+///   在多对象下——函数任务跨 CGU 上池并行）
+/// 断言：
+/// 1. 同配置两次编译：对象文件**逐字节全等** + 链接产物指令序列全等；
+/// 2. 并行与串行（cgu=4）：对象字节全等（par_map 保序 + 归并确定）；
+/// 3. 跨配置：退出码恒等（运行行为一致；.o 布局/数量由 CGU 分区定——
+///    不再要求指令序列跨配置全等，见文件头口径说明）。
 #[test]
-fn deterministic_across_codegen_units_and_threads() {
-    let workdir = std::env::temp_dir().join(format!("forge_det_m3_{}", std::process::id()));
+fn deterministic_multi_object_bytes_across_runs_and_modes() {
+    let workdir = std::env::temp_dir().join(format!("forge_det_m6_{}", std::process::id()));
     std::fs::create_dir_all(&workdir).expect("create workdir");
+    let src = m6_src();
     let variants: [(&str, &[&str], &[(&str, &str)]); 7] = [
-        ("cgu1", &["-C", "codegen-units=1"], &[]),
-        ("cgu2", &["-C", "codegen-units=2"], &[]),
-        ("cgu4", &["-C", "codegen-units=4"], &[]),
-        // 逃生口：FORGE_CODEGEN_THREADS=1 强制串行（即使 cgu>1）
+        ("cgu1_a", &["-C", "codegen-units=1"], &[]),
+        ("cgu1_b", &["-C", "codegen-units=1"], &[]),
+        ("cgu4_a", &["-C", "codegen-units=4"], &[]),
+        ("cgu4_b", &["-C", "codegen-units=4"], &[]),
+        // M4 真并行池：rustc -Z threads=2 + forge 函数任务 par_map 上池
         (
-            "cgu4_t1",
-            &["-C", "codegen-units=4"],
-            &[("FORGE_CODEGEN_THREADS", "1")],
-        ),
-        // cgu=1 时 THREADS=4：无 -Z threads → 门控不满足，仍串行（与 cgu1
-        // 同产物；仅 stderr 提示"需 -Z threads"）
-        (
-            "cgu1_t4",
-            &["-C", "codegen-units=1"],
-            &[("FORGE_CODEGEN_THREADS", "4")],
-        ),
-        // M4 真并行池：rustc -Z threads=2（前端并行 + jobs.frontend=Some）
-        // + FORGE_CODEGEN_THREADS=4 → forge 函数任务 par_map 上池并行。
-        (
-            "cgu4_zt2_t4",
+            "cgu4_par",
             &["-C", "codegen-units=4", "-Z", "threads=2"],
             &[("FORGE_CODEGEN_THREADS", "4")],
         ),
-        (
-            "cgu1_zt2_t4",
-            &["-C", "codegen-units=1", "-Z", "threads=2"],
-            &[("FORGE_CODEGEN_THREADS", "4")],
-        ),
+        ("cgu16_a", &["-C", "codegen-units=16"], &[]),
+        ("cgu16_b", &["-C", "codegen-units=16"], &[]),
     ];
-    let mut seqs: Vec<(String, Vec<String>)> = Vec::new();
+    let mut outs: Vec<(String, Vec<(String, Vec<u8>)>, Vec<String>, i32)> = Vec::new();
     for (name, extra, envs) in variants {
-        let exe = compile(&workdir, name, extra, envs)
+        let (objs, exe) = compile_to_dir(&workdir, name, &src, extra, envs)
             .map_err(|e| format!("{name}: {e}"))
             .expect("compile variant");
-        let seq = inst_seq(&exe);
-        assert!(!seq.is_empty(), "no instructions extracted from {name}");
-        seqs.push((name.to_string(), seq));
+        assert!(!objs.is_empty(), "{name}: no forge objects produced");
+        let exit = run_exit(&exe);
+        outs.push((name.to_string(), objs, inst_seq(&exe), exit));
     }
     let _ = std::fs::remove_dir_all(&workdir);
 
-    let (base_name, base) = &seqs[0];
-    for (name, seq) in &seqs[1..] {
-        assert_seq_eq(base_name, base, name, seq);
+    // 跨配置：退出码恒等（多对象布局可不同，行为必须一致）
+    for (name, _, _, exit) in &outs {
+        assert_eq!(
+            *exit, 75,
+            "{name}: 跨配置行为漂移——exit={exit} ≠ 75（Stage B 多对象不得改变语义）"
+        );
+    }
+    // cgu1 单对象锚：1 个对象（Stage A 形态）
+    assert_eq!(outs[0].1.len(), 1, "cgu=1 应为单对象");
+    // 多对象锚：cgu4/cgu16 至少 2 个对象（多模块 → 多 CGU）
+    assert!(outs[2].1.len() >= 2, "cgu=4 应为多对象（多模块源）");
+    assert!(outs[5].1.len() >= 2, "cgu=16 应为多对象（多模块源）");
+
+    // 同配置重复：逐对象字节全等 + 链接产物指令序列全等
+    for (a_idx, b_idx) in [(0usize, 1usize), (2, 3), (5, 6)] {
+        let (na, oa, sa, _) = &outs[a_idx];
+        let (nb, ob, sb, _) = &outs[b_idx];
+        assert_objects_eq(na, oa, nb, ob);
+        assert_seq_eq(na, sa, nb, sb);
+    }
+    // 并行（cgu4_par）与串行（cgu4_a）：对象字节全等
+    assert_objects_eq("cgu4_serial", &outs[2].1, "cgu4_par_map", &outs[4].1);
+    assert_seq_eq("cgu4_serial", &outs[2].2, "cgu4_par_map", &outs[4].2);
+
+    println!(
+        "PASS  deterministic_multi_object objects(cgu1)={} objects(cgu4)={} objects(cgu16)={} variants=7 exit=75 逐对象字节全等（含 -Z threads 真并行）",
+        outs[0].1.len(),
+        outs[2].1.len(),
+        outs[5].1.len()
+    );
+}
+
+/// 编译到独立子目录并收集对象文件中内部数据符号名（`__slice_*`/`__vtable_*`，
+/// M5 内容稳定键）。`-C save-temps` 保留对象；Stage B 多对象下聚合全部
+/// `forge_codegen_output*.o`（每个数据符号只由 owner CGU 定义一次）。
+fn compile_and_data_syms(
+    workdir: &Path,
+    run_dir: &str,
+    src_name: &str,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Vec<String>, String> {
+    let run = workdir.join(run_dir);
+    std::fs::create_dir_all(&run).map_err(|e| e.to_string())?;
+    let src = workdir.join(format!("{src_name}.rs"));
+    let exe = run.join(format!("{src_name}.exe"));
+    let mut cmd = Command::new("rustc");
+    cmd.arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
+        .args(["-C", "panic=abort", "-C", "overflow-checks=off", "--edition", "2024"])
+        .arg("-C")
+        .arg("save-temps=yes")
+        .args(extra)
+        .arg("-C")
+        .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .envs(envs.iter().copied());
+    let out = cmd.output().map_err(|e| format!("failed to spawn rustc: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "compile failed: {}\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .take(10)
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    let nm = std::env::var("FORGE_E2E_NM").unwrap_or_else(|_| "llvm-nm".to_string());
+    let objs = forge_objects(&run);
+    if objs.is_empty() {
+        return Err(format!("object not found in: {}", run.display()));
+    }
+    let mut names: Vec<String> = Vec::new();
+    for obj in &objs {
+        let out = Command::new(&nm)
+            .arg(obj)
+            .output()
+            .map_err(|e| format!("llvm-nm spawn: {e}"))?;
+        names.extend(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| l.contains("__slice_") || l.contains("__vtable_"))
+                .filter_map(|l| l.split_whitespace().next_back().map(|s| s.to_string())),
+        );
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// M5（WA-38 残余关闭）：内部数据符号名必须**跨运行与调度模式稳定**。
+///
+/// 旧 alloc_id 命名（`__slice_alloc{N}`/`__vtable_alloc{N}`）的 N 来自
+/// rustc 全局 AllocId `AtomicU64`（首次请求序）——-Z threads 真并行
+/// （FORGE_CODEGEN_THREADS>1 上 rustc 查询池）下调度序不定，同一内容
+/// 跨运行符号名数值漂移。M5 改为内容稳定键（64 位 FNV-1a）。M6 起数据
+/// 按 owner CGU 归属跨对象分布——本测试聚合全部对象符号名（跨串/并行、
+/// 跨运行逐字一致）。
+#[test]
+fn stable_data_symbol_names_across_scheduling() {
+    let workdir = std::env::temp_dir().join(format!("forge_det_sym_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    std::fs::write(workdir.join("sym.rs"), data_sym_stress_source()).expect("write source");
+
+    let variants: [(&str, &[&str], &[(&str, &str)]); 4] = [
+        ("serial", &[], &[]),
+        (
+            "par_a",
+            &["-Z", "threads=4"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+        (
+            "par_b",
+            &["-Z", "threads=4"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+        (
+            "par_c",
+            &["-Z", "threads=4"],
+            &[("FORGE_CODEGEN_THREADS", "4")],
+        ),
+    ];
+    let mut syms: Vec<(String, Vec<String>)> = Vec::new();
+    for (name, extra, envs) in variants {
+        let mut names = compile_and_data_syms(&workdir, name, "sym", extra, envs)
+            .map_err(|e| format!("{name}: {e}"))
+            .expect("compile variant");
+        assert!(
+            names.len() >= 20,
+            "{name}: only {} __slice/__vtable symbols — 应力源未触发数据段",
+            names.len()
+        );
+        names.sort();
+        syms.push((name.to_string(), names));
+    }
+    let _ = std::fs::remove_dir_all(&workdir);
+
+    let (base_name, base) = &syms[0];
+    for (name, names) in &syms[1..] {
+        assert_eq!(
+            base, names,
+            "internal data symbol names differ between {base_name} and {name} — \
+             M5 内容稳定键被破坏（WA-38 残余回归：alloc_id 调度序重新泄漏进符号名）"
+        );
     }
     println!(
-        "PASS  determinism_across_codegen_units inst_seq_len={} variants=7 (incl. -Z threads 真并行池 x2)",
+        "PASS  stable_data_symbol_names __slice/__vtable symbols={} variants=4 (serial + -Z threads x3)",
         base.len()
     );
 }

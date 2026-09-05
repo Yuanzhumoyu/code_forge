@@ -151,7 +151,9 @@ impl FuncRefTable {
         id
     }
 
-    /// 已注册的 vtable 数据段（供 codegen_crate 写对象文件时统一落盘）。
+    /// 已注册的 vtable 数据段（M6 起数据归属归并在 backend.rs 按符号名
+    /// owner 判定——本表不再作为落盘源；此访问器保留供表内断言/调试）。
+    #[allow(dead_code)]
     pub fn vtables(&self) -> &[VtableRecord] {
         &self.vtables
     }
@@ -200,7 +202,9 @@ impl FuncRefTable {
         id
     }
 
-    /// 已注册的 promoted/slice 常量数据段（供 codegen_crate 写 .rodata）。
+    /// 已注册的 promoted/slice 常量数据段（M6 起数据归属归并在 backend.rs
+    /// 按符号名 owner 判定——本表不再作为落盘源；此访问器保留供表内断言）。
+    #[allow(dead_code)]
     pub fn promoted(&self) -> &[PromotedRecord] {
         &self.promoted
     }

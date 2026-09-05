@@ -43,7 +43,7 @@ RUSTFLAGS="... -Zshare-generics=yes ..." cargo +nightly -Z build-std=core,alloc 
 ```
 
 `-Zshare-generics=yes` 消除上游（core/alloc）泛型实例的双重复定义（LNK2005：
-`checked_mul`/`abs_diff` 等同时出现在 libcore 与 forge_codegen_output.o）。
+`checked_mul`/`abs_diff` 等同时出现在 libcore 与 forge 产出的对象文件）。
 **已知残余**：`GlobalAlloc::realloc` 经 forge 编译后引用 `core::ptr::mut_ptr::is_null`
 实例，而 LLVM 侧 libcore（share-generics）未生成该符号 → LNK2019 待补
 （需 forge 侧补生成"被引用但上游未生成的实例"）。**同类实证（裸 rustc 场景）**：
@@ -51,6 +51,19 @@ RUSTFLAGS="... -Zshare-generics=yes ..." cargo +nightly -Z build-std=core,alloc 
 `core::num::unchecked_sub::precondition_check`（`v.as_ptr()`/`capacity()` 等
 经 `iter().enumerate()` 路径触发），LLVM 侧未生成 → LNK2019 —— 同一机制：
 core 泛型实例的辅助函数（is_null/precondition_check）缺失，需统一补生成。
+
+## 对象文件形态（M6 Stage B：每 CGU 独立对象）
+
+forge 消费 rustc 的真 CGU 分区（`collect_and_partition_mono_items`）：
+- 多 CGU 时**每 CGU 一个对象文件** `forge_codegen_output.<cgu>.o`（rustc 原生
+  多对象形态——rustc 分区出 >1 个 CGU 才触发；rustc 非增量默认会把过小
+  CGU 合并，小 crate 常为单 CGU → 单对象 `forge_codegen_output.o`）；
+- join_codegen 为每个对象产出独立 WorkProduct（CGU 级增量元数据）；
+- 数据（vtable/promoted）由首见 CGU（owner）定义，其余对象 UNDEF 引用；
+  实例（Fn/Static）跨 CGU 同名去重——MSVC link.exe/lld-link 多 .obj 链接，
+  无 LNK2005；
+- `-C debuginfo>=1`（B-v1：单 CU DWARF 不拆）或 `FORGE_SINGLE_OBJECT=1`
+  回退单对象路径（`-C codegen-units=1` 为单对象回归锚）。
 
 入口程序模板（`mainCRTStartup` 的返回值作为退出码）：
 
