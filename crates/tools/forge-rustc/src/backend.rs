@@ -29,12 +29,17 @@
 //! - 跨 CGU 函数引用 = 任务内就地 resolve 成真实符号名（M4 机制）→ 对象间
 //!   UNDEF + 链接器解析。
 //! - alloc runtime（__rust_alloc 等手写 shim）随首 CGU 对象（确定性位置）。
+//! - **B-v2（debuginfo per-CGU CU）**：`-C debuginfo>=1` 不再强制单对象——
+//!   每个有函数的 CGU 对象并入**独立 DWARF CU**（.debug_info/.debug_line/
+//!   .debug_aranges/.debug_frame 等，CU 内 reloc 只引用本对象已定义函数符号，
+//!   满足 add_dwarf 同文件定义约束）；纯数据对象不产 dwarf。
 //!
-//! 门控：`-C debuginfo>=1`（B-v1：单 CU DWARF 不拆，dwarf 段 reloc 要求目标
-//! 符号同文件定义——见 add_dwarf）或 `-C codegen-units=1`（单 CGU 回归锚）或
-//! env `FORGE_SINGLE_OBJECT=1` 时回退 **Stage A 单对象路径**（跨 CGU 摊平 +
-//! 全局符号序 + 单 writer 尾注数据/dwarf——debuginfo 用例与 cgu=1 行为等价
-//! 保持）。默认 rustc codegen-units=16 → 多对象为常态路径。
+//! 门控：env `FORGE_SINGLE_OBJECT=1` 或单 CGU（`-C codegen-units=1` 回归锚）
+//! 回退 **Stage A 单对象路径**（跨 CGU 摊平 + 全局符号序 + 单 writer 尾注
+//! 数据/dwarf——cgu=1 行为等价保持）。默认 rustc codegen-units=16，但非增量
+//! 下 rustc 会合并过小 CGU（NON_INCR_MIN_CGU_SIZE，见 WA-39）——单模块小
+//! crate 通常单 CGU → 单对象路径；显式 codegen-units + 多模块/大 crate 才
+//! 产生多分区 → 多对象常态路径。
 
 use crate::alloc_runtime::build_alloc_runtime;
 use crate::compile::{auto_register_isa_for_target, isa_name_for_target};
@@ -116,15 +121,16 @@ impl CodegenBackend for CodegenLibBackend {
             }
         }
 
-        // B-v1 门控：debuginfo>=1（单 CU DWARF 不拆——add_dwarf 的 reloc 目标
-        // 符号必须同文件定义）或 FORGE_SINGLE_OBJECT=1 逃生口 → 单对象；
-        // 单 CGU 天然单对象（`-C codegen-units=1` 回归锚 = Stage A 语义）。
+        // B-v2 门控：debuginfo 关闭或开启都可多对象（开启时每 CGU 对象带
+        // 独立 DWARF CU——per-CGU CU，reloc 目标符号=本对象内定义，见下方
+        // dwarf 块）；FORGE_SINGLE_OBJECT=1 逃生口强制单对象；单 CGU 天然
+        // 单对象（`-C codegen-units=1` 回归锚 = Stage A 语义）。
         let debuginfo_on = tcx.sess.opts.debuginfo != rustc_session::config::DebugInfo::None;
         let debuginfo_full = tcx.sess.opts.debuginfo == rustc_session::config::DebugInfo::Full;
         let force_single = std::env::var("FORGE_SINGLE_OBJECT")
             .map(|v| v.trim() == "1")
             .unwrap_or(false);
-        let multi_object = !debuginfo_on && !force_single && codegen_units.len() > 1;
+        let multi_object = !force_single && codegen_units.len() > 1;
 
         // 实例分组计划：单对象 = 1 个（跨 CGU 摊平）计划；多对象 = 每 CGU 一个
         //（组内过滤 allocator shim 等 + 按符号名排序 + 跨 CGU 同名去重）。
@@ -310,9 +316,16 @@ impl CodegenBackend for CodegenLibBackend {
         // owner CGU 定义。
         // B1：per-function per-statement 行号表（(符号, [(机器码偏移, 行)])）
         let mut fn_line_tables: Vec<(String, Vec<(u32, u32)>)> = Vec::new();
-        // CU high_pc：所有发射函数的代码总字节（含 main 别名副本——见下方
-        // add_function("main")），dwarf CU DIE 范围用（gdb pc→CU 映射）。
-        let mut code_span: u64 = 0;
+        // B-v2（per-CGU CU）：CU high_pc = 各对象发射函数代码总字节（含 main
+        // 别名副本——见下方 add_function("main")）——**每 plan 独立**：dwarf
+        // CU DIE 范围用（gdb pc→CU 映射）。
+        let mut plan_code_spans: Vec<u64> = vec![0; plans.len()];
+        // 每对象成功发射的函数符号集（dwarf 行/变量条目按对象过滤用——
+        // per-CGU CU 只含本对象定义的符号，add_dwarf 的 reloc 目标因此
+        // 同文件可解析）。
+        let mut plan_fn_syms: Vec<std::collections::HashSet<String>> = (0..plans.len())
+            .map(|_| std::collections::HashSet::new())
+            .collect();
         // 每函数代码字节（subprogram DW_AT_high_pc——gdb 需函数结束地址才能
         // 建 function block，缺则变量 DIE 被丢（对照 gcc 实证））。
         let mut fn_sizes: std::collections::HashMap<String, u64> = Default::default();
@@ -320,6 +333,40 @@ impl CodegenBackend for CodegenLibBackend {
         // x86 prologue 扫描产物；与 fn_sizes 同键控、同迭代序收集；无 CFI
         //（非 x86/形态不符）不进表 → dwarf.rs 只对这些符号产 FDE）。
         let mut fn_cfi: Vec<(String, u64, FunctionCfi)> = Vec::new();
+
+        // B-v2：debuginfo 上下文的（producer, 源文件路径）——与 CGU 无关，
+        // 每 CU 复用同一串（每 CGU 一个 DWARF CU、共享同一源文件）。
+        let dwarf_ctx = if debuginfo_on {
+            let producer = format!(
+                "code-forge {} (rustc {})",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("CFG_VERSION").unwrap_or("")
+            );
+            // 源文件名：CU DW_AT_name + .debug_line file 条目必须指向磁盘上的
+            // 真实源文件（gdb `list`/源码断点按此打开文件；crate 名匹配不到
+            // .rs 文件）。取本地 crate 根模块所在文件。
+            // rustc_span::FileName 无 Display（1.100 已移除）；Real 变体经
+            // local_path() 取磁盘路径。
+            let root_name = tcx
+                .sess
+                .source_map()
+                .lookup_source_file(
+                    tcx.def_span(rustc_hir::def_id::LOCAL_CRATE.as_def_id())
+                        .lo(),
+                )
+                .name
+                .clone();
+            let src_file = match &root_name {
+                rustc_span::FileName::Real(rf) => rf
+                    .local_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string()),
+                _ => "<unknown>".to_string(),
+            };
+            Some((producer, src_file))
+        } else {
+            None
+        };
 
         let isa_name = isa_name_for_target(&target_triple);
         for (pi, plan) in plans.iter().enumerate() {
@@ -348,7 +395,8 @@ impl CodegenBackend for CodegenLibBackend {
                                     );
                                 }
                                 let _ = writer.add_function(&outcome.sym_name, &compiled_func);
-                                code_span += compiled_func.code.len() as u64;
+                                plan_code_spans[pi] += compiled_func.code.len() as u64;
+                                plan_fn_syms[pi].insert(outcome.sym_name.clone());
                                 fn_sizes
                                     .insert(outcome.sym_name.clone(), compiled_func.code.len() as u64);
                                 // M2：CFI（x86 prologue scan 产物）——与 fn_sizes
@@ -374,7 +422,7 @@ impl CodegenBackend for CodegenLibBackend {
                                 // DefId 无 item_name（对 closure DefId 调用会 ICE）
                                 if tcx.def_path_str(instance.def_id()).ends_with("::main") {
                                     let _ = writer.add_function("main", &compiled_func);
-                                    code_span += compiled_func.code.len() as u64;
+                                    plan_code_spans[pi] += compiled_func.code.len() as u64;
                                 }
                             }
                             Err(e) => {
@@ -447,72 +495,72 @@ impl CodegenBackend for CodegenLibBackend {
                 let _ = writer.add_rodata(sym, bytes, *align);
             }
 
-            // C1/C2 DebugInfo（仅单对象模式——B-v1：单 CU DWARF 不拆；多对象
-            // per-CGU CU 为 B-v2）：`-C debuginfo` 非 None 时生成 DWARF 段
-            //（.debug_line/.debug_info/.debug_abbrev/.debug_frame）并入主对象。
-            let single_object = plans.len() == 1;
-            if single_object && debuginfo_on && !func_ref_table.line_entries().is_empty() {
-                let entries = func_ref_table.line_entries().to_vec();
-                let vars = func_ref_table.var_entries().to_vec();
+            // C1/C2 DebugInfo（B-v2 per-CGU CU）：`-C debuginfo` 非 None 时
+            // **每个有函数的对象**生成独立 DWARF CU（.debug_line/.debug_line_str/
+            // .debug_info/.debug_aranges/.debug_abbrev/.debug_frame）并入该对象
+            // ——CU 内引用的符号 = 本对象已定义的函数（add_function 已登记），
+            // 满足 add_dwarf 的同文件定义约束；纯数据对象不产 dwarf。
+            // 单对象模式 = 单个完整 CU（与 Stage A 逐字节等价——per-plan
+            // 子集 = 全集，顺序/字节不变）。
+            if debuginfo_on && !func_ref_table.line_entries().is_empty() {
+                let sym_set = &plan_fn_syms[pi];
                 // B1：entries（每函数声明行）+ fn_line_tables（per-statement）→
                 // fns: (符号, 声明行, [(指令偏移, 行)])——dwarf gen_debug_line
                 // 生成函数级 + 每语句行号条目（COFF addend 隐式：占位写偏移）。
-                let fns: Vec<(String, u32, Vec<(u32, u32)>)> = entries
+                // 按本对象函数集过滤（保留全局登记序 = 组内符号序）。
+                let entries: Vec<(String, u32)> = func_ref_table
+                    .line_entries()
                     .iter()
-                    .map(|(s, l)| {
-                        let stmts = fn_line_tables
-                            .iter()
-                            .find(|(fs, _)| fs == s)
-                            .map(|(_, v)| v.clone())
-                            .unwrap_or_default();
-                        (s.clone(), *l, stmts)
-                    })
+                    .filter(|(s, _)| sym_set.contains(s))
+                    .cloned()
                     .collect();
-                let producer = format!(
-                    "code-forge {} (rustc {})",
-                    env!("CARGO_PKG_VERSION"),
-                    option_env!("CFG_VERSION").unwrap_or("")
-                );
-                // 源文件名：CU DW_AT_name + .debug_line file 条目必须指向磁盘上的
-                // 真实源文件（gdb `list`/源码断点按此打开文件；crate 名匹配不到
-                // .rs 文件）。取本地 crate 根模块所在文件。
-                let root_name = tcx
-                    .sess
-                    .source_map()
-                    .lookup_source_file(
-                        tcx.def_span(rustc_hir::def_id::LOCAL_CRATE.as_def_id())
-                            .lo(),
-                    )
-                    .name
-                    .clone();
-                let src_file = match &root_name {
-                    rustc_span::FileName::Real(rf) => rf
-                        .local_path()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "<unknown>".to_string()),
-                    _ => "<unknown>".to_string(),
-                };
-                let sections = crate::dwarf::build_dwarf_sections(
-                    &fns,
-                    &vars,
-                    &producer,
-                    &src_file,
-                    code_span,
-                    &fn_sizes,
-                    func_ref_table.enum_types(),
-                    debuginfo_full,
-                    &fn_cfi,
-                );
-                // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——
-                // object crate 对 COFF 调试段发射 ADDR64 reloc，链接器解析
-                // 为函数真实地址（low_pc/行号 set_address 可用）。
-                let dwarf_sections: Vec<(&str, Vec<u8>, Vec<(usize, String)>)> = sections
-                    .iter()
-                    .map(|(n, b, r)| (n.as_str(), b.clone(), r.clone()))
-                    .collect();
-                if let Err(e) = writer.add_dwarf(&dwarf_sections) {
-                    tcx.dcx()
-                        .warn(format!("code-forge: dwarf emission failed: {e}"));
+                if !entries.is_empty() {
+                    let fns: Vec<(String, u32, Vec<(u32, u32)>)> = entries
+                        .iter()
+                        .map(|(s, l)| {
+                            let stmts = fn_line_tables
+                                .iter()
+                                .find(|(fs, _)| fs == s)
+                                .map(|(_, v)| v.clone())
+                                .unwrap_or_default();
+                            (s.clone(), *l, stmts)
+                        })
+                        .collect();
+                    let vars: Vec<crate::dwarf::FnVarEntries> = func_ref_table
+                        .var_entries()
+                        .iter()
+                        .filter(|fv| sym_set.contains(&fv.sym))
+                        .cloned()
+                        .collect();
+                    let fn_cfi_plan: Vec<(String, u64, FunctionCfi)> = fn_cfi
+                        .iter()
+                        .filter(|(s, _, _)| sym_set.contains(s))
+                        .cloned()
+                        .collect();
+                    let (producer, src_file) =
+                        dwarf_ctx.as_ref().expect("debuginfo_on ⇒ dwarf_ctx 存在");
+                    let sections = crate::dwarf::build_dwarf_sections(
+                        &fns,
+                        &vars,
+                        producer,
+                        src_file,
+                        plan_code_spans[pi],
+                        &fn_sizes,
+                        func_ref_table.enum_types(),
+                        debuginfo_full,
+                        &fn_cfi_plan,
+                    );
+                    // 段内 reloc（地址占位 → 函数符号）随段数据传给 add_dwarf——
+                    // object crate 对 COFF 调试段发射 ADDR64 reloc，链接器解析
+                    // 为函数真实地址（low_pc/行号 set_address 可用）。
+                    let dwarf_sections: Vec<(&str, Vec<u8>, Vec<(usize, String)>)> = sections
+                        .iter()
+                        .map(|(n, b, r)| (n.as_str(), b.clone(), r.clone()))
+                        .collect();
+                    if let Err(e) = writer.add_dwarf(&dwarf_sections) {
+                        tcx.dcx()
+                            .warn(format!("code-forge: dwarf emission failed: {e}"));
+                    }
                 }
             }
 

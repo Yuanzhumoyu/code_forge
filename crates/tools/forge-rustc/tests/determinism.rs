@@ -140,7 +140,7 @@ fn data_sym_stress_source() -> String {
     s.push_str("    let mut acc = 0i32;\n");
     let mut idx = 0;
     for i in 0..6 {
-        for t in 0..6 {
+        for _t in 0..6 {
             idx += 1;
             s.push_str(&format!("    acc += f{idx}(&S{i});\n"));
         }
@@ -203,8 +203,13 @@ fn forge_object_bytes(dir: &Path) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-/// 编译并收集产物：源码（`src`，目录内文件 `prog.rs`）在独立子目录
-/// `subdir` 内编译（`-C save-temps` 保留对象），返回 (对象文件字节, exe 路径)。
+/// 编译并收集产物：源码（`src`）在独立子目录 `subdir` 内编译
+///（`-C save-temps` 保留对象），返回 (对象文件字节, exe 路径)。
+///
+/// 注意：源码写入 **workdir 根共享路径**（`prog_src.rs`）而非子目录——DWARF
+/// 的 CU name/行表 file 条目内嵌**源文件绝对路径**：同配置两次编译若各用
+/// 不同子目录的源文件，debug 段字节会因路径不同而"漂移"（非真实非确定）。
+/// 所有变体共享同一源文件路径后，debuginfo 变体的逐对象字节比较才成立。
 fn compile_to_dir(
     workdir: &Path,
     subdir: &str,
@@ -214,7 +219,8 @@ fn compile_to_dir(
 ) -> Result<(Vec<(String, Vec<u8>)>, PathBuf), String> {
     let run = workdir.join(subdir);
     std::fs::create_dir_all(&run).map_err(|e| e.to_string())?;
-    std::fs::write(run.join("prog.rs"), src).map_err(|e| e.to_string())?;
+    let src_path = workdir.join("prog_src.rs");
+    std::fs::write(&src_path, src).map_err(|e| e.to_string())?;
     let exe = run.join("prog.exe");
     let mut cmd = Command::new("rustc");
     cmd.arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
@@ -224,7 +230,7 @@ fn compile_to_dir(
         .args(extra)
         .arg("-C")
         .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
-        .arg(run.join("prog.rs"))
+        .arg(&src_path)
         .arg("-o")
         .arg(&exe)
         .envs(envs.iter().copied());
@@ -380,6 +386,9 @@ fn deterministic_output_across_runs() {
 /// - cgu=16 ×2（多对象——CGU 数由模块数定，≥2）
 /// - cgu=4 + `-Z threads=2` + FORGE_CODEGEN_THREADS=4（真并行池，M4 机制
 ///   在多对象下——函数任务跨 CGU 上池并行）
+/// - cgu=4 + debuginfo=1 ×2、cgu=4 + debuginfo=2 ×2（B-v2 per-CGU CU：
+///   debuginfo 与多对象并存——每个带函数的对象各有独立 DWARF CU，
+///   逐对象字节稳定）
 /// 断言：
 /// 1. 同配置两次编译：对象文件**逐字节全等** + 链接产物指令序列全等；
 /// 2. 并行与串行（cgu=4）：对象字节全等（par_map 保序 + 归并确定）；
@@ -390,7 +399,7 @@ fn deterministic_multi_object_bytes_across_runs_and_modes() {
     let workdir = std::env::temp_dir().join(format!("forge_det_m6_{}", std::process::id()));
     std::fs::create_dir_all(&workdir).expect("create workdir");
     let src = m6_src();
-    let variants: [(&str, &[&str], &[(&str, &str)]); 7] = [
+    let variants: [(&str, &[&str], &[(&str, &str)]); 11] = [
         ("cgu1_a", &["-C", "codegen-units=1"], &[]),
         ("cgu1_b", &["-C", "codegen-units=1"], &[]),
         ("cgu4_a", &["-C", "codegen-units=4"], &[]),
@@ -403,6 +412,27 @@ fn deterministic_multi_object_bytes_across_runs_and_modes() {
         ),
         ("cgu16_a", &["-C", "codegen-units=16"], &[]),
         ("cgu16_b", &["-C", "codegen-units=16"], &[]),
+        // B-v2：debuginfo 与多对象并存（per-CGU CU）——逐对象字节稳定
+        (
+            "cgu4_dbg1_a",
+            &["-C", "codegen-units=4", "-C", "debuginfo=1"],
+            &[],
+        ),
+        (
+            "cgu4_dbg1_b",
+            &["-C", "codegen-units=4", "-C", "debuginfo=1"],
+            &[],
+        ),
+        (
+            "cgu4_dbg2_a",
+            &["-C", "codegen-units=4", "-C", "debuginfo=2"],
+            &[],
+        ),
+        (
+            "cgu4_dbg2_b",
+            &["-C", "codegen-units=4", "-C", "debuginfo=2"],
+            &[],
+        ),
     ];
     let mut outs: Vec<(String, Vec<(String, Vec<u8>)>, Vec<String>, i32)> = Vec::new();
     for (name, extra, envs) in variants {
@@ -415,21 +445,27 @@ fn deterministic_multi_object_bytes_across_runs_and_modes() {
     }
     let _ = std::fs::remove_dir_all(&workdir);
 
-    // 跨配置：退出码恒等（多对象布局可不同，行为必须一致）
+    // 跨配置：退出码恒等（单对象/多对象、debuginfo 开/关布局可不同——行为必须一致）
     for (name, _, _, exit) in &outs {
         assert_eq!(
             *exit, 75,
-            "{name}: 跨配置行为漂移——exit={exit} ≠ 75（Stage B 多对象不得改变语义）"
+            "{name}: 跨配置行为漂移——exit={exit} ≠ 75（Stage B 不得改变语义）"
         );
     }
     // cgu1 单对象锚：1 个对象（Stage A 形态）
     assert_eq!(outs[0].1.len(), 1, "cgu=1 应为单对象");
-    // 多对象锚：cgu4/cgu16 至少 2 个对象（多模块 → 多 CGU）
-    assert!(outs[2].1.len() >= 2, "cgu=4 应为多对象（多模块源）");
-    assert!(outs[5].1.len() >= 2, "cgu=16 应为多对象（多模块源）");
+    // 多对象锚：cgu4/cgu16/debuginfo 变体至少 2 个对象（多模块 → 多 CGU）
+    for idx in [2usize, 5, 7, 9] {
+        assert!(
+            outs[idx].1.len() >= 2,
+            "{} 应为多对象（多模块源），实际 {}",
+            outs[idx].0,
+            outs[idx].1.len()
+        );
+    }
 
     // 同配置重复：逐对象字节全等 + 链接产物指令序列全等
-    for (a_idx, b_idx) in [(0usize, 1usize), (2, 3), (5, 6)] {
+    for (a_idx, b_idx) in [(0usize, 1usize), (2, 3), (5, 6), (7, 8), (9, 10)] {
         let (na, oa, sa, _) = &outs[a_idx];
         let (nb, ob, sb, _) = &outs[b_idx];
         assert_objects_eq(na, oa, nb, ob);
@@ -440,10 +476,13 @@ fn deterministic_multi_object_bytes_across_runs_and_modes() {
     assert_seq_eq("cgu4_serial", &outs[2].2, "cgu4_par_map", &outs[4].2);
 
     println!(
-        "PASS  deterministic_multi_object objects(cgu1)={} objects(cgu4)={} objects(cgu16)={} variants=7 exit=75 逐对象字节全等（含 -Z threads 真并行）",
+        "PASS  deterministic_multi_object objects(cgu1)={} objects(cgu4)={} objects(cgu16)={} \
+         objects(cgu4_dbg1)={} objects(cgu4_dbg2)={} variants=11 exit=75 逐对象字节全等（含 -Z threads 真并行 + per-CGU dwarf）",
         outs[0].1.len(),
         outs[2].1.len(),
-        outs[5].1.len()
+        outs[5].1.len(),
+        outs[7].1.len(),
+        outs[9].1.len()
     );
 }
 

@@ -62,8 +62,11 @@ forge 消费 rustc 的真 CGU 分区（`collect_and_partition_mono_items`）：
 - 数据（vtable/promoted）由首见 CGU（owner）定义，其余对象 UNDEF 引用；
   实例（Fn/Static）跨 CGU 同名去重——MSVC link.exe/lld-link 多 .obj 链接，
   无 LNK2005；
-- `-C debuginfo>=1`（B-v1：单 CU DWARF 不拆）或 `FORGE_SINGLE_OBJECT=1`
-  回退单对象路径（`-C codegen-units=1` 为单对象回归锚）。
+- `-C debuginfo>=1` 与多对象并存（B-v2）：每个有函数的 CGU 对象带独立
+  DWARF CU（per-CGU CU，reloc 目标符号 = 本对象定义）——不再强制单对象；
+  `FORGE_SINGLE_OBJECT=1` 仍可强制单对象（`-C codegen-units=1` 为单对象
+  回归锚，单 CU dwarf 形态与 Stage A 逐字节一致）；`-C incremental` 增量
+  会话下多 CGU 编译可用（二次/含变更的编译不 ICE，CGU 级 WorkProduct 落盘）。
 
 入口程序模板（`mainCRTStartup` 的返回值作为退出码）：
 

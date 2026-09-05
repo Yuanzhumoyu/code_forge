@@ -1684,10 +1684,7 @@ fn e2e_parallel_pool_threads() {
         "debuginfo_full",
     ];
     for name in names {
-        let case = CASES
-            .iter()
-            .find(|c| c.name == name)
-            .expect("case exists");
+        let case = CASES.iter().find(|c| c.name == name).expect("case exists");
         let plain = run_case(case, &workdir)
             .map_err(|e| format!("{name} (T=1): {e}"))
             .expect("plain compile/run");
@@ -1708,7 +1705,10 @@ fn e2e_parallel_pool_threads() {
             par, plain,
             "{name}: 并行池退出码 {par} ≠ T=1 {plain}——par_map 路径产物行为漂移"
         );
-        println!("PASS  parallel-pool {:<16} exit={} (T=1 == -Z threads=2)", name, par);
+        println!(
+            "PASS  parallel-pool {:<16} exit={} (T=1 == -Z threads=2)",
+            name, par
+        );
     }
     let _ = std::fs::remove_dir_all(&workdir);
 }
@@ -1842,7 +1842,6 @@ fn e2e_multi_object_cgu_units() {
          acc + beta::SX(5).v() + alpha::fstr().len() as i32 + beta::fslice().len() as i32 + sd.sp()";
     let src = make_source(body, extra, "mainCRTStartup");
     let src_path = workdir.join("m6_multi.rs");
-    let exe = workdir.join("m6_multi.exe");
     std::fs::write(&src_path, &src).expect("write source");
     // alpha::fa(0..3)=1+3+5=9；SX(5).v()=7；fstr len=9；fslice len=2；sd.sp()=8 → 35
     let expected = 35;
@@ -1877,7 +1876,7 @@ fn e2e_multi_object_cgu_units() {
         Ok(status.code().unwrap_or(-1))
     };
 
-    let mut base_args = vec![
+    let base_args = vec![
         "-Zcodegen-backend=".to_string() + &backend_dll().display().to_string(),
         "-C".to_string(),
         "panic=abort".to_string(),
@@ -1933,5 +1932,196 @@ fn e2e_multi_object_cgu_units() {
         "PASS  e2e_multi_object_cgu_units exit={} (serial == -Z threads=2) objects={}",
         serial_exit,
         objs.len()
+    );
+}
+
+/// M6 B-v2（debuginfo per-CGU CU）：`-C debuginfo>=1` 在多对象模式下不再
+/// 回退单对象——**每个有函数的 CGU 对象自带独立 DWARF CU**（CU 内 reloc
+/// 只引用本对象已定义函数符号，满足 add_dwarf 同文件约束）。断言：
+/// 1. debuginfo=1 / debuginfo=2 + `-C codegen-units=4`（多模块源）编译链接
+///    成功、运行退出码正确（35）；
+/// 2. 产物 ≥2 个对象，且其中 ≥2 个含 `.debug_info` 段（per-CGU CU——
+///    单 CU 摊平形态下只有一个对象带 debug 段）；
+/// 3. debuginfo=2（full：变量/参数 DIE）同路径同样成立（debuginfo_full 单
+///    模块回退单对象路径由 e2e debuginfo_full 用例守护）。
+#[test]
+fn e2e_multi_object_debuginfo_per_cgu_cu() {
+    let workdir =
+        std::env::temp_dir().join(format!("forge_rustc_e2e_dbg_m6_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    println!("workdir: {}", workdir.display());
+
+    // 多模块 + trait dyn + slice/str 数据 + 跨模块调用（mod alpha/beta + root 各成 CGU）
+    let extra = "mod alpha {\n\
+         pub fn fa(x: i32) -> i32 { x * 2 + 1 }\n\
+         pub fn fstr() -> &'static str { \"alpha-lit\" }\n\
+         }\n\
+         mod beta {\n\
+         pub struct SX(pub i32);\n\
+         impl SX { pub fn v(&self) -> i32 { self.0 + 2 } }\n\
+         pub fn fslice() -> &'static [u8] { b\"bb\" }\n\
+         }\n\
+         trait Speak { fn sp(&self) -> i32; }\n\
+         struct Dog;\n\
+         impl Speak for Dog { fn sp(&self) -> i32 { 8 } }\n";
+    let body = "let mut acc = 0i32; let mut i = 0; while i < 3 { acc += alpha::fa(i); i += 1; }\n\
+         let d = Dog; let sd: &dyn Speak = &d;\n\
+         acc + beta::SX(5).v() + alpha::fstr().len() as i32 + beta::fslice().len() as i32 + sd.sp()";
+    let src_path = workdir.join("m6dbg.rs");
+    std::fs::write(&src_path, make_source(body, extra, "mainCRTStartup")).expect("write source");
+    let expected = 35; // fa(0..3)=1+3+5=9；SX.v()=7；fstr len=9；fslice len=2；sp()=8
+
+    for (level, label) in [("1", "debuginfo=1"), ("2", "debuginfo=2")] {
+        let out_exe = workdir.join(format!("m6dbg_{level}.exe"));
+        let mut cmd = Command::new("rustc");
+        cmd.arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
+            .args([
+                "-C", "panic=abort", "-C", "overflow-checks=off", "--edition", "2024",
+                "-C", "codegen-units=4",
+            ])
+            .arg("-C")
+            .arg(format!("debuginfo={level}"))
+            .arg("-C")
+            .arg("save-temps=yes")
+            .arg("-C")
+            .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
+            .arg(&src_path)
+            .arg("-o")
+            .arg(&out_exe);
+        let compile = cmd.output().expect("rustc spawn");
+        if !compile.status.success() {
+            panic!(
+                "{label}: compile failed (多对象 + per-CGU dwarf)\n{}",
+                String::from_utf8_lossy(&compile.stderr)
+                    .lines()
+                    .take(15)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+        let status = Command::new(&out_exe).status().expect("run exe");
+        assert_eq!(
+            status.code(),
+            Some(expected),
+            "{label}: exit {:?} ≠ {expected}（多对象 + per-CGU dwarf 语义漂移）",
+            status.code()
+        );
+        // ≥2 个对象含 .debug_info（per-CGU CU）
+        let objs: Vec<std::path::PathBuf> = std::fs::read_dir(&workdir)
+            .expect("read workdir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                let n = p
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                // 两次 level 编译同源同 cgu → 对象名相同，只统计含 debug 段的对象
+                n.starts_with("forge_codegen_output") && n.ends_with(".o")
+            })
+            .collect();
+        let mut with_dwarf = 0;
+        for obj in &objs {
+            let out = Command::new("llvm-objdump")
+                .arg("-h")
+                .arg(obj)
+                .output()
+                .expect("llvm-objdump spawn");
+            let has_dwarf = String::from_utf8_lossy(&out.stdout).contains(".debug_info");
+            if has_dwarf {
+                with_dwarf += 1;
+            }
+        }
+        assert!(
+            with_dwarf >= 2,
+            "{label}: per-CGU CU 预期 ≥2 个对象含 .debug_info，实际 {with_dwarf}/{}（{objs:?}）",
+            objs.len(),
+        );
+        let _ = std::fs::remove_file(&out_exe);
+        let _ = std::fs::remove_file(workdir.join(format!("m6dbg_{level}.o")));
+        println!(
+            "PASS  e2e_multi_object_debuginfo {label} exit={expected} objects_with_debug_info={with_dwarf}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
+/// M6 增量编译端到端（-C incremental）：rustc 增量会话 + 多 CGU 多对象下
+/// 二次编译（含源码变更）不 ICE、CGU 级 WorkProduct 正常读写、链接运行
+/// 退出码正确。
+#[test]
+fn e2e_incremental_rebuild_cgu() {
+    let workdir = std::env::temp_dir().join(format!("forge_rustc_e2e_incr_{}", std::process::id()));
+    let incr_dir = workdir.join("incr");
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    println!("workdir: {}", workdir.display());
+
+    // v1：多模块（alpha/beta/root）——fa(0..3)=1+3+5=9；body 见 body_of(false)
+    let v1 = "mod alpha { pub fn fa(x: i32) -> i32 { x * 2 + 1 } pub fn fstr() -> &'static str { \"a\" } }\n\
+         mod beta { pub struct SX(pub i32); impl SX { pub fn v(&self) -> i32 { self.0 + 2 } } }\n\
+         trait Speak { fn sp(&self) -> i32; }\n\
+         struct Dog;\n\
+         impl Speak for Dog { fn sp(&self) -> i32 { 8 } }\n";
+    // v2：新增 mod gamma（新 CGU）+ 改变 beta::SX.v 实现（CGU 失效）
+    let v2 = "mod alpha { pub fn fa(x: i32) -> i32 { x * 2 + 1 } pub fn fstr() -> &'static str { \"a\" } }\n\
+         mod beta { pub struct SX(pub i32); impl SX { pub fn v(&self) -> i32 { self.0 + 3 } } }\n\
+         mod gamma { pub fn fg(x: i32) -> i32 { x * 5 } }\n\
+         trait Speak { fn sp(&self) -> i32; }\n\
+         struct Dog;\n\
+         impl Speak for Dog { fn sp(&self) -> i32 { 8 } }\n";
+    let body_of = |use_gamma: bool| {
+        format!(
+            "let mut acc = 0i32; let mut i = 0; while i < 3 {{ acc += alpha::fa(i); i += 1; }}\n\
+             let d = Dog; let sd: &dyn Speak = &d;\n\
+             acc + beta::SX(5).v() + alpha::fstr().len() as i32 + sd.sp(){}",
+            if use_gamma { " + gamma::fg(2)" } else { "" }
+        )
+    };
+    // v1：9 + 7 + 1 + 8 = 25；v2：9 + (5+3) + 1 + 8 + 10 = 36
+    let (exit1, exit2) = (25i32, 36i32);
+
+    let compile = |extra: &str, body: &str, out: &str| -> i32 {
+        // 增量会话要求**同一输入文件/同 crate 名**（dep-graph/crate hash 匹配）
+        // ——不同 pass 复用同名源文件，源码内容变更使对应 CGU 失效。
+        let src_path = workdir.join("incr_prog.rs");
+        std::fs::write(&src_path, make_source(body, extra, "mainCRTStartup")).expect("write");
+        let exe = workdir.join(format!("{out}.exe"));
+        let status = Command::new("rustc")
+            .arg("-Zcodegen-backend=".to_string() + &backend_dll().display().to_string())
+            .args([
+                "-C", "panic=abort", "-C", "overflow-checks=off", "--edition", "2024",
+                "-C", "codegen-units=4",
+            ])
+            .arg("-C")
+            .arg(format!("incremental={}", incr_dir.display()))
+            .arg("-C")
+            .arg("link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib")
+            .arg(&src_path)
+            .arg("-o")
+            .arg(&exe)
+            .status()
+            .expect("rustc spawn");
+        assert!(status.success(), "{out}: 增量编译失败");
+        Command::new(&exe)
+            .status()
+            .expect("run exe")
+            .code()
+            .expect("exit code")
+    };
+
+    let e1 = compile(v1, &body_of(false), "incr_pass1");
+    assert_eq!(e1, exit1, "增量 pass1 exit={e1} ≠ {exit1}");
+    let e2 = compile(v2, &body_of(true), "incr_pass2");
+    assert_eq!(
+        e2, exit2,
+        "增量 pass2（源码变更 + 新 CGU）exit={e2} ≠ {exit2}"
+    );
+    // pass2 无变更再编（同会话目录重复编译——WP 重写路径）
+    let e2b = compile(v2, &body_of(true), "incr_pass2b");
+    assert_eq!(e2b, exit2, "增量 pass2 重复 exit={e2b} ≠ {exit2}");
+
+    let _ = std::fs::remove_dir_all(&workdir);
+    println!(
+        "PASS  e2e_incremental_rebuild_cgu exit={exit1}→{exit2}（-C incremental 3 次编译 + 多 CGU WorkProduct）"
     );
 }
