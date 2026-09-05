@@ -32,9 +32,11 @@ demo_v12 3）。
 ## 剩余事项（需投入决策，技术路径如下）
 
 > **2026-09 更新**：本清单已大幅过期——YMM ABI 主库侧已实现（下 §1）；
-> vec_push/vec_string 已关闭（WA-11，e2e 全绿）。剩余开放项与 2026-09 方案的
-> 完整路径见 `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37）与
-> `crates/tools/forge-rustc/README.md` 路线图节（CFI/并行 CGU 两线调研完成）。
+> vec_push/vec_string 已关闭（WA-11，e2e 全绿）；并行 CGU M3 Stage A 已
+> 落地（backend.rs 任务化 + func_ref drain，默认串行 + FORGE_CODEGEN_THREADS
+> 显式并行，WA-38 宿主限制）。剩余开放项与 2026-09 方案的完整路径见
+> `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37/WA-38）与
+> `crates/tools/forge-rustc/README.md` 路线图节。
 
 ### 1. YMM ABI（>128 位向量传参）——✅ 主库已实现（2026-08-31）
 
