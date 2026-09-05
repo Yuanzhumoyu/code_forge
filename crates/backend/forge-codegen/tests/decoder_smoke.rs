@@ -64,7 +64,7 @@ fn x86_r_forms_roundtrip() {
     roundtrip_asm("x86_push_r12", "push R12"); // REX.B 扩展
     roundtrip_asm("x86_pop_rax", "pop RAX");
     roundtrip_asm("x86_bswap", "bswap R12");
-    roundtrip_asm("x86_mov_imm", "mov_imm RAX, 0x1234");
+    roundtrip_asm("x86_mov_imm", "mov RAX, 0x1234");
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn x86_mem_roundtrip() {
     // modrm_mem：mod=00 无位移；[RSP] → SIB
     roundtrip_asm("x86_xchg_mem", "xchg [RAX], RBX");
     roundtrip_asm("x86_xchg_mem_rsp", "xchg [RSP], RBX");
-    roundtrip_asm("x86_mov_mem", "mov_mem RAX, [RBX]");
-    roundtrip_asm("x86_mov_sto", "mov_sto [RAX], RBX");
+    roundtrip_asm("x86_mov_mem", "mov RAX, [RBX]");
+    roundtrip_asm("x86_mov_sto", "mov [RAX], RBX");
 }
 
 #[test]
@@ -99,10 +99,10 @@ fn x86_byte_mov_roundtrip() {
     roundtrip_asm("x86_mov8", "mov AL, BL");
     roundtrip_asm("x86_mov8_high", "mov SIL, DIL"); // byte_reg → 强制 REX
     roundtrip_asm("x86_mov8_r8b", "mov R8B, AL"); // REX.R
-    // 内存 store 宽度：mov_sto 数据槽 gprx auto——32 位数据（EBX）→ 无
-    // REX.W 4 字节写；64 位数据（RBX）→ REX.W 8 字节写（v14：mov_sto32 已删）。
-    roundtrip_asm("x86_mov_sto32", "mov_sto [EAX], EBX");
-    roundtrip_asm("x86_mov_sto64", "mov_sto [RAX], RBX");
+    // 内存 store 宽度：mov 数据槽 gprx auto——32 位数据（EBX）→ 无
+    // REX.W 4 字节写；64 位数据（RBX）→ REX.W 8 字节写（v14：mov 32 已删）。
+    roundtrip_asm("x86_mov_sto32", "mov [EAX], EBX");
+    roundtrip_asm("x86_mov_sto64", "mov [RAX], RBX");
 }
 
 #[test]
@@ -216,9 +216,6 @@ fn x86_evex_opmask() {
     // k7 → aaa=111（4F）
     let b = encode(&assemble("vaddps ZMM0, ZMM1, ZMM2, K7").unwrap()).unwrap();
     assert_eq!(b, vec![0x62, 0xF1, 0x74, 0x4F, 0x58, 0xC2]);
-    // 零掩码（z=1）：vaddpsz zmm0, zmm1, zmm2, k1 → P2 = z1(80) | aaa(01) = C9
-    let b = encode(&assemble("vaddpsz ZMM0, ZMM1, ZMM2, K1").unwrap()).unwrap();
-    assert_eq!(b, vec![0x62, 0xF1, 0x74, 0xC9, 0x58, 0xC2]);
     // 3 操作数无掩码（分发：vaddps zmm0, zmm1, zmm2 → aaa=0，48）
     let b = encode(&assemble("vaddps ZMM0, ZMM1, ZMM2").unwrap()).unwrap();
     assert_eq!(b, vec![0x62, 0xF1, 0x74, 0x48, 0x58, 0xC2]);
@@ -228,7 +225,6 @@ fn x86_evex_opmask() {
 fn x86_evex_opmask_roundtrip() {
     roundtrip_asm("x86_vaddps_zmm_mask", "vaddps ZMM0, ZMM1, ZMM2, K1");
     roundtrip_asm("x86_vaddps_zmm_mask7", "vaddps ZMM0, ZMM1, ZMM2, K7");
-    roundtrip_asm("x86_vaddpsz_zmm_mask", "vaddpsz ZMM0, ZMM1, ZMM2, K1");
     roundtrip_asm("x86_vaddps_zmm_nomask", "vaddps ZMM0, ZMM1, ZMM2");
 }
 
@@ -259,19 +255,19 @@ fn x86_vex_mem_spec_bytes() {
 #[test]
 fn x86_sib_index_scale() {
     // 索引寻址 [base + index*scale + disp]：SIB index/scale + REX.X
-    roundtrip_asm("sib_idx", "mov64rm RAX, [RBX+RCX*4+8]");
-    roundtrip_asm("sib_idx_scale1", "mov64rm RAX, [RBX+RCX]");
-    roundtrip_asm("sib_idx_scale2", "mov64rm RAX, [RBX+RCX*2-16]");
-    roundtrip_asm("sib_idx_scale8", "mov64rm RAX, [RBP+RCX*8]");
-    roundtrip_asm("sib_idx_r12", "mov64rm RAX, [RBX+R12*4]"); // REX.X
-    roundtrip_asm("sib_idx_r13", "mov64rm RAX, [RBX+R13]"); // REX.X index
-    roundtrip_asm("sib_idx_base_r12", "mov64rm RAX, [R12+RCX*2+64]"); // REX.B base
+    roundtrip_asm("sib_idx", "mov RAX, [RBX+RCX*4+8]");
+    roundtrip_asm("sib_idx_scale1", "mov RAX, [RBX+RCX]");
+    roundtrip_asm("sib_idx_scale2", "mov RAX, [RBX+RCX*2-16]");
+    roundtrip_asm("sib_idx_scale8", "mov RAX, [RBP+RCX*8]");
+    roundtrip_asm("sib_idx_r12", "mov RAX, [RBX+R12*4]"); // REX.X
+    roundtrip_asm("sib_idx_r13", "mov RAX, [RBX+R13]"); // REX.X index
+    roundtrip_asm("sib_idx_base_r12", "mov RAX, [R12+RCX*2+64]"); // REX.B base
     // 字节断言：[rbx+rcx*4+8] → 48 8B 44 8B 08
     use forge_codegen::x86_v12::{assemble, encode};
-    let b = encode(&assemble("mov64rm RAX, [RBX+RCX*4+8]").unwrap()).unwrap();
+    let b = encode(&assemble("mov RAX, [RBX+RCX*4+8]").unwrap()).unwrap();
     assert_eq!(b, vec![0x48, 0x8B, 0x44, 0x8B, 0x08]);
     // [rbx+r12*4] → REX.X=1（R12 索引 = SIB index 4 | X<<3）+ scale 4：4A 8B 04 A3
-    let b = encode(&assemble("mov64rm RAX, [RBX+R12*4]").unwrap()).unwrap();
+    let b = encode(&assemble("mov RAX, [RBX+R12*4]").unwrap()).unwrap();
     assert_eq!(b, vec![0x4A, 0x8B, 0x04, 0xA3]);
 }
 

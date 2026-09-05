@@ -35,18 +35,26 @@ use quote::{format_ident, quote};
 
 /// 入口：`pub(crate)` 由 `integration::gen_integration()` 调用。
 pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
-    // 助记符 → 候选指令（v12.1：lowering 模板用汇编助记符引用 = asm 首词）。
-    // 同助记符多形状（如 add reg,reg 与 add reg,imm）→ 由 gen_lowering_insts
+    // 引用名 → 候选指令：指令 `name`（一对一）或显式 `[[aliases]]`（多态）。
+    // 同引用名多形状（如 add reg,reg 与 add reg,imm）→ 由 gen_lowering_insts
     // 按模板操作数 token 类型消歧（reg/imm/mem/cond）。
-    let mut mnemonic_to_infos: std::collections::HashMap<&str, Vec<&InstInfo>> =
+    let mut ref_to_infos: std::collections::HashMap<&str, Vec<&InstInfo>> =
         std::collections::HashMap::new();
     for i in infos {
-        mnemonic_to_infos
-            .entry(i.mnemonic.as_str())
-            .or_default()
-            .push(i);
+        ref_to_infos.entry(&i.inst.name).or_default().push(i);
     }
-    let name_to_vn = mnemonic_to_infos;
+    for a in &model.aliases {
+        let mut members = Vec::with_capacity(a.insts.len());
+        for name in &a.insts {
+            let info = infos
+                .iter()
+                .find(|i| &i.inst.name == name)
+                .ok_or_else(|| format!("[[aliases.{}]]: 成员指令 '{name}' 未声明", a.name))?;
+            members.push(info);
+        }
+        ref_to_infos.entry(&a.name).or_default().extend(members);
+    }
+    let name_to_vn = ref_to_infos;
 
     let mut arms: Vec<TokenStream> = Vec::new();
     let lowering_attrs = gen_lowering_attrs();
@@ -2068,7 +2076,7 @@ fn pred_width_hint(p: &Pred) -> Option<u32> {
 fn gen_lowering_insts(
     templates: &[String],
     _infos: &[InstInfo],
-    name_to_vn: &std::collections::HashMap<&str, Vec<&InstInfo>>,
+    ref_to_infos: &std::collections::HashMap<&str, Vec<&InstInfo>>,
     width_hint: Option<u32>,
 ) -> Result<Vec<TokenStream>, String> {
     let mut out = Vec::new();
@@ -2087,10 +2095,10 @@ fn gen_lowering_insts(
             Some((n, rest)) => (n.trim(), rest.trim()),
             None => (rhs.trim(), ""),
         };
-        // 助记符 → 候选指令；同助记符多形状按模板操作数 token 类型消歧
-        let cands = name_to_vn
-            .get(inst_name)
-            .ok_or_else(|| format!("lowering 模板引用了未知指令 '{inst_name}'（行: {trimmed}）"))?;
+        // 引用名（指令名或别名）→ 候选指令；同名多形状按模板操作数 token 类型消歧
+        let cands = ref_to_infos.get(inst_name).ok_or_else(|| {
+            format!("lowering 模板引用了未知指令/别名 '{inst_name}'（行: {trimmed}）")
+        })?;
         let toks: Vec<&str> = if ops.is_empty() {
             Vec::new()
         } else {
@@ -2191,7 +2199,7 @@ fn gen_lowering_insts(
             .copied()
             .ok_or_else(|| {
                 format!(
-                    "lowering 模板 '{trimmed}' 无法匹配助记符 '{inst_name}' 的任一形状（操作数签名不符）"
+                    "lowering 模板 '{trimmed}' 无法匹配指令/别名 '{inst_name}' 的任一形状（操作数签名不符）"
                 )
             })?;
         let vn = &info.vn;

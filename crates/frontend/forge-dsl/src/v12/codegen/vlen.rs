@@ -125,12 +125,23 @@ impl Modrm {
                 )
             })
         };
+        // reg 缺省 = op0（首个操作数；S3 约定"数组序 = 编码序"，reg 恒在 op0）
         let (reg, ext) = match &map.reg {
-            ModrmReg::Ext(v) => (None, *v),
-            ModrmReg::Op(n) => (Some(idx_of(n)?), 0),
+            Some(ModrmReg::Ext(v)) => (None, *v),
+            Some(ModrmReg::Op(n)) => (Some(idx_of(n)?), 0),
+            None => {
+                if names.is_empty() {
+                    return Err(format!("{}: reg 缺省需要至少 1 个操作数", ctx()));
+                }
+                (Some(0), 0)
+            }
         };
+        // rm 缺省 = 最后操作数（2 操作数→op1、3 操作数 VEX/EVEX→op2）
         let (mem, rm_name) = map.rm_operand();
-        let rm = idx_of(rm_name)?;
+        let rm = match rm_name {
+            Some(n) => idx_of(n)?,
+            None => names.len() - 1,
+        };
         let rm_kind = info
             .operands
             .get(rm)
@@ -138,8 +149,23 @@ impl Modrm {
             .ok_or_else(|| format!("{}: rm 操作数 {rm} 越界", ctx()))?;
         if mem && !matches!(rm_kind, OperandKind::Reg | OperandKind::Mem) {
             return Err(format!(
-                "{}: rm = \"[{rm_name}]\" 指向 {} 槽——内存形式只能引用 reg（仅基址）\
+                "{}: rm = \"[{n}]\" 指向 {} 槽——内存形式只能引用 reg（仅基址）\
                  或 mem（base/disp/index/scale）槽",
+                ctx(),
+                rm_kind.kind_name(),
+                n = rm_name.unwrap()
+            ));
+        }
+        // 非内存形式 rm 必须是 reg 槽；缺省 rm 落到末尾 imm/cond/label（如 ext
+        // 形式）时给出显式提示。
+        if !mem && rm_kind != OperandKind::Reg {
+            let hint = if rm_name.is_none() {
+                "（rm 缺省 = 最后操作数；请显式写 rm = \"<名字>\"）"
+            } else {
+                ""
+            };
+            return Err(format!(
+                "{}: rm 指向 {} 槽——非内存形式 rm 必须是 reg 槽{hint}",
                 ctx(),
                 rm_kind.kind_name()
             ));
@@ -206,6 +232,13 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
                     info.inst.name
                 ));
             }
+            // Out 在 collect_inst_infos 已解析成 Slot（按 out/inout 角色）
+            Opsize::Out => {
+                return Err(format!(
+                    "[[instructions.{}]].opsize = \"out\": 未解析（需要 ops 声明）",
+                    info.inst.name
+                ));
+            }
             // max：折叠成 `w0.max(w1)...`（Reg 槽逐个 `.width()`）。混宽 IR
             // 降级（`icmp(PTR, I32)`）按宽者编码 = upcast 结果宽度。
             Opsize::Max => {
@@ -252,6 +285,8 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
             },
             // Named 已在 collect_inst_infos 解析（此分支不可达）
             Opsize::Named(_) => (None, false),
+            // Out 已在 collect_inst_infos 解析成 Slot（此分支不可达）
+            Opsize::Out => (None, false),
             // max：编码宽度是运行期取宽的结果，非静态形态 → guard 无条件
             // （同多类槽 Slot；字段按扫描出的 __opsize 视图构造，自反解 16/32/64）。
             Opsize::Max => (None, false),
@@ -291,69 +326,93 @@ fn vlen_ctx(info: &InstInfo, _m: &V12Model) -> Result<VlenCtx, String> {
     };
     // modrm reg/rm/disp：`+r` 形式与无 ModRM 形式（REL32/NOOP）为 None；
     // modrm_fixed（无操作数固定 ModRM 字节）与 modrm 互斥。
+    // v15-S3d：reg/rm 可缺省——reg 默认 op0、rm 默认最后 Reg 操作数；整条
+    // `modrm` 省略且存在 Reg 操作数时，隐式用默认映射（reg-reg 形式）。
+    let names: Vec<String> = info
+        .inst
+        .ops
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
+        .collect();
+    let default_map = ModrmMap {
+        reg: None,
+        rm: None,
+    };
     let (modrm, reg_expr, rm_expr, disp_expr, reg_is_byte, rm_is_byte) =
         if form.opcode_reg.is_some() || form.modrm_fixed.is_some() {
             (None, None, None, None, false, false)
-        } else if let Some(modrm_form) = form.modrm.as_ref() {
-            let names: Vec<String> = info
-                .inst
-                .ops
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
-                .collect();
-            let modrm = Modrm::resolve(modrm_form, info, &names)?;
-            let fid = |i: usize| -> Result<syn::Ident, String> {
-                info.operands
-                    .get(i)
-                    .map(|(_, f, _, _)| f.clone())
-                    .ok_or_else(|| format!("[[instructions.{}]]: 操作数 {i} 越界", info.inst.name))
-            };
-            let reg_expr: TokenStream = match modrm.reg {
-                Some(i) => {
-                    let r = fid(i)?;
-                    quote! { #r.to_index() as u64 }
-                }
-                None => {
-                    let ext = modrm.ext;
-                    quote! { #ext }
-                }
-            };
-            let rm = fid(modrm.rm)?;
-            let (rm_expr, disp_expr): (TokenStream, Option<TokenStream>) = if modrm.memref {
-                // mem 槽：base + disp（index/scale 由 SIB 段单独发射）
-                (
-                    quote! { #rm.base.to_index() as u64 },
-                    Some(quote! { #rm.disp }),
-                )
-            } else if modrm.mem {
-                // reg 槽当基址：仅 [base]，disp 恒 0
-                (quote! { #rm.to_index() as u64 }, Some(quote! { 0i64 }))
-            } else {
-                (quote! { #rm.to_index() as u64 }, None)
-            };
-            // 8 位寄存器标记：索引 4-7（spl/bpl/sil/dil）无 REX 前缀会被解码成
-            // ah/ch/dh/bh，故这类操作数必须强制 REX（即使索引 <8）。内存形式的
-            // rm 是地址，不参与 8 位视图判定。
-            let slot_byte = |i: usize| {
-                info.operands
-                    .get(i)
-                    .map(|(_, _, s, _)| s.kind == OperandKind::Reg && s.byte_reg == Some(true))
-                    .unwrap_or(false)
-            };
-            let reg_is_byte = modrm.reg.map(slot_byte).unwrap_or(false);
-            let rm_is_byte = !modrm.mem && slot_byte(modrm.rm);
-            (
-                Some(modrm),
-                Some(reg_expr),
-                Some(rm_expr),
-                disp_expr,
-                reg_is_byte,
-                rm_is_byte,
-            )
         } else {
-            (None, None, None, None, false, false)
+            let has_reg = info
+                .operands
+                .iter()
+                .any(|(_, _, s, _)| s.kind == OperandKind::Reg);
+            let map = form.modrm.as_ref().or({
+                if has_reg && !names.is_empty() {
+                    Some(&default_map)
+                } else {
+                    None
+                }
+            });
+            match map {
+                None => (None, None, None, None, false, false),
+                Some(modrm_form) => {
+                    let modrm = Modrm::resolve(modrm_form, info, &names)?;
+                    let fid = |i: usize| -> Result<syn::Ident, String> {
+                        info.operands
+                            .get(i)
+                            .map(|(_, f, _, _)| f.clone())
+                            .ok_or_else(|| {
+                                format!("[[instructions.{}]]: 操作数 {i} 越界", info.inst.name)
+                            })
+                    };
+                    let reg_expr: TokenStream = match modrm.reg {
+                        Some(i) => {
+                            let r = fid(i)?;
+                            quote! { #r.to_index() as u64 }
+                        }
+                        None => {
+                            let ext = modrm.ext;
+                            quote! { #ext }
+                        }
+                    };
+                    let rm = fid(modrm.rm)?;
+                    let (rm_expr, disp_expr): (TokenStream, Option<TokenStream>) = if modrm.memref {
+                        // mem 槽：base + disp（index/scale 由 SIB 段单独发射）
+                        (
+                            quote! { #rm.base.to_index() as u64 },
+                            Some(quote! { #rm.disp }),
+                        )
+                    } else if modrm.mem {
+                        // reg 槽当基址：仅 [base]，disp 恒 0
+                        (quote! { #rm.to_index() as u64 }, Some(quote! { 0i64 }))
+                    } else {
+                        (quote! { #rm.to_index() as u64 }, None)
+                    };
+                    // 8 位寄存器标记：索引 4-7（spl/bpl/sil/dil）无 REX 前缀会被解码成
+                    // ah/ch/dh/bh，故这类操作数必须强制 REX（即使索引 <8）。内存形式的
+                    // rm 是地址，不参与 8 位视图判定。
+                    let slot_byte = |i: usize| {
+                        info.operands
+                            .get(i)
+                            .map(|(_, _, s, _)| {
+                                s.kind == OperandKind::Reg && s.byte_reg == Some(true)
+                            })
+                            .unwrap_or(false)
+                    };
+                    let reg_is_byte = modrm.reg.map(slot_byte).unwrap_or(false);
+                    let rm_is_byte = !modrm.mem && slot_byte(modrm.rm);
+                    (
+                        Some(modrm),
+                        Some(reg_expr),
+                        Some(rm_expr),
+                        disp_expr,
+                        reg_is_byte,
+                        rm_is_byte,
+                    )
+                }
+            }
         };
     let imm_bytes = (form.imm.unwrap_or(0) / 8) as usize;
     let vex = if let Some(vs) = &form.vex {

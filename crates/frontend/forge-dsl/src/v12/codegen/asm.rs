@@ -20,23 +20,18 @@ pub(crate) fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String>
         let vn = &info.vn;
         let mut fmt = String::new();
         let mut locals: Vec<TokenStream> = Vec::new();
-        // 完整格式 = mnemonic + 操作数模板（段序列渲染）
-        fmt.push_str(&info.mnemonic);
-        let ops = ops_template(info);
-        if !ops.is_empty() {
-            fmt.push(' ');
-            let segs = parse_template(&ops)?;
-            validate_segs(&segs, info)?;
-            for seg in segs {
-                match seg {
-                    Seg::Lit(l) => fmt.push_str(&l),
-                    Seg::Op(n) => {
-                        let (_, fid, slot, _) = &info.operands[n];
-                        let local = format_ident!("__o{n}");
-                        let expr = render_expr(slot, fid);
-                        locals.push(quote! { let #local = #expr; });
-                        fmt.push_str(&format!("{{__o{n}}}"));
-                    }
+        // 完整格式 = 整条 asm（前导字面 + 操作数模板段序列渲染）
+        let segs = parse_template(&info.inst.asm)?;
+        validate_segs(&segs, info)?;
+        for seg in segs {
+            match seg {
+                Seg::Lit(l) => fmt.push_str(&l),
+                Seg::Op(n) => {
+                    let (_, fid, slot, _) = &info.operands[n];
+                    let local = format_ident!("__o{n}");
+                    let expr = render_expr(slot, fid);
+                    locals.push(quote! { let #local = #expr; });
+                    fmt.push_str(&format!("{{__o{n}}}"));
                 }
             }
         }
@@ -170,20 +165,6 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// 完整汇编格式（含 mnemonic）：`asm` 字段必填（v12.1 起）。
-fn asm_full(info: &InstInfo) -> String {
-    info.inst.asm.clone()
-}
-
-/// 操作数模板（完整格式去掉 mnemonic 前缀）。
-fn ops_template(info: &InstInfo) -> String {
-    let full = asm_full(info);
-    match full.split_once(char::is_whitespace) {
-        Some((_, r)) => r.trim().to_string(),
-        None => String::new(),
-    }
 }
 
 // ─────────────────────────────── assemble ───────────────────────────────
@@ -731,69 +712,13 @@ fn gen_asm_primitives(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStrea
         });
     }
     if has_mem {
+        let mem_items = super::mem::parse_mem_template(&super::mem::effective_template(
+            &model.conventions.mem,
+        ))?;
+        let mem_parser = super::mem::gen_mem_parser(&mem_items);
         out.extend(quote! {
-            /// 内存 `[base(±disp)]` / `[base+index(*scale)(±disp)]`：token 化后
-            /// 括号内空白免疫。失败回滚。
-            fn __mem(it: &mut __Iter) -> Option<MemRef> {
-                let save = it.pos;
-                if !it.eat(&__Tok::LBracket) { return None; }
-                let base = match __reg_cls(it) {
-                    Some((r, _)) => r,
-                    None => { it.pos = save; return None; }
-                };
-                let mut index: Option<Reg> = None;
-                let mut scale: u8 = 1;
-                let mut disp: i64 = 0;
-                if it.eat(&__Tok::Plus) {
-                    if let Some((r, _)) = __reg_cls(it) {
-                        // `+index`（可带 `*scale`）
-                        index = Some(r);
-                        if it.eat(&__Tok::Star) {
-                            let s = match it.toks.get(it.pos) {
-                                Some(__Tok::Num(v)) => { it.pos += 1; *v }
-                                _ => { it.pos = save; return None; }
-                            };
-                            if s != 1 && s != 2 && s != 4 && s != 8 {
-                                it.pos = save;
-                                return None;
-                            }
-                            scale = s as u8;
-                        }
-                    } else {
-                        // 纯位移 `+disp`
-                        let neg = it.eat(&__Tok::Minus);
-                        let v = match __raw_int(it) {
-                            Some(v) => v,
-                            None => { it.pos = save; return None; }
-                        };
-                        disp = if neg { -v } else { v };
-                    }
-                    // 有 index 时可选 `±disp`
-                    if index.is_some() {
-                        if it.eat(&__Tok::Plus) {
-                            let v = match __raw_int(it) {
-                                Some(v) => v,
-                                None => { it.pos = save; return None; }
-                            };
-                            disp = v;
-                        } else if it.eat(&__Tok::Minus) {
-                            let v = match __raw_int(it) {
-                                Some(v) => v,
-                                None => { it.pos = save; return None; }
-                            };
-                            disp = -v;
-                        }
-                    }
-                } else if it.eat(&__Tok::Minus) {
-                    let v = match __raw_int(it) {
-                        Some(v) => v,
-                        None => { it.pos = save; return None; }
-                    };
-                    disp = -v;
-                }
-                if !it.eat(&__Tok::RBracket) { it.pos = save; return None; }
-                Some(MemRef { base, disp, index, scale })
-            }
+            /// 内存操作数解析（由 `[conventions.mem] template` 派生；v16）。
+            #mem_parser
             fn __raw_int(it: &mut __Iter) -> Option<i64> {
                 let v = match it.toks.get(it.pos)? { __Tok::Num(v) => *v, _ => return None };
                 it.pos += 1;
@@ -925,7 +850,11 @@ fn operand_parse_tok(
         }
         OperandKind::Label => {
             let (min, max) = slot.imm_range().unwrap_or((i64::MIN, i64::MAX));
-            let elem = quote! { __label(&mut it, #min, #max, &mut __syms, #n) };
+            // 符号写进候选局部的 `__lsyms`（非共享 `__syms`）：元组求值是急切的，
+            // 前导 `__eat_name` 失败时 `__label` 仍会被调用；若写入共享缓冲会污染
+            // 后续候选的匹配结果（S10c 平铺扫描后暴露）。局部缓冲仅在整条 asm
+            // 完全命中时随 `return` 提交。
+            let elem = quote! { __label(&mut it, #min, #max, &mut __lsyms, #n) };
             Ok((elem, quote! { Some(#fid) }, None))
         }
         OperandKind::Mem => Ok((quote! { __mem(&mut it) }, quote! { Some(#fid) }, None)),
@@ -933,22 +862,46 @@ fn operand_parse_tok(
     }
 }
 
-/// 单条指令的 assemble 尝试：逐段消费 token（字面段 = token 序列匹配；
-/// 占位符段 = 按槽类型解析）。任一失败静默回退下一形状（多形状回退语义）。
-fn gen_assemble_try_tok(info: &InstInfo) -> Result<TokenStream, String> {
+/// 单条指令的 assemble 尝试：对**整条 asm 模板**（前导字面 + 操作数）从左到右
+/// 逐段消费 token（字面段 = token 序列匹配；占位符段 = 按槽类型解析）。任一失败
+/// 静默回退下一形状（多形状回退语义）。前导字面段（助记符位）按 `case_insensitive`
+/// 豁免大小写（`__eat_name`），其余字面段严格遵守 asm 格式（`__eat_lit`）。
+fn gen_assemble_try_tok(info: &InstInfo, case_insensitive: bool) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    let ops = ops_template(info);
-    let segs = parse_template(&ops)?;
+    let segs = parse_template(&info.inst.asm)?;
     validate_segs(&segs, info)?;
     let mut elems: Vec<TokenStream> = Vec::new();
     let mut pats: Vec<TokenStream> = Vec::new();
     let mut cls_binds: Vec<syn::Ident> = Vec::new();
-    for seg in &segs {
+    for (idx, seg) in segs.iter().enumerate() {
         match seg {
             Seg::Lit(l) => {
                 let toks = tokenize(l).map_err(|e| format!("asm template literal '{l}': {e}"))?;
-                let exprs: Vec<_> = toks.iter().map(tok_expr).collect();
-                elems.push(quote! { __eat_lit(&mut it, &[#(#exprs),*]).then_some(()) });
+                // 前导字面（首段）且大小写豁免且单 Ident token → `__eat_name`（大小写不敏感）
+                let leading_name = if idx == 0 && case_insensitive && toks.len() == 1 {
+                    match &toks[0] {
+                        Tok::Ident(s) => Some(s.as_str()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                match leading_name {
+                    Some(name) => {
+                        let name_lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
+                        elems.push(quote! { __eat_name(&mut it, #name_lit).then_some(()) });
+                    }
+                    None if idx == 0 && case_insensitive => {
+                        // 前导多 token 字面（如 `lock cmpxchg [` 的 LOCK 前缀族）：
+                        // Ident token 大小写豁免、标点/数值严格匹配（`__eat_lit_ci`）。
+                        let exprs: Vec<_> = toks.iter().map(tok_expr).collect();
+                        elems.push(quote! { __eat_lit_ci(&mut it, &[#(#exprs),*]).then_some(()) });
+                    }
+                    None => {
+                        let exprs: Vec<_> = toks.iter().map(tok_expr).collect();
+                        elems.push(quote! { __eat_lit(&mut it, &[#(#exprs),*]).then_some(()) });
+                    }
+                }
                 pats.push(quote! { Some(()) });
             }
             Seg::Op(n) => {
@@ -988,10 +941,13 @@ fn gen_assemble_try_tok(info: &InstInfo) -> Result<TokenStream, String> {
     };
     Ok(quote! {
         {
-            let mut it = __Iter { toks: __rest, pos: 0 };
+            // 每候选独立的符号缓冲：失败即弃（不污染共享 __syms），整条 asm
+            // 完全命中时才随 return 提交。见 S10c 平铺扫描后 label 候选被误试的修复。
+            let mut __lsyms: Vec<(usize, String)> = Vec::new();
+            let mut it = __Iter { toks: &__toks, pos: 0 };
             if let (#(#pats),*) = (#(#elems),*) {
                 if #consistency {
-                    return Ok((#ctor, std::mem::take(&mut __syms)));
+                    return Ok((#ctor, __lsyms));
                 }
             }
         }
@@ -1011,9 +967,9 @@ fn form_specificity(info: &InstInfo, _model: &V12Model) -> u64 {
     spec
 }
 
-/// 类型签名：字面 token 序列 + 每操作数槽签名（真重复检测）。
+/// 类型签名：整条 asm 的字面 token 序列 + 每操作数槽签名（真重复检测）。
 fn type_signature(info: &InstInfo) -> Result<String, String> {
-    let segs = parse_template(&ops_template(info))?;
+    let segs = parse_template(&info.inst.asm)?;
     validate_segs(&segs, info)?;
     let mut s = String::new();
     for seg in &segs {
@@ -1041,53 +997,67 @@ fn type_signature(info: &InstInfo) -> Result<String, String> {
 }
 
 /// assemble 入口：`pub(crate)` 由 `codegen::generate()` 调用。
+///
+/// v17 起**不再分派助记符**：按声明序把每条指令的**整条 asm 模板**（前导字面 +
+/// 操作数）从左到右逐 token 匹配，首个完整命中即停。候选全局按 `form_specificity`
+/// 排序（窄约束先，声明序稳定）并做真重复去重（`type_signature`）——同助记符多
+/// 形状的自动分发语义保留，只是不再经过 `match 助记符` 这道前置分派。
 pub(crate) fn gen_assemble(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
     let lexer = gen_lexer_ts(model)?;
     let primitives = gen_asm_primitives(model, infos)?;
-    // 按助记符分组（保声明序）；组内特异性排序（窄约束先，声明序稳定）
-    let mut groups: Vec<(String, Vec<&InstInfo>)> = Vec::new();
-    for info in infos {
-        let mn = &info.mnemonic;
-        match groups.iter_mut().find(|(m, _)| m == mn) {
-            Some((_, v)) => v.push(info),
-            None => groups.push((mn.clone(), vec![info])),
+    let case_insensitive = matches!(model.meta.mnemonic_case, MnemonicCase::Insensitive);
+    // 全局特异性排序（窄约束先，声明序稳定）
+    let mut cands: Vec<&InstInfo> = infos.iter().collect();
+    cands.sort_by_key(|info| form_specificity(info, model));
+    // 真重复（同字面骨架 + 同类型签名）跳过，保留首个声明
+    let mut seen: Vec<String> = Vec::new();
+    let mut tries: Vec<TokenStream> = Vec::new();
+    for info in cands {
+        let sig = type_signature(info)?;
+        if seen.contains(&sig) {
+            continue;
         }
+        seen.push(sig);
+        tries.push(gen_assemble_try_tok(info, case_insensitive)?);
     }
-    let mut arms: Vec<TokenStream> = Vec::new();
-    for (mn, group) in &mut groups {
-        group.sort_by_key(|info| form_specificity(info, model));
-        // 真重复（同字面骨架 + 同类型签名）跳过，保留首个声明
-        let mut seen: Vec<String> = Vec::new();
-        let mut tries: Vec<TokenStream> = Vec::new();
-        for info in group {
-            let sig = type_signature(info)?;
-            if seen.contains(&sig) {
-                continue;
-            }
-            seen.push(sig);
-            tries.push(gen_assemble_try_tok(info)?);
-        }
-        let mn_lit = syn::LitStr::new(mn, proc_macro2::Span::call_site());
-        let err_lit = syn::LitStr::new(
-            &format!("{mn}: operand mismatch"),
-            proc_macro2::Span::call_site(),
-        );
-        arms.push(quote! {
-            #mn_lit => {
-                let mut __syms: Vec<(usize, String)> = Vec::new();
-                #(#tries)*
-                return Err(String::from(#err_lit));
-            }
-        });
-    }
-    let mn_prep = match model.meta.mnemonic_case {
-        MnemonicCase::Insensitive => quote! { let __mn = mn.to_ascii_lowercase(); },
-        MnemonicCase::Sensitive => quote! { let __mn = mn.clone(); },
-    };
     Ok(quote! {
         #lexer
         #primitives
-        /// 汇编单条文本 → 指令（token 驱动；同助记符多 form 按类型签名自动分发）。
+        /// 前导字面（助记符位）大小写豁免匹配（`__eat_name`）。
+        #[allow(dead_code)]
+        fn __eat_name(it: &mut __Iter, name: &str) -> bool {
+            if matches!(it.toks.get(it.pos), Some(__Tok::Ident(x)) if x.eq_ignore_ascii_case(name)) {
+                it.pos += 1;
+                true
+            } else {
+                false
+            }
+        }
+        /// 前导多 token 字面大小写豁免匹配：Ident token 用 `eq_ignore_ascii_case`，
+        /// 标点/数值 token 严格相等（LOCK 前缀族 `lock cmpxchg [` 等）。
+        #[allow(dead_code)]
+        fn __eat_lit_ci(it: &mut __Iter, lit: &[__Tok]) -> bool {
+            let mut p = it.pos;
+            for t in lit {
+                match (it.toks.get(p), t) {
+                    (Some(__Tok::Ident(x)), __Tok::Ident(y)) => {
+                        if !x.eq_ignore_ascii_case(y.as_str()) {
+                            return false;
+                        }
+                    }
+                    (Some(x), y) => {
+                        if x != y {
+                            return false;
+                        }
+                    }
+                    (None, _) => return false,
+                }
+                p += 1;
+            }
+            it.pos = p;
+            true
+        }
+        /// 汇编单条文本 → 指令（token 驱动；左→右整模板扫描，多 form 按类型签名自动分发）。
         pub fn assemble(text: &str) -> Result<Inst, String> {
             let (inst, syms) = __assemble(text)?;
             if syms.is_empty() {
@@ -1098,16 +1068,9 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &V12Model) -> Result<Token
         }
         /// 内部装配：返回 (指令, 未解析符号引用列表 (操作数序号, 符号名))。
         pub(crate) fn __assemble(text: &str) -> Result<(Inst, Vec<(usize, String)>), String> {
-            let toks = __lex(text)?;
-            let Some(__Tok::Ident(mn)) = toks.first() else {
-                return Err("expected mnemonic".into());
-            };
-            let __rest = &toks[1..];
-            #mn_prep
-            match __mn.as_str() {
-                #(#arms,)*
-                _ => Err(format!("unknown mnemonic '{mn}'")),
-            }
+            let __toks = __lex(text)?;
+            #(#tries)*
+            Err("no matching instruction".into())
         }
     })
 }

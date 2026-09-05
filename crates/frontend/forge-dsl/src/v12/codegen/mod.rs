@@ -32,6 +32,8 @@ pub(crate) mod lowering;
 /// Reg 枚举 / MachineInst / Encoder / Decoder / Disasm / Assembler
 /// （integration.rs 拆分）。
 pub(crate) mod machine;
+/// 内存操作数文本模板（v16/S9）：`__render_mem`/`__mem` 从同一份模板派生。
+pub(crate) mod mem;
 /// 占位符注册表——lowering 模板 `{...}` token 的唯一事实源（第三轮重构）。
 pub(crate) mod placeholder;
 /// 变长（VEX/EVEX/前缀扫描）encode/decode——x86 专用机制，独立文件组织。
@@ -162,7 +164,7 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     }
     let infos = collect_inst_infos(model)?;
     let reg_tables = gen_reg_tables(model)?;
-    let mem_support = gen_mem_support(&infos)?;
+    let mem_support = gen_mem_support(model, &infos)?;
     let inst_enum = gen_inst_enum(&infos);
     let (encode_fn, decode_fn) = if variable {
         (
@@ -191,9 +193,12 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     })
 }
 
-/// 有 mem 操作数时生成 `MemRef` 结构 + 渲染/解析 helpers（自包含）。
-fn gen_mem_support(_infos: &[InstInfo]) -> Result<TokenStream, String> {
-    // 找 mem 槽的 base 寄存器组（class）
+/// 有 mem 操作数时生成 `MemRef` 结构 + 反汇编渲染 `__render_mem`（自包含）。
+/// `__render_mem` 从 `[conventions.mem] template` 派生（v16）；缺省 = x86 `[...]`。
+fn gen_mem_support(model: &V12Model, _infos: &[InstInfo]) -> Result<TokenStream, String> {
+    let tpl = mem::effective_template(&model.conventions.mem);
+    let items = mem::parse_mem_template(&tpl)?;
+    let render_mem = mem::gen_render_mem(&items);
     Ok(quote! {
         /// 内存操作数（自包含；base 为物理寄存器索引，disp 为字节位移；
         /// index 为可选索引寄存器（x86 SIB index），scale 为缩放 1/2/4/8）。
@@ -206,27 +211,7 @@ fn gen_mem_support(_infos: &[InstInfo]) -> Result<TokenStream, String> {
             /// 索引缩放（1/2/4/8；缺省 1）。
             pub scale: u8,
         }
-        fn __render_mem(m: &MemRef) -> String {
-            let base = <&'static str as From<Reg>>::from(m.base);
-            let mut s = format!("[{base}");
-            if let Some(idx) = &m.index {
-                let iname = <&'static str as From<Reg>>::from(*idx);
-                if m.scale == 1 {
-                    s.push_str(&format!("+{iname}"));
-                } else {
-                    s.push_str(&format!("+{iname}*{}", m.scale));
-                }
-            }
-            if m.disp != 0 {
-                if m.disp > 0 {
-                    s.push_str(&format!("+{}", m.disp));
-                } else {
-                    s.push_str(&format!("{}", m.disp));
-                }
-            }
-            s.push(']');
-            s
-        }
+        #render_mem
     })
 }
 
@@ -238,7 +223,6 @@ pub(crate) struct InstInfo<'a> {
     /// 下游只读这一份，不再各自 `inst.x.or(form.x)`——覆盖语义单点实现。
     form: EncKeys,
     vn: syn::Ident,
-    mnemonic: String,
     /// 操作数绑定：(位域名, 字段标识, 槽, 角色)。
     operands: Vec<(String, syn::Ident, &'a OperandSlot, OperandRole)>,
 }
@@ -262,7 +246,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
             insts.push(Instruction {
                 name: var.name.clone(),
                 form: Some(fam.form.clone()),
-                opcode: var.opcode,
+                opcode: var.opcode.or(fam.opcode),
                 fields: if fields.is_empty() {
                     None
                 } else {
@@ -293,9 +277,9 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 .clone(),
         };
         let mut enc = inst.enc.over(&preset);
-        // 从 asm 模板解析助记符 + 操作数声明（命名形态：ops 声明 + asm 引用）
-        let (mnemonic, uses, norm_asm) =
-            parse_asm_decl(&inst.asm, inst.ops.as_deref(), &inst.name)?;
+        // 从 asm 模板解析操作数声明（命名形态：ops 声明 + asm 引用；v17 起不再拆助记符）。
+        let asm = inst.asm.clone();
+        let (uses, norm_asm) = parse_asm_decl(&asm, inst.ops.as_deref(), &inst.name)?;
         // `opsize = "<操作数名>"` → 按声明序解析成位置索引（下游只见索引）
         if let Some(Opsize::Named(n)) = &enc.opsize {
             let names = inst.ops.as_deref().unwrap_or(&[]);
@@ -310,6 +294,39 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                     )
                 })?;
             enc.opsize = Some(Opsize::Slot(idx as u16));
+        }
+        // `opsize = "out"` → 唯一 out/inout 角色的 Reg 操作数索引（下游只见 Slot）
+        if let Some(Opsize::Out) = &enc.opsize {
+            let mut out_idxs: Vec<usize> = Vec::new();
+            for (i, u) in uses.iter().enumerate() {
+                if !matches!(u.role, Some(OperandRole::Out) | Some(OperandRole::InOut)) {
+                    continue;
+                }
+                let is_reg = m
+                    .operand_slots
+                    .iter()
+                    .find(|s| s.name == u.slot)
+                    .map(|s| s.kind == OperandKind::Reg)
+                    .unwrap_or(false);
+                if is_reg {
+                    out_idxs.push(i);
+                }
+            }
+            match out_idxs.len() {
+                1 => enc.opsize = Some(Opsize::Slot(out_idxs[0] as u16)),
+                0 => {
+                    return Err(format!(
+                        "[[instructions.{}]].opsize = \"out\": 没有 out/inout 的 Reg 操作数（改用 \"max\" 或显式操作数名）",
+                        inst.name
+                    ));
+                }
+                n => {
+                    return Err(format!(
+                        "[[instructions.{}]].opsize = \"out\": {n} 个 out/inout 操作数，无法唯一确定（显式写操作数名）",
+                        inst.name
+                    ));
+                }
+            }
         }
         let form = &enc;
         // 变长（无 opcode_field）不需要 operand_fields；定宽需要
@@ -336,7 +353,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 .ok_or_else(|| {
                     format!(
                         "[[instructions.{}]]: operand slot '{}' missing (asm '{}')",
-                        inst.name, op.slot, inst.asm
+                        inst.name, op.slot, asm
                     )
                 })?;
             // 字段名：定宽 → 位域名（operand_fields[i] 或 field 覆盖）；
@@ -377,7 +394,6 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
             },
             form: enc.clone(),
             vn: pascal_ident(&inst.name),
-            mnemonic,
             operands,
         });
     }
@@ -473,42 +489,35 @@ fn normalize_named_template(
     Ok(out)
 }
 
-/// 解析指令的助记符与操作数：`ops` 给声明，`asm` 只引用名字。
+/// 解析指令的 asm 模板：`ops` 给声明，`asm` 只引用名字。
 ///
-/// 返回 (助记符, 操作数用法表, **规范化后的 asm**)。规范化 = 把 `{名字}` 换成
+/// 返回 (操作数用法表, **规范化后的 asm**)。规范化 = 把 `{名字}` 换成
 /// `{序号}`，于是下游（asm/machine/decode 生成）只认索引，完全不必感知命名——
-/// 命名只是作者面的语法。v14 的内联声明（`{i:[槽:角色]}`）已删除。
+/// 命名只是作者面的语法。v17 起**不再拆分「助记符」**：整条 asm（前导字面 +
+/// 操作数）原样规范化，助记符只是前导字面段，不再是独立分派键。v14 的内联
+/// 声明（`{i:[槽:角色]}`）已删除。
 pub(crate) fn parse_asm_decl(
     asm: &str,
     ops: Option<&[String]>,
     inst_name: &str,
-) -> Result<(String, Vec<OperandUse>, String), String> {
+) -> Result<(Vec<OperandUse>, String), String> {
     let ctx = || format!("[[instructions.{inst_name}]] asm");
-    let (mnemonic, rest) = asm
-        .split_once(char::is_whitespace)
-        .map_or_else(|| (asm.trim(), ""), |(m, r)| (m.trim(), r.trim()));
-    if mnemonic.is_empty() {
+    if asm.trim().is_empty() {
         return Err(format!("{}: asm must not be empty", ctx()));
-    }
-    if mnemonic.contains('{') || mnemonic.contains('}') {
-        return Err(format!(
-            "{}: asm mnemonic '{mnemonic}' must not contain '{{'/'}}'",
-            ctx()
-        ));
     }
     let Some(list) = ops else {
         // 无操作数指令（ret/nop/…）不需要 ops；有占位符却没 ops = 缺声明
-        if rest.contains('{') {
+        if asm.contains('{') {
             return Err(format!(
                 "{}: asm 引用了操作数但没有 `ops` 声明（v15：声明写在 ops，模板只引用名字）",
                 ctx()
             ));
         }
-        return Ok((mnemonic.to_string(), Vec::new(), asm.to_string()));
+        return Ok((Vec::new(), asm.to_string()));
     };
     let (names, uses) = parse_ops_list(list, inst_name)?;
-    let norm_rest = normalize_named_template(rest, &names, inst_name)?;
-    let segs = asm::parse_template(&norm_rest)?;
+    let norm_asm = normalize_named_template(asm, &names, inst_name)?;
+    let segs = asm::parse_template(&norm_asm)?;
     for (n, name) in names.iter().enumerate() {
         let refs = segs
             .iter()
@@ -521,12 +530,7 @@ pub(crate) fn parse_asm_decl(
             ));
         }
     }
-    let norm_asm = if norm_rest.is_empty() {
-        mnemonic.to_string()
-    } else {
-        format!("{mnemonic} {norm_rest}")
-    };
-    Ok((mnemonic.to_string(), uses, norm_asm))
+    Ok((uses, norm_asm))
 }
 
 // ─────────────────────────────── 寄存器表 ───────────────────────────────

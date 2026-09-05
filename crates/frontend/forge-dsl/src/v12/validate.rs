@@ -14,6 +14,7 @@ pub fn validate(m: &V12Model) -> Result<(), String> {
     validate_forms(m)?;
     validate_instructions(m)?;
     validate_families(m)?;
+    validate_aliases(m)?;
     validate_lowering(m)?;
     validate_patterns(m)?;
     validate_abi(m)?;
@@ -232,6 +233,12 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             }
         }
     }
+    if let Some(mt) = &conv.mem {
+        let items = super::codegen::mem::parse_mem_template(&mt.template)
+            .map_err(|e| format!("[conventions.mem]: {e}"))?;
+        super::codegen::mem::validate_mem_template(&items)
+            .map_err(|e| format!("[conventions.mem]: {e}"))?;
+    }
     Ok(())
 }
 
@@ -431,20 +438,20 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
             ));
         }
         // global_reloc 值域由 `GlobalReloc` 枚举在反序列化期强制
-        if inst.asm.trim().is_empty() {
+        let asm = inst.asm.clone();
+        if asm.trim().is_empty() {
             return Err(format!(
                 "[[instructions.{}]]: asm must not be empty",
                 inst.name
             ));
         }
         // 操作数声明（asm 占位符内联）：解析 + 槽存在/角色合法/序号连续校验
-        let (_, uses, _) =
-            super::codegen::parse_asm_decl(&inst.asm, inst.ops.as_deref(), &inst.name)?;
+        let (uses, _) = super::codegen::parse_asm_decl(&asm, inst.ops.as_deref(), &inst.name)?;
         for op in &uses {
             if !slot_exists(m, &op.slot) {
                 return Err(format!(
                     "[[instructions.{}]]: operand slot '{}' is not declared in [[operand_slots]] (asm '{}')",
-                    inst.name, op.slot, inst.asm
+                    inst.name, op.slot, asm
                 ));
             }
             if let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot)
@@ -546,19 +553,62 @@ fn validate_families(m: &V12Model) -> Result<(), String> {
 
 // ──────────────────────── [[lowering]] ────────────────────────
 
-/// 全部已声明的汇编助记符（`asm` 首词）——含 families 展开（`{name}` → 变体名
-/// 小写）。lowering/emit 模板的行首必须命中其一。
-fn declared_mnemonics(m: &V12Model) -> BTreeSet<String> {
-    let head = |asm: &str| asm.split_whitespace().next().unwrap_or("").to_string();
-    let mut out: BTreeSet<String> = m.instructions.iter().map(|i| head(&i.asm)).collect();
+/// 全部已声明的指令 `name`（`[[instructions.*]]` + `[[families.*.variants.*]]`）。
+/// lowering/pattern/emit 模板的行首可引用其任一。
+fn declared_names(m: &V12Model) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = m.instructions.iter().map(|i| i.name.clone()).collect();
     for f in &m.families {
         for v in &f.variants {
-            let asm = v.asm.as_deref().unwrap_or(&f.asm);
-            out.insert(head(&asm.replace("{name}", &v.name.to_lowercase())));
+            out.insert(v.name.clone());
         }
     }
-    out.remove("");
     out
+}
+
+/// 全部已声明的别名 `name`（`[[aliases.*]]`）。
+fn declared_aliases(m: &V12Model) -> BTreeSet<String> {
+    m.aliases.iter().map(|a| a.name.clone()).collect()
+}
+
+/// 引用名全集 = 指令名 ∪ 别名名。lowering/pattern/emit 模板行首必须命中其一。
+fn declared_refs(m: &V12Model) -> BTreeSet<String> {
+    let mut out = declared_names(m);
+    out.extend(declared_aliases(m));
+    out
+}
+
+/// `[[aliases]]` 校验：名非空/唯一/不与指令名冲突；成员非空且都指向已声明指令。
+fn validate_aliases(m: &V12Model) -> Result<(), String> {
+    let names = declared_names(m);
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (i, a) in m.aliases.iter().enumerate() {
+        let path = format!("[[aliases.{}]]", a.name);
+        if a.name.trim().is_empty() {
+            return Err(format!("[[aliases]] #{i}: name must not be empty"));
+        }
+        if names.contains(&a.name) {
+            return Err(format!(
+                "{path}: 别名名与指令名冲突（'{0}' 已是指令）",
+                a.name
+            ));
+        }
+        if !seen.insert(&a.name) {
+            return Err(format!("{path}: 别名名重复"));
+        }
+        if a.insts.is_empty() {
+            return Err(format!("{path}: insts must not be empty"));
+        }
+        let mut member_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for name in &a.insts {
+            if !names.contains(name) {
+                return Err(format!("{path}: 成员指令 '{name}' 未声明"));
+            }
+            if !member_seen.insert(name) {
+                return Err(format!("{path}: 成员指令 '{name}' 重复"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `[[lowering]]` 校验。
@@ -572,7 +622,7 @@ fn declared_mnemonics(m: &V12Model) -> BTreeSet<String> {
 ///
 /// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测。
 fn validate_lowering(m: &V12Model) -> Result<(), String> {
-    let mnemonics = declared_mnemonics(m);
+    let refs = declared_refs(m);
     // (op, 规范化 when, insts) → 首次出现的下标；用于重复检测
     let mut seen: std::collections::HashMap<(String, String, Vec<String>), usize> =
         std::collections::HashMap::new();
@@ -584,7 +634,7 @@ fn validate_lowering(m: &V12Model) -> Result<(), String> {
         if l.insts.is_empty() {
             return Err(format!("{path}: insts must not be empty"));
         }
-        validate_inst_lines(&path, &l.insts, &mnemonics, &[])?;
+        validate_inst_lines(&path, &l.insts, &refs, &[])?;
         let when_key = match &l.when {
             None => String::new(),
             Some(v) => {
@@ -651,7 +701,7 @@ fn validate_lowering_order(m: &V12Model) -> Result<(), String> {
 fn validate_inst_lines(
     path: &str,
     insts: &[String],
-    mnemonics: &BTreeSet<String>,
+    refs: &BTreeSet<String>,
     extra_known: &[String],
 ) -> Result<(), String> {
     for t in insts {
@@ -662,9 +712,9 @@ fn validate_inst_lines(
         // `{out} = INST …` 的 lhs 仅文档性，取 `=` 右侧
         let rhs = trimmed.split_once('=').map_or(trimmed, |(_, r)| r.trim());
         let head = rhs.split_whitespace().next().unwrap_or("");
-        if !head.starts_with('@') && !mnemonics.contains(head) {
+        if !head.starts_with('@') && !refs.contains(head) {
             return Err(format!(
-                "{path}: insts 引用了未声明的助记符 '{head}'（行: {trimmed}）"
+                "{path}: insts 引用了未声明的指令/别名 '{head}'（行: {trimmed}）"
             ));
         }
         for tok in placeholder_tokens(trimmed) {
@@ -683,7 +733,7 @@ fn validate_inst_lines(
 /// `[[pattern]]` 校验：匹配树解析 / Opcode 合法性（禁 payload 与特判 op）/
 /// 叶变量唯一 / insts 模板 / when 属性名。
 fn validate_patterns(m: &V12Model) -> Result<(), String> {
-    let mnemonics = declared_mnemonics(m);
+    let refs = declared_refs(m);
     for (i, p) in m.pattern.iter().enumerate() {
         let path = format!("[[pattern]] #{i}");
         let tree =
@@ -721,7 +771,7 @@ fn validate_patterns(m: &V12Model) -> Result<(), String> {
             return Err(format!("{path}: insts must not be empty"));
         }
         let extra: Vec<String> = vars.iter().map(|v| format!("{{{v}}}")).collect();
-        validate_inst_lines(&path, &p.insts, &mnemonics, &extra)?;
+        validate_inst_lines(&path, &p.insts, &refs, &extra)?;
 
         // when 属性名 ∈ PRED_ATTRS（与 lowering 一致——未知属性恒假，模式永不命中）。
         if let Some(w) = &p.when {

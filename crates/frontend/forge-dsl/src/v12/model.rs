@@ -38,6 +38,11 @@ pub struct V12Model {
     /// 参数化指令族（`[[families]]`）。
     #[serde(default)]
     pub families: Vec<Family>,
+    /// 显式别名（`[[aliases]]`，S10e）：引用名 → 指令名列表。lowering/pattern/
+    /// emit 模板行首用此引用名（或直接指令名）指向指令；一个引用名映射多条
+    /// 指令 = 多态分派（按操作数签名消歧）。
+    #[serde(default)]
+    pub aliases: Vec<Alias>,
     /// 指令选择规则（`[[lowering]]`）。
     #[serde(default)]
     pub lowering: Vec<Lowering>,
@@ -302,6 +307,17 @@ pub struct Conventions {
     /// （"opsize16"/"lock"/"repe"/"repne"/"addr16"/"rex"）。缺省 = x86 扫描集。
     #[serde(default)]
     pub prefix_scan: Option<Vec<PrefixScanEntry>>,
+    /// 内存操作数文本模板（v16）：`{base}`/`{index}`/`{scale}`/`{disp}` 占位符 +
+    /// 字面标点。缺省 = `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
+    #[serde(default)]
+    pub mem: Option<MemTemplate>,
+}
+
+/// 内存操作数文本模板（v16）：组件占位符序列，同时派生汇编解析器与反汇编渲染器。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemTemplate {
+    pub template: String,
 }
 
 /// 前缀扫描条目：`byte`（单字节）与 `range`（如 "0x40..0x4F"）二选一。
@@ -573,18 +589,29 @@ pub struct Form {
 #[serde(deny_unknown_fields)]
 pub struct ModrmMap {
     /// `reg` 字段来源：操作数名，或固定扩展码（`/digit` 形式的整数）。
-    pub reg: ModrmReg,
+    /// 缺省 = 首个操作数（`ops[0]`）——多数指令 reg 字段就是 op0（S3 约定
+    /// "数组序 = 编码序"，reg 恒在 op0）。
+    #[serde(default)]
+    pub reg: Option<ModrmReg>,
     /// `rm` 字段来源：操作数名；`"[名字]"` = 内存形式（mod≠11）。
-    pub rm: String,
+    /// 缺省 = 最后操作数（2 操作数→op1、3 操作数 VEX/EVEX→op2）。
+    #[serde(default)]
+    pub rm: Option<String>,
 }
 
 impl ModrmMap {
-    /// `rm` 是否内存形式，以及去掉方括号后的操作数名。
-    pub fn rm_operand(&self) -> (bool, &str) {
-        let t = self.rm.trim();
-        match t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
-            Some(inner) => (true, inner.trim()),
-            None => (false, t),
+    /// `rm` 是否内存形式，以及去掉方括号后的操作数名；`None` = 缺省（最后操作数，
+    /// 非内存形式）。
+    pub fn rm_operand(&self) -> (bool, Option<&str>) {
+        match &self.rm {
+            None => (false, None),
+            Some(t) => {
+                let t = t.trim();
+                match t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+                    Some(inner) => (true, Some(inner.trim())),
+                    None => (false, Some(t)),
+                }
+            }
         }
     }
 }
@@ -634,6 +661,13 @@ pub enum Opsize {
     /// 汇编文本路径不受影响：多类 GPR 槽的宽度一致性检查同样对 `max` 生效
     /// （`cmp RAX, EBX` 仍拒绝），只有 IR 降级产生的混宽组合走取宽语义。
     Max,
+    /// `opsize = "out"`：取**唯一** `out`/`inout` 角色的 Reg 操作数宽度。
+    ///
+    /// 目的操作数是"这条指令作用于目的宽度"的自然缺省——取代 `"s0"` 的位置引用
+    /// （`s0` 在 `*_RM_R` 家族恰好是**源**，得靠 5 条指令逐一覆盖 `"dst"`）。
+    /// 0 个或多个 out 操作数 → 编译期报错（改 `"max"` 或显式操作数名）。
+    /// `collect_inst_infos` 里按角色解析成 [`Opsize::Slot`]，下游只见索引。
+    Out,
 }
 
 impl Default for Opsize {
@@ -648,6 +682,9 @@ impl FromStr for Opsize {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "max" {
             return Ok(Self::Max);
+        }
+        if s == "out" {
+            return Ok(Self::Out);
         }
         // "s<N>" / "r<N>" 是位置/字节形态；其余非空字符串 = 命名操作数引用
         let digits = s.get(1..).unwrap_or("");
@@ -693,6 +730,7 @@ impl Display for Opsize {
             Opsize::Reg(bytes) => write!(f, "{}", *bytes as u32 * 8),
             Opsize::Named(n) => write!(f, "{n}"),
             Opsize::Max => write!(f, "max"),
+            Opsize::Out => write!(f, "out"),
         }
     }
 }
@@ -718,7 +756,7 @@ impl<'de> Visitor<'de> for OpsizeVisitor {
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
             formatter,
-            r#"an opsize: bit width integer (16/32/64), "s<N>" (operand slot) or "max""#
+            r#"an opsize: bit width integer (16/32/64), "s<N>" (operand slot), "out" or "max""#
         )
     }
 
@@ -820,7 +858,7 @@ pub struct Instruction {
     /// 省略 `ops` 时回退 v14 的内联声明形态（迁移期并存）。
     #[serde(default)]
     pub ops: Option<Vec<String>>,
-    /// 汇编模板（必填，完整格式）。首词 = 助记符（唯一事实来源）。
+    /// 汇编模板（完整格式）。**必填**（v17：回退自动派生，asm 就地显性编写）。
     /// 有 `ops` 时用 `{名字}` 引用；无 `ops` 时用 `{i:[槽:角色]}` 内联声明。
     pub asm: String,
     /// 结构化谓词（迭代 4 定型：{ and = [...], eq = [...] }）。
@@ -1011,6 +1049,9 @@ pub struct OperandUse {
 pub struct Family {
     pub name: String,
     pub form: String,
+    /// 家族共享主 opcode（v16）；variant.opcode 覆盖（riscv R 型 opcode=0x33）。
+    #[serde(default)]
+    pub opcode: Option<u64>,
     /// 家族共享固定字段（如 SSE 的 prefix/w）；variant.fields 覆盖/追加。
     #[serde(default)]
     pub fields: Option<BTreeMap<String, u64>>,
@@ -1044,6 +1085,23 @@ pub struct FamilyVariant {
     pub roles: Vec<Role>,
     #[serde(default)]
     pub when: Option<toml::Value>,
+}
+
+// ──────────────────────── [[aliases]] ────────────────────────
+
+/// 显式别名：一个**引用名**映射到一条或多条指令（多态分派）。
+///
+/// lowering/pattern/emit 模板的行首词不再是汇编助记符，而是本表的名字（或
+/// 指令自身的 `name`）。单成员 = 1:1 别名（可读的助记符名 → 内部指令名）；
+/// 多成员 = 多态（如 `mov` → MOV_R_RM/MOV_RM_R/…，按操作数签名消歧）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Alias {
+    /// 引用名（lowering/pattern/emit 行首词）。
+    pub name: String,
+    /// 成员指令名列表（每个都是已声明的 `[[instructions.*]]` 或
+    /// `[[families.*.variants.*]]` 的 `name`）。
+    pub insts: Vec<String>,
 }
 
 // ──────────────────────── [[lowering]] ────────────────────────

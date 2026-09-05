@@ -88,7 +88,7 @@ fn f_inst_spec_bytes() {
         ("fsgnj.s F1, F2, F3", r_type(0x10, 3, 2, 0, 1, 0x53)),
         ("fsgnjn.s F1, F2, F3", r_type(0x10, 3, 2, 1, 1, 0x53)),
         ("fsgnjx.s F1, F2, F3", r_type(0x10, 3, 2, 2, 1, 0x53)),
-        ("fcvt.w.s.rtz X1, F2", r_type(0x60, 0, 2, 1, 1, 0x53)),
+        ("fcvt.w.s X1, F2, rtz", r_type(0x60, 0, 2, 1, 1, 0x53)),
         ("fcvt.s.w F1, X2", r_type(0x68, 0, 2, 0, 1, 0x53)),
         ("flt.s X1, F2, F3", r_type(0x50, 3, 2, 1, 1, 0x53)),
         ("feq.s X1, F2, F3", r_type(0x50, 3, 2, 2, 1, 0x53)),

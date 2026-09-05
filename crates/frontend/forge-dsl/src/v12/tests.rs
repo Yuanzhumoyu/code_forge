@@ -76,7 +76,7 @@ fn parse_minimal_riscv_style() {
     let add = &m.instructions[0];
     assert_eq!(add.opcode, Some(0x33));
     assert_eq!(add.fields.as_ref().unwrap()["funct3"], 0);
-    assert_eq!(add.asm, "add {dst}, {src}, {src2}");
+    assert_eq!(add.asm.as_str(), "add {dst}, {src}, {src2}");
 }
 
 const X86_DOC: &str = r#"
@@ -884,8 +884,8 @@ operand_fields = ["rd", "rs1", "imm12"]
 }
 
 #[test]
-fn asm_full_format_extracts_mnemonic() {
-    // asm = 完整格式：首词即 mnemonic；disassemble 直接含完整格式
+fn asm_full_template_renders_and_scans() {
+    // asm = 完整模板：disassemble 直接渲染整条 asm；assemble 左→右整模板扫描
     let model = gen_min_model(
         r#"
 [[instructions]]
@@ -899,21 +899,72 @@ asm = "addi {dst}, {src}, {src2}"
     );
     let ts = super::codegen::generate(&model).unwrap();
     let s = ts.to_string();
-    // disassemble 渲染完整格式（mnemonic + 段）
+    // disassemble 渲染完整格式（前导字面 + 段）
     assert!(
         s.contains(r#""addi {__o0}, {__o1}, {__o2}""#),
         "disassemble 应含完整格式：{s}"
     );
-    // assemble 按 mnemonic 匹配
+    // assemble 左→右整模板扫描：前导字面（助记符位）大小写豁免匹配
     assert!(
-        s.contains(r#""addi" =>"#),
-        "assemble 应匹配 mnemonic 'addi'"
+        s.contains("__eat_name"),
+        "assemble 应发射前导字面大小写豁免匹配器 __eat_name：{s}"
+    );
+    // 不再有 `match 助记符` 分派
+    assert!(
+        !s.contains("unknown mnemonic"),
+        "assemble 不应再有助记符分派错误：{s}"
     );
 }
 
 #[test]
-fn asm_required() {
-    // asm 必填（v12.1：助记符唯一事实来源 = asm 首词，操作数内联声明）
+fn operand_first_asm_scans_without_mnemonic() {
+    // v17：asm 可操作数前置（无前导助记符字面）——首段即操作数解析，整模板
+    // 左→右扫描不再依赖"首词 = 助记符"。disassemble 渲染操作数在前的完整格式。
+    let doc = r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 8 }
+rd = { offset = 8, width = 3 }
+rs1 = { offset = 11, width = 3 }
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+[[forms]]
+name = "RR"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1"]
+[[instructions]]
+name = "SWAP"
+form = "RR"
+opcode = 1
+ops = ["dst:g:out", "src:g"]
+asm = "{dst} = {src}"
+"#;
+    let model = parse_and_validate(doc).unwrap();
+    let ts = super::codegen::generate(&model).unwrap();
+    let s = ts.to_string();
+    // 无前导助记符字面 → 不发射 __eat_name 的**调用**（整模板扫描从操作数解析
+    // 开始；`__eat_name` 函数定义仍无条件发射，故只断言无调用点）
+    assert!(
+        !s.contains("__eat_name(& mut it"),
+        "操作数前置 asm 不应发射 __eat_name 调用：{s}"
+    );
+    // disassemble 渲染操作数前置的完整格式
+    assert!(
+        s.contains(r#""{__o0} = {__o1}""#),
+        "disassemble 应渲染操作数前置格式：{s}"
+    );
+}
+
+#[test]
+fn missing_asm_is_parse_error() {
+    // asm 必填（v17）：缺省不再自动派生，缺 asm → Parse 错误
     let doc = r#"
 [meta]
 name = "x"
@@ -932,22 +983,21 @@ name = "R"
 opcode_field = "opcode"
 operand_fields = ["rd"]
 [[instructions]]
-name = "FOO"
+name = "ADD"
 form = "R"
 opcode = 0x13
+ops = ["dst:g:out"]
 "#;
-    let err = parse_and_validate(doc).unwrap_err();
-    match err {
-        // asm 缺失在 TOML 反序列化层报错（必填字段）
-        V12Error::Parse { msg, .. } => {
-            assert!(msg.contains("missing field `asm`"), "msg: {msg}");
-        }
-        other => panic!("expected Parse error, got {other:?}"),
-    }
+    let err = parse_and_validate(doc).expect_err("缺 asm 必须报错");
+    assert!(
+        matches!(err, crate::v12::V12Error::Parse { .. }),
+        "缺 asm 应为 Parse 错误，得到 {err:?}"
+    );
 }
 #[test]
-fn validate_asm_mnemonic_extracted() {
-    // asm 首词 = 助记符（唯一事实来源）；助记符含 '{' 拒绝
+fn validate_asm_placeholder_must_be_declared() {
+    // asm 里的 `{...}` 必须是已声明的操作数名（v17：前导字面不再特殊，助记符
+    // 概念已消解——含 `{` 的前导字面同样按占位符规则拒绝）。
     let doc = r#"
 [meta]
 name = "x"
@@ -975,7 +1025,7 @@ asm = "{bad {dst}"
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         V12Error::Validation { msg, .. } => {
-            assert!(msg.contains("mnemonic"), "msg: {msg}");
+            assert!(msg.contains("占位符"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -1341,22 +1391,22 @@ fn lowering_err(rule: &str) -> String {
 }
 
 #[test]
-fn lowering_accepts_declared_mnemonic() {
-    let doc = lowering_doc("[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]");
-    parse_and_validate(&doc).expect("已声明助记符 + 已知占位符必须通过");
+fn lowering_accepts_declared_name() {
+    let doc = lowering_doc("[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]");
+    parse_and_validate(&doc).expect("已声明指令名 + 已知占位符必须通过");
 }
 
 #[test]
-fn lowering_rejects_unknown_mnemonic() {
-    let msg = lowering_err("[[lowering]]\nop = \"Copy\"\ninsts = [\"movv {out}, {0}\"]");
-    assert!(msg.contains("未声明的助记符 'movv'"), "msg: {msg}");
+fn lowering_rejects_unknown_ref() {
+    let msg = lowering_err("[[lowering]]\nop = \"Copy\"\ninsts = [\"MOVV {out}, {0}\"]");
+    assert!(msg.contains("未声明的指令/别名 'MOVV'"), "msg: {msg}");
     assert!(msg.contains("[[lowering.Copy]]"), "msg 需带声明路径: {msg}");
 }
 
 #[test]
 fn lowering_rejects_unknown_placeholder() {
     // `{iconst_lo}` 少了 `12`：过去落 fallback 装成字面量，生成能编译但语义错的代码
-    let msg = lowering_err("[[lowering]]\nop = \"Iconst\"\ninsts = [\"mov {out}, {iconst_lo}\"]");
+    let msg = lowering_err("[[lowering]]\nop = \"Iconst\"\ninsts = [\"MOV {out}, {iconst_lo}\"]");
     assert!(msg.contains("未知占位符 '{iconst_lo}'"), "msg: {msg}");
 }
 
@@ -1364,7 +1414,7 @@ fn lowering_rejects_unknown_placeholder() {
 fn lowering_rejects_unknown_when_attr() {
     // 未知属性 → pred::eval 恒假 → 规则永不命中（既不报错也不生效）
     let msg = lowering_err(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_widht\", 32] }\ninsts = [\"mov {out}, {0}\"]",
+        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_widht\", 32] }\ninsts = [\"MOV {out}, {0}\"]",
     );
     assert!(msg.contains("未知属性 'rs1_widht'"), "msg: {msg}");
     assert!(msg.contains("rs1_width"), "需列出可用属性: {msg}");
@@ -1372,8 +1422,8 @@ fn lowering_rejects_unknown_when_attr() {
 
 #[test]
 fn lowering_rejects_exact_duplicate() {
-    let rule = "[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]\n\
-                [[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]";
+    let rule = "[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]\n\
+                [[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]";
     let msg = lowering_err(rule);
     assert!(msg.contains("完全重复"), "msg: {msg}");
 }
@@ -1381,19 +1431,132 @@ fn lowering_rejects_exact_duplicate() {
 /// 同 op 同 insts 但 when 不同 → 合法（宽度/条件分派的正常形态）。
 #[test]
 fn lowering_allows_same_insts_with_different_when() {
-    let rule = "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_width\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
-                [[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]";
+    let rule = "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_width\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+                [[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]";
     parse_and_validate(&lowering_doc(rule)).expect("when 不同不算重复");
 }
 
-/// families 展开出的助记符也算已声明（`{name}` → 变体名小写）。
+/// families 展开出的变体指令名也算已声明（`{name}` → 变体名小写）。
 #[test]
-fn lowering_accepts_family_mnemonic() {
+fn lowering_accepts_family_name() {
     let rule = "[[families]]\nname = \"F\"\nform = \"RR\"\n\
                 ops = [\"dst:g:out\", \"src:g\"]\nasm = \"{name} {dst}, {src}\"\n\
                 [[families.variants]]\nname = \"NEG\"\nopcode = 9\n\
-                [[lowering]]\nop = \"Ineg\"\ninsts = [\"neg {out}, {0}\"]";
-    parse_and_validate(&lowering_doc(rule)).expect("family 变体助记符必须被识别");
+                [[lowering]]\nop = \"Ineg\"\ninsts = [\"NEG {out}, {0}\"]";
+    parse_and_validate(&lowering_doc(rule)).expect("family 变体指令名必须被识别");
+}
+
+// ─────────── S10e：显式 [[aliases]] 解析（多态 / 1:1 / 校验） ───────────
+
+fn aliases_doc(extra: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = {{ offset = 0, width = 8 }}
+rd = {{ offset = 8, width = 3 }}
+rs1 = {{ offset = 11, width = 3 }}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+[[forms]]
+name = "RR"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1"]
+[[instructions]]
+name = "MOV16"
+form = "RR"
+opcode = 1
+ops = ["dst:g:out", "src:g"]
+asm = "mov {{dst}}, {{src}}"
+[[instructions]]
+name = "MOV32"
+form = "RR"
+opcode = 2
+ops = ["dst:g:out", "src:g"]
+asm = "mov {{dst}}, {{src}}"
+{extra}
+"#
+    )
+}
+
+#[test]
+fn aliases_polymorphic_lowering_accepted() {
+    // 别名指向多成员指令；lowering 首词引用别名名 → 解析通过（多态分派在 codegen 消歧）
+    let doc = aliases_doc(
+        "[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\", \"MOV32\"]\n\
+         [[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]",
+    );
+    parse_and_validate(&doc).expect("多态别名 + lowering 引用别名必须通过");
+}
+
+#[test]
+fn aliases_1_to_1_lowering_accepted() {
+    // 别名指向单成员指令（1:1）——等价于直接引用指令名，仍须被 lowering 接受
+    let doc = aliases_doc(
+        "[[aliases]]\nname = \"copy\"\ninsts = [\"MOV16\"]\n\
+         [[lowering]]\nop = \"Copy\"\ninsts = [\"copy {out}, {0}\"]",
+    );
+    parse_and_validate(&doc).expect("1:1 别名 + lowering 引用别名必须通过");
+}
+
+#[test]
+fn aliases_reject_conflict_with_inst_name() {
+    let doc = aliases_doc("[[aliases]]\nname = \"MOV16\"\ninsts = [\"MOV32\"]");
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    };
+    assert!(msg.contains("别名名与指令名冲突"), "msg: {msg}");
+}
+
+#[test]
+fn aliases_reject_unknown_member() {
+    let doc = aliases_doc("[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\", \"NOPE\"]");
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    };
+    assert!(msg.contains("成员指令 'NOPE' 未声明"), "msg: {msg}");
+}
+
+#[test]
+fn aliases_reject_empty_insts() {
+    let doc = aliases_doc("[[aliases]]\nname = \"mov\"\ninsts = []");
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    };
+    assert!(msg.contains("insts must not be empty"), "msg: {msg}");
+}
+
+#[test]
+fn aliases_reject_duplicate_member() {
+    let doc = aliases_doc("[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\", \"MOV16\"]");
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    };
+    assert!(msg.contains("成员指令 'MOV16' 重复"), "msg: {msg}");
+}
+
+#[test]
+fn aliases_reject_duplicate_name() {
+    let doc = aliases_doc(
+        "[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\"]\n\
+         [[aliases]]\nname = \"mov\"\ninsts = [\"MOV32\"]",
+    );
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } => msg,
+        other => panic!("expected Validation error, got {other:?}"),
+    };
+    assert!(msg.contains("别名名重复"), "msg: {msg}");
 }
 
 // ─────────── S2：vary 行表 / in 谓词 / 特异性裁决 / 死规则 ───────────
@@ -1403,14 +1566,14 @@ fn vary_expands_rows_and_adds_predicates() {
     // elem 是谓词属性 → 每行追加 eq[elem, 值]；m 不是 → 纯替换
     let doc = lowering_doc(
         "[[lowering]]\nop = \"Vadd\"\nwhen = { eq = [\"rd\", 256] }\n\
-         vary = { elem = [1, 2], m = [\"mov\", \"mov\"] }\ninsts = [\"{m} {out}, {0}\"]",
+         vary = { elem = [1, 2], m = [\"MOV\", \"MOV\"] }\ninsts = [\"{m} {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("vary 必须展开");
     let rs: Vec<_> = m.lowering.iter().filter(|r| r.op == "Vadd").collect();
     assert_eq!(rs.len(), 2, "两行 → 两条具体规则");
     for r in &rs {
         assert!(r.vary.is_none(), "展开后 vary 必须清空");
-        assert_eq!(r.insts, vec!["mov {out}, {0}"], "{{m}} 已替换");
+        assert_eq!(r.insts, vec!["MOV {out}, {0}"], "{{m}} 已替换");
     }
     // 每条都带 rd + elem 两个谓词叶子
     for r in &rs {
@@ -1471,8 +1634,8 @@ fn lowering_order_is_specificity_then_priority() {
     // 声明序：先兜底、后具体。裁决序必须把具体的排前面——作者不再需要记住
     // "兜底必须写最后"，写反了也不会静默改变分派。
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {1}\"]",
+        "[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     let m = parse_and_validate(&doc).expect("声明序颠倒不再是错误");
     let by_op = m.lowering_by_op();
@@ -1482,7 +1645,7 @@ fn lowering_order_is_specificity_then_priority() {
         .expect("Copy 组存在");
     assert_eq!(
         rules[0].insts,
-        vec!["mov {out}, {1}"],
+        vec!["MOV {out}, {1}"],
         "1 叶子的具体规则排在 0 叶子的兜底之前"
     );
     assert!(rules[1].when.is_none(), "兜底垫底");
@@ -1492,8 +1655,8 @@ fn lowering_order_is_specificity_then_priority() {
 fn priority_overrides_specificity() {
     // 更宽的规则（1 叶子）用 priority 压过更具体的（2 叶子）——Vextract lane0 形态
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\npriority = 1\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"mov {out}, {1}\"]",
+        "[[lowering]]\nop = \"Copy\"\npriority = 1\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     // prio 1 的规则覆盖了 prio 0 那条的全部取值域 → 后者是死规则
     let msg = match parse_and_validate(&doc).unwrap_err() {
@@ -1503,8 +1666,8 @@ fn priority_overrides_specificity() {
     assert!(msg.contains("死规则"), "msg: {msg}");
     // 反过来（不加 priority）则合法：具体的自动排前
     let ok = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"mov {out}, {1}\"]",
+        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     parse_and_validate(&ok).expect("特异性自动裁决：2 叶子排前，1 叶子不再吃掉它");
 }
@@ -1512,8 +1675,8 @@ fn priority_overrides_specificity() {
 #[test]
 fn disjoint_rules_are_not_dead() {
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 64] }\ninsts = [\"mov {out}, {1}\"]",
+        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 64] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     parse_and_validate(&doc).expect("互斥谓词不构成死规则");
 }
@@ -1522,8 +1685,8 @@ fn disjoint_rules_are_not_dead() {
 fn or_not_predicates_skip_dead_check() {
     // 含 or/not → RuleDomain::Opaque，放弃判定（保守，不误报）
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { or = [{ eq = [\"rd\", 32] }, { eq = [\"rd\", 64] }] }\ninsts = [\"mov {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"mov {out}, {1}\"]",
+        "[[lowering]]\nop = \"Copy\"\nwhen = { or = [{ eq = [\"rd\", 32] }, { eq = [\"rd\", 64] }] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     parse_and_validate(&doc).expect("Opaque 谓词不参与死规则判定");
 }
@@ -1594,7 +1757,7 @@ asm = "i {dst}, {src}"
     let preset = &m.forms[0].keys;
     let enc = m.instructions[0].enc.over(preset);
     assert_eq!(
-        enc.modrm.as_ref().map(|m| m.rm.as_str()),
+        enc.modrm.as_ref().and_then(|m| m.rm.as_deref()),
         Some("dst"),
         "指令覆盖生效"
     );
@@ -1667,7 +1830,7 @@ asm = "add {dst}, {src}"
         Some(crate::v12::model::Opsize::Named("dst".into()))
     );
     // 打印序与编码序无关：asm 先打 dst（= 编码序 1）
-    assert_eq!(inst.asm, "add {dst}, {src}");
+    assert_eq!(inst.asm.as_str(), "add {dst}, {src}");
 }
 
 #[test]
@@ -1752,8 +1915,8 @@ fn modrm_map_declares_field_sources() {
     let m = parse_and_validate(&modrm_doc(r#"modrm = { reg = "src", rm = "dst" }"#))
         .expect("映射形态必须合法");
     let mm = m.instructions[0].enc.modrm.as_ref().unwrap();
-    assert_eq!(mm.reg, crate::v12::model::ModrmReg::Op("src".into()));
-    assert_eq!(mm.rm_operand(), (false, "dst"));
+    assert_eq!(mm.reg, Some(crate::v12::model::ModrmReg::Op("src".into())));
+    assert_eq!(mm.rm_operand(), (false, Some("dst")));
 }
 
 /// `reg = <整数>` = 固定扩展码（取代 `"ext"` + `fields.ext` 两处声明）。
@@ -1761,7 +1924,7 @@ fn modrm_map_declares_field_sources() {
 fn modrm_map_reg_integer_is_ext_code() {
     let m = parse_and_validate(&modrm_doc(r#"modrm = { reg = 3, rm = "dst" }"#)).expect("valid");
     let mm = m.instructions[0].enc.modrm.as_ref().unwrap();
-    assert_eq!(mm.reg, crate::v12::model::ModrmReg::Ext(3));
+    assert_eq!(mm.reg, Some(crate::v12::model::ModrmReg::Ext(3)));
 }
 
 /// `rm = "[名]"` = 内存形式（与 asm 里的 `[{base}]` 同形）。
@@ -1770,7 +1933,7 @@ fn modrm_map_bracket_means_memory() {
     let m =
         parse_and_validate(&modrm_doc(r#"modrm = { reg = "src", rm = "[dst]" }"#)).expect("valid");
     let mm = m.instructions[0].enc.modrm.as_ref().unwrap();
-    assert_eq!(mm.rm_operand(), (true, "dst"));
+    assert_eq!(mm.rm_operand(), (true, Some("dst")));
 }
 
 /// 引用了没声明的操作数名 → 生成期报错（带 ops 清单）。
@@ -1836,12 +1999,12 @@ fn pattern_parses_and_validates() {
         + r#"
 [[pattern]]
 match = "Iadd(Imul(a, b), c)"
-insts = ["i {out}, {a}, {b}"]
+insts = ["I {out}, {a}, {b}"]
 "#;
     let m = parse_and_validate(&doc).expect("valid pattern");
     assert_eq!(m.pattern.len(), 1);
     assert_eq!(m.pattern[0].r#match, "Iadd(Imul(a, b), c)");
-    assert_eq!(m.pattern[0].insts, vec!["i {out}, {a}, {b}"]);
+    assert_eq!(m.pattern[0].insts, vec!["I {out}, {a}, {b}"]);
 }
 
 #[test]
@@ -1874,7 +2037,7 @@ fn pattern_rejects_unknown_placeholder() {
         + r#"
 [[pattern]]
 match = "Iadd(a, b)"
-insts = ["i {out}, {nope}"]
+insts = ["I {out}, {nope}"]
 "#;
     let err = parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("未知占位符"), "err: {err}");
@@ -1886,7 +2049,7 @@ fn codegen_emits_pattern_statics_and_lower_pattern() {
         + r#"
 [[pattern]]
 match = "Iadd(Imul(a, b), c)"
-insts = ["i {out}, {a}", "i {out}, {b}", "i {out}, {c}"]
+insts = ["I {out}, {a}", "I {out}, {b}", "I {out}, {c}"]
 "#;
     let model = parse_and_validate(&doc).expect("valid pattern model");
     let ts = super::codegen::generate(&model).expect("codegen must succeed");
@@ -1902,4 +2065,117 @@ insts = ["i {out}, {a}", "i {out}, {b}", "i {out}, {c}"]
     ] {
         assert!(s.contains(needle), "generated code missing '{needle}'");
     }
+}
+
+// ─────────────────── 通用内存模板（S9） ───────────────────
+
+#[test]
+fn mem_template_parse_mips() {
+    use super::codegen::mem::{Comp, Item, parse_mem_template};
+    let items = parse_mem_template("{disp}({base})").unwrap();
+    assert_eq!(items.len(), 4);
+    assert!(matches!(&items[0], Item::Comp(Comp::Disp)));
+    assert!(matches!(&items[1], Item::Lit { text, .. } if text == "("));
+    assert!(matches!(&items[2], Item::Comp(Comp::Base)));
+    assert!(matches!(&items[3], Item::Lit { text, .. } if text == ")"));
+}
+
+#[test]
+fn mem_template_parse_default() {
+    use super::codegen::mem::{Comp, Item, parse_mem_template};
+    let items = parse_mem_template("[{base}+{index}*{scale}+{disp}]").unwrap();
+    assert_eq!(items.len(), 9);
+    assert!(matches!(&items[0], Item::Lit { text, .. } if text == "["));
+    assert!(matches!(&items[1], Item::Comp(Comp::Base)));
+    assert!(matches!(&items[3], Item::Comp(Comp::Index)));
+    assert!(matches!(&items[5], Item::Comp(Comp::Scale)));
+    assert!(matches!(&items[7], Item::Comp(Comp::Disp)));
+    assert!(matches!(&items[8], Item::Lit { text, .. } if text == "]"));
+}
+
+#[test]
+fn mem_template_render_mips_style() {
+    use super::codegen::mem::{gen_render_mem, parse_mem_template};
+    let items = parse_mem_template("{disp}({base})").unwrap();
+    let s = gen_render_mem(&items).to_string();
+    let c = s.replace(' ', "");
+    assert!(!c.contains("\"[\""), "MIPS 不应有方括号：{s}");
+    assert!(c.contains("\"(\""), "应有 '('：{s}");
+    assert!(c.contains("\")\""), "应有 ')'：{s}");
+    assert!(c.contains("m.disp"), "disp 裸有符号输出：{s}");
+}
+
+#[test]
+fn mem_template_parser_mips_style() {
+    use super::codegen::mem::{gen_mem_parser, parse_mem_template};
+    let items = parse_mem_template("{disp}({base})").unwrap();
+    let s = gen_mem_parser(&items).to_string();
+    let c = s.replace(' ', "");
+    assert!(
+        c.contains("__raw_signed_int"),
+        "MIPS disp 需有符号立即数：{s}"
+    );
+    assert!(c.contains("__Tok::LParen"), "应有 '('：{s}");
+    assert!(!c.contains("__Tok::LBracket"), "不应有 '['：{s}");
+}
+
+#[test]
+fn mem_template_default_render_matches_x86() {
+    use super::codegen::mem::{gen_render_mem, parse_mem_template};
+    let items = parse_mem_template("[{base}+{index}*{scale}+{disp}]").unwrap();
+    let s = gen_render_mem(&items).to_string();
+    let c = s.replace(' ', "");
+    assert!(c.contains("\"[\""), "x86 应有 '['：{s}");
+    assert!(c.contains("\"+\""), "x86 应有 '+'：{s}");
+    assert!(c.contains("\"*\""), "x86 应有 '*'：{s}");
+    assert!(c.contains("\"]\""), "x86 应有 ']'：{s}");
+}
+
+#[test]
+fn conventions_mem_validation() {
+    let base = r#"
+[meta]
+name = "mips"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 7 }
+rd = { offset = 7, width = 3 }
+[conventions.mem]
+template = "{disp}({base})"
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+[[forms]]
+name = "R"
+opcode_field = "opcode"
+operand_fields = ["rd"]
+[[instructions]]
+name = "ADD"
+form = "R"
+opcode = 0x13
+ops = ["dst:g:out"]
+asm = "add {dst}"
+"#;
+    parse_and_validate(base).expect("MIPS 模板合法");
+    // 缺 base → 报错
+    let bad = base.replace(r#"template = "{disp}({base})""#, r#"template = "{disp}""#);
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("base"), "err: {err}");
+    // scale 未紧随 index → 报错
+    let bad = base.replace(
+        r#"template = "{disp}({base})""#,
+        r#"template = "[{base}*{scale}]""#,
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("index"), "err: {err}");
+    // 未知占位符 → 报错
+    let bad = base.replace(
+        r#"template = "{disp}({base})""#,
+        r#"template = "[{base}+{foo}]""#,
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("foo"), "err: {err}");
 }

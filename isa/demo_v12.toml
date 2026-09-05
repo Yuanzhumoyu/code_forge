@@ -245,6 +245,16 @@ insts = ["RET"]
 # Iadd：同一条模板字符串 "add {out}, {0}, {1}"，宽度由 when 谓词分发——
 # i16 → ADD16、i32 → ADD32、i64 → ADD64（后端按操作数实际宽度选变体，
 # 无需手写 add16/add32/add64 三条 lowering）。
+
+# ── 显式别名（S10e）：多态引用名 → 指令名列表 ──
+[[aliases]]
+name = "add"
+insts = ["ADD16", "ADD32", "ADD64"]
+
+[[aliases]]
+name = "mov"
+insts = ["MOV16", "MOV32", "MOV64", "MOV16_R_IMM16"]
+
 [[lowering]]
 op = "Iadd"
 vary = { rs1_width = [16, 32, 64] }

@@ -5,8 +5,7 @@
 //!   （v11 对比曾验证 v12 与其 GPR 字节一致；SSE 字节 v11 带多余 REX 不合规，
 //!   v12 组内索引规范正确——以规范为准）。
 //! - **字节级往返**：decode(encode(X)) 再 encode 字节一致（含编码撞车的别名
-//!   指令，如 MOVSXD_R_GPR vs MOVSXD_R_RM、MOVSD 三胞胎、MOVZX_B vs
-//!   MOVZX_R8_RM——声明序首匹配）。
+//!   指令，声明序首匹配）。
 //! - **assemble/disassemble** 往返（opsize 操作数非文本，默认 64）。
 
 use forge_codegen::x86_v12::{Inst, MemRef, Reg, assemble, decode, disassemble, encode};
@@ -44,7 +43,6 @@ fn golden_gpr_spec_bytes() {
         ("btr RAX, RBX", &[0x48, 0x0F, 0xB3, 0xD8]),
         ("btc RAX, RBX", &[0x48, 0x0F, 0xBB, 0xD8]),
         ("mov RAX, RBX", &[0x48, 0x89, 0xD8]), // movrm 已合并进 mov（真重复）
-        ("movr8 RAX, RBX", &[0x48, 0x8B, 0xC3]),
         // imm32 形式（81 /digit + imm32）
         ("add RAX, 42", &[0x48, 0x81, 0xC0, 0x2A, 0x00, 0x00, 0x00]),
         ("sub RAX, 42", &[0x48, 0x81, 0xE8, 0x2A, 0x00, 0x00, 0x00]),
@@ -58,10 +56,10 @@ fn golden_gpr_spec_bytes() {
         ("xadd [R8], R9", &[0xF0, 0x4D, 0x0F, 0xC1, 0x08]),
         ("xchg [RAX], RBX", &[0x48, 0x87, 0x18]),
         ("xchg [RSP], RBX", &[0x48, 0x87, 0x1C, 0x24]), // base=RSP → SIB
-        // 注：locksub/lockand/lockor/lockxor 不在 golden——v11 带多余 0F escape
+        // 注：lock sub/lock and/lock or/lock xor 不在 golden——v11 带多余 0F escape
         //（F0 48 0F 29 非规范），v12 规范修正（F0 48 29），见 mem_spec_bytes。
-        ("mov_mem RAX, [RBX]", &[0x48, 0x8B, 0x03]),
-        ("mov_sto [RAX], RBX", &[0x48, 0x89, 0x18]),
+        ("mov RAX, [RBX]", &[0x48, 0x8B, 0x03]),
+        ("mov [RAX], RBX", &[0x48, 0x89, 0x18]),
     ];
     for (c, expected) in cases {
         let got = v12_bytes(c);
@@ -107,11 +105,11 @@ fn r_forms_spec_bytes() {
         ("bswap RAX", &[0x48, 0x0F, 0xC8]),
         ("bswap R12", &[0x49, 0x0F, 0xCC]),
         (
-            "mov_imm RAX, 0x1234",
+            "mov RAX, 0x1234",
             &[0x48, 0xB8, 0x34, 0x12, 0, 0, 0, 0, 0, 0],
         ),
         (
-            "mov_imm R8, -1",
+            "mov R8, -1",
             &[0x49, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
         ),
     ];
@@ -189,7 +187,7 @@ fn sse_spec_bytes() {
         ("cvtsd2si EAX, XMM0", &[0xF2, 0x0F, 0x2D, 0xC0]),
         ("cvttsd2si EAX, XMM0", &[0xF2, 0x0F, 0x2C, 0xC0]),
         ("movd XMM0, RAX", &[0x66, 0x0F, 0x6E, 0xC0]),
-        ("movd_fr RAX, XMM0", &[0x66, 0x0F, 0x7E, 0xC0]),
+        ("movd RAX, XMM0", &[0x66, 0x0F, 0x7E, 0xC0]),
         ("punpckldq XMM0, XMM1", &[0x66, 0x0F, 0x62, 0xC1]),
         ("punpcklqdq XMM0, XMM1", &[0x66, 0x0F, 0x6C, 0xC1]),
         ("punpckhdq XMM0, XMM1", &[0x66, 0x0F, 0x6A, 0xC1]),
@@ -218,20 +216,20 @@ fn mem_spec_bytes() {
         ("xchg [RSP], RBX", &[0x48, 0x87, 0x1C, 0x24]),
         // xadd [RAX], RBX — F0 LOCK + 48 0F C1 /r
         ("xadd [RAX], RBX", &[0xF0, 0x48, 0x0F, 0xC1, 0x18]),
-        // locksub [RAX], RBX — F0 48 29 /r（v11 带多余 0F escape 非规范，v12 修正）
-        ("locksub [RAX], RBX", &[0xF0, 0x48, 0x29, 0x18]),
-        // mov_mem RAX, [RBX] — 48 8B /r
-        ("mov_mem RAX, [RBX]", &[0x48, 0x8B, 0x03]),
-        // mov_sto [RAX], RBX — 48 89 /r
-        ("mov_sto [RAX], RBX", &[0x48, 0x89, 0x18]),
+        // lock sub [RAX], RBX — F0 48 29 /r（v11 带多余 0F escape 非规范，v12 修正）
+        ("lock sub [RAX], RBX", &[0xF0, 0x48, 0x29, 0x18]),
+        // mov RAX, [RBX] — 48 8B /r
+        ("mov RAX, [RBX]", &[0x48, 0x8B, 0x03]),
+        // mov [RAX], RBX — 48 89 /r
+        ("mov [RAX], RBX", &[0x48, 0x89, 0x18]),
         // movsd XMM0, [RAX] — F2 48?? 不——F2 0F 10（64 位无 REX.W；base=RAX<8）
-        ("movsd_mem XMM0, [RAX]", &[0xF2, 0x0F, 0x10, 0x00]),
+        ("movsd XMM0, [RAX]", &[0xF2, 0x0F, 0x10, 0x00]),
         // mov RAX, RBX — 48 89 /r（reg=src: 3, rm=dest: 0；mov64rr 已合并）
         ("mov RAX, RBX", &[0x48, 0x89, 0xD8]),
-        // mov64rm RAX, [rbp+8] — RBP ∈ force_disp_base → mod=01 + disp8
-        ("mov64rm RAX, [RBP+8]", &[0x48, 0x8B, 0x45, 0x08]),
-        // mov64rm RAX, [RBX-8] — mod=01 + disp8=-8
-        ("mov64rm RAX, [RBX-8]", &[0x48, 0x8B, 0x43, 0xF8]),
+        // mov RAX, [rbp+8] — RBP ∈ force_disp_base → mod=01 + disp8
+        ("mov RAX, [RBP+8]", &[0x48, 0x8B, 0x45, 0x08]),
+        // mov RAX, [RBX-8] — mod=01 + disp8=-8
+        ("mov RAX, [RBX-8]", &[0x48, 0x8B, 0x43, 0xF8]),
     ];
     for (asm, expected) in cases {
         let got = v12_bytes(asm);
@@ -327,10 +325,6 @@ fn all_insts() -> Vec<Inst> {
             src: Reg::from_index(3, forge_ir::RegClass::GPR64),
         },
         MovsxdRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            src: Reg::from_index(1, forge_ir::RegClass::GPR64),
-        },
-        MovsxdRGpr {
             dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
@@ -506,10 +500,6 @@ fn all_insts() -> Vec<Inst> {
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         MovsdXmmFreg {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
-            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
-        },
-        MovsdFregXmm {
             dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
@@ -1096,7 +1086,7 @@ fn assemble_disassemble_roundtrip() {
         "pop R9",
         "bswap RAX",
         "bswap R12",
-        "mov_imm RAX, 0x1234",
+        "mov RAX, 0x1234",
     ];
     for c in cases {
         let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));

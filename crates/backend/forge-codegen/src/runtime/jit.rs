@@ -1973,10 +1973,10 @@ mod tests {
         for src in [
             "mov EAX, EBX",
             "mov RAX, RBX",
-            "mov_mem EAX, [EBX]",
-            "mov_mem RAX, [RBX]",
-            "mov_sto [EAX], EBX",
-            "mov_sto [RAX], RBX",
+            "mov EAX, [EBX]",
+            "mov RAX, [RBX]",
+            "mov [EAX], EBX",
+            "mov [RAX], RBX",
         ] {
             let bytes = encode(&assemble(src).expect(src)).expect("encode");
             let (inst, _) = decode(&bytes).expect(src);

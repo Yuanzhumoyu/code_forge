@@ -170,10 +170,10 @@ fn opsize_dest_slot_and_max_width_dispatch() {
 #[test]
 fn mem_bracket_whitespace_immune() {
     // Mem 槽 `[base±disp]` token 化：括号内空白免疫
-    let a = assemble("mov64rm RAX, [RBX+8]").unwrap();
-    let b = assemble("mov64rm RAX, [ RBX + 8 ]").unwrap();
+    let a = assemble("mov RAX, [RBX+8]").unwrap();
+    let b = assemble("mov RAX, [ RBX + 8 ]").unwrap();
     assert_eq!(a, b);
-    let c = assemble("mov64rm RAX, [RBX]").unwrap();
-    let d = assemble("mov64rm RAX, [ RBX ]").unwrap();
+    let c = assemble("mov RAX, [RBX]").unwrap();
+    let d = assemble("mov RAX, [ RBX ]").unwrap();
     assert_eq!(c, d);
 }
