@@ -50,6 +50,11 @@ jobs:
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
       - name: Install QEMU (riscv64)
         run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
+      # ⚠️ 临时诊断（2026-09-06 第三轮）：forge-codegen lib 测试在 ubuntu 上
+      # SIGSEGV（Windows 从不复现）。cargo test 并行输出无法定位崩溃用例——
+      # 串行跑一次使崩溃点落在两个具名 ok 之间；定位后移除本步。
+      - name: forge-codegen lib serial probe (diagnose SIGSEGV)
+        run: cargo test -p forge-codegen --lib -- --test-threads=1
       # 默认 features（jit 等）；**不带 --all-features**——all-features 会把
       # forge-tests 的 nightly feature 打开 → 依赖 forge-rustc（rustc_private
       # dylib，linux/macOS 需链接 libLLVM 且 macOS arm64 分支受 edition 2024
