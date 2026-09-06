@@ -5,6 +5,63 @@
 
 ## 用法
 
+### 推荐：cargo forge（`tools/cargo-forge`，cargo 外部子命令）
+
+把 forge-rustc 融进 rust 工具链的最省事入口——`cargo forge <build|run|doctor|backend|init>`
+（cargo 外部子命令约定：`cargo forge …` = 执行 `cargo-forge …`）。
+
+安装（任选其一，工具本身只依赖 clap/anyhow）：
+
+```bash
+# 仓库内直接构建（产物 tools/cargo-forge/target/debug/cargo-forge.exe，加入 PATH 即可）
+cargo build --manifest-path tools/cargo-forge/Cargo.toml
+# 或安装到 cargo bin（~/.cargo/bin）
+cargo install --path tools/cargo-forge
+```
+
+```bash
+# 环境自检矩阵（rustc / 组件 / backend dll / wrapper / host；全 PASS → exit 0）
+cargo forge doctor
+
+# 仓库内先构建 backend dll（target/debug/forge_rustc.dll；--release 切 release）
+cargo forge backend
+
+# cargo 工程模式（最小 no_std 工程；入口用下方「标准入口模板」：
+# no_main + #[unsafe(no_mangle)] extern "C" fn main() -> i32，返回值 = 进程退出码）
+cd <你的 no_std 工程>
+cargo forge build                                     # cargo +nightly -Zbuild-std=core build
+cargo forge run                                       # 构建并运行；-- 后参数透传 exe
+cargo forge build --release
+cargo forge build --debuginfo 2 --codegen-units 4 --threads 4  # -Cdebuginfo / -Ccodegen-units / -Zthreads
+cargo forge run --alloc                               # Vec/String：build-std=core,alloc + -Zshare-generics=yes
+
+# 单文件模式（免 build-std：裸 rustc，core/alloc 用 sysroot rlib）
+cargo forge run --file hello.rs
+cargo forge build --file hello.rs --debuginfo 2
+
+# init：为当前 cargo 工程写 .cargo/config.toml（rustflags 组 + rustc-wrapper +
+# [unstable] build-std）与 rust-toolchain.toml（channel=nightly）——之后
+# **裸 `cargo build` / `cargo run`** 即走 forge 后端（不经本工具）
+cargo forge init
+cargo build && ./target/debug/<包名>.exe
+```
+
+顶层全局参数：`--backend-dll <path>`（默认：env `FORGE_RUSTC_DLL` → 仓库
+`target/debug/forge_rustc.dll`）、`--toolchain <str>`（默认 `+nightly`，原样作为
+rustc/cargo 首参）、`-v/--verbose`（打印组装好的 env 摘要与完整子进程输出）。
+工具不在仓库内时：build/run/init 需 `--backend-dll`，backend 需 `--backend-src <repo>`。
+`RUSTUP_HOME` 未设且仓库存在 `target/rustup_home` 时自动注入（本仓库构建/验证
+环境约定——backend dll 与浮点 nightly 配对，见 README 验证路径）。
+
+> 限制：cargo 模式经 env `RUSTFLAGS` 注入参数，cargo 按空格分词——**dll 路径含
+> 空格会解析错误**（init 生成的 `.cargo/config.toml` 用数组元素，无此限制；本
+> 仓库场景 `target/debug` 无空格，可接受）。单文件模式直接传 rustc 参数，无此问题。
+> cargo 模式 `--alloc`（build-std=core,alloc）仍受下方手工方式 alloc 一段记录的
+> 已知残余影响（core 泛型辅助符号 is_null/precondition_check 双份定义/缺失，
+> LNK2005/LNK2019）；单文件模式 `--file --alloc` 走 sysroot alloc rlib 无此问题。
+
+### 底层手工方式（方式一/二/三）
+
 ```bash
 # 构建 backend（需要 nightly + rustc-dev 组件）
 cargo build -p forge-rustc
