@@ -146,7 +146,7 @@ pub fn run(arch: ExecArch, compiled: &CompiledFunction, args: &[u64]) -> u64 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
     use code_forge::backend::FunctionCompiler;
