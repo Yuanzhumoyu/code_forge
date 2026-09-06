@@ -114,6 +114,14 @@ jobs:
       - name: Build forge-rustc-wrapper
         run: cargo build --manifest-path tools/forge-rustc-wrapper/Cargo.toml
       - run: cargo test -p forge-rustc --test e2e
+      # cargo-forge cli_tests（真跑位）：上一步已产出 target/debug/forge_rustc.dll，
+      # 本 job 有 rust-src；FORGE_CLI_TOOLCHAIN 钉版使嵌套 cargo 用已装 channel
+      #（缺省会找 +nightly 别名 → rustup 自动下载最新 nightly，与钉版 dll 错配）。
+      # cli_tests 的 SKIP 门（dll && rust-src）在本环境放行 → 6 条真跑。
+      - name: cargo-forge cli_tests
+        env:
+          FORGE_CLI_TOOLCHAIN: "+nightly-2026-09-05"
+        run: cargo test -p cargo-forge --test cli_tests -- --test-threads=1
 
   # forge-tests nightly（forge-rustc 后端集成；需 nightly + rustc-dev 组件）。
   # 放 Windows：forge-rustc 是 crate-type=dylib 的 rustc_private 后端——Linux
