@@ -105,6 +105,12 @@ fn file_mode(args: &BuildArgs,
             eprintln!("提示: --file 单文件模式忽略 -- 尾参（那是 cargo 模式透传给 cargo 的）");
         }
     }
+    if args.alloc && verbose {
+        eprintln!(
+            "提示: 单文件模式 --alloc 无附加 rustc 参数——alloc 走 sysroot rlib \
+             直链（-Zshare-generics/build-std 只作用于 cargo 模式）"
+        );
+    }
     let out = file.with_extension("exe");
     let flags = env::rustflags_list(&spec(args, dll));
 
