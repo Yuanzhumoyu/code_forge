@@ -767,7 +767,9 @@ unsafe fn free_executable(ptr: *mut u8, size: usize) {
 mod tests {
     use super::*;
 
-    /// x86_64 的简单加法函数: lea eax, [rcx+rdx]; ret
+    /// x86_64 的简单加法函数: lea eax, [rcx+rdx]; ret（仅 x86_64——字节码是
+    /// x86 指令，aarch64 上执行即 SIGILL）
+    #[cfg(target_arch = "x86_64")]
     fn add_code() -> Vec<u8> {
         vec![
             0x8d, 0x04, 0x11, // lea eax, [rcx + rdx]
@@ -775,7 +777,8 @@ mod tests {
         ]
     }
 
-    /// x86_64 返回常量函数: mov eax, 42; ret
+    /// x86_64 返回常量函数: mov eax, 42; ret（同 add_code，仅 x86_64）
+    #[cfg(target_arch = "x86_64")]
     fn constant_code() -> Vec<u8> {
         vec![
             0xb8, 0x2a, 0x00, 0x00, 0x00, // mov eax, 42
@@ -785,7 +788,8 @@ mod tests {
 
     #[test]
     fn test_alloc_and_free() {
-        let code = add_code();
+        // 架构无关的样例字节（不执行，只验证分配/封存）
+        let code = vec![0xc3u8];
         let mem = ExecutableMemory::new(&code).expect("allocate");
         assert!(mem.len() >= code.len());
         assert!(!mem.ptr.is_null());
@@ -793,6 +797,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_call_add_function() {
         let code = add_code();
         let mem = ExecutableMemory::new(&code).expect("allocate");
@@ -804,6 +809,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_call_constant() {
         let code = constant_code();
         let mem = ExecutableMemory::new(&code).expect("allocate");
@@ -813,6 +819,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_exec_once() {
         let code = add_code();
         let result = unsafe {
@@ -828,13 +835,15 @@ mod tests {
 
     #[test]
     fn test_offset_too_large() {
-        let code = add_code();
+        // 架构无关样例字节（不执行，只验证越界偏移被拒）
+        let code = vec![0xc3u8];
         let mem = ExecutableMemory::new(&code).expect("allocate");
         let result = unsafe { mem.get_fn::<extern "C" fn()>(mem.len() + 1) };
         assert!(result.is_err());
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_seal_and_modify() {
         let mut mem = ExecutableMemory::new_writable(&constant_code()).expect("allocate");
         assert!(!mem.is_sealed);
@@ -852,6 +861,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_writable_then_seal() {
         let mut mem = ExecutableMemory::new_writable(&constant_code()).expect("allocate");
         assert!(!mem.is_sealed);

@@ -167,7 +167,19 @@ mod tests {
     fn test_host_arch_name() {
         let name = CpuFeatures::host_arch_name();
         assert!(!name.is_empty());
-        assert_eq!(name, "x86_64"); // 测试在 x86_64 上运行
+        // 架构自适应（非 x86 宿主不硬断言 x86_64——CI macOS 是 arm64）
+        let expected = if cfg!(target_arch = "x86_64") {
+            "x86_64"
+        } else if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else if cfg!(target_arch = "arm") {
+            "arm"
+        } else if cfg!(target_arch = "riscv64") {
+            "riscv64"
+        } else {
+            "unknown"
+        };
+        assert_eq!(name, expected);
     }
 
     #[test]

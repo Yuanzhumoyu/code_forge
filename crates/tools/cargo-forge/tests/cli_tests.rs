@@ -163,13 +163,13 @@ fn run_with_timeout(cmd: &mut Command, timeout_s: u64) -> Output {
 
 /// 运行 cargo-forge（cwd=proj；-- 后为子命令 args）。
 /// `FORGE_CLI_TOOLCHAIN` 设置时透传 `--toolchain <值>`（如 CI 钉版
-/// `+nightly-2026-09-04`）；缺省不加参数 → 工具默认 `+nightly`。
+/// `+nightly-2026-09-05`）；缺省不加参数 → 工具默认 `+nightly`。
 fn run_tool(args: &[&str], proj: Option<&Path>, timeout_s: u64) -> Output {
     let mut cmd = Command::new(tool());
-    if let Ok(tc) = std::env::var("FORGE_CLI_TOOLCHAIN") {
-        if !tc.is_empty() {
-            cmd.arg("--toolchain").arg(tc);
-        }
+    if let Ok(tc) = std::env::var("FORGE_CLI_TOOLCHAIN")
+        && !tc.is_empty()
+    {
+        cmd.arg("--toolchain").arg(tc);
     }
     cmd.args(args);
     if let Some(p) = proj {
