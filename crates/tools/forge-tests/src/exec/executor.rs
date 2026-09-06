@@ -2,8 +2,9 @@
 //!
 //! - 本机（x86_64）：`ExecutableMemory` + extern "C" 调用（真实执行）
 //! - riscv64（QEMU system-mode + semihosting）：见 `super::qemu`
+//! - aarch64（QEMU system-mode + semihosting）：见 `super::qemu_aarch64`
 //!
-//! 返回值寄存器映射与 `[abi.ret_regs]` 一致：x86 RAX、riscv a0。
+//! 返回值寄存器映射与 `[abi.ret_regs]` 一致：x86 RAX、riscv a0、arm64 x0。
 
 use code_forge::backend::CompiledFunction;
 
@@ -12,6 +13,7 @@ use code_forge::backend::CompiledFunction;
 pub enum ExecArch {
     X86_64,
     Riscv64,
+    AArch64,
 }
 
 impl ExecArch {
@@ -19,6 +21,7 @@ impl ExecArch {
         match self {
             ExecArch::X86_64 => "x86_64",
             ExecArch::Riscv64 => "riscv64",
+            ExecArch::AArch64 => "aarch64",
         }
     }
 }
@@ -138,11 +141,51 @@ impl Executor for QemuRiscv64Executor {
     }
 }
 
+/// QEMU aarch64 执行器（system-mode + semihosting；见 `super::qemu_aarch64`）。
+/// 本机无 QEMU 时 `exec` panic（调用方应先用 `qemu_aarch64_path()` 探测）。
+pub struct QemuAarch64Executor;
+
+/// aarch64 semihosting 退出码以字节返回（OS 退出码 0-255）：按**有符号
+/// 8 位**符号扩展（255 → -1），与用例期望对齐。
+fn sign_extend_exit8(raw: u64) -> u64 {
+    (raw as u8 as i8 as i64) as u64
+}
+
+impl Executor for QemuAarch64Executor {
+    fn arch(&self) -> ExecArch {
+        ExecArch::AArch64
+    }
+
+    fn exec(&self, compiled: &CompiledFunction, args: &[u64]) -> u64 {
+        let raw = super::qemu_aarch64::exec_aarch64(compiled, args)
+            .unwrap_or_else(|e| panic!("QemuAarch64Executor: {e}"));
+        sign_extend_exit8(raw)
+    }
+
+    fn exec_module(
+        &self,
+        funcs: &[(String, CompiledFunction)],
+        globals: &[(String, Vec<u8>)],
+        main: &str,
+        args: &[u64],
+    ) -> u64 {
+        let _ = funcs;
+        let _ = globals;
+        let _ = main;
+        let _ = args;
+        // 多函数模块路径（跨函数 call 偏移 patch）为后续迭代；当前单函数入口
+        panic!(
+            "QemuAarch64Executor::exec_module 尚未实现（多函数 call 偏移 patch 后置）"
+        )
+    }
+}
+
 /// 便捷入口：按架构选择执行器。
 pub fn run(arch: ExecArch, compiled: &CompiledFunction, args: &[u64]) -> u64 {
     match arch {
         ExecArch::X86_64 => NativeExecutor.exec(compiled, args),
         ExecArch::Riscv64 => QemuRiscv64Executor.exec(compiled, args),
+        ExecArch::AArch64 => QemuAarch64Executor.exec(compiled, args),
     }
 }
 

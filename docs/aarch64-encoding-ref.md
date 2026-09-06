@@ -152,20 +152,21 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
 
 官方（网页正文需 JS，仅能确认存在与版次；内容与上表经 XML/镜像交叉验证）：
 
-- https://developer.arm.com/documentation/ddi0602/2025-03/Base-Instructions/ADD--immediate---Add-immediate-value-  （DDI0602「A-profile A64 ISA」指令页，2025-03；同日档 2025-06/2025-09 亦存在，见 CCMP 页）
-- https://developer.arm.com/documentation/ddi0602/2025-03/Base-Instructions/CCMP--immediate---Conditional-compare--immediate-- ；…/2025-06/…；…/2025-09/Base-Instructions/CCMP--register---Conditional-compare--register--
-- https://developer.arm.com/documentation/ddi0602/2020-12/…（旧版存档页仍被引用）
+- <https://developer.arm.com/documentation/ddi0602/2025-03/Base-Instructions/ADD--immediate---Add-immediate-value->  （DDI0602「A-profile A64 ISA」指令页，2025-03；同日档 2025-06/2025-09 亦存在，见 CCMP 页）
+- <https://developer.arm.com/documentation/ddi0602/2025-03/Base-Instructions/CCMP--immediate---Conditional-compare--immediate--> ；…/2025-06/…；…/2025-09/Base-Instructions/CCMP--register---Conditional-compare--register--
+- <https://developer.arm.com/documentation/ddi0602/2020-12/…（旧版存档页仍被引用）>
 - DDI0596「Arm A64 ISA（Base Instructions 前身）」/ DDI0597：同一内容老编号，URL 形如 developer.arm.com/documentation/ddi0596/2021-12/Base-Instructions/…
 
 等价/派生源（实际抓取正文）：
+
 - armgen（官方 ISA XML 2026-03_rel 生成，逐指令位图；页脚 Copyright Arm）：
-  http://www.scs.stanford.edu/~zyedidia/arm64/ccmp_imm.html 、ccmp_reg.html 、ccmn_imm.html 、udiv.html 、madd.html （同一站点另有全部 Base/SIMD/SVE 指令与 Index-by-Encoding 页）
+  <http://www.scs.stanford.edu/~zyedidia/arm64/ccmp_imm.html> 、ccmp_reg.html 、ccmn_imm.html 、udiv.html 、madd.html （同一站点另有全部 Base/SIMD/SVE 指令与 Index-by-Encoding 页）
 - Linux 内核 insn.h（注释引述 ARM ARM §C3.1 主表；含全族基址掩码/条件码/寄存器 31 语义）：
-  https://raw.githubusercontent.com/xanmod/linux/master/arch/arm64/include/asm/insn.h （官方镜像 https://gitlab.arm.com/linux-arm/linux-ak/-/raw/…/arch/arm64/include/asm/insn.h）
+  <https://raw.githubusercontent.com/xanmod/linux/master/arch/arm64/include/asm/insn.h> （官方镜像 <https://gitlab.arm.com/linux-arm/linux-ak/-/raw/…/arch/arm64/include/asm/insn.h）>
 - Ruby YJIT A64 编码器（每文件注释链官方 DDI0596/DDI0602 页，单测常量在真机验证）：
-  https://github.com/ruby/ruby/tree/master/yjit/src/asm/arm64/inst （mov.rs / branch.rs / branch_cond.rs / conditional.rs / data_imm.rs / data_reg.rs / pc_rel.rs / load_store.rs / reg_pair.rs / shift_imm.rs / test_bit.rs 已抓取核对）
-- AAPCS64 官方（2025Q4，2026-01-23 发布）：https://raw.githubusercontent.com/ARM-software/abi-aa/main/aapcs64/aapcs64.rst
+  <https://github.com/ruby/ruby/tree/master/yjit/src/asm/arm64/inst> （mov.rs / branch.rs / branch_cond.rs / conditional.rs / data_imm.rs / data_reg.rs / pc_rel.rs / load_store.rs / reg_pair.rs / shift_imm.rs / test_bit.rs 已抓取核对）
+- AAPCS64 官方（2025Q4，2026-01-23 发布）：<https://raw.githubusercontent.com/ARM-software/abi-aa/main/aapcs64/aapcs64.rst>
 - 中文入门佐证（非官方转译，仅概念/别名）：
-  https://armv8-doc.readthedocs.io/en/latest/06.html （周贺贺《Armv8/Armv9 架构入门指南》）
+  <https://armv8-doc.readthedocs.io/en/latest/06.html> （周贺贺《Armv8/Armv9 架构入门指南》）
 
 抓取失败的通道（均已尝试）：support.arm.com SPA 正文、documentation-service.arm.com（PDF）、csci.viu.ca ARM ARM C4 章 PDF、r.jina.ai 渲染代理、web.archive.org、go.googlesource.com。
