@@ -231,18 +231,20 @@ fn check_components(
     } else if dll_ok {
         // 务实判据：backend dll 已存在 = forge-rustc 可用（规格 §doctor.b）；
         // 组件缺失只影响 cargo build-std 的 core/alloc 源码重编，仍给建议
-        (
-            true,
-            format!(
-                "务实判据: backend dll 已存在视为可用（rust-src/rustc-dev 探测: {}）",
-                if missing.is_empty() {
-                    "无法探测（rustc --print sysroot 失败）".to_string()
-                } else {
-                    format!("缺失 {}", missing.join(", "))
-                }
-            ),
-            component_advice(env, &missing),
-        )
+        let detail = format!(
+            "务实判据: backend dll 已存在视为可用（rust-src/rustc-dev 探测: {}）",
+            if missing.is_empty() {
+                "无法探测（rustc --print sysroot 失败）".to_string()
+            } else {
+                format!("缺失 {}", missing.join(", "))
+            }
+        );
+        let advice = if missing.is_empty() {
+            vec!["(a) 项 rustc 可用后重跑 doctor 可精确探测组件".to_string()]
+        } else {
+            component_advice(env, &missing)
+        };
+        (true, detail, advice)
     } else if missing.is_empty() {
         (
             false,
