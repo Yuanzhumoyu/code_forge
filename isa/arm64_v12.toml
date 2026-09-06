@@ -37,7 +37,7 @@ names = [
     "X0","X1","X2","X3","X4","X5","X6","X7",
     "X8","X9","X10","X11","X12","X13","X14","X15",
     "X16","X17","X18","X19","X20","X21","X22","X23",
-    "X24","X25","X26","X27","X28","X29","X30",
+    "X24","X25","X26","X27","X28","X29","X30","SP",
 ]
 
 [reg.gpr4]
@@ -46,7 +46,7 @@ names = [
     "W0","W1","W2","W3","W4","W5","W6","W7",
     "W8","W9","W10","W11","W12","W13","W14","W15",
     "W16","W17","W18","W19","W20","W21","W22","W23",
-    "W24","W25","W26","W27","W28","W29","W30",
+    "W24","W25","W26","W27","W28","W29","W30","WSP",
 ]
 
 # ─────────────────────── 命名位域（A64）───────────────────────
@@ -84,6 +84,10 @@ rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
 opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
 imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
 imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
+p6    = { offset = 26, width = 6 }   # LDP/STP 顶层 [31:26]（X=0x2A/W=0x0A）
+idx3  = { offset = 22, width = 3 }   # LDP/STP index（100 off STP/101 off LDP）
+rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
+imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元）
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
@@ -928,6 +932,12 @@ kind = "imm"
 signed = true
 width = 9
 
+[[operand_slots]]
+name = "imm7u"
+kind = "imm"
+signed = false
+width = 7
+
 # ─────────────────────────── 指令 ───────────────────────────
 
 [[instructions]]
@@ -1011,3 +1021,62 @@ insts = ["LDURX", "LDURW"]
 [[aliases]]
 name = "stur"
 insts = ["STURX", "STURW"]
+
+# ═════════════════════════════ A5：寄存器对 LDP/STP（offset） ═══════════════════════════
+# 布局：opc[31:30] 101 index[24:22] imm7[21:15] Rt2[14:10] Rn Rt
+#   X 对 top6=0x2A（opc=10）、W 对=0x0A（opc=00）；index: STP=4/LDP=5
+# oracle：stp x0,x1,[x2]=A9000440、ldp x0,x1,[x2]=A9400440、
+#   ldp x2,x3,[x4,#16]=A9410C82（imm7=2 缩放）、stp w0,w1,[x2]=29000440、
+#   ldp w0,w1,[x2,#8]=29410440（imm7=1）
+# ⚠️ imm7 语义=**对元素缩放单元**（X 对 ×8、W 对 ×4），asm/golden 存缩放值
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "PAIR"     # LDP/STP：rt rn rt2 imm7（位低→高）
+opcode_field = "op8"
+operand_fields = ["rt", "rn", "rt2", "imm7"]
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+[[instructions]]
+name = "STPX"
+form = "PAIR"
+opcode = 0xA9
+fields = { idx3 = 4 }
+ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7u"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDPX"
+form = "PAIR"
+opcode = 0xA9
+fields = { idx3 = 5 }
+ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7u"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STPW"
+form = "PAIR"
+opcode = 0x29
+fields = { idx3 = 4 }
+ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7u"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDPW"
+form = "PAIR"
+opcode = 0x29
+fields = { idx3 = 5 }
+ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7u"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+
+# ── 别名 ──
+
+[[aliases]]
+name = "stp"
+insts = ["STPX", "STPW"]
+
+[[aliases]]
+name = "ldp"
+insts = ["LDPX", "LDPW"]

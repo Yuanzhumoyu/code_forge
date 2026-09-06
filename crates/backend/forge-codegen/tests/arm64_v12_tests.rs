@@ -136,6 +136,23 @@ fn golden_a4_memory() {
 }
 
 #[test]
+fn golden_a5_pair_and_sp() {
+    // 帧/SP（clang oracle）
+    assert_eq!(enc("sub sp, sp, #16"), word_le(0xD10043FF));
+    assert_eq!(enc("add sp, sp, #16"), word_le(0x910043FF));
+    assert_eq!(enc("add x29, sp, #0"), word_le(0x910003FD)); // mov x29, sp 别名
+    // 寄存器对（imm7=缩放单元：X 对 #2 = 16 字节）
+    assert_eq!(enc("stp x29, x30, [sp, #2]"), word_le(0xA9017BFD));
+    assert_eq!(enc("ldp x29, x30, [sp, #2]"), word_le(0xA9417BFD));
+    assert_eq!(enc("stp x0, x1, [x2, #0]"), word_le(0xA9000440));
+    assert_eq!(enc("ldp x0, x1, [x2, #0]"), word_le(0xA9400440));
+    assert_eq!(enc("stp w0, w1, [x2, #0]"), word_le(0x29000440));
+    // SP 基址访存（imm12 缩放：#1 → 8 字节）
+    assert_eq!(enc("str x0, [sp, #1]"), word_le(0xF90007E0));
+    assert_eq!(enc("ldr x1, [sp, #1]"), word_le(0xF94007E1));
+}
+
+#[test]
 fn golden_register_encoding_pattern() {
     // rd/rn/imm 位段位置：add x5,x6,#0x2a → imm12=0x2A<<10、Rn=6<<5、Rd=5
     let w = 0x91000000u32 | (42 << 10) | (6 << 5) | 5;
