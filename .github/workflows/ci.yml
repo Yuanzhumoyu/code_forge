@@ -48,8 +48,10 @@ jobs:
       - run: rustup override set nightly-2026-09-05
       # P0-18：安装 QEMU（qemu-system-misc 含 riscv64 模拟器）——riscv 矩阵
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
-      - name: Install QEMU (riscv64)
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
+      # P3：qemu-system-arm 提供 qemu-system-aarch64——arm64_v12 jit_matrix
+      # 经 semihosting 真跑（forge-tests lib 用例），避免 arm64 执行回归无门禁。
+      - name: Install QEMU (riscv64 + aarch64)
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-misc qemu-system-arm
       # ⚠️ forge-codegen lib 测试（jit feature 109 个）在 ubuntu **不可通过**：
       # 串行实证 `runtime::jit::tests::test_jit_atomic_rmw_basic` 确定性
       # SIGSEGV（Windows 从不复现）——x86 机器码按 Windows x64 ABI 生成，在
