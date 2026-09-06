@@ -81,6 +81,9 @@ imm19 = { offset = 5,  width = 19 }  # CBZ/CBNZ/B.cond 相对偏移（[23:5]）
 cbop  = { offset = 24, width = 8 }   # CBZ/CBNZ 顶层（含 sf/op 位）
 rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
 
+opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
+imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
+imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
@@ -896,3 +899,115 @@ insts = ["CSINVX", "CSINVW"]
 [[aliases]]
 name = "csneg"
 insts = ["CSNEGX", "CSNEGW"]
+
+# ═════════════════════════════ A4：加载/存储（最小集） ═══════════════════════════
+# LDR/STR 无符号 imm12：size[31:30] 111 001 opc[23:22] imm12[21:10] Rn Rt
+#   top8: X=0xF9、W=0xB9、H=0x79、B=0x39；opc2: STR=0、LDR=1
+# LDUR/STUR 未缩放：size 111 000 opc imm9[20:12] Rn Rt
+#   top8: X=0xF8、W=0xB8、H=0x78、B=0x38；opc2: STUR=0、LDUR=1
+# ⚠️ 无符号 imm12 语义=**缩放单元**（编码存 imm12；真实字节偏移=imm12<<scale）：
+#   DSL 无 encode 变换钩子，asm 文本与 golden 用缩放值；P2 帧/ABI 由后端换算。
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "LSUI"     # LDR/STR(unsigned)：rt rn imm12s
+opcode_field = "op8"
+operand_fields = ["rt", "rn", "imm12s"]
+
+[[forms]]
+name = "LSUN"     # LDUR/STUR：rt rn imm9
+opcode_field = "op8"
+operand_fields = ["rt", "rn", "imm9"]
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "imm9s"
+kind = "imm"
+signed = true
+width = 9
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+[[instructions]]
+name = "LDRX"
+form = "LSUI"
+opcode = 0xF9
+fields = { opc2 = 1 }
+ops = ["dst:r64:out", "base:r64", "imm:imm12u"]
+asm = "ldr {dst}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDRW"
+form = "LSUI"
+opcode = 0xB9
+fields = { opc2 = 1 }
+ops = ["dst:r32:out", "base:r64", "imm:imm12u"]
+asm = "ldr {dst}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STRX"
+form = "LSUI"
+opcode = 0xF9
+fields = { opc2 = 0 }
+ops = ["src:r64", "base:r64", "imm:imm12u"]
+asm = "str {src}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STRW"
+form = "LSUI"
+opcode = 0xB9
+fields = { opc2 = 0 }
+ops = ["src:r32", "base:r64", "imm:imm12u"]
+asm = "str {src}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDURX"
+form = "LSUN"
+opcode = 0xF8
+fields = { opc2 = 1 }
+ops = ["dst:r64:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "LDURW"
+form = "LSUN"
+opcode = 0xB8
+fields = { opc2 = 1 }
+ops = ["dst:r32:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STURX"
+form = "LSUN"
+opcode = 0xF8
+fields = { opc2 = 0 }
+ops = ["src:r64", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STURW"
+form = "LSUN"
+opcode = 0xB8
+fields = { opc2 = 0 }
+ops = ["src:r32", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+# ── 别名 ──
+
+[[aliases]]
+name = "ldr"
+insts = ["LDRX", "LDRW"]
+
+[[aliases]]
+name = "str"
+insts = ["STRX", "STRW"]
+
+[[aliases]]
+name = "ldur"
+insts = ["LDURX", "LDURW"]
+
+[[aliases]]
+name = "stur"
+insts = ["STURX", "STURW"]

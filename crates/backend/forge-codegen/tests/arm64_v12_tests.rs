@@ -121,6 +121,21 @@ fn golden_a3_mul_div_br_cbz_csel() {
 }
 
 #[test]
+fn golden_a4_memory() {
+    // 无符号 imm12 用缩放单元（imm12=1 → X 真实偏移 8 字节 = clang [x1,#8]）
+    assert_eq!(enc("ldr x0, [x1, #0]"), word_le(0xF9400020));
+    assert_eq!(enc("ldr x0, [x1, #1]"), word_le(0xF9400420)); // clang [x1,#8]
+    assert_eq!(enc("str x0, [x1, #0]"), word_le(0xF9000020));
+    assert_eq!(enc("str w2, [x3, #0]"), word_le(0xB9000062));
+    assert_eq!(enc("ldr w2, [x3, #1]"), word_le(0xB9400462)); // clang [x3,#4]（scale=2）
+    assert_eq!(enc("ldr w2, [x3, #0x3FF]"), word_le(0xB94FFC62)); // clang #0xffc
+    // LDUR/STUR 未缩放真字节
+    assert_eq!(enc("ldur x0, [x1, #0]"), word_le(0xF8400020));
+    assert_eq!(enc("ldur w2, [x3, #-8]"), word_le(0xB85F8062));
+    assert_eq!(enc("stur w0, [x1, #4]"), word_le(0xB8004020));
+}
+
+#[test]
 fn golden_register_encoding_pattern() {
     // rd/rn/imm 位段位置：add x5,x6,#0x2a → imm12=0x2A<<10、Rn=6<<5、Rd=5
     let w = 0x91000000u32 | (42 << 10) | (6 << 5) | 5;
