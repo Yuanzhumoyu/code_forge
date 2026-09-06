@@ -523,8 +523,10 @@ fn flush_icache(ptr: *mut u8, size: usize) {
                 }
                 #[cfg(not(target_os = "linux"))]
                 {
-                    // macOS/other: 尝试使用 __clear_cache
-                    extern "C" {
+                    // macOS/other: 尝试使用 __clear_cache（edition 2024：
+                    // extern 块必须是 unsafe extern）
+                    #[allow(unsafe_code)]
+                    unsafe extern "C" {
                         fn __clear_cache(start: *mut u8, end: *mut u8);
                     }
                     __clear_cache(ptr, ptr.add(size));
@@ -534,6 +536,9 @@ fn flush_icache(ptr: *mut u8, size: usize) {
         #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
         {
             // x86_64 / other: 使用编译器屏障确保写入顺序
+            // （ptr/size 在此平台无操作数用途——显式消费，避免
+            // -D warnings 下 unused variable 编译错误）
+            let _ = (ptr, size);
             core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         }
     }
