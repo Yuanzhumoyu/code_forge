@@ -90,14 +90,16 @@ fn w(b: &mut Vec<u8>, inst: u32) {
     b.extend_from_slice(&inst.to_le_bytes());
 }
 
-/// movz/movk 载入 64 位常量到 xRd（sf=1 100101 hw imm16 rd）。
+/// movz/movk 载入 64 位常量到 xRd。
+/// 全字 = op9 基值（[31:23]）<<23 | hw<<21 | imm16<<5 | rd：
+///   movz x 基 0x1A5<<23=0xD2800000；movk x 基 0x1E5<<23=0xF2800000
 fn mov_imm(b: &mut Vec<u8>, rd: u32, val: u64) {
     let mut v = val;
     let mut hw = 0u32;
     while hw < 4 {
         let part = (v & 0xFFFF) as u32;
-        let top: u32 = if hw == 0 { 0b100101 } else { 0b111001 };
-        w(b, (1 << 31) | (top << 23) | (hw << 21) | (part << 5) | rd);
+        let top: u32 = if hw == 0 { 0x1A5 } else { 0x1E5 };
+        w(b, (top << 23) | (hw << 21) | (part << 5) | rd);
         v >>= 16;
         hw += 1;
         if v == 0 {
@@ -142,8 +144,8 @@ fn crt0_with_exit(args: &[u64]) -> (Vec<u8>, usize) {
     // sub sp, sp, #16（d10043ff 形式：sub sp,sp,#16）
     w(&mut b, 0xD10043FF);
     mov_imm(&mut b, 2, 0x20026);
-    w(&mut b, 0xF90007E2); // str x2, [sp]（offset 0，scaled 0）
-    w(&mut b, 0xF9000FE0); // str x0, [sp, #8]（scaled 1）
+    w(&mut b, 0xF90003E2); // str x2, [sp]
+    w(&mut b, 0xF90007E0); // str x0, [sp, #8]
     mov_sp_reg(&mut b, 1, 31); // mov x1, sp（add 形式）
     mov_imm(&mut b, 0, 0x18);
     hlt(&mut b);
@@ -242,14 +244,19 @@ fn run_qemu(qemu: &PathBuf, elf: &[u8]) -> Result<u64, String> {
     let mut f = std::fs::File::create(&tmp).map_err(|e| format!("create elf: {e}"))?;
     f.write_all(elf).map_err(|e| format!("write elf: {e}"))?;
     drop(f);
-    let out = Command::new(qemu)
-        .args([
-            "-M", "virt", "-cpu", "cortex-a57", "-kernel", tmp.to_str().unwrap(), "-nographic",
-            "-semihosting-config", "enable=on,target=native", "-monitor", "none", "-serial",
-            "none", "-no-reboot",
-        ])
-        .output()
-        .map_err(|e| format!("spawn qemu: {e}"))?;
+    let mut cmd = Command::new(qemu);
+    cmd.args([
+        "-M", "virt", "-cpu", "cortex-a57", "-kernel", tmp.to_str().unwrap(), "-nographic",
+        "-semihosting-config", "enable=on,target=native", "-monitor", "none", "-serial",
+        "none", "-no-reboot",
+    ]);
+    if let Ok(d) = std::env::var("FORGE_A64_DUMP") {
+        let _ = std::fs::copy(&tmp, d);
+    }
+    if let Ok(t) = std::env::var("FORGE_A64_TRACE") {
+        cmd.args(["-d", "in_asm", "-D", &t]);
+    }
+    let out = cmd.output().map_err(|e| format!("spawn qemu: {e}"))?;
     let _ = std::fs::remove_file(&tmp);
     if !out.status.success() {
         return Err(format!(
@@ -267,8 +274,8 @@ mod tests {
     use code_forge::backend::CompiledFunction;
 
     fn compiled_const(w0_imm: u32) -> CompiledFunction {
-        // movz w0, #imm（sf=0 100101 hw imm16 rd=0）
-        let movz = (0b0100101 << 23) | ((w0_imm & 0xFFFF) << 5);
+        // movz w0, #imm（op9 W 基 0xA5<<23=0x52800000 | imm<<5）
+        let movz = (0xA5u32 << 23) | ((w0_imm & 0xFFFF) << 5);
         // ret
         let ret = 0xD65F03C0u32;
         let mut code = Vec::new();
@@ -285,6 +292,7 @@ mod tests {
 
     #[test]
     #[ignore = "QEMU aarch64 冒烟调试中（crt0/ELF 加载挂起）——修通后移除"]
+    fn qemu_aarch64_exec_returns_const() {
         if qemu_aarch64_path().is_none() {
             eprintln!("SKIP: qemu-system-aarch64 未安装");
             return;
