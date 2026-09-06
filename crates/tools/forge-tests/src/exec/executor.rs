@@ -174,9 +174,7 @@ impl Executor for QemuAarch64Executor {
         let _ = main;
         let _ = args;
         // 多函数模块路径（跨函数 call 偏移 patch）为后续迭代；当前单函数入口
-        panic!(
-            "QemuAarch64Executor::exec_module 尚未实现（多函数 call 偏移 patch 后置）"
-        )
+        panic!("QemuAarch64Executor::exec_module 尚未实现（多函数 call 偏移 patch 后置）")
     }
 }
 

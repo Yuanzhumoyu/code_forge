@@ -110,7 +110,10 @@ fn mov_imm(b: &mut Vec<u8>, rd: u32, val: u64) {
 
 /// mov xd, xm（orr xd, xzr, xm；sf=1 101010 0 0 11111 rm rd）。
 fn mov_reg(b: &mut Vec<u8>, rd: u32, rm: u32) {
-    w(b, (1 << 31) | (0b101010 << 24) | (0b11111 << 5) | (rm << 16) | rd);
+    w(
+        b,
+        (1 << 31) | (0b101010 << 24) | (0b11111 << 5) | (rm << 16) | rd,
+    );
 }
 
 /// add xd, xm, #0（mov sp, xm 等 sp 语义必须走 ADD——ORR rd=31 写 xzr 无效）
@@ -246,9 +249,20 @@ fn run_qemu(qemu: &PathBuf, elf: &[u8]) -> Result<u64, String> {
     drop(f);
     let mut cmd = Command::new(qemu);
     cmd.args([
-        "-M", "virt", "-cpu", "cortex-a57", "-kernel", tmp.to_str().unwrap(), "-nographic",
-        "-semihosting-config", "enable=on,target=native", "-monitor", "none", "-serial",
-        "none", "-no-reboot",
+        "-M",
+        "virt",
+        "-cpu",
+        "cortex-a57",
+        "-kernel",
+        tmp.to_str().unwrap(),
+        "-nographic",
+        "-semihosting-config",
+        "enable=on,target=native",
+        "-monitor",
+        "none",
+        "-serial",
+        "none",
+        "-no-reboot",
     ]);
     if let Ok(d) = std::env::var("FORGE_A64_DUMP") {
         let _ = std::fs::copy(&tmp, d);
