@@ -1,0 +1,348 @@
+//! cargo-forge 集成测试（cli_tests）：临时目录真实调用 cargo-forge.exe，
+//! 编译→运行 forge no_std 程序并校验退出码。
+//!
+//! 用例（规格 §tests/cli_tests.rs）：
+//! ① 最小 no_std cargo 工程 `cargo-forge run`（主路径：cargo 模式 build-std）→ exit 42
+//! ② `--file` 单文件模式编译运行（同 42 模板）→ exit 42
+//! ③ `--alloc` 单文件模式（Vec push 求和，sysroot alloc rlib 直链）→ exit 6
+//! ④ `--debuginfo 2` 编译（产物存在 + 可运行）→ exit 42
+//! ⑤ `--codegen-units 4 --threads 4`（-Zthreads 注入）→ exit 42
+//! ⑥ `init` 后**裸 `cargo build`**（不设任何 forge env，仅 RUSTUP_HOME 需要）→ 成功 + exit 42
+//!
+//! 前置：backend dll（FORGE_RUSTC_DLL / 仓库 target/debug/forge_rustc.dll）。
+//! dll 缺失先跑 `cargo-forge backend`（一次），仍缺/无法构建 → 打印 SKIP 并放行
+//! （非 fail，规格允许）。每条失败打印完整 stdout/stderr。
+//!
+//! 说明：每条用例独立临时目录 → cargo 模式 build-std 冷启动 ≈ 30s；时间上限
+//! 放宽到 300s（规格的 30s 上限与实测冷启动相悖，见实现报告）。串行跑
+//! （--test-threads=1）避免并发 cargo 争抢。
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static DIR_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// 每个用例的独立临时目录（%TEMP%\cargo_forge_cli_<tag>_<pid>_<seq>）。
+fn tmpdir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "cargo_forge_cli_{}_{}_{}",
+        tag,
+        std::process::id(),
+        DIR_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create tmpdir");
+    dir
+}
+
+/// 被测工具（cargo test 构建产物）。
+fn tool() -> &'static str {
+    env!("CARGO_BIN_EXE_cargo-forge")
+}
+
+/// 仓库根（tools/cargo-forge 上溯两级；用 parent() 链保持路径无 ".." 组件，
+/// 与工具 env::detect_repo 的产物一致——join("..") 会污染断言字符串）。
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("manifest parent")
+        .parent()
+        .expect("repo root")
+        .to_path_buf()
+}
+
+/// backend dll：FORGE_RUSTC_DLL > 仓库 target/debug。
+fn backend_dll_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("FORGE_RUSTC_DLL") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let p = repo_root().join("target").join("debug").join("forge_rustc.dll");
+    p.is_file().then_some(p)
+}
+
+/// RUSTUP_HOME：进程未设且仓库 target/rustup_home 存在时用重定向
+/// （与工具 env.rs 同一规则；本仓库 backend 与该浮点 nightly 配对）。
+fn ensure_rustup_home(cmd: &mut Command) {
+    if std::env::var_os("RUSTUP_HOME").is_none() {
+        let redirect = repo_root().join("target").join("rustup_home");
+        if redirect.is_dir() {
+            cmd.env("RUSTUP_HOME", &redirect);
+        }
+    }
+}
+
+/// dll 缺失时先试一次 `cargo-forge backend`；仍缺 → None（调用方 SKIP 放行）。
+fn ensure_backend_dll() -> Option<()> {
+    if backend_dll_path().is_some() {
+        return Some(());
+    }
+    eprintln!("[cli_tests] backend dll 缺失，尝试 `cargo-forge backend` 构建…");
+    let out = run_tool(&["backend"], None, 1800);
+    if out.status.success() && backend_dll_path().is_some() {
+        return Some(());
+    }
+    let txt = String::from_utf8_lossy(&out.stderr);
+    for l in txt.lines().rev().take(12) {
+        eprintln!("[cli_tests]   {l}");
+    }
+    None
+}
+
+/// 带超时运行（返回前最多等 timeout_s；超时 kill 并 panic）。
+fn run_with_timeout(cmd: &mut Command, timeout_s: u64) -> Output {
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => panic!("spawn 失败: {e}"),
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_s);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("命令超时（>{timeout_s}s）: {cmd:?}");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => panic!("wait 失败: {e}"),
+        }
+    }
+    child.wait_with_output().expect("collect output")
+}
+
+/// 运行 cargo-forge（cwd=proj；-- 后为子命令 args）。
+fn run_tool(args: &[&str], proj: Option<&Path>, timeout_s: u64) -> Output {
+    let mut cmd = Command::new(tool());
+    cmd.args(args);
+    if let Some(p) = proj {
+        cmd.current_dir(p);
+    }
+    ensure_rustup_home(&mut cmd);
+    run_with_timeout(&mut cmd, timeout_s)
+}
+
+/// 失败时打印完整输出 + 断言退出码。
+fn assert_ok(out: &Output, what: &str) {
+    if !out.status.success() {
+        let so = String::from_utf8_lossy(&out.stdout);
+        let se = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "{what} 失败（exit {:?}）\n--- stdout ---\n{so}\n--- stderr ---\n{se}",
+            out.status.code()
+        );
+    }
+}
+
+fn assert_exit(out: &Output, want: i32, what: &str) {
+    let code = out.status.code().unwrap_or(-1);
+    if code != want {
+        let so = String::from_utf8_lossy(&out.stdout);
+        let se = String::from_utf8_lossy(&out.stderr);
+        panic!(
+            "{what} 期望 exit={want}，实际 {code}\n--- stdout ---\n{so}\n--- stderr ---\n{se}"
+        );
+    }
+}
+
+/// README「标准入口模板」：main 返回值 = 进程退出码。
+const MAIN_42: &str = r#"#![no_std]
+#![no_main]
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> i32 {
+    42
+}
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+"#;
+
+/// 最小 no_std cargo 工程（panic=abort dev+release；独立 workspace）。
+fn write_mini_project(dir: &Path, name: &str, body: &str) {
+    std::fs::create_dir_all(dir.join("src")).expect("mkdir src");
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [workspace]\n\n[profile.dev]\npanic = \"abort\"\n\n[profile.release]\npanic = \"abort\"\n"
+        ),
+    )
+    .expect("write Cargo.toml");
+    std::fs::write(dir.join("src").join("main.rs"), body).expect("write main.rs");
+}
+
+fn write_file(dir: &Path, name: &str, body: &str) -> PathBuf {
+    let p = dir.join(name);
+    std::fs::write(&p, body).expect("write source");
+    p
+}
+
+// ── 前置：dll 存在性（一次性 SKIP 门）──────────────────────────────
+// 每条用例开头调用：dll 缺失且 backend 构建失败 → eprintln SKIP + return。
+// （测试期 backend dll 通常已就绪，不会真正触发慢构建。）
+
+#[test]
+fn cli_cargo_mode_run_mini_project() {
+    let Some(()) = ensure_backend_dll() else {
+        eprintln!("SKIP: backend dll 缺失且自动构建失败（无网/无 rustc-dev？）——测试 ① 跳过");
+        return;
+    };
+    let dir = tmpdir("mini_cargo");
+    write_mini_project(&dir, "miniforge", MAIN_42);
+
+    // ① cargo 模式主路径：run 子命令 = build（build-std）+ 运行
+    let out = run_tool(&["run"], Some(&dir), 300);
+    assert_exit(&out, 42, "① cargo 模式 run");
+    assert!(
+        dir.join("target").join("debug").join("miniforge.exe").is_file(),
+        "① 产物 exe 应存在: target\\debug\\miniforge.exe"
+    );
+}
+
+#[test]
+fn cli_file_mode_run() {
+    let Some(()) = ensure_backend_dll() else {
+        eprintln!("SKIP: backend dll 缺失——测试 ② 跳过");
+        return;
+    };
+    let dir = tmpdir("file42");
+    let src = write_file(&dir, "hello.rs", MAIN_42);
+
+    // ② 单文件模式：裸 rustc（免 build-std），run 尾参给 exe
+    let out = run_tool(&["run", "--file", src.to_str().unwrap()], Some(&dir), 120);
+    assert_exit(&out, 42, "② --file run");
+}
+
+#[test]
+fn cli_file_mode_alloc() {
+    let Some(()) = ensure_backend_dll() else {
+        eprintln!("SKIP: backend dll 缺失——测试 ③ 跳过");
+        return;
+    };
+    let dir = tmpdir("filealloc");
+    // ③ --alloc：Vec push 求和。单文件模式 sysroot alloc rlib 直链，
+    // 不需要 build-std（免 -Zshare-generics 的双份符号问题）
+    let src = write_file(
+        &dir,
+        "alloc_sum.rs",
+        r#"#![no_std]
+#![no_main]
+extern crate alloc;
+
+use core::alloc::{GlobalAlloc, Layout};
+
+static mut HEAP: [u8; 8192] = [0; 8192];
+struct A;
+unsafe impl GlobalAlloc for A {
+    unsafe fn alloc(&self, _l: Layout) -> *mut u8 {
+        unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 }
+    }
+    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}
+}
+#[global_allocator]
+static ALLOC: A = A;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main() -> i32 {
+    let mut v = alloc::vec::Vec::new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    (v[0] + v[1] + v[2]) as i32 // 6
+}
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+"#,
+    );
+    let out = run_tool(&["run", "--file", src.to_str().unwrap(), "--alloc"], Some(&dir), 120);
+    assert_exit(&out, 6, "③ --alloc run");
+}
+
+#[test]
+fn cli_debuginfo_build() {
+    let Some(()) = ensure_backend_dll() else {
+        eprintln!("SKIP: backend dll 缺失——测试 ④ 跳过");
+        return;
+    };
+    let dir = tmpdir("dbginfo");
+    let src = write_file(&dir, "dbg.rs", MAIN_42);
+
+    // ④ --debuginfo 2：编译成功 + 产物存在即可（不必断言 dwarf）；顺带运行
+    let out = run_tool(
+        &["build", "--file", src.to_str().unwrap(), "--debuginfo", "2"],
+        Some(&dir),
+        120,
+    );
+    assert_ok(&out, "④ --debuginfo 2 编译");
+    let exe = dir.join("dbg.exe");
+    assert!(exe.is_file(), "④ 产物 exe 应存在: dbg.exe");
+    let run = Command::new(&exe).status().expect("run dbg.exe");
+    assert_eq!(run.code(), Some(42), "④ dbg.exe exit 应 42");
+}
+
+#[test]
+fn cli_codegen_units_threads() {
+    let Some(()) = ensure_backend_dll() else {
+        eprintln!("SKIP: backend dll 缺失——测试 ⑤ 跳过");
+        return;
+    };
+    let dir = tmpdir("cgu_threads");
+    let src = write_file(&dir, "cg.rs", MAIN_42);
+
+    // ⑤ -Ccodegen-units=4 + -Zthreads=4（RUSTFLAGS/rustc 参数注入路径）
+    let out = run_tool(&["run", "--file", src.to_str().unwrap(), "--codegen-units", "4", "--threads", "4"], Some(&dir), 120);
+    assert_exit(&out, 42, "⑤ --codegen-units 4 --threads 4 run");
+}
+
+#[test]
+fn cli_init_then_bare_cargo_build() {
+    let Some(()) = ensure_backend_dll() else {
+        eprintln!("SKIP: backend dll 缺失——测试 ⑥ 跳过");
+        return;
+    };
+    let dir = tmpdir("init_bare");
+    write_mini_project(&dir, "initmini", MAIN_42);
+
+    // ⑥ init：写 .cargo/config.toml + rust-toolchain.toml
+    let out = run_tool(&["init"], Some(&dir), 60);
+    assert_ok(&out, "⑥ init");
+
+    let cfg = std::fs::read_to_string(dir.join(".cargo").join("config.toml")).expect("config.toml");
+    let dll = backend_dll_path().expect("dll").display().to_string();
+    assert!(
+        cfg.contains(&format!("-Zcodegen-backend={}", dll.replace('\\', "\\\\"))),
+        "⑥ config 应含 codegen-backend 绝对路径"
+    );
+    assert!(cfg.contains("rustc-wrapper ="), "⑥ config 应含 rustc-wrapper");
+    assert!(cfg.contains("build-std = [\"core\"]"), "⑥ config 应含 build-std core");
+    let tc = std::fs::read_to_string(dir.join("rust-toolchain.toml")).expect("rust-toolchain.toml");
+    assert!(tc.contains("channel = \"nightly\""), "⑥ rust-toolchain 应 channel nightly");
+
+    // 幂等：重跑 init 不应备份/报错
+    let out2 = run_tool(&["init"], Some(&dir), 60);
+    assert_ok(&out2, "⑥ init 幂等重跑");
+
+    // 裸 `cargo build`：无 RUSTFLAGS/RUSTC_WRAPPER/env（仅 RUSTUP_HOME 若需要）
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build").current_dir(&dir);
+    cmd.env_remove("RUSTFLAGS").env_remove("RUSTC_WRAPPER");
+    ensure_rustup_home(&mut cmd);
+    let out = run_with_timeout(&mut cmd, 300);
+    assert_ok(&out, "⑥ 裸 cargo build");
+
+    let exe = dir.join("target").join("debug").join("initmini.exe");
+    assert!(exe.is_file(), "⑥ 产物应存在: target\\debug\\initmini.exe");
+    let run = Command::new(&exe).status().expect("run initmini.exe");
+    assert_eq!(run.code(), Some(42), "⑥ 裸 cargo build 产物 exit 应 42");
+}
+
