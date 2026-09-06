@@ -710,7 +710,17 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
                     }
                 });
             }
-            stmts.extend(place_ts(quote! { *#fid as u64 }, bf));
+            stmts.extend(place_ts(
+                if slot.kind == OperandKind::Reg {
+                    // 多宽度视图组（base_index=0 共享物理号）时 Reg 枚举判别值
+                    // 是全局序号，不是物理编号——编码必须用 to_index()
+                    //（如 X5/W5 判别值不同但物理号同为 5）
+                    quote! { <Reg as forge_ir::PhysReg>::to_index(*#fid) as u64 }
+                } else {
+                    quote! { *#fid as u64 }
+                },
+                bf,
+            ));
         }
         // 未覆盖位域天然为 0（__w 初始 0）——无需显式置零
         let pat = if info.operands.is_empty() {

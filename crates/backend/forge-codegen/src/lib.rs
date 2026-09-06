@@ -125,6 +125,7 @@ pub use runtime::output_types::{CompiledFunction, RelocKind, Relocation};
 // 架构后端 (DSL 生成；v12 唯一语法)
 // ============================================================
 pub mod arch;
+pub use arch::arm64_v12;
 pub use arch::demo_v12;
 pub use arch::riscv64_v12;
 pub use arch::x86_v12;

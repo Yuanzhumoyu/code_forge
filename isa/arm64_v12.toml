@@ -1,0 +1,237 @@
+# ============================================================
+# AArch64 (ARM64) — A64 — v12 语法（P1 迭代 A1：全链最小可信集）
+# ============================================================
+#
+# 严格遵循 ARM A-profile A64 指令集定义（developer.arm.com DDI0602；
+# A64 指令定宽 32 位小端字）。编码位段以官方文档为准；每条 opcode/
+# 固定常量由本机 LLVM clang --target=aarch64-none-elf + llvm-objdump
+# 逐字 oracle 校验（tests/arm64_v12_tests.rs 的 golden 来自该 oracle）。
+#
+# A1 实现（打通 编码/解码/汇编 全链的最小集，全部常量已 oracle 验证）：
+#   NOP；ADD/ADDS/SUB/SUBS (immediate) × X/W；ADD/SUB (shifted register,
+#   LSL#0 形式 = 三寄存器操作数) × X/W；B/BL（相对跳转）。
+# A2+（后续迭代，逐个 oracle 验证后加入）：逻辑寄存器族、MOVZ/N/K、
+#   CMP/CMN 别名、移位立即数、MADD/MSUB/SDIV/UDIV、CSEL、B.cond/CBZ、
+#   内存 LD/ST 家族、ADR/ADRP、SP/XZR 语义、[abi]/[emit] 接入与 runner。
+
+[meta]
+name = "arm64_v12"
+version = "0.1.0"
+endian = "little"
+mode = 64
+default_inst_width = 32
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+directive_prefix = "."
+
+# ─────────────────────────── 寄存器组 ───────────────────────────
+# X0-X30（gpr8，64 位）与 W0-W30（gpr4，32 位）共享物理编号 0-30
+# （A64 中 Xn/Wn 是同一寄存器组的不同宽度视图）。SP/XZR（31 号上下
+# 文语义）后续迭代。
+
+[reg.gpr8]
+base_index = 0
+names = [
+    "X0","X1","X2","X3","X4","X5","X6","X7",
+    "X8","X9","X10","X11","X12","X13","X14","X15",
+    "X16","X17","X18","X19","X20","X21","X22","X23",
+    "X24","X25","X26","X27","X28","X29","X30",
+]
+
+[reg.gpr4]
+base_index = 0
+names = [
+    "W0","W1","W2","W3","W4","W5","W6","W7",
+    "W8","W9","W10","W11","W12","W13","W14","W15",
+    "W16","W17","W18","W19","W20","W21","W22","W23",
+    "W24","W25","W26","W27","W28","W29","W30",
+]
+
+# ─────────────────────── 命名位域（A64）───────────────────────
+# 通用寄存器位域位置在全 A64 固定：Rd=[4:0]、Rn=[9:5]、Rm=[20:16]。
+
+[conventions.bitfields]
+rd    = { offset = 0,  width = 5 }
+rn    = { offset = 5,  width = 5 }
+rm    = { offset = 16, width = 5 }
+imm12 = { offset = 10, width = 12 } # 加立即数（sh 在 [23:22]，A1 恒 0）
+# 顶层固定段：
+#  - op8 = 位[31:24]（立即数 ALU 与寄存器 ALU 顶层 8 位；X(sf=1)/W(sf=0)
+#    各自为不同 8 位常量，故 X/W 分立 family、opcode 各含 sf）
+op8   = { offset = 24, width = 8 }
+#  - op6 = 位[31:26]（B/BL 的 6 位顶层常量；imm26 占 [25:0]）
+op6   = { offset = 26, width = 6 }
+imm26 = { offset = 0,  width = 26 } # B/BL 相对偏移（与 op6 互补覆盖全字）
+word  = { offset = 0,  width = 32 } # 全字常量（NOP）
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "r64"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "r32"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "imm12u"
+kind = "imm"
+signed = false
+width = 12
+
+[[operand_slots]]
+name = "off26"
+kind = "label"
+signed = true
+width = 26
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "ALUIMM"   # ADD(S)/SUB(S) (imm)：rd/rn/imm12（[23:22] sh=0 → 零 guard）
+opcode_field = "op8"
+operand_fields = ["rd", "rn", "imm12"]
+
+[[forms]]
+name = "ALUREG"   # ADD/SUB (shifted reg, LSL#0)：rd/rn/rm
+                  #（[15:10] imm6=0、[23:22] shift=0 → 零 guard）
+opcode_field = "op8"
+operand_fields = ["rd", "rn", "rm"]
+
+[[forms]]
+name = "BREL"     # B/BL：imm26（[31:26] 为 op6 常量）
+opcode_field = "op6"
+operand_fields = ["imm26"]
+
+[[forms]]
+name = "NOPF"     # 全字常量
+opcode_field = "word"
+operand_fields = []
+
+# ─────────────────────────── 指令 ───────────────────────────
+# op8 常量 = 该指令 (word>>24)&0xFF（oracle 实测）：
+#   add  x,w=0x91/0x11、adds=0xB1/0x31、sub=0xD1/0x51、subs=0xF1/0x71
+#   add(reg) x,w=0x8B/0x0B、sub(reg)=0xCB/0x4B
+# op6：b=0x05（0x14000000>>26）、bl=0x25（0x94000000>>26）
+
+# ── NOP（D503201F）──
+[[instructions]]
+name = "NOPFAM"
+form = "NOPF"
+opcode = 0xD503201F
+asm = "nop"
+
+# ── ADD/ADDS/SUB/SUBS (immediate) ──
+# oracle 校验样本：add x5,x6,#42 = 9100A8C5；adds w5,w6,#42=3100A8C5；
+#   sub x5,x6,#42=D100A8C5；subs x5,x6,#42=F100A8C5
+
+[[instructions]]
+name = "ADDIMMX"
+form = "ALUIMM"
+opcode = 0x91
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "add {dst}, {src}, #{imm}"
+
+[[instructions]]
+name = "ADDIMMW"
+form = "ALUIMM"
+opcode = 0x11
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "add {dst}, {src}, #{imm}"
+
+[[instructions]]
+name = "ADDSIMMX"
+form = "ALUIMM"
+opcode = 0xB1
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "adds {dst}, {src}, #{imm}"
+
+[[instructions]]
+name = "ADDSIMMW"
+form = "ALUIMM"
+opcode = 0x31
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "adds {dst}, {src}, #{imm}"
+
+[[instructions]]
+name = "SUBIMMX"
+form = "ALUIMM"
+opcode = 0xD1
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "sub {dst}, {src}, #{imm}"
+
+[[instructions]]
+name = "SUBIMMW"
+form = "ALUIMM"
+opcode = 0x51
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "sub {dst}, {src}, #{imm}"
+
+[[instructions]]
+name = "SUBSIMMX"
+form = "ALUIMM"
+opcode = 0xF1
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "subs {dst}, {src}, #{imm}"
+
+[[instructions]]
+name = "SUBSIMMW"
+form = "ALUIMM"
+opcode = 0x71
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "subs {dst}, {src}, #{imm}"
+
+# ── ADD/SUB (shifted register, LSL#0) ──
+# oracle 校验样本：add x5,x6,x2=8B0200C5；add w5,w6,w2=0B0200C5
+
+[[instructions]]
+name = "ADDREGX"
+form = "ALUREG"
+opcode = 0x8B
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ADDREGW"
+form = "ALUREG"
+opcode = 0x0B
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "SUBREGX"
+form = "ALUREG"
+opcode = 0xCB
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "sub {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "SUBREGW"
+form = "ALUREG"
+opcode = 0x4B
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "sub {dst}, {src}, {src2}"
+
+# ── B/BL ──
+# oracle 校验样本：b .=14000000；bl .=94000000
+
+[[instructions]]
+name = "B"
+form = "BREL"
+opcode = 0x05
+ops = ["target:off26"]
+asm = "b {target}"
+
+[[instructions]]
+name = "BL"
+form = "BREL"
+opcode = 0x25
+ops = ["target:off26"]
+asm = "bl {target}"
