@@ -50,17 +50,20 @@ jobs:
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
       - name: Install QEMU (riscv64)
         run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
-      # ⚠️ 临时诊断（2026-09-06 第三轮）：forge-codegen lib 测试在 ubuntu 上
-      # SIGSEGV（Windows 从不复现）。cargo test 并行输出无法定位崩溃用例——
-      # 串行跑一次使崩溃点落在两个具名 ok 之间；定位后移除本步。
-      - name: forge-codegen lib serial probe (diagnose SIGSEGV)
-        run: cargo test -p forge-codegen --lib -- --test-threads=1
+      # ⚠️ 临时诊断（2026-09-06 第四轮修正）：forge-codegen lib 测试（jit feature
+      # 109 个）在 ubuntu 上 SIGSEGV（Windows 从不复现）。workspace run 的并行
+      # 输出无法命名崩溃用例；此步以 **jit feature + 串行** 复跑：串行仍崩 →
+      # 崩溃落在具名 ok 之间（可定位用例）；串行过 → 并行竞态，本步即规避。
+      # 注意必须 --features jit（-p 直跑不开 jit 只有 50 个非 jit 测试，等于没复现）。
+      - name: forge-codegen lib (jit) serial — SIGSEGV probe
+        run: cargo test -p forge-codegen --features jit --lib -- --test-threads=1
       # 默认 features（jit 等）；**不带 --all-features**——all-features 会把
       # forge-tests 的 nightly feature 打开 → 依赖 forge-rustc（rustc_private
       # dylib，linux/macOS 需链接 libLLVM 且 macOS arm64 分支受 edition 2024
       # unsafe extern 约束），该套件由独立 job「forge-tests (nightly)」覆盖
       #（Windows 上跑，dylib 链接环境与本地一致）。
-      - run: cargo test --workspace --exclude forge-rustc
+      # forge-codegen 已由上一步串行覆盖 → 从 workspace run 排除（并行 SIGSEGV 规避）。
+      - run: cargo test --workspace --exclude forge-rustc --exclude forge-codegen
 
   # Tests on Windows
   test-windows:
@@ -118,7 +121,10 @@ jobs:
       # fresh checkout 无此产物 → job 必红）。
       - name: Build forge-rustc-wrapper
         run: cargo build --manifest-path tools/forge-rustc-wrapper/Cargo.toml
-      - run: cargo test -p forge-rustc --test e2e
+      # --test-threads=1：e2e binary 内 6 个测试并发各起嵌套 rustc/cargo
+      # 编译——CI 2 核 runner 上互抢导致偶发 compile/run 超时（simd/alloc
+      # 用例假败）；串行化后嵌套编译独占资源。
+      - run: cargo test -p forge-rustc --test e2e -- --test-threads=1
       # cargo-forge cli_tests（真跑位）：上一步已产出 target/debug/forge_rustc.dll，
       # 本 job 有 rust-src；FORGE_CLI_TOOLCHAIN 钉版使嵌套 cargo 用已装 channel
       #（缺省会找 +nightly 别名 → rustup 自动下载最新 nightly，与钉版 dll 错配）。
@@ -183,8 +189,10 @@ jobs:
       - uses: taiki-e/install-action@cargo-tarpaulin
       - name: Generate coverage
         # 默认 features（不开 --all-features：那会启用 forge-tests 的 nightly
-        # → 编译 rustc_private 的 forge-rustc dylib，Linux 缺 libLLVM 无法链接）
-        run: cargo tarpaulin --out xml --workspace --exclude forge-rustc
+        # → 编译 rustc_private 的 forge-rustc dylib，Linux 缺 libLLVM 无法链接）。
+        # ⚠️ 临时排除 forge-codegen：其 lib 测试在 ubuntu 并行下 SIGSEGV（与
+        # test-linux 同因，见该 job 探针注释）——tarpaulin 无法串行；根修后恢复。
+        run: cargo tarpaulin --out xml --workspace --exclude forge-rustc --exclude forge-codegen
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
