@@ -1,6 +1,7 @@
 [toolchain]
-# 跟随 root workspace 的 nightly（当前 rustc 1.99.0-nightly 2026-08-07）。
+# 跟随 root workspace 的 nightly（当前 rustc 1.100.0-nightly 2026-09-04）。
 # 不 pin 具体日期：rustc 内部 API 每周变动，版本适配统一收敛在
 # src/rustc_compat.rs（见 P0.2 方案），升级 nightly 只改该文件。
+# CI 钉版 nightly-2026-09-04（与 tests/e2e.rs 的 NIGHTLY 同步）。
 channel = "nightly"
 components = ["rustc-dev", "rust-src", "llvm-tools"]

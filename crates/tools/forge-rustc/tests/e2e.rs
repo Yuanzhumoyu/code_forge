@@ -22,10 +22,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// 钉版 nightly 工具链（与 `.github/workflows/ci.yml` 的
-/// `toolchain: nightly-2026-08-07` 单点同步；bump 时两处一起改）。
+/// `toolchain: nightly-2026-09-04` 单点同步；bump 时两处一起改）。
 /// `cargo +nightly` 显式 channel 不受 rustup override 影响，必须用钉版
-/// 字面量保证 CI/本地一致（rustc_compat.rs 适配层按此版本维护）。
-const NIGHTLY: &str = "nightly-2026-08-07";
+/// 字面量保证 CI/本地一致（rustc_compat.rs 适配层按此版本维护；
+/// 1.100 起 `LangItem` 移至 `rustc_hir::attrs::lang_items`，1.99 无法编译）。
+const NIGHTLY: &str = "nightly-2026-09-04";
 
 /// 本机工具链选择：CI 用钉版 NIGHTLY；本机可用 `FORGE_E2E_NIGHTLY`
 /// 环境变量覆盖（如 `nightly`——浮动 channel 指向已安装目录，避免
