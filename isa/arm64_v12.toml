@@ -57,10 +57,14 @@ rd    = { offset = 0,  width = 5 }
 rn    = { offset = 5,  width = 5 }
 rm    = { offset = 16, width = 5 }
 imm12 = { offset = 10, width = 12 } # 加立即数（sh 在 [23:22]，A1 恒 0）
+imm16 = { offset = 5,  width = 16 } # MOVZ/N/K 半字立即数（[20:5]）
+hw    = { offset = 21, width = 2 }  # MOVZ/N/K 半字选择（A2 恒 0）
+nbit  = { offset = 21, width = 1 }  # 逻辑族 NOT 位（BIC/ORN/EON=1）
 # 顶层固定段：
 #  - op8 = 位[31:24]（立即数 ALU 与寄存器 ALU 顶层 8 位；X(sf=1)/W(sf=0)
 #    各自为不同 8 位常量，故 X/W 分立 family、opcode 各含 sf）
 op8   = { offset = 24, width = 8 }
+op9   = { offset = 23, width = 9 } # MOV 宽立即数族（含 bit23=1 的 100101）
 #  - op6 = 位[31:26]（B/BL 的 6 位顶层常量；imm26 占 [25:0]）
 op6   = { offset = 26, width = 6 }
 imm26 = { offset = 0,  width = 26 } # B/BL 相对偏移（与 op6 互补覆盖全字）
@@ -87,6 +91,12 @@ signed = false
 width = 12
 
 [[operand_slots]]
+name = "imm16u"
+kind = "imm"
+signed = false
+width = 16
+
+[[operand_slots]]
 name = "off26"
 kind = "label"
 signed = true
@@ -104,6 +114,26 @@ name = "ALUREG"   # ADD/SUB (shifted reg, LSL#0)：rd/rn/rm
                   #（[15:10] imm6=0、[23:22] shift=0 → 零 guard）
 opcode_field = "op8"
 operand_fields = ["rd", "rn", "rm"]
+
+[[forms]]
+name = "MOVR"     # MOV 别名：rd/rm（rn 经 fields=31 常量）
+opcode_field = "op8"
+operand_fields = ["rd", "rm"]
+
+[[forms]]
+name = "MOVW16"   # MOVZ/MOVN/MOVK：rd/imm16（顶层 [31:23] 常量，hw 经 fields）
+opcode_field = "op9"
+operand_fields = ["rd", "imm16"]
+
+[[forms]]
+name = "CMPIMM"   # CMP/CMN(imm)：rn/imm12（rd 经 fields=31 常量）
+opcode_field = "op8"
+operand_fields = ["rn", "imm12"]
+
+[[forms]]
+name = "CMPREG"   # CMP(reg)：rn/rm（rd 经 fields=31 常量）
+opcode_field = "op8"
+operand_fields = ["rn", "rm"]
 
 [[forms]]
 name = "BREL"     # B/BL：imm26（[31:26] 为 op6 常量）
@@ -219,6 +249,37 @@ opcode = 0x4B
 ops = ["dst:r32:out", "src:r32", "src2:r32"]
 asm = "sub {dst}, {src}, {src2}"
 
+# ADDS/SUBS (shifted reg, LSL#0)
+# oracle：adds x5,x6,x7=AB0700C5、subs w5,w6,w7=6B0700C5
+
+[[instructions]]
+name = "ADDSREGX"
+form = "ALUREG"
+opcode = 0xAB
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "adds {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ADDSREGW"
+form = "ALUREG"
+opcode = 0x2B
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "adds {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "SUBSREGX"
+form = "ALUREG"
+opcode = 0xEB
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "subs {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "SUBSREGW"
+form = "ALUREG"
+opcode = 0x6B
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "subs {dst}, {src}, {src2}"
+
 # ── B/BL ──
 # oracle 校验样本：b .=14000000；bl .=94000000
 
@@ -235,3 +296,271 @@ form = "BREL"
 opcode = 0x25
 ops = ["target:off26"]
 asm = "bl {target}"
+
+# ── 逻辑寄存器 AND/BIC/ORR/ORN/EOR/EON（寄存器三操作数）──
+# oracle：and x0,x1,x2=8A020020（W=0A…）、bic x6,x7,x8=8A2800E6（N 位=1）、
+#   orr=AA/2A、orn x6,x7,x8=AA2800E6、eor=CA/4A、eon x6,x7,x8=CA2800E6
+
+[[instructions]]
+name = "ANDREGX"
+form = "ALUREG"
+opcode = 0x8A
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "and {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ANDREGW"
+form = "ALUREG"
+opcode = 0x0A
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "and {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "BICREGX"
+form = "ALUREG"
+opcode = 0x8A
+fields = { nbit = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "bic {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "BICREGW"
+form = "ALUREG"
+opcode = 0x0A
+fields = { nbit = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "bic {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ORRREGX"
+form = "ALUREG"
+opcode = 0xAA
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "orr {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ORRREGW"
+form = "ALUREG"
+opcode = 0x2A
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "orr {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ORNREGX"
+form = "ALUREG"
+opcode = 0xAA
+fields = { nbit = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "orn {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ORNREGW"
+form = "ALUREG"
+opcode = 0x2A
+fields = { nbit = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "orn {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "EORREGX"
+form = "ALUREG"
+opcode = 0xCA
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "eor {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "EORREGW"
+form = "ALUREG"
+opcode = 0x4A
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "eor {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "EONREGX"
+form = "ALUREG"
+opcode = 0xCA
+fields = { nbit = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "eon {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "EONREGW"
+form = "ALUREG"
+opcode = 0x4A
+fields = { nbit = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "eon {dst}, {src}, {src2}"
+
+# ── MOV 别名（ORR rd, xzr, rm；X/W）──
+# oracle：mov x9,x10=AA0A03E9、mov w9,w10=2A0A03E9（rn=31 常量）
+
+[[instructions]]
+name = "MOVX"
+form = "MOVR"
+opcode = 0xAA
+fields = { rn = 31 }
+ops = ["dst:r64:out", "src2:r64"]
+asm = "mov {dst}, {src2}"
+
+[[instructions]]
+name = "MOVW"
+form = "MOVR"
+opcode = 0x2A
+fields = { rn = 31 }
+ops = ["dst:r32:out", "src2:r32"]
+asm = "mov {dst}, {src2}"
+
+# ── CMP/CMN（SUBS/ADDS/SUBS-REG 目标=xzr 别名；rd=31 常量）──
+# oracle：cmp x0,#5=F100141F、cmp w0,#5=7100141F、cmn x0,#5=B100141F、
+#   cmp x1,x2=EB02003F、cmp w1,w2=6B02003F
+
+[[instructions]]
+name = "CMPIMMX"
+form = "CMPIMM"
+opcode = 0xF1
+fields = { rd = 31 }
+ops = ["src:r64", "imm:imm12u"]
+asm = "cmp {src}, #{imm}"
+
+[[instructions]]
+name = "CMPIMMW"
+form = "CMPIMM"
+opcode = 0x71
+fields = { rd = 31 }
+ops = ["src:r32", "imm:imm12u"]
+asm = "cmp {src}, #{imm}"
+
+[[instructions]]
+name = "CMNIMMX"
+form = "CMPIMM"
+opcode = 0xB1
+fields = { rd = 31 }
+ops = ["src:r64", "imm:imm12u"]
+asm = "cmn {src}, #{imm}"
+
+[[instructions]]
+name = "CMNIMMW"
+form = "CMPIMM"
+opcode = 0x31
+fields = { rd = 31 }
+ops = ["src:r32", "imm:imm12u"]
+asm = "cmn {src}, #{imm}"
+
+[[instructions]]
+name = "CMPREGX"
+form = "CMPREG"
+opcode = 0xEB
+fields = { rd = 31 }
+ops = ["src:r64", "src2:r64"]
+asm = "cmp {src}, {src2}"
+
+[[instructions]]
+name = "CMPREGW"
+form = "CMPREG"
+opcode = 0x6B
+fields = { rd = 31 }
+ops = ["src:r32", "src2:r32"]
+asm = "cmp {src}, {src2}"
+
+# ── MOVZ/MOVN/MOVK（hw=0 变体）──
+# 顶层常量 = (word>>23)&0x1FF（[31:23]，含 bit23=1 的 100101）：
+#   movz x0,#0=D2800000 → 0x1A5；movz w=0xA5；movn x=0x125；movn w=0x25；
+#   movk x=0x1E5；movk w=0xE5
+
+[[instructions]]
+name = "MOVZX"
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 0 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movz {dst}, #{imm}"
+
+[[instructions]]
+name = "MOVZW"
+form = "MOVW16"
+opcode = 0xA5
+fields = { hw = 0 }
+ops = ["dst:r32:out", "imm:imm16u"]
+asm = "movz {dst}, #{imm}"
+
+[[instructions]]
+name = "MOVNX"
+form = "MOVW16"
+opcode = 0x125
+fields = { hw = 0 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movn {dst}, #{imm}"
+
+[[instructions]]
+name = "MOVNW"
+form = "MOVW16"
+opcode = 0x25
+fields = { hw = 0 }
+ops = ["dst:r32:out", "imm:imm16u"]
+asm = "movn {dst}, #{imm}"
+
+[[instructions]]
+name = "MOVKX"
+form = "MOVW16"
+opcode = 0x1E5
+fields = { hw = 0 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movk {dst}, #{imm}"
+
+[[instructions]]
+name = "MOVKW"
+form = "MOVW16"
+opcode = 0xE5
+fields = { hw = 0 }
+ops = ["dst:r32:out", "imm:imm16u"]
+asm = "movk {dst}, #{imm}"
+
+# ─────────────────────────── 别名 ───────────────────────────
+
+[[aliases]]
+name = "and"
+insts = ["ANDREGX", "ANDREGW"]
+
+[[aliases]]
+name = "bic"
+insts = ["BICREGX", "BICREGW"]
+
+[[aliases]]
+name = "orr"
+insts = ["ORRREGX", "ORRREGW"]
+
+[[aliases]]
+name = "orn"
+insts = ["ORNREGX", "ORNREGW"]
+
+[[aliases]]
+name = "eor"
+insts = ["EORREGX", "EORREGW"]
+
+[[aliases]]
+name = "eon"
+insts = ["EONREGX", "EONREGW"]
+
+[[aliases]]
+name = "mov"
+insts = ["MOVX", "MOVW"]
+
+[[aliases]]
+name = "movz"
+insts = ["MOVZX", "MOVZW"]
+
+[[aliases]]
+name = "movn"
+insts = ["MOVNX", "MOVNW"]
+
+[[aliases]]
+name = "movk"
+insts = ["MOVKX", "MOVKW"]
+
+[[aliases]]
+name = "cmp"
+insts = ["CMPIMMX", "CMPIMMW", "CMPREGX", "CMPREGW"]
+
+[[aliases]]
+name = "cmn"
+insts = ["CMNIMMX", "CMNIMMW"]

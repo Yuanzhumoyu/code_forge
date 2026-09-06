@@ -50,6 +50,50 @@ fn golden_encode_oracle_verified() {
 }
 
 #[test]
+fn golden_a2_logic_cmp_movw() {
+    // 逻辑寄存器（clang oracle）
+    assert_eq!(enc("and x0, x1, x2"), word_le(0x8A020020));
+    assert_eq!(enc("and w3, w4, w5"), word_le(0x0A050083));
+    assert_eq!(enc("bic x6, x7, x8"), word_le(0x8A2800E6));
+    assert_eq!(enc("bic w9, w10, w11"), word_le(0x0A2B0149));
+    assert_eq!(enc("orr x0, x1, x2"), word_le(0xAA020020));
+    assert_eq!(enc("orr w3, w4, w5"), word_le(0x2A050083));
+    assert_eq!(enc("orn x6, x7, x8"), word_le(0xAA2800E6));
+    assert_eq!(enc("eor x0, x1, x2"), word_le(0xCA020020));
+    assert_eq!(enc("eor w3, w4, w5"), word_le(0x4A050083));
+    assert_eq!(enc("eon x6, x7, x8"), word_le(0xCA2800E6));
+    // MOV 别名（ORR rd, xzr, rm）
+    assert_eq!(enc("mov x9, x10"), word_le(0xAA0A03E9));
+    assert_eq!(enc("mov w9, w10"), word_le(0x2A0A03E9));
+    // CMP/CMN（SUBS/ADDS rd=31）
+    assert_eq!(enc("cmp x0, #5"), word_le(0xF100141F));
+    assert_eq!(enc("cmp w0, #5"), word_le(0x7100141F));
+    assert_eq!(enc("cmn x0, #5"), word_le(0xB100141F));
+    assert_eq!(enc("cmp x1, x2"), word_le(0xEB02003F));
+    assert_eq!(enc("cmp w1, w2"), word_le(0x6B02003F));
+    // MOVZ/MOVN/MOVK（hw=0）与 mov #imm 别名
+    assert_eq!(enc("movz x0, #0"), word_le(0xD2800000));
+    assert_eq!(enc("movz w0, #0"), word_le(0x52800000));
+    assert_eq!(enc("movz x5, #0x1234"), word_le(0xD2824685));
+    assert_eq!(enc("movn x0, #0"), word_le(0x92800000));
+    assert_eq!(enc("movn w0, #0"), word_le(0x12800000));
+    assert_eq!(enc("movk x0, #0"), word_le(0xF2800000));
+    assert_eq!(enc("movk w5, #0xABCD"), word_le(0x729579A5));
+    // adds/sub 寄存器形式（A2 补）
+    assert_eq!(enc("adds x5, x6, x7"), word_le(0xAB0700C5));
+    assert_eq!(enc("subs w5, w6, w7"), word_le(0x6B0700C5));
+}
+
+#[test]
+fn a2_invalid_rejected() {
+    assert!(assemble("movz x0, #0x10000").is_err()); // imm16 上界 0xFFFF
+    assert!(assemble("movk w0, #0x10000").is_err());
+    assert!(assemble("orr x0, w1, x2").is_err()); // 宽度混用
+    assert!(assemble("cmp x0, w1").is_err());
+    assert!(assemble("mov w0, x1").is_err());
+}
+
+#[test]
 fn golden_register_encoding_pattern() {
     // rd/rn/imm 位段位置：add x5,x6,#0x2a → imm12=0x2A<<10、Rn=6<<5、Rd=5
     let w = 0x91000000u32 | (42 << 10) | (6 << 5) | 5;
