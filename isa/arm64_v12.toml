@@ -182,6 +182,7 @@ asm = "nop"
 
 [[instructions]]
 name = "ADDIMMX"
+roles = ["frame_free"]
 form = "ALUIMM"
 opcode = 0x91
 ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
@@ -210,6 +211,7 @@ asm = "adds {dst}, {src}, #{imm}"
 
 [[instructions]]
 name = "SUBIMMX"
+roles = ["frame_alloc"]
 form = "ALUIMM"
 opcode = 0xD1
 ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
@@ -414,6 +416,7 @@ asm = "eon {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MOVX"
+roles = ["gpr_mov"]
 form = "MOVR"
 opcode = 0xAA
 fields = { rn = 31 }
@@ -744,6 +747,8 @@ asm = "blr {src}"
 
 [[instructions]]
 name = "RET"
+roles = ["ret"]
+effect = ["Ret"]
 form = "RETF"
 opcode = 0xD65F
 fields = { rn = 30 }
@@ -1080,3 +1085,136 @@ insts = ["STPX", "STPW"]
 [[aliases]]
 name = "ldp"
 insts = ["LDPX", "LDPW"]
+
+# ════════════════════════════════════════════════════════════
+# B2：接入 TargetMachine（AAPCS64 子集 + 帧 + lowering）
+# ════════════════════════════════════════════════════════════
+# 帧/ABI 事实（AAPCS64）：
+#   sp = X31（Reg::SP）、fp = X29、lr = X30（return address）；
+#   参数 a0-a7 = X0-X7；返回 x0；callee-saved = X19-X28 + fp + lr；
+#   scratch = X16/X17（IP0/IP1，spill 用）；X18 平台寄存器保留。
+# 帧布局镜像 riscv64_v12 的 fp-inside：sub sp → 存 lr/fp 到
+# [sp+frame-8]/[sp+frame-16] → fp=sp+frame → @push_callee（X19-X28
+# 按需保存到 [sp+frame-16-(k+1)*8]）→ @move_args。
+# ⚠️ imm 语义说明：本 DSL 无 encode 变换钩子——A64 的 LDR/STR 无符号
+# imm12 与 LDP/STP imm7 都是"缩放单元"（真实字节偏移 = imm << scale），
+# 帧/ABI 层一律改用 **LDUR/STUR（imm9 真字节偏移，±256）** 保证字节
+# 语义正确；帧 ≥ ~256B 时 imm9 越界 → encode 报错（显式失败不静默截断）。
+
+[abi]
+stack_align = 16
+scratch = ["X16", "X17"]
+# regalloc 不可分配：X18 = 平台寄存器；X30 = lr（BL 返回地址/prologue
+# 保存）——不排除会被分配出垃圾值（覆盖返回地址 → ret 跳错）。
+reserved = ["X18", "X30"]
+
+# 返回寄存器（x0）；Return lowering 的返回值移动目标
+ret_regs = ["X0"]
+
+# Call 返回地址寄存器（BL 写 X30；P1 尚未有 Call lowering 规则）
+call_ret_reg = "X30"
+
+# Call 点被调用方破坏的寄存器（regalloc clobber 集）：AAPCS64 caller-saved
+# = X0-X18 + lr(X30)。X19-X28 由 @push_callee 保存 → 不在 clobber 集。
+call_clobbers = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17", "X18", "X30"]
+
+[[abi.arg_class]]
+class = "int"
+regs = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
+
+[abi.frame]
+sp = "SP"
+fp = "X29"
+# @frame_alloc = SUB SP, SP, #frame（SUB 自带减号语义 → 无需 alloc_neg）
+alloc_neg = false
+# fp-inside：lr/fp 保存槽在帧内顶部（fp_push_bytes=16 = X30+X29 两槽）；
+# min_frame = 16 + Σcallee_saved×8 = 96 由运行期推导（frame_layout_info）。
+layout = "fp-inside"
+fp_push_bytes = 16
+
+[abi.callee_saved]
+# X19-X28（fp/lr 由 fp_push 区显式存取，不入表）：@push_callee/@pop_callee
+# 用 [spill.GPR] store/load 模板（STURX/LDURX）保存到 [sp+frame-16-(k+1)*8]。
+gpr = ["X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28"]
+
+[spill.GPR]
+# base = X29（fp = 入口 sp，帧顶固定）：emission 的 sp_base = -(frame)
+# 是相对帧指针的偏移（spill 槽在帧内底部 [fp - frame + off]，递归各帧
+# 独立）；用 STUR/LDUR 真字节偏移（imm9 符号 ±256——与 riscv LD/SD 的
+# signed imm12 同角色，帧 > ~256B 报错为已知限制）。
+load = "LDURX {0}, X29, {1}"
+store = "STURX {0}, X29, {1}"
+base = "X29"
+
+[emit]
+align_pad = 0
+# 独立尾声标签关闭：arm64 B 是定宽 imm26（label 槽需 reloc patcher 位段
+# 重排，P1 尚未接入 A64 patcher）→ return block 直接 fall-through 到
+# 函数末尾的尾声（RET）——仅单 return block 函数安全（P1 tm 测试满足；
+# 多 return / 跨块分支函数需 B+B.cond 角色与 Arm64RelocPatcher，后置）。
+epilogue_label = false
+
+[emit.prologue]
+insts = [
+    "@frame_alloc",
+    "STURX X30, SP, {frame_size_m8}",
+    "STURX X29, SP, {frame_size_m16}",
+    "ADDIMMX X29, SP, {frame_size}",
+    "@push_callee",
+    "@move_args",
+]
+
+[emit.epilogue]
+insts = [
+    "@pop_callee",
+    "LDURX X30, SP, {frame_size_m8}",
+    "LDURX X29, SP, {frame_size_m16}",
+    "@frame_free",
+    "RET",
+]
+
+# ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
+# 覆盖 op 集 = P1 tm 测试所需最小集（SUPPORTED_OPS 由此唯一集派生）。
+
+[[lowering]]
+op = "Iadd"
+when = { eq = ["rs1_width", 32] }
+insts = ["ADDREGW {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Iadd"
+insts = ["ADDREGX {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Isub"
+when = { eq = ["rs1_width", 32] }
+insts = ["SUBREGW {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Isub"
+insts = ["SUBREGX {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Imul"
+when = { eq = ["rs1_width", 32] }
+insts = ["MULW {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Imul"
+insts = ["MULX {out}, {0}, {1}"]
+
+# Iconst：小值（0..0xFFFF）→ 单条 MOVZ {out}, #imm16。大值/负值需
+# movz+movk(hw 1..3)/movn 多序列——hw 变体指令与值域分派后置（P1 约束：
+# 超出 imm16u 值域在 encode 期显式报错，不静默截断）。
+[[lowering]]
+op = "Iconst"
+when = { eq = ["rd", 64] }
+insts = ["MOVZX {out}, {iconst}"]
+
+[[lowering]]
+op = "Iconst"
+insts = ["MOVZW {out}, {iconst}"]
+
+[[lowering]]
+op = "Copy"
+insts = ["MOVX {out}, {0}"]
