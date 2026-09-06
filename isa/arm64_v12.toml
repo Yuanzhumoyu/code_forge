@@ -69,6 +69,17 @@ op9   = { offset = 23, width = 9 } # MOV 宽立即数族（含 bit23=1 的 10010
 op6   = { offset = 26, width = 6 }
 imm26 = { offset = 0,  width = 26 } # B/BL 相对偏移（与 op6 互补覆盖全字）
 word  = { offset = 0,  width = 32 } # 全字常量（NOP）
+# A3 扩展
+ra    = { offset = 10, width = 5 }   # MADD/MSUB 累加器
+o0    = { offset = 15, width = 1 }   # madd=0 / msub=1
+op2d  = { offset = 10, width = 6 }   # sdiv=000011 / udiv=000010（位[15:10]）
+cond  = { offset = 12, width = 4 }   # CSEL/B.cond 条件码（A64：eq0..nv15）
+csop2 = { offset = 10, width = 2 }   # CSEL 族 op2（sel=0 inc=1）
+mtop  = { offset = 21, width = 11 }  # 乘除/条件族顶层 [31:21]（含 sf）
+b16   = { offset = 16, width = 16 }  # BR/BLR/RET 顶层 [31:16]
+imm19 = { offset = 5,  width = 19 }  # CBZ/CBNZ/B.cond 相对偏移（[23:5]）
+cbop  = { offset = 24, width = 8 }   # CBZ/CBNZ 顶层（含 sf/op 位）
+rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
@@ -564,3 +575,324 @@ insts = ["CMPIMMX", "CMPIMMW", "CMPREGX", "CMPREGW"]
 [[aliases]]
 name = "cmn"
 insts = ["CMNIMMX", "CMNIMMW"]
+
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "MULADD"   # MADD/MSUB：rd rn ra rm（位低→高）
+opcode_field = "mtop"
+operand_fields = ["rd", "rn", "ra", "rm"]
+
+[[forms]]
+name = "MUL3"     # MUL 别名（ra=31 fields）
+opcode_field = "mtop"
+operand_fields = ["rd", "rn", "rm"]
+
+[[forms]]
+name = "DIV2A"    # SDIV/UDIV：rd rn rm（[15:10] op2d 经 fields）
+opcode_field = "mtop"
+operand_fields = ["rd", "rn", "rm"]
+
+[[forms]]
+name = "BRREG2"   # BR/BLR：rn（[31:16] b16 常量；[15:10]/[4:0] 零 guard）
+opcode_field = "b16"
+operand_fields = ["rn"]
+
+[[forms]]
+name = "RETF"     # RET：无操作数（rn=30 fields）
+opcode_field = "b16"
+operand_fields = []
+
+[[forms]]
+name = "CBZF"     # CBZ/CBNZ：rn + imm19
+opcode_field = "cbop"
+operand_fields = ["rt", "imm19"]
+
+[[forms]]
+name = "BCF"      # B.cond：imm19（cond 经 fields 常量）
+opcode_field = "cbop"
+operand_fields = ["imm19"]
+
+[[forms]]
+name = "CSEL4"    # CSEL 族：rd rn cond rm（位低→高；cond 在 rm 之下）
+opcode_field = "mtop"
+operand_fields = ["rd", "rn", "cond", "rm"]
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "cond4"
+kind = "imm"
+signed = false
+width = 4
+
+[[operand_slots]]
+name = "off19"
+kind = "label"
+signed = true
+width = 19
+
+# ── 乘法 MADD/MSUB/MUL（opcode_field=mtop [31:21]）──
+# X madd word 9B020C20 → mtop=(>>21)&0x7FF=0x4D8；W=0xD8
+# X msub 9B069CA4、W 1B069CA4（o0=1）；mul= madd ra=31（9B027C20/1B027C20）
+
+[[instructions]]
+name = "MADDX"
+form = "MULADD"
+opcode = 0x4D8
+ops = ["dst:r64:out", "src:r64", "acc:r64", "src2:r64"]
+asm = "madd {dst}, {src}, {src2}, {acc}"
+
+[[instructions]]
+name = "MADDW"
+form = "MULADD"
+opcode = 0xD8
+ops = ["dst:r32:out", "src:r32", "acc:r32", "src2:r32"]
+asm = "madd {dst}, {src}, {src2}, {acc}"
+
+[[instructions]]
+name = "MSUBX"
+form = "MULADD"
+opcode = 0x4D8
+fields = { o0 = 1 }
+ops = ["dst:r64:out", "src:r64", "acc:r64", "src2:r64"]
+asm = "msub {dst}, {src}, {src2}, {acc}"
+
+[[instructions]]
+name = "MSUBW"
+form = "MULADD"
+opcode = 0xD8
+fields = { o0 = 1 }
+ops = ["dst:r32:out", "src:r32", "acc:r32", "src2:r32"]
+asm = "msub {dst}, {src}, {src2}, {acc}"
+
+[[instructions]]
+name = "MULX"
+form = "MUL3"
+opcode = 0x4D8
+fields = { ra = 31 }
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "mul {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "MULW"
+form = "MUL3"
+opcode = 0xD8
+fields = { ra = 31 }
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "mul {dst}, {src}, {src2}"
+
+# ── 除法 SDIV/UDIV（op2d 区分）──
+# sdiv x0,x1,x2=9AC20C20 → mtop=0x4D6、op2d=3；udiv=9AC20820 op2d=2（W 去 sf）
+
+[[instructions]]
+name = "SDIVX"
+form = "DIV2A"
+opcode = 0x4D6
+fields = { op2d = 3 }
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "sdiv {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "SDIVW"
+form = "DIV2A"
+opcode = 0xD6
+fields = { op2d = 3 }
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "sdiv {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "UDIVX"
+form = "DIV2A"
+opcode = 0x4D6
+fields = { op2d = 2 }
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "udiv {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "UDIVW"
+form = "DIV2A"
+opcode = 0xD6
+fields = { op2d = 2 }
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "udiv {dst}, {src}, {src2}"
+
+# ── BR/BLR/RET ──
+# oracle：br x3=D61F0060、blr x3=D63F0060、ret=D65F03C0（rn=30 常量）
+
+[[instructions]]
+name = "BR"
+form = "BRREG2"
+opcode = 0xD61F
+ops = ["src:r64"]
+asm = "br {src}"
+
+[[instructions]]
+name = "BLR"
+form = "BRREG2"
+opcode = 0xD63F
+ops = ["src:r64"]
+asm = "blr {src}"
+
+[[instructions]]
+name = "RET"
+form = "RETF"
+opcode = 0xD65F
+fields = { rn = 30 }
+asm = "ret"
+
+# ── CBZ/CBNZ ×X/W ──
+# oracle：cbz x0,.=B4000000、cbnz w1,.=35000001
+
+[[instructions]]
+name = "CBZX"
+form = "CBZF"
+opcode = 0xB4
+ops = ["src:r64", "target:off19"]
+asm = "cbz {src}, {target}"
+
+[[instructions]]
+name = "CBZW"
+form = "CBZF"
+opcode = 0x34
+ops = ["src:r32", "target:off19"]
+asm = "cbz {src}, {target}"
+
+[[instructions]]
+name = "CBNZX"
+form = "CBZF"
+opcode = 0xB5
+ops = ["src:r64", "target:off19"]
+asm = "cbnz {src}, {target}"
+
+[[instructions]]
+name = "CBNZW"
+form = "CBZF"
+opcode = 0x35
+ops = ["src:r32", "target:off19"]
+asm = "cbnz {src}, {target}"
+
+# ── CSEL 族（cond 数值槽；位低→高 rd rn cond rm）──
+# 布局：sf op 0 11010100 00 Rm cond op2 1 1 Rn Rd
+#   csel：op=0、op2=0（X mtop: 9A820020 >>21=0x4D4? oracle 推：见下方逐条）
+#   csinc op2=1、csinv op=1 op2=0、csneg op=1 op2=1
+# oracle 实测字：csel x0,x1,x2,eq=9A820020、csinc x0,x1,x2,eq=9A820420、
+#   csinv x4,x5,x6,ne=DA8610A4、csneg w4,w5,w6,gt=5A86C4A4
+
+[[instructions]]
+name = "CSELX"
+form = "CSEL4"
+opcode = 0x4D4
+ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
+asm = "csel {dst}, {src}, {src2}, #{condx}"
+
+[[instructions]]
+name = "CSELW"
+form = "CSEL4"
+opcode = 0xD4
+ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
+asm = "csel {dst}, {src}, {src2}, #{condx}"
+
+[[instructions]]
+name = "CSINCX"
+form = "CSEL4"
+opcode = 0x4D4
+fields = { csop2 = 1 }
+ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
+asm = "csinc {dst}, {src}, {src2}, #{condx}"
+
+[[instructions]]
+name = "CSINCW"
+form = "CSEL4"
+opcode = 0xD4
+fields = { csop2 = 1 }
+ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
+asm = "csinc {dst}, {src}, {src2}, #{condx}"
+
+[[instructions]]
+name = "CSINVX"
+form = "CSEL4"
+opcode = 0x6D4
+ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
+asm = "csinv {dst}, {src}, {src2}, #{condx}"
+
+[[instructions]]
+name = "CSINVW"
+form = "CSEL4"
+opcode = 0x2D4
+ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
+asm = "csinv {dst}, {src}, {src2}, #{condx}"
+
+[[instructions]]
+name = "CSNEGX"
+form = "CSEL4"
+opcode = 0x6D4
+fields = { csop2 = 1 }
+ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
+asm = "csneg {dst}, {src}, {src2}, #{condx}"
+
+[[instructions]]
+name = "CSNEGW"
+form = "CSEL4"
+opcode = 0x2D4
+fields = { csop2 = 1 }
+ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
+asm = "csneg {dst}, {src}, {src2}, #{condx}"
+
+# ── B.cond（cond 数值槽）──
+# oracle：b.eq .=54000000；b.ne 8 = 54000041（imm19=2）
+
+[[instructions]]
+name = "BCOND"
+form = "CBZF"
+opcode = 0x54
+fields = { cond = 0 }
+ops = ["target:off19"]
+asm = "b.eq {target}"
+
+# ── 别名 ──
+
+[[aliases]]
+name = "madd"
+insts = ["MADDX", "MADDW"]
+
+[[aliases]]
+name = "msub"
+insts = ["MSUBX", "MSUBW"]
+
+[[aliases]]
+name = "mul"
+insts = ["MULX", "MULW"]
+
+[[aliases]]
+name = "sdiv"
+insts = ["SDIVX", "SDIVW"]
+
+[[aliases]]
+name = "udiv"
+insts = ["UDIVX", "UDIVW"]
+
+[[aliases]]
+name = "cbz"
+insts = ["CBZX", "CBZW"]
+
+[[aliases]]
+name = "cbnz"
+insts = ["CBNZX", "CBNZW"]
+
+[[aliases]]
+name = "csel"
+insts = ["CSELX", "CSELW"]
+
+[[aliases]]
+name = "csinc"
+insts = ["CSINCX", "CSINCW"]
+
+[[aliases]]
+name = "csinv"
+insts = ["CSINVX", "CSINVW"]
+
+[[aliases]]
+name = "csneg"
+insts = ["CSNEGX", "CSNEGW"]

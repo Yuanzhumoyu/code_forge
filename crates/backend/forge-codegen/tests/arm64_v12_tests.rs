@@ -94,6 +94,33 @@ fn a2_invalid_rejected() {
 }
 
 #[test]
+fn golden_a3_mul_div_br_cbz_csel() {
+    // 乘法/除法（clang oracle）
+    assert_eq!(enc("madd x0, x1, x2, x3"), word_le(0x9B020C20));
+    assert_eq!(enc("madd w0, w1, w2, w3"), word_le(0x1B020C20));
+    assert_eq!(enc("msub x4, x5, x6, x7"), word_le(0x9B069CA4));
+    assert_eq!(enc("msub w4, w5, w6, w7"), word_le(0x1B069CA4));
+    assert_eq!(enc("mul x0, x1, x2"), word_le(0x9B027C20));
+    assert_eq!(enc("mul w0, w1, w2"), word_le(0x1B027C20));
+    assert_eq!(enc("sdiv x0, x1, x2"), word_le(0x9AC20C20));
+    assert_eq!(enc("sdiv w0, w1, w2"), word_le(0x1AC20C20));
+    assert_eq!(enc("udiv x0, x1, x2"), word_le(0x9AC20820));
+    assert_eq!(enc("udiv w0, w1, w2"), word_le(0x1AC20820));
+    // 间接分支
+    assert_eq!(enc("br x3"), word_le(0xD61F0060));
+    assert_eq!(enc("blr x3"), word_le(0xD63F0060));
+    assert_eq!(enc("ret"), word_le(0xD65F03C0));
+    // CBZ/CBNZ
+    assert_eq!(enc("cbz x0, 0"), word_le(0xB4000000));
+    assert_eq!(enc("cbnz w1, 0"), word_le(0x35000001));
+    // CSEL 族
+    assert_eq!(enc("csel x0, x1, x2, #0"), word_le(0x9A820020)); // eq
+    assert_eq!(enc("csinc x0, x1, x2, #0"), word_le(0x9A820420));
+    assert_eq!(enc("csinv x4, x5, x6, #1"), word_le(0xDA8610A4)); // ne
+    assert_eq!(enc("csneg w4, w5, w6, #12"), word_le(0x5A86C4A4)); // gt
+}
+
+#[test]
 fn golden_register_encoding_pattern() {
     // rd/rn/imm 位段位置：add x5,x6,#0x2a → imm12=0x2A<<10、Rn=6<<5、Rd=5
     let w = 0x91000000u32 | (42 << 10) | (6 << 5) | 5;
