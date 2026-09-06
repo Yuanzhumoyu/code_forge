@@ -1218,3 +1218,32 @@ insts = ["MOVZW {out}, {iconst}"]
 [[lowering]]
 op = "Copy"
 insts = ["MOVX {out}, {0}"]
+
+# ── 逻辑运算（P3：Band/Bor/Bxor → ANDREG/ORRREG/EORREG 直落）──
+
+[[lowering]]
+op = "Band"
+when = { eq = ["rs1_width", 32] }
+insts = ["ANDREGW {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Band"
+insts = ["ANDREGX {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Bor"
+when = { eq = ["rs1_width", 32] }
+insts = ["ORRREGW {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Bor"
+insts = ["ORRREGX {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Bxor"
+when = { eq = ["rs1_width", 32] }
+insts = ["EORREGW {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Bxor"
+insts = ["EORREGX {out}, {0}, {1}"]
