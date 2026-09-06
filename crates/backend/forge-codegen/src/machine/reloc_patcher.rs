@@ -78,6 +78,7 @@ pub fn register_default_reloc_patcher(isa: &str) {
         "x86_64" | "x86_64_v12" | "x86_v12" => Arc::new(X86RelocPatcher),
         // riscv64_v12 是定宽 32 位模块（v12 TOML 的 name 键）。
         "riscv64_v12" => Arc::new(RiscvRelocPatcher),
+        "arm64_v12" => Arc::new(Arm64RelocPatcher),
         _ => return,
     };
     register_reloc_patcher(isa, patcher);
@@ -105,6 +106,81 @@ impl RiscvRelocPatcher {
     }
 }
 
+/// AArch64 定宽 32 位：相对偏移重编码进 B/BL imm26 与 B.cond/CBZ/CBNZ
+/// imm19 位段（A64 分支 PC = 指令起始地址，offset = target - site）。
+pub struct Arm64RelocPatcher;
+
+impl Arm64RelocPatcher {
+    /// B/BL：imm26 = offset>>2（[25:0]），要求 offset % 4 == 0。
+    fn b_imm26(offset: i64) -> Result<u32, IrError> {
+        if offset % 4 != 0 {
+            return Err(IrError::Internal(format!(
+                "arm64 reloc: B offset {offset} 非 4 对齐"
+            )));
+        }
+        let imm = offset >> 2;
+        if !(-0x200_0000..=0x1FF_FFFF).contains(&imm) {
+            return Err(IrError::Internal(format!(
+                "arm64 reloc: B offset {offset} 超 imm26 范围"
+            )));
+        }
+        Ok((imm as u32) & 0x3FF_FFFF)
+    }
+    /// B.cond/CBZ/CBNZ：imm19 = offset>>2（[23:5]）。
+    fn b_imm19(offset: i64) -> Result<u32, IrError> {
+        if offset % 4 != 0 {
+            return Err(IrError::Internal(format!(
+                "arm64 reloc: branch offset {offset} 非 4 对齐"
+            )));
+        }
+        let imm = offset >> 2;
+        if !(-0x4_0000..=0x3_FFFF).contains(&imm) {
+            return Err(IrError::Internal(format!(
+                "arm64 reloc: branch offset {offset} 超 imm19 范围"
+            )));
+        }
+        Ok((imm as u32) & 0x7_FFFF)
+    }
+}
+
+impl RelocPatcher for Arm64RelocPatcher {
+    fn apply(
+        &self,
+        code: &mut [u8],
+        offset: usize,
+        kind: RelocKind,
+        target: u64,
+        site: u64,
+    ) -> Result<(), IrError> {
+        let RelocKind::Relative(4, _) = kind else {
+            return Err(IrError::Internal(format!(
+                "arm64 reloc: unsupported kind {kind:?}"
+            )));
+        };
+        let word = u32::from_le_bytes(
+            code[offset..offset + 4]
+                .try_into()
+                .map_err(|_| IrError::Internal("arm64 reloc: 越界".into()))?,
+        );
+        let d = (target as i64) - (site as i64);
+        let top8 = (word >> 24) & 0xFF;
+        let new = match top8 {
+            // B(0x14)/BL(0x94)：imm26 [25:0]
+            0x14 | 0x94 => (word & !0x03FF_FFFFu32) | Arm64RelocPatcher::b_imm26(d)?,
+            // B.cond(0x54)/CBZ/CBNZ(0x34/0xB4/0x35/0xB5)：imm19 [23:5]
+            0x54 | 0x34 | 0xB4 | 0x35 | 0xB5 => {
+                (word & !(0x7_FFFFu32 << 5)) | (Arm64RelocPatcher::b_imm19(d)? << 5)
+            }
+            t => {
+                return Err(IrError::Internal(format!(
+                    "arm64 reloc: 不支持的指令 top8=0x{t:02x}（word 0x{word:08x}）"
+                )));
+            }
+        };
+        code[offset..offset + 4].copy_from_slice(&new.to_le_bytes());
+        Ok(())
+    }
+}
 impl RelocPatcher for RiscvRelocPatcher {
     fn apply(
         &self,
@@ -308,5 +384,72 @@ mod tests {
         let p = RiscvRelocPatcher;
         let mut code = vec![0u8; 4];
         assert!(p.apply(&mut code, 0, RelocKind::ABS4, 0, 0).is_err());
+    }
+
+    #[test]
+    fn arm64_b_imm26_patch() {
+        let p = Arm64RelocPatcher;
+        // b .（offset 0）；target=site+8 → diff=8 → imm26=2
+        let mut code = 0x14000000u32.to_le_bytes().to_vec();
+        p.apply(&mut code, 0, RelocKind::Relative(4, 0), 8, 0)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(code[0..4].try_into().unwrap()),
+            0x14000002
+        );
+        // bl 负偏移：target=site-4 → imm26=-1（全 1 补码）
+        let mut code2 = 0x94000000u32.to_le_bytes().to_vec();
+        p.apply(&mut code2, 0, RelocKind::Relative(4, 0), 0, 4)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(code2[0..4].try_into().unwrap()),
+            0x94000000 | 0x3FF_FFFF
+        );
+    }
+
+    #[test]
+    fn arm64_imm19_patch_bcond_cbz() {
+        let p = Arm64RelocPatcher;
+        // b.eq：word 0x54000000；diff=8 → imm19=2（[23:5]）
+        let mut code = 0x54000000u32.to_le_bytes().to_vec();
+        p.apply(&mut code, 0, RelocKind::Relative(4, 0), 8, 0)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(code[0..4].try_into().unwrap()),
+            0x54000040
+        );
+        // cbz x0：0xB4000000 同 imm19 位段；diff=12 → imm19=3
+        let mut code2 = 0xB4000000u32.to_le_bytes().to_vec();
+        p.apply(&mut code2, 0, RelocKind::Relative(4, 0), 12, 0)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(code2[0..4].try_into().unwrap()),
+            0xB4000060
+        );
+        // cbnz w1：0x35000001 保留 Rt；diff=-4 → imm19=-1
+        let mut code3 = 0x35000001u32.to_le_bytes().to_vec();
+        p.apply(&mut code3, 0, RelocKind::Relative(4, 0), 0, 4)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(code3[0..4].try_into().unwrap()),
+            0x35000001 | (0x7_FFFFu32 << 5)
+        );
+    }
+
+    #[test]
+    fn arm64_non_aligned_and_unknown_rejected() {
+        let p = Arm64RelocPatcher;
+        let mut c1 = 0x14000000u32.to_le_bytes().to_vec();
+        assert!(
+            p.apply(&mut c1, 0, RelocKind::Relative(4, 0), 6, 0)
+                .is_err()
+        ); // 非 4 对齐
+        let mut c2 = 0xD503201Fu32.to_le_bytes().to_vec(); // nop
+        assert!(
+            p.apply(&mut c2, 0, RelocKind::Relative(4, 0), 8, 0)
+                .is_err()
+        );
+        let mut c3 = vec![0u8; 4];
+        assert!(p.apply(&mut c3, 0, RelocKind::ABS4, 0, 0).is_err());
     }
 }
