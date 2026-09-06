@@ -12,5 +12,4 @@ path = "src/main.rs"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 
-# 独立于主 workspace（同 tools/forge-rustc-wrapper 模式）
-[workspace]
+# 主 workspace 成员（见根 Cargo.toml [workspace] members）

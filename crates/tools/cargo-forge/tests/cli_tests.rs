@@ -10,8 +10,9 @@
 //! ⑥ `init` 后**裸 `cargo build`**（不设任何 forge env，仅 RUSTUP_HOME 需要）→ 成功 + exit 42
 //!
 //! 前置：backend dll（FORGE_RUSTC_DLL / 仓库 target/debug/forge_rustc.dll）。
-//! dll 缺失先跑 `cargo-forge backend`（一次），仍缺/无法构建 → 打印 SKIP 并放行
-//! （非 fail，规格允许）。每条失败打印完整 stdout/stderr。
+//! dll 缺失 → 每条用例打印 SKIP 并放行（非 fail——作为主 workspace 成员，
+//! cli_tests 可能出现在无 dll 的门禁/CI 环境，不触发慢速 backend 构建）。
+//! 每条失败打印完整 stdout/stderr。
 //!
 //! 说明：每条用例独立临时目录 → cargo 模式 build-std 冷启动 ≈ 30s；时间上限
 //! 放宽到 300s（规格的 30s 上限与实测冷启动相悖，见实现报告）。串行跑
@@ -40,15 +41,22 @@ fn tool() -> &'static str {
     env!("CARGO_BIN_EXE_cargo-forge")
 }
 
-/// 仓库根（tools/cargo-forge 上溯两级；用 parent() 链保持路径无 ".." 组件，
-/// 与工具 env::detect_repo 的产物一致——join("..") 会污染断言字符串）。
+/// 仓库根：从 CARGO_MANIFEST_DIR（crates/tools/cargo-forge，成员包）向上逐级
+/// 找含 Cargo.toml + tools/forge-rustc-wrapper 的目录（判据与工具 env.rs 一致；
+/// 用 parent() 链保持路径无 ".." 组件，join("..") 会污染断言字符串）。
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("manifest parent")
-        .parent()
-        .expect("repo root")
-        .to_path_buf()
+    fn marker(d: &Path) -> bool {
+        d.join("Cargo.toml").is_file()
+            && d.join("tools").join("forge-rustc-wrapper").join("Cargo.toml").is_file()
+    }
+    let mut dir = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
+    for _ in 0..6 {
+        if marker(&dir) {
+            return dir;
+        }
+        dir = dir.parent().expect("manifest ancestor").to_path_buf();
+    }
+    panic!("未找到仓库根（无 tools/forge-rustc-wrapper 特征）");
 }
 
 /// backend dll：FORGE_RUSTC_DLL > 仓库 target/debug。
@@ -74,20 +82,18 @@ fn ensure_rustup_home(cmd: &mut Command) {
     }
 }
 
-/// dll 缺失时先试一次 `cargo-forge backend`；仍缺 → None（调用方 SKIP 放行）。
+/// dll 缺失 → None（调用方快速 SKIP 放行）。作为主 workspace 成员，cli_tests
+/// 会进入 `cargo test --workspace` 门禁：绝不在此尝试漫长的 backend 构建
+/// （forge-rustc 需 rustc-dev 且冷构建数分钟），只提示先构建。
 fn ensure_backend_dll() -> Option<()> {
     if backend_dll_path().is_some() {
         return Some(());
     }
-    eprintln!("[cli_tests] backend dll 缺失，尝试 `cargo-forge backend` 构建…");
-    let out = run_tool(&["backend"], None, 1800);
-    if out.status.success() && backend_dll_path().is_some() {
-        return Some(());
-    }
-    let txt = String::from_utf8_lossy(&out.stderr);
-    for l in txt.lines().rev().take(12) {
-        eprintln!("[cli_tests]   {l}");
-    }
+    eprintln!(
+        "[cli_tests] SKIP: backend dll 缺失（FORGE_RUSTC_DLL 或 \
+         <repo>\\target\\debug\\forge_rustc.dll）——先 `cargo build -p forge-rustc` \
+         或 `cargo-forge backend` 构建后端后再跑本测试"
+    );
     None
 }
 

@@ -13,27 +13,39 @@ pub const LINK_ARGS: [&str; 3] = [
     "-Clink-arg=/DEFAULTLIB:vcruntime.lib",
 ];
 
-/// 仓库根探测。优先编译期 `CARGO_MANIFEST_DIR`（= tools/cargo-forge）上溯两级
-/// （构建时所在仓库）；该路径在运行时不复存在（仓库移动/删除/在另一副本安装）
-/// 时回退：当前工作目录向上找含 `tools/forge-rustc-wrapper/Cargo.toml` 的祖先。
-/// 都失败 → None（调用方报错提示 --backend-dll / --backend-src）。
+/// 仓库根判据：该目录含 Cargo.toml 且含 `tools/forge-rustc-wrapper/Cargo.toml`
+/// （code-forge 仓库布局特征）。
+fn is_repo_root(d: &Path) -> bool {
+    d.join("Cargo.toml").is_file()
+        && d.join("tools")
+            .join("forge-rustc-wrapper")
+            .join("Cargo.toml")
+            .is_file()
+}
+
+/// 仓库根探测。优先编译期 `CARGO_MANIFEST_DIR`（构建时所在仓库）：从该目录
+/// 向上逐级找仓库根——cargo-forge 曾位于 `tools/`（2 级）、现位于
+/// `crates/tools/`（3 级），不固定层数；编译期路径失效（仓库移动/删除/在另一
+/// 副本安装）时回退：当前工作目录向上找。都失败 → None（调用方报错提示
+/// --backend-dll / --backend-src）。
 ///
 /// 注意：不做 canonicalize——Windows 下会得到 `\\?\` 扩展前缀，污染打印与
 /// RUSTFLAGS；parent()/祖先链本就给出干净绝对路径。
 pub fn detect_repo() -> Option<PathBuf> {
-    let baked = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?.to_path_buf();
-    if baked.join("Cargo.toml").is_file() {
-        return Some(baked);
+    // 编译期锚点（构建时仓库路径，exe 装到别处后仍指向仓库）
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut dir = Some(manifest.to_path_buf());
+    for _ in 0..6 {
+        let d = dir?;
+        if is_repo_root(&d) {
+            return Some(d);
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
     }
+    // 运行时回退：cwd 上溯（仓库移动/删除后于新位置运行）
     let mut dir = std::env::current_dir().ok()?;
     for _ in 0..10 {
-        if dir.join("Cargo.toml").is_file()
-            && dir
-                .join("tools")
-                .join("forge-rustc-wrapper")
-                .join("Cargo.toml")
-                .is_file()
-        {
+        if is_repo_root(&dir) {
             return Some(dir);
         }
         dir = dir.parent()?.to_path_buf();

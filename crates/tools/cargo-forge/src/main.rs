@@ -1,8 +1,9 @@
 //! cargo-forge：把 forge-rustc codegen backend 融进 rust 工具链的 cargo 子命令。
 //!
 //! cargo 的"外部子命令"约定：`cargo forge <args…>` → 查找并执行 `cargo-forge
-//! <args…>`。因此本工具安装（`cargo install --path tools/cargo-forge` 或加入
-//! PATH）后即可直接 `cargo forge build/run/doctor/backend/init`。
+//! <args…>`。因此本工具安装（仓库内 `cargo build -p cargo-forge` 后把
+//! target/debug 加入 PATH，或 `cargo install --path crates/tools/cargo-forge`）
+//! 后即可直接 `cargo forge build/run/doctor/backend/init`。
 //!
 //! 子命令一览：
 //! - `backend`：构建 forge_rustc.dll（`cargo build -p forge-rustc`）

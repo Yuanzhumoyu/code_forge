@@ -5,7 +5,7 @@
 
 ## 用法
 
-### 推荐：cargo forge（`tools/cargo-forge`，cargo 外部子命令）
+### 推荐：cargo forge（`crates/tools/cargo-forge`，cargo 外部子命令）
 
 把 forge-rustc 融进 rust 工具链的最省事入口——`cargo forge <build|run|doctor|backend|init>`
 （cargo 外部子命令约定：`cargo forge …` = 执行 `cargo-forge …`）。
@@ -13,10 +13,11 @@
 安装（任选其一，工具本身只依赖 clap/anyhow）：
 
 ```bash
-# 仓库内直接构建（产物 tools/cargo-forge/target/debug/cargo-forge.exe，加入 PATH 即可）
-cargo build --manifest-path tools/cargo-forge/Cargo.toml
+# 仓库内直接构建（cargo-forge 是主 workspace 成员；产物 target/debug/cargo-forge.exe，
+# 把仓库 target/debug 加入 PATH 即可）
+cargo build -p cargo-forge
 # 或安装到 cargo bin（~/.cargo/bin）
-cargo install --path tools/cargo-forge
+cargo install --path crates/tools/cargo-forge
 ```
 
 ```bash
