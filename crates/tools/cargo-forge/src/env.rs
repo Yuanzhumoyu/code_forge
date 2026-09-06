@@ -55,9 +55,9 @@ pub fn detect_repo() -> Option<PathBuf> {
 
 /// 解析后的运行环境。
 ///
-/// backend dll 定位优先级（规格 §env）：`--backend-dll` > env `FORGE_RUSTC_DLL`
-/// > `<repo>/target/debug/forge_rustc.dll`。wrapper 固定
-/// `<repo>/tools/forge-rustc-wrapper/target/debug/forge-rustc-wrapper.exe`。
+/// backend dll 定位优先级（规格 §env）：`--backend-dll` > env `FORGE_RUSTC_DLL`，
+/// 再到仓库的 `target/debug/forge_rustc.dll`。wrapper 固定为仓库内的
+/// 相对路径 `tools/forge-rustc-wrapper/target/debug/forge-rustc-wrapper.exe`。
 pub struct Env {
     pub repo_root: Option<PathBuf>,
     /// 已解析的 backend dll（可能不存在——存在性由各子命令自检/报错）
@@ -75,11 +75,13 @@ impl Env {
         let repo_root = detect_repo();
         let backend_dll = match cli_backend_dll {
             Some(p) => Some(p.to_path_buf()),
-            None => std::env::var_os("FORGE_RUSTC_DLL").map(PathBuf::from).or_else(|| {
-                repo_root
-                    .as_ref()
-                    .map(|r| r.join("target").join("debug").join("forge_rustc.dll"))
-            }),
+            None => std::env::var_os("FORGE_RUSTC_DLL")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    repo_root
+                        .as_ref()
+                        .map(|r| r.join("target").join("debug").join("forge_rustc.dll"))
+                }),
         };
         let wrapper_exe = repo_root.as_ref().map(|r| {
             r.join("tools")
@@ -231,10 +233,10 @@ pub fn print_fail_output(what: &str, out: &RunOutcome) {
 
 /// wrapper exe 缺失时自动构建（`cargo build --manifest-path …/Cargo.toml`）。
 pub fn ensure_wrapper(env: &Env, verbose: bool) -> anyhow::Result<()> {
-    if let Some(w) = &env.wrapper_exe {
-        if w.is_file() {
-            return Ok(());
-        }
+    if let Some(w) = &env.wrapper_exe
+        && w.is_file()
+    {
+        return Ok(());
     }
     let repo = env.repo_root.as_ref().ok_or_else(|| {
         anyhow::anyhow!(

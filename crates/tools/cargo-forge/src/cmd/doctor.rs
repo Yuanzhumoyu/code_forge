@@ -18,7 +18,10 @@ struct Item {
 }
 
 pub fn run(env: &Env) -> anyhow::Result<i32> {
-    println!("cargo-forge doctor —— 环境检查矩阵（toolchain {}）", env.toolchain);
+    println!(
+        "cargo-forge doctor —— 环境检查矩阵（toolchain {}）",
+        env.toolchain
+    );
 
     // (a) rustc 可用
     let version = probe_rustc_version(env);
@@ -120,19 +123,13 @@ pub fn run(env: &Env) -> anyhow::Result<i32> {
 
     // (e) host 目标提示
     let (e_ok, e_detail, e_advice) = match &host {
-        Some(h) if h.contains("x86_64-pc-windows-msvc") => {
-            (true, h.clone(), vec![])
-        }
+        Some(h) if h.contains("x86_64-pc-windows-msvc") => (true, h.clone(), vec![]),
         Some(h) => (
             false,
             format!("{h}（forge-rustc 端到端仅验证于 x86_64-pc-windows-msvc）"),
             vec!["forge backend dll 是 PE-COFF；其他宿主请自行对照支持矩阵".to_string()],
         ),
-        None => (
-            false,
-            "无法获取 host（rustc 不可用）".to_string(),
-            vec![],
-        ),
+        None => (false, "无法获取 host（rustc 不可用）".to_string(), vec![]),
     };
     items.push(Item {
         key: 'e',
@@ -200,7 +197,12 @@ fn check_components(
     let sysroot_ok = sysroot.is_some();
     if let Some(sr) = sysroot {
         let rust_src_marker = sr
-            .join("lib").join("rustlib").join("src").join("rust").join("library").join("core");
+            .join("lib")
+            .join("rustlib")
+            .join("src")
+            .join("rust")
+            .join("library")
+            .join("core");
         let dev_lib = host.map(|h| sr.join("lib").join("rustlib").join(h).join("lib"));
         let rustc_dev_ok = dev_lib
             .map(|d| {
@@ -225,7 +227,10 @@ fn check_components(
     if sysroot_ok && missing.is_empty() {
         (
             true,
-            format!("rust-src + rustc-dev 齐备（sysroot: {}）", sysroot.unwrap().display()),
+            format!(
+                "rust-src + rustc-dev 齐备（sysroot: {}）",
+                sysroot.unwrap().display()
+            ),
             vec![],
         )
     } else if dll_ok {
@@ -266,7 +271,9 @@ fn check_components(
 
 fn component_advice(env: &Env, missing: &[String]) -> Vec<String> {
     if missing.is_empty() {
-        return vec!["先构建 backend: `cargo build -p forge-rustc`（或 cargo forge backend）".to_string()];
+        return vec![
+            "先构建 backend: `cargo build -p forge-rustc`（或 cargo forge backend）".to_string(),
+        ];
     }
     vec![format!(
         "rustup component add {} --toolchain {}",

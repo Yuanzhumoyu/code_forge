@@ -47,7 +47,10 @@ fn tool() -> &'static str {
 fn repo_root() -> PathBuf {
     fn marker(d: &Path) -> bool {
         d.join("Cargo.toml").is_file()
-            && d.join("tools").join("forge-rustc-wrapper").join("Cargo.toml").is_file()
+            && d.join("tools")
+                .join("forge-rustc-wrapper")
+                .join("Cargo.toml")
+                .is_file()
     }
     let mut dir = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
     for _ in 0..6 {
@@ -67,7 +70,10 @@ fn backend_dll_path() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let p = repo_root().join("target").join("debug").join("forge_rustc.dll");
+    let p = repo_root()
+        .join("target")
+        .join("debug")
+        .join("forge_rustc.dll");
     p.is_file().then_some(p)
 }
 
@@ -149,9 +155,7 @@ fn assert_exit(out: &Output, want: i32, what: &str) {
     if code != want {
         let so = String::from_utf8_lossy(&out.stdout);
         let se = String::from_utf8_lossy(&out.stderr);
-        panic!(
-            "{what} 期望 exit={want}，实际 {code}\n--- stdout ---\n{so}\n--- stderr ---\n{se}"
-        );
+        panic!("{what} 期望 exit={want}，实际 {code}\n--- stdout ---\n{so}\n--- stderr ---\n{se}");
     }
 }
 
@@ -207,7 +211,10 @@ fn cli_cargo_mode_run_mini_project() {
     let out = run_tool(&["run"], Some(&dir), 300);
     assert_exit(&out, 42, "① cargo 模式 run");
     assert!(
-        dir.join("target").join("debug").join("miniforge.exe").is_file(),
+        dir.join("target")
+            .join("debug")
+            .join("miniforge.exe")
+            .is_file(),
         "① 产物 exe 应存在: target\\debug\\miniforge.exe"
     );
 }
@@ -270,7 +277,11 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 }
 "#,
     );
-    let out = run_tool(&["run", "--file", src.to_str().unwrap(), "--alloc"], Some(&dir), 120);
+    let out = run_tool(
+        &["run", "--file", src.to_str().unwrap(), "--alloc"],
+        Some(&dir),
+        120,
+    );
     assert_exit(&out, 6, "③ --alloc run");
 }
 
@@ -306,7 +317,19 @@ fn cli_codegen_units_threads() {
     let src = write_file(&dir, "cg.rs", MAIN_42);
 
     // ⑤ -Ccodegen-units=4 + -Zthreads=4（RUSTFLAGS/rustc 参数注入路径）
-    let out = run_tool(&["run", "--file", src.to_str().unwrap(), "--codegen-units", "4", "--threads", "4"], Some(&dir), 120);
+    let out = run_tool(
+        &[
+            "run",
+            "--file",
+            src.to_str().unwrap(),
+            "--codegen-units",
+            "4",
+            "--threads",
+            "4",
+        ],
+        Some(&dir),
+        120,
+    );
     assert_exit(&out, 42, "⑤ --codegen-units 4 --threads 4 run");
 }
 
@@ -329,10 +352,19 @@ fn cli_init_then_bare_cargo_build() {
         cfg.contains(&format!("-Zcodegen-backend={}", dll.replace('\\', "\\\\"))),
         "⑥ config 应含 codegen-backend 绝对路径"
     );
-    assert!(cfg.contains("rustc-wrapper ="), "⑥ config 应含 rustc-wrapper");
-    assert!(cfg.contains("build-std = [\"core\"]"), "⑥ config 应含 build-std core");
+    assert!(
+        cfg.contains("rustc-wrapper ="),
+        "⑥ config 应含 rustc-wrapper"
+    );
+    assert!(
+        cfg.contains("build-std = [\"core\"]"),
+        "⑥ config 应含 build-std core"
+    );
     let tc = std::fs::read_to_string(dir.join("rust-toolchain.toml")).expect("rust-toolchain.toml");
-    assert!(tc.contains("channel = \"nightly\""), "⑥ rust-toolchain 应 channel nightly");
+    assert!(
+        tc.contains("channel = \"nightly\""),
+        "⑥ rust-toolchain 应 channel nightly"
+    );
 
     // 幂等：重跑 init 不应备份/报错
     let out2 = run_tool(&["init"], Some(&dir), 60);
@@ -351,4 +383,3 @@ fn cli_init_then_bare_cargo_build() {
     let run = Command::new(&exe).status().expect("run initmini.exe");
     assert_eq!(run.code(), Some(42), "⑥ 裸 cargo build 产物 exit 应 42");
 }
-

@@ -90,7 +90,8 @@ fn spec<'a>(args: &'a BuildArgs, dll: &'a Path) -> FlagSpec<'a> {
 }
 
 /// 单文件裸 rustc 模式（README 方式二标准入口形态 + 可选 -C/-Z 扩展参数）。
-fn file_mode(args: &BuildArgs,
+fn file_mode(
+    args: &BuildArgs,
     env: &Env,
     verbose: bool,
     dll: &Path,
@@ -137,7 +138,8 @@ fn file_mode(args: &BuildArgs,
 }
 
 /// cargo 工程模式：RUSTFLAGS + RUSTC_WRAPPER + `cargo +tc -Zbuild-std=core[,alloc] build`。
-fn cargo_mode(args: &BuildArgs,
+fn cargo_mode(
+    args: &BuildArgs,
     env: &Env,
     verbose: bool,
     dll: &Path,
@@ -206,9 +208,10 @@ fn cargo_mode(args: &BuildArgs,
         eprintln!(
             "构建成功（profile={}，backend {}）",
             if args.release { "release" } else { "debug" },
-            dll.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+            dll.file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
         );
     }
     Ok(None)
 }
-

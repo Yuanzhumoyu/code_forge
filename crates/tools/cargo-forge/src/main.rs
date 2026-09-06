@@ -34,7 +34,13 @@ struct Cli {
     backend_dll: Option<std::path::PathBuf>,
 
     /// 工具链（rustup 语法，原样作为 rustc/cargo 首参）
-    #[arg(long, global = true, default_value = "+nightly", value_name = "CHANNEL", help_heading = "全局参数")]
+    #[arg(
+        long,
+        global = true,
+        default_value = "+nightly",
+        value_name = "CHANNEL",
+        help_heading = "全局参数"
+    )]
     toolchain: String,
 
     /// 打印诊断与完整子进程输出（失败时也打印 stderr 尾部）

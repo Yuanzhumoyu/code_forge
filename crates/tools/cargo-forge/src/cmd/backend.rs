@@ -24,7 +24,10 @@ pub fn run(args: &Args, env: &env::Env, verbose: bool) -> anyhow::Result<i32> {
     let repo = match &args.backend_src {
         Some(p) => {
             if !p.join("Cargo.toml").is_file() {
-                bail!("--backend-src 不是 code-forge 仓库根（无 Cargo.toml）: {}", p.display());
+                bail!(
+                    "--backend-src 不是 code-forge 仓库根（无 Cargo.toml）: {}",
+                    p.display()
+                );
             }
             p.clone()
         }
@@ -39,7 +42,10 @@ pub fn run(args: &Args, env: &env::Env, verbose: bool) -> anyhow::Result<i32> {
 
     let profile = if args.release { "release" } else { "debug" };
     let mut cmd = Command::new("cargo");
-    cmd.arg(&env.toolchain).arg("build").arg("-p").arg("forge-rustc");
+    cmd.arg(&env.toolchain)
+        .arg("build")
+        .arg("-p")
+        .arg("forge-rustc");
     if args.release {
         cmd.arg("--release");
     }
@@ -68,10 +74,7 @@ pub fn run(args: &Args, env: &env::Env, verbose: bool) -> anyhow::Result<i32> {
         bail!("forge backend 构建失败（cargo exit {:?}）", out.code);
     }
 
-    let dll = repo
-        .join("target")
-        .join(profile)
-        .join("forge_rustc.dll");
+    let dll = repo.join("target").join(profile).join("forge_rustc.dll");
     if dll.is_file() {
         println!("backend 构建完成: {}", dll.display());
         if args.release {
@@ -82,7 +85,10 @@ pub fn run(args: &Args, env: &env::Env, verbose: bool) -> anyhow::Result<i32> {
             );
         }
     } else {
-        println!("backend 构建成功，但未在预期位置找到 dll: {}", dll.display());
+        println!(
+            "backend 构建成功，但未在预期位置找到 dll: {}",
+            dll.display()
+        );
     }
     Ok(0)
 }

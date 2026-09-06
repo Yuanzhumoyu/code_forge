@@ -26,7 +26,10 @@ pub fn execute(args: &BuildArgs, env: &Env, verbose: bool) -> anyhow::Result<i32
         })?,
     };
     if !exe.is_file() {
-        bail!("可执行文件不存在: {}（编译产物被清理或包名不符？）", exe.display());
+        bail!(
+            "可执行文件不存在: {}（编译产物被清理或包名不符？）",
+            exe.display()
+        );
     }
     if verbose {
         eprintln!("运行: {} {}", exe.display(), args.trailing.join(" "));
@@ -56,7 +59,10 @@ fn resolve_cargo_exe(release: bool, verbose: bool) -> Option<PathBuf> {
         .join(if release { "release" } else { "debug" });
 
     // 候选：原名（cargo 对 bin 名保留 '-'，实测）→ 下划线变体（规格描述）
-    let mut candidates = vec![format!("{pkg}.exe"), format!("{}.exe", pkg.replace('-', "_"))];
+    let mut candidates = vec![
+        format!("{pkg}.exe"),
+        format!("{}.exe", pkg.replace('-', "_")),
+    ];
     if verbose {
         eprintln!(
             "exe 候选: {}（root={}）",
@@ -65,7 +71,10 @@ fn resolve_cargo_exe(release: bool, verbose: bool) -> Option<PathBuf> {
         );
     }
     candidates.dedup();
-    candidates.into_iter().find(|c| profile_dir.join(c).is_file()).map(|c| profile_dir.join(c))
+    candidates
+        .into_iter()
+        .find(|c| profile_dir.join(c).is_file())
+        .map(|c| profile_dir.join(c))
 }
 
 /// 从 Cargo.toml 文本解析 `[package]` 段内 `name = "…"`。
@@ -77,17 +86,13 @@ fn parse_package_name(toml: &str) -> Option<String> {
             in_package = t == "[package]";
             continue;
         }
-        if in_package {
-            if let Some(rest) = t.strip_prefix("name") {
-                let rest = rest.trim_start();
-                if let Some(v) = rest.strip_prefix('=') {
-                    let v = v.trim();
-                    if let Some(n) = v.strip_prefix('"') {
-                        if let Some(end) = n.find('"') {
-                            return Some(n[..end].to_string());
-                        }
-                    }
-                }
+        if in_package && let Some(rest) = t.strip_prefix("name") {
+            let rest = rest.trim_start();
+            if let Some(v) = rest.strip_prefix('=')
+                && let Some(n) = v.trim().strip_prefix('"')
+                && let Some(end) = n.find('"')
+            {
+                return Some(n[..end].to_string());
             }
         }
     }

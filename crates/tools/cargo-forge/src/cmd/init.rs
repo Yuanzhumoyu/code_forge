@@ -59,13 +59,14 @@ pub fn run(args: &Args, env: &Env, verbose: bool) -> anyhow::Result<()> {
     std::fs::create_dir_all(&cargo_dir)
         .map_err(|e| anyhow::anyhow!("创建 {} 失败: {e}", cargo_dir.display()))?;
     let config_path = cargo_dir.join("config.toml");
-    if let Ok(old) = std::fs::read_to_string(&config_path) {
-        if !old.contains(GEN_MARKER) && old.trim() != "" {
-            let backup = backup_path(&config_path);
-            std::fs::rename(&config_path, &backup)
-                .map_err(|e| anyhow::anyhow!("备份 {} 失败: {e}", config_path.display()))?;
-            println!("备份旧配置 → {}", backup.display());
-        }
+    if let Ok(old) = std::fs::read_to_string(&config_path)
+        && !old.contains(GEN_MARKER)
+        && old.trim() != ""
+    {
+        let backup = backup_path(&config_path);
+        std::fs::rename(&config_path, &backup)
+            .map_err(|e| anyhow::anyhow!("备份 {} 失败: {e}", config_path.display()))?;
+        println!("备份旧配置 → {}", backup.display());
     }
     let config_body = config_toml(&dll, wrapper, args.alloc);
     std::fs::write(&config_path, &config_body)
@@ -124,7 +125,10 @@ fn config_toml(dll: &Path, wrapper: &Path, alloc: bool) -> String {
 
 /// 找不冲突的备份文件名：config.toml.forge.bak / .bak.1 / .bak.2 …
 fn backup_path(p: &Path) -> std::path::PathBuf {
-    let base = p.with_file_name(format!("{}.forge.bak", p.file_name().unwrap().to_string_lossy()));
+    let base = p.with_file_name(format!(
+        "{}.forge.bak",
+        p.file_name().unwrap().to_string_lossy()
+    ));
     if !base.exists() {
         return base;
     }
