@@ -84,7 +84,8 @@ pub struct VarEntry {
 pub struct VarMember {
     /// 字段名。
     pub name: String,
-    /// 字段类型（rustc Debug 形态，标量/指针可解析；嵌套聚合 = 0 占位）。
+    /// 字段类型（rustc Debug 形态，标量/指针可解析；嵌套聚合 → 终局回填
+    /// unspecified_type）。
     pub ty_desc: String,
     /// 字段相对结构体起点的字节偏移（layout fields 实测——含 repr 重排）。
     pub byte_off: u32,
@@ -417,11 +418,11 @@ pub fn gen_debug_info(
                 buf.push(8); // DW_AT_byte_size (data1)
                 let tpos = buf.len();
                 buf.extend_from_slice(&0u32.to_le_bytes()); // DW_AT_type 占位
-                if let Some(pn) = pointee
-                    && let Some(&po) = type_off_by_desc.get(&pn)
-                {
-                    buf[tpos..tpos + 4].copy_from_slice(&po.to_le_bytes());
-                }
+                // pointee 未建模（非标量聚合/嵌套指针）= 空串哨兵：终局统一回填
+                // **DW_TAG_unspecified_type**——绝不写 ref 0（0 指 CU 头非 DIE，
+                // gdb follow_die_ref 报 "Cannot find DIE at 0x0" 并拒整个 CU，
+                // M10 实证：ref4 修复前该 0 被 data4 常量形态掩盖）。
+                type_ref_patches.push((tpos, pointee.unwrap_or_default()));
             }
         }
         // structure_type：取每个 struct desc 的（首）变量成员/大小。
@@ -456,9 +457,8 @@ pub fn gen_debug_info(
                 buf.push(0);
                 let tpos = buf.len();
                 buf.extend_from_slice(&0u32.to_le_bytes()); // type 占位
-                if let Some(&po) = type_off_by_desc.get(&m.ty_desc) {
-                    buf[tpos..tpos + 4].copy_from_slice(&po.to_le_bytes());
-                }
+                // 成员类型同样进终局回填（未建模嵌套聚合 → unspecified_type）
+                type_ref_patches.push((tpos, m.ty_desc.clone()));
                 buf.extend_from_slice(&m.byte_off.to_le_bytes()); // data_member_location
             }
             buf.push(0); // structure children terminator
@@ -479,11 +479,30 @@ pub fn gen_debug_info(
             }
             buf.push(0); // enumeration children terminator
         }
-        // 回填变量/参数 DIE 的类型引用
+        // 终局回填：变量/参数/指针 pointee/结构成员的类型引用统一解析——
+        // 可解析（base/pointer/structure/enum 已注册）→ 目标 DIE 偏移；不可
+        // 解析（未建模聚合 pointee/未知成员类型）→ 追加 **DW_TAG_unspecified_type**
+        //（code 12，无属性）并把引用指向它。绝不写 ref 0（0 = CU 头偏移，
+        // 非任何 DIE——gdb 报 "Cannot find DIE at 0x0 referenced from DIE"，
+        // 整个 CU 被拒读；M10 实证：WA-33 表单修复后 &PanicInfo 等未建模
+        // pointee 即触发）。
+        let unspec_off = if type_ref_patches
+            .iter()
+            .any(|(_, d)| !type_off_by_desc.contains_key(d))
+        {
+            let off = buf.len() as u32;
+            buf.push(12); // abbrev code 12: DW_TAG_unspecified_type（无子项无属性）
+            Some(off)
+        } else {
+            None
+        };
         for (tpos, desc) in &type_ref_patches {
-            if let Some(&off4) = type_off_by_desc.get(desc) {
-                buf[*tpos..*tpos + 4].copy_from_slice(&off4.to_le_bytes());
-            }
+            let off4 = type_off_by_desc
+                .get(desc)
+                .copied()
+                .or(unspec_off)
+                .expect("未解析引用必须已有 unspecified_type DIE");
+            buf[*tpos..*tpos + 4].copy_from_slice(&off4.to_le_bytes());
         }
     }
     buf.push(0); // CU children terminator
@@ -588,7 +607,8 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
         4, 0x05, 0, //
         0x03, 0x08, // name → string
         0x3a, 0x0b, // decl_file → data1
-        0x49, 0x06, // type → ref4
+        0x49, 0x13, // type → ref4（DW_FORM_ref4=0x13——勿用 0x06=data4 常量类，
+        // 非引用类 → gdb "Bad type attribute"，变量全 unknown type（M10 归因））
         0x02, 0x18, // location → exprloc（DW_FORM_exprloc=0x18）
         0x3b, 0x06, // decl_line → data4
         0, 0, //
@@ -596,7 +616,8 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
         5, 0x34, 0, //
         0x03, 0x08, // name → string
         0x3a, 0x0b, // decl_file → data1
-        0x49, 0x06, // type → ref4
+        0x49, 0x13, // type → ref4（DW_FORM_ref4=0x13——勿用 0x06=data4 常量类，
+        // 非引用类 → gdb "Bad type attribute"，变量全 unknown type（M10 归因））
         0x02, 0x18, // location → exprloc（DW_FORM_exprloc=0x18）
         0x3b, 0x06, // decl_line → data4
         0, 0, //
@@ -607,10 +628,11 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
         0x3e, 0x0b, // encoding → data1
         0, 0, //
         // code 7：pointer_type，children no (byte_size 8；type ref4 指向内层
-        // base_type——聚合/引用内层为 0 占位，后续扩展)
+        // base_type——聚合/引用内层 = 未解析 → 终局回填 unspecified_type)
         7, 0x0f, 0, //
         0x0b, 0x0b, // byte_size → data1
-        0x49, 0x06, // type → ref4
+        0x49, 0x13, // type → ref4（DW_FORM_ref4=0x13——勿用 0x06=data4 常量类，
+        // 非引用类 → gdb "Bad type attribute"，变量全 unknown type（M10 归因））
         0, 0, //
         // code 8：structure_type，children yes（聚合变量类型——DW_AT_name/
         // byte_size(data4，结构可 >255) + DW_TAG_member 子项）
@@ -622,7 +644,8 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
         // data_member_location data4 = 字节偏移）
         9, 0x0d, 0, //
         0x03, 0x08, // name → string
-        0x49, 0x06, // type → ref4
+        0x49, 0x13, // type → ref4（DW_FORM_ref4=0x13——勿用 0x06=data4 常量类，
+        // 非引用类 → gdb "Bad type attribute"，变量全 unknown type（M10 归因））
         0x38, 0x06, // data_member_location → data4
         0, 0, //
         // code 10：enumeration_type，children yes（C-like 枚举——name/byte_size
@@ -635,6 +658,11 @@ pub fn gen_debug_abbrev() -> Vec<u8> {
         11, 0x28, 0, //
         0x03, 0x08, // name → string
         0x1c, 0x07, // const_value → data8
+        0, 0, //
+        // code 12：unspecified_type，children no（无属性——未建模类型的引用
+        // 兜底目标；避免 ref4 写 0（gdb 拒整个 CU）。tag DW_TAG_unspecified_type
+        // = 0x3b（0x3f 是 DW_TAG_condition——勿混）
+        12, 0x3b, 0, //
         0, 0, //
         0, // 整个 abbrev 表终止
     ]
@@ -1302,6 +1330,110 @@ mod tests {
     }
 
     #[test]
+    fn unresolved_type_refs_fall_back_to_unspecified() {
+        // M10 修复的配套：未建模类型（聚合/指针 pointee 非标量等）的 DW_AT_type
+        // **绝不写 ref 0**（0 = CU 头偏移非 DIE——gdb 报 "Cannot find DIE at 0x0"
+        // 并拒整个 CU；&PanicInfo 之类参数即触发）——终局回填把未解析引用指向
+        // 追加的 DW_TAG_unspecified_type（code 12）。本用例：&Unmodeled 指针 +
+        // 未建模 Opaque 变量 → 后者 ref 落段尾 code 12，且所有 type ref 恒非 0。
+        let entries = vec![("f".to_string(), 5u32)];
+        let vars = vec![FnVarEntries {
+            sym: "f".to_string(),
+            vars: vec![
+                VarEntry {
+                    name: "r".to_string(),
+                    slot_offset: -24,
+                    ty_desc: "&varprobe::Unmodeled".to_string(),
+                    is_arg: false,
+                    decl_line: 7,
+                    members: vec![],
+                    size: 8,
+                },
+                VarEntry {
+                    name: "u".to_string(),
+                    slot_offset: -32,
+                    ty_desc: "varprobe::Opaque".to_string(),
+                    is_arg: false,
+                    decl_line: 8,
+                    members: vec![],
+                    size: 4,
+                },
+            ],
+        }];
+        let (bytes, _) = gen_debug_info(
+            &entries,
+            &vars,
+            "forge",
+            "test",
+            0x30,
+            &Default::default(),
+            &[],
+            true,
+        );
+        // 有未解析引用 → CU 子项序列以 code 12（unspecified DIE）收尾再终止
+        assert!(
+            bytes.windows(2).any(|w| w == [12, 0]),
+            "unspecified_type（code 12）DIE 存在，其后是 CU 终止 0"
+        );
+        let unspec_off = (bytes.len() - 2) as u32; // code 12 在终止 0 前一字节
+        // 结构走查取 r/u 的 type ref
+        let mut p = 12usize; // v5 头
+        assert_eq!(bytes[p], 1, "CU abbrev");
+        p += 1;
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1; // producer
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1; // name
+        p += 2 + 8 + 8 + 4; // language + low_pc + high_pc + stmt_list
+        assert_eq!(bytes[p], 3, "subprogram code 3");
+        p += 1;
+        while bytes[p] != 0 {
+            p += 1;
+        }
+        p += 1; // fn name
+        p += 1 + 8 + 8 + 4; // decl_file + low + high + decl_line
+        let fb_len = bytes[p] as usize;
+        p += 1 + fb_len; // frame_base exprloc
+        let mut refs = Vec::new();
+        loop {
+            let c = bytes[p];
+            if c == 0 {
+                break;
+            }
+            p += 1;
+            assert!(c == 4 || c == 5, "child code 4/5, got {c}");
+            while bytes[p] != 0 {
+                p += 1;
+            }
+            p += 1; // var name
+            p += 1; // decl_file
+            let r = u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap());
+            refs.push(r);
+            p += 4;
+            let ll = bytes[p] as usize;
+            p += 1 + ll; // location exprloc
+            p += 4; // decl_line
+        }
+        assert_eq!(refs.len(), 2, "r + u 两个类型引用");
+        // r（&Unmodeled）：类型 = pointer_type DIE（其 pointee 未建模 → 该
+        // pointer DIE 自身的 DW_AT_type 落 unspecified）；u（Opaque 未建模）：
+        // 变量类型引用直接落 unspecified。
+        assert_ne!(refs[0], 0, "r 的引用非 0（pointer_type DIE）");
+        assert_eq!(
+            refs[1], unspec_off,
+            "未建模 desc 的 type ref → unspecified_type DIE 偏移（绝不 0）"
+        );
+        // 关键回归：CU 内**没有任何 DW_AT_type 引用写 0**
+        for r in &refs {
+            assert_ne!(*r, 0, "type ref 恒非 0（0 = CU 头，gdb 拒 CU）");
+        }
+    }
+
+    #[test]
     fn line_program_structurally_decodes() {
         // 按 DWARF4 行程序语义解码 gen_debug_line：头部字段（version u16、
         // max_ops、line_base=-5、line_range=14、opcode_base=13 +
@@ -1842,5 +1974,48 @@ mod tests {
         let (_, relocs2) = gen_debug_line(&fns, &sizes);
         assert_eq!(relocs.len(), 2, "decl + stmt（无 reloc 变化）");
         assert_eq!(relocs2.len(), 3, "advance_pc 不产 reloc");
+    }
+
+    #[test]
+    fn abbrev_type_attr_uses_ref4_form() {
+        // M10 回归（WA-33 类型打印根因）：DW_AT_type(0x49) 的 form 必须是
+        // DW_FORM_ref4=0x13。曾误写 0x06（DW_FORM_data4——常量类非引用类）：
+        // objdump 宽容解码看似正常，gdb die_type 拒收 → "Bad type attribute"，
+        // 所有变量/参数类型变 "< unknown type >"（p y 失败、ptype i32 正常）。
+        // 本表当前全部属性/表单值都 < 128（单字节 uleb/形式码）。
+        let table = gen_debug_abbrev();
+        let mut p = 0usize;
+        let mut type_forms: Vec<(u8, u8)> = Vec::new();
+        loop {
+            let code = table[p];
+            if code == 0 {
+                break;
+            }
+            p += 1;
+            p += 1; // tag（单字节）
+            p += 1; // children 标志
+            loop {
+                let attr = table[p];
+                let form = table[p + 1];
+                p += 2;
+                if attr == 0 && form == 0 {
+                    break;
+                }
+                if attr == 0x49 {
+                    type_forms.push((code, form));
+                }
+            }
+        }
+        assert!(
+            !type_forms.is_empty(),
+            "DW_AT_type 必须出现在 abbrev 表（4/5/7/9 码）"
+        );
+        for (code, form) in &type_forms {
+            assert_eq!(
+                *form, 0x13,
+                "abbrev code {code}: DW_AT_type form 必须是 DW_FORM_ref4(0x13)，\
+                 实为 0x{form:02x}（0x06=data4 常量类——gdb 拒收）"
+            );
+        }
     }
 }

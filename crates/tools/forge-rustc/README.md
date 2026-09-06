@@ -1,4 +1,4 @@
-﻿# forge-rustc
+# forge-rustc
 
 将 `code-forge` 作为 rustc codegen backend（`-Zcodegen-backend`）使用，
 通过标准 rust 工具链把 Rust 代码编译为可执行文件。
@@ -55,6 +55,7 @@ core 泛型实例的辅助函数（is_null/precondition_check）缺失，需统�
 ## 对象文件形态（M6 Stage B：每 CGU 独立对象）
 
 forge 消费 rustc 的真 CGU 分区（`collect_and_partition_mono_items`）：
+
 - 多 CGU 时**每 CGU 一个对象文件** `forge_codegen_output.<cgu>.o`（rustc 原生
   多对象形态——rustc 分区出 >1 个 CGU 才触发；rustc 非增量默认会把过小
   CGU 合并，小 crate 常为单 CGU → 单对象 `forge_codegen_output.o`）；
@@ -228,14 +229,17 @@ lower 从 rustc `body.var_debug_info` 采集源变量（无投影 local——for
   location=DW_OP_fbreg/decl_line）
 - `DW_TAG_base_type`（标量：name/byte_size/encoding——i8..i128/u8..u128/
   f32/f64/bool/char/usize/isize）+ `DW_TAG_pointer_type`（&T/*const T，
-  指向内层标量 base_type；聚合/嵌套指针 = 0 占位）
+  指向内层标量 base_type；聚合/嵌套指针 pointee 未建模 → DW_AT_type 引用
+  兜底 `DW_TAG_unspecified_type`——**绝不写 ref 0**（0 指 CU 头非 DIE，
+  gdb 报 "Cannot find DIE at 0x0" 拒整个 CU，M10 实证））
 - **`DW_TAG_structure_type` + `DW_TAG_member`（聚合类型，2026-09）**：
   lower 对命名 struct 变量采集成员清单（layout `fields().offset(i)` 实测
   字节偏移——含 repr/对齐重排，与槽内布局一致）→ structure_type DIE
   （name/byte_size）+ member 子项（name/type ref4/data_member_location）。
   类型区顺序 base → pointer → structure（成员反指前两类），变量/成员
-  type ref4 占位统一回填。V1：仅非 enum/union 的命名 struct；成员聚合
-  类型（嵌套 struct/enum 字段）= 0 占位（递归结构待续）。rustc 2026
+  type ref4 占位统一回填（未解析引用 → unspecified_type 兜底）。V1：仅非
+  enum/union 的命名 struct；成员聚合
+  类型（嵌套 struct/enum 字段）= 未解析 → unspecified_type（递归结构待续）。rustc 2026
   field.ty Debug 形态带 "Unnormalized { value: X, .. }" 包装——layout.rs
   `normalize_ty_debug` 剥壳与变量侧 ty_desc 对齐（WA-34）。
 - **`DW_TAG_enumeration_type` + `DW_TAG_enumerator`（C-like 枚举，2026-09）**：
@@ -257,16 +261,23 @@ line 0）。**注意**：①MSVC link.exe 截断 COFF 段名
 或 GNU ld（另含 COFF 符号表，但其 `__end__`/`___tls_*` 伪符号压到
 .text 起点 0x1000 与首函数冲突——GNU ld 会话里首函数入口断点命中后
 帧名显示 `__end__`，其余函数正常；lld-link 无符号表 → 名称断点走
-cooked index 可设但命中帧同受 0x1000 冲突影响）；②gdb-PE 残余：
-**ref4 类型跟随失败**（`p y` 显示 "< unknown type >"——但 `ptype i32`/
-`info types` 正常、typedef 已注册、`info scope` 位置正确、**`set language
-c` 后 `p (int)y` = 42**（转型路径读出变量值））——与 CFI/行表无关（位置
-语义全对，objdump 权威解码净，发射正确），类型打印 = 路线图 M 对照矩阵
-待做（见路线图）；③类型/行号语义以 objdump 解码 + dwarf 结构单测（12
-个：逐字节解析 info/line/aranges/frames）为准。e2e `debuginfo_full` +
-dwarf 单测守护。
+cooked index 可设但命中帧同受 0x1000 冲突影响）；②~~gdb-PE 残余~~
+**gdb-PE 类型打印（M10 已根治，2026-09）**：`p y` 曾显示 "< unknown type >"
+（`ptype i32`/`info types` 正常、typedef 已注册、`info scope` 位置正确、
+`set language c` 后 `p (int)y` = 42）——根因 = abbrev 表 **DW_AT_type(0x49)
+的 form 字节误写 0x06（DW_FORM_data4 常量类）而非 0x13（DW_FORM_ref4 引用
+类）**（code 4/5/7/9 四处）：gdb `die_type` 拒收非引用 form → "DWARF Error:
+Bad type attribute"（`set complaints 10` 首屏实证）→ 变量类型落 error type；
+`typedef i32` 仍注册故 ptype i32 正常——与 CFI/行表/gdb-PE 边界无关，是
+发射侧单字节错误（objdump 宽容解码自洽造成"发射正确"假象）。修复后 gdb
+16.2 实证：**`p y` = 42、`ptype y` = i32、`info scope` length=4、
+complaints 清零**（详见 WORKAROUNDS WA-33 M10 增补）；③类型/行号语义以
+objdump 解码 + dwarf 结构单测（12 个：逐字节解析 info/line/aranges/frames +
+abbrev 表单回归——M10 新增 abbrev_type_attr_uses_ref4_form /
+unresolved_type_refs_fall_back_to_unspecified）为准。e2e `debuginfo_full` + dwarf 单测守护。
 **待续**：结构成员类型递归/枚举变体（DW_TAG_enumeration_type/variant）；
-嵌套聚合字段类型；gdb-PE 类型打印（ref4 类型跟随，M 对照矩阵）。
+嵌套聚合字段类型。
+
 ## 路线图（远期，2026-09 调研修订）
 
 > **已移除：并行 CGU（`-C codegen-units=N`）目标** —— 2026-09 M3→M6/B-v2 全链路
@@ -274,8 +285,15 @@ dwarf 单测守护。
 > 每 CGU 独立对象 + 多 WorkProduct（M6 Stage B）、debuginfo per-CGU CU（B-v2）、
 > `-C incremental` 多 CGU 端到端；验证见 e2e/determinism 用例与 WORKAROUNDS
 > WA-38/WA-39，形态说明见上文「对象文件形态（M6 Stage B）」节）。
-> 本表仅余开放项（类型打印）。
-
-| 项 | 评估 | 前置依赖 |
-| --- | --- | --- |
-| **gdb-PE 类型打印（ref4 类型跟随）** | **2026-09 M2 已落地 CFI + 终端行**（提交见 WORKAROUNDS WA-33）：`.debug_frame` 子系统全链——forge-codegen `machine/cfi.rs`（CFI 模型 + ISA prologue 扫描器注册表，emission 经 `TargetMachine::function_cfi` 按 ISA 名派发、x86 前缀自校验安全退化）+ CompiledFunction.cfi + dwarf.rs `gen_debug_frame`（CIE RA=16 + FDE；条目 8 对齐 gcc 同款）+ 行程序终端行 advance_pc 到 fn 末（零宽末行修复）。**gdb 16.2 实证：`bt 3` helper←mainCRTStartup 双帧 + info args/locals 列出变量**（此前无 CFI 全空）；objdump frames/decodedline 净。**残余**：类型打印 unknown type（ref4 类型跟随——gdb 读 PE DWARF5 的跨 DIE 引用失败，位置语义全对、转型路径可取值的"弱相关"项），待 M1-M10 对照矩阵（M10 gdb 自诊 + M1 字节 diff；全阴性则上报 gdb） | 无（CFI/终端行已落地） |
+> **已关闭：gdb-PE 类型打印（M10 对照矩阵，2026-09）** —— 最后开放项命中
+> 并根治（提交见 WORKAROUNDS WA-33 M10 增补）：`p y` "< unknown type >" 的
+> 根因是 **abbrev 表 DW_AT_type form 误写 0x06（DW_FORM_data4 常量类）而非
+> 0x13（DW_FORM_ref4 引用类）**（dwarf.rs `gen_debug_abbrev` code 4/5/7/9
+> 四处）——gdb die_type 拒收非引用 form（`set complaints 10` 报 "Bad type
+> attribute"），变量/参数类型全部落 error type；`typedef i32` 仍注册故
+> `ptype i32` 正常。objdump 宽容解码自洽，掩盖了该单字节错误。修后 gdb
+> 16.2：`p y`=42、`ptype y`=i32、complaints 清零。对照矩阵其余项（M3-M9：
+> external/decl_column/prototyped、comp_dir/name 形态、language C11、
+> decl_file/文件表、类型 DIE 排位、ref_addr、双 CU）**全无需执行**——M10
+> 自诊 + M1 abbrev 字节 diff 直接命中发射侧 form 错误（收敛优先）。路线图
+> 无剩余开放项。
