@@ -88,19 +88,53 @@ fn ensure_rustup_home(cmd: &mut Command) {
     }
 }
 
-/// dll 缺失 → None（调用方快速 SKIP 放行）。作为主 workspace 成员，cli_tests
+/// rust-src 组件就绪？（init 的裸 `cargo build` 走 -Zbuild-std=core 需要
+/// rust-src；本机 target\rustup_home 的 nightly 已装，CI 的 test job
+///（components 仅 rustc-dev）未装 → 该环境跳过 cli_tests 真跑路径。
+/// 探测 sysroot 下 src/rust/library/core（存在即组件已装）。
+fn rust_src_ready() -> bool {
+    let out = std::process::Command::new("rustc")
+        .arg("--print")
+        .arg("sysroot")
+        .output();
+    let Ok(o) = out else { return false };
+    if !o.status.success() {
+        return false;
+    }
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string());
+    sysroot
+        .join("lib")
+        .join("rustlib")
+        .join("src")
+        .join("rust")
+        .join("library")
+        .join("core")
+        .is_dir()
+}
+
+/// dll/环境缺失 → None（调用方快速 SKIP 放行）。作为主 workspace 成员，cli_tests
 /// 会进入 `cargo test --workspace` 门禁：绝不在此尝试漫长的 backend 构建
 /// （forge-rustc 需 rustc-dev 且冷构建数分钟），只提示先构建。
+/// 条件 = backend dll 存在 **且** rust-src 组件可用（cargo 模式 build-std 与
+/// init 裸 cargo build 都依赖它）——CI 三平台 test job（无 dll / 无 rust-src）
+/// 全部瞬时放行；本机完整环境真跑。
 fn ensure_backend_dll() -> Option<()> {
-    if backend_dll_path().is_some() {
-        return Some(());
+    if backend_dll_path().is_none() {
+        eprintln!(
+            "[cli_tests] SKIP: backend dll 缺失（FORGE_RUSTC_DLL 或 \
+             <repo>\\target\\debug\\forge_rustc.dll）——先 `cargo build -p forge-rustc` \
+             或 `cargo-forge backend` 构建后端后再跑本测试"
+        );
+        return None;
     }
-    eprintln!(
-        "[cli_tests] SKIP: backend dll 缺失（FORGE_RUSTC_DLL 或 \
-         <repo>\\target\\debug\\forge_rustc.dll）——先 `cargo build -p forge-rustc` \
-         或 `cargo-forge backend` 构建后端后再跑本测试"
-    );
-    None
+    if !rust_src_ready() {
+        eprintln!(
+            "[cli_tests] SKIP: rust-src 组件不可用（cargo/init 的 -Zbuild-std 需要）——\
+             安装 rust-src 后本测试才会真跑（CI test job 不含 rust-src → 跳过）"
+        );
+        return None;
+    }
+    Some(())
 }
 
 /// 带超时运行（返回前最多等 timeout_s；超时 kill 并 panic）。
@@ -128,8 +162,15 @@ fn run_with_timeout(cmd: &mut Command, timeout_s: u64) -> Output {
 }
 
 /// 运行 cargo-forge（cwd=proj；-- 后为子命令 args）。
+/// `FORGE_CLI_TOOLCHAIN` 设置时透传 `--toolchain <值>`（如 CI 钉版
+/// `+nightly-2026-09-04`）；缺省不加参数 → 工具默认 `+nightly`。
 fn run_tool(args: &[&str], proj: Option<&Path>, timeout_s: u64) -> Output {
     let mut cmd = Command::new(tool());
+    if let Ok(tc) = std::env::var("FORGE_CLI_TOOLCHAIN") {
+        if !tc.is_empty() {
+            cmd.arg("--toolchain").arg(tc);
+        }
+    }
     cmd.args(args);
     if let Some(p) = proj {
         cmd.current_dir(p);
