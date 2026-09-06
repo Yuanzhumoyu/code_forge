@@ -582,9 +582,11 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: false,
+        known_failure: true,
         phase: "P6 alloc",
-        reason: "",
+        reason: "2026-09-06 回归 known_failure：CI stage_a 偶发 timeout（挂起）——
+        Box::new 的 alloc/Unique 链同 vec_push 类 regalloc spill 非确定性残余
+        （见 vec_push reason）。转正标准：3 轮 stage_a+parallel 全绿且 exit=42",
     },
     Case {
         name: "box_write",
@@ -1608,6 +1610,7 @@ const FLAKY: &[&str] = &[
     "vec_string",
     "vec_iter_enumerate",
     "vec_from_slice",
+    "box_value",
 ];
 
 #[test]

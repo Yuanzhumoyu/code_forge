@@ -4,8 +4,11 @@
 //! 1. 结果确定性（两次运行结果一致）
 //! 2. 基本算术恒等式（a+b == b+a 等）
 //! 3. 边界值正确性
+//!
+//! ⚠️ 模块直接编译并在**本机执行 x86_64 机器码**（ExecutableMemory）——
+//! 仅 x86_64 宿主可用：macOS arm64 CI runner 上执行 x86 指令即 SIGILL。
 
-#![cfg(test)]
+#![cfg(all(test, target_arch = "x86_64"))]
 
 use code_forge::backend::FunctionCompiler;
 use code_forge::backend::arch::x86_v12::{self, TargetMachine};
