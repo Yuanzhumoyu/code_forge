@@ -277,6 +277,7 @@ impl FuncRefTable {
     ///   稳定键命名（`__slice_{内容哈希}`）后同名记录只允许一份：同一
     ///   内容可能经不同 alloc_id 到达（promoted 每次求值各得独立
     ///   AllocId），先见者保留、内容/对齐 debug_assert 相等。
+    ///
     /// 不合并 by_sym/by_idx/global_* 编号映射：编号只用于任务内就地
     /// resolve（函数已在任务内 resolve 完），主线程不再需要。
     pub fn merge_task_table(&mut self, task: &mut FuncRefTable) {

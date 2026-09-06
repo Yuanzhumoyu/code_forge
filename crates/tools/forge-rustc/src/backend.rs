@@ -237,7 +237,7 @@ impl CodegenBackend for CodegenLibBackend {
         {
             let mut task_iter = tasks.into_iter().peekable();
             let mut total_fns = 0usize;
-            for pi in 0..plans.len() {
+            for (pi, plan_outcomes) in outcomes_by_plan.iter_mut().enumerate() {
                 // 任务按 (plan, fn 序) 保序（par_map 保输入序、串行 map 天然保序）
                 while let Some(t) = task_iter.peek() {
                     if t.plan != pi {
@@ -291,7 +291,7 @@ impl CodegenBackend for CodegenLibBackend {
                     // line/var/enum 并入模块表（dwarf；任务序 = 全局函数序）
                     func_ref_table.merge_task_table(&mut t.table);
                     total_fns += t.fns.len();
-                    outcomes_by_plan[pi].append(&mut t.fns);
+                    plan_outcomes.append(&mut t.fns);
                 }
             }
             debug_assert!(
