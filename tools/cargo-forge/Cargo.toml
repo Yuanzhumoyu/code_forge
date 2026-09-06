@@ -1,0 +1,16 @@
+[package]
+name = "cargo-forge"
+version = "0.1.0"
+edition = "2024"
+description = "cargo 子命令：把 forge-rustc codegen backend 融进 rust 工具链（build/run/init/doctor/backend）"
+
+[[bin]]
+name = "cargo-forge"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+# 独立于主 workspace（同 tools/forge-rustc-wrapper 模式）
+[workspace]
