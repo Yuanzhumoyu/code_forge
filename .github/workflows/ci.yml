@@ -18,9 +18,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
+          toolchain: nightly-2026-09-05
           components: rustfmt
-      - run: rustup override set nightly-2026-09-04
+      - run: rustup override set nightly-2026-09-05
       - run: cargo fmt --all -- --check
 
   # Clippy (exclude forge-rustc which needs rustc_private)
@@ -31,9 +31,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
+          toolchain: nightly-2026-09-05
           components: clippy, rustc-dev
-      - run: rustup override set nightly-2026-09-04
+      - run: rustup override set nightly-2026-09-05
       - run: cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings
 
   # Tests on Linux (exclude forge-rustc)
@@ -44,14 +44,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
-          components: rustc-dev
-      - run: rustup override set nightly-2026-09-04
+          toolchain: nightly-2026-09-05
+      - run: rustup override set nightly-2026-09-05
       # P0-18：安装 QEMU（qemu-system-misc 含 riscv64 模拟器）——riscv 矩阵
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
       - name: Install QEMU (riscv64)
         run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
-      - run: cargo test --workspace --exclude forge-rustc --all-features
+      # 默认 features（jit 等）；**不带 --all-features**——all-features 会把
+      # forge-tests 的 nightly feature 打开 → 依赖 forge-rustc（rustc_private
+      # dylib，linux/macOS 需链接 libLLVM 且 macOS arm64 分支受 edition 2024
+      # unsafe extern 约束），该套件由独立 job「forge-tests (nightly)」覆盖
+      #（Windows 上跑，dylib 链接环境与本地一致）。
+      - run: cargo test --workspace --exclude forge-rustc
 
   # Tests on Windows
   test-windows:
@@ -61,10 +65,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
-          components: rustc-dev
-      - run: rustup override set nightly-2026-09-04
-      - run: cargo test --workspace --exclude forge-rustc --all-features
+          toolchain: nightly-2026-09-05
+      - run: rustup override set nightly-2026-09-05
+      - run: cargo test --workspace --exclude forge-rustc
 
   # Tests on macOS
   test-macos:
@@ -74,10 +77,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
-          components: rustc-dev
-      - run: rustup override set nightly-2026-09-04
-      - run: cargo test --workspace --exclude forge-rustc --all-features
+          toolchain: nightly-2026-09-05
+      - run: rustup override set nightly-2026-09-05
+      - run: cargo test --workspace --exclude forge-rustc
 
   # forge-rustc 编译检查（rustc_private 依赖 nightly + rustc-dev；P4.6 纳入 CI）
   forge-rustc-check:
@@ -87,14 +89,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
+          toolchain: nightly-2026-09-05
           components: rustc-dev
-      - run: rustup override set nightly-2026-09-04
+      - run: rustup override set nightly-2026-09-05
       - run: cargo check -p forge-rustc
 
   # forge-rustc 端到端真值测试（Windows：需 MSVC 链接器；rust-src 供
   # e2e 的 cargo +nightly -Z build-std 流程。全部 job 钉版
-  # nightly-2026-09-04（1.100，与本地验证工具链及 rustc_compat.rs
+  # nightly-2026-09-05（1.100，与本地验证工具链及 rustc_compat.rs
   # 适配版本一致；forge-rustc 需 2026-08-31 起的 LangItem 路径，
   # 更早的 1.99 无法编译）。bump 时同步 tests/e2e.rs 的 NIGHTLY。
   forge-rustc-e2e:
@@ -104,26 +106,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
+          toolchain: nightly-2026-09-05
           components: rustc-dev, rust-src
-      - run: rustup override set nightly-2026-09-04
+      - run: rustup override set nightly-2026-09-05
       # P0-21：先构建 wrapper（e2e.rs 断言 wrapper.exe 存在；此前 CI
       # fresh checkout 无此产物 → job 必红）。
       - name: Build forge-rustc-wrapper
         run: cargo build --manifest-path tools/forge-rustc-wrapper/Cargo.toml
       - run: cargo test -p forge-rustc --test e2e
 
-  # forge-tests nightly（forge-rustc 后端集成；需 nightly + rustc-dev 组件）
+  # forge-tests nightly（forge-rustc 后端集成；需 nightly + rustc-dev 组件）。
+  # 放 Windows：forge-rustc 是 crate-type=dylib 的 rustc_private 后端——Linux
+  # rustup 工具链缺 libLLVM-*.so（rust-lld: unable to find library -lLLVM-*，
+  # minimal profile + rustc-dev 不含）无法链接，Windows 与本机开发环境一致。
   forge-tests-nightly:
     name: forge-tests (nightly / forge-rustc)
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
+          toolchain: nightly-2026-09-05
           components: rustc-dev
-      - run: rustup override set nightly-2026-09-04
+      - run: rustup override set nightly-2026-09-05
       - run: cargo test -p forge-tests --features nightly
 
   # Docs check
@@ -134,8 +139,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
-      - run: rustup override set nightly-2026-09-04
+          toolchain: nightly-2026-09-05
+      - run: rustup override set nightly-2026-09-05
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -148,8 +153,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
-      - run: rustup override set nightly-2026-09-04
+          toolchain: nightly-2026-09-05
+      - run: rustup override set nightly-2026-09-05
       - run: cargo bench --no-run --workspace --exclude forge-rustc
 
   # Code coverage via cargo-tarpaulin
@@ -160,11 +165,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-04
-      - run: rustup override set nightly-2026-09-04
+          toolchain: nightly-2026-09-05
+      - run: rustup override set nightly-2026-09-05
       - uses: taiki-e/install-action@cargo-tarpaulin
       - name: Generate coverage
-        run: cargo tarpaulin --out xml --all-features --workspace --exclude forge-rustc
+        # 默认 features（不开 --all-features：那会启用 forge-tests 的 nightly
+        # → 编译 rustc_private 的 forge-rustc dylib，Linux 缺 libLLVM 无法链接）
+        run: cargo tarpaulin --out xml --workspace --exclude forge-rustc
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:

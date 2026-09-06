@@ -1,6 +1,8 @@
 [toolchain]
-# P0-22 注：CI 钉版 nightly-2026-09-04（1.100，与 rustc_compat.rs 适配版本
-# 一致——forge-rustc 依赖 2026-08-31 起的 LangItem 路径，1.99 无法编译）。
+# P0-22 注：CI 钉版 nightly-2026-09-05（rustc 1.100.0-nightly 0ed41eb41，
+# 与 rustc_compat.rs 适配版本一致——forge-rustc 依赖 2026-08-31 起的
+# LangItem 路径，1.99 无法编译；⚠️ 日期 channel 内容 = 发布前一日 rustc，
+# 钉版前先核对本地 nightly 哈希，09-04 channel 与本地 09-05 不同）。
 # 本机因 Windows Defender 受控文件夹拦截 .rustup 写入暂回退浮动；Cargo.lock
 # 已提交（可复现依赖）。bump 钉版时改 .github/workflows/ci.yml +
 # crates/tools/forge-rustc/tests/e2e.rs 的 NIGHTLY 两处。
