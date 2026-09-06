@@ -170,3 +170,14 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
   <https://armv8-doc.readthedocs.io/en/latest/06.html> （周贺贺《Armv8/Armv9 架构入门指南》）
 
 抓取失败的通道（均已尝试）：support.arm.com SPA 正文、documentation-service.arm.com（PDF）、csci.viu.ca ARM ARM C4 章 PDF、r.jina.ai 渲染代理、web.archive.org、go.googlesource.com。
+
+# 实现状态（2026-09，isa/arm64_v12.toml）
+- 已实现：整数 ALU(imm/reg ± 与逻辑)、MOV 别名、CMP/CMN、MOVZ/N/K(hw0)、
+  乘除(MADD/MSUB/MUL/SDIV/UDIV)、分支(B/BL/BR/BLR/RET/CBZ/CBNZ)、
+  CSEL 族、LDR/STR/LDUR/STUR、LDP/STP、SP/XZR(31) 语义；
+  [abi]/[emit]/[spill]/[[lowering]] TargetMachine 全链（P2）；
+  jit_matrix runner + QEMU aarch64 semihosting 真执行（P3）。
+- P3 进行中：负数/大立即数（movn/movk hw1..3）、reloc patcher、
+  forge-rustc aarch64 注册、CI qemu-system-arm。
+- 验证基准：本机 LLVM clang --target=aarch64-none-elf + llvm-objdump
+  oracle 逐字对照 + tm 测试 + QEMU 矩阵真跑（钉版 nightly-2026-09-05）。
