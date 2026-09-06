@@ -5,10 +5,11 @@
 //! 2. 基本算术恒等式（a+b == b+a 等）
 //! 3. 边界值正确性
 //!
-//! ⚠️ 模块直接编译并在**本机执行 x86_64 机器码**（ExecutableMemory）——
-//! 仅 x86_64 宿主可用：macOS arm64 CI runner 上执行 x86 指令即 SIGILL。
+//! ⚠️ 模块直接编译并在**本机执行 x86_64 机器码**（ExecutableMemory）——机器码
+//! 按 Windows x64 ABI 生成，仅 Windows x86_64 宿主可用：macOS arm64 上执行
+//! x86 指令 SIGILL，Linux（SysV）上参数寄存器错位结果错误。
 
-#![cfg(all(test, target_arch = "x86_64"))]
+#![cfg(all(test, target_arch = "x86_64", windows))]
 
 use code_forge::backend::FunctionCompiler;
 use code_forge::backend::arch::x86_v12::{self, TargetMachine};

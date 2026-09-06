@@ -165,6 +165,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn native_exec_add() {
         let compiled = compile_add();
         let r = NativeExecutor.exec(&compiled, &[20, 22]);

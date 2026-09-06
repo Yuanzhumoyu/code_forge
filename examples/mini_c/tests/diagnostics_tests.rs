@@ -3,6 +3,7 @@
 //!
 //! 使用 Backend::Hir 编译含错误的程序，断言错误消息含 `at L:C` 定位。
 
+#![cfg(all(target_arch = "x86_64", windows))] // JIT 执行 Windows-x64-ABI x86 机器码
 use mini_c::compiler::{Backend, compile_and_run_with};
 
 /// 用 Hir 后端编译，返回错误消息。

@@ -968,7 +968,9 @@ fn lower_call(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphV
 // HIR pipeline tests
 // ============================================================
 
-#[cfg(test)]
+// 本测试模块 JIT 编译并在本机执行 x86_64 机器码（Windows x64 ABI）——
+// 仅 Windows x86_64 宿主正确（macOS arm64 SIGILL；Linux SysV 参数错位）。
+#[cfg(all(test, target_arch = "x86_64", windows))]
 mod tests {
     use crate::atoms::minic_lowering;
     use code_forge::ir::{FunctionSignature, Module, TypeId};

@@ -11,9 +11,12 @@
 pub const CAPS_EXTRA: &[&str] = &["Call", "CallIndirect", "GetElementPtr"];
 
 /// 运行全部矩阵用例；断言无 Fail（Skip 仅报告）。
-/// P1-15：x86 矩阵依赖本机 ExecutableMemory 执行 x86 机器码——仅在
-/// x86_64 宿主运行（macOS arm64 CI runner 上会 SIGILL）。
-#[cfg(target_arch = "x86_64")]
+/// P1-15 + 2026-09 修正：x86 矩阵依赖本机 ExecutableMemory 执行 x86 机器码，
+/// 且机器码按 **Windows x64 ABI**（RCX 首参）生成——仅 Windows x86_64 宿主
+/// 正确（macOS arm64 SIGILL；Linux SysV 首参在 RDI → 参数寄存器错位结果错/
+/// SEGV）。SysV 支持是 x86 后端的独立工程，未做；本矩阵由 test-windows 覆盖，
+/// riscv 矩阵（QEMU）在各宿主覆盖执行语义。
+#[cfg(all(target_arch = "x86_64", windows))]
 #[test]
 fn jit_matrix_x86_v12() {
     use crate::jit_matrix::{Capabilities, Outcome, Runner};

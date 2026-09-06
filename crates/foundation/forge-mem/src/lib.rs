@@ -769,7 +769,7 @@ mod tests {
 
     /// x86_64 的简单加法函数: lea eax, [rcx+rdx]; ret（仅 x86_64——字节码是
     /// x86 指令，aarch64 上执行即 SIGILL）
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn add_code() -> Vec<u8> {
         vec![
             0x8d, 0x04, 0x11, // lea eax, [rcx + rdx]
@@ -778,7 +778,7 @@ mod tests {
     }
 
     /// x86_64 返回常量函数: mov eax, 42; ret（同 add_code，仅 x86_64）
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn constant_code() -> Vec<u8> {
         vec![
             0xb8, 0x2a, 0x00, 0x00, 0x00, // mov eax, 42
@@ -797,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn test_call_add_function() {
         let code = add_code();
         let mem = ExecutableMemory::new(&code).expect("allocate");
@@ -809,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn test_call_constant() {
         let code = constant_code();
         let mem = ExecutableMemory::new(&code).expect("allocate");
@@ -819,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn test_exec_once() {
         let code = add_code();
         let result = unsafe {
@@ -843,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn test_seal_and_modify() {
         let mut mem = ExecutableMemory::new_writable(&constant_code()).expect("allocate");
         assert!(!mem.is_sealed);
@@ -861,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", windows))]
     fn test_writable_then_seal() {
         let mut mem = ExecutableMemory::new_writable(&constant_code()).expect("allocate");
         assert!(!mem.is_sealed);

@@ -15,6 +15,7 @@
 //!   isa/x86_v10.toml — `movsxd` the dividend, `cqo` after the mov, divisor
 //!   staged in `R11`).
 
+#![cfg(all(target_arch = "x86_64", windows))] // JIT 执行 Windows-x64-ABI x86 机器码
 use mini_c::compiler::{Backend, compile_and_run, compile_and_run_with};
 
 /// Run `source` through both backends, returning (direct, hir).

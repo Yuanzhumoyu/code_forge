@@ -7,6 +7,7 @@
 //! `b87f0b7`（mini_c break SEGV 根治）等提交修复；`test_if_not_taken` /
 //! `test_equal_false` 等 false 分支行为测试现在真实执行并通过，无需 `#[ignore]`。
 
+#![cfg(all(target_arch = "x86_64", windows))] // JIT 执行 Windows-x64-ABI x86 机器码
 use mini_c::compiler::compile_and_run;
 
 fn run(source: &str) -> i32 {

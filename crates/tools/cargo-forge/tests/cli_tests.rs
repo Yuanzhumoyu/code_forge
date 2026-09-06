@@ -313,7 +313,10 @@ static mut HEAP: [u8; 8192] = [0; 8192];
 struct A;
 unsafe impl GlobalAlloc for A {
     unsafe fn alloc(&self, _l: Layout) -> *mut u8 {
-        unsafe { core::ptr::addr_of_mut!(HEAP) as *mut u8 }
+        unsafe {
+            let base = core::ptr::addr_of_mut!(HEAP) as *mut u8;
+            base.add(base.align_offset(32))
+        }
     }
     unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}
 }
