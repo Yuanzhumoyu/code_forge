@@ -120,7 +120,7 @@ fn mov_sp_reg(b: &mut Vec<u8>, rd: u32, rm: u32) {
 }
 
 fn hlt(b: &mut Vec<u8>) {
-    w(b, 0xD4400000 | 0xF000); // hlt #0xf000（semihosting）
+    w(b, 0xD4400000 | (0xF000 << 5)); // hlt #0xf000（semihosting；imm16 在 [21:5]）
 }
 
 fn bl_here(b: &mut Vec<u8>) -> usize {
@@ -258,14 +258,13 @@ fn run_qemu(qemu: &PathBuf, elf: &[u8]) -> Result<u64, String> {
     }
     let out = cmd.output().map_err(|e| format!("spawn qemu: {e}"))?;
     let _ = std::fs::remove_file(&tmp);
-    if !out.status.success() {
-        return Err(format!(
-            "qemu-aarch64 失败 exit {:?}\n{}",
-            out.status.code(),
+    match out.status.code() {
+        Some(code) => Ok(code as u64),
+        None => Err(format!(
+            "qemu-aarch64 异常终止（signal）\n{}",
             String::from_utf8_lossy(&out.stderr)
-        ));
+        )),
     }
-    Ok(out.status.code().unwrap_or(0) as u64)
 }
 
 #[cfg(test)]
@@ -291,7 +290,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "QEMU aarch64 冒烟调试中（crt0/ELF 加载挂起）——修通后移除"]
     fn qemu_aarch64_exec_returns_const() {
         if qemu_aarch64_path().is_none() {
             eprintln!("SKIP: qemu-system-aarch64 未安装");
