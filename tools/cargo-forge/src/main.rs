@@ -12,9 +12,8 @@ mod env;
 #[command(
     name = "cargo-forge",
     version,
-    about = "forge-rustc codegen backend 的 cargo 子命令",
-    long_about = "把 code-forge 的 rustc codegen backend（forge_rustc.dll）融进 rust 工具链。\
-                  子命令逐步加入：doctor → build/run → backend/init。"
+    about = "forge-rustc codegen backend 的 cargo 子命令（build/run/doctor）",
+    long_about = "把 code-forge 的 rustc codegen backend（forge_rustc.dll）融进 rust 工具链。"
 )]
 struct Cli {
     /// forge_rustc.dll 路径（缺省：env FORGE_RUSTC_DLL → 仓库 target/debug）
@@ -37,6 +36,10 @@ struct Cli {
 enum Cmd {
     /// 环境自检矩阵（PASS/FAIL + 修复建议；全 PASS → exit 0，有 FAIL → exit 1）
     Doctor,
+    /// 用 forge 后端构建（当前 cargo 工程，或 --file 单文件裸 rustc 模式）
+    Build(cmd::build::BuildArgs),
+    /// 构建并运行（-- 后的参数透传 exe；run 不透传 cargo 参数）
+    Run(cmd::build::BuildArgs),
 }
 
 fn main() {
@@ -55,5 +58,10 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
     let env = env::Env::resolve(cli.backend_dll.as_deref(), cli.toolchain.clone());
     match &cli.cmd {
         Cmd::Doctor => cmd::doctor::run(&env),
+        Cmd::Build(a) => {
+            cmd::build::execute(a, &env, cli.verbose)?;
+            Ok(0)
+        }
+        Cmd::Run(a) => cmd::run::execute(a, &env, cli.verbose),
     }
 }
