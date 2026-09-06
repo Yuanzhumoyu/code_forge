@@ -50,19 +50,16 @@ jobs:
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
       - name: Install QEMU (riscv64)
         run: sudo apt-get update && sudo apt-get install -y qemu-system-misc
-      # ⚠️ 临时诊断（2026-09-06 第四轮修正）：forge-codegen lib 测试（jit feature
-      # 109 个）在 ubuntu 上 SIGSEGV（Windows 从不复现）。workspace run 的并行
-      # 输出无法命名崩溃用例；此步以 **jit feature + 串行** 复跑：串行仍崩 →
-      # 崩溃落在具名 ok 之间（可定位用例）；串行过 → 并行竞态，本步即规避。
-      # 注意必须 --features jit（-p 直跑不开 jit 只有 50 个非 jit 测试，等于没复现）。
-      - name: forge-codegen lib (jit) serial — SIGSEGV probe
-        run: cargo test -p forge-codegen --features jit --lib -- --test-threads=1
+      # ⚠️ forge-codegen lib 测试（jit feature 109 个）在 ubuntu **不可通过**：
+      # 串行实证 `runtime::jit::tests::test_jit_atomic_rmw_basic` 确定性
+      # SIGSEGV（Windows 从不复现）——x86 机器码按 Windows x64 ABI 生成，在
+      # SysV（Linux）宿主上经 extern "C" 调用参数寄存器错位 → 解引用崩溃。
+      # 该测试集由 test-windows（Windows x64 ABI 一致）覆盖，Linux 排除。
       # 默认 features（jit 等）；**不带 --all-features**——all-features 会把
       # forge-tests 的 nightly feature 打开 → 依赖 forge-rustc（rustc_private
       # dylib，linux/macOS 需链接 libLLVM 且 macOS arm64 分支受 edition 2024
       # unsafe extern 约束），该套件由独立 job「forge-tests (nightly)」覆盖
       #（Windows 上跑，dylib 链接环境与本地一致）。
-      # forge-codegen 已由上一步串行覆盖 → 从 workspace run 排除（并行 SIGSEGV 规避）。
       - run: cargo test --workspace --exclude forge-rustc --exclude forge-codegen
 
   # Tests on Windows
