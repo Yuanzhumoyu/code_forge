@@ -135,7 +135,9 @@ fn data_sym_stress_source() -> String {
             ));
         }
     }
-    s.push_str("fn pick<X: Copy>(x: X, k: i32) -> i32 { let z: &[X] = &[x, x]; z.len() as i32 * k + k }\n");
+    s.push_str(
+        "fn pick<X: Copy>(x: X, k: i32) -> i32 { let z: &[X] = &[x, x]; z.len() as i32 * k + k }\n",
+    );
     s.push_str("#[unsafe(no_mangle)]\npub extern \"C\" fn mainCRTStartup() -> i32 {\n");
     s.push_str("    let mut acc = 0i32;\n");
     let mut idx = 0;
@@ -234,7 +236,9 @@ fn compile_to_dir(
         .arg("-o")
         .arg(&exe)
         .envs(envs.iter().copied());
-    let out = cmd.output().map_err(|e| format!("failed to spawn rustc: {e}"))?;
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to spawn rustc: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "compile failed: {}\n{}",
@@ -262,10 +266,7 @@ fn run_exit(exe: &Path) -> i32 {
         if let Some(status) = child.try_wait().expect("wait exe") {
             return status.code().expect("exe exit code");
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "exe timeout (挂起)"
-        );
+        assert!(std::time::Instant::now() < deadline, "exe timeout (挂起)");
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
@@ -343,11 +344,17 @@ fn assert_seq_eq(label_a: &str, a: &[String], label_b: &str, b: &[String]) {
 }
 
 /// 对象字节表全等断言（同名对象必须逐字节一致）。
-fn assert_objects_eq(label_a: &str, a: &[(String, Vec<u8>)], label_b: &str, b: &[(String, Vec<u8>)]) {
+fn assert_objects_eq(
+    label_a: &str,
+    a: &[(String, Vec<u8>)],
+    label_b: &str,
+    b: &[(String, Vec<u8>)],
+) {
     let names_a: Vec<&str> = a.iter().map(|(n, _)| n.as_str()).collect();
     let names_b: Vec<&str> = b.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
-        names_a, names_b,
+        names_a,
+        names_b,
         "object file sets differ between {label_a} ({}) and {label_b} ({}) — CGU 分区/对象命名不稳定",
         names_a.len(),
         names_b.len()
@@ -512,7 +519,9 @@ fn compile_and_data_syms(
         .arg("-o")
         .arg(&exe)
         .envs(envs.iter().copied());
-    let out = cmd.output().map_err(|e| format!("failed to spawn rustc: {e}"))?;
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to spawn rustc: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "compile failed: {}\n{}",

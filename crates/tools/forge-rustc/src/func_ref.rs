@@ -311,9 +311,13 @@ impl FuncRefTable {
             let (alloc_id, sym, bytes, align) = &rec;
             // alloc_id 命中或同内容（bytes+align）命中都视为重复
             // （同内容在内容稳定键命名下符号名必同）。
-            let dup_idx = self.promoted.iter().enumerate().find_map(|(i, (a, _, b, al))| {
-                (a == alloc_id || (b == bytes && al == align)).then_some(i)
-            });
+            let dup_idx = self
+                .promoted
+                .iter()
+                .enumerate()
+                .find_map(|(i, (a, _, b, al))| {
+                    (a == alloc_id || (b == bytes && al == align)).then_some(i)
+                });
             match dup_idx {
                 Some(i) => {
                     let (_, old_sym, old_bytes, old_align) = &self.promoted[i];

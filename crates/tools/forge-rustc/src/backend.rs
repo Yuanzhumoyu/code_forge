@@ -209,10 +209,9 @@ impl CodegenBackend for CodegenLibBackend {
             );
         }
         let tasks: Vec<TaskOutcome> = if parallel {
-            rustc_data_structures::sync::par_map(
-                work.iter().copied(),
-                |(pi, fi)| compile_fn_task_guarded(tcx, &plans, pi, fi),
-            )
+            rustc_data_structures::sync::par_map(work.iter().copied(), |(pi, fi)| {
+                compile_fn_task_guarded(tcx, &plans, pi, fi)
+            })
         } else {
             work.iter()
                 .copied()
@@ -250,12 +249,18 @@ impl CodegenBackend for CodegenLibBackend {
                         if let Some(&idx) = vtable_sym_idx.get(&sym) {
                             let (_, old_sym, old_bytes, old_relocs, old_align) = &vtables[idx];
                             debug_assert_eq!(old_sym, &sym, "same vtable sym must have same name");
-                            debug_assert_eq!(old_bytes, &bytes, "same vtable sym must have same bytes");
+                            debug_assert_eq!(
+                                old_bytes, &bytes,
+                                "same vtable sym must have same bytes"
+                            );
                             debug_assert_eq!(
                                 old_relocs, &relocs,
                                 "same vtable sym must have same relocs"
                             );
-                            debug_assert_eq!(old_align, &align, "same vtable sym must have same align");
+                            debug_assert_eq!(
+                                old_align, &align,
+                                "same vtable sym must have same align"
+                            );
                             let _ = alloc_id;
                         } else {
                             vtable_sym_idx.insert(sym.clone(), vtables.len());
@@ -268,8 +273,14 @@ impl CodegenBackend for CodegenLibBackend {
                         if let Some(&idx) = promoted_sym_idx.get(sym) {
                             let (_, old_sym, old_bytes, old_align) = &promoted[idx];
                             debug_assert_eq!(old_sym, sym, "same promoted sym must have same name");
-                            debug_assert_eq!(old_bytes, bytes, "same promoted sym must have same bytes");
-                            debug_assert_eq!(old_align, align, "same promoted sym must have same align");
+                            debug_assert_eq!(
+                                old_bytes, bytes,
+                                "same promoted sym must have same bytes"
+                            );
+                            debug_assert_eq!(
+                                old_align, align,
+                                "same promoted sym must have same align"
+                            );
                             let _ = alloc_id;
                         } else {
                             promoted_sym_idx.insert(sym.clone(), promoted.len());
@@ -288,7 +299,8 @@ impl CodegenBackend for CodegenLibBackend {
                 "M6: 残留未归并的任务（plans/任务序错位）"
             );
             debug_assert_eq!(
-                total_fns, work.len(),
+                total_fns,
+                work.len(),
                 "M6: worker 归并结果数必须等于函数实例数"
             );
         }
@@ -397,8 +409,10 @@ impl CodegenBackend for CodegenLibBackend {
                                 let _ = writer.add_function(&outcome.sym_name, &compiled_func);
                                 plan_code_spans[pi] += compiled_func.code.len() as u64;
                                 plan_fn_syms[pi].insert(outcome.sym_name.clone());
-                                fn_sizes
-                                    .insert(outcome.sym_name.clone(), compiled_func.code.len() as u64);
+                                fn_sizes.insert(
+                                    outcome.sym_name.clone(),
+                                    compiled_func.code.len() as u64,
+                                );
                                 // M2：CFI（x86 prologue scan 产物）——与 fn_sizes
                                 // 同键控收集，dwarf 生成 .debug_frame FDE
                                 if let Some(cfi) = &compiled_func.cfi {
@@ -761,10 +775,7 @@ fn build_plans<'tcx>(
 /// 单对象模式的同名实例去重（首见保留）：排序后相邻同名（=同实例，
 /// LocalCopy 在多个 CGU 重复附着）只留一个——与 Stage A「第二次
 /// add_function 静默跳过」产物一致，但省一次重复降级。
-fn dedup_by_symbol<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    items: Vec<MonoItem<'tcx>>,
-) -> Vec<MonoItem<'tcx>> {
+fn dedup_by_symbol<'tcx>(tcx: TyCtxt<'tcx>, items: Vec<MonoItem<'tcx>>) -> Vec<MonoItem<'tcx>> {
     let mut out: Vec<MonoItem<'tcx>> = Vec::with_capacity(items.len());
     let mut seen: HashMap<String, ()> = HashMap::new();
     for item in items {
