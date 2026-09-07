@@ -62,7 +62,16 @@ jobs:
       # dylib，linux/macOS 需链接 libLLVM 且 macOS arm64 分支受 edition 2024
       # unsafe extern 约束），该套件由独立 job「forge-tests (nightly)」覆盖
       #（Windows 上跑，dylib 链接环境与本地一致）。
-      - run: cargo test --workspace --exclude forge-rustc --exclude forge-codegen
+      # ⚠️ 步骤拆分（2026-09 P3）：arm64/riscv QEMU 矩阵独立成步——此前整个
+      # workspace run 的失败（forge-tests 内非 QEMU 的宿主执行测试在 Linux
+      # 偶发）会连带淹没 QEMU 门禁结果。矩阵单独跑：arm64 jit_matrix 真跑
+      # 门禁成立 + 失败可定位到具体矩阵用例。
+      - name: Test QEMU matrix (arm64 + riscv64, real exec)
+        run: cargo test -p forge-tests --lib 'isa::arm64_v12' 'isa::riscv64_v12' -- --nocapture
+      - name: Test remaining workspace (no forge-rustc/forge-codegen/forge-tests)
+        run: cargo test --workspace --exclude forge-rustc --exclude forge-codegen --exclude forge-tests
+      - name: Test forge-tests lib (host-exec tests)
+        run: cargo test -p forge-tests --lib
 
   # Tests on Windows
   test-windows:
