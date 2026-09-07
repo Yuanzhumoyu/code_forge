@@ -34,7 +34,17 @@ jobs:
           toolchain: nightly-2026-09-05
           components: clippy, rustc-dev
       - run: rustup override set nightly-2026-09-05
-      - run: cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings
+      - name: Clippy gate
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings 2>&1 | tee /tmp/clippy.log
+      - name: Upload clippy log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clippy-log
+          path: /tmp/clippy.log
+          if-no-files-found: ignore
 
   # Tests on Linux (exclude forge-rustc)
   test-linux:
@@ -66,8 +76,10 @@ jobs:
       # workspace run 的失败（forge-tests 内非 QEMU 的宿主执行测试在 Linux
       # 偶发）会连带淹没 QEMU 门禁结果。矩阵单独跑：arm64 jit_matrix 真跑
       # 门禁成立 + 失败可定位到具体矩阵用例。
-      - name: Test QEMU matrix (arm64 + riscv64, real exec)
-        run: cargo test -p forge-tests --lib 'isa::arm64_v12' 'isa::riscv64_v12' -- --nocapture
+      - name: Test arm64 QEMU matrix (real exec)
+        run: cargo test -p forge-tests --lib jit_matrix_arm64_v12 -- --nocapture
+      - name: Test riscv64 QEMU matrix (real exec)
+        run: cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --nocapture
       - name: Test remaining workspace (no forge-rustc/forge-codegen/forge-tests)
         run: cargo test --workspace --exclude forge-rustc --exclude forge-codegen --exclude forge-tests
       - name: Test forge-tests lib (host-exec tests)
