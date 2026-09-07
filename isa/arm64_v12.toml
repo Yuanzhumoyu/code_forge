@@ -1203,9 +1203,24 @@ insts = ["MULW {out}, {0}, {1}"]
 op = "Imul"
 insts = ["MULX {out}, {0}, {1}"]
 
-# Iconst：小值（0..0xFFFF）→ 单条 MOVZ {out}, #imm16。大值/负值需
-# movz+movk(hw 1..3)/movn 多序列——hw 变体指令与值域分派后置（P1 约束：
-# 超出 imm16u 值域在 encode 期显式报错，不静默截断）。
+# Iconst 值分派（按常量池解析真值 attr `iconst`）：
+# - 负值（-0x10000..-1，16 位补码可表）→ MOVN 单条：imm16 = ~v，movn
+#   置其余位全 1 = 符号扩展，i32（W）/i64（X）负常量均正确。
+# - 正值（0..0xFFFF）→ MOVZ 单条。
+# - 超出 16 位值域（|v| ≥ 0x10000）落默认 MOVZW → encode 期 imm16u 越界
+#   显式报错（不静默截断；movz/movn+movk hw1..3 多序列后置）。
+# ⚠️ 不能用 `imm0` 判符号——Iconst 的 immediate 是 `Immediate::Const(cid)`，
+# imm0 = 池索引（正数），无值语义（P3① 实证：imm0<0 规则永不命中）。
+[[lowering]]
+op = "Iconst"
+when = { and = [ { eq = ["rd", 64] }, { lt = ["iconst", 0] }, { ge = ["iconst", -65536] } ] }
+insts = ["MOVNX {out}, {iconst_c16}"]
+
+[[lowering]]
+op = "Iconst"
+when = { and = [ { lt = ["iconst", 0] }, { ge = ["iconst", -65536] } ] }
+insts = ["MOVNW {out}, {iconst_c16}"]
+
 [[lowering]]
 op = "Iconst"
 when = { eq = ["rd", 64] }

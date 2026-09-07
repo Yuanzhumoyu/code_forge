@@ -172,6 +172,27 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                 }
             }),
         },
+        // {iconst_c16}：常量的 16 位取反补值（~v & 0xFFFF）——MOVN 的 imm16。
+        // A64 MOVN 语义 = NOT(imm16 << shift)，其余位全 1：对 [-0x10000,-1]
+        // 的负值，imm16 = ~v 使低 16 位还原为 v，高位全 1 = 符号扩展，单条
+        // movn 即得正确负常量（X/W 均成立）。
+        Ph {
+            name: "{iconst_c16}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0);
+                       ((!__v as u64) & 0xFFFF) as i64 })
+                }
+            }),
+        },
         Ph {
             name: "{iconst_hi20}",
             kind: PhKind::Imm,

@@ -24,7 +24,8 @@ fn jit_matrix_arm64_v12() {
     for extra in CAPS_EXTRA {
         caps.ops.insert(extra);
     }
-    // 期望值必须可被 8 位字节 + 有符号扩展精确表达（QEMU semihost 退出码）
+    // 期望值必须可被 8 位字节 + 有符号扩展精确表达（QEMU semihost 退出码）：
+    // [-128, 127]（含负值——P3① movn 单条负 Iconst 落地后负期望用例转正）
     fn fits_i8(c: &crate::jit_matrix::Case) -> bool {
         use crate::jit_matrix::CaseKind;
         let v = match &c.kind {
@@ -38,9 +39,7 @@ fn jit_matrix_arm64_v12() {
             CaseKind::CompileOnly(_) => return true,
             CaseKind::Module(_, e) => *e,
         };
-        // P1：Iconst 仅支持 0..0xFFFF（MOVZ 单条）；负值需 movn（P3）→
-        // 值域过滤同时排除负期望（return_negative/-1 待 movn 后转正）
-        (0..=127).contains(&v)
+        (-128..=127).contains(&v)
     }
     let runner = Runner {
         machine: code_forge::backend::arm64_v12::TargetMachine::new,

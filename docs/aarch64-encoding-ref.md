@@ -172,12 +172,16 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
 抓取失败的通道（均已尝试）：support.arm.com SPA 正文、documentation-service.arm.com（PDF）、csci.viu.ca ARM ARM C4 章 PDF、r.jina.ai 渲染代理、web.archive.org、go.googlesource.com。
 
 # 实现状态（2026-09，isa/arm64_v12.toml）
-- 已实现：整数 ALU(imm/reg ± 与逻辑)、MOV 别名、CMP/CMN、MOVZ/N/K(hw0)、
-  乘除(MADD/MSUB/MUL/SDIV/UDIV)、分支(B/BL/BR/BLR/RET/CBZ/CBNZ)、
-  CSEL 族、LDR/STR/LDUR/STUR、LDP/STP、SP/XZR(31) 语义；
-  [abi]/[emit]/[spill]/[[lowering]] TargetMachine 全链（P2）；
-  jit_matrix runner + QEMU aarch64 semihosting 真执行（P3）。
-- P3 进行中：负数/大立即数（movn/movk hw1..3）、reloc patcher、
-  forge-rustc aarch64 注册、CI qemu-system-arm。
+- 已实现：整数 ALU(imm/reg ± 与逻辑)、MOV 别名、CMP/CMN、MOVZ/MOVN(hw0)/
+  MOVK(hw0)、**负 Iconst 值分派**（attr `iconst` = 常量池解析真值——Iconst 的
+  `imm0` 是 ConstId 池索引，无值语义；-0x10000..-1 → MOVN 单条 `{iconst_c16}`，
+  movn 高位全 1 = 符号扩展，i32/i64 负常量正确）、乘除(MADD/MSUB/MUL/SDIV/UDIV)、
+  分支(B/BL/BR/BLR/RET/CBZ/CBNZ)、CSEL 族、LDR/STR/LDUR/STUR、LDP/STP、
+  SP/XZR(31) 语义；[abi]/[emit]/[spill]/[[lowering]] TargetMachine 全链（P2）；
+  jit_matrix runner + QEMU aarch64 semihosting 真执行（P3；值域过滤已放宽至
+  [-128,127]，return_negative/return_minus_one 转绿，矩阵 23 passed）。
+- P3 进行中：大立即数（|v| ≥ 0x10000，movz/movn+movk hw1..3 多序列——
+  DSL 定长 insts 限制 → 待定设计）、reloc patcher、forge-rustc aarch64 注册、
+  CI qemu-system-arm。
 - 验证基准：本机 LLVM clang --target=aarch64-none-elf + llvm-objdump
   oracle 逐字对照 + tm 测试 + QEMU 矩阵真跑（钉版 nightly-2026-09-05）。

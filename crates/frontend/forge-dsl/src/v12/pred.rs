@@ -40,6 +40,9 @@ pub const PRED_ATTRS: &[&str] = &[
     "elem",
     "cond",
     "imm0",
+    // `iconst`：当前指令常量池解析的真值（signed i64）。Iconst 的
+    // `imm0` 是 ConstId 池索引（正数），判符号/大小必须用此池解析值。
+    "iconst",
 ];
 
 /// 收集谓词里出现的全部属性名（校验用）。

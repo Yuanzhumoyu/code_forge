@@ -163,6 +163,13 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
             _ => None,
         };
         let __a_imm0 = ctx.current_immediates.first().copied().map(|v| v as i64);
+        // `iconst` = 当前指令常量池解析出的**真值**（signed i64）。
+        // 与 `imm0` 的区别：Iconst 的 immediate 是 `Immediate::Const(cid)`
+        // （builder 统一 `insert_int` 入池），imm0 只是池索引（正数）——
+        // 判断符号/大小必须用池解析值。Constant 引用恒以 cid 指向池条目。
+        let __a_iconst = ctx.constant_pool.as_ref().and_then(|p| {
+            p.resolve_int(crate::prelude::ConstId(ctx.current_const_index))
+        });
         let __attr = |name: &str| -> Option<i64> {
             match name {
                 "rd" => __a_rd,
@@ -173,6 +180,7 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
                 "elem" => __a_elem,
                 "cond" => __a_cond,
                 "imm0" => __a_imm0,
+                "iconst" => __a_iconst,
                 _ => None,
             }
         };
