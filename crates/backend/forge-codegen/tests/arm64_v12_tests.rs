@@ -185,6 +185,34 @@ fn decode_roundtrip_bytes() {
     }
 }
 
+/// MOVZ/MOVK hw 变体（P3① 大立即数多序列）：clang oracle 词 → decode →
+/// encode 字节往返。词 = base | (imm16<<5) | (hw<<21) | rd（imm16 值放
+/// [20:5]、hw 值放 [22:21]——A64 movz/movk 移宽立即数族）。
+/// oracle: movz x0,#0xABCD,lsl#16 = d2b579a0；lsl#32 = d2d579a0；
+/// lsl#48 = d2f579a0；movz w0,#0xABCD,lsl#16 = 52b579a0；
+/// movk x0,#0xABCD,lsl#16 = f2b579a0；lsl#32 = f2d579a0；
+/// movz x1,#1,lsl#48 = d2e00021；movz x9,#0xFFFF,lsl#48 = d2ffffe9。
+#[test]
+fn golden_movw_hw_variants_decode_roundtrip() {
+    for w in [
+        0xD2B579A0u32, // movz x0, #0xABCD, lsl #16（MOVZX1）
+        0xD2D579A0u32, // movz x0, #0xABCD, lsl #32（MOVZX2）
+        0xD2F579A0u32, // movz x0, #0xABCD, lsl #48（MOVZX3）
+        0x52B579A0u32, // movz w0, #0xABCD, lsl #16（MOVZW1）
+        0xF2B579A0u32, // movk x0, #0xABCD, lsl #16（MOVKX1）
+        0xF2D579A0u32, // movk x0, #0xABCD, lsl #32（MOVKX2）
+        0xD2E00021u32, // movz x1, #1, lsl #48
+        0xD2FFFFE9u32, // movz x9, #0xFFFF, lsl #48
+    ] {
+        let b = word_le(w);
+        let (d, n) = decode(&b).unwrap_or_else(|| panic!("decode {w:08x}"));
+        assert_eq!(n, 4, "{w:08x}: 消费字节 != 4");
+        let b2 = encode(&d).unwrap();
+        assert_eq!(b2, b, "词 {w:08x}: decode→encode 字节不一致");
+        assert_eq!(disassemble(&d), disassemble(&d), "{w:08x} disasm 自洽");
+    }
+}
+
 // ─────────────────── disassemble → assemble 往返 ───────────────────
 
 #[test]

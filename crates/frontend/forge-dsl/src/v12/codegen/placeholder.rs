@@ -193,6 +193,78 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                 }
             }),
         },
+        // {iconst_f0}..{iconst_f3}：常量的 16 位分片（低位序：f0=[15:0]、
+        // f1=[31:16]、f2=[47:32]、f3=[63:48]）——MOVZ/MOVK hw 变体的 imm16。
+        // 按 u64 两补码位型右移取片：i64 负大值（高位片 0xFFFF…）同样成立，
+        // movz(hw3) 置高片清零其它 + movk(hw2..hw0) 依降序覆写 = 任意位型。
+        Ph {
+            name: "{iconst_f0}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0) as u64;
+                       ((__v >> (16 * 0)) & 0xFFFF) as i64 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_f1}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0) as u64;
+                       ((__v >> (16 * 1)) & 0xFFFF) as i64 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_f2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0) as u64;
+                       ((__v >> (16 * 2)) & 0xFFFF) as i64 })
+                }
+            }),
+        },
+        Ph {
+            name: "{iconst_f3}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    ({ let __v = ctx.constant_pool.as_ref()
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .unwrap_or(0) as u64;
+                       ((__v >> (16 * 3)) & 0xFFFF) as i64 })
+                }
+            }),
+        },
         Ph {
             name: "{iconst_hi20}",
             kind: PhKind::Imm,

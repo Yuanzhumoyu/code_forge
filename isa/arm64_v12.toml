@@ -536,6 +536,59 @@ fields = { hw = 0 }
 ops = ["dst:r32:out", "imm:imm16u"]
 asm = "movk {dst}, #{imm}"
 
+# ── MOVZ/MOVK hw 变体（P3① 大立即数多序列；位型 = 基址 | hw<<21 | imm16<<5）──
+#   movz x0,#0xABCD,lsl#16 = D2A0ABCD（hw1）；lsl#32 = D2C0…（hw2）；lsl#48 = D2E0…（hw3）
+#   movz w0,#0xABCD,lsl#16 = 52A0ABCD（hw1）；movk x 同族 hw1/2 = F2A0/F2C0…
+# 分片序（低→高）：f0=[15:0] f1=[31:16] f2=[47:32] f3=[63:48]
+
+[[instructions]]
+name = "MOVZX1"   # movz x, #imm16, lsl #16
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 1 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movz {dst}, #{imm}, lsl #16"
+
+[[instructions]]
+name = "MOVZX2"   # movz x, #imm16, lsl #32
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 2 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movz {dst}, #{imm}, lsl #32"
+
+[[instructions]]
+name = "MOVZX3"   # movz x, #imm16, lsl #48
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 3 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movz {dst}, #{imm}, lsl #48"
+
+[[instructions]]
+name = "MOVZW1"   # movz w, #imm16, lsl #16
+form = "MOVW16"
+opcode = 0xA5
+fields = { hw = 1 }
+ops = ["dst:r32:out", "imm:imm16u"]
+asm = "movz {dst}, #{imm}, lsl #16"
+
+[[instructions]]
+name = "MOVKX1"   # movk x, #imm16, lsl #16
+form = "MOVW16"
+opcode = 0x1E5
+fields = { hw = 1 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movk {dst}, #{imm}, lsl #16"
+
+[[instructions]]
+name = "MOVKX2"   # movk x, #imm16, lsl #32
+form = "MOVW16"
+opcode = 0x1E5
+fields = { hw = 2 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "movk {dst}, #{imm}, lsl #32"
+
 # ─────────────────────────── 别名 ───────────────────────────
 
 [[aliases]]
@@ -1203,18 +1256,33 @@ insts = ["MULW {out}, {0}, {1}"]
 op = "Imul"
 insts = ["MULX {out}, {0}, {1}"]
 
-# Iconst 值分派（按常量池解析真值 attr `iconst`）：
-# - 负值（-0x10000..-1，16 位补码可表）→ MOVN 单条：imm16 = ~v，movn
-#   置其余位全 1 = 符号扩展，i32（W）/i64（X）负常量均正确。
-# - 正值（0..0xFFFF）→ MOVZ 单条。
-# - 超出 16 位值域（|v| ≥ 0x10000）落默认 MOVZW → encode 期 imm16u 越界
-#   显式报错（不静默截断；movz/movn+movk hw1..3 多序列后置）。
-# ⚠️ 不能用 `imm0` 判符号——Iconst 的 immediate 是 `Immediate::Const(cid)`，
-# imm0 = 池索引（正数），无值语义（P3① 实证：imm0<0 规则永不命中）。
+# Iconst 值分派（按常量池解析真值 attr `iconst`；⚠️ 不能用 `imm0` 判符号——
+# Iconst 的 immediate 是 `Immediate::Const(cid)`，imm0 = 池索引正数，无值语义，
+# P3① 实证 imm0<0 规则永不命中）：
+#   16 位域内（|v| < 0x10000）→ 单条 MOVZ（正）/MOVN（负，高位全 1 = 符号扩展）。
+#   域外 → 全片序列：X 恒 4 条 movz(hw3)+movk(hw2/hw1/hw0)、W 恒 2 条
+#   movz(hw1)+movk(hw0)——任意 64/32 位位型均可构造（含 i64 负大值：两补码
+#   位型逐片写入，movz hw3 置高片后 movk 覆盖低片，其余位先清零后覆写，正确）。
+# 序列构造先后序 = 高片 movz 先（清零其它）→ 低片 movk 依 hw 降序覆写。
 [[lowering]]
 op = "Iconst"
 when = { and = [ { eq = ["rd", 64] }, { lt = ["iconst", 0] }, { ge = ["iconst", -65536] } ] }
 insts = ["MOVNX {out}, {iconst_c16}"]
+
+[[lowering]]
+op = "Iconst"
+when = { and = [ { eq = ["rd", 64] }, { ge = ["iconst", 0] }, { lt = ["iconst", 65536] } ] }
+insts = ["MOVZX {out}, {iconst}"]
+
+[[lowering]]
+op = "Iconst"
+when = { and = [ { eq = ["rd", 64] }, { not = { and = [ { ge = ["iconst", -65536] }, { lt = ["iconst", 65536] } ] } } ] }
+insts = [
+  "MOVZX3 {out}, {iconst_f3}",
+  "MOVKX2 {out}, {iconst_f2}",
+  "MOVKX1 {out}, {iconst_f1}",
+  "MOVKX {out}, {iconst_f0}",
+]
 
 [[lowering]]
 op = "Iconst"
@@ -1223,12 +1291,16 @@ insts = ["MOVNW {out}, {iconst_c16}"]
 
 [[lowering]]
 op = "Iconst"
-when = { eq = ["rd", 64] }
-insts = ["MOVZX {out}, {iconst}"]
+when = { and = [ { ge = ["iconst", 0] }, { lt = ["iconst", 65536] } ] }
+insts = ["MOVZW {out}, {iconst}"]
 
 [[lowering]]
 op = "Iconst"
-insts = ["MOVZW {out}, {iconst}"]
+when = { not = { and = [ { ge = ["iconst", -65536] }, { lt = ["iconst", 65536] } ] } }
+insts = [
+  "MOVZW1 {out}, {iconst_f1}",
+  "MOVKW {out}, {iconst_f0}",
+]
 
 [[lowering]]
 op = "Copy"

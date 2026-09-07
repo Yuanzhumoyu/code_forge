@@ -171,17 +171,24 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
 
 抓取失败的通道（均已尝试）：support.arm.com SPA 正文、documentation-service.arm.com（PDF）、csci.viu.ca ARM ARM C4 章 PDF、r.jina.ai 渲染代理、web.archive.org、go.googlesource.com。
 
-# 实现状态（2026-09，isa/arm64_v12.toml）
+## 实现状态（2026-09，isa/arm64_v12.toml）
+
 - 已实现：整数 ALU(imm/reg ± 与逻辑)、MOV 别名、CMP/CMN、MOVZ/MOVN(hw0)/
-  MOVK(hw0)、**负 Iconst 值分派**（attr `iconst` = 常量池解析真值——Iconst 的
-  `imm0` 是 ConstId 池索引，无值语义；-0x10000..-1 → MOVN 单条 `{iconst_c16}`，
-  movn 高位全 1 = 符号扩展，i32/i64 负常量正确）、乘除(MADD/MSUB/MUL/SDIV/UDIV)、
-  分支(B/BL/BR/BLR/RET/CBZ/CBNZ)、CSEL 族、LDR/STR/LDUR/STUR、LDP/STP、
+  MOVK(hw0) + **hw 变体（MOVZX1/2/3、MOVZW1、MOVKX1/2，clang oracle
+  d2b579a0/d2d579a0/d2f579a0/52b579a0/f2b579a0/f2d579a0 逐字对照）**、
+  **Iconst 全值域值分派**（attr `iconst` = 常量池解析真值——Iconst 的 `imm0`
+  是 ConstId 池索引，无值语义，P3① 实证 imm0<0 规则永不命中）：16 位域内
+  |v|<0x10000 → 单条 MOVZ（正）/MOVN（负，`{iconst_c16}`=~v，movn 高位全 1
+  = 符号扩展）；域外 → X 恒 4 条 movz(hw3)+movk(hw2/1/0)、W 恒 2 条
+  movz(hw1)+movk(hw0)（分片占位符 `{iconst_f0..f3}`，两补码位型逐片构造，
+  任意 i64/i32 常量可表示）、乘除(MADD/MSUB/MUL/SDIV/UDIV)、分支
+  (B/BL/BR/BLR/RET/CBZ/CBNZ)、CSEL 族、LDR/STR/LDUR/STUR、LDP/STP、
   SP/XZR(31) 语义；[abi]/[emit]/[spill]/[[lowering]] TargetMachine 全链（P2）；
-  jit_matrix runner + QEMU aarch64 semihosting 真执行（P3；值域过滤已放宽至
-  [-128,127]，return_negative/return_minus_one 转绿，矩阵 23 passed）。
-- P3 进行中：大立即数（|v| ≥ 0x10000，movz/movn+movk hw1..3 多序列——
-  DSL 定长 insts 限制 → 待定设计）、reloc patcher、forge-rustc aarch64 注册、
-  CI qemu-system-arm。
+  jit_matrix runner + QEMU aarch64 semihosting 真执行（P3；值域过滤放宽至
+  [-128,127]，return_negative/return_minus_one 转绿，矩阵 23 passed；大常量
+  e2e：return 0x12345678 / -1_000_000_007 QEMU 真执行低 8 位验证；run_qemu
+  临时 ELF 文件名加进程内原子序号——修并行测试文件串扰）。
+- P3 进行中：reloc patcher e2e（patcher 已提交 ddb6d8e，跨块跳转待 toml
+  roles/epilogue 扩展）、forge-rustc aarch64 注册、CI qemu-system-arm。
 - 验证基准：本机 LLVM clang --target=aarch64-none-elf + llvm-objdump
   oracle 逐字对照 + tm 测试 + QEMU 矩阵真跑（钉版 nightly-2026-09-05）。

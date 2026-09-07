@@ -243,7 +243,16 @@ fn build_elf(
 }
 
 fn run_qemu(qemu: &PathBuf, elf: &[u8]) -> Result<u64, String> {
-    let tmp = std::env::temp_dir().join(format!("forge_a64_{}.elf", std::process::id()));
+    // 文件名必须唯一：并行测试（同进程多线程跑同一 lib）会互相覆盖
+    // `{pid}.elf`——qemu 启动读到别的用例的 ELF，返回值串扰
+    //（曾现：smoke(42) 拿到大常量用例的 0x12345678）。
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = std::env::temp_dir().join(format!(
+        "forge_a64_{}_{}.elf",
+        std::process::id(),
+        n
+    ));
     let mut f = std::fs::File::create(&tmp).map_err(|e| format!("create elf: {e}"))?;
     f.write_all(elf).map_err(|e| format!("write elf: {e}"))?;
     drop(f);
@@ -312,5 +321,62 @@ mod tests {
         let cf = compiled_const(42);
         let r = exec_aarch64(&cf, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
         assert_eq!(r, 42, "got {r}");
+    }
+
+    /// P3① 大立即数（完整编译链 + QEMU 真执行）：
+    /// return 0x12345678 (i32) → W 序列 movz w,hw1 + movk w,hw0 → 寄存器
+    /// 低 8 位 0x78（退出码符号扩展前 120）。0x12345678 > imm16u 单条域，
+    /// 必须走多序列（MOVZW1+MOVKW）。
+    #[test]
+    fn qemu_aarch64_exec_large_const_i32() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        use code_forge::backend::arm64_v12::TargetMachine;
+        use code_forge::backend::FunctionCompiler;
+        use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("ret_0x12345678", TypeContext::new(), sig);
+        b.create_block_here();
+        let c = b.iconst_i32(0x1234_5678);
+        b.ret(&[c]);
+        let func = b.finish().expect("build");
+        let compiled = FunctionCompiler::new(TargetMachine::new())
+            .compile_raw(&func)
+            .expect("compile");
+        let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
+        // QEMU semihost SYS_EXIT 的 host 退出码 = status word（低 8 位在
+        // Windows/qemu 传递中按字节保留）；0x12345678 低 8 位 = 0x78
+        assert_eq!(
+            r & 0xFF,
+            0x78,
+            "0x12345678 低 8 位应为 0x78；got {r:#x}"
+        );
+    }
+
+    /// i64 负大值：return -1_000_000_007 → X 序列 movz(hw3)+movk(hw2/1/0)
+    /// 构造两补码位型 0xFFFF_FFFF_C465_35F9；低 8 位 0xF9 符号扩展 = -7。
+    #[test]
+    fn qemu_aarch64_exec_large_const_i64_neg() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        use code_forge::backend::arm64_v12::TargetMachine;
+        use code_forge::backend::FunctionCompiler;
+        use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+        let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("ret_neg1b", TypeContext::new(), sig);
+        b.create_block_here();
+        let c = b.iconst_i64(-1_000_000_007);
+        b.ret(&[c]);
+        let func = b.finish().expect("build");
+        let compiled = FunctionCompiler::new(TargetMachine::new())
+            .compile_raw(&func)
+            .expect("compile");
+        let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
+        // -1_000_000_007 低 8 位 = 0xF9（有符号字节 = -7）
+        assert_eq!(r & 0xFF, 0xF9, "-1_000_000_007 低 8 位应为 0xF9；got {r:#x}");
     }
 }

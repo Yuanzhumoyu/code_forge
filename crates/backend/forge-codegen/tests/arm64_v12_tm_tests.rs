@@ -180,6 +180,36 @@ fn tm_compile_sub_mul() {
 }
 
 #[test]
+fn tm_compile_const_large_seq() {
+    // P3① 大立即数：|v| ≥ 0x10000 → 全片序列（X 恒 4 条）：
+    // movz x, #f3, lsl#48（顶层 0xD2、hw=3）+ movk x, #f2/f1/f0
+    // （顶层 0xF2、hw=2/1/0）——movz 高片清零其它，movk 依 hw 降序覆写，
+    // 任意 64 位位型（含 i64 负大值的两补码位型）可构造。
+    let cf = compile_const("cbig", -1_000_000_007i64);
+    eprintln!("const -1e9-7 code: {:02x?}", cf.code);
+    let count_top8 = |top: u32| {
+        cf.code
+            .windows(4)
+            .filter(|c| {
+                (u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & 0xFF00_0000) == top << 24
+            })
+            .count()
+    };
+    // -1_000_000_007 = 0xFFFF_FFFF_C465_35F9 → f3=0xFFFF f2=0xFFFF
+    // f1=0xC465 f0=0x35F9：movz×1（hw3）+ movk×3
+    assert_eq!(count_top8(0xD2), 1, "应恰一条 movz(hw3 高片): {:02x?}", cf.code);
+    assert_eq!(count_top8(0xF2), 3, "应恰三条 movk(hw2/hw1/hw0): {:02x?}", cf.code);
+    assert_eq!(count_top8(0x92), 0, "大值负常量不应走 movn 单条: {:02x?}", cf.code);
+    // 上界内负值 -42 仍走 movn 单条（顶层 0x92）
+    let cfn = compile_const("cneg42", -42);
+    assert!(
+        has_top8(&cfn.code, 0x92),
+        "-42 应走 movn 单条 (顶层 0x92): {:02x?}",
+        cfn.code
+    );
+}
+
+#[test]
 fn tm_decode_roundtrip() {
     use forge_codegen::arm64_v12::{decode, encode};
     // 对编译产物逐 4 字节 decode，decode(encode(x)) == x（硬契约）
