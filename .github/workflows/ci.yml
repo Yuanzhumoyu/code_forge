@@ -38,6 +38,11 @@ jobs:
         run: |
           set -o pipefail
           cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings 2>&1 | tee /tmp/clippy.log
+      - name: Emit clippy failure details
+        if: failure()
+        run: |
+          ERR=$(grep -E '^(error|warning|  -->)' /tmp/clippy.log | tail -60 | tr '\r\n' ' ' | head -c 7000)
+          echo "::error file=clippy.log,title=Clippy failure::${ERR}"
       - name: Upload clippy log (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -79,7 +84,14 @@ jobs:
       - name: Test arm64 QEMU matrix (real exec)
         run: cargo test -p forge-tests --lib jit_matrix_arm64_v12 -- --nocapture
       - name: Test riscv64 QEMU matrix (real exec)
-        run: cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --nocapture
+        run: |
+          set -o pipefail
+          cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --nocapture 2>&1 | tee /tmp/riscv.log
+      - name: Emit riscv matrix failure details
+        if: failure()
+        run: |
+          ERR=$(grep -E 'FAIL|panicked|error|assert' /tmp/riscv.log | tail -40 | tr '\r\n' ' ' | head -c 6000)
+          echo "::error file=riscv.log,title=riscv matrix failure::${ERR}"
       - name: Test remaining workspace (no forge-rustc/forge-codegen/forge-tests)
         run: cargo test --workspace --exclude forge-rustc --exclude forge-codegen --exclude forge-tests
       - name: Test forge-tests lib (host-exec tests)
