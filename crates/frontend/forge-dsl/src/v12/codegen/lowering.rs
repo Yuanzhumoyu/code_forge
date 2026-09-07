@@ -436,10 +436,13 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             Err(crate::prelude::IrError::Unsupported("v12 return lowering (ret mov inst missing)".into()))
         }
     };
-    // Jump：跳转指令（[abi].jump_inst 键；缺省 JMP_REL32/JAL 存在性回退）
-    // 变体名按键派生，避免硬编码 Inst::JmpRel32/Inst::Jal。
+    // Jump：跳转指令（roles = ["jump"]）。定宽 jump 按字段形状分派：
+    //   ≥2 字段（riscv JAL：[dest gpr out, target label]）→ `jal x0, target`；
+    //   单 label 槽（arm64 B：imm26，无 dest 寄存器）→ `b target`（bare）。
+    //   变长（x86 JMP_REL32 语义）→ label 槽 = 尾部 imm（REL4 fixup）。
+    // 变体名按键派生，避免硬编码 Inst::JmpRel32/Inst::Jal/Inst::B。
     let jump_vn = crate::v12::codegen::pascal_ident(&jump_inst);
-    let jump_body: TokenStream = if has_jal {
+    let jump_body: TokenStream = if has_jal && jal_f.len() >= 2 {
         quote! {
             __pack.push_inst(Inst::#jump_vn {
                 #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
@@ -449,18 +452,24 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         }
     } else if has_jmp {
         quote! {
+            // 定宽 bare（arm64 B：仅 label 槽，imm26 位段 → patcher）与
+            // 变长（x86 JMP_REL32：label 槽 = 尾部 imm → REL4 fixup）的
+            // 指令形态都是单 label 槽，同一发射路径。
             __pack.push_inst(Inst::#jump_vn { #jmp_rel: target.0 as i64 });
             Ok(__pack)
         }
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported("v12 jump lowering (JMP_REL32/JAL missing)".into()))
+            Err(crate::prelude::IrError::Unsupported("v12 jump lowering (JMP_REL32/JAL/B missing)".into()))
         }
     };
-    // Branch：x86 = test cond,cond → je false → jmp true（v11 语义）；
-    // 定宽（riscv）= beq cond, X0, false → jal x0, true（X0 恒零 → cond==0
-    // 走 false；label 槽块号 → 定宽 fixup）。变体名按键派生。
+    // Branch：终结符条件分派按 ISA 声明形状：
+    //   x86   = test cond,cond → je false → jmp true（v11 语义；TEST/JCC/JMP
+    //           三角色齐全）
+    //   riscv = beq cond, X0, false → jal x0, true（BEQ 3 字段 + JAL 定宽）
+    //   arm64 = cbz cond, false → b true（branch 指令 [reg, label] 两字段 +
+    //           bare 定宽 jump：cond 寄存器 == 0 → else，否则落 b true）
     let test_vn = crate::v12::codegen::pascal_ident(&test_inst);
     let branch_vn = crate::v12::codegen::pascal_ident(&branch_inst);
     let beq_vn = crate::v12::codegen::pascal_ident(&branch_inst);
@@ -484,7 +493,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             __pack.push_inst(Inst::#jump_vn { #jmp_rel: true_block });
             Ok(__pack)
         }
-    } else if has_jal && !beq_f.is_empty() {
+    } else if has_jal && jal_f.len() >= 2 && beq_f.len() >= 3 {
         quote! {
             let cond = value_to_xreg.get(cond_val).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
@@ -504,10 +513,26 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             });
             Ok(__pack)
         }
+    } else if has_jcc && has_jmp && !has_test && jcc_f.len() == 2 && jmp_f.len() == 1 {
+        quote! {
+            let cond = value_to_xreg.get(cond_val).copied()
+                .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
+            let true_block = then_block.0 as i64;
+            let false_block = else_block.0 as i64;
+            // cbz cond, false_block（cond == 0 → else；不跳则落下一指令）
+            let __idx = __pack.push_inst(Inst::#branch_vn {
+                #jcc_cond: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #jcc_rel: false_block,
+            });
+            __pack.map_reg_field(cond, __idx, 0u8, false);
+            // b true_block
+            __pack.push_inst(Inst::#jump_vn { #jmp_rel: true_block });
+            Ok(__pack)
+        }
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported("v12 branch lowering (TEST/JCC/JMP or BEQ/JAL missing)".into()))
+            Err(crate::prelude::IrError::Unsupported("v12 branch lowering (TEST/JCC/JMP, BEQ/JAL or CBZ/B missing)".into()))
         }
     };
 

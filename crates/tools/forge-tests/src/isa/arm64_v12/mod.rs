@@ -6,10 +6,13 @@
 //! 且按有符号字节符号扩展 → 期望值超出 [-128,127] 的用例 Skip
 //! （"value-range"）。QEMU 缺失时矩阵全 Skip（arm64 产物不可本机执行）。
 //!
-//! ⚠️ 矩阵执行强约束（P2 边界）：FunctionCompiler 帧/尾声/值传递目前只支持
-//! 单 return block、无 call、帧 ≤256B（LDUR/STUR imm9）等——任何用例触发
-//! 这些缺口会得显式 Fail/报错（不被静默掩盖）；随 lowering/指令扩展自动转绿。
+//! ⚠️ 矩阵执行强约束（P2/P3 边界）：FunctionCompiler 帧/尾声/值传递支持
+//! 单/多 return block（P3② epilogue_label）+ 跨块分支；无 call、帧 ≤256B
+//! （LDUR/STUR imm9）、无 Icmp（Block 用例依赖比较 → 相关用例 Skip 待
+//! Icmp lowering 转正）——任何用例触发缺口会得显式 Fail/报错（不被静默
+//! 掩盖）；随 lowering/指令扩展自动转绿。
 
+#[cfg(test)]
 use code_forge::backend::arm64_v12::SUPPORTED_OPS;
 
 /// 无 `[[lowering]]` 条目的 op 补充声明（与 SUPPORTED_OPS 并集）。

@@ -108,14 +108,6 @@ fn mov_imm(b: &mut Vec<u8>, rd: u32, val: u64) {
     }
 }
 
-/// mov xd, xm（orr xd, xzr, xm；sf=1 101010 0 0 11111 rm rd）。
-fn mov_reg(b: &mut Vec<u8>, rd: u32, rm: u32) {
-    w(
-        b,
-        (1 << 31) | (0b101010 << 24) | (0b11111 << 5) | (rm << 16) | rd,
-    );
-}
-
 /// add xd, xm, #0（mov sp, xm 等 sp 语义必须走 ADD——ORR rd=31 写 xzr 无效）
 fn mov_sp_reg(b: &mut Vec<u8>, rd: u32, rm: u32) {
     // add imm X：0x91000000 | (rn<<5) | rd（imm=0）
@@ -182,7 +174,7 @@ fn build_elf(
     for g in globals {
         let pad = data.len() % 8;
         if pad != 0 {
-            data.extend(std::iter::repeat(0u8).take(8 - pad));
+            data.extend(std::iter::repeat_n(0u8, 8 - pad));
         }
         data.extend_from_slice(&g.1);
     }
@@ -248,11 +240,7 @@ fn run_qemu(qemu: &PathBuf, elf: &[u8]) -> Result<u64, String> {
     //（曾现：smoke(42) 拿到大常量用例的 0x12345678）。
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = std::env::temp_dir().join(format!(
-        "forge_a64_{}_{}.elf",
-        std::process::id(),
-        n
-    ));
+    let tmp = std::env::temp_dir().join(format!("forge_a64_{}_{}.elf", std::process::id(), n));
     let mut f = std::fs::File::create(&tmp).map_err(|e| format!("create elf: {e}"))?;
     f.write_all(elf).map_err(|e| format!("write elf: {e}"))?;
     drop(f);
@@ -333,8 +321,8 @@ mod tests {
             eprintln!("SKIP: qemu-system-aarch64 未安装");
             return;
         }
-        use code_forge::backend::arm64_v12::TargetMachine;
         use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::arm64_v12::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("ret_0x12345678", TypeContext::new(), sig);
@@ -348,11 +336,7 @@ mod tests {
         let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
         // QEMU semihost SYS_EXIT 的 host 退出码 = status word（低 8 位在
         // Windows/qemu 传递中按字节保留）；0x12345678 低 8 位 = 0x78
-        assert_eq!(
-            r & 0xFF,
-            0x78,
-            "0x12345678 低 8 位应为 0x78；got {r:#x}"
-        );
+        assert_eq!(r & 0xFF, 0x78, "0x12345678 低 8 位应为 0x78；got {r:#x}");
     }
 
     /// i64 负大值：return -1_000_000_007 → X 序列 movz(hw3)+movk(hw2/1/0)
@@ -363,8 +347,8 @@ mod tests {
             eprintln!("SKIP: qemu-system-aarch64 未安装");
             return;
         }
-        use code_forge::backend::arm64_v12::TargetMachine;
         use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::arm64_v12::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut b = FunctionBuilder::new("ret_neg1b", TypeContext::new(), sig);
@@ -377,6 +361,61 @@ mod tests {
             .expect("compile");
         let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
         // -1_000_000_007 低 8 位 = 0xF9（有符号字节 = -7）
-        assert_eq!(r & 0xFF, 0xF9, "-1_000_000_007 低 8 位应为 0xF9；got {r:#x}");
+        assert_eq!(
+            r & 0xFF,
+            0xF9,
+            "-1_000_000_007 低 8 位应为 0xF9；got {r:#x}"
+        );
+    }
+
+    /// 构建多块 if/else + phi merge 函数（P3②：跨块分支/跳转/多 return
+    /// block + 统一尾声经 epilogue_label）。cond=true → then 翼 40、
+    /// cond=false → else 翼 2；end 块 phi 参数承载两翼值。
+    fn compile_if_else(cond: bool) -> code_forge::backend::CompiledFunction {
+        use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::arm64_v12::TargetMachine;
+        use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("ifelse", TypeContext::new(), sig);
+        let entry = b.create_block();
+        let then = b.create_block();
+        let els = b.create_block();
+        let (end, phi) = b.create_block_with_params(&[(TypeId::I32, "phi")]);
+        b.switch_to_block(entry);
+        let c = b.iconst_bool(cond);
+        b.branch(c, then, &[], els, &[]);
+        b.switch_to_block(then);
+        let v1 = b.iconst_i32(40);
+        b.jump(end, &[v1]);
+        b.switch_to_block(els);
+        let v2 = b.iconst_i32(2);
+        b.jump(end, &[v2]);
+        b.switch_to_block(end);
+        let z = b.iconst_i32(0);
+        let r = b.iadd(phi[0], z);
+        b.ret(&[r]);
+        let func = b.finish().expect("build");
+        FunctionCompiler::new(TargetMachine::new())
+            .compile_raw(&func)
+            .expect("compile")
+    }
+
+    /// P3② 端到端：B（imm26）+ CBZ（imm19）label 槽跨块分支 + 多 return
+    /// block 经统一尾声（epilogue_label=true）——reloc patcher 位段重排
+    /// 后 QEMU 真执行验证控制流。
+    #[test]
+    fn qemu_aarch64_exec_multi_block_if_else() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        // cond=true → then 翼 40
+        let cf = compile_if_else(true);
+        let r = exec_aarch64(&cf, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
+        assert_eq!(r & 0xFF, 40, "if(true) 应走 then 翼返回 40；got {r:#x}");
+        // cond=false → else 翼 2
+        let cf2 = compile_if_else(false);
+        let r2 = exec_aarch64(&cf2, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
+        assert_eq!(r2 & 0xFF, 2, "if(false) 应走 else 翼返回 2；got {r2:#x}");
     }
 }

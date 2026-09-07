@@ -305,6 +305,7 @@ asm = "subs {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "B"
+roles = ["jump", "epilogue_jump"]
 form = "BREL"
 opcode = 0x05
 ops = ["target:off26"]
@@ -812,6 +813,7 @@ asm = "ret"
 
 [[instructions]]
 name = "CBZX"
+roles = ["branch"]
 form = "CBZF"
 opcode = 0xB4
 ops = ["src:r64", "target:off19"]
@@ -1201,11 +1203,12 @@ base = "X29"
 
 [emit]
 align_pad = 0
-# 独立尾声标签关闭：arm64 B 是定宽 imm26（label 槽需 reloc patcher 位段
-# 重排，P1 尚未接入 A64 patcher）→ return block 直接 fall-through 到
-# 函数末尾的尾声（RET）——仅单 return block 函数安全（P1 tm 测试满足；
-# 多 return / 跨块分支函数需 B+B.cond 角色与 Arm64RelocPatcher，后置）。
-epilogue_label = false
+# 独立尾声标签开启：arm64 B（imm26）与 CBZ（imm19）label 槽经定宽 fixup
+# （Relative(4,0)）+ Arm64RelocPatcher 位段重排 → return block 经
+# `b epilogue_label` 跳到统一尾声，多 return block / 跨块分支函数可用
+# （emission.rs 按 needs_epilogue_label=true 布局）。单块函数仍走
+# fall-through 尾声（epilogue 紧跟 return block 时 emission 不空发跳转）。
+epilogue_label = true
 
 [emit.prologue]
 insts = [

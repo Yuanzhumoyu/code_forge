@@ -182,7 +182,7 @@ pub(crate) fn gen_frame_lowering(
             })?;
             Ok(())
         }
-    } else if has_jump {
+    } else if has_jump && jump_f.len() >= 2 {
         quote! {
             // 定宽（riscv JAL 语义）：jal x0, epilogue_block——label 槽 = 块号
             // → encoder 编码时 use_label_at（定宽 fixup = 指令起始；位段重排
@@ -191,6 +191,17 @@ pub(crate) fn gen_frame_lowering(
                 #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
                 #jal_target: epilogue_block.0 as i64,
             };
+            encoder.encode(&inst, reg_map, sink).map_err(|e| {
+                crate::IrError::Internal(format!("epilogue jump encode: {e}"))
+            })?;
+            Ok(())
+        }
+    } else if has_jump {
+        quote! {
+            // 定宽 bare 跳（arm64 B 语义：仅 label 槽，无 dest 寄存器）：
+            // b epilogue_block——label 槽 = 块号 → encoder 定宽 fixup
+            // Relative(4,0)，位段重排由 Arm64RelocPatcher（imm26）。
+            let inst = Inst::#jump_vn { #jmp_rel: epilogue_block.0 as i64 };
             encoder.encode(&inst, reg_map, sink).map_err(|e| {
                 crate::IrError::Internal(format!("epilogue jump encode: {e}"))
             })?;

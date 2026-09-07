@@ -3,14 +3,16 @@
 //! IR（FunctionBuilder）→ lowering → regalloc → frame → encode 全链路。
 //! 本机无 A64 执行环境（无 QEMU runner）——验证机器码**结构**：
 //! 帧序言（sub sp / stur x30,x29 / fp 建立）、尾声（ldur 恢复 + ret）、
-//! 宽度分派（ADDREGX vs ADDREGW）、常量（MOVZX）以及全字节 decode→encode
-//! 回环契约。golden 参考：LLVM clang --target=aarch64-none-elf oracle 常量
-//!（tests/arm64_v12_tests.rs）。
+//! 宽度分派（ADDREGX vs ADDREGW）、常量（MOVZ/大值多序列）以及全字节
+//! decode→encode 回环契约。golden 参考：LLVM clang --target=aarch64-none-elf
+//! oracle 常量（tests/arm64_v12_tests.rs）。
 //!
 //! 帧布局镜像 riscv64_v12 的 fp-inside：sub sp,sp,#96（min_frame=96）→
 //! stur x30,[sp,#88] / stur x29,[sp,#80] → add x29,sp,#96 → （按需保存
-//! callee-saved）→ move_args → body → 尾声 fall-through（epilogue_label=
-//! false——P1 仅单 return block 函数）。
+//! callee-saved）→ move_args → body → return block 经 `b epilogue_label`
+//! （epilogue_label=true，P3②）跳到统一尾声（多 return block 也正确）。
+//! 完整控制流（跨块分支/多 return）真执行验证见 forge-tests
+//! qemu_aarch64_exec_multi_block_if_else。
 
 use forge_codegen::FunctionCompiler;
 use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
@@ -190,16 +192,29 @@ fn tm_compile_const_large_seq() {
     let count_top8 = |top: u32| {
         cf.code
             .windows(4)
-            .filter(|c| {
-                (u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & 0xFF00_0000) == top << 24
-            })
+            .filter(|c| (u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & 0xFF00_0000) == top << 24)
             .count()
     };
     // -1_000_000_007 = 0xFFFF_FFFF_C465_35F9 → f3=0xFFFF f2=0xFFFF
     // f1=0xC465 f0=0x35F9：movz×1（hw3）+ movk×3
-    assert_eq!(count_top8(0xD2), 1, "应恰一条 movz(hw3 高片): {:02x?}", cf.code);
-    assert_eq!(count_top8(0xF2), 3, "应恰三条 movk(hw2/hw1/hw0): {:02x?}", cf.code);
-    assert_eq!(count_top8(0x92), 0, "大值负常量不应走 movn 单条: {:02x?}", cf.code);
+    assert_eq!(
+        count_top8(0xD2),
+        1,
+        "应恰一条 movz(hw3 高片): {:02x?}",
+        cf.code
+    );
+    assert_eq!(
+        count_top8(0xF2),
+        3,
+        "应恰三条 movk(hw2/hw1/hw0): {:02x?}",
+        cf.code
+    );
+    assert_eq!(
+        count_top8(0x92),
+        0,
+        "大值负常量不应走 movn 单条: {:02x?}",
+        cf.code
+    );
     // 上界内负值 -42 仍走 movn 单条（顶层 0x92）
     let cfn = compile_const("cneg42", -42);
     assert!(

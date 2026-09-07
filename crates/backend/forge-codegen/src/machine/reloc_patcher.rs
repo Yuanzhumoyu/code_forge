@@ -163,18 +163,27 @@ impl RelocPatcher for Arm64RelocPatcher {
                 .map_err(|_| IrError::Internal("arm64 reloc: 越界".into()))?,
         );
         let d = (target as i64) - (site as i64);
-        let top8 = (word >> 24) & 0xFF;
-        let new = match top8 {
-            // B(0x14)/BL(0x94)：imm26 [25:0]
-            0x14 | 0x94 => (word & !0x03FF_FFFFu32) | Arm64RelocPatcher::b_imm26(d)?,
-            // B.cond(0x54)/CBZ/CBNZ(0x34/0xB4/0x35/0xB5)：imm19 [23:5]
-            0x54 | 0x34 | 0xB4 | 0x35 | 0xB5 => {
-                (word & !(0x7_FFFFu32 << 5)) | (Arm64RelocPatcher::b_imm19(d)? << 5)
-            }
-            t => {
-                return Err(IrError::Internal(format!(
-                    "arm64 reloc: 不支持的指令 top8=0x{t:02x}（word 0x{word:08x}）"
-                )));
+        // B/BL 的 imm26 占 [25:0]——初编码时 label 占位（块号）会污染
+        // bit25:24，top8 判定随 imm 漂移（如 0x17FFFFFD top8=0x17），
+        // 必须用 top6（[31:26] op6，B=0x05/BL=0x25，恒定）。
+        // B.cond/CBZ/CBNZ 的 imm19 在 [23:5]，top8（cbop 8 位）恒定可判。
+        let top6 = (word >> 26) & 0x3F;
+        let new = match top6 {
+            // B(0x05)/BL(0x25)：imm26 [25:0]
+            0x05 | 0x25 => (word & !0x03FF_FFFFu32) | Arm64RelocPatcher::b_imm26(d)?,
+            _ => {
+                let top8 = (word >> 24) & 0xFF;
+                match top8 {
+                    // B.cond(0x54)/CBZ/CBNZ(0x34/0xB4/0x35/0xB5)：imm19 [23:5]
+                    0x54 | 0x34 | 0xB4 | 0x35 | 0xB5 => {
+                        (word & !(0x7_FFFFu32 << 5)) | (Arm64RelocPatcher::b_imm19(d)? << 5)
+                    }
+                    t => {
+                        return Err(IrError::Internal(format!(
+                            "arm64 reloc: 不支持的指令 top8=0x{t:02x}（word 0x{word:08x}）"
+                        )));
+                    }
+                }
             }
         };
         code[offset..offset + 4].copy_from_slice(&new.to_le_bytes());
@@ -404,6 +413,16 @@ mod tests {
         assert_eq!(
             u32::from_le_bytes(code2[0..4].try_into().unwrap()),
             0x94000000 | 0x3FF_FFFF
+        );
+        // 初编码 label 占位（块号 0xFFFFFFFD 塞入 imm26）污染 top8：
+        // word=0x17FFFFFD（top8=0x17）——必须按 top6=0x05 识别 B，
+        // patch diff=8 → 0x14000002（imm26 域干净重写）
+        let mut code3 = 0x17FFFFFDu32.to_le_bytes().to_vec();
+        p.apply(&mut code3, 0, RelocKind::Relative(4, 0), 8, 0)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(code3[0..4].try_into().unwrap()),
+            0x14000002
         );
     }
 

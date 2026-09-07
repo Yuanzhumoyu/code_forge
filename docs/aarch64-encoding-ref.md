@@ -187,8 +187,19 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
   jit_matrix runner + QEMU aarch64 semihosting 真执行（P3；值域过滤放宽至
   [-128,127]，return_negative/return_minus_one 转绿，矩阵 23 passed；大常量
   e2e：return 0x12345678 / -1_000_000_007 QEMU 真执行低 8 位验证；run_qemu
-  临时 ELF 文件名加进程内原子序号——修并行测试文件串扰）。
-- P3 进行中：reloc patcher e2e（patcher 已提交 ddb6d8e，跨块跳转待 toml
-  roles/epilogue 扩展）、forge-rustc aarch64 注册、CI qemu-system-arm。
+  临时 ELF 文件名加进程内原子序号——修并行测试文件串扰）、**多块控制流
+  （P3②）**：B 角色 jump/epilogue_jump（bare 定宽跳，仅 label 槽）、CBZX
+  角色 branch（cbz cond,false → b true；终结符按指令字段形状自适应分派）、
+  [emit].epilogue_label=true（return block 经 `b epilogue_label` 跳统一尾声，
+  多 return block 安全）；Arm64RelocPatcher 判词改 top6（B/BL imm26 占
+  [25:0]，初编码 label 占位污染 top8——word 0x17FFFFFD top8=0x17 也要识别）；
+  e2e：if/else + phi merge 双翼 QEMU 真执行（40/2）。
+- 已提交（P3 其余线）：reloc patcher（ddb6d8e）+ ② 多块 e2e（本系列）、
+  forge-rustc aarch64 注册（d78debd，能力边界注释在 compile.rs）、CI
+  qemu-system-arm 门禁（dcb42e7，Test(Linux) 装 qemu-system-arm 提供
+  qemu-system-aarch64）。
+- 待做（下一阶段）：Icmp lowering（cset/cond 码）使矩阵 Block 用例
+  （conditional_branch/loop/if_else_chain）转正；跨函数 Call（BL）经
+  reloc patcher + Call lowering 路径。
 - 验证基准：本机 LLVM clang --target=aarch64-none-elf + llvm-objdump
   oracle 逐字对照 + tm 测试 + QEMU 矩阵真跑（钉版 nightly-2026-09-05）。
