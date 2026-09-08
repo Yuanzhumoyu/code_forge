@@ -212,9 +212,13 @@ jobs:
       - name: Generate coverage
         # 默认 features（不开 --all-features：那会启用 forge-tests 的 nightly
         # → 编译 rustc_private 的 forge-rustc dylib，Linux 缺 libLLVM 无法链接）。
-        # ⚠️ 临时排除 forge-codegen：其 lib 测试在 ubuntu 并行下 SIGSEGV（与
-        # test-linux 同因，见该 job 探针注释）——tarpaulin 无法串行；根修后恢复。
-        run: cargo tarpaulin --out xml --workspace --exclude forge-rustc --exclude forge-codegen
+        # ⚠️ 排除 forge-codegen 与 forge-tests：forge-codegen lib 测试在 ubuntu
+        # 并行下 SIGSEGV（与 test-linux 同因，见该 job 探针注释）；forge-tests
+        # 的 lib 测试含 QEMU/子进程执行（矩阵/spawn），tarpaulin 的 ptrace
+        # 跟踪下不稳定（实测 "Test failed during run"）——两者的执行面分别由
+        # test-linux（QEMU 矩阵独立步）与 test-windows 覆盖，coverage 目标
+        # crate = forge-ir/forge-opt/forge-hir/forge-dsl/forge-grammar 等纯库。
+        run: cargo tarpaulin --out xml --workspace --exclude forge-rustc --exclude forge-codegen --exclude forge-tests
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
