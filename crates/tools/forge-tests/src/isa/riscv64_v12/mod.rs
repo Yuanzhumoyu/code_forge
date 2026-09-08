@@ -3,9 +3,12 @@
 //!
 //! 执行走 QEMU system-mode（`exec::qemu`；exit_seq 的 `sw; beq` 重试循环
 //! 绕过 QEMU 11.0.92 在 jal/ret 返回路径的 MMIO 写丢失）。**值域过滤**：
-//! QEMU 退出码 8 位 → |期望值| > 255 的用例 Skip（"value-range"）。QEMU
-//! 缺失时 exec 为 None → 单函数用例经本机 ExecutableMemory 会崩溃（riscv
-//! 产物不可本机执行）→ 此时矩阵全 Skip（qemu_exec 冒烟测试独立降级）。
+//! sifive_test 退出码 16 位（Windows qemu 保留 16 位）→ |期望值| > 32767
+//! 的用例 Skip（"value-range"）；POSIX 宿主（Linux/macOS CI）进程退出码
+//! 仅低 8 位 → 收紧为 [-128,127]（与 arm64 semihost 通道同语义，见
+//! executor::sign_extend_exit_platform）。QEMU 缺失时 exec 为 None → 单
+//! 函数用例经本机 ExecutableMemory 会崩溃（riscv 产物不可本机执行）→
+//! 此时矩阵全 Skip（qemu_exec 冒烟测试独立降级）。
 
 /// 无 `[[lowering]]` 条目的 op（P1-16 补充声明；与生成的 SUPPORTED_OPS 并集
 /// 构成完整能力集）：
@@ -31,9 +34,34 @@ fn jit_matrix_riscv64_v12() {
                 as Box<dyn crate::exec::executor::Executor>
         }),
     };
+    // 值域过滤按宿主退出码位宽：Windows（qemu 保留 16 位）±32767；
+    // POSIX CI（进程退出码 8 位）[-128,127]（负值经 8 位符号扩展还原，
+    // 超出者 Skip——如 0x1234=4660 在 Linux 只留低 8 位 52，无法对齐）。
+    fn fits_exit(c: &crate::jit_matrix::Case) -> bool {
+        #[cfg(windows)]
+        {
+            crate::jit_matrix::expected_fits_u8(c)
+        }
+        #[cfg(not(windows))]
+        {
+            use crate::jit_matrix::CaseKind;
+            let v = match &c.kind {
+                CaseKind::I32(_, e) => *e as i64,
+                CaseKind::I64(_, e) => *e,
+                CaseKind::Bool(_, _) => return true,
+                CaseKind::Block(_, e) => *e as i64,
+                CaseKind::Args { expected, .. } => *expected,
+                CaseKind::F64Args { expected, .. } => *expected,
+                CaseKind::F64(_, _) => return false,
+                CaseKind::CompileOnly(_) => return true,
+                CaseKind::Module(_, e) => *e,
+            };
+            (-128..=127).contains(&v)
+        }
+    }
     // QEMU 缺失 → 无执行器（矩阵全 Skip，避免本机执行 riscv 崩溃）
     let results = if runner.exec.is_some() {
-        crate::jit_matrix::run_all_filtered(&runner, crate::jit_matrix::expected_fits_u8)
+        crate::jit_matrix::run_all_filtered(&runner, fits_exit)
     } else {
         eprintln!("[riscv64] QEMU 未找到——矩阵用例全部 Skip（编译验证）");
         crate::jit_matrix::run_all_filtered(&runner, |_| false)

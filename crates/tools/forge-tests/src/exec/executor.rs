@@ -113,8 +113,27 @@ pub struct QemuRiscv64Executor;
 /// sifive_test 退出码 = `(value >> 16) & 0xFFFF`（**16 位**，实测 QEMU
 /// 11.0.92：a0=-1 → 65535、a0=-42 → 65494；Windows 保留 16 位退出码）。
 /// 返回 i64 前按 **有符号 16 位**符号扩展（0xFFD6 → -42），与用例期望对齐。
+/// 仅 Windows 宿主使用（POSIX 进程退出码 8 位走 `sign_extend_exit_platform`
+/// 的另一分支）——非 windows 编译下此 fn 无调用方，需 cfg 隔离（CI Clippy
+/// `-D dead-code`）。
+#[cfg(windows)]
 fn sign_extend_exit(raw: u64) -> u64 {
     (raw as u16 as i16 as i64) as u64
+}
+
+/// POSIX 宿主（Linux/macOS CI）进程退出码仅低 8 位（0-255）：sifive_test
+/// 的高字节丢失 → 只能按 **有符号 8 位**扩展（0xD6 → -42）。Windows qemu
+/// 保留 16 位（sign_extend_exit）。runner 的值域 filter 随平台收紧
+/// （Unix：[-128,127]，与 arm64 semihost 通道同语义）。
+fn sign_extend_exit_platform(raw: u64) -> u64 {
+    #[cfg(windows)]
+    {
+        sign_extend_exit(raw)
+    }
+    #[cfg(not(windows))]
+    {
+        (raw as u8 as i8 as i64) as u64
+    }
 }
 
 impl Executor for QemuRiscv64Executor {
@@ -125,7 +144,7 @@ impl Executor for QemuRiscv64Executor {
     fn exec(&self, compiled: &CompiledFunction, args: &[u64]) -> u64 {
         let raw = super::qemu::exec_riscv64(compiled, args)
             .unwrap_or_else(|e| panic!("QemuRiscv64Executor: {e}"));
-        sign_extend_exit(raw)
+        sign_extend_exit_platform(raw)
     }
 
     fn exec_module(
@@ -137,7 +156,7 @@ impl Executor for QemuRiscv64Executor {
     ) -> u64 {
         let raw = super::qemu::exec_riscv64_module(funcs, globals, main, args)
             .unwrap_or_else(|e| panic!("QemuRiscv64Executor::exec_module: {e}"));
-        sign_extend_exit(raw)
+        sign_extend_exit_platform(raw)
     }
 }
 
@@ -187,8 +206,12 @@ pub fn run(arch: ExecArch, compiled: &CompiledFunction, args: &[u64]) -> u64 {
     }
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, target_arch = "x86_64", windows))]
 mod tests {
+    // 整体限 windows：native_exec_add 只在 Windows x64（ABI 一致）执行——
+    // Linux/macOS 的 x86_64 宿主上机器码按 Windows ABI 生成会崩（与
+    // forge-codegen jit 测试同因），且 compile_add 在非 windows 无调用方
+    // → `-D dead-code`（CI Clippy）报 unused。mod 级 cfg 保证三平台一致。
     use super::*;
     use code_forge::backend::FunctionCompiler;
     use code_forge::prelude::*;
@@ -206,7 +229,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_arch = "x86_64", windows))]
     fn native_exec_add() {
         let compiled = compile_add();
         let r = NativeExecutor.exec(&compiled, &[20, 22]);
