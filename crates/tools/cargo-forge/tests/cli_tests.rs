@@ -203,18 +203,28 @@ fn assert_exit(out: &Output, want: i32, what: &str) {
 /// alloc 族用例（Vec/String/Box——`--alloc` 模式）的退出码断言：CI Windows
 /// 偶发 0xC0000005（-1073741819）AV/挂起（forge-codegen regalloc spill
 /// 非确定性残余，见 forge-rustc e2e.rs FLAKY 名单 vec_push reason）——
-/// AV/挂起时**全新编译重跑一次**再判定（每次编译为独立实例，偶发重试通常
-/// 即过）；非 AV 失败不重试（真实回归仍硬断言）。
+/// AV/挂起时**全新编译重跑**（每次编译为独立实例，偶发重试通常即过；最多
+/// 3 次）；非 AV 失败不重试（真实回归仍硬断言）。
 fn assert_exit_alloc(retry: &mut dyn FnMut() -> Output, want: i32, what: &str) {
-    let first = retry();
-    let code = first.status.code();
-    if code == Some(-1073741819) || code.is_none() {
-        eprintln!("{what}: exit {code:?}（alloc 族已知偶发 AV/挂起）→ 全新编译重跑一次");
-        let second = retry();
-        assert_exit(&second, want, what);
+    let mut last: Option<Output> = None;
+    for attempt in 1..=3 {
+        let out = retry();
+        let code = out.status.code();
+        if code == Some(-1073741819) || code.is_none() {
+            eprintln!(
+                "{what}: exit {code:?}（alloc 族已知偶发 AV/挂起）→ 全新编译重跑（第 {attempt} 次）"
+            );
+            last = Some(out);
+            continue;
+        }
+        assert_exit(&out, want, what);
         return;
     }
-    assert_exit(&first, want, what);
+    if let Some(out) = last {
+        assert_exit(&out, want, what);
+    } else {
+        panic!("{what}: 无任何运行输出");
+    }
 }
 
 /// README「标准入口模板」：main 返回值 = 进程退出码。
