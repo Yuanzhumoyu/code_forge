@@ -1,4 +1,9 @@
 # clippy 修复清单
+> ## ⚠️ ARCHIVED（2026-09）
+>
+> 2026-07-31 clippy 全量清零的单次整改记录（已完成）。
+> 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
+
 
 `cargo clippy --workspace --exclude forge-rustc --all-targets` 全量清零记录。
 
@@ -49,3 +54,4 @@ include! 上下文非法，报 "an inner attribute is not permitted in this cont
 - `cargo clippy --workspace --exclude forge-rustc --all-targets` → **0 warning / 0 error**
 - `cargo clean -p forge-ir` + rebuild → 编译 0 error（豁免随 build 稳定生效）
 - `cargo test --workspace --exclude forge-rustc` → 全量通过（41 组 ok，0 FAILED）
+

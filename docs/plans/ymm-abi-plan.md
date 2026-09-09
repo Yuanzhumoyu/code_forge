@@ -1,6 +1,6 @@
 # YMM ABI 完整改进方案（>128 位向量传参）
 
-> 对应 `docs/roadmap-status.md` 剩余事项 1。
+> 对应 `docs/archive/roadmap-status.md` 剩余事项 1。
 >
 > **状态更新（2026-09）**：主库 S1-S5 **已实现**（2026-08-31 提交 ed43103 S1 /
 > e9e869a S2 / 33df6fa 语义标签重构 / 4959474 S4-S5，均早于 HEAD 30780ae 且为其

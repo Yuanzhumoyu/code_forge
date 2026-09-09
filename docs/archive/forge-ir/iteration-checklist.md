@@ -1,9 +1,14 @@
 # forge-ir 迭代清单（详细版：问题解析 + 代码演示）
+> ## ⚠️ ARCHIVED（2026-09）
+>
+> forge-ir 迭代清单实操展开（第 10–23 轮执行记录，S1–S6 均已落地；452 全收敛）。
+> 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
 
-> 本文是 `docs/forge-ir-next-iterations.md`（backlog 总表）的**逐项实操展开**：
+
+> 本文是 `docs/archive/forge-ir/next-iterations.md`（backlog 总表）的**逐项实操展开**：
 > 每项给出问题解析（现象/根因/代码定位）、现状代码、改造演示、边界与风险、验收。
 > 代码位置以当前 workspace（第九轮后基线）实测为准，行号随迭代漂移时以符号名定位。
-> 与 `docs/forge-ir-iteration-roadmap.md` 的关系：roadmap 记"历轮成果"，backlog 管
+> 与 `docs/archive/forge-ir/iteration-roadmap.md` 的关系：roadmap 记"历轮成果"，backlog 管
 > "待办"，本文是"怎么干"。
 
 ---
@@ -143,11 +148,11 @@
 | B3/B4 | ❌ 归档 | max-inttype 位宽全链与 12 个顽固类时间盒内未投入 |
 
 **后续迭代行动版**：剩余 17 个正向失败的逐项问题解析、代码演示、LALR 冲突案例集
-与负向纪律规则见 **`docs/forge-ir-remaining-iterations.md`**（§1 逐项清单 / §2 冲突
+与负向纪律规则见 **`docs/archive/forge-ir/remaining-iterations.md`**（§1 逐项清单 / §2 冲突
 案例集 / §3 纪律规则 / §5 建议执行顺序）。
 
 **第十八～二十三轮记录断档说明**：第十七轮后的负向计数在
-`docs/forge-ir-remaining-iterations.md` §5 逐轮记录。其中第二十一轮的**判定修正**
+`docs/archive/forge-ir/remaining-iterations.md` §5 逐轮记录。其中第二十一轮的**判定修正**
 把部分用例在正向/负向桶间重判（该轮 +8 正向与误接受 67→6 同源），使正确拒绝计数
 在该轮前后**非单调**（修正前曾达 257，修正后收敛 254）；终态以 remaining-iterations
 的 **198/452、254 正确拒绝、0 误接受**（=452 全收敛）为准。
@@ -752,7 +757,7 @@ token 集合（S2 的专用 token 化反而会**膨胀**状态，需权衡）或
 **细化方向**：
 
 1. 用例扩充：异常（invoke/landingpad）、嵌套聚合字面量、metadata 密集模块；
-2. `docs/bench_baseline.md` 每轮更新基线；
+2. `docs/performance/bench_baseline.md` 每轮更新基线；
 3. 热点分析（按需）：`value_map` 查找、display 的 `self.types.borrow()` 重复
    借用——收益不确定，先用 `cargo bench -p forge-ir --bench ir_parse` 出
    profile 再决定。
@@ -820,10 +825,10 @@ cargo test -p forge-dsl --lib determinism                         # determinism 
 
 ### 每轮文档维护约定
 
-1. 轮末成果回写 `docs/forge-ir-iteration-roadmap.md` 附录 §7；
-2. 同步 `docs/forge-ir-next-iterations.md` 状态列（已解锁项移出或标注）；
+1. 轮末成果回写 `docs/archive/forge-ir/iteration-roadmap.md` 附录 §7；
+2. 同步 `docs/archive/forge-ir/next-iterations.md` 状态列（已解锁项移出或标注）；
 3. 同步 compat 文件头基线（正向通过数/误接受数/已解锁类）；
-4. 基准变化更新 `docs/bench_baseline.md`；
+4. 基准变化更新 `docs/performance/bench_baseline.md`；
 5. 新增 LALR 冲突形态 → backlog 附录 §6 备忘表加行。
 
 ### 与 backlog 的差异核对记录（本文写作时实测）
@@ -836,3 +841,4 @@ cargo test -p forge-dsl --lib determinism                         # determinism 
 | S3.4 | `imm0==F32` 目标类型谓词 | `immN` 是立即数谓词（codegen/mod.rs:1817）；用 `rd` 位宽（__rdb，1830）+ `elem` |
 | S3.4 | 文本层缺 fpext/fptrunc | `ConvOp`（grammar.lalrpop:1716-1730）已含两 token，文本层已完成；缺口仅在 `isa/x86_v10.toml` lowering |
 | S5.1 | `forge-dsl/src/codegen/mod.rs:3497` | 实际路径 `crates/frontend/forge-dsl/src/codegen/mod.rs:3497` |
+

@@ -46,7 +46,7 @@ src/
 ### 1. 定义 ISA
 
 在 `isa/` 下新建 TOML（如 `isa/my_isa.toml`），按 v12 DSL 语法定义指令编码、
-寄存器、lowering 规则（见 `docs/isa-dsl.md`）。在 forge-codegen 中注册 backend：
+寄存器、lowering 规则（见 `docs/reference/isa-dsl.md`）。在 forge-codegen 中注册 backend：
 
 ```rust
 // crates/backend/forge-codegen/src/arch/my_isa.rs

@@ -10,7 +10,7 @@
 > **v11 语法层**（`encoding` 字符串 + `@原语`、紧凑 `fields` 串、`when` 谓词串、
 > asm 隐式魔法名）已整体移除——无兼容层、无转换工具、无逃生门。v11 风格文件解析
 > 必然失败（`deny_unknown_fields`）。历史设计决策与迭代记录见
-> [`docs/isa-dsl-v12-roadmap.md`](./isa-dsl-v12-roadmap.md)。
+> [`docs/archive/isa-dsl-v12-roadmap.md`](../archive/isa-dsl-v12-roadmap.md)。
 
 ## 目录
 

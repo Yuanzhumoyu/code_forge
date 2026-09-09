@@ -1,4 +1,9 @@
 # forge-ir display 保真度缺口清单（第二十九~三十轮,已全部修复）
+> ## ⚠️ ARCHIVED（2026-09）
+>
+> forge-ir display 保真度缺口清单（第 29–30 轮，74→0 已全部修复）。
+> 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
+
 
 > 全量 roundtrip 测试（display_llvm::roundtrip_all_assembler_cases，**已解除
 > #[ignore] 作为常规回归**——display_llvm.rs:1615-1618）
@@ -35,3 +40,4 @@
 **验收已达成**：对应用例 ROUNDTRIP-FAIL 消失；全量 roundtrip 取消 ignore 后绿
 （常规回归，198 checked / 254 skip / 0 failures）；452 compat 198 不破；
 `roundtrip_failures.txt` 自愈（0 失败不写入、修复后删除）。
+

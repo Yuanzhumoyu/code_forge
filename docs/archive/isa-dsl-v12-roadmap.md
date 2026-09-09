@@ -1,4 +1,9 @@
 # ISA-DSL v12 路线图（唯一语法，不兼容 v11，允许重构）
+> ## ⚠️ ARCHIVED（2026-09）
+>
+> ISA-DSL v12 历史方案与迭代记录（已完成并演进）。现行语法规范见 `docs/reference/isa-dsl.md`（v15）。
+> 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
+
 
 > 状态：**迭代 1-6 + Phase 1-7 + 第三轮破坏性重构均已完成**（2026-08）。
 > 本文档持久化已批准的 v12 方案，供后续迭代参考。
@@ -7,8 +12,8 @@
 > 无逃生门。forge-dsl 内部重构为直接消费 v12 结构化模型。
 > 当前实现基线：x86_v12 146 条 / riscv64_v12 117 条指令；forge-dsl 51 测试、
 > forge-codegen jit 全套、forge-tests 34（riscv 矩阵 126 QEMU 真执行）、
-> mini_c 全绿。语法规范见 [`docs/isa-dsl.md`](./isa-dsl.md)；第三轮重构
-> 详细记录见 [`docs/asm-dec-generic-design-v2.md`](./asm-dec-generic-design-v2.md)。
+> mini_c 全绿。语法规范见 [`docs/reference/isa-dsl.md`](../reference/isa-dsl.md)；第三轮重构
+> 详细记录见 [`docs/archive/asm-dec-generic-design-v2.md`](./asm-dec-generic-design-v2.md)。
 
 ## 1. 现状诊断（实测数据）
 
@@ -265,7 +270,7 @@ crates/frontend/forge-dsl/src/
 
 - **C1 YMM ABI**：依赖迭代 5 的 `abi.arg_class by-ref` 策略，迭代 6 之后实施
 - **C2 forge-rustc vec**：与 DSL 迁移正交（主库 regalloc），可并行；建议迭代 5 后启动
-- 技术路径见 `docs/roadmap-status.md`
+- 技术路径见 `docs/archive/roadmap-status.md`
 
 ## 8. 风险与决策点
 
@@ -752,7 +757,7 @@ Sdiv/Srem/Udiv/Urem/Call/循环（while/for）→ mini_c 全量；x86 124 指令
   （v11 汇编运行时，已无使用者）；根 `src/lib.rs` 删除 `pub use forge_asm`/
   `assembler`/`encode`；benches/compile_bench 与 examples/jit_demo 重定向
 - **CI + 文档**：ci.yml 删 forge-tests-matrix/forge-tests-unicorn 两个 job；
-  删 `docs/{isa-dsl-v10,encoding-guide,asm-syntax}.md`；`docs/isa-dsl.md`
+  删 `docs/{isa-dsl-v10,encoding-guide,asm-syntax}.md`；`docs/reference/isa-dsl.md`
   重写为 v12 规范；roadmap-status/README/CLAUDE 同步
 
 **验证**：`cargo check --workspace --exclude forge-rustc --all-targets` 全绿；
@@ -843,3 +848,4 @@ forge-codegen 100/100）；clippy/fmt 干净；全仓 grep 零残留
    任意 `{N}` 按槽类型绑定。
 
 全部等价变换：x86/riscv golden 字节断言与 riscv 矩阵 126 全绿。
+

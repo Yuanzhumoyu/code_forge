@@ -1,6 +1,11 @@
 # 剩余迭代内容总清单（forge-ir LLVM 汇编兼容）
+> ## ⚠️ ARCHIVED（2026-09）
+>
+> forge-ir 剩余迭代行动版（第 18–23 轮；452 收敛后已无剩余迭代）。
+> 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
 
-> 本文档是 `docs/forge-ir-iteration-checklist.md` 的**后续行动版**：后者记录已完成的
+
+> 本文档是 `docs/archive/forge-ir/iteration-checklist.md` 的**后续行动版**：后者记录已完成的
 > 第十轮～第十七轮执行结果，本文档列出**接下来所有需要迭代的内容**——每个迭代项
 > 含问题解析、完整代码演示、解决思路、风险与验收命令。
 >
@@ -254,3 +259,4 @@ cargo test --workspace --exclude forge-rustc -j 4         # workspace 全量（�
 
 **终态：正向 198/452、正确拒绝 254、误接受 0、FAIL 0——452 个用例全部收敛,
 误接受清零。**
+

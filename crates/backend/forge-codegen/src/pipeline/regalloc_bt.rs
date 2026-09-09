@@ -529,7 +529,7 @@ impl<'a> BtState<'a> {
                 // 字段用 scratch 覆盖，该值仅满足 Result 签名）。
                 // 注：vec_push 崩溃现场（槽 1144 = v312692 def-spill 槽）值 0，
                 // 疑似 ret_move/call 的 spilled def store 与 scratch 交互——
-                // 见 docs/forge-rustc-vec_push-plan.md E1 深挖。
+                // 见 docs/plans/forge-rustc-vec_push-plan.md E1 深挖。
                 Ok(PReg::new(0, class))
             }
         } else {

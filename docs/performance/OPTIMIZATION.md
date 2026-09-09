@@ -4,7 +4,7 @@
 12th Gen i9-12900H / Windows 11）得出的编译管线热点分析与优化清单。
 
 运行基准：`cargo bench --bench compile_bench -- '^(ir_build|ir_parse|opt_|pipeline_breakdown|codegen|verify|module|throughput|code_size|comparison|e2e_compile_)'`
-（`e2e_jit_execute` 已纳入默认运行——JIT 正确性修复后不再挂起，见 BENCHMARKS.md）。
+（`e2e_jit_execute` 已纳入默认运行——JIT 正确性修复后不再挂起，见 docs/performance/BENCHMARKS.md）。
 
 时间均为 criterion median（µs，除注明 ms）。
 
@@ -55,7 +55,7 @@
   `value_names` 线性扫描（O(n²) 贡献）；主因疑似 forge-grammar `parser.rs`
   的 `Alt` 回溯 + `ZeroOrMore` 嵌套（`block ::= ... stmt* terminator` 中每条
   `inst` 的 `(results "=")? opcode operands immediates? flags? ";"?` 组合）。
-  另：多函数单源解析的 ZeroOrMore 已知有 bug（BENCHMARKS.md），需分开解析。
+  另：多函数单源解析的 ZeroOrMore 已知有 bug（docs/performance/BENCHMARKS.md），需分开解析。
 
 **建议**：
 
@@ -127,7 +127,7 @@
 
 ## 4. P1 — Nop tombstone 残留（简单可落地）
 
-**证据/已知问题**：BENCHMARKS.md 已记录——GVN/CSE/dead-code 将死指令改写为
+**证据/已知问题**：docs/performance/BENCHMARKS.md 已记录——GVN/CSE/dead-code 将死指令改写为
 `Opcode::Nop`，codegen 会跳过它们（已修复编译正确性），但 Nop 会一直携带到
 codegen（污染 use-list/块布局遍历，增加后续 pass 与 codegen 的工作量），
 仅当后续还有 DCE 时才被清理。
@@ -145,7 +145,7 @@ codegen（污染 use-list/块布局遍历，增加后续 pass 与 codegen 的工
 ## 5. P2 — const_fold（O1 最贵）
 
 **证据**：`opt_const_fold` 28.9 µs（many_ops）、`opt_const_fold_float` 12.5 µs
-（float）。O1 管线（complex）6.5 µs。BENCHMARKS.md 记录 const_fold 曾从
+（float）。O1 管线（complex）6.5 µs。docs/performance/BENCHMARKS.md 记录 const_fold 曾从
 469 µs 降到 44 µs（many_ops），现已 28.9 µs——仍有下降空间但收益中等。
 
 **建议**：复查 `scalar/const_fold.rs` 的固定点迭代（`UntilFixedPoint`）是否
@@ -174,7 +174,7 @@ CPU 状态差）。codegen 组紧跟慢速 ir_parse 后运行，数值系统性�
 1. 跨运行对比一律用 `cargo bench -- --save-baseline X` / `--baseline X`
    （相对比值，不比较绝对数）；
 2. 报告中标注"codegen 组受环境噪声影响，以 comparison 组为准"（已写入
-   BENCHMARKS.md）；
+   docs/performance/BENCHMARKS.md）；
 3. 可选：`--measurement-time` 调大 + 锁频（电源计划高性能）。
 
 ---
@@ -182,7 +182,7 @@ CPU 状态差）。codegen 组紧跟慢速 ir_parse 后运行，数值系统性�
 ## 7. P2 — 小函数 prologue 开销
 
 **证据**：`codegen_simple_add` 6.9 µs（comparison）vs `ir_build_simple_add`
-1.9 µs；`e2e_compile_simple` 13.0 µs。BENCHMARKS.md 记录 prologue 推送
+1.9 µs；`e2e_compile_simple` 13.0 µs。docs/performance/BENCHMARKS.md 记录 prologue 推送
 Windows x64 全量 callee-saved（含 RDI/RSI），小函数开销占比大。
 
 **建议**：prologue 按函数实际使用的 callee-saved 寄存器**按需推送**（liveness
@@ -255,7 +255,7 @@ worklist 或小整数快路径，标为后续工作。
 
 **背景**：`cargo test -p mini_c` 崩 STATUS_ACCESS_VIOLATION（integration_tests 第
 一个测试就崩）、`test_hir_e2e_loops` 返回 1（应 55）、`test_hir_e2e_params`
-SEGV。用 objdump 逐字节反汇编定位到 **5 个确定性 bug**（非 BENCHMARKS.md 曾
+SEGV。用 objdump 逐字节反汇编定位到 **5 个确定性 bug**（非 docs/performance/BENCHMARKS.md 曾
 怀疑的 DSL 非确定性——多次 clean rebuild 均确定性复现）：
 
 | # | 根因 | 现象 | 修复 |

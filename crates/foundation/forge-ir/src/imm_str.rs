@@ -1,6 +1,6 @@
 //! 不可变字符串 — SSO 栈上内联 + 静态借用 + Arc 堆上共享。
 //!
-//! `ImmStr` 是一个自包含的不可变字符串值类型（设计文档见 `docs/imm_str.md`）：
+//! `ImmStr` 是一个自包含的不可变字符串值类型（设计文档见 `docs/reference/imm_str.md`）：
 //!
 //! - [`ImmStr::Inline`]：≤ 22 字节的短字符串内联在栈上（零堆分配）；
 //! - [`ImmStr::Static`]：编译期字面量的零拷贝借用（`&'static str`）；

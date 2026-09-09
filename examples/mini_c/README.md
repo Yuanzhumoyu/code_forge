@@ -154,4 +154,4 @@ examples/mini_c/
    callee-saved push 槽内（`callee_saved_bytes` 漏计帧指针）、i32 的 load/store
    曾固定 64 位访问导致相邻槽重叠、frame 大小未包含局部变量区（槽落在 rsp
    之下）、`$modrm_mem_rr` 对 rbp/r13 基址误编 RIP-rel 且缺 SIB 语法。全部
-   修复后 `cargo test -p mini_c` 全绿（见 BENCHMARKS.md Known Issues）。
+   修复后 `cargo test -p mini_c` 全绿（见 docs/performance/BENCHMARKS.md Known Issues）。

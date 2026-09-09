@@ -1611,7 +1611,7 @@ fn roundtrip_fconst_inline() {
 //
 // 第二十九轮状态:首次运行暴露 74 个 display 保真度缺口(124 过/254 skip),
 // 分批次修复(第二十九~三十轮:74 → 27 → 9 → 2 → 0);第三十轮收尾后
-// **452 用例 display→reparse 全部通过**(见 docs/forge-ir-display-gaps.md),
+// **452 用例 display→reparse 全部通过**(见 docs/archive/forge-ir/display-gaps.md),
 // 本测试取消 ignore 作为常规回归。
 
 #[test]

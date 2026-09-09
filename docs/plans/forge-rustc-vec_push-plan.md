@@ -1,6 +1,6 @@
 # forge-rustc vec_push/vec_string 完整改进方案
 
-> 对应 `docs/roadmap-status.md` 剩余事项 2 与 `crates/tools/forge-rustc/WORKAROUNDS.md`
+> 对应 `docs/archive/roadmap-status.md` 剩余事项 2 与 `crates/tools/forge-rustc/WORKAROUNDS.md`
 > [WA-11]。e2e 58 用例中 2 个预期失败（`vec_push` SEGV、`vec_string` len 错）
 > + 派生现象（`vecwc2` 挂起 124）。十二轮深挖已收敛根因范围，本文给出
 > **分步消元的完整技术路径**（每步独立可验证，不再盲调）。

@@ -1,4 +1,9 @@
 # forge-ir 剩余任务总清单（第二十八轮）
+> ## ⚠️ ARCHIVED（2026-09）
+>
+> forge-ir 剩余任务总清单（P0 已实现；P1/P2 与审计遗留，第 28→32 轮）。
+> 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
+
 
 > 状态:LLVM Assembler 兼容 **452 全收敛**(198 正向 + 254 拒绝 + 0 误接受)、
 > workspace 48 suite 全绿、clippy 手写代码 8 条低风险遗留。
@@ -153,3 +158,4 @@ cargo test --workspace --exclude forge-rustc -j 4        # 交付前必跑
   离线,无新用例来源);接入新用例时延续逐例判 RUN 方法论。
 - **远期记录**:forge-dsl 巨型文件拆分(codegen/mod.rs 175KB)与双语法
   体系统一(Frag/AsmFrag)——记录不排期(用户已决策)。
+

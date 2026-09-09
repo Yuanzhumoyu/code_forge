@@ -1,5 +1,52 @@
 # CLAUDE.md
 
+## Documentation Map（文档地图）
+
+仓库文档按**职能**分目录存放（2026-09 重组）。每篇状态标记：
+`[active]` 现行维护 · `[progress]` 进行中 · `[archive]` 历史归档（头部 ARCHIVED，
+仅供参考、代码为准）。**先读 `docs/README.md`**（完整索引），再按主题进子目录。
+
+```text
+docs/
+├── README.md              # 文档总索引 + 状态图例
+├── reference/             # 现行规范/设计参考 [active]
+│   ├── isa-dsl.md             # ISA-DSL v15 唯一语法规范（改 isa/*.toml 先看它）
+│   ├── aarch64-encoding-ref.md# A64 编码参考（arm64_v12 后端/golden 依据）
+│   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
+├── forge-ir/              # forge-ir 工作流 [active]
+│   ├── README.md              # 组说明（历轮计划已归档、如何继续）
+│   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
+├── plans/                 # 有未完成工作的专项方案 [progress]
+│   ├── ymm-abi-plan.md        # YMM ABI（残余缺口见 forge-rustc WORKAROUNDS WA-37）
+│   ├── forge-rustc-vec_push-plan.md # vec 族（核心已关；vec_from_slice 仍 FLAKY）
+│   └── hir-shrink-plan.md     # forge-hir/mini_c 收缩
+├── performance/           # 基准与优化
+│   ├── BENCHMARKS.md          # 基准运行框架
+│   ├── OPTIMIZATION.md        # 优化清单
+│   ├── bench_baseline.md      # 基线 + 历轮实测
+│   └── codegen_stage_profile.md # codegen stage 占比
+├── guides/                # 工具与方法
+│   └── coverage.md            # cargo-llvm-cov 覆盖率工作流
+└── archive/               # 历史归档（⚠️ 内容以其记录时点为准）
+    ├── README.md              # 归档图例与清单
+    ├── roadmap-status.md / isa-dsl-v12-roadmap.md / asm-dec-generic-design-v2.md
+    ├── clippy-fixes.md / coverage-history.md
+    └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
+```
+
+仓库根与 crate 文档（不在 docs/ 下）：
+
+- `README.md` 项目主页 · `CLAUDE.md` 本文件 · `CHANGELOG.md` 更新日志
+- `crates/*/README.md` 与 `crates/tools/forge-rustc/WORKAROUNDS.md`（机读绕法清单
+  `[WA-NN]`）——源码级文档，随 crate 走。
+
+常见误解提示：
+
+- **forge-ir 的轮次纪元不统一**（audit 第 47 轮 ≠ roadmap 第 31 轮）——都已在
+  archive/forge-ir/，继续 forge-ir 迭代请按 `docs/forge-ir/README.md` 约定新开记录；
+- **archive 内"已实现/待办"不代表代码现状**——改代码/加测试前以源码与 test 为准；
+- ISA-DSL 只有 v15（`reference/isa-dsl.md`）是现行语法；v12/v13 文档全在 archive。
+
 ## Build Commands
 
 ```bash
@@ -158,6 +205,7 @@ v12 结构化谓词：属性表 = `v12/pred.rs` 的 `PRED_ATTRS`（`rd`/`rs1_wid
 判别值 Xchg=0/Add=1/Sub=2）。
 
 `[[lowering]]` 的两个消重/去序键（v15-S2）：
+
 - `vary = { attr = [...], name = [...] }`：各列表**等长**，按下标 zip 成行展开。
   键在 `PRED_ATTRS` 里 → 该行自动追加 `eq = [键, 值]` 到 `when`；否则是模板里
   `{键}` 的纯替换变量。x86 `Fcmp` 32 条 → 8 条、`Vadd`/`Vsub` 各 8 → 3。

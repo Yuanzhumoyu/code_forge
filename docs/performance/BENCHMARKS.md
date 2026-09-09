@@ -347,14 +347,14 @@ float 206.7, mem 172.6, spill 64.5, big_loop 310.9.
    prefixes. Zero-copy `&[char]` matching + `match_here` prefix-length made it
    near-linear: `ir_parse_simple_add` 13 ms → **317 µs (41×)**, multi_func
    204 → 7.4 ms, `ir_parse_big_text_256` 24 ms (300 insts used to hang).
-   The parser itself was linear all along (~500 µs); see OPTIMIZATION.md §9.
+   The parser itself was linear all along (~500 µs); see docs/performance/OPTIMIZATION.md §9.
 2. **`mini_c` JIT crashes — FIXED (2026-08-03).** Five deterministic codegen
    bugs caused `cargo test -p mini_c` to SEGV (STATUS_ACCESS_VIOLATION):
    `$modrm_mem_rr` RIP-relative encoding for rbp/r13 bases + missing SIB
    syntax, `callee_saved_bytes` omitting the frame-pointer slot, i32
    load/store fixed at 64-bit (adjacent slot overlap), frame size omitting
    the stack_addr local area, and missing `ctx.default_opsize` in lowering.
-   All fixed (see OPTIMIZATION.md §9); `cargo test -p mini_c` is fully green.
+   All fixed (see docs/performance/OPTIMIZATION.md §9); `cargo test -p mini_c` is fully green.
 3. **`Nop` tombstones from optimization passes — mitigated.** GVN/CSE/SCCP/egraph
    rewrite dead instructions to `Opcode::Nop` after the O1 DCE position; codegen
    skips them (fixed). The O2/O3 pipelines now end with a trailing
@@ -385,7 +385,7 @@ float 206.7, mem 172.6, spill 64.5, big_loop 310.9.
    179.6 µs). Use `comparison`/`code_size` for low-noise absolute numbers and
    `--save-baseline`/`--baseline` for cross-run comparisons. No
    字节→指令解码（`TargetDecoder`）实现存在——`TargetDisassembler` 为 DSL 生成的
-   Inst→文本格式化器（非字节解码），故无 disasm 基准组（tracked in OPTIMIZATION.md §8).
+   Inst→文本格式化器（非字节解码），故无 disasm 基准组（tracked in docs/performance/OPTIMIZATION.md §8).
 
 ## ISA lowering coverage matrix
 
@@ -738,7 +738,7 @@ IR 构建与解析公共热点做了一轮优化。方法：先跑全量基准�
 
 ## 性能优化记录（2026-08 第二轮：codegen 链残余 + 框架级）
 
-基于 `docs/codegen_stage_profile.md` 的 stage 占比实测（**regalloc 仍占 codegen
+基于 `docs/performance/codegen_stage_profile.md` 的 stage 占比实测（**regalloc 仍占 codegen
 63-67%**、lowering 14-20%、emit ~11%）与已识别未实施的优化点，完成第二轮优化。
 对比基准同为 `--save-baseline main`（第一轮优化前）；下表为**两轮累计**变化
 （criterion change vs main baseline，中位数）。

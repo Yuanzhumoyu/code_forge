@@ -1,4 +1,9 @@
 # forge-ir 迭代清单（前瞻 backlog）
+> ## ⚠️ ARCHIVED（2026-09）
+>
+> forge-ir 前瞻 backlog（S/L/M 表；文本层已收敛 452 用例）。
+> 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
+
 
 > 定位：本文件是**前瞻迭代计划**（与 `forge-ir-iteration-roadmap.md` 的"历轮成果记录"
 > 互补）。每轮开工前从本文件挑选迭代项，完成后把成果回写 roadmap 附录 §7 与本文件
@@ -326,7 +331,7 @@ lalrpop 0 冲突 + 增量编译计时。
 
 **细化方向**：
 1. 用例扩充：异常（invoke/landingpad）、聚合（嵌套字面量）、metadata 密集模块；
-2. 对比基线：`docs/bench_baseline.md` 每轮更新；
+2. 对比基线：`docs/performance/bench_baseline.md` 每轮更新；
 3. 热点分析（roadmap 5.2 候选）：`value_map` 查找、display 的
    `self.types.borrow()` 重复借用——收益不确定，按需推进。
 
@@ -451,7 +456,7 @@ cargo test -p forge-ir --test verify_negative
 # 执行层（text_to_exec 全量）
 cargo test -p forge-tests --lib "isa::x86_64::text_to_exec"
 
-# 解析基准（对比 docs/bench_baseline.md）
+# 解析基准（对比 docs/performance/bench_baseline.md）
 cargo bench -p forge-ir --bench ir_parse
 ```
 
@@ -471,10 +476,10 @@ cargo check -p forge-ir   # 冲突会以 build 错误报出（Local ambiguity / 
 
 ### 每轮文档维护约定
 
-1. 轮末把成果回写 `docs/forge-ir-iteration-roadmap.md` 附录 §7（历轮记录）；
+1. 轮末把成果回写 `docs/archive/forge-ir/iteration-roadmap.md` 附录 §7（历轮记录）；
 2. 同步本文件状态列（已解锁项移到 §0 表尾标注"已解锁"或删除）；
 3. 同步 compat 文件头基线（正向通过数/误接受数/已解锁类）；
-4. 基准变化更新 `docs/bench_baseline.md`；
+4. 基准变化更新 `docs/performance/bench_baseline.md`；
 5. 新增 LALR 冲突形态 → 附录 §6 备忘表加行。
 
 ### 已知长期基线（当前，452 全收敛后）
@@ -487,3 +492,4 @@ cargo check -p forge-ir   # 冲突会以 build 错误报出（Local ambiguity / 
 | roundtrip | 0 缺口（198 checked / 254 skip，常规回归） |
 | parse 基准 | parse_medium_module ~57µs、roundtrip ~148µs |
 | 增量编译 | 5-10s（lalrpop 单文件） |
+

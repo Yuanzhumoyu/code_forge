@@ -16,7 +16,7 @@
 > SmallVec<[u64;4]>（lowering 主循环每指令重建，免堆分配）——many_ops
 > lower 62.9µs→25.8µs、total 188µs→100µs；codegen multi_block/complex/
 > with_o1 改善 12-20%、throughput 大函数 -5~-13%。剩余建议见
-> `docs/bench_baseline.md` 文末「优化建议」。
+> `docs/performance/bench_baseline.md` 文末「优化建议」。
 >
 > **第三轮评估（08-31）**：ir_parse big_text_256 -9.4% 显著改善（既有
 > lexer 零拷贝修复效果，无需再动）；verify 各 pass 用惰性缓存

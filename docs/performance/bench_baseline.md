@@ -333,7 +333,7 @@ o2_gvn_pre 2.90、o1_jump_thread 1.96、o2_block_param_coalesce 1.89。
 
 ## 优化建议（基于结构性分析，2026-08-31）
 
-> 依据：`docs/codegen_stage_profile.md` 的 stage 分解（regalloc 63-67%、
+> 依据：`docs/performance/codegen_stage_profile.md` 的 stage 分解（regalloc 63-67%、
 > lowering 14-20%、emit 11%）在 8/27/08-31 实测下仍成立（codegen 组是最大
 > 瓶颈，throughput_500/codegen 2367µs ≈ optimize 的 1.6 倍）。以下方案按
 > 收益排序，均为**局部、低风险**改动；实施后须在干净环境跑 codegen 组 +
@@ -489,7 +489,7 @@ throughput codegen：
 ## 第二轮优化记录（2026-08-31，提交 944f0eb）——lowering SmallVec 化
 
 > 用 `CF_CODEGEN_TIMING=1` 精确测量 codegen stage 分解，发现 **lowering 占
-> codegen 33%**（超出 `docs/codegen_stage_profile.md` 记录的 20%——第二轮
+> codegen 33%**（超出 `docs/performance/codegen_stage_profile.md` 记录的 20%——第二轮
 > 新热点）。最大分配源：lowering 主循环每指令重建 `current_immediates`
 > （`inst.immediates.iter().map(...).collect()` 堆分配 Vec）。
 
