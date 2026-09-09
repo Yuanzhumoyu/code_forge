@@ -158,14 +158,20 @@ jobs:
         env:
           FORGE_CLI_TOOLCHAIN: "+nightly-2026-09-05"
         run: cargo test -p cargo-forge --test cli_tests cli_file_mode_alloc -- --nocapture
-      - name: Upload alloc probe artifacts (for diagnosis)
+      - name: Copy alloc probe exe (diagnosis)
+        if: always()
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem "$env:TEMP" -Recurse -Filter 'alloc_sum.exe' -ErrorAction SilentlyContinue |
+               Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($f) { Copy-Item $f.FullName "$env:RUNNER_TEMP\alloc_ci_bad.exe"; Write-Output "copied $($f.FullName)" }
+          else { Write-Output 'no alloc_sum.exe found in %TEMP%' }
+      - name: Upload alloc probe exe (for diagnosis)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: alloc-probe
-          path: |
-            ${{ runner.temp }}/cargo_forge_cli_filealloc_*/alloc_sum.exe
-            ${{ runner.temp }}/cargo_forge_cli_filealloc_*/alloc_sum.rs
+          path: ${{ runner.temp }}/alloc_ci_bad.exe
           if-no-files-found: ignore
       - name: cargo-forge cli_tests
         env:
