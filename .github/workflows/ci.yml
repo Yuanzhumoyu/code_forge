@@ -151,6 +151,22 @@ jobs:
       # 本 job 有 rust-src；FORGE_CLI_TOOLCHAIN 钉版使嵌套 cargo 用已装 channel
       #（缺省会找 +nightly 别名 → rustup 自动下载最新 nightly，与钉版 dll 错配）。
       # cli_tests 的 SKIP 门（dll && rust-src）在本环境放行 → 6 条真跑。
+      # ⚠️ alloc 用例隔离探测（诊断 run12-16 连败的产物运行 AV）：先单跑
+      # alloc——区分并发/顺序因素；失败产物 exe（tmpdir 未清理）上传
+      # artifact 供与本地成功产物对照（本地同 env 稳定绿）。
+      - name: cargo-forge cli_tests (isolated alloc probe)
+        env:
+          FORGE_CLI_TOOLCHAIN: "+nightly-2026-09-05"
+        run: cargo test -p cargo-forge --test cli_tests cli_file_mode_alloc -- --nocapture
+      - name: Upload alloc probe artifacts (for diagnosis)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alloc-probe
+          path: |
+            ${{ runner.temp }}/cargo_forge_cli_filealloc_*/alloc_sum.exe
+            ${{ runner.temp }}/cargo_forge_cli_filealloc_*/alloc_sum.rs
+          if-no-files-found: ignore
       - name: cargo-forge cli_tests
         env:
           FORGE_CLI_TOOLCHAIN: "+nightly-2026-09-05"
