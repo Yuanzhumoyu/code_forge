@@ -208,22 +208,21 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
-      - uses: taiki-e/install-action@cargo-tarpaulin
+      - run: rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage
-        # 白名单只跑纯逻辑库 crate（forge-ir/forge-opt/forge-hir/forge-dsl/
-        # forge-grammar/forge-mem/forge-hir-macro）：tarpaulin 的 ptrace 在
-        # ubuntu runner 上对含执行/spawn 面的 crate 不稳定（实测 workspace
-        # 全量含 forge-tests/forge-codegen/mini_c 时 "Test failed during
-        # run"——QEMU spawn、JIT、x86 宿主执行均与 ptrace 冲突）。执行面由
-        # test-linux（QEMU 矩阵独立步）与 test-windows 覆盖；coverage 只
-        # 报告纯库。
+        # 白名单纯逻辑库 crate + llvm-cov（非 ptrace）：tarpaulin 在 ubuntu
+        # runner 上稳定 "Test failed during run"（连纯库白名单也崩——
+        # ptrace 与 runner 环境不兼容）；llvm-cov 走正常子进程执行无
+        # 该问题。执行面（QEMU 矩阵/JIT/x86 宿主）由 test-linux/test-windows
+        # 覆盖，coverage 只报告纯库。
         # 默认 features（不开 --all-features：forge-tests nightly → rustc_private
         # dylib，Linux 缺 libLLVM 无法链接）。
-        run: cargo tarpaulin --out xml -p forge-ir -p forge-opt -p forge-hir -p forge-hir-macro -p forge-grammar -p forge-dsl -p forge-mem
+        run: cargo llvm-cov --no-clean --workspace --exclude forge-rustc --exclude forge-codegen --exclude forge-tests --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: cobertura.xml
+          files: lcov.info
           fail_ci_if_error: false
 
 
