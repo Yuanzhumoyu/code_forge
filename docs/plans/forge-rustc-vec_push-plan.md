@@ -625,6 +625,15 @@ stage_a + parallel 全绿且该用例 exit 正确"，且 CI 侧不再出现超�
 仍由同产物复跑兜底），**默认关闭 ⇒ CI 现有行为不变**。它把"这 5 例的正确性是否已可
 进门禁"变成可执行问句：本轮 1600 次单跑无错码 ⇒ 就绪度证据充分。
 
+两条已实测的使用注意：
+
+- 两条分支都验过（把 `vec_push` 的 `expected` 临时改成 99）：容忍模式打印
+  `KNOWN vec_push exit=2 (want 99)`（不致命），严格模式打印 `FAIL …` 并计入
+  `unexpected failures` ⇒ 硬失败；
+- 用 `FORGE_E2E_ONLY=<失败用例>` 单跑时，即便容忍模式套件也会红——失败来自末尾的
+  健全性守卫 `assert!(passed > 0, "no cases passed — backend broken")`，与 FLAKY
+  容忍无关。因此严格模式评估应跑**全量** stage_a（103 例），不要只看单例。
+
 **建议的转正路径（需人批准，本轮未执行）**：
 
 1. 先让 CI 跑一轮严格模式（把 `FORGE_E2E_STRICT_FLAKY=1` 加进 e2e 步骤，或手动触发）
