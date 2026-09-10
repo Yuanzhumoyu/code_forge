@@ -586,7 +586,10 @@ const CASES: &[Case] = &[
         phase: "P6 alloc",
         reason: "2026-09-06 回归 known_failure：CI stage_a 偶发 timeout（挂起）——
         Box::new 的 alloc/Unique 链同 vec_push 类 regalloc spill 非确定性残余
-        （见 vec_push reason）。转正标准：3 轮 stage_a+parallel 全绿且 exit=42。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
+        （见 vec_push reason）。转正标准：3 轮 stage_a+parallel 全绿且 exit=42。（2026-09-10 复核：
+        stage_a 103/103 × 2 轮无复现；**8 并发负载下出现 4 次瞬态超时**（8 worker × 40 轮窗口内），
+        每次均由 harness 的「同产物复跑」转为通过 ⇒ 同 vec_from_slice：宿主侧运行期延迟，
+        非错码/错编译；见 WORKAROUNDS WA-40 与计划 §9.2）",
     },
     Case {
         name: "box_write",
@@ -670,7 +673,10 @@ const CASES: &[Case] = &[
         reason: "2026-09-06 回归 known_failure：CI e2e stage_a 偶发 timeout（挂起：
         Vec::from 的 slice→Vec 拷贝链与 vec_push 同类 regalloc spill 非确定性残余
         （见 vec_push reason；转正原因为 promoted/Unsize 降级正确性，非 alloc 链）。
-        转正标准：3 轮 stage_a+parallel 全绿且 exit=3。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
+        转正标准：3 轮 stage_a+parallel 全绿且 exit=3。（2026-09-10 复核：stage_a 103/103 × 2 轮无复现；
+        **8 并发负载下复现 1 次为 15 s 超时**——该轮产物独立复跑 20/20 exit=3（91–368 ms），
+        且同产物复跑即通过 ⇒ 判为宿主侧运行期延迟，非错码/错编译；harness 已加超时同产物
+        复跑（FORGE_E2E_TIMEOUT_SECS 可覆盖阈值），见 WORKAROUNDS WA-40 与计划 §9.2）",
     },
     Case {
         name: "dyn_trait_call",
@@ -1578,13 +1584,43 @@ fn run_case_with(
     }
 
     // 运行并取退出码（带超时：panic handler 是 loop{}，assert 失败会挂起）
-    let mut child = Command::new(&exe)
+    let mut result = run_exe_with_timeout(&exe);
+    // 超时重试（2026-09-10 取证，见 docs/plans/forge-rustc-vec_push-plan.md §9.2）：
+    // 本机 8 并发负载下复现过该假败——首次运行 15 s 未退出，而**同一产物**事后独立
+    // 复跑 20/20 正确退出（≈100 ms/次）⇒ 超时多为宿主侧起进程/映像就绪延迟
+    // （新写出的 .exe + 负载），不是产物错码。同一产物复跑一次即可区分：
+    // 真挂起（产物确定性 panic loop）两次都会超时，仍照常上报。
+    if let Err(ref e) = result
+        && e.contains(TIMEOUT_MARKER)
+    {
+        println!(
+            "RETRY {:<16} 首次运行超时（疑宿主侧起进程/映像延迟），同产物复跑一次",
+            case.name
+        );
+        result = run_exe_with_timeout(&exe);
+    }
+    result
+}
+
+/// 超时错误标记：`run_exe_with_timeout` 产生、`run_case_with` 据此做一次「同产物复跑」
+/// 以剔除宿主侧起进程/映像延迟造成的假败（真挂起会两次都超时，仍上报）。
+const TIMEOUT_MARKER: &str = "timeout (挂起";
+
+/// 运行产物并取退出码。超时（默认 15 s，`FORGE_E2E_TIMEOUT_SECS` 可覆盖，便于区分
+/// 「真挂起」与「负载下起得慢」）时杀掉子进程并返回含 [`TIMEOUT_MARKER`] 的错误
+/// ——panic handler 是 `loop {}`，assert 失败即挂起。
+fn run_exe_with_timeout(exe: &Path) -> Result<i32, String> {
+    let secs: u64 = std::env::var("FORGE_E2E_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
+    let mut child = Command::new(exe)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("failed to spawn {}: {e}", exe.display()))?;
     let mut code = None;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
     while std::time::Instant::now() < deadline {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             code = status.code();
@@ -1596,7 +1632,9 @@ fn run_case_with(
         Some(c) => Ok(c),
         None => {
             let _ = child.kill();
-            Err("timeout (挂起：可能 assert 失败进入 panic loop)".to_string())
+            Err(format!(
+                "{TIMEOUT_MARKER}：{secs} s 内未退出——可能 assert 失败进入 panic loop)"
+            ))
         }
     }
 }

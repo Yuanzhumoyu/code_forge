@@ -462,8 +462,11 @@ clippy job 有上传），失败即随 runner 销毁。已补（`.github/workflo
 
 ### 9.2 步骤 2：本机 hammer 加严（**已执行，2026-09-10**）
 
-脚本：`target/tmp/hammer.ps1`（5 轮全量 stage_a + 并行变体 + 5 用例各单跑 ×10，
-失败时 `FORGE_E2E_KEEP=1` 保留 `.rs/.exe`）。
+脚本：`crates/tools/forge-rustc/tests/e2e_flake_repro.ps1`（`-Mode hammer`：5 轮全量
+stage_a + 并行变体 + 5 用例各单跑 ×10；`-Mode load`：N 个并发 worker 直接跑 e2e 测试
+二进制、对单用例制造负载直到复现）。失败即写 `target/tmp/*_fail_*.txt`，并把 `KEEP`
+保留的失败工作目录**复制回工作区**。脚本落仓库内（而非 `target/tmp`）是因为后者会随
+会话轮换被清空——2026-09-10 19:45 实测：当时的 hammer/复现脚本全部丢失。
 
 **实测结果（两轮 hammer，合计 13 轮 stage_a）**：
 
@@ -492,26 +495,73 @@ clippy job 有上传），失败即随 runner 销毁。已补（`.github/workflo
    ⇒ 该轮**编译成功且产物语义正确**，失败落在运行期（15 s 未退出），与本仓库 CI 记录的
    "偶发 timeout（挂起）"同族。
 
-**结论（截至 2026-09-10）**：这 5 例的偶发失败**不是错码、也不是该类用例的错编译**，
-而是运行期异常（最可能 = 子进程 15 s 未退出被强杀；`try_wait` 报错的同族路径无法排除）。
-仍待解释的是"该 exe 为何在负载下 15 s 不退出、事后独立复跑却稳定 3"——需要一次
-**当场留证**的复现。
+**负载复现（2026-09-10 20:08，已当场留证）**：`-Mode load -Workers 8 -Rounds 40`
+（8 个并发 worker 直接跑 e2e 二进制、单用例 `vec_from_slice`、`FORGE_E2E_KEEP=1`）
+**第 1 轮即复现**，首次拿到失败文案：
+
+```text
+FAIL worker2 run1 dt=17364ms :: KNOWN vec_from_slice error: timeout (挂起：可能 assert
+失败进入 panic loop) [P6 alloc] :: keep=…\forge_rustc_e2e_15608
+```
+
+失败轮产物已复制到 `target/tmp/e2e_timeout_evidence/`（`vec_from_slice.{rs,exe,pdb}`，
+exe SHA256 `d227066e…315c14`）。**对该产物独立复跑 20 次：20/20 `exit=3`，每次 91–368 ms**
+⇒ 按 §9.1 判据落入"行为一致而失败"一支 = **运行期环境性**（宿主侧起进程/映像就绪延迟：
+新写出的 `.exe` 在 8 路并发嵌套编译下未能在 15 s 内跑起来），**不是错码、也不是该用例的
+错编译**。负载阈值旁证：同一脚本 4 并发 × 30 轮 = **120 次全绿**（单轮 avg 1.86 s、
+max 2.56 s、无一 > 5 s）——即需要 8 路负载才触发。
+
+**主库侧加固（2026-09-10，同轮落地）**：harness 在超时后用**同一产物复跑一次**
+（`run_exe_with_timeout` + `TIMEOUT_MARKER`）：真挂起（产物确定性 panic loop）两次都会
+超时、照常上报；宿主侧延迟则被这次复跑吸收，并打印 `RETRY <case> …` 留痕。
+超时阈值可用 `FORGE_E2E_TIMEOUT_SECS` 覆盖（诊断用）。
+
+**复现的分布（同轮追加 5 个窗口，每窗口 8 worker × 40 轮 = 320 次单跑）**：
+
+| 用例 | 窗口内的瞬态超时 | 结果 |
+| --- | --- | --- |
+| `vec_from_slice` | 4（8 个 worker 中 4 个各 1 次） | 全部由"同产物复跑"转为通过（无 `KNOWN`） |
+| `box_value` | 4（同上） | 全部转为通过 |
+| `vec_push` / `vec_string` / `vec_iter_enumerate` | 0 | 320 次全绿 |
+
+⇒ 超时**不是用例特化**（两个不同用例各 4 次、另三个 0 次），且**每次都是瞬态**：
+整轮 17–18 s（≈15 s 超时 + ≈2 s 嵌套编译）后复跑同一产物即通过。这与"产物错码 /
+确定性挂起"不符，指向**宿主侧运行期延迟**（8 路并发下的起进程 / 映像就绪 / 扫描排队）。
+上文 4 并发对照（120 次全绿、单轮 max 2.56 s）说明需要 8 路负载才容易触发。
+
+**结论（2026-09-10）**：这 5 例的偶发失败是**运行期瞬态超时**（宿主侧），**不是错码、
+也不是该类用例的错编译**——已用"失败轮产物 20/20 正确退出"与"同产物复跑即通过"两条
+独立证据支持。
+
+**主库侧加固（2026-09-10，同轮落地）**：harness 在超时后用**同一产物复跑一次**
 
 **下一步（未闭环）**：
 
-- 制造负载复现（并发 2-3 个 e2e 实例，或重复 v1 那样的长序列），用 v2 脚本的捕获路径
-  （`FORGE_E2E_KEEP=1` + 失败即写 `hammer_fail_*.txt`）抓住 `KNOWN` 文案；
-- 若定格 `error: timeout (挂起…)`：按 §9.1 的字节判据比对该 exe 与正常产物的
-  `.text`/SHA256（一致 ⇒ 纯运行期环境性 → 转 §9.3）；
-- 若定格错码：按 §8.1 关联法查 def-spill 站点（转 §9.4）。
+- CI 侧观察：本轮已具备 `e2e-evidence` 上传（§9.1）+ 超时同产物复跑，下一次偶发应能
+  直接给出 `RETRY`/`KNOWN` 文案与产物；
+- 若出现**两次都超时**（真挂起）：按 §8.1 关联法查 def-spill 站点（转 §9.4）；
+- 若仍只有单次超时：累计若干轮 CI 全绿后按 §9.3 转正。
+
+**复跑前置（环境）**：2026-09-10 会话轮换清空了 `target/`，且钉版工具链缺 `rustc-dev`
+（`cargo test -p forge-rustc` 报 13 个 `can't find crate for rustc_abi/…`），需
+`rustup component add rustc-dev --toolchain nightly-2026-09-05`；`rust-src` 会与既有
+`lib\rustlib\src\rust\library\.cargo\config.toml` 冲突，须单独安装。
 
 ### 9.3 步骤 3（若判定为环境性）
 
-- 5 例保持 `known_failure`，但把 `reason` 从"regalloc 非确定性残余"改为
-  **"CI runner 环境性（附证据：产物字节一致 + 本机 N 轮全绿）"**，并在
-  `crates/tools/forge-rustc/README.md` 的支持矩阵节记录同一结论；
-- CI 取证已补（2026-09-10，见 §9.1）：`forge-rustc-e2e` 现在失败即上传 `e2e-evidence`
-  （日志 + 保留的失败工作目录），把每次偶发都变成可对照的证据，避免下次再从零排查。
+**本节判定已在 §9.2 成立（运行期瞬态超时，非错码/错编译）**，据此推进的部分：
+
+- `reason` 改写（**部分完成**）：已对**拿到直接证据**的两例改写入证据——
+  `vec_from_slice`（复现 → 产物 20/20 正确 → 同产物复跑通过）、`box_value`
+  （窗口内 4 次瞬态超时、全部复跑通过）；`vec_push` / `vec_string` /
+  `vec_iter_enumerate` 未取得直接证据，**保持原文**（不放水、不推测）；
+- harness 侧加固（**已完成**，见 §9.2）：超时后同产物复跑一次 + `RETRY` 留痕 +
+  `FORGE_E2E_TIMEOUT_SECS`；这是把"环境性超时"与"真挂起"分开的判据（两次都超时 =
+  真挂起，照常上报）；
+- CI 取证（**已完成**，见 §9.1）：`forge-rustc-e2e` 现在 `tee` 落盘 + 失败上传
+  `e2e-evidence`（日志 + 保留的失败工作目录），把每次偶发都变成可对照的证据；
+- **未做**：`crates/tools/forge-rustc/README.md` 支持矩阵节的环境性记录——留到 CI
+  出现"复试通过"的实证后再写，避免把"本机 8 路负载"的结论外推成 CI 结论。
 
 ### 9.4 步骤 4（若判定为编译行为差异）
 
