@@ -1612,6 +1612,13 @@ fn run_case_with(
 /// 以剔除宿主侧起进程/映像延迟造成的假败（真挂起会两次都超时，仍上报）。
 const TIMEOUT_MARKER: &str = "timeout (挂起";
 
+/// `FORGE_E2E_STRICT_FLAKY=1`：FLAKY 用例**只容忍超时**（已定性为宿主侧环境性、
+/// 且有同产物复跑兜底），**错码改按 FAIL 硬失败**。用于「5 例的正确性是否已可进门禁」
+/// 的定向验证与转正就绪度评估；默认关闭，CI 现有行为不变。
+fn strict_flaky() -> bool {
+    std::env::var_os("FORGE_E2E_STRICT_FLAKY").is_some()
+}
+
 /// 运行产物并取退出码。超时（默认 15 s，`FORGE_E2E_TIMEOUT_SECS` 可覆盖，便于区分
 /// 「真挂起」与「负载下起得慢」）时杀掉子进程并返回含 [`TIMEOUT_MARKER`] 的错误
 /// ——panic handler 是 `loop {}`，assert 失败即挂起。
@@ -1711,7 +1718,11 @@ fn e2e_stage_a_scalar_cases() {
             }
             Ok(code) => {
                 let msg = format!("exit={code} (want {})", case.expected);
-                if case.known_failure {
+                // 严格模式（FORGE_E2E_STRICT_FLAKY=1）：FLAKY 用例**只容忍超时**，
+                // 错码按 FAIL 上报——超时已定性为宿主侧环境性且有同产物复跑兜底，
+                // 而错码是错编译的signature，用它做转正就绪度的定向验证。
+                // 默认关闭 ⇒ CI 现有行为不变。
+                if case.known_failure && !(strict_flaky() && FLAKY.contains(&case.name)) {
                     // 回归探针（P3.3）：输出失败模式（reason），转正时对照验证
                     println!(
                         "KNOWN {:<16} {msg} [{}] reason: {}",

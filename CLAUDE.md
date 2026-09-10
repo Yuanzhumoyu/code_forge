@@ -289,7 +289,9 @@ let name = node.get_text("name")?;
   `FORGE_E2E_ONLY=<case>` 只跑单用例、`FORGE_E2E_KEEP=1` 失败轮保留工作目录
   （证据在 `%TEMP%\forge_rustc_e2e_<pid>\`，**该目录随会话轮换被清理**，须当场复制）、
   `FORGE_E2E_TRACE=1` 打印 `FORGE_TRACE_*` stderr、`FORGE_E2E_NIGHTLY` 覆盖本机
-  工具链（如 `nightly`）、`FORGE_E2E_TIMEOUT_SECS` 覆盖产物运行超时（默认 15 s）。
+  工具链（如 `nightly`）、`FORGE_E2E_TIMEOUT_SECS` 覆盖产物运行超时（默认 15 s）、
+  `FORGE_E2E_STRICT_FLAKY=1` 让 FLAKY 用例**只容忍超时、错码硬失败**（默认关闭，
+  用于评估 5 例正确性是否已可进门禁，见计划 §9.5）。
   超时后用**同一产物复跑一次**并打印 `RETRY <case>`——真挂起（两次都超时）仍上报，
   宿主侧起进程延迟造成的假败被吸收。
   FLAKY 用例取证脚本：`crates/tools/forge-rustc/tests/e2e_flake_repro.ps1`

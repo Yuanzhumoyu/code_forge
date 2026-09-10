@@ -38,7 +38,8 @@ $env:FORGE_E2E_KEEP = '1'   # 失败轮保留工作目录（取证）
 Remove-Item Env:FORGE_E2E_TRACE, Env:FORGE_TRACE_ALLOC, Env:FORGE_TRACE_SPILL -ErrorAction SilentlyContinue
 
 $log = Join-Path $tmp "flake_repro_${Mode}_${Case}.txt"
-"=== flake repro mode=$Mode case=$Case workers=$Workers rounds=$Rounds toolchain=$Toolchain start $(Get-Date -Format 'HH:mm:ss') ===" |
+$strict = if ($env:FORGE_E2E_STRICT_FLAKY) { 'strict' } else { 'tolerant' }
+"=== flake repro mode=$Mode case=$Case workers=$Workers rounds=$Rounds toolchain=$Toolchain flaky=$strict start $(Get-Date -Format 'HH:mm:ss') ===" |
     Out-File $log -Encoding utf8
 
 function Invoke-CargoTest {
@@ -107,7 +108,7 @@ else {
             foreach ($rt in ($out -split "`n" | Where-Object { $_ -match '^RETRY ' })) {
                 $retries += "worker${wid} run${k}: $($rt -replace '\s+$', '')"
             }
-            $known = (($out -split "`n" | Where-Object { $_ -match "^KNOWN $case " } |
+            $known = (($out -split "`n" | Where-Object { $_ -match "^KNOWN $case |^FAIL $case " } |
                     Select-Object -First 1) -replace '\s+$', '')
             if ($known) {
                 $raw = Join-Path $tmp "load_fail_w${wid}_r${k}.txt"
