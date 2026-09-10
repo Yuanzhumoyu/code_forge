@@ -463,7 +463,7 @@ clippy job 有上传），失败即随 runner 销毁。已补（`.github/workflo
    `[inst ProgPoint(P)] …` 配对，检查该字段是否 `MovRegImm64/MovRMem/XorRmR`
    这类**可改写**字段）。
 
-### 9.2 步骤 2：本机 hammer 加严（**已执行，2026-09-10**）
+### 9.2 步骤 2：本机加严复跑与取证（**已执行，2026-09-10**）
 
 脚本：`crates/tools/forge-rustc/tests/e2e_flake_repro.ps1`（`-Mode hammer`：5 轮全量
 stage_a + 并行变体 + 5 用例各单跑 ×10；`-Mode load`：N 个并发 worker 直接跑 e2e 测试
@@ -478,7 +478,7 @@ stage_a + 并行变体 + 5 用例各单跑 ×10；`-Mode load`：N 个并发 wor
 | 全量 stage_a | **v1 5 轮 + v2 5 轮 + 早前 3 轮 = 13 轮，轮轮 103/103**；5 个 FLAKY 用例每轮均以正确 exit 通过（42/2/2/3/80） |
 | 并行变体 `e2e_parallel_pool_threads` | 3 次全 PASS（`T=1 == -Z threads=2`） |
 | `vec_push` / `vec_string` / `vec_iter_enumerate` / `box_value` | 各 10/10（`exits=[2…] / [2…] / [80…] / [42…]`） |
-| `vec_from_slice` | **v1 出现 1 次失败（1/10，连续重负载序列中）**；v2 10/10；随后定向复跑 30（带 trace）+ 40（无 trace）全过 ⇒ 合计 **80 次单跑仅 1 次失败（≈1/100）** |
+| `vec_from_slice` | **v1 出现 1 次失败（1/10，连续重负载序列中）**；v2 10/10；随后定向复跑 30（带 trace）+ 40（无 trace）全过 ⇒ 该序列口径 **80 次单跑 1 次失败**（≈1/80；8 路并发负载口径见下文 ≈0.3%） |
 
 **失败形态（已定位到"运行期挂起"，2026-09-10 事后取证）**：
 
@@ -545,6 +545,12 @@ max 2.56 s、无一 > 5 s）——即需要 8 路负载才触发。
 stage_a + parallel 全绿且该用例 exit 正确"，且 CI 侧不再出现超时假败（错码仍会照常被
 `FLAKY`/`KNOWN` 捕获）。
 
+**CI 实证（2026-09-10）**：推送 `e50cc3e` 触发 run #21（<https://github.com/Yuanzhumoyu/code_forge/actions/runs/34479152950>）——
+**11/11 job 全绿**；其中 `forge-rustc (e2e, Windows)` 的 "Run e2e (stage A + M4 parallel)"
+步骤 **success**（3m34s），新增的 "Upload e2e evidence (on failure)" 按预期 **skipped**
+（无失败）。即：超时同产物复跑 + `tee` 日志 + `FORGE_E2E_KEEP` 的取证链路已在 CI 生效，
+本轮 CI 未出现超时。**单轮全绿 ≠ flake 消失**（转正标准见 §9.3）。
+
 **下一步（未闭环）**：
 
 - CI 侧观察：本轮已具备 `e2e-evidence` 上传（§9.1）+ 超时同产物复跑，下一次偶发应能
@@ -577,8 +583,10 @@ stage_a + parallel 全绿且该用例 exit 正确"，且 CI 侧不再出现超�
   真挂起，照常上报）；
 - CI 取证（**已完成**，见 §9.1）：`forge-rustc-e2e` 现在 `tee` 落盘 + 失败上传
   `e2e-evidence`（日志 + 保留的失败工作目录），把每次偶发都变成可对照的证据；
-- **未做**：`crates/tools/forge-rustc/README.md` 支持矩阵节的环境性记录——留到 CI
-  出现"复试通过"的实证后再写，避免把"本机 8 路负载"的结论外推成 CI 结论。
+- **仍未做（等更多 CI 轮次）**：`crates/tools/forge-rustc/README.md` 支持矩阵节的
+  环境性记录——本轮只拿到"CI 单轮全绿 + 取证链路生效"（run #21），样本不足以把
+  "本机 8 路负载 ≈0.3%、宿主侧瞬态超时"外推成 CI 结论；待续若干轮 CI 全绿、
+  或 CI 出现一次 `RETRY` 样例（新链路会直接留证）之后再写。
 
 ### 9.4 步骤 4（若判定为编译行为差异）
 
