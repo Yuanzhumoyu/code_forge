@@ -123,7 +123,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // fabs(f)：浮点绝对值（主库 Fabs lowering：andps 掩码）。
             "fabs" => vec![self.builder.fabs(args[0])],
             // simd_splat<T>(x)：向量广播（vbroadcast——主库向量指令；
-            // 仅当目标向量类型未被 ABI 门控拦截时可用）。
+            // 仅当目标向量类型未被 forge-rustc 类型层拦截时可用——
+            // types.rs 只支持 f32×2/4/8；ABI 层向量门控已于 WA-37 D2/D3 撤除）。
             "simd_splat" => {
                 let elem = args
                     .first()

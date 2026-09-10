@@ -1387,7 +1387,8 @@ fn gen_call_lowering(
         }
     };
     // Call：CALL_RIP_REL target = -(FuncRef+1)；指令缺失 → Unsupported。
-    // [abi].call_inst 可覆盖（riscv "JAL"：jal ra, @N——label 槽负值 →
+    // 指令名由指令角色决定（roles = ["call"]，v15-S4 起不再有
+    // [abi].call_inst 名指针——riscv "JAL"：jal ra, @N——label 槽负值 →
     // encoder 转 Relative(4,0) "@N" 符号 reloc，RiscvRelocPatcher 编码 UJ 位段）。
     let call_inst = role_name(infos, Role::Call).unwrap_or_default();
     let call_f = fids(&call_inst);
@@ -1439,7 +1440,7 @@ fn gen_call_lowering(
             }
         }
     } else {
-        // CallIndirect：[abi].call_indirect_inst 键（缺省 "CALL_RM"=x86
+        // CallIndirect：指令名取角色 roles = ["call_indirect"]（缺省 "CALL_RM"=x86
         // FF /2；定宽可声明 "JALR"）。结构迭代：In Reg 槽 = 目标地址
         //（args[0]，map_reg_field 绑 vreg）；Out/InOut Reg 槽 =
         // call_ret_reg；imm/label 槽置 0。
@@ -1700,7 +1701,7 @@ fn gen_call_lowering(
 }
 
 /// 参数 → ABI 寄存器移动语句（浮点参数按类型分派 XMM；整数按序 GPR）。
-/// 整数 mov 指令名按 [abi].ret_mov_inst 泛化；浮点指令缺失时该分支
+/// 整数 mov 指令名按指令角色（roles = ["gpr_mov"]）泛化；浮点指令缺失时该分支
 /// Unsupported（防引用不存在的 Inst 变体）。
 /// `byref_stmt`：宽向量 by-ref 栈拷贝语句（gen_call_lowering 按语义标签
 /// 生成期拼好；标签缺失 → Unsupported）。

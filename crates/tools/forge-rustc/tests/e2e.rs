@@ -2,7 +2,7 @@
 //! 运行产物并校验退出码（入口函数返回值 = 进程退出码）。
 //!
 //! 这是本 crate 的**统一测试体系**（P4.5）：
-//! - 用例清单即 `CASES` 数组（81 项，含 `known_failure` + `reason` 回归探针）
+//! - 用例清单即 `CASES` 数组（103 项，含 `known_failure` + `reason` 回归探针）
 //! - 旧的 `stage_a.rs` / `run_tests.sh` / `test_runner.sh` 已并入本文件并删除
 //! - `rustc_integration_test.ps1` 为简化版 PowerShell 入口（11 个标量用例子集；README 引用）
 //! - 未支持清单（global_asm 等）见 WORKAROUNDS.md（[WA-NN] 编号）
@@ -1604,7 +1604,7 @@ fn run_case_with(
 /// 红 CI。此名单内的 known_failure 用例：PASS 按通过计数（不触发
 /// TURNED-PASS），FAIL 按 KNOWN 打印（不致命）→ 套件双向恒绿并留痕。
 /// 转正 = 修复 forge-codegen regalloc 确定性后移出名单并翻转标记。
-/// 当前 4 个 vec/alloc 用例均为 Vec/String grow 链（见 vec_push reason）。
+/// 当前 5 个 vec/alloc 用例均为 Vec/String grow 链（见 vec_push reason）。
 const FLAKY: &[&str] = &[
     "vec_push",
     "vec_string",
