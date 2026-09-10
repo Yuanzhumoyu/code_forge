@@ -429,3 +429,82 @@ fail-closed 收口：
 
 `tests/e2e.rs` 的 `CASES` 现为 **103 项**（98 硬断言 + 5 个 `FLAKY` 容忍项）。
 历史值 58（本文 §5）/81（e2e.rs 旧头注）/85（README 旧文）/96（WA-36 行）均已过时。
+
+## 9. 修复方案（5 个 FLAKY 用例转正 + sret live range）
+
+**现状定级**：本计划的实现工作（Slice 落盘 / PtrMetadata / Unevaluated promoted /
+`spilled_int_receive` / ScalarPair 双返回 / 栈参数 / `frame_padding` / 原生 Select）
+**均已落地**；剩余的是**一个未定性的偶发失败**（5 例）+ 一个**未复现的假设**
+（sret live range）。因此本方案的核心不是"再改代码"，而是**先取证再判定**。
+
+### 9.1 步骤 1（前置，需要 CI 侧证据）：失败产物与 trace 对照
+
+本机无法复现 ⇒ 必须在 CI 失败时取回证据（沿用既有机制：日志与产物 artifact）：
+
+1. 取 CI 失败 run 的 e2e 产物（失败用例的 `.exe` 与 `-C save-temps` 的 `.o`）与
+   `target\tmp\logs_{check_suite_id}`；
+2. **比对判据**：把 CI 产物的 `.text`（或 forge 写出的 `.o`）与本机同源编译产物做
+   逐字节比对（`llvm-objdump` 归一化指令序列 + 对象字节）：
+   - **字节一致而 CI 崩** ⇒ 判为 **CI runner 环境性**（同类先例：`cli_tests` 的
+     alloc AV 最终以 artifact 双证判定为环境性，提交 `c545aaa`/`80d552d`）→ 进入
+     步骤 3；
+   - **字节不同** ⇒ 编译行为在 CI 与本机有别（工具链/宿主差异）→ 进入步骤 4；
+3. 复现失败 run 侧再取 `FORGE_TRACE_ALLOC=1 FORGE_TRACE_SPILL=1`（e2e 通过
+   `FORGE_E2E_TRACE=1` 打印）与 `FORGE_TRACE_MIR/STMT/TERM`，按 §8.1 的关联法
+   逐条核对 def-spill 站点（脚本口径：把 `[spill-def] vN at ProgPoint(P)` 与
+   `[inst ProgPoint(P)] …` 配对，检查该字段是否 `MovRegImm64/MovRMem/XorRmR`
+   这类**可改写**字段）。
+
+### 9.2 步骤 2（本机可执行，随时可跑）：hammer 加严
+
+```bash
+# 5 轮全量 stage_a（每轮 103 用例；本机历史：3 轮全 103/103）
+for i in 1 2 3 4 5; do cargo test -p forge-rustc --test e2e -- e2e_stage_a_scalar_cases; done
+# 并行变体（M4 真并行池；验证 spill 决策在并行任务粒度下不变）
+cargo test -p forge-rustc --test e2e -- e2e_parallel_pool_threads
+# 5 例单跑 ×10（畸形输入下也应有确定性退出码）
+for c in vec_push vec_string vec_from_slice vec_iter_enumerate box_value; do
+  for i in $(seq 10); do FORGE_E2E_ONLY=$c cargo test -p forge-rustc --test e2e -- e2e_stage_a_scalar_cases; done
+done
+```
+
+判据：任一失败 ⇒ 立即转步骤 9.1 的对照；全绿 ⇒ 记录为"本机 N 轮无复现"（**不放水**，
+FLAKY 标记保留）。
+
+### 9.3 步骤 3（若判定为环境性）
+
+- 5 例保持 `known_failure`，但把 `reason` 从"regalloc 非确定性残余"改为
+  **"CI runner 环境性（附证据：产物字节一致 + 本机 N 轮全绿）"**，并在
+  `crates/tools/forge-rustc/README.md` 的支持矩阵节记录同一结论；
+- 在 CI 上加"失败即上传产物/trace"的既有步骤（已具备则复用），把每次偶发都变成
+  可对照的证据，避免下次再从零排查。
+
+### 9.4 步骤 4（若判定为编译行为差异）
+
+按 §8.1 的关联法定位后，优先怀疑并验证两条线（本计划历史结论的延续）：
+
+1. **并行路径**：`FORGE_CODEGEN_THREADS>1` + `-Z threads>=2` 下函数任务粒度对
+   regalloc 决策的影响（determinism 测试已覆盖**产物布局**，但**未**覆盖 regalloc
+   决策路径本身）——做法：同源在 `T=1` 与 `T=4` 下导出 `FORGE_TRACE_ALLOC` 并 diff
+   分配结果，若不一致即定位分配器的迭代序依赖（HashMap → 排序）；
+2. **sret 地址 vreg live range**（§E3 第 2 项）：构造"跨 call 的 sret 指针 + 高压
+   spill"最小用例（主库 JIT 级，可本机跑），复现后按"`move_args` 前强制存活 /
+   显式 spill 保护"实施（`forge-dsl .../codegen/frame.rs` 收参 + regalloc 活区间）；
+   若主库级最小用例无法复现，则问题在 forge-rustc 生成的 IR 形态，转为 IR 级对照。
+
+### 9.5 步骤 5：转正判定（不放水）
+
+每例单独判定：**本机 5 轮 + CI 3 轮 stage_a+parallel 全绿** ⇒ 翻转
+`known_failure:false` 并从 `FLAKY` 摘除（一例一提交，便于回归定位）；任一轮失败
+⇒ 保留 FLAKY 并回写 trace 证据到本节。
+
+### 9.6 与 WA-40 的关系（已落地的收口，防止假设中的静默错码）
+
+即使 E1 假设未被证实，其失败形态（spilled def 落在不可改写字段 → 静默写坏槽）已按
+fail-closed 收口：`MachineInst::is_reg_field_settable` + regalloc 守卫（spilled def
+撞不可改写字段 ⇒ `Err(IrError::RegAlloc)`，不允许静默写垃圾），并有两条回归测试
+（`test_def_spill_on_settable_field_ok` / `test_def_spill_on_fixed_field_errors`）。
+因此后续任何触发该形态的输入都会**显式报错**而非偶发 AV——这本身会让步骤 9.4 的
+排查更快收敛（要么不触发，要么给出确定的编译错误）。
+
+**工作量**：步骤 2 本机 ~0.5 天；步骤 1/3/4 取决于 CI 何时复现（本地无法闭环）。

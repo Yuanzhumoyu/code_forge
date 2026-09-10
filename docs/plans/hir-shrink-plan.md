@@ -106,6 +106,71 @@ terminator"），三个入口保留薄壳。**注意**：
 才体现），**"1300 → 1100（-15%）" 不可达**。收缩本身的价值低于"用守门网找出
 静默错码"——本轮即为证明。
 
+## 修复方案：收缩点 2（循环三合一）
+
+**目标**：`lower_while`(39) + `lower_for`(49) + `lower_do_while`(38) 三份骨架
+（~126 行）收敛为一个驱动 + 三个薄壳，净省 ~45-50 行；行为等价由 dual_backend
+守门（现含 continue ×3 形态 + 嵌套 break/continue）。
+
+**设计（已按复核修正，不再是计划原稿的 `&dyn Fn` 版本）**
+
+```rust
+/// 循环形态参数化：三种循环的差异全部在这里表达，避免 `&dyn Fn(&mut HirCtx)`
+/// 与 `&mut HirCtx` 的双重可变借用。
+enum LoopKind<'a> {
+    /// while (cond) { body }
+    While { cond: AstRef<'a> },
+    /// for (init?; cond?; update?) { body } —— continue 需先跑 update
+    For {
+        init: Option<AstRef<'a>>,
+        cond: Option<AstRef<'a>>,
+        update: Option<AstRef<'a>>,
+    },
+    /// do { body } while (cond);
+    DoWhile { cond: AstRef<'a> },
+}
+
+/// 统一循环 lowering（骨架 = 建块 + 条件发射 + 取当前块判 terminator + 收尾）。
+fn lower_loop(
+    ctx: &mut HirCtx<'_, SymTable>,
+    kind: LoopKind<'_>,
+    body: AstRef<'_>,
+) -> Result<(), HirError>;
+```
+
+**实施步骤（每步独立提交 + `cargo test -p mini_c` 守门）**
+
+1. **抽小工具**：`jump_if_open(ctx, target)`（"当前块无 terminator 才跳"——该片段
+   现三处重复：while 尾部 / for 尾部 / do-while 尾部）与 `truthy(ctx, cond)`
+   （`iconst(0)+icmp(NotEqual)`，现 4 处重复）。
+2. **先做 While**（纯重构，行为不变）：`lower_loop(While{..})` + 薄壳
+   `lower_while`；跑 `cargo test -p mini_c`。
+3. **再做 DoWhile**：注意"先体后判"顺序与 `continue` 落点 = 条件块
+   （`LoopFrame::new_cond`）。守门用例：`both_dowhile_continue`。
+4. **最后做 For**：用 `LoopFrame::new_for`（`continue` → 懒创建 update 块）+
+   `init/cond/update` 三处可选；update 块与内联 update 两条路径必须与现实现等价
+   （无 continue ⇒ 不留孤立块，否则 IR 校验 `UnreachableBlock` 会拒绝——
+   `test_hir_e2e_break` 是这条不变式的守门）。守门用例：
+   `both_for_continue` / `both_nested_loop_break_continue`。
+5. **收尾**：确认 `codegen_hir.rs` 行数下降（预期 ~1380）并把实测值回写本文。
+
+**验收**：`cargo test -p mini_c`（lib 22 / dual_backend 24 / integration 90 /
+v12 28 / diagnostics 3）全绿；`cargo clippy --workspace --exclude forge-rustc
+--all-targets -- -D warnings` 通过；无 IR 校验失败。
+
+**风险与对策**：`ctx.loops` 的 push/pop 配对是唯一易错点（`continue`/`break` 读到
+错的帧）——对策是每步都在 dual_backend 的 continue/嵌套用例下跑，并在
+`lower_loop` 内用 RAII 风格的守卫（或确保所有 early-return 路径都 pop）。
+
+**可选（点 4）**：`codegen_function_hir` 的 6 处 `map_err` 仅在结构调整时顺带处理
+（净省 ~2 行，不涉诊断信息丢失），不作为独立目标。
+
+## 不在本计划范围（记录）
+
+- `codegen_hir.rs` 回到 "1100 行" 需要结构性收缩（如：op 目录驱动更多节点、
+  `flat_children`/`seq` 兜底与 grammar 层协同）——属新的专项，需另立方案；
+- `HirCtx.loops` 之外的 forge-hir 公共 API（`lower_into_module` 等）本轮未涉及。
+
 ## 不建议收缩（记录）
 
 - `lower_expr` 的 precedence 分发（primary/assignment/logical_or/…）——
