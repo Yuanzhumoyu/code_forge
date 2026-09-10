@@ -237,8 +237,22 @@ rustc (codegen_crate)
 - **无 phi**：forge-ir 无 phi 节点，循环回边重定义靠栈槽内存模型（重新 load）保证正确。
 - **失败即报错**：任何不支持的 MIR 构造 → `tcx.dcx().err(...)` 使编译失败，绝不产出桩函数。
 - **`overflow-checks=off`**：常规 `+`/`-`/`*` 的溢出 Assert 分支未覆盖（checked 元组结果本身已实现——见支持矩阵），测试统一关闭溢出检查。
-- **对象文件形态（M6 Stage B）**：默认按 rustc 真 CGU 分区产出对象——rustc 分区出 >1 个 CGU 时**每 CGU 一个 `.o`**（`forge_codegen_output.<cgu>.o` + 每 CGU 一个 WorkProduct，CGU 级增量；debuginfo per-CGU CU）；单 CGU/`FORGE_SINGLE_OBJECT=1` = 单对象 `forge_codegen_output.o`（Stage A 锚，与旧产物逐字节一致）。详见上文「对象文件形态」节。
-- **M3/M4 并行 CGU（Stage A，2026-09）**：`-C codegen-units=N` 只影响 rustc 的 CGU 划分——forge 在 `collect_instances`（按符号名稳定排序）后把**每个函数**作为独立任务（任务私有 `FuncRefTable`：`@N/G{N}` 编号任务内分配、每函数编译完就地 resolve，零加锁）；`merge_task_table` 把任务登记条目（vtables/promoted 按 alloc_id 去重、line/var/enum 按全局函数序）归并回主表；主线程按原实例序串行 emission（单对象单模块，产物与 -C codegen-units 无关）。**并行机制（M4，根治 WA-38）**：rustc 1.99+ 的 tcx 查询只能在 rustc 自建查询池线程上执行（WorkerLocal registry / 作业 ImplicitCtxt / per-thread SessionGlobals，无注册 API）——forge 直接复用 rustc 自家并行原语 `rustc_data_structures::sync::par_map`（rustc_codegen_ssa 在 `-Z threads` 下同款），把函数降级任务作为**嵌套池作业**提交 rustc 查询池。启用 = `FORGE_CODEGEN_THREADS>1` + rustc `-Z threads>=2`（RUSTFLAGS；`--jobs-frontend` 亦可）+ 函数数>1；否则串行（`-Z threads` 缺失时 par_* 自动串行/显式 map——**默认 T=1 与旧路径逐字节一致**）。`FORGE_CODEGEN_THREADS>1` 但无 `-Z threads` 仅 stderr 提示。
+- **对象文件形态（M6 Stage B）**：默认按 rustc 真 CGU 分区产出对象——rustc 分区出 >1 个 CGU
+  时**每 CGU 一个 `.o`**（`forge_codegen_output.<cgu>.o` + 每 CGU 一个 WorkProduct，CGU 级增量；
+  debuginfo per-CGU CU）；单 CGU/`FORGE_SINGLE_OBJECT=1` = 单对象 `forge_codegen_output.o`
+  （Stage A 锚，与旧产物逐字节一致）。详见上文「对象文件形态」节。
+- **M3/M4 并行 CGU（Stage A，2026-09）**：`-C codegen-units=N` 只影响 rustc 的 CGU 划分——forge
+  在 `collect_instances`（按符号名稳定排序）后把**每个函数**作为独立任务（任务私有
+  `FuncRefTable`：`@N/G{N}` 编号任务内分配、每函数编译完就地 resolve，零加锁）；
+  `merge_task_table` 把任务登记条目（vtables/promoted 按 alloc_id 去重、line/var/enum 按全局
+  函数序）归并回主表；主线程按原实例序串行 emission（单对象单模块，产物与 `-C codegen-units`
+  无关）。**并行机制（M4，根治 WA-38）**：rustc 1.99+ 的 tcx 查询只能在 rustc 自建查询池线程
+  上执行（WorkerLocal registry / 作业 ImplicitCtxt / per-thread SessionGlobals，无注册 API）——
+  forge 直接复用 rustc 自家并行原语 `rustc_data_structures::sync::par_map`（rustc_codegen_ssa
+  在 `-Z threads` 下同款），把函数降级任务作为**嵌套池作业**提交 rustc 查询池。启用 =
+  `FORGE_CODEGEN_THREADS>1` + rustc `-Z threads>=2`（RUSTFLAGS；`--jobs-frontend` 亦可）+
+  函数数>1；否则串行（`-Z threads` 缺失时 par_* 自动串行/显式 map——**默认 T=1 与旧路径
+  逐字节一致**）。`FORGE_CODEGEN_THREADS>1` 但无 `-Z threads` 仅 stderr 提示。
 
 ## 调试信息（`-C debuginfo=1`，C1 line-tables-only）
 

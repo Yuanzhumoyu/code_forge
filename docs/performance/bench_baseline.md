@@ -366,17 +366,17 @@ o2_gvn_pre 2.90、o1_jump_thread 1.96、o2_block_param_coalesce 1.89。
 
 ### P1 — lowering（~14-20%）✅ 评估：已早期修复
 
-5. **每块指令 `cloned().collect()` 借用化**——lowering.rs:344 注释确认
+1. **每块指令 `cloned().collect()` 借用化**——lowering.rs:344 注释确认
    已改借用迭代器（早期实现），无需再改。
 
 ### P2 — emit（~11%）✅ 评估：建议已过时
 
-6. **spill 指令 `AllocResult` 深克隆 → `AllocResultView`**——emit.rs 中
+1. **spill 指令 `AllocResult` 深克隆 → `AllocResultView`**——emit.rs 中
    无 `AllocResult` 深克隆（codegen_stage_profile 建议已过时），无需改动。
 
 ### P3 — ir_parse（次热点，big_text_256 392µs）⏳ 待干净环境 profile
 
-7. **lexer 剩余热点定位**：2026-08-03 已将 lexer 从 O(n³) 修到 near-linear
+1. **lexer 剩余热点定位**：2026-08-03 已将 lexer 从 O(n³) 修到 near-linear
    （零拷贝匹配），但 big_text_256 仍是 ir_parse 最大单点（392µs）。剩余
    热点需在**干净环境** profile（本机负载下不可测）——候选：parser 的
    token 流分配、CST 节点分配、lalrpop 状态机。确认热点后再定方案。
@@ -583,7 +583,7 @@ p<0.05，379.55µs 中位数）——2026-08-03 的 lexer 零拷贝修复持续�
 ### regalloc 剩余评估（两轮优化后）
 
 - `process_block` 每指令 `inst_xregs`/`inst_defs`/`clobbers` SmallVec 构建
-  + `inst_defs.contains()`（defs ≤3 元素线性）——结构已优化。
+- `inst_defs.contains()`（defs ≤3 元素线性）——结构已优化。
 - `expire_dead`/`assign_reg`/`pop_free`/`evict_and_assign`：P0 已覆盖
   （二分 next_use、有序池、驱逐预计算）。
 - **剩余成本是数据流规模本质**（每指令的 active/assignments/interval 查询），
@@ -656,4 +656,3 @@ throughput_500/codegen 2364→2386µs（持平）——优化主要改善 spill 
 
 - HIR 收缩方案（设计文档）、DSL 宽度/原子/ABI 修正（P1-8~12）、
   CI 环境钉版 nightly（本机 rustup 权限限制无法实施）。
-

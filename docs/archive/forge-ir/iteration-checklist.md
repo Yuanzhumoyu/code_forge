@@ -1,10 +1,9 @@
 # forge-ir 迭代清单（详细版：问题解析 + 代码演示）
-> ## ⚠️ ARCHIVED（2026-09）
->
+
+## ⚠️ ARCHIVED（2026-09）
+
 > forge-ir 迭代清单实操展开（第 10–23 轮执行记录，S1–S6 均已落地；452 全收敛）。
 > 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
-
-
 > 本文是 `docs/archive/forge-ir/next-iterations.md`（backlog 总表）的**逐项实操展开**：
 > 每项给出问题解析（现象/根因/代码定位）、现状代码、改造演示、边界与风险、验收。
 > 代码位置以当前 workspace（第九轮后基线）实测为准，行号随迭代漂移时以符号名定位。
@@ -841,4 +840,3 @@ cargo test -p forge-dsl --lib determinism                         # determinism 
 | S3.4 | `imm0==F32` 目标类型谓词 | `immN` 是立即数谓词（codegen/mod.rs:1817）；用 `rd` 位宽（__rdb，1830）+ `elem` |
 | S3.4 | 文本层缺 fpext/fptrunc | `ConvOp`（grammar.lalrpop:1716-1730）已含两 token，文本层已完成；缺口仅在 `isa/x86_v10.toml` lowering |
 | S5.1 | `forge-dsl/src/codegen/mod.rs:3497` | 实际路径 `crates/frontend/forge-dsl/src/codegen/mod.rs:3497` |
-

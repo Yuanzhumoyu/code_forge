@@ -1,10 +1,9 @@
 # forge-ir 迭代路线图（LLVM IR 文本层对齐）
-> ## ⚠️ ARCHIVED（2026-09）
->
+
+## ⚠️ ARCHIVED（2026-09）
+
 > forge-ir 迭代路线图（LLVM IR 文本层对齐；历轮成果至第 31 轮，2026-08 停更）。
 > 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
-
-
 > 状态：持续更新 · 当前代码已达第 31 轮（六轮后的历轮执行记录见附录 §7 与
 > `forge-ir-iteration-checklist.md` §0.1 / `forge-ir-remaining-tasks.md` §5-§7）
 > 适用 crate：`crates/foundation/forge-ir`（及其依赖方 `forge-opt` / `forge-codegen` / `forge-hir`）
@@ -641,4 +640,3 @@ fn gen_inst(rng: &mut impl Rng, ctx: &mut GenCtx) -> String {
   与"空 struct 类型+值"的 TypeOp 本质 LALR 歧义，排除）。
 - **浮点字段 extractvalue/insertvalue**：位模式在 GPR 但后续 FPR 消费需 movq
   转换——Unsupported（规则不匹配自动拒绝）。
-

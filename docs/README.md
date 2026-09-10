@@ -44,6 +44,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `guides/coverage.md` | cargo-llvm-cov 覆盖率工作流（CI Coverage job 现行方法） |
+| `guides/lint.md` | markdownlint 检查命令/豁免形式/存量基线（写文档后自查） |
 
 ## archive/ — 历史归档（⚠️ 先看 ARCHIVED 头）
 

@@ -2,7 +2,7 @@
 
 > 对应 `docs/archive/roadmap-status.md` 剩余事项 2 与 `crates/tools/forge-rustc/WORKAROUNDS.md`
 > [WA-11]。e2e 58 用例中 2 个预期失败（`vec_push` SEGV、`vec_string` len 错）
-> + 派生现象（`vecwc2` 挂起 124）。十二轮深挖已收敛根因范围，本文给出
+> 与派生现象（`vecwc2` 挂起 124）。十二轮深挖已收敛根因范围，本文给出
 > **分步消元的完整技术路径**（每步独立可验证，不再盲调）。
 
 ## 1. 现象与已确认事实
@@ -116,7 +116,7 @@ E2 成功概率最高（嵌套 niche 修复后残留问题与 select 路径敏�
 
 ## 7. 诊断进展（2026-09 补充）
 
-> e2e 环境已打通（`RUSTUP_HOME=target\rustup_home` junction + 
+> e2e 环境已打通（`RUSTUP_HOME=target\rustup_home` junction +
 > `FORGE_E2E_NIGHTLY` 覆盖；`.rustup\tmp` 被 Defender 拦截的解法）。
 > 工具：`FORGE_E2E_ONLY=用例名`（单用例）+ `FORGE_E2E_TRACE=1`（编译成功
 > 也打印 stderr）+ `FORGE_TRACE_MIR/STMT/TERM/CALL/ABI/SLOT/STORE/LOAD/
@@ -171,7 +171,7 @@ iconst 常量实参/Fstore 栈槽中转全对），主库等价 IR 全部执行�
 **验证**：vec_push（Vec::new+2 push 触发 grow）exit=2 转正（known_failure
 移除）；jit 80 / forge-dsl 51 / forge-tests 36 / mini_c 162 全绿。
 **vec_string 仍 known**（exit=0，len 读错）：`String::from(&str)` 走
-sret 返回（String=Vec<u8> 24B）+ ScalarPair &str 参数——to_vec::<Global>
+sret 返回（`String=Vec<u8>` 24B）+ ScalarPair &str 参数——`to_vec::<Global>`
 sret 返回链为下一候选。
 
 ### 🔬 vec_string/vecfrom 定位（2026-09 续，sret_ptr 传 0）
@@ -190,6 +190,7 @@ move_args 前强制存活（与 #spilled_int_receive 同思路）。
 ### 🔬 vec_string 深挖（2026-09 续：Slice 常量 + PtrMetadata）
 
 **strlen 最小反例**：`let s = "hi"; s.len()` → exit=0（want 2）。两步根因：
+
 1. **Slice 常量未落盘**：`_2 = const "hi"`（`ConstValue::Slice{alloc, meta}`）
    是 &str 字面量——statement.rs 的聚合分支 `eval_const_bytes`（16B 字节
    展开）对 Slice 求值失败 → 0。**修复**：Slice 分支写槽
@@ -213,6 +214,7 @@ const**（含 Layout 聚合），LAYOUT 被当 promoted 引用处理 → 值错�
 ### ✅ vec_string 转正（69afd24 后续，e2e 58/58）
 
 **最终修复（三处，均为类型守卫 + 落盘）**：
+
 1. **Slice 落盘（statement.rs）**：`_x = const "hi"`（`ConstValue::Slice`）
    → 写槽 `ptr@[base]=global_addr(alloc)`、`len@[base+8]=iconst(meta)`，
    并 `intern_promoted` 登记 alloc 字节到 rodata（backend.rs 落盘）。
@@ -233,6 +235,7 @@ strlen=2 ✓；jit 80 / forge-dsl 51 / forge-tests 36 / mini_c 162 全绿。
 promoted/static 路径。
 
 ### ✅ 已修复（2026-09 reloc/对齐/双返回三连击，e2e 30→51/58）
+
 | 根因 | 修复 | 提交 |
 | --- | --- | --- |
 | **COFF reloc 隐式 addend**：编码器占位 -(f+1)/-(g+1) 作为隐式 addend 残留 → call 目标偏 -1（0x10d0 vs wrapping_add 0x10d1）、GlobalAddr 符号地址偏 -1（movabs 0x2fff vs .rodata 0x3000） | object_writer.rs：REL32/ADDR64/ADDR32 在 add_relocation 前清零被重定位字段；REL32 保持 addend-4 补偿（coff_adjust_addend +4 净 0 不覆盖） | 16bec80 |
@@ -276,6 +279,7 @@ mixed_args 全部转正。剩余 2 known：vec_push（exit=-1073741819，运行�
 ### 🔬 E1 深挖（gdb 崩溃现场，2026-09 续）
 
 **崩溃现场**（vecpush.exe，ASLR 基址 0x7ff71bff0000）：
+
 - 崩溃指令：`mov %r10,(%r11)`，r11=0（写 [0]）——**copy 目标指针为 0**
 - 寄存器：r13=0x540000（**HEAP 静态数组基址**）、r14=0x15f008（栈）、
   rdi=4（Alignment=4）、rcx=0x10、r12=0x15f0c0（栈）、r8=0x540000
@@ -308,6 +312,7 @@ store 用 scratch（垃圾）→ **spill 槽写入垃圾**（崩溃槽 [-0x500]=
 值 0 = v312692 def-spill）。Call 结果/地址计算链全部受影响。
 
 **修复方向（下一轮）**：
+
 1. **写死物理寄存器的指令不应把 dest 当普通 vreg def**——clobber_map
    已声明 RAX clobber，但 dest 字段的 vreg 绑定导致 spill 覆盖失效；
    lowering 层对 `Reg::from_index(0)` 绑定的 dest 应显式 precolored
@@ -343,6 +348,7 @@ l2.size() 的读取链（反汇编 f 的 prologue 栈参数收参 + l2 投影）
 但 move_args 只处理了前 2 个。
 
 **原因链**：
+
 1. `param_vregs`（entry XReg，ScalarPair 拆分后 7 项）与
    `param_is_float`/`param_by_ref`（按 param_xregs 构建，7 项）**长度
    一致** ✓；

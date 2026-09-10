@@ -1,10 +1,9 @@
 # forge-ir 迭代清单（前瞻 backlog）
-> ## ⚠️ ARCHIVED（2026-09）
->
+
+## ⚠️ ARCHIVED（2026-09）
+
 > forge-ir 前瞻 backlog（S/L/M 表；文本层已收敛 452 用例）。
 > 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
-
-
 > 定位：本文件是**前瞻迭代计划**（与 `forge-ir-iteration-roadmap.md` 的"历轮成果记录"
 > 互补）。每轮开工前从本文件挑选迭代项，完成后把成果回写 roadmap 附录 §7 与本文件
 > 状态列。最后更新：2026-08（当前基线：compat 452 全收敛 198/254/0、roundtrip
@@ -492,4 +491,3 @@ cargo check -p forge-ir   # 冲突会以 build 错误报出（Local ambiguity / 
 | roundtrip | 0 缺口（198 checked / 254 skip，常规回归） |
 | parse 基准 | parse_medium_module ~57µs、roundtrip ~148µs |
 | 增量编译 | 5-10s（lalrpop 单文件） |
-

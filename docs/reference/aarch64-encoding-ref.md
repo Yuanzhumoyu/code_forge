@@ -1,5 +1,10 @@
 # A64 整数核心指令编码参考（为 isa 表 / golden 测试收集）
 
+<!-- markdownlint-configure-file { "MD013": { "line_length": 300, "code_block_line_length": 300, "heading_line_length": 300, "tables": false } } -->
+<!-- 文件级豁免原因：本参考以位级编码文本（位域/条件码/指令十六进制）与官方指令页长 URL 为主，
+     此类行不可断行（现有最长 267 列）；行宽放宽至 300 仅为容纳此类内容，
+     一般叙述文字仍按 120 列折行。 -->
+
 > 抓取方法说明（来源可用性）：developer.arm.com / support.arm.com 的 DDI0602/DDI0596 网页现为 JS 渲染 SPA，
 > web_fetch 只能拿到壳（正文需浏览器执行）；官方 PDF 与 documentation-service 亦为 application/pdf（抓取器不支持）。
 > 因此正文位图以 **等价值来源** 交叉验证：

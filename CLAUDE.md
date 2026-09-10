@@ -26,7 +26,8 @@ docs/
 │   ├── bench_baseline.md      # 基线 + 历轮实测
 │   └── codegen_stage_profile.md # codegen stage 占比
 ├── guides/                # 工具与方法
-│   └── coverage.md            # cargo-llvm-cov 覆盖率工作流
+│   ├── coverage.md            # cargo-llvm-cov 覆盖率工作流
+│   └── lint.md                # markdownlint 检查命令 + 存量基线（写文档后自查）
 └── archive/               # 历史归档（⚠️ 内容以其记录时点为准）
     ├── README.md              # 归档图例与清单
     ├── roadmap-status.md / isa-dsl-v12-roadmap.md / asm-dec-generic-design-v2.md
@@ -56,7 +57,7 @@ docs/
 ### 格式硬规则（不豁免）
 
 - **标题**：文件首行必须是唯一 `# H1`（MD041/MD025）；用 atx 风格（MD003）且
-  `# ` 后留空格（MD018）；层级每次只递增一级（MD001）；标题前后空行
+  `#` 后留空格（MD018）；层级每次只递增一级（MD001）；标题前后空行
   （MD022）、不尾随标点（MD026，中文标题的 `。`/`：` 亦算）、不重复同文标题
   （MD024）；不加粗文本冒充标题（MD036）。
 - **空白**：无尾随空格（MD009）、无硬 Tab（MD010，缩进用空格）、连续空行
@@ -74,20 +75,32 @@ docs/
 - **图片**：一律有 alt 文本（MD045）。
 - **行内元素**：强调/代码/链接标记内侧无空格（MD037/038/039）。
 
-### 推荐配置（行宽适配中文/表格）
+### 仓库配置（行宽适配中文/表格）
 
-仓库**中文正文与长表格占多**，配置建议：
+仓库**中文正文与长表格占多**，根目录 `.markdownlint.json` 配置如下
+（**实际生效配置以此为准**，md 内豁免注释见下节）：
 
 ```json
 {
   "default": true,
-  "MD013": { "line_length": 120 },
-  "MD024": { "allow_different_nesting": true }
+  "MD013": {
+    "line_length": 120,
+    "code_block_line_length": 160,
+    "heading_line_length": 120,
+    "tables": false
+  },
+  "MD024": { "allow_different_nesting": true, "siblings_only": true }
 }
 ```
 
-将来接入 CI lint 时命令示例：
-`npx markdownlint-cli2 "**/*.md" "!target"`（读取同一 `.markdownlint.json`）。
+- 行宽基准 = **120 列**（中文正文/正文行按此折行；默认 80 会让中文行频报）；
+- `tables: false`：**表格行不计入 MD013**——表格行无法断行，长单元格合法，
+  无需逐表加豁免注释；
+- `MD024.siblings_only`：仅同一父标题下重名才报——多轮/多版本记录文档
+  （bench 基线、changelog 结构）跨节复用小节标题不误报；
+- 将来接入 CI lint 时命令示例：
+  `npx markdownlint-cli2 "**/*.md" "!target"`（读取同一 `.markdownlint.json`）。
+- 完整命令与存量基线见 `docs/guides/lint.md`（**写/改文档后跑文件级命令自查**）。
 
 ### 局部豁免写法（必须写明原因）
 
@@ -118,9 +131,11 @@ docs/
    TOML 键/路径原样 code font；术语大小写一致（forge-ir、ISA-DSL、markdownlint
    等）；涉及轮次编号的迭代文档先声明所用纪元（历史上 forge-ir audit 与
    roadmap 纪元曾不一致）。
-6. **提交前自查清单**：markdownlint 零警告（或豁免带注释）；相对链接/锚点全
-   可解析；状态头与日期已写；首行 H1 且尾换行；未引入过时陈述（对照
-   `docs/README.md` 图例与 archive 头）。
+6. **提交前自查清单**：对**改动的每个文件**实跑
+   `npx markdownlint-cli2 <文件>`（读仓库 `.markdownlint.json`）到 0 error
+   （豁免须带注释；命令/豁免形式/存量基线见 `docs/guides/lint.md`）；相对
+   链接/锚点全可解析；状态头与日期已写；首行 H1 且单换行结尾；未引入过时
+   陈述（对照 `docs/README.md` 图例与 archive 头）。
 
 ## Build Commands
 
@@ -151,7 +166,8 @@ cargo check -p forge-rustc
 1. **ISA TOML files** (`isa/*.toml`) defining instruction encodings, register banks, and lowering rules
 2. **Grammar files** (`.lx` EBNF format) defining assembler syntax
 
-The `forge-dsl` proc-macro (`isa_from_file!`) compiles TOML → Rust code at build time, generating the complete ISA module (instructions, encoder, disassembler, assembler, lowering).
+The `forge-dsl` proc-macro (`isa_from_file!`) compiles TOML → Rust code at build time, generating the
+complete ISA module (instructions, encoder, disassembler, assembler, lowering).
 
 ### Crate Dependency Graph
 
@@ -173,13 +189,22 @@ code-forge (root umbrella)
 
 ### Key Architecture Rules
 
-1. **`isa_from_file!`（v12 唯一语法）generates code with `crate::` paths** — it expects to be called from within forge-codegen (where `crate::prelude::*`, `crate::machine::*` resolve)。生成模块名 = 文件 stem。Integration tests in `tests/` cannot use `isa_from_file!` inline; they import ISA types from forge-codegen's backend modules.
+1. **`isa_from_file!`（v12 唯一语法）generates code with `crate::` paths** — it expects
+   to be called from within forge-codegen (where `crate::prelude::*`,
+   `crate::machine::*` resolve)。生成模块名 = 文件 stem。Integration tests in `tests/`
+   cannot use `isa_from_file!` inline; they import ISA types from forge-codegen's backend modules.
 
-2. **Assembler/JIT coupling** — `Assembler` trait ↔ `JitCompiler` are circularly coupled. Both live in forge-codegen. Cannot split into separate crates without first refactoring to remove the cycle.
+2. **Assembler/JIT coupling** — `Assembler` trait ↔ `JitCompiler` are circularly coupled.
+   Both live in forge-codegen. Cannot split into separate crates without first refactoring
+   to remove the cycle.
 
-3. **Proc-macro limitation** — `forge-dsl` is a proc-macro crate; Rust prohibits proc-macro crates from exporting non-proc-macro items. Types like `MemRef` must be defined in forge-codegen, not forge-dsl.
+3. **Proc-macro limitation** — `forge-dsl` is a proc-macro crate; Rust prohibits proc-macro
+   crates from exporting non-proc-macro items. Types like `MemRef` must be defined in
+   forge-codegen, not forge-dsl.
 
-4. **v12 自包含 asm** — v12 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经 lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait（`crate::machine::assembler`）仅要求 `parse_insts`。
+4. **v12 自包含 asm** — v12 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
+   lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait
+   （`crate::machine::assembler`）仅要求 `parse_insts`。
 
 ### ISA Backend Pattern
 

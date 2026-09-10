@@ -1,10 +1,11 @@
 # v14-forge-ir-redesign 路线图状态（2026-08 交接文档）
-> ## ⚠️ ARCHIVED（2026-09）
->
-> v14-forge-ir-redesign 路线图交接文档（P0–P5 执行史，2026-08）。2026-09 已自述大幅过期；剩余开放项已移交 `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37/38/39）与其 README 路线图节。
+
+## ⚠️ ARCHIVED（2026-09）
+
+> v14-forge-ir-redesign 路线图交接文档（P0–P5 执行史，2026-08）。
+> 2026-09 已自述大幅过期；剩余开放项已移交
+> `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37/38/39）与其 README 路线图节。
 > 本文为历史记录，仅供参考；代码现状以仓库代码与现行文档为准，不再维护。
-
-
 > 本文档记录审查路线图（P0-P5）的执行状态与剩余事项的技术路径，供后续迭代/决策参考。
 > 所有状态均以代码为准（非文档承诺），生成自实际提交历史与全量测试验证。
 >
@@ -77,4 +78,3 @@ demo_v12 3）。
 - forge-rustc e2e 需 nightly + rustc-dev（本机可用，第 2 轮验证 56 过 + 2 预期失败）。
 - `exec-unicorn`（vendored unicorn 跨架构模拟）已随 v11 后端删除——aarch64/riscv64
   无 v12 对应后端。
-

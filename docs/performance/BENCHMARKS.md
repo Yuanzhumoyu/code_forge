@@ -230,7 +230,8 @@ across test cases. Use this to compare code-forge against other backends
 
 Environment: 12th Gen Intel(R) Core(TM) i9-12900H, 32 GB RAM,
 Windows 11 Home China 10.0.26200, Rust 1.96.0-nightly, code-forge v0.2.0.
-All times are criterion median wall-clock time. `cargo bench --bench compile_bench -- '^(ir_build|...|end_to_end/e2e_compile_)' --measurement-time 3`
+All times are criterion median wall-clock time.
+`cargo bench --bench compile_bench -- '^(ir_build|...|end_to_end/e2e_compile_)' --measurement-time 3`
 
 ### Compilation Time (median, lower is better)
 
@@ -668,7 +669,10 @@ Implemented in the ISA-gap pass:
 
 **跨架构执行验证**（问题 1：宿主为 Intel，非宿主 ISA 无本机执行验证）：
 
-- **aarch64 / riscv64**：经 WSL 安装 `qemu-user`（`wsl apt install qemu-user`）后，将 JIT 编译产物导出为二进制，用 `qemu-aarch64`/`qemu-riscv64` user-mode 执行 + 返回值断言。WSL 发行版未安装时（需 `wsl --install`），以 `encode-golden` 编码断言为执行验证的替代。
+- **aarch64 / riscv64**：经 WSL 安装 `qemu-user`（`wsl apt install qemu-user`）后，
+  将 JIT 编译产物导出为二进制，用 `qemu-aarch64`/`qemu-riscv64` user-mode 执行 +
+  返回值断言。WSL 发行版未安装时（需 `wsl --install`），以 `encode-golden` 编码断言
+  为执行验证的替代。
 - **wasm32**：wasm 字节码产物可用 wasmtime 执行（安装后）。
 - **已知限制**：`call_indirect` 有返回值时的结果 copy 方向 bug；x86 浮点返回值链路（@move_ret 多返回）；x64 shadow space 栈参数。
 
@@ -731,7 +735,9 @@ IR 构建与解析公共热点做了一轮优化。方法：先跑全量基准�
 
 ### 验证
 
-- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 239、forge-opt 91、forge-codegen 116+12+15+8+12、forge-tests 140 含 298 条 JIT 执行用例迁移集等）。
+- `cargo test --workspace --exclude forge-rustc --all-features`：全部通过（forge-ir 239、
+  forge-opt 91、forge-codegen 116+12+15+8+12、forge-tests 140 含 298 条 JIT 执行用例
+  迁移集等）。
 - `cargo check -p forge-ir -p forge-opt -p forge-codegen`：无警告。
 
 ---
