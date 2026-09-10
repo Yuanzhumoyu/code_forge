@@ -2107,7 +2107,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 self.ctx
                     .xreg_types
                     .get(v)
-                    .and_then(|t| self.ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                    .and_then(|t| {
+                        self.ctx
+                            .type_ctx
+                            .as_ref()
+                            .map(|tc| tc.borrow().size_bytes(*t))
+                    })
                     .map(|b| b as u16)
                     .unwrap_or(0)
             })
@@ -2330,7 +2335,7 @@ mod alloc_integration_tests {
         unsafe { std::env::set_var("FORGE_ASSUME_AVX512", "1") };
         // 类型必须建立在**同一个** TypeContext 上（跨上下文 TypeId 会越界：
         // 参考 jit.rs 的 V512 用例在本机因无 AVX-512 直接 return，其体从未跑到）。
-        let mut tc = TypeContext::new();
+        let tc = TypeContext::new();
         let vt = tc.vector_ty(TypeId::F32, 16); // 16 × f32 = 64 字节 = V512
         let sig = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("callee_v512", tc, sig);
@@ -2346,10 +2351,7 @@ mod alloc_integration_tests {
             .compile(&func)
             .expect("compile v512 callee（FORGE_ASSUME_AVX512 下应通过守卫）");
         // EVEX 前缀（62）+ EVEX 编码的 0F 10 家族；32B 变体是 VEX（C5 FC 10）。
-        let has_evex_load = cf
-            .code
-            .windows(5)
-            .any(|w| w[0] == 0x62 && w[4] == 0x10);
+        let has_evex_load = cf.code.windows(5).any(|w| w[0] == 0x62 && w[4] == 0x10);
         let has_vex_ymm_load = cf.code.windows(3).any(|w| w == [0xC5, 0xFC, 0x10]);
         assert!(
             has_evex_load,
@@ -2364,14 +2366,14 @@ mod alloc_integration_tests {
         unsafe { std::env::remove_var("FORGE_ASSUME_AVX512") };
     }
 
-    /// >16B 向量 Load/Store（V256/V512 槽往返）必须 **fail-closed 显式拒绝**：
+    /// 大于 16B 的向量 Load/Store（V256/V512 槽往返）必须 **fail-closed 显式拒绝**：
     /// ISA 类模型缺 YMM(32B) 槽类 → 无规则可表达 → 旧行为落到默认 8 字节 MOV
     /// **静默截断**。本测试只编译（不执行），本机可跑。
     #[test]
     fn test_wide_vector_slot_load_store_is_rejected() {
         x86_v12::ensure_registered();
         for (lanes, want_bytes) in [(8usize, 32usize), (16, 64)] {
-            let mut tc = TypeContext::new();
+            let tc = TypeContext::new();
             let vt = tc.vector_ty(TypeId::F32, lanes as u32);
             let sig = FunctionSignature::new(&[], &[TypeId::I32]);
             let mut b = FunctionBuilder::new("wide_vec_slot", tc, sig);
@@ -2388,9 +2390,9 @@ mod alloc_integration_tests {
             b.ret(&[int]);
             let func = b.finish().expect("build wide vector slot roundtrip");
             let err = match FunctionCompiler::new(x86_v12::TargetMachine::new()).compile(&func) {
-                Ok(_) => panic!(
-                    "{want_bytes}B 向量 Load/Store 必须 fail-closed（否则 8 字节静默截断）"
-                ),
+                Ok(_) => {
+                    panic!("{want_bytes}B 向量 Load/Store 必须 fail-closed（否则 8 字节静默截断）")
+                }
                 Err(e) => e,
             };
             let msg = format!("{err}");

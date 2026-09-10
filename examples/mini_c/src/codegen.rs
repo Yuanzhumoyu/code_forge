@@ -238,6 +238,29 @@ fn codegen_block(cg: &mut CodegenCtx, block_node: AstRef<'_>) {
 // Statement dispatch
 // ============================================================
 
+/// 赋值运算符全表（长运算符在前，`=` 最后——精确匹配用）。
+const ASSIGN_OPS: &[&str] = &[
+    ">>=", "<<=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "=",
+];
+
+/// 该令牌是否为赋值运算符——按**令牌源码区间**取文本判断。
+///
+/// 多字符运算符的 `AstRef::text()` 是 `PUNCT_2b3d` 这类词法记号名而非字面量，
+/// 故必须回源码取字面文本（`+=` 的源码区间即 "+="）。
+fn is_assign_op(source: &str, tok: AstRef<'_>) -> bool {
+    tok_assign_op(source, tok).is_some()
+}
+
+/// 令牌 → 赋值运算符字面文本（非赋值运算符 → None）。
+fn tok_assign_op<'s>(source: &'s str, tok: AstRef<'_>) -> Option<&'s str> {
+    let s = tok.span();
+    if s.start >= s.end || s.end > source.len() {
+        return None;
+    }
+    let txt = &source[s.start..s.end];
+    ASSIGN_OPS.iter().copied().find(|op| *op == txt)
+}
+
 fn codegen_stmt(cg: &mut CodegenCtx, node: AstRef<'_>) {
     match node.kind() {
         "return_stmt" => codegen_return(cg, node),
@@ -459,8 +482,12 @@ fn codegen_for(cg: &mut CodegenCtx, node: AstRef<'_>) {
     // Desugars to:
     //   init;
     //   cond_blk: if (cond) goto body_blk else goto exit_blk
-    //   body_blk: { body }; update; jump cond_blk
+    //   body_blk: { body }; jump update_blk
+    //   update_blk: update; jump cond_blk
     //   exit_blk:
+    // 注：`continue` 的目标是 **update_blk**（不是 cond_blk）——C 语义要求
+    // for 的 continue 先执行 update 再判条件；旧实现把 cond_blk 入循环栈会跳过
+    // update → 自增丢失、循环不终止（dual_backend 补 continue 用例时实证挂死）。
 
     // Init (optional)
     if let Some(Some(init_node)) = node.get_optional("init") {
@@ -469,6 +496,7 @@ fn codegen_for(cg: &mut CodegenCtx, node: AstRef<'_>) {
 
     let cond_blk = cg.builder.create_block();
     let body_blk = cg.builder.create_block();
+    let update_blk = cg.builder.create_block();
     let exit_blk = cg.builder.create_block();
 
     cg.builder.jump(cond_blk, &[]);
@@ -488,19 +516,23 @@ fn codegen_for(cg: &mut CodegenCtx, node: AstRef<'_>) {
     // Body block
     cg.builder.switch_to_block(body_blk);
     cg.terminated = false;
-    cg.loops.push((cond_blk, exit_blk));
+    cg.loops.push((update_blk, exit_blk));
 
     let body_node = node.get_child("body").expect("for missing body");
     codegen_block(cg, body_node);
 
-    // Update (optional)
-    if let Some(Some(update_node)) = node.get_optional("update")
-        && !cg.terminated
-    {
+    if !cg.terminated {
+        cg.builder.jump(update_blk, &[]);
+        cg.terminated = true;
+    }
+    cg.loops.pop();
+
+    // Update block（continue 落点；无 update 时直通条件块）
+    cg.builder.switch_to_block(update_blk);
+    cg.terminated = false;
+    if let Some(Some(update_node)) = node.get_optional("update") {
         codegen_for_update(cg, update_node);
     }
-
-    cg.loops.pop();
     if !cg.terminated {
         cg.builder.jump(cond_blk, &[]);
         cg.terminated = true;
@@ -668,8 +700,19 @@ fn codegen_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
         }
 
         _other => {
-            // Fallback: flatten transparent wrappers and try
             let fc = flat_children(node);
+            // 表达式级赋值（含成员）：`x += 4` / `p.x += 4` 经 expr_stmt 以
+            // **seq** 形态到达（children = [IDENT|member_access, OP 令牌, rhs]）——
+            // 语句级 assign_stmt 只接受成员 `=`，复合形式全走这里。
+            // OP 令牌文本必须取自**源码区间**：多字符运算符的 token text 是
+            // `PUNCT_2b3d` 这类名字而非 "+="。旧实现直接落入下方二元链 → 赋值
+            // 被静默丢弃（成员复合赋值 dual_backend 用例实证：返回未修改值）。
+            if fc.len() >= 3
+                && matches!(fc[0].kind(), "IDENT" | "member_access")
+                && is_assign_op(cg.source, fc[1])
+            {
+                return codegen_assign_expr(cg, node);
+            }
             if fc.len() == 1 {
                 codegen_expr(cg, fc[0])
             } else {
@@ -738,17 +781,39 @@ fn codegen_assign_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     // assignment has: [IDENT, OP, rhs] for x = expr or x += expr
     // or: [sub_expr] for simple logical_or (no assignment)
     if children.len() >= 2 {
+        // 运算符优先按令牌源码区间取（多字符运算符 token text 是 PUNCT_xxxx），
+        // 取不到再回退整段扫描（assign_stmt 形态）。
+        let op = children
+            .get(1)
+            .and_then(|t| tok_assign_op(cg.source, *t))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| cg.extract_assign_op(node));
         // Check if this is an assignment by looking at the children
         let has_ident = children[0].kind() == "IDENT";
         if has_ident {
             let name = children[0].text().unwrap_or("_");
             // Check if the name is in the symbol table (it's an assignment target)
             if let Some(&ptr) = cg.syms.locals.get(name) {
-                // Get the operator from the source span
-                let op = cg.extract_assign_op(node);
                 let rhs = codegen_expr(cg, children[children.len() - 1]);
                 let result = apply_compound_op(cg, &op, ptr, rhs);
                 cg.builder.store(result, ptr);
+                return result;
+            }
+        }
+        // [member_access, OP, rhs] → 成员赋值（`p.x = 4` / `p.x += 4`）：
+        // 表达式级 assignment 规则允许成员作 LHS（grammar: assignment ::=
+        // member_access OP assignment），而语句级 assign_stmt 只接受 `=`——
+        // `p.x += 4` 因此走 expr_stmt 到这里。旧实现只认 IDENT → **静默丢弃**
+        // 整个赋值（dual_backend 成员复合赋值用例实证：两后端都返回未修改值）。
+        if children[0].kind() == "member_access" {
+            let ma_idents = children[0].get_children("idents");
+            let obj_name = ma_idents.first().and_then(|c| c.text()).unwrap_or("_");
+            let field_name = ma_idents.get(1).and_then(|c| c.text()).unwrap_or("_");
+            let field_key = format!("{}.{}", obj_name, field_name);
+            if let Some(&field_slot) = cg.syms.locals.get(&field_key) {
+                let rhs = codegen_expr(cg, children[children.len() - 1]);
+                let result = apply_compound_op(cg, &op, field_slot, rhs);
+                cg.builder.store(result, field_slot);
                 return result;
             }
         }

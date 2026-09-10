@@ -14,6 +14,51 @@ use crate::span::SourceSpan;
 use forge_grammar::{AstRef, TypedAst};
 use std::collections::HashMap;
 
+/// 活动循环帧：`break` / `continue` 的跳转目标。
+///
+/// `for` 的 `continue` 必须先执行 update 再判条件（C 语义），而 while/do-while
+/// 的 `continue` 直接跳条件块。`update_blk` **按需创建**（首次 `continue` 时）：
+/// 没有 `continue` 的 for 循环把 update 内联在循环体尾部，不留孤立块
+///（IR 校验会拒绝不可达块）。
+#[derive(Debug, Clone, Copy)]
+pub struct LoopFrame {
+    /// 条件块（while/do-while 的 `continue` 落点）。
+    pub cond_blk: BlockId,
+    /// `for` 的 update 块（懒创建；None = 尚未需要）。
+    pub update_blk: Option<BlockId>,
+    /// 该循环的 `continue` 是否需要先跑 update（`for` = true）。
+    pub update_needed: bool,
+    /// `break` 的落点。
+    pub exit_blk: BlockId,
+}
+
+impl LoopFrame {
+    /// while / do-while：`continue` 直接跳条件块。
+    pub fn new_cond(cond_blk: BlockId, exit_blk: BlockId) -> Self {
+        Self {
+            cond_blk,
+            update_blk: None,
+            update_needed: false,
+            exit_blk,
+        }
+    }
+
+    /// `for`：`continue` 需先执行 update。
+    pub fn new_for(cond_blk: BlockId, exit_blk: BlockId) -> Self {
+        Self {
+            cond_blk,
+            update_blk: None,
+            update_needed: true,
+            exit_blk,
+        }
+    }
+
+    /// `continue` 的落点（有 update 块则跳它，否则跳条件块）。
+    pub fn continue_target(&self) -> BlockId {
+        self.update_blk.unwrap_or(self.cond_blk)
+    }
+}
+
 /// Unified lowering context.
 ///
 /// `S` is the frontend's own symbol-table type (e.g. mini_c's `SymTable`).
@@ -28,8 +73,8 @@ pub struct HirCtx<'a, S> {
     pub syms: &'a mut S,
     /// Variable name → stack-slot pointer ("p.x" keys for struct fields).
     pub locals: HashMap<String, GraphValue>,
-    /// Stack of (cond_block, exit_block) for nested loops.
-    pub loops: Vec<(BlockId, BlockId)>,
+    /// Stack of active loops (break/continue targets) for nested loops.
+    pub loops: Vec<LoopFrame>,
     /// Stack offset for the next local slot (grows downward).
     pub next_offset: i32,
     /// Inlining: return-value temp slot. None = emit a real ret.

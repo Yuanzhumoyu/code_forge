@@ -16,7 +16,9 @@
 use crate::atoms::minic_lowering;
 use code_forge::forge_grammar::{AstRef, TypedAst};
 use code_forge::ir::{FuncRef, FunctionSignature, IntCC, TypeId};
-use forge_hir::{BlockId, BrickRegistry, GraphValue, HirCtx, HirError, IrGraph, lower_into_module};
+use forge_hir::{
+    BlockId, BrickRegistry, GraphValue, HirCtx, HirError, IrGraph, LoopFrame, lower_into_module,
+};
 use std::collections::HashMap;
 
 // Re-use SymTable from codegen.rs (it's pub)
@@ -214,8 +216,7 @@ fn lower_assign(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), 
         let field_name = ma_idents.get(1).and_then(|c| c.text()).unwrap_or("_");
 
         // Each field has its own slot: obj.field
-        let field_key = format!("{}.{}", obj_name, field_name);
-        let field_slot = ctx.lookup(&field_key)?;
+        let field_slot = ctx.lookup(&field_key(obj_name, field_name))?;
 
         let op = extract_assign_op(ctx.source, node);
         let result = apply_compound_op(ctx, &op, field_slot, rhs)?;
@@ -235,6 +236,41 @@ fn lower_assign(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), 
     let result = apply_compound_op(ctx, &op, slot, rhs)?;
     minic_lowering::build_store(ctx.graph, result, slot)?;
     Ok(())
+}
+
+/// 结构体字段的槽键：`"对象.字段"`（每字段独立栈槽的命名约定）。
+///
+/// 计划收缩点 3（`docs/plans/hir-shrink-plan.md`，修正版）：该字符串格式旧实现
+/// 在 5 处各自 `format!`——收敛为一个命名约定函数（`lower_struct_init` /
+/// `lower_member_access` / 成员赋值共用）。
+fn field_key(base: &str, field: &str) -> String {
+    format!("{base}.{field}")
+}
+
+/// 赋值运算符全表（长运算符在前，`=` 最后——精确匹配用）。
+const ASSIGN_OPS: &[&str] = &[
+    ">>=", "<<=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "=",
+];
+
+/// 令牌 → 赋值运算符字面文本（非赋值运算符 → None）。
+///
+/// 多字符运算符的 `AstRef::text()` 是 `PUNCT_2b3d` 这类词法记号名而非字面量，
+/// 故必须回**源码区间**取字面文本（`+=` 的区间即 "+="）。
+fn tok_assign_op<'s>(source: &'s str, tok: AstRef<'_>) -> Option<&'s str> {
+    let s = tok.span();
+    if s.start >= s.end || s.end > source.len() {
+        return None;
+    }
+    let txt = &source[s.start..s.end];
+    ASSIGN_OPS.iter().copied().find(|op| *op == txt)
+}
+
+/// 赋值运算符文本：优先按运算符令牌区间取，取不到回退整段扫描
+///（`assign_stmt` 形态：整段文本里找运算符）。
+fn assign_op_of(source: &str, node: AstRef<'_>, tok: Option<AstRef<'_>>) -> String {
+    tok.and_then(|t| tok_assign_op(source, t))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| extract_assign_op(source, node))
 }
 
 /// Extract the operator from an assign_stmt / assignment node via its span.
@@ -270,19 +306,7 @@ fn apply_compound_op(
         return Ok(rhs); // simple assign: no need to load old value
     }
     let old = minic_lowering::build_load(ctx.graph, TypeId::I32, slot)?;
-    match op {
-        "+=" => minic_lowering::build_iadd(ctx.graph, old, rhs),
-        "-=" => minic_lowering::build_isub(ctx.graph, old, rhs),
-        "*=" => minic_lowering::build_imul(ctx.graph, old, rhs),
-        "/=" => minic_lowering::build_sdiv(ctx.graph, old, rhs),
-        "%=" => minic_lowering::build_srem(ctx.graph, old, rhs),
-        "&=" => minic_lowering::build_band(ctx.graph, old, rhs),
-        "|=" => minic_lowering::build_bor(ctx.graph, old, rhs),
-        "^=" => minic_lowering::build_bxor(ctx.graph, old, rhs),
-        "<<=" => minic_lowering::build_ishl(ctx.graph, old, rhs),
-        ">>=" => minic_lowering::build_sshr(ctx.graph, old, rhs),
-        other => Err(HirError::Lowering(format!("unknown assign op: {}", other))),
-    }
+    bin_op(ctx, op, old, rhs)
 }
 
 // ── Control flow ──
@@ -368,7 +392,8 @@ fn lower_while(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), H
 
     // Body block
     ctx.graph.set_current_block(body_blk);
-    ctx.loops.push((cond_blk, exit_blk));
+    // while：`continue` 直接跳条件块（无需 update 块）
+    ctx.loops.push(LoopFrame::new_cond(cond_blk, exit_blk));
     lower_block(ctx, body_node)?;
     ctx.loops.pop();
     // The body may have switched blocks (e.g. an if inside the body); check
@@ -387,6 +412,10 @@ fn lower_while(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), H
 
 fn lower_for(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirError> {
     // for (init?; cond?; update?) { body }
+    // 结构：cond → body → update → cond；`continue` 落点 = update 块
+    //（C 语义：for 的 continue 先执行 update 再判条件）。
+    // update 块**按需创建**：无 `continue` 时 update 内联在循环体尾部，
+    // 否则会留下不可达块（IR 校验拒绝 UnreachableBlock）。
     if let Some(Some(init_node)) = node.get_optional("init") {
         lower_stmt(ctx, init_node)?;
     }
@@ -409,25 +438,50 @@ fn lower_for(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), Hir
         ctx.graph.emit_jump(body_blk)?;
     }
 
-    // Body block
+    // Body block（continue 目标在首次 continue 时懒创建）
     ctx.graph.set_current_block(body_blk);
-    ctx.loops.push((cond_blk, exit_blk));
+    ctx.loops.push(LoopFrame::new_for(cond_blk, exit_blk));
     let body_node = node
         .get_child("body")
         .ok_or_else(|| HirError::Lowering("for missing body".into()))?;
     lower_block(ctx, body_node)?;
 
-    // Update (optional) — only if the body didn't terminate early.
-    // Check the CURRENT block: the body may have switched blocks (an if).
+    let frame = ctx
+        .loops
+        .last()
+        .copied()
+        .ok_or_else(|| HirError::Internal("for: loop frame missing".into()))?;
     let cur = ctx
         .graph
         .current_block()
         .ok_or_else(|| HirError::Internal("no current block".into()))?;
-    if !ctx.graph.has_terminator(cur) {
-        if let Some(Some(update_node)) = node.get_optional("update") {
-            lower_stmt(ctx, update_node)?;
+    match frame.update_blk {
+        // 有 continue：循环体尾部汇入 update 块（两条路径各执行一次 update）
+        Some(update_blk) => {
+            if !ctx.graph.has_terminator(cur) {
+                ctx.graph.emit_jump(update_blk)?;
+            }
+            ctx.graph.set_current_block(update_blk);
+            if let Some(Some(update_node)) = node.get_optional("update") {
+                lower_stmt(ctx, update_node)?;
+            }
+            let cur = ctx
+                .graph
+                .current_block()
+                .ok_or_else(|| HirError::Internal("no current block".into()))?;
+            if !ctx.graph.has_terminator(cur) {
+                ctx.graph.emit_jump(cond_blk)?;
+            }
         }
-        ctx.graph.emit_jump(cond_blk)?;
+        // 无 continue：update 内联在循环体尾部（老结构，零额外块）
+        None => {
+            if !ctx.graph.has_terminator(cur) {
+                if let Some(Some(update_node)) = node.get_optional("update") {
+                    lower_stmt(ctx, update_node)?;
+                }
+                ctx.graph.emit_jump(cond_blk)?;
+            }
+        }
     }
     ctx.loops.pop();
 
@@ -451,7 +505,7 @@ fn lower_do_while(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<()
 
     // Body block
     ctx.graph.set_current_block(body_blk);
-    ctx.loops.push((cond_blk, exit_blk));
+    ctx.loops.push(LoopFrame::new_cond(cond_blk, exit_blk));
     lower_block(ctx, body_node)?;
     ctx.loops.pop();
     // Check the CURRENT block (the body may have switched blocks).
@@ -475,20 +529,27 @@ fn lower_do_while(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<()
 }
 
 fn lower_break(ctx: &mut HirCtx<'_, SymTable>) -> Result<(), HirError> {
-    let (_, exit_blk) = *ctx
+    let exit_blk = ctx
         .loops
         .last()
-        .ok_or_else(|| HirError::Lowering("break outside loop".into()))?;
+        .ok_or_else(|| HirError::Lowering("break outside loop".into()))?
+        .exit_blk;
     ctx.graph.emit_jump(exit_blk)?;
     Ok(())
 }
 
 fn lower_continue(ctx: &mut HirCtx<'_, SymTable>) -> Result<(), HirError> {
-    let (cond_blk, _) = *ctx
+    let last = ctx
         .loops
-        .last()
+        .last_mut()
         .ok_or_else(|| HirError::Lowering("continue outside loop".into()))?;
-    ctx.graph.emit_jump(cond_blk)?;
+    // for 的 continue 必须先执行 update：update 块**按需创建**（无 continue 的
+    // for 循环不留孤立块——IR 校验拒绝不可达块）。
+    if last.update_needed && last.update_blk.is_none() {
+        last.update_blk = Some(ctx.graph.create_block(&[]));
+    }
+    let target = last.continue_target();
+    ctx.graph.emit_jump(target)?;
     Ok(())
 }
 
@@ -576,8 +637,39 @@ fn lower_expr(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphV
         other => {
             // Fallback: flatten transparent wrappers and try the single child
             let fc = flat_children(node);
+            // 表达式级赋值（含成员）：`x += 4` / `p.x += 4` 经 expr_stmt 以 **seq**
+            // 形态到达（children = [IDENT|member_access, OP 令牌, rhs]）。语句级
+            // assign_stmt 只接受成员 `=`，复合形式全走这里；旧实现落入下方二元链
+            // → 赋值被静默丢弃（成员复合赋值 dual_backend 用例实证）。
+            if fc.len() >= 3
+                && matches!(fc[0].kind(), "IDENT" | "member_access")
+                && tok_assign_op(ctx.source, fc[1]).is_some()
+            {
+                return lower_assign_expr(ctx, node);
+            }
             if fc.len() == 1 {
                 lower_expr(ctx, fc[0])
+            } else if !fc.is_empty() {
+                // 多子 `seq`：按「左结合二元链」求值——与 Direct 后端
+                // `codegen.rs` 的同名兜底等价（成员复合赋值 `p.x += 4` 等经语法
+                // 包装后以此形态到达）。旧实现直接报 "unknown expr kind: seq"，
+                // 导致 Hir 后端编译失败而 Direct 后端正常（dual_backend 补
+                // 成员复合赋值用例时实证）。
+                let mut acc = lower_expr(ctx, fc[0])?;
+                let mut i = 1usize;
+                while i + 1 < fc.len() {
+                    let op = fc[i].text().unwrap_or("?");
+                    let rhs = lower_expr(ctx, fc[i + 1])?;
+                    acc = match intcc_for(op) {
+                        Some(cc) => {
+                            let cmp = minic_lowering::build_icmp(ctx.graph, cc, acc, rhs)?;
+                            minic_lowering::build_sextend(ctx.graph, TypeId::I32, cmp)?
+                        }
+                        None => bin_op(ctx, op, acc, rhs)?,
+                    };
+                    i += 2;
+                }
+                Ok(acc)
             } else {
                 Err(HirError::Lowering(format!("unknown expr kind: {}", other)))
             }
@@ -602,6 +694,45 @@ fn flat_children(node: AstRef<'_>) -> Vec<AstRef<'_>> {
 
 // ── Binary arithmetic / bitwise (+ - * / % & | ^ << >>) ──
 
+/// 二元运算分派（**唯一**的「运算符字符串 → build_xxx」表）。
+///
+/// 计划的收缩点 1（`docs/plans/hir-shrink-plan.md`）：旧实现里
+/// `apply_compound_op`（`+=` 等复合形式）与 `lower_binary`（普通形式）各自
+/// 维护一张 10 臂 match 表——本函数按「去掉尾随 `=`」归一化后共用一条分派。
+fn bin_op(
+    ctx: &mut HirCtx<'_, SymTable>,
+    op: &str,
+    l: GraphValue,
+    r: GraphValue,
+) -> Result<GraphValue, HirError> {
+    match op.strip_suffix('=').unwrap_or(op) {
+        "+" => minic_lowering::build_iadd(ctx.graph, l, r),
+        "-" => minic_lowering::build_isub(ctx.graph, l, r),
+        "*" => minic_lowering::build_imul(ctx.graph, l, r),
+        "/" => minic_lowering::build_sdiv(ctx.graph, l, r),
+        "%" => minic_lowering::build_srem(ctx.graph, l, r),
+        "&" => minic_lowering::build_band(ctx.graph, l, r),
+        "|" => minic_lowering::build_bor(ctx.graph, l, r),
+        "^" => minic_lowering::build_bxor(ctx.graph, l, r),
+        "<<" => minic_lowering::build_ishl(ctx.graph, l, r),
+        ">>" => minic_lowering::build_sshr(ctx.graph, l, r),
+        other => Err(HirError::Lowering(format!("unknown binary op: {other}"))),
+    }
+}
+
+/// 比较运算符 → `IntCC`（`lower_compare` 与兜底链共用；未命中返回 None）。
+fn intcc_for(op: &str) -> Option<IntCC> {
+    Some(match op {
+        "==" => IntCC::Equal,
+        "!=" => IntCC::NotEqual,
+        "<" => IntCC::SignedLessThan,
+        ">" => IntCC::SignedGreaterThan,
+        "<=" => IntCC::SignedLessThanOrEqual,
+        ">=" => IntCC::SignedGreaterThanOrEqual,
+        _ => return None,
+    })
+}
+
 fn lower_binary(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphValue, HirError> {
     let children = flat_children(node);
     if children.is_empty() {
@@ -612,19 +743,7 @@ fn lower_binary(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<Grap
     while i + 1 < children.len() {
         let op = children[i].text().unwrap_or("?");
         let rhs = lower_expr(ctx, children[i + 1])?;
-        acc = match op {
-            "+" => minic_lowering::build_iadd(ctx.graph, acc, rhs)?,
-            "-" => minic_lowering::build_isub(ctx.graph, acc, rhs)?,
-            "*" => minic_lowering::build_imul(ctx.graph, acc, rhs)?,
-            "/" => minic_lowering::build_sdiv(ctx.graph, acc, rhs)?,
-            "%" => minic_lowering::build_srem(ctx.graph, acc, rhs)?,
-            "&" => minic_lowering::build_band(ctx.graph, acc, rhs)?,
-            "|" => minic_lowering::build_bor(ctx.graph, acc, rhs)?,
-            "^" => minic_lowering::build_bxor(ctx.graph, acc, rhs)?,
-            "<<" => minic_lowering::build_ishl(ctx.graph, acc, rhs)?,
-            ">>" => minic_lowering::build_sshr(ctx.graph, acc, rhs)?,
-            other => return Err(HirError::Lowering(format!("unknown binary op: {}", other))),
-        };
+        acc = bin_op(ctx, op, acc, rhs)?;
         i += 2;
     }
     Ok(acc)
@@ -645,15 +764,8 @@ fn lower_compare(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<Gra
     while i + 1 < children.len() {
         let op = children[i].text().unwrap_or("?");
         let rhs = lower_expr(ctx, children[i + 1])?;
-        let cc = match op {
-            "==" => IntCC::Equal,
-            "!=" => IntCC::NotEqual,
-            "<" => IntCC::SignedLessThan,
-            ">" => IntCC::SignedGreaterThan,
-            "<=" => IntCC::SignedLessThanOrEqual,
-            ">=" => IntCC::SignedGreaterThanOrEqual,
-            other => return Err(HirError::Lowering(format!("unknown compare op: {}", other))),
-        };
+        let cc = intcc_for(op)
+            .ok_or_else(|| HirError::Lowering(format!("unknown compare op: {}", op)))?;
         let cmp = minic_lowering::build_icmp(ctx.graph, cc, acc, rhs)?;
         acc = minic_lowering::build_sextend(ctx.graph, TypeId::I32, cmp)?;
         i += 2;
@@ -749,18 +861,32 @@ fn lower_assign_expr(
     node: AstRef<'_>,
 ) -> Result<GraphValue, HirError> {
     let children = flat_children(node);
+    let op = assign_op_of(ctx.source, node, children.get(1).copied());
     if children.len() >= 2 {
         // [IDENT, OP, rhs] for x = expr / x += expr
         if children[0].kind() == "IDENT" {
             let name = children[0].text().unwrap_or("_");
             if ctx.locals.contains_key(name) {
                 let slot = ctx.lookup(name)?;
-                let op = extract_assign_op(ctx.source, node);
                 let rhs = lower_expr(ctx, children[children.len() - 1])?;
                 let result = apply_compound_op(ctx, &op, slot, rhs)?;
                 minic_lowering::build_store(ctx.graph, result, slot)?;
                 return Ok(result);
             }
+        }
+        // [member_access, OP, rhs] → 成员赋值（`p.x = 4` / `p.x += 4`）——
+        // 语法：语句级 assign_stmt 只接受 `=`，复合形式经 expr_stmt →
+        // assignment(member_access OP assignment) 到达这里。旧实现只认 IDENT →
+        // **静默丢弃**整个赋值（dual_backend 成员复合赋值用例实证）。
+        if children[0].kind() == "member_access" {
+            let ma_idents = children[0].get_children("idents");
+            let obj_name = ma_idents.first().and_then(|c| c.text()).unwrap_or("_");
+            let field_name = ma_idents.get(1).and_then(|c| c.text()).unwrap_or("_");
+            let slot = ctx.lookup(&format!("{}.{}", obj_name, field_name))?;
+            let rhs = lower_expr(ctx, children[children.len() - 1])?;
+            let result = apply_compound_op(ctx, &op, slot, rhs)?;
+            minic_lowering::build_store(ctx.graph, result, slot)?;
+            return Ok(result);
         }
     }
     // Not an assignment — process first child
@@ -815,8 +941,8 @@ fn lower_struct_init(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result
     for (i, val_node) in values.iter().enumerate() {
         if i < field_names.len() {
             let val = lower_expr(ctx, *val_node)?;
-            let field_key = format!("{}.{}", var_name, field_names[i]);
-            if let Some(&slot) = ctx.locals.get(&field_key) {
+            let key = field_key(var_name, &field_names[i]);
+            if let Some(&slot) = ctx.locals.get(&key) {
                 minic_lowering::build_store(ctx.graph, val, slot)?;
             }
         }
@@ -842,7 +968,7 @@ fn alloc_struct_fields(
     // Insert var.field entries for direct access
     for fname in &field_names {
         let slot = ctx.alloc_slot()?;
-        ctx.locals.insert(format!("{}.{}", var_name, fname), slot);
+        ctx.locals.insert(field_key(var_name, fname), slot);
     }
     // Sentinel for the root var name (used for type lookup)
     let sentinel = ctx.alloc_slot()?;
@@ -858,8 +984,7 @@ fn lower_member_access(
     let obj_name = idents.first().and_then(|c| c.text()).unwrap_or("_");
     let field_name = idents.get(1).and_then(|c| c.text()).unwrap_or("_");
 
-    let field_key = format!("{}.{}", obj_name, field_name);
-    let slot = ctx.lookup(&field_key)?;
+    let slot = ctx.lookup(&field_key(obj_name, field_name))?;
     minic_lowering::build_load(ctx.graph, TypeId::I32, slot)
 }
 

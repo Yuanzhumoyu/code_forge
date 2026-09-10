@@ -1439,9 +1439,7 @@ mod tests {
         module.add_function(bc.finish().expect("ci_callee"));
         module.add_function(bm.finish().expect("ci_main"));
         jit.compile_module(&module).expect("编译 ci_callee+ci_main");
-        let callee_addr = jit
-            .lookup_symbol("ci_callee")
-            .expect("ci_callee 符号地址");
+        let callee_addr = jit.lookup_symbol("ci_callee").expect("ci_callee 符号地址");
         let f: extern "C" fn(u64) -> i32 = jit.get_fn("ci_main").expect("get_fn ci_main");
         let got = f(callee_addr);
         assert_eq!(
@@ -1485,7 +1483,8 @@ mod tests {
         let mut module = Module::new();
         module.add_function(bc.finish().expect("ci_ret_callee"));
         module.add_function(bm.finish().expect("ci_ret_main"));
-        jit.compile_module(&module).expect("编译 ci_ret_callee+ci_ret_main");
+        jit.compile_module(&module)
+            .expect("编译 ci_ret_callee+ci_ret_main");
         let callee_addr = jit
             .lookup_symbol("ci_ret_callee")
             .expect("ci_ret_callee 符号地址");

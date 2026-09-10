@@ -61,7 +61,7 @@ pub use atom::{AtomSpec, AttrSpec, OpTag, PortSpec, RegionSpec};
 pub use attr::AttrValue;
 pub use block::{BlockData, BlockId, Region};
 pub use composite::{CompositeNode, CompositeSpec};
-pub use ctx::HirCtx;
+pub use ctx::{HirCtx, LoopFrame};
 pub use error::HirError;
 pub use graph::{GraphValue, IrGraph, NodeId};
 pub use lowering::{LoweringContext, lower_into_module};

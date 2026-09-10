@@ -243,3 +243,56 @@ fn both_dowhile_two_locals() {
         55,
     );
 }
+
+// ── continue / 嵌套循环 / 成员复合赋值（循环 lowering 合并前的守门网）──
+//
+// 背景：本文件此前**没有任何 `continue` 用例**（全仓唯一 continue 测试
+// `v12_backend_tests::v12_break_continue` 跑的是 V12 后端而非 Hir），而
+// break/continue 的 `ctx.loops` 栈语义正是「循环 lowering 三合一」最容易破的
+// 地方。下列用例先落地为安全网，再谈收缩（见 docs/plans/hir-shrink-plan.md）。
+
+#[test]
+fn both_while_continue() {
+    // i=1..5，跳过奇数（i%2 != 0）累加 → 2 + 4 = 6
+    assert_both(
+        "int main() { int i = 0; int s = 0; while (i < 5) { i = i + 1; if (i % 2) { continue; } s = s + i; } return s; }",
+        6,
+    );
+}
+
+#[test]
+fn both_for_continue() {
+    // 跳过 i==3 → 0+1+2+4+5 = 12
+    assert_both(
+        "int main() { int s = 0; for (int i = 0; i < 6; i = i + 1) { if (i == 3) { continue; } s = s + i; } return s; }",
+        12,
+    );
+}
+
+#[test]
+fn both_dowhile_continue() {
+    // do-while 的 continue 应跳到条件判断（i 已自增）→ 1+2+4+5 = 12
+    assert_both(
+        "int main() { int i = 0; int s = 0; do { i = i + 1; if (i == 3) { continue; } s = s + i; } while (i < 5); return s; }",
+        12,
+    );
+}
+
+#[test]
+fn both_nested_loop_break_continue() {
+    // 内层：j=0 → s+=i；j=1 continue；j=2 → s+=i+2；j=3 break
+    // i=0: 0+2=2、i=1: 1+3=4、i=2: 2+4=6 → 合计 12
+    assert_both(
+        "int main() { int s = 0; for (int i = 0; i < 3; i = i + 1) { for (int j = 0; j < 5; j = j + 1) { if (j == 3) { break; } if (j == 1) { continue; } s = s + i + j; } } return s; }",
+        12,
+    );
+}
+
+#[test]
+fn both_member_compound_assign() {
+    // 成员复合赋值（p.x += / p.y *=）——字段槽读写 + 复合 op 组合
+    assert_both(
+        "int main() { struct P { int x; int y; }; struct P p; p.x = 1; p.y = 2; p.x += 4; p.y *= 3; return p.x + p.y; }",
+        11,
+    );
+}
