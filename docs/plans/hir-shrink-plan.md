@@ -59,7 +59,7 @@ break/continue 的循环栈语义正是「循环 lowering 合并」最容易破�
 （写入时点 blob 逐字比对）；`lower_member_access` 也不分配槽。真实重复只有
 字段名查询样板与键格式化——**实测净省约 10 行**（原估计 -30 偏高）。
 
-### 循环结构（收缩点 2 的前置）
+### 循环结构（收缩点 2 的前置，已落地）
 
 `HirCtx.loops` 由 `Vec<(BlockId, BlockId)>` 改为 `Vec<LoopFrame>`
 （`cond_blk` + 懒创建的 `update_blk` + `update_needed` + `exit_blk`）。
@@ -67,18 +67,28 @@ break/continue 的循环栈语义正是「循环 lowering 合并」最容易破�
 的 for 循环留下**不可达块**，被 IR 校验拒绝（`test_hir_e2e_break` 实证
 `UnreachableBlock` / `DominanceViolation`）。
 
-## 剩余工作（按优先级）
+## 收缩点逐项状态（含剩余工作）
 
-### 收缩点 2：循环三合一（仍开放，收益 ~45-50 行）
+### 收缩点 2：循环 lowering 收敛 —— **已做（按重设计方案）**
 
-`lower_while` / `lower_for` / `lower_do_while` 现为三份实现（~126 行）。骨架应
-覆盖真正的三写部分（建块 + cond 块 `iconst/icmp/branch` + "取当前块判
-terminator"），三个入口保留薄壳。**注意**：
+`lower_while` / `lower_for` / `lower_do_while` 保持**三个显式函数**，只把三处共用的
+**条件跳转惯用法**收敛为三个小工具（`codegen_hir.rs`）：
 
-- 计划原给的 `update: Option<&dyn Fn(&mut HirCtx)->…>` 形参会与 `&mut HirCtx`
-  形成双重可变借用——改为传 `AstRef`/枚举；
-- 合并中心是 `LoopFrame` 的构造差异（`new_cond` vs `new_for`），语义已由本轮的
-  `continue` 用例守门。
+- `truthy(ctx, v)`：`iconst(0) + icmp(NotEqual)` → i1（原 5 处手写：if 1 处、
+  三种循环的 cond 块 3 处、for 的省略条件分支）；
+- `emit_cond_branch(ctx, Option<cond>, then_blk, else_blk)`：**三种循环的公共内容**
+  ——`Some(cond)` 求值 + `truthy` + `emit_branch`；`None`（for 省略条件）无条件跳；
+- `jump_if_open(ctx, target)`：当前块无终结符才跳（原 4 处"取当前块判 terminator"
+  样板；并统一取**当前块**而非进入体时的块句柄——体内嵌套 if 会切换当前块）。
+
+**明确不采纳**原稿的 `LoopKind` 枚举 + `lower_loop` 统一驱动（以及上一版本的同类设计）：
+三种循环的差异（init / update / 先判后判 / `continue` 落点）就是各自的全部语义，
+**共同内容只有"条件跳转"**；为几行惯用法引入驱动抽象，成本高于收益，还会把"块关系
+一眼可见"的可读性换成枚举分派。三个循环函数的显式顺序与块结构保持不变。
+
+**实测**：`codegen_hir.rs` 1427 → **1436 行**（+9）——工具定义（含注释）略多于
+省下的样板，收益体现为**调用点收敛**（8 处 idiom → 3 个函数）与 `if` 侧同类样板的
+消除，而非减行。原估 "-45~-50 行" 与随后修正的 "-15~-20 行" 均未达成，**如实记录**。
 
 ### 收缩点 4：错误传播统一（可选，净省 ~2 行）
 
@@ -99,71 +109,13 @@ terminator"），三个入口保留薄壳。**注意**：
 | --- | ---: | --- |
 | 本计划提交时（79b015c） | 1300 行 | 计划中的 "~1300" 准确 |
 | 2026-09-10 复核前 | 1302 行 | 计划后唯一改动是测试模块 cfg 门控 |
-| 2026-09-10 落地后 | **1427 行** | 净增：两个缺陷修复 + 守门网 + `LoopFrame`；同时做了点 1/点 3 的去重 |
-| 收缩点 2 完成预期 | ~1380 行 | 若要回到 "1100 行" 需另找结构性收缩点（不在本计划范围） |
+| 2026-09-10 落地后 | **1436 行** | 净增：两个缺陷修复 + 守门网 + `LoopFrame` + 循环收敛的三个小工具（含注释）；同时做了点 1/点 3 的去重与调用点收敛 |
+| 收缩点 2 完成（重设计方案） | 1436 行 | **未减行**（+9）：收益 = 8 处条件跳转 idiom 收敛为 3 个函数，三种循环保持显式 |
 
 **结论**：本计划的收益估计应下调为 **~-60 – -85 行**（且只在收缩点 2 落地后
 才体现），**"1300 → 1100（-15%）" 不可达**。收缩本身的价值低于"用守门网找出
-静默错码"——本轮即为证明。
-
-## 修复方案：收缩点 2（循环三合一）
-
-**目标**：`lower_while`(39) + `lower_for`(49) + `lower_do_while`(38) 三份骨架
-（~126 行）收敛为一个驱动 + 三个薄壳，净省 ~45-50 行；行为等价由 dual_backend
-守门（现含 continue ×3 形态 + 嵌套 break/continue）。
-
-**设计（已按复核修正，不再是计划原稿的 `&dyn Fn` 版本）**
-
-```rust
-/// 循环形态参数化：三种循环的差异全部在这里表达，避免 `&dyn Fn(&mut HirCtx)`
-/// 与 `&mut HirCtx` 的双重可变借用。
-enum LoopKind<'a> {
-    /// while (cond) { body }
-    While { cond: AstRef<'a> },
-    /// for (init?; cond?; update?) { body } —— continue 需先跑 update
-    For {
-        init: Option<AstRef<'a>>,
-        cond: Option<AstRef<'a>>,
-        update: Option<AstRef<'a>>,
-    },
-    /// do { body } while (cond);
-    DoWhile { cond: AstRef<'a> },
-}
-
-/// 统一循环 lowering（骨架 = 建块 + 条件发射 + 取当前块判 terminator + 收尾）。
-fn lower_loop(
-    ctx: &mut HirCtx<'_, SymTable>,
-    kind: LoopKind<'_>,
-    body: AstRef<'_>,
-) -> Result<(), HirError>;
-```
-
-**实施步骤（每步独立提交 + `cargo test -p mini_c` 守门）**
-
-1. **抽小工具**：`jump_if_open(ctx, target)`（"当前块无 terminator 才跳"——该片段
-   现三处重复：while 尾部 / for 尾部 / do-while 尾部）与 `truthy(ctx, cond)`
-   （`iconst(0)+icmp(NotEqual)`，现 4 处重复）。
-2. **先做 While**（纯重构，行为不变）：`lower_loop(While{..})` + 薄壳
-   `lower_while`；跑 `cargo test -p mini_c`。
-3. **再做 DoWhile**：注意"先体后判"顺序与 `continue` 落点 = 条件块
-   （`LoopFrame::new_cond`）。守门用例：`both_dowhile_continue`。
-4. **最后做 For**：用 `LoopFrame::new_for`（`continue` → 懒创建 update 块）+
-   `init/cond/update` 三处可选；update 块与内联 update 两条路径必须与现实现等价
-   （无 continue ⇒ 不留孤立块，否则 IR 校验 `UnreachableBlock` 会拒绝——
-   `test_hir_e2e_break` 是这条不变式的守门）。守门用例：
-   `both_for_continue` / `both_nested_loop_break_continue`。
-5. **收尾**：确认 `codegen_hir.rs` 行数下降（预期 ~1380）并把实测值回写本文。
-
-**验收**：`cargo test -p mini_c`（lib 22 / dual_backend 24 / integration 90 /
-v12 28 / diagnostics 3）全绿；`cargo clippy --workspace --exclude forge-rustc
---all-targets -- -D warnings` 通过；无 IR 校验失败。
-
-**风险与对策**：`ctx.loops` 的 push/pop 配对是唯一易错点（`continue`/`break` 读到
-错的帧）——对策是每步都在 dual_backend 的 continue/嵌套用例下跑，并在
-`lower_loop` 内用 RAII 风格的守卫（或确保所有 early-return 路径都 pop）。
-
-**可选（点 4）**：`codegen_function_hir` 的 6 处 `map_err` 仅在结构调整时顺带处理
-（净省 ~2 行，不涉诊断信息丢失），不作为独立目标。
+静默错码"——本轮即为证明；循环收敛一项尤其说明：**该处的重复是"惯用法"级
+（条件跳转），收益是单一事实源与可读性，不是行数**。
 
 ## 不在本计划范围（记录）
 

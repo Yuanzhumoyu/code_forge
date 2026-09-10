@@ -311,6 +311,54 @@ fn apply_compound_op(
 
 // ── Control flow ──
 
+/// 真值化：`v != 0` → i1（`if` / `while` / `for` / `do-while` 共用的比较惯用法）。
+fn truthy(ctx: &mut HirCtx<'_, SymTable>, v: GraphValue) -> Result<GraphValue, HirError> {
+    let zero = ctx.graph.iconst_i32(0)?;
+    ctx.graph.icmp(IntCC::NotEqual, v, zero)
+}
+
+/// 条件跳转——三种循环的**公共内容**就在这里（其余是各自固定的块结构与顺序）。
+///
+/// `Some(cond)`：求值 + `truthy` + `emit_branch(then, else)`；
+/// `None`（`for` 省略条件）：无条件 `emit_jump(then)`。
+///
+/// 不做 `LoopKind` 式统一驱动：init/update/先判或后判/`continue` 落点的差异就是
+/// 三种循环的全部语义，抽象成本高于收益（见 docs/plans/hir-shrink-plan.md 收缩点 2）。
+fn emit_cond_branch(
+    ctx: &mut HirCtx<'_, SymTable>,
+    cond: Option<AstRef<'_>>,
+    then_blk: BlockId,
+    else_blk: BlockId,
+) -> Result<(), HirError> {
+    match cond {
+        Some(node) => {
+            let v = lower_expr(ctx, node)?;
+            let is_true = truthy(ctx, v)?;
+            ctx.graph.emit_branch(is_true, then_blk, else_blk)?;
+        }
+        None => {
+            ctx.graph.emit_jump(then_blk)?;
+        }
+    }
+    Ok(())
+}
+
+/// 当前块**没有终结符**时才跳到 `target`。
+///
+/// 循环体/分支体尾部常用：体内若以 break/continue/return 结束，当前块已有终结符，
+/// 再发跳转会产出不可达块（IR 校验 `UnreachableBlock` 拒绝）；且体内嵌套 if 可能
+/// 切换了当前块，故判据取**当前块**而非进入体时的块句柄。
+fn jump_if_open(ctx: &mut HirCtx<'_, SymTable>, target: BlockId) -> Result<(), HirError> {
+    let cur = ctx
+        .graph
+        .current_block()
+        .ok_or_else(|| HirError::Internal("no current block".into()))?;
+    if !ctx.graph.has_terminator(cur) {
+        ctx.graph.emit_jump(target)?;
+    }
+    Ok(())
+}
+
 fn lower_if(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirError> {
     let cond_node = node
         .get_child("condition")
@@ -321,8 +369,7 @@ fn lower_if(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirE
     let else_opt: Option<AstRef<'_>> = node.get_optional("else_body").flatten();
 
     let cond_val = lower_expr(ctx, cond_node)?;
-    let zero = ctx.graph.iconst_i32(0)?;
-    let is_true = ctx.graph.icmp(IntCC::NotEqual, cond_val, zero)?;
+    let is_true = truthy(ctx, cond_val)?;
 
     // Like the direct backend: no else → branch straight to merge (do NOT
     // create an unused else block — an orphan block breaks the x86 backend).
@@ -344,9 +391,7 @@ fn lower_if(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirE
     // Then block
     ctx.graph.set_current_block(then_blk);
     lower_block(ctx, then_node)?;
-    if !ctx.graph.has_terminator(then_blk) {
-        ctx.graph.emit_jump(merge_blk)?;
-    }
+    jump_if_open(ctx, merge_blk)?;
 
     // Else block
     if has_else {
@@ -360,9 +405,7 @@ fn lower_if(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirE
             .copied()
             .unwrap_or(else_n);
         lower_block(ctx, body)?;
-        if !ctx.graph.has_terminator(else_blk) {
-            ctx.graph.emit_jump(merge_blk)?;
-        }
+        jump_if_open(ctx, merge_blk)?;
     }
 
     ctx.graph.set_current_block(merge_blk);
@@ -385,10 +428,7 @@ fn lower_while(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), H
 
     // Condition block
     ctx.graph.set_current_block(cond_blk);
-    let cond_val = lower_expr(ctx, cond_node)?;
-    let zero = ctx.graph.iconst_i32(0)?;
-    let is_true = ctx.graph.icmp(IntCC::NotEqual, cond_val, zero)?;
-    ctx.graph.emit_branch(is_true, body_blk, exit_blk)?;
+    emit_cond_branch(ctx, Some(cond_node), body_blk, exit_blk)?;
 
     // Body block
     ctx.graph.set_current_block(body_blk);
@@ -396,15 +436,8 @@ fn lower_while(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), H
     ctx.loops.push(LoopFrame::new_cond(cond_blk, exit_blk));
     lower_block(ctx, body_node)?;
     ctx.loops.pop();
-    // The body may have switched blocks (e.g. an if inside the body); check
-    // the CURRENT block for a terminator, not body_blk.
-    let cur = ctx
-        .graph
-        .current_block()
-        .ok_or_else(|| HirError::Internal("no current block".into()))?;
-    if !ctx.graph.has_terminator(cur) {
-        ctx.graph.emit_jump(cond_blk)?;
-    }
+    // 体内可能切换了当前块（如内嵌 if），由 jump_if_open 取当前块判定
+    jump_if_open(ctx, cond_blk)?;
 
     ctx.graph.set_current_block(exit_blk);
     Ok(())
@@ -419,6 +452,8 @@ fn lower_for(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), Hir
     if let Some(Some(init_node)) = node.get_optional("init") {
         lower_stmt(ctx, init_node)?;
     }
+    let cond_node = node.get_optional("condition").flatten();
+    let update_node = node.get_optional("update").flatten();
 
     let cond_blk = ctx.graph.create_block(&[]);
     let body_blk = ctx.graph.create_block(&[]);
@@ -426,17 +461,9 @@ fn lower_for(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), Hir
 
     ctx.graph.emit_jump(cond_blk)?;
 
-    // Condition block
+    // Condition block（省略条件 → 无条件进体）
     ctx.graph.set_current_block(cond_blk);
-    if let Some(Some(cond_node)) = node.get_optional("condition") {
-        let cond_val = lower_expr(ctx, cond_node)?;
-        let zero = ctx.graph.iconst_i32(0)?;
-        let is_true = ctx.graph.icmp(IntCC::NotEqual, cond_val, zero)?;
-        ctx.graph.emit_branch(is_true, body_blk, exit_blk)?;
-    } else {
-        // No condition → always enter body
-        ctx.graph.emit_jump(body_blk)?;
-    }
+    emit_cond_branch(ctx, cond_node, body_blk, exit_blk)?;
 
     // Body block（continue 目标在首次 continue 时懒创建）
     ctx.graph.set_current_block(body_blk);
@@ -451,32 +478,24 @@ fn lower_for(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), Hir
         .last()
         .copied()
         .ok_or_else(|| HirError::Internal("for: loop frame missing".into()))?;
-    let cur = ctx
-        .graph
-        .current_block()
-        .ok_or_else(|| HirError::Internal("no current block".into()))?;
     match frame.update_blk {
         // 有 continue：循环体尾部汇入 update 块（两条路径各执行一次 update）
         Some(update_blk) => {
-            if !ctx.graph.has_terminator(cur) {
-                ctx.graph.emit_jump(update_blk)?;
-            }
+            jump_if_open(ctx, update_blk)?;
             ctx.graph.set_current_block(update_blk);
-            if let Some(Some(update_node)) = node.get_optional("update") {
+            if let Some(update_node) = update_node {
                 lower_stmt(ctx, update_node)?;
             }
+            jump_if_open(ctx, cond_blk)?;
+        }
+        // 无 continue：update 内联在循环体尾部（老结构，零额外块）
+        None => {
             let cur = ctx
                 .graph
                 .current_block()
                 .ok_or_else(|| HirError::Internal("no current block".into()))?;
             if !ctx.graph.has_terminator(cur) {
-                ctx.graph.emit_jump(cond_blk)?;
-            }
-        }
-        // 无 continue：update 内联在循环体尾部（老结构，零额外块）
-        None => {
-            if !ctx.graph.has_terminator(cur) {
-                if let Some(Some(update_node)) = node.get_optional("update") {
+                if let Some(update_node) = update_node {
                     lower_stmt(ctx, update_node)?;
                 }
                 ctx.graph.emit_jump(cond_blk)?;
@@ -508,21 +527,11 @@ fn lower_do_while(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<()
     ctx.loops.push(LoopFrame::new_cond(cond_blk, exit_blk));
     lower_block(ctx, body_node)?;
     ctx.loops.pop();
-    // Check the CURRENT block (the body may have switched blocks).
-    let cur = ctx
-        .graph
-        .current_block()
-        .ok_or_else(|| HirError::Internal("no current block".into()))?;
-    if !ctx.graph.has_terminator(cur) {
-        ctx.graph.emit_jump(cond_blk)?;
-    }
+    jump_if_open(ctx, cond_blk)?;
 
-    // Condition block
+    // Condition block（先体后判：条件真 → 回到循环体）
     ctx.graph.set_current_block(cond_blk);
-    let cond_val = lower_expr(ctx, cond_node)?;
-    let zero = ctx.graph.iconst_i32(0)?;
-    let is_true = ctx.graph.icmp(IntCC::NotEqual, cond_val, zero)?;
-    ctx.graph.emit_branch(is_true, body_blk, exit_blk)?;
+    emit_cond_branch(ctx, Some(cond_node), body_blk, exit_blk)?;
 
     ctx.graph.set_current_block(exit_blk);
     Ok(())

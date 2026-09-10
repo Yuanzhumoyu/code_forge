@@ -1375,7 +1375,7 @@ mod tests {
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
         // callee: (v512) -> i32（提取 lane15 = 16.0）
-        let mut tc = TypeContext::new();
+        let tc = TypeContext::new();
         let vt = tc.vector_ty(TypeId::F32, 16);
         let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
         let mut bc = FunctionBuilder::new("callee", tc, sig_c);
@@ -1418,7 +1418,7 @@ mod tests {
 
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
-        let mut tc = TypeContext::new();
+        let tc = TypeContext::new();
         let vt = tc.vector_ty(TypeId::F32, 8);
         let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
         let mut bc = FunctionBuilder::new("v256_hi", tc, sig_c);
