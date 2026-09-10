@@ -439,10 +439,15 @@ fail-closed 收口：
 
 ### 9.1 步骤 1（前置，需要 CI 侧证据）：失败产物与 trace 对照
 
-本机无法复现 ⇒ 必须在 CI 失败时取回证据（沿用既有机制：日志与产物 artifact）：
+本机是**低频复现**（≈1/100，见 §9.2）⇒ 终局证据仍应取自 CI 失败 run。
+**原文此处假设"沿用既有机制：日志与产物 artifact"——2026-09-10 核查不成立**：
+`forge-rustc-e2e` job 当时既无 `tee` 落盘、也无 `if: failure()` 上传（全仓库只有
+clippy job 有上传），失败即随 runner 销毁。已补（`.github/workflows/ci.yml`）：e2e 步骤改为
+`… | Tee-Object ${{ runner.temp }}/e2e.log`、设 `FORGE_E2E_KEEP=1`（失败轮工作目录不删），
+并新增失败时上传 `e2e-evidence`（日志 + `forge_rustc_e2e_*` 工作目录）。
 
-1. 取 CI 失败 run 的 e2e 产物（失败用例的 `.exe` 与 `-C save-temps` 的 `.o`）与
-   `target\tmp\logs_{check_suite_id}`；
+1. 取 CI 失败 run 的 `e2e-evidence` artifact（失败用例的 `.rs`/`.exe` 与日志里的
+   `KNOWN <case> error: …` 文案）；
 2. **比对判据**：把 CI 产物的 `.text`（或 forge 写出的 `.o`）与本机同源编译产物做
    逐字节比对（`llvm-objdump` 归一化指令序列 + 对象字节）：
    - **字节一致而 CI 崩** ⇒ 判为 **CI runner 环境性**（同类先例：`cli_tests` 的
@@ -469,25 +474,44 @@ fail-closed 收口：
 | `vec_push` / `vec_string` / `vec_iter_enumerate` / `box_value` | 各 10/10（`exits=[2…] / [2…] / [80…] / [42…]`） |
 | `vec_from_slice` | **v1 出现 1 次失败（1/10，连续重负载序列中）**；v2 10/10；随后定向复跑 30（带 trace）+ 40（无 trace）全过 ⇒ 合计 **80 次单跑仅 1 次失败（≈1/100）** |
 
-**失败形态（关键）**：v1 那次失败**没有** `exit=N (want 3)` 文案 ⇒ 走 harness 的
-`Err` 分支（编译失败 / 起进程失败 / **exe 超时挂起**），**不是**错误退出码——与各
-`reason` 记录的 CI 现象（"CI 偶发 timeout（挂起）"）一致。该次复现时尚未启用
-`FORGE_E2E_KEEP`，产物随工作目录被清理 ⇒ **失败文案与产物未留存**；该开关已补
-（提交 `8a05d23`），v2 具备取证能力但未复现。
+**失败形态（已定位到"运行期挂起"，2026-09-10 事后取证）**：
 
-**下一步（未闭环）**：需要一次**成功留证的复现**才能定性：
-制造负载（并发 2-3 个 e2e 实例，或重复 v1 那样的长序列直到复现）+ `FORGE_E2E_KEEP=1
-FORGE_TRACE_ALLOC=1 FORGE_TRACE_SPILL=1`；拿到失败 exe 后按 §9.1 两条判据处理
-（同一 exe 复跑混杂 ⇒ 运行期环境性；恒定失败 ⇒ 确定性错码；再与正常产物做
-`.text`/SHA256 对照）。
+1. v1 记录行是 `vec_from_slice : pass=9 fail=1  exits=[3,3,3,3,3,3,3,3,3]`——10 次里
+   **只有 9 个退出码**。v1 脚本按 `$c\s+exit=` 抓取，若失败轮输出 `KNOWN vec_from_slice
+   exit=N (want 3)` 必被计入 ⇒ 该轮输出的是 `KNOWN vec_from_slice error: …`，即 harness 的
+   `Err` 分支，**不是错误退出码**。（文案当时未落盘——v1 脚本只写聚合行；v2 已修。）
+2. **产物补证**：失败轮的工作目录 `%TEMP%\forge_rustc_e2e_37184`（时间戳 18:40:38，正落在
+   v1 定向循环时段）**至今仍在**，且只有 `vec_from_slice.{rs,exe,pdb}` 三件。当时
+   `FORGE_E2E_KEEP` **尚不存在**（harness 支持于 18:41:47 才写入源码、18:45:43 才提交
+   `8a05d23`；hammer 脚本加该变量更晚）⇒ 目录能留下来只能是 `remove_dir_all` **失败**：
+   只有**超时路径**会在 `kill()` 子进程后立刻清理（被强杀进程的 `.exe` 映像尚未释放 →
+   Windows 删除遭 sharing violation，而 `let _ =` 吞掉错误）；编译失败无 exe、
+   起进程失败无锁，二者都留不下三件套。
+   对照实验佐证：**通过**的单用例轮不留目录（`failed_cases` 为空即删除，实测复现）。
+3. **产物正确性**：那一轮的 `vec_from_slice.exe` 事后独立复跑 **5/5 `exit=3`**（正确值）
+   ⇒ 该轮**编译成功且产物语义正确**，失败落在运行期（15 s 未退出），与本仓库 CI 记录的
+   "偶发 timeout（挂起）"同族。
+
+**结论（截至 2026-09-10）**：这 5 例的偶发失败**不是错码、也不是该类用例的错编译**，
+而是运行期异常（最可能 = 子进程 15 s 未退出被强杀；`try_wait` 报错的同族路径无法排除）。
+仍待解释的是"该 exe 为何在负载下 15 s 不退出、事后独立复跑却稳定 3"——需要一次
+**当场留证**的复现。
+
+**下一步（未闭环）**：
+
+- 制造负载复现（并发 2-3 个 e2e 实例，或重复 v1 那样的长序列），用 v2 脚本的捕获路径
+  （`FORGE_E2E_KEEP=1` + 失败即写 `hammer_fail_*.txt`）抓住 `KNOWN` 文案；
+- 若定格 `error: timeout (挂起…)`：按 §9.1 的字节判据比对该 exe 与正常产物的
+  `.text`/SHA256（一致 ⇒ 纯运行期环境性 → 转 §9.3）；
+- 若定格错码：按 §8.1 关联法查 def-spill 站点（转 §9.4）。
 
 ### 9.3 步骤 3（若判定为环境性）
 
 - 5 例保持 `known_failure`，但把 `reason` 从"regalloc 非确定性残余"改为
   **"CI runner 环境性（附证据：产物字节一致 + 本机 N 轮全绿）"**，并在
   `crates/tools/forge-rustc/README.md` 的支持矩阵节记录同一结论；
-- 在 CI 上加"失败即上传产物/trace"的既有步骤（已具备则复用），把每次偶发都变成
-  可对照的证据，避免下次再从零排查。
+- CI 取证已补（2026-09-10，见 §9.1）：`forge-rustc-e2e` 现在失败即上传 `e2e-evidence`
+  （日志 + 保留的失败工作目录），把每次偶发都变成可对照的证据，避免下次再从零排查。
 
 ### 9.4 步骤 4（若判定为编译行为差异）
 

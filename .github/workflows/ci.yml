@@ -146,7 +146,26 @@ jobs:
       # --test-threads=1：e2e binary 内 6 个测试并发各起嵌套 rustc/cargo
       # 编译——CI 2 核 runner 上互抢导致偶发 compile/run 超时（simd/alloc
       # 用例假败）；串行化后嵌套编译独占资源。
-      - run: cargo test -p forge-rustc --test e2e -- --test-threads=1
+      # 取证（2026-09-10）：5 个 FLAKY 用例的偶发失败在本机 ≈1/100，只有失败轮的
+      # `KNOWN <case> error: …` 文案 + 产物能定性（此前 CI 失败即随 runner 销毁）；
+      # 见 docs/plans/forge-rustc-vec_push-plan.md §9.1。故：tee 落盘 + 开
+      # FORGE_E2E_KEEP（失败轮工作目录不删） + 失败时上传 e2e-evidence。
+      - name: Run e2e (stage A + M4 parallel)
+        env:
+          FORGE_E2E_KEEP: "1"
+        run: |
+          cargo test -p forge-rustc --test e2e -- --test-threads=1 2>&1 |
+            Tee-Object -FilePath "${{ runner.temp }}/e2e.log" -Encoding utf8
+          exit $LASTEXITCODE
+      - name: Upload e2e evidence (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence
+          path: |
+            ${{ runner.temp }}/e2e.log
+            ${{ runner.temp }}/forge_rustc_e2e_*
+          if-no-files-found: ignore
       # cargo-forge cli_tests（真跑位）：上一步已产出 target/debug/forge_rustc.dll，
       # 本 job 有 rust-src；FORGE_CLI_TOOLCHAIN 钉版使嵌套 cargo 用已装 channel
       #（缺省会找 +nightly 别名 → rustup 自动下载最新 nightly，与钉版 dll 错配）。
