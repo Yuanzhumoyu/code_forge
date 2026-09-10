@@ -17,8 +17,7 @@ docs/
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
 ├── plans/                 # 有未完成工作的专项方案 [progress]
-│   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
-│   └── hir-shrink-plan.md     # forge-hir/mini_c 收缩（收缩点 2 仍开放）
+│   └── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -31,6 +30,7 @@ docs/
     ├── README.md              # 归档图例与清单
     ├── roadmap-status.md / isa-dsl-v12-roadmap.md / asm-dec-generic-design-v2.md
     ├── ymm-abi-plan.md        # YMM ABI 方案（2026-09-10 核查完成 → 归档）
+    ├── hir-shrink-plan.md     # HIR/mini_c 收缩（同日均告终结 → 归档）
     ├── clippy-fixes.md / coverage-history.md
     └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
 ```

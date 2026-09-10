@@ -26,8 +26,7 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| `plans/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（历史修复链 + **§8 2026-09-10 复核**：E1 假设未复现、失败面已 fail-closed；5 用例仍 FLAKY，见 `tests/e2e.rs`） | progress |
-| `plans/hir-shrink-plan.md` | forge-hir / mini_c codegen_hir 收缩方案（2026-09-10 重写：修正 3 处前提错误、收益下调；已落 bin_op/field_key/LoopFrame，收缩点 2 仍开放） | progress |
+| `plans/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（历史修复链 + **§8 2026-09-10 复核**：E1 假设未复现、失败面已 fail-closed；5 用例仍 FLAKY，见 `tests/e2e.rs`；§9 修复方案） | progress |
 
 ## performance/ — 基准与优化
 
@@ -51,6 +50,7 @@
 | --- | --- |
 | `archive/roadmap-status.md` | v14-forge-ir-redesign 路线图交接（2026-08；自述 2026-09 大幅过期，开放项移交 forge-rustc WORKAROUNDS/README） |
 | `archive/ymm-abi-plan.md` | YMM ABI（>128 位向量传参）方案（**2026-09-10 核查后归档**：S1-S5/D2-D6 全部落地；残余移交 WORKAROUNDS WA-37 与 CLAUDE.md SIMD 矩阵） |
+| `archive/hir-shrink-plan.md` | HIR/mini_c 收缩方案（**2026-09-10 归档**：点 1/2/3 落地、点 5 前提不成立而删除、点 4 决定不做；收益结论下调） |
 | `archive/isa-dsl-v12-roadmap.md` | ISA-DSL v12 历史（现行规范 = reference/isa-dsl v15） |
 | `archive/asm-dec-generic-design-v2.md` | 汇编器/解码器 v2 设计提案（v13 已落地，v15 演进） |
 | `archive/clippy-fixes.md` | 2026-07 clippy 清零单次记录 |

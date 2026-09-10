@@ -1,5 +1,18 @@
 # HIR 收缩方案（forge-hir / mini_c 手写 lowering）
 
+## ⚠️ ARCHIVED（2026-09）
+
+> 本方案**已终结**（2026-09-10 逐项核查后归档）：收缩点 1（`bin_op` 去重）、点 3
+> （`field_key` 收敛）、点 2（循环 lowering 收敛，按重设计方案：只抽共用原语
+> `truthy`/`emit_cond_branch`/`jump_if_open`，不做 `LoopKind` 统一驱动）均已落地；
+> 点 5 经核实**前提自始不成立**（宏生成物早已统一 `Result`）而删除；点 4（`map_err`
+> 计数，净省 ~2 行）明确**可选且不建议做**。
+> 现行信息入口：代码本身 + 守门用例 `examples/mini_c/tests/dual_backend_tests.rs`
+> （含 continue ×3 形态、嵌套 break/continue、成员复合赋值——**先于收缩落地**，
+> 并因此暴露了两个真实缺陷，见下文「本轮落地」）。
+> 归档时点结论：本计划原估收益（-185 行 / "1300→1100"）不可达，循环收敛的收益是
+> **单一事实源与可读性**而非行数（实测 `codegen_hir.rs` 1427 → 1436 行）。
+> 本文为历史记录，代码现状以仓库代码与现行文档为准。
 > 审查方案 P1 项。目标：在不改变行为的前提下收缩 `examples/mini_c/src/codegen_hir.rs`
 > （手写 AST→IrGraph lowering）与 forge-hir 库的重复结构。
 > 守门：`examples/mini_c/tests/dual_backend_tests.rs`（Direct vs Hir 双后端

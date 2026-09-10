@@ -240,7 +240,7 @@ fn lower_assign(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), 
 
 /// 结构体字段的槽键：`"对象.字段"`（每字段独立栈槽的命名约定）。
 ///
-/// 计划收缩点 3（`docs/plans/hir-shrink-plan.md`，修正版）：该字符串格式旧实现
+/// 计划收缩点 3（`docs/archive/hir-shrink-plan.md`，修正版）：该字符串格式旧实现
 /// 在 5 处各自 `format!`——收敛为一个命名约定函数（`lower_struct_init` /
 /// `lower_member_access` / 成员赋值共用）。
 fn field_key(base: &str, field: &str) -> String {
@@ -323,7 +323,7 @@ fn truthy(ctx: &mut HirCtx<'_, SymTable>, v: GraphValue) -> Result<GraphValue, H
 /// `None`（`for` 省略条件）：无条件 `emit_jump(then)`。
 ///
 /// 不做 `LoopKind` 式统一驱动：init/update/先判或后判/`continue` 落点的差异就是
-/// 三种循环的全部语义，抽象成本高于收益（见 docs/plans/hir-shrink-plan.md 收缩点 2）。
+/// 三种循环的全部语义，抽象成本高于收益（见 docs/archive/hir-shrink-plan.md 收缩点 2）。
 fn emit_cond_branch(
     ctx: &mut HirCtx<'_, SymTable>,
     cond: Option<AstRef<'_>>,
@@ -705,7 +705,7 @@ fn flat_children(node: AstRef<'_>) -> Vec<AstRef<'_>> {
 
 /// 二元运算分派（**唯一**的「运算符字符串 → build_xxx」表）。
 ///
-/// 计划的收缩点 1（`docs/plans/hir-shrink-plan.md`）：旧实现里
+/// 计划的收缩点 1（`docs/archive/hir-shrink-plan.md`）：旧实现里
 /// `apply_compound_op`（`+=` 等复合形式）与 `lower_binary`（普通形式）各自
 /// 维护一张 10 臂 match 表——本函数按「去掉尾随 `=`」归一化后共用一条分派。
 fn bin_op(
