@@ -1357,7 +1357,12 @@ mod tests {
         );
     }
 
-    /// S4: V512（64 字节）by-ref 传参——EVEX 指令需 AVX-512F，无则跳过。
+    /// S4 / WA-37 D5：V512（64 字节）by-ref 传参——EVEX 指令需 AVX-512F，无则跳过。
+    ///
+    /// **断言 lane15（不是 lane0）**：D5 的缺陷正是"被调方只 load 32B"（lane8..15
+    /// 丢失），lane0 断言对它是盲区。类型建在**同一个** TypeContext 上（跨上下文
+    /// TypeId 会越界 panic：`forge-ir/src/types.rs` 的 `get()`；旧写法用另一个 store
+    /// 建 `vt`，在本机无 AVX-512 时直接 return 因而从未跑到）。
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_v512_byref_param() {
@@ -1369,23 +1374,21 @@ mod tests {
         }
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
-        let vt = {
-            let store = TypeContext::new();
-            store.vector_ty(TypeId::F32, 16)
-        };
-        // callee: (v512) -> i32（lane0 提取）
+        // callee: (v512) -> i32（提取 lane15 = 16.0）
+        let mut tc = TypeContext::new();
+        let vt = tc.vector_ty(TypeId::F32, 16);
         let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
-        let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let mut bc = FunctionBuilder::new("callee", tc, sig_c);
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(0);
+        let idx = bc.iconst_i32(15);
         let lane = bc.vextract(p[0], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
         bc.ret(&[int]);
         let mut module = Module::new();
         let callee_ref = module.add_function(bc.finish().expect("callee"));
-        // main: call callee(vconst([1.5, ...16])) → lane0 = 1
+        // main: call callee(vconst([1.5, ...16])) → lane15 = 16
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
@@ -1399,7 +1402,59 @@ mod tests {
         jit.compile_module(&module).expect("编译 main+callee");
         let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
         let got = f();
-        assert_eq!(got, 1, "V512 by-ref lane0 1.5 → 1（EVEX 栈拷贝）");
+        assert_eq!(
+            got, 16,
+            "V512 by-ref 全宽拷贝：lane15 = 16.0 → 16（旧实现按类宽只 load 32B → 该 lane 丢失）"
+        );
+    }
+
+    /// WA-37 D5 同源盲区的**本机可跑**版本：V256（32B）by-ref 收参断言 **lane7**
+    /// （= 8.0），并复现 V512 用例所用的单 TypeContext + Module/JIT 构造
+    ///（该构造在 AVX-512 机器上才跑到 V512，这里用 V256 先在本机验证其成立）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v256_byref_high_lane() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut tc = TypeContext::new();
+        let vt = tc.vector_ty(TypeId::F32, 8);
+        let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("v256_hi", tc, sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
+        bc.switch_to_block(blk);
+        // callee: (v256) -> i32（lane7 * 10 + lane4 = 8*10 + 5 = 85）
+        // 覆盖高半区两条路径：lane7（imm0≥4 → imm0_sub4=3）与 lane4（imm0=4 → sub4=0）。
+        let idx7 = bc.iconst_i32(7);
+        let l7 = bc.vextract(p[0], idx7);
+        let w7 = bc.fpext(l7, TypeId::F64);
+        let i7 = bc.fptosi(w7, TypeId::I32);
+        let idx4 = bc.iconst_i32(4);
+        let l4 = bc.vextract(p[0], idx4);
+        let w4 = bc.fpext(l4, TypeId::F64);
+        let i4 = bc.fptosi(w4, TypeId::I32);
+        let ten = bc.iconst_i32(10);
+        let scaled = bc.imul(i7, ten);
+        let sum = bc.iadd(scaled, i4);
+        bc.ret(&[sum]);
+        let mut module = Module::new();
+        let callee_ref = module.add_function(bc.finish().expect("v256_hi"));
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("v256_hi_main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
+        bm.ret(&r);
+        module.add_function(bm.finish().expect("v256_hi_main"));
+        jit.compile_module(&module).expect("编译 v256_hi+main");
+        let f: extern "C" fn() -> i32 = jit.get_fn("v256_hi_main").expect("get_fn");
+        assert_eq!(
+            f(),
+            85,
+            "V256 全宽 lane 提取：lane7=8.0、lane4=5.0 → 8*10+5=85（旧实现按 rd 判定 → \
+             V256 规则永不命中 → 高半区 lane 取到低半区值）"
+        );
     }
 
     /// WA-37 D6①：`CallIndirect` + 宽向量（>16B）by-ref **实参**。

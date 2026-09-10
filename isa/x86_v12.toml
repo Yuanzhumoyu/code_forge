@@ -3263,52 +3263,52 @@ insts = ["MOVQ_R64_XMM {out}, {0}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] }, { le = ["imm0", 3] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 1] }, { le = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, {imm0}", "MOVSS {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] }, { ge = ["imm0", 4] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 1] }, { ge = ["imm0", 4] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, {imm0_sub4}", "MOVSS {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] }, { le = ["imm0", 3] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 3] }, { le = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, {imm0}", "MOVD_IREG_FREG {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] }, { ge = ["imm0", 4] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 3] }, { ge = ["imm0", 4] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, {imm0_sub4}", "MOVD_IREG_FREG {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { le = ["imm0", 1] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 2] }, { le = ["imm0", 1] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, 78", "MOVSD {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { eq = ["imm0", 2] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 2] }, { eq = ["imm0", 2] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "MOVSD {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 2] }, { ge = ["imm0", 3] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 2] }, { ge = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, 78", "MOVSD {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { le = ["imm0", 1] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 4] }, { le = ["imm0", 1] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, 78", "MOVQ_R64_XMM {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { eq = ["imm0", 2] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 4] }, { eq = ["imm0", 2] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "MOVQ_R64_XMM {out}, {f1}"]
 
 [[lowering]]
 op = "Vextract"
-when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 4] }, { ge = ["imm0", 3] } ] }
+when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 4] }, { ge = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, 78", "MOVQ_R64_XMM {out}, {f1}"]
 
 [[lowering]]
