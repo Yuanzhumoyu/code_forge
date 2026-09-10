@@ -53,7 +53,7 @@ if ($Mode -eq 'hammer') {
     for ($i = 1; $i -le 5; $i++) {
         $r = Invoke-CargoTest @('-p', 'forge-rustc', '--test', 'e2e', '--', '--nocapture', 'e2e_stage_a_scalar_cases')
         $passed = (($r.Out -split "`n" | Where-Object { $_ -match '^passed: ' } | Select-Object -First 1) -replace '\s+$', '')
-        $known = (($r.Out -split "`n" | Where-Object { $_ -match '^KNOWN ' }) -join ' || ')
+        $known = (($r.Out -split "`n" | Where-Object { $_ -match '^KNOWN |^FAIL ' }) -join ' || ')
         "stage_a run${i}: exit=$($r.Exit)  $passed  KNOWN=[$known]" | Out-File $log -Append -Encoding utf8
     }
     $r = Invoke-CargoTest @('-p', 'forge-rustc', '--test', 'e2e', '--', '--nocapture', 'e2e_parallel_pool_threads')
@@ -65,8 +65,9 @@ if ($Mode -eq 'hammer') {
         for ($k = 1; $k -le 10; $k++) {
             $env:FORGE_E2E_ONLY = $c
             $r = Invoke-CargoTest @('-p', 'forge-rustc', '--test', 'e2e', '--', '--nocapture', 'e2e_stage_a_scalar_cases')
-            # 失败形态二选一：`KNOWN <case> exit=N (want M)`（错码）或 `KNOWN <case> error: …`（Err）
-            $known = (($r.Out -split "`n" | Where-Object { $_ -match "^KNOWN $c " } | Select-Object -First 1) -replace '\s+$', '')
+            # 失败形态二选一：`KNOWN <case> exit=N (want M)`（错码，容忍模式）或
+            # `KNOWN|FAIL <case> error: …`（Err）；严格模式下错码走 `FAIL`。
+            $known = (($r.Out -split "`n" | Where-Object { $_ -match "^KNOWN $c |^FAIL $c " } | Select-Object -First 1) -replace '\s+$', '')
             $m = [regex]::Match($r.Out, "$c\s+exit=(-?\d+)")
             if ($m.Success) { $codes += $m.Groups[1].Value }
             if ($known) {

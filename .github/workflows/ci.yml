@@ -150,9 +150,14 @@ jobs:
       # `KNOWN <case> error: …` 文案 + 产物能定性（此前 CI 失败即随 runner 销毁）；
       # 见 docs/plans/forge-rustc-vec_push-plan.md §9.1。故：tee 落盘 + 开
       # FORGE_E2E_KEEP（失败轮工作目录不删） + 失败时上传 e2e-evidence。
+      # 严格模式（2026-09-10 起，试运行）：FLAKY 用例**只容忍超时**（已定性宿主侧
+      # 环境性，仍有同产物复跑兜底），**错码按 FAIL 硬失败**——把 5 例的正确性重新
+      # 纳入门禁。若因历史 AV 形态变红，正是需要排查的信号（产物/日志见 artifact）；
+      # 连续 2 轮全绿后按计划 §9.5 转正（翻转 known_failure 并摘除 FLAKY）。
       - name: Run e2e (stage A + M4 parallel)
         env:
           FORGE_E2E_KEEP: "1"
+          FORGE_E2E_STRICT_FLAKY: "1"
         run: |
           cargo test -p forge-rustc --test e2e -- --test-threads=1 2>&1 |
             Tee-Object -FilePath "${{ runner.temp }}/e2e.log" -Encoding utf8
