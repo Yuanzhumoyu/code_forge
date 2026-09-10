@@ -1627,6 +1627,8 @@ fn e2e_stage_a_scalar_cases() {
     let mut passed = 0;
     let mut known_failures = Vec::new();
     let mut unexpected_failures = Vec::new();
+    // 失败案件名（用于 FORGE_E2E_KEEP 保留工作目录取证，见 §9.1）
+    let mut failed_cases: Vec<&str> = Vec::new();
     // 单用例调试：FORGE_E2E_ONLY=用例名 只跑一个（配合 FORGE_TRACE_*）
     let only = std::env::var("FORGE_E2E_ONLY").ok();
 
@@ -1672,9 +1674,11 @@ fn e2e_stage_a_scalar_cases() {
                         case.name, case.phase, case.reason
                     );
                     known_failures.push(case.name);
+                    failed_cases.push(case.name);
                 } else {
                     println!("FAIL  {:<16} {msg}", case.name);
                     unexpected_failures.push(format!("{}: {msg}", case.name));
+                    failed_cases.push(case.name);
                 }
             }
             Err(e) => {
@@ -1685,15 +1689,28 @@ fn e2e_stage_a_scalar_cases() {
                         case.name, case.phase, case.reason
                     );
                     known_failures.push(case.name);
+                    failed_cases.push(case.name);
                 } else {
                     println!("FAIL  {:<16} {msg}", case.name);
                     unexpected_failures.push(format!("{}: {msg}", case.name));
+                    failed_cases.push(case.name);
                 }
             }
         }
     }
 
-    let _ = std::fs::remove_dir_all(&workdir);
+    // 失败取证：FORGE_E2E_KEEP=1 时**保留工作目录**（否则产物在清理时丢失，
+    // 无法做 §9.1 的"CI/本机产物字节对照"）。目录内每用例留下 `<name>.rs` 与
+    // `<name>.exe`（配合 FORGE_TRACE_* / FORGE_E2E_TRACE 的 stderr 即完整证据）。
+    if failed_cases.is_empty() || std::env::var_os("FORGE_E2E_KEEP").is_none() {
+        let _ = std::fs::remove_dir_all(&workdir);
+    } else {
+        println!(
+            "\n[keep] 失败用例 {:?} —— 工作目录保留：{}（.rs/.exe 可复跑对照）",
+            failed_cases,
+            workdir.display()
+        );
+    }
 
     println!("\n=== e2e 汇总 ===");
     println!("passed: {passed}/{}", CASES.len());
