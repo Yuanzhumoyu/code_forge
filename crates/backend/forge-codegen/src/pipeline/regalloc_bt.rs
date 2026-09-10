@@ -315,6 +315,37 @@ impl<'a> BtState<'a> {
                 }
             }
 
+            // 1.9 fail-closed（WORKAROUNDS WA-40）：spilled def 的正确性依赖
+            // emission 用 `set_reg_field` 把该 def 的字段改写成 scratch 后 store
+            // 回槽。字段若是**固定物理字段**（`is_reg_field_settable == false`，
+            // 如模板里写死的 RAX——DSL 对这类字段不生成 set_reg_field 分支，
+            // 命中通配 `_ => {}` 静默 no-op），指令会写物理寄存器而 store-back
+            // 从 scratch 读 → spill 槽静默写入陈旧值（读回垃圾 → 偶发 AV/挂起）。
+            // 宁可编译期报错，不产出静默错码。
+            for &vreg in &inst_defs {
+                if !self.is_spilled(vreg) || self.assignments.contains_key(&vreg) {
+                    continue;
+                }
+                let field = slot
+                    .iter()
+                    .find(|&&(x, _fi, d)| x == vreg && d)
+                    .map(|&(_, fi, _d)| fi);
+                if let Some(fi) = field
+                    && !inst.is_reg_field_settable(fi as usize)
+                {
+                    return Err(IrError::RegAlloc(format!(
+                        "spilled def v{} at {:?}: field {} of {:?} is a fixed physical \
+                         register (not settable) — emission cannot redirect it to a \
+                         scratch register, the spill slot would silently hold stale \
+                         data (WORKAROUNDS WA-40)",
+                        vreg.index(),
+                        use_point,
+                        fi,
+                        inst
+                    )));
+                }
+            }
+
             self.max_concurrent_spills = self.max_concurrent_spills.max(spilled_this_inst);
 
             // 4. 标记活跃（HashMap 插入 O(1)，替代 Vec retain+push）
@@ -868,6 +899,9 @@ impl<'a> BtState<'a> {
                 .iter()
                 .map(|v| v.width() == 4)
                 .collect(),
+            // 参数字节宽由 CompileState 分配后按 xreg_types 填充（regalloc
+            // 不持有 IR 类型；见 AllocResult::param_bytes 文档）。
+            param_bytes: Vec::new(),
             callee_saved_to_save: callee_saved_pregs,
             frame_info: FrameInfo {
                 spill_area_size,
@@ -1127,6 +1161,98 @@ mod clobber_map_tests {
         assert!(
             !result.spill_slots.contains_key(&x0),
             "无 clobber 时 x0 应留在 RAX 不 spill"
+        );
+    }
+
+    /// W1 正向守卫（WORKAROUNDS WA-40）：def-spill 在**可被 set_reg_field 改写**
+    /// 的字段上合法——emission 会把该字段重设 scratch 后 store 回槽，值仍正确。
+    /// 与 `test_clobber_blocks_fresh_alloc` 同形，但显式声明"可改写性"前提。
+    #[test]
+    fn test_def_spill_on_settable_field_ok() {
+        let mut config = make_config(16, 16);
+        config
+            .classes
+            .get_mut(&RegClass::GPR64)
+            .unwrap()
+            .allocatable = vec![0]; // 仅 RAX，且被 clobber → def 只能 spill
+        let x0 = xgpr(0);
+        let vcode = clobber_vcode();
+        let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]];
+        let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
+        let ctx = AllocContext::default();
+        let alloc = BacktrackingAllocator::new();
+        let result = alloc
+            .allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map)
+            .expect("def-spill 在可改写字段上必须成功（emission 用 scratch 写入 + store 回槽）");
+        assert!(
+            result.spill_slots.contains_key(&x0),
+            "该构造下 def 应被 spill（守卫不得误报）"
+        );
+        // DummyInst 未覆写 → 默认字段可改写（旧契约）。
+        assert!(
+            DummyInst { id: 0 }.is_reg_field_settable(0),
+            "默认 MachineInst 实现必须保持字段可改写（向后兼容）"
+        );
+    }
+
+    /// W1 fail-closed（WORKAROUNDS WA-40）：def-spill 落在**固定物理字段**
+    /// （`is_reg_field_settable == false`，DSL 对这类字段不生成 set_reg_field
+    /// 分支 → 静默 no-op）时必须编译期报错——否则指令写物理寄存器、store-back
+    /// 从 scratch 读，spill 槽静默留下陈旧值（后续 reload 读垃圾 → 偶发 AV/挂起）。
+    #[test]
+    fn test_def_spill_on_fixed_field_errors() {
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        struct FixedFieldInst {
+            #[allow(dead_code)]
+            id: u32,
+        }
+        impl MachineInst for FixedFieldInst {
+            fn uses(&self) -> smallvec::SmallVec<[u32; 4]> {
+                smallvec::SmallVec::new()
+            }
+            fn defs(&self) -> smallvec::SmallVec<[u32; 2]> {
+                smallvec::SmallVec::new()
+            }
+            fn is_branch(&self) -> bool {
+                false
+            }
+            fn branch_targets(&self) -> smallvec::SmallVec<[Block; 2]> {
+                smallvec::SmallVec::new()
+            }
+            fn is_call(&self) -> bool {
+                false
+            }
+            fn is_ret(&self) -> bool {
+                false
+            }
+            /// 模拟"模板里写死的物理字段"：无字段可被改写。
+            fn is_reg_field_settable(&self, _i: usize) -> bool {
+                false
+            }
+        }
+
+        let mut config = make_config(16, 16);
+        config
+            .classes
+            .get_mut(&RegClass::GPR64)
+            .unwrap()
+            .allocatable = vec![0];
+        let x0 = xgpr(0);
+        let mut vcode = crate::VCode::<FixedFieldInst>::new();
+        let bid = vcode.create_block(Block(0));
+        vcode.switch_to_block(bid);
+        vcode.push_inst(FixedFieldInst { id: 0 });
+        let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]];
+        let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
+        let ctx = AllocContext::default();
+        let alloc = BacktrackingAllocator::new();
+        let err = alloc
+            .allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map)
+            .expect_err("固定物理字段上的 def-spill 必须 fail-closed 报错");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("WA-40") && msg.contains("fixed physical"),
+            "错误信息应说明固定物理字段并指向 WA-40：{msg}"
         );
     }
 }

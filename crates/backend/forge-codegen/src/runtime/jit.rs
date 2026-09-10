@@ -1402,6 +1402,101 @@ mod tests {
         assert_eq!(got, 1, "V512 by-ref lane0 1.5 → 1（EVEX 栈拷贝）");
     }
 
+    /// WA-37 D6①：`CallIndirect` + 宽向量（>16B）by-ref **实参**。
+    /// 该路径与直接 `Call` 共用 `gen_call_lowering`（仅跳过 args[0]），但此前
+    /// **零测试**——调用链改动风险最高，补上。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_call_indirect_wide_vector_byref() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 8)
+        };
+        // callee: (v256) -> i32（lane0 → fptosi）——被调方 by-ref 收参
+        let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("ci_callee", TypeContext::new(), sig_c.clone());
+        let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
+        bc.switch_to_block(blk);
+        let idx = bc.iconst_i32(0);
+        let lane = bc.vextract(p[0], idx);
+        let wide = bc.fpext(lane, TypeId::F64);
+        let int = bc.fptosi(wide, TypeId::I32);
+        bc.ret(&[int]);
+        // main: (fn_ptr: i64) -> i32 { call_indirect(fp, [v256 常量]) }
+        let sig_m = FunctionSignature::new(&[(TypeId::I64, "fp")], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("ci_main", TypeContext::new(), sig_m);
+        let (mb, mp) = bm.create_block_with_params(&[(TypeId::I64, "fp")]);
+        bm.switch_to_block(mb);
+        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let r = bm.call_indirect(mp[0], &[v], &[TypeId::I32]);
+        bm.ret(&r);
+
+        let mut module = Module::new();
+        module.add_function(bc.finish().expect("ci_callee"));
+        module.add_function(bm.finish().expect("ci_main"));
+        jit.compile_module(&module).expect("编译 ci_callee+ci_main");
+        let callee_addr = jit
+            .lookup_symbol("ci_callee")
+            .expect("ci_callee 符号地址");
+        let f: extern "C" fn(u64) -> i32 = jit.get_fn("ci_main").expect("get_fn ci_main");
+        let got = f(callee_addr);
+        assert_eq!(
+            got, 1,
+            "CallIndirect 宽向量 by-ref 实参：lane0 1.5 → fptosi → 1"
+        );
+    }
+
+    /// WA-37 D6②：`CallIndirect` + 宽向量（>16B）**返回值（sret）**。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_call_indirect_wide_vector_sret_return() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 8)
+        };
+        // callee: (i32) -> v256（vconst 返回 → 走 sret 隐藏指针）
+        let sig_c = FunctionSignature::new(&[(TypeId::I32, "n")], &[vt]);
+        let mut bc = FunctionBuilder::new("ci_ret_callee", TypeContext::new(), sig_c.clone());
+        let (blk, _p) = bc.create_block_with_params(&[(TypeId::I32, "n")]);
+        bc.switch_to_block(blk);
+        let v = bc.vconst(vec![3.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        bc.ret(&[v]);
+        // main: (fn_ptr: i64) -> i32 { v = call_indirect(fp, [0], [v256]); lane0 → i32 }
+        let sig_m = FunctionSignature::new(&[(TypeId::I64, "fp")], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("ci_ret_main", TypeContext::new(), sig_m);
+        let (mb, mp) = bm.create_block_with_params(&[(TypeId::I64, "fp")]);
+        bm.switch_to_block(mb);
+        let n = bm.iconst_i32(0);
+        let r = bm.call_indirect(mp[0], &[n], &[vt]);
+        let idx = bm.iconst_i32(0);
+        let lane = bm.vextract(r[0], idx);
+        let wide = bm.fpext(lane, TypeId::F64);
+        let int = bm.fptosi(wide, TypeId::I32);
+        bm.ret(&[int]);
+
+        let mut module = Module::new();
+        module.add_function(bc.finish().expect("ci_ret_callee"));
+        module.add_function(bm.finish().expect("ci_ret_main"));
+        jit.compile_module(&module).expect("编译 ci_ret_callee+ci_ret_main");
+        let callee_addr = jit
+            .lookup_symbol("ci_ret_callee")
+            .expect("ci_ret_callee 符号地址");
+        let f: extern "C" fn(u64) -> i32 = jit.get_fn("ci_ret_main").expect("get_fn ci_ret_main");
+        let got = f(callee_addr);
+        assert_eq!(
+            got, 3,
+            "CallIndirect 宽向量 sret 返回：lane0 3.5 → fptosi → 3"
+        );
+    }
+
     /// E2 主库侧：Select cmovne 路径（[lower.Select] test+cmovcc）——
     /// cond 位宽验证（BOOL icmp 结果 + I32 cond），回应 rvalue.rs 注释的
     /// "cond 位宽/cmovne 路径未达预期"。

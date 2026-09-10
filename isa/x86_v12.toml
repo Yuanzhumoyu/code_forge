@@ -2142,6 +2142,10 @@ op = "Load"
 when = { eq = ["rd_vec", 8] }
 insts = ["MOVSD_R_MEM {out}, [{0}]"]
 
+# 注：>16B 向量（V256 32B / V512 64B）的 Load/Store **无规则**——ISA 类模型
+# 只有 XMM（fpr16）/ZMM（fpr32）槽类，缺 YMM(32B) 类，规则无法表达
+# （曾落到下方默认 8 字节 MOV_R_MEM → 静默截断）。现由编译入口
+# **显式拒绝** >16B 向量 Load/Store（compiler.rs，fail-closed）。
 [[lowering]]
 op = "Load"
 insts = ["MOV_R_MEM {out}, [{0}]"]
@@ -2161,6 +2165,7 @@ op = "Store"
 when = { eq = ["rs1_vec", 8] }
 insts = ["MOVSD_MEM_R [{0}], {1}"]
 
+# 注：>16B 向量 store 同 Load（无 YMM/ZMM 槽类可表达）→ 编译入口显式拒绝。
 [[lowering]]
 op = "Store"
 insts = ["STORE_MEM_R [{0}], {1}"]

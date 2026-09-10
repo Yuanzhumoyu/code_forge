@@ -1747,6 +1747,39 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                 }
             }
         }
+        // IR 层向量 Load/Store：只有 ≤16B（V64/V128）有 lowering 规则
+        // （rd_vec/rs1_vec = 8/16，见 isa/x86_v12.toml）。>16B（V256 32B /
+        // V512 64B）**无规则可表达**——ISA 类模型只有 XMM（fpr16）/ZMM（fpr32）
+        // 槽类、缺 YMM(32B) 类；过去会落到默认 8 字节 MOV_R_MEM/STORE_MEM_R
+        // **静默截断**（槽往返只搬 8B，高位 lane 丢）。这里 fail-closed 显式
+        // 拒绝 >16B 向量 Load/Store：不产出静默错码。
+        // （forge-rustc 的向量值走内存建模 + copy_agg/CopyNonOverlapping，
+        //   不经向量 Load/Store；如需支持，须先在类模型引入 YMM 槽类。）
+        for (_, inst) in func.dfg.insts() {
+            let tys: Vec<TypeId> = match inst.opcode {
+                Opcode::Load => inst
+                    .results
+                    .iter()
+                    .filter_map(|v| func.dfg.value_type(*v))
+                    .collect(),
+                Opcode::Store => inst
+                    .operands
+                    .iter()
+                    .filter_map(|v| func.dfg.value_type(*v))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for ty in tys {
+                let s = types.borrow();
+                if (s.is_vector(ty) || s.is_scalable_vector(ty)) && s.size_bytes(ty) > 16 {
+                    return Err(IrError::Unsupported(format!(
+                        "IR Load/Store 的 {} 字节向量暂不支持（>16B 向量无 lowering 规则：\
+                         ISA 类模型缺 YMM(32B) 槽类；type {ty:?}）",
+                        s.size_bytes(ty)
+                    )));
+                }
+            }
+        }
         // 聚合参数/返回 >8 字节：由 expand_agg_call_args / expand_large_agg_params /
         // expand_large_agg_ret 处理（≤16 字节拆段；>16 字节在 pass 内拒绝）。
         // 异常处理（P1.1）：invoke/landingpad/resume 无机器指令映射，编译期拒绝
@@ -2063,6 +2096,22 @@ impl<I: MachineInst + 'static> CompileState<I> {
         alloc_result.sret = self.ctx.is_sret_return;
         // 栈参数区字节数（move_args 收栈参数时计算 spill 槽地址）
         alloc_result.stack_arg_bytes = self.ctx.max_stack_arg_bytes;
+        // 参数字节宽（IR 类型 size_bytes）——@move_args 的 by-ref 宽向量收参按
+        // 真实字节宽分派 32B/64B load 变体。寄存器类宽对 >128 位向量恒为
+        // VEC(32)（reg_class_for），无法区分 V256/V512：旧实现用 __pv.width()
+        // 使 64B 分支永不可达 → V512 收参只 load 32B（WA-37 D5）。
+        alloc_result.param_bytes = self
+            .param_xregs
+            .iter()
+            .map(|v| {
+                self.ctx
+                    .xreg_types
+                    .get(v)
+                    .and_then(|t| self.ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                    .map(|b| b as u16)
+                    .unwrap_or(0)
+            })
+            .collect();
 
         // 分配后回写：按 xreg_map 把 XReg 的分配结果填入微指令寄存器字段（物理 Reg）
         let mut global_inst = 0usize;
@@ -2262,5 +2311,93 @@ mod alloc_integration_tests {
             cf1.code.len() <= cf0.code.len(),
             "O1 常量折叠应不增大代码（P0-1 回归：优化管线未生效）"
         );
+    }
+
+    /// WA-37 D5 守卫：V512（64 字节）by-ref 参数的**被调方**收参，load 变体必须
+    /// 按参数 IR 字节宽分派到 **64B（EVEX zmm）**。旧实现按参数 XReg 的寄存器类
+    /// 宽分派（`reg_class_for` 对 >128 位恒给 `VEC(32)`）→ 64B 分支永不可达，
+    /// 只从 [ptr] 拷 32B（lane8..15 丢失；原测试只断言 lane0 故未暴露）。
+    ///
+    /// 本机无 AVX-512F 时用 `FORGE_ASSUME_AVX512=1` 放开**可行性守卫**以验证
+    /// 编码分派——本测试只编译不执行（EVEX 真执行需硬件）。
+    #[test]
+    fn test_v512_byref_callee_load_is_64b() {
+        x86_v12::ensure_registered();
+        // 安全：仅本测试设置该 env（进程内其他测试只读；只影响能力判断）
+        let _env_guard = crate::AVX512_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("FORGE_ASSUME_AVX512", "1") };
+        // 类型必须建立在**同一个** TypeContext 上（跨上下文 TypeId 会越界：
+        // 参考 jit.rs 的 V512 用例在本机因无 AVX-512 直接 return，其体从未跑到）。
+        let mut tc = TypeContext::new();
+        let vt = tc.vector_ty(TypeId::F32, 16); // 16 × f32 = 64 字节 = V512
+        let sig = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("callee_v512", tc, sig);
+        let (blk, p) = b.create_block_with_params(&[(vt, "v")]);
+        b.switch_to_block(blk);
+        let idx = b.iconst_i32(0);
+        let lane = b.vextract(p[0], idx);
+        let wide = b.fpext(lane, TypeId::F64);
+        let int = b.fptosi(wide, TypeId::I32);
+        b.ret(&[int]);
+        let func = b.finish().expect("build v512 callee");
+        let cf = FunctionCompiler::new(x86_v12::TargetMachine::new())
+            .compile(&func)
+            .expect("compile v512 callee（FORGE_ASSUME_AVX512 下应通过守卫）");
+        // EVEX 前缀（62）+ EVEX 编码的 0F 10 家族；32B 变体是 VEX（C5 FC 10）。
+        let has_evex_load = cf
+            .code
+            .windows(5)
+            .any(|w| w[0] == 0x62 && w[4] == 0x10);
+        let has_vex_ymm_load = cf.code.windows(3).any(|w| w == [0xC5, 0xFC, 0x10]);
+        assert!(
+            has_evex_load,
+            "V512 收参应含 EVEX zmm load（62 ... 10）：D5 回归（按类宽分派 → 只拷 32B）。\
+             prologue bytes = {:02x?}",
+            &cf.code[..cf.code.len().min(48)]
+        );
+        assert!(
+            !has_vex_ymm_load,
+            "V512 收参不得退回 32B VEX.256 ymm load（C5 FC 10，lane8..15 丢失）"
+        );
+        unsafe { std::env::remove_var("FORGE_ASSUME_AVX512") };
+    }
+
+    /// >16B 向量 Load/Store（V256/V512 槽往返）必须 **fail-closed 显式拒绝**：
+    /// ISA 类模型缺 YMM(32B) 槽类 → 无规则可表达 → 旧行为落到默认 8 字节 MOV
+    /// **静默截断**。本测试只编译（不执行），本机可跑。
+    #[test]
+    fn test_wide_vector_slot_load_store_is_rejected() {
+        x86_v12::ensure_registered();
+        for (lanes, want_bytes) in [(8usize, 32usize), (16, 64)] {
+            let mut tc = TypeContext::new();
+            let vt = tc.vector_ty(TypeId::F32, lanes as u32);
+            let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+            let mut b = FunctionBuilder::new("wide_vec_slot", tc, sig);
+            let (blk, _p) = b.create_block_with_params(&[]);
+            b.switch_to_block(blk);
+            let v = b.vconst(vec![1.0f32; lanes]);
+            let slot = b.alloca(vt, 1);
+            b.store(v, slot);
+            let back = b.load(slot, vt);
+            let idx = b.iconst_i32(0);
+            let lane = b.vextract(back, idx);
+            let wide = b.fpext(lane, TypeId::F64);
+            let int = b.fptosi(wide, TypeId::I32);
+            b.ret(&[int]);
+            let func = b.finish().expect("build wide vector slot roundtrip");
+            let err = match FunctionCompiler::new(x86_v12::TargetMachine::new()).compile(&func) {
+                Ok(_) => panic!(
+                    "{want_bytes}B 向量 Load/Store 必须 fail-closed（否则 8 字节静默截断）"
+                ),
+                Err(e) => e,
+            };
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("Load/Store") && msg.contains(&format!("{want_bytes} 字节向量")),
+                "{want_bytes}B：错误信息应说明 Load/Store 与字节数：{msg}"
+            );
+        }
     }
 }

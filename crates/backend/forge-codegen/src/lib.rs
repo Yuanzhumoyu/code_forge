@@ -280,7 +280,21 @@ pub fn avx2_available() -> bool {
 
 /// AVX-512F 可用性（64 字节 ZMM 向量、EVEX 编码的前提——V512 by-ref/sret
 /// 栈拷贝与收参）。非 x86_64 或检测失败 → false。
+///
+/// `FORGE_ASSUME_AVX512=1` 覆盖：**仅供测试**在无 AVX-512 的宿主上验证
+/// EVEX 编码/收参分派（如 V512 by-ref 的 64B load 选择）——它只放开可行性
+/// 守卫，**不会**让 EVEX 指令在该 CPU 上可执行（真执行需硬件）。
+///
+/// 会读写该环境变量的测试必须持有 [`AVX512_ENV_LOCK`]（进程内串行化，
+/// 否则并行测试互相覆盖 env → 时过时败）。
+pub static AVX512_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn avx512_available() -> bool {
+    // 覆盖开关每次直读（不缓存）——测试可在进程内任意时刻打开它；
+    // 真实检测结果才走 OnceLock 缓存。
+    if std::env::var_os("FORGE_ASSUME_AVX512").is_some() {
+        return true;
+    }
     static AVX512: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVX512.get_or_init(|| {
         #[cfg(target_arch = "x86_64")]

@@ -32,6 +32,13 @@ pub struct AllocResult {
     pub stack_arg_bytes: u32,
     /// 参数是否为 32 位整数（i32/u32——收参需符号扩展 movsxd）。
     pub param_is_32: Vec<bool>,
+    /// 每个参数的 **IR 类型字节数**（与 param_vregs 对齐）——由 `CompileState`
+    /// 在分配后按 `xreg_types` 填充。用途：`@move_args` 的 by-ref 宽向量收参
+    /// 必须按**真实字节宽**分派 32B/64B load 变体——寄存器类宽对 >128 位向量
+    /// 恒为 `VEC(32)`（`reg_class_for`），无法区分 V256(32B)/V512(64B)，旧实现
+    /// 因此让 64B 分支永不可达 → V512 只 load 32B（lane8..15 丢失，WA-37 D5）。
+    /// 0 = 未知（保守按 32B 处理）。
+    pub param_bytes: Vec<u16>,
     /// 需要在序言中保存的 callee-saved 物理寄存器（按 push 顺序）
     pub callee_saved_to_save: Vec<PReg>,
     /// 帧布局信息
@@ -68,6 +75,7 @@ impl Default for AllocResult {
             sret: false,
             stack_arg_bytes: 0,
             param_is_32: Vec::new(),
+            param_bytes: Vec::new(),
             callee_saved_to_save: Vec::new(),
             frame_info: FrameInfo {
                 spill_area_size: 0,
@@ -118,6 +126,7 @@ impl AllocResult {
             sret: false,
             stack_arg_bytes: 0,
             param_is_32: Vec::new(),
+            param_bytes: Vec::new(),
             callee_saved_to_save: Vec::new(),
             frame_info: FrameInfo {
                 spill_area_size: 0,

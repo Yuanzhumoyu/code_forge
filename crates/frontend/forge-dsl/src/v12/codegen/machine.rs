@@ -152,6 +152,9 @@ pub(crate) fn gen_machine_inst(
     let mut implicit_arms: Vec<TokenStream> = Vec::new();
     let mut reg_field_arms: Vec<TokenStream> = Vec::new();
     let mut set_reg_field_arms: Vec<TokenStream> = Vec::new();
+    // 字段可改写性（regalloc 对 spilled def 的 fail-closed 校验用，见 WA-40）：
+    // 只有 reg_field_entries 里登记的字段能被 set_reg_field 改写。
+    let mut reg_field_settable_arms: Vec<TokenStream> = Vec::new();
     // 物理寄存器名 → 索引（implicit_regs 解析用）。
     let gpr_names: Vec<String> = model
         .reg
@@ -258,8 +261,10 @@ pub(crate) fn gen_machine_inst(
         if reg_field_entries.is_empty() {
             reg_field_arms.push(quote! { Inst::#vn { .. } => 0 });
             set_reg_field_arms.push(quote! { Inst::#vn { .. } => {} });
+            reg_field_settable_arms.push(quote! { Inst::#vn { .. } => false });
         } else {
             let fids: Vec<_> = reg_field_entries.iter().map(|(_, fid, _)| fid).collect();
+            let field_idxs: Vec<_> = reg_field_entries.iter().map(|(idx, _, _)| idx).collect();
             let rf_arms: Vec<_> = reg_field_entries
                 .iter()
                 .map(|(idx, fid, _)| quote! { #idx => #fid.to_index() })
@@ -290,6 +295,9 @@ pub(crate) fn gen_machine_inst(
             });
             set_reg_field_arms.push(quote! {
                 Inst::#vn { #(#fids),*, .. } => match i { #(#srf_arms,)* _ => {} }
+            });
+            reg_field_settable_arms.push(quote! {
+                Inst::#vn { .. } => match i { #(#field_idxs => true,)* _ => false }
             });
         }
 
@@ -392,6 +400,9 @@ pub(crate) fn gen_machine_inst(
             }
             fn set_reg_field(&mut self, i: usize, preg: u32, class: forge_ir::RegClass) {
                 match self { #(#set_reg_field_arms,)* Inst::Raw(_) => {} }
+            }
+            fn is_reg_field_settable(&self, i: usize) -> bool {
+                match self { #(#reg_field_settable_arms,)* Inst::Raw(_) => false }
             }
         }
     })

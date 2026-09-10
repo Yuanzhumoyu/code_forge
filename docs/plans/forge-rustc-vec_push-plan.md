@@ -374,3 +374,58 @@ spill 的 entry vreg 如何正确收参（move_args 需把 ABI 值写入 spill �
    无法替代前端要求）。
 
 E1-E5（grow 链定位/Select 恢复/sret spill/转正）在此线之后执行。
+
+---
+
+## 8. 2026-09-10 复核：E1 假设未复现 + 已落地加固（当前状态以此节为准）
+
+**触发**：2026-09-06（`b56225d` + `b836a78`）把 5 个 vec/alloc 用例重新标为
+`known_failure` 并列入 `FLAKY` 双向容忍名单（`crates/tools/forge-rustc/tests/e2e.rs`），
+本文 §1–§7「已转正 / e2e 58–85 全绿」的表述随之失效。§1–§7 作为历史记录保留，
+本节给出**当前实测状态**与结论。
+
+### 8.1 本机实测（Windows x64，Alder Lake：**无 AVX-512F**）
+
+| 验证项 | 命令/口径 | 结果 |
+| --- | --- | --- |
+| 全量 stage_a | `cargo test -p forge-rustc --test e2e -- e2e_stage_a_scalar_cases` × 2 轮（改动前） | **103/103 通过**（两轮一致）；5 个 FLAKY 用例全部以正确 exit 通过：`box_value`=42、`vec_push`=2、`vec_string`=2、`vec_from_slice`=3、`vec_iter_enumerate`=80 |
+| 单用例 `vec_push` × 5 轮 | `FORGE_E2E_ONLY=vec_push` | 5/5 `FLAKY-PASS` exit=2（无 AV 无挂起） |
+| spill 现场（决定性证据） | `FORGE_TRACE_ALLOC=1 FORGE_TRACE_SPILL=1`（19782 行 trace） | def-spill 36 处；与指令关联成功的 **32 处全部**是 `MovRegImm64 { dest: RAX }` / `MovRMem { dest: RAX, src: RAX }` / `XorRmR { dest: RAX }` 这类 **dest 占位为物理 RAX 但字段可被 `set_reg_field` 改写**的值字段（`map_reg_field` 绑定） |
+
+**§E1 假设判定（写死物理寄存器 × def-spill → 静默写坏槽）**：在当前代码 + 本机上
+**未复现**——32/32 关联 def-spill 都落在可改写字段上（emission 会把字段重设 scratch，
+指令实际写入与 store-back 一致 ⇒ 值正确），且 5 用例 ×7 轮全绿。
+⇒ 5 个 `known_failure` 标记**保持不动**（无修补证据不放水）；若 CI 仍偶发，按既有
+做法导出 `target\tmp\logs_*` 取证比对（同类先例：`cli_tests` 的 alloc AV 最终以
+artifact 双证判定为 CI runner 环境性，见提交 `c545aaa`/`80d552d`）。
+
+### 8.2 已落地加固（把「假设中的静默面」永久收口）
+
+即使假设未复现，其失败形态（静默写坏 spill 槽）属于 must-not-happen，已按
+fail-closed 收口：
+
+1. **`MachineInst::is_reg_field_settable`**（`machine/inst.rs`，新 trait 能力，
+   默认 `true` 保持手写 machine 兼容）；DSL 生成器（`forge-dsl .../codegen/machine.rs`）
+   按变体的 Reg 操作数表精确产出——固定物理字段（不参与 `map_reg_field`）返回 `false`。
+2. **regalloc fail-closed 守卫**（`pipeline/regalloc_bt.rs`，标记 §1.9）：spilled def
+   落在不可改写字段时返回 `IrError::RegAlloc`（消息含 WA-40 编号），不再让
+   emission 命中 `_ => {}` 静默 no-op。
+3. **回归测试**：`test_def_spill_on_settable_field_ok`（正向：合法 def-spill 仍允许）、
+   `test_def_spill_on_fixed_field_errors`（守卫生效，断言错误文案）。
+4. **`AllocResult.param_bytes`**（IR 类型字节数，分配后由 `CompileState` 填充）——
+   供 by-ref 收参按真实字节宽分派（见 `docs/plans/ymm-abi-plan.md` D5）。
+
+### 8.3 未关闭项
+
+- **5 个 FLAKY 用例**：保持 `known_failure`，转正标准仍为各 `reason` 所写
+  （3 轮 stage_a + parallel 全绿）。本机 2 轮 103/103 只是「无复现证据」，不等于已修。
+- **sret 地址 vreg live range**（§E3 第 2 项、「🔬 vec_string/vecfrom 定位」）：
+  **未实施**；`vec_from_slice` 在本机通过（exit=3），故无复现证据，暂缓；一旦复现，
+  按该节「move_args 前强制存活」方向实施。
+- **`box_value`**：`reason` 指向 `Box::new` 的 alloc/Unique 链同族 flake；本机 exit=42
+  稳定通过 2 轮。
+
+### 8.4 用例计数口径（历史文档已多处漂移，以此为准）
+
+`tests/e2e.rs` 的 `CASES` 现为 **103 项**（98 硬断言 + 5 个 `FLAKY` 容忍项）。
+历史值 58（本文 §5）/81（e2e.rs 旧头注）/85（README 旧文）/96（WA-36 行）均已过时。

@@ -2,22 +2,17 @@
 
 > 对应 `docs/archive/roadmap-status.md` 剩余事项 1。
 >
-> **状态更新（2026-09）**：主库 S1-S5 **已实现**（2026-08-31 提交 ed43103 S1 /
-> e9e869a S2 / 33df6fa 语义标签重构 / 4959474 S4-S5，均早于 HEAD 30780ae 且为其
-> 祖先）——>128 位向量 by-ref 传参（调用方 temp 槽 store + GPR 指针）+ sret
-> 返回 + 混合槽位全链路，JIT 测试 7 个全绿（jit.rs test_jit_v256_byref_param /
-> wide_vector_call_byref / v256_byref_return / wide_vector_call_sret /
-> mixed_scalar_and_byref_args / sret_with_byref_arg / v512_byref_param）。
-> 本文件 §1 现状盘点表大部分已过时（"调用方实参拒绝 / 返回 sret 未实现"两项
-> 已实现）；§2-3 设计已按此落地（作为实现蓝图）。**真实剩余缺口（D2-D6）**：
-> D2 forge-rustc B3 向量 ABI 门控分级解除（只解 V256，前置 = forge-rustc 向量
-> local 全宽 load/store 基建——statement/place/rvalue 现只标量/聚合槽；V64/V128
-> 保持门控）；D3 ≤16B 向量按值 XMM 全宽移动（V128 参数走 MOVSD/MOVSS 静默
-> 截断风险，被 B3 保护）；D4 宽向量第 5+ GPR 槽（两侧显式 Unsupported，自约定
-> 一致，建议不做）；D5 V512 全 lane 验证（reg_class_for >128 位一律 VEC(32) vs
-> 收参按 XReg width==64 分派——64B 参数可能只拷 32B，现测试只断言 lane0）；
-> D6 CallIndirect 宽参/宽返回测试。详见 crates/tools/forge-rustc/WORKAROUNDS.md
-> WA-37。
+> **状态更新（2026-09-10 复核，以此为准）**：主库 S1–S5 **已实现**（2026-08-31 起
+> ed43103 S1 / e9e869a S2 / 33df6fa 语义标签重构 / 4959474 S4-S5）——>128 位向量
+> by-ref 传参（调用方 temp 槽 store + GPR 指针）+ sret 返回 + 混合槽位全链路；
+> **D2/D3 已关闭**（B3 门控撤除；≤16B 向量全宽 MOVAPS，机制是指令角色
+> `roles = ["vec_mov"]` 而非 `[abi].vec_mov_inst`——v15-S4 已删除全部 `*_inst`
+> 名指针）。**本轮（2026-09-10）落地的真实缺口**：
+> **D5 已修**（V512 被调方收参按**参数 IR 类型字节数**分派 64B load，见 §5.1）、
+> **D4 补齐**（by-class 分支补显式 `Unsupported`，不再静默丢参）、
+> **D6 补测试**（CallIndirect 宽向量实参 / sret 返回两例，均绿）。
+> 另发现并收口：IR 层 **>16B 向量 Load/Store** 无 lowering 规则（旧行为落默认
+> 8 字节 MOV 静默截断）→ 现编译期显式拒绝（§5.4）。
 
 ## 1. 现状盘点（代码为准）
 
@@ -26,8 +21,8 @@
 | ABI 声明 `vector by-ref limit` | ✅ 已声明 | `isa/x86_v12.toml` `[abi.arg_class] vector strategy="by-ref" limit=128` |
 | 入口守卫（>16 字节向量检查） | ✅ 已实现 | `pipeline/compiler.rs:1706-1742`（`vector_by_ref_limit()` 查询；超限 → Unsupported） |
 | 被调方收参（`move_args` by-ref 分支：从 `[ptr]` load 到 YMM） | ✅ 已实现 | `frame.rs` gen_frame_lowering；验证 `runtime/jit.rs:872 test_jit_v256_byref_param`（extern "C" fn(*const f32)） |
-| 调用方 IR Call 宽向量实参（>16 字节） | ❌ 编译期拒绝 | `runtime/jit.rs:915 test_jit_wide_vector_call_arg_rejected`（显式拒绝防静默截断） |
-| 宽向量返回值（sret） | ❌ 未实现 | 无路径；`expand_large_agg_ret` 仅覆盖 ≤16 字节聚合 |
+| 调用方 IR Call 宽向量实参（>16 字节） | ✅ 已实现（2026-08-31 S1） | 帧内 RBP 相对槽（间距 64B）store + 指针进 GPR 槽；验证 `test_jit_wide_vector_call_byref`（旧「编译期拒绝」测试已删除并反转） |
+| 宽向量返回值（sret） | ✅ 已实现（S2） | 被调方 store 到 `[RCX]` + 调用方回读；向量不经 `expand_large_agg_ret`（后者只管 `is_aggregate`）；验证 `test_jit_v256_byref_return` / `test_jit_wide_vector_call_sret` |
 | regalloc 的 by-ref 标记 | ✅ 已预留 | `pipeline/alloc_result.rs:25 param_by_ref: Vec<bool>`（`regalloc_bt.rs:792` 填充） |
 
 **结论**：缺口集中在**调用方**（call lowering 的实参栈拷贝）与**返回路径**（sret
@@ -124,3 +119,49 @@ store [ret_slot_ptr+16], result.high
   e2e（58 用例）回归——调用链改动最危险，必须全套守门。
 - **返回值经栈回读的额外拷贝**：先正确后优化（sret 是标准做法，接受
   一次栈往返；后续可做返回值优化 RVO 评估）。
+
+## 5. 2026-09-10 复核结论（D4/D5/D6 + 新发现）
+
+### 5.1 D5 V512 收参宽度（**已修**）
+
+**根因（静态定位 + 生成级验证）**：被调方 by-ref 收参的 load 变体按
+`__pv.width()`（参数 XReg 的**寄存器类宽**）分派，而 `reg_class_for` 对 >128 位
+向量一律给 `VEC(32)`（`lib.rs`）→ **64B（ZMM）分支永不可达**：调用方按 IR 类型
+`size_bytes` 写满 64B，被调方只 load 32B（VEX.256 还会把 ZMM 高 256 位清零 →
+lane8..15 丢失）。旧测试只断言 lane0，故长期未暴露。
+
+**修法**：新增 `AllocResult.param_bytes`（每参数 IR 类型字节数，分配后由
+`CompileState` 按 `xreg_types` 填充，镜像 `sret`/`stack_arg_bytes` 的既有模式）；
+`forge-dsl .../codegen/frame.rs` 的 by-ref load 改为按 `__rm.param_bytes` 分派：
+64 → ZMM（EVEX）、≤32 → VEX.256、其它 >32B → 显式 `Unsupported`（不静默截断）。
+
+**验证**：新增生成级测试 `test_v512_byref_callee_load_is_64b`（断言 prologue 含
+EVEX zmm load 且**不含** VEX.256 ymm load）——本机无 AVX-512F 也能跑（只编译不执行）。
+运行级断言（lane15 = 16.0）仍需硬件；本机 Alder Lake 无 AVX-512F，
+`test_jit_v512_byref_param` 在本机**直接 return 跳过**（实测确认）。
+
+### 5.2 D4 第 5+ GPR 槽（**已补齐**）
+
+调用方与 by-position 分支本就有显式 `Unsupported`；**by-class 分支缺 else**
+（`frame.rs`）→ 静默不收参。本轮补 else → `Unsupported`（与 by-position 同款
+fail-closed）。x86 走 by-position，故对本仓库 x86 主路径无行为变化。
+
+### 5.3 D6 CallIndirect 宽向量（**已补测试**）
+
+路径与直接 `Call` 共用 `gen_call_lowering`（仅跳过 `args[0]`），此前**零测试**。
+新增两例（`runtime/jit.rs`，本机可跑）：
+`test_jit_call_indirect_wide_vector_byref`（V256 by-ref 实参 → lane0=1）、
+`test_jit_call_indirect_wide_vector_sret_return`（V256 sret 返回 → lane0=3）——均绿。
+
+### 5.4 新发现：IR 层 >16B 向量 Load/Store（**已 fail-closed**）
+
+`isa/x86_v12.toml` 的 Load/Store 规则只覆盖 `rd_vec/rs1_vec = 8/16`；>16B 向量会
+落到底部默认 **8 字节** `MOV_R_MEM`/`STORE_MEM_R` → **静默截断**（槽往返只搬 8B）。
+该类规则无法直接补：ISA 类模型只有 XMM（`fpr16`）/ZMM（`fpr32`）槽类、**缺
+YMM(32B) 槽类**（实测：`VMOVUPS_RM` 的 `dst:fpr` 与 `VMOVUPS_ZMM_MEM` 的
+`dst:fpr32` 均被 DSL 报“操作数签名不符”，规则无法表达）。
+处理：在 `pipeline/compiler.rs` 增加守卫——**>16B 向量 Load/Store 显式拒绝**
+（`Unsupported`，消息说明缺 YMM 槽类），测试
+`test_wide_vector_slot_load_store_is_rejected`（32B/64B 两档断言）。
+forge-rustc 的向量值走内存建模（`copy_agg` / `CopyNonOverlapping`）不经该路径，
+故无回归；如需支持需先在类模型引入 YMM 槽类。

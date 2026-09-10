@@ -784,18 +784,19 @@ fn gen_emit_pseudo(
             // by-ref 向量 load：宽向量参数（>16 字节）按引用传参——ABI 传 GPR
             // 指针（int 槽位），收参时从 [ptr] load 到目标向量寄存器。
             // 优先非对齐 VMOVUPS（指针未必 32 字节对齐）；缺省回退 VMOVAPS。
-            // 宽度由参数 XReg 决定：32 字节（V256）→ VMOVUPS_RM（VEX ymm）；
-            // 64 字节（V512）→ VMOVUPS_ZMM_MEM（EVEX zmm）。
-            let byref_loads: Vec<(&str, &str, u16)> = vec![
-                ("VMOVUPS_RM", "VMOVAPS_RM", 32),
-                ("VMOVUPS_ZMM_MEM", "VMOVAPS_ZMM_MEM", 64),
-            ];
-            let mut byref_stmt: TokenStream = quote! {
-                return Err(crate::IrError::Emit(
-                    "v12 by-ref vector arg load missing (VMOVUPS_RM/VMOVUPS_ZMM_MEM)".into(),
-                ));
-            };
-            for (inst_name, fallback, width) in byref_loads {
+            // **宽度按参数 IR 类型字节数分派**（`__rm.param_bytes`，与
+            // param_vregs 对齐）：寄存器类宽对 >128 位向量恒为 VEC(32)
+            //（`reg_class_for`），旧实现用 `__pv.width()` → 64B（V512）分支
+            // 永不可达、只 load 32B（lane8..15 丢失，WA-37 D5）。
+            // 32 字节（V256）→ VMOVUPS_RM（VEX ymm）；64 字节（V512）→
+            // VMOVUPS_ZMM_MEM（EVEX zmm）；其它 >32B 宽度无对应变体 → 显式
+            // Unsupported（不静默截断）。
+            let mut byref_32: Option<TokenStream> = None;
+            let mut byref_64: Option<TokenStream> = None;
+            for (inst_name, fallback, width) in [
+                ("VMOVUPS_RM", "VMOVAPS_RM", 32u16),
+                ("VMOVUPS_ZMM_MEM", "VMOVAPS_ZMM_MEM", 64u16),
+            ] {
                 let fids = if inst_fids(infos, inst_name).len() == 2 {
                     inst_fids(infos, inst_name)
                 } else {
@@ -807,25 +808,46 @@ fn gen_emit_pseudo(
                 let d_fid = fids[0].clone();
                 let m_fid = fids[1].clone();
                 let vn = crate::v12::codegen::pascal_ident(inst_name);
-                let w = width;
-                byref_stmt = quote! {
-                    if __pv.width() == #w {
-                        let __bytes = encode(&Inst::#vn {
-                            #d_fid: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                            #m_fid: MemRef {
-                                base: Reg::from_index(__src.to_index(), forge_ir::RegClass::GPR64),
-                                disp: 0,
-                                index: None,
-                                scale: 1,
-                            },
-                        }).map_err(|e| crate::IrError::Emit(e))?;
-                        __sink.put_bytes(&__bytes);
-                    } else {
-                        #byref_stmt
-                    }
+                let stmt: TokenStream = quote! {
+                    let __bytes = encode(&Inst::#vn {
+                        #d_fid: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                        #m_fid: MemRef {
+                            base: Reg::from_index(__src.to_index(), forge_ir::RegClass::GPR64),
+                            disp: 0,
+                            index: None,
+                            scale: 1,
+                        },
+                    }).map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
                 };
+                if width == 32 {
+                    byref_32 = Some(stmt);
+                } else {
+                    byref_64 = Some(stmt);
+                }
             }
-            let byref_stmt = byref_stmt;
+            let byref_stmt: TokenStream = match (byref_32, byref_64) {
+                (Some(s32), Some(s64)) => quote! {
+                    let __vbytes = __rm.param_bytes.get(__i).copied().unwrap_or(0);
+                    if __vbytes == 64 {
+                        #s64
+                    } else if __vbytes <= 32 {
+                        #s32
+                    } else {
+                        return Err(crate::IrError::Emit(
+                            "v12 by-ref vector arg: unsupported width (仅支持 32B/64B 向量；\
+                             其它 >32B 宽度无 load 变体)".into(),
+                        ));
+                    }
+                },
+                (Some(s32), None) => s32,
+                (None, Some(s64)) => s64,
+                (None, None) => quote! {
+                    return Err(crate::IrError::Emit(
+                        "v12 by-ref vector arg load missing (VMOVUPS_RM/VMOVUPS_ZMM_MEM)".into(),
+                    ));
+                },
+            };
             let fpr_stmt: TokenStream = if has_fpr_mov {
                 quote! {
                     if __fi < #fn_ {
@@ -969,6 +991,13 @@ fn gen_emit_pseudo(
                             let __src = [#(Reg::#regs),*][__gi];
                             __gi += 1;
                             #byref_stmt
+                        } else {
+                            // WA-37 D4：by-class ABI（riscv 等）下 by-ref 宽向量参数
+                            // 超出 int 槽位上限时**显式拒绝**——旧实现无 else，会静默
+                            // 不收参（值垃圾）。与 by-position 分支同款 fail-closed。
+                            return Err(crate::IrError::Unsupported(
+                                "v12 move_args: by-ref 宽向量参数超出 int 槽位上限（by-class ABI）".into(),
+                            ));
                         }
                     },
                 )

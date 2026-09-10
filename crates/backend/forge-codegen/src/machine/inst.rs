@@ -155,6 +155,20 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
     /// opsize 恒 64，auto 宽度分发失效（见 WA-35/DSL 回填缺口）。
     fn set_reg_field(&mut self, _i: usize, _preg_idx: u32, _class: RegClass) {}
 
+    /// 第 `i` 个寄存器字段是否**可被 [`Self::set_reg_field`] 改写**。
+    ///
+    /// 默认 `true`（手写 machine 实现沿用旧契约）；DSL 生成实现按该变体的
+    /// Reg 操作数表精确返回——固定物理字段（模板里写死的 RAX 等、不参与
+    /// `map_reg_field` 的字段）返回 `false`。
+    ///
+    /// 用途：regalloc 对 **spilled def** 的 fail-closed 校验——spilled def 依赖
+    /// emission 把该字段改写成 scratch 寄存器后 store 回槽；字段不可改写时，
+    /// 指令实际写入物理寄存器而 store-back 从 scratch 读 → **静默写坏 spill 槽**
+    /// （读回垃圾 → 偶发 AV/挂起）。此时宁可编译期报错（WORKAROUNDS WA-40）。
+    fn is_reg_field_settable(&self, _i: usize) -> bool {
+        true
+    }
+
     /// Whether this instruction is foldable (no side effects, can be deleted).
     fn is_foldable(&self) -> bool {
         !self.has_side_effects()
