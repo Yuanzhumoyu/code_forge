@@ -55,7 +55,7 @@ demo_v12 3）。
   wide_vector_call byref/sret、mixed/sret_with_byref）。入口守卫
   `compiler.rs` 由一律拒绝改为 by-ref 能力选择（≤16B 寄存器 / >16B by-ref /
   >32B 需 avx512）。
-- **剩余缺口（D2-D6，见 docs/plans/ymm-abi-plan.md 状态块与 WA-37）**：forge-rustc B3
+- **剩余缺口（D2-D6，见 `docs/archive/ymm-abi-plan.md` 状态块与 WA-37——该档 2026-09-10 已由 plans/ 归档，D2-D6 亦均已落地）**：forge-rustc B3
   门控分级解除（只解 V256，前置向量 local 全宽 load/store 基建）；≤16B 向量
   按值 XMM 全宽移动（V64/V128 静默截断，B3 保护中）；V512 全 lane 验证；
   第 5+ GPR 槽（建议不做）；CallIndirect 测试。主库 compiler/lowering/frame/

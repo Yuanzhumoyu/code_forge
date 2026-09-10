@@ -413,7 +413,7 @@ fail-closed 收口：
 3. **回归测试**：`test_def_spill_on_settable_field_ok`（正向：合法 def-spill 仍允许）、
    `test_def_spill_on_fixed_field_errors`（守卫生效，断言错误文案）。
 4. **`AllocResult.param_bytes`**（IR 类型字节数，分配后由 `CompileState` 填充）——
-   供 by-ref 收参按真实字节宽分派（见 `docs/plans/ymm-abi-plan.md` D5）。
+   供 by-ref 收参按真实字节宽分派（见 `docs/archive/ymm-abi-plan.md` D5）。
 
 ### 8.3 未关闭项
 

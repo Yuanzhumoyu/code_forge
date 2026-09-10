@@ -17,9 +17,8 @@ docs/
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
 ├── plans/                 # 有未完成工作的专项方案 [progress]
-│   ├── ymm-abi-plan.md        # YMM ABI（残余缺口见 forge-rustc WORKAROUNDS WA-37）
-│   ├── forge-rustc-vec_push-plan.md # vec 族（核心已关；5 用例 FLAKY，见 e2e.rs）
-│   └── hir-shrink-plan.md     # forge-hir/mini_c 收缩
+│   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
+│   └── hir-shrink-plan.md     # forge-hir/mini_c 收缩（收缩点 2 仍开放）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -31,6 +30,7 @@ docs/
 └── archive/               # 历史归档（⚠️ 内容以其记录时点为准）
     ├── README.md              # 归档图例与清单
     ├── roadmap-status.md / isa-dsl-v12-roadmap.md / asm-dec-generic-design-v2.md
+    ├── ymm-abi-plan.md        # YMM ABI 方案（2026-09-10 核查完成 → 归档）
     ├── clippy-fixes.md / coverage-history.md
     └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
 ```
@@ -292,7 +292,7 @@ let name = node.get_text("name")?;
 | --- | --- | --- |
 | 长度 | V64（2×f32）、V128（4×f32）、V256（8×f32，AVX）/（8×i32、4×i64，AVX2） | 动态 `vector_ty(elem, len)` 与内建去重；`<3 x f32>` 等非 2 幂长度用 128 位指令低 lane 语义（未用 lane 无定义）；V256 测试在无 AVX/AVX2 机器自动 skip |
 | 元素 | f32/f64/i32/i64 | vadd/vsub/vneg 全元素（f32→addps、f64→addpd、i32→paddd、i64→paddq/psubq；V256 整数走 AVX2 vpaddd/vpsubd/vpaddq/vpsubq）；vmul 浮点 + i32（PMULLD/VPMULLD）；i64 vmul/vdiv 与整数 vdiv 无 SIMD 指令 → 编译期 Unsupported；vabs 用按位掩码（andps 0x7FFFFFFF×4）对 f64/i64 亦正确 |
-| 运算 | vconst/vconst_array/vadd/vsub/vmul/vdiv/vneg/vabs/vbitcast/vextract（全 lane）/vinsert/vbroadcast/vsplit/vconcat/shuffle_vector | `vconst<T: Vector>(Vec<T>)` 泛型值语义（动态数组，ty 由 T+长度推导）；`vconst_array([T; N])` 静态数组；`vconst_bytes(Vec<u8>, ty)` 底层字节 API（元素 LE 字节序，用户自定义 `Vector::lane_bytes` 即可接入）；shuffle_vector：V128 单 shufps、V256 拆半双 shufps（mask 组内语义）；vbroadcast 64 位元素用 vbroadcastsd |
+| 运算 | vconst/vconst_array/vadd/vsub/vmul/vdiv/vneg/vabs/vbitcast/vextract（全 lane）/vinsert/vbroadcast/vsplit/vconcat/shuffle_vector | `vconst<T: Vector>(Vec<T>)` 泛型值语义（动态数组，ty 由 T+长度推导）；`vconst_array([T; N])` 静态数组；`vconst_bytes(Vec<u8>, ty)` 底层字节 API（元素 LE 字节序，用户自定义 `Vector::lane_bytes` 即可接入）；shuffle_vector：V128 单 shufps、V256 拆半双 shufps（mask 组内语义）；vbroadcast 64 位元素用 vbroadcastsd。**vextract 的 V256 规则按 `rs1_width`（向量操作数）判定**——结果类型是标量，用 `rd` 会永不命中（2026-09-10 修复：V256 lane≥4 曾取到低半区值，`test_jit_v256_byref_high_lane` 守护） |
 | 常量 | 扁平字节池（`Vec<u8>` + offset 表 + 每段端序 `vec_endian`） | `vconst<T: Vector>(Vec<T>)` 泛型值语义（ty 由 T+len 推导，默认 Little）、`vconst_array([T; N])` 静态数组、`vconst_bytes` 底层字节；**端序**：`Vector::lane_bytes(endian)`（Little→to_le、Big→to_be，u8..u128/f32/f64 全位宽，u128 16 字节不截断）、`vconst_with_endian`/`vconst_bytes_with_endian` 显式端序（大端框架数据）、`ConstantPool::get_vector_endian` 查询；DSL 按常量端序还原（LE→from_le、BE→from_be，32 位元素逐元素 BE 读）；rodata 数据段加载为长期优化 |
 | ABI | **≤16B（V64/V128）按值 XMM 全宽 + >16B（V256）by-ref/sret 全线支持**（2026-09 D3 补齐 VEC(16) 全宽） | Windows x64 无 YMM 参数寄存器——>8B 非标量按引用传指针（占 GPR 槽）、返回 >64 位走首参 RCX 隐藏 sret；≤16B 向量（VEC(16) 类）按值进 XMM{pos}（by-position 槽）：收参/实参/返回用**全宽 128 位 MOVAPS**（指令角色 `roles = ["vec_mov"]`（缺省 MOVAPS）——MOVSD/MOVSS 只移 8/4B 会静默截断高半，WA-37 D3 修复）。Load/Store 谓词加 `rd_vec`/`rs1_vec`（向量类型字节数）→ V128 走 MOVUPS_128（0F 10/11 无前缀 16 字节）、V64 走 movsd 8B。jit 12+ 测试绿（v128/v64 byval param/return、mixed、wide byref/sret、v512）；forge-rustc B3 门控已撤、simd_v128/v64/v256 e2e 全绿。**残余**：宽向量第 5+ GPR 槽显式 Unsupported（调用方 + 被调方 by-position/by-class 三处均 fail-closed）；IR 层 >16B 向量 Load/Store 无 lowering 规则（ISA 类模型缺 YMM 槽类 → 编译期显式拒绝，不静默截断）。V512 被调方收参已按**参数 IR 字节数**分派 64B load（EVEX；生成级测试 `test_v512_byref_callee_load_is_64b` 守护，运行级 lane15 断言需 AVX-512F 硬件）。见 forge-rustc WORKAROUNDS.md WA-37 |
 | 编码 | SSE（0F/0F38 前缀族）+ AVX（VEX C4 语义键）+ AVX2（VEX 族） | v12 生成器内联实现 ModRM/REX/VEX 发射（`v12/codegen/mod.rs` 的 VlenCtx）；VEX 三操作数 r/m=src2、vvvv=~src1；无源指令 vvvv 编码 1111；vextractf128 的 dest 在 r/m、src 在 reg；vzeroupper 无需（Windows x64 ABI 允许破坏 YMM 高半） |
