@@ -285,6 +285,18 @@ let name = node.get_text("name")?;
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
+- **forge-rustc e2e 环境开关**（`crates/tools/forge-rustc/tests/e2e.rs`）：
+  `FORGE_E2E_ONLY=<case>` 只跑单用例、`FORGE_E2E_KEEP=1` 失败轮保留工作目录
+  （证据在 `%TEMP%\forge_rustc_e2e_<pid>\`，**该目录随会话轮换被清理**，须当场复制）、
+  `FORGE_E2E_TRACE=1` 打印 `FORGE_TRACE_*` stderr、`FORGE_E2E_NIGHTLY` 覆盖本机
+  工具链（如 `nightly`）、`FORGE_E2E_TIMEOUT_SECS` 覆盖产物运行超时（默认 15 s）。
+  超时后用**同一产物复跑一次**并打印 `RETRY <case>`——真挂起（两次都超时）仍上报，
+  宿主侧起进程延迟造成的假败被吸收。
+  FLAKY 用例取证脚本：`crates/tools/forge-rustc/tests/e2e_flake_repro.ps1`
+  （`-Mode hammer` 5 轮全量 stage_a + 并行变体 + 5 用例各单跑 ×10；`-Mode load`
+  N 并发 worker 直接跑 e2e 二进制制造负载直到复现）。判定标准见
+  `docs/plans/forge-rustc-vec_push-plan.md` §9.1/§9.2（失败轮产物须与本机产物做
+  行为/字节对照：一致 ⇒ 宿主环境性；错码 ⇒ 转 regalloc 关联法）。
 
 ## SIMD 支持矩阵（x86_64，isa/x86_v12.toml）
 

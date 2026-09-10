@@ -641,7 +641,11 @@ const CASES: &[Case] = &[
         变体）——alloc/Vec grow 链（RawVec::grow_amortized/finish_grow）高压 spill 下
         sret copy_agg 写 [0]（sret_ptr 值丢失）类 regalloc 非确定性残余（上方注释指向
         forge-codegen regalloc）。2026-09-04 曾本地 3 次转正——spill 决策随编译实例
-        变化。转正标准：3 轮 stage_a+parallel 全绿且 exit=2。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
+        变化。转正标准：3 轮 stage_a+parallel 全绿且 exit=2。（2026-09-10 复核：stage_a 103/103 × 2 轮；
+        **8 并发负载下 3 个窗口（各 320 次单跑）中出现 1 次瞬态 15 s 超时**，由 harness 的
+        「同产物复跑」转为通过 ⇒ 该次是宿主侧运行期延迟、非错码；但上面记录的 AV
+        （0xC0000005）形态**本轮未复现**，不能据此归因。def-spill 站点经 FORGE_TRACE_ALLOC
+        核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §9.2）",
     },
     Case {
         name: "vec_string",
@@ -656,9 +660,11 @@ const CASES: &[Case] = &[
         reason: "2026-09-06 回归 known_failure：CI 偶发 timeout（挂起：可能 assert 失败
         进入 panic loop）+ 本地 round 偶发——String::from 的 alloc/grow 链与 vec_push
         同类 regalloc spill 非确定性残余（见 vec_push reason）。转正标准：3 轮
-        stage_a+parallel 全绿且 exit=2（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与
-        单用例 5 轮均无复现；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——
-        失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
+        stage_a+parallel 全绿且 exit=2（2026-09-10 复核：stage_a 103/103 × 2 轮；**8 并发负载下 3 个窗口
+        （各 320 次单跑）中出现 1 次瞬态 15 s 超时**，由 harness 的「同产物复跑」转为通过 ⇒
+        与文档记录的 timeout 形态一致、属宿主侧运行期延迟（非错码）；def-spill 站点经
+        FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见
+        WORKAROUNDS WA-40 与计划 §9.2）",
     },
     Case {
         name: "vec_from_slice",
@@ -1303,7 +1309,7 @@ const CASES: &[Case] = &[
         phase: "F1 iter",
         reason: "2026-09-06 回归 known_failure：CI 偶发 exit -1073741819（AV，expect 80）
         ——Vec grow + iter 链同 vec_push 类 regalloc spill 非确定性残余（见 vec_push
-        reason；WA-29 的 null 解引用曾同类）。转正标准：3 轮 stage_a+parallel 全绿且 exit=80。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
+        reason；WA-29 的 null 解引用曾同类）。转正标准：3 轮 stage_a+parallel 全绿且 exit=80。（2026-09-10 复核：stage_a 103/103 × 2 轮；**8 并发负载下 3 个窗口（各 320 次单跑）中出现 1 次瞬态 15 s 超时**，由 harness 的「同产物复跑」转为通过 ⇒ 该次为宿主侧运行期延迟、非错码；上面记录的 AV 形态**本轮未复现**，不能据此归因。def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §9.2）",
     },
     Case {
         name: "string_concat_len",
