@@ -455,21 +455,31 @@ fail-closed 收口：
    `[inst ProgPoint(P)] …` 配对，检查该字段是否 `MovRegImm64/MovRMem/XorRmR`
    这类**可改写**字段）。
 
-### 9.2 步骤 2（本机可执行，随时可跑）：hammer 加严
+### 9.2 步骤 2：本机 hammer 加严（**已执行，2026-09-10**）
 
-```bash
-# 5 轮全量 stage_a（每轮 103 用例；本机历史：3 轮全 103/103）
-for i in 1 2 3 4 5; do cargo test -p forge-rustc --test e2e -- e2e_stage_a_scalar_cases; done
-# 并行变体（M4 真并行池；验证 spill 决策在并行任务粒度下不变）
-cargo test -p forge-rustc --test e2e -- e2e_parallel_pool_threads
-# 5 例单跑 ×10（畸形输入下也应有确定性退出码）
-for c in vec_push vec_string vec_from_slice vec_iter_enumerate box_value; do
-  for i in $(seq 10); do FORGE_E2E_ONLY=$c cargo test -p forge-rustc --test e2e -- e2e_stage_a_scalar_cases; done
-done
-```
+脚本：`target/tmp/hammer.ps1`（5 轮全量 stage_a + 并行变体 + 5 用例各单跑 ×10，
+失败时 `FORGE_E2E_KEEP=1` 保留 `.rs/.exe`）。
 
-判据：任一失败 ⇒ 立即转步骤 9.1 的对照；全绿 ⇒ 记录为"本机 N 轮无复现"（**不放水**，
-FLAKY 标记保留）。
+**实测结果（两轮 hammer，合计 13 轮 stage_a）**：
+
+| 项目 | 结果 |
+| --- | --- |
+| 全量 stage_a | **v1 5 轮 + v2 5 轮 + 早前 3 轮 = 13 轮，轮轮 103/103**；5 个 FLAKY 用例每轮均以正确 exit 通过（42/2/2/3/80） |
+| 并行变体 `e2e_parallel_pool_threads` | 3 次全 PASS（`T=1 == -Z threads=2`） |
+| `vec_push` / `vec_string` / `vec_iter_enumerate` / `box_value` | 各 10/10（`exits=[2…] / [2…] / [80…] / [42…]`） |
+| `vec_from_slice` | **v1 出现 1 次失败（1/10，连续重负载序列中）**；v2 10/10；随后定向复跑 30（带 trace）+ 40（无 trace）全过 ⇒ 合计 **80 次单跑仅 1 次失败（≈1/100）** |
+
+**失败形态（关键）**：v1 那次失败**没有** `exit=N (want 3)` 文案 ⇒ 走 harness 的
+`Err` 分支（编译失败 / 起进程失败 / **exe 超时挂起**），**不是**错误退出码——与各
+`reason` 记录的 CI 现象（"CI 偶发 timeout（挂起）"）一致。该次复现时尚未启用
+`FORGE_E2E_KEEP`，产物随工作目录被清理 ⇒ **失败文案与产物未留存**；该开关已补
+（提交 `8a05d23`），v2 具备取证能力但未复现。
+
+**下一步（未闭环）**：需要一次**成功留证的复现**才能定性：
+制造负载（并发 2-3 个 e2e 实例，或重复 v1 那样的长序列直到复现）+ `FORGE_E2E_KEEP=1
+FORGE_TRACE_ALLOC=1 FORGE_TRACE_SPILL=1`；拿到失败 exe 后按 §9.1 两条判据处理
+（同一 exe 复跑混杂 ⇒ 运行期环境性；恒定失败 ⇒ 确定性错码；再与正常产物做
+`.text`/SHA256 对照）。
 
 ### 9.3 步骤 3（若判定为环境性）
 
