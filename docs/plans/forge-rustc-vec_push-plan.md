@@ -418,12 +418,14 @@ fail-closed 收口：
 ### 8.3 未关闭项
 
 - **5 个 FLAKY 用例**：保持 `known_failure`，转正标准仍为各 `reason` 所写
-  （3 轮 stage_a + parallel 全绿）。本机 2 轮 103/103 只是「无复现证据」，不等于已修。
+  （3 轮 stage_a + parallel 全绿且 exit 正确）。**2026-09-10 已定性**：8 并发负载下复现
+  的是**运行期瞬态超时**（宿主侧起进程/映像延迟）——失败轮产物语义正确、同产物复跑即
+  通过，**非错码、非错编译**；5 例 `reason` 均已写入该证据（详见 §9.2）。
+  例外记录：`vec_push` / `vec_iter_enumerate` 历史 reason 里的 **AV（0xC0000005）** 形态
+  本轮**未复现**，不能据此归因（保持原描述）。
 - **sret 地址 vreg live range**（§E3 第 2 项、「🔬 vec_string/vecfrom 定位」）：
   **未实施**；`vec_from_slice` 在本机通过（exit=3），故无复现证据，暂缓；一旦复现，
   按该节「move_args 前强制存活」方向实施。
-- **`box_value`**：`reason` 指向 `Box::new` 的 alloc/Unique 链同族 flake；本机 exit=42
-  稳定通过 2 轮。
 
 ### 8.4 用例计数口径（历史文档已多处漂移，以此为准）
 
@@ -434,12 +436,13 @@ fail-closed 收口：
 
 **现状定级**：本计划的实现工作（Slice 落盘 / PtrMetadata / Unevaluated promoted /
 `spilled_int_receive` / ScalarPair 双返回 / 栈参数 / `frame_padding` / 原生 Select）
-**均已落地**；剩余的是**一个未定性的偶发失败**（5 例）+ 一个**未复现的假设**
-（sret live range）。因此本方案的核心不是"再改代码"，而是**先取证再判定**。
+**均已落地**；剩余两件事：**一个已定性的偶发失败**（5 例 = 宿主侧运行期瞬态超时，
+见 §9.2）与**一个未复现的假设**（sret live range）。因此本方案的核心不是"再改代码"，
+而是**先取证再判定**（本轮已完成取证与判定，转正仍待 CI 实证）。
 
 ### 9.1 步骤 1（前置，需要 CI 侧证据）：失败产物与 trace 对照
 
-本机是**低频复现**（≈1/100，见 §9.2）⇒ 终局证据仍应取自 CI 失败 run。
+本机为**低频复现**（8 路并发负载下 ≈0.3%，见 §9.2）⇒ 终局证据仍应取自 CI 失败 run。
 **原文此处假设"沿用既有机制：日志与产物 artifact"——2026-09-10 核查不成立**：
 `forge-rustc-e2e` job 当时既无 `tee` 落盘、也无 `if: failure()` 上传（全仓库只有
 clippy job 有上传），失败即随 runner 销毁。已补（`.github/workflows/ci.yml`）：e2e 步骤改为
@@ -547,7 +550,13 @@ stage_a + parallel 全绿且该用例 exit 正确"，且 CI 侧不再出现超�
 - CI 侧观察：本轮已具备 `e2e-evidence` 上传（§9.1）+ 超时同产物复跑，下一次偶发应能
   直接给出 `RETRY`/`KNOWN` 文案与产物；
 - 若出现**两次都超时**（真挂起）：按 §8.1 关联法查 def-spill 站点（转 §9.4）；
-- 若仍只有单次超时：累计若干轮 CI 全绿后按 §9.3 转正。
+- 若仍只有单次超时：累计若干轮 CI 全绿后按 §9.3 转正；
+- **门禁收紧候选（待定，需用户/CI 观察后再做）**：现状 `FLAKY` 对 5 例**任何**失败
+  （含错码）都只打 `KNOWN` 不致命 ⇒ 这 5 例的**正确性其实没有门禁**。既然本轮已把
+  "超时"定性为环境性，可考虑把容忍范围缩到**只容忍超时**（`Err(TIMEOUT_MARKER)`，
+  且已有同产物复跑兜底）、**错码（`exit=N (want M)`）恢复为硬失败**——这样 5 例的
+  正确性重新进门禁。风险：历史上 `vec_push`/`vec_iter_enumerate` 记录过 AV 形态，
+  若 AV 也是宿主侧偶发，CI 会重新变红（那也正是需要的信号）。
 
 **复跑前置（环境）**：2026-09-10 会话轮换清空了 `target/`，且钉版工具链缺 `rustc-dev`
 （`cargo test -p forge-rustc` 报 13 个 `can't find crate for rustc_abi/…`），需
