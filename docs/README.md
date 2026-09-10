@@ -26,9 +26,9 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| `plans/ymm-abi-plan.md` | YMM ABI（>128 位向量传参）：主库 S1-S5 已实现；剩余缺口 D2-D6 以 `crates/tools/forge-rustc/WORKAROUNDS.md` WA-37 为准 | progress |
-| `plans/forge-rustc-vec_push-plan.md` | forge-rustc vec_push/vec_string 方案（核心已关闭 WA-11；`vec_from_slice` 仍列 e2e FLAKY） | progress |
-| `plans/hir-shrink-plan.md` | forge-hir / mini_c codegen_hir 收缩方案（5 收缩点未落地，dual_backend 守门） | progress |
+| `plans/ymm-abi-plan.md` | YMM ABI（>128 位向量传参）：主库 S1-S5 + D2/D3 已实现；**D5 已修**（V512 收参按参数 IR 字节宽分派）、D4 补齐、D6 补测试（2026-09-10）；残余以 `WORKAROUNDS.md` WA-37 为准 | progress |
+| `plans/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（历史修复链 + **§8 2026-09-10 复核**：E1 假设未复现、失败面已 fail-closed；5 用例仍 FLAKY，见 `tests/e2e.rs`） | progress |
+| `plans/hir-shrink-plan.md` | forge-hir / mini_c codegen_hir 收缩方案（2026-09-10 重写：修正 3 处前提错误、收益下调；已落 bin_op/field_key/LoopFrame，收缩点 2 仍开放） | progress |
 
 ## performance/ — 基准与优化
 

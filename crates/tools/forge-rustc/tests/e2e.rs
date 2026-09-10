@@ -586,7 +586,7 @@ const CASES: &[Case] = &[
         phase: "P6 alloc",
         reason: "2026-09-06 回归 known_failure：CI stage_a 偶发 timeout（挂起）——
         Box::new 的 alloc/Unique 链同 vec_push 类 regalloc spill 非确定性残余
-        （见 vec_push reason）。转正标准：3 轮 stage_a+parallel 全绿且 exit=42",
+        （见 vec_push reason）。转正标准：3 轮 stage_a+parallel 全绿且 exit=42。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
     },
     Case {
         name: "box_write",
@@ -618,10 +618,11 @@ const CASES: &[Case] = &[
         phase: "P6 alloc",
         reason: "",
     },
-    // ── Vec/String 完整运行（本轮回归未修，显式已知失败清单）：push 写元素时 SEGV。
-    //    最小复现见 README 限制区⑧（probe_n n=5，~40 行）：grow 链 finish_grow 的 sret
-    //    copy_agg 在高压 spill 下写 [0]（sret_ptr 值丢失——活区间/spill 决策 bug，
-    //    指向 forge-codegen regalloc）。修复后移除 known_failure 转硬断言。──
+    // ── Vec/String 完整运行（2026-09-06 回归后为显式已知失败清单 + FLAKY 容忍）。
+    //    历史定性见 docs/plans/forge-rustc-vec_push-plan.md（§1–§7 修复链 + §8
+    //    2026-09-10 复核：E1「写死物理寄存器 × def-spill」在本机未复现——103/103 × 2 轮；
+    //    该失败形态已按 fail-closed 收口，见 WORKAROUNDS WA-40）。
+    //    转正 = 3 轮 stage_a+parallel 全绿（各 case 的 reason 末尾有复核注记）。──
     Case {
         name: "vec_push",
         body: "let mut v = alloc::vec::Vec::new(); v.push(1); v.push(2); v.len() as i32",
@@ -637,7 +638,7 @@ const CASES: &[Case] = &[
         变体）——alloc/Vec grow 链（RawVec::grow_amortized/finish_grow）高压 spill 下
         sret copy_agg 写 [0]（sret_ptr 值丢失）类 regalloc 非确定性残余（上方注释指向
         forge-codegen regalloc）。2026-09-04 曾本地 3 次转正——spill 决策随编译实例
-        变化。转正标准：3 轮 stage_a+parallel 全绿且 exit=2",
+        变化。转正标准：3 轮 stage_a+parallel 全绿且 exit=2。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
     },
     Case {
         name: "vec_string",
@@ -652,7 +653,9 @@ const CASES: &[Case] = &[
         reason: "2026-09-06 回归 known_failure：CI 偶发 timeout（挂起：可能 assert 失败
         进入 panic loop）+ 本地 round 偶发——String::from 的 alloc/grow 链与 vec_push
         同类 regalloc spill 非确定性残余（见 vec_push reason）。转正标准：3 轮
-        stage_a+parallel 全绿且 exit=2",
+        stage_a+parallel 全绿且 exit=2（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与
+        单用例 5 轮均无复现；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——
+        失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
     },
     Case {
         name: "vec_from_slice",
@@ -667,7 +670,7 @@ const CASES: &[Case] = &[
         reason: "2026-09-06 回归 known_failure：CI e2e stage_a 偶发 timeout（挂起：
         Vec::from 的 slice→Vec 拷贝链与 vec_push 同类 regalloc spill 非确定性残余
         （见 vec_push reason；转正原因为 promoted/Unsize 降级正确性，非 alloc 链）。
-        转正标准：3 轮 stage_a+parallel 全绿且 exit=3",
+        转正标准：3 轮 stage_a+parallel 全绿且 exit=3。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
     },
     Case {
         name: "dyn_trait_call",
@@ -1294,7 +1297,7 @@ const CASES: &[Case] = &[
         phase: "F1 iter",
         reason: "2026-09-06 回归 known_failure：CI 偶发 exit -1073741819（AV，expect 80）
         ——Vec grow + iter 链同 vec_push 类 regalloc spill 非确定性残余（见 vec_push
-        reason；WA-29 的 null 解引用曾同类）。转正标准：3 轮 stage_a+parallel 全绿且 exit=80",
+        reason；WA-29 的 null 解引用曾同类）。转正标准：3 轮 stage_a+parallel 全绿且 exit=80。（2026-09-10 复核：本机 stage_a 103/103 × 2 轮与单用例 5 轮**均无复现**；def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §8）",
     },
     Case {
         name: "string_concat_len",
