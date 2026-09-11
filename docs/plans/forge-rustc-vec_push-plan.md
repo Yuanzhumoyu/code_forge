@@ -684,16 +684,21 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
 | `vec_push` | 94720 B | `a91b9eef72b947006551c4bf1af44df3f03becc2602710caeb1c24c4939663fb` |
 | `vec_iter_enumerate` | 103936 B | `5f421f08ef7457898a07481ad6d5cfc95bbd03520a97f2cfe2c612f1d10cc732` |
 
-  ⇒ **同一份机器码在 CI 上间歇 AV**（run #25/#26/#27 连续三轮命中、run #28 未命中），
+  ⇒ **同一份机器码在 CI 上间歇 AV**（run #25/#26/#27/#29 命中、run #28 未命中），
   在**本机稳定正确** ⇒ 判定 **CI runner 环境性 AV**（同 `cli_tests` alloc AV 的产物
   双证先例 `c545aaa`/`80d552d`），**不是 codegen 缺陷**；同时反证这两例的 codegen
-  跨机器逐字节确定（本机 3 次重建亦全同）。**机制仍未知**：候选是 CI runner 的
-  OS/安全策略差异（CET/CFG/加载器布局/Defender），本机与 CI 的文件头/`.text` 都相同，
-  只能记为"环境性待解项"——但它不再阻塞门禁设计。**机制探针（2026-09-11 起随每轮
-  CI 运行）**：该轮一旦出现 `CI-ENV-AV`，CI 就把同一 `.exe` 连跑 20 次并打印退出码
-  直方图（`[probe] <case> 20 runs: …`）——**全 AV** ⇒ 该 runner 上确定性（OS/安全
-  策略）；**混合** ⇒ 与地址随机化/时序相关的环境性。本机对照（同两个 exe 各 20 次）：
-  `vec_push 2x20`、`vec_iter_enumerate 80x20`，**0 次 AV**。
+  跨机器逐字节确定（本机 3 次重建亦全同）。
+
+- **机制探针（2026-09-11 起每轮无条件运行）**：run #31 实测 ——
+  `[probe] vec_push 20 runs: AVx20`、`[probe] vec_iter_enumerate 20 runs: AVx20`，
+  两侧 `.text` 指纹均与本机一致；本机同两 exe 各 20 次为 `2x20` / `80x20`（**0 AV**）。
+  ⇒ **同一 runner 实例内确定性崩溃**（20/20；ASLR 每轮都变却次次崩，故与地址随机化
+  无关），而**跨 runner 轮次时有时无** ⇒ 指向 runner 池里**机型/镜像不同**（哪台撞上
+  触发条件就在那台上稳定复现）。机制候选因此收窄为"机型/OS 版本固定的某项策略"
+  （CET/CFG/加载器布局等），**不是随机时序**。为拿到最后一块拼图，CI 探针还会打印
+  Windows **WER 崩溃记录**（exception code + **fault offset**）——本机有逐字节相同的
+  `.text`，拿到偏移即可反查崩在哪条指令。
+  本机对照一次性重述：严格口径单用例 ≈5.5k 次 + 全量套件多轮，**0 次 AV**。
 
 - **可见性缺口（已修，2026-09-11）**：libtest **捕获"通过"测试的 stdout**，而容忍后的
   AV/超时不会让测试失败 ⇒ 这些事件在 CI 日志里**原本看不见**（run #28 全绿，但无法

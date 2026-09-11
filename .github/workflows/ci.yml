@@ -209,6 +209,15 @@ jobs:
             Remove-Item -Recurse -Force $d.FullName -ErrorAction SilentlyContinue
           }
           Remove-Item Env:FORGE_E2E_ONLY, Env:FORGE_E2E_KEEP, Env:FORGE_E2E_TIMEOUT_SECS -ErrorAction SilentlyContinue
+          # WER 崩溃记录（含 exception code 与 fault offset）——本机有逐字节相同的
+          # .text，拿到偏移即可反查是哪条指令在崩（机制定位的最后一块拼图）。
+          '--- Application Error (WER) entries ---'
+          Get-WinEvent -FilterHashtable @{
+              LogName      = 'Application'
+              ProviderName = 'Application Error'
+              StartTime    = (Get-Date).AddMinutes(-15)
+            } -MaxEvents 8 -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Message -replace "`r?`n", ' | ' }
           # 探针里的 cargo test 是"故意失败"（TIMEOUT_SECS=0 + passed>0 守卫），
           # 不能让它的退出码把 job 弄红——本步骤永远成功返回。
           exit 0
