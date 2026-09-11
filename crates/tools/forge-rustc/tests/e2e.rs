@@ -1879,7 +1879,35 @@ fn e2e_alloc_step_probe() {
     const SIX_PUSH: &str = "let mut v = alloc::vec::Vec::new(); let mut i = 0; while i < 6 { v.push(i); i += 1; } v.len() as i32";
     const ITER_ENUM: &str = "let mut v = alloc::vec::Vec::new(); v.push(10); v.push(20); v.push(30); let mut s = 0; for (i, x) in v.iter().enumerate() { s += i as i32 * x; } s";
 
-    let variants: [(&str, &str, &str, i32); 7] = [
+    // 「审计分配器」：记录每次 alloc 的请求尺寸，并在返回块之后**投毒** 32 字节，
+    // 供用例回读校验。用途：在**本机**确定性地检测两件本来只在 CI 机型上暴露的事——
+    // ①生成代码是否向分配器要了**错误的尺寸/对齐**（尺寸错了，naive 分配器也照样"成功"，
+    //   随后按错误尺寸写/拷 → 在别的内存布局上就是 AV / 0xC0000409 栈缓冲区破坏）；
+    // ②push 路径是否越界写到分配块之外（投毒字节被改写）。
+    // 记录数组：ASIZE[0..8] 尺寸、AALIGN[0..8] 对齐、APTR0 首次返回的指针、AN 次数。
+    const AUDIT_ALLOC: &str = "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstatic mut CUR: usize = 0;\nstatic mut ASIZE: [usize; 8] = [0; 8];\nstatic mut AALIGN: [usize; 8] = [0; 8];\nstatic mut APTR: [*mut u8; 8] = [core::ptr::null_mut(); 8];\nstatic mut AN: usize = 0;\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, l: Layout) -> *mut u8 { unsafe {\n        let base = core::ptr::addr_of_mut!(HEAP) as *mut u8;\n        let cur = core::ptr::addr_of_mut!(CUR).read();\n        let align = if l.align() < 16 { 16 } else { l.align() };\n        let off = (cur + align - 1) & !(align - 1);\n        let size = l.size();\n        if off + size + 32 > 8192 { return core::ptr::null_mut(); }\n        let n = core::ptr::addr_of_mut!(AN).read();\n        if n < 8 {\n            (*core::ptr::addr_of_mut!(ASIZE))[n] = size;\n            (*core::ptr::addr_of_mut!(AALIGN))[n] = l.align();\n        }\n        core::ptr::addr_of_mut!(AN).write(n + 1);\n        let p = base.add(off);\n        if n < 8 { (*core::ptr::addr_of_mut!(APTR))[n] = p; }\n        let mut i = 0;\n        while i < 32 { p.add(size + i).write_volatile(0xA5); i += 1; }\n        core::ptr::addr_of_mut!(CUR).write(off + size + 32);\n        p\n    } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;";
+
+    // 首次 push（空 Vec grow-from-empty）实际向分配器要多少字节？Vec<i32> 期望
+    // cap=4 × 4B = 16；Vec<u8> 期望 cap=8 × 1B = 8；第五次 push 时 4→8 应要 32。
+    const AUDIT_ONE_I32: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe { (*core::ptr::addr_of!(ASIZE))[0] as i32 }";
+    const AUDIT_ONE_U8: &str = "let mut v: alloc::vec::Vec<u8> = alloc::vec::Vec::new(); v.push(1); unsafe { (*core::ptr::addr_of!(ASIZE))[0] as i32 }";
+    const AUDIT_GROW_2: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); let mut i = 0; while i < 5 { v.push(i); i += 1; } unsafe { (*core::ptr::addr_of!(ASIZE))[1] as i32 }";
+    const AUDIT_ALIGN: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe { (*core::ptr::addr_of!(AALIGN))[0] as i32 }";
+    // 投毒校验：push 若干次后回读每个分配块之后的 32 字节；全为 0xA5 ⇒ 返回 1，
+    // 否则返回 1000+首个被改写的偏移（本机若出现 1000+ ⇒ 生成代码越界写）。
+    const AUDIT_POISON: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); let mut i = 0; while i < 5 { v.push(i); i += 1; } unsafe {\n        let n = core::ptr::addr_of!(AN).read();\n        let mut k = 0; let mut bad = -1;\n        while k < n && k < 8 {\n            let p = (*core::ptr::addr_of!(APTR))[k] as *const u8;\n            let sz = (*core::ptr::addr_of!(ASIZE))[k];\n            let mut j = 0;\n            while j < 32 {\n                if p.add(sz + j).read_volatile() != 0xA5 { bad = (k * 100 + j) as i32; break; }\n                j += 1;\n            }\n            if bad >= 0 { break; }\n            k += 1;\n        }\n        if bad < 0 { 1 } else { 1000 + bad }\n    }";
+    // 仅回读指针数组第 0 项与 HEAP 起点的差（期望 0）：检验"指针写入 static mut 数组再读回"。
+    const AUDIT_PTR_RT: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as usize;\n        let base = core::ptr::addr_of!(HEAP) as usize;\n        p.wrapping_sub(base) as i32\n    }";
+    // 只做一次"计算地址读取"：读首个分配块末尾（毒区首字节，期望 0xA5=165）。
+    const AUDIT_READ_AT_PTR: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        p.add(sz).read_volatile() as i32\n    }";
+    // 同上但**不读内存**：只算地址并返回相对偏移（期望 16）——分离"地址计算"与"载入"。
+    const AUDIT_ADDR_CALC: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        let base = core::ptr::addr_of!(HEAP) as usize;\n        (p as usize).wrapping_add(sz).wrapping_sub(base) as i32\n    }";
+    // 读同一字节但**把值归一化成常量**再返回（期望 165）——分离"载入成功"与"值回传"。
+    const AUDIT_READ_ONLY: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        let b = p.add(sz).read_volatile();\n        if b == 0xA5 { 165 } else { b as i32 }\n    }";
+    // 只校验第 0 个块（不跨块、不用 APTR[1]）。
+    const AUDIT_GUARD_K0: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        let mut j = 0; let mut bad = -1;\n        while j < 32 {\n            if p.add(sz + j).read_volatile() != 0xA5 { bad = j as i32; break; }\n            j += 1;\n        }\n        if bad < 0 { 1 } else { 1000 + bad }\n    }";
+
+    let variants: [(&str, &str, &str, i32); 17] = [
         ("probe_new_only", NEW_ONLY, NAIVE_ALLOC, 0),
         ("probe_one_push", ONE_PUSH, NAIVE_ALLOC, 1),
         ("probe_two_push", TWO_PUSH, NAIVE_ALLOC, 2),
@@ -1887,6 +1915,18 @@ fn e2e_alloc_step_probe() {
         ("probe_iter_enum", ITER_ENUM, NAIVE_ALLOC, 80),
         ("probe_two_push_bump", TWO_PUSH, BUMP_ALLOC, 2),
         ("probe_six_push_bump", SIX_PUSH, BUMP_ALLOC, 6),
+        ("probe_audit_one_i32", AUDIT_ONE_I32, AUDIT_ALLOC, 16),
+        ("probe_audit_one_u8", AUDIT_ONE_U8, AUDIT_ALLOC, 8),
+        ("probe_audit_grow2", AUDIT_GROW_2, AUDIT_ALLOC, 32),
+        ("probe_audit_align4", AUDIT_ALIGN, AUDIT_ALLOC, 4),
+        ("probe_oob_guard", AUDIT_POISON, AUDIT_ALLOC, 1),
+        // ↓ 隔离 `probe_oob_guard` 在本机就 AV 的原因（指针数组回读 / 计算地址读取）
+        ("probe_ptr_roundtrip", AUDIT_PTR_RT, AUDIT_ALLOC, 0),
+        ("probe_read_at_ptr", AUDIT_READ_AT_PTR, AUDIT_ALLOC, 165),
+        ("probe_guard_k0", AUDIT_GUARD_K0, AUDIT_ALLOC, 1),
+        // ↓ 继续钉住 probe_read_at_ptr 的 AV：地址计算 vs 载入值流
+        ("probe_addr_calc", AUDIT_ADDR_CALC, AUDIT_ALLOC, 16),
+        ("probe_read_only", AUDIT_READ_ONLY, AUDIT_ALLOC, 165),
     ];
 
     for (name, body, extra, want) in variants {

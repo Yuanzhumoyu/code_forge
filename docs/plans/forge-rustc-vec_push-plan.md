@@ -742,6 +742,31 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   （候选：该 runner 的 OS 构建/CPU 相关的运行库分派路径、或该镜像的安全策略），
   **不是 forge 的 codegen 缺陷**。
 
+- **本机确定性异常（2026-09-11 新发现，与上面那条独立）**：诊断探针里有三个变体在
+  **本机（Intel/Win11 —— 就是 CI 上 0 AV 的同一台机器）**也**稳定 AV**（3/3 轮）：
+
+  | 变体 | 内容 | 本机 |
+  | --- | --- | --- |
+  | `probe_addr_calc` | `p = APTR[0]; sz = ASIZE[0]; (p as usize + sz) - base` 作返回值（**不读内存**） | **AV** |
+  | `probe_read_at_ptr` | 读 `p.add(sz)` 一个字节并把值作返回值 | **AV** |
+  | `probe_read_only` | 读同一字节、但值归一化成常量再返回 | ok exit=165 |
+  | `probe_guard_k0` / `probe_ptr_roundtrip` | 用同样的指针算术做比较/减法后返回 | ok |
+
+  **最小复现**（脱离 harness：`rustc -Zcodegen-backend=<forge_rustc.dll>` 直接编）：
+  `Vec::new(); v.push(1);` 之后读 `APTR[0]`/`ASIZE[0]`，把 `(p as usize + sz) - base`
+  当返回值 ⇒ **AV**（期望 16）；把同一个值改成"先比较再返回常量" ⇒ 正常。
+  **形态敏感（Heisenbug）**：给该程序加上 VEH 基础设施
+  （`AddVectoredExceptionHandler` 加函数指针再加 handler）后，同一表达式**正常返回
+  16**——用带标记退出码（`0xEE0xxxxx`）验证 handler **没有**跑过，即确实"异常消失
+  了"；而加一个无关空函数**仍 AV**。⇒ 症状随寄存器分配/栈布局变化。
+
+  **判读（谨慎）**：这是**本仓可本地复现的候选 codegen 缺陷**（合法程序确定性 AV，
+  且随无关代码形状出现/消失），与上面"CI 机型相关"可能同源（都表现为某些布局下
+  指针/地址变野），也可能独立。当前证据只到"某个代码形态会崩"，**尚未定位到具体
+  指令**；后续按 §9.4 关联法缩小到 IR/regalloc 决策：`FORGE_TRACE_VCODE` 与
+  `llvm-objdump -d` 逐版对照，再做二分裁剪。已登记为 `WORKAROUNDS.md`
+  **WA-41（开放）**。
+
 - **可见性缺口（已修，2026-09-11）**：libtest **捕获"通过"测试的 stdout**，而容忍后的
   AV/超时不会让测试失败 ⇒ 这些事件在 CI 日志里**原本看不见**（run #28 全绿，但无法
   判断当轮有没有踩到 AV）。现在 harness 在设 `FORGE_E2E_EVENTS=<路径>` 时把关键事件
