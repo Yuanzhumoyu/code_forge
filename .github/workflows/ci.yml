@@ -175,6 +175,33 @@ jobs:
             '--- e2e events ---'
             Get-Content target\tmp\e2e_events.txt
           } else { '--- e2e events: (file absent) ---' }
+      # CI 环境 AV 的**概率**探针（always）：产物与本机逐字节相同却只在 runner 上
+      # AV，机制未定位（OS/安全策略候选）。同一 exe 连跑 20 次给出退出码直方图：
+      # 全 AV ⇒ 该 runner 上确定性；混合 ⇒ 与地址随机化/时序相关的环境性。
+      - name: Probe CI-env AV rate (always)
+        if: always()
+        run: |
+          $ev = 'target\tmp\e2e_events.txt'
+          if (-not (Test-Path $ev)) { '--- probe: no events file ---'; exit 0 }
+          $cases = Select-String -Path $ev -Pattern '^\[CI-ENV-AV\] (\S+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value }
+          if (-not $cases) { '--- probe: 本轮无 CI-ENV-AV ---'; exit 0 }
+          foreach ($d in Get-ChildItem "$env:TEMP" -Directory -Filter 'forge_rustc_e2e*' -ErrorAction SilentlyContinue) {
+            foreach ($c in $cases) {
+              $exe = Join-Path $d.FullName "$c.exe"
+              if (-not (Test-Path $exe)) { continue }
+              $codes = @()
+              for ($i = 1; $i -le 20; $i++) {
+                $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+                if ($p.WaitForExit(15000)) { $codes += $p.ExitCode } else { $p.Kill(); $codes += 'HANG' }
+              }
+              $hist = ($codes | Group-Object | ForEach-Object { "$($_.Name)x$($_.Count)" }) -join ' '
+              $plain = ($codes | Group-Object | ForEach-Object {
+                  if ($_.Name -eq 'HANG') { $_.Name } elseif ([int]$_.Name -eq -1073741819) { "AVx$($_.Count)" } else { "$($_.Name)x$($_.Count)" }
+                }) -join ' '
+              "[probe] $c 20 runs: $plain   (raw: $hist)"
+            }
+          }
       # ⚠️ runner.temp（D:\a\_temp）≠ 测试进程的 %TEMP%（C:\Users\RUNNER~1\…）——
       # run #25/#26 的 artifact 因此只有 e2e.log、没有保留的失败工作目录。本步按
       # `$env:TEMP` 收集：打印每个产物的 `.text` SHA256（跨机可比指纹，见
