@@ -673,6 +673,10 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   `e2e.log`（4056 B），**保留的失败工作目录没上传**。现改为按 `$env:TEMP` 收集：
   打印每个失败产物的 `.text` SHA256（跨机可比指纹，`pe_text_hash.ps1`）并把
   `.rs/.exe` 复制到 `target/tmp/e2e_keep/` 一并上传。
+- **本机 codegen 确定性对照（2026-09-11）**：这两个用例各**连续重建 3 次**，`.text`
+  SHA256 三次全同（`vec_push` `a91b9eef…63fb` ×3、`vec_iter_enumerate` `5f421f08…c732`
+  ×3）⇒ 本机这条路径逐字节确定：CI 指纹**相同**即可判环境性、**不同**即 CI 侧
+  codegen 差异（转 §9.4）。
 - **决定性判据（下一步）**：比对 CI 侧 `[evidence] … text_sha256=…` 与本机基线——
 
   1. **指纹相同** ⇒ 生成代码逐字节一致而 CI 仍 AV ⇒ 判为 **CI runner 环境性**
