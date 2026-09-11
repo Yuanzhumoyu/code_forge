@@ -732,10 +732,14 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
      ⇒ 失败侧集中在 **Server 2025 SKU + AMD 机型**，与本机（Win11 + Intel）不同；
      同一轮 `probe_one_push` 仍 AV、`probe_new_only` 仍 ok、bump 变体仍 AV，裁剪结论
      在第二个失败机型上复现。
-  5. **单变量实验：e2e job 换 `windows-2022`**（2026-09-11 起一轮）：探针同时打印
-     `.text` 指纹——**指纹相同而 AV 消失** ⇒ 机器/OS SKU 是变量（可据此决定是否钉版
-     该 job 到 2022 并让 2 例回归正常门禁）；**指纹不同** ⇒ 变的是构建（实验无效，
-     需另设对照）。结论回写本节后再定去留。
+  5. **单变量实验：e2e job 换 `windows-2022`**（2026-09-11，**已做毕、已回退**）：
+     探针同时打印 `.text` 指纹——结果 **Server 2022 的 AMD 机型（20348.5499 /
+     AMD64 Family 25 Model 17）同样 20/20 AV**，且指纹与本机仍逐字节相同
+     ⇒ **变量是机型（实测均 AMD Family 25）而非 OS SKU**；钉版无益，`ci.yml` 已回退
+     到 `windows-latest` 并把结论写进注释。
+     附带发现：该机上 `vec_iter_enumerate` 的退出码是 **`-1073740791`（0xC0000409
+     STATUS_STACK_BUFFER_OVERRUN）**而非 AV——同一 exe 的**症状随机器变化**，
+     与"栈/缓冲区被写坏"的签名一致（对 WA-41 有参考价值）。
 
   **判读（当前）**：崩溃点已精确到"空 Vec 首次 push 的 grow 路径"，且与地址复用无关；
   同一份机器码在该机型 20/20 崩、在本机 5.5k+ 次 0 崩 ⇒ 仍是**机型/OS 侧变量**

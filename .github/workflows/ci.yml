@@ -131,13 +131,12 @@ jobs:
   # 更早的 1.99 无法编译）。bump 时同步 tests/e2e.rs 的 NIGHTLY。
   forge-rustc-e2e:
     name: forge-rustc (e2e, Windows)
-    # ⚠️ 实验（2026-09-11）：vec_push / vec_iter_enumerate 的确定性 AV（0xC0000005）
-    # 只出现在部分 runner 机型上，已抓到失败机型指纹：Windows Server 2025
-    # (26100.33296) + AMD64 Family 25 Model 1；本机 Windows 11 25H2 + Intel
-    # Family 6 Model 154 从不复现。本轮换 windows-2022 做**单变量实验**：
-    # 探针会同时打印 `.text` 指纹——指纹相同而 AV 消失 ⇒ 机器/OS 是变量；
-    # 指纹不同 ⇒ 变的是构建（实验无效，需另设对照）。结论回写计划 §9.5 后再定去留。
-    runs-on: windows-2022
+    # 机型实验（2026-09-11，已做毕）：vec_push / vec_iter_enumerate 的确定性 AV
+    # 曾被怀疑与 OS SKU 相关，故把本 job 临时钉到 windows-2022 单变量验证——
+    # 结果 **Server 2022 的 AMD 机型同样 20/20 AV**（`.text` 指纹与本机仍逐字节
+    # 相同）⇒ 变量是**机型（实测均 AMD Family 25）**而非 OS SKU，钉版无益，回退。
+    # 详见 docs/plans/forge-rustc-vec_push-plan.md §9.5。
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
