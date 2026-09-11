@@ -695,10 +695,22 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   ⇒ **同一 runner 实例内确定性崩溃**（20/20；ASLR 每轮都变却次次崩，故与地址随机化
   无关），而**跨 runner 轮次时有时无** ⇒ 指向 runner 池里**机型/镜像不同**（哪台撞上
   触发条件就在那台上稳定复现）。机制候选因此收窄为"机型/OS 版本固定的某项策略"
-  （CET/CFG/加载器布局等），**不是随机时序**。为拿到最后一块拼图，CI 探针还会打印
-  Windows **WER 崩溃记录**（exception code + **fault offset**）——本机有逐字节相同的
-  `.text`，拿到偏移即可反查崩在哪条指令。
+  （CET/CFG/加载器布局等），**不是随机时序**。
   本机对照一次性重述：严格口径单用例 ≈5.5k 次 + 全量套件多轮，**0 次 AV**。
+
+- **两条机制取证路线（2026-09-11 起随每轮 CI 跑）**：
+
+  1. **WER 崩溃记录**：探针打印 `Application Error` 事件的 exception code +
+     fault offset（本机有逐字节相同的 `.text`，可反查崩在哪条指令）。
+     ⚠️ run #32 实测该 runner **没有任何 WER 记录**（服务未记录/被禁用）⇒ 此路已死。
+  2. **分配路径逐步裁剪**（`e2e_alloc_step_probe`，诊断测试、不做断言）：
+     `probe_new_only`（只 new）/ `probe_one_push`（首次 push = 0→4 的 grow）/
+     `probe_two_push` / `probe_six_push`（多次 grow）/ `probe_iter_enum`
+     （= `vec_iter_enumerate`），外加 **`*_bump` 变体**（分配器每次返回**不同地址**）。
+     判读：**哪一步先 AV** ⇒ 崩溃点落在该路径；**bump 变体通过而 naive 变体 AV**
+     ⇒ 触发条件就是"同一地址反复分配"（naive 分配器），那 2 例即可通过改测试分配器
+     而不靠容忍解决；**bump 也 AV** ⇒ 与分配地址无关，继续往访存/序言方向查。
+     本机基线：7 个变体全 `ok`（5.14 s）。
 
 - **可见性缺口（已修，2026-09-11）**：libtest **捕获"通过"测试的 stdout**，而容忍后的
   AV/超时不会让测试失败 ⇒ 这些事件在 CI 日志里**原本看不见**（run #28 全绿，但无法

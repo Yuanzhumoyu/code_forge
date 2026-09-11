@@ -209,6 +209,12 @@ jobs:
             Remove-Item -Recurse -Force $d.FullName -ErrorAction SilentlyContinue
           }
           Remove-Item Env:FORGE_E2E_ONLY, Env:FORGE_E2E_KEEP, Env:FORGE_E2E_TIMEOUT_SECS -ErrorAction SilentlyContinue
+          # 分配路径逐步裁剪（诊断）：new_only / one_push / two_push / six_push /
+          # iter_enum + bump 分配器对照 —— 哪一步先 AV，崩溃点就落在哪条路径上；
+          # bump 变体通过而 naive 变体 AV ⇒ 触发条件就是"每次 alloc 返回同一地址"。
+          '--- alloc-step probe (diagnostic) ---'
+          cargo test -p forge-rustc --test e2e -- --nocapture e2e_alloc_step_probe 2>&1 |
+            Select-String -Pattern '^PROBE |test result:'
           # WER 崩溃记录（含 exception code 与 fault offset）——本机有逐字节相同的
           # .text，拿到偏移即可反查是哪条指令在崩（机制定位的最后一块拼图）。
           '--- Application Error (WER) entries ---'

@@ -1844,6 +1844,76 @@ fn e2e_stage_a_scalar_cases() {
     assert!(passed > 0, "no cases passed — backend broken");
 }
 
+/// 分配路径逐步探针（**诊断用，不做断言**；2026-09-11 加）。
+///
+/// 背景：CI 上 `vec_push` / `vec_iter_enumerate` 在**某些 runner 实例**上
+/// 20/20 稳定 AV（`0xC0000005`），而 `.text` 与本机逐字节相同、本机 0 AV
+/// （见 docs/plans/forge-rustc-vec_push-plan.md §9.5）。WER 在该 runner 上不留记录，
+/// 所以改用"逐步裁剪 + 对照变体"定位崩溃点：
+///
+/// - `probe_new_only`：只 `Vec::new()`（不分配）；
+/// - `probe_one_push`：首次 push（触发 0→4 的 grow = 一次 alloc）；
+/// - `probe_two_push` / `probe_six_push`：多次 push（后续 grow，多次 alloc/realloc）；
+/// - `probe_iter_enum`：push×3 + 迭代（= `vec_iter_enumerate`）；
+/// - `*_bump`：同样程序但分配器**每次返回不同地址**（bump），用来验证
+///   "同一地址反复分配（naive 分配器）是否就是触发条件"。
+///
+/// 本机预期全部 exit 正确；受影响的 runner 上会看到某一步 AV —— 哪一步先崩，
+/// 崩溃点就落在哪条路径上。
+#[test]
+fn e2e_alloc_step_probe() {
+    let workdir =
+        std::env::temp_dir().join(format!("forge_rustc_alloc_probe_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    println!("workdir: {}", workdir.display());
+
+    // 与 vec_push 等用例完全一致的 naive 分配器：**每次 alloc 都返回同一地址**。
+    const NAIVE_ALLOC: &str = "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe {\n        let base = core::ptr::addr_of_mut!(HEAP) as *mut u8;\n        base.add(base.align_offset(32))\n    } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;";
+    // bump 分配器：每次 alloc 前进游标、返回**不同**地址（dealloc 仍是 no-op）。
+    const BUMP_ALLOC: &str = "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstatic mut CUR: usize = 0;\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, l: Layout) -> *mut u8 { unsafe {\n        let base = core::ptr::addr_of_mut!(HEAP) as *mut u8;\n        let cur = core::ptr::addr_of_mut!(CUR).read();\n        let align = if l.align() < 16 { 16 } else { l.align() };\n        let off = (cur + align - 1) & !(align - 1);\n        let next = off + l.size();\n        if next > 8192 { return core::ptr::null_mut(); }\n        core::ptr::addr_of_mut!(CUR).write(next);\n        base.add(off)\n    } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;";
+
+    const NEW_ONLY: &str = "let v: alloc::vec::Vec<u8> = alloc::vec::Vec::new(); v.len() as i32";
+    const ONE_PUSH: &str = "let mut v = alloc::vec::Vec::new(); v.push(1); v.len() as i32";
+    const TWO_PUSH: &str =
+        "let mut v = alloc::vec::Vec::new(); v.push(1); v.push(2); v.len() as i32";
+    const SIX_PUSH: &str = "let mut v = alloc::vec::Vec::new(); let mut i = 0; while i < 6 { v.push(i); i += 1; } v.len() as i32";
+    const ITER_ENUM: &str = "let mut v = alloc::vec::Vec::new(); v.push(10); v.push(20); v.push(30); let mut s = 0; for (i, x) in v.iter().enumerate() { s += i as i32 * x; } s";
+
+    let variants: [(&str, &str, &str, i32); 7] = [
+        ("probe_new_only", NEW_ONLY, NAIVE_ALLOC, 0),
+        ("probe_one_push", ONE_PUSH, NAIVE_ALLOC, 1),
+        ("probe_two_push", TWO_PUSH, NAIVE_ALLOC, 2),
+        ("probe_six_push", SIX_PUSH, NAIVE_ALLOC, 6),
+        ("probe_iter_enum", ITER_ENUM, NAIVE_ALLOC, 80),
+        ("probe_two_push_bump", TWO_PUSH, BUMP_ALLOC, 2),
+        ("probe_six_push_bump", SIX_PUSH, BUMP_ALLOC, 6),
+    ];
+
+    for (name, body, extra, want) in variants {
+        let case = Case {
+            name,
+            body,
+            extra,
+            entry: "mainCRTStartup",
+            expected: want,
+            expect_compile_fail: false,
+            expect_compile_err: "",
+            known_failure: false,
+            phase: "probe",
+            reason: "分配路径逐步探针（诊断用，不参与门禁）",
+        };
+        // 诊断优先：任何结果都只打印，不让本测试红（真实门禁在 stage_a）
+        let (verdict, detail) = match run_case(&case, &workdir) {
+            Ok(code) if code == want => ("ok", format!("exit={code}")),
+            Ok(-1073741819) => ("AV", "exit=-1073741819 (0xC0000005)".to_string()),
+            Ok(code) => ("WRONG", format!("exit={code} (want {want})")),
+            Err(e) => ("ERR", format!("error: {e}")),
+        };
+        println!("PROBE {name:<22} {verdict:<5} {detail}");
+    }
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
 /// M4（并行路径 A，根治 WA-38）：forge 函数降级任务提交 **rustc 查询池**
 /// （`-Z threads>=2` 开启 rustc 并行前端 → backend.rs 门控
 /// `FORGE_CODEGEN_THREADS>1 && jobs.frontend.is_some() && 函数数>1` 后以
