@@ -176,32 +176,42 @@ jobs:
             Get-Content target\tmp\e2e_events.txt
           } else { '--- e2e events: (file absent) ---' }
       # CI 环境 AV 的**概率**探针（always）：产物与本机逐字节相同却只在 runner 上
-      # AV，机制未定位（OS/安全策略候选）。同一 exe 连跑 20 次给出退出码直方图：
+      # AV，机制未定位（OS/安全策略候选）。这里不依赖"本轮是否恰好命中"——用
+      # FORGE_E2E_ONLY + FORGE_E2E_TIMEOUT_SECS=0 让 harness 当轮"失败"从而保留
+      # 刚构建的产物，再对**同一 exe** 连跑 20 次给退出码直方图：
       # 全 AV ⇒ 该 runner 上确定性；混合 ⇒ 与地址随机化/时序相关的环境性。
+      # （本机对照：两例各 20 次全为正确退出，0 AV。）
       - name: Probe CI-env AV rate (always)
         if: always()
         run: |
-          $ev = 'target\tmp\e2e_events.txt'
-          if (-not (Test-Path $ev)) { '--- probe: no events file ---'; exit 0 }
-          $cases = Select-String -Path $ev -Pattern '^\[CI-ENV-AV\] (\S+)' |
-            ForEach-Object { $_.Matches[0].Groups[1].Value }
-          if (-not $cases) { '--- probe: 本轮无 CI-ENV-AV ---'; exit 0 }
-          foreach ($d in Get-ChildItem "$env:TEMP" -Directory -Filter 'forge_rustc_e2e*' -ErrorAction SilentlyContinue) {
-            foreach ($c in $cases) {
-              $exe = Join-Path $d.FullName "$c.exe"
-              if (-not (Test-Path $exe)) { continue }
-              $codes = @()
-              for ($i = 1; $i -le 20; $i++) {
-                $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
-                if ($p.WaitForExit(15000)) { $codes += $p.ExitCode } else { $p.Kill(); $codes += 'HANG' }
-              }
-              $hist = ($codes | Group-Object | ForEach-Object { "$($_.Name)x$($_.Count)" }) -join ' '
-              $plain = ($codes | Group-Object | ForEach-Object {
-                  if ($_.Name -eq 'HANG') { $_.Name } elseif ([int]$_.Name -eq -1073741819) { "AVx$($_.Count)" } else { "$($_.Name)x$($_.Count)" }
-                }) -join ' '
-              "[probe] $c 20 runs: $plain   (raw: $hist)"
+          Remove-Item Env:FORGE_E2E_EVENTS -ErrorAction SilentlyContinue
+          $env:FORGE_E2E_KEEP = '1'
+          $env:FORGE_E2E_TIMEOUT_SECS = '0'
+          foreach ($c in 'vec_push', 'vec_iter_enumerate') {
+            $env:FORGE_E2E_ONLY = $c
+            cargo test -p forge-rustc --test e2e -- --nocapture e2e_stage_a_scalar_cases 2>&1 | Out-Null
+            $d = Get-ChildItem "$env:TEMP" -Directory -Filter 'forge_rustc_e2e*' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if (-not $d) { "[probe] $c : 未找到保留的工作目录"; continue }
+            $exe = Join-Path $d.FullName "$c.exe"
+            if (-not (Test-Path $exe)) { "[probe] $c : 产物缺失 ($($d.FullName))"; continue }
+            $codes = @()
+            for ($i = 1; $i -le 20; $i++) {
+              $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+              if ($p.WaitForExit(15000)) { $codes += $p.ExitCode } else { $p.Kill(); $codes += 'HANG' }
             }
+            $plain = ($codes | Group-Object | ForEach-Object {
+                if ($_.Name -eq 'HANG') { $_.Name }
+                elseif ([int]$_.Name -eq -1073741819) { "AVx$($_.Count)" }
+                else { "$($_.Name)x$($_.Count)" }
+              }) -join ' '
+            "[probe] $c 20 runs: $plain   (text_sha256=$(& crates\tools\forge-rustc\tests\pe_text_hash.ps1 $exe | ForEach-Object { ($_ -split ' ')[0] }))"
+            Remove-Item -Recurse -Force $d.FullName -ErrorAction SilentlyContinue
           }
+          Remove-Item Env:FORGE_E2E_ONLY, Env:FORGE_E2E_KEEP, Env:FORGE_E2E_TIMEOUT_SECS -ErrorAction SilentlyContinue
+          # 探针里的 cargo test 是"故意失败"（TIMEOUT_SECS=0 + passed>0 守卫），
+          # 不能让它的退出码把 job 弄红——本步骤永远成功返回。
+          exit 0
       # ⚠️ runner.temp（D:\a\_temp）≠ 测试进程的 %TEMP%（C:\Users\RUNNER~1\…）——
       # run #25/#26 的 artifact 因此只有 e2e.log、没有保留的失败工作目录。本步按
       # `$env:TEMP` 收集：打印每个产物的 `.text` SHA256（跨机可比指纹，见
