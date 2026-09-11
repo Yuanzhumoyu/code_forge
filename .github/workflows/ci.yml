@@ -215,6 +215,14 @@ jobs:
           '--- alloc-step probe (diagnostic) ---'
           cargo test -p forge-rustc --test e2e -- --nocapture e2e_alloc_step_probe 2>&1 |
             Select-String -Pattern '^PROBE |test result:'
+          # runner 指纹：同一份机器码只在某些机上崩 ⇒ 把机型/OS 版本/缓解策略打出来，
+          # 与本机（无 AV）对照，才能说清"机器相关的那个变量"是什么。
+          # （只用注册表 + 环境变量，`Get-CimInstance` 在受限环境里可能不可用。）
+          '--- runner fingerprint ---'
+          "OS: " + [System.Environment]::OSVersion.VersionString
+          $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+          "Build: $($cv.CurrentBuild).$($cv.UBR)  DisplayVersion: $($cv.DisplayVersion)  Product: $($cv.ProductName)"
+          "CPU: $env:PROCESSOR_IDENTIFIER  cores: $env:NUMBER_OF_PROCESSORS"
           # WER 崩溃记录（含 exception code 与 fault offset）——本机有逐字节相同的
           # .text，拿到偏移即可反查是哪条指令在崩（机制定位的最后一块拼图）。
           '--- Application Error (WER) entries ---'

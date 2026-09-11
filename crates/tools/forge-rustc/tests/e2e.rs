@@ -1911,6 +1911,10 @@ fn e2e_alloc_step_probe() {
         };
         println!("PROBE {name:<22} {verdict:<5} {detail}");
     }
+
+    // 对照组（**已撤**）：曾想用"普通 rustc 编同一份源码"做后台无关对照，但
+    // rustc 对 `#![no_main]` 不把 `#[no_mangle] mainCRTStartup` 当入口（`--emit=link`
+    // 只产出 ~1.5 KB 空桩、退出码恒 0），对照组不成立，故不保留该路径。
     let _ = std::fs::remove_dir_all(&workdir);
 }
 

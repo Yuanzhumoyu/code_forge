@@ -707,10 +707,31 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
      `probe_new_only`（只 new）/ `probe_one_push`（首次 push = 0→4 的 grow）/
      `probe_two_push` / `probe_six_push`（多次 grow）/ `probe_iter_enum`
      （= `vec_iter_enumerate`），外加 **`*_bump` 变体**（分配器每次返回**不同地址**）。
-     判读：**哪一步先 AV** ⇒ 崩溃点落在该路径；**bump 变体通过而 naive 变体 AV**
-     ⇒ 触发条件就是"同一地址反复分配"（naive 分配器），那 2 例即可通过改测试分配器
-     而不靠容忍解决；**bump 也 AV** ⇒ 与分配地址无关，继续往访存/序言方向查。
-     本机基线：7 个变体全 `ok`（5.14 s）。
+     本机基线：7 个变体全 `ok`（5.14 s）。**run #33 实测（失败机型）**：
+
+     | 变体 | 该机型结果 |
+     | --- | --- |
+     | `probe_new_only`（不分配） | **ok exit=0** |
+     | `probe_one_push` / `probe_two_push` / `probe_six_push` / `probe_iter_enum` | **AV** |
+     | `probe_two_push_bump` / `probe_six_push_bump`（bump 分配器） | **AV** |
+
+     ⇒ ①**崩溃必须有分配**，且**首次 push（空 Vec 的 grow-from-empty）就触发**；
+     ②**bump 变体同样 AV** ⇒ "每次 alloc 返回同一地址"**不是**触发条件（上一轮假设
+     被否）；③同机 `vec_string` / `vec_from_slice` / `box_value`（一次直接 alloc、
+     不走 grow-from-empty）**全部通过** ⇒ 触发点精确落在 **`RawVec::grow_amortized`
+     的空容量路径**上。
+  3. **普通 rustc 对照（不可行，已撤）**：本想用"同一份源码由不带 `-Zcodegen-backend`
+     的 rustc 编一遍"判定是否 forge 侧行为差异，但 rustc 对 `#![no_main]` 不把
+     `#[no_mangle] mainCRTStartup` 当入口（只产出 ~1.5 KB 空桩、退出码恒 0）⇒ 对照组
+     不成立，该路径已从 harness 移除（避免留下"假对照"）。
+  4. **runner 指纹**（每轮打印）：OS/构建号、`PROCESSOR_IDENTIFIER`、核数 —— 用来把
+     "机器相关的那个变量"落到纸面（本机：Windows 11 25H2 / 26200.9445 / Intel64
+     Family 6 Model 154 / 20 核，0 AV）。
+
+  **判读（当前）**：崩溃点已精确到"空 Vec 首次 push 的 grow 路径"，且与地址复用无关；
+  同一份机器码在该机型 20/20 崩、在本机 5.5k+ 次 0 崩 ⇒ 仍是**机型/OS 侧变量**
+  （候选：该 runner 的 OS 构建/CPU 相关的运行库分派路径、或该镜像的安全策略），
+  **不是 forge 的 codegen 缺陷**。
 
 - **可见性缺口（已修，2026-09-11）**：libtest **捕获"通过"测试的 stdout**，而容忍后的
   AV/超时不会让测试失败 ⇒ 这些事件在 CI 日志里**原本看不见**（run #28 全绿，但无法
