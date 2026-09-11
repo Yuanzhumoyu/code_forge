@@ -642,49 +642,45 @@ stage_a + parallel 全绿且该用例 exit 正确"，且 CI 侧不再出现超�
    "超时容忍"留在 harness 的复跑逻辑里（不再靠用例白名单）；
 3. `reason` 改写为"已转正（日期）+ 转正依据"；保留 `e2e-evidence` 上传备复盘。
 
-**严格模式 CI 试运行（2026-09-10/11）**：run #25（提交 `f7caaaa`）在严格口径下
-`forge-rustc (e2e, Windows)` job **红**——失败步正是 "Run e2e (stage A + M4 parallel)"
-（3m31s），而 "Upload e2e evidence (on failure)" **成功执行** ⇒ 取证链路按设计工作
-（artifact `e2e-evidence`，4056 B）。同分支上一轮 run #24（非严格口径）全绿。
+#### 严格模式 CI 试运行 → 抓到 CI 稳定 AV（2026-09-10/11）
 
-**失败文案待取**：CI 日志与 artifact 下载都需要仓库存取权限（API 无 token 返回 403
-"Must have admin rights"；本机 `curl`/`pwsh` 出网被沙箱 TLS 凭证限制挡住，只剩只读
-公开 API 可用）。因此如实记为**待定性**，两个假设并列：
+- run #25（`f7caaaa`）、run #26（`605ce0a`）严格口径均红，失败步是同一处
+  "Run e2e (stage A + M4 parallel)"；而非严格口径 run #20–#24 连续 5 轮"全绿"。
+- **失败文案（run #26 日志，2026-09-11 取得）**：
 
-1. **严格模式抓到错码**：某 FLAKY 用例在 CI 上产生 `FAIL <case> exit=N (want M)`
-   ——即历史记录的 AV/错码类确实存在，且 CI 比本机更易触发（本机 1600 次严格单跑
-   0 错码、5 例 × 8 并发常规口径 ≈3.5k 次亦 0 错码）；
-2. **既有 flake 假败**：套件里**非 FLAKY** 用例/测试的运行期超时（如
-   `e2e_parallel_pool_threads` 的 6 例各编译两次、M6/增量/cargo 模板测试）——严格
-   模式对它们**无影响**，属本轮之前就存在的风险（run #20–#24 连续全绿 ⇒ 很低频）。
+```text
+FAIL  vec_push           exit=-1073741819 (want 2)
+FAIL  vec_iter_enumerate exit=-1073741819 (want 80)
+[keep] 失败用例 ["vec_push","vec_iter_enumerate"] —— 工作目录保留：
+       C:\Users\RUNNER~1\AppData\Local\Temp\forge_rustc_e2e_7668
+=== e2e 汇总 ===
+passed: 101/103
+test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
+```
 
-区分手段（按代价排序）：
+- `-1073741819` = `0xC0000005` **ACCESS_VIOLATION**。同轮另外 3 个 FLAKY 用例
+  （`vec_string` / `vec_from_slice` / `box_value`）均 **FLAKY-PASS**（exit 正确）。
+- **门禁问题被证实**：容忍口径下这两条会打成 `KNOWN <case> exit=-1073741819`
+  （非致命），套件照旧 `passed: 101/103` 且**退出码 0** ⇒ 历史那些"CI 全绿"里，
+  这 2 例**一直在 AV**（各 `reason` 早已记录同一签名），**FLAKY 把它们的所有失败
+  都吞掉了**。严格模式只是把既存事实变成红灯——这正是本轮加开关的目的。
+- **本机对照基线**（同一 harness、同一钉版工具链构建；产物留 `target/tmp/local_ref/`）：
+  `vec_push.exe` 94720 B、`.text` SHA256 `a91b9eef…63fb`，独立复跑 **exit=2**；
+  `vec_iter_enumerate.exe` 103936 B、`.text` SHA256 `5f421f08…c732`，独立复跑
+  **exit=80** ⇒ 同源在本机产物**正确**（与 §9.2 的结论一致：本机不是错编译）。
+- **取证链路缺陷（本轮已修）**：`${{ runner.temp }}`（`D:\a\_temp`）≠ 测试进程的
+  `%TEMP%`（`C:\Users\RUNNER~1\AppData\Local\Temp`）⇒ #25/#26 的 artifact 只收到
+  `e2e.log`（4056 B），**保留的失败工作目录没上传**。现改为按 `$env:TEMP` 收集：
+  打印每个失败产物的 `.text` SHA256（跨机可比指纹，`pe_text_hash.ps1`）并把
+  `.rs/.exe` 复制到 `target/tmp/e2e_keep/` 一并上传。
+- **决定性判据（下一步）**：比对 CI 侧 `[evidence] … text_sha256=…` 与本机基线——
 
-- 取 run #25 的 `e2e-evidence` artifact（含 `e2e.log` 的 `KNOWN`/`FAIL`/`RETRY` 行与
-  保留的失败工作目录）——**决定性证据**，需仓库存取权限；
-- 看下一轮严格口径 CI 是否复现：复现 ⇒ 确定性信号，假设 1 优先；不再复现 ⇒ 更可能是
-  假设 2（低频假败）；
-- 本机继续加压（`-Mode load -Workers 8 -Rounds 40`）复跑：假设 1 成立时应在某个窗口
-  撞到错码（当前累计 0/≈5.1k）。
-
-**已复现（2/2）**：run #26（提交 `605ce0a`）严格口径**再次红**，失败步与 #25 相同；
-而非严格口径 run #20–#24 **连续 5 轮全绿**。严格与容忍的唯一行为差异 =
-`FLAKY + 错码 → FAIL`（超时仍容忍、非 FLAKY 用例完全不受影响）⇒ 这个
-**2/2 vs 5/5 对比把权重明显推向假设 1：CI 上确有 FLAKY 用例产生错码**
-（历史上 `reason` 记录的 `exit -1073741819`（0xC0000005 AV）正是错码形态），
-且它在 CI 上稳定复现、在本机不复现（本机严格口径：单用例 ≈5.1k 次 + 全量套件
-6 轮 6/6，全部全绿）。
-
-**artifact 体量旁证（弱）**：`e2e-evidence` 压缩后仅 4056 B。若错码 FAIL 发生在
-`e2e_stage_a_scalar_cases`，`FORGE_E2E_KEEP` 会保留 103 例的工作目录（≈40 MB 级），
-artifact 应显著更大 ⇒ 提示失败**可能不在 stage_a**（`e2e_parallel_pool_threads`、
-M6/增量/cargo 模板等测试不受严格模式影响、且不留工作目录），或 runner 的
-`std::env::temp_dir()` 与 `${{ runner.temp }}` 不一致导致 glob 未命中。两种可能都
-需要 CI 失败文案才能定掉。
-
-**判断**：在拿到 CI 文案前**不转正、也不回退严格模式**——严格模式红是对"5 例正确性
-无门禁"这一现状的正反馈；若最终定为假设 2，则应把"超时容忍"从用例白名单扩展到
-**全部用例**（同产物复跑已就位），而不是把门禁重新关掉。
+  1. **指纹相同** ⇒ 生成代码逐字节一致而 CI 仍 AV ⇒ 判为 **CI runner 环境性**
+     （同 `cli_tests` alloc AV 的产物双证先例，提交 `c545aaa`/`80d552d`）→ 按 §9.3
+     把这 2 例 `reason` 改写为"CI 运行环境 AV（附双证）"，并把严格模式收窄为
+     **只容忍超时 + 该 AV 签名**（其余错码仍硬失败）：既恢复绿 CI，也不放弃门禁；
+  2. **指纹不同** ⇒ CI 与本机生成的机器码不同 ⇒ 转 §9.4（regalloc / 并行路径
+     确定性）；此时严格模式保持红才是对的。
 
 ### 9.6 与 WA-40 的关系（已落地的收口，防止假设中的静默错码）
 

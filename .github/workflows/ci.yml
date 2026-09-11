@@ -152,8 +152,8 @@ jobs:
       # FORGE_E2E_KEEP（失败轮工作目录不删） + 失败时上传 e2e-evidence。
       # 严格模式（2026-09-10 起，试运行）：FLAKY 用例**只容忍超时**（已定性宿主侧
       # 环境性，仍有同产物复跑兜底），**错码按 FAIL 硬失败**——把 5 例的正确性重新
-      # 纳入门禁。若因历史 AV 形态变红，正是需要排查的信号（产物/日志见 artifact）；
-      # 连续 2 轮全绿后按计划 §9.5 转正（翻转 known_failure 并摘除 FLAKY）。
+      # 纳入门禁。run #25/#26 由此抓到 CI 稳定 AV（0xC0000005）的 vec_push /
+      # vec_iter_enumerate（容忍口径下被 KNOWN 掩盖成 passed: 101/103）。
       - name: Run e2e (stage A + M4 parallel)
         env:
           FORGE_E2E_KEEP: "1"
@@ -162,6 +162,31 @@ jobs:
           cargo test -p forge-rustc --test e2e -- --test-threads=1 2>&1 |
             Tee-Object -FilePath "${{ runner.temp }}/e2e.log" -Encoding utf8
           exit $LASTEXITCODE
+      # ⚠️ runner.temp（D:\a\_temp）≠ 测试进程的 %TEMP%（C:\Users\RUNNER~1\…）——
+      # run #25/#26 的 artifact 因此只有 e2e.log、没有保留的失败工作目录。本步按
+      # `$env:TEMP` 收集：打印每个失败用例产物的 `.text` SHA256（跨机可比指纹，见
+      # crates/tools/forge-rustc/tests/pe_text_hash.ps1）并把 `.rs/.exe` 复制进
+      # 工作区，供 upload-artifact 打包。
+      - name: Collect e2e evidence (.text digests + kept workdirs)
+        if: failure()
+        run: |
+          . crates\tools\forge-rustc\tests\pe_text_hash.ps1
+          $log = "${{ runner.temp }}/e2e.log"
+          $dst = 'target\tmp\e2e_keep'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          $lines = @()
+          foreach ($d in Get-ChildItem "$env:TEMP" -Directory -Filter 'forge_rustc_e2e*' -ErrorAction SilentlyContinue) {
+            $lines += "[keep] $($d.FullName)"
+            foreach ($exe in Get-ChildItem $d.FullName -Filter '*.exe' -ErrorAction SilentlyContinue) {
+              $lines += ("[evidence] {0,-26} bytes={1,-8} text_sha256={2}" -f `
+                  $exe.Name, $exe.Length, (Get-PeTextSha256 -Path $exe.FullName))
+            }
+            Copy-Item "$($d.FullName)\*.rs" $dst -Force -ErrorAction SilentlyContinue
+            Copy-Item "$($d.FullName)\*.exe" $dst -Force -ErrorAction SilentlyContinue
+          }
+          if ($lines.Count -eq 0) { $lines = @('[evidence] 未发现保留的 e2e 工作目录') }
+          $lines += "[evidence] uploaded: " + ((Get-ChildItem $dst -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')
+          $lines | Tee-Object -FilePath $log -Append
       - name: Upload e2e evidence (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -169,7 +194,7 @@ jobs:
           name: e2e-evidence
           path: |
             ${{ runner.temp }}/e2e.log
-            ${{ runner.temp }}/forge_rustc_e2e_*
+            target/tmp/e2e_keep/**
           if-no-files-found: ignore
       # cargo-forge cli_tests（真跑位）：上一步已产出 target/debug/forge_rustc.dll，
       # 本 job 有 rust-src；FORGE_CLI_TOOLCHAIN 钉版使嵌套 cargo 用已装 channel
