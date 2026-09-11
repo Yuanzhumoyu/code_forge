@@ -684,22 +684,30 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
 | `vec_push` | 94720 B | `a91b9eef72b947006551c4bf1af44df3f03becc2602710caeb1c24c4939663fb` |
 | `vec_iter_enumerate` | 103936 B | `5f421f08ef7457898a07481ad6d5cfc95bbd03520a97f2cfe2c612f1d10cc732` |
 
-  ⇒ **同一份机器码在 CI 上稳定 AV（#25–#27 三轮）、在本机稳定正确** ⇒ 判定
-  **CI runner 环境性 AV**（同 `cli_tests` alloc AV 的产物双证先例
-  `c545aaa`/`80d552d`），**不是 codegen 缺陷**；同时反证这两例的 codegen 跨机器
-  逐字节确定（本机 3 次重建亦全同）。**机制仍未知**：候选是 CI runner 的 OS/安全
-  策略差异（CET/CFG/加载器布局/Defender），本机与 CI 的文件头/`.text` 都相同，
+  ⇒ **同一份机器码在 CI 上间歇 AV**（run #25/#26/#27 连续三轮命中、run #28 未命中），
+  在**本机稳定正确** ⇒ 判定 **CI runner 环境性 AV**（同 `cli_tests` alloc AV 的产物
+  双证先例 `c545aaa`/`80d552d`），**不是 codegen 缺陷**；同时反证这两例的 codegen
+  跨机器逐字节确定（本机 3 次重建亦全同）。**机制仍未知**：候选是 CI runner 的
+  OS/安全策略差异（CET/CFG/加载器布局/Defender），本机与 CI 的文件头/`.text` 都相同，
   只能记为"环境性待解项"——但它不再阻塞门禁设计。
+
+- **可见性缺口（已修，2026-09-11）**：libtest **捕获"通过"测试的 stdout**，而容忍后的
+  AV/超时不会让测试失败 ⇒ 这些事件在 CI 日志里**原本看不见**（run #28 全绿，但无法
+  判断当轮有没有踩到 AV）。现在 harness 在设 `FORGE_E2E_EVENTS=<路径>` 时把关键事件
+  追加落盘（`RETRY` / `KNOWN-TIMEOUT` / `KNOWN-WRONGCODE` / `CI-ENV-AV` / `FAIL` +
+  末尾 `SUMMARY passed=… known=…`），CI 用 `if: always()` 步骤打印并在失败时随
+  artifact 上传 ⇒ **每轮都能直接看出"有没有环境性事件"**。
 
 - **据此落地的策略（2026-09-11）**：严格模式收窄为**只容忍「超时」与「CI-ENV-AV
   签名（`0xC0000005` = `-1073741819`）」**，其余错码仍硬失败；被容忍的 AV 打印
   `KNOWN <case> exit=… [phase] CI-ENV-AV: …`（**显式、不静默**）；两例 `reason`
   已写入双证。效果：CI 恢复绿（`passed: 101/103` + 2 条 `CI-ENV-AV` 告警），而
   "非 AV 错码进门禁"的收益保留。
-- **转正判据相应更新**：`vec_push` / `vec_iter_enumerate` 在 CI 上**恒 AV**，
-  因此不能靠"CI 全绿"转正——需先解释或消除该 AV（CI 侧机制定位），暂**不转正**；
-  `vec_string` / `vec_from_slice` / `box_value` 不受影响，仍按原判据（3 轮
-  stage_a + parallel 全绿且 exit 正确）评估。
+- **转正判据相应更新**：`vec_push` / `vec_iter_enumerate` 在 CI 上**间歇 AV**
+  （#25–#27 命中、#28 未命中）——容忍后套件仍绿，因此**"CI 全绿"不再能证明这两例
+  exit 正确**（要靠 `[SUMMARY]` 事件的 `known=[]`）。未消除该 AV 前**暂不转正**；
+  `vec_string` / `vec_from_slice` / `box_value` 不受影响，仍按原判据（3 轮 stage_a +
+  parallel 全绿且 exit 正确）评估。
 
 ### 9.6 与 WA-40 的关系（已落地的收口，防止假设中的静默错码）
 

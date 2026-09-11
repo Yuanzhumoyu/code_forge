@@ -158,10 +158,23 @@ jobs:
         env:
           FORGE_E2E_KEEP: "1"
           FORGE_E2E_STRICT_FLAKY: "1"
+          # libtest 捕获"通过"测试的 stdout ⇒ 被容忍的 KNOWN/CI-ENV-AV/RETRY 在日志里
+          # 看不见（run #28 就是全绿但无法判断有没有踩到环境性 AV）。落事件文件，
+          # 由下方 if: always() 步骤打印。
+          FORGE_E2E_EVENTS: "${{ github.workspace }}/target/tmp/e2e_events.txt"
         run: |
+          New-Item -ItemType Directory -Force -Path target\tmp | Out-Null
+          Remove-Item target\tmp\e2e_events.txt -ErrorAction SilentlyContinue
           cargo test -p forge-rustc --test e2e -- --test-threads=1 2>&1 |
             Tee-Object -FilePath "${{ runner.temp }}/e2e.log" -Encoding utf8
           exit $LASTEXITCODE
+      - name: Show e2e events (always)
+        if: always()
+        run: |
+          if (Test-Path target\tmp\e2e_events.txt) {
+            '--- e2e events ---'
+            Get-Content target\tmp\e2e_events.txt
+          } else { '--- e2e events: (file absent) ---' }
       # ⚠️ runner.temp（D:\a\_temp）≠ 测试进程的 %TEMP%（C:\Users\RUNNER~1\…）——
       # run #25/#26 的 artifact 因此只有 e2e.log、没有保留的失败工作目录。本步按
       # `$env:TEMP` 收集：打印每个产物的 `.text` SHA256（跨机可比指纹，见
@@ -202,6 +215,7 @@ jobs:
           name: e2e-evidence
           path: |
             ${{ runner.temp }}/e2e.log
+            target/tmp/e2e_events.txt
             target/tmp/e2e_keep/**
           if-no-files-found: ignore
       # cargo-forge cli_tests（真跑位）：上一步已产出 target/debug/forge_rustc.dll，

@@ -1607,6 +1607,7 @@ fn run_case_with(
             "RETRY {:<16} 首次运行超时（疑宿主侧起进程/映像延迟），同产物复跑一次",
             case.name
         );
+        record_event("RETRY", case.name, "首次运行超时，同产物复跑一次");
         result = run_exe_with_timeout(&exe);
     }
     result
@@ -1622,6 +1623,24 @@ const TIMEOUT_MARKER: &str = "timeout (挂起";
 /// CI 现有行为不变。
 fn strict_flaky() -> bool {
     std::env::var_os("FORGE_E2E_STRICT_FLAKY").is_some()
+}
+
+/// 事件留痕文件：libtest **默认捕获通过的测试输出**（失败才回放），所以"被容忍的"
+/// `KNOWN` / `CI-ENV-AV` / `RETRY` 在 CI 日志里原本是**看不见的**——那样就没法回答
+/// "本轮到底有没有踩到环境性 AV/超时"。设 `FORGE_E2E_EVENTS=<路径>` 时把关键事件与
+/// 汇总追加到该文件，CI 用 `if: always()` 步骤打印出来（见 .github/workflows/ci.yml）。
+fn record_event(kind: &str, case: &str, detail: &str) {
+    use std::io::Write as _;
+    let Some(path) = std::env::var_os("FORGE_E2E_EVENTS") else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "[{kind}] {case} {detail}");
+    }
 }
 
 /// CI 运行环境 AV 签名：`0xC0000005` = `-1073741819`。
@@ -1745,17 +1764,20 @@ fn e2e_stage_a_scalar_cases() {
                             "KNOWN {:<16} {msg} [{}] CI-ENV-AV: CI runner 环境性 AV（产物 .text 与本机逐字节一致，见计划 §9.5）",
                             case.name, case.phase
                         );
+                        record_event("CI-ENV-AV", case.name, &msg);
                     } else {
                         // 回归探针（P3.3）：输出失败模式（reason），转正时对照验证
                         println!(
                             "KNOWN {:<16} {msg} [{}] reason: {}",
                             case.name, case.phase, case.reason
                         );
+                        record_event("KNOWN-WRONGCODE", case.name, &msg);
                     }
                     known_failures.push(case.name);
                     failed_cases.push(case.name);
                 } else {
                     println!("FAIL  {:<16} {msg}", case.name);
+                    record_event("FAIL", case.name, &msg);
                     unexpected_failures.push(format!("{}: {msg}", case.name));
                     failed_cases.push(case.name);
                 }
@@ -1767,10 +1789,20 @@ fn e2e_stage_a_scalar_cases() {
                         "KNOWN {:<16} {msg} [{}] reason: {}",
                         case.name, case.phase, case.reason
                     );
+                    record_event(
+                        if e.contains(TIMEOUT_MARKER) {
+                            "KNOWN-TIMEOUT"
+                        } else {
+                            "KNOWN-ERR"
+                        },
+                        case.name,
+                        &msg,
+                    );
                     known_failures.push(case.name);
                     failed_cases.push(case.name);
                 } else {
                     println!("FAIL  {:<16} {msg}", case.name);
+                    record_event("FAIL", case.name, &msg);
                     unexpected_failures.push(format!("{}: {msg}", case.name));
                     failed_cases.push(case.name);
                 }
@@ -1793,6 +1825,16 @@ fn e2e_stage_a_scalar_cases() {
 
     println!("\n=== e2e 汇总 ===");
     println!("passed: {passed}/{}", CASES.len());
+    record_event(
+        "SUMMARY",
+        "stage_a",
+        &format!(
+            "passed={passed}/{} known={:?} unexpected={}",
+            CASES.len(),
+            known_failures,
+            unexpected_failures.len()
+        ),
+    );
     if !known_failures.is_empty() {
         println!("known failures (待 Phase 2/3): {:?}", known_failures);
     }
