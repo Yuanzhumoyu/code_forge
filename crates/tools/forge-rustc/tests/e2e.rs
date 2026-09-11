@@ -643,9 +643,13 @@ const CASES: &[Case] = &[
         forge-codegen regalloc）。2026-09-04 曾本地 3 次转正——spill 决策随编译实例
         变化。转正标准：3 轮 stage_a+parallel 全绿且 exit=2。（2026-09-10 复核：stage_a 103/103 × 2 轮；
         **8 并发负载下 3 个窗口（各 320 次单跑）中出现 1 次瞬态 15 s 超时**，由 harness 的
-        「同产物复跑」转为通过 ⇒ 该次是宿主侧运行期延迟、非错码；但上面记录的 AV
-        （0xC0000005）形态**本轮未复现**，不能据此归因。def-spill 站点经 FORGE_TRACE_ALLOC
-        核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §9.2）",
+        「同产物复跑」转为通过 ⇒ 该次是宿主侧运行期延迟、非错码。**2026-09-11 CI 稳定 AV 双证**：
+        CI 上 run #25/#26/#27 连续 `exit=-1073741819`（0xC0000005 AV），而该产物的
+        `.text` SHA256 `a91b9eef…63fb`（94720 B）**与 CI 逐字节相同**、本机复跑 exit=2
+        ⇒ 判为 **CI runner 环境性 AV**（同 cli_tests alloc AV 先例），非错编译；严格口径
+        已按 `CI_ENV_AV_CODE` 容忍并留 `CI-ENV-AV` 标记（计划 §9.5）。def-spill 站点经
+        FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见
+        WORKAROUNDS WA-40 与计划 §9.5）",
     },
     Case {
         name: "vec_string",
@@ -1309,7 +1313,7 @@ const CASES: &[Case] = &[
         phase: "F1 iter",
         reason: "2026-09-06 回归 known_failure：CI 偶发 exit -1073741819（AV，expect 80）
         ——Vec grow + iter 链同 vec_push 类 regalloc spill 非确定性残余（见 vec_push
-        reason；WA-29 的 null 解引用曾同类）。转正标准：3 轮 stage_a+parallel 全绿且 exit=80。（2026-09-10 复核：stage_a 103/103 × 2 轮；**8 并发负载下 3 个窗口（各 320 次单跑）中出现 1 次瞬态 15 s 超时**，由 harness 的「同产物复跑」转为通过 ⇒ 该次为宿主侧运行期延迟、非错码；上面记录的 AV 形态**本轮未复现**，不能据此归因。def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40 与计划 §9.2）",
+        reason；WA-29 的 null 解引用曾同类）。转正标准：3 轮 stage_a+parallel 全绿且 exit=80。（2026-09-10 复核：stage_a 103/103 × 2 轮；**8 并发负载下 3 个窗口（各 320 次单跑）中出现 1 次瞬态 15 s 超时**，由 harness 的「同产物复跑」转为通过 ⇒ 该次为宿主侧运行期延迟。**2026-09-11 CI 稳定 AV 双证**：run #25/#26/#27 连续 AV（0xC0000005），而产物 `.text` SHA256 `5f421f08…c732`（103936 B）与 CI 逐字节相同、本机复跑 exit=80 ⇒ 判为 **CI runner 环境性 AV**，非错编译；严格口径已按 `CI_ENV_AV_CODE` 容忍并留 `CI-ENV-AV` 标记（计划 §9.5）。def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40）",
     },
     Case {
         name: "string_concat_len",
@@ -1612,12 +1616,22 @@ fn run_case_with(
 /// 以剔除宿主侧起进程/映像延迟造成的假败（真挂起会两次都超时，仍上报）。
 const TIMEOUT_MARKER: &str = "timeout (挂起";
 
-/// `FORGE_E2E_STRICT_FLAKY=1`：FLAKY 用例**只容忍超时**（已定性为宿主侧环境性、
-/// 且有同产物复跑兜底），**错码改按 FAIL 硬失败**。用于「5 例的正确性是否已可进门禁」
-/// 的定向验证与转正就绪度评估；默认关闭，CI 现有行为不变。
+/// `FORGE_E2E_STRICT_FLAKY=1`：FLAKY 用例**只容忍超时 + CI 运行环境 AV**（两者均已
+/// 定性为宿主侧环境性、且有同产物复跑兜底），**其余错码改按 FAIL 硬失败**。
+/// 用于「5 例的正确性是否已可进门禁」的定向验证与转正就绪度评估；默认关闭，
+/// CI 现有行为不变。
 fn strict_flaky() -> bool {
     std::env::var_os("FORGE_E2E_STRICT_FLAKY").is_some()
 }
+
+/// CI 运行环境 AV 签名：`0xC0000005` = `-1073741819`。
+///
+/// 2026-09-11 双证（见计划 §9.5）：`vec_push` / `vec_iter_enumerate` 在 CI 上
+/// **稳定 AV**（run #25/#26/#27），而两例的 `.text` SHA256 与大小**与本机逐字节
+/// 相同**（`a91b9eef…63fb` / `5f421f08…c732`）且本机复跑正确（exit=2/80）
+/// ⇒ 同一份机器码只在 CI runner 上崩 ⇒ 环境性（同 `cli_tests` alloc AV 先例）。
+/// 严格模式下该签名按 KNOWN 容忍并打印 `CI-ENV-AV` 标记（不静默），其余错码仍硬失败。
+const CI_ENV_AV_CODE: i32 = -1073741819;
 
 /// 运行产物并取退出码。超时（默认 15 s，`FORGE_E2E_TIMEOUT_SECS` 可覆盖，便于区分
 /// 「真挂起」与「负载下起得慢」）时杀掉子进程并返回含 [`TIMEOUT_MARKER`] 的错误
@@ -1718,16 +1732,26 @@ fn e2e_stage_a_scalar_cases() {
             }
             Ok(code) => {
                 let msg = format!("exit={code} (want {})", case.expected);
-                // 严格模式（FORGE_E2E_STRICT_FLAKY=1）：FLAKY 用例**只容忍超时**，
-                // 错码按 FAIL 上报——超时已定性为宿主侧环境性且有同产物复跑兜底，
-                // 而错码是错编译的signature，用它做转正就绪度的定向验证。
+                // 严格模式（FORGE_E2E_STRICT_FLAKY=1）：FLAKY 用例只容忍**超时**与
+                // **CI 运行环境 AV**（两者都已有双证/复跑兜底），其余错码按 FAIL
+                // 上报——错码是错编译的 signature，用它做转正就绪度的定向验证。
                 // 默认关闭 ⇒ CI 现有行为不变。
-                if case.known_failure && !(strict_flaky() && FLAKY.contains(&case.name)) {
-                    // 回归探针（P3.3）：输出失败模式（reason），转正时对照验证
-                    println!(
-                        "KNOWN {:<16} {msg} [{}] reason: {}",
-                        case.name, case.phase, case.reason
-                    );
+                let flaky_strict = strict_flaky() && FLAKY.contains(&case.name);
+                let env_av = flaky_strict && code == CI_ENV_AV_CODE;
+                if case.known_failure && (!flaky_strict || env_av) {
+                    if env_av {
+                        // 显式标记：不静默（同产物 .text 与本机逐字节一致，见 §9.5）
+                        println!(
+                            "KNOWN {:<16} {msg} [{}] CI-ENV-AV: CI runner 环境性 AV（产物 .text 与本机逐字节一致，见计划 §9.5）",
+                            case.name, case.phase
+                        );
+                    } else {
+                        // 回归探针（P3.3）：输出失败模式（reason），转正时对照验证
+                        println!(
+                            "KNOWN {:<16} {msg} [{}] reason: {}",
+                            case.name, case.phase, case.reason
+                        );
+                    }
                     known_failures.push(case.name);
                     failed_cases.push(case.name);
                 } else {

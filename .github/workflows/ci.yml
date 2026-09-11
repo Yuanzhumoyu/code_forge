@@ -164,9 +164,9 @@ jobs:
           exit $LASTEXITCODE
       # ⚠️ runner.temp（D:\a\_temp）≠ 测试进程的 %TEMP%（C:\Users\RUNNER~1\…）——
       # run #25/#26 的 artifact 因此只有 e2e.log、没有保留的失败工作目录。本步按
-      # `$env:TEMP` 收集：打印每个失败用例产物的 `.text` SHA256（跨机可比指纹，见
-      # crates/tools/forge-rustc/tests/pe_text_hash.ps1）并把 `.rs/.exe` 复制进
-      # 工作区，供 upload-artifact 打包。
+      # `$env:TEMP` 收集：打印每个产物的 `.text` SHA256（跨机可比指纹，见
+      # crates/tools/forge-rustc/tests/pe_text_hash.ps1），并**只回传失败用例**的
+      # `.rs/.exe`（保留目录含全部 103 例，全传是 ~10 MB 级噪声）。
       - name: Collect e2e evidence (.text digests + kept workdirs)
         if: failure()
         run: |
@@ -175,16 +175,24 @@ jobs:
           $dst = 'target\tmp\e2e_keep'
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $lines = @()
+          $keepLine = Select-String -Path $log -Pattern '\[keep\] 失败用例 \[(.*?)\]' -ErrorAction SilentlyContinue |
+            Select-Object -Last 1
+          $failed = @()
+          if ($keepLine) {
+            $failed = [regex]::Matches($keepLine.Line, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
+          }
+          $lines += "[evidence] 失败用例: " + ($failed -join ', ')
           foreach ($d in Get-ChildItem "$env:TEMP" -Directory -Filter 'forge_rustc_e2e*' -ErrorAction SilentlyContinue) {
             $lines += "[keep] $($d.FullName)"
             foreach ($exe in Get-ChildItem $d.FullName -Filter '*.exe' -ErrorAction SilentlyContinue) {
               $lines += ("[evidence] {0,-26} bytes={1,-8} text_sha256={2}" -f `
                   $exe.Name, $exe.Length, (Get-PeTextSha256 -Path $exe.FullName))
             }
-            Copy-Item "$($d.FullName)\*.rs" $dst -Force -ErrorAction SilentlyContinue
-            Copy-Item "$($d.FullName)\*.exe" $dst -Force -ErrorAction SilentlyContinue
+            foreach ($c in $failed) {
+              Copy-Item (Join-Path $d.FullName "$c.rs") $dst -Force -ErrorAction SilentlyContinue
+              Copy-Item (Join-Path $d.FullName "$c.exe") $dst -Force -ErrorAction SilentlyContinue
+            }
           }
-          if ($lines.Count -eq 0) { $lines = @('[evidence] 未发现保留的 e2e 工作目录') }
           $lines += "[evidence] uploaded: " + ((Get-ChildItem $dst -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')
           $lines | Tee-Object -FilePath $log -Append
       - name: Upload e2e evidence (on failure)

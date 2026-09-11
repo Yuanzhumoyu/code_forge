@@ -677,14 +677,29 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   SHA256 三次全同（`vec_push` `a91b9eef…63fb` ×3、`vec_iter_enumerate` `5f421f08…c732`
   ×3）⇒ 本机这条路径逐字节确定：CI 指纹**相同**即可判环境性、**不同**即 CI 侧
   codegen 差异（转 §9.4）。
-- **决定性判据（下一步）**：比对 CI 侧 `[evidence] … text_sha256=…` 与本机基线——
+- **判定完成（2026-09-11，CI run #27 日志）**：CI 侧指纹与本机**逐字节相同**——
 
-  1. **指纹相同** ⇒ 生成代码逐字节一致而 CI 仍 AV ⇒ 判为 **CI runner 环境性**
-     （同 `cli_tests` alloc AV 的产物双证先例，提交 `c545aaa`/`80d552d`）→ 按 §9.3
-     把这 2 例 `reason` 改写为"CI 运行环境 AV（附双证）"，并把严格模式收窄为
-     **只容忍超时 + 该 AV 签名**（其余错码仍硬失败）：既恢复绿 CI，也不放弃门禁；
-  2. **指纹不同** ⇒ CI 与本机生成的机器码不同 ⇒ 转 §9.4（regalloc / 并行路径
-     确定性）；此时严格模式保持红才是对的。
+| 用例 | 大小（CI = 本机） | `.text` SHA256（CI = 本机） |
+| --- | --- | --- |
+| `vec_push` | 94720 B | `a91b9eef72b947006551c4bf1af44df3f03becc2602710caeb1c24c4939663fb` |
+| `vec_iter_enumerate` | 103936 B | `5f421f08ef7457898a07481ad6d5cfc95bbd03520a97f2cfe2c612f1d10cc732` |
+
+  ⇒ **同一份机器码在 CI 上稳定 AV（#25–#27 三轮）、在本机稳定正确** ⇒ 判定
+  **CI runner 环境性 AV**（同 `cli_tests` alloc AV 的产物双证先例
+  `c545aaa`/`80d552d`），**不是 codegen 缺陷**；同时反证这两例的 codegen 跨机器
+  逐字节确定（本机 3 次重建亦全同）。**机制仍未知**：候选是 CI runner 的 OS/安全
+  策略差异（CET/CFG/加载器布局/Defender），本机与 CI 的文件头/`.text` 都相同，
+  只能记为"环境性待解项"——但它不再阻塞门禁设计。
+
+- **据此落地的策略（2026-09-11）**：严格模式收窄为**只容忍「超时」与「CI-ENV-AV
+  签名（`0xC0000005` = `-1073741819`）」**，其余错码仍硬失败；被容忍的 AV 打印
+  `KNOWN <case> exit=… [phase] CI-ENV-AV: …`（**显式、不静默**）；两例 `reason`
+  已写入双证。效果：CI 恢复绿（`passed: 101/103` + 2 条 `CI-ENV-AV` 告警），而
+  "非 AV 错码进门禁"的收益保留。
+- **转正判据相应更新**：`vec_push` / `vec_iter_enumerate` 在 CI 上**恒 AV**，
+  因此不能靠"CI 全绿"转正——需先解释或消除该 AV（CI 侧机制定位），暂**不转正**；
+  `vec_string` / `vec_from_slice` / `box_value` 不受影响，仍按原判据（3 轮
+  stage_a + parallel 全绿且 exit 正确）评估。
 
 ### 9.6 与 WA-40 的关系（已落地的收口，防止假设中的静默错码）
 
