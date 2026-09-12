@@ -225,11 +225,12 @@ pub(crate) fn gen_frame_lowering(
         .and_then(|fr| fr.fp.clone())
         .unwrap_or_else(|| "RBP".to_string());
     let spill_gpr = model.spill.get("GPR");
-    let spill_fpr = model.spill.get("FPR");
     let gpr_load = gen_spill_stmt(infos, spill_gpr, true, &default_base)?;
     let gpr_store = gen_spill_stmt(infos, spill_gpr, false, &default_base)?;
-    let fpr_load = gen_spill_stmt(infos, spill_fpr, true, &default_base)?;
-    let fpr_store = gen_spill_stmt(infos, spill_fpr, false, &default_base)?;
+    // FPR（含向量）溢出**按值宽分派**（WA-46）：≤8 字节走缺省 `[spill.FPR]`，
+    // 16/32/64 走 `[spill.FPR16/32/64]`；>8 字节缺模板 → 生成期 fail-closed。
+    let fpr_load = gen_fpr_spill_dispatch(infos, model, true, &default_base)?;
+    let fpr_store = gen_fpr_spill_dispatch(infos, model, false, &default_base)?;
 
     Ok(quote! {
         pub struct FrameLowering;
@@ -1204,6 +1205,57 @@ fn gen_emit_pseudo(
         }
         other => Err(format!("unknown emit pseudo '@{other}'")),
     }
+}
+
+/// FPR（标量 + 向量）溢出语句的**宽度分派**（WA-46）。
+///
+/// 旧实现：只有一份 `[spill.FPR]`（x86 是 8 字节 MOVSD），而生成的
+/// `emit_spill_load/store` **忽略 width 参数** ⇒ 任何被 spill 的向量值只搬
+/// 8 字节：V128/V256/V512 的高半区既不写也不读（栈上残留）——CI 上
+/// `test_jit_v512_byref_param` 偶发 `lane15 != 16` 的根因。
+///
+/// 现按宽度分派：`width <= 8` → `[spill.FPR]`（标量缺省）；16/32/64 →
+/// `[spill.FPR16/32/64]`；其它宽度 → `Unsupported`（fail-closed，**不**退回
+/// 窄搬运）。ISA 完全未声明 FPR 溢出模板时保持原 no-op（riscv/定宽试点不变）。
+fn gen_fpr_spill_dispatch(
+    infos: &[InstInfo],
+    model: &V12Model,
+    is_load: bool,
+    default_base: &str,
+) -> Result<TokenStream, String> {
+    let Some(default_tpl) = model.spill.get("FPR") else {
+        return Ok(quote! {
+            let _ = (__dst, __off);
+        });
+    };
+    let scalar = gen_spill_stmt(infos, Some(default_tpl), is_load, default_base)?;
+    let what = if is_load { "load" } else { "store" };
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (key, w) in [("FPR16", 16u16), ("FPR32", 32), ("FPR64", 64)] {
+        let stmt = match model.spill.get(key) {
+            Some(t) => gen_spill_stmt(infos, Some(t), is_load, default_base)?,
+            // 缺该宽度模板：该臂直接 fail-closed（不生成窄搬运）。
+            None => quote! {
+                return Err(crate::IrError::Unsupported(format!(
+                    "FPR spill {}: 本 ISA 未声明 [spill.{}]（{} 字节）——不退回窄搬运\
+                     （会静默截断向量高半区）",
+                    #what, #key, #w
+                )));
+            },
+        };
+        arms.push(quote! { else if width == #w { #stmt } });
+    }
+    Ok(quote! {
+        if width <= 8 {
+            #scalar
+        } #(#arms)*
+        else {
+            return Err(crate::IrError::Unsupported(format!(
+                "FPR spill {}: 不支持 {} 字节宽度（支持 ≤8/16/32/64）",
+                #what, width
+            )));
+        }
+    })
 }
 
 /// spill 模板 → 单条 load/store 语句。

@@ -1120,6 +1120,58 @@ mod tests {
         );
     }
 
+    /// **已知限制记录（WA-46 附带发现）**：向量**高压力 spill** 场景在本后端
+    /// 跑不起来——分配器报 `instruction needs 3 scratch regs for spilled
+    /// operands, but only 2 available`（`[abi].scratch` = R10/R11，见
+    /// `isa/x86_v12.toml`）。构造：N=17 个 V256 值逐个消费
+    /// （`vneg → vextract → fptosi → iadd`，单条指令 ≤2 个向量寄存器），
+    /// 只要有一个 `vconst` 的 `{out}` 与内部临时同时被 spill 就需要 3 个 scratch。
+    /// 本用例**断言该错误仍存在**（不得静默通过）：一旦放宽 scratch 约束，
+    /// 就应改为断言 VEX.256 spill 搬运 + lane7 语义（溢出宽度另有生成级用例
+    /// `compiler.rs::test_fpr_spill_width_dispatch` 直接驱动 FrameLowering 守门）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v256_high_pressure_spill_is_known_limited() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        if !crate::avx_available() {
+            eprintln!("[jit] 无 AVX——跳过 V256 高压力 spill 限制记录用例");
+            return;
+        }
+        const N: usize = 17;
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("v256_spill", TypeContext::new(), sig);
+        let (blk, _p) = b.create_block_with_params(&[]);
+        b.switch_to_block(blk);
+        let vals: Vec<_> = (0..N)
+            .map(|i| b.vconst(vec![1.0f32 + i as f32; 8]))
+            .collect();
+        let mut acc = b.iconst_i32(0);
+        for v in &vals {
+            let neg = b.vneg(*v);
+            let idx = b.iconst_i32(7);
+            let lane = b.vextract(neg, idx);
+            let wide = b.fpext(lane, TypeId::F64);
+            let int = b.fptosi(wide, TypeId::I32);
+            acc = b.iadd(acc, int);
+        }
+        b.ret(&[acc]);
+        let func = b.finish().expect("build v256 spill");
+        let err = match FunctionCompiler::new(x86_v12::TargetMachine::new()).compile_raw(&func) {
+            Ok(_) => panic!(
+                "N={N} 个 32B 值 > 16 个架构寄存器：当前应报 3-scratch 限制；\
+                 若已放宽 scratch 约束 → 本用例应改为断言 VEX.256 spill 搬运与 lane7 语义"
+            ),
+            Err(e) => e,
+        };
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("scratch"),
+            "期望 scratch 不足的 RegAlloc 错误（已知限制），实际：{msg}"
+        );
+    }
+
     /// M1-D3（WA-37 D3）：V128（4×f32，≤16B）按值参数——XMM 全宽收参。
     /// 两次调用传不同向量验证高半 lane3 不依赖寄存器遗留值（修复前收参走
     /// MOVSD 8 字节 + 调用方 GPR 槽，值靠遗留 XMM 高半偶然存活）。

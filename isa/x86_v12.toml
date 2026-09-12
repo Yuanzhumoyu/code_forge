@@ -996,6 +996,30 @@ fields = { prefix = 0 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "movups [{src2}], {src}"
 
+# 128 位**MemRef 形式**（base+disp；spill 槽用——上面的 reg 基址形式 disp 恒 0，
+# 表达不了 `[RBP - off]`）。与 MOVSD_RM/MR 同形，只是无 F2 前缀 = 16 字节。
+[[instructions]]
+name = "MOVUPS_RM"
+modrm = { rm = "[mem]" }
+opsize = 32
+escape = [0x0F]
+prefix = "field"
+opcode = 0x10
+fields = { prefix = 0 }
+ops = ["dst:fpr:out", "mem:mem"]
+asm = "movups {dst}, {mem}"
+
+[[instructions]]
+name = "MOVUPS_MR"
+modrm = { rm = "[mem]" }
+opsize = 32
+escape = [0x0F]
+prefix = "field"
+opcode = 0x11
+fields = { prefix = 0 }
+ops = ["src:fpr", "mem:mem:out"]
+asm = "movups {mem}, {src}"
+
 # ── 标量浮点补齐（Phase 4：F32 内存标量、F32→整数、64 位转换、极值、舍入）──
 
 [[instructions]]
@@ -2001,7 +2025,13 @@ fp_push_bytes = 8
 gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
 xmm = []
 
-# 溢出模板（基址 = RBP 帧指针）
+# 溢出模板（基址 = RBP 帧指针）——**按值宽分档**（WA-46）：
+# 旧实现只有一份 [spill.FPR]，模板是 8 字节 MOVSD，而生成器忽略 width 参数 ⇒
+# 任何向量值被 spill 都只搬 8 字节（V128/V256/V512 高半区静默截断；CI 上
+# `test_jit_v512_byref_param` 偶发 lane15 错即此因：高半是栈残留）。
+# 现按宽度分档：FPR（≤8 字节标量，缺省）/ FPR16 / FPR32 / FPR64；
+# 生成器按 `xreg.width()` 分派，>8 字节未声明模板 → **编译期 Unsupported**
+#（fail-closed，不再退回 8 字节标量搬运）。
 [spill.GPR]
 load = "MOV64_RM {0}, {1}"
 store = "MOV64_MR {0}, {1}"
@@ -2010,6 +2040,21 @@ base = "RBP"
 [spill.FPR]
 load = "MOVSD_RM {0}, {1}"
 store = "MOVSD_MR {0}, {1}"
+base = "RBP"
+
+[spill.FPR16]
+load = "MOVUPS_RM {0}, {1}"
+store = "MOVUPS_MR {0}, {1}"
+base = "RBP"
+
+[spill.FPR32]
+load = "VMOVUPS_RM {0}, {1}"
+store = "VMOVUPS_MR {0}, {1}"
+base = "RBP"
+
+[spill.FPR64]
+load = "VMOVUPS_ZMM_MEM {0}, {1}"
+store = "VMOVUPS_ZMM_MR {0}, {1}"
 base = "RBP"
 
 # 序言/尾声（模板按指令操作数序绑定：MOV64_RR op0=src、op1=dest；

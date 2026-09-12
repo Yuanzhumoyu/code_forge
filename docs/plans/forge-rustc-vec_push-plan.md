@@ -1110,12 +1110,13 @@ V512 已被真跑覆盖"）。
 | 34680068995（#48） | `ca55a75` | W2（WA-44：niche tag 偏移按 `tag_field`） | **11 job 全绿** |
 | 34677125033（#45） | `3ab1bfc` | `frame.rs` by-ref 收参角色化（W1 前序提交） | ❌ 仅 **Test (Windows)** 红 |
 
-**#51 的未决项（如实记录）**：#51 与 #49 代码完全相同、#49 与 #52 的同一 job 全绿，故判为
-**抖动**；由于当时还没有 annotations 通道且 job 日志 403，**失败用例名未取到**。已落地的
-`Surface failing test names as annotations` 步骤（#52）使该现象**下次出现即自证**（annotations
-无需 admin，可经 API 读）。本机侧已做 15 轮 `forge-codegen --lib --all-features` 压测（0 失败）
-与 x86 JIT 矩阵（195 passed / 3 skipped / 0 failed），未见复现。**已排除一个候选**：
-`cargo-forge` 的 `cli_tests`（重、带 `-Z build-std` 冷启动）在 CI 上会 **SKIP**——
+**#51 的未决项（已由 #57 的 annotations 解释）**：#51 与 #49 代码完全相同、#49 与 #52 的同一 job 全绿，
+当时判为**抖动**且拿不到失败用例名。**#57 复现同一现象并由 annotations 自证**：失败用例 =
+`test_jit_v512_byref_param`、断言在 `runtime/jit.rs:1457`（lane15）、`122 passed; 1 failed`——
+即同一用例同一断言 ⇒ #51 的未决项**不是新问题**，根因是 §10.7 的向量溢出宽度缺陷（WA-46）。
+本机侧已做 15 轮 `forge-codegen --lib --all-features` 压测（0 失败）
+与 x86 JIT 矩阵（195 passed / 3 skipped / 0 failed），未见复现（本机无 AVX-512F，该用例按硬件 skip）。
+**已排除一个候选**：`cargo-forge` 的 `cli_tests`（重、带 `-Z build-std` 冷启动）在 CI 上会 **SKIP**——
 `tools/forge-rustc-wrapper` **不是 workspace 成员**（根 `Cargo.toml` members 不含它），
 故该 job 不产 `target/debug/forge_rustc.dll`，而 cli_tests 以"dll 缺失 → 打印 SKIP 并放行"
 为前置约定（2026-09-12 复核 `Cargo.toml` + `cli_tests.rs` 头部注释）。
@@ -1159,3 +1160,38 @@ MATRIX-SUMMARY x86_v12 pass=195 skip=3 fail=0
 
 ⇒ 3 条 Skip 全是"所需 op 不在能力集"的能力性跳过（不是硬件/环境）；顺带纠正 `CLAUDE.md` 里
 写死的旧值 193 → 195（含采集日期与命令）。
+
+### 10.7 由 CI annotations 定位并修复：向量溢出宽度（WA-46，2026-09-12）
+
+**触发**：run #57（`8649229`，docs-only 提交）的 `Test (Windows)` 红。该 job 的 check-run
+`annotations`（`::error::` 通道，§10.4 落地）**直接给出**：
+
+```text
+test runtime::jit::tests::test_jit_v512_byref_param ... FAILED
+---- runtime::jit::tests::test_jit_v512_byref_param stdout ----
+thread 'runtime::jit::tests::test_jit_v512_byref_param' (8540) panicked at crates\backend\forge-codegen\src\runtime\jit.rs:1457:9:
+test result: FAILED. 122 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+```
+
+**这一步的信息量**（此前完全不可得，job 日志 403、annotations 通道是唯一读法）：
+
+1. 该 runner **有 AVX-512F**——否则 `test_jit_v512_byref_param` 会按硬件 skip（`AVX512-SKIP`）；
+2. 失败断言是 `jit.rs:1457` 的 `assert_eq!(got, 16)`（lane15），**不是**编译错误/超时；
+3. 与 #51 的"未知抖动"**同用例同断言** ⇒ 那个未决项到此解释清楚；
+4. docs-only 提交也会红 ⇒ 与本次改动无关，是**既有缺陷**在特定条件下暴露。
+
+**定位**（本机无法复现：无 AVX-512F，EVEX 不能执行）走到确定性证据链：
+
+- 溢出宽度：`[spill.FPR]` 只有 8 字节 `MOVSD_RM/MR`，而生成的 `emit_spill_load/store`
+  **显式丢弃 width**（`let _ = width;`）⇒ 任何 FPR 类溢出只搬低 8 字节；
+- 值宽：`reg_class_for` 把 >128 位向量一律归 `VEC(32)`，类表里 `reg_width = 32`
+  ⇒ spill 槽 32 字节、`xreg.width()` 报 32（64B 的 V512 也被当 32B）；
+- 二者叠加 ⇒ 溢出后**高半区既不写也不读**，读到的是**栈残留** ⇒ **偶发**（值随栈内容变化），
+  与"同代码多数 run 全绿、少数 run 红"的观测完全一致（#49/#52/#54/#56 绿、#51/#57 红）。
+
+**修复与守卫**：见 `WORKAROUNDS.md` WA-46 与 `CHANGELOG.md`；守卫是**确定性**的
+`test_fpr_spill_width_dispatch`（直接驱动生成的 `FrameLowering`，逐宽度断言机器码形状 +
+未声明宽度必须报错），不依赖分配器压力（高压力路径另有 scratch 限制，已单独记录）。
+
+**复核点**：下一次含本修复的 CI run，`Test (Windows)` 的 `test_jit_v512_byref_param`
+应确定性通过（本机无 AVX-512F，该硬件路径只能在 CI 上验证）。

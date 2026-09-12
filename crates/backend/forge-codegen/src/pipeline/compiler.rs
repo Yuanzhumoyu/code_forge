@@ -2032,6 +2032,10 @@ impl<I: MachineInst + 'static> CompileState<I> {
             RegClass::FPR(16),
             RegClass::VEC(16),
             RegClass::VEC(32),
+            // WA-46：>256 位向量（V512）由 `reg_class_for` 归入 VEC(64)——
+            // 必须在此登记才能拿到 `reg_width = 64`（spill 槽按值宽，槽内不被
+            // 截断；池继承同族最宽类 = ZMM）。
+            RegClass::VEC(64),
         ] {
             if classes.contains_key(&class) {
                 continue;
@@ -2571,5 +2575,76 @@ mod alloc_integration_tests {
             "64B store 应为 EVEX vmovups [mem], zmm（62 ... 11）：code = {:02x?}",
             &cf.code[..cf.code.len().min(64)]
         );
+    }
+
+    /// **WA-46 溢出宽度守卫（生成级，直接驱动 FrameLowering）**：FPR 溢出
+    /// 必须按 `width` 搬运——旧实现只有一份 8 字节 `MOVSD` 模板且生成的
+    /// `emit_spill_load/store` 忽略 width ⇒ 向量值 spill 只搬低 8 字节
+    /// （高半区静默截断）。用例绕过分配器（高压力下分配器会因 3-scratch 限制
+    /// 拒绝，测不到该路径），直接对每个宽度检查发射的机器码形状。
+    #[test]
+    fn test_fpr_spill_width_dispatch() {
+        use crate::machine::frame::TargetFrameLowering;
+        x86_v12::ensure_registered();
+        let fl = x86_v12::FrameLowering;
+        let emit = |width: u16, is_load: bool| -> Result<Vec<u8>, IrError> {
+            let mut sink = crate::pipeline::emit::CodeSink::new();
+            if is_load {
+                fl.emit_spill_load(0, -32, width, true, &mut sink)?;
+            } else {
+                fl.emit_spill_store(0, -32, width, true, &mut sink)?;
+            }
+            Ok(sink.bytes().to_vec())
+        };
+        // 8 字节标量：movsd（F2 0F 10/11）
+        let s8 = emit(8, false).expect("8B store");
+        assert_eq!(&s8[..3], &[0xF2, 0x0F, 0x11], "8B spill store 应为 movsd");
+        let l8 = emit(8, true).expect("8B load");
+        assert_eq!(&l8[..3], &[0xF2, 0x0F, 0x10], "8B spill load 应为 movsd");
+        // 16 字节：movups（0F 10/11，无 F2/F3 前缀）
+        let s16 = emit(16, false).expect("16B store");
+        assert_eq!(
+            &s16[..2],
+            &[0x0F, 0x11],
+            "16B spill store 应为 movups（0F 11）"
+        );
+        let l16 = emit(16, true).expect("16B load");
+        assert_eq!(
+            &l16[..2],
+            &[0x0F, 0x10],
+            "16B spill load 应为 movups（0F 10）"
+        );
+        // 32 字节：VEX.256 vmovups（C4 .. 7C 10/11）
+        let s32 = emit(32, false).expect("32B store");
+        assert!(
+            s32.len() >= 4 && s32[0] == 0xC4 && s32[2] == 0x7C && s32[3] == 0x11,
+            "32B spill store 应为 VEX.256 vmovups（C4 .. 7C 11）：{s32:02x?}"
+        );
+        let l32 = emit(32, true).expect("32B load");
+        assert!(
+            l32.len() >= 4 && l32[0] == 0xC4 && l32[2] == 0x7C && l32[3] == 0x10,
+            "32B spill load 应为 VEX.256 vmovups（C4 .. 7C 10）：{l32:02x?}"
+        );
+        // 64 字节：EVEX.512 vmovups（62 .. 10/11，P2 的 L'L = 10）
+        let s64 = emit(64, false).expect("64B store");
+        assert!(
+            s64.len() >= 5 && s64[0] == 0x62 && s64[4] == 0x11 && (s64[3] & 0x60) == 0x40,
+            "64B spill store 应为 EVEX zmm vmovups（62 .. 11）：{s64:02x?}"
+        );
+        let l64 = emit(64, true).expect("64B load");
+        assert!(
+            l64.len() >= 5 && l64[0] == 0x62 && l64[4] == 0x10 && (l64[3] & 0x60) == 0x40,
+            "64B spill load 应为 EVEX zmm vmovups（62 .. 10）：{l64:02x?}"
+        );
+        // 其它宽度 → fail-closed（不静默退回窄搬运）。
+        for w in [24u16, 48] {
+            let e = emit(w, false).expect_err("未声明宽度的 store 必须报错");
+            let msg = format!("{e}");
+            assert!(
+                msg.contains("spill"),
+                "{w}B：错误信息应说明 spill 宽度缺失：{msg}"
+            );
+            assert!(emit(w, true).is_err(), "{w}B：load 同样必须 fail-closed");
+        }
     }
 }

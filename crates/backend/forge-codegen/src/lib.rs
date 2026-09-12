@@ -378,16 +378,24 @@ impl LowerCtx {
     }
 
     /// 位宽感知的寄存器类推导：动态 vector/scalable 类型按字节位宽映射
-    /// （≤128 → VEC(16)、>128 → VEC(32)），其余回退 RegClass::from_type_id。
+    /// （≤128 → VEC(16)、>128 且 ≤256 → VEC(32)、>256 → VEC(64)），
+    /// 其余回退 RegClass::from_type_id。
+    ///
+    /// **>256 位必须是 VEC(64)**（WA-46）：类的 `reg_width` 决定 spill 槽大小与
+    /// spill 搬运宽度，旧实现把 64 字节向量（V512）也归到 VEC(32) ⇒ 槽只有
+    /// 32 字节、搬运按 32 字节 → 高半区静默截断（CI 上 V512 by-ref 用例偶发
+    /// lane15 错）。
     pub fn reg_class_for(&self, ty: &TypeId) -> RegClass {
         if let Some(ctx) = &self.type_ctx {
             let store = ctx.borrow();
             if store.is_vector(*ty) || store.is_scalable_vector(*ty) {
-                let bits = store.size_bytes(*ty) * 8;
-                return if bits <= 128 {
+                let bytes = store.size_bytes(*ty);
+                return if bytes <= 16 {
                     RegClass::VEC(16)
-                } else {
+                } else if bytes <= 32 {
                     RegClass::VEC(32)
+                } else {
+                    RegClass::VEC(64)
                 };
             }
         }
