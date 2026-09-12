@@ -1910,10 +1910,14 @@ fn e2e_alloc_step_probe() {
     const RAW64: &str = "unsafe {\n        let l = core::alloc::Layout::from_size_align(64, 4).unwrap();\n        let p = alloc::alloc::alloc(l);\n        if p.is_null() { return -1; }\n        p.write(7);\n        1\n    }";
     // 完全不经过分配器：直接写 static HEAP 前 64 字节（隔离"写 HEAP"本身）。
     const HEAP_WRITE: &str = "unsafe {\n        let base = core::ptr::addr_of_mut!(HEAP) as *mut u8;\n        let mut i = 0;\n        while i < 64 { base.add(i).write_volatile(0x5A); i += 1; }\n        1\n    }";
+    // 在**出问题的机器上**取 faulting RIP：装 VEH，异常时以 0xEE0xxxxx|RIP低20位 退出。
+    // （本机已验证该基础设施对正常路径无影响。）
+    const VEH_ALLOC: &str = "extern crate alloc;\nuse core::alloc::{GlobalAlloc, Layout};\nstatic mut HEAP: [u8; 8192] = [0; 8192];\nstruct A;\nunsafe impl GlobalAlloc for A {\n    unsafe fn alloc(&self, _l: Layout) -> *mut u8 { unsafe {\n        let base = core::ptr::addr_of_mut!(HEAP) as *mut u8;\n        base.add(base.align_offset(32))\n    } }\n    unsafe fn dealloc(&self, _p: *mut u8, _l: Layout) {}\n}\n#[global_allocator]\nstatic ALLOC: A = A;\n#[repr(C)]\nstruct Er { code: u32, flags: u32, record: *mut Er, address: *mut core::ffi::c_void, num: u32, pad: u32, info: [u64; 15] }\n#[repr(C)]\nstruct Ep { er: *mut Er, ctx: *mut u8 }\n#[link(name = \"kernel32\")]\nunsafe extern \"system\" {\n    fn AddVectoredExceptionHandler(first: u32, handler: unsafe extern \"system\" fn(*mut Ep) -> i32) -> *mut core::ffi::c_void;\n    fn ExitProcess(code: u32) -> !;\n}\nunsafe extern \"system\" fn veh(info: *mut Ep) -> i32 {\n    unsafe {\n        let ctx = (*info).ctx;\n        let rip = *(ctx.add(0xF8) as *const u64);\n        ExitProcess(0xEE00_0000u32 | ((rip & 0x000F_FFFF) as u32))\n    }\n}\n#[inline(never)]\nunsafe fn install_veh() { unsafe { AddVectoredExceptionHandler(1, veh); } }";
+    const VEH_ONE_PUSH: &str = "unsafe { install_veh(); }\n    let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new();\n    v.push(1);\n    v.len() as i32";
     // 只校验第 0 个块（不跨块、不用 APTR[1]）。
     const AUDIT_GUARD_K0: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        let mut j = 0; let mut bad = -1;\n        while j < 32 {\n            if p.add(sz + j).read_volatile() != 0xA5 { bad = j as i32; break; }\n            j += 1;\n        }\n        if bad < 0 { 1 } else { 1000 + bad }\n    }";
 
-    let variants: [(&str, &str, &str, i32); 21] = [
+    let variants: [(&str, &str, &str, i32); 22] = [
         ("probe_new_only", NEW_ONLY, NAIVE_ALLOC, 0),
         ("probe_one_push", ONE_PUSH, NAIVE_ALLOC, 1),
         ("probe_two_push", TWO_PUSH, NAIVE_ALLOC, 2),
@@ -1939,6 +1943,8 @@ fn e2e_alloc_step_probe() {
         ("probe_raw_alloc16", RAW16, NAIVE_ALLOC, 1),
         ("probe_raw_alloc64", RAW64, NAIVE_ALLOC, 1),
         ("probe_heap_write", HEAP_WRITE, NAIVE_ALLOC, 1),
+        // VEH 版：在崩的机器上把 faulting RIP 带回来（0xEE0xxxxx|低20位 ⇒ 见 CI 日志）
+        ("probe_veh_one_push", VEH_ONE_PUSH, VEH_ALLOC, 1),
     ];
 
     for (name, body, extra, want) in variants {
