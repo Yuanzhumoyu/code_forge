@@ -769,7 +769,10 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   指针/地址变野），也可能独立。当前证据只到"某个代码形态会崩"，**尚未定位到具体
   指令**；后续按 §9.4 关联法缩小到 IR/regalloc 决策：`FORGE_TRACE_VCODE` 与
   `llvm-objdump -d` 逐版对照，再做二分裁剪。已登记为 `WORKAROUNDS.md`
-  **WA-41（开放）**。
+  **WA-41**（当时标注开放；2026-09-12 关闭，见下）。
+  **→ 2026-09-12 已定位并根治（= WA-42，见 §9.7）**：与 CI 机型相关 AV **同源**——
+  都是 niche 枚举 `None` 的 tag 只写 4 字节、判别读 8 字节，高 4 字节残留栈垃圾
+  （本机该程序的残留恰为 `0x00007ffd00000000`，AMD runner 上恒非零 → 必然 AV）。
 
 - **AMD 机型上的崩溃面比 Vec 更宽（run #36/#37 实测）**：两台 AMD Family 25 机型上，
   "分配类"探针**大面积 AV**，而且**两台之间还不一样**：
@@ -811,6 +814,8 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   exit 正确**（要靠 `[SUMMARY]` 事件的 `known=[]`）。未消除该 AV 前**暂不转正**；
   `vec_string` / `vec_from_slice` / `box_value` 不受影响，仍按原判据（3 轮 stage_a +
   parallel 全绿且 exit 正确）评估。
+  **→ 2026-09-12**：该 AV 已定位并根治（§9.7 / WA-42）。转正判据仍是"CI 侧
+  `[SUMMARY] known=[]`"——先推修复、看 AMD runner 是否还报 `CI-ENV-AV`，再翻标记。
 
 ### 9.6 与 WA-40 的关系（已落地的收口，防止假设中的静默错码）
 
@@ -820,5 +825,56 @@ fail-closed 收口：`MachineInst::is_reg_field_settable` + regalloc 守卫（sp
 （`test_def_spill_on_settable_field_ok` / `test_def_spill_on_fixed_field_errors`）。
 因此后续任何触发该形态的输入都会**显式报错**而非偶发 AV——这本身会让步骤 9.4 的
 排查更快收敛（要么不触发，要么给出确定的编译错误）。
+
+### 9.7 根治（2026-09-12）：niche tag 写入宽度 = WA-42
+
+§9.5 里"CI 机型相关 AV"与"本机确定性 AV（WA-41）"**同源**，根因在降级层一行宽度推导，
+与 regalloc 无关（WA-40 的假设至此可以彻底排除）。
+
+**定位路径**（本机最小复现 `asm_bad`：`Vec::new(); v.push(1);` + 分配器记账回读）：
+
+1. `llvm-objdump -d` 找到崩溃指令：`movq (%r11),%r10`（`RIP=…4B83`），`r11` 来自
+   被拷贝的 `ptr`；`gdb` 实测 `ptr=0x00007ffd00000000`、`old_layout.size=0x7ffde8cf00d2`
+   ——**低 4 字节为 0、高 4 字节为栈残留**，这是"只写了 4 字节"的指纹。
+2. `FORGE_TRACE_ABI/CALL/ARGS` 确认调用链与实参布局：
+   `finish_grow(0x6486) → <Global as Allocator>::grow(0x1518C) → grow_impl_runtime(0x2CA7)`，
+   崩在 `grow_impl_runtime` 的 `copy_nonoverlapping(ptr, new_ptr, old_layout.size())`；
+   `new_layout={16,4}` 全对，`ptr` / `old_layout` 是**栈残留**。
+3. 关掉 PE `DYNAMIC_BASE`（`target/tmp/noaslr.py`）后按绝对 VA 在各入口打点，实测
+   `finish_grow` 入口 `cap=4`、`elem_layout={4,4}` 正确，但 `current_memory` 返回的
+   24 字节 `Some(...)` 三字段全是垃圾、且 sret 缓冲**调用前全 0** ⇒ `current_memory`
+   **本应返回 `None`**（`self.cap==0`）却走了 `Some`。
+4. `FORGE_TRACE_IR` 看到 IR 里 `current_memory` 的 None 分支是
+   **`%b3: store i32 0, ptr %v64`（4 字节）**，而 `%b5` 收尾把**整个 24 字节**（3 次
+   `load i64`）拷进 sret；调用方 `finish_grow` 按 8 字节判空 ⇒ 高 4 字节残留非零 ⇒
+   误判 `Some(野指针)` ⇒ 解引用 AV。
+
+**根因**：`lower/statement.rs` 的 niche 枚举构造把 tag 写入宽度按 `backend_repr`
+两分支推导（`Scalar` / `ScalarPair`）+ `_ => 4` 兜底。`Option<(NonNull<u8>, Layout)>`
+（24 字节，`BackendRepr::Memory`，niche = offset 0 的 8 字节指针字段）落进兜底 ⇒
+`store i32 0`。WA-29 修的是 `Scalar`/`ScalarPair` 两形态，**Memory payload + 指针 niche
+这条路径漏网**。本机 e2e 的 `vec_push` 为何没崩：该程序栈上高 4 字节残留恰为 0；
+AMD runner 的残留恒非零 ⇒ 20/20 稳定 AV（`.text` 与本机逐字节相同也由此解释：
+同一份机器码，只差栈残留内容）。
+
+**修复**：宽度改取**枚举 tag 标量自身**——`Variants::Multiple { tag, .. }`（Niche 编码
+下 rustc 给的 `tag` 就是 niche 字段的标量）→ `tag.primitive().size(&self.tcx).bytes()`；
+≥8 字节写 I64（`store i64 0` = 8 字节完整清零），窄 tag（u8/u16）行为不变。
+
+**验证（全部本机实测）**：
+
+| 项 | 修复前 | 修复后 |
+| --- | --- | --- |
+| WA-41 最小复现 `asm_bad` 退出码 | `-1073741819`（AV） | **16**（期望值；关 ASLR 复跑同值） |
+| `current_memory` 的 IR | 1 处 `store i32 0` / 18 处 `store i64 0` | **0 处** `store i32 0` / **19 处** `store i64 0` |
+| 本机 e2e | `passed: 101/103`（5 例 FLAKY-PASS） | **`passed: 103/103 known=[]`** |
+| 回归门 | — | `niche_wide_payload_none_tag_store_uses_tag_width`（IR 级，与栈布局无关） |
+
+**转正路径**：本机已全绿，但 CI 的 AMD runner 才是原始失败现场。先推修复（FLAKY 标记
+**暂不动**）→ 看下轮 `[SUMMARY] known=[]` 且无 `[CI-ENV-AV]` ⇒ 再把 5 例移出 `FLAKY`
+并翻 `known_failure=false`（§9.5 的判据不变：不以"容忍式全绿"当转正证据）。
+
+**残余**：niche 位于聚合 payload **非 0 偏移**时 `tag_off` 仍走 `_ => 0` 兜底（本轮复现
+形态 niche 在 offset 0，未取该路径）；如需支持应按 `tag_field` 取偏移并补用例。
 
 **工作量**：步骤 2 本机 ~0.5 天；步骤 1/3/4 取决于 CI 何时复现（本地无法闭环）。

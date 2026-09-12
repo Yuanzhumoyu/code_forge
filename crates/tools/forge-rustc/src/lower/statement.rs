@@ -129,6 +129,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let dval = self.builder.iconst(discr as i64, TypeId::I32);
                                     self.builder.store(dval, base);
                                 } else if let rustc_abi::Variants::Multiple {
+                                    tag,
                                     tag_encoding:
                                         rustc_abi::TagEncoding::Niche {
                                             untagged_variant,
@@ -175,15 +176,19 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     // 路径 SEGV 根因：Enumerate::next 的 None
                                     // 构造 movl 写 _0+8，判别读 8 字节含残留
                                     // 高位 → main 误判 Some → **x 解引用 null）。
-                                    let tag_w = match &layout.layout.backend_repr {
-                                        rustc_abi::BackendRepr::Scalar(s) => {
-                                            s.primitive().size(&self.tcx).bytes() as u32
-                                        }
-                                        rustc_abi::BackendRepr::ScalarPair { b, .. } => {
-                                            b.primitive().size(&self.tcx).bytes() as u32
-                                        }
-                                        _ => 4,
-                                    };
+                                    //
+                                    // WA-42：宽度取**枚举 tag 标量自身**
+                                    //（`Variants::Multiple { tag, .. }`——Niche 编码下
+                                    // rustc 给的 tag 就是 niche 字段的标量）。此前按
+                                    // `backend_repr` 两分支推导 + `_ => 4` 兜底：宽聚合
+                                    // payload（`Memory` repr，如 `Option<(NonNull<u8>,
+                                    // Layout)>` 24 字节、niche = offset 0 的 8 字节指针）
+                                    // 落进兜底 → `store i32 0` 只写低 4 字节，高 4 字节
+                                    // 残留（本机实测 0x00007ffd00000000）→ 调用方按 8
+                                    // 字节判空失败 → `finish_grow` 误取 `Some(野指针)`
+                                    // → `grow_impl_runtime` 的 copy 解引用 → AV
+                                    //（WA-41 本机确定性复现的根因）。
+                                    let tag_w = tag.primitive().size(&self.tcx).bytes() as u32;
                                     let nv = if tag_w >= 8 {
                                         self.builder.iconst(niche_value as i64, TypeId::I64)
                                     } else {

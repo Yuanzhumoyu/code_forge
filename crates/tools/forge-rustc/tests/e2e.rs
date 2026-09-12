@@ -1976,6 +1976,101 @@ fn e2e_alloc_step_probe() {
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
+/// WA-42 回归（2026-09-12 修复）：**宽聚合 payload 的 niche 枚举 `None` 构造
+/// 必须按 tag 标量宽度写入**。
+///
+/// 根因（本机确定性复现 WA-41 的定位结论，见 WORKAROUNDS WA-41/WA-42）：
+/// `Option<(NonNull<u8>, Layout)>` 的布局是 24 字节 `Memory` repr、niche 是
+/// offset 0 的 8 字节指针字段。枚举构造降级旧的 tag 宽度推导只覆盖
+/// `backend_repr = Scalar / ScalarPair`，`Memory` 落进 `_ => 4` 兜底 → 发
+/// `store i32 0`（`movl`）只写低 4 字节，**高 4 字节残留栈上旧值**（本机实测
+/// `0x00007ffd00000000`）→ 调用方 `finish_grow` 按 8 字节判空失败 → 误取
+/// `Some(野指针)` → `grow_impl_runtime` 的 `copy_nonoverlapping` 解引用 → AV
+/// （`Vec::new(); v.push(1)` 就崩，即 CI 上 `vec_push`/`vec_iter_enumerate`
+/// 机型相关 AV 的同一族缺陷）。
+///
+/// 断言取 **IR 级**而非行为级：残留字节取决于栈布局（本机 e2e 的 vec 用例
+/// 恰好残留 0 → 行为级断言在本机不复现），IR 里 `store i64` / `store i32`
+/// 与布局无关且确定 → 该测试是稳定回归门（修复前必红）。
+#[test]
+fn niche_wide_payload_none_tag_store_uses_tag_width() {
+    let dll = backend_dll();
+    let workdir = std::env::temp_dir().join(format!("forge_rustc_wa42_{}", std::process::id()));
+    std::fs::create_dir_all(&workdir).expect("create workdir");
+    let src = workdir.join("wa42_niche.rs");
+    // wide_none：24 字节 payload + offset 0 的 8 字节指针 niche（Memory repr）。
+    // `#[inline(never)]` 保证它是独立函数、IR dump 可单独检索。
+    std::fs::write(
+        &src,
+        r#"#![no_std]
+#![no_main]
+use core::ptr::NonNull;
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn wide_none() -> Option<(NonNull<u8>, usize, usize)> {
+    None
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn mainCRTStartup() -> i32 {
+    match wide_none() {
+        None => 42,
+        Some(_) => 1,
+    }
+}
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+"#,
+    )
+    .expect("write source");
+    let exe = workdir.join("wa42_niche.exe");
+    let out = Command::new("rustc")
+        .arg("-Zcodegen-backend=".to_string() + &dll.display().to_string())
+        .args(["-C", "panic=abort", "--edition", "2024"])
+        .arg("-C")
+        .arg(
+            "link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE \
+             /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib",
+        )
+        // IR dump 走 stderr：本测试直接检索它做与栈布局无关的形状断言。
+        .env("FORGE_TRACE_IR", "1")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("rustc spawn");
+    assert!(
+        out.status.success(),
+        "WA-42 用例编译失败:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let status = Command::new(&exe).status().expect("run exe");
+    assert_eq!(
+        status.code(),
+        Some(42),
+        "WA-42 用例运行错码（None 判别被栈残留污染）"
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let start = stderr
+        .find("=== IR dump: wide_none ===")
+        .expect("IR dump 缺 wide_none（FORGE_TRACE_IR 未生效？）");
+    // 从 dump 头**之后**找下一个 dump 头：直接对 `rest` 再 find 会命中 0 位置。
+    let rest = &stderr[start + "=== IR dump:".len()..];
+    let end = rest.find("[forge] === IR dump:").unwrap_or(rest.len());
+    let fn_ir = &rest[..end];
+    assert!(
+        fn_ir.contains("store i64 0, ptr"),
+        "WA-42 回归：wide_none 的 None tag 必须按 8 字节 tag 宽度写入（store i64）\n{fn_ir}"
+    );
+    assert!(
+        !fn_ir.contains("store i32 0, ptr"),
+        "WA-42 回归：wide_none 出现 4 字节 tag 写入（高 4 字节会残留栈垃圾 → 误判 Some）\n{fn_ir}"
+    );
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
 /// M4（并行路径 A，根治 WA-38）：forge 函数降级任务提交 **rustc 查询池**
 /// （`-Z threads>=2` 开启 rustc 并行前端 → backend.rs 门控
 /// `FORGE_CODEGEN_THREADS>1 && jobs.frontend.is_some() && 函数数>1` 后以
