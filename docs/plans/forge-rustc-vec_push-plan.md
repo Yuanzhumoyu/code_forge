@@ -1099,10 +1099,18 @@ V512 已被真跑覆盖"）。
 
 | run | commit | 内容 | 结果 |
 | --- | --- | --- | --- |
+| 34683492547（#52） | `ecd9646` | Windows job 失败用例名转 annotations + 测试输出落盘 | **11 job 全绿**（含 **Test (Windows)**） |
+| 34682470331（#51） | `c214390` | 诊断步骤改版本无关写法 | ❌ 仅 **Test (Windows)** 红，且**这次是 `cargo test --workspace --exclude forge-rustc` 步骤本身失败**（诊断步骤绿）。代码与全绿的 #49 完全相同 ⇒ **抖动**；失败用例名未知（当时还没有 annotations 通道），已由 #52 的可见化机制兜住 |
 | 34682141756（#50） | `3756d2c` | §10.4/§10.5 记录 + 事件写 step summary | ❌ 仅 **Test (Windows)** 红——**失败点是新增诊断步骤自身**（见 §10.4「#50 的教训」）；被测的 `cargo test --workspace --exclude forge-rustc` 步骤成功 |
 | 34681840003（#49） | `ed24119` | W3 + W4（宽向量 Load/Store + 门控可见化） | **11 job 全绿**（Format / Clippy / forge-rustc check / forge-tests / Docs / **Test (Windows)** / Benchmarks / e2e / Test (macOS) / Test (Linux) / Coverage） |
 | 34680068995（#48） | `ca55a75` | W2（WA-44：niche tag 偏移按 `tag_field`） | **11 job 全绿** |
 | 34677125033（#45） | `3ab1bfc` | `frame.rs` by-ref 收参角色化（W1 前序提交） | ❌ 仅 **Test (Windows)** 红 |
+
+**#51 的未决项（如实记录）**：#51 与 #49 代码完全相同、#49 与 #52 的同一 job 全绿，故判为
+**抖动**；由于当时还没有 annotations 通道且 job 日志 403，**失败用例名未取到**。已落地的
+`Surface failing test names as annotations` 步骤（#52）使该现象**下次出现即自证**（annotations
+无需 admin，可经 API 读）。本机侧已做 15 轮 `forge-codegen --lib --all-features` 压测（0 失败）
+与 x86 JIT 矩阵（195 passed / 3 skipped / 0 failed），未见复现。
 
 **#45 的 `Test (Windows)` 红与今日修的 env 泄漏同源（推断，非日志直证）**：该 job 跑
 `cargo test --workspace --exclude forge-rustc`，其 `forge-codegen --lib` 二进制里同时存在
