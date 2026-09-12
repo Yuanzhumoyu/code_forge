@@ -814,8 +814,10 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   exit 正确**（要靠 `[SUMMARY]` 事件的 `known=[]`）。未消除该 AV 前**暂不转正**；
   `vec_string` / `vec_from_slice` / `box_value` 不受影响，仍按原判据（3 轮 stage_a +
   parallel 全绿且 exit 正确）评估。
-  **→ 2026-09-12**：该 AV 已定位并根治（§9.7 / WA-42）。转正判据仍是"CI 侧
-  `[SUMMARY] known=[]`"——先推修复、看 AMD runner 是否还报 `CI-ENV-AV`，再翻标记。
+  **→ 2026-09-12**：该 AV 已定位并根治（§9.7 / WA-42）。判据按"CI 侧
+  `[SUMMARY] known=[]`"执行完成：run 93927221004 在同一 AMD 机型给出
+  `passed=103/103 known=[]` + 探针 21/21 ok ⇒ **5 例已全部转正**（FLAKY 清空 +
+  `known_failure=false`），详见 §9.7.1。
 
 ### 9.6 与 WA-40 的关系（已落地的收口，防止假设中的静默错码）
 
@@ -878,3 +880,40 @@ AMD runner 的残留恒非零 ⇒ 20/20 稳定 AV（`.text` 与本机逐字节�
 形态 niche 在 offset 0，未取该路径）；如需支持应按 `tag_field` 取偏移并补用例。
 
 **工作量**：步骤 2 本机 ~0.5 天；步骤 1/3/4 取决于 CI 何时复现（本地无法闭环）。
+
+#### 9.7.1 CI 实证与 5 例转正（2026-09-12，收官）
+
+修复推送后 **CI run `93927221004`**（e2e Windows job，runner = **AMD64 Family 25
+Model 1 Stepping 1 / 4 cores** —— 正是修复前 20/20 稳定 AV 的同一机型）：
+
+| 观察点 | 修复前（run #25–#39） | 本次 run 93927221004 |
+| --- | --- | --- |
+| `[SUMMARY] stage_a` | `passed=101/103 known=[vec_push, vec_iter_enumerate]`（+ `[CI-ENV-AV]`） | **`passed=103/103 known=[] unexpected=0`** |
+| `vec_push` 20 次单跑 | `AVx20`（0xC0000005） | **`2x20`**（全部 exit=2） |
+| `vec_iter_enumerate` 20 次单跑 | `AVx20` | **`80x20`** |
+| alloc 逐步探针 21 变体 | 8 个变体 `AVx20`（`one_push`/`two_push`/`six_push`/`iter_enum`/`audit_one_i32`/`audit_grow2`/`audit_align4`/`oob_guard`/`ptr_roundtrip` 等） | **21/21 全 `ok`** |
+| e2e 测试函数 | — | **8 passed / 0 failed**（含新增 IR 级回归门） |
+
+⇒ 同机型、同探针二进制、从"稳定 AV"变"全部正确"，**根因与修复都得到跨机器实证**；
+`.text` 逐字节相同而结论相反，正说明变量是**栈残留内容**（niche 高 4 字节）而非机器码。
+
+依据此证据，**5 例按 §9.5 判据转正**（`tests/e2e.rs`）：
+
+- `FLAKY` 名单清空（机制保留：将来再遇机器相关偶发时把用例名放回即可，见 const 文档）；
+- 5 例 `known_failure: true → false`（错码/AV 从此**硬失败**，不再有任何容忍路径）；
+- 各 case 的 `reason` 前置「2026-09-12 转正」+ 本 run 证据，历史叙述整段保留作回归对照；
+- 本机复核：`e2e_stage_a_scalar_cases` `PASS box_value/vec_push/vec_string/
+  vec_from_slice/vec_iter_enumerate`（exit=42/2/2/3/80）+ `passed: 103/103`，
+  全 8 个测试 `--test-threads=1` 全绿；hammer（§9.2）stage_a 5 轮 103/103 + 各例 ×10 全过。
+
+**未并入**：`e2e_parallel_pool_threads` 的用例名单仍不含 vec/alloc 与 V256 用例
+——「par 编译偶发 timeout 挂起」形态从未定性（与本次 AV 无关），合并需先拿该形态的
+独立证据（见该测试头部注释）。
+
+**旁证（同 run 发现，与本修复无关）**：`Test (Windows)` job 的
+`test_jit_v512_byref_param` 失败 `Unsupported("v12 lowering: Vconst no matching rule")`
+——该测试在**无 AVX-512F** 的机器上会提前 return（本机即如此），本次 runner 有
+AVX-512F 才真正跑到 `vconst(16×f32)`；而 `isa/x86_v12.toml` 的 `Vconst` 规则只覆盖
+`rd = 64/128/256`，**缺 `rd = 512`**。⇒ 预存缺口被机型差异暴露，非本提交引入
+（本提交不触 forge-codegen/ISA）；本机无 AVX-512 无法验证 EVEX 实现，故不在本次
+改动内处理，另记待办。

@@ -28,8 +28,10 @@ use std::process::Command;
 /// 1.100 起 `LangItem` 移至 `rustc_hir::attrs::lang_items`，1.99 无法编译。
 /// ⚠️ 日期 channel 的 rustc 提交是发布前一日：nightly-2026-09-04 =
 /// a69a63265（2026-09-03），**与本机 nightly-2026-09-05 = 0ed41eb41
-/// （2026-09-04）不同**——本地验证必须在 09-05 上（vec 用例 CI-only AV
-/// 即此差异所致）。务必与本地 rustup 当前 nightly 对齐再钉版！）
+/// （2026-09-04）不同**——本地验证必须在 09-05 上。务必与本地 rustup 当前 nightly
+/// 对齐再钉版！（历史注：曾把 vec 用例的 CI-only AV 归因于该 channel 差异；
+/// 2026-09-12 已定性为 **WA-42**（niche tag 写入宽度）——与工具链版本无关，
+/// 差异来自 runner 栈残留内容，见计划 §9.7。）
 const NIGHTLY: &str = "nightly-2026-09-05";
 
 /// 本机工具链选择：CI 用钉版 NIGHTLY；本机可用 `FORGE_E2E_NIGHTLY`
@@ -582,9 +584,12 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "P6 alloc",
-        reason: "2026-09-06 回归 known_failure：CI stage_a 偶发 timeout（挂起）——
+        reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
+        的 AMD Family 25 Model 1 runner：e2e stage_a 103/103、`[SUMMARY] known=[]`、alloc 探针
+        21/21 全 ok（该 runner 在修复前对此类用例 20/20 AV）；本机 hammer：stage_a 5 轮 103/103 +
+        5 例各 ×10 全过。以下为历史记录（保留作回归对照）：2026-09-06 回归 known_failure：CI stage_a 偶发 timeout（挂起）——
         Box::new 的 alloc/Unique 链同 vec_push 类 regalloc spill 非确定性残余
         （见 vec_push reason）。转正标准：3 轮 stage_a+parallel 全绿且 exit=42。（2026-09-10 复核：
         stage_a 103/103 × 2 轮无复现；**8 并发负载下出现 4 次瞬态超时**（8 worker × 40 轮窗口内），
@@ -621,11 +626,12 @@ const CASES: &[Case] = &[
         phase: "P6 alloc",
         reason: "",
     },
-    // ── Vec/String 完整运行（2026-09-06 回归后为显式已知失败清单 + FLAKY 容忍）。
-    //    历史定性见 docs/plans/forge-rustc-vec_push-plan.md（§1–§7 修复链 + §8
-    //    2026-09-10 复核：E1「写死物理寄存器 × def-spill」在本机未复现——103/103 × 2 轮；
-    //    该失败形态已按 fail-closed 收口，见 WORKAROUNDS WA-40）。
-    //    转正 = 3 轮 stage_a+parallel 全绿（各 case 的 reason 末尾有复核注记）。──
+    // ── Vec/String 完整运行（**2026-09-12 起全部转正：known_failure=false + FLAKY 为空**，
+    //    即全部进 CI 门禁）。根因 = WORKAROUNDS **WA-42**（niche 枚举 tag 写入宽度：
+    //    `Option<(NonNull<u8>, Layout)>` 的 None 只写 4 字节 → 高 4 字节残留 → 判别误判
+    //    `Some(野指针)` → grow 链 copy 解引用 AV）。修复链与全部取证见
+    //    docs/plans/forge-rustc-vec_push-plan.md §9.7（`passed=103/103 known=[]` 的 CI run
+    //    93927221004 + 本机 hammer 5 轮 + 各 case reason 里的历史记录）。──
     Case {
         name: "vec_push",
         body: "let mut v = alloc::vec::Vec::new(); v.push(1); v.push(2); v.len() as i32",
@@ -634,9 +640,12 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "P2",
-        reason: "2026-09-06 回归 known_failure：CI（e2e Windows）与本机 hammer（3 轮
+        reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
+        的 AMD Family 25 Model 1 runner：e2e stage_a 103/103、`[SUMMARY] known=[]`、alloc 探针
+        21/21 全 ok（该 runner 在修复前对此类用例 20/20 AV）；本机 hammer：stage_a 5 轮 103/103 +
+        5 例各 ×10 全过。以下为历史记录（保留作回归对照）：2026-09-06 回归 known_failure：CI（e2e Windows）与本机 hammer（3 轮
         stage_a 中 1 轮）均现偶发 exit -1073741819（0xC0000005 AV，本机 439s 挂起/超时
         变体）——alloc/Vec grow 链（RawVec::grow_amortized/finish_grow）高压 spill 下
         sret copy_agg 写 [0]（sret_ptr 值丢失）类 regalloc 非确定性残余（上方注释指向
@@ -659,9 +668,12 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "P2",
-        reason: "2026-09-06 回归 known_failure：CI 偶发 timeout（挂起：可能 assert 失败
+        reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
+        的 AMD Family 25 Model 1 runner：e2e stage_a 103/103、`[SUMMARY] known=[]`、alloc 探针
+        21/21 全 ok（该 runner 在修复前对此类用例 20/20 AV）；本机 hammer：stage_a 5 轮 103/103 +
+        5 例各 ×10 全过。以下为历史记录（保留作回归对照）：2026-09-06 回归 known_failure：CI 偶发 timeout（挂起：可能 assert 失败
         进入 panic loop）+ 本地 round 偶发——String::from 的 alloc/grow 链与 vec_push
         同类 regalloc spill 非确定性残余（见 vec_push reason）。转正标准：3 轮
         stage_a+parallel 全绿且 exit=2（2026-09-10 复核：stage_a 103/103 × 2 轮；**8 并发负载下 3 个窗口
@@ -678,9 +690,12 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "P6 alloc",
-        reason: "2026-09-06 回归 known_failure：CI e2e stage_a 偶发 timeout（挂起：
+        reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
+        的 AMD Family 25 Model 1 runner：e2e stage_a 103/103、`[SUMMARY] known=[]`、alloc 探针
+        21/21 全 ok（该 runner 在修复前对此类用例 20/20 AV）；本机 hammer：stage_a 5 轮 103/103 +
+        5 例各 ×10 全过。以下为历史记录（保留作回归对照）：2026-09-06 回归 known_failure：CI e2e stage_a 偶发 timeout（挂起：
         Vec::from 的 slice→Vec 拷贝链与 vec_push 同类 regalloc spill 非确定性残余
         （见 vec_push reason；转正原因为 promoted/Unsize 降级正确性，非 alloc 链）。
         转正标准：3 轮 stage_a+parallel 全绿且 exit=3。（2026-09-10 复核：stage_a 103/103 × 2 轮无复现；
@@ -1309,9 +1324,12 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
-        known_failure: true,
+        known_failure: false,
         phase: "F1 iter",
-        reason: "2026-09-06 回归 known_failure：CI 偶发 exit -1073741819（AV，expect 80）
+        reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
+        的 AMD Family 25 Model 1 runner：e2e stage_a 103/103、`[SUMMARY] known=[]`、alloc 探针
+        21/21 全 ok（该 runner 在修复前对此类用例 20/20 AV）；本机 hammer：stage_a 5 轮 103/103 +
+        5 例各 ×10 全过。以下为历史记录（保留作回归对照）：2026-09-06 回归 known_failure：CI 偶发 exit -1073741819（AV，expect 80）
         ——Vec grow + iter 链同 vec_push 类 regalloc spill 非确定性残余（见 vec_push
         reason；WA-29 的 null 解引用曾同类）。转正标准：3 轮 stage_a+parallel 全绿且 exit=80。（2026-09-10 复核：stage_a 103/103 × 2 轮；**8 并发负载下 3 个窗口（各 320 次单跑）中出现 1 次瞬态 15 s 超时**，由 harness 的「同产物复跑」转为通过 ⇒ 该次为宿主侧运行期延迟。**2026-09-11 CI 稳定 AV 双证**：run #25/#26/#27 连续 AV（0xC0000005），而产物 `.text` SHA256 `5f421f08…c732`（103936 B）与 CI 逐字节相同、本机复跑 exit=80 ⇒ 判为 **CI runner 环境性 AV**，非错编译；严格口径已按 `CI_ENV_AV_CODE` 容忍并留 `CI-ENV-AV` 标记（计划 §9.5）。def-spill 站点经 FORGE_TRACE_ALLOC 核查全落在可改写字段——失败面已按 fail-closed 收口，见 WORKAROUNDS WA-40）",
     },
@@ -1619,8 +1637,9 @@ const TIMEOUT_MARKER: &str = "timeout (挂起";
 
 /// `FORGE_E2E_STRICT_FLAKY=1`：FLAKY 用例**只容忍超时 + CI 运行环境 AV**（两者均已
 /// 定性为宿主侧环境性、且有同产物复跑兜底），**其余错码改按 FAIL 硬失败**。
-/// 用于「5 例的正确性是否已可进门禁」的定向验证与转正就绪度评估；默认关闭，
-/// CI 现有行为不变。
+/// 用于「5 例的正确性是否已可进门禁」的定向验证与转正就绪度评估；默认关闭。
+/// 2026-09-12 起 [`FLAKY`] 为空（5 例已转正）⇒ 本开关与 `CI-ENV-AV` 容忍路径
+/// 当前**不生效**（等价于全量门禁），保留以备将来出现新的机器相关偶发。
 fn strict_flaky() -> bool {
     std::env::var_os("FORGE_E2E_STRICT_FLAKY").is_some()
 }
@@ -1650,6 +1669,11 @@ fn record_event(kind: &str, case: &str, detail: &str) {
 /// 相同**（`a91b9eef…63fb` / `5f421f08…c732`）且本机复跑正确（exit=2/80）
 /// ⇒ 同一份机器码只在 CI runner 上崩 ⇒ 环境性（同 `cli_tests` alloc AV 先例）。
 /// 严格模式下该签名按 KNOWN 容忍并打印 `CI-ENV-AV` 标记（不静默），其余错码仍硬失败。
+///
+/// **2026-09-12 收尾**：双证结论已升级为**已定位的 codegen 缺陷**（WA-42：niche tag
+/// 写入宽度——AMD runner 栈残留高位恒非零 ⇒ 必然 AV；`.text` 相同而结论不同正说明
+/// 变量是**栈残留内容**而非机器码）。5 例转正后不再有容忍对象，本常量仅作留痕/回归
+/// 对照保留（勿据此把新的 AV 判为"环境性"——先查 WA-42 类宽度/判空路径）。
 const CI_ENV_AV_CODE: i32 = -1073741819;
 
 /// 运行产物并取退出码。超时（默认 15 s，`FORGE_E2E_TIMEOUT_SECS` 可覆盖，便于区分
@@ -1685,20 +1709,22 @@ fn run_exe_with_timeout(exe: &Path) -> Result<i32, String> {
     }
 }
 
-/// 双向 flake 用例（2026-09-06 起，见各 case reason）：regalloc spill
-/// 非确定性导致**时过时败**——known_failure:true 会使偶发 PASS 触发
-/// TURNED-PASS 报错（反断言防 stale），known_failure:false 会使偶发 AV
-/// 红 CI。此名单内的 known_failure 用例：PASS 按通过计数（不触发
-/// TURNED-PASS），FAIL 按 KNOWN 打印（不致命）→ 套件双向恒绿并留痕。
-/// 转正 = 修复 forge-codegen regalloc 确定性后移出名单并翻转标记。
-/// 当前 5 个 vec/alloc 用例均为 Vec/String grow 链（见 vec_push reason）。
-const FLAKY: &[&str] = &[
-    "vec_push",
-    "vec_string",
-    "vec_iter_enumerate",
-    "vec_from_slice",
-    "box_value",
-];
+/// 双向 flake 用例名单（**2026-09-12 起为空 = 全量门禁**）。
+///
+/// 用途（历史）：名单内 `known_failure:true` 的用例"时过时败"——偶发 PASS 会触发
+/// 反断言（防 stale），偶发 AV 又会红 CI，故按双向容忍留痕（PASS 计数、FAIL 打印
+/// `KNOWN` 不致命）。转正 = 移出名单 + 翻 `known_failure=false`。
+///
+/// **2026-09-12 转正收官**：原 5 例（vec_push / vec_string / vec_iter_enumerate /
+/// vec_from_slice / box_value）的 CI 机型相关 AV 与 WA-41 同源，根因 = **WA-42**
+/// （niche 枚举 tag 写入宽度）→ 全部移出名单并翻标记。CI run 93927221004 的
+/// AMD Family 25 Model 1 runner 上 `passed=103/103 known=[]`、alloc 探针 21/21 全 ok
+/// （该 runner 修复前 20/20 AV），本机 hammer 5 轮 103/103 + 5 例各 ×10 全过
+/// （计划 §9.7 / WORKAROUNDS WA-42）。
+///
+/// 机制保留：将来若再出现**机器相关**的偶发（而非错码），把用例名放回本名单即可
+/// 重新容忍；`FORGE_E2E_STRICT_FLAKY` 亦只在名单非空时有意义。
+const FLAKY: &[&str] = &[];
 
 #[test]
 fn e2e_stage_a_scalar_cases() {
@@ -1860,6 +1886,13 @@ fn e2e_stage_a_scalar_cases() {
 ///
 /// 本机预期全部 exit 正确；受影响的 runner 上会看到某一步 AV —— 哪一步先崩，
 /// 崩溃点就落在哪条路径上。
+///
+/// **2026-09-12 结案（WA-42）**：本探针已把崩溃点收敛到 grow 链（`probe_one_push`
+/// 即崩 ⇒ 首次 alloc 的 `finish_grow → grow_impl_runtime` 路径），根因是 niche
+/// 枚举 `None` 的 tag 只写 4 字节、判别读 8 字节（`current_memory` 误返 `Some`）。
+/// 修复后同一 AMD runner（Family 25 Model 1）上 **21/21 变体全部 ok**
+/// （此前其中 8 个 20/20 AV）——见计划 §9.7。探针保留：它是"机器相关崩溃面"的
+/// 现成指纹，将来换机型时可一眼看出是否同类。
 #[test]
 fn e2e_alloc_step_probe() {
     let workdir =
@@ -2083,7 +2116,10 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 /// ⚠️ 名单不含 alloc/Vec grow 与 V256 用例：2026-09-06 起它们在本测试出现
 /// 非确定性残余（vec AV / par 编译偶发 timeout 挂起——见 vec_push reason 与
 /// FLAKY 名单），其编译正确性由 stage_a/并行 case 清单与 jit 矩阵覆盖；
-/// regalloc/pool 确定性修复后回归名单。
+/// **2026-09-12 更新**：vec AV 半边已由 WA-42 根治（5 例转正进门禁，见计划 §9.7），
+/// 但"par 编译偶发 timeout 挂起"从未定性，且 `-Z threads=2` 下用例会成倍放大编译
+/// 负载——故暂仍不并入本名单（避免用未定性的形态换覆盖率）；要并入需先拿该形态的
+/// 独立证据（本机 hammer 的 parallel 变体扩名单跑通多轮）后再改。
 #[test]
 fn e2e_parallel_pool_threads() {
     let workdir = std::env::temp_dir().join(format!("forge_rustc_e2e_par_{}", std::process::id()));
