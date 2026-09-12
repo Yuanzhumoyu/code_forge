@@ -572,6 +572,65 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                 }
             }),
         },
+        // 512 位常量的第 3/4 个 128 位段（half=2/3；命名沿用 `_hi` 后缀=第 2 段
+        // 的惯例，`_h2`/`_h3` 标 half 序号，lo/hi 标该 128 位段内的低/高 64 位）。
+        // V512 的 Vconst 规则用它们拼 4 个 128 位段 → 4 条 EVEX 插入。
+        Ph {
+            name: "{vconst_lo_h2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 2usize, false, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi_h2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 2usize, true, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
+        Ph {
+            name: "{vconst_lo_h3}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 3usize, false, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi_h3}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    __vconst_half(ctx.constant_pool.as_ref(), ctx.current_const_index, 3usize, true, __vconst_elem_bits(ctx, results) == 64)
+                }
+            }),
+        },
         // ── 条件码 ──
         Ph {
             name: "{cc}",

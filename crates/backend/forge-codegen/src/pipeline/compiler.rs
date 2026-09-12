@@ -2366,6 +2366,58 @@ mod alloc_integration_tests {
         unsafe { std::env::remove_var("FORGE_ASSUME_AVX512") };
     }
 
+    /// V512（64 字节）`Vconst` 的**生成级**守卫（不需要 AVX-512 硬件：只编译不执行）。
+    ///
+    /// 背景：`isa/x86_v12.toml` 的 `Vconst` 规则原只覆盖 `rd = 64/128/256`，V512
+    /// 常量落到「no matching rule」→ `Unsupported`。该缺口只在**有 AVX-512F 的机器**
+    /// 上暴露（`runtime::jit` 的 `test_jit_v512_byref_param` 无 AVX-512F 时提前
+    /// return，本机即如此），历史上因此在 CI 上偶发红（Test (Windows) 命中
+    /// AVX-512 runner 的 run）。本测试用「**无宽向量参数/返回** + 函数内局部 V512
+    /// 常量」构造——不触发宽向量 ABI 的 AVX-512 入口守卫，任何机器都能编译验证。
+    ///
+    /// 断言：①编译成功（修复前 `Unsupported("v12 lowering: Vconst no matching rule")`）；
+    /// ②机器码含 **4 条 EVEX `VINSERTF32X4`**（`62 P0 P1 P2 18 /r ib`）且 imm 恰为
+    /// 0/1/2/3 各一次 ⇒ 512 位的 4 个 128 位 lane 都被显式写入（这也是 Vconst 规则
+    /// 「`{out}` 自身当累加器、初始值不影响结果」这一构造前提的可执行证据）。
+    #[test]
+    fn test_v512_vconst_generates_four_evex_inserts() {
+        x86_v12::ensure_registered();
+        let tc = TypeContext::new();
+        let vt = tc.vector_ty(TypeId::F32, 16); // 16 × f32 = 64 字节 = V512
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("v512_vconst", tc, sig);
+        b.create_block_here();
+        let v = b.vconst(vec![
+            1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+            16.0,
+        ]);
+        // 取 lane15（=16.0）——与运行级 V512 用例同形，便于两处对照。
+        let idx = b.iconst_i32(15);
+        let lane = b.vextract(v, idx);
+        let wide = b.fpext(lane, TypeId::F64);
+        let int = b.fptosi(wide, TypeId::I32);
+        b.ret(&[int]);
+        let func = b.finish().expect("build v512 vconst");
+        let cf = FunctionCompiler::new(x86_v12::TargetMachine::new())
+            .compile(&func)
+            .expect("V512 常量应可降级（修复前：Vconst no matching rule）");
+        // EVEX = 62 + P0 P1 P2 + opcode：窗口 [62, P0, P1, P2, opcode, modrm, imm]。
+        let mut imms: Vec<u8> = Vec::new();
+        for w in cf.code.windows(7) {
+            if w[0] == 0x62 && w[4] == 0x18 {
+                imms.push(w[6]);
+            }
+        }
+        imms.sort_unstable();
+        assert_eq!(
+            imms,
+            vec![0u8, 1, 2, 3],
+            "V512 常量应由 4 条 EVEX VINSERTF32X4 拼成、imm = 0/1/2/3 各一次（4 个 lane 全写）。\
+             实际 imm = {imms:?}；code = {:02x?}",
+            &cf.code[..cf.code.len().min(64)]
+        );
+    }
+
     /// 大于 16B 的向量 Load/Store（V256/V512 槽往返）必须 **fail-closed 显式拒绝**：
     /// ISA 类模型缺 YMM(32B) 槽类 → 无规则可表达 → 旧行为落到默认 8 字节 MOV
     /// **静默截断**。本测试只编译（不执行），本机可跑。

@@ -910,10 +910,16 @@ Model 1 Stepping 1 / 4 cores** —— 正是修复前 20/20 稳定 AV 的同一�
 ——「par 编译偶发 timeout 挂起」形态从未定性（与本次 AV 无关），合并需先拿该形态的
 独立证据（见该测试头部注释）。
 
-**旁证（同 run 发现，与本修复无关）**：`Test (Windows)` job 的
-`test_jit_v512_byref_param` 失败 `Unsupported("v12 lowering: Vconst no matching rule")`
-——该测试在**无 AVX-512F** 的机器上会提前 return（本机即如此），本次 runner 有
-AVX-512F 才真正跑到 `vconst(16×f32)`；而 `isa/x86_v12.toml` 的 `Vconst` 规则只覆盖
-`rd = 64/128/256`，**缺 `rd = 512`**。⇒ 预存缺口被机型差异暴露，非本提交引入
-（本提交不触 forge-codegen/ISA）；本机无 AVX-512 无法验证 EVEX 实现，故不在本次
-改动内处理，另记待办。
+**旁证（同 run 发现，与本修复无关 → 已顺手根治）**：`Test (Windows)` job 的
+`test_jit_v512_byref_param` 曾失败 `Unsupported("v12 lowering: Vconst no matching rule")`
+——该测试在**无 AVX-512F** 的机器上提前 return（本机即如此），只有 AVX-512F 的 runner
+才真正跑到 `vconst(16×f32)`；而 `isa/x86_v12.toml` 的 `Vconst` 规则只覆盖
+`rd = 64/128/256`，**缺 `rd = 512`**（历史上 2026-09-11 已有 3 次同类红）。
+⇒ 预存缺口被机型差异暴露，非 WA-42 提交引入。
+**2026-09-12 已实现（WA-43）**：新增 EVEX `VINSERTF32X4` + 4 个常量占位符
+（`{vconst_lo_h2}`/`{vconst_hi_h2}`/`{vconst_lo_h3}`/`{vconst_hi_h3}`）+ 两条
+`Vconst rd=512` 规则（32/64 位 lane），4 条插入按 imm=0..3 覆盖全部 lane；
+并用**生成级**测试 `test_v512_vconst_generates_four_evex_inserts`（无宽向量参数/返回
+⇒ 任何机器可跑）断言「恰 4 条 EVEX 插入且 imm={0,1,2,3}」，`objdump -b binary` 实测
+解码为 `vinsertf32x4 zmm13, zmm13, xmm15, 0x0/1/2/3`、8 条 movabs 常量逐 lane 与源码
+f32 位型一致。运行级 lane15=16 仍由原 V512 用例在有 AVX-512F 的 runner 上守护。
