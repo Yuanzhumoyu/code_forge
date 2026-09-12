@@ -1110,7 +1110,11 @@ V512 已被真跑覆盖"）。
 **抖动**；由于当时还没有 annotations 通道且 job 日志 403，**失败用例名未取到**。已落地的
 `Surface failing test names as annotations` 步骤（#52）使该现象**下次出现即自证**（annotations
 无需 admin，可经 API 读）。本机侧已做 15 轮 `forge-codegen --lib --all-features` 压测（0 失败）
-与 x86 JIT 矩阵（195 passed / 3 skipped / 0 failed），未见复现。
+与 x86 JIT 矩阵（195 passed / 3 skipped / 0 failed），未见复现。**已排除一个候选**：
+`cargo-forge` 的 `cli_tests`（重、带 `-Z build-std` 冷启动）在 CI 上会 **SKIP**——
+`tools/forge-rustc-wrapper` **不是 workspace 成员**（根 `Cargo.toml` members 不含它），
+故该 job 不产 `target/debug/forge_rustc.dll`，而 cli_tests 以"dll 缺失 → 打印 SKIP 并放行"
+为前置约定（2026-09-12 复核 `Cargo.toml` + `cli_tests.rs` 头部注释）。
 
 **#45 的 `Test (Windows)` 红与今日修的 env 泄漏同源（推断，非日志直证）**：该 job 跑
 `cargo test --workspace --exclude forge-rustc`，其 `forge-codegen --lib` 二进制里同时存在
