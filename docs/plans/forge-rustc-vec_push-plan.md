@@ -771,6 +771,29 @@ test result: FAILED. 5 passed; 1 failed; … finished in 51.84s
   `llvm-objdump -d` 逐版对照，再做二分裁剪。已登记为 `WORKAROUNDS.md`
   **WA-41（开放）**。
 
+- **AMD 机型上的崩溃面比 Vec 更宽（run #36/#37 实测）**：两台 AMD Family 25 机型上，
+  "分配类"探针**大面积 AV**，而且**两台之间还不一样**：
+
+  | 变体 | 本机 Intel | Server2022 / AMD M17 | Server2025 / AMD M1 |
+  | --- | --- | --- | --- |
+  | `probe_new_only`（不分配） | ok | ok | ok |
+  | `probe_one_push` / `two_push` / `six_push` / `iter_enum` | ok | **AV** | **AV** |
+  | `probe_audit_one_i32`（读 `ASIZE[0]`=16） | ok 16 | **AV** | **AV** |
+  | `probe_audit_one_u8`（读 `ASIZE[0]`=8） | ok 8 | ok | ok |
+  | `probe_audit_grow2` / `audit_align4` / `oob_guard` / `ptr_roundtrip` | ok | **AV** | **AV** |
+  | `probe_read_at_ptr` / `probe_read_only` | **AV** | **AV** | ok |
+  | `probe_addr_calc` | **AV** | **AV** | **`0xC0000409`** |
+  | `probe_guard_k0`（同为 16B 分配 + 读毒区） | ok | ok | ok |
+
+  ⇒ ①触发面**不止 Vec/grow**：`audit_one_i32` / `ptr_roundtrip` 这类"分配 + 读自己的
+  记账静态"同样崩；②**崩溃集合随机型变化**，同一份 exe 在两台 AMD 机给出不同集合与
+  不同症状（AV vs `0xC0000409`）⇒ 不是"某程序的确定性错码"，而是**机器相关的运行时
+  行为**；③`0xC0000409` 与审计分配器"越界即 `return null` → `handle_alloc_error`
+  → abort"的路径吻合，是下一步隔离点。
+  已加入**裸分配探针**（`probe_raw_alloc4/16/64`：`alloc::alloc::alloc` 后写一字节；
+  `probe_heap_write`：不经分配器直接写 HEAP）——用来判定"连裸分配都崩"还是"Vec 机制
+  才崩"。本机四项均 ok。
+
 - **可见性缺口（已修，2026-09-11）**：libtest **捕获"通过"测试的 stdout**，而容忍后的
   AV/超时不会让测试失败 ⇒ 这些事件在 CI 日志里**原本看不见**（run #28 全绿，但无法
   判断当轮有没有踩到 AV）。现在 harness 在设 `FORGE_E2E_EVENTS=<路径>` 时把关键事件

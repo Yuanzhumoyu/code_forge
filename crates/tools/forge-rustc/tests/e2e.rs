@@ -1904,10 +1904,16 @@ fn e2e_alloc_step_probe() {
     const AUDIT_ADDR_CALC: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        let base = core::ptr::addr_of!(HEAP) as usize;\n        (p as usize).wrapping_add(sz).wrapping_sub(base) as i32\n    }";
     // 读同一字节但**把值归一化成常量**再返回（期望 165）——分离"载入成功"与"值回传"。
     const AUDIT_READ_ONLY: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        let b = p.add(sz).read_volatile();\n        if b == 0xA5 { 165 } else { b as i32 }\n    }";
+    // 裸分配（不经过 Vec）：请求 size 字节、写一个字节再返回 1；分配失败返回 -1。
+    const RAW4: &str = "unsafe {\n        let l = core::alloc::Layout::from_size_align(4, 4).unwrap();\n        let p = alloc::alloc::alloc(l);\n        if p.is_null() { return -1; }\n        p.write(7);\n        1\n    }";
+    const RAW16: &str = "unsafe {\n        let l = core::alloc::Layout::from_size_align(16, 4).unwrap();\n        let p = alloc::alloc::alloc(l);\n        if p.is_null() { return -1; }\n        p.write(7);\n        1\n    }";
+    const RAW64: &str = "unsafe {\n        let l = core::alloc::Layout::from_size_align(64, 4).unwrap();\n        let p = alloc::alloc::alloc(l);\n        if p.is_null() { return -1; }\n        p.write(7);\n        1\n    }";
+    // 完全不经过分配器：直接写 static HEAP 前 64 字节（隔离"写 HEAP"本身）。
+    const HEAP_WRITE: &str = "unsafe {\n        let base = core::ptr::addr_of_mut!(HEAP) as *mut u8;\n        let mut i = 0;\n        while i < 64 { base.add(i).write_volatile(0x5A); i += 1; }\n        1\n    }";
     // 只校验第 0 个块（不跨块、不用 APTR[1]）。
     const AUDIT_GUARD_K0: &str = "let mut v: alloc::vec::Vec<i32> = alloc::vec::Vec::new(); v.push(1); unsafe {\n        let p = (*core::ptr::addr_of!(APTR))[0] as *const u8;\n        let sz = (*core::ptr::addr_of!(ASIZE))[0];\n        let mut j = 0; let mut bad = -1;\n        while j < 32 {\n            if p.add(sz + j).read_volatile() != 0xA5 { bad = j as i32; break; }\n            j += 1;\n        }\n        if bad < 0 { 1 } else { 1000 + bad }\n    }";
 
-    let variants: [(&str, &str, &str, i32); 17] = [
+    let variants: [(&str, &str, &str, i32); 21] = [
         ("probe_new_only", NEW_ONLY, NAIVE_ALLOC, 0),
         ("probe_one_push", ONE_PUSH, NAIVE_ALLOC, 1),
         ("probe_two_push", TWO_PUSH, NAIVE_ALLOC, 2),
@@ -1927,6 +1933,12 @@ fn e2e_alloc_step_probe() {
         // ↓ 继续钉住 probe_read_at_ptr 的 AV：地址计算 vs 载入值流
         ("probe_addr_calc", AUDIT_ADDR_CALC, AUDIT_ALLOC, 16),
         ("probe_read_only", AUDIT_READ_ONLY, AUDIT_ALLOC, 165),
+        // ↓ 裸分配 / 直接写 HEAP：把"分配路径"从"Vec 机制"里剥出来（CI 上 AMD 机型
+        //   连 `audit_one_i32` 都崩，说明触发面比 Vec 更宽）。
+        ("probe_raw_alloc4", RAW4, NAIVE_ALLOC, 1),
+        ("probe_raw_alloc16", RAW16, NAIVE_ALLOC, 1),
+        ("probe_raw_alloc64", RAW64, NAIVE_ALLOC, 1),
+        ("probe_heap_write", HEAP_WRITE, NAIVE_ALLOC, 1),
     ];
 
     for (name, body, extra, want) in variants {
