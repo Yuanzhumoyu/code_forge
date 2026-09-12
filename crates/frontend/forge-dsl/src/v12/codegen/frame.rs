@@ -6,7 +6,7 @@
 
 use super::super::model::*;
 use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
-use super::lowering::role_name;
+use super::lowering::{inst_by_role, reg_mem_fids, role_name};
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -783,31 +783,30 @@ fn gen_emit_pseudo(
             };
             // by-ref 向量 load：宽向量参数（>16 字节）按引用传参——ABI 传 GPR
             // 指针（int 槽位），收参时从 [ptr] load 到目标向量寄存器。
-            // 优先非对齐 VMOVUPS（指针未必 32 字节对齐）；缺省回退 VMOVAPS。
+            // **按语义角色取指令**（`roles = ["wide_vec_load_32"]` /
+            // `["wide_vec_load_64"]`——角色全 ISA 唯一，validate 保证）：不做
+            // 「按指令名搜索 + 非对齐优先/对齐兜底」的隐式回退——ISA 把角色打在
+            // 自己选定的那条指令上即可（x86 打在非对齐 VMOVUPS_RM /
+            // VMOVUPS_ZMM_MEM；想用对齐变体的 ISA 就把角色打在那条上），生成器
+            // 只认角色、不猜名字；字段名同样由操作数结构派生（reg_mem_fids）。
             // **宽度按参数 IR 类型字节数分派**（`__rm.param_bytes`，与
             // param_vregs 对齐）：寄存器类宽对 >128 位向量恒为 VEC(32)
             //（`reg_class_for`），旧实现用 `__pv.width()` → 64B（V512）分支
             // 永不可达、只 load 32B（lane8..15 丢失，WA-37 D5）。
-            // 32 字节（V256）→ VMOVUPS_RM（VEX ymm）；64 字节（V512）→
-            // VMOVUPS_ZMM_MEM（EVEX zmm）；其它 >32B 宽度无对应变体 → 显式
-            // Unsupported（不静默截断）。
+            // 32 字节（V256）→ wide_vec_load_32；64 字节（V512）→
+            // wide_vec_load_64；其它 >32B 宽度无对应角色 → 显式 Unsupported
+            //（不静默截断）。
             let mut byref_32: Option<TokenStream> = None;
             let mut byref_64: Option<TokenStream> = None;
-            for (inst_name, fallback, width) in [
-                ("VMOVUPS_RM", "VMOVAPS_RM", 32u16),
-                ("VMOVUPS_ZMM_MEM", "VMOVAPS_ZMM_MEM", 64u16),
-            ] {
-                let fids = if inst_fids(infos, inst_name).len() == 2 {
-                    inst_fids(infos, inst_name)
-                } else {
-                    inst_fids(infos, fallback)
+            for (role, width) in [(Role::WideVecLoad32, 32u16), (Role::WideVecLoad64, 64u16)] {
+                let Some(info) = inst_by_role(infos, role) else {
+                    continue; // 本 ISA 未声明该角色 → 该宽度不可用（下方给 Unsupported）
                 };
-                if fids.len() != 2 {
-                    continue;
-                }
-                let d_fid = fids[0].clone();
-                let m_fid = fids[1].clone();
-                let vn = crate::v12::codegen::pascal_ident(inst_name);
+                let (d_fid, m_fid, _) = reg_mem_fids(info);
+                let (Some(d_fid), Some(m_fid)) = (d_fid, m_fid) else {
+                    continue; // 非 Reg+Mem 形状（validate 层应已拒绝）
+                };
+                let vn = info.vn.clone();
                 let stmt: TokenStream = quote! {
                     let __bytes = encode(&Inst::#vn {
                         #d_fid: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
@@ -844,7 +843,8 @@ fn gen_emit_pseudo(
                 (None, Some(s64)) => s64,
                 (None, None) => quote! {
                     return Err(crate::IrError::Emit(
-                        "v12 by-ref vector arg load missing (VMOVUPS_RM/VMOVUPS_ZMM_MEM)".into(),
+                        "v12 by-ref vector arg load missing（本 ISA 未声明 \
+                         roles = [\"wide_vec_load_32\"] / [\"wide_vec_load_64\"] 的指令）".into(),
                     ));
                 },
             };
@@ -1123,7 +1123,7 @@ fn gen_emit_pseudo(
                     };
                     if __rm.param_by_ref.get(__i) == Some(&true) {
                         // by-ref：宽向量参数按引用传——GPR 槽位是数据指针，
-                        // 从 [ptr] load 到向量寄存器（VMOVAPS_RM/ZMM_MEM）。
+                        // 从 [ptr] load 到向量寄存器（roles = wide_vec_load_32/64）。
                         #byref_stmt_use
                     } else if __rm.param_is_float.get(__i) == Some(&true) {
                         #fpr_stmt_use

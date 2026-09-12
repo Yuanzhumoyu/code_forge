@@ -307,6 +307,11 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 角色缺失 → 明确的 `Unsupported("<角色> 未声明")`，不再静默去查一个别的 ISA 的
 指令名（v14 靠 `unwrap_or_else(|| "MOV_RM8_R64")` 兜底，共 16 处 x86 硬编码）。
 
+宽向量 by-ref/sret 的 load/store 由 **ISA 自行选定变体**：把角色打在你想要的那条
+指令上即可（x86 打在非对齐 `VMOVUPS_RM` / `VMOVUPS_ZMM_MEM` / `VMOVUPS_MR` /
+`VMOVUPS_ZMM_MR` 上）——生成器只认角色，**不按指令名探测、也不做"非对齐优先/对齐
+兜底"的隐式回退**（那样等于把某个 ISA 的指令名约定写进通用生成器）。
+
 **`global_reloc`**（枚举）：`abs8`（x86 MOVABS_GLOBAL：imm 槽 <0 编码 GlobalId
 → ABS8 `"G{id}"`）、`pcrel_hi`/`pcrel_lo`（riscv AUIPC/ADDI 的 PC-relative hi20/
 lo12）。生成器按此字段生成 encoder reloc arm，替代按指令名特判。
