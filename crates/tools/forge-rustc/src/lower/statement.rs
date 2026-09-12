@@ -194,24 +194,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     } else {
                                         self.builder.iconst(niche_value as i64, TypeId::I32)
                                     };
-                                    // tag 位置（通常 offset 0；通用按 tag_field 偏移）。
-                                    // WA-28：ScalarPair niche（如 Option<(usize,&i32)> 的
-                                    // tag 是指针 &i32，在 payload 第 2 标量 offset 8）——
-                                    // fields().offset(tag_field) 对重排/聚合 payload 给
-                                    // 错偏移（写 offset 0 而判别读 b_offset=8，不一致 →
-                                    // None 后 &i32 残留旧值 → main 误判 Some 解引用）。
-                                    let tag_off = match &layout.layout.backend_repr {
-                                        rustc_abi::BackendRepr::ScalarPair {
-                                            b, b_offset, ..
-                                        } => {
-                                            let is_ptr = matches!(
-                                                b.primitive(),
-                                                rustc_abi::Primitive::Pointer(_)
-                                            );
-                                            if is_ptr { b_offset.bytes() as i64 } else { 0 }
-                                        }
-                                        _ => 0,
-                                    };
+                                    // tag 位置：**按 rustc 布局派生**（WA-44）——
+                                    // `niche_tag_offset` 统一处理 ScalarPair 的标量
+                                    // 偏移与聚合 payload 的 tag_field 偏移；旧实现
+                                    // 恒给 offset 0（niche 在 offset 16 的 24 字节
+                                    // 枚举被判读到字段 0 → Some 误判 None）。
+                                    let tag_off = self.niche_tag_offset(&layout)?;
                                     if tag_off == 0 {
                                         self.builder.store(nv, base);
                                     } else {

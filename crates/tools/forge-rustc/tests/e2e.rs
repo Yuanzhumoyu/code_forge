@@ -1278,6 +1278,36 @@ const CASES: &[Case] = &[
         phase: "D intrinsics",
         reason: "",
     },
+    // ── WA-44：niche 落在聚合 payload **非 0 偏移** ──
+    // 24 字节 payload（Memory repr）的 niche 在第 3 个字段（offset 16）；旧实现
+    // 读写判别一律用 offset 0 ⇒ 判别读到字段 0 的 `0` ⇒ `Some` 被误判为 `None`。
+    Case {
+        name: "niche_offset_some_zero_first",
+        body: "let o: Option<(usize, usize, core::ptr::NonNull<u8>)> = \
+               Some((0, 2, core::ptr::NonNull::dangling())); \
+               match o { Some((a, b, _)) => (a + b + 10) as i32, None => 99 }",
+        expected: 12, // Some → 0 + 2 + 10；旧行为读 offset 0 见 0 → 误判 None → 99
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "WA-44 niche",
+        reason: "niche 偏移一般化（tag_field 派生）的守卫用例",
+    },
+    Case {
+        name: "niche_offset_none_roundtrip",
+        body: "let o: Option<(usize, usize, core::ptr::NonNull<u8>)> = None; \
+               match o { Some((a, b, _)) => (a + b + 10) as i32, None => 99 }",
+        expected: 99, // None 仍必须是 None（写入偏移修正后不能把 niche 写到字段 0）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        known_failure: false,
+        phase: "WA-44 niche",
+        reason: "niche 偏移一般化（tag_field 派生）的守卫用例（None 侧）",
+    },
     // ── Range 迭代（WA-20）──
     Case {
         name: "range_next_once",

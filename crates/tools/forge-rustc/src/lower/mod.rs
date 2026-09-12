@@ -975,6 +975,73 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             .unwrap_or(0)
         }
     }
+    /// niche 枚举 tag 字段在枚举内的**字节偏移**（WA-44）。
+    ///
+    /// 旧实现只认「`ScalarPair` 且第二标量是指针」→ `b_offset`，其余一律 0；
+    /// 于是 niche 落在聚合 payload **非 0 偏移**的枚举（如 24 字节 `Memory` repr、
+    /// niche = 第 3 个字段 offset 16）读写都在 offset 0：判别读到字段 0 的值
+    /// → 该值为 0 时把 `Some` 误判成 `None`（e2e `niche_offset_some_zero_first`
+    /// 修复前 exit=99、期望 12）。
+    ///
+    /// 现按 rustc 自己的布局信息派生（保守：只在旧实现给 0 的分支上改进）：
+    ///
+    /// 1. `ScalarPair { a, b, b_offset }`——`a` 按定义在 offset 0，故 tag 与 `b`
+    ///    同类（primitive 相同）就用 `b_offset`（x86 `Option<(usize,&i32)>` 的
+    ///    `&i32` → 8，与 WA-26/WA-28 结论一致）；
+    /// 2. 其余形态——`Variants::Multiple { tag_field, .. }` 且字段存在 →
+    ///    `fields().offset(tag_field)`（rustc_abi 文档：Niche 编码的 niche 位于
+    ///    该枚举的 `tag_field` 字段）；
+    /// 3. 兜底 0（`Scalar` 单标量等历史行为不变）。
+    ///
+    /// fail-closed：`偏移 + tag 宽度 > 枚举尺寸` → 编译错误（绝不越界写）。
+    pub(crate) fn niche_tag_offset(
+        &self,
+        layout: &rustc_middle::ty::layout::TyAndLayout<'tcx>,
+    ) -> Result<i64, ForgeError> {
+        let rustc_abi::Variants::Multiple {
+            tag,
+            tag_field,
+            tag_encoding: rustc_abi::TagEncoding::Niche { .. },
+            ..
+        } = layout.layout.variants()
+        else {
+            return Ok(0);
+        };
+        let prim = tag.primitive();
+        let tag_size = prim.size(&self.tcx).bytes() as i64;
+        let off = match &layout.layout.backend_repr {
+            // ScalarPair：**保持 WA-26/WA-28/vl3 的经验判据**——只有 `b` 是
+            // 指针类时才取 `b_offset`（`Option<(usize,&i32)>` 的 &i32 在 8），
+            // 其余（b 非指针的 niche，如 grow 链 `Result<_, TryReserveError>`）
+            // 一律 0。**勿改成「tag 与 b 同类就用 b_offset」**：2026-09-12 实测
+            // 那样会让 grow 链三个用例（vec_push / vec_iter_enumerate /
+            // string_concat_len）走进 `unreachable_unchecked` → `ud2`
+            //（exit=0xC000001D）；本项只补下方「聚合 payload」分支。
+            rustc_abi::BackendRepr::ScalarPair { b, b_offset, .. } => {
+                if matches!(b.primitive(), rustc_abi::Primitive::Pointer(_)) {
+                    b_offset.bytes() as i64
+                } else {
+                    0
+                }
+            }
+            _ => {
+                let fields = layout.layout.fields();
+                if tag_field.index() < fields.count() {
+                    fields.offset(tag_field.index()).bytes() as i64
+                } else {
+                    0
+                }
+            }
+        };
+        let size = layout.layout.size().bytes() as i64;
+        if off + tag_size > size {
+            return Err(ForgeError::Message(format!(
+                "niche tag 偏移越界：offset {off} + tag {tag_size}B > 枚举 {size}B"
+            )));
+        }
+        Ok(off)
+    }
+
     pub(crate) fn field_ty(&self, ty: Ty<'tcx>, idx: usize) -> Ty<'tcx> {
         match ty.kind() {
             ty::TyKind::Adt(def, substs) if def.is_struct() || def.is_union() => {

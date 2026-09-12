@@ -947,3 +947,65 @@ Test Linux·macOS·Windows / forge-rustc check / e2e / forge-tests / Docs / Benc
 ⇒ 任何机器可跑）断言「恰 4 条 EVEX 插入且 imm={0,1,2,3}」，`objdump -b binary` 实测
 解码为 `vinsertf32x4 zmm13, zmm13, xmm15, 0x0/1/2/3`、8 条 movabs 常量逐 lane 与源码
 f32 位型一致。运行级 lane15=16 仍由原 V512 用例在有 AVX-512F 的 runner 上守护。
+
+## 10. 剩余开放项修复记录（2026-09-12）
+
+本节记录 §9.7.1 结尾列出的三项残余 + 一项可见性改进的修复过程。**每项独立提交、独立过门**；
+共同门：`cargo fmt --all -- --check` / `cargo clippy --workspace --exclude forge-rustc
+--all-targets --all-features -- -D warnings` / `cargo test --workspace --exclude forge-rustc
+--exclude cargo-forge` / `cargo test -p forge-rustc --test e2e -- --test-threads=1`
+（要求 `[SUMMARY] stage_a passed=N/N known=[]`）/ 改 `.md` 后 `markdownlint-cli2` 0 error。
+
+### 10.1 W1：`stack_arg` 兜底名 → 角色 / 生成期 fail-closed（提交 `b675a80`）
+
+**问题**：`forge-dsl` 通用生成器里还剩三处「按 x86 指令名兜底」——`frame.rs` 与
+`lowering.rs` 的 `format_ident!("Mov64Rm")` / `("Mov64Mr")` + `mem/dest/src` 字段名，
+只在 ISA 未声明 `[abi].stack_arg_shadow` 时取值。与 `docs/reference/isa-dsl.md` 角色章
+「角色缺失 → 明确 Unsupported，不再静默去查一个别的 ISA 的指令名」相悖。
+
+**定位证据**：兜底今天是死代码（x86 声明了 shadow + 两个角色 → 走标签路径；riscv 走
+by-class 且其引用点被 `has_stack_arg` 生成期门控——由其生成测试二进制的字符串指纹佐证：
+含 `v12 move_args`/`v12 float args`/`by-ref vector arg load missing`，但**不含**
+`Mov64Rm`/`Mov64Mr` 与 `int/float/by-ref arg position out of range`）。但「by-position +
+shadow 缺角色」的 ISA 会生成引用不存在变体的代码（模糊的生成码编译错）。
+
+**改法**：按角色取指令（`inst_by_role(StackArgLoad/StackArgStore)` + `reg_mem_fids` 结构
+派生字段 + `info.vn` 变体名）；缺角色时 shadow 已声明 → **生成期**点名角色的错误，
+未声明 → `None`（不生成该分支 / 给出明确 Emit 错误）。生成器里不再出现任何字面指令名。
+
+**验证**：新增 DSL 守卫 `stack_arg_shadow_requires_role_tags`（夹具 = 真实
+`isa/x86_v12.toml` 字符串手术删 `roles` 行）：删 `stack_arg_load`/`stack_arg_store` 时由
+frame.rs 报 `…[abi].stack_arg_shadow 已声明，但本 ISA 缺 roles = ["…"] 的指令（不按指令名兜底）`；
+原样则全量 `generate()` 成功。回归：`forge-codegen` 0 failed、clippy/fmt 干净、
+e2e 8/8 + `passed=103/103 known=[]`（含 `five_args_stack`）。
+
+### 10.2 W2：niche tag 偏移一般化（WA-44）
+
+**问题**：`statement.rs`（写 niche）与 `rvalue.rs`（读判别）共用同一套两分支启发式——
+`ScalarPair` 且 `b` 是指针 → `b_offset`，**其余一律 0**。于是 niche 落在聚合 payload
+非 0 偏移的枚举读写都在 offset 0 ⇒ 判别读到字段 0 的值；该值为 0 时 `Some` 被误判 `None`。
+
+**先立门再修**：新增 e2e `niche_offset_some_zero_first`（`Option<(usize, usize, NonNull<u8>)>`
+= 24 字节、niche 在第 3 字段 offset 16，`Some((0, 2, dangling))` 期望 12）——**修复前实测
+exit=99** ✓ 复现；`niche_offset_none_roundtrip`（None → 99）作对侧守卫。
+
+**改法（范围收窄）**：新增唯一助手 `LowerCtxt::niche_tag_offset`（两侧共用）：
+①`ScalarPair` 分支**逐字保留** WA-26/WA-28/vl3 的经验判据；②**只新增**「非 ScalarPair」
+分支 → `Variants::Multiple { tag_field, .. }` + `fields().offset(tag_field)`
+（rustc_abi 文档：Niche 的 niche 位于该枚举的 `tag_field` 字段）；③其余 0；另加
+fail-closed 尺寸守卫。
+
+**范围教训（本次最有价值的一条）**：第一版把 `ScalarPair` 分支"一般化"为
+「tag 与 `b` 同类（primitive 相同）就用 `b_offset`」——grow 链三例
+（`vec_push`/`vec_iter_enumerate`/`string_concat_len`）立刻 `exit=-1073741795`
+（`0xC000001D`）；gdb 定位到 `rip` 处即 **`ud2`（`0F 0B`）**，即误判判别值后走进了
+`unreachable_unchecked` 通路。⇒ 这些枚举的 niche 判据**不能按 tag 标量类推**，
+保留原判据、只补聚合分支。
+
+**验证**：两例 e2e 修复后 12/99；全量 e2e `passed=105/105 known=[]`；
+hammer（§9.2）5 轮 `105/105 KNOWN=[]` + parallel PASS + 5 例各 ×10 全过；clippy/fmt 干净。
+
+### 10.3 W3 / W4（本记录随实现补写）
+
+- **W3**：V256/V512 向量 Load/Store（ISA 规则 + 放宽 `compiler.rs` 的 fail-closed 门 + 测试）；
+- **W4**：AVX-512 门控用例的"是否真跑过"可见化（marker 文件 + ci.yml `if: always()` 步骤）。
