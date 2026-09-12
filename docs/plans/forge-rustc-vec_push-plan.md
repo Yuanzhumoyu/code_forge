@@ -1065,9 +1065,15 @@ fail-closed 拒绝（注释归因"ISA 类模型缺 YMM(32B) 槽类"）。真正�
   `AVX512-HW=0|1`（生成级 `test_v512_slot_load_store_requires_avx512` 的能力检测结果）、
   `V512-GEN`（两条 env 放开的生成级用例——证明 EVEX 生成路径当轮真跑过）；
 - CI `Test (Windows)` job：cargo test 步骤加 `FORGE_JIT_EVENTS` env，并加 `if: always()` 步骤
-  打印（去重排序），**同时写入 `$GITHUB_STEP_SUMMARY`**——job 日志端点需 admin 权限
-  （公共仓库亦 403，见 §10.5），而 step summary 会进入 check-run 的 `output.summary`，
-  可经 API 读到，是本仓库核对"当轮到底跑了什么"的通道。
+  打印（去重排序）。
+- **取证通道（实测修正）**：本仓库无法读 job 日志——`/actions/jobs/<id>/logs` 对公共仓库也返回
+  403（`Must have admin rights`）。`$GITHUB_STEP_SUMMARY` 只是 UI 的 job summary，**不会**出现在
+  check-run 的 `output.summary`（#51 的诊断步骤成功且写入后，该字段仍为 `null`）⇒ 不作为通道。
+  真正可读的是 **workflow 命令 `::error::` 产生的 annotations**（`/check-runs/<id>/annotations`
+  无需 admin，实测可读）：故新增 `if: always()` 步骤 `Surface failing test names as annotations`——
+  从 `target/tmp/windows-test.log`（cargo test 已用 `Tee-Object` 落盘）提取
+  `test … FAILED` / `thread … panicked` / `test result: FAILED` 行并以 `::error::` 重发。
+  同步骤也让 `Test (Windows)` 的失败**用例名**从此可自查（此前只能看到 "exit code 1"）。
 
 **本机实证**（2026-09-12，`cargo test -p forge-codegen --lib --all-features`，本机无 AVX-512F）：
 
@@ -1079,8 +1085,8 @@ AVX512-SKIP test_jit_v512_byref_param
 ```
 
 ⇒ 生成级 EVEX 路径真跑、运行级按硬件 skip，且判定依据可见。有 AVX-512F 的 runner 上应出现
-`AVX512-HW=1` 与 `AVX512-RUN`——**待 step summary 版落地后的 CI run 核对并回填**
-（未核对前不声称"CI 上运行级 V512 已被真跑覆盖"）。
+`AVX512-HW=1` 与 `AVX512-RUN`——**待该版本 CI run 核对后回填**（未核对前不声称"CI 上运行级
+V512 已被真跑覆盖"）。
 
 **#50 的教训（诊断步骤自身红了）**：首版 `shell: pwsh` 步骤用了**行尾 `|` 续行**的跨行管道，
 在 CI 上以退出码 1 失败（`Test (Windows)` 因此整 job 红；被测的 `cargo test` 步骤本身成功）。

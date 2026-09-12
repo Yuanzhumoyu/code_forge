@@ -97,12 +97,19 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
-      - run: cargo test --workspace --exclude forge-rustc
+      - name: Run workspace tests (Windows)
+        shell: pwsh
         env:
           # AVX-512 门控用例（V512 运行级/生成级）**是否真跑过**：libtest 会吞掉
           # 通过测试的输出，skip 与真跑过在日志里都是 `... ok`——落盘事件 + 下方
           # if: always() 打印步骤是唯一判据（同 e2e 的 FORGE_E2E_EVENTS 模式）。
           FORGE_JIT_EVENTS: "${{ github.workspace }}/target/tmp/jit_events.txt"
+        run: |
+          New-Item -ItemType Directory -Force -Path target/tmp | Out-Null
+          cargo test --workspace --exclude forge-rustc 2>&1 | Tee-Object -FilePath target/tmp/windows-test.log
+          $code = $LASTEXITCODE
+          # Tee-Object 成功会让步骤误判为成功——必须显式回传 cargo 的退出码。
+          if ($code -ne 0) { exit $code }
       - name: Show AVX-512 gated test events (always)
         if: always()
         shell: pwsh
@@ -113,10 +120,23 @@ jobs:
           if ($lines.Count -eq 0) { $lines = @("FORGE_JIT_EVENTS: 无事件文件（未落盘或为空）") }
           Write-Output "--- FORGE_JIT_EVENTS ($p) ---"
           $lines | Sort-Object -Unique | Write-Output
-          # 同时写入 step summary：job 日志需 admin 权限（公共仓库亦 403），
-          # check-run 的 output.summary 可经 API 读到（本仓库核对该事件的通道）。
+          # 同时写入 step summary（若 runner 提供该文件）。
           $md = @("### AVX-512 门控用例事件（FORGE_JIT_EVENTS）", "", '```text') + $lines + @('```')
           if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $md }
+      - name: Surface failing test names as annotations (always)
+        if: always()
+        shell: pwsh
+        run: |
+          # job 日志需 admin 权限（公共仓库的 job log 端点亦 403），而 workflow
+          # 命令 `::error::` 落进 check-run 的 annotations——可经 API 读到失败
+          # 用例名（这是本仓库唯一能自查 CI 测试失败的通道）。
+          $log = Join-Path $env:GITHUB_WORKSPACE "target/tmp/windows-test.log"
+          if (-not (Test-Path $log)) { Write-Output "无测试日志（$log）"; exit 0 }
+          $hits = Select-String -Path $log -Pattern '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----'
+          if ($hits.Count -eq 0) { Write-Output "无失败行"; exit 0 }
+          Write-Output "--- failing lines ---"
+          $hits | ForEach-Object { $_.Line } | Select-Object -Unique
+          $hits | ForEach-Object { Write-Output ("::error::" + $_.Line) }
 
   # Tests on macOS
   test-macos:
