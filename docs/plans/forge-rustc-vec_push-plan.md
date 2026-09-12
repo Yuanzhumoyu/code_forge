@@ -1099,6 +1099,10 @@ V512 已被真跑覆盖"）。
 
 | run | commit | 内容 | 结果 |
 | --- | --- | --- | --- |
+| 34703244549（#56） | `49323a1` | §10.5 补"#51 候选已排除"（docs） | **11 job 全绿**（含 **Test (Windows)**）；自 #52 起该 job 已连续 #52/#56 绿 |
+| （#55） | `e3a055c` | `docs/forge-ir/backlog.md` 复核（docs） | 未逐条核对（docs-only，其后 #56 同树全绿） |
+| 34702946018（#54） | `3a76c99` | 残留清单核查 + 矩阵跳过/失败可见化（代码） | **11 job 全绿**（逐 job 核对：Format / Clippy / forge-rustc check / forge-tests / Docs / Test (Windows) / Benchmarks / e2e / Test (macOS) / Test (Linux) / Coverage） |
+| 34684847549（#53） | `fb22296` | §10.5 记录（docs） | **11 job 全绿** |
 | 34683492547（#52） | `ecd9646` | Windows job 失败用例名转 annotations + 测试输出落盘 | **11 job 全绿**（含 **Test (Windows)**） |
 | 34682470331（#51） | `c214390` | 诊断步骤改版本无关写法 | ❌ 仅 **Test (Windows)** 红，且**这次是 `cargo test --workspace --exclude forge-rustc` 步骤本身失败**（诊断步骤绿）。代码与全绿的 #49 完全相同 ⇒ **抖动**；失败用例名未知（当时还没有 annotations 通道），已由 #52 的可见化机制兜住 |
 | 34682141756（#50） | `3756d2c` | §10.4/§10.5 记录 + 事件写 step summary | ❌ 仅 **Test (Windows)** 红——**失败点是新增诊断步骤自身**（见 §10.4「#50 的教训」）；被测的 `cargo test --workspace --exclude forge-rustc` 步骤成功 |
