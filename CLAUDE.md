@@ -275,12 +275,16 @@ let name = node.get_text("name")?;
 - `forge-rustc` tests require nightly Rust with `rustc-dev` component
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +
-  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 193 passed /
-  3 skipped、riscv64_v12 131 passed / 65 skipped，0 failed**：整数/浮点/调用/
+  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 195 passed /
+  3 skipped**（本机 2026-09-12 实测 `cargo test -p forge-tests --lib
+  jit_matrix_x86_v12`；旧记录的 193 已过时）、**riscv64_v12 131 passed /
+  65 skipped，0 failed**（QEMU 通道，未在本机复测）：整数/浮点/调用/
   向量/饱和/指针转换/undef/poison/GlobalAddr/原子（AtomicRmw/Cmpxchg）/GEP/Nop/
   混宽整数算术与比较；V256 用例在无 AVX 机器
-  自动 Skip。`CaseKind::{I32/I64/F64/Bool/Block/Args/F64Args/Module/
-  CompileOnly}`；`ops` 未覆盖 → Skip（不失败，实现后自动转绿）。
+  自动 Skip（**哪些用例 Skip 及原因**经 `FORGE_JIT_EVENTS` 的
+  `MATRIX-SKIP`/`MATRIX-FAIL`/`MATRIX-SUMMARY` 事件可核对——libtest 吞掉通过
+  测试的输出，否则 CI 上不可见）。`CaseKind::{I32/I64/F64/Bool/Block/Args/
+  F64Args/Module/CompileOnly}`；`ops` 未覆盖 → Skip（不失败，实现后自动转绿）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
@@ -311,7 +315,7 @@ let name = node.get_text("name")?;
 | 元素 | f32/f64/i32/i64 | vadd/vsub/vneg 全元素（f32→addps、f64→addpd、i32→paddd、i64→paddq/psubq；V256 整数走 AVX2 vpaddd/vpsubd/vpaddq/vpsubq）；vmul 浮点 + i32（PMULLD/VPMULLD）；i64 vmul/vdiv 与整数 vdiv 无 SIMD 指令 → 编译期 Unsupported；vabs 用按位掩码（andps 0x7FFFFFFF×4）对 f64/i64 亦正确 |
 | 运算 | vconst/vconst_array/vadd/vsub/vmul/vdiv/vneg/vabs/vbitcast/vextract（全 lane）/vinsert/vbroadcast/vsplit/vconcat/shuffle_vector | `vconst<T: Vector>(Vec<T>)` 泛型值语义（动态数组，ty 由 T+长度推导）；`vconst_array([T; N])` 静态数组；`vconst_bytes(Vec<u8>, ty)` 底层字节 API（元素 LE 字节序，用户自定义 `Vector::lane_bytes` 即可接入）；shuffle_vector：V128 单 shufps、V256 拆半双 shufps（mask 组内语义）；vbroadcast 64 位元素用 vbroadcastsd。**vextract 的 V256 规则按 `rs1_width`（向量操作数）判定**——结果类型是标量，用 `rd` 会永不命中（2026-09-10 修复：V256 lane≥4 曾取到低半区值，`test_jit_v256_byref_high_lane` 守护） |
 | 常量 | 扁平字节池（`Vec<u8>` + offset 表 + 每段端序 `vec_endian`） | `vconst<T: Vector>(Vec<T>)` 泛型值语义（ty 由 T+len 推导，默认 Little）、`vconst_array([T; N])` 静态数组、`vconst_bytes` 底层字节；**端序**：`Vector::lane_bytes(endian)`（Little→to_le、Big→to_be，u8..u128/f32/f64 全位宽，u128 16 字节不截断）、`vconst_with_endian`/`vconst_bytes_with_endian` 显式端序（大端框架数据）、`ConstantPool::get_vector_endian` 查询；DSL 按常量端序还原（LE→from_le、BE→from_be，32 位元素逐元素 BE 读）；**V512（64 字节）常量**按 4×128 位段各自装好后用 4 条 EVEX `VINSERTF32X4`（imm=0..3，覆盖全部 128 位 lane）拼成——占位符 `{vconst_lo_h2}`/`{vconst_hi_h2}`/`{vconst_lo_h3}`/`{vconst_hi_h3}`，生成级测试 `test_v512_vconst_generates_four_evex_inserts`（无需 AVX-512 硬件）守护，见 WORKAROUNDS WA-43；rodata 数据段加载为长期优化 |
-| ABI | **≤16B（V64/V128）按值 XMM 全宽 + >16B（V256）by-ref/sret 全线支持**（2026-09 D3 补齐 VEC(16) 全宽） | Windows x64 无 YMM 参数寄存器——>8B 非标量按引用传指针（占 GPR 槽）、返回 >64 位走首参 RCX 隐藏 sret；≤16B 向量（VEC(16) 类）按值进 XMM{pos}（by-position 槽）：收参/实参/返回用**全宽 128 位 MOVAPS**（指令角色 `roles = ["vec_mov"]`（缺省 MOVAPS）——MOVSD/MOVSS 只移 8/4B 会静默截断高半，WA-37 D3 修复）。Load/Store 谓词加 `rd_vec`/`rs1_vec`（向量类型字节数）→ V128 走 MOVUPS_128（0F 10/11 无前缀 16 字节）、V64 走 movsd 8B。jit 12+ 测试绿（v128/v64 byval param/return、mixed、wide byref/sret、v512）；forge-rustc B3 门控已撤、simd_v128/v64/v256 e2e 全绿。**残余**：宽向量第 5+ GPR 槽显式 Unsupported（调用方 + 被调方 by-position/by-class 三处均 fail-closed）；CallIndirect 宽参/返回缺测试。IR 层 >16B 向量 Load/Store 已于 2026-09-12 支持（32B 恒可、>32B 需 AVX-512F，`rd_vec`/`rs1_vec` = 32/64 → `VMOVUPS_256_*`/`VMOVUPS_512_*` 的 **reg 基址**形式；ABI by-ref 仍走 MemRef 形式）。V512 被调方收参已按**参数 IR 字节数**分派 64B load（EVEX；生成级测试 `test_v512_byref_callee_load_is_64b` 守护，运行级 lane15 断言需 AVX-512F 硬件）。见 forge-rustc WORKAROUNDS.md WA-37 |
+| ABI | **≤16B（V64/V128）按值 XMM 全宽 + >16B（V256）by-ref/sret 全线支持**（2026-09 D3 补齐 VEC(16) 全宽） | Windows x64 无 YMM 参数寄存器——>8B 非标量按引用传指针（占 GPR 槽）、返回 >64 位走首参 RCX 隐藏 sret；≤16B 向量（VEC(16) 类）按值进 XMM{pos}（by-position 槽）：收参/实参/返回用**全宽 128 位 MOVAPS**（指令角色 `roles = ["vec_mov"]`（缺省 MOVAPS）——MOVSD/MOVSS 只移 8/4B 会静默截断高半，WA-37 D3 修复）。Load/Store 谓词加 `rd_vec`/`rs1_vec`（向量类型字节数）→ V128 走 MOVUPS_128（0F 10/11 无前缀 16 字节）、V64 走 movsd 8B。jit 12+ 测试绿（v128/v64 byval param/return、mixed、wide byref/sret、v512）；forge-rustc B3 门控已撤、simd_v128/v64/v256 e2e 全绿。**残余**：宽向量第 5+ GPR 槽显式 Unsupported（调用方 + 被调方 by-position/by-class 三处均 fail-closed；设计取舍，建议不做）。CallIndirect 宽参/返回**已测**（`test_jit_call_indirect_wide_vector_byref` / `test_jit_call_indirect_wide_vector_sret_return`，2026-09-12 逐条核查 WA-37 残留清单时确认）。IR 层 >16B 向量 Load/Store 已于 2026-09-12 支持（32B 恒可、>32B 需 AVX-512F，`rd_vec`/`rs1_vec` = 32/64 → `VMOVUPS_256_*`/`VMOVUPS_512_*` 的 **reg 基址**形式；ABI by-ref 仍走 MemRef 形式）。V512 被调方收参已按**参数 IR 字节数**分派 64B load（EVEX；生成级测试 `test_v512_byref_callee_load_is_64b` 守护，运行级 lane15 断言需 AVX-512F 硬件）。见 forge-rustc WORKAROUNDS.md WA-37 |
 | 编码 | SSE（0F/0F38 前缀族）+ AVX（VEX C4 语义键）+ AVX2（VEX 族） | v12 生成器内联实现 ModRM/REX/VEX 发射（`v12/codegen/mod.rs` 的 VlenCtx）；VEX 三操作数 r/m=src2、vvvv=~src1；无源指令 vvvv 编码 1111；vextractf128 的 dest 在 r/m、src 在 reg；vzeroupper 无需（Windows x64 ABI 允许破坏 YMM 高半） |
 
 v12 结构化谓词：属性表 = `v12/pred.rs` 的 `PRED_ATTRS`（`rd`/`rs1_width`/

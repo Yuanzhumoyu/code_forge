@@ -35,6 +35,7 @@ fn jit_matrix_x86_v12() {
         exec: None, // 本机 ExecutableMemory 快路径
     };
     let results = crate::jit_matrix::run_all(&runner);
+    crate::jit_matrix::emit_events("x86_v12", &results);
     let mut pass = 0;
     let mut skip = 0;
     let mut fail: Vec<(String, String)> = Vec::new();

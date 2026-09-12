@@ -1123,3 +1123,31 @@ env 带进真执行。Windows runner 是消费级 Intel（无 AVX-512F）⇒ EVE
 **未取到 job 日志**：`/actions/jobs/<id>/logs` 对公共仓库亦返回 403
 （`Must have admin rights to Repository`），故本条为 job 级证据 + 本机复现的推断。
 `ed24119` 改为按**硬件**判 skip（`avx512_hardware_available()`）后，#49 同一 job 转绿。
+
+### 10.6 残留清单核查 + 矩阵跳过可见化（2026-09-12）
+
+**背景**：§10.1–§10.5 落地后，`WORKAROUNDS.md` / `CLAUDE.md` 里仍有几条"残余"是**本轮之前**
+写的，可能已被后续提交关掉——文档滞后于代码是本仓库反复出现的教训。逐条对**代码/测试**核查：
+
+| 出处 | 原残余 | 核查结论（依据） |
+| --- | --- | --- |
+| WA-37 ③ | V512 测试仅断言 lane0（盲区） | **已关闭**——`test_jit_v512_byref_param` 断言 **lane15**（D5 缺陷正是"被调方只 load 32B"，lane0 对它是盲区） |
+| WA-37 ⑤ | CallIndirect 宽参/返回缺测试 | **已关闭**——D6①/② 的 `test_jit_call_indirect_wide_vector_byref` 与 `test_jit_call_indirect_wide_vector_sret_return` 已在 `runtime/jit.rs` |
+| WA-37 ④ | 宽向量第 5+ GPR 槽显式 Unsupported | **保留**（设计取舍，两侧 fail-closed，建议不做） |
+| WA-42 | niche 非 0 偏移时 `tag_off` 走 `_ => 0` 兜底 | **已关闭**——WA-44（§10.2） |
+| WA-43 | V512 的 Load/Store 仍 fail-closed | **已关闭**——W3（§10.3）/WA-45 |
+
+**矩阵跳过/失败可见化**（§10.4 同一问题的另一个面）：libtest 吞掉通过测试输出，于是
+"跳过了哪些用例、为什么"在 CI 上不可见。`jit_matrix::emit_events` 现把结果写成
+`FORGE_JIT_EVENTS` 事件 `MATRIX-SKIP` / `MATRIX-FAIL` / `MATRIX-SUMMARY`（x86 与 riscv 两个
+runner 都接）。本机实测（2026-09-12，`cargo test -p forge-tests --lib jit_matrix_x86_v12`）：
+
+```text
+MATRIX-SKIP x86_v12 sdiv_var_module (capability)
+MATRIX-SKIP x86_v12 call_recursive_fib (capability)
+MATRIX-SKIP x86_v12 call_recursive_fib_slot (capability)
+MATRIX-SUMMARY x86_v12 pass=195 skip=3 fail=0
+```
+
+⇒ 3 条 Skip 全是"所需 op 不在能力集"的能力性跳过（不是硬件/环境）；顺带纠正 `CLAUDE.md` 里
+写死的旧值 193 → 195（含采集日期与命令）。

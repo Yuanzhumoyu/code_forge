@@ -66,6 +66,7 @@ fn jit_matrix_riscv64_v12() {
         eprintln!("[riscv64] QEMU 未找到——矩阵用例全部 Skip（编译验证）");
         crate::jit_matrix::run_all_filtered(&runner, |_| false)
     };
+    crate::jit_matrix::emit_events("riscv64_v12", &results);
     let mut pass = 0;
     let mut skip = 0;
     let mut fail: Vec<(String, String)> = Vec::new();

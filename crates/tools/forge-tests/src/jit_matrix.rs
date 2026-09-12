@@ -100,6 +100,32 @@ pub enum Outcome {
     Fail(String),
 }
 
+/// 把矩阵结果落成 `FORGE_JIT_EVENTS` 事件（`code_forge::backend::jit_event`）：
+/// 摘要一行 + 每条 Skip/Fail 一行（含原因）。libtest 会吞掉**通过**测试的输出，
+/// 于是"跳过了哪些用例、为什么跳过"在 CI 日志里完全不可见（与 AVX-512 门控
+/// 用例同类问题）——事件是唯一可核对的通道。
+pub fn emit_events(isa: &str, results: &[(String, Outcome)]) {
+    let (mut pass, mut skip) = (0usize, 0usize);
+    let mut fails: Vec<String> = Vec::new();
+    for (name, outcome) in results {
+        match outcome {
+            Outcome::Pass => pass += 1,
+            Outcome::Skip(why) => {
+                skip += 1;
+                code_forge::backend::jit_event("MATRIX-SKIP", &format!("{isa} {name} ({why})"));
+            }
+            Outcome::Fail(e) => fails.push(format!("{name}: {e}")),
+        }
+    }
+    for f in &fails {
+        code_forge::backend::jit_event("MATRIX-FAIL", &format!("{isa} {f}"));
+    }
+    code_forge::backend::jit_event(
+        "MATRIX-SUMMARY",
+        &format!("{isa} pass={pass} skip={skip} fail={}", fails.len()),
+    );
+}
+
 /// 执行单个用例（Result 内部实现；`?` 传播执行/断言错误）。
 fn run_case_impl<M: TargetMachine + Clone>(r: &Runner<M>, c: &Case) -> Result<i64, String> {
     match &c.kind {
