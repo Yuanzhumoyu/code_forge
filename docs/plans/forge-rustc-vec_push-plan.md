@@ -1065,7 +1065,9 @@ fail-closed 拒绝（注释归因"ISA 类模型缺 YMM(32B) 槽类"）。真正�
   `AVX512-HW=0|1`（生成级 `test_v512_slot_load_store_requires_avx512` 的能力检测结果）、
   `V512-GEN`（两条 env 放开的生成级用例——证明 EVEX 生成路径当轮真跑过）；
 - CI `Test (Windows)` job：cargo test 步骤加 `FORGE_JIT_EVENTS` env，并加 `if: always()` 步骤
-  打印（去重排序）。
+  打印（去重排序），**同时写入 `$GITHUB_STEP_SUMMARY`**——job 日志端点需 admin 权限
+  （公共仓库亦 403，见 §10.5），而 step summary 会进入 check-run 的 `output.summary`，
+  可经 API 读到，是本仓库核对"当轮到底跑了什么"的通道。
 
 **本机实证**（2026-09-12，`cargo test -p forge-codegen --lib --all-features`，本机无 AVX-512F）：
 
@@ -1077,4 +1079,25 @@ AVX512-SKIP test_jit_v512_byref_param
 ```
 
 ⇒ 生成级 EVEX 路径真跑、运行级按硬件 skip，且判定依据可见。有 AVX-512F 的 runner 上应出现
-`AVX512-HW=1` 与 `AVX512-RUN`——**待含本节改动的 CI run 落地后核对并回填**（未核对前不声称已覆盖）。
+`AVX512-HW=1` 与 `AVX512-RUN`——**待 step summary 版落地后的 CI run 核对并回填**
+（未核对前不声称"CI 上运行级 V512 已被真跑覆盖"）。
+
+### 10.5 提交与 CI 证据（2026-09-12）
+
+| run | commit | 内容 | 结果 |
+| --- | --- | --- | --- |
+| 34681840003（#49） | `ed24119` | W3 + W4（宽向量 Load/Store + 门控可见化） | **11 job 全绿**（Format / Clippy / forge-rustc check / forge-tests / Docs / **Test (Windows)** / Benchmarks / e2e / Test (macOS) / Test (Linux) / Coverage） |
+| 34680068995（#48） | `ca55a75` | W2（WA-44：niche tag 偏移按 `tag_field`） | **11 job 全绿** |
+| 34677125033（#45） | `3ab1bfc` | `frame.rs` by-ref 收参角色化（W1 前序提交） | ❌ 仅 **Test (Windows)** 红 |
+
+**#45 的 `Test (Windows)` 红与今日修的 env 泄漏同源（推断，非日志直证）**：该 job 跑
+`cargo test --workspace --exclude forge-rustc`，其 `forge-codegen --lib` 二进制里同时存在
+①设 `FORGE_ASSUME_AVX512` 的生成级 V512 用例（D5/Vconst）与 ②要**执行** EVEX 的运行级
+`test_jit_v512_byref_param`；当时②用 `avx512_available()`（读 env）判 skip ⇒ 可能被①留下的
+env 带进真执行。Windows runner 是消费级 Intel（无 AVX-512F）⇒ EVEX 触发
+`STATUS_ILLEGAL_INSTRUCTION`。佐证：**本机以同一命令稳定复现同一崩溃**
+（`cargo test -p forge-codegen --lib --all-features` → `0xc000001d` @ `test_jit_v512_byref_param`；
+见 §10.3），且 #48/#49 同代码全绿而 #45 红，符合"并行测试 env 时序"的 race 特征。
+**未取到 job 日志**：`/actions/jobs/<id>/logs` 对公共仓库亦返回 403
+（`Must have admin rights to Repository`），故本条为 job 级证据 + 本机复现的推断。
+`ed24119` 改为按**硬件**判 skip（`avx512_hardware_available()`）后，#49 同一 job 转绿。
