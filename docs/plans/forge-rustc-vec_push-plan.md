@@ -434,11 +434,11 @@ fail-closed 收口：
 
 ## 9. 修复方案（5 个 FLAKY 用例转正 + sret live range）
 
-**现状定级**：本计划的实现工作（Slice 落盘 / PtrMetadata / Unevaluated promoted /
-`spilled_int_receive` / ScalarPair 双返回 / 栈参数 / `frame_padding` / 原生 Select）
-**均已落地**；剩余两件事：**一个已定性的偶发失败**（5 例 = 宿主侧运行期瞬态超时，
-见 §9.2）与**一个未复现的假设**（sret live range）。因此本方案的核心不是"再改代码"，
-而是**先取证再判定**（本轮已完成取证与判定，转正仍待 CI 实证）。
+**现状定级（2026-09-12 收官）**：本计划的实现工作（Slice 落盘 / PtrMetadata / Unevaluated promoted /
+`spilled_int_receive` / ScalarPair 双返回 / 栈参数 / `frame_padding` / 原生 Select / 宽向量常量）
+**均已落地**；§9 的两件悬案也已终结——5 例的机型相关 AV **根因 = WA-42**（niche 枚举 tag
+写入宽度），修复后**全部转正**（`FLAKY` 清空 + `known_failure=false`），另一个"未复现的假设
+（sret live range）"**未触发即作废**（§9.4）。收尾 CI（run 93934196718）**11 个 job 全绿**。
 
 ### 9.1 步骤 1（前置，需要 CI 侧证据）：失败产物与 trace 对照
 
@@ -587,8 +587,17 @@ stage_a + parallel 全绿且该用例 exit 正确"，且 CI 侧不再出现超�
   环境性记录——本轮只拿到"CI 单轮全绿 + 取证链路生效"（run #21），样本不足以把
   "本机 8 路负载 ≈0.3%、宿主侧瞬态超时"外推成 CI 结论；待续若干轮 CI 全绿、
   或 CI 出现一次 `RETRY` 样例（新链路会直接留证）之后再写。
+  **→ 2026-09-12 改口径**：AV 那半边已定性为**真缺陷（WA-42）**而非环境性（`.text`
+  相同、差的是栈残留），故 README 支持矩阵**不再**为它留"环境性"记录；只有"宿主侧
+  瞬态超时"是环境性的，已由 harness 的同产物复跑 + `RETRY` 留痕吸收（§9.2）。
 
 ### 9.4 步骤 4（若判定为编译行为差异）
+
+**→ 2026-09-12：本步骤未触发、前提作废。** §9.1 第 2 条的判据没有走到"字节不同"分支
+——CI 两台 runner 与本机产物 `.text` **逐字节相同**（`a91b9eef…63fb` / `5f421f08…c732`）；
+根因是 **WA-42**（niche 枚举 `None` 的 tag 只写 4 字节 → 高 4 字节残留栈垃圾）——同一份
+机器码在不同机器上因**栈残留内容**不同而表现不同（§9.7）。下列两条假设因此都未被证实，
+保留作历史参考。
 
 按 §8.1 的关联法定位后，优先怀疑并验证两条线（本计划历史结论的延续）：
 
@@ -905,6 +914,21 @@ Model 1 Stepping 1 / 4 cores** —— 正是修复前 20/20 稳定 AV 的同一�
 - 本机复核：`e2e_stage_a_scalar_cases` `PASS box_value/vec_push/vec_string/
   vec_from_slice/vec_iter_enumerate`（exit=42/2/2/3/80）+ `passed: 103/103`，
   全 8 个测试 `--test-threads=1` 全绿；hammer（§9.2）stage_a 5 轮 103/103 + 各例 ×10 全过。
+
+**收官 run 93934196718（2026-09-12，转正后 + WA-43 后）：11 个 job 全绿**（Format / Clippy /
+Test Linux·macOS·Windows / forge-rustc check / e2e / forge-tests / Docs / Benchmarks / Coverage）：
+
+- e2e 这次落在**另一台机器**（`Intel64 Family 6 Model 173`，与 §9.7.1 的 `AMD64 Family 25
+  Model 1` 不同族）仍 `[SUMMARY] stage_a passed=103/103 known=[] unexpected=0` +
+  `vec_push 2x20` / `vec_iter_enumerate 80x20` + 8 tests 0 failed ⇒ 修复跨**两个 runner 族**成立；
+- `Test (Windows)`：`120 passed; 0 failed`，其中 `test_jit_v512_byref_param`（运行级 lane15，
+  需 AVX-512F）、`test_v512_vconst_generates_four_evex_inserts`（生成级，任意机器）、
+  `test_v512_byref_callee_load_is_64b` 均 `ok`；
+- 该 run 同时修掉了我自己引入的 Clippy 红（测试里未用变量，见 CI 同款命令已纳入本地自查）。
+  注：libtest 会捕获**通过**测试的输出来，所以从日志**无法区分**"V512 运行级用例真跑过"
+  还是"该 runner 无 AVX-512F 提前 return"（两者都打印 `ok`）——运行级实证取自
+  run 93927221004（同一用例在修复前于 AVX-512 runner 上因 `Unsupported` 失败 ⇒ 确未跳过）
+  与其后修复通过的同一用例；**永久门**是那条任意机器可跑的生成级测试。
 
 **未并入**：`e2e_parallel_pool_threads` 的用例名单仍不含 vec/alloc 与 V256 用例
 ——「par 编译偶发 timeout 挂起」形态从未定性（与本次 AV 无关），合并需先拿该形态的
