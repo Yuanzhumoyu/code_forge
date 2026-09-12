@@ -1082,10 +1082,18 @@ AVX512-SKIP test_jit_v512_byref_param
 `AVX512-HW=1` 与 `AVX512-RUN`——**待 step summary 版落地后的 CI run 核对并回填**
 （未核对前不声称"CI 上运行级 V512 已被真跑覆盖"）。
 
+**#50 的教训（诊断步骤自身红了）**：首版 `shell: pwsh` 步骤用了**行尾 `|` 续行**的跨行管道，
+在 CI 上以退出码 1 失败（`Test (Windows)` 因此整 job 红；被测的 `cargo test` 步骤本身成功）。
+本地以 Windows PowerShell 5.1 复现同类解析错误（`The string is missing the terminator`）——
+诊断脚本必须只用版本无关构造。已改为：全部单行语句、围栏字符串用**单引号** `'```text'`
+（双引号里的反引号是转义字符，`` `t `` = TAB）、`$env:GITHUB_STEP_SUMMARY` 空值守卫；
+本地对"有事件文件/无事件文件"两分支均 0 退出。
+
 ### 10.5 提交与 CI 证据（2026-09-12）
 
 | run | commit | 内容 | 结果 |
 | --- | --- | --- | --- |
+| 34682141756（#50） | `3756d2c` | §10.4/§10.5 记录 + 事件写 step summary | ❌ 仅 **Test (Windows)** 红——**失败点是新增诊断步骤自身**（见 §10.4「#50 的教训」）；被测的 `cargo test --workspace --exclude forge-rustc` 步骤成功 |
 | 34681840003（#49） | `ed24119` | W3 + W4（宽向量 Load/Store + 门控可见化） | **11 job 全绿**（Format / Clippy / forge-rustc check / forge-tests / Docs / **Test (Windows)** / Benchmarks / e2e / Test (macOS) / Test (Linux) / Coverage） |
 | 34680068995（#48） | `ca55a75` | W2（WA-44：niche tag 偏移按 `tag_field`） | **11 job 全绿** |
 | 34677125033（#45） | `3ab1bfc` | `frame.rs` by-ref 收参角色化（W1 前序提交） | ❌ 仅 **Test (Windows)** 红 |
