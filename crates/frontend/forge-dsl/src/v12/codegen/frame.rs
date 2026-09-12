@@ -638,88 +638,72 @@ fn gen_emit_pseudo(
                 .ok_or_else(|| {
                     format!("[{move_inst}] must have In(src)/Out|InOut(dest) reg operands")
                 })?;
-            // Windows x64 栈参数 load：按语义标签 `stack_arg_load` 收集
-            //（TOML 显式声明，不做按指令名探测——第三轮重构原则）。
-            // 生成期门控：shadow 已声明但标签缺失 → Unsupported。
+            // 栈参数收参指令：**按语义角色**取（`stack_arg_load` / `stack_arg_store`，
+            // 角色全 ISA 唯一、validate 保证）。缺角色 → `None`，由下面各调用点给出
+            // 生成期的明确错误——**不再用 x86 指令名（Mov64Rm/Mov64Mr + mem/dest/src）
+            // 兜底**（那样等于把某个 ISA 的命名约定写进通用生成器；见
+            // docs/reference/isa-dsl.md「角色缺失 → 明确 Unsupported，不再静默去查一个
+            // 别的 ISA 的指令名」）。
+            // 生成期门控：shadow 已声明但角色缺失 → 直接报错（不产错码）。
             let stack_shadow_ref: TokenStream =
                 match model.abi.as_ref().and_then(|a| a.stack_arg_shadow) {
                     Some(v) => quote! { Some(#v) },
                     None => quote! { None },
                 };
-            let stack_load_tagged =
-                crate::v12::codegen::lowering::insts_by_role(infos, Role::StackArgLoad);
-            let stack_store_tagged =
-                crate::v12::codegen::lowering::insts_by_role(infos, Role::StackArgStore);
-            let (int_stack_load, il_mem, il_reg) =
-                if model
-                    .abi
-                    .as_ref()
-                    .and_then(|a| a.stack_arg_shadow)
-                    .is_some()
-                {
-                    match stack_load_tagged.first() {
-                        Some(info) => {
-                            let (reg, mem, _reg_idx) =
-                                crate::v12::codegen::lowering::reg_mem_fids(info);
-                            match (reg, mem) {
-                                (Some(r), Some(m)) => {
-                                    (crate::v12::codegen::pascal_ident(&info.inst.name), m, r)
-                                }
-                                _ => {
-                                    return Err(
-                                        "move_args: [stack_arg_load] tag must be on Reg+Mem inst"
-                                            .into(),
-                                    );
-                                }
-                            }
-                        }
-                        None => return Err(
-                            "move_args: stack_arg_shadow declared but [stack_arg_load] tag missing"
-                                .into(),
-                        ),
-                    }
-                } else {
-                    (
-                        format_ident!("Mov64Rm"),
-                        format_ident!("mem"),
-                        format_ident!("dest"),
-                    )
-                };
-            // spilled 栈参数 store（ABI 槽 → spill 槽中转用 MOV64_MR：
-            // Reg 槽 op0、Mem 槽 op1，与调用方 store 同标签）
-            let (int_stack_store, is_mem, is_reg) = if model
+            let has_shadow = model
                 .abi
                 .as_ref()
                 .and_then(|a| a.stack_arg_shadow)
-                .is_some()
-            {
-                match stack_store_tagged.first() {
-                    Some(info) => {
-                        let (reg, mem, _reg_idx) =
-                            crate::v12::codegen::lowering::reg_mem_fids(info);
-                        match (reg, mem) {
-                            (Some(r), Some(m)) => {
-                                (crate::v12::codegen::pascal_ident(&info.inst.name), m, r)
-                            }
-                            _ => {
-                                return Err(
-                                    "move_args: [stack_arg_store] tag must be on Reg+Mem inst"
-                                        .into(),
-                                );
-                            }
+                .is_some();
+            // (变体名, Mem 字段, Reg 字段)——load 的 Reg 槽是 dest、store 是 src，
+            // 字段名由 `reg_mem_fids` 从操作数结构派生。
+            let tagged =
+                |role: Role,
+                 what: &str|
+                 -> Result<Option<(syn::Ident, syn::Ident, syn::Ident)>, String> {
+                    let Some(info) = crate::v12::codegen::lowering::inst_by_role(infos, role)
+                    else {
+                        if has_shadow {
+                            return Err(format!(
+                                "move_args: [abi].stack_arg_shadow 已声明，但本 ISA 缺 \
+                             roles = [\"{role}\"] 的指令（不按指令名兜底）"
+                            ));
                         }
+                        return Ok(None);
+                    };
+                    let (reg, mem, _idx) = crate::v12::codegen::lowering::reg_mem_fids(info);
+                    match (reg, mem) {
+                        (Some(r), Some(m)) => Ok(Some((info.vn.clone(), m, r))),
+                        _ => Err(format!(
+                            "move_args: roles = [\"{role}\"] 的{what}必须是 Reg+Mem 形状"
+                        )),
                     }
-                    None => return Err(
-                        "move_args: stack_arg_shadow declared but [stack_arg_store] tag missing"
-                            .into(),
-                    ),
-                }
-            } else {
-                (
-                    format_ident!("Mov64Mr"),
-                    format_ident!("mem"),
-                    format_ident!("src"),
-                )
+                };
+            let load_triple = tagged(Role::StackArgLoad, "收参指令")?;
+            let store_triple = tagged(Role::StackArgStore, "写回指令")?;
+            // 栈参数收参语句（by-position 的 int 臂用）：有角色 → 用角色命中的指令
+            // 从 [rbp+off] load 到 __dest；无角色 → **生成期**就给明确错误
+            //（不引用任何指令名，也不再让 by-position 臂去插值假名字）。
+            let stack_int_recv: TokenStream = match (&load_triple, has_shadow) {
+                (Some((vn, mem, reg)), true) => quote! {
+                    let __off = (16i64 + __shadow as i64) + (__pos - #n) as i64 * 8;
+                    let __bytes = encode(&Inst::#vn {
+                        #mem: MemRef {
+                            base: Reg::RBP,
+                            disp: __off,
+                            index: None,
+                            scale: 1,
+                        },
+                        #reg: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
+                    }).map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
+                },
+                _ => quote! {
+                    return Err(crate::IrError::Emit(
+                        "v12 move_args: 本 ISA 不支持栈参数（未声明 [abi].stack_arg_shadow / \
+                         roles = [\"stack_arg_load\"] 的指令）".into(),
+                    ));
+                },
             };
             // 栈参数收参的 scratch 寄存器（[abi].scratch 首项，缺省 R10）
             // 与 callee-saved 区字节数（sp_base 计算常量）。
@@ -936,17 +920,7 @@ fn gen_emit_pseudo(
                             }).map_err(|e| crate::IrError::Emit(e))?;
                             __sink.put_bytes(&__bytes);
                         } else if let Some(__shadow) = #stack_shadow_ref {
-                            let __off = (16i64 + __shadow as i64) + (__pos - #n) as i64 * 8;
-                            let __bytes = encode(&Inst::#int_stack_load {
-                                #il_mem: MemRef {
-                                    base: Reg::RBP,
-                                    disp: __off,
-                                    index: None,
-                                    scale: 1,
-                                },
-                                #il_reg: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
-                            }).map_err(|e| crate::IrError::Emit(e))?;
-                            __sink.put_bytes(&__bytes);
+                            #stack_int_recv
                         } else {
                             return Err(crate::IrError::Emit(
                                 "v12 move_args: int arg position out of range".into(),
@@ -1010,8 +984,12 @@ fn gen_emit_pseudo(
                 .as_ref()
                 .and_then(|a| a.stack_arg_shadow)
                 .is_some();
-            let stack_arg_receive: TokenStream = if has_stack_arg {
-                quote! {
+            let stack_arg_receive: TokenStream = match (
+                has_stack_arg,
+                load_triple.as_ref(),
+                store_triple.as_ref(),
+            ) {
+                (true, Some((l_vn, l_mem, l_reg)), Some((s_vn, s_mem, s_reg))) => quote! {
                     // 栈参数（位置 ≥ 寄存器数且 shadow 声明）**无条件**收参到
                     // spill 槽（regalloc 强制 spill 保证有槽；即使分配了 preg
                     // 也不走寄存器分支——否则与低位置参数共享寄存器时，批量
@@ -1023,42 +1001,45 @@ fn gen_emit_pseudo(
                         let __off = (16i64 + __shadow as i64) + (__pos - #n) as i64 * 8;
                         let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
                         let __slot_off = __rm.spill_slot(__pv).offset as i64;
-                        // load ABI 槽 → scratch
-                        let __lbytes = encode(&Inst::#int_stack_load {
-                            #il_mem: MemRef {
+                        // load ABI 槽 → scratch（角色 stack_arg_load 命中的指令）
+                        let __lbytes = encode(&Inst::#l_vn {
+                            #l_mem: MemRef {
                                 base: Reg::RBP,
                                 disp: __off,
                                 index: None,
                                 scale: 1,
                             },
-                            #il_reg: __scratch0,
+                            #l_reg: __scratch0,
                         }).map_err(|e| crate::IrError::Emit(e))?;
                         __sink.put_bytes(&__lbytes);
-                        // store scratch → spill 槽
-                        let __sbytes = encode(&Inst::#int_stack_store {
-                            #is_mem: MemRef {
+                        // store scratch → spill 槽（角色 stack_arg_store 命中的指令）
+                        let __sbytes = encode(&Inst::#s_vn {
+                            #s_mem: MemRef {
                                 base: Reg::RBP,
                                 disp: __sp_base + __slot_off,
                                 index: None,
                                 scale: 1,
                             },
-                            #is_reg: __scratch0,
+                            #s_reg: __scratch0,
                         }).map_err(|e| crate::IrError::Emit(e))?;
                         __sink.put_bytes(&__sbytes);
                         continue;
                     }
-                }
-            } else {
-                quote! {}
+                },
+                // shadow 未声明（riscv/demo 无栈参数）→ 分支整体不生成
+                //（否则分支体引用不存在的 Reg/Inst 变体）。
+                _ => quote! {},
             };
             // spilled 的寄存器参数（位置 < n）收参到 spill 槽：ABI 寄存器
-            // 值 → scratch → spill 槽。需要 MOV 指令（int_stack_load 是
-            // mem→reg，这里 reg→reg 用 mov_vn）+ stack_arg_store（reg→mem）。
-            // 无栈参数 ISA（riscv/demo）也有 spilled 参数 → 用通用 mov/spill
-            // 模板（inst 存在性检查兜底：无 mov 时跳过）。
+            // 值 → scratch → spill 槽。需要 MOV 指令（GprMov 角色）+ 角色
+            // stack_arg_store（reg→mem）；无栈参数 ISA（riscv/demo）也有 spilled
+            // 参数 → 用通用 mov/spill 模板（inst 存在性检查兜底：无 mov 时跳过）。
             let has_mov_inst = inst_exists(infos, "MOV_RM8_R64");
-            let spilled_int_receive: TokenStream = if has_stack_arg && has_mov_inst {
-                quote! {
+            let spilled_int_receive: TokenStream = match (
+                has_stack_arg && has_mov_inst,
+                store_triple.as_ref(),
+            ) {
+                (true, Some((s_vn, s_mem, s_reg))) => quote! {
                     // 位置 < n 的 spilled 寄存器参数：load ABI 寄存器 → scratch
                     // → spill 槽（mod.rs 210 写槽依赖 entry vreg 值正确）
                     if __pos < #n
@@ -1074,21 +1055,20 @@ fn gen_emit_pseudo(
                             #m_dest: __scratch0,
                         }).map_err(|e| crate::IrError::Emit(e))?;
                         __sink.put_bytes(&__lbytes);
-                        // scratch → spill 槽
-                        let __sbytes = encode(&Inst::#int_stack_store {
-                            #is_mem: MemRef {
+                        // scratch → spill 槽（角色 stack_arg_store 命中的指令）
+                        let __sbytes = encode(&Inst::#s_vn {
+                            #s_mem: MemRef {
                                 base: Reg::RBP,
                                 disp: __sp_base + __slot_off,
                                 index: None,
                                 scale: 1,
                             },
-                            #is_reg: __scratch0,
+                            #s_reg: __scratch0,
                         }).map_err(|e| crate::IrError::Emit(e))?;
                         __sink.put_bytes(&__sbytes);
                     }
-                }
-            } else {
-                quote! {}
+                },
+                _ => quote! {},
             };
             let stack_arg_prologue: TokenStream = if has_stack_arg {
                 quote! {
