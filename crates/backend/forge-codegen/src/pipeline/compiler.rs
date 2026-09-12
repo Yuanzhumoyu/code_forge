@@ -1747,35 +1747,42 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                 }
             }
         }
-        // IR 层向量 Load/Store：只有 ≤16B（V64/V128）有 lowering 规则
-        // （rd_vec/rs1_vec = 8/16，见 isa/x86_v12.toml）。>16B（V256 32B /
-        // V512 64B）**无规则可表达**——ISA 类模型只有 XMM（fpr16）/ZMM（fpr32）
-        // 槽类、缺 YMM(32B) 类；过去会落到默认 8 字节 MOV_R_MEM/STORE_MEM_R
-        // **静默截断**（槽往返只搬 8B，高位 lane 丢）。这里 fail-closed 显式
-        // 拒绝 >16B 向量 Load/Store：不产出静默错码。
-        // （forge-rustc 的向量值走内存建模 + copy_agg/CopyNonOverlapping，
-        //   不经向量 Load/Store；如需支持，须先在类模型引入 YMM 槽类。）
+        // IR 层宽向量（>16B）能力门（W3，2026-09-12）：
+        //  - 32B（V256）：VEX.256（如 vmovups ymm）——ISA 已有算术/常量/槽往返
+        //    全套规则；与既有 V256 算术路径一致，不在此加硬件门（运行级用例
+        //    自行按 AVX 能力 skip）。
+        //  - 64B（V512）：EVEX（zmm）——**需 AVX-512F**；无则编译期拒绝
+        //    （与上方 ABI 守卫同一判据），避免发射本机无法执行的 EVEX。
+        //  - 其它 >16B 宽度（非 32/64）：无 lowering 规则 → 显式拒绝。
+        // 旧行为：>16B 向量 Load/Store 一律拒绝（ISA 缺宽槽类 → 曾落到默认
+        // 8 字节 MOV 静默截断）；现由 isa/x86_v12.toml 的 rd_vec/rs1_vec
+        // = 32/64 规则 + 本条硬件门共同把住。
         for (_, inst) in func.dfg.insts() {
-            let tys: Vec<TypeId> = match inst.opcode {
-                Opcode::Load => inst
-                    .results
-                    .iter()
-                    .filter_map(|v| func.dfg.value_type(*v))
-                    .collect(),
-                Opcode::Store => inst
-                    .operands
-                    .iter()
-                    .filter_map(|v| func.dfg.value_type(*v))
-                    .collect(),
-                _ => Vec::new(),
-            };
+            let tys: Vec<TypeId> = inst
+                .results
+                .iter()
+                .chain(inst.operands.iter())
+                .filter_map(|v| func.dfg.value_type(*v))
+                .collect();
             for ty in tys {
                 let s = types.borrow();
-                if (s.is_vector(ty) || s.is_scalable_vector(ty)) && s.size_bytes(ty) > 16 {
+                if !(s.is_vector(ty) || s.is_scalable_vector(ty)) {
+                    continue;
+                }
+                let bytes = s.size_bytes(ty);
+                if bytes <= 16 {
+                    continue;
+                }
+                if bytes > 32 && !crate::avx512_available() {
                     return Err(IrError::Unsupported(format!(
-                        "IR Load/Store 的 {} 字节向量暂不支持（>16B 向量无 lowering 规则：\
-                         ISA 类模型缺 YMM(32B) 槽类；type {ty:?}）",
-                        s.size_bytes(ty)
+                        "IR 层 {bytes} 字节向量（V512/EVEX）需 AVX-512F（当前机器不支持；\
+                         type {ty:?}）"
+                    )));
+                }
+                if bytes != 32 && bytes != 64 {
+                    return Err(IrError::Unsupported(format!(
+                        "IR {bytes} 字节向量暂不支持（仅 V256 32B / V512 64B 有 lowering \
+                         规则；type {ty:?}）"
                     )));
                 }
             }
@@ -2152,6 +2159,26 @@ mod alloc_integration_tests {
     use super::*;
     use crate::arch::x86_v12;
 
+    /// 生成期 AVX-512 可行性开关的作用域守卫（Drop 时清除，**panic 安全**）。
+    /// 必须与 `crate::AVX512_ENV_LOCK` 配对使用——env 只放开"能否发射 EVEX"
+    /// 的生成期门；**执行** EVEX 的测试用 `avx512_hardware_available()` 判 skip
+    /// （env 泄漏到运行时测试会真的执行 EVEX → STATUS_ILLEGAL_INSTRUCTION，
+    /// 2026-09-12 实测 0xC000001D）。
+    struct AssumeAvx512;
+
+    impl AssumeAvx512 {
+        fn set() -> Self {
+            unsafe { std::env::set_var("FORGE_ASSUME_AVX512", "1") };
+            Self
+        }
+    }
+
+    impl Drop for AssumeAvx512 {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var("FORGE_ASSUME_AVX512") };
+        }
+    }
+
     fn build_sig(params: &[TypeId], ret: TypeId) -> FunctionSignature {
         FunctionSignature::new(&params.iter().map(|t| (*t, "")).collect::<Vec<_>>(), &[ret])
     }
@@ -2332,7 +2359,9 @@ mod alloc_integration_tests {
         let _env_guard = crate::AVX512_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("FORGE_ASSUME_AVX512", "1") };
+        let _assume = AssumeAvx512::set();
+        // 可见性事件：本用例恒跑（env 放开可行性门）——落盘以便 CI 日志佐证。
+        crate::jit_event("V512-GEN", "test_v512_byref_callee_load_is_64b");
         // 类型必须建立在**同一个** TypeContext 上（跨上下文 TypeId 会越界：
         // 参考 jit.rs 的 V512 用例在本机因无 AVX-512 直接 return，其体从未跑到）。
         let tc = TypeContext::new();
@@ -2350,9 +2379,15 @@ mod alloc_integration_tests {
         let cf = FunctionCompiler::new(x86_v12::TargetMachine::new())
             .compile(&func)
             .expect("compile v512 callee（FORGE_ASSUME_AVX512 下应通过守卫）");
-        // EVEX 前缀（62）+ EVEX 编码的 0F 10 家族；32B 变体是 VEX（C5 FC 10）。
+        // EVEX 前缀（62）+ EVEX 编码的 0F 10 家族；32B 变体是 3 字节 VEX
+        // （C4 P0 P1 10，P1 = W0/vvvv=1111/L=1/pp=00 → 0x7C）——本编码器恒发
+        // 3 字节 VEX，故负向断言按 C4 形态匹配（旧的 `C5 FC 10` 恒不命中 =
+        // 空断言，2026-09-12 W3 修正）。
         let has_evex_load = cf.code.windows(5).any(|w| w[0] == 0x62 && w[4] == 0x10);
-        let has_vex_ymm_load = cf.code.windows(3).any(|w| w == [0xC5, 0xFC, 0x10]);
+        let has_vex_ymm_load = cf
+            .code
+            .windows(4)
+            .any(|w| w[0] == 0xC4 && w[2] == 0x7C && w[3] == 0x10);
         assert!(
             has_evex_load,
             "V512 收参应含 EVEX zmm load（62 ... 10）：D5 回归（按类宽分派 → 只拷 32B）。\
@@ -2361,9 +2396,8 @@ mod alloc_integration_tests {
         );
         assert!(
             !has_vex_ymm_load,
-            "V512 收参不得退回 32B VEX.256 ymm load（C5 FC 10，lane8..15 丢失）"
+            "V512 收参不得退回 32B VEX.256 ymm load（C4 .. 7C 10，lane8..15 丢失）"
         );
-        unsafe { std::env::remove_var("FORGE_ASSUME_AVX512") };
     }
 
     /// V512（64 字节）`Vconst` 的**生成级**守卫（不需要 AVX-512 硬件：只编译不执行）。
@@ -2379,9 +2413,20 @@ mod alloc_integration_tests {
     /// ②机器码含 **4 条 EVEX `VINSERTF32X4`**（`62 P0 P1 P2 18 /r ib`）且 imm 恰为
     /// 0/1/2/3 各一次 ⇒ 512 位的 4 个 128 位 lane 都被显式写入（这也是 Vconst 规则
     /// 「`{out}` 自身当累加器、初始值不影响结果」这一构造前提的可执行证据）。
+    ///
+    /// W3（2026-09-12）起：64B 向量值（含 Vconst）统一由编译入口的字节门守卫
+    /// 「>32B 需 AVX-512F」——无硬件时用 `FORGE_ASSUME_AVX512=1` 放开可行性门
+    /// （本例只编译不执行，EVEX 真执行由有硬件的 runner 守护）。
     #[test]
     fn test_v512_vconst_generates_four_evex_inserts() {
         x86_v12::ensure_registered();
+        // 安全：仅本测试设置该 env（AVX512_ENV_LOCK 串行化，见 lib.rs 说明）。
+        let _env_guard = crate::AVX512_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _assume = AssumeAvx512::set();
+        // 可见性事件：本用例恒跑（env 放开生成期门）——落盘以便 CI 日志佐证。
+        crate::jit_event("V512-GEN", "test_v512_vconst_generates_four_evex_inserts");
         let tc = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("v512_vconst", tc, sig);
@@ -2418,40 +2463,113 @@ mod alloc_integration_tests {
         );
     }
 
-    /// 大于 16B 的向量 Load/Store（V256/V512 槽往返）必须 **fail-closed 显式拒绝**：
-    /// ISA 类模型缺 YMM(32B) 槽类 → 无规则可表达 → 旧行为落到默认 8 字节 MOV
-    /// **静默截断**。本测试只编译（不执行），本机可跑。
+    /// 构造并编译 `${lanes}×f32` 向量的**栈槽往返**函数（W3 宽向量 Load/Store
+    /// 用例共用）：vconst → alloca → store → load → vextract lane0 → i32。
+    fn compile_wide_slot_roundtrip(lanes: usize) -> Result<CompiledFunction, IrError> {
+        let tc = TypeContext::new();
+        let vt = tc.vector_ty(TypeId::F32, lanes as u32);
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("wide_vec_slot", tc, sig);
+        let (blk, _p) = b.create_block_with_params(&[]);
+        b.switch_to_block(blk);
+        let v = b.vconst(vec![1.0f32; lanes]);
+        let slot = b.alloca(vt, 1);
+        b.store(v, slot);
+        let back = b.load(slot, vt);
+        let idx = b.iconst_i32(0);
+        let lane = b.vextract(back, idx);
+        let wide = b.fpext(lane, TypeId::F64);
+        let int = b.fptosi(wide, TypeId::I32);
+        b.ret(&[int]);
+        let func = b.finish().expect("build wide vector slot roundtrip");
+        FunctionCompiler::new(x86_v12::TargetMachine::new()).compile(&func)
+    }
+
+    /// W3（2026-09-12）：V256（32B）向量的 **IR 层 Load/Store 已可降级**——
+    /// ISA 规则 `rd_vec/rs1_vec = 32` → `VMOVUPS_RM/MR`（VEX.256，`vex_l=1`；
+    /// 槽类 `fpr16` 的寄存器编号即 ymm 号）。旧实现把 >16B 的 Load/Store 一律
+    /// fail-closed 拒绝（"ISA 类模型缺 YMM 槽类"）——本轮由规则 + 编译入口字节门
+    /// （>32B 才要 AVX-512F）共同承载。
+    ///
+    /// 只编译不执行（运行级 lane 往返见 `runtime::jit::test_jit_v256_slot_roundtrip`）。
+    /// 断言机器码含 **VEX.256** 的 0F 10/11（vmovups ymm）：本编码器恒发 3 字节
+    /// VEX（`C4 P0 P1`），P1 = W=0/vvvv=1111/L=1/pp=00 → `0x7C`（仅 R̄/X̄/B̄ 在 P0）。
     #[test]
-    fn test_wide_vector_slot_load_store_is_rejected() {
+    fn test_v256_slot_load_store_is_lowered() {
         x86_v12::ensure_registered();
-        for (lanes, want_bytes) in [(8usize, 32usize), (16, 64)] {
-            let tc = TypeContext::new();
-            let vt = tc.vector_ty(TypeId::F32, lanes as u32);
-            let sig = FunctionSignature::new(&[], &[TypeId::I32]);
-            let mut b = FunctionBuilder::new("wide_vec_slot", tc, sig);
-            let (blk, _p) = b.create_block_with_params(&[]);
-            b.switch_to_block(blk);
-            let v = b.vconst(vec![1.0f32; lanes]);
-            let slot = b.alloca(vt, 1);
-            b.store(v, slot);
-            let back = b.load(slot, vt);
-            let idx = b.iconst_i32(0);
-            let lane = b.vextract(back, idx);
-            let wide = b.fpext(lane, TypeId::F64);
-            let int = b.fptosi(wide, TypeId::I32);
-            b.ret(&[int]);
-            let func = b.finish().expect("build wide vector slot roundtrip");
-            let err = match FunctionCompiler::new(x86_v12::TargetMachine::new()).compile(&func) {
-                Ok(_) => {
-                    panic!("{want_bytes}B 向量 Load/Store 必须 fail-closed（否则 8 字节静默截断）")
-                }
+        let cf = compile_wide_slot_roundtrip(8).expect("32B 向量槽往返应可降级（W3）");
+        let is_vex256 = |w: &[u8], op: u8| w[0] == 0xC4 && w[2] == 0x7C && w[3] == op;
+        assert!(
+            cf.code.windows(4).any(|w| is_vex256(w, 0x10)),
+            "32B load 应为 VEX.256 vmovups ymm, [base]（C4 .. 7C 10）：code = {:02x?}",
+            &cf.code[..cf.code.len().min(64)]
+        );
+        assert!(
+            cf.code.windows(4).any(|w| is_vex256(w, 0x11)),
+            "32B store 应为 VEX.256 vmovups [base], ymm（C4 .. 7C 11）：code = {:02x?}",
+            &cf.code[..cf.code.len().min(64)]
+        );
+        // 反向守卫：32B 槽往返**不得**只搬 8 字节（旧默认规则只会发 movsd
+        // F3 0F 10/11 → lane1..7 静默截断）。
+        assert!(
+            !cf.code
+                .windows(3)
+                .any(|w| w == [0xF3, 0x0F, 0x10] || w == [0xF3, 0x0F, 0x11]),
+            "32B 槽往返不得退回 movsd（8 字节静默截断）：code = {:02x?}",
+            &cf.code[..cf.code.len().min(64)]
+        );
+    }
+
+    /// W3（2026-09-12）：V512（64B）向量的 IR 层 Load/Store——**需 AVX-512F**
+    /// （EVEX vmovups zmm）。分两半：①无 AVX-512F 的机器上必须**编译期拒绝**
+    /// （与 ABI 守卫同一判据，不发射本机无法执行的 EVEX）；②`FORGE_ASSUME_AVX512=1`
+    /// 放开可行性门后成功降级且含 EVEX 0F 10/11（只编译不执行）。
+    ///
+    /// 本机（无 AVX-512F）两半都跑到；有 AVX-512F 的机器跳过①（无从构造"无
+    /// 能力"场景）——②由生成级断言守护编码。
+    #[test]
+    fn test_v512_slot_load_store_requires_avx512() {
+        x86_v12::ensure_registered();
+        // 安全：仅本测试设置该 env（与 D5 用例共用 AVX512_ENV_LOCK 串行化）。
+        let _env_guard = crate::AVX512_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if crate::avx512_hardware_available() {
+            // 可见性事件：本机是否有 AVX-512F 决定这一半是否跑到（libtest 吞掉
+            // 通过测试的输出 → 只能靠 `FORGE_JIT_EVENTS` 落盘判断）。
+            crate::jit_event("AVX512-HW=1", "test_v512_slot_load_store_requires_avx512");
+            eprintln!("[w3] 本机有 AVX-512F——跳过「无能力必须拒绝」一半（无从构造）");
+        } else {
+            crate::jit_event("AVX512-HW=0", "test_v512_slot_load_store_requires_avx512");
+            let err = match compile_wide_slot_roundtrip(16) {
+                Ok(_) => panic!("无 AVX-512F 时 64B 向量必须编译期拒绝（不得发射 EVEX）"),
                 Err(e) => e,
             };
             let msg = format!("{err}");
             assert!(
-                msg.contains("Load/Store") && msg.contains(&format!("{want_bytes} 字节向量")),
-                "{want_bytes}B：错误信息应说明 Load/Store 与字节数：{msg}"
+                msg.contains("64 字节向量") && msg.contains("AVX-512F"),
+                "64B：错误信息应说明字节数与 AVX-512F 前提：{msg}"
             );
         }
+        let _assume = AssumeAvx512::set();
+        let cf = compile_wide_slot_roundtrip(16)
+            .expect("FORGE_ASSUME_AVX512 下 64B 向量槽往返应可降级（W3）");
+        // EVEX：62 + P0 P1 P2 + opcode（窗口 [62, P0, P1, P2, opcode, modrm]）；
+        // P2 的 L'L = 10（bits 6:5）= 512 位宽。
+        let has_evex = |op: u8| {
+            cf.code
+                .windows(5)
+                .any(|w| w[0] == 0x62 && w[4] == op && (w[3] & 0x60) == 0x40)
+        };
+        assert!(
+            has_evex(0x10),
+            "64B load 应为 EVEX vmovups zmm, [mem]（62 ... 10）：code = {:02x?}",
+            &cf.code[..cf.code.len().min(64)]
+        );
+        assert!(
+            has_evex(0x11),
+            "64B store 应为 EVEX vmovups [mem], zmm（62 ... 11）：code = {:02x?}",
+            &cf.code[..cf.code.len().min(64)]
+        );
     }
 }

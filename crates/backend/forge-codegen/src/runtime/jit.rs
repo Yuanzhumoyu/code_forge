@@ -1076,6 +1076,50 @@ mod tests {
         assert_eq!(g(), 6, "V64 store/load 栈槽 lane1=6.5 → 6");
     }
 
+    /// W3（2026-09-12）：**V256（32B）向量经栈槽 store/load 全宽往返**——
+    /// `rd_vec/rs1_vec = 32` → VEX.256 `vmovups`（gpr 基址形式
+    /// VMOVUPS_256_R_MEM/MEM_R）。旧实现把 >16B 的 IR Load/Store 一律
+    /// fail-closed 拒绝（"ISA 缺 YMM 槽类"）；若曾落到默认 8 字节规则，
+    /// lane7 必丢。VEX.256 需 AVX，无则跳过（本机 AVX2 → 真跑）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_v256_slot_roundtrip() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        if !crate::avx_available() {
+            eprintln!("[jit] 无 AVX——跳过 V256 槽往返测试");
+            return;
+        }
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let vt256 = {
+            let store = TypeContext::new();
+            store.vector_ty(TypeId::F32, 8)
+        };
+        // main: () -> i32 = store V256 → 槽 -48; load 回; lane7 → fptosi
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        jit.add_function("v256_slot", &sig, |b| {
+            let entry = b.create_block();
+            b.switch_to_block(entry);
+            let addr = b.stack_addr(-48);
+            let v = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 16.5]);
+            b.store(v, addr);
+            let vl = b.load(addr, vt256);
+            let idx = b.iconst_i32(7);
+            let lane = b.vextract(vl, idx);
+            let wide = b.fpext(lane, TypeId::F64);
+            let int = b.fptosi(wide, TypeId::I32);
+            b.ret(&[int]);
+        })
+        .expect("compile v256_slot");
+        let f: extern "C" fn() -> i32 = jit.get_fn("v256_slot").expect("get_fn");
+        assert_eq!(
+            f(),
+            16,
+            "V256 store/load 栈槽全宽 lane7=16.5 → 16（8 字节截断会得垃圾/0）"
+        );
+    }
+
     /// M1-D3（WA-37 D3）：V128（4×f32，≤16B）按值参数——XMM 全宽收参。
     /// 两次调用传不同向量验证高半 lane3 不依赖寄存器遗留值（修复前收参走
     /// MOVSD 8 字节 + 调用方 GPR 槽，值靠遗留 XMM 高半偶然存活）。
@@ -1368,10 +1412,18 @@ mod tests {
     fn test_jit_v512_byref_param() {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
-        if !crate::avx512_available() {
-            eprintln!("[jit] 无 AVX-512F——跳过 V512 by-ref 测试");
+        // **硬件**判据（不读 FORGE_ASSUME_AVX512）：本测试要**执行** EVEX，
+        // 生成期开关放开不了 CPU 能力——若按 avx512_available() 判断，
+        // 别的测试留下的 env 会让本机真的跑 EVEX → STATUS_ILLEGAL_INSTRUCTION
+        // （2026-09-12 实测 0xC000001D）。
+        if !crate::avx512_hardware_available() {
+            // 可见性事件（`FORGE_JIT_EVENTS`）：skip 与真跑过在 libtest 日志里
+            // 都是 `... ok`，只有落盘事件能区分（CI 有 if: always() 打印步骤）。
+            crate::jit_event("AVX512-SKIP", "test_jit_v512_byref_param");
+            eprintln!("[jit] 无 AVX-512F 硬件——跳过 V512 by-ref 测试");
             return;
         }
+        crate::jit_event("AVX512-RUN", "test_jit_v512_byref_param");
         ensure_registered();
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
         // callee: (v512) -> i32（提取 lane15 = 16.0）
@@ -2131,6 +2183,42 @@ mod tests {
             let (inst, _) = decode(&bytes).expect(src);
             let bytes2 = encode(&inst).expect("re-encode");
             assert_eq!(bytes2, bytes, "roundtrip {src}");
+        }
+    }
+
+    /// W3（2026-09-12）守卫：**reg 基址**宽向量内存形式（`modrm = { rm = "[src]" }`
+    /// 指向 reg 槽 = 仅基址 `[base]`、disp 恒 0）的 VEX.256 / EVEX.512 形态——
+    /// assemble → encode → decode → encode 字节往返。VEX/EVEX 解码臂原先对
+    /// "内存形式 + reg 槽"直接**报错**（v15 ModRM 已允许该形态）；本轮补齐
+    /// 解码侧，使 lowering 规则（只能绑定寄存器操作数、不能现场构造 MemRef）
+    /// 可表达宽向量 Load/Store。ISA 无 YMM 名组——256 位形态沿用 128 位视图名
+    /// （XMM 号即 ymm 号），512 位用 ZMM 名。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_wide_vec_reg_base_mem_roundtrip_bytes() {
+        use crate::arch::x86_v12::{assemble, decode, encode};
+        // 期望字节（objdump `-D -b binary -m i386:x86-64 -M intel` 实证）：
+        //   c4 e1 7c 10 00 → vmovups ymm0, YMMWORD PTR [rax]
+        //   c4 e1 7c 11 00 → vmovups YMMWORD PTR [rax], ymm0
+        //   62 f1 7c 48 10 00 → vmovups zmm0, ZMMWORD PTR [rax]
+        //   62 f1 7c 48 11 00 → vmovups ZMMWORD PTR [rax], zmm0
+        for (src, want) in [
+            ("vmovups XMM0, [RAX]", &[0xC4, 0xE1, 0x7C, 0x10, 0x00][..]),
+            ("vmovups [RAX], XMM0", &[0xC4, 0xE1, 0x7C, 0x11, 0x00][..]),
+            (
+                "vmovups ZMM0, [RAX]",
+                &[0x62, 0xF1, 0x7C, 0x48, 0x10, 0x00][..],
+            ),
+            (
+                "vmovups [RAX], ZMM0",
+                &[0x62, 0xF1, 0x7C, 0x48, 0x11, 0x00][..],
+            ),
+        ] {
+            let bytes = encode(&assemble(src).expect(src)).expect("encode");
+            assert_eq!(bytes, want, "{src}：编码字节与 objdump 实证不一致");
+            let (inst, _) = decode(&bytes).expect(src);
+            let bytes2 = encode(&inst).expect("re-encode");
+            assert_eq!(bytes2, bytes, "roundtrip {src}（bytes = {bytes:02x?}）");
         }
     }
 

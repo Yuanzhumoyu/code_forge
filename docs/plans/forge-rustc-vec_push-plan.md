@@ -1005,7 +1005,76 @@ fail-closed 尺寸守卫。
 **验证**：两例 e2e 修复后 12/99；全量 e2e `passed=105/105 known=[]`；
 hammer（§9.2）5 轮 `105/105 KNOWN=[]` + parallel PASS + 5 例各 ×10 全过；clippy/fmt 干净。
 
-### 10.3 W3 / W4（本记录随实现补写）
+### 10.3 W3：V256/V512 向量 IR Load/Store（ISA 规则 + 编解码能力补齐，2026-09-12）
 
-- **W3**：V256/V512 向量 Load/Store（ISA 规则 + 放宽 `compiler.rs` 的 fail-closed 门 + 测试）；
-- **W4**：AVX-512 门控用例的"是否真跑过"可见化（marker 文件 + ci.yml `if: always()` 步骤）。
+**问题**：`Load`/`Store` 规则只覆盖 `rd_vec`/`rs1_vec` = 8/16；>16B 由 `compiler.rs` 的 IR 前置门
+fail-closed 拒绝（注释归因"ISA 类模型缺 YMM(32B) 槽类"）。真正让"补规则"行不通的是两条 **DSL 能力缺口**
+（先探明、再动手——否则会写成一条永不命中的规则）：
+
+1. lowering 模板**只能绑定寄存器操作数**（`parse_mem_template` 只认物理寄存器名与 `{off}`/`{alloca}`），
+   无法现场构造 MemRef ⇒ 宽向量内存指令若用 `mem` 槽（带 base/disp）就写不出规则；
+2. VEX/EVEX **解码臂**拒绝「内存形式 + reg 槽」（生成期直接 `Err`），尽管 v15 ModRM 明确允许
+   `modrm = { rm = "[reg]" }`（仅基址 `[base]`、disp 恒 0，`docs/reference/isa-dsl.md` 已写为语言能力）
+   且**编码侧早已实现**该风味 ⇒ 这类指令根本加不进 ISA。
+
+**改法**：
+
+- ISA：新增 4 条 **reg 基址**指令 `VMOVUPS_256_R_MEM`/`VMOVUPS_256_MEM_R`（VEX.256，`vex_l=1`）、
+  `VMOVUPS_512_R_MEM`/`VMOVUPS_512_MEM_R`（EVEX.512，`evex_l=2`）——与原 MemRef 形式**同编码键**
+  （同一机器码的两种操作数建模：MemRef 形式继续供 ABI by-ref 的 `[RSP+off]`）；`Load`/`Store` 规则
+  补 `rd_vec`/`rs1_vec` = 32/64 两档；
+- forge-dsl `vlen.rs`：VEX/EVEX 解码臂对 reg 类 rm 槽按 v15 语义取 `ModRM.rm + B`（SIB 在场按 `SIB.base`）；
+- `compiler.rs`：IR 前置门改口径——32B（V256）放行（与既有 V256 算术路径一致）、**>32B 需
+  `avx512_available()`**（与宽向量 ABI 守卫同一判据）、非 32/64 的 >16B 宽度仍显式拒绝
+  （三条路径都不产出静默错码，也不发射本机无法执行的 EVEX）；
+- 顺带修 `lib.rs`：新增 **`avx512_hardware_available()`**（纯 cpuid、不读 env）——运行级 EVEX 用例必须按
+  **硬件**判 skip；否则别的测试留下的 `FORGE_ASSUME_AVX512` 会让它在本机**真跑 EVEX**（实测
+  `cargo test -p forge-codegen --lib --all-features` 崩于 `test_jit_v512_byref_param`，`0xC000001D`）。
+  生成级用例的 env 开关收敛为 panic 安全的 RAII 守卫（`AssumeAvx512`，Drop 时清除）。
+
+**验证**（本机 2026-09-12）：
+
+- 生成级：`test_v256_slot_load_store_is_lowered`（VEX `C4 .. 7C 10/11`，且不得退回 `movsd`——
+  反向守卫按真实的 3 字节 VEX 形态匹配）；`test_v512_slot_load_store_requires_avx512`（无 AVX-512F 时
+  **必须编译期拒绝** + `FORGE_ASSUME_AVX512` 下 EVEX `62 .. 10/11`，P2 的 L'L=10）；
+- 运行级：`test_jit_v256_slot_roundtrip` **真执行** VEX.256 栈槽往返，lane7 = 16.5 → 16
+  （旧 8 字节默认规则会得垃圾/0）；
+- 编码：`test_jit_wide_vec_reg_base_mem_roundtrip_bytes`（asm→encode→decode→encode 字节往返）+
+  `objdump -D -b binary -m i386:x86-64 -M intel` 实证
+  `c4 e1 7c 10 00` = `vmovups ymm0, YMMWORD PTR [rax]`、`c4 e1 7c 11 00` = store、
+  `62 f1 7c 48 10 00` = `vmovups zmm0, ZMMWORD PTR [rax]`、`62 f1 7c 48 11 00` = store；
+- 门禁：`cargo test --workspace --exclude forge-rustc --exclude cargo-forge` 0 failed（含
+  `-p forge-codegen --lib --all-features` 123 passed）、e2e 8/8 + stage_a
+  `[SUMMARY] stage_a passed=105/105 known=[] unexpected=0`、clippy `-D warnings` 与 fmt 干净。
+
+**残余**：V512 的 Load/Store 在本机只有编译级/生成级证据（无 AVX-512F 硬件）——运行级由 W4 的
+"是否真跑过"可见化 + 有 AVX-512 runner 上的 `test_jit_v512_byref_param` 守护；同一机器码存在两种
+`Inst` 变体（汇编按操作数形状分发、解码先命中 MemRef 形式，打印与编码字节等价，见 WORKAROUNDS WA-45）。
+
+### 10.4 W4：AVX-512 门控用例"是否真跑过"的可见化（2026-09-12）
+
+**问题**：CI 上无法判断 V512 用例是否真跑过——libtest 捕获**通过**测试的 stdout/stderr，
+`skip`（无 AVX-512F 提前 return）与真执行都只打印 `... ok`。历史上因此只能靠 runner 机型
+推断"V512 缺口是否暴露 / 修复后是否真验证过"。
+
+**改法**：
+
+- 新增 `forge-codegen::jit_event(kind, case)`：`FORGE_JIT_EVENTS=<文件>` 时追加一行
+  `<事件> <用例>`（写失败静默；与 e2e 的 `FORGE_E2E_EVENTS` 同模式、同理：libtest 吞输出）；
+- 事件点：`AVX512-RUN` / `AVX512-SKIP`（运行级 `test_jit_v512_byref_param`，按**硬件**判）、
+  `AVX512-HW=0|1`（生成级 `test_v512_slot_load_store_requires_avx512` 的能力检测结果）、
+  `V512-GEN`（两条 env 放开的生成级用例——证明 EVEX 生成路径当轮真跑过）；
+- CI `Test (Windows)` job：cargo test 步骤加 `FORGE_JIT_EVENTS` env，并加 `if: always()` 步骤
+  打印（去重排序）。
+
+**本机实证**（2026-09-12，`cargo test -p forge-codegen --lib --all-features`，本机无 AVX-512F）：
+
+```text
+V512-GEN test_v512_byref_callee_load_is_64b
+AVX512-HW=0 test_v512_slot_load_store_requires_avx512
+V512-GEN test_v512_vconst_generates_four_evex_inserts
+AVX512-SKIP test_jit_v512_byref_param
+```
+
+⇒ 生成级 EVEX 路径真跑、运行级按硬件 skip，且判定依据可见。有 AVX-512F 的 runner 上应出现
+`AVX512-HW=1` 与 `AVX512-RUN`——**待含本节改动的 CI run 落地后核对并回填**（未核对前不声称已覆盖）。

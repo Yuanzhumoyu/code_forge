@@ -98,6 +98,22 @@ jobs:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
       - run: cargo test --workspace --exclude forge-rustc
+        env:
+          # AVX-512 门控用例（V512 运行级/生成级）**是否真跑过**：libtest 会吞掉
+          # 通过测试的输出，skip 与真跑过在日志里都是 `... ok`——落盘事件 + 下方
+          # if: always() 打印步骤是唯一判据（同 e2e 的 FORGE_E2E_EVENTS 模式）。
+          FORGE_JIT_EVENTS: "${{ github.workspace }}/target/tmp/jit_events.txt"
+      - name: Show AVX-512 gated test events (always)
+        if: always()
+        shell: pwsh
+        run: |
+          $p = Join-Path $env:GITHUB_WORKSPACE "target/tmp/jit_events.txt"
+          if (Test-Path $p) {
+            "--- FORGE_JIT_EVENTS ($p) ---"
+            Get-Content $p | Sort-Object -Unique
+          } else {
+            "FORGE_JIT_EVENTS: 无文件（事件未落盘——检查 FORGE_JIT_EVENTS 是否生效）"
+          }
 
   # Tests on macOS
   test-macos:

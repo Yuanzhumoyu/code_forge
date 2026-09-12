@@ -283,18 +283,19 @@ pub fn avx2_available() -> bool {
 ///
 /// `FORGE_ASSUME_AVX512=1` 覆盖：**仅供测试**在无 AVX-512 的宿主上验证
 /// EVEX 编码/收参分派（如 V512 by-ref 的 64B load 选择）——它只放开可行性
-/// 守卫，**不会**让 EVEX 指令在该 CPU 上可执行（真执行需硬件）。
+/// 守卫，**不会**让 EVEX 指令在该 CPU 上可执行（真执行需硬件，见
+/// [`avx512_hardware_available`]）。
 ///
 /// 会读写该环境变量的测试必须持有 [`AVX512_ENV_LOCK`]（进程内串行化，
-/// 否则并行测试互相覆盖 env → 时过时败）。
+/// 否则并行测试互相覆盖 env → 时过时败）；**要执行 EVEX 的测试必须用
+/// [`avx512_hardware_available`] 判skip**（否则会被别的测试留下的 env
+/// 带进非法指令，2026-09-12 实测 0xC000001D）。
 pub static AVX512_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub fn avx512_available() -> bool {
-    // 覆盖开关每次直读（不缓存）——测试可在进程内任意时刻打开它；
-    // 真实检测结果才走 OnceLock 缓存。
-    if std::env::var_os("FORGE_ASSUME_AVX512").is_some() {
-        return true;
-    }
+/// **真实硬件** AVX-512F 能力——**不读** `FORGE_ASSUME_AVX512`。
+/// 任何会**执行** EVEX 指令的测试/代码路径必须用本函数（env 只放开生成期的
+/// 可行性门，不能让本机真的跑得动 EVEX）。
+pub fn avx512_hardware_available() -> bool {
     static AVX512: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVX512.get_or_init(|| {
         #[cfg(target_arch = "x86_64")]
@@ -306,6 +307,35 @@ pub fn avx512_available() -> bool {
             false
         }
     })
+}
+
+pub fn avx512_available() -> bool {
+    // 覆盖开关每次直读（不缓存）——测试可在进程内任意时刻打开它；
+    // 真实检测结果才走 OnceLock 缓存。
+    if std::env::var_os("FORGE_ASSUME_AVX512").is_some() {
+        return true;
+    }
+    avx512_hardware_available()
+}
+
+/// 机器能力门控用例的**可见性事件**（`FORGE_JIT_EVENTS=<文件>` 时追加一行
+/// `<事件> <用例>`）。libtest 会吞掉**通过**测试的 stdout/stderr，于是
+/// 「无 AVX-512F 就 skip」这类用例在 CI 日志里与真跑过完全无法区分（两者都只
+/// 打印 `... ok`）——落盘事件 + CI 的 `if: always()` 步骤是唯一判据（与 e2e 的
+/// `FORGE_E2E_EVENTS` 同模式）。写失败静默：可见性辅助不得影响测试结论。
+pub fn jit_event(kind: &str, case: &str) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("FORGE_JIT_EVENTS") else {
+        return;
+    };
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let _ = writeln!(f, "{kind} {case}");
 }
 
 impl LowerCtx {

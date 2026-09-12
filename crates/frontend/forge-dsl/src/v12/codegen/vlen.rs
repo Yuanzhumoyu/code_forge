@@ -1233,12 +1233,14 @@ fn gen_vlen_vex_decode_arm(
                     field_ctor_expr(slot, quote! { ((__modrm >> 3) & 7) as u32 | (__r << 3) })
                 } else if i == mm.rm {
                     if is_mem {
-                        return Err(format!(
-                            "[[instructions.{}]]: VEX 内存形式的 rm 位置是 reg 槽（应为 mem 槽）",
-                            info.inst.name
-                        ));
+                        // 内存形式而 rm 槽是 **reg 类**——v15 合法形态（"rm = [名]
+                        // 指向 reg 槽 = 仅基址 [base]、disp 恒 0"，见 Modrm::resolve
+                        // 与编码侧 `modrm.mem && !memref` 分支）。base 取
+                        // ModRM.rm + B（SIB 在场时 __base 已按 SIB.base 重算）。
+                        field_ctor_expr(slot, quote! { __base })
+                    } else {
+                        field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) })
                     }
-                    field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) })
                 } else if has_src {
                     field_ctor_expr(slot, quote! { __vvvv as u32 })
                 } else {
@@ -1463,12 +1465,11 @@ fn gen_vlen_evex_decode_arm(
                     )
                 } else if i == mm.rm {
                     if is_mem {
-                        return Err(format!(
-                            "[[instructions.{}]]: EVEX 内存形式的 rm 位置是 reg 槽（应为 mem 槽）",
-                            info.inst.name
-                        ));
+                        // 同 VEX：rm 槽为 reg 类 = 仅基址 [base]（v15 合法形态）
+                        field_ctor_expr(slot, quote! { __base })
+                    } else {
+                        field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) })
                     }
-                    field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) })
                 } else if has_src {
                     field_ctor_expr(slot, quote! { __vvvv as u32 })
                 } else {

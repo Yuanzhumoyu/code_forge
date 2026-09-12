@@ -1369,6 +1369,25 @@ fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 
 ops = ["src:fpr32", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
 
+# 宽向量 IR Load/Store 的 gpr 基址形式（EVEX 512 位；见 VMOVUPS_256_R_MEM 的说明）
+[[instructions]]
+name = "VMOVUPS_512_R_MEM"
+form = "EVEX_RR_MEMREF"
+modrm = { rm = "[src]" }
+opcode = 0x10
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+ops = ["dst:fpr32:out", "src:gpr"]
+asm = "vmovups {dst}, [{src}]"
+
+[[instructions]]
+name = "VMOVUPS_512_MEM_R"
+form = "EVEX_RR_MEMREF"
+modrm = { rm = "[src2]" }
+opcode = 0x11
+fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+ops = ["src:fpr32", "src2:gpr"]
+asm = "vmovups [{src2}], {src}"
+
 # ── EVEX opmask（掩码写合并，z=0）：vaddps zmm, zmm, zmm, k1 ──
 # 与 3 操作数 VADDPS_ZMM 同助记符自动分发（类型签名 O3 不同）；第 4 操作数
 # kreg 类槽 → P2 aaa = 掩码寄存器索引。
@@ -1431,6 +1450,31 @@ opcode = 0x11
 fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
+
+# ── 宽向量 IR Load/Store 的 **gpr 基址**形式（W3，2026-09-12）──
+# 与 MOVUPS_128_R_MEM 同形：`modrm = { rm = "[reg]" }` = 仅基址 [base]、disp 恒 0
+# （v15 ModRM 的 mem+reg 形态）。IR 层的 Load/Store 地址是 lowering 的**寄存器
+# 操作数**，而 lowering 模板只能绑定寄存器、无法现场构造 MemRef——故需要这两条。
+# 上面的 MemRef 形式（VMOVUPS_RM/MR、VMOVUPS_ZMM_MEM/MR）继续供 ABI by-ref 路径
+# （base+disp 由 frame/Call lowering 显式构造，如 `[RSP+off]`）。
+# 二者编码键相同（同一机器码的两种操作数建模）；汇编/解码按其操作数形状分发。
+[[instructions]]
+name = "VMOVUPS_256_R_MEM"
+form = "VEX_RR_MEMREF"
+modrm = { rm = "[src]" }
+opcode = 0x10
+fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "vmovups {dst}, [{src}]"
+
+[[instructions]]
+name = "VMOVUPS_256_MEM_R"
+form = "VEX_RR_MEMREF"
+modrm = { rm = "[src2]" }
+opcode = 0x11
+fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+ops = ["src:fpr", "src2:gpr"]
+asm = "vmovups [{src2}], {src}"
 
 [[instructions]]
 name = "VBROADCASTSS"
@@ -2142,10 +2186,23 @@ op = "Load"
 when = { eq = ["rd", 16] }
 insts = ["MOVZX_R16_MEM {out}, [{0}]"]
 
-# ≤16B 向量（Direct XMM 值）内存 load——WA-37 D3 全宽往返：
+# 向量（Direct 值）内存 load——WA-37 D3 全宽往返 + W3 宽向量：
 # V128（16B）→ movups（0F 10 无前缀，16 字节非对齐）；V64（8B）
-# → movsd（低 64 位即 V64 全值；V64 高半无意义）。rd_vec = 结果向量
-# 类型字节数（非向量 None）——不误伤 64 位标量/I128 load。
+# → movsd（低 64 位即 V64 全值；V64 高半无意义）；V256（32B）→ vmovups
+# ymm（VEX.256，vex_l=1）；V512（64B）→ vmovups zmm（EVEX，evex_l=2）。
+# rd_vec = 结果向量类型字节数（非向量 None）——不误伤 64 位标量/I128 load。
+# 宽向量的**硬件前提**由编译入口按字节数守卫（compiler.rs）：>32B 需
+# AVX-512F（EVEX），无则显式拒绝（不发射本机无法执行的指令）。
+[[lowering]]
+op = "Load"
+when = { eq = ["rd_vec", 64] }
+insts = ["VMOVUPS_512_R_MEM {out}, [{0}]"]
+
+[[lowering]]
+op = "Load"
+when = { eq = ["rd_vec", 32] }
+insts = ["VMOVUPS_256_R_MEM {out}, [{0}]"]
+
 [[lowering]]
 op = "Load"
 when = { eq = ["rd_vec", 16] }
@@ -2156,10 +2213,8 @@ op = "Load"
 when = { eq = ["rd_vec", 8] }
 insts = ["MOVSD_R_MEM {out}, [{0}]"]
 
-# 注：>16B 向量（V256 32B / V512 64B）的 Load/Store **无规则**——ISA 类模型
-# 只有 XMM（fpr16）/ZMM（fpr32）槽类，缺 YMM(32B) 类，规则无法表达
-# （曾落到下方默认 8 字节 MOV_R_MEM → 静默截断）。现由编译入口
-# **显式拒绝** >16B 向量 Load/Store（compiler.rs，fail-closed）。
+# 默认（非向量 / 未覆盖宽度）——8 字节 MOV。宽向量**不会**落到这里：
+# 32B/64B 有上面的专用规则，其它 >16B 宽度由编译入口显式拒绝。
 [[lowering]]
 op = "Load"
 insts = ["MOV_R_MEM {out}, [{0}]"]
@@ -2171,6 +2226,16 @@ insts = ["STORE_MEM_R_8 [{0}], {1}"]
 
 [[lowering]]
 op = "Store"
+when = { eq = ["rs1_vec", 64] }
+insts = ["VMOVUPS_512_MEM_R [{0}], {1}"]
+
+[[lowering]]
+op = "Store"
+when = { eq = ["rs1_vec", 32] }
+insts = ["VMOVUPS_256_MEM_R [{0}], {1}"]
+
+[[lowering]]
+op = "Store"
 when = { eq = ["rs1_vec", 16] }
 insts = ["MOVUPS_128_MEM_R [{0}], {1}"]
 
@@ -2179,7 +2244,8 @@ op = "Store"
 when = { eq = ["rs1_vec", 8] }
 insts = ["MOVSD_MEM_R [{0}], {1}"]
 
-# 注：>16B 向量 store 同 Load（无 YMM/ZMM 槽类可表达）→ 编译入口显式拒绝。
+# 默认（非向量 / 未覆盖宽度）——8 字节 store；向量宽度同上（32B/64B 专用
+# 规则，其它 >16B 宽度由编译入口显式拒绝）。
 [[lowering]]
 op = "Store"
 insts = ["STORE_MEM_R [{0}], {1}"]
