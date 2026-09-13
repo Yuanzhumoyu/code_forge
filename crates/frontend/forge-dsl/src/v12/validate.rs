@@ -203,6 +203,39 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
     // 自由模板（lowering/emit 的 `insts`）不在这里猜——它含助记符与内存语法。
     validate_reg_names(m)?;
     validate_spill_coverage(m)?;
+    validate_types(m)?;
+    Ok(())
+}
+
+/// `[types]` 显式映射校验（B2）：类型名合法、目标组已声明（在
+/// `explicit_type_map` 里查）、映射的类宽 ≥ 该类型的字节宽（`ptr` 按 ISA
+/// 地址宽；`void` 只能 unsupported）——防止把 `i64` 映射到 1 字节组这类
+/// "看起来能用、实际截断"的配置。**显式条目优先于通用值池规则**。
+fn validate_types(m: &V12Model) -> Result<(), String> {
+    let addr_w = m.addr_class()?.width();
+    for (ty, target) in m.explicit_type_map()? {
+        let Some(rc) = target else {
+            // 显式 unsupported：合法（把"宿主会拒绝"变成"ISA 明确声明不支持"）。
+            continue;
+        };
+        if ty == "void" {
+            return Err("[types].void: void 不承载寄存器，只能写 \"unsupported\"".into());
+        }
+        // 向量类型：类宽必须 ≥ 元素字节数（tier 语义），其余按标量字节宽。
+        let need = match ty.as_str() {
+            "ptr" => Some(addr_w),
+            other => crate::v12::model::type_name_bytes(other),
+        };
+        if let Some(need) = need
+            && rc.width() < need
+        {
+            return Err(format!(
+                "[types].{ty} = \"{rc}\": 类宽 {} 字节 < 该类型 {} 字节（会静默截断）",
+                rc.width(),
+                need
+            ));
+        }
+    }
     Ok(())
 }
 

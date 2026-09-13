@@ -184,10 +184,33 @@ base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
    文件存在性**：整数族要求类宽 ≤ `value_gpr_width`（1 字节 ISA 上写 `i64`/
    指针即被拒）；浮点/向量族额外要求 ISA **声明了浮点寄存器组**（无 `[reg.fpr*]`
    的 ISA 上 `f32`/`f64`/`v128`… 一律被拒——它们没有可编码的寄存器文件），
-   向量再按 `vector_tiers` 夹到档位。被 DCE 墓碑化的值（`TypeId::VOID`，不承载
-   寄存器）跳过。**不**按 8 字节池生成不存在的类。
+   向量再按 `vector_tiers` 夹到档位。**`[types]` 显式条目优先于以上全部规则**
+   （软浮点 / 非常规宽度 / 1 字节地址都靠它）。被 DCE 墓碑化的值
+   （`TypeId::VOID`，不承载寄存器）跳过。**不**按 8 字节池生成不存在的类。
 5. **向量 by-value/by-ref**：超过 `[abi.arg_class].limit`（字节 = limit/8）的
    向量按引用传参；按值收参判定用同一阈值（不再写死 `VEC(16)`）。
+
+### `[types]` — 类型 → 类（ISA 数据，B2 接口通用化）
+
+值池门与 lowering 的"类型 → 寄存器类"推导**可以被 ISA 覆盖**——"非常规映射"是
+数据，不是宿主代码：
+
+```toml
+[types]
+i8  = "gpr1"        # 值 = 已声明 [reg.*] 组名（类宽必须 ≥ 类型字节宽）
+f64 = "gpr8"        # 软浮点：没有 FPR 组的 ISA 也能声明 f64 走 GPR
+ptr = "gpr1"        # 1 字节地址的 ISA（ptr 的健全性按 [meta].addr_width 判）
+i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更清楚）
+```
+
+- 语义：**显式条目优先**于通用规则（族 + 值池宽 + 浮点文件存在性），未列出的类型
+  走通用规则。`class_for_type`（编译入口的门）与 `type_map()`（lowering 的
+  `reg_class_for`）读**同一份**数据，避免"门放行、lowering 按别的类分配"。
+- 校验：类型名必须是 `bool/i8/i16/i32/i64/i128/f16/f32/f64/f128/ptr/v64/v128/
+  v256/void`；目标必须已声明；类宽 ≥ 类型字节宽（`ptr` 按 `addr_width`，
+  否则报"会静默截断"）；`void` 只能写 `"unsupported"`。
+- 用例：`crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（`ptr = "gpr1"`）、
+  `demo_v12.toml`（`f32/f64 = "gpr8"` 软浮点演示）。
 
 ### 最小示例
 

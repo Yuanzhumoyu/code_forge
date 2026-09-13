@@ -1992,6 +1992,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ctx.addr_class = ri.addr_class();
             ctx.slot_bytes = ri.slot_bytes();
             ctx.vector_tiers = ri.vector_tiers().to_vec();
+            ctx.type_map = ri.type_map().to_vec();
         }
         // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。

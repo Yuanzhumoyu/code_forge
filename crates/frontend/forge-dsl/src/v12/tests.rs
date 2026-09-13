@@ -2604,3 +2604,61 @@ store = "NOP"
     .expect("声明档位后合法");
     assert!(m.spill.contains_key("FPR16"));
 }
+
+// ─────────── B2：`[types]` 显式类型→类映射（ISA 数据，优先于通用值池规则） ───────────
+
+/// 合法：显式映射到已声明组；`"unsupported"` 也合法；`ptr` 按 ISA 地址宽判定。
+#[test]
+fn types_explicit_map_parses_and_validates() {
+    let doc = two_view_doc(
+        r#"
+[types]
+i8 = "gpr8"
+f64 = "fpr16"
+ptr = "gpr4"
+i64 = "unsupported"
+"#,
+    )
+    .replace("[meta]", "[meta]\naddr_width = 4");
+    let m = parse_and_validate(&doc).expect("合法显式映射");
+    let map = m.explicit_type_map().unwrap();
+    assert!(map.contains(&("i8".to_string(), Some(RegClass::GPR(8)))));
+    assert!(map.contains(&("ptr".to_string(), Some(RegClass::GPR(4)))));
+    assert!(
+        map.contains(&("i64".to_string(), None)),
+        "unsupported 记 None"
+    );
+}
+
+/// 非法：类型名未知 / 目标组未声明 / 类宽 < 类型字节宽（会静默截断）/ void 映射。
+#[test]
+fn types_explicit_map_rejects_bad_entries() {
+    let msg = validation_msg(&two_view_doc("[types]\nfoo = \"gpr8\"\n"));
+    assert!(msg.contains("未知类型名"), "msg: {msg}");
+    let msg = validation_msg(&two_view_doc("[types]\ni8 = \"gpr32\"\n"));
+    assert!(msg.contains("未声明"), "msg: {msg}");
+    let msg = validation_msg(&two_view_doc("[types]\ni64 = \"gpr4\"\n"));
+    assert!(msg.contains("静默截断"), "msg: {msg}");
+    let msg = validation_msg(&two_view_doc("[types]\nvoid = \"gpr8\"\n"));
+    assert!(msg.contains("void"), "msg: {msg}");
+}
+
+/// `ptr` 的健全性按 **ISA 地址宽**（不是 `TypeId::bits()` 的 8）：
+/// 地址宽 4 的 ISA 可以 `ptr = "gpr4"`；地址宽 2 的 ISA 不能 `ptr = "gpr1"`。
+#[test]
+fn types_ptr_uses_isa_address_width() {
+    let doc = two_view_doc("[types]\nptr = \"gpr4\"\n").replace("[meta]", "[meta]\naddr_width = 4");
+    parse_and_validate(&doc).expect("地址宽 4 → ptr = gpr4 合法");
+    let doc2 = two_view_doc("[types]\nptr = \"gpr1\"\n")
+        .replace("[meta]", "[meta]\naddr_width = 2")
+        .replace(
+            "[reg.gpr8]",
+            "[reg.gpr2]\nbase_index = 0\nnames = [\"E0\", \"E1\"]\n\n\
+             [reg.gpr1]\nbase_index = 0\nnames = [\"B0\", \"B1\"]\n\n[reg.gpr8]",
+        );
+    let msg = validation_msg(&doc2);
+    assert!(
+        msg.contains("静默截断"),
+        "addr_width=2 > gpr1 → 报错：{msg}"
+    );
+}

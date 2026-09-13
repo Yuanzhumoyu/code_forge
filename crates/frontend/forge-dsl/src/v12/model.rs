@@ -28,6 +28,16 @@ pub struct V12Model {
     /// ISA 约定（位域/ModRM/REX/操作数宽度前缀）。
     #[serde(default)]
     pub conventions: Conventions,
+    /// 类型 → 寄存器类的**显式映射**（`[types]`，可选；B2 接口通用化）。
+    ///
+    /// 键 = 类型名（`bool`/`i8`/`i16`/`i32`/`i64`/`i128`/`f16`/`f32`/`f64`/
+    /// `f128`/`ptr`/`v64`/`v128`/`v256`），值 = 已声明 `[reg.*]` 组名，或
+    /// `"unsupported"`（显式拒绝该类型）。显式条目**优先于**通用值池规则，
+    /// 使"非常规映射"成为 ISA 数据而不是宿主代码：
+    /// 软浮点（`f64 = "gpr8"`）、1 字节地址（`ptr = "gpr1"`）等。
+    /// 未列出的类型走通用规则（族 + 宽度 ≤ 值池/寄存器文件存在性）。
+    #[serde(default)]
+    pub types: Option<BTreeMap<String, String>>,
     /// 操作数槽（`[[operand_slots]]`）。
     pub operand_slots: Vec<OperandSlot>,
     /// 编码形式（`[[forms]]`）。
@@ -177,6 +187,38 @@ impl V12Model {
             .vector_tiers
             .clone()
             .unwrap_or_else(|| vec![16, 32, 64])
+    }
+
+    /// `[types]` 的显式条目 → `(类型名, 目标)`；`None` = 该表未声明。
+    /// 目标：`Ok(Some(rc))` = 映射到类、`Ok(None)` = 显式 `"unsupported"`。
+    pub(crate) fn explicit_type_map(&self) -> Result<Vec<(String, Option<RegClass>)>, String> {
+        let Some(map) = &self.types else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(map.len());
+        for (ty, target) in map {
+            if type_id_ident(ty).is_none() {
+                return Err(format!(
+                    "[types].{ty}: 未知类型名（可用：bool/i8/i16/i32/i64/i128/f16/f32/f64/f128/\
+                     ptr/v64/v128/v256/void）"
+                ));
+            }
+            let t = target.trim();
+            if t.eq_ignore_ascii_case("unsupported") {
+                out.push((ty.clone(), None));
+                continue;
+            }
+            let rc: RegClass = t
+                .parse()
+                .map_err(|_| format!("[types].{ty}: 无法解析寄存器类 \"{target}\""))?;
+            if !self.reg.contains_key(&rc) {
+                return Err(format!(
+                    "[types].{ty} = \"{target}\": 该寄存器组未声明（必须指向已声明 [reg.*]）"
+                ));
+            }
+            out.push((ty.clone(), Some(rc)));
+        }
+        Ok(out)
     }
 
     /// 向量 by-value 阈值（**字节**）：`[abi.arg_class]` 中
@@ -393,6 +435,45 @@ pub enum RegClass {
     VEC(u16),
     /// 掩码寄存器（如 x86 AVX-512 k0-k7），payload = 字节宽度。
     KReg(u16),
+}
+
+/// `[types]` 允许的类型名（与 forge-ir `TypeId` 常量一一对应）。
+pub(crate) fn type_id_ident(s: &str) -> Option<&'static str> {
+    Some(match s {
+        "void" => "VOID",
+        "bool" => "BOOL",
+        "i8" => "I8",
+        "i16" => "I16",
+        "i32" => "I32",
+        "i64" => "I64",
+        "i128" => "I128",
+        "f16" => "F16",
+        "f32" => "F32",
+        "f64" => "F64",
+        "f128" => "F128",
+        "ptr" => "PTR",
+        "v64" => "V64",
+        "v128" => "V128",
+        "v256" => "V256",
+        _ => return None,
+    })
+}
+
+/// 类型名的字节宽（`[types]` 映射的健全性校验用）。`ptr` 由调用方按 ISA
+/// 地址宽判定（传 `None` 表示"按地址宽，跳过比较"）；`void`/`bool` 记 1。
+pub(crate) fn type_name_bytes(s: &str) -> Option<u16> {
+    Some(match s {
+        "void" | "bool" | "i8" => 1,
+        "f16" | "i16" => 2,
+        "i32" | "f32" => 4,
+        "i64" | "f64" => 8,
+        "i128" | "f128" => 16,
+        "v64" => 8,
+        "v128" => 16,
+        "v256" => 32,
+        "ptr" => return None, // 由 ISA 地址宽决定
+        _ => return None,
+    })
 }
 
 impl RegClass {

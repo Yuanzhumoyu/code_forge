@@ -577,12 +577,21 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
             fn slot_bytes(&self) -> u16 { __SLOT_BYTES }
             fn vector_tiers(&self) -> &[u16] { &__VECTOR_TIERS }
             fn class_for_type(&self, ty: forge_ir::TypeId) -> Option<forge_ir::RegClass> {
+                // ① `[types]` 显式映射（ISA 数据，优先）；② 通用值池规则。
+                for (t, rc) in __TYPE_MAP {
+                    if t == ty {
+                        return Some(rc);
+                    }
+                }
                 crate::machine::reg_info::class_for_type_in_pool(
                     ty,
                     __VALUE_GPR_CLASS,
                     __VALUE_FPR_POOL,
                     &__VECTOR_TIERS,
                 )
+            }
+            fn type_map(&self) -> &'static [(forge_ir::TypeId, forge_ir::RegClass)] {
+                &__TYPE_MAP
             }
             fn sp_reg(&self) -> forge_ir::FrameAccess<Self::Reg> {
                 forge_ir::FrameAccess::Register(#sp_expr)

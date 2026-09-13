@@ -84,7 +84,8 @@ fn one_byte_pool_rejects_wide_types() {
     assert_eq!(ri.class_for_type(TypeId::I16), None, "无 GPR(2) 组");
     assert_eq!(ri.class_for_type(TypeId::I32), None, "无 GPR(4) 组");
     assert_eq!(ri.class_for_type(TypeId::I64), None, "无 GPR(8) 组");
-    assert_eq!(ri.class_for_type(TypeId::PTR), None, "指针 = 8 字节 > 值池");
+    // 注：PTR 由夹具的 `[types] ptr = "gpr1"` 显式映射承载 —— 见
+    // `class_table_has_only_declared_classes` 与 `explicit_type_map_*` 断言。
     // 无 FPR 组 → 浮点/向量寄存器文件不存在（值池门必须看**文件存在性**，
     // 只看宽度会让 f64 落到一个该 ISA 没有的 FPR(8) 类上）。
     assert_eq!(ri.class_for_type(TypeId::F32), None, "无浮点寄存器组");
@@ -93,6 +94,20 @@ fn one_byte_pool_rejects_wide_types() {
     assert_eq!(ri.class_for_type(TypeId::V128), None, "无向量寄存器组");
     assert_eq!(ri.class_for_type(TypeId::V256), None, "无向量寄存器组");
     assert_eq!(ri.class_for_type(TypeId::VOID), None, "void = 无寄存器");
+    // `[types] ptr = "gpr1"`：**显式映射优先于通用规则**——本 ISA 地址宽 1 字节，
+    // 所以指针可承载（通用规则会按 `TypeId::bits()` 的 8 字节把它拒掉）。
+    assert_eq!(
+        ri.class_for_type(TypeId::PTR),
+        Some(RegClass::GPR(1)),
+        "[types] 显式映射必须生效"
+    );
+    assert!(
+        ri.type_map().contains(&(TypeId::PTR, RegClass::GPR(1))),
+        "type_map 必须暴露给 lowering：{:?}",
+        ri.type_map()
+    );
+    // 显式映射只覆盖列出的类型，其余仍走值池门。
+    assert_eq!(ri.class_for_type(TypeId::I64), None, "i64 仍未声明 → 拒绝");
 }
 
 /// 类表 = ISA 声明：1 字节 ISA 只有 `GPR(1)`——不再有"编造的 fallback 类表"

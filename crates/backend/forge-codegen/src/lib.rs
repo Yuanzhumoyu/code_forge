@@ -267,6 +267,9 @@ pub struct LowerCtx {
     pub slot_bytes: u16,
     /// 向量类字节档位（`TargetRegInfo::vector_tiers`；缺省 `[16,32,64]`）。
     pub vector_tiers: Vec<u16>,
+    /// ISA 的 `[types]` 显式类型→类映射（`TargetRegInfo::type_map`）。
+    /// lowering 必须与编译入口的门用同一份数据（B2 接口通用化）。
+    pub type_map: Vec<(TypeId, RegClass)>,
 }
 
 use std::collections::HashSet;
@@ -398,6 +401,7 @@ impl LowerCtx {
             addr_class: RegClass::GPR64,
             slot_bytes: 8,
             vector_tiers: vec![16, 32, 64],
+            type_map: Vec::new(),
             type_ctx: None,
         }
     }
@@ -417,6 +421,10 @@ impl LowerCtx {
     /// 32 字节、搬运按 32 字节 → 高半区静默截断（CI 上 V512 by-ref 用例偶发
     /// lane15 错）。
     pub fn reg_class_for(&self, ty: &TypeId) -> RegClass {
+        // ① ISA 的 `[types]` 显式映射（B2）：与编译入口的值池门同一份数据。
+        if let Some((_, rc)) = self.type_map.iter().find(|(t, _)| t == ty) {
+            return *rc;
+        }
         if let Some(ctx) = &self.type_ctx {
             let store = ctx.borrow();
             if store.is_vector(*ty) || store.is_scalable_vector(*ty) {
@@ -594,5 +602,24 @@ mod memref_tests {
         // Copy + Eq（字段在 Inst 枚举中要求）
         let c = m;
         assert_eq!(c, m);
+    }
+}
+
+#[cfg(test)]
+mod type_map_tests {
+    use super::*;
+
+    /// B2：lowering 的 `reg_class_for` 必须先查 ISA 的 `[types]` 显式映射
+    /// （与编译入口的值池门同一份数据），否则"门放行、lowering 按别的类分配"。
+    #[test]
+    fn reg_class_for_honours_isa_type_map() {
+        let mut ctx = LowerCtx::new();
+        // 无映射时：F64 走 `from_type_id` 的族规则 → FPR(8)。
+        assert_eq!(ctx.reg_class_for(&TypeId::F64), RegClass::FPR(8));
+        // 软浮点 ISA 显式声明 f64 → GPR(8)：映射优先。
+        ctx.type_map = vec![(TypeId::F64, RegClass::GPR(8))];
+        assert_eq!(ctx.reg_class_for(&TypeId::F64), RegClass::GPR(8));
+        // 未列出的类型不受影响。
+        assert_eq!(ctx.reg_class_for(&TypeId::I32), RegClass::GPR(4));
     }
 }

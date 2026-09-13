@@ -287,13 +287,17 @@ let name = node.get_text("name")?;
   能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 195 passed /
   3 skipped**（本机 2026-09-12 实测 `cargo test -p forge-tests --lib
   jit_matrix_x86_v12`；旧记录的 193 已过时）、**riscv64_v12 131 passed /
-  65 skipped，0 failed**（QEMU 通道，未在本机复测）：整数/浮点/调用/
+  67 skipped，0 failed**（QEMU 通道；2026-09-13 本机实测
+  `cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --test-threads=1
+  --nocapture`，**需 `--nocapture` 才看得到计数**）：整数/浮点/调用/
   向量/饱和/指针转换/undef/poison/GlobalAddr/原子（AtomicRmw/Cmpxchg）/GEP/Nop/
   混宽整数算术与比较；V256 用例在无 AVX 机器
   自动 Skip（**哪些用例 Skip 及原因**经 `FORGE_JIT_EVENTS` 的
   `MATRIX-SKIP`/`MATRIX-FAIL`/`MATRIX-SUMMARY` 事件可核对——libtest 吞掉通过
   测试的输出，否则 CI 上不可见）。`CaseKind::{I32/I64/F64/Bool/Block/Args/
   F64Args/Module/CompileOnly}`；`ops` 未覆盖 → Skip（不失败，实现后自动转绿）。
+  **两条矩阵是两套能力集，改类表/值池/ABI 必须都跑**（2026-09-13 实测：x86 全绿
+  而 riscv 的 7 个 fcmp 错值，正是 riscv 通道抓到的）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch

@@ -75,6 +75,20 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
         Some(c) => quote! { Some(#c) },
         None => quote! { None },
     };
+    // `[types]` 显式映射（B2）：类型 → 类的 ISA 数据。生成 `__TYPE_MAP` 常量，
+    // `class_for_type` 先查它（显式条目**优先于**通用值池规则），`type_map()`
+    // 让 lowering 的 `reg_class_for` 也走同一份数据。
+    let mut type_map_entries: Vec<TokenStream> = Vec::new();
+    for (ty, target) in model.explicit_type_map()? {
+        let Some(rc) = target else {
+            continue; // 显式 unsupported：不进映射表（由值池门返回 None）
+        };
+        let ident = crate::v12::model::type_id_ident(&ty)
+            .ok_or_else(|| format!("[types].{ty}: 未知类型名"))?;
+        let tid = format_ident!("{ident}");
+        type_map_entries.push(quote! { (forge_ir::TypeId::#tid, #rc) });
+    }
+    let n_type_map = type_map_entries.len();
 
     // 默认值类：主 GPR 组宽度 / FPR 组宽度
     let gpr_class = quote! { #gpr_main };
@@ -130,6 +144,9 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
         pub(crate) const __FP_OVERHEAD_BYTES: u16 = #fp_overhead;
         /// 向量类字节档位（升序；`TargetRegInfo::vector_tiers`）。
         pub(crate) const __VECTOR_TIERS: [u16; #n_tiers] = [#(#vector_tiers),*];
+        /// `[types]` 显式类型→类映射（B2；空 = 全部走通用值池规则）。
+        pub(crate) const __TYPE_MAP: [(forge_ir::TypeId, forge_ir::RegClass); #n_type_map] =
+            [#(#type_map_entries),*];
 
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum Reg { #(#variants),* }

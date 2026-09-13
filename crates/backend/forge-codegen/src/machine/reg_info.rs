@@ -74,10 +74,18 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// 类型 → 寄存器类；`None` = 本 ISA 无法承载该类型（调用方必须报
     /// `Unsupported`，**不得**静默降级到某个宽度缺省）。
     /// 缺省实现 = `RegClass::from_type_id`（i8→GPR(1)/i64→GPR(8)/f64→FPR(8)/…）。
-    /// DSL 生成的实现额外校验"类宽度 ≤ 本 ISA 值池宽"（1 字节 GPR 池的 ISA
-    /// 对 i64 返回 None）。
+    /// DSL 生成的实现：① 先查 `[types]` 显式映射（ISA 数据，可表达软浮点
+    /// `f64 = "gpr8"`、1 字节地址 `ptr = "gpr1"` 等非常规映射）；② 再走
+    /// `class_for_type_in_pool`（族 + 值池宽 + 寄存器文件存在性）。
     fn class_for_type(&self, ty: TypeId) -> Option<RegClass> {
         Some(RegClass::from_type_id(ty))
+    }
+
+    /// `[types]` 显式类型→类映射（ISA 数据）。**lowering 必须与
+    /// `class_for_type` 用同一份映射**（否则门放行、lowering 却按别的类分配）。
+    /// 缺省空 = 只用 `RegClass::from_type_id` 的族/宽度规则。
+    fn type_map(&self) -> &'static [(TypeId, RegClass)] {
+        &[]
     }
 
     /// 寄存器类的字节宽度（从 ISA TOML [reg_classes] 读取）。
