@@ -123,6 +123,10 @@ jobs:
           # 同时写入 step summary（若 runner 提供该文件）。
           $md = @("### AVX-512 门控用例事件（FORGE_JIT_EVENTS）", "", '```text') + $lines + @('```')
           if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $md }
+          # **并以 `::warning::` 报成 annotations**：job 日志 403、step summary 不进
+          # check-run 的 output.summary（实测 null），annotations 是唯一可经 API 读到的
+          # 通道 ⇒ 这样每次 run 都能看到"该 runner 是否有 AVX-512F / V512 用例是否真跑"。
+          $lines | Sort-Object -Unique | ForEach-Object { Write-Output ("::warning::" + $_) }
       - name: Surface failing test names as annotations (always)
         if: always()
         shell: pwsh

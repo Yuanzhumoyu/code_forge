@@ -1,4 +1,4 @@
-# forge-rustc vec_push/vec_string 完整改进方案
+﻿# forge-rustc vec_push/vec_string 完整改进方案
 
 > 对应 `docs/archive/roadmap-status.md` 剩余事项 2 与 `crates/tools/forge-rustc/WORKAROUNDS.md`
 > [WA-11]。e2e 58 用例中 2 个预期失败（`vec_push` SEGV、`vec_string` len 错）
@@ -1207,16 +1207,27 @@ test result: FAILED. 122 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
 **复核点**：下一次含本修复的 CI run，`Test (Windows)` 的 `test_jit_v512_byref_param`
 应确定性通过（本机无 AVX-512F，该硬件路径只能在 CI 上验证）。
 
-**#58–#61 复核结果（2026-09-12/13）——WA-46 修复未能根治该现象（如实修正）**：
+**#58–#61 复核结果（2026-09-12/13）——真实根因是 WA-47（V512 lane 提取）**：
 `0ddf8a4`（WA-46）与 `316f39d`（补守卫）的 CI 全绿（#58/#59/#60），但
 **#61（`13c6f48`，docs-only）再次红**，annotations 给出**同一用例同一断言**：
 `test_jit_v512_byref_param ... FAILED`（`runtime/jit.rs:1527` = 行号漂移后的同一处
-`assert_eq!(got, 16, …)`），`126 passed; 1 failed`。⇒ 结论修正：
+`assert_eq!(got, 16, …)`）。据此**本机生成级复现**（无需 AVX-512 硬件）拿到决定性证据：
 
-1. **WA-46 是真实缺陷**（8B 搬运 + 32B 槽/类宽静默截断），修复与三块确定性守卫生效，
-   #58–#60 全绿——但它**不是**该 V512 偶发失败的唯一/主要成因；
-2. 修复后仍以 ~1/4 的概率复现（观察口径：#51/#57/#61 红，共 10 次 run）⇒ 该偶发项**保持开放**，
-   §10.7 的"根因已定位"降级为"**部分成因**已定位并修复"；
-3. 下一步诊断手段（已落地）：①annotations 抓取改为 `-Context 0,4`——把 panic 之后的
-   **断言消息**（left/right 或自定义文本）一并报出；②`test_jit_v512_byref_param` **连测 8 次**
-   并报告全部取值，失败时可直接区分"每次不同（残留内容）"与"恒定错值（确定性错码）"。
+```text
+（修复前，FORGE_ASSUME_AVX512 下编译该 callee 后 objdump）
+vmovups zmm15, [rcx]          ; 64B by-ref 收参 ✓（D5 已修）
+pshufd  xmm14, xmm15, 0xf     ; ✗ imm=15 → PSHUFD 只用低 2 位 → 取 dword3 = lane3 = 4.0
+movss / cvtss2sd / cvttsd2si  ; ⇒ 断言 16 得 4
+```
+
+⇒ **真实根因 = WA-47**：V512（`rs1_width = 512`）在 `Vextract` 规则集里**没有专档**，落到 128 位
+通用回退（`PSHUFD imm=原 lane 号`）⇒ lane4..15 全部取到 lane(L%4)。该用例**只在有 AVX-512F 的
+runner 上真跑**，故一直表现为"偶发/机型相关"（3 红 / 11 run ≈ 落到 AVX-512F runner 的比例）；
+WA-46（向量 spill 截断）是**独立的潜在缺陷**、与本次现象无关（已各自修复 + 各自守卫）。
+修复：新增 `VEXTRACTF32X4` + 6 条 V512 `Vextract` 规则（见 `WORKAROUNDS.md` WA-47）；守卫为
+生成级断言（lane15 必须 `62 … 19 imm=3` + `PSHUFD 0xFF`，且不得出现回退形态 `PSHUFD …, 15`）。
+
+**诊断通道补强（2026-09-13）**：CI 现在把 `FORGE_JIT_EVENTS` 的事件**以 `::warning::` 报成
+annotations**（含 `AVX512-HW=0|1`、`AVX512-RUN/SKIP`、`MATRIX-*`）⇒ 每次 run 都能经 API 读到
+"该 runner 有没有 AVX-512F、V512 用例这次是否真跑"——此前正是这个盲点让"跳过"与"真跑"无法区分
+（`step summary` 不进 check-run 的 `output.summary`、job 日志 403）。

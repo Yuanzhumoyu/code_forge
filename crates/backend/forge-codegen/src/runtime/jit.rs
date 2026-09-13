@@ -1685,6 +1685,44 @@ mod tests {
         let cf_callee = FunctionCompiler::new(x86_v12::TargetMachine::new())
             .compile_raw(&callee_func)
             .expect("compile callee（FORGE_ASSUME_AVX512 下应过守卫）");
+        // **V512 lane15 提取路径**（2026-09-13 定位的真实缺陷）：必须用 EVEX
+        // `VEXTRACTF32X4` 取第 3 个 128 位段 + 段内 `PSHUFD 0xFF`（广播 dword3）
+        // ——旧实现无 V512 规则，落到 128 位通用回退 `PSHUFD …, imm0`，而 PSHUFD
+        // 只用 imm 低 2 位 ⇒ lane15 实际取到 lane3（值 4）：CI 上
+        // `test_jit_v512_byref_param` 断言 16 得 4 即此因（只在有 AVX-512F 的
+        // runner 上真跑 ⇒ 长期伪装成"偶发红"）。
+        let ext = cf_callee
+            .code
+            .windows(7)
+            .find(|w| w[0] == 0x62 && w[4] == 0x19)
+            .unwrap_or_else(|| {
+                panic!(
+                    "V512 lane15 提取应为 EVEX VEXTRACTF32X4（62 … 19 /r ib）：code = {:02x?}",
+                    &cf_callee.code[..cf_callee.code.len().min(64)]
+                )
+            });
+        assert_eq!(
+            ext[6],
+            3,
+            "VEXTRACTF32X4 应立即数 3（第 4 个 128 位段）：code = {:02x?}",
+            &cf_callee.code[..cf_callee.code.len().min(64)]
+        );
+        assert!(
+            cf_callee
+                .code
+                .windows(6)
+                .any(|w| { w[2] == 0x0F && w[3] == 0x70 && w[5] == 0xFF }),
+            "段内提取应为 PSHUFD 0xFF（广播 dword3 → lane15）：code = {:02x?}",
+            &cf_callee.code[..cf_callee.code.len().min(64)]
+        );
+        assert!(
+            !cf_callee
+                .code
+                .windows(6)
+                .any(|w| { w[2] == 0x0F && w[3] == 0x70 && w[5] == 15 }),
+            "不得退回 128 位通用回退（PSHUFD imm=15 只会取 lane3）：code = {:02x?}",
+            &cf_callee.code[..cf_callee.code.len().min(64)]
+        );
         assert!(
             is_evex(&cf_callee.code, 0x10),
             "被调方 V512 收参应为 EVEX zmm load（62 … 10）：{:02x?}",
