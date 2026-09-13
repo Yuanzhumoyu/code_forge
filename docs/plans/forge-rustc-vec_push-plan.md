@@ -1099,7 +1099,9 @@ V512 已被真跑覆盖"）。
 
 | run | commit | 内容 | 结果 |
 | --- | --- | --- | --- |
-| 34703244549（#56） | `49323a1` | §10.5 补"#51 候选已排除"（docs） | **11 job 全绿**（含 **Test (Windows)**）；自 #52 起该 job 已连续 #52/#56 绿 |
+| 34709093219（#58） | `0ddf8a4` | WA-46 向量溢出宽度修复（§10.7） | **11 job 全绿**（含 **Test (Windows)**：`test_jit_v512_byref_param` 通过——#51/#57 的同一 job/同一用例转绿） |
+| 34703656290（#57） | `8649229` | §10.5 记录（docs-only） | ❌ 仅 **Test (Windows)** 红——**annotations 自证**：`test_jit_v512_byref_param` FAILED @ `runtime/jit.rs:1457`（lane15）⇒ 由此定位 WA-46（§10.7） |
+| 34703244549（#56） | `49323a1` | §10.5 补"#51 候选已排除"（docs） | **11 job 全绿**（含 **Test (Windows)**） |
 | （#55） | `e3a055c` | `docs/forge-ir/backlog.md` 复核（docs） | 未逐条核对（docs-only，其后 #56 同树全绿） |
 | 34702946018（#54） | `3a76c99` | 残留清单核查 + 矩阵跳过/失败可见化（代码） | **11 job 全绿**（逐 job 核对：Format / Clippy / forge-rustc check / forge-tests / Docs / Test (Windows) / Benchmarks / e2e / Test (macOS) / Test (Linux) / Coverage） |
 | 34684847549（#53） | `fb22296` | §10.5 记录（docs） | **11 job 全绿** |
@@ -1195,3 +1197,10 @@ test result: FAILED. 122 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
 
 **复核点**：下一次含本修复的 CI run，`Test (Windows)` 的 `test_jit_v512_byref_param`
 应确定性通过（本机无 AVX-512F，该硬件路径只能在 CI 上验证）。
+
+**#58 复核结果（2026-09-12）**：`0ddf8a4`（WA-46 修复）的 CI **11 job 全绿**，
+`Test (Windows)` 的 `test_jit_v512_byref_param` 通过、annotations 只剩 Node 弃用告警
+（无 `::error::`）⇒ 修复后该 job 恢复绿。**诚实的限定**：原缺陷是"高半区栈残留"造成的
+**偶发**（同代码 #49/#52/#54/#56 绿、#51/#57 红），单次绿不足以终局证明"永不复发"；
+但根因是确定性缺陷（8B 搬运 + 32B 槽），已由确定性守卫 `test_fpr_spill_width_dispatch`
+覆盖（修复前必红）——后续 run 继续作为观察点。
