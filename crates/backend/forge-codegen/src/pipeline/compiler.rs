@@ -1674,6 +1674,30 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         self.compile_with_alloc(func).map(|(cf, _)| cf)
     }
 
+    /// 值池门：函数内每个值类型都必须能被 ISA 承载
+    /// （`TargetRegInfo::class_for_type` 返回 `Some`）。否则报 `Unsupported`
+    /// 并点名类型与值池宽度——**绝不**静默按某个宽度缺省生成寄存器类。
+    fn check_value_pools(machine: &M, func: &Function) -> Result<(), IrError> {
+        let ri = machine.reg_info();
+        let gpr = ri.value_gpr_class();
+        let fpr = ri.value_fpr_class();
+        for (v, _) in func.dfg.values() {
+            let Some(ty) = func.dfg.value_type(v) else {
+                continue;
+            };
+            if ri.class_for_type(ty).is_none() {
+                return Err(IrError::Unsupported(format!(
+                    "ISA 值池无法承载类型 {ty:?}（值池 GPR {} 字节 / FPR {} 字节；\
+                     需要 [meta].value_gpr_width / addr_width / value_fpr_width \
+                     声明更宽的寄存器组，或改用更窄的 IR 类型）",
+                    gpr.width(),
+                    fpr.width()
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Compile an IR function (raw, no IR-level optimization passes)。
     /// 显式绕过优化管线（即使设置了 opt_level）。
     /// 公共 API 面：只返回编译产物；分配明细经 [`Self::compile_with_alloc`]。
@@ -1703,6 +1727,11 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         };
 
         let _cf_t0 = std::time::Instant::now();
+        // 值池门（fail-closed，2026-09-12 去「宽度写死」）：函数里出现的每个值
+        // 类型都必须落在 ISA 值池内（`TargetRegInfo::class_for_type`）。1 字节
+        // 寄存器 ISA 上出现 i16/i32/i64/指针 等宽类型时**编译期拒绝**，而不是
+        // 静默按 8 字节池生成不存在的寄存器类（历史行为：生成成功但语义错误）。
+        Self::check_value_pools(&self.machine, func)?;
         // 宽向量参数/返回（>16 字节）ABI：
         // - 若 ISA 声明 `vector by-ref limit`（如 x86 limit=128 位）→ 宽向量按
         //   引用传参（调用方栈拷贝 + 传指针 GPR；被调方入口从 [ptr] 加载）。
@@ -1943,6 +1972,17 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let mut ctx = LowerCtx::new();
         ctx.call_conv = func.calling_convention;
         ctx.type_ctx = Some(func.types.clone());
+        // 值/地址寄存器类与栈槽单位：全部由 TargetRegInfo 元数据提供
+        //（DSL 从 [meta].value_gpr_width/addr_width/slot_bytes 生成）——
+        // lowering 里不再出现 RegClass::GPR64/FPR64 字面量（1 字节寄存器 ISA
+        // 的值池是 GPR(1)，写死 8 字节会生成不存在的类）。
+        {
+            let ri = machine.reg_info();
+            ctx.value_gpr_class = ri.value_gpr_class();
+            ctx.value_fpr_class = ri.value_fpr_class();
+            ctx.addr_class = ri.addr_class();
+            ctx.slot_bytes = ri.slot_bytes();
+        }
         // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
@@ -2023,20 +2063,18 @@ impl<I: MachineInst + 'static> CompileState<I> {
         //（GPR(4) 继承主 GPR 类、FPR/VEC 继承主 FPR 类）。
         // 基类由元数据推导（同族最宽已声明类），而非硬编码 GPR64/FPR64——
         // 例如只有 GPR(4) 主类的 32 位 ISA，其 GPR(2)/GPR(1) 继承 GPR(4)。
-        for class in [
-            RegClass::GPR(4),
-            RegClass::GPR(2),
-            RegClass::GPR(1),
-            RegClass::FPR(4),
-            RegClass::FPR(8),
-            RegClass::FPR(16),
-            RegClass::VEC(16),
-            RegClass::VEC(32),
-            // WA-46：>256 位向量（V512）由 `reg_class_for` 归入 VEC(64)——
-            // 必须在此登记才能拿到 `reg_width = 64`（spill 槽按值宽，槽内不被
-            // 截断；池继承同族最宽类 = ZMM）。
-            RegClass::VEC(64),
-        ] {
+        // 类清单同样**派生**（2026-09-12 去「宽度写死」）：标量宽度档
+        // （GPR 1/2/4、FPR 4/8/16）+ 值池/地址类 + `ri.vector_tiers()`；
+        // 对 x86 派生集合与历史写死数组完全一致（GPR(8)/FPR(16) 已由上面的
+        // 主类 entry 插入）。
+        let mut fallback_classes: Vec<RegClass> = Vec::new();
+        fallback_classes.extend([RegClass::GPR(1), RegClass::GPR(2), RegClass::GPR(4)]);
+        fallback_classes.extend([RegClass::FPR(4), RegClass::FPR(8), RegClass::FPR(16)]);
+        fallback_classes.push(ri.addr_class());
+        fallback_classes.push(ri.value_gpr_class());
+        fallback_classes.push(ri.value_fpr_class());
+        fallback_classes.extend(ri.vector_tiers().iter().map(|t| RegClass::VEC(*t)));
+        for class in fallback_classes {
             if classes.contains_key(&class) {
                 continue;
             }
@@ -2083,7 +2121,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
             scratch_regs: ri
                 .scratch_regs()
                 .iter()
-                .map(|&n| PReg::new(n, RegClass::GPR64))
+                // scratch 是值搬运临时寄存器 → 类 = ISA 值池类（x86 = GPR(8)）。
+                .map(|&n| PReg::new(n, ri.value_gpr_class()))
                 .collect(),
             param_xregs: self.param_xregs.clone(),
             // 寄存器参数数 = ABI int 参数槽上限（Windows x64 = 4；其余

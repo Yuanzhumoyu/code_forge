@@ -241,6 +241,17 @@ pub struct LowerCtx {
     /// 当前函数的类型上下文（动态 vector/scalable 类型 → 寄存器类的
     /// 位宽感知推导，消除 RegClass::from_type_id 对动态类型的 GPR(8) 兜底）。
     pub type_ctx: Option<forge_ir::TypeContext>,
+    /// 宿主「整数值寄存器池」类（`TargetRegInfo::value_gpr_class`）。
+    /// lowering 里不能用 `RegClass::GPR64` 字面量——1 字节寄存器 ISA 的值池
+    /// 是 GPR(1)。缺省 GPR64（`LowerCtx::new()` 的测试/直连场景）；
+    /// `CompileState::new` 会用机器元数据覆盖。
+    pub value_gpr_class: RegClass,
+    /// 宿主「浮点值寄存器池」类（同 `value_gpr_class`；缺省 FPR64 = f64 值池）。
+    pub value_fpr_class: RegClass,
+    /// 地址/指针类（`TargetRegInfo::addr_class`；缺省 GPR64）。
+    pub addr_class: RegClass,
+    /// ABI 栈槽单位（字节，`TargetRegInfo::slot_bytes`；缺省 8）。
+    pub slot_bytes: u16,
 }
 
 use std::collections::HashSet;
@@ -367,6 +378,10 @@ impl LowerCtx {
             zero_vreg: None,
             zero_xreg: None,
             current_clobbers: Vec::new(),
+            value_gpr_class: RegClass::GPR64,
+            value_fpr_class: RegClass::FPR64,
+            addr_class: RegClass::GPR64,
+            slot_bytes: 8,
             type_ctx: None,
         }
     }
@@ -412,7 +427,7 @@ impl LowerCtx {
         if let Some(x) = self.zero_xreg {
             return x;
         }
-        let x = self.alloc_xreg(RegClass::GPR64);
+        let x = self.alloc_xreg(self.value_gpr_class);
         self.zero_xreg = Some(x);
         x
     }
@@ -484,7 +499,7 @@ impl LowerCtx {
 
     /// 分配一个新的整数类虚拟寄存器。
     pub fn alloc_vreg(&mut self) -> VReg {
-        self.alloc_vreg_with_class(RegClass::GPR64)
+        self.alloc_vreg_with_class(self.value_gpr_class)
     }
 
     /// 分配一个指定寄存器类别的虚拟寄存器。
@@ -509,7 +524,7 @@ impl LowerCtx {
         if let Some(vreg) = self.zero_vreg {
             return vreg;
         }
-        let vreg = self.alloc_temp_vreg(RegClass::GPR64);
+        let vreg = self.alloc_temp_vreg(self.value_gpr_class);
         self.zero_vreg = Some(vreg);
         vreg
     }

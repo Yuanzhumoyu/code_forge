@@ -56,18 +56,23 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     // 位模式链——bitcast 结果 → Copy → 下游 Freg 字段——用
                     // GPR64 会与 FPR 物理编码别名冲突：r15 与 xmm15 的 reg
                     // 位相同，regalloc 跨池无法检测别名）。
+                    // 值 XReg 保持**池宽**（int→GPR64、fp→FPR64）；类由元数据
+                    // 提供（`value_gpr_class`/`value_fpr_class`：x86 = GPR(8)/FPR(8)，
+                    // 1 字节寄存器 ISA = GPR(1)）。宽度只在 set_reg_field 回填多类槽
+                    // （gprx）时从 xreg_types 查 IR 类型推导（见 compiler.rs 回填处
+                    // ——WA-35 DSL 修复）。
                     let class = inst
                         .results
                         .first()
                         .and_then(|v| func.dfg.value_type(*v))
                         .map(|t| {
                             if self.ctx.reg_class_for(&t).is_fp() {
-                                RegClass::FPR64
+                                self.ctx.value_fpr_class
                             } else {
-                                RegClass::GPR64
+                                self.ctx.value_gpr_class
                             }
                         })
-                        .unwrap_or(RegClass::GPR64);
+                        .unwrap_or(self.ctx.value_gpr_class);
                     let xreg = inst
                         .operands
                         .first()
@@ -192,8 +197,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         lowering: &dyn TargetLowering<Inst = I>,
     ) -> Result<(), IrError> {
         // 预扫描：StackAddr 最大槽深 + Alloca 帧槽分配。
-        // Alloca 槽从 StackAddr 区之下（更负）连续分配（8 字节对齐），避免与
-        // 前段固定的 StackAddr 偏移（Immediate::Int，-4/-8...）重叠。
+        // Alloca 槽从 StackAddr 区之下（更负）连续分配（**槽单位**对齐 = 元数据
+        // `TargetRegInfo::slot_bytes`，x86/riscv64/arm64/demo = 8），避免与前段
+        // 固定的 StackAddr 偏移（Immediate::Int，-4/-8...）重叠。
+        let slot_unit = self.ctx.slot_bytes.max(1) as i64;
         let mut stackaddr_depth: i64 = 0;
         let mut allocas: Vec<(Inst, u32)> = Vec::new(); // (指令, 槽字节数)
         // 预扫描第二遍：识别 `Iadd(stack_addr(0), iconst(-N))` 模式——mini_c 的
@@ -244,7 +251,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             }
         }
         for v in iadd_stack_offsets {
-            let depth = -v + 8;
+            let depth = -v + slot_unit as i64;
             stackaddr_depth = stackaddr_depth.max(depth);
             // 与主循环 StackAddr immediate 的处理一致：负偏移槽深计入 locals
             // 帧需求（否则 spill 槽从过浅位置分配覆盖局部变量）。
@@ -256,7 +263,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 match inst.opcode {
                     Opcode::StackAddr => {
                         if let Some(Immediate::Int(v)) = inst.immediates.first() {
-                            let depth = if *v >= 0 { 0 } else { -*v + 8 };
+                            let depth = if *v >= 0 { 0 } else { -*v + slot_unit as i64 };
                             stackaddr_depth = stackaddr_depth.max(depth);
                         }
                     }
@@ -276,7 +283,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                                 .type_ctx
                                 .as_ref()
                                 .map(|tc| tc.borrow().size_bytes(t))
-                                .unwrap_or(8)
+                                .unwrap_or(self.ctx.slot_bytes as u32)
                                 .max(1) as u64;
                             let bytes = (size * count) as u32;
                             allocas.push((ii, bytes));
@@ -286,15 +293,16 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 }
             }
         }
-        // 槽偏移从 -(stackaddr 区底 + 8) 起递减；总帧需求并入 max_stack_bytes。
+        // 槽偏移从 -(stackaddr 区底 + 槽单位) 起递减；总帧需求并入 max_stack_bytes。
         let has_allocas = !allocas.is_empty();
-        let mut slot = -(stackaddr_depth + 8);
+        let mut slot = -(stackaddr_depth + slot_unit);
         for (ii, bytes) in allocas {
             self.alloca_offsets.insert(ii, slot);
-            slot -= (((bytes as i64) + 7) / 8) * 8; // 8 字节对齐（stable 算术）
+            // 槽单位对齐（stable 算术）：x86 = 8 字节。
+            slot -= (((bytes as i64) + slot_unit - 1) / slot_unit) * slot_unit;
         }
         if has_allocas {
-            let alloca_region = (-slot - stackaddr_depth - 8) as u32;
+            let alloca_region = (-slot - stackaddr_depth - slot_unit) as u32;
             self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(alloca_region);
         }
 
@@ -368,7 +376,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     .operands
                     .first()
                     .and_then(|v| self.value_to_xreg.get(v).copied())
-                    .or_else(|| Some(self.ctx.alloc_xreg(RegClass::GPR64)));
+                    .or_else(|| Some(self.ctx.alloc_xreg(self.ctx.value_gpr_class)));
                 if let (Some(xr), Some(r)) = (x, inst.results.first()) {
                     if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
                         eprintln!(
@@ -389,9 +397,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         // set_reg_field 回填多类槽（gprx）时从 xreg_types 查
                         // IR 类型推导（见 compiler.rs 回填处——WA-35 DSL 修复）。
                         let class = if self.ctx.reg_class_for(&result_ty).is_fp() {
-                            RegClass::FPR64
+                            self.ctx.value_fpr_class
                         } else {
-                            RegClass::GPR64
+                            self.ctx.value_gpr_class
                         };
                         let xreg = self.ctx.alloc_xreg(class);
                         self.value_to_xreg.insert(v, xreg);
@@ -473,7 +481,11 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             // 取用；平移 callee-saved 区与 StackAddr 的 current_offset 一致——
             // lea 基准 rbp - callee_saved_bytes）。
             if matches!(inst.opcode, Opcode::Alloca) {
-                let off = self.alloca_offsets.get(&ii).copied().unwrap_or(-8);
+                let off = self
+                    .alloca_offsets
+                    .get(&ii)
+                    .copied()
+                    .unwrap_or(-(self.ctx.slot_bytes.max(1) as i64));
                 self.ctx.current_alloca_offset = off - self.ctx.stack_slot_shift as i64;
             }
 
@@ -555,12 +567,13 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 }
                 self.ctx.current_offset = *v - self.ctx.stack_slot_shift as i64;
                 // 正偏移（rbp 上方）不是本函数局部变量槽，不参与 locals 帧计算；
-                // 负偏移槽深 = -v + 槽宽（8 字节对齐）。直接 (-v as u32) 对正偏移
-                // 会下溢成巨大值导致帧大小溢出崩溃（io_stack_addr_distinct_offsets）。
+                // 负偏移槽深 = -v + 槽单位（元数据 `slot_bytes`）。直接 (-v as u32)
+                // 对正偏移会下溢成巨大值导致帧大小溢出崩溃
+                //（io_stack_addr_distinct_offsets）。
                 let depth = if *v >= 0 {
                     0
                 } else {
-                    (-*v as u32).saturating_add(8)
+                    (-*v as u32).saturating_add(self.ctx.slot_bytes.max(1) as u32)
                 };
                 self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(depth);
             }
@@ -623,8 +636,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             let base = self.ctx.xregs.next_index();
             if machine_insts.xregs.next_index() > 0 {
                 machine_insts.remap_internal(base);
+                // 占位分配（仅推进函数级 XReg 编号计数器，类无意义）——用值池类
+                // 以免出现写死宽度。
                 for _ in 0..machine_insts.xregs.next_index() {
-                    self.ctx.alloc_xreg(RegClass::GPR64);
+                    self.ctx.alloc_xreg(self.ctx.value_gpr_class);
                 }
             }
             self.xreg_map.extend(machine_insts.xreg_map);
@@ -656,8 +671,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         let term_base = self.ctx.xregs.next_index();
         if term_insts.xregs.next_index() > 0 {
             term_insts.remap_internal(term_base);
+            // 占位分配（仅推进编号计数器）——见上：类无意义，用值池类。
             for _ in 0..term_insts.xregs.next_index() {
-                self.ctx.alloc_xreg(RegClass::GPR64);
+                self.ctx.alloc_xreg(self.ctx.value_gpr_class);
             }
         }
         self.xreg_map.extend(term_insts.xreg_map);
