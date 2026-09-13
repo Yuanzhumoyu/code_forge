@@ -9,6 +9,7 @@
 //!   ModRM/REX/VEX 等 x86 机制降级为 form 的**语义键**（`modrm = "rr"` 等），
 //!   实现为 forge-dsl 内部函数，语义键集合在迭代 3/4 定型。
 
+use super::shared::group_names;
 use quote::quote;
 use serde::{Deserialize, Serialize, de::Visitor};
 use std::{
@@ -61,6 +62,145 @@ pub struct V12Model {
     pub spill: BTreeMap<String, SpillTemplate>,
 }
 
+// ─────────────────── 宽度/类派生（元数据单点，禁止代码内写死）───────────────────
+//
+// 设计契约（2026-09-12 去「宽度写死」）：寄存器类、宽度、栈槽单位一律从
+// `[meta]`/`[reg.*]`/`[abi.*]` 派生；**缺组即 Err**（fail-closed），绝不静默
+// 回退到 `GPR(8)`/`GPR(4)`/`"RAX"`/`"RBP"` 这类 x86 缺省——1 字节寄存器的
+// ISA 曾因这些回退而"生成成功但语义错误"。
+
+impl V12Model {
+    /// 校验显式宽度键指向的组是否存在。
+    fn require_group(&self, rc: RegClass, key: &str) -> Result<RegClass, String> {
+        if self.reg.contains_key(&rc) {
+            Ok(rc)
+        } else {
+            Err(format!(
+                "{key} = {} 没有对应的 [reg.{rc}] 寄存器组（显式宽度键必须指向已声明组）",
+                rc.width()
+            ))
+        }
+    }
+
+    /// 主 GPR 类：`[meta].default_gpr_width` > 已声明 GPR 组中最宽者 > Err。
+    /// 主 GPR 类是 GPR 名字/索引解析的**唯一锚点**（取代历史 `GPR(8).or(GPR(4))`）。
+    pub(crate) fn main_gpr_class(&self) -> Result<RegClass, String> {
+        if let Some(w) = self.meta.default_gpr_width {
+            return self.require_group(RegClass::GPR(w), "[meta].default_gpr_width");
+        }
+        self.reg
+            .keys()
+            .filter(|rc| matches!(rc, RegClass::GPR(_)))
+            .max_by_key(|rc| rc.width())
+            .copied()
+            .ok_or_else(|| {
+                "[meta]/[reg.*]: 未声明任何 GPR 组（如 [reg.gpr8]）——\
+                 整数/地址寄存器组是必需的"
+                    .to_string()
+            })
+    }
+
+    /// 主 FPR 类：`[meta].default_fpr_width` > `fpr16`（XMM 基准，历史规则）>
+    /// 最宽 FPR 组 > None（无浮点组）。
+    pub(crate) fn main_fpr_class(&self) -> Result<Option<RegClass>, String> {
+        if let Some(w) = self.meta.default_fpr_width {
+            return Ok(Some(
+                self.require_group(RegClass::FPR(w), "[meta].default_fpr_width")?,
+            ));
+        }
+        // 16 字节组优先于"更宽"（ZMM 32 字节组不得改变 SSE/ABI 占位基准）。
+        Ok(self
+            .reg
+            .keys()
+            .filter(|rc| matches!(rc, RegClass::FPR(_)))
+            .max_by_key(|rc| {
+                if rc.width() == 16 {
+                    u16::MAX
+                } else {
+                    rc.width()
+                }
+            })
+            .copied())
+    }
+
+    /// 地址/指针类：`[meta].addr_width` > 主 GPR 类。
+    /// 用于 MemRef base/index、`lea`、sp/fp、帧地址计算与地址类槽。
+    pub(crate) fn addr_class(&self) -> Result<RegClass, String> {
+        if let Some(w) = self.meta.addr_width {
+            return self.require_group(RegClass::GPR(w), "[meta].addr_width");
+        }
+        self.main_gpr_class()
+    }
+
+    /// 宿主「整数值寄存器池」类：`[meta].value_gpr_width` > 主 GPR 类。
+    /// x86 = GPR(8)（历史值池宽，行为不变）。
+    pub(crate) fn value_gpr_class(&self) -> Result<RegClass, String> {
+        if let Some(w) = self.meta.value_gpr_width {
+            return self.require_group(RegClass::GPR(w), "[meta].value_gpr_width");
+        }
+        self.main_gpr_class()
+    }
+
+    /// 宿主「浮点值寄存器池」类：`[meta].value_fpr_width` > `FPR(8)`
+    /// （历史 `FPR64` 语义：f64 值池宽）> None（未声明该宽度组）。
+    /// 注意：**不得**按"最宽 FPR 组"推导（x86 最宽是 ZMM，且 `fpr8` 是 MMX）。
+    pub(crate) fn value_fpr_class(&self) -> Result<Option<RegClass>, String> {
+        if let Some(w) = self.meta.value_fpr_width {
+            return Ok(Some(
+                self.require_group(RegClass::FPR(w), "[meta].value_fpr_width")?,
+            ));
+        }
+        Ok(Some(RegClass::FPR(8)).filter(|rc| self.reg.contains_key(rc)))
+    }
+
+    /// ABI 栈槽单位（字节）：`[meta].slot_bytes` > 地址类宽度。
+    pub(crate) fn slot_bytes(&self) -> Result<u16, String> {
+        match self.meta.slot_bytes {
+            Some(b) => Ok(b),
+            None => Ok(self.addr_class()?.width()),
+        }
+    }
+
+    /// 帧指针保存槽字节数：`[meta].fp_overhead_bytes` > 地址类宽度
+    /// （x86/riscv64/arm64/demo 均为 8，与历史常量 `frame_pointer_overhead() = 8` 一致）。
+    pub(crate) fn fp_overhead_bytes(&self) -> Result<u16, String> {
+        match self.meta.fp_overhead_bytes {
+            Some(b) => Ok(b),
+            None => Ok(self.addr_class()?.width()),
+        }
+    }
+
+    /// 指定组的寄存器名列表（缺组 → Err）。
+    pub(crate) fn names_of(&self, rc: RegClass) -> Result<Vec<String>, String> {
+        match self.reg.get(&rc) {
+            Some(g) => group_names(g),
+            None => Err(format!("[reg.{rc}] 未声明（引用该寄存器类但没有对应组）")),
+        }
+    }
+
+    /// 指定组的 `名字 → 物理索引` 表（base_index + 组内序号）。
+    /// 取代历史在 `integration.rs` 内重复两遍、且锚定 `GPR(8)/GPR(4)` 的映射。
+    pub(crate) fn name_to_idx(
+        &self,
+        rc: RegClass,
+    ) -> Result<std::collections::HashMap<String, u32>, String> {
+        let base = self.reg.get(&rc).and_then(|g| g.base_index).unwrap_or(0);
+        Ok(self
+            .names_of(rc)?
+            .into_iter()
+            .enumerate()
+            .map(|(i, n)| (n, i as u32 + base))
+            .collect())
+    }
+
+    /// 主 GPR 类的 `名字 → 索引` 表（sp/fp/scratch/callee_saved/物理 clobber 解析用）。
+    pub(crate) fn main_gpr_name_to_idx(
+        &self,
+    ) -> Result<std::collections::HashMap<String, u32>, String> {
+        self.name_to_idx(self.main_gpr_class()?)
+    }
+}
+
 // ─────────────────────────── [meta] ───────────────────────────
 
 /// ISA 元信息。
@@ -105,9 +245,38 @@ pub struct Meta {
     pub directive_prefix: String,
     /// 缺省 opsize（位；如 32/64）。无显式 opsize 语义的 form 在 decode 时
     /// 的 `__opsize` 初始值（影响 REX.W/宽度 guard 的缺省判定）。缺省 None
-    /// = 现状（decode 初始 4 = 32 位）。
+    /// = 现状（decode 初始 4 = 32 位）。**位**为单位；生成代码里的 `__opsize`
+    /// 是**字节**（= 本值 / 8）。
     #[serde(default)]
     pub default_opsize: Option<u8>,
+    /// 主 GPR 类宽度（**字节**）。缺省 = 已声明 GPR 组中最宽者（x86 = 8）。
+    /// 主 GPR 类是：名字/索引解析锚点、`__DEFAULT_GPR_CLASS`、寄存器槽类。
+    #[serde(default)]
+    pub default_gpr_width: Option<u16>,
+    /// 主 FPR 类宽度（**字节**）。缺省 = 已声明 FPR 组中最宽者；无 FPR 组 = None。
+    #[serde(default)]
+    pub default_fpr_width: Option<u16>,
+    /// 地址/指针类宽度（**字节**）。缺省 = `default_gpr_width`。
+    /// 用于 MemRef base/index、`lea`、sp/fp、帧地址计算。
+    #[serde(default)]
+    pub addr_width: Option<u16>,
+    /// 宿主「整数值寄存器池」宽度（**字节**）。缺省 = `default_gpr_width`
+    /// （x86 = 8 → 与历史 `GPR64` 值池一致）。
+    #[serde(default)]
+    pub value_gpr_width: Option<u16>,
+    /// 宿主「浮点值寄存器池」宽度（**字节**）。缺省 = 8（历史 `FPR64` 语义：
+    /// f64 值池宽）。**不能**按"最宽 FPR 组"推导——x86 的 `[reg.fpr8]` 是
+    /// MM0-7、最宽组是 `fpr32`(ZMM)，都不是浮点标量值池。
+    #[serde(default)]
+    pub value_fpr_width: Option<u16>,
+    /// ABI 栈槽单位（**字节**）。缺省 = `addr_width`。
+    /// 用于 alloca/聚合拆分/传参栈槽/spill 槽对齐。
+    #[serde(default)]
+    pub slot_bytes: Option<u16>,
+    /// 帧指针保存槽字节数（`RegInfo::frame_pointer_overhead`）。
+    /// 缺省 = `addr_width`（x86/riscv64/arm64/demo = 8，与历史常量一致）。
+    #[serde(default)]
+    pub fp_overhead_bytes: Option<u16>,
 }
 
 fn default_comment_char() -> String {

@@ -2215,3 +2215,154 @@ fn stack_arg_shadow_requires_role_tags() {
         );
     }
 }
+
+// ─────────── P0：宽度/类元数据派生（去「宽度写死」，2026-09-12） ───────────
+
+/// 仅声明 1 字节 GPR 组的 ISA：全部类/宽度必须由元数据派生，
+/// 历史实现锚定 `GPR(8).or(GPR(4))` → 名字表为空（静默失效）。
+fn one_byte_doc(meta_extra: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "tiny8"
+default_inst_width = 32
+{meta_extra}
+[reg.gpr1]
+names = ["A0", "A1", "A2", "A3"]
+[[operand_slots]]
+name = "a8"
+kind = "reg"
+class = "gpr1"
+roles = ["in", "out"]
+[[instructions]]
+name = "MOV8"
+form = "RR"
+opcode = 1
+ops = ["dst:a8:out", "src:a8"]
+asm = "mov {{dst}}, {{src}}"
+[[forms]]
+name = "RR"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1"]
+[conventions.bitfields]
+opcode = {{ offset = 0, width = 8 }}
+rd = {{ offset = 8, width = 3 }}
+rs1 = {{ offset = 11, width = 3 }}
+"#
+    )
+}
+
+/// 1 字节寄存器 ISA：`main_gpr_class`/`addr_class`/`slot_bytes`/`fp_overhead_bytes`
+/// 全部 = 1 字节；名字表可解析（不再为空）。
+#[test]
+fn width_metadata_one_byte_gpr_is_derived() {
+    let m = parse_and_validate(&one_byte_doc("")).expect("1 字节寄存器 ISA 必须合法");
+    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(1));
+    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(1));
+    assert_eq!(m.value_gpr_class().unwrap(), RegClass::GPR(1));
+    assert_eq!(m.slot_bytes().unwrap(), 1, "栈槽单位 = 地址宽（1 字节）");
+    assert_eq!(m.fp_overhead_bytes().unwrap(), 1);
+    assert_eq!(m.main_fpr_class().unwrap(), None, "无 FPR 组");
+    assert_eq!(m.value_fpr_class().unwrap(), None, "无 fpr8 组");
+    let idx = m.main_gpr_name_to_idx().expect("名字表必须解析成功");
+    assert_eq!(idx.get("A0"), Some(&0));
+    assert_eq!(idx.get("A3"), Some(&3));
+    assert_eq!(idx.len(), 4);
+    // 索引含 base_index（历史实现只按组内序号，base_index≠0 的组会错位）。
+    let m2 = parse_and_validate(&one_byte_doc("")).unwrap();
+    assert!(
+        m2.names_of(RegClass::GPR(1))
+            .unwrap()
+            .contains(&"A2".into())
+    );
+}
+
+/// 主 GPR 类 = 已声明 GPR 组中最宽者（x86 四视图 → 8）。
+#[test]
+fn width_metadata_main_gpr_is_widest_group() {
+    let doc = r#"
+[meta]
+name = "w"
+[reg.gpr1]
+count = 4
+[reg.gpr2]
+base_index = 0
+count = 4
+[reg.gpr8]
+base_index = 0
+count = 4
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out"]
+"#;
+    let m = parse_and_validate(doc).expect("合法");
+    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.slot_bytes().unwrap(), 8);
+}
+
+/// 主 FPR 类保留历史规则：**优先 16 字节组**（XMM 基准），而非"最宽"
+/// （x86 最宽是 32 字节 ZMM——若按最宽推导，SSE/ABI 占位会变成 ZMM 视图）。
+#[test]
+fn width_metadata_main_fpr_prefers_xmm16() {
+    let doc = one_byte_doc("").replace(
+        "[reg.gpr1]",
+        "[reg.fpr4]\ncount = 8\n[reg.fpr16]\ncount = 16\n[reg.fpr32]\ncount = 32\n[reg.gpr1]",
+    );
+    let m = parse_and_validate(&doc).expect("合法");
+    assert_eq!(m.main_fpr_class().unwrap(), Some(RegClass::FPR(16)));
+    // 显式键优先。
+    let forced = parse_and_validate(&one_byte_doc("default_fpr_width = 4").replace(
+        "[reg.gpr1]",
+        "[reg.fpr4]\ncount = 8\n[reg.fpr16]\ncount = 16\n[reg.gpr1]",
+    ))
+    .expect("合法");
+    assert_eq!(forced.main_fpr_class().unwrap(), Some(RegClass::FPR(4)));
+}
+
+/// 没有任何 GPR 组 → 派生失败（历史实现静默回退 `GPR(8)`/`GPR(4)` + 空名字表）。
+#[test]
+fn width_metadata_missing_gpr_group_is_error() {
+    let doc = r#"
+[meta]
+name = "floatonly"
+[reg.fpr4]
+count = 8
+[[operand_slots]]
+name = "f"
+kind = "reg"
+class = "fpr4"
+roles = ["in", "out"]
+"#;
+    let msg = validation_msg(doc);
+    assert!(msg.contains("GPR"), "msg: {msg}");
+}
+
+/// 显式宽度键必须指向已声明组（不允许"声明一个不存在的类"）。
+#[test]
+fn width_metadata_explicit_key_needs_group() {
+    let msg = validation_msg(&one_byte_doc("default_gpr_width = 8"));
+    assert!(msg.contains("default_gpr_width"), "msg: {msg}");
+    let msg = validation_msg(&one_byte_doc("addr_width = 2"));
+    assert!(msg.contains("addr_width"), "msg: {msg}");
+    let msg = validation_msg(&one_byte_doc("slot_bytes = 0"));
+    assert!(msg.contains("slot_bytes"), "msg: {msg}");
+}
+
+/// `[meta].default_opsize`（位）必须与某个已声明 GPR 组一致
+/// （生成代码里的 `__opsize` 是字节，1 字节 ISA 需显式声明 8）。
+#[test]
+fn width_metadata_default_opsize_needs_matching_group() {
+    let m = parse_and_validate(&one_byte_doc("default_opsize = 8")).expect("合法");
+    assert_eq!(m.meta.default_opsize, Some(8));
+    let msg = validation_msg(&one_byte_doc("default_opsize = 8").replace("gpr1", "gpr8"));
+    // 注意：替换后 class = "gpr8" 与组一致，但 default_opsize=8 找不到 gpr1 → 报错。
+    assert!(
+        msg.contains("default_opsize"),
+        "1 字节 opsize 必须要求 [reg.gpr1]：{msg}"
+    );
+    let msg = validation_msg(&one_byte_doc("default_opsize = 12"));
+    assert!(msg.contains("8 的倍数"), "msg: {msg}");
+}

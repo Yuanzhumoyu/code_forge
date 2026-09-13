@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 pub fn validate(m: &V12Model) -> Result<(), String> {
     validate_meta(m)?;
     validate_regs(m)?;
+    validate_widths(m)?;
     validate_conventions(m)?;
     validate_operand_slots(m)?;
     validate_forms(m)?;
@@ -119,6 +120,60 @@ fn validate_regs(m: &V12Model) -> Result<(), String> {
                     return Err(format!("[reg.{gname}].count must be > 0"));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+// ─────────────────────── 类/宽度元数据（去写死）───────────────────────
+
+/// 宽度元数据校验（2026-09-12 去「宽度写死」）：
+/// 显式宽度键必须指向已声明组、为合法字节宽度；`default_opsize` 若声明则必须
+/// 是 8 的倍数并与某个已声明 GPR 组的位宽一致。缺组一律 Err（fail-closed），
+/// 不静默回退到 `GPR(8)`/`GPR(4)` 这类 x86 缺省。
+fn validate_widths(m: &V12Model) -> Result<(), String> {
+    // 显式宽度键 → 必须存在对应组（派生方法内部即校验）。
+    let _ = m.main_gpr_class()?;
+    let _ = m.main_fpr_class()?;
+    let _ = m.addr_class()?;
+    let _ = m.value_gpr_class()?;
+    let _ = m.value_fpr_class()?;
+    if m.slot_bytes()? == 0 {
+        return Err("[meta].slot_bytes must be > 0".into());
+    }
+    if m.fp_overhead_bytes()? == 0 && m.meta.fp_overhead_bytes.is_some() {
+        return Err("[meta].fp_overhead_bytes must be > 0".into());
+    }
+    for (key, w) in [
+        ("default_gpr_width", m.meta.default_gpr_width),
+        ("default_fpr_width", m.meta.default_fpr_width),
+        ("addr_width", m.meta.addr_width),
+        ("value_gpr_width", m.meta.value_gpr_width),
+        ("value_fpr_width", m.meta.value_fpr_width),
+        ("slot_bytes", m.meta.slot_bytes),
+        ("fp_overhead_bytes", m.meta.fp_overhead_bytes),
+    ] {
+        if let Some(w) = w
+            && w == 0
+        {
+            return Err(format!("[meta].{key} must be > 0"));
+        }
+    }
+    if let Some(bits) = m.meta.default_opsize {
+        if bits == 0 || bits % 8 != 0 {
+            return Err(format!(
+                "[meta].default_opsize = {bits} 必须是 8 的倍数（单位：位）"
+            ));
+        }
+        let want = (bits / 8) as u16;
+        if !m
+            .reg
+            .keys()
+            .any(|rc| matches!(rc, RegClass::GPR(w) if *w == want))
+        {
+            return Err(format!(
+                "[meta].default_opsize = {bits}（{want} 字节）没有对应的 [reg.gpr{want}] 组"
+            ));
         }
     }
     Ok(())
