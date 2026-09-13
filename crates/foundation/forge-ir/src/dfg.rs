@@ -50,11 +50,14 @@ pub struct ValueData {
 }
 
 /// 指令的数据。
+///
+/// **块内顺序的唯一事实源是 `BlockData.inst_order`**；`Instruction.block` 只记
+/// 归属块。历史实现还有一个 `pos: u32`（创建时写一次、**全仓无读取点**，删/移
+/// 指令后即陈旧）——它是第二份顺序信息，已删除（2026-09-14）。
 #[derive(Clone, Debug)]
 pub struct Instruction {
     pub opcode: Opcode,
     pub block: Block,
-    pub pos: u32,
     pub results: SmallVec<[Value; 2]>,
     pub operands: SmallVec<[Value; 4]>,
     pub immediates: SmallVec<[Immediate; 4]>,
@@ -175,11 +178,9 @@ impl DataFlowGraph {
                 v
             })
             .collect();
-        let pos = self.blocks[block.0 as usize].inst_order.len() as u32;
         let instruction = Instruction {
             opcode,
             block,
-            pos,
             results,
             operands,
             immediates,

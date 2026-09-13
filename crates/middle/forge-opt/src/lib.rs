@@ -26,6 +26,44 @@ pub struct PassResult {
     pub values_replaced: usize,
 }
 
+/// 不动点迭代轮数上限（防线：pass 的 `changed` 若恒真会让流水线挂死）。
+pub const MAX_FIXED_POINT_ROUNDS: usize = 256;
+
+/// pass 之后的 IR 校验策略（仅 debug 构建生效）。
+///
+/// 历史行为等价于 `Warn`：校验失败只 `log::warn`，坏 IR 继续流向下一个 pass。
+/// `Error` 是 **S6 的门禁形态**（pass 契约 + 完整 use-def）：一旦所有 pass 都能
+/// 保持不变量，就把默认值改过来。
+///
+/// **当前实测欠账（2026-09-14，`Error` 模式下逐 pass 暴露）**：`inline`
+/// （内联体操作数未登记 use-lists + 返回类型不匹配）、`gvn_pre`/`mem2reg`
+/// （插入指令的操作数未登记 use-lists）等会把 IR 置为不一致——一个 pass 弄脏后，
+/// 后续每个 pass 都会报同一处不一致，所以 S0 不采用"按 pass 白名单放行"的做法
+/// （那会把整条流水线放行），而是保留 warn 默认 + 提供严格开关 + 用测试钉住欠账
+/// （见 `strict_verification_reports_known_debt`）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PassVerify {
+    /// 不校验（release 构建下的等价行为）。
+    Off,
+    /// 校验失败只记录 warn（**当前默认**，与历史行为一致）。
+    #[default]
+    Warn,
+    /// 校验失败即返回 `IrError::Internal`（S6 的目标默认值）。
+    Error,
+}
+
+/// 累加单轮 `PassResult` 到总计。
+///
+/// 历史实现只做 `total.changed |= r.changed`，`instructions_removed` 等计数
+/// **全部丢失**（调用方拿到的统计恒为 0）。
+fn accumulate(total: &mut PassResult, r: &PassResult) {
+    total.changed |= r.changed;
+    total.instructions_removed += r.instructions_removed;
+    total.instructions_added += r.instructions_added;
+    total.blocks_removed += r.blocks_removed;
+    total.values_replaced += r.values_replaced;
+}
+
 // ============================================================
 // OptimizationLevel
 // ============================================================
@@ -82,11 +120,26 @@ pub enum PassRunMode {
 
 pub struct PassManager {
     passes: Vec<(Box<dyn OptimizationPass>, PassRunMode)>,
+    verify_after_pass: PassVerify,
 }
 
 impl PassManager {
     pub fn new() -> Self {
-        Self { passes: Vec::new() }
+        Self {
+            passes: Vec::new(),
+            verify_after_pass: PassVerify::default(),
+        }
+    }
+
+    /// 设置 pass 之后的 IR 校验策略（debug 构建生效；见 [`PassVerify`]）。
+    pub fn set_verify_after_pass(&mut self, policy: PassVerify) -> &mut Self {
+        self.verify_after_pass = policy;
+        self
+    }
+
+    /// 当前策略。
+    pub fn verify_after_pass(&self) -> PassVerify {
+        self.verify_after_pass
     }
 
     pub fn is_empty(&self) -> bool {
@@ -104,40 +157,65 @@ impl PassManager {
                 match mode {
                     PassRunMode::Once => {
                         let r = pass.run_on_function(func)?;
-                        total.changed |= r.changed;
+                        accumulate(&mut total, &r);
                     }
-                    PassRunMode::UntilFixedPoint => loop {
-                        let r = pass.run_on_function(func)?;
-                        total.changed |= r.changed;
-                        if !r.changed {
-                            break;
+                    PassRunMode::UntilFixedPoint => {
+                        // 不动点迭代必须有上限：历史实现是 `loop { ... }`，
+                        // 任何"每轮都报 changed"的 pass 会让整条流水线挂死。
+                        let mut rounds = 0usize;
+                        loop {
+                            let r = pass.run_on_function(func)?;
+                            let changed = r.changed;
+                            accumulate(&mut total, &r);
+                            rounds += 1;
+                            if !changed {
+                                break;
+                            }
+                            if rounds >= MAX_FIXED_POINT_ROUNDS {
+                                return Err(IrError::Internal(format!(
+                                    "pass '{}' 在 '{}' 上 {rounds} 轮未达不动点（上限 {MAX_FIXED_POINT_ROUNDS}）\
+                                     ——pass 的 changed 判定可能有误（每轮都报变化）",
+                                    pass.name(),
+                                    func.name
+                                )));
+                            }
                         }
-                    },
+                    }
                     PassRunMode::Iterate(n) => {
                         for _ in 0..*n {
                             let r = pass.run_on_function(func)?;
-                            total.changed |= r.changed;
+                            accumulate(&mut total, &r);
                         }
                     }
                 }
 
-                // In debug mode, verify IR consistency after each pass.
-                // Uses warn-only mode to avoid aborting on fixable issues.
+                // Debug 构建下逐 pass 校验 IR 一致性。策略见 `PassVerify`。
                 #[cfg(debug_assertions)]
                 {
-                    let mut v = forge_ir::verify::Verifier::new();
-                    if let Err(errors) = v.verify(func) {
-                        let msg = errors
-                            .iter()
-                            .map(|e| format!("{:?}", e))
-                            .collect::<Vec<_>>()
-                            .join("; ");
-                        log::warn!(
-                            "IR verification warning after '{}' on '{}': {}",
-                            pass.name(),
-                            func.name,
-                            msg
-                        );
+                    if self.verify_after_pass != PassVerify::Off {
+                        let mut v = forge_ir::verify::Verifier::with_ctx(func.types.clone());
+                        if let Err(errors) = v.verify(func) {
+                            let msg = errors
+                                .iter()
+                                .map(|e| format!("{e:?}"))
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            match self.verify_after_pass {
+                                PassVerify::Error => {
+                                    return Err(IrError::Internal(format!(
+                                        "pass '{}' 之后 '{}' 未通过 IR 校验：{msg}",
+                                        pass.name(),
+                                        func.name
+                                    )));
+                                }
+                                _ => log::warn!(
+                                    "IR 校验欠账 after '{}' on '{}': {}",
+                                    pass.name(),
+                                    func.name,
+                                    msg
+                                ),
+                            }
+                        }
                     }
                 }
 
@@ -154,7 +232,7 @@ impl PassManager {
         for (pass, _mode) in &self.passes {
             if !pass.is_function_pass() {
                 let r = pass.run_on_module(module)?;
-                total.changed |= r.changed;
+                accumulate(&mut total, &r);
                 // 模块级 pass（IPA：inline/lto/func_specialize）可能改写函数体，
                 // 对所有函数统一失效分析缓存
                 for func in module.iter_functions_mut() {
@@ -440,7 +518,11 @@ mod pipeline_tests {
             let sig = FunctionSignature::new(&[(TypeId::I32, "n")], &[TypeId::I32]);
             let mut b = FunctionBuilder::new("loop", TypeContext::new(), sig);
             let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "n")]);
-            let header = b.create_block();
+            // header 是循环头：携带 (i, sum) 两个块参数——jump/branch 的实参数
+            // 必须与块参数一一对应（此前的夹具建了 0 参数块却传 2 个实参，
+            // 属于**非法 IR**，被当时"只 warn 不失败"的 pass 后校验掩盖）。
+            let (header, hparams) =
+                b.create_block_with_params(&[(TypeId::I32, "i"), (TypeId::I32, "sum")]);
             let body = b.create_block();
             let exit = b.create_block();
             b.switch_to_block(entry);
@@ -448,8 +530,8 @@ mod pipeline_tests {
             let one = b.iconst_i32(1);
             b.jump(header, &[zero, zero]);
             b.switch_to_block(header);
-            let i = b.iconst_i32(0);
-            let sum = b.iconst_i32(0);
+            let i = hparams[0];
+            let sum = hparams[1];
             let cond = b.icmp(IntCC::SignedLessThan, i, params[0]);
             b.branch(cond, body, &[], exit, &[]);
             b.switch_to_block(body);
@@ -477,6 +559,61 @@ mod pipeline_tests {
                 // Trailing-DCE claim: if this ever becomes > 0, the trailing
                 // DCE (or physical Nop removal) optimization has a target.
             }
+        }
+    }
+
+    /// **欠账钉住**：`PassVerify::Error`（S6 的目标门禁）在当前 pass 集上**必然失败**。
+    ///
+    /// 2026-09-14 打开严格校验后实测：`inline` / `gvn_pre` / `mem2reg` 等 pass 会留下
+    /// use-list 不一致或返回类型不匹配的 IR（详情见 `PassVerify` 文档）。本测试把
+    /// 这个事实固定下来，避免它再次被"只 warn"掩盖：
+    ///
+    /// **S6 修好这些 pass 之后，本测试会开始失败** —— 届时把断言改为
+    /// `assert!(result.is_ok())` 并把 pass 后校验默认值切到 `PassVerify::Error`。
+    #[test]
+    fn strict_verification_reports_known_debt() {
+        // 循环夹具（与 `o2_pipeline_nop_residue` 同形）：循环头带 (i, sum) 块参数，
+        // O2 的 GVN-PRE/mem2reg 会在这里留下 use-list 不一致。
+        fn build_loop() -> Function {
+            let sig = FunctionSignature::new(&[(TypeId::I32, "n")], &[TypeId::I32]);
+            let mut b = FunctionBuilder::new("debt", TypeContext::new(), sig);
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "n")]);
+            let (header, hparams) =
+                b.create_block_with_params(&[(TypeId::I32, "i"), (TypeId::I32, "sum")]);
+            let body = b.create_block();
+            let exit = b.create_block();
+            b.switch_to_block(entry);
+            let zero = b.iconst_i32(0);
+            let one = b.iconst_i32(1);
+            b.jump(header, &[zero, zero]);
+            b.switch_to_block(header);
+            let i = hparams[0];
+            let sum = hparams[1];
+            let cond = b.icmp(IntCC::SignedLessThan, i, params[0]);
+            b.branch(cond, body, &[], exit, &[]);
+            b.switch_to_block(body);
+            let next_sum = b.iadd(sum, i);
+            let next_i = b.iadd(i, one);
+            b.jump(header, &[next_i, next_sum]);
+            b.switch_to_block(exit);
+            b.ret(&[sum]);
+            b.finish().expect("build")
+        }
+
+        let mut f = build_loop();
+        let mut pm = PassManager::for_level(OptimizationLevel::O2);
+        pm.set_verify_after_pass(PassVerify::Error);
+        assert_eq!(pm.verify_after_pass(), PassVerify::Error);
+        match pm.run_on_function(&mut f) {
+            Err(IrError::Internal(msg)) => assert!(
+                msg.contains("未通过 IR 校验"),
+                "严格校验失败原因应是 IR 不变量欠账，实际：{msg}"
+            ),
+            Ok(_) => panic!(
+                "严格校验已通过——pass 不变量欠账已修复：\
+                 请把 PassVerify 默认值改为 Error 并删除本测试的'欠账'语义"
+            ),
+            Err(other) => panic!("预期 IR 校验失败，实际：{other:?}"),
         }
     }
 }

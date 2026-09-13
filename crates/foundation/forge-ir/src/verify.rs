@@ -16,6 +16,14 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub enum VerifyError {
+    /// 校验器没有 `TypeContext`：类型相关检查（聚合/标量分类、指针/整型判定、
+    /// GEP 索引类型等 8 类）无法执行。
+    ///
+    /// 历史实现对这些检查**静默跳过**（`.unwrap_or(false)`），于是"没有 ctx 的
+    /// 校验"看起来通过、实际少了 8 类规则。现在它本身就是一个错误：
+    /// 要么用 `Verifier::with_ctx(func.types.clone())`，要么明确接受"只做结构检查"
+    /// 的降级（fail-closed，不静默）。
+    MissingTypeContext,
     MissingEntry,
     UndefinedValue {
         value: Value,
@@ -152,6 +160,11 @@ pub enum VerifyError {
 impl std::fmt::Display for VerifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            VerifyError::MissingTypeContext => write!(
+                f,
+                "verifier has no TypeContext: 8 类类型相关检查无法执行——\
+                 用 Verifier::with_ctx(func.types.clone()) 构造"
+            ),
             VerifyError::MissingEntry => write!(f, "function has no entry block"),
             VerifyError::UndefinedValue { value, user, block } => {
                 write!(
@@ -400,6 +413,12 @@ impl Verifier {
         self.check_dominance(func);
         self.check_inst_order(func);
         self.check_path_termination(func);
+
+        // fail-closed：无类型上下文时 8 类类型相关检查无法执行 → 明确报错
+        // （不是静默放宽）。放在最后，保证结构类检查仍然跑完并一起上报。
+        if self.ctx.is_none() {
+            self.errors.push(VerifyError::MissingTypeContext);
+        }
 
         if self.errors.is_empty() {
             Ok(())
@@ -966,17 +985,27 @@ impl Verifier {
                 });
                 return;
             }
-            // 推进类型（常量索引；非常量索引后无法推导——保守跳过）
-            let idx_const = match func.dfg.values[v.0 as usize].def {
-                crate::ValueDef::Inst(ii, 0) => func.dfg.insts[ii.0 as usize]
-                    .immediates
-                    .first()
-                    .and_then(|i| match i {
+            // 推进类型（常量索引；非常量索引后无法推导——保守跳过）。
+            // 越界访问一律报错而非 panic：`check_uses` 只记录错误不中止，
+            // 因此坏 IR 仍可能走到这里（历史实现直接 `values[v.0]`/`insts[ii.0]`
+            // 会 panic——公开 API 不得 panic）。
+            let Some(vd) = func.dfg.values.get(v.0 as usize) else {
+                self.errors.push(VerifyError::UndefinedValue {
+                    value: *v,
+                    user: inst,
+                    block: func.dfg.insts[inst.0 as usize].block,
+                });
+                return;
+            };
+            let idx_const = match vd.def {
+                crate::ValueDef::Inst(ii, 0) => func.dfg.insts.get(ii.0 as usize).and_then(|di| {
+                    di.immediates.first().and_then(|i| match i {
                         Immediate::Int(x) => Some(*x),
                         Immediate::Uint(x) => Some(*x as i64),
                         Immediate::Const(c) => func.constants.get_int(*c).map(|(x, _)| x as i64),
                         _ => None,
-                    }),
+                    })
+                }),
                 _ => None,
             };
             let next = match idx_const {

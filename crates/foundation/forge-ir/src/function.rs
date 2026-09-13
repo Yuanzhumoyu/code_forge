@@ -411,8 +411,15 @@ impl Function {
     /// RAUW：把 `old` 的所有使用替换为 `new`，同步更新 DFG 操作数与 use-lists。
     /// 返回被替换的使用数量。
     ///
-    /// 注意：只覆盖指令操作数（use-lists 记录范围）；终结符参数请用
-    /// PHASE 2 的 `Terminator::map_values` / `Function::retarget`。
+    /// **只覆盖指令操作数**——终结符里的用值（分支/跳转实参、`switch` 判别值、
+    /// `ret` 返回值）不在 use-lists 里（`Use.user` 只能是 `Inst`），所以这里改不到。
+    /// 需要连带改终结符时用：
+    /// - [`Function::apply_replacements`]（一次遍历所有终结符 + 指令操作数，等价于
+    ///   "全量 RAUW"）；
+    /// - 或逐块 [`crate::Terminator::args_to`] / [`crate::Terminator::retarget`]。
+    ///
+    /// 这是 forge-ir v3 方案 **S4**（终结符并入指令流、use-def 完整）要消除的
+    /// 缺口：历史注释指向的 `Terminator::map_values` 从未存在过。
     pub fn replace_all_uses(&mut self, old: Value, new: Value) -> usize {
         let uses: Vec<(Inst, u8)> = self
             .use_lists

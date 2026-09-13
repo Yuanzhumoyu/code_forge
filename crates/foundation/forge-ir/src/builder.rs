@@ -798,8 +798,19 @@ impl FunctionBuilder {
     pub fn iconst_i64(&mut self, v: i64) -> Value {
         self.iconst(v, self.ctx.i64_ty())
     }
+    /// 浮点常量的**值宽**（bits）——取自结果类型；拿不到类型信息时按 64 位
+    /// （`fconst` 的参数宽度）兜底。位宽进常量池的去重键，f32/f64/f128 不再合并。
+    fn float_const_width(&self, ty: TypeId) -> u16 {
+        use crate::types::TypeEntry;
+        match self.ctx.borrow().get(ty) {
+            TypeEntry::Float { bits } => *bits,
+            _ => 64,
+        }
+    }
+
     pub fn fconst(&mut self, bits: u64, ty: TypeId) -> Value {
-        let cid = self.func.constants.insert_float(bits);
+        let width = self.float_const_width(ty);
+        let cid = self.func.constants.insert_float_typed(bits as u128, width);
         self.emit1(
             Opcode::Fconst,
             vec![],
@@ -811,7 +822,7 @@ impl FunctionBuilder {
 
     /// f128 常量（128 位 IEEE 754 bits）。
     pub fn fconst128(&mut self, bits: u128, ty: TypeId) -> Value {
-        let cid = self.func.constants.insert_float128(bits);
+        let cid = self.func.constants.insert_float_typed(bits, 128);
         self.emit1(
             Opcode::Fconst,
             vec![],

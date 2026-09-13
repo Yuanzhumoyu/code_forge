@@ -1,6 +1,11 @@
 //! IR 实体类型 — 零开销 newtype over u32。
 //!
 //! 所有实体都是 Copy + Eq + Hash，作为 PrimaryMap/SecondaryMap 的键。
+//!
+//! ⚠️ **`PrimaryMap`/`SecondaryMap` 尚未实现**（本注释长期与代码不符）：
+//! 当前存储是 `DataFlowGraph` 上的裸 `Vec`（句柄 `.0` 即下标）+ 各处
+//! `HashMap<句柄, _>` 辅表。容器与密集索引改造见
+//! `docs/plans/forge-ir-v3-plan.md` **S2**。
 //! 实体本身不携带数据，数据存储在 DataFlowGraph 的对应表中。
 
 use std::fmt::{self, Display};

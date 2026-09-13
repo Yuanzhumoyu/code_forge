@@ -1774,9 +1774,26 @@ fn fmt_phi_value(
         }
         crate::Opcode::Fconst => {
             if let Some(crate::Immediate::Const(cid)) = inst_data.immediates.first()
-                && let Some(bits) = func.constants.get_float(*cid)
+                && let Some((bits, pool_width)) = func.constants.get_float_with_width(*cid)
             {
-                write!(f, "{}", f64::from_bits(bits))
+                // 位宽：优先看**值类型**（16 位的 half 与 bfloat 只能靠类型区分），
+                // 类型不可用时用常量池记录的宽度兜底。
+                // 历史实现恒按 `f64::from_bits` 还原 → f32 常量（如 1.5，
+                // 位模式 0x3FC0_0000）作为 phi 入边被打印成反规格化 f64
+                // 的错误十进制值（2026-09-14 审计发现）。
+                let width = match func.dfg.value_type(v) {
+                    Some(ty) => match func.types.borrow().get(ty) {
+                        crate::types::TypeEntry::Float { bits } => *bits,
+                        crate::types::TypeEntry::BFloat { bits } => *bits,
+                        _ => pool_width,
+                    },
+                    None => pool_width,
+                };
+                match width {
+                    16 => write!(f, "0xH{:04x}", bits as u16),
+                    32 => write!(f, "{}", f32::from_bits(bits as u32)),
+                    _ => write!(f, "{}", f64::from_bits(bits as u64)),
+                }
             } else {
                 write!(f, "undef")
             }

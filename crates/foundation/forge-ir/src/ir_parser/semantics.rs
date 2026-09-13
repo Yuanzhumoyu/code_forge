@@ -947,11 +947,11 @@ fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
     };
     for f in module.iter_functions() {
         for am in &f.metadata {
-            check(&am.kind, store.get(am.node))?;
+            check(&am.kind, metadata_node_of(store, am.node)?)?;
         }
         for (_, inst) in f.dfg.insts() {
             for am in &inst.metadata {
-                check(&am.kind, store.get(am.node))?;
+                check(&am.kind, metadata_node_of(store, am.node)?)?;
             }
         }
         for (_, bd) in f.dfg.blocks() {
@@ -965,11 +965,25 @@ fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
                 Terminator::Unreachable => &[],
             };
             for am in metas {
-                check(&am.kind, store.get(am.node))?;
+                check(&am.kind, metadata_node_of(store, am.node)?)?;
             }
         }
     }
     Ok(())
+}
+
+/// 取 metadata 节点：越界 → 语义错误（`MetadataStore::get` 现在返回 `Option`，
+/// 不再 panic；挂着的引用必须点名报错而不是静默跳过）。
+fn metadata_node_of(
+    store: &crate::metadata::MetadataStore,
+    id: crate::metadata::MetadataId,
+) -> Result<&crate::metadata::MetadataNode, IrError> {
+    store.get(id).ok_or_else(|| {
+        IrError::Semantic(format!(
+            "metadata 引用 !{} 不存在（store 内无该节点）",
+            id.0
+        ))
+    })
 }
 
 /// 常量表达式求值为初始字节（全局地址占位 0——真实地址为链接期重定位，

@@ -8,7 +8,7 @@
 
 | # | 待办 | 状态提示 | 出处（archive/forge-ir/） |
 | --- | --- | --- | --- |
-| 1 | `agg_expand` 第三批（rewrite 族 4 函数 ~400 行）迁移 | ⚠️ **前提已失效（2026-09-12 复核）**：`forge-ir` 内已无 `agg_expand` / `rewrite` 族函数（全 crate `rg` 0 命中）——需回读归档档确认它对应到现在的哪块代码，或直接关闭 | code-quality-audit.md（第 47 轮"剩余状态"） |
+| 1 | `agg_expand` 第三批（rewrite 族 4 函数 ~400 行）迁移 | ⚠️ **前提未失效（2026-09-14 复核推翻 2026-09-12 的结论）**：归档档记 4 个 rewrite 族函数未迁移（`code-quality-audit.md:360/392/417`），代码侧 `crates/backend/forge-codegen/src/pipeline/compiler.rs:65/175` 仍在、`agg_expand.rs:177` 只是占位 ⇒ **仍开放**，不应关闭 | code-quality-audit.md（第 47 轮"剩余状态"） |
 | 2 | 结构性重构：`make_inst` 三层包装收敛、egraph 改名、巨型文件拆分、forge-dsl 双语法统一、`isel_strategy` 标签接通、HexLit 超 64 位折叠对齐 | 历轮累积未关闭（低风险/风险面大混合）；**2026-09-12 未逐项复核** | code-quality-audit.md 历轮"遗留/记录"节、remaining-tasks.md §3 |
 | 3 | extractvalue/insertvalue 常量**深层**折叠的 builder API 缺口（`fb.extract_value` 仅单层、AggConst 递归 child 缺深层索引） | **仍开放（2026-09-12 复核）**：`fold_extract_value` 只折叠单层（嵌套子聚合走 `AggChild::Agg(_) => None`，见 `crates/middle/forge-opt/src/scalar/const_fold.rs`），`builder.extract_value` 亦单层 | remaining-tasks.md §1.2 |
 | 4 | P2 长期：4.1 round-trip fuzz、4.2 负向全覆盖、4.4 端到端执行对照 | 无完成标注，仍开放；**2026-09-12 未复核** | iteration-roadmap.md §4 |
@@ -16,6 +16,19 @@
 | 6 | P1 残余：SjLj 异常 codegen（长期）、va_arg ABI 布局语义、>16B 聚合栈传参（现 Unsupported） | 前置条件门控；**2026-09-12 部分复核**：`crates/backend/forge-codegen/src/pipeline/agg_expand.rs` 仍标注「段值拆分 ≤16 字节：寄存器路径；>16 字节 Unsupported」⇒ **聚合**该项仍开放（>16B **向量**已另行走通：by-ref ABI + Load/Store，见 `WORKAROUNDS.md` WA-45） | iteration-roadmap.md §3.2/§2.5、next-iterations.md L2/L7 |
 | 7 | Windows SEH/ARM EH codegen（随 ABI 选择）、statepoint（无近期计划）、M1 拆分监控（>15s 触发） | 长期/条件性；**2026-09-12 未复核** | next-iterations.md §0/§3 |
 | 8 | forge-grammar semantic 层接入（产品决策）、forge-tests fuzz 归并、jit `register_external` 吞错改 Result 透传 | **2026-09-12 复核**：fuzz 归并 ✅ 已落地（`forge-tests/src/exec/fuzz.rs`，16 条性质测试）；`register_external` ✅ 已是 `Result<(), IrError>` 且透传 patch 错误；**仍开放**：semantic 层零外部调用（`forge-grammar/src/lib.rs` 注明"第二十九轮起 NameResolver/SymbolTable/TypeChecker 零外部调用，mini_c 用自研"） | remaining-tasks.md §3 |
+
+## 2026-09-14 复核记录（forge-ir v3 方案 S0）
+
+新增待办（S0 实测发现的 pass 不变量欠账，归属 v3 方案 **S6**）：
+
+- `inline` / `gvn_pre` / `mem2reg` 等 pass 运行后会留下 use-list 不一致或返回类型
+  不匹配的 IR——此前 pass 后校验只 `log::warn`，欠账被掩盖；S0 把校验策略化
+  （`forge_opt::PassVerify`，默认 `Warn`、严格模式 `Error`）并用
+  `strict_verification_reports_known_debt` 钉住。**S6 修好后该测试会失败**（提示把默认值切到 `Error`）。
+- 覆盖矩阵（`forge-tests/src/coverage.rs`）此前用 `match op { ... _ => ... }` 兜底，
+  34 个 opcode 静默无覆盖；S0 改为显式 `UNCOVERED_OPS`（逐条原因）+ 完整性守卫断言
+  `COVERAGE_OPS ∪ UNCOVERED_OPS == Opcode::ALL`。
+- 方案与全部已落地项见 [`docs/plans/forge-ir-v3-plan.md`](../plans/forge-ir-v3-plan.md)。
 
 ## 2026-09-12 复核记录
 

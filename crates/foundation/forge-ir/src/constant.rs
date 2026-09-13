@@ -30,15 +30,19 @@ pub struct AggConst {
 // ConstantPool
 // ============================================================
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ConstantPool {
     /// 整数常量: 值 + 位宽
     int_consts: Vec<(i128, u32)>,
     int_dedup: HashMap<(i128, u32), ConstId>,
 
-    /// 浮点常量: IEEE 754 bits（u64 存低 64 位；f128 常量用 u128 全宽）
-    float_consts: Vec<u128>,
-    float_dedup: HashMap<u128, ConstId>,
+    /// 浮点常量: (IEEE 754 bits, **值宽 bits** = 16/32/64/128)。
+    /// 位宽必须进池：历史的 `Vec<u128>` 只有位模式，f32 `1.5`（0x3FC0_0000）
+    /// 会与位模式相同的 f64（约 1.9e-314，反规格化）**去重成同一个 ConstId**，
+    /// 打印期只能靠结果类型猜宽度——phi 入边那条路径猜错，输出错误的十进制值
+    /// （2026-09-14 审计发现）。
+    float_consts: Vec<(u128, u16)>,
+    float_dedup: HashMap<(u128, u16), ConstId>,
 
     /// 任意精度常量 (超大整数、非标准浮点等)
     big_consts: Vec<Big>,
@@ -59,8 +63,22 @@ pub struct ConstantPool {
 }
 
 impl ConstantPool {
+    /// 新建常量池（预置 bool 槽：index 0 = false、index 1 = true）。
     pub fn new() -> Self {
-        let mut pool = Self::default();
+        let mut pool = Self {
+            int_consts: Vec::new(),
+            int_dedup: HashMap::new(),
+            float_consts: Vec::new(),
+            float_dedup: HashMap::new(),
+            big_consts: Vec::new(),
+            big_dedup: HashMap::new(),
+            vec_data: Vec::new(),
+            vec_offsets: Vec::new(),
+            vec_endian: Vec::new(),
+            vec_dedup: HashMap::new(),
+            aggregates: Vec::new(),
+            agg_dedup: HashMap::new(),
+        };
         // 预置 bool 常量槽：index 0 = false (0,1)，index 1 = true (1,1)。
         // bool 只有 0/1 两个值，固定占位避免 iconst_bool 反复插入膨胀常量池；
         // 后续 insert_int(0,1)/insert_int(1,1) 经去重命中这两个槽位。
@@ -96,7 +114,31 @@ impl ConstantPool {
 
     /// 插入浮点常量 (IEEE 754 bits，自动去重)。f64/f32 位模式经 u64 传入。
     pub fn insert_float(&mut self, bits: u64) -> ConstId {
-        self.insert_float128(bits as u128)
+        self.insert_float_typed(bits as u128, 64)
+    }
+
+    /// 插入浮点常量并**显式记录值宽**（bits：16/32/64/128）。
+    ///
+    /// 位宽进去重键 → 同一位模式的不同精度不再合并（f32 0x3FC0_0000 ≠ f64 同模式）。
+    /// `bits` 必须能装进 `width`（越界在 debug 构建下断言失败，release 保留完整
+    /// 位模式——不静默截断；宽度是元数据，不是掩码）。
+    pub fn insert_float_typed(&mut self, bits: u128, width: u16) -> ConstId {
+        debug_assert!(
+            (1..=128).contains(&width),
+            "浮点值宽必须是 1..=128 位，得到 {width}"
+        );
+        debug_assert!(
+            width == 128 || bits >> width == 0,
+            "浮点位模式 {bits:#x} 装不进 {width} 位（调用方传错位宽）"
+        );
+        let key = (bits, width);
+        if let Some(&id) = self.float_dedup.get(&key) {
+            return id;
+        }
+        let id = ConstId::pack(ConstId::TAG_FLOAT, self.float_consts.len() as u32);
+        self.float_consts.push(key);
+        self.float_dedup.insert(key, id);
+        id
     }
 
     /// 插入聚合常量（树形，自动去重）；返回 AggId。
@@ -118,13 +160,7 @@ impl ConstantPool {
 
     /// 插入 f128 浮点常量（128 位 IEEE 754 bits，自动去重）。
     pub fn insert_float128(&mut self, bits: u128) -> ConstId {
-        if let Some(&id) = self.float_dedup.get(&bits) {
-            return id;
-        }
-        let id = ConstId::pack(ConstId::TAG_FLOAT, self.float_consts.len() as u32);
-        self.float_consts.push(bits);
-        self.float_dedup.insert(bits, id);
-        id
+        self.insert_float_typed(bits, 128)
     }
 
     /// 插入任意精度常量 (自动去重)。
@@ -183,11 +219,21 @@ impl ConstantPool {
     /// 获取浮点常量: 128 位 IEEE 754 bits（f64 常量为零扩展的低 64 位）。
     /// 若 ConstId 不是浮点类型则返回 None。
     pub fn get_float128(&self, id: ConstId) -> Option<u128> {
+        self.get_float_with_width(id).map(|(bits, _)| bits)
+    }
+
+    /// 获取浮点常量: (位模式, 值宽 bits)。值宽是入库时记录的（见 `insert_float_typed`）。
+    pub fn get_float_with_width(&self, id: ConstId) -> Option<(u128, u16)> {
         if id.tag() != ConstId::TAG_FLOAT {
             return None;
         }
         let idx = id.index() as usize;
         self.float_consts.get(idx).copied()
+    }
+
+    /// 获取浮点常量的值宽（bits：16/32/64/128）。
+    pub fn get_float_width(&self, id: ConstId) -> Option<u16> {
+        self.get_float_with_width(id).map(|(_, w)| w)
     }
 
     /// 获取任意精度常量。若 ConstId 不是 Big 类型则返回 None。
@@ -209,8 +255,8 @@ impl ConstantPool {
                 Some((v, bits)) => self.insert_int(v, bits),
                 None => cid,
             },
-            ConstId::TAG_FLOAT => match src.get_float128(cid) {
-                Some(bits) => self.insert_float128(bits),
+            ConstId::TAG_FLOAT => match src.get_float_with_width(cid) {
+                Some((bits, width)) => self.insert_float_typed(bits, width),
                 None => cid,
             },
             ConstId::TAG_BIG => match src.get_big(cid) {
@@ -255,21 +301,23 @@ impl ConstantPool {
         self.vec_endian.get(id.index() as usize).copied()
     }
 
-    /// 常量总数。
+    /// 常量总数（含聚合池——历史实现漏了 aggregate，导致"池非空但 total_len 为 0"）。
     pub fn total_len(&self) -> usize {
         self.int_consts.len()
             + self.float_consts.len()
             + self.big_consts.len()
             + self.vec_offsets.len()
+            + self.aggregates.len()
     }
 
-    /// 是否为空。
+    /// 是否为空（含聚合池）。
     pub fn is_empty(&self) -> bool {
         self.int_consts.is_empty()
             && self.float_consts.is_empty()
             && self.big_consts.is_empty()
             && self.vec_offsets.is_empty()
             && self.vec_endian.is_empty()
+            && self.aggregates.is_empty()
     }
 
     /// 常量总数。
@@ -335,6 +383,17 @@ impl std::hash::Hash for BigHashKey {
                 state.write(r.to_string().as_bytes());
             }
         }
+    }
+}
+
+/// `Default` = `new()`（**含 bool 预置槽**）。
+///
+/// 历史实现是 `#[derive(Default)]`，绕过了 `new()` 的 `insert_int(0,1)/(1,1)`，
+/// 而 `bool_const` 直接构造 `ConstId(index 0|1)`（不去重、不插入）——于是
+/// `ConstantPool::default()` 造出的池里这两个 id 悬空（公开 API 陷阱）。
+impl Default for ConstantPool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

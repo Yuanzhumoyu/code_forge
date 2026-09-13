@@ -206,17 +206,30 @@ impl MetadataStore {
     }
 
     /// 按显式 id 插入（LLVM：`!5 = ...` 的 id 是文本数字；0..id 补空占位）。
+    ///
+    /// **去重表保持自洽**：覆盖槽位时先摘掉旧内容的映射（否则 `intern` 会命中
+    /// 一个已被覆盖的节点）；新内容只在"尚无映射"时登记 —— 同一内容若已存在于
+    /// 另一个 id，则保留先注册的映射（文本 id 保真优先，这是解析器的契约）。
+    /// 历史实现两条路径（`intern` 去重 / `insert_at` 直插）互不更新 →
+    /// 同内容可产生两个 id 且去重表指向被覆盖的节点。
     pub fn insert_at(&mut self, id: MetadataId, node: MetadataNode) {
+        let old = self.nodes.get(id.0 as usize).cloned();
         if self.nodes.len() <= id.0 as usize {
             self.nodes
                 .resize(id.0 as usize + 1, MetadataNode::Tuple(SmallVec::new()));
         }
+        if let Some(old) = old
+            && self.dedup.get(&old) == Some(&id)
+        {
+            self.dedup.remove(&old);
+        }
+        self.dedup.entry(node.clone()).or_insert(id);
         self.nodes[id.0 as usize] = node;
     }
 
-    /// Look up a metadata node by ID.
-    pub fn get(&self, id: MetadataId) -> &MetadataNode {
-        &self.nodes[id.0 as usize]
+    /// Look up a metadata node by ID（越界返回 `None`——历史实现直接索引 panic）。
+    pub fn get(&self, id: MetadataId) -> Option<&MetadataNode> {
+        self.nodes.get(id.0 as usize)
     }
 
     /// Number of metadata nodes.

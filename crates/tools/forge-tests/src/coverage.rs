@@ -400,8 +400,65 @@ mod capability_tests {
 // 零缺口断言（以 v12 TOML 声明集为基准）
 // ═══════════════════════════════════════════════
 
-/// v12 声明的 lowering op 全部必须 lowering ok（其余 75-20 个 op 为
-/// 向量/浮点/溢出/饱和等 v10 独有，v12 未声明 → 允许缺口）。
+/// **矩阵未覆盖**的 opcode（带原因）——`Opcode::ALL \ COVERAGE_OPS`。
+///
+/// 历史实现的 `check_isa` 用 `match op { ... _ => b.iconst_i32(0) }` 兜底：
+/// 未覆盖的 opcode 静默走 fallback（既不算通过也不算失败），新增 opcode 也不会
+/// 被发现。本清单把它变成**显式契约**：
+/// - 每个 `Opcode` 要么在 `COVERAGE_OPS`（有矩阵行），要么在这里（有名有因）；
+/// - 两边都必须能解析成真实 opcode（rot 检测）；
+/// - 两者并集必须等于 `Opcode::ALL`。
+#[cfg(test)]
+mod no_coverage_list {
+    /// (opcode 名, 原因)。
+    pub const UNCOVERED_OPS: &[(&str, &str)] = &[
+        // 内存类：矩阵只建代表性行；这三个由后端 lowering 用例（jit 矩阵、
+        // x86 codegen 测试）覆盖。
+        ("Store", "由后端 lowering 用例覆盖（矩阵只取代表性行）"),
+        ("Fload", "浮点 load：由 f64/f32 用例覆盖"),
+        ("Fstore", "浮点 store：由 f64/f32 用例覆盖"),
+        // 浮点单目/转换/指针转换：不在 v12 声明集（见 V12_LOWERING_OPS 注释）。
+        ("Frem", "v12 未声明 lowering（浮点取余）"),
+        ("Fptrunc", "v12 未声明 lowering"),
+        ("Fpext", "v12 未声明 lowering"),
+        ("Fptosi", "v12 未声明 lowering"),
+        ("Sitofp", "v12 未声明 lowering"),
+        ("Fptoui", "v12 未声明 lowering"),
+        ("Uitofp", "v12 未声明 lowering"),
+        ("Ptrtoint", "v12 未声明 lowering"),
+        ("Inttoptr", "v12 未声明 lowering"),
+        ("AddrSpaceCast", "地址空间转换：v12 未声明 lowering"),
+        // 向量族：由 SIMD 用例（jit 矩阵 V64/V128/V256/V512 + codegen 测试）覆盖。
+        ("Vconst", "向量常量：由 SIMD 用例覆盖"),
+        ("Vadd", "向量算术：由 SIMD 用例覆盖"),
+        ("Vsub", "向量算术：由 SIMD 用例覆盖"),
+        ("Vmul", "向量算术：由 SIMD 用例覆盖"),
+        ("Vdiv", "向量算术：由 SIMD 用例覆盖"),
+        ("Vneg", "向量算术：由 SIMD 用例覆盖"),
+        ("Vabs", "向量算术：由 SIMD 用例覆盖"),
+        ("Vextract", "向量 lane 操作：由 SIMD 用例覆盖"),
+        ("Vinsert", "向量 lane 操作：由 SIMD 用例覆盖"),
+        ("Vbitcast", "向量位转换：由 SIMD 用例覆盖"),
+        ("Vbroadcast", "向量广播：由 SIMD 用例覆盖"),
+        ("ShuffleVector", "向量混洗：由 SIMD 用例覆盖"),
+        ("Vsplit", "向量拆分：由 SIMD 用例覆盖"),
+        ("Vconcat", "向量拼接：由 SIMD 用例覆盖"),
+        // 值语义 / 异常 / 复合 / 原子：需要专门构造（多结果、landingpad 等）。
+        ("Poison", "值语义：由 undef/poison 用例覆盖"),
+        ("Undef", "值语义：由 undef/poison 用例覆盖"),
+        ("VaArg", "可变参数：需要 va_arg ABI 夹具（长期项）"),
+        ("Cmpxchg", "原子：由原子用例覆盖（多结果 + 配对语义）"),
+        ("ExtractValue", "聚合取值：由聚合用例覆盖"),
+        ("InsertValue", "聚合插入：由聚合用例覆盖"),
+        (
+            "LandingPad",
+            "异常：v12 codegen 对含 landingpad 函数 Unsupported",
+        ),
+    ];
+}
+
+/// v12 声明的 lowering op 全部必须 lowering ok（其余 op 为向量/浮点/转换等
+/// v12 未声明，或由其它用例覆盖——缺口逐条登记在 `no_coverage_list`）。
 #[cfg(test)]
 mod zero_gaps_tests {
     use super::*;
@@ -423,5 +480,56 @@ mod zero_gaps_tests {
             failures.len(),
             failures.join("\n")
         );
+    }
+
+    /// 覆盖矩阵的**完整性契约**：`COVERAGE_OPS ∪ UNCOVERED_OPS == Opcode::ALL`，
+    /// 两边名字都是真实 opcode 且互不相交（rot 检测：改名/删 opcode 会失败）。
+    #[test]
+    fn coverage_matrix_covers_every_opcode_or_declares_the_gap() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let all: BTreeSet<&str> = Opcode::ALL.iter().map(|o| o.name()).collect();
+        let covered: BTreeSet<&str> = COVERAGE_OPS.iter().copied().collect();
+        let uncovered: BTreeMap<&str, &str> =
+            no_coverage_list::UNCOVERED_OPS.iter().copied().collect();
+
+        assert_eq!(covered.len(), COVERAGE_OPS.len(), "COVERAGE_OPS 有重复项");
+        assert_eq!(
+            uncovered.len(),
+            no_coverage_list::UNCOVERED_OPS.len(),
+            "UNCOVERED_OPS 有重复项"
+        );
+
+        // 名字必须都能解析成真实 opcode（防改名/删除后清单腐烂）
+        for name in covered.iter().chain(uncovered.keys()) {
+            assert!(
+                Opcode::ALL.iter().any(|o| o.name() == *name),
+                "'{name}' 不是已知 opcode（清单已腐烂）"
+            );
+        }
+        // 两个清单互不相交
+        let uncovered_names: BTreeSet<&str> = uncovered.keys().copied().collect();
+        let overlap: Vec<&&str> = covered.intersection(&uncovered_names).collect();
+        assert!(
+            overlap.is_empty(),
+            "这些名字同时出现在 COVERAGE_OPS 与 UNCOVERED_OPS：{overlap:?}"
+        );
+        // 并集 == 全部 opcode
+        let union: BTreeSet<&str> = covered
+            .iter()
+            .copied()
+            .chain(uncovered.keys().copied())
+            .collect();
+        let missing: Vec<&&str> = all.difference(&union).collect();
+        assert!(
+            missing.is_empty(),
+            "这些 opcode 既没有矩阵行也没有登记缺口：{missing:?}"
+        );
+        let phantom: Vec<&&str> = union.difference(&all).collect();
+        assert!(phantom.is_empty(), "清单里有非 opcode 项：{phantom:?}");
+        // 缺口原因不得为空
+        for (name, reason) in no_coverage_list::UNCOVERED_OPS {
+            assert!(!reason.trim().is_empty(), "'{name}' 的缺口原因不能为空");
+        }
     }
 }

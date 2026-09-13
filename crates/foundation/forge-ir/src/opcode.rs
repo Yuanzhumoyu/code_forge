@@ -515,6 +515,290 @@ impl Opcode {
 }
 
 // ============================================================
+// 指令清单（单一事实源的过渡形态）
+// ============================================================
+
+impl Opcode {
+    /// **全部 opcode 变体**。
+    ///
+    /// 这是"指令清单单一事实源"的第一步（S1 会由 `ops.toml` 生成）：覆盖率矩阵、
+    /// 一致性守卫、名字查找都从它派生，不再靠各自手写的名字列表
+    /// （历史实现 `opcode.rs` 测试辅助 `all_opcodes()` 漏了 10 个变体、
+    /// `ir_parser/llvm_mapping.rs` 自述 105 与实际 109 不符）。
+    ///
+    /// **完整性由编译期保证**：`Opcode::name()` 是无 `_` 兜底臂的穷举 match ——
+    /// 新增变体不更新 `name()`/`ALL` 会直接编译失败；`tests/opcode_table.rs`
+    /// 再断言 `ALL` 与穷举分支数、与名字集合三者一致。
+    pub const ALL: &'static [Opcode] = &[
+        // 整数算术
+        Opcode::Iadd,
+        Opcode::Isub,
+        Opcode::Imul,
+        Opcode::Udiv,
+        Opcode::Sdiv,
+        Opcode::Urem,
+        Opcode::Srem,
+        // 浮点
+        Opcode::Fadd,
+        Opcode::Fsub,
+        Opcode::Fmul,
+        Opcode::Fdiv,
+        Opcode::Frem,
+        Opcode::Fneg,
+        Opcode::Fabs,
+        Opcode::Fsqrt,
+        // 位运算
+        Opcode::Band,
+        Opcode::Bor,
+        Opcode::Bxor,
+        Opcode::Bnot,
+        Opcode::Ishl,
+        Opcode::Ushr,
+        Opcode::Sshr,
+        // 位操作
+        Opcode::Clz,
+        Opcode::Ctz,
+        Opcode::Popcnt,
+        Opcode::Bitreverse,
+        Opcode::Rotl,
+        Opcode::Rotr,
+        // 整数扩展
+        Opcode::Abs,
+        Opcode::Smin,
+        Opcode::Smax,
+        Opcode::Umin,
+        Opcode::Umax,
+        Opcode::SaddSat,
+        Opcode::SsubSat,
+        Opcode::UaddSat,
+        Opcode::UsubSat,
+        Opcode::Bswap,
+        // 浮点扩展
+        Opcode::Fma,
+        Opcode::Fmin,
+        Opcode::Fmax,
+        Opcode::Fcopysign,
+        Opcode::Ffloor,
+        Opcode::Fceil,
+        Opcode::Ftrunc,
+        Opcode::Fround,
+        // 比较（带条件的变体，条件取默认值——名字查找与清单只需变体身份）
+        Opcode::Icmp { cond: IntCC::Equal },
+        Opcode::Fcmp {
+            cond: FloatCC::Equal,
+        },
+        // 溢出检测
+        Opcode::SaddOverflow,
+        Opcode::UaddOverflow,
+        Opcode::SsubOverflow,
+        Opcode::UsubOverflow,
+        Opcode::SmulOverflow,
+        Opcode::UmulOverflow,
+        // 内存
+        Opcode::Load,
+        Opcode::Store,
+        Opcode::Fload,
+        Opcode::Fstore,
+        // 常量
+        Opcode::Iconst,
+        Opcode::Fconst,
+        Opcode::Vconst,
+        // 值语义
+        Opcode::Poison,
+        Opcode::Undef,
+        // 转换
+        Opcode::Sextend,
+        Opcode::Uextend,
+        Opcode::Ireduce,
+        Opcode::Fptrunc,
+        Opcode::Fpext,
+        Opcode::Fptosi,
+        Opcode::Sitofp,
+        Opcode::Fptoui,
+        Opcode::Uitofp,
+        Opcode::Ptrtoint,
+        Opcode::Inttoptr,
+        Opcode::Bitcast,
+        // 调用
+        Opcode::Call,
+        Opcode::CallIndirect,
+        // 地址
+        Opcode::StackAddr,
+        Opcode::GlobalAddr,
+        // Alloca / GEP
+        Opcode::Alloca,
+        Opcode::GetElementPtr,
+        // 向量
+        Opcode::Vadd,
+        Opcode::Vsub,
+        Opcode::Vmul,
+        Opcode::Vdiv,
+        Opcode::Vneg,
+        Opcode::Vabs,
+        Opcode::Vextract,
+        Opcode::Vinsert,
+        Opcode::Vbitcast,
+        Opcode::Vbroadcast,
+        Opcode::ShuffleVector,
+        Opcode::Vsplit,
+        Opcode::Vconcat,
+        // Trap / 指针
+        Opcode::Trap,
+        Opcode::IsNull,
+        Opcode::IsNotNull,
+        Opcode::AddrSpaceCast,
+        Opcode::VaArg,
+        // 原子
+        Opcode::AtomicRmw,
+        Opcode::Cmpxchg,
+        Opcode::Fence,
+        // 复合值
+        Opcode::ExtractValue,
+        Opcode::InsertValue,
+        // 异常
+        Opcode::LandingPad,
+        // 其它
+        Opcode::Copy,
+        Opcode::Select,
+        Opcode::Freeze,
+        Opcode::Nop,
+    ];
+
+    /// 变体名（PascalCase，与 ISA TOML 的 `op = "Iadd"` / `[[pattern]].match = "Fadd(...)"`
+    /// 契约一致；也是 `from_name` 的查找键）。
+    ///
+    /// **穷举 match，无 `_` 兜底臂**：新增变体不同步更新这里 → 编译失败
+    /// （这是"加一个 opcode 会漏表"这一类腐化的编译期守卫）。
+    pub fn name(&self) -> &'static str {
+        match self {
+            Opcode::Iadd => "Iadd",
+            Opcode::Isub => "Isub",
+            Opcode::Imul => "Imul",
+            Opcode::Udiv => "Udiv",
+            Opcode::Sdiv => "Sdiv",
+            Opcode::Urem => "Urem",
+            Opcode::Srem => "Srem",
+            Opcode::Fadd => "Fadd",
+            Opcode::Fsub => "Fsub",
+            Opcode::Fmul => "Fmul",
+            Opcode::Fdiv => "Fdiv",
+            Opcode::Frem => "Frem",
+            Opcode::Fneg => "Fneg",
+            Opcode::Fabs => "Fabs",
+            Opcode::Fsqrt => "Fsqrt",
+            Opcode::Band => "Band",
+            Opcode::Bor => "Bor",
+            Opcode::Bxor => "Bxor",
+            Opcode::Bnot => "Bnot",
+            Opcode::Ishl => "Ishl",
+            Opcode::Ushr => "Ushr",
+            Opcode::Sshr => "Sshr",
+            Opcode::Clz => "Clz",
+            Opcode::Ctz => "Ctz",
+            Opcode::Popcnt => "Popcnt",
+            Opcode::Bitreverse => "Bitreverse",
+            Opcode::Rotl => "Rotl",
+            Opcode::Rotr => "Rotr",
+            Opcode::Abs => "Abs",
+            Opcode::Smin => "Smin",
+            Opcode::Smax => "Smax",
+            Opcode::Umin => "Umin",
+            Opcode::Umax => "Umax",
+            Opcode::SaddSat => "SaddSat",
+            Opcode::SsubSat => "SsubSat",
+            Opcode::UaddSat => "UaddSat",
+            Opcode::UsubSat => "UsubSat",
+            Opcode::Bswap => "Bswap",
+            Opcode::Fma => "Fma",
+            Opcode::Fmin => "Fmin",
+            Opcode::Fmax => "Fmax",
+            Opcode::Fcopysign => "Fcopysign",
+            Opcode::Ffloor => "Ffloor",
+            Opcode::Fceil => "Fceil",
+            Opcode::Ftrunc => "Ftrunc",
+            Opcode::Fround => "Fround",
+            Opcode::Icmp { .. } => "Icmp",
+            Opcode::Fcmp { .. } => "Fcmp",
+            Opcode::SaddOverflow => "SaddOverflow",
+            Opcode::UaddOverflow => "UaddOverflow",
+            Opcode::SsubOverflow => "SsubOverflow",
+            Opcode::UsubOverflow => "UsubOverflow",
+            Opcode::SmulOverflow => "SmulOverflow",
+            Opcode::UmulOverflow => "UmulOverflow",
+            Opcode::Load => "Load",
+            Opcode::Store => "Store",
+            Opcode::Fload => "Fload",
+            Opcode::Fstore => "Fstore",
+            Opcode::Iconst => "Iconst",
+            Opcode::Fconst => "Fconst",
+            Opcode::Vconst => "Vconst",
+            Opcode::Poison => "Poison",
+            Opcode::Undef => "Undef",
+            Opcode::Sextend => "Sextend",
+            Opcode::Uextend => "Uextend",
+            Opcode::Ireduce => "Ireduce",
+            Opcode::Fptrunc => "Fptrunc",
+            Opcode::Fpext => "Fpext",
+            Opcode::Fptosi => "Fptosi",
+            Opcode::Sitofp => "Sitofp",
+            Opcode::Fptoui => "Fptoui",
+            Opcode::Uitofp => "Uitofp",
+            Opcode::Ptrtoint => "Ptrtoint",
+            Opcode::Inttoptr => "Inttoptr",
+            Opcode::Bitcast => "Bitcast",
+            Opcode::Call => "Call",
+            Opcode::CallIndirect => "CallIndirect",
+            Opcode::StackAddr => "StackAddr",
+            Opcode::GlobalAddr => "GlobalAddr",
+            Opcode::Alloca => "Alloca",
+            Opcode::GetElementPtr => "GetElementPtr",
+            Opcode::Vadd => "Vadd",
+            Opcode::Vsub => "Vsub",
+            Opcode::Vmul => "Vmul",
+            Opcode::Vdiv => "Vdiv",
+            Opcode::Vneg => "Vneg",
+            Opcode::Vabs => "Vabs",
+            Opcode::Vextract => "Vextract",
+            Opcode::Vinsert => "Vinsert",
+            Opcode::Vbitcast => "Vbitcast",
+            Opcode::Vbroadcast => "Vbroadcast",
+            Opcode::ShuffleVector => "ShuffleVector",
+            Opcode::Vsplit => "Vsplit",
+            Opcode::Vconcat => "Vconcat",
+            Opcode::Trap => "Trap",
+            Opcode::IsNull => "IsNull",
+            Opcode::IsNotNull => "IsNotNull",
+            Opcode::AddrSpaceCast => "AddrSpaceCast",
+            Opcode::VaArg => "VaArg",
+            Opcode::AtomicRmw => "AtomicRmw",
+            Opcode::Cmpxchg => "Cmpxchg",
+            Opcode::Fence => "Fence",
+            Opcode::ExtractValue => "ExtractValue",
+            Opcode::InsertValue => "InsertValue",
+            Opcode::LandingPad => "LandingPad",
+            Opcode::Copy => "Copy",
+            Opcode::Select => "Select",
+            Opcode::Freeze => "Freeze",
+            Opcode::Nop => "Nop",
+        }
+    }
+
+    /// 按变体名查找（ISA TOML 的 `op` / `pattern.match` 名字契约）。
+    pub fn from_name(name: &str) -> Option<Opcode> {
+        Self::ALL.iter().copied().find(|op| op.name() == name)
+    }
+
+    /// 按规范助记符查找（`mnemonic()` 的逆；`ALL` 内助记符必须唯一，
+    /// 由 `tests/opcode_table.rs` 断言）。
+    pub fn from_mnemonic(mnemonic: &str) -> Option<Opcode> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|op| op.mnemonic() == mnemonic)
+    }
+}
+
+// ============================================================
 // 比较条件
 // ============================================================
 
@@ -771,132 +1055,11 @@ mod tests {
         }
     }
 
-    // Helper: list of all opcode variants for systematic testing
+    // Helper: 全部 opcode —— 单一事实源 = `Opcode::ALL`。
+    // 历史版本在这里手写第二份清单，漏了 Fptrunc/Fpext/Fptosi/Sitofp/Fptoui/
+    // Uitofp/Ptrtoint/Inttoptr/Vsplit/Vconcat 共 10 个变体，"系统性覆盖测试"
+    // 因此并不系统（2026-09-14 审计发现）。
     fn all_opcodes() -> Vec<Opcode> {
-        vec![
-            // Integer arithmetic
-            Opcode::Iadd,
-            Opcode::Isub,
-            Opcode::Imul,
-            Opcode::Udiv,
-            Opcode::Sdiv,
-            Opcode::Urem,
-            Opcode::Srem,
-            // Float
-            Opcode::Fadd,
-            Opcode::Fsub,
-            Opcode::Fmul,
-            Opcode::Fdiv,
-            Opcode::Frem,
-            Opcode::Fneg,
-            Opcode::Fabs,
-            Opcode::Fsqrt,
-            // Bitwise
-            Opcode::Band,
-            Opcode::Bor,
-            Opcode::Bxor,
-            Opcode::Bnot,
-            Opcode::Ishl,
-            Opcode::Ushr,
-            Opcode::Sshr,
-            // Bit manipulation
-            Opcode::Clz,
-            Opcode::Ctz,
-            Opcode::Popcnt,
-            Opcode::Bitreverse,
-            Opcode::Rotl,
-            Opcode::Rotr,
-            // Integer extended
-            Opcode::Abs,
-            Opcode::Smin,
-            Opcode::Smax,
-            Opcode::Umin,
-            Opcode::Umax,
-            Opcode::SaddSat,
-            Opcode::SsubSat,
-            Opcode::UaddSat,
-            Opcode::UsubSat,
-            Opcode::Bswap,
-            // Float extended
-            Opcode::Fma,
-            Opcode::Fmin,
-            Opcode::Fmax,
-            Opcode::Fcopysign,
-            Opcode::Ffloor,
-            Opcode::Fceil,
-            Opcode::Ftrunc,
-            Opcode::Fround,
-            // Comparison
-            Opcode::Icmp { cond: IntCC::Equal },
-            Opcode::Fcmp {
-                cond: FloatCC::Equal,
-            },
-            // Overflow
-            Opcode::SaddOverflow,
-            Opcode::UaddOverflow,
-            Opcode::SsubOverflow,
-            Opcode::UsubOverflow,
-            Opcode::SmulOverflow,
-            Opcode::UmulOverflow,
-            // Memory
-            Opcode::Load,
-            Opcode::Store,
-            Opcode::Fload,
-            Opcode::Fstore,
-            // Constants
-            Opcode::Iconst,
-            Opcode::Fconst,
-            Opcode::Vconst,
-            // Value semantics
-            Opcode::Poison,
-            Opcode::Undef,
-            // Conversions
-            Opcode::Sextend,
-            Opcode::Uextend,
-            Opcode::Ireduce,
-            Opcode::Bitcast,
-            // Calls
-            Opcode::Call,
-            Opcode::CallIndirect,
-            // Address
-            Opcode::StackAddr,
-            Opcode::GlobalAddr,
-            // Alloca / GEP
-            Opcode::Alloca,
-            Opcode::GetElementPtr,
-            // Vector
-            Opcode::Vadd,
-            Opcode::Vsub,
-            Opcode::Vmul,
-            Opcode::Vdiv,
-            Opcode::Vneg,
-            Opcode::Vabs,
-            Opcode::Vextract,
-            Opcode::Vinsert,
-            Opcode::Vbitcast,
-            Opcode::Vbroadcast,
-            Opcode::ShuffleVector,
-            // Trap / Pointer
-            Opcode::Trap,
-            Opcode::IsNull,
-            Opcode::IsNotNull,
-            // Atomic
-            Opcode::AtomicRmw,
-            Opcode::Cmpxchg,
-            Opcode::Fence,
-            // Compound
-            Opcode::ExtractValue,
-            Opcode::InsertValue,
-            // Pointer
-            Opcode::AddrSpaceCast,
-            Opcode::VaArg,
-            // Exception
-            Opcode::LandingPad,
-            // Other
-            Opcode::Copy,
-            Opcode::Select,
-            Opcode::Freeze,
-            Opcode::Nop,
-        ]
+        Opcode::ALL.to_vec()
     }
 }

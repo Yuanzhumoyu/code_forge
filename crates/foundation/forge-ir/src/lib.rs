@@ -4,10 +4,20 @@
 //!
 //! Inspired by Cranelift's entity system:
 //! - Entities (`Value`, `Inst`, `Block`, `TypeId`, ...)  are Copy handles (u32 newtypes)
-//! - Data is stored in `PrimaryMap` tables inside `DataFlowGraph`
+//! - Data is stored in arena `Vec`s on `DataFlowGraph`（句柄 .0 即下标）
 //! - `TypeStore` provides type interning and size/alignment queries
-//! - `UseLists` provides incrementally-maintained def-use chains
+//! - `UseLists` provides incrementally-maintained def-use chains — **仅覆盖指令
+//!   操作数**；终结符用值不在其中（见 `Function::replace_all_uses` 文档与
+//!   `docs/plans/forge-ir-v3-plan.md` S4）
 //! - Block Parameters replace traditional Phi instructions
+//!
+//! # 已知结构欠账（v3 方案）
+//!
+//! 本 crate 的公开面与表示层缺口已由 `docs/plans/forge-ir-v3-plan.md` 记录并排期：
+//! 指令元数据单一事实源（S1）、实体容器 `PrimaryMap/SecondaryMap`（S2）、类型
+//! 上下文去锁与所有权（S3）、终结符并入指令流（S4）、附件强类型化与可见性收紧
+//! （S5）、校验与 pass 契约（S6）。`entity.rs` 的 doc 注释声称已有
+//! `PrimaryMap/SecondaryMap`——**尚未实现**，当前就是裸 `Vec` + `HashMap` 辅表。
 //!
 //! # Key differences from v1
 //!

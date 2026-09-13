@@ -617,7 +617,9 @@ pub fn lower_into_module(
     // P0-14：接入 forge-ir 验证器——HIR 降级产物必须通过 IR 一致性校验
     // （入口/类型/use/块参数/终结符/支配）。此前 2580 行 Verifier 在 HIR
     // 路径零调用，图级缺陷（块参数不匹配、悬空 use）变成未初始化寄存器读。
-    let mut verifier = forge_ir::verify::Verifier::new();
+    // 必须带 TypeContext：无 ctx 时 8 类类型检查无法执行，校验器会明确报
+    // `MissingTypeContext`（fail-closed，不再静默放宽）。
+    let mut verifier = forge_ir::verify::Verifier::with_ctx(func.types.clone());
     if let Err(errors) = verifier.verify(&func) {
         return Err(HirError::Internal(format!(
             "HIR lowered function '{name}' failed IR verification: {errors:?}"
