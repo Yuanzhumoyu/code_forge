@@ -784,6 +784,42 @@ struct PatternEmit {
     rewritten: Vec<String>,
 }
 
+/// 帧相对内存的基址寄存器（`[abi.frame].fp` 的 `Reg::NAME`；x86 = `Reg::RBP`）。
+/// sret / 宽向量 by-ref 路径此前写死字面量 `Reg::RBP`——ISA 换名（或换帧寄存器）
+/// 会生成引用不存在寄存器的代码。未声明 fp 时回退"主 GPR 组 0 号占位"（这些路径
+/// 只在声明了对应角色的 ISA 上生成；角色门已 fail-closed）。
+fn frame_base_toks(model: &V12Model) -> TokenStream {
+    match model
+        .abi
+        .as_ref()
+        .and_then(|a| a.frame.as_ref())
+        .and_then(|f| f.fp.as_ref())
+    {
+        Some(n) => {
+            let id = format_ident!("{n}");
+            quote! { Reg::#id }
+        }
+        None => quote! { <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS) },
+    }
+}
+
+/// 栈相对内存的基址寄存器（`[abi.frame].sp` 的 `Reg::NAME`；x86 = `Reg::RSP`）。
+/// 栈参数 store 路径此前写死 `Reg::RSP`。
+fn sp_base_toks(model: &V12Model) -> TokenStream {
+    match model
+        .abi
+        .as_ref()
+        .and_then(|a| a.frame.as_ref())
+        .map(|f| &f.sp)
+    {
+        Some(n) => {
+            let id = format_ident!("{n}");
+            quote! { Reg::#id }
+        }
+        None => quote! { <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS) },
+    }
+}
+
 /// `[[pattern]].when` 的宽度提示（与 lowering 规则同构：`eq = ["rs1_width", N]`）。
 fn pattern_width_hint(p: &Pattern) -> Option<u32> {
     let pred = pred::parse(p.when.as_ref()?).ok()?;
@@ -1112,6 +1148,12 @@ fn gen_call_lowering(
     infos: &[InstInfo],
     model: &V12Model,
 ) -> Result<TokenStream, String> {
+    // R8：帧/栈基址从 `[abi.frame]` 派生（不再写死 `Reg::RBP` / `Reg::RSP`）。
+    let __frame_base = frame_base_toks(model);
+    let __sp_base = sp_base_toks(model);
+    // R9：by-ref/sret 的向量槽步长 = 最大向量档位（x86 = 64），帧需求 = 槽步长 + 1 个槽单位。
+    let __vec_stride: u32 = model.vector_tiers().last().copied().unwrap_or(32) as u32;
+    let __sret_frame: u32 = __vec_stride + model.slot_bytes()? as u32;
     let vn = |n: &str| crate::v12::codegen::pascal_ident(n);
     let fids = |n: &str| inst_fids(infos, n);
     // ABI 参数/返回寄存器类（缺失 → Call 降级 Unsupported，如定宽试点 ISA）
@@ -1311,7 +1353,7 @@ fn gen_call_lowering(
                 Inst::#vn_l64 {
                     #f_l64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #m_l64: MemRef {
-                        base: Reg::RBP,
+                        base: #__frame_base,
                         disp: __sret_off,
                         index: None,
                         scale: 1,
@@ -1321,7 +1363,7 @@ fn gen_call_lowering(
                 Inst::#vn_l32 {
                     #f_l32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #m_l32: MemRef {
-                        base: Reg::RBP,
+                        base: #__frame_base,
                         disp: __sret_off,
                         index: None,
                         scale: 1,
@@ -1500,7 +1542,7 @@ fn gen_call_lowering(
                 let __lidx = __pack.push_inst(Inst::#vn_lea {
                     #f_lea: Reg::from_index(0, __ADDR_CLASS),
                     #m_lea: MemRef {
-                        base: Reg::RBP,
+                        base: #__frame_base,
                         disp: __sret_off,
                         index: None,
                         scale: 1,
@@ -1513,7 +1555,7 @@ fn gen_call_lowering(
                 });
                 __pack.map_reg_field(__sp, __midx, #m_src_idx, false);
                 // 帧需求（sret 槽 64B 对齐间距）
-                ctx.max_stack_bytes = ctx.max_stack_bytes.max(72);
+                ctx.max_stack_bytes = ctx.max_stack_bytes.max(#__sret_frame);
             }
         }
     } else {
@@ -1546,7 +1588,7 @@ fn gen_call_lowering(
                 .max(__SLOT_BYTES as u32);
             // 槽偏移/帧需求：槽单位由元数据给出（`__SLOT_BYTES`；x86 = 8）——
             // 历史实现写死 8/64 的槽间距。
-            let __off = -((__SLOT_BYTES as usize + 64 * __bi) as i64);
+            let __off = -((__SLOT_BYTES as usize + #__vec_stride as usize * __bi) as i64);
             __bi += 1;
             // 地址平移：局部槽基准 = RBP - stack_slot_shift（x86 callee-saved
             // 区 64B；与 StackAddr 的 current_offset = v - shift 同构——否则
@@ -1558,7 +1600,7 @@ fn gen_call_lowering(
                 Inst::#vn_s64 {
                     #f_s64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #m_s64: MemRef {
-                        base: Reg::RBP,
+                        base: #__frame_base,
                         disp: __addr,
                         index: None,
                         scale: 1,
@@ -1568,7 +1610,7 @@ fn gen_call_lowering(
                 Inst::#vn_s32 {
                     #f_s32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #m_s32: MemRef {
-                        base: Reg::RBP,
+                        base: #__frame_base,
                         disp: __addr,
                         index: None,
                         scale: 1,
@@ -1588,7 +1630,7 @@ fn gen_call_lowering(
             let __lidx = __pack.push_inst(Inst::#vn_lea {
                 #f_lea: Reg::from_index(0, __ADDR_CLASS),
                 #m_lea: MemRef {
-                    base: Reg::RBP,
+                    base: #__frame_base,
                     disp: __addr,
                     index: None,
                     scale: 1,
@@ -1614,7 +1656,7 @@ fn gen_call_lowering(
             //    与 StackAddr 的 depth = -v + 8 同构——不含 shift，帧内统一平移）
             ctx.max_stack_bytes = ctx
                 .max_stack_bytes
-                .max((__SLOT_BYTES as usize + 64 * __bi) as u32);
+                .max((__SLOT_BYTES as usize + #__vec_stride as usize * __bi) as u32);
         }
     } else {
         quote! {
@@ -1653,6 +1695,7 @@ fn gen_call_lowering(
         // 栈参数 store 指令（角色 stack_arg_store；缺角色 → None，由 helper
         // 生成明确的生成期错误，不按指令名兜底）
         &stack_store,
+        &__sp_base,
     );
     let op_ident = format_ident!("{op_name}");
     // call_body 为 Unsupported（return Err）时，其后不再生成 arg_loop/ret_move
@@ -1687,7 +1730,7 @@ fn gen_call_lowering(
                     })
                 });
                 let __sret_off: i64 = if __sret {
-                    -8i64 - ctx.stack_slot_shift as i64
+                    -(__SLOT_BYTES as i64) - ctx.stack_slot_shift as i64
                 } else {
                     0
                 };
@@ -1741,6 +1784,8 @@ fn arg_move_loop(
     // 栈参数 store 指令（角色 stack_arg_store）的 (变体名, Mem 字段, Reg 字段,
     // Reg 序号)；None = 本 ISA 不支持栈参数（生成期给明确错误，不猜指令名）。
     stack_store: &Option<(syn::Ident, syn::Ident, syn::Ident, u8)>,
+    // 栈相对内存的基址寄存器表达式（`[abi.frame].sp` 派生；R8 去写死）。
+    sp_base: &TokenStream,
 ) -> TokenStream {
     let n = *n;
     let fn_ = *fn_;
@@ -1752,12 +1797,13 @@ fn arg_move_loop(
     // [rsp+shadow+…]；无角色 → 生成期就给明确错误（不引用任何指令名）。
     let stack_store_stmt: TokenStream = match (stack_shadow.is_some(), stack_store) {
         (true, Some((s_vn, s_mem, s_reg, s_reg_idx))) => quote! {
-            // Windows x64 栈参数：第 5+ 个 int 参数 store 到 [rsp+shadow+(k-n)*8]
-            let __off = __shadow as i64 + (__pi - #n) as i64 * 8;
+            // 栈参数（声明 [abi].stack_arg_shadow 的 ISA）：第 N+ 个 int 参数
+            // store 到 [sp+shadow+(k-n)*槽单位]（基址 = [abi.frame].sp 派生）
+            let __off = __shadow as i64 + (__pi - #n) as i64 * __SLOT_BYTES as i64;
             __pi += 1;
             let __idx = __pack.push_inst(Inst::#s_vn {
                 #s_mem: MemRef {
-                    base: Reg::RSP,
+                    base: #sp_base,
                     disp: __off,
                     index: None,
                     scale: 1,
@@ -1768,7 +1814,7 @@ fn arg_move_loop(
             // 帧需求：栈参数区 = shadow + 已用栈槽
             ctx.max_stack_arg_bytes = ctx
                 .max_stack_arg_bytes
-                .max(__shadow + (__pi - #n) as u32 * 8);
+                .max(__shadow + (__pi - #n) as u32 * __SLOT_BYTES as u32);
         },
         _ => quote! {
             return Err(crate::prelude::IrError::Unsupported(

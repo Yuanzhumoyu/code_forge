@@ -17,7 +17,13 @@ use quote::{format_ident, quote};
 pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
     // [abi] → arg_regs（按 arg_class 顺序：int 类在前，其余 class 依次）。
     // ret_regs：缺省空（v12 声明层暂不区分返回寄存器——后续迭代扩展）。
-    let stack_align = model.abi.as_ref().and_then(|a| a.stack_align).unwrap_or(16);
+    // 栈对齐：显式 `[abi].stack_align` > `[meta].slot_bytes`（x86 = 16/8 不变；
+    // 1 字节寄存器 ISA 缺省即 1，不再回退 x86 的 16）。
+    let stack_align = model
+        .abi
+        .as_ref()
+        .and_then(|a| a.stack_align)
+        .unwrap_or(model.slot_bytes()? as u32);
     let frame_padding = model
         .abi
         .as_ref()
