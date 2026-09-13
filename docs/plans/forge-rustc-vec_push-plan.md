@@ -1,5 +1,3 @@
-﻿| 34736538777（#63） | `7fdd34f` | WA-47：V512 lane 提取补规则 + `::warning::` 事件 annotations | **11 job 全绿**；但该 run 的 annotations 显示 `AVX512-HW=0` + `AVX512-SKIP test_jit_v512_byref_param` ⇒ **本次跑在无 AVX-512F 的 runner 上，V512 用例被跳过**（这正是新通道的价值：绿 = 跳过，不再与"真跑通过"混淆） |
-（`step summary` 不进 check-run 的 `output.summary`、job 日志 403）。
 # forge-rustc vec_push/vec_string 完整改进方案
 
 > 对应 `docs/archive/roadmap-status.md` 剩余事项 2 与 `crates/tools/forge-rustc/WORKAROUNDS.md`
@@ -1101,7 +1099,8 @@ V512 已被真跑覆盖"）。
 
 | run | commit | 内容 | 结果 |
 | --- | --- | --- | --- |
-| 34735264319（#60） | `316f39d` | WA-46 三块成因补确定性守卫（类分档 + V512 by-ref 调用方 64B 拷贝） | **11 job 全绿**（含 **Test (Windows)**：V512 用例通过 ⇒ 修复后**连续 3 次**（#58/#59/#60）通过，修复前同一用例在 #51/#57 红） |
+| 34736538777（#63） | `7fdd34f` | WA-47：V512 lane 提取补规则 + `::warning::` 事件 annotations | **11 job 全绿**；但该 run 的 annotations 显示 `AVX512-HW=0` + `AVX512-SKIP test_jit_v512_byref_param` ⇒ **本次跑在无 AVX-512F 的 runner 上、V512 用例被跳过**（这正是新通道的价值：绿=跳过，不再与"真跑通过"混淆） |
+| 34735264319（#60） | `316f39d` | WA-46 三块成因补确定性守卫（类分档 + V512 by-ref 调用方 64B 拷贝） | **11 job 全绿**（含 **Test (Windows)**） |
 | 34709093219（#58） | `0ddf8a4` | WA-46 向量溢出宽度修复（§10.7） | **11 job 全绿**（含 **Test (Windows)**：`test_jit_v512_byref_param` 通过——#51/#57 的同一 job/同一用例转绿） |
 | 34703656290（#57） | `8649229` | §10.5 记录（docs-only） | ❌ 仅 **Test (Windows)** 红——**annotations 自证**：`test_jit_v512_byref_param` FAILED @ `runtime/jit.rs:1457`（lane15）⇒ 由此定位 WA-46（§10.7） |
 | 34703244549（#56） | `49323a1` | §10.5 补"#51 候选已排除"（docs） | **11 job 全绿**（含 **Test (Windows)**） |
