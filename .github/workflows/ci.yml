@@ -129,14 +129,21 @@ jobs:
         run: |
           # job 日志需 admin 权限（公共仓库的 job log 端点亦 403），而 workflow
           # 命令 `::error::` 落进 check-run 的 annotations——可经 API 读到失败
-          # 用例名（这是本仓库唯一能自查 CI 测试失败的通道）。
+          # 用例名（这是本仓库唯一能自查 CI 测试失败的通道）。`-Context 0,4`
+          # 连带 panic 之后的**断言消息**（left/right 或自定义消息）一起报出——
+          # 只报 panic 位置不足以定位"值错在哪"（#57 即因此只能看到行号）。
           $log = Join-Path $env:GITHUB_WORKSPACE "target/tmp/windows-test.log"
           if (-not (Test-Path $log)) { Write-Output "无测试日志（$log）"; exit 0 }
-          $hits = Select-String -Path $log -Pattern '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----'
+          $hits = Select-String -Path $log -Pattern '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----' -Context 0,4
           if ($hits.Count -eq 0) { Write-Output "无失败行"; exit 0 }
           Write-Output "--- failing lines ---"
-          $hits | ForEach-Object { $_.Line } | Select-Object -Unique
-          $hits | ForEach-Object { Write-Output ("::error::" + $_.Line) }
+          foreach ($h in $hits) {
+            Write-Output $h.Line
+            Write-Output ("::error::" + $h.Line)
+            foreach ($c in $h.Context.PostContext) {
+              if ($c.Trim()) { Write-Output ("::error::  " + $c) }
+            }
+          }
 
   # Tests on macOS
   test-macos:

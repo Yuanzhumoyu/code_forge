@@ -1523,10 +1523,15 @@ mod tests {
         module.add_function(bm.finish().expect("main"));
         jit.compile_module(&module).expect("编译 main+callee");
         let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
-        let got = f();
-        assert_eq!(
-            got, 16,
-            "V512 by-ref 全宽拷贝：lane15 = 16.0 → 16（旧实现按类宽只 load 32B → 该 lane 丢失）"
+        // 该缺陷**偶发**（CI 观察：同一提交多数 run 绿、少数红，~3/10；高半区/中间
+        // lane 读到的是**残留**内容）。单次调用可能恰好正确 ⇒ **连测 8 次**并报告
+        // 全部取值：既提高检出率，也让失败信息直接给出"是否每次不同"（区分
+        // "残留内容"与"确定性错码"）。
+        let got: Vec<i32> = (0..8).map(|_| f()).collect();
+        assert!(
+            got.iter().all(|&v| v == 16),
+            "V512 by-ref 全宽拷贝：lane15 = 16.0 → 16（旧实现按类宽只 load 32B → 该 lane 丢失）。\
+             连测 8 次实测 = {got:?}"
         );
     }
 
