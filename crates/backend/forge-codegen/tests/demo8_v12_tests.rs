@@ -95,6 +95,23 @@ fn one_byte_pool_rejects_wide_types() {
     assert_eq!(ri.class_for_type(TypeId::VOID), None, "void = 无寄存器");
 }
 
+/// 类表 = ISA 声明：1 字节 ISA 只有 `GPR(1)`——不再有"编造的 fallback 类表"
+/// （历史实现会凭空造出 GPR(2)/GPR(4)/FPR(4)/FPR(8)/VEC(16)… 并借同族池，
+/// 使未声明类变成"可分配但不可编码"）。
+#[test]
+fn class_table_has_only_declared_classes() {
+    let tm = TargetMachine::new();
+    let classes = TargetMachineTrait::reg_info(&tm).register_classes();
+    let list: Vec<RegClass> = classes.iter().map(|c| c.reg_class).collect();
+    assert_eq!(
+        list,
+        vec![RegClass::GPR(1)],
+        "唯一声明组 [reg.gpr1] ⇒ 类表只能有 GPR(1)：{list:?}"
+    );
+    assert_eq!(classes[0].width, 1, "类宽 = 1 字节");
+    assert_eq!(classes[0].allocatable, vec![0, 1, 2, 3], "池 = A0..A3");
+}
+
 // ───────────────── 2. 汇编/编码/解码往返 ─────────────────
 
 #[test]

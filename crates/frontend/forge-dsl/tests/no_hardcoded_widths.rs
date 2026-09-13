@@ -80,6 +80,12 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "let value_fpr = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));",
         "同上：宿主浮点值池缺省（无 FPR 组时保持历史语义）",
     ),
+    (
+        "integration.rs",
+        "let value_fpr_eff = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));",
+        "类表登记时用**同一个**有效浮点值池类（与 machine.rs 的 __VALUE_FPR_CLASS \
+         同规则）——riscv（只有 fpr4 组、值类为 FPR(8)）必须把 FPR(8) 也登记为可分配类",
+    ),
 ];
 
 fn scan_dir(dir: &std::path::Path, out: &mut Vec<(String, usize, String)>) {

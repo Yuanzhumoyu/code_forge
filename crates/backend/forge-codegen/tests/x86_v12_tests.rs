@@ -1111,3 +1111,52 @@ fn disassemble_known_texts() {
         "sqrtsd XMM0, XMM1"
     );
 }
+
+/// 类表 = **ISA 声明**（2026-09-13 去「编造 fallback 类表」）：
+/// x86 的类表必须只含"已声明族/类型宽度/tier"，且**不得**出现未声明的类
+/// （历史 `fallback_classes` 会凭空造出 GPR(2)/FPR(4)/VEC(16)… 并借池）。
+#[test]
+fn class_table_is_declared_isa_data() {
+    let tm = forge_codegen::x86_v12::TargetMachine::new();
+    let classes: Vec<RegClass> = forge_codegen::TargetMachine::reg_info(&tm)
+        .register_classes()
+        .iter()
+        .map(|c| c.reg_class)
+        .collect();
+    for want in [
+        RegClass::GPR(1),
+        RegClass::GPR(2),
+        RegClass::GPR(4),
+        RegClass::GPR(8),
+        RegClass::FPR(8),
+        RegClass::FPR(16),
+        RegClass::FPR(32),
+        RegClass::VEC(16),
+        RegClass::VEC(32),
+        RegClass::VEC(64),
+    ] {
+        assert!(classes.contains(&want), "类表缺少 {want:?}：{classes:?}");
+    }
+    // `fpr4` 未声明（x86 只有 fpr8/fpr16/fpr32）→ 不得凭空出现。
+    assert!(
+        !classes.contains(&RegClass::FPR(4)),
+        "未声明的 FPR(4) 不得出现：{classes:?}"
+    );
+    // 每个类都必须有非空可分配池（否则 regalloc 会在该类的值上死循环/报错）。
+    for c in forge_codegen::TargetMachine::reg_info(&tm).register_classes() {
+        assert!(
+            !c.allocatable.is_empty(),
+            "类 {}（{:?}）可分配池为空",
+            c.name,
+            c.reg_class
+        );
+    }
+    // VEC(64)（V512）池必须来自浮点文件（x86 的 ZMM 与 XMM 同编号空间）。
+    let v512 = forge_codegen::TargetMachine::reg_info(&tm)
+        .register_classes()
+        .into_iter()
+        .find(|c| c.reg_class == RegClass::VEC(64))
+        .expect("VEC(64)");
+    assert_eq!(v512.width, 64, "VEC(64).width 必须是 64（spill 槽按值宽）");
+    assert!(v512.allocatable.contains(&15), "池应含 XMM15：{v512:?}");
+}

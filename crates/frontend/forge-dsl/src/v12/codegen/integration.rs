@@ -468,6 +468,94 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
     // scratch：从 [abi].scratch 解析物理索引（spill load/store 用）。
     let scratch: Vec<TokenStream> = scratch_list.into_iter().map(|i| quote! { #i }).collect();
+    // ── 类表（ISA 数据，2026-09-13）──────────────────────────────────────
+    // 分配器的类表 = **本函数生成的表**（编译期不再编造"未声明的类"）。
+    // 规则：把"宿主可能请求的类"逐个映射到同族物理寄存器文件——
+    //   GPR：类型系统整数宽度 {1,2,4,8}（≤ 主 GPR 宽）∪ 已声明 GPR 组宽 ∪ 地址/值池
+    //   FPR：浮点值池宽 ∪ 已声明且 ≤ 该宽的 FPR 组
+    //   VEC：`[meta].vector_tiers` 档位（池 = 浮点文件；无浮点文件时用已声明 VEC 组）
+    // 未声明的族不产生任何类（1 字节寄存器 ISA 只有 GPR(1)；i16/i32/i64 由值池门
+    // 在编译期拒绝）。x86/riscv64/arm64/demo 的**被请求类**集合与本表完全一致
+    // （已用 FGE_DEBUG_GEN dump + jit 矩阵验证行为不变）。
+    let mut class_entries: Vec<TokenStream> = Vec::new();
+    {
+        let mut gpr_widths: Vec<u16> = model
+            .reg
+            .keys()
+            .filter_map(|rc| match rc {
+                RegClass::GPR(w) => Some(*w),
+                _ => None,
+            })
+            .collect();
+        for w in [1u16, 2, 4, 8] {
+            if w <= gpr_main.width() {
+                gpr_widths.push(w);
+            }
+        }
+        gpr_widths.push(model.addr_class()?.width());
+        gpr_widths.push(model.value_gpr_class()?.width());
+        gpr_widths.sort_unstable();
+        gpr_widths.dedup();
+        for w in gpr_widths {
+            let cls = RegClass::GPR(w);
+            let gname = cls.to_string();
+            class_entries.push(quote! {
+                crate::machine::isa_info::RegisterClassInfo {
+                    name: #gname,
+                    count: #gpr_count as u16,
+                    width: #w,
+                    prefix: "",
+                    reg_class: forge_ir::RegClass::GPR(#w),
+                    allocatable: vec![#(#gp_alloc),*],
+                }
+            });
+        }
+        if let Some(fpr_main) = model.main_fpr_class()? {
+            // **有效的**宿主浮点值池类（与 `machine.rs` 的 `__VALUE_FPR_CLASS`
+            // 同规则：`value_fpr_class()` 缺省 FPR(8)）。riscv 这类"只有 fpr4 组、
+            // 但浮点值类为 FPR(8)"的 ISA 必须把 FPR(8) 也登记进类表，否则浮点值
+            // vreg 的类不在分配器配置里 —— riscv 矩阵 fcmp 系列实测错值。
+            let value_fpr_eff = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));
+            let mut fpr_widths: Vec<u16> = vec![value_fpr_eff.width(), fpr_main.width()];
+            for rc in model.reg.keys() {
+                if let RegClass::FPR(w) = rc {
+                    fpr_widths.push(*w);
+                }
+            }
+            fpr_widths.sort_unstable();
+            fpr_widths.dedup();
+            for w in fpr_widths {
+                let gname = RegClass::FPR(w).to_string();
+                // 池 = 浮点寄存器文件的分配序（`0..num_fp_regs`）：同一物理文件
+                // 的不同宽度视图共用池（x86 FPR(8)/FPR(16)/FPR(32) 共享 XMM/ZMM
+                // 编号空间；riscv FPR(4)/FPR(8) 共享 fa 编号空间）。
+                class_entries.push(quote! {
+                    crate::machine::isa_info::RegisterClassInfo {
+                        name: #gname,
+                        count: #fpr_count as u16,
+                        width: #w,
+                        prefix: "",
+                        reg_class: forge_ir::RegClass::FPR(#w),
+                        allocatable: vec![#(#fp_alloc),*],
+                    }
+                });
+            }
+            for t in model.vector_tiers() {
+                let cls = RegClass::VEC(t);
+                let gname = cls.to_string();
+                class_entries.push(quote! {
+                    crate::machine::isa_info::RegisterClassInfo {
+                        name: #gname,
+                        count: #fpr_count as u16,
+                        width: #t,
+                        prefix: "",
+                        reg_class: forge_ir::RegClass::VEC(#t),
+                        allocatable: vec![#(#fp_alloc),*],
+                    }
+                });
+            }
+        }
+    }
     Ok(quote! {
         pub struct RegInfo;
 
@@ -476,6 +564,11 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
 
             fn num_gp_regs(&self) -> u32 { #gpr_count }
             fn num_fp_regs(&self) -> u32 { #fpr_count }
+            fn register_classes(
+                &self,
+            ) -> Vec<crate::machine::isa_info::RegisterClassInfo> {
+                vec![#(#class_entries),*]
+            }
             fn default_gpr_class(&self) -> forge_ir::RegClass { __DEFAULT_GPR_CLASS }
             fn default_fpr_class(&self) -> forge_ir::RegClass { __DEFAULT_FPR_CLASS }
             fn addr_class(&self) -> forge_ir::RegClass { __ADDR_CLASS }

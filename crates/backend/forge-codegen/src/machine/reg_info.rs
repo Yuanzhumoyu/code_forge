@@ -15,9 +15,13 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// 浮点/向量寄存器数量。
     fn num_fp_regs(&self) -> u32;
 
-    /// 寄存器类元数据。
-    fn register_classes(&self) -> &[super::isa_info::RegisterClassInfo] {
-        &[]
+    /// 寄存器类表（ISA 声明）：**分配器类表的唯一来源**。
+    ///
+    /// 每个"宿主可能请求的类"都指向同族的物理寄存器文件；未声明的族不产生类
+    /// （1 字节寄存器 ISA 只有 `GPR(1)`，请求 `i16`/`i32`/`i64` 由值池门在编译期
+    /// 拒绝）。缺省空 = 非 DSL 后端/测试替身（编译器会用主类补两条兜底）。
+    fn register_classes(&self) -> Vec<super::isa_info::RegisterClassInfo> {
+        Vec::new()
     }
 
     /// ISA 默认整数值类（lowering 中 alloc_xreg 的默认目标类）。

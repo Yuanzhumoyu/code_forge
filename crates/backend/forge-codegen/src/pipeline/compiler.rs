@@ -2037,10 +2037,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
     ) -> Result<AllocResult, IrError> {
         let ri = machine.reg_info();
 
-        // Build new RegAllocConfig from TargetRegInfo — 全部寄存器类。
-        // 注：DSL 生成的 `RegInfo` **不覆写** `register_classes()`（返回空表），
-        // 因此本循环对仓库内所有 ISA 都为空；真实类表由下面的
-        // `fallback_classes` 派生（唯一来源）。
+        // Build RegAllocConfig from TargetRegInfo — 类表 = **ISA 声明**。
+        // DSL 生成的 `RegInfo::register_classes()` 由 `[reg.*]`/`[meta]`/`[abi]`
+        // 派生（每个可请求的类指向同族物理寄存器文件）；**不再有编造的 fallback
+        // 类表**（2026-09-13，R1）：未声明的类不会出现在分配器配置里，请求即
+        // 编译期 Unsupported（此前 GPR(2)/FPR(16)/VEC(16)… 会被凭空造出并借池）。
         let mut classes: HashMap<RegClass, ClassConfig> = HashMap::new();
         for info in ri.register_classes() {
             classes.insert(
@@ -2053,70 +2054,28 @@ impl<I: MachineInst + 'static> CompileState<I> {
         }
 
         // 主 GPR/FPR 类推导（元数据驱动）：由 ISA 的 default_*_class() 显式
-        // 暴露（DSL 从 [reg.gpr64]/[reg.gpr] 与 [meta].default_fpr_width 生成），
-        // compiler 不再猜测 GPR64/FPR64。例如 x86 浮点值主类为 FPR(8)
-        //（f64 值宽），即使其 XMM 寄存器组是 FPR(16)。
+        // 暴露（DSL 从 `[reg.*]` 与 `[meta]` 生成），compiler 不再猜测
+        // GPR64/FPR64。例如 x86 浮点值主类为 FPR(8)（f64 值宽），即使其 XMM
+        // 寄存器组是 FPR(16)。
         let main_gpr = ri.default_gpr_class();
         let main_fpr = ri.default_fpr_class();
 
-        // 防御兜底：register_classes() 为空（非 DSL 生成的 ISA / 测试 mock）时，
-        // 用 allocatable 顺序补主类。
-        classes.entry(main_gpr).or_insert_with(|| ClassConfig {
-            allocatable: ri.allocatable_gp_order(),
-            reg_width: main_gpr.default_width(),
-        });
-        classes.entry(main_fpr).or_insert_with(|| ClassConfig {
-            allocatable: ri.allocatable_fp_order(),
-            reg_width: main_fpr.default_width(),
-        });
-
-        // 未定义宽度类的 fallback：ISA 未声明某宽度类时，同族继承主类池
-        //（GPR(4) 继承主 GPR 类、FPR/VEC 继承主 FPR 类）。
-        // 基类由元数据推导（同族最宽已声明类），而非硬编码 GPR64/FPR64——
-        // 例如只有 GPR(4) 主类的 32 位 ISA，其 GPR(2)/GPR(1) 继承 GPR(4)。
-        // 类清单同样**派生**（2026-09-12 去「宽度写死」）：标量宽度档
-        // （GPR 1/2/4、FPR 4/8/16）+ 值池/地址类 + `ri.vector_tiers()`；
-        // 对 x86 派生集合与历史写死数组完全一致（GPR(8)/FPR(16) 已由上面的
-        // 主类 entry 插入）。
-        let mut fallback_classes: Vec<RegClass> = Vec::new();
-        fallback_classes.extend([RegClass::GPR(1), RegClass::GPR(2), RegClass::GPR(4)]);
-        fallback_classes.extend([RegClass::FPR(4), RegClass::FPR(8), RegClass::FPR(16)]);
-        fallback_classes.push(ri.addr_class());
-        fallback_classes.push(ri.value_gpr_class());
-        fallback_classes.push(ri.value_fpr_class());
-        fallback_classes.extend(ri.vector_tiers().iter().map(|t| RegClass::VEC(*t)));
-        for class in fallback_classes {
-            if classes.contains_key(&class) {
-                continue;
-            }
-            let base = classes
-                .keys()
-                .filter(|c| c.is_int() == class.is_int())
-                // classes 是 HashMap，keys() 顺序跨进程随机；default_width 相同时
-                // 平局 → 随机继承配置。用 (变体序, 宽度) 确定性排序。
-                .max_by(|a, b| {
-                    fn rank(c: &RegClass) -> (u8, u16) {
-                        match c {
-                            RegClass::GPR(w) => (0, *w),
-                            RegClass::FPR(w) => (1, *w),
-                            RegClass::VEC(w) => (2, *w),
-                            RegClass::KReg(w) => (3, *w),
-                        }
-                    }
-                    rank(a).cmp(&rank(b))
-                })
-                .copied();
-            if let Some(base) = base
-                && let Some(cfg) = classes.get(&base)
-            {
-                classes.insert(
-                    class,
-                    ClassConfig {
-                        allocatable: cfg.allocatable.clone(),
-                        reg_width: class.default_width(),
-                    },
-                );
-            }
+        // 非 DSL 后端/测试替身（类表为空）时的兜底：至少让主类可用。
+        if classes.is_empty() {
+            classes.insert(
+                main_gpr,
+                ClassConfig {
+                    allocatable: ri.allocatable_gp_order(),
+                    reg_width: main_gpr.default_width(),
+                },
+            );
+            classes.insert(
+                main_fpr,
+                ClassConfig {
+                    allocatable: ri.allocatable_fp_order(),
+                    reg_width: main_fpr.default_width(),
+                },
+            );
         }
 
         let precolored: HashMap<XReg, PReg> = ri.precolored_xregs().into_iter().collect();

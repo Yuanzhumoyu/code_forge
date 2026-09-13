@@ -123,17 +123,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         ".unwrap_or(RegClass::GPR64)",
         "vreg_class 对**未分配** vreg 的历史缺省（调用方只在已分配时读）",
     ),
-    (
-        "pipeline/compiler.rs",
-        "fallback_classes.extend([RegClass::GPR(1), RegClass::GPR(2), RegClass::GPR(4)]);",
-        "标量宽度档**清单**（派生集合，非 ISA 假设）：具体池由同族最宽类继承，\
-         1 字节 ISA 的值池仍是 GPR(1)",
-    ),
-    (
-        "pipeline/compiler.rs",
-        "fallback_classes.extend([RegClass::FPR(4), RegClass::FPR(8), RegClass::FPR(16)]);",
-        "同上（浮点标量档）",
-    ),
 ];
 
 fn scan_dir(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, usize, String)>) {
