@@ -956,19 +956,23 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
     };
     // arg_slot / arg_class.strategy 的值域由枚举在反序列化期强制
     if let Some(align) = abi.stack_align
-        && (align == 0 || align % 8 != 0)
+        && align == 0
     {
-        return Err(format!(
-            "[abi].stack_align must be a positive multiple of 8, got {align}"
-        ));
+        return Err(format!("[abi].stack_align must be > 0, got {align}"));
     }
-    // stack_arg_shadow：>0 且 8 的倍数（栈参数槽 8 字节对齐）。
-    if let Some(shadow) = abi.stack_arg_shadow
-        && (shadow == 0 || shadow % 8 != 0)
-    {
-        return Err(format!(
-            "[abi].stack_arg_shadow must be a positive multiple of 8, got {shadow}"
-        ));
+    // stack_arg_shadow：>0 且 **栈槽单位** 的倍数（元数据派生：x86 = 8 字节槽；
+    // 1 字节寄存器 ISA 的槽是 1 字节——历史实现写死"8 的倍数"）。
+    if let Some(shadow) = abi.stack_arg_shadow {
+        if shadow == 0 {
+            return Err(format!("[abi].stack_arg_shadow must be > 0, got {shadow}"));
+        }
+        let unit = m.slot_bytes()? as u32;
+        if unit > 1 && shadow % unit != 0 {
+            return Err(format!(
+                "[abi].stack_arg_shadow must be a positive multiple of the stack slot unit \
+                 ({unit} bytes), got {shadow}"
+            ));
+        }
     }
     let mut seen = std::collections::HashSet::new();
     for ac in &abi.arg_class {

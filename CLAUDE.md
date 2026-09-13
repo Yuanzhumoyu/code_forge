@@ -289,6 +289,17 @@ let name = node.get_text("name")?;
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
+- **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽单位一律由 `[meta]` 派生
+  （`default_gpr_width`/`default_fpr_width`/`addr_width`/`value_gpr_width`/
+  `value_fpr_width`/`slot_bytes`/`fp_overhead_bytes`/`vector_tiers`；优先级
+  显式键 > 派生 > **报错**）。生成期用 `__DEFAULT_GPR_CLASS`/`__ADDR_CLASS`/
+  `__SLOT_BYTES` 等常量，宿主用 `TargetRegInfo::{addr_class, value_gpr_class,
+  value_fpr_class, slot_bytes, vector_tiers, class_for_type}`——**不要**再写
+  `RegClass::GPR64`/8 字节缺省。1 字节寄存器 ISA 夹具 =
+  `isa/demo8_v12.toml`（+ `tests/demo8_v12_tests.rs`）；反回潮守卫 =
+  `crates/{frontend/forge-dsl,backend/forge-codegen}/tests/no_hardcoded_widths.rs`
+  （白名单带理由，且条目必须被命中）。规范细节见 `docs/reference/isa-dsl.md`
+  的「宽度元数据」节。
 - **forge-rustc e2e 环境开关**（`crates/tools/forge-rustc/tests/e2e.rs`）：
   `FORGE_E2E_ONLY=<case>` 只跑单用例、`FORGE_E2E_KEEP=1` 失败轮保留工作目录
   （证据在 `%TEMP%\forge_rustc_e2e_<pid>\`，**该目录随会话轮换被清理**，须当场复制）、

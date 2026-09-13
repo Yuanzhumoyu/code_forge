@@ -144,3 +144,26 @@ pub fn class_for_type_in_pool(
         RegClass::KReg(w) => Some(RegClass::KReg(w)),
     }
 }
+
+/// 类型的可读名（错误信息用；`TypeId` 的 `Debug` 只有裸编号 `TypeId(5)`，而
+/// 值池拒绝信息必须点名 `i64` 这类类型名才可操作）。
+pub fn type_label(ty: TypeId) -> String {
+    match ty {
+        TypeId::VOID => "void".into(),
+        TypeId::BOOL => "bool".into(),
+        TypeId::I8 => "i8".into(),
+        TypeId::I16 => "i16".into(),
+        TypeId::I32 => "i32".into(),
+        TypeId::I64 => "i64".into(),
+        TypeId::F32 => "f32".into(),
+        TypeId::F64 => "f64".into(),
+        TypeId::PTR => "ptr".into(),
+        TypeId::I128 => "i128".into(),
+        TypeId::F16 => "f16".into(),
+        TypeId::F128 => "f128".into(),
+        TypeId::V64 => "v64".into(),
+        TypeId::V128 => "v128".into(),
+        TypeId::V256 => "v256".into(),
+        other => format!("{other:?}"),
+    }
+}

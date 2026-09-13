@@ -19,6 +19,7 @@
   - [v15 迭代总览（S1–S6）](#v15-迭代总览s1s6)
   - [快速开始](#快速开始)
   - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
+  - [宽度元数据（去「宽度写死」）](#宽度元数据去宽度写死)
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
   - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
@@ -93,6 +94,15 @@ comment_char = "#"           # 行注释起始字符（缺省 "#"）
 label_suffix = ":"           # 标签定义后缀（缺省 ":"）
 directive_prefix = "."       # 伪指令前缀（缺省 "."）
 imm_prefix = "$"             # 可选：立即数前缀（x86 AT&T "$"、ARM "#"）
+# ── 宽度元数据（可选；缺省从 [reg.*] 派生，见下节）──
+default_gpr_width = 8        # 主 GPR 类宽度（字节）；缺省 = 最宽已声明 GPR 组
+default_fpr_width = 16       # 主 FPR 类宽度（字节）；缺省 = fpr16 优先，其次最宽
+addr_width = 8               # 地址/指针类（MemRef base/index、lea、sp/fp）
+value_gpr_width = 8          # 宿主整数值池类宽（lowering 值 XReg）
+value_fpr_width = 8          # 宿主浮点值池类宽（缺省 8 = f64 值池）
+slot_bytes = 8               # ABI 栈槽单位（alloca/聚合/spill 槽对齐）
+fp_overhead_bytes = 8        # 帧指针保存槽字节数（frame_pointer_overhead）
+vector_tiers = [16, 32, 64]  # 向量类字节档位（升序；缺省 = x86 XMM/YMM/ZMM）
 
 [reg.gpr64]                  # 寄存器组
 width = 64
@@ -105,6 +115,75 @@ base_index = 4               # 物理编号偏移（如 gpr8h 高字节组）
 寄存器物理编号 = **组内索引**（`Reg::to_index()`），这是 v12 与 v11
 （`16+i` 浮点索引，产生非规范字节）的根本区别。`[reg.*]` 的组名编码宽度
 （`gpr8`/`fpr4`/`vec8`/`kreg8`），`RegClass` 四族 GPR/FPR/VEC/KReg 各带字节宽。
+
+## 宽度元数据（去「宽度写死」）
+
+寄存器类/宽度**全部**从元数据派生；生成期与宿主流水线里不存留任何 x86 的
+8 字节缺省（2026-09-12 重构）。这使「1 字节寄存器」这类非常规 ISA 可用；
+历史实现在这种 ISA 上会"生成成功但语义错误"——主 GPR 组锚定
+`GPR(8).or(GPR(4))` 取不到组 ⇒ 名字表为空 ⇒ `sp`/`fp`/`scratch`/`callee_saved`
+与物理 clobber **静默丢弃**，或落回 `from_index(0, GPR64)` 构造一个该 ISA
+根本不存在的类。
+
+### 键与派生规则
+
+优先级统一为 **显式键 > 派生 > 显式报错**（绝不静默兜底）：
+
+| 键 | 单位 | 缺省派生 | 用途 |
+| --- | --- | --- | --- |
+| `[meta].default_gpr_width` | 字节 | 最宽已声明 GPR 组 | 主 GPR 类；GPR 名字/索引解析锚点 |
+| `[meta].default_fpr_width` | 字节 | `fpr16`（XMM 基准）优先，其次最宽 | 主 FPR 类（ABI/SSE 占位基准） |
+| `[meta].addr_width` | 字节 | `default_gpr_width` | 地址类：MemRef base/index、`lea`、sp/fp、帧地址 |
+| `[meta].value_gpr_width` | 字节 | `default_gpr_width` | 宿主整数值池（值 XReg / 零值 / 临时 vreg） |
+| `[meta].value_fpr_width` | 字节 | `8`（f64 值池；**不按最宽 FPR 组推导**） | 宿主浮点值池 |
+| `[meta].slot_bytes` | 字节 | `addr_width` | ABI 栈槽单位、alloca/聚合拆分、spill 槽对齐 |
+| `[meta].fp_overhead_bytes` | 字节 | `addr_width` | `RegInfo::frame_pointer_overhead()` |
+| `[meta].vector_tiers` | 字节（升序） | `[16, 32, 64]` | 向量类档位（`reg_class_for` 取最小 ≥ 请求值） |
+| `[meta].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
+| `[abi.frame].fp_push_bytes` | 字节 | 地址类宽度 | prologue 在帧指针上方 push 的字节数 |
+| `[abi.arg_class].limit` | 位 | — | 向量 by-value 阈值（超过则 by-ref 传参），同时是收参侧 by-value 判定 |
+
+显式宽度键必须指向**已声明组**（如 `addr_width = 2` 要求存在 `[reg.gpr2]`），
+否则 `validate` 报错；`vector_tiers` 必须严格升序且非 0。
+
+### 生成的访问器
+
+- 生成模块常量：`__DEFAULT_GPR_CLASS` / `__DEFAULT_FPR_CLASS` / `__ADDR_CLASS` /
+  `__VALUE_GPR_CLASS` / `__VALUE_FPR_CLASS` / `__SLOT_BYTES` /
+  `__FP_OVERHEAD_BYTES` / `__VECTOR_TIERS`（生成期代码用它们，不写类字面量）。
+- 宿主 `TargetRegInfo`：`default_gpr_class` / `default_fpr_class` /
+  `addr_class` / `value_gpr_class` / `value_fpr_class` / `slot_bytes` /
+  `vector_tiers` / `class_for_type`。DSL 生成的 `RegInfo` 全部覆写；
+  trait 缺省 = 历史 x86 值（`GPR64`/`FPR64`/8/`[16,32,64]`）。
+
+### fail-closed 契约
+
+1. **名字解析**：`[abi].scratch/reserved/ret_regs/call_ret_reg/call_clobbers`、
+   `[abi.callee_saved].gpr`、`[abi.arg_class].regs`、`[abi.frame].sp/fp`、
+   `[spill.*].base`、`[[instructions]].implicit_regs` 里的物理名必须能在某个
+   已声明 `[reg.*]` 组内解析——否则生成期报错（历史实现 `filter_map` 静默丢弃：
+   scratch/callee_saved 缺失 ⇒ regalloc 会分配被占用寄存器）。
+2. **帧寄存器**：声明了 `[abi.frame]` 却没有可解析的 `sp`（或 `fp`）→ 报错；
+   完全未声明 `[abi.frame]` 的纯寄存器夹具保留"索引 0 占位"（类 = 主 GPR 类，
+   不再是 x86 的 `GPR64`）。
+3. **spill 基址**：`[spill.*]` 模板未写 `base` 且无 `[abi.frame].fp` → 报错
+   （历史实现回退字面量 `"RBP"`）。
+4. **值池门**：函数里出现的每个值类型都必须被 `class_for_type` 承载，否则
+   **编译期** `Unsupported`（点名类型与值池宽度）。1 字节寄存器 ISA 上写
+   `i64`/指针即被拒绝，而不是按 8 字节池生成不存在的类。
+5. **向量 by-value/by-ref**：超过 `[abi.arg_class].limit`（字节 = limit/8）的
+   向量按引用传参；按值收参判定用同一阈值（不再写死 `VEC(16)`）。
+
+### 最小示例
+
+`isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/`slot_bytes`/
+`value_gpr_width`/`fp_overhead_bytes` 全 = 1，`default_opsize = 8`）是这条路径的
+回归夹具：`tests/demo8_v12_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
+sp/fp/scratch 名字解析成功）、汇编/编码/解码往返，以及宿主编译 i8 函数
+（机器码可被反汇编回 `mov/add/ret`）与 i64 的编译期拒绝。
+
+> 指令字宽是**另一条轴**：`default_inst_width` 目前只支持 32（定宽）或
+> `variable_length = true`，定宽 decode 按 4 字节读字——"1 字节指令"尚未支持。
 
 ## `[conventions]` — ISA 约定
 
@@ -682,3 +761,5 @@ memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄�
 - **`isa/riscv64_v12.toml`**：117 条指令，定宽试点（QEMU 真执行验证）；jit 矩阵
   131 passed / 67 skipped / 0 failed。`[abi.frame] layout = "fp-inside"` 全推导。
 - **`isa/demo_v12.toml`**：同助记符多宽度自动分发演示基线。
+- **`isa/demo8_v12.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，
+  宽度元数据全 = 1）；验证见 `crates/backend/forge-codegen/tests/demo8_v12_tests.rs`。

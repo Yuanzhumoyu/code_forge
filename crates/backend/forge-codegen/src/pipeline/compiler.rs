@@ -1687,9 +1687,11 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             };
             if ri.class_for_type(ty).is_none() {
                 return Err(IrError::Unsupported(format!(
-                    "ISA 值池无法承载类型 {ty:?}（值池 GPR {} 字节 / FPR {} 字节；\
-                     需要 [meta].value_gpr_width / addr_width / value_fpr_width \
-                     声明更宽的寄存器组，或改用更窄的 IR 类型）",
+                    "ISA 值池无法承载类型 {}（{} 位；值池 GPR {} 字节 / FPR {} 字节。\
+                     需要 [meta].value_gpr_width / addr_width / value_fpr_width 声明更宽的\
+                     寄存器组，或改用更窄的 IR 类型）",
+                    crate::machine::reg_info::type_label(ty),
+                    ty.bits(),
                     gpr.width(),
                     fpr.width()
                 )));
@@ -1982,6 +1984,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ctx.value_fpr_class = ri.value_fpr_class();
             ctx.addr_class = ri.addr_class();
             ctx.slot_bytes = ri.slot_bytes();
+            ctx.vector_tiers = ri.vector_tiers().to_vec();
         }
         // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。

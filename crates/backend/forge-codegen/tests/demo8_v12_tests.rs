@@ -1,0 +1,228 @@
+//! demo8_v12 — **1 字节寄存器 ISA** 回归测试（去「寄存器类型/宽度写死」）。
+//!
+//! 夹具（`isa/demo8_v12.toml`）只有唯一的 1 字节 GPR 组 `[reg.gpr1]`：历史实现
+//! 在生成期锚定 `GPR(8).or(GPR(4))`、把地址类/值池/栈槽/帧开销写死 8 字节，会在
+//! 这个 ISA 上静默退化（空名字表、构造不存在的类）。本文件断言三件事：
+//!
+//! 1. **元数据派生**：主 GPR 类/地址类/值池/槽单位/帧开销全部 = 1 字节；
+//!    sp/fp/scratch/callee_saved 名字解析成功（不再是空表）；allocatable 正确排除。
+//! 2. **汇编/编码/解码往返**在同一路径上仍然正确（1 字节寄存器不改变指令字宽）。
+//! 3. **宿主编译**：i8-only 函数可编译出机器码；i64 等宽类型被值池门
+//!    **编译期拒绝**（`Unsupported`），不再按 8 字节池生成不存在的寄存器类。
+
+use forge_codegen::FunctionCompiler;
+use forge_codegen::TargetMachine as TargetMachineTrait;
+use forge_codegen::demo8_v12::{Inst, TargetMachine, assemble, decode, disassemble, encode};
+use forge_ir::{FunctionBuilder, FunctionSignature, PhysReg, RegClass, TypeContext, TypeId};
+
+fn enc(asm: &str) -> Vec<u8> {
+    let inst = assemble(asm).unwrap_or_else(|e| panic!("assemble `{asm}`: {e}"));
+    encode(&inst).unwrap_or_else(|e| panic!("encode `{asm}`: {e}"))
+}
+
+/// 32 位小端字：opcode | rd<<8 | rs1<<11 | rs2<<14（与 demo_v12 同布局）。
+fn word(b0: u8, rd: u32, rs1: u32, rs2: u32) -> Vec<u8> {
+    let w = (b0 as u32) | (rd << 8) | (rs1 << 11) | (rs2 << 14);
+    w.to_le_bytes().to_vec()
+}
+
+/// 32 位小端字：opcode | rd<<8 | imm8<<16（RI2 形式）。
+fn imm_word(b0: u8, rd: u32, imm: u32) -> Vec<u8> {
+    let w = (b0 as u32) | (rd << 8) | (imm << 16);
+    w.to_le_bytes().to_vec()
+}
+
+// ───────────────── 1. 宽度元数据派生（核心回归）─────────────────
+
+/// 1 字节寄存器 ISA 的类/宽度全部由元数据派生——不再是 8 字节缺省。
+#[test]
+fn one_byte_register_metadata_is_derived() {
+    let tm = TargetMachine::new();
+    let ri = TargetMachineTrait::reg_info(&tm);
+    assert_eq!(
+        ri.default_gpr_class(),
+        RegClass::GPR(1),
+        "主 GPR 类 = 最宽已声明组（唯一 [reg.gpr1]）"
+    );
+    assert_eq!(ri.addr_class(), RegClass::GPR(1), "[meta].addr_width = 1");
+    assert_eq!(
+        ri.value_gpr_class(),
+        RegClass::GPR(1),
+        "[meta].value_gpr_width = 1（宿主值池）"
+    );
+    assert_eq!(ri.slot_bytes(), 1, "[meta].slot_bytes = 1（栈槽单位）");
+    assert_eq!(
+        ri.frame_pointer_overhead(),
+        1,
+        "帧指针保存槽 = [meta].fp_overhead_bytes = 1（历史写死 8）"
+    );
+    assert_eq!(ri.num_gp_regs(), 8, "唯一组的 8 个寄存器");
+    // 名字解析：sp/fp/scratch 全部命中（历史：锚点 GPR(8)/GPR(4) 都不存在 →
+    // 空名字表 → 这些全部静默丢弃/落回索引 0）。
+    assert_eq!(ri.sp_reg().register_index(), Some(7), "[abi.frame].sp = A7");
+    assert_eq!(ri.fp_reg().map(|r| r.to_index()), Some(6), "fp = A6");
+    assert_eq!(ri.scratch_regs(), vec![4, 5], "[abi].scratch = A4/A5");
+    assert_eq!(
+        ri.callee_saved(),
+        Vec::<u32>::new(),
+        "[abi.callee_saved] 空"
+    );
+    // allocatable = 0..8 排除 sp(7)/fp(6)/scratch(4,5)/reserved(6,7) → A0..A3
+    assert_eq!(ri.allocatable_gp_order(), vec![0, 1, 2, 3]);
+}
+
+/// 值池门：i8 可承载、i64/指针被拒绝（fail-closed，不再静默按 8 字节池）。
+#[test]
+fn one_byte_pool_rejects_wide_types() {
+    let tm = TargetMachine::new();
+    let ri = TargetMachineTrait::reg_info(&tm);
+    assert_eq!(ri.class_for_type(TypeId::I8), Some(RegClass::GPR(1)));
+    assert_eq!(ri.class_for_type(TypeId::I16), None, "无 GPR(2) 组");
+    assert_eq!(ri.class_for_type(TypeId::I32), None, "无 GPR(4) 组");
+    assert_eq!(ri.class_for_type(TypeId::I64), None, "无 GPR(8) 组");
+    assert_eq!(ri.class_for_type(TypeId::PTR), None, "指针 = 8 字节 > 值池");
+}
+
+// ───────────────── 2. 汇编/编码/解码往返 ─────────────────
+
+#[test]
+fn encode_layout_is_metadata_free_of_x86_defaults() {
+    // add：opcode + rd/rs1/rs2（3 位字段够 8 个寄存器）
+    assert_eq!(enc("add a1, a2, a3"), word(0x10, 1, 2, 3));
+    // mov 寄存器形态
+    assert_eq!(enc("mov a1, a2"), word(0x20, 1, 2, 0));
+    // mov 立即数形态（RI2：rd + imm8）
+    assert_eq!(enc("mov a1, 7"), imm_word(0x21, 1, 7));
+    // 加载/存储（RI：rd/rs1/imm8）
+    let ri_word = |b0: u8, rd: u32, rs1: u32, imm: u32| {
+        let w = (b0 as u32) | (rd << 8) | (rs1 << 11) | (imm << 16);
+        w.to_le_bytes().to_vec()
+    };
+    assert_eq!(enc("ld a1, a2, 3"), ri_word(0x30, 1, 2, 3));
+    assert_eq!(enc("st a1, a2, 3"), ri_word(0x31, 1, 2, 3));
+    assert_eq!(enc("subi a7, a7, 2"), ri_word(0x40, 7, 7, 2));
+    assert_eq!(enc("addi a7, a7, 2"), ri_word(0x41, 7, 7, 2));
+    // 分支（B：rs1 + imm8）
+    assert_eq!(enc("brz a1, -4"), {
+        let w = 0x50u32 | (1 << 11) | (((-4i32) as u32 & 0xFF) << 16);
+        w.to_le_bytes().to_vec()
+    });
+    // ret：全字位域
+    assert_eq!(enc("ret"), 1u32.to_le_bytes().to_vec());
+    assert_eq!(enc("nop"), 0u32.to_le_bytes().to_vec());
+}
+
+#[test]
+fn assemble_encode_decode_roundtrip() {
+    for asm in [
+        "add a0, a1, a2",
+        "sub a7, a0, a1",
+        "mov a3, a4",
+        "mov a5, 42",
+        "ld a1, a2, 5",
+        "st a1, a2, 5",
+        "subi a7, a7, 2",
+        "addi a7, a7, 2",
+        "nop",
+        "ret",
+    ] {
+        let inst = assemble(asm).unwrap_or_else(|e| panic!("assemble `{asm}`: {e}"));
+        let bytes = encode(&inst).unwrap_or_else(|e| panic!("encode `{asm}`: {e}"));
+        assert_eq!(bytes.len(), 4, "定宽 4 字节指令：`{asm}`");
+        let (back, used) = decode(&bytes).unwrap_or_else(|| panic!("decode `{asm}` 失败"));
+        assert_eq!(used, 4, "decode 消费整条指令：`{asm}`");
+        assert_eq!(
+            back, inst,
+            "decode(encode(x)) == x：`{asm}`（原始 {:02x?}）",
+            bytes
+        );
+        // 反汇编文本可再汇编（asm 模板往返）
+        let text = disassemble(&back);
+        let re =
+            assemble(&text).unwrap_or_else(|e| panic!("re-assemble `{text}`（来自 `{asm}`）: {e}"));
+        assert_eq!(encode(&re).unwrap(), bytes, "文本往返：`{asm}` → `{text}`");
+    }
+}
+
+#[test]
+fn polymorphic_mov_dispatch_by_operand_kind() {
+    // 同一助记符 mov：寄存器形态 → MOV8；立即数形态 → MOV8_R_IMM8
+    let r = assemble("mov a1, a2").unwrap();
+    let i = assemble("mov a1, 9").unwrap();
+    assert!(matches!(r, Inst::Mov8 { .. }), "寄存器形态：{r:?}");
+    assert!(matches!(i, Inst::Mov8RImm8 { .. }), "立即数形态：{i:?}");
+    // 越界立即数（8 位有符号 → [-128, 127]）必须报错，不静默截断
+    assert!(assemble("mov a1, 128").is_err());
+    assert!(assemble("mov a1, -129").is_err());
+}
+
+// ───────────────── 3. 宿主编译（i8-only 函数）─────────────────
+
+/// 编译 `fn f(a: i8, b: i8) -> i8 { a + b }`（1 字节寄存器池）。
+#[test]
+fn compile_i8_function_on_one_byte_pool() {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I8, "a"), (TypeId::I8, "b")], &[TypeId::I8]);
+    let mut b = FunctionBuilder::new("add8_fn", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I8, "a"), (TypeId::I8, "b")]);
+    b.switch_to_block(entry);
+    let v = b.iadd(params[0], params[1]);
+    b.ret(&[v]);
+    let func = b.finish().expect("build");
+
+    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let cf = compiler.compile_raw(&func).expect("i8 函数必须可编译");
+    eprintln!(
+        "demo8 add8 code ({} bytes): {:02x?}",
+        cf.code.len(),
+        cf.code
+    );
+    assert!(!cf.code.is_empty(), "生成代码非空");
+    assert_eq!(cf.code.len() % 4, 0, "定宽 4 字节指令序列");
+
+    // 机器码必须能被本 ISA 解码回合法指令序列，且含 ADD8 与 RET
+    let mut off = 0usize;
+    let mut asm: Vec<String> = Vec::new();
+    while off < cf.code.len() {
+        let (inst, used) = decode(&cf.code[off..])
+            .unwrap_or_else(|| panic!("机器码 offset {off} 处无法解码：{:02x?}", cf.code));
+        asm.push(disassemble(&inst));
+        off += used;
+    }
+    eprintln!("disasm: {asm:?}");
+    let joined = asm.join("\n");
+    assert!(joined.contains("add "), "应含 add：{joined}");
+    assert!(joined.contains("ret"), "应含 ret：{joined}");
+}
+
+/// 宽类型（i64）在 1 字节值池上 → 编译期 `Unsupported`（点名值池宽度）。
+#[test]
+fn compile_i64_function_is_rejected_with_clear_error() {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
+    let mut b = FunctionBuilder::new("add64_fn", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+    b.switch_to_block(entry);
+    let v = b.iadd(params[0], params[1]);
+    b.ret(&[v]);
+    let func = b.finish().expect("build");
+
+    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let err = compiler
+        .compile_raw(&func)
+        .expect_err("1 字节值池不得静默承载 i64");
+    let msg = format!("{err}");
+    eprintln!("i64 拒绝信息：{msg}");
+    assert!(
+        msg.contains("Unsupported") || msg.contains("无法承载"),
+        "{msg}"
+    );
+    assert!(
+        msg.contains("i64") || msg.contains("I64"),
+        "必须点名类型：{msg}"
+    );
+    assert!(
+        msg.contains("GPR") || msg.contains("值池"),
+        "必须点名值池：{msg}"
+    );
+}

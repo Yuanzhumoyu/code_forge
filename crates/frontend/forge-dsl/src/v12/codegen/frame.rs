@@ -728,7 +728,7 @@ fn gen_emit_pseudo(
                             index: None,
                             scale: 1,
                         },
-                        #reg: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
+                        #reg: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
                     }).map_err(|e| crate::IrError::Emit(e))?;
                     __sink.put_bytes(&__bytes);
                 },
@@ -834,7 +834,7 @@ fn gen_emit_pseudo(
                     let __bytes = encode(&Inst::#vn {
                         #d_fid: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
                         #m_fid: MemRef {
-                            base: Reg::from_index(__src.to_index(), forge_ir::RegClass::GPR64),
+                            base: Reg::from_index(__src.to_index(), __ADDR_CLASS),
                             disp: 0,
                             index: None,
                             scale: 1,
@@ -954,7 +954,7 @@ fn gen_emit_pseudo(
                             let __src = [#(Reg::#regs),*][__pos];
                             let __bytes = encode(&Inst::#mov_vn {
                                 #m_src: __src,
-                                #m_dest: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
+                                #m_dest: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
 
                             }).map_err(|e| crate::IrError::Emit(e))?;
                             __sink.put_bytes(&__bytes);
@@ -993,7 +993,7 @@ fn gen_emit_pseudo(
                             __gi += 1;
                             let __bytes = encode(&Inst::#mov_vn {
                                 #m_src: __src,
-                                #m_dest: Reg::from_index(__dest, forge_ir::RegClass::GPR64),
+                                #m_dest: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
 
                             }).map_err(|e| crate::IrError::Emit(e))?;
                             __sink.put_bytes(&__bytes);

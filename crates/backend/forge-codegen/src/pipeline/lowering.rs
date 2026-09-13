@@ -251,7 +251,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             }
         }
         for v in iadd_stack_offsets {
-            let depth = -v + slot_unit as i64;
+            let depth = -v + slot_unit;
             stackaddr_depth = stackaddr_depth.max(depth);
             // 与主循环 StackAddr immediate 的处理一致：负偏移槽深计入 locals
             // 帧需求（否则 spill 槽从过浅位置分配覆盖局部变量）。
@@ -263,7 +263,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 match inst.opcode {
                     Opcode::StackAddr => {
                         if let Some(Immediate::Int(v)) = inst.immediates.first() {
-                            let depth = if *v >= 0 { 0 } else { -*v + slot_unit as i64 };
+                            let depth = if *v >= 0 { 0 } else { -*v + slot_unit };
                             stackaddr_depth = stackaddr_depth.max(depth);
                         }
                     }

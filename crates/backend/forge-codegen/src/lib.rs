@@ -127,6 +127,7 @@ pub use runtime::output_types::{CompiledFunction, RelocKind, Relocation};
 pub mod arch;
 pub use arch::arm64_v12;
 pub use arch::demo_v12;
+pub use arch::demo8_v12;
 pub use arch::riscv64_v12;
 pub use arch::x86_v12;
 
@@ -252,6 +253,8 @@ pub struct LowerCtx {
     pub addr_class: RegClass,
     /// ABI 栈槽单位（字节，`TargetRegInfo::slot_bytes`；缺省 8）。
     pub slot_bytes: u16,
+    /// 向量类字节档位（`TargetRegInfo::vector_tiers`；缺省 `[16,32,64]`）。
+    pub vector_tiers: Vec<u16>,
 }
 
 use std::collections::HashSet;
@@ -382,6 +385,7 @@ impl LowerCtx {
             value_fpr_class: RegClass::FPR64,
             addr_class: RegClass::GPR64,
             slot_bytes: 8,
+            vector_tiers: vec![16, 32, 64],
             type_ctx: None,
         }
     }
@@ -392,9 +396,9 @@ impl LowerCtx {
         self.xregs.alloc_default(class)
     }
 
-    /// 位宽感知的寄存器类推导：动态 vector/scalable 类型按字节位宽映射
-    /// （≤128 → VEC(16)、>128 且 ≤256 → VEC(32)、>256 → VEC(64)），
-    /// 其余回退 RegClass::from_type_id。
+    /// 位宽感知的寄存器类推导：动态 vector/scalable 类型按字节位宽映射到
+    /// **向量档位**（`TargetRegInfo::vector_tiers`，元数据驱动；缺省
+    /// `[16, 32, 64]` = x86 XMM/YMM/ZMM），其余回退 `RegClass::from_type_id`。
     ///
     /// **>256 位必须是 VEC(64)**（WA-46）：类的 `reg_width` 决定 spill 槽大小与
     /// spill 搬运宽度，旧实现把 64 字节向量（V512）也归到 VEC(32) ⇒ 槽只有
@@ -405,13 +409,16 @@ impl LowerCtx {
             let store = ctx.borrow();
             if store.is_vector(*ty) || store.is_scalable_vector(*ty) {
                 let bytes = store.size_bytes(*ty);
-                return if bytes <= 16 {
-                    RegClass::VEC(16)
-                } else if bytes <= 32 {
-                    RegClass::VEC(32)
-                } else {
-                    RegClass::VEC(64)
-                };
+                // 最小的 ≥ 请求字节数的档位；超出最大档 → 最大档（宽度由类的
+                // reg_width 承载，spill/ABI 按类宽工作）。
+                let tier = self
+                    .vector_tiers
+                    .iter()
+                    .copied()
+                    .find(|t| (*t as u32) >= bytes)
+                    .or_else(|| self.vector_tiers.last().copied())
+                    .unwrap_or(64);
+                return RegClass::VEC(tier.max(1));
             }
         }
         RegClass::from_type_id(*ty)

@@ -1,0 +1,268 @@
+# ============================================================
+# demo8_v12 — 1 字节寄存器 ISA（去「宽度写死」回归夹具）
+# ============================================================
+#
+# 目的：证明「寄存器宽度写死」已从 DSL 生成期与宿主流水线中消除——
+# 本 ISA **只有一个 1 字节 GPR 组** `[reg.gpr1]`（没有 gpr2/gpr4/gpr8），
+# 历史实现（主 GPR 组锚定 `GPR(8).or(GPR(4))`、地址/槽宽内置 8 字节）在
+# 这个文件上会退化成"生成成功但语义错误"或构造不存在的类：
+#
+# - 主 GPR 类 → `GPR(1)`（`[meta].default_gpr_width` 派生自最宽已声明组）
+# - 地址类 → `GPR(1)`（`[meta].addr_width = 1`）
+# - 值池 → `GPR(1)`（`[meta].value_gpr_width = 1`）——宿主编译 i16/i32/i64
+#   会被 `class_for_type` 值池门**编译期拒绝**（Unsupported），不再按 8 字节池
+#   生成不存在的寄存器类
+# - 栈槽单位 / 帧指针保存槽 → 1 字节（`slot_bytes` / `fp_overhead_bytes`）
+# - decode 缺省 opsize → 8 位（`[meta].default_opsize = 8`，生成代码里的
+#   `__opsize` 单位是**字节** = 1）
+#
+# 指令字宽仍是 32 位（`default_inst_width = 32`）——"1 字节指令"是另一条
+# 独立轴（定宽 decode 目前按 4 字节读字），不在本夹具范围内。
+#
+# 验证：crates/backend/forge-codegen/tests/demo8_v12_tests.rs
+
+[meta]
+name = "demo8_v12"
+version = "15.0"
+endian = "little"
+mode = 8
+default_inst_width = 32
+# 位（= 生成代码里 __opsize 的 1 字节）
+default_opsize = 8
+addr_width = 1
+slot_bytes = 1
+value_gpr_width = 1
+fp_overhead_bytes = 1
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# ─────────────────────────── 寄存器组（唯一，1 字节）───────────────────────────
+
+[reg.gpr1]
+base_index = 0
+names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+
+# ─────────────────────── 命名位域 ───────────────────────
+
+[conventions.bitfields]
+opcode = { offset = 0, width = 8 }
+rd     = { offset = 8,  width = 3 }
+rs1    = { offset = 11, width = 3 }
+rs2    = { offset = 14, width = 3 }
+imm8   = { offset = 16, width = 8 }
+word   = { offset = 0,  width = 32 }
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "a8"
+kind = "reg"
+class = "gpr1"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "lab"
+kind = "label"
+signed = true
+width = 8
+
+[[operand_slots]]
+name = "imm8"
+kind = "imm"
+signed = true
+width = 8
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "R"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "rs2"]
+
+[[forms]]
+name = "RR"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1"]
+
+[[forms]]
+name = "RI"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "imm8"]
+
+[[forms]]
+name = "RI2"
+opcode_field = "opcode"
+operand_fields = ["rd", "imm8"]
+
+[[forms]]
+name = "B"
+opcode_field = "opcode"
+operand_fields = ["rs1", "imm8"]
+
+[[forms]]
+name = "W"
+opcode_field = "word"
+operand_fields = []
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+[[instructions]]
+name = "ADD8"
+form = "R"
+opcode = 0x10
+ops = ["dst:a8:out", "src:a8", "src2:a8"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "SUB8"
+form = "R"
+opcode = 0x11
+ops = ["dst:a8:out", "src:a8", "src2:a8"]
+asm = "sub {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "MOV8"
+roles = ["gpr_mov"]
+form = "RR"
+opcode = 0x20
+ops = ["dst:a8:out", "src:a8"]
+asm = "mov {dst}, {src}"
+
+[[instructions]]
+name = "MOV8_R_IMM8"
+form = "RI2"
+opcode = 0x21
+ops = ["dst:a8:out", "imm:imm8"]
+asm = "mov {dst}, {imm}"
+
+# 加载/存储（地址 = 基址寄存器 + 8 位偏移；不做独立 mem 槽，与 riscv 同形）
+[[instructions]]
+name = "LD8"
+form = "RI"
+opcode = 0x30
+ops = ["dst:a8:out", "base:a8", "imm:imm8"]
+asm = "ld {dst}, {base}, {imm}"
+
+[[instructions]]
+name = "ST8"
+form = "RI"
+opcode = 0x31
+ops = ["src:a8", "base:a8", "imm:imm8"]
+asm = "st {src}, {base}, {imm}"
+
+# 帧分配/释放（rd = rs1 ± imm8）
+[[instructions]]
+name = "SUBI8"
+roles = ["frame_alloc"]
+form = "RI"
+opcode = 0x40
+ops = ["dst:a8:out", "src:a8", "imm:imm8"]
+asm = "subi {dst}, {src}, {imm}"
+
+[[instructions]]
+name = "ADDI8"
+roles = ["frame_free"]
+form = "RI"
+opcode = 0x41
+ops = ["dst:a8:out", "src:a8", "imm:imm8"]
+asm = "addi {dst}, {src}, {imm}"
+
+# 返回（全字位域；word = 1，与 NOP 的 0 区分）
+[[instructions]]
+name = "RET"
+roles = ["ret"]
+form = "W"
+opcode = 1
+effect = ["Ret"]
+asm = "ret"
+
+# 分支（标签槽）
+[[instructions]]
+name = "BRZ"
+form = "B"
+opcode = 0x50
+effect = ["Branch"]
+ops = ["src:a8", "target:lab"]
+asm = "brz {src}, {target}"
+
+# 无操作数（全字位域，避免与 opcode 0x10 撞车）
+[[instructions]]
+name = "NOP"
+form = "W"
+opcode = 0
+asm = "nop"
+
+# ════════════════════════════════════════════════════════════
+# TargetMachine 接入：调用约定 + 帧 + 序言/尾声 + lowering
+# ════════════════════════════════════════════════════════════
+
+[abi]
+# 1 字节寄存器 → 栈对齐也是 1（不写死 x86 的 16）
+stack_align = 1
+# spill 搬运临时寄存器（regalloc 不可分配）
+scratch = ["A4", "A5"]
+# A6/A7 是 fp/sp（已在 RegInfo 排除；显式列出以验证名字解析）
+reserved = ["A6", "A7"]
+# 返回寄存器 A0；Return/调用方返回值移动目标
+ret_regs = ["A0"]
+
+[[abi.arg_class]]
+class = "int"
+regs = ["A0", "A1", "A2", "A3"]
+
+[abi.frame]
+sp = "A7"
+fp = "A6"
+# fp 保存槽 = 1 字节（不是 x86 的 8）
+fp_push_bytes = 1
+
+[abi.callee_saved]
+gpr = []
+
+[emit]
+align_pad = 0
+# 无 JMP 指令：return block 直接 fall-through 到函数末尾的尾声（单 return 安全）
+epilogue_label = false
+
+[emit.prologue]
+insts = ["@move_args"]
+
+[emit.epilogue]
+insts = ["RET"]
+
+# 溢出模板（基址 = A6 帧指针；LD8/ST8 = Reg + Reg + imm8）
+[spill.GPR]
+load = "LD8 {0}, A6, {1}"
+store = "ST8 {0}, A6, {1}"
+base = "A6"
+
+# ── 显式别名（多态引用名 → 指令名列表）──
+[[aliases]]
+name = "mov"
+insts = ["MOV8", "MOV8_R_IMM8"]
+
+[[aliases]]
+name = "add"
+insts = ["ADD8"]
+
+[[aliases]]
+name = "sub"
+insts = ["SUB8"]
+
+[[lowering]]
+op = "Iadd"
+insts = ["add {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Isub"
+insts = ["sub {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Iconst"
+insts = ["mov {out}, {iconst}"]
+
+[[lowering]]
+op = "Copy"
+insts = ["mov {out}, {0}"]
