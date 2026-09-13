@@ -437,7 +437,9 @@ impl LowerCtx {
                     .copied()
                     .find(|t| (*t as u32) >= bytes)
                     .or_else(|| self.vector_tiers.last().copied())
-                    .unwrap_or(64);
+                    // 未声明任何档位（手写后端/测试替身）：按**真实字节数**成类，
+                    // 不再回退 x86 的常量 64。
+                    .unwrap_or(bytes.max(1) as u16);
                 return RegClass::VEC(tier.max(1));
             }
         }

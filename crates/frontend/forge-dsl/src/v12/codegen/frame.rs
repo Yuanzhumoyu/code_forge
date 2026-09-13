@@ -1306,8 +1306,12 @@ fn gen_fpr_spill_dispatch(
     };
     let scalar = gen_spill_stmt(infos, Some(default_tpl), is_load, default_base)?;
     let what = if is_load { "load" } else { "store" };
-    // 标量缺省档上限 = 浮点值池宽度（x86 = 8）。
-    let scalar_max = model.value_fpr_class()?.map(|c| c.width()).unwrap_or(8);
+    // 标量缺省档上限 = 浮点值**池**类宽（x86 = 8）；池未声明时退回主浮点类宽，
+    // 仍无 → 0（表示"没有标量档"，全部宽度走 `[spill.FPR<bytes>]` 档位）。
+    let scalar_max = match model.value_fpr_class()? {
+        Some(c) => c.width(),
+        None => model.main_fpr_class()?.map(|c| c.width()).unwrap_or(0),
+    };
     // 宽度档：从已声明模板键 `FPR<bytes>` 派生（`m.spill` 是 BTreeMap，键序稳定）。
     let mut tiers: Vec<(String, u16)> = Vec::new();
     for key in model.spill.keys() {
