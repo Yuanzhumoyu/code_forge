@@ -355,7 +355,7 @@ mod tests {
         }
         // 未注册 ISA → None（无 CFI，安全退化零回归）
         assert_eq!(function_cfi_for("riscv64_v12", &PROLOGUE), None);
-        assert_eq!(function_cfi_for("demo_v12", &PROLOGUE), None);
+        assert_eq!(function_cfi_for("unregistered_backend", &PROLOGUE), None);
         assert_eq!(function_cfi_for("unknown_isa", &PROLOGUE), None);
     }
 

@@ -134,8 +134,8 @@ macro_rules! impl_erased_target_machine {
 
             fn compile(
                 &self,
-                func: &forge_ir::Function,
-            ) -> Result<$crate::CompiledFunction, forge_ir::IrError> {
+                func: &$crate::ir::Function,
+            ) -> Result<$crate::CompiledFunction, $crate::ir::IrError> {
                 let compiler = $crate::pipeline::compiler::FunctionCompiler::new(self.clone());
                 compiler.compile_raw(func)
             }

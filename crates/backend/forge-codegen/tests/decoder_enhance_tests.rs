@@ -6,6 +6,8 @@
 //! 回归即验证 LE 路径；BE 路径由生成代码结构保证（无 BE ISA 时以 LE 断言
 //! 覆盖 imm_read_ts 的装配逻辑）。
 
+mod common;
+
 use forge_codegen::machine::decoder::DecodeError;
 use forge_codegen::machine::decoder::TargetDecoder;
 
@@ -41,7 +43,7 @@ fn decode_error_reports_partial_prefix_offset() {
 #[test]
 fn decode_error_fixed_width_isa() {
     // demo（定宽 32 位）：非法字节 → InvalidBytes(0)；过短 → InvalidBytes(len)
-    let dec = forge_codegen::demo_v12::Decoder;
+    let dec = common::demo_v12::Decoder;
     let err = dec.decode(&[0xFF, 0xFF, 0xFF, 0xFF]).unwrap_err();
     assert!(matches!(err, DecodeError::InvalidBytes(0)), "{err:?}");
     let err = dec.decode(&[0x10]).unwrap_err();

@@ -10,9 +10,11 @@
 //! 3. **宿主编译**：i8-only 函数可编译出机器码；i64 等宽类型被值池门
 //!    **编译期拒绝**（`Unsupported`），不再按 8 字节池生成不存在的寄存器类。
 
+mod common;
+
+use common::demo8_v12::{Inst, TargetMachine, assemble, decode, disassemble, encode};
 use forge_codegen::FunctionCompiler;
 use forge_codegen::TargetMachine as TargetMachineTrait;
-use forge_codegen::demo8_v12::{Inst, TargetMachine, assemble, decode, disassemble, encode};
 use forge_ir::{FunctionBuilder, FunctionSignature, PhysReg, RegClass, TypeContext, TypeId};
 
 fn enc(asm: &str) -> Vec<u8> {

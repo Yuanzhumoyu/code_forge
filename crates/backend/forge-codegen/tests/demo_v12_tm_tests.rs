@@ -9,6 +9,8 @@
 //! frame_size=0 时不发射帧指令）；[emit].epilogue_label = false（无 JMP
 //! 指令，return block 直接 fall-through 到尾声 RET）。
 
+mod common;
+
 use forge_codegen::FunctionCompiler;
 use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
@@ -26,7 +28,7 @@ fn compile_binop(
     let v = build(&mut b, &params);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::demo_v12::TargetMachine::new());
+    let compiler = FunctionCompiler::new(common::demo_v12::TargetMachine::new());
     compiler.compile_raw(&func).expect("compile")
 }
 
@@ -83,7 +85,7 @@ fn tm_compile_width_dispatch() {
 #[test]
 fn tm_decode_roundtrip() {
     // 对编译产物逐 4 字节 decode，decode(encode(x)) == x（硬契约）
-    use forge_codegen::demo_v12::{decode, encode};
+    use common::demo_v12::{decode, encode};
     for name in ["add16", "add32", "add64"] {
         let ty = match name {
             "add16" => TypeId::I16,

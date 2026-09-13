@@ -4,6 +4,8 @@
 //! 载体：表达式/.equ → riscv64_v12（`addi x1, x0, expr`，imm12 有符号）；
 //! 数据伪指令/宏/行号 → demo_v12（定宽 32 位）。
 
+mod common;
+
 use forge_codegen::machine::assembler::TargetAssembler;
 
 // ── riscv：表达式 / .equ ──
@@ -92,15 +94,15 @@ fn immediate_expr_in_branch() {
 
 // ─────────────────── 数据伪指令（demo_v12）───────────────────
 
-fn dm_parse(src: &str) -> Vec<forge_codegen::demo_v12::Inst> {
-    let asm = forge_codegen::demo_v12::Assembler;
+fn dm_parse(src: &str) -> Vec<common::demo_v12::Inst> {
+    let asm = common::demo_v12::Assembler;
     asm.parse_insts(src)
         .unwrap_or_else(|e| panic!("parse_insts: {e}"))
 }
 
 #[test]
 fn data_word_hword_dword() {
-    use forge_codegen::demo_v12::Inst;
+    use common::demo_v12::Inst;
     let insts = dm_parse(concat!(
         ".word 0x11223344\n",
         ".hword 0x5566\n",
@@ -116,7 +118,7 @@ fn data_word_hword_dword() {
 
 #[test]
 fn data_ascii_asciz_zero() {
-    use forge_codegen::demo_v12::Inst;
+    use common::demo_v12::Inst;
     let insts = dm_parse(concat!(".ascii \"hi\"\n", ".asciz \"!\"\n", ".zero 3\n"));
     assert_eq!(insts.len(), 3);
     assert!(matches!(&insts[0], Inst::Raw(b) if b == b"hi"));
@@ -126,7 +128,7 @@ fn data_ascii_asciz_zero() {
 
 #[test]
 fn data_escape_sequences() {
-    use forge_codegen::demo_v12::Inst;
+    use common::demo_v12::Inst;
     // 源文本含 \n \t \" 转义（rust 字符串里用 \\n 等表达源反斜杠）
     let src = ".ascii \"a\\nb\\t\\\"\"\n";
     let insts = dm_parse(src);
@@ -142,7 +144,7 @@ fn data_escape_sequences() {
 
 #[test]
 fn macro_expansion() {
-    use forge_codegen::demo_v12::Inst;
+    use common::demo_v12::Inst;
     let insts = dm_parse(concat!(
         ".macro LD2 reg, imm\n",
         "mov %reg, w0\n",
@@ -157,7 +159,7 @@ fn macro_expansion() {
 
 #[test]
 fn macro_nested_expansion() {
-    use forge_codegen::demo_v12::Inst;
+    use common::demo_v12::Inst;
     let insts = dm_parse(concat!(
         ".macro SETZ r\n",
         "mov %r, w0\n",
@@ -175,13 +177,13 @@ fn macro_nested_expansion() {
 
 #[test]
 fn macro_error_missing_endm() {
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     assert!(asm.parse_insts(concat!(".macro FOO\n", "nop\n")).is_err());
 }
 
 #[test]
 fn macro_error_arg_count() {
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     assert!(
         asm.parse_insts(concat!(".macro ONE a\n", "nop\n", ".endm\n", "ONE 1, 2\n"))
             .is_err()
@@ -193,7 +195,7 @@ fn macro_error_arg_count() {
 #[test]
 fn error_carries_line_number() {
     // demo：第 3 行语法错误
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     let err = asm
         .parse_insts(concat!("nop\n", "nop\n", "frob r1, r2\n"))
         .unwrap_err();

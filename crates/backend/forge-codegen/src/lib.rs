@@ -22,7 +22,10 @@
 //! - [`CodeSink`] — 代码发射接收器
 //! - [`Registry`] — 全局后端注册表
 
-use forge_ir::IrError;
+// ISA-DSL 生成代码引用 `crate::IrError`（`isa_from_file!(…, krate = 本 crate)`
+// 时即 `forge_codegen::IrError`）——必须**公开**，否则生成物只能活在库内部
+// （demo 夹具迁到 tests/ 正是踩到这一点）。
+pub use forge_ir::IrError;
 use forge_ir::*;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -87,6 +90,14 @@ impl Default for MemRef {
     }
 }
 
+// ============================================================
+// ISA-DSL 生成代码的运行面（generated-code runtime surface）
+// ============================================================
+// `isa_from_file!(..., krate = <宿主>)` 会把生成物里的 `forge_ir::…` 改写为
+// `<宿主>::ir::…`——本 re-export 就是那个 `ir`。宿主因此**不需要**自己依赖
+// forge-ir，生成代码的全部依赖都落在本 crate 的公开面上。
+pub use forge_ir as ir;
+
 pub mod prelude {
     pub use crate::{
         AllocResult, CodeSink, EffectKind, EncodeError, InstPacket, IsaCapabilities, IsaInfo,
@@ -124,10 +135,11 @@ pub use runtime::output_types::{CompiledFunction, RelocKind, Relocation};
 // ============================================================
 // 架构后端 (DSL 生成；v12 唯一语法)
 // ============================================================
+// 只有**发行后端**：x86_64 / aarch64 / riscv64。ISA-DSL 的示例谱
+// （demo_v12 / demo8_v12）是测试夹具，在 `tests/isa/` + `tests/common/mod.rs`
+// 里用 `isa_from_file!(…, krate = forge_codegen)` 生成——不进本 rlib。
 pub mod arch;
 pub use arch::arm64_v12;
-pub use arch::demo_v12;
-pub use arch::demo8_v12;
 pub use arch::riscv64_v12;
 pub use arch::x86_v12;
 

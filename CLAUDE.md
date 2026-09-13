@@ -189,10 +189,14 @@ code-forge (root umbrella)
 
 ### Key Architecture Rules
 
-1. **`isa_from_file!`（v12 唯一语法）generates code with `crate::` paths** — it expects
-   to be called from within forge-codegen (where `crate::prelude::*`,
-   `crate::machine::*` resolve)。生成模块名 = 文件 stem。Integration tests in `tests/`
-   cannot use `isa_from_file!` inline; they import ISA types from forge-codegen's backend modules.
+1. **`isa_from_file!`（v12 唯一语法）默认生成 `crate::` 路径** — 即"生成在哪个
+   crate 里就属于哪个 crate"（`crate::prelude::*`、`crate::machine::*` 在该 crate 内解析）。
+   生成模块名 = 文件 stem。**在别的 crate（含 `tests/`）里生成**时给第二个参数
+   `krate = <宿主路径>`：生成物里的 `crate::…` 改写为 `<宿主>::…`、`forge_ir::…`
+   改写为 `<宿主>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir;`），因此
+   生成代码只依赖宿主的**公开面**——demo 夹具正是这样住在
+   `tests/isa/*.toml` + `tests/common/mod.rs`（`krate = forge_codegen`）而不进库本体。
+   库本体只有真实后端：`arch/{x86,arm64,riscv64}_v12.rs`。
 
 2. **Assembler/JIT coupling** — `Assembler` trait ↔ `JitCompiler` are circularly coupled.
    Both live in forge-codegen. Cannot split into separate crates without first refactoring
@@ -209,18 +213,23 @@ code-forge (root umbrella)
 ### ISA Backend Pattern
 
 ```rust
-// crates/backend/forge-codegen/src/arch/my_isa.rs
+// 发行后端：crates/backend/forge-codegen/src/arch/my_isa.rs
 forge_dsl::isa_from_file!("isa/my_isa.toml");
 pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
 // 注册由 DSL 生成的 ensure_registered() 完成（OnceLock 注册 Registry + reloc patcher），
 // 无需手写——见 arch/x86_v12.rs 的实际形态。
+
+// 测试夹具（不发行）：crates/backend/forge-codegen/tests/common/mod.rs
+forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
 ```
 
 > 注：生成模块导出的是 `TargetMachine`（组合 IsaInfo/RegInfo/ABI/Lowering/Encoder/
 > FrameLowering/Disassembler/Assembler/**Decoder**），**没有 `Isa` 类型**；
 > 无 `register_backend!` 宏。v11 后端（x86_64/aarch64/riscv64/wasm32/minimal_sd）
-> 已随 v11 语法层删除——现仅 `arch/x86_v12.rs` 与 `arch/riscv64_v12.rs`，二者均
-> 已接 TargetMachine（riscv 定宽试点，QEMU 真执行矩阵 126 用例全绿）。
+> 已随 v11 语法层删除——现为 `arch/x86_v12.rs`、`arch/arm64_v12.rs`、
+> `arch/riscv64_v12.rs`（三者均已接 TargetMachine；riscv 定宽试点有 QEMU 真执行
+> 矩阵）。示例/夹具谱（`demo_v12`、`demo8_v12`）**不在库里**，见
+> `crates/backend/forge-codegen/tests/isa/README.md`。
 
 ### Frontend Pipeline (forge-grammar v21)
 
@@ -296,9 +305,12 @@ let name = node.get_text("name")?;
   `__SLOT_BYTES` 等常量，宿主用 `TargetRegInfo::{addr_class, value_gpr_class,
   value_fpr_class, slot_bytes, vector_tiers, class_for_type}`——**不要**再写
   `RegClass::GPR64`/8 字节缺省。1 字节寄存器 ISA 夹具 =
-  `isa/demo8_v12.toml`（+ `tests/demo8_v12_tests.rs`）；反回潮守卫 =
+  `crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（由
+  `tests/common/mod.rs` 用 `isa_from_file!(…, krate = forge_codegen)` 宿住，
+  **不进库本体**；用例在 `tests/demo8_v12_tests.rs`）；反回潮守卫 =
   `crates/{frontend/forge-dsl,backend/forge-codegen}/tests/no_hardcoded_widths.rs`
-  （白名单带理由，且条目必须被命中）。规范细节见 `docs/reference/isa-dsl.md`
+  （白名单带理由，且条目必须被命中）+ `tests/library_surface.rs`（demo 谱不得
+  回到 `src/` 或仓库根 `isa/`）。规范细节见 `docs/reference/isa-dsl.md`
   的「宽度元数据」节。
 - **forge-rustc e2e 环境开关**（`crates/tools/forge-rustc/tests/e2e.rs`）：
   `FORGE_E2E_ONLY=<case>` 只跑单用例、`FORGE_E2E_KEEP=1` 失败轮保留工作目录
@@ -378,6 +390,8 @@ base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
 ## Code Conventions
 
 - Edition 2024 throughout
-- `forge-ir` types are re-exported in `forge-codegen::prelude` for DSL-generated code
-- All generated code paths use `crate::` relative to forge-codegen
+- `forge-ir` types are re-exported in `forge-codegen::prelude` for DSL-generated code；
+  `forge-codegen::ir` 是 `forge_ir` 的 re-export（`krate = …` 生成物的 `forge_ir::` 目标）
+- Generated code paths use `crate::` **when generated inside forge-codegen**（发行后端）；
+  在别的 crate 里生成时用 `isa_from_file!(…, krate = <宿主>)`，生成物只落到该宿主的公开面
 - Root `src/lib.rs` is a thin facade — all real code in `crates/`

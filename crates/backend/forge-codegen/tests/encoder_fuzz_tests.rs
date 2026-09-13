@@ -13,6 +13,8 @@
 //!
 //! 种子固定（可复现）；迭代量级 10^4，位决策树/前缀扫描均为 O(1)-O(4)。
 
+mod common;
+
 use forge_codegen::machine::decoder::TargetDecoder;
 
 // ─────────────────────────── 确定性 PRNG ───────────────────────────
@@ -129,7 +131,7 @@ fn fuzz_decode_random_bytes_no_panic() {
     let mut rng = Rng::new(0xF00D_2026);
     let x86 = forge_codegen::x86_v12::Decoder;
     let riscv = forge_codegen::riscv64_v12::Decoder;
-    let demo = forge_codegen::demo_v12::Decoder;
+    let demo = common::demo_v12::Decoder;
     for _ in 0..100_000 {
         let bytes = rng.random_bytes(23);
         assert_decode_robust(&x86, &bytes);
@@ -151,7 +153,7 @@ fn fuzz_decode_random_bytes_no_panic() {
 fn fuzz_decode_truncated_prefixes_no_panic() {
     let x86 = forge_codegen::x86_v12::Decoder;
     let riscv = forge_codegen::riscv64_v12::Decoder;
-    let demo = forge_codegen::demo_v12::Decoder;
+    let demo = common::demo_v12::Decoder;
     assert_truncation_robust(&x86, X86_SAMPLES);
     assert_truncation_robust(&riscv, RISCV_SAMPLES);
     assert_truncation_robust(&demo, DEMO_SAMPLES);

@@ -34,7 +34,7 @@
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
   - [asm 模板](#asm-模板)
   - [代码生成输出](#代码生成输出)
-  - [已有 ISA 文件](#已有-isa-文件)
+  - [已有 ISA 谱](#已有-isa-谱)
 
 ---
 
@@ -56,7 +56,7 @@ lowering 里 66 条同 op + 逐字节相同 insts、只差 when）、以及 16 �
 
 ## 快速开始
 
-在任意 crate 中（推荐 `forge-codegen` 的 `arch/` 目录）：
+**发行后端**（生成在 `forge-codegen` 内部，`crate::` 即本 crate）：
 
 ```rust
 // crates/backend/forge-codegen/src/arch/my_isa.rs
@@ -64,12 +64,24 @@ forge_dsl::isa_from_file!("isa/my_isa.toml");
 pub use self::my_isa::*; // 模块名 = 文件 stem（小写、`-` → `_`）
 ```
 
+**任意其它宿主 crate / 测试**（生成物只依赖宿主的**公开面**）：
+
+```rust
+// crates/backend/forge-codegen/tests/common/mod.rs（测试夹具示例）
+forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
+```
+
+`krate = <路径>` 把生成代码里的路径根改写：`crate::…` → `<路径>::…`、
+`forge_ir::…` → `<路径>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir;`）。
+缺省（不写 `krate`）保持"生成在哪个 crate 就属于哪个 crate"的历史行为，生成物
+逐字节不变。生成代码所需的运行面（公开 API 清单）见「生成代码依赖的运行面」一节。
+
 `isa_from_file!` 生成 `pub mod <file_stem>` 自包含模块：`Reg` 物理寄存器枚举、
 `Inst` 指令枚举、`encode` / `decode` / `disassemble` / `assemble` 自由函数，以及
 TargetMachine 集成层（`TargetMachine` / `Encoder` / `Decoder` / `Disassembler` /
 `Assembler` / `ABI` / `FrameLowering` / `Lowering` / `RegInfo` / `IsaInfo` /
-`ensure_registered`）。生成代码仅依赖 std + forge-codegen 的 `crate::prelude`，
-无 lalrpop / forge-asm 运行时。
+`ensure_registered`）。生成代码仅依赖 std + 宿主 crate 的公开面（内部生成时为
+`crate::prelude` 与 `crate::machine::*`），无 lalrpop / forge-asm 运行时。
 
 **S1 起**：生成模块内嵌 `include_bytes!(<TOML 绝对路径>)`，rustc 把 TOML 当编译
 依赖——改 `isa/*.toml` 直接触发重编译，**不再需要手动 `touch arch/<isa>.rs`**。
@@ -179,7 +191,7 @@ base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
 
 ### 最小示例
 
-`isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/`slot_bytes`/
+`crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/`slot_bytes`/
 `value_gpr_width`/`fp_overhead_bytes` 全 = 1，`default_opsize = 8`）是这条路径的
 回归夹具：`tests/demo8_v12_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
 sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 可承载；
@@ -745,6 +757,27 @@ memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄�
   Unsupported）。**已删除** v14 的 `TargetMachine::pattern_matcher()` 挂点与
   `ext/pattern_isel.rs`（476 行死模块）。
 
+### 生成代码依赖的运行面（generated-code runtime surface）
+
+生成物（`isa_from_file!`）只允许引用宿主 crate 的**公开**项。发行后端生成在
+`forge-codegen` 内部（`crate::…`，内部可见性即可）；用 `krate = <宿主>` 生成到
+其它 crate / 测试时，宿主必须公开这些路径：
+
+- 顶层：`AllocResult`、`CodeSink`、`CompiledFunction`、`EncodeError`、`IrError`、
+  `RelocKind`、`Registry`、`prelude`、`ir`（= `forge_ir` 的 re-export）、
+  `impl_erased_target_machine!`（`#[macro_export]`，宏体用 `$crate` 引用运行时项）。
+- `machine` 下：`abi::{FrameLayout, FrameLayoutKind, TargetABI}`、
+  `assembler::{AsmError, TargetAssembler}`、`decoder::{DecodeError, TargetDecoder}`、
+  `disasm::TargetDisassembler`、`encoder::TargetEncoder`、
+  `frame::TargetFrameLowering`、`inst::{MachineInst, OperandConstraint}`、
+  `isa_info::{IsaCapabilities, IsaInfo}`、`lowering::TargetLowering`、
+  `reg_info::{TargetRegInfo, class_for_type_in_pool}`、
+  `reloc_patcher::{register_default_reloc_patcher, RelocPatcher}`、
+  `target::TargetMachine`。
+
+forge-codegen 已全部 `pub`；`tests/library_surface.rs` 与"在测试 crate 里生成
+demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
+
 ### 汇编器能力（`TargetAssembler::parse_insts`）
 
 - **`.equ name, expr`**：符号常量（顺序求值，前向引用失败；指令立即数表达式可引用）。
@@ -765,13 +798,22 @@ memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄�
 - **大端变长 imm**：`imm_read_ts` 按 `[meta].endian` 装配（little → `from_le_bytes`、
   big → `from_be_bytes`）。
 
-## 已有 ISA 文件
+## 已有 ISA 谱
+
+**发行后端**（库本体，`crates/backend/forge-codegen/src/arch/`）：
 
 - **`isa/x86_v12.toml`**：140 条 `[[instructions]]` + 51 条 families 变体 + 2 条
   `[[pattern]]`，19 个 form 预设，208 条 lowering。变长语义键，接 TargetMachine；
   jit 矩阵 195 passed / 3 skipped / 0 failed。
 - **`isa/riscv64_v12.toml`**：117 条指令，定宽试点（QEMU 真执行验证）；jit 矩阵
   131 passed / 67 skipped / 0 failed。`[abi.frame] layout = "fp-inside"` 全推导。
-- **`isa/demo_v12.toml`**：同助记符多宽度自动分发演示基线。
-- **`isa/demo8_v12.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，
-  宽度元数据全 = 1）；验证见 `crates/backend/forge-codegen/tests/demo8_v12_tests.rs`。
+- **`isa/arm64_v12.toml`**：A64 定宽后端（golden 依据见
+  `docs/reference/aarch64-encoding-ref.md`）。
+
+**测试夹具**（**不在库里**，`crates/backend/forge-codegen/tests/isa/`；由
+`tests/common/mod.rs` 用 `isa_from_file!(…, krate = forge_codegen)` 宿住）：
+
+- **`demo_v12.toml`**：同助记符多宽度自动分发演示基线。
+- **`demo8_v12.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，宽度
+  元数据全 = 1）；用例见 `tests/demo8_v12_tests.rs`。
+- 库表面守卫 `tests/library_surface.rs` 保证夹具谱不会回到 `src/` 或仓库根 `isa/`。

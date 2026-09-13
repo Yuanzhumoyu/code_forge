@@ -4,7 +4,9 @@
 //! 操作数实际类型自动分发到不同 opcode；混宽拒绝；空白免疫；decode→encode
 //! 字节往返；disassemble→assemble 往返。
 
-use forge_codegen::demo_v12::{Inst, assemble, decode, disassemble, encode};
+mod common;
+
+use common::demo_v12::{Inst, assemble, decode, disassemble, encode};
 
 fn enc(asm: &str) -> Vec<u8> {
     let inst = assemble(asm).unwrap_or_else(|e| panic!("assemble `{asm}`: {e}"));
@@ -138,7 +140,7 @@ fn unknown_mnemonic_and_bad_syntax() {
 #[test]
 fn parse_insts_two_pass_labels() {
     use forge_codegen::machine::assembler::TargetAssembler;
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     // 前向标签 + 后向引用 + 空行/注释/尾随注释
     let insts = asm
         .parse_insts("brz r1, loop\nloop: nop\n# comment\n\nbrz r2, loop # trailing\n")
@@ -157,16 +159,16 @@ fn parse_insts_two_pass_labels() {
 #[test]
 fn parse_insts_undefined_label() {
     use forge_codegen::machine::assembler::{AsmError, TargetAssembler};
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     let err = asm.parse_insts("brz r1, nowhere").unwrap_err();
     assert!(matches!(err, AsmError::UndefinedLabel(_)));
 }
 
 #[test]
 fn parse_insts_labels_resolve_consistently() {
-    use forge_codegen::demo_v12::{decode, encode};
+    use common::demo_v12::{decode, encode};
     use forge_codegen::machine::assembler::TargetAssembler;
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     // 标签展开后编码：两处 brz 引用 loop（块 1 = nop 所在块）
     let insts = asm
         .parse_insts("brz r1, loop\nloop: nop\nbrz r2, loop")
@@ -185,9 +187,9 @@ fn parse_insts_labels_resolve_consistently() {
 
 #[test]
 fn parse_insts_directives() {
-    use forge_codegen::demo_v12::{Inst, encode};
+    use common::demo_v12::{Inst, encode};
     use forge_codegen::machine::assembler::TargetAssembler;
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     // .byte 原样字节；.align 4 在 offset=8 时无填充；标签仍按块索引
     let insts = asm
         .parse_insts(".byte 0xde, 0xad, 0xbe, 0xef\nmov r1, r2\n.align 4\nloop: nop\nbrz r1, loop")
@@ -205,9 +207,9 @@ fn parse_insts_directives() {
 
 #[test]
 fn parse_insts_align_pads() {
-    use forge_codegen::demo_v12::{Inst, encode};
+    use common::demo_v12::{Inst, encode};
     use forge_codegen::machine::assembler::TargetAssembler;
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     // .byte 1 字节 → .align 4 → 填 3 字节 0x00 → nop
     let insts = asm.parse_insts(".byte 0x01\n.align 4\nnop").unwrap();
     assert_eq!(insts.len(), 3);
@@ -215,16 +217,13 @@ fn parse_insts_align_pads() {
     let total: usize = insts.iter().map(|i| encode(i).unwrap().len()).sum();
     assert_eq!(total, 8);
     // disassemble Raw 渲染
-    assert_eq!(
-        forge_codegen::demo_v12::disassemble(&insts[0]),
-        ".byte 0x01"
-    );
+    assert_eq!(common::demo_v12::disassemble(&insts[0]), ".byte 0x01");
 }
 
 #[test]
 fn parse_insts_directive_errors() {
     use forge_codegen::machine::assembler::{AsmError, TargetAssembler};
-    let asm = forge_codegen::demo_v12::Assembler;
+    let asm = common::demo_v12::Assembler;
     assert!(matches!(
         asm.parse_insts(".frob 1").unwrap_err(),
         AsmError::Other(_)
