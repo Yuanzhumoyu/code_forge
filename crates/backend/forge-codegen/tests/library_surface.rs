@@ -119,7 +119,13 @@ fn repo_isa_dir_has_no_demo_specs() {
     );
 
     // 测试夹具谱必须存在（否则测试共享模块编译不过，但守卫先点名缺哪个）
-    for f in ["demo_v12.toml", "demo8_v12.toml"] {
+    for f in [
+        "demo_v12.toml",
+        "demo8_v12.toml",
+        "demo_inst8_v12.toml",
+        "demo_inst12_v12.toml",
+        "demo_inst100_v12.toml",
+    ] {
         let p = manifest_dir().join("tests/isa").join(f);
         assert!(p.is_file(), "测试夹具谱缺失：{p:?}");
     }

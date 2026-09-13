@@ -192,6 +192,35 @@ impl V12Model {
         }
     }
 
+    /// **定宽**指令字长（字节）：`ceil([meta].default_inst_width / 8)`。
+    ///
+    /// **无宽度白名单、无上限**：任何 ≥ 1 位的字宽都成立（含非 8 倍数位宽，如
+    /// 12 位 = 2 字节；尾部填充位必须为 0——生成代码的"补集零 guard"保证）。
+    /// 字宽是 ISA 数据：encode/decode 的读写宽度与定宽 label/global fixup 的
+    /// `RelocKind` 宽度都由它派生（历史实现把字面量 4 写死在
+    /// `codegen/mod.rs`/`machine.rs`）。
+    ///
+    /// 生成代码把指令字表示为**字节数组**（`[u8; ceil(位/8)]`，LE 位序），所以
+    /// 字长不受任何机器字限制。唯一的天然边界是**单个位域 ≤ 64 位**：位域值承载
+    /// 在 `Inst` 的 `i64` 操作数与 u64 常量键上，> 64 位的单域需要更宽的值表示
+    /// （与字长无关——一个字可以有很多 ≤64 位的域）。
+    pub(crate) fn inst_bytes(&self) -> Result<u32, String> {
+        if self.meta.variable_length {
+            return Err(
+                "[meta]: variable_length = true 的 ISA 没有固定指令字长（inst_bytes 不可用）"
+                    .into(),
+            );
+        }
+        let bits = self.meta.default_inst_width.ok_or_else(|| {
+            "[meta].default_inst_width 缺失：定宽 ISA 必须声明指令字宽（位；8/16/32/64/任意）"
+                .to_string()
+        })?;
+        if bits == 0 {
+            return Err("[meta].default_inst_width must be > 0".into());
+        }
+        Ok(bits.div_ceil(8))
+    }
+
     /// 向量类字节档位（升序）：`[meta].vector_tiers` > `[16, 32, 64]`
     /// （x86 XMM/YMM/ZMM 语义；缺省值即历史 `reg_class_for` 的三档硬编码）。
     pub(crate) fn vector_tiers(&self) -> Vec<u16> {

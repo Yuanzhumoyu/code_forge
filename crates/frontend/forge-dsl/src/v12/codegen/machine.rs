@@ -457,6 +457,11 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
     // 起始，reloc = Relative(4,0)（相对指令地址本身；位段重排由
     // RiscvRelocPatcher 编码）。
     let fixed = !model.meta.variable_length;
+    // 定宽 ISA 的 fixup 宽度 = 指令字长（ISA 数据；历史实现写死 4 字节）。
+    // 位段重排（riscv JAL/B 型、arm64 imm26…）由该 ISA 的 `RelocPatcher` 做。
+    let fixed_bytes: u32 = if fixed { model.inst_bytes()? } else { 4 };
+    // 无后缀字面量（`4` 而非 `4u32`）：32 位 ISA 的生成代码与去写死前逐字节一致。
+    let fixed_bytes_lit = proc_macro2::Literal::u32_unsuffixed(fixed_bytes);
     // 含 Label 槽的指令：encode 后对 fixup 位置 use_label_at（块号 → 实际偏移）。
     let mut label_arms: Vec<TokenStream> = Vec::new();
     for info in infos {
@@ -471,7 +476,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
             let imm_bytes = (info.form.imm.unwrap_or(0) / 8) as usize;
             if fixed {
                 // 定宽：label 槽散布在位段中，fixup = 指令起始（patcher 按
-                // ISA 重编码位段；Relative(4,0) = 相对指令地址本身）。
+                // ISA 重编码位段；Relative(字长,0) = 相对指令地址本身）。
                 label_arms.push(quote! {
                     Inst::#vn { .. } => {
                         let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
@@ -486,12 +491,12 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                             // 记录 "@N" 符号重定位（JIT 符号表按 FuncRef 序注册）。
                             sink.add_reloc(
                                 __base,
-                                crate::RelocKind::Relative(4, 0),
+                                crate::RelocKind::Relative(#fixed_bytes_lit, 0),
                                 &format!("@{}", -rel - 1),
                                 0,
                             );
                         } else {
-                            sink.use_label_at(__base, forge_ir::Block(rel as u32), crate::RelocKind::Relative(4, 0));
+                            sink.use_label_at(__base, forge_ir::Block(rel as u32), crate::RelocKind::Relative(#fixed_bytes_lit, 0));
                         }
                         Ok(())
                     }
@@ -532,8 +537,9 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
     // >= 0 时是普通立即数。三种语义：
     // - "abs8"（x86 MOVABS_GLOBAL）：符号在指令末尾 8 字节（imm64），
     //   reloc = ABS8；
-    // - "pcrel_hi"/"pcrel_lo"（riscv AUIPC_GLOBAL/ADDI_GLOBAL）：定宽 4 字节，
-    //   fixup = 指令起始，reloc = Relative(4,0)；patcher 按 opcode 0x17/0x13
+    // - "pcrel_hi"/"pcrel_lo"（riscv AUIPC_GLOBAL/ADDI_GLOBAL）：定宽字长
+    //   （`[meta].default_inst_width`，riscv = 4 字节），
+    //   fixup = 指令起始，reloc = Relative(字长,0)；patcher 按 opcode 0x17/0x13
     //   分写 hi20/lo12 位段。
     let mut global_arms: Vec<TokenStream> = Vec::new();
     for info in infos {
@@ -573,7 +579,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                 if imm < 0 {
                     sink.add_reloc(
                         __base,
-                        crate::RelocKind::Relative(4, 0),
+                        crate::RelocKind::Relative(#fixed_bytes_lit, 0),
                         &format!("G{}", -imm - 1),
                         0,
                     );

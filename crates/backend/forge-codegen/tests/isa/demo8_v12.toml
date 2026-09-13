@@ -17,8 +17,10 @@
 # - decode 缺省 opsize → 8 位（`[meta].default_opsize = 8`，生成代码里的
 #   `__opsize` 单位是**字节** = 1）
 #
-# 指令字宽仍是 32 位（`default_inst_width = 32`）——"1 字节指令"是另一条
-# 独立轴（定宽 decode 目前按 4 字节读字），不在本夹具范围内。
+# 指令字宽是**另一条轴**：本夹具刻意保持 32 位字（与 demo_v12 一致），把
+# 「1 字节寄存器」单独隔离验证。「8 / 12 / 100 位指令字」的回归夹具分别是
+# demo_inst8_v12 / demo_inst12_v12 / demo_inst100_v12
+# （`[meta].default_inst_width` 无白名单/上限，见 docs/reference/isa-dsl.md）。
 #
 # 验证：crates/backend/forge-codegen/tests/demo8_v12_tests.rs
 

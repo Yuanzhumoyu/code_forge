@@ -1,0 +1,127 @@
+# ============================================================
+# demo_inst8_v12 — 1 字节**指令字** ISA（指令字宽 = ISA 数据 的回归夹具）
+# ============================================================
+#
+# 目的：证明「定宽 = 32 位」这一写死已消除——`[meta].default_inst_width`
+# 现在是真正的 ISA 数据（支持 8/16/32/64 位字），encode/decode 的读字宽度、
+# 以及定宽 label/global fixup 的 `RelocKind::Relative(字长, 0)` 全部由它派生
+# （历史实现把字面量 4 写在 `codegen/mod.rs` 与 `codegen/machine.rs`）。
+#
+# 本 ISA：8 位字 = 2 位 opcode + 三个 2 位寄存器域（4 个 1 字节寄存器 A0..A3）。
+# 分支指令的 label 域 4 位落在**字内**（bits 0..4）——字内位段重排由该 ISA 的
+# `RelocPatcher` 负责（本夹具的 patcher 在测试里注册，见
+# `tests/demo_inst8_v12_tests.rs`）；没有 patcher 的 ISA 走通用写入路径。
+#
+# `demo8_v12.toml`（1 字节**寄存器**）与 `demo_v12.toml` 是 32 位字的另一条轴，
+# 三者互不替代。
+#
+# 验证：crates/backend/forge-codegen/tests/demo_inst8_v12_tests.rs
+
+[meta]
+name = "demo_inst8_v12"
+version = "15.0"
+endian = "little"
+mode = 8
+# 1 字节指令字（8/16/32/64 皆可；越界位域由 validate 拒绝）
+default_inst_width = 8
+# 位（= 生成代码里 __opsize 的 1 字节）
+default_opsize = 8
+addr_width = 1
+value_gpr_width = 1
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# ─────────────────────────── 寄存器组（4 个 1 字节寄存器）───────────────────────────
+
+[reg.gpr1]
+base_index = 0
+names = ["A0", "A1", "A2", "A3"]
+
+# ─────────────────────── 命名位域（全部落在 8 位字内）───────────────────────
+
+[conventions.bitfields]
+op   = { offset = 6, width = 2 }   # 操作码（4 条指令）
+rd   = { offset = 4, width = 2 }   # 目的寄存器
+rs1  = { offset = 2, width = 2 }   # 源寄存器 1
+rs2  = { offset = 0, width = 2 }   # 源寄存器 2
+lab  = { offset = 0, width = 2 }   # 分支目标（字内 2 位：正相对偏移 0..=3；见测试）
+word = { offset = 0, width = 8 }   # 全字（nop 的常量匹配）
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "r2"
+kind = "reg"
+class = "gpr1"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "lab"
+kind = "label"
+signed = true
+width = 2
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "R3"
+opcode_field = "op"
+operand_fields = ["rd", "rs1", "rs2"]
+
+[[forms]]
+name = "R2"
+opcode_field = "op"
+operand_fields = ["rd", "rs1"]
+
+[[forms]]
+name = "B"
+opcode_field = "op"
+operand_fields = ["rs1", "lab"]
+
+[[forms]]
+name = "W"
+opcode_field = "word"
+operand_fields = []
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+# 全字常量 0 → 与 op=1/2/3 的指令互不冲突（补集零 guard）
+[[instructions]]
+name = "NOP"
+form = "W"
+opcode = 0
+asm = "nop"
+
+[[instructions]]
+name = "ADD8"
+form = "R3"
+opcode = 1
+ops = ["dst:r2:out", "src:r2", "src2:r2"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "MOV8"
+roles = ["gpr_mov"]
+form = "R2"
+opcode = 2
+ops = ["dst:r2:out", "src:r2"]
+asm = "mov {dst}, {src}"
+
+[[instructions]]
+name = "BRZ8"
+form = "B"
+opcode = 3
+effect = ["Branch"]
+ops = ["src:r2", "target:lab"]
+asm = "brz {src}, {target}"
+
+# ── 显式别名（多态引用名 → 指令名列表）──
+[[aliases]]
+name = "add"
+insts = ["ADD8"]
+
+[[aliases]]
+name = "mov"
+insts = ["MOV8"]

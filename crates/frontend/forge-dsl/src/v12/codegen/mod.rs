@@ -164,11 +164,10 @@ fn semantic_operand_name(op: &OperandUse, slot: &OperandSlot, _i: usize) -> Stri
 
 pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     let variable = model.meta.variable_length;
-    if !variable && model.meta.default_inst_width != Some(32) {
-        return Err(format!(
-            "v12 codegen (iteration 2/3) supports default_inst_width = 32 or variable_length, got {:?}",
-            model.meta.default_inst_width
-        ));
+    // 定宽 ISA 的指令字长是 ISA 数据（`[meta].default_inst_width` ∈ {8,16,32,64}）；
+    // 变长 ISA 无固定字长。字长非法/缺失在此报错（不再只认 32）。
+    if !variable {
+        model.inst_bytes()?;
     }
     let infos = collect_inst_infos(model)?;
     let reg_tables = gen_reg_tables(model)?;
@@ -182,6 +181,12 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     } else {
         (gen_encode(&infos, model)?, gen_decode(&infos, model)?)
     };
+    // 定宽字位域助手（`__place`/`__bits`，字节数组字，字长任意）——仅定宽路径用。
+    let bit_helpers = if variable {
+        quote! {}
+    } else {
+        gen_bit_helpers()
+    };
     let disasm_fn = asm::gen_disassemble(&infos)?;
     let asm_fn = asm::gen_assemble(&infos, model)?;
     // 迭代 5：TargetMachine 集成层（MachineInst/Encoder/Decoder/ABI/
@@ -192,6 +197,7 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
         #reg_tables
         #mem_support
         #inst_enum
+        #bit_helpers
         #encode_fn
         #decode_fn
         #disasm_fn
@@ -664,6 +670,16 @@ fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
 
 fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
     let little = m.meta.endian == Endian::Little;
+    // 指令字长（字节，= ceil(位宽/8)）——定宽 ISA 的 ISA 数据，**无宽度白名单/上限**。
+    // 字表示为**字节数组**（`[u8; n]`，LE 位序：bit 0 = 第 0 字节 LSB），位域写入
+    // 走生成的 `__place` 助手；因此字长不受 u64/u128 限制（任意位宽，含非 8 倍数）。
+    // 大端 ISA：内存序 = 字节数组反转（bit 0 落在最后一个字节的 LSB）。
+    let inst_len_lit = proc_macro2::Literal::u32_unsuffixed(m.inst_bytes()?);
+    let out = if little {
+        quote! { Ok(__word.to_vec()) }
+    } else {
+        quote! { Ok({ let mut __out = __word.to_vec(); __out.reverse(); __out }) }
+    };
     let mut arms = Vec::new();
     for info in infos {
         let vn = &info.vn;
@@ -730,7 +746,7 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
                 bf,
             ));
         }
-        // 未覆盖位域天然为 0（__w 初始 0）——无需显式置零
+        // 未覆盖位域天然为 0（__word 初始 0）——无需显式置零
         let pat = if info.operands.is_empty() {
             quote! { Inst::#vn }
         } else {
@@ -741,21 +757,18 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
                 .collect();
             quote! { Inst::#vn { #(#ids),* } }
         };
-        let out = if little {
-            quote! { Ok((__w as u32).to_le_bytes().to_vec()) }
-        } else {
-            quote! { Ok((__w as u32).to_be_bytes().to_vec()) }
-        };
+        let out = out.clone();
         arms.push(quote! {
             #pat => {
-                let mut __w: u64 = 0;
+                let mut __word = [0u8; #inst_len_lit as usize];
                 #(#stmts)*
                 #out
             }
         });
     }
     Ok(quote! {
-        /// 编码单条指令为字节（定宽：小端 4 字节；32 位定宽）。
+        /// 编码单条指令为字节（定宽：`ceil([meta].default_inst_width / 8)` 字节，
+        /// 字长任意；`[meta].endian` 决定内存字节序）。
         pub fn encode(inst: &Inst) -> Result<Vec<u8>, String> {
             match inst {
                 #(#arms,)*
@@ -763,6 +776,46 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             }
         }
     })
+}
+
+/// 定宽字位域助手（每个定宽模块生成一次）：
+/// `__word: [u8; n]` 是 LE 位序的字（bit 0 = 第 0 字节 LSB），字长任意。
+/// `__place` 写 [off, off+width)、`__bits` 读 [off, off+width)（width ≤ 64）。
+/// 用 u128 中间量覆盖"跨字节 + 非字节对齐"的位段（shift ≤ 7，width ≤ 64 → ≤ 71 位）。
+fn gen_bit_helpers() -> TokenStream {
+    quote! {
+        /// 位域写入：`value` 的低 `width` 位写到字的 [off, off+width)。
+        /// `width ≤ 64`（位域值是 u64/i64）；字长任意（不越界——位域由 validate
+        /// 约束在字内）。
+        #[inline]
+        fn __place(word: &mut [u8], value: u64, off: usize, width: u32) {
+            let mask: u64 = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+            let shifted = ((value & mask) as u128) << (off % 8);
+            let start = off / 8;
+            let nbytes = ((off % 8) + width as usize).div_ceil(8);
+            let mut i = 0usize;
+            while i < nbytes {
+                word[start + i] |= (shifted >> (8 * i)) as u8;
+                i += 1;
+            }
+        }
+
+        /// 位域读取：字的 [off, off+width) 值（`width ≤ 64`；字长任意）。
+        #[inline]
+        fn __bits(word: &[u8], off: usize, width: u32) -> u64 {
+            let start = off / 8;
+            let shift = (off % 8) as u32;
+            let nbytes = ((off % 8) + width as usize).div_ceil(8);
+            let mut acc: u128 = 0;
+            let mut i = 0usize;
+            while i < nbytes {
+                acc |= (word[start + i] as u128) << (8 * i);
+                i += 1;
+            }
+            let mask: u64 = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+            ((acc >> shift) as u64) & mask
+        }
+    }
 }
 
 // ─────────────────────────────── decode ───────────────────────────────
@@ -853,14 +906,8 @@ fn emit_bit_trie(nodes: &[BitTrieNode], idx: usize) -> TokenStream {
         let mut chain = quote! {};
         for (bit, w, value, child) in node.edges.iter().rev() {
             let sub = emit_bit_trie(nodes, *child);
-            let mask = if *w >= 64 {
-                quote! { u64::MAX }
-            } else {
-                let m = (1u64 << *w) - 1;
-                quote! { #m }
-            };
             chain = quote! {
-                if ((__w >> #bit) & #mask) == #value {
+                if __bits(&__word, #bit as usize, #w) == #value {
                     #sub
                 } else {
                     #chain
@@ -874,6 +921,11 @@ fn emit_bit_trie(nodes: &[BitTrieNode], idx: usize) -> TokenStream {
 
 fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
     let little = m.meta.endian == Endian::Little;
+    // 指令字长（字节）：ISA 数据（`[meta].default_inst_width`），**无白名单/上限**。
+    // 字表示为字节数组（LE 位序），各 arm 的常量位段比较与字段提取都走生成的
+    // `__bits` 助手——字长不受 u64/u128 限制。
+    let inst_bytes = m.inst_bytes()?;
+    let inst_len_lit = proc_macro2::Literal::u32_unsuffixed(inst_bytes);
     let mut groups: Vec<BitTrieGroup> = Vec::new();
     for info in infos {
         let vn = &info.vn;
@@ -907,14 +959,9 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             let bf = get_bf(m, fname)?;
             covered_ranges.extend(bf_ranges(bf));
         }
-        // 补集零 guard：`(w & !covered_mask) == 0`
-        let mut covered_mask: u64 = 0;
-        for (s, e) in &covered_ranges {
-            let w = e - s;
-            let mask = if w == 64 { u64::MAX } else { (1u64 << w) - 1 };
-            covered_mask |= mask << s;
-        }
-        let guard = quote! { ((__w & !(#covered_mask)) == 0) };
+        // 补集零 guard：**按字节**生成（字长任意，不能用 u64 掩码）——
+        // 未覆盖的位（含非 8 倍数位宽在末字节的填充位）必须为 0。
+        let guard = complement_zero_guard(&covered_ranges, inst_bytes);
         // 字段提取
         let mut binds: Vec<TokenStream> = Vec::new();
         let mut ctor_fields: Vec<TokenStream> = Vec::new();
@@ -941,12 +988,13 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
         } else {
             quote! { Inst::#vn { #(#ctor_fields),* } }
         };
+        let ctor_len = inst_len_lit.clone();
         groups.push((
             key,
             quote! {
                 if #guard {
                     #(#binds)*
-                    return Some((#ctor, 4));
+                    return Some((#ctor, #ctor_len as usize));
                 }
             },
         ));
@@ -955,18 +1003,23 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
     check_bit_trie_overlaps(&nodes)?;
     let dispatch = emit_bit_trie(&nodes, 0);
     let read = if little {
-        quote! { u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64 }
+        quote! { bytes[..#inst_len_lit as usize].to_vec() }
     } else {
-        quote! { u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64 }
+        quote! {{
+            let mut __be = bytes[..#inst_len_lit as usize].to_vec();
+            __be.reverse();
+            __be
+        }}
     };
     Ok(quote! {
-        /// 解码 4 字节为指令；常量位段位级决策树（叶节点优先，叶内声明序），
-        /// 无匹配 → None。返回 (指令, 消费字节数)。
+        /// 解码定宽指令字（`ceil([meta].default_inst_width / 8)` 字节，字长任意）；
+        /// 常量位段位级决策树（叶节点优先，叶内声明序），无匹配 → None。
+        /// 返回 (指令, 消费字节数) = 字长的字节数。
         pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
-            if bytes.len() < 4 {
+            if bytes.len() < #inst_len_lit as usize {
                 return None;
             }
-            let __w = #read;
+            let __word: Vec<u8> = #read;
             #dispatch
             None
         }
@@ -976,10 +1029,39 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
         pub fn decode_partial(bytes: &[u8]) -> Result<(Inst, usize), usize> {
             match decode(bytes) {
                 Some(r) => Ok(r),
-                None => Err(if bytes.len() < 4 { bytes.len() } else { 0 }),
+                None => Err(if bytes.len() < #inst_len_lit as usize {
+                    bytes.len()
+                } else {
+                    0
+                }),
             }
         }
     })
+}
+
+/// 补集零 guard：未覆盖位必须为 0——按字节生成 `(__word[i] & mask) == 0` 合取
+/// （字长任意，不能用 u64 掩码；非 8 倍数位宽的末字节填充位天然未覆盖 → 必须为 0）。
+fn complement_zero_guard(covered: &[(u32, u32)], inst_bytes: u32) -> TokenStream {
+    let mut uncovered = vec![0xFFu8; inst_bytes as usize];
+    for (s, e) in covered {
+        for bit in *s..*e {
+            let byte = (bit / 8) as usize;
+            if byte < uncovered.len() {
+                uncovered[byte] &= !(1u8 << (bit % 8));
+            }
+        }
+    }
+    let terms: Vec<TokenStream> = uncovered
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| **m != 0)
+        .map(|(i, m)| quote! { (__word[#i] & #m) == 0 })
+        .collect();
+    if terms.is_empty() {
+        quote! { true }
+    } else {
+        quote! { #(#terms)&&* }
+    }
 }
 
 // ─────────────────────────────── 位域助手 ───────────────────────────────
@@ -1006,52 +1088,44 @@ fn single(bf: &Bitfield) -> (u32, u32) {
     (bf.offset.unwrap(), bf.width.unwrap())
 }
 
-fn mask_ts(w: u32) -> TokenStream {
-    if w == 64 {
-        quote! { u64::MAX }
-    } else {
-        let m = (1u64 << w) - 1;
-        quote! { #m }
-    }
-}
-
-/// encode：`__w |= (value & mask) << offset`（单）或逐 piece `((value >> shift) & mask) << offset`。
+/// encode：`__place(&mut __word, value, offset, width)`（单）或逐 piece
+/// `__place(&mut __word, value >> shift, offset, width)`。
+/// 字是字节数组（字长任意），位段跨字节/非字节对齐由 `__place` 处理。
 fn place_ts(value: TokenStream, bf: &Bitfield) -> Vec<TokenStream> {
     match &bf.pieces {
         None => {
             let (off, w) = single(bf);
-            let mask = mask_ts(w);
-            vec![quote! { __w |= (#value & #mask) << #off; }]
+            vec![quote! { __place(&mut __word, #value, #off as usize, #w); }]
         }
         Some(ps) => ps
             .iter()
             .map(|p| {
-                let mask = mask_ts(p.width);
                 let sh = p.shift;
                 let off = p.offset;
-                quote! { __w |= ((#value >> #sh) & #mask) << #off; }
+                let w = p.width;
+                quote! { __place(&mut __word, (#value >> #sh), #off as usize, #w); }
             })
             .collect(),
     }
 }
 
 /// decode：字段原始提取（u64）→ 整体加括号（防 `|` 与后续 `<<`/`as` 优先级问题）。
-/// 单 → `(w >> off) & mask`；散布 → pieces OR 累加。
+/// 单 → `__bits(&__word, off, w)`；散布 → pieces OR 累加。
+/// 字是字节数组（字长任意），故统一走 `__bits` 助手而非 `__w >> off`。
 fn extract_ts(bf: &Bitfield) -> TokenStream {
     match &bf.pieces {
         None => {
             let (off, w) = single(bf);
-            let mask = mask_ts(w);
-            quote! { ((__w >> #off) & #mask) }
+            quote! { (__bits(&__word, #off as usize, #w)) }
         }
         Some(ps) => {
             let parts: Vec<_> = ps
                 .iter()
                 .map(|p| {
-                    let mask = mask_ts(p.width);
                     let sh = p.shift;
                     let off = p.offset;
-                    quote! { (((__w >> #off) & #mask) << #sh) }
+                    let w = p.width;
+                    quote! { ((__bits(&__word, #off as usize, #w)) << #sh) }
                 })
                 .collect();
             quote! { (#(#parts)|*) }

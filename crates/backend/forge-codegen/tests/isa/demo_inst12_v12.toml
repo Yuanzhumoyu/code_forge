@@ -1,0 +1,96 @@
+# ============================================================
+# demo_inst12_v12 — 12 位**指令字** ISA（字宽无白名单：非 8 倍数位宽）
+# ============================================================
+#
+# 目的：证明指令字宽只是 ISA 数据，**没有** {8,16,32,64} 之类的白名单——
+# 本 ISA 用 12 位字（2 字节存储，高 4 位是填充位，必须为 0）：
+#
+# - encode：`__w` 按字长截成 2 字节（LE/BE 由 `[meta].endian` 决定）
+# - decode：读 2 字节 → u64；字外的填充位若被置 1 → 各 arm 的"补集零 guard"
+#   不成立 → 无匹配（None），**不静默接受**非法字
+# - 定宽 label/global fixup 宽度 = 字长的字节数（ceil(12/8) = 2）
+#
+# 位布局（12 位字）：`op(3) | rd(3) | rs1(3) | rs2(3)`，16 个 1 字节寄存器。
+#
+# 与 `demo_inst8_v12`（8 位字）/ `demo8_v12`（1 字节寄存器）/ `demo_v12`（32 位字）
+# 并列，互不替代。
+#
+# 验证：crates/backend/forge-codegen/tests/demo_inst12_v12_tests.rs
+
+[meta]
+name = "demo_inst12_v12"
+version = "15.0"
+endian = "little"
+mode = 8
+# 12 位字（非 8 倍数；1..=64 位任意取值，无白名单）
+default_inst_width = 12
+default_opsize = 8
+addr_width = 1
+value_gpr_width = 1
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# ─────────────────────────── 寄存器组（8 个 1 字节寄存器）───────────────────────────
+
+[reg.gpr1]
+base_index = 0
+names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+
+# ─────────────────────── 命名位域（全部落在 12 位字内）───────────────────────
+
+[conventions.bitfields]
+op   = { offset = 9, width = 3 }    # 操作码（bits 9..12）
+rd   = { offset = 6, width = 3 }    # 目的寄存器
+rs1  = { offset = 3, width = 3 }    # 源寄存器 1
+rs2  = { offset = 0, width = 3 }    # 源寄存器 2
+word = { offset = 0, width = 12 }   # 全字（nop 的常量匹配；12 位，不是 16）
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "r3"
+kind = "reg"
+class = "gpr1"
+roles = ["in", "out"]
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "R3"
+opcode_field = "op"
+operand_fields = ["rd", "rs1", "rs2"]
+
+[[forms]]
+name = "R2"
+opcode_field = "op"
+operand_fields = ["rd", "rs1"]
+
+[[forms]]
+name = "W"
+opcode_field = "word"
+operand_fields = []
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+# 全字常量 0（12 位全 0）→ 与 op=1/2 的指令互不冲突
+[[instructions]]
+name = "NOP12"
+form = "W"
+opcode = 0
+asm = "nop"
+
+[[instructions]]
+name = "ADD12"
+form = "R3"
+opcode = 1
+ops = ["dst:r3:out", "src:r3", "src2:r3"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "MOV12"
+form = "R2"
+opcode = 2
+ops = ["dst:r3:out", "src:r3"]
+asm = "mov {dst}, {src}"

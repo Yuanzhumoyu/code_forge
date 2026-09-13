@@ -228,7 +228,7 @@ forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
 > 无 `register_backend!` 宏。v11 后端（x86_64/aarch64/riscv64/wasm32/minimal_sd）
 > 已随 v11 语法层删除——现为 `arch/x86_v12.rs`、`arch/arm64_v12.rs`、
 > `arch/riscv64_v12.rs`（三者均已接 TargetMachine；riscv 定宽试点有 QEMU 真执行
-> 矩阵）。示例/夹具谱（`demo_v12`、`demo8_v12`）**不在库里**，见
+> 矩阵）。示例/夹具谱（`demo_v12`、`demo8_v12`、`demo_inst{8,12,100}_v12`）**不在库里**，见
 > `crates/backend/forge-codegen/tests/isa/README.md`。
 
 ### Frontend Pipeline (forge-grammar v21)
@@ -302,16 +302,20 @@ let name = node.get_text("name")?;
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
-- **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局一律由 TOML 派生
-  （`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/`value_gpr_width`/
-  `value_fpr_width`/`vector_tiers`；`[stack]`：`slot`/`align`/`fp_save`；
+- **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局/指令字宽一律由
+  TOML 派生（`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/
+  `value_gpr_width`/`value_fpr_width`/`vector_tiers`/`default_inst_width`（**任意
+  ≥ 1 位，无白名单/上限**）；`[stack]`：`slot`/`align`/`fp_save`；
   `[abi.stack_args]`：`callee_base`/`caller_base`/`first_offset_slots`/`stride_slots`/
-  `shadow_bytes`；优先级 显式键 > 派生 > **报错**）。生成期用
-  `__DEFAULT_GPR_CLASS`/`__ADDR_CLASS`/`__SLOT_BYTES` 等常量，宿主用
+  `shadow_bytes`；优先级 显式键 > 派生 > **报错**）。定宽指令字在生成代码里是
+  **字节数组**（`[u8; ceil(位/8)]` + `__place`/`__bits`），位域可落在机器字之外
+  （100 位字夹具 = 13 字节）；唯一边界是**单个位域 ≤ 64 位**（值承载在 u64/i64）。
+  生成期用 `__DEFAULT_GPR_CLASS`/`__ADDR_CLASS`/`__SLOT_BYTES` 等常量，宿主用
   `TargetRegInfo::{addr_class, value_gpr_class,
   value_fpr_class, slot_bytes, vector_tiers, class_for_type}`——**不要**再写
   `RegClass::GPR64`/8 字节缺省。1 字节寄存器 ISA 夹具 =
-  `crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（由
+  `crates/backend/forge-codegen/tests/isa/demo8_v12.toml`；指令字宽夹具 =
+  `tests/isa/demo_inst{8,12,100}_v12.toml`（由
   `tests/common/mod.rs` 用 `isa_from_file!(…, krate = forge_codegen)` 宿住，
   **不进库本体**；用例在 `tests/demo8_v12_tests.rs`）；反回潮守卫 =
   `crates/{frontend/forge-dsl,backend/forge-codegen}/tests/no_hardcoded_widths.rs`

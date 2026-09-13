@@ -408,15 +408,21 @@ count = 8
 
 #[test]
 fn validation_bitfield_overflow() {
-    let doc = slot_doc("[conventions.bitfields]\nbig = { offset = 63, width = 2 }");
+    // 值表示上限：单个位域 > 64 位（位域值承载在 u64/i64 上）→ 报错
+    let doc = slot_doc("[conventions.bitfields]\nbig = { offset = 0, width = 65 }");
     let err = parse_and_validate(&doc).unwrap_err();
     match err {
         V12Error::Validation { msg, .. } => {
-            assert!(msg.contains("exceeds 64 bits"), "msg: {msg}");
+            assert!(msg.contains("超过值表示上限 64 位"), "msg: {msg}");
             assert!(msg.contains("big"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
+    // 字侧偏移**无上限**（字长是 ISA 数据，字由字节数组承载）：offset 63 合法
+    parse_and_validate(&slot_doc(
+        "[conventions.bitfields]\nhi = { offset = 63, width = 2 }",
+    ))
+    .expect("字侧偏移不受 64 位限制（字长任意）");
 }
 
 #[test]
@@ -669,7 +675,8 @@ class = "gpr"
 
 #[test]
 fn codegen_big_endian_decode_reads_be() {
-    // big-endian 定宽：encode 写 to_be_bytes、decode 读 from_be_bytes
+    // big-endian 定宽：字是字节数组（LE 位序），内存序 = 反转字节
+    // （decode 读入后 reverse、encode 输出前 reverse）——不再是 to_be_bytes。
     let doc = r#"
 [meta]
 name = "x"
@@ -698,11 +705,15 @@ asm = "foo {dst}"
     let model = parse_and_validate(doc).unwrap();
     let ts = super::codegen::generate(&model).unwrap();
     let s = ts.to_string();
+    // TokenStream::to_string 会在符号间插空格（`__out . reverse ()`）——按 token 名断言。
     assert!(
-        s.contains("from_be_bytes"),
-        "big-endian decode 应读 BE：{s}"
+        s.contains("__be") && s.contains("reverse"),
+        "big-endian decode 应把内存字节序转成 LE 位序（`__be.reverse()`）"
     );
-    assert!(s.contains("to_be_bytes"), "big-endian encode 应写 BE：{s}");
+    assert!(
+        s.contains("__out") && s.contains("reverse"),
+        "big-endian encode 应反转字节序输出（`__out.reverse()`）"
+    );
 }
 
 #[test]
@@ -2662,5 +2673,196 @@ fn types_ptr_uses_isa_address_width() {
     assert!(
         msg.contains("静默截断"),
         "addr_width=2 > gpr1 → 报错：{msg}"
+    );
+}
+
+// ─────────── B6：指令字宽 = ISA 数据（任意 1..=64 位，无白名单） ───────────
+
+/// 定宽 ISA 的指令字宽取自 `[meta].default_inst_width`，字节数 = `ceil(位/8)`。
+/// 用"低位 opcode + 补集零 guard"形式——**任何字宽**都成立（含 > 64 位：
+/// 单个位域 ≤ 64 位是值表示上限，与字长无关）。
+fn word_doc(bits: u32) -> String {
+    let op_w = bits.min(8);
+    format!(
+        r#"
+[meta]
+name = "w{b}"
+default_inst_width = {bits}
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+op = {{ offset = 0, width = {op_w} }}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+[[forms]]
+name = "W"
+opcode_field = "op"
+operand_fields = []
+[[instructions]]
+name = "NOP"
+form = "W"
+opcode = 0
+asm = "nop"
+"#,
+        bits = bits,
+        b = bits
+    )
+}
+
+/// 字宽**不设白名单/上限**：1 位、12 位（非 8 倍数）、100 位（超机器字）、
+/// 4096 位都合法，字节数 = ceil(位/8)；只有 0 位（非宽度）才报错。
+#[test]
+fn inst_width_accepts_arbitrary_bit_widths() {
+    for (bits, bytes) in [
+        (1u32, 1u32),
+        (8, 1),
+        (12, 2),
+        (16, 2),
+        (24, 3),
+        (32, 4),
+        (64, 8),
+        (65, 9),
+        (100, 13),
+        (128, 16),
+        (1000, 125),
+        (4096, 512),
+    ] {
+        let m = parse_and_validate(&word_doc(bits))
+            .unwrap_or_else(|e| panic!("{bits} 位字应合法：{e}"));
+        assert_eq!(m.inst_bytes().unwrap(), bytes, "{bits} 位 → {bytes} 字节");
+    }
+    let msg = validation_msg(&word_doc(0));
+    assert!(msg.contains("must be > 0"), "0 位不是宽度：{msg}");
+}
+
+/// 单个位域 > 64 位报错（值表示上限：位域值是 u64/i64）——**不是**字长限制：
+/// 同一个 100 位字里可以有多个 ≤64 位的域（见 `word_doc` 与夹具 demo_inst100）。
+#[test]
+fn inst_width_field_over_64_bits_rejected() {
+    let doc = r#"
+[meta]
+name = "wide"
+default_inst_width = 100
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+wide = { offset = 0, width = 65 }
+op = { offset = 0, width = 8 }
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+[[forms]]
+name = "W"
+opcode_field = "op"
+operand_fields = []
+[[instructions]]
+name = "NOP"
+form = "W"
+opcode = 0
+asm = "nop"
+"#;
+    let msg = validation_msg(doc);
+    assert!(
+        msg.contains("超过值表示上限 64 位"),
+        "65 位单个域应被拒绝（值表示上限），实际：{}",
+        &msg[..msg.len().min(200)]
+    );
+}
+
+/// 定宽 label/global fixup 的 `RelocKind::Relative(字长字节数, 0)` 由字宽派生
+/// （历史实现写死 4）——12 位字 → `Relative(2, 0)`，64 位字 → `Relative(8, 0)`。
+#[test]
+fn inst_width_drives_reloc_width() {
+    for (bits, reloc) in [(12u32, "Relative (2 , 0)"), (32, "Relative (4 , 0)")] {
+        let doc = format!(
+            r#"
+[meta]
+name = "br{b}"
+default_inst_width = {bits}
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+op  = {{ offset = 0, width = 4 }}
+rs1 = {{ offset = 4, width = 3 }}
+lab = {{ offset = 8, width = 4 }}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+[[operand_slots]]
+name = "l"
+kind = "label"
+signed = true
+width = 4
+[[forms]]
+name = "B"
+opcode_field = "op"
+operand_fields = ["rs1", "lab"]
+[[instructions]]
+name = "BRZ"
+form = "B"
+opcode = 1
+effect = ["Branch"]
+ops = ["src:g", "target:l"]
+asm = "brz {{src}}, {{target}}"
+"#,
+            bits = bits,
+            b = bits
+        );
+        let m = parse_and_validate(&doc).unwrap_or_else(|e| panic!("{bits} 位字应合法：{e}"));
+        let ts = crate::v12::codegen::generate(&m)
+            .unwrap_or_else(|e| panic!("{bits} 位字应生成成功：{e}"))
+            .to_string();
+        assert!(
+            ts.contains(reloc),
+            "{bits} 位字的 fixup 宽度应为 {reloc}（由字长派生）"
+        );
+    }
+}
+
+/// 位域必须落在指令字内：12 位字里 `offset = 8, width = 4`（最高位 12）合法，
+/// 但 `offset = 9, width = 4`（最高位 13）报错——**不静默移位出字**。
+#[test]
+fn inst_width_rejects_bitfield_beyond_word() {
+    // 用 4 位 opcode 位域（可移位到字内任意位置）+ 全字常量指令
+    let doc = |op: &str| {
+        format!(
+            r#"
+[meta]
+name = "fit"
+default_inst_width = 12
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+{op}
+word = {{ offset = 0, width = 12 }}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+[[forms]]
+name = "W"
+opcode_field = "word"
+operand_fields = []
+[[instructions]]
+name = "NOP"
+form = "W"
+opcode = 0
+asm = "nop"
+"#
+        )
+    };
+    parse_and_validate(&doc("op = { offset = 8, width = 4 }")).expect("bits 8..12 落在 12 位字内");
+    let msg = validation_msg(&doc("op = { offset = 9, width = 4 }"));
+    assert!(
+        msg.contains("超出指令字宽"),
+        "13 位 > 12 位字宽 → 报错：{msg}"
     );
 }

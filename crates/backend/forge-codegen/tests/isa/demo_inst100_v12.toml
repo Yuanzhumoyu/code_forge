@@ -1,0 +1,96 @@
+# ============================================================
+# demo_inst100_v12 — **100 位指令字** ISA（字宽无上限：超机器字、非 8 倍数）
+# ============================================================
+#
+# 目的：证明指令字宽**没有任何上限**（既不是 32，也不是 64/128）——本 ISA 用
+# 100 位字（13 字节，高 4 位是填充位，必须为 0）：
+#
+# - 位域落在机器字之外（op 在 bit 92..100 → 第 11/12 字节），跨字节且有非对齐
+#   偏移——由生成代码的**字节数组字**（`[u8; 13]` + `__place`/`__bits`）承载，
+#   与 u64/u128 无关
+# - 字宽非 8 倍数：末字节填充位（bit 100..104）必须为 0，否则不匹配（fail-closed）
+# - 定宽 label/global fixup 宽度 = 字长的字节数（ceil(100/8) = 13）
+#
+# 位布局（100 位字）：
+#   op(8) @ 92..100 | rd(4) @ 76..80 | rs1(4) @ 64..68 | rs2(4) @ 4..8
+#
+# 与 `demo_inst8_v12`（8 位字）/ `demo_inst12_v12`（12 位字）/ `demo_v12`（32 位字）
+# 并列，互不替代。
+#
+# 验证：crates/backend/forge-codegen/tests/demo_inst100_v12_tests.rs
+
+[meta]
+name = "demo_inst100_v12"
+version = "15.0"
+endian = "little"
+mode = 8
+# 100 位字（13 字节；字长任意，无白名单/上限）
+default_inst_width = 100
+default_opsize = 8
+addr_width = 1
+value_gpr_width = 1
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# ─────────────────────────── 寄存器组（16 个 1 字节寄存器，4 位域）───────────────────────────
+
+[reg.gpr1]
+base_index = 0
+names = [
+    "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7",
+    "A8", "A9", "A10", "A11", "A12", "A13", "A14", "A15",
+]
+
+# ─────────────────────── 命名位域（落在 100 位字内，含 bit 92+）───────────────────────
+
+[conventions.bitfields]
+op  = { offset = 92, width = 8 }   # 操作码（bit 92..100：机器字之外）
+rd  = { offset = 76, width = 4 }   # 目的寄存器
+rs1 = { offset = 64, width = 4 }   # 源寄存器 1（恰好从第 8 字节开始）
+rs2 = { offset = 4,  width = 4 }   # 源寄存器 2
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "r4"
+kind = "reg"
+class = "gpr1"
+roles = ["in", "out"]
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "R3"
+opcode_field = "op"
+operand_fields = ["rd", "rs1", "rs2"]
+
+[[forms]]
+name = "R2"
+opcode_field = "op"
+operand_fields = ["rd", "rs1"]
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+# 全字 0（op = 0 且其余位由"补集零 guard"约束为 0）
+# 注意：asm 模板里没有操作数占位符 → 这里也不能声明 ops（否则汇编器无从取值）
+[[instructions]]
+name = "NOP100"
+form = "R2"
+opcode = 0
+asm = "nop"
+
+[[instructions]]
+name = "ADD100"
+form = "R3"
+opcode = 1
+ops = ["dst:r4:out", "src:r4", "src2:r4"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "MOV100"
+form = "R2"
+opcode = 2
+ops = ["dst:r4:out", "src:r4"]
+asm = "mov {dst}, {src}"

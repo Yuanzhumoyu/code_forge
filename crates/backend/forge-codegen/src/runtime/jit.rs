@@ -397,13 +397,8 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
                             } else {
                                 let patch_value =
                                     Self::compute_patch_value(kind, target_addr, site_addr);
-                                let n = match kind {
-                                    RelocKind::Relative(w, _) | RelocKind::Absolute(w) => {
-                                        w as usize
-                                    }
-                                };
-                                let bytes_v = patch_value.to_le_bytes();
-                                let end = (reloc_offset + n).min(bytes.len());
+                                let bytes_v = kind.encode_value(patch_value);
+                                let end = (reloc_offset + bytes_v.len()).min(bytes.len());
                                 bytes[reloc_offset..end]
                                     .copy_from_slice(&bytes_v[..end - reloc_offset]);
                             }

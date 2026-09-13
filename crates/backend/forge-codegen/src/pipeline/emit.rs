@@ -138,21 +138,25 @@ impl CodeSink {
             }
 
             // Legacy path (no patcher): plain relative/absolute write-back.
+            // 宽度 = `RelocKind` 声明的**字节数**，由 ISA/后端决定（**不设白名单**：
+            // 任意 ≥ 1 字节；超出 8 字节的部分按符号/零扩展补位）。
+            let width = kind.width_bytes() as usize;
+            if width == 0 {
+                return Err(format!(
+                    "reloc width 0 at offset {patch_offset} ({kind:?}): 宽度由 ISA 声明，必须 ≥ 1 字节"
+                ));
+            }
             let patch_value = match kind {
-                RelocKind::Absolute(bits) => {
+                RelocKind::Absolute(_) => {
                     self.relocs.push(Relocation {
                         offset: *patch_offset,
                         kind: *kind,
                         symbol: ImmStr::default(),
                         addend: *target as i64,
                     });
-                    match bits {
-                        4 => *target as u32 as u64,
-                        8 => *target as u64,
-                        _ => *target as u64,
-                    }
+                    *target as u64
                 }
-                RelocKind::Relative(bits, adjustment) => {
+                RelocKind::Relative(_, adjustment) => {
                     let rel_target = *target as i64 - *patch_offset as i64 + *adjustment as i64;
                     self.relocs.push(Relocation {
                         offset: *patch_offset,
@@ -160,30 +164,22 @@ impl CodeSink {
                         symbol: ImmStr::default(),
                         addend: rel_target,
                     });
-                    match bits {
-                        1 => (rel_target as u8) as u64,
-                        4 => (rel_target as i32) as u32 as u64,
-                        8 => rel_target as u64,
-                        _ => rel_target as u64,
-                    }
+                    rel_target as u64
                 }
             };
 
-            // Patch the bytes in-place
-            match kind {
-                RelocKind::Absolute(4) | RelocKind::Relative(4, _) => {
-                    self.data[*patch_offset..*patch_offset + 4]
-                        .copy_from_slice(&(patch_value as u32).to_le_bytes());
-                }
-                RelocKind::Absolute(8) | RelocKind::Relative(8, _) => {
-                    self.data[*patch_offset..*patch_offset + 8]
-                        .copy_from_slice(&patch_value.to_le_bytes());
-                }
-                RelocKind::Relative(1, _) => {
-                    self.data[*patch_offset] = patch_value as u8;
-                }
-                _ => {}
+            // Patch the bytes in-place（width 字节 LE；越界 → 调用方给的
+            // patch_offset 或缓冲区长度不对，明确报错不 panic）。
+            let end = *patch_offset + width;
+            if end > self.data.len() {
+                return Err(format!(
+                    "reloc at offset {patch_offset} (width {width}) exceeds code buffer \
+                     length {} ",
+                    self.data.len()
+                ));
             }
+            let le = kind.encode_value(patch_value);
+            self.data[*patch_offset..end].copy_from_slice(&le);
         }
 
         self.relocs.sort_by_key(|r| r.offset);

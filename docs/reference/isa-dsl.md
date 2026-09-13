@@ -162,6 +162,30 @@ base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
 显式宽度键必须指向**已声明组**（如 `addr_width = 2` 要求存在 `[reg.gpr2]`），
 否则 `validate` 报错；`vector_tiers` 必须严格升序且非 0。
 
+### 指令字宽（`[meta].default_inst_width`，**无白名单/上限**）
+
+定宽 ISA 的指令字宽是 ISA 数据，可写**任意 ≥ 1 位**（不只是 32）：
+
+- 存储字节数 = `ceil(位 / 8)`（100 位 → 13 字节；12 位 → 2 字节）；
+- 生成代码把字表示为**字节数组**（`[u8; n]`，LE 位序：bit 0 = 第 0 字节 LSB），
+  位域读写走生成的 `__place` / `__bits` 助手，因此字长**不受 u64/u128 限制**，
+  位域可以落在机器字之外（如 bit 92..100）、跨字节或非字节对齐；
+- **大端 ISA**（`[meta].endian = "big"`）的内存序 = 该字节数组反转；
+- `variable_length = true` 与 `default_inst_width` 互斥（前者没有固定字长）；
+- 定宽 label/global fixup 的 `RelocKind` 宽度 = 字长的字节数（历史实现写死 4）；
+- 非 8 倍数位宽时，末字节的**填充位必须为 0**——各 arm 的"补集零 guard"按字节
+  生成，填充位置 1 的字不匹配任何指令（`None`，不静默按低位解码）。
+
+唯一与字长无关的边界：**单个位域 ≤ 64 位**（位域值承载在 u64 常量键与 `i64`
+操作数上；> 64 位的单域需要一个更宽的值表示，会明确报错）。一个字里可以有任意
+多个 ≤ 64 位的域，因此 100/128/4096 位的字都能表达。
+
+夹具（`crates/backend/forge-codegen/tests/isa/`，均由
+`tests/common/mod.rs` 用 `krate = forge_codegen` 宿住）：`demo_inst8_v12.toml`
+（8 位字，含字内 label 域 + `RelocPatcher`）、`demo_inst12_v12.toml`（12 位字，
+非 8 倍数 + 填充位拒绝）、`demo_inst100_v12.toml`（100 位字：超机器字 +
+位域在 bit 92..100）。用例分别在 `tests/demo_inst{8,12,100}_v12_tests.rs`。
+
 ### 生成的访问器
 
 - 生成模块常量：`__DEFAULT_GPR_CLASS` / `__DEFAULT_FPR_CLASS` / `__ADDR_CLASS` /
@@ -228,8 +252,7 @@ sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 
 `mov A3, A0` / `mov A2, A1` / `add A1, A3, A2` / `mov A0, A1` / `ret`）、
 O1 开启后（含墓碑值）仍可编译、`i64` 的编译期拒绝。
 
-> 指令字宽是**另一条轴**：`default_inst_width` 目前只支持 32（定宽）或
-> `variable_length = true`，定宽 decode 按 4 字节读字——"1 字节指令"尚未支持。
+> 指令字宽是**另一条轴**，且**没有白名单/上限**——见下节「指令字宽」。
 >
 > **残余（有意保留）**：`[abi.stack_args]`（栈参数）与 `wide_vec_*`/
 > `frame_rbp_addr`（宽向量 by-ref/sret）这几条路径的**指令角色**目前只有 x86

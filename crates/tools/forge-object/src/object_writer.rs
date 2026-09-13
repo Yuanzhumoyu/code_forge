@@ -448,13 +448,17 @@ fn map_architecture(arch: &target_lexicon::Architecture) -> Result<Architecture,
 
 /// 将 codegen-lib 的 RelocKind 映射到 object crate 的 RelocationFlags。
 fn map_reloc_flags(kind: &RelocKind, format: BinaryFormat, _arch: Architecture) -> RelocationFlags {
-    fn size_from_width(w: u8) -> u8 {
+    /// 位宽（bits）映射：object crate 的 `size` 字段是 u8 位宽。
+    /// 宽度由 ISA 声明（`RelocKind` 是字节数）；超出 8 字节的 fixup 在目标
+    /// 文件里没有对应的 `size` 编码（>64 位）——退回 64 位并不截断补丁值本身
+    /// （补丁值由 `RelocKind::encode_value` 按宽度写出，这里只影响 COFF/ELF
+    /// 的 `size` 标注）。
+    fn size_from_width(w: u32) -> u8 {
         match w {
             1 => 8,
             2 => 16,
             4 => 32,
-            8 => 64,
-            _ => 32,
+            _ => 64,
         }
     }
     match kind {

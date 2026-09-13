@@ -456,6 +456,7 @@ fn gen_asm_primitives(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStrea
             .iter()
             .any(|(_, _, s, _)| s.kind == OperandKind::Cond)
     });
+    let _ = (has_imm, has_label);
 
     let mut out = TokenStream::new();
     if has_reg || has_mem {
@@ -488,11 +489,17 @@ fn gen_asm_primitives(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStrea
             }
         });
     }
-    if has_imm || has_label {
+    // 表达式/标签helper **无条件生成**：`.equ` 伪指令与 `parse_insts` 的符号回填
+    // 永远引用它们（`__expr` / `__set_label_operand`），与"本 ISA 有没有 imm/label
+    // 操作数"无关。历史实现按 has_imm/has_label 门控定义 → 只有寄存器操作数的
+    // ISA（夹具 `demo_inst12_v12`）生成出**引用未定义 helper** 的模块（编译不过）。
+    // 未被本 ISA 用到的入口函数加 `#[allow(dead_code)]`。
+    {
         let dollar = model.meta.imm_prefix.as_deref() == Some("$");
         out.extend(quote! {
             /// 立即数/表达式求值：数字、负号、括号、算术（+ - * / % << >> & | ^ ~）、
             /// 符号常量（.equ）。失败回滚 token 位置。
+            #[allow(dead_code)]
             fn __imm(it: &mut __Iter, min: i64, max: i64, float: bool) -> Option<i64> {
                 let save = it.pos;
                 let _d = if #dollar { it.eat(&__Tok::Dollar) } else { false };
@@ -641,7 +648,7 @@ fn gen_asm_primitives(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStrea
             }
         });
     }
-    if has_label {
+    {
         let mut label_set_arms: Vec<TokenStream> = Vec::new();
         for info in infos {
             let vn = &info.vn;
@@ -658,6 +665,7 @@ fn gen_asm_primitives(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStrea
         out.extend(quote! {
             /// 标签：数字/表达式 = 偏移；非寄存器 ident = 符号引用（回填期解析）。
             /// 失败回滚。
+            #[allow(dead_code)]
             fn __label(
                 it: &mut __Iter,
                 min: i64,

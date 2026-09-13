@@ -39,9 +39,7 @@ fn validate_meta(m: &V12Model) -> Result<(), String> {
                 .into(),
         );
     }
-    if let Some(w) = m.meta.default_inst_width
-        && w == 0
-    {
+    if m.meta.default_inst_width == Some(0) {
         return Err("[meta].default_inst_width must be > 0".into());
     }
     if let Some(l) = m.meta.max_inst_len
@@ -370,11 +368,16 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
                 if *w == 0 {
                     return Err(format!("[conventions.bitfields.{name}].width must be > 0"));
                 }
-                if off + w > 64 {
+                // 字侧（offset）无上限——字长是 ISA 数据、由字节数组承载；
+                // 只有**单个位域的值宽**受 u64/i64 值表示限制。
+                if *w > 64 {
                     return Err(format!(
-                        "[conventions.bitfields.{name}]: offset {off} + width {w} exceeds 64 bits"
+                        "[conventions.bitfields.{name}].width = {w} 超过值表示上限 64 位\
+                         （位域值承载在 u64 常量键与 i64 操作数上；字长本身无上限，\
+                         可拆成多个 ≤64 位的域）"
                     ));
                 }
+                let _ = off;
             }
             (None, None, Some(pieces)) => {
                 if pieces.is_empty() {
@@ -391,9 +394,11 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
                             "[conventions.bitfields.{name}].pieces[{i}].width must be > 0"
                         ));
                     }
-                    if p.offset + p.width > 64 || p.shift + p.width > 64 {
+                    // 字侧 piece.offset 无上限；值侧 shift+width ≤ 64（值表示上限）。
+                    if p.width > 64 || p.shift + p.width > 64 {
                         return Err(format!(
-                            "[conventions.bitfields.{name}].pieces[{i}]: offset/shift + width exceeds 64 bits"
+                            "[conventions.bitfields.{name}].pieces[{i}]: width/shift+width 超过值表示上限 64 位\
+                             （字长无上限，可拆更多 piece）"
                         ));
                     }
                     if word_ranges
@@ -419,6 +424,26 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             _ => {
                 return Err(format!(
                     "[conventions.bitfields.{name}]: declare either {{ offset, width }} or {{ pieces = [...] }}, not both/neither"
+                ));
+            }
+        }
+    }
+    // 定宽 ISA：每个位域必须落在指令字内（字宽 = ISA 数据；历史实现把
+    // "定宽 = 32 位"写死在 codegen，超宽位域会被静默移位出字/截断）。
+    if !m.meta.variable_length
+        && let Some(bits) = m.meta.default_inst_width
+    {
+        for (name, bf) in &conv.bitfields {
+            let hi = match &bf.pieces {
+                Some(ps) => ps.iter().map(|p| p.offset + p.width).max(),
+                None => bf.offset.zip(bf.width).map(|(o, w)| o + w),
+            };
+            if let Some(hi) = hi
+                && hi > bits
+            {
+                return Err(format!(
+                    "[conventions.bitfields.{name}]: 位域最高位 {hi} 超出指令字宽 {bits} 位\
+                     （[meta].default_inst_width；请缩短位域或加宽指令字）"
                 ));
             }
         }

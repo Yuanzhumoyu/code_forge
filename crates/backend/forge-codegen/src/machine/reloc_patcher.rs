@@ -261,29 +261,22 @@ impl RelocPatcher for X86RelocPatcher {
         target: u64,
         site: u64,
     ) -> Result<(), IrError> {
-        match kind {
-            RelocKind::Relative(w, adj) => {
-                let v = (target as i64 - site as i64 + adj as i64) as u64;
-                match w {
-                    1 => {
-                        code[offset] = v as u8;
-                    }
-                    4 => {
-                        code[offset..offset + 4].copy_from_slice(&(v as u32).to_le_bytes());
-                    }
-                    8 => {
-                        code[offset..offset + 8].copy_from_slice(&v.to_le_bytes());
-                    }
-                    _ => {}
-                }
-            }
-            RelocKind::Absolute(w) => {
-                let n = w as usize;
-                if offset + n <= code.len() {
-                    code[offset..offset + n].copy_from_slice(&target.to_le_bytes()[..n]);
-                }
-            }
+        // 宽度由 `RelocKind`（= ISA 声明）决定，**无白名单**：任意 ≥ 1 字节都写
+        // 平铺 LE（x86 语义）；越界 → 明确报错（历史实现 `_ => {}` 静默不补，
+        // `Absolute(w>8)` 还会 panic 切片）。
+        let value = match kind {
+            RelocKind::Relative(_, adj) => (target as i64 - site as i64 + adj as i64) as u64,
+            RelocKind::Absolute(_) => target,
+        };
+        let le = kind.encode_value(value);
+        let end = offset + le.len();
+        if end > code.len() {
+            return Err(IrError::Internal(format!(
+                "x86 reloc: patch [{offset},{end}) 超出代码缓冲 {} 字节",
+                code.len()
+            )));
         }
+        code[offset..end].copy_from_slice(&le);
         Ok(())
     }
 }
