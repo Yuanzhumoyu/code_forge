@@ -1099,6 +1099,7 @@ V512 已被真跑覆盖"）。
 
 | run | commit | 内容 | 结果 |
 | --- | --- | --- | --- |
+| 34736888769（#65） | `1d6184f` | §10.5 行序修复 + run #63 记录（docs） | **Test (Windows) 绿**，且 annotations 显示 **`AVX512-HW=1` + `AVX512-RUN test_jit_v512_byref_param`** ⇒ 本次**真跑在 AVX-512F runner 上并通过**——WA-47 的**硬件级验证**（修复前同类 runner 上该断言必得 4） |
 | 34736538777（#63） | `7fdd34f` | WA-47：V512 lane 提取补规则 + `::warning::` 事件 annotations | **11 job 全绿**；但该 run 的 annotations 显示 `AVX512-HW=0` + `AVX512-SKIP test_jit_v512_byref_param` ⇒ **本次跑在无 AVX-512F 的 runner 上、V512 用例被跳过**（这正是新通道的价值：绿=跳过，不再与"真跑通过"混淆） |
 | 34735264319（#60） | `316f39d` | WA-46 三块成因补确定性守卫（类分档 + V512 by-ref 调用方 64B 拷贝） | **11 job 全绿**（含 **Test (Windows)**） |
 | 34709093219（#58） | `0ddf8a4` | WA-46 向量溢出宽度修复（§10.7） | **11 job 全绿**（含 **Test (Windows)**：`test_jit_v512_byref_param` 通过——#51/#57 的同一 job/同一用例转绿） |
@@ -1232,3 +1233,10 @@ WA-46（向量 spill 截断）是**独立的潜在缺陷**、与本次现象无�
 annotations**（含 `AVX512-HW=0|1`、`AVX512-RUN/SKIP`、`MATRIX-*`）⇒ 每次 run 都能经 API 读到
 "该 runner 有没有 AVX-512F、V512 用例这次是否真跑"——此前正是这个盲点让"跳过"与"真跑"无法区分
 （`step summary` 不进 check-run 的 `output.summary`、job 日志 403）。
+
+**WA-47 硬件级验证（run #65，2026-09-13）**：`1d6184f` 的 `Test (Windows)` 绿，且 annotations 为
+`AVX512-HW=1 test_v512_slot_load_store_requires_avx512` + `AVX512-RUN test_jit_v512_byref_param`
+⇒ **该 run 确实落在有 AVX-512F 的 runner 上并真正执行了 V512 用例**（对比 run #63 的
+`AVX512-HW=0` + `AVX512-SKIP`）。结合"修复前同类 runner 上该断言必得 4（lane3）"的生成级证据，
+WA-47 的修复在**硬件上得到确认**；这也是 §10.4 的 W4 目标（门控用例"是否真跑过"可见化）
+第一次以"可经 API 读到的 annotation"形式闭环。
