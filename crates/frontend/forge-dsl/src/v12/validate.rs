@@ -142,10 +142,38 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
     // （此前只在 `gen_abi` 生成期检查，读 TOML 的人拿不到早期反馈）。
     let _ = m.vector_by_ref_limit_bytes()?;
     if m.slot_bytes()? == 0 {
-        return Err("[meta].slot_bytes must be > 0".into());
+        return Err("[stack].slot must be > 0".into());
     }
-    if m.fp_overhead_bytes()? == 0 && m.meta.fp_overhead_bytes.is_some() {
-        return Err("[meta].fp_overhead_bytes must be > 0".into());
+    if m.fp_overhead_bytes()? == 0 && m.stack.as_ref().and_then(|s| s.fp_save).is_some() {
+        return Err("[stack].fp_save must be > 0".into());
+    }
+    if m.stack.as_ref().and_then(|s| s.slot).is_some() && m.slot_bytes()? == 0 {
+        return Err("[stack].slot must be > 0".into());
+    }
+    if m.stack.as_ref().and_then(|s| s.align).is_some() && m.stack_align()? == 0 {
+        return Err("[stack].align must be > 0".into());
+    }
+    // `[abi.stack_args]`：基址只能是 fp|sp；槽数与步长必须 > 0。
+    if let Some(sa) = m.abi.as_ref().and_then(|a| a.stack_args.as_ref()) {
+        for (key, base) in [
+            ("callee_base", sa.callee_base.as_ref()),
+            ("caller_base", sa.caller_base.as_ref()),
+        ] {
+            if let Some(base) = base
+                && base != "fp"
+                && base != "sp"
+            {
+                return Err(format!(
+                    "[abi.stack_args].{key} = \"{base}\" 非法（只能是 \"fp\" 或 \"sp\"）"
+                ));
+            }
+        }
+        if sa.first_offset_slots == Some(0) {
+            return Err("[abi.stack_args].first_offset_slots must be > 0".into());
+        }
+        if sa.stride_slots == Some(0) {
+            return Err("[abi.stack_args].stride_slots must be > 0".into());
+        }
     }
     for (key, w) in [
         ("default_gpr_width", m.meta.default_gpr_width),
@@ -153,8 +181,6 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
         ("addr_width", m.meta.addr_width),
         ("value_gpr_width", m.meta.value_gpr_width),
         ("value_fpr_width", m.meta.value_fpr_width),
-        ("slot_bytes", m.meta.slot_bytes),
-        ("fp_overhead_bytes", m.meta.fp_overhead_bytes),
     ] {
         if let Some(w) = w
             && w == 0
@@ -1026,21 +1052,19 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
         return Ok(());
     };
     // arg_slot / arg_class.strategy 的值域由枚举在反序列化期强制
-    if let Some(align) = abi.stack_align
-        && align == 0
-    {
-        return Err(format!("[abi].stack_align must be > 0, got {align}"));
-    }
+
     // stack_arg_shadow：>0 且 **栈槽单位** 的倍数（元数据派生：x86 = 8 字节槽；
     // 1 字节寄存器 ISA 的槽是 1 字节——历史实现写死"8 的倍数"）。
-    if let Some(shadow) = abi.stack_arg_shadow {
+    if let Some(shadow) = abi.stack_args.as_ref().and_then(|s| s.shadow_bytes) {
         if shadow == 0 {
-            return Err(format!("[abi].stack_arg_shadow must be > 0, got {shadow}"));
+            return Err(format!(
+                "[abi.stack_args].shadow_bytes must be > 0, got {shadow}"
+            ));
         }
         let unit = m.slot_bytes()? as u32;
         if unit > 1 && shadow % unit != 0 {
             return Err(format!(
-                "[abi].stack_arg_shadow must be a positive multiple of the stack slot unit \
+                "[abi.stack_args].shadow_bytes must be a positive multiple of the stack slot unit \
                  ({unit} bytes), got {shadow}"
             ));
         }

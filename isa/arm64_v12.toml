@@ -1156,8 +1156,12 @@ insts = ["LDPX", "LDPW"]
 # 帧/ABI 层一律改用 **LDUR/STUR（imm9 真字节偏移，±256）** 保证字节
 # 语义正确；帧 ≥ ~256B 时 imm9 越界 → encode 报错（显式失败不静默截断）。
 
+[stack]
+slot = 8
+align = 16
+fp_save = 8
+
 [abi]
-stack_align = 16
 scratch = ["X16", "X17"]
 # regalloc 不可分配：X18 = 平台寄存器；X30 = lr（BL 返回地址/prologue
 # 保存）——不排除会被分配出垃圾值（覆盖返回地址 → ret 跳错）。

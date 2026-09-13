@@ -2347,8 +2347,10 @@ fn width_metadata_explicit_key_needs_group() {
     assert!(msg.contains("default_gpr_width"), "msg: {msg}");
     let msg = validation_msg(&one_byte_doc("addr_width = 2"));
     assert!(msg.contains("addr_width"), "msg: {msg}");
-    let msg = validation_msg(&one_byte_doc("slot_bytes = 0"));
-    assert!(msg.contains("slot_bytes"), "msg: {msg}");
+    // `[stack]` 键值域（2026-09-13 从 [meta]/[abi] 归并而来）
+    let msg =
+        validation_msg(&one_byte_doc("").replace("[reg.gpr1]", "[stack]\nslot = 0\n\n[reg.gpr1]"));
+    assert!(msg.contains("slot"), "msg: {msg}");
 }
 
 /// `[meta].default_opsize`（位）必须与某个已声明 GPR 组一致

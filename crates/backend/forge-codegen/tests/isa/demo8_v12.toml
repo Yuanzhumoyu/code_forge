@@ -31,9 +31,7 @@ default_inst_width = 32
 # 位（= 生成代码里 __opsize 的 1 字节）
 default_opsize = 8
 addr_width = 1
-slot_bytes = 1
 value_gpr_width = 1
-fp_overhead_bytes = 1
 case_insensitive_regs = true
 comment_char = "#"
 label_suffix = ":"
@@ -205,9 +203,13 @@ asm = "nop"
 # TargetMachine 接入：调用约定 + 帧 + 序言/尾声 + lowering
 # ════════════════════════════════════════════════════════════
 
+[stack]
+# 1 字节寄存器 → 槽单位 / 栈对齐 / 帧保存槽全 = 1（不写死 x86 的 8/16）
+slot = 1
+align = 1
+fp_save = 1
+
 [abi]
-# 1 字节寄存器 → 栈对齐也是 1（不写死 x86 的 16）
-stack_align = 1
 # spill 搬运临时寄存器（regalloc 不可分配）
 scratch = ["A4", "A5"]
 # A6/A7 是 fp/sp（已在 RegInfo 排除；显式列出以验证名字解析）

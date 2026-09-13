@@ -218,8 +218,12 @@ asm = "nop"
 # B3：接入 TargetMachine（调用约定 + 帧 + 序言/尾声 + lowering）
 # ════════════════════════════════════════════════════════════
 
+[stack]
+slot = 8
+align = 8
+fp_save = 8
+
 [abi]
-stack_align = 8
 # @move_args 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
 # 生成器按角色解析 src/dest，不依赖操作数序）
 

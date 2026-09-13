@@ -1012,8 +1012,12 @@ asm = "ret"
 # B2：接入 TargetMachine（SysV rv64 子集 + 帧 + lowering）
 # ════════════════════════════════════════════════════════════
 
+[stack]
+slot = 8
+align = 16
+fp_save = 8
+
 [abi]
-stack_align = 16
 scratch = ["X5", "X6"]
 # regalloc 不可分配：X0=zero（写入无效）、X1=ra（prologue 保存 + call 返回
 # 地址）、X3/X4=gp/tp（固定用途）——不排除会分配出垃圾（实测 subw x0）。

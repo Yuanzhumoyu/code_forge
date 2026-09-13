@@ -38,6 +38,10 @@ pub struct V12Model {
     /// 未列出的类型走通用规则（族 + 宽度 ≤ 值池/寄存器文件存在性）。
     #[serde(default)]
     pub types: Option<BTreeMap<String, String>>,
+    /// 栈与对齐（`[stack]`，可选）：槽单位/栈对齐/帧指针保存槽。
+    /// 取代散落在 `[meta]`/`[abi]` 的同类键（2026-09-13 归并）。
+    #[serde(default)]
+    pub stack: Option<StackSection>,
     /// 操作数槽（`[[operand_slots]]`）。
     pub operand_slots: Vec<OperandSlot>,
     /// 编码形式（`[[forms]]`）。
@@ -163,18 +167,26 @@ impl V12Model {
         Ok(Some(RegClass::FPR(8)).filter(|rc| self.reg.contains_key(rc)))
     }
 
-    /// ABI 栈槽单位（字节）：`[meta].slot_bytes` > 地址类宽度。
+    /// ABI 栈槽单位（字节）：`[stack].slot` > 地址类宽度。
     pub(crate) fn slot_bytes(&self) -> Result<u16, String> {
-        match self.meta.slot_bytes {
+        match self.stack.as_ref().and_then(|s| s.slot) {
             Some(b) => Ok(b),
             None => Ok(self.addr_class()?.width()),
         }
     }
 
-    /// 帧指针保存槽字节数：`[meta].fp_overhead_bytes` > 地址类宽度
+    /// 栈对齐（字节）：`[stack].align` > 槽单位。
+    pub(crate) fn stack_align(&self) -> Result<u32, String> {
+        match self.stack.as_ref().and_then(|s| s.align) {
+            Some(a) => Ok(a),
+            None => Ok(self.slot_bytes()? as u32),
+        }
+    }
+
+    /// 帧指针保存槽字节数：`[stack].fp_save` > 地址类宽度
     /// （x86/riscv64/arm64/demo 均为 8，与历史常量 `frame_pointer_overhead() = 8` 一致）。
     pub(crate) fn fp_overhead_bytes(&self) -> Result<u16, String> {
-        match self.meta.fp_overhead_bytes {
+        match self.stack.as_ref().and_then(|s| s.fp_save) {
             Some(b) => Ok(b),
             None => Ok(self.addr_class()?.width()),
         }
@@ -370,19 +382,28 @@ pub struct Meta {
     /// MM0-7、最宽组是 `fpr32`(ZMM)，都不是浮点标量值池。
     #[serde(default)]
     pub value_fpr_width: Option<u16>,
-    /// ABI 栈槽单位（**字节**）。缺省 = `addr_width`。
-    /// 用于 alloca/聚合拆分/传参栈槽/spill 槽对齐。
-    #[serde(default)]
-    pub slot_bytes: Option<u16>,
-    /// 帧指针保存槽字节数（`RegInfo::frame_pointer_overhead`）。
-    /// 缺省 = `addr_width`（x86/riscv64/arm64/demo = 8，与历史常量一致）。
-    #[serde(default)]
-    pub fp_overhead_bytes: Option<u16>,
     /// 向量类字节档位（升序；`TargetRegInfo::vector_tiers`）。
     /// 缺省 = `[16, 32, 64]`（x86 XMM/YMM/ZMM 语义）。向量类型按字节数夹到
     /// "最小的 ≥ 请求值的档位"，超过最大档 → 生成/编译期 `Unsupported`。
     #[serde(default)]
     pub vector_tiers: Option<Vec<u16>>,
+}
+
+/// `[stack]` — 栈与对齐（2026-09-13 从 `[meta]`/`[abi]` 归并而来）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct StackSection {
+    /// ABI 栈槽单位（**字节**）。缺省 = 地址类宽度。
+    /// alloca/聚合拆分/传参栈槽/spill 槽对齐与步长都用它。
+    #[serde(default)]
+    pub slot: Option<u16>,
+    /// 栈对齐（**字节**）。缺省 = `slot`。
+    #[serde(default)]
+    pub align: Option<u32>,
+    /// 帧指针保存槽字节数（`RegInfo::frame_pointer_overhead`）。
+    /// 缺省 = 地址类宽度（x86/riscv64/arm64/demo = 8）。
+    #[serde(default)]
+    pub fp_save: Option<u16>,
 }
 
 fn default_comment_char() -> String {
@@ -1618,24 +1639,44 @@ pub struct Pattern {
 
 // ───────────────────────── [abi] ─────────────────────────
 
+/// `[abi.stack_args]` — 寄存器耗尽后的参数内存布局（2026-09-13 去 x86 写死）。
+/// x86（Windows x64）栈参数在**被调方**是 `[fp + first_offset_slots*slot + k*stride_slots*slot]`、
+/// 在**调用方**是 `[sp + shadow_bytes + k*stride_slots*slot]`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AbiStackArgs {
+    /// **被调方**收参的基址寄存器：`"fp"`（帧指针，x86）或 `"sp"`。
+    /// 缺省 `"fp"`；取自 `[abi.frame]` 声明的寄存器名。
+    #[serde(default)]
+    pub callee_base: Option<String>,
+    /// **调用方**写栈参数的基址：`"sp"`（x86：`[sp + shadow + k*stride]`）或 `"fp"`。
+    /// 缺省 `"sp"`。
+    #[serde(default)]
+    pub caller_base: Option<String>,
+    /// 被调方第一个栈参数相对 `callee_base` 的槽数（x86 = 2：返回地址 + 保存的 fp）。
+    #[serde(default)]
+    pub first_offset_slots: Option<u32>,
+    /// 相邻栈参数的槽步长（x86 = 1）。
+    #[serde(default)]
+    pub stride_slots: Option<u32>,
+    /// 调用方在 call 前预留的 shadow space 字节数（Windows x64 = 32）。
+    #[serde(default)]
+    pub shadow_bytes: Option<u32>,
+}
+
 /// 调用约定。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Abi {
-    #[serde(default)]
-    pub stack_align: Option<u32>,
     /// 帧布局的额外栈填充（字节）：x86 = 8（align/2，SysV/Windows x64
     /// ABI：prologue push rbp + callee-saved 后 rsp%16==8，sub rsp 需使
     /// call 前 rsp%16==0）。缺省 0。
     #[serde(default)]
     pub frame_padding: Option<i32>,
-    /// 调用方 call 前预留的 shadow space 字节数（Windows x64 = 0x20）。
-    /// Some(n) 启用栈参数：第 5+ 个参数（寄存器耗尽后）由调用方 store 到
-    /// [rsp+n+(k-nregs)*8]、被调方从 [rbp+n+8+(k-nregs)*8] load。
-    /// None = 不支持栈参数（超寄存器参数 → Unsupported）。riscv 缺省 None
-    ///（8 个 GPR + 8 个 FPR 足够，SysV 无 shadow space）。
+    /// 栈参数布局（`[abi.stack_args]`）：寄存器耗尽后的第 N+ 个参数怎么放。
+    /// `None` = 不支持栈参数（超寄存器参数 → Unsupported）。
     #[serde(default)]
-    pub stack_arg_shadow: Option<u32>,
+    pub stack_args: Option<AbiStackArgs>,
     #[serde(default)]
     pub arg_class: Vec<ArgClass>,
     /// 帧布局（sp/fp 寄存器名、帧分配/释放指令名）。

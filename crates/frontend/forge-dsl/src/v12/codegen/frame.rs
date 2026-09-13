@@ -17,13 +17,9 @@ use quote::{format_ident, quote};
 pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
     // [abi] → arg_regs（按 arg_class 顺序：int 类在前，其余 class 依次）。
     // ret_regs：缺省空（v12 声明层暂不区分返回寄存器——后续迭代扩展）。
-    // 栈对齐：显式 `[abi].stack_align` > `[meta].slot_bytes`（x86 = 16/8 不变；
-    // 1 字节寄存器 ISA 缺省即 1，不再回退 x86 的 16）。
-    let stack_align = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_align)
-        .unwrap_or(model.slot_bytes()? as u32);
+    // 栈对齐：`[stack].align` > `[stack].slot`（x86 = 16/8 不变；1 字节寄存器
+    // ISA 缺省即 1，不再回退 x86 的 16）。
+    let stack_align = model.stack_align()?;
     let frame_padding = model
         .abi
         .as_ref()
@@ -692,38 +688,85 @@ fn gen_emit_pseudo(
             // docs/reference/isa-dsl.md「角色缺失 → 明确 Unsupported，不再静默去查一个
             // 别的 ISA 的指令名」）。
             // 生成期门控：shadow 已声明但角色缺失 → 直接报错（不产错码）。
-            let stack_shadow_ref: TokenStream =
-                match model.abi.as_ref().and_then(|a| a.stack_arg_shadow) {
-                    Some(v) => quote! { Some(#v) },
-                    None => quote! { None },
-                };
+            let stack_shadow_ref: TokenStream = match model
+                .abi
+                .as_ref()
+                .and_then(|a| a.stack_args.as_ref())
+                .and_then(|s| s.shadow_bytes)
+            {
+                Some(v) => quote! { Some(#v) },
+                None => quote! { None },
+            };
             let has_shadow = model
                 .abi
                 .as_ref()
-                .and_then(|a| a.stack_arg_shadow)
+                .and_then(|a| a.stack_args.as_ref())
+                .and_then(|s| s.shadow_bytes)
                 .is_some();
-            // 栈参数内存基址 = `[abi.frame].fp` 对应的寄存器（x86 = RBP）。
-            // 历史实现写死字面量 `Reg::RBP`——非 x86 ISA 一旦声明 shadow 会
-            // 生成引用不存在寄存器的代码；这里改为元数据派生 + 生成期
-            // fail-closed（fp 未声明 → 报错）。
-            let fp_reg: TokenStream = match model
+            // 栈参数内存基址 = `[abi.stack_args].callee_base`（缺省 fp → 用
+            // `[abi.frame].fp` 的名字；x86 = RBP）。历史实现写死字面量 `Reg::RBP`
+            // ——非 x86 ISA 一旦声明 shadow 会生成引用不存在寄存器的代码；这里改为
+            // 元数据派生 + 生成期 fail-closed（fp 未声明 → 报错）。
+            let callee_base_kind = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.stack_args.as_ref())
+                .and_then(|s| s.callee_base.clone())
+                .unwrap_or_else(|| "fp".to_string());
+            let callee_base: TokenStream = match model
                 .abi
                 .as_ref()
                 .and_then(|a| a.frame.as_ref())
-                .and_then(|f| f.fp.as_ref())
+                .map(|f| {
+                    if callee_base_kind == "sp" {
+                        f.sp.clone()
+                    } else {
+                        f.fp.clone().unwrap_or_default()
+                    }
+                })
+                .filter(|n| !n.is_empty())
             {
                 Some(n) => {
                     let id = format_ident!("{n}");
                     quote! { Reg::#id }
                 }
                 None if has_shadow => {
-                    return Err(
-                        "move_args: [abi].stack_arg_shadow 已声明，但 [abi.frame].fp 缺失——\
-                         栈参数内存基址需要帧指针（不再回退字面量 \"RBP\"）"
-                            .into(),
-                    );
+                    return Err(format!(
+                        "move_args: [abi.stack_args].shadow_bytes 已声明，但 \
+                         [abi.frame].{callee_base_kind} 缺失——栈参数内存基址需要\
+                         {}（不再回退字面量 \"RBP\"）",
+                        if callee_base_kind == "sp" {
+                            "栈指针"
+                        } else {
+                            "帧指针"
+                        }
+                    ));
                 }
                 None => quote! { Reg::from_index(0, __DEFAULT_GPR_CLASS) },
+            };
+            // 被调方第一个栈参数的槽偏移与步长（`[abi.stack_args]`；x86 = 2/1）。
+            let first_off: u32 = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.stack_args.as_ref())
+                .and_then(|s| s.first_offset_slots)
+                .unwrap_or(2);
+            let stride: u32 = model
+                .abi
+                .as_ref()
+                .and_then(|a| a.stack_args.as_ref())
+                .and_then(|s| s.stride_slots)
+                .unwrap_or(1);
+            // 发射用字面量：无后缀（`2` 而非 `2u32`）；stride == 1（紧凑布局，
+            // x86/riscv/arm64 均如此）时不发射 `* 1`——这样"键归类"这类纯重构
+            // 的生成代码与重构前**逐字节一致**（可用 dump 对照证明行为不变），
+            // 只有声明了 stride ≠ 1 的 ISA 才多出步长因子。
+            let first_off_lit = proc_macro2::Literal::u32_unsuffixed(first_off);
+            let stride_factor: TokenStream = if stride == 1 {
+                quote! {}
+            } else {
+                let lit = proc_macro2::Literal::u32_unsuffixed(stride);
+                quote! { * #lit }
             };
             // (变体名, Mem 字段, Reg 字段)——load 的 Reg 槽是 dest、store 是 src，
             // 字段名由 `reg_mem_fids` 从操作数结构派生。
@@ -735,7 +778,7 @@ fn gen_emit_pseudo(
                     else {
                         if has_shadow {
                             return Err(format!(
-                                "move_args: [abi].stack_arg_shadow 已声明，但本 ISA 缺 \
+                                "move_args: [abi.stack_args].shadow_bytes 已声明，但本 ISA 缺 \
                              roles = [\"{role}\"] 的指令（不按指令名兜底）"
                             ));
                         }
@@ -756,10 +799,10 @@ fn gen_emit_pseudo(
             //（不引用任何指令名，也不再让 by-position 臂去插值假名字）。
             let stack_int_recv: TokenStream = match (&load_triple, has_shadow) {
                 (Some((vn, mem, reg)), true) => quote! {
-                    let __off = (2 * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 * __SLOT_BYTES as i64;
+                    let __off = (#first_off_lit * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 #stride_factor * __SLOT_BYTES as i64;
                     let __bytes = encode(&Inst::#vn {
                         #mem: MemRef {
-                            base: #fp_reg,
+                            base: #callee_base,
                             disp: __off,
                             index: None,
                             scale: 1,
@@ -770,7 +813,7 @@ fn gen_emit_pseudo(
                 },
                 _ => quote! {
                     return Err(crate::IrError::Emit(
-                        "v12 move_args: 本 ISA 不支持栈参数（未声明 [abi].stack_arg_shadow / \
+                        "v12 move_args: 本 ISA 不支持栈参数（未声明 [abi.stack_args] / \
                          roles = [\"stack_arg_load\"] 的指令）".into(),
                     ));
                 },
@@ -1057,7 +1100,8 @@ fn gen_emit_pseudo(
             let has_stack_arg = model
                 .abi
                 .as_ref()
-                .and_then(|a| a.stack_arg_shadow)
+                .and_then(|a| a.stack_args.as_ref())
+                .and_then(|s| s.shadow_bytes)
                 .is_some();
             let stack_arg_receive: TokenStream = match (
                 has_stack_arg,
@@ -1073,13 +1117,13 @@ fn gen_emit_pseudo(
                         && __pos >= #n
                         && __rm.spill_slots.contains_key(&__pv)
                     {
-                        let __off = (2 * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 * __SLOT_BYTES as i64;
+                        let __off = (#first_off_lit * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 #stride_factor * __SLOT_BYTES as i64;
                         let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
                         let __slot_off = __rm.spill_slot(__pv).offset as i64;
                         // load ABI 槽 → scratch（角色 stack_arg_load 命中的指令）
                         let __lbytes = encode(&Inst::#l_vn {
                             #l_mem: MemRef {
-                                base: #fp_reg,
+                                base: #callee_base,
                                 disp: __off,
                                 index: None,
                                 scale: 1,
@@ -1090,7 +1134,7 @@ fn gen_emit_pseudo(
                         // store scratch → spill 槽（角色 stack_arg_store 命中的指令）
                         let __sbytes = encode(&Inst::#s_vn {
                             #s_mem: MemRef {
-                                base: #fp_reg,
+                                base: #callee_base,
                                 disp: __sp_base + __slot_off,
                                 index: None,
                                 scale: 1,
@@ -1133,7 +1177,7 @@ fn gen_emit_pseudo(
                         // scratch → spill 槽（角色 stack_arg_store 命中的指令）
                         let __sbytes = encode(&Inst::#s_vn {
                             #s_mem: MemRef {
-                                base: #fp_reg,
+                                base: #callee_base,
                                 disp: __sp_base + __slot_off,
                                 index: None,
                                 scale: 1,

@@ -112,9 +112,13 @@ default_fpr_width = 16       # 主 FPR 类宽度（字节）；缺省 = fpr16 �
 addr_width = 8               # 地址/指针类（MemRef base/index、lea、sp/fp）
 value_gpr_width = 8          # 宿主整数值池类宽（lowering 值 XReg）
 value_fpr_width = 8          # 宿主浮点值池类宽（缺省 8 = f64 值池）
-slot_bytes = 8               # ABI 栈槽单位（alloca/聚合/spill 槽对齐）
-fp_overhead_bytes = 8        # 帧指针保存槽字节数（frame_pointer_overhead）
 vector_tiers = [16, 32, 64]  # 向量类字节档位（升序；缺省 = x86 XMM/YMM/ZMM）
+
+# ── 栈与帧（可选；缺省全部派生）──
+[stack]
+slot = 8                     # 栈槽单位字节（alloca/聚合/spill 槽对齐）；缺省 = addr_width
+align = 16                   # 栈对齐字节；缺省 = slot
+fp_save = 8                  # 帧指针保存槽字节数；缺省 = addr_width
 
 [reg.gpr8]                   # 寄存器组（组名的数字 = **字节**宽：gpr8 = 64 位）
 names = ["RAX", "RCX", "..."] # 显式名单；或 count + prefix 生成式声明
@@ -147,8 +151,9 @@ base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
 | `[meta].addr_width` | 字节 | `default_gpr_width` | 地址类：MemRef base/index、`lea`、sp/fp、帧地址 |
 | `[meta].value_gpr_width` | 字节 | `default_gpr_width` | 宿主整数值池（值 XReg / 零值 / 临时 vreg） |
 | `[meta].value_fpr_width` | 字节 | `8`（f64 值池；**不按最宽 FPR 组推导**） | 宿主浮点值池 |
-| `[meta].slot_bytes` | 字节 | `addr_width` | ABI 栈槽单位、alloca/聚合拆分、spill 槽对齐 |
-| `[meta].fp_overhead_bytes` | 字节 | `addr_width` | `RegInfo::frame_pointer_overhead()` |
+| `[stack].slot` | 字节 | `addr_width` | ABI 栈槽单位、alloca/聚合拆分、spill 槽对齐 |
+| `[stack].align` | 字节 | `slot` | 栈对齐（prologue 帧分配对齐；x86 = 16） |
+| `[stack].fp_save` | 字节 | `addr_width` | `RegInfo::frame_pointer_overhead()` |
 | `[meta].vector_tiers` | 字节（升序） | `[16, 32, 64]` | 向量类档位（`reg_class_for` 取最小 ≥ 请求值） |
 | `[meta].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
 | `[abi.frame].fp_push_bytes` | 字节 | 地址类宽度 | prologue 在帧指针上方 push 的字节数 |
@@ -214,8 +219,8 @@ i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更�
 
 ### 最小示例
 
-`crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/`slot_bytes`/
-`value_gpr_width`/`fp_overhead_bytes` 全 = 1，`default_opsize = 8`）是这条路径的
+`crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/
+`value_gpr_width` = 1、`[stack] slot/align/fp_save` = 1，`default_opsize = 8`）是这条路径的
 回归夹具：`tests/demo8_v12_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
 sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 可承载；
 `i16/i32/i64/ptr` 与 `f32/f64/v64/v128/v256` 全部 `None`）、编码布局、
@@ -226,7 +231,7 @@ O1 开启后（含墓碑值）仍可编译、`i64` 的编译期拒绝。
 > 指令字宽是**另一条轴**：`default_inst_width` 目前只支持 32（定宽）或
 > `variable_length = true`，定宽 decode 按 4 字节读字——"1 字节指令"尚未支持。
 >
-> **残余（有意保留）**：`[abi].stack_arg_shadow`（栈参数）与 `wide_vec_*`/
+> **残余（有意保留）**：`[abi.stack_args]`（栈参数）与 `wide_vec_*`/
 > `frame_rbp_addr`（宽向量 by-ref/sret）这几条路径的**指令角色**目前只有 x86
 > 声明；它们的内存基址已改为从 `[abi.frame].fp` 派生（不再写死 `Reg::RBP`），
 > 但 lowering 侧同角色路径仍假定 x86 的 fp/sp 形态——非 x86 ISA 声明这些角色
@@ -628,15 +633,20 @@ insts = ["movsd {out}, {a}", "mulsd {out}, {b}", "addsd {out}, {c}"]
 
 ```toml
 [abi]
-stack_align = 16
 frame_padding = 8              # 帧额外栈填充（x86 = 8；见下）
-stack_arg_shadow = 32          # Windows x64 shadow space（Some 启用栈参数；None 不支持）
 arg_slot = "by-position"       # 参数槽位计数策略：by-class（缺省，riscv）/ by-position（x86）
 scratch = ["R10", "R11"]       # spill load/store 专用（须排除 allocatable）
 ret_regs = ["X10"]             # 返回寄存器（缺省空 = index 0，x86 RAX 语义）
 call_ret_reg = "X1"            # Call 的返回地址寄存器（缺省 "X1"=riscv ra）
 call_clobbers = ["X1", "X7", ...]  # Call 点被调用方破坏的寄存器
 reserved = ["X0", "X1", "X3", "X4"]  # regalloc 不可分配寄存器
+
+[abi.stack_args]               # 寄存器耗尽后的参数内存布局（可选；全缺省 = x86 形态）
+callee_base = "fp"             # 被调方基址寄存器：fp（缺省）/ sp
+caller_base = "sp"             # 调用方基址寄存器：sp（缺省）/ fp
+first_offset_slots = 2         # 被调方首个栈参相对基址的槽数（x86 = 2：返回地址 + 保存的 fp）
+stride_slots = 1               # 相邻栈参的槽步长（x86 = 1）
+shadow_bytes = 32              # 调用方预留的 shadow space 字节（Some 启用栈参数；None 不支持）
 
 [[abi.arg_class]]
 class = "int"                  # int / float / vector / other
@@ -660,9 +670,12 @@ limit = 128
   `by-position`（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）。
 - `frame_padding`：prologue push rbp + callee-saved 后 rsp%16==8，sub rsp 需使
   call 前 rsp%16==0（Windows x64 ABI，缺省 0 会让系统 DLL 在未对齐栈上 SEGV）。
-- `stack_arg_shadow`：第 5+ 参数（寄存器耗尽后）由调用方 store 到
-  `[rsp+n+(k-nregs)*8]`、被调方从 `[rbp+n+8+(k-nregs)*8]` load。None = 不支持栈
-  参数（超寄存器参数 → Unsupported）。
+- `[abi.stack_args]`：第 5+ 参数（寄存器耗尽后）由调用方 store 到
+  `[caller_base + shadow_bytes + k*stride_slots*slot]`、被调方从
+  `[callee_base + first_offset_slots*slot + k*stride_slots*slot]` load
+  （x86 的缺省值 = `sp`/`fp`/2/1，与历史硬编码逐字节同值）。`shadow_bytes = None` =
+  不支持栈参数（超寄存器参数 → Unsupported）。这五个键是 ISA 数据，宿主/生成代码
+  不再写死 x86 的 2/1/32/`RBP`/`RSP`。
 - `call_clobbers`：Call 点被调用方破坏的寄存器。缺省 = 整数参数寄存器 + 返回寄存
   器。**定宽 ISA 无 callee-saved 保存序列时须列全 caller-saved**，否则跨调用存活
   值留在寄存器被覆盖（实测递归 fib 死循环）。s 系（@push_callee 保存）不在列表。

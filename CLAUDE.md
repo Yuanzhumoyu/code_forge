@@ -285,7 +285,7 @@ let name = node.get_text("name")?;
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +
   能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 195 passed /
-  3 skipped**（本机 2026-09-12 实测 `cargo test -p forge-tests --lib
+  3 skipped**（本机 2026-09-13 实测 `cargo test -p forge-tests --lib
   jit_matrix_x86_v12`；旧记录的 193 已过时）、**riscv64_v12 131 passed /
   67 skipped，0 failed**（QEMU 通道；2026-09-13 本机实测
   `cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --test-threads=1
@@ -302,11 +302,13 @@ let name = node.get_text("name")?;
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
-- **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽单位一律由 `[meta]` 派生
-  （`default_gpr_width`/`default_fpr_width`/`addr_width`/`value_gpr_width`/
-  `value_fpr_width`/`slot_bytes`/`fp_overhead_bytes`/`vector_tiers`；优先级
-  显式键 > 派生 > **报错**）。生成期用 `__DEFAULT_GPR_CLASS`/`__ADDR_CLASS`/
-  `__SLOT_BYTES` 等常量，宿主用 `TargetRegInfo::{addr_class, value_gpr_class,
+- **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局一律由 TOML 派生
+  （`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/`value_gpr_width`/
+  `value_fpr_width`/`vector_tiers`；`[stack]`：`slot`/`align`/`fp_save`；
+  `[abi.stack_args]`：`callee_base`/`caller_base`/`first_offset_slots`/`stride_slots`/
+  `shadow_bytes`；优先级 显式键 > 派生 > **报错**）。生成期用
+  `__DEFAULT_GPR_CLASS`/`__ADDR_CLASS`/`__SLOT_BYTES` 等常量，宿主用
+  `TargetRegInfo::{addr_class, value_gpr_class,
   value_fpr_class, slot_bytes, vector_tiers, class_for_type}`——**不要**再写
   `RegClass::GPR64`/8 字节缺省。1 字节寄存器 ISA 夹具 =
   `crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（由
