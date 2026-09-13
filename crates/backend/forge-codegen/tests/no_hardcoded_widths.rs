@@ -15,8 +15,8 @@
 ///
 /// **已知覆盖边界**：只匹配**类字面量**；裸数字宽度（栈槽步长 `8`、帧开销
 /// `16`、sret 槽 `72` 等）不在范围内——见
-/// `docs/reference/isa-dsl.md` 的「宽度元数据」节（那些由 `slot_bytes` /
-/// `fp_overhead_bytes` 派生，其中 `[abi].stack_arg_shadow` 与 `wide_vec_*` /
+/// `docs/reference/isa-dsl.md` 的「宽度元数据」节（那些由 `[stack].slot` /
+/// `[stack].fp_save` 派生，其中 `[abi.stack_args]` 与 `wide_vec_*` /
 /// `frame_rbp_addr` 路径的角色目前只有 x86 声明）。
 const FORBIDDEN: &[&str] = &[
     "RegClass::GPR(1)",

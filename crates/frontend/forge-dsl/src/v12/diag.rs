@@ -107,7 +107,7 @@ mod tests {
         );
         assert_eq!(declared_name("[reg.gpr8]: dup"), Some("gpr8"));
         // 无声明名的节 → None（退化到首行，不乱指）
-        assert_eq!(declared_name("[abi].stack_align must be"), None);
+        assert_eq!(declared_name("[stack].align must be"), None);
         assert_eq!(declared_name("[[forms]]: duplicate"), None);
         assert_eq!(declared_name("[conventions.bitfields]: x"), None);
     }

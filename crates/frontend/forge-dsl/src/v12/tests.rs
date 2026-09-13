@@ -2182,7 +2182,7 @@ asm = "add {dst}"
 
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────
 
-/// `[abi].stack_arg_shadow` 一旦声明，就必须有 `roles = ["stack_arg_load"]` /
+/// `[abi.stack_args].shadow_bytes` 一旦声明，就必须有 `roles = ["stack_arg_load"]` /
 /// `["stack_arg_store"]` 的指令——缺失时**生成期**给出点名角色的明确错误，
 /// 绝不用 x86 指令名（Mov64Rm/Mov64Mr + mem/dest/src）兜底
 /// （见 docs/reference/isa-dsl.md 角色章）。
@@ -2190,7 +2190,7 @@ asm = "add {dst}"
 /// 夹具：直接拿真实 `isa/x86_v12.toml` 做字符串手术删掉那两条 `roles = [...]`，
 /// 其余保持原样——测的是**发货 ISA** 的真实生成路径，而不是人造小模型。
 #[test]
-fn stack_arg_shadow_requires_role_tags() {
+fn stack_args_requires_role_tags() {
     let src = include_str!("../../../../../isa/x86_v12.toml");
     // 正例：原样 → 全量生成成功（x86 声明了 shadow + 两个角色）。
     let m = parse_and_validate(src).expect("x86 doc parses");
@@ -2205,7 +2205,7 @@ fn stack_arg_shadow_requires_role_tags() {
         // 缺口可能在 validate 或 codegen 暴露，两处都算合格——但必须**点名角色**。
         let err = match parse_and_validate(&mutated) {
             Ok(m2) => crate::v12::codegen::generate(&m2)
-                .expect_err("声明 stack_arg_shadow 却缺角色 → 必须生成期报错"),
+                .expect_err("声明 [abi.stack_args].shadow_bytes 却缺角色 → 必须生成期报错"),
             Err(e) => e.to_string(),
         };
         eprintln!("[W1] 缺 {role} → {err}");
@@ -2433,7 +2433,7 @@ fn codegen_msg(doc: &str) -> String {
 }
 
 /// 校验期**或**生成期报错都算合格（缺口可能被任一层拦住）——与
-/// `stack_arg_shadow_requires_role_tags` 的既有写法一致。
+/// `stack_args_requires_role_tags` 的既有写法一致。
 fn any_stage_msg(doc: &str) -> String {
     match parse_and_validate(doc) {
         Ok(m) => crate::v12::codegen::generate(&m)

@@ -1053,7 +1053,7 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
     };
     // arg_slot / arg_class.strategy 的值域由枚举在反序列化期强制
 
-    // stack_arg_shadow：>0 且 **栈槽单位** 的倍数（元数据派生：x86 = 8 字节槽；
+    // [abi.stack_args].shadow_bytes：>0 且 **栈槽单位** 的倍数（元数据派生：x86 = 8 字节槽；
     // 1 字节寄存器 ISA 的槽是 1 字节——历史实现写死"8 的倍数"）。
     if let Some(shadow) = abi.stack_args.as_ref().and_then(|s| s.shadow_bytes) {
         if shadow == 0 {

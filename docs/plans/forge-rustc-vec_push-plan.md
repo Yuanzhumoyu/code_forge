@@ -251,7 +251,7 @@ mixed_args 全部转正。剩余 2 known：vec_push（exit=-1073741819，运行�
 
 | 组件 | 实现 |
 | --- | --- |
-| TOML | `[abi].stack_arg_shadow = 32` + MOV64_RM/MR 加 `stack_arg_load/store` 标签 |
+| TOML | `[abi.stack_args].shadow_bytes = 32`（2026-09-13 键归类前写作 `[abi].stack_arg_shadow`）+ MOV64_RM/MR 加 `stack_arg_load/store` 标签 |
 | 调用方 | 第 5+ 参数 store [rsp+shadow+(k-n)*8]（标签驱动，不用指令名） |
 | 被调方 | 从 [rbp+16+shadow+(k-n)*8] load 到 spill 槽（无条件，防共享寄存器批量覆盖） |
 | 帧布局 | frame_size 并入栈参数区；spill 槽起始上移 stack_args |
@@ -960,7 +960,8 @@ f32 位型一致。运行级 lane15=16 仍由原 V512 用例在有 AVX-512F 的 
 
 **问题**：`forge-dsl` 通用生成器里还剩三处「按 x86 指令名兜底」——`frame.rs` 与
 `lowering.rs` 的 `format_ident!("Mov64Rm")` / `("Mov64Mr")` + `mem/dest/src` 字段名，
-只在 ISA 未声明 `[abi].stack_arg_shadow` 时取值。与 `docs/reference/isa-dsl.md` 角色章
+只在 ISA 未声明 `[abi.stack_args].shadow_bytes` 时取值（键名 2026-09-13 归类前为
+`[abi].stack_arg_shadow`）。与 `docs/reference/isa-dsl.md` 角色章
 「角色缺失 → 明确 Unsupported，不再静默去查一个别的 ISA 的指令名」相悖。
 
 **定位证据**：兜底今天是死代码（x86 声明了 shadow + 两个角色 → 走标签路径；riscv 走
@@ -973,9 +974,10 @@ shadow 缺角色」的 ISA 会生成引用不存在变体的代码（模糊的�
 派生字段 + `info.vn` 变体名）；缺角色时 shadow 已声明 → **生成期**点名角色的错误，
 未声明 → `None`（不生成该分支 / 给出明确 Emit 错误）。生成器里不再出现任何字面指令名。
 
-**验证**：新增 DSL 守卫 `stack_arg_shadow_requires_role_tags`（夹具 = 真实
+**验证**：新增 DSL 守卫 `stack_args_requires_role_tags`（2026-09-13 键归类时由
+`stack_arg_shadow_requires_role_tags` 改名；夹具 = 真实
 `isa/x86_v12.toml` 字符串手术删 `roles` 行）：删 `stack_arg_load`/`stack_arg_store` 时由
-frame.rs 报 `…[abi].stack_arg_shadow 已声明，但本 ISA 缺 roles = ["…"] 的指令（不按指令名兜底）`；
+frame.rs 报 `…[abi.stack_args].shadow_bytes 已声明，但本 ISA 缺 roles = ["…"] 的指令（不按指令名兜底）`；
 原样则全量 `generate()` 成功。回归：`forge-codegen` 0 failed、clippy/fmt 干净、
 e2e 8/8 + `passed=103/103 known=[]`（含 `five_args_stack`）。
 

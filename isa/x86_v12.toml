@@ -939,7 +939,7 @@ modrm = { rm = "[mem]" }
 opcode = 0x8B
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "mov {dst}, {mem}"
-# 被调方栈参数 load（[abi].stack_arg_shadow 启用时从 [rbp+off] 收第 5+ 参数）
+# 被调方栈参数 load（[abi.stack_args].shadow_bytes 启用时从 [fp+first_off*slot+…] 收第 5+ 参数）
 
 [[instructions]]
 name = "MOV64_MR"
@@ -949,7 +949,7 @@ modrm = { rm = "[mem]" }
 opcode = 0x89
 ops = ["src:gpr", "mem:mem"]
 asm = "mov {mem}, {src}"
-# 调用方栈参数 store（[abi].stack_arg_shadow 启用时第 5+ 参数写 [rsp+off]）
+# 调用方栈参数 store（[abi.stack_args].shadow_bytes 启用时第 5+ 参数写 [sp+shadow+…]）
 
 [[instructions]]
 name = "MOVSD_RM"
