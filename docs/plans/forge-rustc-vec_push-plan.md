@@ -1,4 +1,6 @@
-﻿# forge-rustc vec_push/vec_string 完整改进方案
+﻿| 34736538777（#63） | `7fdd34f` | WA-47：V512 lane 提取补规则 + `::warning::` 事件 annotations | **11 job 全绿**；但该 run 的 annotations 显示 `AVX512-HW=0` + `AVX512-SKIP test_jit_v512_byref_param` ⇒ **本次跑在无 AVX-512F 的 runner 上，V512 用例被跳过**（这正是新通道的价值：绿 = 跳过，不再与"真跑通过"混淆） |
+（`step summary` 不进 check-run 的 `output.summary`、job 日志 403）。
+# forge-rustc vec_push/vec_string 完整改进方案
 
 > 对应 `docs/archive/roadmap-status.md` 剩余事项 2 与 `crates/tools/forge-rustc/WORKAROUNDS.md`
 > [WA-11]。e2e 58 用例中 2 个预期失败（`vec_push` SEGV、`vec_string` len 错）
