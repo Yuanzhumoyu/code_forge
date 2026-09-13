@@ -186,12 +186,21 @@ pub(crate) fn gen_machine_inst(
         let vn = &info.vn;
         // implicit_regs：指令隐式破坏的物理寄存器（cqo 的 RDX、idiv 的
         // RAX/RDX）→ MachineInst::clobbers（regalloc 在本指令点避开）。
+        // 名字解析 **fail-closed**：解析不到即生成期报错（历史实现 `filter_map`
+        // 静默丢弃 ⇒ clobber 集缺失 ⇒ regalloc 会分配被隐式破坏的寄存器）。
         if let Some(implicit) = &info.inst.implicit_regs {
-            let entries: Vec<TokenStream> = implicit
-                .iter()
-                .filter_map(|r| name_to_idx.get(r.as_str()).copied())
-                .map(|idx| quote! { (#idx, #gpr_clobber_toks) })
-                .collect();
+            let mut entries: Vec<TokenStream> = Vec::with_capacity(implicit.len());
+            for r in implicit {
+                let idx = name_to_idx.get(r.as_str()).copied().ok_or_else(|| {
+                    format!(
+                        "[[instructions.{}]].implicit_regs: 物理寄存器名 \"{r}\" 不在主 GPR 组 \
+                         [reg.{gpr_clobber_class}] 内（生成期 fail-closed：静默丢弃会让 regalloc \
+                         分配被隐式破坏的寄存器）",
+                        info.inst.name
+                    )
+                })?;
+                entries.push(quote! { (#idx, #gpr_clobber_toks) });
+            }
             if !entries.is_empty() {
                 implicit_arms.push(quote! { Inst::#vn { .. } => &[#(#entries),*] });
             }

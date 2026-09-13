@@ -138,6 +138,9 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
     let _ = m.addr_class()?;
     let _ = m.value_gpr_class()?;
     let _ = m.value_fpr_class()?;
+    // 向量 by-ref 阈值：`strategy`/`limit` 成对性 + 唯一性 + 8 的倍数
+    // （此前只在 `gen_abi` 生成期检查，读 TOML 的人拿不到早期反馈）。
+    let _ = m.vector_by_ref_limit_bytes()?;
     if m.slot_bytes()? == 0 {
         return Err("[meta].slot_bytes must be > 0".into());
     }
@@ -199,6 +202,41 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
     // 索引 0、scratch/callee_saved 缺失（regalloc 会分配被占用寄存器）。
     // 自由模板（lowering/emit 的 `insts`）不在这里猜——它含助记符与内存语法。
     validate_reg_names(m)?;
+    validate_spill_coverage(m)?;
+    Ok(())
+}
+
+/// 溢出模板覆盖校验（R5）：**每个比宿主浮点值池更宽的浮点/向量类**都必须有
+/// 对应的 `[spill.FPR<bytes>]` 模板——生成器的 FPR 溢出按宽度档分派，缺档会在
+/// **编译期**（IR 编译时）才报 `Unsupported`，读 TOML 的人很难定位。
+///
+/// 这里把它提前到 DSL 校验期：点名"哪个类需要哪个键"。（没有浮点组、或只有
+/// 标量宽度的 ISA 不需要任何档位。）
+fn validate_spill_coverage(m: &V12Model) -> Result<(), String> {
+    let scalar = m.value_fpr_class()?.map(|c| c.width()).unwrap_or(0);
+    // 有 `[spill.FPR]` 才谈档位（否则 FPR 溢出整条路径本来就是 no-op）。
+    let Some(_base) = m.spill.get("FPR") else {
+        return Ok(());
+    };
+    let declared_tiers: BTreeSet<u16> = m
+        .spill
+        .keys()
+        .filter_map(|k| k.strip_prefix("FPR"))
+        .filter_map(|n| n.parse::<u16>().ok())
+        .collect();
+    for rc in m.reg.keys() {
+        let w = match rc {
+            RegClass::FPR(w) | RegClass::VEC(w) => *w,
+            _ => continue,
+        };
+        if w <= scalar || declared_tiers.contains(&w) {
+            continue;
+        }
+        return Err(format!(
+            "[reg.{rc}] 宽 {w} 字节 > 浮点值池 {scalar} 字节，但缺少 [spill.FPR{w}] 溢出模板\
+             ——生成器按宽度档分派，缺档会在 IR 编译期才报 Unsupported（此处提前点名）"
+        ));
+    }
     Ok(())
 }
 

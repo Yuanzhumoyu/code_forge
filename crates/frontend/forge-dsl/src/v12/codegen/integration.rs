@@ -532,15 +532,9 @@ fn resolve_frame_reg(
     key: &str,
     frame_declared: bool,
 ) -> Result<(TokenStream, u32), String> {
-    let hit = declared
-        .and_then(|n| name_to_idx.get(n.as_str()).map(|&i| (n.clone(), i)))
-        .or_else(|| {
-            name_to_idx
-                .iter()
-                .find(|(n, _)| conventional.iter().any(|c| n.eq_ignore_ascii_case(c)))
-                .map(|(n, &i)| (n.clone(), i))
-        });
-    if let Some((n, i)) = hit {
+    // 显式声明优先**且唯一**：声明了却解析不到 → 直接报错，不用惯例名顶替
+    // （否则 `sp = "EAX"`（在别的组）会被静默换成 RSP——与本文档字符串相反）。
+    if let Some((n, i)) = declared.and_then(|n| name_to_idx.get(n.as_str()).map(|&i| (n, i))) {
         let ident = format_ident!("{n}");
         return Ok((quote! { Reg::#ident }, i));
     }
@@ -549,6 +543,14 @@ fn resolve_frame_reg(
             "{key}: 声明为 \"{n}\" 但不在 [reg.{main_group}] 组内——请改成该组内的寄存器名\
              （生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
         ));
+    }
+    // 未声明 → 惯例名（RSP/SP、RBP/FP）。
+    if let Some((n, &i)) = name_to_idx
+        .iter()
+        .find(|(n, _)| conventional.iter().any(|c| n.eq_ignore_ascii_case(c)))
+    {
+        let ident = format_ident!("{n}");
+        return Ok((quote! { Reg::#ident }, i));
     }
     if frame_declared {
         return Err(format!(

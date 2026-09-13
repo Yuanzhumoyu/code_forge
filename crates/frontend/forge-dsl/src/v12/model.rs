@@ -186,20 +186,45 @@ impl V12Model {
         let Some(abi) = &self.abi else {
             return Ok(None);
         };
+        let mut found: Option<(String, u16)> = None;
         for ac in &abi.arg_class {
-            if ac.strategy == Some(ArgStrategy::ByRef)
-                && let Some(bits) = ac.limit
-            {
-                if bits == 0 || bits % 8 != 0 {
+            let name = ac.class.name();
+            match (ac.strategy, ac.limit) {
+                // by-ref 与 limit 必须**成对**：只写一个都是配置错误（历史实现
+                // 静默忽略 limit ⇒ 宽向量按值传参会静默截断/错 ABI）。
+                (Some(ArgStrategy::ByRef), None) => {
                     return Err(format!(
-                        "[abi.arg_class.{}]: by-ref limit {bits} 必须是 8 的倍数（单位：位）",
-                        ac.class.name()
+                        "[abi.arg_class.{name}]: strategy = \"by-ref\" 必须同时声明 `limit`（位）"
                     ));
                 }
-                return Ok(Some((bits / 8) as u16));
+                (Some(ArgStrategy::ByRef), Some(bits)) => {
+                    if bits == 0 || bits % 8 != 0 {
+                        return Err(format!(
+                            "[abi.arg_class.{name}]: by-ref limit {bits} 必须是 8 的倍数（单位：位）"
+                        ));
+                    }
+                    let bytes = (bits / 8) as u16;
+                    if let Some((prev, prev_bytes)) = &found
+                        && *prev_bytes != bytes
+                    {
+                        return Err(format!(
+                            "[abi.arg_class]: 多个 by-ref 类的阈值冲突（{prev} = {prev_bytes} 字节 vs \
+                             {name} = {bytes} 字节）——阈值必须唯一，否则 ABI 依声明序而变"
+                        ));
+                    }
+                    found.get_or_insert((name.to_string(), bytes));
+                }
+                // 无 by-ref 策略却写了 limit：按值类没有阈值语义。
+                (None, Some(bits)) => {
+                    return Err(format!(
+                        "[abi.arg_class.{name}]: 声明了 `limit = {bits}` 但 strategy 不是 \
+                         \"by-ref\"——按值传参的类没有阈值语义（写 strategy = \"by-ref\" 或删掉 limit）"
+                    ));
+                }
+                (None, None) => {}
             }
         }
-        Ok(None)
+        Ok(found.map(|(_, b)| b))
     }
 
     /// 指定组的寄存器名列表（缺组 → Err）。

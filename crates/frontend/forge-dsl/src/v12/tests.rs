@@ -2366,3 +2366,241 @@ fn width_metadata_default_opsize_needs_matching_group() {
     let msg = validation_msg(&one_byte_doc("default_opsize = 12"));
     assert!(msg.contains("8 的倍数"), "msg: {msg}");
 }
+
+// ─────────── 残余收敛（2026-09-13）：冲突/静默丢弃类缺口逐条 fail-closed ───────────
+
+/// 两宽度视图的最小 ISA（主 GPR = gpr8；`gpr4` 用来制造"声明在别组"的名字），
+/// 可注入 `[abi]`/`[[instructions]]`/`[spill.*]` 片段。
+fn two_view_doc(extra: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "twoview"
+default_inst_width = 32
+[reg.gpr8]
+names = ["R0", "R1", "R2", "R3"]
+[reg.gpr4]
+base_index = 0
+names = ["E0", "E1", "E2", "E3"]
+[reg.fpr16]
+base_index = 0
+names = ["F0", "F1"]
+[conventions.bitfields]
+opcode = {{ offset = 0, width = 8 }}
+rd = {{ offset = 8, width = 3 }}
+rs1 = {{ offset = 11, width = 3 }}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out"]
+[[instructions]]
+name = "NOP"
+form = "W"
+opcode = 0
+asm = "nop"
+[[instructions]]
+name = "MOV"
+roles = ["gpr_mov"]
+form = "RR"
+opcode = 16
+ops = ["dst:g:out", "src:g"]
+asm = "mov {{dst}}, {{src}}"
+[[forms]]
+name = "RR"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1"]
+[[forms]]
+name = "W"
+opcode_field = "opcode"
+operand_fields = []
+{extra}
+"#
+    )
+}
+
+/// 生成期错误（`generate` 阶段）——与 `validation_msg` 分开，因为 R2/R3 属于
+/// codegen 而非 validate。
+fn codegen_msg(doc: &str) -> String {
+    match parse_and_validate(doc) {
+        Ok(m) => crate::v12::codegen::generate(&m)
+            .err()
+            .unwrap_or_else(|| panic!("预期生成期报错，实际生成成功")),
+        Err(e) => panic!("预期生成期报错，解析/校验先失败：{e}"),
+    }
+}
+
+/// 校验期**或**生成期报错都算合格（缺口可能被任一层拦住）——与
+/// `stack_arg_shadow_requires_role_tags` 的既有写法一致。
+fn any_stage_msg(doc: &str) -> String {
+    match parse_and_validate(doc) {
+        Ok(m) => crate::v12::codegen::generate(&m)
+            .err()
+            .unwrap_or_else(|| panic!("预期报错（校验或生成期），实际两阶段都成功")),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// R3：`[abi.frame].sp` 声明了却不在**主 GPR 组**内 → 生成期报错，
+/// **不得**被惯例名（RSP/SP）顶替。
+#[test]
+fn frame_sp_declared_outside_main_group_is_error() {
+    let msg = codegen_msg(&two_view_doc(
+        r#"
+[abi]
+[[abi.arg_class]]
+class = "int"
+regs = ["R0", "R1"]
+[abi.frame]
+sp = "E0"
+fp = "E1"
+"#,
+    ));
+    assert!(msg.contains("sp"), "必须点名 [abi.frame].sp：{msg}");
+    assert!(msg.contains("E0"), "必须点名冲突的名字：{msg}");
+    assert!(
+        !msg.contains("已解析为") && msg.contains("生成期 fail-closed"),
+        "必须是 fail-closed 而非静默替换：{msg}"
+    );
+}
+
+/// R3 反例：`sp` 落在主 GPR 组内 → 正常解析（不报错）。
+#[test]
+fn frame_sp_inside_main_group_resolves() {
+    let m = parse_and_validate(&two_view_doc(
+        r#"
+[abi]
+[[abi.arg_class]]
+class = "int"
+regs = ["R0", "R1"]
+[abi.frame]
+sp = "R3"
+fp = "R2"
+"#,
+    ))
+    .expect("主组内的 sp/fp 合法");
+    crate::v12::codegen::generate(&m).expect("生成成功");
+}
+
+/// R2：`[[instructions]].implicit_regs` 里的名字解析不到 → 校验期/生成期报错
+/// （历史实现 `filter_map` 静默丢弃 ⇒ clobber 集缺失）。
+#[test]
+fn implicit_regs_unknown_name_is_error() {
+    let msg = any_stage_msg(&two_view_doc(
+        r#"
+[[instructions]]
+name = "CQO"
+form = "W"
+opcode = 1
+implicit_regs = ["NOPE"]
+asm = "cqo"
+"#,
+    ));
+    assert!(msg.contains("implicit_regs"), "msg: {msg}");
+    assert!(msg.contains("NOPE"), "必须点名未知寄存器：{msg}");
+    assert!(msg.contains("CQO"), "必须点名指令：{msg}");
+}
+
+/// R2 反例：`implicit_regs` 用主组内的名字 → 正常生成。
+#[test]
+fn implicit_regs_known_name_generates() {
+    let m = parse_and_validate(&two_view_doc(
+        r#"
+[[instructions]]
+name = "CQO"
+form = "W"
+opcode = 1
+implicit_regs = ["R1"]
+asm = "cqo"
+"#,
+    ))
+    .expect("合法");
+    crate::v12::codegen::generate(&m).expect("生成成功");
+}
+
+/// R4：`strategy = "by-ref"` 与 `limit` 必须成对；阈值必须唯一（位→字节）。
+#[test]
+fn by_ref_limit_must_be_paired_and_unique() {
+    // 只写 strategy
+    let msg = validation_msg(&two_view_doc(
+        r#"
+[abi]
+[[abi.arg_class]]
+class = "vector"
+strategy = "by-ref"
+"#,
+    ));
+    assert!(msg.contains("limit"), "msg: {msg}");
+    // 只写 limit
+    let msg = validation_msg(&two_view_doc(
+        r#"
+[abi]
+[[abi.arg_class]]
+class = "vector"
+limit = 128
+"#,
+    ));
+    assert!(msg.contains("by-ref"), "msg: {msg}");
+    // 阈值冲突
+    let msg = validation_msg(&two_view_doc(
+        r#"
+[abi]
+[[abi.arg_class]]
+class = "vector"
+strategy = "by-ref"
+limit = 128
+[[abi.arg_class]]
+class = "float"
+strategy = "by-ref"
+limit = 256
+"#,
+    ));
+    assert!(msg.contains("冲突"), "msg: {msg}");
+    // 合法：单个 + 8 的倍数
+    let m = parse_and_validate(&two_view_doc(
+        r#"
+[abi]
+[[abi.arg_class]]
+class = "vector"
+strategy = "by-ref"
+limit = 128
+"#,
+    ))
+    .expect("合法");
+    assert_eq!(m.vector_by_ref_limit_bytes().unwrap(), Some(16));
+}
+
+/// R5：比浮点值池更宽的浮点/向量类必须有 `[spill.FPR<bytes>]` 档位——
+/// 缺失在校验期点名（历史实现要等 IR 编译期才报 Unsupported）。
+#[test]
+fn wide_fpr_class_requires_spill_tier() {
+    // fpr16（16 字节 > 缺省标量 8）但没有 [spill.FPR16]
+    let msg = validation_msg(&two_view_doc(
+        r#"
+[spill.GPR]
+load = "NOP"
+store = "NOP"
+[spill.FPR]
+load = "NOP"
+store = "NOP"
+"#,
+    ));
+    assert!(msg.contains("FPR16"), "必须点名缺哪个键：{msg}");
+    assert!(msg.contains("reg.fpr16"), "必须点名哪个类：{msg}");
+    // 声明档位后合法
+    let m = parse_and_validate(&two_view_doc(
+        r#"
+[spill.GPR]
+load = "NOP"
+store = "NOP"
+[spill.FPR]
+load = "NOP"
+store = "NOP"
+[spill.FPR16]
+load = "NOP"
+store = "NOP"
+"#,
+    ))
+    .expect("声明档位后合法");
+    assert!(m.spill.contains_key("FPR16"));
+}
