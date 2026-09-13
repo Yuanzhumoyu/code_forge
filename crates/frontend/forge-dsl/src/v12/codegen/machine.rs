@@ -31,9 +31,9 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
     let mut to_index_arms: Vec<TokenStream> = Vec::new();
     let mut class_arms: Vec<TokenStream> = Vec::new();
     let mut width_arms: Vec<TokenStream> = Vec::new();
-    // from_index：GPR 区 → 主 GPR 视图（"gpr64"/"gpr" 组）；FPR 区 → XMM 视图
-    let mut gpr_main: Option<RegClass> = None;
-    let mut fpr_main: Option<RegClass> = None;
+    // from_index：GPR 区 → 主 GPR 视图；FPR 区 → 浮点视图。默认值类在下面
+    // 用**元数据派生**（`V12Model::main_gpr_class`/`main_fpr_class`），不在此处
+    // 按"已声明组最宽"手推。
     for (reg_class, names, base) in &groups {
         for (i, n) in names.iter().enumerate() {
             let v = format_ident!("{n}");
@@ -51,39 +51,28 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
             width_arms.push(quote! { Reg::#v => #width });
         }
     }
-    // 主组兜底：宽 GPR 组 / 宽 FPR 组（`__DEFAULT_GPR_CLASS`/`__DEFAULT_FPR_CLASS`）。
-    // 此前两值都取 `groups.first()`（按 RegClass 降序 → 最高类，x86 即 FPR/XMM），
-    // 使 `__DEFAULT_GPR_CLASS` 误成 GPR(16)（无效类）——修正为各自的宽度最大组。
-    if gpr_main.is_none() {
-        gpr_main = groups
-            .iter()
-            .filter(|(rc, ..)| matches!(rc, RegClass::GPR(_)))
-            .max_by_key(|(rc, ..)| rc.width())
-            .map(|(g, ..)| *g);
-    }
-    if fpr_main.is_none() {
-        // 优先 XMM（16 字节）作为默认浮点类——ABI/SSE 占位以 XMM 为基准；
-        // ZMM（32 字节）等 EVEX 组不改变默认（否则 SSE 占位变成 ZMM 视图）。
-        fpr_main = groups
-            .iter()
-            .filter(|(rc, ..)| matches!(rc, RegClass::FPR(_)))
-            .find(|(rc, ..)| rc.width() == 16)
-            .or_else(|| {
-                groups
-                    .iter()
-                    .filter(|(rc, ..)| matches!(rc, RegClass::FPR(_)))
-                    .max_by_key(|(rc, ..)| rc.width())
-            })
-            .map(|(g, ..)| *g);
-    }
-    // from_index：按传入 RegClass 消歧（is_fp → FPR 视图、否则 GPR 视图）。
-    // v12 物理编号 = 组内索引（XMM0=0），故 FPR 分支按组内索引映射（不偏移）。
-    let gpr_width = gpr_main.map(|r| r.width()).unwrap_or_else(|| 8);
-    let fpr_width = fpr_main.map(|r| r.width()).unwrap_or_else(|| 8);
+    // 主组 = **元数据派生**（`[meta]` 显式宽度键 > 最宽已声明组；缺 GPR 组
+    // 即 Err）。历史实现取 `GPR(8).or(GPR(4)).unwrap_or(8)`——1 字节寄存器
+    // ISA 两者都不存在，会拿到一个不存在的类（并让名字表全空）。
+    let gpr_main = model.main_gpr_class()?;
+    // 无 FPR 组（arm64/demo）= FPR(8)：`from_index` 的 FPR 视图按 FPR 区映射，
+    // 不需要同名宽度组（历史 `unwrap_or(8)` 语义，保留）。
+    let fpr_main = model.main_fpr_class()?.unwrap_or(RegClass::FPR(8));
+    // 地址类 / 值池 / 栈槽单位 / 帧开销（全部元数据驱动，缺组即 Err）。
+    let addr_class = model.addr_class()?;
+    let value_gpr = model.value_gpr_class()?;
+    let value_fpr = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));
+    let slot_bytes = model.slot_bytes()?;
+    let fp_overhead = model.fp_overhead_bytes()?;
+    let vector_tiers = model.vector_tiers();
+    let n_tiers = vector_tiers.len();
 
     // 默认值类：主 GPR 组宽度 / FPR 组宽度
-    let gpr_class = quote! { forge_ir::RegClass::GPR(#gpr_width) };
-    let fpr_class = quote! { forge_ir::RegClass::FPR(#fpr_width) };
+    let gpr_class = quote! { #gpr_main };
+    let fpr_class = quote! { #fpr_main };
+    let addr_toks = quote! { #addr_class };
+    let value_gpr_toks = quote! { #value_gpr };
+    let value_fpr_toks = quote! { #value_fpr };
 
     // from_index_grp：按组名 + 索引构造 Reg（decode 宽度视图 / assemble 组视图）。
     // 覆盖全部组（含宽度视图组 gpr8/16/32/64 与浮点组）。
@@ -100,7 +89,13 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
                 fb = Some(v);
             }
         }
-        let fb = fb.unwrap_or_else(|| format_ident!("RAX"));
+        // 组内索引越界兜底 = 该组首个寄存器（组名由 TOML 决定，**不写死 x86
+        // 的 "RAX"**；组为空由 `group_names` 在生成期报错，这里到不了）。
+        let Some(fb) = fb else {
+            return Err(format!(
+                "[reg.{reg_class}]: 组内没有寄存器名——无法生成 from_index_grp 兜底"
+            ));
+        };
         grp_arms.push(quote! {
             #gname_lit => match idx { #(#idx_arms,)* _ => Reg::#fb }
         });
@@ -109,8 +104,20 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
     Ok(quote! {
         /// 默认整数值类（lowering 中 alloc_xreg 的默认目标类；元数据驱动）。
         pub(crate) const __DEFAULT_GPR_CLASS: forge_ir::RegClass = #gpr_class;
-        /// 默认浮点值类。
+        /// 默认浮点值类（ABI/SSE 占位基准）。
         pub(crate) const __DEFAULT_FPR_CLASS: forge_ir::RegClass = #fpr_class;
+        /// 地址/指针类（MemRef base/index、`lea`、sp/fp、帧地址）。
+        pub(crate) const __ADDR_CLASS: forge_ir::RegClass = #addr_toks;
+        /// 宿主整数值寄存器池类（值 XReg/零值/临时 vreg）。
+        pub(crate) const __VALUE_GPR_CLASS: forge_ir::RegClass = #value_gpr_toks;
+        /// 宿主浮点值寄存器池类（f64 值池宽；≠ `__DEFAULT_FPR_CLASS`）。
+        pub(crate) const __VALUE_FPR_CLASS: forge_ir::RegClass = #value_fpr_toks;
+        /// ABI 栈槽单位（字节）。
+        pub(crate) const __SLOT_BYTES: u16 = #slot_bytes;
+        /// 帧指针保存槽字节数。
+        pub(crate) const __FP_OVERHEAD_BYTES: u16 = #fp_overhead;
+        /// 向量类字节档位（升序；`TargetRegInfo::vector_tiers`）。
+        pub(crate) const __VECTOR_TIERS: [u16; #n_tiers] = [#(#vector_tiers),*];
 
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum Reg { #(#variants),* }
@@ -155,19 +162,13 @@ pub(crate) fn gen_machine_inst(
     // 字段可改写性（regalloc 对 spilled def 的 fail-closed 校验用，见 WA-40）：
     // 只有 reg_field_entries 里登记的字段能被 set_reg_field 改写。
     let mut reg_field_settable_arms: Vec<TokenStream> = Vec::new();
-    // 物理寄存器名 → 索引（implicit_regs 解析用）。
-    let gpr_names: Vec<String> = model
-        .reg
-        .get(&RegClass::GPR(8))
-        .or_else(|| model.reg.get(&RegClass::GPR(4)))
-        .map(group_names)
-        .transpose()?
-        .unwrap_or_default();
-    let name_to_idx: std::collections::HashMap<&str, u32> = gpr_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i as u32))
-        .collect();
+    // 物理寄存器名 → 索引（implicit_regs 解析用）。锚点 = **元数据派生**的
+    // 主 GPR 类（`[meta].default_gpr_width` > 最宽已声明组），缺组即 Err——
+    // 历史实现锚定 `GPR(8).or(GPR(4))`，1 字节寄存器 ISA 会得到空表并静默
+    // 丢弃 implicit_regs（clobber 集缺失 → regalloc 分配被隐式破坏的寄存器）。
+    let name_to_idx = model.main_gpr_name_to_idx()?;
+    let gpr_clobber_class = model.main_gpr_class()?;
+    let gpr_clobber_toks = quote! { #gpr_clobber_class };
 
     for info in infos {
         let vn = &info.vn;
@@ -177,7 +178,7 @@ pub(crate) fn gen_machine_inst(
             let entries: Vec<TokenStream> = implicit
                 .iter()
                 .filter_map(|r| name_to_idx.get(r.as_str()).copied())
-                .map(|idx| quote! { (#idx, forge_ir::RegClass::GPR64) })
+                .map(|idx| quote! { (#idx, #gpr_clobber_toks) })
                 .collect();
             if !entries.is_empty() {
                 implicit_arms.push(quote! { Inst::#vn { .. } => &[#(#entries),*] });
@@ -284,9 +285,10 @@ pub(crate) fn gen_machine_inst(
                         // GPR(4)/EAX 视图）。若无此传导，回填退化 64 位视图、
                         // encode opsize 恒 64（auto 宽度分发失效——WA-35）。
                         // 仅接受 GPR 族 class（gprx 只收 GPR）：浮点/向量值误配
-                        // 进 gprx 槽（如 F64 store 穷举）时回退 GPR(8)——传
-                        // FPR(w) 会给 fpr8(MM) 组 id 越界（coverage 实证）。
-                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, if class.is_int() { class } else { forge_ir::RegClass::GPR(8) }) }
+                        // 进 gprx 槽（如 F64 store 穷举）时回退**主 GPR 类**
+                        //（元数据派生；1 字节寄存器 ISA = GPR(1)）——传 FPR(w)
+                        // 会给 fpr8(MM) 组 id 越界（coverage 实证）。
+                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, if class.is_int() { class } else { __DEFAULT_GPR_CLASS }) }
                     }
                 })
                 .collect();

@@ -35,7 +35,6 @@ use crate::v12::pred::CmpOp;
 
 use super::super::model::*;
 use super::super::pred::Pred;
-use super::super::shared::group_names;
 use super::InstInfo;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -382,60 +381,27 @@ fn gen_isa_info(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStream, Str
 }
 
 fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
-    // 主 GPR 组（gpr/gpr64）与浮点组（xmm/fpr）数量（names.len() 优先，
-    // 缺省 count 字段）。
-    let gpr_count = model
-        .reg
-        .get(&RegClass::GPR(8))
-        .or_else(|| model.reg.get(&RegClass::GPR(4)))
-        .map(|g| {
-            g.names
-                .as_ref()
-                .map(|n| n.len() as u32)
-                .or(g.count.map(|c| c as u32))
-                .unwrap_or(16)
-        })
-        .unwrap_or(16);
+    // 主 GPR 类 = **元数据派生**（`[meta].default_gpr_width` > 最宽已声明 GPR 组；
+    // 缺 GPR 组即 Err）。历史实现锚定 `GPR(8).or(GPR(4)).unwrap_or(16)`——1 字节
+    // 寄存器 ISA 两者都不存在 ⇒ 名字表为空 ⇒ sp/fp/scratch/callee_saved/clobber
+    // 全部静默丢弃（最危险的写死点）。
+    let gpr_main = model.main_gpr_class()?;
+    let gpr_count = model.names_of(gpr_main)?.len() as u32;
     // 主浮点/向量组数量：与默认 FPR 类一致（优先 16 字节 XMM 组——ABI/SSE
     // 占位以 XMM 为基准；ZMM 等 EVEX 组不改变 num_fp_regs，否则 regalloc 会
-    // 用 XMM 类分配 16-31 号越界）。riscv F32/F64 同为 32 号组。
-    let fpr_count = model
-        .reg
-        .iter()
-        .filter(|(rc, _)| matches!(rc, RegClass::FPR(_)))
-        .find(|(rc, _)| **rc == RegClass::FPR(16))
-        .or_else(|| {
-            model
-                .reg
-                .iter()
-                .filter(|(rc, _)| matches!(rc, RegClass::FPR(_)))
-                .max_by_key(|(rc, _)| rc.width())
-        })
-        .map(|(_, g)| {
-            g.names
-                .as_ref()
-                .map(|n| n.len() as u32)
-                .or(g.count.map(|c| c as u32))
-                .unwrap_or(0)
-        })
-        .unwrap_or(0);
-    // 主 GPR 组寄存器名（用于 sp/fp 引用解析）。
-    let gpr_names: Vec<String> = model
-        .reg
-        .get(&RegClass::GPR(8))
-        .or_else(|| model.reg.get(&RegClass::GPR(4)))
-        .map(group_names)
-        .transpose()?
-        .unwrap_or_default();
-    let name_to_idx: std::collections::HashMap<&str, u32> = gpr_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i as u32))
-        .collect();
-    // SP/FP：优先 [abi.frame].sp/.fp 声明的名字（demo "X7"/"X6" 等自定义
-    // 寄存器名），否则按惯例名（"RSP"/"SP"、"RBP"/"FP"）解析；缺失回退
-    // 索引（x86 RSP=4/RBP=5；riscv 无显式声明时用 2/8——但组内索引可能
-    // 不同，缺省用 0 号避免越界）。
+    // 用 XMM 类分配 16-31 号越界）。riscv F32/F64 同为 32 号组；无 FPR 组 → 0。
+    let fpr_count = match model.main_fpr_class()? {
+        Some(rc) => model.names_of(rc)?.len() as u32,
+        None => 0,
+    };
+    // 主 GPR 组寄存器名 → 物理索引（用于 sp/fp/scratch/callee_saved/clobber 引用
+    // 解析）；缺组即 Err（不再 `unwrap_or_default()` 静默空表）。
+    let name_to_idx = model.main_gpr_name_to_idx()?;
+    // SP/FP：优先 [abi.frame].sp/.fp 声明的名字（demo "X7"/"X6" 等自定义寄存器名），
+    // 否则按惯例名（"RSP"/"SP"、"RBP"/"FP"）解析。**两者都解析不到 → 生成期
+    // 报错**（fail-closed）：历史实现静默回退 `from_index(idx = 0, GPR64)`，
+    // 对非 x86 ISA 会构造该 ISA 根本不存在的寄存器类；1 字节寄存器 ISA 连主
+    // GPR 名字表都是空的（锚点 GPR(8)/GPR(4) 都不存在）。
     let frame_sp_name = model
         .abi
         .as_ref()
@@ -446,82 +412,38 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
         .as_ref()
         .and_then(|a| a.frame.as_ref())
         .and_then(|f| f.fp.clone());
-    let sp_idx = frame_sp_name
-        .as_ref()
-        .and_then(|n| name_to_idx.get(n.as_str()).copied())
-        .or_else(|| {
-            name_to_idx
-                .iter()
-                .find(|(n, _)| n.eq_ignore_ascii_case("rsp") || n.eq_ignore_ascii_case("sp"))
-                .map(|(_, &i)| i)
-        })
-        .unwrap_or(0);
-    let fp_idx = frame_fp_name
-        .as_ref()
-        .and_then(|n| name_to_idx.get(n.as_str()).copied())
-        .or_else(|| {
-            name_to_idx
-                .iter()
-                .find(|(n, _)| n.eq_ignore_ascii_case("rbp") || n.eq_ignore_ascii_case("fp"))
-                .map(|(_, &i)| i)
-        })
-        .unwrap_or(0);
-    // sp/fp 引用：能解析到名字 → Reg::NAME；否则用 from_index（避免不存在的变体）
-    let sp_ref = frame_sp_name
-        .as_ref()
-        .and_then(|n| name_to_idx.get(n.as_str()).map(|&i| (n.clone(), i)))
-        .or_else(|| {
-            name_to_idx
-                .iter()
-                .find(|(n, _)| n.eq_ignore_ascii_case("rsp") || n.eq_ignore_ascii_case("sp"))
-                .map(|(n, &i)| ((*n).to_string(), i))
-        })
-        .map(|(n, i)| {
-            let ident = format_ident!("{n}");
-            (quote! { Reg::#ident }, i)
-        })
-        .unwrap_or_else(|| {
-            (
-                quote! { <Reg as forge_ir::PhysReg>::from_index(#sp_idx, forge_ir::RegClass::GPR64) },
-                sp_idx,
-            )
-        });
-    let fp_ref = frame_fp_name
-        .as_ref()
-        .and_then(|n| name_to_idx.get(n.as_str()).map(|&i| (n.clone(), i)))
-        .or_else(|| {
-            name_to_idx
-                .iter()
-                .find(|(n, _)| n.eq_ignore_ascii_case("rbp") || n.eq_ignore_ascii_case("fp"))
-                .map(|(n, &i)| ((*n).to_string(), i))
-        })
-        .map(|(n, i)| {
-            let ident = format_ident!("{n}");
-            (quote! { Reg::#ident }, i)
-        })
-        .unwrap_or_else(|| {
-            (
-                quote! { <Reg as forge_ir::PhysReg>::from_index(#fp_idx, forge_ir::RegClass::GPR64) },
-                fp_idx,
-            )
-        });
-    let sp_expr = sp_ref.0;
-    let fp_expr = fp_ref.0;
-    let sp_idx = sp_ref.1;
-    let fp_idx = fp_ref.1;
+    let frame_declared = model.abi.as_ref().and_then(|a| a.frame.as_ref()).is_some();
+    let (sp_expr, sp_idx) = resolve_frame_reg(
+        gpr_main,
+        &name_to_idx,
+        frame_sp_name.as_ref(),
+        ["rsp", "sp"],
+        "[abi.frame].sp",
+        frame_declared,
+    )?;
+    let (fp_expr, fp_idx) = resolve_frame_reg(
+        gpr_main,
+        &name_to_idx,
+        frame_fp_name.as_ref(),
+        ["rbp", "fp"],
+        "[abi.frame].fp",
+        frame_declared,
+    )?;
     // callee_saved：从 [abi].callee_saved.gpr 解析物理索引（顺序 = prologue push 序）。
-    let callee_saved: Vec<TokenStream> = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.callee_saved.as_ref())
-        .map(|cs| {
-            cs.gpr
-                .iter()
-                .filter_map(|n| name_to_idx.get(n.as_str()).copied())
-                .map(|i| quote! { #i })
-                .collect()
-        })
-        .unwrap_or_default();
+    // 名字不在主 GPR 组内 → 生成期 Err（不再静默丢弃该寄存器）。
+    let callee_saved: Vec<TokenStream> = resolve_reg_list(
+        &name_to_idx,
+        model
+            .abi
+            .as_ref()
+            .and_then(|a| a.callee_saved.as_ref())
+            .map(|cs| cs.gpr.as_slice())
+            .unwrap_or(&[]),
+        "[abi.callee_saved].gpr",
+    )?
+    .into_iter()
+    .map(|i| quote! { #i })
+    .collect();
     // allocatable：全量 0..count（排除 SP/FP + spill scratch + [abi].reserved）。
     // reserved：不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被 prologue/
     // call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 subw x0 结果丢失）。
@@ -530,26 +452,13 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     // spill 重写会覆盖其值（t+= 循环崩溃：i 地址在 R11 被 spill load 覆盖）。
     // 6i 曾尝试排除但触发循环 spill 暴露 v12 spill bug；6k/6m/6n 修复后
     // 重新排除（scatch 全时保留给 spill 机制）。
-    let scratch_idx: std::collections::HashSet<u32> = model
-        .abi
-        .as_ref()
-        .map(|a| {
-            a.scratch
-                .iter()
-                .filter_map(|n| name_to_idx.get(n.as_str()).copied())
-                .collect()
-        })
-        .unwrap_or_default();
-    let reserved_idx: std::collections::HashSet<u32> = model
-        .abi
-        .as_ref()
-        .map(|a| {
-            a.reserved
-                .iter()
-                .filter_map(|n| name_to_idx.get(n.as_str()).copied())
-                .collect()
-        })
-        .unwrap_or_default();
+    let abi_ref = model.abi.as_ref();
+    let scratch_names: &[String] = abi_ref.map(|a| a.scratch.as_slice()).unwrap_or(&[]);
+    let reserved_names: &[String] = abi_ref.map(|a| a.reserved.as_slice()).unwrap_or(&[]);
+    let scratch_list = resolve_reg_list(&name_to_idx, scratch_names, "[abi].scratch")?;
+    let reserved_list = resolve_reg_list(&name_to_idx, reserved_names, "[abi].reserved")?;
+    let scratch_idx: std::collections::HashSet<u32> = scratch_list.iter().copied().collect();
+    let reserved_idx: std::collections::HashSet<u32> = reserved_list.iter().copied().collect();
     let gp_alloc: Vec<TokenStream> = (0..gpr_count)
         .filter(|&i| {
             i != sp_idx && i != fp_idx && !scratch_idx.contains(&i) && !reserved_idx.contains(&i)
@@ -558,17 +467,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
         .collect();
     let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
     // scratch：从 [abi].scratch 解析物理索引（spill load/store 用）。
-    let scratch: Vec<TokenStream> = model
-        .abi
-        .as_ref()
-        .map(|a| {
-            a.scratch
-                .iter()
-                .filter_map(|n| name_to_idx.get(n.as_str()).copied())
-                .map(|i| quote! { #i })
-                .collect()
-        })
-        .unwrap_or_default();
+    let scratch: Vec<TokenStream> = scratch_list.into_iter().map(|i| quote! { #i }).collect();
     Ok(quote! {
         pub struct RegInfo;
 
@@ -579,6 +478,19 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
             fn num_fp_regs(&self) -> u32 { #fpr_count }
             fn default_gpr_class(&self) -> forge_ir::RegClass { __DEFAULT_GPR_CLASS }
             fn default_fpr_class(&self) -> forge_ir::RegClass { __DEFAULT_FPR_CLASS }
+            fn addr_class(&self) -> forge_ir::RegClass { __ADDR_CLASS }
+            fn value_gpr_class(&self) -> forge_ir::RegClass { __VALUE_GPR_CLASS }
+            fn value_fpr_class(&self) -> forge_ir::RegClass { __VALUE_FPR_CLASS }
+            fn slot_bytes(&self) -> u16 { __SLOT_BYTES }
+            fn vector_tiers(&self) -> &[u16] { &__VECTOR_TIERS }
+            fn class_for_type(&self, ty: forge_ir::TypeId) -> Option<forge_ir::RegClass> {
+                crate::machine::reg_info::class_for_type_in_pool(
+                    ty,
+                    __VALUE_GPR_CLASS,
+                    __VALUE_FPR_CLASS,
+                    &__VECTOR_TIERS,
+                )
+            }
             fn sp_reg(&self) -> forge_ir::FrameAccess<Self::Reg> {
                 forge_ir::FrameAccess::Register(#sp_expr)
             }
@@ -597,9 +509,80 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
             fn callee_saved(&self) -> Vec<u32> {
                 vec![#(#callee_saved),*]
             }
-            fn frame_pointer_overhead(&self) -> u32 { 8 }
+            fn frame_pointer_overhead(&self) -> u32 { __FP_OVERHEAD_BYTES as u32 }
         }
     })
+}
+
+/// 解析 `[abi.frame].sp/.fp`：显式名字 > 惯例名（大小写不敏感）。
+///
+/// 规则（fail-closed 与兼容并重）：
+/// - 显式声明了名字 → 必须能在主 GPR 组内解析，否则 `Err`（拼写错误不再静默
+///   落回索引 0）；
+/// - 未声明 → 惯例名（`RSP`/`SP`、`RBP`/`FP`）；
+/// - 仍未命中且 `[abi.frame]` **已声明** → `Err`（配了帧却没有可用的 sp/fp）；
+/// - 未声明 `[abi.frame]`（纯寄存器夹具 / 无帧 ISA）→ 索引 0 占位，类用元数据
+///   派生的 `__DEFAULT_GPR_CLASS`（历史实现写死 `GPR64` ⇒ 非 x86 ISA 会构造
+///   一个该 ISA 根本不存在的类）。
+fn resolve_frame_reg(
+    main_group: RegClass,
+    name_to_idx: &std::collections::HashMap<String, u32>,
+    declared: Option<&String>,
+    conventional: [&str; 2],
+    key: &str,
+    frame_declared: bool,
+) -> Result<(TokenStream, u32), String> {
+    let hit = declared
+        .and_then(|n| name_to_idx.get(n.as_str()).map(|&i| (n.clone(), i)))
+        .or_else(|| {
+            name_to_idx
+                .iter()
+                .find(|(n, _)| conventional.iter().any(|c| n.eq_ignore_ascii_case(c)))
+                .map(|(n, &i)| (n.clone(), i))
+        });
+    if let Some((n, i)) = hit {
+        let ident = format_ident!("{n}");
+        return Ok((quote! { Reg::#ident }, i));
+    }
+    if let Some(n) = declared {
+        return Err(format!(
+            "{key}: 声明为 \"{n}\" 但不在 [reg.{main_group}] 组内——请改成该组内的寄存器名\
+             （生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
+        ));
+    }
+    if frame_declared {
+        return Err(format!(
+            "{key}: 未声明，且惯例名 {conventional:?} 不在 [reg.{main_group}] 组内——\
+             请在 [abi.frame] 显式声明该寄存器在 TOML 中的名字\
+             （生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
+        ));
+    }
+    // 未声明 [abi.frame]：索引 0 占位（类由元数据派生，指向真实存在的主 GPR 寄存器）。
+    Ok((
+        quote! { <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS) },
+        0,
+    ))
+}
+
+/// 解析物理寄存器名列表 → 索引列表；任一名字不在主 GPR 组内 → `Err`
+/// （历史实现 `filter_map` 静默丢弃未知名字 ⇒ regalloc 会分配被占用寄存器）。
+fn resolve_reg_list(
+    name_to_idx: &std::collections::HashMap<String, u32>,
+    names: &[String],
+    key: &str,
+) -> Result<Vec<u32>, String> {
+    let mut out = Vec::with_capacity(names.len());
+    for n in names {
+        match name_to_idx.get(n.as_str()) {
+            Some(&i) => out.push(i),
+            None => {
+                return Err(format!(
+                    "{key}: 物理寄存器名 \"{n}\" 不在主 GPR 组内（生成期 fail-closed）"
+                ));
+            }
+        }
+    }
+    Ok(out)
 }
 
 // ─────────────────────── TargetMachine ───────────────────────
@@ -708,19 +691,10 @@ pub(crate) fn collect_phys_clobbers(
     infos: &[InstInfo],
     model: &V12Model,
 ) -> Result<Vec<TokenStream>, String> {
-    // 主 GPR 组名 → 物理索引
-    let gpr_names: Vec<String> = model
-        .reg
-        .get(&RegClass::GPR(8))
-        .or_else(|| model.reg.get(&RegClass::GPR(4)))
-        .map(group_names)
-        .transpose()?
-        .unwrap_or_default();
-    let name_to_idx: std::collections::HashMap<&str, u32> = gpr_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i as u32))
-        .collect();
+    // 主 GPR 组名 → 物理索引（元数据派生，缺组即 Err）。
+    let main = model.main_gpr_class()?;
+    let main_toks = quote! { #main };
+    let name_to_idx = model.name_to_idx(main)?;
     let mut out: Vec<TokenStream> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for t in insts {
@@ -729,10 +703,15 @@ pub(crate) fn collect_phys_clobbers(
             if part.is_empty() || part.starts_with('{') || part.starts_with('@') {
                 continue;
             }
+            // 只收集**解析得到**的物理寄存器名；其余 token 是助记符/语法
+            //（如 `[sp + N]` 的 `sp`、`lock`、`byte`）——自由模板无法逐 token
+            // 判类，故名称正确性由 `validate_widths` 在**结构化字段**上把关
+            //（[abi] 的 sp/fp/scratch/reserved/callee_saved/ret_regs/…），
+            // 不在这里猜。类 = 主 GPR 类（元数据派生）。
             if let Some(&idx) = name_to_idx.get(part)
                 && seen.insert(part.to_uppercase())
             {
-                out.push(quote! { (#idx, forge_ir::RegClass::GPR64) });
+                out.push(quote! { (#idx, #main_toks) });
             }
         }
     }

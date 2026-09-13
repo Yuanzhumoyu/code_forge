@@ -83,7 +83,8 @@ fn field_ty(slot: &OperandSlot) -> TokenStream {
 }
 
 /// Reg 槽的 RegClass 表达式（`Reg::from_index` 消歧 GPR/FPR 用；
-/// 槽位 class 为浮点组 → FPR64，否则 GPR64）。
+/// 槽位 class 缺失（多类槽 gprx）→ 主 GPR 类常量 `__DEFAULT_GPR_CLASS`
+/// （元数据派生；历史实现写死 `GPR(8)`——1 字节寄存器 ISA 下不存在该类）。
 fn reg_class_expr(slot: &OperandSlot) -> TokenStream {
     match slot.class.as_ref() {
         Some(c) => match c {
@@ -92,7 +93,7 @@ fn reg_class_expr(slot: &OperandSlot) -> TokenStream {
             RegClass::VEC(w) => quote! { forge_ir::RegClass::VEC(#w) },
             RegClass::KReg(w) => quote! { forge_ir::RegClass::KReg(#w) },
         },
-        _ => quote! { forge_ir::RegClass::GPR(8) },
+        _ => quote! { __DEFAULT_GPR_CLASS },
     }
 }
 
@@ -123,11 +124,18 @@ pub(crate) fn field_ctor_expr_view(
     match view {
         Some(_) => {
             // 固定宽度组：from_index_grp(v, 组名)
-            let class = slot.class.as_ref().unwrap_or(&RegClass::GPR(8));
-            quote! { <Reg as TryFrom<RegRef>>::try_from(RegRef::new(#class,#v)).unwrap() }
+            let ctor = match slot.class.as_ref() {
+                Some(c) => quote! { #c },
+                // 槽 class 缺失（多类槽 gprx）→ 主 GPR 类常量（元数据派生；
+                // 历史实现写死 `GPR(8)`）。
+                None => quote! { __DEFAULT_GPR_CLASS },
+            };
+            quote! { <Reg as TryFrom<RegRef>>::try_from(RegRef::new(#ctor,#v)).unwrap() }
         }
         None => {
-            // 多态 GPR：按 decode 扫描的前缀宽度选择视图
+            // 多类 GPR（宽度视图）：按 decode 扫描出的 `__opsize`（**字节**，
+            // 由 `[meta].default_opsize` 提供缺省）选择视图——assemble/encode
+            // 侧已按实际寄存器宽度还原，decode 反向。
             quote! {
                 <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(__opsize),#v)).unwrap()
             }

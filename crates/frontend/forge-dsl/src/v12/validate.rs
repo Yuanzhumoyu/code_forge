@@ -159,6 +159,24 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
             return Err(format!("[meta].{key} must be > 0"));
         }
     }
+    // 向量档位：升序、非 0、去重（生成代码按"最小的 ≥ 请求字节数的档位"选择）。
+    if let Some(tiers) = &m.meta.vector_tiers {
+        if tiers.is_empty() {
+            return Err("[meta].vector_tiers must not be empty".into());
+        }
+        let mut prev = 0u16;
+        for t in tiers {
+            if *t == 0 {
+                return Err("[meta].vector_tiers must be > 0".into());
+            }
+            if *t <= prev {
+                return Err(format!(
+                    "[meta].vector_tiers must be strictly ascending (got {tiers:?})"
+                ));
+            }
+            prev = *t;
+        }
+    }
     if let Some(bits) = m.meta.default_opsize {
         if bits == 0 || bits % 8 != 0 {
             return Err(format!(
@@ -174,6 +192,72 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
             return Err(format!(
                 "[meta].default_opsize = {bits}（{want} 字节）没有对应的 [reg.gpr{want}] 组"
             ));
+        }
+    }
+    // 结构化寄存器名字段必须能解析到**已声明组**内的名字（fail-closed）：
+    // 历史实现用 `filter_map`/`unwrap_or_default` 静默丢弃未知名字 ⇒ sp/fp 落回
+    // 索引 0、scratch/callee_saved 缺失（regalloc 会分配被占用寄存器）。
+    // 自由模板（lowering/emit 的 `insts`）不在这里猜——它含助记符与内存语法。
+    validate_reg_names(m)?;
+    Ok(())
+}
+
+/// 结构化寄存器名引用校验：`[abi]` 的 sp/fp/scratch/reserved/callee_saved/
+/// ret_regs/call_ret_reg/call_clobbers/implicit_regs/arg_class.regs 与
+/// `[spill.*].base` 必须在某个已声明寄存器组内。
+fn validate_reg_names(m: &V12Model) -> Result<(), String> {
+    let mut declared: BTreeSet<String> = BTreeSet::new();
+    for (rc, g) in &m.reg {
+        for n in super::shared::group_names(g).map_err(|e| format!("[reg.{rc}]: {e}"))? {
+            declared.insert(n);
+        }
+    }
+    let check = |names: &[String], key: &str| -> Result<(), String> {
+        for n in names {
+            if !declared.contains(n.as_str()) {
+                return Err(format!(
+                    "{key}: 物理寄存器名 \"{n}\" 不在任何已声明 [reg.*] 组内\
+                     （生成期 fail-closed；历史实现静默丢弃 ⇒ 该寄存器不被排除/不被保存）"
+                ));
+            }
+        }
+        Ok(())
+    };
+    if let Some(abi) = &m.abi {
+        check(&abi.scratch, "[abi].scratch")?;
+        check(&abi.reserved, "[abi].reserved")?;
+        check(&abi.ret_regs, "[abi].ret_regs")?;
+        check(
+            &abi.call_clobbers.clone().unwrap_or_default(),
+            "[abi].call_clobbers",
+        )?;
+        if let Some(r) = &abi.call_ret_reg {
+            check(std::slice::from_ref(r), "[abi].call_ret_reg")?;
+        }
+        if let Some(cs) = &abi.callee_saved {
+            check(&cs.gpr, "[abi.callee_saved].gpr")?;
+        }
+        for ac in &abi.arg_class {
+            check(&ac.regs, "[abi.arg_class].regs")?;
+        }
+        if let Some(f) = &abi.frame {
+            check(std::slice::from_ref(&f.sp), "[abi.frame].sp")?;
+            if let Some(fp) = &f.fp {
+                check(std::slice::from_ref(fp), "[abi.frame].fp")?;
+            }
+        }
+    }
+    for (name, t) in &m.spill {
+        if let Some(b) = &t.base {
+            check(std::slice::from_ref(b), &format!("[spill.{name}].base"))?;
+        }
+    }
+    for inst in &m.instructions {
+        if let Some(ir) = &inst.implicit_regs {
+            check(
+                ir,
+                &format!("[[instructions.{name}]].implicit_regs", name = inst.name),
+            )?;
         }
     }
     Ok(())

@@ -170,6 +170,38 @@ impl V12Model {
         }
     }
 
+    /// 向量类字节档位（升序）：`[meta].vector_tiers` > `[16, 32, 64]`
+    /// （x86 XMM/YMM/ZMM 语义；缺省值即历史 `reg_class_for` 的三档硬编码）。
+    pub(crate) fn vector_tiers(&self) -> Vec<u16> {
+        self.meta
+            .vector_tiers
+            .clone()
+            .unwrap_or_else(|| vec![16, 32, 64])
+    }
+
+    /// 向量 by-value 阈值（**字节**）：`[abi.arg_class]` 中
+    /// `strategy = "by-ref"` 的 `limit`（位）/ 8。`None` = 本 ISA 未声明
+    /// by-ref 策略（调用方自定缺省，如按值上限 = 浮点值池宽）。
+    pub(crate) fn vector_by_ref_limit_bytes(&self) -> Result<Option<u16>, String> {
+        let Some(abi) = &self.abi else {
+            return Ok(None);
+        };
+        for ac in &abi.arg_class {
+            if ac.strategy == Some(ArgStrategy::ByRef)
+                && let Some(bits) = ac.limit
+            {
+                if bits == 0 || bits % 8 != 0 {
+                    return Err(format!(
+                        "[abi.arg_class.{}]: by-ref limit {bits} 必须是 8 的倍数（单位：位）",
+                        ac.class.name()
+                    ));
+                }
+                return Ok(Some((bits / 8) as u16));
+            }
+        }
+        Ok(None)
+    }
+
     /// 指定组的寄存器名列表（缺组 → Err）。
     pub(crate) fn names_of(&self, rc: RegClass) -> Result<Vec<String>, String> {
         match self.reg.get(&rc) {
@@ -277,6 +309,11 @@ pub struct Meta {
     /// 缺省 = `addr_width`（x86/riscv64/arm64/demo = 8，与历史常量一致）。
     #[serde(default)]
     pub fp_overhead_bytes: Option<u16>,
+    /// 向量类字节档位（升序；`TargetRegInfo::vector_tiers`）。
+    /// 缺省 = `[16, 32, 64]`（x86 XMM/YMM/ZMM 语义）。向量类型按字节数夹到
+    /// "最小的 ≥ 请求值的档位"，超过最大档 → 生成/编译期 `Unsupported`。
+    #[serde(default)]
+    pub vector_tiers: Option<Vec<u16>>,
 }
 
 fn default_comment_char() -> String {

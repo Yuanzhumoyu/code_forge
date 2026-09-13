@@ -42,30 +42,20 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
                 .unwrap_or(0)
         });
     let mut arg_regs: Vec<TokenStream> = Vec::new();
-    let mut by_ref_limit: Option<u32> = None;
     if let Some(abi) = &model.abi {
         for ac in &abi.arg_class {
             for r in &ac.regs {
                 let i = format_ident!("{r}");
                 arg_regs.push(quote! { Reg::#i });
             }
-            // by-ref 策略：`strategy = "by-ref"` + `limit`（位）→ 超过该位宽的
-            // 向量按引用传参（阈值字节 = limit/8；x86 声明 128 位 → 16 字节）。
-            if ac.strategy == Some(ArgStrategy::ByRef)
-                && let Some(bits) = ac.limit
-            {
-                if bits % 8 != 0 {
-                    return Err(format!(
-                        "[abi.arg_class.{}]: by-ref limit {bits} 不是 8 的倍数（应为位宽）",
-                        ac.class.name()
-                    ));
-                }
-                by_ref_limit = Some(bits / 8);
-            }
         }
     }
+    // by-ref 策略：`strategy = "by-ref"` + `limit`（位）→ 超过该位宽的向量按引用
+    // 传参（阈值字节 = limit/8；x86 声明 128 位 → 16 字节）。解析与校验统一在
+    // `V12Model::vector_by_ref_limit_bytes`（生成期 Err：非 8 的倍数）。
+    let by_ref_limit = model.vector_by_ref_limit_bytes()?;
     let by_ref_toks: TokenStream = match by_ref_limit {
-        Some(b) => quote! { Some(#b) },
+        Some(b) => quote! { Some(#b as u32) },
         None => quote! { None },
     };
     // 声明式帧布局：[abi.frame].layout（fp-inside/fp-outside）+ fp_push_bytes。
@@ -86,12 +76,15 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
             quote! { crate::machine::abi::FrameLayoutKind::Outside }
         }
     };
+    // fp_push_bytes：显式键 > 地址类宽度（元数据驱动；x86 = 8、riscv/arm64 = 16、
+    // demo = 0 均由各自 TOML 显式声明——历史 `unwrap_or(8)` 对 1 字节寄存器 ISA
+    // 是错的 8）。
     let fp_push = model
         .abi
         .as_ref()
         .and_then(|a| a.frame.as_ref())
         .and_then(|f| f.fp_push_bytes)
-        .unwrap_or(8);
+        .unwrap_or(model.addr_class()?.width() as u32);
     // 返回寄存器：[abi].ret_regs（物理名）→ Reg::NAME；缺省空 = index 0
     //（x86 RAX 语义，由 Return/Call lowering 的 from_index(0) 兜底）。
     let mut ret_regs: Vec<TokenStream> = Vec::new();
@@ -129,6 +122,29 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
 }
 
 // ─────────────────────── TargetFrameLowering ───────────────────────
+
+/// 跳转指令 dest 槽的寄存器类（元数据：槽声明的 class；多类/未声明 → 主 GPR
+/// 类常量 `__DEFAULT_GPR_CLASS`）。历史实现写死 `GPR(64)`——非 x86 ISA 的
+/// 零寄存器（riscv x0）宽度不同 ⇒ 会构造出该 ISA 不存在的类。
+fn jump_dest_class(
+    model: &V12Model,
+    infos: &[InstInfo],
+    inst_name: &str,
+    fid: &syn::Ident,
+) -> TokenStream {
+    let slot = infos
+        .iter()
+        .find(|i| i.inst.name == inst_name)
+        .and_then(|i| i.operands.iter().find(|(_, f, _, _)| f == fid))
+        .map(|(_, _, slot, _)| *slot);
+    match slot.and_then(|s| s.class.as_ref()) {
+        Some(c) => quote! { #c },
+        None => {
+            let _ = model;
+            quote! { __DEFAULT_GPR_CLASS }
+        }
+    }
+}
 
 /// 入口：`pub(crate)` 由 `integration::gen_integration()` 调用。
 pub(crate) fn gen_frame_lowering(
@@ -183,12 +199,14 @@ pub(crate) fn gen_frame_lowering(
             Ok(())
         }
     } else if has_jump && jump_f.len() >= 2 {
+        // 定宽（riscv JAL 语义）：jal x0, epilogue_block——label 槽 = 块号
+        // → encoder 编码时 use_label_at（定宽 fixup = 指令起始；位段重排由
+        // patcher）。dest 用该槽声明的类（缺省 = 主 GPR 类，元数据派生，
+        // 不写死 x86 的 GPR64）。
+        let jal_dest_cls = jump_dest_class(model, infos, &jump_inst, &jal_dest);
         quote! {
-            // 定宽（riscv JAL 语义）：jal x0, epilogue_block——label 槽 = 块号
-            // → encoder 编码时 use_label_at（定宽 fixup = 指令起始；位段重排
-            // 由 patcher）。
             let inst = Inst::#jump_vn {
-                #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #jal_dest: Reg::from_index(0, #jal_dest_cls),
                 #jal_target: epilogue_block.0 as i64,
             };
             encoder.encode(&inst, reg_map, sink).map_err(|e| {
@@ -216,14 +234,29 @@ pub(crate) fn gen_frame_lowering(
     };
 
     // spill load/store：`{0}` = 寄存器、`{1}` = 帧偏移、基址来自模板 base。
-    // 模板未声明 base 时缺省取 [abi.frame].fp（x86 RBP / riscv X8）——
-    // 二者正是帧指针语义；再回退 "RBP"。
-    let default_base = model
+    // 模板未声明 base 时取 [abi.frame].fp（x86 RBP / riscv X8 / arm64 X29）——
+    // 正是帧指针语义。**fp 也未声明 → 生成期 Err**（历史实现回退字面量
+    // `"RBP"`：非 x86 ISA 会生成一个不存在的寄存器名）。仅在"存在未声明 base
+    // 的溢出模板"时才要求该键——完全没有 spill 的 ISA（如纯算术夹具）不受影响。
+    let needs_default_base = model.spill.values().any(|t| t.base.is_none());
+    let default_base = match model
         .abi
         .as_ref()
         .and_then(|a| a.frame.as_ref())
         .and_then(|fr| fr.fp.clone())
-        .unwrap_or_else(|| "RBP".to_string());
+    {
+        Some(fp) => fp,
+        None if needs_default_base => {
+            return Err(
+                "[spill.*]: 存在未声明 base 的溢出模板，但 [abi.frame].fp 缺失——spill 基址\
+                 缺省取帧指针，不能回退 x86 的 \"RBP\"（生成期 fail-closed：请声明 \
+                 [abi.frame].fp 或在每个 [spill.*] 显式写 base）"
+                    .to_string(),
+            );
+        }
+        // 所有模板都自带 base（或无 spill 模板）：该缺省值不会被使用。
+        None => String::new(),
+    };
     let spill_gpr = model.spill.get("GPR");
     let gpr_load = gen_spill_stmt(infos, spill_gpr, true, &default_base)?;
     let gpr_store = gen_spill_stmt(infos, spill_gpr, false, &default_base)?;
@@ -760,10 +793,15 @@ fn gen_emit_pseudo(
                     ));
                 }
             };
+            // by-value 向量阈值 = `[abi.arg_class].limit`（by-ref 策略，字节；
+            // x86 = 16B）——元数据驱动，取代写死的 `class == VEC(16)` 判定
+            // （1 字节/非常规宽度 ISA 的向量类不是 VEC(16)）。
+            let fpr_pool_w = model.value_fpr_class()?.map_or(16, |c| c.width());
+            let vec_by_val_max = model.vector_by_ref_limit_bytes()?.unwrap_or(fpr_pool_w);
             let vec16_cond = quote! {
                 __rm.param_vregs
                     .get(__i)
-                    .map(|x| x.class() == forge_ir::RegClass::VEC(16))
+                    .map(|x| x.width() <= #vec_by_val_max)
                     .unwrap_or(false)
             };
             // by-ref 向量 load：宽向量参数（>16 字节）按引用传参——ABI 传 GPR
@@ -1214,8 +1252,10 @@ fn gen_emit_pseudo(
 /// 8 字节：V128/V256/V512 的高半区既不写也不读（栈上残留）——CI 上
 /// `test_jit_v512_byref_param` 偶发 `lane15 != 16` 的根因。
 ///
-/// 现按宽度分派：`width <= 8` → `[spill.FPR]`（标量缺省）；16/32/64 →
-/// `[spill.FPR16/32/64]`；其它宽度 → `Unsupported`（fail-closed，**不**退回
+/// 现按宽度分派：`width <= scalar_max` → `[spill.FPR]`（标量缺省，
+/// `scalar_max` = `[meta].value_fpr_width` / `FPR(8)`）；其余宽度档 = **已声明的
+/// 模板键** `FPR<bytes>`（元数据驱动——x86 声明 FPR16/32/64；不是代码里的
+/// 16/32/64 字面量）；未声明的宽度 → `Unsupported`（fail-closed，**不**退回
 /// 窄搬运）。ISA 完全未声明 FPR 溢出模板时保持原 no-op（riscv/定宽试点不变）。
 fn gen_fpr_spill_dispatch(
     infos: &[InstInfo],
@@ -1230,11 +1270,29 @@ fn gen_fpr_spill_dispatch(
     };
     let scalar = gen_spill_stmt(infos, Some(default_tpl), is_load, default_base)?;
     let what = if is_load { "load" } else { "store" };
+    // 标量缺省档上限 = 浮点值池宽度（x86 = 8）。
+    let scalar_max = model.value_fpr_class()?.map(|c| c.width()).unwrap_or(8);
+    // 宽度档：从已声明模板键 `FPR<bytes>` 派生（`m.spill` 是 BTreeMap，键序稳定）。
+    let mut tiers: Vec<(String, u16)> = Vec::new();
+    for key in model.spill.keys() {
+        if key == "FPR" {
+            continue;
+        }
+        let Some(num) = key.strip_prefix("FPR") else {
+            continue;
+        };
+        if let Ok(w) = num.parse::<u16>()
+            && w > scalar_max
+        {
+            tiers.push((key.clone(), w));
+        }
+    }
+    tiers.sort_by_key(|(_, w)| *w);
     let mut arms: Vec<TokenStream> = Vec::new();
-    for (key, w) in [("FPR16", 16u16), ("FPR32", 32), ("FPR64", 64)] {
+    for (key, w) in &tiers {
         let stmt = match model.spill.get(key) {
             Some(t) => gen_spill_stmt(infos, Some(t), is_load, default_base)?,
-            // 缺该宽度模板：该臂直接 fail-closed（不生成窄搬运）。
+            // 理论到不了（档位即来自已声明键）；留作防御性 fail-closed。
             None => quote! {
                 return Err(crate::IrError::Unsupported(format!(
                     "FPR spill {}: 本 ISA 未声明 [spill.{}]（{} 字节）——不退回窄搬运\
@@ -1245,14 +1303,24 @@ fn gen_fpr_spill_dispatch(
         };
         arms.push(quote! { else if width == #w { #stmt } });
     }
+    let supported = if tiers.is_empty() {
+        format!("≤{scalar_max}")
+    } else {
+        let mut s = format!("≤{scalar_max}");
+        for (_, w) in &tiers {
+            s.push('/');
+            s.push_str(&w.to_string());
+        }
+        s
+    };
     Ok(quote! {
-        if width <= 8 {
+        if width <= #scalar_max {
             #scalar
         } #(#arms)*
         else {
             return Err(crate::IrError::Unsupported(format!(
-                "FPR spill {}: 不支持 {} 字节宽度（支持 ≤8/16/32/64）",
-                #what, width
+                "FPR spill {}: 不支持 {} 字节宽度（本 ISA 支持 {}）",
+                #what, width, #supported
             )));
         }
     })

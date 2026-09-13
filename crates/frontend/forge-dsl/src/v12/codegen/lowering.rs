@@ -325,7 +325,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 let ident = format_ident!("{r}");
                 quote! { Reg::#ident }
             })
-            .unwrap_or_else(|| quote! { Reg::from_index(0, forge_ir::RegClass::GPR64) });
+            .unwrap_or_else(|| quote! { Reg::from_index(0, __DEFAULT_GPR_CLASS) });
         // S2：宽向量返回值（>16 字节）sret——结果 store 到 [sret_ptr]，
         // sret_ptr = 首个 GPR 参数槽（Windows x64：隐藏 sret 参数占 RCX）。
         // 生成期门控：语义标签缺失（riscv）→ Unsupported。
@@ -342,14 +342,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 // sret_ptr 来自首 int 参数槽（x86 arg_class int 首项 = RCX）
                 let __sret = Reg::from_index(
                     [#(Reg::#int_regs),*][0].to_index(),
-                    forge_ir::RegClass::GPR64,
+                    __DEFAULT_GPR_CLASS,
                 );
                 let __vbytes = ctx
                     .xreg_types
                     .get(&val)
                     .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
-                    .unwrap_or(32)
-                    .max(32);
+                    .unwrap_or(__SLOT_BYTES as u32)
+                    .max(__SLOT_BYTES as u32);
                 let __sidx = __pack.push_inst(if __vbytes == 64 {
                     Inst::#vn_s64 {
                         #f_s64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
@@ -409,7 +409,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 #sret_return_body
             } else {
                 let __idx = __pack.push_inst(Inst::#ret_vn {
-                    #mov_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #mov_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
                     #mov_dest: #ret_dest,
 
                 });
@@ -422,8 +422,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                     && let Some(&__v2) = value_to_xreg.get(&__r2)
                 {
                     let __idx2 = __pack.push_inst(Inst::#ret_vn {
-                        #mov_src: Reg::from_index(1, forge_ir::RegClass::GPR64),
-                        #mov_dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+                        #mov_src: Reg::from_index(1, __DEFAULT_GPR_CLASS),
+                        #mov_dest: Reg::from_index(1, __DEFAULT_GPR_CLASS),
                     });
                     __pack.map_reg_field(__v2, __idx2, #mov_src_idx_lit as u8, false);
                 }
@@ -445,7 +445,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     let jump_body: TokenStream = if has_jal && jal_f.len() >= 2 {
         quote! {
             __pack.push_inst(Inst::#jump_vn {
-                #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #jal_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
                 #jal_target: target.0 as i64,
             });
             Ok(__pack)
@@ -481,8 +481,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             let false_block = else_block.0 as i64;
             // TEST cond, cond（85 /r：reg=op0、rm=op1）
             let __idx = __pack.push_inst(Inst::#test_vn {
-                #t_a: Reg::from_index(0, forge_ir::RegClass::GPR64),
-                #t_b: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #t_a: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                #t_b: Reg::from_index(0, __DEFAULT_GPR_CLASS),
 
             });
             __pack.map_reg_field(cond, __idx, 0u8, false);
@@ -501,14 +501,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             let false_block = else_block.0 as i64;
             // beq cond, X0, false_block（cond==0 → false）
             let __idx = __pack.push_inst(Inst::#beq_vn {
-                #b_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-                #b_src2: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #b_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                #b_src2: Reg::from_index(0, __DEFAULT_GPR_CLASS),
                 #b_target: false_block,
             });
             __pack.map_reg_field(cond, __idx, 0u8, false);
             // jal x0, true_block
             __pack.push_inst(Inst::#jump_vn {
-                #jal_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #jal_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
                 #jal_target: true_block,
             });
             Ok(__pack)
@@ -521,7 +521,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             let false_block = else_block.0 as i64;
             // cbz cond, false_block（cond == 0 → else；不跳则落下一指令）
             let __idx = __pack.push_inst(Inst::#branch_vn {
-                #jcc_cond: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #jcc_cond: Reg::from_index(0, __DEFAULT_GPR_CLASS),
                 #jcc_rel: false_block,
             });
             __pack.map_reg_field(cond, __idx, 0u8, false);
@@ -1212,7 +1212,7 @@ fn gen_call_lowering(
             quote! { Reg::#ident }
         })
         .unwrap_or_else(|| {
-            quote! { <Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR64) }
+            quote! { <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS) }
         });
     let int_regs: Vec<syn::Ident> = abi
         .arg_class
@@ -1241,17 +1241,17 @@ fn gen_call_lowering(
         .first()
         .map(|r| {
             let ident = format_ident!("{r}");
-            quote! { (Reg::#ident.to_index(), forge_ir::RegClass::GPR64) }
+            quote! { (Reg::#ident.to_index(), __DEFAULT_GPR_CLASS) }
         })
         .unwrap_or_else(|| {
             quote! {
-                (<Reg as forge_ir::PhysReg>::from_index(0, forge_ir::RegClass::GPR64).to_index(),
-                 forge_ir::RegClass::GPR64)
+                (<Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS).to_index(),
+                 __DEFAULT_GPR_CLASS)
             }
         });
     let gpr_clobbers: Vec<TokenStream> = clobber_gprs
         .iter()
-        .map(|r| quote! { (Reg::#r.to_index(), forge_ir::RegClass::GPR64) })
+        .map(|r| quote! { (Reg::#r.to_index(), __DEFAULT_GPR_CLASS) })
         .chain(std::iter::once(ret_gpr_clobber))
         .collect();
     let fpr_clobbers: Vec<TokenStream> = float_regs
@@ -1305,8 +1305,8 @@ fn gen_call_lowering(
                 .xreg_types
                 .get(&__r)
                 .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
-                .unwrap_or(32)
-                .max(32);
+                .unwrap_or(__SLOT_BYTES as u32)
+                .max(__SLOT_BYTES as u32);
             let __ridx = __pack.push_inst(if __vbytes == 64 {
                 Inst::#vn_l64 {
                     #f_l64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
@@ -1360,7 +1360,7 @@ fn gen_call_lowering(
             } else {
                 let __idx = __pack.push_inst(Inst::#mov_vn {
                     #m_src: #ret_src_expr,
-                    #m_dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #m_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
 
                 });
                 // 结果 vreg 绑 **dest 序号**（x86 MOV_RM8_R64 dest=op1=1；
@@ -1375,8 +1375,8 @@ fn gen_call_lowering(
             && !ctx.xreg_types.get(&__r2).is_some_and(|t| t.is_float())
         {
             let __idx2 = __pack.push_inst(Inst::#mov_vn {
-                #m_src: Reg::from_index(1, forge_ir::RegClass::GPR64),
-                #m_dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+                #m_src: Reg::from_index(1, __DEFAULT_GPR_CLASS),
+                #m_dest: Reg::from_index(1, __DEFAULT_GPR_CLASS),
             });
             __pack.map_reg_field(__r2, __idx2, #m_dest_idx, true);
         }
@@ -1455,7 +1455,9 @@ fn gen_call_lowering(
                     let fid_ident = format_ident!("{fid}");
                     match (slot.kind, role) {
                         (OperandKind::Reg, OperandRole::In) => {
-                            ctor.push(quote! { #fid_ident: Reg::from_index(0, forge_ir::RegClass::GPR64) });
+                            ctor.push(
+                                quote! { #fid_ident: Reg::from_index(0, __DEFAULT_GPR_CLASS) },
+                            );
                             binds.push(quote! {
                                 __pack.map_reg_field(__callee, __idx, #idx as u8, false);
                             });
@@ -1492,9 +1494,11 @@ fn gen_call_lowering(
         let (vn_lea, f_lea, m_lea, i_lea) = byref("frame_rbp_addr").expect("tag lea");
         quote! {
             if __sret {
-                let __sp = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
+                // 地址类（`__ADDR_CLASS`：x86 = GPR(8)，1 字节 ISA = GPR(1)）——
+                // 这里搬的是帧槽地址，不是整数值。
+                let __sp = ctx.alloc_xreg(__ADDR_CLASS);
                 let __lidx = __pack.push_inst(Inst::#vn_lea {
-                    #f_lea: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #f_lea: Reg::from_index(0, __ADDR_CLASS),
                     #m_lea: MemRef {
                         base: Reg::RBP,
                         disp: __sret_off,
@@ -1504,7 +1508,7 @@ fn gen_call_lowering(
                 });
                 __pack.map_reg_field(__sp, __lidx, #i_lea, true);
                 let __midx = __pack.push_inst(Inst::#mov_vn {
-                    #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #m_src: Reg::from_index(0, __ADDR_CLASS),
                     #m_dest: [#(Reg::#int_regs),*][0],
                 });
                 __pack.map_reg_field(__sp, __midx, #m_src_idx, false);
@@ -1538,9 +1542,11 @@ fn gen_call_lowering(
                 .xreg_types
                 .get(&__a)
                 .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
-                .unwrap_or(32)
-                .max(32);
-            let __off = -((8 + 64 * __bi) as i64);
+                .unwrap_or(__SLOT_BYTES as u32)
+                .max(__SLOT_BYTES as u32);
+            // 槽偏移/帧需求：槽单位由元数据给出（`__SLOT_BYTES`；x86 = 8）——
+            // 历史实现写死 8/64 的槽间距。
+            let __off = -((__SLOT_BYTES as usize + 64 * __bi) as i64);
             __bi += 1;
             // 地址平移：局部槽基准 = RBP - stack_slot_shift（x86 callee-saved
             // 区 64B；与 StackAddr 的 current_offset = v - shift 同构——否则
@@ -1577,9 +1583,10 @@ fn gen_call_lowering(
                 false,
             );
             // 2) 槽地址 → 地址 XReg（frame_rbp_addr 指令的 Reg 字段 = 结果）
-            let __ptr = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
+            //    地址类 = `__ADDR_CLASS`（不是整数值池类）。
+            let __ptr = ctx.alloc_xreg(__ADDR_CLASS);
             let __lidx = __pack.push_inst(Inst::#vn_lea {
-                #f_lea: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #f_lea: Reg::from_index(0, __ADDR_CLASS),
                 #m_lea: MemRef {
                     base: Reg::RBP,
                     disp: __addr,
@@ -1594,7 +1601,7 @@ fn gen_call_lowering(
                 let __dst = [#(Reg::#int_regs),*][#slot_var];
                 #slot_var += 1;
                 let __midx = __pack.push_inst(Inst::#mov_vn {
-                    #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                    #m_src: Reg::from_index(0, __ADDR_CLASS),
                     #m_dest: __dst,
                 });
                 __pack.map_reg_field(__ptr, __midx, #m_src_idx, false);
@@ -1605,7 +1612,9 @@ fn gen_call_lowering(
             }
             // 4) 帧需求：槽深并入 max_stack_bytes（frame_layout 的 sub rsp 大小；
             //    与 StackAddr 的 depth = -v + 8 同构——不含 shift，帧内统一平移）
-            ctx.max_stack_bytes = ctx.max_stack_bytes.max((8 + 64 * __bi) as u32);
+            ctx.max_stack_bytes = ctx
+                .max_stack_bytes
+                .max((__SLOT_BYTES as usize + 64 * __bi) as u32);
         }
     } else {
         quote! {
@@ -1753,7 +1762,7 @@ fn arg_move_loop(
                     index: None,
                     scale: 1,
                 },
-                #s_reg: Reg::from_index(0, forge_ir::RegClass::GPR64),
+                #s_reg: Reg::from_index(0, __DEFAULT_GPR_CLASS),
             });
             __pack.map_reg_field(__a, __idx, #s_reg_idx, false);
             // 帧需求：栈参数区 = shadow + 已用栈槽
@@ -1770,7 +1779,7 @@ fn arg_move_loop(
     };
     let int_stmt = quote! {
         let __idx = __pack.push_inst(Inst::#mov_vn {
-            #m_src: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            #m_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
             #m_dest: __dst,
         });
         // 参数 vreg 绑 **src 序号**（x86 MOV_RM8_R64 src=op0=0；riscv mv

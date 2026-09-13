@@ -1258,7 +1258,7 @@ fn gen_vlen_vex_decode_arm(
                     ));
                 }
                 quote! { MemRef {
-                    base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(8), __base)).unwrap(),
+                    base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(__ADDR_CLASS, __base)).unwrap(),
                     disp: __disp,
                     index: __index_reg,
                     scale: __scale,
@@ -1317,7 +1317,7 @@ fn gen_vlen_vex_decode_arm(
                         } else {
                             __index_reg = Some(
                                 <Reg as TryFrom<RegRef>>::try_from(
-                                    RegRef::new(RegClass::GPR(8), __idx_full),
+                                    RegRef::new(__ADDR_CLASS, __idx_full),
                                 ).unwrap(),
                             );
                         }
@@ -1481,7 +1481,7 @@ fn gen_vlen_evex_decode_arm(
             }
             OperandKind::Mem => {
                 quote! { MemRef {
-                    base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(8), __base)).unwrap(),
+                    base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(__ADDR_CLASS, __base)).unwrap(),
                     disp: __disp,
                     index: __index_reg,
                     scale: __scale,
@@ -1541,7 +1541,7 @@ fn gen_vlen_evex_decode_arm(
                         } else {
                             __index_reg = Some(
                                 <Reg as TryFrom<RegRef>>::try_from(
-                                    RegRef::new(RegClass::GPR(8), __idx_full),
+                                    RegRef::new(__ADDR_CLASS, __idx_full),
                                 ).unwrap(),
                             );
                         }
@@ -1898,7 +1898,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
                     let mm = need_modrm()?;
                     if i == mm.rm && mm.memref {
                         Ok(
-                            quote! { MemRef { base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(8),__base)).unwrap(),  disp: __disp, index: __index_reg, scale: __scale } },
+                            quote! { MemRef { base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(__ADDR_CLASS,__base)).unwrap(),  disp: __disp, index: __index_reg, scale: __scale } },
                         )
                     } else {
                         Err(format!(
@@ -2045,7 +2045,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
                                     } else {
                                         __index_reg = Some(
                                             <Reg as TryFrom<RegRef>>::try_from(
-                                                RegRef::new(RegClass::GPR(8), __idx_full),
+                                                RegRef::new(__ADDR_CLASS, __idx_full),
                                             ).unwrap(),
                                         );
                                     }
