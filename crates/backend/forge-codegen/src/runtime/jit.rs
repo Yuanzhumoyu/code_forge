@@ -441,6 +441,24 @@ mod tests {
     use crate::arch::x86_v12::{self, ensure_registered};
     use forge_ir::TypeId;
 
+    /// `FORGE_ASSUME_AVX512` 作用域守卫（Drop 时清除，**panic 安全**）——
+    /// 必须与 `crate::AVX512_ENV_LOCK` 配对：env 只放开"能否发射 EVEX"的
+    /// 生成期门；**执行** EVEX 的测试用 `avx512_hardware_available()` 判 skip。
+    struct AssumeAvx512;
+
+    impl AssumeAvx512 {
+        fn set() -> Self {
+            unsafe { std::env::set_var("FORGE_ASSUME_AVX512", "1") };
+            Self
+        }
+    }
+
+    impl Drop for AssumeAvx512 {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var("FORGE_ASSUME_AVX512") };
+        }
+    }
+
     #[test]
     fn test_jit_compiler_new() {
         let jit = JitCompiler::new(x86_v12::TargetMachine::new());
@@ -1604,6 +1622,86 @@ mod tests {
         assert_eq!(
             got, 1,
             "CallIndirect 宽向量 by-ref 实参：lane0 1.5 → fptosi → 1"
+        );
+    }
+
+    /// **WA-46 附带守卫（生成级，无需 AVX-512 硬件）**：V512（64B）**by-ref
+    /// 调用两侧都必须 64 字节搬运**——调用方栈拷贝 store = EVEX zmm（`62 … 11`）、
+    /// 被调方收参 load = EVEX zmm（`62 … 10`），且**不得**退回 32B（VEX `C4 .. 7C`）。
+    ///
+    /// 缺失的那一半正是 CI #57 的运行级失败路径（`test_jit_v512_byref_param`，
+    /// lane15 错）：本机无 AVX-512F 不能执行 EVEX ⇒ 以生成级断言把这条路径锁死
+    /// （被调方一侧另有 `compiler.rs::test_v512_byref_callee_load_is_64b`）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_v512_byref_caller_copy_is_64b_generation() {
+        use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let _env_guard = crate::AVX512_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _assume = AssumeAvx512::set();
+        // callee: (v512) -> i32（提取 lane15）——与运行级用例同形。
+        let tc = TypeContext::new();
+        let vt = tc.vector_ty(TypeId::F32, 16);
+        let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
+        let mut bc = FunctionBuilder::new("callee", tc, sig_c);
+        let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
+        bc.switch_to_block(blk);
+        let idx = bc.iconst_i32(15);
+        let lane = bc.vextract(p[0], idx);
+        let wide = bc.fpext(lane, TypeId::F64);
+        let int = bc.fptosi(wide, TypeId::I32);
+        bc.ret(&[int]);
+        let callee_func = bc.finish().expect("build callee");
+        // main: () -> i32 { callee(vconst(16×f32)) } —— 宽向量实参 by-ref 栈拷贝
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        bm.create_block_here();
+        let v = bm.vconst(vec![
+            1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+            16.0,
+        ]);
+        let ptr = bm.iconst_i64(0);
+        let _ = bm.call_indirect(ptr, &[v], &[TypeId::I32]);
+        let zero = bm.iconst_i32(0);
+        bm.ret(&[zero]);
+        let main_func = bm.finish().expect("build main");
+        let is_evex = |code: &[u8], op: u8| {
+            code.windows(5)
+                .any(|w| w[0] == 0x62 && w[4] == op && (w[3] & 0x60) == 0x40)
+        };
+        let is_vex256 = |code: &[u8], op: u8| {
+            code.windows(4)
+                .any(|w| w[0] == 0xC4 && w[2] == 0x7C && w[3] == op)
+        };
+        // 被调方：收参 load 必须 EVEX 64B，不得只 load 32B。
+        let cf_callee = FunctionCompiler::new(x86_v12::TargetMachine::new())
+            .compile_raw(&callee_func)
+            .expect("compile callee（FORGE_ASSUME_AVX512 下应过守卫）");
+        assert!(
+            is_evex(&cf_callee.code, 0x10),
+            "被调方 V512 收参应为 EVEX zmm load（62 … 10）：{:02x?}",
+            &cf_callee.code[..cf_callee.code.len().min(48)]
+        );
+        assert!(
+            !is_vex256(&cf_callee.code, 0x10),
+            "被调方 V512 收参不得退回 32B（C4 .. 7C 10，lane8..15 丢失）"
+        );
+        // 调用方：宽向量实参 by-ref 栈拷贝的 store 必须 EVEX 64B。
+        let cf_main = FunctionCompiler::new(x86_v12::TargetMachine::new())
+            .compile_raw(&main_func)
+            .expect("compile main（宽向量实参 by-ref）");
+        assert!(
+            is_evex(&cf_main.code, 0x11),
+            "调用方 V512 by-ref 拷贝应为 EVEX zmm store（62 … 11）：{:02x?}",
+            &cf_main.code[..cf_main.code.len().min(64)]
+        );
+        assert!(
+            !is_vex256(&cf_main.code, 0x11),
+            "调用方 V512 by-ref 拷贝不得退回 32B（C4 .. 7C 11，高半区丢失）——\
+             WA-46 的 CI #57 失败路径"
         );
     }
 

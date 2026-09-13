@@ -2577,6 +2577,36 @@ mod alloc_integration_tests {
         );
     }
 
+    /// **WA-46 宽度分档守卫（类映射）**：向量值的寄存器类必须按**值宽**分档——
+    /// ≤16B → `VEC(16)`、≤32B → `VEC(32)`、>32B → **`VEC(64)`**。旧实现 >128 位
+    /// 一律 `VEC(32)`，而类的 `reg_width` 决定 spill 槽大小与 `xreg.width()`
+    /// ⇒ 64B 的 V512 值只有 32B 槽、搬运宽度也只报 32（溢出后高半区静默截断）。
+    /// 这里同时锁住链路：`VEC(64).default_width() == 64`（类表 fallback 用
+    /// `class.default_width()` 作 `reg_width`，见上方 classes 构建）。
+    #[test]
+    fn test_vector_reg_class_widths() {
+        let tc = TypeContext::new();
+        let v64 = tc.vector_ty(TypeId::F32, 2);
+        let v128 = tc.vector_ty(TypeId::F32, 4);
+        let v256 = tc.vector_ty(TypeId::F32, 8);
+        let v512 = tc.vector_ty(TypeId::F32, 16);
+        let mut ctx = LowerCtx::new();
+        ctx.type_ctx = Some(tc);
+        assert_eq!(ctx.reg_class_for(&v64), RegClass::VEC(16));
+        assert_eq!(ctx.reg_class_for(&v128), RegClass::VEC(16));
+        assert_eq!(ctx.reg_class_for(&v256), RegClass::VEC(32));
+        assert_eq!(
+            ctx.reg_class_for(&v512),
+            RegClass::VEC(64),
+            "64 字节向量必须归 VEC(64)（槽宽/搬运宽度按值宽；WA-46）"
+        );
+        assert_eq!(
+            RegClass::VEC(64).default_width(),
+            64,
+            "VEC(64) 的 reg_width 必须是 64（spill 槽 = 64 字节）"
+        );
+    }
+
     /// **WA-46 溢出宽度守卫（生成级，直接驱动 FrameLowering）**：FPR 溢出
     /// 必须按 `width` 搬运——旧实现只有一份 8 字节 `MOVSD` 模板且生成的
     /// `emit_spill_load/store` 忽略 width ⇒ 向量值 spill 只搬低 8 字节

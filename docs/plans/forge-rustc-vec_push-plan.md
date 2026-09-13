@@ -1195,6 +1195,14 @@ test result: FAILED. 122 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
 `test_fpr_spill_width_dispatch`（直接驱动生成的 `FrameLowering`，逐宽度断言机器码形状 +
 未声明宽度必须报错），不依赖分配器压力（高压力路径另有 scratch 限制，已单独记录）。
 
+**三块成因各有确定性守卫（2026-09-12 补，均无需 AVX-512 硬件）**：
+
+| 成因 | 守卫 |
+| --- | --- |
+| `[spill.FPR]` 恒 8 字节 + 生成器忽略 `width` | `test_fpr_spill_width_dispatch`（逐宽度机器码形状 + 24/48B 必须报错） |
+| >32B 向量被归 `VEC(32)`（槽宽与 `xreg.width()` 只报 32） | `test_vector_reg_class_widths`（16/32/**64** 分档 + `VEC(64).default_width() == 64`） |
+| V512 by-ref **调用方**拷贝路径（#57 的实际失败路径） | `test_v512_byref_caller_copy_is_64b_generation`（调用方 store `62 … 11`、被调方 load `62 … 10`，且都不得退回 32B `C4 .. 7C`） |
+
 **复核点**：下一次含本修复的 CI run，`Test (Windows)` 的 `test_jit_v512_byref_param`
 应确定性通过（本机无 AVX-512F，该硬件路径只能在 CI 上验证）。
 
