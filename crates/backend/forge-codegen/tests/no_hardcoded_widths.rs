@@ -12,20 +12,38 @@
 //! `LowerCtx` 上的同名字段（由 `CompileState::new` 注入）。
 
 /// 禁止在宿主生产代码里出现的写死类。
+///
+/// **已知覆盖边界**：只匹配**类字面量**；裸数字宽度（栈槽步长 `8`、帧开销
+/// `16`、sret 槽 `72` 等）不在范围内——见
+/// `docs/reference/isa-dsl.md` 的「宽度元数据」节（那些由 `slot_bytes` /
+/// `fp_overhead_bytes` 派生，其中 `[abi].stack_arg_shadow` 与 `wide_vec_*` /
+/// `frame_rbp_addr` 路径的角色目前只有 x86 声明）。
 const FORBIDDEN: &[&str] = &[
-    "RegClass::GPR(8)",
-    "RegClass::GPR(4)",
-    "RegClass::GPR(2)",
     "RegClass::GPR(1)",
+    "RegClass::GPR(2)",
+    "RegClass::GPR(4)",
+    "RegClass::GPR(8)",
+    "RegClass::GPR(16)",
+    "RegClass::GPR(32)",
+    "RegClass::GPR(64)",
     "RegClass::GPR64",
-    "RegClass::FPR(16)",
-    "RegClass::FPR(8)",
     "RegClass::FPR(4)",
+    "RegClass::FPR(8)",
+    "RegClass::FPR(16)",
+    "RegClass::FPR(32)",
+    "RegClass::FPR(64)",
     "RegClass::FPR64",
+    "RegClass::VEC(8)",
     "RegClass::VEC(16)",
     "RegClass::VEC(32)",
     "RegClass::VEC(64)",
+    "RegClass::VEC(128)",
+    "RegClass::VEC(256)",
+    "RegClass::KReg(4)",
     "RegClass::KReg(8)",
+    "RegClass::KReg(16)",
+    "RegClass::KReg(32)",
+    "RegClass::KReg(64)",
 ];
 
 /// 白名单：(相对 `src/` 的路径, 该行 trim 后的内容, 理由)。

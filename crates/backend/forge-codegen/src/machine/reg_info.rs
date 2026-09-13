@@ -88,7 +88,8 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     fn fp_reg(&self) -> Option<Self::Reg>;
 
     /// 通用寄存器分配优先级顺序（靠前的优先分配）。
-    /// 排除 SP、FP 和被调用者保存寄存器。
+    /// 排除 SP、FP、spill scratch 与 `[abi].reserved`（DSL 生成的实现；
+    /// callee-saved 仍可分配——跨调用由 prologue/epilogue 保存）。
     fn allocatable_gp_order(&self) -> Vec<u32>;
 
     /// 浮点寄存器分配优先级顺序。
@@ -103,8 +104,10 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// Prologue 在帧指针上方 push 的字节数（帧指针保存槽，如 x86 `push rbp`
     /// = 8；aarch64/riscv64 `stp/sd fp,lr` = 16；wasm 无帧 = 0）。
     /// codegen 用它计算局部变量区基址（`fp - overhead - callee_saved_bytes`）。
+    /// 缺省 = **地址类宽度**（元数据派生：1 字节寄存器 ISA = 1；DSL 生成的
+    /// `RegInfo` 一律用 `[meta].fp_overhead_bytes` 覆写）。
     fn frame_pointer_overhead(&self) -> u32 {
-        8
+        self.addr_class().width() as u32
     }
 
     /// 预着色的 VReg → PReg 映射（如 RAX = VReg(0) 用于返回值）。
@@ -113,32 +116,44 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     }
 }
 
-/// 类型 → 寄存器类，并按 ISA **值池宽度**做 fail-closed 校验
-/// （2026-09-12 去「宽度寄存写死」）：DSL 生成的 `RegInfo::class_for_type`
+/// 类型 → 寄存器类，并按 ISA **值池宽度 + 寄存器文件存在性**做 fail-closed
+/// 校验（2026-09-12 去「宽度寄存器写死」）：DSL 生成的 `RegInfo::class_for_type`
 /// 与宿主编译入口共用本函数。
 ///
 /// 规则：
 /// - 整数族（GPR，含 bool/ptr）：类宽 ≤ `gpr_pool.width()`，否则 `None`；
-/// - 浮点族（FPR）：类宽 ≤ `fpr_pool.width()`，否则 `None`；
-/// - 向量：v64/v128/v256 按字节数夹到 `vector_tiers` 中**最小的 ≥ 请求值**
-///   的档位；超过最大档 → `None`（不静默截断）；
+///   （更窄的 GPR 类在值语义上是合法视图，故不要求存在同名宽度组）
+/// - 浮点族（FPR）：`fpr_pool` 为 `None`（ISA 未声明任何浮点寄存器组）→ `None`；
+///   否则类宽 ≤ `fpr_pool.width()`；
+/// - 向量：同样要求 `fpr_pool` 存在（向量寄存器与浮点共用寄存器文件），再按
+///   字节数夹到 `vector_tiers` 中**最小的 ≥ 请求值**的档位；超过最大档 → 取最大档；
 /// - `KReg`：原样通过。
 ///
 /// 返回 `None` 的调用方必须报 `Unsupported`（点名类型与值池宽度），
-/// **不得**回退到某个宽度缺省（1 字节寄存器 ISA 上把 i64 放进 GPR(8) 会
-/// 生成该 ISA 根本不存在的寄存器类）。
+/// **不得**回退到某个宽度缺省（1 字节寄存器 ISA 上把 i64 放进 GPR(8)、或把 f64
+/// 放进根本不存在的 FPR(8)，都是"生成成功但语义错误"）。
 pub fn class_for_type_in_pool(
     ty: TypeId,
     gpr_pool: RegClass,
-    fpr_pool: RegClass,
+    fpr_pool: Option<RegClass>,
     vector_tiers: &[u16],
 ) -> Option<RegClass> {
     match RegClass::from_type_id(ty) {
         RegClass::GPR(w) => (w <= gpr_pool.width()).then_some(RegClass::GPR(w)),
-        RegClass::FPR(w) => (w <= fpr_pool.width()).then_some(RegClass::FPR(w)),
+        RegClass::FPR(w) => {
+            let pool = fpr_pool?;
+            (w <= pool.width()).then_some(RegClass::FPR(w))
+        }
         RegClass::VEC(_) => {
+            // 无浮点寄存器文件的 ISA 也没有向量寄存器（x86 的 XMM/VEC 与
+            // FPR 同组）——不能放行，否则会构造该 ISA 不存在的 VEC 类。
+            let _ = fpr_pool?;
             let bytes = (ty.bits() / 8) as u16;
-            let tier = vector_tiers.iter().copied().find(|t| *t >= bytes)?;
+            let tier = vector_tiers
+                .iter()
+                .copied()
+                .find(|t| *t >= bytes)
+                .or_else(|| vector_tiers.last().copied())?;
             Some(RegClass::VEC(tier.max(1)))
         }
         RegClass::KReg(w) => Some(RegClass::KReg(w)),

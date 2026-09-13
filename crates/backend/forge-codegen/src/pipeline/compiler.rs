@@ -1685,6 +1685,13 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             let Some(ty) = func.dfg.value_type(v) else {
                 continue;
             };
+            // 已删除/墓碑值：DCE 之后 `ValueData.ty` 被置为 `TypeId::VOID`
+            // （见 `dfg.rs` 的 replace/tombstone 路径），它不承载任何寄存器——
+            // 必须跳过，否则 1 字节值池的 ISA 上**任何**被优化掉的死值都会让
+            // 整个函数编译失败（`from_type_id(VOID)` 兜底是 GPR(8)）。
+            if matches!(ty, TypeId::VOID) {
+                continue;
+            }
             if ri.class_for_type(ty).is_none() {
                 return Err(IrError::Unsupported(format!(
                     "ISA 值池无法承载类型 {}（{} 位；值池 GPR {} 字节 / FPR {} 字节。\
@@ -2031,8 +2038,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let ri = machine.reg_info();
 
         // Build new RegAllocConfig from TargetRegInfo — 全部寄存器类。
-        // register_classes() 暴露 [reg.*] 多宽度类（如 GPR32 → GPR(4) 池），
-        // 使 lowering 可按类型分派到对应宽度的寄存器池。
+        // 注：DSL 生成的 `RegInfo` **不覆写** `register_classes()`（返回空表），
+        // 因此本循环对仓库内所有 ISA 都为空；真实类表由下面的
+        // `fallback_classes` 派生（唯一来源）。
         let mut classes: HashMap<RegClass, ClassConfig> = HashMap::new();
         for info in ri.register_classes() {
             classes.insert(

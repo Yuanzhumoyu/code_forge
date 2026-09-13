@@ -285,7 +285,9 @@ pub struct Meta {
     /// 主 GPR 类是：名字/索引解析锚点、`__DEFAULT_GPR_CLASS`、寄存器槽类。
     #[serde(default)]
     pub default_gpr_width: Option<u16>,
-    /// 主 FPR 类宽度（**字节**）。缺省 = 已声明 FPR 组中最宽者；无 FPR 组 = None。
+    /// 主 FPR 类宽度（**字节**）。缺省 = `fpr16`（XMM 基准）优先，其次最宽已
+    /// 声明 FPR 组；无 FPR 组 = None。16 字节组刻意优先于"最宽"——否则 x86 的
+    /// ZMM 组会把 SSE/ABI 占位基准带偏（见 `main_fpr_class`）。
     #[serde(default)]
     pub default_fpr_width: Option<u16>,
     /// 地址/指针类宽度（**字节**）。缺省 = `default_gpr_width`。

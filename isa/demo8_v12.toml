@@ -10,8 +10,9 @@
 # - 主 GPR 类 → `GPR(1)`（`[meta].default_gpr_width` 派生自最宽已声明组）
 # - 地址类 → `GPR(1)`（`[meta].addr_width = 1`）
 # - 值池 → `GPR(1)`（`[meta].value_gpr_width = 1`）——宿主编译 i16/i32/i64
-#   会被 `class_for_type` 值池门**编译期拒绝**（Unsupported），不再按 8 字节池
-#   生成不存在的寄存器类
+#   会被 `class_for_type` 值池门**编译期拒绝**（Unsupported）；本 ISA 未声明
+#   任何浮点寄存器组，故 f32/f64/v64/v128/v256 同样被拒（值池门判据 =
+#   寄存器文件存在性 + 池宽，不只是比宽度），不再按 8 字节池生成不存在的类
 # - 栈槽单位 / 帧指针保存槽 → 1 字节（`slot_bytes` / `fp_overhead_bytes`）
 # - decode 缺省 opsize → 8 位（`[meta].default_opsize = 8`，生成代码里的
 #   `__opsize` 单位是**字节** = 1）

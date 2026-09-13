@@ -487,7 +487,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
                 crate::machine::reg_info::class_for_type_in_pool(
                     ty,
                     __VALUE_GPR_CLASS,
-                    __VALUE_FPR_CLASS,
+                    __VALUE_FPR_POOL,
                     &__VECTOR_TIERS,
                 )
             }

@@ -71,7 +71,9 @@ fn one_byte_register_metadata_is_derived() {
     assert_eq!(ri.allocatable_gp_order(), vec![0, 1, 2, 3]);
 }
 
-/// 值池门：i8 可承载、i64/指针被拒绝（fail-closed，不再静默按 8 字节池）。
+/// 值池门：i8 可承载；i16/i32/i64/指针（宽 > 1 字节）与**全部浮点/向量**
+/// （本 ISA 未声明任何 FPR 组 ⇒ 寄存器文件不存在）一律按类型拒绝。
+/// fail-closed 的关键：拒绝发生在编译期，而不是按 8 字节池生成不存在的类。
 #[test]
 fn one_byte_pool_rejects_wide_types() {
     let tm = TargetMachine::new();
@@ -81,6 +83,14 @@ fn one_byte_pool_rejects_wide_types() {
     assert_eq!(ri.class_for_type(TypeId::I32), None, "无 GPR(4) 组");
     assert_eq!(ri.class_for_type(TypeId::I64), None, "无 GPR(8) 组");
     assert_eq!(ri.class_for_type(TypeId::PTR), None, "指针 = 8 字节 > 值池");
+    // 无 FPR 组 → 浮点/向量寄存器文件不存在（值池门必须看**文件存在性**，
+    // 只看宽度会让 f64 落到一个该 ISA 没有的 FPR(8) 类上）。
+    assert_eq!(ri.class_for_type(TypeId::F32), None, "无浮点寄存器组");
+    assert_eq!(ri.class_for_type(TypeId::F64), None, "无浮点寄存器组");
+    assert_eq!(ri.class_for_type(TypeId::V64), None, "无向量寄存器组");
+    assert_eq!(ri.class_for_type(TypeId::V128), None, "无向量寄存器组");
+    assert_eq!(ri.class_for_type(TypeId::V256), None, "无向量寄存器组");
+    assert_eq!(ri.class_for_type(TypeId::VOID), None, "void = 无寄存器");
 }
 
 // ───────────────── 2. 汇编/编码/解码往返 ─────────────────
@@ -193,6 +203,52 @@ fn compile_i8_function_on_one_byte_pool() {
     let joined = asm.join("\n");
     assert!(joined.contains("add "), "应含 add：{joined}");
     assert!(joined.contains("ret"), "应含 ret：{joined}");
+    // 收参/返回值必须经寄存器搬运（@move_args + ret_regs = A0）——只断言
+    // "含 add/ret" 会让"参数未搬运/返回值未回写"这类回归溜过去。
+    assert!(
+        asm.iter().filter(|s| s.starts_with("mov ")).count() >= 2,
+        "应含 ≥2 条 mov（收参 + 返回值回写）：{joined}"
+    );
+    assert!(
+        asm.iter().any(|s| s.starts_with("mov A0")),
+        "返回值必须回写到 ret_regs[0] = A0：{joined}"
+    );
+    // 全部寄存器操作数必须是 A0..A7（唯一 1 字节组）——出现别的寄存器名说明
+    // 某处仍按写死的类/别名构造寄存器（如 x86 的 RBP/RAX）。
+    for tok in joined.split(|c: char| !c.is_ascii_alphanumeric()) {
+        let looks_like_reg = tok.len() >= 2
+            && tok.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            && tok[1..].chars().all(|c| c.is_ascii_digit());
+        if looks_like_reg {
+            assert!(tok.starts_with('A'), "非本 ISA 的寄存器名 {tok}：{joined}");
+        }
+    }
+}
+
+/// 开启 IR 优化（O1）后编译 i8 函数：DCE 会把死值墓碑化（`ValueData.ty` =
+/// `TypeId::VOID`，见 `dfg.rs`）——值池门必须跳过这类不承载寄存器的值，
+/// 否则 1 字节值池的 ISA 上**任何**含死值的函数都会被误拒。
+#[test]
+fn compile_i8_function_with_opt_level_skips_tombstoned_values() {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I8, "a"), (TypeId::I8, "b")], &[TypeId::I8]);
+    let mut b = FunctionBuilder::new("opt8_fn", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I8, "a"), (TypeId::I8, "b")]);
+    b.switch_to_block(entry);
+    let dead = b.isub(params[0], params[1]); // 结果未使用 → O1 DCE 墓碑化
+    let live = b.iadd(params[0], params[1]);
+    b.ret(&[live]);
+    let _ = dead;
+    let func = b.finish().expect("build");
+
+    let compiler = FunctionCompiler::new(TargetMachine::new())
+        .with_opt_level(forge_opt::OptimizationLevel::O1);
+    let cf = compiler
+        .compile_raw(&func)
+        .expect("开启 O1 后 i8 函数必须仍可编译（墓碑值不得触发值池门）");
+    eprintln!("demo8 O1 code ({} bytes): {:02x?}", cf.code.len(), cf.code);
+    assert!(!cf.code.is_empty(), "生成代码非空");
+    assert_eq!(cf.code.len() % 4, 0, "定宽 4 字节指令序列");
 }
 
 /// 宽类型（i64）在 1 字节值池上 → 编译期 `Unsupported`（点名值池宽度）。
@@ -213,14 +269,10 @@ fn compile_i64_function_is_rejected_with_clear_error() {
         .expect_err("1 字节值池不得静默承载 i64");
     let msg = format!("{err}");
     eprintln!("i64 拒绝信息：{msg}");
-    assert!(
-        msg.contains("Unsupported") || msg.contains("无法承载"),
-        "{msg}"
-    );
-    assert!(
-        msg.contains("i64") || msg.contains("I64"),
-        "必须点名类型：{msg}"
-    );
+    // 必须命中值池门的**具体**文案（`Unsupported` 单独出现不足以证明是本门
+    // 拒绝——别的 Unsupported 也会满足）。
+    assert!(msg.contains("值池无法承载"), "必须是值池门拒绝：{msg}");
+    assert!(msg.contains("i64"), "必须点名类型：{msg}");
     assert!(
         msg.contains("GPR") || msg.contains("值池"),
         "必须点名值池：{msg}"

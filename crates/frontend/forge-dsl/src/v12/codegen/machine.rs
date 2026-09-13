@@ -66,6 +66,15 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
     let fp_overhead = model.fp_overhead_bytes()?;
     let vector_tiers = model.vector_tiers();
     let n_tiers = vector_tiers.len();
+    // 浮点寄存器**文件**是否存在（与"值池宽度"不同）：无 FPR 组的 ISA
+    // （arm64/demo/demo8）没有任何浮点/向量寄存器 —— 值池门必须据此拒绝
+    // FPR/VEC 类型，否则会放行一个该 ISA 根本不存在的类。
+    let has_fp_file = model.main_fpr_class()?.is_some();
+    let fpr_pool_opt: Option<RegClass> = if has_fp_file { Some(value_fpr) } else { None };
+    let fpr_pool_toks = match fpr_pool_opt {
+        Some(c) => quote! { Some(#c) },
+        None => quote! { None },
+    };
 
     // 默认值类：主 GPR 组宽度 / FPR 组宽度
     let gpr_class = quote! { #gpr_main };
@@ -112,6 +121,9 @@ pub(crate) fn gen_reg_enum(model: &V12Model) -> Result<TokenStream, String> {
         pub(crate) const __VALUE_GPR_CLASS: forge_ir::RegClass = #value_gpr_toks;
         /// 宿主浮点值寄存器池类（f64 值池宽；≠ `__DEFAULT_FPR_CLASS`）。
         pub(crate) const __VALUE_FPR_CLASS: forge_ir::RegClass = #value_fpr_toks;
+        /// 浮点值池（**None = 本 ISA 未声明任何浮点寄存器组**）：
+        /// 值池门据此拒绝 FPR/VEC 类型（详见 `class_for_type_in_pool`）。
+        pub(crate) const __VALUE_FPR_POOL: Option<forge_ir::RegClass> = #fpr_pool_toks;
         /// ABI 栈槽单位（字节）。
         pub(crate) const __SLOT_BYTES: u16 = #slot_bytes;
         /// 帧指针保存槽字节数。

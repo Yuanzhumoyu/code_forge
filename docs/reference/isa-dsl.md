@@ -104,12 +104,11 @@ slot_bytes = 8               # ABI 栈槽单位（alloca/聚合/spill 槽对齐�
 fp_overhead_bytes = 8        # 帧指针保存槽字节数（frame_pointer_overhead）
 vector_tiers = [16, 32, 64]  # 向量类字节档位（升序；缺省 = x86 XMM/YMM/ZMM）
 
-[reg.gpr64]                  # 寄存器组
-width = 64
-names = ["RAX", "..."]       # 显式名单；或 count + prefix 生成式声明
-count = 16
-prefix = "XMM"
-base_index = 4               # 物理编号偏移（如 gpr8h 高字节组）
+[reg.gpr8]                   # 寄存器组（组名的数字 = **字节**宽：gpr8 = 64 位）
+names = ["RAX", "RCX", "..."] # 显式名单；或 count + prefix 生成式声明
+count = 16                    # 与 names 同时给出时必须等长
+prefix = "XMM"                # 生成式：XMM0, XMM1, …
+base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
 ```
 
 寄存器物理编号 = **组内索引**（`Reg::to_index()`），这是 v12 与 v11
@@ -169,8 +168,12 @@ base_index = 4               # 物理编号偏移（如 gpr8h 高字节组）
 3. **spill 基址**：`[spill.*]` 模板未写 `base` 且无 `[abi.frame].fp` → 报错
    （历史实现回退字面量 `"RBP"`）。
 4. **值池门**：函数里出现的每个值类型都必须被 `class_for_type` 承载，否则
-   **编译期** `Unsupported`（点名类型与值池宽度）。1 字节寄存器 ISA 上写
-   `i64`/指针即被拒绝，而不是按 8 字节池生成不存在的类。
+   **编译期** `Unsupported`（点名类型与值池宽度）。判据 = **值池宽度 + 寄存器
+   文件存在性**：整数族要求类宽 ≤ `value_gpr_width`（1 字节 ISA 上写 `i64`/
+   指针即被拒）；浮点/向量族额外要求 ISA **声明了浮点寄存器组**（无 `[reg.fpr*]`
+   的 ISA 上 `f32`/`f64`/`v128`… 一律被拒——它们没有可编码的寄存器文件），
+   向量再按 `vector_tiers` 夹到档位。被 DCE 墓碑化的值（`TypeId::VOID`，不承载
+   寄存器）跳过。**不**按 8 字节池生成不存在的类。
 5. **向量 by-value/by-ref**：超过 `[abi.arg_class].limit`（字节 = limit/8）的
    向量按引用传参；按值收参判定用同一阈值（不再写死 `VEC(16)`）。
 
@@ -179,11 +182,20 @@ base_index = 4               # 物理编号偏移（如 gpr8h 高字节组）
 `isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/`slot_bytes`/
 `value_gpr_width`/`fp_overhead_bytes` 全 = 1，`default_opsize = 8`）是这条路径的
 回归夹具：`tests/demo8_v12_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
-sp/fp/scratch 名字解析成功）、汇编/编码/解码往返，以及宿主编译 i8 函数
-（机器码可被反汇编回 `mov/add/ret`）与 i64 的编译期拒绝。
+sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 可承载；
+`i16/i32/i64/ptr` 与 `f32/f64/v64/v128/v256` 全部 `None`）、编码布局、
+汇编→编码→解码→反汇编往返，以及宿主编译 i8 函数（机器码反汇编为
+`mov A3, A0` / `mov A2, A1` / `add A1, A3, A2` / `mov A0, A1` / `ret`）、
+O1 开启后（含墓碑值）仍可编译、`i64` 的编译期拒绝。
 
 > 指令字宽是**另一条轴**：`default_inst_width` 目前只支持 32（定宽）或
 > `variable_length = true`，定宽 decode 按 4 字节读字——"1 字节指令"尚未支持。
+>
+> **残余（有意保留）**：`[abi].stack_arg_shadow`（栈参数）与 `wide_vec_*`/
+> `frame_rbp_addr`（宽向量 by-ref/sret）这几条路径的**指令角色**目前只有 x86
+> 声明；它们的内存基址已改为从 `[abi.frame].fp` 派生（不再写死 `Reg::RBP`），
+> 但 lowering 侧同角色路径仍假定 x86 的 fp/sp 形态——非 x86 ISA 声明这些角色
+> 会得到生成期/生成模块编译错误（fail-loud），而非静默错码。
 
 ## `[conventions]` — ISA 约定
 

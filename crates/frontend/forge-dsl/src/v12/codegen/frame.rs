@@ -446,7 +446,9 @@ fn gen_emit_inst(
                                 .abi
                                 .as_ref()
                                 .and_then(|a| a.callee_saved.as_ref())
-                                .map(|c| c.gpr.len() as i64 * 8)
+                                .map(|c| {
+                                    c.gpr.len() as i64 * model.slot_bytes().unwrap_or(8) as i64
+                                })
                                 .unwrap_or(0);
                             quote! { #cs }
                         }
@@ -505,20 +507,22 @@ fn gen_emit_pseudo(
     name: &str,
 ) -> Result<TokenStream, String> {
     // callee-saved 区字节数（生成期常量，与 frame_layout::callee_saved_bytes
-    // 一致：fp 保存槽 + callee-saved × 8）——move_args 收 spilled 栈参数时
+    // 一致：fp 保存槽 + callee-saved × 槽单位）——move_args 收 spilled 栈参数时
     // 计算 spill 槽地址 sp_base = -(frame) - callee_saved + stack_arg_bytes。
+    // 缺省/步长全部元数据派生（x86 = 8；1 字节寄存器 ISA = 1）。
+    let slot_bytes_lit = model.slot_bytes()? as i64;
     let callee_saved_bytes_lit: i64 = {
         let fp_push = model
             .abi
             .as_ref()
             .and_then(|a| a.frame.as_ref())
             .and_then(|f| f.fp_push_bytes)
-            .unwrap_or(8) as i64;
+            .unwrap_or(model.addr_class()?.width() as u32) as i64;
         let cs = model
             .abi
             .as_ref()
             .and_then(|a| a.callee_saved.as_ref())
-            .map(|c| c.gpr.len() as i64 * 8)
+            .map(|c| c.gpr.len() as i64 * slot_bytes_lit)
             .unwrap_or(0);
         fp_push + cs
     };
@@ -550,7 +554,10 @@ fn gen_emit_pseudo(
                     );
                 };
                 let sp = format_ident!("{}", frame.sp);
-                let fp_push = frame.fp_push_bytes.unwrap_or(8) as i64;
+                let fp_push = frame
+                    .fp_push_bytes
+                    .unwrap_or(model.addr_class()?.width() as u32)
+                    as i64;
                 let spill_tpl = model
                     .spill
                     .get("GPR")
@@ -598,7 +605,7 @@ fn gen_emit_pseudo(
                     let __n = __saved.len();
                     for (__k, __preg) in #iter.enumerate() {
                         let __reg = Reg::from_index(__preg.num, __preg.class);
-                        let __off_val: i64 = (#k_expr + 1) * 8;
+                        let __off_val: i64 = (#k_expr + 1) * __SLOT_BYTES as i64;
                         let __off = __frame_size as i64 - #fp_push - __off_val;
                         let __bytes = encode(&Inst::#vn {
                             #f_reg: __reg,
@@ -689,6 +696,29 @@ fn gen_emit_pseudo(
                 .as_ref()
                 .and_then(|a| a.stack_arg_shadow)
                 .is_some();
+            // 栈参数内存基址 = `[abi.frame].fp` 对应的寄存器（x86 = RBP）。
+            // 历史实现写死字面量 `Reg::RBP`——非 x86 ISA 一旦声明 shadow 会
+            // 生成引用不存在寄存器的代码；这里改为元数据派生 + 生成期
+            // fail-closed（fp 未声明 → 报错）。
+            let fp_reg: TokenStream = match model
+                .abi
+                .as_ref()
+                .and_then(|a| a.frame.as_ref())
+                .and_then(|f| f.fp.as_ref())
+            {
+                Some(n) => {
+                    let id = format_ident!("{n}");
+                    quote! { Reg::#id }
+                }
+                None if has_shadow => {
+                    return Err(
+                        "move_args: [abi].stack_arg_shadow 已声明，但 [abi.frame].fp 缺失——\
+                         栈参数内存基址需要帧指针（不再回退字面量 \"RBP\"）"
+                            .into(),
+                    );
+                }
+                None => quote! { Reg::from_index(0, __DEFAULT_GPR_CLASS) },
+            };
             // (变体名, Mem 字段, Reg 字段)——load 的 Reg 槽是 dest、store 是 src，
             // 字段名由 `reg_mem_fids` 从操作数结构派生。
             let tagged =
@@ -720,10 +750,10 @@ fn gen_emit_pseudo(
             //（不引用任何指令名，也不再让 by-position 臂去插值假名字）。
             let stack_int_recv: TokenStream = match (&load_triple, has_shadow) {
                 (Some((vn, mem, reg)), true) => quote! {
-                    let __off = (16i64 + __shadow as i64) + (__pos - #n) as i64 * 8;
+                    let __off = (2 * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 * __SLOT_BYTES as i64;
                     let __bytes = encode(&Inst::#vn {
                         #mem: MemRef {
-                            base: Reg::RBP,
+                            base: #fp_reg,
                             disp: __off,
                             index: None,
                             scale: 1,
@@ -1037,13 +1067,13 @@ fn gen_emit_pseudo(
                         && __pos >= #n
                         && __rm.spill_slots.contains_key(&__pv)
                     {
-                        let __off = (16i64 + __shadow as i64) + (__pos - #n) as i64 * 8;
+                        let __off = (2 * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 * __SLOT_BYTES as i64;
                         let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
                         let __slot_off = __rm.spill_slot(__pv).offset as i64;
                         // load ABI 槽 → scratch（角色 stack_arg_load 命中的指令）
                         let __lbytes = encode(&Inst::#l_vn {
                             #l_mem: MemRef {
-                                base: Reg::RBP,
+                                base: #fp_reg,
                                 disp: __off,
                                 index: None,
                                 scale: 1,
@@ -1054,7 +1084,7 @@ fn gen_emit_pseudo(
                         // store scratch → spill 槽（角色 stack_arg_store 命中的指令）
                         let __sbytes = encode(&Inst::#s_vn {
                             #s_mem: MemRef {
-                                base: Reg::RBP,
+                                base: #fp_reg,
                                 disp: __sp_base + __slot_off,
                                 index: None,
                                 scale: 1,
@@ -1097,7 +1127,7 @@ fn gen_emit_pseudo(
                         // scratch → spill 槽（角色 stack_arg_store 命中的指令）
                         let __sbytes = encode(&Inst::#s_vn {
                             #s_mem: MemRef {
-                                base: Reg::RBP,
+                                base: #fp_reg,
                                 disp: __sp_base + __slot_off,
                                 index: None,
                                 scale: 1,
