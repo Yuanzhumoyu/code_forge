@@ -5,9 +5,9 @@
 
 use super::dfg::DataFlowGraph;
 use super::entity::{Inst, Value};
+use crate::entity_map::SecondaryMap;
 use crate::error::IrError;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 
 // ============================================================
 // Use
@@ -29,19 +29,22 @@ pub struct Use {
 // ============================================================
 
 /// Use-List 管理器 — 每个 Value 的所有使用点的集合。
+///
+/// 存储是 [`SecondaryMap`]（句柄即下标，`O(1)` 无哈希）——S2 之前是
+/// `HashMap<Value, _>`，每次记录/查询都要哈希；改用密集索引后
+/// `record_inst`/`uses` 都退化为一次 `Vec` 索引。
 #[derive(Clone, Debug, Default)]
 pub struct UseLists {
     /// 每个 Value → 所有 Use 的列表。
-    uses: HashMap<Value, SmallVec<[Use; 4]>>,
+    uses: SecondaryMap<Value, SmallVec<[Use; 4]>>,
 }
 
 impl UseLists {
     pub fn new() -> Self {
         Self {
-            // 适度预分配：容量 8 覆盖单条指令的少量 use 项，同时让中大型
-            // 函数少几次 rehash。不设过大——微小函数（2-3 条指令）的
-            // HashMap 初始化成本会反超收益（ir_build_simple_add +39%）。
-            uses: HashMap::with_capacity(8),
+            // 无需预分配：句柄即下标，`SecondaryMap` 是 `Vec<Option<_>>`，
+            // 增长摊还 O(1)（旧实现给 HashMap 预分配 8 是为了少几次 rehash）。
+            uses: SecondaryMap::new(),
         }
     }
 
@@ -53,7 +56,7 @@ impl UseLists {
     /// 在 `DFG::make_inst` 后调用。
     pub fn record_inst(&mut self, inst: Inst, operands: &[Value]) {
         for (idx, &operand) in operands.iter().enumerate() {
-            self.uses.entry(operand).or_default().push(Use {
+            self.uses.get_mut_or_default(operand).push(Use {
                 value: operand,
                 user: inst,
                 operand_idx: idx as u8,
@@ -66,7 +69,7 @@ impl UseLists {
     pub fn remove_inst(&mut self, dfg: &DataFlowGraph, inst: Inst) {
         let operands = dfg.inst_operands(inst);
         for (idx, &operand) in operands.iter().enumerate() {
-            if let Some(use_list) = self.uses.get_mut(&operand) {
+            if let Some(use_list) = self.uses.get_mut(operand) {
                 use_list.retain(|u| u.user != inst || u.operand_idx != idx as u8);
             }
         }
@@ -97,7 +100,7 @@ impl UseLists {
 
     /// 获取某个值的所有使用点。
     pub fn uses(&self, value: Value) -> &[Use] {
-        self.uses.get(&value).map(|v| v.as_slice()).unwrap_or(&[])
+        self.uses.get(value).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
     /// 获取某个值的使用计数。
@@ -122,11 +125,11 @@ impl UseLists {
     /// 替换特定指令中的一个操作数。
     pub fn replace_operand(&mut self, old: Value, new: Value, inst: Inst, operand_idx: u8) {
         // 从 old 的 use-list 中移除
-        if let Some(old_list) = self.uses.get_mut(&old) {
+        if let Some(old_list) = self.uses.get_mut(old) {
             old_list.retain(|u| u.user != inst || u.operand_idx != operand_idx);
         }
         // 添加到 new 的 use-list
-        self.uses.entry(new).or_default().push(Use {
+        self.uses.get_mut_or_default(new).push(Use {
             value: new,
             user: inst,
             operand_idx,
@@ -145,7 +148,7 @@ impl UseLists {
             self.replace_operand(u.value, new, u.user, u.operand_idx);
         }
         // 清空 old 的 use-list
-        if let Some(old_list) = self.uses.get_mut(&old) {
+        if let Some(old_list) = self.uses.get_mut(old) {
             old_list.clear();
         }
         count
@@ -154,7 +157,7 @@ impl UseLists {
     /// 移除某个值的所有使用记录（值死亡时清理 use-list 条目）。
     /// 返回被移除的数量。
     pub fn remove_value(&mut self, value: Value) -> usize {
-        self.uses.remove(&value).map(|l| l.len()).unwrap_or(0)
+        self.uses.remove(value).map(|l| l.len()).unwrap_or(0)
     }
 
     /// 清空所有使用信息。
@@ -197,7 +200,7 @@ impl UseLists {
                 }
                 let operands = dfg.inst_operands(u.user);
                 if u.operand_idx as usize >= operands.len()
-                    || operands[u.operand_idx as usize] != *value
+                    || operands[u.operand_idx as usize] != value
                 {
                     errors.push(IrError::Internal(format!(
                         "use-list for {}: inst {} operand {} mismatch",

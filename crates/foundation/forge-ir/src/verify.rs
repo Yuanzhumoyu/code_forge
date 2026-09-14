@@ -7,8 +7,9 @@ use super::opcode::{ConvertRule, Opcode, TypeClass, TypeRule, WidthRule};
 use super::terminator::Terminator;
 use super::types::{TypeContext, TypeEntry};
 use crate::Immediate;
+use crate::entity_map::SecondaryMap;
 use crate::error::IrError;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 // ============================================================
 // VerifyError
@@ -553,7 +554,7 @@ impl Verifier {
 
     fn check_types(&mut self, dfg: &DataFlowGraph) {
         // Collect all defined values
-        let mut defined: HashMap<Value, TypeId> = HashMap::new();
+        let mut defined: SecondaryMap<Value, TypeId> = SecondaryMap::new();
         for (v, vd) in dfg.values() {
             defined.insert(v, vd.ty);
         }
@@ -561,7 +562,7 @@ impl Verifier {
         for (inst, instruction) in dfg.insts() {
             // Check that instruction results have types
             for &result in &instruction.results {
-                if !defined.contains_key(&result) {
+                if !defined.contains_key(result) {
                     self.errors.push(VerifyError::UndefinedValue {
                         value: result,
                         user: inst,
@@ -573,7 +574,7 @@ impl Verifier {
             // Verify icmp/fcmp results are Bool
             if matches!(instruction.opcode, Opcode::Icmp | Opcode::Fcmp) {
                 for &r in &instruction.results {
-                    if let Some(&ty) = defined.get(&r)
+                    if let Some(&ty) = defined.get(r)
                         && ty != self.bool_ty()
                     {
                         self.errors.push(VerifyError::TypeMismatch {
@@ -598,7 +599,7 @@ impl Verifier {
                     | Opcode::SmulOverflow
                     | Opcode::UmulOverflow
             ) && instruction.results.len() >= 2
-                && let Some(&ty) = defined.get(&instruction.results[1])
+                && let Some(&ty) = defined.get(instruction.results[1])
                 && ty != self.bool_ty()
             {
                 self.errors.push(VerifyError::TypeMismatch {
@@ -611,7 +612,7 @@ impl Verifier {
             // IsNull/IsNotNull result must be bool
             if matches!(instruction.opcode, Opcode::IsNull | Opcode::IsNotNull) {
                 for &r in &instruction.results {
-                    if let Some(&ty) = defined.get(&r)
+                    if let Some(&ty) = defined.get(r)
                         && ty != self.bool_ty()
                     {
                         self.errors.push(VerifyError::TypeMismatch {
@@ -632,7 +633,7 @@ impl Verifier {
         &mut self,
         inst: Inst,
         instruction: &super::dfg::Instruction,
-        defined: &HashMap<Value, TypeId>,
+        defined: &SecondaryMap<Value, TypeId>,
     ) {
         let op = &instruction.opcode;
         // 逐指令类型规则**族**声明在 `ops.toml`（`type_rule`），这里按族分派——
@@ -658,12 +659,12 @@ impl Verifier {
                 let operand_tys: Vec<Option<TypeId>> = instruction
                     .operands
                     .iter()
-                    .map(|v| defined.get(v).copied())
+                    .map(|v| defined.get(*v).copied())
                     .collect();
                 let result_ty = instruction
                     .results
                     .first()
-                    .and_then(|v| defined.get(v))
+                    .and_then(|v| defined.get(*v))
                     .copied();
                 let violations =
                     crate::type_rules::check_shape(*op, &operand_tys, result_ty, &|t| {
@@ -706,8 +707,8 @@ impl Verifier {
             TypeRule::CmpxchgPair => {
                 // cmp（operands[1]）与 new（operands[2]）同类型（opaque-ptr-cmpxchg）
                 if instruction.operands.len() >= 3 {
-                    let t1 = defined.get(&instruction.operands[1]);
-                    let t2 = defined.get(&instruction.operands[2]);
+                    let t1 = defined.get(instruction.operands[1]);
+                    let t2 = defined.get(instruction.operands[2]);
                     if let (Some(&a), Some(&b)) = (t1, t2)
                         && a != b
                     {
@@ -717,13 +718,13 @@ impl Verifier {
             }
             TypeRule::Convert => self.check_conversion(inst, instruction, defined),
             TypeRule::Load => {
-                if let Some(&addr_ty) = instruction.operands.first().and_then(|v| defined.get(v))
+                if let Some(&addr_ty) = instruction.operands.first().and_then(|v| defined.get(*v))
                     && !self.is_pointer_ty(addr_ty)
                 {
                     self.errors.push(VerifyError::LoadAddrNotPointer { inst });
                 }
                 // load 结果类型必须有大小（opaque/metadata 等占位类型——LLVM 拒绝）
-                if let Some(rt) = instruction.results.first().and_then(|v| defined.get(v))
+                if let Some(rt) = instruction.results.first().and_then(|v| defined.get(*v))
                     && let Some(ctx) = &self.ctx
                     && ctx.borrow().size_bytes(*rt) == 0
                 {
@@ -737,7 +738,8 @@ impl Verifier {
             }
             TypeRule::Store => {
                 if instruction.operands.len() >= 2
-                    && let Some(&addr_ty) = instruction.operands.get(1).and_then(|v| defined.get(v))
+                    && let Some(&addr_ty) =
+                        instruction.operands.get(1).and_then(|v| defined.get(*v))
                     && !self.is_pointer_ty(addr_ty)
                 {
                     self.errors.push(VerifyError::StoreAddrNotPointer { inst });
@@ -751,7 +753,7 @@ impl Verifier {
                         detail: "no callee operand".to_string(),
                     });
                 } else if op.type_rule() == TypeRule::CallIndirect
-                    && let Some(&callee_ty) = defined.get(&instruction.operands[0])
+                    && let Some(&callee_ty) = defined.get(instruction.operands[0])
                     && !self.is_pointer_ty(callee_ty)
                 {
                     self.errors.push(VerifyError::CallInvalidTarget {
@@ -769,7 +771,7 @@ impl Verifier {
         &mut self,
         inst: Inst,
         instruction: &super::dfg::Instruction,
-        defined: &HashMap<Value, TypeId>,
+        defined: &SecondaryMap<Value, TypeId>,
     ) {
         let Some(rule) = instruction.opcode.info().convert else {
             // 生成期保证 `type_rule == Convert` ⇔ 有 convert 表；这里防御性返回，
@@ -777,10 +779,10 @@ impl Verifier {
             debug_assert!(false, "Convert 族缺少 convert 事实表");
             return;
         };
-        let Some(&src_ty) = instruction.operands.first().and_then(|v| defined.get(v)) else {
+        let Some(&src_ty) = instruction.operands.first().and_then(|v| defined.get(*v)) else {
             return;
         };
-        let Some(&dst_ty) = instruction.results.first().and_then(|v| defined.get(v)) else {
+        let Some(&dst_ty) = instruction.results.first().and_then(|v| defined.get(*v)) else {
             return;
         };
         // 类别：`Any` 不限制；`Vector` 只在能确认是向量时才判否（保持既有行为）

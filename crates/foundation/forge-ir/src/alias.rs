@@ -11,9 +11,9 @@
 //! 消费方：CSE / GVN（load 消重的 kill 精度）、LICM（load 外提判定）。
 //! 解析是惰性 memo 化的（按 Value 缓存），同一函数内多次查询无重复工作。
 
+use crate::entity_map::SecondaryMap;
 use crate::*;
 use std::cell::RefCell;
-use std::collections::HashMap;
 
 /// 内存访问的分类位置。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -42,7 +42,7 @@ pub enum AliasResult {
 /// 最小别名分析：惰性 memo 化 地址 → 位置 解析。
 #[derive(Default)]
 pub struct AliasAnalysis {
-    memo: RefCell<HashMap<Value, MemoryLocation>>,
+    memo: RefCell<SecondaryMap<Value, MemoryLocation>>,
 }
 
 impl AliasAnalysis {
@@ -54,7 +54,7 @@ impl AliasAnalysis {
     /// （`StackAddr` / `GlobalAddr` / `Alloca`），其余（实参、load 结果、
     /// inttoptr…）视为 `Unknown`。
     pub fn location_of_addr(&self, func: &Function, addr: Value) -> MemoryLocation {
-        if let Some(&loc) = self.memo.borrow().get(&addr) {
+        if let Some(&loc) = self.memo.borrow().get(addr) {
             return loc;
         }
         let loc = self.compute_addr_loc(func, addr);

@@ -46,6 +46,7 @@ pub mod data_layout;
 pub mod dfg;
 pub mod display;
 pub mod entity;
+pub mod entity_map;
 pub mod error;
 pub mod function;
 pub mod imm_str;

@@ -18,6 +18,7 @@
 | 模块 | 内容 |
 | --- | --- |
 | `entity` | 实体句柄：`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/`GlobalId`/`SigRef`/`VReg`/`XReg`/`PReg`/`RegClass` |
+| `entity_map` | 密集索引容器：`PrimaryMap`/`SecondaryMap`/`EntitySet`/`PackedOption` + `EntityRef`（S2） |
 | `dfg` | `DataFlowGraph`（`values`/`insts`/`blocks` 三个 arena）、`Instruction`、`BlockData` |
 | `function` | `Function`、`Module`、`Layout`、`GlobalVariable`/`GlobalAlias`、`AnalysisCache` |
 | `types` | `TypeStore`（interner）、`TypeContext`、`FunctionSignature` |
@@ -72,5 +73,6 @@ builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 （S5）、校验与 pass 契约（S6）、文本层诊断（S7）。
 
 S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；**S1 已全部落地**
-（`ops.toml` + 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族，查表全 O(1)），
-下一步按方案进入 S2（实体容器 `PrimaryMap`/`SecondaryMap`）。
+（`ops.toml` + 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族，查表全 O(1)）；
+**S2 第一切片已落地**（`entity_map` 四个容器 + forge-ir 内部句柄键表迁移，
+句柄键 `HashMap` 45 → 31 处）。余项见该文档 §6 的 S2 记录。

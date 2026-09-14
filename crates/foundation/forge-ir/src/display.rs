@@ -16,8 +16,9 @@ use super::immediate::Immediate;
 use super::opcode::Opcode;
 use super::terminator::Terminator;
 use super::types::{TypeContext, TypeEntry, TypeStore};
+use crate::entity_map::SecondaryMap;
 use crate::ir_parser::llvm_mapping::llvm_mnemonic;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 
 // ============================================================
@@ -28,8 +29,8 @@ use std::fmt;
 /// 绑定名作基础名、无名自动 `v{index}`/`b{index}`；同名冲突追加 `_1`/`_2` 后缀。
 /// 值命名空间与块命名空间分开（LLVM 中 label 与 SSA 值可同名）。
 struct NameResolver {
-    values: HashMap<Value, ImmStr>,
-    blocks: HashMap<Block, ImmStr>,
+    values: SecondaryMap<Value, ImmStr>,
+    blocks: SecondaryMap<Block, ImmStr>,
 }
 
 fn disambiguate(base: ImmStr, used: &mut HashSet<ImmStr>) -> ImmStr {
@@ -46,14 +47,14 @@ impl NameResolver {
     fn new(func: &Function, store: &TypeContext) -> Self {
         let mut used_values: HashSet<ImmStr> = HashSet::new();
         let mut used_blocks: HashSet<ImmStr> = HashSet::new();
-        let mut values: HashMap<Value, ImmStr> = HashMap::new();
-        let mut blocks: HashMap<Block, ImmStr> = HashMap::new();
+        let mut values: SecondaryMap<Value, ImmStr> = SecondaryMap::new();
+        let mut blocks: SecondaryMap<Block, ImmStr> = SecondaryMap::new();
 
         // 块名（layout 顺序，确定性）
         for &block in &func.layout.block_order {
             let base = func
                 .block_names
-                .get(&block)
+                .get(block)
                 .map(|s| ImmStr::from(store.borrow().lookup_str(*s)))
                 .unwrap_or_else(|| ImmStr::from(format!("b{}", block.0)));
             blocks.insert(block, disambiguate(base, &mut used_blocks));
@@ -64,7 +65,7 @@ impl NameResolver {
             for &v in func.dfg.block_param_values(block) {
                 let base = func
                     .value_names
-                    .get(&v)
+                    .get(v)
                     .map(|s| ImmStr::from(store.borrow().lookup_str(*s)))
                     .unwrap_or_else(|| ImmStr::from(format!("v{}", v.0)));
                 values.insert(v, disambiguate(base, &mut used_values));
@@ -73,7 +74,7 @@ impl NameResolver {
                 for &v in &inst.results {
                     let base = func
                         .value_names
-                        .get(&v)
+                        .get(v)
                         .map(|s| ImmStr::from(store.borrow().lookup_str(*s)))
                         .unwrap_or_else(|| ImmStr::from(format!("v{}", v.0)));
                     values.insert(v, disambiguate(base, &mut used_values));
@@ -93,11 +94,11 @@ impl NameResolver {
     }
 
     fn value(&self, v: Value) -> &str {
-        self.values.get(&v).map(ImmStr::as_str).unwrap_or("?")
+        self.values.get(v).map(ImmStr::as_str).unwrap_or("?")
     }
 
     fn block(&self, b: Block) -> &str {
-        self.blocks.get(&b).map(ImmStr::as_str).unwrap_or("?")
+        self.blocks.get(b).map(ImmStr::as_str).unwrap_or("?")
     }
 }
 

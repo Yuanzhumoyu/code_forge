@@ -61,6 +61,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-14)
 
+- **实体容器与密集索引（forge-ir v3 方案 S2 第一切片）**：新模块 `src/entity_map.rs`（无新依赖，8 个单测）提供 `PrimaryMap`（`push` 分配句柄、下标即句柄、**刻意不支持删除**）、`SecondaryMap`（`Vec<Option<_>>`，"未设置"与"空值"可区分，`get_mut_or_default` 等价 `entry().or_default()`）、`EntitySet`（密集位图，O(1) 增删查）、`PackedOption`（句柄可空压缩：`Option<Value>` 8 字节 → **4 字节**，`u32::MAX` 为空哨兵），以及 `EntityRef` trait + `entity_ref_impls!` 宏（已为 10 个句柄类型实现：句柄 ↔ 密集下标）。`ListPool` 明确不做（本仓库列表用途都是短生命周期局部量）。
+  同批把 forge-ir 内部的**句柄键表**迁到密集索引（`HashMap` → `SecondaryMap`）：`use_list.rs` 的 `uses`（最热路径：每建/删/改指令都碰）、`verify.rs` 的 `defined`（每次 `verify()` 重建）、`function.rs` 的 `value_names`/`block_names`、`display.rs` 的 `NameResolver`（`imm_str.md` 点名的热路径）、`alias.rs` 的 `memo`、`debug_info.rs` 的 `locations`、`loop_info.rs` 的 `depths`。
+  **计量**：`forge-ir/src` 的句柄键 `HashMap` **45 → 31 处**（`git grep` 对比 HEAD；全仓基线 129 处 / 36 文件）；workspace 测试 1380 → **1388 passed**。
+  S2 余项记在方案 §6：`predecessors()`/`successors()` 与支配树（公开 API，牵动 forge-opt/forge-codegen 15+ 调用点）、句柄字段私有化（`.0` 约 260 处）、墓碑语义显式化、两个下游 crate 内部的句柄键表。
+
+### Changed (2026-09-14)
+
 - **`ops.toml`：指令元数据单一事实源（forge-ir v3 方案 S1 第一步）**：
   crate 根新增 `crates/foundation/forge-ir/ops.toml`（109 条 `[[op]]`：变体名、助记符、分组、文档、值操作数个数、结果数、`may_ub`、`side_effect`、变体载荷），
   `build.rs` 扩容为"lalrpop + 读 `ops.toml` 生成 `$OUT_DIR/opcode_gen.rs`"，`src/opcode.rs` 以 `include!` 接入——**新增一个 opcode 从改 6 张手写表变成加一行 `[[op]]`**

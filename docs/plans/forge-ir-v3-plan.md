@@ -96,7 +96,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
-| S2 | 实体容器与密集索引 | 待开工 |
+| S2 | 实体容器与密集索引 | **部分落地**：四个容器已实现（`PrimaryMap`/`SecondaryMap`/`EntitySet`/`PackedOption`），forge-ir 内部主表已迁移（句柄键 `HashMap` 45 → 31 处）；余项：`predecessors/successors` 与支配树（公开 API，牵动 forge-opt/forge-codegen）、句柄字段私有化、墓碑语义、`ListPool` |
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
@@ -298,8 +298,7 @@ binop 37 个、浮点 binop 8 个、Fma、Select、Icmp/Fcmp，再加上 13 个�
 **门禁（S1 收尾后）**：workspace **1380 passed / 0 failed / 19 ignored**（67 suites）；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt / clippy `-D warnings` 干净。
 
-**builder 侧断言不做声明化（实证否决）**：把同一个 `check_shape` 挂到
-`FunctionBuilder::emit_with_mem` 的 debug 断言后，**5 个既有 builder 测试失败**
+**builder 侧断言不做声明化（实证否决）**：把同一个 `check_shape` 挂到`FunctionBuilder::emit_with_mem` 的 debug 断言后，**5 个既有 builder 测试失败**
 （`test_int_binary_upcast_result_ty`、`test_float_binary_upcast_result_ty`、
 `test_bool_arith_normalized`、`test_bool_special_handling`、
 `test_shift_result_ty_keeps_lhs`）——builder **刻意允许**"混合宽度操作数 + 结果类型
@@ -307,6 +306,46 @@ upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两个
 二者职责不同：builder 是宽松构造层（类别维度由各方法的 `assert!(t.is_int())` 把关，
 **比 verifier 更严**——verifier 对 binop 并不查类别），verifier 是严格校验层。
 强行统一会破坏既有语义，故保留 `debug_check_shape` 为可选工具并写明原因。
+
+### S2（第一切片）：实体容器 + forge-ir 内部主表迁移（2026-09-14）
+
+**容器本体**（新模块 `src/entity_map.rs`，无新依赖，8 个单测）：
+
+- `EntityRef` trait（句柄 ↔ 密集下标，`as_u32`/`from_u32`）+ 宏
+  `entity_ref_impls!`，已为 `Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/
+  `GlobalId`/`SigRef`/`AggId`/`VReg` 实现。
+- `PrimaryMap<K, V>`：主存，`push` 分配句柄、下标即句柄、**只增不删**（删除会让
+  句柄失效，而句柄遍布 IR——这一"刻意不支持删除"与 Cranelift 的取舍一致）。
+- `SecondaryMap<K, V>`：辅存，`Vec<Option<V>>`，"未设置"与"空值"可区分；
+  `get_mut_or_default`/`get_mut_or_insert_with` 等价于 `HashMap` 的 `entry().or_*`。
+- `EntitySet<K>`：密集位图（`O(1)` 插入/查询/删除）。
+- `PackedOption<K>`：句柄的可空压缩，**4 字节**（`Option<Value>` 是 8 字节——
+  `Value` 没有 niche），`u32::MAX` 为空哨兵。
+- **`ListPool` 不做**（本仓库的列表用途都是短生命周期局部量，引入只增加一层间接）。
+
+**已迁移的句柄键表**（`HashMap` → `SecondaryMap`，逐个是"句柄即下标"的天然密集表）：
+
+| 位置 | 表 | 说明 |
+| --- | --- | --- |
+| `use_list.rs` | `uses: Value → SmallVec<[Use;4]>` | 最热路径：每建/删/改指令都碰 |
+| `verify.rs` | `defined: Value → TypeId` | 每次 `verify()` 重建、每操作数查询 |
+| `function.rs` | `value_names`/`block_names` | 显示名绑定 |
+| `display.rs` | `NameResolver::{values, blocks}` | `docs/reference/imm_str.md` 点名的热路径 |
+| `alias.rs` | `memo: Value → MemoryLocation` | 惰性别名查询缓存 |
+| `debug_info.rs` | `locations: Value → SourceLocation` | 调试位置 |
+| `loop_info.rs` | `depths: Block → u32` | 循环深度 |
+
+**计量证据**：`crates/foundation/forge-ir/src` 里"句柄键 `HashMap`"从 **45 处降到
+31 处**（`git grep` 对比 HEAD；全仓基线 129 处 / 36 文件）。容器与迁移共 **8 个
+容器单测**，workspace 1380 → 1388 passed。
+
+**S2 余项（未做，明确记录）**：① `predecessors()`/`successors()` 与支配树
+（`analysis.rs` 的 `idom/depth/tin/tout/children`）——它们是**公开 API**，
+`forge-opt`/`forge-codegen` 有 15+ 处调用者（多为 `.clone()` 后 `.get(&block)`），
+需连带迁移调用方；② 句柄字段私有化 + 访问器（`Value(pub u32)` → `index()`，
+全仓 `.0` 约 260 处，同理分期）；③ 墓碑语义显式化（`Layout` 的删除/复用策略）；
+④ `forge-opt`/`forge-codegen` 内部的句柄键表（regalloc 的 `XReg→PReg`、
+`Block→VBlockId` 等）。
 
 ## 7. 参考设计（外部）
 

@@ -1,14 +1,18 @@
 //! IR 实体类型 — 零开销 newtype over u32。
 //!
-//! 所有实体都是 Copy + Eq + Hash，作为 PrimaryMap/SecondaryMap 的键。
-//!
-//! ⚠️ **`PrimaryMap`/`SecondaryMap` 尚未实现**（本注释长期与代码不符）：
-//! 当前存储是 `DataFlowGraph` 上的裸 `Vec`（句柄 `.0` 即下标）+ 各处
-//! `HashMap<句柄, _>` 辅表。容器与密集索引改造见
-//! `docs/plans/forge-ir-v3-plan.md` **S2**。
+//! 所有实体都是 Copy + Eq + Hash，并实现 [`crate::entity_map::EntityRef`]，
+//! 因此可直接作为密集索引容器的键（v3 方案 **S2** 已落地
+//! [`PrimaryMap`](crate::entity_map::PrimaryMap) /
+//! [`SecondaryMap`](crate::entity_map::SecondaryMap) /
+//! [`EntitySet`](crate::entity_map::EntitySet) /
+//! [`PackedOption`](crate::entity_map::PackedOption)）。
 //! 实体本身不携带数据，数据存储在 DataFlowGraph 的对应表中。
 
 use std::fmt::{self, Display};
+
+crate::entity_ref_impls!(
+    Value, Inst, Block, TypeId, FuncRef, ConstId, GlobalId, SigRef, AggId, VReg
+);
 
 // ============================================================
 // 实体定义

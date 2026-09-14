@@ -52,7 +52,7 @@ impl fmt::Display for SourceLocation {
 #[derive(Clone, Debug, Default)]
 pub struct DebugInfo {
     /// 指令结果 Value → 源码位置的映射。
-    pub locations: std::collections::HashMap<Value, SourceLocation>,
+    pub locations: crate::entity_map::SecondaryMap<Value, SourceLocation>,
     /// 函数名（用于调试输出）。
     pub function_name: Option<ImmStr>,
 }
@@ -69,7 +69,7 @@ impl DebugInfo {
 
     /// 获取指令的源码位置。
     pub fn get_location(&self, value: Value) -> Option<&SourceLocation> {
-        self.locations.get(&value)
+        self.locations.get(value)
     }
 }
 

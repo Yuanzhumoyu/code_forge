@@ -4,6 +4,7 @@
 //! `Module` 管理多个函数、全局变量、类型系统和模块元数据。
 
 use crate::ImmStr;
+use crate::entity_map::SecondaryMap;
 use crate::error::IrError;
 
 use super::analysis::DominatorTree;
@@ -253,10 +254,10 @@ pub struct Function {
     pub types: TypeContext,
 
     /// 值名称 — 调试和 IR 打印时使用 (e.g., %add1, %cmp)。
-    pub value_names: HashMap<Value, InternedStr>,
+    pub value_names: SecondaryMap<Value, InternedStr>,
 
     /// 块名称 — 调试和 IR 打印时使用 (e.g., %entry, %loop_body)。
-    pub block_names: HashMap<Block, InternedStr>,
+    pub block_names: SecondaryMap<Block, InternedStr>,
 
     // === 分析缓存 ===
     pub analysis: AnalysisCache,
@@ -324,8 +325,8 @@ impl Function {
             entry_block: None,
             types,
             debug_info: None,
-            value_names: HashMap::new(),
-            block_names: HashMap::new(),
+            value_names: SecondaryMap::new(),
+            block_names: SecondaryMap::new(),
             analysis: AnalysisCache::new(),
         }
     }

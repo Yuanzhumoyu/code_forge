@@ -2,6 +2,7 @@
 
 use crate::analysis::{DominatorTree, block_successors_in_func};
 use crate::entity::*;
+use crate::entity_map::SecondaryMap;
 use crate::function::Function;
 use std::collections::{HashMap, HashSet};
 
@@ -23,7 +24,7 @@ pub struct LoopInfo {
 #[derive(Clone, Debug)]
 pub struct LoopForest {
     loops: Vec<LoopInfo>,
-    depths: HashMap<Block, u32>,
+    depths: SecondaryMap<Block, u32>,
 }
 
 impl LoopForest {
@@ -122,15 +123,15 @@ impl LoopForest {
             l.depth = depths[idx];
         }
 
-        let mut depth_map: HashMap<Block, u32> = HashMap::new();
+        let mut depth_map: SecondaryMap<Block, u32> = SecondaryMap::new();
         for l in &loops {
             for &b in &l.blocks {
-                let e = depth_map.entry(b).or_insert(0);
+                let e = depth_map.get_mut_or_default(b);
                 *e = (*e).max(l.depth);
             }
         }
         for (block, _) in func.dfg.blocks() {
-            depth_map.entry(block).or_insert(0);
+            depth_map.get_mut_or_default(block);
         }
 
         Self {
@@ -140,7 +141,7 @@ impl LoopForest {
     }
 
     pub fn get_loop_depth(&self, block: Block) -> u32 {
-        self.depths.get(&block).copied().unwrap_or(0)
+        self.depths.get(block).copied().unwrap_or(0)
     }
     pub fn all_loops(&self) -> &[LoopInfo] {
         &self.loops
