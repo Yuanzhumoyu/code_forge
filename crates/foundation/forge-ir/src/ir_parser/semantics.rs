@@ -3546,22 +3546,23 @@ fn check_di_node(name: &str, vals: &[MetadataVal], distinct: bool) -> Result<(),
             // 操作码序列状态机（第二十三轮 invalid-diexpression-verify）：
             // need_op 状态——名字操作码查白名单(带 arity);数字操作码须在
             // LLVM 扩展区(≥ 4096,数字 0/1/9 非法);need_args 状态——数字
-            // 作参数消费(无范围限制)
-            const OPS: &[(&str, u32)] = &[
-                ("DW_OP_deref", 0),
-                ("DW_OP_xderef", 0),
-                ("DW_OP_plus", 0),
-                ("DW_OP_swap", 0),
-                ("DW_OP_plus_uconst", 1),
-                ("DW_OP_constu", 1),
-                ("DW_OP_stack_value", 0),
-                ("DW_OP_LLVM_fragment", 2),
-                // convert 2 参（bits + DW_ATE_* 编码枚举名）
-                ("DW_OP_LLVM_convert", 2),
-                ("DW_OP_LLVM_tag_offset", 1),
-                ("DW_OP_LLVM_entry_value", 1),
-                ("DW_OP_LLVM_arg", 2),
-            ];
+            // 作参数消费(无范围限制)。
+            //
+            // 查表用 `match`（O(1) 决策树）而不是 `OPS.iter().find`（线性扫）：
+            // 这是元数据解析路径，名字表同理不该线性查找。
+            fn dw_op_arity(name: &str) -> Option<u32> {
+                Some(match name {
+                    "DW_OP_deref" | "DW_OP_xderef" | "DW_OP_plus" | "DW_OP_swap"
+                    | "DW_OP_stack_value" => 0,
+                    "DW_OP_plus_uconst"
+                    | "DW_OP_constu"
+                    | "DW_OP_LLVM_tag_offset"
+                    | "DW_OP_LLVM_entry_value" => 1,
+                    // convert 2 参（bits + DW_ATE_* 编码枚举名）
+                    "DW_OP_LLVM_fragment" | "DW_OP_LLVM_convert" | "DW_OP_LLVM_arg" => 2,
+                    _ => return None,
+                })
+            }
             let mut need_args: u32 = 0;
             for v in vals {
                 match v {
@@ -3571,8 +3572,8 @@ fn check_di_node(name: &str, vals: &[MetadataVal], distinct: bool) -> Result<(),
                             need_args -= 1;
                             continue;
                         }
-                        match OPS.iter().find(|(n, _)| *n == s.as_str()) {
-                            Some((_, a)) => need_args = *a,
+                        match dw_op_arity(s.as_str()) {
+                            Some(a) => need_args = a,
                             None => {
                                 return Err(IrError::Semantic(format!("invalid opcode '{s}'")));
                             }

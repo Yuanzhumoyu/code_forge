@@ -35,6 +35,13 @@ struct OpDef {
     /// `Immediate`，verifier 据此检查；宿主 lowering 用 `IntCC::code()`/
     /// `FloatCC::code()` 把它喂给 `current_immediates`。
     cond: Option<String>,
+    /// LLVM 文本指令名（display 输出用）。
+    llvm: String,
+    /// 该 LLVM 文本名是否可**解析回本 opcode**；`false` = 仅 display 用
+    /// （别名/精化/常量内联/需要条件等，见 ops.toml 注释）。
+    llvm_parse: bool,
+    /// 额外可解析名（别名，`llvm` 之外的旧名/宽松名）。
+    llvm_aliases: Vec<String>,
 }
 
 fn generate_opcode_table() {
@@ -137,6 +144,32 @@ fn generate_opcode_table() {
         // flag 闭包借 `name`（错误消息用）——先取值再构造结构体，避免同时借用与移动。
         let may_ub = flag("may_ub");
         let side_effect = flag("side_effect");
+
+        // LLVM 文本名（display 用）+ 是否可解析回本 opcode + 别名。
+        let llvm = req("llvm");
+        assert!(
+            !llvm.trim().is_empty() && !llvm.contains(' '),
+            "ops.toml `{name}` 的 llvm 名须为非空单词（不含空格），实际 {llvm:?}"
+        );
+        let llvm_parse = match table.get("llvm_parse") {
+            None => true,
+            Some(toml::Value::Boolean(b)) => *b,
+            other => panic!("ops.toml `{name}` 的 llvm_parse 须为布尔，实际 {other:?}"),
+        };
+        let llvm_aliases: Vec<String> = match table.get("llvm_alias") {
+            None => Vec::new(),
+            Some(toml::Value::Array(items)) => items
+                .iter()
+                .map(|it| {
+                    it.as_str()
+                        .unwrap_or_else(|| {
+                            panic!("ops.toml `{name}` 的 llvm_alias 元素须为字符串，实际 {it:?}")
+                        })
+                        .to_string()
+                })
+                .collect(),
+            other => panic!("ops.toml `{name}` 的 llvm_alias 须为字符串数组，实际 {other:?}"),
+        };
         defs.push(OpDef {
             name,
             mnemonic,
@@ -147,18 +180,48 @@ fn generate_opcode_table() {
             may_ub,
             side_effect,
             cond,
+            llvm,
+            llvm_parse,
+            llvm_aliases,
         });
     }
 
-    // 唯一性（生成期就拦住，而不是等到运行期查表返回第一个）
-    for (i, a) in defs.iter().enumerate() {
-        for b in defs.iter().skip(i + 1) {
-            assert_ne!(a.name, b.name, "ops.toml 变体名重复：{}", a.name);
-            assert_ne!(
-                a.mnemonic, b.mnemonic,
-                "ops.toml 助记符重复：{}（{} 与 {}）",
-                a.mnemonic, a.name, b.name
-            );
+    // 唯一性（生成期就拦住，而不是等到运行期查表返回第一个）。
+    //
+    // 全部用 `HashMap` 做 **O(1) 探测**（总数 n 条、解析名 m 条 ⇒ O(n+m)）：
+    // 之前是"每个变体与其余全部比较"的 O(n²) 双重循环 + `seen.iter().find`，
+    // 与"查找应当是 O(1)"的同一原则相悖（虽然只在构建期跑一次）。
+    // 冲突信息也更有用：直接点名"哪两条"。
+    {
+        use std::collections::HashMap;
+        let mut by_name: HashMap<&str, &str> = HashMap::with_capacity(defs.len());
+        let mut by_mnemonic: HashMap<&str, &str> = HashMap::with_capacity(defs.len());
+        let mut by_parse_name: HashMap<&str, &str> = HashMap::with_capacity(defs.len() * 2);
+        for d in &defs {
+            if let Some(prev) = by_name.insert(d.name.as_str(), d.name.as_str()) {
+                panic!("ops.toml 变体名重复：{}", prev);
+            }
+            if let Some(prev) = by_mnemonic.insert(d.mnemonic.as_str(), d.name.as_str()) {
+                panic!(
+                    "ops.toml 助记符重复：{}（{prev} 与 {}）",
+                    d.mnemonic, d.name
+                );
+            }
+            // 解析名唯一：`llvm_parse` 的 llvm 名 + 全部别名
+            // （否则 `from_llvm_name` 的"查第一个"就变成隐式优先级，正是要消灭的约定）
+            if d.llvm_parse
+                && let Some(prev) = by_parse_name.insert(d.llvm.as_str(), d.name.as_str())
+            {
+                panic!(
+                    "ops.toml 解析名冲突：`{}` 同时属于 {prev} 与 {}",
+                    d.llvm, d.name
+                );
+            }
+            for a in &d.llvm_aliases {
+                if let Some(prev) = by_parse_name.insert(a.as_str(), d.name.as_str()) {
+                    panic!("ops.toml 解析名冲突：`{a}` 同时属于 {prev} 与 {}", d.name);
+                }
+            }
         }
     }
 
@@ -186,11 +249,22 @@ fn render(defs: &[OpDef]) -> String {
          #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]\n\
          pub enum Opcode {\n",
     );
+    // 分节注释里的条数：预聚合一次（O(n)），而不是每换一个分组就线性数一遍（O(n·c)）。
+    let category_counts: std::collections::HashMap<&str, usize> = {
+        let mut m: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for d in defs {
+            *m.entry(d.category.as_str()).or_insert(0) += 1;
+        }
+        m
+    };
     let mut cur_cat = "";
     for d in defs {
         if d.category != cur_cat {
             cur_cat = &d.category;
-            let n = defs.iter().filter(|x| x.category == cur_cat).count();
+            let n = category_counts
+                .get(cur_cat)
+                .copied()
+                .unwrap_or_else(|| unreachable!("分组 {cur_cat} 未统计"));
             let _ = std::fmt::Write::write_fmt(
                 &mut s,
                 format_args!("    // === {} ({n}) ===\n", cur_cat),
@@ -240,6 +314,14 @@ fn render(defs: &[OpDef]) -> String {
          \x20   pub side_effect: bool,\n\
          \x20   /// 比较条件 immediate 的通道（`Icmp`/`Fcmp` 有值，其余为 `None`）。\n\
          \x20   pub cond: Option<CondKind>,\n\
+         \x20   /// LLVM 文本指令名（display 输出的 base 名；`icmp`/`fcmp` 的条件由\n\
+         \x20   /// display 层从 immediate 拼上）。\n\
+         \x20   pub llvm: &'static str,\n\
+         \x20   /// 该文本名可解析回的 opcode（`None` = 仅 display 用：别名/精化/\n\
+         \x20   /// 常量内联/需要条件等，见 `ops.toml` 注释）。\n\
+         \x20   pub llvm_parse: Option<&'static str>,\n\
+         \x20   /// 额外可解析名（`llvm` 之外的旧名/宽松名）。\n\
+         \x20   pub llvm_aliases: &'static [&'static str],\n\
          }\n\n\
          /// 比较条件所在的 immediate 通道类型。\n\
          #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
@@ -275,12 +357,24 @@ fn render(defs: &[OpDef]) -> String {
             None => "None".to_string(),
             Some(ty) => format!("Some(CondKind::{ty})"),
         };
+        let llvm_parse = if d.llvm_parse {
+            format!("Some({:?})", d.llvm)
+        } else {
+            "None".to_string()
+        };
+        let aliases = if d.llvm_aliases.is_empty() {
+            "&[]".to_string()
+        } else {
+            let items: Vec<String> = d.llvm_aliases.iter().map(|a| format!("{a:?}")).collect();
+            format!("&[{}]", items.join(", "))
+        };
         let _ = std::fmt::Write::write_fmt(
             &mut s,
             format_args!(
                 "        OpcodeInfo {{ name: {:?}, mnemonic: {:?}, category: {:?}, doc: {:?}, \
-                 arity: {arity}, result_count: {}, may_ub: {}, side_effect: {}, cond: {cond} }},\n",
-                d.name, d.mnemonic, d.category, d.doc, d.results, d.may_ub, d.side_effect
+                 arity: {arity}, result_count: {}, may_ub: {}, side_effect: {}, cond: {cond}, \
+                 llvm: {:?}, llvm_parse: {llvm_parse}, llvm_aliases: {aliases} }},\n",
+                d.name, d.mnemonic, d.category, d.doc, d.results, d.may_ub, d.side_effect, d.llvm
             ),
         );
     }
@@ -346,17 +440,87 @@ fn render(defs: &[OpDef]) -> String {
          \x20           OperandArity::Fixed(n) => n as usize,\n\
          \x20           OperandArity::Variadic => 0,\n\
          \x20       }\n\
-         \x20   }\n\n\
-         \x20   /// 按变体名查找。\n\
+         \x20   }\n",
+    );
+
+    // === 名字查找：生成的 `match`（不是线性扫 ALL）===
+    //
+    // 三种查找都是"文本 → opcode"的解析路径，必须走编译期决策树（字符串 match
+    // 被 LLVM 编成"按长度分组 + 逐字节比较"），而不是 `ALL.iter().find(...)`：
+    // 后者是 109 次 `&str` 比较/次（本机 debug 实测 2.77 µs/次 对 0.02 µs/次，
+    // 见提交说明）。名字唯一性由本文件生成期断言，因此 `match` 不会有重复臂。
+    s.push_str(
+        "    /// 按变体名查找（ISA TOML 的 `op = \"Iadd\"` 契约）。\n\
          \x20   pub fn from_name(name: &str) -> Option<Opcode> {\n\
-         \x20       Self::ALL.iter().copied().find(|op| op.name() == name)\n\
-         \x20   }\n\n\
-         \x20   /// 按规范助记符查找（[`Opcode::mnemonic`] 的逆）。\n\
+         \x20       Some(match name {\n",
+    );
+    for d in defs {
+        let _ = std::fmt::Write::write_fmt(
+            &mut s,
+            format_args!("            {:?} => Opcode::{},\n", d.name, d.name),
+        );
+    }
+    s.push_str("            _ => return None,\n        })\n    }\n\n");
+
+    s.push_str(
+        "    /// 按规范助记符查找（[`Opcode::mnemonic`] 的逆）。\n\
          \x20   pub fn from_mnemonic(mnemonic: &str) -> Option<Opcode> {\n\
-         \x20       Self::ALL.iter().copied().find(|op| op.mnemonic() == mnemonic)\n\
-         \x20   }\n\
-         }\n\n\
-         // 表与清单等长由生成期保证；这里补一条编译期断言防手工改动生成物。\n\
+         \x20       Some(match mnemonic {\n",
+    );
+    for d in defs {
+        let _ = std::fmt::Write::write_fmt(
+            &mut s,
+            format_args!("            {:?} => Opcode::{},\n", d.mnemonic, d.name),
+        );
+    }
+    s.push_str("            _ => return None,\n        })\n    }\n\n");
+
+    s.push_str(
+        "    /// 按 LLVM 文本名查找（解析用）。\n\
+         \x20   ///\n\
+         \x20   /// 命中 [`OpcodeInfo::llvm_parse`]（display 名可反向解析者）或\n\
+         \x20   /// [`OpcodeInfo::llvm_aliases`]（`callbr`/`ptrtoaddr` 等旧名）。\n\
+         \x20   /// 名字唯一性由 `build.rs` 在生成期断言（无\"查第一个\"的隐式优先级）；\n\
+         \x20   /// `icmp`/`fcmp` 是 `llvm_parse = false`——它们需要条件，由调用方特判。\n\
+         \x20   pub fn from_llvm_name(name: &str) -> Option<Opcode> {\n\
+         \x20       Some(match name {\n",
+    );
+    for d in defs {
+        if d.llvm_parse {
+            let _ = std::fmt::Write::write_fmt(
+                &mut s,
+                format_args!("            {:?} => Opcode::{},\n", d.llvm, d.name),
+            );
+        }
+        for a in &d.llvm_aliases {
+            let _ = std::fmt::Write::write_fmt(
+                &mut s,
+                format_args!("            {a:?} => Opcode::{},\n", d.name),
+            );
+        }
+    }
+    s.push_str("            _ => return None,\n        })\n    }\n\n");
+
+    // 需要条件的比较指令（`cond_kind()` 有值者）的 LLVM 文本名：单独一张 O(1) 表。
+    // 解析器不能把 `icmp` 直接解析成无条件指令，`llvm_mapping::opcode` 用它给出
+    // "需要条件"的解析错误——同样不写成线性扫 `ALL`。
+    s.push_str(
+        "    /// 按「需要条件的比较指令」的 LLVM 文本名查找（`opcode()` 的错误分派用）。\n\
+         \x20   ///\n\
+         \x20   /// 只有 [`Opcode::cond_kind`] 有值的指令（当前 `Icmp`/`Fcmp`）出现在这里：\n\
+         \x20   /// 它们的文本名不能解析成无条件指令。\n\
+         \x20   pub fn from_cond_llvm_name(name: &str) -> Option<Opcode> {\n\
+         \x20       Some(match name {\n",
+    );
+    for d in defs.iter().filter(|d| d.cond.is_some()) {
+        let _ = std::fmt::Write::write_fmt(
+            &mut s,
+            format_args!("            {:?} => Opcode::{},\n", d.llvm, d.name),
+        );
+    }
+    s.push_str("            _ => return None,\n        })\n    }\n}\n\n");
+    s.push_str(
+        "// 表与清单等长由生成期保证；这里补一条编译期断言防手工改动生成物。\n\
          const _: () = assert!(Opcode::ALL.len() == Opcode::INFOS.len());\n",
     );
 

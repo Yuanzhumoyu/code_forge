@@ -498,10 +498,11 @@ mod zero_gaps_tests {
             "UNCOVERED_OPS 有重复项"
         );
 
-        // 名字必须都能解析成真实 opcode（防改名/删除后清单腐烂）
+        // 名字必须都能解析成真实 opcode（防改名/删除后清单腐烂）——
+        // 用生成的 O(1) `from_name` 查表，而不是线性扫 `Opcode::ALL`
         for name in covered.iter().chain(uncovered.keys()) {
             assert!(
-                Opcode::ALL.iter().any(|o| o.name() == *name),
+                Opcode::from_name(name).is_some(),
                 "'{name}' 不是已知 opcode（清单已腐烂）"
             );
         }

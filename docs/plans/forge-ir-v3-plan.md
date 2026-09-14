@@ -95,7 +95,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | 期 | 范围 | 状态 |
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
-| S1 | 指令元数据单一事实源 | **大部分落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字映射（§6 第一步）；比较条件从变体载荷归一到 immediate 通道（§6 第二步）。余项：LLVM 文本名表进 `ops.toml`、verifier 类型规则与 builder 断言声明化 |
+| S1 | 指令元数据单一事实源 | **大部分落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射 + 全部查表 O(1)（§6 第一/二/三步）。余项：verifier 类型规则与 builder 断言声明化 |
 | S2 | 实体容器与密集索引 | 待开工 |
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
@@ -198,17 +198,16 @@ markdownlint 到 0 error）→ push 后看 CI run 全绿。
   `Variadic => 0`，要区分请读 `info().arity`）。
 - 生成器 **fail-closed**：缺字段/类型不对/名字或助记符重复/未知载荷/载荷缺默认值
   一律 `panic!` 中断构建（构建期就拦住，而不是运行期查表取第一个）。
-- `ops.toml` 的 `payload` 明确把 `Icmp{cond}`/`Fcmp{cond}` 记为**变体载荷**——
-  这是待归一项（见下），不是已完成项。
+- `ops.toml` 的 `payload` 当时把 `Icmp{cond}`/`Fcmp{cond}` 记为**变体载荷**——
+  已于同日第二步归一（见下）。
 
 **迁移保真证据**（不靠"看起来一样"）：用一次性脚本把 **git HEAD 的手写表**与
 **生成物**各自独立解析（老表按 Rust 源码分组解析、新表按生成行正则解析）后逐项比对：
 `OLD_VARIANTS=109 / OLD_MNEMONICS=109 / NEW_INFOS=109`，`NEW_VARIADIC=6 /
 NEW_SIDE_EFFECT=9 / NEW_MAY_UB=15`，**MISMATCHES=0（109 变体 × 6 属性）**。
 
-**S1 余项（未做，明确记录）**：① LLVM 文本名表（含 `Fload→load`、
-`Ireduce→trunc` 等有损对）进 `ops.toml`；② verifier 的 ~371 行 per-opcode 类型规则
-与 `builder.rs` 的构造断言按 `OpcodeInfo` 声明化。
+**S1 余项（未做，明确记录）**：verifier 的 ~371 行 per-opcode 类型规则与
+`builder.rs` 的构造断言按 `OpcodeInfo` 声明化。
 
 ### S1（第二步）：比较条件归一（2026-09-14）
 
@@ -238,6 +237,42 @@ immediate 通道：`Opcode::Icmp`/`Opcode::Fcmp` 成为纯身份变体（`Opcode
 
 **基线数字（S1 第二步后）**：见本节末门禁表（workspace 1374 passed / 0 failed /
 18 ignored，66 suites；x86 矩阵 195/3/0；riscv64 131/67/0）。
+
+### S1（第三步）：LLVM 文本名进 `ops.toml` + 查表一律 O(1)（2026-09-14）
+
+**LLVM 文本名表进 `ops.toml`**：`ir_parser/llvm_mapping.rs` 里的**正/反两张手写表**
+（105+ 条 `match`）删除，改为每个 opcode 声明
+`llvm = "<文本名>"` + `llvm_parse = false`（仅 display 用）+ `llvm_alias = [...]`（旧名）：
+
+- 有损对从"读者自己比对两张表"变成**声明**：`Fload`/`Fstore` 复用 `load`/`store`、
+  `Iconst`/`Fconst`/`Vconst` 常量内联、`Vadd`/`Vsub`/`Vmul`/`Vneg`/`Vabs`/`Vbitcast`
+  由标量名 + 向量类型精化、`Vsplit`/`Vconcat`/`Ftrunc` 解析器不接受、`CallIndirect`
+  复用 `call`、`Icmp`/`Fcmp` 需要条件——全部 `llvm_parse = false`（17 条）。
+- 别名 3 条：`callbr → Call`、`ptrtoaddr → Ptrtoint`、`vextractelement → Vextract`。
+- 生成期断言：变体名/助记符/**解析名集合**三者唯一（解析名冲突会让
+  `from_llvm_name` 变成"查第一个"的隐式优先级）。
+- **迁移保真证据**：一次性脚本独立解析 git HEAD 的两张表与生成物后逐项比对
+  → `PARSE_NAMES=95 / OLD_PARSE_PAIRS=95 / OLD_SHOW_PAIRS=108`，**MISMATCHES=0**。
+
+**查表一律 O(1)**（`Opcode::from_name`/`from_mnemonic`/`from_llvm_name`/
+`from_cond_llvm_name`/`info()` 都是**生成的 `match`**，不是 `ALL.iter().find`）：
+
+| 查找 | 线性扫 `ALL` | 生成 `match` | 提升 |
+| --- | --- | --- | --- |
+| `from_llvm_name` | 2770.5 ns | 203.5 ns | 13.6× |
+| `from_mnemonic` | 2532.2 ns | 300.8 ns | 8.4× |
+| `from_name` | 2806.0 ns | 551.2 ns | 5.1× |
+
+（本机 debug 构建，200k 轮 × 28 个名字 = 560 万次；计时工具留在
+`tests/llvm_name_lookup_perf.rs`，默认 `#[ignore]`，跑法见文件头。）
+
+**生成器自身的构建期查表也改了**：唯一性检查从 O(n²) 双重循环 + `seen.iter().find`
+改为 `HashMap` O(1) 探测（冲突信息直接点名两条），分节条数从 O(n·c) 改为预聚合
+O(n)。**证据：生成物 `opcode_gen.rs` 前后 SHA256 完全一致**
+（`5A53A0F5B566C4EEA0CD6CAADBDE9ECA2E54E408E0D35C0C712D2FC0130B062A`）。
+另外把 `semantics.rs` 的 DWARF 表达式操作码表（`OPS.iter().find`）与
+`forge-tests/coverage.rs` 的清单腐烂检查（`Opcode::ALL.iter().any`）也换成
+`match`/生成的 `from_name`。
 
 ## 7. 参考设计（外部）
 

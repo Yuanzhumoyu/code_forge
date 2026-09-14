@@ -40,6 +40,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   fail-closed：`Verifier` 新增 `MissingCondImmediate`/`WrongCondImmediate`（条件缺失或类型不对直接报错，不按默认条件继续）；display 对坏 IR 打印 `icmp <cond?>` 而非静默省略；forge-codegen 的 immediate 折叠表删掉 `_ => 0` 兜底臂改为显式列出全部 `Immediate` 变体。
   **归一暴露并修掉两个真实缺陷**：① `ExprKey`（CSE/GVN/GVN-PRE 表达式的键）只含 `opcode + operands + ty`——条件在 opcode 载荷里时恰好够用，归一后 `icmp eq` 与 `icmp ne` 键相同会互相消除（错值级），现在 immediate 进键（回归测试 `p0_icmp_cond_distinct` 抓到的）；② `algebraic.rs` 的 `x cmp x → 1/0` 规则读的是 `Immediate::Int(cc)`，而条件当时在变体载荷上、immediates 恒空 ⇒ 该分支从未命中（死代码），归一后真正生效。
 
+### Changed (2026-09-14)
+
+- **LLVM 文本名表进 `ops.toml`；全部指令名查表改为生成 `match`（O(1)）**：
+  `ir_parser/llvm_mapping.rs` 的正/反两张手写表（105+ 条 `match`）删除，改为每个 opcode 在 `ops.toml` 声明 `llvm = "<文本名>"`、`llvm_parse = false`（仅 display 用）、`llvm_alias = [...]`（旧名）。有损对从"读者自己比对两张表"变成**声明**：`Fload`/`Fstore` 复用 `load`/`store`、`Iconst`/`Fconst`/`Vconst` 常量内联、`Vadd`/`Vsub`/`Vmul`/`Vneg`/`Vabs`/`Vbitcast` 由标量名 + 向量类型精化、`Vsplit`/`Vconcat`/`Ftrunc` 解析器不接受、`CallIndirect` 复用 `call`、`Icmp`/`Fcmp` 需要条件（共 17 条 display-only）；别名 3 条（`callbr`/`ptrtoaddr`/`vextractelement`）。生成期断言变体名/助记符/**解析名集合**三者唯一。
+  **查表一律 O(1)**：`from_name`/`from_mnemonic`/`from_llvm_name`/`from_cond_llvm_name`/`info()` 都是生成的 `match`（此前是 `ALL.iter().find` 线性扫 109 条）。
+  本机 debug 实测（200k 轮 × 28 名 = 560 万次）：`from_llvm_name` 2770.5 → **201.2 ns**（13.8×）、`from_mnemonic` 2532.2 → **275.0 ns**（9.2×）、`from_name` 2806.0 → **509.1 ns**（5.5×）；计时工具 `forge-ir/tests/llvm_name_lookup_perf.rs` 默认 `#[ignore]` 留在仓库。
+  生成器自身的构建期查表同步去掉 O(n²)/O(n·c)（改 `HashMap` O(1) 探测），**生成物 SHA256 前后完全一致**（`5A53A0F5…`）证明改写不改变行为；`semantics.rs` 的 DWARF 操作码表与 `forge-tests` 的清单腐烂检查也从线性扫描改为 `match`/`from_name`。
+  **迁移保真证据**：独立脚本解析 git HEAD 两张表与生成物逐项比对 → `PARSE_NAMES=95 / OLD_PARSE_PAIRS=95 / OLD_SHOW_PAIRS=108`，**MISMATCHES=0**。
+
 ### Added (2026-09-14)
 
 - **`ops.toml`：指令元数据单一事实源（forge-ir v3 方案 S1 第一步）**：

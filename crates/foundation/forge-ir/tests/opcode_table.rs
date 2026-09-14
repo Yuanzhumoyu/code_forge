@@ -207,7 +207,98 @@ fn mnemonics_are_unique_and_invertible() {
     }
 }
 
-/// 条件指令（`Icmp`/`Fcmp`）是**纯变体身份**：条件不再是变体载荷，而是
+/// LLVM 文本名表（`ops.toml` 的 `llvm`/`llvm_parse`/`llvm_alias`）自洽：
+/// 名字非空且无空格、可解析者对得上、别名指向本 opcode、解析名全局唯一、
+/// 需要条件的比较指令是 display-only 且**不能**被当普通文本名解析。
+#[test]
+fn llvm_name_table_is_consistent() {
+    // 每个 opcode 都有非空、无空格的 display 名
+    for op in Opcode::ALL {
+        let name = op.info().llvm;
+        assert!(!name.is_empty(), "{} 的 llvm 名为空", op.name());
+        assert!(
+            !name.contains(char::is_whitespace),
+            "{} 的 llvm 名含空白：{name:?}",
+            op.name()
+        );
+    }
+
+    // 可解析：`llvm_parse` 指向自己的 display 名，且能被查回来
+    let mut parse_names: HashSet<&str> = HashSet::new();
+    let mut parseable = 0usize;
+    let mut aliases = 0usize;
+    for op in Opcode::ALL {
+        let info = op.info();
+        if let Some(n) = info.llvm_parse {
+            parseable += 1;
+            assert_eq!(
+                n,
+                info.llvm,
+                "{} 的 llvm_parse 必须是它的 display 名（可解析即默认名）",
+                op.name()
+            );
+            assert!(parse_names.insert(n), "解析名重复（生成期应已拦住）：{n}");
+            assert_eq!(Opcode::from_llvm_name(n), Some(*op), "解析名 {n} 不可查回");
+        }
+        for a in info.llvm_aliases {
+            aliases += 1;
+            assert!(
+                parse_names.insert(a),
+                "解析名（别名）重复（生成期应已拦住）：{a}"
+            );
+            assert_eq!(
+                Opcode::from_llvm_name(a),
+                Some(*op),
+                "别名 {a} 不可查回 {}",
+                op.name()
+            );
+        }
+    }
+    assert!(parseable >= 90, "可解析名过少：{parseable}");
+    assert_eq!(
+        aliases, 3,
+        "别名数量变化需同步本断言（callbr/ptrtoaddr/vextractelement）"
+    );
+
+    // display-only 的典型：常量内联、复用文本名、向量精化、需要条件
+    for op in [
+        Opcode::Iconst,
+        Opcode::Fconst,
+        Opcode::Vconst,
+        Opcode::Fload,
+        Opcode::Fstore,
+        Opcode::CallIndirect,
+        Opcode::Vadd,
+        Opcode::Vbitcast,
+        Opcode::Ftrunc,
+        Opcode::Vsplit,
+        Opcode::Vconcat,
+    ] {
+        assert_eq!(
+            op.info().llvm_parse,
+            None,
+            "{} 应是 display-only（不可由文本名直接解析）",
+            op.name()
+        );
+    }
+
+    // 需要条件的比较指令：文本名不可直接解析，且解析时报"需要条件"
+    for op in [Opcode::Icmp, Opcode::Fcmp] {
+        assert_eq!(op.info().llvm_parse, None);
+        assert_eq!(Opcode::from_llvm_name(op.info().llvm), None);
+    }
+    let err = forge_ir::ir_parser::llvm_mapping::opcode("icmp").expect_err("icmp 需要条件");
+    assert!(
+        err.to_string().contains("condition"),
+        "错误提示应说明需要条件，实际：{err}"
+    );
+    assert!(
+        forge_ir::ir_parser::llvm_mapping::opcode("nosuchopcode").is_err(),
+        "未知名字必须报错（不兜底）"
+    );
+}
+
+/// 条件指令（`Icmp`/`Fcmp`）是**纯变体身份**：条件不是变体载荷，而是
 /// immediate 通道（`Immediate::IntCC`/`FloatCC`）——`cond_kind()` 声明该契约，
 /// 数值表示由 `IntCC::code()`/`FloatCC::code()` 提供。
 #[test]
