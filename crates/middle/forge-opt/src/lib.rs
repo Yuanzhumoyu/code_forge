@@ -32,23 +32,30 @@ pub const MAX_FIXED_POINT_ROUNDS: usize = 256;
 /// pass 之后的 IR 校验策略（仅 debug 构建生效）。
 ///
 /// 历史行为等价于 `Warn`：校验失败只 `log::warn`，坏 IR 继续流向下一个 pass。
-/// `Error` 是 **S6 的门禁形态**（pass 契约 + 完整 use-def）：一旦所有 pass 都能
-/// 保持不变量，就把默认值改过来。
+/// **现在默认 `Error`**：pass 破坏不变量当场返回 `IrError::Internal`
+/// （S6 门禁形态，2026-09-14 起生效）。
 ///
-/// **当前实测欠账（2026-09-14，`Error` 模式下逐 pass 暴露）**：`inline`
-/// （内联体操作数未登记 use-lists + 返回类型不匹配）、`gvn_pre`/`mem2reg`
-/// （插入指令的操作数未登记 use-lists）等会把 IR 置为不一致——一个 pass 弄脏后，
-/// 后续每个 pass 都会报同一处不一致，所以 S0 不采用"按 pass 白名单放行"的做法
-/// （那会把整条流水线放行），而是保留 warn 默认 + 提供严格开关 + 用测试钉住欠账
-/// （见 `strict_verification_reports_known_debt`）。
+/// S6 修复记录（打开严格校验后逐条暴露并修掉，见
+/// `docs/plans/forge-ir-v3-plan.md` §6）：
+/// - 多个 pass 直接 `dfg.make_inst` 建指令而不登记 use-lists
+///   （`gvn_pre`/`pgo`/`inline`/`lto`/`func_specialize` 与 forge-codegen 的聚合展开）
+///   → 统一改用 `Function::{make_inst, make_inst_with_meta_and_loc}`；
+/// - `gvn_pre` 往"操作数尚未定义"的前驱块插入表达式（`DominanceViolation`）
+///   → 插入前检查操作数定义块是否支配该前驱；
+/// - `tail_call` 把**跨函数**尾调用改写成"跳到被调方入口块编号"
+///   （`BlockParamCountMismatch`：块编号空间不同）→ 只处理自递归尾调用，并用
+///   `kill_inst` 做原子删除；
+/// - `inline` 只用 `replace_all_uses` 替换 call 结果（漏终结符用值），随后
+///   `kill_inst` 把该值 VOID 化 → 调用方 `ret` 返回 VOID（真实错码）
+///   → 改用 `apply_replacements`（指令操作数 + 终结符全覆盖）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PassVerify {
     /// 不校验（release 构建下的等价行为）。
     Off,
-    /// 校验失败只记录 warn（**当前默认**，与历史行为一致）。
-    #[default]
+    /// 校验失败只记录 warn（排查用；历史上曾是默认值）。
     Warn,
-    /// 校验失败即返回 `IrError::Internal`（S6 的目标默认值）。
+    /// 校验失败即返回 `IrError::Internal`（**当前默认**，S6 门禁）。
+    #[default]
     Error,
 }
 
@@ -570,10 +577,18 @@ mod pipeline_tests {
     ///
     /// **S6 修好这些 pass 之后，本测试会开始失败** —— 届时把断言改为
     /// `assert!(result.is_ok())` 并把 pass 后校验默认值切到 `PassVerify::Error`。
+    /// **S6 门禁：严格校验下所有流水线必须保持 IR 不变量**。
+    ///
+    /// 2026-09-14 打开"pass 后严格校验"时首次暴露两笔欠账：
+    /// ① 多个 pass 直接 `dfg.make_inst` 建指令而**不登记 use-lists**
+    ///    （`gvn_pre`/`pgo`/`inline`/`lto`/`func_specialize`，以及 forge-codegen 的
+    ///    聚合展开路径）；② `gvn_pre` 会往"操作数尚未定义"的前驱块插入表达式
+    ///    （`DominanceViolation`）。
+    /// 两处都已修（改用 `Function::make_inst` 系列 + PRE 的先决条件检查），
+    /// 本测试把"严格模式全绿"固定下来：任何 pass 再制造不变量破坏都会在此变成
+    /// 失败用例，而不是继续被 `Warn` 静默吞掉。
     #[test]
-    fn strict_verification_reports_known_debt() {
-        // 循环夹具（与 `o2_pipeline_nop_residue` 同形）：循环头带 (i, sum) 块参数，
-        // O2 的 GVN-PRE/mem2reg 会在这里留下 use-list 不一致。
+    fn strict_verification_passes_for_all_pipelines() {
         fn build_loop() -> Function {
             let sig = FunctionSignature::new(&[(TypeId::I32, "n")], &[TypeId::I32]);
             let mut b = FunctionBuilder::new("debt", TypeContext::new(), sig);
@@ -600,20 +615,45 @@ mod pipeline_tests {
             b.finish().expect("build")
         }
 
-        let mut f = build_loop();
-        let mut pm = PassManager::for_level(OptimizationLevel::O2);
-        pm.set_verify_after_pass(PassVerify::Error);
-        assert_eq!(pm.verify_after_pass(), PassVerify::Error);
-        match pm.run_on_function(&mut f) {
-            Err(IrError::Internal(msg)) => assert!(
-                msg.contains("未通过 IR 校验"),
-                "严格校验失败原因应是 IR 不变量欠账，实际：{msg}"
-            ),
-            Ok(_) => panic!(
-                "严格校验已通过——pass 不变量欠账已修复：\
-                 请把 PassVerify 默认值改为 Error 并删除本测试的'欠账'语义"
-            ),
-            Err(other) => panic!("预期 IR 校验失败，实际：{other:?}"),
+        fn build_call_with_table() -> (Function, std::collections::HashMap<FuncRef, Function>) {
+            let callee = build_add_one();
+            let callee_ref = FuncRef(0);
+            let mut table = std::collections::HashMap::new();
+            table.insert(callee_ref, callee);
+
+            let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+            let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+            let entry = b.create_block();
+            b.switch_to_block(entry);
+            let c41 = b.iconst_i32(41);
+            let call_ret = b.call(callee_ref, &[c41], &[TypeId::I32]);
+            b.ret(&[call_ret[0]]);
+            (b.finish().expect("build"), table)
+        }
+
+        // 三种形状 × 三个优化级别，全部在严格校验下跑通
+        for level in [
+            OptimizationLevel::O1,
+            OptimizationLevel::O2,
+            OptimizationLevel::O3,
+        ] {
+            for build in [
+                build_many_ops as fn() -> Function,
+                build_loop as fn() -> Function,
+            ] {
+                let mut f = build();
+                let mut pm = PassManager::for_level(level);
+                pm.set_verify_after_pass(PassVerify::Error);
+                pm.run_on_function(&mut f)
+                    .unwrap_or_else(|e| panic!("{level:?} 严格校验失败：{e:?}"));
+            }
+
+            // 带函数表（启用 inline）的路径
+            let (mut caller, table) = build_call_with_table();
+            let mut pm = PassManager::for_level_with_table(level, table);
+            pm.set_verify_after_pass(PassVerify::Error);
+            pm.run_on_function(&mut caller)
+                .unwrap_or_else(|e| panic!("{level:?} + inline 严格校验失败：{e:?}"));
         }
     }
 }

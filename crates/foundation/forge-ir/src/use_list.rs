@@ -72,6 +72,25 @@ impl UseLists {
         }
     }
 
+    /// 忘掉 `inst` 的**全部**使用记录（按 user 扫，不依赖当前操作数）。
+    ///
+    /// 与 [`UseLists::remove_inst`] 的区别：后者按指令**当前**操作数逐条删除，
+    /// 因此必须在改写操作数**之前**调用；一旦操作数已被就地改写，旧记录就找不到了
+    /// （留下陈旧 use 项）。本方法按 `user == inst` 清扫，可在改写后安全调用——
+    /// `Function::refresh_inst_uses` 用它做"改完重登记"。
+    ///
+    /// 代价：一次全 use 表扫描（O(值数)）。用于 pass/codegen 的少量就地改写路径；
+    /// S2 把 use 表换成 `SecondaryMap` 后可退化为直接索引。
+    pub fn forget_inst(&mut self, inst: Inst) -> usize {
+        let mut removed = 0usize;
+        for list in self.uses.values_mut() {
+            let before = list.len();
+            list.retain(|u| u.user != inst);
+            removed += before - list.len();
+        }
+        removed
+    }
+
     // ============================================================
     // 查询
     // ============================================================

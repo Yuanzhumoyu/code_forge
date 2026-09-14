@@ -199,7 +199,7 @@ pub fn inline_calls(
 
                 // Create new instruction in caller（保留全字段：flags/mem_flags/
                 // metadata/loc/isel_strategy）
-                let new_inst = func.dfg.make_inst_with_meta_and_loc(
+                let new_inst = func.make_inst_with_meta_and_loc(
                     ci.opcode,
                     block,
                     new_operands,
@@ -226,8 +226,15 @@ pub fn inline_calls(
             if let Some(ret_val) = callee_ret_vals.first()
                 && let Some(&mapped_ret) = value_map.get(ret_val)
             {
-                // Replace all uses of call_result（DFG + use-lists 双更新）
-                func.replace_all_uses(call_result, mapped_ret);
+                // **全量替换**（指令操作数 + 终结符）：call 的结果值常被 `ret`/`br`
+                // 的实参直接使用，而 `replace_all_uses` 只覆盖指令操作数（终结符
+                // 用值不在 use-lists 中）。漏掉终结符后，紧接着的 `kill_inst` 会把
+                // 结果值 VOID 化，调用方的 `ret` 就返回一个 VOID 值
+                // —— 2026-09-14 严格校验实测的 `ReturnValueTypeMismatch
+                // { expected: I32, found: VOID }`（这是真实错码，不只是簿记问题）。
+                let mut repl: HashMap<Value, Value> = HashMap::new();
+                repl.insert(call_result, mapped_ret);
+                func.apply_replacements(&repl);
             }
 
             // Move the new instructions from end of inst_order to before the call

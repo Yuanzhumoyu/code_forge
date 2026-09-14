@@ -84,7 +84,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
         let block = Block(bi as u32);
 
         // Allocate a StackAddr slot (8 bytes) at the start of this block
-        let stack_addr = func.dfg.make_inst(
+        let stack_addr = func.make_inst(
             Opcode::StackAddr,
             block,
             smallvec::smallvec![],
@@ -99,7 +99,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .unwrap_or(Value(0));
 
         // Load current counter from slot
-        let loaded = func.dfg.make_inst(
+        let loaded = func.make_inst(
             Opcode::Load,
             block,
             smallvec::smallvec![slot_ptr],
@@ -114,7 +114,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .unwrap_or(Value(0));
 
         // Create constant 1 for increment
-        let one_inst = func.dfg.make_inst(
+        let one_inst = func.make_inst(
             Opcode::Iconst,
             block,
             smallvec::smallvec![],
@@ -129,7 +129,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .unwrap_or(Value(0));
 
         // Increment: loaded + 1
-        let incremented = func.dfg.make_inst(
+        let incremented = func.make_inst(
             Opcode::Iadd,
             block,
             smallvec::smallvec![loaded_val, one_val],
@@ -144,7 +144,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .unwrap_or(Value(0));
 
         // Store incremented value back to slot
-        func.dfg.make_inst(
+        func.make_inst(
             Opcode::Store,
             block,
             smallvec::smallvec![inc_val, slot_ptr],

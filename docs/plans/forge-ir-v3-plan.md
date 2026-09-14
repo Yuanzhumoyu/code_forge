@@ -100,7 +100,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
-| S6 | 校验与 pass 契约 | 待开工（**含 S0 暴露的 pass 欠账**） |
+| S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
@@ -148,6 +148,38 @@ markdownlint 到 0 error）→ push 后看 CI run 全绿。
 并用 `strict_verification_reports_known_debt` 钉住（该测试在 S6 修好后会失败，提示切换默认）。
 
 **基线数字（S0 后）**：workspace **1367 passed / 0 failed / 18 ignored**（65 suites）。
+
+### S6 先行清偿：pass 欠账清零（2026-09-14）
+
+按"先把 S6 的两笔 pass 欠账清掉，再继续 S1"的要求，先清偿 S0 暴露的欠账，
+**不清偿就不许把默认策略切到 `Error`**（严格校验一旦默认开启，任何脏 pass 都会
+直接打断全部管线用例）：
+
+1. **契约先立**：`Function::make_inst` / `make_inst_with_meta_and_loc` 包装
+   `dfg.make_inst*` 并登记 use-lists；`Function::refresh_inst_uses` 供就地改写操作数后
+   重登记。根因是 `UseLists::remove_inst` **按指令当前操作数**逐条删——在改写**之后**
+   调用就删不掉旧记录，于是新增 `UseLists::forget_inst`（按 `user == inst` 清扫，
+   与操作数内容无关）。现全仓 pass/前端建指令一律走 `Function::make_inst*`；
+   回归守卫 `forge-ir/tests/use_lists.rs`（3 个用例，含"改完刷新后 use-lists 与 DFG 一致"）。
+2. **三处欠账逐一修掉**（不是放行）：`inline`（内联体操作数未登记 + 调用结果
+   **终结符操作数**没被 RAUW，曾让 `ret` 返回 `VOID` 值 ⇒ 改用 `Function::apply_replacements`）、
+   `gvn_pre`（新建指令未登记；且 PRE 会在**不被操作数定义支配**的前驱插入 ⇒ 新增
+   `operands_dominate` 守卫）、`mem2reg`/`pgo`/`lto`/`func_specialize`（同批收敛）。
+   `ipa/tail_call.rs` 顺带收窄为**仅自递归**（跨函数尾调用改写会产生
+   `BlockParamCountMismatch` 的非法 IR）并改为原子 `kill_inst` + `set_terminator`。
+3. **codegen 侧补上同一道门**：`pipeline/compiler.rs` 的 47 处 `.dfg.make_inst*` 改走
+   包装，13 处墓碑/Copy 块与 3 处操作数改写点改为 `refresh_inst_uses`，聚合展开后
+   加 **debug-only** 断言 `use_lists.verify(&dfg)`。此处**刻意只查 use-lists、不跑完整
+   `Verifier`**：`expand_geps` 会生成类型自洽性不足的 IR（`%p = add i64 %prev, %t`
+   却声明 PTR 结果，源码原注释即"verify 不跑"），根因是 v12 尚无
+   `Ptrtoint`/`Inttoptr` 降级 ⇒ **类型化指针算术归 S4/S5**，此处不静默容忍而是写明范围。
+4. **默认策略切换**：`PassVerify::Error` 成为 `#[default]`（debug 构建；`Off`/`Warn`
+   仍可经 `PassManager::set_verify_after_pass` 显式选择，release 不跑校验）。
+   S0 的 `strict_verification_reports_known_debt` 按预期完成使命后撤销，
+   换成 `strict_verification_passes_for_all_pipelines`（O1/O2/O3 × 多形态函数全绿）。
+
+**基线数字（S6 欠账清偿后）**：workspace **1369 passed / 0 failed / 18 ignored**（65 suites，
+`cargo test --workspace --exclude forge-rustc --exclude cargo-forge -j 2 -- --test-threads=1`）。
 
 ## 7. 参考设计（外部）
 

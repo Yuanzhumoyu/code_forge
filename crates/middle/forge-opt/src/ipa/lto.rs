@@ -233,7 +233,7 @@ fn lto_inline_callee(
                 .collect();
 
             // 保留全字段（flags/mem_flags/metadata/loc/isel_strategy）
-            let new_inst = caller.dfg.make_inst_with_meta_and_loc(
+            let new_inst = caller.make_inst_with_meta_and_loc(
                 inst.opcode,
                 target_block,
                 new_operands,

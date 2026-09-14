@@ -470,6 +470,79 @@ impl Function {
         self.kill_inst(old_inst);
     }
 
+    // ============================================================
+    // 指令创建（保持 use_lists 新鲜）
+    // ============================================================
+
+    /// 创建指令并**登记 use-lists**。
+    ///
+    /// pass / 前端构造 IR 请统一走这里，**不要**直接 `dfg.make_inst`：直接创建会留下
+    /// use-def 空洞，而 `Verifier` 的 `UseListInconsistency` 只在 pass 之后才发现；
+    /// 期间 DCE / RAUW / GVN 都会基于不完整的 use-list 做出错误判断
+    /// （2026-09-14 实测：`gvn_pre`/`pgo`/`inline` 等直接建指令且不登记，见
+    /// `docs/plans/forge-ir-v3-plan.md` S6）。
+    pub fn make_inst(
+        &mut self,
+        opcode: Opcode,
+        block: Block,
+        operands: SmallVec<[Value; 4]>,
+        immediates: SmallVec<[super::immediate::Immediate; 4]>,
+        result_tys: &[TypeId],
+        flags: super::inst_flags::InstFlags,
+    ) -> Inst {
+        let inst = self.dfg.make_inst(
+            opcode,
+            block,
+            operands.clone(),
+            immediates,
+            result_tys,
+            flags,
+        );
+        self.use_lists.record_inst(inst, &operands);
+        inst
+    }
+
+    /// [`Function::make_inst`] 的 mem_flags / metadata / 源码位置版。
+    #[allow(clippy::too_many_arguments)]
+    pub fn make_inst_with_meta_and_loc(
+        &mut self,
+        opcode: Opcode,
+        block: Block,
+        operands: SmallVec<[Value; 4]>,
+        immediates: SmallVec<[super::immediate::Immediate; 4]>,
+        result_tys: &[TypeId],
+        flags: super::inst_flags::InstFlags,
+        mem_flags: super::mem_flags::MemFlags,
+        metadata: SmallVec<[AttachedMetadata; 2]>,
+        loc: Option<super::debug_info::SourceLocation>,
+    ) -> Inst {
+        let inst = self.dfg.make_inst_with_meta_and_loc(
+            opcode,
+            block,
+            operands.clone(),
+            immediates,
+            result_tys,
+            flags,
+            mem_flags,
+            metadata,
+            loc,
+        );
+        self.use_lists.record_inst(inst, &operands);
+        inst
+    }
+
+    /// 就地改写某条指令的操作数后**重登记** use-lists。
+    ///
+    /// 先按 `user == inst` 忘掉该指令的全部旧记录（`forget_inst`），再登记当前
+    /// 操作数——**必须在改写之后调用**（改写前用 `UseLists::remove_inst` 亦可，
+    /// 但那要求调用方记住顺序；本方法对顺序不敏感）。返回重登记的操作数个数。
+    pub fn refresh_inst_uses(&mut self, inst: Inst) -> usize {
+        self.use_lists.forget_inst(inst);
+        let operands = self.dfg.insts[inst.0 as usize].operands.clone();
+        self.use_lists.record_inst(inst, &operands);
+        operands.len()
+    }
+
     /// 把 `block` 终结符中指向 `old_target` 的所有跳转目标改为 `new_target`
     /// （参数原样保留；不改变其它块的终结符）。
     /// 删除块的第 `idx` 个参数，并同步清理**所有前驱终结符**传给该位置的

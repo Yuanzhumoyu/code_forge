@@ -24,11 +24,22 @@
 - `inline` / `gvn_pre` / `mem2reg` 等 pass 运行后会留下 use-list 不一致或返回类型
   不匹配的 IR——此前 pass 后校验只 `log::warn`，欠账被掩盖；S0 把校验策略化
   （`forge_opt::PassVerify`，默认 `Warn`、严格模式 `Error`）并用
-  `strict_verification_reports_known_debt` 钉住。**S6 修好后该测试会失败**（提示把默认值切到 `Error`）。
+  `strict_verification_reports_known_debt` 钉住。
+  **✅ 同日已清偿**：三处 pass 欠账修掉（`inline` 补终结符 RAUW、`gvn_pre` 补登记 +
+  支配守卫、`mem2reg`/`pgo`/`lto`/`func_specialize` 同批），`Function::make_inst*`
+  成为建指令唯一入口（配套 `UseLists::forget_inst` + `Function::refresh_inst_uses`），
+  `PassVerify::Error` 转为 `#[default]`，守卫测试换成
+  `strict_verification_passes_for_all_pipelines`；详见
+  [`docs/plans/forge-ir-v3-plan.md`](../plans/forge-ir-v3-plan.md) §5/§6。
 - 覆盖矩阵（`forge-tests/src/coverage.rs`）此前用 `match op { ... _ => ... }` 兜底，
   34 个 opcode 静默无覆盖；S0 改为显式 `UNCOVERED_OPS`（逐条原因）+ 完整性守卫断言
   `COVERAGE_OPS ∪ UNCOVERED_OPS == Opcode::ALL`。
 - 方案与全部已落地项见 [`docs/plans/forge-ir-v3-plan.md`](../plans/forge-ir-v3-plan.md)。
+
+**仍开放（S6 相关的类型模型欠账，归 S4/S5）**：`expand_geps` 会生成类型自洽性不足的
+IR（`%p = add i64 %prev, %t` 却声明 PTR 结果，源码原注释即"verify 不跑"）——根因是
+v12 尚无 `Ptrtoint`/`Inttoptr` 降级；codegen 侧的 use-list 断言因此**刻意不跑完整
+`Verifier`**（范围已在 `compiler.rs` 注释写明，不是静默容忍）。
 
 ## 2026-09-12 复核记录
 

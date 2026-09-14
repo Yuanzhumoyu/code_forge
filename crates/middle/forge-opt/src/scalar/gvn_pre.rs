@@ -74,6 +74,16 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
                     continue; // Already available in this predecessor
                 }
 
+                // **支配性前置条件**：被插入的表达式在 `pred` 末尾求值，其每个操作数
+                // 必须已在该点可用（定义块支配 `pred`；同块定义天然在前）。
+                // 缺这条检查会往"操作数尚未定义"的前驱里插入指令 →
+                // `DominanceViolation`（2026-09-14 严格校验实测：本 pass 是首个
+                // 破坏不变量者）。不可插入的前驱直接跳过：那里的冗余留给 GVN/后续
+                // pass，不制造非法 IR。
+                if !operands_dominate(func, expr_key, pred) {
+                    continue;
+                }
+
                 // Create a copy of the expression at the end of the predecessor
                 let new_val = insert_expression(func, pred, expr_key);
                 if let Some(v) = new_val {
@@ -96,6 +106,32 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
     Ok(result)
 }
 
+/// 表达式在 `at` 块末尾求值是否合法：每个操作数的定义点必须支配 `at`。
+///
+/// - `ValueDef::Inst(i, _)`：定义块支配 `at`（同块内定义天然在前——插入点在块尾）；
+/// - `ValueDef::Param(blk, _)`：块参数在块入口即有效 → 要求 `blk` 支配 `at`；
+/// - `AggConst` / `UndefNamed`：无定义点，恒可用。
+///
+/// 这是 PRE 插入的**健全性条件**（经典 PRE 的 "earliest" 判定隐含它；本实现
+/// 按前驱逐个插入，因此必须显式检查）。
+fn operands_dominate(func: &Function, expr_key: &ExprKey, at: Block) -> bool {
+    let dom = func.dominator_tree();
+    for op in &expr_key.operands {
+        let def_block = match func.dfg.value_def(*op) {
+            Some(ValueDef::Inst(inst, _)) => match func.dfg.insts.get(inst.0 as usize) {
+                Some(i) => i.block,
+                None => return false,
+            },
+            Some(ValueDef::Param(block, _)) => *block,
+            Some(ValueDef::AggConst(_)) | Some(ValueDef::UndefNamed(_)) | None => continue,
+        };
+        if !dom.dominates(def_block, at) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Insert a copy of an expression into a block. Returns the new SSA value.
 fn insert_expression(func: &mut Function, block: Block, expr_key: &ExprKey) -> Option<Value> {
     // Build operands from ExprKey
@@ -106,7 +142,7 @@ fn insert_expression(func: &mut Function, block: Block, expr_key: &ExprKey) -> O
     let opcode = expr_key.opcode;
 
     // Create the instruction
-    let new_inst = func.dfg.make_inst(
+    let new_inst = func.make_inst(
         opcode,
         block,
         operands,
