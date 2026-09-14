@@ -86,7 +86,9 @@ fn generate_opcode_table() {
                 Arity::Fixed(*n as u8)
             }
             Some(toml::Value::String(s)) if s == "variadic" => Arity::Variadic,
-            other => panic!("ops.toml `{name}` 的 operands 须为整数或 \"variadic\"，实际 {other:?}"),
+            other => {
+                panic!("ops.toml `{name}` 的 operands 须为整数或 \"variadic\"，实际 {other:?}")
+            }
         };
         let results = match table.get("results") {
             None => 1u8,
@@ -116,7 +118,10 @@ fn generate_opcode_table() {
                         panic!("ops.toml `{name}` 声明了 payload 就必须给 `payload_default`")
                     });
                 assert!(
-                    default.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
+                    default
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_uppercase()),
                     "ops.toml `{name}` 的 payload_default 须是变体名（PascalCase），实际 {default:?}"
                 );
                 Some((s.clone(), default.to_string()))
@@ -192,10 +197,8 @@ fn render(defs: &[OpDef]) -> String {
                 format_args!("    // === {} ({n}) ===\n", cur_cat),
             );
         }
-        let _ = std::fmt::Write::write_fmt(
-            &mut s,
-            format_args!("    /// {}\n    {}", d.doc, d.name),
-        );
+        let _ =
+            std::fmt::Write::write_fmt(&mut s, format_args!("    /// {}\n    {}", d.doc, d.name));
         match &d.payload {
             None => s.push_str(",\n"),
             Some((ty, _default)) => {
@@ -262,7 +265,10 @@ fn render(defs: &[OpDef]) -> String {
     for d in defs {
         match &d.payload {
             None => {
-                let _ = std::fmt::Write::write_fmt(&mut s, format_args!("        Opcode::{},\n", d.name));
+                let _ = std::fmt::Write::write_fmt(
+                    &mut s,
+                    format_args!("        Opcode::{},\n", d.name),
+                );
             }
             Some((ty, default)) => {
                 let _ = std::fmt::Write::write_fmt(
