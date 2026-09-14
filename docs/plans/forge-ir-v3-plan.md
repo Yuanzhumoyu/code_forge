@@ -95,7 +95,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | 期 | 范围 | 状态 |
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
-| S1 | 指令元数据单一事实源 | 待开工 |
+| S1 | 指令元数据单一事实源 | **部分落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字映射（见 §6 末）；余项：`Icmp`/`Fcmp` 载荷归一、LLVM 文本名表、verifier 类型规则与 builder 断言声明化 |
 | S2 | 实体容器与密集索引 | 待开工 |
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
@@ -180,6 +180,37 @@ markdownlint 到 0 error）→ push 后看 CI run 全绿。
 
 **基线数字（S6 欠账清偿后）**：workspace **1369 passed / 0 failed / 18 ignored**（65 suites，
 `cargo test --workspace --exclude forge-rustc --exclude cargo-forge -j 2 -- --test-threads=1`）。
+
+### S1（第一步）：`ops.toml` 成为指令元数据单一事实源（2026-09-14）
+
+**做了什么**：crate 根新增 `ops.toml`（109 条 `[[op]]`：变体名、助记符、分组、
+文档、值操作数个数、结果数、`may_ub`、`side_effect`、变体载荷），`build.rs` 扩容为
+"lalrpop + 读 `ops.toml` 生成 `$OUT_DIR/opcode_gen.rs`"，`src/opcode.rs` 用 `include!`
+接入。被替换掉的**六张手写表**：枚举本身、`ALL`、`name()`、`mnemonic()`、
+`result_count()`、`expected_operand_count()`（外加 `may_ub()`/`has_side_effect()`），
+一次性全部改由生成物投影：
+
+- `Opcode::info() -> &'static OpcodeInfo` 是**无 `_` 兜底臂**的生成 match（新增变体
+  不同步更新即编译失败）；`name/mnemonic/category/doc/arity/result_count/may_ub/
+  side_effect` 都是它的字段。
+- 操作数元数建模为 `OperandArity::{Fixed(u8), Variadic}`：修掉了老表"`0` 既表示
+  '无操作数' 又表示 '不检查'"的语义混淆（`expected_operand_count()` 保持历史契约
+  `Variadic => 0`，要区分请读 `info().arity`）。
+- 生成器 **fail-closed**：缺字段/类型不对/名字或助记符重复/未知载荷/载荷缺默认值
+  一律 `panic!` 中断构建（构建期就拦住，而不是运行期查表取第一个）。
+- `ops.toml` 的 `payload` 明确把 `Icmp{cond}`/`Fcmp{cond}` 记为**变体载荷**——
+  这是待归一项（见下），不是已完成项。
+
+**迁移保真证据**（不靠"看起来一样"）：用一次性脚本把 **git HEAD 的手写表**与
+**生成物**各自独立解析（老表按 Rust 源码分组解析、新表按生成行正则解析）后逐项比对：
+`OLD_VARIANTS=109 / OLD_MNEMONICS=109 / NEW_INFOS=109`，`NEW_VARIADIC=6 /
+NEW_SIDE_EFFECT=9 / NEW_MAY_UB=15`，**MISMATCHES=0（109 变体 × 6 属性）**。
+
+**S1 余项（未做，明确记录）**：① `Icmp`/`Fcmp` 条件从变体载荷归一到 instruction
+属性通道（牵动 forge-codegen `LowerCtx.current_immediates` 与 forge-dsl 生成代码里
+`icmp_id`/`fcmp_id` 两张数字映射表）；② LLVM 文本名表（含 `Fload→load`、
+`Ireduce→trunc` 等有损对）进 `ops.toml`；③ verifier 的 ~371 行 per-opcode 类型规则
+与 `builder.rs` 的构造断言按 `OpcodeInfo` 声明化。
 
 ## 7. 参考设计（外部）
 

@@ -1,0 +1,827 @@
+# forge-ir 指令元数据单一事实源（v3 方案 S1）
+#
+# `build.rs` 读本文件生成 `$OUT_DIR/opcode_gen.rs`：`Opcode` 枚举、`Opcode::ALL`、
+# `Opcode::INFOS`（名称/助记符/类别/操作数元数/结果数/UB/副作用）、`name()`/
+# `from_name()`/`mnemonic()`/`from_mnemonic()`/`result_count()`/`may_ub()`/
+# `has_side_effect()`/`expected_operand_count()`。**新增一个 opcode = 在本文件加一行**
+# （生成代码不可能与枚举漂移：两者同源）。
+#
+# 字段（缺省值见括号；`operands` 必填）：
+#   name        变体名（PascalCase；ISA TOML 的 `op = "Iadd"` 契约）
+#   mnemonic    规范助记符（display 用；须唯一，`from_mnemonic` 的逆）
+#   category    分组（生成枚举时作分节注释）
+#   doc         变体文档（生成 `#[doc = ...]`）
+#   operands    值操作数个数：非负整数 | "variadic"（个数不定，不检查）
+#   results     结果值个数（1）
+#   may_ub      是否可能有未定义行为（false）
+#   side_effect 是否有副作用 ⇒ 不可被 DCE 删除（false）
+#   payload     变体载荷类型（无）——目前只有 Icmp/Fcmp 带条件载荷
+#   payload_default  载荷的默认变体名（声明 payload 时必填，`ALL` 里用）
+#
+# 口径：这些字段此前散在 `opcode.rs` 的 6 张手写表里（枚举/`result_count`/
+# `may_ub`/`has_side_effect`/`mnemonic`/`expected_operand_count`），逐项搬迁、
+# 由 `tests/opcode_table.rs` 与 `tests/ops_toml.rs` 守卫。
+
+version = 1
+
+[[op]]
+name = "Iadd"
+mnemonic = "iadd"
+category = "int-arith"
+doc = "整数加法（结果类型 = 操作数类型 upcast）"
+operands = 2
+
+[[op]]
+name = "Isub"
+mnemonic = "isub"
+category = "int-arith"
+doc = "整数减法"
+operands = 2
+
+[[op]]
+name = "Imul"
+mnemonic = "imul"
+category = "int-arith"
+doc = "整数乘法"
+operands = 2
+
+[[op]]
+name = "Udiv"
+mnemonic = "udiv"
+category = "int-arith"
+doc = "无符号除法（除零为 UB）"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "Sdiv"
+mnemonic = "sdiv"
+category = "int-arith"
+doc = "有符号除法（除零/溢出为 UB）"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "Urem"
+mnemonic = "urem"
+category = "int-arith"
+doc = "无符号取余（除零为 UB）"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "Srem"
+mnemonic = "srem"
+category = "int-arith"
+doc = "有符号取余（除零/溢出为 UB）"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "Fadd"
+mnemonic = "fadd"
+category = "float-arith"
+doc = "浮点加法"
+operands = 2
+
+[[op]]
+name = "Fsub"
+mnemonic = "fsub"
+category = "float-arith"
+doc = "浮点减法"
+operands = 2
+
+[[op]]
+name = "Fmul"
+mnemonic = "fmul"
+category = "float-arith"
+doc = "浮点乘法"
+operands = 2
+
+[[op]]
+name = "Fdiv"
+mnemonic = "fdiv"
+category = "float-arith"
+doc = "浮点除法"
+operands = 2
+
+[[op]]
+name = "Frem"
+mnemonic = "frem"
+category = "float-arith"
+doc = "浮点取模（LLVM `frem`；x87 FPREM 语义，按 IEEE 754 remainder）"
+operands = 2
+
+[[op]]
+name = "Fneg"
+mnemonic = "fneg"
+category = "float-arith"
+doc = "浮点取负"
+operands = 1
+
+[[op]]
+name = "Fabs"
+mnemonic = "fabs"
+category = "float-arith"
+doc = "浮点绝对值"
+operands = 1
+
+[[op]]
+name = "Fsqrt"
+mnemonic = "fsqrt"
+category = "float-arith"
+doc = "浮点平方根"
+operands = 1
+
+[[op]]
+name = "Band"
+mnemonic = "and"
+category = "bitwise"
+doc = "按位与"
+operands = 2
+
+[[op]]
+name = "Bor"
+mnemonic = "or"
+category = "bitwise"
+doc = "按位或"
+operands = 2
+
+[[op]]
+name = "Bxor"
+mnemonic = "xor"
+category = "bitwise"
+doc = "按位异或"
+operands = 2
+
+[[op]]
+name = "Bnot"
+mnemonic = "not"
+category = "bitwise"
+doc = "按位取反"
+operands = 1
+
+[[op]]
+name = "Ishl"
+mnemonic = "shl"
+category = "bitwise"
+doc = "逻辑左移"
+operands = 2
+
+[[op]]
+name = "Ushr"
+mnemonic = "ushr"
+category = "bitwise"
+doc = "逻辑右移"
+operands = 2
+
+[[op]]
+name = "Sshr"
+mnemonic = "sshr"
+category = "bitwise"
+doc = "算术右移"
+operands = 2
+
+[[op]]
+name = "Clz"
+mnemonic = "clz"
+category = "bit-ops"
+doc = "前导零计数"
+operands = 1
+
+[[op]]
+name = "Ctz"
+mnemonic = "ctz"
+category = "bit-ops"
+doc = "尾随零计数"
+operands = 1
+
+[[op]]
+name = "Popcnt"
+mnemonic = "popcnt"
+category = "bit-ops"
+doc = "置位数（Hamming 重量）"
+operands = 1
+
+[[op]]
+name = "Bitreverse"
+mnemonic = "bitreverse"
+category = "bit-ops"
+doc = "位序反转"
+operands = 1
+
+[[op]]
+name = "Rotl"
+mnemonic = "rotl"
+category = "bit-ops"
+doc = "循环左移"
+operands = 2
+
+[[op]]
+name = "Rotr"
+mnemonic = "rotr"
+category = "bit-ops"
+doc = "循环右移"
+operands = 2
+
+[[op]]
+name = "Abs"
+mnemonic = "abs"
+category = "int-ext"
+doc = "整数绝对值"
+operands = 1
+
+[[op]]
+name = "Smin"
+mnemonic = "smin"
+category = "int-ext"
+doc = "有符号最小值"
+operands = 2
+
+[[op]]
+name = "Smax"
+mnemonic = "smax"
+category = "int-ext"
+doc = "有符号最大值"
+operands = 2
+
+[[op]]
+name = "Umin"
+mnemonic = "umin"
+category = "int-ext"
+doc = "无符号最小值"
+operands = 2
+
+[[op]]
+name = "Umax"
+mnemonic = "umax"
+category = "int-ext"
+doc = "无符号最大值"
+operands = 2
+
+[[op]]
+name = "SaddSat"
+mnemonic = "sadd_sat"
+category = "int-ext"
+doc = "有符号饱和加法"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "SsubSat"
+mnemonic = "ssub_sat"
+category = "int-ext"
+doc = "有符号饱和减法"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "UaddSat"
+mnemonic = "uadd_sat"
+category = "int-ext"
+doc = "无符号饱和加法"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "UsubSat"
+mnemonic = "usub_sat"
+category = "int-ext"
+doc = "无符号饱和减法"
+operands = 2
+may_ub = true
+
+[[op]]
+name = "Bswap"
+mnemonic = "bswap"
+category = "int-ext"
+doc = "字节序交换"
+operands = 1
+
+[[op]]
+name = "Fma"
+mnemonic = "fma"
+category = "float-ext"
+doc = "融合乘加：a * b + c"
+operands = 3
+
+[[op]]
+name = "Fmin"
+mnemonic = "fmin"
+category = "float-ext"
+doc = "浮点最小值（IEEE 754-2019 minimumNumber）"
+operands = 2
+
+[[op]]
+name = "Fmax"
+mnemonic = "fmax"
+category = "float-ext"
+doc = "浮点最大值"
+operands = 2
+
+[[op]]
+name = "Fcopysign"
+mnemonic = "fcopysign"
+category = "float-ext"
+doc = "拷贝符号位"
+operands = 2
+
+[[op]]
+name = "Ffloor"
+mnemonic = "ffloor"
+category = "float-ext"
+doc = "向负无穷取整"
+operands = 1
+
+[[op]]
+name = "Fceil"
+mnemonic = "fceil"
+category = "float-ext"
+doc = "向正无穷取整"
+operands = 1
+
+[[op]]
+name = "Ftrunc"
+mnemonic = "ftrunc"
+category = "float-ext"
+doc = "向零取整"
+operands = 1
+
+[[op]]
+name = "Fround"
+mnemonic = "fround"
+category = "float-ext"
+doc = "就近取整（平局取偶）"
+operands = 1
+
+[[op]]
+name = "Icmp"
+mnemonic = "icmp"
+category = "compare"
+doc = "整数比较（条件在变体载荷 `cond` 里）"
+operands = 2
+payload = "IntCC"
+payload_default = "Equal"
+
+[[op]]
+name = "Fcmp"
+mnemonic = "fcmp"
+category = "compare"
+doc = "浮点比较（条件在变体载荷 `cond` 里）"
+operands = 2
+payload = "FloatCC"
+payload_default = "Equal"
+
+[[op]]
+name = "SaddOverflow"
+mnemonic = "sadd_overflow"
+category = "overflow"
+doc = "有符号加法 + 溢出标志（结果 {value, overflow:i1}）"
+operands = 2
+results = 2
+may_ub = true
+
+[[op]]
+name = "UaddOverflow"
+mnemonic = "uadd_overflow"
+category = "overflow"
+doc = "无符号加法 + 溢出标志"
+operands = 2
+results = 2
+may_ub = true
+
+[[op]]
+name = "SsubOverflow"
+mnemonic = "ssub_overflow"
+category = "overflow"
+doc = "有符号减法 + 溢出标志"
+operands = 2
+results = 2
+may_ub = true
+
+[[op]]
+name = "UsubOverflow"
+mnemonic = "usub_overflow"
+category = "overflow"
+doc = "无符号减法 + 溢出标志"
+operands = 2
+results = 2
+may_ub = true
+
+[[op]]
+name = "SmulOverflow"
+mnemonic = "smul_overflow"
+category = "overflow"
+doc = "有符号乘法 + 溢出标志"
+operands = 2
+results = 2
+may_ub = true
+
+[[op]]
+name = "UmulOverflow"
+mnemonic = "umul_overflow"
+category = "overflow"
+doc = "无符号乘法 + 溢出标志"
+operands = 2
+results = 2
+may_ub = true
+
+[[op]]
+name = "Load"
+mnemonic = "load"
+category = "memory"
+doc = "整数/通用加载"
+operands = 1
+
+[[op]]
+name = "Store"
+mnemonic = "store"
+category = "memory"
+doc = "整数/通用存储"
+operands = 2
+results = 0
+side_effect = true
+
+[[op]]
+name = "Fload"
+mnemonic = "fload"
+category = "memory"
+doc = "浮点加载（按类型分派到 MOVSD_RM 等——普通 Load 走 GPR，F64 值会错乱）"
+operands = 1
+
+[[op]]
+name = "Fstore"
+mnemonic = "fstore"
+category = "memory"
+doc = "浮点存储（按类型分派到 MOVSD_MR 等）"
+operands = 2
+results = 0
+side_effect = true
+
+[[op]]
+name = "Iconst"
+mnemonic = "iconst"
+category = "const"
+doc = "整数常量（值在常量池，经 Immediate::Const 引用）"
+operands = 0
+
+[[op]]
+name = "Fconst"
+mnemonic = "fconst"
+category = "const"
+doc = "浮点常量（位模式 + 位宽存常量池）"
+operands = 0
+
+[[op]]
+name = "Vconst"
+mnemonic = "vconst"
+category = "const"
+doc = "向量常量（字节池）"
+operands = 0
+
+[[op]]
+name = "Poison"
+mnemonic = "poison"
+category = "value"
+doc = "产生指定类型的 poison 值（延迟 UB）"
+operands = 0
+
+[[op]]
+name = "Undef"
+mnemonic = "undef"
+category = "value"
+doc = "产生 undef 值（任意位模式，每次使用独立）"
+operands = 0
+
+[[op]]
+name = "Sextend"
+mnemonic = "sextend"
+category = "convert"
+doc = "有符号扩展"
+operands = 1
+
+[[op]]
+name = "Uextend"
+mnemonic = "uextend"
+category = "convert"
+doc = "无符号扩展"
+operands = 1
+
+[[op]]
+name = "Ireduce"
+mnemonic = "ireduce"
+category = "convert"
+doc = "整数截断（LLVM `trunc`）"
+operands = 1
+
+[[op]]
+name = "Fptrunc"
+mnemonic = "fptrunc"
+category = "convert"
+doc = "浮点窄化"
+operands = 1
+
+[[op]]
+name = "Fpext"
+mnemonic = "fpext"
+category = "convert"
+doc = "浮点加宽"
+operands = 1
+
+[[op]]
+name = "Fptosi"
+mnemonic = "fptosi"
+category = "convert"
+doc = "浮点 → 有符号整数"
+operands = 1
+
+[[op]]
+name = "Sitofp"
+mnemonic = "sitofp"
+category = "convert"
+doc = "有符号整数 → 浮点"
+operands = 1
+
+[[op]]
+name = "Fptoui"
+mnemonic = "fptoui"
+category = "convert"
+doc = "浮点 → 无符号整数"
+operands = 1
+
+[[op]]
+name = "Uitofp"
+mnemonic = "uitofp"
+category = "convert"
+doc = "无符号整数 → 浮点"
+operands = 1
+
+[[op]]
+name = "Ptrtoint"
+mnemonic = "ptrtoint"
+category = "convert"
+doc = "指针 → 整数"
+operands = 1
+
+[[op]]
+name = "Inttoptr"
+mnemonic = "inttoptr"
+category = "convert"
+doc = "整数 → 指针"
+operands = 1
+
+[[op]]
+name = "Bitcast"
+mnemonic = "bitcast"
+category = "convert"
+doc = "同位宽重解释（int↔float↔向量）"
+operands = 1
+
+[[op]]
+name = "Call"
+mnemonic = "call"
+category = "call"
+doc = "直接调用（被调在 Immediate::Func；实参个数不定）"
+operands = "variadic"
+side_effect = true
+
+[[op]]
+name = "CallIndirect"
+mnemonic = "call_indirect"
+category = "call"
+doc = "间接调用（函数指针为首操作数；实参个数不定）"
+operands = "variadic"
+side_effect = true
+
+[[op]]
+name = "StackAddr"
+mnemonic = "stack_addr"
+category = "address"
+doc = "栈槽地址（帧偏移在 Immediate::Int）"
+operands = 0
+
+[[op]]
+name = "GlobalAddr"
+mnemonic = "global_addr"
+category = "address"
+doc = "全局变量地址"
+operands = 0
+
+[[op]]
+name = "Alloca"
+mnemonic = "alloca"
+category = "alloca"
+doc = "栈分配（类型/元素数在对齐与类型 immediate 里）"
+operands = 0
+
+[[op]]
+name = "GetElementPtr"
+mnemonic = "gep"
+category = "gep"
+doc = "地址计算（基类型 immediate + 变长索引操作数）"
+operands = "variadic"
+
+[[op]]
+name = "Vadd"
+mnemonic = "vadd"
+category = "vector"
+doc = "向量加法"
+operands = 2
+
+[[op]]
+name = "Vsub"
+mnemonic = "vsub"
+category = "vector"
+doc = "向量减法"
+operands = 2
+
+[[op]]
+name = "Vmul"
+mnemonic = "vmul"
+category = "vector"
+doc = "向量乘法"
+operands = 2
+
+[[op]]
+name = "Vdiv"
+mnemonic = "vdiv"
+category = "vector"
+doc = "向量除法"
+operands = 2
+
+[[op]]
+name = "Vneg"
+mnemonic = "vneg"
+category = "vector"
+doc = "向量取负"
+operands = 1
+
+[[op]]
+name = "Vabs"
+mnemonic = "vabs"
+category = "vector"
+doc = "向量绝对值"
+operands = 1
+
+[[op]]
+name = "Vextract"
+mnemonic = "vextract"
+category = "vector"
+doc = "提取向量元素（lane 索引见 immediate/操作数）"
+operands = 1
+
+[[op]]
+name = "Vinsert"
+mnemonic = "vinsert"
+category = "vector"
+doc = "插入向量元素"
+operands = 2
+
+[[op]]
+name = "Vbitcast"
+mnemonic = "vbitcast"
+category = "vector"
+doc = "向量位重解释（总位宽相同）"
+operands = 1
+
+[[op]]
+name = "Vbroadcast"
+mnemonic = "vbroadcast"
+category = "vector"
+doc = "标量广播成向量（元素个数不定）"
+operands = "variadic"
+
+[[op]]
+name = "ShuffleVector"
+mnemonic = "shufflevector"
+category = "vector"
+doc = "向量重排（掩码在 immediate 列表）"
+operands = "variadic"
+
+[[op]]
+name = "Vsplit"
+mnemonic = "vsplit"
+category = "vector"
+doc = "宽向量 → 128 位片段提取（fragment 立即数选片段）"
+operands = 1
+
+[[op]]
+name = "Vconcat"
+mnemonic = "vconcat"
+category = "vector"
+doc = "128 位片段拼接成宽向量（V128×2 → V256）"
+operands = "variadic"
+
+[[op]]
+name = "Trap"
+mnemonic = "trap"
+category = "trap"
+doc = "触发陷阱（按定义不可达，如失败的边界检查）"
+operands = 0
+results = 0
+may_ub = true
+side_effect = true
+
+[[op]]
+name = "IsNull"
+mnemonic = "is_null"
+category = "pointer"
+doc = "判空指针"
+operands = 1
+
+[[op]]
+name = "IsNotNull"
+mnemonic = "is_not_null"
+category = "pointer"
+doc = "判非空指针"
+operands = 1
+
+[[op]]
+name = "AddrSpaceCast"
+mnemonic = "addrspacecast"
+category = "pointer"
+doc = "指针地址空间转换（结果类型 = 目标 addrspace 指针）"
+operands = 1
+
+[[op]]
+name = "VaArg"
+mnemonic = "va_arg"
+category = "pointer"
+doc = "可变参数读取（LLVM `va_arg`；文本层存 (Type, ptr) 操作数）"
+operands = 1
+side_effect = true
+
+[[op]]
+name = "LandingPad"
+mnemonic = "landingpad"
+category = "pointer"
+doc = "异常着陆垫（LLVM `landingpad`；codegen Unsupported）"
+operands = 0
+
+[[op]]
+name = "AtomicRmw"
+mnemonic = "atomicrmw"
+category = "atomic"
+doc = "原子读改写（操作判别值与内存序在 immediate 列表）"
+operands = 2
+side_effect = true
+
+[[op]]
+name = "Cmpxchg"
+mnemonic = "cmpxchg"
+category = "atomic"
+doc = "原子比较交换（成功/失败内存序在 immediate 列表）"
+operands = 3
+side_effect = true
+
+[[op]]
+name = "Fence"
+mnemonic = "fence"
+category = "atomic"
+doc = "内存屏障"
+operands = 0
+results = 0
+side_effect = true
+
+[[op]]
+name = "ExtractValue"
+mnemonic = "extractvalue"
+category = "aggregate"
+doc = "聚合字段提取（索引在 immediate 列表）"
+operands = 1
+
+[[op]]
+name = "InsertValue"
+mnemonic = "insertvalue"
+category = "aggregate"
+doc = "聚合字段插入（索引在 immediate 列表）"
+operands = 2
+
+[[op]]
+name = "Copy"
+mnemonic = "copy"
+category = "other"
+doc = "显式拷贝（PHI 消除/合并用）"
+operands = 1
+
+[[op]]
+name = "Select"
+mnemonic = "select"
+category = "other"
+doc = "三元选择（cond 须为 i1）"
+operands = 3
+
+[[op]]
+name = "Freeze"
+mnemonic = "freeze"
+category = "other"
+doc = "冻结 poison/undef（阻止常量折叠跨此推断）"
+operands = 1
+
+[[op]]
+name = "Nop"
+mnemonic = "nop"
+category = "other"
+doc = "空操作（删除后的墓碑）"
+operands = 0
+results = 0

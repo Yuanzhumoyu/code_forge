@@ -14,6 +14,8 @@ lalrpop-util = "0.23.1"
 
 [build-dependencies]
 lalrpop = "0.23.1"
+# ops.toml（指令元数据单一事实源，v3 方案 S1）解析——只用 toml::Value，不引 serde derive。
+toml = "1.1.6"
 
 [dev-dependencies]
 criterion = "0.8.2"
