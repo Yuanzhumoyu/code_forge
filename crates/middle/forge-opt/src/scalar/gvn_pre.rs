@@ -167,6 +167,7 @@ fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey
                 let key = ExprKey {
                     opcode: inst.opcode,
                     operands: inst.operands.iter().copied().collect(),
+                    immediates: inst.immediates.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
                 expr_to_id.entry(key.clone()).or_insert_with(|| {
@@ -201,6 +202,7 @@ fn compute_gen_kill(
                 let key = ExprKey {
                     opcode: inst.opcode,
                     operands: inst.operands.iter().copied().collect(),
+                    immediates: inst.immediates.iter().copied().collect(),
                     ty: func.dfg.values[v.0 as usize].ty,
                 };
                 if let Some(&id) = expr_to_id.get(&key) {

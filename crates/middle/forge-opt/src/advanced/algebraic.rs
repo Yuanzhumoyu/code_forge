@@ -411,19 +411,17 @@ fn try_rewrite(inst: &Instruction, cache: &ConstCache, ty: TypeId) -> Option<Rep
             }
             None
         }
-        // === Icmp eq: x == x → true (1) ===
-        Opcode::Icmp { .. } => {
+        // === Icmp eq/ne: x cmp x → 1/0 ===
+        Opcode::Icmp => {
             if let Some(bv) = b
                 && a == bv
             {
-                // x cmp x
-                let cond = match inst.immediates.first() {
-                    Some(Immediate::Int(cc)) => *cc as u8,
-                    _ => return None,
-                };
-                match cond {
-                    0 => return Some(ReplaceAction::Const { value: 1 }), // eq
-                    1 => return Some(ReplaceAction::Const { value: 0 }), // ne
+                // 条件从 immediate 通道读（v3 S1）。此前这里读 `Immediate::Int(cc)`
+                // 而条件在变体载荷上、immediates 恒空 ⇒ 该分支从不命中（死代码）；
+                // 归一后 `x == x → true` / `x != x → false` 才真正生效。
+                match inst.immediates.iter().find_map(|im| im.as_int_cc()) {
+                    Some(IntCC::Equal) => return Some(ReplaceAction::Const { value: 1 }),
+                    Some(IntCC::NotEqual) => return Some(ReplaceAction::Const { value: 0 }),
                     _ => {}
                 }
             }

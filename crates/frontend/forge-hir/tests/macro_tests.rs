@@ -202,9 +202,7 @@ fn test_e2e_if_else() {
         .register_atom(
             forge_hir::atom::AtomSpec::new(
                 forge_hir::atom::arith::icmp(),
-                forge_ir::opcode::Opcode::Icmp {
-                    cond: forge_ir::opcode::IntCC::Equal,
-                },
+                forge_ir::opcode::Opcode::Icmp,
             )
             .attr_str("cond")
             .input("lhs", forge_ir::TypeId::I32)

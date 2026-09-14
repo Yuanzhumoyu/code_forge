@@ -6,8 +6,10 @@
 //! `result_count`/`expected_operand_count`/`may_ub`/`has_side_effect` 全部由它投影。
 //! **新增一个 opcode = 在 `ops.toml` 加一行**（生成物与枚举同源，不可能漂移）。
 //!
-//! 类型信息、常量、块引用等通过 `Immediate` 传递；比较条件目前仍是变体载荷
-//! （`Icmp { cond }`/`Fcmp { cond }`），归一到 immediate 通道是 S1 的后续项。
+//! 类型信息、常量、块引用等通过 `Immediate` 传递；`Icmp`/`Fcmp` 的比较条件同样走
+//! immediate 通道（`Immediate::IntCC`/`FloatCC`，`Opcode::cond_kind()` 声明该契约），
+//! 数值表示由 [`IntCC::code`]/[`FloatCC::code`] 提供（ISA TOML 的 `cond` 谓词与宿主
+//! lowering 共用同一份映射）。
 //!
 //! 本文件手写保留的只有**非 opcode** 的枚举：比较条件（`IntCC`/`FloatCC`）、
 //! 内存序（`Ordering`）与原子操作码（`AtomicRmwOp`）。
@@ -47,6 +49,46 @@ impl IntCC {
             IntCC::UnsignedLessThanOrEqual => "ule",
             IntCC::UnsignedGreaterThanOrEqual => "uge",
         }
+    }
+
+    /// 规范条件码（**1..=10**，与 ISA TOML 的 `when = { eq = ["cond", N] }` 契约一致）。
+    ///
+    /// 这是条件的**唯一**数字表示：宿主 lowering 把 `Immediate::IntCC(cc)` 映射成
+    /// `cc.code()` 交给 [`LowerCtx::current_immediates`]，ISA 规则按此数值分派。
+    /// 历史上这段映射是 forge-dsl 生成代码里的 `icmp_id`（每个 ISA 模块各生成一份），
+    /// v3 S1 收敛到本 crate（生成物与宿主共用同一份，不再重复）。
+    ///
+    /// [`LowerCtx::current_immediates`]: 见 `forge-codegen` 的同名文档
+    pub fn code(&self) -> u8 {
+        match self {
+            IntCC::Equal => 1,
+            IntCC::NotEqual => 2,
+            IntCC::SignedLessThan => 3,
+            IntCC::SignedLessThanOrEqual => 4,
+            IntCC::SignedGreaterThan => 5,
+            IntCC::SignedGreaterThanOrEqual => 6,
+            IntCC::UnsignedLessThan => 7,
+            IntCC::UnsignedLessThanOrEqual => 8,
+            IntCC::UnsignedGreaterThan => 9,
+            IntCC::UnsignedGreaterThanOrEqual => 10,
+        }
+    }
+
+    /// [`IntCC::code`] 的逆（未知码返回 `None`，不兜底）。
+    pub fn from_code(code: u8) -> Option<IntCC> {
+        Some(match code {
+            1 => IntCC::Equal,
+            2 => IntCC::NotEqual,
+            3 => IntCC::SignedLessThan,
+            4 => IntCC::SignedLessThanOrEqual,
+            5 => IntCC::SignedGreaterThan,
+            6 => IntCC::SignedGreaterThanOrEqual,
+            7 => IntCC::UnsignedLessThan,
+            8 => IntCC::UnsignedLessThanOrEqual,
+            9 => IntCC::UnsignedGreaterThan,
+            10 => IntCC::UnsignedGreaterThanOrEqual,
+            _ => return None,
+        })
     }
 }
 
@@ -107,6 +149,54 @@ impl FloatCC {
             FloatCC::Ule => "ule",
             FloatCC::Une => "une",
         }
+    }
+
+    /// 规范条件码（**1..=16**，与 ISA TOML 的 `when = { eq = ["cond", N] }` 契约一致）。
+    ///
+    /// 与 [`IntCC::code`] 同理：条件的唯一数字表示，宿主 lowering 用它喂
+    /// `LowerCtx.current_immediates`；历史上是 forge-dsl 生成的 `fcmp_id`。
+    pub fn code(&self) -> u8 {
+        match self {
+            FloatCC::Ordered => 1,
+            FloatCC::Unordered => 2,
+            FloatCC::Equal => 3,
+            FloatCC::NotEqual => 4,
+            FloatCC::LessThan => 5,
+            FloatCC::LessThanOrEqual => 6,
+            FloatCC::GreaterThan => 7,
+            FloatCC::GreaterThanOrEqual => 8,
+            FloatCC::False => 9,
+            FloatCC::True => 10,
+            FloatCC::Ueq => 11,
+            FloatCC::Ugt => 12,
+            FloatCC::Uge => 13,
+            FloatCC::Ult => 14,
+            FloatCC::Ule => 15,
+            FloatCC::Une => 16,
+        }
+    }
+
+    /// [`FloatCC::code`] 的逆（未知码返回 `None`，不兜底）。
+    pub fn from_code(code: u8) -> Option<FloatCC> {
+        Some(match code {
+            1 => FloatCC::Ordered,
+            2 => FloatCC::Unordered,
+            3 => FloatCC::Equal,
+            4 => FloatCC::NotEqual,
+            5 => FloatCC::LessThan,
+            6 => FloatCC::LessThanOrEqual,
+            7 => FloatCC::GreaterThan,
+            8 => FloatCC::GreaterThanOrEqual,
+            9 => FloatCC::False,
+            10 => FloatCC::True,
+            11 => FloatCC::Ueq,
+            12 => FloatCC::Ugt,
+            13 => FloatCC::Uge,
+            14 => FloatCC::Ult,
+            15 => FloatCC::Ule,
+            16 => FloatCC::Une,
+            _ => return None,
+        })
     }
 }
 

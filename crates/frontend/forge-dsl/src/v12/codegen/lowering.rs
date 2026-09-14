@@ -107,19 +107,27 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             } else {
                 quote! { ctx.current_clobbers = vec![#(#clobbers),*]; }
             };
-            // Icmp 特殊：__cc = 条件码（setcc 用；其他 op 恒 0）
+            // Icmp 特殊：__cc = 条件码（setcc 用；其他 op 恒 0）。
+            // 条件已归一到 immediate 通道（v3 S1）：宿主把
+            // `Immediate::IntCC` 折成 `IntCC::code()`（1..=10）放进
+            // `current_immediates[0]`，这里解出 `IntCC` 再映射到 x86 的 setcc 编码。
             let cc_bind: TokenStream = if rule.op == "Icmp" {
                 quote! {
                     let __cc: u8 = match op {
-                        crate::prelude::Opcode::Icmp { cond } => {
+                        crate::prelude::Opcode::Icmp => {
                             use crate::prelude::IntCC::*;
-                            match cond {
-                                Equal => 4, NotEqual => 5,
-                                SignedLessThan => 12, SignedLessThanOrEqual => 14,
-                                SignedGreaterThan => 15, SignedGreaterThanOrEqual => 13,
-                                UnsignedLessThan => 2, UnsignedLessThanOrEqual => 6,
-                                UnsignedGreaterThan => 7, UnsignedGreaterThanOrEqual => 3,
-                                _ => 4,
+                            let __raw = ctx.current_immediates.first().copied().unwrap_or(0) as u8;
+                            match crate::prelude::IntCC::from_code(__raw) {
+                                Some(cond) => match cond {
+                                    Equal => 4, NotEqual => 5,
+                                    SignedLessThan => 12, SignedLessThanOrEqual => 14,
+                                    SignedGreaterThan => 15, SignedGreaterThanOrEqual => 13,
+                                    UnsignedLessThan => 2, UnsignedLessThanOrEqual => 6,
+                                    UnsignedGreaterThan => 7, UnsignedGreaterThanOrEqual => 3,
+                                },
+                                // 条件缺失/未知码 = 坏 IR（Verifier 的
+                                // MissingCondImmediate 会先报），生成代码不猜条件。
+                                None => 0,
                             }
                         }
                         _ => 0,
@@ -645,26 +653,6 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 crate::prelude::TypeId::I8 => 5,
                 crate::prelude::TypeId::I16 => 6,
                 _ => 0,
-            }
-        }
-
-        /// 谓词属性 `cond` 的数值映射（Fcmp 16 条件；与 TOML when 谓词对齐）。
-        fn fcmp_id(c: &crate::prelude::FloatCC) -> i64 {
-            use crate::prelude::FloatCC::*;
-            match c {
-                Ordered => 1, Unordered => 2, Equal => 3, NotEqual => 4,
-                LessThan => 5, LessThanOrEqual => 6, GreaterThan => 7, GreaterThanOrEqual => 8,
-                False => 9, True => 10, Ueq => 11, Ugt => 12, Uge => 13, Ult => 14, Ule => 15, Une => 16,
-            }
-        }
-
-        /// 谓词属性 `cond` 的数值映射（Icmp 10 条件）。
-        fn icmp_id(c: &crate::prelude::IntCC) -> i64 {
-            use crate::prelude::IntCC::*;
-            match c {
-                Equal => 1, NotEqual => 2,
-                SignedLessThan => 3, SignedLessThanOrEqual => 4, SignedGreaterThan => 5, SignedGreaterThanOrEqual => 6,
-                UnsignedLessThan => 7, UnsignedLessThanOrEqual => 8, UnsignedGreaterThan => 9, UnsignedGreaterThanOrEqual => 10,
             }
         }
 

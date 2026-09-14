@@ -29,9 +29,12 @@ struct OpDef {
     results: u8,
     may_ub: bool,
     side_effect: bool,
-    /// (载荷类型, `ALL` 里用的默认变体值)——载荷类型必须是本 crate 里手写的
-    /// 非 opcode 枚举（`IntCC`/`FloatCC`），默认值须是该类型的合法变体名。
-    payload: Option<(String, String)>,
+    /// 比较条件 immediate 的通道类型（`Icmp`/`Fcmp` 专用）：`IntCC` | `FloatCC`。
+    ///
+    /// 这是**声明式的 immediate 契约**（不是变体载荷）：指令须带一条对应类型的
+    /// `Immediate`，verifier 据此检查；宿主 lowering 用 `IntCC::code()`/
+    /// `FloatCC::code()` 把它喂给 `current_immediates`。
+    cond: Option<String>,
 }
 
 fn generate_opcode_table() {
@@ -108,33 +111,28 @@ fn generate_opcode_table() {
                 other => panic!("ops.toml `{name}` 的 {key} 须为布尔，实际 {other:?}"),
             }
         };
-        let payload = match table.get("payload") {
+        let cond = match table.get("cond") {
             None => None,
-            Some(toml::Value::String(s)) if s == "IntCC" || s == "FloatCC" => {
-                let default = table
-                    .get("payload_default")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| {
-                        panic!("ops.toml `{name}` 声明了 payload 就必须给 `payload_default`")
-                    });
-                assert!(
-                    default
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_uppercase()),
-                    "ops.toml `{name}` 的 payload_default 须是变体名（PascalCase），实际 {default:?}"
-                );
-                Some((s.clone(), default.to_string()))
-            }
-            other => panic!("ops.toml `{name}` 的 payload 只支持 IntCC/FloatCC，实际 {other:?}"),
+            Some(toml::Value::String(s)) if s == "IntCC" || s == "FloatCC" => Some(s.clone()),
+            other => panic!("ops.toml `{name}` 的 cond 只支持 IntCC/FloatCC，实际 {other:?}"),
         };
-        // 载荷与操作数个数是两回事（条件不占值操作数），这里只做一致性提醒：
-        // 比较类指令必须带条件载荷，否则 `cond` 无处可放。
-        if name == "Icmp" || name == "Fcmp" {
-            assert!(
-                payload.is_some(),
-                "ops.toml `{name}` 必须声明 payload（条件承载在变体上）"
-            );
+        // 条件通道与指令身份是绑定的：`Icmp` 只能是 IntCC、`Fcmp` 只能是 FloatCC
+        // （写反了会让 ISA 规则按错的条件码分派，生成期就拦住）。
+        match name.as_str() {
+            "Icmp" => assert_eq!(
+                cond.as_deref(),
+                Some("IntCC"),
+                "ops.toml Icmp 必须声明 cond = \"IntCC\""
+            ),
+            "Fcmp" => assert_eq!(
+                cond.as_deref(),
+                Some("FloatCC"),
+                "ops.toml Fcmp 必须声明 cond = \"FloatCC\""
+            ),
+            _ => assert!(
+                cond.is_none(),
+                "ops.toml `{name}` 不是比较指令，不应声明 cond"
+            ),
         }
         // flag 闭包借 `name`（错误消息用）——先取值再构造结构体，避免同时借用与移动。
         let may_ub = flag("may_ub");
@@ -148,7 +146,7 @@ fn generate_opcode_table() {
             results,
             may_ub,
             side_effect,
-            payload,
+            cond,
         });
     }
 
@@ -183,7 +181,8 @@ fn render(defs: &[OpDef]) -> String {
         "/// IR 操作码。\n\
          ///\n\
          /// 变体清单、助记符与全部派生属性来自 `ops.toml`（生成期同源，不可能漂移）。\n\
-         /// 类型信息、常量、块引用等经 `Immediate` 传递；`Icmp`/`Fcmp` 的条件是变体载荷。\n\
+         /// 类型信息、常量、块引用等经 `Immediate` 传递；`Icmp`/`Fcmp` 的比较条件\n\
+         /// 同样走 immediate 通道（`Immediate::IntCC`/`FloatCC`，见 `OpcodeInfo.cond`）。\n\
          #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]\n\
          pub enum Opcode {\n",
     );
@@ -199,18 +198,7 @@ fn render(defs: &[OpDef]) -> String {
         }
         let _ =
             std::fmt::Write::write_fmt(&mut s, format_args!("    /// {}\n    {}", d.doc, d.name));
-        match &d.payload {
-            None => s.push_str(",\n"),
-            Some((ty, _default)) => {
-                // 枚举声明只要类型；默认变体值只在 `ALL` 里用。
-                let field = match ty.as_str() {
-                    "IntCC" => "cond: IntCC",
-                    "FloatCC" => "cond: FloatCC",
-                    other => unreachable!("未知载荷 {other}"),
-                };
-                let _ = std::fmt::Write::write_fmt(&mut s, format_args!(" {{ {field} }},\n"));
-            }
-        }
+        s.push_str(",\n");
     }
     s.push_str("}\n\n");
 
@@ -250,6 +238,16 @@ fn render(defs: &[OpDef]) -> String {
          \x20   pub may_ub: bool,\n\
          \x20   /// 是否有副作用（不可被 DCE 删除）。\n\
          \x20   pub side_effect: bool,\n\
+         \x20   /// 比较条件 immediate 的通道（`Icmp`/`Fcmp` 有值，其余为 `None`）。\n\
+         \x20   pub cond: Option<CondKind>,\n\
+         }\n\n\
+         /// 比较条件所在的 immediate 通道类型。\n\
+         #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
+         pub enum CondKind {\n\
+         \x20   /// 条件经 `Immediate::IntCC` 传递（`Icmp`）。\n\
+         \x20   IntCC,\n\
+         \x20   /// 条件经 `Immediate::FloatCC` 传递（`Fcmp`）。\n\
+         \x20   FloatCC,\n\
          }\n\n",
     );
 
@@ -263,20 +261,7 @@ fn render(defs: &[OpDef]) -> String {
          \x20   pub const ALL: &'static [Opcode] = &[\n",
     );
     for d in defs {
-        match &d.payload {
-            None => {
-                let _ = std::fmt::Write::write_fmt(
-                    &mut s,
-                    format_args!("        Opcode::{},\n", d.name),
-                );
-            }
-            Some((ty, default)) => {
-                let _ = std::fmt::Write::write_fmt(
-                    &mut s,
-                    format_args!("        Opcode::{} {{ cond: {ty}::{default} }},\n", d.name),
-                );
-            }
-        }
+        let _ = std::fmt::Write::write_fmt(&mut s, format_args!("        Opcode::{},\n", d.name));
     }
     s.push_str("    ];\n\n");
 
@@ -286,11 +271,15 @@ fn render(defs: &[OpDef]) -> String {
             Arity::Fixed(n) => format!("OperandArity::Fixed({n})"),
             Arity::Variadic => "OperandArity::Variadic".to_string(),
         };
+        let cond = match d.cond.as_deref() {
+            None => "None".to_string(),
+            Some(ty) => format!("Some(CondKind::{ty})"),
+        };
         let _ = std::fmt::Write::write_fmt(
             &mut s,
             format_args!(
                 "        OpcodeInfo {{ name: {:?}, mnemonic: {:?}, category: {:?}, doc: {:?}, \
-                 arity: {arity}, result_count: {}, may_ub: {}, side_effect: {} }},\n",
+                 arity: {arity}, result_count: {}, may_ub: {}, side_effect: {}, cond: {cond} }},\n",
                 d.name, d.mnemonic, d.category, d.doc, d.results, d.may_ub, d.side_effect
             ),
         );
@@ -305,13 +294,9 @@ fn render(defs: &[OpDef]) -> String {
          \x20       match self {\n",
     );
     for (i, d) in defs.iter().enumerate() {
-        let pat = match &d.payload {
-            None => format!("Opcode::{}", d.name),
-            Some(_) => format!("Opcode::{} {{ .. }}", d.name),
-        };
         let _ = std::fmt::Write::write_fmt(
             &mut s,
-            format_args!("            {pat} => &Self::INFOS[{i}],\n"),
+            format_args!("            Opcode::{} => &Self::INFOS[{i}],\n", d.name),
         );
     }
     s.push_str("        }\n    }\n\n");
@@ -344,6 +329,12 @@ fn render(defs: &[OpDef]) -> String {
          \x20   /// 是否必然有副作用（不可被 DCE 删除）。\n\
          \x20   pub fn has_side_effect(&self) -> bool {\n\
          \x20       self.info().side_effect\n\
+         \x20   }\n\n\
+         \x20   /// 比较条件 immediate 的通道（`Icmp`/`Fcmp` 有值，其余 `None`）。\n\
+         \x20   ///\n\
+         \x20   /// 有值时该指令**必须**带一条对应类型的 immediate（`Verifier` 检查）。\n\
+         \x20   pub fn cond_kind(&self) -> Option<CondKind> {\n\
+         \x20       self.info().cond\n\
          \x20   }\n\n\
          \x20   /// 期望的值操作数数量。\n\
          \x20   ///\n\

@@ -100,7 +100,8 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
                     continue;
                 }
                 let ty = func.dfg.values[v.0 as usize].ty;
-                let new = evaluate_lattice(&inst.opcode, &inst.operands, ty, &lattice);
+                let new =
+                    evaluate_lattice(&inst.opcode, &inst.operands, &inst.immediates, ty, &lattice);
                 if !lattice_eq(old, &new) {
                     lattice.insert(v, new);
                     if let Some(users) = uses_map.get(&v) {
@@ -259,6 +260,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
 fn evaluate_lattice(
     opcode: &Opcode,
     operands: &[Value],
+    immediates: &[forge_ir::Immediate],
     ty: TypeId,
     lattice: &HashMap<Value, LatticeValue>,
 ) -> LatticeValue {
@@ -272,7 +274,7 @@ fn evaluate_lattice(
     if const_ops.len() != operands.len() {
         return LatticeValue::Top;
     }
-    match super::const_fold::fold_opcode(opcode, &const_ops, ty) {
+    match super::const_fold::fold_opcode(opcode, &const_ops, immediates, ty) {
         Ok(Some(cv)) => LatticeValue::Constant(cv),
         _ => LatticeValue::Top,
     }

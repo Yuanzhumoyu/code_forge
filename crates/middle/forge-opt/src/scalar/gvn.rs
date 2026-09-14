@@ -118,6 +118,7 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
 fn try_const_fold(
     opcode: &Opcode,
     mapped_operands: &[Value],
+    immediates: &[Immediate],
     const_map: &HashMap<Value, (Big, TypeId)>,
 ) -> Option<(Big, TypeId)> {
     // 第三十五轮:统一走 const_fold::fold_opcode 权威实现(sccp.rs:277 先例;
@@ -136,7 +137,7 @@ fn try_const_fold(
         ConstValue::Float(_, t) => *t,
         ConstValue::Bool(_) => TypeId::I16,
     })?;
-    let folded = super::const_fold::fold_opcode(opcode, &const_ops, ty).ok()??;
+    let folded = super::const_fold::fold_opcode(opcode, &const_ops, immediates, ty).ok()??;
     match folded {
         ConstValue::Int(v, t) => Some((v, t)),
         ConstValue::Float(v, t) => Some((v, t)),
@@ -259,7 +260,7 @@ fn gvn_dfs(
         // === Constant folding ===
         if !super::cse::is_load_op(&inst.opcode)
             && let Some((folded_val, folded_ty)) =
-                try_const_fold(&inst.opcode, &mapped_operands, const_map)
+                try_const_fold(&inst.opcode, &mapped_operands, &inst.immediates, const_map)
         {
             // Replace current instruction with a constant
             let cid = func.constants.insert_big(folded_val.clone());
@@ -274,7 +275,7 @@ fn gvn_dfs(
             continue;
         }
 
-        let key = super::cse::expr_key(&inst.opcode, &mapped_operands, ty);
+        let key = super::cse::expr_key(&inst.opcode, &mapped_operands, &inst.immediates, ty);
 
         // === Memory Load GVN ===（P1-5：Load/Fload——kill 精化后真正生效；
         // 跨块复用前提：地址为同一 SSA 值且支配，且无中间 may-alias 写）

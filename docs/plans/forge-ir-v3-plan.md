@@ -95,7 +95,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | 期 | 范围 | 状态 |
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
-| S1 | 指令元数据单一事实源 | **部分落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字映射（见 §6 末）；余项：`Icmp`/`Fcmp` 载荷归一、LLVM 文本名表、verifier 类型规则与 builder 断言声明化 |
+| S1 | 指令元数据单一事实源 | **大部分落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字映射（§6 第一步）；比较条件从变体载荷归一到 immediate 通道（§6 第二步）。余项：LLVM 文本名表进 `ops.toml`、verifier 类型规则与 builder 断言声明化 |
 | S2 | 实体容器与密集索引 | 待开工 |
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
@@ -206,11 +206,38 @@ markdownlint 到 0 error）→ push 后看 CI run 全绿。
 `OLD_VARIANTS=109 / OLD_MNEMONICS=109 / NEW_INFOS=109`，`NEW_VARIADIC=6 /
 NEW_SIDE_EFFECT=9 / NEW_MAY_UB=15`，**MISMATCHES=0（109 变体 × 6 属性）**。
 
-**S1 余项（未做，明确记录）**：① `Icmp`/`Fcmp` 条件从变体载荷归一到 instruction
-属性通道（牵动 forge-codegen `LowerCtx.current_immediates` 与 forge-dsl 生成代码里
-`icmp_id`/`fcmp_id` 两张数字映射表）；② LLVM 文本名表（含 `Fload→load`、
-`Ireduce→trunc` 等有损对）进 `ops.toml`；③ verifier 的 ~371 行 per-opcode 类型规则
+**S1 余项（未做，明确记录）**：① LLVM 文本名表（含 `Fload→load`、
+`Ireduce→trunc` 等有损对）进 `ops.toml`；② verifier 的 ~371 行 per-opcode 类型规则
 与 `builder.rs` 的构造断言按 `OpcodeInfo` 声明化。
+
+### S1（第二步）：比较条件归一（2026-09-14）
+
+`Icmp { cond }`/`Fcmp { cond }` 的**变体载荷**删除，条件改走 instruction 的
+immediate 通道：`Opcode::Icmp`/`Opcode::Fcmp` 成为纯身份变体（`Opcode` 至此
+109 个变体全部无载荷），条件由 `Immediate::IntCC`/`FloatCC` 承载，
+`ops.toml` 用 `cond = "IntCC"|"FloatCC"` 声明这一契约（生成物给出
+`Opcode::cond_kind()`）。
+
+- **数值表示唯一化**：`IntCC::code()`（1..=10）/`FloatCC::code()`（1..=16）+
+  `from_code()` 成为条件的唯一数字映射。此前 forge-dsl 为**每个 ISA 模块**生成
+  一张 `icmp_id`/`fcmp_id` 表，宿主 lowering 另有隐式约定；现在宿主
+  `current_immediates` 直接填 `code()`，ISA TOML 的 `cond` 谓词读同一个数字，
+  生成代码里那两张表被删除（x86 的 setcc 编码映射保留 ISA 侧，输入改为
+  canonical code → x86 cc）。
+- **fail-closed**：`Verifier` 新增 `MissingCondImmediate` / `WrongCondImmediate`
+  （条件缺失或类型不对直接报错，不按"默认条件"继续）；display 对坏 IR 打印
+  `icmp <cond?>` 而非静默省略条件；forge-codegen 的 immediate 折叠表删掉
+  `_ => 0` 兜底臂，改为显式列出全部 `Immediate` 变体（新增变体必须重新表态）。
+- **顺手修掉的两个真实缺陷**（都是本次归一暴露的）：
+  ① `ExprKey`（CSE/GVN/GVN-PRE 的表达式的键）只含 `opcode + operands + ty`——
+  条件在 opcode 载荷里时恰好"够用"，归一后 `icmp eq` 与 `icmp ne` 键相同会互相
+  消除（**错值级**）；现在 immediate 进键，`p0_icmp_cond_distinct` 回归测试
+  正是这样抓到的。
+  ② `algebraic.rs` 的 `x cmp x → 1/0` 规则读的是 `Immediate::Int(cc)`，而当时
+  条件在变体载荷上、immediates 恒空 ⇒ 该分支**从未命中**（死代码）；归一后真正生效。
+
+**基线数字（S1 第二步后）**：见本节末门禁表（workspace 1374 passed / 0 failed /
+18 ignored，66 suites；x86 矩阵 195/3/0；riscv64 131/67/0）。
 
 ## 7. 参考设计（外部）
 

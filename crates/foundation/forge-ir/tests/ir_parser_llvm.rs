@@ -315,10 +315,12 @@ fn icmp_all_conditions() {
         );
         let f = parse_function(&src).expect("parse icmp");
         let inst = &f.dfg.insts[0];
-        match &inst.opcode {
-            Opcode::Icmp { cond } => assert_eq!(*cond, want, "icmp {name}"),
-            other => panic!("expected Icmp, got {other:?}"),
-        }
+        assert_eq!(inst.opcode, Opcode::Icmp, "icmp {name}");
+        assert_eq!(
+            inst.immediates.first().and_then(|im| im.as_int_cc()),
+            Some(want),
+            "icmp {name}：条件须在 immediate 通道"
+        );
     }
 }
 
@@ -329,10 +331,12 @@ fn fcmp_ordered() {
     )
     .expect("parse fcmp");
     let inst = &f.dfg.insts[0];
-    match &inst.opcode {
-        Opcode::Fcmp { cond } => assert_eq!(*cond, forge_ir::opcode::FloatCC::LessThan),
-        other => panic!("expected Fcmp, got {other:?}"),
-    }
+    assert_eq!(inst.opcode, Opcode::Fcmp);
+    assert_eq!(
+        inst.immediates.first().and_then(|im| im.as_float_cc()),
+        Some(forge_ir::opcode::FloatCC::LessThan),
+        "fcmp olt：条件须在 immediate 通道"
+    );
 }
 
 #[test]
@@ -347,10 +351,7 @@ fn fcmp_unsupported_condition() {
         );
         let f = parse_function(&src).unwrap_or_else(|e| panic!("fcmp {cond} 应解析成功: {e}"));
         let inst = &f.dfg.insts[0];
-        assert!(
-            matches!(inst.opcode, Opcode::Fcmp { .. }),
-            "fcmp {cond}: 期望 Fcmp opcode"
-        );
+        assert!(inst.opcode == Opcode::Fcmp, "fcmp {cond}: 期望 Fcmp opcode");
     }
     // 伪条件仍报错
     let r = parse_function(

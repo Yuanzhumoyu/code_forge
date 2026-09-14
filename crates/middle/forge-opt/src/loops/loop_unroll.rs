@@ -455,14 +455,16 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
         let iv_param_val = header_block.param_values[iv_idx];
         for &inst_id in &header_block.inst_order {
             let inst = &func.dfg.insts[inst_id.0 as usize];
-            if let Opcode::Icmp { cond } = &inst.opcode {
+            if inst.opcode == Opcode::Icmp
+                && let Some(cond) = inst.immediates.iter().find_map(|im| im.as_int_cc())
+            {
                 let operands = &inst.operands;
                 // Check if one operand is the IV
                 let other = if operands.first().copied() == Some(iv_param_val) {
-                    cmp_cc = Some(*cond);
+                    cmp_cc = Some(cond);
                     operands.get(1).copied()
                 } else if operands.get(1).copied() == Some(iv_param_val) {
-                    cmp_cc = Some(*cond);
+                    cmp_cc = Some(cond);
                     operands.first().copied()
                 } else {
                     continue;

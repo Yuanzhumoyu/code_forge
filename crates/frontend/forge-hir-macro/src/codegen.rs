@@ -344,12 +344,11 @@ fn map_backend_opcode(maps_to: &str) -> TokenStream {
         "arith.shl" => quote! { ::forge_hir::ir_opcode::Opcode::Ishl },
         "arith.ushr" => quote! { ::forge_hir::ir_opcode::Opcode::Ushr },
         "arith.sshr" => quote! { ::forge_hir::ir_opcode::Opcode::Sshr },
-        "arith.icmp" => {
-            quote! { ::forge_hir::ir_opcode::Opcode::Icmp { cond: ::forge_hir::ir::IntCC::Equal } }
-        }
-        "arith.fcmp" => {
-            quote! { ::forge_hir::ir_opcode::Opcode::Fcmp { cond: ::forge_hir::ir::FloatCC::Equal } }
-        }
+        // 比较条件不是 opcode 载荷（v3 S1 归一：条件经 `Immediate::IntCC`/
+        // `FloatCC` 传递），atom 里 `cond` 是普通属性，由此处登记的 opcode 只是
+        // 指令身份。
+        "arith.icmp" => quote! { ::forge_hir::ir_opcode::Opcode::Icmp },
+        "arith.fcmp" => quote! { ::forge_hir::ir_opcode::Opcode::Fcmp },
         "arith.sextend" => quote! { ::forge_hir::ir_opcode::Opcode::Sextend },
         "arith.uextend" => quote! { ::forge_hir::ir_opcode::Opcode::Uextend },
         "arith.ireduce" => quote! { ::forge_hir::ir_opcode::Opcode::Ireduce },

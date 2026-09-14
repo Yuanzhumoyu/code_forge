@@ -4,6 +4,7 @@
 //! 常量、块引用、函数引用、类型引用等。
 
 use super::entity::*;
+use crate::opcode::{FloatCC, IntCC};
 use crate::string_pool::InternedStr;
 
 /// 非 Value 的操作数 — 编译时已知的常量或实体引用。
@@ -27,6 +28,10 @@ pub enum Immediate {
     String(InternedStr),
     /// 聚合常量引用（3.1：extractvalue/insertvalue 的聚合字面量操作数）。
     Agg(AggId),
+    /// 整数比较条件（`Icmp` 的唯一 immediate；v3 S1 之前是变体载荷 `Icmp { cond }`）。
+    IntCC(IntCC),
+    /// 浮点比较条件（`Fcmp` 的唯一 immediate；v3 S1 之前是变体载荷 `Fcmp { cond }`）。
+    FloatCC(FloatCC),
 }
 
 impl Immediate {
@@ -54,6 +59,22 @@ impl Immediate {
     pub fn as_const(&self) -> Option<ConstId> {
         match self {
             Immediate::Const(c) => Some(*c),
+            _ => None,
+        }
+    }
+
+    /// 整数比较条件（非 `Icmp` 的 immediate 返回 `None`）。
+    pub fn as_int_cc(&self) -> Option<IntCC> {
+        match self {
+            Immediate::IntCC(cc) => Some(*cc),
+            _ => None,
+        }
+    }
+
+    /// 浮点比较条件（非 `Fcmp` 的 immediate 返回 `None`）。
+    pub fn as_float_cc(&self) -> Option<FloatCC> {
+        match self {
+            Immediate::FloatCC(cc) => Some(*cc),
             _ => None,
         }
     }

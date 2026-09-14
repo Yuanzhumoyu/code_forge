@@ -8,6 +8,7 @@
 
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::function::Function;
+use forge_ir::immediate::Immediate;
 use forge_ir::ir_parser::parse_module;
 use forge_ir::opcode::{FloatCC, IntCC, Opcode};
 use forge_ir::types::{FunctionSignature, TypeContext};
@@ -94,11 +95,9 @@ fn verify_fcmp_operand_not_float() {
         // builder 的 fcmp 对非浮点操作数直接 assert，须用 emit1 绕过构建层检查，
         // 由 verify 的 check_immediates 报 FcmpOperandNotFloat
         fb.emit1(
-            Opcode::Fcmp {
-                cond: FloatCC::Equal,
-            },
+            Opcode::Fcmp,
             vec![a, b],
-            vec![],
+            vec![Immediate::FloatCC(FloatCC::Equal)],
             ctx.bool_ty(),
             InstFlags::NONE,
         );
@@ -108,6 +107,63 @@ fn verify_fcmp_operand_not_float() {
         &errs,
         |e| matches!(e, VerifyError::FcmpOperandNotFloat { .. }),
         "FcmpOperandNotFloat",
+    );
+}
+
+// ── 条件 immediate 契约（v3 S1：条件从变体载荷归一到 immediate 通道）──
+
+/// 缺条件 → `MissingCondImmediate`（不按默认条件继续）。
+#[test]
+fn verify_icmp_missing_cond_immediate() {
+    let errs = verify_builder(&[], |fb, ctx| {
+        let (entry, _) = fb.create_entry_block();
+        fb.switch_to_block(entry);
+        let a = fb.iconst(1, ctx.i32_ty());
+        let b = fb.iconst(2, ctx.i32_ty());
+        // 直接 emit 一条无条件的 Icmp（builder.icmp 一定带条件）
+        fb.emit1(
+            Opcode::Icmp,
+            vec![a, b],
+            vec![],
+            ctx.bool_ty(),
+            InstFlags::NONE,
+        );
+        fb.ret(&[]);
+    });
+    has_any(
+        &errs,
+        |e| matches!(e, VerifyError::MissingCondImmediate { expected, .. } if *expected == "IntCC"),
+        "MissingCondImmediate(IntCC)",
+    );
+}
+
+/// 条件类型不对（Icmp 配 FloatCC）→ `WrongCondImmediate`（与"完全没给"区分）。
+#[test]
+fn verify_icmp_wrong_cond_immediate() {
+    let errs = verify_builder(&[], |fb, ctx| {
+        let (entry, _) = fb.create_entry_block();
+        fb.switch_to_block(entry);
+        let a = fb.iconst(1, ctx.i32_ty());
+        let b = fb.iconst(2, ctx.i32_ty());
+        fb.emit1(
+            Opcode::Icmp,
+            vec![a, b],
+            vec![Immediate::FloatCC(FloatCC::Equal)],
+            ctx.bool_ty(),
+            InstFlags::NONE,
+        );
+        fb.ret(&[]);
+    });
+    has_any(
+        &errs,
+        |e| {
+            matches!(
+                e,
+                VerifyError::WrongCondImmediate { expected, found, .. }
+                    if *expected == "IntCC" && *found == "FloatCC"
+            )
+        },
+        "WrongCondImmediate(IntCC, FloatCC)",
     );
 }
 

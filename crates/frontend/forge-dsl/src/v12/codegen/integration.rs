@@ -156,9 +156,15 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
                 }
             })
         });
+        // 比较条件走 immediate 通道（v3 S1）：宿主 lowering 把
+        // `Immediate::IntCC`/`FloatCC` 折成 `IntCC::code()`/`FloatCC::code()`
+        // （规范条件码 1..=10 / 1..=16，与 TOML 的 `cond` 谓词同一份映射），
+        // 因此这里直接读 `current_immediates[0]` ——不再需要每 ISA 生成
+        // `icmp_id`/`fcmp_id` 两张重复的数字映射表。
         let __a_cond = match op {
-            crate::prelude::Opcode::Fcmp { cond } => Some(fcmp_id(cond)),
-            crate::prelude::Opcode::Icmp { cond } => Some(icmp_id(cond)),
+            crate::prelude::Opcode::Icmp | crate::prelude::Opcode::Fcmp => {
+                ctx.current_immediates.first().copied().map(|v| v as i64)
+            }
             _ => None,
         };
         let __a_imm0 = ctx.current_immediates.first().copied().map(|v| v as i64);

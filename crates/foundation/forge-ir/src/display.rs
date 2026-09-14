@@ -714,7 +714,11 @@ impl<'a> fmt::Display for InstDisplay<'a> {
             write!(f, "tail ")?;
         }
         // LLVM 指令名（含 icmp/fcmp 条件）
-        write!(f, "{}", llvm_mnemonic(&instruction.opcode))?;
+        write!(
+            f,
+            "{}",
+            llvm_mnemonic(&instruction.opcode, &instruction.immediates)
+        )?;
         if matches!(instruction.opcode, Opcode::Call | Opcode::CallIndirect)
             && instruction
                 .immediates

@@ -47,10 +47,17 @@ impl OptimizationPass for CsePass {
 
 /// 计算指令的表达式的哈希键。
 ///
-/// 键由操作码和操作数列表组成。
+/// 键由操作码、操作数列表与 **immediate 通道** 组成（v3 S1：比较条件等
+/// 逐指令属性在 immediate 里，不再藏在 `Opcode` 载荷中——键不含 immediate
+/// 会把 `icmp eq` 与 `icmp ne` 判成同一表达式，是错值级缺陷）。
 /// 类型不同的同操作码指令被视为不同的表达式。
 /// 对于交换律操作（Iadd/Imul/Fadd/Fmul/Band/Bor/Bxor），操作数排序后生成统一键。
-pub(crate) fn expr_key(opcode: &Opcode, operands: &[Value], ty: TypeId) -> ExprKey {
+pub(crate) fn expr_key(
+    opcode: &Opcode,
+    operands: &[Value],
+    immediates: &[Immediate],
+    ty: TypeId,
+) -> ExprKey {
     let mut ops: smallvec::SmallVec<[Value; 4]> = operands.iter().copied().collect();
     if is_commutative(opcode) && ops.len() >= 2 {
         // 对交换律操作排序操作数，使 a+b 和 b+a 产生相同键
@@ -59,6 +66,7 @@ pub(crate) fn expr_key(opcode: &Opcode, operands: &[Value], ty: TypeId) -> ExprK
     ExprKey {
         opcode: *opcode,
         operands: ops,
+        immediates: immediates.iter().copied().collect(),
         ty,
     }
 }
@@ -116,13 +124,16 @@ pub(crate) fn killed_by_write(
 /// operands 用 SmallVec（≤4 操作数 inline，无堆分配）——
 /// 每指令一次 key 构造是 CSE/GVN/GVN-PRE 的每指令固定开销。
 ///
-/// `opcode` 直接存 `Opcode`（含 Icmp/Fcmp 的 cond 载荷）而非判别 u8——
-/// 修复 P0-2：`icmp eq a,b` 与 `icmp ne a,b` 此前共用判别值 23 被错误
-/// 互相替换。Opcode 已实现 Eq+Hash（cond 参与哈希）。
+/// 键含 `opcode + operands + immediates + ty`：**immediate 必须进键**——
+/// 逐指令属性（比较条件、向量 lane、原子内存序…）都在那里，漏掉就会把
+/// 语义不同的指令判成同一表达式。P0-2 的教训（旧判别值把 `icmp eq a,b` 与
+/// `icmp ne a,b` 合并成 23 → 错值）在 v3 S1 把条件从 opcode 载荷搬到
+/// immediate 后以新形式重现：`p0_icmp_cond_distinct` 正是这样抓到的。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ExprKey {
     pub(crate) opcode: Opcode,
     pub(crate) operands: smallvec::SmallVec<[Value; 4]>,
+    pub(crate) immediates: smallvec::SmallVec<[Immediate; 4]>,
     pub(crate) ty: TypeId,
 }
 
@@ -160,8 +171,8 @@ pub(crate) fn is_cse_candidate(opcode: &Opcode) -> bool {
             | Opcode::Ishl
             | Opcode::Ushr
             | Opcode::Sshr
-            | Opcode::Icmp { .. }
-            | Opcode::Fcmp { .. }
+            | Opcode::Icmp
+            | Opcode::Fcmp
             | Opcode::Sextend
             | Opcode::Uextend
             | Opcode::Fptrunc
@@ -259,7 +270,7 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
                 .collect();
 
             let ty = func.dfg.values[inst_result.0 as usize].ty;
-            let key = expr_key(&inst.opcode, &mapped_operands, ty);
+            let key = expr_key(&inst.opcode, &mapped_operands, &inst.immediates, ty);
 
             if let Some(&existing_result) = expr_table.get(&key) {
                 // 找到重复表达式！消除当前指令（延迟到循环后统一 kill）

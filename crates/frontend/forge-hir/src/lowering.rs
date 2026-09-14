@@ -259,8 +259,8 @@ impl<'a> LoweringContext<'a> {
                     | Opcode::Ishl
                     | Opcode::Ushr
                     | Opcode::Sshr
-                    | Opcode::Icmp { .. }
-                    | Opcode::Fcmp { .. }
+                    | Opcode::Icmp
+                    | Opcode::Fcmp
             )
         {
             return Err(HirError::Internal(format!(
@@ -288,11 +288,13 @@ impl<'a> LoweringContext<'a> {
             Opcode::Sshr => vec![self.builder.sshr(operands[0], operands[1])],
 
             // === Comparison (2) ===
-            Opcode::Icmp { .. } => {
+            // 条件来自 atom 属性（`cond`），由 builder 折进 immediate 通道
+            // （`Immediate::IntCC`/`FloatCC`，v3 S1）。
+            Opcode::Icmp => {
                 let cond = extract_intcc(attrs)?;
                 vec![self.builder.icmp(cond, operands[0], operands[1])]
             }
-            Opcode::Fcmp { .. } => {
+            Opcode::Fcmp => {
                 let cond = extract_floatcc(attrs)?;
                 vec![self.builder.fcmp(cond, operands[0], operands[1])]
             }
@@ -754,7 +756,7 @@ mod tests {
         // icmp atom
         registry
             .register_atom(
-                atom::AtomSpec::new(atom::arith::icmp(), Opcode::Icmp { cond: IntCC::Equal })
+                atom::AtomSpec::new(atom::arith::icmp(), Opcode::Icmp)
                     .attr_str("cond")
                     .input("lhs", TypeId::I32)
                     .input("rhs", TypeId::I32)

@@ -4,7 +4,8 @@
 //! 进入此处查表；向量类型指令（`add <4 x i32>`）由 `vector_op` 精化。
 
 use crate::error::IrError;
-use crate::opcode::{FloatCC, IntCC, Opcode};
+use crate::immediate::Immediate;
+use crate::opcode::{CondKind, FloatCC, IntCC, Opcode};
 
 /// LLVM 指令名 → forge Opcode（标量基础；向量类型由 [`vector_op`] 精化）。
 /// 返回错误信息用于语义错误报告。
@@ -189,9 +190,13 @@ pub fn vector_op(op: Opcode) -> Opcode {
     }
 }
 
-/// forge Opcode → LLVM 指令名（display 用）。Icmp/Fcmp 带条件名；
-/// 转换/向量指令的精确文本由 display 层按操作数类型补全。
-pub fn llvm_mnemonic(op: &Opcode) -> String {
+/// forge Opcode → LLVM 指令名（display 用）。Icmp/Fcmp 的条件从 `immediates`
+/// 取（`Immediate::IntCC`/`FloatCC`）；转换/向量指令的精确文本由 display 层按
+/// 操作数类型补全。
+///
+/// 条件缺失（IR 未过 verifier 的 `MissingCondImmediate`）时打印 `icmp <cond?>`
+/// ——**响亮地**暴露坏 IR，而不是静默省略条件（省略会让输出看起来合法）。
+pub fn llvm_mnemonic(op: &Opcode, immediates: &[Immediate]) -> String {
     let base = match op {
         // 整数算术
         Opcode::Iadd => "add",
@@ -246,8 +251,8 @@ pub fn llvm_mnemonic(op: &Opcode) -> String {
         Opcode::Ftrunc => "ftrunc",
         Opcode::Fround => "round",
         // 比较（条件由 display 拼）
-        Opcode::Icmp { .. } => "icmp",
-        Opcode::Fcmp { .. } => "fcmp",
+        Opcode::Icmp => "icmp",
+        Opcode::Fcmp => "fcmp",
         // 溢出
         Opcode::SaddOverflow => "sadd.with.overflow",
         Opcode::UaddOverflow => "uadd.with.overflow",
@@ -317,10 +322,16 @@ pub fn llvm_mnemonic(op: &Opcode) -> String {
         Opcode::Nop => "nop",
         Opcode::LandingPad => "landingpad",
     };
-    // Icmp/Fcmp 附加条件
-    match op {
-        Opcode::Icmp { cond } => format!("icmp {}", cond.mnemonic()),
-        Opcode::Fcmp { cond } => format!("fcmp {}", cond.mnemonic()),
-        _ => base.to_string(),
+    // Icmp/Fcmp 附加条件（条件走 immediate 通道）
+    match op.cond_kind() {
+        Some(CondKind::IntCC) => match immediates.iter().find_map(Immediate::as_int_cc) {
+            Some(cc) => format!("icmp {}", cc.mnemonic()),
+            None => "icmp <cond?>".to_string(),
+        },
+        Some(CondKind::FloatCC) => match immediates.iter().find_map(Immediate::as_float_cc) {
+            Some(cc) => format!("fcmp {}", cc.mnemonic()),
+            None => "fcmp <cond?>".to_string(),
+        },
+        None => base.to_string(),
     }
 }

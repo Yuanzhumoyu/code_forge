@@ -15,8 +15,12 @@
 #   results     结果值个数（1）
 #   may_ub      是否可能有未定义行为（false）
 #   side_effect 是否有副作用 ⇒ 不可被 DCE 删除（false）
-#   payload     变体载荷类型（无）——目前只有 Icmp/Fcmp 带条件载荷
-#   payload_default  载荷的默认变体名（声明 payload 时必填，`ALL` 里用）
+#   cond        该指令携带**比较条件 immediate**：IntCC | FloatCC（无）
+#
+# 关于条件：`Icmp`/`Fcmp` 曾经把条件放在**变体载荷**里（`Icmp { cond }`），
+# 与其它指令"属性走 immediate 通道"的表示并存；2026-09-14 归一为
+# `Immediate::IntCC`/`FloatCC`（宿主 lowering 用 `IntCC::code()`/`FloatCC::code()`
+# 喂 `current_immediates`，ISA TOML 的 `cond` 谓词读同一个数字）。
 #
 # 口径：这些字段此前散在 `opcode.rs` 的 6 张手写表里（枚举/`result_count`/
 # `may_ub`/`has_side_effect`/`mnemonic`/`expected_operand_count`），逐项搬迁、
@@ -358,19 +362,17 @@ operands = 1
 name = "Icmp"
 mnemonic = "icmp"
 category = "compare"
-doc = "整数比较（条件在变体载荷 `cond` 里）"
+doc = "整数比较（条件经 Immediate::IntCC 传递，`IntCC::code()` = 1..=10）"
 operands = 2
-payload = "IntCC"
-payload_default = "Equal"
+cond = "IntCC"
 
 [[op]]
 name = "Fcmp"
 mnemonic = "fcmp"
 category = "compare"
-doc = "浮点比较（条件在变体载荷 `cond` 里）"
+doc = "浮点比较（条件经 Immediate::FloatCC 传递，`FloatCC::code()` = 1..=16）"
 operands = 2
-payload = "FloatCC"
-payload_default = "Equal"
+cond = "FloatCC"
 
 [[op]]
 name = "SaddOverflow"

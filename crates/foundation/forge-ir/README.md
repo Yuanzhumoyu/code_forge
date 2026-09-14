@@ -31,9 +31,15 @@
 
 crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**：`build.rs` 读它生成
 `$OUT_DIR/opcode_gen.rs`（`Opcode` 枚举、`ALL`/`INFOS`、名字与助记符映射、
-`result_count`/`expected_operand_count`/`may_ub`/`has_side_effect`）。**新增一个
+`result_count`/`expected_operand_count`/`may_ub`/`has_side_effect`/`cond`）。**新增一个
 opcode = 加一行 `[[op]]`**；生成物与枚举同源，不可能漂移（`Opcode::info()` 是
 无兜底臂的穷举 match）。
+
+比较条件（`Icmp`/`Fcmp`）走 immediate 通道（`Immediate::IntCC`/`FloatCC`，
+`ops.toml` 的 `cond` 声明该契约、`Opcode::cond_kind()` 暴露它）；条件的数字表示是
+`IntCC::code()`（1..=10）/`FloatCC::code()`（1..=16），ISA TOML 的 `cond` 谓词与宿主
+`LowerCtx.current_immediates` 共用这一份映射。`Verifier` 对缺失/类型不对的条件报
+`MissingCondImmediate`/`WrongCondImmediate`。
 
 ## 使用要点
 
@@ -50,7 +56,7 @@ opcode = 加一行 `[[op]]`**；生成物与枚举同源，不可能漂移（`Op
   （分支实参/`ret` 返回值）要用 `apply_replacements` 或 `Terminator::args_to`/`retarget`。
 - **指令清单**：`ops.toml` → 生成的 `Opcode::ALL` 是全部变体的单一事实源（覆盖率
   矩阵、一致性守卫、名字查找都用它）；`Opcode::name()`/`from_name()` 用于 ISA TOML
-  的 `op = "..."` 契约，`Opcode::info()` 给出类别/元数/结果数/UB/副作用。
+  的 `op = "..."` 契约，`Opcode::info()` 给出类别/元数/结果数/UB/副作用/条件通道。
 
 ## 已知欠账
 
@@ -61,5 +67,5 @@ opcode = 加一行 `[[op]]`**；生成物与枚举同源，不可能漂移（`Op
 （S5）、校验与 pass 契约（S6）、文本层诊断（S7）。
 
 S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；S1 已落地
-"`ops.toml` + 生成枚举/派生表"（S1 余项：`Icmp`/`Fcmp` 条件从变体载荷归一到
-immediate 通道、LLVM 文本名表、verifier 类型规则与 builder 断言的声明化）。
+"`ops.toml` + 生成枚举/派生表"与"比较条件归一到 immediate 通道"（S1 余项：
+LLVM 文本名表进 `ops.toml`、verifier 类型规则与 builder 断言的声明化）。

@@ -479,9 +479,9 @@ impl FunctionBuilder {
         let bt = self.type_of(b);
         assert!(at.is_int() && bt.is_int(), "icmp only support int");
         self.emit1(
-            Opcode::Icmp { cond },
+            Opcode::Icmp,
             vec![a, b],
-            vec![],
+            vec![Immediate::IntCC(cond)],
             TypeId::BOOL,
             InstFlags::NONE,
         )
@@ -491,9 +491,9 @@ impl FunctionBuilder {
         let bt = self.type_of(b);
         assert!(at.is_float() && bt.is_float(), "fcmp only support float");
         self.emit1(
-            Opcode::Fcmp { cond },
+            Opcode::Fcmp,
             vec![a, b],
-            vec![],
+            vec![Immediate::FloatCC(cond)],
             TypeId::BOOL,
             InstFlags::NONE,
         )

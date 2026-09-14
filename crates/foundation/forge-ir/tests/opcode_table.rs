@@ -11,7 +11,7 @@
 use std::collections::HashSet;
 
 use forge_ir::Opcode;
-use forge_ir::opcode::{FloatCC, IntCC};
+use forge_ir::opcode::{CondKind, FloatCC, IntCC};
 
 /// **编译期**穷举：新增 `Opcode` 变体而不更新这里 / 不更新 `Opcode::name()`
 /// 都会编译失败。返回值是分支数，用于与 `Opcode::ALL` 对账。
@@ -63,8 +63,8 @@ fn variant_name_exhaustive(op: &Opcode) -> &'static str {
         Opcode::Fceil => "Fceil",
         Opcode::Ftrunc => "Ftrunc",
         Opcode::Fround => "Fround",
-        Opcode::Icmp { cond: _ } => "Icmp",
-        Opcode::Fcmp { cond: _ } => "Fcmp",
+        Opcode::Icmp => "Icmp",
+        Opcode::Fcmp => "Fcmp",
         Opcode::SaddOverflow => "SaddOverflow",
         Opcode::UaddOverflow => "UaddOverflow",
         Opcode::SsubOverflow => "SsubOverflow",
@@ -207,19 +207,75 @@ fn mnemonics_are_unique_and_invertible() {
     }
 }
 
-/// 条件变体（`Icmp`/`Fcmp`）的名字与助记符与条件取值无关——清单按变体身份登记。
+/// 条件指令（`Icmp`/`Fcmp`）是**纯变体身份**：条件不再是变体载荷，而是
+/// immediate 通道（`Immediate::IntCC`/`FloatCC`）——`cond_kind()` 声明该契约，
+/// 数值表示由 `IntCC::code()`/`FloatCC::code()` 提供。
 #[test]
-fn conditional_variants_are_opcode_identity_only() {
-    let a = Opcode::Icmp { cond: IntCC::Equal };
-    let b = Opcode::Icmp {
-        cond: IntCC::SignedLessThan,
-    };
-    assert_eq!(a.name(), "Icmp");
-    assert_eq!(a.mnemonic(), b.mnemonic());
-    let fa = Opcode::Fcmp {
-        cond: FloatCC::Ordered,
-    };
-    assert_eq!(fa.name(), "Fcmp");
-    // 查找按变体身份返回带默认条件的那个（清单里的代表元素）
-    assert_eq!(Opcode::from_name("Icmp"), Some(a));
+fn conditional_variants_carry_cond_in_immediates() {
+    assert_eq!(Opcode::Icmp.name(), "Icmp");
+    assert_eq!(Opcode::Fcmp.name(), "Fcmp");
+    assert_eq!(Opcode::Icmp.cond_kind(), Some(CondKind::IntCC));
+    assert_eq!(Opcode::Fcmp.cond_kind(), Some(CondKind::FloatCC));
+    // 非比较指令没有条件通道
+    assert_eq!(Opcode::Iadd.cond_kind(), None);
+    assert_eq!(Opcode::Select.cond_kind(), None);
+    // 条件的数字表示可逆（ISA TOML 的 cond 谓词契约）
+    for cc in [
+        IntCC::Equal,
+        IntCC::NotEqual,
+        IntCC::SignedLessThan,
+        IntCC::SignedLessThanOrEqual,
+        IntCC::SignedGreaterThan,
+        IntCC::SignedGreaterThanOrEqual,
+        IntCC::UnsignedLessThan,
+        IntCC::UnsignedLessThanOrEqual,
+        IntCC::UnsignedGreaterThan,
+        IntCC::UnsignedGreaterThanOrEqual,
+    ] {
+        assert_eq!(IntCC::from_code(cc.code()), Some(cc), "{cc:?} 码不可逆");
+    }
+    assert_eq!(IntCC::from_code(0), None, "未知码必须返回 None（不兜底）");
+    assert_eq!(IntCC::from_code(11), None);
+    for cc in [
+        FloatCC::Ordered,
+        FloatCC::Unordered,
+        FloatCC::Equal,
+        FloatCC::NotEqual,
+        FloatCC::LessThan,
+        FloatCC::LessThanOrEqual,
+        FloatCC::GreaterThan,
+        FloatCC::GreaterThanOrEqual,
+        FloatCC::False,
+        FloatCC::True,
+        FloatCC::Ueq,
+        FloatCC::Ugt,
+        FloatCC::Uge,
+        FloatCC::Ult,
+        FloatCC::Ule,
+        FloatCC::Une,
+    ] {
+        assert_eq!(FloatCC::from_code(cc.code()), Some(cc), "{cc:?} 码不可逆");
+    }
+    assert_eq!(FloatCC::from_code(0), None);
+    assert_eq!(FloatCC::from_code(17), None);
+    // 条件码在各自集合内唯一
+    let int_codes: Vec<u8> = [
+        IntCC::Equal,
+        IntCC::NotEqual,
+        IntCC::SignedLessThan,
+        IntCC::SignedLessThanOrEqual,
+        IntCC::SignedGreaterThan,
+        IntCC::SignedGreaterThanOrEqual,
+        IntCC::UnsignedLessThan,
+        IntCC::UnsignedLessThanOrEqual,
+        IntCC::UnsignedGreaterThan,
+        IntCC::UnsignedGreaterThanOrEqual,
+    ]
+    .iter()
+    .map(IntCC::code)
+    .collect();
+    let mut sorted = int_codes.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), int_codes.len(), "IntCC 条件码必须唯一");
 }

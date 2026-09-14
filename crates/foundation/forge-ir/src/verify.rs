@@ -131,6 +131,19 @@ pub enum VerifyError {
     FcmpOperandNotFloat {
         inst: Inst,
     },
+    /// 比较指令缺条件 immediate（`Icmp` 须有 `Immediate::IntCC`、
+    /// `Fcmp` 须有 `Immediate::FloatCC`）——条件不再是变体载荷，缺了就无法
+    /// 确定比较语义，必须报错而不是按"默认条件"继续。
+    MissingCondImmediate {
+        inst: Inst,
+        expected: &'static str,
+    },
+    /// 比较指令的条件 immediate 类型不对（`Icmp` 配了 `FloatCC`，或反之）。
+    WrongCondImmediate {
+        inst: Inst,
+        expected: &'static str,
+        found: &'static str,
+    },
     /// 转换指令位宽关系非法（sext/zext 源须窄于目标；ireduce 反之；bitcast 同宽）。
     ConversionBitWidthMismatch {
         inst: Inst,
@@ -337,6 +350,24 @@ impl std::fmt::Display for VerifyError {
             VerifyError::FcmpOperandNotFloat { inst } => {
                 write!(f, "fcmp operands must be float: inst {}", inst)
             }
+            VerifyError::MissingCondImmediate { inst, expected } => {
+                write!(
+                    f,
+                    "compare instruction is missing its {} condition immediate: inst {}",
+                    expected, inst
+                )
+            }
+            VerifyError::WrongCondImmediate {
+                inst,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "compare instruction expects a {} condition immediate but has {}: inst {}",
+                    expected, found, inst
+                )
+            }
             VerifyError::ConversionBitWidthMismatch {
                 inst,
                 expected,
@@ -507,10 +538,7 @@ impl Verifier {
             }
 
             // Verify icmp/fcmp results are Bool
-            if matches!(
-                instruction.opcode,
-                Opcode::Icmp { .. } | Opcode::Fcmp { .. }
-            ) {
+            if matches!(instruction.opcode, Opcode::Icmp | Opcode::Fcmp) {
                 for &r in &instruction.results {
                     if let Some(&ty) = defined.get(&r)
                         && ty != self.bool_ty()
@@ -714,9 +742,7 @@ impl Verifier {
         }
 
         // Icmp/Fcmp: both operands same type
-        if matches!(op, Opcode::Icmp { .. } | Opcode::Fcmp { .. })
-            && instruction.operands.len() >= 2
-        {
+        if matches!(op, Opcode::Icmp | Opcode::Fcmp) && instruction.operands.len() >= 2 {
             let ty0 = defined.get(&instruction.operands[0]);
             let ty1 = defined.get(&instruction.operands[1]);
             if let (Some(&t0), Some(&t1)) = (ty0, ty1)
@@ -730,10 +756,10 @@ impl Verifier {
             }
             // 类别检查：icmp 须整型、fcmp 须浮点（补类别维度，同宽不足以保证语义）
             if let (Some(&t0), Some(&t1)) = (ty0, ty1) {
-                if matches!(op, Opcode::Icmp { .. }) && (!t0.is_int() || !t1.is_int()) {
+                if matches!(op, Opcode::Icmp) && (!t0.is_int() || !t1.is_int()) {
                     self.errors.push(VerifyError::IcmpOperandNotInt { inst });
                 }
-                if matches!(op, Opcode::Fcmp { .. }) && (!t0.is_float() || !t1.is_float()) {
+                if matches!(op, Opcode::Fcmp) && (!t0.is_float() || !t1.is_float()) {
                     self.errors.push(VerifyError::FcmpOperandNotFloat { inst });
                 }
             }
@@ -1035,6 +1061,47 @@ impl Verifier {
     fn check_immediates(&mut self, func: &Function) {
         let dfg = &func.dfg;
         for (inst, instruction) in dfg.insts() {
+            // 比较条件 immediate（v3 S1：条件从变体载荷归一到 immediate 通道）
+            // —— `Icmp`/`Fcmp` 必须恰好带一条对应类型的条件，缺/错都 fail-closed。
+            if let Some(kind) = instruction.opcode.cond_kind() {
+                use crate::opcode::CondKind;
+                let (expected, present) = match kind {
+                    CondKind::IntCC => (
+                        "IntCC",
+                        instruction
+                            .immediates
+                            .iter()
+                            .any(|im| im.as_int_cc().is_some()),
+                    ),
+                    CondKind::FloatCC => (
+                        "FloatCC",
+                        instruction
+                            .immediates
+                            .iter()
+                            .any(|im| im.as_float_cc().is_some()),
+                    ),
+                };
+                if !present {
+                    // 区分"完全没给"与"给了另一类条件"，两者都是错但诊断不同
+                    let other = instruction.immediates.iter().find_map(|im| {
+                        match (im.as_int_cc(), im.as_float_cc()) {
+                            (Some(_), _) => Some("IntCC"),
+                            (_, Some(_)) => Some("FloatCC"),
+                            _ => None,
+                        }
+                    });
+                    match other {
+                        Some(found) => self.errors.push(VerifyError::WrongCondImmediate {
+                            inst,
+                            expected,
+                            found,
+                        }),
+                        None => self
+                            .errors
+                            .push(VerifyError::MissingCondImmediate { inst, expected }),
+                    }
+                }
+            }
             // GEP struct 索引必须是 i32（LLVM LangRef：getelementptr 的结构体
             // 索引只能是 i32 常量——i64 等其他整数类型被 llvm-as 拒绝）
             if instruction.opcode == Opcode::GetElementPtr {
@@ -2045,12 +2112,12 @@ mod tests {
         let _ = f;
         let _ = f2;
         fb.func.dfg.make_inst(
-            Opcode::Icmp {
-                cond: crate::opcode::IntCC::SignedGreaterThan,
-            },
+            Opcode::Icmp,
             entry,
             smallvec::smallvec![f, f2],
-            SmallVec::new(),
+            smallvec::smallvec![crate::immediate::Immediate::IntCC(
+                crate::opcode::IntCC::SignedGreaterThan
+            )],
             &[TypeId::BOOL],
             InstFlags::NONE,
         );

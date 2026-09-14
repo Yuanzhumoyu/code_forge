@@ -2847,8 +2847,14 @@ fn build_inst<'a>(
             .unwrap_or_else(|| ctx.i32_ty())
     };
 
+    // 比较条件经 immediate 通道（Icmp → IntCC、Fcmp → FloatCC）
+    let mut cond_immediate: Option<Immediate> = None;
     let op = match op_name {
-        "icmp" | "fcmp" if cond.is_some() => build_cmp(op_name, cond.unwrap())?,
+        "icmp" | "fcmp" if cond.is_some() => {
+            let (opc, imm) = build_cmp(op_name, cond.unwrap())?;
+            cond_immediate = Some(imm);
+            opc
+        }
         "trunc" => {
             // 整数→Ireduce、浮点→Fptrunc（LLVM：trunc 对浮点是精度截断）
             if operands
@@ -2870,7 +2876,7 @@ fn build_inst<'a>(
         op
     };
     // 转换指令的目标类型立即数
-    let immediates: Vec<Immediate> = if matches!(
+    let mut immediates: Vec<Immediate> = if matches!(
         op,
         Opcode::Uextend
             | Opcode::Sextend
@@ -2894,6 +2900,10 @@ fn build_inst<'a>(
     } else {
         vec![]
     };
+    // 比较条件（Icmp/Fcmp 的 cond 已是唯一 immediate）
+    if let Some(ci) = cond_immediate {
+        immediates.push(ci);
+    }
 
     // 算术标志（nsw/nuw/exact）→ InstFlags（LLVM：`add nsw i32 %a, i32 %b`）
     let mut inst_flags = InstFlags::NONE;
@@ -2922,13 +2932,17 @@ fn build_inst<'a>(
     Ok(())
 }
 
-fn build_cmp(op: &str, cond: &str) -> Result<Opcode, IrError> {
+/// 比较指令的条件 → `(opcode, 条件 immediate)`。
+///
+/// 条件走 immediate 通道（v3 S1 归一）：`Icmp` + `Immediate::IntCC`、
+/// `Fcmp` + `Immediate::FloatCC`。
+fn build_cmp(op: &str, cond: &str) -> Result<(Opcode, Immediate), IrError> {
     if op == "icmp" {
         let cc = llvm_mapping::int_cc(cond).map_err(|e| IrError::Semantic(e.to_string()))?;
-        Ok(Opcode::Icmp { cond: cc })
+        Ok((Opcode::Icmp, Immediate::IntCC(cc)))
     } else {
         let cc = llvm_mapping::float_cc(cond).map_err(|e| IrError::Semantic(e.to_string()))?;
-        Ok(Opcode::Fcmp { cond: cc })
+        Ok((Opcode::Fcmp, Immediate::FloatCC(cc)))
     }
 }
 

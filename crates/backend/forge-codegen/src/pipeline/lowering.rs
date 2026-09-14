@@ -455,7 +455,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             // Icmp 的比较宽度取操作数（bool 结果会让 cmp/setcc 用 32 位比较
             // 64 位值——高位被截断，如 usize 比较 z=0x1FFFFFFFFFFFFFFF 时
             // 低 32 位 0xFFFFFFFF 被当 -1）。
-            if matches!(inst.opcode, Opcode::Icmp { .. })
+            if matches!(inst.opcode, Opcode::Icmp)
                 && let Some(op0) = inst.operands.first()
                 && let Some(oty) = dfg.value_type(*op0)
             {
@@ -495,7 +495,16 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 self.ctx.current_const_index = cid.0;
             }
             // 全量 immediates 缓存：Uint/Int/Const 提取为 u64 值列表
-            //（ShuffleVector 的 mask、Vextract/Vinsert 的 index 等）。
+            //（ShuffleVector 的 mask、Vextract/Vinsert 的 index、比较指令的 cond 等）。
+            //
+            // **比较条件（v3 S1）**：`Immediate::IntCC`/`FloatCC` 折成
+            // `IntCC::code()`/`FloatCC::code()`（规范码 1..=10 / 1..=16），
+            // ISA TOML 的 `cond` 谓词读的正是这个数字；映射只有一份
+            // （forge-ir 的 `code()`，历史实现是每个 ISA 模块各生成一张 `icmp_id`/`fcmp_id`）。
+            //
+            // 非数值 immediate（Block/Type/String/Agg）折 0：它们不是"目标模板可读的
+            // 数值属性"，但**必须显式列出**——不给 `_` 兜底臂，新增 `Immediate` 变体
+            // 时编译器会强制这里重新表态。
             self.ctx.current_immediates = inst
                 .immediates
                 .iter()
@@ -505,7 +514,12 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     Immediate::Const(c) => c.0 as u64,
                     Immediate::Global(g) => g.0 as u64,
                     Immediate::Func(f) => f.0 as u64,
-                    _ => 0,
+                    Immediate::IntCC(cc) => cc.code() as u64,
+                    Immediate::FloatCC(cc) => cc.code() as u64,
+                    Immediate::Block(_)
+                    | Immediate::Type(_)
+                    | Immediate::String(_)
+                    | Immediate::Agg(_) => 0,
                 })
                 .collect();
             if let Some(Immediate::Func(f)) = inst.immediates.first() {

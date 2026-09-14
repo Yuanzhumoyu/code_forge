@@ -131,9 +131,14 @@ fn fold_extract_value(
 }
 
 /// 返回 `None` 如果操作数不足或包含未知值。
+///
+/// `immediates` 是**指令的 immediate 通道**（v3 S1 起比较条件经
+/// `Immediate::IntCC`/`FloatCC` 传递，不再是 `Opcode` 载荷）；
+/// 只有比较类折叠会读它，其余分支忽略。
 pub fn fold_opcode(
     opcode: &Opcode,
     operands: &[ConstValue],
+    immediates: &[forge_ir::Immediate],
     ty: TypeId,
 ) -> Result<Option<ConstValue>, IrError> {
     match opcode {
@@ -236,10 +241,18 @@ pub fn fold_opcode(
         }
 
         // === 整数比较 ===
-        Opcode::Icmp { cond } => fold_icmp(operands, *cond, ty),
+        Opcode::Icmp => match immediates.iter().find_map(|im| im.as_int_cc()) {
+            Some(cond) => fold_icmp(operands, cond, ty),
+            // 条件缺失 = 坏 IR（`Verifier` 的 MissingCondImmediate 会先报）；
+            // 折叠层不猜条件，直接不折叠。
+            None => Ok(None),
+        },
 
         // === 浮点比较 ===
-        Opcode::Fcmp { cond, .. } => fold_fcmp(operands, *cond, ty),
+        Opcode::Fcmp => match immediates.iter().find_map(|im| im.as_float_cc()) {
+            Some(cond) => fold_fcmp(operands, cond, ty),
+            None => Ok(None),
+        },
 
         // === 浮点算术 ===
         Opcode::Fadd => fold_binary_float(operands, ty, |a, b| a + b),
@@ -1135,7 +1148,12 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
         if let Some(folded) = if matches!(inst_info.opcode, Opcode::ExtractValue) {
             fold_extract_value(&func.constants, &inst_info.immediates, result_ty)?
         } else {
-            fold_opcode(&inst_info.opcode, &const_operands, result_ty)?
+            fold_opcode(
+                &inst_info.opcode,
+                &const_operands,
+                &inst_info.immediates,
+                result_ty,
+            )?
         } {
             // 替换指令为 Iconst/Fconst (插入常量池)
             let new_const_id = match &folded {
