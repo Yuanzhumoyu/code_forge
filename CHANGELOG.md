@@ -49,6 +49,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   生成器自身的构建期查表同步去掉 O(n²)/O(n·c)（改 `HashMap` O(1) 探测），**生成物 SHA256 前后完全一致**（`5A53A0F5…`）证明改写不改变行为；`semantics.rs` 的 DWARF 操作码表与 `forge-tests` 的清单腐烂检查也从线性扫描改为 `match`/`from_name`。
   **迁移保真证据**：独立脚本解析 git HEAD 两张表与生成物逐项比对 → `PARSE_NAMES=95 / OLD_PARSE_PAIRS=95 / OLD_SHOW_PAIRS=108`，**MISMATCHES=0**。
 
+### Changed (2026-09-14)
+
+- **verifier 的逐指令类型规则声明化（forge-ir v3 S1 收尾）**：
+  `verify.rs` 的 `check_operand_types` 原本按 opcode 手写分组（`matches!` 大名单：binop 37 个、浮点 binop 8 个、`Fma`、`Select`、`Icmp`/`Fcmp`，再加 13 个转换指令的逐 opcode 分支）。
+  现在**族名声明在 `ops.toml` 的 `type_rule`**，verifier 按族分派：12 个封闭族（`none`(48)/`binop_same`(37)/`convert`(13)/`load`(2)/`store`(2)/`same3`/`cmp_int`/`cmp_float`/`select`/`cmpxchg_pair`/`call`/`call_indirect`）。
+  写成未实现的族名 → **构建期报错**；新增族名 → `verify.rs` 的穷举 match（无 `_` 臂）**编译失败**（双向 fail-closed）。
+  13 条转换分支收敛成一张事实表 `convert = { src, dst, width }`（`int/float/ptr/any` × `widen/narrow/any/equal_bytes/equal_total_bits`），诊断文本由事实表拼出；形状类规则抽到新模块 `src/type_rules.rs` 的 `check_shape`（verifier 与 builder 共用一份实现，自带 4 个单测）。
+  守卫测试 `type_rule_classification_is_complete` 断言每个 opcode 都有分类且各族计数钉住。
+  **builder 侧不做声明化（实证否决）**：把同一函数挂到 `FunctionBuilder::emit_with_mem` 后 **5 个既有 builder 测试失败**——builder 刻意允许"混合宽度操作数 + 结果类型 upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两操作数同类型；builder 是宽松构造层（类别维度由方法内 `assert!(t.is_int())` 把关，比 verifier 更严），verifier 是严格校验层，强行统一会破坏既有语义，故保留为可选工具函数并写明原因。
+
 ### Added (2026-09-14)
 
 - **`ops.toml`：指令元数据单一事实源（forge-ir v3 方案 S1 第一步）**：

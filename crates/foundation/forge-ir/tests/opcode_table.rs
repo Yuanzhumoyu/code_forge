@@ -11,7 +11,7 @@
 use std::collections::HashSet;
 
 use forge_ir::Opcode;
-use forge_ir::opcode::{CondKind, FloatCC, IntCC};
+use forge_ir::opcode::{CondKind, FloatCC, IntCC, TypeRule};
 
 /// **编译期**穷举：新增 `Opcode` 变体而不更新这里 / 不更新 `Opcode::name()`
 /// 都会编译失败。返回值是分支数，用于与 `Opcode::ALL` 对账。
@@ -202,6 +202,89 @@ fn mnemonics_are_unique_and_invertible() {
             Opcode::from_mnemonic(op.mnemonic()),
             Some(*op),
             "{} 的助记符不可逆",
+            op.name()
+        );
+    }
+}
+
+/// 逐指令**类型规则族**（`ops.toml` 的 `type_rule`）分类完备：
+///
+/// - 每个 opcode 都必须落在一个族里（族名来自生成物，无法乱写）；
+/// - 各族**计数钉住**——新增 opcode 时"它属于哪一族"必须显式决定，
+///   默认掉进 `none` 会被这条断言拦下；
+/// - `Convert` 族必须带 `convert` 事实表（源/目标类 + 位宽关系），
+///   非 `Convert` 族不得带（否则声明了也不会被读，属于隐式死数据）。
+#[test]
+fn type_rule_classification_is_complete() {
+    use std::collections::HashMap;
+
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for op in Opcode::ALL {
+        let info = op.info();
+        let name = match info.type_rule {
+            TypeRule::None => "none",
+            TypeRule::BinopSame => "binop_same",
+            TypeRule::Same3 => "same3",
+            TypeRule::CmpInt => "cmp_int",
+            TypeRule::CmpFloat => "cmp_float",
+            TypeRule::Select => "select",
+            TypeRule::Convert => "convert",
+            TypeRule::CmpxchgPair => "cmpxchg_pair",
+            TypeRule::Load => "load",
+            TypeRule::Store => "store",
+            TypeRule::Call => "call",
+            TypeRule::CallIndirect => "call_indirect",
+        };
+        *counts.entry(name).or_insert(0) += 1;
+        match info.type_rule {
+            TypeRule::Convert => assert!(
+                info.convert.is_some(),
+                "{} 属于 Convert 族但缺 convert 事实表",
+                op.name()
+            ),
+            _ => assert!(
+                info.convert.is_none(),
+                "{} 不是 Convert 族却带 convert 事实表（声明了也不会被读）",
+                op.name()
+            ),
+        }
+    }
+    // 计数基线（2026-09-14 实测；改 ops.toml 分类时同步这里）
+    let expected: &[(&str, usize)] = &[
+        ("binop_same", 37),
+        ("same3", 1),
+        ("cmp_int", 1),
+        ("cmp_float", 1),
+        ("select", 1),
+        ("convert", 13),
+        ("cmpxchg_pair", 1),
+        ("load", 2),
+        ("store", 2),
+        ("call", 1),
+        ("call_indirect", 1),
+        ("none", 48),
+    ];
+    let total: usize = expected.iter().map(|(_, n)| n).sum();
+    assert_eq!(total, Opcode::ALL.len(), "计数基线总和必须等于变体数");
+    for (name, n) in expected {
+        assert_eq!(
+            counts.get(name).copied().unwrap_or(0),
+            *n,
+            "type_rule = \"{name}\" 的 opcode 数变了（分类漂移）"
+        );
+    }
+    // 「检查在别处」的指令：类型检查在 immediate 阶段（GEP 索引推进类型、
+    // AtomicRmw 判别值/内存序、聚合索引越界），这里显式声明为 none
+    for op in [
+        Opcode::GetElementPtr,
+        Opcode::AtomicRmw,
+        Opcode::ExtractValue,
+        Opcode::InsertValue,
+    ] {
+        assert_eq!(
+            op.type_rule(),
+            TypeRule::None,
+            "{} 的类型检查在别处（immediate 阶段），这里应为 none",
             op.name()
         );
     }

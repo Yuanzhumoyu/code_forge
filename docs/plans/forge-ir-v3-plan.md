@@ -95,7 +95,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | 期 | 范围 | 状态 |
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
-| S1 | 指令元数据单一事实源 | **大部分落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射 + 全部查表 O(1)（§6 第一/二/三步）。余项：verifier 类型规则与 builder 断言声明化 |
+| S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | 待开工 |
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
@@ -206,8 +206,8 @@ markdownlint 到 0 error）→ push 后看 CI run 全绿。
 `OLD_VARIANTS=109 / OLD_MNEMONICS=109 / NEW_INFOS=109`，`NEW_VARIADIC=6 /
 NEW_SIDE_EFFECT=9 / NEW_MAY_UB=15`，**MISMATCHES=0（109 变体 × 6 属性）**。
 
-**S1 余项（未做，明确记录）**：verifier 的 ~371 行 per-opcode 类型规则与
-`builder.rs` 的构造断言按 `OpcodeInfo` 声明化。
+**当时记录的 S1 余项**（verifier 逐指令类型规则与 builder 断言的声明化）已在
+第三步与第四步处理，见下。
 
 ### S1（第二步）：比较条件归一（2026-09-14）
 
@@ -273,6 +273,40 @@ O(n)。**证据：生成物 `opcode_gen.rs` 前后 SHA256 完全一致**
 另外把 `semantics.rs` 的 DWARF 表达式操作码表（`OPS.iter().find`）与
 `forge-tests/coverage.rs` 的清单腐烂检查（`Opcode::ALL.iter().any`）也换成
 `match`/生成的 `from_name`。
+
+### S1（第四步）：verifier 类型规则声明化（2026-09-14）
+
+`verify.rs` 的 `check_operand_types` 原本按 opcode 手写分组（`matches!` 大名单：
+binop 37 个、浮点 binop 8 个、Fma、Select、Icmp/Fcmp，再加上 13 个转换指令的
+逐 opcode 分支）。现在**族名声明在 `ops.toml`**，verifier 按族分派：
+
+- `type_rule` 12 个族的**封闭词汇表**：`none`(48) / `binop_same`(37) /
+  `convert`(13) / `load`(2) / `store`(2) / `same3` / `cmp_int` / `cmp_float` /
+  `select` / `cmpxchg_pair` / `call` / `call_indirect`。写成未实现的族名 →
+  **构建期报错**；新增族名 → `verify.rs` 的穷举 match（无 `_` 臂）**编译失败**
+  ——双向 fail-closed。
+- 转换指令的 13 条分支收敛成一张**事实表**：`convert = { src, dst, width }`
+  （`int/float/ptr/any` × `widen/narrow/any/equal_bytes/equal_total_bits`），
+  规则本体只剩一份（含诊断文本由 `conversion_expectation` 从事实表拼）。
+- 形状类规则（`binop_same`/`same3`/`cmp_*`/`select`）抽到新模块
+  `src/type_rules.rs` 的 `check_shape`：**verifier 与 builder 共用同一实现**
+  （builder 侧保留为 debug 工具函数，未挂在发射路径上——见下），并有自己的 4 个单测。
+- `none` 的两种含义在 `ops.toml` 注释里点名（确实无规则 / 检查在 immediate 阶段），
+  由守卫测试 `type_rule_classification_is_complete` 断言**每个 opcode 都有分类**
+  且各族计数钉住（新增 opcode 默认掉进 `none` 会被拦下）。
+
+**门禁（S1 收尾后）**：workspace **1380 passed / 0 failed / 19 ignored**（67 suites）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt / clippy `-D warnings` 干净。
+
+**builder 侧断言不做声明化（实证否决）**：把同一个 `check_shape` 挂到
+`FunctionBuilder::emit_with_mem` 的 debug 断言后，**5 个既有 builder 测试失败**
+（`test_int_binary_upcast_result_ty`、`test_float_binary_upcast_result_ty`、
+`test_bool_arith_normalized`、`test_bool_special_handling`、
+`test_shift_result_ty_keeps_lhs`）——builder **刻意允许**"混合宽度操作数 + 结果类型
+upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两个操作数同类型。
+二者职责不同：builder 是宽松构造层（类别维度由各方法的 `assert!(t.is_int())` 把关，
+**比 verifier 更严**——verifier 对 binop 并不查类别），verifier 是严格校验层。
+强行统一会破坏既有语义，故保留 `debug_check_shape` 为可选工具并写明原因。
 
 ## 7. 参考设计（外部）
 

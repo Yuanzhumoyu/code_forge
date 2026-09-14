@@ -31,15 +31,20 @@
 
 crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**：`build.rs` 读它生成
 `$OUT_DIR/opcode_gen.rs`（`Opcode` 枚举、`ALL`/`INFOS`、名字与助记符映射、
-`result_count`/`expected_operand_count`/`may_ub`/`has_side_effect`/`cond`）。**新增一个
-opcode = 加一行 `[[op]]`**；生成物与枚举同源，不可能漂移（`Opcode::info()` 是
-无兜底臂的穷举 match）。
+`result_count`/`expected_operand_count`/`may_ub`/`has_side_effect`/`cond`/`llvm`/
+`type_rule`）。**新增一个 opcode = 加一行 `[[op]]`**；生成物与枚举同源，不可能漂移
+（`Opcode::info()` 是无兜底臂的穷举 match，查表都是生成的 `match` ⇒ O(1)）。
 
 比较条件（`Icmp`/`Fcmp`）走 immediate 通道（`Immediate::IntCC`/`FloatCC`，
 `ops.toml` 的 `cond` 声明该契约、`Opcode::cond_kind()` 暴露它）；条件的数字表示是
 `IntCC::code()`（1..=10）/`FloatCC::code()`（1..=16），ISA TOML 的 `cond` 谓词与宿主
 `LowerCtx.current_immediates` 共用这一份映射。`Verifier` 对缺失/类型不对的条件报
 `MissingCondImmediate`/`WrongCondImmediate`。
+
+逐指令**类型规则族**同样声明在 `ops.toml`（`type_rule`，12 族）：`Verifier` 按族
+分派（穷举 match），形状类规则的实现只在 `src/type_rules.rs` 一份（`check_shape`，
+builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
+`convert = { src, dst, width }`。
 
 ## 使用要点
 
@@ -66,6 +71,6 @@ opcode = 加一行 `[[op]]`**；生成物与枚举同源，不可能漂移（`Op
 去锁与所有权（S3）、终结符并入指令流与完整 use-def（S4）、附件强类型化与可见性收紧
 （S5）、校验与 pass 契约（S6）、文本层诊断（S7）。
 
-S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；S1 已落地
-"`ops.toml` + 生成枚举/派生表"与"比较条件归一到 immediate 通道"（S1 余项：
-LLVM 文本名表进 `ops.toml`、verifier 类型规则与 builder 断言的声明化）。
+S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；**S1 已全部落地**
+（`ops.toml` + 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族，查表全 O(1)），
+下一步按方案进入 S2（实体容器 `PrimaryMap`/`SecondaryMap`）。

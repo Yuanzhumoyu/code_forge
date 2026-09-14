@@ -21,6 +21,20 @@
 #               （别名/向量精化/常量内联/需要条件等）——有损对从此**声明**在这里，
 #               不再靠"读者自己比对正反两张表"
 #   llvm_alias  额外的可解析名（字符串数组；旧名/宽松名，如 callbr/ptrtoaddr）
+#   type_rule   **verifier 的逐指令类型规则族**（必填）：
+#               none / binop_same / same3 / cmp_int / cmp_float / select /
+#               convert / cmpxchg_pair / load / store / call / call_indirect
+#               规则本体在 `verify.rs`（形状类规则在 `type_rules.rs`，verifier 与
+#               builder 共用一份实现）；族名写错 → 构建期报错，新增族名 →
+#               `verify.rs` 的穷举 match 编译失败（双向 fail-closed）。
+#               `none` 有两种含义，注释里点名：① 确实没有类型规则；
+#               ② 检查在 immediate 阶段（GEP 索引 / AtomicRmw 判别值 / 聚合索引）。
+#               ⚠️ 这是 **verifier** 的规则，不是 builder 的构造约束：builder 刻意
+#               允许"混合宽度操作数 + 结果类型 upcast"（`iadd(i8, i64) → i64`，见
+#               `builder.rs` 的 5 个 upcast 测试），其类别断言比 verifier 更严。
+#   convert     type_rule = "convert" 专用的事实表：
+#               { src = "any|int|float|ptr|vector", dst = 同上,
+#                 width = "any|widen|narrow|equal_bytes|equal_total_bits" }
 #
 # 名字唯一性都在生成期断言：变体名、助记符，以及"解析名集合
 # （`llvm_parse` 的 llvm 名 ∪ 全部别名）"——后者若冲突会让 `from_llvm_name`
@@ -39,6 +53,7 @@ version = 1
 [[op]]
 name = "Iadd"
 mnemonic = "iadd"
+type_rule = "binop_same"
 llvm = "add"
 category = "int-arith"
 doc = "整数加法（结果类型 = 操作数类型 upcast）"
@@ -47,6 +62,7 @@ operands = 2
 [[op]]
 name = "Isub"
 mnemonic = "isub"
+type_rule = "binop_same"
 llvm = "sub"
 category = "int-arith"
 doc = "整数减法"
@@ -55,6 +71,7 @@ operands = 2
 [[op]]
 name = "Imul"
 mnemonic = "imul"
+type_rule = "binop_same"
 llvm = "mul"
 category = "int-arith"
 doc = "整数乘法"
@@ -63,6 +80,7 @@ operands = 2
 [[op]]
 name = "Udiv"
 mnemonic = "udiv"
+type_rule = "binop_same"
 llvm = "udiv"
 category = "int-arith"
 doc = "无符号除法（除零为 UB）"
@@ -72,6 +90,7 @@ may_ub = true
 [[op]]
 name = "Sdiv"
 mnemonic = "sdiv"
+type_rule = "binop_same"
 llvm = "sdiv"
 category = "int-arith"
 doc = "有符号除法（除零/溢出为 UB）"
@@ -81,6 +100,7 @@ may_ub = true
 [[op]]
 name = "Urem"
 mnemonic = "urem"
+type_rule = "binop_same"
 llvm = "urem"
 category = "int-arith"
 doc = "无符号取余（除零为 UB）"
@@ -90,6 +110,7 @@ may_ub = true
 [[op]]
 name = "Srem"
 mnemonic = "srem"
+type_rule = "binop_same"
 llvm = "srem"
 category = "int-arith"
 doc = "有符号取余（除零/溢出为 UB）"
@@ -99,6 +120,7 @@ may_ub = true
 [[op]]
 name = "Fadd"
 mnemonic = "fadd"
+type_rule = "binop_same"
 llvm = "fadd"
 category = "float-arith"
 doc = "浮点加法"
@@ -107,6 +129,7 @@ operands = 2
 [[op]]
 name = "Fsub"
 mnemonic = "fsub"
+type_rule = "binop_same"
 llvm = "fsub"
 category = "float-arith"
 doc = "浮点减法"
@@ -115,6 +138,7 @@ operands = 2
 [[op]]
 name = "Fmul"
 mnemonic = "fmul"
+type_rule = "binop_same"
 llvm = "fmul"
 category = "float-arith"
 doc = "浮点乘法"
@@ -123,6 +147,7 @@ operands = 2
 [[op]]
 name = "Fdiv"
 mnemonic = "fdiv"
+type_rule = "binop_same"
 llvm = "fdiv"
 category = "float-arith"
 doc = "浮点除法"
@@ -131,6 +156,7 @@ operands = 2
 [[op]]
 name = "Frem"
 mnemonic = "frem"
+type_rule = "binop_same"
 llvm = "frem"
 category = "float-arith"
 doc = "浮点取模（LLVM `frem`；x87 FPREM 语义，按 IEEE 754 remainder）"
@@ -139,6 +165,7 @@ operands = 2
 [[op]]
 name = "Fneg"
 mnemonic = "fneg"
+type_rule = "none"
 llvm = "fneg"
 category = "float-arith"
 doc = "浮点取负"
@@ -147,6 +174,7 @@ operands = 1
 [[op]]
 name = "Fabs"
 mnemonic = "fabs"
+type_rule = "none"
 llvm = "fabs"
 category = "float-arith"
 doc = "浮点绝对值"
@@ -155,6 +183,7 @@ operands = 1
 [[op]]
 name = "Fsqrt"
 mnemonic = "fsqrt"
+type_rule = "none"
 llvm = "fsqrt"
 category = "float-arith"
 doc = "浮点平方根"
@@ -163,6 +192,7 @@ operands = 1
 [[op]]
 name = "Band"
 mnemonic = "and"
+type_rule = "binop_same"
 llvm = "and"
 category = "bitwise"
 doc = "按位与"
@@ -171,6 +201,7 @@ operands = 2
 [[op]]
 name = "Bor"
 mnemonic = "or"
+type_rule = "binop_same"
 llvm = "or"
 category = "bitwise"
 doc = "按位或"
@@ -179,6 +210,7 @@ operands = 2
 [[op]]
 name = "Bxor"
 mnemonic = "xor"
+type_rule = "binop_same"
 llvm = "xor"
 category = "bitwise"
 doc = "按位异或"
@@ -187,6 +219,7 @@ operands = 2
 [[op]]
 name = "Bnot"
 mnemonic = "not"
+type_rule = "none"
 llvm = "not"
 category = "bitwise"
 doc = "按位取反"
@@ -195,6 +228,7 @@ operands = 1
 [[op]]
 name = "Ishl"
 mnemonic = "shl"
+type_rule = "binop_same"
 llvm = "shl"
 category = "bitwise"
 doc = "逻辑左移"
@@ -203,6 +237,7 @@ operands = 2
 [[op]]
 name = "Ushr"
 mnemonic = "ushr"
+type_rule = "binop_same"
 llvm = "lshr"
 category = "bitwise"
 doc = "逻辑右移"
@@ -211,6 +246,7 @@ operands = 2
 [[op]]
 name = "Sshr"
 mnemonic = "sshr"
+type_rule = "binop_same"
 llvm = "ashr"
 category = "bitwise"
 doc = "算术右移"
@@ -219,6 +255,7 @@ operands = 2
 [[op]]
 name = "Clz"
 mnemonic = "clz"
+type_rule = "none"
 llvm = "clz"
 category = "bit-ops"
 doc = "前导零计数"
@@ -227,6 +264,7 @@ operands = 1
 [[op]]
 name = "Ctz"
 mnemonic = "ctz"
+type_rule = "none"
 llvm = "ctz"
 category = "bit-ops"
 doc = "尾随零计数"
@@ -235,6 +273,7 @@ operands = 1
 [[op]]
 name = "Popcnt"
 mnemonic = "popcnt"
+type_rule = "none"
 llvm = "ctpop"
 category = "bit-ops"
 doc = "置位数（Hamming 重量）"
@@ -243,6 +282,7 @@ operands = 1
 [[op]]
 name = "Bitreverse"
 mnemonic = "bitreverse"
+type_rule = "none"
 llvm = "bitreverse"
 category = "bit-ops"
 doc = "位序反转"
@@ -251,6 +291,7 @@ operands = 1
 [[op]]
 name = "Rotl"
 mnemonic = "rotl"
+type_rule = "binop_same"
 llvm = "rotl"
 category = "bit-ops"
 doc = "循环左移"
@@ -259,6 +300,7 @@ operands = 2
 [[op]]
 name = "Rotr"
 mnemonic = "rotr"
+type_rule = "binop_same"
 llvm = "rotr"
 category = "bit-ops"
 doc = "循环右移"
@@ -267,6 +309,7 @@ operands = 2
 [[op]]
 name = "Abs"
 mnemonic = "abs"
+type_rule = "none"
 llvm = "abs"
 category = "int-ext"
 doc = "整数绝对值"
@@ -275,6 +318,7 @@ operands = 1
 [[op]]
 name = "Smin"
 mnemonic = "smin"
+type_rule = "binop_same"
 llvm = "smin"
 category = "int-ext"
 doc = "有符号最小值"
@@ -283,6 +327,7 @@ operands = 2
 [[op]]
 name = "Smax"
 mnemonic = "smax"
+type_rule = "binop_same"
 llvm = "smax"
 category = "int-ext"
 doc = "有符号最大值"
@@ -291,6 +336,7 @@ operands = 2
 [[op]]
 name = "Umin"
 mnemonic = "umin"
+type_rule = "binop_same"
 llvm = "umin"
 category = "int-ext"
 doc = "无符号最小值"
@@ -299,6 +345,7 @@ operands = 2
 [[op]]
 name = "Umax"
 mnemonic = "umax"
+type_rule = "binop_same"
 llvm = "umax"
 category = "int-ext"
 doc = "无符号最大值"
@@ -307,6 +354,7 @@ operands = 2
 [[op]]
 name = "SaddSat"
 mnemonic = "sadd_sat"
+type_rule = "binop_same"
 llvm = "sadd.sat"
 category = "int-ext"
 doc = "有符号饱和加法"
@@ -316,6 +364,7 @@ may_ub = true
 [[op]]
 name = "SsubSat"
 mnemonic = "ssub_sat"
+type_rule = "binop_same"
 llvm = "ssub.sat"
 category = "int-ext"
 doc = "有符号饱和减法"
@@ -325,6 +374,7 @@ may_ub = true
 [[op]]
 name = "UaddSat"
 mnemonic = "uadd_sat"
+type_rule = "binop_same"
 llvm = "uadd.sat"
 category = "int-ext"
 doc = "无符号饱和加法"
@@ -334,6 +384,7 @@ may_ub = true
 [[op]]
 name = "UsubSat"
 mnemonic = "usub_sat"
+type_rule = "binop_same"
 llvm = "usub.sat"
 category = "int-ext"
 doc = "无符号饱和减法"
@@ -343,6 +394,7 @@ may_ub = true
 [[op]]
 name = "Bswap"
 mnemonic = "bswap"
+type_rule = "none"
 llvm = "bswap"
 category = "int-ext"
 doc = "字节序交换"
@@ -351,6 +403,7 @@ operands = 1
 [[op]]
 name = "Fma"
 mnemonic = "fma"
+type_rule = "same3"
 llvm = "fma"
 category = "float-ext"
 doc = "融合乘加：a * b + c"
@@ -359,6 +412,7 @@ operands = 3
 [[op]]
 name = "Fmin"
 mnemonic = "fmin"
+type_rule = "binop_same"
 llvm = "fmin"
 category = "float-ext"
 doc = "浮点最小值（IEEE 754-2019 minimumNumber）"
@@ -367,6 +421,7 @@ operands = 2
 [[op]]
 name = "Fmax"
 mnemonic = "fmax"
+type_rule = "binop_same"
 llvm = "fmax"
 category = "float-ext"
 doc = "浮点最大值"
@@ -375,6 +430,7 @@ operands = 2
 [[op]]
 name = "Fcopysign"
 mnemonic = "fcopysign"
+type_rule = "binop_same"
 llvm = "fcopysign"
 category = "float-ext"
 doc = "拷贝符号位"
@@ -383,6 +439,7 @@ operands = 2
 [[op]]
 name = "Ffloor"
 mnemonic = "ffloor"
+type_rule = "none"
 llvm = "floor"
 category = "float-ext"
 doc = "向负无穷取整"
@@ -391,6 +448,7 @@ operands = 1
 [[op]]
 name = "Fceil"
 mnemonic = "fceil"
+type_rule = "none"
 llvm = "ceil"
 category = "float-ext"
 doc = "向正无穷取整"
@@ -399,6 +457,7 @@ operands = 1
 [[op]]
 name = "Ftrunc"
 mnemonic = "ftrunc"
+type_rule = "none"
 llvm = "ftrunc"
 llvm_parse = false
 category = "float-ext"
@@ -408,6 +467,7 @@ operands = 1
 [[op]]
 name = "Fround"
 mnemonic = "fround"
+type_rule = "none"
 llvm = "round"
 category = "float-ext"
 doc = "就近取整（平局取偶）"
@@ -416,6 +476,7 @@ operands = 1
 [[op]]
 name = "Icmp"
 mnemonic = "icmp"
+type_rule = "cmp_int"
 llvm = "icmp"
 llvm_parse = false
 category = "compare"
@@ -426,6 +487,7 @@ cond = "IntCC"
 [[op]]
 name = "Fcmp"
 mnemonic = "fcmp"
+type_rule = "cmp_float"
 llvm = "fcmp"
 llvm_parse = false
 category = "compare"
@@ -436,6 +498,7 @@ cond = "FloatCC"
 [[op]]
 name = "SaddOverflow"
 mnemonic = "sadd_overflow"
+type_rule = "binop_same"
 llvm = "sadd.with.overflow"
 category = "overflow"
 doc = "有符号加法 + 溢出标志（结果 {value, overflow:i1}）"
@@ -446,6 +509,7 @@ may_ub = true
 [[op]]
 name = "UaddOverflow"
 mnemonic = "uadd_overflow"
+type_rule = "binop_same"
 llvm = "uadd.with.overflow"
 category = "overflow"
 doc = "无符号加法 + 溢出标志"
@@ -456,6 +520,7 @@ may_ub = true
 [[op]]
 name = "SsubOverflow"
 mnemonic = "ssub_overflow"
+type_rule = "binop_same"
 llvm = "ssub.with.overflow"
 category = "overflow"
 doc = "有符号减法 + 溢出标志"
@@ -466,6 +531,7 @@ may_ub = true
 [[op]]
 name = "UsubOverflow"
 mnemonic = "usub_overflow"
+type_rule = "binop_same"
 llvm = "usub.with.overflow"
 category = "overflow"
 doc = "无符号减法 + 溢出标志"
@@ -476,6 +542,7 @@ may_ub = true
 [[op]]
 name = "SmulOverflow"
 mnemonic = "smul_overflow"
+type_rule = "binop_same"
 llvm = "smul.with.overflow"
 category = "overflow"
 doc = "有符号乘法 + 溢出标志"
@@ -486,6 +553,7 @@ may_ub = true
 [[op]]
 name = "UmulOverflow"
 mnemonic = "umul_overflow"
+type_rule = "binop_same"
 llvm = "umul.with.overflow"
 category = "overflow"
 doc = "无符号乘法 + 溢出标志"
@@ -496,6 +564,7 @@ may_ub = true
 [[op]]
 name = "Load"
 mnemonic = "load"
+type_rule = "load"
 llvm = "load"
 category = "memory"
 doc = "整数/通用加载"
@@ -504,6 +573,7 @@ operands = 1
 [[op]]
 name = "Store"
 mnemonic = "store"
+type_rule = "store"
 llvm = "store"
 category = "memory"
 doc = "整数/通用存储"
@@ -514,6 +584,7 @@ side_effect = true
 [[op]]
 name = "Fload"
 mnemonic = "fload"
+type_rule = "load"
 llvm = "load"
 llvm_parse = false
 category = "memory"
@@ -523,6 +594,7 @@ operands = 1
 [[op]]
 name = "Fstore"
 mnemonic = "fstore"
+type_rule = "store"
 llvm = "store"
 llvm_parse = false
 category = "memory"
@@ -534,6 +606,7 @@ side_effect = true
 [[op]]
 name = "Iconst"
 mnemonic = "iconst"
+type_rule = "none"
 llvm = "iconst"
 llvm_parse = false
 category = "const"
@@ -543,6 +616,7 @@ operands = 0
 [[op]]
 name = "Fconst"
 mnemonic = "fconst"
+type_rule = "none"
 llvm = "iconst"
 llvm_parse = false
 category = "const"
@@ -552,6 +626,7 @@ operands = 0
 [[op]]
 name = "Vconst"
 mnemonic = "vconst"
+type_rule = "none"
 llvm = "vconst"
 llvm_parse = false
 category = "const"
@@ -561,6 +636,7 @@ operands = 0
 [[op]]
 name = "Poison"
 mnemonic = "poison"
+type_rule = "none"
 llvm = "poison"
 category = "value"
 doc = "产生指定类型的 poison 值（延迟 UB）"
@@ -569,6 +645,7 @@ operands = 0
 [[op]]
 name = "Undef"
 mnemonic = "undef"
+type_rule = "none"
 llvm = "undef"
 category = "value"
 doc = "产生 undef 值（任意位模式，每次使用独立）"
@@ -577,6 +654,8 @@ operands = 0
 [[op]]
 name = "Sextend"
 mnemonic = "sextend"
+type_rule = "convert"
+convert = { src = "int", dst = "int", width = "widen" }
 llvm = "sext"
 category = "convert"
 doc = "有符号扩展"
@@ -585,6 +664,8 @@ operands = 1
 [[op]]
 name = "Uextend"
 mnemonic = "uextend"
+type_rule = "convert"
+convert = { src = "int", dst = "int", width = "widen" }
 llvm = "zext"
 category = "convert"
 doc = "无符号扩展"
@@ -593,6 +674,8 @@ operands = 1
 [[op]]
 name = "Ireduce"
 mnemonic = "ireduce"
+type_rule = "convert"
+convert = { src = "int", dst = "int", width = "narrow" }
 llvm = "trunc"
 category = "convert"
 doc = "整数截断（LLVM `trunc`）"
@@ -601,6 +684,8 @@ operands = 1
 [[op]]
 name = "Fptrunc"
 mnemonic = "fptrunc"
+type_rule = "convert"
+convert = { src = "float", dst = "float", width = "narrow" }
 llvm = "fptrunc"
 category = "convert"
 doc = "浮点窄化"
@@ -609,6 +694,8 @@ operands = 1
 [[op]]
 name = "Fpext"
 mnemonic = "fpext"
+type_rule = "convert"
+convert = { src = "float", dst = "float", width = "widen" }
 llvm = "fpext"
 category = "convert"
 doc = "浮点加宽"
@@ -617,6 +704,8 @@ operands = 1
 [[op]]
 name = "Fptosi"
 mnemonic = "fptosi"
+type_rule = "convert"
+convert = { src = "float", dst = "int", width = "any" }
 llvm = "fptosi"
 category = "convert"
 doc = "浮点 → 有符号整数"
@@ -625,6 +714,8 @@ operands = 1
 [[op]]
 name = "Sitofp"
 mnemonic = "sitofp"
+type_rule = "convert"
+convert = { src = "int", dst = "float", width = "any" }
 llvm = "sitofp"
 category = "convert"
 doc = "有符号整数 → 浮点"
@@ -633,6 +724,8 @@ operands = 1
 [[op]]
 name = "Fptoui"
 mnemonic = "fptoui"
+type_rule = "convert"
+convert = { src = "float", dst = "int", width = "any" }
 llvm = "fptoui"
 category = "convert"
 doc = "浮点 → 无符号整数"
@@ -641,6 +734,8 @@ operands = 1
 [[op]]
 name = "Uitofp"
 mnemonic = "uitofp"
+type_rule = "convert"
+convert = { src = "int", dst = "float", width = "any" }
 llvm = "uitofp"
 category = "convert"
 doc = "无符号整数 → 浮点"
@@ -649,6 +744,8 @@ operands = 1
 [[op]]
 name = "Ptrtoint"
 mnemonic = "ptrtoint"
+type_rule = "convert"
+convert = { src = "ptr", dst = "int", width = "any" }
 llvm = "ptrtoint"
 llvm_alias = ["ptrtoaddr"]
 category = "convert"
@@ -658,6 +755,8 @@ operands = 1
 [[op]]
 name = "Inttoptr"
 mnemonic = "inttoptr"
+type_rule = "convert"
+convert = { src = "int", dst = "ptr", width = "any" }
 llvm = "inttoptr"
 category = "convert"
 doc = "整数 → 指针"
@@ -666,6 +765,8 @@ operands = 1
 [[op]]
 name = "Bitcast"
 mnemonic = "bitcast"
+type_rule = "convert"
+convert = { src = "any", dst = "any", width = "equal_bytes" }
 llvm = "bitcast"
 category = "convert"
 doc = "同位宽重解释（int↔float↔向量）"
@@ -674,6 +775,7 @@ operands = 1
 [[op]]
 name = "Call"
 mnemonic = "call"
+type_rule = "call"
 llvm = "call"
 llvm_alias = ["callbr"]
 category = "call"
@@ -684,6 +786,7 @@ side_effect = true
 [[op]]
 name = "CallIndirect"
 mnemonic = "call_indirect"
+type_rule = "call_indirect"
 llvm = "call"
 llvm_parse = false
 category = "call"
@@ -694,6 +797,7 @@ side_effect = true
 [[op]]
 name = "StackAddr"
 mnemonic = "stack_addr"
+type_rule = "none"
 llvm = "stack_addr"
 category = "address"
 doc = "栈槽地址（帧偏移在 Immediate::Int）"
@@ -702,6 +806,7 @@ operands = 0
 [[op]]
 name = "GlobalAddr"
 mnemonic = "global_addr"
+type_rule = "none"
 llvm = "global_addr"
 category = "address"
 doc = "全局变量地址"
@@ -710,6 +815,7 @@ operands = 0
 [[op]]
 name = "Alloca"
 mnemonic = "alloca"
+type_rule = "none"
 llvm = "alloca"
 category = "alloca"
 doc = "栈分配（类型/元素数在对齐与类型 immediate 里）"
@@ -718,6 +824,7 @@ operands = 0
 [[op]]
 name = "GetElementPtr"
 mnemonic = "gep"
+type_rule = "none"
 llvm = "getelementptr"
 category = "gep"
 doc = "地址计算（基类型 immediate + 变长索引操作数）"
@@ -726,6 +833,7 @@ operands = "variadic"
 [[op]]
 name = "Vadd"
 mnemonic = "vadd"
+type_rule = "none"
 llvm = "add"
 llvm_parse = false
 category = "vector"
@@ -735,6 +843,7 @@ operands = 2
 [[op]]
 name = "Vsub"
 mnemonic = "vsub"
+type_rule = "none"
 llvm = "sub"
 llvm_parse = false
 category = "vector"
@@ -744,6 +853,7 @@ operands = 2
 [[op]]
 name = "Vmul"
 mnemonic = "vmul"
+type_rule = "none"
 llvm = "mul"
 llvm_parse = false
 category = "vector"
@@ -753,6 +863,7 @@ operands = 2
 [[op]]
 name = "Vdiv"
 mnemonic = "vdiv"
+type_rule = "none"
 llvm = "div"
 category = "vector"
 doc = "向量除法"
@@ -761,6 +872,7 @@ operands = 2
 [[op]]
 name = "Vneg"
 mnemonic = "vneg"
+type_rule = "none"
 llvm = "fneg"
 llvm_parse = false
 category = "vector"
@@ -770,6 +882,7 @@ operands = 1
 [[op]]
 name = "Vabs"
 mnemonic = "vabs"
+type_rule = "none"
 llvm = "fabs"
 llvm_parse = false
 category = "vector"
@@ -779,6 +892,7 @@ operands = 1
 [[op]]
 name = "Vextract"
 mnemonic = "vextract"
+type_rule = "none"
 llvm = "extractelement"
 llvm_alias = ["vextractelement"]
 category = "vector"
@@ -788,6 +902,7 @@ operands = 1
 [[op]]
 name = "Vinsert"
 mnemonic = "vinsert"
+type_rule = "none"
 llvm = "insertelement"
 category = "vector"
 doc = "插入向量元素"
@@ -796,6 +911,8 @@ operands = 2
 [[op]]
 name = "Vbitcast"
 mnemonic = "vbitcast"
+type_rule = "convert"
+convert = { src = "any", dst = "any", width = "equal_total_bits" }
 llvm = "bitcast"
 llvm_parse = false
 category = "vector"
@@ -805,6 +922,7 @@ operands = 1
 [[op]]
 name = "Vbroadcast"
 mnemonic = "vbroadcast"
+type_rule = "none"
 llvm = "vbroadcast"
 category = "vector"
 doc = "标量广播成向量（元素个数不定）"
@@ -813,6 +931,7 @@ operands = "variadic"
 [[op]]
 name = "ShuffleVector"
 mnemonic = "shufflevector"
+type_rule = "none"
 llvm = "shufflevector"
 category = "vector"
 doc = "向量重排（掩码在 immediate 列表）"
@@ -821,6 +940,7 @@ operands = "variadic"
 [[op]]
 name = "Vsplit"
 mnemonic = "vsplit"
+type_rule = "none"
 llvm = "vsplit"
 llvm_parse = false
 category = "vector"
@@ -830,6 +950,7 @@ operands = 1
 [[op]]
 name = "Vconcat"
 mnemonic = "vconcat"
+type_rule = "none"
 llvm = "vconcat"
 llvm_parse = false
 category = "vector"
@@ -839,6 +960,7 @@ operands = "variadic"
 [[op]]
 name = "Trap"
 mnemonic = "trap"
+type_rule = "none"
 llvm = "trap"
 category = "trap"
 doc = "触发陷阱（按定义不可达，如失败的边界检查）"
@@ -850,6 +972,7 @@ side_effect = true
 [[op]]
 name = "IsNull"
 mnemonic = "is_null"
+type_rule = "none"
 llvm = "isnull"
 category = "pointer"
 doc = "判空指针"
@@ -858,6 +981,7 @@ operands = 1
 [[op]]
 name = "IsNotNull"
 mnemonic = "is_not_null"
+type_rule = "none"
 llvm = "isnotnull"
 category = "pointer"
 doc = "判非空指针"
@@ -866,6 +990,7 @@ operands = 1
 [[op]]
 name = "AddrSpaceCast"
 mnemonic = "addrspacecast"
+type_rule = "none"
 llvm = "addrspacecast"
 category = "pointer"
 doc = "指针地址空间转换（结果类型 = 目标 addrspace 指针）"
@@ -874,6 +999,7 @@ operands = 1
 [[op]]
 name = "VaArg"
 mnemonic = "va_arg"
+type_rule = "none"
 llvm = "va_arg"
 category = "pointer"
 doc = "可变参数读取（LLVM `va_arg`；文本层存 (Type, ptr) 操作数）"
@@ -883,6 +1009,7 @@ side_effect = true
 [[op]]
 name = "LandingPad"
 mnemonic = "landingpad"
+type_rule = "none"
 llvm = "landingpad"
 category = "pointer"
 doc = "异常着陆垫（LLVM `landingpad`；codegen Unsupported）"
@@ -891,6 +1018,7 @@ operands = 0
 [[op]]
 name = "AtomicRmw"
 mnemonic = "atomicrmw"
+type_rule = "none"
 llvm = "atomicrmw"
 category = "atomic"
 doc = "原子读改写（操作判别值与内存序在 immediate 列表）"
@@ -900,6 +1028,7 @@ side_effect = true
 [[op]]
 name = "Cmpxchg"
 mnemonic = "cmpxchg"
+type_rule = "cmpxchg_pair"
 llvm = "cmpxchg"
 category = "atomic"
 doc = "原子比较交换（成功/失败内存序在 immediate 列表）"
@@ -909,6 +1038,7 @@ side_effect = true
 [[op]]
 name = "Fence"
 mnemonic = "fence"
+type_rule = "none"
 llvm = "fence"
 category = "atomic"
 doc = "内存屏障"
@@ -919,6 +1049,7 @@ side_effect = true
 [[op]]
 name = "ExtractValue"
 mnemonic = "extractvalue"
+type_rule = "none"
 llvm = "extractvalue"
 category = "aggregate"
 doc = "聚合字段提取（索引在 immediate 列表）"
@@ -927,6 +1058,7 @@ operands = 1
 [[op]]
 name = "InsertValue"
 mnemonic = "insertvalue"
+type_rule = "none"
 llvm = "insertvalue"
 category = "aggregate"
 doc = "聚合字段插入（索引在 immediate 列表）"
@@ -935,6 +1067,7 @@ operands = 2
 [[op]]
 name = "Copy"
 mnemonic = "copy"
+type_rule = "none"
 llvm = "copy"
 category = "other"
 doc = "显式拷贝（PHI 消除/合并用）"
@@ -943,6 +1076,7 @@ operands = 1
 [[op]]
 name = "Select"
 mnemonic = "select"
+type_rule = "select"
 llvm = "select"
 category = "other"
 doc = "三元选择（cond 须为 i1）"
@@ -951,6 +1085,7 @@ operands = 3
 [[op]]
 name = "Freeze"
 mnemonic = "freeze"
+type_rule = "none"
 llvm = "freeze"
 category = "other"
 doc = "冻结 poison/undef（阻止常量折叠跨此推断）"
@@ -959,6 +1094,7 @@ operands = 1
 [[op]]
 name = "Nop"
 mnemonic = "nop"
+type_rule = "none"
 llvm = "nop"
 category = "other"
 doc = "空操作（删除后的墓碑）"

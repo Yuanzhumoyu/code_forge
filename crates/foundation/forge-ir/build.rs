@@ -42,6 +42,48 @@ struct OpDef {
     llvm_parse: bool,
     /// 额外可解析名（别名，`llvm` 之外的旧名/宽松名）。
     llvm_aliases: Vec<String>,
+    /// 逐指令**类型规则族**（verifier 的操作数类型阶段据此分派；规则本体在
+    /// `verify.rs` 实现，这里只声明"该指令属于哪个族"）。
+    ///
+    /// 词汇表封闭（[`TYPE_RULES`]）：写成未实现的族名 → 构建期报错；
+    /// 新增族名会让 `verify.rs` 的穷举 match 编译失败（双向 fail-closed）。
+    type_rule: String,
+    /// `type_rule = "convert"` 时的事实三元组 `(src 类, dst 类, 位宽关系)`。
+    convert: Option<(String, String, String)>,
+}
+
+/// 类型规则族的封闭词汇表（与 `verify.rs` 的穷举 match 一一对应）。
+const TYPE_RULES: &[&str] = &[
+    "none",
+    "binop_same",
+    "same3",
+    "cmp_int",
+    "cmp_float",
+    "select",
+    "convert",
+    "cmpxchg_pair",
+    "load",
+    "store",
+    "call",
+    "call_indirect",
+];
+/// 转换指令的源/目标类型类。
+const TYPE_CLASSES: &[&str] = &["any", "int", "float", "ptr", "vector"];
+/// 转换指令的位宽关系。
+const WIDTH_RULES: &[&str] = &["any", "widen", "narrow", "equal_bytes", "equal_total_bits"];
+
+/// `snake_case` → `PascalCase`（生成枚举变体名用；词汇表已限定字符集）。
+fn pascal(s: &str) -> String {
+    s.split('_')
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let mut c = p.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
 }
 
 fn generate_opcode_table() {
@@ -170,6 +212,45 @@ fn generate_opcode_table() {
                 .collect(),
             other => panic!("ops.toml `{name}` 的 llvm_alias 须为字符串数组，实际 {other:?}"),
         };
+
+        // 逐指令类型规则族（封闭词汇表）+ 转换指令的事实三元组
+        let type_rule = match table.get("type_rule") {
+            Some(toml::Value::String(s)) if TYPE_RULES.contains(&s.as_str()) => s.clone(),
+            other => {
+                panic!("ops.toml `{name}` 的 type_rule 须是 {TYPE_RULES:?} 之一，实际 {other:?}")
+            }
+        };
+        let convert = match table.get("convert") {
+            None => None,
+            Some(toml::Value::Table(t)) => {
+                let field = |k: &str, allowed: &[&str]| -> String {
+                    match t.get(k).and_then(|v| v.as_str()) {
+                        Some(s) if allowed.contains(&s) => s.to_string(),
+                        other => panic!(
+                            "ops.toml `{name}` 的 convert.{k} 须是 {allowed:?} 之一，实际 {other:?}"
+                        ),
+                    }
+                };
+                Some((
+                    field("src", TYPE_CLASSES),
+                    field("dst", TYPE_CLASSES),
+                    field("width", WIDTH_RULES),
+                ))
+            }
+            other => panic!("ops.toml `{name}` 的 convert 须是内联表，实际 {other:?}"),
+        };
+        // 规则与事实表必须配套（`convert` 规则没有三元组就无法校验；反之声明了
+        // 三元组的其它族也不会被 verifier 读取——两种都拦在构建期）。
+        match (type_rule.as_str(), &convert) {
+            ("convert", None) => panic!(
+                "ops.toml `{name}` 声明了 type_rule = \"convert\"，必须给 convert = {{ src, dst, width }}"
+            ),
+            ("convert", Some(_)) => {}
+            (other, Some(_)) => panic!(
+                "ops.toml `{name}` 的 type_rule = \"{other}\" 不需要 convert 三元组（只有 convert 族读它）"
+            ),
+            (_, None) => {}
+        }
         defs.push(OpDef {
             name,
             mnemonic,
@@ -183,6 +264,8 @@ fn generate_opcode_table() {
             llvm,
             llvm_parse,
             llvm_aliases,
+            type_rule,
+            convert,
         });
     }
 
@@ -322,6 +405,10 @@ fn render(defs: &[OpDef]) -> String {
          \x20   pub llvm_parse: Option<&'static str>,\n\
          \x20   /// 额外可解析名（`llvm` 之外的旧名/宽松名）。\n\
          \x20   pub llvm_aliases: &'static [&'static str],\n\
+         \x20   /// 逐指令类型规则族（verifier 的操作数类型阶段据此分派）。\n\
+         \x20   pub type_rule: TypeRule,\n\
+         \x20   /// `type_rule == TypeRule::Convert` 时的事实三元组（其余族为 `None`）。\n\
+         \x20   pub convert: Option<ConvertRule>,\n\
          }\n\n\
          /// 比较条件所在的 immediate 通道类型。\n\
          #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
@@ -330,6 +417,76 @@ fn render(defs: &[OpDef]) -> String {
          \x20   IntCC,\n\
          \x20   /// 条件经 `Immediate::FloatCC` 传递（`Fcmp`）。\n\
          \x20   FloatCC,\n\
+         }\n\n\
+         /// 逐指令**类型规则族**。\n\
+         ///\n\
+         /// 族名声明在 `ops.toml`（`type_rule`），规则本体实现在 `verify.rs` 的\n\
+         /// `check_operand_types`；那里对本枚举做**穷举 match**（无 `_` 臂），\n\
+         /// 因此\"声明了新族却没实现\"或\"实现了却没声明\"都会编译/构建失败。\n\
+         #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
+         pub enum TypeRule {\n\
+         \x20   /// 该指令没有类型规则（`ops.toml` 注明是\"检查在别处\"还是\"待补\"）。\n\
+         \x20   None,\n\
+         \x20   /// 前两个值操作数同类型，且不是聚合类型。\n\
+         \x20   BinopSame,\n\
+         \x20   /// 三个操作数同类型（`Fma`）。\n\
+         \x20   Same3,\n\
+         \x20   /// 两个操作数同类型且为整型（`Icmp`）。\n\
+         \x20   CmpInt,\n\
+         \x20   /// 两个操作数同类型且为浮点（`Fcmp`）。\n\
+         \x20   CmpFloat,\n\
+         \x20   /// `select`：cond 为 bool、两个分支同类型且结果同类型。\n\
+         \x20   Select,\n\
+         \x20   /// 转换指令：按 [`ConvertRule`] 校验源/目标类与位宽。\n\
+         \x20   Convert,\n\
+         \x20   /// `cmpxchg`：cmp 与 new 操作数同类型。\n\
+         \x20   CmpxchgPair,\n\
+         \x20   /// `load`：地址为指针、结果类型有大小。\n\
+         \x20   Load,\n\
+         \x20   /// `store`：地址为指针。\n\
+         \x20   Store,\n\
+         \x20   /// `call`：有被调操作数。\n\
+         \x20   Call,\n\
+         \x20   /// `call_indirect`：有被调操作数且为指针。\n\
+         \x20   CallIndirect,\n\
+         }\n\n\
+         /// 转换指令的源/目标类型类。\n\
+         #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
+         pub enum TypeClass {\n\
+         \x20   /// 不限制类别。\n\
+         \x20   Any,\n\
+         \x20   /// 整数（含 bool）。\n\
+         \x20   Int,\n\
+         \x20   /// 浮点。\n\
+         \x20   Float,\n\
+         \x20   /// 指针。\n\
+         \x20   Ptr,\n\
+         \x20   /// 向量。\n\
+         \x20   Vector,\n\
+         }\n\n\
+         /// 转换指令的位宽关系。\n\
+         #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
+         pub enum WidthRule {\n\
+         \x20   /// 不检查位宽。\n\
+         \x20   Any,\n\
+         \x20   /// 目标严格宽于源（sext/zext/fpext）。\n\
+         \x20   Widen,\n\
+         \x20   /// 目标严格窄于源（ireduce/fptrunc）。\n\
+         \x20   Narrow,\n\
+         \x20   /// 字节大小相同（bitcast）。\n\
+         \x20   EqualBytes,\n\
+         \x20   /// 向量总位宽相同（vbitcast；只在两侧都是向量时比较）。\n\
+         \x20   EqualTotalBits,\n\
+         }\n\n\
+         /// 转换指令的类型事实（`ops.toml` 的 `convert` 内联表）。\n\
+         #[derive(Clone, Copy, Debug, PartialEq, Eq)]\n\
+         pub struct ConvertRule {\n\
+         \x20   /// 源操作数类型类。\n\
+         \x20   pub src: TypeClass,\n\
+         \x20   /// 目标（结果）类型类。\n\
+         \x20   pub dst: TypeClass,\n\
+         \x20   /// 位宽关系。\n\
+         \x20   pub width: WidthRule,\n\
          }\n\n",
     );
 
@@ -368,12 +525,23 @@ fn render(defs: &[OpDef]) -> String {
             let items: Vec<String> = d.llvm_aliases.iter().map(|a| format!("{a:?}")).collect();
             format!("&[{}]", items.join(", "))
         };
+        let type_rule = format!("TypeRule::{}", pascal(&d.type_rule));
+        let convert = match &d.convert {
+            None => "None".to_string(),
+            Some((src, dst, width)) => format!(
+                "Some(ConvertRule {{ src: TypeClass::{}, dst: TypeClass::{}, width: WidthRule::{} }})",
+                pascal(src),
+                pascal(dst),
+                pascal(width)
+            ),
+        };
         let _ = std::fmt::Write::write_fmt(
             &mut s,
             format_args!(
                 "        OpcodeInfo {{ name: {:?}, mnemonic: {:?}, category: {:?}, doc: {:?}, \
                  arity: {arity}, result_count: {}, may_ub: {}, side_effect: {}, cond: {cond}, \
-                 llvm: {:?}, llvm_parse: {llvm_parse}, llvm_aliases: {aliases} }},\n",
+                 llvm: {:?}, llvm_parse: {llvm_parse}, llvm_aliases: {aliases}, \
+                 type_rule: {type_rule}, convert: {convert} }},\n",
                 d.name, d.mnemonic, d.category, d.doc, d.results, d.may_ub, d.side_effect, d.llvm
             ),
         );
@@ -429,6 +597,10 @@ fn render(defs: &[OpDef]) -> String {
          \x20   /// 有值时该指令**必须**带一条对应类型的 immediate（`Verifier` 检查）。\n\
          \x20   pub fn cond_kind(&self) -> Option<CondKind> {\n\
          \x20       self.info().cond\n\
+         \x20   }\n\n\
+         \x20   /// 逐指令类型规则族（verifier 的操作数类型阶段据此分派）。\n\
+         \x20   pub fn type_rule(&self) -> TypeRule {\n\
+         \x20       self.info().type_rule\n\
          \x20   }\n\n\
          \x20   /// 期望的值操作数数量。\n\
          \x20   ///\n\

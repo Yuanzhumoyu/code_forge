@@ -3,7 +3,7 @@
 use super::dfg::{DataFlowGraph, Instruction, ValueDef};
 use super::entity::*;
 use super::function::Function;
-use super::opcode::Opcode;
+use super::opcode::{ConvertRule, Opcode, TypeClass, TypeRule, WidthRule};
 use super::terminator::Terminator;
 use super::types::{TypeContext, TypeEntry};
 use crate::Immediate;
@@ -399,6 +399,39 @@ impl std::fmt::Display for VerifyError {
 // Verifier
 // ============================================================
 
+/// 转换指令类型不匹配时的诊断文本：期望形态来自 `ops.toml` 的 `convert` 事实表，
+/// 因此这里不需要按 opcode 写 13 条消息（规则只有一份）。
+fn conversion_expectation(rule: &ConvertRule, src_ty: TypeId, dst_ty: TypeId) -> (String, String) {
+    let class = |c: TypeClass| match c {
+        TypeClass::Any => "any",
+        TypeClass::Int => "int",
+        TypeClass::Float => "float",
+        TypeClass::Ptr => "ptr",
+        TypeClass::Vector => "vector",
+    };
+    let found = format!("t{} → t{}", src_ty.0, dst_ty.0);
+    let expected = match rule.width {
+        WidthRule::Widen => format!(
+            "{} src ({}) < {} dst ({})",
+            class(rule.src),
+            src_ty.0,
+            class(rule.dst),
+            dst_ty.0
+        ),
+        WidthRule::Narrow => format!(
+            "{} src ({}) > {} dst ({})",
+            class(rule.src),
+            src_ty.0,
+            class(rule.dst),
+            dst_ty.0
+        ),
+        WidthRule::EqualBytes => format!("same bit-width ({} = {})", src_ty.0, dst_ty.0),
+        WidthRule::EqualTotalBits => format!("same total width ({} = {})", src_ty.0, dst_ty.0),
+        WidthRule::Any => format!("{} src → {} dst", class(rule.src), class(rule.dst)),
+    };
+    (expected, found)
+}
+
 pub struct Verifier {
     pub errors: Vec<VerifyError>,
     ctx: Option<TypeContext>,
@@ -602,366 +635,227 @@ impl Verifier {
         defined: &HashMap<Value, TypeId>,
     ) {
         let op = &instruction.opcode;
-        // Binary ops where both operands must have the same type
-        let is_binary_same_type = matches!(
-            op,
-            Opcode::Iadd
-                | Opcode::Isub
-                | Opcode::Imul
-                | Opcode::Udiv
-                | Opcode::Sdiv
-                | Opcode::Urem
-                | Opcode::Srem
-                | Opcode::Band
-                | Opcode::Bor
-                | Opcode::Bxor
-                | Opcode::Ishl
-                | Opcode::Ushr
-                | Opcode::Sshr
-                | Opcode::Rotl
-                | Opcode::Rotr
-                | Opcode::Smin
-                | Opcode::Smax
-                | Opcode::Umin
-                | Opcode::Umax
-                | Opcode::SaddSat
-                | Opcode::SsubSat
-                | Opcode::UaddSat
-                | Opcode::UsubSat
-                | Opcode::SaddOverflow
-                | Opcode::UaddOverflow
-                | Opcode::SsubOverflow
-                | Opcode::UsubOverflow
-                | Opcode::SmulOverflow
-                | Opcode::UmulOverflow
-        );
-
-        let is_float_binary = matches!(
-            op,
-            Opcode::Fadd
-                | Opcode::Fsub
-                | Opcode::Fmul
-                | Opcode::Fdiv
-                | Opcode::Frem
-                | Opcode::Fmin
-                | Opcode::Fmax
-                | Opcode::Fcopysign
-        );
-
-        if (is_binary_same_type || is_float_binary) && instruction.operands.len() >= 2 {
-            let ty0 = defined.get(&instruction.operands[0]);
-            let ty1 = defined.get(&instruction.operands[1]);
-            if let (Some(&t0), Some(&t1)) = (ty0, ty1)
-                && t0 != t1
-            {
-                self.errors.push(VerifyError::TypeMismatch {
-                    inst,
-                    expected: format!("t{}", t0.0),
-                    found: format!("t{}", t1.0),
-                });
+        // 逐指令类型规则**族**声明在 `ops.toml`（`type_rule`），这里按族分派——
+        // 不是"每个 opcode 一条手写 if"。穷举 match（无 `_` 臂）：新增族名会让
+        // 这里编译失败，写成未实现的族名则构建期就报错（双向 fail-closed）。
+        let mismatch = |this: &mut Self, inst: Inst, expected: String, found: String| {
+            this.errors.push(VerifyError::TypeMismatch {
+                inst,
+                expected,
+                found,
+            });
+        };
+        match op.type_rule() {
+            TypeRule::None => {}
+            TypeRule::BinopSame
+            | TypeRule::Same3
+            | TypeRule::CmpInt
+            | TypeRule::CmpFloat
+            | TypeRule::Select => {
+                // 形状规则只有一份实现（`type_rules::check_shape`）：
+                // verifier 在这里把违规翻成带指令上下文的诊断，builder 在
+                // `emit_with_mem` 里用同一函数做 debug 断言。
+                let operand_tys: Vec<Option<TypeId>> = instruction
+                    .operands
+                    .iter()
+                    .map(|v| defined.get(v).copied())
+                    .collect();
+                let result_ty = instruction
+                    .results
+                    .first()
+                    .and_then(|v| defined.get(v))
+                    .copied();
+                let violations =
+                    crate::type_rules::check_shape(*op, &operand_tys, result_ty, &|t| {
+                        self.ctx
+                            .as_ref()
+                            .map(|c| c.borrow().is_aggregate(t))
+                            .unwrap_or(false)
+                    });
+                for v in violations {
+                    use crate::type_rules::ShapeViolation as SV;
+                    match v {
+                        SV::OperandTypeMismatch { expected, found } => mismatch(
+                            self,
+                            inst,
+                            format!("t{}", expected.0),
+                            format!("t{}", found.0),
+                        ),
+                        SV::NotScalar { found } => {
+                            mismatch(self, inst, "scalar".to_string(), format!("t{}", found.0))
+                        }
+                        SV::CondNotBool { .. } => {
+                            self.errors.push(VerifyError::SelectCondNotBool { inst })
+                        }
+                        SV::ResultTypeMismatch { expected, found } => mismatch(
+                            self,
+                            inst,
+                            format!("t{}", expected.0),
+                            format!("t{}", found.0),
+                        ),
+                        SV::CompareClass { want_int } => {
+                            if want_int {
+                                self.errors.push(VerifyError::IcmpOperandNotInt { inst });
+                            } else {
+                                self.errors.push(VerifyError::FcmpOperandNotFloat { inst });
+                            }
+                        }
+                    }
+                }
             }
-        }
-
-        // cmpxchg：cmp（operands[1]）与 new（operands[2]）类型必须一致（opaque-ptr-cmpxchg）
-        if op == &Opcode::Cmpxchg && instruction.operands.len() >= 3 {
-            let t1 = defined.get(&instruction.operands[1]);
-            let t2 = defined.get(&instruction.operands[2]);
-            if let (Some(&a), Some(&b)) = (t1, t2)
-                && a != b
-            {
-                self.errors.push(VerifyError::TypeMismatch {
-                    inst,
-                    expected: format!("t{}", a.0),
-                    found: format!("t{}", b.0),
-                });
+            TypeRule::CmpxchgPair => {
+                // cmp（operands[1]）与 new（operands[2]）同类型（opaque-ptr-cmpxchg）
+                if instruction.operands.len() >= 3 {
+                    let t1 = defined.get(&instruction.operands[1]);
+                    let t2 = defined.get(&instruction.operands[2]);
+                    if let (Some(&a), Some(&b)) = (t1, t2)
+                        && a != b
+                    {
+                        mismatch(self, inst, format!("t{}", a.0), format!("t{}", b.0));
+                    }
+                }
             }
-        }
-
-        // 3.1 聚合类型指令分类：算术/转换等指令的操作数必须是标量（load/store
-        // 聚合值合法——内存访问；算术指令聚合 operand 拒绝）。
-        if (is_binary_same_type || is_float_binary) && instruction.operands.len() >= 2 {
-            for &opd in instruction.operands.iter().take(2) {
-                if let Some(&t) = defined.get(&opd)
-                    && self
-                        .ctx
-                        .as_ref()
-                        .map(|c| c.borrow().is_aggregate(t))
-                        .unwrap_or(false)
+            TypeRule::Convert => self.check_conversion(inst, instruction, defined),
+            TypeRule::Load => {
+                if let Some(&addr_ty) = instruction.operands.first().and_then(|v| defined.get(v))
+                    && !self.is_pointer_ty(addr_ty)
                 {
-                    self.errors.push(VerifyError::TypeMismatch {
+                    self.errors.push(VerifyError::LoadAddrNotPointer { inst });
+                }
+                // load 结果类型必须有大小（opaque/metadata 等占位类型——LLVM 拒绝）
+                if let Some(rt) = instruction.results.first().and_then(|v| defined.get(v))
+                    && let Some(ctx) = &self.ctx
+                    && ctx.borrow().size_bytes(*rt) == 0
+                {
+                    mismatch(
+                        self,
                         inst,
-                        expected: "scalar".to_string(),
-                        found: format!("t{}", t.0),
+                        "loadable type with nonzero size".into(),
+                        format!("type {rt:?} has no size (opaque/placeholder)"),
+                    );
+                }
+            }
+            TypeRule::Store => {
+                if instruction.operands.len() >= 2
+                    && let Some(&addr_ty) = instruction.operands.get(1).and_then(|v| defined.get(v))
+                    && !self.is_pointer_ty(addr_ty)
+                {
+                    self.errors.push(VerifyError::StoreAddrNotPointer { inst });
+                }
+            }
+            TypeRule::Call | TypeRule::CallIndirect => {
+                // 低配检查：call 至少 1 个操作数（callee）；call_indirect 首操作数须指针
+                if instruction.operands.is_empty() {
+                    self.errors.push(VerifyError::CallInvalidTarget {
+                        inst,
+                        detail: "no callee operand".to_string(),
+                    });
+                } else if op.type_rule() == TypeRule::CallIndirect
+                    && let Some(&callee_ty) = defined.get(&instruction.operands[0])
+                    && !self.is_pointer_ty(callee_ty)
+                {
+                    self.errors.push(VerifyError::CallInvalidTarget {
+                        inst,
+                        detail: "call_indirect callee must be a pointer".to_string(),
                     });
                 }
             }
         }
+    }
 
-        // Fma: all 3 operands same type
-        if matches!(op, Opcode::Fma) && instruction.operands.len() >= 3 {
-            let ty0 = defined.get(&instruction.operands[0]);
-            let ty1 = defined.get(&instruction.operands[1]);
-            let ty2 = defined.get(&instruction.operands[2]);
-            if let (Some(&t0), Some(&t1), Some(&t2)) = (ty0, ty1, ty2)
-                && (t0 != t1 || t0 != t2)
+    /// 转换指令的类型规则（源/目标类 + 位宽关系）——事实来自 `ops.toml` 的
+    /// `convert` 表（`OpcodeInfo.convert`），这里只有一份实现。
+    fn check_conversion(
+        &mut self,
+        inst: Inst,
+        instruction: &super::dfg::Instruction,
+        defined: &HashMap<Value, TypeId>,
+    ) {
+        let Some(rule) = instruction.opcode.info().convert else {
+            // 生成期保证 `type_rule == Convert` ⇔ 有 convert 表；这里防御性返回，
+            // 不 panic（公开 API 不 panic 的同一原则）。
+            debug_assert!(false, "Convert 族缺少 convert 事实表");
+            return;
+        };
+        let Some(&src_ty) = instruction.operands.first().and_then(|v| defined.get(v)) else {
+            return;
+        };
+        let Some(&dst_ty) = instruction.results.first().and_then(|v| defined.get(v)) else {
+            return;
+        };
+        // 类别：`Any` 不限制；`Vector` 只在能确认是向量时才判否（保持既有行为）
+        let class_of = |this: &Self, ty: TypeId| -> Option<TypeClass> {
+            if ty.is_int() {
+                Some(TypeClass::Int)
+            } else if ty.is_float() {
+                Some(TypeClass::Float)
+            } else if this.is_pointer_ty(ty) {
+                Some(TypeClass::Ptr)
+            } else if this
+                .ctx
+                .as_ref()
+                .map(|c| c.borrow().is_vector(ty))
+                .unwrap_or(false)
             {
-                self.errors.push(VerifyError::TypeMismatch {
-                    inst,
-                    expected: format!("t{} (all same)", t0.0),
-                    found: format!("t{}, t{}, t{}", t0.0, t1.0, t2.0),
-                });
+                Some(TypeClass::Vector)
+            } else {
+                None
             }
-        }
-
-        // Select: operand[1] and operand[2] same type, result same type
-        if matches!(op, Opcode::Select)
-            && instruction.operands.len() >= 3
-            && let (Some(&t1), Some(&t2)) = (
-                defined.get(&instruction.operands[1]),
-                defined.get(&instruction.operands[2]),
-            )
-        {
-            if t1 != t2 {
-                self.errors.push(VerifyError::TypeMismatch {
-                    inst,
-                    expected: format!("t{}", t1.0),
-                    found: format!("t{}", t2.0),
-                });
-            }
-            // Result must match
-            if let Some(&r) = instruction.results.first()
-                && let Some(&rt) = defined.get(&r)
-                && rt != t1
-            {
-                self.errors.push(VerifyError::TypeMismatch {
-                    inst,
-                    expected: format!("t{}", t1.0),
-                    found: format!("t{}", rt.0),
-                });
-            }
-        }
-
-        // Icmp/Fcmp: both operands same type
-        if matches!(op, Opcode::Icmp | Opcode::Fcmp) && instruction.operands.len() >= 2 {
-            let ty0 = defined.get(&instruction.operands[0]);
-            let ty1 = defined.get(&instruction.operands[1]);
-            if let (Some(&t0), Some(&t1)) = (ty0, ty1)
-                && t0 != t1
-            {
-                self.errors.push(VerifyError::TypeMismatch {
-                    inst,
-                    expected: format!("t{}", t0.0),
-                    found: format!("t{}", t1.0),
-                });
-            }
-            // 类别检查：icmp 须整型、fcmp 须浮点（补类别维度，同宽不足以保证语义）
-            if let (Some(&t0), Some(&t1)) = (ty0, ty1) {
-                if matches!(op, Opcode::Icmp) && (!t0.is_int() || !t1.is_int()) {
-                    self.errors.push(VerifyError::IcmpOperandNotInt { inst });
+        };
+        let class_matches =
+            |this: &Self, want: TypeClass, ty: TypeId, rule: &ConvertRule| -> bool {
+                if want == TypeClass::Any {
+                    return true;
                 }
-                if matches!(op, Opcode::Fcmp) && (!t0.is_float() || !t1.is_float()) {
-                    self.errors.push(VerifyError::FcmpOperandNotFloat { inst });
+                // Vbitcast（EqualTotalBits）在既有实现里只在两侧都是向量时比较总位宽，
+                // 非向量不报错——因此这里对"未知类别"也放行，由位宽规则决定是否检查。
+                let known = class_of(this, ty);
+                if known.is_none() && rule.width == WidthRule::EqualTotalBits {
+                    return true;
+                }
+                known == Some(want)
+            };
+        let src_ok = class_matches(self, rule.src, src_ty, &rule);
+        let dst_ok = class_matches(self, rule.dst, dst_ty, &rule);
+        let width_ok = match rule.width {
+            WidthRule::Any => true,
+            WidthRule::Widen => src_ty.bits() < dst_ty.bits(),
+            WidthRule::Narrow => src_ty.bits() > dst_ty.bits(),
+            WidthRule::EqualBytes => {
+                if let Some(ctx) = &self.ctx {
+                    let store = ctx.borrow();
+                    store.size_bytes(src_ty) == store.size_bytes(dst_ty)
+                } else {
+                    src_ty.bits() == dst_ty.bits()
                 }
             }
-        }
-
-        // Select: cond 必须 bool（i1）
-        if matches!(op, Opcode::Select)
-            && instruction.operands.len() >= 3
-            && let Some(&cond_ty) = defined.get(&instruction.operands[0])
-            && cond_ty != TypeId::BOOL
-        {
-            self.errors.push(VerifyError::SelectCondNotBool { inst });
-        }
-
-        // 转换指令位宽/类别：sext/zext 源整型且窄于目标；ireduce 源整型且宽于目标；
-        // bitcast 同位宽（int↔float）；vbitcast 向量总位宽相同
-        if matches!(
-            op,
-            Opcode::Sextend
-                | Opcode::Uextend
-                | Opcode::Ireduce
-                | Opcode::Fptrunc
-                | Opcode::Fpext
-                | Opcode::Fptosi
-                | Opcode::Sitofp
-                | Opcode::Fptoui
-                | Opcode::Uitofp
-                | Opcode::Ptrtoint
-                | Opcode::Inttoptr
-                | Opcode::Bitcast
-                | Opcode::Vbitcast
-        ) && let Some(&src_ty) = instruction.operands.first().and_then(|v| defined.get(v))
-            && let Some(&dst_ty) = instruction.results.first().and_then(|v| defined.get(v))
-        {
-            match op {
-                Opcode::Sextend | Opcode::Uextend => {
-                    if !src_ty.is_int() || !dst_ty.is_int() || src_ty.bits() >= dst_ty.bits() {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: format!("int src ({}) < int dst ({})", src_ty.0, dst_ty.0),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
+            WidthRule::EqualTotalBits => {
+                // 向量总位宽相同（经 TypeStore 查 len × elem bits）；非向量不比较
+                let Some(ctx) = &self.ctx else {
+                    return;
+                };
+                let store = ctx.borrow();
+                let vector_bits = |ty: TypeId| match store.get(ty) {
+                    TypeEntry::Vector { elem, len } => match store.get(*elem) {
+                        TypeEntry::Int { bits } => Some(bits * len),
+                        TypeEntry::Float { bits } => Some(*bits as u32 * len),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match (vector_bits(src_ty), vector_bits(dst_ty)) {
+                    (Some(s), Some(d)) => s == d,
+                    _ => true,
                 }
-                Opcode::Ireduce => {
-                    if !src_ty.is_int() || !dst_ty.is_int() || src_ty.bits() <= dst_ty.bits() {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: format!("int src ({}) > int dst ({})", src_ty.0, dst_ty.0),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Fptrunc => {
-                    if !src_ty.is_float() || !dst_ty.is_float() || src_ty.bits() <= dst_ty.bits() {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: format!(
-                                "float src ({}) > float dst ({})",
-                                src_ty.0, dst_ty.0
-                            ),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Fpext => {
-                    if !src_ty.is_float() || !dst_ty.is_float() || src_ty.bits() >= dst_ty.bits() {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: format!(
-                                "float src ({}) < float dst ({})",
-                                src_ty.0, dst_ty.0
-                            ),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Fptosi | Opcode::Fptoui => {
-                    if !src_ty.is_float() || !dst_ty.is_int() {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: "float src → int dst".to_string(),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Sitofp | Opcode::Uitofp => {
-                    if !src_ty.is_int() || !dst_ty.is_float() {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: "int src → float dst".to_string(),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Ptrtoint => {
-                    if !self.is_pointer_ty(src_ty) || !dst_ty.is_int() {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: "ptr src → int dst".to_string(),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Inttoptr => {
-                    if !src_ty.is_int() || !self.is_pointer_ty(dst_ty) {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: "int src → ptr dst".to_string(),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Bitcast => {
-                    // 同位宽（int↔float）；向量/指针用 size_bytes（bits() 对复合类型返回 0）
-                    let (s, d) = if let Some(ctx) = &self.ctx {
-                        let store = ctx.borrow();
-                        (
-                            store.size_bytes(src_ty) as u64,
-                            store.size_bytes(dst_ty) as u64,
-                        )
-                    } else {
-                        (src_ty.bits() as u64, dst_ty.bits() as u64)
-                    };
-                    if s != d {
-                        self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                            inst,
-                            expected: format!("same bit-width ({} = {})", src_ty.0, dst_ty.0),
-                            found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                        });
-                    }
-                }
-                Opcode::Vbitcast => {
-                    // 向量总位宽相同（经 TypeStore 查 len × elem bits）
-                    if let Some(ctx) = &self.ctx {
-                        let store = ctx.borrow();
-                        let vector_bits = |ty: TypeId| match store.get(ty) {
-                            TypeEntry::Vector { elem, len } => match store.get(*elem) {
-                                TypeEntry::Int { bits } => Some(bits * len),
-                                TypeEntry::Float { bits } => Some(*bits as u32 * len),
-                                _ => None,
-                            },
-                            _ => None,
-                        };
-                        if let (Some(s), Some(d)) = (vector_bits(src_ty), vector_bits(dst_ty))
-                            && s != d
-                        {
-                            self.errors.push(VerifyError::ConversionBitWidthMismatch {
-                                inst,
-                                expected: format!("same total width ({} = {})", s, d),
-                                found: format!("t{} → t{}", src_ty.0, dst_ty.0),
-                            });
-                        }
-                    }
-                }
-                _ => {}
             }
-        }
-
-        // load/store 指针语义
-        if matches!(op, Opcode::Load | Opcode::Fload)
-            && let Some(&addr_ty) = instruction.operands.first().and_then(|v| defined.get(v))
-            && !self.is_pointer_ty(addr_ty)
-        {
-            self.errors.push(VerifyError::LoadAddrNotPointer { inst });
-        }
-        // load 结果类型无大小（opaque/metadata 等占位类型）——LLVM 拒绝
-        if matches!(op, Opcode::Load | Opcode::Fload)
-            && let Some(rt) = instruction.results.first().and_then(|v| defined.get(v))
-            && let Some(ctx) = &self.ctx
-            && ctx.borrow().size_bytes(*rt) == 0
-        {
-            self.errors.push(VerifyError::TypeMismatch {
+        };
+        if !src_ok || !dst_ok || !width_ok {
+            let (expected, found) = conversion_expectation(&rule, src_ty, dst_ty);
+            self.errors.push(VerifyError::ConversionBitWidthMismatch {
                 inst,
-                expected: "loadable type with nonzero size".into(),
-                found: format!("type {rt:?} has no size (opaque/placeholder)"),
+                expected,
+                found,
             });
-        }
-        if matches!(op, Opcode::Store | Opcode::Fstore)
-            && instruction.operands.len() >= 2
-            && let Some(&addr_ty) = instruction.operands.get(1).and_then(|v| defined.get(v))
-            && !self.is_pointer_ty(addr_ty)
-        {
-            self.errors.push(VerifyError::StoreAddrNotPointer { inst });
-        }
-
-        // Call 低配检查：call 至少 1 个操作数（callee 指针）；call_indirect 首操作数须指针
-        if matches!(op, Opcode::Call | Opcode::CallIndirect) {
-            if instruction.operands.is_empty() {
-                self.errors.push(VerifyError::CallInvalidTarget {
-                    inst,
-                    detail: "no callee operand".to_string(),
-                });
-            } else if matches!(op, Opcode::CallIndirect)
-                && let Some(&callee_ty) = defined.get(&instruction.operands[0])
-                && !self.is_pointer_ty(callee_ty)
-            {
-                self.errors.push(VerifyError::CallInvalidTarget {
-                    inst,
-                    detail: "call_indirect callee must be a pointer".to_string(),
-                });
-            }
         }
     }
 

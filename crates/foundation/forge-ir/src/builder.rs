@@ -403,6 +403,35 @@ impl FunctionBuilder {
     ) -> Value {
         self.emit(opcode, operands, immediates, &[result_ty], flags)[0]
     }
+
+    /// debug-only：按 `ops.toml` 声明的 `type_rule` 检查指令形状
+    /// （与 `Verifier` 共用 `type_rules::check_shape`，不是第二份实现）。
+    ///
+    /// **当前未在 `emit` 里调用**——实证冲突（2026-09-14）：builder 刻意允许
+    /// "混合宽度操作数 + 结果类型 upcast"（`iadd(i8, i64) → i64`，见
+    /// `tests::test_int_binary_upcast_result_ty` 等 5 个测试），而 verifier 的
+    /// `BinopSame` 规则要求两个操作数同类型。二者职责不同：builder 是宽松构造层
+    /// （类别维度由各方法的 `assert!(t.is_int())` 把关，比 verifier 更严），
+    /// verifier 是严格校验层。保留本函数作为**可选工具**，不在发射路径上强制。
+    #[cfg(debug_assertions)]
+    #[allow(dead_code)]
+    fn debug_check_shape(&self, opcode: Opcode, operands: &[Value], result_tys: &[TypeId]) {
+        let operand_tys: Vec<Option<TypeId>> = operands
+            .iter()
+            .map(|v| self.func.dfg.value_type(*v))
+            .collect();
+        let violations = crate::type_rules::check_shape(
+            opcode,
+            &operand_tys,
+            result_tys.first().copied(),
+            &|t| self.func.types.borrow().is_aggregate(t),
+        );
+        assert!(
+            violations.is_empty(),
+            "builder 发射了违反类型规则的 {opcode:?}：{violations:?}\
+             （规则族声明在 ops.toml 的 type_rule；故意构造非法 IR 请用 dfg.make_inst）"
+        );
+    }
     fn type_of(&self, v: Value) -> TypeId {
         self.func
             .dfg

@@ -59,6 +59,7 @@ pub mod opcode;
 pub mod string_pool;
 pub mod symbol;
 pub mod terminator;
+pub mod type_rules;
 pub mod types;
 pub mod use_list;
 pub mod verify;
