@@ -9,8 +9,8 @@
 //! 3. `TermKind` 判别与 `successors`/`args_to` 语义一致。
 
 use forge_ir::{
-    Block, CallConv, FuncRef, Function, FunctionSignature, TermKind, Terminator, TypeContext,
-    TypeId, Value,
+    Block, CallConv, FuncRef, Function, FunctionSignature, Opcode, TermKind, TypeContext, TypeId,
+    Value,
 };
 
 /// 构造一个未终止的空壳函数：入口块 + 两个带 i32 参数的块。
@@ -81,14 +81,13 @@ fn ret_switch_unreachable_write_read_back() {
     let cases: [(i64, Block, &[Value]); 1] = [(7, b2, &case_args)];
     func.switch(b0, v, b1, [v], &cases);
     assert_eq!(func.dfg.term_kind(b0), Some(TermKind::Switch));
-    let (disc, default_block, default_args, read_cases) =
-        func.dfg.term_switch(b0).expect("switch 投影");
-    assert_eq!((disc, default_block), (v, b1));
-    assert_eq!(default_args, &[v]);
-    assert_eq!(read_cases.len(), 1);
-    assert_eq!(read_cases[0].0, 7);
-    assert_eq!(read_cases[0].1, b2);
-    assert_eq!(read_cases[0].2.as_slice(), &[v][..]);
+    let view = func.dfg.term_switch(b0).expect("switch 投影");
+    assert_eq!((view.discriminant, view.default_block), (v, b1));
+    assert_eq!(view.default_args, &[v]);
+    assert_eq!(view.cases.len(), 1);
+    assert_eq!(view.cases[0].value, 7);
+    assert_eq!(view.cases[0].target, b2);
+    assert_eq!(view.cases[0].args, &[v]);
     assert!(func.dfg.block_successors(b0).contains(&b1));
     assert!(func.dfg.block_successors(b0).contains(&b2));
 
@@ -150,14 +149,41 @@ fn terminator_writes_keep_use_def_fresh() {
     assert!(func.use_lists.verify(&func.dfg).is_ok());
 }
 
-/// 种类判别与实际变体一致（切换表示时这条最容易悄悄漂移）。
+/// **S4 主体的核心不变量**：终结符是 `dfg.insts` 里的一条指令（因此 use-def
+/// 天然完整），但**不在 `inst_order` 里**（块内指令列表语义不变）。
+#[test]
+fn terminator_is_an_inst_outside_inst_order() {
+    let (mut func, b0, b1, _b2, v) = fixture();
+    func.jump(b0, b1, [v]);
+
+    let term = func.dfg.block_terminator(b0).expect("终结符指令");
+    assert_eq!(func.dfg.insts[term.0 as usize].opcode, Opcode::Jmp);
+    assert!(
+        !func.dfg.blocks[b0.0 as usize].inst_order.contains(&term),
+        "终结符不进 inst_order（块内指令列表只含非终结符指令）"
+    );
+    // 终结符用值就是它的操作数：use-def 里可见、可按普通指令 RAUW
+    assert_eq!(func.use_lists.use_count(v), 1);
+    assert_eq!(func.use_lists.user_insts(v), vec![term]);
+    assert_eq!(func.dfg.insts[term.0 as usize].block, b0);
+
+    // 重写终结符：旧指令被墓碑化、新指令接替（同一块只留一条终结符）
+    func.ret(b0, [v]);
+    let term2 = func.dfg.block_terminator(b0).expect("新终结符指令");
+    assert_ne!(term, term2);
+    assert_eq!(func.dfg.insts[term.0 as usize].opcode, Opcode::Nop);
+    assert_eq!(func.dfg.insts[term2.0 as usize].opcode, Opcode::Ret);
+    assert_eq!(func.use_lists.use_count(v), 1, "旧指令的 use 项已摘除");
+    assert!(func.use_lists.verify(&func.dfg).is_ok());
+    // （不跑完整 Verifier：本夹具的另两个块未终止，会用块参数规则报多入口）
+}
+
+/// 种类判别与 opcode 一致（判别表本体在 `terminator.rs` 单测里与 ops.toml 对账）。
 #[test]
 fn term_kind_matches_variant() {
-    assert_eq!(
-        Terminator::Unreachable.kind(),
-        TermKind::Unreachable,
-        "Unreachable"
-    );
+    let (mut func, b0, _b1, _b2, _v) = fixture();
+    func.unreachable(b0);
+    assert_eq!(func.dfg.term_kind(b0), Some(TermKind::Unreachable));
     assert!(TermKind::Branch.has_multiple_successors());
     assert!(TermKind::Switch.has_multiple_successors());
     assert!(TermKind::Invoke.has_multiple_successors());

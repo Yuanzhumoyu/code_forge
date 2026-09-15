@@ -138,10 +138,10 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             }
         } else if let Some((target, _)) = func.dfg.term_jump(block_id) {
             push_reachable!(target);
-        } else if let Some((_, default_block, _, cases)) = func.dfg.term_switch(block_id) {
-            push_reachable!(default_block);
-            for (_, target, _) in cases {
-                push_reachable!(*target);
+        } else if let Some(view) = func.dfg.term_switch(block_id) {
+            push_reachable!(view.default_block);
+            for case in &view.cases {
+                push_reachable!(case.target);
             }
         }
     }

@@ -14,14 +14,15 @@ use super::data_layout::TargetTriple;
 use super::debug_info::DebugInfo;
 use super::dfg::{BlockData, DataFlowGraph, Instruction};
 use super::entity::*;
+use super::immediate::Immediate;
 use super::loop_info::LoopForest;
 use super::metadata::{AttachedMetadata, MetadataStore};
 use super::opcode::Opcode;
 use super::string_pool::InternedStr;
 use super::symbol::{Comdat, ComdatId, ComdatKind, SymbolInfo};
-use super::terminator::Terminator;
+use super::terminator::TermKind;
 use super::types::{CallConv, FunctionSignature, TypeContext};
-use super::use_list::{UseLists, UseSite};
+use super::use_list::UseLists;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -377,12 +378,10 @@ impl Function {
     pub fn predecessors(&self) -> &SecondaryMap<Block, Vec<Block>> {
         self.analysis.predecessors.get_or_init(|| {
             let mut preds: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
-            for (block, bd) in self.dfg.blocks() {
+            for (block, _bd) in self.dfg.blocks() {
                 // CFG 构造容忍未终止块（校验器要在坏 IR 上跑）：无终结符 ⇒ 无出边
-                if let Some(term) = bd.terminator_opt() {
-                    for succ in term.successors() {
-                        preds.get_mut_or_default(succ).push(block);
-                    }
+                for succ in self.dfg.block_successors(block) {
+                    preds.get_mut_or_default(succ).push(block);
                 }
             }
             preds
@@ -393,13 +392,8 @@ impl Function {
     pub fn successors(&self) -> &SecondaryMap<Block, Vec<Block>> {
         self.analysis.successors.get_or_init(|| {
             let mut succs: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
-            for (block, bd) in self.dfg.blocks() {
-                succs.insert(
-                    block,
-                    bd.terminator_opt()
-                        .map(|t| t.successors())
-                        .unwrap_or_default(),
-                );
+            for (block, _bd) in self.dfg.blocks() {
+                succs.insert(block, self.dfg.block_successors(block));
             }
             succs
         })
@@ -431,56 +425,52 @@ impl Function {
     // 原子 IR 修改原语（保持 use_lists 新鲜）
     // ============================================================
 
-    /// 设置块终结符并**同步 use-lists**。
+    /// 设置块终结符并**同步 use-lists**（低层：编码成终结符指令）。
     ///
-    /// **crate 内部低层入口**（S4-d 收口）：外部 crate 无法构造 `Terminator`，
-    /// 一律走下面按形式命名的写入口（`jump`/`branch`/`ret`/…）。
-    /// S4 主体（终结符并入指令流）会把本函数的实现体换成"发射终结符指令"，
-    /// 调用点不动。
-    pub(crate) fn set_terminator(&mut self, block: Block, term: Terminator) {
-        // 按**当前**（旧）终结符的用值精确摘除 use 项，避免全表扫描
-        self.use_lists.remove_terminator(block, &self.dfg);
-        self.dfg.set_terminator(block, term);
-        self.use_lists.record_terminator(block, &self.dfg);
-    }
-
-    /// 就地改写终结符并**自动重登记 use 项**：`f` 拿到 `&mut Terminator`
-    /// 随便改（改实参、增删用值），返回后 use-def 与 DFG 保证一致。
-    ///
-    /// **crate 内部**：它是按形式写入口的实现基础（参数带 `Terminator`，
-    /// 外部无法构造）。外部要用 [`Function::set_return_values`] /
-    /// [`Function::retarget_terminator`] / [`Function::replace_terminator_args`]。
-    pub(crate) fn rewrite_terminator(
+    /// **crate 内部低层入口**：调用方一律走下面按形式命名的写入口
+    /// （`jump`/`branch`/`ret`/…），它们负责拼好 operands/immediates。
+    pub(crate) fn set_terminator(
         &mut self,
         block: Block,
-        f: impl FnOnce(&mut Terminator),
-    ) -> usize {
-        if let Some(term) = self.dfg.block_terminator_mut(block) {
-            f(term);
+        opcode: Opcode,
+        operands: SmallVec<[Value; 4]>,
+        immediates: SmallVec<[crate::Immediate; 4]>,
+    ) {
+        // 按**旧**终结符指令的操作数精确摘除 use 项（含结果值防御性清理）
+        if let Some(old) = self.dfg.block_terminator(block) {
+            self.use_lists.remove_inst(&self.dfg, old);
+            for &r in self.dfg.inst_results(old) {
+                self.use_lists.remove_value(r);
+            }
         }
-        self.refresh_terminator_uses(block)
+        self.dfg
+            .set_terminator(block, opcode, operands.clone(), immediates);
+        let inst = self.dfg.block_terminator(block).expect("刚写入终结符指令");
+        self.use_lists.record_inst(inst, &operands);
+    }
+
+    /// 终结符被就地改写操作数后重登记其 use 项。
+    pub(crate) fn refresh_terminator_inst_uses(&mut self, block: Block) -> usize {
+        let Some(inst) = self.dfg.block_terminator(block) else {
+            return 0;
+        };
+        self.refresh_inst_uses(inst)
     }
 
     // ============================================================
-    // 终结符按形式的写入口（S4-d）
+    // 终结符按形式的写入口
     // ============================================================
     //
-    // 调用方**不要**自己拼 `Terminator`：用下面这些按形式命名的写入口。
-    // 这样 S4 主体（终结符并入指令流、删 `Terminator`）只需要重写这些函数的
-    // 实现体，全部构造点原样不动；`set_terminator(Terminator)` 也随之收成
-    // crate 内部（外部已无法构造 `Terminator`）。
+    // 终结符是一条指令：这里负责把每种形式**编码**成
+    // (opcode, operands, immediates)，编码约定与 `DataFlowGraph` 的解码访问器
+    // 一一对应（另见 `ops.toml` 的「终结符」节）。
     // 所有写入口统一走 `set_terminator` ⇒ use-def 始终新鲜。
 
     /// 无条件跳转：`block: jump target(args)`。
     pub fn jump(&mut self, block: Block, target: Block, args: impl AsRef<[Value]>) {
-        self.set_terminator(
-            block,
-            Terminator::Jump {
-                target,
-                args: args.as_ref().iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
-        );
+        let operands: SmallVec<[Value; 4]> = args.as_ref().iter().copied().collect();
+        let immediates = smallvec::smallvec![Immediate::Block(target)];
+        self.set_terminator(block, Opcode::Jmp, operands, immediates);
     }
 
     /// 条件分支：`block: br cond, then(then_args), else(else_args)`。
@@ -493,37 +483,38 @@ impl Function {
         else_block: Block,
         else_args: impl AsRef<[Value]>,
     ) {
-        self.set_terminator(
-            block,
-            Terminator::Branch {
-                cond,
-                then_block,
-                then_args: then_args.as_ref().iter().copied().collect(),
-                else_block,
-                else_args: else_args.as_ref().iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
-        );
+        let then_args = then_args.as_ref();
+        let else_args = else_args.as_ref();
+        let mut operands: SmallVec<[Value; 4]> =
+            SmallVec::with_capacity(1 + then_args.len() + else_args.len());
+        operands.push(cond);
+        operands.extend(then_args.iter().copied());
+        operands.extend(else_args.iter().copied());
+        let immediates = smallvec::smallvec![
+            Immediate::Block(then_block),
+            Immediate::Block(else_block),
+            Immediate::Uint(then_args.len() as u64),
+            Immediate::Uint(else_args.len() as u64),
+        ];
+        self.set_terminator(block, Opcode::Br, operands, immediates);
     }
 
     /// 返回：`block: ret values`。
     pub fn ret(&mut self, block: Block, values: impl AsRef<[Value]>) {
-        self.set_terminator(
-            block,
-            Terminator::Return {
-                values: values.as_ref().iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
-        );
+        let operands: SmallVec<[Value; 4]> = values.as_ref().iter().copied().collect();
+        self.set_terminator(block, Opcode::Ret, operands, SmallVec::new());
     }
 
     /// 改写返回实参（聚合展开用；保留 metadata）。
     pub fn set_return_values(&mut self, block: Block, values: impl AsRef<[Value]>) {
-        self.rewrite_terminator(block, |term| {
-            if let Terminator::Return { values: slots, .. } = term {
-                *slots = values.as_ref().iter().copied().collect();
-            }
-        });
+        let Some(inst) = self.dfg.block_terminator(block) else {
+            return;
+        };
+        if self.dfg.term_kind(block) != Some(TermKind::Return) {
+            return;
+        }
+        self.dfg.insts[inst.0 as usize].operands = values.as_ref().iter().copied().collect();
+        self.refresh_terminator_inst_uses(block);
     }
 
     /// 多路分支：`block: switch discriminant, default(default_args)[cases…]`。
@@ -535,26 +526,28 @@ impl Function {
         default_args: impl AsRef<[Value]>,
         cases: &[(i64, Block, &[Value])],
     ) {
-        #[allow(clippy::type_complexity)]
-        let cases_sv: SmallVec<[(i64, Block, SmallVec<[Value; 2]>); 4]> = cases
-            .iter()
-            .map(|(v, b, args)| (*v, *b, args.iter().copied().collect()))
-            .collect();
-        self.set_terminator(
-            block,
-            Terminator::Switch {
-                discriminant,
-                default_block,
-                default_args: default_args.as_ref().iter().copied().collect(),
-                cases: cases_sv,
-                metadata: SmallVec::new(),
-            },
-        );
+        let default_args = default_args.as_ref();
+        let total: usize =
+            default_args.len() + cases.iter().map(|(_, _, a)| a.len()).sum::<usize>();
+        let mut operands: SmallVec<[Value; 4]> = SmallVec::with_capacity(1 + total);
+        operands.push(discriminant);
+        operands.extend(default_args.iter().copied());
+        let mut immediates: SmallVec<[Immediate; 4]> = SmallVec::with_capacity(3 + cases.len() * 3);
+        immediates.push(Immediate::Block(default_block));
+        immediates.push(Immediate::Uint(default_args.len() as u64));
+        immediates.push(Immediate::Uint(cases.len() as u64));
+        for (val, target, args) in cases {
+            operands.extend(args.iter().copied());
+            immediates.push(Immediate::Int(*val));
+            immediates.push(Immediate::Block(*target));
+            immediates.push(Immediate::Uint(args.len() as u64));
+        }
+        self.set_terminator(block, Opcode::Switch, operands, immediates);
     }
 
     /// 显式不可达：`block: unreachable`。
     pub fn unreachable(&mut self, block: Block) {
-        self.set_terminator(block, Terminator::Unreachable);
+        self.set_terminator(block, Opcode::Unreachable, SmallVec::new(), SmallVec::new());
     }
 
     /// invoke：`block: invoke callee(args) to normal(normal_args) unwind unwind(unwind_args)`。
@@ -570,35 +563,69 @@ impl Function {
         unwind_block: Block,
         unwind_args: impl AsRef<[Value]>,
     ) {
-        self.set_terminator(
-            block,
-            Terminator::Invoke {
-                callee,
-                args: args.as_ref().iter().copied().collect(),
-                ret_ty,
-                normal_block,
-                normal_args: normal_args.as_ref().iter().copied().collect(),
-                unwind_block,
-                unwind_args: unwind_args.as_ref().iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
-        );
+        let args = args.as_ref();
+        let normal_args = normal_args.as_ref();
+        let unwind_args = unwind_args.as_ref();
+        let mut operands: SmallVec<[Value; 4]> =
+            SmallVec::with_capacity(args.len() + normal_args.len() + unwind_args.len());
+        operands.extend(args.iter().copied());
+        operands.extend(normal_args.iter().copied());
+        operands.extend(unwind_args.iter().copied());
+        let immediates = smallvec::smallvec![
+            Immediate::Func(callee),
+            Immediate::Block(normal_block),
+            Immediate::Block(unwind_block),
+            Immediate::Uint(args.len() as u64),
+            Immediate::Uint(normal_args.len() as u64),
+            Immediate::Uint(unwind_args.len() as u64),
+            Immediate::Type(ret_ty),
+        ];
+        self.set_terminator(block, Opcode::Invoke, operands, immediates);
     }
 
     /// resume：`block: resume value`。
     pub fn resume(&mut self, block: Block, value: Value) {
-        self.set_terminator(
-            block,
-            Terminator::Resume {
-                value,
-                metadata: SmallVec::new(),
-            },
-        );
+        let operands = smallvec::smallvec![value];
+        self.set_terminator(block, Opcode::Resume, operands, SmallVec::new());
     }
 
     /// 把 `block` 终结符中指向 `old_target` 的目标改为 `new_target`（实参原样保留）。
     pub fn retarget_terminator(&mut self, block: Block, old_target: Block, new_target: Block) {
-        self.rewrite_terminator(block, |term| term.retarget(old_target, new_target));
+        let Some(inst) = self.dfg.block_terminator(block) else {
+            return;
+        };
+        let kind = self.dfg.term_kind(block);
+        let imms = &mut self.dfg.insts[inst.0 as usize].immediates;
+        // case 表：immediates[3..] 每 3 个一组 (Int, Block, Uint)
+        let case_count = match imms.get(2) {
+            Some(Immediate::Uint(n)) => *n as usize,
+            _ => 0,
+        };
+        let positions: &[usize] = match kind {
+            Some(TermKind::Jump) => &[0],
+            Some(TermKind::Branch) => &[0, 1],
+            Some(TermKind::Switch) => &[0],
+            Some(TermKind::Invoke) => &[1, 2],
+            _ => &[],
+        };
+        for &pos in positions {
+            if let Some(Immediate::Block(b)) = imms.get_mut(pos)
+                && *b == old_target
+            {
+                *b = new_target;
+            }
+        }
+        if kind == Some(TermKind::Switch) {
+            for c in 0..case_count {
+                let pos = 3 + c * 3 + 1;
+                if let Some(Immediate::Block(b)) = imms.get_mut(pos)
+                    && *b == old_target
+                {
+                    *b = new_target;
+                }
+            }
+        }
+        // 只改了块编号、不动用值：use 项无需变化。
     }
 
     /// 把 `block` 传给 `target` 的实参整体替换为 `args`（不跳向该块则无操作）。
@@ -608,55 +635,103 @@ impl Function {
         target: Block,
         args: impl AsRef<[Value]>,
     ) {
-        let args: SmallVec<[Value; 2]> = args.as_ref().iter().copied().collect();
-        self.rewrite_terminator(block, |term| term.replace_args(target, args));
+        let new_args = args.as_ref();
+        match self.dfg.term_kind(block) {
+            Some(TermKind::Jump) => {
+                if let Some((t, _)) = self.dfg.term_jump(block)
+                    && t == target
+                {
+                    self.jump(block, t, new_args);
+                }
+            }
+            Some(TermKind::Branch) => {
+                let Some((cond, t, targs, e, eargs)) = self.dfg.term_branch(block) else {
+                    return;
+                };
+                if t == target {
+                    let eargs = eargs.to_vec();
+                    self.branch(block, cond, t, new_args, e, &eargs);
+                } else if e == target {
+                    let targs = targs.to_vec();
+                    self.branch(block, cond, t, &targs, e, new_args);
+                }
+            }
+            Some(TermKind::Switch) => {
+                let Some(view) = self.dfg.term_switch(block) else {
+                    return;
+                };
+                let disc = view.discriminant;
+                let default_block = view.default_block;
+                let default_args: Vec<Value> = if default_block == target {
+                    new_args.to_vec()
+                } else {
+                    view.default_args.to_vec()
+                };
+                let mut cases: Vec<(i64, Block, Vec<Value>)> = view
+                    .cases
+                    .iter()
+                    .map(|c| {
+                        let a = if c.target == target {
+                            new_args.to_vec()
+                        } else {
+                            c.args.to_vec()
+                        };
+                        (c.value, c.target, a)
+                    })
+                    .collect();
+                let case_refs: Vec<(i64, Block, &[Value])> = cases
+                    .iter_mut()
+                    .map(|(v, b, a)| (*v, *b, a.as_slice()))
+                    .collect();
+                self.switch(block, disc, default_block, &default_args, &case_refs);
+            }
+            Some(TermKind::Invoke) => {
+                let Some((callee, iargs, ret_ty, n, nargs, u, uargs)) = self.dfg.term_invoke(block)
+                else {
+                    return;
+                };
+                let iargs = iargs.to_vec();
+                let nargs: Vec<Value> = if n == target {
+                    new_args.to_vec()
+                } else {
+                    nargs.to_vec()
+                };
+                let uargs: Vec<Value> = if u == target {
+                    new_args.to_vec()
+                } else {
+                    uargs.to_vec()
+                };
+                self.invoke(block, callee, &iargs, ret_ty, n, &nargs, u, &uargs);
+            }
+            _ => {}
+        }
     }
 
-    /// 就地改写终结符后**重登记**该块的终结符 use 项。
-    ///
-    /// 用于 `Terminator::{retarget, replace_args, remove_arg}` 这类原地修改
-    /// （`retarget` 只改目标块、不动用值，可跳过；`replace_args`/`remove_arg`
-    /// 会改变槽位值或下标 ⇒ 必须调用）。返回重登记的用值个数。
+    /// 重登记该块终结符指令的 use 项（就地改写实参后用）。
     pub fn refresh_terminator_uses(&mut self, block: Block) -> usize {
-        self.use_lists.forget_terminator(block);
-        let n = self.dfg.term_used_values(block).len();
-        self.use_lists.record_terminator(block, &self.dfg);
-        n
+        self.refresh_terminator_inst_uses(block)
     }
 
     /// RAUW：把 `old` 的所有使用替换为 `new`，同步更新 DFG 操作数与 use-lists。
     /// 返回被替换的使用数量。
     ///
-    /// **覆盖面 = use-def 的覆盖面**：指令操作数与终结符用值（分支/跳转实参、
-    /// `switch` 判别值与 case 实参、`ret` 返回值、`invoke`/`resume` 用值）都在内
-    /// （S4-a 之前终结符不在 use-lists 里，这里改不到——历史缺口已消除）。
+    /// 终结符就是指令，所以"所有使用"天然包括分支/跳转实参、`switch` 判别值与
+    /// case 实参、`ret` 返回值、`invoke`/`resume` 用值（S4 主体之前它们不在
+    /// use-lists 里，这里改不到——该缺口已随表示归一消失）。
     /// 需要一次替换多组值时用 [`Function::apply_replacements`]。
     pub fn replace_all_uses(&mut self, old: Value, new: Value) -> usize {
-        let uses: Vec<(UseSite, u32)> = self
+        let uses: Vec<(Inst, u32)> = self
             .use_lists
             .uses(old)
             .iter()
-            .map(|u| (u.site, u.operand_idx))
+            .map(|u| (u.user, u.operand_idx))
             .collect();
         let count = uses.len();
-        for (site, operand_idx) in uses {
-            match site {
-                UseSite::Inst(user) => {
-                    if let Some(inst) = self.dfg.insts.get_mut(user.0 as usize)
-                        && let Some(slot) = inst.operands.get_mut(operand_idx as usize)
-                    {
-                        *slot = new;
-                    }
-                }
-                UseSite::Term(block) => {
-                    if let Some(term) = self.dfg.block_terminator_mut(block) {
-                        term.for_each_value_mut(|idx, slot| {
-                            if idx == operand_idx && *slot == old {
-                                *slot = new;
-                            }
-                        });
-                    }
-                }
+        for (user, operand_idx) in uses {
+            if let Some(inst) = self.dfg.insts.get_mut(user.0 as usize)
+                && let Some(slot) = inst.operands.get_mut(operand_idx as usize)
+            {
+                *slot = new;
             }
         }
         self.use_lists.replace_all_uses(old, new);
@@ -775,14 +850,9 @@ impl Function {
     pub fn remove_block_param(&mut self, block: Block, idx: usize) {
         // 1. 先收集前驱（不可变借用结束），再改终结符
         let preds: Vec<Block> = self.predecessors().get(block).cloned().unwrap_or_default();
-        // 2. 清理前驱终结符对应参数位置（删参数会移动后续槽位下标 ⇒ 重登记 use 项）
+        // 2. 清理前驱终结符传给该块的实参（删参数会移动后续槽位下标）
         for pred in preds {
-            if let Some(pd) = self.dfg.blocks.get_mut(pred.0 as usize)
-                && let Some(term) = pd.terminator.as_mut()
-            {
-                term.remove_arg(block, idx);
-            }
-            self.refresh_terminator_uses(pred);
+            self.remove_terminator_arg(pred, block, idx);
         }
         // 3. 从块参数表删除
         let bd = &mut self.dfg.blocks[block.0 as usize];
@@ -794,13 +864,93 @@ impl Function {
         }
     }
 
-    /// 批量替换：把 `replacements`（old → new）一次性应用到所有指令操作数与
-    /// 终结符用值，**同步维护 use-lists**（单趟语义：不追溯链式映射——
-    /// 与 pass 现有批量替换行为一致）。
+    /// 从 `block` 终结符传给 `target` 的实参里删掉第 `idx` 个（并同步 arg-count）。
+    ///
+    /// 终结符是编码成指令的，删一个实参会移动后续下标 ⇒ 与其就地 splice，
+    /// 不如**解码 → 改 → 按形式写回**：写入口顺带保证 use-def 新鲜。
+    pub(crate) fn remove_terminator_arg(&mut self, block: Block, target: Block, idx: usize) {
+        match self.dfg.term_kind(block) {
+            Some(TermKind::Jump) => {
+                if let Some((t, args)) = self.dfg.term_jump(block)
+                    && t == target
+                    && idx < args.len()
+                {
+                    let mut new_args = args.to_vec();
+                    new_args.remove(idx);
+                    self.jump(block, t, &new_args);
+                }
+            }
+            Some(TermKind::Branch) => {
+                let Some((cond, t, targs, e, eargs)) = self.dfg.term_branch(block) else {
+                    return;
+                };
+                let mut new_targs = targs.to_vec();
+                let mut new_eargs = eargs.to_vec();
+                if t == target && idx < new_targs.len() {
+                    new_targs.remove(idx);
+                } else if e == target && idx < new_eargs.len() {
+                    new_eargs.remove(idx);
+                } else {
+                    return;
+                }
+                self.branch(block, cond, t, &new_targs, e, &new_eargs);
+            }
+            Some(TermKind::Switch) => {
+                let Some(view) = self.dfg.term_switch(block) else {
+                    return;
+                };
+                let disc = view.discriminant;
+                let default_block = view.default_block;
+                let mut default_args = view.default_args.to_vec();
+                if default_block == target && idx < default_args.len() {
+                    default_args.remove(idx);
+                }
+                let mut cases: Vec<(i64, Block, Vec<Value>)> = view
+                    .cases
+                    .iter()
+                    .map(|c| {
+                        let mut a = c.args.to_vec();
+                        if c.target == target && idx < a.len() {
+                            a.remove(idx);
+                        }
+                        (c.value, c.target, a)
+                    })
+                    .collect();
+                let case_refs: Vec<(i64, Block, &[Value])> = cases
+                    .iter_mut()
+                    .map(|(v, b, a)| (*v, *b, a.as_slice()))
+                    .collect();
+                self.switch(block, disc, default_block, &default_args, &case_refs);
+            }
+            Some(TermKind::Invoke) => {
+                let Some((callee, iargs, ret_ty, n, nargs, u, uargs)) = self.dfg.term_invoke(block)
+                else {
+                    return;
+                };
+                let iargs = iargs.to_vec();
+                let mut nargs = nargs.to_vec();
+                let mut uargs = uargs.to_vec();
+                if n == target && idx < nargs.len() {
+                    nargs.remove(idx);
+                } else if u == target && idx < uargs.len() {
+                    uargs.remove(idx);
+                } else {
+                    return;
+                }
+                self.invoke(block, callee, &iargs, ret_ty, n, &nargs, u, &uargs);
+            }
+            _ => {}
+        }
+    }
+
+    /// 批量替换：把 `replacements`（old → new）一次性应用到所有指令操作数
+    /// （**终结符就是指令，天然包含在内**），**同步维护 use-lists**
+    /// （单趟语义：不追溯链式映射——与 pass 现有批量替换行为一致）。
     /// 返回被替换的操作数总数。
     pub fn apply_replacements(&mut self, replacements: &HashMap<Value, Value>) -> usize {
         let mut count = 0;
-        // 指令操作数 + use-lists 同步（dfg 与 use_lists 为不相交字段，可同时可变借用）
+        // 指令操作数（含终结符指令）+ use-lists 同步
+        //（dfg 与 use_lists 为不相交字段，可同时可变借用）
         for (idx, inst) in self.dfg.insts.iter_mut().enumerate() {
             if matches!(inst.opcode, Opcode::Nop) {
                 continue;
@@ -810,36 +960,11 @@ impl Function {
                 if let Some(&replacement) = replacements.get(operand) {
                     let old = *operand;
                     *operand = replacement;
-                    self.use_lists.replace_operand(
-                        old,
-                        replacement,
-                        UseSite::Inst(inst_id),
-                        operand_idx as u32,
-                    );
+                    self.use_lists
+                        .replace_operand(old, replacement, inst_id, operand_idx as u32);
                     count += 1;
                 }
             }
-        }
-        // 终结符用值：按规范序平坦改写（不再逐变体 match —— 遍历序只有一处定义）
-        let mut touched: Vec<Block> = Vec::new();
-        for i in 0..self.dfg.blocks.len() {
-            let mut changed = false;
-            if let Some(term) = self.dfg.block_terminator_mut(Block(i as u32)) {
-                term.for_each_value_mut(|_, slot| {
-                    if let Some(&replacement) = replacements.get(slot) {
-                        *slot = replacement;
-                        count += 1;
-                        changed = true;
-                    }
-                });
-            }
-            if changed {
-                touched.push(Block(i as u32));
-            }
-        }
-        // 值变了 ⇒ 旧 use 项指向 old，必须按块重登记（下标序不变）
-        for block in touched {
-            self.refresh_terminator_uses(block);
         }
         count
     }

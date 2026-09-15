@@ -75,8 +75,7 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                 continue;
             }
             let only_load_store = uses.iter().all(|u| {
-                let Some(user_inst) = u.site.as_inst().map(|i| &func.dfg.insts[i.0 as usize])
-                else {
+                let Some(user_inst) = func.dfg.insts.get(u.user.0 as usize) else {
                     return false;
                 };
                 matches!(user_inst.opcode, Opcode::Load | Opcode::Store)
@@ -89,9 +88,7 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
             let mut load_list = Vec::new();
 
             for u in uses {
-                let Some(user) = u.site.as_inst() else {
-                    continue;
-                };
+                let user = u.user;
                 let user_inst = &func.dfg.insts[user.0 as usize];
                 let user_block = user_inst.block;
                 match user_inst.opcode {

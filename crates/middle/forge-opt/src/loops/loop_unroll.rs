@@ -303,18 +303,30 @@ fn emit_cloned_terminator(
             );
         }
         Some(TermKind::Switch) => {
-            let (disc, default_block, default_args, cases) =
-                func.dfg.term_switch(src).expect("Switch 投影");
-            let m_default: Vec<Value> = default_args.iter().map(|v| rv(*v)).collect();
-            let owned: Vec<(i64, Block, Vec<Value>)> = cases
+            let view = func.dfg.term_switch(src).expect("Switch 投影");
+            let m_default: Vec<Value> = view.default_args.iter().map(|v| rv(*v)).collect();
+            let owned: Vec<(i64, Block, Vec<Value>)> = view
+                .cases
                 .iter()
-                .map(|(val, blk, args)| (*val, rb(*blk), args.iter().map(|v| rv(*v)).collect()))
+                .map(|c| {
+                    (
+                        c.value,
+                        rb(c.target),
+                        c.args.iter().map(|v| rv(*v)).collect(),
+                    )
+                })
                 .collect();
             let refs: Vec<(i64, Block, &[Value])> = owned
                 .iter()
                 .map(|(val, blk, args)| (*val, *blk, args.as_slice()))
                 .collect();
-            func.switch(dst, rv(disc), rb(default_block), &m_default, &refs);
+            func.switch(
+                dst,
+                rv(view.discriminant),
+                rb(view.default_block),
+                &m_default,
+                &refs,
+            );
         }
         Some(TermKind::Return) => {
             let values = func.dfg.term_return_values(src).expect("Return 投影");

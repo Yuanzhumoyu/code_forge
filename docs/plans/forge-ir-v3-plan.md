@@ -98,7 +98,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
-| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写/读面收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类、终结符字段私有化、未终止成为显式 `Option`、按形式写入口 + `TermKind` 投影访问器；**forge-opt 已 0 处引用 `Terminator`**）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
+| S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
@@ -654,6 +654,48 @@ S4-e 之后外部 crate 的表示依赖已清零；本步把 **forge-ir 自己**
 
 **验证**：workspace 1400 passed / 0 failed / 19 ignored（72 suites，用例数不变）；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+
+### S4（主体）：终结符并入指令流（2026-09-15）
+
+八个前置子项（§6 上）把表示相关的调用点收进少数函数之后，主体在**一次提交**内完成：
+
+- **表示**：终结符不再是枚举——它就是一条指令（`Opcode::{Ret, Jmp, Br, Switch,
+  Unreachable, Invoke, Resume}`），存 `DataFlowGraph::insts`，由
+  `BlockData.terminator: Option<Inst>` 引用。**不进 `inst_order`**：块内指令列表
+  仍只含非终结符指令，因此"遍历块内指令"的全部既有语义与约 40 处迭代点不变
+  （这是把 349 处引用的迁移面压到可控范围的关键取舍）。
+- **编码**（`ops.toml` 的「终结符」节与 `dfg.rs` 解码一一对应，且解码处自校验）：
+  `Ret` operands=返回值；`Jmp` operands=实参 + `[Block(target)]`；`Br`
+  operands=`[cond, then_args…, else_args…]` + `[Block(then), Block(else),
+  Uint(then_argc), Uint(else_argc)]`；`Switch` operands=`[disc, default_args…,
+  case_args…]` + `[Block(default), Uint(default_argc), Uint(case_count),
+  (Int, Block, Uint(argc))…]`；`Invoke` 同形带 `Func`/`Type(ret_ty)`；`Resume`
+  operands=`[value]`。**不新增 immediate 变体、不新增 arena**——`Immediate::Block`/
+  `Type` 早已存在，case 表内联进 immediates。
+- **读**：`TermKind` 由 opcode 派生（`terminator::term_kind_of`，并有守卫与
+  `ops.toml` 的 `category = "terminator"` 对账）；DFG 的投影访问器全部改为从
+  终结符指令解码；`term_switch` 返回结构化 `SwitchView`（case 表来自 immediates）。
+- **写**：按形式写入口直接编码指令；`set_terminator` 负责"墓碑化旧终结符指令 +
+  发射新指令 + 同步 use-lists"；`retarget`/`replace_args`/`remove_arg` 改为
+  "解码 → 改 → 按形式写回"（避免手写操作数 splice）。
+- **use-def 归一**：`UseSite` 与 `record_terminator`/`forget_terminator` 等一并删除
+  ——终结符用值就是那条指令的 operands，`UseLists` 只剩"指令操作数"一条路径，
+  `verify` 的终结符专项检查也随之消失（被"每条指令的操作数都登记"覆盖）。
+  `apply_replacements` 的终结符专项分支同样删除。
+- **边界**：`TargetLowering::lower_terminator` 形参从 `&Terminator` 改为
+  `(dfg, block)`，DSL 生成器改为按 `TermKind` 分派 + 投影取载荷 ⇒ **ISA TOML 与
+  `[[lowering]]` 规则一字未动**；打印（`TerminatorDisplay`）解析器、校验器在 S4-f
+  已经只依赖访问器，本次未改。
+- **顺带**：`ops.toml` 新增 7 条（`category = "terminator"`，variadic + results=0 +
+  type_rule none）；`opcode_table` 的穷举表与分类计数基线同步；forge-tests 的
+  `UNCOVERED_OPS` 登记 7 条（终结符由 `lower_terminator` 路径与 JIT 控制流用例覆盖）；
+  `display_llvm` 的往返比较从"比终结符值"改为"比语义形态"（两侧指令句柄必然不同）。
+
+**验证**：workspace 1394 passed / 0 failed / 19 ignored（72 suites）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+新增守卫 `tests/terminator_api.rs::terminator_is_an_inst_outside_inst_order`
+（终结符是 `insts` 里的指令、**不在** `inst_order`、其操作数在 use-def 里、
+重写后旧指令墓碑化且 use 项摘除）。
 
 ## 7. 参考设计（外部）
 

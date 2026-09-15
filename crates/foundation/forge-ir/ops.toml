@@ -1100,3 +1100,95 @@ category = "other"
 doc = "空操作（删除后的墓碑）"
 operands = 0
 results = 0
+
+# ── 终结符（v3 方案 S4 主体：终结符并入指令流）────────────────────────
+#
+# 终结符不再是独立枚举：它就是**一条指令**——存进 `dfg.insts`，块经
+# `BlockData.terminator: Option<Inst>` 引用，**不进 `inst_order`**
+# （因此"块内指令列表"的既有语义与全部迭代点不变）。
+#
+# 编码约定（唯一事实源 = `dfg.rs` 的 `encode_terminator` 与解码访问器）：
+#   Ret          operands = 返回值（0 个 = void）
+#   Jmp          operands = 目标块实参；immediates = [Block(target)]
+#   Br           operands = [cond, then_args…, else_args…]；
+#                immediates = [Block(then), Block(else), Uint(then_argc), Uint(else_argc)]
+#   Switch       operands = [disc, default_args…, case0_args…, …]；
+#                immediates = [Block(default), Uint(default_argc), Uint(case_count),
+#                              (Int(val), Block(target), Uint(argc))…]
+#   Unreachable  operands = []；immediates = []
+#   Invoke       operands = [args…, normal_args…, unwind_args…]；
+#                immediates = [Func(callee), Block(normal), Block(unwind), Uint(argc),
+#                              Uint(normal_argc), Uint(unwind_argc), Type(ret_ty)]
+#   Resume       operands = [value]；immediates = []
+#
+# 一律 variadic + `results = 0` + `type_rule = "none"`：终结符的操作数形状由
+# 上面这套约定（以及解码访问器）保证，不走逐指令类型规则族。
+[[op]]
+name = "Ret"
+mnemonic = "ret"
+type_rule = "none"
+llvm = "ret"
+category = "terminator"
+doc = "返回（operands 即返回值；0 个 = void）"
+operands = "variadic"
+results = 0
+
+[[op]]
+name = "Jmp"
+mnemonic = "jmp"
+type_rule = "none"
+llvm = "jmp"
+category = "terminator"
+doc = "无条件跳转（operands = 目标块实参；Immediate::Block = 目标）"
+operands = "variadic"
+results = 0
+
+[[op]]
+name = "Br"
+mnemonic = "br"
+type_rule = "none"
+llvm = "br"
+category = "terminator"
+doc = "条件分支（operands = cond + then_args… + else_args…；两个 Block immediate = 目标）"
+operands = "variadic"
+results = 0
+
+[[op]]
+name = "Switch"
+mnemonic = "switch"
+type_rule = "none"
+llvm = "switch"
+category = "terminator"
+doc = "多路分支（operands = disc + default_args… + case_args…；case 表内联在 immediates）"
+operands = "variadic"
+results = 0
+
+[[op]]
+name = "Unreachable"
+mnemonic = "unreachable"
+type_rule = "none"
+llvm = "unreachable"
+category = "terminator"
+doc = "显式不可达（无操作数）"
+operands = 0
+results = 0
+
+[[op]]
+name = "Invoke"
+mnemonic = "invoke"
+type_rule = "none"
+llvm = "invoke"
+category = "terminator"
+doc = "invoke 调用终结符（文本层 P1.1；codegen 报 Unsupported）"
+operands = "variadic"
+results = 0
+
+[[op]]
+name = "Resume"
+mnemonic = "resume"
+type_rule = "none"
+llvm = "resume"
+category = "terminator"
+doc = "重新抛出（文本层 P1.1；codegen 报 Unsupported）"
+operands = 1
+results = 0

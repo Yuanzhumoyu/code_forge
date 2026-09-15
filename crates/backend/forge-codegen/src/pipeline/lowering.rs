@@ -136,9 +136,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             // 已有寄存器到 param_xregs，如循环中块参数 value 作为跳转 arg）
             if let Some(pred_list) = preds.get(info.block) {
                 for pred in pred_list {
-                    let term = func.dfg.block_terminator(*pred);
                     self.map_terminator_args_to_params(
-                        term,
+                        &func.dfg,
+                        *pred,
                         info.block,
                         &mut param_xregs,
                         &info.param_tys,
@@ -161,15 +161,16 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
     pub(crate) fn map_terminator_args_to_params(
         &mut self,
-        term: Option<&Terminator>,
+        dfg: &forge_ir::DataFlowGraph,
+        pred: Block,
         target: Block,
         param_xregs: &mut [XReg],
         param_tys: &[TypeId],
     ) {
-        // 统一经 Terminator::args_to 提取传向 target 的参数（Jump/Branch/
-        // Switch 全覆盖；原实现漏了 Switch 分支）。
-        if let Some(t) = term {
-            let args = t.args_to(target);
+        // 统一经 `term_args_to` 提取传向 target 的参数（Jump/Branch/Switch/
+        // Invoke 全覆盖）。
+        let args = dfg.term_args_to(pred, target);
+        {
             for (i, &arg) in args.iter().enumerate() {
                 if i < param_xregs.len() {
                     // 传参寄存器复用：若 arg 已有映射（典型场景：循环中块参数
@@ -676,16 +677,16 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
         // Lower terminator
         self.ctx.current_clobbers.clear();
-        // 未终止的块是坏 IR：这里**报错**而不是让 fail-closed 的
-        // `BlockData::terminator()` 在编译器里 panic（`finish()` 与校验器本应
+        // 未终止的块是坏 IR：这里**报错**而不是 panic（`finish()` 与校验器本应
         // 已拦住；这是 codegen 侧的兜底，fail-closed 但不崩进程）。
-        let Some(terminator) = block_data.terminator_opt() else {
+        if block_data.terminator_opt().is_none() {
             return Err(IrError::Internal(
                 "IR 含未终止的基本块：无法 lower 终结符".to_string(),
             ));
-        };
+        }
         let mut term_insts = lowering.lower_terminator(
-            terminator,
+            dfg,
+            block,
             &self.value_to_xreg,
             &self.block_map,
             &mut self.ctx,
@@ -707,7 +708,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             self.vcode.push_inst(mi);
         }
 
-        if matches!(block_data.terminator(), Terminator::Return { .. })
+        if dfg.term_kind(block) == Some(forge_ir::TermKind::Return)
             && let Some(vb) = self.vcode.block_mut(vblock_id)
         {
             vb.is_return_block = true;

@@ -15,7 +15,7 @@ use super::inst_flags::InstFlags;
 use super::mem_flags::MemFlags;
 use super::metadata::AttachedMetadata;
 use super::opcode::Opcode;
-use super::terminator::Terminator;
+use super::terminator::TermKind;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -89,37 +89,72 @@ pub struct BlockData {
     pub param_values: SmallVec<[Value; 2]>,
     /// 块内指令的顺序列表 (索引到 DataFlowGraph.insts)
     pub inst_order: Vec<Inst>,
-    /// 终结符 —— `None` = **该块尚未终止**（构造中/坏 IR）。
+    /// 终结符**指令**句柄（v3 方案 S4 主体）。
     ///
-    /// 写入只能经 [`crate::Function::set_terminator`] /
-    /// [`crate::Function::rewrite_terminator`] / [`crate::Function::refresh_terminator_uses`]
-    /// ——它们同步 use-def。字段是 `pub(crate)`：crate 外只能经
-    /// [`BlockData::terminator`] 读（v3 方案 S4-b/S4-c，2026-09-15）。
+    /// 终结符就是一条指令：存 [`DataFlowGraph::insts`]，有 opcode/operands/
+    /// immediates/metadata，**同样进 use-def**；但它**不进 `inst_order`**
+    /// （块内指令列表的语义保持不变：只含非终结符指令）。
     ///
-    /// 之前是 `terminator: Terminator + has_terminator: bool` 两个字段：默认值
-    /// `Terminator::Unreachable` 同时充当"未终止"占位与"显式 unreachable"，
-    /// 只能靠布尔位区分（`BlockData::default()` 之类的构造会静默把"未终止"伪装成
-    /// "显式 unreachable"）。`Option` 把这两件事在类型上分开——"未终止"不再是
-    /// 一个可以被误读为合法终结符的取值。
-    pub(crate) terminator: Option<Terminator>,
+    /// `None` = 该块尚未终止（构建中/坏 IR）：旧表示用"默认 `Unreachable` +
+    /// `has_terminator` 布尔位"编码这件事，会让"漏写终结符"看起来像"显式
+    /// unreachable"；现在两件事在类型上分开。
+    pub(crate) terminator: Option<Inst>,
 }
 
 impl BlockData {
-    /// 终结符。**块未终止则 panic**（fail-closed）。
+    /// 终结符指令句柄。**块未终止则 panic**（fail-closed）。
     ///
     /// "没有终结符"是**构建中/坏 IR** 状态，不是一种终结符：静默回退成
-    /// `Terminator::Unreachable` 正是 S4-c 要消灭的伪装（"漏写终结符"会看起来像
-    /// "显式 unreachable"）。需要容忍该状态的调用方——**校验器**、builder、
-    /// display、解析器的元数据校验——请用 [`BlockData::terminator_opt`]。
-    pub fn terminator(&self) -> &Terminator {
-        self.terminator.as_ref().unwrap_or_else(|| {
-            panic!("块尚未终止（无终结符）：读取方应改用 BlockData::terminator_opt()")
-        })
+    /// `Unreachable` 正是 S4-c 消灭掉的伪装。需要容忍该状态的调用方
+    /// （**校验器**、builder、display、解析器）请用 [`BlockData::terminator_opt`]。
+    pub fn terminator(&self) -> Inst {
+        self.terminator
+            .unwrap_or_else(|| panic!("块尚未终止（无终结符指令）：读取方应改用 terminator_opt()"))
     }
 
-    /// 终结符；`None` = 该块尚未终止（见 [`BlockData::terminator`]）。
-    pub fn terminator_opt(&self) -> Option<&Terminator> {
-        self.terminator.as_ref()
+    /// 终结符指令句柄；`None` = 该块尚未终止（见 [`BlockData::terminator`]）。
+    pub fn terminator_opt(&self) -> Option<Inst> {
+        self.terminator
+    }
+}
+
+/// `switch` 终结符的解码视图（case 表在指令 immediates 里，这里结构化）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwitchView<'a> {
+    /// 判别值。
+    pub discriminant: Value,
+    /// default 目标。
+    pub default_block: Block,
+    /// default 实参。
+    pub default_args: &'a [Value],
+    /// case 表（声明序）。
+    pub cases: Vec<SwitchCaseView<'a>>,
+}
+
+/// `switch` 的单个 case。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwitchCaseView<'a> {
+    /// case 常量。
+    pub value: i64,
+    /// 目标块。
+    pub target: Block,
+    /// 传给目标块的实参。
+    pub args: &'a [Value],
+}
+
+/// 取第 `i` 个 immediate 的块（非 `Block` 则 `None`）。
+fn imm_block(imms: &[Immediate], i: usize) -> Option<Block> {
+    match imms.get(i) {
+        Some(Immediate::Block(b)) => Some(*b),
+        _ => None,
+    }
+}
+
+/// 取第 `i` 个 immediate 的无符号数（非 `Uint` 则 `None`）。
+fn imm_uint(imms: &[Immediate], i: usize) -> Option<usize> {
+    match imms.get(i) {
+        Some(Immediate::Uint(v)) => Some(*v as usize),
+        _ => None,
     }
 }
 
@@ -359,13 +394,38 @@ impl DataFlowGraph {
 
     // === 修改 ===
 
-    /// 写块终结符的**低层原语**：只写字段，不动 use-lists。
+    /// 写块终结符的**低层原语**：把终结符编码成一条指令并挂到块上。
     ///
-    /// crate 内部使用（builder 的终结符发射走 [`crate::Function::set_terminator`]）。
-    /// 外部 crate（forge-opt 等）必须走 `Function::set_terminator`——它才会同步
-    /// use-def；直接写字段会让终结符实参的 use 项失效。
-    pub(crate) fn set_terminator(&mut self, block: Block, term: Terminator) {
-        self.blocks[block.0 as usize].terminator = Some(term);
+    /// 编码约定见 [`DataFlowGraph::term_kind`] 上方的说明 + `ops.toml`。
+    /// 只动 DFG，**不动 use-lists**：调用方（[`crate::Function::set_terminator`]）
+    /// 必须在写前摘除旧用值、写后登记新用值。
+    pub(crate) fn set_terminator(
+        &mut self,
+        block: Block,
+        opcode: Opcode,
+        operands: SmallVec<[Value; 4]>,
+        immediates: SmallVec<[Immediate; 4]>,
+    ) {
+        if let Some(old) = self.blocks[block.0 as usize].terminator.take() {
+            self.remove_inst(old);
+        }
+        let inst = Inst(self.insts.len() as u32);
+        self.insts.push(Instruction {
+            opcode,
+            block,
+            results: SmallVec::new(),
+            operands,
+            immediates,
+            flags: InstFlags::NONE,
+            mem_flags: MemFlags::NONE,
+            metadata: SmallVec::new(),
+            loc: None,
+            isel_strategy: None,
+            param_attrs: SmallVec::new(),
+            fn_attrs: crate::function::FunctionAttributes::NONE,
+        });
+        // **不登记 inst_order**：块内指令列表只含非终结符指令。
+        self.blocks[block.0 as usize].terminator = Some(inst);
     }
 
     pub fn remove_inst(&mut self, inst: Inst) {
@@ -393,6 +453,10 @@ impl DataFlowGraph {
     }
 
     pub fn remove_block(&mut self, block: Block) {
+        // 终结符指令也一并墓碑化（它不在 inst_order 里）
+        if let Some(term) = self.blocks[block.0 as usize].terminator.take() {
+            self.remove_inst(term);
+        }
         // Mark all instructions in this block as Nop
         let insts: Vec<Inst> = std::mem::take(&mut self.blocks[block.0 as usize].inst_order);
         for inst in insts {
@@ -451,54 +515,91 @@ impl DataFlowGraph {
             .unwrap_or(&[])
     }
 
-    /// 块终结符（块不存在或**尚未终止**则 `None`）。
-    pub fn block_terminator(&self, b: Block) -> Option<&Terminator> {
-        self.blocks
-            .get(b.0 as usize)
-            .and_then(|d| d.terminator.as_ref())
+    /// 块终结符的**指令句柄**（块不存在或尚未终止则 `None`）。
+    ///
+    /// S4 主体起终结符就是一条指令（存 `insts`，不进 `inst_order`）；
+    /// 读取请优先用投影访问器（[`DataFlowGraph::term_kind`] 等）。
+    pub fn block_terminator(&self, b: Block) -> Option<Inst> {
+        self.blocks.get(b.0 as usize).and_then(|d| d.terminator)
     }
 
-    /// 块终结符（可变）—— **crate 内部低层入口**：拿到的引用改写后调用方必须
-    /// 让 use-def 跟上（[`crate::Function::rewrite_terminator`] 或
-    /// [`crate::Function::refresh_terminator_uses`]）。crate 外不可见，
-    /// 因此跨 crate 的就地改写只能走 `Function` 的 API。
-    pub(crate) fn block_terminator_mut(&mut self, b: Block) -> Option<&mut Terminator> {
-        self.blocks
-            .get_mut(b.0 as usize)
-            .and_then(|d| d.terminator.as_mut())
-    }
-
-    /// 块的后继（未终止的块没有后继）。
+    /// 块的后继（去重保序；未终止的块没有后继）。
     pub fn block_successors(&self, b: Block) -> Vec<Block> {
-        self.block_terminator(b)
-            .map(|t| t.successors())
-            .unwrap_or_default()
+        let mut out: Vec<Block> = Vec::new();
+        let mut push = |t: Block| {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        };
+        match self.term_kind(b) {
+            Some(TermKind::Jump) => {
+                if let Some((t, _)) = self.term_jump(b) {
+                    push(t);
+                }
+            }
+            Some(TermKind::Branch) => {
+                if let Some((_, t, _, e, _)) = self.term_branch(b) {
+                    push(t);
+                    push(e);
+                }
+            }
+            Some(TermKind::Switch) => {
+                if let Some(v) = self.term_switch(b) {
+                    push(v.default_block);
+                    for case in &v.cases {
+                        push(case.target);
+                    }
+                }
+            }
+            Some(TermKind::Invoke) => {
+                if let Some((_, _, _, n, _, u, _)) = self.term_invoke(b) {
+                    push(n);
+                    push(u);
+                }
+            }
+            _ => {}
+        }
+        out
     }
 
     // ============================================================
-    // 终结符投影访问器（S4-d）
+    // 终结符投影访问器（S4-d 建立；S4 主体起解码终结符**指令**）
     // ============================================================
     //
-    // 读取方**不要**直接 match `Terminator`：一律经下面这组访问器读。
-    // 这样 S4 主体（终结符并入指令流、删 `Terminator`）只需要重写这里的实现，
-    // 全部调用点原样不动。表示相关的边界只剩三处天然表示感知的地方：
-    // 打印（display）、机器码 lowering、文本解析。
+    // 终结符是一条指令（opcode ∈ {Ret, Jmp, Br, Switch, Unreachable, Invoke,
+    // Resume}），载荷按 ops.toml「终结符」节的约定编码：
+    //   Ret          operands = 返回值
+    //   Jmp          operands = 实参；immediates = [Block(target)]
+    //   Br           operands = [cond, then_args…, else_args…]；
+    //                immediates = [Block(then), Block(else), Uint(then_argc), Uint(else_argc)]
+    //   Switch       operands = [disc, default_args…, case_args…]；
+    //                immediates = [Block(default), Uint(default_argc),
+    //                              Uint(case_count), (Int, Block, Uint(argc))…]
+    //   Unreachable  operands = []
+    //   Invoke       operands = [args…, normal_args…, unwind_args…]；
+    //                immediates = [Func, Block(normal), Block(unwind), Uint(argc),
+    //                              Uint(normal_argc), Uint(unwind_argc), Type(ret_ty)]
+    //   Resume       operands = [value]
+    // **operands 的顺序就是终结符用值的规范序**（use-list 下标即操作数下标）。
+
+    fn term_inst(&self, b: Block) -> Option<&Instruction> {
+        let inst = self.block_terminator(b)?;
+        self.insts.get(inst.0 as usize)
+    }
 
     /// 终结符种类（块未终止 = `None`）。
-    pub fn term_kind(&self, b: Block) -> Option<super::terminator::TermKind> {
-        self.block_terminator(b).map(|t| t.kind())
+    pub fn term_kind(&self, b: Block) -> Option<TermKind> {
+        super::terminator::term_kind_of(&self.term_inst(b)?.opcode)
     }
 
     /// 终结符附件元数据（无终结符 / `unreachable` 则空切片）。
     pub fn term_metadata(&self, b: Block) -> &[AttachedMetadata] {
-        match self.block_terminator(b) {
-            Some(Terminator::Branch { metadata, .. })
-            | Some(Terminator::Jump { metadata, .. })
-            | Some(Terminator::Return { metadata, .. })
-            | Some(Terminator::Switch { metadata, .. })
-            | Some(Terminator::Invoke { metadata, .. })
-            | Some(Terminator::Resume { metadata, .. }) => metadata,
-            _ => &[],
+        match self.term_kind(b) {
+            None | Some(TermKind::Unreachable) => &[],
+            Some(_) => self
+                .term_inst(b)
+                .map(|i| i.metadata.as_slice())
+                .unwrap_or(&[]),
         }
     }
 
@@ -507,70 +608,84 @@ impl DataFlowGraph {
         &mut self,
         b: Block,
     ) -> Option<&mut SmallVec<[AttachedMetadata; 2]>> {
-        match self.block_terminator_mut(b)? {
-            Terminator::Branch { metadata, .. }
-            | Terminator::Jump { metadata, .. }
-            | Terminator::Return { metadata, .. }
-            | Terminator::Switch { metadata, .. }
-            | Terminator::Invoke { metadata, .. }
-            | Terminator::Resume { metadata, .. } => Some(metadata),
-            Terminator::Unreachable => None,
+        let inst = self.block_terminator(b)?;
+        if self.term_kind(b) == Some(TermKind::Unreachable) {
+            return None;
         }
+        self.insts.get_mut(inst.0 as usize).map(|i| &mut i.metadata)
     }
 
     /// 分支形式：`(cond, then_block, then_args, else_block, else_args)`。
     #[allow(clippy::type_complexity)]
     pub fn term_branch(&self, b: Block) -> Option<(Value, Block, &[Value], Block, &[Value])> {
-        match self.block_terminator(b)? {
-            Terminator::Branch {
-                cond,
-                then_block,
-                then_args,
-                else_block,
-                else_args,
-                ..
-            } => Some((*cond, *then_block, then_args, *else_block, else_args)),
-            _ => None,
+        let inst = self.term_inst(b)?;
+        if inst.opcode != Opcode::Br {
+            return None;
         }
+        let cond = *inst.operands.first()?;
+        let then_block = imm_block(&inst.immediates, 0)?;
+        let else_block = imm_block(&inst.immediates, 1)?;
+        let then_argc = imm_uint(&inst.immediates, 2)?;
+        let else_argc = imm_uint(&inst.immediates, 3)?;
+        let rest = inst.operands.get(1..)?;
+        if then_argc + else_argc != rest.len() {
+            return None; // 编码自洽性：两个 argc 必须覆盖全部实参
+        }
+        let (then_args, else_args) = rest.split_at(then_argc);
+        Some((cond, then_block, then_args, else_block, else_args))
     }
 
     /// 无条件跳转形式：`(target, args)`。
     pub fn term_jump(&self, b: Block) -> Option<(Block, &[Value])> {
-        match self.block_terminator(b)? {
-            Terminator::Jump { target, args, .. } => Some((*target, args)),
-            _ => None,
+        let inst = self.term_inst(b)?;
+        if inst.opcode != Opcode::Jmp {
+            return None;
         }
+        Some((imm_block(&inst.immediates, 0)?, &inst.operands))
     }
 
     /// 返回形式的返回值切片（非 `Return` 则 `None`）。
     pub fn term_return_values(&self, b: Block) -> Option<&[Value]> {
-        match self.block_terminator(b)? {
-            Terminator::Return { values, .. } => Some(values),
-            _ => None,
-        }
+        let inst = self.term_inst(b)?;
+        (inst.opcode == Opcode::Ret).then_some(inst.operands.as_slice())
     }
 
-    /// switch 形式：`(discriminant, default_block, default_args, cases)`。
-    #[allow(clippy::type_complexity)]
-    pub fn term_switch(
-        &self,
-        b: Block,
-    ) -> Option<(
-        Value,
-        Block,
-        &[Value],
-        &[(i64, Block, SmallVec<[Value; 2]>)],
-    )> {
-        match self.block_terminator(b)? {
-            Terminator::Switch {
-                discriminant,
-                default_block,
-                default_args,
-                cases,
-                ..
-            } => Some((*discriminant, *default_block, default_args, cases)),
-            _ => None,
+    /// switch 形式（解码成结构化视图；case 表在 immediates 里）。
+    pub fn term_switch(&self, b: Block) -> Option<SwitchView<'_>> {
+        let inst = self.term_inst(b)?;
+        if inst.opcode != Opcode::Switch {
+            return None;
         }
+        let discriminant = *inst.operands.first()?;
+        let default_block = imm_block(&inst.immediates, 0)?;
+        let default_argc = imm_uint(&inst.immediates, 1)?;
+        let case_count = imm_uint(&inst.immediates, 2)?;
+        let rest = inst.operands.get(1..)?;
+        let default_args = rest.get(..default_argc.min(rest.len()))?;
+        let mut cursor = default_args.len();
+        let mut cases = Vec::with_capacity(case_count);
+        for c in 0..case_count {
+            let base = 3 + c * 3;
+            let value = match inst.immediates.get(base) {
+                Some(Immediate::Int(v)) => *v,
+                _ => return None,
+            };
+            let target = imm_block(&inst.immediates, base + 1)?;
+            let argc = imm_uint(&inst.immediates, base + 2)?;
+            let args = rest.get(cursor..cursor + argc)?;
+            cursor += argc;
+            cases.push(SwitchCaseView {
+                value,
+                target,
+                args,
+            });
+        }
+        Some(SwitchView {
+            discriminant,
+            default_block,
+            default_args,
+            cases,
+        })
     }
 
     /// invoke 形式：`(callee, args, ret_ty, normal_block, normal_args, unwind_block, unwind_args)`。
@@ -579,64 +694,120 @@ impl DataFlowGraph {
         &self,
         b: Block,
     ) -> Option<(FuncRef, &[Value], TypeId, Block, &[Value], Block, &[Value])> {
-        match self.block_terminator(b)? {
-            Terminator::Invoke {
-                callee,
-                args,
-                ret_ty,
-                normal_block,
-                normal_args,
-                unwind_block,
-                unwind_args,
-                ..
-            } => Some((
-                *callee,
-                args,
-                *ret_ty,
-                *normal_block,
-                normal_args,
-                *unwind_block,
-                unwind_args,
-            )),
-            _ => None,
+        let inst = self.term_inst(b)?;
+        if inst.opcode != Opcode::Invoke {
+            return None;
         }
+        let callee = match inst.immediates.first()? {
+            Immediate::Func(f) => *f,
+            _ => return None,
+        };
+        let normal_block = imm_block(&inst.immediates, 1)?;
+        let unwind_block = imm_block(&inst.immediates, 2)?;
+        let argc = imm_uint(&inst.immediates, 3)?;
+        let normal_argc = imm_uint(&inst.immediates, 4)?;
+        let unwind_argc = imm_uint(&inst.immediates, 5)?;
+        let ret_ty = match inst.immediates.get(6)? {
+            Immediate::Type(t) => *t,
+            _ => return None,
+        };
+        if argc + normal_argc + unwind_argc != inst.operands.len() {
+            return None;
+        }
+        let args = inst.operands.get(..argc)?;
+        let normal_args = inst.operands.get(argc..argc + normal_argc)?;
+        let unwind_args = inst.operands.get(argc + normal_argc..)?;
+        Some((
+            callee,
+            args,
+            ret_ty,
+            normal_block,
+            normal_args,
+            unwind_block,
+            unwind_args,
+        ))
     }
 
     /// `resume` 的用值（非 `Resume` 则 `None`）。
     pub fn term_resume_value(&self, b: Block) -> Option<Value> {
-        match self.block_terminator(b)? {
-            Terminator::Resume { value, .. } => Some(*value),
-            _ => None,
+        let inst = self.term_inst(b)?;
+        if inst.opcode != Opcode::Resume {
+            return None;
         }
+        inst.operands.first().copied()
     }
 
     /// 是否为显式 `unreachable`。
     pub fn term_is_unreachable(&self, b: Block) -> bool {
-        matches!(self.block_terminator(b), Some(Terminator::Unreachable))
+        self.term_kind(b) == Some(TermKind::Unreachable)
     }
 
     /// 传给 `target` 的实参（非该目标的分支则空切片）。
     pub fn term_args_to(&self, b: Block, target: Block) -> &[Value] {
-        self.block_terminator(b)
-            .map(|t| t.args_to(target))
-            .unwrap_or(&[])
+        match self.term_kind(b) {
+            Some(TermKind::Jump) => match self.term_jump(b) {
+                Some((t, args)) if t == target => args,
+                _ => &[],
+            },
+            Some(TermKind::Branch) => match self.term_branch(b) {
+                Some((_, t, targs, e, eargs)) => {
+                    if t == target {
+                        targs
+                    } else if e == target {
+                        eargs
+                    } else {
+                        &[]
+                    }
+                }
+                None => &[],
+            },
+            Some(TermKind::Switch) => match self.term_switch(b) {
+                Some(v) => {
+                    if v.default_block == target {
+                        v.default_args
+                    } else {
+                        v.cases
+                            .iter()
+                            .find(|c| c.target == target)
+                            .map(|c| c.args)
+                            .unwrap_or(&[])
+                    }
+                }
+                None => &[],
+            },
+            Some(TermKind::Invoke) => match self.term_invoke(b) {
+                Some((_, _, _, n, nargs, u, uargs)) => {
+                    if n == target {
+                        nargs
+                    } else if u == target {
+                        uargs
+                    } else {
+                        &[]
+                    }
+                }
+                None => &[],
+            },
+            _ => &[],
+        }
     }
 
-    /// 按规范序遍历终结符用值（见 [`Terminator::for_each_value`]）。
-    pub fn for_each_term_value(&self, b: Block, f: impl FnMut(u32, Value)) {
-        if let Some(term) = self.block_terminator(b) {
-            term.for_each_value(f);
+    /// 按规范序遍历终结符用值（= 终结符指令的 operands 顺序）。
+    pub fn for_each_term_value(&self, b: Block, mut f: impl FnMut(u32, Value)) {
+        if let Some(inst) = self.term_inst(b) {
+            for (i, v) in inst.operands.iter().enumerate() {
+                f(i as u32, *v);
+            }
         }
     }
 
     /// 终结符用值（规范序）。
     pub fn term_used_values(&self, b: Block) -> Vec<Value> {
-        self.block_terminator(b)
-            .map(|t| t.used_values())
+        self.term_inst(b)
+            .map(|i| i.operands.to_vec())
             .unwrap_or_default()
     }
 
-    /// 块是否已终止（显式设置了 ret/jump/branch/unreachable/switch 之一）。
+    /// 块是否已终止（显式设置了 ret/jmp/br/unreachable/switch/invoke/resume 之一）。
     pub fn block_has_terminator(&self, b: Block) -> bool {
         self.blocks
             .get(b.0 as usize)

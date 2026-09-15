@@ -58,8 +58,15 @@ builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
   `VerifyError::MissingTypeContext`——8 类类型相关检查无法执行时**不静默放宽**。
 - **修改 IR**：优先用原子原语 `Function::{replace_all_uses, kill_inst,
   replace_all_uses_and_kill, remove_block_param, apply_replacements}`——它们保持
-  use-lists 新鲜。**注意 `replace_all_uses` 只覆盖指令操作数**，终结符里的用值
-  （分支实参/`ret` 返回值）要用 `apply_replacements` 或 `Terminator::args_to`/`retarget`。
+  use-lists 新鲜。终结符**就是指令**（v3 S4 主体），所以 `replace_all_uses` 天然
+  覆盖分支实参/`ret` 返回值等终结符用值。
+- **终结符**：载体是一条终结符指令（`Opcode::{Ret, Jmp, Br, Switch, Unreachable,
+  Invoke, Resume}`，存 `insts`、不进 `inst_order`，由 `BlockData.terminator`
+  引用）；读取经投影访问器 `DataFlowGraph::{term_kind, term_branch, term_jump,
+  term_return_values, term_switch, term_invoke, term_args_to, block_successors, …}`，
+  写入经按形式写入口 `Function::{jump, branch, ret, switch, unreachable, invoke,
+  resume, set_return_values, retarget_terminator, replace_terminator_args}`。
+  编码约定见 `ops.toml` 的「终结符」节（与 `dfg.rs` 的解码一一对应）。
 - **指令清单**：`ops.toml` → 生成的 `Opcode::ALL` 是全部变体的单一事实源（覆盖率
   矩阵、一致性守卫、名字查找都用它）；`Opcode::name()`/`from_name()` 用于 ISA TOML
   的 `op = "..."` 契约，`Opcode::info()` 给出类别/元数/结果数/UB/副作用/条件通道。

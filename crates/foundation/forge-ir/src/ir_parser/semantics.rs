@@ -1911,11 +1911,8 @@ fn finalize_phis<'a>(
                 while vals.len() < n_params {
                     vals.push(fb.undef(phi_tys[vals.len()]));
                 }
-                if let Some(term) = fb.func.dfg.blocks[pred.0 as usize].terminator.as_mut() {
-                    term.replace_args(target, vals.into());
-                }
-                // 实参值被整体替换 ⇒ 重登记该前驱的终结符 use 项
-                fb.func.refresh_terminator_uses(pred);
+                // 实参值被整体替换 ⇒ 经写入口重写（顺带重登记 use 项）
+                fb.func.replace_terminator_args(pred, target, &vals);
                 continue;
             }
             let args: SmallVec<[Value; 2]> = idxs.into_iter().map(|(_, v)| v).collect();

@@ -1238,13 +1238,13 @@ impl Verifier {
         }
         // switch case 值重复
         for (block, _bd) in dfg.blocks() {
-            if let Some((_, _, _, cases)) = dfg.term_switch(block) {
+            if let Some(view) = dfg.term_switch(block) {
                 let mut seen: HashSet<i64> = HashSet::new();
-                for (val, _, _) in cases {
-                    if !seen.insert(*val) {
+                for case in &view.cases {
+                    if !seen.insert(case.value) {
                         self.errors.push(VerifyError::InvalidImmediate {
-                            inst: Inst(u32::MAX), // 终结符无指令句柄，detail 说明
-                            detail: format!("duplicate switch case value {}", val),
+                            inst: Inst(u32::MAX), // 终结符无独立指令句柄可见性，detail 说明
+                            detail: format!("duplicate switch case value {}", case.value),
                         });
                     }
                 }
@@ -1357,9 +1357,9 @@ impl Verifier {
                                 );
                             }
                         }
-                    } else if let Some((_, default_block, default_args, cases)) =
-                        dfg.term_switch(pred)
-                    {
+                    } else if let Some(view) = dfg.term_switch(pred) {
+                        let default_block = view.default_block;
+                        let default_args = view.default_args;
                         // Default case
                         if default_block == block {
                             if default_args.len() != expected_params {
@@ -1379,8 +1379,10 @@ impl Verifier {
                             }
                         }
                         // Case branches
-                        for (_, case_block, case_args) in cases.iter() {
-                            if *case_block == block {
+                        for case in view.cases.iter() {
+                            let case_block = case.target;
+                            let case_args = case.args;
+                            if case_block == block {
                                 if case_args.len() != expected_params {
                                     self.errors.push(VerifyError::BlockParamCountMismatch {
                                         block: pred,
@@ -1391,7 +1393,7 @@ impl Verifier {
                                     Self::check_arg_types(
                                         &mut self.errors,
                                         dfg,
-                                        *case_block,
+                                        case_block,
                                         case_args,
                                         block_data,
                                     );

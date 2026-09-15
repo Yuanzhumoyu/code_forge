@@ -572,29 +572,33 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             #[allow(unreachable_code)]
             fn lower_terminator(
                 &self,
-                term: &crate::prelude::Terminator,
+                dfg: &crate::prelude::DataFlowGraph,
+                block: crate::prelude::Block,
                 value_to_xreg: &std::collections::HashMap<crate::prelude::Value, crate::prelude::XReg>,
                 _block_to_vblock: &std::collections::HashMap<crate::prelude::Block, crate::prelude::VBlockId>,
                 ctx: &mut crate::prelude::LowerCtx,
             ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
                 let mut __pack: crate::prelude::InstPacket<Self::Inst> =
                     crate::prelude::InstPacket::new();
-                match term {
-                    crate::prelude::Terminator::Return { values, .. } => {
+                // 终结符是一条指令：按种类分派、用投影取载荷（存储形态对 ISA 不可见）。
+                match dfg.term_kind(block) {
+                    Some(crate::prelude::TermKind::Return) => {
+                        let values: &[crate::prelude::Value] =
+                            dfg.term_return_values(block).unwrap_or(&[]);
                         #return_body
                     }
-                    crate::prelude::Terminator::Jump { target, .. } => {
+                    Some(crate::prelude::TermKind::Jump) => {
+                        let (target, _args) =
+                            dfg.term_jump(block).expect("Jump 投影");
                         #jump_body
                     }
-                    crate::prelude::Terminator::Branch {
-                        cond: cond_val,
-                        then_block,
-                        else_block,
-                        ..
-                    } => {
+                    Some(crate::prelude::TermKind::Branch) => {
+                        let (cond_val, then_block, _then_args, else_block, _else_args) =
+                            dfg.term_branch(block).expect("Branch 投影");
+                        let cond_val = &cond_val;
                         #branch_body
                     }
-                    crate::prelude::Terminator::Unreachable => {
+                    Some(crate::prelude::TermKind::Unreachable) => {
                         #unreachable_body
                     }
                     _ => Err(crate::prelude::IrError::Unsupported("v12 terminator lowering".into())),
@@ -605,7 +609,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         quote! {
             fn lower_terminator(
                 &self,
-                _term: &crate::prelude::Terminator,
+                _dfg: &crate::prelude::DataFlowGraph,
+                _block: crate::prelude::Block,
                 _value_to_xreg: &std::collections::HashMap<crate::prelude::Value, crate::prelude::XReg>,
                 _block_to_vblock: &std::collections::HashMap<crate::prelude::Block, crate::prelude::VBlockId>,
                 _ctx: &mut crate::prelude::LowerCtx,

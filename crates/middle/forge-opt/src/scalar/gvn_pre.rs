@@ -322,9 +322,9 @@ fn compute_ant(
                     vec![then_block, else_block]
                 } else if let Some((target, _)) = func.dfg.term_jump(b) {
                     vec![target]
-                } else if let Some((_, default_block, _, cases)) = func.dfg.term_switch(b) {
-                    let mut s = vec![default_block];
-                    s.extend(cases.iter().map(|(_, t, _)| *t));
+                } else if let Some(view) = func.dfg.term_switch(b) {
+                    let mut s = vec![view.default_block];
+                    s.extend(view.cases.iter().map(|c| c.target));
                     s
                 } else {
                     vec![]

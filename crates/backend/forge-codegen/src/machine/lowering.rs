@@ -5,7 +5,7 @@
 //! 临时寄存器分配器 + XReg→微指令寄存器字段映射 + 输入/输出。
 
 use crate::{LowerCtx, VBlockId};
-use forge_ir::{Block, IrError, Opcode, Terminator, Value, XReg, XRegAllocator};
+use forge_ir::{Block, IrError, Opcode, Value, XReg, XRegAllocator};
 use std::collections::HashMap;
 
 /// 指令包 — DSL 中间指令（IR op）映射到微指令的返回结构，取代旧的 `Vec<Inst>`。
@@ -137,9 +137,14 @@ pub trait TargetLowering: Send + Sync + 'static {
     ) -> Result<InstPacket<Self::Inst>, IrError>;
 
     /// 将 IR 终止指令降低为微指令包。
+    ///
+    /// 终结符是一条指令（S4 主体），因此这里给的是**块** + DFG：实现方用
+    /// `DataFlowGraph::term_kind` 判形态，再用 `term_*` 投影取载荷
+    /// （ISA 侧不需要知道终结符的存储形态）。
     fn lower_terminator(
         &self,
-        term: &Terminator,
+        dfg: &forge_ir::DataFlowGraph,
+        block: Block,
         value_to_xreg: &HashMap<Value, XReg>,
         block_to_vblock: &HashMap<Block, VBlockId>,
         ctx: &mut LowerCtx,

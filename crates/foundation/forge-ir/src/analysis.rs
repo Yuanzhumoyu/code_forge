@@ -12,10 +12,7 @@ use std::collections::HashMap;
 // ============================================================
 
 pub fn block_successors_in_func(func: &Function, block: Block) -> Vec<Block> {
-    func.dfg
-        .block_terminator(block)
-        .map(|t| t.successors())
-        .unwrap_or_default()
+    func.dfg.block_successors(block)
 }
 
 // ============================================================
@@ -180,13 +177,11 @@ fn compute_idom(
 ) -> SecondaryMap<Block, Block> {
     // 一次构建前驱映射（替代每轮对每个 block 线性扫全函数，O(轮数×n²) → O(轮数×n)）。
     let mut preds_map: HashMap<Block, Vec<Block>> = HashMap::new();
-    for (block, bd) in func.dfg.blocks() {
-        // CFG 构造必须容忍未终止的块（校验器会在坏 IR 上跑）：
+    for (block, _bd) in func.dfg.blocks() {
+        // CFG 构造容忍未终止的块（校验器会在坏 IR 上跑）：
         // "没有终结符" ⇒ 没有后继边，这是结构事实，不是静默回退。
-        if let Some(term) = bd.terminator_opt() {
-            for succ in term.successors() {
-                preds_map.entry(succ).or_default().push(block);
-            }
+        for succ in func.dfg.block_successors(block) {
+            preds_map.entry(succ).or_default().push(block);
         }
     }
 

@@ -452,6 +452,32 @@ mod no_coverage_list {
             "LandingPad",
             "异常：v12 codegen 对含 landingpad 函数 Unsupported",
         ),
+        // 终结符指令（S4 主体：终结符就是指令）：不走进逐指令 lowering 矩阵——
+        // 它们由 `TargetLowering::lower_terminator` 按块处理，覆盖来自 codegen
+        // 用例（terminator_return_packet/terminator_jump_packet、v12_integration_tests）
+        // 与 JIT 矩阵的控制流用例（Branch/Jump/Return）。
+        (
+            "Ret",
+            "终结符：由 lower_terminator 路径 + JIT 控制流用例覆盖",
+        ),
+        (
+            "Jmp",
+            "终结符：由 lower_terminator 路径 + JIT 控制流用例覆盖",
+        ),
+        (
+            "Br",
+            "终结符：由 lower_terminator 路径 + JIT 控制流用例覆盖",
+        ),
+        (
+            "Switch",
+            "终结符：由 lower_terminator 路径 + JIT switch 用例覆盖",
+        ),
+        (
+            "Unreachable",
+            "终结符：由 lower_terminator 路径 + JIT trap 用例覆盖",
+        ),
+        ("Invoke", "终结符：v12 codegen 对含 invoke 函数 Unsupported"),
+        ("Resume", "终结符：v12 codegen 对含 resume 函数 Unsupported"),
     ];
 }
 

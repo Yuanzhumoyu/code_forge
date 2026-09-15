@@ -335,6 +335,17 @@ pub fn fold_opcode(
         | Opcode::Ptrtoint
         | Opcode::Inttoptr => Ok(None),
 
+        // === 终结符指令（S4 主体：终结符就是指令）===
+        // 常量折叠只处理值生产者；终结符不产值（`fold_opcode` 的前提是"有结果值"），
+        // 分支折叠走 `fold_branches`，这里一律不折叠。
+        Opcode::Ret
+        | Opcode::Jmp
+        | Opcode::Br
+        | Opcode::Switch
+        | Opcode::Unreachable
+        | Opcode::Invoke
+        | Opcode::Resume => Ok(None),
+
         // === 选择 ===
         Opcode::Select => {
             if operands.len() < 3 {

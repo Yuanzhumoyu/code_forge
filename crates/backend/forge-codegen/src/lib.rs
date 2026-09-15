@@ -105,9 +105,9 @@ pub mod prelude {
         avx2_available,
     };
     pub use forge_ir::{
-        AtomicRmwOp, Block, ConstId, Endianness, FloatCC, FrameAccess, Immediate, Instruction,
-        IntCC, IrError, Opcode, PReg, PhysReg, RegClass, Terminator, TypeId, VReg, Value, XReg,
-        XRegAllocator,
+        AtomicRmwOp, Block, ConstId, DataFlowGraph, Endianness, FloatCC, FrameAccess, Immediate,
+        Instruction, IntCC, IrError, Opcode, PReg, PhysReg, RegClass, TermKind, TypeId, VReg,
+        Value, XReg, XRegAllocator,
     };
 }
 

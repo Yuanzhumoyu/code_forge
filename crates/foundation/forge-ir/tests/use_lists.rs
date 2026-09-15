@@ -10,8 +10,8 @@
 //! 与 DFG 完全一致。
 
 use forge_ir::{
-    Function, FunctionBuilder, FunctionSignature, Inst, InstFlags, Opcode, TypeContext, TypeId,
-    UseSite, Value, ValueDef, Verifier,
+    Block, Function, FunctionBuilder, FunctionSignature, Inst, InstFlags, Opcode, TypeContext,
+    TypeId, Value, ValueDef, Verifier,
 };
 
 /// 构造 `%s = iadd %a, %b`（外加两个 iconst），返回函数、操作数、结果与 iadd 指令 id。
@@ -137,14 +137,18 @@ fn build_branch() -> (Function, Value, Value) {
     (b.finish().expect("build"), x, cond)
 }
 
-/// 基线：`br` 的条件与实参、`ret` 的返回值都登记为终结符 use。
+/// 基线：`br` 的条件与实参、`ret` 的返回值都登记为（终结符）指令 use。
 #[test]
 fn terminator_values_are_registered() {
     let (func, x, cond) = build_branch();
     assert_eq!(func.use_lists.use_count(x), 3, "%x 的终结符使用");
-    assert_eq!(func.use_lists.user_insts(x).len(), 0, "%x 没有指令使用者");
     assert_eq!(
-        func.use_lists.user_blocks(x).len(),
+        func.use_lists.user_insts(x).len(),
+        3,
+        "%x 被 3 条终结符指令使用（br + 两个 ret）"
+    );
+    assert_eq!(
+        func.use_lists.user_blocks(&func.dfg, x).len(),
         3,
         "%x 被 entry(br)/then(ret)/else(ret) 使用"
     );
@@ -158,7 +162,7 @@ fn terminator_values_are_registered() {
     assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
 }
 
-/// **S4-a 的核心收获**：`replace_all_uses` 现在真的覆盖终结符实参。
+/// RAUW 覆盖终结符指令的操作数（终结符就是指令 ⇒ 天然覆盖）。
 #[test]
 fn rauw_covers_terminator_args() {
     let (mut func, x, cond) = build_branch();
@@ -169,9 +173,9 @@ fn rauw_covers_terminator_args() {
         "3 处终结符使用（br 实参 + 两个 ret）都应被替换"
     );
 
-    // 值真的被写进了终结符（不是只改 use-list）
-    for (i, bd) in func.dfg.blocks.iter().enumerate() {
-        for v in bd.terminator().used_values() {
+    // 值真的被写进了终结符指令（不是只改 use-list）
+    for i in 0..func.dfg.blocks.len() {
+        for v in func.dfg.term_used_values(Block(i as u32)) {
             assert_ne!(v, x, "块 {i} 的终结符仍引用 %x");
         }
     }
@@ -182,12 +186,12 @@ fn rauw_covers_terminator_args() {
     assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
 }
 
-/// 按形式写入口（`Function::branch`）：按旧终结符精确摘除、按新终结符登记。
+/// 按形式写入口（`Function::branch`）：旧的终结符指令被墓碑化、新指令登记 use。
 #[test]
 fn set_terminator_keeps_use_def_fresh() {
     let (mut func, x, cond) = build_branch();
     let entry = func.entry();
-    let succs = func.dfg.block_terminator(entry).unwrap().successors();
+    let succs = func.dfg.block_successors(entry);
     let (then_blk, else_blk) = (succs[0], succs[1]);
     // 新 br：条件从 %cond 换成 %x，then_args 也改成 %x
     //（两个目标块都仍可达 ⇒ 可以顺带跑完整 Verifier）
@@ -219,7 +223,7 @@ fn set_terminator_keeps_use_def_fresh() {
 fn in_place_arg_rewrite_keeps_use_def_fresh() {
     let (mut func, x, cond) = build_branch();
     let entry = func.entry();
-    let then_blk = func.dfg.block_terminator(entry).unwrap().successors()[0];
+    let then_blk = func.dfg.block_successors(entry)[0];
     // 把 br 传给 then 的实参从 %x 换成 %cond
     func.replace_terminator_args(entry, then_blk, [cond]);
 
@@ -234,22 +238,19 @@ fn in_place_arg_rewrite_keeps_use_def_fresh() {
     assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
 }
 
-///
-/// S4-b 之后 crate 外已**无法**绕过 `Function::set_terminator` 直接写终结符字段
-/// （`BlockData.terminator` 是 `pub(crate)`），所以这里改用"正常写入 + 手工留下旧
-/// 终结符的 use 项"来复现同一状态——它等价于"某处改了终结符却没重登记"的后果。
+/// 陈旧 use 项必须被校验器抓到（`replace_operand` 手工制造不一致状态）。
 #[test]
 fn verifier_detects_stale_terminator_use() {
     let (mut func, x, cond) = build_branch();
     let entry = func.entry();
-    let succs = func.dfg.block_terminator(entry).unwrap().successors();
+    let succs = func.dfg.block_successors(entry);
     let (then_blk, else_blk) = (succs[0], succs[1]);
-    // 正常写入新终结符（then_args 从 %x 换成 %cond）……
+    // 正常写入新终结符指令（then_args 从 %x 换成 %cond）……
     func.branch(entry, cond, then_blk, [cond], else_blk, []);
-    // ……再把 entry 终结符 idx1 的登记从 %cond 改记到 %x：DFG 槽位仍是 %cond
+    let term_inst = func.dfg.block_terminator(entry).expect("终结符指令");
+    // ……再把 idx1 的登记从 %cond 改记到 %x：DFG 槽位仍是 %cond
     // ⇒ 制造出"陈旧 use 项"（等价于改了终结符却没刷新 use-def 的后果）
-    func.use_lists
-        .replace_operand(cond, x, UseSite::Term(entry), 1);
+    func.use_lists.replace_operand(cond, x, term_inst, 1);
 
     assert!(
         func.use_lists.verify(&func.dfg).is_err(),

@@ -34,11 +34,8 @@ impl LoopForest {
 
         // Detect back-edges（用 Function 惰性 predecessors 缓存加速 collect_loop_body）
         let preds_map = func.predecessors();
-        for (pred, bd) in func.dfg.blocks() {
-            let Some(term) = bd.terminator_opt() else {
-                continue; // 未终止块无出边（与 CFG 构造一致）
-            };
-            for succ in term.successors() {
+        for (pred, _bd) in func.dfg.blocks() {
+            for succ in func.dfg.block_successors(pred) {
                 if dom_tree.dominates(succ, pred) {
                     let header = succ;
                     if let Some(&idx) = header_to_loop.get(&header) {

@@ -6,6 +6,7 @@
 //! 类型/立即数/终结符参数丢失）。
 
 use forge_ir::FunctionBuilder;
+use forge_ir::Value;
 use forge_ir::dfg::BlockData;
 use forge_ir::function::{Function, Module};
 use forge_ir::immediate::Immediate;
@@ -113,17 +114,92 @@ fn assert_inst_eq(
     }
 }
 
-fn assert_block_eq(f1: &Function, b1: &BlockData, f2: &Function, b2: &BlockData, text: &str) {
-    assert_eq!(b1.inst_order.len(), b2.inst_order.len(), "inst count blk");
-    for (i1, i2) in b1.inst_order.iter().zip(b2.inst_order.iter()) {
-        let a = &f1.dfg.insts[i1.0 as usize];
-        let b = &f2.dfg.insts[i2.0 as usize];
-        assert_inst_eq(f1, a, f2, b, text);
+/// 终结符的**语义形态**（种类 + 目标块号 + 实参位号）。
+///
+/// 终结符现在是指令，两侧解析出的指令句柄必然不同，因此往返比较必须比语义
+/// 而不是比句柄。
+fn term_shape(dfg: &forge_ir::DataFlowGraph, block: forge_ir::Block) -> String {
+    use forge_ir::TermKind as K;
+    let b = |x: forge_ir::Block| x.0;
+    let v = |xs: &[Value]| {
+        xs.iter()
+            .map(|x| x.0.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    match dfg.term_kind(block) {
+        None => "none".to_string(),
+        Some(K::Return) => format!("ret({})", v(dfg.term_return_values(block).unwrap_or(&[]))),
+        Some(K::Jump) => {
+            let (t, args) = dfg.term_jump(block).expect("jump");
+            format!("jmp b{}({})", b(t), v(args))
+        }
+        Some(K::Branch) => {
+            let (cond, t, targs, e, eargs) = dfg.term_branch(block).expect("branch");
+            format!(
+                "br %{}(b{}({}) b{}({}))",
+                cond.0,
+                b(t),
+                v(targs),
+                b(e),
+                v(eargs)
+            )
+        }
+        Some(K::Switch) => {
+            let view = dfg.term_switch(block).expect("switch");
+            let cases: Vec<String> = view
+                .cases
+                .iter()
+                .map(|c| format!("{}:b{}({})", c.value, b(c.target), v(c.args)))
+                .collect();
+            format!(
+                "switch %{} default b{}({}) [{}]",
+                view.discriminant.0,
+                b(view.default_block),
+                v(view.default_args),
+                cases.join(" ")
+            )
+        }
+        Some(K::Invoke) => {
+            let (c, args, ret_ty, n, nargs, u, uargs) = dfg.term_invoke(block).expect("invoke");
+            format!(
+                "invoke @{}({}) -> b{}({}) unwind b{}({}) ty{}",
+                c.0,
+                v(args),
+                b(n),
+                v(nargs),
+                b(u),
+                v(uargs),
+                ret_ty.0
+            )
+        }
+        Some(K::Resume) => format!(
+            "resume %{}",
+            dfg.term_resume_value(block).unwrap_or(Value(0)).0
+        ),
+        Some(K::Unreachable) => "unreachable".to_string(),
     }
-    // 终结符（含块参数）整体比较
+}
+
+fn assert_block_eq(
+    f1: &Function,
+    b1: &BlockData,
+    i1: usize,
+    f2: &Function,
+    b2: &BlockData,
+    i2: usize,
+    text: &str,
+) {
+    assert_eq!(b1.inst_order.len(), b2.inst_order.len(), "inst count blk");
+    for (a, c) in b1.inst_order.iter().zip(b2.inst_order.iter()) {
+        let ia = &f1.dfg.insts[a.0 as usize];
+        let ic = &f2.dfg.insts[c.0 as usize];
+        assert_inst_eq(f1, ia, f2, ic, text);
+    }
+    // 终结符（含块参数）整体比较：比**语义形态**，不比指令句柄
     assert_eq!(
-        b1.terminator(),
-        b2.terminator(),
+        term_shape(&f1.dfg, forge_ir::Block(i1 as u32)),
+        term_shape(&f2.dfg, forge_ir::Block(i2 as u32)),
         "terminator mismatch:\n{text}"
     );
 }
@@ -144,8 +220,8 @@ fn assert_modules_eq(m1: &Module, m2: &Module, text: &str) {
             "block count {}",
             f1.name
         );
-        for (b1, b2) in f1.dfg.blocks.iter().zip(f2.dfg.blocks.iter()) {
-            assert_block_eq(f1, b1, f2, b2, text);
+        for (i, (b1, b2)) in f1.dfg.blocks.iter().zip(f2.dfg.blocks.iter()).enumerate() {
+            assert_block_eq(f1, b1, i, f2, b2, i, text);
         }
     }
 }

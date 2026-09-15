@@ -126,6 +126,14 @@ fn variant_name_exhaustive(op: &Opcode) -> &'static str {
         Opcode::Select => "Select",
         Opcode::Freeze => "Freeze",
         Opcode::Nop => "Nop",
+        // 终结符（v3 方案 S4 主体：终结符并入指令流）
+        Opcode::Ret => "Ret",
+        Opcode::Jmp => "Jmp",
+        Opcode::Br => "Br",
+        Opcode::Switch => "Switch",
+        Opcode::Unreachable => "Unreachable",
+        Opcode::Invoke => "Invoke",
+        Opcode::Resume => "Resume",
     }
 }
 
@@ -262,7 +270,7 @@ fn type_rule_classification_is_complete() {
         ("store", 2),
         ("call", 1),
         ("call_indirect", 1),
-        ("none", 48),
+        ("none", 55),
     ];
     let total: usize = expected.iter().map(|(_, n)| n).sum();
     assert_eq!(total, Opcode::ALL.len(), "计数基线总和必须等于变体数");

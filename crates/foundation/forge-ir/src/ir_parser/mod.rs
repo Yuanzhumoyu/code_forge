@@ -175,8 +175,8 @@ mod semantics_tests {
         assert_eq!(insts, 1, "iadd in inst_order");
         assert!(
             matches!(
-                f.dfg.blocks[0].terminator_opt(),
-                Some(crate::terminator::Terminator::Return { .. })
+                f.dfg.term_kind(crate::Block(0)),
+                Some(crate::terminator::TermKind::Return)
             ),
             "ret terminator"
         );

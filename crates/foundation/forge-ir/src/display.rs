@@ -601,11 +601,7 @@ impl<'a> fmt::Display for BlockDisplay<'a> {
                         write!(f, "{}", fmt_llvm_type(&self.store.borrow(), t))?;
                     }
                     for (j, &pred) in preds.iter().enumerate() {
-                        let val = dfg.blocks[pred.0 as usize]
-                            .terminator()
-                            .args_to(self.block)
-                            .get(i)
-                            .copied();
+                        let val = dfg.term_args_to(pred, self.block).get(i).copied();
                         write!(f, " [ ")?;
                         fmt_phi_value(f, self.func, self.names, val)?;
                         write!(f, ", %{}", self.names.block(pred))?;
@@ -1525,8 +1521,9 @@ impl fmt::Display for TerminatorDisplay<'_> {
                 Ok(())
             }
             TermKind::Switch => {
-                let (discriminant, default_block, _default_args, cases) =
-                    dfg.term_switch(block).expect("Switch 投影");
+                let view = dfg.term_switch(block).expect("Switch 投影");
+                let discriminant = view.discriminant;
+                let default_block = view.default_block;
                 write!(f, "    switch ")?;
                 match value_as_literal(self.func, self.store, self.module, discriminant) {
                     Some(lit) => write!(f, "{}", lit)?,
@@ -1545,13 +1542,14 @@ impl fmt::Display for TerminatorDisplay<'_> {
                 // case 值类型跟随 discriminant（LLVM：`switch i64 %x, ... [ i64 1, ... ]`）
                 let case_ty = dfg.value_type(discriminant);
                 let case_ty_str = case_ty.map(|t| fmt_llvm_type(&self.store.borrow(), t));
-                for (i, (val, blk, _args)) in cases.iter().enumerate() {
+                for (i, case) in view.cases.iter().enumerate() {
                     if i > 0 {
                         write!(f, " ")?;
                     }
+                    let blk = self.names.block(case.target);
                     match &case_ty_str {
-                        Some(ty) => write!(f, "{ty} {}, label %{}", val, self.names.block(*blk))?,
-                        None => write!(f, "i32 {}, label %{}", val, self.names.block(*blk))?,
+                        Some(ty) => write!(f, "{ty} {}, label %{}", case.value, blk)?,
+                        None => write!(f, "i32 {}, label %{}", case.value, blk)?,
                     }
                 }
                 write!(f, " ]")?;

@@ -262,22 +262,37 @@ fn frame_spill_bytes() {
 
 #[test]
 fn terminator_return_packet() {
-    use forge_codegen::prelude::{LowerCtx, Terminator, Value};
+    use forge_codegen::ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+    use forge_codegen::prelude::LowerCtx;
     use forge_codegen::x86_v12::Inst;
-    use smallvec::smallvec;
 
     let tm = forge_codegen::x86_v12::TargetMachine::new();
     let mut ctx = LowerCtx::default();
     let ret_val = ctx.alloc_xreg(forge_ir::RegClass::GPR64);
+
+    // 终结符是一条指令（S4 主体）：经公开写入口建好 IR，再交给 lowering。
+    let mut fb = FunctionBuilder::new(
+        "t",
+        TypeContext::new(),
+        FunctionSignature::new(&[], &[TypeId::I32]),
+    );
+    let (entry, _) = fb.create_entry_block();
+    let v = fb.iconst_i32(7);
+    fb.ret(&[v]);
+    let func = fb.finish().expect("build");
+    let ret_value = func.dfg.term_return_values(entry).expect("ret 投影")[0];
     let mut vmap = std::collections::HashMap::new();
-    vmap.insert(Value(7), ret_val);
-    let term = Terminator::Return {
-        values: smallvec![Value(7)],
-        metadata: smallvec![],
-    };
+    vmap.insert(ret_value, ret_val);
+
     let pack = tm
         .lowering()
-        .lower_terminator(&term, &vmap, &std::collections::HashMap::new(), &mut ctx)
+        .lower_terminator(
+            &func.dfg,
+            entry,
+            &vmap,
+            &std::collections::HashMap::new(),
+            &mut ctx,
+        )
         .expect("lower Return");
     // MOV_RM8_R64(0x89: reg=src: val、rm=dest: RAX)——与 v11 一致：不生成 RET，
     // return block 经 epilogue_jump 跳到 epilogue 统一恢复。
@@ -299,21 +314,31 @@ fn terminator_return_packet() {
 
 #[test]
 fn terminator_jump_packet() {
-    use forge_codegen::prelude::{Block, LowerCtx, Terminator};
+    use forge_codegen::ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+    use forge_codegen::prelude::LowerCtx;
     use forge_codegen::x86_v12::Inst;
-    use smallvec::smallvec;
 
     let tm = forge_codegen::x86_v12::TargetMachine::new();
     let mut ctx = LowerCtx::default();
-    let term = Terminator::Jump {
-        target: Block(3),
-        args: smallvec![],
-        metadata: smallvec![],
-    };
+    let mut fb = FunctionBuilder::new(
+        "t",
+        TypeContext::new(),
+        FunctionSignature::new(&[], &[TypeId::I32]),
+    );
+    let b0 = fb.create_block();
+    let b1 = fb.create_block();
+    fb.switch_to_block(b0);
+    fb.jump(b1, &[]);
+    fb.switch_to_block(b1);
+    let v = fb.iconst_i32(0);
+    fb.ret(&[v]);
+    let func = fb.finish().expect("build");
+
     let pack = tm
         .lowering()
         .lower_terminator(
-            &term,
+            &func.dfg,
+            b0,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
             &mut ctx,
@@ -321,7 +346,7 @@ fn terminator_jump_packet() {
         .expect("lower Jump");
     assert_eq!(pack.insts.len(), 1);
     match &pack.insts[0] {
-        Inst::JmpRel32 { target } => assert_eq!(*target, 3, "jmp 目标块号"),
+        Inst::JmpRel32 { target } => assert_eq!(*target, 1, "jmp 目标块号"),
         other => panic!("expected JmpRel32, got {other:?}"),
     }
 }

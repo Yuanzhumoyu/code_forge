@@ -137,9 +137,9 @@ fn build_use_counts(func: &Function) -> HashMap<Value, usize> {
         }
     }
 
-    // Terminator 使用的值也计入
-    for (_, block_data) in func.dfg.blocks() {
-        for v in block_data.terminator().used_values() {
+    // 终结符使用的值也计入（终结符是指令：`term_used_values` 即其操作数）
+    for (block, _) in func.dfg.blocks() {
+        for v in func.dfg.term_used_values(block) {
             *counts.entry(v).or_insert(0) += 1;
         }
     }
@@ -199,10 +199,10 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
         {
             stack.push(normal_block);
             stack.push(unwind_block);
-        } else if let Some((_, default_block, _, cases)) = func.dfg.term_switch(block_id) {
-            stack.push(default_block);
-            for (_, target, _) in cases {
-                stack.push(*target);
+        } else if let Some(view) = func.dfg.term_switch(block_id) {
+            stack.push(view.default_block);
+            for case in &view.cases {
+                stack.push(case.target);
             }
         }
     }
