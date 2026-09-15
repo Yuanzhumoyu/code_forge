@@ -397,6 +397,20 @@ impl Function {
         })
     }
 
+    /// 入口块。
+    ///
+    /// 契约：`entry_block` 由构造方（`FunctionBuilder::create_entry_block`、
+    /// 文本解析器、lowering）设置。**缺失即编程错误**——这里 fail-closed
+    /// panic，而不是像历史上各处那样静默回退 `Block(0)`：静默回退会把
+    /// "根本没设入口"伪装成"入口是 0 号块"，支配树/循环分析/CFG 遍历会据此
+    /// 算出看似合理但错误的结果（v3 方案 S4 前置清理，2026-09-14）。
+    ///
+    /// 需要"可能没有入口"语义的调用方请直接读 `entry_block` 字段。
+    pub fn entry(&self) -> Block {
+        self.entry_block
+            .unwrap_or_else(|| panic!("Function {} 未设置 entry_block（入口块）", self.name))
+    }
+
     /// 惰性获取循环森林 (依赖 DominatorTree).
     pub fn loop_forest(&self) -> &LoopForest {
         self.analysis.loop_forest.get_or_init(|| {

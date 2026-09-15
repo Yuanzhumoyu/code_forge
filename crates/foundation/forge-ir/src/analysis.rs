@@ -45,7 +45,7 @@ impl DominatorTree {
         if block_count == 0 {
             return Self::empty();
         }
-        let entry = func.entry_block.unwrap_or(Block(0));
+        let entry = func.entry();
 
         let postorder = compute_postorder(func, entry);
         let postorder_rank: HashMap<Block, usize> =
@@ -81,6 +81,8 @@ impl DominatorTree {
 
     fn empty() -> Self {
         Self {
+            // 空函数（无块）的退化值：没有任何查询会用到它（block_count == 0
+            // 时所有查询短路），故这里不是"入口约定"，只是占位。
             entry: Block(0),
             children: SecondaryMap::new(),
             tin: SecondaryMap::new(),

@@ -98,7 +98,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
-| S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
+| S4 | 终结符归一 + 完整 use-def | **前置清理已落地**（`Function::entry()` fail-closed、`EPILOGUE_LABEL` 具名）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`、`Use` 带种类）待开工 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
@@ -415,6 +415,31 @@ workspace 1388 passed 不变（等价替换；全仓编译 + 全部测试 + 两�
 ② `TypeId` 常量的"预填充顺序 + 索引 9 空洞"契约目前由 `debug_assert` + 本轮新增
 的 `tests/type_facts.rs` 守卫（release 下靠测试而非断言）；
 ③ `Module::set_data_layout` 整体替换 `self.types` 的语义待收敛。
+
+### S4 前置清理：入口约定 fail-closed + 尾声哨兵具名（2026-09-14）
+
+S4（终结符并入指令流）的两处"形状约定"先清掉，避免它们跟着大改一起漂：
+
+1. **`Function::entry()`（fail-closed）**：此前 7 处 pass/分析写
+   `func.entry_block.unwrap_or(Block(0))`——静默回退会把"根本没设入口"伪装成
+   "入口是 0 号块"，支配树/循环分析/CFG 遍历据此算出**看似合理但错误**的结果。
+   现在统一走 `Function::entry()`：缺失即 panic（编程错误），要"可能没有入口"
+   的语义就直接读 `entry_block` 字段。涉及 `analysis.rs`、`forge-opt` 的
+   `dead_code`/`gvn`/`gvn_pre`×2/`jump_thread`/`sccp`，以及
+   `forge-codegen/pipeline/compiler.rs` 的 entry 参数重建（原来注着
+   "entry 块约定为索引 0"）。`DominatorTree::empty()` 的 `entry: Block(0)`
+   保留但注明是"空函数退化值、没有任何查询会用到"，不是入口约定。
+   `make_placeholder_ptr` 的 `Block(0)` 同样注明是 `ValueDef::Param` 的语法占位。
+
+2. **`EPILOGUE_LABEL`（具名哨兵）**：统一尾声不是 IR 块，但机器层 label 复用
+   `Block` 句柄，此前用字面量 `Block(0xFFFFFFFD)`（emission.rs 两处 + 注释里
+   提到这个魔数）。现在 `crate::pipeline::emit::EPILOGUE_LABEL` 具名 + 文档
+   （为什么取 u32 空间最高的 3 个值、为什么不能改——定宽 ISA 把块号写进
+   label 位域，reloc patcher 依赖它只占低位），并在绑定前加 debug 断言
+   （块数不得逼近哨兵值）。
+
+**验证**：workspace 1383 passed / 0 failed / 19 ignored（68 suites）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

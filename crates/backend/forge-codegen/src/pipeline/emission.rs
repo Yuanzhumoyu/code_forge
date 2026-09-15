@@ -122,7 +122,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 frame_lowering.emit_epilogue_jump(
                     encoder,
                     alloc_result,
-                    Block(0xFFFFFFFD),
+                    crate::pipeline::emit::EPILOGUE_LABEL,
                     sink,
                 )?;
             }
@@ -144,8 +144,15 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
         // Stage 10: Epilogue
         if frame_lowering.needs_epilogue_label() {
-            let epilogue_block = Block(0xFFFFFFFD);
-            sink.bind_label(epilogue_block);
+            // 统一尾声标签：机器层 label 空间里的保留哨兵（见 EPILOGUE_LABEL 文档）。
+            // 这里断言哨兵与真实块索引空间不冲突（块数是 u32 索引空间里的实数）。
+            debug_assert!(
+                (vblocks.len() as u64) < crate::pipeline::emit::EPILOGUE_LABEL.0 as u64,
+                "尾声哨兵 0x{:X} 与真实块索引空间冲突（块数 {}）",
+                crate::pipeline::emit::EPILOGUE_LABEL.0,
+                vblocks.len()
+            );
+            sink.bind_label(crate::pipeline::emit::EPILOGUE_LABEL);
         }
         frame_lowering.emit_epilogue(frame_size, alloc_result, &mut sink)?;
 

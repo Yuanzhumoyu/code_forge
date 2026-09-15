@@ -41,7 +41,7 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
     let mut avail_out = compute_avail(func, &gen_map, &kill_map);
     let ant_in = compute_ant(func, &gen_map);
 
-    let entry = func.entry_block.unwrap_or(Block(0));
+    let entry = func.entry();
     let preds = func.predecessors().clone();
 
     // Find partially redundant expressions and insert them in predecessor blocks
@@ -244,7 +244,7 @@ fn compute_avail(
         avail_out.insert(Block(bi as u32), HashSet::new());
     }
     let preds = func.predecessors().clone();
-    let entry = func.entry_block.unwrap_or(Block(0));
+    let entry = func.entry();
     let mut changed = true;
     while changed {
         changed = false;

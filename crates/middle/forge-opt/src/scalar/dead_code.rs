@@ -179,7 +179,7 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
     }
 
     // DFS 标记可达块 (use entry_block if set, otherwise Block(0))
-    let entry = func.entry_block.unwrap_or(Block(0));
+    let entry = func.entry();
     let mut reachable = HashSet::new();
     let mut stack = vec![entry];
 

@@ -49,7 +49,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     // 去重入队标记：同一块可能被多个用户/分支重复加入 worklist，
     // 重复 pop 会整块重扫（克隆 + 全指令 evaluate），是主要开销。
     let mut in_queue: HashSet<Block> = HashSet::new();
-    let entry = func.entry_block.unwrap_or(Block(0));
+    let entry = func.entry();
     if reachable.insert(entry) && in_queue.insert(entry) {
         worklist.push(entry);
     }

@@ -407,7 +407,7 @@ mod tests {
             u32::from_le_bytes(code2[0..4].try_into().unwrap()),
             0x94000000 | 0x3FF_FFFF
         );
-        // 初编码 label 占位（块号 0xFFFFFFFD 塞入 imm26）污染 top8：
+        // 初编码 label 占位（统一尾声哨兵 EPILOGUE_LABEL.0 塞入 imm26）污染 top8：
         // word=0x17FFFFFD（top8=0x17）——必须按 top6=0x05 识别 B，
         // patch diff=8 → 0x14000002（imm26 域干净重写）
         let mut code3 = 0x17FFFFFDu32.to_le_bytes().to_vec();

@@ -10,6 +10,20 @@ use forge_ir::Block;
 use forge_ir::ImmStr;
 use std::sync::Arc;
 
+/// 统一尾声标签 —— 机器层 label 空间里的**保留哨兵**。
+///
+/// 机器 IR 的 label 复用 IR 的 `Block` 句柄类型，但统一尾声**不是 IR 块**：
+/// 它由 `TargetFrameLowering::emit_epilogue` 发射，`return` 块通过
+/// `emit_epilogue_jump` 跳到它（多 return 块共用一个尾声）。
+///
+/// 取 `0xFFFF_FFFD`：u32 索引空间最高的 3 个值留给"非真实块"的外部标签，
+/// 与任何真实块索引保持天文距离（真实函数不可能有 42 亿个块）。
+///
+/// **不要改这个值**：定宽 ISA 的 `emit_epilogue_jump` 把块号写进 label 位域
+/// （如 riscv JAL 的 imm26），重新编码（reloc patch）依赖它只占低位、高位由
+/// patcher 重写——改动会同时影响 `reloc_patcher` 的位段重排测试。
+pub const EPILOGUE_LABEL: Block = Block(0xFFFF_FFFD);
+
 /// Byte-level code emission buffer with label fixup support.
 pub struct CodeSink {
     data: Vec<u8>,

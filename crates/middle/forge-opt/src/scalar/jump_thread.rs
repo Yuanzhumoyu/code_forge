@@ -46,7 +46,7 @@ impl OptimizationPass for JumpThreadPass {
 pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     let block_count = func.dfg.blocks.len();
-    let entry = func.entry_block.unwrap_or(Block(0));
+    let entry = func.entry();
 
     loop {
         let mut changed = false;

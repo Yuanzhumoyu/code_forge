@@ -85,7 +85,7 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
     let mut const_map: HashMap<Value, (Big, TypeId)> = HashMap::new();
 
     // DFS from entry block
-    let entry_id = func.entry_block.unwrap_or(Block(0));
+    let entry_id = func.entry();
     // P1-5：别名分析（load 消重的 kill 精度）
     let alias = AliasAnalysis::new();
     gvn_dfs(

@@ -502,7 +502,7 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
     };
     func.signature = func.types.borrow_mut().register_signature(new_sig);
     // entry 块参数重建 + 重写映射（旧参数值 → 新值列表）
-    let entry = Block(0); // entry 块约定为索引 0
+    let entry = func.entry(); // fail-closed：缺失入口即编程错误（不再假定 Block(0)）
     let old_bvals = func.dfg.blocks[entry.0 as usize].param_values.clone();
     let mut rewrite: HashMap<Value, Vec<Value>> = HashMap::new();
     let mut new_bparams: Vec<TypeId> = Vec::new();
@@ -1340,6 +1340,10 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
 }
 
 /// GEP 无基址操作数时的占位值（正常 IR 不会出现——防御性兜底）。
+///
+/// `Block(0)` 在这里只是"必须给一个块句柄"的**语法占位**（`ValueDef::Param`
+/// 要求块 + 下标），**不是**"入口是 0 号块"的约定——该值不参与任何支配/
+/// CFG 判断（GEP 展开只把它当 PTR 值用）。入口约定请用 `Function::entry()`。
 fn make_placeholder_ptr(func: &mut Function) -> Value {
     func.dfg
         .make_value(TypeId::PTR, ValueDef::Param(Block(0), 0))
