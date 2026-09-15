@@ -40,6 +40,9 @@ pub enum VerifyError {
         block: Block,
     },
     BlockParamCountMismatch {
+        /// 违规的**终结符指令**（S4 主体：终结符是指令，诊断可以点名它）。
+        inst: Inst,
+        /// 前驱块（终结符所在块）。
         block: Block,
         expected: usize,
         found: usize,
@@ -66,6 +69,8 @@ pub enum VerifyError {
         found: usize,
     },
     ReturnTypeMismatch {
+        /// `ret` 终结符指令。
+        inst: Inst,
         block: Block,
         expected: usize,
         found: usize,
@@ -98,6 +103,8 @@ pub enum VerifyError {
     },
     /// Return 值数量与签名匹配但类型不符。
     ReturnValueTypeMismatch {
+        /// `ret` 终结符指令。
+        inst: Inst,
         block: Block,
         ret_idx: usize,
         expected: TypeId,
@@ -105,6 +112,8 @@ pub enum VerifyError {
     },
     /// 终结符目标块不存在（与 MissingTerminator 区分：终结符存在但目标非法）。
     InvalidTerminatorTarget {
+        /// 违规的终结符指令。
+        inst: Inst,
         block: Block,
         target: Block,
     },
@@ -117,6 +126,8 @@ pub enum VerifyError {
     /// 终结符使用了不被支配的值（与指令级 DominanceViolation 区分）。
     TerminatorDominanceViolation {
         value: Value,
+        /// 违规的终结符指令。
+        inst: Inst,
         block: Block,
         def_block: Block,
     },
@@ -202,14 +213,15 @@ impl std::fmt::Display for VerifyError {
                 write!(f, "block {}: missing terminator", block)
             }
             VerifyError::BlockParamCountMismatch {
+                inst,
                 block,
                 expected,
                 found,
             } => {
                 write!(
                     f,
-                    "block {}: jump args count {} != block params {}",
-                    block, found, expected
+                    "block {}: terminator inst {} jump args count {} != block params {}",
+                    block, inst, found, expected
                 )
             }
             VerifyError::BlockArgTypeMismatch {
@@ -252,14 +264,15 @@ impl std::fmt::Display for VerifyError {
                 )
             }
             VerifyError::ReturnTypeMismatch {
+                inst,
                 block,
                 expected,
                 found,
             } => {
                 write!(
                     f,
-                    "block {}: return value count {} != signature {}",
-                    block, found, expected
+                    "block {}: ret inst {} value count {} != signature {}",
+                    block, inst, found, expected
                 )
             }
             VerifyError::MultipleEntryBlocks { blocks } => {
@@ -306,6 +319,7 @@ impl std::fmt::Display for VerifyError {
                 )
             }
             VerifyError::ReturnValueTypeMismatch {
+                inst,
                 block,
                 ret_idx,
                 expected,
@@ -313,15 +327,19 @@ impl std::fmt::Display for VerifyError {
             } => {
                 write!(
                     f,
-                    "block {}: return value {} type mismatch (expected t{}, found t{})",
-                    block, ret_idx, expected.0, found.0
+                    "block {}: ret inst {} value {} type mismatch (expected t{}, found t{})",
+                    block, inst, ret_idx, expected.0, found.0
                 )
             }
-            VerifyError::InvalidTerminatorTarget { block, target } => {
+            VerifyError::InvalidTerminatorTarget {
+                inst,
+                block,
+                target,
+            } => {
                 write!(
                     f,
-                    "block {}: terminator targets nonexistent block {}",
-                    block, target
+                    "block {}: terminator inst {} targets nonexistent block {}",
+                    block, inst, target
                 )
             }
             VerifyError::InstOrderViolation { value, user, block } => {
@@ -333,13 +351,14 @@ impl std::fmt::Display for VerifyError {
             }
             VerifyError::TerminatorDominanceViolation {
                 value,
+                inst,
                 block,
                 def_block,
             } => {
                 write!(
                     f,
-                    "dominance violation: terminator in block {} uses value {} defined in {}",
-                    block, value, def_block
+                    "dominance violation: terminator inst {} in block {} uses value {} defined in {}",
+                    inst, block, value, def_block
                 )
             }
             VerifyError::SelectCondNotBool { inst } => {
@@ -1243,7 +1262,11 @@ impl Verifier {
                 for case in &view.cases {
                     if !seen.insert(case.value) {
                         self.errors.push(VerifyError::InvalidImmediate {
-                            inst: Inst(u32::MAX), // 终结符无独立指令句柄可见性，detail 说明
+                            // 终结符是指令（S4 主体）：诊断点名那条 `switch` 指令，
+                            // 不再伪造 `Inst(u32::MAX)`。
+                            inst: dfg
+                                .block_terminator(block)
+                                .expect("switch 投影命中 ⇒ 终结符指令存在"),
                             detail: format!("duplicate switch case value {}", case.value),
                         });
                     }
@@ -1271,14 +1294,14 @@ impl Verifier {
             }
         }
 
-        // Check terminator values
+        // Check terminator values（终结符是指令 ⇒ 诊断点名真实指令句柄）
         for (block, _block_data) in dfg.blocks() {
+            let term_inst = dfg.block_terminator(block);
             for val in dfg.term_used_values(block) {
                 if !defined.contains(&val) {
-                    // Create a fake inst to report the error
                     self.errors.push(VerifyError::UndefinedValue {
                         value: val,
-                        user: Inst(u32::MAX), // terminator reference
+                        user: term_inst.expect("终结符用值来自终结符指令"),
                         block,
                     });
                 }
@@ -1301,13 +1324,16 @@ impl Verifier {
                     if dfg.blocks.get(pred.0 as usize).is_none() {
                         continue;
                     }
-                    // 前驱终结符传给本块的实参（投影读取，不依赖终结符表示）
+                    // 前驱终结符指令（诊断点名它）+ 传给本块的实参（投影读取）
+                    let pred_term_inst =
+                        dfg.block_terminator(pred).expect("前驱已终止（投影命中）");
                     if let Some((_, then_block, then_args, else_block, else_args)) =
                         dfg.term_branch(pred)
                     {
                         if then_block == block {
                             if then_args.len() != expected_params {
                                 self.errors.push(VerifyError::BlockParamCountMismatch {
+                                    inst: pred_term_inst,
                                     block: pred,
                                     expected: expected_params,
                                     found: then_args.len(),
@@ -1325,6 +1351,7 @@ impl Verifier {
                         if else_block == block {
                             if else_args.len() != expected_params {
                                 self.errors.push(VerifyError::BlockParamCountMismatch {
+                                    inst: pred_term_inst,
                                     block: pred,
                                     expected: expected_params,
                                     found: else_args.len(),
@@ -1343,6 +1370,7 @@ impl Verifier {
                         if target == block {
                             if args.len() != expected_params {
                                 self.errors.push(VerifyError::BlockParamCountMismatch {
+                                    inst: pred_term_inst,
                                     block: pred,
                                     expected: expected_params,
                                     found: args.len(),
@@ -1364,6 +1392,7 @@ impl Verifier {
                         if default_block == block {
                             if default_args.len() != expected_params {
                                 self.errors.push(VerifyError::BlockParamCountMismatch {
+                                    inst: pred_term_inst,
                                     block: pred,
                                     expected: expected_params,
                                     found: default_args.len(),
@@ -1385,6 +1414,7 @@ impl Verifier {
                             if case_block == block {
                                 if case_args.len() != expected_params {
                                     self.errors.push(VerifyError::BlockParamCountMismatch {
+                                        inst: pred_term_inst,
                                         block: pred,
                                         expected: expected_params,
                                         found: case_args.len(),
@@ -1406,8 +1436,12 @@ impl Verifier {
 
             // Check Return: 数量与类型都须匹配签名
             if let Some(values) = dfg.term_return_values(block) {
+                let ret_inst = dfg
+                    .block_terminator(block)
+                    .expect("ret 投影命中 ⇒ 终结符指令存在");
                 if values.len() != signature_rets.len() {
                     self.errors.push(VerifyError::ReturnTypeMismatch {
+                        inst: ret_inst,
                         block,
                         expected: signature_rets.len(),
                         found: values.len(),
@@ -1419,6 +1453,7 @@ impl Verifier {
                             && found != expected
                         {
                             self.errors.push(VerifyError::ReturnValueTypeMismatch {
+                                inst: ret_inst,
                                 block,
                                 ret_idx: i,
                                 expected,
@@ -1465,8 +1500,13 @@ impl Verifier {
             // 里只有一处定义（S4-e 起 forge-opt 也走同一处）。
             for target in dfg.block_successors(block) {
                 if dfg.blocks.get(target.0 as usize).is_none() {
-                    self.errors
-                        .push(VerifyError::InvalidTerminatorTarget { block, target });
+                    self.errors.push(VerifyError::InvalidTerminatorTarget {
+                        inst: dfg
+                            .block_terminator(block)
+                            .expect("后继存在 ⇒ 终结符指令存在"),
+                        block,
+                        target,
+                    });
                 }
             }
         }
@@ -1672,6 +1712,10 @@ impl Verifier {
                 if def_block != block && !domtree.dominates(def_block, block) {
                     self.errors.push(VerifyError::TerminatorDominanceViolation {
                         value: val,
+                        inst: func
+                            .dfg
+                            .block_terminator(block)
+                            .expect("终结符用值来自终结符指令"),
                         block,
                         def_block,
                     });

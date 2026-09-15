@@ -100,7 +100,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
-| S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
+| S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
@@ -696,6 +696,33 @@ x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 新增守卫 `tests/terminator_api.rs::terminator_is_an_inst_outside_inst_order`
 （终结符是 `insts` 里的指令、**不在** `inst_order`、其操作数在 use-def 里、
 重写后旧指令墓碑化且 use 项摘除）。
+
+### S6（子项）：终结符诊断点名真实指令句柄（2026-09-15）
+
+S4 主体让终结符成为指令之后，校验器里与终结符相关的 5 个错误变体仍只报块号或带
+伪造句柄，属于"表示已换、诊断没跟上"的残留：
+
+- **问题**：`BlockParamCountMismatch` / `ReturnTypeMismatch` /
+  `ReturnValueTypeMismatch` / `InvalidTerminatorTarget` /
+  `TerminatorDominanceViolation` 这 5 类错误**全都精确归属于一条终结符指令**，
+  但诊断里要么只有块号，要么用 `Inst(u32::MAX)` 占位（源码注释原文：
+  "终结符无独立指令句柄可见性"）——消费者（display / forge-rustc 诊断）无法把
+  错误定位到具体那条指令，也无法在块内有多个候选时区分。
+- **做法**：5 个变体各加 `inst: Inst` 字段并在 `Display` 里打印
+  （`block {}: terminator inst {} …` 等）；构造点全部改为取**真实句柄**——
+  `check_uses` 的终结符用值循环绑定 `term_inst`、`check_block_params` 绑定
+  前驱块的终结符指令、`switch` case 重复与非法跳转目标各自取
+  `block_terminator(block)`。两处 `Inst(u32::MAX)` 伪造随之删除；这些
+  `expect` 都挂在"投影已命中"的分支上，坏 IR 上不会因缺终结符而 panic。
+- **守卫**：`tests/verify_negative.rs::terminator_diagnostics_carry_real_inst`
+  ——`ret` 值数量不符时 `ReturnTypeMismatch.inst` 必须等于该块的终结符指令；
+  用公开写入口 `Function::jump` 把跳转目标改到不存在的块后，
+  `InvalidTerminatorTarget.inst` 必须等于**新**终结符指令、且不等于被墓碑化的
+  旧句柄（同时钉住"重写终结符 = 墓碑 + 新发指令"）。
+
+**验证**：workspace 1395 passed / 0 failed / 19 ignored（56 个测试二进制 +
+13 组 doc-test，较 S4 主体 +1）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

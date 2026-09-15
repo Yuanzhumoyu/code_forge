@@ -254,6 +254,67 @@ fn verify_path_without_return() {
     );
 }
 
+// ── 终结符诊断携带真实指令句柄（S4 主体后续） ──
+
+/// 终结符是指令之后，终结符相关诊断必须点名**那条指令**——此前是伪造的
+/// `Inst(u32::MAX)`（"终结符无独立指令句柄可见性"）。
+#[test]
+fn terminator_diagnostics_carry_real_inst() {
+    // ① ret 值数量与签名不符 → ReturnTypeMismatch { inst }
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
+    let mut fb = FunctionBuilder::new("f", ctx.clone(), sig);
+    let (entry, _) = fb.create_entry_block();
+    fb.ret(&[]);
+    let func = fb.finish().expect("build");
+    let ret_inst = func.dfg.block_terminator(entry).expect("终结符指令");
+    assert_ne!(ret_inst.0, u32::MAX, "终结符指令句柄必须真实");
+
+    let mut verifier = Verifier::with_ctx(ctx.clone());
+    let errs = verifier.verify(&func).expect_err("must fail");
+    let reported = errs
+        .iter()
+        .find_map(|e| match e {
+            VerifyError::ReturnTypeMismatch { inst, .. } => Some(*inst),
+            _ => None,
+        })
+        .expect("ReturnTypeMismatch");
+    assert_eq!(reported, ret_inst, "诊断应点名真实的 ret 指令");
+
+    // ② jump 到不存在的块 → InvalidTerminatorTarget { inst }
+    let sig2 = FunctionSignature::new(&[], &[]);
+    let mut fb2 = FunctionBuilder::new("g", ctx.clone(), sig2);
+    let (entry2, _) = fb2.create_entry_block();
+    let dead = fb2.create_block();
+    fb2.jump(dead, &[]);
+    fb2.switch_to_block(dead);
+    fb2.ret(&[]);
+    let mut func2 = fb2.finish().expect("build");
+    let old_inst = func2.dfg.block_terminator(entry2).expect("终结符指令");
+    // 走公开写入口把跳转目标改到不存在的块：终结符被墓碑化并新发一条指令
+    // （旧句柄不可再用，诊断必须点名新句柄）。
+    func2.jump(entry2, forge_ir::Block(999), []);
+    let bad_inst = func2.dfg.block_terminator(entry2).expect("终结符指令");
+    assert_ne!(bad_inst, old_inst, "重写终结符应新发指令");
+
+    let mut verifier2 = Verifier::with_ctx(ctx);
+    let errs2 = verifier2.verify(&func2).expect_err("must fail");
+    let reported2 = errs2
+        .iter()
+        .find_map(|e| match e {
+            VerifyError::InvalidTerminatorTarget { inst, .. } => Some(*inst),
+            _ => None,
+        })
+        .expect("InvalidTerminatorTarget");
+    assert_ne!(reported2.0, u32::MAX, "不得再伪造 Inst(u32::MAX)");
+    assert_ne!(reported2, old_inst, "诊断不得点名已墓碑化的旧指令");
+    assert_eq!(
+        Some(reported2),
+        func2.dfg.block_terminator(entry2),
+        "诊断的指令必须是该块当前终结符"
+    );
+}
+
 // ── 缺口 7：TerminatorDominanceViolation ──
 
 fn build_branch_merge(fb: &mut FunctionBuilder, ctx: &TypeContext) {

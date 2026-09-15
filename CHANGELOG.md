@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **终结符诊断点名真实指令句柄（forge-ir v3 S6 子项，S4 主体后续）**：S4 让终结符成为指令之后，校验器中 5 个与终结符相关的错误变体仍只报块号或带伪造句柄——`BlockParamCountMismatch`/`ReturnTypeMismatch`/`ReturnValueTypeMismatch`/`InvalidTerminatorTarget`/`TerminatorDominanceViolation` 现各带 `inst: Inst` 并在 `Display` 里打印（`block {}: terminator inst {} …`）。
+  构造点全部改取真实句柄（终结符用值循环绑定 `term_inst`、块参数检查绑定前驱块的终结符指令、`switch` case 重复与非法跳转目标各取 `block_terminator(block)`），两处 `Inst(u32::MAX)` 伪造占位删除。
+  守卫 `tests/verify_negative.rs::terminator_diagnostics_carry_real_inst`（`ret` 计数不符点名真实 `ret` 指令；用公开写入口 `Function::jump` 改到不存在的块后，`InvalidTerminatorTarget.inst` 等于新终结符指令且不等于被墓碑化的旧句柄）。
+
+### Changed (2026-09-15)
+
 - **终结符并入指令流（forge-ir v3 S4 主体，破坏性）**：`Terminator` 枚举与 `UseSite` **删除**——终结符现在就是一条指令（新增 opcode `Ret`/`Jmp`/`Br`/`Switch`/`Unreachable`/`Invoke`/`Resume`，`category = "terminator"`），存 `DataFlowGraph::insts`，由 `BlockData.terminator: Option<Inst>` 引用，**不进 `inst_order`**（块内指令列表语义不变，约 40 处迭代点零改动）。块实参即这条指令的 operands、目标块与 `switch` case 表在它的 immediates 里（`Immediate::Block`/`Type` 早已存在，未新增 immediate 变体、未新增 arena；编码约定见 `ops.toml`「终结符」节，解码处自校验）。
   读经投影访问器（`term_kind`/`term_branch`/`term_jump`/`term_return_values`/`term_switch`（改为结构化 `SwitchView`）/`term_invoke`/`term_resume_value`/`term_is_unreachable`/`term_args_to`/`term_used_values`/`for_each_term_value`/`block_successors`），写经按形式写入口（`jump`/`branch`/`ret`/`switch`/`unreachable`/`invoke`/`resume`/`set_return_values`/`retarget_terminator`/`replace_terminator_args`）。
   **use-def 随之归一**：终结符用值就是普通操作数，`UseLists` 只剩"指令操作数"一条路径，`record_terminator`/`forget_terminator`/终结符专项校验与 `apply_replacements` 的终结符分支一并消失；`Function::replace_all_uses` 天然覆盖分支实参/`ret` 返回值。
