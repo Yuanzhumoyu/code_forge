@@ -255,50 +255,6 @@ pub enum Endianness {
 }
 
 impl TypeId {
-    /// **待移除**：`TypeId::bits()` 的旧实现（v3 S3 的迁移目标，见
-    /// `docs/plans/forge-ir-v3-plan.md` §6 的 S3 记录）。
-    ///
-    /// 它有两条撒谎的默认值：`PTR` 恒 64（不查 `DataLayout`）、复合类型返回 0
-    /// （与 void 不可区分）。正确入口是 [`TypeId::builtin_scalar_bits`]（内建标量，
-    /// `Option`）与 `TypeStore::scalar_bits` / `TypeStore::size_bytes`（含指针/动态宽度）。
-    ///
-    /// 保留在这里**只为让跨 crate 迁移可分步**（80 处调用点，其中约 35 处在下游
-    /// crate，4 处在 `forge-rustc`——本机无法编译校验）；下一轮连同调用点一起删。
-    pub fn bits(&self) -> u32 {
-        match *self {
-            // void, bool
-            TypeId::VOID => 0,
-            TypeId::BOOL => 1,
-            // i8, i16, i32, i64
-            TypeId::I8 => 8,
-            TypeId::I16 => 16,
-            TypeId::I32 => 32,
-            TypeId::I64 => 64,
-            // f32, f64
-            TypeId::F32 => 32,
-            TypeId::F64 => 64,
-            // ptr — dynamic, use DataLayout
-            TypeId::PTR => 64, // 宿主默认视图（迁移目标：问 store）
-            // extended types — valid basic types indexed 10-15
-            TypeId::I128 => 128, // I128
-            TypeId::F16 => 16,   // F16
-            TypeId::F128 => 128, // F128
-            TypeId::V64 => 64,   // V64
-            TypeId::V128 => 128, // V128
-            TypeId::V256 => 256, // V256
-            _ => 0,              // composite types
-        }
-    }
-
-    /// 获取位宽 — 对基本整数/浮点类型返回 `Some(bits)`。
-    /// 对于指针、向量、结构体、数组等复合类型返回 `None`。
-    pub fn try_bits(&self) -> Option<u32> {
-        match self.bits() {
-            0 if self.0 >= 9 || (self.0 == 8) => None, // ptr (8) and composite types
-            b => Some(b),
-        }
-    }
-
     /// **内建**标量类型的位宽（无 `TypeStore` 也能答的部分）。
     ///
     /// - `BOOL` → `Some(1)`；`I8`/`I16`/`I32`/`I64`/`I128`、`F16`/`F32`/`F64`/`F128`
@@ -324,6 +280,19 @@ impl TypeId {
             TypeId::F64 => 64,
             TypeId::F128 => 128,
             // void / ptr / 向量：无静态标量位宽（见文档）
+            _ => return None,
+        })
+    }
+
+    /// **内建**向量常量的总位宽（`V64`/`V128`/`V256` → 64/128/256）。
+    ///
+    /// 与指针不同，这些是**静态事实**（类型名就写明了总位宽）；内部化的动态
+    /// 向量（`<3 x f32>` 等）返回 `None`，需要问 `TypeStore`。
+    pub fn builtin_vector_bits(self) -> Option<u32> {
+        Some(match self {
+            TypeId::V64 => 64,
+            TypeId::V128 => 128,
+            TypeId::V256 => 256,
             _ => return None,
         })
     }
@@ -694,73 +663,34 @@ mod tests {
 
     // === TypeId tests ===
 
+    /// 内建标量位宽（`builtin_scalar_bits`）：不再有"猜 PTR=64 / 复合返回 0"的
+    /// 撒谎默认值——不知道就是 `None`；指针宽度要问 `TypeStore`（按 DataLayout）。
     #[test]
-    fn type_id_bits_void() {
-        assert_eq!(TypeId(0).bits(), 0); // void
+    fn type_id_builtin_scalar_bits() {
+        assert_eq!(TypeId::BOOL.builtin_scalar_bits(), Some(1)); // i1
+        assert_eq!(TypeId::I8.builtin_scalar_bits(), Some(8));
+        assert_eq!(TypeId::I16.builtin_scalar_bits(), Some(16));
+        assert_eq!(TypeId::I32.builtin_scalar_bits(), Some(32));
+        assert_eq!(TypeId::I64.builtin_scalar_bits(), Some(64));
+        assert_eq!(TypeId::I128.builtin_scalar_bits(), Some(128));
+        assert_eq!(TypeId::F16.builtin_scalar_bits(), Some(16));
+        assert_eq!(TypeId::F32.builtin_scalar_bits(), Some(32));
+        assert_eq!(TypeId::F64.builtin_scalar_bits(), Some(64));
+        assert_eq!(TypeId::F128.builtin_scalar_bits(), Some(128));
     }
 
     #[test]
-    fn type_id_bits_bool() {
-        assert_eq!(TypeId(1).bits(), 1); // bool / i1
-    }
-
-    #[test]
-    fn type_id_bits_integers() {
-        assert_eq!(TypeId(2).bits(), 8); // i8
-        assert_eq!(TypeId(3).bits(), 16); // i16
-        assert_eq!(TypeId(4).bits(), 32); // i32
-        assert_eq!(TypeId(5).bits(), 64); // i64
-    }
-
-    #[test]
-    fn type_id_bits_floats() {
-        assert_eq!(TypeId(6).bits(), 32); // f32
-        assert_eq!(TypeId(7).bits(), 64); // f64
-    }
-
-    #[test]
-    fn type_id_bits_ptr() {
-        assert_eq!(TypeId(8).bits(), 64); // ptr — default for backward compat
-    }
-
-    #[test]
-    fn type_id_bits_extended() {
-        assert_eq!(TypeId(10).bits(), 128); // I128
-        assert_eq!(TypeId(11).bits(), 16); // F16
-        assert_eq!(TypeId(12).bits(), 128); // F128
-        assert_eq!(TypeId(13).bits(), 64); // V64
-        assert_eq!(TypeId(14).bits(), 128); // V128
-        assert_eq!(TypeId(15).bits(), 256); // V256
-    }
-
-    #[test]
-    fn type_id_bits_composite_returns_zero() {
-        // TypeId(9) and TypeId(16+) are composite types
-        assert_eq!(TypeId(9).bits(), 0);
-        assert_eq!(TypeId(16).bits(), 0);
-        assert_eq!(TypeId(17).bits(), 0);
-        assert_eq!(TypeId(100).bits(), 0);
-    }
-
-    #[test]
-    fn type_id_try_bits_basic() {
-        assert_eq!(TypeId(2).try_bits(), Some(8)); // i8
-        assert_eq!(TypeId(5).try_bits(), Some(64)); // i64
-        assert_eq!(TypeId(6).try_bits(), Some(32)); // f32
-        assert_eq!(TypeId(1).try_bits(), Some(1)); // bool
-        assert_eq!(TypeId(0).try_bits(), Some(0)); // void
-    }
-
-    #[test]
-    fn type_id_try_bits_ptr() {
-        // ptr (TypeId(8)) returns Some(64) from bits(), same behavior as try_bits()
-        assert_eq!(TypeId(8).try_bits(), Some(64));
-    }
-
-    #[test]
-    fn type_id_try_bits_composite_returns_none() {
-        assert_eq!(TypeId(9).try_bits(), None);
-        assert_eq!(TypeId(17).try_bits(), None);
+    fn builtin_scalar_bits_is_none_for_ptr_void_and_composites() {
+        // 指针宽度是 DataLayout 的事实 → 这里不给数（`TypeStore::scalar_bits` 才答）
+        assert_eq!(TypeId::PTR.builtin_scalar_bits(), None);
+        assert_eq!(TypeId::VOID.builtin_scalar_bits(), None);
+        // 向量/复合：无标量位宽概念
+        assert_eq!(TypeId::V64.builtin_scalar_bits(), None);
+        assert_eq!(TypeId::V128.builtin_scalar_bits(), None);
+        assert_eq!(TypeId::V256.builtin_scalar_bits(), None);
+        assert_eq!(TypeId(9).builtin_scalar_bits(), None, "保留空洞 9");
+        assert_eq!(TypeId(17).builtin_scalar_bits(), None);
+        assert_eq!(TypeId(100).builtin_scalar_bits(), None);
     }
 
     // === ConstId tests ===

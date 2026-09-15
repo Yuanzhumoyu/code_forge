@@ -97,7 +97,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
-| S3 | 类型系统去锁/所有权 | 待开工 |
+| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
@@ -378,6 +378,43 @@ upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两个
 **计量**（同一 `git grep` 口径，`forge-ir/src` 全树）：句柄键 `HashMap`
 S2 前 45 处 → 第二切片后 25 处 → **本切片后 10 处**（`SecondaryMap` 使用点 74 处）。
 workspace 1388 passed 不变（等价替换；全仓编译 + 全部测试 + 两条矩阵为证据）。
+
+### S3（第二切片）：删除 `TypeId::bits()`/`try_bits()`（2026-09-14）
+
+按"无需兼容旧版本结构"的直接要求，**删除**了会撒谎的位宽视图并迁移全部调用点
+（不做兼容层）：
+
+- **`TypeId::bits()` / `try_bits()` 删除**。它有两条撒谎的默认值：`PTR` 恒 64
+  （不查 `DataLayout`）、复合类型返回 0（与 void 不可区分）。替代物：
+  `TypeStore::scalar_bits`（含指针，按 DataLayout）与
+  `TypeId::builtin_scalar_bits`（内建标量）+ 新增
+  `TypeId::builtin_vector_bits`（`V64/V128/V256` 的静态总位宽——类型名即事实）
+  与 `TypeContext::scalar_bits` 转发方法。
+- **迁移 76 处调用点**（`.bits()`/`.try_bits()`；原先统计的 80 处里有 4 处在
+  `forge-rustc`，逐条核对后确认那是 **rustc 自己的 API**
+  （`data_layout.pointer_size().bits()`），与本次无关）：
+  `forge-ir`（verify 转换宽度规则改问 store、builder 的 `iconst` 常量位宽问
+  store、entity 测试改测 `builtin_scalar_bits`）、`forge-opt`
+  （`const_fold` 19 处 + `algebraic` 1 处）、`forge-dsl`
+  （5 处 **生成代码**：新增 `LowerCtx::type_bits_of`，生成的 lowering 改调它）、
+  `forge-codegen`（`opsize_from_type`/`mem_opsize_from_type` 改为实例方法并问
+  store、`reg_info` 的 VEC 档位用内建向量位宽、`pattern.rs`/`compiler.rs` 同理）。
+- **两处行为修正**（这正是删掉视图的目的）：
+  ① `opsize_from_type`/`mem_opsize_from_type` 现在按 `DataLayout` 算指针宽度
+  ——32 位目标的指针 opsize 从 64 修正为 32（x86/riscv64/arm64 默认仍是 64，
+  故两条矩阵不变）；
+  ② `const_fold` 对**动态位宽**标量（`i24` 等内部化类型）改为**不折叠**
+  （fail-closed 守卫 + `debug_assert`）：本模块无 store，宁可不优化也不按错误
+  位宽算值。要折叠动态位宽需把 `TypeStore` 传进该模块（S3 后续项）。
+- 验证：残留 `bits(`/`try_bits` 调用点 0（`forge-rustc` 那两处是 rustc API）；
+  fmt/clippy `-D warnings` 干净；workspace **1383 passed / 0 failed / 19 ignored**
+  （68 suites）；x86 矩阵 195/3/0；riscv64 131/67/0。
+
+**S3 余项**：① `TypeContext(Arc<RwLock<TypeStore>>)` 去锁 + `TypeStore` 显式传参
+（本轮只去掉锁中毒 panic；所有权显式化会牵动数百处 `ctx.borrow()`）；
+② `TypeId` 常量的"预填充顺序 + 索引 9 空洞"契约目前由 `debug_assert` + 本轮新增
+的 `tests/type_facts.rs` 守卫（release 下靠测试而非断言）；
+③ `Module::set_data_layout` 整体替换 `self.types` 的语义待收敛。
 
 ## 7. 参考设计（外部）
 

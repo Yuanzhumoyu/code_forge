@@ -805,7 +805,16 @@ impl FunctionBuilder {
         )
     }
     pub fn iconst(&mut self, value: i64, ty: TypeId) -> Value {
-        let bits = ty.bits().max(1); // use type's actual bit width, min 1
+        // 常量池条目要记位宽：问 store（按 DataLayout 处理指针、支持动态整数
+        // 位宽）；非标量类型（不该出现在这里）退到内建标量表，最后兜底 1 位。
+        let bits = self
+            .func
+            .types
+            .borrow()
+            .scalar_bits(ty)
+            .or_else(|| ty.builtin_scalar_bits())
+            .unwrap_or(1)
+            .max(1);
         let cid = self.func.constants.insert_int(value as i128, bits);
         self.emit1(
             Opcode::Iconst,

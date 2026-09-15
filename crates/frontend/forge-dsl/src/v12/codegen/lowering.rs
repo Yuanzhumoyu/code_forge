@@ -285,7 +285,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     let fpr_return_body: TokenStream = if has_fpr_mov {
         quote! {
             // 浮点返回值 → XMM0（f32 → fpr_mov32 / f64 → fpr_mov64）
-            let __fidx = __pack.push_inst(if ctx.xreg_types.get(&val).map(|t| t.bits()).unwrap_or(64) == 32 {
+            let __fidx = __pack.push_inst(if ctx.type_bits_of(&val).unwrap_or(64) == 32 {
                 Inst::#fpr_mov32_vn {
                     #fpr_mov_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #fpr_mov_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
@@ -675,9 +675,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             t.and_then(|&t| {
                 ctx.type_ctx
                     .as_ref()
-                    .and_then(|tc| tc.element_type(t))
+                    .and_then(|tc| tc.element_type(t).and_then(|e| tc.scalar_bits(e)))
             })
-            .map(|e| e.bits() as u64)
+            .map(|b| b as u64)
             .unwrap_or(32)
         }
 
@@ -1317,7 +1317,7 @@ fn gen_call_lowering(
         .collect();
     let fpr_ret_stmt: TokenStream = if has_fpr_mov {
         quote! {
-            let __idx = __pack.push_inst(if ctx.xreg_types.get(&__r).map(|t| t.bits()).unwrap_or(64) == 32 && #has_ss {
+            let __idx = __pack.push_inst(if ctx.type_bits_of(&__r).unwrap_or(64) == 32 && #has_ss {
                 Inst::#fpr_mov32_vn { #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS), #f_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS) }
             } else {
                 Inst::#fpr_mov64_vn { #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS), #f_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS) }
@@ -1861,7 +1861,7 @@ fn arg_move_loop(
                 if __fi < #fn_ {
                     let __dst = [#(Reg::#fpr_regs),*][__fi];
                     __fi += 1;
-                    let __idx = __pack.push_inst(if ctx.xreg_types.get(&__a).map(|t| t.bits()).unwrap_or(64) == 32 && #has_ss {
+                    let __idx = __pack.push_inst(if ctx.type_bits_of(&__a).unwrap_or(64) == 32 && #has_ss {
                         Inst::#fpr_mov32_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
                     } else {
                         Inst::#fpr_mov64_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
@@ -1897,7 +1897,7 @@ fn arg_move_loop(
             if __pi < #fn_ {
                 let __dst = [#(Reg::#fpr_regs),*][__pi];
                 __pi += 1;
-                let __idx = __pack.push_inst(if ctx.xreg_types.get(&__a).map(|t| t.bits()).unwrap_or(64) == 32 && #has_ss {
+                let __idx = __pack.push_inst(if ctx.type_bits_of(&__a).unwrap_or(64) == 32 && #has_ss {
                     Inst::#fpr_mov32_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
                 } else {
                     Inst::#fpr_mov64_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }

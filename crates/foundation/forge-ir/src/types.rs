@@ -918,6 +918,12 @@ impl TypeContext {
     pub fn element_type(&self, id: TypeId) -> Option<TypeId> {
         self.borrow().element_type(id)
     }
+    /// 标量位宽（转发 `TypeStore::scalar_bits`；与 `size_bytes`/`is_int` 等
+    /// 既有转发方法一致）。
+    pub fn scalar_bits(&self, id: TypeId) -> Option<u32> {
+        self.borrow().scalar_bits(id)
+    }
+
     pub fn size_bytes(&self, id: TypeId) -> u32 {
         self.borrow().size_bytes(id)
     }

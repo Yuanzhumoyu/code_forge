@@ -54,7 +54,7 @@ fn ty_float_format(ty: TypeId) -> Option<FloatFormat> {
 
 /// 按类型宽度截断 Big 值（有符号语义）。
 fn truncate_to_type(value: &Big, ty: TypeId) -> Big {
-    let bits = ty.bits();
+    let bits = scalar_bits(ty);
     if bits == 0 || (!ty_is_int(ty) && !ty_is_ptr(ty)) {
         return value.clone();
     }
@@ -63,7 +63,7 @@ fn truncate_to_type(value: &Big, ty: TypeId) -> Big {
 
 /// 将 Big 解释为固定位宽的无符号值。
 fn as_unsigned_big(value: &Big, ty: TypeId) -> Big {
-    let bits = ty.bits();
+    let bits = scalar_bits(ty);
     if bits == 0 {
         return Big::U_ZERO;
     }
@@ -135,12 +135,29 @@ fn fold_extract_value(
 /// `immediates` 是**指令的 immediate 通道**（v3 S1 起比较条件经
 /// `Immediate::IntCC`/`FloatCC` 传递，不再是 `Opcode` 载荷）；
 /// 只有比较类折叠会读它，其余分支忽略。
+/// 常量折叠的标量位宽（**内建标量表**；调用点已由 `fold_opcode` 的入口守卫保证
+/// 是内建标量，`debug_assert` 兜住违反）。
+///
+/// 这是 v3 S3 去 `TypeId::bits()` 的结果：不再"猜"位宽——动态位宽类型
+/// （`i24` 等由 `TypeStore::int_ty` 内部化）在本模块（无 store）**不折叠**。
+fn scalar_bits(ty: TypeId) -> u32 {
+    let bits = ty.builtin_scalar_bits();
+    debug_assert!(bits.is_some(), "常量折叠只应处理内建标量，实际 {ty:?}");
+    bits.unwrap_or(0)
+}
+
 pub fn fold_opcode(
     opcode: &Opcode,
     operands: &[ConstValue],
     immediates: &[forge_ir::Immediate],
     ty: TypeId,
 ) -> Result<Option<ConstValue>, IrError> {
+    // fail-closed 守卫：位宽运算只对有静态位宽的标量成立。动态位宽类型（i24…）、
+    // 向量、复合类型一律**不折叠**——宁可不优化，也不按错误位宽算出错值。
+    // 要折叠动态位宽需要把 `TypeStore` 传进本模块（S3 后续项，见方案 §6）。
+    if ty.builtin_scalar_bits().is_none() {
+        return Ok(None);
+    }
     match opcode {
         // === 整数算术 ===
         Opcode::Iadd => fold_binary_int(operands, ty, |a, b| a + b, |a, b| a.checked_add(b)),
@@ -197,7 +214,7 @@ pub fn fold_opcode(
             }
             match &operands[0] {
                 ConstValue::Int(v, _) => {
-                    let bits = ty.bits();
+                    let bits = scalar_bits(ty);
                     if bits == 0 {
                         return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
                     }
@@ -235,7 +252,7 @@ pub fn fold_opcode(
             };
             let shift = big_to_usize(b);
             // For signed shift, convert to signed by truncating to bits first
-            let sa = a.truncate_to_bits_signed(ty.bits());
+            let sa = a.truncate_to_bits_signed(scalar_bits(ty));
             let result = sa >> shift;
             Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
@@ -372,7 +389,7 @@ pub fn fold_opcode(
             let u = a.trunc_to_u64();
             let result = u.leading_zeros() as u64;
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(ty.bits()),
+                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
                 ty,
             )))
         }
@@ -384,7 +401,7 @@ pub fn fold_opcode(
             let u = a.trunc_to_u64();
             let result = u.trailing_zeros() as u64;
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(ty.bits()),
+                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
                 ty,
             )))
         }
@@ -396,7 +413,7 @@ pub fn fold_opcode(
             let u = a.trunc_to_u64();
             let result = u.count_ones() as u64;
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(ty.bits()),
+                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
                 ty,
             )))
         }
@@ -408,7 +425,7 @@ pub fn fold_opcode(
             let u = a.trunc_to_u64();
             let result = u.reverse_bits();
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(ty.bits()),
+                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
                 ty,
             )))
         }
@@ -418,10 +435,10 @@ pub fn fold_opcode(
                 None => return Ok(None),
             };
             let val = a.trunc_to_u64();
-            let shift = (big_to_usize(b) as u32) % (ty.bits().max(1));
+            let shift = (big_to_usize(b) as u32) % (scalar_bits(ty).max(1));
             let result = val.rotate_left(shift);
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(ty.bits()),
+                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
                 ty,
             )))
         }
@@ -431,10 +448,10 @@ pub fn fold_opcode(
                 None => return Ok(None),
             };
             let val = a.trunc_to_u64();
-            let shift = (big_to_usize(b) as u32) % (ty.bits().max(1));
+            let shift = (big_to_usize(b) as u32) % (scalar_bits(ty).max(1));
             let result = val.rotate_right(shift);
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(ty.bits()),
+                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
                 ty,
             )))
         }
@@ -488,7 +505,7 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let bits = ty.bits();
+            let bits = scalar_bits(ty);
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
             }
@@ -509,7 +526,7 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let bits = ty.bits();
+            let bits = scalar_bits(ty);
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
             }
@@ -530,7 +547,7 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let bits = ty.bits();
+            let bits = scalar_bits(ty);
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
             }
@@ -547,7 +564,7 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let bits = ty.bits();
+            let bits = scalar_bits(ty);
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
             }
@@ -564,7 +581,7 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let bits = ty.bits();
+            let bits = scalar_bits(ty);
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
             }
@@ -887,7 +904,10 @@ fn fold_extend(
     }
     match &operands[0] {
         ConstValue::Int(v, from_ty) => {
-            let from_bits = from_ty.bits();
+            // 源类型必须是内建标量（动态位宽 → 不折叠）
+            let Some(from_bits) = from_ty.builtin_scalar_bits() else {
+                return Ok(None);
+            };
             if from_bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::S_ZERO, to_ty)));
             }
@@ -934,10 +954,13 @@ fn fold_bitcast(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstVa
         ConstValue::Float(v, _) => {
             // 浮点 → 整数位模式
             if ty_is_int(to_ty) {
+                let Some(to_bits) = to_ty.builtin_scalar_bits() else {
+                    return Ok(None);
+                };
                 let fmt = FloatFormat::F64; // default
                 let bits = v.to_bits_trunc(fmt);
                 Ok(Some(ConstValue::Int(
-                    Big::from_u64(bits).truncate_to_bits(to_ty.bits()),
+                    Big::from_u64(bits).truncate_to_bits(to_bits),
                     to_ty,
                 )))
             } else {

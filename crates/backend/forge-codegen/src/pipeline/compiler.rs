@@ -1758,7 +1758,9 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                      需要 [meta].value_gpr_width / addr_width / value_fpr_width 声明更宽的\
                      寄存器组，或改用更窄的 IR 类型）",
                     crate::machine::reg_info::type_label(ty),
-                    ty.bits(),
+                    ty.builtin_scalar_bits()
+                        .map(|b| b.to_string())
+                        .unwrap_or_else(|| "非标量".to_string()),
                     gpr.width(),
                     fpr.width()
                 )));

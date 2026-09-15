@@ -179,7 +179,9 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
                     }
                     ReplaceAction::Const { value } => {
                         let value = truncate_to_type(value, ty);
-                        let cid = func.constants.insert_int(value as i128, ty.bits());
+                        // 常量池条目要记位宽：问 store（指针宽度按 DataLayout；动态整数位宽也能答）
+                        let bits = func.types.borrow().scalar_bits(ty).unwrap_or(1).max(1);
+                        let cid = func.constants.insert_int(value as i128, bits);
                         inst.opcode = Opcode::Iconst;
                         inst.operands.clear();
                         inst.immediates.clear();

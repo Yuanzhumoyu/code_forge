@@ -819,16 +819,25 @@ impl Verifier {
             };
         let src_ok = class_matches(self, rule.src, src_ty, &rule);
         let dst_ok = class_matches(self, rule.dst, dst_ty, &rule);
+        // 标量位宽：有 ctx 就问 store（**指针宽度按 DataLayout**、动态整数位宽
+        // 也能答）；没有 ctx 时退到内建标量表。两者都给不出（非标量）→ 0——
+        // 那种情形上面的类检查已经报了错，位宽比较的结果不影响诊断。
+        let scalar_bits = |this: &Self, ty: TypeId| -> u32 {
+            match &this.ctx {
+                Some(ctx) => ctx.borrow().scalar_bits(ty).unwrap_or(0),
+                None => ty.builtin_scalar_bits().unwrap_or(0),
+            }
+        };
         let width_ok = match rule.width {
             WidthRule::Any => true,
-            WidthRule::Widen => src_ty.bits() < dst_ty.bits(),
-            WidthRule::Narrow => src_ty.bits() > dst_ty.bits(),
+            WidthRule::Widen => scalar_bits(self, src_ty) < scalar_bits(self, dst_ty),
+            WidthRule::Narrow => scalar_bits(self, src_ty) > scalar_bits(self, dst_ty),
             WidthRule::EqualBytes => {
                 if let Some(ctx) = &self.ctx {
                     let store = ctx.borrow();
                     store.size_bytes(src_ty) == store.size_bytes(dst_ty)
                 } else {
-                    src_ty.bits() == dst_ty.bits()
+                    scalar_bits(self, src_ty) == scalar_bits(self, dst_ty)
                 }
             }
             WidthRule::EqualTotalBits => {

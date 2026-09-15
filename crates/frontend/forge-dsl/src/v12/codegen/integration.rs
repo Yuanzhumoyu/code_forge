@@ -105,21 +105,21 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
             if ctx.type_ctx.as_ref().is_some_and(|tc| tc.is_vector(*t)) {
                 (ctx.type_ctx.as_ref().map(|tc| tc.size_bytes(*t)).unwrap_or(0) * 8) as i64
             } else {
-                t.bits() as i64
+                ctx.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(*t)).unwrap_or(0) as i64
             }
         });
         let __a_rs1 = args.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
             if ctx.type_ctx.as_ref().is_some_and(|tc| tc.is_vector(*t)) {
                 (ctx.type_ctx.as_ref().map(|tc| tc.size_bytes(*t)).unwrap_or(0) * 8) as i64
             } else {
-                t.bits() as i64
+                ctx.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(*t)).unwrap_or(0) as i64
             }
         });
         let __a_rs2 = args.get(1).and_then(|x| ctx.xreg_types.get(x)).map(|t| {
             if ctx.type_ctx.as_ref().is_some_and(|tc| tc.is_vector(*t)) {
                 (ctx.type_ctx.as_ref().map(|tc| tc.size_bytes(*t)).unwrap_or(0) * 8) as i64
             } else {
-                t.bits() as i64
+                ctx.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(*t)).unwrap_or(0) as i64
             }
         });
         let __a_elem = results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {

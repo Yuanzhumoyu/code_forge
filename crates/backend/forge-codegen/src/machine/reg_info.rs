@@ -160,7 +160,8 @@ pub fn class_for_type_in_pool(
             // 无浮点寄存器文件的 ISA 也没有向量寄存器（x86 的 XMM/VEC 与
             // FPR 同组）——不能放行，否则会构造该 ISA 不存在的 VEC 类。
             let _ = fpr_pool?;
-            let bytes = (ty.bits() / 8) as u16;
+            // 内建向量常量有静态总位宽；动态向量（None→0）按旧行为取最小档
+            let bytes = (ty.builtin_vector_bits().unwrap_or(0) / 8) as u16;
             let tier = vector_tiers
                 .iter()
                 .copied()

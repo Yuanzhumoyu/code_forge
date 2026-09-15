@@ -492,8 +492,19 @@ impl LowerCtx {
     /// - 32 位写（窄算术）在 x86/aarch64 硬件上自动零扩展高 32 位；
     /// - 消费方 `[lower.Uextend]` 按源宽度 movzx（x86）或 mov（32 位源）。
     ///   违反约定会在 uextend/64 位运算中携带高位垃圾（历史缺陷，已修复）。
-    pub fn opsize_from_type(ty: &TypeId) -> u8 {
-        match ty.bits().div_ceil(8) {
+    ///
+    /// 位宽事实来源：`TypeContext::scalar_bits`（指针按 DataLayout）→ 内建标量表
+    /// → 兜底 64（完全无信息时的寄存器安全默认）。
+    fn type_bits_or_default(&self, ty: &TypeId) -> u32 {
+        self.type_ctx
+            .as_ref()
+            .and_then(|tc| tc.scalar_bits(*ty))
+            .or_else(|| ty.builtin_scalar_bits())
+            .unwrap_or(64)
+    }
+
+    pub fn opsize_from_type(&self, ty: &TypeId) -> u8 {
+        match self.type_bits_or_default(ty).div_ceil(8) {
             0..=1 => 32,
             2 => 16,
             4 => 32,
@@ -507,12 +518,12 @@ impl LowerCtx {
     /// 窄类型算术用 32 位避免残留高位参与 64 位运算）；内存访问必须用真实
     /// 宽度，否则 u8 元素 load 读 4 字节（越界读到相邻槽垃圾）、store 写
     /// 4 字节（越界覆盖相邻槽）。
-    pub fn mem_opsize_from_type(ty: &TypeId) -> u8 {
-        (ty.bits().div_ceil(8) as u8).saturating_mul(8)
+    pub fn mem_opsize_from_type(&self, ty: &TypeId) -> u8 {
+        (self.type_bits_or_default(ty).div_ceil(8) as u8).saturating_mul(8)
     }
 
     /// 内存访问（load/store）的精确宽度——聚合类型（struct/array）的
-    /// `bits()` 为 0，`mem_opsize_from_type` 会错误返回 0（store 宽度 0 →
+    /// 位宽视图为 0，`mem_opsize_from_type` 会错误返回 0（store 宽度 0 →
     /// 机器码缺陷/SEGV）；这里优先用 TypeStore::size_bytes（聚合 → 真实
     /// 字节数，如 {i32,i32} → 64 位），基础类型回退到 bits() 路径。
     pub fn mem_opsize_for(&self, ty: &TypeId) -> u8 {
@@ -523,7 +534,14 @@ impl LowerCtx {
                 return (bytes as u8).saturating_mul(8).min(64);
             }
         }
-        Self::mem_opsize_from_type(ty)
+        self.mem_opsize_from_type(ty)
+    }
+
+    /// 值 → 标量位宽（生成的 lowering 用）：问 `type_ctx`（指针宽度按 DataLayout、
+    /// 动态整数位宽也能答）；值未登记类型或非标量 → `None`。
+    pub fn type_bits_of(&self, val: &XReg) -> Option<u32> {
+        let ty = *self.xreg_types.get(val)?;
+        self.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(ty))
     }
 
     /// 分配一个新的整数类虚拟寄存器。

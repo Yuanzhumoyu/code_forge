@@ -4,7 +4,6 @@
 //! These methods operate on [`super::compiler::CompileState`] and are split out
 //! of `compiler.rs` to keep each pipeline stage's responsibilities in one file.
 
-use crate::LowerCtx;
 use crate::machine::lowering::TargetLowering;
 use crate::machine::pattern::{
     PatTerm, PatternSpec, eval_pat_pred, type_elem_id, type_vec_bytes, type_width_bits,
@@ -430,7 +429,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 // 否则默认 64 会让 i32 store 写 8 字节，覆盖相邻局部变量槽。
                 .or_else(|| inst.operands.first().and_then(|v| dfg.value_type(*v)));
             self.ctx.default_opsize = match result_ty {
-                Some(ty) => LowerCtx::opsize_from_type(&ty),
+                Some(ty) => self.ctx.opsize_from_type(&ty),
                 // 无类型信息可用（罕见）：用 ISA 的值池宽（x86/riscv = 64 位；
                 // 1 字节寄存器 ISA = 8 位）——不再是 x86 的常量 64。
                 None => (self.ctx.value_gpr_class.width() as u8).saturating_mul(8),
@@ -459,7 +458,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 && let Some(op0) = inst.operands.first()
                 && let Some(oty) = dfg.value_type(*op0)
             {
-                self.ctx.default_opsize = LowerCtx::opsize_from_type(&oty);
+                self.ctx.default_opsize = self.ctx.opsize_from_type(&oty);
             }
             // ExtractValue/InsertValue：字段操作在聚合的 64 位域进行——
             // `mov rd, rs1` 必须完整拷贝（否则 32 位截断只剩字段 0）、

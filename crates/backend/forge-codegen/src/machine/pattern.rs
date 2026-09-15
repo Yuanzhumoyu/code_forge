@@ -155,7 +155,7 @@ pub fn type_width_bits(t: TypeId, type_ctx: Option<&TypeContext>) -> i64 {
     if type_ctx.is_some_and(|tc| tc.is_vector(t)) {
         (type_ctx.map(|tc| tc.size_bytes(t)).unwrap_or(0) * 8) as i64
     } else {
-        t.bits() as i64
+        type_ctx.and_then(|tc| tc.scalar_bits(t)).unwrap_or(0) as i64
     }
 }
 

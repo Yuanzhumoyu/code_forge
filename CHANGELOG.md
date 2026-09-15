@@ -73,6 +73,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   计量（同一 `git grep` 口径，`forge-ir/src` 全树）：句柄键 `HashMap` S2 前 45 → 第二切片后 25 → **本切片后 10 处**（`SecondaryMap` 使用点 74 处）。
   顺带记录一个待补的易用性缺口：`for (child, &parent) in &secondary_map` 需要 `IntoIterator for &SecondaryMap`（暂未提供，本次改用 `iter()`）；门禁：clippy `-D warnings` 干净、workspace 1388 passed / 0 failed / 19 ignored（67 suites）、x86 矩阵 195/3/0、riscv64 131/67/0。
 
+- **删除 `TypeId::bits()`/`try_bits()`，位宽改问类型事实 API（forge-ir v3 方案 S3 第二切片）**：
+  旧视图有两条撒谎的默认值——`PTR` 恒 64（不查 `DataLayout`）、复合类型返回 0（与 void 不可区分）。
+  按"无需兼容旧版本结构"直接删除，迁移 **76 处调用点**：`forge-ir`（verify 转换宽度规则、builder 的 `iconst` 常量位宽、entity 测试）、`forge-opt`（`const_fold` 19 处 + `algebraic`）、
+  `forge-dsl`（5 处 **生成代码** —— 新增 `LowerCtx::type_bits_of`）、`forge-codegen`（`opsize_from_type`/`mem_opsize_from_type` 改实例方法并问 store、`reg_info` VEC 档位、`pattern.rs`/`compiler.rs`）。
+  新增 `TypeStore::scalar_bits`（指针按 DataLayout）、`TypeContext::scalar_bits`、`TypeId::builtin_scalar_bits`/`builtin_vector_bits`。
+  **两处行为修正**：32 位目标的指针 opsize 从 64 修正为 32；`const_fold` 对动态位宽标量（`i24` 等）改为不折叠（fail-closed 守卫，本模块无 store）。
+  另：`TypeContext::borrow/borrow_mut` 锁中毒不再 panic（取回内部值），新增守卫 `tests/type_facts.rs`。
+
+  实测：残留 `bits(`/`try_bits` 调用 0；workspace 1383 passed / 0 failed / 19 ignored（68 suites）；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 ### Added (2026-09-14)
 
 - **实体容器与密集索引（forge-ir v3 方案 S2 第一切片）**：新模块 `src/entity_map.rs`（无新依赖，8 个单测）提供 `PrimaryMap`（`push` 分配句柄、下标即句柄、**刻意不支持删除**）、`SecondaryMap`（`Vec<Option<_>>`，"未设置"与"空值"可区分，`get_mut_or_default` 等价 `entry().or_default()`）、`EntitySet`（密集位图，O(1) 增删查）、`PackedOption`（句柄可空压缩：`Option<Value>` 8 字节 → **4 字节**，`u32::MAX` 为空哨兵），以及 `EntityRef` trait + `entity_ref_impls!` 宏（已为 10 个句柄类型实现：句柄 ↔ 密集下标）。`ListPool` 明确不做（本仓库列表用途都是短生命周期局部量）。
