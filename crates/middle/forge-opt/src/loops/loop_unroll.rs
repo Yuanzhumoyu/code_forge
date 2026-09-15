@@ -148,22 +148,14 @@ fn find_first_body_block(
     header: Block,
     body_set: &HashSet<Block>,
 ) -> Option<Block> {
-    let term = &func.dfg.blocks[header.0 as usize].terminator();
-    match term {
-        Terminator::Branch {
-            then_block,
-            else_block,
-            ..
-        } => {
-            if body_set.contains(then_block) {
-                Some(*then_block)
-            } else if body_set.contains(else_block) {
-                Some(*else_block)
-            } else {
-                None
-            }
-        }
-        _ => None,
+    // 投影读取（不依赖 Terminator 表示）
+    let (_, then_block, _, else_block, _) = func.dfg.term_branch(header)?;
+    if body_set.contains(&then_block) {
+        Some(then_block)
+    } else if body_set.contains(&else_block) {
+        Some(else_block)
+    } else {
+        None
     }
 }
 
@@ -184,27 +176,24 @@ fn collect_body_chain(
         visited.insert(current);
         chain.push(current);
 
-        // Follow terminator to next body block
-        let term = &func.dfg.blocks[current.0 as usize].terminator();
-        match term {
-            Terminator::Jump { target, .. } if body_set.contains(target) => {
-                current = *target;
+        // Follow terminator to next body block（投影读取）
+        if let Some((target, _)) = func.dfg.term_jump(current) {
+            if body_set.contains(&target) {
+                current = target;
+            } else {
+                break;
             }
-            Terminator::Branch {
-                then_block,
-                else_block,
-                ..
-            } => {
-                // Follow the path that stays in the loop
-                if body_set.contains(then_block) && !visited.contains(then_block) {
-                    current = *then_block;
-                } else if body_set.contains(else_block) && !visited.contains(else_block) {
-                    current = *else_block;
-                } else {
-                    break;
-                }
+        } else if let Some((_, then_block, _, else_block, _)) = func.dfg.term_branch(current) {
+            // Follow the path that stays in the loop
+            if body_set.contains(&then_block) && !visited.contains(&then_block) {
+                current = then_block;
+            } else if body_set.contains(&else_block) && !visited.contains(&else_block) {
+                current = else_block;
+            } else {
+                break;
             }
-            _ => break,
+        } else {
+            break;
         }
     }
     chain
@@ -413,28 +402,8 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
     let mut cmp_cc: Option<IntCC> = None;
 
     for (pi, &_param_val) in header_block.param_values.iter().enumerate() {
-        let init_arg = init_pred.and_then(|p| {
-            let term = &func.dfg.blocks[p.0 as usize].terminator();
-            match term {
-                Terminator::Jump { target, args, .. } if *target == header => args.get(pi).copied(),
-                Terminator::Branch {
-                    then_block,
-                    then_args,
-                    else_block,
-                    else_args,
-                    ..
-                } => {
-                    if *then_block == header {
-                        then_args.get(pi).copied()
-                    } else if *else_block == header {
-                        else_args.get(pi).copied()
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        });
+        // 投影读取：循环外前驱传给 header 的第 pi 个实参
+        let init_arg = init_pred.and_then(|p| func.dfg.term_args_to(p, header).get(pi).copied());
 
         // Check if init arg is a constant
         if let Some(init_v) = init_arg {

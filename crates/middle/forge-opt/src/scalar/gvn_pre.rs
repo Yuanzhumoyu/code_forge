@@ -314,26 +314,21 @@ fn compute_ant(
     let mut changed = true;
     while changed {
         changed = false;
-        for (bi, block) in func.dfg.blocks.iter().enumerate() {
+        for bi in 0..func.dfg.blocks.len() {
             let b = Block(bi as u32);
-            let succs: Vec<Block> = match &block.terminator() {
-                Terminator::Branch {
-                    then_block,
-                    else_block,
-                    ..
-                } => vec![*then_block, *else_block],
-                Terminator::Jump { target, .. } => vec![*target],
-                Terminator::Switch {
-                    default_block,
-                    cases,
-                    ..
-                } => {
-                    let mut s = vec![*default_block];
+            // 后继按投影读（与旧 match 语义逐条等价：Invoke/Resume 仍为空）
+            let succs: Vec<Block> =
+                if let Some((_, then_block, _, else_block, _)) = func.dfg.term_branch(b) {
+                    vec![then_block, else_block]
+                } else if let Some((target, _)) = func.dfg.term_jump(b) {
+                    vec![target]
+                } else if let Some((_, default_block, _, cases)) = func.dfg.term_switch(b) {
+                    let mut s = vec![default_block];
                     s.extend(cases.iter().map(|(_, t, _)| *t));
                     s
-                }
-                _ => vec![],
-            };
+                } else {
+                    vec![]
+                };
             let ant_out = if succs.is_empty() {
                 HashSet::new()
             } else {

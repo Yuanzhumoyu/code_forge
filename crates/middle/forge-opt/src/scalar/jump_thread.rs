@@ -187,13 +187,12 @@ mod tests {
         assert!(r.changed);
         // B0 should now jump directly to B2
         assert!(
-            matches!(&func.dfg.blocks[0].terminator(), Terminator::Jump { target, .. } if *target == b2)
+            func.dfg
+                .term_jump(Block(0))
+                .is_some_and(|(target, _)| target == b2)
         );
         // B1 should be unreachable
-        assert!(matches!(
-            func.dfg.blocks[1].terminator(),
-            Terminator::Unreachable
-        ));
+        assert!(func.dfg.term_is_unreachable(Block(1)));
     }
 
     #[test]
@@ -226,14 +225,8 @@ mod tests {
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
         // B1 and B2 should be unreachable
-        assert!(matches!(
-            func.dfg.blocks[1].terminator(),
-            Terminator::Unreachable
-        ));
-        assert!(matches!(
-            func.dfg.blocks[2].terminator(),
-            Terminator::Unreachable
-        ));
+        assert!(func.dfg.term_is_unreachable(Block(1)));
+        assert!(func.dfg.term_is_unreachable(Block(2)));
     }
 
     #[test]

@@ -37,11 +37,11 @@ pub fn optimize_tail_calls(
     let block_count = func.dfg.blocks.len();
 
     for bi in 0..block_count {
-        // Check if block ends with Return
-        let return_values = match &func.dfg.blocks[bi].terminator() {
-            Terminator::Return { values, .. } => values.clone(),
-            _ => continue,
+        // Check if block ends with Return（投影读取，不依赖 Terminator 表示）
+        let Some(values) = func.dfg.term_return_values(Block(bi as u32)) else {
+            continue;
         };
+        let return_values: smallvec::SmallVec<[Value; 2]> = values.iter().copied().collect();
         if return_values.is_empty() {
             continue;
         }
@@ -173,16 +173,23 @@ mod tests {
             .dfg
             .blocks
             .iter()
-            .position(|bd| matches!(&bd.terminator(), Terminator::Jump { target, .. } if *target == entry_block))
+            .enumerate()
+            .position(|(i, _)| {
+                rec_func
+                    .dfg
+                    .term_jump(Block(i as u32))
+                    .is_some_and(|(target, _)| target == entry_block)
+            })
             .expect("应有一个块被改写成 jump entry");
-        match &rec_func.dfg.blocks[recurse_block].terminator() {
-            Terminator::Jump { args, .. } => assert_eq!(
-                args.len(),
-                rec_func.dfg.blocks[entry_block.0 as usize].params.len(),
-                "实参数必须与入口块参数数量一致"
-            ),
-            other => panic!("预期 Jump，实际 {other:?}"),
-        }
+        let (_, args) = rec_func
+            .dfg
+            .term_jump(Block(recurse_block as u32))
+            .expect("预期 Jump");
+        assert_eq!(
+            args.len(),
+            rec_func.dfg.blocks[entry_block.0 as usize].params.len(),
+            "实参数必须与入口块参数数量一致"
+        );
         // 严格校验：改写后 IR 必须仍然合法
         let mut v = forge_ir::verify::Verifier::with_ctx(rec_func.types.clone());
         assert!(

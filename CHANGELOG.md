@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **读取面全部改走投影访问器，forge-opt 的终结符依赖清零（forge-ir v3 S4 子项 e）**：`crates/middle/forge-opt` 中所有 `match Terminator` 读取点（const_fold / dead_code / jump_thread / sccp / gvn_pre / tail_call / inline / lto / func_specialize / copy_prop / ind_var_simplify / block_param_coalesce / insert_preheader / loop_unroll）改为使用投影访问器（`term_branch`/`term_jump`/`term_return_values`/`term_switch`/`term_invoke`/`term_args_to`/`term_is_unreachable`/`for_each_term_value`/`block_successors`）；
+  codegen 的 `ret` 读取与 invoke/resume 判别、forge-rustc 的诊断打印同步迁移。**该 crate 现已 0 处引用 `Terminator`**（`git grep -c` 实测）——为 S4 主体（终结符并入指令流、删 `Terminator`）把表示相关调用点收进访问器实现体。
+  顺带修掉一处**遍历口径缺陷**：`const_fold::collect_uses` 的 `Switch` 分支漏算 `default_args`（旧手写 match 只收 discriminant + case args），改用规范序 `for_each_term_value` 后 default 实参也计入使用。
+
+### Changed (2026-09-15)
+
 - **终结符写入口按形式化 + 读取面投影化（forge-ir v3 S4 子项 d）**：`Function` 新增按形式命名的写入口 `jump`/`branch`/`ret`/`switch`/`unreachable`/`invoke`/`resume` 与 `set_return_values`/`retarget_terminator`/`replace_terminator_args`；`set_terminator(Terminator)` 与 `rewrite_terminator` 收为 `pub(crate)`，**crate 外已无法构造或就地改写 `Terminator`**（实测残留写点 = 0）。DFG 新增 `TermKind` 判别与投影访问器（`term_branch`/`term_jump`/`term_return_values`/`term_switch`/`term_invoke`/`term_resume_value`/`term_is_unreachable`/`term_args_to`/`term_used_values`/`for_each_term_value`）。
   迁移 20 处构造点（builder 7 个方法委托、forge-opt 7 文件、codegen 3 处、解析器 phi 回填、loop_unroll 的 `clone_terminator` 改为按投影读+按形式写）；顺带修掉 codegen 中"手写逐块改 `inst.operands` 却不刷新 use-lists"的又一处 use-def 置空（改用 `replace_all_uses`）。
   目的：S4 主体（终结符并入指令流、删 `Terminator`）必须一次提交内完成，本步把表示相关的调用点收进少数访问器/写入口的实现体，使那次切换只需重写实现体。守卫 `tests/terminator_api.rs` 6 例（7 种形式的写↔投影读回、`TermKind` 判别一致、use-def 新鲜）。

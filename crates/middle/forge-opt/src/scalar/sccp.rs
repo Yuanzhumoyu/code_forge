@@ -115,64 +115,34 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             }
         }
 
-        // Propagate reachability
-        let block = &func.dfg.blocks[block_id.0 as usize];
-        match &block.terminator() {
-            Terminator::Branch {
-                cond,
-                then_block,
-                else_block,
-                ..
-            } => match lattice.get(cond) {
-                Some(LatticeValue::Constant(cv)) => match cv.to_bool() {
-                    Some(true) => {
-                        if reachable.insert(*then_block) && in_queue.insert(*then_block) {
-                            worklist.push(*then_block);
-                        }
-                    }
-                    Some(false) => {
-                        if reachable.insert(*else_block) && in_queue.insert(*else_block) {
-                            worklist.push(*else_block);
-                        }
-                    }
-                    None => {
-                        if reachable.insert(*then_block) && in_queue.insert(*then_block) {
-                            worklist.push(*then_block);
-                        }
-                        if reachable.insert(*else_block) && in_queue.insert(*else_block) {
-                            worklist.push(*else_block);
-                        }
-                    }
-                },
-                _ => {
-                    if reachable.insert(*then_block) && in_queue.insert(*then_block) {
-                        worklist.push(*then_block);
-                    }
-                    if reachable.insert(*else_block) && in_queue.insert(*else_block) {
-                        worklist.push(*else_block);
-                    }
+        // Propagate reachability（按投影读，语义与旧 match 逐条等价）
+        macro_rules! push_reachable {
+            ($target:expr) => {
+                if reachable.insert($target) && in_queue.insert($target) {
+                    worklist.push($target);
                 }
-            },
-            Terminator::Jump { target, .. }
-                if reachable.insert(*target) && in_queue.insert(*target) =>
-            {
-                worklist.push(*target);
-            }
-            Terminator::Switch {
-                default_block,
-                cases,
-                ..
-            } => {
-                if reachable.insert(*default_block) && in_queue.insert(*default_block) {
-                    worklist.push(*default_block);
-                }
-                for (_, target, _) in cases {
-                    if reachable.insert(*target) && in_queue.insert(*target) {
-                        worklist.push(*target);
-                    }
+            };
+        }
+        if let Some((cond, then_block, _, else_block, _)) = func.dfg.term_branch(block_id) {
+            let known = match lattice.get(&cond) {
+                Some(LatticeValue::Constant(cv)) => cv.to_bool(),
+                _ => None,
+            };
+            match known {
+                Some(true) => push_reachable!(then_block),
+                Some(false) => push_reachable!(else_block),
+                None => {
+                    push_reachable!(then_block);
+                    push_reachable!(else_block);
                 }
             }
-            _ => {}
+        } else if let Some((target, _)) = func.dfg.term_jump(block_id) {
+            push_reachable!(target);
+        } else if let Some((_, default_block, _, cases)) = func.dfg.term_switch(block_id) {
+            push_reachable!(default_block);
+            for (_, target, _) in cases {
+                push_reachable!(*target);
+            }
         }
     }
 

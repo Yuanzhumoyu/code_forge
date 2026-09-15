@@ -188,38 +188,21 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
             continue;
         }
 
-        let block = func.block(block_id);
-        match &block.terminator() {
-            Terminator::Branch {
-                then_block,
-                else_block,
-                ..
-            } => {
-                stack.push(*then_block);
-                stack.push(*else_block);
-            }
-            Terminator::Jump { target, .. } => {
+        // 后继按投影读（形态与旧 match 等价：Return/Unreachable/Resume 无后继）
+        if let Some((_, then_block, _, else_block, _)) = func.dfg.term_branch(block_id) {
+            stack.push(then_block);
+            stack.push(else_block);
+        } else if let Some((target, _)) = func.dfg.term_jump(block_id) {
+            stack.push(target);
+        } else if let Some((_, _, _, normal_block, _, unwind_block, _)) =
+            func.dfg.term_invoke(block_id)
+        {
+            stack.push(normal_block);
+            stack.push(unwind_block);
+        } else if let Some((_, default_block, _, cases)) = func.dfg.term_switch(block_id) {
+            stack.push(default_block);
+            for (_, target, _) in cases {
                 stack.push(*target);
-            }
-            Terminator::Return { .. } | Terminator::Unreachable => {}
-            Terminator::Invoke {
-                normal_block,
-                unwind_block,
-                ..
-            } => {
-                stack.push(*normal_block);
-                stack.push(*unwind_block);
-            }
-            Terminator::Resume { .. } => {}
-            Terminator::Switch {
-                default_block,
-                cases,
-                ..
-            } => {
-                stack.push(*default_block);
-                for (_, target, _) in cases.iter() {
-                    stack.push(*target);
-                }
             }
         }
     }
@@ -329,7 +312,10 @@ mod tests {
 
         assert!(r.blocks_removed >= 1);
         let dead = &func.dfg.blocks[1];
-        assert!(dead.inst_order.is_empty() || matches!(dead.terminator(), Terminator::Unreachable));
+        assert!(
+            dead.inst_order.is_empty() || func.dfg.term_is_unreachable(Block(1)),
+            "被清理的块应是 unreachable"
+        );
     }
 
     /// P0-5 负向：原子指令（AtomicRmw）结果未用也**不可**删除——

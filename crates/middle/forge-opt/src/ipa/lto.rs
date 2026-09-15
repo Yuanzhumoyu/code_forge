@@ -258,8 +258,8 @@ fn lto_inline_callee(
         }
 
         // Handle Return
-        if let Terminator::Return { values, .. } = &callee_block.terminator() {
-            for &v in values.iter() {
+        if let Some(values) = callee.dfg.term_return_values(Block(bi as u32)) {
+            for &v in values {
                 ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
             }
         }

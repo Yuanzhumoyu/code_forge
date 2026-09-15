@@ -987,7 +987,8 @@ fn fold_bitcast(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstVa
 fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
     let mut uses: HashMap<Value, Vec<(usize, usize)>> = HashMap::new();
 
-    for (bi, block) in func.dfg.blocks.iter().enumerate() {
+    for bi in 0..func.dfg.blocks.len() {
+        let block = &func.dfg.blocks[bi];
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.insts[inst_id.0 as usize];
             for operand in &inst.operands {
@@ -996,62 +997,10 @@ fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
                     .push((bi, inst_id.0 as usize));
             }
         }
-        // Terminator 中的值使用
-        match &block.terminator() {
-            Terminator::Branch {
-                cond,
-                then_args,
-                else_args,
-                ..
-            } => {
-                uses.entry(*cond).or_default().push((bi, usize::MAX)); // MAX 表示 terminator
-                for v in then_args.iter().chain(else_args.iter()) {
-                    uses.entry(*v).or_default().push((bi, usize::MAX));
-                }
-            }
-            Terminator::Jump { args, .. } => {
-                for v in args {
-                    uses.entry(*v).or_default().push((bi, usize::MAX));
-                }
-            }
-            Terminator::Return { values, .. } => {
-                for v in values {
-                    uses.entry(*v).or_default().push((bi, usize::MAX));
-                }
-            }
-            Terminator::Unreachable => {}
-            Terminator::Invoke {
-                args,
-                normal_args,
-                unwind_args,
-                ..
-            } => {
-                for v in args
-                    .iter()
-                    .chain(normal_args.iter())
-                    .chain(unwind_args.iter())
-                {
-                    uses.entry(*v).or_default().push((bi, usize::MAX));
-                }
-            }
-            Terminator::Resume { value, .. } => {
-                uses.entry(*value).or_default().push((bi, usize::MAX));
-            }
-            Terminator::Switch {
-                discriminant,
-                cases,
-                ..
-            } => {
-                uses.entry(*discriminant)
-                    .or_default()
-                    .push((bi, usize::MAX));
-                for (_, _, args) in cases.iter() {
-                    for v in args {
-                        uses.entry(*v).or_default().push((bi, usize::MAX));
-                    }
-                }
-            }
-        }
+        // 终结符中的值使用（规范序遍历，唯一事实源）
+        func.dfg.for_each_term_value(Block(bi as u32), |_, v| {
+            uses.entry(v).or_default().push((bi, usize::MAX));
+        });
     }
 
     uses
@@ -1433,8 +1382,7 @@ mod tests {
         // The else block should be unreachable now
         let else_block = &func.dfg.blocks[else_blk.0 as usize];
         assert!(
-            else_block.inst_order.is_empty()
-                || matches!(else_block.terminator(), Terminator::Unreachable),
+            else_block.inst_order.is_empty() || func.dfg.term_is_unreachable(else_blk),
             "Else block should be cleared (dead)"
         );
     }

@@ -419,12 +419,13 @@ fn rewrite_agg_value_uses(
             }
         }
     }
-    // Return values 重写（terminator——先收集再写，避免借用冲突）
+    // Return values 重写（先收集再写，避免借用冲突；投影读取）
     let mut ret_updates: Vec<(Block, Vec<Value>)> = Vec::new();
-    for (b, bd) in func.dfg.blocks() {
-        if let Terminator::Return { values, .. } = &bd.terminator()
-            && values.contains(&old_v)
-        {
+    for (b, _bd) in func.dfg.blocks() {
+        let Some(values) = func.dfg.term_return_values(b) else {
+            continue;
+        };
+        if values.contains(&old_v) {
             let mut new_vals: Vec<Value> = Vec::new();
             for &v in values {
                 if v == old_v {
@@ -561,19 +562,20 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
         ty: TypeId,
     }
     let mut jobs: Vec<RetJob> = Vec::new();
-    for (b, bd) in func.dfg.blocks() {
-        if let Terminator::Return { values, .. } = &bd.terminator() {
-            for &v in values {
-                if let Some(ty) = func.dfg.value_type(v)
-                    && func.types.borrow().is_aggregate(ty)
-                    && func.types.borrow().size_bytes(ty) > 8
-                {
-                    jobs.push(RetJob {
-                        block: b,
-                        val: v,
-                        ty,
-                    });
-                }
+    for (b, _bd) in func.dfg.blocks() {
+        let Some(values) = func.dfg.term_return_values(b) else {
+            continue;
+        };
+        for &v in values {
+            if let Some(ty) = func.dfg.value_type(v)
+                && func.types.borrow().is_aggregate(ty)
+                && func.types.borrow().size_bytes(ty) > 8
+            {
+                jobs.push(RetJob {
+                    block: b,
+                    val: v,
+                    ty,
+                });
             }
         }
     }
@@ -1885,10 +1887,10 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                 ));
             }
         }
-        for (_, bd) in func.dfg.blocks() {
+        for (b, _bd) in func.dfg.blocks() {
             if matches!(
-                bd.terminator(),
-                Terminator::Invoke { .. } | Terminator::Resume { .. }
+                func.dfg.term_kind(b),
+                Some(TermKind::Invoke | TermKind::Resume)
             ) {
                 return Err(IrError::Unsupported(
                     "异常处理 invoke/resume 无机器指令映射（P1.1 仅文本层解析/展示）".to_string(),

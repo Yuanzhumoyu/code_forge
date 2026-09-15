@@ -150,12 +150,11 @@ pub fn inline_calls(
                 }
             }
 
-            // Identify callee return value from terminator
-            let callee_ret_vals: SmallVec<[Value; 2]> =
-                match &callee.dfg.blocks[callee_entry.0 as usize].terminator() {
-                    Terminator::Return { values, .. } => values.clone(),
-                    _ => continue,
-                };
+            // Identify callee return value from terminator（投影读取）
+            let Some(values) = callee.dfg.term_return_values(callee_entry) else {
+                continue;
+            };
+            let callee_ret_vals: SmallVec<[Value; 2]> = values.iter().copied().collect();
 
             // Clone instructions from callee → caller
             let mut new_inst_count = 0usize;
@@ -343,7 +342,7 @@ pub fn evaluate_inline_cost(
         }
     }
 
-    if !matches!(block.terminator(), Terminator::Return { .. }) {
+    if func.dfg.term_kind(Block(0)) != Some(TermKind::Return) {
         return InlineCost {
             static_cost: 0,
             loop_penalty: 0,

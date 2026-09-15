@@ -44,8 +44,8 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
         );
         // ret values 数诊断（ScalarPair 双返回：被调方 Return 的 values 数
         // 决定是否生成 RDX 返回 mov——enumerate None 路径 r3.b 残留排查）
-        for (bi, bd) in func.dfg.blocks.iter().enumerate() {
-            if let Terminator::Return { values, .. } = &bd.terminator() {
+        for bi in 0..func.dfg.blocks.len() {
+            if let Some(values) = func.dfg.term_return_values(Block(bi as u32)) {
                 eprintln!("[forge] IR ret b{bi} values={}", values.len());
             }
         }

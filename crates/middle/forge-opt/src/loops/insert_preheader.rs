@@ -12,7 +12,7 @@
 //! ```
 //!
 //! - ph 的参数 = header 参数（pred 原传给 header 的 args 现在传给 ph，
-//!   `Terminator::retarget` 保留 args）；
+//!   `retarget_terminator` 保留 args）；
 //! - ph 无条件 jump header，转发自己的参数；
 //! - ph 是 header 的唯一循环外 pred 且支配 header → 重建后
 //!   `LoopInfo::preheader == ph`，LICM 全量走 preheader 外提。
@@ -163,9 +163,11 @@ mod tests {
         // （原 left/right 也是 Jump——按 retarget 后它们的 target 不再是 header 来识别）
         let header = Block(3);
         let mut ph = None;
-        for (bi, blk) in func.dfg.blocks.iter().enumerate() {
-            if let Terminator::Jump { target, .. } = &blk.terminator()
-                && *target == header
+        for bi in 0..func.dfg.blocks.len() {
+            if func
+                .dfg
+                .term_jump(Block(bi as u32))
+                .is_some_and(|(target, _)| target == header)
             {
                 ph = Some(Block(bi as u32));
             }
@@ -175,10 +177,9 @@ mod tests {
         // left(1)/right(2) 的 Jump 目标改为 ph
         for p in [Block(1), Block(2)] {
             assert!(
-                matches!(
-                    &func.dfg.blocks[p.0 as usize].terminator(),
-                    Terminator::Jump { target, .. } if *target == ph
-                ),
+                func.dfg
+                    .term_jump(p)
+                    .is_some_and(|(target, _)| target == ph),
                 "循环外 pred {p:?} 应改跳 preheader"
             );
         }

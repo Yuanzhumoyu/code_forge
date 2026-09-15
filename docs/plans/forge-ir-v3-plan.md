@@ -98,7 +98,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
-| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写入面/读取面收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类、`BlockData` 终结符字段私有化、未终止成为显式 `Option`、按形式写入口 + `TermKind` 投影访问器；crate 外已无法构造 `Terminator`）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
+| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写/读面收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类、终结符字段私有化、未终止成为显式 `Option`、按形式写入口 + `TermKind` 投影访问器；**forge-opt 已 0 处引用 `Terminator`**）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
@@ -601,6 +601,31 @@ x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 **验证**：workspace 1400 passed / 0 failed / 19 ignored（72 suites，较 S4-c +6）；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+
+### S4（子项 e）：读取面全部改走投影（forge-opt 的终结符依赖清零）（2026-09-15）
+
+S4-d 建好了投影访问器与按形式写入口，本步把消费者全部搬过去：
+
+- forge-opt 的全部读取 match 迁移：`const_fold`（`collect_uses` 的 7 变体 match
+  换成一行 `for_each_term_value`，另 2 处断言）、`dead_code`（DFS 后继 + 2 处断言）、
+  `jump_thread`（4）、`sccp`（可达性传播）、`gvn_pre`（后继）、`tail_call`（3）、
+  `inline`（2）、`lto` / `func_specialize` / `copy_prop` / `ind_var_simplify` /
+  `block_param_coalesce` / `insert_preheader` / `loop_unroll`（含 `find_first_body_block`
+  与 `collect_body_chain` 的后继跟踪）。
+- codegen 的 3 处 `ret` 读取与 1 处 invoke/resume 判别、forge-rustc
+  `compile.rs` 的诊断打印也改走投影。
+- **结果：`crates/middle/forge-opt` 已 0 处引用 `Terminator`**（`git grep -c` 实测），
+  该 crate 不再依赖终结符表示。
+- **顺带修掉一处遍历口径缺陷**：`const_fold::collect_uses` 的 `Switch` 分支漏了
+  `default_args`（只收 discriminant + case args），改走 `for_each_term_value` 后
+  default 实参也计入"被使用"——这正是"手写逐变体遍历"与规范序唯一事实源分叉的产物。
+- **残余（全部属于原子切换本身）**：forge-ir 内部（访问器/写入口实现、`use_list`、
+  `verify`、`ir_parser`、`dfg`/`function`）+ 三处天生表示感知的边界（display 打印、
+  codegen lowering 及其 DSL 生成器、文本解析）+ `tests/terminator_api.rs` 的
+  变体一致性断言。
+
+**验证**：workspace 1400 passed / 0 failed / 19 ignored（72 suites，用例数不变——
+纯迁移）；x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

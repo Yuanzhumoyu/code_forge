@@ -85,26 +85,8 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
             let param_val = header_block.param_values[pi];
 
             // Get the value from the latch's terminator (back edge arg)
-            let latch_term = &func.dfg.blocks[latch.0 as usize].terminator();
-            let back_edge_arg = match latch_term {
-                Terminator::Jump { target, args, .. } if *target == header => args.get(pi).copied(),
-                Terminator::Branch {
-                    then_block,
-                    then_args,
-                    else_block,
-                    else_args,
-                    ..
-                } => {
-                    if *then_block == header {
-                        then_args.get(pi).copied()
-                    } else if *else_block == header {
-                        else_args.get(pi).copied()
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
+            // 投影读取：`args_to(target)` 覆盖 Jump/Branch/Switch/Invoke 的实参语义
+            let back_edge_arg = func.dfg.term_args_to(latch, header).get(pi).copied();
 
             let be_arg = match back_edge_arg {
                 Some(v) => v,

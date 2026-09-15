@@ -67,26 +67,12 @@ pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, IrError>
             let mut all_same = true;
 
             for &pred_block in pred_list {
-                let pred_term = &func.dfg.blocks[pred_block.0 as usize].terminator();
-                let arg = match pred_term {
-                    Terminator::Jump { args, .. } => args.get(param_idx).copied(),
-                    Terminator::Branch {
-                        then_block,
-                        then_args,
-                        else_block,
-                        else_args,
-                        ..
-                    } => {
-                        if *then_block == block {
-                            then_args.get(param_idx).copied()
-                        } else if *else_block == block {
-                            else_args.get(param_idx).copied()
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                };
+                // 投影读取：前驱传给本块的实参
+                let arg = func
+                    .dfg
+                    .term_args_to(pred_block, block)
+                    .get(param_idx)
+                    .copied();
 
                 match (common_value, arg) {
                     (None, Some(v)) => common_value = Some(v),
