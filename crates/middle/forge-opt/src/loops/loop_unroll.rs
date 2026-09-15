@@ -277,7 +277,7 @@ fn clone_body_chain(
 
         // Clone terminator
         let new_term = clone_terminator(&tmpl.terminator, &val_remap, &block_remap);
-        func.dfg.set_terminator(new_block, new_term);
+        func.set_terminator(new_block, new_term);
     }
 
     (block_remap, val_remap)
@@ -377,7 +377,7 @@ fn redirect_branch_target(func: &mut Function, block: Block, old_target: Block, 
         }
         _ => return,
     };
-    func.dfg.set_terminator(block, new_term);
+    func.set_terminator(block, new_term);
 }
 
 /// 估算循环的 trip count。

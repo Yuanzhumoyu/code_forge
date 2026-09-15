@@ -114,7 +114,7 @@ pub fn optimize_tail_calls(
 
         // Replace Return with Jump（目标 = 本函数入口块：递归转循环）
         let args: smallvec::SmallVec<[Value; 2]> = call_operands.iter().copied().collect();
-        func.dfg.set_terminator(
+        func.set_terminator(
             Block(bi as u32),
             Terminator::Jump {
                 target: entry,

@@ -69,12 +69,16 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
             };
 
             // Check: is this StackAddr only used by Load/Store?
+            // 终结符宿主（如 `ret %p`）不算 Load/Store ⇒ 不提升。
             let uses = func.use_lists.uses(ptr_val);
             if uses.is_empty() {
                 continue;
             }
             let only_load_store = uses.iter().all(|u| {
-                let user_inst = &func.dfg.insts[u.user.0 as usize];
+                let Some(user_inst) = u.site.as_inst().map(|i| &func.dfg.insts[i.0 as usize])
+                else {
+                    return false;
+                };
                 matches!(user_inst.opcode, Opcode::Load | Opcode::Store)
             });
             if !only_load_store {
@@ -85,17 +89,20 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
             let mut load_list = Vec::new();
 
             for u in uses {
-                let user_inst = &func.dfg.insts[u.user.0 as usize];
+                let Some(user) = u.site.as_inst() else {
+                    continue;
+                };
+                let user_inst = &func.dfg.insts[user.0 as usize];
                 let user_block = user_inst.block;
                 match user_inst.opcode {
                     Opcode::Store => {
                         // Store(value, ptr) — first operand is stored value, second is ptr
                         if let Some(&stored_val) = user_inst.operands.first() {
-                            store_list.push((user_block, u.user, stored_val));
+                            store_list.push((user_block, user, stored_val));
                         }
                     }
                     Opcode::Load => {
-                        load_list.push((user_block, u.user));
+                        load_list.push((user_block, user));
                     }
                     _ => {}
                 }

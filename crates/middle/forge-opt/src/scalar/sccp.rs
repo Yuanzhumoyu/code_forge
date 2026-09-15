@@ -216,39 +216,43 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             result.changed = true;
         }
 
-        // Fold constant branch conditions
-        let block = &mut func.dfg.blocks[bi];
+        // Fold constant branch conditions（先算新终结符，再经 Function::set_terminator
+        // 写入以同步 use-lists）
+        let mut folded: Option<Terminator> = None;
         if let Terminator::Branch {
             cond,
             then_block,
             else_block,
             ..
-        } = &block.terminator
+        } = &func.dfg.blocks[bi].terminator
             && let Some(LatticeValue::Constant(cv)) = lattice.get(cond)
         {
             if let Some(true) = cv.to_bool() {
-                block.terminator = Terminator::Jump {
+                folded = Some(Terminator::Jump {
                     target: *then_block,
                     args: smallvec::smallvec![],
                     metadata: smallvec::smallvec![],
-                };
-                result.changed = true;
+                });
             } else if let Some(false) = cv.to_bool() {
-                block.terminator = Terminator::Jump {
+                folded = Some(Terminator::Jump {
                     target: *else_block,
                     args: smallvec::smallvec![],
                     metadata: smallvec::smallvec![],
-                };
-                result.changed = true;
+                });
             }
+        }
+        if let Some(term) = folded {
+            func.set_terminator(Block(bi as u32), term);
+            result.changed = true;
         }
     }
 
     // Clear unreachable blocks
-    for (bi, block) in func.dfg.blocks.iter_mut().enumerate() {
-        if !reachable.contains(&Block(bi as u32)) {
-            block.inst_order.clear();
-            block.terminator = Terminator::Unreachable;
+    for bi in 0..func.dfg.blocks.len() {
+        let block_id = Block(bi as u32);
+        if !reachable.contains(&block_id) {
+            func.dfg.blocks[bi].inst_order.clear();
+            func.set_terminator(block_id, Terminator::Unreachable);
             result.blocks_removed += 1;
             result.changed = true;
         }

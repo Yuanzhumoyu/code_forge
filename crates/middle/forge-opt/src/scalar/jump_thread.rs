@@ -88,11 +88,14 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
             };
 
             if let Some((_, final_target, final_args)) = target_info {
-                func.dfg.blocks[bi].terminator = Terminator::Jump {
-                    target: final_target,
-                    args: final_args,
-                    metadata: smallvec::smallvec![],
-                };
+                func.set_terminator(
+                    Block(bi as u32),
+                    Terminator::Jump {
+                        target: final_target,
+                        args: final_args,
+                        metadata: smallvec::smallvec![],
+                    },
+                );
                 changed = true;
                 result.blocks_removed += 1;
             }
@@ -121,32 +124,34 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                 // Get predecessors and redirect（用结构化 API：retarget + 整体替换 args）
                 let pred_list: Vec<Block> = preds.get(block_id).cloned().unwrap_or_default();
                 for &pred_id in &pred_list {
-                    let pred_block = &mut func.dfg.blocks[pred_id.0 as usize];
                     let target = jump_target;
                     let new_args = jump_args.clone();
                     // 原实现：then 与 else 都指向 block_id 时合并为 Jump（丢弃 cond）。
                     // 保持该语义——否则 Branch 的两个分支都指向同一空 jump 块。
                     let both_sides = matches!(
-                        &pred_block.terminator,
+                        &func.dfg.blocks[pred_id.0 as usize].terminator,
                         Terminator::Branch {
                             then_block: t,
                             else_block: e,
                             ..
                         } if *t == block_id && *e == block_id
                     );
-                    pred_block.terminator.retarget(block_id, target);
+                    // 就地改写终结符后必须重登记 use 项（实参值/槽位变了）
+                    let mut new_term = func.dfg.blocks[pred_id.0 as usize].terminator.clone();
                     if both_sides {
-                        pred_block.terminator = Terminator::Jump {
+                        new_term = Terminator::Jump {
                             target,
                             args: new_args,
                             metadata: smallvec::smallvec![],
                         };
                     } else {
-                        pred_block.terminator.replace_args(target, new_args);
+                        new_term.retarget(block_id, target);
+                        new_term.replace_args(target, new_args);
                     }
+                    func.set_terminator(pred_id, new_term);
                 }
                 // Set empty block to Unreachable
-                func.dfg.blocks[bi].terminator = Terminator::Unreachable;
+                func.set_terminator(Block(bi as u32), Terminator::Unreachable);
                 changed = true;
                 result.blocks_removed += 1;
             }

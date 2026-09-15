@@ -1252,15 +1252,16 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
 fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> bool {
     let mut changed = false;
 
-    for block in func.dfg.blocks.iter_mut() {
-        if let Terminator::Branch {
+    for bi in 0..func.dfg.blocks.len() {
+        // 先算出新终结符（借用结束），再经 Function::set_terminator 写入以同步 use-lists
+        let folded = if let Terminator::Branch {
             cond,
             then_block,
             else_block,
             then_args,
             else_args,
             ..
-        } = &block.terminator
+        } = &func.dfg.blocks[bi].terminator
             && let Some(const_val) = known.get(cond)
             && let Some(is_true) = const_val.to_bool()
         {
@@ -1270,11 +1271,16 @@ fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> boo
             } else {
                 (*else_block, else_args.clone())
             };
-            block.terminator = Terminator::Jump {
+            Some(Terminator::Jump {
                 target,
                 args,
                 metadata: smallvec::smallvec![],
-            };
+            })
+        } else {
+            None
+        };
+        if let Some(term) = folded {
+            func.set_terminator(Block(bi as u32), term);
             changed = true;
         }
     }

@@ -21,7 +21,7 @@ use super::string_pool::InternedStr;
 use super::symbol::{Comdat, ComdatId, ComdatKind, SymbolInfo};
 use super::terminator::Terminator;
 use super::types::{CallConv, FunctionSignature, TypeContext};
-use super::use_list::UseLists;
+use super::use_list::{UseLists, UseSite};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -423,31 +423,81 @@ impl Function {
     // 原子 IR 修改原语（保持 use_lists 新鲜）
     // ============================================================
 
+    /// 设置块终结符并**同步 use-lists** —— 写终结符的唯一公开入口。
+    ///
+    /// 与 [`DataFlowGraph::set_terminator`]（crate 内部低层原语，只写字段）的区别：
+    /// 本方法按旧终结符的用值精确摘除 use 项、再按新终结符登记。
+    /// 绕过它（直接写块字段）会留下陈旧/缺失的终结符 use 项，
+    /// 默认 verify-after-every-pass = Error 会立刻报 `UseListInconsistency`。
+    ///
+    /// S4-a（2026-09-15）：终结符实参由此进入 use-def，
+    /// [`Function::replace_all_uses`] 才是真正的"所有使用"。
+    pub fn set_terminator(&mut self, block: Block, term: Terminator) {
+        // 取出旧终结符（owned）：按它的用值精确摘除，避免全表扫描。
+        let old = self
+            .dfg
+            .blocks
+            .get_mut(block.0 as usize)
+            .map(|bd| std::mem::replace(&mut bd.terminator, Terminator::Unreachable));
+        if let Some(old) = &old {
+            self.use_lists.remove_terminator(block, old);
+        }
+        self.dfg.set_terminator(block, term);
+        if let Some(t) = self.dfg.block_terminator(block) {
+            self.use_lists.record_terminator(block, t);
+        }
+    }
+
+    /// 就地改写终结符后**重登记**该块的终结符 use 项。
+    ///
+    /// 用于 `Terminator::{retarget, replace_args, remove_arg}` 这类原地修改
+    /// （`retarget` 只改目标块、不动用值，可跳过；`replace_args`/`remove_arg`
+    /// 会改变槽位值或下标 ⇒ 必须调用）。返回重登记的用值个数。
+    pub fn refresh_terminator_uses(&mut self, block: Block) -> usize {
+        self.use_lists.forget_terminator(block);
+        match self.dfg.block_terminator(block) {
+            Some(t) => {
+                let n = t.value_count() as usize;
+                self.use_lists.record_terminator(block, t);
+                n
+            }
+            None => 0,
+        }
+    }
+
     /// RAUW：把 `old` 的所有使用替换为 `new`，同步更新 DFG 操作数与 use-lists。
     /// 返回被替换的使用数量。
     ///
-    /// **只覆盖指令操作数**——终结符里的用值（分支/跳转实参、`switch` 判别值、
-    /// `ret` 返回值）不在 use-lists 里（`Use.user` 只能是 `Inst`），所以这里改不到。
-    /// 需要连带改终结符时用：
-    /// - [`Function::apply_replacements`]（一次遍历所有终结符 + 指令操作数，等价于
-    ///   "全量 RAUW"）；
-    /// - 或逐块 [`crate::Terminator::args_to`] / [`crate::Terminator::retarget`]。
-    ///
-    /// 这是 forge-ir v3 方案 **S4**（终结符并入指令流、use-def 完整）要消除的
-    /// 缺口：历史注释指向的 `Terminator::map_values` 从未存在过。
+    /// **覆盖面 = use-def 的覆盖面**：指令操作数与终结符用值（分支/跳转实参、
+    /// `switch` 判别值与 case 实参、`ret` 返回值、`invoke`/`resume` 用值）都在内
+    /// （S4-a 之前终结符不在 use-lists 里，这里改不到——历史缺口已消除）。
+    /// 需要一次替换多组值时用 [`Function::apply_replacements`]。
     pub fn replace_all_uses(&mut self, old: Value, new: Value) -> usize {
-        let uses: Vec<(Inst, u8)> = self
+        let uses: Vec<(UseSite, u32)> = self
             .use_lists
             .uses(old)
             .iter()
-            .map(|u| (u.user, u.operand_idx))
+            .map(|u| (u.site, u.operand_idx))
             .collect();
         let count = uses.len();
-        for (user, operand_idx) in uses {
-            if let Some(inst) = self.dfg.insts.get_mut(user.0 as usize)
-                && let Some(slot) = inst.operands.get_mut(operand_idx as usize)
-            {
-                *slot = new;
+        for (site, operand_idx) in uses {
+            match site {
+                UseSite::Inst(user) => {
+                    if let Some(inst) = self.dfg.insts.get_mut(user.0 as usize)
+                        && let Some(slot) = inst.operands.get_mut(operand_idx as usize)
+                    {
+                        *slot = new;
+                    }
+                }
+                UseSite::Term(block) => {
+                    if let Some(term) = self.dfg.block_terminator_mut(block) {
+                        term.for_each_value_mut(|idx, slot| {
+                            if idx == operand_idx && *slot == old {
+                                *slot = new;
+                            }
+                        });
+                    }
+                }
             }
         }
         self.use_lists.replace_all_uses(old, new);
@@ -566,11 +616,12 @@ impl Function {
     pub fn remove_block_param(&mut self, block: Block, idx: usize) {
         // 1. 先收集前驱（不可变借用结束），再改终结符
         let preds: Vec<Block> = self.predecessors().get(block).cloned().unwrap_or_default();
-        // 2. 清理前驱终结符对应参数位置
+        // 2. 清理前驱终结符对应参数位置（删参数会移动后续槽位下标 ⇒ 重登记 use 项）
         for pred in preds {
             if let Some(pd) = self.dfg.blocks.get_mut(pred.0 as usize) {
                 pd.terminator.remove_arg(block, idx);
             }
+            self.refresh_terminator_uses(pred);
         }
         // 3. 从块参数表删除
         let bd = &mut self.dfg.blocks[block.0 as usize];
@@ -583,7 +634,7 @@ impl Function {
     }
 
     /// 批量替换：把 `replacements`（old → new）一次性应用到所有指令操作数与
-    /// 终结符参数，**同步维护 use-lists**（单趟语义：不追溯链式映射——
+    /// 终结符用值，**同步维护 use-lists**（单趟语义：不追溯链式映射——
     /// 与 pass 现有批量替换行为一致）。
     /// 返回被替换的操作数总数。
     pub fn apply_replacements(&mut self, replacements: &HashMap<Value, Value>) -> usize {
@@ -598,98 +649,36 @@ impl Function {
                 if let Some(&replacement) = replacements.get(operand) {
                     let old = *operand;
                     *operand = replacement;
-                    self.use_lists
-                        .replace_operand(old, replacement, inst_id, operand_idx as u8);
+                    self.use_lists.replace_operand(
+                        old,
+                        replacement,
+                        UseSite::Inst(inst_id),
+                        operand_idx as u32,
+                    );
                     count += 1;
                 }
             }
         }
-        // 终结符参数（不在 use-lists 中，直接改值）
-        for block in self.dfg.blocks.iter_mut() {
-            match &mut block.terminator {
-                Terminator::Branch {
-                    cond,
-                    then_args,
-                    else_args,
-                    ..
-                } => {
-                    if let Some(&r) = replacements.get(cond) {
-                        *cond = r;
+        // 终结符用值：按规范序平坦改写（不再逐变体 match —— 遍历序只有一处定义）
+        let mut touched: Vec<Block> = Vec::new();
+        for i in 0..self.dfg.blocks.len() {
+            let mut changed = false;
+            if let Some(term) = self.dfg.block_terminator_mut(Block(i as u32)) {
+                term.for_each_value_mut(|_, slot| {
+                    if let Some(&replacement) = replacements.get(slot) {
+                        *slot = replacement;
                         count += 1;
+                        changed = true;
                     }
-                    for v in then_args.iter_mut().chain(else_args.iter_mut()) {
-                        if let Some(&r) = replacements.get(v) {
-                            *v = r;
-                            count += 1;
-                        }
-                    }
-                }
-                Terminator::Jump { args, .. } => {
-                    for v in args.iter_mut() {
-                        if let Some(&r) = replacements.get(v) {
-                            *v = r;
-                            count += 1;
-                        }
-                    }
-                }
-                Terminator::Return { values, .. } => {
-                    for v in values.iter_mut() {
-                        if let Some(&r) = replacements.get(v) {
-                            *v = r;
-                            count += 1;
-                        }
-                    }
-                }
-                Terminator::Switch {
-                    discriminant,
-                    default_args,
-                    cases,
-                    ..
-                } => {
-                    if let Some(&r) = replacements.get(discriminant) {
-                        *discriminant = r;
-                        count += 1;
-                    }
-                    for v in default_args.iter_mut() {
-                        if let Some(&r) = replacements.get(v) {
-                            *v = r;
-                            count += 1;
-                        }
-                    }
-                    for (_, _, args) in cases.iter_mut() {
-                        for v in args.iter_mut() {
-                            if let Some(&r) = replacements.get(v) {
-                                *v = r;
-                                count += 1;
-                            }
-                        }
-                    }
-                }
-                Terminator::Invoke {
-                    args,
-                    normal_args,
-                    unwind_args,
-                    ..
-                } => {
-                    for v in args
-                        .iter_mut()
-                        .chain(normal_args.iter_mut())
-                        .chain(unwind_args.iter_mut())
-                    {
-                        if let Some(&r) = replacements.get(v) {
-                            *v = r;
-                            count += 1;
-                        }
-                    }
-                }
-                Terminator::Resume { value, .. } => {
-                    if let Some(&r) = replacements.get(value) {
-                        *value = r;
-                        count += 1;
-                    }
-                }
-                Terminator::Unreachable => {}
+                });
             }
+            if changed {
+                touched.push(Block(i as u32));
+            }
+        }
+        // 值变了 ⇒ 旧 use 项指向 old，必须按块重登记（下标序不变）
+        for block in touched {
+            self.refresh_terminator_uses(block);
         }
         count
     }

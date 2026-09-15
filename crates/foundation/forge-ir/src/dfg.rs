@@ -334,7 +334,12 @@ impl DataFlowGraph {
 
     // === 修改 ===
 
-    pub fn set_terminator(&mut self, block: Block, term: Terminator) {
+    /// 写块终结符的**低层原语**：只写字段，不动 use-lists。
+    ///
+    /// crate 内部使用（builder 的终结符发射走 [`crate::Function::set_terminator`]）。
+    /// 外部 crate（forge-opt 等）必须走 `Function::set_terminator`——它才会同步
+    /// use-def；直接写字段会让终结符实参的 use 项失效。
+    pub(crate) fn set_terminator(&mut self, block: Block, term: Terminator) {
         self.blocks[block.0 as usize].terminator = term;
         self.blocks[block.0 as usize].has_terminator = true;
     }

@@ -98,7 +98,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
-| S4 | 终结符归一 + 完整 use-def | **前置清理已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`、`Use` 带种类）待开工 |
+| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类且终结符用值入 use-def）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
@@ -462,6 +462,50 @@ x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 **验证**：workspace 1383 passed / 0 failed / 19 ignored（68 suites）；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+
+### S4（子项 a）：终结符用值进入 use-def（2026-09-15）
+
+S4 主体（终结符并入指令流）之前，先把**正确性缺口**独立补上：`Use.user` 只能是
+`Inst`，因此终结符里的用值——分支条件与 `then/else` 实参、`jump` 实参、`ret`
+返回值、`switch` 判别值与 case 实参、`invoke`/`resume` 用值——**完全不在
+use-def 中**。后果是 `Function::replace_all_uses` 名不副实（pass 对分支实参做
+RAUW 会留下悬空实参），而 `Verifier` 的 use-list 检查**看不见**这一类（它也只
+校验指令操作数）。
+
+- `Terminator::for_each_value` / `for_each_value_mut`：终结符用值的**唯一遍历序**
+  （`Branch: cond, then_args, else_args`；`Switch: discriminant, default_args,
+  cases…`；…）。两份遍历由同一个 `macro_rules!` 模板展开 ⇒ 记录用的下标序与
+  改写用的下标序**结构性一致**，不可能各自漂移；`used_values()` 也改由它实现。
+  单槽变体（`Resume`）的末次自增由 `let _ = idx;` 显式读一次（`unused_assignments`）。
+- `use_list.rs`：`Use { value, user: Inst, operand_idx: u8 }` →
+  `Use { value, site: UseSite, operand_idx: u32 }`，`UseSite::{Inst(Inst),
+  Term(Block)}`。新增 `record_terminator`（写终结符后）、`remove_terminator`
+  （按**旧**用值精确摘除，`O(用值数)`）、`forget_terminator`（按宿主清扫，
+  顺序不敏感）、`has_use_at`、`user_blocks`；`user_insts`/`user_blocks` 去重保序。
+  `verify()` 改为**双向**：终结符用值必须在 use-lists 中，且每条 `Term` 记录
+  必须在 DFG 终结符的同一平坦下标上取到同值。`Use` 从 12 字节增至 16 字节
+  （`SecondaryMap<Value, SmallVec<[Use; 4]>>` 内联容量 64 字节），换取终结符覆盖。
+- `Function::set_terminator(block, term)`：写终结符的**唯一公开入口**——`mem::replace`
+  取出旧终结符（owned，无克隆）→ 精确摘除旧 use 项 → 写新终结符 → 登记新项。
+  `DataFlowGraph::set_terminator` 降为 `pub(crate)`（低层原语，不动 use-lists）。
+  新增 `refresh_terminator_uses(block)` 供 `retarget`/`replace_args`/`remove_arg`
+  这类就地改写后重登记（`retarget` 只改目标块、不动用值，可跳过）。
+- `Function::replace_all_uses` 现在同时写指令操作数与终结符槽位（按 `UseSite` 分派）；
+  `apply_replacements` 删掉手写的 7 变体终结符 match，改用规范序 `for_each_value_mut`
+  并按块刷新（净减约 60 行且有唯一事实源）；`remove_block_param` 删参数后刷新前驱。
+- 全部 15 处终结符写入点收口：builder 的 7 个终结符方法改走 `func.set_terminator`；
+  forge-opt 的 8 处直接写字段（`sccp` 3、`jump_thread` 4、`dead_code` 1、`const_fold` 1）
+  改为 `func.set_terminator`（`sccp`/`const_fold` 先算出新终结符再写，避免与
+  `lattice`/`known` 的借用冲突）；`tail_call`/`insert_preheader`/`loop_unroll`（2）
+  由 `dfg.set_terminator` 换成 `Function::set_terminator`；解析器 phi 回填的
+  `replace_args` 后加 `refresh_terminator_uses`。唯一外部 `Use` 字段读者
+  `mem2reg`（4 处）改为 `u.site.as_inst()`（终结符宿主不算 Load/Store ⇒ 不提升）。
+
+**验证**：workspace 1392 passed / 0 failed / 19 ignored（71 suites；较 S4 子项
+1383 增 9 = `terminator.rs` 3 + `use_list.rs` 2 + `tests/use_lists.rs` 4）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+新增守卫：`UseLists` 双向校验（终结符缺项/陈旧项都报 `UseListInconsistency`）、
+`terminator.rs` 的平坦序规格测试与"共享/可变遍历一致"测试。
 
 ## 7. 参考设计（外部）
 

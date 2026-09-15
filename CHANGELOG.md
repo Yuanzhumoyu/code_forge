@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-15)
+
+- **终结符用值进入 use-def（forge-ir v3 S4 子项 a）**：
+  `Use.user` 只能是 `Inst`，于是分支条件与 `then/else` 实参、`jump` 实参、`ret` 返回值、`switch` 判别值与 case 实参、`invoke`/`resume` 用值**完全不在 use-def 中**——`Function::replace_all_uses` 名不副实（pass 对分支实参做 RAUW 会留下悬空实参），而 `Verifier` 的 use-list 检查也看不见这一类（它同样只校验指令操作数）。
+  现在 `Use { value, site: UseSite, operand_idx: u32 }`，`UseSite::{Inst(Inst), Term(Block)}`；`Terminator::for_each_value`/`for_each_value_mut` 是终结符用值的唯一遍历序（两份遍历由同一宏模板展开 ⇒ 记录序与改写序结构性一致，`used_values()` 亦由它实现）。
+  `Function::set_terminator` 成为写终结符的唯一公开入口（精确摘除旧 use 项再登记新项；`DataFlowGraph::set_terminator` 降为 `pub(crate)`），新增 `refresh_terminator_uses` 供就地改写（`replace_args`/`remove_arg`）后重登记；15 处终结符写入点全部收口（builder 7、forge-opt 8），`apply_replacements` 删掉手写的 7 变体终结符 match 改用规范序遍历。
+  `UseLists::verify` 改为双向（终结符用值必须在 use-lists 中；每条 `Term` 记录必须在 DFG 同一下标取到同值）⇒ 绕过 `set_terminator` 会立刻被 `PassVerify::Error` 抓到。守卫：`tests/use_lists.rs` 新增 4 例（RAUW 覆盖终结符实参、`set_terminator` 精确摘除、陈旧 use 项必报 `UseListInconsistency`）、`terminator.rs` 平坦序规格测试。
+
 ### Fixed (2026-09-14)
 
 - **forge-ir S0 止血（12 项，来自全仓只读审计的实证缺陷）**：

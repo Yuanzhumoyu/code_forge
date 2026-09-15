@@ -92,7 +92,7 @@ pub fn insert_preheaders(func: &mut Function) -> Result<PassResult, IrError> {
                 .retarget(header, ph);
         }
         // ph → header：转发自身参数
-        func.dfg.set_terminator(
+        func.set_terminator(
             ph,
             Terminator::Jump {
                 target: header,

@@ -73,6 +73,87 @@ pub enum Terminator {
     Unreachable,
 }
 
+/// 终结符用值的**唯一遍历模板**（v3 方案 S4-a）。
+///
+/// 共享遍历 [`Terminator::for_each_value`] 与可变遍历
+/// [`Terminator::for_each_value_mut`] 由同一个模板展开：两份 match 不可能各自
+/// 漂移，因此"记录 use 项时的下标序"与"改写时的下标序"**结构性一致**
+/// （这是 [`crate::use_list::Use::operand_idx`] 的契约）。
+///
+/// - `$t`：`&Terminator` 或 `&mut Terminator`（默认绑定模式决定 `$slot` 类型）；
+/// - `$slot`：绑定名——作为元变量传入 ⇒ 调用点卫生，调用方可在 `$body` 里直接引用；
+/// - `$iter`：`iter`（共享）或 `iter_mut`（可变）；
+/// - `$body`：对每个用值执行的语句块。
+macro_rules! walk_terminator_values {
+    ($t:expr, $slot:ident, $iter:ident, $body:block) => {
+        match $t {
+            Terminator::Branch {
+                cond,
+                then_args,
+                else_args,
+                ..
+            } => {
+                let $slot = cond;
+                $body
+                for $slot in then_args.$iter() {
+                    $body
+                }
+                for $slot in else_args.$iter() {
+                    $body
+                }
+            }
+            Terminator::Jump { args, .. } => {
+                for $slot in args.$iter() {
+                    $body
+                }
+            }
+            Terminator::Return { values, .. } => {
+                for $slot in values.$iter() {
+                    $body
+                }
+            }
+            Terminator::Switch {
+                discriminant,
+                default_args,
+                cases,
+                ..
+            } => {
+                let $slot = discriminant;
+                $body
+                for $slot in default_args.$iter() {
+                    $body
+                }
+                for (_, _, case_args) in cases.$iter() {
+                    for $slot in case_args.$iter() {
+                        $body
+                    }
+                }
+            }
+            Terminator::Invoke {
+                args,
+                normal_args,
+                unwind_args,
+                ..
+            } => {
+                for $slot in args.$iter() {
+                    $body
+                }
+                for $slot in normal_args.$iter() {
+                    $body
+                }
+                for $slot in unwind_args.$iter() {
+                    $body
+                }
+            }
+            Terminator::Resume { value, .. } => {
+                let $slot = value;
+                $body
+            }
+            Terminator::Unreachable => {}
+        }
+    };
+}
+
 impl Terminator {
     /// 返回此终止指令的所有后继块。
     pub fn successors(&self) -> Vec<Block> {
@@ -107,49 +188,55 @@ impl Terminator {
         }
     }
 
-    /// 返回此终止指令中使用的所有值。
+    /// 按**固定顺序**遍历终结符使用的全部值：`(平坦下标, 值)`。
+    ///
+    /// 下标序是 use-def 契约的一部分（见 [`crate::use_list::Use::operand_idx`]）：
+    /// `UseLists` 记录、校验与改写都走这一序列，**不允许**各处自行 `match` 变体。
+    ///
+    /// 顺序（v3 方案 S4-a，2026-09-15 定型）：
+    ///
+    /// - `Branch`：`cond`、`then_args…`、`else_args…`
+    /// - `Jump`：`args…`
+    /// - `Return`：`values…`
+    /// - `Switch`：`discriminant`、`default_args…`、各 case 的实参（声明序）
+    /// - `Invoke`：`args…`、`normal_args…`、`unwind_args…`
+    /// - `Resume`：`value`
+    /// - `Unreachable`：无
+    pub fn for_each_value(&self, mut f: impl FnMut(u32, Value)) {
+        let mut idx = 0u32;
+        walk_terminator_values!(self, slot, iter, {
+            f(idx, *slot);
+            idx += 1;
+        });
+        // 单槽变体（Resume）的末次自增后没有下一次读取——显式读一次，
+        // 免得 `unused_assignments` 在宏展开上报警。
+        let _ = idx;
+    }
+
+    /// [`Terminator::for_each_value`] 的可变版本——**下标序完全相同**。
+    /// 用于 RAUW / 批量替换（改完值后调用方须重登记 use 项，见
+    /// [`crate::Function::refresh_terminator_uses`]）。
+    pub fn for_each_value_mut(&mut self, mut f: impl FnMut(u32, &mut Value)) {
+        let mut idx = 0u32;
+        walk_terminator_values!(self, slot, iter_mut, {
+            f(idx, slot);
+            idx += 1;
+        });
+        let _ = idx;
+    }
+
+    /// 用值个数（= [`Terminator::for_each_value`] 的下标上界）。
+    pub fn value_count(&self) -> u32 {
+        let mut n = 0u32;
+        self.for_each_value(|idx, _| n = idx + 1);
+        n
+    }
+
+    /// 返回此终止指令中使用的所有值（顺序 = [`Terminator::for_each_value`]，由后者实现）。
     pub fn used_values(&self) -> Vec<Value> {
-        match self {
-            Terminator::Branch {
-                cond,
-                then_args,
-                else_args,
-                ..
-            } => {
-                let mut v = vec![*cond];
-                v.extend_from_slice(then_args);
-                v.extend_from_slice(else_args);
-                v
-            }
-            Terminator::Jump { args, .. } => args.to_vec(),
-            Terminator::Return { values, .. } => values.to_vec(),
-            Terminator::Switch {
-                discriminant,
-                default_args,
-                cases,
-                ..
-            } => {
-                let mut v = vec![*discriminant];
-                v.extend_from_slice(default_args);
-                for (_, _, args) in cases {
-                    v.extend_from_slice(args);
-                }
-                v
-            }
-            Terminator::Invoke {
-                args,
-                normal_args,
-                unwind_args,
-                ..
-            } => {
-                let mut v = args.to_vec();
-                v.extend_from_slice(normal_args);
-                v.extend_from_slice(unwind_args);
-                v
-            }
-            Terminator::Resume { value, .. } => vec![*value],
-            Terminator::Unreachable => Vec::new(),
-        }
+        let mut values = Vec::new();
+        self.for_each_value(|_, v| values.push(v));
+        values
     }
 
     /// 终结符传给 `target` 块的参数切片（不跳向该块则空）。
@@ -479,5 +566,157 @@ mod tests {
         t.retarget(t1, t2);
         assert!(t.successors().iter().all(|&s| s == t2));
         assert_eq!(t.args_to(t2), &[make_value(2)]);
+    }
+
+    /// 各变体的平坦遍历序**就是契约**（use-list 下标用它）。
+    /// 期望值逐条写死：改遍历序必须同时改这里，提醒它是一次破坏性变更。
+    #[test]
+    fn test_flat_value_order_is_spec() {
+        let (v0, v1, v2, v3, v4, v5) = (0u32, 1, 2, 3, 4, 5);
+        let flat = |t: &Terminator| {
+            let mut out = Vec::new();
+            t.for_each_value(|idx, v| out.push((idx, v.0)));
+            out
+        };
+
+        let branch = Terminator::Branch {
+            cond: Value(v0),
+            then_block: Block(1),
+            then_args: smallvec::smallvec![Value(v1), Value(v2)],
+            else_block: Block(2),
+            else_args: smallvec::smallvec![Value(v3)],
+            metadata: SmallVec::new(),
+        };
+        assert_eq!(flat(&branch), vec![(0, v0), (1, v1), (2, v2), (3, v3)]);
+
+        let jump = Terminator::Jump {
+            target: Block(1),
+            args: smallvec::smallvec![Value(v1), Value(v2)],
+            metadata: SmallVec::new(),
+        };
+        assert_eq!(flat(&jump), vec![(0, v1), (1, v2)]);
+
+        let ret = Terminator::Return {
+            values: smallvec::smallvec![Value(v4)],
+            metadata: SmallVec::new(),
+        };
+        assert_eq!(flat(&ret), vec![(0, v4)]);
+
+        let switch = Terminator::Switch {
+            discriminant: Value(v0),
+            default_block: Block(1),
+            default_args: smallvec::smallvec![Value(v1)],
+            cases: smallvec::smallvec![
+                (0, Block(2), smallvec::smallvec![Value(v2), Value(v3)]),
+                (1, Block(3), smallvec::smallvec![Value(v4)]),
+            ],
+            metadata: SmallVec::new(),
+        };
+        assert_eq!(
+            flat(&switch),
+            vec![(0, v0), (1, v1), (2, v2), (3, v3), (4, v4)]
+        );
+
+        let invoke = Terminator::Invoke {
+            callee: FuncRef(0),
+            args: smallvec::smallvec![Value(v1)],
+            ret_ty: TypeId::VOID,
+            normal_block: Block(1),
+            normal_args: smallvec::smallvec![Value(v2)],
+            unwind_block: Block(2),
+            unwind_args: smallvec::smallvec![Value(v3)],
+            metadata: SmallVec::new(),
+        };
+        assert_eq!(flat(&invoke), vec![(0, v1), (1, v2), (2, v3)]);
+
+        let resume = Terminator::Resume {
+            value: Value(v5),
+            metadata: SmallVec::new(),
+        };
+        assert_eq!(flat(&resume), vec![(0, v5)]);
+
+        assert!(flat(&Terminator::Unreachable).is_empty());
+    }
+
+    /// 共享遍历与可变遍历必须给出**同一序列**（同一模板展开 ⇒ 结构性保证；
+    /// 本测试把该保证变成可执行的回归门）。
+    #[test]
+    fn test_shared_and_mut_walks_agree() {
+        let samples = vec![
+            Terminator::Branch {
+                cond: Value(0),
+                then_block: Block(1),
+                then_args: smallvec::smallvec![Value(1)],
+                else_block: Block(2),
+                else_args: smallvec::smallvec![Value(2), Value(3)],
+                metadata: SmallVec::new(),
+            },
+            Terminator::Jump {
+                target: Block(1),
+                args: smallvec::smallvec![Value(7)],
+                metadata: SmallVec::new(),
+            },
+            Terminator::Return {
+                values: smallvec::smallvec![Value(8)],
+                metadata: SmallVec::new(),
+            },
+            Terminator::Switch {
+                discriminant: Value(0),
+                default_block: Block(1),
+                default_args: smallvec::smallvec![Value(1)],
+                cases: smallvec::smallvec![(3, Block(2), smallvec::smallvec![Value(2)])],
+                metadata: SmallVec::new(),
+            },
+            Terminator::Invoke {
+                callee: FuncRef(0),
+                args: smallvec::smallvec![Value(4)],
+                ret_ty: TypeId::VOID,
+                normal_block: Block(1),
+                normal_args: smallvec::smallvec![Value(5)],
+                unwind_block: Block(2),
+                unwind_args: smallvec::smallvec![Value(6)],
+                metadata: SmallVec::new(),
+            },
+            Terminator::Resume {
+                value: Value(9),
+                metadata: SmallVec::new(),
+            },
+            Terminator::Unreachable,
+        ];
+
+        for t in &samples {
+            let mut shared = Vec::new();
+            t.for_each_value(|idx, v| shared.push((idx, v)));
+            let mut mutable = Vec::new();
+            let mut t2 = t.clone();
+            t2.for_each_value_mut(|idx, v| mutable.push((idx, *v)));
+            assert_eq!(shared, mutable, "walk divergence on {t:?}");
+            assert_eq!(shared.len() as u32, t.value_count());
+            assert_eq!(
+                shared.iter().map(|(_, v)| *v).collect::<Vec<Value>>(),
+                t.used_values()
+            );
+        }
+    }
+
+    /// `for_each_value_mut` 能真正改写槽位（RAUW 依赖它）。
+    #[test]
+    fn test_for_each_value_mut_rewrites_all_slots() {
+        let mut t = Terminator::Switch {
+            discriminant: Value(0),
+            default_block: Block(1),
+            default_args: smallvec::smallvec![Value(0)],
+            cases: smallvec::smallvec![(1, Block(2), smallvec::smallvec![Value(0), Value(5)])],
+            metadata: SmallVec::new(),
+        };
+        t.for_each_value_mut(|_, slot| {
+            if *slot == Value(0) {
+                *slot = Value(42);
+            }
+        });
+        assert_eq!(
+            t.used_values(),
+            vec![Value(42), Value(42), Value(42), Value(5)]
+        );
     }
 }

@@ -227,15 +227,15 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
     let mut removed = 0;
 
     // 清空不可达块
-    for (i, block) in func.dfg.blocks.iter_mut().enumerate() {
+    for i in 0..func.dfg.blocks.len() {
         let block_id = Block(i as u32);
-        if !reachable.contains(&block_id)
-            && (!block.inst_order.is_empty()
-                || !matches!(block.terminator, Terminator::Unreachable))
-        {
+        let stale = !reachable.contains(&block_id)
+            && (!func.dfg.blocks[i].inst_order.is_empty()
+                || !matches!(func.dfg.blocks[i].terminator, Terminator::Unreachable));
+        if stale {
             removed += 1;
-            block.inst_order.clear();
-            block.terminator = Terminator::Unreachable;
+            func.dfg.blocks[i].inst_order.clear();
+            func.set_terminator(block_id, Terminator::Unreachable);
         }
     }
 

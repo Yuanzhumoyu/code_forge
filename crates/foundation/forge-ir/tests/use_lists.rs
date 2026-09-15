@@ -103,6 +103,161 @@ fn function_make_inst_registers_uses() {
     );
     assert_eq!(func.use_lists.use_count(a), 2, "%a 被 %s 与 %t 使用");
     assert_eq!(func.use_lists.use_count(bv), 1);
-    assert_eq!(func.use_lists.use_count(s), 1, "%s 被 %t 使用");
+    assert_eq!(
+        func.use_lists.use_count(s),
+        2,
+        "%s 被 %t 使用，且被 ret 终结符使用（S4-a：终结符用值也进 use-def）"
+    );
     assert!(func.use_lists.verify(&func.dfg).is_ok());
+}
+
+// ============================================================
+// S4-a：终结符用值进入 use-def
+// ============================================================
+
+/// 构造一个带 `br` 的函数：
+/// `entry: br %cond, %then(%x), %else()` / `then: ret %x` / `else: ret %x`。
+///
+/// `%x` 的终结符使用 = then_args + 两个 `ret` = 3 处；`%cond` = 1 处。
+/// `else` 不带宽参数（无前驱带参块会被 `Verifier` 判为多入口）。
+fn build_branch() -> (Function, Value, Value) {
+    let sig = FunctionSignature::new(&[(TypeId::I32, "x")], &[TypeId::I32]);
+    let mut b = FunctionBuilder::new("brancher", TypeContext::new(), sig);
+    let (then_blk, _) = b.create_block_with_tys(&[TypeId::I32]);
+    let else_blk = b.create_block();
+    // create_block_with_tys 会把 cur_block 切到新块 ⇒ 最后回到入口块发指令
+    let (_entry, params) = b.create_entry_block();
+    let x = params[0];
+    let cond = b.iconst_i32(1);
+    b.branch(cond, then_blk, &[x], else_blk, &[]);
+    b.switch_to_block(then_blk);
+    b.ret(&[x]);
+    b.switch_to_block(else_blk);
+    b.ret(&[x]);
+    (b.finish().expect("build"), x, cond)
+}
+
+/// 基线：`br` 的条件与实参、`ret` 的返回值都登记为终结符 use。
+#[test]
+fn terminator_values_are_registered() {
+    let (func, x, cond) = build_branch();
+    assert_eq!(func.use_lists.use_count(x), 3, "%x 的终结符使用");
+    assert_eq!(func.use_lists.user_insts(x).len(), 0, "%x 没有指令使用者");
+    assert_eq!(
+        func.use_lists.user_blocks(x).len(),
+        3,
+        "%x 被 entry(br)/then(ret)/else(ret) 使用"
+    );
+    assert_eq!(func.use_lists.use_count(cond), 1, "分支条件 %cond");
+    assert!(
+        func.use_lists.verify(&func.dfg).is_ok(),
+        "构造完成后 use-lists 必须自洽：{:?}",
+        func.use_lists.verify(&func.dfg).err()
+    );
+    let mut v = Verifier::with_ctx(func.types.clone());
+    assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
+}
+
+/// **S4-a 的核心收获**：`replace_all_uses` 现在真的覆盖终结符实参。
+#[test]
+fn rauw_covers_terminator_args() {
+    let (mut func, x, cond) = build_branch();
+
+    let replaced = func.replace_all_uses(x, cond);
+    assert_eq!(
+        replaced, 3,
+        "3 处终结符使用（br 实参 + 两个 ret）都应被替换"
+    );
+
+    // 值真的被写进了终结符（不是只改 use-list）
+    for (i, bd) in func.dfg.blocks.iter().enumerate() {
+        for v in bd.terminator.used_values() {
+            assert_ne!(v, x, "块 {i} 的终结符仍引用 %x");
+        }
+    }
+    assert_eq!(func.use_lists.use_count(x), 0, "%x 不应再有使用者");
+    assert_eq!(func.use_lists.use_count(cond), 4, "原条件 1 + 被替换的 3");
+
+    let mut v = Verifier::with_ctx(func.types.clone());
+    assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
+}
+
+/// `Function::set_terminator` 是唯一入口：按旧终结符精确摘除、按新终结符登记。
+#[test]
+fn set_terminator_keeps_use_def_fresh() {
+    use forge_ir::Terminator;
+
+    let (mut func, x, cond) = build_branch();
+    let entry = func.entry();
+    let succs = func.dfg.block_terminator(entry).unwrap().successors();
+    let (then_blk, else_blk) = (succs[0], succs[1]);
+    // 新 br：条件从 %cond 换成 %x，then_args 也改成 %x
+    //（两个目标块都仍可达 ⇒ 可以顺带跑完整 Verifier）
+    func.set_terminator(
+        entry,
+        Terminator::Branch {
+            cond: x,
+            then_block: then_blk,
+            then_args: smallvec::smallvec![x],
+            else_block: else_blk,
+            else_args: smallvec::smallvec![],
+            metadata: smallvec::smallvec![],
+        },
+    );
+
+    assert_eq!(
+        func.use_lists.use_count(cond),
+        0,
+        "旧 br 的条件记录应被摘除"
+    );
+    assert_eq!(
+        func.use_lists.use_count(x),
+        4,
+        "cond 槽 + then_args + 两个 ret"
+    );
+    assert!(func.use_lists.verify(&func.dfg).is_ok());
+    let mut v = Verifier::with_ctx(func.types.clone());
+    assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
+}
+
+/// 就地改写终结符却不重登记 → `Verifier` 必须报 `UseListInconsistency`
+/// （这正是 S4-a 之前**看不见**的一类 bug 类别）。
+#[test]
+fn verifier_detects_stale_terminator_use() {
+    use forge_ir::Terminator;
+
+    let (mut func, x, cond) = build_branch();
+    let entry = func.entry();
+    let succs = func.dfg.block_terminator(entry).unwrap().successors();
+    let (then_blk, else_blk) = (succs[0], succs[1]);
+    // 绕过 set_terminator 直接写字段：then_args 从 %x 换成 %cond，use 项不刷新
+    func.dfg.blocks[entry.0 as usize].terminator = Terminator::Branch {
+        cond,
+        then_block: then_blk,
+        then_args: smallvec::smallvec![cond],
+        else_block: else_blk,
+        else_args: smallvec::smallvec![],
+        metadata: smallvec::smallvec![],
+    };
+
+    assert!(
+        func.use_lists.verify(&func.dfg).is_err(),
+        "绕过 set_terminator 必须被 use-list 校验抓到"
+    );
+    let mut v = Verifier::with_ctx(func.types.clone());
+    let res = v.verify(&func);
+    assert!(res.is_err(), "Verifier 应报错");
+    assert!(
+        res.err()
+            .unwrap()
+            .iter()
+            .any(|e| format!("{e:?}").contains("UseListInconsistency")),
+        "期望 UseListInconsistency"
+    );
+
+    // 重登记后恢复一致：entry 的 %x 记录消失，%cond 多出一处
+    func.refresh_terminator_uses(entry);
+    assert!(func.use_lists.verify(&func.dfg).is_ok());
+    assert_eq!(func.use_lists.use_count(x), 2, "entry 的 %x 记录被摘除");
+    assert_eq!(func.use_lists.use_count(cond), 2, "cond 槽 + then_args");
 }

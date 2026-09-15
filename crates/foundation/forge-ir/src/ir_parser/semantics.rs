@@ -1924,12 +1924,15 @@ fn finalize_phis<'a>(
                 fb.func.dfg.blocks[pred.0 as usize]
                     .terminator
                     .replace_args(target, vals.into());
+                // 实参值被整体替换 ⇒ 重登记该前驱的终结符 use 项
+                fb.func.refresh_terminator_uses(pred);
                 continue;
             }
             let args: SmallVec<[Value; 2]> = idxs.into_iter().map(|(_, v)| v).collect();
             fb.func.dfg.blocks[pred.0 as usize]
                 .terminator
                 .replace_args(target, args);
+            fb.func.refresh_terminator_uses(pred);
         }
         // 校验：真正跳入该块的每个前驱都提供了完整参数（LLVM phi 覆盖所有前驱）
         let _preds_of_target = fb

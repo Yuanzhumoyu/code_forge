@@ -1228,7 +1228,7 @@ impl FunctionBuilder {
         self.emit(Opcode::Nop, vec![], vec![], &[], InstFlags::NONE);
     }
     pub fn ret(&mut self, values: &[Value]) {
-        self.func.dfg.set_terminator(
+        self.func.set_terminator(
             self.cur_block,
             Terminator::Return {
                 values: values.iter().copied().collect(),
@@ -1239,7 +1239,7 @@ impl FunctionBuilder {
     }
 
     pub fn jump(&mut self, target: Block, args: &[Value]) {
-        self.func.dfg.set_terminator(
+        self.func.set_terminator(
             self.cur_block,
             Terminator::Jump {
                 target,
@@ -1257,7 +1257,7 @@ impl FunctionBuilder {
         else_block: Block,
         else_args: &[Value],
     ) {
-        self.func.dfg.set_terminator(
+        self.func.set_terminator(
             self.cur_block,
             Terminator::Branch {
                 cond,
@@ -1272,7 +1272,6 @@ impl FunctionBuilder {
     }
     pub fn unreachable(&mut self) {
         self.func
-            .dfg
             .set_terminator(self.cur_block, Terminator::Unreachable);
         self.block_open = false;
     }
@@ -1287,7 +1286,7 @@ impl FunctionBuilder {
             .iter()
             .map(|(v, b, args)| (*v, *b, args.iter().copied().collect()))
             .collect();
-        self.func.dfg.set_terminator(
+        self.func.set_terminator(
             self.cur_block,
             Terminator::Switch {
                 discriminant,
@@ -1324,7 +1323,7 @@ impl FunctionBuilder {
         unwind_block: Block,
         unwind_args: &[Value],
     ) {
-        self.func.dfg.set_terminator(
+        self.func.set_terminator(
             self.cur_block,
             Terminator::Invoke {
                 callee,
@@ -1342,7 +1341,7 @@ impl FunctionBuilder {
 
     /// resume 终结符（LLVM `resume <ty> %l`；重新抛出异常）。
     pub fn resume(&mut self, value: Value) {
-        self.func.dfg.set_terminator(
+        self.func.set_terminator(
             self.cur_block,
             Terminator::Resume {
                 value,
