@@ -98,7 +98,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
-| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写入面收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类且终结符用值入 use-def、`BlockData` 终结符字段私有化 + `rewrite_terminator`）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
+| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写入面收口 + 块级表示收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类且终结符用值入 use-def、`BlockData` 终结符字段私有化 + `rewrite_terminator`、"未终止"成为显式 `Option` 状态并删 `has_terminator`）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
@@ -533,6 +533,40 @@ S4-a 把终结符用值纳入 use-def 之后，"谁能写终结符"本身就成�
   `tests/use_lists.rs::rewrite_terminator_keeps_use_def_fresh` 钉在本地。
 
 **验证**：workspace 1393 passed / 0 failed / 19 ignored（71 suites，较 S4-a +1）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+
+### S4（子项 c）：块级表示收口——"未终止"成为显式状态（2026-09-15）
+
+S4 主体（终结符并入指令流、块实参变操作数）必须**一次提交内完成**：只要还有
+一个变体留在 `Terminator` 里，块就有"指令终结符 / 枚举终结符"两种形态，读写方
+就得同时处理两者——那正是用户明令禁止的双表示。在动主体之前，先把它最后的结构
+歧义清掉：
+
+- `BlockData` 的 `terminator: Terminator` + `has_terminator: bool` 两个字段
+  合并成 **`terminator: Option<Terminator>`**。此前默认值 `Terminator::Unreachable`
+  同时充当"未终止"占位与"显式 unreachable"，只能靠布尔位区分；任何按 `Default`
+  构造出来的块都会把"漏写终结符"静默伪装成"显式 unreachable"。现在两件事在类型上
+  分开：`None` = 尚未终止。
+- 读取口按"是否需要容忍坏 IR"分成两个，**不存在静默回退**：
+  - `BlockData::terminator()` —— **fail-closed**：未终止即 panic（与
+    `Function::entry()` 同一套契约）。所有"假设 IR 已成形"的读取点用它，
+    于是"漏写终结符"会**响亮失败**而不是被当成 unreachable 继续算 CFG。
+  - `BlockData::terminator_opt()` —— 给必须容忍坏 IR 的调用方：**校验器**、
+    display、解析器的元数据校验。
+  - **CFG 构造**（`Function::{predecessors, successors}`、`DominatorTree::build`、
+    `LoopForest::build`）走 `terminator_opt()`：未终止块"没有出边"是结构事实，
+    不是回退——校验器本来就要在坏 IR 上跑（`Function::predecessors()` 在
+    `check_entry` 里就被调用）。
+- 行为保持不变的两处独立兜底：`check_terminators` 仍报 `MissingTerminator`；
+  `check_path_termination` 对 `None` 仍报 `PathWithoutReturn`（原实现正是靠
+  `has_terminator` 区分这两者的）。`FunctionBuilder::finish` 的防御改为
+  `terminator.is_none()`，报错文案不变。
+- 新增守卫 `tests/verify_negative.rs::unterminated_block_is_explicit_state`：
+  ①新块 `terminator_opt()` 为 `None`；②CFG 构造/支配树容忍且不 panic；
+  ③经 `terminator()` 读取**必须 panic**（`catch_unwind` 验证"响亮失败"）。
+  `dfg::tests::test_make_block` 同步从"新块终结符 = Unreachable"改为"新块未终止"。
+
+**验证**：workspace 1394 passed / 0 failed / 19 ignored（71 suites，较 S4-b +1）；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）

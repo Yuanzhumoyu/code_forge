@@ -89,26 +89,37 @@ pub struct BlockData {
     pub param_values: SmallVec<[Value; 2]>,
     /// 块内指令的顺序列表 (索引到 DataFlowGraph.insts)
     pub inst_order: Vec<Inst>,
-    /// 终结符。**写入只能经 [`crate::Function::set_terminator`] /
-    /// [`crate::Function::rewrite_terminator`] / [`crate::Function::refresh_terminator_uses`]**
+    /// 终结符 —— `None` = **该块尚未终止**（构造中/坏 IR）。
+    ///
+    /// 写入只能经 [`crate::Function::set_terminator`] /
+    /// [`crate::Function::rewrite_terminator`] / [`crate::Function::refresh_terminator_uses`]
     /// ——它们同步 use-def。字段是 `pub(crate)`：crate 外只能经
-    /// [`BlockData::terminator`] 读（v3 方案 S4-b 收口，2026-09-15）。
-    pub(crate) terminator: Terminator,
-    /// 终结符是否被显式设置（ret/jump/branch/unreachable/switch 均可）。
-    /// finish() 时校验：块漏写终结符会保持默认 Unreachable，被编译期
-    /// 无条件 lower 成 UD2，运行到该块即非法指令崩溃。
-    pub(crate) has_terminator: bool,
+    /// [`BlockData::terminator`] 读（v3 方案 S4-b/S4-c，2026-09-15）。
+    ///
+    /// 之前是 `terminator: Terminator + has_terminator: bool` 两个字段：默认值
+    /// `Terminator::Unreachable` 同时充当"未终止"占位与"显式 unreachable"，
+    /// 只能靠布尔位区分（`BlockData::default()` 之类的构造会静默把"未终止"伪装成
+    /// "显式 unreachable"）。`Option` 把这两件事在类型上分开——"未终止"不再是
+    /// 一个可以被误读为合法终结符的取值。
+    pub(crate) terminator: Option<Terminator>,
 }
 
 impl BlockData {
-    /// 终结符（只读）。crate 外**唯一**的终结符读取入口。
+    /// 终结符。**块未终止则 panic**（fail-closed）。
+    ///
+    /// "没有终结符"是**构建中/坏 IR** 状态，不是一种终结符：静默回退成
+    /// `Terminator::Unreachable` 正是 S4-c 要消灭的伪装（"漏写终结符"会看起来像
+    /// "显式 unreachable"）。需要容忍该状态的调用方——**校验器**、builder、
+    /// display、解析器的元数据校验——请用 [`BlockData::terminator_opt`]。
     pub fn terminator(&self) -> &Terminator {
-        &self.terminator
+        self.terminator.as_ref().unwrap_or_else(|| {
+            panic!("块尚未终止（无终结符）：读取方应改用 BlockData::terminator_opt()")
+        })
     }
 
-    /// 是否已显式设置终结符（见 [`BlockData::has_terminator`] 字段说明）。
-    pub fn has_terminator(&self) -> bool {
-        self.has_terminator
+    /// 终结符；`None` = 该块尚未终止（见 [`BlockData::terminator`]）。
+    pub fn terminator_opt(&self) -> Option<&Terminator> {
+        self.terminator.as_ref()
     }
 }
 
@@ -287,8 +298,7 @@ impl DataFlowGraph {
             params: SmallVec::new(),
             param_values: SmallVec::new(),
             inst_order: Vec::new(),
-            terminator: Terminator::Unreachable,
-            has_terminator: false,
+            terminator: None,
         });
         block
     }
@@ -342,8 +352,7 @@ impl DataFlowGraph {
             params: param_tys.iter().copied().collect(),
             param_values: params.iter().copied().collect(),
             inst_order: Vec::new(),
-            terminator: Terminator::Unreachable,
-            has_terminator: false,
+            terminator: None,
         });
         (block, params)
     }
@@ -356,8 +365,7 @@ impl DataFlowGraph {
     /// 外部 crate（forge-opt 等）必须走 `Function::set_terminator`——它才会同步
     /// use-def；直接写字段会让终结符实参的 use 项失效。
     pub(crate) fn set_terminator(&mut self, block: Block, term: Terminator) {
-        self.blocks[block.0 as usize].terminator = term;
-        self.blocks[block.0 as usize].has_terminator = true;
+        self.blocks[block.0 as usize].terminator = Some(term);
     }
 
     pub fn remove_inst(&mut self, inst: Inst) {
@@ -443,9 +451,11 @@ impl DataFlowGraph {
             .unwrap_or(&[])
     }
 
-    /// 块终结符（块不存在则 `None`）。
+    /// 块终结符（块不存在或**尚未终止**则 `None`）。
     pub fn block_terminator(&self, b: Block) -> Option<&Terminator> {
-        self.blocks.get(b.0 as usize).map(|d| &d.terminator)
+        self.blocks
+            .get(b.0 as usize)
+            .and_then(|d| d.terminator.as_ref())
     }
 
     /// 块终结符（可变）—— **crate 内部低层入口**：拿到的引用改写后调用方必须
@@ -453,14 +463,23 @@ impl DataFlowGraph {
     /// [`crate::Function::refresh_terminator_uses`]）。crate 外不可见，
     /// 因此跨 crate 的就地改写只能走 `Function` 的 API。
     pub(crate) fn block_terminator_mut(&mut self, b: Block) -> Option<&mut Terminator> {
-        self.blocks.get_mut(b.0 as usize).map(|d| &mut d.terminator)
+        self.blocks
+            .get_mut(b.0 as usize)
+            .and_then(|d| d.terminator.as_mut())
     }
 
-    /// 块是否已显式设置终结符（见 [`BlockData::has_terminator`]）。
+    /// 块的后继（未终止的块没有后继）。
+    pub fn block_successors(&self, b: Block) -> Vec<Block> {
+        self.block_terminator(b)
+            .map(|t| t.successors())
+            .unwrap_or_default()
+    }
+
+    /// 块是否已终止（显式设置了 ret/jump/branch/unreachable/switch 之一）。
     pub fn block_has_terminator(&self, b: Block) -> bool {
         self.blocks
             .get(b.0 as usize)
-            .is_some_and(|d| d.has_terminator)
+            .is_some_and(|d| d.terminator.is_some())
     }
 
     // === 迭代 ===
@@ -578,10 +597,10 @@ mod tests {
         let mut dfg = DataFlowGraph::new();
         let b = dfg.make_block();
         assert_eq!(dfg.block_count(), 1);
-        assert!(matches!(
-            dfg.block_terminator(b).unwrap(),
-            Terminator::Unreachable
-        ));
+        // 新建块**尚未终止**：`None` 而不是默认 `Unreachable`
+        //（后者会把"漏写终结符"伪装成"显式 unreachable"，S4-c 起不再如此）
+        assert!(dfg.block_terminator(b).is_none());
+        assert!(!dfg.block_has_terminator(b));
     }
 
     /// block_insts_mut：按 inst_order 可变迭代，跳过 Nop 墓碑。

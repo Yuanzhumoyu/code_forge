@@ -181,8 +181,12 @@ fn compute_idom(
     // 一次构建前驱映射（替代每轮对每个 block 线性扫全函数，O(轮数×n²) → O(轮数×n)）。
     let mut preds_map: HashMap<Block, Vec<Block>> = HashMap::new();
     for (block, bd) in func.dfg.blocks() {
-        for succ in bd.terminator.successors() {
-            preds_map.entry(succ).or_default().push(block);
+        // CFG 构造必须容忍未终止的块（校验器会在坏 IR 上跑）：
+        // "没有终结符" ⇒ 没有后继边，这是结构事实，不是静默回退。
+        if let Some(term) = bd.terminator_opt() {
+            for succ in term.successors() {
+                preds_map.entry(succ).or_default().push(block);
+            }
         }
     }
 

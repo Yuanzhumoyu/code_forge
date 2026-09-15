@@ -217,11 +217,11 @@ impl FunctionBuilder {
     }
 
     pub fn finish(mut self) -> Result<Function, IrError> {
-        // 防御：每个基本块必须有显式终结符（ret/jump/branch/unreachable/switch）。
-        // 漏写时块终结符保持默认 Unreachable，会被编译期无条件 lower 成 UD2，
-        // 运行到该块即非法指令崩溃（曾导致 forge-tests 进程 0xC000001D）。
+        // 防御：每个基本块必须已终止（ret/jump/branch/unreachable/switch）。
+        // 漏写时块终结符为 `None`，会被编译期无条件 lower 成 UD2，运行到该块即
+        // 非法指令崩溃（曾导致 forge-tests 进程 0xC000001D）。
         for (i, bd) in self.func.dfg.blocks.iter().enumerate() {
-            if !bd.has_terminator {
+            if bd.terminator.is_none() {
                 return Err(IrError::Internal(format!(
                     "FunctionBuilder::finish: fn {} block {i} has no explicit terminator — \
                      each block must end with ret/jump/branch/unreachable/switch",

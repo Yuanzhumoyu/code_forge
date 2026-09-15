@@ -378,8 +378,11 @@ impl Function {
         self.analysis.predecessors.get_or_init(|| {
             let mut preds: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
             for (block, bd) in self.dfg.blocks() {
-                for succ in bd.terminator.successors() {
-                    preds.get_mut_or_default(succ).push(block);
+                // CFG 构造容忍未终止块（校验器要在坏 IR 上跑）：无终结符 ⇒ 无出边
+                if let Some(term) = bd.terminator_opt() {
+                    for succ in term.successors() {
+                        preds.get_mut_or_default(succ).push(block);
+                    }
                 }
             }
             preds
@@ -391,7 +394,12 @@ impl Function {
         self.analysis.successors.get_or_init(|| {
             let mut succs: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
             for (block, bd) in self.dfg.blocks() {
-                succs.insert(block, bd.terminator.successors());
+                succs.insert(
+                    block,
+                    bd.terminator_opt()
+                        .map(|t| t.successors())
+                        .unwrap_or_default(),
+                );
             }
             succs
         })
@@ -438,7 +446,7 @@ impl Function {
             .dfg
             .blocks
             .get_mut(block.0 as usize)
-            .map(|bd| std::mem::replace(&mut bd.terminator, Terminator::Unreachable));
+            .and_then(|bd| bd.terminator.take());
         if let Some(old) = &old {
             self.use_lists.remove_terminator(block, old);
         }
@@ -631,8 +639,10 @@ impl Function {
         let preds: Vec<Block> = self.predecessors().get(block).cloned().unwrap_or_default();
         // 2. 清理前驱终结符对应参数位置（删参数会移动后续槽位下标 ⇒ 重登记 use 项）
         for pred in preds {
-            if let Some(pd) = self.dfg.blocks.get_mut(pred.0 as usize) {
-                pd.terminator.remove_arg(block, idx);
+            if let Some(pd) = self.dfg.blocks.get_mut(pred.0 as usize)
+                && let Some(term) = pd.terminator.as_mut()
+            {
+                term.remove_arg(block, idx);
             }
             self.refresh_terminator_uses(pred);
         }

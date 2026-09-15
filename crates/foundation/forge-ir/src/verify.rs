@@ -1238,7 +1238,7 @@ impl Verifier {
         }
         // switch case 值重复
         for (_, bd) in dfg.blocks() {
-            if let Terminator::Switch { cases, .. } = &bd.terminator {
+            if let Some(Terminator::Switch { cases, .. }) = bd.terminator_opt() {
                 let mut seen: HashSet<i64> = HashSet::new();
                 for (val, _, _) in cases {
                     if !seen.insert(*val) {
@@ -1273,7 +1273,10 @@ impl Verifier {
 
         // Check terminator values
         for (block, block_data) in dfg.blocks() {
-            for val in block_data.terminator.used_values() {
+            let Some(term) = block_data.terminator_opt() else {
+                continue;
+            };
+            for val in term.used_values() {
                 if !defined.contains(&val) {
                     // Create a fake inst to report the error
                     self.errors.push(VerifyError::UndefinedValue {
@@ -1302,14 +1305,14 @@ impl Verifier {
                         Some(pd) => pd,
                         None => continue,
                     };
-                    match &pred_data.terminator {
-                        Terminator::Branch {
+                    match pred_data.terminator_opt() {
+                        Some(Terminator::Branch {
                             then_block,
                             then_args,
                             else_block,
                             else_args,
                             ..
-                        } => {
+                        }) => {
                             // Then branch
                             if *then_block == block {
                                 if then_args.len() != expected_params {
@@ -1347,7 +1350,7 @@ impl Verifier {
                                 }
                             }
                         }
-                        Terminator::Jump { target, args, .. } if *target == block => {
+                        Some(Terminator::Jump { target, args, .. }) if *target == block => {
                             if args.len() != expected_params {
                                 self.errors.push(VerifyError::BlockParamCountMismatch {
                                     block: pred,
@@ -1364,12 +1367,12 @@ impl Verifier {
                                 );
                             }
                         }
-                        Terminator::Switch {
+                        Some(Terminator::Switch {
                             default_block,
                             default_args,
                             cases,
                             ..
-                        } => {
+                        }) => {
                             // Default case
                             if *default_block == block {
                                 if default_args.len() != expected_params {
@@ -1415,7 +1418,7 @@ impl Verifier {
             }
 
             // Check Return: 数量与类型都须匹配签名
-            if let Terminator::Return { values, .. } = &block_data.terminator {
+            if let Some(Terminator::Return { values, .. }) = block_data.terminator_opt() {
                 if values.len() != signature_rets.len() {
                     self.errors.push(VerifyError::ReturnTypeMismatch {
                         block,
@@ -1467,23 +1470,25 @@ impl Verifier {
         for (block, block_data) in dfg.blocks() {
             // 块从未设置终结符（构建遗漏）→ MissingTerminator。
             // FunctionBuilder::finish 有防御，但手构 dfg 的函数可绕过，verify 必须兜底。
-            if !block_data.has_terminator {
+            if block_data.terminator.is_none() {
                 self.errors.push(VerifyError::MissingTerminator { block });
             }
             // All blocks must have a non-default terminator
             // (Unreachable is allowed as an explicit terminator)
-            match &block_data.terminator {
-                Terminator::Jump { target, .. } if dfg.blocks.get(target.0 as usize).is_none() => {
+            match block_data.terminator_opt() {
+                Some(Terminator::Jump { target, .. })
+                    if dfg.blocks.get(target.0 as usize).is_none() =>
+                {
                     self.errors.push(VerifyError::InvalidTerminatorTarget {
                         block,
                         target: *target,
                     });
                 }
-                Terminator::Branch {
+                Some(Terminator::Branch {
                     then_block,
                     else_block,
                     ..
-                } => {
+                }) => {
                     if dfg.blocks.get(then_block.0 as usize).is_none() {
                         self.errors.push(VerifyError::InvalidTerminatorTarget {
                             block,
@@ -1497,11 +1502,11 @@ impl Verifier {
                         });
                     }
                 }
-                Terminator::Switch {
+                Some(Terminator::Switch {
                     default_block,
                     cases,
                     ..
-                } => {
+                }) => {
                     if dfg.blocks.get(default_block.0 as usize).is_none() {
                         self.errors.push(VerifyError::InvalidTerminatorTarget {
                             block,
@@ -1518,11 +1523,11 @@ impl Verifier {
                         }
                     }
                 }
-                Terminator::Invoke {
+                Some(Terminator::Invoke {
                     normal_block,
                     unwind_block,
                     ..
-                } => {
+                }) => {
                     if dfg.blocks.get(normal_block.0 as usize).is_none() {
                         self.errors.push(VerifyError::InvalidTerminatorTarget {
                             block,
@@ -1561,7 +1566,11 @@ impl Verifier {
 
         while let Some(block) = worklist.pop() {
             if let Some(block_data) = func.dfg.blocks.get(block.0 as usize) {
-                for succ in block_data.terminator.successors() {
+                for succ in block_data
+                    .terminator_opt()
+                    .map(|t| t.successors())
+                    .unwrap_or_default()
+                {
                     if reachable.insert(succ) {
                         worklist.push(succ);
                     }
@@ -1718,15 +1727,16 @@ impl Verifier {
         // 异常边豁免：Invoke 的 unwind_args（异常路径传值）不受正常支配树约束——
         // unwind 边是隐式异常路径，其值不要求定义块支配 unwind 块（LLVM 语义）。
         for (block, block_data) in func.dfg.blocks() {
-            let vals: Vec<Value> = match &block_data.terminator {
-                Terminator::Invoke {
+            let vals: Vec<Value> = match block_data.terminator_opt() {
+                Some(Terminator::Invoke {
                     args, normal_args, ..
-                } => {
+                }) => {
                     let mut v = args.to_vec();
                     v.extend_from_slice(normal_args);
                     v
                 }
-                other => other.used_values(),
+                Some(other) => other.used_values(),
+                None => Vec::new(),
             };
             for val in vals {
                 let def_block = match func.dfg.value_def(val) {
@@ -1823,7 +1833,11 @@ impl Verifier {
 
         while let Some(block) = worklist.pop() {
             if let Some(block_data) = func.dfg.blocks.get(block.0 as usize) {
-                for succ in block_data.terminator.successors() {
+                for succ in block_data
+                    .terminator_opt()
+                    .map(|t| t.successors())
+                    .unwrap_or_default()
+                {
                     if visited.insert(succ) {
                         worklist.push(succ);
                     }
@@ -1837,18 +1851,14 @@ impl Verifier {
                 continue; // unreachable blocks already reported
             }
             if let Some(block_data) = func.dfg.blocks.get(block.0 as usize) {
-                let succs = block_data.terminator.successors();
+                let term = block_data.terminator_opt();
+                let succs = term.map(|t| t.successors()).unwrap_or_default();
                 if succs.is_empty()
-                    && !matches!(
-                        block_data.terminator,
-                        Terminator::Return { .. }
-                    )
-                    // 显式 unreachable（has_terminator）是合法死代码；
-                    // 从未设置终结符的块（默认 Unreachable）是构建遗漏 → PathWithoutReturn
-                    && !(matches!(
-                        block_data.terminator,
-                        Terminator::Unreachable
-                    ) && block_data.has_terminator)
+                    && !matches!(term, Some(Terminator::Return { .. }))
+                    // 显式 unreachable 是合法死代码；
+                    // 从未设置终结符的块（`None`）是构建遗漏 → PathWithoutReturn
+                    // （`check_terminators` 另报 MissingTerminator，两处独立兜底）
+                    && !matches!(term, Some(Terminator::Unreachable))
                 {
                     self.errors
                         .push(VerifyError::PathWithoutReturn { last_block: block });

@@ -309,9 +309,13 @@ impl UseLists {
         }
 
         // 2. 每个块终结符的所有用值都在 use-lists 中（S4-a 新增覆盖）
+        //（未终止的块没有终结符用值，`None` 无需检查）
         for (i, bd) in dfg.blocks.iter().enumerate() {
             let block = Block(i as u32);
-            bd.terminator.for_each_value(|idx, value| {
+            let Some(term) = bd.terminator_opt() else {
+                continue;
+            };
+            term.for_each_value(|idx, value| {
                 if !self.has_use_at(value, UseSite::Term(block), idx) {
                     errors.push(IrError::Internal(format!(
                         "terminator of {} operand {} (value {}) not found in use-lists",

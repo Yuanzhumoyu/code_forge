@@ -83,6 +83,36 @@ fn verify_missing_terminator() {
     );
 }
 
+/// S4-c：未终止是**显式状态**（`terminator_opt() == None`），不是"默认
+/// `Unreachable` + 布尔位"。三处断言把该契约钉住：
+///
+/// 1. 新块 `terminator_opt()` 为 `None`（不是 `Unreachable`）；
+/// 2. 容忍坏 IR 的读取口（CFG 构造/校验器）不 panic；
+/// 3. 假设"块已终止"的读取口 fail-closed panic（不静默冒充 unreachable）。
+#[test]
+fn unterminated_block_is_explicit_state() {
+    let ctx = TypeContext::new();
+    let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let b = func.dfg.make_block();
+    func.entry_block = Some(b);
+
+    // 1. 显式未终止
+    assert!(func.dfg.block_terminator(b).is_none());
+    assert!(!func.dfg.block_has_terminator(b));
+    assert!(func.dfg.blocks[b.0 as usize].terminator_opt().is_none());
+    // 2. CFG 构造容忍未终止块（无出边），不 panic
+    assert!(func.successors().get(b).is_none_or(|s| s.is_empty()));
+    assert!(func.predecessors().get(b).is_none_or(|p| p.is_empty()));
+    assert!(func.dominator_tree().idom(b).is_some());
+    // 3. fail-closed：假设已终止的读取口 panic（catch_unwind 验证"响亮失败"）
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        func.dfg.blocks[b.0 as usize].terminator()
+    }))
+    .is_err();
+    assert!(panicked, "未终止块经 terminator() 读取必须 panic");
+}
+
 // ── 缺口 3：FcmpOperandNotFloat ──
 
 #[test]

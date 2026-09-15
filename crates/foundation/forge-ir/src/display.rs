@@ -603,7 +603,7 @@ impl<'a> fmt::Display for BlockDisplay<'a> {
                     }
                     for (j, &pred) in preds.iter().enumerate() {
                         let val = dfg.blocks[pred.0 as usize]
-                            .terminator
+                            .terminator()
                             .args_to(self.block)
                             .get(i)
                             .copied();
@@ -636,18 +636,20 @@ impl<'a> fmt::Display for BlockDisplay<'a> {
             )?;
         }
 
-        // Terminator
-        write!(
-            f,
-            "{}",
-            TerminatorDisplay {
-                func: self.func,
-                store: self.store,
-                module: self.module,
-                term: &block_data.terminator,
-                names: self.names,
-            }
-        )?;
+        // Terminator（未终止的块没有终结符可打印）
+        if let Some(term) = block_data.terminator_opt() {
+            write!(
+                f,
+                "{}",
+                TerminatorDisplay {
+                    func: self.func,
+                    store: self.store,
+                    module: self.module,
+                    term,
+                    names: self.names,
+                }
+            )?;
+        }
         writeln!(f)
     }
 }

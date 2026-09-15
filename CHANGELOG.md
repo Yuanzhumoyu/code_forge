@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **块级表示收口："未终止"成为显式状态（forge-ir v3 S4 子项 c）**：`BlockData` 的 `terminator: Terminator` + `has_terminator: bool` 合并为 `terminator: Option<Terminator>`——默认值 `Unreachable` 同时充当"未终止"占位与"显式 unreachable"、只能靠布尔位区分的歧义消失（按 `Default` 构造的块曾会把"漏写终结符"静默伪装成"显式 unreachable"）。
+  读取口一分为二且**无静默回退**：`BlockData::terminator()` fail-closed（未终止即 panic，与 `Function::entry()` 同一契约），`BlockData::terminator_opt()` 供必须容忍坏 IR 的调用方（校验器/display/解析器元数据校验）；**CFG 构造**（`predecessors`/`successors`/支配树/循环森林）用 `terminator_opt()`——"未终止 ⇒ 无出边"是结构事实，且校验器本就要在坏 IR 上跑。
+  两处兜底行为不变（`MissingTerminator` 与 `PathWithoutReturn` 仍分别上报）；新增守卫 `tests/verify_negative.rs::unterminated_block_is_explicit_state`（新块为 `None`、CFG 构造容忍不 panic、`terminator()` 读取必须 panic）。
+
+### Changed (2026-09-15)
+
 - **终结符写入面收口（forge-ir v3 S4 子项 b）**：`BlockData.{terminator,has_terminator}` 降为 `pub(crate)` 并新增只读访问器，crate 外（forge-opt / forge-codegen / forge-rustc / 集成测试，22 个文件）的读取统一改走访问器——**跨 crate 直接写终结符字段已不可能**，唯一写路径是 `Function::set_terminator`；`DataFlowGraph::block_terminator_mut` 同步降为 `pub(crate)`。
   新增 `Function::rewrite_terminator(block, f)`：就地改写终结符后自动重登记 use 项。
   **顺带修掉三处真实缺陷**：`forge-codegen` 的 `ret` 值就地改写（大聚合返回值展开、段值替换、`ret` 内 RAUW）此前从不刷新 use-def——在终结符进入 use-def 之后会留下陈旧 use 项，现全部改走 `rewrite_terminator`（`insert_preheader` 的 `retarget` 亦然）。

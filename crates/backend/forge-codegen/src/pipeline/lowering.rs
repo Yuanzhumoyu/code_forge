@@ -676,8 +676,16 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
         // Lower terminator
         self.ctx.current_clobbers.clear();
+        // 未终止的块是坏 IR：这里**报错**而不是让 fail-closed 的
+        // `BlockData::terminator()` 在编译器里 panic（`finish()` 与校验器本应
+        // 已拦住；这是 codegen 侧的兜底，fail-closed 但不崩进程）。
+        let Some(terminator) = block_data.terminator_opt() else {
+            return Err(IrError::Internal(
+                "IR 含未终止的基本块：无法 lower 终结符".to_string(),
+            ));
+        };
         let mut term_insts = lowering.lower_terminator(
-            block_data.terminator(),
+            terminator,
             &self.value_to_xreg,
             &self.block_map,
             &mut self.ctx,

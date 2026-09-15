@@ -955,7 +955,10 @@ fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
             }
         }
         for (_, bd) in f.dfg.blocks() {
-            let metas: &[AttachedMetadata] = match &bd.terminator {
+            let Some(term) = bd.terminator_opt() else {
+                continue;
+            };
+            let metas: &[AttachedMetadata] = match term {
                 Terminator::Branch { metadata, .. }
                 | Terminator::Jump { metadata, .. }
                 | Terminator::Return { metadata, .. }
@@ -1921,17 +1924,17 @@ fn finalize_phis<'a>(
                 while vals.len() < n_params {
                     vals.push(fb.undef(phi_tys[vals.len()]));
                 }
-                fb.func.dfg.blocks[pred.0 as usize]
-                    .terminator
-                    .replace_args(target, vals.into());
+                if let Some(term) = fb.func.dfg.blocks[pred.0 as usize].terminator.as_mut() {
+                    term.replace_args(target, vals.into());
+                }
                 // 实参值被整体替换 ⇒ 重登记该前驱的终结符 use 项
                 fb.func.refresh_terminator_uses(pred);
                 continue;
             }
             let args: SmallVec<[Value; 2]> = idxs.into_iter().map(|(_, v)| v).collect();
-            fb.func.dfg.blocks[pred.0 as usize]
-                .terminator
-                .replace_args(target, args);
+            if let Some(term) = fb.func.dfg.blocks[pred.0 as usize].terminator.as_mut() {
+                term.replace_args(target, args);
+            }
             fb.func.refresh_terminator_uses(pred);
         }
         // 校验：真正跳入该块的每个前驱都提供了完整参数（LLVM phi 覆盖所有前驱）
@@ -4212,16 +4215,23 @@ fn attach_term_metadata(
             kind: metadata_kind_of(name)?,
             node: id,
         };
-        match &mut bd.terminator {
-            Terminator::Return { metadata, .. }
-            | Terminator::Jump { metadata, .. }
-            | Terminator::Branch { metadata, .. }
-            | Terminator::Switch { metadata, .. }
-            | Terminator::Invoke { metadata, .. }
-            | Terminator::Resume { metadata, .. } => metadata.push(am),
-            Terminator::Unreachable => {
+        match bd.terminator.as_mut() {
+            Some(
+                Terminator::Return { metadata, .. }
+                | Terminator::Jump { metadata, .. }
+                | Terminator::Branch { metadata, .. }
+                | Terminator::Switch { metadata, .. }
+                | Terminator::Invoke { metadata, .. }
+                | Terminator::Resume { metadata, .. },
+            ) => metadata.push(am),
+            Some(Terminator::Unreachable) => {
                 return Err(IrError::Semantic(
                     "unreachable cannot carry metadata".to_string(),
+                ));
+            }
+            None => {
+                return Err(IrError::Semantic(
+                    "block has no terminator to attach metadata to".to_string(),
                 ));
             }
         }
