@@ -67,6 +67,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   语义差异写进 doc：`predecessors()` 里**无前驱的块不出现**（entry），`successors()` **每个块都有条目**（无后继者空 vec）——与迁移前逐块 `insert` 行为一致。
   计量（同一 `git grep` 口径，`forge-ir/src` 全树）：S2 之前 **45 处** → 第一切片后 32 处 → 本切片后 **25 处**。门禁：clippy `-D warnings` 干净、workspace 1388 passed / 0 failed / 19 ignored（67 suites）、x86 矩阵 195/3/0、riscv64 131/67/0。
 
+- **支配树字段密集化（forge-ir v3 方案 S2 第三切片）**：
+  `analysis.rs` 的 `DominatorTree` 五个字段（`children`/`tin`/`tout`/`idom`/`depth`）由 `HashMap<Block, _>` 改为 `SecondaryMap`（含 `empty()`、C-H-K 迭代的 `idom` 局部表、`compute_children`/`compute_intervals` 的签名与返回类型）。
+  支配树是 `dominates`/`idom`/`depth`/`ncd`/`children` 的底座（`loop_info`/`licm`/`gvn` 都在用），查询从"哈希 + 探测"变为一次 `Vec` 索引（`dominates` 一次查 4 张表）。
+  计量（同一 `git grep` 口径，`forge-ir/src` 全树）：句柄键 `HashMap` S2 前 45 → 第二切片后 25 → **本切片后 10 处**（`SecondaryMap` 使用点 74 处）。
+  顺带记录一个待补的易用性缺口：`for (child, &parent) in &secondary_map` 需要 `IntoIterator for &SecondaryMap`（暂未提供，本次改用 `iter()`）；门禁：clippy `-D warnings` 干净、workspace 1388 passed / 0 failed / 19 ignored（67 suites）、x86 矩阵 195/3/0、riscv64 131/67/0。
+
 ### Added (2026-09-14)
 
 - **实体容器与密集索引（forge-ir v3 方案 S2 第一切片）**：新模块 `src/entity_map.rs`（无新依赖，8 个单测）提供 `PrimaryMap`（`push` 分配句柄、下标即句柄、**刻意不支持删除**）、`SecondaryMap`（`Vec<Option<_>>`，"未设置"与"空值"可区分，`get_mut_or_default` 等价 `entry().or_default()`）、`EntitySet`（密集位图，O(1) 增删查）、`PackedOption`（句柄可空压缩：`Option<Value>` 8 字节 → **4 字节**，`u32::MAX` 为空哨兵），以及 `EntityRef` trait + `entity_ref_impls!` 宏（已为 10 个句柄类型实现：句柄 ↔ 密集下标）。`ListPool` 明确不做（本仓库列表用途都是短生命周期局部量）。

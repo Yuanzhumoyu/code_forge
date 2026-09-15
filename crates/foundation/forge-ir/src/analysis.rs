@@ -3,6 +3,7 @@
 //! Cooper-Harvey-Kennedy 迭代算法计算立即支配者。
 
 use crate::entity::*;
+use crate::entity_map::SecondaryMap;
 use crate::function::Function;
 use std::collections::HashMap;
 
@@ -24,17 +25,17 @@ pub fn block_successors_in_func(func: &Function, block: Block) -> Vec<Block> {
 #[derive(Clone, Debug)]
 pub struct DominatorTree {
     pub entry: Block,
-    children: HashMap<Block, Vec<Block>>,
+    children: SecondaryMap<Block, Vec<Block>>,
     /// DFS 进入/离开时间戳（支配树上的区间序）。
     /// a 支配 b ⟺ tin[a] ≤ tin[b] 且 tout[b] ≤ tout[a]——O(1) 查询、
     /// O(n) 空间（替代原 dom_sets 的每块全套支配者 HashSet，O(n²) 空间）。
-    tin: HashMap<Block, u32>,
-    tout: HashMap<Block, u32>,
+    tin: SecondaryMap<Block, u32>,
+    tout: SecondaryMap<Block, u32>,
     /// 立即支配者（entry 为自身；P1-10 新增——循环分析/块参数 coalesce/
     /// SCEV 需要 idom/depth/NCD 查询）。
-    idom: HashMap<Block, Block>,
+    idom: SecondaryMap<Block, Block>,
     /// 支配深度（entry=0，子块=父+1）。
-    depth: HashMap<Block, u32>,
+    depth: SecondaryMap<Block, u32>,
     block_count: usize,
 }
 
@@ -55,14 +56,14 @@ impl DominatorTree {
         let (tin, tout) = compute_intervals(entry, &children);
         // 从 idom 推导深度：entry=0，沿 idom 链累加（O(n) 每块沿链到根，
         // 总 O(n·depth) —— 对典型 CFG 足够；深链退化可改 BFS 优化）。
-        let mut depth: HashMap<Block, u32> = HashMap::new();
+        let mut depth: SecondaryMap<Block, u32> = SecondaryMap::new();
         depth.insert(entry, 0);
         for &b in &postorder {
             if b == entry {
                 continue;
             }
-            if let Some(&parent) = idom.get(&b) {
-                let d = depth.get(&parent).copied().unwrap_or(0) + 1;
+            if let Some(&parent) = idom.get(b) {
+                let d = depth.get(parent).copied().unwrap_or(0) + 1;
                 depth.insert(b, d);
             }
         }
@@ -81,11 +82,11 @@ impl DominatorTree {
     fn empty() -> Self {
         Self {
             entry: Block(0),
-            children: HashMap::new(),
-            tin: HashMap::new(),
-            tout: HashMap::new(),
-            idom: HashMap::new(),
-            depth: HashMap::new(),
+            children: SecondaryMap::new(),
+            tin: SecondaryMap::new(),
+            tout: SecondaryMap::new(),
+            idom: SecondaryMap::new(),
+            depth: SecondaryMap::new(),
             block_count: 0,
         }
     }
@@ -96,10 +97,10 @@ impl DominatorTree {
         }
         // 区间判定：a 支配 b ⟺ b 落在 a 的 DFS 子树区间内
         match (
-            self.tin.get(&a),
-            self.tout.get(&a),
-            self.tin.get(&b),
-            self.tout.get(&b),
+            self.tin.get(a),
+            self.tout.get(a),
+            self.tin.get(b),
+            self.tout.get(b),
         ) {
             (Some(&ta_in), Some(&ta_out), Some(&tb_in), Some(&tb_out)) => {
                 ta_in <= tb_in && tb_out <= ta_out
@@ -109,17 +110,17 @@ impl DominatorTree {
     }
 
     pub fn children(&self, block: Block) -> &[Block] {
-        self.children.get(&block).map_or(&[], |v| v.as_slice())
+        self.children.get(block).map_or(&[], |v| v.as_slice())
     }
 
     /// 立即支配者（P1-10）：entry 的 idom 是自身。
     pub fn idom(&self, block: Block) -> Option<Block> {
-        self.idom.get(&block).copied()
+        self.idom.get(block).copied()
     }
 
     /// 支配深度（P1-10）：entry=0。
     pub fn depth(&self, block: Block) -> u32 {
-        self.depth.get(&block).copied().unwrap_or(0)
+        self.depth.get(block).copied().unwrap_or(0)
     }
 
     /// 最近公共支配者（P1-10）：沿 idom 链求交（浅者优先）。
@@ -174,7 +175,7 @@ fn compute_idom(
     entry: Block,
     postorder: &[Block],
     postorder_rank: &HashMap<Block, usize>,
-) -> HashMap<Block, Block> {
+) -> SecondaryMap<Block, Block> {
     // 一次构建前驱映射（替代每轮对每个 block 线性扫全函数，O(轮数×n²) → O(轮数×n)）。
     let mut preds_map: HashMap<Block, Vec<Block>> = HashMap::new();
     for (block, bd) in func.dfg.blocks() {
@@ -183,7 +184,7 @@ fn compute_idom(
         }
     }
 
-    let mut idom: HashMap<Block, Block> = HashMap::new();
+    let mut idom: SecondaryMap<Block, Block> = SecondaryMap::new();
     idom.insert(entry, entry);
 
     let mut changed = true;
@@ -197,7 +198,7 @@ fn compute_idom(
             let processed: Vec<Block> = preds
                 .iter()
                 .copied()
-                .filter(|p| idom.contains_key(p))
+                .filter(|p| idom.contains_key(*p))
                 .collect();
             if processed.is_empty() {
                 continue;
@@ -206,7 +207,7 @@ fn compute_idom(
             for &pred in &processed[1..] {
                 new_idom = intersect(&idom, postorder_rank, new_idom, pred);
             }
-            if idom.get(&block).copied() != Some(new_idom) {
+            if idom.get(block).copied() != Some(new_idom) {
                 idom.insert(block, new_idom);
                 changed = true;
             }
@@ -216,7 +217,7 @@ fn compute_idom(
 }
 
 fn intersect(
-    idom: &HashMap<Block, Block>,
+    idom: &SecondaryMap<Block, Block>,
     postorder_rank: &HashMap<Block, usize>,
     mut finger1: Block,
     mut finger2: Block,
@@ -229,20 +230,20 @@ fn intersect(
         let rank2 = postorder_rank.get(&finger2).copied().unwrap_or(0);
         if rank1 < rank2 {
             // finger1 is deeper (lower postorder rank) → advance it
-            finger1 = *idom.get(&finger1).unwrap_or(&finger1);
+            finger1 = idom.get(finger1).copied().unwrap_or(finger1);
         } else {
             // finger2 is deeper (or equal rank) → advance it
-            finger2 = *idom.get(&finger2).unwrap_or(&finger2);
+            finger2 = idom.get(finger2).copied().unwrap_or(finger2);
         }
     }
     finger1
 }
 
-fn compute_children(idom: &HashMap<Block, Block>) -> HashMap<Block, Vec<Block>> {
-    let mut children: HashMap<Block, Vec<Block>> = HashMap::new();
-    for (&child, &parent) in idom {
-        if child != parent {
-            children.entry(parent).or_default().push(child);
+fn compute_children(idom: &SecondaryMap<Block, Block>) -> SecondaryMap<Block, Vec<Block>> {
+    let mut children: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
+    for (child, parent) in idom.iter() {
+        if child != *parent {
+            children.get_mut_or_default(*parent).push(child);
         }
     }
     children
@@ -252,10 +253,10 @@ fn compute_children(idom: &HashMap<Block, Block>) -> HashMap<Block, Vec<Block>> 
 /// a 支配 b ⟺ tin[a] ≤ tin[b] 且 tout[b] ≤ tout[a]。
 fn compute_intervals(
     entry: Block,
-    children: &HashMap<Block, Vec<Block>>,
-) -> (HashMap<Block, u32>, HashMap<Block, u32>) {
-    let mut tin: HashMap<Block, u32> = HashMap::new();
-    let mut tout: HashMap<Block, u32> = HashMap::new();
+    children: &SecondaryMap<Block, Vec<Block>>,
+) -> (SecondaryMap<Block, u32>, SecondaryMap<Block, u32>) {
+    let mut tin: SecondaryMap<Block, u32> = SecondaryMap::new();
+    let mut tout: SecondaryMap<Block, u32> = SecondaryMap::new();
     let mut timer: u32 = 0;
     // Iterative DFS：stack 存 (node, exiting)；先推 (node, false) 入点，
     // 出点 (node, true) 记录 tout。
@@ -266,13 +267,13 @@ fn compute_intervals(
             tout.insert(node, timer);
             continue;
         }
-        if tin.contains_key(&node) {
+        if tin.contains_key(node) {
             continue;
         }
         timer += 1;
         tin.insert(node, timer);
         stack.push((node, true));
-        if let Some(kids) = children.get(&node) {
+        if let Some(kids) = children.get(node) {
             for &kid in kids.iter().rev() {
                 stack.push((kid, false));
             }

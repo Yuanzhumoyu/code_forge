@@ -96,7 +96,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
-| S2 | 实体容器与密集索引 | **大部分落地**：四个容器已实现，forge-ir 内部主表 + `predecessors()`/`successors()`（含两个下游 crate 的调用点）已迁移（句柄键 `HashMap` 45 → 25 处）；余项：支配树字段、句柄字段私有化、墓碑语义、`ListPool` |
+| S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
@@ -339,12 +339,10 @@ upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两个
 31 处**（`git grep` 对比 HEAD；全仓基线 129 处 / 36 文件）。容器与迁移共 **8 个
 容器单测**，workspace 1380 → 1388 passed。
 
-**S2 余项（未做，明确记录）**：① 支配树字段（`analysis.rs` 的
-`idom/depth/tin/tout/children`——crate 内部，改动面小，留作下一片）；
-② 句柄字段私有化 + 访问器（`Value(pub u32)` → `index()`，全仓 `.0` 约 260 处）；
-③ 墓碑语义显式化（`Layout` 的删除/复用策略）；
-④ `forge-opt`/`forge-codegen` 内部的句柄键表（regalloc 的 `XReg→PReg`、
-`Block→VBlockId` 等）。
+**S2 余项（未做，明确记录）**：① 句柄字段私有化 + 访问器（`Value(pub u32)` →
+`index()`，全仓 `.0` 约 260 处，需按 crate 分期）；② 墓碑语义显式化（`Layout` 的
+删除/复用策略）；③ `ListPool`（按需）；④ `forge-opt`/`forge-codegen` 内部的句柄键表
+（regalloc 的 `XReg→PReg`、`Block→VBlockId` 等）。
 
 ### S2（第二切片）：`predecessors()`/`successors()` 迁到密集索引（2026-09-14）
 
@@ -363,6 +361,23 @@ upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两个
 **计量**（同一 `git grep` 口径，`forge-ir/src` 全树）：第一切片后 32 处 → 本切片后 **25 处**（本轮还改掉
 `loop_info.rs` 的 `collect_loop_body` 形参类型）。workspace 1388 passed 不变
 （本轮无新增测试，改动是等价替换；全仓编译 + 全部测试 + 两条矩阵是证据）。
+
+### S2（第三切片）：支配树字段密集化（2026-09-14）
+
+`analysis.rs` 的 `DominatorTree` 五个字段（`children`/`tin`/`tout`/`idom`/`depth`）
+由 `HashMap<Block, _>` 改为 `SecondaryMap`（含 `empty()`、C-H-K 迭代的 `idom` 局部表、
+`compute_children`/`compute_intervals` 的签名与返回类型）。支配树是
+`dominates`/`idom`/`depth`/`ncd`/`children` 的底座，`loop_info`/`licm`/`gvn` 都在用；
+查询从"哈希 + 探测"变为一次 `Vec` 索引（`dominates` 一次查 4 张表）。
+
+顺带修掉一处 `SecondaryMap` 的 API 缺口用法：`for (child, &parent) in idom` 需要
+`IntoIterator for &SecondaryMap`（本容器暂未提供），改为 `idom.iter()`
+（产出 `(K, &V)`）。`IntoIterator for &SecondaryMap/PrimaryMap/EntitySet` 作为
+待补的易用性缺口记录在此。
+
+**计量**（同一 `git grep` 口径，`forge-ir/src` 全树）：句柄键 `HashMap`
+S2 前 45 处 → 第二切片后 25 处 → **本切片后 10 处**（`SecondaryMap` 使用点 74 处）。
+workspace 1388 passed 不变（等价替换；全仓编译 + 全部测试 + 两条矩阵为证据）。
 
 ## 7. 参考设计（外部）
 
