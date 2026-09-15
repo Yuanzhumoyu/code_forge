@@ -96,7 +96,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
-| S2 | 实体容器与密集索引 | **部分落地**：四个容器已实现（`PrimaryMap`/`SecondaryMap`/`EntitySet`/`PackedOption`），forge-ir 内部主表已迁移（句柄键 `HashMap` 45 → 31 处）；余项：`predecessors/successors` 与支配树（公开 API，牵动 forge-opt/forge-codegen）、句柄字段私有化、墓碑语义、`ListPool` |
+| S2 | 实体容器与密集索引 | **大部分落地**：四个容器已实现，forge-ir 内部主表 + `predecessors()`/`successors()`（含两个下游 crate 的调用点）已迁移（句柄键 `HashMap` 45 → 25 处）；余项：支配树字段、句柄字段私有化、墓碑语义、`ListPool` |
 | S3 | 类型系统去锁/所有权 | 待开工 |
 | S4 | 终结符归一 + 完整 use-def | 待开工（依赖 S1） |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
@@ -339,13 +339,30 @@ upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两个
 31 处**（`git grep` 对比 HEAD；全仓基线 129 处 / 36 文件）。容器与迁移共 **8 个
 容器单测**，workspace 1380 → 1388 passed。
 
-**S2 余项（未做，明确记录）**：① `predecessors()`/`successors()` 与支配树
-（`analysis.rs` 的 `idom/depth/tin/tout/children`）——它们是**公开 API**，
-`forge-opt`/`forge-codegen` 有 15+ 处调用者（多为 `.clone()` 后 `.get(&block)`），
-需连带迁移调用方；② 句柄字段私有化 + 访问器（`Value(pub u32)` → `index()`，
-全仓 `.0` 约 260 处，同理分期）；③ 墓碑语义显式化（`Layout` 的删除/复用策略）；
+**S2 余项（未做，明确记录）**：① 支配树字段（`analysis.rs` 的
+`idom/depth/tin/tout/children`——crate 内部，改动面小，留作下一片）；
+② 句柄字段私有化 + 访问器（`Value(pub u32)` → `index()`，全仓 `.0` 约 260 处）；
+③ 墓碑语义显式化（`Layout` 的删除/复用策略）；
 ④ `forge-opt`/`forge-codegen` 内部的句柄键表（regalloc 的 `XReg→PReg`、
 `Block→VBlockId` 等）。
+
+### S2（第二切片）：`predecessors()`/`successors()` 迁到密集索引（2026-09-14）
+
+`Function::predecessors()`/`successors()` 是**跨 crate 公开 API**（`forge-opt` 的
+循环/预处理 pass、`forge-codegen` 的 lowering 共 10+ 调用点）。两处
+`OnceLock<HashMap<Block, Vec<Block>>>` 改为
+`OnceLock<SecondaryMap<Block, Vec<Block>>>`，`preds.entry(succ).or_default()` 换成
+`get_mut_or_default`；调用方由 `.get(&block)` 改为 `.get(block)`（11 处，横跨
+`display.rs`/`function.rs`/`semantics.rs`/`verify.rs`/`loop_info.rs` 与
+`forge-opt` 的 6 个 pass 文件、`forge-codegen` 的 lowering）。
+
+语义差异（写进 doc）：`predecessors()` 里**无前驱的块不出现**（entry），调用方用
+`get(b).cloned().unwrap_or_default()`；`successors()` 则**每个块都有条目**（无后继者
+为空 `vec![]`）——与迁移前逐块 `insert` 的行为一致。
+
+**计量**（同一 `git grep` 口径，`forge-ir/src` 全树）：第一切片后 32 处 → 本切片后 **25 处**（本轮还改掉
+`loop_info.rs` 的 `collect_loop_body` 形参类型）。workspace 1388 passed 不变
+（本轮无新增测试，改动是等价替换；全仓编译 + 全部测试 + 两条矩阵是证据）。
 
 ## 7. 参考设计（外部）
 

@@ -59,6 +59,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   守卫测试 `type_rule_classification_is_complete` 断言每个 opcode 都有分类且各族计数钉住。
   **builder 侧不做声明化（实证否决）**：把同一函数挂到 `FunctionBuilder::emit_with_mem` 后 **5 个既有 builder 测试失败**——builder 刻意允许"混合宽度操作数 + 结果类型 upcast"（`iadd(i8, i64) → i64`），而 verifier 的 `BinopSame` 要求两操作数同类型；builder 是宽松构造层（类别维度由方法内 `assert!(t.is_int())` 把关，比 verifier 更严），verifier 是严格校验层，强行统一会破坏既有语义，故保留为可选工具函数并写明原因。
 
+### Changed (2026-09-14)
+
+- **`predecessors()`/`successors()` 迁到密集索引（forge-ir v3 方案 S2 第二切片）**：
+  `Function` 的两处 `OnceLock<HashMap<Block, Vec<Block>>>` 改为 `OnceLock<SecondaryMap<Block, Vec<Block>>>`（`preds.entry(succ).or_default()` → `get_mut_or_default`）。
+  这是**跨 crate 公开 API**：`forge-opt` 的 6 个 pass 文件（`gvn_pre`/`loop_unroll`/`insert_preheader`/`ind_var_simplify`/`block_param_coalesce`/`jump_thread`）、`forge-codegen` 的 lowering，以及 forge-ir 内的 `display.rs`/`function.rs`/`semantics.rs`/`verify.rs`/`loop_info.rs` 共 11 处调用点由 `.get(&block)` 改为 `.get(block)`。
+  语义差异写进 doc：`predecessors()` 里**无前驱的块不出现**（entry），`successors()` **每个块都有条目**（无后继者空 vec）——与迁移前逐块 `insert` 行为一致。
+  计量（同一 `git grep` 口径，`forge-ir/src` 全树）：S2 之前 **45 处** → 第一切片后 32 处 → 本切片后 **25 处**。门禁：clippy `-D warnings` 干净、workspace 1388 passed / 0 failed / 19 ignored（67 suites）、x86 矩阵 195/3/0、riscv64 131/67/0。
+
 ### Added (2026-09-14)
 
 - **实体容器与密集索引（forge-ir v3 方案 S2 第一切片）**：新模块 `src/entity_map.rs`（无新依赖，8 个单测）提供 `PrimaryMap`（`push` 分配句柄、下标即句柄、**刻意不支持删除**）、`SecondaryMap`（`Vec<Option<_>>`，"未设置"与"空值"可区分，`get_mut_or_default` 等价 `entry().or_default()`）、`EntitySet`（密集位图，O(1) 增删查）、`PackedOption`（句柄可空压缩：`Option<Value>` 8 字节 → **4 字节**，`u32::MAX` 为空哨兵），以及 `EntityRef` trait + `entity_ref_impls!` 宏（已为 10 个句柄类型实现：句柄 ↔ 密集下标）。`ListPool` 明确不做（本仓库列表用途都是短生命周期局部量）。

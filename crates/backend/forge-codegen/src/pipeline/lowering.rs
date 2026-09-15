@@ -135,7 +135,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
             // 先处理所有 pred 的传参映射（map_terminator 可能复用 arg 的
             // 已有寄存器到 param_xregs，如循环中块参数 value 作为跳转 arg）
-            if let Some(pred_list) = preds.get(&info.block) {
+            if let Some(pred_list) = preds.get(info.block) {
                 for pred in pred_list {
                     let term = func.dfg.block_terminator(*pred);
                     self.map_terminator_args_to_params(

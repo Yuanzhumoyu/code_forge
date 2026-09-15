@@ -64,7 +64,7 @@ pub fn insert_preheaders(func: &mut Function) -> Result<PassResult, IrError> {
             }
             let block_set: HashSet<Block> = l.blocks.iter().copied().collect();
             let outside: Vec<Block> = preds_map
-                .get(&l.header)
+                .get(l.header)
                 .map(|ps| {
                     ps.iter()
                         .copied()

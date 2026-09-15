@@ -119,7 +119,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
 
             if is_empty_jump {
                 // Get predecessors and redirect（用结构化 API：retarget + 整体替换 args）
-                let pred_list: Vec<Block> = preds.get(&block_id).cloned().unwrap_or_default();
+                let pred_list: Vec<Block> = preds.get(block_id).cloned().unwrap_or_default();
                 for &pred_id in &pred_list {
                     let pred_block = &mut func.dfg.blocks[pred_id.0 as usize];
                     let target = jump_target;

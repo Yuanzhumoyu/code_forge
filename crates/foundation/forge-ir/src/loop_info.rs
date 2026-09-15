@@ -68,7 +68,7 @@ impl LoopForest {
         // 外 pred（如 if 两边都进循环）→ None（需 insert_preheader 正规化）。
         for l in &mut loops {
             let block_set: HashSet<Block> = l.blocks.iter().copied().collect();
-            if let Some(preds) = preds_map.get(&l.header) {
+            if let Some(preds) = preds_map.get(l.header) {
                 let outside: Vec<Block> = preds
                     .iter()
                     .copied()
@@ -155,7 +155,7 @@ impl LoopForest {
 }
 
 fn collect_loop_body(
-    preds: &HashMap<Block, Vec<Block>>,
+    preds: &SecondaryMap<Block, Vec<Block>>,
     start: Block,
     header: Block,
     body: &mut Vec<Block>,
@@ -170,7 +170,7 @@ fn collect_loop_body(
         if current == header {
             continue;
         }
-        for &pred in preds.get(&current).map(|v| v.as_slice()).unwrap_or(&[]) {
+        for &pred in preds.get(current).map(|v| v.as_slice()).unwrap_or(&[]) {
             if !body_set.contains(&pred) && pred != header {
                 body.push(pred);
                 body_set.insert(pred);

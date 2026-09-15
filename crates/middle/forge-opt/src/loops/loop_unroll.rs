@@ -107,7 +107,7 @@ fn perform_unroll(
     let preds = func.predecessors().clone();
 
     // Find latch (back-edge predecessor of header)
-    let header_preds = preds.get(&header).cloned().unwrap_or_default();
+    let header_preds = preds.get(header).cloned().unwrap_or_default();
     let latch = header_preds
         .iter()
         .find(|&&p| body_set.contains(&p))
@@ -391,7 +391,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
     let preds = func.predecessors();
 
     // Need at least 2 predecessors: one init (outside loop), one back edge
-    let pred_list = match preds.get(&header) {
+    let pred_list = match preds.get(header) {
         Some(p) => p,
         None => return 0,
     };

@@ -60,7 +60,7 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
         }
 
         // For each partially redundant expression, try to hoist it
-        let plist = preds.get(&b).cloned().unwrap_or_default();
+        let plist = preds.get(b).cloned().unwrap_or_default();
         for &expr_id in &earliest {
             let expr_key = match id_to_expr.get(expr_id) {
                 Some(k) => k,
@@ -253,7 +253,7 @@ fn compute_avail(
             let avail_in: HashSet<ExprId> = if b == entry {
                 HashSet::new()
             } else {
-                let plist = preds.get(&b).cloned().unwrap_or_default();
+                let plist = preds.get(b).cloned().unwrap_or_default();
                 if plist.is_empty() {
                     HashSet::new()
                 } else {
@@ -288,7 +288,7 @@ fn compute_avail_in(
     avail_out: &HashMap<Block, HashSet<ExprId>>,
 ) -> HashSet<ExprId> {
     let preds = func.predecessors().clone();
-    let plist = preds.get(&b).cloned().unwrap_or_default();
+    let plist = preds.get(b).cloned().unwrap_or_default();
     if plist.is_empty() {
         return HashSet::new();
     }

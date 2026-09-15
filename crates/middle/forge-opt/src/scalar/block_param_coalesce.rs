@@ -54,7 +54,7 @@ pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, IrError>
             continue;
         }
 
-        let pred_list = match preds.get(&block) {
+        let pred_list = match preds.get(block) {
             Some(p) if !p.is_empty() => p,
             _ => continue, // entry block — params are function args, don't coalesce
         };

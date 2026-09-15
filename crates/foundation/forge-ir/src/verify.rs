@@ -514,7 +514,7 @@ impl Verifier {
         let preds = func.predecessors();
         let mut no_pred_blocks: Vec<Block> = Vec::new();
         for (block, block_data) in func.dfg.blocks() {
-            let has_preds = preds.get(&block).is_some_and(|p| !p.is_empty());
+            let has_preds = preds.get(block).is_some_and(|p| !p.is_empty());
             if !has_preds && !block_data.param_values.is_empty() {
                 no_pred_blocks.push(block);
             }
@@ -1287,7 +1287,7 @@ impl Verifier {
             let expected_params = block_data.params.len();
 
             // 仅遍历本块的实际前驱，检查其终结符传给本块的参数
-            if let Some(block_preds) = preds.get(&block) {
+            if let Some(block_preds) = preds.get(block) {
                 for &pred in block_preds {
                     let pred_data = match dfg.blocks.get(pred.0 as usize) {
                         Some(pd) => pd,

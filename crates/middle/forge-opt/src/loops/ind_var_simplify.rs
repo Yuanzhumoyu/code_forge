@@ -55,7 +55,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
 
         // Find the latch (back-edge predecessor dominated by header)
         let latch = match preds
-            .get(&header)
+            .get(header)
             .into_iter()
             .flatten()
             .find(|&&p| body.contains(&p))
@@ -67,7 +67,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
 
         // Find the init predecessor (outside-loop predecessor)
         let _init_pred = preds
-            .get(&header)
+            .get(header)
             .into_iter()
             .flatten()
             .find(|&&p| !body.contains(&p))

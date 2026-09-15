@@ -1935,7 +1935,7 @@ fn finalize_phis<'a>(
         let _preds_of_target = fb
             .func
             .predecessors()
-            .get(&target)
+            .get(target)
             .cloned()
             .unwrap_or_default();
     }

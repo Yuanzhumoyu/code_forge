@@ -591,7 +591,7 @@ impl<'a> fmt::Display for BlockDisplay<'a> {
                 let mut preds: Vec<Block> = self
                     .func
                     .predecessors()
-                    .get(&self.block)
+                    .get(self.block)
                     .cloned()
                     .unwrap_or_default();
                 preds.sort_by_key(|b| b.0);

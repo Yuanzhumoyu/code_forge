@@ -162,8 +162,8 @@ impl Layout {
 /// - 失效需 `&mut self`（`invalidate`），与其它线程的 `&self` 共享由借用检查互斥
 #[derive(Default)]
 pub struct AnalysisCache {
-    pub predecessors: OnceLock<HashMap<Block, Vec<Block>>>,
-    pub successors: OnceLock<HashMap<Block, Vec<Block>>>,
+    pub predecessors: OnceLock<SecondaryMap<Block, Vec<Block>>>,
+    pub successors: OnceLock<SecondaryMap<Block, Vec<Block>>>,
     /// 支配树 (惰性构建)
     pub dominator_tree: OnceLock<DominatorTree>,
     /// 循环森林 (惰性构建，依赖 DominatorTree)
@@ -374,12 +374,12 @@ impl Function {
     }
 
     /// 惰性获取前驱映射: Block → Vec<Block>.
-    pub fn predecessors(&self) -> &HashMap<Block, Vec<Block>> {
+    pub fn predecessors(&self) -> &SecondaryMap<Block, Vec<Block>> {
         self.analysis.predecessors.get_or_init(|| {
-            let mut preds: HashMap<Block, Vec<Block>> = HashMap::new();
+            let mut preds: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
             for (block, bd) in self.dfg.blocks() {
                 for succ in bd.terminator.successors() {
-                    preds.entry(succ).or_default().push(block);
+                    preds.get_mut_or_default(succ).push(block);
                 }
             }
             preds
@@ -387,9 +387,9 @@ impl Function {
     }
 
     /// 惰性获取后继映射: Block → Vec<Block>.
-    pub fn successors(&self) -> &HashMap<Block, Vec<Block>> {
+    pub fn successors(&self) -> &SecondaryMap<Block, Vec<Block>> {
         self.analysis.successors.get_or_init(|| {
-            let mut succs: HashMap<Block, Vec<Block>> = HashMap::new();
+            let mut succs: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
             for (block, bd) in self.dfg.blocks() {
                 succs.insert(block, bd.terminator.successors());
             }
@@ -551,7 +551,7 @@ impl Function {
     /// 被删除参数值的其它使用（非终结符）由调用方先 RAUW。
     pub fn remove_block_param(&mut self, block: Block, idx: usize) {
         // 1. 先收集前驱（不可变借用结束），再改终结符
-        let preds: Vec<Block> = self.predecessors().get(&block).cloned().unwrap_or_default();
+        let preds: Vec<Block> = self.predecessors().get(block).cloned().unwrap_or_default();
         // 2. 清理前驱终结符对应参数位置
         for pred in preds {
             if let Some(pd) = self.dfg.blocks.get_mut(pred.0 as usize) {
