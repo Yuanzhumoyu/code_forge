@@ -997,7 +997,7 @@ fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
             }
         }
         // Terminator 中的值使用
-        match &block.terminator {
+        match &block.terminator() {
             Terminator::Branch {
                 cond,
                 then_args,
@@ -1261,7 +1261,7 @@ fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> boo
             then_args,
             else_args,
             ..
-        } = &func.dfg.blocks[bi].terminator
+        } = &func.dfg.blocks[bi].terminator()
             && let Some(const_val) = known.get(cond)
             && let Some(is_true) = const_val.to_bool()
         {
@@ -1444,7 +1444,7 @@ mod tests {
         let else_block = &func.dfg.blocks[else_blk.0 as usize];
         assert!(
             else_block.inst_order.is_empty()
-                || matches!(else_block.terminator, Terminator::Unreachable),
+                || matches!(else_block.terminator(), Terminator::Unreachable),
             "Else block should be cleared (dead)"
         );
     }

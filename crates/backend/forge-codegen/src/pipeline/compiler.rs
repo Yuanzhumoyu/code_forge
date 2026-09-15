@@ -422,7 +422,7 @@ fn rewrite_agg_value_uses(
     // Return values 重写（terminator——先收集再写，避免借用冲突）
     let mut ret_updates: Vec<(Block, Vec<Value>)> = Vec::new();
     for (b, bd) in func.dfg.blocks() {
-        if let Terminator::Return { values, .. } = &bd.terminator
+        if let Terminator::Return { values, .. } = &bd.terminator()
             && values.contains(&old_v)
         {
             let mut new_vals: Vec<Value> = Vec::new();
@@ -437,10 +437,12 @@ fn rewrite_agg_value_uses(
         }
     }
     for (b, new_vals) in ret_updates {
-        let bd = &mut func.dfg.blocks[b.0 as usize];
-        if let Terminator::Return { values, .. } = &mut bd.terminator {
-            *values = smallvec::SmallVec::from_iter(new_vals);
-        }
+        // 经 Function::rewrite_terminator：改完终结符用值后同步 use-def
+        func.rewrite_terminator(b, |term| {
+            if let Terminator::Return { values, .. } = term {
+                *values = smallvec::SmallVec::from_iter(new_vals);
+            }
+        });
     }
     Ok(())
 }
@@ -546,13 +548,16 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
                         }
                     }
                 }
-                if let Terminator::Return { values, .. } = &mut func.dfg.blocks[bi].terminator {
-                    for v in values.iter_mut() {
-                        if *v == *old_v {
-                            *v = new_v;
+                // 经 rewrite_terminator：终结符里的 RAUW 也要同步 use-def
+                func.rewrite_terminator(Block(bi as u32), |term| {
+                    if let Terminator::Return { values, .. } = term {
+                        for v in values.iter_mut() {
+                            if *v == *old_v {
+                                *v = new_v;
+                            }
                         }
                     }
-                }
+                });
             }
         }
     }
@@ -580,7 +585,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
     }
     let mut jobs: Vec<RetJob> = Vec::new();
     for (b, bd) in func.dfg.blocks() {
-        if let Terminator::Return { values, .. } = &bd.terminator {
+        if let Terminator::Return { values, .. } = &bd.terminator() {
             for &v in values {
                 if let Some(ty) = func.dfg.value_type(v)
                     && func.types.borrow().is_aggregate(ty)
@@ -687,19 +692,20 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                 )));
             }
         }
-        // Return values 替换（段值）
-        let bd = &mut func.dfg.blocks[job.block.0 as usize];
-        if let Terminator::Return { values, .. } = &mut bd.terminator {
-            let mut new_vals: Vec<Value> = Vec::new();
-            for &v in values.iter() {
-                if v == job.val {
-                    new_vals.extend_from_slice(&segs);
-                } else {
-                    new_vals.push(v);
+        // Return values 替换（段值）——经 rewrite_terminator 同步 use-def
+        func.rewrite_terminator(job.block, |term| {
+            if let Terminator::Return { values, .. } = term {
+                let mut new_vals: Vec<Value> = Vec::new();
+                for &v in values.iter() {
+                    if v == job.val {
+                        new_vals.extend_from_slice(&segs);
+                    } else {
+                        new_vals.push(v);
+                    }
                 }
+                *values = smallvec::SmallVec::from_iter(new_vals);
             }
-            *values = smallvec::SmallVec::from_iter(new_vals);
-        }
+        });
         // gen 指令（段常量/段 load/add）已由 make_inst push 到块尾——顺序正确
         // （生成顺序），位于块内指令之后、terminator 之前——无需移动。
     }
@@ -1903,7 +1909,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         }
         for (_, bd) in func.dfg.blocks() {
             if matches!(
-                bd.terminator,
+                bd.terminator(),
                 Terminator::Invoke { .. } | Terminator::Resume { .. }
             ) {
                 return Err(IrError::Unsupported(

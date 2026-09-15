@@ -152,7 +152,7 @@ pub fn inline_calls(
 
             // Identify callee return value from terminator
             let callee_ret_vals: SmallVec<[Value; 2]> =
-                match &callee.dfg.blocks[callee_entry.0 as usize].terminator {
+                match &callee.dfg.blocks[callee_entry.0 as usize].terminator() {
                     Terminator::Return { values, .. } => values.clone(),
                     _ => continue,
                 };
@@ -343,7 +343,7 @@ pub fn evaluate_inline_cost(
         }
     }
 
-    if !matches!(block.terminator, Terminator::Return { .. }) {
+    if !matches!(block.terminator(), Terminator::Return { .. }) {
         return InlineCost {
             static_cost: 0,
             loop_penalty: 0,

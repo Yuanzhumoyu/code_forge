@@ -89,11 +89,27 @@ pub struct BlockData {
     pub param_values: SmallVec<[Value; 2]>,
     /// 块内指令的顺序列表 (索引到 DataFlowGraph.insts)
     pub inst_order: Vec<Inst>,
-    pub terminator: Terminator,
+    /// 终结符。**写入只能经 [`crate::Function::set_terminator`] /
+    /// [`crate::Function::rewrite_terminator`] / [`crate::Function::refresh_terminator_uses`]**
+    /// ——它们同步 use-def。字段是 `pub(crate)`：crate 外只能经
+    /// [`BlockData::terminator`] 读（v3 方案 S4-b 收口，2026-09-15）。
+    pub(crate) terminator: Terminator,
     /// 终结符是否被显式设置（ret/jump/branch/unreachable/switch 均可）。
     /// finish() 时校验：块漏写终结符会保持默认 Unreachable，被编译期
     /// 无条件 lower 成 UD2，运行到该块即非法指令崩溃。
-    pub has_terminator: bool,
+    pub(crate) has_terminator: bool,
+}
+
+impl BlockData {
+    /// 终结符（只读）。crate 外**唯一**的终结符读取入口。
+    pub fn terminator(&self) -> &Terminator {
+        &self.terminator
+    }
+
+    /// 是否已显式设置终结符（见 [`BlockData::has_terminator`] 字段说明）。
+    pub fn has_terminator(&self) -> bool {
+        self.has_terminator
+    }
 }
 
 // ============================================================
@@ -427,11 +443,24 @@ impl DataFlowGraph {
             .unwrap_or(&[])
     }
 
+    /// 块终结符（块不存在则 `None`）。
     pub fn block_terminator(&self, b: Block) -> Option<&Terminator> {
         self.blocks.get(b.0 as usize).map(|d| &d.terminator)
     }
-    pub fn block_terminator_mut(&mut self, b: Block) -> Option<&mut Terminator> {
+
+    /// 块终结符（可变）—— **crate 内部低层入口**：拿到的引用改写后调用方必须
+    /// 让 use-def 跟上（[`crate::Function::rewrite_terminator`] 或
+    /// [`crate::Function::refresh_terminator_uses`]）。crate 外不可见，
+    /// 因此跨 crate 的就地改写只能走 `Function` 的 API。
+    pub(crate) fn block_terminator_mut(&mut self, b: Block) -> Option<&mut Terminator> {
         self.blocks.get_mut(b.0 as usize).map(|d| &mut d.terminator)
+    }
+
+    /// 块是否已显式设置终结符（见 [`BlockData::has_terminator`]）。
+    pub fn block_has_terminator(&self, b: Block) -> bool {
+        self.blocks
+            .get(b.0 as usize)
+            .is_some_and(|d| d.has_terminator)
     }
 
     // === 迭代 ===

@@ -448,6 +448,19 @@ impl Function {
         }
     }
 
+    /// 就地改写终结符并**自动重登记 use 项**：`f` 拿到 `&mut Terminator`
+    /// 随便改（改实参、增删用值），返回后 use-def 与 DFG 保证一致。
+    ///
+    /// 这是"不想重建整个终结符"时的入口——例如只把 `Return.values` 里的某个值
+    /// 换成段值。**不要**用 `DataFlowGraph::block_terminator_mut` 代替它：
+    /// 那条路不改 use-lists（crate 外也已不可见）。返回重登记的用值个数。
+    pub fn rewrite_terminator(&mut self, block: Block, f: impl FnOnce(&mut Terminator)) -> usize {
+        if let Some(term) = self.dfg.block_terminator_mut(block) {
+            f(term);
+        }
+        self.refresh_terminator_uses(block)
+    }
+
     /// 就地改写终结符后**重登记**该块的终结符 use 项。
     ///
     /// 用于 `Terminator::{retarget, replace_args, remove_arg}` 这类原地修改

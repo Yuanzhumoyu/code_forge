@@ -211,7 +211,7 @@ fn clone_callee_into_caller(
         }
 
         // Handle callee's Return terminator
-        if let Terminator::Return { values, .. } = &callee_block.terminator {
+        if let Terminator::Return { values, .. } = &callee_block.terminator() {
             for &v in values.iter() {
                 ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
             }

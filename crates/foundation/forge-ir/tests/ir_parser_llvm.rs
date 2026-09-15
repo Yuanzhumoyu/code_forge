@@ -393,11 +393,11 @@ fn control_flow() {
     .expect("parse cf");
     assert_eq!(f.dfg.block_count(), 3);
     assert!(matches!(
-        &f.dfg.blocks[0].terminator,
+        &f.dfg.blocks[0].terminator(),
         forge_ir::terminator::Terminator::Branch { .. }
     ));
     assert!(matches!(
-        &f.dfg.blocks[2].terminator,
+        &f.dfg.blocks[2].terminator(),
         forge_ir::terminator::Terminator::Unreachable
     ));
 }

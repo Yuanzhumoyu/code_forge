@@ -58,19 +58,19 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
         for bi in 0..block_count {
             let target_info = {
                 let block = &func.dfg.blocks[bi];
-                if let Terminator::Jump { target, args, .. } = &block.terminator {
+                if let Terminator::Jump { target, args, .. } = &block.terminator() {
                     if args.is_empty() {
                         // Check if target block is an empty block with only Jump
                         let target_block = &func.dfg.blocks[target.0 as usize];
                         if target_block.inst_order.is_empty()
                             && target_block.params.is_empty()
-                            && matches!(target_block.terminator, Terminator::Jump { .. })
+                            && matches!(target_block.terminator(), Terminator::Jump { .. })
                         {
                             if let Terminator::Jump {
                                 target: final_target,
                                 args: final_args,
                                 ..
-                            } = &target_block.terminator
+                            } = &target_block.terminator()
                             {
                                 Some((*target, *final_target, final_args.clone()))
                             } else {
@@ -110,7 +110,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
             let (is_empty_jump, jump_target, jump_args) = {
                 let block = &func.dfg.blocks[bi];
                 if block.inst_order.is_empty() && block.params.is_empty() {
-                    if let Terminator::Jump { target, args, .. } = &block.terminator {
+                    if let Terminator::Jump { target, args, .. } = &block.terminator() {
                         (true, *target, args.clone())
                     } else {
                         (false, Block(0), smallvec![])
@@ -129,7 +129,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                     // 原实现：then 与 else 都指向 block_id 时合并为 Jump（丢弃 cond）。
                     // 保持该语义——否则 Branch 的两个分支都指向同一空 jump 块。
                     let both_sides = matches!(
-                        &func.dfg.blocks[pred_id.0 as usize].terminator,
+                        &func.dfg.blocks[pred_id.0 as usize].terminator(),
                         Terminator::Branch {
                             then_block: t,
                             else_block: e,
@@ -137,7 +137,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                         } if *t == block_id && *e == block_id
                     );
                     // 就地改写终结符后必须重登记 use 项（实参值/槽位变了）
-                    let mut new_term = func.dfg.blocks[pred_id.0 as usize].terminator.clone();
+                    let mut new_term = func.dfg.blocks[pred_id.0 as usize].terminator().clone();
                     if both_sides {
                         new_term = Terminator::Jump {
                             target,
@@ -205,11 +205,11 @@ mod tests {
         assert!(r.changed);
         // B0 should now jump directly to B2
         assert!(
-            matches!(&func.dfg.blocks[0].terminator, Terminator::Jump { target, .. } if *target == b2)
+            matches!(&func.dfg.blocks[0].terminator(), Terminator::Jump { target, .. } if *target == b2)
         );
         // B1 should be unreachable
         assert!(matches!(
-            func.dfg.blocks[1].terminator,
+            func.dfg.blocks[1].terminator(),
             Terminator::Unreachable
         ));
     }
@@ -245,11 +245,11 @@ mod tests {
         assert!(r.changed);
         // B1 and B2 should be unreachable
         assert!(matches!(
-            func.dfg.blocks[1].terminator,
+            func.dfg.blocks[1].terminator(),
             Terminator::Unreachable
         ));
         assert!(matches!(
-            func.dfg.blocks[2].terminator,
+            func.dfg.blocks[2].terminator(),
             Terminator::Unreachable
         ));
     }

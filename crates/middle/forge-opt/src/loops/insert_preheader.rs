@@ -85,11 +85,11 @@ pub fn insert_preheaders(func: &mut Function) -> Result<PassResult, IrError> {
         // ph 参数 = header 参数（pred 传给 ph 的 args 与 header 参数同型）
         let param_tys: Vec<TypeId> = func.dfg.blocks[header.0 as usize].params.to_vec();
         let (ph, ph_params) = func.dfg.make_block_with_params(&param_tys);
-        // 循环外 pred 的边改指 ph（retarget 保留原 args——现在成为 ph 的参数实参）
+        // 循环外 pred 的边改指 ph（retarget 保留原 args——现在成为 ph 的参数实参）。
+        // 就地改写终结符必须走 Function::rewrite_terminator（它会重登记 use 项；
+        // `retarget` 只动目标块不动用值，这次重登记是恒等操作但保证契约不破）。
         for p in &outside {
-            func.dfg.blocks[p.0 as usize]
-                .terminator
-                .retarget(header, ph);
+            func.rewrite_terminator(*p, |term| term.retarget(header, ph));
         }
         // ph → header：转发自身参数
         func.set_terminator(
@@ -171,7 +171,7 @@ mod tests {
         let header = Block(3);
         let mut ph = None;
         for (bi, blk) in func.dfg.blocks.iter().enumerate() {
-            if let Terminator::Jump { target, .. } = &blk.terminator
+            if let Terminator::Jump { target, .. } = &blk.terminator()
                 && *target == header
             {
                 ph = Some(Block(bi as u32));
@@ -183,7 +183,7 @@ mod tests {
         for p in [Block(1), Block(2)] {
             assert!(
                 matches!(
-                    &func.dfg.blocks[p.0 as usize].terminator,
+                    &func.dfg.blocks[p.0 as usize].terminator(),
                     Terminator::Jump { target, .. } if *target == ph
                 ),
                 "循环外 pred {p:?} 应改跳 preheader"

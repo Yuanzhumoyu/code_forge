@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-15)
+
+- **终结符写入面收口（forge-ir v3 S4 子项 b）**：`BlockData.{terminator,has_terminator}` 降为 `pub(crate)` 并新增只读访问器，crate 外（forge-opt / forge-codegen / forge-rustc / 集成测试，22 个文件）的读取统一改走访问器——**跨 crate 直接写终结符字段已不可能**，唯一写路径是 `Function::set_terminator`；`DataFlowGraph::block_terminator_mut` 同步降为 `pub(crate)`。
+  新增 `Function::rewrite_terminator(block, f)`：就地改写终结符后自动重登记 use 项。
+  **顺带修掉三处真实缺陷**：`forge-codegen` 的 `ret` 值就地改写（大聚合返回值展开、段值替换、`ret` 内 RAUW）此前从不刷新 use-def——在终结符进入 use-def 之后会留下陈旧 use 项，现全部改走 `rewrite_terminator`（`insert_preheader` 的 `retarget` 亦然）。
+  可达性用探针实测：该路径在 `cargo test -p forge-codegen`（21 suites）与 `cargo test -p forge-tests --lib`（含 x86/riscv JIT 矩阵）下均不可达（仅 forge-rustc e2e 覆盖），故以 `tests/use_lists.rs::rewrite_terminator_keeps_use_def_fresh` 在本地钉住 API 契约。
+
 ### Fixed (2026-09-15)
 
 - **终结符用值进入 use-def（forge-ir v3 S4 子项 a）**：

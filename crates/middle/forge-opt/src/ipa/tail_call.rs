@@ -38,7 +38,7 @@ pub fn optimize_tail_calls(
 
     for bi in 0..block_count {
         // Check if block ends with Return
-        let return_values = match &func.dfg.blocks[bi].terminator {
+        let return_values = match &func.dfg.blocks[bi].terminator() {
             Terminator::Return { values, .. } => values.clone(),
             _ => continue,
         };
@@ -180,9 +180,9 @@ mod tests {
             .dfg
             .blocks
             .iter()
-            .position(|bd| matches!(&bd.terminator, Terminator::Jump { target, .. } if *target == entry_block))
+            .position(|bd| matches!(&bd.terminator(), Terminator::Jump { target, .. } if *target == entry_block))
             .expect("应有一个块被改写成 jump entry");
-        match &rec_func.dfg.blocks[recurse_block].terminator {
+        match &rec_func.dfg.blocks[recurse_block].terminator() {
             Terminator::Jump { args, .. } => assert_eq!(
                 args.len(),
                 rec_func.dfg.blocks[entry_block.0 as usize].params.len(),

@@ -135,7 +135,7 @@ mod tests {
         assert!(r.changed);
         assert!(r.instructions_removed >= 1);
         // Return should use src directly (not copied)
-        let term = &func.dfg.blocks[0].terminator;
+        let term = &func.dfg.blocks[0].terminator();
         if let Terminator::Return { values, .. } = term {
             assert_eq!(values[0], src);
         } else {

@@ -677,7 +677,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // Lower terminator
         self.ctx.current_clobbers.clear();
         let mut term_insts = lowering.lower_terminator(
-            &block_data.terminator,
+            block_data.terminator(),
             &self.value_to_xreg,
             &self.block_map,
             &mut self.ctx,
@@ -699,7 +699,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             self.vcode.push_inst(mi);
         }
 
-        if matches!(block_data.terminator, Terminator::Return { .. })
+        if matches!(block_data.terminator(), Terminator::Return { .. })
             && let Some(vb) = self.vcode.block_mut(vblock_id)
         {
             vb.is_return_block = true;

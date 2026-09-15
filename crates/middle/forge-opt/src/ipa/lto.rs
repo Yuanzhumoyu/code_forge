@@ -258,7 +258,7 @@ fn lto_inline_callee(
         }
 
         // Handle Return
-        if let Terminator::Return { values, .. } = &callee_block.terminator {
+        if let Terminator::Return { values, .. } = &callee_block.terminator() {
             for &v in values.iter() {
                 ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
             }

@@ -98,7 +98,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
-| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类且终结符用值入 use-def）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
+| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写入面收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类且终结符用值入 use-def、`BlockData` 终结符字段私有化 + `rewrite_terminator`）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
@@ -506,6 +506,34 @@ RAUW 会留下悬空实参），而 `Verifier` 的 use-list 检查**看不见**�
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 新增守卫：`UseLists` 双向校验（终结符缺项/陈旧项都报 `UseListInconsistency`）、
 `terminator.rs` 的平坦序规格测试与"共享/可变遍历一致"测试。
+
+### S4（子项 b）：终结符写入面收口（2026-09-15）
+
+S4-a 把终结符用值纳入 use-def 之后，"谁能写终结符"本身就成了不变量的一部分。
+本子项把**写面收口从约定变成编译期强制**：
+
+- `BlockData::{terminator, has_terminator}` 降为 `pub(crate)`，新增只读访问器
+  `BlockData::terminator()` / `BlockData::has_terminator()`；crate 外
+  （forge-opt / forge-codegen / forge-rustc / forge-ir 集成测试共 22 个文件）
+  的读取全部改为访问器。**crate 外已无法直接写终结符字段**，唯一路径是
+  `Function::set_terminator`。`DataFlowGraph::block_terminator_mut` 同步降为
+  `pub(crate)`（补一个只读的 `block_has_terminator`）。
+- 新增 `Function::rewrite_terminator(block, f)`：就地改写终结符（改实参、增删用值）
+  后**自动重登记 use 项**——"不想重建整个终结符"时的入口。
+- **暴露并修掉三处真实缺陷**：`forge-codegen/src/pipeline/compiler.rs` 里的 `ret`
+  值就地改写（大聚合返回值展开、段值替换、`ret` 内 RAUW）从不刷新 use-def；S4-a
+  之后它们会留下陈旧 use 项。三处现在都走 `rewrite_terminator`；
+  `insert_preheader.rs` 的 `pred.terminator.retarget(...)` 一并改走同一 API
+  （`retarget` 只动目标块不动用值，重登记是恒等操作，但契约不破）。
+- **可达性取证（不是推断）**：在 `expand_large_agg_ret` 的调用点临时插 panic 探针，
+  跑 `cargo test -p forge-codegen`（21 suites 全绿）与
+  `cargo test -p forge-tests --lib`（43 用例，含 x86/riscv JIT 矩阵）**均未触发**
+  ⇒ 该路径在本机不可达，只由 forge-rustc e2e 覆盖（本机无法编译 `forge-rustc`，
+  缺 `rustc-dev`）。因此把该 API 的契约用
+  `tests/use_lists.rs::rewrite_terminator_keeps_use_def_fresh` 钉在本地。
+
+**验证**：workspace 1393 passed / 0 failed / 19 ignored（71 suites，较 S4-a +1）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

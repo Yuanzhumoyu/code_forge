@@ -117,7 +117,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
 
         // Propagate reachability
         let block = &func.dfg.blocks[block_id.0 as usize];
-        match &block.terminator {
+        match &block.terminator() {
             Terminator::Branch {
                 cond,
                 then_block,
@@ -224,7 +224,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             then_block,
             else_block,
             ..
-        } = &func.dfg.blocks[bi].terminator
+        } = &func.dfg.blocks[bi].terminator()
             && let Some(LatticeValue::Constant(cv)) = lattice.get(cond)
         {
             if let Some(true) = cv.to_bool() {

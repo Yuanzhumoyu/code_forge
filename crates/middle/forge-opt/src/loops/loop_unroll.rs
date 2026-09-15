@@ -148,7 +148,7 @@ fn find_first_body_block(
     header: Block,
     body_set: &HashSet<Block>,
 ) -> Option<Block> {
-    let term = &func.dfg.blocks[header.0 as usize].terminator;
+    let term = &func.dfg.blocks[header.0 as usize].terminator();
     match term {
         Terminator::Branch {
             then_block,
@@ -185,7 +185,7 @@ fn collect_body_chain(
         chain.push(current);
 
         // Follow terminator to next body block
-        let term = &func.dfg.blocks[current.0 as usize].terminator;
+        let term = &func.dfg.blocks[current.0 as usize].terminator();
         match term {
             Terminator::Jump { target, .. } if body_set.contains(target) => {
                 current = *target;
@@ -242,7 +242,7 @@ fn clone_body_chain(
             param_tys,
             param_values,
             insts: orig_insts,
-            terminator: orig.terminator.clone(),
+            terminator: orig.terminator().clone(),
         });
     }
 
@@ -275,7 +275,7 @@ fn clone_body_chain(
             func.dfg.clone_inst(inst_id, new_block, &mut val_remap);
         }
 
-        // Clone terminator
+        // Clone terminator（BlockTemplate 的本地字段，不是 forge-ir 的 BlockData）
         let new_term = clone_terminator(&tmpl.terminator, &val_remap, &block_remap);
         func.set_terminator(new_block, new_term);
     }
@@ -347,7 +347,7 @@ fn clone_terminator(
 /// Redirect the branch target in block's terminator from old_target to new_target.
 fn redirect_branch_target(func: &mut Function, block: Block, old_target: Block, new_target: Block) {
     let bd = &mut func.dfg.blocks[block.0 as usize];
-    let new_term = match &bd.terminator {
+    let new_term = match &bd.terminator() {
         Terminator::Branch {
             cond,
             then_block,
@@ -412,7 +412,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
 
     for (pi, &_param_val) in header_block.param_values.iter().enumerate() {
         let init_arg = init_pred.and_then(|p| {
-            let term = &func.dfg.blocks[p.0 as usize].terminator;
+            let term = &func.dfg.blocks[p.0 as usize].terminator();
             match term {
                 Terminator::Jump { target, args, .. } if *target == header => args.get(pi).copied(),
                 Terminator::Branch {

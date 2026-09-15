@@ -139,7 +139,7 @@ fn build_use_counts(func: &Function) -> HashMap<Value, usize> {
 
     // Terminator 使用的值也计入
     for (_, block_data) in func.dfg.blocks() {
-        for v in block_data.terminator.used_values() {
+        for v in block_data.terminator().used_values() {
             *counts.entry(v).or_insert(0) += 1;
         }
     }
@@ -189,7 +189,7 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
         }
 
         let block = func.block(block_id);
-        match &block.terminator {
+        match &block.terminator() {
             Terminator::Branch {
                 then_block,
                 else_block,
@@ -231,7 +231,7 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
         let block_id = Block(i as u32);
         let stale = !reachable.contains(&block_id)
             && (!func.dfg.blocks[i].inst_order.is_empty()
-                || !matches!(func.dfg.blocks[i].terminator, Terminator::Unreachable));
+                || !matches!(func.dfg.blocks[i].terminator(), Terminator::Unreachable));
         if stale {
             removed += 1;
             func.dfg.blocks[i].inst_order.clear();
@@ -329,7 +329,7 @@ mod tests {
 
         assert!(r.blocks_removed >= 1);
         let dead = &func.dfg.blocks[1];
-        assert!(dead.inst_order.is_empty() || matches!(dead.terminator, Terminator::Unreachable));
+        assert!(dead.inst_order.is_empty() || matches!(dead.terminator(), Terminator::Unreachable));
     }
 
     /// P0-5 负向：原子指令（AtomicRmw）结果未用也**不可**删除——

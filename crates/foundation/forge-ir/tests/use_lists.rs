@@ -171,7 +171,7 @@ fn rauw_covers_terminator_args() {
 
     // 值真的被写进了终结符（不是只改 use-list）
     for (i, bd) in func.dfg.blocks.iter().enumerate() {
-        for v in bd.terminator.used_values() {
+        for v in bd.terminator().used_values() {
             assert_ne!(v, x, "块 {i} 的终结符仍引用 %x");
         }
     }
@@ -220,8 +220,41 @@ fn set_terminator_keeps_use_def_fresh() {
     assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
 }
 
-/// 就地改写终结符却不重登记 → `Verifier` 必须报 `UseListInconsistency`
-/// （这正是 S4-a 之前**看不见**的一类 bug 类别）。
+/// `Function::rewrite_terminator`：就地改终结符用值后 use-def 自动跟上。
+///
+/// S4-b：codegen 的三处"`ret` 值就地改写"（大聚合返回展开、段值替换、ret 内
+/// RAUW）走的就是这条 API——它们此前直接改 `BlockData.terminator`，在终结符
+/// 进入 use-def 之后会留下陈旧 use 项。该路径只由 forge-rustc e2e 覆盖（本机不可跑），
+/// 所以这里把 API 契约钉在本地。
+#[test]
+fn rewrite_terminator_keeps_use_def_fresh() {
+    use forge_ir::Terminator;
+
+    let (mut func, x, cond) = build_branch();
+    let entry = func.entry();
+    // 与 codegen 同形：拿到 &mut Terminator 后改用值
+    let renewed = func.rewrite_terminator(entry, |term| {
+        if let Terminator::Branch { then_args, .. } = term {
+            then_args[0] = cond;
+        }
+    });
+    assert_eq!(renewed, 2, "br 的 cond + then_args 两个用值都被重登记");
+
+    assert_eq!(func.use_lists.use_count(x), 2, "%x 只剩两个 ret");
+    assert_eq!(func.use_lists.use_count(cond), 2, "br 的 cond + then_args");
+    assert!(
+        func.use_lists.verify(&func.dfg).is_ok(),
+        "就地改写后 use-lists 必须自洽：{:?}",
+        func.use_lists.verify(&func.dfg).err()
+    );
+    let mut v = Verifier::with_ctx(func.types.clone());
+    assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
+}
+
+///
+/// S4-b 之后 crate 外已**无法**绕过 `Function::set_terminator` 直接写终结符字段
+/// （`BlockData.terminator` 是 `pub(crate)`），所以这里改用"正常写入 + 手工留下旧
+/// 终结符的 use 项"来复现同一状态——它等价于"某处改了终结符却没重登记"的后果。
 #[test]
 fn verifier_detects_stale_terminator_use() {
     use forge_ir::Terminator;
@@ -230,19 +263,25 @@ fn verifier_detects_stale_terminator_use() {
     let entry = func.entry();
     let succs = func.dfg.block_terminator(entry).unwrap().successors();
     let (then_blk, else_blk) = (succs[0], succs[1]);
-    // 绕过 set_terminator 直接写字段：then_args 从 %x 换成 %cond，use 项不刷新
-    func.dfg.blocks[entry.0 as usize].terminator = Terminator::Branch {
-        cond,
-        then_block: then_blk,
-        then_args: smallvec::smallvec![cond],
-        else_block: else_blk,
-        else_args: smallvec::smallvec![],
-        metadata: smallvec::smallvec![],
-    };
+    let old_term = func.dfg.block_terminator(entry).unwrap().clone();
+    // 正常写入新终结符（then_args 从 %x 换成 %cond）……
+    func.set_terminator(
+        entry,
+        Terminator::Branch {
+            cond,
+            then_block: then_blk,
+            then_args: smallvec::smallvec![cond],
+            else_block: else_blk,
+            else_args: smallvec::smallvec![],
+            metadata: smallvec::smallvec![],
+        },
+    );
+    // ……再补登记**旧**终结符的 use 项：等价于"改了终结符但没刷新 use-def"
+    func.use_lists.record_terminator(entry, &old_term);
 
     assert!(
         func.use_lists.verify(&func.dfg).is_err(),
-        "绕过 set_terminator 必须被 use-list 校验抓到"
+        "陈旧终结符 use 项必须被 use-list 校验抓到"
     );
     let mut v = Verifier::with_ctx(func.types.clone());
     let res = v.verify(&func);
@@ -255,9 +294,9 @@ fn verifier_detects_stale_terminator_use() {
         "期望 UseListInconsistency"
     );
 
-    // 重登记后恢复一致：entry 的 %x 记录消失，%cond 多出一处
+    // 重登记后恢复一致：陈旧记录被清扫，%x 只剩两个 ret
     func.refresh_terminator_uses(entry);
     assert!(func.use_lists.verify(&func.dfg).is_ok());
-    assert_eq!(func.use_lists.use_count(x), 2, "entry 的 %x 记录被摘除");
+    assert_eq!(func.use_lists.use_count(x), 2, "entry 的 %x 陈旧记录被摘除");
     assert_eq!(func.use_lists.use_count(cond), 2, "cond 槽 + then_args");
 }

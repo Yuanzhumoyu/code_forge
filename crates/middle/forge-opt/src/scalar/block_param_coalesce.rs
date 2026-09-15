@@ -67,7 +67,7 @@ pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, IrError>
             let mut all_same = true;
 
             for &pred_block in pred_list {
-                let pred_term = &func.dfg.blocks[pred_block.0 as usize].terminator;
+                let pred_term = &func.dfg.blocks[pred_block.0 as usize].terminator();
                 let arg = match pred_term {
                     Terminator::Jump { args, .. } => args.get(param_idx).copied(),
                     Terminator::Branch {

@@ -316,7 +316,7 @@ fn compute_ant(
         changed = false;
         for (bi, block) in func.dfg.blocks.iter().enumerate() {
             let b = Block(bi as u32);
-            let succs: Vec<Block> = match &block.terminator {
+            let succs: Vec<Block> = match &block.terminator() {
                 Terminator::Branch {
                     then_block,
                     else_block,

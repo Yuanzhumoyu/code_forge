@@ -121,7 +121,11 @@ fn assert_block_eq(f1: &Function, b1: &BlockData, f2: &Function, b2: &BlockData,
         assert_inst_eq(f1, a, f2, b, text);
     }
     // 终结符（含块参数）整体比较
-    assert_eq!(b1.terminator, b2.terminator, "terminator mismatch:\n{text}");
+    assert_eq!(
+        b1.terminator(),
+        b2.terminator(),
+        "terminator mismatch:\n{text}"
+    );
 }
 
 fn assert_modules_eq(m1: &Module, m2: &Module, text: &str) {

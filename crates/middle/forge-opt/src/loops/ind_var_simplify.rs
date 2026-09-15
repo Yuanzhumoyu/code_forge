@@ -85,7 +85,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
             let param_val = header_block.param_values[pi];
 
             // Get the value from the latch's terminator (back edge arg)
-            let latch_term = &func.dfg.blocks[latch.0 as usize].terminator;
+            let latch_term = &func.dfg.blocks[latch.0 as usize].terminator();
             let back_edge_arg = match latch_term {
                 Terminator::Jump { target, args, .. } if *target == header => args.get(pi).copied(),
                 Terminator::Branch {
