@@ -1932,10 +1932,7 @@ fn finalize_phis<'a>(
                 continue;
             }
             let args: SmallVec<[Value; 2]> = idxs.into_iter().map(|(_, v)| v).collect();
-            if let Some(term) = fb.func.dfg.blocks[pred.0 as usize].terminator.as_mut() {
-                term.replace_args(target, args);
-            }
-            fb.func.refresh_terminator_uses(pred);
+            fb.func.replace_terminator_args(pred, target, &args);
         }
         // 校验：真正跳入该块的每个前驱都提供了完整参数（LLVM phi 覆盖所有前驱）
         let _preds_of_target = fb

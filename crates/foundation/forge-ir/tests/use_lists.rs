@@ -182,28 +182,16 @@ fn rauw_covers_terminator_args() {
     assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
 }
 
-/// `Function::set_terminator` 是唯一入口：按旧终结符精确摘除、按新终结符登记。
+/// 按形式写入口（`Function::branch`）：按旧终结符精确摘除、按新终结符登记。
 #[test]
 fn set_terminator_keeps_use_def_fresh() {
-    use forge_ir::Terminator;
-
     let (mut func, x, cond) = build_branch();
     let entry = func.entry();
     let succs = func.dfg.block_terminator(entry).unwrap().successors();
     let (then_blk, else_blk) = (succs[0], succs[1]);
     // 新 br：条件从 %cond 换成 %x，then_args 也改成 %x
     //（两个目标块都仍可达 ⇒ 可以顺带跑完整 Verifier）
-    func.set_terminator(
-        entry,
-        Terminator::Branch {
-            cond: x,
-            then_block: then_blk,
-            then_args: smallvec::smallvec![x],
-            else_block: else_blk,
-            else_args: smallvec::smallvec![],
-            metadata: smallvec::smallvec![],
-        },
-    );
+    func.branch(entry, x, then_blk, [x], else_blk, []);
 
     assert_eq!(
         func.use_lists.use_count(cond),
@@ -220,25 +208,20 @@ fn set_terminator_keeps_use_def_fresh() {
     assert!(v.verify(&func).is_ok(), "{:?}", v.verify(&func).err());
 }
 
-/// `Function::rewrite_terminator`：就地改终结符用值后 use-def 自动跟上。
+/// 就地改写实参（`Function::replace_terminator_args`）：use-def 自动跟上。
 ///
 /// S4-b：codegen 的三处"`ret` 值就地改写"（大聚合返回展开、段值替换、ret 内
-/// RAUW）走的就是这条 API——它们此前直接改 `BlockData.terminator`，在终结符
-/// 进入 use-def 之后会留下陈旧 use 项。该路径只由 forge-rustc e2e 覆盖（本机不可跑），
-/// 所以这里把 API 契约钉在本地。
+/// RAUW）此前直接改 `BlockData.terminator`，在终结符进入 use-def 之后会留下
+/// 陈旧 use 项；S4-d 起它们走按形式写入口（`set_return_values` /
+/// `replace_all_uses`），本条把"就地改写后 use-def 自洽"的契约钉在本地
+/// （该路径只由 forge-rustc e2e 覆盖，本机不可跑）。
 #[test]
-fn rewrite_terminator_keeps_use_def_fresh() {
-    use forge_ir::Terminator;
-
+fn in_place_arg_rewrite_keeps_use_def_fresh() {
     let (mut func, x, cond) = build_branch();
     let entry = func.entry();
-    // 与 codegen 同形：拿到 &mut Terminator 后改用值
-    let renewed = func.rewrite_terminator(entry, |term| {
-        if let Terminator::Branch { then_args, .. } = term {
-            then_args[0] = cond;
-        }
-    });
-    assert_eq!(renewed, 2, "br 的 cond + then_args 两个用值都被重登记");
+    let then_blk = func.dfg.block_terminator(entry).unwrap().successors()[0];
+    // 把 br 传给 then 的实参从 %x 换成 %cond
+    func.replace_terminator_args(entry, then_blk, [cond]);
 
     assert_eq!(func.use_lists.use_count(x), 2, "%x 只剩两个 ret");
     assert_eq!(func.use_lists.use_count(cond), 2, "br 的 cond + then_args");
@@ -257,25 +240,13 @@ fn rewrite_terminator_keeps_use_def_fresh() {
 /// 终结符的 use 项"来复现同一状态——它等价于"某处改了终结符却没重登记"的后果。
 #[test]
 fn verifier_detects_stale_terminator_use() {
-    use forge_ir::Terminator;
-
     let (mut func, x, cond) = build_branch();
     let entry = func.entry();
     let succs = func.dfg.block_terminator(entry).unwrap().successors();
     let (then_blk, else_blk) = (succs[0], succs[1]);
     let old_term = func.dfg.block_terminator(entry).unwrap().clone();
     // 正常写入新终结符（then_args 从 %x 换成 %cond）……
-    func.set_terminator(
-        entry,
-        Terminator::Branch {
-            cond,
-            then_block: then_blk,
-            then_args: smallvec::smallvec![cond],
-            else_block: else_blk,
-            else_args: smallvec::smallvec![],
-            metadata: smallvec::smallvec![],
-        },
-    );
+    func.branch(entry, cond, then_blk, [cond], else_blk, []);
     // ……再补登记**旧**终结符的 use 项：等价于"改了终结符但没刷新 use-def"
     func.use_lists.record_terminator(entry, &old_term);
 

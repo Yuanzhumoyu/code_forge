@@ -98,7 +98,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
-| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写入面收口 + 块级表示收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类且终结符用值入 use-def、`BlockData` 终结符字段私有化 + `rewrite_terminator`、"未终止"成为显式 `Option` 状态并删 `has_terminator`）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
+| S4 | 终结符归一 + 完整 use-def | **前置清理 + use-def 补全 + 写入面/读取面收口已落地**（`Function::entry()` fail-closed、`LabelRef` 取代哨兵 `Block`、`Use` 带种类、`BlockData` 终结符字段私有化、未终止成为显式 `Option`、按形式写入口 + `TermKind` 投影访问器；crate 外已无法构造 `Terminator`）；主体（终结符成 opcode、块实参成操作数、删 `Terminator`）待开工 |
 | S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
@@ -567,6 +567,39 @@ S4 主体（终结符并入指令流、块实参变操作数）必须**一次提
   `dfg::tests::test_make_block` 同步从"新块终结符 = Unreachable"改为"新块未终止"。
 
 **验证**：workspace 1394 passed / 0 failed / 19 ignored（71 suites，较 S4-b +1）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+
+### S4（子项 d）：写入口按形式化 + 读取面投影化（2026-09-15）
+
+主体必须一次提交内完成（见上），所以先把"表示相关的调用点"压到少数几个函数里，
+使那次原子切换只需要重写这些函数的**实现体**：
+
+- **写侧**：`Function` 新增按形式命名的写入口——`jump` / `branch` / `ret` /
+  `switch` / `unreachable` / `invoke` / `resume`，外加 `set_return_values`
+  （改 `ret` 实参）、`retarget_terminator`、`replace_terminator_args`。
+  调用方不再拼 `Terminator`；`Function::set_terminator` 与 `rewrite_terminator`
+  收为 `pub(crate)` ⇒ **crate 外已无法构造或就地改写 `Terminator`**（实测写点残留 = 0）。
+  迁移：builder 的 7 个终结符方法委托给新入口；forge-opt 的 7 个文件全部改走新入口；
+  codegen 三处 `ret` 值改写改走 `set_return_values`，其中一处的 RAUW 改用
+  `replace_all_uses`——顺带修掉"手写逐块改 `inst.operands` 却不刷新 use-lists"
+  的又一处置空；`loop_unroll` 的 `clone_terminator` 换成 `emit_cloned_terminator`
+  （按投影读源块 + 按形式写目标块，不再 match 变体）；解析器 phi 回填走
+  `replace_terminator_args`。
+- **读侧**：新增 `TermKind`（无载荷判别）与 DFG 投影访问器——`term_kind` /
+  `term_branch` / `term_jump` / `term_return_values` / `term_switch` /
+  `term_invoke` / `term_resume_value` / `term_is_unreachable` / `term_args_to` /
+  `term_used_values` / `for_each_term_value`。
+- **新守卫** `tests/terminator_api.rs`（6 例）：7 种形式**写进去能按同形式投影读回**
+  （种类/目标/实参/用值/后继），`TermKind` 判别与实际变体一致，写入口与就地改写
+  都让 use-def 保持新鲜。
+- **残余表示相关面（下一轮原子切换要处理的全部内容）**：forge-opt 的约 35 处读取
+  match（const_fold 8 / dead_code 7 / loop_unroll 5 / jump_thread 4 / sccp 3 /
+  gvn_pre 3 / tail_call 3 / insert_preheader 3 / ind_var_simplify 2 /
+  block_param_coalesce 2 / inline 2 / lto+func_specialize+copy_prop 各 1）+
+  三处**天生表示感知**的边界（display 打印、codegen lowering、文本解析）+
+  校验器内部的变体 match + 访问器/写入口自身的实现体。
+
+**验证**：workspace 1400 passed / 0 failed / 19 ignored（72 suites，较 S4-c +6）；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）

@@ -57,25 +57,20 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
         // 2. Fold jump chains: if target block is empty with only Jump, redirect directly
         for bi in 0..block_count {
             let target_info = {
-                let block = &func.dfg.blocks[bi];
-                if let Terminator::Jump { target, args, .. } = &block.terminator() {
+                let block_id = Block(bi as u32);
+                if let Some((target, args)) = func.dfg.term_jump(block_id) {
                     if args.is_empty() {
                         // Check if target block is an empty block with only Jump
                         let target_block = &func.dfg.blocks[target.0 as usize];
                         if target_block.inst_order.is_empty()
                             && target_block.params.is_empty()
-                            && matches!(target_block.terminator(), Terminator::Jump { .. })
+                            && func.dfg.term_kind(target) == Some(TermKind::Jump)
                         {
-                            if let Terminator::Jump {
-                                target: final_target,
-                                args: final_args,
-                                ..
-                            } = &target_block.terminator()
-                            {
-                                Some((*target, *final_target, final_args.clone()))
-                            } else {
-                                None
-                            }
+                            func.dfg
+                                .term_jump(target)
+                                .map(|(final_target, final_args)| {
+                                    (target, final_target, final_args.to_vec())
+                                })
                         } else {
                             None
                         }
@@ -88,14 +83,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
             };
 
             if let Some((_, final_target, final_args)) = target_info {
-                func.set_terminator(
-                    Block(bi as u32),
-                    Terminator::Jump {
-                        target: final_target,
-                        args: final_args,
-                        metadata: smallvec::smallvec![],
-                    },
-                );
+                func.jump(Block(bi as u32), final_target, &final_args);
                 changed = true;
                 result.blocks_removed += 1;
             }
@@ -107,11 +95,15 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
             if block_id == entry {
                 continue; // preserve entry block
             }
-            let (is_empty_jump, jump_target, jump_args) = {
+            let (is_empty_jump, jump_target, jump_args): (
+                bool,
+                Block,
+                smallvec::SmallVec<[Value; 2]>,
+            ) = {
                 let block = &func.dfg.blocks[bi];
                 if block.inst_order.is_empty() && block.params.is_empty() {
-                    if let Terminator::Jump { target, args, .. } = &block.terminator() {
-                        (true, *target, args.clone())
+                    if let Some((target, args)) = func.dfg.term_jump(block_id) {
+                        (true, target, args.iter().copied().collect())
                     } else {
                         (false, Block(0), smallvec![])
                     }
@@ -129,29 +121,19 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                     // 原实现：then 与 else 都指向 block_id 时合并为 Jump（丢弃 cond）。
                     // 保持该语义——否则 Branch 的两个分支都指向同一空 jump 块。
                     let both_sides = matches!(
-                        &func.dfg.blocks[pred_id.0 as usize].terminator(),
-                        Terminator::Branch {
-                            then_block: t,
-                            else_block: e,
-                            ..
-                        } if *t == block_id && *e == block_id
+                        func.dfg.term_branch(pred_id),
+                        Some((_, t, _, e, _)) if t == block_id && e == block_id
                     );
-                    // 就地改写终结符后必须重登记 use 项（实参值/槽位变了）
-                    let mut new_term = func.dfg.blocks[pred_id.0 as usize].terminator().clone();
                     if both_sides {
-                        new_term = Terminator::Jump {
-                            target,
-                            args: new_args,
-                            metadata: smallvec::smallvec![],
-                        };
+                        func.jump(pred_id, target, &new_args);
                     } else {
-                        new_term.retarget(block_id, target);
-                        new_term.replace_args(target, new_args);
+                        // 目标改指 + 实参整体替换（两个写入口都自动重登记 use 项）
+                        func.retarget_terminator(pred_id, block_id, target);
+                        func.replace_terminator_args(pred_id, target, &new_args);
                     }
-                    func.set_terminator(pred_id, new_term);
                 }
                 // Set empty block to Unreachable
-                func.set_terminator(Block(bi as u32), Terminator::Unreachable);
+                func.unreachable(Block(bi as u32));
                 changed = true;
                 result.blocks_removed += 1;
             }

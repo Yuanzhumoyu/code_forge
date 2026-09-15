@@ -2567,12 +2567,7 @@ mod tests {
         let mut func = fb.finish().expect("build");
 
         // Corrupt: set Jump target to a non-existent block
-        let corrupt = Terminator::Jump {
-            target: Block(999),
-            args: SmallVec::new(),
-            metadata: SmallVec::new(),
-        };
-        func.set_terminator(entry, corrupt);
+        func.jump(entry, Block(999), []);
 
         let mut verifier = Verifier::with_ctx(ctx.clone());
         let result = verifier.verify(&func);

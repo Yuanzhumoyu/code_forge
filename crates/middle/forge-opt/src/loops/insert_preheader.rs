@@ -86,20 +86,13 @@ pub fn insert_preheaders(func: &mut Function) -> Result<PassResult, IrError> {
         let param_tys: Vec<TypeId> = func.dfg.blocks[header.0 as usize].params.to_vec();
         let (ph, ph_params) = func.dfg.make_block_with_params(&param_tys);
         // 循环外 pred 的边改指 ph（retarget 保留原 args——现在成为 ph 的参数实参）。
-        // 就地改写终结符必须走 Function::rewrite_terminator（它会重登记 use 项；
-        // `retarget` 只动目标块不动用值，这次重登记是恒等操作但保证契约不破）。
+        // 就地改写终结符必须走 Function 的写入口（自动重登记 use 项；
+        // `retarget_terminator` 只动目标块不动用值，重登记是恒等操作但契约不破）
         for p in &outside {
-            func.rewrite_terminator(*p, |term| term.retarget(header, ph));
+            func.retarget_terminator(*p, header, ph);
         }
         // ph → header：转发自身参数
-        func.set_terminator(
-            ph,
-            Terminator::Jump {
-                target: header,
-                args: ph_params.into_iter().collect(),
-                metadata: smallvec::SmallVec::new(),
-            },
-        );
+        func.jump(ph, header, &ph_params);
         result.instructions_added += 1;
         result.changed = true;
     }

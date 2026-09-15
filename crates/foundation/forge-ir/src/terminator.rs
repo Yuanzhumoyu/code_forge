@@ -73,6 +73,44 @@ pub enum Terminator {
     Unreachable,
 }
 
+/// 终结符种类判别（**无载荷**）。
+///
+/// 读取方应当只依赖"种类 + 投影访问器"（[`crate::DataFlowGraph::term_branch`] 等）
+/// 而不是直接 match [`Terminator`]：这样当 S4 主体把终结符并入指令流（`Terminator`
+/// 删除）时，需要改写的只有访问器实现，调用点不动。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TermKind {
+    Branch,
+    Jump,
+    Return,
+    Switch,
+    Invoke,
+    Resume,
+    Unreachable,
+}
+
+impl TermKind {
+    /// 该种类是否可能有多于一个后继（CFG 形状查询用）。
+    pub fn has_multiple_successors(self) -> bool {
+        matches!(self, TermKind::Branch | TermKind::Switch | TermKind::Invoke)
+    }
+}
+
+impl Terminator {
+    /// 种类判别（见 [`TermKind`]）。
+    pub fn kind(&self) -> TermKind {
+        match self {
+            Terminator::Branch { .. } => TermKind::Branch,
+            Terminator::Jump { .. } => TermKind::Jump,
+            Terminator::Return { .. } => TermKind::Return,
+            Terminator::Switch { .. } => TermKind::Switch,
+            Terminator::Invoke { .. } => TermKind::Invoke,
+            Terminator::Resume { .. } => TermKind::Resume,
+            Terminator::Unreachable => TermKind::Unreachable,
+        }
+    }
+}
+
 /// 终结符用值的**唯一遍历模板**（v3 方案 S4-a）。
 ///
 /// 共享遍历 [`Terminator::for_each_value`] 与可变遍历

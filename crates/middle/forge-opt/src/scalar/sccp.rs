@@ -216,33 +216,20 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             result.changed = true;
         }
 
-        // Fold constant branch conditions（先算新终结符，再经 Function::set_terminator
+        // Fold constant branch conditions（先算目标，再经 Function 的按形式写入口
         // 写入以同步 use-lists）
-        let mut folded: Option<Terminator> = None;
-        if let Terminator::Branch {
-            cond,
-            then_block,
-            else_block,
-            ..
-        } = &func.dfg.blocks[bi].terminator()
-            && let Some(LatticeValue::Constant(cv)) = lattice.get(cond)
+        let mut folded: Option<Block> = None;
+        if let Some((cond, then_block, _, else_block, _)) = func.dfg.term_branch(Block(bi as u32))
+            && let Some(LatticeValue::Constant(cv)) = lattice.get(&cond)
         {
             if let Some(true) = cv.to_bool() {
-                folded = Some(Terminator::Jump {
-                    target: *then_block,
-                    args: smallvec::smallvec![],
-                    metadata: smallvec::smallvec![],
-                });
+                folded = Some(then_block);
             } else if let Some(false) = cv.to_bool() {
-                folded = Some(Terminator::Jump {
-                    target: *else_block,
-                    args: smallvec::smallvec![],
-                    metadata: smallvec::smallvec![],
-                });
+                folded = Some(else_block);
             }
         }
-        if let Some(term) = folded {
-            func.set_terminator(Block(bi as u32), term);
+        if let Some(target) = folded {
+            func.jump(Block(bi as u32), target, []);
             result.changed = true;
         }
     }
@@ -252,7 +239,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         let block_id = Block(bi as u32);
         if !reachable.contains(&block_id) {
             func.dfg.blocks[bi].inst_order.clear();
-            func.set_terminator(block_id, Terminator::Unreachable);
+            func.unreachable(block_id);
             result.blocks_removed += 1;
             result.changed = true;
         }

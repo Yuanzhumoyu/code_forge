@@ -431,16 +431,13 @@ impl Function {
     // 原子 IR 修改原语（保持 use_lists 新鲜）
     // ============================================================
 
-    /// 设置块终结符并**同步 use-lists** —— 写终结符的唯一公开入口。
+    /// 设置块终结符并**同步 use-lists**。
     ///
-    /// 与 [`DataFlowGraph::set_terminator`]（crate 内部低层原语，只写字段）的区别：
-    /// 本方法按旧终结符的用值精确摘除 use 项、再按新终结符登记。
-    /// 绕过它（直接写块字段）会留下陈旧/缺失的终结符 use 项，
-    /// 默认 verify-after-every-pass = Error 会立刻报 `UseListInconsistency`。
-    ///
-    /// S4-a（2026-09-15）：终结符实参由此进入 use-def，
-    /// [`Function::replace_all_uses`] 才是真正的"所有使用"。
-    pub fn set_terminator(&mut self, block: Block, term: Terminator) {
+    /// **crate 内部低层入口**（S4-d 收口）：外部 crate 无法构造 `Terminator`，
+    /// 一律走下面按形式命名的写入口（`jump`/`branch`/`ret`/…）。
+    /// S4 主体（终结符并入指令流）会把本函数的实现体换成"发射终结符指令"，
+    /// 调用点不动。
+    pub(crate) fn set_terminator(&mut self, block: Block, term: Terminator) {
         // 取出旧终结符（owned）：按它的用值精确摘除，避免全表扫描。
         let old = self
             .dfg
@@ -459,14 +456,169 @@ impl Function {
     /// 就地改写终结符并**自动重登记 use 项**：`f` 拿到 `&mut Terminator`
     /// 随便改（改实参、增删用值），返回后 use-def 与 DFG 保证一致。
     ///
-    /// 这是"不想重建整个终结符"时的入口——例如只把 `Return.values` 里的某个值
-    /// 换成段值。**不要**用 `DataFlowGraph::block_terminator_mut` 代替它：
-    /// 那条路不改 use-lists（crate 外也已不可见）。返回重登记的用值个数。
-    pub fn rewrite_terminator(&mut self, block: Block, f: impl FnOnce(&mut Terminator)) -> usize {
+    /// **crate 内部**：它是按形式写入口的实现基础（参数带 `Terminator`，
+    /// 外部无法构造）。外部要用 [`Function::set_return_values`] /
+    /// [`Function::retarget_terminator`] / [`Function::replace_terminator_args`]。
+    pub(crate) fn rewrite_terminator(
+        &mut self,
+        block: Block,
+        f: impl FnOnce(&mut Terminator),
+    ) -> usize {
         if let Some(term) = self.dfg.block_terminator_mut(block) {
             f(term);
         }
         self.refresh_terminator_uses(block)
+    }
+
+    // ============================================================
+    // 终结符按形式的写入口（S4-d）
+    // ============================================================
+    //
+    // 调用方**不要**自己拼 `Terminator`：用下面这些按形式命名的写入口。
+    // 这样 S4 主体（终结符并入指令流、删 `Terminator`）只需要重写这些函数的
+    // 实现体，全部构造点原样不动；`set_terminator(Terminator)` 也随之收成
+    // crate 内部（外部已无法构造 `Terminator`）。
+    // 所有写入口统一走 `set_terminator` ⇒ use-def 始终新鲜。
+
+    /// 无条件跳转：`block: jump target(args)`。
+    pub fn jump(&mut self, block: Block, target: Block, args: impl AsRef<[Value]>) {
+        self.set_terminator(
+            block,
+            Terminator::Jump {
+                target,
+                args: args.as_ref().iter().copied().collect(),
+                metadata: SmallVec::new(),
+            },
+        );
+    }
+
+    /// 条件分支：`block: br cond, then(then_args), else(else_args)`。
+    pub fn branch(
+        &mut self,
+        block: Block,
+        cond: Value,
+        then_block: Block,
+        then_args: impl AsRef<[Value]>,
+        else_block: Block,
+        else_args: impl AsRef<[Value]>,
+    ) {
+        self.set_terminator(
+            block,
+            Terminator::Branch {
+                cond,
+                then_block,
+                then_args: then_args.as_ref().iter().copied().collect(),
+                else_block,
+                else_args: else_args.as_ref().iter().copied().collect(),
+                metadata: SmallVec::new(),
+            },
+        );
+    }
+
+    /// 返回：`block: ret values`。
+    pub fn ret(&mut self, block: Block, values: impl AsRef<[Value]>) {
+        self.set_terminator(
+            block,
+            Terminator::Return {
+                values: values.as_ref().iter().copied().collect(),
+                metadata: SmallVec::new(),
+            },
+        );
+    }
+
+    /// 改写返回实参（聚合展开用；保留 metadata）。
+    pub fn set_return_values(&mut self, block: Block, values: impl AsRef<[Value]>) {
+        self.rewrite_terminator(block, |term| {
+            if let Terminator::Return { values: slots, .. } = term {
+                *slots = values.as_ref().iter().copied().collect();
+            }
+        });
+    }
+
+    /// 多路分支：`block: switch discriminant, default(default_args)[cases…]`。
+    pub fn switch(
+        &mut self,
+        block: Block,
+        discriminant: Value,
+        default_block: Block,
+        default_args: impl AsRef<[Value]>,
+        cases: &[(i64, Block, &[Value])],
+    ) {
+        #[allow(clippy::type_complexity)]
+        let cases_sv: SmallVec<[(i64, Block, SmallVec<[Value; 2]>); 4]> = cases
+            .iter()
+            .map(|(v, b, args)| (*v, *b, args.iter().copied().collect()))
+            .collect();
+        self.set_terminator(
+            block,
+            Terminator::Switch {
+                discriminant,
+                default_block,
+                default_args: default_args.as_ref().iter().copied().collect(),
+                cases: cases_sv,
+                metadata: SmallVec::new(),
+            },
+        );
+    }
+
+    /// 显式不可达：`block: unreachable`。
+    pub fn unreachable(&mut self, block: Block) {
+        self.set_terminator(block, Terminator::Unreachable);
+    }
+
+    /// invoke：`block: invoke callee(args) to normal(normal_args) unwind unwind(unwind_args)`。
+    #[allow(clippy::too_many_arguments)]
+    pub fn invoke(
+        &mut self,
+        block: Block,
+        callee: FuncRef,
+        args: impl AsRef<[Value]>,
+        ret_ty: TypeId,
+        normal_block: Block,
+        normal_args: impl AsRef<[Value]>,
+        unwind_block: Block,
+        unwind_args: impl AsRef<[Value]>,
+    ) {
+        self.set_terminator(
+            block,
+            Terminator::Invoke {
+                callee,
+                args: args.as_ref().iter().copied().collect(),
+                ret_ty,
+                normal_block,
+                normal_args: normal_args.as_ref().iter().copied().collect(),
+                unwind_block,
+                unwind_args: unwind_args.as_ref().iter().copied().collect(),
+                metadata: SmallVec::new(),
+            },
+        );
+    }
+
+    /// resume：`block: resume value`。
+    pub fn resume(&mut self, block: Block, value: Value) {
+        self.set_terminator(
+            block,
+            Terminator::Resume {
+                value,
+                metadata: SmallVec::new(),
+            },
+        );
+    }
+
+    /// 把 `block` 终结符中指向 `old_target` 的目标改为 `new_target`（实参原样保留）。
+    pub fn retarget_terminator(&mut self, block: Block, old_target: Block, new_target: Block) {
+        self.rewrite_terminator(block, |term| term.retarget(old_target, new_target));
+    }
+
+    /// 把 `block` 传给 `target` 的实参整体替换为 `args`（不跳向该块则无操作）。
+    pub fn replace_terminator_args(
+        &mut self,
+        block: Block,
+        target: Block,
+        args: impl AsRef<[Value]>,
+    ) {
+        let args: SmallVec<[Value; 2]> = args.as_ref().iter().copied().collect();
+        self.rewrite_terminator(block, |term| term.replace_args(target, args));
     }
 
     /// 就地改写终结符后**重登记**该块的终结符 use 项。

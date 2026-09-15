@@ -231,11 +231,11 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
         let block_id = Block(i as u32);
         let stale = !reachable.contains(&block_id)
             && (!func.dfg.blocks[i].inst_order.is_empty()
-                || !matches!(func.dfg.blocks[i].terminator(), Terminator::Unreachable));
+                || func.dfg.term_kind(block_id) != Some(TermKind::Unreachable));
         if stale {
             removed += 1;
             func.dfg.blocks[i].inst_order.clear();
-            func.set_terminator(block_id, Terminator::Unreachable);
+            func.unreachable(block_id);
         }
     }
 

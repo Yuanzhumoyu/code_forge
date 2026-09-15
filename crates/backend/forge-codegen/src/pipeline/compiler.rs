@@ -437,12 +437,8 @@ fn rewrite_agg_value_uses(
         }
     }
     for (b, new_vals) in ret_updates {
-        // 经 Function::rewrite_terminator：改完终结符用值后同步 use-def
-        func.rewrite_terminator(b, |term| {
-            if let Terminator::Return { values, .. } = term {
-                *values = smallvec::SmallVec::from_iter(new_vals);
-            }
-        });
+        // 经按形式写入口：改完终结符用值后同步 use-def
+        func.set_return_values(b, &new_vals);
     }
     Ok(())
 }
@@ -534,31 +530,12 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
     for (old_v, segs, agg_ty) in agg_info {
         rewrite_agg_value_uses(func, old_v, &segs, agg_ty, agg_slots)?;
     }
-    // 非聚合参数：直接替换（单值——参数索引变化后引用保持）
+    // 非聚合参数：直接替换（单值——参数索引变化后引用保持）。
+    // 用 `Function::replace_all_uses` 一次覆盖**指令操作数与终结符用值**并同步
+    // use-def（此前手写逐块改 `inst.operands` 不刷新 use-lists，会留下陈旧 use 项）。
     for (old_v, vals) in &rewrite {
         if vals.len() == 1 {
-            let new_v = vals[0];
-            for bi in 0..func.dfg.blocks.len() {
-                let order = func.dfg.blocks[bi].inst_order.clone();
-                for &ii in &order {
-                    let inst = &mut func.dfg.insts[ii.0 as usize];
-                    for op in inst.operands.iter_mut() {
-                        if *op == *old_v {
-                            *op = new_v;
-                        }
-                    }
-                }
-                // 经 rewrite_terminator：终结符里的 RAUW 也要同步 use-def
-                func.rewrite_terminator(Block(bi as u32), |term| {
-                    if let Terminator::Return { values, .. } = term {
-                        for v in values.iter_mut() {
-                            if *v == *old_v {
-                                *v = new_v;
-                            }
-                        }
-                    }
-                });
-            }
+            func.replace_all_uses(*old_v, vals[0]);
         }
     }
     Ok(())
@@ -692,20 +669,21 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                 )));
             }
         }
-        // Return values 替换（段值）——经 rewrite_terminator 同步 use-def
-        func.rewrite_terminator(job.block, |term| {
-            if let Terminator::Return { values, .. } = term {
-                let mut new_vals: Vec<Value> = Vec::new();
-                for &v in values.iter() {
-                    if v == job.val {
-                        new_vals.extend_from_slice(&segs);
-                    } else {
-                        new_vals.push(v);
-                    }
-                }
-                *values = smallvec::SmallVec::from_iter(new_vals);
+        // Return values 替换（段值）——按形式写入口同步 use-def
+        let old_values: Vec<Value> = func
+            .dfg
+            .term_return_values(job.block)
+            .unwrap_or(&[])
+            .to_vec();
+        let mut new_vals: Vec<Value> = Vec::new();
+        for &v in old_values.iter() {
+            if v == job.val {
+                new_vals.extend_from_slice(&segs);
+            } else {
+                new_vals.push(v);
             }
-        });
+        }
+        func.set_return_values(job.block, &new_vals);
         // gen 指令（段常量/段 load/add）已由 make_inst push 到块尾——顺序正确
         // （生成顺序），位于块内指令之后、terminator 之前——无需移动。
     }

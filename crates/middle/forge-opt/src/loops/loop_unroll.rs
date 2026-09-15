@@ -226,7 +226,6 @@ fn clone_body_chain(
         param_tys: Vec<TypeId>,
         param_values: Vec<Value>,
         insts: Vec<Inst>,
-        terminator: Terminator,
     }
 
     let mut templates: Vec<BlockTemplate> = Vec::new();
@@ -242,7 +241,6 @@ fn clone_body_chain(
             param_tys,
             param_values,
             insts: orig_insts,
-            terminator: orig.terminator().clone(),
         });
     }
 
@@ -275,109 +273,113 @@ fn clone_body_chain(
             func.dfg.clone_inst(inst_id, new_block, &mut val_remap);
         }
 
-        // Clone terminator（BlockTemplate 的本地字段，不是 forge-ir 的 BlockData）
-        let new_term = clone_terminator(&tmpl.terminator, &val_remap, &block_remap);
-        func.set_terminator(new_block, new_term);
+        // Clone terminator：从**源块**按投影读取并重映射，经按形式写入口发射
+        emit_cloned_terminator(func, new_block, tmpl.block, &val_remap, &block_remap);
     }
 
     (block_remap, val_remap)
 }
 
-/// Clone a terminator with value/block remapping.
-fn clone_terminator(
-    term: &Terminator,
+/// 把 `src` 块的终结符重映射后发射到 `dst` 块（值/块都按 map 重映射）。
+///
+/// 走 DFG 的投影访问器 + `Function` 的按形式写入口 ⇒ 不依赖 `Terminator` 表示。
+fn emit_cloned_terminator(
+    func: &mut Function,
+    dst: Block,
+    src: Block,
     val_remap: &HashMap<Value, Value>,
     block_remap: &HashMap<Block, Block>,
-) -> Terminator {
-    match term {
-        Terminator::Jump { target, args, .. } => {
-            let new_target = block_remap.get(target).copied().unwrap_or(*target);
-            let new_args: smallvec::SmallVec<[Value; 2]> = args
+) {
+    let rv = |v: Value| val_remap.get(&v).copied().unwrap_or(v);
+    let rb = |b: Block| block_remap.get(&b).copied().unwrap_or(b);
+
+    match func.dfg.term_kind(src) {
+        Some(TermKind::Jump) => {
+            let (target, args) = func.dfg.term_jump(src).expect("Jump 投影");
+            let mapped: Vec<Value> = args.iter().map(|v| rv(*v)).collect();
+            func.jump(dst, rb(target), &mapped);
+        }
+        Some(TermKind::Branch) => {
+            let (cond, then_block, then_args, else_block, else_args) =
+                func.dfg.term_branch(src).expect("Branch 投影");
+            let m_then: Vec<Value> = then_args.iter().map(|v| rv(*v)).collect();
+            let m_else: Vec<Value> = else_args.iter().map(|v| rv(*v)).collect();
+            func.branch(
+                dst,
+                rv(cond),
+                rb(then_block),
+                &m_then,
+                rb(else_block),
+                &m_else,
+            );
+        }
+        Some(TermKind::Switch) => {
+            let (disc, default_block, default_args, cases) =
+                func.dfg.term_switch(src).expect("Switch 投影");
+            let m_default: Vec<Value> = default_args.iter().map(|v| rv(*v)).collect();
+            let owned: Vec<(i64, Block, Vec<Value>)> = cases
                 .iter()
-                .map(|v| val_remap.get(v).copied().unwrap_or(*v))
+                .map(|(val, blk, args)| (*val, rb(*blk), args.iter().map(|v| rv(*v)).collect()))
                 .collect();
-            Terminator::Jump {
-                target: new_target,
-                args: new_args,
-                metadata: smallvec::smallvec![],
+            let refs: Vec<(i64, Block, &[Value])> = owned
+                .iter()
+                .map(|(val, blk, args)| (*val, *blk, args.as_slice()))
+                .collect();
+            func.switch(dst, rv(disc), rb(default_block), &m_default, &refs);
+        }
+        Some(TermKind::Return) => {
+            let values = func.dfg.term_return_values(src).expect("Return 投影");
+            let mapped: Vec<Value> = values.iter().map(|v| rv(*v)).collect();
+            func.ret(dst, &mapped);
+        }
+        Some(TermKind::Invoke) => {
+            let (callee, args, ret_ty, normal, normal_args, unwind, unwind_args) =
+                func.dfg.term_invoke(src).expect("Invoke 投影");
+            let m_args: Vec<Value> = args.iter().map(|v| rv(*v)).collect();
+            let m_normal: Vec<Value> = normal_args.iter().map(|v| rv(*v)).collect();
+            let m_unwind: Vec<Value> = unwind_args.iter().map(|v| rv(*v)).collect();
+            func.invoke(
+                dst,
+                callee,
+                &m_args,
+                ret_ty,
+                rb(normal),
+                &m_normal,
+                rb(unwind),
+                &m_unwind,
+            );
+        }
+        Some(TermKind::Resume) => {
+            if let Some(value) = func.dfg.term_resume_value(src) {
+                func.resume(dst, rv(value));
             }
         }
-        Terminator::Branch {
-            cond,
-            then_block,
-            then_args,
-            else_block,
-            else_args,
-            ..
-        } => {
-            let new_cond = val_remap.get(cond).copied().unwrap_or(*cond);
-            let new_then = block_remap.get(then_block).copied().unwrap_or(*then_block);
-            let new_else = block_remap.get(else_block).copied().unwrap_or(*else_block);
-            let new_then_args: smallvec::SmallVec<[Value; 2]> = then_args
-                .iter()
-                .map(|v| val_remap.get(v).copied().unwrap_or(*v))
-                .collect();
-            let new_else_args: smallvec::SmallVec<[Value; 2]> = else_args
-                .iter()
-                .map(|v| val_remap.get(v).copied().unwrap_or(*v))
-                .collect();
-            Terminator::Branch {
-                cond: new_cond,
-                then_block: new_then,
-                then_args: new_then_args,
-                else_block: new_else,
-                else_args: new_else_args,
-                metadata: smallvec::smallvec![],
-            }
-        }
-        Terminator::Return { values, .. } => {
-            let new_vals: smallvec::SmallVec<[Value; 2]> = values
-                .iter()
-                .map(|v| val_remap.get(v).copied().unwrap_or(*v))
-                .collect();
-            Terminator::Return {
-                values: new_vals,
-                metadata: smallvec::smallvec![],
-            }
-        }
-        _ => term.clone(),
+        Some(TermKind::Unreachable) => func.unreachable(dst),
+        None => {}
     }
 }
 
 /// Redirect the branch target in block's terminator from old_target to new_target.
 fn redirect_branch_target(func: &mut Function, block: Block, old_target: Block, new_target: Block) {
-    let bd = &mut func.dfg.blocks[block.0 as usize];
-    let new_term = match &bd.terminator() {
-        Terminator::Branch {
-            cond,
-            then_block,
-            then_args,
-            else_block,
-            else_args,
-            ..
-        } => {
-            let new_then = if *then_block == old_target {
-                new_target
-            } else {
-                *then_block
-            };
-            let new_else = if *else_block == old_target {
-                new_target
-            } else {
-                *else_block
-            };
-            Terminator::Branch {
-                cond: *cond,
-                then_block: new_then,
-                then_args: then_args.clone(),
-                else_block: new_else,
-                else_args: else_args.clone(),
-                metadata: smallvec::smallvec![],
-            }
-        }
-        _ => return,
+    // 走投影 + 写入口（不再直接 match/重建 `Terminator`）。投影借自 dfg，
+    // 发射需要 &mut func ⇒ 先拷成 owned 再发射。
+    let Some((cond, then_block, then_args, else_block, else_args)) = func.dfg.term_branch(block)
+    else {
+        return;
     };
-    func.set_terminator(block, new_term);
+    let then_args: Vec<Value> = then_args.to_vec();
+    let else_args: Vec<Value> = else_args.to_vec();
+    let new_then = if then_block == old_target {
+        new_target
+    } else {
+        then_block
+    };
+    let new_else = if else_block == old_target {
+        new_target
+    } else {
+        else_block
+    };
+    func.branch(block, cond, new_then, &then_args, new_else, &else_args);
 }
 
 /// 估算循环的 trip count。

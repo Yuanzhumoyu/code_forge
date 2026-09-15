@@ -1253,34 +1253,24 @@ fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> boo
     let mut changed = false;
 
     for bi in 0..func.dfg.blocks.len() {
-        // 先算出新终结符（借用结束），再经 Function::set_terminator 写入以同步 use-lists
-        let folded = if let Terminator::Branch {
-            cond,
-            then_block,
-            else_block,
-            then_args,
-            else_args,
-            ..
-        } = &func.dfg.blocks[bi].terminator()
-            && let Some(const_val) = known.get(cond)
+        let block_id = Block(bi as u32);
+        // 先算出去向与实参（借用结束），再经 Function 的按形式写入口写入以同步 use-lists
+        let folded = if let Some((cond, then_block, then_args, else_block, else_args)) =
+            func.dfg.term_branch(block_id)
+            && let Some(const_val) = known.get(&cond)
             && let Some(is_true) = const_val.to_bool()
         {
             // 替换为无条件跳转
-            let (target, args) = if is_true {
-                (*then_block, then_args.clone())
+            if is_true {
+                Some((then_block, then_args.to_vec()))
             } else {
-                (*else_block, else_args.clone())
-            };
-            Some(Terminator::Jump {
-                target,
-                args,
-                metadata: smallvec::smallvec![],
-            })
+                Some((else_block, else_args.to_vec()))
+            }
         } else {
             None
         };
-        if let Some(term) = folded {
-            func.set_terminator(Block(bi as u32), term);
+        if let Some((target, args)) = folded {
+            func.jump(block_id, target, &args);
             changed = true;
         }
     }

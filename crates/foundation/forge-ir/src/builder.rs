@@ -24,7 +24,6 @@ use super::immediate::Immediate;
 use super::inst_flags::InstFlags;
 use super::mem_flags::MemFlags;
 use super::opcode::{FloatCC, IntCC, Opcode};
-use super::terminator::Terminator;
 use super::types::{FunctionSignature, TypeContext};
 use smallvec::SmallVec;
 
@@ -1228,25 +1227,12 @@ impl FunctionBuilder {
         self.emit(Opcode::Nop, vec![], vec![], &[], InstFlags::NONE);
     }
     pub fn ret(&mut self, values: &[Value]) {
-        self.func.set_terminator(
-            self.cur_block,
-            Terminator::Return {
-                values: values.iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
-        );
+        self.func.ret(self.cur_block, values);
         self.block_open = false;
     }
 
     pub fn jump(&mut self, target: Block, args: &[Value]) {
-        self.func.set_terminator(
-            self.cur_block,
-            Terminator::Jump {
-                target,
-                args: args.iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
-        );
+        self.func.jump(self.cur_block, target, args);
         self.block_open = false;
     }
     pub fn branch(
@@ -1257,22 +1243,18 @@ impl FunctionBuilder {
         else_block: Block,
         else_args: &[Value],
     ) {
-        self.func.set_terminator(
+        self.func.branch(
             self.cur_block,
-            Terminator::Branch {
-                cond,
-                then_block,
-                then_args: then_args.iter().copied().collect(),
-                else_block,
-                else_args: else_args.iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
+            cond,
+            then_block,
+            then_args,
+            else_block,
+            else_args,
         );
         self.block_open = false;
     }
     pub fn unreachable(&mut self) {
-        self.func
-            .set_terminator(self.cur_block, Terminator::Unreachable);
+        self.func.unreachable(self.cur_block);
         self.block_open = false;
     }
     pub fn switch(
@@ -1281,21 +1263,8 @@ impl FunctionBuilder {
         default: Block,
         cases: &[(i64, Block, &[Value])],
     ) {
-        #[allow(clippy::type_complexity)]
-        let cases_sv: SmallVec<[(i64, Block, SmallVec<[Value; 2]>); 4]> = cases
-            .iter()
-            .map(|(v, b, args)| (*v, *b, args.iter().copied().collect()))
-            .collect();
-        self.func.set_terminator(
-            self.cur_block,
-            Terminator::Switch {
-                discriminant,
-                default_block: default,
-                default_args: SmallVec::new(),
-                cases: cases_sv,
-                metadata: SmallVec::new(),
-            },
-        );
+        self.func
+            .switch(self.cur_block, discriminant, default, [], cases);
         self.block_open = false;
     }
     pub fn call(&mut self, func: FuncRef, args: &[Value], ret_tys: &[TypeId]) -> Vec<Value> {
@@ -1323,31 +1292,22 @@ impl FunctionBuilder {
         unwind_block: Block,
         unwind_args: &[Value],
     ) {
-        self.func.set_terminator(
+        self.func.invoke(
             self.cur_block,
-            Terminator::Invoke {
-                callee,
-                args: args.iter().copied().collect(),
-                ret_ty,
-                normal_block,
-                normal_args: normal_args.iter().copied().collect(),
-                unwind_block,
-                unwind_args: unwind_args.iter().copied().collect(),
-                metadata: SmallVec::new(),
-            },
+            callee,
+            args,
+            ret_ty,
+            normal_block,
+            normal_args,
+            unwind_block,
+            unwind_args,
         );
         self.block_open = false;
     }
 
     /// resume 终结符（LLVM `resume <ty> %l`；重新抛出异常）。
     pub fn resume(&mut self, value: Value) {
-        self.func.set_terminator(
-            self.cur_block,
-            Terminator::Resume {
-                value,
-                metadata: SmallVec::new(),
-            },
-        );
+        self.func.resume(self.cur_block, value);
         self.block_open = false;
     }
 

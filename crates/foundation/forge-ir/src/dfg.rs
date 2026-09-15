@@ -475,6 +475,138 @@ impl DataFlowGraph {
             .unwrap_or_default()
     }
 
+    // ============================================================
+    // 终结符投影访问器（S4-d）
+    // ============================================================
+    //
+    // 读取方**不要**直接 match `Terminator`：一律经下面这组访问器读。
+    // 这样 S4 主体（终结符并入指令流、删 `Terminator`）只需要重写这里的实现，
+    // 全部调用点原样不动。表示相关的边界只剩三处天然表示感知的地方：
+    // 打印（display）、机器码 lowering、文本解析。
+
+    /// 终结符种类（块未终止 = `None`）。
+    pub fn term_kind(&self, b: Block) -> Option<super::terminator::TermKind> {
+        self.block_terminator(b).map(|t| t.kind())
+    }
+
+    /// 分支形式：`(cond, then_block, then_args, else_block, else_args)`。
+    #[allow(clippy::type_complexity)]
+    pub fn term_branch(&self, b: Block) -> Option<(Value, Block, &[Value], Block, &[Value])> {
+        match self.block_terminator(b)? {
+            Terminator::Branch {
+                cond,
+                then_block,
+                then_args,
+                else_block,
+                else_args,
+                ..
+            } => Some((*cond, *then_block, then_args, *else_block, else_args)),
+            _ => None,
+        }
+    }
+
+    /// 无条件跳转形式：`(target, args)`。
+    pub fn term_jump(&self, b: Block) -> Option<(Block, &[Value])> {
+        match self.block_terminator(b)? {
+            Terminator::Jump { target, args, .. } => Some((*target, args)),
+            _ => None,
+        }
+    }
+
+    /// 返回形式的返回值切片（非 `Return` 则 `None`）。
+    pub fn term_return_values(&self, b: Block) -> Option<&[Value]> {
+        match self.block_terminator(b)? {
+            Terminator::Return { values, .. } => Some(values),
+            _ => None,
+        }
+    }
+
+    /// switch 形式：`(discriminant, default_block, default_args, cases)`。
+    #[allow(clippy::type_complexity)]
+    pub fn term_switch(
+        &self,
+        b: Block,
+    ) -> Option<(
+        Value,
+        Block,
+        &[Value],
+        &[(i64, Block, SmallVec<[Value; 2]>)],
+    )> {
+        match self.block_terminator(b)? {
+            Terminator::Switch {
+                discriminant,
+                default_block,
+                default_args,
+                cases,
+                ..
+            } => Some((*discriminant, *default_block, default_args, cases)),
+            _ => None,
+        }
+    }
+
+    /// invoke 形式：`(callee, args, ret_ty, normal_block, normal_args, unwind_block, unwind_args)`。
+    #[allow(clippy::type_complexity)]
+    pub fn term_invoke(
+        &self,
+        b: Block,
+    ) -> Option<(FuncRef, &[Value], TypeId, Block, &[Value], Block, &[Value])> {
+        match self.block_terminator(b)? {
+            Terminator::Invoke {
+                callee,
+                args,
+                ret_ty,
+                normal_block,
+                normal_args,
+                unwind_block,
+                unwind_args,
+                ..
+            } => Some((
+                *callee,
+                args,
+                *ret_ty,
+                *normal_block,
+                normal_args,
+                *unwind_block,
+                unwind_args,
+            )),
+            _ => None,
+        }
+    }
+
+    /// `resume` 的用值（非 `Resume` 则 `None`）。
+    pub fn term_resume_value(&self, b: Block) -> Option<Value> {
+        match self.block_terminator(b)? {
+            Terminator::Resume { value, .. } => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// 是否为显式 `unreachable`。
+    pub fn term_is_unreachable(&self, b: Block) -> bool {
+        matches!(self.block_terminator(b), Some(Terminator::Unreachable))
+    }
+
+    /// 传给 `target` 的实参（非该目标的分支则空切片）。
+    pub fn term_args_to(&self, b: Block, target: Block) -> &[Value] {
+        self.block_terminator(b)
+            .map(|t| t.args_to(target))
+            .unwrap_or(&[])
+    }
+
+    /// 按规范序遍历终结符用值（见 [`Terminator::for_each_value`]）。
+    pub fn for_each_term_value(&self, b: Block, f: impl FnMut(u32, Value)) {
+        if let Some(term) = self.block_terminator(b) {
+            term.for_each_value(f);
+        }
+    }
+
+    /// 终结符用值（规范序）。
+    pub fn term_used_values(&self, b: Block) -> Vec<Value> {
+        self.block_terminator(b)
+            .map(|t| t.used_values())
+            .unwrap_or_default()
+    }
+
     /// 块是否已终止（显式设置了 ret/jump/branch/unreachable/switch 之一）。
     pub fn block_has_terminator(&self, b: Block) -> bool {
         self.blocks
