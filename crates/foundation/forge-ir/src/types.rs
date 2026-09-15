@@ -483,6 +483,30 @@ impl TypeStore {
 
     // === 大小 / 对齐 ===
 
+    /// 标量类型的位宽 —— **类型事实**（不是宿主常量视图）。
+    ///
+    /// - `Int { bits }` → `bits`（含 `i1`/bool）
+    /// - `Float { bits }` / `BFloat { bits }` → `bits`
+    /// - `Pointer { addr_space }` → **按 `DataLayout` 取**（`pointer_size(addr_space) * 8`），
+    ///   不是硬编码 64
+    /// - 向量 / 数组 / 结构体 / 函数 / void / opaque → `None`
+    ///   （要"大小"请用 [`TypeStore::size_bytes`]；向量总位宽 = 元素位宽 × 长度，
+    ///   标量位宽无法表达）
+    ///
+    /// 与 `TypeId::bits()` 的区别：后者是历史视图（`PTR` 恒 64、复合类型返回 0，
+    /// "未知"与"0 位"不可区分）。新代码用本方法。
+    pub fn scalar_bits(&self, id: TypeId) -> Option<u32> {
+        match self.get(id) {
+            TypeEntry::Int { bits } => Some(*bits),
+            TypeEntry::Float { bits } => Some(*bits as u32),
+            TypeEntry::BFloat { bits } => Some(*bits as u32),
+            TypeEntry::Pointer { addr_space } => {
+                Some(self.data_layout.pointer_size(*addr_space).saturating_mul(8))
+            }
+            _ => None,
+        }
+    }
+
     fn align_to(offset: u32, align: u32) -> u32 {
         offset.div_ceil(align) * align
     }
@@ -826,13 +850,22 @@ impl TypeContext {
     }
 
     /// Immutable read access to the TypeStore.
+    ///
+    /// **锁中毒不 panic**（v3 S3）：`RwLock` 中毒只表示"某个持锁线程 panic 过"，
+    /// 而 `TypeStore` 的不变量由构造期与写入方法维护，数据本身仍可读——继续用
+    /// `into_inner()` 取回内部值比在公开 API 上 panic 更安全（v3 原则：
+    /// 公开 API 不 panic）。此前是 `.expect("TypeStore RwLock poisoned")`。
     pub fn borrow(&self) -> RwLockReadGuard<'_, TypeStore> {
-        self.0.read().expect("TypeStore RwLock poisoned")
+        self.0
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Mutable write access to the TypeStore.
+    /// Mutable write access to the TypeStore（中毒同样恢复，见 [`TypeContext::borrow`]）。
     pub fn borrow_mut(&self) -> RwLockWriteGuard<'_, TypeStore> {
-        self.0.write().expect("TypeStore RwLock poisoned")
+        self.0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     // === Pre-filled type convenience accessors (immutable borrow) ===

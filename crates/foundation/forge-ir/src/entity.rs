@@ -255,9 +255,15 @@ pub enum Endianness {
 }
 
 impl TypeId {
-    /// 获取位宽 — 对基本整数/浮点类型有效。
-    /// 对于指针、向量、结构体、数组等复合类型返回 0。
-    /// 对于完整的大小/对齐/类型查询，使用 `TypeStore::size_bytes()`。
+    /// **待移除**：`TypeId::bits()` 的旧实现（v3 S3 的迁移目标，见
+    /// `docs/plans/forge-ir-v3-plan.md` §6 的 S3 记录）。
+    ///
+    /// 它有两条撒谎的默认值：`PTR` 恒 64（不查 `DataLayout`）、复合类型返回 0
+    /// （与 void 不可区分）。正确入口是 [`TypeId::builtin_scalar_bits`]（内建标量，
+    /// `Option`）与 `TypeStore::scalar_bits` / `TypeStore::size_bytes`（含指针/动态宽度）。
+    ///
+    /// 保留在这里**只为让跨 crate 迁移可分步**（80 处调用点，其中约 35 处在下游
+    /// crate，4 处在 `forge-rustc`——本机无法编译校验）；下一轮连同调用点一起删。
     pub fn bits(&self) -> u32 {
         match *self {
             // void, bool
@@ -272,7 +278,7 @@ impl TypeId {
             TypeId::F32 => 32,
             TypeId::F64 => 64,
             // ptr — dynamic, use DataLayout
-            TypeId::PTR => 64, // default for backward compat
+            TypeId::PTR => 64, // 宿主默认视图（迁移目标：问 store）
             // extended types — valid basic types indexed 10-15
             TypeId::I128 => 128, // I128
             TypeId::F16 => 16,   // F16
@@ -291,6 +297,35 @@ impl TypeId {
             0 if self.0 >= 9 || (self.0 == 8) => None, // ptr (8) and composite types
             b => Some(b),
         }
+    }
+
+    /// **内建**标量类型的位宽（无 `TypeStore` 也能答的部分）。
+    ///
+    /// - `BOOL` → `Some(1)`；`I8`/`I16`/`I32`/`I64`/`I128`、`F16`/`F32`/`F64`/`F128`
+    ///   → 各自位宽；
+    /// - `VOID`、`PTR`、向量/复合类型 → `None`。
+    ///
+    /// 指针**故意不给数**：宽度是 `DataLayout` 的事实（32 位目标 = 32 位），
+    /// 正确入口是 `TypeStore::scalar_bits` / `TypeStore::size_bytes`；
+    /// 动态整数位宽（`i24` 等经 `TypeStore::int_ty` 内部化）同理只能问 store。
+    ///
+    /// 本方法取代了会"猜 `PTR`=64、复合返回 0"的 `TypeId::bits()`
+    /// （v3 S3 方向；`bits()` 的调用点迁移见方案 §6）。
+    pub fn builtin_scalar_bits(self) -> Option<u32> {
+        Some(match self {
+            TypeId::BOOL => 1,
+            TypeId::I8 => 8,
+            TypeId::I16 => 16,
+            TypeId::I32 => 32,
+            TypeId::I64 => 64,
+            TypeId::I128 => 128,
+            TypeId::F16 => 16,
+            TypeId::F32 => 32,
+            TypeId::F64 => 64,
+            TypeId::F128 => 128,
+            // void / ptr / 向量：无静态标量位宽（见文档）
+            _ => return None,
+        })
     }
 
     /// 是否为整数类型。
