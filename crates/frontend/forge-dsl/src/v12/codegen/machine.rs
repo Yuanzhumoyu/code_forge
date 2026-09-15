@@ -496,7 +496,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                                 0,
                             );
                         } else {
-                            sink.use_label_at(__base, forge_ir::Block(rel as u32), crate::RelocKind::Relative(#fixed_bytes_lit, 0));
+                            sink.use_label_at(__base, crate::pipeline::emit::LabelRef::from_id(rel as u32), crate::RelocKind::Relative(#fixed_bytes_lit, 0));
                         }
                         Ok(())
                     }
@@ -523,7 +523,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                                 0,
                             );
                         } else {
-                            sink.use_label_at(fixup, forge_ir::Block(rel as u32), crate::RelocKind::REL4);
+                            sink.use_label_at(fixup, crate::pipeline::emit::LabelRef::from_id(rel as u32), crate::RelocKind::REL4);
                         }
                         Ok(())
                     }

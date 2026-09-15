@@ -10,27 +10,81 @@ use forge_ir::Block;
 use forge_ir::ImmStr;
 use std::sync::Arc;
 
-/// 统一尾声标签 —— 机器层 label 空间里的**保留哨兵**。
+/// 机器层 label —— IR 块，或**机器层自造的外部标签**。
 ///
-/// 机器 IR 的 label 复用 IR 的 `Block` 句柄类型，但统一尾声**不是 IR 块**：
-/// 它由 `TargetFrameLowering::emit_epilogue` 发射，`return` 块通过
-/// `emit_epilogue_jump` 跳到它（多 return 块共用一个尾声）。
+/// 存在理由：机器 IR 的 label 复用 IR 的 `Block` 句柄，但统一尾声**不是 IR 块**
+/// （它由 `TargetFrameLowering::emit_epilogue` 发射、`return` 块通过
+/// `emit_epilogue_jump` 跳到它）。历史实现用魔数 `Block(0xFFFFFFFD)` 表示，
+/// 既可能与真实块索引碰撞，也挡不住别处乱造同值句柄；现在把两种来源写进类型。
 ///
-/// 取 `0xFFFF_FFFD`：u32 索引空间最高的 3 个值留给"非真实块"的外部标签，
-/// 与任何真实块索引保持天文距离（真实函数不可能有 42 亿个块）。
-///
-/// **不要改这个值**：定宽 ISA 的 `emit_epilogue_jump` 把块号写进 label 位域
-/// （如 riscv JAL 的 imm26），重新编码（reloc patch）依赖它只占低位、高位由
-/// patcher 重写——改动会同时影响 `reloc_patcher` 的位段重排测试。
-pub const EPILOGUE_LABEL: Block = Block(0xFFFF_FFFD);
+/// 编码侧仍需要一个数字 id（定宽 ISA 把它塞进 label 位域、变长走 reloc，
+/// 由 encoder → `use_label_at` → patcher 消费），用 [`LabelRef::id`] 取 /
+/// [`LabelRef::from_id`] 还原。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LabelRef {
+    /// 真实 IR 块（id = `block.0`）。
+    Block(Block),
+    /// 机器层外部标签（id 落在保留区间，见 [`ExternalLabel`]）。
+    External(ExternalLabel),
+}
+
+/// 机器层的外部（非 IR 块）标签。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ExternalLabel {
+    /// 统一尾声：多 return 块共用的收尾代码入口。
+    Epilogue,
+}
+
+impl ExternalLabel {
+    /// 保留区间的基址（u32 索引空间最高 3 个值留给外部标签）。
+    pub const BASE: u32 = 0xFFFF_FFFD;
+
+    /// 编码 id。
+    pub fn id(self) -> u32 {
+        match self {
+            ExternalLabel::Epilogue => Self::BASE,
+        }
+    }
+}
+
+impl LabelRef {
+    /// 统一尾声标签（`Block` 之外唯一的机器层标签）。
+    pub const EPILOGUE: LabelRef = LabelRef::External(ExternalLabel::Epilogue);
+
+    /// 编码 id（塞进指令 label 槽 / 供 fixup 查表）。
+    pub fn id(self) -> u32 {
+        match self {
+            LabelRef::Block(b) => b.0,
+            LabelRef::External(e) => e.id(),
+        }
+    }
+
+    /// 由编码 id 还原：保留区间 → 外部标签；其余 → IR 块。
+    ///
+    /// 编码器把 label 槽写成数字、`use_label_at` 再从数字还原——**这是唯一
+    /// 允许"数字 ↔ 标签"互转的边界**（生成的 machine.rs 调它）。
+    pub fn from_id(id: u32) -> LabelRef {
+        if id >= ExternalLabel::BASE {
+            LabelRef::External(ExternalLabel::Epilogue)
+        } else {
+            LabelRef::Block(Block(id))
+        }
+    }
+}
+
+impl From<Block> for LabelRef {
+    fn from(block: Block) -> Self {
+        LabelRef::Block(block)
+    }
+}
 
 /// Byte-level code emission buffer with label fixup support.
 pub struct CodeSink {
     data: Vec<u8>,
     /// Label bindings: Block(label_id) → offset in data.
-    labels: std::collections::HashMap<Block, usize>,
+    labels: std::collections::HashMap<LabelRef, usize>,
     /// Pending label references: (patch_offset, label, reloc_kind).
-    pending: Vec<(usize, Block, RelocKind)>,
+    pending: Vec<(usize, LabelRef, RelocKind)>,
     /// Relocations to be recorded (emitted to output).
     relocs: Vec<Relocation>,
     /// Backend-specific relocation encoder (used by `finish` to patch
@@ -89,12 +143,19 @@ impl CodeSink {
     // ── label management ──
 
     /// Bind a label at the current offset.
-    pub fn bind_label(&mut self, label: Block) {
+    pub fn bind_label(&mut self, label: impl Into<LabelRef>) {
+        let label: LabelRef = label.into();
         self.labels.insert(label, self.data.len());
     }
 
     /// Record a label reference at `patch_offset` for later fixup.
-    pub fn use_label_at(&mut self, patch_offset: usize, label: Block, kind: RelocKind) {
+    pub fn use_label_at(
+        &mut self,
+        patch_offset: usize,
+        label: impl Into<LabelRef>,
+        kind: RelocKind,
+    ) {
+        let label: LabelRef = label.into();
         self.pending.push((patch_offset, label, kind));
     }
 
@@ -123,8 +184,10 @@ impl CodeSink {
         for (patch_offset, label, kind) in &self.pending {
             let target = self.labels.get(label).ok_or_else(|| {
                 format!(
-                    "unresolved label {:?} referenced at offset {}",
-                    label.0, patch_offset
+                    "unresolved label {:?} (id {}) referenced at offset {}",
+                    label,
+                    label.id(),
+                    patch_offset
                 )
             })?;
 

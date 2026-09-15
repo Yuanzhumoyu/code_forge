@@ -86,6 +86,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **S4 前置清理：入口约定 fail-closed + 尾声哨兵具名**：
   ① 7 处 pass/分析（`analysis.rs`、`dead_code`/`gvn`/`gvn_pre`×2/`jump_thread`/`sccp`）与 `forge-codegen/pipeline/compiler.rs` 的 entry 参数重建此前写 `entry_block.unwrap_or(Block(0))` / "entry 块约定为索引 0"——静默回退会把"没设入口"伪装成"入口是 0 号块"，支配树/循环分析会据此算出看似合理但错误的结果；现在统一走新增的 `Function::entry()`（缺失即 panic，fail-closed），要"可能没有入口"语义的调用方直接读 `entry_block` 字段。
   ② 统一尾声标签此前是字面量 `Block(0xFFFFFFFD)`（`emission.rs` 两处 + reloc patcher 注释里的魔数）→ 具名为 `pipeline::emit::EPILOGUE_LABEL` 并写明"为什么是这个值、为什么不能改（定宽 ISA 把块号写进 label 位域，reloc patcher 依赖其只占低位）"，绑定前加 debug 断言（块数不得逼近哨兵）。
+
+  实测：workspace 1383 passed / 0 failed / 19 ignored（68 suites）；x86 矩阵 195/3/0；riscv64 131/67/0；clippy `-D warnings` 干净。
+
+- **`LabelRef` 取代机器层哨兵 `Block`（v3 方案 S4 子项）**：
+  机器层 label 复用 IR 的 `Block` 句柄，但"统一尾声"不是 IR 块——此前用魔数 `Block(0xFFFFFFFD)` 表示（上一提交具名为 `EPILOGUE_LABEL`）。
+  本轮引入 `pipeline::emit::LabelRef { Block(Block), External(ExternalLabel) }` 与 `ExternalLabel::{BASE, id()}`，把"真实块"与"机器层自造标签"写进类型；
+  `LabelRef::id()`/`from_id()` 是**唯一的数字 ↔ 标签互转边界**（定宽 ISA 把 id 塞进 label 位域、变长走 reloc，编码器/patcher 仍按数字工作）。
+  `CodeSink::{bind_label, use_label_at}` 收 `impl Into<LabelRef>`（块标签调用点零改动），`TargetFrameLowering::emit_epilogue_jump` 形参改为 `LabelRef`，
+  DSL 生成器同步（`epilogue_block.id() as i64`、生成的 machine.rs 用 `LabelRef::from_id(rel as u32)` 还原）。
+  编码 id 不变（尾声仍 `0xFFFF_FFFD`），`reloc_patcher` 位段重排语义与测试不受影响。
+
   实测：workspace 1383 passed / 0 failed / 19 ignored（68 suites）；x86 矩阵 195/3/0；riscv64 131/67/0；clippy `-D warnings` 干净。
 
 ### Added (2026-09-14)
