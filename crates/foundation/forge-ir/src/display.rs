@@ -14,7 +14,7 @@ use super::function::{Function, Module};
 use super::imm_str::ImmStr;
 use super::immediate::Immediate;
 use super::opcode::Opcode;
-use super::terminator::Terminator;
+use super::terminator::TermKind;
 use super::types::{TypeContext, TypeEntry, TypeStore};
 use crate::entity_map::SecondaryMap;
 use crate::ir_parser::llvm_mapping::llvm_mnemonic;
@@ -572,10 +572,9 @@ struct BlockDisplay<'a> {
 impl<'a> fmt::Display for BlockDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let dfg = &self.func.dfg;
-        let block_data = match dfg.blocks.get(self.block.0 as usize) {
-            Some(bd) => bd,
-            None => return write!(f, "  block {} {{ /* removed */ }}", self.block),
-        };
+        if dfg.blocks.get(self.block.0 as usize).is_none() {
+            return write!(f, "  block {} {{ /* removed */ }}", self.block);
+        }
 
         // 块标签：LLVM 标准无块参数；entry 块参数由 define 头绑定。
         // 非 entry 块的参数（forge 块参数）以 phi 指令形式输出在块首。
@@ -636,20 +635,18 @@ impl<'a> fmt::Display for BlockDisplay<'a> {
             )?;
         }
 
-        // Terminator（未终止的块没有终结符可打印）
-        if let Some(term) = block_data.terminator_opt() {
-            write!(
-                f,
-                "{}",
-                TerminatorDisplay {
-                    func: self.func,
-                    store: self.store,
-                    module: self.module,
-                    term,
-                    names: self.names,
-                }
-            )?;
-        }
+        // Terminator（未终止的块没有终结符可打印；构造器自身按 kind 判空）
+        write!(
+            f,
+            "{}",
+            TerminatorDisplay {
+                func: self.func,
+                store: self.store,
+                module: self.module,
+                block: self.block,
+                names: self.names,
+            }
+        )?;
         writeln!(f)
     }
 }
@@ -1456,19 +1453,29 @@ fn fmt_mem_attrs(f: &mut fmt::Formatter<'_>, instruction: &Instruction) -> fmt::
 }
 
 /// 终结符的文本输出（LLVM 风格；块参数经 `label %t(i32 %v)` 扩展传递）。
+///
+/// 只经 `TermKind` 判别 + DFG 投影访问器读取（S4-f）——打印是**天生表示感知**的
+/// 边界之一，但它依赖的是访问器而不是终结符的存储形态，因此 S4 主体（终结符并入
+/// 指令流）不需要再改本文件。
 struct TerminatorDisplay<'a> {
     func: &'a Function,
     store: &'a TypeContext,
     module: Option<&'a Module>,
-    term: &'a Terminator,
+    block: Block,
     names: &'a NameResolver,
 }
 
-impl<'a> fmt::Display for TerminatorDisplay<'a> {
+impl fmt::Display for TerminatorDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let dfg = &self.func.dfg;
-        match self.term {
-            Terminator::Return { values, metadata } => {
+        let block = self.block;
+        let Some(kind) = dfg.term_kind(block) else {
+            return Ok(());
+        };
+        let metadata = dfg.term_metadata(block);
+        match kind {
+            TermKind::Return => {
+                let values = dfg.term_return_values(block).unwrap_or(&[]);
                 write!(f, "    ret ")?;
                 match values.first() {
                     None => write!(f, "void")?,
@@ -1488,67 +1495,55 @@ impl<'a> fmt::Display for TerminatorDisplay<'a> {
                 fmt_term_meta(f, metadata, self.module)?;
                 Ok(())
             }
-            Terminator::Jump {
-                target,
-                args: _,
-                metadata,
-            } => {
-                write!(f, "    br label %{}", self.names.block(*target))?;
+            TermKind::Jump => {
+                let (target, _args) = dfg.term_jump(block).expect("Jump 投影");
+                write!(f, "    br label %{}", self.names.block(target))?;
                 fmt_term_meta(f, metadata, self.module)?;
                 Ok(())
             }
-            Terminator::Branch {
-                cond,
-                then_block,
-                then_args: _,
-                else_block,
-                else_args: _,
-                metadata,
-            } => {
+            TermKind::Branch => {
+                let (cond, then_block, _then_args, else_block, _else_args) =
+                    dfg.term_branch(block).expect("Branch 投影");
                 write!(f, "  br ")?;
                 // cond 可能是内联常量（iconst 指令行被跳过），需字面量内联；
                 // 类型用真实类型而非硬编码 i1（builder 允许整数当条件）
-                match value_as_literal(self.func, self.store, self.module, *cond) {
+                match value_as_literal(self.func, self.store, self.module, cond) {
                     Some(lit) => write!(f, "{}", lit)?,
-                    None => match dfg.value_type(*cond) {
+                    None => match dfg.value_type(cond) {
                         Some(ty) => write!(
                             f,
                             "{} %{}",
                             fmt_llvm_type(&self.store.borrow(), ty),
-                            self.names.value(*cond)
+                            self.names.value(cond)
                         )?,
-                        None => write!(f, "%{}", self.names.value(*cond))?,
+                        None => write!(f, "%{}", self.names.value(cond))?,
                     },
                 }
-                write!(f, ", label %{}", self.names.block(*then_block))?;
-                write!(f, ", label %{}", self.names.block(*else_block))?;
+                write!(f, ", label %{}", self.names.block(then_block))?;
+                write!(f, ", label %{}", self.names.block(else_block))?;
                 fmt_term_meta(f, metadata, self.module)?;
                 Ok(())
             }
-            Terminator::Switch {
-                discriminant,
-                default_block,
-                default_args: _,
-                cases,
-                metadata,
-            } => {
+            TermKind::Switch => {
+                let (discriminant, default_block, _default_args, cases) =
+                    dfg.term_switch(block).expect("Switch 投影");
                 write!(f, "    switch ")?;
-                match value_as_literal(self.func, self.store, self.module, *discriminant) {
+                match value_as_literal(self.func, self.store, self.module, discriminant) {
                     Some(lit) => write!(f, "{}", lit)?,
-                    None => match dfg.value_type(*discriminant) {
+                    None => match dfg.value_type(discriminant) {
                         Some(ty) => write!(
                             f,
                             "{} %{}",
                             fmt_llvm_type(&self.store.borrow(), ty),
-                            self.names.value(*discriminant)
+                            self.names.value(discriminant)
                         )?,
-                        None => write!(f, "%{}", self.names.value(*discriminant))?,
+                        None => write!(f, "%{}", self.names.value(discriminant))?,
                     },
                 }
-                write!(f, ", label %{}", self.names.block(*default_block))?;
+                write!(f, ", label %{}", self.names.block(default_block))?;
                 write!(f, " [")?;
                 // case 值类型跟随 discriminant（LLVM：`switch i64 %x, ... [ i64 1, ... ]`）
-                let case_ty = dfg.value_type(*discriminant);
+                let case_ty = dfg.value_type(discriminant);
                 let case_ty_str = case_ty.map(|t| fmt_llvm_type(&self.store.borrow(), t));
                 for (i, (val, blk, _args)) in cases.iter().enumerate() {
                     if i > 0 {
@@ -1563,34 +1558,27 @@ impl<'a> fmt::Display for TerminatorDisplay<'a> {
                 fmt_term_meta(f, metadata, self.module)?;
                 Ok(())
             }
-            Terminator::Unreachable => write!(f, "    unreachable"),
-            Terminator::Invoke {
-                callee,
-                args,
-                ret_ty,
-                normal_block,
-                normal_args,
-                unwind_block,
-                unwind_args: _,
-                metadata,
-            } => {
+            TermKind::Unreachable => write!(f, "    unreachable"),
+            TermKind::Invoke => {
+                let (callee, args, ret_ty, normal_block, normal_args, unwind_block, _unwind_args) =
+                    dfg.term_invoke(block).expect("Invoke 投影");
                 // invoke <retty> @callee(args) to label %ok unwind label %pad；
                 // `%r = invoke`：normal_args[0] 即返回值绑定名
                 if let Some(&retv) = normal_args.first()
-                    && *ret_ty != TypeId::VOID
+                    && ret_ty != TypeId::VOID
                 {
                     write!(f, "    %{} = invoke ", self.names.value(retv))?;
                 } else {
                     write!(f, "    invoke ")?;
                 }
-                if *ret_ty != TypeId::VOID {
-                    write!(f, "{} ", fmt_llvm_type(&self.store.borrow(), *ret_ty))?;
+                if ret_ty != TypeId::VOID {
+                    write!(f, "{} ", fmt_llvm_type(&self.store.borrow(), ret_ty))?;
                 } else {
                     write!(f, "void ")?;
                 }
                 match self.module {
                     Some(m) => {
-                        let n = &m.get_function(*callee).name;
+                        let n = &m.get_function(callee).name;
                         // Local callee 占位(名字以 % 开头——间接调用,第二十九轮)
                         if n.starts_with('%') {
                             write!(f, "{n}")?;
@@ -1618,24 +1606,25 @@ impl<'a> fmt::Display for TerminatorDisplay<'a> {
                         },
                     }
                 }
-                write!(f, ") to label %{}", self.names.block(*normal_block))?;
-                write!(f, " unwind label %{}", self.names.block(*unwind_block))?;
+                write!(f, ") to label %{}", self.names.block(normal_block))?;
+                write!(f, " unwind label %{}", self.names.block(unwind_block))?;
                 fmt_term_meta(f, metadata, self.module)?;
                 Ok(())
             }
-            Terminator::Resume { value, metadata } => {
+            TermKind::Resume => {
+                let value = dfg.term_resume_value(block).expect("Resume 投影");
                 // resume <ty> %l
                 write!(f, "    resume ")?;
-                match value_as_literal(self.func, self.store, self.module, *value) {
+                match value_as_literal(self.func, self.store, self.module, value) {
                     Some(lit) => write!(f, "{}", lit)?,
-                    None => match dfg.value_type(*value) {
+                    None => match dfg.value_type(value) {
                         Some(ty) => write!(
                             f,
                             "{} %{}",
                             fmt_llvm_type(&self.store.borrow(), ty),
-                            self.names.value(*value)
+                            self.names.value(value)
                         )?,
-                        None => write!(f, "%{}", self.names.value(*value))?,
+                        None => write!(f, "%{}", self.names.value(value))?,
                     },
                 }
                 fmt_term_meta(f, metadata, self.module)?;
@@ -1645,12 +1634,10 @@ impl<'a> fmt::Display for TerminatorDisplay<'a> {
     }
 }
 
-impl<'a> TerminatorDisplay<'a> {}
-
 /// 终结符尾 metadata 附加（LLVM：`ret i32 %x, !range !0` / `br ..., !prof !1`）。
 fn fmt_term_meta(
     f: &mut fmt::Formatter<'_>,
-    metadata: &smallvec::SmallVec<[crate::metadata::AttachedMetadata; 2]>,
+    metadata: &[crate::metadata::AttachedMetadata],
     module: Option<&Module>,
 ) -> fmt::Result {
     for am in metadata {

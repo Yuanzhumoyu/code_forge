@@ -489,6 +489,35 @@ impl DataFlowGraph {
         self.block_terminator(b).map(|t| t.kind())
     }
 
+    /// 终结符附件元数据（无终结符 / `unreachable` 则空切片）。
+    pub fn term_metadata(&self, b: Block) -> &[AttachedMetadata] {
+        match self.block_terminator(b) {
+            Some(Terminator::Branch { metadata, .. })
+            | Some(Terminator::Jump { metadata, .. })
+            | Some(Terminator::Return { metadata, .. })
+            | Some(Terminator::Switch { metadata, .. })
+            | Some(Terminator::Invoke { metadata, .. })
+            | Some(Terminator::Resume { metadata, .. }) => metadata,
+            _ => &[],
+        }
+    }
+
+    /// 终结符附件元数据（可变；`unreachable`/未终止则 `None` —— 它们不能携带元数据）。
+    pub(crate) fn term_metadata_mut(
+        &mut self,
+        b: Block,
+    ) -> Option<&mut SmallVec<[AttachedMetadata; 2]>> {
+        match self.block_terminator_mut(b)? {
+            Terminator::Branch { metadata, .. }
+            | Terminator::Jump { metadata, .. }
+            | Terminator::Return { metadata, .. }
+            | Terminator::Switch { metadata, .. }
+            | Terminator::Invoke { metadata, .. }
+            | Terminator::Resume { metadata, .. } => Some(metadata),
+            Terminator::Unreachable => None,
+        }
+    }
+
     /// 分支形式：`(cond, then_block, then_args, else_block, else_args)`。
     #[allow(clippy::type_complexity)]
     pub fn term_branch(&self, b: Block) -> Option<(Value, Block, &[Value], Block, &[Value])> {

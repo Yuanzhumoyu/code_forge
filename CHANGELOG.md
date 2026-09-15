@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **crate 内读取面也全部走终结符投影（forge-ir v3 S4 子项 f）**：`use_list` 的 `record_terminator`/`remove_terminator` 不再收 `&Terminator`（改为按块 + `&DataFlowGraph` 经 `for_each_term_value` 读取）；
+  `verify` 的全部变体 match 改走投影（`block_successors`/`term_branch`/`term_jump`/`term_switch`/`term_invoke`/`term_return_values`/`term_kind`）；`display` 的 `TerminatorDisplay` 改为"持有块 + 按 `term_kind` 分派 + 投影取载荷"，打印边界不再依赖存储形态；解析器的终结符元数据校验/附着改走新增的 `DataFlowGraph::{term_metadata, term_metadata_mut}`。有意的小行为变化：非法跳转目标现在**每个**各报一条 `InvalidTerminatorTarget`（旧代码对 `Switch` 只报第一条 case）。
+  目的：S4 主体（终结符并入指令流、删 `Terminator`）只剩访问器/写入口的实现体与 `Terminator` 定义本身要改。forge-ir 内 `Terminator` 引用 241 → 205（其中 60 在定义/测试、40 在解析 AST）。
+
+### Changed (2026-09-15)
+
 - **读取面全部改走投影访问器，forge-opt 的终结符依赖清零（forge-ir v3 S4 子项 e）**：`crates/middle/forge-opt` 中所有 `match Terminator` 读取点（const_fold / dead_code / jump_thread / sccp / gvn_pre / tail_call / inline / lto / func_specialize / copy_prop / ind_var_simplify / block_param_coalesce / insert_preheader / loop_unroll）改为使用投影访问器（`term_branch`/`term_jump`/`term_return_values`/`term_switch`/`term_invoke`/`term_args_to`/`term_is_unreachable`/`for_each_term_value`/`block_successors`）；
   codegen 的 `ret` 读取与 invoke/resume 判别、forge-rustc 的诊断打印同步迁移。**该 crate 现已 0 处引用 `Terminator`**（`git grep -c` 实测）——为 S4 主体（终结符并入指令流、删 `Terminator`）把表示相关调用点收进访问器实现体。
   顺带修掉一处**遍历口径缺陷**：`const_fold::collect_uses` 的 `Switch` 分支漏算 `default_args`（旧手写 match 只收 discriminant + case args），改用规范序 `for_each_term_value` 后 default 实参也计入使用。

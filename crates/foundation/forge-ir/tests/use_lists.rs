@@ -11,7 +11,7 @@
 
 use forge_ir::{
     Function, FunctionBuilder, FunctionSignature, Inst, InstFlags, Opcode, TypeContext, TypeId,
-    Value, ValueDef, Verifier,
+    UseSite, Value, ValueDef, Verifier,
 };
 
 /// 构造 `%s = iadd %a, %b`（外加两个 iconst），返回函数、操作数、结果与 iadd 指令 id。
@@ -244,11 +244,12 @@ fn verifier_detects_stale_terminator_use() {
     let entry = func.entry();
     let succs = func.dfg.block_terminator(entry).unwrap().successors();
     let (then_blk, else_blk) = (succs[0], succs[1]);
-    let old_term = func.dfg.block_terminator(entry).unwrap().clone();
     // 正常写入新终结符（then_args 从 %x 换成 %cond）……
     func.branch(entry, cond, then_blk, [cond], else_blk, []);
-    // ……再补登记**旧**终结符的 use 项：等价于"改了终结符但没刷新 use-def"
-    func.use_lists.record_terminator(entry, &old_term);
+    // ……再把 entry 终结符 idx1 的登记从 %cond 改记到 %x：DFG 槽位仍是 %cond
+    // ⇒ 制造出"陈旧 use 项"（等价于改了终结符却没刷新 use-def 的后果）
+    func.use_lists
+        .replace_operand(cond, x, UseSite::Term(entry), 1);
 
     assert!(
         func.use_lists.verify(&func.dfg).is_err(),

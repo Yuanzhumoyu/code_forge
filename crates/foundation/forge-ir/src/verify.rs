@@ -4,7 +4,7 @@ use super::dfg::{DataFlowGraph, Instruction, ValueDef};
 use super::entity::*;
 use super::function::Function;
 use super::opcode::{ConvertRule, Opcode, TypeClass, TypeRule, WidthRule};
-use super::terminator::Terminator;
+use super::terminator::TermKind;
 use super::types::{TypeContext, TypeEntry};
 use crate::Immediate;
 use crate::entity_map::SecondaryMap;
@@ -1237,8 +1237,8 @@ impl Verifier {
             }
         }
         // switch case 值重复
-        for (_, bd) in dfg.blocks() {
-            if let Some(Terminator::Switch { cases, .. }) = bd.terminator_opt() {
+        for (block, _bd) in dfg.blocks() {
+            if let Some((_, _, _, cases)) = dfg.term_switch(block) {
                 let mut seen: HashSet<i64> = HashSet::new();
                 for (val, _, _) in cases {
                     if !seen.insert(*val) {
@@ -1272,11 +1272,8 @@ impl Verifier {
         }
 
         // Check terminator values
-        for (block, block_data) in dfg.blocks() {
-            let Some(term) = block_data.terminator_opt() else {
-                continue;
-            };
-            for val in term.used_values() {
+        for (block, _block_data) in dfg.blocks() {
+            for val in dfg.term_used_values(block) {
                 if !defined.contains(&val) {
                     // Create a fake inst to report the error
                     self.errors.push(VerifyError::UndefinedValue {
@@ -1301,56 +1298,49 @@ impl Verifier {
             // 仅遍历本块的实际前驱，检查其终结符传给本块的参数
             if let Some(block_preds) = preds.get(block) {
                 for &pred in block_preds {
-                    let pred_data = match dfg.blocks.get(pred.0 as usize) {
-                        Some(pd) => pd,
-                        None => continue,
-                    };
-                    match pred_data.terminator_opt() {
-                        Some(Terminator::Branch {
-                            then_block,
-                            then_args,
-                            else_block,
-                            else_args,
-                            ..
-                        }) => {
-                            // Then branch
-                            if *then_block == block {
-                                if then_args.len() != expected_params {
-                                    self.errors.push(VerifyError::BlockParamCountMismatch {
-                                        block: pred,
-                                        expected: expected_params,
-                                        found: then_args.len(),
-                                    });
-                                } else {
-                                    Self::check_arg_types(
-                                        &mut self.errors,
-                                        dfg,
-                                        *then_block,
-                                        then_args,
-                                        block_data,
-                                    );
-                                }
-                            }
-                            // Else branch
-                            if *else_block == block {
-                                if else_args.len() != expected_params {
-                                    self.errors.push(VerifyError::BlockParamCountMismatch {
-                                        block: pred,
-                                        expected: expected_params,
-                                        found: else_args.len(),
-                                    });
-                                } else {
-                                    Self::check_arg_types(
-                                        &mut self.errors,
-                                        dfg,
-                                        *else_block,
-                                        else_args,
-                                        block_data,
-                                    );
-                                }
+                    if dfg.blocks.get(pred.0 as usize).is_none() {
+                        continue;
+                    }
+                    // 前驱终结符传给本块的实参（投影读取，不依赖终结符表示）
+                    if let Some((_, then_block, then_args, else_block, else_args)) =
+                        dfg.term_branch(pred)
+                    {
+                        if then_block == block {
+                            if then_args.len() != expected_params {
+                                self.errors.push(VerifyError::BlockParamCountMismatch {
+                                    block: pred,
+                                    expected: expected_params,
+                                    found: then_args.len(),
+                                });
+                            } else {
+                                Self::check_arg_types(
+                                    &mut self.errors,
+                                    dfg,
+                                    then_block,
+                                    then_args,
+                                    block_data,
+                                );
                             }
                         }
-                        Some(Terminator::Jump { target, args, .. }) if *target == block => {
+                        if else_block == block {
+                            if else_args.len() != expected_params {
+                                self.errors.push(VerifyError::BlockParamCountMismatch {
+                                    block: pred,
+                                    expected: expected_params,
+                                    found: else_args.len(),
+                                });
+                            } else {
+                                Self::check_arg_types(
+                                    &mut self.errors,
+                                    dfg,
+                                    else_block,
+                                    else_args,
+                                    block_data,
+                                );
+                            }
+                        }
+                    } else if let Some((target, args)) = dfg.term_jump(pred) {
+                        if target == block {
                             if args.len() != expected_params {
                                 self.errors.push(VerifyError::BlockParamCountMismatch {
                                     block: pred,
@@ -1361,64 +1351,59 @@ impl Verifier {
                                 Self::check_arg_types(
                                     &mut self.errors,
                                     dfg,
-                                    *target,
+                                    target,
                                     args,
                                     block_data,
                                 );
                             }
                         }
-                        Some(Terminator::Switch {
-                            default_block,
-                            default_args,
-                            cases,
-                            ..
-                        }) => {
-                            // Default case
-                            if *default_block == block {
-                                if default_args.len() != expected_params {
+                    } else if let Some((_, default_block, default_args, cases)) =
+                        dfg.term_switch(pred)
+                    {
+                        // Default case
+                        if default_block == block {
+                            if default_args.len() != expected_params {
+                                self.errors.push(VerifyError::BlockParamCountMismatch {
+                                    block: pred,
+                                    expected: expected_params,
+                                    found: default_args.len(),
+                                });
+                            } else {
+                                Self::check_arg_types(
+                                    &mut self.errors,
+                                    dfg,
+                                    default_block,
+                                    default_args,
+                                    block_data,
+                                );
+                            }
+                        }
+                        // Case branches
+                        for (_, case_block, case_args) in cases.iter() {
+                            if *case_block == block {
+                                if case_args.len() != expected_params {
                                     self.errors.push(VerifyError::BlockParamCountMismatch {
                                         block: pred,
                                         expected: expected_params,
-                                        found: default_args.len(),
+                                        found: case_args.len(),
                                     });
                                 } else {
                                     Self::check_arg_types(
                                         &mut self.errors,
                                         dfg,
-                                        *default_block,
-                                        default_args,
+                                        *case_block,
+                                        case_args,
                                         block_data,
                                     );
                                 }
                             }
-                            // Case branches
-                            for (_, case_block, case_args) in cases.iter() {
-                                if *case_block == block {
-                                    if case_args.len() != expected_params {
-                                        self.errors.push(VerifyError::BlockParamCountMismatch {
-                                            block: pred,
-                                            expected: expected_params,
-                                            found: case_args.len(),
-                                        });
-                                    } else {
-                                        Self::check_arg_types(
-                                            &mut self.errors,
-                                            dfg,
-                                            *case_block,
-                                            case_args,
-                                            block_data,
-                                        );
-                                    }
-                                }
-                            }
                         }
-                        _ => {}
                     }
                 }
             }
 
             // Check Return: 数量与类型都须匹配签名
-            if let Some(Terminator::Return { values, .. }) = block_data.terminator_opt() {
+            if let Some(values) = dfg.term_return_values(block) {
                 if values.len() != signature_rets.len() {
                     self.errors.push(VerifyError::ReturnTypeMismatch {
                         block,
@@ -1467,81 +1452,20 @@ impl Verifier {
     }
 
     fn check_terminators(&mut self, dfg: &DataFlowGraph) {
-        for (block, block_data) in dfg.blocks() {
+        for (block, _block_data) in dfg.blocks() {
             // 块从未设置终结符（构建遗漏）→ MissingTerminator。
             // FunctionBuilder::finish 有防御，但手构 dfg 的函数可绕过，verify 必须兜底。
-            if block_data.terminator.is_none() {
+            if dfg.term_kind(block).is_none() {
                 self.errors.push(VerifyError::MissingTerminator { block });
             }
-            // All blocks must have a non-default terminator
-            // (Unreachable is allowed as an explicit terminator)
-            match block_data.terminator_opt() {
-                Some(Terminator::Jump { target, .. })
-                    if dfg.blocks.get(target.0 as usize).is_none() =>
-                {
-                    self.errors.push(VerifyError::InvalidTerminatorTarget {
-                        block,
-                        target: *target,
-                    });
+            // 全部跳转目标必须存在（投影读取；Unreachable 是合法显式终结符）。
+            // 用 succ 集合而不是逐变体 match：目标集合的语义在 `block_successors`
+            // 里只有一处定义（S4-e 起 forge-opt 也走同一处）。
+            for target in dfg.block_successors(block) {
+                if dfg.blocks.get(target.0 as usize).is_none() {
+                    self.errors
+                        .push(VerifyError::InvalidTerminatorTarget { block, target });
                 }
-                Some(Terminator::Branch {
-                    then_block,
-                    else_block,
-                    ..
-                }) => {
-                    if dfg.blocks.get(then_block.0 as usize).is_none() {
-                        self.errors.push(VerifyError::InvalidTerminatorTarget {
-                            block,
-                            target: *then_block,
-                        });
-                    }
-                    if dfg.blocks.get(else_block.0 as usize).is_none() {
-                        self.errors.push(VerifyError::InvalidTerminatorTarget {
-                            block,
-                            target: *else_block,
-                        });
-                    }
-                }
-                Some(Terminator::Switch {
-                    default_block,
-                    cases,
-                    ..
-                }) => {
-                    if dfg.blocks.get(default_block.0 as usize).is_none() {
-                        self.errors.push(VerifyError::InvalidTerminatorTarget {
-                            block,
-                            target: *default_block,
-                        });
-                    }
-                    for (_, target, _) in cases.iter() {
-                        if dfg.blocks.get(target.0 as usize).is_none() {
-                            self.errors.push(VerifyError::InvalidTerminatorTarget {
-                                block,
-                                target: *target,
-                            });
-                            break;
-                        }
-                    }
-                }
-                Some(Terminator::Invoke {
-                    normal_block,
-                    unwind_block,
-                    ..
-                }) => {
-                    if dfg.blocks.get(normal_block.0 as usize).is_none() {
-                        self.errors.push(VerifyError::InvalidTerminatorTarget {
-                            block,
-                            target: *normal_block,
-                        });
-                    }
-                    if dfg.blocks.get(unwind_block.0 as usize).is_none() {
-                        self.errors.push(VerifyError::InvalidTerminatorTarget {
-                            block,
-                            target: *unwind_block,
-                        });
-                    }
-                }
-                _ => {}
             }
         }
     }
@@ -1565,15 +1489,9 @@ impl Verifier {
         reachable.insert(entry);
 
         while let Some(block) = worklist.pop() {
-            if let Some(block_data) = func.dfg.blocks.get(block.0 as usize) {
-                for succ in block_data
-                    .terminator_opt()
-                    .map(|t| t.successors())
-                    .unwrap_or_default()
-                {
-                    if reachable.insert(succ) {
-                        worklist.push(succ);
-                    }
+            for succ in func.dfg.block_successors(block) {
+                if reachable.insert(succ) {
+                    worklist.push(succ);
                 }
             }
         }
@@ -1726,18 +1644,15 @@ impl Verifier {
         // Check terminator values（用专用错误变体，不再伪造 Inst(u32::MAX)）。
         // 异常边豁免：Invoke 的 unwind_args（异常路径传值）不受正常支配树约束——
         // unwind 边是隐式异常路径，其值不要求定义块支配 unwind 块（LLVM 语义）。
-        for (block, block_data) in func.dfg.blocks() {
-            let vals: Vec<Value> = match block_data.terminator_opt() {
-                Some(Terminator::Invoke {
-                    args, normal_args, ..
-                }) => {
+        for (block, _block_data) in func.dfg.blocks() {
+            let vals: Vec<Value> =
+                if let Some((_, args, _, _, normal_args, _, _)) = func.dfg.term_invoke(block) {
                     let mut v = args.to_vec();
                     v.extend_from_slice(normal_args);
                     v
-                }
-                Some(other) => other.used_values(),
-                None => Vec::new(),
-            };
+                } else {
+                    func.dfg.term_used_values(block)
+                };
             for val in vals {
                 let def_block = match func.dfg.value_def(val) {
                     Some(ValueDef::AggConst(_)) => entry,
@@ -1832,15 +1747,9 @@ impl Verifier {
         visited.insert(entry);
 
         while let Some(block) = worklist.pop() {
-            if let Some(block_data) = func.dfg.blocks.get(block.0 as usize) {
-                for succ in block_data
-                    .terminator_opt()
-                    .map(|t| t.successors())
-                    .unwrap_or_default()
-                {
-                    if visited.insert(succ) {
-                        worklist.push(succ);
-                    }
+            for succ in func.dfg.block_successors(block) {
+                if visited.insert(succ) {
+                    worklist.push(succ);
                 }
             }
         }
@@ -1850,19 +1759,17 @@ impl Verifier {
             if !visited.contains(&block) {
                 continue; // unreachable blocks already reported
             }
-            if let Some(block_data) = func.dfg.blocks.get(block.0 as usize) {
-                let term = block_data.terminator_opt();
-                let succs = term.map(|t| t.successors()).unwrap_or_default();
-                if succs.is_empty()
-                    && !matches!(term, Some(Terminator::Return { .. }))
-                    // 显式 unreachable 是合法死代码；
-                    // 从未设置终结符的块（`None`）是构建遗漏 → PathWithoutReturn
-                    // （`check_terminators` 另报 MissingTerminator，两处独立兜底）
-                    && !matches!(term, Some(Terminator::Unreachable))
-                {
-                    self.errors
-                        .push(VerifyError::PathWithoutReturn { last_block: block });
-                }
+            let kind = func.dfg.term_kind(block);
+            let succs = func.dfg.block_successors(block);
+            if succs.is_empty()
+                && kind != Some(TermKind::Return)
+                // 显式 unreachable 是合法死代码；
+                // 从未设置终结符的块（`None`）是构建遗漏 → PathWithoutReturn
+                // （`check_terminators` 另报 MissingTerminator，两处独立兜底）
+                && kind != Some(TermKind::Unreachable)
+            {
+                self.errors
+                    .push(VerifyError::PathWithoutReturn { last_block: block });
             }
         }
     }

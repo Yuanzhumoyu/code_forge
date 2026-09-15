@@ -24,7 +24,6 @@ use crate::mem_flags::MemFlags;
 use crate::opcode::AtomicRmwOp;
 use crate::opcode::Opcode;
 use crate::opcode::Ordering;
-use crate::terminator::Terminator;
 use crate::types::{FunctionSignature, TypeContext, TypeEntry};
 
 use super::ast_items::*;
@@ -913,7 +912,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
 /// 其余 kind（tbaa/range/align 等）LLVM 只要求节点存在、形状自由，保持宽松。
 /// 在 build_module 收尾统一校验（函数级 + 指令级 + 终结符级 metadata）。
 fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
-    use crate::metadata::{AttachedMetadata, MetadataKind, MetadataNode};
+    use crate::metadata::{MetadataKind, MetadataNode};
     let store = &module.metadata_store;
     let check = |kind: &MetadataKind, node: &MetadataNode| -> Result<(), IrError> {
         use crate::metadata::MetadataValue;
@@ -954,20 +953,8 @@ fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
                 check(&am.kind, metadata_node_of(store, am.node)?)?;
             }
         }
-        for (_, bd) in f.dfg.blocks() {
-            let Some(term) = bd.terminator_opt() else {
-                continue;
-            };
-            let metas: &[AttachedMetadata] = match term {
-                Terminator::Branch { metadata, .. }
-                | Terminator::Jump { metadata, .. }
-                | Terminator::Return { metadata, .. }
-                | Terminator::Switch { metadata, .. }
-                | Terminator::Invoke { metadata, .. }
-                | Terminator::Resume { metadata, .. } => metadata.as_slice(),
-                Terminator::Unreachable => &[],
-            };
-            for am in metas {
+        for (block, _bd) in f.dfg.blocks() {
+            for am in f.dfg.term_metadata(block) {
                 check(&am.kind, metadata_node_of(store, am.node)?)?;
             }
         }
@@ -4199,8 +4186,6 @@ fn attach_term_metadata(
     if metas.is_empty() {
         return Ok(());
     }
-    use crate::terminator::Terminator;
-    let bd = &mut fb.func.dfg.blocks[block.0 as usize];
     for (name, r) in metas {
         let id = match r {
             MetadataRef::Num(id) => crate::metadata::MetadataId(*id),
@@ -4212,26 +4197,17 @@ fn attach_term_metadata(
             kind: metadata_kind_of(name)?,
             node: id,
         };
-        match bd.terminator.as_mut() {
-            Some(
-                Terminator::Return { metadata, .. }
-                | Terminator::Jump { metadata, .. }
-                | Terminator::Branch { metadata, .. }
-                | Terminator::Switch { metadata, .. }
-                | Terminator::Invoke { metadata, .. }
-                | Terminator::Resume { metadata, .. },
-            ) => metadata.push(am),
-            Some(Terminator::Unreachable) => {
-                return Err(IrError::Semantic(
-                    "unreachable cannot carry metadata".to_string(),
-                ));
-            }
-            None => {
-                return Err(IrError::Semantic(
-                    "block has no terminator to attach metadata to".to_string(),
-                ));
-            }
+        if fb.func.dfg.term_kind(block).is_none() {
+            return Err(IrError::Semantic(
+                "block has no terminator to attach metadata to".to_string(),
+            ));
         }
+        let Some(metadata) = fb.func.dfg.term_metadata_mut(block) else {
+            return Err(IrError::Semantic(
+                "unreachable cannot carry metadata".to_string(),
+            ));
+        };
+        metadata.push(am);
     }
     Ok(())
 }

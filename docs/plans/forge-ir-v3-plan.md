@@ -627,6 +627,34 @@ S4-d 建好了投影访问器与按形式写入口，本步把消费者全部搬
 **验证**：workspace 1400 passed / 0 failed / 19 ignored（72 suites，用例数不变——
 纯迁移）；x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
+### S4（子项 f）：crate 内的读取面也全部走投影（2026-09-15）
+
+S4-e 之后外部 crate 的表示依赖已清零；本步把 **forge-ir 自己**的读取点也搬过去，
+使 S4 主体只剩"访问器/写入口的实现体 + `Terminator` 定义本身"要动：
+
+- `use_list`：`record_terminator`/`remove_terminator` 不再收 `&Terminator`，改为
+  `(block, &DataFlowGraph)` 经 `for_each_term_value` 读取；`verify` 的终结符两条
+  检查同样改走访问器 ⇒ use-list 层完全不感知终结符的存储形态。
+- `verify`：全部变体 match 改走投影——`check_terminators` 用 `block_successors`
+  收集目标（并删掉逐变体重复的目标校验），`check_block_params` 用
+  `term_branch`/`term_jump`/`term_switch`，`check_dominance` 用 `term_invoke`，
+  `check_path_termination` 用 `term_kind`，两处可达性 BFS 用 `block_successors`。
+- `display`：`TerminatorDisplay` 从"持有 `&Terminator` 并 match 变体"改为
+  "持有 `block` + 按 `term_kind` 分派 + 投影取载荷"——打印这个边界不再依赖存储形态。
+- `ir_parser/semantics.rs`：终结符元数据的校验与附着改走新增的
+  `DataFlowGraph::{term_metadata, term_metadata_mut}`（解析 AST `ParsedTerminator`
+  与本项无关，原样保留）。
+- 有意的小行为变化：`check_terminators` 现在对**每个**非法跳转目标各报一条
+  `InvalidTerminatorTarget`（旧代码对 `Switch` 只报第一条 case 就 `break`）——
+  错误信息更完整，测试全绿。
+
+**统计**：forge-ir 内 `Terminator` 引用 241 → 205，其中 60 处于定义/测试、
+40 处于解析 AST（`ParsedTerminator`），真正剩余的"存储形态相关"只有
+`dfg.rs`（访问器实现 33）+ `function.rs`（写入口实现 19）+ `terminator.rs` 定义本身。
+
+**验证**：workspace 1400 passed / 0 failed / 19 ignored（72 suites，用例数不变）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+
 ## 7. 参考设计（外部）
 
 - Cranelift：two-map 实体容器与"刻意不支持删除"

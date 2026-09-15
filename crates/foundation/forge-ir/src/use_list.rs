@@ -12,7 +12,6 @@
 
 use super::dfg::DataFlowGraph;
 use super::entity::{Block, Inst, Value};
-use super::terminator::Terminator;
 use crate::entity_map::SecondaryMap;
 use crate::error::IrError;
 use smallvec::SmallVec;
@@ -113,12 +112,12 @@ impl UseLists {
         }
     }
 
-    /// 记录一个块终结符的所有用值（下标序 = [`Terminator::for_each_value`]）。
+    /// 记录一个块终结符的所有用值（下标序 = `DataFlowGraph::for_each_term_value`）。
     ///
     /// 调用时机与 [`UseLists::record_inst`] 对称：写完终结符之后。
-    pub fn record_terminator(&mut self, block: Block, term: &Terminator) {
+    pub fn record_terminator(&mut self, block: Block, dfg: &DataFlowGraph) {
         let site = UseSite::Term(block);
-        term.for_each_value(|idx, value| {
+        dfg.for_each_term_value(block, |idx, value| {
             self.uses.get_mut_or_default(value).push(Use {
                 value,
                 site,
@@ -142,9 +141,9 @@ impl UseLists {
     ///
     /// 必须在终结符被**改写之前**调用；改写后请用
     /// [`UseLists::forget_terminator`]（按宿主清扫，与顺序无关）。
-    pub fn remove_terminator(&mut self, block: Block, term: &Terminator) {
+    pub fn remove_terminator(&mut self, block: Block, dfg: &DataFlowGraph) {
         let site = UseSite::Term(block);
-        term.for_each_value(|_, value| {
+        dfg.for_each_term_value(block, |_, value| {
             if let Some(use_list) = self.uses.get_mut(value) {
                 use_list.retain(|u| u.site != site);
             }
@@ -310,12 +309,9 @@ impl UseLists {
 
         // 2. 每个块终结符的所有用值都在 use-lists 中（S4-a 新增覆盖）
         //（未终止的块没有终结符用值，`None` 无需检查）
-        for (i, bd) in dfg.blocks.iter().enumerate() {
+        for (i, _bd) in dfg.blocks.iter().enumerate() {
             let block = Block(i as u32);
-            let Some(term) = bd.terminator_opt() else {
-                continue;
-            };
-            term.for_each_value(|idx, value| {
+            dfg.for_each_term_value(block, |idx, value| {
                 if !self.has_use_at(value, UseSite::Term(block), idx) {
                     errors.push(IrError::Internal(format!(
                         "terminator of {} operand {} (value {}) not found in use-lists",
@@ -349,13 +345,11 @@ impl UseLists {
                     }
                     UseSite::Term(block) => {
                         let mut slot = None;
-                        if let Some(term) = dfg.block_terminator(block) {
-                            term.for_each_value(|idx, v| {
-                                if idx == u.operand_idx {
-                                    slot = Some(v);
-                                }
-                            });
-                        }
+                        dfg.for_each_term_value(block, |idx, v| {
+                            if idx == u.operand_idx {
+                                slot = Some(v);
+                            }
+                        });
                         match slot {
                             None => errors.push(IrError::Internal(format!(
                                 "use-list for {}: block {} terminator operand {} does not exist",
@@ -456,27 +450,32 @@ mod tests {
     /// 终结符用值进入 use-list：记录、查询、精确摘除。
     #[test]
     fn test_record_and_remove_terminator() {
+        let mut dfg = DataFlowGraph::new();
+        let b0 = dfg.make_block();
         let mut use_lists = UseLists::new();
         let cond = Value(1);
         let arg = Value(2);
-        let term = Terminator::Branch {
-            cond,
-            then_block: Block(1),
-            then_args: smallvec::smallvec![arg],
-            else_block: Block(2),
-            else_args: smallvec::smallvec![],
-            metadata: SmallVec::new(),
-        };
-        use_lists.record_terminator(Block(0), &term);
+        dfg.set_terminator(
+            b0,
+            Terminator::Branch {
+                cond,
+                then_block: Block(1),
+                then_args: smallvec::smallvec![arg],
+                else_block: Block(2),
+                else_args: smallvec::smallvec![],
+                metadata: SmallVec::new(),
+            },
+        );
+        use_lists.record_terminator(b0, &dfg);
 
         assert_eq!(use_lists.use_count(cond), 1);
         assert_eq!(use_lists.use_count(arg), 1);
-        assert!(use_lists.has_use_at(cond, UseSite::Term(Block(0)), 0));
-        assert!(use_lists.has_use_at(arg, UseSite::Term(Block(0)), 1));
-        assert_eq!(use_lists.user_blocks(cond), vec![Block(0)]);
+        assert!(use_lists.has_use_at(cond, UseSite::Term(b0), 0));
+        assert!(use_lists.has_use_at(arg, UseSite::Term(b0), 1));
+        assert_eq!(use_lists.user_blocks(cond), vec![b0]);
         assert!(use_lists.user_insts(cond).is_empty());
 
-        use_lists.remove_terminator(Block(0), &term);
+        use_lists.remove_terminator(b0, &dfg);
         assert!(!use_lists.has_uses(cond));
         assert!(!use_lists.has_uses(arg));
     }
@@ -484,18 +483,25 @@ mod tests {
     /// `forget_terminator` 对顺序不敏感（就地改写后用）。
     #[test]
     fn test_forget_terminator_is_order_insensitive() {
+        let mut dfg = DataFlowGraph::new();
+        let b0 = dfg.make_block();
         let mut use_lists = UseLists::new();
-        let mut term = Terminator::Jump {
-            target: Block(1),
-            args: smallvec::smallvec![Value(1), Value(2)],
-            metadata: SmallVec::new(),
-        };
-        use_lists.record_terminator(Block(0), &term);
+        dfg.set_terminator(
+            b0,
+            Terminator::Jump {
+                target: Block(1),
+                args: smallvec::smallvec![Value(1), Value(2)],
+                metadata: SmallVec::new(),
+            },
+        );
+        use_lists.record_terminator(b0, &dfg);
         // 就地改写：先把旧值换掉（此时按旧用值摘除已找不到），再刷新
-        term.for_each_value_mut(|_, slot| *slot = Value(9));
+        if let Some(term) = dfg.block_terminator_mut(b0) {
+            term.for_each_value_mut(|_, slot| *slot = Value(9));
+        }
         assert_eq!(use_lists.use_count(Value(9)), 0);
-        assert_eq!(use_lists.forget_terminator(Block(0)), 2);
-        use_lists.record_terminator(Block(0), &term);
+        assert_eq!(use_lists.forget_terminator(b0), 2);
+        use_lists.record_terminator(b0, &dfg);
         assert_eq!(use_lists.use_count(Value(9)), 2);
         assert!(!use_lists.has_uses(Value(1)));
     }

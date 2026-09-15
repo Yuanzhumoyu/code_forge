@@ -438,19 +438,10 @@ impl Function {
     /// S4 主体（终结符并入指令流）会把本函数的实现体换成"发射终结符指令"，
     /// 调用点不动。
     pub(crate) fn set_terminator(&mut self, block: Block, term: Terminator) {
-        // 取出旧终结符（owned）：按它的用值精确摘除，避免全表扫描。
-        let old = self
-            .dfg
-            .blocks
-            .get_mut(block.0 as usize)
-            .and_then(|bd| bd.terminator.take());
-        if let Some(old) = &old {
-            self.use_lists.remove_terminator(block, old);
-        }
+        // 按**当前**（旧）终结符的用值精确摘除 use 项，避免全表扫描
+        self.use_lists.remove_terminator(block, &self.dfg);
         self.dfg.set_terminator(block, term);
-        if let Some(t) = self.dfg.block_terminator(block) {
-            self.use_lists.record_terminator(block, t);
-        }
+        self.use_lists.record_terminator(block, &self.dfg);
     }
 
     /// 就地改写终结符并**自动重登记 use 项**：`f` 拿到 `&mut Terminator`
@@ -628,14 +619,9 @@ impl Function {
     /// 会改变槽位值或下标 ⇒ 必须调用）。返回重登记的用值个数。
     pub fn refresh_terminator_uses(&mut self, block: Block) -> usize {
         self.use_lists.forget_terminator(block);
-        match self.dfg.block_terminator(block) {
-            Some(t) => {
-                let n = t.value_count() as usize;
-                self.use_lists.record_terminator(block, t);
-                n
-            }
-            None => 0,
-        }
+        let n = self.dfg.term_used_values(block).len();
+        self.use_lists.record_terminator(block, &self.dfg);
+        n
     }
 
     /// RAUW：把 `old` 的所有使用替换为 `new`，同步更新 DFG 操作数与 use-lists。
