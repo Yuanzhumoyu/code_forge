@@ -206,7 +206,7 @@ pub fn inline_calls(
                     &result_tys,
                     ci.flags,
                     ci.mem_flags,
-                    ci.metadata.clone(),
+                    ci.metadata().iter().cloned().collect(),
                     ci.loc.clone(),
                 );
                 if let Some(strategy) = ci.isel_strategy() {

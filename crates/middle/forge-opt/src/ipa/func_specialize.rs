@@ -194,7 +194,7 @@ fn clone_callee_into_caller(
                 &result_tys,
                 inst.flags,
                 inst.mem_flags,
-                inst.metadata.clone(),
+                inst.metadata().iter().cloned().collect(),
                 inst.loc.clone(),
             );
             if let Some(strategy) = inst.isel_strategy() {

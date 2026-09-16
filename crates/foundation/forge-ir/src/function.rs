@@ -233,7 +233,10 @@ pub struct Function {
     pub ret_attrs: Vec<ParamAttributes>,
 
     /// 附加的 metadata — (kind, MetadataId) 对。
-    pub metadata: SmallVec<[AttachedMetadata; 2]>,
+    ///
+    /// **单写**（v3 方案 S5）：读 [`Function::metadata`]、写
+    /// [`Function::attach_metadata`]。
+    pub(crate) metadata: SmallVec<[AttachedMetadata; 2]>,
 
     /// personality 函数（异常处理：`personality ptr @__gxx_personality_v0`；P1.1 文本层）。
     pub personality: Option<FuncRef>,
@@ -330,6 +333,16 @@ impl Function {
             block_names: SecondaryMap::new(),
             analysis: AnalysisCache::new(),
         }
+    }
+
+    /// 函数附件 metadata（`(kind, node)` 对，按附加序）。
+    pub fn metadata(&self) -> &[AttachedMetadata] {
+        &self.metadata
+    }
+
+    /// 附加一条函数级 metadata —— **函数附件的唯一写入口**（S5：metadata 单写）。
+    pub fn attach_metadata(&mut self, metadata: AttachedMetadata) {
+        self.metadata.push(metadata);
     }
 
     /// 参数类型（来自权威签名）。
@@ -1025,7 +1038,10 @@ pub struct GlobalVariable {
     /// 全局地址空间（`@g = addrspace(1) global ...`；0 = 默认）。
     pub addr_space: u32,
     /// 全局尾 metadata 附加（`@g = global i32 0, !absolute_symbol !0`）。
-    pub metadata: Vec<crate::metadata::AttachedMetadata>,
+    ///
+    /// **单写**（v3 方案 S5）：读 [`GlobalVariable::metadata`]、写
+    /// [`GlobalVariable::attach_metadata`]。
+    pub(crate) metadata: Vec<crate::metadata::AttachedMetadata>,
     /// ifunc（第二十九轮:IR 表示——`@f = ifunc <retty> (<params>), ptr @resolver`;
     /// ty 为返回类型;参数类型存解析层文本;resolver 为解析器名）。
     pub is_ifunc: bool,
@@ -1043,7 +1059,9 @@ pub struct GlobalAlias {
     /// aliasee：类型前缀（TypeOp 形式）或 Void 占位（括号表达式自带类型）。
     pub aliasee_ty: Option<crate::ir_parser::ast_items::ParsedType>,
     pub aliasee: crate::ir_parser::ast_items::ConstExpr,
-    pub metadata: Vec<crate::metadata::AttachedMetadata>,
+    /// 别名尾 metadata 附加（**单写**：读 [`GlobalAlias::metadata`]、写
+    /// [`GlobalAlias::attach_metadata`]）。
+    pub(crate) metadata: Vec<crate::metadata::AttachedMetadata>,
 }
 
 impl GlobalVariable {
@@ -1094,6 +1112,28 @@ impl GlobalVariable {
     pub fn with_symbol(mut self, symbol: SymbolInfo) -> Self {
         self.symbol = symbol;
         self
+    }
+
+    /// 全局尾 metadata（`(kind, node)` 对，按附加序）。
+    pub fn metadata(&self) -> &[crate::metadata::AttachedMetadata] {
+        &self.metadata
+    }
+
+    /// 附加一条全局尾 metadata —— **全局变量附件的唯一写入口**（S5：metadata 单写）。
+    pub fn attach_metadata(&mut self, metadata: crate::metadata::AttachedMetadata) {
+        self.metadata.push(metadata);
+    }
+}
+
+impl GlobalAlias {
+    /// 别名尾 metadata（`(kind, node)` 对，按附加序）。
+    pub fn metadata(&self) -> &[crate::metadata::AttachedMetadata] {
+        &self.metadata
+    }
+
+    /// 附加一条别名尾 metadata —— **别名附件的唯一写入口**（S5：metadata 单写）。
+    pub fn attach_metadata(&mut self, metadata: crate::metadata::AttachedMetadata) {
+        self.metadata.push(metadata);
     }
 }
 

@@ -99,7 +99,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
-| S5 | 附件强类型化与可见性 | **第一、二切片已落地**：`isel_strategy` 类型化（`IselStrategy`，无宿主标签清单）+ 字段私有化；开放集合划边界（删 `TargetTriple` 的架构名查表、IR 公开面字符串统一 `ImmStr`）（均见 §6 末）；余项：metadata 单写、`dfg` 私有化 + 受限编辑 API |
+| S5 | 附件强类型化与可见性 | **前三切片已落地**：`isel_strategy` 类型化（`IselStrategy`，无宿主标签清单）+ 字段私有化；开放集合划边界（删 `TargetTriple` 的架构名查表、IR 公开面字符串统一 `ImmStr`）；metadata 单写（5 个载体各收成一个写入口）（均见 §6 末）；余项：`dfg` 私有化 + 受限编辑 API |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
@@ -806,6 +806,45 @@ S5 第 1 项把 `isel_strategy` 定量类型化之后，本步给出**整类"开
 fmt/clippy `-D warnings` 干净。首轮整包又抓到 1 处**我自己新写断言的错误**
 （三段式 `riscv64-unknown-elf` 的第三段是 OS 而非 environment，已按实测修正）
 ——"目标三元组的段语义"同样只能实测，不能按印象写。
+
+### S5（第 3 项）：metadata 单写（2026-09-15）
+
+附件 metadata（`AttachedMetadata` = `(kind, node)` 对）此前有**多条写路径**，
+而且语义还不一致：指令可经构造参数或直接 `inst.metadata.push(..)`，终结符要经
+`term_metadata_mut` 返回的 `&mut SmallVec` **逃逸可变引用**（可以整表替换、清空、
+乱序，附件约定无处安放），函数是 `func.metadata.push(..)`，全局变量则是
+`gv.metadata = attached`（整表替换）——与函数的追加语义不一致。
+
+本步把 5 个载体的写入各收成**一个入口**并把字段私有化：
+
+| 载体 | 读 | 写（唯一入口） |
+| --- | --- | --- |
+| 指令 | `Instruction::metadata()` | `Instruction::attach_metadata()` |
+| 终结符 | `DataFlowGraph::term_metadata()` | `DataFlowGraph::attach_term_metadata()` → `TermMetadataAttach` |
+| 函数 | `Function::metadata()` | `Function::attach_metadata()` |
+| 全局变量 | `GlobalVariable::metadata()` | `GlobalVariable::attach_metadata()` |
+| 别名 | `GlobalAlias::metadata()` | `GlobalAlias::attach_metadata()` |
+
+- **终结符**：删掉 `term_metadata_mut`（`pub(crate)` 的 `&mut SmallVec` 逃逸），
+  换成返回 `TermMetadataAttach::{Attached, NoTerminator, Unreachable}` 的单写入口
+  ——此前解析器用两段检查（`term_kind().is_none()` + `term_metadata_mut().is_none()`）
+  区分两种失败原因，现在由返回值显式分类，解析器的两条诊断一字未改。
+- **创建期的初始表**仍走 `make_inst_with_meta_and_loc` 的构造参数（构造参数不是
+  "事后补写"）；`clone_inst` 保持"复制全字段"。
+- **追加语义统一**：全局变量从"整表替换"改为逐条追加（解析期该表必为空，
+  行为等价）；同一 kind 多次附加即多一条（与文本里多处 `!dbg !N` 一一对应；
+  重复 kind 的合并/拒绝不在本步范围，属 S6 校验契约）。
+- **跨 crate 读取面**迁移：`forge-opt` 的 inline / lto / func_specialize 三处
+  "保留全字段"从 `inst.metadata.clone()` 改为 `inst.metadata().iter().cloned().collect()`
+  （`SmallVec::from_slice` 要求 `Copy`，`AttachedMetadata` 非 `Copy`——实测编译报错后改）。
+
+**验证**：workspace 1416 passed / 0 failed / 19 ignored（59 个测试二进制 +
+13 组 doc-test，较 S5 第 2 项 +6）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。新增守卫 `tests/metadata_single_write.rs`（6 例：
+指令追加序、终结符三种返回值（含 `unreachable` 拒绝）+ 读口恒空、函数/全局追加、
+**文本层四载体端到端落位**、builder 产物可挂附件、源码断言"写入只许出现在唯一写
+入口实现体里"）。源码断言同样用**负向探针**实测会失败（`src/zz_guard_probe.rs`
+里放 `inst.metadata.push(..)` ⇒ FAILED，删除后恢复绿）。
 
 ## 7. 参考设计（外部）
 

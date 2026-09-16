@@ -69,7 +69,11 @@ pub struct Instruction {
     /// call-site 函数属性（`call ... nounwind`；仅 call 指令）。
     pub fn_attrs: crate::function::FunctionAttributes,
     /// Attached metadata — TBAA, alias scope, alignment hints, etc.
-    pub metadata: SmallVec<[AttachedMetadata; 2]>,
+    ///
+    /// **单写**（v3 方案 S5）：读 [`Instruction::metadata`]、写
+    /// [`Instruction::attach_metadata`]；字段私有，避免"整表替换 / 绕过追加约定"
+    /// 的第三条路径。创建期由 `make_inst_with_meta_and_loc` 接收初始表。
+    pub(crate) metadata: SmallVec<[AttachedMetadata; 2]>,
     /// Source location — file, line, column for debugging and diagnostics.
     pub loc: Option<SourceLocation>,
     /// Instruction-selection strategy tag produced by pattern matching
@@ -88,6 +92,20 @@ pub struct Instruction {
 }
 
 impl Instruction {
+    /// 指令附件 metadata（`(kind, node)` 对，按附加序）。
+    pub fn metadata(&self) -> &[AttachedMetadata] {
+        &self.metadata
+    }
+
+    /// 附加一条 metadata —— **指令附件的唯一写入口**（S5：metadata 单写）。
+    ///
+    /// 追加语义：同一 kind 再次附加即多一条（与文本里多处 `!dbg !N` 一一对应；
+    /// 重复 kind 的合并/拒绝不在本步范围）。初始表请走
+    /// [`DataFlowGraph::make_inst_with_meta_and_loc`]。
+    pub fn attach_metadata(&mut self, metadata: AttachedMetadata) {
+        self.metadata.push(metadata);
+    }
+
     /// 指令选择标签；`None` = 无标签（按 opcode 逐条降级）。
     pub fn isel_strategy(&self) -> Option<&crate::isel_strategy::IselStrategy> {
         self.isel_strategy.as_ref()
@@ -140,6 +158,17 @@ impl BlockData {
     pub fn terminator_opt(&self) -> Option<Inst> {
         self.terminator
     }
+}
+
+/// [`DataFlowGraph::attach_term_metadata`] 的结果（三种"没写成"的原因要分开报）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TermMetadataAttach {
+    /// 已附加到终结符指令。
+    Attached,
+    /// 块尚未终止（构建中/坏 IR）。
+    NoTerminator,
+    /// 终结符是 `Unreachable`——文本里没有可挂 metadata 的位置。
+    Unreachable,
 }
 
 /// `switch` 终结符的解码视图（case 表在指令 immediates 里，这里结构化）。
@@ -627,16 +656,34 @@ impl DataFlowGraph {
         }
     }
 
-    /// 终结符附件元数据（可变；`unreachable`/未终止则 `None` —— 它们不能携带元数据）。
-    pub(crate) fn term_metadata_mut(
+    /// 给块终结符附加 metadata —— **终结符附件的唯一写入口**（S5：metadata 单写）。
+    ///
+    /// 取代了此前返回 `&mut SmallVec` 的 `term_metadata_mut`：那种"逃逸可变引用"
+    /// 让调用方可以整表替换、清空或乱序，附件约定无处安放。
+    ///
+    /// 返回 `Unreachable` / `NoTerminator` 时**不写**（调用方据此给精确诊断）：
+    /// `unreachable` 在文本里没有可挂 metadata 的位置，未终止则是坏 IR。
+    pub fn attach_term_metadata(
         &mut self,
         b: Block,
-    ) -> Option<&mut SmallVec<[AttachedMetadata; 2]>> {
-        let inst = self.block_terminator(b)?;
-        if self.term_kind(b) == Some(TermKind::Unreachable) {
-            return None;
+        metadata: AttachedMetadata,
+    ) -> TermMetadataAttach {
+        if self.block_terminator(b).is_none() {
+            return TermMetadataAttach::NoTerminator;
         }
-        self.insts.get_mut(inst.0 as usize).map(|i| &mut i.metadata)
+        if self.term_kind(b) == Some(TermKind::Unreachable) {
+            return TermMetadataAttach::Unreachable;
+        }
+        let Some(inst) = self.block_terminator(b) else {
+            return TermMetadataAttach::NoTerminator;
+        };
+        match self.insts.get_mut(inst.0 as usize) {
+            Some(i) => {
+                i.attach_metadata(metadata);
+                TermMetadataAttach::Attached
+            }
+            None => TermMetadataAttach::NoTerminator,
+        }
     }
 
     /// 分支形式：`(cond, then_block, then_args, else_block, else_args)`。

@@ -241,7 +241,7 @@ fn lto_inline_callee(
                 &result_tys,
                 inst.flags,
                 inst.mem_flags,
-                inst.metadata.clone(),
+                inst.metadata().iter().cloned().collect(),
                 inst.loc.clone(),
             );
             if let Some(strategy) = inst.isel_strategy() {

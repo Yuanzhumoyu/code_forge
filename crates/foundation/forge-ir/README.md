@@ -47,6 +47,27 @@ crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**
 builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 `convert = { src, dst, width }`。
 
+## metadata 单写
+
+附件 metadata（`AttachedMetadata` = `(kind, node)` 对）在 5 个载体上各只有**一个
+写入口**，字段私有（v3 S5）：
+
+| 载体 | 读 | 写（唯一入口） |
+| --- | --- | --- |
+| 指令 | `Instruction::metadata()` | `Instruction::attach_metadata()` |
+| 终结符 | `DataFlowGraph::term_metadata()` | `DataFlowGraph::attach_term_metadata()`（返回 `TermMetadataAttach`） |
+| 函数 | `Function::metadata()` | `Function::attach_metadata()` |
+| 全局变量 | `GlobalVariable::metadata()` | `GlobalVariable::attach_metadata()` |
+| 别名 | `GlobalAlias::metadata()` | `GlobalAlias::attach_metadata()` |
+
+创建期的初始表仍走 `make_inst_with_meta_and_loc` 的构造参数（不是"事后补写"）。
+追加语义统一：同一 kind 再次附加即多一条（与文本里多处 `!dbg !N` 一一对应；
+重复 kind 的合并/拒绝不在本步范围）。终结符的 `unreachable` 不接受附件
+（文本里没有可挂的位置），未终止则是坏 IR——两种"没写成"的原因由返回值
+`TermMetadataAttach::{Attached, NoTerminator, Unreachable}` 分开报，调用方
+（解析器）据此给精确诊断。反回潮守卫见 `tests/metadata_single_write.rs`
+（含源码断言"写入只能出现在唯一写入口的实现体里"，已用负向探针验证会失败）。
+
 ## 开放集合的边界
 
 `Instruction`/`Module` 上的字符串与"可扩展标签"按**三分**划边界（v3 S5）：
@@ -117,5 +138,7 @@ S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；**S
 句柄键 `HashMap` 45 → 31 处）；**S4 主体已落地**（终结符并入指令流）；
 **S5 第一切片已落地**（`isel_strategy` 类型化 + 字段私有化，2026-09-15）；
 **S5 第二切片已落地**（开放集合划边界：删掉 `TargetTriple` 的架构名查表、
-IR 公开面字符串统一 `ImmStr`，2026-09-15）。
+IR 公开面字符串统一 `ImmStr`，2026-09-15）；
+**S5 第三切片已落地**（metadata 单写：5 个载体的附件各收成一个写入口 + 字段
+私有化，2026-09-15）。
 余项见该文档 §6 的 S2/S5 记录。

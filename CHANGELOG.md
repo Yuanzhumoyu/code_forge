@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **metadata 单写：5 个载体的附件各收成一个写入口，字段私有化（forge-ir v3 S5 第 3 项）**：附件 metadata（`(kind, node)` 对）此前有多条写路径且语义不一致——指令可经构造参数或 `inst.metadata.push(..)`、终结符要经 `term_metadata_mut` 逃逸出的 `&mut SmallVec`、函数是 `func.metadata.push(..)`、全局变量是 `gv.metadata = attached`（整表替换）。
+  现统一为唯一入口：`Instruction::{metadata, attach_metadata}`、`DataFlowGraph::{term_metadata, attach_term_metadata}`（返回 `TermMetadataAttach::{Attached, NoTerminator, Unreachable}`，取代 `term_metadata_mut` 的逃逸可变引用）、`Function::{metadata, attach_metadata}`、`GlobalVariable::{metadata, attach_metadata}`、`GlobalAlias::{metadata, attach_metadata}`；创建期初始表仍走 `make_inst_with_meta_and_loc` 构造参数。
+  追加语义统一（全局由"整表替换"改为逐条追加，解析期该表必为空 ⇒ 行为等价）；`unreachable` 不接受附件、未终止是坏 IR，两种失败原因由返回值分开报（解析器诊断文本未变）。跨 crate 读取面 `forge-opt` 的 inline/lto/func_specialize 三处改走 `inst.metadata()`。守卫 `tests/metadata_single_write.rs`（6 例，含文本层四载体端到端与"写入只许出现在唯一写入口实现体里"的源码断言，已用负向探针验证会失败）。
+
+### Changed (2026-09-15)
+
 - **开放集合划边界：删掉按架构名/OS 名查表的宿主查询，IR 公开面字符串统一 `ImmStr`（forge-ir v3 S5 第 2 项）**：`TargetTriple::{is_32bit, is_64bit, os_name}` **删除**——它们是"把写死的常量换成合法取值集合"的典型越界：架构名写进宿主白名单（`"x86_64" | "aarch64" | …`），表外架构（`loongarch64`、用户自定 ISA 名）两个都返回 `false`（既非 32 位也非 64 位的静默错误答案），且可能与 ISA 自己声明的 `addr_width` 矛盾；实测零生产调用点（只有其自身单测），故直接删除、不留兼容层。`TargetTriple` 只留 `parse`/字段/`Display`：四个分量原样保留原样往返，无归一化表。
   边界三分与规则（写进 crate README）：闭合集合（opcode/条件码/类别/效果/终结符种类，由 `ops.toml` 等单点闭死）、目标/ISA 数据（寄存器类与宽度、栈槽、指令字宽、pattern 名、isel 标签、triple 各段）、用户程序数据（名字、`section`、metadata 自定义 kind、`Immediate::String`）；**不得从后两类字符串反推第一类或任何数值**，数值一律来自 ISA 数据（指针宽度 = `DataLayout` 的 `p:<size>:<abi>`）。
   承载统一：`Module.source_filename: Option<String>` → `Option<ImmStr>`、`module_asm: Vec<String>` → `Vec<ImmStr>`（SSO + `Arc<str>` 共享，Clone O(1)），IR 公开面不再有裸 `String` 字段。守卫 `tests/open_set_boundary.rs`（4 例：未知架构名往返、宽度只跟布局数据走、`src/` 不得重现代码表、公开面不得有 `String` 字段），**已用负向探针验证守卫会失败**。

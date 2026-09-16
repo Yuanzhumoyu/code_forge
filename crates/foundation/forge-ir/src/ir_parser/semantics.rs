@@ -857,8 +857,8 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             let fr = func_refs[&f.name];
             let func = module.get_function_mut(fr);
             for (name, r) in &f.metadata {
-                func.metadata
-                    .push(attach_metadata(name, r, &module_meta_store)?);
+                let am = attach_metadata(name, r, &module_meta_store)?;
+                func.attach_metadata(am);
             }
         }
     }
@@ -874,7 +874,9 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             .iter_globals_mut()
             .find(|(_, g)| g.name.as_str() == gname)
         {
-            gv.metadata = attached;
+            for am in attached {
+                gv.attach_metadata(am);
+            }
         }
     }
     // 引用存在性（AST 级）：指令尾/函数头/global 尾 metadata 的 Num 引用必须已定义
@@ -3152,12 +3154,10 @@ fn attach_inst_metadata<'a>(
                     return Err(IrError::Semantic(format!("unresolved named metadata !{n}")));
                 }
             };
-            fb.func.dfg.insts[ii.0 as usize]
-                .metadata
-                .push(crate::metadata::AttachedMetadata {
-                    kind: metadata_kind_of(name)?,
-                    node: id,
-                });
+            fb.func.dfg.insts[ii.0 as usize].attach_metadata(crate::metadata::AttachedMetadata {
+                kind: metadata_kind_of(name)?,
+                node: id,
+            });
         }
     }
     Ok(())
@@ -4194,17 +4194,19 @@ fn attach_term_metadata(
             kind: metadata_kind_of(name)?,
             node: id,
         };
-        if fb.func.dfg.term_kind(block).is_none() {
-            return Err(IrError::Semantic(
-                "block has no terminator to attach metadata to".to_string(),
-            ));
+        match fb.func.dfg.attach_term_metadata(block, am) {
+            crate::dfg::TermMetadataAttach::Attached => {}
+            crate::dfg::TermMetadataAttach::NoTerminator => {
+                return Err(IrError::Semantic(
+                    "block has no terminator to attach metadata to".to_string(),
+                ));
+            }
+            crate::dfg::TermMetadataAttach::Unreachable => {
+                return Err(IrError::Semantic(
+                    "unreachable cannot carry metadata".to_string(),
+                ));
+            }
         }
-        let Some(metadata) = fb.func.dfg.term_metadata_mut(block) else {
-            return Err(IrError::Semantic(
-                "unreachable cannot carry metadata".to_string(),
-            ));
-        };
-        metadata.push(am);
     }
     Ok(())
 }
