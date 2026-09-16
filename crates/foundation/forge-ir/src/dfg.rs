@@ -18,6 +18,7 @@ use super::opcode::Opcode;
 use super::terminator::TermKind;
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================
 // ValueDef — Value 的来源
@@ -235,6 +236,36 @@ fn imm_uint(imms: &[Immediate], i: usize) -> Option<usize> {
 // DataFlowGraph
 // ============================================================
 
+/// 控制流结构修订号（v3 S6）。
+///
+/// 凡是**会改变 [`DataFlowGraph::block_successors`] 解码结果**的写入都 `bump()`：
+/// 块的增删、终结符写入、把块的终结符指令墓碑化。惰性分析缓存
+/// （[`crate::analysis::AnalysisManager`]）按它判新鲜 ⇒ 读者不可能拿到改图之前的
+/// 分析结果；也不需要调用方"记得失效"。
+///
+/// `AtomicU64`（而非 `Cell`）：`&DataFlowGraph` 也要能读（缓存自校验发生在 `&self`
+/// 读路径上），且 `DataFlowGraph` 必须保持 `Sync`（多线程共享 `&Function`）。
+/// `Clone` 是手写的"复制当前值"——`AtomicU64` 本身不是 `Clone`，而克隆出的 DFG
+/// 必须带着**独立**的计数器（共享计数器会让克隆体的改图错误地作废原函数的缓存）。
+#[derive(Debug, Default)]
+pub struct CfgRevision(AtomicU64);
+
+impl CfgRevision {
+    fn bump(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+impl Clone for CfgRevision {
+    fn clone(&self) -> Self {
+        Self(AtomicU64::new(self.get()))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DataFlowGraph {
     /// 值 arena。**私有**（v3 方案 S5：`dfg` 私有化 + 受限编辑 API）。
@@ -261,6 +292,9 @@ pub struct DataFlowGraph {
     /// 写：`block_mut`（就地编辑口，契约见其文档）；结构性增删只有
     /// `make_block*` / `remove_block`（在 `dfg.rs` 内）。
     pub(crate) blocks: Vec<BlockData>,
+    /// 控制流结构修订号：见 [`CfgRevision`]。惰性分析缓存据此判新鲜，
+    /// 因此**读分析结果与改图之间不存在"忘记失效"的窗口**。
+    cfg_revision: CfgRevision,
 }
 
 impl DataFlowGraph {
@@ -269,7 +303,13 @@ impl DataFlowGraph {
             values: Vec::new(),
             insts: Vec::new(),
             blocks: Vec::new(),
+            cfg_revision: CfgRevision::default(),
         }
+    }
+
+    /// 控制流结构修订号（只增不减）。
+    pub fn cfg_revision(&self) -> u64 {
+        self.cfg_revision.get()
     }
 
     // === 实体分配 ===
@@ -431,6 +471,7 @@ impl DataFlowGraph {
             inst_order: Vec::new(),
             terminator: None,
         });
+        self.cfg_revision.bump();
         block
     }
 
@@ -485,6 +526,7 @@ impl DataFlowGraph {
             inst_order: Vec::new(),
             terminator: None,
         });
+        self.cfg_revision.bump();
         (block, params)
     }
 
@@ -523,6 +565,7 @@ impl DataFlowGraph {
         });
         // **不登记 inst_order**：块内指令列表只含非终结符指令。
         self.blocks[block.0 as usize].terminator = Some(inst);
+        self.cfg_revision.bump();
     }
 
     /// **墓碑化的唯一实现**（crate 内低层原语，S2）：标标志 + 清空指令内容与附件。
@@ -537,6 +580,17 @@ impl DataFlowGraph {
         let idx = inst.0 as usize;
         if idx >= self.insts.len() {
             return;
+        }
+        // 墓碑化可能正落在块的**终结符**上（块内顺序表不含终结符，所以
+        // "就地墓碑化"是绕过 `set_terminator` 的另一条改 CFG 的路）：
+        // 那种情况下 `block_successors` 的解码结果会变，结构修订号必须前进。
+        let block = self.insts[idx].block;
+        if self
+            .blocks
+            .get(block.index() as usize)
+            .is_some_and(|bd| bd.terminator == Some(inst))
+        {
+            self.cfg_revision.bump();
         }
         let i = &mut self.insts[idx];
         i.tombstone = true;
@@ -572,6 +626,9 @@ impl DataFlowGraph {
     }
 
     pub fn remove_block(&mut self, block: Block) {
+        // 结构变更（块没了）⇒ 结构修订号前进：惰性分析缓存据此自动作废，
+        // 不依赖调用方记得 `Function::invalidate_analysis()`（v3 S6）。
+        self.cfg_revision.bump();
         // 终结符指令也一并墓碑化（它不在 inst_order 里）
         if let Some(term) = self.blocks[block.0 as usize].terminator.take() {
             self.remove_inst(term);

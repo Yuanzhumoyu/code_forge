@@ -100,7 +100,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
-| S6 | 校验与 pass 契约 | **大部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；**重算 CFG/支配树并比对**（`AnalysisCacheStale`）、墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫与**错误码 × 回归测试对账守卫**（32 变体全覆盖）已落地（均见 §6 末）；余项：`AnalysisManager`（把惰性缓存抽成显式管理器） |
+| S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
@@ -1119,6 +1119,50 @@ fmt/clippy `-D warnings` 干净。
 **验证**：workspace 1455 passed / 0 failed / 19 ignored（64 个测试二进制 +
 13 组 doc-test，较上一片 +5 = 4 例新测试 + 1 条守卫）；`verify_negative` 44 例；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
+
+### S6（切片）：`AnalysisManager` —— 惰性缓存从"靠约定失效"改为"自校验 + 快照"（2026-09-16）
+
+S6 计划的最后一项余项：把挂在 `Function` 上的 `OnceLock` 惰性缓存抽成**显式生命周期的
+管理器**。做的过程中发现，只"抽成管理器"并不解决问题——`OnceLock` 的语义缺陷在别处。
+
+**① 实测出的缺陷**（先测后改）：上一片给 `set_terminator`/`retarget_terminator`/
+`kill_inst` 加了自动失效，但 `tombstone_inst` 没加——而**块内顺序表不含终结符**，
+所以"就地墓碑化终结符"是一条绕过 `set_terminator` 的改图路：缓存里 entry 的
+后继仍是 `[then, else]`，而现场解码已经是空。另有一条同类路：`func.dfg.make_block()` /
+`dfg.remove_block()` 直接改结构，既没有 `&mut Function`，也就没法失效。
+旧契约下这两条只能靠"调用方记得"或事后由校验器重算比对抓（`AnalysisCacheStale`）。
+
+**② 新结构**：`OnceLock<T>` → `AnalysisSlot<T>`（`RwLock<Option<(修订号, Arc<T>)>>`），
+由 `AnalysisManager` 拥有，四个槽（前驱/后继/支配树/循环森林）：
+
+- **修订号自校验**：`AnalysisRevision = (DFG 结构修订号, 显式失效次数)`。结构修订号
+  （`DataFlowGraph::cfg_revision`，`CfgRevision` 包 `AtomicU64`，`Clone` 手写为"复制当前值"
+  以免克隆体共享计数器）在**三条改 CFG 的路上**自动前进：块增删、终结符写入、
+  终结符被墓碑化（条件 bump：只有墓碑化的正是本块终结符时才前进）。读时不一致即重算
+  ⇒ **陈旧结果不可能被读到**；`invalidate_analysis()` 降级为"省一次重算"的优化，
+  正确性不再依赖任何调用方记得失效。
+- **`Arc` 快照语义**：访问器返回 `Arc<DominatorTree>` / `Arc<SecondaryMap<…>>` 而不是
+  `&T`。此前"取一份分析 → 改 CFG → 再用"会让同一次使用期内前后不一致（引用指向
+  被就地改写的缓存）；现在快照在使用期内恒定，改图只影响**下一次**读。
+- **`AnalysisCacheStale` 删除**（错误码 32 → 31）：它是 `OnceLock` 时代的补丁——陈旧结果
+  已不可能被读到，"忘了失效"不再是缺陷，检查与错误码一并删（不保留过渡）。
+
+**③ 迁移面实测**：`crates/foundation/forge-ir/src/{analysis,dfg,function,loop_info}.rs`
+（`AnalysisCache` 整体删除，访问器改快照）+ 校验器删检查 + `tests/analysis_cache.rs`
+重写。**`forge-opt`/`forge-codegen` 零改动**（`Arc<T>` 的 Deref 让 `func.successors().get(b)`
+与 `&SecondaryMap` 形参原样可用；13 处 `.clone()` 快照语义不变，且从深拷贝变成 `Arc` 克隆）。
+校验器侧反而更强：它自己用的 `predecessors`/`dominator_tree` 现在天然是最新图。
+
+**④ 守卫与负向验证**（`tests/analysis_cache.rs`，8 例）：写入口后必须看到新图；
+**快照在改图后不变**；**墓碑化终结符**后后继清空（新测出的那条路）；
+**绕过 `Function` 直接 `dfg.make_block()`** 后新块必须出现在新鲜表里；`kill_inst`
+终结符；`retarget_terminator` 换目标；反面——**不改控制流的指令写入必须复用缓存**
+（`Arc::ptr_eq`，否则每次写指令都要重算分析）；显式失效仍可用。两条负向探针各验一次：
+关掉"墓碑化 ⇒ bump"则 `tombstoning_terminator_refreshes_cfg` **FAILED**；
+关掉"新建块 ⇒ bump"则 `raw_dfg_block_creation_refreshes_analysis` **FAILED**；恢复后 8 例全绿。
+
+**验证**：workspace 1459 passed / 0 failed / 19 ignored（64 个测试二进制 + 13 组 doc-test）；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。错误码 32 → 31。
 
 ## 7. 参考设计（外部）
 

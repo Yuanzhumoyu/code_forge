@@ -7,7 +7,7 @@ use crate::ImmStr;
 use crate::entity_map::SecondaryMap;
 use crate::error::IrError;
 
-use super::analysis::DominatorTree;
+use super::analysis::{AnalysisManager, AnalysisRevision, DominatorTree};
 use super::constant::ConstantPool;
 use super::data_layout::DataLayout;
 use super::data_layout::TargetTriple;
@@ -25,7 +25,7 @@ use super::types::{CallConv, FunctionSignature, TypeContext};
 use super::use_list::UseLists;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::Arc;
 
 // ============================================================
 // FunctionAttributes
@@ -153,50 +153,17 @@ impl Layout {
 }
 
 // ============================================================
-// AnalysisCache
-// ============================================================
-
-/// 分析缓存 — 惰性计算的 CFG 分析结果。
-///
-/// 用 [`OnceLock`]（原子惰性初始化）替代原来的 `UnsafeCell` 内部可变性：
-/// - 多线程共享 `&Function` 时并发调用惰性分析方法安全（无 data race，无需 unsafe impl Sync）
-/// - 失效需 `&mut self`（`invalidate`），与其它线程的 `&self` 共享由借用检查互斥
-#[derive(Default)]
-pub struct AnalysisCache {
-    pub predecessors: OnceLock<SecondaryMap<Block, Vec<Block>>>,
-    pub successors: OnceLock<SecondaryMap<Block, Vec<Block>>>,
-    /// 支配树 (惰性构建)
-    pub dominator_tree: OnceLock<DominatorTree>,
-    /// 循环森林 (惰性构建，依赖 DominatorTree)
-    pub loop_forest: OnceLock<LoopForest>,
-}
-
-impl AnalysisCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn invalidate(&mut self) {
-        self.predecessors = OnceLock::new();
-        self.successors = OnceLock::new();
-        self.dominator_tree = OnceLock::new();
-        self.loop_forest = OnceLock::new();
-    }
-}
-
-// ============================================================
 // Function
 // ============================================================
 
 /// IR 函数 — SSA 函数的主要容器。
 /// Clone: compile_raw 需要可变的 IR 副本（Stage 3 pattern isel 就地重写）。
-/// `analysis`（OnceLock 缓存）不克隆——副本的缓存按需重建。
+/// `analysis`（惰性分析缓存）不克隆——副本的缓存按需重建。
 ///
 /// # Thread safety
-/// `analysis` 是 [`OnceLock`]-backed 惰性分析缓存：多线程共享 `&Function`
-/// 时并发调用 `predecessors`/`successors`/`dominator_tree`/`loop_forest`
-/// 是安全的（原子初始化，无 data race）。失效（`invalidate`）需要 `&mut self`，
-/// 与其它线程的 `&self` 共享由借用检查互斥。
+/// `analysis` 是 [`AnalysisManager`]：内部 `RwLock` 槽位，多线程共享 `&Function`
+/// 并发调用 `predecessors`/`successors`/`dominator_tree`/`loop_forest` 安全
+/// （无 data race；同一份分析可能被并发重算一次，结果等价）。
 pub struct Function {
     /// 函数名.
     pub name: ImmStr,
@@ -264,7 +231,9 @@ pub struct Function {
     pub block_names: SecondaryMap<Block, InternedStr>,
 
     // === 分析缓存 ===
-    pub analysis: AnalysisCache,
+    /// 惰性分析缓存管理器（私有；读写走 [`Function::analysis`] /
+    /// [`Function::analysis_mut`]，分析本身走 `predecessors` 等访问器）。
+    pub(crate) analysis: AnalysisManager,
 }
 
 impl Clone for Function {
@@ -291,7 +260,7 @@ impl Clone for Function {
             types: self.types.clone(),
             value_names: self.value_names.clone(),
             block_names: self.block_names.clone(),
-            analysis: AnalysisCache::default(),
+            analysis: AnalysisManager::default(),
         }
     }
 }
@@ -331,7 +300,7 @@ impl Function {
             debug_info: None,
             value_names: SecondaryMap::new(),
             block_names: SecondaryMap::new(),
-            analysis: AnalysisCache::new(),
+            analysis: AnalysisManager::new(),
         }
     }
 
@@ -356,18 +325,28 @@ impl Function {
     }
 
     // ============================================================
-    // 分析访问 (unsafe 内部可变性)
+    // 分析访问（快照式惰性缓存）
     // ============================================================
 
-    /// 获取分析缓存的不可变引用（只读；惰性初始化由 OnceLock 保证并发安全）。
-    pub fn analysis(&self) -> &AnalysisCache {
+    /// 获取分析缓存管理器（只读；槽位自校验修订号，见 [`AnalysisManager`]）。
+    pub fn analysis(&self) -> &AnalysisManager {
         &self.analysis
     }
 
-    /// 获取分析缓存的可变引用（失效缓存用）。需要 `&mut self`——
+    /// 获取分析缓存管理器的可变引用（显式失效用）。需要 `&mut self`——
     /// 与其它线程的 `&self` 共享由借用检查互斥。
-    pub fn analysis_mut(&mut self) -> &mut AnalysisCache {
+    pub fn analysis_mut(&mut self) -> &mut AnalysisManager {
         &mut self.analysis
+    }
+
+    /// 控制流结构修订号（[`DataFlowGraph::cfg_revision`]）。
+    pub fn cfg_revision(&self) -> u64 {
+        self.dfg.cfg_revision()
+    }
+
+    /// 当前分析修订号 = (结构修订号, 显式失效次数)。
+    fn analysis_revision(&self) -> AnalysisRevision {
+        self.analysis.revision(self.cfg_revision())
     }
 
     /// 按 Block 获取 BlockData。
@@ -380,16 +359,21 @@ impl Function {
         self.dfg.block_mut(id)
     }
 
-    /// 惰性获取支配树（OnceLock 原子初始化，并发安全）。
-    pub fn dominator_tree(&self) -> &DominatorTree {
+    /// 惰性获取支配树（当前修订号对应的快照）。
+    ///
+    /// 返回 `Arc` 快照而非 `&DominatorTree`：调用方拿到的整棵树在本次调用内恒定，
+    /// 不受随后改写控制流的影响（改图只会让**下一次**读重算，见
+    /// [`AnalysisManager`]）。
+    pub fn dominator_tree(&self) -> Arc<DominatorTree> {
+        let rev = self.analysis_revision();
         self.analysis
-            .dominator_tree
-            .get_or_init(|| DominatorTree::build(self))
+            .dominator_tree(rev, || DominatorTree::build(self))
     }
 
-    /// 惰性获取前驱映射: Block → Vec<Block>.
-    pub fn predecessors(&self) -> &SecondaryMap<Block, Vec<Block>> {
-        self.analysis.predecessors.get_or_init(|| {
+    /// 惰性获取前驱映射: Block → Vec<Block>（快照，语义见 [`Function::dominator_tree`]）。
+    pub fn predecessors(&self) -> Arc<SecondaryMap<Block, Vec<Block>>> {
+        let rev = self.analysis_revision();
+        self.analysis.predecessors(rev, || {
             let mut preds: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
             for (block, _bd) in self.dfg.blocks() {
                 // CFG 构造容忍未终止块（校验器要在坏 IR 上跑）：无终结符 ⇒ 无出边
@@ -401,9 +385,10 @@ impl Function {
         })
     }
 
-    /// 惰性获取后继映射: Block → Vec<Block>.
-    pub fn successors(&self) -> &SecondaryMap<Block, Vec<Block>> {
-        self.analysis.successors.get_or_init(|| {
+    /// 惰性获取后继映射: Block → Vec<Block>（快照，语义见 [`Function::dominator_tree`]）。
+    pub fn successors(&self) -> Arc<SecondaryMap<Block, Vec<Block>>> {
+        let rev = self.analysis_revision();
+        self.analysis.successors(rev, || {
             let mut succs: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
             for (block, _bd) in self.dfg.blocks() {
                 succs.insert(block, self.dfg.block_successors(block));
@@ -426,11 +411,12 @@ impl Function {
             .unwrap_or_else(|| panic!("Function {} 未设置 entry_block（入口块）", self.name))
     }
 
-    /// 惰性获取循环森林 (依赖 DominatorTree).
-    pub fn loop_forest(&self) -> &LoopForest {
-        self.analysis.loop_forest.get_or_init(|| {
+    /// 惰性获取循环森林（依赖支配树；快照，语义见 [`Function::dominator_tree`]）。
+    pub fn loop_forest(&self) -> Arc<LoopForest> {
+        let rev = self.analysis_revision();
+        self.analysis.loop_forest(rev, || {
             let dt = self.dominator_tree();
-            LoopForest::build(self, dt)
+            LoopForest::build(self, &dt)
         })
     }
 
@@ -469,10 +455,12 @@ impl Function {
 
     /// 控制流被改写后使惰性分析缓存失效（CFG/支配树/循环森林）。
     ///
-    /// 幂等、O(1)（四个 `OnceLock` 重建）。`Function` 的每个改控制流的写入口都会
-    /// 调它；绕过 `Function` 直接改 `dfg` 结构（`dfg.remove_block` 等）的调用方
-    /// 必须自己调 [`Function::analysis_mut`] 的 `invalidate`——校验器的
-    /// `AnalysisCacheStale` 检查会抓这种漏网。
+    /// **优化而非正确性前提**（v3 S6）：缓存槽按 [`AnalysisRevision`] 自校验，
+    /// 结构修订号（[`DataFlowGraph::cfg_revision`]）在块增删 / 终结符写入 /
+    /// 终结符墓碑化时自动前进 ⇒ 忘记调用这里只会多算一次，不会读到旧图。
+    /// 提前释放槽位能省下"改图后没人再读"时的无用重算。
+    ///
+    /// 幂等、O(1)。改控制流的写入口内部会调它（少一次重算）。
     pub fn invalidate_analysis(&mut self) {
         self.analysis.invalidate();
     }

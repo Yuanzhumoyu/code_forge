@@ -43,10 +43,10 @@ impl LoopForest {
                         if !loops[idx].latches.contains(&pred) {
                             loops[idx].latches.push(pred);
                         }
-                        collect_loop_body(preds_map, pred, header, &mut loops[idx].blocks);
+                        collect_loop_body(&preds_map, pred, header, &mut loops[idx].blocks);
                     } else {
                         let mut blocks = vec![header];
-                        collect_loop_body(preds_map, pred, header, &mut blocks);
+                        collect_loop_body(&preds_map, pred, header, &mut blocks);
                         let idx = loops.len();
                         loops.push(LoopInfo {
                             header,

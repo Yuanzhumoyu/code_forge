@@ -5,7 +5,9 @@
 use crate::entity::*;
 use crate::entity_map::SecondaryMap;
 use crate::function::Function;
+use crate::loop_info::LoopForest;
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 // ============================================================
 // CFG 辅助函数
@@ -13,6 +15,142 @@ use std::collections::HashMap;
 
 pub fn block_successors_in_func(func: &Function, block: Block) -> Vec<Block> {
     func.dfg.block_successors(block)
+}
+
+// ============================================================
+// AnalysisManager — 惰性分析缓存的显式生命周期（v3 S6）
+// ============================================================
+
+/// 分析修订号 = (DFG 结构修订号, 管理器失效计数)。
+///
+/// **正确性只取决于它**：每个缓存槽里记着"这份结果算于哪个修订号"，读者拿到的
+/// 永远是当前修订号对应的结果。改完控制流**不需要**任何人记得失效缓存——
+/// 修订号变了就自动重算（`invalidate()` 只是省下一次重算的显式优化）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AnalysisRevision {
+    /// [`crate::dfg::DataFlowGraph::cfg_revision`]：块增删、终结符写入、墓碑化的计数。
+    pub cfg: u64,
+    /// [`AnalysisManager::invalidations`]：显式 `invalidate()` 的次数。
+    pub invalidations: u64,
+}
+
+/// 一个惰性分析缓存槽：按修订号判定新鲜，过期即重算；读者拿到 `Arc` 快照。
+///
+/// 用 `RwLock<Option<(修订号, Arc<T>)>>` 而不是 `OnceLock<T>`：`OnceLock` 一旦
+/// 初始化就只能靠 `&mut self` 清空，"改了控制流但漏了失效"会静默返回旧结果；
+/// 这里过期自检 + 重算，且 `&self` 即可（快照式读，读到的分析在该调用内恒定）。
+#[derive(Debug)]
+pub struct AnalysisSlot<T> {
+    cached: RwLock<Option<(AnalysisRevision, Arc<T>)>>,
+}
+
+impl<T> Default for AnalysisSlot<T> {
+    fn default() -> Self {
+        Self {
+            cached: RwLock::new(None),
+        }
+    }
+}
+
+impl<T> AnalysisSlot<T> {
+    /// 取当前修订号对应的结果：修订号一致 ⇒ 复用快照；否则重算并覆盖。
+    ///
+    /// 并发：两个线程同时发现过期时会各算一次，覆盖后仍等价（分析是纯函数）。
+    fn get(&self, rev: AnalysisRevision, compute: impl FnOnce() -> T) -> Arc<T> {
+        if let Some((cached_rev, value)) = self.cached.read().expect("分析缓存锁中毒").as_ref()
+            && *cached_rev == rev
+        {
+            return Arc::clone(value);
+        }
+        let value = Arc::new(compute());
+        *self.cached.write().expect("分析缓存锁中毒") = Some((rev, Arc::clone(&value)));
+        value
+    }
+
+    fn clear(&self) {
+        *self.cached.write().expect("分析缓存锁中毒") = None;
+    }
+}
+
+/// 惰性分析缓存管理器（[`Function::analysis`]）：显式生命周期 + 修订号自校验。
+///
+/// 生命周期契约：
+///
+/// - 每个槽按 [`AnalysisRevision`] 自校验；`invalidate()` 只做"提前释放"，
+///   **正确性不依赖任何调用方记得失效**（这是本类型存在的理由）；
+/// - 读者拿 `Arc` 快照：快照在本次调用内恒定，不受后续控制流改写影响——
+///   "先读旧图、再改 CFG、再读"不会看到半个新图（此前的 `&T` 引用语义会让
+///   第二次读拿到被就地改写后的内容）。
+#[derive(Default)]
+pub struct AnalysisManager {
+    invalidations: u64,
+    predecessors: AnalysisSlot<SecondaryMap<Block, Vec<Block>>>,
+    successors: AnalysisSlot<SecondaryMap<Block, Vec<Block>>>,
+    dominator_tree: AnalysisSlot<DominatorTree>,
+    loop_forest: AnalysisSlot<LoopForest>,
+}
+
+impl AnalysisManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 显式失效：失效计数 +1 并释放全部槽位。
+    ///
+    /// **这是优化而不是正确性前提**（见类型级文档）：忘了调用只是白算一次。
+    /// 幂等、O(1)；需要 `&mut self`，与其它线程的 `&self` 共享由借用检查互斥。
+    pub fn invalidate(&mut self) {
+        self.invalidations += 1;
+        self.predecessors.clear();
+        self.successors.clear();
+        self.dominator_tree.clear();
+        self.loop_forest.clear();
+    }
+
+    /// 显式失效次数（构成 [`AnalysisRevision`] 的一半）。
+    pub fn invalidations(&self) -> u64 {
+        self.invalidations
+    }
+
+    /// 组装当前修订号；`cfg` 来自 [`Function::cfg_revision`]。
+    pub fn revision(&self, cfg: u64) -> AnalysisRevision {
+        AnalysisRevision {
+            cfg,
+            invalidations: self.invalidations,
+        }
+    }
+
+    pub fn predecessors(
+        &self,
+        rev: AnalysisRevision,
+        compute: impl FnOnce() -> SecondaryMap<Block, Vec<Block>>,
+    ) -> Arc<SecondaryMap<Block, Vec<Block>>> {
+        self.predecessors.get(rev, compute)
+    }
+
+    pub fn successors(
+        &self,
+        rev: AnalysisRevision,
+        compute: impl FnOnce() -> SecondaryMap<Block, Vec<Block>>,
+    ) -> Arc<SecondaryMap<Block, Vec<Block>>> {
+        self.successors.get(rev, compute)
+    }
+
+    pub fn dominator_tree(
+        &self,
+        rev: AnalysisRevision,
+        compute: impl FnOnce() -> DominatorTree,
+    ) -> Arc<DominatorTree> {
+        self.dominator_tree.get(rev, compute)
+    }
+
+    pub fn loop_forest(
+        &self,
+        rev: AnalysisRevision,
+        compute: impl FnOnce() -> LoopForest,
+    ) -> Arc<LoopForest> {
+        self.loop_forest.get(rev, compute)
+    }
 }
 
 // ============================================================

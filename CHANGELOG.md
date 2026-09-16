@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **`AnalysisManager`：惰性分析缓存改为"修订号自校验 + `Arc` 快照"（forge-ir v3 S6 切片，S6 最后一项余项）**：`Function` 上的 `OnceLock` 缓存（前驱/后继/支配树/循环森林）换成 `AnalysisSlot<T>`（`RwLock<Option<(修订号, Arc<T>)>>`），由新类型 `AnalysisManager` 拥有。修订号 = `(DFG 结构修订号, 显式失效次数)`；结构修订号（`DataFlowGraph::cfg_revision`）在**三条改 CFG 的路上**自动前进——块增删、终结符写入、**终结符被墓碑化**。读到过期修订即重算并返回当前快照 ⇒ **陈旧分析结果不可能被读到**，`invalidate_analysis()` 降级为"少算一次"的优化，正确性不再依赖调用方记得失效。
+  实测出的两条旧漏洞：①`tombstone_inst` 不失效缓存，而块内顺序表不含终结符 ⇒ "就地墓碑化终结符"是绕过 `set_terminator` 的改图路，读者会拿到改图前的后继；②`func.dfg.make_block()`/`dfg.remove_block()` 直接改结构，没有 `&mut Function` 可用来失效。
+  访问器返回 `Arc` 快照而非 `&T`："取一份分析 → 改 CFG → 再用"不再出现同一次使用期内前后不一致（旧引用语义会指向被就地改写的缓存）。**`forge-opt`/`forge-codegen` 零改动**（`Arc` 的 Deref 让既有调用与 `&SecondaryMap` 形参原样可用；13 处 `.clone()` 语义不变，从深拷贝变成 `Arc` 克隆）。
+  校验器的 `AnalysisCacheStale` 检查与错误码随旧语义一并删除（错误码 32 → 31，无过渡层）；`tests/analysis_cache.rs` 重写为 8 例（写入口后必须看到新图、快照在改图后恒定、墓碑化终结符、绕过 `Function` 直接建块、`kill_inst` 终结符、`retarget_terminator`、反面"不改控制流的写入必须复用缓存"（`Arc::ptr_eq`）、显式失效仍可用）；两条负向探针各验一次（关掉对应 bump ⇒ 对应测试 FAILED，恢复后全绿）。
+  实测：workspace 1459 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **错误码 × 回归测试对账守卫（forge-ir v3 S6 切片）**：`verify.rs` 的 `VerifyError` 现为 **32 个变体**，而 `tests/verify_negative.rs` 的文件头一直写着"27 个错误码全部有回归测试"——错误码 30 → 32 的两片都没人回写，属"文档声称 vs 实测"漂移。
   逐变体实测引用数后补齐 4 例：`OperandCountMismatch`（操作数个数不符）、`MultipleEntryBlocks`（多入口块，入口自带参数）、`DominanceViolation`（定义不支配使用）、`MissingTypeContext`（`TypeContext` 查不到类型）——这 4 个此前**既不在 `tests/*.rs` 出现、源码内 `VerifyError::<名>` 引用也不足 3 次**（crate 内单测同样没覆盖）。
   新增守卫 `every_verify_error_variant_has_a_regression_test`：解析 `src/verify.rs` 的枚举变体，要求每个变体在 `tests/*.rs` 里以 `VerifyError::<名>` 出现，或在同源码内出现 ≥3 次（构造点 + `Display` 臂 + crate 内单测），否则必须进本测试的 `ALLOWED`（当前为空；白名单条目必须被命中，否则报"条目已失效"）。守卫已用**负向探针**验证：临时插一个只有定义 + `Display` 臂的 `ProbeVariantNoTest` ⇒ 守卫 FAILED 并点名该变体，恢复后 green（改用测试侧改名做负向是无效的——只会得到 E0599 编译错，反而掩盖守卫是否生效）。文件头改为"对账交给守卫"，不再写会漂的计数。

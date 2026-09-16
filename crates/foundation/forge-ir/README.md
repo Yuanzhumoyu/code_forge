@@ -20,13 +20,13 @@
 | `entity` | 实体句柄：`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/`GlobalId`/`SigRef`/`VReg`/`XReg`/`PReg`/`RegClass` |
 | `entity_map` | 密集索引容器：`PrimaryMap`/`SecondaryMap`/`EntitySet`/`PackedOption` + `EntityRef`（S2） |
 | `dfg` | `DataFlowGraph`（`values`/`insts`/`blocks` 三个 arena——`values` 已私有化，见「arena 访问收口」）、`Instruction`、`BlockData` |
-| `function` | `Function`、`Module`、`Layout`、`GlobalVariable`/`GlobalAlias`、`AnalysisCache` |
+| `function` | `Function`、`Module`、`Layout`、`GlobalVariable`/`GlobalAlias`（`analysis` 字段是 `AnalysisManager`） |
 | `types` | `TypeStore`（interner）、`TypeContext`、`FunctionSignature` |
 | `opcode` / `immediate` / `inst_flags` / `mem_flags` / `isel_strategy` | 指令操作码与附件（`opcode` 的枚举与派生表由 `ops.toml` 生成，见下） |
 | `builder` | `FunctionBuilder`（构造 IR 的唯一推荐入口） |
-| `use_list` / `analysis` / `loop_info` / `alias` | def-use 链、支配树、循环森林、最小别名分析 |
+| `use_list` / `analysis` / `loop_info` / `alias` | def-use 链、支配树与**惰性分析缓存管理器 `AnalysisManager`**（修订号自校验 + `Arc` 快照）、循环森林、最小别名分析 |
 | `constant` / `big` / `imm_str` / `string_pool` | 常量池（int/float/big/vector/aggregate）、任意精度、SSO 字符串 |
-| `verify` | `Verifier`（63 条规则 / 13 阶段 + 惰性分析缓存重算比对 `AnalysisCacheStale`、墓碑规范形态 `TombstoneNotCanonical`、严重级 `VerifySeverity`（`UnreachableBlock` 为唯一建议级）） |
+| `verify` | `Verifier`（实测 31 个错误码 `VerifyError` / 18 个 `check_*` 检查函数 + 墓碑规范形态 `TombstoneNotCanonical`、严重级 `VerifySeverity`（`UnreachableBlock` 为唯一建议级）） |
 | `display` / `ir_parser` | LLVM 文本输出（logos + lalrpop 解析） |
 | `metadata` / `debug_info` / `symbol` / `data_layout` | 元数据、调试信息、符号、DataLayout 与 target triple（只作数据，不提供按架构名猜属性的查询——见「开放集合的边界」） |
 

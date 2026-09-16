@@ -148,16 +148,6 @@ pub enum VerifyError {
         inst: Inst,
         what: String,
     },
-    /// 惰性分析缓存与现场重算不一致（改了控制流却忘了 `analysis_mut().invalidate()`）。
-    ///
-    /// `what` = `"successors"` / `"predecessors"` / `"dominator_tree"`；
-    /// `block` = 首个不一致的块；`cached`/`fresh` 便于诊断。
-    AnalysisCacheStale {
-        what: String,
-        block: Block,
-        cached: String,
-        fresh: String,
-    },
     /// Return 值数量与签名匹配但类型不符。
     ReturnValueTypeMismatch {
         /// `ret` 终结符指令。
@@ -382,18 +372,6 @@ impl std::fmt::Display for VerifyError {
                      DataFlowGraph::tombstone_inst_low)"
                 )
             }
-            VerifyError::AnalysisCacheStale {
-                what,
-                block,
-                cached,
-                fresh,
-            } => {
-                write!(
-                    f,
-                    "stale analysis cache `{what}` at block {block}: cached {cached} != fresh {fresh} \
-                     (改控制流后需 Function::invalidate_analysis())"
-                )
-            }
             VerifyError::ReturnValueTypeMismatch {
                 inst,
                 block,
@@ -574,7 +552,6 @@ impl Verifier {
         self.check_inst_order(func);
         self.check_path_termination(func);
         self.check_tombstones(&func.dfg);
-        self.check_analysis_cache(func);
 
         // fail-closed：无类型上下文时 8 类类型相关检查无法执行 → 明确报错
         // （不是静默放宽）。放在最后，保证结构类检查仍然跑完并一起上报。
@@ -1922,61 +1899,13 @@ impl Verifier {
         }
     }
 
-    /// **重算 CFG/支配树并与惰性缓存比对**（v3 S6）。
-    ///
-    /// `Function::{predecessors, successors, dominator_tree}` 是 `OnceLock` 惰性
-    /// 缓存：只要有人改过控制流却忘了 `analysis_mut().invalidate()`，后续读者就会
-    /// 拿着旧 CFG/旧支配树算出"看起来合理但错误"的结果——而且**没有任何测试会失败**。
-    /// 这里现场重算（`dfg.block_successors` 直接解码终结符、`DominatorTree::build`
-    /// 重跑迭代）与已初始化的缓存逐块比对，把"陈旧缓存"变成可上报的错误。
-    ///
-    /// 边界：只比**已初始化**的缓存（未初始化的缓存没有陈旧问题）；未终止的块
-    /// 在 `block_successors` 里是"无出边"，与缓存构造口径一致。
-    fn check_analysis_cache(&mut self, func: &Function) {
-        // ① 后继 / 前驱
-        for (what, cached) in [
-            ("successors", func.analysis().successors.get()),
-            ("predecessors", func.analysis().predecessors.get()),
-        ] {
-            let Some(cached) = cached else { continue };
-            for (block, _) in func.dfg.blocks() {
-                let fresh: Vec<Block> = if what == "successors" {
-                    func.dfg.block_successors(block)
-                } else {
-                    // 前驱 = 所有以本块为后继的块（块序升序，与缓存构造一致）
-                    func.dfg
-                        .blocks()
-                        .map(|(b, _)| b)
-                        .filter(|&pred| func.dfg.block_successors(pred).contains(&block))
-                        .collect()
-                };
-                let got = cached.get(block).cloned().unwrap_or_default();
-                if got != fresh {
-                    self.errors.push(VerifyError::AnalysisCacheStale {
-                        what: what.to_string(),
-                        block,
-                        cached: format!("{got:?}"),
-                        fresh: format!("{fresh:?}"),
-                    });
-                }
-            }
-        }
-
-        // ② 支配树（重跑算法并与缓存逐块比 idom）
-        if let Some(cached) = func.analysis().dominator_tree.get() {
-            let fresh = crate::analysis::DominatorTree::build(func);
-            for (block, _) in func.dfg.blocks() {
-                if cached.idom(block) != fresh.idom(block) {
-                    self.errors.push(VerifyError::AnalysisCacheStale {
-                        what: "dominator_tree".to_string(),
-                        block,
-                        cached: format!("{:?}", cached.idom(block)),
-                        fresh: format!("{:?}", fresh.idom(block)),
-                    });
-                }
-            }
-        }
-    }
+    // 说明：这里**没有**"缓存陈旧"检查了（v3 S6 后续，2026-09-16）。
+    //
+    // 上一片加的 `AnalysisCacheStale` 是 `OnceLock` 时代的补丁：缓存一旦初始化就
+    // 只能靠调用方记得失效，校验器只能事后重算比对来抓漏网。现在缓存槽按
+    // `crate::analysis::AnalysisRevision` 自校验（结构修订号由 DFG 在块增删 /
+    // 终结符写入 / 终结符墓碑化时前进），过期即重算并返回快照 ⇒ **陈旧结果不可能
+    // 被读到**，"忘了失效"不再是缺陷；检查与错误码一并删除（错误码 32 → 31）。
 }
 
 impl Default for Verifier {
