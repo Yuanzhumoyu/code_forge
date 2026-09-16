@@ -630,12 +630,12 @@ fn assert_modules_eq(m1: &Module, m2: &Module, text: &str) {
     for (f1, f2) in fs1.iter().zip(fs2.iter()) {
         assert_eq!(f1.name, f2.name);
         assert_eq!(
-            f1.dfg.blocks.len(),
-            f2.dfg.blocks.len(),
+            f1.dfg.block_count(),
+            f2.dfg.block_count(),
             "block count {}",
             f1.name
         );
-        for (b1, b2) in f1.dfg.blocks.iter().zip(f2.dfg.blocks.iter()) {
+        for (b1, b2) in f1.dfg.block_data_iter().zip(f2.dfg.block_data_iter()) {
             assert_block_eq(f1, b1, f2, b2, text);
         }
     }

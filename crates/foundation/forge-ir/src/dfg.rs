@@ -233,7 +233,14 @@ pub struct DataFlowGraph {
     /// `make_inst*` / `remove_inst`（在 `dfg.rs` 内）。`blocks` arena 的收口是
     /// 后续切片。
     pub(crate) insts: Vec<Instruction>,
-    pub blocks: Vec<BlockData>,
+    /// 块 arena。**私有**（v3 方案 S5：`dfg` 私有化 + 受限编辑 API）。
+    ///
+    /// 读：`block`（fail-closed）/ `block_opt`（容忍坏 IR）/ `block_data_iter` /
+    /// `blocks()` / `block_count` / `block_params` / `block_param_values` /
+    /// `block_terminator` / `block_inst_iter`；
+    /// 写：`block_mut`（就地编辑口，契约见其文档）；结构性增删只有
+    /// `make_block*` / `remove_block`（在 `dfg.rs` 内）。
+    pub(crate) blocks: Vec<BlockData>,
 }
 
 impl DataFlowGraph {
@@ -1028,13 +1035,39 @@ impl DataFlowGraph {
 
     // === 便捷访问 ===
 
-    /// 按 Block 索引获取 BlockData (O(1)).
+    /// 按 Block 索引获取 BlockData。**句柄不合法即 panic**（fail-closed，
+    /// 与 `value_data`/`inst_data` 同一契约）。容忍坏 IR 的调用方用
+    /// [`DataFlowGraph::block_opt`]。
     pub fn block(&self, b: Block) -> &BlockData {
-        &self.blocks[b.0 as usize]
+        self.blocks
+            .get(b.0 as usize)
+            .unwrap_or_else(|| panic!("块句柄不合法（越界或来自别的 DFG）：{b:?}"))
     }
-    /// 按 Block 索引获取可变 BlockData。
+
+    /// 按 Block 索引获取 BlockData；句柄不合法返回 `None`。
+    pub fn block_opt(&self, b: Block) -> Option<&BlockData> {
+        self.blocks.get(b.0 as usize)
+    }
+
+    /// 按 Block 索引获取可变 BlockData（**块 arena 的唯一外部可变入口**）。
+    ///
+    /// 契约：`params`/`param_values` 决定块参数集合，改它们必须与
+    /// `Function::add_block_param`/`remove_block_param` 保持口径一致（它们会同步
+    /// 值表与 use-lists）；`inst_order` 是**块内指令顺序的唯一事实源**，只在
+    /// "指令插入/搬移"实现里改（`make_inst*` 追加、`move_insts_to` 重排）；
+    /// `terminator` 字段已私有，写终结符走 `Function::{jump, branch, ret, …}`。
     pub fn block_mut(&mut self, b: Block) -> &mut BlockData {
-        &mut self.blocks[b.0 as usize]
+        let idx = b.0 as usize;
+        if idx >= self.blocks.len() {
+            panic!("块句柄不合法（越界或来自别的 DFG）：{b:?}");
+        }
+        &mut self.blocks[idx]
+    }
+
+    /// 按块序迭代 `BlockData`（不带句柄）——[`DataFlowGraph::blocks`] 的无句柄版，
+    /// 供"只关心内容"的遍历（`enumerate()` 得到的下标即块序）。
+    pub fn block_data_iter(&self) -> impl Iterator<Item = &BlockData> {
+        self.blocks.iter()
     }
 
     pub fn block_count(&self) -> usize {

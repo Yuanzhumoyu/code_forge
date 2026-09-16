@@ -17,7 +17,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     // ── Stage 1: Block Mapping ──
 
     pub(crate) fn create_blocks(&mut self, func: &Function) {
-        for (i, _) in func.dfg.blocks.iter().enumerate() {
+        for (i, _) in func.dfg.block_data_iter().enumerate() {
             let block_id = Block(i as u32);
             let vblock_id = self.vcode.create_block(block_id);
             self.block_map.insert(block_id, vblock_id);
@@ -306,7 +306,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(alloca_region);
         }
 
-        for (i, block_data) in func.dfg.blocks.iter().enumerate() {
+        for (i, block_data) in func.dfg.block_data_iter().enumerate() {
             self.lower_block(
                 Block(i as u32),
                 block_data,

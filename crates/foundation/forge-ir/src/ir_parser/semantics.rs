@@ -1869,12 +1869,8 @@ fn finalize_phis<'a>(
         if !has_phi {
             continue;
         }
-        let n_params = fb.func.dfg.blocks[target.0 as usize].params.len();
-        let phi_tys: Vec<TypeId> = fb.func.dfg.blocks[target.0 as usize]
-            .params
-            .iter()
-            .copied()
-            .collect();
+        let n_params = fb.func.dfg.block(target).params.len();
+        let phi_tys: Vec<TypeId> = fb.func.dfg.block(target).params.iter().copied().collect();
         // 收集 (前驱块 → (参数位, 值))；同一前驱多条入边按 phi 顺序排位
         let mut per_pred: HashMap<Block, Vec<(usize, Value)>> = HashMap::new();
         let mut phi_idx = 0usize;
@@ -2519,11 +2515,7 @@ fn build_inst<'a>(
             if inst.align > 0 {
                 check_align_value(inst.align)?;
                 // store 无结果值——通过 dfg 末尾指令定位
-                if let Some(last) = fb.func.dfg.blocks[block.0 as usize]
-                    .inst_order
-                    .last()
-                    .copied()
-                {
+                if let Some(last) = fb.func.dfg.block(block).inst_order.last().copied() {
                     fb.func
                         .dfg
                         .inst_mut(last)

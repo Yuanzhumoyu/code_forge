@@ -59,7 +59,7 @@ impl OptimizationPass for GvnPass {
 
 /// 对单个函数执行全局值编号（含常量折叠和内存 load GVN）。
 pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError> {
-    let n = func.dfg.blocks.len();
+    let n = func.dfg.block_count();
     if n == 0 {
         return Ok(PassResult::default());
     }
@@ -174,7 +174,7 @@ fn gvn_dfs(
     // 2. Process all instructions in this block
     // inst_ids 需复制一份：循环内要调用借用**整个 DFG** 的方法
     // （`value_data`/`set_value_type`），不能再借用 `blocks` 字段
-    let inst_ids: Vec<Inst> = func.dfg.blocks[block_id.0 as usize].inst_order.clone();
+    let inst_ids: Vec<Inst> = func.dfg.block(block_id).inst_order.clone();
 
     for inst_id in &inst_ids {
         // P1-5：只读快照（kill 分支做别名查询时不得持有 dfg.insts 的 &mut）

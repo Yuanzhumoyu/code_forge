@@ -9,8 +9,7 @@ use forge_ir::opcode::Opcode;
 /// 按序收集函数内全部指令 opcode。
 fn opcodes(f: &forge_ir::function::Function) -> Vec<Opcode> {
     f.dfg
-        .blocks
-        .iter()
+        .block_data_iter()
         .flat_map(|b| b.inst_order.iter())
         .map(|&i| f.dfg.inst_data(i).opcode)
         .collect()
@@ -639,7 +638,7 @@ define i32 @f() {
     let f = parse_function(src).expect("deep extractvalue should parse+build");
     // 常量聚合路径:链式 emit 两个 ExtractValue(值语义等价)
     let mut count = 0;
-    for bd in f.dfg.blocks.iter() {
+    for bd in f.dfg.block_data_iter() {
         for &i in &bd.inst_order {
             if f.dfg.inst_data(i).opcode == Opcode::ExtractValue {
                 count += 1;
@@ -663,7 +662,7 @@ define i32 @f() {
 "#;
     let f = parse_function(src).expect("value-path deep extractvalue should parse+build");
     let mut count = 0;
-    for bd in f.dfg.blocks.iter() {
+    for bd in f.dfg.block_data_iter() {
         for &i in &bd.inst_order {
             if f.dfg.inst_data(i).opcode == Opcode::ExtractValue {
                 count += 1;

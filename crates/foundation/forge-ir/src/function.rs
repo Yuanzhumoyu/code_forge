@@ -868,7 +868,7 @@ impl Function {
             self.remove_terminator_arg(pred, block, idx);
         }
         // 3. 从块参数表删除
-        let bd = &mut self.dfg.blocks[block.0 as usize];
+        let bd = self.dfg.block_mut(block);
         if idx < bd.params.len() {
             bd.params.remove(idx);
         }
@@ -996,7 +996,7 @@ impl Function {
 
     /// 统一遍历函数内所有块活跃指令（可变），跳 Nop 墓碑。
     pub fn for_insts_mut(&mut self, mut f: impl FnMut(&mut Instruction)) {
-        let block_count = self.dfg.blocks.len();
+        let block_count = self.dfg.block_count();
         for bi in 0..block_count {
             let block = Block(bi as u32);
             self.block_for_insts_mut(block, &mut f);

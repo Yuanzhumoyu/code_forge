@@ -85,7 +85,7 @@ pub fn inline_calls(
     let _predecessors = func.predecessors().clone();
 
     // We iterate by block index because we may modify inst_order during inlining
-    let block_count = func.dfg.blocks.len();
+    let block_count = func.dfg.block_count();
     for bi in 0..block_count {
         if inline_count >= max_depth {
             break;
@@ -97,7 +97,7 @@ pub fn inline_calls(
         #[allow(clippy::type_complexity)]
         let mut candidates: Vec<(usize, Inst, FuncRef, SmallVec<[Value; 4]>, Value)> = Vec::new();
         {
-            let block_data = &func.dfg.blocks[bi];
+            let block_data = &func.dfg.block(Block(bi as u32));
             for (pos, &inst_id) in block_data.inst_order.iter().enumerate() {
                 let inst = &func.dfg.inst_data(inst_id);
                 if !matches!(inst.opcode, Opcode::Call) {
@@ -134,14 +134,14 @@ pub fn inline_calls(
             };
 
             // Map callee entry params → call operands
-            let callee_param_vals: Vec<Value> = callee.dfg.blocks[callee_entry.0 as usize]
+            let callee_param_vals: Vec<Value> = callee
+                .dfg
+                .block(callee_entry)
                 .param_values
                 .iter()
                 .copied()
                 .collect();
-            let callee_entry_insts: Vec<Inst> = callee.dfg.blocks[callee_entry.0 as usize]
-                .inst_order
-                .to_vec();
+            let callee_entry_insts: Vec<Inst> = callee.dfg.block(callee_entry).inst_order.to_vec();
 
             let mut value_map: HashMap<Value, Value> = HashMap::new();
             for (i, &pval) in callee_param_vals.iter().enumerate() {
@@ -246,7 +246,7 @@ pub fn inline_calls(
 
                 // Remove the Call instruction (now shifted by new_inst_count)
                 let call_shifted_pos = insert_pos + new_inst_count;
-                let call_id = func.dfg.blocks[bi].inst_order[call_shifted_pos];
+                let call_id = func.dfg.block(Block(bi as u32)).inst_order[call_shifted_pos];
                 func.kill_inst(call_id);
             } else {
                 // Just remove the call
@@ -315,7 +315,7 @@ pub fn evaluate_inline_cost(
     }
 
     // 仅处理单块函数
-    if func.dfg.blocks.len() != 1 {
+    if func.dfg.block_count() != 1 {
         return InlineCost {
             static_cost: 0,
             loop_penalty: 0,
@@ -325,7 +325,7 @@ pub fn evaluate_inline_cost(
         };
     }
 
-    let block = &func.dfg.blocks[0];
+    let block = &func.dfg.block(Block(0));
 
     // 检查自递归
     for &inst_id in &block.inst_order {
@@ -430,7 +430,9 @@ mod tests {
         assert!(r.changed);
 
         // After inlining, the Call should be replaced with Nop
-        let has_call = caller.dfg.blocks[0]
+        let has_call = caller
+            .dfg
+            .block(Block(0))
             .inst_order
             .iter()
             .any(|&iid| matches!(caller.dfg.inst_data(iid).opcode, Opcode::Call));
@@ -452,7 +454,7 @@ mod tests {
         let v5 = b.bxor(v4, v2);
         b.ret(&[v5]);
         let callee = b.finish().expect("build");
-        let callee_size = callee.dfg.blocks[0].inst_order.len();
+        let callee_size = callee.dfg.block(Block(0)).inst_order.len();
         assert!(
             callee_size >= 5,
             "callee should have at least 5 instructions"

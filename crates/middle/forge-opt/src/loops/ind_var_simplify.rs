@@ -73,7 +73,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
             .find(|&&p| !body.contains(&p))
             .copied();
 
-        let header_block = &func.dfg.blocks[header.0 as usize];
+        let header_block = &func.dfg.block(header);
         let param_count = header_block.params.len();
         if param_count == 0 {
             continue;
@@ -181,7 +181,7 @@ fn strength_reduce_ind_vars(
 
     for iv in ind_vars {
         for &block in body.iter() {
-            let bd = &func.dfg.blocks[block.0 as usize];
+            let bd = &func.dfg.block(block);
             let inst_ids: Vec<Inst> = bd.inst_order.clone();
 
             for &inst_id in &inst_ids {

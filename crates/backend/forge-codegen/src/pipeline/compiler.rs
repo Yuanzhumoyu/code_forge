@@ -448,14 +448,12 @@ fn rewrite_agg_value_uses(
 fn move_to_front(func: &mut Function, block: Block, pos: usize, insts: &[Inst]) {
     let mut moved: Vec<Inst> = Vec::with_capacity(insts.len());
     for _ in 0..insts.len() {
-        let order = &mut func.dfg.blocks[block.0 as usize].inst_order;
+        let order = &mut func.dfg.block_mut(block).inst_order;
         moved.push(order.pop().unwrap());
     }
     moved.reverse();
     for (k, &ni) in moved.iter().enumerate() {
-        func.dfg.blocks[block.0 as usize]
-            .inst_order
-            .insert(pos + k, ni);
+        func.dfg.block_mut(block).inst_order.insert(pos + k, ni);
     }
 }
 
@@ -502,7 +500,7 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
     func.signature = func.types.borrow_mut().register_signature(new_sig);
     // entry 块参数重建 + 重写映射（旧参数值 → 新值列表）
     let entry = func.entry(); // fail-closed：缺失入口即编程错误（不再假定 Block(0)）
-    let old_bvals = func.dfg.blocks[entry.0 as usize].param_values.clone();
+    let old_bvals = func.dfg.block(entry).param_values.clone();
     let mut rewrite: HashMap<Value, Vec<Value>> = HashMap::new();
     let mut new_bparams: Vec<TypeId> = Vec::new();
     let mut new_bvals: Vec<Value> = Vec::new();
@@ -524,7 +522,7 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
             agg_info.push((old_v, vals, *t));
         }
     }
-    let bd = &mut func.dfg.blocks[entry.0 as usize];
+    let bd = func.dfg.block_mut(entry);
     bd.params = smallvec::SmallVec::from_iter(new_bparams);
     bd.param_values = smallvec::SmallVec::from_iter(new_bvals);
     // 使用处重写（聚合参数——rewrite 内部即时移动辅助指令）
@@ -894,12 +892,13 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
         // 新指令移到 call 前
         let mut moved: Vec<Inst> = Vec::with_capacity(new_insts.len());
         for _ in 0..new_insts.len() {
-            let order = &mut func.dfg.blocks[job.block.0 as usize].inst_order;
+            let order = &mut func.dfg.block_mut(job.block).inst_order;
             moved.push(order.pop().unwrap());
         }
         moved.reverse();
         for (k, &ni) in moved.iter().enumerate() {
-            func.dfg.blocks[job.block.0 as usize]
+            func.dfg
+                .block_mut(job.block)
                 .inst_order
                 .insert(job.pos + k, ni);
         }
@@ -1180,12 +1179,13 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                 if !new_insts.is_empty() {
                     let mut moved: Vec<Inst> = Vec::with_capacity(new_insts.len());
                     for _ in 0..new_insts.len() {
-                        let order = &mut func.dfg.blocks[job.block.0 as usize].inst_order;
+                        let order = &mut func.dfg.block_mut(job.block).inst_order;
                         moved.push(order.pop().unwrap());
                     }
                     moved.reverse();
                     for (k, &ni) in moved.iter().enumerate() {
-                        func.dfg.blocks[job.block.0 as usize]
+                        func.dfg
+                            .block_mut(job.block)
                             .inst_order
                             .insert(job.pos + k, ni);
                     }
@@ -1292,12 +1292,13 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
         // 新指令移到使用指令位置前
         let mut moved: Vec<Inst> = Vec::with_capacity(new_insts.len());
         for _ in 0..new_insts.len() {
-            let order = &mut func.dfg.blocks[job.block.0 as usize].inst_order;
+            let order = &mut func.dfg.block_mut(job.block).inst_order;
             moved.push(order.pop().unwrap());
         }
         moved.reverse();
         for (k, &ni) in moved.iter().enumerate() {
-            func.dfg.blocks[job.block.0 as usize]
+            func.dfg
+                .block_mut(job.block)
                 .inst_order
                 .insert(job.pos + k, ni);
         }
@@ -1499,12 +1500,12 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
         // 新指令（块尾）移到 GEP 位置前（逆序处理 jobs：尾即本 GEP 的新指令）
         let mut new_insts: Vec<Inst> = Vec::with_capacity(new_count);
         for _ in 0..new_count {
-            let order = &mut func.dfg.blocks[b.0 as usize].inst_order;
+            let order = &mut func.dfg.block_mut(b).inst_order;
             new_insts.push(order.pop().unwrap());
         }
         new_insts.reverse();
         for (k, &ni) in new_insts.iter().enumerate() {
-            func.dfg.blocks[b.0 as usize].inst_order.insert(pos + k, ni);
+            func.dfg.block_mut(b).inst_order.insert(pos + k, ni);
         }
     }
     Ok(())
@@ -1568,7 +1569,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
     }
     // 逆序替换：inst_order.insert(pos) 移动后续下标——从后往前插入不受影响。
     for (b, pos, op_idx, bytes, is_store) in jobs.into_iter().rev() {
-        let store_ii = func.dfg.blocks[b.0 as usize].inst_order[pos];
+        let store_ii = func.dfg.block(b).inst_order[pos];
         // Store：分段展开（operands[1]=addr）；Call 参数：单打包值替换 operand
         let addr = if is_store {
             let inst = &func.dfg.inst_data(store_ii);
@@ -1679,12 +1680,12 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
         // 新指令（块尾）移到 Store 位置前（逆序处理 jobs：尾即本 Store 的新指令）
         let mut moved: Vec<Inst> = Vec::with_capacity(new_insts.len());
         for _ in 0..new_insts.len() {
-            let order = &mut func.dfg.blocks[b.0 as usize].inst_order;
+            let order = &mut func.dfg.block_mut(b).inst_order;
             moved.push(order.pop().unwrap());
         }
         moved.reverse();
         for (k, &ni) in moved.iter().enumerate() {
-            func.dfg.blocks[b.0 as usize].inst_order.insert(pos + k, ni);
+            func.dfg.block_mut(b).inst_order.insert(pos + k, ni);
         }
     }
     Ok(())

@@ -49,11 +49,11 @@ pub fn eliminate_dead_stores(func: &mut Function) -> Result<PassResult, IrError>
     // 待删除的冗余 store（循环后统一 kill，避免借用冲突）
     let mut to_kill: Vec<Inst> = Vec::new();
 
-    let block_count = func.dfg.blocks.len();
+    let block_count = func.dfg.block_count();
     for bi in 0..block_count {
         // 位置 → 最近 store 指令
         let mut last_store: HashMap<MemoryLocation, Inst> = HashMap::new();
-        let inst_ids = func.dfg.blocks[bi].inst_order.clone();
+        let inst_ids = func.dfg.block(Block(bi as u32)).inst_order.clone();
 
         for inst_id in inst_ids {
             let inst = &func.dfg.inst_data(inst_id);

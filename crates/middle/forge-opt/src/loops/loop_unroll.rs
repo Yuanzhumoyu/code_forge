@@ -69,7 +69,7 @@ pub fn unroll_loops(
             let body_size: usize = li
                 .blocks
                 .iter()
-                .map(|&b| func.dfg.blocks[b.0 as usize].inst_order.len())
+                .map(|&b| func.dfg.block(b).inst_order.len())
                 .sum();
             body_size <= max_body_size
         })
@@ -219,7 +219,7 @@ fn clone_body_chain(
 
     let mut templates: Vec<BlockTemplate> = Vec::new();
     for &block in body_blocks {
-        let orig = &func.dfg.blocks[block.0 as usize];
+        let orig = &func.dfg.block(block);
         let param_tys: Vec<TypeId> = orig.params.iter().copied().collect();
         let param_values: Vec<Value> = orig.param_values.iter().copied().collect();
 
@@ -390,7 +390,7 @@ fn redirect_branch_target(func: &mut Function, block: Block, old_target: Block, 
 /// 返回估算的 trip count，若不确定则返回 0。
 fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
     let header = loop_info.header;
-    let header_block = &func.dfg.blocks[header.0 as usize];
+    let header_block = &func.dfg.block(header);
     let preds = func.predecessors();
 
     // Need at least 2 predecessors: one init (outside loop), one back edge

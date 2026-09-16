@@ -57,7 +57,7 @@ builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 | --- | --- | --- | --- |
 | `values` | **已私有**（`pub(crate)`） | `value_data`（fail-closed）/ `value_data_opt`（容忍坏 IR）/ `value_def` / `value_type` / `values()` / `value_count` | `set_value_type`（pass 精化类型）；创建/墓碑化仍在 `dfg.rs` 内 |
 | `insts` | **已私有**（`pub(crate)`） | `inst_data`（fail-closed）/ `inst_data_opt`（容忍坏 IR）/ `inst_opcode` / `inst_operands` / `inst_results` / `inst_block` / `insts()` / `inst_count` | `inst_mut` / `inst_mut_opt`（`(dfg, Inst)` 就地编辑口）；结构性增删只有 `make_inst*` / `remove_inst` |
-| `blocks` | 待收口 | `block`/`blocks()`/`block_params`/`block_param_values`/`block_inst_iter`/… | 待定 |
+| `blocks` | **已私有**（`pub(crate)`） | `block`（fail-closed）/ `block_opt`（容忍坏 IR）/ `block_data_iter` / `blocks()` / `block_count` / `block_params` / `block_param_values` / `block_terminator` / `block_inst_iter` | `block_mut`（就地编辑口）；结构性增删只有 `make_block*` / `remove_block` |
 
 `*_data` 与 `BlockData::terminator` 同一契约：句柄不合法（越界/来自别的 DFG）
 即 panic——坏 IR 只有校验器/display 这类容忍方能用 `*_opt` 读口。
@@ -69,12 +69,20 @@ builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 `Function::refresh_inst_uses` 重登记"（后者是本口的既有用法，
 `tests/dfg_privatization.rs::inst_mut_operand_edit_needs_refresh` 钉住）。
 
+`block_mut` 的**契约**：`inst_order` 是**块内指令顺序的唯一事实源**，只在
+"指令插入/搬移"的实现里改（`make_inst*` 追加、`move_insts_to` 重排）；改
+`params`/`param_values` 必须与 `Function::{add_block_param, remove_block_param}`
+口径一致（后者同步值表与 use-lists）；`terminator` 字段已私有，写终结符走
+`Function::{jump, branch, ret, …}`。
+
 迁移面实测：`values` 31 处索引 + 7 处 `get(..)`（其中 3 处写）；`insts`
 216 处索引 + 8 处裸 `dfg.insts[..]` + 11 处 `get(..)` + 3 处 `get_mut(..)` +
-1 处 `iter()` + 25 处 `&mut …`，共 39 个文件。守卫
-`tests/dfg_privatization.rs` 断言 `src/` 里 `dfg.values`/`dfg.insts` **字段**访问
-为 0（迭代访问器 `values()`/`insts()` 与 `insts_iter_mut()` 不算；已用负向探针
-验证会失败）。
+1 处 `iter()` + 25 处 `&mut …`，共 39 个文件；`blocks` 75 处索引 + 1 处裸
+`dfg.blocks[..]` + 40 处 `len()` + 23 处 `iter()` + 8 处 `&mut …` + 1 处
+`get(..)`（另含 `benches/` 1 处）。守卫 `tests/dfg_privatization.rs` 断言
+`src/` 里 `dfg.values`/`dfg.insts`/`dfg.blocks` **字段**访问为 0（迭代访问器
+`values()`/`insts()`/`blocks()`/`block_data_iter()` 与 `insts_iter_mut()` 不算；
+已用负向探针验证会失败）。
 
 ## metadata 单写
 
@@ -173,5 +181,7 @@ IR 公开面字符串统一 `ImmStr`，2026-09-15）；
 **S5 第四切片已落地**（`dfg` 私有化第一步：`values` arena 收口 + `set_value_type`
 受限写入口，2026-09-15）；
 **S5 第五切片已落地**（`dfg` 私有化第二步：`insts` arena 收口 +
-`inst_mut`/`inst_mut_opt` 就地编辑口，2026-09-15）。
+`inst_mut`/`inst_mut_opt` 就地编辑口，2026-09-15）；
+**S5 第六切片已落地**（`dfg` 私有化第三步收尾：`blocks` arena 收口 +
+`block_mut`/`block_data_iter`，**三个 arena 全部私有**，2026-09-15）。
 余项见该文档 §6 的 S2/S5 记录。

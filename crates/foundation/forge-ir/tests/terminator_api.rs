@@ -159,7 +159,7 @@ fn terminator_is_an_inst_outside_inst_order() {
     let term = func.dfg.block_terminator(b0).expect("终结符指令");
     assert_eq!(func.dfg.inst_data(term).opcode, Opcode::Jmp);
     assert!(
-        !func.dfg.blocks[b0.0 as usize].inst_order.contains(&term),
+        !func.dfg.block(b0).inst_order.contains(&term),
         "终结符不进 inst_order（块内指令列表只含非终结符指令）"
     );
     // 终结符用值就是它的操作数：use-def 里可见、可按普通指令 RAUW

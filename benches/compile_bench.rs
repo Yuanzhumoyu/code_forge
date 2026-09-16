@@ -276,7 +276,7 @@ fn build_big_loop() -> Function {
 
 /// Count IR instructions in a function.
 fn count_ir_insts(func: &Function) -> usize {
-    func.dfg.blocks.iter().map(|b| b.inst_order.len()).sum()
+    func.dfg.block_data_iter().map(|b| b.inst_order.len()).sum()
 }
 
 // ============================================================

@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **`dfg` 私有化第三步：`blocks` arena 收口——三个 arena 至此全部私有（forge-ir v3 S5 第 6 项）**：`DataFlowGraph.blocks` 由 `pub` 降为 `pub(crate)`——读走 `block`（fail-closed：句柄不合法即 panic，与 `value_data`/`inst_data` 同契约）/ `block_opt`（容忍坏 IR）/ 新增 `block_data_iter`（无句柄迭代）/ 既有 `block_count`/`block_params`/`block_param_values`/`block_terminator`/`block_inst_iter`；写走 `block_mut`（就地编辑口），结构性增删仍只有 `make_block*`/`remove_block`。
+  **契约**：`inst_order` 是块内指令顺序的唯一事实源（只在"插入/搬移"实现里改）；`params`/`param_values` 的改动须与 `Function::{add_block_param, remove_block_param}` 口径一致；写终结符走 `Function::{jump, branch, ret, …}`。新增 `block_data_iter` 的理由：原代码大量用 `blocks.iter().enumerate()` 取块序下标，而 `blocks()` 产出 `(Block, &BlockData)` 元组——无句柄迭代口让 23 处成为纯文本替换、语义零变化。
+  迁移面实测：75 处 `dfg.blocks[..]` + 1 处裸 `dfg.blocks[..]` + 40 处 `len()` + 23 处 `iter()` + 8 处 `&mut …` + 1 处 `get(..)` + 2 处 `is_empty()` + 1 处整体借用，另含 `benches/compile_bench.rs`（首次把 benches 纳入迁移面）。顺带修 8 处 `&mut …inst_order` 前缀被吞、6 处多行 `.dfg\n.blocks\n.iter()` 链、2 处经读口 `inst_order.clear()`。守卫 `tests/dfg_privatization.rs` 扩到 13 例（block/block_opt/block_data_iter/blocks()/block_count 口径一致、越界 fail-closed、block_mut 就地编辑），源码断言扩成 `dfg.values`+`dfg.insts`+`dfg.blocks` 三字段（负向探针验证会失败）。
+
+### Changed (2026-09-15)
+
 - **`dfg` 私有化第二步：`insts` arena 收口 + `inst_mut` 就地编辑口（forge-ir v3 S5 第 5 项）**：`DataFlowGraph.insts` 由 `pub` 降为 `pub(crate)`——读走 `inst_data`（fail-closed：句柄不合法即 panic，与 `value_data`/`BlockData::terminator` 同契约）/ `inst_data_opt`（容忍坏 IR）/ 既有 `inst_opcode`/`inst_operands`/`inst_results`/`inst_block`/`insts()`/`inst_count`；写走 `inst_mut` / `inst_mut_opt`（`(dfg, Inst)` 寻址的就地编辑口），结构性增删仍只有 `make_inst*`/`remove_inst`。
   **契约**：安全字段是 `opcode`/`immediates`/`flags`/`mem_flags`/`param_attrs`/`fn_attrs`/`metadata`/`loc`/`isel_strategy`；`operands`/`results` 不在此列——改操作数走 `replace_all_uses`/`apply_replacements`，或"就地改写 + `refresh_inst_uses` 重登记"。另加 crate 内 `insts_iter_mut()`（`Function::apply_replacements` 用），使 `dfg.insts` 字段语法在 `src/` 里归零。
   迁移面实测 39 个文件：216 处索引 + 8 处裸 `dfg.insts[..]` + 11 处 `get(..)` + 3 处 `get_mut(..)` + 1 处 `iter()` + 25 处 `&mut …`；顺带修 8 处"经读口做写操作"（`set_isel_strategy`/`attach_metadata`/`flags |=`/`results.push`）、约 20 处 `&Inst` 接收者、4 处整数/`usize` 索引、6 处 `iter()`→`insts()` 的闭包解构、4 处多行 `.dfg\n.insts` 链。守卫 `tests/dfg_privatization.rs` 扩到 10 例（含"`inst_mut` 改操作数后必须 `refresh_inst_uses`，use 计数与 verifier 双重校验"），源码断言扩成 `dfg.values`+`dfg.insts` 双字段（负向探针验证会失败）。`blocks` arena 的收口是后续切片。

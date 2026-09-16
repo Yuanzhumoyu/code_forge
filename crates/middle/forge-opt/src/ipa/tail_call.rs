@@ -34,7 +34,7 @@ pub fn optimize_tail_calls(
     function_table: &HashMap<FuncRef, Function>,
 ) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let block_count = func.dfg.blocks.len();
+    let block_count = func.dfg.block_count();
 
     for bi in 0..block_count {
         // Check if block ends with Return（投影读取，不依赖 Terminator 表示）
@@ -48,7 +48,7 @@ pub fn optimize_tail_calls(
 
         // Find last non-Nop Call instruction
         let call_info = {
-            let block = &func.dfg.blocks[bi];
+            let block = &func.dfg.block(Block(bi as u32));
             let mut found = None;
             for &inst_id in block.inst_order.iter().rev() {
                 let inst = &func.dfg.inst_data(inst_id);
@@ -102,7 +102,7 @@ pub fn optimize_tail_calls(
         };
         // 先决条件：实参数必须与入口块参数**数量一致**（fail-closed：不一致就跳过，
         // 不产出非法 IR）。
-        let entry_param_count = func.dfg.blocks[entry.0 as usize].params.len();
+        let entry_param_count = func.dfg.block(entry).params.len();
         if call_operands.len() != entry_param_count {
             continue;
         }
@@ -171,8 +171,7 @@ mod tests {
         // 目标必须是**本函数**入口块，且实参数与入口块参数一致
         let recurse_block = rec_func
             .dfg
-            .blocks
-            .iter()
+            .block_data_iter()
             .enumerate()
             .position(|(i, _)| {
                 rec_func
@@ -187,7 +186,7 @@ mod tests {
             .expect("预期 Jump");
         assert_eq!(
             args.len(),
-            rec_func.dfg.blocks[entry_block.0 as usize].params.len(),
+            rec_func.dfg.block(entry_block).params.len(),
             "实参数必须与入口块参数数量一致"
         );
         // 严格校验：改写后 IR 必须仍然合法

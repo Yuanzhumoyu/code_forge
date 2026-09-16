@@ -27,7 +27,7 @@ impl OptimizationPass for PrePass {
 
 pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let n_blocks = func.dfg.blocks.len();
+    let n_blocks = func.dfg.block_count();
     if n_blocks <= 1 {
         return Ok(result);
     }
@@ -158,7 +158,7 @@ fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey
     let mut expr_to_id = HashMap::new();
     let mut id_to_expr = Vec::new();
     let mut next = 0;
-    for block in func.dfg.blocks.iter() {
+    for block in func.dfg.block_data_iter() {
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             if is_cse_candidate(&inst.opcode)
@@ -190,8 +190,8 @@ fn compute_gen_kill(
 ) {
     let mut gen_map = HashMap::new();
     let mut kill_map = HashMap::new();
-    for bi in 0..func.dfg.blocks.len() {
-        let block = &func.dfg.blocks[bi];
+    for bi in 0..func.dfg.block_count() {
+        let block = &func.dfg.block(Block(bi as u32));
         let mut gen_set = HashSet::new();
         let mut kill = HashSet::new();
         for &inst_id in &block.inst_order {
@@ -238,7 +238,7 @@ fn compute_avail(
     gen_map: &HashMap<Block, HashSet<ExprId>>,
     kill_map: &HashMap<Block, HashSet<ExprId>>,
 ) -> HashMap<Block, HashSet<ExprId>> {
-    let n = func.dfg.blocks.len();
+    let n = func.dfg.block_count();
     let mut avail_out: HashMap<Block, HashSet<ExprId>> = HashMap::new();
     for bi in 0..n {
         avail_out.insert(Block(bi as u32), HashSet::new());
@@ -306,7 +306,7 @@ fn compute_ant(
     func: &Function,
     gen_map: &HashMap<Block, HashSet<ExprId>>,
 ) -> HashMap<Block, HashSet<ExprId>> {
-    let n = func.dfg.blocks.len();
+    let n = func.dfg.block_count();
     let mut ant_in = HashMap::with_capacity(n);
     for bi in 0..n {
         ant_in.insert(Block(bi as u32), HashSet::new());
@@ -314,7 +314,7 @@ fn compute_ant(
     let mut changed = true;
     while changed {
         changed = false;
-        for bi in 0..func.dfg.blocks.len() {
+        for bi in 0..func.dfg.block_count() {
             let b = Block(bi as u32);
             // 后继按投影读（与旧 match 语义逐条等价：Invoke/Resume 仍为空）
             let succs: Vec<Block> =

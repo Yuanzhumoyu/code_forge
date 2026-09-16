@@ -55,9 +55,9 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
     // Phase 1: 收集 StackAddr 候选
     let mut slots: Vec<SlotInfo> = Vec::new();
 
-    for bi in 0..func.dfg.blocks.len() {
+    for bi in 0..func.dfg.block_count() {
         let _block = Block(bi as u32);
-        let block_data = &func.dfg.blocks[bi];
+        let block_data = &func.dfg.block(Block(bi as u32));
         for &inst_id in &block_data.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             if inst.opcode != Opcode::StackAddr {
@@ -210,8 +210,8 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                 if !promoted {
                     let mut load_forward: Vec<(Inst, Value)> = Vec::new();
 
-                    for bi in 0..func.dfg.blocks.len() {
-                        let block_data = &func.dfg.blocks[bi];
+                    for bi in 0..func.dfg.block_count() {
+                        let block_data = &func.dfg.block(Block(bi as u32));
                         let mut reaching: Option<Value> = None;
 
                         for &inst_id in &block_data.inst_order {

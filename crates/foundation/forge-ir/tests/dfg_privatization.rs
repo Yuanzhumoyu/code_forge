@@ -27,9 +27,22 @@
 //! 必须 `Function::refresh_inst_uses`（改操作数的推荐路径仍是
 //! `replace_all_uses`/`apply_replacements`）；本文件把这条契约钉住。
 //!
-//! 两条源码断言（`dfg.values` / `dfg.insts` 字段零访问）覆盖边界：`dfg.rs`
+//! ## 切片 3：`blocks`（已私有）
+//!
+//! - 读：`block`（fail-closed）/ `block_opt`（容忍坏 IR）/ `block_data_iter` /
+//!   `blocks()` / `block_count` / `block_params` / `block_param_values` /
+//!   `block_terminator` / `block_inst_iter`；
+//! - 写：`block_mut`（就地编辑口）——`inst_order` 是块内指令顺序的唯一事实源，
+//!   只在"插入/搬移"实现里改；`params`/`param_values` 的改动必须与
+//!   `Function::{add_block_param, remove_block_param}` 口径一致；结构性增删只有
+//!   `make_block*` / `remove_block`。
+//!
+//! 迁移面实测：75 处 `dfg.blocks[..]` + 1 处裸 `dfg.blocks[..]` + 40 处 `len()` +
+//! 23 处 `iter()` + 8 处 `&mut …` + 1 处 `get(..)`，另含 `benches/` 1 处。
+//!
+//! 三条源码断言（`dfg.values` / `dfg.insts` / `dfg.blocks` 字段零访问）覆盖边界：`dfg.rs`
 //! 自身实现、`self.values`（别的结构体字段）、`dfg.values()`/`dfg.insts()`
-//! 迭代访问器、注释行均不算。`blocks` arena 的收口是后续切片。
+//! 迭代访问器、注释行均不算。三个 arena 至此全部收口。
 
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::types::{FunctionSignature, TypeContext};
@@ -128,7 +141,7 @@ fn no_direct_values_arena_access_in_src() {
                     // display 的另一个结构体字段）也不在其列。
                     let rest = t;
                     let mut offending = false;
-                    for field in ["dfg.values", "dfg.insts"] {
+                    for field in ["dfg.values", "dfg.insts", "dfg.blocks"] {
                         let mut r = rest;
                         while let Some(pos) = r.find(field) {
                             let after = &r[pos + field.len()..];
@@ -154,7 +167,8 @@ fn no_direct_values_arena_access_in_src() {
         hits.is_empty(),
         "arena 只能经受限 API 访问（values: value_data/value_data_opt/value_def/\
          value_type/values()/set_value_type；insts: inst_data/inst_data_opt/\
-         inst_opcode/inst_operands/inst_results/insts()/inst_mut/inst_mut_opt）：\n{}",
+         inst_opcode/inst_operands/inst_results/insts()/inst_mut/inst_mut_opt；\
+         blocks: block/block_opt/block_data_iter/block_count/block_mut）：\n{}",
         hits.iter()
             .map(|(f, l, t)| format!("{f}:{l}: {t}"))
             .collect::<Vec<_>>()
@@ -289,4 +303,53 @@ fn refined_value_type_stays_verifiable() {
     let outcome = verifier.verify(&func);
     assert!(outcome.is_ok(), "精化值类型后 IR 仍应通过校验：{outcome:?}");
     let _ = ImmStr::from("unused-import-guard");
+}
+
+/// 块 arena 读口：`block` fail-closed、`block_opt` 容忍坏 IR、迭代口同源。
+#[test]
+fn block_accessors_are_fail_closed_and_agree() {
+    let (func, _a, _sum) = fixture();
+    let entry = func.entry_block.expect("entry");
+    assert!(
+        !func.dfg.block(entry).inst_order.is_empty(),
+        "入口块应有指令"
+    );
+
+    assert_eq!(
+        func.dfg.block_data_iter().count(),
+        func.dfg.block_count(),
+        "无句柄迭代口与计数同源"
+    );
+    assert_eq!(func.dfg.blocks().count(), func.dfg.block_count());
+
+    let bogus = forge_ir::Block(func.dfg.block_count() as u32 + 5);
+    assert!(func.dfg.block_opt(bogus).is_none());
+}
+
+/// `block` 越界 panic（fail-closed 契约）。
+#[test]
+#[should_panic(expected = "块句柄不合法")]
+fn block_panics_on_invalid_handle() {
+    let (func, _a, _sum) = fixture();
+    let bogus = forge_ir::Block(func.dfg.block_count() as u32 + 5);
+    let _ = func.dfg.block(bogus);
+}
+
+/// 块写口：`block_mut` 就地编辑（块名/顺序表），越界 panic。
+#[test]
+fn block_mut_is_the_only_edit_entry() {
+    let (mut func, _a, _sum) = fixture();
+    let entry = func.entry_block.expect("entry");
+    let before = func.dfg.block(entry).inst_order.len();
+    assert!(before > 0);
+
+    // 就地清空块内顺序表（结构性口径由 make_inst*/remove_block 维护；此处只验证写口可用）
+    func.dfg.block_mut(entry).inst_order.clear();
+    assert_eq!(func.dfg.block(entry).inst_order.len(), 0);
+
+    let bogus = forge_ir::Block(func.dfg.block_count() as u32 + 5);
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        func.dfg.block_mut(bogus);
+    }));
+    assert!(panicked.is_err(), "越界句柄必须 fail-closed");
 }

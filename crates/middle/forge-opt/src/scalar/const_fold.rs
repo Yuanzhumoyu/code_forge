@@ -998,8 +998,8 @@ fn fold_bitcast(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstVa
 fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
     let mut uses: HashMap<Value, Vec<(usize, usize)>> = HashMap::new();
 
-    for bi in 0..func.dfg.blocks.len() {
-        let block = &func.dfg.blocks[bi];
+    for bi in 0..func.dfg.block_count() {
+        let block = &func.dfg.block(Block(bi as u32));
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             for operand in &inst.operands {
@@ -1063,7 +1063,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
     let mut known: HashMap<Value, ConstValue> = HashMap::new();
     let mut worklist: Vec<Value> = Vec::new();
 
-    for block in func.dfg.blocks.iter() {
+    for block in func.dfg.block_data_iter() {
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             let Some(v) = inst.results.first().copied() else {
@@ -1212,7 +1212,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
 fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> bool {
     let mut changed = false;
 
-    for bi in 0..func.dfg.blocks.len() {
+    for bi in 0..func.dfg.block_count() {
         let block_id = Block(bi as u32);
         // 先算出去向与实参（借用结束），再经 Function 的按形式写入口写入以同步 use-lists
         let folded = if let Some((cond, then_block, then_args, else_block, else_args)) =
@@ -1263,7 +1263,7 @@ mod tests {
 
     /// Find an instruction by its result Value and read its constant value.
     fn get_iconst_value_for(func: &Function, value: Value) -> Option<i64> {
-        for block in func.dfg.blocks.iter() {
+        for block in func.dfg.block_data_iter() {
             for &inst_id in &block.inst_order {
                 let inst = &func.dfg.inst_data(inst_id);
                 if inst.results.first().copied() == Some(value) {
@@ -1391,7 +1391,7 @@ mod tests {
         assert!(r.blocks_removed >= 1, "Dead block should be eliminated");
 
         // The else block should be unreachable now
-        let else_block = &func.dfg.blocks[else_blk.0 as usize];
+        let else_block = &func.dfg.block(else_blk);
         assert!(
             else_block.inst_order.is_empty() || func.dfg.term_is_unreachable(else_blk),
             "Else block should be cleared (dead)"

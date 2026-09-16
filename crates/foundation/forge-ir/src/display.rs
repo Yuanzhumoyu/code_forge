@@ -572,7 +572,7 @@ struct BlockDisplay<'a> {
 impl<'a> fmt::Display for BlockDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let dfg = &self.func.dfg;
-        if dfg.blocks.get(self.block.0 as usize).is_none() {
+        if dfg.block_opt(self.block).is_none() {
             return write!(f, "  block {} {{ /* removed */ }}", self.block);
         }
 

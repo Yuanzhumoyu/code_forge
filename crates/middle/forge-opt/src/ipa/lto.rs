@@ -111,9 +111,9 @@ impl OptimizationPass for LtoPass {
 
         let mut call_sites: Vec<CallSite> = Vec::new();
         for (_fr, func) in module.iter_func_refs() {
-            for bi in 0..func.dfg.blocks.len() {
+            for bi in 0..func.dfg.block_count() {
                 let block_id = Block(bi as u32);
-                let block_data = &func.dfg.blocks[bi];
+                let block_data = &func.dfg.block(Block(bi as u32));
                 for &inst_id in &block_data.inst_order {
                     let inst = &func.dfg.inst_data(inst_id);
                     if inst.opcode != Opcode::Call {
@@ -144,8 +144,7 @@ impl OptimizationPass for LtoPass {
             // Skip large functions
             let callee_size: usize = callee_func
                 .dfg
-                .blocks
-                .iter()
+                .block_data_iter()
                 .map(|b| b.inst_order.len())
                 .sum();
             if callee_size > self.threshold {
@@ -192,7 +191,7 @@ fn lto_inline_callee(
     let mut val_remap: HashMap<Value, Value> = HashMap::new();
 
     // Map callee params to call arguments
-    for callee_block in callee.dfg.blocks.iter() {
+    for callee_block in callee.dfg.block_data_iter() {
         for (pv, arg) in callee_block.param_values.iter().zip(call_args.iter()) {
             val_remap.insert(*pv, *arg);
         }
@@ -200,8 +199,8 @@ fn lto_inline_callee(
 
     // Clone instructions from callee into caller
     let mut ret_vals: Vec<Value> = Vec::new();
-    for bi in 0..callee.dfg.blocks.len() {
-        let callee_block = &callee.dfg.blocks[bi];
+    for bi in 0..callee.dfg.block_count() {
+        let callee_block = &callee.dfg.block(Block(bi as u32));
 
         for &inst_id in &callee_block.inst_order {
             let inst = &callee.dfg.inst_data(inst_id);

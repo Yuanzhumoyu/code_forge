@@ -45,7 +45,7 @@ impl OptimizationPass for JumpThreadPass {
 /// 对函数执行跳转线程优化。
 pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let block_count = func.dfg.blocks.len();
+    let block_count = func.dfg.block_count();
     let entry = func.entry();
 
     loop {
@@ -61,7 +61,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                 if let Some((target, args)) = func.dfg.term_jump(block_id) {
                     if args.is_empty() {
                         // Check if target block is an empty block with only Jump
-                        let target_block = &func.dfg.blocks[target.0 as usize];
+                        let target_block = &func.dfg.block(target);
                         if target_block.inst_order.is_empty()
                             && target_block.params.is_empty()
                             && func.dfg.term_kind(target) == Some(TermKind::Jump)
@@ -100,7 +100,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                 Block,
                 smallvec::SmallVec<[Value; 2]>,
             ) = {
-                let block = &func.dfg.blocks[bi];
+                let block = &func.dfg.block(Block(bi as u32));
                 if block.inst_order.is_empty() && block.params.is_empty() {
                     if let Some((target, args)) = func.dfg.term_jump(block_id) {
                         (true, target, args.iter().copied().collect())

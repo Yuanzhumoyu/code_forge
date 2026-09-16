@@ -72,7 +72,7 @@ impl OptimizationPass for PgoInstrumentPass {
 /// 在每个 block 起始处插入:  Load slot → Iadd 1 → Store slot
 fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    let block_count = func.dfg.blocks.len();
+    let block_count = func.dfg.block_count();
     if block_count == 0 {
         return Ok(result);
     }
@@ -195,7 +195,7 @@ impl OptimizationPass for PgoOptimizePass {
         let mut result = PassResult::default();
 
         // Compute block hotness
-        let mut hotness: Vec<(Block, u64)> = (0..func.dfg.blocks.len())
+        let mut hotness: Vec<(Block, u64)> = (0..func.dfg.block_count())
             .map(|i| (Block(i as u32), self.counters.block_heat(i as u32)))
             .collect();
 

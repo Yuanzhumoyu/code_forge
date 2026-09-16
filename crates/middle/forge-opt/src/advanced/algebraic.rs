@@ -58,7 +58,7 @@ impl ConstCache {
         let mut map = HashMap::new();
         let mut bnot_sources = HashMap::new();
 
-        for block in func.dfg.blocks.iter() {
+        for block in func.dfg.block_data_iter() {
             for &inst_id in &block.inst_order {
                 let inst = &func.dfg.inst_data(inst_id);
                 if let Some(v) = inst.results.first().copied() {
@@ -136,7 +136,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
         let cache = ConstCache::build(func);
         let mut replacements: Vec<(Block, usize, ReplaceAction)> = Vec::new();
 
-        for (bi, block) in func.dfg.blocks.iter().enumerate() {
+        for (bi, block) in func.dfg.block_data_iter().enumerate() {
             for (ii, &inst_id) in block.inst_order.iter().enumerate() {
                 let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Nop) {
@@ -161,7 +161,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
         total.changed = true;
         total.instructions_removed += replacements.len();
         for (bi, ii, action) in replacements {
-            let block = &func.dfg.blocks[bi.0 as usize];
+            let block = &func.dfg.block(bi);
             let inst_id = block.inst_order[ii];
             // 先读值信息：`value_data` 是对整个 DFG 的方法借用，必须在取
             // `&mut insts[..]` 之前算完（字段级不相交借用只对直接字段路径成立）。

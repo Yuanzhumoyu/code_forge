@@ -39,7 +39,7 @@ enum LatticeValue {
 
 pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
-    if func.dfg.blocks.is_empty() {
+    if func.dfg.block_count() == 0 {
         return Ok(result);
     }
 
@@ -55,7 +55,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     }
 
     // Init Iconst/Fconst
-    for block in func.dfg.blocks.iter() {
+    for block in func.dfg.block_data_iter() {
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             if let Some(v) = inst.results.first().copied() {
@@ -84,7 +84,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     // Worklist propagation
     while let Some(block_id) = worklist.pop() {
         in_queue.remove(&block_id);
-        let block = &func.dfg.blocks[block_id.0 as usize];
+        let block = &func.dfg.block(block_id);
         let inst_ids = &block.inst_order;
 
         for inst_id in inst_ids {
@@ -147,14 +147,14 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     }
 
     // Replace constants and fold branch conditions
-    let block_count = func.dfg.blocks.len();
+    let block_count = func.dfg.block_count();
     for bi in 0..block_count {
         let block_id = Block(bi as u32);
         if !reachable.contains(&block_id) {
             continue;
         }
 
-        let inst_ids = &func.dfg.blocks[bi].inst_order;
+        let inst_ids = &func.dfg.block(Block(bi as u32)).inst_order;
         // 收集常量改写（避免借用冲突），循环后统一应用并同步 use-lists
         let mut rewrites: Vec<(Inst, Opcode, crate::entity::ConstId)> = Vec::new();
         for inst_id in inst_ids {
@@ -205,10 +205,10 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     }
 
     // Clear unreachable blocks
-    for bi in 0..func.dfg.blocks.len() {
+    for bi in 0..func.dfg.block_count() {
         let block_id = Block(bi as u32);
         if !reachable.contains(&block_id) {
-            func.dfg.blocks[bi].inst_order.clear();
+            func.dfg.block_mut(Block(bi as u32)).inst_order.clear();
             func.unreachable(block_id);
             result.blocks_removed += 1;
             result.changed = true;
@@ -253,8 +253,8 @@ fn lattice_eq(a: Option<&LatticeValue>, b: &LatticeValue) -> bool {
 
 fn collect_all_uses(func: &Function) -> HashMap<Value, HashSet<Block>> {
     let mut uses: HashMap<Value, HashSet<Block>> = HashMap::new();
-    for bi in 0..func.dfg.blocks.len() {
-        let block = &func.dfg.blocks[bi];
+    for bi in 0..func.dfg.block_count() {
+        let block = &func.dfg.block(Block(bi as u32));
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             for operand in &inst.operands {
@@ -289,7 +289,9 @@ mod tests {
         assert!(r.instructions_removed > 0);
 
         // Verify Iadd was replaced with Iconst
-        let has_iadd = func.dfg.blocks[0]
+        let has_iadd = func
+            .dfg
+            .block(Block(0))
             .inst_order
             .iter()
             .any(|&iid| matches!(func.dfg.inst_data(iid).opcode, Opcode::Iadd));

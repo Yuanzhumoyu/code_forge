@@ -99,7 +99,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
-| S5 | 附件强类型化与可见性 | **五切片已落地**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化第一、二步（`values`、`insts` 两个 arena 已 `pub(crate)`，各带受限读写口）（均见 §6 末）；余项：`blocks` arena 收口 |
+| S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
@@ -915,6 +915,42 @@ fmt/clippy `-D warnings` 干净。
 
 **验证**：workspace 1426 passed / 0 failed / 19 ignored（60 个测试二进制 +
 13 组 doc-test，较 S5 第 4 项 +4）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。
+
+### S5（第 6 项）：`dfg` 私有化第三步——`blocks` arena 收口（2026-09-15）
+
+三个 arena 的最后一片，收完后 `DataFlowGraph.{values,insts,blocks}` **全部私有**
+——S0 诊断的第一条欠账（"use-def 可被绕过"）在表示层关闭。
+
+- **私有化**：`pub(crate) blocks`；读口 `block`（fail-closed，与
+  `value_data`/`inst_data` 同契约）/ `block_opt`（容忍坏 IR）/ 新增
+  `block_data_iter`（无句柄迭代，`blocks()` 的无句柄版）/ 既有 `block_count`/
+  `block_params`/`block_param_values`/`block_terminator`/`block_inst_iter`。
+- **写口**：`block_mut`（就地编辑口）。**契约**：`inst_order` 是块内指令顺序的
+  唯一事实源，只在"插入/搬移"实现里改；`params`/`param_values` 的改动必须与
+  `Function::{add_block_param, remove_block_param}` 口径一致；`terminator` 字段
+  已私有（S4-c），写终结符走 `Function::{jump, branch, ret, …}`；结构性增删只有
+  `make_block*`/`remove_block`（`dfg.rs` 内）。
+- **为什么加 `block_data_iter`**：原代码大量使用
+  `dfg.blocks.iter().enumerate()` 拿块序下标，而既有的 `blocks()` 迭代器产出
+  `(Block, &BlockData)` 元组——直接替换会迫使 23 处闭包改解构、还可能改变
+  "下标 vs 句柄"的语义。加一个无句柄迭代口让这 23 处成为**纯文本替换**，
+  语义零变化。
+- **迁移面（实测）**：75 处 `dfg.blocks[..]` + 1 处裸 `dfg.blocks[..]` + 40 处
+  `len()` + 23 处 `iter()` + 8 处 `&mut …` + 1 处 `get(..)` + 2 处 `is_empty()` +
+  1 处 `&dfg.blocks` 整体借用（`func_specialize` 改 `block_count`），另含
+  `benches/compile_bench.rs` 1 处（本步第一次把 `benches/` 也纳入迁移面）。
+- **修错**：8 处 `let order = &mut …inst_order` 的 `&mut` 前缀被脚本吞掉
+  （`let order = &mut func.dfg.block_mut(b).inst_order`）；6 处多行
+  `.dfg\n.blocks\n.iter()` 链；`forge-opt` 2 处 `inst_order.clear()` 经读口
+  改（改为 `block_mut`）。
+- **守卫**：`tests/dfg_privatization.rs` 扩到 13 例——新增 `block`/`block_opt`/
+  `block_data_iter`/`blocks()`/`block_count` 口径一致、`block` 越界 panic、
+  `block_mut` 就地编辑与越界 fail-closed；源码断言扩成
+  `dfg.values`+`dfg.insts`+`dfg.blocks` 三字段（负向探针实测 FAILED）。
+
+**验证**：workspace 1429 passed / 0 failed / 19 ignored（60 个测试二进制 +
+13 组 doc-test，较 S5 第 5 项 +3）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）

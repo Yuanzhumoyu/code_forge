@@ -100,14 +100,14 @@ fn unterminated_block_is_explicit_state() {
     // 1. 显式未终止
     assert!(func.dfg.block_terminator(b).is_none());
     assert!(!func.dfg.block_has_terminator(b));
-    assert!(func.dfg.blocks[b.0 as usize].terminator_opt().is_none());
+    assert!(func.dfg.block(b).terminator_opt().is_none());
     // 2. CFG 构造容忍未终止块（无出边），不 panic
     assert!(func.successors().get(b).is_none_or(|s| s.is_empty()));
     assert!(func.predecessors().get(b).is_none_or(|p| p.is_empty()));
     assert!(func.dominator_tree().idom(b).is_some());
     // 3. fail-closed：假设已终止的读取口 panic（catch_unwind 验证"响亮失败"）
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        func.dfg.blocks[b.0 as usize].terminator()
+        func.dfg.block(b).terminator()
     }))
     .is_err();
     assert!(panicked, "未终止块经 terminator() 读取必须 panic");

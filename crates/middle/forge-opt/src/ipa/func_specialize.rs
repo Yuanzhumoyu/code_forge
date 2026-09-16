@@ -50,8 +50,8 @@ pub fn specialize_calls(
     // Collect all Call instructions
     #[allow(clippy::type_complexity)]
     let mut calls: Vec<(usize, Inst, FuncRef, Vec<(usize, Value)>)> = Vec::new();
-    for bi in 0..func.dfg.blocks.len() {
-        let block_data = &func.dfg.blocks[bi];
+    for bi in 0..func.dfg.block_count() {
+        let block_data = &func.dfg.block(Block(bi as u32));
         for &inst_id in &block_data.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             if inst.opcode != Opcode::Call {
@@ -89,8 +89,8 @@ pub fn specialize_calls(
         };
 
         // Only specialize single-block functions for now
-        let callee_body = &callee_func.dfg.blocks;
-        if callee_body.len() != 1 && callee_body.is_empty() {
+        let callee_blocks = callee_func.dfg.block_count();
+        if callee_blocks != 1 && callee_blocks == 0 {
             continue;
         }
 
@@ -141,7 +141,7 @@ fn clone_callee_into_caller(
     let mut val_remap: HashMap<Value, Value> = HashMap::new();
 
     // Map callee params to call arguments
-    for callee_block in callee.dfg.blocks.iter() {
+    for callee_block in callee.dfg.block_data_iter() {
         for (pv, arg) in callee_block.param_values.iter().zip(call_args.iter()) {
             val_remap.insert(*pv, *arg);
         }
@@ -149,8 +149,8 @@ fn clone_callee_into_caller(
 
     // Clone instructions from callee into caller
     let mut ret_vals: Vec<Value> = Vec::new();
-    for bi in 0..callee.dfg.blocks.len() {
-        let callee_block = &callee.dfg.blocks[bi];
+    for bi in 0..callee.dfg.block_count() {
+        let callee_block = &callee.dfg.block(Block(bi as u32));
 
         for &inst_id in &callee_block.inst_order {
             let inst = &callee.dfg.inst_data(inst_id);

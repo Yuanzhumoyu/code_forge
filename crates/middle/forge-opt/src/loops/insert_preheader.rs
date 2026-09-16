@@ -83,7 +83,7 @@ pub fn insert_preheaders(func: &mut Function) -> Result<PassResult, IrError> {
 
     for (header, outside) in to_fix {
         // ph 参数 = header 参数（pred 传给 ph 的 args 与 header 参数同型）
-        let param_tys: Vec<TypeId> = func.dfg.blocks[header.0 as usize].params.to_vec();
+        let param_tys: Vec<TypeId> = func.dfg.block(header).params.to_vec();
         let (ph, ph_params) = func.dfg.make_block_with_params(&param_tys);
         // 循环外 pred 的边改指 ph（retarget 保留原 args——现在成为 ph 的参数实参）。
         // 就地改写终结符必须走 Function 的写入口（自动重登记 use 项；
@@ -163,7 +163,7 @@ mod tests {
         // （原 left/right 也是 Jump——按 retarget 后它们的 target 不再是 header 来识别）
         let header = Block(3);
         let mut ph = None;
-        for bi in 0..func.dfg.blocks.len() {
+        for bi in 0..func.dfg.block_count() {
             if func
                 .dfg
                 .term_jump(Block(bi as u32))
@@ -239,7 +239,7 @@ mod tests {
 
         // 循环体不再含 load；全函数仅 1 条 load，且在 preheader 中
         let mut loads: Vec<Block> = Vec::new();
-        for (bi, blk) in func.dfg.blocks.iter().enumerate() {
+        for (bi, blk) in func.dfg.block_data_iter().enumerate() {
             for &inst_id in &blk.inst_order {
                 let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Load) {

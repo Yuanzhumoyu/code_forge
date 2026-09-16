@@ -490,8 +490,7 @@ mod pipeline_tests {
     /// Count `Opcode::Nop` tombstones left in a function.
     fn count_nops(func: &Function) -> usize {
         func.dfg
-            .blocks
-            .iter()
+            .block_data_iter()
             .flat_map(|blk| blk.inst_order.iter())
             .filter(|&&i| matches!(func.dfg.inst_data(i).opcode, Opcode::Nop))
             .count()

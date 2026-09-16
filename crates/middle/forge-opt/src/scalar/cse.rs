@@ -205,13 +205,13 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
     // P1-5：别名分析（load 消重的 kill 精度）
     let alias = AliasAnalysis::new();
 
-    let block_count = func.dfg.blocks.len();
+    let block_count = func.dfg.block_count();
     for bi in 0..block_count {
         // 每个块独立维护表达式表
         let mut expr_table: HashMap<ExprKey, Value> = HashMap::new();
 
         // 借用 inst_order（blocks 与 insts 为 dfg 不同字段，可拆分借用）
-        let inst_ids = &func.dfg.blocks[bi].inst_order;
+        let inst_ids = &func.dfg.block(Block(bi as u32)).inst_order;
 
         for inst_id in inst_ids {
             // 只读借用（CSE 不改指令；别名查询需要 &func，不可持 &mut）

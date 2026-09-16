@@ -171,7 +171,7 @@ mod semantics_tests {
         .expect("parse");
         assert_eq!(f.name.as_str(), "add");
         // inst_order 含 iadd；ret 是 terminator（不占 inst_order）
-        let insts: usize = f.dfg.blocks.iter().map(|b| b.inst_order.len()).sum();
+        let insts: usize = f.dfg.block_data_iter().map(|b| b.inst_order.len()).sum();
         assert_eq!(insts, 1, "iadd in inst_order");
         assert!(
             matches!(

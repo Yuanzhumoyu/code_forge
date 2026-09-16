@@ -50,7 +50,7 @@ pub fn propagate_copies(func: &mut Function) -> Result<PassResult, IrError> {
 
     // 2. 原子删除所有 Copy 指令（结果值已全部被替换，无活跃使用）
     let mut to_kill: Vec<Inst> = Vec::new();
-    for block in func.dfg.blocks.iter() {
+    for block in func.dfg.block_data_iter() {
         for &inst_id in &block.inst_order {
             if matches!(func.dfg.inst_data(inst_id).opcode, Opcode::Copy) {
                 to_kill.push(inst_id);
@@ -74,7 +74,7 @@ fn build_copy_map(func: &Function) -> HashMap<Value, Value> {
     let mut map: HashMap<Value, Value> = HashMap::new();
 
     // 收集直接 Copy 映射
-    for block in func.dfg.blocks.iter() {
+    for block in func.dfg.block_data_iter() {
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             if matches!(inst.opcode, Opcode::Copy)

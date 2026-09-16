@@ -143,7 +143,9 @@ fn parser_lands_metadata_on_all_carriers() {
     let entry = func.entry_block.expect("entry");
     assert_eq!(func.dfg.term_metadata(entry).len(), 1, "ret 终结符 !dbg");
 
-    let load = func.dfg.blocks[entry.0 as usize]
+    let load = func
+        .dfg
+        .block(entry)
         .inst_order
         .iter()
         .copied()

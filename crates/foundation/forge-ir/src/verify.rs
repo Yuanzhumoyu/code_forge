@@ -517,7 +517,7 @@ impl Verifier {
             return;
         }
         let entry = func.entry_block.unwrap();
-        if func.dfg.blocks.get(entry.0 as usize).is_none() {
+        if func.dfg.block_opt(entry).is_none() {
             self.errors.push(VerifyError::MissingEntry);
             return;
         }
@@ -1321,7 +1321,7 @@ impl Verifier {
             // 仅遍历本块的实际前驱，检查其终结符传给本块的参数
             if let Some(block_preds) = preds.get(block) {
                 for &pred in block_preds {
-                    if dfg.blocks.get(pred.0 as usize).is_none() {
+                    if dfg.block_opt(pred).is_none() {
                         continue;
                     }
                     // 前驱终结符指令（诊断点名它）+ 传给本块的实参（投影读取）
@@ -1499,7 +1499,7 @@ impl Verifier {
             // 用 succ 集合而不是逐变体 match：目标集合的语义在 `block_successors`
             // 里只有一处定义（S4-e 起 forge-opt 也走同一处）。
             for target in dfg.block_successors(block) {
-                if dfg.blocks.get(target.0 as usize).is_none() {
+                if dfg.block_opt(target).is_none() {
                     self.errors.push(VerifyError::InvalidTerminatorTarget {
                         inst: dfg
                             .block_terminator(block)
@@ -1597,7 +1597,7 @@ impl Verifier {
                     }
                 }
                 ValueDef::Param(block, param_idx) => {
-                    if (block.0 as usize) >= dfg.blocks.len() {
+                    if (block.0 as usize) >= dfg.block_count() {
                         self.errors.push(VerifyError::ValueDefMismatch {
                             value,
                             expected_def: format!("block {} param {}", block, param_idx),
@@ -1605,7 +1605,7 @@ impl Verifier {
                         });
                         continue;
                     }
-                    let block_data = &dfg.blocks[block.0 as usize];
+                    let block_data = &dfg.block(block);
                     if param_idx as usize >= block_data.params.len() {
                         self.errors.push(VerifyError::ValueDefMismatch {
                             value,
