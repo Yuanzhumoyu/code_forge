@@ -51,7 +51,7 @@ pub fn optimize_tail_calls(
             let block = &func.dfg.blocks[bi];
             let mut found = None;
             for &inst_id in block.inst_order.iter().rev() {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Nop) {
                     continue;
                 }

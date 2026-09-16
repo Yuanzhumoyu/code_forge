@@ -282,7 +282,7 @@ mod semantics_tests {
     }
 
     fn first_vconst_bytes(func: &crate::function::Function) -> Vec<u8> {
-        for inst in &func.dfg.insts {
+        for (_, inst) in func.dfg.insts() {
             if matches!(inst.opcode, crate::Opcode::Vconst)
                 && let Some(crate::Immediate::Const(cid)) = inst.immediates.first()
             {

@@ -1001,7 +1001,7 @@ fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
     for bi in 0..func.dfg.blocks.len() {
         let block = &func.dfg.blocks[bi];
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             for operand in &inst.operands {
                 uses.entry(*operand)
                     .or_default()
@@ -1065,7 +1065,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
 
     for block in func.dfg.blocks.iter() {
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             let Some(v) = inst.results.first().copied() else {
                 continue;
             };
@@ -1106,7 +1106,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
             Some(&id) => id,
             None => continue,
         };
-        let inst_info = &func.dfg.insts[def_inst_id.0 as usize];
+        let inst_info = &func.dfg.inst_data(def_inst_id);
 
         // 收集 operands 的常量值（SmallVec：多数指令 1-3 个操作数，避免堆分配）
         let const_operands: smallvec::SmallVec<[ConstValue; 4]> = inst_info
@@ -1155,10 +1155,10 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
             };
 
             // Update the instruction in-place（同步 use-lists：清掉旧 operands）
-            if !func.dfg.insts[def_inst_id.0 as usize].operands.is_empty() {
+            if !func.dfg.inst_data(def_inst_id).operands.is_empty() {
                 func.use_lists.remove_inst(&func.dfg, def_inst_id);
             }
-            let inst = &mut func.dfg.insts[def_inst_id.0 as usize];
+            let inst = func.dfg.inst_mut(def_inst_id);
             inst.opcode = new_opcode;
             inst.operands.clear();
             inst.immediates = smallvec::smallvec![Immediate::Const(new_const_id)];
@@ -1180,7 +1180,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
                         // （由 fold_branches 处理）
                         continue;
                     }
-                    let user_inst = &func.dfg.insts[ui];
+                    let user_inst = &func.dfg.inst_data(Inst(ui as u32));
                     if let Some(uv) = user_inst.results.first().copied()
                         && !known.contains_key(&uv)
                     {
@@ -1249,7 +1249,7 @@ mod tests {
 
     /// Helper: read i64 from an Iconst instruction's constant pool entry.
     fn get_iconst_i64(func: &Function, inst_id: Inst) -> Option<i64> {
-        let inst = &func.dfg.insts[inst_id.0 as usize];
+        let inst = &func.dfg.inst_data(inst_id);
         if matches!(inst.opcode, Opcode::Iconst) {
             inst.immediates
                 .first()
@@ -1265,7 +1265,7 @@ mod tests {
     fn get_iconst_value_for(func: &Function, value: Value) -> Option<i64> {
         for block in func.dfg.blocks.iter() {
             for &inst_id in &block.inst_order {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if inst.results.first().copied() == Some(value) {
                     return get_iconst_i64(func, inst_id);
                 }
@@ -1291,7 +1291,7 @@ mod tests {
         // %c 应为常量 2
         let def = func.dfg.value_def(Value(2)).cloned();
         if let Some(forge_ir::dfg::ValueDef::Inst(iid, _)) = def {
-            let inst = &func.dfg.insts[iid.0 as usize];
+            let inst = &func.dfg.inst_data(iid);
             assert!(
                 matches!(inst.opcode, Opcode::Iconst),
                 "折叠后应为 Iconst，got {:?}",

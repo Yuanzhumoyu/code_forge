@@ -157,7 +157,7 @@ fn terminator_is_an_inst_outside_inst_order() {
     func.jump(b0, b1, [v]);
 
     let term = func.dfg.block_terminator(b0).expect("终结符指令");
-    assert_eq!(func.dfg.insts[term.0 as usize].opcode, Opcode::Jmp);
+    assert_eq!(func.dfg.inst_data(term).opcode, Opcode::Jmp);
     assert!(
         !func.dfg.blocks[b0.0 as usize].inst_order.contains(&term),
         "终结符不进 inst_order（块内指令列表只含非终结符指令）"
@@ -165,14 +165,14 @@ fn terminator_is_an_inst_outside_inst_order() {
     // 终结符用值就是它的操作数：use-def 里可见、可按普通指令 RAUW
     assert_eq!(func.use_lists.use_count(v), 1);
     assert_eq!(func.use_lists.user_insts(v), vec![term]);
-    assert_eq!(func.dfg.insts[term.0 as usize].block, b0);
+    assert_eq!(func.dfg.inst_data(term).block, b0);
 
     // 重写终结符：旧指令被墓碑化、新指令接替（同一块只留一条终结符）
     func.ret(b0, [v]);
     let term2 = func.dfg.block_terminator(b0).expect("新终结符指令");
     assert_ne!(term, term2);
-    assert_eq!(func.dfg.insts[term.0 as usize].opcode, Opcode::Nop);
-    assert_eq!(func.dfg.insts[term2.0 as usize].opcode, Opcode::Ret);
+    assert_eq!(func.dfg.inst_data(term).opcode, Opcode::Nop);
+    assert_eq!(func.dfg.inst_data(term2).opcode, Opcode::Ret);
     assert_eq!(func.use_lists.use_count(v), 1, "旧指令的 use 项已摘除");
     assert!(func.use_lists.verify(&func.dfg).is_ok());
     // （不跑完整 Verifier：本夹具的另两个块未终止，会用块参数规则报多入口）

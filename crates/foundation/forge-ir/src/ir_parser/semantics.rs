@@ -2356,7 +2356,7 @@ fn build_inst<'a>(
                     },
                 );
                 if let Some(crate::ValueDef::Inst(ci, _)) = fb.func.dfg.value_def(v).copied() {
-                    let inst_data = &mut fb.func.dfg.insts[ci.0 as usize];
+                    let inst_data = fb.func.dfg.inst_mut(ci);
                     for f in &inst.flags {
                         if let Some(s) = f.strip_prefix("asm:") {
                             let sid = ctx.borrow_mut().strings.intern(s);
@@ -2431,7 +2431,7 @@ fn build_inst<'a>(
             if let Some(first) = vals.first().copied()
                 && let Some(crate::ValueDef::Inst(ci, _)) = fb.func.dfg.value_def(first).copied()
             {
-                let inst_data = &mut fb.func.dfg.insts[ci.0 as usize];
+                let inst_data = fb.func.dfg.inst_mut(ci);
                 inst_data.flags |= call_flags;
                 if let Some(cc) = cc_imm {
                     inst_data.immediates.push(cc);
@@ -2524,7 +2524,9 @@ fn build_inst<'a>(
                     .last()
                     .copied()
                 {
-                    fb.func.dfg.insts[last.0 as usize]
+                    fb.func
+                        .dfg
+                        .inst_mut(last)
                         .immediates
                         .push(Immediate::Uint(inst.align));
                 }
@@ -2546,7 +2548,7 @@ fn build_inst<'a>(
             if inst.flags.iter().any(|f| f == "inalloca")
                 && let Some(crate::ValueDef::Inst(i, _)) = fb.func.dfg.value_def(v).copied()
             {
-                fb.func.dfg.insts[i.0 as usize].flags |= crate::InstFlags::INALLOCA;
+                fb.func.dfg.inst_mut(i).flags |= crate::InstFlags::INALLOCA;
             }
             if inst.align > 0 {
                 check_align_value(inst.align)?;
@@ -2579,7 +2581,7 @@ fn build_inst<'a>(
                 }
             }
             if let Some(crate::ValueDef::Inst(inst, _)) = fb.func.dfg.value_def(v).copied()
-                && let Some(id) = fb.func.dfg.insts.get_mut(inst.0 as usize)
+                && let Some(id) = fb.func.dfg.inst_mut_opt(inst)
             {
                 id.immediates.push(Immediate::Uint(as_val));
             }
@@ -2972,7 +2974,7 @@ fn check_align_value(align: u64) -> Result<(), IrError> {
 
 fn attach_align(fb: &mut FunctionBuilder, v: Value, align: u64) {
     if let Some(crate::ValueDef::Inst(inst, _)) = fb.func.dfg.value_def(v).copied()
-        && let Some(inst_data) = fb.func.dfg.insts.get_mut(inst.0 as usize)
+        && let Some(inst_data) = fb.func.dfg.inst_mut_opt(inst)
     {
         inst_data.immediates.push(Immediate::Uint(align));
     }
@@ -3154,10 +3156,13 @@ fn attach_inst_metadata<'a>(
                     return Err(IrError::Semantic(format!("unresolved named metadata !{n}")));
                 }
             };
-            fb.func.dfg.insts[ii.0 as usize].attach_metadata(crate::metadata::AttachedMetadata {
-                kind: metadata_kind_of(name)?,
-                node: id,
-            });
+            fb.func
+                .dfg
+                .inst_mut(ii)
+                .attach_metadata(crate::metadata::AttachedMetadata {
+                    kind: metadata_kind_of(name)?,
+                    node: id,
+                });
         }
     }
     Ok(())

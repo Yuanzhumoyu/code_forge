@@ -179,7 +179,7 @@ fn gvn_dfs(
     for inst_id in &inst_ids {
         // P1-5：只读快照（kill 分支做别名查询时不得持有 dfg.insts 的 &mut）
         let (snap_opcode, snap_result) = {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(*inst_id);
             (inst.opcode, inst.results.first().copied())
         };
         let inst_result = match snap_result {
@@ -198,7 +198,7 @@ fn gvn_dfs(
                     snap_opcode,
                     Opcode::Store | Opcode::Fstore | Opcode::AtomicRmw | Opcode::Cmpxchg
                 ) {
-                    let wloc = alias.location_of_access(func, &func.dfg.insts[inst_id.0 as usize]);
+                    let wloc = alias.location_of_access(func, func.dfg.inst_data(*inst_id));
                     for scope in scopes.iter_mut() {
                         scope.retain(|key, _| !super::cse::killed_by_write(key, wloc, alias, func));
                     }
@@ -209,7 +209,7 @@ fn gvn_dfs(
 
         // 先读类型：`value_data` 借用整个 DFG，需在取 `&mut insts[..]` 之前算完
         let ty = func.dfg.value_data(inst_result).ty;
-        let inst = &mut func.dfg.insts[inst_id.0 as usize];
+        let inst = func.dfg.inst_mut(*inst_id);
 
         // Handle Iconst / Fconst: record in constant map
         match &inst.opcode {

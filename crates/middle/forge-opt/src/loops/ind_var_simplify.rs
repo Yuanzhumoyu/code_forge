@@ -96,7 +96,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
             // Check if back_edge_arg is "param + constant"
             let be_def = func.dfg.value_def(be_arg).copied();
             if let Some(ValueDef::Inst(inst, _)) = be_def {
-                let inst_data = &func.dfg.insts[inst.0 as usize];
+                let inst_data = &func.dfg.inst_data(inst);
                 if inst_data.opcode == Opcode::Iadd {
                     let operands = &inst_data.operands;
                     let other = if operands.first().copied() == Some(param_val) {
@@ -111,7 +111,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
                     if let Some(other_val) = other {
                         let other_def = func.dfg.value_def(other_val).copied();
                         if let Some(ValueDef::Inst(iconst_inst, _)) = other_def {
-                            let iconst_data = &func.dfg.insts[iconst_inst.0 as usize];
+                            let iconst_data = &func.dfg.inst_data(iconst_inst);
                             if iconst_data.opcode == Opcode::Iconst
                                 && let Some(cid) =
                                     iconst_data.immediates.iter().find_map(|i| i.as_const())
@@ -147,7 +147,7 @@ fn resolve_iconst_value(func: &Function, v: Value) -> Option<i64> {
     let def = func.dfg.value_def(v).copied()?;
     match def {
         ValueDef::Inst(inst, _) => {
-            let inst_data = &func.dfg.insts[inst.0 as usize];
+            let inst_data = &func.dfg.inst_data(inst);
             if inst_data.opcode == Opcode::Iconst {
                 let cid = inst_data.immediates.iter().find_map(|i| i.as_const())?;
                 func.constants.resolve_int(cid)
@@ -185,7 +185,7 @@ fn strength_reduce_ind_vars(
             let inst_ids: Vec<Inst> = bd.inst_order.clone();
 
             for &inst_id in &inst_ids {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if inst.results.is_empty() {
                     continue;
                 }

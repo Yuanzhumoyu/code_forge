@@ -99,7 +99,7 @@ pub fn inline_calls(
         {
             let block_data = &func.dfg.blocks[bi];
             for (pos, &inst_id) in block_data.inst_order.iter().enumerate() {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if !matches!(inst.opcode, Opcode::Call) {
                     continue;
                 }
@@ -160,7 +160,7 @@ pub fn inline_calls(
             let mut new_inst_count = 0usize;
 
             for &callee_inst_id in &callee_entry_insts {
-                let ci = &callee.dfg.insts[callee_inst_id.0 as usize];
+                let ci = &callee.dfg.inst_data(callee_inst_id);
 
                 // Skip terminators and Nops in callee body
                 if ci.opcode == Opcode::Nop {
@@ -210,7 +210,9 @@ pub fn inline_calls(
                     ci.loc.clone(),
                 );
                 if let Some(strategy) = ci.isel_strategy() {
-                    func.dfg.insts[new_inst.0 as usize].set_isel_strategy(strategy.clone());
+                    func.dfg
+                        .inst_mut(new_inst)
+                        .set_isel_strategy(strategy.clone());
                 }
 
                 // Map old callee results → new caller values
@@ -327,7 +329,7 @@ pub fn evaluate_inline_cost(
 
     // 检查自递归
     for &inst_id in &block.inst_order {
-        let inst = &func.dfg.insts[inst_id.0 as usize];
+        let inst = &func.dfg.inst_data(inst_id);
         if matches!(inst.opcode, Opcode::Call)
             && let Some(inner_ref) = inst.immediates.iter().find_map(|i| i.as_func())
             && inner_ref == callee
@@ -431,7 +433,7 @@ mod tests {
         let has_call = caller.dfg.blocks[0]
             .inst_order
             .iter()
-            .any(|&iid| matches!(caller.dfg.insts[iid.0 as usize].opcode, Opcode::Call));
+            .any(|&iid| matches!(caller.dfg.inst_data(iid).opcode, Opcode::Call));
         assert!(!has_call, "Call should be inlined");
     }
 

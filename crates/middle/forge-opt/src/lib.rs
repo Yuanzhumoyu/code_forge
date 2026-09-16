@@ -493,7 +493,7 @@ mod pipeline_tests {
             .blocks
             .iter()
             .flat_map(|blk| blk.inst_order.iter())
-            .filter(|&&i| matches!(func.dfg.insts[i.0 as usize].opcode, Opcode::Nop))
+            .filter(|&&i| matches!(func.dfg.inst_data(i).opcode, Opcode::Nop))
             .count()
     }
 

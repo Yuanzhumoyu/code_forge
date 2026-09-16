@@ -943,12 +943,12 @@ impl Verifier {
                 self.errors.push(VerifyError::UndefinedValue {
                     value: *v,
                     user: inst,
-                    block: func.dfg.insts[inst.0 as usize].block,
+                    block: func.dfg.inst_data(inst).block,
                 });
                 return;
             };
             let idx_const = match vd.def {
-                crate::ValueDef::Inst(ii, 0) => func.dfg.insts.get(ii.0 as usize).and_then(|di| {
+                crate::ValueDef::Inst(ii, 0) => func.dfg.inst_data_opt(ii).and_then(|di| {
                     di.immediates.first().and_then(|i| match i {
                         Immediate::Int(x) => Some(*x),
                         Immediate::Uint(x) => Some(*x as i64),
@@ -1564,7 +1564,7 @@ impl Verifier {
         for (value, vd) in dfg.values() {
             match vd.def {
                 ValueDef::Inst(inst, result_idx) => {
-                    if (inst.0 as usize) >= dfg.insts.len() {
+                    if (inst.0 as usize) >= dfg.inst_count() {
                         self.errors.push(VerifyError::ValueDefMismatch {
                             value,
                             expected_def: format!("inst {} result {}", inst, result_idx),
@@ -1572,7 +1572,7 @@ impl Verifier {
                         });
                         continue;
                     }
-                    let inst_data = &dfg.insts[inst.0 as usize];
+                    let inst_data = &dfg.inst_data(inst);
                     if matches!(inst_data.opcode, Opcode::Nop) && inst_data.results.is_empty() {
                         if func.use_lists.use_count(value) > 0 {
                             self.errors.push(VerifyError::ValueDefMismatch {
@@ -1661,8 +1661,7 @@ impl Verifier {
                     Some(ValueDef::Inst(def_inst, _)) => {
                         // Look up the instruction's block
                         func.dfg
-                            .insts
-                            .get(def_inst.0 as usize)
+                            .inst_data_opt(*def_inst)
                             .map(|i| i.block)
                             .unwrap_or(user_block)
                     }
@@ -1701,8 +1700,7 @@ impl Verifier {
                     Some(ValueDef::UndefNamed(_)) => entry,
                     Some(ValueDef::Inst(def_inst, _)) => func
                         .dfg
-                        .insts
-                        .get(def_inst.0 as usize)
+                        .inst_data_opt(*def_inst)
                         .map(|i| i.block)
                         .unwrap_or(entry),
                     Some(ValueDef::Param(def_block, _)) => *def_block,
@@ -1731,7 +1729,7 @@ impl Verifier {
         for (block, block_data) in dfg.blocks() {
             let mut defined: HashSet<Value> = block_data.param_values.iter().copied().collect();
             for &inst_id in &block_data.inst_order {
-                let inst = match dfg.insts.get(inst_id.0 as usize) {
+                let inst = match dfg.inst_data_opt(inst_id) {
                     Some(i) => i,
                     None => continue,
                 };
@@ -1757,8 +1755,7 @@ impl Verifier {
                     // 跨块 use 由支配检查报告
                     if let Some(ValueDef::Inst(def_inst, _)) = dfg.value_def(op)
                         && dfg
-                            .insts
-                            .get(def_inst.0 as usize)
+                            .inst_data_opt(*def_inst)
                             .is_some_and(|d| d.block == block)
                     {
                         self.errors.push(VerifyError::InstOrderViolation {
@@ -2268,7 +2265,7 @@ mod tests {
                 .map(|p| Inst(p as u32))
                 .unwrap()
         };
-        fb.func.dfg.insts[store_id.0 as usize].results.push(v);
+        fb.func.dfg.inst_mut(store_id).results.push(v);
         let func = fb.finish().expect("build");
 
         let mut verifier = Verifier::with_ctx(ctx.clone());

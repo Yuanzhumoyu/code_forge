@@ -224,7 +224,15 @@ pub struct DataFlowGraph {
     /// 写：`set_value_type`（pass 精化值类型）——其余写入（创建、墓碑化）只在
     /// 本文件内。`insts`/`blocks` 两个 arena 的私有化是后续切片。
     pub(crate) values: Vec<ValueData>,
-    pub insts: Vec<Instruction>,
+    /// 指令 arena。**私有**（v3 方案 S5：`dfg` 私有化 + 受限编辑 API）。
+    ///
+    /// 读：`inst_data`（fail-closed）/ `inst_data_opt` / `inst_opcode` /
+    /// `inst_operands` / `inst_results` / `inst_block` / `insts()` / `inst_count`；
+    /// 写：`inst_mut` / `inst_mut_opt`（`(dfg, Inst)` 寻址的就地编辑口，改
+    /// `operands` 后必须 `Function::refresh_inst_uses`）；结构性增删走
+    /// `make_inst*` / `remove_inst`（在 `dfg.rs` 内）。`blocks` arena 的收口是
+    /// 后续切片。
+    pub(crate) insts: Vec<Instruction>,
     pub blocks: Vec<BlockData>,
 }
 
@@ -589,6 +597,56 @@ impl DataFlowGraph {
     pub fn inst_block(&self, i: Inst) -> Option<Block> {
         self.insts.get(i.0 as usize).map(|d| d.block)
     }
+
+    /// 指令的完整数据。**句柄不合法即 panic**（fail-closed，与
+    /// [`DataFlowGraph::value_data`] 同一契约）：越界句柄/墓碑句柄都是坏 IR。
+    /// 容忍坏 IR 的调用方（校验器/display）请用 [`DataFlowGraph::inst_data_opt`]。
+    pub fn inst_data(&self, i: Inst) -> &Instruction {
+        self.insts
+            .get(i.0 as usize)
+            .unwrap_or_else(|| panic!("指令句柄不合法（越界或来自别的 DFG）：{i:?}"))
+    }
+
+    /// 指令的完整数据；句柄不合法返回 `None`（见 [`DataFlowGraph::inst_data`]）。
+    pub fn inst_data_opt(&self, i: Inst) -> Option<&Instruction> {
+        self.insts.get(i.0 as usize)
+    }
+
+    /// 指令的可变编辑口 —— **指令 arena 的唯一外部可变入口**（v3 S5）。
+    ///
+    /// # 契约（改错字段会破坏不变量）
+    ///
+    /// - 安全字段：`opcode`/`immediates`/`flags`/`mem_flags`/`param_attrs`/
+    ///   `fn_attrs`/`metadata`/`loc`/`isel_strategy`/`block`（块归属变更是 S2 余项）。
+    /// - **`operands`/`results` 不在此列**：改操作数会绕过 use-lists，必须走
+    ///   [`crate::Function::replace_all_uses`]/`apply_replacements`，或"就地改写 +
+    ///   [`crate::Function::refresh_inst_uses`] 重登记"（后者是本口的既有用法）。
+    /// - 结构性增删（push/remove）不在此列：用 `make_inst*`/`remove_inst`。
+    ///
+    /// 句柄不合法即 panic（fail-closed）。
+    pub fn inst_mut(&mut self, i: Inst) -> &mut Instruction {
+        let idx = i.0 as usize;
+        if idx >= self.insts.len() {
+            panic!("指令句柄不合法（越界或来自别的 DFG）：{i:?}");
+        }
+        &mut self.insts[idx]
+    }
+
+    /// 指令的可变编辑口；句柄不合法返回 `None`（见 [`DataFlowGraph::inst_mut`]）。
+    pub fn inst_mut_opt(&mut self, i: Inst) -> Option<&mut Instruction> {
+        self.insts.get_mut(i.0 as usize)
+    }
+
+    /// crate 内批量就地编辑迭代（`(Inst, &mut Instruction)`，含墓碑槽位）。
+    ///
+    /// **仅供 crate 内实现用**（如 `Function::apply_replacements`）：与
+    /// [`DataFlowGraph::inst_mut`] 同一契约——改 `operands` 后必须同步 use-lists。
+    pub(crate) fn insts_iter_mut(&mut self) -> impl Iterator<Item = (Inst, &mut Instruction)> {
+        self.insts
+            .iter_mut()
+            .enumerate()
+            .map(|(k, inst)| (Inst(k as u32), inst))
+    }
     pub fn block_params(&self, b: Block) -> &[TypeId] {
         self.blocks
             .get(b.0 as usize)
@@ -952,7 +1010,7 @@ impl DataFlowGraph {
             fn next(&mut self) -> Option<Self::Item> {
                 self.iter
                     .next()
-                    .and_then(|&inst| self.dfg.insts.get(inst.0 as usize))
+                    .and_then(|&inst| self.dfg.inst_data_opt(inst))
             }
         }
         if (b.0 as usize) < self.blocks.len() {
@@ -1080,7 +1138,7 @@ mod tests {
         }
         assert_eq!(visited, 1, "墓碑指令应被跳过");
         assert_eq!(
-            dfg.insts[i2.0 as usize]
+            dfg.inst_data(i2)
                 .isel_strategy()
                 .map(crate::isel_strategy::IselStrategy::name),
             Some("tagged"),

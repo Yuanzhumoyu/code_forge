@@ -526,7 +526,7 @@ impl Function {
         if self.dfg.term_kind(block) != Some(TermKind::Return) {
             return;
         }
-        self.dfg.insts[inst.0 as usize].operands = values.as_ref().iter().copied().collect();
+        self.dfg.inst_mut(inst).operands = values.as_ref().iter().copied().collect();
         self.refresh_terminator_inst_uses(block);
     }
 
@@ -608,7 +608,7 @@ impl Function {
             return;
         };
         let kind = self.dfg.term_kind(block);
-        let imms = &mut self.dfg.insts[inst.0 as usize].immediates;
+        let imms = &mut self.dfg.inst_mut(inst).immediates;
         // case 表：immediates[3..] 每 3 个一组 (Int, Block, Uint)
         let case_count = match imms.get(2) {
             Some(Immediate::Uint(n)) => *n as usize,
@@ -741,7 +741,7 @@ impl Function {
             .collect();
         let count = uses.len();
         for (user, operand_idx) in uses {
-            if let Some(inst) = self.dfg.insts.get_mut(user.0 as usize)
+            if let Some(inst) = self.dfg.inst_mut_opt(user)
                 && let Some(slot) = inst.operands.get_mut(operand_idx as usize)
             {
                 *slot = new;
@@ -850,7 +850,7 @@ impl Function {
     /// 但那要求调用方记住顺序；本方法对顺序不敏感）。返回重登记的操作数个数。
     pub fn refresh_inst_uses(&mut self, inst: Inst) -> usize {
         self.use_lists.forget_inst(inst);
-        let operands = self.dfg.insts[inst.0 as usize].operands.clone();
+        let operands = self.dfg.inst_data(inst).operands.clone();
         self.use_lists.record_inst(inst, &operands);
         operands.len()
     }
@@ -964,11 +964,10 @@ impl Function {
         let mut count = 0;
         // 指令操作数（含终结符指令）+ use-lists 同步
         //（dfg 与 use_lists 为不相交字段，可同时可变借用）
-        for (idx, inst) in self.dfg.insts.iter_mut().enumerate() {
+        for (inst_id, inst) in self.dfg.insts_iter_mut() {
             if matches!(inst.opcode, Opcode::Nop) {
                 continue;
             }
-            let inst_id = Inst(idx as u32);
             for (operand_idx, operand) in inst.operands.iter_mut().enumerate() {
                 if let Some(&replacement) = replacements.get(operand) {
                     let old = *operand;
@@ -1495,11 +1494,11 @@ mod tests {
             panic!()
         };
         assert!(
-            fb.func.dfg.insts[y_inst.0 as usize].operands.contains(&c),
+            fb.func.dfg.inst_data(*y_inst).operands.contains(&c),
             "DFG 侧 operands 已更新为 c"
         );
         assert!(
-            !fb.func.dfg.insts[y_inst.0 as usize].operands.contains(&x),
+            !fb.func.dfg.inst_data(*y_inst).operands.contains(&x),
             "DFG 侧不再引用 x"
         );
 
@@ -1577,7 +1576,7 @@ mod tests {
             panic!()
         };
         {
-            let inst = &mut fb.func.dfg.insts[x_inst.0 as usize];
+            let inst = fb.func.dfg.inst_mut(x_inst);
             inst.flags = crate::inst_flags::InstFlags::MAY_UB;
             inst.set_isel_strategy(crate::IselStrategy::from_static("lea_sib:4"));
             inst.loc = Some(crate::debug_info::SourceLocation {
@@ -1590,8 +1589,8 @@ mod tests {
         let mut remap: HashMap<Value, Value> = HashMap::new();
         let new_inst = fb.func.dfg.clone_inst(x_inst, target, &mut remap);
 
-        let orig = &fb.func.dfg.insts[x_inst.0 as usize];
-        let cloned = &fb.func.dfg.insts[new_inst.0 as usize];
+        let orig = &fb.func.dfg.inst_data(x_inst);
+        let cloned = &fb.func.dfg.inst_data(new_inst);
         assert_eq!(cloned.opcode, orig.opcode, "opcode");
         assert_eq!(cloned.operands, orig.operands, "operands（无映射时保持）");
         assert_eq!(cloned.immediates, orig.immediates, "immediates");

@@ -92,7 +92,9 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             &[TypeId::PTR],
             InstFlags::default(),
         );
-        let slot_ptr = func.dfg.insts[stack_addr.0 as usize]
+        let slot_ptr = func
+            .dfg
+            .inst_data(stack_addr)
             .results
             .first()
             .copied()
@@ -107,7 +109,9 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             &[TypeId::I64],
             InstFlags::default(),
         );
-        let loaded_val = func.dfg.insts[loaded.0 as usize]
+        let loaded_val = func
+            .dfg
+            .inst_data(loaded)
             .results
             .first()
             .copied()
@@ -122,7 +126,9 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             &[TypeId::I64],
             InstFlags::default(),
         );
-        let one_val = func.dfg.insts[one_inst.0 as usize]
+        let one_val = func
+            .dfg
+            .inst_data(one_inst)
             .results
             .first()
             .copied()
@@ -137,7 +143,9 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             &[TypeId::I64],
             InstFlags::default(),
         );
-        let inc_val = func.dfg.insts[incremented.0 as usize]
+        let inc_val = func
+            .dfg
+            .inst_data(incremented)
             .results
             .first()
             .copied()

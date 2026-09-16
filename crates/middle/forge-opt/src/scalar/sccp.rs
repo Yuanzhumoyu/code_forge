@@ -57,7 +57,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     // Init Iconst/Fconst
     for block in func.dfg.blocks.iter() {
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if let Some(v) = inst.results.first().copied() {
                 let ty = func.dfg.value_data(v).ty;
                 match &inst.opcode {
@@ -88,7 +88,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         let inst_ids = &block.inst_order;
 
         for inst_id in inst_ids {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(*inst_id);
             if let Some(v) = inst.results.first().copied() {
                 let old = lattice.get(&v);
                 // Skip instructions that have already been constant-folded or
@@ -158,7 +158,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         // 收集常量改写（避免借用冲突），循环后统一应用并同步 use-lists
         let mut rewrites: Vec<(Inst, Opcode, crate::entity::ConstId)> = Vec::new();
         for inst_id in inst_ids {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(*inst_id);
             if let Some(v) = inst.results.first().copied()
                 && let Some(LatticeValue::Constant(cv)) = lattice.get(&v)
             {
@@ -178,7 +178,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         for (inst_id, new_op, cid) in rewrites {
             // 同步 use-lists：清掉旧 operands 的使用记录再清字段
             func.use_lists.remove_inst(&func.dfg, inst_id);
-            let inst = &mut func.dfg.insts[inst_id.0 as usize];
+            let inst = func.dfg.inst_mut(inst_id);
             inst.opcode = new_op;
             inst.operands.clear();
             inst.immediates = smallvec::smallvec![Immediate::Const(cid)];
@@ -256,7 +256,7 @@ fn collect_all_uses(func: &Function) -> HashMap<Value, HashSet<Block>> {
     for bi in 0..func.dfg.blocks.len() {
         let block = &func.dfg.blocks[bi];
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             for operand in &inst.operands {
                 uses.entry(*operand).or_default().insert(Block(bi as u32));
             }
@@ -292,7 +292,7 @@ mod tests {
         let has_iadd = func.dfg.blocks[0]
             .inst_order
             .iter()
-            .any(|&iid| matches!(func.dfg.insts[iid.0 as usize].opcode, Opcode::Iadd));
+            .any(|&iid| matches!(func.dfg.inst_data(iid).opcode, Opcode::Iadd));
         assert!(!has_iadd, "Iadd should have been replaced with Iconst");
     }
 

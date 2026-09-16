@@ -38,9 +38,10 @@ fn runtime_label_needs_no_static_leak() {
     let tag = IselStrategy::new(dynamic_name.clone());
     assert_eq!(tag.name(), dynamic_name, "名字原样保留（含目标侧参数）");
 
-    func.dfg.insts[iadd.0 as usize].set_isel_strategy(tag);
+    func.dfg.inst_mut(iadd).set_isel_strategy(tag);
     assert_eq!(
-        func.dfg.insts[iadd.0 as usize]
+        func.dfg
+            .inst_data(iadd)
             .isel_strategy()
             .map(IselStrategy::name),
         Some(dynamic_name.as_str()),
@@ -52,17 +53,23 @@ fn runtime_label_needs_no_static_leak() {
 #[test]
 fn label_survives_clone_inst() {
     let (mut func, _b0, iadd, _) = fixture("f");
-    func.dfg.insts[iadd.0 as usize].set_isel_strategy(IselStrategy::from_static("lea_sib:4"));
+    func.dfg
+        .inst_mut(iadd)
+        .set_isel_strategy(IselStrategy::from_static("lea_sib:4"));
 
     let target = func.dfg.make_block();
     let mut remap = std::collections::HashMap::new();
     let cloned = func.dfg.clone_inst(iadd, target, &mut remap);
 
-    let orig_tag = func.dfg.insts[iadd.0 as usize]
+    let orig_tag = func
+        .dfg
+        .inst_data(iadd)
         .isel_strategy()
         .expect("原指令有标签")
         .clone();
-    let cloned_tag = func.dfg.insts[cloned.0 as usize]
+    let cloned_tag = func
+        .dfg
+        .inst_data(cloned)
         .isel_strategy()
         .expect("克隆指令应保留标签");
     assert_eq!(cloned_tag, &orig_tag, "克隆后标签内容相同");
@@ -74,9 +81,9 @@ fn label_survives_clone_inst() {
     );
 
     // 摘除：返回被摘下的标签，之后读回 None（`None` 是"无标签"的唯一编码）
-    let taken = func.dfg.insts[cloned.0 as usize].clear_isel_strategy();
+    let taken = func.dfg.inst_mut(cloned).clear_isel_strategy();
     assert_eq!(taken.as_ref(), Some(&orig_tag));
-    assert!(func.dfg.insts[cloned.0 as usize].isel_strategy().is_none());
+    assert!(func.dfg.inst_data(cloned).isel_strategy().is_none());
 }
 
 /// 标签是**值**：可从被调方 DFG 读到、挂到调用方 DFG 的指令上
@@ -84,24 +91,26 @@ fn label_survives_clone_inst() {
 #[test]
 fn label_crosses_dfgs() {
     let (mut callee, _cb, callee_inst, _) = fixture("callee");
-    callee.dfg.insts[callee_inst.0 as usize]
+    callee
+        .dfg
+        .inst_mut(callee_inst)
         .set_isel_strategy(IselStrategy::from_static("lea-merge-iadd-imul-4"));
 
     let (mut caller, _pb, caller_inst, _) = fixture("caller");
-    assert!(
-        caller.dfg.insts[caller_inst.0 as usize]
-            .isel_strategy()
-            .is_none()
-    );
+    assert!(caller.dfg.inst_data(caller_inst).isel_strategy().is_none());
 
-    let moved = callee.dfg.insts[callee_inst.0 as usize]
+    let moved = callee
+        .dfg
+        .inst_data(callee_inst)
         .isel_strategy()
         .expect("被调方有标签")
         .clone();
-    caller.dfg.insts[caller_inst.0 as usize].set_isel_strategy(moved);
+    caller.dfg.inst_mut(caller_inst).set_isel_strategy(moved);
 
     assert_eq!(
-        caller.dfg.insts[caller_inst.0 as usize]
+        caller
+            .dfg
+            .inst_data(caller_inst)
             .isel_strategy()
             .map(IselStrategy::name),
         Some("lea-merge-iadd-imul-4"),
@@ -113,7 +122,7 @@ fn label_crosses_dfgs() {
 #[test]
 fn label_is_single_valued() {
     let (mut func, _b0, iadd, _) = fixture("f");
-    let inst = &mut func.dfg.insts[iadd.0 as usize];
+    let inst = func.dfg.inst_mut(iadd);
     assert!(inst.isel_strategy().is_none(), "默认无标签");
     inst.set_isel_strategy(IselStrategy::from_static("first"));
     inst.set_isel_strategy(IselStrategy::from_static("second"));

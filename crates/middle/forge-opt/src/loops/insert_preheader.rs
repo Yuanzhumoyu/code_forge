@@ -241,7 +241,7 @@ mod tests {
         let mut loads: Vec<Block> = Vec::new();
         for (bi, blk) in func.dfg.blocks.iter().enumerate() {
             for &inst_id in &blk.inst_order {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Load) {
                     loads.push(Block(bi as u32));
                 }

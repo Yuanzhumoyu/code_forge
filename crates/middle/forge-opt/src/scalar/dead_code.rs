@@ -80,7 +80,7 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
         // 无使用者的纯指令 → 延迟到循环后统一原子删除（kill_inst 同步 use-lists）
         let mut to_kill: Vec<Inst> = Vec::new();
         for inst_id in &inst_ids {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(*inst_id);
             // 跳过已经是 Nop 的指令
             if matches!(inst.opcode, Opcode::Nop) {
                 continue;
@@ -257,7 +257,7 @@ mod tests {
             panic!("c 应是指令定义")
         };
         assert!(
-            matches!(func.dfg.insts[c_inst.0 as usize].opcode, Opcode::Nop),
+            matches!(func.dfg.inst_data(*c_inst).opcode, Opcode::Nop),
             "c 指令应已墓碑化为 Nop"
         );
         assert_eq!(func.dfg.value_type(_c), Some(TypeId::VOID), "c 值应为 VOID");
@@ -282,7 +282,7 @@ mod tests {
 
         // Store should be preserved (has side effects)
         let store_id = func.dfg.blocks[0].inst_order[1];
-        let store_inst = &func.dfg.insts[store_id.0 as usize];
+        let store_inst = &func.dfg.inst_data(store_id);
         assert!(matches!(store_inst.opcode, Opcode::Store));
     }
 
@@ -348,9 +348,8 @@ mod tests {
         );
         let atomic_present = func
             .dfg
-            .insts
-            .iter()
-            .any(|i| matches!(i.opcode, Opcode::AtomicRmw));
+            .insts()
+            .any(|(_, i)| matches!(i.opcode, Opcode::AtomicRmw));
         assert!(atomic_present, "原子指令应保留");
     }
 }

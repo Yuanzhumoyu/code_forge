@@ -60,7 +60,7 @@ impl ConstCache {
 
         for block in func.dfg.blocks.iter() {
             for &inst_id in &block.inst_order {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if let Some(v) = inst.results.first().copied() {
                     match &inst.opcode {
                         Opcode::Iconst | Opcode::Fconst
@@ -138,7 +138,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
 
         for (bi, block) in func.dfg.blocks.iter().enumerate() {
             for (ii, &inst_id) in block.inst_order.iter().enumerate() {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Nop) {
                     continue;
                 }
@@ -175,7 +175,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
             {
                 // 同步 use-lists：清掉旧 operands 的使用记录
                 func.use_lists.remove_inst(&func.dfg, inst_id);
-                let inst = &mut func.dfg.insts[inst_id.0 as usize];
+                let inst = func.dfg.inst_mut(inst_id);
 
                 match action {
                     ReplaceAction::Copy { src } => {
@@ -201,7 +201,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
             }
             // 记录新 operands 的使用（Copy 的 src 成为活跃使用）
             func.use_lists
-                .record_inst(inst_id, &func.dfg.insts[inst_id.0 as usize].operands);
+                .record_inst(inst_id, &func.dfg.inst_data(inst_id).operands);
         }
     }
 

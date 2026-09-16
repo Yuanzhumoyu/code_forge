@@ -65,7 +65,7 @@ impl AliasAnalysis {
     fn compute_addr_loc(&self, func: &Function, addr: Value) -> MemoryLocation {
         match func.dfg.value_def(addr) {
             Some(ValueDef::Inst(i, _)) => {
-                let inst = &func.dfg.insts[i.0 as usize];
+                let inst = &func.dfg.inst_data(*i);
                 match &inst.opcode {
                     Opcode::StackAddr => inst
                         .immediates
@@ -216,7 +216,7 @@ mod tests {
         let aa = AliasAnalysis::new();
         let mut load_loc = None;
         let mut store_loc = None;
-        for inst in func.dfg.insts.iter() {
+        for (_, inst) in func.dfg.insts() {
             match inst.opcode {
                 Opcode::Load => load_loc = aa.location_of_access(&func, inst),
                 Opcode::Store => store_loc = aa.location_of_access(&func, inst),

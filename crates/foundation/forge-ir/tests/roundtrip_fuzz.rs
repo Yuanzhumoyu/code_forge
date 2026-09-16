@@ -608,8 +608,8 @@ fn assert_inst_eq(
 fn assert_block_eq(f1: &Function, b1: &BlockData, f2: &Function, b2: &BlockData, text: &str) {
     assert_eq!(b1.inst_order.len(), b2.inst_order.len(), "inst count blk");
     for (i1, i2) in b1.inst_order.iter().zip(b2.inst_order.iter()) {
-        let a = &f1.dfg.insts[i1.0 as usize];
-        let b = &f2.dfg.insts[i2.0 as usize];
+        let a = &f1.dfg.inst_data(*i1);
+        let b = &f2.dfg.inst_data(*i2);
         assert_inst_eq(f1, a, f2, b, text);
     }
     assert_eq!(

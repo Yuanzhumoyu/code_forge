@@ -91,7 +91,7 @@ fn memoryize_from_segs(
         &[TypeId::PTR],
         InstFlags::NONE,
     );
-    let slot = func.dfg.insts[alloca.0 as usize].results[0];
+    let slot = func.dfg.inst_data(alloca).results[0];
     // 2) 字段覆盖的段逐段 store（仿 Store 分支的 store + add ptr, 8 模式）
     let mut cur = slot;
     for (i, s) in segs.iter().skip(start).take(n_segs).enumerate() {
@@ -114,7 +114,7 @@ fn memoryize_from_segs(
                 &[TypeId::I64],
                 InstFlags::NONE,
             );
-            let cv = func.dfg.insts[ci.0 as usize].results[0];
+            let cv = func.dfg.inst_data(ci).results[0];
             let add = func.make_inst(
                 Opcode::Iadd,
                 use_pos.block,
@@ -123,19 +123,19 @@ fn memoryize_from_segs(
                 &[TypeId::PTR],
                 InstFlags::NONE,
             );
-            cur = func.dfg.insts[add.0 as usize].results[0];
+            cur = func.dfg.inst_data(add).results[0];
         }
     }
     // 3) 原指令 Nop + 登记（槽填充 store 只执行一次——后续提取命中映射）
     let __tomb = use_pos.inst;
     {
-        let inst = &mut func.dfg.insts[__tomb.0 as usize];
+        let inst = func.dfg.inst_mut(__tomb);
         inst.opcode = Opcode::Nop;
         inst.operands = smallvec::smallvec![];
         inst.immediates = smallvec::smallvec![];
     }
     func.refresh_inst_uses(__tomb);
-    agg_slots.insert(func.dfg.insts[__tomb.0 as usize].results[0], (slot, seg_ty));
+    agg_slots.insert(func.dfg.inst_data(__tomb).results[0], (slot, seg_ty));
     Ok(())
 }
 
@@ -159,7 +159,7 @@ fn memoryize_from_addr(
         &[TypeId::I64],
         InstFlags::NONE,
     );
-    let cv = func.dfg.insts[ci.0 as usize].results[0];
+    let cv = func.dfg.inst_data(ci).results[0];
     let add = func.make_inst(
         Opcode::Iadd,
         use_pos.block,
@@ -168,16 +168,16 @@ fn memoryize_from_addr(
         &[TypeId::PTR],
         InstFlags::NONE,
     );
-    let p = func.dfg.insts[add.0 as usize].results[0];
+    let p = func.dfg.inst_data(add).results[0];
     let __tomb = use_pos.inst;
     {
-        let inst = &mut func.dfg.insts[__tomb.0 as usize];
+        let inst = func.dfg.inst_mut(__tomb);
         inst.opcode = Opcode::Nop;
         inst.operands = smallvec::smallvec![];
         inst.immediates = smallvec::smallvec![];
     }
     func.refresh_inst_uses(__tomb);
-    agg_slots.insert(func.dfg.insts[__tomb.0 as usize].results[0], (p, seg_ty));
+    agg_slots.insert(func.dfg.inst_data(__tomb).results[0], (p, seg_ty));
     Ok(())
 }
 
@@ -193,7 +193,7 @@ fn rewrite_agg_value_uses(
     let mut uses: Vec<UsePos> = Vec::new();
     for (b, bd) in func.dfg.blocks() {
         for (pos, &ii) in bd.inst_order.iter().enumerate() {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if inst.operands.contains(&old_v) {
                 uses.push(UsePos {
                     block: b,
@@ -205,7 +205,7 @@ fn rewrite_agg_value_uses(
     }
     // 逆序处理（后面的使用先——插入不影响更前 pos）
     for use_pos in uses.into_iter().rev() {
-        let inst = &func.dfg.insts[use_pos.inst.0 as usize];
+        let inst = &func.dfg.inst_data(use_pos.inst);
         match inst.opcode {
             Opcode::ExtractValue => {
                 let idx = inst
@@ -228,7 +228,7 @@ fn rewrite_agg_value_uses(
                     })?;
                     if ts.is_aggregate(fty) {
                         drop(ts);
-                        let res = func.dfg.insts[use_pos.inst.0 as usize].results[0];
+                        let res = func.dfg.inst_data(use_pos.inst).results[0];
                         memoryize_from_addr(func, &use_pos, addr, foff, fty, agg_slots)?;
                         // 递归：登记的新值（内层聚合）的后续提取继续处理
                         return rewrite_agg_value_uses(func, res, &[], fty, agg_slots);
@@ -244,7 +244,7 @@ fn rewrite_agg_value_uses(
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let cv = func.dfg.insts[ci.0 as usize].results[0];
+                    let cv = func.dfg.inst_data(ci).results[0];
                     let add = func.make_inst(
                         Opcode::Iadd,
                         use_pos.block,
@@ -253,7 +253,7 @@ fn rewrite_agg_value_uses(
                         &[TypeId::PTR],
                         InstFlags::NONE,
                     );
-                    let p = func.dfg.insts[add.0 as usize].results[0];
+                    let p = func.dfg.inst_data(add).results[0];
                     let ld = func.make_inst(
                         Opcode::Load,
                         use_pos.block,
@@ -262,11 +262,11 @@ fn rewrite_agg_value_uses(
                         &[fty],
                         InstFlags::NONE,
                     );
-                    let lv = func.dfg.insts[ld.0 as usize].results[0];
+                    let lv = func.dfg.inst_data(ld).results[0];
                     // 结果 value 重定向：原指令改 Copy（值传播到 load 结果）
                     let __cp = use_pos.inst;
                     {
-                        let inst = &mut func.dfg.insts[__cp.0 as usize];
+                        let inst = func.dfg.inst_mut(__cp);
                         inst.opcode = Opcode::Copy;
                         inst.operands = smallvec::smallvec![lv];
                         inst.immediates = smallvec::smallvec![];
@@ -284,7 +284,7 @@ fn rewrite_agg_value_uses(
                 if ts.is_aggregate(seg_ty) {
                     // S1：嵌套聚合字段——内存化（槽 + 段 store + 登记）
                     drop(ts);
-                    let res = func.dfg.insts[use_pos.inst.0 as usize].results[0];
+                    let res = func.dfg.inst_data(use_pos.inst).results[0];
                     memoryize_from_segs(func, &use_pos, seg_ty, off, segs, agg_slots)?;
                     // 递归：登记的新值（内层聚合）的后续提取继续处理
                     return rewrite_agg_value_uses(func, res, &[], seg_ty, agg_slots);
@@ -309,7 +309,7 @@ fn rewrite_agg_value_uses(
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let cv = func.dfg.insts[ci.0 as usize].results[0];
+                    let cv = func.dfg.inst_data(ci).results[0];
                     local_gen.push(ci);
                     let sh = func.make_inst(
                         Opcode::Ushr,
@@ -319,7 +319,7 @@ fn rewrite_agg_value_uses(
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    final_v = func.dfg.insts[sh.0 as usize].results[0];
+                    final_v = func.dfg.inst_data(sh).results[0];
                     local_gen.push(sh);
                 }
                 // 浮点字段：bitcast（段值 i64 → 字段类型——movq_to_xmm 位模式
@@ -334,12 +334,12 @@ fn rewrite_agg_value_uses(
                         &[seg_ty],
                         InstFlags::NONE,
                     );
-                    target = func.dfg.insts[bc.0 as usize].results[0];
+                    target = func.dfg.inst_data(bc).results[0];
                     local_gen.push(bc);
                 }
                 let __cp = use_pos.inst;
                 {
-                    let inst = &mut func.dfg.insts[__cp.0 as usize];
+                    let inst = func.dfg.inst_mut(__cp);
                     inst.opcode = Opcode::Copy;
                     inst.operands = smallvec::smallvec![target];
                     inst.immediates = smallvec::smallvec![];
@@ -371,7 +371,7 @@ fn rewrite_agg_value_uses(
                             &[TypeId::I64],
                             InstFlags::NONE,
                         );
-                        let cv = func.dfg.insts[ci.0 as usize].results[0];
+                        let cv = func.dfg.inst_data(ci).results[0];
                         local_gen.push(ci);
                         let add = func.make_inst(
                             Opcode::Iadd,
@@ -381,14 +381,14 @@ fn rewrite_agg_value_uses(
                             &[TypeId::PTR],
                             InstFlags::NONE,
                         );
-                        prev_addr = func.dfg.insts[add.0 as usize].results[0];
+                        prev_addr = func.dfg.inst_data(add).results[0];
                         local_gen.push(add);
                     }
                 }
                 // 原 store 标 Nop
                 let __tomb = use_pos.inst;
                 {
-                    let inst = &mut func.dfg.insts[__tomb.0 as usize];
+                    let inst = func.dfg.inst_mut(__tomb);
                     inst.opcode = Opcode::Nop;
                     inst.operands = smallvec::smallvec![];
                     inst.immediates = smallvec::smallvec![];
@@ -402,12 +402,12 @@ fn rewrite_agg_value_uses(
                     .iter()
                     .position(|&v| v == old_v)
                     .ok_or_else(|| IrError::Unsupported("call 参数重写：未找到".into()))?;
-                let mut ops = func.dfg.insts[use_pos.inst.0 as usize].operands.clone();
+                let mut ops = func.dfg.inst_data(use_pos.inst).operands.clone();
                 ops.remove(op_idx);
                 for (k, s) in segs.iter().enumerate() {
                     ops.insert(op_idx + k, *s);
                 }
-                func.dfg.insts[use_pos.inst.0 as usize].operands = ops;
+                func.dfg.inst_mut(use_pos.inst).operands = ops;
                 // 就地改写操作数后必须重登记 use-lists（否则留下指向旧操作数的陈旧 use）
                 func.refresh_inst_uses(use_pos.inst);
             }
@@ -611,7 +611,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let cv = func.dfg.insts[ci.0 as usize].results[0];
+                    let cv = func.dfg.inst_data(ci).results[0];
                     gen_insts.push(ci);
                     segs.push(cv);
                     off += 8;
@@ -619,7 +619,9 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
             }
             ValueDef::Inst(li, 0) => {
                 // load 结果 → 段 load
-                let addr = func.dfg.insts[li.0 as usize]
+                let addr = func
+                    .dfg
+                    .inst_data(li)
                     .operands
                     .first()
                     .copied()
@@ -635,7 +637,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let ldv = func.dfg.insts[ld.0 as usize].results[0];
+                    let ldv = func.dfg.inst_data(ld).results[0];
                     gen_insts.push(ld);
                     segs.push(ldv);
                     off += 8;
@@ -649,7 +651,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                             &[TypeId::I64],
                             InstFlags::NONE,
                         );
-                        let cv = func.dfg.insts[ci.0 as usize].results[0];
+                        let cv = func.dfg.inst_data(ci).results[0];
                         gen_insts.push(ci);
                         let add = func.make_inst(
                             Opcode::Iadd,
@@ -659,7 +661,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                             &[TypeId::PTR],
                             InstFlags::NONE,
                         );
-                        prev_addr = func.dfg.insts[add.0 as usize].results[0];
+                        prev_addr = func.dfg.inst_data(add).results[0];
                         gen_insts.push(add);
                     }
                 }
@@ -708,7 +710,7 @@ fn expand_large_agg_call_results(
     let mut jobs: Vec<Job> = Vec::new();
     for (_b, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect)
                 && inst.results.len() == 1
                 && let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
@@ -737,7 +739,7 @@ fn expand_large_agg_call_results(
         let r1 = func
             .dfg
             .make_value(TypeId::I64, ValueDef::Inst(job.inst, 1));
-        let inst = &mut func.dfg.insts[job.inst.0 as usize];
+        let inst = func.dfg.inst_mut(job.inst);
         inst.results = smallvec::smallvec![r0, r1];
         // 旧结果使用处重写
         rewrite_agg_value_uses(func, job.old_r, &[r0, r1], job.ty, agg_slots)?;
@@ -765,7 +767,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
     let mut jobs: Vec<ArgJob> = Vec::new();
     for (b, bd) in func.dfg.blocks() {
         for (pos, &ii) in bd.inst_order.iter().enumerate() {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect) {
                 let skip = usize::from(inst.opcode == Opcode::CallIndirect);
                 for (op_idx, &v) in inst.operands.iter().enumerate().skip(skip) {
@@ -818,7 +820,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let cv = func.dfg.insts[iconst.0 as usize].results[0];
+                    let cv = func.dfg.inst_data(iconst).results[0];
                     new_insts.push(iconst);
                     segs.push(cv);
                     off += 8;
@@ -826,7 +828,9 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
             }
             ValueDef::Inst(li, 0) => {
                 // load 结果：追踪 addr，逐段 load
-                let addr = func.dfg.insts[li.0 as usize]
+                let addr = func
+                    .dfg
+                    .inst_data(li)
                     .operands
                     .first()
                     .copied()
@@ -842,7 +846,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let ldv = func.dfg.insts[ld.0 as usize].results[0];
+                    let ldv = func.dfg.inst_data(ld).results[0];
                     new_insts.push(ld);
                     segs.push(ldv);
                     off += 8;
@@ -856,7 +860,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
                             &[TypeId::I64],
                             InstFlags::NONE,
                         );
-                        let off_v = func.dfg.insts[off_inst.0 as usize].results[0];
+                        let off_v = func.dfg.inst_data(off_inst).results[0];
                         new_insts.push(off_inst);
                         let add = func.make_inst(
                             Opcode::Iadd,
@@ -866,7 +870,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
                             &[TypeId::PTR],
                             InstFlags::NONE,
                         );
-                        prev_addr = func.dfg.insts[add.0 as usize].results[0];
+                        prev_addr = func.dfg.inst_data(add).results[0];
                         new_insts.push(add);
                     }
                 }
@@ -879,12 +883,12 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
             }
         }
         // operands 替换（op_idx 处插入段值）
-        let mut ops = func.dfg.insts[job.inst.0 as usize].operands.clone();
+        let mut ops = func.dfg.inst_data(job.inst).operands.clone();
         ops.remove(job.op_idx);
         for (k, s) in segs.iter().enumerate() {
             ops.insert(job.op_idx + k, *s);
         }
-        func.dfg.insts[job.inst.0 as usize].operands = ops;
+        func.dfg.inst_mut(job.inst).operands = ops;
         // 就地改写操作数后必须重登记 use-lists
         func.refresh_inst_uses(job.inst);
         // 新指令移到 call 前
@@ -909,7 +913,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
 fn collect_extract_jobs(func: &Function, jobs: &mut Vec<UseJob>, res: Value, load_idx: usize) {
     for (b, bd) in func.dfg.blocks() {
         for (pos, &ii) in bd.inst_order.iter().enumerate() {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if inst.opcode == Opcode::ExtractValue
                 && inst.operands.first() == Some(&res)
                 && let Some(Immediate::Uint(u)) = inst.immediates.first()
@@ -945,7 +949,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
     let mut loads: Vec<LoadInfo> = Vec::new();
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if inst.opcode == Opcode::Load
                 && let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
                 && func.types.borrow().is_aggregate(rt)
@@ -964,7 +968,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
     let mut jobs: Vec<UseJob> = Vec::new();
     for (b, bd) in func.dfg.blocks() {
         for (pos, &ii) in bd.inst_order.iter().enumerate() {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             for (op_idx, &v) in inst.operands.iter().enumerate() {
                 if let Some(li) = loads.iter().position(|l| l.result == v) {
                     let kind = match inst.opcode {
@@ -1030,7 +1034,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                     &[seg_ty],
                     InstFlags::NONE,
                 );
-                let ldv = func.dfg.insts[ld.0 as usize].results[0];
+                let ldv = func.dfg.inst_data(ld).results[0];
                 new_insts.push(ld);
                 // dst: store seg_ty %ldv, ptr %dst_addr
                 let st = func.make_inst(
@@ -1055,7 +1059,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                             &[TypeId::I64],
                             InstFlags::NONE,
                         );
-                        let off_v = func.dfg.insts[off_inst.0 as usize].results[0];
+                        let off_v = func.dfg.inst_data(off_inst).results[0];
                         new_insts.push(off_inst);
                         let add = func.make_inst(
                             Opcode::Iadd,
@@ -1065,7 +1069,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                             &[TypeId::PTR],
                             InstFlags::NONE,
                         );
-                        *cur = func.dfg.insts[add.0 as usize].results[0];
+                        *cur = func.dfg.inst_data(add).results[0];
                         new_insts.push(add);
                     }
                 }
@@ -1073,7 +1077,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
             // 使用指令（Store）标 Nop
             let __tomb = job.inst;
             {
-                let inst = &mut func.dfg.insts[__tomb.0 as usize];
+                let inst = func.dfg.inst_mut(__tomb);
                 inst.opcode = Opcode::Nop;
                 inst.operands = smallvec::smallvec![];
                 inst.immediates = smallvec::smallvec![];
@@ -1081,7 +1085,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
             func.refresh_inst_uses(__tomb);
         } else if let Some(idx) = extract_idx {
             // S1：命中嵌套聚合槽映射（内层提取）——地址语义优先
-            let hit_inst = &func.dfg.insts[job.inst.0 as usize];
+            let hit_inst = &func.dfg.inst_data(job.inst);
             if let Some(&(slot_addr, slot_ty)) = agg_slots.get(&hit_inst.operands[0]) {
                 let ts = func.types.borrow();
                 let foff = ts.field_offset(slot_ty, idx).ok_or_else(|| {
@@ -1105,7 +1109,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                             &[TypeId::I64],
                             InstFlags::NONE,
                         );
-                        let off_v = func.dfg.insts[off_inst.0 as usize].results[0];
+                        let off_v = func.dfg.inst_data(off_inst).results[0];
                         new_insts.push(off_inst);
                         let add2 = func.make_inst(
                             Opcode::Iadd,
@@ -1115,12 +1119,12 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                             &[TypeId::PTR],
                             InstFlags::NONE,
                         );
-                        addr2 = func.dfg.insts[add2.0 as usize].results[0];
+                        addr2 = func.dfg.inst_data(add2).results[0];
                         new_insts.push(add2);
                     }
                     let __tomb = job.inst;
                     {
-                        let inst = &mut func.dfg.insts[__tomb.0 as usize];
+                        let inst = func.dfg.inst_mut(__tomb);
                         inst.opcode = Opcode::Nop;
                         inst.operands = smallvec::smallvec![];
                         inst.immediates = smallvec::smallvec![];
@@ -1141,7 +1145,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let off_v = func.dfg.insts[off_inst.0 as usize].results[0];
+                    let off_v = func.dfg.inst_data(off_inst).results[0];
                     new_insts.push(off_inst);
                     let add = func.make_inst(
                         Opcode::Iadd,
@@ -1151,7 +1155,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         &[TypeId::PTR],
                         InstFlags::NONE,
                     );
-                    let p = func.dfg.insts[add.0 as usize].results[0];
+                    let p = func.dfg.inst_data(add).results[0];
                     new_insts.push(add);
                     let ld = func.make_inst(
                         Opcode::Load,
@@ -1161,11 +1165,11 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         &[fty],
                         InstFlags::NONE,
                     );
-                    let lv = func.dfg.insts[ld.0 as usize].results[0];
+                    let lv = func.dfg.inst_data(ld).results[0];
                     new_insts.push(ld);
                     let __cp = job.inst;
                     {
-                        let inst = &mut func.dfg.insts[__cp.0 as usize];
+                        let inst = func.dfg.inst_mut(__cp);
                         inst.opcode = Opcode::Copy;
                         inst.operands = smallvec::smallvec![lv];
                         inst.immediates = smallvec::smallvec![];
@@ -1211,7 +1215,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let off2_v = func.dfg.insts[off2_inst.0 as usize].results[0];
+                    let off2_v = func.dfg.inst_data(off2_inst).results[0];
                     new_insts.push(off2_inst);
                     let add2 = func.make_inst(
                         Opcode::Iadd,
@@ -1221,18 +1225,18 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         &[TypeId::PTR],
                         InstFlags::NONE,
                     );
-                    addr2 = func.dfg.insts[add2.0 as usize].results[0];
+                    addr2 = func.dfg.inst_data(add2).results[0];
                     new_insts.push(add2);
                 }
                 let __tomb = job.inst;
                 {
-                    let inst = &mut func.dfg.insts[__tomb.0 as usize];
+                    let inst = func.dfg.inst_mut(__tomb);
                     inst.opcode = Opcode::Nop;
                     inst.operands = smallvec::smallvec![];
                     inst.immediates = smallvec::smallvec![];
                 }
                 func.refresh_inst_uses(__tomb);
-                let res_new = func.dfg.insts[__tomb.0 as usize].results[0];
+                let res_new = func.dfg.inst_data(__tomb).results[0];
                 agg_slots.insert(res_new, (addr2, field_ty));
                 collect_extract_jobs(func, &mut jobs, res_new, job.load);
             } else {
@@ -1251,7 +1255,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let off_v = func.dfg.insts[off_inst.0 as usize].results[0];
+                    let off_v = func.dfg.inst_data(off_inst).results[0];
                     new_insts.push(off_inst);
                     let add = func.make_inst(
                         Opcode::Iadd,
@@ -1261,7 +1265,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         &[TypeId::PTR],
                         InstFlags::NONE,
                     );
-                    prev_addr = func.dfg.insts[add.0 as usize].results[0];
+                    prev_addr = func.dfg.inst_data(add).results[0];
                     new_insts.push(add);
                 }
                 let ld = func.make_inst(
@@ -1272,12 +1276,12 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                     &[field_ty],
                     InstFlags::NONE,
                 );
-                let ldv = func.dfg.insts[ld.0 as usize].results[0];
+                let ldv = func.dfg.inst_data(ld).results[0];
                 new_insts.push(ld);
                 // extractvalue 改 Copy（result 保留 → 新 load 值）
                 let __cp = job.inst;
                 {
-                    let inst = &mut func.dfg.insts[__cp.0 as usize];
+                    let inst = func.dfg.inst_mut(__cp);
                     inst.opcode = Opcode::Copy;
                     inst.operands = smallvec::smallvec![ldv];
                     inst.immediates = smallvec::smallvec![];
@@ -1302,7 +1306,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
     let mut nop_list: Vec<Inst> = Vec::new();
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if inst.opcode == Opcode::Load
                 && let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
                 && func.types.borrow().is_aggregate(rt)
@@ -1315,7 +1319,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
     for ii in nop_list {
         let __tomb = ii;
         {
-            let inst = &mut func.dfg.insts[__tomb.0 as usize];
+            let inst = func.dfg.inst_mut(__tomb);
             inst.opcode = Opcode::Nop;
             inst.operands = smallvec::smallvec![];
             inst.immediates = smallvec::smallvec![];
@@ -1346,7 +1350,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
     let mut jobs: Vec<(Block, usize, Inst)> = Vec::new(); // (block, pos, inst)
     for (b, bd) in func.dfg.blocks() {
         for (pos, &ii) in bd.inst_order.iter().enumerate() {
-            if func.dfg.insts[ii.0 as usize].opcode == Opcode::GetElementPtr {
+            if func.dfg.inst_data(ii).opcode == Opcode::GetElementPtr {
                 jobs.push((b, pos, ii));
             }
         }
@@ -1354,7 +1358,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
     for (b, pos, ii) in jobs.into_iter().rev() {
         // 提前 copy 出 GEP 数据（inst 借用须在 &mut func 生成段前结束）
         let (indexed_ty, base, indices) = {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             (
                 inst.immediates
                     .iter()
@@ -1374,7 +1378,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
             let ValueDef::Inst(ci, _) = def else {
                 return None;
             };
-            let id = func.dfg.insts.get(ci.0 as usize)?;
+            let id = func.dfg.inst_data_opt(ci)?;
             if id.opcode != Opcode::Iconst {
                 return None;
             }
@@ -1439,7 +1443,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
                 &[TypeId::I64],
                 InstFlags::NONE,
             );
-            let sval = func.dfg.insts[size_inst.0 as usize].results[0];
+            let sval = func.dfg.inst_data(size_inst).results[0];
             let mul = func.make_inst(
                 Opcode::Imul,
                 b,
@@ -1448,7 +1452,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
                 &[TypeId::I64],
                 InstFlags::NONE,
             );
-            let mval = func.dfg.insts[mul.0 as usize].results[0];
+            let mval = func.dfg.inst_data(mul).results[0];
             // %p = add i64 %prev, %t（结果类型 PTR——内部指针算术，verify 不跑）
             let add = func.make_inst(
                 Opcode::Iadd,
@@ -1458,7 +1462,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
                 &[TypeId::PTR],
                 InstFlags::NONE,
             );
-            prev = func.dfg.insts[add.0 as usize].results[0];
+            prev = func.dfg.inst_data(add).results[0];
             new_count += 3;
         }
         if const_off != 0 || new_count > 0 {
@@ -1471,7 +1475,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
                 &[TypeId::I64],
                 InstFlags::NONE,
             );
-            let off_v = func.dfg.insts[off_inst.0 as usize].results[0];
+            let off_v = func.dfg.inst_data(off_inst).results[0];
             let add = func.make_inst(
                 Opcode::Iadd,
                 b,
@@ -1480,13 +1484,13 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
                 &[TypeId::PTR],
                 InstFlags::NONE,
             );
-            prev = func.dfg.insts[add.0 as usize].results[0];
+            prev = func.dfg.inst_data(add).results[0];
             new_count += 2;
         }
         // GEP 原地改 Copy（result 保留——SSA 引用一致）
         let __cp = ii;
         {
-            let inst = &mut func.dfg.insts[__cp.0 as usize];
+            let inst = func.dfg.inst_mut(__cp);
             inst.opcode = Opcode::Copy;
             inst.operands = smallvec::smallvec![prev];
             inst.immediates = smallvec::smallvec![];
@@ -1523,7 +1527,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
     let mut jobs: Vec<(Block, usize, usize, Vec<u8>, bool)> = Vec::new(); // (block, pos, operand 索引, 内存字节, 是否 Store)
     for (b, bd) in func.dfg.blocks() {
         for (pos, &ii) in bd.inst_order.iter().enumerate() {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             match inst.opcode {
                 Opcode::Store => {
                     if let Some(v) = inst.operands.first()
@@ -1567,7 +1571,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
         let store_ii = func.dfg.blocks[b.0 as usize].inst_order[pos];
         // Store：分段展开（operands[1]=addr）；Call 参数：单打包值替换 operand
         let addr = if is_store {
-            let inst = &func.dfg.insts[store_ii.0 as usize];
+            let inst = &func.dfg.inst_data(store_ii);
             inst.operands.get(op_idx + 1).copied()
         } else {
             None
@@ -1600,7 +1604,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                     &[store_ty],
                     InstFlags::NONE,
                 );
-                let cv = func.dfg.insts[iconst.0 as usize].results[0];
+                let cv = func.dfg.inst_data(iconst).results[0];
                 new_insts.push(iconst);
                 let st = func.make_inst(
                     Opcode::Store,
@@ -1623,7 +1627,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                         &[TypeId::I64],
                         InstFlags::NONE,
                     );
-                    let off_v = func.dfg.insts[off_inst.0 as usize].results[0];
+                    let off_v = func.dfg.inst_data(off_inst).results[0];
                     new_insts.push(off_inst);
                     let add = func.make_inst(
                         Opcode::Iadd,
@@ -1633,7 +1637,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                         &[TypeId::PTR],
                         InstFlags::NONE,
                     );
-                    prev_addr = func.dfg.insts[add.0 as usize].results[0];
+                    prev_addr = func.dfg.inst_data(add).results[0];
                     new_insts.push(add);
                 }
             }
@@ -1653,9 +1657,9 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                 &[TypeId::I64],
                 InstFlags::NONE,
             );
-            let cv = func.dfg.insts[iconst.0 as usize].results[0];
+            let cv = func.dfg.inst_data(iconst).results[0];
             {
-                let inst = &mut func.dfg.insts[store_ii.0 as usize];
+                let inst = func.dfg.inst_mut(store_ii);
                 inst.operands[op_idx] = cv;
             }
             // 就地改单个操作数也要重登记 use-lists
@@ -1665,7 +1669,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
             // 原 Store 标 Nop（无结果——不生成机器指令；lowering 跳过 Nop）
             let __tomb = store_ii;
             {
-                let inst = &mut func.dfg.insts[__tomb.0 as usize];
+                let inst = func.dfg.inst_mut(__tomb);
                 inst.opcode = Opcode::Nop;
                 inst.operands = smallvec::smallvec![];
                 inst.immediates = smallvec::smallvec![];

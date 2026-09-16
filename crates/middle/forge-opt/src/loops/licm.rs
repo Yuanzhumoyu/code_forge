@@ -90,7 +90,7 @@ fn collect_loop_writes(
             continue;
         }
         for &inst_id in &func.dfg.blocks[bi].inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             match inst.opcode {
                 Opcode::Call | Opcode::CallIndirect => writes.push(MemoryLocation::Unknown),
                 Opcode::Store | Opcode::Fstore | Opcode::AtomicRmw | Opcode::Cmpxchg => {
@@ -117,7 +117,7 @@ fn collect_values_outside(func: &Function, body: &HashSet<Block>) -> HashSet<Val
             values.insert(v);
         }
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if let Some(v) = inst.results.first().copied() {
                 values.insert(v);
             }
@@ -143,7 +143,7 @@ fn mark_invariants(
             continue;
         }
         for &inst_id in &func.dfg.blocks[bi].inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if matches!(inst.opcode, Opcode::Iconst | Opcode::Fconst)
                 && let Some(v) = inst.results.first().copied()
             {
@@ -166,7 +166,7 @@ fn mark_invariants(
                 if inv_insts.contains(&(bid, inst_id)) {
                     continue;
                 }
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if inst.results.is_empty() {
                     continue;
                 }
@@ -225,7 +225,7 @@ fn hoist_to_header(
             if !invariants.contains(&(bid, inst_id)) {
                 continue;
             }
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if inst.results.is_empty() {
                 continue;
             }
@@ -469,7 +469,7 @@ mod tests {
         let mut loads: Vec<Block> = Vec::new();
         for (bi, blk) in func.dfg.blocks.iter().enumerate() {
             for &inst_id in &blk.inst_order {
-                let inst = &func.dfg.insts[inst_id.0 as usize];
+                let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Load) {
                     loads.push(Block(bi as u32));
                 }
@@ -519,7 +519,7 @@ mod tests {
         // load 必须仍留在循环体
         let mut loads_in_body = 0;
         for &inst_id in &func.dfg.blocks[body_blk.0 as usize].inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if matches!(inst.opcode, Opcode::Load) {
                 loads_in_body += 1;
             }

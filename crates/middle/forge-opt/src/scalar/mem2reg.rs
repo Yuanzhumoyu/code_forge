@@ -59,7 +59,7 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
         let _block = Block(bi as u32);
         let block_data = &func.dfg.blocks[bi];
         for &inst_id in &block_data.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if inst.opcode != Opcode::StackAddr {
                 continue;
             }
@@ -75,7 +75,7 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                 continue;
             }
             let only_load_store = uses.iter().all(|u| {
-                let Some(user_inst) = func.dfg.insts.get(u.user.0 as usize) else {
+                let Some(user_inst) = func.dfg.inst_data_opt(u.user) else {
                     return false;
                 };
                 matches!(user_inst.opcode, Opcode::Load | Opcode::Store)
@@ -89,7 +89,7 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
 
             for u in uses {
                 let user = u.user;
-                let user_inst = &func.dfg.insts[user.0 as usize];
+                let user_inst = &func.dfg.inst_data(user);
                 let user_block = user_inst.block;
                 match user_inst.opcode {
                     Opcode::Store => {
@@ -131,7 +131,9 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                 if all_dominated {
                     // Replace all Load results with the stored value
                     for &(_, load_inst) in &slot.loads {
-                        let load_results: Vec<Value> = func.dfg.insts[load_inst.0 as usize]
+                        let load_results: Vec<Value> = func
+                            .dfg
+                            .inst_data(load_inst)
                             .results
                             .iter()
                             .copied()
@@ -175,7 +177,9 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
 
                 if all_same_value && all_dominated {
                     for &(_, load_inst) in &slot.loads {
-                        let load_results: Vec<Value> = func.dfg.insts[load_inst.0 as usize]
+                        let load_results: Vec<Value> = func
+                            .dfg
+                            .inst_data(load_inst)
                             .results
                             .iter()
                             .copied()
@@ -211,7 +215,7 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                         let mut reaching: Option<Value> = None;
 
                         for &inst_id in &block_data.inst_order {
-                            let inst = &func.dfg.insts[inst_id.0 as usize];
+                            let inst = &func.dfg.inst_data(inst_id);
                             if matches!(inst.opcode, Opcode::Nop) {
                                 continue;
                             }
@@ -238,7 +242,9 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
 
                     let forwarded = load_forward.len();
                     for (load_inst, stored_val) in load_forward {
-                        let load_results: Vec<Value> = func.dfg.insts[load_inst.0 as usize]
+                        let load_results: Vec<Value> = func
+                            .dfg
+                            .inst_data(load_inst)
                             .results
                             .iter()
                             .copied()
@@ -294,9 +300,8 @@ mod tests {
         let mut func = b.finish().expect("build");
         let live_before = func
             .dfg
-            .insts
-            .iter()
-            .filter(|i| !matches!(i.opcode, crate::Opcode::Nop))
+            .insts()
+            .filter(|(_, i)| !matches!(i.opcode, crate::Opcode::Nop))
             .count();
 
         let pass = Mem2RegPass::new();
@@ -305,9 +310,8 @@ mod tests {
         // mem2reg 墓碑化删除的指令(Nop 不回收)——统计活指令验证减少
         let live_after = func
             .dfg
-            .insts
-            .iter()
-            .filter(|i| !matches!(i.opcode, crate::Opcode::Nop))
+            .insts()
+            .filter(|(_, i)| !matches!(i.opcode, crate::Opcode::Nop))
             .count();
         assert!(live_after < live_before, "Instructions should be removed");
     }

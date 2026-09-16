@@ -421,7 +421,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
         if let Some(init_v) = init_arg {
             let init_def = func.dfg.value_def(init_v).copied();
             if let Some(ValueDef::Inst(inst, _)) = init_def {
-                let inst_data = &func.dfg.insts[inst.0 as usize];
+                let inst_data = &func.dfg.inst_data(inst);
                 if inst_data.opcode == Opcode::Iconst
                     && let Some(cid) = inst_data.immediates.iter().find_map(|i| i.as_const())
                     && let Some(big) = func.constants.resolve_int(cid)
@@ -437,7 +437,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
     if let Some(iv_idx) = iv_param_idx {
         let iv_param_val = header_block.param_values[iv_idx];
         for &inst_id in &header_block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if inst.opcode == Opcode::Icmp
                 && let Some(cond) = inst.immediates.iter().find_map(|im| im.as_int_cc())
             {
@@ -456,7 +456,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
                 if let Some(other_v) = other {
                     let other_def = func.dfg.value_def(other_v).copied();
                     if let Some(ValueDef::Inst(other_inst, _)) = other_def {
-                        let other_data = &func.dfg.insts[other_inst.0 as usize];
+                        let other_data = &func.dfg.inst_data(other_inst);
                         if other_data.opcode == Opcode::Iconst
                             && let Some(cid) =
                                 other_data.immediates.iter().find_map(|i| i.as_const())

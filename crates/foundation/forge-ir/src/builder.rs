@@ -1629,7 +1629,7 @@ mod tests {
         let crate::ValueDef::Inst(inst, _) = fb.func.dfg.value_def(not).unwrap() else {
             panic!("bnot result should be inst def");
         };
-        let inst_data = fb.func.dfg.insts.get(inst.0 as usize).unwrap();
+        let inst_data = fb.func.dfg.inst_data_opt(*inst).unwrap();
         assert_eq!(inst_data.opcode, Opcode::Bxor);
         fb.ret(&[not]);
     }
@@ -1653,7 +1653,7 @@ mod tests {
             let crate::ValueDef::Inst(inst, _) = fb.func.dfg.value_def(v).unwrap() else {
                 panic!("bool arith result should be inst def");
             };
-            let inst_data = fb.func.dfg.insts.get(inst.0 as usize).unwrap();
+            let inst_data = fb.func.dfg.inst_data_opt(*inst).unwrap();
             assert_eq!(inst_data.opcode, Opcode::Bxor);
         }
         // bool×int 混合：保持 Iadd，结果 upcast 到 I32
@@ -1662,7 +1662,7 @@ mod tests {
         let crate::ValueDef::Inst(mix_inst, _) = fb.func.dfg.value_def(mix).unwrap() else {
             panic!("mixed result should be inst def");
         };
-        let mix_data = fb.func.dfg.insts.get(mix_inst.0 as usize).unwrap();
+        let mix_data = fb.func.dfg.inst_data_opt(*mix_inst).unwrap();
         assert_eq!(mix_data.opcode, Opcode::Iadd);
         fb.ret(&[mix]);
     }

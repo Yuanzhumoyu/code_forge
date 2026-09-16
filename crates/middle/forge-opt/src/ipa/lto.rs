@@ -115,7 +115,7 @@ impl OptimizationPass for LtoPass {
                 let block_id = Block(bi as u32);
                 let block_data = &func.dfg.blocks[bi];
                 for &inst_id in &block_data.inst_order {
-                    let inst = &func.dfg.insts[inst_id.0 as usize];
+                    let inst = &func.dfg.inst_data(inst_id);
                     if inst.opcode != Opcode::Call {
                         continue;
                     }
@@ -155,7 +155,7 @@ impl OptimizationPass for LtoPass {
             // Get caller function
             let caller = module.get_function_mut(site.func_ref);
 
-            let call_inst_data = &caller.dfg.insts[site.call_inst.0 as usize];
+            let call_inst_data = &caller.dfg.inst_data(site.call_inst);
             let call_block = call_inst_data.block;
             let call_results: Vec<Value> = call_inst_data.results.iter().copied().collect();
             let call_operands: Vec<Value> = call_inst_data.operands.iter().copied().collect();
@@ -204,7 +204,7 @@ fn lto_inline_callee(
         let callee_block = &callee.dfg.blocks[bi];
 
         for &inst_id in &callee_block.inst_order {
-            let inst = &callee.dfg.insts[inst_id.0 as usize];
+            let inst = &callee.dfg.inst_data(inst_id);
 
             // Remap operands
             let new_operands: smallvec::SmallVec<[Value; 4]> = inst
@@ -245,11 +245,14 @@ fn lto_inline_callee(
                 inst.loc.clone(),
             );
             if let Some(strategy) = inst.isel_strategy() {
-                caller.dfg.insts[new_inst.0 as usize].set_isel_strategy(strategy.clone());
+                caller
+                    .dfg
+                    .inst_mut(new_inst)
+                    .set_isel_strategy(strategy.clone());
             }
 
             // Map old results to new results
-            let new_results = &caller.dfg.insts[new_inst.0 as usize].results;
+            let new_results = &caller.dfg.inst_data(new_inst).results;
             for (i, &old_r) in inst.results.iter().enumerate() {
                 if i < new_results.len() {
                     val_remap.insert(old_r, new_results[i]);

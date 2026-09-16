@@ -1,7 +1,9 @@
-//! `dfg` 私有化切片的守卫：**值 arena（`values`）只能经受限 API 访问**（v3 S5）。
+//! `dfg` 私有化切片的守卫：**arena 只能经受限 API 访问**（v3 S5）。
 //!
 //! `DataFlowGraph` 的三个 arena 此前全 `pub`，下游可以绕过 use-lists 直改操作数
-//! （S0 诊断里的"use-def 可被绕过"）。本切片先收 **`values`**：
+//! （S0 诊断里的"use-def 可被绕过"）。按 arena 分切片，每片一次提交内完成迁移：
+//!
+//! ## 切片 1：`values`（已私有）
 //!
 //! - 读：`value_data`（fail-closed，句柄不合法即 panic，与 `BlockData::terminator`
 //!   同契约）/ `value_data_opt`（容忍坏 IR）/ `value_def` / `value_type` /
@@ -10,9 +12,24 @@
 //!   `dfg.rs` 内。
 //!
 //! 迁移面实测：全仓 31 处 `dfg.values[..]` + 7 处 `dfg.values.get(..)`，其中
-//! 3 处写（`const_fold` 定宽、`gvn` 折叠类型、`algebraic` 结果类型）——全部改走
-//! 上表入口后，`dfg.values` 在 `src/` 里应为 0 处（源码断言）。
-//! `insts`/`blocks` 两个 arena 的私有化是后续切片。
+//! 3 处写（`const_fold` 定宽、`gvn` 折叠类型、`algebraic` 结果类型）。
+//!
+//! ## 切片 2：`insts`（已私有）
+//!
+//! - 读：`inst_data`（fail-closed）/ `inst_data_opt` / `inst_opcode` /
+//!   `inst_operands` / `inst_results` / `inst_block` / `insts()` / `inst_count`；
+//! - 写：`inst_mut` / `inst_mut_opt`（`(dfg, Inst)` 寻址的就地编辑口）；
+//!   结构性增删只有 `make_inst*` / `remove_inst`（`dfg.rs` 内）。
+//!
+//! 迁移面实测：全仓 216 处 `dfg.insts[..]` + 8 处裸 `dfg.insts[..]` + 11 处
+//! `dfg.insts.get(..)` + 3 处 `get_mut(..)` + 1 处 `iter()` + 25 处 `&mut …`,
+//! 共 39 个文件。**契约**：`inst_mut` 是就地编辑口，改 `operands`/`results` 后
+//! 必须 `Function::refresh_inst_uses`（改操作数的推荐路径仍是
+//! `replace_all_uses`/`apply_replacements`）；本文件把这条契约钉住。
+//!
+//! 两条源码断言（`dfg.values` / `dfg.insts` 字段零访问）覆盖边界：`dfg.rs`
+//! 自身实现、`self.values`（别的结构体字段）、`dfg.values()`/`dfg.insts()`
+//! 迭代访问器、注释行均不算。`blocks` arena 的收口是后续切片。
 
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::types::{FunctionSignature, TypeContext};
@@ -105,18 +122,23 @@ fn no_direct_values_arena_access_in_src() {
                     if t.starts_with("//") {
                         continue;
                     }
-                    // `dfg.values` / `func.dfg.values` 等对 arena **字段**的访问；
-                    // 迭代访问器 `dfg.values()` 不算（括号紧跟其后）。
-                    // 本文件内的 `self.values`（dfg.rs 实现体、display 的另一个
-                    // 结构体字段）也不在其列。
-                    let mut rest = t;
+                    // `dfg.values` / `dfg.insts` 等对 arena **字段**的访问；
+                    // 迭代访问器 `dfg.values()`/`dfg.insts()` 不算（括号紧跟其后）。
+                    // 本文件内的 `self.values`/`self.insts`（dfg.rs 实现体、
+                    // display 的另一个结构体字段）也不在其列。
+                    let rest = t;
                     let mut offending = false;
-                    while let Some(pos) = rest.find("dfg.values") {
-                        let after = &rest[pos + "dfg.values".len()..];
-                        if !after.starts_with('(') {
-                            offending = true;
+                    for field in ["dfg.values", "dfg.insts"] {
+                        let mut r = rest;
+                        while let Some(pos) = r.find(field) {
+                            let after = &r[pos + field.len()..];
+                            // `(` = 迭代/方法访问器；`_` = 更长的方法名
+                            // （如 `insts_iter_mut`）——都不是字段访问
+                            if !after.starts_with('(') && !after.starts_with('_') {
+                                offending = true;
+                            }
+                            r = after;
                         }
-                        rest = after;
                     }
                     if offending {
                         out.push((rel.clone(), i + 1, t.to_string()));
@@ -130,13 +152,116 @@ fn no_direct_values_arena_access_in_src() {
     walk(&root, &root, &mut hits);
     assert!(
         hits.is_empty(),
-        "值 arena 只能经受限 API 访问（value_data / value_data_opt / value_def / \
-         value_type / values() / set_value_type）：\n{}",
+        "arena 只能经受限 API 访问（values: value_data/value_data_opt/value_def/\
+         value_type/values()/set_value_type；insts: inst_data/inst_data_opt/\
+         inst_opcode/inst_operands/inst_results/insts()/inst_mut/inst_mut_opt）：\n{}",
         hits.iter()
             .map(|(f, l, t)| format!("{f}:{l}: {t}"))
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+/// 指令 arena 读口：`inst_data` fail-closed、`inst_data_opt` 容忍坏 IR。
+#[test]
+fn inst_data_is_fail_closed_and_opt_tolerates() {
+    let (func, _a, _sum) = fixture();
+    let iadd = first_inst(&func, Opcode::Iadd);
+    assert_eq!(func.dfg.inst_data(iadd).opcode, Opcode::Iadd);
+    assert!(func.dfg.inst_data_opt(iadd).is_some());
+
+    let bogus = Inst(func.dfg.inst_count() as u32 + 9);
+    assert!(func.dfg.inst_data_opt(bogus).is_none());
+    assert_eq!(
+        func.dfg.inst_count(),
+        func.dfg.insts().count(),
+        "迭代口同源"
+    );
+}
+
+/// `inst_data` 越界 panic（fail-closed 契约）。
+#[test]
+#[should_panic(expected = "指令句柄不合法")]
+fn inst_data_panics_on_invalid_handle() {
+    let (func, _a, _sum) = fixture();
+    let bogus = Inst(func.dfg.inst_count() as u32 + 9);
+    let _ = func.dfg.inst_data(bogus);
+}
+
+/// 指令写口：`inst_mut` 就地改非 use-list 字段，句柄不合法 panic / `opt` 给 `None`。
+#[test]
+fn inst_mut_is_the_only_edit_entry() {
+    let (mut func, _a, _sum) = fixture();
+    let iadd = first_inst(&func, Opcode::Iadd);
+
+    func.dfg.inst_mut(iadd).flags = InstFlags::MAY_UB;
+    assert!(func.dfg.inst_data(iadd).flags.contains(InstFlags::MAY_UB));
+
+    let bogus = Inst(func.dfg.inst_count() as u32 + 9);
+    assert!(func.dfg.inst_mut_opt(bogus).is_none());
+}
+
+/// 契约：`inst_mut` 改 `operands` 后必须 `refresh_inst_uses`，use-def 才新鲜。
+#[test]
+fn inst_mut_operand_edit_needs_refresh() {
+    let ctx = TypeContext::new();
+    let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[TypeId::I32]));
+    let mut func = Function::new("h", ctx.clone(), sig_ref, CallConv::Default);
+    let (b0, _) = func.dfg.make_block_with_params(&[]);
+    func.entry_block = Some(b0);
+    let a = func.dfg.make_inst(
+        Opcode::Iconst,
+        b0,
+        smallvec::SmallVec::new(),
+        smallvec::smallvec![Immediate::Const(func.constants.insert_int(1, 32))],
+        &[TypeId::I32],
+        InstFlags::NONE,
+    );
+    let b = func.dfg.make_inst(
+        Opcode::Iconst,
+        b0,
+        smallvec::SmallVec::new(),
+        smallvec::smallvec![Immediate::Const(func.constants.insert_int(2, 32))],
+        &[TypeId::I32],
+        InstFlags::NONE,
+    );
+    let va = func.dfg.inst_results(a)[0];
+    let vb = func.dfg.inst_results(b)[0];
+    let add = func.dfg.make_inst(
+        Opcode::Iadd,
+        b0,
+        smallvec::smallvec![va, va],
+        smallvec::SmallVec::new(),
+        &[TypeId::I32],
+        InstFlags::NONE,
+    );
+    func.ret(b0, [func.dfg.inst_results(add)[0]]);
+    func.refresh_inst_uses(add);
+
+    assert_eq!(func.use_lists.use_count(va), 2, "初始两条 use");
+    assert_eq!(func.use_lists.use_count(vb), 0);
+
+    // 就地改写第二条操作数 + 重登记（`inst_mut` 的既有用法）
+    func.dfg.inst_mut(add).operands[1] = vb;
+    func.refresh_inst_uses(add);
+    assert_eq!(func.use_lists.use_count(va), 1, "重登记后旧 use 应消失");
+    assert_eq!(func.use_lists.use_count(vb), 1, "新 use 应登记");
+
+    let mut verifier = forge_ir::verify::Verifier::with_ctx(ctx);
+    let outcome = verifier.verify(&func);
+    assert!(
+        outcome.is_ok(),
+        "就地改写 + 重登记后 IR 应有效：{outcome:?}"
+    );
+}
+
+/// 在 fixture 里按 opcode 找第一条指令。
+fn first_inst(func: &Function, opcode: Opcode) -> Inst {
+    func.dfg
+        .insts()
+        .find(|(_, i)| i.opcode == opcode)
+        .unwrap_or_else(|| panic!("找不到 {opcode:?} 指令"))
+        .0
 }
 
 /// 受限写入口在真实语义下可用：精化值类型后 verifier 仍接受。

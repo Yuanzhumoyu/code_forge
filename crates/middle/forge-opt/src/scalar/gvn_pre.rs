@@ -118,7 +118,7 @@ fn operands_dominate(func: &Function, expr_key: &ExprKey, at: Block) -> bool {
     let dom = func.dominator_tree();
     for op in &expr_key.operands {
         let def_block = match func.dfg.value_def(*op) {
-            Some(ValueDef::Inst(inst, _)) => match func.dfg.insts.get(inst.0 as usize) {
+            Some(ValueDef::Inst(inst, _)) => match func.dfg.inst_data_opt(*inst) {
                 Some(i) => i.block,
                 None => return false,
             },
@@ -151,7 +151,7 @@ fn insert_expression(func: &mut Function, block: Block, expr_key: &ExprKey) -> O
         InstFlags::default(),
     );
 
-    func.dfg.insts[new_inst.0 as usize].results.first().copied()
+    func.dfg.inst_data(new_inst).results.first().copied()
 }
 
 fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey>) {
@@ -160,7 +160,7 @@ fn number_expressions(func: &Function) -> (HashMap<ExprKey, ExprId>, Vec<ExprKey
     let mut next = 0;
     for block in func.dfg.blocks.iter() {
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if is_cse_candidate(&inst.opcode)
                 && let Some(v) = inst.results.first().copied()
             {
@@ -195,7 +195,7 @@ fn compute_gen_kill(
         let mut gen_set = HashSet::new();
         let mut kill = HashSet::new();
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if is_cse_candidate(&inst.opcode)
                 && let Some(v) = inst.results.first().copied()
             {

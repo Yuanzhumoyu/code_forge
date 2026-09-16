@@ -212,7 +212,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         let mut iadd_stack_offsets: Vec<i64> = Vec::new();
         for (_, bd) in dfg.blocks() {
             for &ii in &bd.inst_order {
-                let inst = &dfg.insts[ii.0 as usize];
+                let inst = &dfg.inst_data(ii);
                 if inst.opcode != Opcode::Iadd {
                     continue;
                 }
@@ -227,7 +227,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     let forge_ir::dfg::ValueDef::Inst(def_ii, _) = val.def else {
                         continue;
                     };
-                    let def = &dfg.insts[def_ii.0 as usize];
+                    let def = &dfg.inst_data(def_ii);
                     match def.opcode {
                         Opcode::StackAddr => has_stack = true,
                         Opcode::Iconst => {
@@ -259,7 +259,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         }
         for (_, bd) in func.dfg.blocks() {
             for &ii in &bd.inst_order {
-                let inst = &func.dfg.insts[ii.0 as usize];
+                let inst = &func.dfg.inst_data(ii);
                 match inst.opcode {
                     Opcode::StackAddr => {
                         if let Some(Immediate::Int(v)) = inst.immediates.first() {
@@ -353,7 +353,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             if consumed.contains(&ii) {
                 continue; // 内部节点已并入命中模式（整棵子树 fused，不单独 lowering）
             }
-            let inst = &dfg.insts[ii.0 as usize];
+            let inst = &dfg.inst_data(ii);
             let args: smallvec::SmallVec<[XReg; 8]> = inst
                 .operands
                 .iter()
@@ -537,7 +537,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     let forge_ir::dfg::ValueDef::Inst(ii, _) = def else {
                         return None;
                     };
-                    let id = dfg.insts.get(ii.0 as usize)?;
+                    let id = dfg.inst_data_opt(ii)?;
                     if id.opcode != forge_ir::opcode::Opcode::Iconst {
                         return None;
                     }
@@ -557,7 +557,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 self.ctx.current_immediates.insert(0, fold_idx.unwrap_or(0));
                 if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
                     let dbg = dfg.value_data_opt(idx_v).map(|v| &v.def);
-                    let idbg = dfg.insts.get(1).map(|d| (d.opcode, &d.immediates));
+                    let idbg = dfg
+                        .inst_data_opt(forge_ir::Inst(1))
+                        .map(|d| (d.opcode, &d.immediates));
                     eprintln!(
                         "[vextract] op={:?} idx_operand={:?} def={:?} inst1={:?} folded={:?}",
                         inst.opcode, idx_v, dbg, idbg, fold_idx
@@ -748,7 +750,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             if consumed.contains(&ii) {
                 continue;
             }
-            let inst = &dfg.insts[ii.0 as usize];
+            let inst = &dfg.inst_data(ii);
             for spec in patterns {
                 if spec.op != inst.opcode || inst.operands.len() != spec.args.len() {
                     continue;
@@ -850,7 +852,7 @@ fn match_pat_term(
             let Some(ValueDef::Inst(def_ii, _)) = dfg.value_def(value).copied() else {
                 return false;
             };
-            let def = &dfg.insts[def_ii.0 as usize];
+            let def = &dfg.inst_data(def_ii);
             if def.block != block || def.opcode != *op {
                 return false;
             }

@@ -56,7 +56,7 @@ pub fn eliminate_dead_stores(func: &mut Function) -> Result<PassResult, IrError>
         let inst_ids = func.dfg.blocks[bi].inst_order.clone();
 
         for inst_id in inst_ids {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             match inst.opcode {
                 Opcode::Store | Opcode::Fstore => {
                     // volatile store 不可删（可观察语义），也不记录
@@ -113,9 +113,8 @@ mod tests {
     /// 统计函数内 Store 指令数。
     fn count_stores(func: &Function) -> usize {
         func.dfg
-            .insts
-            .iter()
-            .filter(|i| matches!(i.opcode, Opcode::Store | Opcode::Fstore))
+            .insts()
+            .filter(|(_, i)| matches!(i.opcode, Opcode::Store | Opcode::Fstore))
             .count()
     }
 

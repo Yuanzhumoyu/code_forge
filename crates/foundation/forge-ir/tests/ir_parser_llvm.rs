@@ -12,7 +12,7 @@ fn opcodes(f: &forge_ir::function::Function) -> Vec<Opcode> {
         .blocks
         .iter()
         .flat_map(|b| b.inst_order.iter())
-        .map(|&i| f.dfg.insts[i.0 as usize].opcode)
+        .map(|&i| f.dfg.inst_data(i).opcode)
         .collect()
 }
 
@@ -314,7 +314,7 @@ fn icmp_all_conditions() {
             "define i1 @f(i32 %a, i32 %b) {{\n  %e:\n    %r = icmp {name} i32 %a, i32 %b\n    ret i1 %r\n}}\n"
         );
         let f = parse_function(&src).expect("parse icmp");
-        let inst = &f.dfg.insts[0];
+        let inst = &f.dfg.inst_data(forge_ir::Inst(0));
         assert_eq!(inst.opcode, Opcode::Icmp, "icmp {name}");
         assert_eq!(
             inst.immediates.first().and_then(|im| im.as_int_cc()),
@@ -330,7 +330,7 @@ fn fcmp_ordered() {
         "define i1 @f(double %a, double %b) {\n  %e:\n    %r = fcmp olt double %a, double %b\n    ret i1 %r\n}\n",
     )
     .expect("parse fcmp");
-    let inst = &f.dfg.insts[0];
+    let inst = &f.dfg.inst_data(forge_ir::Inst(0));
     assert_eq!(inst.opcode, Opcode::Fcmp);
     assert_eq!(
         inst.immediates.first().and_then(|im| im.as_float_cc()),
@@ -350,7 +350,7 @@ fn fcmp_unsupported_condition() {
             "define i1 @f(double %a, double %b) {{\n  %e:\n    %r = fcmp {cond} double %a, double %b\n    ret i1 %r\n}}\n"
         );
         let f = parse_function(&src).unwrap_or_else(|e| panic!("fcmp {cond} 应解析成功: {e}"));
-        let inst = &f.dfg.insts[0];
+        let inst = &f.dfg.inst_data(forge_ir::Inst(0));
         assert!(inst.opcode == Opcode::Fcmp, "fcmp {cond}: 期望 Fcmp opcode");
     }
     // 伪条件仍报错
@@ -641,7 +641,7 @@ define i32 @f() {
     let mut count = 0;
     for bd in f.dfg.blocks.iter() {
         for &i in &bd.inst_order {
-            if f.dfg.insts[i.0 as usize].opcode == Opcode::ExtractValue {
+            if f.dfg.inst_data(i).opcode == Opcode::ExtractValue {
                 count += 1;
             }
         }
@@ -665,7 +665,7 @@ define i32 @f() {
     let mut count = 0;
     for bd in f.dfg.blocks.iter() {
         for &i in &bd.inst_order {
-            if f.dfg.insts[i.0 as usize].opcode == Opcode::ExtractValue {
+            if f.dfg.inst_data(i).opcode == Opcode::ExtractValue {
                 count += 1;
             }
         }

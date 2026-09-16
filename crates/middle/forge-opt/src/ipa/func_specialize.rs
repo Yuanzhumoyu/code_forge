@@ -53,7 +53,7 @@ pub fn specialize_calls(
     for bi in 0..func.dfg.blocks.len() {
         let block_data = &func.dfg.blocks[bi];
         for &inst_id in &block_data.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if inst.opcode != Opcode::Call {
                 continue;
             }
@@ -69,7 +69,7 @@ pub fn specialize_calls(
             for (i, &operand) in inst.operands.iter().enumerate() {
                 let def = func.dfg.value_def(operand).copied();
                 if let Some(ValueDef::Inst(def_inst, _)) = def {
-                    let def_data = &func.dfg.insts[def_inst.0 as usize];
+                    let def_data = &func.dfg.inst_data(def_inst);
                     if matches!(def_data.opcode, Opcode::Iconst | Opcode::Fconst) {
                         const_args.push((i, operand));
                     }
@@ -94,13 +94,17 @@ pub fn specialize_calls(
             continue;
         }
 
-        let call_block = func.dfg.insts[call_inst.0 as usize].block;
-        let call_results: Vec<Value> = func.dfg.insts[call_inst.0 as usize]
+        let call_block = func.dfg.inst_data(call_inst).block;
+        let call_results: Vec<Value> = func
+            .dfg
+            .inst_data(call_inst)
             .results
             .iter()
             .copied()
             .collect();
-        let call_operands: Vec<Value> = func.dfg.insts[call_inst.0 as usize]
+        let call_operands: Vec<Value> = func
+            .dfg
+            .inst_data(call_inst)
             .operands
             .iter()
             .copied()
@@ -149,7 +153,7 @@ fn clone_callee_into_caller(
         let callee_block = &callee.dfg.blocks[bi];
 
         for &inst_id in &callee_block.inst_order {
-            let inst = &callee.dfg.insts[inst_id.0 as usize];
+            let inst = &callee.dfg.inst_data(inst_id);
 
             // Remap operands
             let new_operands: smallvec::SmallVec<[Value; 4]> = inst
@@ -198,11 +202,14 @@ fn clone_callee_into_caller(
                 inst.loc.clone(),
             );
             if let Some(strategy) = inst.isel_strategy() {
-                caller.dfg.insts[new_inst.0 as usize].set_isel_strategy(strategy.clone());
+                caller
+                    .dfg
+                    .inst_mut(new_inst)
+                    .set_isel_strategy(strategy.clone());
             }
 
             // Map old results to new results
-            let new_results = &caller.dfg.insts[new_inst.0 as usize].results;
+            let new_results = &caller.dfg.inst_data(new_inst).results;
             for (i, &old_r) in inst.results.iter().enumerate() {
                 if i < new_results.len() {
                     val_remap.insert(old_r, new_results[i]);

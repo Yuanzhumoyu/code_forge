@@ -14,7 +14,7 @@ use std::collections::HashMap;
 pub(crate) fn has_gep(func: &Function) -> bool {
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            if func.dfg.insts[ii.0 as usize].opcode == Opcode::GetElementPtr {
+            if func.dfg.inst_data(ii).opcode == Opcode::GetElementPtr {
                 return true;
             }
         }
@@ -37,7 +37,7 @@ pub(crate) fn has_large_agg_ret(func: &Function) -> bool {
 pub(crate) fn has_large_agg_call_result(func: &Function) -> bool {
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect)
                 && inst.results.len() == 1
                 && let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
@@ -55,7 +55,7 @@ pub(crate) fn has_large_agg_call_result(func: &Function) -> bool {
 pub(crate) fn has_large_agg_call_arg(func: &Function) -> bool {
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect) {
                 let skip = usize::from(inst.opcode == Opcode::CallIndirect);
                 for v in inst.operands.iter().skip(skip) {
@@ -84,7 +84,7 @@ pub(crate) fn has_large_agg_param(func: &Function) -> bool {
 pub(crate) fn has_large_agg_load(func: &Function) -> bool {
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             if matches!(inst.opcode, Opcode::Load)
                 && let Some(ty) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
                 && func.types.borrow().is_aggregate(ty)
@@ -115,7 +115,7 @@ pub(crate) fn has_any_agg(func: &Function) -> bool {
 fn has_agg_mem_access(func: &Function) -> bool {
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.insts[ii.0 as usize];
+            let inst = &func.dfg.inst_data(ii);
             match inst.opcode {
                 Opcode::Store => {
                     if let Some(v) = inst.operands.first()

@@ -99,7 +99,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
-| S5 | 附件强类型化与可见性 | **四切片已落地**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界（删 `TargetTriple` 架构名查表、公开面字符串统一 `ImmStr`）；metadata 单写（5 个载体各一个写入口）；`dfg` 私有化第一步（`values` arena 收口 + `set_value_type`）（均见 §6 末）；余项：`insts`/`blocks` 两个 arena 的收口（含同步 use-lists 的 `&mut` 编辑入口） |
+| S5 | 附件强类型化与可见性 | **五切片已落地**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化第一、二步（`values`、`insts` 两个 arena 已 `pub(crate)`，各带受限读写口）（均见 §6 末）；余项：`blocks` arena 收口 |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
@@ -879,6 +879,42 @@ S0 诊断的第一条欠账是"**use-def 可被绕过**"：`DataFlowGraph.{value
 
 **验证**：workspace 1422 passed / 0 failed / 19 ignored（60 个测试二进制 +
 13 组 doc-test，较 S5 第 3 项 +6）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。
+
+### S5（第 5 项）：`dfg` 私有化第二步——`insts` arena 收口（2026-09-15）
+
+按 arena 分切片的第二片，也是最大的一片：实测 `insts` 的外部触点
+**216 处索引 + 8 处裸 `dfg.insts[..]` + 11 处 `get(..)` + 3 处 `get_mut(..)` +
+1 处 `iter()` + 25 处 `&mut …`，跨 39 个文件**。
+
+- **私有化**：`pub(crate) insts`；读口 `inst_data`（fail-closed，与
+  `value_data`/`BlockData::terminator` 同契约）/ `inst_data_opt`（容忍坏 IR）/ 既有
+  `inst_opcode`/`inst_operands`/`inst_results`/`inst_block`/`insts()`/`inst_count`。
+- **写口**：`inst_mut`（fail-closed）/ `inst_mut_opt`——`(dfg, Inst)` 寻址的就地
+  编辑口，取代对 arena 的 `&mut` 索引。**契约**：安全字段 = `opcode`/`immediates`/
+  `flags`/`mem_flags`/`param_attrs`/`fn_attrs`/`metadata`/`loc`/`isel_strategy`；
+  **`operands`/`results` 不在此列**（改操作数会绕过 use-lists）——推荐
+  `replace_all_uses`/`apply_replacements`，或"就地改写 + `refresh_inst_uses`"。
+  结构性增删仍只有 `make_inst*`/`remove_inst`（在 `dfg.rs` 内）。
+  另加 crate 内的 `insts_iter_mut()`（仅供 `Function::apply_replacements` 这类
+  批量就地编辑，同一契约），使 `dfg.insts` **字段语法在 `src/` 里彻底归零**。
+- **迁移与修错**：脚本化替换 5 类访问模式 → 逐个修编译器点出的**语义误译**：
+  ① `&mut` 前缀被吞导致 `let imms = inst_mut(..).immediates` 变成移出借用；
+  ② 8 处"经读口做写操作"（`.set_isel_strategy`/`attach_metadata`/`flags |=`/
+  `results.push`）改回 `inst_mut`；③ 约 20 处 `&Inst` 接收者（`inst_data(*i)`）与
+  4 处整数/`usize` 索引（`Inst(ui as u32)`）；④ 6 处 `iter()`→`insts()` 后闭包要
+  解构 `(_, i)`；⑤ 4 处多行 `.dfg\n.insts` 链（单行正则漏掉）。
+- **顺带修的既有旁路**：`forge-codegen` 两处 `inst.operands = ops`（大聚合段展开）
+  原本就是"就地改写 + `refresh_inst_uses`"，现改走 `inst_mut`；`Function::
+  apply_replacements` 改走 `insts_iter_mut`（不再直接碰 arena）。
+- **守卫**：`tests/dfg_privatization.rs` 扩到 10 例——新增
+  `inst_data` 越界 panic / `inst_data_opt` 给 `None` / `inst_mut` 改 flags 与
+  `inst_mut_opt` 越界 / **`inst_mut` 改操作数必须 `refresh_inst_uses`（use 计数
+  1→1、verifier 仍通过）** / 迭代口与 `inst_count` 同源；源码断言扩成
+  `dfg.values` + `dfg.insts` 双字段（负向探针实测 FAILED）。
+
+**验证**：workspace 1426 passed / 0 failed / 19 ignored（60 个测试二进制 +
+13 组 doc-test，较 S5 第 4 项 +4）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）

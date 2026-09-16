@@ -192,8 +192,8 @@ fn assert_block_eq(
 ) {
     assert_eq!(b1.inst_order.len(), b2.inst_order.len(), "inst count blk");
     for (a, c) in b1.inst_order.iter().zip(b2.inst_order.iter()) {
-        let ia = &f1.dfg.insts[a.0 as usize];
-        let ic = &f2.dfg.insts[c.0 as usize];
+        let ia = &f1.dfg.inst_data(*a);
+        let ic = &f2.dfg.inst_data(*c);
         assert_inst_eq(f1, ia, f2, ic, text);
     }
     // 终结符（含块参数）整体比较：比**语义形态**，不比指令句柄

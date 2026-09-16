@@ -55,7 +55,7 @@ fn fixture() -> (Function, forge_ir::Block, Inst, Value) {
 #[test]
 fn instruction_metadata_appends_in_order() {
     let (mut func, _b0, iadd, _) = fixture();
-    let inst = &mut func.dfg.insts[iadd.0 as usize];
+    let inst = func.dfg.inst_mut(iadd);
     assert!(inst.metadata().is_empty(), "默认无附件");
 
     inst.attach_metadata(am(MetadataKind::DebugLoc, 0));
@@ -149,7 +149,7 @@ fn parser_lands_metadata_on_all_carriers() {
         .copied()
         .find(|&i| func.dfg.inst_opcode(i) == Some(&Opcode::Load))
         .expect("load 指令");
-    assert_eq!(func.dfg.insts[load.0 as usize].metadata().len(), 1);
+    assert_eq!(func.dfg.inst_data(load).metadata().len(), 1);
 
     let gv = m
         .iter_globals()
@@ -263,7 +263,9 @@ fn builder_built_function_accepts_metadata() {
     let ValueDef::Inst(iconst, _) = *func.dfg.value_def(v).expect("结果已定义") else {
         panic!("iconst 的结果应指令定义");
     };
-    func.dfg.insts[iconst.0 as usize].attach_metadata(am(MetadataKind::DebugLoc, 0));
-    assert_eq!(func.dfg.insts[iconst.0 as usize].metadata().len(), 1);
+    func.dfg
+        .inst_mut(iconst)
+        .attach_metadata(am(MetadataKind::DebugLoc, 0));
+    assert_eq!(func.dfg.inst_data(iconst).metadata().len(), 1);
     assert_eq!(func.dfg.term_metadata(entry).len(), 0);
 }

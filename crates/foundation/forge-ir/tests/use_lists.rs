@@ -42,7 +42,7 @@ fn refresh_after_operand_rewrite_is_consistent() {
 
     // 模拟 pass 的就地改写：第二个操作数 %b → %a（保持二元 Iadd 合法，
     // 于是本用例可以顺带跑完整 Verifier）。旧实现会留下 %b 的陈旧记录。
-    func.dfg.insts[s_inst.0 as usize].operands = smallvec::smallvec![a, a];
+    func.dfg.inst_mut(s_inst).operands = smallvec::smallvec![a, a];
     func.refresh_inst_uses(s_inst);
 
     assert_eq!(
@@ -69,7 +69,7 @@ fn refresh_after_operand_rewrite_is_consistent() {
 fn forget_inst_removes_all_entries_of_that_user() {
     let (mut func, a, bv, s_inst) = build_add();
     // 先就地改写，制造"按当前操作数删不掉旧记录"的局面
-    func.dfg.insts[s_inst.0 as usize].operands = smallvec::smallvec![a, a];
+    func.dfg.inst_mut(s_inst).operands = smallvec::smallvec![a, a];
 
     let removed = func.use_lists.forget_inst(s_inst);
     assert_eq!(removed, 2, "按 user 清扫：两条记录全删（含已陈旧的 %b）");

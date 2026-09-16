@@ -215,7 +215,7 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
 
         for inst_id in inst_ids {
             // 只读借用（CSE 不改指令；别名查询需要 &func，不可持 &mut）
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(*inst_id);
 
             // P0-3：内存写指令 kill load 表达式——否则 `load p; store v,p;
             // load p` 第二个 load 被错误消除。
@@ -331,7 +331,7 @@ mod tests {
         let ValueDef::Inst(total_inst, _) = func.dfg.value_def(total).unwrap() else {
             panic!("total 应是指令定义")
         };
-        let ops = &func.dfg.insts[total_inst.0 as usize].operands;
+        let ops = &func.dfg.inst_data(*total_inst).operands;
         assert_eq!(ops.as_slice(), &[sum1, sum1], "total 应引用 sum1 两次");
         assert_eq!(
             func.dfg.value_type(sum2),
@@ -571,7 +571,7 @@ mod tests {
         let ValueDef::Inst(sum_inst, _) = func.dfg.value_def(sum).unwrap() else {
             panic!("sum 应是指令定义")
         };
-        let ops = &func.dfg.insts[sum_inst.0 as usize].operands;
+        let ops = &func.dfg.inst_data(*sum_inst).operands;
         assert_eq!(ops.as_slice(), &[l1, l1], "l2 应被消除并复用 l1");
     }
 

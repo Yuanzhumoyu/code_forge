@@ -1048,7 +1048,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                         let is_const = matches!(
                             self.func.dfg.value_def(idx),
                             Some(crate::dfg::ValueDef::Inst(inst, _))
-                                if self.func.dfg.insts.get(inst.0 as usize).map(|d| d.opcode)
+                                if self.func.dfg.inst_data_opt(*inst).map(|d| d.opcode)
                                     == Some(crate::opcode::Opcode::Iconst)
                         );
                         if is_const {
@@ -1751,7 +1751,7 @@ fn fmt_phi_value(
     let crate::ValueDef::Inst(inst, _) = def else {
         return write!(f, "%{}", names.value(v));
     };
-    let Some(inst_data) = func.dfg.insts.get(inst.0 as usize) else {
+    let Some(inst_data) = func.dfg.inst_data_opt(*inst) else {
         return write!(f, "%{}", names.value(v));
     };
     match inst_data.opcode {
@@ -2221,7 +2221,7 @@ fn value_as_literal(
     let ValueDef::Inst(inst, _) = def else {
         return None;
     };
-    let inst_data = func.dfg.insts.get(inst.0 as usize)?;
+    let inst_data = func.dfg.inst_data_opt(inst)?;
     match inst_data.opcode {
         Opcode::Iconst => {
             let Immediate::Const(cid) = inst_data.immediates.first().copied()? else {

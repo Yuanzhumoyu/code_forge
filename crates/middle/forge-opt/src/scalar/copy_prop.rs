@@ -52,7 +52,7 @@ pub fn propagate_copies(func: &mut Function) -> Result<PassResult, IrError> {
     let mut to_kill: Vec<Inst> = Vec::new();
     for block in func.dfg.blocks.iter() {
         for &inst_id in &block.inst_order {
-            if matches!(func.dfg.insts[inst_id.0 as usize].opcode, Opcode::Copy) {
+            if matches!(func.dfg.inst_data(inst_id).opcode, Opcode::Copy) {
                 to_kill.push(inst_id);
             }
         }
@@ -76,7 +76,7 @@ fn build_copy_map(func: &Function) -> HashMap<Value, Value> {
     // 收集直接 Copy 映射
     for block in func.dfg.blocks.iter() {
         for &inst_id in &block.inst_order {
-            let inst = &func.dfg.insts[inst_id.0 as usize];
+            let inst = &func.dfg.inst_data(inst_id);
             if matches!(inst.opcode, Opcode::Copy)
                 && let (Some(result), Some(source)) =
                     (inst.results.first().copied(), inst.operands.first())

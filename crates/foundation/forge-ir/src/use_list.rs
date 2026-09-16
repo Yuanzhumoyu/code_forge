@@ -140,8 +140,7 @@ impl UseLists {
         let mut out: Vec<Block> = Vec::new();
         for inst in self.user_insts(value) {
             let block = dfg
-                .insts
-                .get(inst.0 as usize)
+                .inst_data_opt(inst)
                 .map(|i| i.block)
                 .unwrap_or(Block(u32::MAX));
             if block != Block(u32::MAX) && !out.contains(&block) {
@@ -384,7 +383,7 @@ mod tests {
         let term_inst = dfg.block_terminator(b0).expect("终结符指令");
         use_lists.record_inst(term_inst, &[Value(1), Value(2)]);
         // 就地改写：先把旧值换掉（此时按旧操作数摘除已找不到），再刷新
-        dfg.insts[term_inst.0 as usize].operands = smallvec::smallvec![Value(9), Value(9)];
+        dfg.inst_mut(term_inst).operands = smallvec::smallvec![Value(9), Value(9)];
         assert_eq!(use_lists.use_count(Value(9)), 0);
         assert_eq!(use_lists.forget_inst(term_inst), 2);
         use_lists.record_inst(term_inst, &[Value(9), Value(9)]);
