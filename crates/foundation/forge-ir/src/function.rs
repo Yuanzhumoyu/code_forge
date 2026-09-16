@@ -1133,10 +1133,13 @@ pub struct Module {
     pub target_triple: Option<TargetTriple>,
 
     /// `source_filename = "..."`（LLVM 模块元数据；编译产物调试用）。
-    pub source_filename: Option<String>,
+    ///
+    /// 开放数据用 [`ImmStr`]（SSO + `Arc<str>` 共享，Clone O(1)）——IR 层的
+    /// 字符串字段不出现裸 `String`（v3 方案 S5 第 2 项：开放集合划边界）。
+    pub source_filename: Option<ImmStr>,
 
     /// `module asm "..."`（模块级内联汇编；可多条，按序输出）。
-    pub module_asm: Vec<String>,
+    pub module_asm: Vec<ImmStr>,
 }
 
 impl Module {

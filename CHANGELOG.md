@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **开放集合划边界：删掉按架构名/OS 名查表的宿主查询，IR 公开面字符串统一 `ImmStr`（forge-ir v3 S5 第 2 项）**：`TargetTriple::{is_32bit, is_64bit, os_name}` **删除**——它们是"把写死的常量换成合法取值集合"的典型越界：架构名写进宿主白名单（`"x86_64" | "aarch64" | …`），表外架构（`loongarch64`、用户自定 ISA 名）两个都返回 `false`（既非 32 位也非 64 位的静默错误答案），且可能与 ISA 自己声明的 `addr_width` 矛盾；实测零生产调用点（只有其自身单测），故直接删除、不留兼容层。`TargetTriple` 只留 `parse`/字段/`Display`：四个分量原样保留原样往返，无归一化表。
+  边界三分与规则（写进 crate README）：闭合集合（opcode/条件码/类别/效果/终结符种类，由 `ops.toml` 等单点闭死）、目标/ISA 数据（寄存器类与宽度、栈槽、指令字宽、pattern 名、isel 标签、triple 各段）、用户程序数据（名字、`section`、metadata 自定义 kind、`Immediate::String`）；**不得从后两类字符串反推第一类或任何数值**，数值一律来自 ISA 数据（指针宽度 = `DataLayout` 的 `p:<size>:<abi>`）。
+  承载统一：`Module.source_filename: Option<String>` → `Option<ImmStr>`、`module_asm: Vec<String>` → `Vec<ImmStr>`（SSO + `Arc<str>` 共享，Clone O(1)），IR 公开面不再有裸 `String` 字段。守卫 `tests/open_set_boundary.rs`（4 例：未知架构名往返、宽度只跟布局数据走、`src/` 不得重现代码表、公开面不得有 `String` 字段），**已用负向探针验证守卫会失败**。
+
+### Changed (2026-09-15)
+
 - **`isel_strategy` 类型化 + 字段私有化（forge-ir v3 S5 第 1 项）**：`Instruction.isel_strategy` 从 `Option<&'static str>` 变为 `Option<IselStrategy>`（新模块 `src/isel_strategy.rs`）——**不是枚举**：标签名由目标 ISA 数据决定，forge-ir 不解析、不认识任何具体名字（无枚举/白名单/长度限制，名字内嵌的参数如 `"lea_sib:4"` 原样保留）。
   修掉两个真实缺陷：① `&'static str` 逼生产者把运行期名字 `Box::leak`（审计记录过那次泄漏修复），`IselStrategy::new` 现收任意 `&str`/`String`（短名内联零分配、长名 `Arc<str>` 共享、字面量 `from_static` 零拷贝）；② 裸字符串让"两套命名体系错配"（`lea_sib` vs `lea-merge-iadd-imul-4`）静默，类型化后比较必须先构造 `IselStrategy`，且**刻意不实现** `PartialEq<str>`/`Deref<Target = str>`/`Default`（空名 fail-closed，`None` 是"无标签"的唯一编码）。
   字段降为 `pub(crate)`，读写走 `Instruction::{isel_strategy, set_isel_strategy, clear_isel_strategy}`；5 处"保留全字段"复制点（`clone_inst`/lto/inline/func_specialize）改走写入口。**行为不变**：该通道当前无生产者（手写 `ext/pattern_isel.rs` 已随 ISA-DSL v15 删除），与 `[[pattern]]` 命名体系对接仍属 backlog #2。守卫 `tests/isel_strategy.rs`（5 例）。

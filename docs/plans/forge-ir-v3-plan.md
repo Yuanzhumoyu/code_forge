@@ -99,7 +99,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
-| S5 | 附件强类型化与可见性 | **第一切片已落地**：`isel_strategy` 类型化（`IselStrategy`，无宿主标签清单）+ 字段私有化（见 §6 末）；余项：开放集合划边界、metadata 单写、`dfg` 私有化 + 受限编辑 API |
+| S5 | 附件强类型化与可见性 | **第一、二切片已落地**：`isel_strategy` 类型化（`IselStrategy`，无宿主标签清单）+ 字段私有化；开放集合划边界（删 `TargetTriple` 的架构名查表、IR 公开面字符串统一 `ImmStr`）（均见 §6 末）；余项：metadata 单写、`dfg` 私有化 + 受限编辑 API |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
@@ -762,6 +762,50 @@ fmt/clippy `-D warnings` 干净。新增守卫 `tests/isel_strategy.rs`（5 例�
 （短名内联、长名共享、字面量借用三种承载 + 空名两条入口 + 值语义）。
 首轮整包跑出 2 处**我自己测试里的断言错误**（20 B 名字其实走内联、派生 `Debug`
 打印 `IselStrategy("…")`），已修正——说明"类型承载变体"的断言必须实测而非按印象写。
+
+### S5（第 2 项）：开放集合划边界（2026-09-15）
+
+S5 第 1 项把 `isel_strategy` 定量类型化之后，本步给出**整类"开放集合"的边界**
+并清掉越界的那一处。边界三分：
+
+- **(a) 闭合集合**：由单一事实源闭死（opcode = `ops.toml` 生成、`Icmp/Fcmp` 条件码、
+  指令类别与效果、终结符种类、`MetadataKind` 的 well-known 项）；
+- **(b) 目标/ISA 数据**：开放，但值由 ISA/目标数据声明（寄存器类与宽度、栈槽与
+  对齐、指令字宽、pattern 名、`IselStrategy`、`TargetTriple` 各段）；
+- **(c) 用户程序数据**：开放（函数/块/值/全局/结构体/`section` 名、metadata 自定义
+  kind、`Immediate::String`、`source_filename`、`module asm`）。
+
+**规则**：不得从 (b)/(c) 的字符串反推 (a) 或**任何数值**——那就是宿主白名单，
+表外取值只会得到静默错误答案；数值一律来自 ISA 数据（指针宽度 = `DataLayout` 的
+`p:<size>:<abi>`，由 ISA `[meta] addr_width` 派生）。另：(b)/(c) 的字符串数据一律
+用 `ImmStr`，IR 公开面不出现裸 `String` 字段。
+
+**本步实做**：
+
+1. **删掉越界的那处**：`TargetTriple::{is_32bit, is_64bit, os_name}` 是把架构名/OS 名
+   写成宿主查表的三个查询（`"x86_64" | "aarch64" | …`），表外架构（`loongarch64`、
+   用户自定 ISA 名）**两个都返回 `false`**——"既非 32 位也非 64 位"的静默错误答案，
+   而且与 ISA 自己声明的 `addr_width` 可能矛盾。实测**零生产调用点**（只有它自己的
+   单测），故按"无需兼容旧版本结构"直接删除。`TargetTriple` 只留 `parse`/字段/`Display`：
+   四个分量原样保留、原样往返，无归一化表、无"未知 → 默认"改写。
+2. **统一 (c) 类的承载**：`Module.source_filename: Option<String>` →
+   `Option<ImmStr>`、`module_asm: Vec<String>` → `Vec<ImmStr>`（SSO + `Arc<str>` 共享、
+   `Clone` O(1)；迁移解析器 2 处写入点，`Display` 处靠 deref 无需改）。IR 公开面
+   至此没有裸 `String` 字段。
+3. **守卫** `tests/open_set_boundary.rs`（4 例）：行为断言——未知架构名经
+   parse → display → parse 原样往返；指针宽度只跟布局字符串走（同一 `p:32:32` 挂在
+   x86_64 与 loongarch64 两个 triple 下都是 4 字节）。源码断言——`src/` 不得出现
+   带引号的架构名字面量或 `fn is_32bit/is_64bit/os_name`；IR 公开面不得出现
+   `pub … : String` 字段（`src/ir_parser/**` 的解析期 AST 按设计例外，白名单必须被命中）。
+   **守卫已用负向探针实测会失败**（临时放入 `src/zz_guard_probe.rs` 含
+   `pub probe_field: String` + `"x86_64"` 后两条源码断言双双 FAILED，删除后恢复绿）
+   ——否则"永远绿的守卫"等于没有守卫。
+
+**验证**：workspace 1410 passed / 0 failed / 19 ignored（58 个测试二进制 +
+13 组 doc-test，较 S5 第 1 项 +4）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。首轮整包又抓到 1 处**我自己新写断言的错误**
+（三段式 `riscv64-unknown-elf` 的第三段是 OS 而非 environment，已按实测修正）
+——"目标三元组的段语义"同样只能实测，不能按印象写。
 
 ## 7. 参考设计（外部）
 

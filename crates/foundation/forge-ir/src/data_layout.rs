@@ -462,6 +462,19 @@ pub enum Mangling {
 ///
 /// Format: `<arch>-<vendor>-<os>[-<environment>]`
 ///
+/// # 边界（v3 方案 S5 第 2 项：开放集合划边界）
+///
+/// 四个分量都是**开放数据**：值集合不由 IR 规范闭合，任何字符串（含本 crate
+/// 不认识的架构，如 `loongarch64`、用户自定 ISA 名）都原样保留、原样往返——
+/// **没有归一化表、没有"未知 → 默认"改写**。
+///
+/// 曾经存在的 `is_32bit()` / `is_64bit()` / `os_name()` 是反面教材：它们把架构名
+/// 写成宿主侧白名单（`"x86_64" | "aarch64" | …`），表外的架构**两个都返回 false**
+/// （既非 32 位也非 64 位的静默错误答案），且可能与 ISA 自己声明的 `addr_width`
+/// 矛盾。指针宽度等数值的唯一来源是 ISA 数据（[`DataLayout`] 的 `p:<size>:<abi>`，
+/// 由 ISA 元数据派生），**不是**这个类型。反回潮守卫见
+/// `tests/open_set_boundary.rs`。
+///
 /// Examples:
 /// - `x86_64-unknown-linux-gnu`
 /// - `x86_64-pc-windows-msvc`
@@ -489,50 +502,6 @@ impl TargetTriple {
             vendor: ImmStr::from(parts.get(1).copied().unwrap_or("unknown")),
             os: ImmStr::from(parts.get(2).copied().unwrap_or("unknown")),
             environment: ImmStr::from(parts.get(3).copied().unwrap_or("")),
-        }
-    }
-
-    /// Check if this target uses 32-bit pointers.
-    pub fn is_32bit(&self) -> bool {
-        matches!(
-            self.arch.as_str(),
-            "i386"
-                | "i486"
-                | "i586"
-                | "i686"
-                | "arm"
-                | "armv7"
-                | "thumbv7"
-                | "mips"
-                | "mipsel"
-                | "wasm32"
-        )
-    }
-
-    /// Check if this target uses 64-bit pointers.
-    pub fn is_64bit(&self) -> bool {
-        matches!(
-            self.arch.as_str(),
-            "x86_64"
-                | "aarch64"
-                | "arm64"
-                | "riscv64"
-                | "powerpc64"
-                | "powerpc64le"
-                | "mips64"
-                | "sparc64"
-                | "s390x"
-        )
-    }
-
-    /// Get the default OS name.
-    pub fn os_name(&self) -> &str {
-        match self.os.as_str() {
-            "linux" => "linux",
-            "windows" | "win32" => "windows",
-            "macos" | "darwin" => "macos",
-            "none" | "unknown" => "bare",
-            _ => "unknown",
         }
     }
 }
@@ -668,17 +637,32 @@ mod tests {
         assert_eq!(dl.pointer_size(99), 8); // fallback to addr 0
     }
 
+    /// 目标三元组只作**数据**：解析出的分量原样保留（含本 crate 不认识的架构名），
+    /// 不提供任何"按架构名猜宽度/OS"的查询（见类型文档的边界说明）。
     #[test]
     fn test_target_triple() {
         let t = TargetTriple::parse("x86_64-pc-windows-msvc");
         assert_eq!(t.arch.as_str(), "x86_64");
-        assert!(t.is_64bit());
+        assert_eq!(t.vendor.as_str(), "pc");
+        assert_eq!(t.os.as_str(), "windows");
+        assert_eq!(t.environment.as_str(), "msvc");
+        assert_eq!(t.to_string(), "x86_64-pc-windows-msvc");
 
-        let t = TargetTriple::parse("wasm32-unknown-unknown");
-        assert!(t.is_32bit());
+        // 未知/自定架构同样原样保留（无归一化表）
+        let t = TargetTriple::parse("loongarch64-acme-none-elf");
+        assert_eq!(t.arch.as_str(), "loongarch64");
+        assert_eq!(t.to_string(), "loongarch64-acme-none-elf");
 
-        let t = TargetTriple::parse("x86_64-unknown-linux-gnu");
-        assert!(t.is_64bit());
-        assert_eq!(t.os_name(), "linux");
+        // 三段式（无 environment）：第三段是 OS，Display 不补空段
+        let t3 = TargetTriple::parse("riscv64-unknown-elf");
+        assert_eq!(t3.os.as_str(), "elf");
+        assert_eq!(t3.environment.as_str(), "");
+        assert_eq!(t3.to_string(), "riscv64-unknown-elf");
+
+        // 四段式才带 environment
+        let t4 = TargetTriple::parse("x86_64-unknown-linux-gnu");
+        assert_eq!(t4.os.as_str(), "linux");
+        assert_eq!(t4.environment.as_str(), "gnu");
+        assert_eq!(t4.to_string(), "x86_64-unknown-linux-gnu");
     }
 }

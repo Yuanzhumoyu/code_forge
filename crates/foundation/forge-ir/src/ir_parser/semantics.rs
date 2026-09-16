@@ -410,10 +410,10 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 }
             }
             ParsedItem::SourceFilename(s) => {
-                module.source_filename = Some(s.clone());
+                module.source_filename = Some(crate::ImmStr::from(s.as_str()));
             }
             ParsedItem::ModuleAsm(s) => {
-                module.module_asm.push(s.clone());
+                module.module_asm.push(crate::ImmStr::from(s.as_str()));
             }
             ParsedItem::ComdatDecl(c) => {
                 // `$c = comdat any` 声明（重复声明报错——LLVM 符号表）

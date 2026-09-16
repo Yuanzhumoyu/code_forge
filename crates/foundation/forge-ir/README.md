@@ -28,7 +28,7 @@
 | `constant` / `big` / `imm_str` / `string_pool` | 常量池（int/float/big/vector/aggregate）、任意精度、SSO 字符串 |
 | `verify` | `Verifier`（63 条规则 / 13 阶段） |
 | `display` / `ir_parser` | LLVM 文本输出（logos + lalrpop 解析） |
-| `metadata` / `debug_info` / `symbol` / `data_layout` | 元数据、调试信息、符号、DataLayout |
+| `metadata` / `debug_info` / `symbol` / `data_layout` | 元数据、调试信息、符号、DataLayout 与 target triple（只作数据，不提供按架构名猜属性的查询——见「开放集合的边界」） |
 
 crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**：`build.rs` 读它生成
 `$OUT_DIR/opcode_gen.rs`（`Opcode` 枚举、`ALL`/`INFOS`、名字与助记符映射、
@@ -46,6 +46,28 @@ crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**
 分派（穷举 match），形状类规则的实现只在 `src/type_rules.rs` 一份（`check_shape`，
 builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 `convert = { src, dst, width }`。
+
+## 开放集合的边界
+
+`Instruction`/`Module` 上的字符串与"可扩展标签"按**三分**划边界（v3 S5）：
+
+| 类别 | 取值来源 | 表示 | 例子 |
+| --- | --- | --- | --- |
+| 闭合集合 | 单一事实源闭死 | 生成枚举 / 结构体 | opcode（`ops.toml`）、`Icmp/Fcmp` 条件码、指令类别与效果、终结符种类、`MetadataKind` 的 well-known 项 |
+| 目标/ISA 数据 | ISA 或目标数据声明 | `ImmStr` / 专用类型 | 寄存器类与宽度、栈槽与对齐、指令字宽、pattern 名、`IselStrategy`、`TargetTriple` 各段 |
+| 用户程序数据 | 用户源码/输入决定 | `ImmStr` | 函数/块/值/全局/结构体/`section` 名、`Immediate::String`、`source_filename`、`module asm` |
+
+规则一：**不得从后两类的字符串反推第一类或任何数值**——那是宿主白名单，表外
+取值只会得到静默错误答案（历史实例：`TargetTriple::{is_32bit, is_64bit,
+os_name}` 三个架构名/OS 名查表，表外架构两个都返回 `false`；已于 S5 第 2 项
+删除）。数值一律来自 ISA 数据，例如指针宽度 = `DataLayout` 的 `p:<size>:<abi>`
+（由 ISA `[meta] addr_width` 派生），与 `target triple` 的架构名无关。
+
+规则二：后两类的字符串数据一律用 `ImmStr`（SSO 内联 + `Arc<str>` 共享，
+`Clone` O(1)），IR 公开面不出现裸 `String` 字段（`src/ir_parser/**` 的解析期
+AST 与诊断消息按设计例外）。两条规则由 `tests/open_set_boundary.rs` 钉住
+（行为断言：未知架构名原样往返、宽度只跟布局数据走；源码断言：不得重现代码表、
+公开面不得出现 `String` 字段，且已用负向探针验证守卫会失败）。
 
 ## 使用要点
 
@@ -93,5 +115,7 @@ S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；**S
 （`ops.toml` + 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族，查表全 O(1)）；
 **S2 第一切片已落地**（`entity_map` 四个容器 + forge-ir 内部句柄键表迁移，
 句柄键 `HashMap` 45 → 31 处）；**S4 主体已落地**（终结符并入指令流）；
-**S5 第一切片已落地**（`isel_strategy` 类型化 + 字段私有化，2026-09-15）。
+**S5 第一切片已落地**（`isel_strategy` 类型化 + 字段私有化，2026-09-15）；
+**S5 第二切片已落地**（开放集合划边界：删掉 `TargetTriple` 的架构名查表、
+IR 公开面字符串统一 `ImmStr`，2026-09-15）。
 余项见该文档 §6 的 S2/S5 记录。
