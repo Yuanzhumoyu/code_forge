@@ -101,11 +101,11 @@ fn ret_switch_unreachable_write_read_back() {
 fn invoke_and_resume_write_read_back() {
     let (mut func, b0, b1, b2, v) = fixture();
 
-    func.invoke(b0, FuncRef(0), [v], TypeId::VOID, b1, [v], b2, []);
+    func.invoke(b0, FuncRef::new(0), [v], TypeId::VOID, b1, [v], b2, []);
     assert_eq!(func.dfg.term_kind(b0), Some(TermKind::Invoke));
     let (callee, args, ret_ty, normal, normal_args, unwind, unwind_args) =
         func.dfg.term_invoke(b0).expect("invoke 投影");
-    assert_eq!(callee, FuncRef(0));
+    assert_eq!(callee, FuncRef::new(0));
     assert_eq!(args, &[v]);
     assert_eq!(ret_ty, TypeId::VOID);
     assert_eq!((normal, unwind), (b1, b2));

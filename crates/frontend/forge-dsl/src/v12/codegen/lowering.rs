@@ -454,7 +454,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         quote! {
             __pack.push_inst(Inst::#jump_vn {
                 #jal_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #jal_target: target.0 as i64,
+                #jal_target: target.index() as i64,
             });
             Ok(__pack)
         }
@@ -463,7 +463,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             // 定宽 bare（arm64 B：仅 label 槽，imm26 位段 → patcher）与
             // 变长（x86 JMP_REL32：label 槽 = 尾部 imm → REL4 fixup）的
             // 指令形态都是单 label 槽，同一发射路径。
-            __pack.push_inst(Inst::#jump_vn { #jmp_rel: target.0 as i64 });
+            __pack.push_inst(Inst::#jump_vn { #jmp_rel: target.index() as i64 });
             Ok(__pack)
         }
     } else {
@@ -485,8 +485,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         quote! {
             let cond = value_to_xreg.get(cond_val).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            let true_block = then_block.0 as i64;
-            let false_block = else_block.0 as i64;
+            let true_block = then_block.index() as i64;
+            let false_block = else_block.index() as i64;
             // TEST cond, cond（85 /r：reg=op0、rm=op1）
             let __idx = __pack.push_inst(Inst::#test_vn {
                 #t_a: Reg::from_index(0, __DEFAULT_GPR_CLASS),
@@ -505,8 +505,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         quote! {
             let cond = value_to_xreg.get(cond_val).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            let true_block = then_block.0 as i64;
-            let false_block = else_block.0 as i64;
+            let true_block = then_block.index() as i64;
+            let false_block = else_block.index() as i64;
             // beq cond, X0, false_block（cond==0 → false）
             let __idx = __pack.push_inst(Inst::#beq_vn {
                 #b_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
@@ -525,8 +525,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         quote! {
             let cond = value_to_xreg.get(cond_val).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            let true_block = then_block.0 as i64;
-            let false_block = else_block.0 as i64;
+            let true_block = then_block.index() as i64;
+            let false_block = else_block.index() as i64;
             // cbz cond, false_block（cond == 0 → else；不跳则落下一指令）
             let __idx = __pack.push_inst(Inst::#branch_vn {
                 #jcc_cond: Reg::from_index(0, __DEFAULT_GPR_CLASS),
@@ -696,10 +696,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             elem64: bool,
         ) -> i64 {
             let Some(p) = pool else { return 0 };
-            let Some(bytes) = p.get_vector(crate::prelude::ConstId(cid)) else { return 0 };
+            let Some(bytes) = p.get_vector(crate::prelude::ConstId::from_raw(cid)) else { return 0 };
             let base = half * 16;
             let le = matches!(
-                p.get_vector_endian(crate::prelude::ConstId(cid)),
+                p.get_vector_endian(crate::prelude::ConstId::from_raw(cid)),
                 None | Some(crate::prelude::Endianness::Little)
             );
             if elem64 {
@@ -728,7 +728,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             cid: u32,
         ) -> i64 {
             let Some(p) = pool else { return 0 };
-            let Some(bytes) = p.get_vector(crate::prelude::ConstId(cid)) else { return 0 };
+            let Some(bytes) = p.get_vector(crate::prelude::ConstId::from_raw(cid)) else { return 0 };
             if bytes.len() < 8 { return 0; }
             let mut a = [0u8; 8];
             a.copy_from_slice(&bytes[0..8]);
@@ -1466,7 +1466,7 @@ fn gen_call_lowering(
                     .map(|(_, fid, slot, role)| {
                         let fid_ident = format_ident!("{fid}");
                         if slot.kind == OperandKind::Label {
-                            quote! { #fid_ident: -(__f.0 as i64 + 1) }
+                            quote! { #fid_ident: -(__f.index() as i64 + 1) }
                         } else if slot.kind == OperandKind::Reg
                             && matches!(role, OperandRole::Out | OperandRole::InOut)
                         {

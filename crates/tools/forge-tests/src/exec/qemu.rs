@@ -649,7 +649,7 @@ mod tests {
 
         let funcs: Vec<(String, CompiledFunction)> = (0..module.function_count())
             .map(|i| {
-                let fr = FuncRef(i as u32);
+                let fr = FuncRef::new(i as u32);
                 let func = module.get_function(fr);
                 let cf =
                     FunctionCompiler::new(code_forge::backend::riscv64_v12::TargetMachine::new())

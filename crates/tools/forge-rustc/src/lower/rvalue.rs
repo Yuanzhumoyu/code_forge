@@ -392,7 +392,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         if crate::trace::trace_enabled("GLOBAL") {
                             eprintln!("[forge] global_addr alloc={alloc_id:?} -> G{g}");
                         }
-                        return Ok(self.builder.global_addr(GlobalId(g)));
+                        return Ok(self.builder.global_addr(GlobalId::new(g)));
                     }
                     if crate::trace::trace_enabled("GLOBAL") {
                         eprintln!("[forge] const alloc={alloc_id:?} non-data, skip");

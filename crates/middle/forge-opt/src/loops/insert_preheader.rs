@@ -161,21 +161,21 @@ mod tests {
 
         // 找到新块：唯一一个 terminator 是 Jump 且 target 是 header、非 left/right 的块
         // （原 left/right 也是 Jump——按 retarget 后它们的 target 不再是 header 来识别）
-        let header = Block(3);
+        let header = Block::new(3);
         let mut ph = None;
         for bi in 0..func.dfg.block_count() {
             if func
                 .dfg
-                .term_jump(Block(bi as u32))
+                .term_jump(Block::new(bi as u32))
                 .is_some_and(|(target, _)| target == header)
             {
-                ph = Some(Block(bi as u32));
+                ph = Some(Block::new(bi as u32));
             }
         }
         let ph = ph.expect("应存在跳 header 的新 preheader 块");
 
         // left(1)/right(2) 的 Jump 目标改为 ph
-        for p in [Block(1), Block(2)] {
+        for p in [Block::new(1), Block::new(2)] {
             assert!(
                 func.dfg
                     .term_jump(p)
@@ -243,7 +243,7 @@ mod tests {
             for &inst_id in &blk.inst_order {
                 let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Load) {
-                    loads.push(Block(bi as u32));
+                    loads.push(Block::new(bi as u32));
                 }
             }
         }

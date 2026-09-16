@@ -67,7 +67,7 @@ fn fixture() -> (Function, Value, Value) {
 #[should_panic(expected = "值句柄不合法")]
 fn value_data_panics_on_invalid_handle() {
     let (func, _a, _sum) = fixture();
-    let bogus = Value(func.dfg.value_count() as u32 + 7);
+    let bogus = Value::new(func.dfg.value_count() as u32 + 7);
     let _ = func.dfg.value_data(bogus);
 }
 
@@ -78,7 +78,7 @@ fn value_data_opt_tolerates_invalid_handle() {
     assert!(func.dfg.value_data_opt(a).is_some());
     assert_eq!(func.dfg.value_data_opt(a).map(|d| d.ty), Some(TypeId::I64));
 
-    let bogus = Value(func.dfg.value_count() as u32 + 7);
+    let bogus = Value::new(func.dfg.value_count() as u32 + 7);
     assert!(func.dfg.value_data_opt(bogus).is_none());
     // 与既有 Option 读口口径一致
     assert!(func.dfg.value_type(bogus).is_none());
@@ -94,7 +94,7 @@ fn set_value_type_is_the_only_write_entry() {
     assert!(func.dfg.set_value_type(a, TypeId::I32), "合法句柄应写入");
     assert_eq!(func.dfg.value_type(a), Some(TypeId::I32));
 
-    let bogus = Value(func.dfg.value_count() as u32 + 3);
+    let bogus = Value::new(func.dfg.value_count() as u32 + 3);
     assert!(!func.dfg.set_value_type(bogus, TypeId::I64), "越界不写");
 }
 
@@ -184,7 +184,7 @@ fn inst_data_is_fail_closed_and_opt_tolerates() {
     assert_eq!(func.dfg.inst_data(iadd).opcode, Opcode::Iadd);
     assert!(func.dfg.inst_data_opt(iadd).is_some());
 
-    let bogus = Inst(func.dfg.inst_count() as u32 + 9);
+    let bogus = Inst::new(func.dfg.inst_count() as u32 + 9);
     assert!(func.dfg.inst_data_opt(bogus).is_none());
     assert_eq!(
         func.dfg.inst_count(),
@@ -198,7 +198,7 @@ fn inst_data_is_fail_closed_and_opt_tolerates() {
 #[should_panic(expected = "指令句柄不合法")]
 fn inst_data_panics_on_invalid_handle() {
     let (func, _a, _sum) = fixture();
-    let bogus = Inst(func.dfg.inst_count() as u32 + 9);
+    let bogus = Inst::new(func.dfg.inst_count() as u32 + 9);
     let _ = func.dfg.inst_data(bogus);
 }
 
@@ -211,7 +211,7 @@ fn inst_mut_is_the_only_edit_entry() {
     func.dfg.inst_mut(iadd).flags = InstFlags::MAY_UB;
     assert!(func.dfg.inst_data(iadd).flags.contains(InstFlags::MAY_UB));
 
-    let bogus = Inst(func.dfg.inst_count() as u32 + 9);
+    let bogus = Inst::new(func.dfg.inst_count() as u32 + 9);
     assert!(func.dfg.inst_mut_opt(bogus).is_none());
 }
 
@@ -322,7 +322,7 @@ fn block_accessors_are_fail_closed_and_agree() {
     );
     assert_eq!(func.dfg.blocks().count(), func.dfg.block_count());
 
-    let bogus = forge_ir::Block(func.dfg.block_count() as u32 + 5);
+    let bogus = forge_ir::Block::new(func.dfg.block_count() as u32 + 5);
     assert!(func.dfg.block_opt(bogus).is_none());
 }
 
@@ -331,7 +331,7 @@ fn block_accessors_are_fail_closed_and_agree() {
 #[should_panic(expected = "块句柄不合法")]
 fn block_panics_on_invalid_handle() {
     let (func, _a, _sum) = fixture();
-    let bogus = forge_ir::Block(func.dfg.block_count() as u32 + 5);
+    let bogus = forge_ir::Block::new(func.dfg.block_count() as u32 + 5);
     let _ = func.dfg.block(bogus);
 }
 
@@ -347,7 +347,7 @@ fn block_mut_is_the_only_edit_entry() {
     func.dfg.block_mut(entry).inst_order.clear();
     assert_eq!(func.dfg.block(entry).inst_order.len(), 0);
 
-    let bogus = forge_ir::Block(func.dfg.block_count() as u32 + 5);
+    let bogus = forge_ir::Block::new(func.dfg.block_count() as u32 + 5);
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         func.dfg.block_mut(bogus);
     }));

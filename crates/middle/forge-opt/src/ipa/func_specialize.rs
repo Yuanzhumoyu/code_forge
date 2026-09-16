@@ -51,7 +51,7 @@ pub fn specialize_calls(
     #[allow(clippy::type_complexity)]
     let mut calls: Vec<(usize, Inst, FuncRef, Vec<(usize, Value)>)> = Vec::new();
     for bi in 0..func.dfg.block_count() {
-        let block_data = &func.dfg.block(Block(bi as u32));
+        let block_data = &func.dfg.block(Block::new(bi as u32));
         for &inst_id in &block_data.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             if inst.opcode != Opcode::Call {
@@ -150,7 +150,7 @@ fn clone_callee_into_caller(
     // Clone instructions from callee into caller
     let mut ret_vals: Vec<Value> = Vec::new();
     for bi in 0..callee.dfg.block_count() {
-        let callee_block = &callee.dfg.block(Block(bi as u32));
+        let callee_block = &callee.dfg.block(Block::new(bi as u32));
 
         for &inst_id in &callee_block.inst_order {
             let inst = &callee.dfg.inst_data(inst_id);
@@ -218,7 +218,7 @@ fn clone_callee_into_caller(
         }
 
         // Handle callee's Return terminator
-        if let Some(values) = callee.dfg.term_return_values(Block(bi as u32)) {
+        if let Some(values) = callee.dfg.term_return_values(Block::new(bi as u32)) {
             for &v in values {
                 ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
             }
@@ -245,7 +245,7 @@ mod tests {
         cf.is_const = true;
 
         let mut func_table = HashMap::new();
-        func_table.insert(FuncRef(0), cf);
+        func_table.insert(FuncRef::new(0), cf);
 
         let sig2 = FunctionSignature::new(&[], &[]);
         let mut b2 = FunctionBuilder::new("caller", TypeContext::new(), sig2);
@@ -270,7 +270,7 @@ mod tests {
         let prod = b.imul(params[0], two);
         b.ret(&[prod]);
         let cf = b.finish().expect("build");
-        let callee_ref = FuncRef(0);
+        let callee_ref = FuncRef::new(0);
 
         let mut func_table = HashMap::new();
         func_table.insert(callee_ref, cf);

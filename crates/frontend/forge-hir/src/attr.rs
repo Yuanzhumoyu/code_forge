@@ -158,8 +158,8 @@ impl fmt::Display for AttrValue {
             AttrValue::Str(s) => write!(f, "{}", s),
             AttrValue::Type(t) => write!(f, "{:?}", t),
             AttrValue::BlockId(b) => write!(f, "block_id({})", b.0),
-            AttrValue::Block(b) => write!(f, "block({})", b.0),
-            AttrValue::Func(fr) => write!(f, "func({})", fr.0),
+            AttrValue::Block(b) => write!(f, "block({})", b.index()),
+            AttrValue::Func(fr) => write!(f, "func({})", fr.index()),
             AttrValue::Array(arr) => {
                 write!(f, "[")?;
                 for (i, v) in arr.iter().enumerate() {

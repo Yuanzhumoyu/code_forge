@@ -153,7 +153,9 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             temp: None,
             temp_class: None,
             xreg: "0u32",
-            ctor: Some(|_| quote! { ctx.current_global.map(|g| -(g.0 as i64) - 1).unwrap_or(0) }),
+            ctor: Some(
+                |_| quote! { ctx.current_global.map(|g| -(g.index() as i64) - 1).unwrap_or(0) },
+            ),
         },
         // ── 整数常量（常量池解析）──
         Ph {
@@ -167,7 +169,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0)
                 }
             }),
@@ -187,7 +189,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        ((!__v as u64) & 0xFFFF) as i64 })
                 }
@@ -208,7 +210,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0) as u64;
                        ((__v >> (16 * 0)) & 0xFFFF) as i64 })
                 }
@@ -225,7 +227,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0) as u64;
                        ((__v >> (16 * 1)) & 0xFFFF) as i64 })
                 }
@@ -242,7 +244,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0) as u64;
                        ((__v >> (16 * 2)) & 0xFFFF) as i64 })
                 }
@@ -259,7 +261,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0) as u64;
                        ((__v >> (16 * 3)) & 0xFFFF) as i64 })
                 }
@@ -276,7 +278,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0); __v + 0x800 })
                 }
             }),
@@ -292,7 +294,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        let __lo = (__v << 52 >> 52) as i32;
                        (if __lo >= 0x800 { __lo - 0x1000 } else { __lo }) as i64 })
@@ -310,7 +312,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        ((__v >> 32) as i64) + 0x800 })
                 }
@@ -327,7 +329,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        let __hi32 = (__v >> 32) as i64;
                        let __lo = (__hi32 << 52 >> 52) as i32;
@@ -346,7 +348,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        (__v as i64 & 0xFFFFFFFF) + 0x800 })
                 }
@@ -363,7 +365,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_int(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        let __lo32 = (__v as i64 & 0xFFFFFFFF);
                        let __lo = (__lo32 << 52 >> 52) as i32;
@@ -383,7 +385,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0) as i64
                 }
             }),
@@ -399,7 +401,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        ((__v >> 32) as i64) + 0x800 })
                 }
@@ -416,7 +418,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        let __hi32 = (__v >> 32) as i64;
                        let __lo = (__hi32 << 52 >> 52) as i32;
@@ -435,7 +437,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        (__v as i64 & 0xFFFFFFFF) + 0x800 })
                 }
@@ -452,7 +454,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             ctor: Some(|_| {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
-                        .and_then(|p| p.resolve_float(crate::prelude::ConstId(ctx.current_const_index)))
+                        .and_then(|p| p.resolve_float(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
                        let __lo32 = (__v as i64 & 0xFFFFFFFF);
                        let __lo = (__lo32 << 52 >> 52) as i32;

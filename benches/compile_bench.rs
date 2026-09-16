@@ -197,7 +197,7 @@ fn build_call_func() -> Function {
     let mut b = FunctionBuilder::new("caller", TypeContext::new(), sig);
     let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "a")]);
     b.switch_to_block(entry);
-    let rets = b.call(FuncRef(0), &[params[0]], &[TypeId::I32]);
+    let rets = b.call(FuncRef::new(0), &[params[0]], &[TypeId::I32]);
     let r = b.iadd(params[0], rets[0]);
     b.ret(&[r]);
     b.finish().unwrap()
@@ -1032,8 +1032,8 @@ fn bench_module_compile(c: &mut Criterion) {
 fn bench_opt_ipa_real_table(c: &mut Criterion) {
     let table_src = || {
         let mut t: std::collections::HashMap<FuncRef, Function> = std::collections::HashMap::new();
-        t.insert(FuncRef(0), build_callee());
-        t.insert(FuncRef(1), build_call_func());
+        t.insert(FuncRef::new(0), build_callee());
+        t.insert(FuncRef::new(1), build_call_func());
         t
     };
 

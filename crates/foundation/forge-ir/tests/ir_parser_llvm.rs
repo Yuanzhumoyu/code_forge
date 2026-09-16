@@ -313,7 +313,7 @@ fn icmp_all_conditions() {
             "define i1 @f(i32 %a, i32 %b) {{\n  %e:\n    %r = icmp {name} i32 %a, i32 %b\n    ret i1 %r\n}}\n"
         );
         let f = parse_function(&src).expect("parse icmp");
-        let inst = &f.dfg.inst_data(forge_ir::Inst(0));
+        let inst = &f.dfg.inst_data(forge_ir::Inst::new(0));
         assert_eq!(inst.opcode, Opcode::Icmp, "icmp {name}");
         assert_eq!(
             inst.immediates.first().and_then(|im| im.as_int_cc()),
@@ -329,7 +329,7 @@ fn fcmp_ordered() {
         "define i1 @f(double %a, double %b) {\n  %e:\n    %r = fcmp olt double %a, double %b\n    ret i1 %r\n}\n",
     )
     .expect("parse fcmp");
-    let inst = &f.dfg.inst_data(forge_ir::Inst(0));
+    let inst = &f.dfg.inst_data(forge_ir::Inst::new(0));
     assert_eq!(inst.opcode, Opcode::Fcmp);
     assert_eq!(
         inst.immediates.first().and_then(|im| im.as_float_cc()),
@@ -349,7 +349,7 @@ fn fcmp_unsupported_condition() {
             "define i1 @f(double %a, double %b) {{\n  %e:\n    %r = fcmp {cond} double %a, double %b\n    ret i1 %r\n}}\n"
         );
         let f = parse_function(&src).unwrap_or_else(|e| panic!("fcmp {cond} 应解析成功: {e}"));
-        let inst = &f.dfg.inst_data(forge_ir::Inst(0));
+        let inst = &f.dfg.inst_data(forge_ir::Inst::new(0));
         assert!(inst.opcode == Opcode::Fcmp, "fcmp {cond}: 期望 Fcmp opcode");
     }
     // 伪条件仍报错
@@ -392,11 +392,11 @@ fn control_flow() {
     .expect("parse cf");
     assert_eq!(f.dfg.block_count(), 3);
     assert_eq!(
-        f.dfg.term_kind(forge_ir::Block(0)),
+        f.dfg.term_kind(forge_ir::Block::new(0)),
         Some(forge_ir::terminator::TermKind::Branch)
     );
     assert_eq!(
-        f.dfg.term_kind(forge_ir::Block(2)),
+        f.dfg.term_kind(forge_ir::Block::new(2)),
         Some(forge_ir::terminator::TermKind::Unreachable)
     );
 }
@@ -505,7 +505,7 @@ fn calls() {
         "define i32 @add(i32 %a, i32 %b) {\n  %e:\n    %s = add i32 %a, i32 %b\n    ret i32 %s\n}\ndefine i32 @main() {\n  %e:\n    %r = call i32 @add(i32 1, i32 2)\n    ret i32 %r\n}\n",
     )
     .expect("parse module");
-    let main = m.get_function(forge_ir::entity::FuncRef(1));
+    let main = m.get_function(forge_ir::entity::FuncRef::new(1));
     assert!(opcodes(main).contains(&Opcode::Call));
 }
 
@@ -580,7 +580,12 @@ fn module_target_and_comment() {
     )
     .expect("parse module");
     assert!(m.target_triple.is_some(), "target triple set");
-    assert!(m.get_function(forge_ir::entity::FuncRef(0)).name.as_str() == "f");
+    assert!(
+        m.get_function(forge_ir::entity::FuncRef::new(0))
+            .name
+            .as_str()
+            == "f"
+    );
 }
 
 // ── 错误路径 ──

@@ -18,7 +18,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
     pub(crate) fn create_blocks(&mut self, func: &Function) {
         for (i, _) in func.dfg.block_data_iter().enumerate() {
-            let block_id = Block(i as u32);
+            let block_id = Block::new(i as u32);
             let vblock_id = self.vcode.create_block(block_id);
             self.block_map.insert(block_id, vblock_id);
         }
@@ -308,7 +308,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
         for (i, block_data) in func.dfg.block_data_iter().enumerate() {
             self.lower_block(
-                Block(i as u32),
+                Block::new(i as u32),
                 block_data,
                 &func.dfg,
                 &func.use_lists,
@@ -492,7 +492,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             }
 
             if let Some(Immediate::Const(cid)) = inst.immediates.first() {
-                self.ctx.current_const_index = cid.0;
+                // raw（含 tag 位）——DSL 侧用 ConstId::from_raw 还原；用 index() 会丢掉 tag（v3 S2 实测踩过：float/vector 常量全错）
+                self.ctx.current_const_index = cid.raw();
             }
             // 全量 immediates 缓存：Uint/Int/Const 提取为 u64 值列表
             //（ShuffleVector 的 mask、Vextract/Vinsert 的 index、比较指令的 cond 等）。
@@ -511,9 +512,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 .map(|imm| match imm {
                     Immediate::Uint(v) => *v,
                     Immediate::Int(v) => *v as u64,
-                    Immediate::Const(c) => c.0 as u64,
-                    Immediate::Global(g) => g.0 as u64,
-                    Immediate::Func(f) => f.0 as u64,
+                    Immediate::Const(c) => c.raw() as u64,
+                    Immediate::Global(g) => g.index() as u64,
+                    Immediate::Func(f) => f.index() as u64,
                     Immediate::IntCC(cc) => cc.code() as u64,
                     Immediate::FloatCC(cc) => cc.code() as u64,
                     Immediate::Block(_)
@@ -558,7 +559,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
                     let dbg = dfg.value_data_opt(idx_v).map(|v| &v.def);
                     let idbg = dfg
-                        .inst_data_opt(forge_ir::Inst(1))
+                        .inst_data_opt(forge_ir::Inst::new(1))
                         .map(|d| (d.opcode, &d.immediates));
                     eprintln!(
                         "[vextract] op={:?} idx_operand={:?} def={:?} inst1={:?} folded={:?}",

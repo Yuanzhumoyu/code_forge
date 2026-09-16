@@ -56,7 +56,7 @@ fn invoke_landingpad_compile_rejected() {
     b.resume(l2);
     b.switch_to_block(entry);
     b.invoke(
-        forge_ir::FuncRef(0),
+        forge_ir::FuncRef::new(0),
         &[],
         forge_ir::TypeId::VOID,
         ok,

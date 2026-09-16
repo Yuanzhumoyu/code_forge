@@ -14,25 +14,53 @@ crate::entity_ref_impls!(
     Value, Inst, Block, TypeId, FuncRef, ConstId, GlobalId, SigRef, AggId, VReg
 );
 
+/// 为"裸 u32 句柄"生成 `new`/`index` —— **字段私有化后的唯一构造/读取口**
+/// （v3 方案 S2：句柄字段私有化）。
+///
+/// 字段私有（`pub(crate)`）后，crate 外既不能凭空 `Value(3)` 造句柄，也不能
+/// `v.0` 直接读索引：前者会把"坏句柄"从构造点泄漏到整个下游，后者让句柄的
+/// 表示（u32 还是别的）成为公开契约。`new` 用于"从外部编号恢复句柄"（解析文本
+/// id、索引表查回），调用点必须能论证该编号来自可信来源。
+macro_rules! entity_index_accessors {
+    ($($t:ty),* $(,)?) => {$(
+        impl $t {
+            /// 由索引构造。**crate 外请谨慎**：只在"编号来自可信来源"
+            /// （解析出的文本 id、索引表查回、`enumerate()` 计数）时使用。
+            pub const fn new(index: u32) -> Self {
+                Self(index)
+            }
+
+            /// 索引值。
+            pub const fn index(self) -> u32 {
+                self.0
+            }
+        }
+    )*};
+}
+
+entity_index_accessors!(
+    Value, Inst, Block, TypeId, FuncRef, GlobalId, SigRef, AggId, VReg
+);
+
 // ============================================================
 // 实体定义
 // ============================================================
 
 /// SSA 值。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Value(pub u32);
+pub struct Value(pub(crate) u32);
 
 /// 指令。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Inst(pub u32);
+pub struct Inst(pub(crate) u32);
 
 /// 基本块。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Block(pub u32);
+pub struct Block(pub(crate) u32);
 
 /// 类型句柄 (在 TypeStore 中解析)。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct TypeId(pub u32);
+pub struct TypeId(pub(crate) u32);
 
 // 常用类型常量——**单一数据源**：TypeStore 预填充（types.rs with_data_layout）
 // 按固定顺序插入，每步 debug_assert 与这里的索引对齐（见 types.rs）。
@@ -60,7 +88,7 @@ impl TypeId {
 
 /// 函数引用 (在 Module 中解析)。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct FuncRef(pub u32);
+pub struct FuncRef(pub(crate) u32);
 
 /// 常量引用 (在 ConstantPool 中解析)。
 ///
@@ -70,13 +98,24 @@ pub struct FuncRef(pub u32);
 /// - bits 31..30: tag (0 = int, 1 = float, 2 = big, 3 = vec)
 /// - bits 29..0:  index (30 bits, up to ~1B entries per category)
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct ConstId(pub u32);
+pub struct ConstId(pub(crate) u32);
 
 /// 聚合常量 id（ConstantPool::aggregates 池索引；与 ConstId 分离——聚合是树形）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AggId(pub u32);
+pub struct AggId(pub(crate) u32);
 
 impl ConstId {
+    /// 由**打包后的原始值**构造（crate 外句柄唯一构造口，v3 S2）。
+    /// 注意与 [`ConstId::index`] 的区别：后者是低 30 位的池内索引。
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// 打包后的原始值（tag 位 + 池内索引）。
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
     /// Tag indicating this is an integer constant.
     pub const TAG_INT: u32 = 0;
     /// Tag indicating this is a float constant.
@@ -108,15 +147,15 @@ impl ConstId {
 
 /// 全局变量引用 (在 Module 中解析)。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct GlobalId(pub u32);
+pub struct GlobalId(pub(crate) u32);
 
 /// 函数签名引用 (在 TypeStore 中解析)。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct SigRef(pub u32);
+pub struct SigRef(pub(crate) u32);
 
 /// 虚拟寄存器 (lowering 后使用，与 SSA Value 不同)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct VReg(pub u32);
+pub struct VReg(pub(crate) u32);
 
 impl fmt::Display for VReg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

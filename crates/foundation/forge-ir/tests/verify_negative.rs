@@ -268,7 +268,7 @@ fn terminator_diagnostics_carry_real_inst() {
     fb.ret(&[]);
     let func = fb.finish().expect("build");
     let ret_inst = func.dfg.block_terminator(entry).expect("终结符指令");
-    assert_ne!(ret_inst.0, u32::MAX, "终结符指令句柄必须真实");
+    assert_ne!(ret_inst.index(), u32::MAX, "终结符指令句柄必须真实");
 
     let mut verifier = Verifier::with_ctx(ctx.clone());
     let errs = verifier.verify(&func).expect_err("must fail");
@@ -293,7 +293,7 @@ fn terminator_diagnostics_carry_real_inst() {
     let old_inst = func2.dfg.block_terminator(entry2).expect("终结符指令");
     // 走公开写入口把跳转目标改到不存在的块：终结符被墓碑化并新发一条指令
     // （旧句柄不可再用，诊断必须点名新句柄）。
-    func2.jump(entry2, forge_ir::Block(999), []);
+    func2.jump(entry2, forge_ir::Block::new(999), []);
     let bad_inst = func2.dfg.block_terminator(entry2).expect("终结符指令");
     assert_ne!(bad_inst, old_inst, "重写终结符应新发指令");
 
@@ -306,7 +306,7 @@ fn terminator_diagnostics_carry_real_inst() {
             _ => None,
         })
         .expect("InvalidTerminatorTarget");
-    assert_ne!(reported2.0, u32::MAX, "不得再伪造 Inst(u32::MAX)");
+    assert_ne!(reported2.index(), u32::MAX, "不得再伪造 Inst(u32::MAX)");
     assert_ne!(reported2, old_inst, "诊断不得点名已墓碑化的旧指令");
     assert_eq!(
         Some(reported2),
@@ -372,7 +372,7 @@ fn verify_invoke_unwind_exempt_from_dominance() {
         // unwind_args 传 v（v 定义于 entry，entry 支配 pad——正常支配也成立，
         // 但 unwind 边路径允许更宽松的值来源）
         fb.invoke(
-            forge_ir::FuncRef(0),
+            forge_ir::FuncRef::new(0),
             &[],
             forge_ir::TypeId::VOID,
             ok,

@@ -69,7 +69,7 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
         let dt = func.dominator_tree();
         let mut map = HashMap::new();
         for bi in 0..n {
-            let block = Block(bi as u32);
+            let block = Block::new(bi as u32);
             map.insert(block, dt.children(block).to_vec());
         }
         map

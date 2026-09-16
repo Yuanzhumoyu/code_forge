@@ -81,7 +81,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
     let slot_const = func.constants.insert_int(8, 64); // 8 bytes per counter
 
     for bi in 0..block_count {
-        let block = Block(bi as u32);
+        let block = Block::new(bi as u32);
 
         // Allocate a StackAddr slot (8 bytes) at the start of this block
         let stack_addr = func.make_inst(
@@ -98,7 +98,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .results
             .first()
             .copied()
-            .unwrap_or(Value(0));
+            .unwrap_or(Value::new(0));
 
         // Load current counter from slot
         let loaded = func.make_inst(
@@ -115,7 +115,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .results
             .first()
             .copied()
-            .unwrap_or(Value(0));
+            .unwrap_or(Value::new(0));
 
         // Create constant 1 for increment
         let one_inst = func.make_inst(
@@ -132,7 +132,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .results
             .first()
             .copied()
-            .unwrap_or(Value(0));
+            .unwrap_or(Value::new(0));
 
         // Increment: loaded + 1
         let incremented = func.make_inst(
@@ -149,7 +149,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
             .results
             .first()
             .copied()
-            .unwrap_or(Value(0));
+            .unwrap_or(Value::new(0));
 
         // Store incremented value back to slot
         func.make_inst(
@@ -162,7 +162,7 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
         );
 
         // Rotate: move the 5 new insts (StackAddr, Load, Iconst, Iadd, Store) to front
-        let block = Block(bi as u32);
+        let block = Block::new(bi as u32);
         func.dfg.move_insts_to(block, 0, 5);
 
         result.instructions_added += 5;
@@ -196,7 +196,7 @@ impl OptimizationPass for PgoOptimizePass {
 
         // Compute block hotness
         let mut hotness: Vec<(Block, u64)> = (0..func.dfg.block_count())
-            .map(|i| (Block(i as u32), self.counters.block_heat(i as u32)))
+            .map(|i| (Block::new(i as u32), self.counters.block_heat(i as u32)))
             .collect();
 
         // Sort by hotness descending, but keep entry block at position 0

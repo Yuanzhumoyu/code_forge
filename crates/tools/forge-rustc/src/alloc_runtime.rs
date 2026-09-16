@@ -34,7 +34,11 @@ pub fn build_alloc_runtime<'tcx>(
         let zero = b.iconst(0, TypeId::I64);
         let ty = b.iconst(0x3000, TypeId::I64);
         let prot = b.iconst(0x04, TypeId::I64);
-        let r = b.call(FuncRef(valloc), &[zero, p[0], ty, prot], &[TypeId::I64]);
+        let r = b.call(
+            FuncRef::new(valloc),
+            &[zero, p[0], ty, prot],
+            &[TypeId::I64],
+        );
         b.ret(&r);
         let f = b.finish().expect("build");
         out.push(("__rust_alloc".to_string(), compile_with_isa(&f, isa_name)?));
@@ -54,7 +58,7 @@ pub fn build_alloc_runtime<'tcx>(
         let (_blk, p) = b.create_entry_block();
         let zero = b.iconst(0, TypeId::I64);
         let rel = b.iconst(0x8000, TypeId::I64);
-        b.call(FuncRef(vfree), &[p[0], zero, rel], &[]);
+        b.call(FuncRef::new(vfree), &[p[0], zero, rel], &[]);
         b.ret(&[]);
         let f = b.finish().expect("build");
         out.push((
@@ -71,7 +75,7 @@ pub fn build_alloc_runtime<'tcx>(
         );
         let mut b = FunctionBuilder::new("__rust_alloc_zeroed", TypeContext::new(), sig);
         let (_blk, p) = b.create_entry_block();
-        let r = b.call(FuncRef(rust_alloc), &[p[0], p[1]], &[TypeId::I64]);
+        let r = b.call(FuncRef::new(rust_alloc), &[p[0], p[1]], &[TypeId::I64]);
         b.ret(&r);
         let f = b.finish().expect("build");
         out.push((
@@ -102,7 +106,7 @@ pub fn build_alloc_runtime<'tcx>(
         //（原实现把 iconst/jump 写在 create_block_with_params 之后，导致这些指令
         //  被追加到 body_blk、entry 无终结符——finish() 校验暴露，修复为显式切回）
         b.switch_to_block(entry);
-        let nr = b.call(FuncRef(rust_alloc), &[p[3], p[2]], &[TypeId::I64]);
+        let nr = b.call(FuncRef::new(rust_alloc), &[p[3], p[2]], &[TypeId::I64]);
         let new_ptr = nr[0];
         let lt = b.icmp(IntCC::UnsignedLessThan, p[1], p[3]);
         let n = b.select(lt, p[1], p[3]);
@@ -122,7 +126,7 @@ pub fn build_alloc_runtime<'tcx>(
         let i2 = b.iadd(ib, eight);
         b.jump(loop_blk, &[i2]);
         b.switch_to_block(done_blk);
-        b.call(FuncRef(rust_dealloc), &[p[0], p[1], p[2]], &[]);
+        b.call(FuncRef::new(rust_dealloc), &[p[0], p[1], p[2]], &[]);
         b.ret(&[new_ptr]);
         let f = b.finish().expect("build");
         out.push((

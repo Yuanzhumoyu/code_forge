@@ -120,10 +120,10 @@ fn assert_inst_eq(
 /// 而不是比句柄。
 fn term_shape(dfg: &forge_ir::DataFlowGraph, block: forge_ir::Block) -> String {
     use forge_ir::TermKind as K;
-    let b = |x: forge_ir::Block| x.0;
+    let b = |x: forge_ir::Block| x.index();
     let v = |xs: &[Value]| {
         xs.iter()
-            .map(|x| x.0.to_string())
+            .map(|x| x.index().to_string())
             .collect::<Vec<_>>()
             .join(",")
     };
@@ -138,7 +138,7 @@ fn term_shape(dfg: &forge_ir::DataFlowGraph, block: forge_ir::Block) -> String {
             let (cond, t, targs, e, eargs) = dfg.term_branch(block).expect("branch");
             format!(
                 "br %{}(b{}({}) b{}({}))",
-                cond.0,
+                cond.index(),
                 b(t),
                 v(targs),
                 b(e),
@@ -154,7 +154,7 @@ fn term_shape(dfg: &forge_ir::DataFlowGraph, block: forge_ir::Block) -> String {
                 .collect();
             format!(
                 "switch %{} default b{}({}) [{}]",
-                view.discriminant.0,
+                view.discriminant.index(),
                 b(view.default_block),
                 v(view.default_args),
                 cases.join(" ")
@@ -164,18 +164,20 @@ fn term_shape(dfg: &forge_ir::DataFlowGraph, block: forge_ir::Block) -> String {
             let (c, args, ret_ty, n, nargs, u, uargs) = dfg.term_invoke(block).expect("invoke");
             format!(
                 "invoke @{}({}) -> b{}({}) unwind b{}({}) ty{}",
-                c.0,
+                c.index(),
                 v(args),
                 b(n),
                 v(nargs),
                 b(u),
                 v(uargs),
-                ret_ty.0
+                ret_ty.index()
             )
         }
         Some(K::Resume) => format!(
             "resume %{}",
-            dfg.term_resume_value(block).unwrap_or(Value(0)).0
+            dfg.term_resume_value(block)
+                .unwrap_or(Value::new(0))
+                .index()
         ),
         Some(K::Unreachable) => "unreachable".to_string(),
     }
@@ -198,8 +200,8 @@ fn assert_block_eq(
     }
     // 终结符（含块参数）整体比较：比**语义形态**，不比指令句柄
     assert_eq!(
-        term_shape(&f1.dfg, forge_ir::Block(i1 as u32)),
-        term_shape(&f2.dfg, forge_ir::Block(i2 as u32)),
+        term_shape(&f1.dfg, forge_ir::Block::new(i1 as u32)),
+        term_shape(&f2.dfg, forge_ir::Block::new(i2 as u32)),
         "terminator mismatch:\n{text}"
     );
 }

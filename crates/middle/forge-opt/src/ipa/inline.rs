@@ -90,14 +90,14 @@ pub fn inline_calls(
         if inline_count >= max_depth {
             break;
         }
-        let block = Block(bi as u32);
+        let block = Block::new(bi as u32);
         let loop_depth = loop_forest.get_loop_depth(block);
 
         // Collect call candidates first (can't borrow func mutably while iterating)
         #[allow(clippy::type_complexity)]
         let mut candidates: Vec<(usize, Inst, FuncRef, SmallVec<[Value; 4]>, Value)> = Vec::new();
         {
-            let block_data = &func.dfg.block(Block(bi as u32));
+            let block_data = &func.dfg.block(Block::new(bi as u32));
             for (pos, &inst_id) in block_data.inst_order.iter().enumerate() {
                 let inst = &func.dfg.inst_data(inst_id);
                 if !matches!(inst.opcode, Opcode::Call) {
@@ -246,7 +246,7 @@ pub fn inline_calls(
 
                 // Remove the Call instruction (now shifted by new_inst_count)
                 let call_shifted_pos = insert_pos + new_inst_count;
-                let call_id = func.dfg.block(Block(bi as u32)).inst_order[call_shifted_pos];
+                let call_id = func.dfg.block(Block::new(bi as u32)).inst_order[call_shifted_pos];
                 func.kill_inst(call_id);
             } else {
                 // Just remove the call
@@ -325,7 +325,7 @@ pub fn evaluate_inline_cost(
         };
     }
 
-    let block = &func.dfg.block(Block(0));
+    let block = &func.dfg.block(Block::new(0));
 
     // 检查自递归
     for &inst_id in &block.inst_order {
@@ -344,7 +344,7 @@ pub fn evaluate_inline_cost(
         }
     }
 
-    if func.dfg.term_kind(Block(0)) != Some(TermKind::Return) {
+    if func.dfg.term_kind(Block::new(0)) != Some(TermKind::Return) {
         return InlineCost {
             static_cost: 0,
             loop_penalty: 0,
@@ -413,7 +413,7 @@ mod tests {
     fn inline_simple_call() {
         let callee = build_add_one();
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         // caller: fn test() -> i32 { add_one(41) }
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
@@ -421,7 +421,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let c41 = b.iconst_i32(41);
-        let ret = b.call(FuncRef(0), &[c41], &[TypeId::I32]);
+        let ret = b.call(FuncRef::new(0), &[c41], &[TypeId::I32]);
         b.ret(&[ret[0]]);
 
         let mut caller = b.finish().expect("build");
@@ -432,7 +432,7 @@ mod tests {
         // After inlining, the Call should be replaced with Nop
         let has_call = caller
             .dfg
-            .block(Block(0))
+            .block(Block::new(0))
             .inst_order
             .iter()
             .any(|&iid| matches!(caller.dfg.inst_data(iid).opcode, Opcode::Call));
@@ -454,21 +454,21 @@ mod tests {
         let v5 = b.bxor(v4, v2);
         b.ret(&[v5]);
         let callee = b.finish().expect("build");
-        let callee_size = callee.dfg.block(Block(0)).inst_order.len();
+        let callee_size = callee.dfg.block(Block::new(0)).inst_order.len();
         assert!(
             callee_size >= 5,
             "callee should have at least 5 instructions"
         );
 
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         let sig2 = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b2 = FunctionBuilder::new("test", TypeContext::new(), sig2);
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
         let c = b2.iconst_i32(5);
-        let ret = b2.call(FuncRef(0), &[c], &[TypeId::I32]);
+        let ret = b2.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
         let mut caller = b2.finish().expect("build");
 
@@ -487,7 +487,7 @@ mod tests {
         let callee2 = b3.finish().expect("build");
 
         let mut funcs2 = HashMap::new();
-        funcs2.insert(FuncRef(0), callee2);
+        funcs2.insert(FuncRef::new(0), callee2);
 
         let mut low_pass = InlinePass::new(funcs2);
         low_pass.set_threshold(2);
@@ -499,7 +499,7 @@ mod tests {
     fn inline_maps_return_value() {
         let callee = build_add_one();
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         // caller uses the return value in further computation
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
@@ -507,7 +507,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let c = b.iconst_i32(10);
-        let ret = b.call(FuncRef(0), &[c], &[TypeId::I32]);
+        let ret = b.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         let doubled = b.iadd(ret[0], ret[0]);
         b.ret(&[doubled]);
 
@@ -524,7 +524,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let c = b.iconst_i32(1);
-        let ret = b.call(FuncRef(99), &[c], &[TypeId::I32]); // not in table
+        let ret = b.call(FuncRef::new(99), &[c], &[TypeId::I32]); // not in table
         b.ret(&[ret[0]]);
 
         let mut caller = b.finish().expect("build");
@@ -552,14 +552,14 @@ mod tests {
         callee.attributes.set(FunctionAttributes::INLINE_ALWAYS);
 
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         let sig2 = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b2 = FunctionBuilder::new("test", TypeContext::new(), sig2);
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
         let c = b2.iconst_i32(5);
-        let ret = b2.call(FuncRef(0), &[c], &[TypeId::I32]);
+        let ret = b2.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
         let mut caller = b2.finish().expect("build");
 
@@ -581,14 +581,14 @@ mod tests {
         callee.attributes.set(FunctionAttributes::INLINE_NEVER);
 
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         let sig2 = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b2 = FunctionBuilder::new("test", TypeContext::new(), sig2);
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
         let c = b2.iconst_i32(5);
-        let ret = b2.call(FuncRef(0), &[c], &[TypeId::I32]);
+        let ret = b2.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
         let mut caller = b2.finish().expect("build");
 
@@ -601,14 +601,14 @@ mod tests {
     fn inline_with_threshold_builder() {
         let callee = build_add_one();
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
         let c = b.iconst_i32(41);
-        let ret = b.call(FuncRef(0), &[c], &[TypeId::I32]);
+        let ret = b.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b.ret(&[ret[0]]);
         let mut caller = b.finish().expect("build");
 
@@ -632,7 +632,7 @@ mod tests {
         let callee = callee_builder.finish().expect("build");
 
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         let sig2 = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("loop_caller", TypeContext::new(), sig2);
@@ -648,7 +648,7 @@ mod tests {
         let c10 = b.iconst_i32(10);
         let cmp = b.icmp(IntCC::SignedLessThan, iv, c10);
         let c5 = b.iconst_i32(5);
-        let _call_res = b.call(FuncRef(0), &[c5], &[TypeId::I32]); // call inside loop!
+        let _call_res = b.call(FuncRef::new(0), &[c5], &[TypeId::I32]); // call inside loop!
         let inc = b.iconst_i32(1);
         let _next = b.iadd(iv, inc);
         b.branch(cmp, body_blk, &[], exit_blk, &[]);
@@ -670,19 +670,19 @@ mod tests {
         let mut callee_builder = FunctionBuilder::new("recurse", TypeContext::new(), sig);
         let (entry, params) = callee_builder.create_block_with_params(&[(TypeId::I32, "x")]);
         callee_builder.switch_to_block(entry);
-        let ret = callee_builder.call(FuncRef(0), &[params[0]], &[TypeId::I32]);
+        let ret = callee_builder.call(FuncRef::new(0), &[params[0]], &[TypeId::I32]);
         callee_builder.ret(&[ret[0]]);
         let callee = callee_builder.finish().expect("build");
 
         let mut funcs = HashMap::new();
-        funcs.insert(FuncRef(0), callee);
+        funcs.insert(FuncRef::new(0), callee);
 
         let sig2 = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("caller", TypeContext::new(), sig2);
         let entry2 = b.create_block();
         b.switch_to_block(entry2);
         let c = b.iconst_i32(1);
-        let ret = b.call(FuncRef(0), &[c], &[TypeId::I32]);
+        let ret = b.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b.ret(&[ret[0]]);
         let mut caller = b.finish().expect("build");
 

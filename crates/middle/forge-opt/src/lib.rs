@@ -446,7 +446,7 @@ mod pipeline_tests {
     #[test]
     fn pipeline_with_table_enables_inlining() {
         let callee = build_add_one();
-        let callee_ref = FuncRef(0);
+        let callee_ref = FuncRef::new(0);
         let mut fn_table = std::collections::HashMap::new();
         fn_table.insert(callee_ref, callee);
 
@@ -616,7 +616,7 @@ mod pipeline_tests {
 
         fn build_call_with_table() -> (Function, std::collections::HashMap<FuncRef, Function>) {
             let callee = build_add_one();
-            let callee_ref = FuncRef(0);
+            let callee_ref = FuncRef::new(0);
             let mut table = std::collections::HashMap::new();
             table.insert(callee_ref, callee);
 

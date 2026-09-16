@@ -389,7 +389,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         _ => src_ty,
                                     };
                                     let g = self.gen_vtable(src_concrete, dyn_ty)?;
-                                    let hi = self.builder.global_addr(GlobalId(g));
+                                    let hi = self.builder.global_addr(GlobalId::new(g));
                                     let dst = self.place_addr(place);
                                     self.builder.store(lo, dst);
                                     let eight = self.builder.iconst(8, TypeId::I64);
@@ -504,7 +504,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         return Ok(());
                                     };
                                     let base = self.place_addr(place);
-                                    let ptr = self.builder.global_addr(GlobalId(g));
+                                    let ptr = self.builder.global_addr(GlobalId::new(g));
                                     self.builder.store(ptr, base);
                                     let lenv = self.builder.iconst(meta as i64, TypeId::I64);
                                     let eight = self.builder.iconst(8, TypeId::I64);
@@ -541,7 +541,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         return Ok(());
                                     };
                                     let base = self.place_addr(place);
-                                    let ptrv = self.builder.global_addr(GlobalId(g));
+                                    let ptrv = self.builder.global_addr(GlobalId::new(g));
                                     self.builder.store(ptrv, base);
                                     return Ok(());
                                 }

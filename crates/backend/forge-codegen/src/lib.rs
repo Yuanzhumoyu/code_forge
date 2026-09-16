@@ -551,7 +551,7 @@ impl LowerCtx {
 
     /// 分配一个指定寄存器类别的虚拟寄存器。
     pub fn alloc_vreg_with_class(&mut self, class: RegClass) -> VReg {
-        let vreg = VReg(self.next_vreg);
+        let vreg = VReg::new(self.next_vreg);
         self.next_vreg += 1;
         self.vreg_classes.insert(vreg, class);
         self.vreg_widths.insert(vreg, class.default_width());

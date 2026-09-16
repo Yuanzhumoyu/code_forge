@@ -1337,7 +1337,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
 /// CFG 判断（GEP 展开只把它当 PTR 值用）。入口约定请用 `Function::entry()`。
 fn make_placeholder_ptr(func: &mut Function) -> Value {
     func.dfg
-        .make_value(TypeId::PTR, ValueDef::Param(Block(0), 0))
+        .make_value(TypeId::PTR, ValueDef::Param(Block::new(0), 0))
 }
 
 /// GEP 展开（全 ISA 通用，编译期）：`getelementptr T, ptr %p, i32 i0, i32 i1...`

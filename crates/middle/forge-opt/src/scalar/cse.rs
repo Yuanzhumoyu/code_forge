@@ -61,7 +61,7 @@ pub(crate) fn expr_key(
     let mut ops: smallvec::SmallVec<[Value; 4]> = operands.iter().copied().collect();
     if is_commutative(opcode) && ops.len() >= 2 {
         // 对交换律操作排序操作数，使 a+b 和 b+a 产生相同键
-        ops.sort_by_key(|v| v.0);
+        ops.sort_by_key(|v| v.index());
     }
     ExprKey {
         opcode: *opcode,
@@ -211,7 +211,7 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
         let mut expr_table: HashMap<ExprKey, Value> = HashMap::new();
 
         // 借用 inst_order（blocks 与 insts 为 dfg 不同字段，可拆分借用）
-        let inst_ids = &func.dfg.block(Block(bi as u32)).inst_order;
+        let inst_ids = &func.dfg.block(Block::new(bi as u32)).inst_order;
 
         for inst_id in inst_ids {
             // 只读借用（CSE 不改指令；别名查询需要 &func，不可持 &mut）

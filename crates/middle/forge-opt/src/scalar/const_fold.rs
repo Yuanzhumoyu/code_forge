@@ -24,22 +24,22 @@ use std::collections::HashMap;
 
 /// 检查 TypeId 是否为整数类型（预设索引 2-5, 10）。
 fn ty_is_int(ty: TypeId) -> bool {
-    matches!(ty.0, 2 | 3 | 4 | 5 | 10)
+    matches!(ty.index(), 2 | 3 | 4 | 5 | 10)
 }
 
 /// 检查 TypeId 是否为浮点类型（预设索引 6-7, 11-12）。
 fn ty_is_float(ty: TypeId) -> bool {
-    matches!(ty.0, 6 | 7 | 11 | 12)
+    matches!(ty.index(), 6 | 7 | 11 | 12)
 }
 
 /// 检查 TypeId 是否为指针类型（预设索引 8）。
 fn ty_is_ptr(ty: TypeId) -> bool {
-    ty.0 == 8
+    ty.index() == 8
 }
 
 /// 获取浮点格式。仅对预设浮点类型有效。
 fn ty_float_format(ty: TypeId) -> Option<FloatFormat> {
-    match ty.0 {
+    match ty.index() {
         6 => Some(FloatFormat::F32),   // F32
         7 => Some(FloatFormat::F64),   // F64
         11 => Some(FloatFormat::F16),  // F16
@@ -999,17 +999,17 @@ fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
     let mut uses: HashMap<Value, Vec<(usize, usize)>> = HashMap::new();
 
     for bi in 0..func.dfg.block_count() {
-        let block = &func.dfg.block(Block(bi as u32));
+        let block = &func.dfg.block(Block::new(bi as u32));
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             for operand in &inst.operands {
                 uses.entry(*operand)
                     .or_default()
-                    .push((bi, inst_id.0 as usize));
+                    .push((bi, inst_id.index() as usize));
             }
         }
         // 终结符中的值使用（规范序遍历，唯一事实源）
-        func.dfg.for_each_term_value(Block(bi as u32), |_, v| {
+        func.dfg.for_each_term_value(Block::new(bi as u32), |_, v| {
             uses.entry(v).or_default().push((bi, usize::MAX));
         });
     }
@@ -1180,7 +1180,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
                         // （由 fold_branches 处理）
                         continue;
                     }
-                    let user_inst = &func.dfg.inst_data(Inst(ui as u32));
+                    let user_inst = &func.dfg.inst_data(Inst::new(ui as u32));
                     if let Some(uv) = user_inst.results.first().copied()
                         && !known.contains_key(&uv)
                     {
@@ -1213,7 +1213,7 @@ fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> boo
     let mut changed = false;
 
     for bi in 0..func.dfg.block_count() {
-        let block_id = Block(bi as u32);
+        let block_id = Block::new(bi as u32);
         // 先算出去向与实参（借用结束），再经 Function 的按形式写入口写入以同步 use-lists
         let folded = if let Some((cond, then_block, then_args, else_block, else_args)) =
             func.dfg.term_branch(block_id)
@@ -1289,7 +1289,7 @@ mod tests {
         let result = pass.run_on_function(&mut func).unwrap();
         assert!(result.changed, "聚合字面量 extractvalue 应折叠（%c = 2）");
         // %c 应为常量 2
-        let def = func.dfg.value_def(Value(2)).cloned();
+        let def = func.dfg.value_def(Value::new(2)).cloned();
         if let Some(forge_ir::dfg::ValueDef::Inst(iid, _)) = def {
             let inst = &func.dfg.inst_data(iid);
             assert!(

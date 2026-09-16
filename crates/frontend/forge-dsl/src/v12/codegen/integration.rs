@@ -173,7 +173,7 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
         // （builder 统一 `insert_int` 入池），imm0 只是池索引（正数）——
         // 判断符号/大小必须用池解析值。Constant 引用恒以 cid 指向池条目。
         let __a_iconst = ctx.constant_pool.as_ref().and_then(|p| {
-            p.resolve_int(crate::prelude::ConstId(ctx.current_const_index))
+            p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index))
         });
         let __attr = |name: &str| -> Option<i64> {
             match name {

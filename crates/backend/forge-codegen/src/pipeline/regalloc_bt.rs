@@ -1068,7 +1068,7 @@ mod clobber_map_tests {
 
     fn clobber_vcode() -> crate::VCode<DummyInst> {
         let mut vcode = crate::VCode::<DummyInst>::new();
-        let bid = vcode.create_block(Block(0));
+        let bid = vcode.create_block(Block::new(0));
         vcode.switch_to_block(bid);
         for i in 0..3 {
             vcode.push_inst(DummyInst { id: i });
@@ -1239,7 +1239,7 @@ mod clobber_map_tests {
             .allocatable = vec![0];
         let x0 = xgpr(0);
         let mut vcode = crate::VCode::<FixedFieldInst>::new();
-        let bid = vcode.create_block(Block(0));
+        let bid = vcode.create_block(Block::new(0));
         vcode.switch_to_block(bid);
         vcode.push_inst(FixedFieldInst { id: 0 });
         let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]];

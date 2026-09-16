@@ -53,7 +53,7 @@ pub fn eliminate_dead_stores(func: &mut Function) -> Result<PassResult, IrError>
     for bi in 0..block_count {
         // 位置 → 最近 store 指令
         let mut last_store: HashMap<MemoryLocation, Inst> = HashMap::new();
-        let inst_ids = func.dfg.block(Block(bi as u32)).inst_order.clone();
+        let inst_ids = func.dfg.block(Block::new(bi as u32)).inst_order.clone();
 
         for inst_id in inst_ids {
             let inst = &func.dfg.inst_data(inst_id);

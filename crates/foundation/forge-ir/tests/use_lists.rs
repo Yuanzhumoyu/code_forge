@@ -175,7 +175,7 @@ fn rauw_covers_terminator_args() {
 
     // 值真的被写进了终结符指令（不是只改 use-list）
     for i in 0..func.dfg.block_count() {
-        for v in func.dfg.term_used_values(Block(i as u32)) {
+        for v in func.dfg.term_used_values(Block::new(i as u32)) {
             assert_ne!(v, x, "块 {i} 的终结符仍引用 %x");
         }
     }

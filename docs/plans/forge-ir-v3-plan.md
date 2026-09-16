@@ -96,7 +96,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
-| S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
+| S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`，见 §6 末）；余项：墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
@@ -951,6 +951,44 @@ fmt/clippy `-D warnings` 干净。
 
 **验证**：workspace 1429 passed / 0 failed / 19 ignored（60 个测试二进制 +
 13 组 doc-test，较 S5 第 5 项 +3）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。
+
+### S2（切片）：句柄字段私有化（2026-09-16）
+
+S5 把三个 arena 收口之后，句柄本身仍是 `pub struct Value(pub u32)` 一类：crate 外
+可以 `Value(999)` **凭空造句柄**（坏句柄从构造点泄漏到整个下游，而 arena 私有化只在
+读取时才拦得住），也可以 `v.0` 直读索引（把句柄的**表示**变成公开契约）。本切片把
+10 个裸 u32 句柄的字段降为 `pub(crate)`，统一出入口：
+
+- 9 个纯句柄（`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`GlobalId`/`SigRef`/`AggId`/
+  `VReg`）：`::new(u32)` + `.index()`（宏生成，见 `entity.rs` 的
+  `entity_index_accessors!`）。
+- `ConstId`：`::from_raw(u32)` + `.raw()`（打包值）/ 既有 `.index()`（**低 30 位池内
+  索引**，语义与 `raw` 不同）+ `.tag()`——所以它的构造口刻意不叫 `new`。
+
+**迁移面（编译器逐条点名，非文本猜测）**：本仓 178 + 45 处编译错误，另有 DSL 生成器
+模板 32 处与 `forge-rustc`（本机不可编译）文本审计。做法是把 `--message-format=json`
+的诊断按 **byte span** 打成补丁（构造点 → `::new`，索引读 → `.index()`），逐轮
+"编译 → 补丁 → 再编译"，4 轮收敛。
+
+- **DSL 生成器**（`forge-dsl/src/v12/codegen/{lowering,placeholder,machine,integration}.rs`）：
+  生成物里也有 `Block(...)`/`ConstId(...)` 与 `.0`——这些是 `quote!` 模板文本，
+  必须改**生成器源**（改调用点无效，错误都指向 `isa_from_file!` 那一行）。
+- **`forge-rustc`**（本机缺 rustc-dev 不能编译）：改走文本审计——`FuncRef`(8)/
+  `GlobalId`(4)/`Block`(1) 构造与 `block_id.0`(2)/`b.0`(1)；顺带确认 `alloc.0`、
+  `rec.0`、`relocs[i].0`、`instrs` 之外的 `.0` 都是 rustc/元组字段、不是 IR 句柄。
+- **踩坑（重要）**：机械规则"E0616 → `.index()`"对 `ConstId` 是**错的**——
+  `ConstId::index()` 是低 30 位池内索引，而 `.0` 是含 tag 的打包值。整包测试立刻
+  抓到 20 个 JIT 用例错值（float/vector 常量全错），改为 `.raw()` 后恢复。
+  教训：**类型已有同名 `index()` 时，`.0` ≠ `.index()`**；编译器只保证能编译，
+  语义要测试来验。
+- **守卫** `tests/entity_privatization.rs`（4 例）：9 个句柄 `new`/`index` 往返 +
+  `Default`=0 + Display/Debug；`ConstId` 的 `raw`/`index`/`tag` 三者语义区分；
+  句柄 Display 文本不变；源码断言 `entity.rs` 里这 10 个句柄必须是
+  `pub(crate) u32`（已用负向探针实测会失败）。
+
+**验证**：workspace 1433 passed / 0 failed / 19 ignored（61 个测试二进制 +
+13 组 doc-test，较 S5 第 6 项 +4）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）

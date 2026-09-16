@@ -54,7 +54,7 @@ impl LabelRef {
     /// 编码 id（塞进指令 label 槽 / 供 fixup 查表）。
     pub fn id(self) -> u32 {
         match self {
-            LabelRef::Block(b) => b.0,
+            LabelRef::Block(b) => b.index(),
             LabelRef::External(e) => e.id(),
         }
     }
@@ -67,7 +67,7 @@ impl LabelRef {
         if id >= ExternalLabel::BASE {
             LabelRef::External(ExternalLabel::Epilogue)
         } else {
-            LabelRef::Block(Block(id))
+            LabelRef::Block(Block::new(id))
         }
     }
 }

@@ -199,7 +199,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
             let addr = seg.as_ptr() as u64;
             self.symbols.insert(global.name.clone(), addr);
             self.symbols
-                .insert(ImmStr::from(format!("G{}", gid.0)), addr);
+                .insert(ImmStr::from(format!("G{}", gid.index())), addr);
             self.data_segments.push(seg);
         }
 
@@ -209,7 +209,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
             let compiled: Vec<(ImmStr, CompiledFunction)> = std::thread::scope(|s| {
                 let handles: Vec<_> = (0..func_count)
                     .map(|i| {
-                        let fr = FuncRef(i as u32);
+                        let fr = FuncRef::new(i as u32);
                         let func = module.get_function(fr);
                         let machine = self.machine().clone();
                         s.spawn(move || {
@@ -239,7 +239,7 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
         } else {
             // ── 串行路径：小模块，避免线程创建开销 ──
             for (i, _func) in module.iter_functions().enumerate() {
-                let func_ref = FuncRef(i as u32);
+                let func_ref = FuncRef::new(i as u32);
                 let func = module.get_function(func_ref);
                 let mut compiled = {
                     let compiler = FunctionCompiler::new(self.machine().clone());
@@ -1879,9 +1879,9 @@ mod tests {
         b.switch_to_block(rec);
         let one = b.iconst_i64(1);
         let nm1 = b.isub(p[0], one);
-        let r1 = b.call(FuncRef(0), &[nm1], &[TypeId::I64]);
+        let r1 = b.call(FuncRef::new(0), &[nm1], &[TypeId::I64]);
         let nm2 = b.isub(p[0], two);
-        let r2 = b.call(FuncRef(0), &[nm2], &[TypeId::I64]);
+        let r2 = b.call(FuncRef::new(0), &[nm2], &[TypeId::I64]);
         let sum = b.iadd(r1[0], r2[0]);
         b.jump(done, &[sum]);
         b.switch_to_block(done);

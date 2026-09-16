@@ -85,11 +85,11 @@ fn collect_loop_writes(
 ) -> Vec<MemoryLocation> {
     let mut writes = Vec::new();
     for bi in 0..func.dfg.block_count() {
-        let bid = Block(bi as u32);
+        let bid = Block::new(bi as u32);
         if !body.contains(&bid) {
             continue;
         }
-        for &inst_id in &func.dfg.block(Block(bi as u32)).inst_order {
+        for &inst_id in &func.dfg.block(Block::new(bi as u32)).inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             match inst.opcode {
                 Opcode::Call | Opcode::CallIndirect => writes.push(MemoryLocation::Unknown),
@@ -108,11 +108,11 @@ fn collect_loop_writes(
 fn collect_values_outside(func: &Function, body: &HashSet<Block>) -> HashSet<Value> {
     let mut values = HashSet::new();
     for bi in 0..func.dfg.block_count() {
-        let bid = Block(bi as u32);
+        let bid = Block::new(bi as u32);
         if body.contains(&bid) {
             continue;
         }
-        let block = &func.dfg.block(Block(bi as u32));
+        let block = &func.dfg.block(Block::new(bi as u32));
         for &v in &block.param_values {
             values.insert(v);
         }
@@ -138,11 +138,11 @@ fn mark_invariants(
 
     // First pass: constants are always invariant
     for bi in 0..func.dfg.block_count() {
-        let bid = Block(bi as u32);
+        let bid = Block::new(bi as u32);
         if !body.contains(&bid) {
             continue;
         }
-        for &inst_id in &func.dfg.block(Block(bi as u32)).inst_order {
+        for &inst_id in &func.dfg.block(Block::new(bi as u32)).inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             if matches!(inst.opcode, Opcode::Iconst | Opcode::Fconst)
                 && let Some(v) = inst.results.first().copied()
@@ -158,11 +158,11 @@ fn mark_invariants(
     while changed {
         changed = false;
         for bi in 0..func.dfg.block_count() {
-            let bid = Block(bi as u32);
+            let bid = Block::new(bi as u32);
             if !body.contains(&bid) {
                 continue;
             }
-            for &inst_id in &func.dfg.block(Block(bi as u32)).inst_order {
+            for &inst_id in &func.dfg.block(Block::new(bi as u32)).inst_order {
                 if inv_insts.contains(&(bid, inst_id)) {
                     continue;
                 }
@@ -219,8 +219,8 @@ fn hoist_to_header(
     // Phase 1: Collect invariant instruction IDs (immutable borrows)
     let mut hoist_data: Vec<InvariantData> = Vec::new();
     for bi in 0..func.dfg.block_count() {
-        let bid = Block(bi as u32);
-        let inst_order = func.dfg.block(Block(bi as u32)).inst_order.clone();
+        let bid = Block::new(bi as u32);
+        let inst_order = func.dfg.block(Block::new(bi as u32)).inst_order.clone();
         for &inst_id in &inst_order {
             if !invariants.contains(&(bid, inst_id)) {
                 continue;
@@ -471,7 +471,7 @@ mod tests {
             for &inst_id in &blk.inst_order {
                 let inst = &func.dfg.inst_data(inst_id);
                 if matches!(inst.opcode, Opcode::Load) {
-                    loads.push(Block(bi as u32));
+                    loads.push(Block::new(bi as u32));
                 }
             }
         }

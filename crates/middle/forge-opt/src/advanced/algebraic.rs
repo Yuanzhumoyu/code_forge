@@ -104,7 +104,7 @@ impl ConstCache {
 
 /// Get bit mask for truncation based on type.
 fn type_mask(ty: TypeId) -> i64 {
-    match ty.0 {
+    match ty.index() {
         2 => 0xFF,        // I8
         3 => 0xFFFF,      // I16
         4 => 0xFFFF_FFFF, // I32
@@ -149,7 +149,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
                     .map(|v| func.dfg.value_data(v).ty)
                     .unwrap_or(TypeId::VOID);
                 if let Some(action) = try_rewrite(inst, &cache, ty) {
-                    replacements.push((Block(bi as u32), ii, action));
+                    replacements.push((Block::new(bi as u32), ii, action));
                 }
             }
         }
@@ -170,7 +170,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
                 .inst_results(inst_id)
                 .first()
                 .copied()
-                .unwrap_or(Value(0));
+                .unwrap_or(Value::new(0));
             let ty = func.dfg.value_data(result).ty;
             {
                 // 同步 use-lists：清掉旧 operands 的使用记录
@@ -193,7 +193,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
                         inst.operands.clear();
                         inst.immediates.clear();
                         inst.immediates.push(Immediate::Const(cid));
-                        if result.0 > 0 {
+                        if result.index() > 0 {
                             func.dfg.set_value_type(result, ty);
                         }
                     }

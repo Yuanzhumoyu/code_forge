@@ -143,7 +143,7 @@ fn branch_fixup_uses_word_width() {
         "opcode 位（bits 6..8）在占位编码里已就位"
     );
     // 目标标签紧跟在分支之后 → rel = 1
-    sink.bind_label(Block(1));
+    sink.bind_label(Block::new(1));
     let code = sink.finish().expect("finish 补 fixup");
     assert_eq!(code.len(), 1);
     assert_eq!(

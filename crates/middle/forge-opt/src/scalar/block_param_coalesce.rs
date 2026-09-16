@@ -48,8 +48,8 @@ pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, IrError>
 
     let block_count = func.dfg.block_count();
     for bi in 0..block_count {
-        let block = Block(bi as u32);
-        let param_count = func.dfg.block(Block(bi as u32)).params.len();
+        let block = Block::new(bi as u32);
+        let param_count = func.dfg.block(Block::new(bi as u32)).params.len();
         if param_count == 0 {
             continue;
         }
@@ -101,7 +101,7 @@ pub fn coalesce_block_params(func: &mut Function) -> Result<PassResult, IrError>
 
         // Process in reverse order so indices stay valid
         for &(param_idx, replacement) in params_to_coalesce.iter().rev() {
-            let param_val = func.dfg.block(Block(bi as u32)).param_values[param_idx];
+            let param_val = func.dfg.block(Block::new(bi as u32)).param_values[param_idx];
 
             // RAUW（DFG + use-lists 双更新）
             func.replace_all_uses(param_val, replacement);
@@ -177,14 +177,14 @@ mod tests {
         b.ret(&[c42]);
 
         let mut func = b.finish().expect("build");
-        let param_count_before = func.dfg.block(Block(3)).params.len();
+        let param_count_before = func.dfg.block(Block::new(3)).params.len();
         assert_eq!(param_count_before, 1);
 
         let pass = BlockParamCoalescePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed, "Should coalesce redundant block param");
         assert_eq!(
-            func.dfg.block(Block(3)).params.len(),
+            func.dfg.block(Block::new(3)).params.len(),
             0,
             "Param should be removed"
         );
@@ -217,14 +217,14 @@ mod tests {
         b.ret(&[merge_val]);
 
         let mut func = b.finish().expect("build");
-        let param_count_before = func.dfg.block(Block(3)).params.len();
+        let param_count_before = func.dfg.block(Block::new(3)).params.len();
         assert_eq!(param_count_before, 1);
 
         let pass = BlockParamCoalescePass::new();
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(!r.changed, "Should NOT coalesce when values differ");
         assert_eq!(
-            func.dfg.block(Block(3)).params.len(),
+            func.dfg.block(Block::new(3)).params.len(),
             1,
             "Param should remain"
         );

@@ -46,7 +46,7 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
 
     // Find partially redundant expressions and insert them in predecessor blocks
     for bi in 0..n_blocks {
-        let b = Block(bi as u32);
+        let b = Block::new(bi as u32);
         let avail_in = if b == entry {
             HashSet::new()
         } else {
@@ -191,7 +191,7 @@ fn compute_gen_kill(
     let mut gen_map = HashMap::new();
     let mut kill_map = HashMap::new();
     for bi in 0..func.dfg.block_count() {
-        let block = &func.dfg.block(Block(bi as u32));
+        let block = &func.dfg.block(Block::new(bi as u32));
         let mut gen_set = HashSet::new();
         let mut kill = HashSet::new();
         for &inst_id in &block.inst_order {
@@ -227,8 +227,8 @@ fn compute_gen_kill(
                 }
             }
         }
-        gen_map.insert(Block(bi as u32), gen_set);
-        kill_map.insert(Block(bi as u32), kill);
+        gen_map.insert(Block::new(bi as u32), gen_set);
+        kill_map.insert(Block::new(bi as u32), kill);
     }
     (gen_map, kill_map)
 }
@@ -241,7 +241,7 @@ fn compute_avail(
     let n = func.dfg.block_count();
     let mut avail_out: HashMap<Block, HashSet<ExprId>> = HashMap::new();
     for bi in 0..n {
-        avail_out.insert(Block(bi as u32), HashSet::new());
+        avail_out.insert(Block::new(bi as u32), HashSet::new());
     }
     let preds = func.predecessors().clone();
     let entry = func.entry();
@@ -249,7 +249,7 @@ fn compute_avail(
     while changed {
         changed = false;
         for bi in 0..n {
-            let b = Block(bi as u32);
+            let b = Block::new(bi as u32);
             let avail_in: HashSet<ExprId> = if b == entry {
                 HashSet::new()
             } else {
@@ -309,13 +309,13 @@ fn compute_ant(
     let n = func.dfg.block_count();
     let mut ant_in = HashMap::with_capacity(n);
     for bi in 0..n {
-        ant_in.insert(Block(bi as u32), HashSet::new());
+        ant_in.insert(Block::new(bi as u32), HashSet::new());
     }
     let mut changed = true;
     while changed {
         changed = false;
         for bi in 0..func.dfg.block_count() {
-            let b = Block(bi as u32);
+            let b = Block::new(bi as u32);
             // 后继按投影读（与旧 match 语义逐条等价：Invoke/Resume 仍为空）
             let succs: Vec<Block> =
                 if let Some((_, then_block, _, else_block, _)) = func.dfg.term_branch(b) {

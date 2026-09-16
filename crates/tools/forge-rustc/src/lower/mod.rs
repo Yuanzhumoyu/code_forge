@@ -493,7 +493,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             if crate::trace::trace_enabled("TERM") {
                 eprintln!(
                     "[forge] term in bb{}: {:?}",
-                    block_id.0,
+                    block_id.index(),
                     bb_data.terminator().kind
                 );
             }
@@ -657,7 +657,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             ) = ct.const_
                             && let Some(g) = self.intern_const_data(alloc_id)
                         {
-                            call_args.push(self.builder.global_addr(GlobalId(g)));
+                            call_args.push(self.builder.global_addr(GlobalId::new(g)));
                             call_args.push(self.builder.iconst(meta as i64, TypeId::I64));
                             continue;
                         }
@@ -809,7 +809,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     );
                                     let sym = symbol_name_for_instance(self.tcx, &instance);
                                     let fr = self.func_refs.intern(&sym);
-                                    self.builder.call(FuncRef(fr), &args, &ret_tys)
+                                    self.builder.call(FuncRef::new(fr), &args, &ret_tys)
                                 }
                             }
                         } else {
@@ -855,10 +855,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     if crate::trace::trace_enabled("ASSERT") {
                         eprintln!(
                             "[forge] assert in bb{} target=bb{} expected={} -> Block({:?}) cond={cond_val:?}",
-                            block_id.0,
+                            block_id.index(),
                             target.index(),
                             expected,
-                            self.blocks.get(target).map(|b| b.0),
+                            self.blocks.get(target).map(|b| b.index()),
                         );
                     }
                     // 成功路径必须跳转 MIR 的 success target 块（blocks 已预建），
@@ -883,7 +883,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             // 占位 &PanicInfo（当前后端不构造 PanicInfo；panic_handler
                             // 若访问 info 需自备占位布局——e2e 用例的 handler 为 loop）
                             let zero = self.builder.iconst(0, TypeId::I64);
-                            self.builder.call(FuncRef(fr), &[zero], &[]);
+                            self.builder.call(FuncRef::new(fr), &[zero], &[]);
                         }
                         self.builder.unreachable();
                         // 成功路径：后续语句继续在 success 块（lower_body 按

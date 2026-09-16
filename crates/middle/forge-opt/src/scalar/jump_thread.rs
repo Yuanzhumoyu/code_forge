@@ -57,7 +57,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
         // 2. Fold jump chains: if target block is empty with only Jump, redirect directly
         for bi in 0..block_count {
             let target_info = {
-                let block_id = Block(bi as u32);
+                let block_id = Block::new(bi as u32);
                 if let Some((target, args)) = func.dfg.term_jump(block_id) {
                     if args.is_empty() {
                         // Check if target block is an empty block with only Jump
@@ -83,7 +83,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
             };
 
             if let Some((_, final_target, final_args)) = target_info {
-                func.jump(Block(bi as u32), final_target, &final_args);
+                func.jump(Block::new(bi as u32), final_target, &final_args);
                 changed = true;
                 result.blocks_removed += 1;
             }
@@ -91,7 +91,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
 
         // 3. Empty block elimination: no insts, no params, only Jump
         for bi in 0..block_count {
-            let block_id = Block(bi as u32);
+            let block_id = Block::new(bi as u32);
             if block_id == entry {
                 continue; // preserve entry block
             }
@@ -100,15 +100,15 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                 Block,
                 smallvec::SmallVec<[Value; 2]>,
             ) = {
-                let block = &func.dfg.block(Block(bi as u32));
+                let block = &func.dfg.block(Block::new(bi as u32));
                 if block.inst_order.is_empty() && block.params.is_empty() {
                     if let Some((target, args)) = func.dfg.term_jump(block_id) {
                         (true, target, args.iter().copied().collect())
                     } else {
-                        (false, Block(0), smallvec![])
+                        (false, Block::new(0), smallvec![])
                     }
                 } else {
-                    (false, Block(0), smallvec![])
+                    (false, Block::new(0), smallvec![])
                 }
             };
 
@@ -133,7 +133,7 @@ pub fn thread_jumps(func: &mut Function) -> Result<PassResult, IrError> {
                     }
                 }
                 // Set empty block to Unreachable
-                func.unreachable(Block(bi as u32));
+                func.unreachable(Block::new(bi as u32));
                 changed = true;
                 result.blocks_removed += 1;
             }
@@ -188,11 +188,11 @@ mod tests {
         // B0 should now jump directly to B2
         assert!(
             func.dfg
-                .term_jump(Block(0))
+                .term_jump(Block::new(0))
                 .is_some_and(|(target, _)| target == b2)
         );
         // B1 should be unreachable
-        assert!(func.dfg.term_is_unreachable(Block(1)));
+        assert!(func.dfg.term_is_unreachable(Block::new(1)));
     }
 
     #[test]
@@ -225,8 +225,8 @@ mod tests {
         let r = pass.run_on_function(&mut func).unwrap();
         assert!(r.changed);
         // B1 and B2 should be unreachable
-        assert!(func.dfg.term_is_unreachable(Block(1)));
-        assert!(func.dfg.term_is_unreachable(Block(2)));
+        assert!(func.dfg.term_is_unreachable(Block::new(1)));
+        assert!(func.dfg.term_is_unreachable(Block::new(2)));
     }
 
     #[test]

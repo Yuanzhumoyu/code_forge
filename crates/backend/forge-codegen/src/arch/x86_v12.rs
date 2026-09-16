@@ -55,7 +55,7 @@ mod tests {
             m.add_function(b.finish().expect("build"));
         }
         let compiler = FunctionCompiler::new(TargetMachine::new());
-        let func = m.get_function(forge_ir::FuncRef(0));
+        let func = m.get_function(forge_ir::FuncRef::new(0));
         let cf = compiler.compile_raw(func).expect("compile const42");
         eprintln!("const42 code ({} bytes):", cf.code.len());
         for (i, &byte) in cf.code.iter().enumerate() {

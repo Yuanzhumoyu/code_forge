@@ -137,7 +137,7 @@ mod tests {
         // Return should use src directly (not copied)
         let values = func
             .dfg
-            .term_return_values(Block(0))
+            .term_return_values(Block::new(0))
             .expect("expected Return terminator");
         assert_eq!(values[0], src);
     }

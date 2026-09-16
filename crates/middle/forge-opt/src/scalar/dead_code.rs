@@ -211,13 +211,13 @@ pub(crate) fn eliminate_dead_blocks(func: &mut Function) -> usize {
 
     // 清空不可达块
     for i in 0..func.dfg.block_count() {
-        let block_id = Block(i as u32);
+        let block_id = Block::new(i as u32);
         let stale = !reachable.contains(&block_id)
-            && (!func.dfg.block(Block(i as u32)).inst_order.is_empty()
+            && (!func.dfg.block(Block::new(i as u32)).inst_order.is_empty()
                 || func.dfg.term_kind(block_id) != Some(TermKind::Unreachable));
         if stale {
             removed += 1;
-            func.dfg.block_mut(Block(i as u32)).inst_order.clear();
+            func.dfg.block_mut(Block::new(i as u32)).inst_order.clear();
             func.unreachable(block_id);
         }
     }
@@ -281,7 +281,7 @@ mod tests {
         let _r = pass.run_on_function(&mut func).unwrap();
 
         // Store should be preserved (has side effects)
-        let store_id = func.dfg.block(Block(0)).inst_order[1];
+        let store_id = func.dfg.block(Block::new(0)).inst_order[1];
         let store_inst = &func.dfg.inst_data(store_id);
         assert!(matches!(store_inst.opcode, Opcode::Store));
     }
@@ -311,9 +311,9 @@ mod tests {
         let r = pass.run_on_function(&mut func).unwrap();
 
         assert!(r.blocks_removed >= 1);
-        let dead = &func.dfg.block(Block(1));
+        let dead = &func.dfg.block(Block::new(1));
         assert!(
-            dead.inst_order.is_empty() || func.dfg.term_is_unreachable(Block(1)),
+            dead.inst_order.is_empty() || func.dfg.term_is_unreachable(Block::new(1)),
             "被清理的块应是 unreachable"
         );
     }

@@ -256,7 +256,7 @@ pub fn build_min(op: Opcode) -> Function {
         Opcode::StackAddr => b.stack_addr(0),
         Opcode::Alloca => b.alloca(TypeId::I32, 4),
         Opcode::GetElementPtr => b.gep(bv, &[a], TypeId::I32),
-        Opcode::GlobalAddr => b.global_addr(GlobalId(0)),
+        Opcode::GlobalAddr => b.global_addr(GlobalId::new(0)),
         // ── constants / misc ──
         Opcode::Iconst => b.iconst_i32(1),
         Opcode::Fconst => b.fconst_f64(1.0),
@@ -282,7 +282,7 @@ pub fn build_min(op: Opcode) -> Function {
         Opcode::IsNotNull => b.is_not_null(bv),
         Opcode::Select => b.select(a, x, y),
         // ── call ──
-        Opcode::Call => b.call(FuncRef(0), &[a], &[TypeId::I32])[0],
+        Opcode::Call => b.call(FuncRef::new(0), &[a], &[TypeId::I32])[0],
         Opcode::CallIndirect => b.call_indirect(bv, &[a], &[TypeId::I32])[0],
         // ── atomics (via builder) ──
         Opcode::AtomicRmw => {

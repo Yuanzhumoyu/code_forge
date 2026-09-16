@@ -38,7 +38,7 @@ pub fn optimize_tail_calls(
 
     for bi in 0..block_count {
         // Check if block ends with Return（投影读取，不依赖 Terminator 表示）
-        let Some(values) = func.dfg.term_return_values(Block(bi as u32)) else {
+        let Some(values) = func.dfg.term_return_values(Block::new(bi as u32)) else {
             continue;
         };
         let return_values: smallvec::SmallVec<[Value; 2]> = values.iter().copied().collect();
@@ -48,7 +48,7 @@ pub fn optimize_tail_calls(
 
         // Find last non-Nop Call instruction
         let call_info = {
-            let block = &func.dfg.block(Block(bi as u32));
+            let block = &func.dfg.block(Block::new(bi as u32));
             let mut found = None;
             for &inst_id in block.inst_order.iter().rev() {
                 let inst = &func.dfg.inst_data(inst_id);
@@ -114,7 +114,7 @@ pub fn optimize_tail_calls(
 
         // Replace Return with Jump（目标 = 本函数入口块：递归转循环）
         let args: smallvec::SmallVec<[Value; 2]> = call_operands.iter().copied().collect();
-        func.jump(Block(bi as u32), entry, &args);
+        func.jump(Block::new(bi as u32), entry, &args);
         result.instructions_removed += 1;
         result.changed = true;
     }
@@ -155,7 +155,7 @@ mod tests {
         let one = b.iconst_i32(1);
         let dec = b.isub(params[0], one);
         // 自递归调用：FuncRef(0) 指向函数自身（函数表里放同名函数的克隆）
-        let call_ret = b.call(FuncRef(0), &[dec], &[TypeId::I32]);
+        let call_ret = b.call(FuncRef::new(0), &[dec], &[TypeId::I32]);
         b.ret(&[call_ret[0]]);
         b.switch_to_block(done);
         b.ret(&[zero]);
@@ -163,7 +163,7 @@ mod tests {
         let entry_block = rec_func.entry_block.expect("entry");
 
         let mut func_table = HashMap::new();
-        func_table.insert(FuncRef(0), rec_func.clone());
+        func_table.insert(FuncRef::new(0), rec_func.clone());
 
         let pass = TailCallPass::new(func_table);
         let r = pass.run_on_function(&mut rec_func).unwrap();
@@ -176,13 +176,13 @@ mod tests {
             .position(|(i, _)| {
                 rec_func
                     .dfg
-                    .term_jump(Block(i as u32))
+                    .term_jump(Block::new(i as u32))
                     .is_some_and(|(target, _)| target == entry_block)
             })
             .expect("应有一个块被改写成 jump entry");
         let (_, args) = rec_func
             .dfg
-            .term_jump(Block(recurse_block as u32))
+            .term_jump(Block::new(recurse_block as u32))
             .expect("预期 Jump");
         assert_eq!(
             args.len(),
@@ -212,13 +212,13 @@ mod tests {
         let callee_func = b.finish().expect("build");
 
         let mut func_table = HashMap::new();
-        func_table.insert(FuncRef(0), callee_func);
+        func_table.insert(FuncRef::new(0), callee_func);
 
         let sig2 = FunctionSignature::new(&[(TypeId::I32, "x")], &[TypeId::I32]);
         let mut b2 = FunctionBuilder::new("caller", TypeContext::new(), sig2);
         let (entry2, params2) = b2.create_block_with_params(&[(TypeId::I32, "x")]);
         b2.switch_to_block(entry2);
-        let call_results = b2.call(FuncRef(0), &[params2[0]], &[TypeId::I32]);
+        let call_results = b2.call(FuncRef::new(0), &[params2[0]], &[TypeId::I32]);
         b2.ret(&[call_results[0]]);
         let mut caller_func = b2.finish().expect("build");
 

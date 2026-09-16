@@ -362,7 +362,7 @@ pub(crate) fn gen_machine_inst(
                 .map(|(_, fid, _, _)| fid)
         {
             branch_targets_arms.push(quote! {
-                Inst::#vn { #fid, .. } => smallvec::smallvec![crate::prelude::Block(*#fid as u32)]
+                Inst::#vn { #fid, .. } => smallvec::smallvec![crate::prelude::Block::new(*#fid as u32)]
             });
         }
         let eff_kinds: Vec<TokenStream> = eff

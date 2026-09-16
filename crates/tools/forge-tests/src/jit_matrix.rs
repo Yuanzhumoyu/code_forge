@@ -482,7 +482,7 @@ fn run_module<M: TargetMachine + Clone>(
     if let Some(ex) = &r.exec {
         let funcs: Vec<(String, CompiledFunction)> = (0..module.function_count())
             .map(|i| {
-                let fr = FuncRef(i as u32);
+                let fr = FuncRef::new(i as u32);
                 let func = module.get_function(fr);
                 let compiled = FunctionCompiler::new((r.machine)())
                     .compile_raw(func)

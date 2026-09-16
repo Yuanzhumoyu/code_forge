@@ -390,7 +390,7 @@ fn codegen_if(cg: &mut CodegenCtx, node: AstRef<'_>) {
     let else_blk = if has_else {
         cg.builder.create_block()
     } else {
-        Block(u32::MAX)
+        Block::new(u32::MAX)
     };
 
     if has_else {

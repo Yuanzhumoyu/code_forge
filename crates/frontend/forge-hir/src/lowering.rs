@@ -350,7 +350,7 @@ impl<'a> LoweringContext<'a> {
             Opcode::GlobalAddr => {
                 use forge_ir::GlobalId;
                 let id = extract_attr_u64(attrs, "id").unwrap_or(0) as u32;
-                vec![self.builder.global_addr(GlobalId(id))]
+                vec![self.builder.global_addr(GlobalId::new(id))]
             }
 
             // === Select (1) ===

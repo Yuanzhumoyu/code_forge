@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-16)
+
+- **句柄字段私有化：10 个裸 u32 句柄不再能凭空构造（forge-ir v3 S2 切片）**：`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`GlobalId`/`SigRef`/`AggId`/`VReg` 的字段由 `pub u32` 降为 `pub(crate)`，统一出入口 `::new(u32)` + `.index()`；`ConstId` 为 `::from_raw(u32)` + `.raw()`（打包值）+ 既有 `.index()`（低 30 位池内索引）+ `.tag()`。此前 crate 外可 `Value(999)` 造句柄（坏句柄从构造点泄漏到下游），也可 `v.0` 直读索引（句柄表示成了公开契约）。
+  迁移面：本仓 178 + 45 处编译错误（按 `--message-format=json` 的 byte span 打补丁，4 轮收敛）；**DSL 生成器模板 32 处**（`forge-dsl/src/v12/codegen/{lowering,placeholder,machine,integration}.rs` 的 `quote!` 文本——生成物里的 `Block(...)`/`ConstId(...)`/`.0` 必须改生成器源）；`forge-rustc`（本机不可编译）走文本审计后定点修补。
+  **踩坑**：机械规则"private field → `.index()`"对 `ConstId` 是错的——`ConstId::index()` 是低 30 位池内索引，而 `.0` 是含 tag 的打包值；整包测试立刻抓到 20 个 JIT 用例错值（float/vector 常量全错），改 `.raw()` 后恢复。守卫 `tests/entity_privatization.rs`（4 例：往返/Default/Display、`ConstId` 三者语义区分、源码断言句柄字段必须 `pub(crate)`，已用负向探针验证会失败）。
+
 ### Changed (2026-09-15)
 
 - **`dfg` 私有化第三步：`blocks` arena 收口——三个 arena 至此全部私有（forge-ir v3 S5 第 6 项）**：`DataFlowGraph.blocks` 由 `pub` 降为 `pub(crate)`——读走 `block`（fail-closed：句柄不合法即 panic，与 `value_data`/`inst_data` 同契约）/ `block_opt`（容忍坏 IR）/ 新增 `block_data_iter`（无句柄迭代）/ 既有 `block_count`/`block_params`/`block_param_values`/`block_terminator`/`block_inst_iter`；写走 `block_mut`（就地编辑口），结构性增删仍只有 `make_block*`/`remove_block`。
