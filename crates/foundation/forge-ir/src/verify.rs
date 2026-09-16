@@ -101,6 +101,25 @@ pub enum VerifyError {
     PathWithoutReturn {
         last_block: Block,
     },
+    /// 墓碑指令不满足规范形态（`tombstone = true` 却仍带内容/附件）。
+    ///
+    /// `what` = `"operands"` / `"immediates"` / `"metadata"` / `"param_attrs"` /
+    /// `"isel_strategy"`。墓碑化必须走 `DataFlowGraph::tombstone_inst_low`
+    /// （`kill_inst`/`Function::tombstone_inst`），手写"只改 opcode"会留下陈旧状态。
+    TombstoneNotCanonical {
+        inst: Inst,
+        what: String,
+    },
+    /// 惰性分析缓存与现场重算不一致（改了控制流却忘了 `analysis_mut().invalidate()`）。
+    ///
+    /// `what` = `"successors"` / `"predecessors"` / `"dominator_tree"`；
+    /// `block` = 首个不一致的块；`cached`/`fresh` 便于诊断。
+    AnalysisCacheStale {
+        what: String,
+        block: Block,
+        cached: String,
+        fresh: String,
+    },
     /// Return 值数量与签名匹配但类型不符。
     ReturnValueTypeMismatch {
         /// `ret` 终结符指令。
@@ -318,6 +337,25 @@ impl std::fmt::Display for VerifyError {
                     last_block
                 )
             }
+            VerifyError::TombstoneNotCanonical { inst, what } => {
+                write!(
+                    f,
+                    "tombstoned instruction {inst} still carries {what} (墓碑化须走 \
+                     DataFlowGraph::tombstone_inst_low)"
+                )
+            }
+            VerifyError::AnalysisCacheStale {
+                what,
+                block,
+                cached,
+                fresh,
+            } => {
+                write!(
+                    f,
+                    "stale analysis cache `{what}` at block {block}: cached {cached} != fresh {fresh} \
+                     (改控制流后需 Function::invalidate_analysis())"
+                )
+            }
             VerifyError::ReturnValueTypeMismatch {
                 inst,
                 block,
@@ -497,6 +535,8 @@ impl Verifier {
         self.check_dominance(func);
         self.check_inst_order(func);
         self.check_path_termination(func);
+        self.check_tombstones(&func.dfg);
+        self.check_analysis_cache(func);
 
         // fail-closed：无类型上下文时 8 类类型相关检查无法执行 → 明确报错
         // （不是静默放宽）。放在最后，保证结构类检查仍然跑完并一起上报。
@@ -1816,6 +1856,89 @@ impl Verifier {
             }
         }
     }
+
+    /// 墓碑规范形态（v3 S2/S6）：`is_tombstone()` 为真者不得仍带 operands/
+    /// immediates/附件——墓碑化只有一条实现，手写"只把 opcode 改成 Nop"会留下
+    /// 陈旧状态（dump/诊断会看到"删了却还带 TBAA/融合标签"）。
+    fn check_tombstones(&mut self, dfg: &DataFlowGraph) {
+        // 用**原始 arena** 迭代：insts() 会跳过墓碑，校验器必须看到全部
+        for (inst_id, inst) in dfg.all_insts() {
+            if !inst.is_tombstone() {
+                continue;
+            }
+            let bad: [(&str, bool); 5] = [
+                ("operands", !inst.operands.is_empty()),
+                ("immediates", !inst.immediates.is_empty()),
+                ("metadata", !inst.metadata().is_empty()),
+                ("param_attrs", !inst.param_attrs.is_empty()),
+                ("isel_strategy", inst.isel_strategy().is_some()),
+            ];
+            for (what, is_bad) in bad {
+                if is_bad {
+                    self.errors.push(VerifyError::TombstoneNotCanonical {
+                        inst: inst_id,
+                        what: what.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// **重算 CFG/支配树并与惰性缓存比对**（v3 S6）。
+    ///
+    /// `Function::{predecessors, successors, dominator_tree}` 是 `OnceLock` 惰性
+    /// 缓存：只要有人改过控制流却忘了 `analysis_mut().invalidate()`，后续读者就会
+    /// 拿着旧 CFG/旧支配树算出"看起来合理但错误"的结果——而且**没有任何测试会失败**。
+    /// 这里现场重算（`dfg.block_successors` 直接解码终结符、`DominatorTree::build`
+    /// 重跑迭代）与已初始化的缓存逐块比对，把"陈旧缓存"变成可上报的错误。
+    ///
+    /// 边界：只比**已初始化**的缓存（未初始化的缓存没有陈旧问题）；未终止的块
+    /// 在 `block_successors` 里是"无出边"，与缓存构造口径一致。
+    fn check_analysis_cache(&mut self, func: &Function) {
+        // ① 后继 / 前驱
+        for (what, cached) in [
+            ("successors", func.analysis().successors.get()),
+            ("predecessors", func.analysis().predecessors.get()),
+        ] {
+            let Some(cached) = cached else { continue };
+            for (block, _) in func.dfg.blocks() {
+                let fresh: Vec<Block> = if what == "successors" {
+                    func.dfg.block_successors(block)
+                } else {
+                    // 前驱 = 所有以本块为后继的块（块序升序，与缓存构造一致）
+                    func.dfg
+                        .blocks()
+                        .map(|(b, _)| b)
+                        .filter(|&pred| func.dfg.block_successors(pred).contains(&block))
+                        .collect()
+                };
+                let got = cached.get(block).cloned().unwrap_or_default();
+                if got != fresh {
+                    self.errors.push(VerifyError::AnalysisCacheStale {
+                        what: what.to_string(),
+                        block,
+                        cached: format!("{got:?}"),
+                        fresh: format!("{fresh:?}"),
+                    });
+                }
+            }
+        }
+
+        // ② 支配树（重跑算法并与缓存逐块比 idom）
+        if let Some(cached) = func.analysis().dominator_tree.get() {
+            let fresh = crate::analysis::DominatorTree::build(func);
+            for (block, _) in func.dfg.blocks() {
+                if cached.idom(block) != fresh.idom(block) {
+                    self.errors.push(VerifyError::AnalysisCacheStale {
+                        what: "dominator_tree".to_string(),
+                        block,
+                        cached: format!("{:?}", cached.idom(block)),
+                        fresh: format!("{:?}", fresh.idom(block)),
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl Default for Verifier {
@@ -1832,6 +1955,41 @@ mod tests {
     use crate::opcode::IntCC;
     use crate::types::{FunctionSignature, TypeContext};
     use smallvec::SmallVec;
+
+    /// 墓碑规范形态：置了 `tombstone` 却留着附件/操作数 → `TombstoneNotCanonical`。
+    ///
+    /// 只能 crate 内构造（字段 `pub(crate)`，crate 外没有"伪墓碑"这条路）。
+    #[test]
+    fn test_non_canonical_tombstone_reported() {
+        let ctx = TypeContext::new();
+        let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
+        let mut fb = FunctionBuilder::new("t", ctx.clone(), sig);
+        let (_entry, _) = fb.create_entry_block();
+        let v = fb.iconst_i32(7);
+        fb.ret(&[v]);
+        let mut func = fb.finish().expect("build");
+
+        let inst = func
+            .dfg
+            .insts()
+            .find(|(_, i)| i.opcode == Opcode::Iconst)
+            .map(|(id, _)| id)
+            .expect("iconst");
+        {
+            let i = func.dfg.inst_mut(inst);
+            i.tombstone = true; // 绕过唯一实现：内容/附件原样留着
+        }
+
+        let mut verifier = Verifier::with_ctx(ctx);
+        let errs = verifier.verify(&func).expect_err("伪墓碑必须上报");
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                VerifyError::TombstoneNotCanonical { inst: i, what } if *i == inst && what == "immediates"
+            )),
+            "应报 TombstoneNotCanonical(immediates)：{errs:?}"
+        );
+    }
 
     #[test]
     fn test_verify_valid_function() {

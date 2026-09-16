@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **校验器重算 CFG/支配树并比对 + 墓碑规范形态（forge-ir v3 S6 切片）**：新增 `VerifyError::{AnalysisCacheStale, TombstoneNotCanonical}`（错误码 30 → 32）。`Function::{predecessors, successors, dominator_tree}` 是 `OnceLock` 惰性缓存，此前**所有改控制流的写入口都不失效缓存**（全靠 `forge-opt` 8 处 pass 各自记得 `invalidate()`），改完 CFG 读到旧分析结果是静默错误且没有任何测试会失败。
+  现在：①新增 `Function::invalidate_analysis()`（幂等 O(1)），`set_terminator`（所有按形式写入口的公共底层）/`retarget_terminator`/`kill_inst` 内部调用 ⇒ 写完自动失效；②校验器新增 `check_analysis_cache`：现场重算 successors/predecessors/支配树与**已初始化**缓存逐块比对，不一致报 `AnalysisCacheStale { what, block, cached, fresh }`（兜住绕过 `Function` 直改 `dfg` 的漏网）；③新增 `check_tombstones`：`is_tombstone()` 为真者不得仍带 operands/immediates/metadata/param_attrs/isel_strategy，否则报 `TombstoneNotCanonical`。实现中发现 `dfg.insts()` **会跳过墓碑**，校验器看不到它们——补 crate 内 `all_insts()`（原始 arena 迭代）。
+  守卫 `tests/analysis_cache.rs`（4 例）+ `verify.rs` 内单测（伪墓碑上报；crate 外造不出伪墓碑，字段私有）。
+
 - **墓碑语义显式化：`Instruction::is_tombstone()` 成为唯一判据（forge-ir v3 S2 切片）**：删除是"标墓碑"而非回收槽位，但"是不是墓碑"此前靠 `opcode == Nop` 猜——而 `Opcode::Nop` **是合法指令**（`FunctionBuilder::nop()` 发一条进 `inst_order`）。全仓实测三种答案（12 处 `matches!(opcode, Nop)`、4 处 `Nop && results.is_empty()`、1 处 `opcode == Nop`）：合法 Nop 被当成墓碑跳过，而带 results 的就地墓碑反被当成活指令。
   现在唯一事实源是 `Instruction.tombstone: bool`（私有）+ `is_tombstone()`，唯一实现是 `DataFlowGraph::tombstone_inst_low`（标标志 + Nop + 清 operands/immediates + **清附件** metadata/param_attrs/fn_attrs/isel_strategy，此前附件留在墓碑上）。两档语义共用它：**删除**（`remove_inst`/`kill_inst`，额外摘 `inst_order` 条目 + 清 results + 值 VOID）与**就地**（新增公开入口 `Function::tombstone_inst`，保留顺序表条目与 results，附 use-lists 重登记）——`forge-codegen` 8 处手写墓碑块全部改走它；4 处复合判据与 2 处"数墓碑"改 `is_tombstone()`，lowering 边界的 `matches!(opcode, Nop)` 按原意保留（任何 Nop 都不产生机器码）。
   守卫 `tests/tombstone_semantics.rs`（4 例：删除语义规范终态、**合法 `nop()` 不是墓碑**、就地墓碑化保留 results 但清附件、源码断言"`opcode = Opcode::Nop` 只许出现在 `dfg.rs`"，已用负向探针验证会失败）。

@@ -442,6 +442,10 @@ impl Function {
     ///
     /// **crate 内部低层入口**：调用方一律走下面按形式命名的写入口
     /// （`jump`/`branch`/`ret`/…），它们负责拼好 operands/immediates。
+    ///
+    /// **CFG 变了 ⇒ 惰性分析缓存自动失效**（v3 S6：`invalidate_analysis`）：
+    /// 此前只有 `forge-opt` 的 8 处 pass 自己记得 `invalidate()`，任何走公开写
+    /// 入口改控制流的调用方读到旧 CFG/支配树都是静默错误。
     pub(crate) fn set_terminator(
         &mut self,
         block: Block,
@@ -449,6 +453,7 @@ impl Function {
         operands: SmallVec<[Value; 4]>,
         immediates: SmallVec<[crate::Immediate; 4]>,
     ) {
+        self.invalidate_analysis();
         // 按**旧**终结符指令的操作数精确摘除 use 项（含结果值防御性清理）
         if let Some(old) = self.dfg.block_terminator(block) {
             self.use_lists.remove_inst(&self.dfg, old);
@@ -460,6 +465,16 @@ impl Function {
             .set_terminator(block, opcode, operands.clone(), immediates);
         let inst = self.dfg.block_terminator(block).expect("刚写入终结符指令");
         self.use_lists.record_inst(inst, &operands);
+    }
+
+    /// 控制流被改写后使惰性分析缓存失效（CFG/支配树/循环森林）。
+    ///
+    /// 幂等、O(1)（四个 `OnceLock` 重建）。`Function` 的每个改控制流的写入口都会
+    /// 调它；绕过 `Function` 直接改 `dfg` 结构（`dfg.remove_block` 等）的调用方
+    /// 必须自己调 [`Function::analysis_mut`] 的 `invalidate`——校验器的
+    /// `AnalysisCacheStale` 检查会抓这种漏网。
+    pub fn invalidate_analysis(&mut self) {
+        self.analysis.invalidate();
     }
 
     /// 终结符被就地改写操作数后重登记其 use 项。
@@ -604,6 +619,7 @@ impl Function {
 
     /// 把 `block` 终结符中指向 `old_target` 的目标改为 `new_target`（实参原样保留）。
     pub fn retarget_terminator(&mut self, block: Block, old_target: Block, new_target: Block) {
+        self.invalidate_analysis();
         let Some(inst) = self.dfg.block_terminator(block) else {
             return;
         };
@@ -754,6 +770,8 @@ impl Function {
     /// 原子删除指令：use-lists 清理 + 墓碑化 + 结果值 VOID 化。
     /// 调用方须保证结果值无活跃使用（或先 RAUW）。
     pub fn kill_inst(&mut self, inst: Inst) {
+        // 删的可能正是终结符指令（CFG 随之变化）⇒ 保守失效分析缓存
+        self.invalidate_analysis();
         self.use_lists.remove_inst(&self.dfg, inst);
         for &r in self.dfg.inst_results(inst) {
             self.use_lists.remove_value(r);

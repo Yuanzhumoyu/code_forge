@@ -100,7 +100,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
-| S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
+| S6 | 校验与 pass 契约 | **大部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；**重算 CFG/支配树并比对**（`AnalysisCacheStale`）+ 墓碑规范形态（`TombstoneNotCanonical`）已落地（均见 §6 末）；余项：severity 分级、`AnalysisManager` |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
@@ -1024,6 +1024,43 @@ fmt/clippy `-D warnings` 干净。
 **验证**：workspace 1437 passed / 0 failed / 19 ignored（62 个测试二进制 +
 13 组 doc-test，较句柄私有化 +4）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。
+
+### S6（切片）：重算 CFG/支配树并比对 + 墓碑规范形态（2026-09-16）
+
+S6 的"重算再比对"落地，并顺手把上一片（墓碑语义）的不变量交给校验器兜底。
+
+**① 惰性分析缓存陈旧检查（新增 `AnalysisCacheStale`）**：`Function` 的
+`predecessors`/`successors`/`dominator_tree` 是 `OnceLock` 惰性缓存——只要有人改了
+控制流却忘了失效，后续读者就会拿旧 CFG/旧支配树算出"看起来合理但错误"的结果，
+而且**没有任何测试会失败**（这是本节最值得防的静默错误）。实测暴露的现状：
+
+- `Function` 的改控制流写入口（`jump`/`branch`/`ret`/`switch`/`unreachable`/
+  `invoke`/`resume`/`retarget_terminator`/`kill_inst`）**此前都不失效缓存**，
+  全靠 `forge-opt` 的 8 处 pass 各自记得调 `invalidate()`；
+- 校验器新增 `check_analysis_cache`：现场重算（`dfg.block_successors` 直接解码
+  终结符、`DominatorTree::build` 重跑迭代）与**已初始化**的缓存逐块比对，
+  不一致即上报 `AnalysisCacheStale { what, block, cached, fresh }`。
+
+**② 写完自动失效**：新增 `Function::invalidate_analysis()`（幂等、O(1)），并在
+`set_terminator`（所有按形式写入口的公共底层）、`retarget_terminator`、`kill_inst`
+里调用 ⇒ "先读缓存、再改 CFG、再读"必须看到新 CFG；`forge-opt` 的显式
+`invalidate()` 保留（幂等，且它们还改了别的分析口径）。
+
+**③ 墓碑规范形态检查（新增 `TombstoneNotCanonical`）**：`is_tombstone()` 为真者
+不得仍带 operands/immediates/metadata/param_attrs/isel_strategy（手写"只改 opcode"
+的伪墓碑会留下陈旧状态）。实现时踩到一个真问题：`dfg.insts()` **会跳过墓碑**，
+校验器因此看不到它们——补 `pub(crate) fn all_insts()`（原始 arena 迭代）才生效；
+这点差异写进了两个访问器的文档。
+
+**守卫**：`tests/analysis_cache.rs`（4 例：写入口自动失效后 `successors`/
+`predecessors`/`dominator_tree` 立即反映新 CFG；手工塞陈旧 successors 缓存 →
+校验器报错；改 CFG 后塞回旧支配树 → 报错；新鲜缓存不误报）+ `verify.rs` 内一个
+单测（`tombstone = true` 但留着 immediates → `TombstoneNotCanonical`；crate 外造不出
+伪墓碑，字段 приват，所以这条只能在 crate 内测）。
+
+**验证**：workspace 1442 passed / 0 failed / 19 ignored（63 个测试二进制 +
+13 组 doc-test，较墓碑切片 +5）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。错误码 30 → 32。
 
 ## 7. 参考设计（外部）
 

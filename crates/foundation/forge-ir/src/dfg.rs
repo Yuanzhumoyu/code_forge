@@ -1099,6 +1099,15 @@ impl DataFlowGraph {
         &mut self.blocks[idx]
     }
 
+    /// **原始 arena 迭代**（含墓碑）：`insts()` 会跳过墓碑，供校验器等"必须看到
+    /// 全部槽位"的调用方使用。crate 内专用。
+    pub(crate) fn all_insts(&self) -> impl Iterator<Item = (Inst, &Instruction)> {
+        self.insts
+            .iter()
+            .enumerate()
+            .map(|(k, inst)| (Inst(k as u32), inst))
+    }
+
     /// 按块序迭代 `BlockData`（不带句柄）——[`DataFlowGraph::blocks`] 的无句柄版，
     /// 供"只关心内容"的遍历（`enumerate()` 得到的下标即块序）。
     pub fn block_data_iter(&self) -> impl Iterator<Item = &BlockData> {
