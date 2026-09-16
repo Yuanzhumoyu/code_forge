@@ -26,7 +26,7 @@
 | `builder` | `FunctionBuilder`（构造 IR 的唯一推荐入口） |
 | `use_list` / `analysis` / `loop_info` / `alias` | def-use 链、支配树、循环森林、最小别名分析 |
 | `constant` / `big` / `imm_str` / `string_pool` | 常量池（int/float/big/vector/aggregate）、任意精度、SSO 字符串 |
-| `verify` | `Verifier`（63 条规则 / 13 阶段 + 惰性分析缓存重算比对 `AnalysisCacheStale`、墓碑规范形态 `TombstoneNotCanonical`） |
+| `verify` | `Verifier`（63 条规则 / 13 阶段 + 惰性分析缓存重算比对 `AnalysisCacheStale`、墓碑规范形态 `TombstoneNotCanonical`、严重级 `VerifySeverity`（`UnreachableBlock` 为唯一建议级）） |
 | `display` / `ir_parser` | LLVM 文本输出（logos + lalrpop 解析） |
 | `metadata` / `debug_info` / `symbol` / `data_layout` | 元数据、调试信息、符号、DataLayout 与 target triple（只作数据，不提供按架构名猜属性的查询——见「开放集合的边界」） |
 

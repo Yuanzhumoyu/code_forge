@@ -12,6 +12,44 @@ use crate::error::IrError;
 use std::collections::HashSet;
 
 // ============================================================
+// Verifier
+// ============================================================
+
+/// 诊断严重级（v3 方案 S6：severity 分级）。
+///
+/// 分界线是**"合法 IR 上的可疑现象" vs "不变量被破坏"**：
+///
+/// - [`VerifySeverity::Warning`]：IR 本身合法（LLVM 也接受），只是可疑或低效——
+///   例如不可达死块（`UnreachableBlock` 的判据本身就是启发式：≤1 条指令且无参数的
+///   死 merge 块已被豁免）。这类不该让 pass 门禁失败，也不该让用户以为 IR 坏了。
+/// - [`VerifySeverity::Error`]：不变量被破坏（use-def 失真、块参数对不上、终结符
+///   指向不存在/未终止的块……），下游读它会算出垃圾 ⇒ 必须失败。
+///
+/// 默认倾向 Error：**新增诊断一律先算 Error**，要降级必须给出"为什么合法"的理由。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum VerifySeverity {
+    /// 建议级：合法 IR 上的可疑现象（不参与严格门禁）。
+    Warning,
+    /// 违规级：不变量被破坏（严格门禁按它失败）。
+    Error,
+}
+
+impl VerifyError {
+    /// 该诊断的严重级（见 [`VerifySeverity`]）。
+    pub fn severity(&self) -> VerifySeverity {
+        match self {
+            // 唯一的建议级：不可达块是**合法**的死代码（校验器只能提示可疑）。
+            VerifyError::UnreachableBlock { .. } => VerifySeverity::Warning,
+            _ => VerifySeverity::Error,
+        }
+    }
+
+    /// 是否违规级（`severity() == Error`）。
+    pub fn is_error(&self) -> bool {
+        self.severity() == VerifySeverity::Error
+    }
+}
+// ============================================================
 // VerifyError
 // ============================================================
 

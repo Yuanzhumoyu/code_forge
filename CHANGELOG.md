@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **校验器 severity 分级 + 健壮性钉住（forge-ir v3 S6 切片）**：新增 `VerifySeverity::{Warning, Error}` 与 `VerifyError::{severity, is_error}`——分界线是"合法 IR 上的可疑现象"vs"不变量被破坏"，`UnreachableBlock`（不可达死块，LLVM 与本仓注释都视为合法，`check_reachability` 本就对它做了死 merge 豁免）降为唯一的建议级，其余保持违规级；`forge-opt` 的 `PassVerify::Error` 改为只在违规级失败、建议级记 `log::warn!`。
+  新增 `tests/verifier_robustness.rs`（8 例）：越界跳转目标、越界操作数句柄、被跳转的未终止块、`remove_block` 后被指向的块、截断的 `switch` case 表、死块建议级、结构违规违规级、合法 IR 对照组——**实测 6 个坏 IR 夹具全部返回错误、无 panic**（含前两片新增的 `expect("投影命中…")` 路径）。顺带删掉 `forge-opt` 中一段自相矛盾的过时注释（上半段说严格校验"必然失败"，下半段已写"两处都已修…全绿"）。
+
 - **校验器重算 CFG/支配树并比对 + 墓碑规范形态（forge-ir v3 S6 切片）**：新增 `VerifyError::{AnalysisCacheStale, TombstoneNotCanonical}`（错误码 30 → 32）。`Function::{predecessors, successors, dominator_tree}` 是 `OnceLock` 惰性缓存，此前**所有改控制流的写入口都不失效缓存**（全靠 `forge-opt` 8 处 pass 各自记得 `invalidate()`），改完 CFG 读到旧分析结果是静默错误且没有任何测试会失败。
   现在：①新增 `Function::invalidate_analysis()`（幂等 O(1)），`set_terminator`（所有按形式写入口的公共底层）/`retarget_terminator`/`kill_inst` 内部调用 ⇒ 写完自动失效；②校验器新增 `check_analysis_cache`：现场重算 successors/predecessors/支配树与**已初始化**缓存逐块比对，不一致报 `AnalysisCacheStale { what, block, cached, fresh }`（兜住绕过 `Function` 直改 `dfg` 的漏网）；③新增 `check_tombstones`：`is_tombstone()` 为真者不得仍带 operands/immediates/metadata/param_attrs/isel_strategy，否则报 `TombstoneNotCanonical`。实现中发现 `dfg.insts()` **会跳过墓碑**，校验器看不到它们——补 crate 内 `all_insts()`（原始 arena 迭代）。
   守卫 `tests/analysis_cache.rs`（4 例）+ `verify.rs` 内单测（伪墓碑上报；crate 外造不出伪墓碑，字段私有）。

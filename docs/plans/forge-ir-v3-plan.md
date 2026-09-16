@@ -100,7 +100,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
-| S6 | 校验与 pass 契约 | **大部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；**重算 CFG/支配树并比对**（`AnalysisCacheStale`）+ 墓碑规范形态（`TombstoneNotCanonical`）已落地（均见 §6 末）；余项：severity 分级、`AnalysisManager` |
+| S6 | 校验与 pass 契约 | **大部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；**重算 CFG/支配树并比对**（`AnalysisCacheStale`）、墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）与校验器健壮性守卫已落地（均见 §6 末）；余项：`AnalysisManager`（把惰性缓存抽成显式管理器） |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
@@ -1061,6 +1061,34 @@ S6 的"重算再比对"落地，并顺手把上一片（墓碑语义）的不变
 **验证**：workspace 1442 passed / 0 failed / 19 ignored（63 个测试二进制 +
 13 组 doc-test，较墓碑切片 +5）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。错误码 30 → 32。
+
+### S6（切片）：severity 分级 + 校验器健壮性钉住（2026-09-16）
+
+S6 计划里的 "severity" 落地，并把"校验器在坏 IR 上只许报错、不许 panic"这条契约
+用实测钉住。
+
+**① severity 分级**（新增 `VerifySeverity::{Warning, Error}` + `VerifyError::severity()`
+/`is_error()`）：分界线是**"合法 IR 上的可疑现象" vs "不变量被破坏"**。
+`UnreachableBlock` 是唯一的建议级——不可达死块在 LLVM 与本仓自己的注释里都是合法
+IR（`check_reachability` 甚至已经豁免"≤1 条指令且无参数的死 merge 块"，说明它本来
+就是启发式），其余全部保持违规级。`forge-opt` 的 `PassVerify::Error` 改为**只在
+违规级上失败**，建议级降为 `log::warn!`（此前任何诊断都让门禁红）。
+
+**② 校验器健壮性**（`tests/verifier_robustness.rs`，8 例）：用手工破坏的 IR 验证
+"返回 `Err` 而不是 panic"——越界跳转目标、越界操作数句柄、被跳转的未终止块、
+`remove_block` 后仍被指向的块、被截断的 `switch` case 表、以及两个对照
+（合法 IR 通过；结构违规是违规级、死块是建议级）。**实测：6 个坏 IR 夹具全部
+返回错误、无 panic**——包括前两片新加的 `expect("投影命中 …")` 路径，它们的
+前提在这批夹具下依然成立。
+
+**③ 顺带纠错**：`forge-opt` 里 `strict_verification_passes_for_all_pipelines` 的
+文档注释上半段还写着"`PassVerify::Error` 在当前 pass 集上**必然失败**…S6 修好后
+本测试会开始失败"，而同一条注释下半段已写"两处都已修…把严格模式全绿固定下来"
+——两段自相矛盾（欠账已清）。删掉过时的上半段，测试体本身是 `assert!(result.is_ok())`。
+
+**验证**：workspace 1450 passed / 0 failed / 19 ignored（64 个测试二进制 +
+13 组 doc-test，较上一片 +8）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

@@ -209,11 +209,28 @@ impl PassManager {
                                 .join("; ");
                             match self.verify_after_pass {
                                 PassVerify::Error => {
-                                    return Err(IrError::Internal(format!(
-                                        "pass '{}' 之后 '{}' 未通过 IR 校验：{msg}",
-                                        pass.name(),
-                                        func.name
-                                    )));
+                                    // 严重级分级（S6）：只有**违规级**才让门禁失败；
+                                    // 建议级（如不可达死块——合法 IR）只记 warn。
+                                    let hard: Vec<_> =
+                                        errors.iter().filter(|e| e.is_error()).collect();
+                                    if hard.is_empty() {
+                                        log::warn!(
+                                            "IR 校验建议 after '{}' on '{}': {msg}",
+                                            pass.name(),
+                                            func.name
+                                        );
+                                    } else {
+                                        let hard_msg = hard
+                                            .iter()
+                                            .map(|e| format!("{e:?}"))
+                                            .collect::<Vec<_>>()
+                                            .join("; ");
+                                        return Err(IrError::Internal(format!(
+                                            "pass '{}' 之后 '{}' 未通过 IR 校验：{hard_msg}",
+                                            pass.name(),
+                                            func.name
+                                        )));
+                                    }
                                 }
                                 _ => log::warn!(
                                     "IR 校验欠账 after '{}' on '{}': {}",
@@ -568,15 +585,9 @@ mod pipeline_tests {
         }
     }
 
-    /// **欠账钉住**：`PassVerify::Error`（S6 的目标门禁）在当前 pass 集上**必然失败**。
+    /// **严格校验门禁**：`PassVerify::Error` 下所有流水线必须保持 IR 不变量。
     ///
-    /// 2026-09-14 打开严格校验后实测：`inline` / `gvn_pre` / `mem2reg` 等 pass 会留下
-    /// use-list 不一致或返回类型不匹配的 IR（详情见 `PassVerify` 文档）。本测试把
-    /// 这个事实固定下来，避免它再次被"只 warn"掩盖：
-    ///
-    /// **S6 修好这些 pass 之后，本测试会开始失败** —— 届时把断言改为
-    /// `assert!(result.is_ok())` 并把 pass 后校验默认值切到 `PassVerify::Error`。
-    /// **S6 门禁：严格校验下所有流水线必须保持 IR 不变量**。
+    /// （2026-09-14 打开严格校验时曾暴露两笔欠账，已于同日修掉；本测试守住"全绿"。）
     ///
     /// 2026-09-14 打开"pass 后严格校验"时首次暴露两笔欠账：
     /// ① 多个 pass 直接 `dfg.make_inst` 建指令而**不登记 use-lists**
