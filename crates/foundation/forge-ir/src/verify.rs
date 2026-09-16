@@ -1573,7 +1573,7 @@ impl Verifier {
                         continue;
                     }
                     let inst_data = &dfg.inst_data(inst);
-                    if matches!(inst_data.opcode, Opcode::Nop) && inst_data.results.is_empty() {
+                    if inst_data.is_tombstone() {
                         if func.use_lists.use_count(value) > 0 {
                             self.errors.push(VerifyError::ValueDefMismatch {
                                 value,
@@ -1734,7 +1734,7 @@ impl Verifier {
                     None => continue,
                 };
                 // 跳过已删除（Nop 墓碑）指令
-                if matches!(inst.opcode, Opcode::Nop) && inst.results.is_empty() {
+                if inst.is_tombstone() {
                     continue;
                 }
                 // 结果数必须与 opcode 元数据一致（Store/Trap 无结果、overflow 双结果）

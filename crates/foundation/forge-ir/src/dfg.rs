@@ -89,9 +89,29 @@ pub struct Instruction {
     /// 写 [`Instruction::set_isel_strategy`] / [`Instruction::clear_isel_strategy`]
     /// ——与 `BlockData.terminator` 同一约定，附件只经入口改。
     pub(crate) isel_strategy: Option<crate::isel_strategy::IselStrategy>,
+    /// **墓碑标志**（v3 方案 S2：墓碑语义显式化）。
+    ///
+    /// 删除是"标墓碑"而非回收槽位：`remove_inst` 把块内顺序表条目摘掉，就地墓碑化
+    /// 的调用方（`Function::tombstone_inst`）保留条目。此前"是不是墓碑"靠
+    /// `opcode == Nop` 猜——而 `Opcode::Nop` **是合法指令**（`Builder::nop()` 会发
+    /// 一条进 `inst_order`），于是同一个问题在全仓有两种答案（`Nop` / `Nop &&
+    /// results.is_empty()`），合法 Nop 会被当成墓碑跳过。
+    ///
+    /// 现在唯一事实源是本字段：读 [`Instruction::is_tombstone`]，写经
+    /// [`DataFlowGraph::tombstone_inst`]（crate 内）/ [`crate::Function::tombstone_inst`]
+    /// （跨 crate，附带 use-lists 重登记）。字段私有。
+    pub(crate) tombstone: bool,
 }
 
 impl Instruction {
+    /// 该指令是否已被墓碑化（**唯一判据**，见 `Instruction::tombstone` 字段文档）。
+    ///
+    /// 与"`opcode == Nop`"的区别：`Opcode::Nop` 是合法指令（`Builder::nop()`），
+    /// 只有本判据为真才是"删除后的占位"。
+    pub fn is_tombstone(&self) -> bool {
+        self.tombstone
+    }
+
     /// 指令附件 metadata（`(kind, node)` 对，按附加序）。
     pub fn metadata(&self) -> &[AttachedMetadata] {
         &self.metadata
@@ -327,6 +347,7 @@ impl DataFlowGraph {
             isel_strategy: None,
             param_attrs: SmallVec::new(),
             fn_attrs: crate::function::FunctionAttributes::NONE,
+            tombstone: false,
         };
         // Push instruction to global table first (determines Inst.0 index),
         // then record its index in the block's inst_order.
@@ -386,6 +407,7 @@ impl DataFlowGraph {
         if let Some(strategy) = self.insts[inst.0 as usize].isel_strategy.clone() {
             self.insts[new_inst.0 as usize].set_isel_strategy(strategy);
         }
+        self.insts[new_inst.0 as usize].tombstone = self.insts[inst.0 as usize].tombstone;
         self.insts[new_inst.0 as usize].param_attrs =
             self.insts[inst.0 as usize].param_attrs.clone();
         self.insts[new_inst.0 as usize].fn_attrs = self.insts[inst.0 as usize].fn_attrs;
@@ -497,9 +519,36 @@ impl DataFlowGraph {
             isel_strategy: None,
             param_attrs: SmallVec::new(),
             fn_attrs: crate::function::FunctionAttributes::NONE,
+            tombstone: false,
         });
         // **不登记 inst_order**：块内指令列表只含非终结符指令。
         self.blocks[block.0 as usize].terminator = Some(inst);
+    }
+
+    /// **墓碑化的唯一实现**（crate 内低层原语，S2）：标标志 + 清空指令内容与附件。
+    ///
+    /// 与"合法 `nop`"无关：只有经这里的指令 `is_tombstone()` 才为真。
+    /// **不动 `inst_order`**（`remove_inst` 负责摘条目；就地墓碑化的调用方保留
+    /// 条目）、**不动 use-lists**（跨 crate 调用方请用
+    /// [`crate::Function::tombstone_inst`]）、**不动 `results`**——部分就地墓碑化
+    /// 的调用方（大聚合展开）之后仍要读那条被作废指令的结果值；"删除语义"的
+    /// 结果处理由 [`DataFlowGraph::remove_inst`] 追加（清空 + VOID）。
+    pub(crate) fn tombstone_inst_low(&mut self, inst: Inst) {
+        let idx = inst.0 as usize;
+        if idx >= self.insts.len() {
+            return;
+        }
+        let i = &mut self.insts[idx];
+        i.tombstone = true;
+        i.opcode = Opcode::Nop;
+        i.operands.clear();
+        i.immediates.clear();
+        // 附件一并清掉：墓碑上的 metadata/isel_strategy/param_attrs 是陈旧状态，
+        // 只会误导 dump 与诊断（"删了但看起来还带 TBAA/融合标签"）。
+        i.metadata.clear();
+        i.param_attrs.clear();
+        i.fn_attrs = crate::function::FunctionAttributes::NONE;
+        i.isel_strategy = None;
     }
 
     pub fn remove_inst(&mut self, inst: Inst) {
@@ -512,17 +561,13 @@ impl DataFlowGraph {
                     .inst_order
                     .retain(|&i| i != inst);
             }
-            // 结果值 VOID 化（防下游把已删除值当活跃值读类型）
-            for &r in &self.insts[idx].results {
+            self.tombstone_inst_low(inst);
+            // 删除语义额外处理结果值：清空 + VOID（防下游把已删除值当活跃值读类型）
+            for r in std::mem::take(&mut self.insts[idx].results) {
                 if let Some(vd) = self.values.get_mut(r.0 as usize) {
                     vd.ty = TypeId::VOID;
                 }
             }
-            // Mark as Nop in global table
-            self.insts[idx].opcode = Opcode::Nop;
-            self.insts[idx].results.clear();
-            self.insts[idx].operands.clear();
-            self.insts[idx].immediates.clear();
         }
     }
 
@@ -531,20 +576,10 @@ impl DataFlowGraph {
         if let Some(term) = self.blocks[block.0 as usize].terminator.take() {
             self.remove_inst(term);
         }
-        // Mark all instructions in this block as Nop
+        // 块内指令全部墓碑化（并摘掉顺序表条目）
         let insts: Vec<Inst> = std::mem::take(&mut self.blocks[block.0 as usize].inst_order);
         for inst in insts {
-            if (inst.0 as usize) < self.insts.len() {
-                for &r in &self.insts[inst.0 as usize].results {
-                    if let Some(vd) = self.values.get_mut(r.0 as usize) {
-                        vd.ty = TypeId::VOID;
-                    }
-                }
-                self.insts[inst.0 as usize].opcode = Opcode::Nop;
-                self.insts[inst.0 as usize].results.clear();
-                self.insts[inst.0 as usize].operands.clear();
-                self.insts[inst.0 as usize].immediates.clear();
-            }
+            self.tombstone_inst_low(inst);
         }
     }
 
@@ -998,7 +1033,7 @@ impl DataFlowGraph {
         self.insts
             .iter()
             .enumerate()
-            .filter(|(_, id)| !matches!(id.opcode, Opcode::Nop) || !id.results.is_empty())
+            .filter(|(_, id)| !id.is_tombstone())
             .map(|(i, id)| (Inst(i as u32), id))
     }
     pub fn blocks(&self) -> impl Iterator<Item = (Block, &BlockData)> {
@@ -1105,7 +1140,7 @@ impl<'a> Iterator for BlockInstsMut<'a> {
             // 索引在其生命周期内；id 来自同一 DFG 的 inst_order，恒 < len。
             // 返回的 &'a mut 引用从 &'a mut Vec 派生，是标准迭代器模式。
             let inst = unsafe { &mut *self.insts.as_mut_ptr().add(id.0 as usize) };
-            if matches!(inst.opcode, Opcode::Nop) && inst.results.is_empty() {
+            if inst.is_tombstone() {
                 continue;
             }
             return Some(inst);

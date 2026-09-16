@@ -187,6 +187,12 @@ fn metadata_writes_only_inside_the_single_entry() {
             "self.metadata.push(metadata);",
             "Function/GlobalVariable/GlobalAlias::attach_metadata 唯一写入口",
         ),
+        (
+            "dfg.rs",
+            "i.metadata.clear();",
+            "墓碑化（DataFlowGraph::tombstone_inst_low）清掉陈旧附件——删除语义的一部分，\
+             不是第三条写路径（S2 墓碑语义显式化）",
+        ),
     ];
 
     fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, usize, String)>) {

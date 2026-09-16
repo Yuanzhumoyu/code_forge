@@ -492,7 +492,7 @@ mod pipeline_tests {
         func.dfg
             .block_data_iter()
             .flat_map(|blk| blk.inst_order.iter())
-            .filter(|&&i| matches!(func.dfg.inst_data(i).opcode, Opcode::Nop))
+            .filter(|&&i| func.dfg.inst_data(i).is_tombstone())
             .count()
     }
 

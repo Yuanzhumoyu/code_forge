@@ -163,7 +163,7 @@ pub fn inline_calls(
                 let ci = &callee.dfg.inst_data(callee_inst_id);
 
                 // Skip terminators and Nops in callee body
-                if ci.opcode == Opcode::Nop {
+                if ci.is_tombstone() {
                     continue;
                 }
                 if ci.results.is_empty() && ci.opcode != Opcode::Store {

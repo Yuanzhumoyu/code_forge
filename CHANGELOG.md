@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **墓碑语义显式化：`Instruction::is_tombstone()` 成为唯一判据（forge-ir v3 S2 切片）**：删除是"标墓碑"而非回收槽位，但"是不是墓碑"此前靠 `opcode == Nop` 猜——而 `Opcode::Nop` **是合法指令**（`FunctionBuilder::nop()` 发一条进 `inst_order`）。全仓实测三种答案（12 处 `matches!(opcode, Nop)`、4 处 `Nop && results.is_empty()`、1 处 `opcode == Nop`）：合法 Nop 被当成墓碑跳过，而带 results 的就地墓碑反被当成活指令。
+  现在唯一事实源是 `Instruction.tombstone: bool`（私有）+ `is_tombstone()`，唯一实现是 `DataFlowGraph::tombstone_inst_low`（标标志 + Nop + 清 operands/immediates + **清附件** metadata/param_attrs/fn_attrs/isel_strategy，此前附件留在墓碑上）。两档语义共用它：**删除**（`remove_inst`/`kill_inst`，额外摘 `inst_order` 条目 + 清 results + 值 VOID）与**就地**（新增公开入口 `Function::tombstone_inst`，保留顺序表条目与 results，附 use-lists 重登记）——`forge-codegen` 8 处手写墓碑块全部改走它；4 处复合判据与 2 处"数墓碑"改 `is_tombstone()`，lowering 边界的 `matches!(opcode, Nop)` 按原意保留（任何 Nop 都不产生机器码）。
+  守卫 `tests/tombstone_semantics.rs`（4 例：删除语义规范终态、**合法 `nop()` 不是墓碑**、就地墓碑化保留 results 但清附件、源码断言"`opcode = Opcode::Nop` 只许出现在 `dfg.rs`"，已用负向探针验证会失败）。
+
 - **句柄字段私有化：10 个裸 u32 句柄不再能凭空构造（forge-ir v3 S2 切片）**：`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`GlobalId`/`SigRef`/`AggId`/`VReg` 的字段由 `pub u32` 降为 `pub(crate)`，统一出入口 `::new(u32)` + `.index()`；`ConstId` 为 `::from_raw(u32)` + `.raw()`（打包值）+ 既有 `.index()`（低 30 位池内索引）+ `.tag()`。此前 crate 外可 `Value(999)` 造句柄（坏句柄从构造点泄漏到下游），也可 `v.0` 直读索引（句柄表示成了公开契约）。
   迁移面：本仓 178 + 45 处编译错误（按 `--message-format=json` 的 byte span 打补丁，4 轮收敛）；**DSL 生成器模板 32 处**（`forge-dsl/src/v12/codegen/{lowering,placeholder,machine,integration}.rs` 的 `quote!` 文本——生成物里的 `Block(...)`/`ConstId(...)`/`.0` 必须改生成器源）；`forge-rustc`（本机不可编译）走文本审计后定点修补。
   **踩坑**：机械规则"private field → `.index()`"对 `ConstId` 是错的——`ConstId::index()` 是低 30 位池内索引，而 `.0` 是含 tag 的打包值；整包测试立刻抓到 20 个 JIT 用例错值（float/vector 常量全错），改 `.raw()` 后恢复。守卫 `tests/entity_privatization.rs`（4 例：往返/Default/Display、`ConstId` 三者语义区分、源码断言句柄字段必须 `pub(crate)`，已用负向探针验证会失败）。

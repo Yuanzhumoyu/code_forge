@@ -128,13 +128,7 @@ fn memoryize_from_segs(
     }
     // 3) 原指令 Nop + 登记（槽填充 store 只执行一次——后续提取命中映射）
     let __tomb = use_pos.inst;
-    {
-        let inst = func.dfg.inst_mut(__tomb);
-        inst.opcode = Opcode::Nop;
-        inst.operands = smallvec::smallvec![];
-        inst.immediates = smallvec::smallvec![];
-    }
-    func.refresh_inst_uses(__tomb);
+    func.tombstone_inst(__tomb);
     agg_slots.insert(func.dfg.inst_data(__tomb).results[0], (slot, seg_ty));
     Ok(())
 }
@@ -170,13 +164,7 @@ fn memoryize_from_addr(
     );
     let p = func.dfg.inst_data(add).results[0];
     let __tomb = use_pos.inst;
-    {
-        let inst = func.dfg.inst_mut(__tomb);
-        inst.opcode = Opcode::Nop;
-        inst.operands = smallvec::smallvec![];
-        inst.immediates = smallvec::smallvec![];
-    }
-    func.refresh_inst_uses(__tomb);
+    func.tombstone_inst(__tomb);
     agg_slots.insert(func.dfg.inst_data(__tomb).results[0], (p, seg_ty));
     Ok(())
 }
@@ -387,13 +375,7 @@ fn rewrite_agg_value_uses(
                 }
                 // 原 store 标 Nop
                 let __tomb = use_pos.inst;
-                {
-                    let inst = func.dfg.inst_mut(__tomb);
-                    inst.opcode = Opcode::Nop;
-                    inst.operands = smallvec::smallvec![];
-                    inst.immediates = smallvec::smallvec![];
-                }
-                func.refresh_inst_uses(__tomb);
+                func.tombstone_inst(__tomb);
                 move_to_front(func, use_pos.block, use_pos.pos, &local_gen);
             }
             Opcode::Call | Opcode::CallIndirect => {
@@ -1075,13 +1057,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
             }
             // 使用指令（Store）标 Nop
             let __tomb = job.inst;
-            {
-                let inst = func.dfg.inst_mut(__tomb);
-                inst.opcode = Opcode::Nop;
-                inst.operands = smallvec::smallvec![];
-                inst.immediates = smallvec::smallvec![];
-            }
-            func.refresh_inst_uses(__tomb);
+            func.tombstone_inst(__tomb);
         } else if let Some(idx) = extract_idx {
             // S1：命中嵌套聚合槽映射（内层提取）——地址语义优先
             let hit_inst = &func.dfg.inst_data(job.inst);
@@ -1122,13 +1098,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                         new_insts.push(add2);
                     }
                     let __tomb = job.inst;
-                    {
-                        let inst = func.dfg.inst_mut(__tomb);
-                        inst.opcode = Opcode::Nop;
-                        inst.operands = smallvec::smallvec![];
-                        inst.immediates = smallvec::smallvec![];
-                    }
-                    func.refresh_inst_uses(__tomb);
+                    func.tombstone_inst(__tomb);
                     agg_slots.insert(res, (addr2, fty));
                     // 追加内层提取任务（递归）
                     collect_extract_jobs(func, &mut jobs, res, job.load);
@@ -1229,13 +1199,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
                     new_insts.push(add2);
                 }
                 let __tomb = job.inst;
-                {
-                    let inst = func.dfg.inst_mut(__tomb);
-                    inst.opcode = Opcode::Nop;
-                    inst.operands = smallvec::smallvec![];
-                    inst.immediates = smallvec::smallvec![];
-                }
-                func.refresh_inst_uses(__tomb);
+                func.tombstone_inst(__tomb);
                 let res_new = func.dfg.inst_data(__tomb).results[0];
                 agg_slots.insert(res_new, (addr2, field_ty));
                 collect_extract_jobs(func, &mut jobs, res_new, job.load);
@@ -1319,13 +1283,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
     }
     for ii in nop_list {
         let __tomb = ii;
-        {
-            let inst = func.dfg.inst_mut(__tomb);
-            inst.opcode = Opcode::Nop;
-            inst.operands = smallvec::smallvec![];
-            inst.immediates = smallvec::smallvec![];
-        }
-        func.refresh_inst_uses(__tomb);
+        func.tombstone_inst(__tomb);
     }
     Ok(())
 }
@@ -1669,13 +1627,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
         } else {
             // 原 Store 标 Nop（无结果——不生成机器指令；lowering 跳过 Nop）
             let __tomb = store_ii;
-            {
-                let inst = func.dfg.inst_mut(__tomb);
-                inst.opcode = Opcode::Nop;
-                inst.operands = smallvec::smallvec![];
-                inst.immediates = smallvec::smallvec![];
-            }
-            func.refresh_inst_uses(__tomb);
+            func.tombstone_inst(__tomb);
         }
         // 新指令（块尾）移到 Store 位置前（逆序处理 jobs：尾即本 Store 的新指令）
         let mut moved: Vec<Inst> = Vec::with_capacity(new_insts.len());

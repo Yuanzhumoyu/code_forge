@@ -96,7 +96,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
-| S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`，见 §6 末）；余项：墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
+| S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
@@ -989,6 +989,40 @@ S5 把三个 arena 收口之后，句柄本身仍是 `pub struct Value(pub u32)`
 
 **验证**：workspace 1433 passed / 0 failed / 19 ignored（61 个测试二进制 +
 13 组 doc-test，较 S5 第 6 项 +4）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。
+
+### S2（切片）：墓碑语义显式化（2026-09-16）
+
+删除是"标墓碑"而不是回收槽位，但"是不是墓碑"此前靠 `opcode == Nop` **猜**——而
+`Opcode::Nop` **是合法指令**（`FunctionBuilder::nop()` 会发一条进 `inst_order`，
+`forge-tests` 的 coverage/jit 用例都在用）。实测同一个问题在全仓有**三种答案**：
+12 处 `matches!(opcode, Nop)`、4 处 `Nop && results.is_empty()`、1 处 `opcode == Nop`
+——合法 Nop 会被当成墓碑跳过（`block_insts_mut`/`block_inst_iter`），而**带 results
+的墓碑**（就地墓碑化）反而被当成活指令。
+
+- **唯一事实源**：`Instruction.tombstone: bool`（字段私有）+
+  `Instruction::is_tombstone()`；`make_inst*` 初始化 false，`clone_inst` 复制。
+- **唯一实现**：`DataFlowGraph::tombstone_inst_low`（crate 内）：标标志 + `opcode =
+  Nop` + 清 operands/immediates + **清附件**（metadata/param_attrs/fn_attrs/
+  isel_strategy——此前它们留在墓碑上，dump/诊断会看到"删了却还带 TBAA/融合标签"）。
+- **两档语义**（都经上面那个实现）：
+  - **删除**：`remove_inst`/`Function::kill_inst` —— 额外摘掉 `inst_order` 条目、
+    清空 results 并把结果值 VOID 化；
+  - **就地**：`Function::tombstone_inst`（新增公开入口，附 use-lists 重登记）——
+    保留顺序表条目与 `results`（大聚合展开等调用方之后仍要读被作废指令的结果值），
+    `forge-codegen` 的 8 处手写墓碑块（`opcode = Nop` + 清表 + `refresh_inst_uses`）
+    全部改走它。
+- **判据迁移**：4 处复合判据（`Nop && results.is_empty()`）与 2 处"数墓碑"改
+  `is_tombstone()`；**lowering 边界的 `matches!(opcode, Nop)` 保留**——那里"任何
+  Nop 都不产生机器码"是有意为之（合法 nop 在 ISA 里没有 lowering 规则）。
+- **守卫** `tests/tombstone_semantics.rs`（4 例）：删除语义的规范终态（标志/空表/
+  结果清空/值 VOID/退出顺序表）、**合法 `nop()` 不是墓碑**（且无句柄迭代口仍看得到
+  它）、就地墓碑化保留 results 但清附件、源码断言"`opcode = Opcode::Nop` 只许出现
+  在 `dfg.rs`"（负向探针实测 FAILED）。既有的 metadata 单写守卫同时把
+  `i.metadata.clear()` 记入白名单（删除语义的一部分，不是第三条写路径）。
+
+**验证**：workspace 1437 passed / 0 failed / 19 ignored（62 个测试二进制 +
+13 组 doc-test，较句柄私有化 +4）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）

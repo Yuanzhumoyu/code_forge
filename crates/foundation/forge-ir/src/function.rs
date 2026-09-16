@@ -761,6 +761,19 @@ impl Function {
         self.dfg.remove_inst(inst);
     }
 
+    /// **就地墓碑化**：标墓碑 + 清空指令内容 + 结果值 VOID 化 + use-lists 重登记，
+    /// 但**保留块内顺序表条目**（与 [`Function::kill_inst`] 的区别）。
+    ///
+    /// 用于"指令槽位留着、内容作废"的重写场景（大聚合展开、`__cp`/`__tomb` 占位
+    /// 替换）：占位条目仍在 `inst_order` 里，遍历方靠
+    /// [`Instruction::is_tombstone`] 跳过。此前这些调用点各自手写
+    /// "`opcode = Nop` + 清三张表 + `refresh_inst_uses`"，附件（metadata/
+    /// isel_strategy/param_attrs）留在墓碑上（S2 实测不一致）。
+    pub fn tombstone_inst(&mut self, inst: Inst) {
+        self.dfg.tombstone_inst_low(inst);
+        self.refresh_inst_uses(inst);
+    }
+
     /// RAUW + kill 一体：把 `old_inst` 的每个结果替换为 `new_values` 中对应的
     /// 新值，然后原子删除 `old_inst`。替代 pass 中手工"replace_all_uses +
     /// 清字段 + remove_inst"的成对调用，保证 use_lists 始终新鲜。

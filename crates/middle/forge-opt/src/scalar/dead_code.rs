@@ -257,7 +257,7 @@ mod tests {
             panic!("c 应是指令定义")
         };
         assert!(
-            matches!(func.dfg.inst_data(*c_inst).opcode, Opcode::Nop),
+            func.dfg.inst_data(*c_inst).is_tombstone(),
             "c 指令应已墓碑化为 Nop"
         );
         assert_eq!(func.dfg.value_type(_c), Some(TypeId::VOID), "c 值应为 VOID");
