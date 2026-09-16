@@ -100,7 +100,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
-| S6 | 校验与 pass 契约 | **大部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；**重算 CFG/支配树并比对**（`AnalysisCacheStale`）、墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）与校验器健壮性守卫已落地（均见 §6 末）；余项：`AnalysisManager`（把惰性缓存抽成显式管理器） |
+| S6 | 校验与 pass 契约 | **大部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；**重算 CFG/支配树并比对**（`AnalysisCacheStale`）、墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫与**错误码 × 回归测试对账守卫**（32 变体全覆盖）已落地（均见 §6 末）；余项：`AnalysisManager`（把惰性缓存抽成显式管理器） |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
@@ -1089,6 +1089,36 @@ IR（`check_reachability` 甚至已经豁免"≤1 条指令且无参数的死 me
 **验证**：workspace 1450 passed / 0 failed / 19 ignored（64 个测试二进制 +
 13 组 doc-test，较上一片 +8）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。
+
+### S6（切片）：错误码 × 回归测试对账（2026-09-16）
+
+`verify.rs` 的 `VerifyError` 现有 **32 个变体**，而 `tests/verify_negative.rs` 的文件头
+一直写着"27 个错误码全部有回归测试"——错误码 30 → 32 的两片都没人回写这个数字，
+是典型的"文档声称 vs 实测"漂移（本仓库最常复发的一类问题）。
+
+**① 补齐 4 个无测试变体**：逐变体实测引用数后，`OperandCountMismatch` /
+`MultipleEntryBlocks` / `DominanceViolation` / `MissingTypeContext` 四个变体
+**既不在 `tests/*.rs` 里出现，源码内 `VerifyError::<名>` 形式的引用也不足 3 次**
+（即 crate 内单测同样没覆盖）——补 4 例负向测试：操作数个数不符；多入口块（入口块
+自带参数，`>1` 个无前驱块才触发）；定义不支配使用；`TypeContext` 查不到类型。
+文件头改成"对账交给守卫"，不再写会漂的计数。
+
+**② 守卫**（`every_verify_error_variant_has_a_regression_test`）：从 `src/verify.rs`
+解析 `pub enum VerifyError { … }` 的变体名，要求每个变体满足其一——(a) 在 `tests/*.rs`
+全文里以 `VerifyError::<名>` 出现（crate 外回归测试）；或 (b) 在同文件里以该形式出现
+≥3 次（= 定义之外的构造点 + `Display` 臂 + crate 内单测）。都不满足则必须写进本测试的
+`ALLOWED`（当前为空；白名单条目**必须被命中**，否则报"条目已失效"以防腐烂）。
+另断言变体数 > 20，自证解析没瞎。
+
+**③ 负向验证**（"守卫必须会失败"这条纪律）：临时往枚举里插一个只有定义 + `Display` 臂的
+`ProbeVariantNoTest`（源码内 2 次引用 < 3、测试内 0 次）⇒ 守卫 **FAILED** 且点名
+`ProbeVariantNoTest`；恢复后 green。教训：此前想用"改测试文件里的变体名"做负向是**无效**的
+——那只会得到 E0599 编译错，而编译错掩盖了守卫本身是否生效；负向探针必须从**被扫描的
+源码侧**动手。
+
+**验证**：workspace 1455 passed / 0 failed / 19 ignored（64 个测试二进制 +
+13 组 doc-test，较上一片 +5 = 4 例新测试 + 1 条守卫）；`verify_negative` 44 例；
+x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

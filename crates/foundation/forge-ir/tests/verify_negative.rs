@@ -1,10 +1,14 @@
 //! 负向测试（4.2）：verify 错误码全覆盖 + parse 层非法语法拒绝。
 //!
-//! verify.rs 内部单元测试已覆盖 20 个 `VerifyError` 变体；本文件补齐其余
-//! 7 个（MissingEntry / MissingTerminator / FcmpOperandNotFloat /
+//! 覆盖分工：`verify.rs` 内部单测覆盖大部分变体；本文件补齐"需要手构坏 IR 才能
+//! 触发"的那些（MissingEntry / MissingTerminator / FcmpOperandNotFloat /
 //! StoreAddrNotPointer / CallInvalidTarget / PathWithoutReturn /
-//! TerminatorDominanceViolation），使 27 个错误码全部有回归测试。
-//! 末尾附 parse 层非法语法拒绝样例。
+//! TerminatorDominanceViolation / OperandCountMismatch / MultipleEntryBlocks /
+//! DominanceViolation / MissingTypeContext …），末尾附 parse 层非法语法拒绝样例。
+//!
+//! **变体与测试的对账由 `every_verify_error_variant_has_a_regression_test` 守卫**
+//! （新增错误码而不加测试会直接失败），所以这里不再写"共 N 个错误码"这种会漂的
+//! 数字。
 
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::function::Function;
@@ -816,4 +820,208 @@ fn parse_rejects_alloca_addrspace_before_align() {
         .is_ok(),
         "alloca align before addrspace must be accepted"
     );
+}
+
+// ── 补齐 4 个此前无回归测试的错误码（S6 后续：负向套件与枚举对账） ──
+
+/// `OperandCountMismatch`：操作数个数与 opcode 元数不符。
+///
+/// 用 `dfg.make_inst` 直接建（builder 有断言会先拦），一个操作数的 `Iadd`。
+#[test]
+fn verify_operand_count_mismatch() {
+    let ctx = TypeContext::new();
+    let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let (b0, params) = func.dfg.make_block_with_params(&[TypeId::I32, TypeId::I32]);
+    func.entry_block = Some(b0);
+    // Iadd 期望 2 个操作数，这里只给 1 个
+    let bad = func.dfg.make_inst(
+        Opcode::Iadd,
+        b0,
+        smallvec::smallvec![params[0]],
+        smallvec::SmallVec::new(),
+        &[TypeId::I32],
+        InstFlags::NONE,
+    );
+    func.ret(b0, []);
+
+    let mut verifier = Verifier::with_ctx(ctx);
+    let errs = verifier.verify(&func).expect_err("操作数个数不符必须上报");
+    assert!(
+        errs.iter().any(|e| matches!(
+            e,
+            VerifyError::OperandCountMismatch { inst, .. } if *inst == bad
+        )),
+        "应报 OperandCountMismatch：{errs:?}"
+    );
+}
+
+/// `MultipleEntryBlocks`：无前驱且**带参数**的块（参数永不初始化）⇒ 多入口。
+#[test]
+fn verify_multiple_entry_blocks() {
+    let ctx = TypeContext::new();
+    let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    // 判据："无前驱且**带参数**"的块超过 1 个 —— 入口块自己也带参数即满足
+    let (entry, _) = func.dfg.make_block_with_params(&[TypeId::I32]);
+    // 第二个"入口"：无人跳入，同样带块参数
+    let (orphan, orphan_params) = func.dfg.make_block_with_params(&[TypeId::I32]);
+    func.entry_block = Some(entry);
+    func.ret(entry, []);
+    func.unreachable(orphan);
+    let _ = orphan_params;
+
+    let mut verifier = Verifier::with_ctx(ctx);
+    let errs = verifier.verify(&func).expect_err("多入口必须上报");
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, VerifyError::MultipleEntryBlocks { .. })),
+        "应报 MultipleEntryBlocks：{errs:?}"
+    );
+}
+
+/// `DominanceViolation`：指令使用了**兄弟块**里定义的值（该定义不支配它）。
+#[test]
+fn verify_dominance_violation() {
+    let ctx = TypeContext::new();
+    let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[ctx.i32_ty()]));
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let (entry, _) = func.dfg.make_block_with_params(&[]);
+    let (a, _) = func.dfg.make_block_with_params(&[]);
+    let (b, _) = func.dfg.make_block_with_params(&[]);
+    func.entry_block = Some(entry);
+    // entry 条件分支到 a / b
+    let c = func.dfg.make_inst(
+        Opcode::Iconst,
+        entry,
+        smallvec::SmallVec::new(),
+        smallvec::smallvec![Immediate::Const(func.constants.insert_int(1, 1))],
+        &[TypeId::BOOL],
+        InstFlags::NONE,
+    );
+    let cond = func.dfg.inst_results(c)[0];
+    func.branch(entry, cond, a, [], b, []);
+    // a 里定义一个值，b 里使用它（兄弟块 ⇒ 不支配）
+    let def = func.dfg.make_inst(
+        Opcode::Iconst,
+        a,
+        smallvec::SmallVec::new(),
+        smallvec::smallvec![Immediate::Const(func.constants.insert_int(7, 32))],
+        &[TypeId::I32],
+        InstFlags::NONE,
+    );
+    let v = func.dfg.inst_results(def)[0];
+    let user = func.dfg.make_inst(
+        Opcode::Iadd,
+        b,
+        smallvec::smallvec![v, v],
+        smallvec::SmallVec::new(),
+        &[TypeId::I32],
+        InstFlags::NONE,
+    );
+    func.refresh_inst_uses(user);
+    func.ret(a, [v]);
+    func.ret(b, [func.dfg.inst_results(user)[0]]);
+
+    let mut verifier = Verifier::with_ctx(ctx);
+    let errs = verifier.verify(&func).expect_err("跨兄弟块使用必须上报");
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, VerifyError::DominanceViolation { .. })),
+        "应报 DominanceViolation：{errs:?}"
+    );
+}
+
+/// `MissingTypeContext`：`Verifier::new()`（无 ctx）不得静默放宽——8 类类型检查
+/// 无法执行时明确报错。
+#[test]
+fn verify_missing_type_context() {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
+    let mut fb = FunctionBuilder::new("f", ctx.clone(), sig);
+    let (_entry, _) = fb.create_entry_block();
+    let v = fb.iconst_i32(3);
+    fb.ret(&[v]);
+    let func = fb.finish().expect("build");
+
+    // 无 ctx 的校验器：结构检查照跑，最后追加 MissingTypeContext
+    let mut verifier = Verifier::new();
+    let errs = verifier
+        .verify(&func)
+        .expect_err("无类型上下文必须 fail-closed");
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, VerifyError::MissingTypeContext)),
+        "应报 MissingTypeContext：{errs:?}"
+    );
+}
+
+/// **错误码 × 回归测试对账守卫**：`VerifyError` 的每个变体都必须有测试。
+///
+/// 判据：变体名在 `tests/*.rs` 里出现，或在 `verify.rs` 自身出现 ≥3 次
+/// （枚举定义不算；构造点 + Display 臂 = 2，多出来的是 crate 内单测）。
+/// 新增错误码却不加测试 ⇒ 本测试失败。白名单条目必须被命中（防腐烂）。
+#[test]
+fn every_verify_error_variant_has_a_regression_test() {
+    const ALLOWED: &[(&str, &str)] = &[];
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src = std::fs::read_to_string(root.join("src").join("verify.rs")).expect("verify.rs");
+    let body = {
+        let start = src.find("pub enum VerifyError {").expect("枚举定义");
+        let rest = &src[start..];
+        let end = rest.find("\n}").expect("枚举结束");
+        rest[..end].to_string()
+    };
+    let variants: Vec<String> = {
+        let mut v: Vec<String> = Vec::new();
+        for line in body.lines() {
+            let t = line.trim_start();
+            if let Some(name) = t.split(['{', '(', ',']).next().map(str::trim)
+                && name.starts_with(char::is_uppercase)
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !name.is_empty()
+                && !v.contains(&name.to_string())
+            {
+                v.push(name.to_string());
+            }
+        }
+        v
+    };
+    assert!(variants.len() > 20, "变体解析可疑：{}", variants.len());
+
+    let mut tests_blob = String::new();
+    let tests_dir = root.join("tests");
+    for entry in std::fs::read_dir(&tests_dir).expect("tests/") {
+        let p = entry.expect("dir entry").path();
+        if p.extension().is_some_and(|x| x == "rs")
+            && let Ok(text) = std::fs::read_to_string(&p)
+        {
+            tests_blob.push_str(&text);
+        }
+    }
+
+    let mut used: Vec<usize> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for v in &variants {
+        let in_tests = tests_blob.matches(&format!("VerifyError::{v}")).count();
+        let in_src = src.matches(&format!("VerifyError::{v}")).count();
+        if in_tests == 0 && in_src < 3 {
+            match ALLOWED.iter().position(|(name, _)| name == v) {
+                Some(i) => used.push(i),
+                None => missing.push(v.clone()),
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "这些错误码没有任何回归测试（新增变体请补测试，或写进本测试的 ALLOWED 并说明理由）：{}",
+        missing.join(", ")
+    );
+    for (i, (name, why)) in ALLOWED.iter().enumerate() {
+        assert!(
+            used.contains(&i),
+            "白名单条目已失效（{name} 已有测试），请删除（理由曾是：{why}）"
+        );
+    }
 }
