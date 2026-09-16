@@ -155,6 +155,21 @@ impl TypeStore {
         Self::with_data_layout(DataLayout::default())
     }
 
+    /// **原地更新**目标数据布局（v3 S3：`DataLayout` 单一数据源）。
+    ///
+    /// 与"新建一个 `TypeStore` 再换掉"的区别：这里保留全部已 intern 的类型、
+    /// 去重表、命名类型与**已注册签名**，且所有指向本存储的 `TypeContext` 克隆
+    /// （包括改布局之前构建的 `Function`）立即看到新布局。旧写法
+    /// （`TypeContext::with_data_layout` 整体替换）会让模块与既有函数各持一套
+    /// 存储 —— 指针宽度/大小/对齐各算各的，静默错值；同时清空签名表。
+    ///
+    /// 无需失效任何缓存：`TypeStore` 不缓存布局派生结果 —— `size_bytes`/`alignment`
+    /// 都是查询期按 `self.data_layout` 现算的，`TypeKey` 只含结构
+    /// （整型位宽/元素类型/字段类型/地址空间），不含宽度与对齐。
+    pub fn set_data_layout(&mut self, data_layout: DataLayout) {
+        self.data_layout = data_layout;
+    }
+
     /// 创建 TypeStore 并预填充基本类型，使用指定的 DataLayout。
     pub fn with_data_layout(data_layout: DataLayout) -> Self {
         let mut store = Self {
@@ -840,13 +855,6 @@ impl TypeContext {
     /// Create a TypeContext from an existing TypeStore.
     pub fn from_store(store: TypeStore) -> Self {
         Self(Arc::new(RwLock::new(store)))
-    }
-
-    /// Create with a custom DataLayout.
-    pub fn with_data_layout(data_layout: DataLayout) -> Self {
-        Self(Arc::new(RwLock::new(TypeStore::with_data_layout(
-            data_layout,
-        ))))
     }
 
     /// Immutable read access to the TypeStore.

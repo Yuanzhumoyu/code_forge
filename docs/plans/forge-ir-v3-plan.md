@@ -97,7 +97,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
-| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
+| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储，不再整体替换 `TypeStore`；`Module.data_layout` 副本字段删除，`TypeContext::with_data_layout` 删除）；余项：去 `RwLock` 与 `TypeStore` 显式传参（222 处 `ctx.borrow()`） |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
@@ -1163,6 +1163,40 @@ S6 计划的最后一项余项：把挂在 `Function` 上的 `OnceLock` 惰性�
 
 **验证**：workspace 1459 passed / 0 failed / 19 ignored（64 个测试二进制 + 13 组 doc-test）；
 x86 矩阵 195/3/0；riscv64 131/67/0；fmt/clippy `-D warnings` 干净。错误码 32 → 31。
+
+### S3（切片）：`DataLayout` 单一数据源（2026-09-16）
+
+S3 余项里"去 `RwLock` + `TypeStore` 显式传参"（222 处 `ctx.borrow()`）是一整轮迁移，
+但它的**前置缺陷**可以独立切出来先修：布局有两份、存储会被整体换掉。
+
+**先测后改**（新增 `tests/data_layout_single_source.rs`，先跑出失败再改）——旧实现
+`Module::set_data_layout` 直接 `self.types = TypeContext::with_data_layout(..)`，
+实测两条后果：
+
+- **已 intern 的签名/类型全丢**：`set_data_layout` 后 `store.get_signature(sr)`
+  在 `types.rs` 的 fail-closed 分支 panic（"重建会清空已注册签名"这句文档自述的
+  约束，正是这条缺陷的自我描述）；
+- **模块与既有函数各持一套存储**：改布局前构建的 `Function` 读到的仍是 p:64（实测
+  `size_bytes(ptr)` = 8，而模块侧已是 4）⇒ 同一模块内指针宽度/大小/对齐按各自那份
+  布局算，静默错值。
+
+**改法**：①新增 `TypeStore::set_data_layout(&mut self, DataLayout)` —— 原地写那一个
+字段；无需失效任何缓存（`TypeStore` 不缓存布局派生结果：`size_bytes`/`alignment`
+查询期现算，`TypeKey` 只含结构，不含宽度/对齐）。②`Module::set_data_layout` 改为
+`self.types.borrow_mut().set_data_layout(dl)`；**删除 `Module.data_layout` 副本字段**
+（布局唯一副本在共享存储里），新增 `Module::data_layout()` 读取；"必须在
+`add_function` 之前调用"这条约束随之消失。③删除 `TypeContext::with_data_layout`
+（正是它让"换掉整个存储"变得顺手，现已无调用方）。④迁移 3 处字段读取
+（`display.rs` 的 `target datalayout` 输出、`ir_parser` 内测、`open_set_boundary` 测试）
+与解析器注释。
+
+**守卫**（`tests/data_layout_single_source.rs`，4 例）：改布局保留已 intern 的类型
+与签名；改布局前构建的函数/所有克隆立即看到新布局；类型 id 只由结构决定（改布局不让
+同一向量类型分叉）；`Module` 暴露的布局与存储里的是同一份。两例在实现前实测 **FAILED**
+（签名丢失 panic；指针宽度 8 ≠ 4），实现后 4 例全绿。
+
+**验证**：workspace 1463 passed / 0 failed / 19 ignored（+4）；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt/clippy `-D warnings` 干净；`cargo doc -D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

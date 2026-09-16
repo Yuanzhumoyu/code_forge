@@ -114,8 +114,9 @@ impl fmt::Display for Module {
         if let Some(ref triple) = self.target_triple {
             writeln!(f, "target triple = \"{}\"", triple)?;
         }
-        if !self.data_layout.is_default() {
-            writeln!(f, "target datalayout = \"{}\"", self.data_layout)?;
+        let data_layout = self.data_layout();
+        if !data_layout.is_default() {
+            writeln!(f, "target datalayout = \"{}\"", data_layout)?;
         }
         for asm in &self.module_asm {
             writeln!(f, "module asm \"{}\"", fmt_quoted(asm))?;

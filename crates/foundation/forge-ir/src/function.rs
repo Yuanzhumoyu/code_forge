@@ -1184,9 +1184,6 @@ pub struct Module {
     /// 元数据存储 — 跨函数共享的 metadata 节点。
     pub metadata_store: MetadataStore,
 
-    /// 目标数据布局 — 控制类型大小、对齐、指针宽度。
-    pub data_layout: DataLayout,
-
     /// 目标三元组 — 目标架构、供应商、OS、环境。
     pub target_triple: Option<TargetTriple>,
 
@@ -1213,22 +1210,26 @@ impl Module {
             comdats: Vec::new(),
             comdat_names: HashMap::new(),
             metadata_store: MetadataStore::new(),
-            data_layout: DataLayout::default(),
             target_triple: None,
             source_filename: None,
             module_asm: Vec::new(),
         }
     }
 
-    /// 设置 DataLayout 并**同步重建类型上下文**——`TypeStore` 的 size/align
-    /// 查询走内嵌 DataLayout（见 `TypeStore::size_bytes`/`alignment`），两者
-    /// 必须一致。必须在 `add_function` 之前调用（重建会清空已注册签名）。
+    /// 设置 DataLayout —— **原地更新共享类型存储里的那一份**（v3 S3）。
     ///
-    /// 修复历史 bug：`parse_module` 曾只写 `data_layout` 字段，导致
-    /// `types` 内嵌布局仍旧默认（x86_64），跨文件布局查询错位。
+    /// 不再重建 `TypeContext`（旧写法会清空已注册签名/已 intern 类型，并让改布局
+    /// 之前构建的 `Function` 继续持有**旧存储**：模块与函数看到的指针宽度/大小/
+    /// 对齐各算各的）。现在布局只有一个副本，就在 `TypeStore` 里，所有克隆
+    /// （含既有函数、builder、verifier）立即看到新值 —— 因此也不再需要
+    /// "必须在 `add_function` 之前调用"这条约束。
     pub fn set_data_layout(&mut self, data_layout: DataLayout) {
-        self.types = TypeContext::with_data_layout(data_layout.clone());
-        self.data_layout = data_layout;
+        self.types.borrow_mut().set_data_layout(data_layout);
+    }
+
+    /// 目标数据布局（唯一副本在共享类型存储里，见 [`Module::set_data_layout`]）。
+    pub fn data_layout(&self) -> DataLayout {
+        self.types.borrow().data_layout.clone()
     }
 
     /// 设置目标三元组。

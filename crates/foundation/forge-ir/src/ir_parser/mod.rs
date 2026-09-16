@@ -252,9 +252,9 @@ mod semantics_tests {
              define i32 @f() {\n  %entry:\n    ret i32 0\n}\n",
         )
         .expect("parse");
-        assert_eq!(m.data_layout.pointer_size(0), 4, "p:32 → 4-byte pointer");
-        // 关键：types 内嵌布局必须与 data_layout 同步（历史 bug：parse
-        // 只写字段，types 仍默认 x86_64）——size/align 查询走 types
+        assert_eq!(m.data_layout().pointer_size(0), 4, "p:32 → 4-byte pointer");
+        // 关键：布局只有一份，在 types 存储里（v3 S3 前是"两个字段各写一次"，
+        // 而 `set_data_layout` 整体替换存储 ⇒ 模块与既有函数会分叉）
         assert_eq!(
             m.types.size_bytes(crate::TypeId::PTR),
             4,

@@ -405,7 +405,9 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                     module.set_target_triple(v);
                 } else if k.as_str() == "datalayout" {
                     let dl = DataLayout::parse(v).map_err(|e| IrError::Semantic(e.to_string()))?;
-                    // 同步重建 types（size/align 查询与 data_layout 一致）
+                    // 原地更新共享类型存储里的布局（v3 S3）：不再重建存储，
+                    // 所以 `target datalayout` 出现在文件任何位置都不会丢掉先前
+                    // intern 的类型/签名，模块与既有函数也不会各持一套布局
                     module.set_data_layout(dl);
                 }
             }

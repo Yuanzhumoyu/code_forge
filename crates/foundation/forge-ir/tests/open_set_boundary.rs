@@ -111,7 +111,7 @@ fn pointer_width_comes_from_layout_not_arch_name() {
         m.set_target_triple(name);
         m.set_data_layout(dl32.clone());
         assert_eq!(
-            m.data_layout.pointer_size(0),
+            m.data_layout().pointer_size(0),
             4,
             "{name} 的指针宽度必须来自布局数据"
         );

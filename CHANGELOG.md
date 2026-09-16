@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **`DataLayout` 单一数据源（forge-ir v3 S3 切片）**：`Module::set_data_layout` 此前是 `self.types = TypeContext::with_data_layout(..)`——**整体替换类型存储**。实测两条后果：①改布局前 intern 的签名/类型全部丢失（`get_signature` 直接在 fail-closed 分支 panic，文档里"必须在 `add_function` 之前调用（重建会清空已注册签名）"就是这条缺陷的自述）；②改布局前构建的 `Function` 持有旧存储 ⇒ 同一模块内模块侧与函数侧的指针宽度/大小/对齐各算各的（实测 `size_bytes(ptr)` 一侧 4、一侧 8）。
+  现在：新增 `TypeStore::set_data_layout`（原地写那一个字段，无需失效任何缓存——布局派生结果都是查询期现算，`TypeKey` 不含宽度/对齐）；`Module::set_data_layout` 改为原地更新共享存储，**删除 `Module.data_layout` 副本字段**（唯一副本在存储里）并新增 `Module::data_layout()`，"必须在 `add_function` 之前调用"的约束消失；删除 `TypeContext::with_data_layout`（无调用方）；迁移 3 处字段读取与解析器注释。新增 `tests/data_layout_single_source.rs`（4 例，其中 2 例在实现前实测 FAILED：签名丢失 panic、指针宽度 8 ≠ 4）。
+  实测：workspace 1463 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **`AnalysisManager`：惰性分析缓存改为"修订号自校验 + `Arc` 快照"（forge-ir v3 S6 切片，S6 最后一项余项）**：`Function` 上的 `OnceLock` 缓存（前驱/后继/支配树/循环森林）换成 `AnalysisSlot<T>`（`RwLock<Option<(修订号, Arc<T>)>>`），由新类型 `AnalysisManager` 拥有。修订号 = `(DFG 结构修订号, 显式失效次数)`；结构修订号（`DataFlowGraph::cfg_revision`）在**三条改 CFG 的路上**自动前进——块增删、终结符写入、**终结符被墓碑化**。读到过期修订即重算并返回当前快照 ⇒ **陈旧分析结果不可能被读到**，`invalidate_analysis()` 降级为"少算一次"的优化，正确性不再依赖调用方记得失效。
   实测出的两条旧漏洞：①`tombstone_inst` 不失效缓存，而块内顺序表不含终结符 ⇒ "就地墓碑化终结符"是绕过 `set_terminator` 的改图路，读者会拿到改图前的后继；②`func.dfg.make_block()`/`dfg.remove_block()` 直接改结构，没有 `&mut Function` 可用来失效。
   访问器返回 `Arc` 快照而非 `&T`："取一份分析 → 改 CFG → 再用"不再出现同一次使用期内前后不一致（旧引用语义会指向被就地改写的缓存）。**`forge-opt`/`forge-codegen` 零改动**（`Arc` 的 Deref 让既有调用与 `&SecondaryMap` 形参原样可用；13 处 `.clone()` 语义不变，从深拷贝变成 `Arc` 克隆）。
