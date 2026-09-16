@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **`dfg` 私有化第一步：`values` arena 收口 + `set_value_type` 受限写入口（forge-ir v3 S5 第 4 项）**：`DataFlowGraph.values` 由 `pub` 降为 `pub(crate)`——读走 `value_data`（fail-closed：句柄不合法即 panic，与 `BlockData::terminator` 同契约）/ `value_data_opt`（容忍坏 IR）/ 既有 `value_def`/`value_type`/`values()`/`value_count`；写走唯一入口 `set_value_type(v, ty) -> bool`（越界不写返回 `false`），创建与墓碑化仍只在 `dfg.rs` 内。
+  迁移面实测 38 处（31 处 `dfg.values[..]` + 7 处 `dfg.values.get(..)`，含 3 处写：`const_fold` 常量定宽、`gvn` 折叠类型、`algebraic` 结果类型），跨 forge-ir / forge-codegen / forge-opt 共 14 个文件；顺带修 4 处借用冲突——`value_data` 等借用整个 `dfg`，破坏了原先靠 `dfg.insts[..]` 与 `dfg.values[..]` 字段级不相交才成立的借用（gvn 的 `inst_ids` 改复制、algebraic/gvn 把读类型提到取 `&mut inst` 之前）。守卫 `tests/dfg_privatization.rs`（6 例，含"`src/` 里 `dfg.values` 字段访问为 0"的源码断言，已用负向探针验证会失败）。`insts`/`blocks` 两个 arena 的收口是后续切片。
+
+### Changed (2026-09-15)
+
 - **metadata 单写：5 个载体的附件各收成一个写入口，字段私有化（forge-ir v3 S5 第 3 项）**：附件 metadata（`(kind, node)` 对）此前有多条写路径且语义不一致——指令可经构造参数或 `inst.metadata.push(..)`、终结符要经 `term_metadata_mut` 逃逸出的 `&mut SmallVec`、函数是 `func.metadata.push(..)`、全局变量是 `gv.metadata = attached`（整表替换）。
   现统一为唯一入口：`Instruction::{metadata, attach_metadata}`、`DataFlowGraph::{term_metadata, attach_term_metadata}`（返回 `TermMetadataAttach::{Attached, NoTerminator, Unreachable}`，取代 `term_metadata_mut` 的逃逸可变引用）、`Function::{metadata, attach_metadata}`、`GlobalVariable::{metadata, attach_metadata}`、`GlobalAlias::{metadata, attach_metadata}`；创建期初始表仍走 `make_inst_with_meta_and_loc` 构造参数。
   追加语义统一（全局由"整表替换"改为逐条追加，解析期该表必为空 ⇒ 行为等价）；`unreachable` 不接受附件、未终止是坏 IR，两种失败原因由返回值分开报（解析器诊断文本未变）。跨 crate 读取面 `forge-opt` 的 inline/lto/func_specialize 三处改走 `inst.metadata()`。守卫 `tests/metadata_single_write.rs`（6 例，含文本层四载体端到端与"写入只许出现在唯一写入口实现体里"的源码断言，已用负向探针验证会失败）。

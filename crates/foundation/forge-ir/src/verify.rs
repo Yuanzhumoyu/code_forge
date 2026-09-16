@@ -939,7 +939,7 @@ impl Verifier {
             // 越界访问一律报错而非 panic：`check_uses` 只记录错误不中止，
             // 因此坏 IR 仍可能走到这里（历史实现直接 `values[v.0]`/`insts[ii.0]`
             // 会 panic——公开 API 不得 panic）。
-            let Some(vd) = func.dfg.values.get(v.0 as usize) else {
+            let Some(vd) = func.dfg.value_data_opt(*v) else {
                 self.errors.push(VerifyError::UndefinedValue {
                     value: *v,
                     user: inst,

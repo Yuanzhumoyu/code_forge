@@ -83,10 +83,10 @@ impl NameResolver {
         }
         // 未定义引用占位值（前向引用——第二十九轮:display 输出 `%原始名`,
         // reparse 后同样成为占位,幂等）
-        for (v, vd) in func.dfg.values.iter().enumerate() {
+        for (v, vd) in func.dfg.values() {
             if let crate::dfg::ValueDef::UndefNamed(id) = vd.def {
                 let base = ImmStr::from(store.borrow().lookup_str(id));
-                values.insert(crate::Value(v as u32), disambiguate(base, &mut used_values));
+                values.insert(v, disambiguate(base, &mut used_values));
             }
         }
 
@@ -2207,11 +2207,11 @@ fn value_as_literal(
     module: Option<&Module>,
     v: Value,
 ) -> Option<ImmStr> {
-    let def = func.dfg.values.get(v.0 as usize)?.def;
+    let def = func.dfg.value_data_opt(v)?.def;
     // 聚合常量值：字面量文本带类型前缀（`{i32, i32} {i32 7, i32 9}`——
     // store/ret/call 实参均要求 `<ty> <val>`）
     if let ValueDef::AggConst(agg_id) = def {
-        let ty = func.dfg.values.get(v.0 as usize)?.ty;
+        let ty = func.dfg.value_data_opt(v)?.ty;
         return Some(crate::ImmStr::from(format!(
             "{} {}",
             fmt_llvm_type(&store.borrow(), ty),
@@ -2228,7 +2228,7 @@ fn value_as_literal(
                 return None;
             };
             let (val, bits) = func.constants.get_int(cid)?;
-            let vty = func.dfg.values.get(v.0 as usize)?.ty;
+            let vty = func.dfg.value_data_opt(v)?.ty;
             // 向量类型的常量（向量 GEP 求值宽松 0——第二十九轮:原输出
             // `i{bits}` 类型漂移为标量,reparse 后类型不等）
             if matches!(

@@ -59,7 +59,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.insts[inst_id.0 as usize];
             if let Some(v) = inst.results.first().copied() {
-                let ty = func.dfg.values[v.0 as usize].ty;
+                let ty = func.dfg.value_data(v).ty;
                 match &inst.opcode {
                     Opcode::Iconst
                         if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
@@ -99,7 +99,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
                 if matches!(old, Some(LatticeValue::Constant(_))) {
                     continue;
                 }
-                let ty = func.dfg.values[v.0 as usize].ty;
+                let ty = func.dfg.value_data(v).ty;
                 let new =
                     evaluate_lattice(&inst.opcode, &inst.operands, &inst.immediates, ty, &lattice);
                 if !lattice_eq(old, &new) {

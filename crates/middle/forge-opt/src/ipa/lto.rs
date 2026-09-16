@@ -229,7 +229,7 @@ fn lto_inline_callee(
             let result_tys: Vec<TypeId> = inst
                 .results
                 .iter()
-                .map(|&v| callee.dfg.values[v.0 as usize].ty)
+                .map(|&v| callee.dfg.value_data(v).ty)
                 .collect();
 
             // 保留全字段（flags/mem_flags/metadata/loc/isel_strategy）

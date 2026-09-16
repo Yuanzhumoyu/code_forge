@@ -217,7 +217,13 @@ fn imm_uint(imms: &[Immediate], i: usize) -> Option<usize> {
 
 #[derive(Clone, Debug)]
 pub struct DataFlowGraph {
-    pub values: Vec<ValueData>,
+    /// 值 arena。**私有**（v3 方案 S5：`dfg` 私有化 + 受限编辑 API）。
+    ///
+    /// 读：`value_data`（fail-closed）/ `value_data_opt` / `value_def` /
+    /// `value_type` / `values()` / `value_count`；
+    /// 写：`set_value_type`（pass 精化值类型）——其余写入（创建、墓碑化）只在
+    /// 本文件内。`insts`/`blocks` 两个 arena 的私有化是后续切片。
+    pub(crate) values: Vec<ValueData>,
     pub insts: Vec<Instruction>,
     pub blocks: Vec<BlockData>,
 }
@@ -534,6 +540,36 @@ impl DataFlowGraph {
     }
     pub fn value_type(&self, v: Value) -> Option<TypeId> {
         self.values.get(v.0 as usize).map(|d| d.ty)
+    }
+
+    /// 值的完整数据（`def` + `ty`）。**句柄不合法即 panic**（fail-closed）：
+    /// 越界句柄/来自别的 DFG 的句柄都是坏 IR，静默返回默认值只会让错误漂远
+    /// （与 `BlockData::terminator` 同一契约）。必须容忍坏 IR 的调用方
+    /// （校验器/display/lowering 的容忍路径）请用 [`DataFlowGraph::value_data_opt`]。
+    pub fn value_data(&self, v: Value) -> &ValueData {
+        self.values
+            .get(v.0 as usize)
+            .unwrap_or_else(|| panic!("值句柄不合法（越界或来自别的 DFG）：{v:?}"))
+    }
+
+    /// 值的完整数据；句柄不合法返回 `None`（见 [`DataFlowGraph::value_data`]）。
+    pub fn value_data_opt(&self, v: Value) -> Option<&ValueData> {
+        self.values.get(v.0 as usize)
+    }
+
+    /// 改写值的类型 —— **值 arena 的唯一写入口**（受限编辑 API，v3 S5）：
+    /// pass 精化/统一类型时用（常量折叠定宽、GVN 折叠类型、代数化简结果类型）。
+    ///
+    /// 返回是否写入：句柄不合法（越界/墓碑）时**不写**并返回 `false`
+    /// ——与读口 [`DataFlowGraph::value_type`] 的 `Option` 一致，不 panic。
+    pub fn set_value_type(&mut self, v: Value, ty: TypeId) -> bool {
+        match self.values.get_mut(v.0 as usize) {
+            Some(vd) => {
+                vd.ty = ty;
+                true
+            }
+            None => false,
+        }
     }
     pub fn inst_results(&self, i: Inst) -> &[Value] {
         self.insts

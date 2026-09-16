@@ -19,7 +19,7 @@
 | --- | --- |
 | `entity` | 实体句柄：`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/`GlobalId`/`SigRef`/`VReg`/`XReg`/`PReg`/`RegClass` |
 | `entity_map` | 密集索引容器：`PrimaryMap`/`SecondaryMap`/`EntitySet`/`PackedOption` + `EntityRef`（S2） |
-| `dfg` | `DataFlowGraph`（`values`/`insts`/`blocks` 三个 arena）、`Instruction`、`BlockData` |
+| `dfg` | `DataFlowGraph`（`values`/`insts`/`blocks` 三个 arena——`values` 已私有化，见「arena 访问收口」）、`Instruction`、`BlockData` |
 | `function` | `Function`、`Module`、`Layout`、`GlobalVariable`/`GlobalAlias`、`AnalysisCache` |
 | `types` | `TypeStore`（interner）、`TypeContext`、`FunctionSignature` |
 | `opcode` / `immediate` / `inst_flags` / `mem_flags` / `isel_strategy` | 指令操作码与附件（`opcode` 的枚举与派生表由 `ops.toml` 生成，见下） |
@@ -46,6 +46,25 @@ crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**
 分派（穷举 match），形状类规则的实现只在 `src/type_rules.rs` 一份（`check_shape`，
 builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 `convert = { src, dst, width }`。
+
+## arena 访问收口
+
+`DataFlowGraph` 的三个 arena 曾全 `pub`，下游能绕过 use-lists 直改操作数（S0 诊断
+里的"use-def 可被绕过"）。v3 S5 的收口**按 arena 分切片**推进（每个 arena 一次
+提交内完成迁移，不留双入口）：
+
+| arena | 状态 | 读 | 写（唯一入口） |
+| --- | --- | --- | --- |
+| `values` | **已私有**（`pub(crate)`） | `value_data`（fail-closed）/ `value_data_opt`（容忍坏 IR）/ `value_def` / `value_type` / `values()` / `value_count` | `set_value_type`（pass 精化类型）；创建/墓碑化仍在 `dfg.rs` 内 |
+| `insts` | 待收口 | `inst_results`/`inst_opcode`/`inst_operands`/`inst_block`/`insts()`/`inst_count` … | 待定（`&mut` 编辑入口须同步 use-lists） |
+| `blocks` | 待收口 | `block`/`blocks()`/`block_params`/`block_param_values`/`block_inst_iter`/… | 待定 |
+
+`value_data` 与 `BlockData::terminator` 同一契约：句柄不合法（越界/来自别的 DFG）
+即 panic——坏 IR 只有校验器/display 这类容忍方能用 `*_opt` 读口。迁移面实测：
+31 处 `dfg.values[..]` + 7 处 `dfg.values.get(..)`，其中 3 处是写
+（`const_fold` 定宽、`gvn` 折叠类型、`algebraic` 结果类型），全部改走上表入口；
+守卫 `tests/dfg_privatization.rs` 断言 `src/` 里 `dfg.values` 字段访问为 0
+（已用负向探针验证会失败）。
 
 ## metadata 单写
 
@@ -140,5 +159,7 @@ S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；**S
 **S5 第二切片已落地**（开放集合划边界：删掉 `TargetTriple` 的架构名查表、
 IR 公开面字符串统一 `ImmStr`，2026-09-15）；
 **S5 第三切片已落地**（metadata 单写：5 个载体的附件各收成一个写入口 + 字段
-私有化，2026-09-15）。
+私有化，2026-09-15）；
+**S5 第四切片已落地**（`dfg` 私有化第一步：`values` arena 收口 + `set_value_type`
+受限写入口，2026-09-15）。
 余项见该文档 §6 的 S2/S5 记录。

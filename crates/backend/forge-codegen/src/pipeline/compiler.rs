@@ -589,7 +589,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
         }
         let mut segs: Vec<Value> = Vec::new();
         let mut gen_insts: Vec<Inst> = Vec::new();
-        match func.dfg.values[job.val.0 as usize].def {
+        match func.dfg.value_data(job.val).def {
             ValueDef::AggConst(aid) => {
                 let agg = func
                     .constants
@@ -667,7 +667,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
             _ => {
                 return Err(IrError::Unsupported(format!(
                     "聚合返回：值来源不支持（def {:?}）",
-                    func.dfg.values[job.val.0 as usize].def
+                    func.dfg.value_data(job.val).def
                 )));
             }
         }
@@ -796,7 +796,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
         // 段值生成
         let mut segs: Vec<Value> = Vec::new();
         let mut new_insts: Vec<Inst> = Vec::new();
-        match func.dfg.values[job.val.0 as usize].def {
+        match func.dfg.value_data(job.val).def {
             ValueDef::AggConst(aid) => {
                 let agg = func
                     .constants
@@ -874,7 +874,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
             _ => {
                 return Err(IrError::Unsupported(format!(
                     "聚合实参拆段：值来源不支持（def {:?}）",
-                    func.dfg.values[job.val.0 as usize].def
+                    func.dfg.value_data(job.val).def
                 )));
             }
         }
@@ -1370,7 +1370,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
         let base = base.unwrap_or_else(|| make_placeholder_ptr(func));
         // 索引常量折叠（Iconst 值 → i64）
         let fold = |func: &Function, v: Value| -> Option<i64> {
-            let def = func.dfg.values[v.0 as usize].def;
+            let def = func.dfg.value_data(v).def;
             let ValueDef::Inst(ci, _) = def else {
                 return None;
             };
@@ -1527,7 +1527,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
             match inst.opcode {
                 Opcode::Store => {
                     if let Some(v) = inst.operands.first()
-                        && let ValueDef::AggConst(aid) = func.dfg.values[v.0 as usize].def
+                        && let ValueDef::AggConst(aid) = func.dfg.value_data(*v).def
                     {
                         let agg = func.constants.get_aggregate(aid).ok_or_else(|| {
                             IrError::Unsupported("聚合常量 store：常量池缺失 AggId".into())
@@ -1544,7 +1544,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                 Opcode::Call | Opcode::CallIndirect => {
                     let skip = usize::from(inst.opcode == Opcode::CallIndirect);
                     for (op_idx, v) in inst.operands.iter().enumerate().skip(skip) {
-                        if let ValueDef::AggConst(aid) = func.dfg.values[v.0 as usize].def {
+                        if let ValueDef::AggConst(aid) = func.dfg.value_data(*v).def {
                             let agg = func.constants.get_aggregate(aid).ok_or_else(|| {
                                 IrError::Unsupported("聚合常量参数：常量池缺失 AggId".into())
                             })?;

@@ -119,7 +119,7 @@ fn has_agg_mem_access(func: &Function) -> bool {
             match inst.opcode {
                 Opcode::Store => {
                     if let Some(v) = inst.operands.first()
-                        && matches!(func.dfg.values[v.0 as usize].def, ValueDef::AggConst(_))
+                        && matches!(func.dfg.value_data(*v).def, ValueDef::AggConst(_))
                     {
                         return true;
                     }
@@ -130,7 +130,7 @@ fn has_agg_mem_access(func: &Function) -> bool {
                         .operands
                         .iter()
                         .skip(skip)
-                        .any(|v| matches!(func.dfg.values[v.0 as usize].def, ValueDef::AggConst(_)))
+                        .any(|v| matches!(func.dfg.value_data(*v).def, ValueDef::AggConst(_)))
                     {
                         return true;
                     }

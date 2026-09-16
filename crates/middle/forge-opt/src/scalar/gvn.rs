@@ -172,10 +172,11 @@ fn gvn_dfs(
     scopes.push(HashMap::new());
 
     // 2. Process all instructions in this block
-    // inst_ids 借用 blocks（insts 的 &mut 借用与其不冲突——dfg 字段级拆分）
-    let inst_ids = &func.dfg.blocks[block_id.0 as usize].inst_order;
+    // inst_ids 需复制一份：循环内要调用借用**整个 DFG** 的方法
+    // （`value_data`/`set_value_type`），不能再借用 `blocks` 字段
+    let inst_ids: Vec<Inst> = func.dfg.blocks[block_id.0 as usize].inst_order.clone();
 
-    for inst_id in inst_ids {
+    for inst_id in &inst_ids {
         // P1-5：只读快照（kill 分支做别名查询时不得持有 dfg.insts 的 &mut）
         let (snap_opcode, snap_result) = {
             let inst = &func.dfg.insts[inst_id.0 as usize];
@@ -206,8 +207,9 @@ fn gvn_dfs(
             }
         };
 
+        // 先读类型：`value_data` 借用整个 DFG，需在取 `&mut insts[..]` 之前算完
+        let ty = func.dfg.value_data(inst_result).ty;
         let inst = &mut func.dfg.insts[inst_id.0 as usize];
-        let ty = func.dfg.values[inst_result.0 as usize].ty;
 
         // Handle Iconst / Fconst: record in constant map
         match &inst.opcode {
@@ -268,7 +270,7 @@ fn gvn_dfs(
             inst.operands.clear();
             inst.immediates.clear();
             inst.immediates.push(Immediate::Const(cid));
-            func.dfg.values[inst_result.0 as usize].ty = folded_ty;
+            func.dfg.set_value_type(inst_result, folded_ty);
             const_map.insert(inst_result, (folded_val, folded_ty));
             result.instructions_removed += 1;
             result.changed = true;

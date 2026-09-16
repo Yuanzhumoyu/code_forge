@@ -99,7 +99,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
-| S5 | 附件强类型化与可见性 | **前三切片已落地**：`isel_strategy` 类型化（`IselStrategy`，无宿主标签清单）+ 字段私有化；开放集合划边界（删 `TargetTriple` 的架构名查表、IR 公开面字符串统一 `ImmStr`）；metadata 单写（5 个载体各收成一个写入口）（均见 §6 末）；余项：`dfg` 私有化 + 受限编辑 API |
+| S5 | 附件强类型化与可见性 | **四切片已落地**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界（删 `TargetTriple` 架构名查表、公开面字符串统一 `ImmStr`）；metadata 单写（5 个载体各一个写入口）；`dfg` 私有化第一步（`values` arena 收口 + `set_value_type`）（均见 §6 末）；余项：`insts`/`blocks` 两个 arena 的收口（含同步 use-lists 的 `&mut` 编辑入口） |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
@@ -845,6 +845,41 @@ fmt/clippy `-D warnings` 干净。新增守卫 `tests/metadata_single_write.rs`�
 **文本层四载体端到端落位**、builder 产物可挂附件、源码断言"写入只许出现在唯一写
 入口实现体里"）。源码断言同样用**负向探针**实测会失败（`src/zz_guard_probe.rs`
 里放 `inst.metadata.push(..)` ⇒ FAILED，删除后恢复绿）。
+
+### S5（第 4 项）：`dfg` 私有化第一步——`values` arena 收口（2026-09-15）
+
+S0 诊断的第一条欠账是"**use-def 可被绕过**"：`DataFlowGraph.{values,insts,blocks}`
+三个 arena 全 `pub`，下游可以直接改操作数而不更新 use-lists。全量收口面很大
+（实测 `insts` 251 处、`blocks` 112 处、`values` 24 处索引 + 6 处写 + 51 处非索引），
+因此**按 arena 分切片**，每片在一次提交内完成迁移与私有化（不留双入口）。
+
+本片收 **`values`**：
+
+- **私有化**：`pub(crate) values`；读口 `value_data`（fail-closed：句柄不合法即
+  panic，与 `BlockData::terminator` 同契约）/ `value_data_opt`（容忍坏 IR 的
+  校验器/display/lowering 用）/ 既有 `value_def`/`value_type`/`values()`/`value_count`。
+- **受限写入口**：`set_value_type(v, ty) -> bool` —— pass 精化值类型的三处写点
+  （`const_fold` 常量定宽、`gvn` 折叠类型、`algebraic` 结果类型）改走它；越界
+  不写并返回 `false`（与读口 `value_type` 的 `Option` 口径一致，不 panic）。
+  创建/墓碑化（`make_*`、`remove_inst`、`clone_inst`）仍只在 `dfg.rs` 内。
+- **迁移面（实测 38 处）**：31 处 `dfg.values[..]`（`.ty`/`.def` 读 + 3 处写）+
+  7 处 `dfg.values.get(..)`，跨 forge-ir（display/verify）、forge-codegen
+  （lowering/compiler/agg_expand）、forge-opt（algebraic/gvn/gvn_pre/sccp/cse/
+  const_fold/inline/lto/func_specialize）共 14 个文件。脚本化替换后逐个修
+  **借用冲突**（4 处）：`value_data` 等方法借用整个 `dfg`，破坏了原先靠
+  `func.dfg.insts[..]` 与 `func.dfg.values[..]` **字段级不相交**才成立的借用
+  （gvn 的 `inst_ids` 借 `blocks` 跨循环存活 ⇒ 改为复制 id 列表；algebraic/gvn
+  的 `&mut inst` 存活期内读类型 ⇒ 把读提到取 `&mut` 之前）。另修 4 处
+  `&Value` 接收者（`value_data(*v)`）。
+- **守卫** `tests/dfg_privatization.rs`（6 例）：`value_data` 越界 panic、
+  `value_data_opt` 越界 `None`、`set_value_type` 写入/越界不写、迭代口与点查口
+  同源、精化类型后 verifier 仍接受、源码断言 `src/` 里 `dfg.values` 字段访问为 0
+  （`dfg.values()` 迭代访问器不算）。源码断言用**负向探针**实测会失败
+  （`src/zz_guard_probe.rs` 里放 `dfg.values[v.0 as usize].ty` ⇒ FAILED）。
+
+**验证**：workspace 1422 passed / 0 failed / 19 ignored（60 个测试二进制 +
+13 组 doc-test，较 S5 第 3 项 +6）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。
 
 ## 7. 参考设计（外部）
 

@@ -146,7 +146,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
                     .results
                     .first()
                     .copied()
-                    .map(|v| func.dfg.values[v.0 as usize].ty)
+                    .map(|v| func.dfg.value_data(v).ty)
                     .unwrap_or(TypeId::VOID);
                 if let Some(action) = try_rewrite(inst, &cache, ty) {
                     replacements.push((Block(bi as u32), ii, action));
@@ -163,12 +163,19 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
         for (bi, ii, action) in replacements {
             let block = &func.dfg.blocks[bi.0 as usize];
             let inst_id = block.inst_order[ii];
+            // 先读值信息：`value_data` 是对整个 DFG 的方法借用，必须在取
+            // `&mut insts[..]` 之前算完（字段级不相交借用只对直接字段路径成立）。
+            let result = func
+                .dfg
+                .inst_results(inst_id)
+                .first()
+                .copied()
+                .unwrap_or(Value(0));
+            let ty = func.dfg.value_data(result).ty;
             {
                 // 同步 use-lists：清掉旧 operands 的使用记录
                 func.use_lists.remove_inst(&func.dfg, inst_id);
                 let inst = &mut func.dfg.insts[inst_id.0 as usize];
-                let result = inst.results.first().copied().unwrap_or(Value(0));
-                let ty = func.dfg.values[result.0 as usize].ty;
 
                 match action {
                     ReplaceAction::Copy { src } => {
@@ -187,7 +194,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
                         inst.immediates.clear();
                         inst.immediates.push(Immediate::Const(cid));
                         if result.0 > 0 {
-                            func.dfg.values[result.0 as usize].ty = ty;
+                            func.dfg.set_value_type(result, ty);
                         }
                     }
                 }

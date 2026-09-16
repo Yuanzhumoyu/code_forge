@@ -1166,7 +1166,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
             if matches!(folded, ConstValue::Bool(_))
                 && let Some(result_val) = inst.results.first().copied()
             {
-                func.dfg.values[result_val.0 as usize].ty = TypeId::I32;
+                func.dfg.set_value_type(result_val, TypeId::I32);
             }
 
             known.insert(value, folded);

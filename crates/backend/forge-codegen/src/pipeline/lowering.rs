@@ -221,7 +221,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 let mut const_val: i64 = 0;
                 let mut has_const = false;
                 for &op in &inst.operands {
-                    let Some(val) = dfg.values.get(op.0 as usize) else {
+                    let Some(val) = dfg.value_data_opt(op) else {
                         continue;
                     };
                     let forge_ir::dfg::ValueDef::Inst(def_ii, _) = val.def else {
@@ -533,7 +533,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         .get(if inst.opcode == Opcode::Vinsert { 2 } else { 1 })
             {
                 let fold_idx = (|| {
-                    let def = dfg.values.get(idx_v.0 as usize)?.def;
+                    let def = dfg.value_data_opt(idx_v)?.def;
                     let forge_ir::dfg::ValueDef::Inst(ii, _) = def else {
                         return None;
                     };
@@ -556,7 +556,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 })();
                 self.ctx.current_immediates.insert(0, fold_idx.unwrap_or(0));
                 if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
-                    let dbg = dfg.values.get(idx_v.0 as usize).map(|v| &v.def);
+                    let dbg = dfg.value_data_opt(idx_v).map(|v| &v.def);
                     let idbg = dfg.insts.get(1).map(|d| (d.opcode, &d.immediates));
                     eprintln!(
                         "[vextract] op={:?} idx_operand={:?} def={:?} inst1={:?} folded={:?}",

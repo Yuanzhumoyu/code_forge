@@ -193,7 +193,7 @@ pub fn inline_calls(
                 let result_tys: SmallVec<[TypeId; 2]> = ci
                     .results
                     .iter()
-                    .map(|&v| callee.dfg.values[v.0 as usize].ty)
+                    .map(|&v| callee.dfg.value_data(v).ty)
                     .collect();
 
                 // Create new instruction in caller（保留全字段：flags/mem_flags/

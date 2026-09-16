@@ -174,7 +174,7 @@ fn clone_callee_into_caller(
             let result_tys: Vec<TypeId> = inst
                 .results
                 .iter()
-                .map(|&v| callee.dfg.values[v.0 as usize].ty)
+                .map(|&v| callee.dfg.value_data(v).ty)
                 .collect();
 
             // Skip terminators (Return handled separately)

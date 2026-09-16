@@ -269,7 +269,7 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
                 .map(|v| replacements.get(v).copied().unwrap_or(*v))
                 .collect();
 
-            let ty = func.dfg.values[inst_result.0 as usize].ty;
+            let ty = func.dfg.value_data(inst_result).ty;
             let key = expr_key(&inst.opcode, &mapped_operands, &inst.immediates, ty);
 
             if let Some(&existing_result) = expr_table.get(&key) {
