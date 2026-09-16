@@ -244,8 +244,8 @@ fn lto_inline_callee(
                 inst.metadata.clone(),
                 inst.loc.clone(),
             );
-            if let Some(strategy) = inst.isel_strategy {
-                caller.dfg.insts[new_inst.0 as usize].isel_strategy = Some(strategy);
+            if let Some(strategy) = inst.isel_strategy() {
+                caller.dfg.insts[new_inst.0 as usize].set_isel_strategy(strategy.clone());
             }
 
             // Map old results to new results

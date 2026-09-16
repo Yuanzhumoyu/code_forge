@@ -106,8 +106,8 @@ pub mod prelude {
     };
     pub use forge_ir::{
         AtomicRmwOp, Block, ConstId, DataFlowGraph, Endianness, FloatCC, FrameAccess, Immediate,
-        Instruction, IntCC, IrError, Opcode, PReg, PhysReg, RegClass, TermKind, TypeId, VReg,
-        Value, XReg, XRegAllocator,
+        Instruction, IntCC, IrError, IselStrategy, Opcode, PReg, PhysReg, RegClass, TermKind,
+        TypeId, VReg, Value, XReg, XRegAllocator,
     };
 }
 

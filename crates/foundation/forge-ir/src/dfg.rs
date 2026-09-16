@@ -77,7 +77,31 @@ pub struct Instruction {
     /// sequence named by the tag instead of lowering the opcode verbatim
     /// (e.g. `"lea_sib:4"` for `Iadd(Imul(idx,4), base)` → LEA).
     /// `None` = default lowering.
-    pub isel_strategy: Option<&'static str>,
+    ///
+    /// 类型见 [`crate::isel_strategy::IselStrategy`]：标签名由目标 ISA 数据
+    /// 决定，forge-ir 不认识任何具体名字（无枚举/白名单/长度限制）。
+    ///
+    /// **字段私有**（v3 方案 S5 可见性）：读 [`Instruction::isel_strategy`]、
+    /// 写 [`Instruction::set_isel_strategy`] / [`Instruction::clear_isel_strategy`]
+    /// ——与 `BlockData.terminator` 同一约定，附件只经入口改。
+    pub(crate) isel_strategy: Option<crate::isel_strategy::IselStrategy>,
+}
+
+impl Instruction {
+    /// 指令选择标签；`None` = 无标签（按 opcode 逐条降级）。
+    pub fn isel_strategy(&self) -> Option<&crate::isel_strategy::IselStrategy> {
+        self.isel_strategy.as_ref()
+    }
+
+    /// 写指令选择标签（覆盖既有标签）。
+    pub fn set_isel_strategy(&mut self, strategy: crate::isel_strategy::IselStrategy) {
+        self.isel_strategy = Some(strategy);
+    }
+
+    /// 摘除指令选择标签，返回被摘下的那个。
+    pub fn clear_isel_strategy(&mut self) -> Option<crate::isel_strategy::IselStrategy> {
+        self.isel_strategy.take()
+    }
 }
 
 /// 基本块的数据。
@@ -309,8 +333,8 @@ impl DataFlowGraph {
             loc,
         );
         // 保留 isel_strategy / param_attrs（make_inst_* 系列不接收该字段）
-        if let Some(strategy) = self.insts[inst.0 as usize].isel_strategy {
-            self.insts[new_inst.0 as usize].isel_strategy = Some(strategy);
+        if let Some(strategy) = self.insts[inst.0 as usize].isel_strategy.clone() {
+            self.insts[new_inst.0 as usize].set_isel_strategy(strategy);
         }
         self.insts[new_inst.0 as usize].param_attrs =
             self.insts[inst.0 as usize].param_attrs.clone();
@@ -968,12 +992,14 @@ mod tests {
         let mut visited = 0;
         for inst in dfg.block_insts_mut(b) {
             assert_eq!(inst.opcode, Opcode::Iconst);
-            inst.isel_strategy = Some("tagged");
+            inst.set_isel_strategy(crate::isel_strategy::IselStrategy::from_static("tagged"));
             visited += 1;
         }
         assert_eq!(visited, 1, "墓碑指令应被跳过");
         assert_eq!(
-            dfg.insts[i2.0 as usize].isel_strategy,
+            dfg.insts[i2.0 as usize]
+                .isel_strategy()
+                .map(crate::isel_strategy::IselStrategy::name),
             Some("tagged"),
             "可变迭代应写回"
         );

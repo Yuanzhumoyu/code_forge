@@ -53,6 +53,7 @@ pub mod imm_str;
 pub mod immediate;
 pub mod inst_flags;
 pub mod ir_parser;
+pub mod isel_strategy;
 pub mod loop_info;
 pub mod mem_flags;
 pub mod metadata;
@@ -83,6 +84,7 @@ pub use types::*;
 // Opcode + related
 pub use immediate::*;
 pub use inst_flags::*;
+pub use isel_strategy::IselStrategy;
 pub use opcode::*;
 
 // Data structures

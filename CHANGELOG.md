@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
+- **`isel_strategy` 类型化 + 字段私有化（forge-ir v3 S5 第 1 项）**：`Instruction.isel_strategy` 从 `Option<&'static str>` 变为 `Option<IselStrategy>`（新模块 `src/isel_strategy.rs`）——**不是枚举**：标签名由目标 ISA 数据决定，forge-ir 不解析、不认识任何具体名字（无枚举/白名单/长度限制，名字内嵌的参数如 `"lea_sib:4"` 原样保留）。
+  修掉两个真实缺陷：① `&'static str` 逼生产者把运行期名字 `Box::leak`（审计记录过那次泄漏修复），`IselStrategy::new` 现收任意 `&str`/`String`（短名内联零分配、长名 `Arc<str>` 共享、字面量 `from_static` 零拷贝）；② 裸字符串让"两套命名体系错配"（`lea_sib` vs `lea-merge-iadd-imul-4`）静默，类型化后比较必须先构造 `IselStrategy`，且**刻意不实现** `PartialEq<str>`/`Deref<Target = str>`/`Default`（空名 fail-closed，`None` 是"无标签"的唯一编码）。
+  字段降为 `pub(crate)`，读写走 `Instruction::{isel_strategy, set_isel_strategy, clear_isel_strategy}`；5 处"保留全字段"复制点（`clone_inst`/lto/inline/func_specialize）改走写入口。**行为不变**：该通道当前无生产者（手写 `ext/pattern_isel.rs` 已随 ISA-DSL v15 删除），与 `[[pattern]]` 命名体系对接仍属 backlog #2。守卫 `tests/isel_strategy.rs`（5 例）。
+
+### Changed (2026-09-15)
+
 - **终结符诊断点名真实指令句柄（forge-ir v3 S6 子项，S4 主体后续）**：S4 让终结符成为指令之后，校验器中 5 个与终结符相关的错误变体仍只报块号或带伪造句柄——`BlockParamCountMismatch`/`ReturnTypeMismatch`/`ReturnValueTypeMismatch`/`InvalidTerminatorTarget`/`TerminatorDominanceViolation` 现各带 `inst: Inst` 并在 `Display` 里打印（`block {}: terminator inst {} …`）。
   构造点全部改取真实句柄（终结符用值循环绑定 `term_inst`、块参数检查绑定前驱块的终结符指令、`switch` case 重复与非法跳转目标各取 `block_terminator(block)`），两处 `Inst(u32::MAX)` 伪造占位删除。
   守卫 `tests/verify_negative.rs::terminator_diagnostics_carry_real_inst`（`ret` 计数不符点名真实 `ret` 指令；用公开写入口 `Function::jump` 改到不存在的块后，`InvalidTerminatorTarget.inst` 等于新终结符指令且不等于被墓碑化的旧句柄）。

@@ -1536,7 +1536,7 @@ mod tests {
         {
             let inst = &mut fb.func.dfg.insts[x_inst.0 as usize];
             inst.flags = crate::inst_flags::InstFlags::MAY_UB;
-            inst.isel_strategy = Some("lea_sib:4");
+            inst.set_isel_strategy(crate::IselStrategy::from_static("lea_sib:4"));
             inst.loc = Some(crate::debug_info::SourceLocation {
                 file: Some(crate::imm_str::ImmStr::from("test.rs")),
                 line: Some(42),
@@ -1557,7 +1557,8 @@ mod tests {
         assert_eq!(cloned.metadata, orig.metadata, "metadata 保留");
         assert_eq!(cloned.loc, orig.loc, "loc 保留");
         assert_eq!(
-            cloned.isel_strategy, orig.isel_strategy,
+            cloned.isel_strategy(),
+            orig.isel_strategy(),
             "isel_strategy 保留"
         );
         assert_eq!(cloned.block, target, "克隆到目标块");

@@ -99,7 +99,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S2 | 实体容器与密集索引 | **forge-ir 部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；余项：句柄字段私有化、墓碑语义、`ListPool`、两个下游 crate 内部句柄表 |
 | S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试；余项：去 `RwLock` 与 `TypeStore` 显式传参 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
-| S5 | 附件强类型化与可见性 | 待开工（依赖 S4） |
+| S5 | 附件强类型化与可见性 | **第一切片已落地**：`isel_strategy` 类型化（`IselStrategy`，无宿主标签清单）+ 字段私有化（见 §6 末）；余项：开放集合划边界、metadata 单写、`dfg` 私有化 + 受限编辑 API |
 | S6 | 校验与 pass 契约 | **部分落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`（见 §6 末）；终结符诊断已点名真实指令句柄（见 §6 末）；校验器/契约的进一步强化待续 |
 | S7 | 文本层诊断与往返 | 待开工 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
@@ -723,6 +723,45 @@ S4 主体让终结符成为指令之后，校验器里与终结符相关的 5 �
 **验证**：workspace 1395 passed / 0 failed / 19 ignored（56 个测试二进制 +
 13 组 doc-test，较 S4 主体 +1）；x86 矩阵 195/3/0；riscv64 131/67/0；
 fmt/clippy `-D warnings` 干净。
+
+### S5（第 1 项）：`isel_strategy` 类型化 + 字段私有化（2026-09-15）
+
+S4 主体收口了终结符表示之后，指令上最后一个"开放集合裸字符串"附件就是
+`Instruction.isel_strategy: Option<&'static str>`。本步把它类型化并把字段私有化，
+**不改变任何指令序列**（该通道当前既无生产者也无消费者，见下）。
+
+- **类型**：新增 `IselStrategy`（新模块 `src/isel_strategy.rs`），**刻意不是枚举**
+  ——标签集合由目标 ISA 数据决定（例 `"lea_sib:4"` = `Iadd(Imul(idx,4), base)` 走
+  LEA 的 SIB 形式、倍率 4），forge-ir 不解析、不认识任何具体名字：无枚举、无白名单、
+  无字符/长度限制，名字内嵌的参数原样保留。修掉两个真实缺陷：
+  ① **`'static` 逼生产者泄漏**——名字来自运行期数据（TOML/匹配表）时必须
+  `Box::leak` 才能变成 `&'static str`（审计记录过那次泄漏修复）；现在
+  `IselStrategy::new` 收任意 `&str`/`String`，字面量走 `from_static` 零拷贝；
+  ② **裸字符串让错配静默**——手写标签 `"lea_sib"` 与 DSL 侧
+  `"lea-merge-iadd-imul-4"` 比较为假时编译期毫无提示（审计记录的断点）；类型化后
+  要比较必须先构造 `IselStrategy`，且**刻意不实现** `PartialEq<str>` /
+  `Deref<Target = str>` / `Default`（空名 fail-closed；`None` 是"无标签"的唯一编码，
+  与 S4-c 对终结符消灭"同一件事两份编码"同一条理由）。
+- **承载选型**：值语义用 `ImmStr`（≤22 B 内联零分配、长名 `Arc<str>` 共享、
+  `Clone` O(1)），**不用 `InternedStr`**（`StringPool` 池内 id）——inline / lto /
+  func_specialize 要把标签从**被调方的 DFG** 搬到**调用方的 DFG**，池内 id 跨池失真。
+- **可见性**：字段降为 `pub(crate)`，读 `Instruction::isel_strategy()`、写
+  `set_isel_strategy` / `clear_isel_strategy`；5 处"保留全字段"复制点
+  （`dfg::clone_inst`、`lto`、`inline`、`func_specialize`、`function.rs` 的克隆测试）
+  全部改走写入口 ⇒ crate 外无法再直写附件（与 `BlockData.terminator` 同一约定）。
+- **现状（必须记清，避免误读为"已接通"）**：手写 pattern-isel 生产者
+  （`ext/pattern_isel.rs`，`lea_sib`/`cmovcc` 标签）已随 ISA-DSL v15 的"删死模块"
+  删除，`[[pattern]]`/`lower_pattern` 侧用的是 pattern 名——两条命名体系的对接仍是
+  backlog #2 的功能开发项（会改变指令序列，需专项验证）。本步只做**类型化与可见性**，
+  不改变 pass / 后端的任何行为。
+
+**验证**：workspace 1406 passed / 0 failed / 19 ignored（57 个测试二进制 +
+13 组 doc-test，较 S6 子项 +11）；x86 矩阵 195/3/0；riscv64 131/67/0；
+fmt/clippy `-D warnings` 干净。新增守卫 `tests/isel_strategy.rs`（5 例：运行期名字
+免泄漏、`clone_inst` 保留、跨 DFG 搬运、单值覆盖写、空名 panic）+ 模块内 6 例
+（短名内联、长名共享、字面量借用三种承载 + 空名两条入口 + 值语义）。
+首轮整包跑出 2 处**我自己测试里的断言错误**（20 B 名字其实走内联、派生 `Debug`
+打印 `IselStrategy("…")`），已修正——说明"类型承载变体"的断言必须实测而非按印象写。
 
 ## 7. 参考设计（外部）
 

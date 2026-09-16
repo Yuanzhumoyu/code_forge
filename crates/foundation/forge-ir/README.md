@@ -22,7 +22,7 @@
 | `dfg` | `DataFlowGraph`（`values`/`insts`/`blocks` 三个 arena）、`Instruction`、`BlockData` |
 | `function` | `Function`、`Module`、`Layout`、`GlobalVariable`/`GlobalAlias`、`AnalysisCache` |
 | `types` | `TypeStore`（interner）、`TypeContext`、`FunctionSignature` |
-| `opcode` / `immediate` / `inst_flags` / `mem_flags` | 指令操作码与附件（`opcode` 的枚举与派生表由 `ops.toml` 生成，见下） |
+| `opcode` / `immediate` / `inst_flags` / `mem_flags` / `isel_strategy` | 指令操作码与附件（`opcode` 的枚举与派生表由 `ops.toml` 生成，见下） |
 | `builder` | `FunctionBuilder`（构造 IR 的唯一推荐入口） |
 | `use_list` / `analysis` / `loop_info` / `alias` | def-use 链、支配树、循环森林、最小别名分析 |
 | `constant` / `big` / `imm_str` / `string_pool` | 常量池（int/float/big/vector/aggregate）、任意精度、SSO 字符串 |
@@ -67,6 +67,16 @@ builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
   写入经按形式写入口 `Function::{jump, branch, ret, switch, unreachable, invoke,
   resume, set_return_values, retarget_terminator, replace_terminator_args}`。
   编码约定见 `ops.toml` 的「终结符」节（与 `dfg.rs` 的解码一一对应）。
+- **指令选择标签**（`Instruction.isel_strategy: Option<IselStrategy>`，S5）：
+  模式匹配/融合阶段标注"这条指令是怎么被选出来的"。标签名**由目标 ISA 数据
+  决定**——forge-ir 不解析、不认识任何具体名字（无枚举/白名单/长度限制），
+  名字里的参数（如 `"lea_sib:4"`）也原样保留。字段**私有**，读写走
+  `Instruction::{isel_strategy, set_isel_strategy, clear_isel_strategy}`；
+  `IselStrategy` 是**值**（`ImmStr` 承载：短名内联零分配、长名 `Arc<str>` 共享、
+  `Clone` O(1)），因此可跨 DFG 搬运（inline/lto/func_specialize 把被调方的标签
+  搬到调用方）；空名 fail-closed。**注意**：手写 pattern-isel 生产者已随
+  ISA-DSL v15 删除，标签与 `[[pattern]]` 命名体系的对接仍属 backlog（会改变
+  指令序列，需专项验证）。
 - **指令清单**：`ops.toml` → 生成的 `Opcode::ALL` 是全部变体的单一事实源（覆盖率
   矩阵、一致性守卫、名字查找都用它）；`Opcode::name()`/`from_name()` 用于 ISA TOML
   的 `op = "..."` 契约，`Opcode::info()` 给出类别/元数/结果数/UB/副作用/条件通道。
@@ -82,4 +92,6 @@ builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；**S1 已全部落地**
 （`ops.toml` + 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族，查表全 O(1)）；
 **S2 第一切片已落地**（`entity_map` 四个容器 + forge-ir 内部句柄键表迁移，
-句柄键 `HashMap` 45 → 31 处）。余项见该文档 §6 的 S2 记录。
+句柄键 `HashMap` 45 → 31 处）；**S4 主体已落地**（终结符并入指令流）；
+**S5 第一切片已落地**（`isel_strategy` 类型化 + 字段私有化，2026-09-15）。
+余项见该文档 §6 的 S2/S5 记录。

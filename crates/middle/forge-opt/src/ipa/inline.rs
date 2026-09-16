@@ -209,8 +209,8 @@ pub fn inline_calls(
                     ci.metadata.clone(),
                     ci.loc.clone(),
                 );
-                if let Some(strategy) = ci.isel_strategy {
-                    func.dfg.insts[new_inst.0 as usize].isel_strategy = Some(strategy);
+                if let Some(strategy) = ci.isel_strategy() {
+                    func.dfg.insts[new_inst.0 as usize].set_isel_strategy(strategy.clone());
                 }
 
                 // Map old callee results → new caller values
