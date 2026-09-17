@@ -581,7 +581,29 @@ pub struct ParsedBlock {
     /// 字符串标签 `"2"`/`-3` 解码后可能是数字形态但非数字标签）。
     pub label_is_num: bool,
     pub insts: Vec<ParsedInst>,
+    /// 每条指令在源码里的**字节区间**（与 `insts` 平行；v3 S7 span 贯穿）。
+    ///
+    /// 语法层只能拿到位置（`@L`/`@R`），行/列要等 `parse_to_ast` 拿到源文本后再算
+    /// （见 `inst_line_cols`）。位置与 `insts` 等长（同一处收集），不等长视为无位置。
+    pub inst_spans: Vec<(usize, usize)>,
+    /// 每条指令的 `(行, 列)`（1-based；与 `insts` 平行）——`parse_to_ast` 由
+    /// `inst_spans` 换算，语义层据此给指令挂 `SourceLocation`。
+    pub inst_line_cols: Vec<Option<(u32, u32)>>,
     pub terminator: ParsedTerminator,
+}
+
+/// 把 `(指令, 起始字节, 结束字节)` 列表拆成 `(指令表, 字节区间表)`（长度一致；
+/// 语法层只能给出位置，行/列由 `parse_to_ast` 拿源文本换算——见 `ParsedBlock`）。
+pub fn split_spanned_insts(
+    items: Vec<(ParsedInst, usize, usize)>,
+) -> (Vec<ParsedInst>, Vec<(usize, usize)>) {
+    let mut insts = Vec::with_capacity(items.len());
+    let mut spans = Vec::with_capacity(items.len());
+    for (inst, start, end) in items {
+        insts.push(inst);
+        spans.push((start, end));
+    }
+    (insts, spans)
 }
 
 pub struct ParsedInst {

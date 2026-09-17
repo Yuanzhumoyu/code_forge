@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **IR 侧 span 贯穿：指令位置落进 `Instruction::loc`（forge-ir v3 S7 切片）**：改前实测整条解析链路上 `Instruction::loc` **恒为 `None`**——语法层不留字节区间（`ParsedBlock` 只有 `insts`），`FunctionBuilder::set_current_loc`/`emit1` 早已会把位置写进指令，却**没有任何调用者**，诊断只能指到函数级。
+  现在三层各加一处真相：①语法层新增 `SpannedInst = <l: @L> <i: Inst> <r: @R>`（`grammar.lalrpop`），两个 `Block` 产生式改吃 `(<SpannedInst>)*`，由 `ast_items::split_spanned_insts` 拆出与 `insts` 平行的 `inst_spans`；
+  ②`parse_to_ast` 用 `locate` 把字节偏移换算成 **1-based `(行, 列)`**（`ParsedBlock::inst_line_cols`；长度不等时视为无位置，不猜）；③`build_function` 发射每条指令前 `set_current_loc(...)`、循环尾复位，使指令内物化的常量随所属指令、循环后为终结符物化的合成常量**不继承**上一条位置。
+  边界如实记录：`phi` 绑块参数、不发射指令，终结符走 `build_terminator`（不经 builder）⇒ 两者暂无位置；位置不进文本层（打印 → 重解析 → 再打印逐字节相同）。新增 `tests/source_span.rs`（4 例，含"列号必须来自源码"的非固定缩进夹具）；负向验证：删循环尾复位 ⇒ 2 例 FAILED，删发射前落位 ⇒ 3 例 FAILED，恢复后全绿。
+  实测：workspace 1488 passed / 0 failed / 19 ignored；LLVM 语料 198/254/0、语料往返幂等 189/189 不变。
+
 - **half/bfloat 位模式保真 + splat 文本往返：语料往返漂移 2 → 0（forge-ir v3 S7 切片）**：收掉最后两条漂移，189 个正向用例**全部幂等**（`KNOWN_DRIFT` 清空）。
   ① `float-literals.ll` 的 **f16/bfloat 值静默丢失**：`@2 = global half -qnan` 打印成 `0x7fc00000`（4 字节、无 `H` 前缀），回读按整数截断成 `0x0000`；根因是 `float_init_bytes` 没有 f16/bfloat 分支（落 `(f as f32)` 存 4 字节）。现在 `float_init_bytes` 增 f16（f32 → IEEE binary16，RN-even，含 denormal/Inf/NaN）与 bfloat（高 16 位 RN-even）；
   `fmt_global_init` 增 `0xH{:04x}`/`0xR{:04x}` 打印臂；grammar 的 `FloatHexLit`（`0xH...`/`f0x...`）由折成 `Float(0.0)` 改为 `Int(位模式)`；lexer 同时剥离 `f0x` 前缀（`llvm-dis` 的 half 输出形式）并**真正解码 C99 十六进制浮点**（`0x1.e3p-16`，此前恒 0.0）。实测 `+0x1.e3p-16` 打印 `0xH01e3`，与 LLVM 期望的 `f0x01e3` 一致。

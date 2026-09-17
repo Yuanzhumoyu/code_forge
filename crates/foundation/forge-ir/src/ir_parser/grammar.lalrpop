@@ -1493,23 +1493,38 @@ Body: Vec<ParsedBlock> = {
 // ── 块 ──
 
 Block: ParsedBlock = {
-    <label: BlockLabel> Colon <insts: (<Inst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => ParsedBlock {
-        label: label.0,
-        label_is_num: label.1,
-        implicit: false,
-        insts: insts,
-        terminator: term,
-        uselistorders: tail,
+    <label: BlockLabel> Colon <insts: (<SpannedInst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => {
+        let (insts, inst_spans) = crate::ir_parser::ast_items::split_spanned_insts(insts);
+        ParsedBlock {
+            label: label.0,
+            label_is_num: label.1,
+            implicit: false,
+            insts,
+            inst_spans,
+            inst_line_cols: Vec::new(),
+            terminator: term,
+            uselistorders: tail,
+        }
     },
     // LLVM 合法语法：入口块可省略 label（`define void @f() { %a = ... }`）
-    <insts: (<Inst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => ParsedBlock {
-        label: "entry".to_string(),
-        uselistorders: tail,
-        label_is_num: false,
-        implicit: true,
-        insts: insts,
-        terminator: term,
+    <insts: (<SpannedInst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => {
+        let (insts, inst_spans) = crate::ir_parser::ast_items::split_spanned_insts(insts);
+        ParsedBlock {
+            label: "entry".to_string(),
+            uselistorders: tail,
+            label_is_num: false,
+            implicit: true,
+            insts,
+            inst_spans,
+            inst_line_cols: Vec::new(),
+            terminator: term,
+        }
     },
+};
+
+/// 单条指令 + 它在源码里的字节区间（`@L`/`@R`——v3 S7 span 贯穿）。
+SpannedInst: (ParsedInst, usize, usize) = {
+    <l: @L> <i: Inst> <r: @R> => (i, l, r),
 };
 
 // 块 label：`%name`（LocalId）或裸名 `name`（LLVM 均合法；裸名走 Ident）

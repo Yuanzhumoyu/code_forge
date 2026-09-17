@@ -161,7 +161,7 @@ fn floor_boundary(source: &str, offset: usize) -> usize {
 }
 
 /// 字节偏移 → `(行号, 列号, 该行文本)`（行/列从 1 开始）。
-fn locate(source: &str, offset: usize) -> (usize, usize, &str) {
+pub(crate) fn locate(source: &str, offset: usize) -> (usize, usize, &str) {
     let offset = floor_boundary(source, offset);
     let before = &source[..offset];
     let line_no = before.matches('\n').count() + 1;

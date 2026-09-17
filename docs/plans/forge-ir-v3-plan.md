@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；余项：splat 逐 lane 广播值、`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；余项：splat 逐 lane 广播值、`features=["text"]` 门控、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1512,6 +1512,46 @@ riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --a
 **验证**：workspace 1484 passed / 0 failed / 19 ignored（+2）；x86 矩阵 195/3/0；
 riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
 `cargo doc -D warnings` 全干净。
+
+### S7（切片）：IR 侧 span 贯穿（指令位置落进 `Instruction::loc`）（2026-09-17）
+
+改前实测：整条解析链路上 `Instruction::loc` **恒为 `None`**——语法层不留字节区间
+（`ParsedBlock` 只有 `insts`），所以 `FunctionBuilder::set_current_loc`/`emit1`（早就
+会把它写进指令）**没有任何调用者**。诊断因此只能指到函数级，"改一行报一行"做不到。
+
+**贯通路径**（三层，各只加一处真相）：
+
+1. **语法层**（`grammar.lalrpop`）：新增 `SpannedInst: (ParsedInst, usize, usize) =
+   { <l: @L> <i: Inst> <r: @R> => (i, l, r) }`，两个 `Block` 产生式改吃
+   `(<SpannedInst>)*`，交 `ast_items::split_spanned_insts` 拆成平行的
+   `insts` + `inst_spans`（字节区间）。
+2. **换算**（`semantics::parse_to_ast`）：语法层只给字节偏移（它没有源文本句柄），
+   拿到 `source` 后用 `locate` 换成 **1-based `(行, 列)`** 存进
+   `ParsedBlock::inst_line_cols`；`inst_spans` 与 `insts` 不等长时**视为无位置**
+   （不猜、不错位）。
+3. **落位**（`build_function` 指令循环）：发射前 `fb.set_current_loc(Some(SourceLocation
+   { file: None, line, column }))`，循环体内该条指令（含它**物化的常量**）都带上这个
+   位置；循环尾 `set_current_loc(None)`，让**循环之后**为终结符物化的合成常量不继承上
+   一条的位置。
+
+**证据**（新增 `tests/source_span.rs`，4 例）：位置落在**它自己**那条指令上且列号来自
+源码（夹具故意用 2/4 两种缩进 ⇒ 列 3/列 5，写死列号会失败）；指令内常量随所属指令、
+循环后合成常量无位置；多块各归各的行，phi 行与终结符行**不出现**在任何位置里；
+位置**不进文本层**（打印 → 重解析 → 再打印逐字节相同）。
+
+**负向验证**（改源码 → 用例必须红 → 恢复）：
+
+- 删掉循环尾的 `set_current_loc(None)` ⇒ 2 例 FAILED（合成常量继承了第 3 行）；
+- 删掉发射前的 `set_current_loc(...)` ⇒ 3 例 FAILED（位置全空）。
+
+**已知缺口（如实记录，不假装已覆盖）**：`phi` 绑到块参数、不发射指令，终结符走
+`build_terminator`（不经 builder）⇒ 两者的行**暂无位置**；`source_span.rs` 用显式断言
+把这两条现状钉住（补齐时同步翻转断言）。
+
+**验证**：workspace 1488 passed / 0 failed / 19 ignored（+4）；LLVM 语料正向
+198/452、负向正确拒绝 254、误接受 0 不变；语料往返幂等 189/189、`display_llvm`
+结构化往返全绿（位置不进文本层）；fmt `--check`/clippy `-D warnings`/
+`cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
 
 ## 7. 参考设计（外部）
 

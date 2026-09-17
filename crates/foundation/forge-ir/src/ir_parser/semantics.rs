@@ -57,9 +57,28 @@ pub fn parse_function(source: &str) -> Result<crate::function::Function, IrError
 fn parse_to_ast(source: &str) -> Result<ParsedModule, IrError> {
     let lexer = TokenStream::new(source);
     let parser = super::grammar::ModuleParser::new();
-    parser
+    let mut ast = parser
         .parse(lexer)
-        .map_err(|e| IrError::Parse(super::format_parse_error(source, &e)))
+        .map_err(|e| IrError::Parse(super::format_parse_error(source, &e)))?;
+    // span 贯穿（v3 S7）：语法层给的是字节区间，这里拿源文本换算成 行:列，
+    // 语义层据此给每条指令挂 `SourceLocation`（列号 1-based）。
+    for item in &mut ast.items {
+        if let ParsedItem::Function(f) = item {
+            for b in &mut f.blocks {
+                if b.inst_spans.len() == b.insts.len() {
+                    b.inst_line_cols = b
+                        .inst_spans
+                        .iter()
+                        .map(|(start, _)| {
+                            let (line, col, _) = super::locate(source, *start);
+                            Some((line as u32, col as u32))
+                        })
+                        .collect();
+                }
+            }
+        }
+    }
+    Ok(ast)
 }
 
 // ── 模块构建 ──
@@ -1847,10 +1866,20 @@ fn build_function<'a>(
             }
             phi_idx += 1;
         }
-        for inst in &pb.insts {
+        for (inst_idx, inst) in pb.insts.iter().enumerate() {
             if inst.opcode == "phi" {
                 continue;
             }
+            // span 贯穿（v3 S7）：把这条指令的源码位置挂上去（`FunctionBuilder::emit1`
+            // 会把它写进 `Instruction.loc`）。phi 不在此处发射（绑到块参数）⇒ 其位置
+            // 暂缺；终结符走 `build_terminator`，位置同样暂缺（见计划 S7 余项）。
+            fb.set_current_loc(pb.inst_line_cols.get(inst_idx).copied().flatten().map(
+                |(line, column)| crate::SourceLocation {
+                    file: None,
+                    line: Some(line),
+                    column: Some(column),
+                },
+            ));
             build_inst(
                 inst,
                 &mut fb,
@@ -1860,6 +1889,7 @@ fn build_function<'a>(
                 global_refs,
                 block,
             )?;
+            fb.set_current_loc(None);
         }
         build_terminator(
             &pb.terminator,
