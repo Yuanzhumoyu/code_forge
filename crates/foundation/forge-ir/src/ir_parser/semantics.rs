@@ -1458,7 +1458,7 @@ fn int_init_bytes(ty: TypeId, n: i64, ctx: &TypeContext) -> Vec<u8> {
             32 => (v as u32).to_le_bytes().to_vec(),
             64 => v.to_le_bytes().to_vec(),
             // 更宽浮点（f128/x86_fp80…）的十六进制字面量走各自的专用通道
-            // （ xL…/ xK…），i64 字面量放不下，这里保持旧的 4 字节行为
+            // （0xL…/0xK…），i64 字面量放不下，这里保持旧的 4 字节行为
             _ => (v as u32).to_le_bytes().to_vec(),
         },
         _ => (v as u32).to_le_bytes().to_vec(),
