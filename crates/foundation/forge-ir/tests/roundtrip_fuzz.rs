@@ -523,16 +523,24 @@ fn gen_module(ctx: &mut GenCtx) -> String {
     // funcs 是模块级作用域：call 只能引用本模块已生成的函数
     let saved_funcs = std::mem::take(&mut ctx.funcs);
     let mut out = String::new();
-    let nglobals = ctx.rng.below(3) as usize;
-    for _ in 0..nglobals {
+    // 全局**保真矩阵**（v3 S7 扩面）：S7 修掉的六类文本保真缺陷全在这里被随机采样——
+    // 非 8/16/32/64 位宽整数（i5/i7/i24/i33…）、浮点位模式（`0x…`）、half/bfloat
+    // 的 `0xH`/`0xR`/`f0x` 形态、聚合（数组/结构体/字符串）、向量字面量与
+    // `splat`、以及常量表达式 init。生成的全局名按序记录，供后面的常量表达式引用。
+    let nglobals = ctx.rng.below(4) as usize;
+    let mut defined: Vec<String> = Vec::new();
+    for i in 0..nglobals {
         let g = ctx.fresh("g");
-        let ty = *ctx.rng.pick(&[Ty::I32, Ty::I64]);
-        let init = match ctx.rng.below(3) {
-            0 => "0",
-            1 => "1",
-            _ => "42",
+        let (ty, init) = gen_global_init(ctx, &defined);
+        // LLVM：`constant`/`global` 二者之一是**定义关键字**（不是两个词连写）
+        let kw = if ctx.rng.chance(30) {
+            "constant"
+        } else {
+            "global"
         };
-        out.push_str(&format!("@{g} = global {} {init}\n", ty.name()));
+        out.push_str(&format!("@{g} = {kw} {ty} {init}\n"));
+        defined.push(g);
+        let _ = i;
     }
     let nfuncs = 1 + ctx.rng.below(2) as usize;
     for i in 0..nfuncs {
@@ -540,6 +548,142 @@ fn gen_module(ctx: &mut GenCtx) -> String {
     }
     ctx.funcs = saved_funcs;
     out
+}
+
+/// 随机十六进制位模式（`nibbles` 个十六进制位）。
+fn rand_hex(ctx: &mut GenCtx, nibbles: usize) -> String {
+    let mut s = String::with_capacity(nibbles);
+    for i in 0..nibbles {
+        let d = ctx.rng.below(16) as u32;
+        // 首位留半个字节，避免 64 位字面量越过 i64（解析端按有符号读）
+        let d = if i == 0 && nibbles.is_multiple_of(2) {
+            d % 8
+        } else {
+            d
+        };
+        s.push(char::from_digit(d, 16).unwrap());
+    }
+    s
+}
+
+/// 单个全局的类型文本 + 初始化文本（只产文本层支持的形态）。
+fn gen_global_init(ctx: &mut GenCtx, defined: &[String]) -> (String, String) {
+    // 位宽与对应十六进制位数（`i5` 这类非字节位宽是 S7 的 i5 保真回归点）
+    const INT_WIDTHS: &[(u32, usize)] = &[
+        (1, 1),
+        (5, 2),
+        (7, 2),
+        (8, 2),
+        (16, 4),
+        (24, 6),
+        (32, 8),
+        (33, 9),
+        (64, 16),
+        (128, 32),
+    ];
+    match ctx.rng.below(12) {
+        // 整数（十进制；位宽覆盖非 8/16/32/64）
+        0 | 1 => {
+            let (bits, _) = *ctx.rng.pick(INT_WIDTHS);
+            let raw = ctx.rng.next();
+            let v = if bits >= 64 {
+                (raw >> 1) as i64
+            } else {
+                (raw & ((1u64 << bits) - 1)) as i64
+            };
+            (format!("i{bits}"), v.to_string())
+        }
+        // 整数（十六进制字面量）
+        2 => {
+            let (bits, nibbles) = *ctx.rng.pick(INT_WIDTHS);
+            (format!("i{bits}"), format!("0x{}", rand_hex(ctx, nibbles)))
+        }
+        // 浮点十进制
+        3 => {
+            let t = *ctx.rng.pick(&["float", "double"]);
+            (t.to_string(), (*ctx.rng.pick(FLOATS)).to_string())
+        }
+        // 浮点**位模式**（0x…：float 8 位十六进制、double 16 位、half/bfloat 4 位）
+        4 => {
+            let (t, nibbles) = *ctx.rng.pick(&[
+                ("float", 8usize),
+                ("double", 16),
+                ("half", 4),
+                ("bfloat", 4),
+            ]);
+            (t.to_string(), format!("0x{}", rand_hex(ctx, nibbles)))
+        }
+        // `f0x…`（llvm-dis 对 half 的输出形态）
+        5 => ("half".to_string(), format!("f0x{}", rand_hex(ctx, 4))),
+        // 零初始化
+        6 => {
+            let ty = *ctx.rng.pick(&["i1", "i32", "i64", "float", "double"]);
+            (ty.to_string(), "zeroinitializer".to_string())
+        }
+        // 数组聚合（元素位宽与类型声明一致）
+        7 => {
+            let (bits, nibbles) = *ctx.rng.pick(&[(8u32, 2usize), (32, 8), (64, 16)]);
+            let n = 1 + ctx.rng.below(3) as usize;
+            let lanes: Vec<String> = (0..n)
+                .map(|_| format!("i{bits} 0x{}", rand_hex(ctx, nibbles)))
+                .collect();
+            (
+                format!("[{n} x i{bits}]"),
+                format!("[{}]", lanes.join(", ")),
+            )
+        }
+        // 结构体聚合（含 padding，S7 的 0 元素递归形态）
+        8 => {
+            let (a, b) = *ctx
+                .rng
+                .pick(&[("i32", "i64"), ("i8", "i32"), ("i64", "float")]);
+            let va = if a == "float" { "1.0" } else { "7" };
+            let vb = if b == "float" { "2.5" } else { "0" };
+            (
+                format!("{{ {a}, {b} }}"),
+                format!("{{ {a} {va}, {b} {vb} }}"),
+            )
+        }
+        // 字符串常量（`c"…"`；类型为 `[N x i8]`）
+        9 => {
+            let n = 1 + ctx.rng.below(4) as usize;
+            let bytes: Vec<String> = (0..n)
+                .map(|_| format!("\\{:02X}", 1 + ctx.rng.below(26)))
+                .collect();
+            (format!("[{n} x i8]"), format!("c\"{}\"", bytes.join("")))
+        }
+        // 向量字面量 / `splat`（LLVM 18+ 广播常量；S7 文本往返回归点）
+        10 => {
+            let (ty, elem) = *ctx.rng.pick(&[
+                ("<4 x i32>", "i32"),
+                ("<2 x float>", "float"),
+                ("<4 x i16>", "i16"),
+            ]);
+            if ctx.rng.chance(40) {
+                (ty.to_string(), format!("splat ({elem} 7)"))
+            } else {
+                let n = if ty.starts_with("<4") { 4 } else { 2 };
+                let lanes: Vec<String> = (0..n)
+                    .map(|_| {
+                        if elem == "float" {
+                            "float 1.5".to_string()
+                        } else {
+                            format!("{elem} 3")
+                        }
+                    })
+                    .collect();
+                (ty.to_string(), format!("<{}>", lanes.join(", ")))
+            }
+        }
+        // 常量表达式（引用已定义的全局；`ptrtoint (ptr @gN to i64)`）
+        _ => match defined.last() {
+            Some(target) => (
+                "i64".to_string(),
+                format!("ptrtoint (ptr @{target} to i64)"),
+            ),
+            None => ("i64".to_string(), "0".to_string()),
+        },
+    }
 }
 
 // ── round-trip 断言（与 display_llvm.rs 同强度：opcode/操作数/立即数值/类型/终结符）──
@@ -641,13 +785,48 @@ fn assert_modules_eq(m1: &Module, m2: &Module, text: &str) {
     }
 }
 
+/// 全局保真对比（v3 S7 扩面）：名字/常量性/地址空间/**初始化字节**/
+/// 常量表达式文本。字节对比正是"位模式保真"那类缺陷的判据（i5 截断、
+/// f16 丢值、浮点位模式被压成 32 位都会在这里现形）。
+fn assert_globals_eq(m1: &Module, m2: &Module, text: &str) {
+    assert_eq!(
+        m1.global_count(),
+        m2.global_count(),
+        "global count:\n{text}"
+    );
+    for ((_, g1), (_, g2)) in m1.iter_globals().zip(m2.iter_globals()) {
+        assert_eq!(g1.name, g2.name, "global name:\n{text}");
+        assert_eq!(
+            (g1.is_constant, g1.addr_space, g1.alignment),
+            (g2.is_constant, g2.addr_space, g2.alignment),
+            "global {} 属性:\n{text}",
+            g1.name
+        );
+        assert_eq!(
+            g1.init, g2.init,
+            "global {} 初始化字节（保真）:\n{text}",
+            g1.name
+        );
+        assert_eq!(
+            g1.init_expr_text, g2.init_expr_text,
+            "global {} 常量表达式文本:\n{text}",
+            g1.name
+        );
+    }
+}
+
 fn fuzz_roundtrip(src: &str, seed: u64, iter: usize) {
     let m1 = parse_module(src)
         .unwrap_or_else(|e| panic!("[seed={seed:#x} iter={iter}] parse1 failed:\n{src}\n{e}"));
-    let text = m1.to_string();
-    let m2 = parse_module(&text)
-        .unwrap_or_else(|e| panic!("[seed={seed:#x} iter={iter}] reparse failed:\n{text}\n{e}"));
-    assert_modules_eq(&m1, &m2, &text);
+    let text1 = m1.to_string();
+    let m2 = parse_module(&text1)
+        .unwrap_or_else(|e| panic!("[seed={seed:#x} iter={iter}] reparse failed:\n{text1}\n{e}"));
+    assert_modules_eq(&m1, &m2, &text1);
+    assert_globals_eq(&m1, &m2, &text1);
+    // 文本幂等（与 corpus_roundtrip 同强度）：打印-解析必须收敛，且第 2 轮输出
+    // 与第 1 轮逐字节相同——全局/元数据的打印规范化若有残留漂移会在这里现形。
+    let text2 = m2.to_string();
+    assert_eq!(text1, text2, "[seed={seed:#x} iter={iter}] 文本不幂等");
 }
 
 fn run_fuzz(seed: u64, iters: usize) {

@@ -667,6 +667,8 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 Some(GlobalInitVal::ZeroInit) => Some(vec![0u8; ctx.size_bytes(ty) as usize]),
                 // 聚合常量：按元素/字段类型打包字节（struct 含 padding 布局）
                 Some(GlobalInitVal::Agg(vals)) => Some(pack_agg_init(&ctx, ty, vals)?),
+                // 向量字面量：按元素类型逐 lane LE 打包（lane 数/类别必须与类型相符）
+                Some(GlobalInitVal::Vector(lanes)) => Some(vec_init_bytes(&ctx, &g.ty, lanes)?),
                 // 常量表达式：求字节（全局地址占位 0——链接期重定位，P1 文本层占位）
                 Some(GlobalInitVal::Expr(e)) => {
                     let expr_bytes = const_expr_bytes(&ctx, e, ctx.size_bytes(ty) as u64)?;
@@ -698,6 +700,10 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             // 表达式 init 保留**文本**（display 原样输出；v3 S7：核心只存文本载荷）
             if let Some(GlobalInitVal::Expr(e)) = &g.init {
                 gv.init_expr_text = Some(crate::ImmStr::from(e.to_llvm_string()));
+            }
+            // 向量字面量 init 同样只存文本（元素前缀取自全局的向量类型）
+            if let Some(GlobalInitVal::Vector(lanes)) = &g.init {
+                gv.init_expr_text = Some(crate::ImmStr::from(vector_lanes_text(&g.ty, lanes)));
             }
             if let Some(data) = init {
                 gv = gv.with_init(data);
@@ -1440,6 +1446,59 @@ fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<
         }
     };
     Ok(bytes)
+}
+
+/// 向量字面量初值 → 字节（v3 S7：此前 `<4 x i32> <i32 3, …>` 这种全局初值
+/// **根本解析不了**——lexer 把整段当一个 `VecConstLit` token，而 `TypeAndInit`
+/// 只拆了 `ZeroInitLit`/`VecZeroInitLit`）。
+///
+/// 语义：按**元素类型**逐 lane 低位优先写入；元素类型取自向量类型文本（`ty_text`）。
+/// lane 数必须与向量长度相符，lane 的值类别（整数/浮点）必须与元素类别一致——
+/// 两者不符都**报错**，不静默补零（静默补零正是 S7 修掉的那类"值悄悄丢"缺陷）。
+fn vec_init_bytes(
+    ctx: &TypeContext,
+    ty_text: &ParsedType,
+    lanes: &[VecLane],
+) -> Result<Vec<u8>, IrError> {
+    let (len, elem_text) = match ty_text {
+        ParsedType::Vec(len, elem) => (*len, (**elem).clone()),
+        _ => {
+            return Err(IrError::Semantic(format!(
+                "向量初值用在非向量类型 `{}` 上",
+                fmt_parsed_type(ty_text)
+            )));
+        }
+    };
+    if lanes.len() as u32 != len {
+        return Err(IrError::Semantic(format!(
+            "向量初值 lane 数 {} 与类型 `{}` 不符",
+            lanes.len(),
+            fmt_parsed_type(ty_text)
+        )));
+    }
+    let elem = to_type_result(&elem_text, ctx)?;
+    let elem_size = (ctx.size_bytes(elem) as usize).max(1);
+    let is_int = ctx.is_int(elem);
+    let is_float = ctx.is_float(elem);
+    let mut out = Vec::with_capacity(len as usize * elem_size);
+    for (i, lane) in lanes.iter().enumerate() {
+        let bytes = match lane {
+            VecLane::Int(v) if is_int => int_init_bytes(elem, *v, ctx),
+            VecLane::UInt(v) if is_int => int_init_bytes(elem, *v as i64, ctx),
+            VecLane::Float(v) if is_float => float_init_bytes(elem, *v, ctx),
+            _ => {
+                return Err(IrError::Semantic(format!(
+                    "向量初值 lane {i} 的值类别与元素类型 `{}` 不符",
+                    fmt_parsed_type(&elem_text)
+                )));
+            }
+        };
+        // lane 字节按元素宽度截断/补零（非 8/16/32/64 位宽元素的实际字节数）
+        let n = bytes.len().min(elem_size);
+        out.extend_from_slice(&bytes[..n]);
+        out.resize(out.len() + (elem_size - n), 0);
+    }
+    Ok(out)
 }
 
 fn int_init_bytes(ty: TypeId, n: i64, ctx: &TypeContext) -> Vec<u8> {

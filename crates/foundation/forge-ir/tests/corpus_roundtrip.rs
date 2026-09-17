@@ -220,4 +220,87 @@ define void @f(ptr %p) {\n\
             assert_eq!(print(&t1), t1, "浮点位模式打印必须幂等（源：{src}）");
         }
     }
+
+    /// 向量字面量全局初值（`global <4 x i32> <i32 1, …>`）：**lane 值必须进字节**。
+    ///
+    /// 改前实测两处都不行：①语法层把 `<N x T> <lanes>` 整段当一个 `VecConstLit`
+    /// token，`TypeAndInit` 只拆了 `zeroinitializer` 两种形态 ⇒ 这种全局**直接解析
+    /// 失败**；②`parse_vec_lanes` 把整段 `i32 3` 喂给 `parse::<i64>()`（前缀必然使
+    /// 解析失败）⇒ 即便能进也**每个 lane 静默变 0**。
+    #[test]
+    fn vector_literal_global_keeps_lane_values() {
+        let src = "@v = global <4 x i32> <i32 1, i32 2, i32 3, i32 4>\n";
+        let m = parse_module(src).expect("向量字面量初值应可解析");
+        let (_, g) = m.iter_globals().next().expect("global");
+        assert_eq!(
+            g.init.as_deref(),
+            Some(&[1u8, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0][..]),
+            "lane 值必须按元素宽度 LE 进字节（不是全 0）"
+        );
+        let t1 = m.to_string();
+        assert!(
+            t1.contains("<i32 1, i32 2, i32 3, i32 4>"),
+            "lane 值必须原样打印（实测：{t1}）"
+        );
+        assert_eq!(print(&t1), t1, "向量初值打印必须幂等");
+        // 元素类型前缀取自向量类型（不是写死 i32）：i16 向量 lane 打 i16
+        let t2 = print("@w = global <4 x i16> <i16 -1, i16 -1, i16 -1, i16 -1>\n");
+        assert!(
+            t2.contains("<i16 -1, i16 -1, i16 -1, i16 -1>"),
+            "i16 向量的 lane 前缀必须是 i16（实测：{t2}）"
+        );
+        assert_eq!(print(&t2), t2, "i16 向量初值打印必须幂等");
+    }
+
+    /// 向量初值的非法形态必须**报错**（fail-closed，不静默补零）：lane 数不符、
+    /// lane 值类别与元素类型不符。
+    #[test]
+    fn malformed_vector_initializer_is_rejected() {
+        for src in [
+            // lane 数不足
+            "@v = global <4 x i32> <i32 1, i32 2>\n",
+            // 浮点元素配整数 lane
+            "@v = global <2 x float> <i32 1, i32 2>\n",
+        ] {
+            assert!(
+                parse_module(src).is_err(),
+                "非法向量初值必须被拒绝（源：{src}）"
+            );
+        }
+    }
+
+    /// `c"…"` 字符串常量里**转义的收尾引号**不能丢：`c"T\22"` 是两字节 `T` + `"`，
+    /// 打印成 `c"T\""` 后必须回读成同样两字节。
+    ///
+    /// 改前实测：`decode_c_string` 用 `trim_end_matches('"')`（复数）剥引号，把
+    /// **转义的收尾引号一起吃掉** ⇒ `[84, 34]` 静默变 `[84]`。
+    #[test]
+    fn escaped_trailing_quote_in_c_string_survives() {
+        for src in [
+            "@g = global [2 x i8] c\"T\\22\"\n",
+            "@g = global [2 x i8] c\"T\\\"\"\n",
+            "@g = global [2 x i8] [i8 0x54, i8 0x22]\n",
+        ] {
+            let m = parse_module(src).unwrap_or_else(|e| panic!("parse 失败（{src}）：{e}"));
+            let (_, g) = m.iter_globals().next().expect("global");
+            assert_eq!(
+                g.init.as_deref(),
+                Some(&[84u8, 34][..]),
+                "转义收尾引号必须保真（源：{src}）"
+            );
+            let t1 = m.to_string();
+            assert!(
+                t1.contains("c\"T\\\"\""),
+                "应打印成 c-string 形态（实测：{t1}）"
+            );
+            let m2 = parse_module(&t1).expect("打印结果必须可回读");
+            let (_, g2) = m2.iter_globals().next().expect("global");
+            assert_eq!(
+                g2.init.as_deref(),
+                Some(&[84u8, 34][..]),
+                "打印-回读后字节必须不变（源：{src}；打印：{t1}）"
+            );
+            assert_eq!(print(&t1), t1, "c-string 打印必须幂等（源：{src}）");
+        }
+    }
 }

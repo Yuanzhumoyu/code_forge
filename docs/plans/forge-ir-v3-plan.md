@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；余项：splat 逐 lane 广播值、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；余项：splat 逐 lane 广播值、错误恢复；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1604,6 +1604,44 @@ riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --a
 LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0；语料往返幂等 189/189；
 `display_llvm` 结构化往返全绿；fmt `--check`/clippy（全 feature + 无 feature）/
 `cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
+
+### S7（切片）：结构化 fuzz 扩面——顺带挖出三处"静默丢值"（2026-09-17）
+
+**扩面内容**（`tests/roundtrip_fuzz.rs`）：全局生成器从"`global i32/i64 0|1|42`"扩到
+**保真矩阵**——非 8/16/32/64 位宽整数（i1/i5/i7/i24/i33/i128，十进制 + 十六进制）、
+浮点十进制与**位模式**（float/double/half/bfloat 的 `0x…`）、`f0x…`、`zeroinitializer`、
+数组/结构体/字符串（`c"…"`）聚合、向量字面量与 `splat`、常量表达式 init；断言侧加两条：
+**全局初始化字节对比**（名字/常量性/地址空间/`init` 字节/`init_expr_text`）与**文本幂等**
+（`text1 == text2`，与 `corpus_roundtrip` 同强度）。
+
+**扩面立刻挖出三处真缺陷，全部是"值悄悄丢"**（往返只比对 m1/m2 两边时看不见——这正是
+扩面的价值）：
+
+1. **向量字面量全局初值根本无法解析**：lexer 把 `<4 x i32> <i32 3, …>` 整段当一个
+   `VecConstLit` token（最长匹配），而 `TypeAndInit` 只拆了标量/向量两种
+   `zeroinitializer` 形态。修：新增 `GlobalInitVal::Vector(Vec<VecLane>)` + `TypeAndInit`
+   的 `VecConstLit` 分支 + `vec_init_bytes`（按元素类型逐 lane LE 打包；**lane 数与
+   值类别不符一律报错**，不静默补零）。
+2. **`parse_vec_lanes` 把每个 lane 都读成 0**：它把整段 `i32 3` 直接喂给
+   `parse::<i64>()`/`parse::<f64>()`——前缀必然使解析失败 ⇒ 向量常量的**值全丢**。
+   修：先拆出元素类型前缀再解析值，且**类别由前缀决定**（`f32 3` 是浮点 lane）。
+   顺带：lane 文本前缀取自向量元素类型（`<4 x i16>` 不再打成 `i32`）。
+3. **`c"…"` 里转义的收尾引号被吃掉**：`decode_c_string` 用 `trim_end_matches('"')`
+   （**复数**）剥引号，`c"T\22"`（两字节 `T` + `"`）首轮得 `[84, 34]`，打印成
+   `c"T\""` 后回读只剩 `[84]`。修：`strip_prefix`/`strip_suffix` 各剥一层。
+
+**回归钉子**（`corpus_roundtrip.rs` 的 `fidelity` 模块 +3 例）：
+`vector_literal_global_keeps_lane_values`（lane 值进字节 + i16 前缀 + 幂等）、
+`malformed_vector_initializer_is_rejected`（lane 数/类别不符都是错误）、
+`escaped_trailing_quote_in_c_string_survives`（三种写法 + 打印-回读字节不变）。
+
+**负向验证**：回退 lane 前缀剥离 + 回退 `decode_c_string` ⇒ 2 例 FAILED；注掉 grammar
+的 `VecConstLit` 分支（**强制重建** LALRPOP 生成物）⇒ 向量保真用例 FAILED；恢复后全绿。
+
+**结果**：10k 随机模块 round-trip 0 失败（新增字节对比与文本幂等断言）；
+LLVM 语料正向 **198/452**、负向正确拒绝 254、误接受 0——与基线一致；
+语料往返幂等 **189/189**、`display_llvm` 结构化往返 198/0；workspace
+**1495 passed / 0 failed / 19 ignored**（+3）；fmt/clippy/release/doc 全干净。
 
 ## 7. 参考设计（外部）
 

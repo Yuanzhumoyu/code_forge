@@ -464,6 +464,11 @@ TypeAndInit: (ParsedType, Option<GlobalInitVal>) = {
     <t: Type> => (t, None),
     <lit: ZeroInitLit> => (crate::ir_parser::ast_items::split_scalar_ty(&lit), Some(GlobalInitVal::ZeroInit)),
     <lit: VecZeroInitLit> => (crate::ir_parser::ast_items::split_vec_const_lit(&lit).0, Some(GlobalInitVal::ZeroInit)),
+    // 向量字面量同上：`<4 x i32> <i32 3, …>` 也是单 token（VecConstLit）
+    <lit: VecConstLit> => {
+        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
+        (ty, Some(GlobalInitVal::Vector(lanes)))
+    },
 };
 
 // ── 全局变量：@g = global <ty> <init> [, align N] ──

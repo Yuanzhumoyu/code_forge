@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **结构化 fuzz 扩面（forge-ir v3 S7 切片）**：`roundtrip_fuzz` 的全局生成器从 `global i32/i64 0|1|42` 扩到**保真矩阵**（i1/i5/i7/i24/i33/i128 十进制与十六进制、float/double/half/bfloat 的十进制与 `0x…` 位模式、`f0x…`、`zeroinitializer`、数组/结构体/`c"…"` 字符串聚合、向量字面量与 `splat`、常量表达式 init），断言侧新增**全局初始化字节对比**与**文本幂等**（`text1 == text2`）。10k 随机模块 0 失败。
+  扩面立刻挖出三处"值悄悄丢"（往返只比对 m1/m2 两边时看不见）并修掉：①**向量字面量全局初值根本无法解析**（lexer 把 `<4 x i32> <i32 3, …>` 整段当一个 token，`TypeAndInit` 只拆 `zeroinitializer`）——新增 `GlobalInitVal::Vector` + `VecConstLit` 分支 + `vec_init_bytes`（逐 lane 按元素类型打包，lane 数/类别不符一律报错）；②**`parse_vec_lanes` 把每个 lane 都读成 0**（把整段 `i32 3` 喂给 `parse::<i64>()`，前缀必然失败）——改为先拆元素类型前缀、类别由前缀决定，lane 文本前缀也取自元素类型（`<4 x i16>` 不再打 `i32`）；③**`c"…"` 转义的收尾引号被吃掉**（`trim_end_matches('"')` 复数剥引号）：`c"T\22"` = `[84,34]` 打印成 `c"T\""` 后回读只剩 `[84]`——改为各剥一层 `strip_prefix`/`strip_suffix`。
+  回归钉子：`fidelity::vector_literal_global_keeps_lane_values`、`fidelity::malformed_vector_initializer_is_rejected`、`fidelity::escaped_trailing_quote_in_c_string_survives`。负向验证：回退 lane 前缀剥离 / 回退 `decode_c_string` ⇒ 2 例 FAILED，注掉 grammar 分支（强制重建生成物）⇒ 向量保真用例 FAILED。
+  实测：workspace 1495 passed / 0 failed / 19 ignored；LLVM 语料 198/254/0、语料往返幂等 189/189、`display_llvm` 结构化往返 198/0 均与基线一致。
+
 - **`features = ["text"]` 文本层门控（forge-ir v3 S7 切片）**：门控前 `--no-default-features` **根本编不过**——两个核心实体字段直接存解析层 AST（`GlobalVariable::init_expr: Option<ConstExpr>`、`GlobalAlias::{aliasee_ty, aliasee}`）。
   ①这两个字段的唯一读点是 `display`（原样还原文本）、唯一写点是语义层，故改为**不透明文本载荷**：语义层构建时渲染（`e.to_llvm_string()`；别名拼 `fmt_parsed_type(ty) + " " + expr`，`Void` 占位不带前缀），核心存 `init_expr_text: Option<ImmStr>` / `aliasee_text: ImmStr`（与既有 `ifunc_params` 同一约定），display 改为原样输出文本。
   ②`default = ["text"]`、`text = ["dep:logos", "dep:lalrpop-util"]`（两者 `optional = true`）；`lalrpop` 是 build-dependency 不可选 ⇒ `build.rs` 读 `CARGO_FEATURE_TEXT` 决定是否生成 LALRPOP 表，`ops.toml` 的指令元数据生成**不随 feature 关**（核心也读 `Opcode` 表）。

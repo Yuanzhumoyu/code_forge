@@ -240,6 +240,13 @@ pub enum GlobalInitVal {
     ZeroInit,
     /// 聚合常量元素（`[i32 1, i32 2]` / `{ i32 1, i64 2 }`；单层标量）。
     Agg(Vec<GlobalInitVal>),
+    /// **向量字面量**初值（`@v = global <4 x i32> <i32 3, i32 3, i32 3, i32 3>`）。
+    ///
+    /// 元素类型取自全局声明的向量类型（lane 只带值）；语法层把
+    /// `<N x T> <lanes>` 整段当**单 token**（`VecConstLit`，最长匹配），所以在
+    /// `TypeAndInit` 里拆开——这与标量 `i32 zeroinitializer`（`ZeroInitLit`）
+    /// 同一模式。文本渲染见 [`vector_lanes_text`]。
+    Vector(Vec<VecLane>),
     /// 常量表达式（`ptrtoint (ptr @h to i32)` 等；保留树供 display 还原）。
     Expr(Box<ConstExpr>),
 }
@@ -343,24 +350,10 @@ impl ConstExpr {
             ConstExpr::Splat(ty, inner) => {
                 format!("splat ({} {})", fmt_parsed_type(ty), inner.to_llvm_string())
             }
-            // 向量常量：值文本只含 `<lanes>`（类型前缀由 operand_text 的
-            // op_ty 提供——第二十九轮:原走 other 输出完整 `ty <lanes>`
-            // 致类型重复 `<2 x i32> <2 x i32> <...>`,reparse 拒绝）
-            ConstExpr::Vector(_ty, lanes) => {
-                if lanes.is_empty() {
-                    "zeroinitializer".to_string()
-                } else {
-                    let lanes_s: Vec<String> = lanes
-                        .iter()
-                        .map(|l| match l {
-                            VecLane::Int(n) => format!("i32 {n}"),
-                            VecLane::UInt(n) => format!("i32 {n}"),
-                            VecLane::Float(f) => format!("float {f}"),
-                        })
-                        .collect();
-                    format!("<{}>", lanes_s.join(", "))
-                }
-            }
+            // 向量常量：值文本只含 `<lanes>`（类型前缀由外层位置提供——
+            // 第二十九轮:原走 other 输出完整 `ty <lanes>` 致类型重复
+            // `<2 x i32> <2 x i32> <...>`,reparse 拒绝）
+            ConstExpr::Vector(ty, lanes) => vector_lanes_text(ty, lanes),
             // 嵌套表达式操作数：自身带括号（`bitcast (ptr @h to ptr)`），无类型前缀
             other => other.to_llvm_string(),
         }
@@ -806,6 +799,32 @@ pub fn split_vec_const_lit(lit: &str) -> (ParsedType, Vec<VecLane>) {
     (ty, lanes)
 }
 
+/// 向量 lane 列表 → 文本（`<i32 3, i32 3>`；空 lane = `zeroinitializer`）。
+///
+/// **元素前缀取自向量类型**（不是写死 `i32`/`float`）：`<4 x i16> <i16 -1, …>`
+/// 必须原样打回 `i16`，否则往返后常量池里的元素类型漂移（v3 S7）。
+/// lane 值与 `parse_vec_lanes` 的判定配套：浮点 lane 定要有 `.`/指数，否则会被
+/// 读回整数 lane（见该函数）。
+pub fn vector_lanes_text(ty: &ParsedType, lanes: &[VecLane]) -> String {
+    if lanes.is_empty() {
+        return "zeroinitializer".to_string();
+    }
+    let elem = match ty {
+        ParsedType::Vec(_, e) => fmt_parsed_type(e),
+        // 非向量类型（宽松兜底：文本层只在向量位置用它）
+        _ => "i32".to_string(),
+    };
+    let lanes_s: Vec<String> = lanes
+        .iter()
+        .map(|l| match l {
+            VecLane::Int(n) => format!("{elem} {n}"),
+            VecLane::UInt(n) => format!("{elem} {n}"),
+            VecLane::Float(f) => format!("{elem} {f}"),
+        })
+        .collect();
+    format!("<{}>", lanes_s.join(", "))
+}
+
 /// 解析向量类型文本（`<4 x float` 或 `<4 x float>`）→ ParsedType::Vec。
 fn parse_vec_type(s: &str) -> ParsedType {
     let inner = s.trim().trim_start_matches('<').trim_end_matches('>');
@@ -847,11 +866,15 @@ pub fn split_scalar_ty(lit: &str) -> ParsedType {
 /// 解码 LLVM 字符串常量 token：`c"abc\00\n"` → 字节。
 /// 支持转义：`\hh`（hex 字节）、`\n`/`\t`/`\r`、`\\`、`\"`、`\'`。
 pub fn decode_c_string(s: &str) -> Vec<u8> {
-    let inner = s
-        .trim()
-        .trim_start_matches('c')
-        .trim_start_matches('"')
-        .trim_end_matches('"');
+    // 只剥**一层** `c` 前缀与一对引号（v3 S7 修）：原来用
+    // `trim_start_matches('"')`/`trim_end_matches('"')`，会把**转义的收尾引号
+    // 一起吃掉**——`c"T\""`（内容 `T` + `"`）被削成 `T\`，末字节静默丢失
+    // （`@g = global [2 x i8] c"T\22"` 首轮 [84, 34]、打印成 `c"T\""` 后回读只剩
+    // [84]）。结构化 fuzz 扩面后由"初始化字节保真"断言抓到。
+    let s = s.trim();
+    let s = s.strip_prefix('c').unwrap_or(s);
+    let s = s.strip_prefix('"').unwrap_or(s);
+    let inner = s.strip_suffix('"').unwrap_or(s);
     let bytes: Vec<char> = inner.chars().collect();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -920,7 +943,7 @@ pub fn parse_vec_lanes(s: &str) -> Vec<VecLane> {
                 return VecLane::Int(0);
             }
             // 关键字 lane（`i1 true`/`i1 false`/`i1 undef`/`i1 poison`/`i1 null`/
-            // `i32 zeroinitializer`）——先于浮点判定（false/true 含 'e' 会误判；
+            // `i32 zeroinitializer`）——先于数值判定（false/true 含 'e' 会误判；
             // 第十二轮修复）
             if t.ends_with("true") {
                 return VecLane::Int(1);
@@ -935,25 +958,51 @@ pub fn parse_vec_lanes(s: &str) -> Vec<VecLane> {
             {
                 return VecLane::Int(0);
             }
-            if t.contains('.') || t.contains('e') || t.contains('E') {
-                VecLane::Float(t.parse::<f64>().unwrap_or(0.0))
-            } else if let Some(rest) = t.strip_prefix("-0x").or_else(|| t.strip_prefix("0x")) {
+            // 拆出**元素类型前缀**（`i32 3` → 前缀 `i32`、值 `3`）。v3 S7 修：
+            // 此前把整段 `i32 3` 直接喂给 `parse::<f64>()`/`parse::<i64>()`，
+            // 前缀必然使解析失败 ⇒ **每个 lane 都静默变 0**（向量常量的值全丢，
+            // 而往返测试只比对 m1/m2 两边、看不出来；结构化 fuzz 扩面后发现）。
+            // 单段（`3`/`1.5`，裸值形态）无前缀。
+            let mut parts = t.split_whitespace();
+            let first = parts.next().unwrap_or("");
+            let (prefix, value) = match (parts.next(), parts.next()) {
+                (Some(v), None) => (first, v),
+                _ => ("", t),
+            };
+            // 类别由前缀决定（`f32 3` 是浮点 lane，`i32 3` 是整数 lane）；无前缀时
+            // 退回旧的启发式（含 `.`/`e`/`E` 即浮点）。
+            let prefix_is_float = matches!(
+                prefix,
+                "float" | "double" | "half" | "bfloat" | "fp128" | "x86_fp80" | "ppc_fp128"
+            ) || (prefix.starts_with('f')
+                && prefix[1..].chars().all(|c| c.is_ascii_digit()));
+            if !prefix.is_empty() && prefix_is_float {
+                return VecLane::Float(value.parse::<f64>().unwrap_or(0.0));
+            }
+            if prefix.is_empty()
+                && (value.contains('.') || value.contains('e') || value.contains('E'))
+            {
+                return VecLane::Float(value.parse::<f64>().unwrap_or(0.0));
+            }
+            if let Some(rest) = value
+                .strip_prefix("-0x")
+                .or_else(|| value.strip_prefix("0x"))
+            {
                 let v = u64::from_str_radix(rest.replace('_', "").as_str(), 16).unwrap_or(0);
-                if t.starts_with('-') {
-                    VecLane::Int(-(v as i64))
-                } else {
-                    VecLane::UInt(v)
+                if value.starts_with('-') {
+                    return VecLane::Int(-(v as i64));
                 }
-            } else if let Some(rest) = t.strip_prefix('-') {
-                VecLane::Int(rest.parse::<i64>().unwrap_or(0).wrapping_neg())
-            } else {
-                match t.parse::<i64>() {
-                    Ok(n) => VecLane::Int(n),
-                    Err(_) => match t.parse::<u64>() {
-                        Ok(u) => VecLane::UInt(u),
-                        Err(_) => VecLane::Int(0),
-                    },
-                }
+                return VecLane::UInt(v);
+            }
+            if let Some(rest) = value.strip_prefix('-') {
+                return VecLane::Int(rest.parse::<i64>().unwrap_or(0).wrapping_neg());
+            }
+            match value.parse::<i64>() {
+                Ok(n) => VecLane::Int(n),
+                Err(_) => match value.parse::<u64>() {
+                    Ok(u) => VecLane::UInt(u),
+                    Err(_) => VecLane::Int(0),
+                },
             }
         })
         .collect()
