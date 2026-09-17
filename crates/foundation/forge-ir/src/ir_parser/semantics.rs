@@ -927,6 +927,10 @@ fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
             // 3.4 扩展：!tbaa 必须引用 tuple 节点（嵌套 tag 结构 `!{!{...}, i64 1}`）
             MetadataKind::TBAA => match node {
                 MetadataNode::Tuple(_) => Ok(()),
+                // 引用了**未定义**的 !N（空洞占位）：无从校验，保持宽松
+                //（与旧行为一致——旧实现里这种槽位是空 tuple，同样放行；
+                // 语料 incomplete-ir-metadata.ll 正是这种用例）
+                MetadataNode::Placeholder => Ok(()),
                 other => Err(IrError::Semantic(format!(
                     "!tbaa must reference a tuple tag node, got {other:?}"
                 ))),

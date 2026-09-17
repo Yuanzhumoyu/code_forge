@@ -21,26 +21,6 @@ use forge_ir::ir_parser::parse_module;
 /// 否则测试会提示"条目已失效"。
 const KNOWN_DRIFT: &[(&str, &str)] = &[
     (
-        "DICommonBlock.ll",
-        "命名元数据 `!llvm.dbg.cu = !{!0}` 回读后名字与列表都丢（变成 `!N = !{}`）",
-    ),
-    (
-        "DIEnumerator.ll",
-        "同命名元数据丢失（`!llvm.module.flags` 等）",
-    ),
-    (
-        "disubprogram-targetfuncname.ll",
-        "同命名元数据丢失（`!omp_offload.info` 位置/名字漂移）",
-    ),
-    (
-        "export-symbol-anonymous-class.ll",
-        "同命名元数据丢失（`!llvm.module.flags`/`!llvm.dbg.cu`/`!llvm.ident`）",
-    ),
-    (
-        "generic-debug-node.ll",
-        "同命名元数据丢失（`!named = !{...}` 回读成匿名空节点）",
-    ),
-    (
         "constant-splat.ll",
         "splat 向量全局打印成 `<1 x i1> <1 x i32> zeroinitializer`（多出错误类型前缀）",
     ),
@@ -136,7 +116,7 @@ fn positive_corpus_print_is_idempotent() {
     );
     assert_eq!(
         idempotent,
-        181,
+        186,
         "幂等用例数变了（实测 {idempotent}，已知漂移 {} 个）：修好或退化了就更新这个数与 KNOWN_DRIFT",
         KNOWN_DRIFT.len()
     );

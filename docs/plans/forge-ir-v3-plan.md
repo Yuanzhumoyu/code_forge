@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、幂等 181/189，8 条 `KNOWN_DRIFT` 逐条记原因；顺手修掉 i5 常量宽度与大整数/位模式浮点两类保真缺陷）已落地（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、幂等 **186/189**，3 条 `KNOWN_DRIFT` 逐条记原因）已落地；顺手修掉三类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、**命名元数据往返**——`MetadataNode::Placeholder` 区分空洞与显式 `!{}`，命名行前置输出）（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1409,9 +1409,38 @@ f32/f64 的**大整数**分支改走 `0x` 位模式；③f128 的 `0xL…` 字�
 riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
 `cargo doc -D warnings` 全干净。
 
-**仍在 `KNOWN_DRIFT` 的 3 类**（未修，原因已实测记录）：①命名元数据回读丢名字与列表
-（5 个 DI/`!named` 用例，一个根因）；②splat 向量全局多打一个类型前缀；③聚合常量元素
-类型丢失（`float 4` → `i32 4`）。
+**S7 余项**：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；
+语料往返漂移剩 3 类（splat 类型前缀、`0xH`/`f0x` 小数字面量、聚合常量元素类型）。
+
+### S7（切片）：命名元数据往返幂等（漂移 8 → 3）（2026-09-17）
+
+上一片留下的最大一类漂移（5 个 DI 用例）定位到根因并修掉。**逐例打差异后**看到的真相与
+最初猜测不同：命名元数据的**名字与内容都没丢**（`lookup_named` 两次都在），漂移来自
+**id 空洞**与**文本顺序**：
+
+1. 解析器为显式 `!N` 预留槽位时会把中间空洞补成**空 tuple**（文本里有 `!15` 与 `!19`
+   ⇒ 16..18 成为 `!{}`）。这些空洞被打印出来，二次解析后成了"显式定义"，命名节点 id
+   整体后移 ⇒ 文本变化、不幂等。
+2. 打印顺序把命名节点按 store id 内联在数字节点之间（`0..15` → 命名(16,17,18) →
+   `19,20`），而命名节点的 id 依赖解析顺序 ⇒ 文本与 id 绑定。
+
+**改法**：①`MetadataNode` 增加 **`Placeholder`** 变体，`MetadataStore::insert_at` 的空洞
+填充改用它——与用户写明的空 tuple（`!0 = !{}`）**区分开**；②display 改为**命名 metadata
+先输出**（LLVM 风格，文本与 id 无关），随后按 id 输出数字节点并**跳过无人引用的
+`Placeholder`**（被引用的仍照打，否则 reparse 会引用未定义 `!N`——第二十九轮踩过的那条）；
+③`!tbaa` 形状检查对 `Placeholder` 保持宽松（引用未定义节点时无从校验；语料
+`incomplete-ir-metadata.ll` 正是这种用例——实测发现不放宽会让正向收敛数 198 → 197）。
+
+**结果**：往返幂等 **186/189**（此前 181），漂移 **8 → 3**；LLVM 语料正向收敛数保持
+**198/452**、负向正确拒绝 254、误接受 0。
+
+**守卫**：`tests/corpus_roundtrip.rs` 的 `KNOWN_DRIFT` 收窄到实测剩下的 3 条，计数
+（189 / 186）同步更新；**负向验证**两处都做——①关掉"跳过空洞占位" ⇒ 5 个 DI 用例重新
+漂移、守卫 **FAILED**；②删掉 `KNOWN_DRIFT` 的一条 ⇒ 守卫点名"新漂移" FAILED；恢复后全绿。
+
+**验证**：workspace 1481 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
 
 ## 7. 参考设计（外部）
 

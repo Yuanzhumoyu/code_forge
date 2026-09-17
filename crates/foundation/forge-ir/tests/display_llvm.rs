@@ -717,6 +717,7 @@ fn collect_metadata_strings(m: &Module) -> Vec<String> {
             MetadataNode::Leaf(v) => std::slice::from_ref(v),
             MetadataNode::Tuple(v) => v,
             MetadataNode::Named { ops, .. } => ops,
+            MetadataNode::Placeholder => &[],
         };
         for v in vals {
             if let MetadataValue::String(s) = v {

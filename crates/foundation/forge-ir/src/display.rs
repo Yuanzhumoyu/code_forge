@@ -293,24 +293,40 @@ impl fmt::Display for Module {
                 }
             }
         }
-        // metadata 节点定义：`!N = !{...}` / `!named(...)`——**总是输出**
-        //（含空 Tuple 占位——第二十九轮:原跳过空节点造成 ID 空洞,
-        // attach 引用 `!N` 在 reparse 时未定义 → semantics 越界 panic）
+        // metadata 输出（v3 S7 往返幂等）：
+        //
+        // ① **命名 metadata 先输出**（LLVM 风格）——命名节点在 store 里的 id 取决于
+        //    解析顺序（显式 `!N` 区之后），把它固定在数字节点之前，打印文本就与 id 无关；
+        // ② 再按 id 顺序输出数字节点，**跳过无人引用的空洞占位**（`Placeholder`——
+        //    解析器给显式 `!N` 预留槽位时补齐的空位）：它们打印出来会让往返不幂等
+        //    （二次解析后空位被物化并打印，id 整体后移）。写明的 `!N = !{}` 是
+        //    `Tuple([])`，仍照打；被引用的空洞也照打（reparse 时 `!N` 不能未定义——
+        //    第二十九轮踩过：跳过空节点造成 ID 空洞 → semantics 越界 panic）。
         for (id, node) in self.metadata_store.iter() {
-            // 命名 metadata（LLVM：`!t = !{...}`）经 name_of 反查输出名字；否则 `!N`
-            match self.metadata_store.name_of(id) {
-                Some(name) => writeln!(
+            if let Some(name) = self.metadata_store.name_of(id) {
+                writeln!(
                     f,
                     "!{name} = {}",
                     fmt_metadata_node(&self.metadata_store, node)
-                )?,
-                None => writeln!(
-                    f,
-                    "!{} = {}",
-                    id.0,
-                    fmt_metadata_node(&self.metadata_store, node)
-                )?,
+                )?;
             }
+        }
+        let referenced = collect_referenced_metadata(self);
+        for (id, node) in self.metadata_store.iter() {
+            if self.metadata_store.name_of(id).is_some() {
+                continue; // ① 已输出
+            }
+            if matches!(node, crate::metadata::MetadataNode::Placeholder)
+                && !referenced.contains(&id.0)
+            {
+                continue;
+            }
+            writeln!(
+                f,
+                "!{} = {}",
+                id.0,
+                fmt_metadata_node(&self.metadata_store, node)
+            )?;
         }
         for func in self.iter_functions() {
             // 跳过 Local callee 占位函数(名字以 % 开头——间接调用占位,
@@ -2062,6 +2078,67 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
     }
 }
 
+/// 收集所有**被引用**的 metadata 节点 id：节点内部引用（含 `Field` 嵌套）、
+/// 命名节点内容、以及函数/全局/别名/指令上的挂载（`AttachedMetadata.node`）。
+///
+/// 用途见 `Display for Module` 里 metadata 段的注释：无人引用的空占位节点不打印。
+fn collect_referenced_metadata(module: &Module) -> std::collections::HashSet<u32> {
+    use crate::metadata::{MetadataNode, MetadataValue};
+    use std::collections::HashSet;
+
+    fn walk_val(v: &MetadataValue, out: &mut HashSet<u32>) {
+        match v {
+            MetadataValue::Node(id) => {
+                out.insert(id.0);
+            }
+            MetadataValue::Field(_, inner) => walk_val(inner, out),
+            _ => {}
+        }
+    }
+    fn walk_node(node: &MetadataNode, out: &mut HashSet<u32>) {
+        match node {
+            MetadataNode::Leaf(v) => walk_val(v, out),
+            MetadataNode::Tuple(vals) => {
+                for v in vals {
+                    walk_val(v, out);
+                }
+            }
+            MetadataNode::Named { ops, .. } => {
+                for v in ops {
+                    walk_val(v, out);
+                }
+            }
+            MetadataNode::Placeholder => {}
+        }
+    }
+
+    let mut out: HashSet<u32> = HashSet::new();
+    for (_, node) in module.metadata_store.iter() {
+        walk_node(node, &mut out);
+    }
+    for func in module.iter_functions() {
+        for m in func.metadata() {
+            out.insert(m.node.0);
+        }
+        for (_, data) in func.dfg.insts() {
+            for m in &data.metadata {
+                out.insert(m.node.0);
+            }
+        }
+    }
+    for (_, g) in module.iter_globals() {
+        for m in g.metadata() {
+            out.insert(m.node.0);
+        }
+    }
+    for a in module.iter_global_aliases() {
+        for m in a.metadata() {
+            out.insert(m.node.0);
+        }
+    }
+    out
+}
+
 /// 按元素类型+端序把单个 lane 的字节格式化为文本（vconst lane 输出）。
 fn fmt_vconst_lane(
     store: &TypeStore,
@@ -2133,6 +2210,8 @@ fn fmt_metadata_node(
             )
         }
         MetadataNode::Leaf(v) => fmt_metadata_val(store, v),
+        // 空洞占位（被引用时才会走到这里）：打印成空 tuple，reparse 得到 `!N = !{}`
+        MetadataNode::Placeholder => "!{}".to_string(),
     }
 }
 

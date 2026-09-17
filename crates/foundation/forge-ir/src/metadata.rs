@@ -156,6 +156,11 @@ pub enum MetadataNode {
         ops: SmallVec<[MetadataValue; 4]>,
         distinct: bool,
     },
+    /// **空洞占位**：解析器为显式 `!N` id 预留槽位时补齐的空位（文本里 `!15` 与 `!19`
+    /// 并存 ⇒ 16..18 是空洞）。与用户写的空 tuple（`!0 = !{}` ⇒ [`MetadataNode::Tuple`]）
+    /// **必须区分**：后者是显式定义、打印时必须原样输出（否则往返丢失），前者无人引用时
+    /// 不打印（否则 id 会随解析顺序变化，往返不幂等）。
+    Placeholder,
 }
 
 impl MetadataStore {
@@ -216,7 +221,8 @@ impl MetadataStore {
         let old = self.nodes.get(id.0 as usize).cloned();
         if self.nodes.len() <= id.0 as usize {
             self.nodes
-                .resize(id.0 as usize + 1, MetadataNode::Tuple(SmallVec::new()));
+                // 空洞补 Placeholder（与显式 !{} 区分，见 MetadataNode::Placeholder）
+                .resize(id.0 as usize + 1, MetadataNode::Placeholder);
         }
         if let Some(old) = old
             && self.dedup.get(&old) == Some(&id)
