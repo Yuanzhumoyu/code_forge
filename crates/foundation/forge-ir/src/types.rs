@@ -845,6 +845,7 @@ impl TypeStore {
 // ============================================================
 
 use std::ops::Deref;
+#[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 

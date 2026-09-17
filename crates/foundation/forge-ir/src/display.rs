@@ -1175,12 +1175,9 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                         match value_as_literal(self.func, self.store, self.module, p) {
                             // 字面量自带类型（`ptr @g` / `i32 42`）→ 不再重复 ptr_ty
                             Some(lit) => write!(f, " {}", lit)?,
-                            None => write!(
-                                f,
-                                " {} %{}",
-                                fmt_llvm_type(store, pt),
-                                self.names.value(p)
-                            )?,
+                            None => {
+                                write!(f, " {} %{}", fmt_llvm_type(store, pt), self.names.value(p))?
+                            }
                         }
                     }
                     fmt_mem_attrs(f, instruction)?;
@@ -2327,10 +2324,7 @@ fn value_as_literal(
                 "poison"
             };
             match func.dfg.value_type(v) {
-                Some(ty) => Some(ImmStr::from(format!(
-                    "{} {word}",
-                    fmt_llvm_type(store, ty)
-                ))),
+                Some(ty) => Some(ImmStr::from(format!("{} {word}", fmt_llvm_type(store, ty)))),
                 None => Some(ImmStr::from_static(word)),
             }
         }
