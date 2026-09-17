@@ -1939,6 +1939,10 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
                 format!("0x{bits:08x}")
             } else if f.fract() == 0.0 && f.abs() < 1e15 {
                 format!("{f:.1}")
+            } else if f.fract() == 0.0 {
+                // 大整数浮点：十进制展开在解析端按整数字面量读会溢出（实测 f32/f64::MAX
+                // 往返变成位模式全 1）⇒ 直接给 hex 位模式，解析端按位模式还原（精确）
+                format!("0x{bits:08x}")
             } else {
                 format!("{f}")
             }
@@ -1950,6 +1954,9 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
                 format!("0x{bits:016x}")
             } else if f.fract() == 0.0 && f.abs() < 1e15 {
                 format!("{f:.1}")
+            } else if f.fract() == 0.0 {
+                // 同 f32：大整数浮点走 hex 位模式（十进制展开无法被精确回读）
+                format!("0x{bits:016x}")
             } else {
                 format!("{f}")
             }
@@ -2036,6 +2043,17 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
             }
             out.push('}');
             out
+        }
+        // 非 8/16/32/64 位宽整数（i1/i5/i24…）：按低 ceil(bits/8) 字节 LE 解码后十进制输出
+        // （LLVM 风格 i5 7）。此前落末尾兜底把 LE 字节当十六进制原样打印 ⇒ i5 7
+        // 打成 0x07000000，reparse 后又变 0x00000007，往返不幂等（实测漂移）。
+        TypeEntry::Int { bits } => {
+            let nbytes = (*bits as usize).div_ceil(8).clamp(1, init.len().max(1));
+            let mut v: u128 = 0;
+            for (k, &b) in init.iter().take(nbytes).enumerate() {
+                v |= (b as u128) << (k * 8);
+            }
+            format!("{v}")
         }
         _ => format!(
             "0x{}",

@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）已落地并带守卫（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、往返断言扩面、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、幂等 181/189，8 条 `KNOWN_DRIFT` 逐条记原因；顺手修掉 i5 常量宽度与大整数/位模式浮点两类保真缺陷）已落地（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1370,6 +1370,48 @@ riscv64 131/67/0；LLVM 语料正/负向断言不变；fmt `--check`/clippy `-D 
 `CARGO_FEATURE_TEXT` + 把 `ConstExpr`/`ParsedType` 与 `GlobalVariable` 解耦）；
 IR 侧 span 贯穿（`SourceLocation`）；错误恢复（一次报多个错误）；往返断言扩面；
 结构化 fuzz。
+
+### S7（切片）：语料往返断言扩面 + 两类保真缺陷（2026-09-17）
+
+"往返断言扩面"落到**真实语料**：LLVM 官方 test/Assembler 的 189 个正向用例
+（能 parse 的那些）必须 **parse → print → parse → print 幂等**——打印机做了规范化，
+首轮不要求等于原文，但规范化必须**收敛**。
+
+**先测后改**（临时探针，跑完即删）：189 个正向用例 **reparse 全部成功**（打印机产出的
+文本自己的解析器都能读回），但 **9 个不幂等**。逐例打差异后定位到三类根因：
+
+- **i5 常量**（`uselistorder.ll`）：`@g = global i5 7` 打成 `0x07000000`，
+  reparse 后又变 `0x00000007`。根因是 `int_init_bytes` 对非 8/16/32/64 位宽落
+  `_ => (v as u32)` 存了 **4 字节**，打印端把 LE 字节当十六进制原样输出。
+- **浮点类型上的整数字面量 = 位模式**（`float-literals.ll`）：`global double 0x7FF0000000000000`
+  应当是 `+inf`，实测静默变成 `0.0`（`0x7FEFFFFFFFFFFFFF` 变 `0xffffffff`）——
+  同一个 `_ => 32 位` 兜底把 64 位位模式截成低 32 位。
+- **大整数浮点打印**：`f64::MAX` 打成 100+ 位十进制展开，解析端按整数字面量读溢出 ⇒
+  往返变成位模式全 1。
+
+**改法**：①`int_init_bytes` 改为按类型分派——非字节位宽取
+`ceil(bits/8)` 字节（clamp 1..8）、浮点类型取**位模式**（16/32/64 位；更宽浮点走各自
+专用通道）；②`fmt_global_init` 增加非字节位宽整数臂（LE 解码后十进制，`i5 7`）、
+f32/f64 的**大整数**分支改走 `0x` 位模式；③f128 的 `0xL…` 字面量保持旧行为并注明
+（i64 字面量放不下，需专用通道）。
+
+**结果**：漂移 9 → **8**（`uselistorder.ll` 幂等），幂等 180 → **181**；修掉的两类
+各有回归用例。
+
+**守卫**（新增 `tests/corpus_roundtrip.rs`，3 例）：正向语料 reparse 必须全部成功、
+漂移必须恰好等于 `KNOWN_DRIFT`（8 条，每条写明实测原因，**必须被命中**——修好要删条目）、
+能 parse 的正向用例数（189）与幂等数（181）**精确相等**（语料或解析器动过就得更新）。
+负向验证：把 `unnamed.ll` 从 `KNOWN_DRIFT` 里删掉 ⇒ 守卫 **FAILED** 并点名它为"新的漂移"；
+关掉 `int_init_bytes` 的 64 位浮点位模式分支 ⇒ `fidelity::float_bit_pattern_global_roundtrips`
+**FAILED**；两处恢复后 3 例全绿。
+
+**验证**：workspace 1481 passed / 0 failed / 19 ignored（+3）；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
+
+**仍在 `KNOWN_DRIFT` 的 3 类**（未修，原因已实测记录）：①命名元数据回读丢名字与列表
+（5 个 DI/`!named` 用例，一个根因）；②splat 向量全局多打一个类型前缀；③聚合常量元素
+类型丢失（`float 4` → `i32 4`）。
 
 ## 7. 参考设计（外部）
 

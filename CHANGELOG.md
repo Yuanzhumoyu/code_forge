@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **语料往返断言扩面 + 两类保真缺陷修复（forge-ir v3 S7 切片）**：把"往返断言"落到真实语料——LLVM 官方 test/Assembler 的 189 个正向用例必须 `parse → print → parse → print` **幂等**（打印机做规范化，首轮不必等于原文，但规范化必须收敛）。实测：189 个 reparse 全部成功，但 9 个不幂等，逐例打差异后定位三类根因并修掉两类：
+  ① **非字节位宽整数常量**：`@g = global i5 7` 打成 `0x07000000`、reparse 后又变 `0x00000007`——`int_init_bytes` 对非 8/16/32/64 位宽落 `(v as u32)` 存了 4 字节，打印端又把 LE 字节当十六进制原样输出；现在按 `ceil(bits/8)` 字节存储、打印端新增非字节位宽臂（LE 解码后十进制，`i5 7`）。
+  ② **浮点类型上的整数字面量 = 位模式**：`global double 0x7FF0000000000000` 本应是 `+inf`，实测静默变成 `0.0`（`0x7FEFFFFFFFFFFFFF` 变 `0xffffffff`）——同一个 `_ => 32 位` 兜底把 64 位位模式截断；现在浮点类型按位模式编码（16/32/64），并把 f32/f64 的**大整数**打印改走 `0x` 位模式（`f64::MAX` 原先打 100+ 位十进制，解析端按整数读溢出 ⇒ 往返变全 1 位模式）。
+  漂移 9 → **8**，幂等 180 → **181**。新增 `tests/corpus_roundtrip.rs`（3 例）：reparse 必须全成功、漂移必须恰好等于 `KNOWN_DRIFT`（8 条逐条记原因、必须被命中）、正向可 parse 数（189）与幂等数（181）精确相等；另含两类修复的回归用例。负向验证：删掉 `KNOWN_DRIFT` 一条 ⇒ 守卫点名"新漂移" FAILED；关掉 64 位浮点位模式分支 ⇒ 回归用例 FAILED。
+  实测：workspace 1481 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。仍在 `KNOWN_DRIFT` 的三类（命名元数据回读丢名字/列表、splat 向量全局多打类型前缀、聚合常量元素类型丢失）已有实测记录，留待后续切片。
+
 - **解析错误诊断可用（forge-ir v3 S7 文本层切片）**：`ir_parser::parse_to_ast` 此前把 lalrpop 的原始错误 `format!("{:?}", e)` 直接当消息，实测输出是 `UnrecognizedToken { token: (17, Ident("entry"), 22), expected: ["Target", "VoidTy", … 共 88 项 …] }`——**没有行列、没有出错处的源码行**，还把 88 个文法内部记号名（`VconstOp`/`UselistorderBbKw` 这类）倒给用户。
   现在 `parse_module` 的语法错误是：`解析错误 2:1：非预期 entry` + 回显该行源码 + 插入符 `^` + 期望集合收敛到 8 项（`…（共 N 个）`），内部记号名做用户化映射（`RBrace`→`}`、`IntTy`→`iN`、`VecTy`→`<N x T>`、`*Kw` 去后缀小写、`IntLit`→`整数常量`、`LocalId`→`%局部名`）；EOF 报"输入在结构未结束时结束"，非法字符报"出现无法识别的字符"；坏偏移/非字符边界一律回退（诊断路径不 panic）。顺带把 `LexError` 改成 `BadChar { offset }` / `Rejected` 两态——词法错误此前丢掉了 logos 给出的位置。
   新增 `tests/parse_error_diagnostics.rs`（4 例）；负向验证（改回 `{:?}`）⇒ 4 例全 FAILED，恢复后全绿。实测：workspace 1478 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0；LLVM 语料正/负向断言不变。

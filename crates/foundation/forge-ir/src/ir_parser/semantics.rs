@@ -1408,16 +1408,31 @@ fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<
 fn int_init_bytes(ty: TypeId, n: i64, ctx: &TypeContext) -> Vec<u8> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     let store = ctx.borrow();
-    let bits = match store.get(ty) {
-        TypeEntry::Int { bits } => *bits,
-        _ => 32,
-    };
     let v = n as u64;
-    match bits {
-        8 => vec![v as u8],
-        16 => (v as u16).to_le_bytes().to_vec(),
-        32 => (v as u32).to_le_bytes().to_vec(),
-        64 => { v }.to_le_bytes().to_vec(),
+    match store.entry_opt(ty) {
+        Some(TypeEntry::Int { bits }) => match *bits {
+            8 => vec![v as u8],
+            16 => (v as u16).to_le_bytes().to_vec(),
+            32 => (v as u32).to_le_bytes().to_vec(),
+            64 => v.to_le_bytes().to_vec(),
+            // 非字节位宽（i1/i5/i24/i128…）：低 `ceil(bits/8)` 字节（i64 字面量上限 8 字节）。
+            // 此前落 `_ => 32 位` ⇒ i5 存成 4 字节，打印/回读往返不稳定。
+            bits => {
+                let size = (bits as usize).div_ceil(8).clamp(1, 8);
+                v.to_le_bytes()[..size].to_vec()
+            }
+        },
+        // **浮点类型上的整数字面量 = 位模式**（LLVM：`global double 0x7FF0000000000000`
+        // 是 +inf）。此前落 `_ => 32 位` ⇒ 低 32 位为 0 时静默变成 0.0（实测：
+        // 0x7FF0000000000000 → 0x00000000、0x7FEFFFFFFFFFFFFF → 0xffffffff）。
+        Some(TypeEntry::Float { bits }) | Some(TypeEntry::BFloat { bits }) => match *bits {
+            16 => (v as u16).to_le_bytes().to_vec(),
+            32 => (v as u32).to_le_bytes().to_vec(),
+            64 => v.to_le_bytes().to_vec(),
+            // 更宽浮点（f128/x86_fp80…）的十六进制字面量走各自的专用通道
+            // （ xL…/ xK…），i64 字面量放不下，这里保持旧的 4 字节行为
+            _ => (v as u32).to_le_bytes().to_vec(),
+        },
         _ => (v as u32).to_le_bytes().to_vec(),
     }
 }
