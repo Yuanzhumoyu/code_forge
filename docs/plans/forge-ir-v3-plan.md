@@ -97,7 +97,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
-| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 与 verify 已改 `&TypeStore` 显式传参：`borrow()` 51 → 2、13 → 1；`debug_read_count` 守卫钉住"打印一次 = 1 次读锁""校验取锁次数不随 IR 规模增长"）；余项：`ir_parser`/`pipeline` 等按同一形态迁移，之后才是把锁换成快照式实现 |
+| S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`（需 `LowerCtx` 带 store 的设计）②读写交错函数的"先写后读"结构改造 ③把锁换成快照式实现 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
@@ -1290,6 +1290,38 @@ O(1)）再 `borrow()`，让守卫借用**局部**而不是 `self`，因此后面
 **验证**：workspace 1471 passed / 0 failed / 19 ignored（+1）；x86 矩阵 195/3/0；
 riscv64 131/67/0；fmt/clippy `-D warnings` 干净；`cargo check --release --all-targets`
 无警告；`cargo doc -D warnings` 干净。
+
+### S3（切片）：读路径纪律批量落地（parser / pipeline / types）+ 静态预算守卫（2026-09-16）
+
+同一形态铺到剩余的纯读面。**先按"函数体内是否有 `borrow_mut()` / 是否显式 `drop(guard)`"
+分类，只迁移纯读函数**——`RwLock` 不可重入，读写交错的函数里持有长读锁会自锁死；
+这批函数当初写 `drop(ts)` 就是为了在读段之间放锁，属于"已经正确、但不能改成长锁"。
+
+| 文件 | 改前 | 改后 | 说明 |
+| --- | --- | --- | --- |
+| `pipeline/compiler.rs` | 30 | **23** | 7 个 `expand_*`/`memoryize_from_segs` 入口各一次锁；余下 16 处在 `rewrite_agg_value_uses`/`expand_large_aggs`（显式 `drop` 守卫的读写交错）与 `expand_large_agg_params`（唯一 `borrow_mut`）/`compile_with_alloc`（编排点，会调到前者） |
+| `ir_parser/semantics.rs` | 32 | **24** | 6 个纯读助手（`pack_*_init`/`int_init_bytes`/`float_init_bytes`/`agg_const_from_operands`/`encode_lanes_to_bytes`）改 `&TypeStore`；余下 24 处全在 `to_type*`/`build_inst`/`operand_to_value` 这些**同时 intern** 的函数里 |
+| `types.rs` | 13 | 13 | 这 13 处就是 `TypeContext` 的**一次性查询封装**（每次调用恰好 1 次读锁），是给"顺手口"用的，保留；新增用例钉住"每次调用 = 1 次、intern 不取读锁" |
+| `forge-dsl/.../lowering.rs` | 11 | 11 | **实测不是普通代码**：11 处全在 `quote! { ... }` 模板文本里（生成的 lowering 在 codegen 期 `tc.borrow()`）；要迁移得同时改生成物与 `LowerCtx` 形态，单列为余项 |
+
+`func: &mut Function` 的函数里不能用 `func.types.borrow()` 提升——读守卫借着 `func`，
+会让后续 `&mut func` 调用报 `E0502`；改用 `let types_ctx = func.types.clone();`
+（Arc，O(1)）再取锁，守卫借局部。
+
+**静态预算守卫**（新增 `tests/read_path_budget.rs`，2 例）：逐文件把 `borrow()`
+处数钉成**精确相等**的预算（不是上限装饰），每条都写清"为什么还剩这些"；
+另断言文件存在（防表里的文件改名后腐烂）。负向验证：往 `compiler.rs` 插一行
+`let _ = types.borrow();` ⇒ 实测 24 ≠ 预算 23、守卫 **FAILED** 并提示"迁移完成请下调预算"；
+删除后全绿。加上已有的运行时守卫（display 1 次 / verify 不随规模增长 /
+一次性封装恰好 1 次），读路径现在是"运行时 + 静态"两层钉住。
+
+**验证**：workspace 1474 passed / 0 failed / 19 ignored（+3）；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
+
+**余项**：①`forge-dsl` 生成物侧的 `tc.borrow()`（需 `LowerCtx` 带 store 的设计）；
+②`semantics.rs` 的 24 处与 `compiler.rs` 的 16 处交错点——把 intern 与查询拆成
+"先写后读"两段才能消掉，属结构性改造；③之后才是"把锁换成快照式实现"。
 
 ## 7. 参考设计（外部）
 

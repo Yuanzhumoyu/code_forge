@@ -13,6 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **读路径纪律批量落地 + 静态预算守卫（forge-ir v3 S3 切片）**：把"入口取一次读锁、把 `&TypeStore` 显式传下去"铺到剩余的纯读面。先按"函数体内是否有 `borrow_mut()` / 是否显式 `drop(guard)`"分类——`RwLock` 不可重入，读写交错的函数持有长读锁会自锁死，而这些函数当初写 `drop(ts)` 正是为了在读段之间放锁，属"已正确但不能改成长锁"，因此只迁移纯读函数：
+  `pipeline/compiler.rs` `borrow()` **30 → 23**（7 个 `expand_*`/`memoryize_from_segs` 入口各一次）；`ir_parser/semantics.rs` **32 → 24**（6 个纯读助手 `pack_*_init`/`int_init_bytes`/`float_init_bytes`/`agg_const_from_operands`/`encode_lanes_to_bytes` 改 `&TypeStore`）；`types.rs` 13 处是 `TypeContext` 一次性查询封装（保留，新增用例钉住"每次调用恰好 1 次读锁、intern 不取读锁"）。
+  `func: &mut Function` 的函数里不能用 `func.types.borrow()` 提升（守卫借着 `func` ⇒ 后续 `&mut func` 报 E0502），改用 `let types_ctx = func.types.clone();`（Arc，O(1)）再取锁。
+  **实测发现**：`forge-dsl/src/v12/codegen/lowering.rs` 那 11 处 `borrow()` **不是普通代码，而是 `quote! { ... }` 模板文本**（生成的 lowering 在 codegen 期 `tc.borrow()`）——迁移它要同时改生成物与 `LowerCtx` 形态，单列为余项，本切片只用预算锁住。
+  新增 `tests/read_path_budget.rs`（2 例）：逐文件把 `borrow()` 处数钉成**精确相等**的预算（每条写清"为什么还剩这些"，并断言文件存在防腐烂）；负向验证（往 `compiler.rs` 插一行 `borrow()`）实测 24 ≠ 23 ⇒ FAILED。
+  实测：workspace 1474 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **读路径纪律落到校验器（forge-ir v3 S3 切片）**：`verify.rs` 此前有 13 处 `borrow()`——`check_conversion`/`check_immediates`/`check_gep_indices`/`check_operand_types` 等在**每条指令上各取一次读锁**（`check_conversion` 里 `scalar_bits`/`vector_bits` 两个闭包还各自取锁），取锁次数与指令数成正比。
   现在 `verify()` 取**一次**读锁（`ctx` 先 `clone`（Arc，O(1)）再 `borrow()`，守卫借用局部而非 `self`，因此仍可调 `&mut self` 检查函数），`&TypeStore` 贯穿 `check_types` → `check_operand_types` → `check_conversion`、`check_type_refs`、`check_immediates` → `check_gep_indices`；`is_pointer_ty`/`scalar_bits`/`class_of`/`class_matches` 改为接收 `Option<&TypeStore>`。实测 `verify.rs` 的 `borrow()` **13 → 1**。
   新增守卫 `verifier_read_locks_do_not_scale_with_ir_size`：1 条指令与 80 条指令的函数取锁次数必须相等（实测均 3 = 入口 1 + `Function` 内部查询 2）；负向验证（逐指令循环里插一行 `clone`+`borrow()`）实测 5 vs 84 ⇒ FAILED，删除后全绿。顺带实测到：这类退化**多数情况下连编译都过不了**——守卫借着 `self.ctx` 时不能再对 `self` 取 `&mut`（E0502），借用检查器已经封死"守卫跨 `&mut self` 调用"。

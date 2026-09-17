@@ -139,3 +139,74 @@ fn verifier_read_locks_do_not_scale_with_ir_size() {
         "校验一次函数的取锁次数应是个小常数（实测 {small} 次；其中 verify.rs 入口 1 次）"
     );
 }
+
+/// `TypeContext` 的**一次性查询封装**每次调用恰好 1 次读锁（不多、不少）。
+///
+/// 这些封装（`ctx.size_bytes(ty)` 这类）是多查询调用方的"顺手口"；多查询路径
+/// 必须改用 `&TypeStore` 显式传参（见本文件其余用例）。这里钉住"每次调用 1 次"，
+/// 防止某个封装内部退化成多次取锁（例如递归里每层取一次）。
+#[test]
+fn one_shot_type_context_accessors_take_one_lock() {
+    let ctx = TypeContext::new();
+    let i32_ty = ctx.i32_ty();
+    let vec_ty = ctx.vector_ty(i32_ty, 4);
+    let ptr_ty = ctx.ptr_ty();
+
+    let one = |what: &str, f: &dyn Fn()| {
+        ctx.debug_reset_read_count();
+        f();
+        assert_eq!(
+            ctx.debug_read_count(),
+            1,
+            "TypeContext::{what} 应恰好取 1 次读锁"
+        );
+    };
+
+    one("is_int", &|| {
+        let _ = ctx.is_int(i32_ty);
+    });
+    one("is_float", &|| {
+        let _ = ctx.is_float(i32_ty);
+    });
+    one("is_ptr", &|| {
+        let _ = ctx.is_ptr(ptr_ty);
+    });
+    one("is_void", &|| {
+        let _ = ctx.is_void(i32_ty);
+    });
+    one("is_vector", &|| {
+        let _ = ctx.is_vector(vec_ty);
+    });
+    one("element_type", &|| {
+        let _ = ctx.element_type(vec_ty);
+    });
+    one("scalar_bits", &|| {
+        let _ = ctx.scalar_bits(i32_ty);
+    });
+    one("size_bytes", &|| {
+        let _ = ctx.size_bytes(vec_ty);
+    });
+    one("alignment", &|| {
+        let _ = ctx.alignment(vec_ty);
+    });
+    one("fmt_type", &|| {
+        let _ = ctx.fmt_type(vec_ty);
+    });
+    one("get_signature", &|| {
+        let _ = ctx.get_signature(sig_ref(&ctx, i32_ty));
+    });
+
+    // intern 路径只取写锁，不取读锁
+    ctx.debug_reset_read_count();
+    let _ = ctx.vector_ty(i32_ty, 8);
+    let _ = ctx.int_ty(24);
+    assert_eq!(
+        ctx.debug_read_count(),
+        0,
+        "intern（写路径）不应取读锁（否则读写锁序会自锁死）"
+    );
+}
+
+fn sig_ref(ctx: &TypeContext, ty: TypeId) -> forge_ir::SigRef {
+    ctx.register_signature(FunctionSignature::new(&[(ty, "x")], &[ty]))
+}

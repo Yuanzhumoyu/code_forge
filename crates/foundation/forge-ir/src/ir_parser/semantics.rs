@@ -1287,8 +1287,10 @@ fn pack_agg_init(
     ty: TypeId,
     vals: &[GlobalInitVal],
 ) -> Result<Vec<u8>, IrError> {
-    let mut out = Vec::with_capacity(ctx.size_bytes(ty) as usize);
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     let store = ctx.borrow();
+    let mut out = Vec::with_capacity(ctx.size_bytes(ty) as usize);
+    let store = &store;
     let entry = store.get(ty);
     match entry {
         crate::types::TypeEntry::Array { elem, len } => {
@@ -1336,7 +1338,7 @@ fn pack_agg_init(
         _ => {
             return Err(IrError::Semantic(format!(
                 "aggregate init for non-aggregate type {}",
-                ctx.borrow().fmt_type(ty)
+                store.fmt_type(ty)
             )));
         }
     }
@@ -1345,7 +1347,9 @@ fn pack_agg_init(
 
 /// 标量值 → 元素类型字节（int/float/pointer；值类型不匹配报错）。
 fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<Vec<u8>, IrError> {
-    let bytes = match (v, ctx.borrow().get(ty)) {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    let store = ctx.borrow();
+    let bytes = match (v, store.get(ty)) {
         // 常量表达式元素（聚合内 `ptr @f` 等）：求字节（全局地址占位 0）
         (GlobalInitVal::Expr(e), _) => const_expr_bytes(ctx, e, ctx.size_bytes(ty) as u64)?,
         (GlobalInitVal::Int(n), crate::types::TypeEntry::Int { bits: 8 }) => vec![*n as u8],
@@ -1394,7 +1398,7 @@ fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<
         _ => {
             return Err(IrError::Semantic(format!(
                 "aggregate init value incompatible with type {}",
-                ctx.borrow().fmt_type(ty)
+                store.fmt_type(ty)
             )));
         }
     };
@@ -1402,7 +1406,9 @@ fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<
 }
 
 fn int_init_bytes(ty: TypeId, n: i64, ctx: &TypeContext) -> Vec<u8> {
-    let bits = match ctx.borrow().get(ty) {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    let store = ctx.borrow();
+    let bits = match store.get(ty) {
         TypeEntry::Int { bits } => *bits,
         _ => 32,
     };
@@ -1418,7 +1424,9 @@ fn int_init_bytes(ty: TypeId, n: i64, ctx: &TypeContext) -> Vec<u8> {
 
 /// 按浮点类型把字面量编码为小端字节（global 初始值）。
 fn float_init_bytes(ty: TypeId, f: f64, ctx: &TypeContext) -> Vec<u8> {
-    match ctx.borrow().get(ty) {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    let store = ctx.borrow();
+    match store.get(ty) {
         TypeEntry::Float { bits: 32 } => (f as f32).to_le_bytes().to_vec(),
         TypeEntry::Float { bits: 64 } => f.to_le_bytes().to_vec(),
         _ => (f as f32).to_le_bytes().to_vec(),
@@ -3026,6 +3034,8 @@ fn agg_const_from_operands(
     elems: &[ParsedOperand],
     ctx: &TypeContext,
 ) -> Result<crate::AggId, IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    let store = ctx.borrow();
     use crate::constant::AggChild;
     use crate::types::TypeEntry;
     let mut children = Vec::new();
@@ -3038,21 +3048,21 @@ fn agg_const_from_operands(
             })?;
         let child = match &e.op {
             Operand::Int(n) => {
-                let bits = match ctx.borrow().get(ety) {
+                let bits = match store.get(ety) {
                     TypeEntry::Int { bits } => *bits,
                     _ => 32,
                 };
                 AggChild::Scalar(fb.func.constants.insert_int(*n as i128, bits))
             }
             Operand::UInt(n) => {
-                let bits = match ctx.borrow().get(ety) {
+                let bits = match store.get(ety) {
                     TypeEntry::Int { bits } => *bits,
                     _ => 32,
                 };
                 AggChild::Scalar(fb.func.constants.insert_int(*n as i128, bits))
             }
             Operand::Float(f) => {
-                let bits = match ctx.borrow().get(ety) {
+                let bits = match store.get(ety) {
                     TypeEntry::Float { bits: 32 } => (*f as f32).to_bits() as u128,
                     _ => f.to_bits() as u128,
                 };
@@ -3060,7 +3070,7 @@ fn agg_const_from_operands(
             }
             Operand::Agg(sub) => AggChild::Agg(agg_const_from_operands(fb, ety, sub, ctx)?),
             Operand::ZeroInit => {
-                let cid = match ctx.borrow().get(ety) {
+                let cid = match store.get(ety) {
                     TypeEntry::Int { bits } => fb.func.constants.insert_int(0, *bits),
                     TypeEntry::Float { .. } => fb.func.constants.insert_float128(0),
                     _ => fb.func.constants.insert_int(0, 8),
@@ -3070,7 +3080,7 @@ fn agg_const_from_operands(
             // undef/poison/null 聚合元素（`{ i32 undef, ... }`——第十四轮
             // unnamed.ll）——零标量占位
             Operand::Undef | Operand::Poison | Operand::Null => {
-                let cid = match ctx.borrow().get(ety) {
+                let cid = match store.get(ety) {
                     TypeEntry::Int { bits } => fb.func.constants.insert_int(0, *bits),
                     TypeEntry::Float { .. } => fb.func.constants.insert_float128(0),
                     _ => fb.func.constants.insert_int(0, 8),
@@ -3848,9 +3858,11 @@ fn encode_lanes_to_bytes(
     lanes: &[VecLane],
     big: bool,
 ) -> Result<Vec<u8>, IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    let store = ctx.borrow();
     let mut data = Vec::with_capacity(lanes.len() * 16);
     for lane in lanes {
-        match (lane, ctx.borrow().get(elem)) {
+        match (lane, store.get(elem)) {
             (VecLane::Int(n), TypeEntry::Int { bits: 1 }) => data.push((*n & 1) as u8),
             (VecLane::Int(n), TypeEntry::Int { bits: 8 }) => data.push(*n as u8),
             (VecLane::Int(n), TypeEntry::Int { bits: 16 }) => {
@@ -3901,13 +3913,13 @@ fn encode_lanes_to_bytes(
             _ => {
                 return Err(IrError::Semantic(format!(
                     "vector lane incompatible with element type {}",
-                    ctx.borrow().fmt_type(elem)
+                    store.fmt_type(elem)
                 )));
             }
         }
     }
     if big {
-        let lane_size = ctx.borrow().size_bytes(elem) as usize;
+        let lane_size = store.size_bytes(elem) as usize;
         for chunk in data.chunks_mut(lane_size) {
             chunk.reverse();
         }

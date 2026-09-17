@@ -70,12 +70,17 @@ fn memoryize_from_segs(
     segs: &[Value],
     agg_slots: &mut AggSlots,
 ) -> Result<(), IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
+    // 不与 func 的 &mut 借用冲突。
+    let types_ctx = func.types.clone();
+    let store = types_ctx.borrow();
     if !off.is_multiple_of(8) {
         return Err(IrError::Unsupported(format!(
             "嵌套聚合字段提取：非对齐字段（off={off}）暂不支持"
         )));
     }
-    let size = func.types.borrow().size_bytes(seg_ty) as usize;
+    let size = store.size_bytes(seg_ty) as usize;
     let n_segs = size.div_ceil(8);
     let start = off / 8;
     if start + n_segs > segs.len() {
@@ -527,9 +532,14 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
 /// RAX/RDX 双槽 mov）。段来源：AggConst（Iconst 段）、load 结果（段 load）、
 /// 其余（参数段值已被 expand_large_agg_params 重写为 i64——不在此处理）。
 fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
+    // 不与 func 的 &mut 借用冲突。
+    let types_ctx = func.types.clone();
+    let store = types_ctx.borrow();
     let rets = func.return_types();
     let has_large = rets.iter().any(|t| {
-        let s = func.types.borrow();
+        let s = &store;
         s.is_aggregate(*t) && s.size_bytes(*t) > 8
     });
     if !has_large {
@@ -548,8 +558,8 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
         };
         for &v in values {
             if let Some(ty) = func.dfg.value_type(v)
-                && func.types.borrow().is_aggregate(ty)
-                && func.types.borrow().size_bytes(ty) > 8
+                && store.is_aggregate(ty)
+                && store.size_bytes(ty) > 8
             {
                 jobs.push(RetJob {
                     block: b,
@@ -560,7 +570,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
         }
     }
     for job in jobs {
-        let size = func.types.borrow().size_bytes(job.ty) as usize;
+        let size = store.size_bytes(job.ty) as usize;
         if size > 16 {
             return Err(IrError::Unsupported(format!(
                 "聚合返回 >16 字节暂不支持（栈传递未实现）：type {:?}",
@@ -681,6 +691,11 @@ fn expand_large_agg_call_results(
     func: &mut Function,
     agg_slots: &mut AggSlots,
 ) -> Result<(), IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
+    // 不与 func 的 &mut 借用冲突。
+    let types_ctx = func.types.clone();
+    let store = types_ctx.borrow();
     // 收集（block, pos, inst, 旧结果, 聚合类型）
     struct Job {
         inst: Inst,
@@ -694,10 +709,10 @@ fn expand_large_agg_call_results(
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect)
                 && inst.results.len() == 1
                 && let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
-                && func.types.borrow().is_aggregate(rt)
-                && func.types.borrow().size_bytes(rt) > 8
+                && store.is_aggregate(rt)
+                && store.size_bytes(rt) > 8
             {
-                let size = func.types.borrow().size_bytes(rt) as usize;
+                let size = store.size_bytes(rt) as usize;
                 if size > 16 {
                     return Err(IrError::Unsupported(format!(
                         "聚合返回 >16 字节暂不支持：type {rt:?}"
@@ -737,6 +752,11 @@ fn expand_large_agg_call_results(
 /// 必须在 expand_large_aggs **之前**：拆段后大聚合值不再被 call 使用，
 /// expand_large_aggs 的使用检测不命中 Call。
 fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
+    // 不与 func 的 &mut 借用冲突。
+    let types_ctx = func.types.clone();
+    let store = types_ctx.borrow();
     struct ArgJob {
         block: Block,
         pos: usize,
@@ -752,8 +772,8 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
                 let skip = usize::from(inst.opcode == Opcode::CallIndirect);
                 for (op_idx, &v) in inst.operands.iter().enumerate().skip(skip) {
                     if let Some(ty) = func.dfg.value_type(v)
-                        && func.types.borrow().is_aggregate(ty)
-                        && func.types.borrow().size_bytes(ty) > 8
+                        && store.is_aggregate(ty)
+                        && store.size_bytes(ty) > 8
                     {
                         jobs.push(ArgJob {
                             block: b,
@@ -769,7 +789,7 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
     }
     for job in jobs.into_iter().rev() {
         let ty = func.dfg.value_type(job.val).unwrap_or(TypeId::PTR);
-        let size = func.types.borrow().size_bytes(ty) as usize;
+        let size = store.size_bytes(ty) as usize;
         if size > 16 {
             return Err(IrError::Unsupported(format!(
                 "聚合实参 >16 字节暂不支持（栈传递未实现）：type {ty:?}"
@@ -1306,6 +1326,11 @@ fn make_placeholder_ptr(func: &mut Function) -> Value {
 /// GEP 规则（旧 `lea [rs1+rs2*4+0]` 单索引规则已废弃）。
 /// 局限：struct 索引必须常量（LLVM 语义）；索引按无符号处理（数组下标）。
 fn expand_geps(func: &mut Function) -> Result<(), IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
+    // 不与 func 的 &mut 借用冲突。
+    let types_ctx = func.types.clone();
+    let store = types_ctx.borrow();
     let mut jobs: Vec<(Block, usize, Inst)> = Vec::new(); // (block, pos, inst)
     for (b, bd) in func.dfg.blocks() {
         for (pos, &ii) in bd.inst_order.iter().enumerate() {
@@ -1354,7 +1379,7 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
         let mut dyn_parts: Vec<(Value, u32)> = Vec::new(); // (idx 值, 元素字节)
         for (i, &idx) in indices.iter().enumerate() {
             let i = i + 1; // 原操作数下标（operands[0]=base）
-            let ts = func.types.borrow();
+            let ts = &store;
             if i == 1 {
                 // 第一索引作用于 indexed_ty 自身（T* → T 数组）
                 let size = ts.size_bytes(cur_ty) as i64;
@@ -1482,6 +1507,11 @@ fn expand_geps(func: &mut Function) -> Result<(), IrError> {
 ///   Unsupported——大聚合值内存化传播）。
 /// - 仅小端数据布局（x86_64/aarch64 默认）；大端需反向打包（暂不支持）。
 fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
+    // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+    // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
+    // 不与 func 的 &mut 借用冲突。
+    let types_ctx = func.types.clone();
+    let store = types_ctx.borrow();
     // 第一遍：收集（聚合常量 → 字节布局）
     let mut jobs: Vec<(Block, usize, usize, Vec<u8>, bool)> = Vec::new(); // (block, pos, operand 索引, 内存字节, 是否 Store)
     for (b, bd) in func.dfg.blocks() {
@@ -1511,7 +1541,7 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                             let agg = func.constants.get_aggregate(aid).ok_or_else(|| {
                                 IrError::Unsupported("聚合常量参数：常量池缺失 AggId".into())
                             })?;
-                            let size = func.types.borrow().size_bytes(agg.ty);
+                            let size = store.size_bytes(agg.ty);
                             if size > 8 {
                                 // >8 字节由 expand_agg_call_args 拆段处理——跳过
                                 continue;
@@ -2006,6 +2036,11 @@ pub(crate) struct CompileState<I: MachineInst> {
 
 impl<I: MachineInst + 'static> CompileState<I> {
     fn new<M: TargetMachine>(machine: &M, func: &Function) -> Self {
+        // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
+        // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
+        // 不与 func 的 &mut 借用冲突。
+        let types_ctx = func.types.clone();
+        let store = types_ctx.borrow();
         let mut ctx = LowerCtx::new();
         ctx.call_conv = func.calling_convention;
         ctx.type_ctx = Some(func.types.clone());
@@ -2040,7 +2075,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // S2：sret 隐藏参数——函数返回宽向量（>16 字节）→ 首 int 槽被
         // sret 指针占用（move_args 收参 __gi 从 1 起；调用方 sret 约定）。
         ctx.is_sret_return = func.return_types().iter().any(|t| {
-            let s = func.types.borrow();
+            let s = &store;
             (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
         });
         ctx.constant_pool = Some(func.constants.clone());
