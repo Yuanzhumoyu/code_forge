@@ -845,6 +845,7 @@ impl TypeStore {
 // ============================================================
 
 use std::ops::Deref;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// A shared, interior-mutable reference to a `TypeStore`.
@@ -852,29 +853,63 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 /// Created once in a `Module` and shared across all builders, functions,
 /// verifiers, and display contexts via cheap `Arc`-based `Clone`.
 ///
-/// Uses `Arc<RwLock<TypeStore>>` for `Send + Sync` thread safety
-/// when the optimization framework accesses types across threads.
+/// # 读路径纪律（v3 S3："`TypeStore` 显式传参"）
+///
+/// [`TypeContext::borrow`] 是**显式取一次锁**的入口：多查询路径（display、
+/// verify、lowering）应当只取一次，然后把 `&TypeStore` **显式传参**给下游函数，
+/// 而不是每个查询各自 `borrow()` 一遍。理由有二：
+///
+/// - 每次 `borrow()` 都是一次 `RwLock` 读锁获取（与 intern 写锁互斥）；
+/// - `RwLock` **不可重入**：读锁存活期间再调 `borrow_mut()`（intern 新类型）会
+///   自锁死。把 `&TypeStore` 显式传下去，同时也就把"这个作用域是只读的"写进了
+///   签名——需要 intern 的代码拿不到 `&TypeStore` 就写不出来。
+///
+/// `tests/type_store_read_path.rs` 用 `debug_read_count` 钉住这条纪律：
+/// 打印一个模块只许取一次读锁。
 ///
 /// # Usage
 ///
 /// ```text
 /// let ctx = TypeContext::new();
-/// let i32_ty = ctx.i32_ty();              // convenience accessor
-/// let sig = ctx.borrow().get_signature(sr); // transparent Deref → RwLock
-/// ctx.borrow_mut().register_signature(s);    // mutable access
+/// let i32_ty = ctx.i32_ty();                  // convenience accessor（无锁）
+/// let store = ctx.borrow();                   // 取一次读锁
+/// let sig = store.get_signature(sr);          // 之后全部无锁
+/// ctx.borrow_mut().register_signature(s);     // 需要写时单独取写锁
 /// ```
 #[derive(Clone, Debug)]
-pub struct TypeContext(Arc<RwLock<TypeStore>>);
+pub struct TypeContext {
+    store: Arc<RwLock<TypeStore>>,
+    /// 读锁获取计数（**仅 `cfg(debug_assertions)`**）：测试用它钉住"读路径只取
+    /// 一次锁"。release 下字段不存在，零开销。
+    #[cfg(debug_assertions)]
+    reads: Arc<AtomicUsize>,
+}
 
 impl TypeContext {
     /// Create a new TypeContext wrapping a fresh TypeStore.
     pub fn new() -> Self {
-        Self(Arc::new(RwLock::new(TypeStore::new())))
+        Self::from_store(TypeStore::new())
     }
 
     /// Create a TypeContext from an existing TypeStore.
     pub fn from_store(store: TypeStore) -> Self {
-        Self(Arc::new(RwLock::new(store)))
+        Self {
+            store: Arc::new(RwLock::new(store)),
+            #[cfg(debug_assertions)]
+            reads: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// 读锁获取次数（仅 `cfg(debug_assertions)`；release 下不统计也不编译）。
+    #[cfg(debug_assertions)]
+    pub fn debug_read_count(&self) -> usize {
+        self.reads.load(Ordering::Relaxed)
+    }
+
+    /// 把读锁计数清零（仅 `cfg(debug_assertions)`；测试用）。
+    #[cfg(debug_assertions)]
+    pub fn debug_reset_read_count(&self) {
+        self.reads.store(0, Ordering::Relaxed);
     }
 
     /// Immutable read access to the TypeStore.
@@ -883,15 +918,21 @@ impl TypeContext {
     /// 而 `TypeStore` 的不变量由构造期与写入方法维护，数据本身仍可读——继续用
     /// `into_inner()` 取回内部值比在公开 API 上 panic 更安全（v3 原则：
     /// 公开 API 不 panic）。此前是 `.expect("TypeStore RwLock poisoned")`。
+    ///
+    /// 多查询路径请只调一次并传 `&TypeStore`（见类型级文档的"读路径纪律"）。
     pub fn borrow(&self) -> RwLockReadGuard<'_, TypeStore> {
-        self.0
+        #[cfg(debug_assertions)]
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.store
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Mutable write access to the TypeStore（中毒同样恢复，见 [`TypeContext::borrow`]）。
+    ///
+    /// **不可在读锁存活期间调用**（`RwLock` 不可重入 ⇒ 自锁死）。
     pub fn borrow_mut(&self) -> RwLockWriteGuard<'_, TypeStore> {
-        self.0
+        self.store
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -1000,7 +1041,7 @@ impl Deref for TypeContext {
     type Target = RwLock<TypeStore>;
 
     fn deref(&self) -> &RwLock<TypeStore> {
-        &self.0
+        &self.store
     }
 }
 

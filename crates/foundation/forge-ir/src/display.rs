@@ -15,7 +15,7 @@ use super::imm_str::ImmStr;
 use super::immediate::Immediate;
 use super::opcode::Opcode;
 use super::terminator::TermKind;
-use super::types::{TypeContext, TypeEntry, TypeStore};
+use super::types::{TypeEntry, TypeStore};
 use crate::entity_map::SecondaryMap;
 use crate::ir_parser::llvm_mapping::llvm_mnemonic;
 use std::collections::HashSet;
@@ -44,7 +44,7 @@ fn disambiguate(base: ImmStr, used: &mut HashSet<ImmStr>) -> ImmStr {
 }
 
 impl NameResolver {
-    fn new(func: &Function, store: &TypeContext) -> Self {
+    fn new(func: &Function, store: &TypeStore) -> Self {
         let mut used_values: HashSet<ImmStr> = HashSet::new();
         let mut used_blocks: HashSet<ImmStr> = HashSet::new();
         let mut values: SecondaryMap<Value, ImmStr> = SecondaryMap::new();
@@ -55,7 +55,7 @@ impl NameResolver {
             let base = func
                 .block_names
                 .get(block)
-                .map(|s| ImmStr::from(store.borrow().lookup_str(*s)))
+                .map(|s| ImmStr::from(store.lookup_str(*s)))
                 .unwrap_or_else(|| ImmStr::from(format!("b{}", block.0)));
             blocks.insert(block, disambiguate(base, &mut used_blocks));
         }
@@ -66,7 +66,7 @@ impl NameResolver {
                 let base = func
                     .value_names
                     .get(v)
-                    .map(|s| ImmStr::from(store.borrow().lookup_str(*s)))
+                    .map(|s| ImmStr::from(store.lookup_str(*s)))
                     .unwrap_or_else(|| ImmStr::from(format!("v{}", v.0)));
                 values.insert(v, disambiguate(base, &mut used_values));
             }
@@ -75,7 +75,7 @@ impl NameResolver {
                     let base = func
                         .value_names
                         .get(v)
-                        .map(|s| ImmStr::from(store.borrow().lookup_str(*s)))
+                        .map(|s| ImmStr::from(store.lookup_str(*s)))
                         .unwrap_or_else(|| ImmStr::from(format!("v{}", v.0)));
                     values.insert(v, disambiguate(base, &mut used_values));
                 }
@@ -85,7 +85,7 @@ impl NameResolver {
         // reparse 后同样成为占位,幂等）
         for (v, vd) in func.dfg.values() {
             if let crate::dfg::ValueDef::UndefNamed(id) = vd.def {
-                let base = ImmStr::from(store.borrow().lookup_str(id));
+                let base = ImmStr::from(store.lookup_str(id));
                 values.insert(v, disambiguate(base, &mut used_values));
             }
         }
@@ -108,13 +108,17 @@ impl NameResolver {
 
 impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // **整个模块只取一次读锁**（v3 S3 读路径纪律）：下游全部按 `&TypeStore`
+        // 显式传参，既不重复取锁，也不可能在这里 intern（写锁 → 自锁死）。
+        let store = self.types.borrow();
         if let Some(ref src) = self.source_filename {
             writeln!(f, "source_filename = \"{}\"", fmt_quoted(src))?;
         }
         if let Some(ref triple) = self.target_triple {
             writeln!(f, "target triple = \"{}\"", triple)?;
         }
-        let data_layout = self.data_layout();
+        // 布局也直接读已取到的 store（`self.data_layout()` 会再取一次读锁）
+        let data_layout = store.data_layout.clone();
         if !data_layout.is_default() {
             writeln!(f, "target datalayout = \"{}\"", data_layout)?;
         }
@@ -190,7 +194,7 @@ impl fmt::Display for Module {
                 } else {
                     "global"
                 },
-                fmt_llvm_type(&self.types.borrow(), gv.ty)
+                fmt_llvm_type(&store, gv.ty)
             )?;
             // ifunc 形态（第二十九轮）:`ifunc <retty> (<params>), ptr @resolver`
             if gv.is_ifunc {
@@ -216,7 +220,7 @@ impl fmt::Display for Module {
                 if let Some(expr) = &gv.init_expr {
                     write!(f, " {}", expr.to_llvm_string())?;
                 } else {
-                    write!(f, " {}", fmt_global_init(&self.types.borrow(), gv.ty, init))?;
+                    write!(f, " {}", fmt_global_init(&store, gv.ty, init))?;
                 }
             }
             if gv.alignment != 0 {
@@ -261,7 +265,7 @@ impl fmt::Display for Module {
                 f,
                 "@{} = {dso}{unnamed}{link}alias {}",
                 a.name,
-                fmt_llvm_type(&self.types.borrow(), a.ty)
+                fmt_llvm_type(&store, a.ty)
             )?;
             write!(f, ", {aliasee_txt}")?;
             for am in &a.metadata {
@@ -271,7 +275,7 @@ impl fmt::Display for Module {
             writeln!(f)?;
         }
         // LLVM 类型定义：`%struct.X = type { ... }`
-        let types = self.types.borrow();
+        let types = &store;
         for (name, tid) in types.named_structs() {
             if let Some(crate::types::TypeEntry::Struct {
                 fields, is_packed, ..
@@ -279,7 +283,7 @@ impl fmt::Display for Module {
             {
                 let inner = fields
                     .iter()
-                    .map(|f| fmt_llvm_type(&types, f.ty))
+                    .map(|f| fmt_llvm_type(types, f.ty))
                     .collect::<Vec<_>>()
                     .join(", ");
                 if *is_packed {
@@ -319,7 +323,7 @@ impl fmt::Display for Module {
                 "{}",
                 FunctionDisplay {
                     func,
-                    store: &self.types,
+                    store: &store,
                     module: Some(self),
                 }
             )?;
@@ -331,7 +335,9 @@ impl fmt::Display for Module {
 
 struct FunctionDisplay<'a> {
     func: &'a Function,
-    store: &'a TypeContext,
+    /// 取一次读锁后传下来的存储（见 TypeContext 的「读路径纪律」）——
+    /// 下游全部无锁查询，且**拿不到写锁**（display 只读）。
+    store: &'a TypeStore,
     module: Option<&'a Module>,
 }
 
@@ -339,11 +345,13 @@ struct FunctionDisplay<'a> {
 /// 格式；module 上下文省略——元数据名回退为数值 id）。forge-rustc 的
 /// FORGE_TRACE_IR 用它 dump 降级产物，核对 StackAddr/Store 槽偏移。
 pub fn function_to_string(func: &Function) -> String {
+    // 取一次读锁，之后整棵格式化树无锁查询（v3 S3 读路径纪律）
+    let store = func.types.borrow();
     format!(
         "{}",
         FunctionDisplay {
             func,
-            store: &func.types,
+            store: &store,
             module: None,
         }
     )
@@ -425,17 +433,17 @@ impl<'a> fmt::Display for FunctionDisplay<'a> {
                 }
             }
             if let Some(ty) = pa.byval {
-                write!(f, "byval({}) ", fmt_llvm_type(&self.store.borrow(), ty))?;
+                write!(f, "byval({}) ", fmt_llvm_type(self.store, ty))?;
             }
             if let Some(ty) = pa.sret {
-                write!(f, "sret({}) ", fmt_llvm_type(&self.store.borrow(), ty))?;
+                write!(f, "sret({}) ", fmt_llvm_type(self.store, ty))?;
             }
             if pa.align != 0 {
                 write!(f, "align {} ", pa.align)?;
             }
         }
         match sig.returns.first() {
-            Some(ty) => write!(f, "{}", fmt_llvm_type(&self.store.borrow(), *ty))?,
+            Some(ty) => write!(f, "{}", fmt_llvm_type(self.store, *ty))?,
             None => write!(f, "void")?,
         }
         write!(f, " @{}(", func.name)?;
@@ -451,7 +459,7 @@ impl<'a> fmt::Display for FunctionDisplay<'a> {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", fmt_llvm_type(&self.store.borrow(), *ty))?;
+            write!(f, "{}", fmt_llvm_type(self.store, *ty))?;
             // 参数属性（LLVM：`i32 signext %a`）
             if let Some(pa) = func.param_attrs.get(i) {
                 for (on, name) in [
@@ -470,10 +478,10 @@ impl<'a> fmt::Display for FunctionDisplay<'a> {
                     }
                 }
                 if let Some(ty) = pa.byval {
-                    write!(f, " byval({})", fmt_llvm_type(&self.store.borrow(), ty))?;
+                    write!(f, " byval({})", fmt_llvm_type(self.store, ty))?;
                 }
                 if let Some(ty) = pa.sret {
-                    write!(f, " sret({})", fmt_llvm_type(&self.store.borrow(), ty))?;
+                    write!(f, " sret({})", fmt_llvm_type(self.store, ty))?;
                 }
                 if pa.align != 0 {
                     write!(f, " align {}", pa.align)?;
@@ -564,7 +572,7 @@ impl<'a> fmt::Display for FunctionDisplay<'a> {
 
 struct BlockDisplay<'a> {
     func: &'a Function,
-    store: &'a TypeContext,
+    store: &'a TypeStore,
     module: Option<&'a Module>,
     block: Block,
     names: &'a NameResolver,
@@ -599,12 +607,12 @@ impl<'a> fmt::Display for BlockDisplay<'a> {
                     let ty = dfg.value_type(p);
                     write!(f, "    %{} = phi ", self.names.value(p))?;
                     if let Some(t) = ty {
-                        write!(f, "{}", fmt_llvm_type(&self.store.borrow(), t))?;
+                        write!(f, "{}", fmt_llvm_type(self.store, t))?;
                     }
                     for (j, &pred) in preds.iter().enumerate() {
                         let val = dfg.term_args_to(pred, self.block).get(i).copied();
                         write!(f, " [ ")?;
-                        fmt_phi_value(f, self.func, self.names, val)?;
+                        fmt_phi_value(f, self.func, self.store, self.names, val)?;
                         write!(f, ", %{}", self.names.block(pred))?;
                         if j + 1 < preds.len() {
                             write!(f, " ],")?;
@@ -650,7 +658,7 @@ impl<'a> fmt::Display for BlockDisplay<'a> {
 
 struct InstDisplay<'a> {
     func: &'a Function,
-    store: &'a TypeContext,
+    store: &'a TypeStore,
     module: Option<&'a Module>,
     inst: &'a Instruction,
     names: &'a NameResolver,
@@ -781,7 +789,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 .first()
                 .and_then(|r| self.func.dfg.value_type(*r))
             {
-                write!(f, " {}", fmt_llvm_type(&self.store.borrow(), rty))?;
+                write!(f, " {}", fmt_llvm_type(self.store, rty))?;
             }
             // inline asm（第二十九轮:asm 串/约束经 Immediate::String 还原——
             // `call void asm sideeffect "mov", "~{...}"()`——位于 ret 类型之后）
@@ -789,9 +797,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 .immediates
                 .iter()
                 .filter_map(|im| match im {
-                    crate::Immediate::String(s) => {
-                        Some(self.store.borrow().lookup_str(*s).to_string())
-                    }
+                    crate::Immediate::String(s) => Some(self.store.lookup_str(*s).to_string()),
                     _ => None,
                 })
                 .collect();
@@ -841,7 +847,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     Some(lit) => write!(f, "{}", lit)?,
                     None => {
                         if let Some(ty) = self.func.dfg.value_type(op) {
-                            write!(f, "{} ", fmt_llvm_type(&self.store.borrow(), ty))?;
+                            write!(f, "{} ", fmt_llvm_type(self.store, ty))?;
                         }
                         // call 实参属性：`i32 signext %a`（LLVM：属性在类型后、值前）
                         if let Some(attrs) = instruction.param_attrs.get(i.saturating_sub(start)) {
@@ -876,9 +882,9 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 .first()
                 .and_then(|r| self.func.dfg.value_type(*r))
             {
-                write!(f, " {}", fmt_llvm_type(&self.store.borrow(), rty))?;
+                write!(f, " {}", fmt_llvm_type(self.store, rty))?;
             }
-            let store = self.store.borrow();
+            let store = self.store;
             let mut i = 0usize;
             let mut first = true;
             while i < instruction.immediates.len() {
@@ -897,7 +903,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 f,
                                 "{}{name} {} @{}",
                                 if first { " " } else { ", " },
-                                fmt_llvm_type(&store, *ty),
+                                fmt_llvm_type(store, *ty),
                                 self.module
                                     .map(|m| m.get_function(*fr).name.as_str())
                                     .unwrap_or("")
@@ -926,7 +932,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 {
                     // 字面量（undef/null/常量）经 fmt_operand_llvm 自带类型前缀;
                     // %name 值需显式类型（第二十九轮:原双输出致 `ptr ptr undef`）
-                    let store = self.store.borrow();
+                    let store = self.store;
                     let p_lit = value_as_literal(self.func, self.store, self.module, pv);
                     let v_lit = value_as_literal(self.func, self.store, self.module, vv);
                     match (p_lit, v_lit) {
@@ -939,7 +945,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 write!(
                                     f,
                                     ", {} %{}",
-                                    fmt_llvm_type(&store, vt),
+                                    fmt_llvm_type(store, vt),
                                     self.names.value(vv)
                                 )?;
                             }
@@ -949,7 +955,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 write!(
                                     f,
                                     " {} %{}",
-                                    fmt_llvm_type(&store, pt),
+                                    fmt_llvm_type(store, pt),
                                     self.names.value(pv)
                                 )?;
                             }
@@ -960,7 +966,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 write!(
                                     f,
                                     " {} %{}",
-                                    fmt_llvm_type(&store, pt),
+                                    fmt_llvm_type(store, pt),
                                     self.names.value(pv)
                                 )?;
                             }
@@ -968,7 +974,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 write!(
                                     f,
                                     ", {} %{}",
-                                    fmt_llvm_type(&store, vt),
+                                    fmt_llvm_type(store, vt),
                                     self.names.value(vv)
                                 )?;
                             }
@@ -993,12 +999,12 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 }
                 // 字面量自带类型前缀;%name 值需显式类型
                 //（第二十九轮:原双输出致 `i32 i32 1` 类型重复）
-                let store = self.store.borrow();
+                let store = self.store;
                 for (i, &v) in instruction.operands.iter().enumerate() {
                     if let Some(lit) = value_as_literal(self.func, self.store, self.module, v) {
                         write!(f, " {lit}")?;
                     } else if let Some(t) = self.func.dfg.value_type(v) {
-                        write!(f, " {} %{}", fmt_llvm_type(&store, t), self.names.value(v))?;
+                        write!(f, " {} %{}", fmt_llvm_type(store, t), self.names.value(v))?;
                     }
                     if i < instruction.operands.len() - 1 {
                         write!(f, ",")?;
@@ -1013,19 +1019,19 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 return Ok(());
             }
             Opcode::Vextract | Opcode::Vinsert | Opcode::ShuffleVector => {
-                let store = self.store.borrow();
+                let store = self.store;
                 // extractelement <vecty> <v>, <i32> <idx> / insertelement ... / shufflevector ... <mask>
                 if let Some(&a) = instruction.operands.first()
                     && let Some(t) = self.func.dfg.value_type(a)
                 {
-                    write!(f, " {}", fmt_llvm_type(&store, t))?;
+                    write!(f, " {}", fmt_llvm_type(store, t))?;
                     write!(f, " {}", fmt_operand_llvm(self, a))?;
                 }
                 if matches!(instruction.opcode, Opcode::Vinsert | Opcode::ShuffleVector)
                     && let Some(&e) = instruction.operands.get(1)
                     && let Some(et) = self.func.dfg.value_type(e)
                 {
-                    write!(f, ", {}", fmt_llvm_type(&store, et))?;
+                    write!(f, ", {}", fmt_llvm_type(store, et))?;
                     write!(f, " {}", fmt_operand_llvm(self, e))?;
                 }
                 if instruction.opcode == Opcode::ShuffleVector {
@@ -1062,18 +1068,18 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 return Ok(());
             }
             Opcode::ExtractValue | Opcode::InsertValue => {
-                let store = self.store.borrow();
+                let store = self.store;
                 // 聚合常量 agg：immediates = [idx, tag, Type(agg_ty)]
                 //   tag = Uint(0) → zeroinitializer；Agg(id) → 聚合常量池还原
                 if let (Some(tag), Some(Immediate::Type(agg_ty))) =
                     (instruction.immediates.get(1), instruction.immediates.get(2))
                 {
-                    write!(f, " {}", fmt_llvm_type(&store, *agg_ty))?;
+                    write!(f, " {}", fmt_llvm_type(store, *agg_ty))?;
                     match tag {
                         Immediate::Uint(0) => write!(f, " zeroinitializer")?,
                         Immediate::String(s) => write!(f, " {}", store.lookup_str(*s))?,
                         Immediate::Agg(id) => {
-                            write!(f, " {}", fmt_agg_const(&store, &self.func.constants, *id))?;
+                            write!(f, " {}", fmt_agg_const(store, &self.func.constants, *id))?;
                             // insertvalue 聚合字面量：补出 elem 值（折叠后 children[idx] 即插入元素）
                             if matches!(instruction.opcode, Opcode::InsertValue)
                                 && let Some(Immediate::Uint(idx)) = instruction.immediates.first()
@@ -1087,7 +1093,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 write!(
                                     f,
                                     ", {}",
-                                    fmt_agg_scalar(&store, &self.func.constants, ety, *cid)
+                                    fmt_agg_scalar(store, &self.func.constants, ety, *cid)
                                 )?;
                             }
                         }
@@ -1110,7 +1116,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 write!(
                                     f,
                                     " {} %{}",
-                                    fmt_llvm_type(&store, t),
+                                    fmt_llvm_type(store, t),
                                     self.names.value(agg)
                                 )?;
                             }
@@ -1128,7 +1134,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                 write!(
                                     f,
                                     ", {} %{}",
-                                    fmt_llvm_type(&store, et),
+                                    fmt_llvm_type(store, et),
                                     self.names.value(elem)
                                 )?;
                             }
@@ -1157,14 +1163,14 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     .first()
                     .and_then(|&p| self.func.dfg.value_type(p));
                 if let (Some(vt), Some(pt)) = (val_ty, ptr_ty) {
-                    let store = self.store.borrow();
+                    let store = self.store;
                     if instruction
                         .mem_flags
                         .contains(crate::mem_flags::MemFlags::VOLATILE)
                     {
                         write!(f, " volatile")?;
                     }
-                    write!(f, " {},", fmt_llvm_type(&store, vt))?;
+                    write!(f, " {},", fmt_llvm_type(store, vt))?;
                     if let Some(&p) = instruction.operands.first() {
                         match value_as_literal(self.func, self.store, self.module, p) {
                             // 字面量自带类型（`ptr @g` / `i32 42`）→ 不再重复 ptr_ty
@@ -1172,7 +1178,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                             None => write!(
                                 f,
                                 " {} %{}",
-                                fmt_llvm_type(&store, pt),
+                                fmt_llvm_type(store, pt),
                                 self.names.value(p)
                             )?,
                         }
@@ -1185,12 +1191,12 @@ impl<'a> fmt::Display for InstDisplay<'a> {
             }
             // alloca <ty> [, i32 <count>] [, align N]
             Opcode::Alloca => {
-                let store = self.store.borrow();
+                let store = self.store;
                 if instruction.flags.contains(crate::InstFlags::INALLOCA) {
                     write!(f, " inalloca")?;
                 }
                 if let Some(Immediate::Type(ty)) = instruction.immediates.first() {
-                    write!(f, " {}", fmt_llvm_type(&store, *ty))?;
+                    write!(f, " {}", fmt_llvm_type(store, *ty))?;
                     if let Some(Immediate::Uint(count)) = instruction.immediates.get(1)
                         && *count != 1
                     {
@@ -1211,12 +1217,12 @@ impl<'a> fmt::Display for InstDisplay<'a> {
             }
             // getelementptr [inbounds] <base>, <ptrty> <ptr>, <idxty> <idx>, ...
             Opcode::GetElementPtr => {
-                let store = self.store.borrow();
+                let store = self.store;
                 if instruction.flags.contains(crate::InstFlags::INBOUNDS) {
                     write!(f, " inbounds")?;
                 }
                 if let Some(Immediate::Type(base)) = instruction.immediates.first() {
-                    write!(f, " {}", fmt_llvm_type(&store, *base))?;
+                    write!(f, " {}", fmt_llvm_type(store, *base))?;
                 }
                 for &op in instruction.operands.iter() {
                     write!(f, ", ")?;
@@ -1224,7 +1230,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                         Some(lit) => write!(f, "{}", lit)?,
                         None => {
                             if let Some(ty) = self.func.dfg.value_type(op) {
-                                write!(f, "{} ", fmt_llvm_type(&store, ty))?;
+                                write!(f, "{} ", fmt_llvm_type(store, ty))?;
                             }
                             write!(f, "%{}", self.names.value(op))?;
                         }
@@ -1246,7 +1252,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 // 函数地址引用（String 编码——第三十一轮:函数引用不再用
                 // GlobalId,display 直接输出 @函数名）
                 if let Some(Immediate::String(sid)) = instruction.immediates.first() {
-                    write!(f, " ptr @{}", self.store.borrow().lookup_str(*sid))?;
+                    write!(f, " ptr @{}", self.store.lookup_str(*sid))?;
                     return Ok(());
                 }
                 if let Some(Immediate::Global(gid)) = instruction.immediates.first()
@@ -1275,11 +1281,11 @@ impl<'a> fmt::Display for InstDisplay<'a> {
             // vconst <ty> [<lane>, ...] [big]（forge 扩展；lane 数据 round-trip，
             // 大端常量输出 `big` 标记——修复旧版只输出类型导致数据丢失）
             Opcode::Vconst => {
-                let store = self.store.borrow();
+                let store = self.store;
                 if let Some(&r) = instruction.results.first()
                     && let Some(ty) = self.func.dfg.value_type(r)
                 {
-                    write!(f, " {}", fmt_llvm_type(&store, ty))?;
+                    write!(f, " {}", fmt_llvm_type(store, ty))?;
                     // vector of ptr:数字 lane 无法表达(ptr lane 仅 null/@g/
                     // zeroinitializer 合法)——全零输出 zeroinitializer
                     //（第二十九轮:原输出 <0, 0> 数字 lane,reparse 拒绝）
@@ -1297,7 +1303,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                         && let Some(endian) = self.func.constants.get_vector_endian(*cid)
                         && let Some(&TypeEntry::Vector { elem, len }) = store.entry_opt(ty)
                     {
-                        let lane_size = size_bytes_or_zero(&store, elem) as usize;
+                        let lane_size = size_bytes_or_zero(store, elem) as usize;
                         let n_lanes = len as usize;
                         if lane_size > 0 && data.len() >= n_lanes * lane_size {
                             write!(f, " [")?;
@@ -1306,7 +1312,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                                     write!(f, ", ")?;
                                 }
                                 let chunk = &data[i * lane_size..(i + 1) * lane_size];
-                                write!(f, "{}", fmt_vconst_lane(&store, elem, chunk, endian))?;
+                                write!(f, "{}", fmt_vconst_lane(store, elem, chunk, endian))?;
                             }
                             write!(f, "]")?;
                             if matches!(endian, crate::Endianness::Big) {
@@ -1324,7 +1330,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
         if instruction.opcode == Opcode::VaArg {
             if let Some(&ap) = instruction.operands.first() {
                 if let Some(ty) = self.func.dfg.value_type(ap) {
-                    write!(f, " {} ", fmt_llvm_type(&self.store.borrow(), ty))?;
+                    write!(f, " {} ", fmt_llvm_type(self.store, ty))?;
                 } else {
                     write!(f, " ")?;
                 }
@@ -1335,7 +1341,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                 .first()
                 .and_then(|r| self.func.dfg.value_type(*r))
             {
-                write!(f, ", {}", fmt_llvm_type(&self.store.borrow(), rty))?;
+                write!(f, ", {}", fmt_llvm_type(self.store, rty))?;
             }
             fmt_inst_metadata(f, instruction, self.module)?;
             return Ok(());
@@ -1352,7 +1358,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     Some(lit) => write!(f, "{}", lit)?,
                     None => {
                         if let Some(ty) = self.func.dfg.value_type(op) {
-                            write!(f, "{} ", fmt_llvm_type(&self.store.borrow(), ty))?;
+                            write!(f, "{} ", fmt_llvm_type(self.store, ty))?;
                         }
                         write!(f, "%{}", self.names.value(op))?;
                     }
@@ -1386,7 +1392,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
             .first()
             .and_then(|r| self.func.dfg.value_type(*r))
         {
-            write!(f, " to {}", fmt_llvm_type(&self.store.borrow(), rty))?;
+            write!(f, " to {}", fmt_llvm_type(self.store, rty))?;
         }
 
         // 指令尾 metadata 附加（`..., !dbg !N`）
@@ -1456,7 +1462,7 @@ fn fmt_mem_attrs(f: &mut fmt::Formatter<'_>, instruction: &Instruction) -> fmt::
 /// 指令流）不需要再改本文件。
 struct TerminatorDisplay<'a> {
     func: &'a Function,
-    store: &'a TypeContext,
+    store: &'a TypeStore,
     module: Option<&'a Module>,
     block: Block,
     names: &'a NameResolver,
@@ -1482,7 +1488,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
                             Some(ty) => write!(
                                 f,
                                 "{} %{}",
-                                fmt_llvm_type(&self.store.borrow(), ty),
+                                fmt_llvm_type(self.store, ty),
                                 self.names.value(*v)
                             )?,
                             None => write!(f, "%{}", self.names.value(*v))?,
@@ -1510,7 +1516,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
                         Some(ty) => write!(
                             f,
                             "{} %{}",
-                            fmt_llvm_type(&self.store.borrow(), ty),
+                            fmt_llvm_type(self.store, ty),
                             self.names.value(cond)
                         )?,
                         None => write!(f, "%{}", self.names.value(cond))?,
@@ -1532,7 +1538,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
                         Some(ty) => write!(
                             f,
                             "{} %{}",
-                            fmt_llvm_type(&self.store.borrow(), ty),
+                            fmt_llvm_type(self.store, ty),
                             self.names.value(discriminant)
                         )?,
                         None => write!(f, "%{}", self.names.value(discriminant))?,
@@ -1542,7 +1548,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
                 write!(f, " [")?;
                 // case 值类型跟随 discriminant（LLVM：`switch i64 %x, ... [ i64 1, ... ]`）
                 let case_ty = dfg.value_type(discriminant);
-                let case_ty_str = case_ty.map(|t| fmt_llvm_type(&self.store.borrow(), t));
+                let case_ty_str = case_ty.map(|t| fmt_llvm_type(self.store, t));
                 for (i, case) in view.cases.iter().enumerate() {
                     if i > 0 {
                         write!(f, " ")?;
@@ -1571,7 +1577,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
                     write!(f, "    invoke ")?;
                 }
                 if ret_ty != TypeId::VOID {
-                    write!(f, "{} ", fmt_llvm_type(&self.store.borrow(), ret_ty))?;
+                    write!(f, "{} ", fmt_llvm_type(self.store, ret_ty))?;
                 } else {
                     write!(f, "void ")?;
                 }
@@ -1598,7 +1604,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
                             Some(ty) => write!(
                                 f,
                                 "{} %{}",
-                                fmt_llvm_type(&self.store.borrow(), ty),
+                                fmt_llvm_type(self.store, ty),
                                 self.names.value(*arg)
                             )?,
                             None => write!(f, "%{}", self.names.value(*arg))?,
@@ -1620,7 +1626,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
                         Some(ty) => write!(
                             f,
                             "{} %{}",
-                            fmt_llvm_type(&self.store.borrow(), ty),
+                            fmt_llvm_type(self.store, ty),
                             self.names.value(value)
                         )?,
                         None => write!(f, "%{}", self.names.value(value))?,
@@ -1740,6 +1746,7 @@ fn ordering_name(im: Option<&Immediate>) -> String {
 fn fmt_phi_value(
     f: &mut fmt::Formatter<'_>,
     func: &Function,
+    store: &TypeStore,
     names: &NameResolver,
     v: Option<Value>,
 ) -> fmt::Result {
@@ -1775,7 +1782,7 @@ fn fmt_phi_value(
                 // 位模式 0x3FC0_0000）作为 phi 入边被打印成反规格化 f64
                 // 的错误十进制值（2026-09-14 审计发现）。
                 let width = match func.dfg.value_type(v) {
-                    Some(ty) => match func.types.borrow().entry_opt(ty) {
+                    Some(ty) => match store.entry_opt(ty) {
                         Some(crate::types::TypeEntry::Float { bits }) => *bits,
                         Some(crate::types::TypeEntry::BFloat { bits }) => *bits,
                         _ => pool_width,
@@ -2233,7 +2240,7 @@ fn fmt_llvm_type(store: &TypeStore, ty: TypeId) -> String {
 /// display 遍历指令时跳过这些"值定义"指令行，使用处内联。
 fn value_as_literal(
     func: &Function,
-    store: &TypeContext,
+    store: &TypeStore,
     module: Option<&Module>,
     v: Value,
 ) -> Option<ImmStr> {
@@ -2244,8 +2251,8 @@ fn value_as_literal(
         let ty = func.dfg.value_data_opt(v)?.ty;
         return Some(crate::ImmStr::from(format!(
             "{} {}",
-            fmt_llvm_type(&store.borrow(), ty),
-            fmt_agg_const(&store.borrow(), &func.constants, agg_id)
+            fmt_llvm_type(store, ty),
+            fmt_agg_const(store, &func.constants, agg_id)
         )));
     }
     let ValueDef::Inst(inst, _) = def else {
@@ -2262,21 +2269,19 @@ fn value_as_literal(
             // 向量类型的常量（向量 GEP 求值宽松 0——第二十九轮:原输出
             // `i{bits}` 类型漂移为标量,reparse 后类型不等）
             if matches!(
-                store.borrow().entry_opt(vty),
+                store.entry_opt(vty),
                 Some(crate::types::TypeEntry::Vector { .. })
                     | Some(crate::types::TypeEntry::ScalableVector { .. })
             ) {
                 return Some(ImmStr::from(format!(
                     "{} zeroinitializer",
-                    fmt_llvm_type(&store.borrow(), vty)
+                    fmt_llvm_type(store, vty)
                 )));
             }
             // ptr 类型的常量：零 → `ptr null`；非零 → `ptr {val}`（LLVM 15+
             // opaque ptr 常量语法——第二十九轮:原输出 `i64 {val}` 丢 PTR 类型,
             // GEP 表达式求值结果 roundtrip 后变 I64）；addrspace(N) 保留
-            if let Some(crate::types::TypeEntry::Pointer { addr_space }) =
-                store.borrow().entry_opt(vty)
-            {
+            if let Some(crate::types::TypeEntry::Pointer { addr_space }) = store.entry_opt(vty) {
                 let pfx = if *addr_space == 0 {
                     "ptr".to_string()
                 } else {
@@ -2298,7 +2303,7 @@ fn value_as_literal(
             // f32 → `0x3FC00000`（8 位 hex）、f64 → `0x3FF8000000000000`（16 位 hex）、
             // half → `0xH...`、bfloat → `0xR...`（第二十九轮）
             let ty = func.dfg.value_type(v)?;
-            let hex = match store.borrow().get(ty) {
+            let hex = match store.get(ty) {
                 crate::types::TypeEntry::Float { bits: 16 } => {
                     format!("0xH{:04x}", bits as u16)
                 }
@@ -2310,7 +2315,7 @@ fn value_as_literal(
             };
             Some(ImmStr::from(format!(
                 "{} {}",
-                fmt_llvm_type(&store.borrow(), ty),
+                fmt_llvm_type(store, ty),
                 hex
             )))
         }
@@ -2324,7 +2329,7 @@ fn value_as_literal(
             match func.dfg.value_type(v) {
                 Some(ty) => Some(ImmStr::from(format!(
                     "{} {word}",
-                    fmt_llvm_type(&store.borrow(), ty)
+                    fmt_llvm_type(store, ty)
                 ))),
                 None => Some(ImmStr::from_static(word)),
             }
@@ -2333,10 +2338,7 @@ fn value_as_literal(
         Opcode::GlobalAddr => {
             // 函数地址引用（String 编码——第三十一轮）
             if let Some(Immediate::String(sid)) = inst_data.immediates.first() {
-                return Some(ImmStr::from(format!(
-                    "ptr @{}",
-                    store.borrow().lookup_str(*sid)
-                )));
+                return Some(ImmStr::from(format!("ptr @{}", store.lookup_str(*sid))));
             }
             let Immediate::Global(gid) = inst_data.immediates.first().copied()? else {
                 return None;
@@ -2367,7 +2369,7 @@ fn value_as_literal(
             }
             let data = func.constants.get_vector(cid)?;
             let ty = func.dfg.value_type(v)?;
-            let store_ref = store.borrow();
+            let store_ref = store;
             let &crate::types::TypeEntry::Vector { elem, len } = store_ref.get(ty) else {
                 return None;
             };
@@ -2382,12 +2384,12 @@ fn value_as_literal(
                 }
                 return None;
             }
-            let lane_size = size_bytes_or_zero(&store_ref, elem) as usize;
+            let lane_size = size_bytes_or_zero(store_ref, elem) as usize;
             if lane_size == 0 || data.len() < len as usize * lane_size {
                 return None;
             }
             let mut text = String::from(" ");
-            text.push_str(&fmt_llvm_type(&store_ref, ty));
+            text.push_str(&fmt_llvm_type(store_ref, ty));
             text.push_str(" <");
             for i in 0..len as usize {
                 if i > 0 {
@@ -2395,7 +2397,7 @@ fn value_as_literal(
                 }
                 let chunk = &data[i * lane_size..(i + 1) * lane_size];
                 text.push_str(&fmt_vconst_lane(
-                    &store_ref,
+                    store_ref,
                     elem,
                     chunk,
                     crate::Endianness::Little,
@@ -2427,8 +2429,9 @@ mod tests {
         fb.switch_to_block(entry);
         let r = fb.iadd(params[0], params[0]);
         fb.ret(&[r]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         format!(
             "{}",
             FunctionDisplay {
@@ -2501,8 +2504,9 @@ mod tests {
         fb.switch_to_block(else_blk);
         let v2 = fb.iconst_i32(0);
         fb.ret(&[v2]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2552,8 +2556,9 @@ mod tests {
         fb.switch_to_block(case1_blk);
         let v1 = fb.iconst_i32(1);
         fb.ret(&[v1]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2578,8 +2583,9 @@ mod tests {
         let entry = fb.create_block();
         fb.switch_to_block(entry);
         fb.ret(&[]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2603,8 +2609,9 @@ mod tests {
         fb.switch_to_block(target);
         let v = fb.iconst_i32(42);
         fb.ret(&[v]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2628,8 +2635,9 @@ mod tests {
         let entry = fb.create_block();
         fb.switch_to_block(entry);
         fb.unreachable();
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2659,8 +2667,9 @@ mod tests {
         let v = fb.iconst_i32(2);
         let fv = fb.fconst_f64(1.0);
         fb.ret(&[v, fv]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2692,8 +2701,9 @@ mod tests {
         fb.switch_to_block(entry);
         let r = fb.iadd(params[0], params[0]);
         fb.ret(&[r]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2731,8 +2741,9 @@ mod tests {
         let b = fb.iconst_i32(2);
         let r = fb.iadd(a, b);
         fb.ret(&[r]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2762,8 +2773,9 @@ mod tests {
         fb.bind_name(a, "x"); // 与参数同名 → 消歧 %x / %x_1
         let r = fb.iadd(a, a);
         fb.ret(&[r]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2798,8 +2810,9 @@ mod tests {
         fb.bind_name(a, "second");
         let r = fb.iadd(a, a);
         fb.ret(&[r]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {
@@ -2826,8 +2839,9 @@ mod tests {
         fb.switch_to_block(entry);
         let r = fb.iconst_i32(1);
         fb.ret(&[r]);
-        let store = fb.type_ctx().clone();
         let func = fb.finish().expect("build");
+        // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
+        let store = func.types.borrow();
         let text = format!(
             "{}",
             FunctionDisplay {

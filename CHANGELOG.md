@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **类型读路径纪律：`&TypeStore` 显式传参（forge-ir v3 S3 切片，display 落地）**：`TypeContext::borrow()` 每次都是一次 `RwLock` 读锁获取，而 `RwLock` **不可重入**（读锁存活期间再 `borrow_mut()` intern 新类型 = 自锁死）；`display.rs` 此前有 **51 处** `borrow()`（`value_as_literal` 每值一次、`NameResolver::new` 每块/值各一次），打印一个模块的取锁次数与函数体大小成正比。
+  现在 display 全量改为"**入口取一次锁、把 `&TypeStore` 显式传下去**"：`FunctionDisplay`/`BlockDisplay`/`InstDisplay`/`TerminatorDisplay`/`NameResolver`/`value_as_literal`/`fmt_phi_value` 的参数与字段改为 `&TypeStore`，`Display for Module` 与 `function_to_string` 各取一次（布局也读已取到的 store，避免 `Module::data_layout()` 再取一次）——非测试路径 `borrow()` **51 → 2**（这 2 处就是入口本身）。
+  `TypeContext` 新增**仅 `debug_assertions`** 的读锁计数（`debug_read_count`/`debug_reset_read_count`；release 下字段与方法都不存在，零开销），并新增 `tests/type_store_read_path.rs`（3 例）钉住"打印一个模块/一个函数各只取 1 次读锁、重复打印 3 次 = 3 次"。负向验证：在 `Module::fmt` 临时加一行 `borrow()` ⇒ 计数 2、守卫 FAILED；删掉后全绿。
+  实测：workspace 1470 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **坏 IR 的越界 `TypeId`/`SigRef` 变成诊断，不再 panic（forge-ir v3 S3 切片）**：`TypeStore::get`/`get_signature` 是 fail-closed 索引（`entries[id]`/`signatures[sr]`），而 IR 里的类型句柄是**数据**。临时探针实测两条崩溃路径：越界 `SigRef` 走校验器 ⇒ `signatures[9999]` `index out of bounds`；越界 `TypeId` 走 **display** ⇒ `entries[9999]` 越界（"把坏 IR 打印出来给人看"这个最需要诊断的时刻反而崩了）。
   现在：`TypeStore` 增加容忍坏 IR 的读取口 `entry_opt`/`signature_opt`/`contains_type`（`get`/`get_signature` 保持 fail-closed 并注明是良好 IR 的快路径）；校验器新增前置自检 `check_type_refs`（扫签名句柄 + 签名参数/返回类型 + 全部值类型 + 块参数类型），越界即报新错误码 `BadTypeId`/`BadSigRef` 并跳过后续类型相关检查（结构类检查照常跑完一起上报；错误码 31 → 33）；display 的 11 处类型查询改走 `entry_opt`，`fmt_llvm_type` 对越界 id 打印 `<bad-type:N>` 占位符，5 处 `size_bytes`/`alignment` 收进容忍助手（存储自身查询仍 fail-closed）。
   新增 `tests/bad_type_id_robustness.rs`（4 例）：越界值类型 / 越界签名返回类型 / 越界 `SigRef` 均返回诊断，坏 IR 打印出占位符；其中两条在改前实测 panic。实测：workspace 1467 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
