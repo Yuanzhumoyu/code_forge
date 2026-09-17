@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **坏 IR 的越界 `TypeId`/`SigRef` 变成诊断，不再 panic（forge-ir v3 S3 切片）**：`TypeStore::get`/`get_signature` 是 fail-closed 索引（`entries[id]`/`signatures[sr]`），而 IR 里的类型句柄是**数据**。临时探针实测两条崩溃路径：越界 `SigRef` 走校验器 ⇒ `signatures[9999]` `index out of bounds`；越界 `TypeId` 走 **display** ⇒ `entries[9999]` 越界（"把坏 IR 打印出来给人看"这个最需要诊断的时刻反而崩了）。
+  现在：`TypeStore` 增加容忍坏 IR 的读取口 `entry_opt`/`signature_opt`/`contains_type`（`get`/`get_signature` 保持 fail-closed 并注明是良好 IR 的快路径）；校验器新增前置自检 `check_type_refs`（扫签名句柄 + 签名参数/返回类型 + 全部值类型 + 块参数类型），越界即报新错误码 `BadTypeId`/`BadSigRef` 并跳过后续类型相关检查（结构类检查照常跑完一起上报；错误码 31 → 33）；display 的 11 处类型查询改走 `entry_opt`，`fmt_llvm_type` 对越界 id 打印 `<bad-type:N>` 占位符，5 处 `size_bytes`/`alignment` 收进容忍助手（存储自身查询仍 fail-closed）。
+  新增 `tests/bad_type_id_robustness.rs`（4 例）：越界值类型 / 越界签名返回类型 / 越界 `SigRef` 均返回诊断，坏 IR 打印出占位符；其中两条在改前实测 panic。实测：workspace 1467 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **`DataLayout` 单一数据源（forge-ir v3 S3 切片）**：`Module::set_data_layout` 此前是 `self.types = TypeContext::with_data_layout(..)`——**整体替换类型存储**。实测两条后果：①改布局前 intern 的签名/类型全部丢失（`get_signature` 直接在 fail-closed 分支 panic，文档里"必须在 `add_function` 之前调用（重建会清空已注册签名）"就是这条缺陷的自述）；②改布局前构建的 `Function` 持有旧存储 ⇒ 同一模块内模块侧与函数侧的指针宽度/大小/对齐各算各的（实测 `size_bytes(ptr)` 一侧 4、一侧 8）。
   现在：新增 `TypeStore::set_data_layout`（原地写那一个字段，无需失效任何缓存——布局派生结果都是查询期现算，`TypeKey` 不含宽度/对齐）；`Module::set_data_layout` 改为原地更新共享存储，**删除 `Module.data_layout` 副本字段**（唯一副本在存储里）并新增 `Module::data_layout()`，"必须在 `add_function` 之前调用"的约束消失；删除 `TypeContext::with_data_layout`（无调用方）；迁移 3 处字段读取与解析器注释。新增 `tests/data_layout_single_source.rs`（4 例，其中 2 例在实现前实测 FAILED：签名丢失 panic、指针宽度 8 ≠ 4）。
   实测：workspace 1463 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。

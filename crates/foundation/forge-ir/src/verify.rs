@@ -148,6 +148,20 @@ pub enum VerifyError {
         inst: Inst,
         what: String,
     },
+    /// IR 里引用了**类型存储范围之外**的 `TypeId`（v3 S3）。
+    ///
+    /// `what` 指出引用位置（如 `"value"` / `"inst result"` / `"block param"` /
+    /// `"signature param"` / `"signature return"`）。类型句柄是数据，越界值必须
+    /// 变成诊断：校验器此前会在 `TypeStore` 的 fail-closed 索引处 panic。
+    BadTypeId {
+        what: String,
+        ty: TypeId,
+    },
+    /// IR 里引用了**签名表范围之外**的 `SigRef`（v3 S3）；语义同上，只是句柄是签名。
+    BadSigRef {
+        what: String,
+        sr: SigRef,
+    },
     /// Return 值数量与签名匹配但类型不符。
     ReturnValueTypeMismatch {
         /// `ret` 终结符指令。
@@ -372,6 +386,20 @@ impl std::fmt::Display for VerifyError {
                      DataFlowGraph::tombstone_inst_low)"
                 )
             }
+            VerifyError::BadTypeId { what, ty } => {
+                write!(
+                    f,
+                    "type id {ty} referenced by {what} is out of range of the type store \
+                     (坏 IR 的类型句柄；TypeStore::entry_opt({ty}) == None)"
+                )
+            }
+            VerifyError::BadSigRef { what, sr } => {
+                write!(
+                    f,
+                    "signature ref {sr} referenced by {what} is out of range of the type store \
+                     (坏 IR 的签名句柄；TypeStore::signature_opt({sr}) == None)"
+                )
+            }
             VerifyError::ReturnValueTypeMismatch {
                 inst,
                 block,
@@ -542,16 +570,22 @@ impl Verifier {
         self.check_operand_counts(&func.dfg);
         self.check_types(&func.dfg);
         self.check_uses(&func.dfg);
-        self.check_immediates(func);
         self.check_use_lists(func);
-        self.check_block_params(func);
         self.check_terminators(&func.dfg);
         self.check_reachability(func);
         self.check_value_defs(func);
         self.check_dominance(func);
         self.check_inst_order(func);
-        self.check_path_termination(func);
         self.check_tombstones(&func.dfg);
+
+        // 类型引用自检（v3 S3）：越界 `TypeId`/`SigRef` ⇒ 报错并**跳过**后面的
+        // 类型相关检查（继续跑会在类型存储的 fail-closed 索引处 panic——那是"坏 IR
+        // 变成崩溃"而不是诊断）。结构类检查（上面那批）不看类型存储，先跑完一起报。
+        if self.check_type_refs(func) {
+            self.check_immediates(func);
+            self.check_block_params(func);
+            self.check_path_termination(func);
+        }
 
         // fail-closed：无类型上下文时 8 类类型相关检查无法执行 → 明确报错
         // （不是静默放宽）。放在最后，保证结构类检查仍然跑完并一起上报。
@@ -564,6 +598,67 @@ impl Verifier {
         } else {
             Err(self.errors.clone())
         }
+    }
+
+    /// 类型引用自检（v3 S3）：IR 里的 `TypeId`/`SigRef` 是**数据**——文本解析、
+    /// 跨模块拼接、pass 写错都可能产生越界句柄。此前的 `TypeStore::get`/
+    /// `get_signature` 直接索引，校验器遇到坏句柄就 panic（实测：越界 `SigRef`
+    /// 在 `types.rs` 的 `signatures[9999]` 处 `index out of bounds`）。
+    ///
+    /// 这里把"类型引用是否可解析"变成诊断（`BadTypeId`/`BadSigRef`），返回 `true`
+    /// 才继续跑类型相关检查。无类型上下文（`ctx == None`）时无从判断，交给末尾的
+    /// `MissingTypeContext` fail-closed 上报。
+    fn check_type_refs(&mut self, func: &Function) -> bool {
+        let Some(ctx) = self.ctx.clone() else {
+            return true;
+        };
+        let store = ctx.borrow();
+
+        let check_ty = |errs: &mut Vec<VerifyError>, what: &str, ty: TypeId| {
+            if !store.contains_type(ty) {
+                errs.push(VerifyError::BadTypeId {
+                    what: what.to_string(),
+                    ty,
+                });
+            }
+        };
+
+        // ① 函数签名（句柄本身 + 签名里的参数/返回类型）
+        match store.signature_opt(func.signature) {
+            None => {
+                self.errors.push(VerifyError::BadSigRef {
+                    what: "function signature".to_string(),
+                    sr: func.signature,
+                });
+            }
+            Some(sig) => {
+                for (ty, _) in &sig.params {
+                    check_ty(&mut self.errors, "signature param", *ty);
+                }
+                for ty in &sig.returns {
+                    check_ty(&mut self.errors, "signature return", *ty);
+                }
+            }
+        }
+
+        // ② 所有值（含指令结果）的类型
+        for (_v, vd) in func.dfg.values() {
+            check_ty(&mut self.errors, "value", vd.ty);
+        }
+
+        // ③ 块参数类型
+        for (_b, bd) in func.dfg.blocks() {
+            for ty in &bd.params {
+                check_ty(&mut self.errors, "block param", *ty);
+            }
+        }
+
+        !self.errors.iter().any(|e| {
+            matches!(
+                e,
+                VerifyError::BadTypeId { .. } | VerifyError::BadSigRef { .. }
+            )
+        })
     }
 
     fn check_entry(&mut self, func: &Function) {

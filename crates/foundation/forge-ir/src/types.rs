@@ -442,13 +442,33 @@ impl TypeStore {
         id
     }
 
-    /// 按 SigRef 查询函数签名。
+    /// 按 SigRef 查询函数签名。**fail-closed**：越界 `SigRef` panic——调用方
+    /// 已确认句柄有效时用它；可能拿到坏 IR 的路径（校验器/display）用
+    /// [`TypeStore::signature_opt`]。
     pub fn get_signature(&self, sr: SigRef) -> &FunctionSignature {
         &self.signatures[sr.0 as usize]
     }
 
+    /// 按 SigRef 查询签名，越界返回 `None`（**容忍坏 IR 的读取口**，v3 S3）。
+    pub fn signature_opt(&self, sr: SigRef) -> Option<&FunctionSignature> {
+        self.signatures.get(sr.0 as usize)
+    }
+
+    /// 按 `TypeId` 查询类型条目。**fail-closed**：越界 `TypeId` panic——IR 里的
+    /// `TypeId` 是数据（文本解析/跨模块拼接/pass 写错都可能越界），所以任何可能
+    /// 拿到坏 IR 的路径（校验器、display）必须用 [`TypeStore::entry_opt`]。
     pub fn get(&self, id: TypeId) -> &TypeEntry {
         &self.entries[id.0 as usize]
+    }
+
+    /// 按 `TypeId` 查询类型条目，越界返回 `None`（**容忍坏 IR 的读取口**，v3 S3）。
+    pub fn entry_opt(&self, id: TypeId) -> Option<&TypeEntry> {
+        self.entries.get(id.0 as usize)
+    }
+
+    /// `TypeId` 是否在本存储范围内。
+    pub fn contains_type(&self, id: TypeId) -> bool {
+        (id.0 as usize) < self.entries.len()
     }
 
     pub fn type_count(&self) -> usize {

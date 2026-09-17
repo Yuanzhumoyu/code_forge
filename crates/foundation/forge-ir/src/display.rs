@@ -273,9 +273,9 @@ impl fmt::Display for Module {
         // LLVM 类型定义：`%struct.X = type { ... }`
         let types = self.types.borrow();
         for (name, tid) in types.named_structs() {
-            if let crate::types::TypeEntry::Struct {
+            if let Some(crate::types::TypeEntry::Struct {
                 fields, is_packed, ..
-            } = types.get(tid)
+            }) = types.entry_opt(tid)
             {
                 let inner = fields
                     .iter()
@@ -1284,9 +1284,9 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     // zeroinitializer 合法)——全零输出 zeroinitializer
                     //（第二十九轮:原输出 <0, 0> 数字 lane,reparse 拒绝）
                     let is_ptr_elem = matches!(
-                        store.get(ty),
-                        TypeEntry::Vector { elem, .. }
-                            if matches!(store.get(*elem), TypeEntry::Pointer { .. })
+                        store.entry_opt(ty),
+                        Some(TypeEntry::Vector { elem, .. })
+                            if matches!(store.entry_opt(*elem), Some(TypeEntry::Pointer { .. }))
                     );
                     if is_ptr_elem {
                         write!(f, " zeroinitializer")?;
@@ -1295,9 +1295,9 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     if let Some(Immediate::Const(cid)) = instruction.immediates.first()
                         && let Some(data) = self.func.constants.get_vector(*cid)
                         && let Some(endian) = self.func.constants.get_vector_endian(*cid)
-                        && let &TypeEntry::Vector { elem, len } = store.get(ty)
+                        && let Some(&TypeEntry::Vector { elem, len }) = store.entry_opt(ty)
                     {
-                        let lane_size = store.size_bytes(elem) as usize;
+                        let lane_size = size_bytes_or_zero(&store, elem) as usize;
                         let n_lanes = len as usize;
                         if lane_size > 0 && data.len() >= n_lanes * lane_size {
                             write!(f, " [")?;
@@ -1775,9 +1775,9 @@ fn fmt_phi_value(
                 // 位模式 0x3FC0_0000）作为 phi 入边被打印成反规格化 f64
                 // 的错误十进制值（2026-09-14 审计发现）。
                 let width = match func.dfg.value_type(v) {
-                    Some(ty) => match func.types.borrow().get(ty) {
-                        crate::types::TypeEntry::Float { bits } => *bits,
-                        crate::types::TypeEntry::BFloat { bits } => *bits,
+                    Some(ty) => match func.types.borrow().entry_opt(ty) {
+                        Some(crate::types::TypeEntry::Float { bits }) => *bits,
+                        Some(crate::types::TypeEntry::BFloat { bits }) => *bits,
                         _ => pool_width,
                     },
                     None => pool_width,
@@ -1844,8 +1844,8 @@ fn fmt_agg_scalar(
     if let Some((v, bits)) = pool.get_int(cid) {
         format!("i{bits} {v}")
     } else if let Some(bits) = pool.get_float128(cid) {
-        match store.get(ety) {
-            crate::types::TypeEntry::Float { bits: 32 } => {
+        match store.entry_opt(ety) {
+            Some(crate::types::TypeEntry::Float { bits: 32 }) => {
                 format!("float {}", f32::from_bits(bits as u32))
             }
             _ => format!("double {}", f64::from_bits(bits as u64)),
@@ -1885,11 +1885,11 @@ fn fmt_agg_const(
             }
         })
         .collect();
-    match store.get(agg.ty) {
-        crate::types::TypeEntry::Struct { is_packed, .. } if *is_packed => {
+    match store.entry_opt(agg.ty) {
+        Some(crate::types::TypeEntry::Struct { is_packed, .. }) if *is_packed => {
             format!("<{{ {} }}>", inner.join(", "))
         }
-        crate::types::TypeEntry::Struct { .. } => format!("{{ {} }}", inner.join(", ")),
+        Some(crate::types::TypeEntry::Struct { .. }) => format!("{{ {} }}", inner.join(", ")),
         _ => format!("[{}]", inner.join(", ")),
     }
 }
@@ -1898,15 +1898,19 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
     // 全零字节 → zeroinitializer（LLVM 标准；非标量聚合/数组/向量——
     // 第二十九轮:去掉原 `init.len() > 8` 限制,8 字节内聚合(如 [8 x i8])
     // 也被正确折叠;标量零走数字分支）
+    // 越界 `TypeId`（坏 IR）：按字节 dump 兜底，不 panic（诊断路径）
+    let Some(entry) = store.entry_opt(ty) else {
+        return format!("<bad-type:{}> {}", ty.index(), {
+            let hex: Vec<String> = init.iter().map(|b| format!("{b:02x}")).collect();
+            hex.join(" ")
+        });
+    };
     if init.iter().all(|&b| b == 0)
-        && !matches!(
-            store.get(ty),
-            TypeEntry::Int { .. } | TypeEntry::Float { .. }
-        )
+        && !matches!(entry, TypeEntry::Int { .. } | TypeEntry::Float { .. })
     {
         return "zeroinitializer".to_string();
     }
-    match store.get(ty) {
+    match entry {
         TypeEntry::Int { bits: 32 } if init.len() >= 4 => {
             format!(
                 "{}",
@@ -1960,7 +1964,7 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
         }
         // [N x i8] → LLVM 字符串常量 c"..."（可打印字符 + 转义；其余 hex）
         TypeEntry::Array { elem, len }
-            if matches!(store.get(*elem), TypeEntry::Int { bits: 8 })
+            if matches!(store.entry_opt(*elem), Some(TypeEntry::Int { bits: 8 }))
                 && init.len() as u64 >= *len =>
         {
             let bytes = &init[..*len as usize];
@@ -1980,7 +1984,7 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
         }
         // 数组/结构体聚合：逐元素反解（struct 跳过 padding 字节）
         TypeEntry::Array { elem, len } if init.len() as u64 >= *len => {
-            let elem_size = store.size_bytes(*elem) as usize;
+            let elem_size = size_bytes_or_zero(store, *elem) as usize;
             if elem_size == 0 {
                 return format!(
                     "0x{}",
@@ -2012,10 +2016,10 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
                     out.push_str(", ");
                 }
                 if !*is_packed && i > 0 {
-                    let align = store.alignment(f.ty) as usize;
+                    let align = alignment_or_one(store, f.ty) as usize;
                     offset = offset.div_ceil(align) * align;
                 }
-                let size = store.size_bytes(f.ty) as usize;
+                let size = size_bytes_or_zero(store, f.ty) as usize;
                 let chunk = init
                     .get(offset..(offset + size).min(init.len()))
                     .unwrap_or(&[]);
@@ -2050,14 +2054,14 @@ fn fmt_vconst_lane(
     let i16v = |b: &[u8]| i16::from_le_bytes([b[0], b[1]]);
     let i32v = |b: &[u8]| i32::from_le_bytes([b[0], b[1], b[2], b[3]]);
     let i64v = |b: &[u8]| i64::from_le_bytes(b.try_into().unwrap_or([0; 8]));
-    match store.get(elem) {
-        TypeEntry::Int { bits: 8 } => format!("{}", i8::from_le_bytes([le[0]])),
-        TypeEntry::Int { bits: 16 } if le.len() >= 2 => format!("{}", i16v(&le)),
-        TypeEntry::Int { bits: 32 } if le.len() >= 4 => format!("{}", i32v(&le)),
-        TypeEntry::Int { bits: 64 } if le.len() >= 8 => format!("{}", i64v(&le)),
+    match store.entry_opt(elem) {
+        Some(TypeEntry::Int { bits: 8 }) => format!("{}", i8::from_le_bytes([le[0]])),
+        Some(TypeEntry::Int { bits: 16 }) if le.len() >= 2 => format!("{}", i16v(&le)),
+        Some(TypeEntry::Int { bits: 32 }) if le.len() >= 4 => format!("{}", i32v(&le)),
+        Some(TypeEntry::Int { bits: 64 }) if le.len() >= 8 => format!("{}", i64v(&le)),
         // 任意位宽整数 lane（i1/i7/i13...——mask 常量 `<4 x i1>` 等;
         // 第二十九轮:原兜底 "0" 丢失 true lane 位模式,roundtrip 不等）
-        TypeEntry::Int { bits } => {
+        Some(TypeEntry::Int { bits }) => {
             let nbytes = (*bits as usize).div_ceil(8);
             let mut v: u128 = 0;
             for (k, &byte) in le.iter().enumerate().take(nbytes.min(le.len())) {
@@ -2065,7 +2069,7 @@ fn fmt_vconst_lane(
             }
             format!("{v}")
         }
-        TypeEntry::Float { bits: 32 } if le.len() >= 4 => {
+        Some(TypeEntry::Float { bits: 32 }) if le.len() >= 4 => {
             let f = f32::from_le_bytes([le[0], le[1], le[2], le[3]]);
             if f.is_finite() && f.fract() == 0.0 && f.abs() < 1e15 {
                 format!("{f:.1}") // 整数值浮点带小数点（LLVM 浮点字面量风格）
@@ -2073,7 +2077,7 @@ fn fmt_vconst_lane(
                 format!("{f}")
             }
         }
-        TypeEntry::Float { bits: 64 } if le.len() >= 8 => {
+        Some(TypeEntry::Float { bits: 64 }) if le.len() >= 8 => {
             let f = f64::from_le_bytes(le[..8].try_into().unwrap_or([0; 8]));
             if f.is_finite() && f.fract() == 0.0 && f.abs() < 1e15 {
                 format!("{f:.1}")
@@ -2147,8 +2151,33 @@ fn fmt_metadata_val(
     }
 }
 
+/// 类型的字节数；越界 `TypeId` ⇒ 0（display 是诊断路径，不许 panic）。
+///
+/// `TypeStore::size_bytes` 等查询走 fail-closed 索引（IR 良好时的快路径），
+/// 所以容忍坏 IR 的调用方必须先用 `contains_type` 探一下。
+fn size_bytes_or_zero(store: &TypeStore, ty: TypeId) -> u32 {
+    if store.contains_type(ty) {
+        store.size_bytes(ty)
+    } else {
+        0
+    }
+}
+
+/// 类型的对齐；越界 `TypeId` ⇒ 1（语义见 [`size_bytes_or_zero`]）。
+fn alignment_or_one(store: &TypeStore, ty: TypeId) -> u32 {
+    if store.contains_type(ty) {
+        store.alignment(ty)
+    } else {
+        1
+    }
+}
+
 fn fmt_llvm_type(store: &TypeStore, ty: TypeId) -> String {
-    match store.get(ty) {
+    // 越界 `TypeId` 打印占位符（display 是诊断路径：打印坏 IR 时不许 panic）
+    let Some(entry) = store.entry_opt(ty) else {
+        return format!("<bad-type:{}>", ty.index());
+    };
+    match entry {
         TypeEntry::Struct { name: Some(n), .. } => format!("%{}", store.lookup_str(*n)),
         TypeEntry::Struct {
             name: None,
@@ -2233,9 +2262,9 @@ fn value_as_literal(
             // 向量类型的常量（向量 GEP 求值宽松 0——第二十九轮:原输出
             // `i{bits}` 类型漂移为标量,reparse 后类型不等）
             if matches!(
-                store.borrow().get(vty),
-                crate::types::TypeEntry::Vector { .. }
-                    | crate::types::TypeEntry::ScalableVector { .. }
+                store.borrow().entry_opt(vty),
+                Some(crate::types::TypeEntry::Vector { .. })
+                    | Some(crate::types::TypeEntry::ScalableVector { .. })
             ) {
                 return Some(ImmStr::from(format!(
                     "{} zeroinitializer",
@@ -2245,7 +2274,9 @@ fn value_as_literal(
             // ptr 类型的常量：零 → `ptr null`；非零 → `ptr {val}`（LLVM 15+
             // opaque ptr 常量语法——第二十九轮:原输出 `i64 {val}` 丢 PTR 类型,
             // GEP 表达式求值结果 roundtrip 后变 I64）；addrspace(N) 保留
-            if let crate::types::TypeEntry::Pointer { addr_space } = store.borrow().get(vty) {
+            if let Some(crate::types::TypeEntry::Pointer { addr_space }) =
+                store.borrow().entry_opt(vty)
+            {
                 let pfx = if *addr_space == 0 {
                     "ptr".to_string()
                 } else {
@@ -2351,7 +2382,7 @@ fn value_as_literal(
                 }
                 return None;
             }
-            let lane_size = store_ref.size_bytes(elem) as usize;
+            let lane_size = size_bytes_or_zero(&store_ref, elem) as usize;
             if lane_size == 0 || data.len() < len as usize * lane_size {
                 return None;
             }

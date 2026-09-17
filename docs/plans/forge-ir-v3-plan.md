@@ -97,7 +97,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
-| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储，不再整体替换 `TypeStore`；`Module.data_layout` 副本字段删除，`TypeContext::with_data_layout` 删除）；余项：去 `RwLock` 与 `TypeStore` 显式传参（222 处 `ctx.borrow()`） |
+| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`，校验器不再 panic、display 打印占位符）；余项：去 `RwLock` 与 `TypeStore` 显式传参（222 处 `ctx.borrow()`） |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
@@ -1196,6 +1196,37 @@ S3 余项里"去 `RwLock` + `TypeStore` 显式传参"（222 处 `ctx.borrow()`�
 （签名丢失 panic；指针宽度 8 ≠ 4），实现后 4 例全绿。
 
 **验证**：workspace 1463 passed / 0 failed / 19 ignored（+4）；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt/clippy `-D warnings` 干净；`cargo doc -D warnings` 干净。
+
+### S3（切片）：坏 IR 的越界 `TypeId`/`SigRef` 变成诊断（2026-09-16）
+
+同上一条：这是"去 `RwLock` + 显式传参"之前该修的类型面缺陷——**类型句柄是数据**。
+
+**先测后改**（临时探针，跑完即删）——`TypeStore::get`/`get_signature` 是 fail-closed
+索引（`entries[id.0]`/`signatures[sr.0]`），实测两条崩溃路径：
+
+- 越界 `SigRef` 走校验器 ⇒ `types.rs` 的 `signatures[9999]` `index out of bounds`
+  （len 1）；
+- 越界 `TypeId` 走 **display** ⇒ `entries[9999]` `index out of bounds`（len 16），
+  栈是 `display::value_as_literal → inst fmt → func fmt → module fmt`。
+  即"把坏 IR 打印出来给人看"这个最需要诊断的时刻反而崩了。
+
+**改法**：①`TypeStore` 增加**容忍坏 IR 的读取口** `entry_opt`/`signature_opt`/
+`contains_type`（`get`/`get_signature` 保持 fail-closed，注释写明"良好 IR 的快路径"）；
+②校验器新增前置自检 `check_type_refs`：扫签名（句柄本身 + 参数/返回类型）、全部值的
+类型、块参数类型，越界即报新错误码 `BadTypeId { what, ty }` / `BadSigRef { what, sr }`
+并**跳过**后续类型相关检查（`check_immediates`/`check_block_params`/`check_path_termination`
+——继续跑会在类型查询处 panic）；结构类检查（操作数个数/终结符/可达性/支配/顺序/墓碑）
+不看类型存储，仍照常跑完一起上报（错误码 31 → 33）；③display 的 11 处类型查询改走
+`entry_opt`（`fmt_llvm_type` 对越界 id 打印 `<bad-type:N>` 占位符；`fmt_global_init`
+打印占位符 + 字节 dump），并把 5 处 `size_bytes`/`alignment` 收进容忍助手
+`size_bytes_or_zero`/`alignment_or_one`（存储自身的查询保持 fail-closed）。
+
+**守卫**（`tests/bad_type_id_robustness.rs`，4 例）：越界值类型 / 越界签名返回类型 /
+越界 `SigRef` 都返回诊断（点名 `BadTypeId`/`BadSigRef`）；坏 IR 能打印出
+`<bad-type:9999>` 占位符。前两条（SigRef、display）在改前实测 **panic**，改后 4 例全绿。
+
+**验证**：workspace 1467 passed / 0 failed / 19 ignored（+4）；x86 矩阵 195/3/0；
 riscv64 131/67/0；fmt/clippy `-D warnings` 干净；`cargo doc -D warnings` 干净。
 
 ## 7. 参考设计（外部）
