@@ -844,46 +844,102 @@ impl TypeStore {
 // TypeContext — shared, interior-mutable TypeStore reference
 // ============================================================
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
+
+/// 一次**读快照**：`borrow()` 返回它，`Deref` 到 `&TypeStore`。
+///
+/// **v3 S3（锁 → 快照）**：此前 `borrow()` 返回 `RwLockReadGuard`，读锁在**整个读
+/// 作用域**内与写互斥（且读锁存活时再 `borrow_mut()` 会自锁死）。现在 `TypeStore`
+/// 存在 `Arc` 里、读写锁只护住**那个 `Arc` 指针**：`borrow()` 取锁只为把 `Arc`
+/// 克隆一份（几次原子操作）后立刻放锁，读作用域不再持有锁。
+///
+/// 代价与纪律（见 [`TypeContext`] 的"读路径纪律"）：快照是**不可变视图**，若它在
+/// 别人 intern 新类型时仍然存活，写侧必须克隆整表（COW）才算安全——所以"读快照
+/// 不要跨 intern"从"会死锁"变成了"会整表克隆"，仍由守卫钉住。
+pub struct TypeStoreRef(Arc<TypeStore>);
+
+impl Deref for TypeStoreRef {
+    type Target = TypeStore;
+    fn deref(&self) -> &TypeStore {
+        &self.0
+    }
+}
+
+impl TypeStoreRef {
+    /// 快照底层 `Arc`（需要把快照交给别的所有者时用；克隆是 O(1)）。
+    pub fn arc(&self) -> Arc<TypeStore> {
+        Arc::clone(&self.0)
+    }
+}
+
+/// 写守卫（**copy-on-write**）：`Deref` 读、`DerefMut` 写（写时 `Arc::make_mut`）。
+///
+/// 没有并发快照存活时 `Arc::make_mut` 不克隆（`strong_count == 1`）——这是常态；
+/// 有快照存活时必须克隆，否则那个快照会看到"变化中的"表（撕裂读）。
+/// 克隆次数在 `cfg(debug_assertions)` 下由 `TypeContext::debug_cow_clone_count`
+/// 计数，守卫"读快照不跨 intern"的纪律。
+pub struct TypeStoreMut<'a> {
+    guard: RwLockWriteGuard<'a, Arc<TypeStore>>,
+}
+
+impl Deref for TypeStoreMut<'_> {
+    type Target = TypeStore;
+    fn deref(&self) -> &TypeStore {
+        &self.guard
+    }
+}
+
+impl DerefMut for TypeStoreMut<'_> {
+    fn deref_mut(&mut self) -> &mut TypeStore {
+        Arc::make_mut(&mut self.guard)
+    }
+}
 
 /// A shared, interior-mutable reference to a `TypeStore`.
 ///
 /// Created once in a `Module` and shared across all builders, functions,
 /// verifiers, and display contexts via cheap `Arc`-based `Clone`.
 ///
-/// # 读路径纪律（v3 S3："`TypeStore` 显式传参"）
+/// # 读路径纪律（v3 S3："`TypeStore` 显式传参" + 锁 → 快照）
 ///
 /// [`TypeContext::borrow`] 是**显式取一次锁**的入口：多查询路径（display、
 /// verify、lowering）应当只取一次，然后把 `&TypeStore` **显式传参**给下游函数，
-/// 而不是每个查询各自 `borrow()` 一遍。理由有二：
+/// 而不是每个查询各自 `borrow()` 一遍。理由有三：
 ///
-/// - 每次 `borrow()` 都是一次 `RwLock` 读锁获取（与 intern 写锁互斥）；
-/// - `RwLock` **不可重入**：读锁存活期间再调 `borrow_mut()`（intern 新类型）会
-///   自锁死。把 `&TypeStore` 显式传下去，同时也就把"这个作用域是只读的"写进了
-///   签名——需要 intern 的代码拿不到 `&TypeStore` 就写不出来。
+/// - 每次 `borrow()` 都要碰一次 `RwLock`（克隆 `Arc` 指针，与 intern 写锁互斥）；
+/// - 拿到的 [`TypeStoreRef`] 是**不可变快照**：若它在别人 intern 时仍存活，写侧
+///   必须**克隆整表**（COW）才安全（次数由 `debug_cow_clone_count` 计数）；
+/// - 把 `&TypeStore` 显式传下去，同时就把"这个作用域是只读的"写进了签名——
+///   需要 intern 的代码拿不到 `&TypeStore` 就写不出来。
 ///
 /// `tests/type_store_read_path.rs` 用 `debug_read_count` 钉住这条纪律：
-/// 打印一个模块只许取一次读锁。
+/// 打印一个模块只许取一次快照。
 ///
 /// # Usage
 ///
 /// ```text
 /// let ctx = TypeContext::new();
 /// let i32_ty = ctx.i32_ty();                  // convenience accessor（无锁）
-/// let store = ctx.borrow();                   // 取一次读锁
+/// let store = ctx.borrow();                   // 取一次快照（Arc 克隆）
 /// let sig = store.get_signature(sr);          // 之后全部无锁
-/// ctx.borrow_mut().register_signature(s);     // 需要写时单独取写锁
+/// ctx.borrow_mut().register_signature(s);     // 需要写时单独取写锁（COW）
 /// ```
 #[derive(Clone, Debug)]
 pub struct TypeContext {
-    store: Arc<RwLock<TypeStore>>,
-    /// 读锁获取计数（**仅 `cfg(debug_assertions)`**）：测试用它钉住"读路径只取
-    /// 一次锁"。release 下字段不存在，零开销。
+    /// 读写锁只护住**指针**：`borrow()` 克隆 `Arc` 后立刻放锁；`borrow_mut()` 在写时
+    /// 用 `Arc::make_mut` 换上一个新表（有快照存活时克隆，否则原地改）。
+    store: Arc<RwLock<Arc<TypeStore>>>,
+    /// 读快照获取计数（**仅 `cfg(debug_assertions)`**）：测试用它钉住"读路径只取
+    /// 一次快照"。release 下字段不存在，零开销。
     #[cfg(debug_assertions)]
     reads: Arc<AtomicUsize>,
+    /// **COW 克隆次数**（仅 `cfg(debug_assertions)`）：写侧发现"有快照存活"的次数。
+    /// 常态应为 0（读快照不跨 intern）；非 0 说明有地方把快照拿着去 intern 了。
+    #[cfg(debug_assertions)]
+    cow_clones: Arc<AtomicUsize>,
 }
 
 impl TypeContext {
@@ -895,47 +951,74 @@ impl TypeContext {
     /// Create a TypeContext from an existing TypeStore.
     pub fn from_store(store: TypeStore) -> Self {
         Self {
-            store: Arc::new(RwLock::new(store)),
+            store: Arc::new(RwLock::new(Arc::new(store))),
             #[cfg(debug_assertions)]
             reads: Arc::new(AtomicUsize::new(0)),
+            #[cfg(debug_assertions)]
+            cow_clones: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    /// 读锁获取次数（仅 `cfg(debug_assertions)`；release 下不统计也不编译）。
+    /// 读快照获取次数（仅 `cfg(debug_assertions)`；release 下不统计也不编译）。
     #[cfg(debug_assertions)]
     pub fn debug_read_count(&self) -> usize {
         self.reads.load(Ordering::Relaxed)
     }
 
-    /// 把读锁计数清零（仅 `cfg(debug_assertions)`；测试用）。
+    /// 把读快照计数清零（仅 `cfg(debug_assertions)`；测试用）。
     #[cfg(debug_assertions)]
     pub fn debug_reset_read_count(&self) {
         self.reads.store(0, Ordering::Relaxed);
     }
 
-    /// Immutable read access to the TypeStore.
+    /// COW 克隆次数（仅 `cfg(debug_assertions)`）：写侧遇到"有快照存活"的次数。
+    ///
+    /// 它把"读快照不要跨 intern"从"会自锁死"变成可测量的**性能纪律**：整表克隆是
+    /// O(表大小)，正常路径应当为 **0**。
+    #[cfg(debug_assertions)]
+    pub fn debug_cow_clone_count(&self) -> usize {
+        self.cow_clones.load(Ordering::Relaxed)
+    }
+
+    /// 把 COW 克隆计数清零（仅 `cfg(debug_assertions)`；测试用）。
+    #[cfg(debug_assertions)]
+    pub fn debug_reset_cow_clone_count(&self) {
+        self.cow_clones.store(0, Ordering::Relaxed);
+    }
+
+    /// 读快照（v3 S3：锁只护住 `Arc` 指针，读作用域**不持锁**）。
     ///
     /// **锁中毒不 panic**（v3 S3）：`RwLock` 中毒只表示"某个持锁线程 panic 过"，
     /// 而 `TypeStore` 的不变量由构造期与写入方法维护，数据本身仍可读——继续用
     /// `into_inner()` 取回内部值比在公开 API 上 panic 更安全（v3 原则：
     /// 公开 API 不 panic）。此前是 `.expect("TypeStore RwLock poisoned")`。
     ///
-    /// 多查询路径请只调一次并传 `&TypeStore`（见类型级文档的"读路径纪律"）。
-    pub fn borrow(&self) -> RwLockReadGuard<'_, TypeStore> {
+    /// 多查询路径请只调一次并把 `&TypeStore` 传下去；**不要**把快照拿过 intern
+    /// 调用（会触发整表克隆，见类型级文档的"读路径纪律"）。
+    pub fn borrow(&self) -> TypeStoreRef {
         #[cfg(debug_assertions)]
         self.reads.fetch_add(1, Ordering::Relaxed);
-        self.store
+        let guard = self
+            .store
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        TypeStoreRef(Arc::clone(&guard))
     }
 
-    /// Mutable write access to the TypeStore（中毒同样恢复，见 [`TypeContext::borrow`]）。
+    /// 写守卫（copy-on-write；中毒同样恢复，见 [`TypeContext::borrow`]）。
     ///
-    /// **不可在读锁存活期间调用**（`RwLock` 不可重入 ⇒ 自锁死）。
-    pub fn borrow_mut(&self) -> RwLockWriteGuard<'_, TypeStore> {
-        self.store
+    /// 有读快照存活时会整表克隆（`debug_cow_clone_count` 计数）；没有快照存活
+    /// （常态）则原地修改。
+    pub fn borrow_mut(&self) -> TypeStoreMut<'_> {
+        let guard = self
+            .store
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(debug_assertions)]
+        if Arc::strong_count(&guard) > 1 {
+            self.cow_clones.fetch_add(1, Ordering::Relaxed);
+        }
+        TypeStoreMut { guard }
     }
 
     // === Pre-filled type convenience accessors (immutable borrow) ===
@@ -1035,14 +1118,6 @@ impl TypeContext {
     }
     pub fn intern_str(&self, s: &str) -> InternedStr {
         self.borrow_mut().intern_str(s)
-    }
-}
-
-impl Deref for TypeContext {
-    type Target = RwLock<TypeStore>;
-
-    fn deref(&self) -> &RwLock<TypeStore> {
-        &self.store
     }
 }
 

@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **`TypeContext` 锁 → 快照：读路径不再持锁（forge-ir v3 S3 切片）**：`store: Arc<RwLock<TypeStore>>` → `Arc<RwLock<Arc<TypeStore>>>`——读写锁只护住那个 `Arc` 指针：`borrow()` 取锁只为克隆 `Arc` 后立刻放锁，返回新的 `TypeStoreRef`（`Deref<Target = TypeStore>`），读作用域不再持锁；`borrow_mut()` 返回 `TypeStoreMut`，`DerefMut` 走 `Arc::make_mut`（无快照存活时原地改，有快照存活时克隆整表）。同时**删除 `impl Deref for TypeContext { type Target = RwLock<TypeStore> }` 逃逸口**（把原始锁暴露给调用方，与"入口显式化"相反；全仓无使用者）。
+  语义变化如实记录：读快照是不可变视图（拿快照后 intern，旧快照看不到新类型）；改前"读锁存活期间 `borrow_mut()`"会自锁死，现在合法并触发一次整表克隆——因此"读快照不跨 intern"从**死锁**强制变为**性能纪律**，由新增的 `debug_cow_clone_count`（仅 debug）钉住。
+  新增守卫 2 例：`snapshot_is_isolated_from_later_interning`（快照存活时写入 ⇒ 恰好 1 次整表克隆 + 新旧快照可见性；该用例本身即"读快照与写可并存"的证据）、`write_path_never_clones_in_real_workload`（真实负载 0 次克隆）。负向验证：去掉 COW 计数 / 在 `int_ty` 里故意持快照跨 intern ⇒ 各 FAILED。**不宣称吞吐提升**（未做 A/B 基准），宣称的是结构性质与"真实负载 0 克隆"这一可测后果。
+  实测：workspace 1504 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0；LLVM 语料 198/254/0、往返幂等 189/189。
+
 - **splat 逐 lane 广播 + 向量元素类型名不再靠猜（forge-ir v3 S7 收官切片）**：①`ConstExpr::Splat` 在共享求值口 `const_expr_bytes` 里返回宽松 0（动它会让指令级常量池变序），故 `@s = global <4 x i32> splat (i32 7)` 的 lane 全是 0——现在**只在全局初值路径**广播（新增 `splat_init_bytes`：按向量元素类型逐 lane 重复内层标量；内层类型与元素类型不符即报错，非标量内层按既有 P1 占位零策略）。
   ②顺带挖出**向量元素类型名靠首字母猜**的静默损坏：`VecTy` 的 lexer 动作只做 `strip_prefix('i')/('b')/('f')`、其余落 `Ptr` ⇒ `float`→`f64`、`half`/`double`→`ptr`、`bfloat`→`i32`、`fp128`→`f64`（往返测试只比对 m1/m2、两边错得一样所以没暴露）。修：抽出唯一映射 `elem_ty_from_text`（`half`/`bfloat`→f16、`float`→f32、`double`→f64、`fp128`/`x86_fp80`/`ppc_fp128`→f128、`ptr`、`iN`/`bN`）。如实记录：`bfloat` 向量元素与 `half` 同为 `Float(16)`（标量 bfloat 另有 `BFloat`），`x86_fp80` 沿用既有约定映射 `f128`。
   新增守卫 2 例（`fidelity::splat_global_broadcasts_lane_value`、`fidelity::vector_element_type_names_are_not_guessed`，九种元素写法按打印形态钉住）；fuzz 生成器扩到 `double`/`half` 元素写法。负向验证：回退元素映射 / 回退 splat 广播 ⇒ 各 FAILED。

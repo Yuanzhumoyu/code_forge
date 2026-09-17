@@ -97,7 +97,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
-| S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`（需 `LowerCtx` 带 store 的设计）②读写交错函数的"先写后读"结构改造 ③把锁换成快照式实现 |
+| S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`（需 `LowerCtx` 带 store 的设计）②读写交错函数的"先写后读"结构改造；③**锁 → 快照已落地**（`TypeContext` 读快照 + `borrow_mut` COW、删 `Deref` 逃逸口，见 §6 末"锁 → 快照"切片） |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
@@ -1708,6 +1708,48 @@ splat 广播用例 FAILED；恢复后全绿。
 198/452、负向正确拒绝 254、误接受 0（**与基线逐项一致**）；语料往返幂等 189/189；
 `display_llvm` 结构化往返 198/0；10k 随机模块 fuzz 0 失败；fmt/clippy/release/doc 全干净。
 **S7 余项清零**。
+
+### S3（切片）：锁 → 快照（`TypeContext` 读路径不再持锁）（2026-09-17）
+
+S3 余项 ③（"把锁换成快照式实现"）。**调用面早已显式化**（S3 前几片把 `&TypeStore`
+贯穿到了 display/verify/pipeline/types），所以本切片只动 `TypeContext` 内部：
+
+- `store: Arc<RwLock<TypeStore>>` → `Arc<RwLock<Arc<TypeStore>>>`——读写锁只护住**那个
+  `Arc` 指针**。`borrow()` 取锁 → 克隆 `Arc` → **立刻放锁**，返回新的 `TypeStoreRef`
+  （`Deref<Target = TypeStore>`）：读作用域**不再持锁**（锁只被持有几次原子操作的时间）。
+- `borrow_mut()` 返回 `TypeStoreMut`，`DerefMut` 走 `Arc::make_mut`：**没有快照存活时
+  原地改**（常态），有快照存活时必须克隆整表（否则快照会看到"变化中的"表）。
+- **删除 `impl Deref for TypeContext { type Target = RwLock<TypeStore> }`** 逃逸口：它把
+  原始锁直接暴露给调用方，与"入口显式化"方向相反；全仓无使用者（编译器确认，删除后
+  workspace 一次编过）。
+
+**语义变化（如实记录）**：读快照是**不可变视图**——拿快照后 intern，旧快照看不到新类型
+（隔离）。改前"读锁存活期间 `borrow_mut()`"会**自锁死**，现在合法（并触发一次整表克隆）。
+因此"读快照不跨 intern"这条纪律从**死锁**强制变成了**性能纪律**（整表克隆 O(表大小)），
+改由 `debug_cow_clone_count`（仅 debug）钉住。
+
+**证据**（`tests/type_store_read_path.rs` +2 例，该文件共 7 例）：
+
+- `snapshot_is_isolated_from_later_interning`：拿快照 → 写入 → 实测**恰好 1 次**整表
+  克隆；旧快照看不到新类型、新快照看得到。**这条用例本身就是"读快照与写可并存"的证据**
+  （改前会死锁，用例根本写不出来）。
+- `write_path_never_clones_in_real_workload`：真实负载（建 IR + 打印 + 校验 + 同一 ctx 上
+  继续 intern + **解析文本并打印**）实测 **0 次整表克隆**，且断言读快照次数 > 0（证明用例
+  确实走了读路径）。
+- 既有 5 例（打印只取 1 次快照、校验不随 IR 规模增长、一次性封装恰好 1 次、intern 不取
+  快照、锁中毒不 panic）全部保持。
+
+**负向验证**：① 去掉 COW 计数 ⇒ `snapshot_is_isolated_from_later_interning` FAILED；
+② 在 `TypeContext::int_ty` 便利口里故意 `let _snap = self.borrow();`（快照跨 intern）
+⇒ `write_path_never_clones_in_real_workload` FAILED。恢复后 7 例全绿。
+
+**不宣称什么**：本切片不做 A/B 基准、**不宣称吞吐提升**；宣称的是结构性质（读作用域不
+持锁、锁不再经 `Deref` 外泄、读快照与写可并存）**及其可测后果**（真实负载 0 次整表克隆）。
+
+**验证**：workspace **1504 passed / 0 failed / 19 ignored**（+2）；x86 矩阵 195/3/0；
+riscv64 131/67/0；LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0；语料往返幂等
+189/189；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
 
 ## 7. 参考设计（外部）
 

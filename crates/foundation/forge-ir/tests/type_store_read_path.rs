@@ -210,3 +210,77 @@ fn one_shot_type_context_accessors_take_one_lock() {
 fn sig_ref(ctx: &TypeContext, ty: TypeId) -> forge_ir::SigRef {
     ctx.register_signature(FunctionSignature::new(&[(ty, "x")], &[ty]))
 }
+
+// ── 锁 → 快照（v3 S3）：新语义的守卫 ──
+
+/// 快照是**不可变视图**：拿快照后 intern 新类型，旧快照看不到、新快照看得到。
+///
+/// 这条同时是"读快照与写**可以并存**"的证据——改前（`RwLockReadGuard` 直接借用
+/// `self.store`）在同一线程里"先 `borrow()` 再 `borrow_mut()`"会**自锁死**，
+/// 本用例根本写不出来。
+#[test]
+fn snapshot_is_isolated_from_later_interning() {
+    let ctx = TypeContext::new();
+    ctx.debug_reset_cow_clone_count();
+    let old = ctx.borrow();
+    assert!(old.lookup_named("Later").is_none(), "初始没有该命名类型");
+
+    // 快照 `old` 存活期间写入：写侧必须整表克隆（COW），次数被计数
+    let anon = {
+        let mut guard = ctx.borrow_mut();
+        let a = guard.struct_anon(vec![], false);
+        guard.define_named("Later", a);
+        a
+    };
+    assert_eq!(
+        ctx.debug_cow_clone_count(),
+        1,
+        "快照存活期间的写入必须触发**恰好一次**整表克隆"
+    );
+    assert!(
+        old.lookup_named("Later").is_none(),
+        "旧快照必须看不到写入后的类型（隔离）"
+    );
+    assert_eq!(
+        ctx.borrow().lookup_named("Later"),
+        Some(anon),
+        "新快照必须看到写入后的类型"
+    );
+}
+
+/// **常态零克隆**：真实工作负载（建 IR + intern + 打印 + 校验 + 解析文本）里
+/// 不应有任何"拿着快照去 intern"的地方——否则每次写都要克隆整表（O(表大小)）。
+///
+/// 这是"读快照不跨 intern"纪律的可测量形式：改前那条纪律靠**死锁**（不可重入）
+/// 强制，现在靠本用例（`debug_cow_clone_count == 0`）强制。
+#[test]
+fn write_path_never_clones_in_real_workload() {
+    let (m, ctx) = rich_module();
+    // 可校验的函数单独造（`rich_module` 只保证可打印）
+    let func = func_with_insts(&ctx, 8);
+    let mut verifier = Verifier::with_ctx(ctx.clone());
+    ctx.debug_reset_cow_clone_count();
+    ctx.debug_reset_read_count();
+
+    // 1) 打印（入口取一次快照）+ 校验 + 再 intern 新类型（同一 ctx 上混合读写）
+    let _ = format!("{m}");
+    assert!(verifier.verify(&func).is_ok(), "IR 应合法");
+    let _ = ctx.vector_ty(ctx.i32_ty(), 8);
+    let _ = ctx.int_ty(24);
+    // 2) 文本层（解析器内部大量 interning）
+    let parsed = forge_ir::ir_parser::parse_module(
+        "define i32 @f(i32 %a) {\nentry:\n  %x = add i32 %a, 1\n  ret i32 %x\n}\n",
+    )
+    .expect("parse");
+    let _ = format!("{parsed}");
+
+    assert_eq!(
+        ctx.debug_cow_clone_count(),
+        0,
+        "正常路径不得出现「快照跨 intern」（每次都会克隆整表）"
+    );
+    assert!(
+        ctx.debug_read_count() > 0,
+        "本用例应确实走过读快照路径（实测 0 次 ⇒ 用例没测到东西）"
+    );
+}
