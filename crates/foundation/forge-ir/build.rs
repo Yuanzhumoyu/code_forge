@@ -8,8 +8,15 @@
 fn main() {
     // ① lalrpop：src/ir_parser/grammar.lalrpop → grammar.rs
     // （生成代码的 clippy 豁免见 mod.rs 的 lalrpop_mod!(#[allow(...)] ...) 宏参数。）
-    lalrpop::process_root().unwrap();
-    // ② 指令元数据
+    //
+    // v3 S7：整块文本层由 `features = ["text"]` 门控。lalrpop 是 **build-dependency，
+    // 不能设 optional**（build.rs 永远要编译），所以这里读 Cargo 注入的
+    // `CARGO_FEATURE_TEXT` 决定是否生成；关闭时不生成也没有消费者
+    // （`src/ir_parser` 整模块 `#[cfg(feature = "text")]`）。
+    if std::env::var_os("CARGO_FEATURE_TEXT").is_some() {
+        lalrpop::process_root().unwrap();
+    }
+    // ② 指令元数据（核心也读：Opcode 枚举/派生表/名字查找）——**不随 feature 关**。
     generate_opcode_table();
 }
 

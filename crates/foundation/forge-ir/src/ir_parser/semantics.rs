@@ -637,8 +637,17 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 linkage,
                 dso_local: a.dso_local,
                 unnamed_addr: a.unnamed_addr,
-                aliasee_ty: Some(a.aliasee.0.clone()),
-                aliasee: a.aliasee.1.clone(),
+                // aliasee 文本在解析层渲染（v3 S7：核心实体不再持有解析层 AST）：
+                // TypeOp（`ptr @b`）带类型前缀；Void 占位 / 括号表达式自带类型。
+                aliasee_text: crate::ImmStr::from(if a.aliasee.0 == ParsedType::Void {
+                    a.aliasee.1.to_llvm_string()
+                } else {
+                    format!(
+                        "{} {}",
+                        fmt_parsed_type(&a.aliasee.0),
+                        a.aliasee.1.to_llvm_string()
+                    )
+                }),
                 metadata: Vec::new(),
             };
             module
@@ -686,9 +695,9 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                     .as_ref()
                     .map(|r| crate::imm_str::ImmStr::from(r.trim_start_matches('@').to_string()));
             }
-            // 表达式 init 保留树（display 原样还原文本，替代字节还原）
+            // 表达式 init 保留**文本**（display 原样输出；v3 S7：核心只存文本载荷）
             if let Some(GlobalInitVal::Expr(e)) = &g.init {
-                gv.init_expr = Some((**e).clone());
+                gv.init_expr_text = Some(crate::ImmStr::from(e.to_llvm_string()));
             }
             if let Some(data) = init {
                 gv = gv.with_init(data);

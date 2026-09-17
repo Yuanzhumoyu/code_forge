@@ -1046,9 +1046,13 @@ pub struct GlobalVariable {
     pub name: ImmStr,
     pub ty: TypeId,
     pub init: Option<Vec<u8>>,
-    /// 常量表达式 init（`ptrtoint (ptr @h to i32)`）——display 原样还原文本；
+    /// 常量表达式 init 的**文本**（`ptrtoint (ptr @h to i32)`）——display 原样输出；
     /// 字节 init（占位）与表达式并存（真实地址为链接期重定位，P1 文本层占位 0）。
-    pub init_expr: Option<crate::ir_parser::ast_items::ConstExpr>,
+    ///
+    /// **v3 S7（`features=["text"]`）**：这里原本存解析层 AST（`ConstExpr`），使核心
+    /// 实体硬依赖文本层——关闭 `text` 后核心连编译都过不了。现在表达式由解析层在构建
+    /// 全局时渲染成文本，核心只当**不透明文本载荷**保管（与 `ifunc_params` 同一约定）。
+    pub init_expr_text: Option<ImmStr>,
     /// Symbol information — linkage, visibility, section, comdat, TLS.
     pub symbol: SymbolInfo,
     pub is_constant: bool,
@@ -1074,9 +1078,13 @@ pub struct GlobalAlias {
     pub linkage: crate::symbol::Linkage,
     pub dso_local: bool,
     pub unnamed_addr: bool,
-    /// aliasee：类型前缀（TypeOp 形式）或 Void 占位（括号表达式自带类型）。
-    pub aliasee_ty: Option<crate::ir_parser::ast_items::ParsedType>,
-    pub aliasee: crate::ir_parser::ast_items::ConstExpr,
+    /// aliasee 的**文本**（`ptr @b` / `(ptrtoint (ptr @h to i32))`）——含类型前缀，
+    /// 由解析层在构建别名时渲染好（display 原样输出）。
+    ///
+    /// **v3 S7（`features=["text"]`）**：原来拆成 `aliasee_ty`（解析层 `ParsedType`）
+    /// 与 `aliasee`（解析层 `ConstExpr`）两个字段，核心实体因此依赖文本层；现在合并
+    /// 为单个文本载荷。
+    pub aliasee_text: ImmStr,
     /// 别名尾 metadata 附加（**单写**：读 [`GlobalAlias::metadata`]、写
     /// [`GlobalAlias::attach_metadata`]）。
     pub(crate) metadata: Vec<crate::metadata::AttachedMetadata>,
@@ -1088,7 +1096,7 @@ impl GlobalVariable {
             name: ImmStr::from(name),
             ty,
             init: None,
-            init_expr: None,
+            init_expr_text: None,
             symbol: SymbolInfo::new(),
             is_constant: true,
             alignment: 0,
@@ -1105,7 +1113,7 @@ impl GlobalVariable {
             name: ImmStr::from(name),
             ty,
             init: None,
-            init_expr: None,
+            init_expr_text: None,
             symbol: SymbolInfo::new(),
             is_constant: false,
             alignment: 0,

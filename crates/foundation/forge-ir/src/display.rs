@@ -216,9 +216,10 @@ impl fmt::Display for Module {
                 }
             }
             if let Some(init) = &gv.init {
-                // 常量表达式 init：原样输出表达式树（字节是占位，不能还原表达式）
-                if let Some(expr) = &gv.init_expr {
-                    write!(f, " {}", expr.to_llvm_string())?;
+                // 常量表达式 init：原样输出解析层渲染好的文本（字节是占位，
+                // 不能还原表达式）；v3 S7：核心只存文本载荷，不再持有解析层 AST。
+                if let Some(expr) = &gv.init_expr_text {
+                    write!(f, " {expr}")?;
                 } else {
                     write!(f, " {}", fmt_global_init(&store, gv.ty, init))?;
                 }
@@ -250,17 +251,9 @@ impl fmt::Display for Module {
             };
             let dso = if a.dso_local { "dso_local " } else { "" };
             let unnamed = if a.unnamed_addr { "unnamed_addr " } else { "" };
-            // aliasee 文本：TypeOp（`ptr @b`）带类型前缀；括号表达式自带类型
-            let aliasee_txt = match &a.aliasee_ty {
-                Some(ty) if !matches!(ty, crate::ir_parser::ast_items::ParsedType::Void) => {
-                    format!(
-                        "{} {}",
-                        crate::ir_parser::ast_items::fmt_parsed_type(ty),
-                        a.aliasee.to_llvm_string()
-                    )
-                }
-                _ => a.aliasee.to_llvm_string(),
-            };
+            // aliasee 文本：解析层已渲染好（TypeOp `ptr @b` 带类型前缀；
+            // 括号表达式自带类型）——v3 S7：核心只存这一个文本载荷。
+            let aliasee_txt = &a.aliasee_text;
             write!(
                 f,
                 "@{} = {dso}{unnamed}{link}alias {}",

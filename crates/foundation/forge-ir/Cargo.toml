@@ -4,13 +4,22 @@ version = "0.1.0"
 edition = "2024"
 description = "Forge IR: SSA-form intermediate representation types, builder, parser, and analysis"
 
+[features]
+default = ["text"]
+# 文本层：LLVM 文本 IR 的**解析器**（`ir_parser`）与**打印机**（`display`）。
+#
+# 关闭后 forge-ir 只剩内存 IR（类型/函数/DFG/verifier/pass/分析），不再依赖
+# `logos`/`lalrpop-util`，build.rs 也不再生成 LALRPOP 表。核心与文本层的边界由
+# `tests/text_feature_gate.rs` 静态守卫钉住（核心文件不得出现 `ir_parser` 引用）。
+text = ["dep:logos", "dep:lalrpop-util"]
+
 [dependencies]
 smallvec = "1.16.0"
 thiserror = "2.0.20"
 dashu = "0.6.0"
 bitflags = "2.13.1"
-logos = "0.16.1"
-lalrpop-util = "0.23.1"
+logos = { version = "0.16.1", optional = true }
+lalrpop-util = { version = "0.23.1", optional = true }
 
 [build-dependencies]
 lalrpop = "0.23.1"

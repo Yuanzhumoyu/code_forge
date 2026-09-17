@@ -44,6 +44,12 @@ pub mod builder;
 pub mod constant;
 pub mod data_layout;
 pub mod dfg;
+/// 文本层：LLVM 文本 IR 的打印机（`impl Display for Module` 等）。
+///
+/// 与 [`ir_parser`] 一同由 **`features = ["text"]`**（默认开启）门控——关闭后
+/// forge-ir 只剩内存 IR，核心不依赖任何文本层类型（边界守卫见
+/// `tests/text_feature_gate.rs`）。
+#[cfg(feature = "text")]
 pub mod display;
 pub mod entity;
 pub mod entity_map;
@@ -52,6 +58,12 @@ pub mod function;
 pub mod imm_str;
 pub mod immediate;
 pub mod inst_flags;
+/// 文本层：LLVM 文本 IR 的解析器（logos 词法 + lalrpop 语法 + 语义构建）。
+///
+/// 由 **`features = ["text"]`**（默认开启）门控：关闭后本模块整块不编译，
+/// `logos`/`lalrpop-util` 可选依赖随之消失，`build.rs` 也不再生成 LALRPOP 表
+/// （生成开关读 `CARGO_FEATURE_TEXT`，因为 `lalrpop` 是 build-dependency、不可选）。
+#[cfg(feature = "text")]
 pub mod ir_parser;
 pub mod isel_strategy;
 pub mod loop_info;

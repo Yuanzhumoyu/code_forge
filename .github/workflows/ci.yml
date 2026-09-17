@@ -38,6 +38,13 @@ jobs:
         run: |
           set -o pipefail
           cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings 2>&1 | tee /tmp/clippy.log
+      # 文本层门控（v3 S7）：forge-ir 关掉 `features=["text"]` 后必须仍能编译
+      # （核心不得依赖 `ir_parser`/`display`；边界守卫 tests/text_feature_gate.rs）。
+      # 只查 `--lib`：`tests/*.rs` 大量使用 `ir_parser`，它们本来就需要该 feature。
+      - name: Text layer gate (forge-ir --no-default-features)
+        run: |
+          set -o pipefail
+          cargo clippy -p forge-ir --no-default-features --lib -- -D warnings 2>&1 | tee /tmp/text-gate.log
       - name: Upload clippy log (on failure)
         if: failure()
         uses: actions/upload-artifact@v4

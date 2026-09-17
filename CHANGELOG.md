@@ -13,6 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **`features = ["text"]` 文本层门控（forge-ir v3 S7 切片）**：门控前 `--no-default-features` **根本编不过**——两个核心实体字段直接存解析层 AST（`GlobalVariable::init_expr: Option<ConstExpr>`、`GlobalAlias::{aliasee_ty, aliasee}`）。
+  ①这两个字段的唯一读点是 `display`（原样还原文本）、唯一写点是语义层，故改为**不透明文本载荷**：语义层构建时渲染（`e.to_llvm_string()`；别名拼 `fmt_parsed_type(ty) + " " + expr`，`Void` 占位不带前缀），核心存 `init_expr_text: Option<ImmStr>` / `aliasee_text: ImmStr`（与既有 `ifunc_params` 同一约定），display 改为原样输出文本。
+  ②`default = ["text"]`、`text = ["dep:logos", "dep:lalrpop-util"]`（两者 `optional = true`）；`lalrpop` 是 build-dependency 不可选 ⇒ `build.rs` 读 `CARGO_FEATURE_TEXT` 决定是否生成 LALRPOP 表，`ops.toml` 的指令元数据生成**不随 feature 关**（核心也读 `Opcode` 表）。
+  ③`lib.rs` 的 `display`/`ir_parser` 两个模块加 `#[cfg(feature = "text")]`。
+  ④新增 `tests/text_feature_gate.rs`（4 例源码级边界守卫：核心文件含注释在内不得出现 `ir_parser`/`crate::display`、模块声明恰好一次且紧跟 cfg、manifest 的 `dep:`+optional、build.rs 只门控 LALRPOP）；CI Clippy job 增 `cargo clippy -p forge-ir --no-default-features --lib -- -D warnings`（`--lib` 必须——`tests/*.rs` 本来就需要 `text`）。
+  负向验证：核心文件引入 `ir_parser` / 去掉 cfg 属性 / `default = []` / 把元数据生成挪进门控块 ⇒ 四条守卫各自 FAILED，恢复后全绿。行为零变化：LLVM 语料 198/254/0、语料往返幂等 189/189、`display_llvm` 结构化往返全绿。
+  实测：workspace 1492 passed / 0 failed / 19 ignored；无 feature 的 check/clippy（debug + release）0 错 0 警告。
+
 - **IR 侧 span 贯穿：指令位置落进 `Instruction::loc`（forge-ir v3 S7 切片）**：改前实测整条解析链路上 `Instruction::loc` **恒为 `None`**——语法层不留字节区间（`ParsedBlock` 只有 `insts`），`FunctionBuilder::set_current_loc`/`emit1` 早已会把位置写进指令，却**没有任何调用者**，诊断只能指到函数级。
   现在三层各加一处真相：①语法层新增 `SpannedInst = <l: @L> <i: Inst> <r: @R>`（`grammar.lalrpop`），两个 `Block` 产生式改吃 `(<SpannedInst>)*`，由 `ast_items::split_spanned_insts` 拆出与 `insts` 平行的 `inst_spans`；
   ②`parse_to_ast` 用 `locate` 把字节偏移换算成 **1-based `(行, 列)`**（`ParsedBlock::inst_line_cols`；长度不等时视为无位置，不猜）；③`build_function` 发射每条指令前 `set_current_loc(...)`、循环尾复位，使指令内物化的常量随所属指令、循环后为终结符物化的合成常量**不继承**上一条位置。

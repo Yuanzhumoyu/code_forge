@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；余项：splat 逐 lane 广播值、`features=["text"]` 门控、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；余项：splat 逐 lane 广播值、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1551,6 +1551,58 @@ riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --a
 **验证**：workspace 1488 passed / 0 failed / 19 ignored（+4）；LLVM 语料正向
 198/452、负向正确拒绝 254、误接受 0 不变；语料往返幂等 189/189、`display_llvm`
 结构化往返全绿（位置不进文本层）；fmt `--check`/clippy `-D warnings`/
+`cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
+
+### S7（切片）：`features = ["text"]` 文本层门控（2026-09-17）
+
+**门控前的实际耦合**（不是"理论上的洁癖"）：`--no-default-features` **根本编不过**——
+两个核心实体字段直接存解析层 AST：
+
+- `GlobalVariable::init_expr: Option<ir_parser::ast_items::ConstExpr>`；
+- `GlobalAlias::{aliasee_ty: Option<ParsedType>, aliasee: ConstExpr}`。
+
+**① 核心去依赖：AST 字段 → 不透明文本载荷**。两个字段的**唯一**读点是 `display`（打印
+时原样还原文本），**唯一**写点是语义层；没有任何地方按结构读它。所以：语义层在构建时
+把表达式渲染成文本（`e.to_llvm_string()`；别名按原 display 规则拼
+`fmt_parsed_type(ty) + " " + expr`，`Void` 占位则不带类型前缀），核心只保管
+`init_expr_text: Option<ImmStr>` 与 `aliasee_text: ImmStr`（与既有
+`ifunc_params: Vec<ImmStr>` 同一约定：解析层类型文本存核心）。display 从"读 AST 再渲染"
+改为"原样输出文本"——输出逐字节不变（语料 198/254/0 与往返幂等 189/189 实证）。
+
+**② feature 与可选依赖**：`default = ["text"]`、`text = ["dep:logos",
+"dep:lalrpop-util"]`，两个运行时依赖 `optional = true`。`lalrpop` 是 **build-dependency
+（不能 optional）** ⇒ `build.rs` 读 Cargo 注入的 `CARGO_FEATURE_TEXT` 决定是否
+`lalrpop::process_root()`；`ops.toml` 的指令元数据生成**不随 feature 关**（`Opcode`
+枚举/派生表/名字查找核心也读）。
+
+**③ 模块门控**：`lib.rs` 的 `pub mod display;` / `pub mod ir_parser;` 各加
+`#[cfg(feature = "text")]`。
+
+**④ 边界守卫（`tests/text_feature_gate.rs`，4 例源码级断言）**——光"能编译"验不了
+边界：只要有一个核心文件引用文本层就编不过，而没人天天跑 `--no-default-features`，
+耦合会悄悄长回来。守卫内容：核心文件（`src/*.rs` 去掉 `lib.rs`/`display.rs`、跳过
+`src/ir_parser/`）**含注释在内**不得出现 `ir_parser`/`crate::display`；两个模块声明
+**恰好一次**且紧跟 cfg 属性；manifest 里 `text` 用 `dep:` 形式且两个依赖
+`optional = true`；`build.rs` 里 LALRPOP 生成在 `CARGO_FEATURE_TEXT` 块内、元数据生成
+**不在**块内。
+
+**⑤ 门禁**：CI 的 Clippy job 增一步 `cargo clippy -p forge-ir --no-default-features
+--lib -- -D warnings`（`--lib` 是必须的：`tests/*.rs` 大量使用 `ir_parser`，它们本来
+就需要 `text`；本守卫文件自身不引用文本层，带不带 feature 都能编译）。
+
+**负向验证**（每条各打掉一条守卫，随后恢复全绿）：
+
+| 改法 | 期望红 | 实测 |
+| --- | --- | --- |
+| `verify.rs` 引入 `use crate::ir_parser::…` | 守卫 1 | ✅ FAILED（点名该行） |
+| 去掉 `pub mod display;` 前的 cfg 属性 | 守卫 2 | ✅ FAILED（实测上一行 `pub mod dfg;`） |
+| `default = []` | 守卫 3 | ✅ FAILED（缺 `default = ["text"]`） |
+| 把 `generate_opcode_table()` 挪进门控块 | 守卫 4 | ✅ FAILED（"不得被门控"） |
+
+**结果**：`cargo check/clippy -p forge-ir --no-default-features --lib`（debug + release）
+0 错 0 警告；**行为零变化**——workspace 1492 passed / 0 failed / 19 ignored（+4）；
+LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0；语料往返幂等 189/189；
+`display_llvm` 结构化往返全绿；fmt `--check`/clippy（全 feature + 无 feature）/
 `cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
 
 ## 7. 参考设计（外部）
