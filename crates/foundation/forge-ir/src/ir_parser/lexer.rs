@@ -712,13 +712,30 @@ pub fn lexer(src: &str) -> logos::Lexer<'_, Token> {
     Token::lexer(src)
 }
 
-/// 词法错误（lalrpop 需要 Location/Error 类型）。
+/// 词法/文法动作层的错误（lalrpop 需要 Location/Error 类型）。
+///
+/// - [`LexError::BadChar`] 带**出错字节偏移**（v3 S7 文本层）：lalrpop 把词法错误
+///   包成 `ParseError::User`，不留下位置的话诊断就只能说"出现了非法字符"而指不出
+///   在哪一行；
+/// - [`LexError::Rejected`] 是**文法动作里显式拒绝**的写法（例如非法 `target(...)`
+///   类型参数），没有自然位置。
 #[derive(Debug, Clone, PartialEq)]
-pub struct LexError;
+pub enum LexError {
+    /// 非法字符，附其字节偏移。
+    BadChar {
+        /// 出错字符在源文本中的字节偏移。
+        offset: usize,
+    },
+    /// 文法动作显式拒绝（无位置）。
+    Rejected,
+}
 
 impl std::fmt::Display for LexError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unexpected character")
+        match self {
+            LexError::BadChar { .. } => write!(f, "unexpected character"),
+            LexError::Rejected => write!(f, "rejected by grammar action"),
+        }
     }
 }
 
@@ -733,7 +750,11 @@ impl<'a> Iterator for TokenStream<'a> {
                 let span = self.lexer.span();
                 Some(Ok((span.start, tok, span.end)))
             }
-            Some(Err(_)) => Some(Err(LexError)),
+            Some(Err(_)) => {
+                // logos 在错误 token 上也设 span（指向非法字符）
+                let span = self.lexer.span();
+                Some(Err(LexError::BadChar { offset: span.start }))
+            }
             None => None,
         }
     }

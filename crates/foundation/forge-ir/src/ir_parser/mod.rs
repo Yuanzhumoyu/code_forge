@@ -53,6 +53,159 @@ pub fn parse_function(source: &str) -> Result<crate::function::Function, IrError
     semantics::parse_function(source)
 }
 
+/// 把 lalrpop 的原始解析错误转成**面向用户**的诊断（v3 S7 文本层第一步）。
+///
+/// 此前这里是 `format!("{:?}", e)`，输出形如
+/// `UnrecognizedToken { token: (17, Ident("entry"), 22), expected: ["Target", … 88 项] }`：
+/// **没有行列**、**没有出错处的源码行**、还把 88 个文法内部记号名倒给用户。
+///
+/// 现在输出：
+///
+/// ```text
+/// 解析错误 3:8：非预期 `iaddd`
+///   3 |   %0 = iaddd i32 1, 2
+///     |        ^
+/// 期望其中之一：`ret`、`br`、`switch`、…（共 88 个）
+/// ```
+pub(crate) fn format_parse_error(
+    source: &str,
+    err: &lalrpop_util::ParseError<
+        usize,
+        crate::ir_parser::lexer::Token,
+        crate::ir_parser::lexer::LexError,
+    >,
+) -> String {
+    use lalrpop_util::ParseError;
+
+    // (字节偏移, 出错记号文本, 期望记号名)
+    let (offset, token, expected): (usize, Option<String>, Vec<String>) = match err {
+        ParseError::InvalidToken { location } => (*location, None, Vec::new()),
+        ParseError::UnrecognizedEof { location, expected } => (*location, None, expected.to_vec()),
+        ParseError::UnrecognizedToken {
+            token: (start, tok, end),
+            expected,
+        } => (
+            *start,
+            Some(snippet(source, *start, *end).unwrap_or_else(|| format!("{tok:?}"))),
+            expected.to_vec(),
+        ),
+        ParseError::ExtraToken {
+            token: (start, tok, end),
+        } => (
+            *start,
+            Some(snippet(source, *start, *end).unwrap_or_else(|| format!("{tok:?}"))),
+            Vec::new(),
+        ),
+        // 词法错误/文法动作拒绝：`LexError` 区分二者（前者自带偏移）
+        ParseError::User { error } => match error {
+            crate::ir_parser::lexer::LexError::BadChar { offset } => (*offset, None, Vec::new()),
+            crate::ir_parser::lexer::LexError::Rejected => (0, None, Vec::new()),
+        },
+    };
+
+    let (line_no, col_no, line_text) = locate(source, offset);
+    let mut msg = format!("解析错误 {line_no}:{col_no}");
+    match token.as_deref().map(str::trim) {
+        Some(t) if !t.is_empty() => msg.push_str(&format!("：非预期 `{t}`")),
+        _ => match err {
+            ParseError::UnrecognizedEof { .. } => msg.push_str("：输入在结构未结束时结束"),
+            ParseError::User {
+                error: crate::ir_parser::lexer::LexError::BadChar { .. },
+            } => msg.push_str("：出现无法识别的字符"),
+            ParseError::User { .. } => msg.push_str("：该写法不被文法接受"),
+            _ => {}
+        },
+    }
+    msg.push('\n');
+    let width = line_no.to_string().len();
+    msg.push_str(&format!("{line_no:>width$} | {line_text}\n"));
+    msg.push_str(&format!(
+        "{} | {}^\n",
+        " ".repeat(width),
+        " ".repeat(col_no.saturating_sub(1))
+    ));
+    if !expected.is_empty() {
+        let shown: Vec<String> = expected
+            .iter()
+            .take(8)
+            .map(|n| format!("`{}`", token_hint(n)))
+            .collect();
+        let tail = if expected.len() > shown.len() {
+            format!("…（共 {} 个）", expected.len())
+        } else {
+            String::new()
+        };
+        msg.push_str(&format!("期望其中之一：{}{tail}", shown.join("、")));
+    }
+    msg
+}
+
+/// 源文本 `[start, end)` 的切片（越界/非字符边界时返回 `None`）。
+fn snippet(source: &str, start: usize, end: usize) -> Option<String> {
+    if start >= end || end > source.len() {
+        return None;
+    }
+    let start = floor_boundary(source, start);
+    let end = floor_boundary(source, end);
+    source.get(start..end).map(str::to_string)
+}
+
+/// 把偏移回退到字符边界（坏 IR/坏偏移都不许 panic）。
+fn floor_boundary(source: &str, offset: usize) -> usize {
+    let offset = offset.min(source.len());
+    let mut i = offset;
+    while i > 0 && !source.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// 字节偏移 → `(行号, 列号, 该行文本)`（行/列从 1 开始）。
+fn locate(source: &str, offset: usize) -> (usize, usize, &str) {
+    let offset = floor_boundary(source, offset);
+    let before = &source[..offset];
+    let line_no = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end = source[line_start..]
+        .find('\n')
+        .map(|i| line_start + i)
+        .unwrap_or(source.len());
+    let col_no = source[line_start..offset].chars().count() + 1;
+    (line_no, col_no, &source[line_start..line_end])
+}
+
+/// 文法内部记号名 → 用户看得懂的写法（只做高频映射，其余小写首字母）。
+fn token_hint(name: &str) -> String {
+    match name {
+        "RBrace" => "}".into(),
+        "LBrace" => "{".into(),
+        "RBracket" => "]".into(),
+        "LBracket" => "[".into(),
+        "RAngle" => ">".into(),
+        "LAngle" => "<".into(),
+        "Comma" => ",".into(),
+        "Equals" => "=".into(),
+        "IntTy" => "iN".into(),
+        "FloatTy" => "fN".into(),
+        "PtrTy" => "ptr".into(),
+        "VoidTy" => "void".into(),
+        "VecTy" => "<N x T>".into(),
+        "VscaleTy" => "<vscale x N x T>".into(),
+        "IntLit" => "整数常量".into(),
+        "StrLit" => "字符串".into(),
+        "LocalId" => "%局部名".into(),
+        "GlobalId" => "@全局名".into(),
+        "LabelStr" => "标签".into(),
+        other => match other.strip_suffix("Kw") {
+            Some(base) => base.to_ascii_lowercase(),
+            None => match other.chars().next() {
+                Some(first) => format!("{}{}", first.to_ascii_lowercase(), &other[1..]),
+                None => String::new(),
+            },
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ast_items::*;

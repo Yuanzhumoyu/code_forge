@@ -3326,7 +3326,7 @@ Type: ParsedType = {
     Target LParen <args: TargetArgList> RParen =>? {
         if args.0 == "type" && args.1 {
             Err(lalrpop_util::ParseError::User {
-                error: crate::ir_parser::lexer::LexError,
+                error: crate::ir_parser::lexer::LexError::Rejected,
             })
         } else {
             Ok(ParsedType::Opaque)

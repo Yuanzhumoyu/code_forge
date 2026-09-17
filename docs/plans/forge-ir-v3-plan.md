@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | 待开工 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）已落地并带守卫（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、往返断言扩面、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1322,6 +1322,54 @@ riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --a
 **余项**：①`forge-dsl` 生成物侧的 `tc.borrow()`（需 `LowerCtx` 带 store 的设计）；
 ②`semantics.rs` 的 24 处与 `compiler.rs` 的 16 处交错点——把 intern 与查询拆成
 "先写后读"两段才能消掉，属结构性改造；③之后才是"把锁换成快照式实现"。
+
+### S7（切片）：解析错误诊断（行:列 + 源码行 + 插入符 + 收敛的期望集合）（2026-09-17）
+
+S7（文本层）开工第一刀，选的是**用户直接看到**的那部分：错误信息。
+
+**先测后改**（临时探针，跑完即删）——`semantics::parse_to_ast` 此前是
+`IrError::Parse(format!("{:?}", e))`，实测输出：
+
+```text
+UnrecognizedToken { token: (17, Ident("entry"), 22), expected: ["Target", "VoidTy",
+"PtrTy", "OpaqueKw", … 共 88 项 …] }
+```
+
+三条缺陷一次测出来：**没有行列**（只有字节偏移）、**没有出错处的源码行**、
+把 88 个文法内部记号名（`VconstOp`/`UselistorderBbKw` 这种）直接倒给用户。
+
+**改法**：新增 `ir_parser::format_parse_error(source, err)`（`mod.rs`），
+`parse_to_ast` 改用它：
+
+- `解析错误 <line>:<col>：非预期 <出错处源码切片>`（切片取自 `UnrecognizedToken`
+  的 `(start, tok, end)`，比记号名可读）；
+- 回显该行源码并画插入符（形如 `2 | entry:` 与 `| ^` 两行，插入符对齐出错列）；
+- 期望集合收敛到 8 项 + `…（共 N 个）`，内部记号名做用户化映射
+  （`RBrace`→`}`、`IntTy`→`iN`、`VecTy`→`<N x T>`、`*Kw` 去后缀小写、
+  `IntLit`→`整数常量`、`LocalId`→`%局部名` …）；
+- EOF 报"输入在结构未结束时结束"，非法字符报"出现无法识别的字符"；
+- 坏偏移/非字符边界一律回退（诊断路径不 panic）。
+
+顺带补上 `LexError`：改成枚举 `BadChar { offset }`（词法错误带偏移——此前
+`TokenStream` 把 logos 的错误位置丢掉了，诊断只能说"非法字符"而指不出在哪）
+与 `Rejected`（文法动作里显式拒绝、无自然位置，grammar.lalrpop 里那处
+`ParseError::User` 改成构造它）。
+
+**守卫**（`tests/parse_error_diagnostics.rs`，4 例）：语法错误带 `行:列` + 源码行 +
+插入符 + 出错记号原文；期望集合 ≤ 8 项且**不泄漏** lalrpop 内部形态
+（`UnrecognizedToken`/`expected: [`/`VconstOp`/`UselistorderBbKw`）；EOF 报位置与原因；
+非法字符（`~`——实测 `$name` 是 comdat 记号、`;` 是注释，都不触发词法错误）报位置。
+**负向验证**：把 `parse_to_ast` 改回 `format!("{:?}", e)` ⇒ 4 例全 **FAILED**；
+恢复后全绿。
+
+**验证**：workspace 1478 passed / 0 failed / 19 ignored（+4）；x86 矩阵 195/3/0；
+riscv64 131/67/0；LLVM 语料正/负向断言不变；fmt `--check`/clippy `-D warnings`/
+`cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
+
+**S7 余项**：`features=["text"]` 门控（build-deps 不可选 ⇒ 需 build.rs 读
+`CARGO_FEATURE_TEXT` + 把 `ConstExpr`/`ParsedType` 与 `GlobalVariable` 解耦）；
+IR 侧 span 贯穿（`SourceLocation`）；错误恢复（一次报多个错误）；往返断言扩面；
+结构化 fuzz。
 
 ## 7. 参考设计（外部）
 

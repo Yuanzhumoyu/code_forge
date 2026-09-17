@@ -59,7 +59,7 @@ fn parse_to_ast(source: &str) -> Result<ParsedModule, IrError> {
     let parser = super::grammar::ModuleParser::new();
     parser
         .parse(lexer)
-        .map_err(|e| IrError::Parse(format!("{:?}", e)))
+        .map_err(|e| IrError::Parse(super::format_parse_error(source, &e)))
 }
 
 // ── 模块构建 ──

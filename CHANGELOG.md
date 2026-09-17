@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **解析错误诊断可用（forge-ir v3 S7 文本层切片）**：`ir_parser::parse_to_ast` 此前把 lalrpop 的原始错误 `format!("{:?}", e)` 直接当消息，实测输出是 `UnrecognizedToken { token: (17, Ident("entry"), 22), expected: ["Target", "VoidTy", … 共 88 项 …] }`——**没有行列、没有出错处的源码行**，还把 88 个文法内部记号名（`VconstOp`/`UselistorderBbKw` 这类）倒给用户。
+  现在 `parse_module` 的语法错误是：`解析错误 2:1：非预期 entry` + 回显该行源码 + 插入符 `^` + 期望集合收敛到 8 项（`…（共 N 个）`），内部记号名做用户化映射（`RBrace`→`}`、`IntTy`→`iN`、`VecTy`→`<N x T>`、`*Kw` 去后缀小写、`IntLit`→`整数常量`、`LocalId`→`%局部名`）；EOF 报"输入在结构未结束时结束"，非法字符报"出现无法识别的字符"；坏偏移/非字符边界一律回退（诊断路径不 panic）。顺带把 `LexError` 改成 `BadChar { offset }` / `Rejected` 两态——词法错误此前丢掉了 logos 给出的位置。
+  新增 `tests/parse_error_diagnostics.rs`（4 例）；负向验证（改回 `{:?}`）⇒ 4 例全 FAILED，恢复后全绿。实测：workspace 1478 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0；LLVM 语料正/负向断言不变。
+
 - **读路径纪律批量落地 + 静态预算守卫（forge-ir v3 S3 切片）**：把"入口取一次读锁、把 `&TypeStore` 显式传下去"铺到剩余的纯读面。先按"函数体内是否有 `borrow_mut()` / 是否显式 `drop(guard)`"分类——`RwLock` 不可重入，读写交错的函数持有长读锁会自锁死，而这些函数当初写 `drop(ts)` 正是为了在读段之间放锁，属"已正确但不能改成长锁"，因此只迁移纯读函数：
   `pipeline/compiler.rs` `borrow()` **30 → 23**（7 个 `expand_*`/`memoryize_from_segs` 入口各一次）；`ir_parser/semantics.rs` **32 → 24**（6 个纯读助手 `pack_*_init`/`int_init_bytes`/`float_init_bytes`/`agg_const_from_operands`/`encode_lanes_to_bytes` 改 `&TypeStore`）；`types.rs` 13 处是 `TypeContext` 一次性查询封装（保留，新增用例钉住"每次调用恰好 1 次读锁、intern 不取读锁"）。
   `func: &mut Function` 的函数里不能用 `func.types.borrow()` 提升（守卫借着 `func` ⇒ 后续 `&mut func` 报 E0502），改用 `let types_ctx = func.types.clone();`（Arc，O(1)）再取锁。
