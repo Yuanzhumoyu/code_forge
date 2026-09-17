@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、幂等 **187/189**，2 条 `KNOWN_DRIFT` 逐条记原因）已落地；顺手修掉四类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返——`MetadataNode::Placeholder`、**聚合常量子元素**——浮点带小数点 + 递归零聚合）（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；余项：splat 逐 lane 广播值、`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1467,6 +1467,49 @@ riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --a
 ⇒ 该回归用例 **FAILED** 且守卫报 `unnamed.ll` 为新漂移；恢复后 4 例全绿。
 
 **验证**：workspace 1482 passed / 0 failed / 19 ignored（+1）；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
+
+### S7（切片）：half/bfloat 位模式保真 + splat 文本往返（语料漂移 2 → 0）（2026-09-17）
+
+收掉最后两条漂移，**语料往返 189/189 全部幂等**（`KNOWN_DRIFT` 清空）。
+
+**① `float-literals.ll`：f16/bfloat 值静默丢失**。实测 `@2 = global half -qnan` 打印成
+`0x7fc00000`（4 字节、无 `H` 前缀），回读按整数截断成 `0x0000`。根因：`float_init_bytes`
+没有 f16/bfloat 分支，落 `_ => (f as f32)` 存了 **4 字节**。修：
+
+- `float_init_bytes` 增 `Float{bits:16}`（f32 → IEEE binary16，RN-even，含 denormal/Inf/NaN）
+  与 `BFloat`（高 16 位 RN-even）；
+- `fmt_global_init` 增 `0xH{:04x}` / `0xR{:04x}` 两条臂（LLVM 的 half/bfloat 位模式写法）；
+- grammar 的 `FloatHexLit`（`0xH...`/`f0x...`）由折成 `Float(0.0)` 改为 `Int(位模式)`——
+  `int_init_bytes` 已按浮点类型还原位模式；
+- lexer：`f0x` 前缀也剥离（`llvm-dis` 用 `f0x01e3` 输出 half），并**真正解码 C99 十六进制
+  浮点**（`0x1.e3p-16`；此前恒返回 0.0，denormal 静默变 0）。
+
+实测：`@denormal.hex = global half +0x1.e3p-16` 打印 `0xH01e3`——与 LLVM 期望的
+`f0x01e3` 位模式一致。
+
+**② `constant-splat.ll`：splat 常量既能丢值又能错类型**。此前语法把 `splat (i32 7)` 折成
+"空向量 + `<1 x i32>` 类型" ⇒ 打印 `<5 x i32> <1 x i32> zeroinitializer`。修：新增
+`ConstExpr::Splat(ParsedType, Box<ConstExpr>)`，语法保留表达式、打印回 `splat (i32 7)`
+（**必须带内层类型**——实测打成 `splat (7)` 会 reparse 失败），并去掉向量常量打印里重复的
+类型前缀。
+
+**值保真仍缺**：splat 的逐 lane 广播字节未实现——实测"取内层值"会让**指令级**常量池变序，
+`display_llvm` 的结构化往返在 `constant-splat.ll` 上失败（`Iconst` 的 ConstId 2 vs 0），
+故保持宽松 0、文本层原样往返，值保真留后续切片。
+
+**教训（本机取证纪律）**：改 `grammar.lalrpop` 后**必须强制重建**（touch `build.rs` 或
+`cargo clean -p forge-ir`），否则跑的是旧生成物——本轮先拿到过假的"漂移 0"，强制重建后
+立刻暴露 `splat (7)` 无法回读。
+
+**结果**：语料往返漂移 **2 → 0**（幂等 189/189）；LLVM 语料正向 **198/452**、负向正确拒绝
+254、误接受 0 不变；`display_llvm` 的**结构化**往返亦全绿。守卫新增
+`fidelity::half_and_bfloat_globals_roundtrip`（5 组：qnan/denormal-hex/denormal-dec/`f0x`）
+与 `fidelity::splat_constant_roundtrips_without_type_prefix`；**负向验证**（同时回退位模式
+映射与 splat 内层类型 + 强制重建）⇒ 3 个用例 FAILED，恢复后 6 例全绿。
+
+**验证**：workspace 1484 passed / 0 failed / 19 ignored（+2）；x86 矩阵 195/3/0；
 riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
 `cargo doc -D warnings` 全干净。
 

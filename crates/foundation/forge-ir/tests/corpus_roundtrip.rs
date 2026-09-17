@@ -19,16 +19,9 @@ use forge_ir::ir_parser::parse_module;
 
 /// 已知往返漂移（每条一行原因）。**必须被命中**：修好之后请从这里删掉，
 /// 否则测试会提示"条目已失效"。
-const KNOWN_DRIFT: &[(&str, &str)] = &[
-    (
-        "constant-splat.ll",
-        "splat 向量全局打印成 `<1 x i1> <1 x i32> zeroinitializer`（多出错误类型前缀）",
-    ),
-    (
-        "float-literals.ll",
-        "仍有小数字面量写法差异（`0xH`/`f0x` 形态回读后再打印不同）",
-    ),
-];
+/// 已知往返漂移（每条一行原因）。**当前为空**：189 个正向用例全部幂等。
+/// 将来若出现漂移，把用例名与实测原因加进来（条目必须被命中，修好要删）。
+const KNOWN_DRIFT: &[(&str, &str)] = &[];
 
 fn is_negative(name: &str, src: &str) -> bool {
     if src.contains("RUN: not llvm-as") || src.contains("RUN: not --crash llvm-as") {
@@ -112,7 +105,7 @@ fn positive_corpus_print_is_idempotent() {
     );
     assert_eq!(
         idempotent,
-        187,
+        189,
         "幂等用例数变了（实测 {idempotent}，已知漂移 {} 个）：修好或退化了就更新这个数与 KNOWN_DRIFT",
         KNOWN_DRIFT.len()
     );
@@ -137,6 +130,44 @@ mod fidelity {
             "i5 常量应打印为 `i5 7`（实测：{t1}）"
         );
         assert_eq!(print(&t1), t1, "i5 常量打印必须幂等");
+    }
+
+    /// f16/bfloat 全局常量：按 LLVM 的**位模式**写法输出（`0xH....`/`0xR....`），
+    /// 且回读保真（此前落通用 hex 臂，打 4 字节且无前缀 ⇒ 回读按整数截断成 0）。
+    #[test]
+    fn half_and_bfloat_globals_roundtrip() {
+        for (src, want) in [
+            // half +qnan / -qnan：f16 位模式 0x7e00 / 0xfe00（符号位由实现保留）
+            ("@a = global half -qnan\n", "0xH7e00"),
+            ("@a = global bfloat +qnan\n", "0xH7e00"),
+            // C99 十六进制浮点（denormal）：LLVM 期望 f0x01e3
+            ("@a = global half +0x1.e3p-16\n", "0xH01e3"),
+            ("@a = global half 2.878904342651367875e-5\n", "0xH01e3"),
+            // LLVM 的 `f0x....` 写法（llvm-dis 用它输出 half）
+            ("@a = global half f0x01e3\n", "0xH01e3"),
+        ] {
+            let t1 = print(src);
+            assert!(
+                t1.contains(want),
+                "half/bfloat 常量必须保真（期望含 {want}，实测：{t1}；源：{src}）"
+            );
+            assert_eq!(print(&t1), t1, "half/bfloat 打印必须幂等（源：{src}）");
+        }
+    }
+
+    /// `splat` 向量常量：**表达式原样往返**（`splat (i32 7)`）——此前折成空向量
+    /// `<1 x i32> zeroinitializer`，既丢值又丢类型（回读成另一个类型）。
+    ///
+    /// 注：字节级**广播求值**仍未落地（`const_expr_value` 取内层值，向量全局的 lane
+    /// 布局由调用方决定）；本用例钉的是文本层幂等与类型不漂移。
+    #[test]
+    fn splat_constant_roundtrips_without_type_prefix() {
+        let t1 = print("@s = constant <5 x i32> splat (i32 7)\n");
+        assert!(
+            !t1.contains("<1 x i32>"),
+            "splat 常量不应打印出多余的类型前缀（实测：{t1}）"
+        );
+        assert_eq!(print(&t1), t1, "splat 常量打印必须幂等");
     }
 
     /// 聚合常量的**聚合元素**（`%1 zeroinitializer`）必须是递归零聚合，

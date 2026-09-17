@@ -2012,7 +2012,15 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
                 format!("{f}")
             }
         }
-        // f16/bfloat/其他位宽浮点：hex 位模式（第二十九轮:原落兜底
+        // half/bfloat：LLVM 的位模式写法 `0xH....` / `0xR....`（此前落下面那条通用
+        // hex 臂，打 4 字节且无前缀 ⇒ 回读按整数截断，值静默丢失：实测 float-literals.ll）
+        TypeEntry::Float { bits: 16 } if init.len() >= 2 => {
+            format!("0xH{:04x}", u16::from_le_bytes([init[0], init[1]]))
+        }
+        TypeEntry::BFloat { bits: 16 } if init.len() >= 2 => {
+            format!("0xR{:04x}", u16::from_le_bytes([init[0], init[1]]))
+        }
+        // 其他位宽浮点（fp128/x86_fp80/ppc_fp128）：hex 位模式（第二十九轮:原落兜底
         // `0x{bytes}` 无类型标注,reparse 歧义）
         TypeEntry::Float { bits } | TypeEntry::BFloat { bits } if init.len() >= 2 => {
             format!(
@@ -2023,6 +2031,21 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
                     .map(|b| format!("{b:02x}"))
                     .collect::<String>()
             )
+        }
+        // 向量：逐 lane 解码（`<2 x i32> <i32 9, i32 9>`）——此前没有 Vector 臂，
+        // 落末尾 hex 兜底（可读性差，且 splat 常量看不出结构）
+        TypeEntry::Vector { elem, len }
+            if init.len() as u64
+                >= (*len as u64) * (size_bytes_or_zero(store, *elem).max(1) as u64) =>
+        {
+            let lane = size_bytes_or_zero(store, *elem).max(1) as usize;
+            let lanes: Vec<String> = (0..*len as usize)
+                .map(|i| {
+                    let chunk = &init[i * lane..(i + 1) * lane];
+                    fmt_global_init(store, *elem, chunk)
+                })
+                .collect();
+            format!("<{}>", lanes.join(", "))
         }
         // [N x i8] → LLVM 字符串常量 c"..."（可打印字符 + 转义；其余 hex）
         TypeEntry::Array { elem, len }

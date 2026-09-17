@@ -756,7 +756,10 @@ GlobalInit: GlobalInitVal = {
     <n: HexLit> => GlobalInitVal::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
     <f: FloatLit> => GlobalInitVal::Float(f),
     <fh: HexFloatLit> => GlobalInitVal::Float(fh),
-    <_fh: FloatHexLit> => GlobalInitVal::Float(0.0),
+    // 浮点十六进制**位模式**（`0xH7C00` / `f0x01e3`）当作整数位模式走 GlobalInitVal::Int，
+    // `int_init_bytes` 会按浮点类型把位模式还原成字节。此前折成 Float(0.0)：
+    // `global half -qnan` 回读成 0.0（值静默丢失）。
+    <fh: FloatHexLit> => GlobalInitVal::Int(fh),
     Null => GlobalInitVal::Null,
     <c: CString> => GlobalInitVal::Str(
         crate::ir_parser::ast_items::decode_c_string(&c),
@@ -835,11 +838,12 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
     PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> Comma <_d: ExprOperand> Comma <_a: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k, _d, _a]),
     // blockaddress（`ptr blockaddress(@f, %label)`——宽松 0；第十六轮 pr119818）
     BlockaddressKw LParen <_f: GlobalId> Comma <_l: LocalId> RParen => crate::ir_parser::ast_items::ConstExpr::Int(0),
-    // splat（LLVM：`splat (ptr null)`——向量广播常量；求值宽松 0）
-    SplatKw LParen <_op: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Vector(
-        crate::ir_parser::ast_items::ParsedType::Vec(1, Box::new(crate::ir_parser::ast_items::ParsedType::Int(32))),
-        vec![],
-    ),
+    // splat（LLVM 18+：`splat (i32 7)`——向量广播常量）。**保留表达式**而不是折成
+    // 空向量（折成 `<1 x i32> zeroinitializer` 会同时丢值与类型，实测
+    // constant-splat.ll 往返漂移）；字节级广播求值仍未实现（`const_expr_bytes` 宽松值）
+    SplatKw LParen <op: ExprOperand> RParen => {
+        crate::ir_parser::ast_items::ConstExpr::Splat(op.0, Box::new(op.1))
+    },
     Ptrtoint LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
         crate::ir_parser::ast_items::ConstExpr::PtrToInt {
             op_ty: op.0,
@@ -934,8 +938,8 @@ ExprValue: crate::ir_parser::ast_items::ConstExpr = {
     ),
     <n: IntLit> => crate::ir_parser::ast_items::ConstExpr::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
     <n: HexLit> => crate::ir_parser::ast_items::ConstExpr::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
-    // 浮点十六进制位模式（宽松 0）
-    <_n: FloatHexLit> => crate::ir_parser::ast_items::ConstExpr::UInt(0),
+    // 浮点十六进制位模式（`f0x01e3`）——保留位模式供常量表达式求值
+    <n: FloatHexLit> => crate::ir_parser::ast_items::ConstExpr::UInt(n as u64),
     <f: FloatLit> => crate::ir_parser::ast_items::ConstExpr::Float(f),
     True => crate::ir_parser::ast_items::ConstExpr::Int(1),
     False => crate::ir_parser::ast_items::ConstExpr::Int(0),
@@ -3445,4 +3449,3 @@ AggListElem: ParsedOperand = {
         ParsedOperand { ty: ParsedType::Void, op: Operand::Agg(v) }
     },
 };
-

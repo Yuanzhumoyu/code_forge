@@ -13,6 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **half/bfloat 位模式保真 + splat 文本往返：语料往返漂移 2 → 0（forge-ir v3 S7 切片）**：收掉最后两条漂移，189 个正向用例**全部幂等**（`KNOWN_DRIFT` 清空）。
+  ① `float-literals.ll` 的 **f16/bfloat 值静默丢失**：`@2 = global half -qnan` 打印成 `0x7fc00000`（4 字节、无 `H` 前缀），回读按整数截断成 `0x0000`；根因是 `float_init_bytes` 没有 f16/bfloat 分支（落 `(f as f32)` 存 4 字节）。现在 `float_init_bytes` 增 f16（f32 → IEEE binary16，RN-even，含 denormal/Inf/NaN）与 bfloat（高 16 位 RN-even）；
+  `fmt_global_init` 增 `0xH{:04x}`/`0xR{:04x}` 打印臂；grammar 的 `FloatHexLit`（`0xH...`/`f0x...`）由折成 `Float(0.0)` 改为 `Int(位模式)`；lexer 同时剥离 `f0x` 前缀（`llvm-dis` 的 half 输出形式）并**真正解码 C99 十六进制浮点**（`0x1.e3p-16`，此前恒 0.0）。实测 `+0x1.e3p-16` 打印 `0xH01e3`，与 LLVM 期望的 `f0x01e3` 一致。
+  ② `constant-splat.ll` 的 **splat 常量折成空向量**（既丢值又多一个 `<1 x i32>` 类型前缀）：新增 `ConstExpr::Splat(ParsedType, Box<ConstExpr>)`，语法保留表达式、打印回 `splat (i32 7)`（必须带内层类型，否则自己解析不回来），并去掉向量常量打印里重复的类型前缀。**逐 lane 广播值仍未落地**——实测"取内层值"会让指令级常量池变序（`display_llvm` 结构化往返在 `constant-splat.ll` 上失败，`Iconst` ConstId 2 vs 0），故保持宽松 0、文本层原样往返。
+  结果：语料往返漂移 **2 → 0**（幂等 189/189）；LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0 不变；`display_llvm` 结构化往返全绿。新增回归用例 `fidelity::half_and_bfloat_globals_roundtrip`（5 组）与 `fidelity::splat_constant_roundtrips_without_type_prefix`；负向验证（回退位模式映射 + splat 内层类型 + 强制重建）⇒ 3 例 FAILED，恢复后全绿。
+  实测：workspace 1484 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **聚合常量往返幂等：语料漂移 3 → 2（forge-ir v3 S7 切片）**：收掉 `unnamed.ll` 那条漂移，逐例打差异后定位两处根因，都在"聚合常量子元素"上：①浮点子元素被打印成整数字面量——`fmt_agg_scalar` 用 `format!("{}", f32)`，Rust 对 `4.0` 打 `"4"`，文本 `float 4` 回读成了 **i32** 常量（类型漂移）；现在用 `fmt_f32_literal`/`fmt_f64_literal` 保证带小数点或指数（`4` → `4.0`），非有限值给 hex 位模式。②聚合元素的零值被压成 i8 标量——`agg_const_from_operands` 对 `zeroinitializer`/`undef`/`poison`/`null` 元素一律 `insert_int(0, 8)`，元素类型是结构体时（`%1 zeroinitializer`）文本成了 `i8 0`，与聚合类型不符；现在新增 `zero_agg_child`：标量 → 零标量，**结构体/数组 → 递归零聚合**（`%1 { i32 0 }`）。③顺带修整数子元素：用**元素类型**位宽打印，而不是常量池里记的宽度。
   结果：`unnamed.ll` 转幂等，往返漂移 **3 → 2**（余：`constant-splat.ll` 的 splat 展开与类型前缀、`float-literals.ll` 的 f16 hex 形态），幂等 **187/189**；LLVM 语料正向 **198/452**、负向正确拒绝 254、误接受 0 不变。新增回归用例 `fidelity::nested_zero_aggregate_roundtrips`；负向验证：临时关掉 `zero_agg_child` 的结构体分支 ⇒ 该用例 FAILED 且守卫报 `unnamed.ll` 为新漂移。
   实测：workspace 1482 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。

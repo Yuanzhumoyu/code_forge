@@ -1028,6 +1028,11 @@ fn const_expr_value(_ctx: &TypeContext, e: &ConstExpr) -> Result<i128, IrError> 
         ConstExpr::Float(f) => f.to_bits() as i128,
         ConstExpr::Null => 0,
         ConstExpr::Undef | ConstExpr::Poison => 0,
+        // splat：**字节级广播求值仍未实现**——保持宽松 0（与历史行为一致）。
+        // 文本层由 ConstExpr::Splat 原样往返（打印/解析），值保真留后续切片：
+        // 取内层值会让**指令级**常量池多出/变序（实测 display_llvm 的结构化往返
+        // 在 constant-splat.ll 上失败：Iconst 的 ConstId 2 vs 0）。
+        ConstExpr::Splat(..) => 0,
         ConstExpr::PtrToInt {
             op, op_ty, to_ty, ..
         } => {
@@ -1448,8 +1453,73 @@ fn float_init_bytes(ty: TypeId, f: f64, ctx: &TypeContext) -> Vec<u8> {
     match store.get(ty) {
         TypeEntry::Float { bits: 32 } => (f as f32).to_le_bytes().to_vec(),
         TypeEntry::Float { bits: 64 } => f.to_le_bytes().to_vec(),
+        // f16/bfloat：**真正的 16 位模式**（此前落 _ => (f as f32) 存 4 字节，
+        // global half -qnan 被打印成 0x7fc00000、回读按整数截成 0x0000）
+        TypeEntry::Float { bits: 16 } => f32_to_f16_bits(f as f32).to_le_bytes().to_vec(),
+        TypeEntry::BFloat { .. } => f32_to_bf16_bits(f as f32).to_le_bytes().to_vec(),
         _ => (f as f32).to_le_bytes().to_vec(),
     }
+}
+
+/// 32 → IEEE binary16 位模式（round-to-nearest-even；含 denormal/Inf/NaN）。
+fn f32_to_f16_bits(v: f32) -> u16 {
+    let bits = v.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let raw_exp = ((bits >> 23) & 0xff) as i32;
+    let mut mant = bits & 0x007f_ffff;
+    if raw_exp == 0xff {
+        // Inf / NaN（NaN 保留 quiet 位与非零尾数痕迹）
+        let m = if mant == 0 {
+            0
+        } else {
+            0x200 | ((mant >> 13) as u16 & 0x1ff)
+        };
+        return sign | 0x7c00 | m;
+    }
+    let mut exp = raw_exp - 127 + 15;
+    if exp >= 0x1f {
+        return sign | 0x7c00; // 溢出 → Inf
+    }
+    if exp <= 0 {
+        if exp < -10 {
+            return sign; // 下溢 → ±0
+        }
+        // denormal：隐含位参与移位，再 RN-even
+        mant |= 0x0080_0000;
+        let shift = (14 - exp) as u32;
+        let mut m = (mant >> shift) as u16;
+        let rem = mant & ((1u32 << shift) - 1);
+        let halfway = 1u32 << (shift - 1);
+        if rem > halfway || (rem == halfway && (m & 1) == 1) {
+            m += 1;
+        }
+        return sign | m;
+    }
+    // 规格化：10 位尾数 + RN-even
+    let mut m = (mant >> 13) as u16;
+    let rem = mant & 0x1fff;
+    if rem > 0x1000 || (rem == 0x1000 && (m & 1) == 1) {
+        m += 1;
+        if m == 0x400 {
+            m = 0;
+            exp += 1;
+            if exp >= 0x1f {
+                return sign | 0x7c00;
+            }
+        }
+    }
+    sign | ((exp as u16) << 10) | m
+}
+
+/// 32 → bfloat16 位模式（取高 16 位 + RN-even）。
+fn f32_to_bf16_bits(v: f32) -> u16 {
+    let bits = v.to_bits();
+    if bits & 0x7fff_ffff > 0x7f80_0000 {
+        // NaN：保持 quiet 位（简单保留高位，不再舍入）
+        return (bits >> 16) as u16;
+    }
+    let round = ((bits >> 15) & 1 == 1) && ((bits & 0x7fff) != 0 || (bits >> 16) & 1 == 1);
+    ((bits >> 16) + u32::from(round)) as u16
 }
 
 fn signature_of(f: &ParsedFunction, ctx: &TypeContext) -> FunctionSignature {

@@ -300,6 +300,11 @@ pub enum ConstExpr {
     /// 向量常量：`<2 x i32> <i32 3, i32 4>`（常量表达式位置；
     /// semantics 求值宽松返回 0——标量折叠无法表达向量）。
     Vector(ParsedType, Vec<VecLane>),
+    /// `splat (<op>)`（LLVM 18+ 向量广播常量）。
+    ///
+    /// 打印成 splat (i32 7) 才能被自己解析回来）。保留**表达式本身**（不折叠）：打印回 `splat (<op>)` 即可幂等往返；
+    /// 求值仍是宽松值（按字节广播尚未实现，见 `const_expr_bytes` 的说明）。
+    Splat(ParsedType, Box<ConstExpr>),
     /// 转换常量折叠表达式：`trunc (i64 42 to i32)` / `zext (i32 -1 to i64)` /
     /// `sext (...) to ...`（src_ty 为源类型——zext/sext 求值需要位宽）。
     Cast {
@@ -334,6 +339,10 @@ impl ConstExpr {
             ConstExpr::Null => "null".to_string(),
             ConstExpr::Undef => "undef".to_string(),
             ConstExpr::Poison => "poison".to_string(),
+            // `splat (i32 7)`：表达式原样打印（类型前缀由调用方给）
+            ConstExpr::Splat(ty, inner) => {
+                format!("splat ({} {})", fmt_parsed_type(ty), inner.to_llvm_string())
+            }
             // 向量常量：值文本只含 `<lanes>`（类型前缀由 operand_text 的
             // op_ty 提供——第二十九轮:原走 other 输出完整 `ty <lanes>`
             // 致类型重复 `<2 x i32> <2 x i32> <...>`,reparse 拒绝）
@@ -410,6 +419,7 @@ impl ConstExpr {
             ConstExpr::Null => "null".to_string(),
             ConstExpr::Undef => "undef".to_string(),
             ConstExpr::Poison => "poison".to_string(),
+            // `splat (i32 7)`：表达式原样打印（类型前缀由调用方给）
             ConstExpr::PtrToInt { op_ty, op, to_ty } => {
                 format!(
                     "ptrtoint ({} to {})",
@@ -475,12 +485,16 @@ impl ConstExpr {
                 ));
                 out
             }
-            // 向量常量：`<2 x i32> <i32 3, i32 4>`
-            ConstExpr::Vector(ty, lanes) => {
+            // `splat (i32 7)`：表达式原样打印（类型前缀由调用方给）
+            ConstExpr::Splat(ty, inner) => {
+                format!("splat ({} {})", fmt_parsed_type(ty), inner.to_llvm_string())
+            }
+            // 向量常量：`<2 x i32> <i32 3, i32 4>`（类型前缀由调用方给——全局/操作数
+            // 已打印类型；这里再带一次会得到 `<5 x i32> <1 x i32> zeroinitializer`，
+            // 实测 constant-splat.ll 漂移）
+            ConstExpr::Vector(_ty, lanes) => {
                 if lanes.is_empty() {
-                    // 向量 zeroinitializer（`<2 x ptr> zeroinitializer`——
-                    // 第二十九轮:空 lanes 原输出 `<>`,reparse 拒绝）
-                    return format!("{} zeroinitializer", fmt_parsed_type(ty));
+                    return "zeroinitializer".to_string();
                 }
                 let lanes_s: Vec<String> = lanes
                     .iter()
@@ -496,7 +510,7 @@ impl ConstExpr {
                         }
                     })
                     .collect();
-                format!("{} <{}>", fmt_parsed_type(ty), lanes_s.join(", "))
+                format!("<{}>", lanes_s.join(", "))
             }
             // 转换折叠：`trunc (i64 42 to i32)`
             ConstExpr::Cast {

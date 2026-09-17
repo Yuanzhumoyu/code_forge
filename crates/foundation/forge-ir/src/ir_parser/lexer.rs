@@ -571,6 +571,8 @@ pub enum Token {
         let s = lex.slice();
         let hex = s
             .trim_start_matches("0x")
+            // LLVM 的另一种写法 `f0x01e3`（half；`llvm-dis` 用它输出）——前缀同样剥离
+            .trim_start_matches("f0x")
             .trim_start_matches(['H', 'J', 'K', 'L', 'M', 'R'])
             .replace('_', "");
         i64::from_str_radix(&hex, 16).unwrap_or(0)
@@ -584,8 +586,10 @@ pub enum Token {
         _ => f64::NAN,
     })]
     FloatLit(f64),
-    // C99 十六进制浮点（`0x1.0p-32`——LLVM 测试 float-literals；宽松 0）
-    #[regex(r"[+-]?0x[0-9A-Fa-f.]*p[+-]?[0-9]+", |_| 0.0)]
+    // C99 十六进制浮点（`0x1.0p-32`——LLVM 测试 float-literals）。
+    // 此前一律解码为 0.0（值静默丢失：`global half +0x1.e3p-16` 是 denormal 却变 0，
+    // 打印成 `0xH0000` 与 LLVM 的 `f0x01e3` 不符）
+    #[regex(r"[+-]?0x[0-9A-Fa-f.]*p[+-]?[0-9]+", |lex| parse_c99_hex_float(lex.slice()))]
     HexFloatLit(f64),
     // 任意精度整数（第二十三轮 Big 化：dashu Integer——任意长度十进制,
     // 溢出不再折叠哨兵,值域校验/display 保留精确值;
@@ -771,6 +775,55 @@ impl<'a> TokenStream<'a> {
             lexer: Token::lexer(src),
         }
     }
+}
+
+/// C99 十六进制浮点字面量（`0x1.e3p-16` / `-0x1.0p-126`）→ `f64`。
+///
+/// 值 = 尾数 × 2^指数（`p` 后为**十进制**指数）；此前该 token 一律返回 `0.0`，
+/// 使 `global half +0x1.e3p-16`（denormal）静默变成 0。
+pub(crate) fn parse_c99_hex_float(s: &str) -> f64 {
+    let (sign, rest) = match s.strip_prefix('-') {
+        Some(r) => (-1.0, r),
+        None => (1.0, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let rest = rest
+        .strip_prefix("0x")
+        .or_else(|| rest.strip_prefix("0X"))
+        .unwrap_or(rest);
+    let (mantissa, exponent) = match rest.split_once(['p', 'P']) {
+        Some((m, e)) => (m, e.parse::<i32>().unwrap_or(0)),
+        None => (rest, 0),
+    };
+    let (int_part, frac_part) = match mantissa.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (mantissa, ""),
+    };
+    let mut mant = 0.0f64;
+    for c in int_part.chars() {
+        mant = mant * 16.0 + f64::from(c.to_digit(16).unwrap_or(0));
+    }
+    let mut scale = 1.0 / 16.0;
+    for c in frac_part.chars() {
+        mant += f64::from(c.to_digit(16).unwrap_or(0)) * scale;
+        scale /= 16.0;
+    }
+    sign * mant * exp2(exponent)
+}
+
+/// `2^n`（n 为任意 i32；rustc 的 `f64::powi` 只接受整数指数的乘法展开，
+/// 直接乘更省事且不依赖 std 的浮点幂实现细节）。
+fn exp2(n: i32) -> f64 {
+    let mut r = 1.0f64;
+    let mut base = if n < 0 { 0.5f64 } else { 2.0f64 };
+    let mut k = n.unsigned_abs();
+    while k > 0 {
+        if k & 1 == 1 {
+            r *= base;
+        }
+        base *= base;
+        k >>= 1;
+    }
+    r
 }
 
 #[cfg(test)]
