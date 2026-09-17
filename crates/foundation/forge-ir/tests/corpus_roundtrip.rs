@@ -157,9 +157,6 @@ mod fidelity {
 
     /// `splat` 向量常量：**表达式原样往返**（`splat (i32 7)`）——此前折成空向量
     /// `<1 x i32> zeroinitializer`，既丢值又丢类型（回读成另一个类型）。
-    ///
-    /// 注：字节级**广播求值**仍未落地（`const_expr_value` 取内层值，向量全局的 lane
-    /// 布局由调用方决定）；本用例钉的是文本层幂等与类型不漂移。
     #[test]
     fn splat_constant_roundtrips_without_type_prefix() {
         let t1 = print("@s = constant <5 x i32> splat (i32 7)\n");
@@ -168,6 +165,75 @@ mod fidelity {
             "splat 常量不应打印出多余的类型前缀（实测：{t1}）"
         );
         assert_eq!(print(&t1), t1, "splat 常量打印必须幂等");
+    }
+
+    /// 向量**元素类型名**必须按 LLVM 写法识别（v3 S7）。
+    ///
+    /// 改前 `VecTy` 的 lexer 动作按首字母猜（`strip_prefix('i')/('b')/('f')`，其余落
+    /// `Ptr`）：`float`→`f64`（`"loat"` 解析失败取兜底 64）、`half`/`double`→`ptr`、
+    /// `bfloat`→`i32`、`fp128`→`f64`——**静默类型损坏**，而往返测试只比对 m1/m2 两边
+    /// （两边错得一样）所以看不出来。这里按**打印形态**钉住（用户可见的口径）。
+    ///
+    /// 注：`x86_fp80` 沿用既有标量约定映射为 `f128`；`bfloat` 向量元素与 `half` 同
+    /// `Float(16)`（标量 bfloat 另有 `BFloat` 条目，向量元素尚未区分——如实记录现状）。
+    #[test]
+    fn vector_element_type_names_are_not_guessed() {
+        for (elem, want) in [
+            ("float", "f32"),
+            ("double", "f64"),
+            ("half", "f16"),
+            ("bfloat", "f16"),
+            ("fp128", "f128"),
+            ("x86_fp80", "f128"),
+            ("ptr", "ptr"),
+            ("i33", "i33"),
+            ("b7", "i7"),
+        ] {
+            let src = format!("@v = external global <2 x {elem}>\n");
+            let t1 = print(&src);
+            assert!(
+                t1.contains(&format!("<2 x {want}>")),
+                "`<2 x {elem}>` 应打印为 `<2 x {want}>`（实测：{t1}）"
+            );
+            assert_eq!(print(&t1), t1, "向量类型打印必须幂等（元素 {elem}）");
+        }
+    }
+
+    ///
+    /// 此前 `ConstExpr::Splat` 在求值口返回宽松 0 ⇒ `@s = global <4 x i32> splat (i32 7)`
+    /// 的 lane 全是 0（文本往返看不出，字节才是判据）。内层类型与向量元素类型不符、
+    /// 或类型不是向量，都必须报错。
+    #[test]
+    fn splat_global_broadcasts_lane_value() {
+        let want: Vec<u8> = [7u32, 7, 7, 7]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let src = "@s = global <4 x i32> splat (i32 7)\n";
+        let m = parse_module(src).expect("parse");
+        let (_, g) = m.iter_globals().next().expect("global");
+        assert_eq!(g.init.as_deref(), Some(&want[..]), "lane 必须广播该值");
+        // 打印-回读后字节不变（表达式原样往返 + 广播一致）
+        let t1 = m.to_string();
+        assert!(t1.contains("splat (i32 7)"), "表达式应原样打印：{t1}");
+        let m2 = parse_module(&t1).expect("reparse");
+        let (_, g2) = m2.iter_globals().next().expect("global");
+        assert_eq!(g2.init.as_deref(), Some(&want[..]), "回读后 lane 仍须广播");
+        // 非零标量亦可（i64 元素）
+        let want64: Vec<u8> = [(-1i64), -1].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let m3 = parse_module("@s = global <2 x i64> splat (i64 -1)\n").expect("parse");
+        let (_, g3) = m3.iter_globals().next().expect("global");
+        assert_eq!(g3.init.as_deref(), Some(&want64[..]));
+        // 非法：内层类型与元素类型不符 / 用在非向量类型上
+        for bad in [
+            "@s = global <4 x i32> splat (i8 7)\n",
+            "@s = global i32 splat (i32 7)\n",
+        ] {
+            assert!(
+                parse_module(bad).is_err(),
+                "非法 splat 初值必须被拒绝（源：{bad}）"
+            );
+        }
     }
 
     /// 聚合常量的**聚合元素**（`%1 zeroinitializer`）必须是递归零聚合，

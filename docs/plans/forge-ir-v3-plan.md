@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；余项：splat 逐 lane 广播值；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；**收官切片**（splat 逐 lane 广播 + 向量元素类型名不再靠猜）已落地，**S7 余项清零**（见 §6 末）；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1675,6 +1675,39 @@ LLVM 语料正向 **198/452**、负向正确拒绝 254、误接受 0——与基
 198/452、负向正确拒绝 254、误接受 0；语料往返幂等 189/189；`display_llvm` 结构化
 往返 198/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
 `cargo doc -D warnings` 全干净。
+
+### S7（切片）：splat 逐 lane 广播 + 向量元素类型名不再靠猜（2026-09-17，S7 收官）
+
+**① `splat` 的值**：`ConstExpr::Splat` 在 `const_expr_bytes` 里返回宽松 0（那个函数是
+指令级常量池共享的求值口，"取内层值"会让常量池变序——见上文 splat 文本切片记录），
+所以 `@s = global <4 x i32> splat (i32 7)` 的 lane 全是 0（文本往返看不出，字节才是判据）。
+现在**只在全局初值这条路径**广播：新增 `splat_init_bytes`——按向量元素类型逐 lane 重复
+内层标量，填满整个向量；内层类型必须与元素类型一致（fail-closed），非标量内层
+（`ptr @g` 等）按既有 P1 占位零策略处理（真实地址是链接期重定位）。
+
+**② 顺带挖出"向量元素类型名靠首字母猜"的静默损坏**（这正是 ① 的类型比对把它暴露的
+原因）：`VecTy` 的 lexer 动作对元素文本只做 `strip_prefix('i')/('b')/('f')`、其余落
+`Ptr`，于是 `float`→`f64`（`"loat"` 解析失败取兜底 64）、`half`/`double`→`ptr`、
+`bfloat`→`i32`、`fp128`→`f64`——**类型静默损坏**，而往返测试只比对 m1/m2 两边（错得
+一样）所以一直没暴露。修：抽出唯一映射 [`elem_ty_from_text`]（`half`/`bfloat`→f16、
+`float`→f32、`double`→f64、`fp128`/`x86_fp80`/`ppc_fp128`→f128、`ptr`、
+`iN`/`bN`），`VecTy` 动作改调它。
+如实记录现状：`bfloat` **向量元素**与 `half` 同为 `Float(16)`（标量 bfloat 另有
+`BFloat` 条目，向量元素尚未区分）；`x86_fp80` 沿用既有标量约定映射 `f128`。
+
+**守卫**（`corpus_roundtrip.rs` 的 `fidelity` +2 例）：
+`splat_global_broadcasts_lane_value`（4×i32 广播、2×i64 广播、打印-回读后字节不变、
+内层类型不符/非向量两种非法形态报错）、`vector_element_type_names_are_not_guessed`
+（`float`/`double`/`half`/`bfloat`/`fp128`/`x86_fp80`/`ptr`/`i33`/`b7` 九种写法按**打印
+形态**钉住 + 幂等）。fuzz 生成器也扩到 `double`/`half` 元素写法。
+
+**负向验证**：回退 `VecTy` 的元素映射 ⇒ 元素名用例 FAILED；回退 splat 广播 ⇒
+splat 广播用例 FAILED；恢复后全绿。
+
+**结果**：workspace **1502 passed / 0 failed / 19 ignored**（+2）；LLVM 语料正向
+198/452、负向正确拒绝 254、误接受 0（**与基线逐项一致**）；语料往返幂等 189/189；
+`display_llvm` 结构化往返 198/0；10k 随机模块 fuzz 0 失败；fmt/clippy/release/doc 全干净。
+**S7 余项清零**。
 
 ## 7. 参考设计（外部）
 

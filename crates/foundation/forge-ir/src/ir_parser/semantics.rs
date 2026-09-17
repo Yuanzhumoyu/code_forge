@@ -730,11 +730,16 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 Some(GlobalInitVal::Agg(vals)) => Some(pack_agg_init(&ctx, ty, vals)?),
                 // 向量字面量：按元素类型逐 lane LE 打包（lane 数/类别必须与类型相符）
                 Some(GlobalInitVal::Vector(lanes)) => Some(vec_init_bytes(&ctx, &g.ty, lanes)?),
-                // 常量表达式：求字节（全局地址占位 0——链接期重定位，P1 文本层占位）
-                Some(GlobalInitVal::Expr(e)) => {
-                    let expr_bytes = const_expr_bytes(&ctx, e, ctx.size_bytes(ty) as u64)?;
-                    Some(expr_bytes)
-                }
+                // 常量表达式：求字节（全局地址占位 0——链接期重定位，P1 文本层占位）。
+                // `splat (T v)` 走**逐 lane 广播**（v3 S7）：此前落 `const_expr_bytes` 的
+                // 宽松 0，向量初值的值全丢。只在**全局初值**这条路径广播——动
+                // `const_expr_bytes` 会让指令级常量池变序（见 §6 的 splat 切片记录）。
+                Some(GlobalInitVal::Expr(e)) => Some(match e.as_ref() {
+                    ConstExpr::Splat(elem_text, inner) => {
+                        splat_init_bytes(&ctx, ty, elem_text, inner)?
+                    }
+                    _ => const_expr_bytes(&ctx, e, ctx.size_bytes(ty) as u64)?,
+                }),
                 Some(GlobalInitVal::Null) => None,
                 None => None,
             };
@@ -1557,6 +1562,57 @@ fn vec_init_bytes(
         // lane 字节按元素宽度截断/补零（非 8/16/32/64 位宽元素的实际字节数）
         let n = bytes.len().min(elem_size);
         out.extend_from_slice(&bytes[..n]);
+        out.resize(out.len() + (elem_size - n), 0);
+    }
+    Ok(out)
+}
+
+/// `splat (T v)` 全局初值 → 字节（v3 S7）：把标量 `v` 按向量**元素类型**逐 lane 重复，
+/// 填满整个向量（`@v = global <4 x i32> splat (i32 7)` ⇒ 4 个 lane 都是 7）。
+///
+/// 只在全局初值这条路径做广播：`const_expr_bytes` 是指令级常量池共享的求值口，
+/// 在那里"取内层值"会让常量池变序（见 §6 splat 切片记录），故保持宽松。
+/// 内层类型必须与向量元素类型一致，否则报错（fail-closed）。
+fn splat_init_bytes(
+    ctx: &TypeContext,
+    ty: TypeId,
+    elem_text: &ParsedType,
+    inner: &ConstExpr,
+) -> Result<Vec<u8>, IrError> {
+    let size = ctx.size_bytes(ty) as usize;
+    let vec_elem = ctx.element_type(ty).ok_or_else(|| {
+        IrError::Semantic(format!(
+            "splat 初值用在非向量类型 `{}` 上",
+            ctx.fmt_type(ty)
+        ))
+    })?;
+    let elem = to_type_result(elem_text, ctx)?;
+    if elem != vec_elem {
+        return Err(IrError::Semantic(format!(
+            "splat 内层类型 `{}` 与向量元素类型 `{}` 不符",
+            fmt_parsed_type(elem_text),
+            ctx.fmt_type(vec_elem)
+        )));
+    }
+    let elem_size = (ctx.size_bytes(elem) as usize).max(1);
+    if size == 0 || !size.is_multiple_of(elem_size) {
+        return Err(IrError::Semantic(format!(
+            "splat 初值大小 {size} 不是元素大小 {elem_size} 的整数倍"
+        )));
+    }
+    let lane = match inner {
+        ConstExpr::Int(n) => int_init_bytes(elem, *n, ctx),
+        ConstExpr::UInt(n) => int_init_bytes(elem, *n as i64, ctx),
+        ConstExpr::Float(f) => float_init_bytes(elem, *f, ctx),
+        // `null`/`undef`/`poison` 广播为零（与其它位置的宽松口径一致）；
+        // 含全局地址的表达式（`splat (ptr @g)`）同样是**占位零**——真实地址是链接期
+        // 重定位，P1 只做文本保真（与 `const_expr_bytes` 的占位策略同源）。
+        _ => vec![0u8; elem_size],
+    };
+    let mut out = Vec::with_capacity(size);
+    let n = lane.len().min(elem_size);
+    for _ in 0..size / elem_size {
+        out.extend_from_slice(&lane[..n]);
         out.resize(out.len() + (elem_size - n), 0);
     }
     Ok(out)

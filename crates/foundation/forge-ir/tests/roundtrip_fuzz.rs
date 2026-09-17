@@ -652,12 +652,16 @@ fn gen_global_init(ctx: &mut GenCtx, defined: &[String]) -> (String, String) {
                 .collect();
             (format!("[{n} x i8]"), format!("c\"{}\"", bytes.join("")))
         }
-        // 向量字面量 / `splat`（LLVM 18+ 广播常量；S7 文本往返回归点）
+        // 向量字面量 / `splat`（LLVM 18+ 广播常量；S7 文本往返回归点）。
+        // 元素写法覆盖 `fN` 与 LLVM 名字（`float`/`double`/`half`）两条通道——后者
+        // 曾被 `VecTy` 的"按首字母猜"静默映射成 f64/ptr。
         10 => {
             let (ty, elem) = *ctx.rng.pick(&[
                 ("<4 x i32>", "i32"),
                 ("<2 x float>", "float"),
                 ("<4 x i16>", "i16"),
+                ("<2 x double>", "double"),
+                ("<2 x half>", "half"),
             ]);
             if ctx.rng.chance(40) {
                 (ty.to_string(), format!("splat ({elem} 7)"))
@@ -665,8 +669,8 @@ fn gen_global_init(ctx: &mut GenCtx, defined: &[String]) -> (String, String) {
                 let n = if ty.starts_with("<4") { 4 } else { 2 };
                 let lanes: Vec<String> = (0..n)
                     .map(|_| {
-                        if elem == "float" {
-                            "float 1.5".to_string()
+                        if matches!(elem, "float" | "double" | "half") {
+                            format!("{elem} 1.5")
                         } else {
                             format!("{elem} 3")
                         }

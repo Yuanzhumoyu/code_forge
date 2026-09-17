@@ -496,14 +496,7 @@ pub enum Token {
         let (n, elem) = inner.split_once('x').map(|(n, e)| (n.trim(), e.trim())).unwrap_or(("0", "i32"));
         VecElem {
             len: n.parse().unwrap_or(0),
-            elem: if let Some(bits) = elem.strip_prefix('i').or_else(|| elem.strip_prefix('b')) {
-                // iN 与 b<N>（bit-precise）同 IR 表示 Int(bits)
-                ElemTy::Int(bits.parse().unwrap_or(32))
-            } else if let Some(bits) = elem.strip_prefix('f') {
-                ElemTy::Float(bits.parse().unwrap_or(64))
-            } else {
-                ElemTy::Ptr
-            },
+            elem: elem_ty_from_text(elem),
         }
     })]
     VecTy(VecElem),
@@ -702,6 +695,33 @@ pub enum ElemTy {
     Int(u32),
     Float(u16),
     Ptr,
+}
+
+/// 向量元素文本 → [`ElemTy`]（**唯一**的元素名映射表）。
+///
+/// 这里必须认识 LLVM 的全部写法：`iN`/`bN`（bit-precise）、`fN`、以及
+/// `half`/`bfloat`/`float`/`double`/`fp128`/`x86_fp80`/`ppc_fp128`/`ptr`。
+///
+/// v3 S7 修：此前 `VecTy` 的动作按**首字母**猜（`strip_prefix('i')`/`('b')`/`('f')`，
+/// 其余落 `Ptr`），于是 `float`→`f64`（`"loat"` 解析失败取兜底 64）、
+/// `half`/`double`→`ptr`、`bfloat`→`i32`、`fp128`→`f64`——**静默类型损坏**，且往返
+/// 测试只比对 m1/m2 两边所以一直没暴露（`<4 x float>` 打印成 `<4 x double>` 也只是
+/// "规范化"，幂等仍然成立）。
+pub fn elem_ty_from_text(elem: &str) -> ElemTy {
+    match elem {
+        "half" | "bfloat" => ElemTy::Float(16),
+        "float" => ElemTy::Float(32),
+        "double" => ElemTy::Float(64),
+        "fp128" | "x86_fp80" | "ppc_fp128" => ElemTy::Float(128),
+        "ptr" => ElemTy::Ptr,
+        other if other.starts_with("ptr ") => ElemTy::Ptr, // `ptr addrspace(N)`
+        other => match other.split_at(1) {
+            // `iN` 与 `bN`（bit-precise）同 IR 表示 Int(bits)
+            ("i" | "b", rest) => ElemTy::Int(rest.parse().unwrap_or(32)),
+            ("f", rest) => ElemTy::Float(rest.parse().unwrap_or(64)),
+            _ => ElemTy::Ptr,
+        },
+    }
 }
 
 /// 向量类型（长度 + 元素）。

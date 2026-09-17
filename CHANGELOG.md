@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **splat 逐 lane 广播 + 向量元素类型名不再靠猜（forge-ir v3 S7 收官切片）**：①`ConstExpr::Splat` 在共享求值口 `const_expr_bytes` 里返回宽松 0（动它会让指令级常量池变序），故 `@s = global <4 x i32> splat (i32 7)` 的 lane 全是 0——现在**只在全局初值路径**广播（新增 `splat_init_bytes`：按向量元素类型逐 lane 重复内层标量；内层类型与元素类型不符即报错，非标量内层按既有 P1 占位零策略）。
+  ②顺带挖出**向量元素类型名靠首字母猜**的静默损坏：`VecTy` 的 lexer 动作只做 `strip_prefix('i')/('b')/('f')`、其余落 `Ptr` ⇒ `float`→`f64`、`half`/`double`→`ptr`、`bfloat`→`i32`、`fp128`→`f64`（往返测试只比对 m1/m2、两边错得一样所以没暴露）。修：抽出唯一映射 `elem_ty_from_text`（`half`/`bfloat`→f16、`float`→f32、`double`→f64、`fp128`/`x86_fp80`/`ppc_fp128`→f128、`ptr`、`iN`/`bN`）。如实记录：`bfloat` 向量元素与 `half` 同为 `Float(16)`（标量 bfloat 另有 `BFloat`），`x86_fp80` 沿用既有约定映射 `f128`。
+  新增守卫 2 例（`fidelity::splat_global_broadcasts_lane_value`、`fidelity::vector_element_type_names_are_not_guessed`，九种元素写法按打印形态钉住）；fuzz 生成器扩到 `double`/`half` 元素写法。负向验证：回退元素映射 / 回退 splat 广播 ⇒ 各 FAILED。
+  实测：workspace 1502 passed / 0 failed / 19 ignored；LLVM 语料 198/254/0、往返幂等 189/189、结构化往返 198/0、10k fuzz 0 失败——与基线一致。**S7 全部切片落地。**
+
 - **解析错误恢复：一次尽量报多处（forge-ir v3 S7 切片）**：改前解析失败只报**第一处**。现在首条诊断**原样**输出（格式与既有断言不变），随后从出错偏移起把**该行剩余内容删掉**（保留换行 ⇒ 行号不变）重新解析，新错误若在更后面就再报一条并标注"（跳过第 N 行出错处后继续检查）"，上限 **3 条**；剩余部分已能解析 / 位置不再前进 / 出错处就在行尾 / 已到输入末尾即停。因为只删"出错行剩余内容"，后续诊断回显的源码行与行号都仍是用户文件里的那一行。
   **恢复只用于报告**：任一条诊断存在就仍是 `Err`——LLVM 语料"误接受 0"判据不变（`recovery_never_accepts_invalid_source` 钉住）。**边界**：只覆盖语法层，语义阶段（未知 opcode/SSA 违规）仍是报第一处（`semantic_errors_still_report_first_only` 钉住现状）。
   新增守卫 5 例（`tests/parse_error_diagnostics.rs`）：多错误、上限、恢复不放行、无进展/EOF 单条、语义边界。负向验证：停用恢复循环 ⇒ 2 例 FAILED；上限改 8 ⇒ 上限用例 FAILED。
