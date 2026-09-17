@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、幂等 **186/189**，3 条 `KNOWN_DRIFT` 逐条记原因）已落地；顺手修掉三类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、**命名元数据往返**——`MetadataNode::Placeholder` 区分空洞与显式 `!{}`，命名行前置输出）（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、幂等 **187/189**，2 条 `KNOWN_DRIFT` 逐条记原因）已落地；顺手修掉四类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返——`MetadataNode::Placeholder`、**聚合常量子元素**——浮点带小数点 + 递归零聚合）（见 §6 末）；余项：`features=["text"]` 门控、IR 侧 span 贯穿、错误恢复、结构化 fuzz；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1439,6 +1439,34 @@ riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --a
 漂移、守卫 **FAILED**；②删掉 `KNOWN_DRIFT` 的一条 ⇒ 守卫点名"新漂移" FAILED；恢复后全绿。
 
 **验证**：workspace 1481 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
+
+### S7（切片）：聚合常量往返幂等（漂移 3 → 2）（2026-09-17）
+
+接着收 `unnamed.ll` 那条漂移，逐例打差异后定位**两处**根因（都在"聚合常量子元素"上）：
+
+1. **浮点子元素打印成整数字面量**：`fmt_agg_scalar` 用 `format!("{}", f32)`——Rust 对
+   `4.0` 打 `"4"`，文本 `float 4` 回读成了 **i32** 常量 ⇒ 二次打印变 `i32 4`（类型漂移）。
+   现在用 `fmt_f32_literal`/`fmt_f64_literal`：保证带小数点或指数（`4` → `4.0`），
+   非有限值给 hex 位模式。
+2. **聚合元素的零值被压成 i8 标量**：`agg_const_from_operands` 对
+   `zeroinitializer`/`undef`/`poison`/`null` 元素一律 `insert_int(0, 8)`——元素类型是
+   结构体时（`%1 zeroinitializer`）文本成了 `i8 0`，与聚合类型不符 ⇒ 漂移。现在新增
+   `zero_agg_child`：标量 → 零标量，**结构体/数组 → 递归零聚合**（`%1 { i32 0 }`）。
+3. 顺带修 `fmt_agg_scalar` 的整数子元素：用**元素类型**的位宽打印，而不是常量池里记的
+   宽度（池条目可能来自别处，照池宽度打会与聚合类型不一致）。
+
+**结果**：`unnamed.ll` 转幂等，往返漂移 **3 → 2**（余：`constant-splat.ll` 的 splat
+展开与类型前缀、`float-literals.ll` 的 f16 hex 形态）；幂等 **187/189**；LLVM 语料正向
+**198/452**、负向正确拒绝 254、误接受 0（不变）。
+
+**守卫**：`KNOWN_DRIFT` 收窄到 2 条、计数（189 / 187）更新；新增回归用例
+`fidelity::nested_zero_aggregate_roundtrips`（断言 `%1 zeroinitializer` 打成递归零聚合、
+浮点子元素带小数点、且打印幂等）。**负向验证**：临时关掉 `zero_agg_child` 的结构体分支
+⇒ 该回归用例 **FAILED** 且守卫报 `unnamed.ll` 为新漂移；恢复后 4 例全绿。
+
+**验证**：workspace 1482 passed / 0 failed / 19 ignored（+1）；x86 矩阵 195/3/0；
 riscv64 131/67/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
 `cargo doc -D warnings` 全干净。
 

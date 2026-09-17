@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **聚合常量往返幂等：语料漂移 3 → 2（forge-ir v3 S7 切片）**：收掉 `unnamed.ll` 那条漂移，逐例打差异后定位两处根因，都在"聚合常量子元素"上：①浮点子元素被打印成整数字面量——`fmt_agg_scalar` 用 `format!("{}", f32)`，Rust 对 `4.0` 打 `"4"`，文本 `float 4` 回读成了 **i32** 常量（类型漂移）；现在用 `fmt_f32_literal`/`fmt_f64_literal` 保证带小数点或指数（`4` → `4.0`），非有限值给 hex 位模式。②聚合元素的零值被压成 i8 标量——`agg_const_from_operands` 对 `zeroinitializer`/`undef`/`poison`/`null` 元素一律 `insert_int(0, 8)`，元素类型是结构体时（`%1 zeroinitializer`）文本成了 `i8 0`，与聚合类型不符；现在新增 `zero_agg_child`：标量 → 零标量，**结构体/数组 → 递归零聚合**（`%1 { i32 0 }`）。③顺带修整数子元素：用**元素类型**位宽打印，而不是常量池里记的宽度。
+  结果：`unnamed.ll` 转幂等，往返漂移 **3 → 2**（余：`constant-splat.ll` 的 splat 展开与类型前缀、`float-literals.ll` 的 f16 hex 形态），幂等 **187/189**；LLVM 语料正向 **198/452**、负向正确拒绝 254、误接受 0 不变。新增回归用例 `fidelity::nested_zero_aggregate_roundtrips`；负向验证：临时关掉 `zero_agg_child` 的结构体分支 ⇒ 该用例 FAILED 且守卫报 `unnamed.ll` 为新漂移。
+  实测：workspace 1482 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **命名元数据往返幂等：语料往返漂移 8 → 3（forge-ir v3 S7 切片）**：上一片留下的最大一类往返漂移（5 个 DI/`!named` 用例）定位到根因并修掉。逐例打差异后发现真相与最初猜测不同——命名元数据的**名字与内容都没丢**（`lookup_named` 两次都在），漂移来自 **id 空洞**与**文本顺序**：解析器为显式 `!N` 预留槽位时会把中间空洞补成空 tuple（文本里有 `!15` 与 `!19` ⇒ 16..18 成为 `!{}`），这些空洞被打印后二次解析成了"显式定义"，命名节点 id 整体后移；同时打印顺序把命名节点按 store id 内联在数字节点之间，于是文本与 id 绑定。
   现在：①`MetadataNode` 增加 **`Placeholder`** 变体，`MetadataStore::insert_at` 的空洞填充改用它——与用户写明的空 tuple（`!0 = !{}`）区分开；②display **先输出命名 metadata**（LLVM 风格，文本与 id 无关），再按 id 输出数字节点并**跳过无人引用的 `Placeholder`**（被引用的仍照打，否则 reparse 会引用未定义的 `!N`）；③`!tbaa` 形状检查对 `Placeholder` 保持宽松（引用未定义节点时无从校验；实测不放宽会让语料正向收敛数 198 → 197）。
   结果：往返幂等 **186/189**（此前 181），漂移 **8 → 3**；LLVM 语料正向 **198/452**、负向正确拒绝 254、误接受 0——均与基线一致。`tests/corpus_roundtrip.rs` 的 `KNOWN_DRIFT` 收窄到 3 条、计数同步更新；负向验证：关掉"跳过空洞占位" ⇒ 5 个 DI 用例重新漂移、守卫 FAILED；删掉 `KNOWN_DRIFT` 一条 ⇒ 守卫点名"新漂移" FAILED。

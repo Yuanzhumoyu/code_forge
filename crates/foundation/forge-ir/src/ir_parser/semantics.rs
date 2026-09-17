@@ -3088,23 +3088,12 @@ fn agg_const_from_operands(
                 AggChild::Scalar(fb.func.constants.insert_float128(bits))
             }
             Operand::Agg(sub) => AggChild::Agg(agg_const_from_operands(fb, ety, sub, ctx)?),
-            Operand::ZeroInit => {
-                let cid = match store.get(ety) {
-                    TypeEntry::Int { bits } => fb.func.constants.insert_int(0, *bits),
-                    TypeEntry::Float { .. } => fb.func.constants.insert_float128(0),
-                    _ => fb.func.constants.insert_int(0, 8),
-                };
-                AggChild::Scalar(cid)
-            }
-            // undef/poison/null 聚合元素（`{ i32 undef, ... }`——第十四轮
-            // unnamed.ll）——零标量占位
-            Operand::Undef | Operand::Poison | Operand::Null => {
-                let cid = match store.get(ety) {
-                    TypeEntry::Int { bits } => fb.func.constants.insert_int(0, *bits),
-                    TypeEntry::Float { .. } => fb.func.constants.insert_float128(0),
-                    _ => fb.func.constants.insert_int(0, 8),
-                };
-                AggChild::Scalar(cid)
+            // `zeroinitializer` / `undef` / `poison` / `null` 作聚合元素：
+            // 标量 → 零标量；**聚合 → 递归零聚合**（此前一律落 `insert_int(0, 8)`，
+            // `%1 zeroinitializer`（元素类型是结构体）就存成 i8 标量、打印成 `i8 0`，
+            // 与聚合类型不符 ⇒ 往返漂移，实测 unnamed.ll）
+            Operand::ZeroInit | Operand::Undef | Operand::Poison | Operand::Null => {
+                zero_agg_child(fb, ety, &store)?
             }
             other => {
                 return Err(IrError::Semantic(format!(
@@ -3117,6 +3106,47 @@ fn agg_const_from_operands(
     Ok(fb.func.constants.insert_aggregate(ty, children))
 }
 
+/// 聚合元素的零值：标量 → 零常量；**结构体/数组 → 递归零聚合**。
+///
+/// 此前 `zeroinitializer`/`undef`/`null` 作聚合元素时一律存 `insert_int(0, 8)`——
+/// 当元素类型是结构体（`%1 zeroinitializer`）时，文本层级就成了 `i8 0` 标量，
+/// 与聚合类型不符，二次解析后宽度又变回 i32 ⇒ 往返不幂等（实测 unnamed.ll）。
+fn zero_agg_child(
+    fb: &mut FunctionBuilder,
+    ety: crate::TypeId,
+    store: &crate::types::TypeStore,
+) -> Result<crate::constant::AggChild, IrError> {
+    use crate::constant::AggChild;
+    use crate::types::TypeEntry;
+    match store.entry_opt(ety) {
+        Some(TypeEntry::Int { bits }) => {
+            Ok(AggChild::Scalar(fb.func.constants.insert_int(0, *bits)))
+        }
+        Some(TypeEntry::Float { .. }) | Some(TypeEntry::BFloat { .. }) => {
+            Ok(AggChild::Scalar(fb.func.constants.insert_float128(0)))
+        }
+        Some(TypeEntry::Struct { fields, .. }) => {
+            let mut children = Vec::with_capacity(fields.len());
+            for f in fields {
+                children.push(zero_agg_child(fb, f.ty, store)?);
+            }
+            Ok(AggChild::Agg(
+                fb.func.constants.insert_aggregate(ety, children),
+            ))
+        }
+        Some(TypeEntry::Array { elem, len }) => {
+            let mut children = Vec::with_capacity(*len as usize);
+            for _ in 0..*len {
+                children.push(zero_agg_child(fb, *elem, store)?);
+            }
+            Ok(AggChild::Agg(
+                fb.func.constants.insert_aggregate(ety, children),
+            ))
+        }
+        // 其他（指针/token/metadata/向量…）：零标量占位（保持既有行为）
+        _ => Ok(AggChild::Scalar(fb.func.constants.insert_int(0, 8))),
+    }
+}
 /// `#N` 属性组引用 → 组内具体属性名（LLVM：`attributes #0 = { nounwind }`）。
 fn expand_attr_groups(
     attrs: &[String],

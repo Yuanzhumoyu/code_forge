@@ -1854,6 +1854,34 @@ impl fmt::Display for DataFlowGraph {
 /// 命名 struct / 非零地址空间指针 / 函数类型无 LLVM 文本形式，回退
 /// [`TypeStore::fmt_type`]（parser 读不回，属已知限制）。
 /// global 初始值字节 → 文本（按类型：i32/i64/f32/f64；其余回退 hex）。
+/// 浮点字面量文本：**保证带小数点或指数**（Rust 的 `{}` 对 `4.0` 打 `"4"`，回读会被
+/// 当成整数字面量 ⇒ 聚合子元素类型漂移 `float` → `i32`，实测 `unnamed.ll` 漂移）；
+/// 非有限值给 hex 位模式（`nan`/`inf` 关键字无法还原 payload）。
+fn fmt_f32_literal(v: f32) -> String {
+    if !v.is_finite() {
+        return format!("0x{:08x}", v.to_bits());
+    }
+    let s = format!("{v}");
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        s
+    } else {
+        format!("{s}.0")
+    }
+}
+
+/// 见 [`fmt_f32_literal`]。
+fn fmt_f64_literal(v: f64) -> String {
+    if !v.is_finite() {
+        return format!("0x{:016x}", v.to_bits());
+    }
+    let s = format!("{v}");
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        s
+    } else {
+        format!("{s}.0")
+    }
+}
+
 /// 聚合标量元素文本（`i32 1` / `double 2`；按元素类型格式化）。
 fn fmt_agg_scalar(
     store: &TypeStore,
@@ -1862,13 +1890,20 @@ fn fmt_agg_scalar(
     cid: crate::ConstId,
 ) -> String {
     if let Some((v, bits)) = pool.get_int(cid) {
-        format!("i{bits} {v}")
+        // 用**元素类型**的位宽打印，而不是池里记的宽度：池条目可能来自别处（如
+        // `%1 zeroinitializer` 展开出的 0 记在 i8 上），照池宽度打印会让文本与聚合
+        // 类型不一致 ⇒ 往返漂移（实测 unnamed.ll：`i8 0` ↔ `i32 0`）。
+        let ebits = match store.entry_opt(ety) {
+            Some(crate::types::TypeEntry::Int { bits }) => *bits,
+            _ => bits,
+        };
+        format!("i{ebits} {v}")
     } else if let Some(bits) = pool.get_float128(cid) {
         match store.entry_opt(ety) {
             Some(crate::types::TypeEntry::Float { bits: 32 }) => {
-                format!("float {}", f32::from_bits(bits as u32))
+                format!("float {}", fmt_f32_literal(f32::from_bits(bits as u32)))
             }
-            _ => format!("double {}", f64::from_bits(bits as u64)),
+            _ => format!("double {}", fmt_f64_literal(f64::from_bits(bits as u64))),
         }
     } else {
         format!("{} undef", fmt_llvm_type(store, ety))

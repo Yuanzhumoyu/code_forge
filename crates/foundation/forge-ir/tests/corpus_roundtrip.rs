@@ -28,10 +28,6 @@ const KNOWN_DRIFT: &[(&str, &str)] = &[
         "float-literals.ll",
         "仍有小数字面量写法差异（`0xH`/`f0x` 形态回读后再打印不同）",
     ),
-    (
-        "unnamed.ll",
-        "聚合常量元素类型丢失（`%2 { float 4, double 20 }` 回读成 `%2 { i32 4, i32 20 }`）",
-    ),
 ];
 
 fn is_negative(name: &str, src: &str) -> bool {
@@ -116,7 +112,7 @@ fn positive_corpus_print_is_idempotent() {
     );
     assert_eq!(
         idempotent,
-        186,
+        187,
         "幂等用例数变了（实测 {idempotent}，已知漂移 {} 个）：修好或退化了就更新这个数与 KNOWN_DRIFT",
         KNOWN_DRIFT.len()
     );
@@ -141,6 +137,34 @@ mod fidelity {
             "i5 常量应打印为 `i5 7`（实测：{t1}）"
         );
         assert_eq!(print(&t1), t1, "i5 常量打印必须幂等");
+    }
+
+    /// 聚合常量的**聚合元素**（`%1 zeroinitializer`）必须是递归零聚合，
+    /// 而不是 i8 零标量（否则文本与聚合类型不符、往返漂移——实测 `unnamed.ll`）。
+    #[test]
+    fn nested_zero_aggregate_roundtrips() {
+        let src = "\
+%0 = type { %1, %2 }\n\
+%1 = type { i32 }\n\
+%2 = type { float, double }\n\
+define void @f(ptr %p) {\n\
+  store %0 { %1 zeroinitializer, %2 { float 4.000000e+00, double 2.000000e+01 } }, ptr %p\n\
+  ret void\n\
+}\n";
+        let t1 = print(src);
+        assert!(
+            t1.contains("%1 { i32 0 }") || t1.contains("%1 { i32 0.0 }"),
+            "`%1 zeroinitializer` 应是递归零聚合（实测：{t1}）"
+        );
+        assert!(
+            !t1.contains("i8 0"),
+            "不应把聚合零值打成 i8 标量（实测：{t1}）"
+        );
+        assert!(
+            t1.contains("float 4.0") || t1.contains("float 4.000000e+00"),
+            "浮点子元素必须带小数点（否则回读成 i32，实测：{t1}）"
+        );
+        assert_eq!(print(&t1), t1, "聚合常量打印必须幂等");
     }
 
     /// 浮点类型上的整数字面量 = **位模式**（`global double 0x7FF0000000000000` 是 +inf）。
