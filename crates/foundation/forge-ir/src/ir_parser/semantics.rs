@@ -55,11 +55,10 @@ pub fn parse_function(source: &str) -> Result<crate::function::Function, IrError
 }
 
 fn parse_to_ast(source: &str) -> Result<ParsedModule, IrError> {
-    let lexer = TokenStream::new(source);
-    let parser = super::grammar::ModuleParser::new();
-    let mut ast = parser
-        .parse(lexer)
-        .map_err(|e| IrError::Parse(super::format_parse_error(source, &e)))?;
+    let mut ast = match try_parse(source) {
+        Ok(ast) => ast,
+        Err(first) => return Err(IrError::Parse(recover_diagnostics(source, &first))),
+    };
     // span 贯穿（v3 S7）：语法层给的是字节区间，这里拿源文本换算成 行:列，
     // 语义层据此给每条指令挂 `SourceLocation`（列号 1-based）。
     for item in &mut ast.items {
@@ -79,6 +78,68 @@ fn parse_to_ast(source: &str) -> Result<ParsedModule, IrError> {
         }
     }
     Ok(ast)
+}
+
+/// 单次解析（不含 span 换算与错误恢复）。
+fn try_parse(source: &str) -> Result<ParsedModule, super::ParseErr> {
+    let parser = super::grammar::ModuleParser::new();
+    parser.parse(TokenStream::new(source))
+}
+
+/// 诊断条数上限（首条 + 最多两条恢复所得）。
+const PARSE_DIAGNOSTIC_LIMIT: usize = 3;
+
+/// 解析失败 → 诊断文本，**尽量一次报多处**（v3 S7 错误恢复）。
+///
+/// 恢复策略（保守、可解释、绝不改变"接受/拒绝"结论）：
+///
+/// 1. 首条诊断**原样**输出（与无恢复时逐字节相同）；
+/// 2. 从出错位置起，把**该行剩余内容删掉**（保留换行 ⇒ **行号不变**），重新解析；
+/// 3. 新错误若在**更后面**，再报一条（带"跳过第 N 行出错处后继续检查"的前缀），
+///    最多报到 [`PARSE_DIAGNOSTIC_LIMIT`] 条；若剩余部分已能解析，或位置不再前进
+///    （原地打转/已到输入末尾），就停。
+///
+/// 为什么只删"剩余行"：报错处**后面**的行此时从未被改动，因此后续诊断显示的源码行
+/// 就是用户文件里的那一行（行号也一致）；而被删的行不会再被显示。
+///
+/// 恢复**只用于报告**：任何一条诊断存在 ⇒ 结果仍是 `Err`，绝不让非法 IR 变合法
+/// （LLVM 语料的"误接受 0"判据由此保持不变）。
+fn recover_diagnostics(source: &str, first: &super::ParseErr) -> String {
+    let mut out = super::format_parse_error(source, first);
+    let mut work = source.to_string();
+    let mut at = super::error_offset(first);
+    let mut last_edit = 0usize;
+    for _ in 1..PARSE_DIAGNOSTIC_LIMIT {
+        // 位置必须**前进**（否则原地打转）；已到输入末尾则无恢复余地（如未闭合结构）。
+        if at <= last_edit || at >= work.len() {
+            break;
+        }
+        let line = super::locate(&work, at).0;
+        let cut = work[at..].find('\n').map(|i| at + i).unwrap_or(work.len());
+        // 出错处就在行尾（`at` 指向换行）⇒ 这一行没有可删的内容，恢复无处下手
+        if cut == at {
+            break;
+        }
+        work.replace_range(at..cut, "");
+        last_edit = at;
+        match try_parse(&work) {
+            // 剩下的都能解析 ⇒ 没有别的错误可报
+            Ok(_) => break,
+            Err(next) => {
+                let next_at = super::error_offset(&next);
+                // 新错误没往前走（同一处再来一次）⇒ 不重复报，直接停
+                if next_at <= at {
+                    break;
+                }
+                at = next_at;
+                out.push_str(&format!(
+                    "\n（跳过第 {line} 行出错处后继续检查）\n{}",
+                    super::format_parse_error(&work, &next)
+                ));
+            }
+        }
+    }
+    out
 }
 
 // ── 模块构建 ──

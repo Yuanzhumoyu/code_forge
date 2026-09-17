@@ -113,3 +113,92 @@ fn lexer_error_reports_position() {
     );
     assert!(msg.contains('^'), "应有插入符（实测：{msg}）");
 }
+
+// ── 错误恢复（v3 S7）：一次尽量报多处 ──
+
+/// 计数诊断条数（每个诊断都以 `解析错误 ` 开头）。
+fn count_diagnostics(msg: &str) -> usize {
+    msg.matches("解析错误 ").count()
+}
+
+/// 两处坏行 ⇒ 两条诊断，且都指向各自的行；首条与无恢复时**逐字节相同**。
+#[test]
+fn multiple_parse_errors_are_reported() {
+    let src = "define i32 @f() {\nentry:\n  %a = zzz 1\n  %b = zzz 2\n  ret i32 0\n}\n";
+    let msg = parse_err(src);
+    assert_eq!(msg, parse_err(src), "诊断必须确定性（同输入同输出）");
+    assert!(
+        msg.contains("解析错误 3:12") && msg.contains("解析错误 4:12"),
+        "应同时报第 3、4 行（实测：{msg}）"
+    );
+    assert!(
+        msg.contains("（跳过第 3 行出错处后继续检查）"),
+        "后续诊断应标明它的来源（实测：{msg}）"
+    );
+    assert_eq!(count_diagnostics(&msg), 2, "本例应恰好 2 条诊断：{msg}");
+    // 首条诊断仍是原有格式（行号 + 源码行 + 插入符）
+    assert!(
+        msg.starts_with("解析错误 3:12：非预期 `1`\n3 |   %a = zzz 1\n"),
+        "首条诊断格式不得改变（实测：{msg}）"
+    );
+    assert!(msg.contains("4 |   %b = zzz 2"), "第二条应回显它自己的行");
+}
+
+/// 诊断条数有上限（首条 + 最多两条恢复所得）。
+#[test]
+fn recovery_is_capped() {
+    let src = "define i32 @f() {\nentry:\n  %a = zzz 1\n  %b = zzz 2\n  %c = zzz 3\n  %d = zzz 4\n  %e = zzz 5\n  ret i32 0\n}\n";
+    let msg = parse_err(src);
+    assert_eq!(
+        count_diagnostics(&msg),
+        3,
+        "应恰好报 3 条（首条 + 2 条恢复所得）：{msg}"
+    );
+    assert!(
+        !msg.contains("解析错误 6:12"),
+        "超出上限的后续错误不再报（实测：{msg}）"
+    );
+}
+
+/// 恢复**只用于报告**：删掉出错行的剩余内容能解析，也绝不放行。
+#[test]
+fn recovery_never_accepts_invalid_source() {
+    // 出错处之后剩余部分本可解析（`%a = zzz` 是合法文法形态），
+    // 但源码里有错误 ⇒ 必须仍然 Err。
+    let src = "define i32 @f() {\nentry:\n  %a = zzz 1\n  ret i32 0\n}\n";
+    assert!(
+        forge_ir::ir_parser::parse_module(src).is_err(),
+        "恢复不得让非法源码变成 Ok"
+    );
+}
+
+/// 没有恢复余地时（出错处就在行尾/输入末尾、或位置不前进）只报一条。
+#[test]
+fn recovery_stops_when_no_progress() {
+    // 纯垃圾行：删掉后为空模块；不得重复报同一条
+    let msg = parse_err("garbage !!!\n");
+    assert_eq!(count_diagnostics(&msg), 1, "不得重复报同一处：{msg}");
+    // 未闭合结构（EOF 错误）：出错位置在行尾，没有可删内容 ⇒ 单条
+    let msg2 = parse_err("define void @f() {\nentry:\n  %x = add i32 1, 2\n");
+    assert_eq!(count_diagnostics(&msg2), 1, "EOF 错误不恢复：{msg2}");
+    assert!(msg2.contains("输入在结构未结束时结束"));
+}
+
+/// **边界（如实记录）**：恢复只覆盖**语法层**。语义阶段（未知 opcode、SSA 违规等）
+/// 仍是"报第一处就停"——要让语义层也一次报多处，需要 IR 构建带着错误继续往下走
+/// （占位值/坏实体），是另一类改动，不在本切片。
+#[test]
+fn semantic_errors_still_report_first_only() {
+    let src = "define i32 @f() {\nentry:\n  zzz\n  yyy\n  ret i32 0\n}\n";
+    let err = match forge_ir::ir_parser::parse_module(src) {
+        Err(forge_ir::IrError::Semantic(m)) => m,
+        Err(other) => panic!("期望语义错误，实际 {other}"),
+        Ok(_) => panic!("期望语义错误，实际解析成功"),
+    };
+    assert!(err.contains("Unknown opcode"), "实测：{err}");
+    assert_eq!(
+        err.matches("Unknown opcode").count(),
+        1,
+        "语义阶段仍只报第一处（实测：{err}）"
+    );
+}

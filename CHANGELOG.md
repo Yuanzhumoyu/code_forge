@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **解析错误恢复：一次尽量报多处（forge-ir v3 S7 切片）**：改前解析失败只报**第一处**。现在首条诊断**原样**输出（格式与既有断言不变），随后从出错偏移起把**该行剩余内容删掉**（保留换行 ⇒ 行号不变）重新解析，新错误若在更后面就再报一条并标注"（跳过第 N 行出错处后继续检查）"，上限 **3 条**；剩余部分已能解析 / 位置不再前进 / 出错处就在行尾 / 已到输入末尾即停。因为只删"出错行剩余内容"，后续诊断回显的源码行与行号都仍是用户文件里的那一行。
+  **恢复只用于报告**：任一条诊断存在就仍是 `Err`——LLVM 语料"误接受 0"判据不变（`recovery_never_accepts_invalid_source` 钉住）。**边界**：只覆盖语法层，语义阶段（未知 opcode/SSA 违规）仍是报第一处（`semantic_errors_still_report_first_only` 钉住现状）。
+  新增守卫 5 例（`tests/parse_error_diagnostics.rs`）：多错误、上限、恢复不放行、无进展/EOF 单条、语义边界。负向验证：停用恢复循环 ⇒ 2 例 FAILED；上限改 8 ⇒ 上限用例 FAILED。
+  实测：workspace 1500 passed / 0 failed / 19 ignored；LLVM 语料 198/254/0、往返幂等 189/189、结构化往返 198/0。
+
 - **结构化 fuzz 扩面（forge-ir v3 S7 切片）**：`roundtrip_fuzz` 的全局生成器从 `global i32/i64 0|1|42` 扩到**保真矩阵**（i1/i5/i7/i24/i33/i128 十进制与十六进制、float/double/half/bfloat 的十进制与 `0x…` 位模式、`f0x…`、`zeroinitializer`、数组/结构体/`c"…"` 字符串聚合、向量字面量与 `splat`、常量表达式 init），断言侧新增**全局初始化字节对比**与**文本幂等**（`text1 == text2`）。10k 随机模块 0 失败。
   扩面立刻挖出三处"值悄悄丢"（往返只比对 m1/m2 两边时看不见）并修掉：①**向量字面量全局初值根本无法解析**（lexer 把 `<4 x i32> <i32 3, …>` 整段当一个 token，`TypeAndInit` 只拆 `zeroinitializer`）——新增 `GlobalInitVal::Vector` + `VecConstLit` 分支 + `vec_init_bytes`（逐 lane 按元素类型打包，lane 数/类别不符一律报错）；②**`parse_vec_lanes` 把每个 lane 都读成 0**（把整段 `i32 3` 喂给 `parse::<i64>()`，前缀必然失败）——改为先拆元素类型前缀、类别由前缀决定，lane 文本前缀也取自元素类型（`<4 x i16>` 不再打 `i32`）；③**`c"…"` 转义的收尾引号被吃掉**（`trim_end_matches('"')` 复数剥引号）：`c"T\22"` = `[84,34]` 打印成 `c"T\""` 后回读只剩 `[84]`——改为各剥一层 `strip_prefix`/`strip_suffix`。
   回归钉子：`fidelity::vector_literal_global_keeps_lane_values`、`fidelity::malformed_vector_initializer_is_rejected`、`fidelity::escaped_trailing_quote_in_c_string_survives`。负向验证：回退 lane 前缀剥离 / 回退 `decode_c_string` ⇒ 2 例 FAILED，注掉 grammar 分支（强制重建生成物）⇒ 向量保真用例 FAILED。

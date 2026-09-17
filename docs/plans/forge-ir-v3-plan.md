@@ -101,7 +101,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
-| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；余项：splat 逐 lane 广播值、错误恢复；LLVM 语料（198/452）仍是硬门禁 |
+| S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；余项：splat 逐 lane 广播值；LLVM 语料（198/452）仍是硬门禁 |
 | S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
 
 ### 每期固定门禁
@@ -1642,6 +1642,39 @@ LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0；语料往返�
 LLVM 语料正向 **198/452**、负向正确拒绝 254、误接受 0——与基线一致；
 语料往返幂等 **189/189**、`display_llvm` 结构化往返 198/0；workspace
 **1495 passed / 0 failed / 19 ignored**（+3）；fmt/clippy/release/doc 全干净。
+
+### S7（切片）：错误恢复——一次尽量报多处（2026-09-17）
+
+改前：解析失败只报**第一处**（LALRPOP 不恢复，`?` 直接返回）。
+
+**策略**（保守、可解释、**绝不改变接受/拒绝结论**）：
+
+1. 首条诊断**原样**输出（与无恢复时逐字节相同——既有格式与语料断言不受影响）；
+2. 从出错偏移起，把**该行剩余内容删掉**（保留换行 ⇒ **行号不变**）后重新解析；
+3. 新错误若在**更后面**才继续报一条，并加"（跳过第 N 行出错处后继续检查）"前缀；
+   诊断条数上限 **3**（首条 + 2 条恢复所得）；
+4. 停止条件：剩余部分已能解析 / 位置不再前进（原地打转）/ 出错处就在行尾
+   （`at` 指向换行，没有可删内容）/ 已到输入末尾（未闭合结构）。
+
+**为什么这样可解释**：只删"出错行剩余内容"，后续诊断指向的行此时**从未被改动**，
+所以回显的源码行就是用户文件里的那一行，行号也一致；被删的行不会再被显示。
+**恢复只用于报告**：任何一条诊断存在 ⇒ 结果仍是 `Err`——LLVM 语料"误接受 0"
+的判据因此保持不变（`recovery_never_accepts_invalid_source` 钉住）。
+
+**边界（如实记录）**：恢复只覆盖**语法层**。语义阶段（未知 opcode、SSA 违规等）仍是
+"报第一处就停"——要让语义层也一次报多处，得让 IR 构建带着错误继续走（占位值/坏实体），
+属另一类改动；`semantic_errors_still_report_first_only` 把现状钉住。
+
+**守卫**（`tests/parse_error_diagnostics.rs` +5 例）：两处坏行报两条且各指其行、首条格式
+未变；上限恰好 3 条；恢复不放行；无进展/EOF 只报一条；语义边界。
+
+**负向验证**：停用恢复循环（`for _ in 1..1`）⇒ `multiple_parse_errors_are_reported` 与
+`recovery_is_capped` FAILED；把上限改成 8 ⇒ `recovery_is_capped` FAILED；恢复后全绿。
+
+**结果**：workspace **1500 passed / 0 failed / 19 ignored**（+5）；LLVM 语料正向
+198/452、负向正确拒绝 254、误接受 0；语料往返幂等 189/189；`display_llvm` 结构化
+往返 198/0；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
 
 ## 7. 参考设计（外部）
 

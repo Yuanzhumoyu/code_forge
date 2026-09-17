@@ -39,6 +39,27 @@ pub mod ast_items;
 use crate::error::IrError;
 use lalrpop_util::lalrpop_mod;
 
+/// lalrpop 的解析错误类型（词法错误经 `User` 通道传回）。
+pub(crate) type ParseErr = lalrpop_util::ParseError<usize, lexer::Token, lexer::LexError>;
+
+/// 错误位置的字节偏移（诊断与**错误恢复**都用它定位）。
+pub(crate) fn error_offset(err: &ParseErr) -> usize {
+    use lalrpop_util::ParseError;
+    match err {
+        ParseError::InvalidToken { location } => *location,
+        ParseError::UnrecognizedEof { location, .. } => *location,
+        ParseError::UnrecognizedToken {
+            token: (start, ..), ..
+        } => *start,
+        ParseError::ExtraToken { token: (start, ..) } => *start,
+        // 词法错误自带偏移；文法动作拒绝（`Rejected`）没有位置可用
+        ParseError::User { error } => match error {
+            lexer::LexError::BadChar { offset } => *offset,
+            lexer::LexError::Rejected => 0,
+        },
+    }
+}
+
 // ============================================================
 // 公开 API（签名与旧解析器保持一致）
 // ============================================================
@@ -67,41 +88,28 @@ pub fn parse_function(source: &str) -> Result<crate::function::Function, IrError
 ///     |        ^
 /// 期望其中之一：`ret`、`br`、`switch`、…（共 88 个）
 /// ```
-pub(crate) fn format_parse_error(
-    source: &str,
-    err: &lalrpop_util::ParseError<
-        usize,
-        crate::ir_parser::lexer::Token,
-        crate::ir_parser::lexer::LexError,
-    >,
-) -> String {
+pub(crate) fn format_parse_error(source: &str, err: &ParseErr) -> String {
     use lalrpop_util::ParseError;
 
-    // (字节偏移, 出错记号文本, 期望记号名)
-    let (offset, token, expected): (usize, Option<String>, Vec<String>) = match err {
-        ParseError::InvalidToken { location } => (*location, None, Vec::new()),
-        ParseError::UnrecognizedEof { location, expected } => (*location, None, expected.to_vec()),
+    // (出错记号文本, 期望记号名)；位置由 [`error_offset`] 单点给出
+    let (token, expected): (Option<String>, Vec<String>) = match err {
+        ParseError::UnrecognizedEof { expected, .. } => (None, expected.to_vec()),
         ParseError::UnrecognizedToken {
             token: (start, tok, end),
             expected,
         } => (
-            *start,
             Some(snippet(source, *start, *end).unwrap_or_else(|| format!("{tok:?}"))),
             expected.to_vec(),
         ),
         ParseError::ExtraToken {
             token: (start, tok, end),
         } => (
-            *start,
             Some(snippet(source, *start, *end).unwrap_or_else(|| format!("{tok:?}"))),
             Vec::new(),
         ),
-        // 词法错误/文法动作拒绝：`LexError` 区分二者（前者自带偏移）
-        ParseError::User { error } => match error {
-            crate::ir_parser::lexer::LexError::BadChar { offset } => (*offset, None, Vec::new()),
-            crate::ir_parser::lexer::LexError::Rejected => (0, None, Vec::new()),
-        },
+        _ => (None, Vec::new()),
     };
+    let offset = error_offset(err);
 
     let (line_no, col_no, line_text) = locate(source, offset);
     let mut msg = format!("解析错误 {line_no}:{col_no}");
