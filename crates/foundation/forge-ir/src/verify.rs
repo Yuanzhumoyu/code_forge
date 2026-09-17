@@ -9,6 +9,7 @@ use super::types::{TypeContext, TypeEntry};
 use crate::Immediate;
 use crate::entity_map::SecondaryMap;
 use crate::error::IrError;
+use crate::types::TypeStore;
 use std::collections::HashSet;
 
 // ============================================================
@@ -567,8 +568,17 @@ impl Verifier {
             return Err(self.errors.clone());
         }
 
+        // **一次读锁**（v3 S3 读路径纪律）：类型查询全部用这个 `&TypeStore`，
+        // 不随 IR 规模增长地重复取锁。校验器全程只读（本文件没有 `borrow_mut`）
+        // ⇒ 读锁存活期间不可能去 intern，也就不可能 `RwLock` 自锁死。
+        // `ctx` 先 clone（Arc，O(1)）再取锁：守卫借用的是这个**局部**，不是 `self`，
+        // 因此下面仍可调 `&mut self` 的检查函数。
+        let ctx = self.ctx.clone();
+        let store_guard = ctx.as_ref().map(|c| c.borrow());
+        let types: Option<&TypeStore> = store_guard.as_deref();
+
         self.check_operand_counts(&func.dfg);
-        self.check_types(&func.dfg);
+        self.check_types(&func.dfg, types);
         self.check_uses(&func.dfg);
         self.check_use_lists(func);
         self.check_terminators(&func.dfg);
@@ -581,8 +591,8 @@ impl Verifier {
         // 类型引用自检（v3 S3）：越界 `TypeId`/`SigRef` ⇒ 报错并**跳过**后面的
         // 类型相关检查（继续跑会在类型存储的 fail-closed 索引处 panic——那是"坏 IR
         // 变成崩溃"而不是诊断）。结构类检查（上面那批）不看类型存储，先跑完一起报。
-        if self.check_type_refs(func) {
-            self.check_immediates(func);
+        if self.check_type_refs(func, types) {
+            self.check_immediates(func, types);
             self.check_block_params(func);
             self.check_path_termination(func);
         }
@@ -608,11 +618,10 @@ impl Verifier {
     /// 这里把"类型引用是否可解析"变成诊断（`BadTypeId`/`BadSigRef`），返回 `true`
     /// 才继续跑类型相关检查。无类型上下文（`ctx == None`）时无从判断，交给末尾的
     /// `MissingTypeContext` fail-closed 上报。
-    fn check_type_refs(&mut self, func: &Function) -> bool {
-        let Some(ctx) = self.ctx.clone() else {
+    fn check_type_refs(&mut self, func: &Function, types: Option<&TypeStore>) -> bool {
+        let Some(store) = types else {
             return true;
         };
-        let store = ctx.borrow();
 
         let check_ty = |errs: &mut Vec<VerifyError>, what: &str, ty: TypeId| {
             if !store.contains_type(ty) {
@@ -721,7 +730,7 @@ impl Verifier {
         }
     }
 
-    fn check_types(&mut self, dfg: &DataFlowGraph) {
+    fn check_types(&mut self, dfg: &DataFlowGraph, types: Option<&TypeStore>) {
         // Collect all defined values
         let mut defined: SecondaryMap<Value, TypeId> = SecondaryMap::new();
         for (v, vd) in dfg.values() {
@@ -756,7 +765,7 @@ impl Verifier {
             }
 
             // Operand type consistency for binary ops
-            self.check_operand_types(inst, instruction, &defined);
+            self.check_operand_types(inst, instruction, &defined, types);
 
             // Overflow arithmetic: results[1] must be bool (i1)
             if matches!(
@@ -803,6 +812,7 @@ impl Verifier {
         inst: Inst,
         instruction: &super::dfg::Instruction,
         defined: &SecondaryMap<Value, TypeId>,
+        types: Option<&TypeStore>,
     ) {
         let op = &instruction.opcode;
         // 逐指令类型规则**族**声明在 `ops.toml`（`type_rule`），这里按族分派——
@@ -837,10 +847,7 @@ impl Verifier {
                     .copied();
                 let violations =
                     crate::type_rules::check_shape(*op, &operand_tys, result_ty, &|t| {
-                        self.ctx
-                            .as_ref()
-                            .map(|c| c.borrow().is_aggregate(t))
-                            .unwrap_or(false)
+                        types.map(|store| store.is_aggregate(t)).unwrap_or(false)
                     });
                 for v in violations {
                     use crate::type_rules::ShapeViolation as SV;
@@ -885,17 +892,17 @@ impl Verifier {
                     }
                 }
             }
-            TypeRule::Convert => self.check_conversion(inst, instruction, defined),
+            TypeRule::Convert => self.check_conversion(inst, instruction, defined, types),
             TypeRule::Load => {
                 if let Some(&addr_ty) = instruction.operands.first().and_then(|v| defined.get(*v))
-                    && !self.is_pointer_ty(addr_ty)
+                    && !Self::is_pointer_ty(types, addr_ty)
                 {
                     self.errors.push(VerifyError::LoadAddrNotPointer { inst });
                 }
                 // load 结果类型必须有大小（opaque/metadata 等占位类型——LLVM 拒绝）
                 if let Some(rt) = instruction.results.first().and_then(|v| defined.get(*v))
-                    && let Some(ctx) = &self.ctx
-                    && ctx.borrow().size_bytes(*rt) == 0
+                    && let Some(store) = types
+                    && store.size_bytes(*rt) == 0
                 {
                     mismatch(
                         self,
@@ -909,7 +916,7 @@ impl Verifier {
                 if instruction.operands.len() >= 2
                     && let Some(&addr_ty) =
                         instruction.operands.get(1).and_then(|v| defined.get(*v))
-                    && !self.is_pointer_ty(addr_ty)
+                    && !Self::is_pointer_ty(types, addr_ty)
                 {
                     self.errors.push(VerifyError::StoreAddrNotPointer { inst });
                 }
@@ -923,7 +930,7 @@ impl Verifier {
                     });
                 } else if op.type_rule() == TypeRule::CallIndirect
                     && let Some(&callee_ty) = defined.get(instruction.operands[0])
-                    && !self.is_pointer_ty(callee_ty)
+                    && !Self::is_pointer_ty(types, callee_ty)
                 {
                     self.errors.push(VerifyError::CallInvalidTarget {
                         inst,
@@ -941,6 +948,7 @@ impl Verifier {
         inst: Inst,
         instruction: &super::dfg::Instruction,
         defined: &SecondaryMap<Value, TypeId>,
+        types: Option<&TypeStore>,
     ) {
         let Some(rule) = instruction.opcode.info().convert else {
             // 生成期保证 `type_rule == Convert` ⇔ 有 convert 表；这里防御性返回，
@@ -955,66 +963,58 @@ impl Verifier {
             return;
         };
         // 类别：`Any` 不限制；`Vector` 只在能确认是向量时才判否（保持既有行为）
-        let class_of = |this: &Self, ty: TypeId| -> Option<TypeClass> {
+        let class_of = |ty: TypeId| -> Option<TypeClass> {
             if ty.is_int() {
                 Some(TypeClass::Int)
             } else if ty.is_float() {
                 Some(TypeClass::Float)
-            } else if this.is_pointer_ty(ty) {
+            } else if Self::is_pointer_ty(types, ty) {
                 Some(TypeClass::Ptr)
-            } else if this
-                .ctx
-                .as_ref()
-                .map(|c| c.borrow().is_vector(ty))
-                .unwrap_or(false)
-            {
+            } else if types.map(|store| store.is_vector(ty)).unwrap_or(false) {
                 Some(TypeClass::Vector)
             } else {
                 None
             }
         };
-        let class_matches =
-            |this: &Self, want: TypeClass, ty: TypeId, rule: &ConvertRule| -> bool {
-                if want == TypeClass::Any {
-                    return true;
-                }
-                // Vbitcast（EqualTotalBits）在既有实现里只在两侧都是向量时比较总位宽，
-                // 非向量不报错——因此这里对"未知类别"也放行，由位宽规则决定是否检查。
-                let known = class_of(this, ty);
-                if known.is_none() && rule.width == WidthRule::EqualTotalBits {
-                    return true;
-                }
-                known == Some(want)
-            };
-        let src_ok = class_matches(self, rule.src, src_ty, &rule);
-        let dst_ok = class_matches(self, rule.dst, dst_ty, &rule);
+        let class_matches = |want: TypeClass, ty: TypeId, rule: &ConvertRule| -> bool {
+            if want == TypeClass::Any {
+                return true;
+            }
+            // Vbitcast（EqualTotalBits）在既有实现里只在两侧都是向量时比较总位宽，
+            // 非向量不报错——因此这里对"未知类别"也放行，由位宽规则决定是否检查。
+            let known = class_of(ty);
+            if known.is_none() && rule.width == WidthRule::EqualTotalBits {
+                return true;
+            }
+            known == Some(want)
+        };
+        let src_ok = class_matches(rule.src, src_ty, &rule);
+        let dst_ok = class_matches(rule.dst, dst_ty, &rule);
         // 标量位宽：有 ctx 就问 store（**指针宽度按 DataLayout**、动态整数位宽
         // 也能答）；没有 ctx 时退到内建标量表。两者都给不出（非标量）→ 0——
         // 那种情形上面的类检查已经报了错，位宽比较的结果不影响诊断。
-        let scalar_bits = |this: &Self, ty: TypeId| -> u32 {
-            match &this.ctx {
-                Some(ctx) => ctx.borrow().scalar_bits(ty).unwrap_or(0),
+        let scalar_bits = |ty: TypeId| -> u32 {
+            match types {
+                Some(store) => store.scalar_bits(ty).unwrap_or(0),
                 None => ty.builtin_scalar_bits().unwrap_or(0),
             }
         };
         let width_ok = match rule.width {
             WidthRule::Any => true,
-            WidthRule::Widen => scalar_bits(self, src_ty) < scalar_bits(self, dst_ty),
-            WidthRule::Narrow => scalar_bits(self, src_ty) > scalar_bits(self, dst_ty),
+            WidthRule::Widen => scalar_bits(src_ty) < scalar_bits(dst_ty),
+            WidthRule::Narrow => scalar_bits(src_ty) > scalar_bits(dst_ty),
             WidthRule::EqualBytes => {
-                if let Some(ctx) = &self.ctx {
-                    let store = ctx.borrow();
+                if let Some(store) = types {
                     store.size_bytes(src_ty) == store.size_bytes(dst_ty)
                 } else {
-                    scalar_bits(self, src_ty) == scalar_bits(self, dst_ty)
+                    scalar_bits(src_ty) == scalar_bits(dst_ty)
                 }
             }
             WidthRule::EqualTotalBits => {
                 // 向量总位宽相同（经 TypeStore 查 len × elem bits）；非向量不比较
-                let Some(ctx) = &self.ctx else {
+                let Some(store) = types else {
                     return;
                 };
-                let store = ctx.borrow();
                 let vector_bits = |ty: TypeId| match store.get(ty) {
                     TypeEntry::Vector { elem, len } => match store.get(*elem) {
                         TypeEntry::Int { bits } => Some(bits * len),
@@ -1039,10 +1039,11 @@ impl Verifier {
         }
     }
 
-    /// 类型是否指针（经 TypeStore 查 TypeEntry::Pointer；无 ctx 时按预设 PTR 判断）。
-    fn is_pointer_ty(&self, ty: TypeId) -> bool {
-        match &self.ctx {
-            Some(ctx) => matches!(ctx.borrow().get(ty), TypeEntry::Pointer { .. }),
+    /// 类型是否指针（经传入的存储查 `TypeEntry::Pointer`；无类型上下文时按预设
+    /// `TypeId::PTR` 判断）。用传入的 `&TypeStore` 而不是自己取锁——v3 S3 读路径纪律。
+    fn is_pointer_ty(types: Option<&TypeStore>, ty: TypeId) -> bool {
+        match types {
+            Some(store) => matches!(store.entry_opt(ty), Some(TypeEntry::Pointer { .. })),
             None => ty == TypeId::PTR,
         }
     }
@@ -1052,11 +1053,20 @@ impl Verifier {
     /// GEP struct 索引校验：索引遍历 indexed_ty（immediates[0]），struct 位置
     /// 的索引必须是 i32（LLVM LangRef）；常量索引推进类型，非常量索引后无法
     /// 继续推导（跳过后续 struct 检查——保守不误报）。
-    fn check_gep_indices(&mut self, func: &Function, inst: crate::Inst, instruction: &Instruction) {
+    fn check_gep_indices(
+        &mut self,
+        func: &Function,
+        inst: crate::Inst,
+        instruction: &Instruction,
+        types: Option<&TypeStore>,
+    ) {
         let Some(Immediate::Type(indexed)) = instruction.immediates.first() else {
             return;
         };
-        let ts = func.types.borrow();
+        // 用调用方传下来的存储（v3 S3 读路径纪律），不再自己取锁
+        let Some(ts) = types else {
+            return;
+        };
         let total_idx = instruction.operands.len().saturating_sub(1);
         let mut cur = *indexed;
         for (k, v) in instruction.operands.iter().skip(1).enumerate() {
@@ -1132,7 +1142,7 @@ impl Verifier {
         }
     }
 
-    fn check_immediates(&mut self, func: &Function) {
+    fn check_immediates(&mut self, func: &Function, types: Option<&TypeStore>) {
         let dfg = &func.dfg;
         for (inst, instruction) in dfg.insts() {
             // 比较条件 immediate（v3 S1：条件从变体载荷归一到 immediate 通道）
@@ -1179,7 +1189,7 @@ impl Verifier {
             // GEP struct 索引必须是 i32（LLVM LangRef：getelementptr 的结构体
             // 索引只能是 i32 常量——i64 等其他整数类型被 llvm-as 拒绝）
             if instruction.opcode == Opcode::GetElementPtr {
-                self.check_gep_indices(func, inst, instruction);
+                self.check_gep_indices(func, inst, instruction, types);
             }
             // atomicrmw 操作数类型约束（LLVM：add/sub/xchg 等须整数，
             // fadd/fsub 须浮点）
@@ -1193,7 +1203,7 @@ impl Verifier {
                 );
                 if let Some(&val_ty) = instruction.operands.get(1)
                     && let Some(ty) = dfg.value_type(val_ty)
-                    && let Some(val_is_float) = self.ctx.as_ref().map(|c| c.borrow().is_float(ty))
+                    && let Some(val_is_float) = types.map(|store| store.is_float(ty))
                 {
                     let mismatch = if float_ops {
                         !val_is_float
@@ -1321,9 +1331,9 @@ impl Verifier {
                 && let Some(Immediate::Const(cid)) = instruction.immediates.first()
                 && let Some(&r) = instruction.results.first()
                 && let Some(ty) = dfg.value_type(r)
-                && let Some(ctx) = &self.ctx
+                && let Some(store) = types
             {
-                let expected = ctx.borrow().size_bytes(ty) as usize;
+                let expected = store.size_bytes(ty) as usize;
                 if let Some(data) = func.constants.get_vector(*cid)
                     && data.len() != expected
                 {
@@ -1351,8 +1361,7 @@ impl Verifier {
                         _ => None,
                     })
             {
-                let field_count = if let Some(ctx) = &self.ctx {
-                    let store = ctx.borrow();
+                let field_count = if let Some(store) = types {
                     match store.get(agg_ty) {
                         TypeEntry::Struct { fields, .. } => Some(fields.len() as u64),
                         TypeEntry::Array { len, .. } => Some(*len),
@@ -1386,9 +1395,8 @@ impl Verifier {
                         _ => None,
                     })
                 && let Some(Immediate::Uint(idx)) = instruction.immediates.first()
-                && let Some(ctx) = &self.ctx
+                && let Some(store) = types
             {
-                let store = ctx.borrow();
                 let field_ty = match store.get(agg_ty) {
                     TypeEntry::Struct { fields, .. } => fields.get(*idx as usize).map(|f| f.ty),
                     TypeEntry::Array { elem, .. } => Some(*elem),

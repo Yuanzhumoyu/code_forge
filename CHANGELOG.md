@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **读路径纪律落到校验器（forge-ir v3 S3 切片）**：`verify.rs` 此前有 13 处 `borrow()`——`check_conversion`/`check_immediates`/`check_gep_indices`/`check_operand_types` 等在**每条指令上各取一次读锁**（`check_conversion` 里 `scalar_bits`/`vector_bits` 两个闭包还各自取锁），取锁次数与指令数成正比。
+  现在 `verify()` 取**一次**读锁（`ctx` 先 `clone`（Arc，O(1)）再 `borrow()`，守卫借用局部而非 `self`，因此仍可调 `&mut self` 检查函数），`&TypeStore` 贯穿 `check_types` → `check_operand_types` → `check_conversion`、`check_type_refs`、`check_immediates` → `check_gep_indices`；`is_pointer_ty`/`scalar_bits`/`class_of`/`class_matches` 改为接收 `Option<&TypeStore>`。实测 `verify.rs` 的 `borrow()` **13 → 1**。
+  新增守卫 `verifier_read_locks_do_not_scale_with_ir_size`：1 条指令与 80 条指令的函数取锁次数必须相等（实测均 3 = 入口 1 + `Function` 内部查询 2）；负向验证（逐指令循环里插一行 `clone`+`borrow()`）实测 5 vs 84 ⇒ FAILED，删除后全绿。顺带实测到：这类退化**多数情况下连编译都过不了**——守卫借着 `self.ctx` 时不能再对 `self` 取 `&mut`（E0502），借用检查器已经封死"守卫跨 `&mut self` 调用"。
+  实测：workspace 1471 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
+
 - **类型读路径纪律：`&TypeStore` 显式传参（forge-ir v3 S3 切片，display 落地）**：`TypeContext::borrow()` 每次都是一次 `RwLock` 读锁获取，而 `RwLock` **不可重入**（读锁存活期间再 `borrow_mut()` intern 新类型 = 自锁死）；`display.rs` 此前有 **51 处** `borrow()`（`value_as_literal` 每值一次、`NameResolver::new` 每块/值各一次），打印一个模块的取锁次数与函数体大小成正比。
   现在 display 全量改为"**入口取一次锁、把 `&TypeStore` 显式传下去**"：`FunctionDisplay`/`BlockDisplay`/`InstDisplay`/`TerminatorDisplay`/`NameResolver`/`value_as_literal`/`fmt_phi_value` 的参数与字段改为 `&TypeStore`，`Display for Module` 与 `function_to_string` 各取一次（布局也读已取到的 store，避免 `Module::data_layout()` 再取一次）——非测试路径 `borrow()` **51 → 2**（这 2 处就是入口本身）。
   `TypeContext` 新增**仅 `debug_assertions`** 的读锁计数（`debug_read_count`/`debug_reset_read_count`；release 下字段与方法都不存在，零开销），并新增 `tests/type_store_read_path.rs`（3 例）钉住"打印一个模块/一个函数各只取 1 次读锁、重复打印 3 次 = 3 次"。负向验证：在 `Module::fmt` 临时加一行 `borrow()` ⇒ 计数 2、守卫 FAILED；删掉后全绿。

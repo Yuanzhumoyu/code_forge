@@ -11,13 +11,16 @@
 //! 成正比。改后非测试路径只剩 2 处入口取锁。
 //!
 //! 本文件用 `TypeContext::debug_read_count`（仅 `debug_assertions`）把这条纪律
-//! 钉成可测不变量：**打印一个模块 / 一个函数各只取 1 次读锁**。
+//! 钉成可测不变量：**打印一个模块 / 一个函数各只取 1 次读锁**；**校验一个函数
+//! 的取锁次数不随 IR 规模增长**（改前 `verify.rs` 的 `check_conversion`/
+//! `check_immediates`/`check_gep_indices` 在每条指令上各取一次锁）。
 #![cfg(debug_assertions)]
 
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::display::function_to_string;
 use forge_ir::types::{FunctionSignature, TypeContext};
-use forge_ir::{Module, TypeId};
+use forge_ir::verify::Verifier;
+use forge_ir::{Function, Module, TypeId};
 
 /// 一个内容较"重"的模块：参数化入口块 + 第二个块 + 整型/浮点/向量常量——
 /// 覆盖 display 里会查类型的那些路径（值字面量、块参数、签名、函数头）。
@@ -90,5 +93,49 @@ fn repeated_display_keeps_the_budget() {
         ctx.debug_read_count(),
         3,
         "3 次打印 = 3 次取锁（每次打印独立取一次）"
+    );
+}
+
+/// 单块函数：入口带一个参数，随后 `extra` 条 `iadd`，最后 `ret`。
+fn func_with_insts(ctx: &TypeContext, extra: usize) -> Function {
+    let i32_ty = ctx.i32_ty();
+    let sig = FunctionSignature::new(&[(i32_ty, "x")], &[i32_ty]);
+    let mut fb = FunctionBuilder::new("sized", ctx.clone(), sig);
+    let (entry, params) = fb.create_block_with_params(&[(i32_ty, "p")]);
+    fb.switch_to_block(entry);
+    let mut acc = params[0];
+    for _ in 0..extra {
+        acc = fb.iadd(acc, params[0]);
+    }
+    fb.ret(&[acc]);
+    fb.finish().expect("build")
+}
+
+/// 校验一个函数的取锁次数**不随指令数增长**（v3 S3 读路径纪律在 verify.rs 的落地）。
+///
+/// 改前：`check_conversion`/`check_immediates`/`check_gep_indices` 在每条指令上
+/// 各 `borrow()` 一次 ⇒ 次数 ∝ 指令数（13 处 `borrow()`）。改后 `verify()` 入口
+/// 取一次，`&TypeStore` 贯穿全部检查。
+#[test]
+fn verifier_read_locks_do_not_scale_with_ir_size() {
+    let ctx = TypeContext::new();
+    let reads_for = |extra: usize| -> usize {
+        let func = func_with_insts(&ctx, extra);
+        let mut verifier = Verifier::with_ctx(ctx.clone());
+        ctx.debug_reset_read_count();
+        let outcome = verifier.verify(&func);
+        assert!(outcome.is_ok(), "{extra} 条指令的 IR 应合法：{outcome:?}");
+        ctx.debug_read_count()
+    };
+
+    let small = reads_for(1);
+    let large = reads_for(80);
+    assert_eq!(
+        small, large,
+        "取锁次数不得随 IR 规模增长（1 条指令 {small} 次 vs 80 条 {large} 次）"
+    );
+    assert_eq!(
+        small, 3,
+        "校验一次函数的取锁次数应是个小常数（实测 {small} 次；其中 verify.rs 入口 1 次）"
     );
 }

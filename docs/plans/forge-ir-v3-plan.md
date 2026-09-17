@@ -97,7 +97,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
-| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 全量改 `&TypeStore` 显式传参，非测试路径 `borrow()` 51 → 2，`debug_read_count` 守卫钉住"打印一次 = 1 次读锁"）；余项：`verify.rs`/`ir_parser`/`pipeline` 等按同一形态迁移，之后才是把锁换成快照式实现 |
+| S3 | 类型系统去锁/所有权 | **部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 与 verify 已改 `&TypeStore` 显式传参：`borrow()` 51 → 2、13 → 1；`debug_read_count` 守卫钉住"打印一次 = 1 次读锁""校验取锁次数不随 IR 规模增长"）；余项：`ir_parser`/`pipeline` 等按同一形态迁移，之后才是把锁换成快照式实现 |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
@@ -1261,6 +1261,35 @@ riscv64 131/67/0；fmt/clippy `-D warnings` 干净；`cargo doc -D warnings` 干
 **余项**：`verify.rs`（12 处）、`ir_parser/semantics.rs`（57 处）、
 `pipeline/compiler.rs`（31 处）、`types.rs` 自身（22 处）按同一形态迁移；之后才是
 "把锁换成快照式实现"。
+
+### S3（切片）：读路径纪律落到校验器（`verify.rs`，2026-09-16）
+
+同一形态的第二个模块。改前 `verify.rs` 有 13 处 `borrow()`：`check_conversion` /
+`check_immediates` / `check_gep_indices` / `check_operand_types` 等**在每条指令上
+各取一次读锁**（`check_conversion` 里还有 `scalar_bits`/`vector_bits` 两个闭包各自
+取锁），取锁次数与指令数成正比。
+
+**改法**：`verify()` 在 `check_entry` 之后取**一次**读锁——`ctx` 先 `clone`（Arc，
+O(1)）再 `borrow()`，让守卫借用**局部**而不是 `self`，因此后面仍可调 `&mut self`
+的检查函数；`&TypeStore` 作为参数贯穿 `check_types` → `check_operand_types` →
+`check_conversion`、`check_type_refs`、`check_immediates` → `check_gep_indices`。
+`is_pointer_ty`/`scalar_bits`/`class_of`/`class_matches` 从"自带 `&self` 取锁"改为
+"接收 `Option<&TypeStore>`"。实测 `verify.rs` 的 `borrow()` **13 → 1**（就是入口那处）。
+
+顺带实测到一条**结构性强约束**：负向探针（在逐指令循环里插一行 `self.ctx...borrow()`）
+**编译不过**——`E0502`：读锁守卫借着 `self.ctx`，其生命周期内不能再对 `self` 取
+`&mut`。也就是说"守卫跨 `&mut self` 调用"这条路已被借用检查器封死，想退化成
+"每指令取一次锁"必须显式 `clone` 出局部 `ctx` 才写得出来。
+
+**守卫**（`tests/type_store_read_path.rs` 追加 1 例）：
+`verifier_read_locks_do_not_scale_with_ir_size` —— 1 条指令与 80 条指令的函数
+取锁次数必须**相等**（实测均为 3：入口 1 次 + `Function` 内部查询 2 次）。
+负向验证：在 `check_immediates` 的逐指令循环里插一行 `clone`+`borrow()` ⇒ 实测
+1 条指令 5 次 / 80 条 84 次，测试 **FAILED**；删掉后 4 例全绿。
+
+**验证**：workspace 1471 passed / 0 failed / 19 ignored（+1）；x86 矩阵 195/3/0；
+riscv64 131/67/0；fmt/clippy `-D warnings` 干净；`cargo check --release --all-targets`
+无警告；`cargo doc -D warnings` 干净。
 
 ## 7. 参考设计（外部）
 
