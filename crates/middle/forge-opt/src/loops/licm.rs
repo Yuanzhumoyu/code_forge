@@ -4,8 +4,9 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[derive(Default)]
 pub struct LicmPass;
@@ -242,7 +243,7 @@ fn hoist_to_header(
 
     // Phase 2: Clone invariants to header（保留全字段：flags/mem_flags/metadata/loc），
     // 自动维护 val_remap（链式克隆把先前 hoist 的值重定向）
-    let mut val_remap: HashMap<Value, Value> = HashMap::new();
+    let mut val_remap: SecondaryMap<Value, Value> = SecondaryMap::new();
     let mut count = 0;
 
     for hd in &hoist_data {
@@ -253,7 +254,7 @@ fn hoist_to_header(
     // Phase 3: Replace all uses of old values with hoisted values（DFG + use-lists 双更新）
     for hd in &hoist_data {
         for &old_r in &hd.old_results {
-            if let Some(&new_r) = val_remap.get(&old_r) {
+            if let Some(&new_r) = val_remap.get(old_r) {
                 func.replace_all_uses(old_r, new_r);
             }
         }

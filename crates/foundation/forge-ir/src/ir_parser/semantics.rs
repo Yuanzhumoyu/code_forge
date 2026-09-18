@@ -13,6 +13,7 @@ use crate::DataLayout;
 use crate::Endianness;
 use crate::builder::FunctionBuilder;
 use crate::entity::{Block, FuncRef, GlobalId, TypeId, Value};
+use crate::entity_map::SecondaryMap;
 use crate::function::Function;
 use crate::function::FunctionAttributes;
 use crate::function::GlobalVariable;
@@ -2186,7 +2187,7 @@ fn finalize_phis<'a>(
         let n_params = fb.func.dfg.block(target).params.len();
         let phi_tys: Vec<TypeId> = fb.func.dfg.block(target).params.iter().copied().collect();
         // 收集 (前驱块 → (参数位, 值))；同一前驱多条入边按 phi 顺序排位
-        let mut per_pred: HashMap<Block, Vec<(usize, Value)>> = HashMap::new();
+        let mut per_pred: SecondaryMap<Block, Vec<(usize, Value)>> = SecondaryMap::new();
         let mut phi_idx = 0usize;
         for inst in &pb.insts {
             if inst.opcode != "phi" {
@@ -2198,14 +2199,14 @@ fn finalize_phis<'a>(
                 // 值是循环体内定义、经自边回流。
                 let v =
                     operand_to_value(&inc.val, ctx, value_map, func_refs, global_refs, fb, pred)?;
-                per_pred.entry(pred).or_default().push((phi_idx, v));
+                per_pred.get_mut_or_default(pred).push((phi_idx, v));
             }
             phi_idx += 1;
         }
         // 回填：对每个前驱，参数按位序组装并写入其终结符跳转
-        let preds: Vec<Block> = per_pred.keys().copied().collect();
+        let preds: Vec<Block> = per_pred.keys().collect();
         for pred in preds {
-            let mut idxs = per_pred.remove(&pred).unwrap();
+            let mut idxs = per_pred.remove(pred).unwrap();
             idxs.sort_by_key(|(i, _)| *i);
             // 去重校验（同一前驱重复入边 → 参数位重复）
             for w in idxs.windows(2) {

@@ -144,7 +144,7 @@ pub fn inline_calls(
                 .collect();
             let callee_entry_insts: Vec<Inst> = callee.dfg.block(callee_entry).inst_order.to_vec();
 
-            let mut value_map: HashMap<Value, Value> = HashMap::new();
+            let mut value_map: SecondaryMap<Value, Value> = SecondaryMap::new();
             for (i, &pval) in callee_param_vals.iter().enumerate() {
                 if let Some(&arg) = call_operands.get(i) {
                     value_map.insert(pval, arg);
@@ -174,7 +174,7 @@ pub fn inline_calls(
                 // Remap operands
                 let mut new_operands: SmallVec<[Value; 4]> = SmallVec::new();
                 for &op in &ci.operands {
-                    new_operands.push(value_map.get(&op).copied().unwrap_or(op));
+                    new_operands.push(value_map.get(op).copied().unwrap_or(op));
                 }
 
                 // Remap constants（callee 池 → caller 池：按 tag 全池重建，
@@ -226,7 +226,7 @@ pub fn inline_calls(
 
             // Map return value → call result
             if let Some(ret_val) = callee_ret_vals.first()
-                && let Some(&mapped_ret) = value_map.get(ret_val)
+                && let Some(&mapped_ret) = value_map.get(*ret_val)
             {
                 // **全量替换**（指令操作数 + 终结符）：call 的结果值常被 `ret`/`br`
                 // 的实参直接使用，而 `replace_all_uses` 只覆盖指令操作数（终结符

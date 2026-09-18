@@ -7,8 +7,8 @@
 //! 依赖约定:仅依赖 forge_ir 与 crate::pipeline::agg_const;
 //! 不依赖 CompileState(展开在 CompileState::new 之前执行——常量池克隆时序)。
 
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::HashMap;
 
 /// 函数是否含 GEP(决定是否需要可变副本做 GEP 展开)。
 pub(crate) fn has_gep(func: &Function) -> bool {
@@ -150,7 +150,7 @@ fn has_agg_mem_access(func: &Function) -> bool {
 }
 
 // 聚合值 → 内存槽地址映射（S1 嵌套聚合字段提取）：value → (PTR 地址, 槽类型)。
-pub(crate) type AggSlots = HashMap<Value, (Value, TypeId)>;
+pub(crate) type AggSlots = SecondaryMap<Value, (Value, TypeId)>;
 
 /// 使用位置（重写任务队列条目——block/pos/inst 定位使用指令）。
 pub(crate) struct UsePos {

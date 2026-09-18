@@ -212,7 +212,7 @@ fn rewrite_agg_value_uses(
                     .ok_or_else(|| IrError::Unsupported("extractvalue 索引缺失".into()))?;
                 // S1：命中嵌套聚合提取的槽映射——地址语义（GEP+load 标量 /
                 // 登记子地址继续链式提取）
-                if let Some(&(addr, slot_ty)) = agg_slots.get(&inst.operands[0]) {
+                if let Some(&(addr, slot_ty)) = agg_slots.get(inst.operands[0]) {
                     let ts = func.types.borrow();
                     let foff = ts.field_offset(slot_ty, idx).ok_or_else(|| {
                         IrError::Unsupported(format!("extractvalue 字段偏移缺失：{idx}"))
@@ -489,7 +489,7 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
     // entry 块参数重建 + 重写映射（旧参数值 → 新值列表）
     let entry = func.entry(); // fail-closed：缺失入口即编程错误（不再假定 Block(0)）
     let old_bvals = func.dfg.block(entry).param_values.clone();
-    let mut rewrite: HashMap<Value, Vec<Value>> = HashMap::new();
+    let mut rewrite: SecondaryMap<Value, Vec<Value>> = SecondaryMap::new();
     let mut new_bparams: Vec<TypeId> = Vec::new();
     let mut new_bvals: Vec<Value> = Vec::new();
     let mut agg_info: Vec<(Value, Vec<Value>, TypeId)> = Vec::new(); // (旧值, 段值, 聚合类型)
@@ -520,9 +520,9 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
     // 非聚合参数：直接替换（单值——参数索引变化后引用保持）。
     // 用 `Function::replace_all_uses` 一次覆盖**指令操作数与终结符用值**并同步
     // use-def（此前手写逐块改 `inst.operands` 不刷新 use-lists，会留下陈旧 use 项）。
-    for (old_v, vals) in &rewrite {
+    for (old_v, vals) in rewrite.iter() {
         if vals.len() == 1 {
-            func.replace_all_uses(*old_v, vals[0]);
+            func.replace_all_uses(old_v, vals[0]);
         }
     }
     Ok(())
@@ -1082,7 +1082,7 @@ fn expand_large_aggs(func: &mut Function, agg_slots: &mut AggSlots) -> Result<()
         } else if let Some(idx) = extract_idx {
             // S1：命中嵌套聚合槽映射（内层提取）——地址语义优先
             let hit_inst = &func.dfg.inst_data(job.inst);
-            if let Some(&(slot_addr, slot_ty)) = agg_slots.get(&hit_inst.operands[0]) {
+            if let Some(&(slot_addr, slot_ty)) = agg_slots.get(hit_inst.operands[0]) {
                 let ts = func.types.borrow();
                 let foff = ts.field_offset(slot_ty, idx).ok_or_else(|| {
                     IrError::Unsupported(format!("extractvalue 字段偏移缺失：{idx}"))
@@ -1899,7 +1899,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             expand_agg_stores(f)?;
             // call 结果拆 2 先于参数拆段：%q = call {i64,i64} 传给后续 call 时
             // 参数已是段值（i64），expand_agg_call_args 的 load 追踪不会误判
-            let mut agg_slots: AggSlots = HashMap::new();
+            let mut agg_slots: AggSlots = SecondaryMap::new();
             expand_large_agg_call_results(f, &mut agg_slots)?;
             expand_agg_call_args(f)?;
             expand_large_agg_params(f, &mut agg_slots)?;

@@ -72,3 +72,86 @@ fn xreg_is_index_plus_class_so_not_dense() {
         "按 (index, class) 区分：换成「下标=index」的密集表就会把两者合并"
     );
 }
+
+/// **全仓守卫**：`crates/**` 与根 `src/` 的**代码**里不得再出现以
+/// `Value`/`Block`/`Inst` 为键的 `HashMap`（都是密集句柄，必须用 `SecondaryMap`）。
+///
+/// `XReg` 是唯一豁免：它的键含 `class`（见上一个用例），按 index 密化会改变语义。
+/// 注释行（`//`）不计——`use_list.rs` 的文档里提到旧实现用了 `HashMap<Value, _>`。
+#[test]
+fn no_dense_handle_hashmaps_repo_wide() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..");
+    let mut hits: Vec<String> = Vec::new();
+    for start in ["crates", "src"] {
+        walk_src(&root.join(start), &root, &mut hits);
+    }
+    assert!(
+        hits.is_empty(),
+        "以下位置仍以密集句柄为键用 HashMap（应改用 `forge_ir::entity_map::SecondaryMap`；\
+         若确需 `XReg` 这类「键含 class」的句柄请在本守卫里写明理由）：\n{}",
+        hits.join("\n")
+    );
+}
+
+fn walk_src(dir: &std::path::Path, root: &std::path::Path, hits: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            walk_src(&p, root, hits);
+            continue;
+        }
+        if p.extension().is_none_or(|x| x != "rs") {
+            continue;
+        }
+        // 只看生产代码（`tests/` 下的夹具不算）
+        if p.components().any(|c| c.as_os_str() == "tests") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let rel = p
+            .strip_prefix(root)
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (i, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            if let Some(bad) = dense_handle_hashmap_in(line) {
+                hits.push(format!("{rel}:{}: [{bad}] {}", i + 1, line.trim()));
+            }
+        }
+    }
+}
+
+/// 行内是否出现"以密集句柄为键的 `HashMap`"（只认**精确**的 `Value`/`Block`/`Inst`，
+/// 不误伤 `BlockId`/`ValueId` 这类别的句柄类型）。
+fn dense_handle_hashmap_in(line: &str) -> Option<&'static str> {
+    const KEYS: [&str; 3] = ["Value", "Block", "Inst"];
+    let mut rest = line;
+    while let Some(pos) = rest.find("HashMap<") {
+        let after = &rest[pos + "HashMap<".len()..];
+        let after = after.trim_start();
+        if let Some(key) = KEYS.iter().find(|k| {
+            after.strip_prefix(**k).is_some_and(|r| {
+                r.starts_with(',')
+                    || r.starts_with('>')
+                    || r.starts_with(" ,")
+                    || r.starts_with(" >")
+            })
+        }) {
+            return Some(key);
+        }
+        rest = after;
+    }
+    None
+}

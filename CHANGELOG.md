@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **密集句柄表收口：全仓零 `HashMap<Value|Block|Inst>`（forge-ir v3 S2 余项④ 收官）**：把上批登记的 32 处余量全部迁完（`forge-opt` 的 `const_fold`/`sccp`/`gvn`/`gvn_pre`/`loop_unroll`/`licm`/`algebraic`/`lto`/`func_specialize`/`inline`），并清掉 `forge-ir`（`analysis` 的 `postorder_rank`/`preds_map`、`loop_info`、`ir_parser/semantics::per_pred`）与 `forge-codegen`（`agg_expand::AggSlots`、`compiler::rewrite`、`liverange`、`lowering::roots`）的同类表。
+  为此给 `SecondaryMap` 补 `FromIterator<(K, V)>`（与 `HashMap::collect()` 同形），`Function::apply_replacements` 与 `DataFlowGraph::clone_inst` 的 `value_remap` 改收 `&mut SecondaryMap`。
+  守卫由"预算表"升级为**零容忍扫描**：`forge-opt/tests/entity_tables.rs::no_dense_handle_hashmaps_in_forge_opt` + `forge-codegen/tests/entity_tables.rs::no_dense_handle_hashmaps_repo_wide`（扫 `crates/**` 与根 `src/`，跳过注释行、精确匹配键名以免误伤 forge-hir 的 `HashMap<BlockId, _>`）。负向验证：在 `loops/licm.rs` 插一处 `HashMap<Value, u64>` ⇒ 两个用例各 FAILED 并点名 `licm.rs:247: [Value]`。
+  **唯一豁免**：`XReg`（`Eq`/`Hash` 含 class，按 index 密化会把同一 index 的不同类合并——语义变化），理由由 `xreg_is_index_plus_class_so_not_dense` 钉住。本切片未做 opt 侧 A/B（不宣称提速）。
+  实测：workspace 1514 passed / 0 failed / 19 ignored；x86 195/3/0、riscv64 131/67/0、arm64 23/175/0。
+
 - **优化 pass 侧密集句柄表 → `SecondaryMap`（forge-ir v3 S2 余项④ 第二批）**：`Value`/`Inst`/`Block` 都是 forge-ir 的密集句柄，以它们为键的表不该走 `HashMap`。本批迁移 `scalar/dead_code.rs::build_use_counts`、`scalar/copy_prop.rs::build_copy_map`、`scalar/cse.rs`/`scalar/gvn.rs` 的 `replacements`（含 `gvn_dfs` 传参）、`ipa/inline.rs::repl`，并把**核心 API** `Function::apply_replacements` 的参数由 `&HashMap<Value, Value>` 改为 `&SecondaryMap<Value, Value>`（4 处调用点同步）。
   剩余 32 处逐文件登记进新增的预算表 `crates/middle/forge-opt/tests/entity_tables.rs`（精确相等 + 每条写原因；迁移一批下调一批，新增一处即红），另有 `apply_replacements_takes_a_dense_map` 守卫核心 API 不回头。负向验证：在 `loops/licm.rs` 插一处 `HashMap<Value, u64>` ⇒ 预算用例 FAILED（实测 2 vs 预算 1）。
   本切片**未做** opt 侧 A/B 计时（不宣称 pass 提速），宣称的是结构一致性与"剩余量可数"。实测：workspace 1512 passed / 0 failed / 19 ignored；x86 195/3/0、riscv64 131/67/0、arm64 23/175/0。

@@ -10,8 +10,9 @@ use crate::machine::pattern::{
 };
 use crate::machine::peephole::TargetPeephole;
 use crate::pipeline::compiler::{CompileState, atomic_op_from_u64};
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     // ── Stage 1: Block Mapping ──
@@ -334,7 +335,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 无 [[pattern]] 的 ISA 生成空表 → 此处零开销空转。
         let patterns = lowering.patterns();
         let mut consumed: HashSet<Inst> = HashSet::new();
-        let mut roots: HashMap<Inst, (String, Vec<Value>)> = HashMap::new();
+        let mut roots: SecondaryMap<Inst, (String, Vec<Value>)> = SecondaryMap::new();
         if !patterns.is_empty() {
             self.scan_patterns(
                 block,
@@ -628,7 +629,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             }
             // 每次 lowering 前清空写死寄存器（生成代码在 arm 尾部设置）
             self.ctx.current_clobbers.clear();
-            let mut machine_insts = if let Some((name, leaves)) = roots.get(&ii) {
+            let mut machine_insts = if let Some((name, leaves)) = roots.get(ii) {
                 // S6 pattern 命中：叶变量 → XReg（树 DFS 序），根结果 XReg 不变。
                 if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
                     eprintln!(
@@ -745,7 +746,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         use_lists: &UseLists,
         patterns: &'static [PatternSpec],
         consumed: &mut HashSet<Inst>,
-        roots: &mut HashMap<Inst, (String, Vec<Value>)>,
+        roots: &mut SecondaryMap<Inst, (String, Vec<Value>)>,
     ) {
         for &ii in block_data.inst_order.iter().rev() {
             if consumed.contains(&ii) {

@@ -19,8 +19,8 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct EGraphPass;
@@ -49,14 +49,14 @@ impl OptimizationPass for EGraphPass {
 // ============================================================
 
 struct ConstCache {
-    map: HashMap<Value, i64>,
-    bnot_sources: HashMap<Value, Value>,
+    map: SecondaryMap<Value, i64>,
+    bnot_sources: SecondaryMap<Value, Value>,
 }
 
 impl ConstCache {
     fn build(func: &Function) -> Self {
-        let mut map = HashMap::new();
-        let mut bnot_sources = HashMap::new();
+        let mut map = SecondaryMap::new();
+        let mut bnot_sources = SecondaryMap::new();
 
         for block in func.dfg.block_data_iter() {
             for &inst_id in &block.inst_order {
@@ -82,19 +82,19 @@ impl ConstCache {
     }
 
     fn is_zero(&self, v: Value) -> bool {
-        self.map.get(&v).is_some_and(|i| *i == 0)
+        self.map.get(v).is_some_and(|i| *i == 0)
     }
 
     fn is_one(&self, v: Value) -> bool {
-        self.map.get(&v).is_some_and(|i| *i == 1)
+        self.map.get(v).is_some_and(|i| *i == 1)
     }
 
     fn is_all_ones(&self, v: Value) -> bool {
-        self.map.get(&v).is_some_and(|i| *i == -1)
+        self.map.get(v).is_some_and(|i| *i == -1)
     }
 
     fn try_to_i64(&self, v: Value) -> Option<i64> {
-        self.map.get(&v).copied()
+        self.map.get(v).copied()
     }
 }
 
@@ -371,8 +371,8 @@ fn try_rewrite(inst: &Instruction, cache: &ConstCache, ty: TypeId) -> Option<Rep
         }
         // === Bnot (double negation: ~~x → x) ===
         Opcode::Bnot => {
-            if let Some(src) = cache.bnot_sources.get(&a)
-                && let Some(grandparent) = cache.bnot_sources.get(src)
+            if let Some(src) = cache.bnot_sources.get(a)
+                && let Some(grandparent) = cache.bnot_sources.get(*src)
             {
                 return Some(ReplaceAction::Copy { src: *grandparent });
             }

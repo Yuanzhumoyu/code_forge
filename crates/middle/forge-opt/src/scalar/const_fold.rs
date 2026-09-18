@@ -14,9 +14,9 @@
 
 use crate::{ConstValue, OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use forge_ir::{Big, FloatFormat};
-use std::collections::HashMap;
 
 // ============================================================
 // TypeId 辅助函数 (forge-ir v2: TypeId 无 is_int/is_float 方法)
@@ -995,22 +995,21 @@ fn fold_bitcast(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstVa
 // ============================================================
 
 /// 收集所有使用指定 Value 的指令的位置（(block_idx, inst_idx)）。
-fn collect_uses(func: &Function) -> HashMap<Value, Vec<(usize, usize)>> {
-    let mut uses: HashMap<Value, Vec<(usize, usize)>> = HashMap::new();
+fn collect_uses(func: &Function) -> SecondaryMap<Value, Vec<(usize, usize)>> {
+    let mut uses: SecondaryMap<Value, Vec<(usize, usize)>> = SecondaryMap::new();
 
     for bi in 0..func.dfg.block_count() {
         let block = &func.dfg.block(Block::new(bi as u32));
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             for operand in &inst.operands {
-                uses.entry(*operand)
-                    .or_default()
+                uses.get_mut_or_default(*operand)
                     .push((bi, inst_id.index() as usize));
             }
         }
         // 终结符中的值使用（规范序遍历，唯一事实源）
         func.dfg.for_each_term_value(Block::new(bi as u32), |_, v| {
-            uses.entry(v).or_default().push((bi, usize::MAX));
+            uses.get_mut_or_default(v).push((bi, usize::MAX));
         });
     }
 
@@ -1059,8 +1058,8 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
     // (旧实现每轮重建 known/uses/worklist，并对 worklist 每个 value 做全函数
     // 线性扫描 find_def_inst，导致 O(n²)/O(n³) 的固定开销。这里只扫一遍，
     // 之后增量更新 known，worklist 单遍即可完成传播。)
-    let mut def_map: HashMap<Value, Inst> = HashMap::new();
-    let mut known: HashMap<Value, ConstValue> = HashMap::new();
+    let mut def_map: SecondaryMap<Value, Inst> = SecondaryMap::new();
+    let mut known: SecondaryMap<Value, ConstValue> = SecondaryMap::new();
     let mut worklist: Vec<Value> = Vec::new();
 
     for block in func.dfg.block_data_iter() {
@@ -1102,7 +1101,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
         }
 
         // 通过 def_map O(1) 定位定义指令（旧实现为全函数线性扫描）
-        let def_inst_id = match def_map.get(&value) {
+        let def_inst_id = match def_map.get(value) {
             Some(&id) => id,
             None => continue,
         };
@@ -1112,7 +1111,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
         let const_operands: smallvec::SmallVec<[ConstValue; 4]> = inst_info
             .operands
             .iter()
-            .filter_map(|v| known.get(v).cloned())
+            .filter_map(|v| known.get(*v).cloned())
             .collect();
 
         // 如果不是所有 operands 都是常量，跳过且不标记 processed：
@@ -1173,7 +1172,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
             result.instructions_removed += 1;
 
             // 将所有使用者加入 worklist
-            if let Some(users) = uses.get(&value) {
+            if let Some(users) = uses.get(value) {
                 for &(_user_bi, ui) in users {
                     if ui == usize::MAX {
                         // Terminator 使用者 — 不需要加入 worklist
@@ -1182,7 +1181,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
                     }
                     let user_inst = &func.dfg.inst_data(Inst::new(ui as u32));
                     if let Some(uv) = user_inst.results.first().copied()
-                        && !known.contains_key(&uv)
+                        && !known.contains_key(uv)
                     {
                         worklist.push(uv);
                     }
@@ -1209,7 +1208,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
 }
 
 /// 折叠常量条件分支。
-fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> bool {
+fn fold_branches(func: &mut Function, known: &SecondaryMap<Value, ConstValue>) -> bool {
     let mut changed = false;
 
     for bi in 0..func.dfg.block_count() {
@@ -1217,7 +1216,7 @@ fn fold_branches(func: &mut Function, known: &HashMap<Value, ConstValue>) -> boo
         // 先算出去向与实参（借用结束），再经 Function 的按形式写入口写入以同步 use-lists
         let folded = if let Some((cond, then_block, then_args, else_block, else_args)) =
             func.dfg.term_branch(block_id)
-            && let Some(const_val) = known.get(&cond)
+            && let Some(const_val) = known.get(cond)
             && let Some(is_true) = const_val.to_bool()
         {
             // 替换为无条件跳转

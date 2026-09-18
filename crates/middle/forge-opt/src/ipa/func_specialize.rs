@@ -14,6 +14,7 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -138,7 +139,7 @@ fn clone_callee_into_caller(
     target_block: Block,
     call_args: &[Value],
 ) -> Result<Vec<Value>, IrError> {
-    let mut val_remap: HashMap<Value, Value> = HashMap::new();
+    let mut val_remap: SecondaryMap<Value, Value> = SecondaryMap::new();
 
     // Map callee params to call arguments
     for callee_block in callee.dfg.block_data_iter() {
@@ -159,7 +160,7 @@ fn clone_callee_into_caller(
             let new_operands: smallvec::SmallVec<[Value; 4]> = inst
                 .operands
                 .iter()
-                .map(|v| val_remap.get(v).copied().unwrap_or(*v))
+                .map(|v| val_remap.get(*v).copied().unwrap_or(*v))
                 .collect();
 
             // Clone immediates（remap_from 按 tag 全池重建，替代手写三级 fallback）
@@ -220,7 +221,7 @@ fn clone_callee_into_caller(
         // Handle callee's Return terminator
         if let Some(values) = callee.dfg.term_return_values(Block::new(bi as u32)) {
             for &v in values {
-                ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
+                ret_vals.push(val_remap.get(v).copied().unwrap_or(v));
             }
         }
     }

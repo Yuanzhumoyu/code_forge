@@ -12,6 +12,7 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -188,7 +189,7 @@ fn lto_inline_callee(
     target_block: Block,
     call_args: &[Value],
 ) -> Result<Vec<Value>, IrError> {
-    let mut val_remap: HashMap<Value, Value> = HashMap::new();
+    let mut val_remap: SecondaryMap<Value, Value> = SecondaryMap::new();
 
     // Map callee params to call arguments
     for callee_block in callee.dfg.block_data_iter() {
@@ -209,7 +210,7 @@ fn lto_inline_callee(
             let new_operands: smallvec::SmallVec<[Value; 4]> = inst
                 .operands
                 .iter()
-                .map(|v| val_remap.get(v).copied().unwrap_or(*v))
+                .map(|v| val_remap.get(*v).copied().unwrap_or(*v))
                 .collect();
 
             // Remap immediates: copy constants from callee pool to caller pool
@@ -262,7 +263,7 @@ fn lto_inline_callee(
         // Handle Return
         if let Some(values) = callee.dfg.term_return_values(Block::new(bi as u32)) {
             for &v in values {
-                ret_vals.push(val_remap.get(&v).copied().unwrap_or(v));
+                ret_vals.push(val_remap.get(v).copied().unwrap_or(v));
             }
         }
     }

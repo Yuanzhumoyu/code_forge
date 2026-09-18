@@ -96,7 +96,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
-| S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`（§4 已判定不做）；两个下游 crate 内部句柄表——**代码生成侧六张密集表已迁**（`LowerCtx::{vreg_classes,vreg_types,vreg_widths}` + `CompileState::{value_to_xreg,block_map,alloca_offsets}`；A/B −11.5%/−3.0%），**优化 pass 侧重映射表/use-count 表已迁**、余 32 处登记在 `forge-opt/tests/entity_tables.rs` 的预算表（见 §6 末两节）；**XReg 键表待拍板**（`XReg` 的键含 class，按 index 密化会合并不同类的条目） |
+| S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`（§4 已判定不做）；两个下游 crate 内部句柄表——**已收口**：全仓生产代码里以 `Value`/`Block`/`Inst` 为键的 `HashMap` **为 0**（代码生成侧六表 + 优化 pass 全部 + forge-ir/forge-codegen 同类表；零容忍扫描守卫），唯一豁免是 `XReg`（键含 class，密化会合并不同类条目，理由钉在守卫里；见 §6 末三节） |
 | S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`**已落地**（`LowerCtx::type_store` 快照；模板 11 处 `.borrow()` 清零 + 宽向量门"每指令取锁"收回入口，见 §6 末"LowerCtx 带类型快照"切片）②读写交错函数的"先写后读"结构改造；③**锁 → 快照已落地**（`TypeContext` 读快照 + `borrow_mut` COW、删 `Deref` 逃逸口，见 §6 末"锁 → 快照"切片） |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
@@ -1871,6 +1871,48 @@ sccp 4、algebraic 2、lto/licm/inline/func_specialize 各 1，共 **32 处**）
 A/B：64 条指令 −11.5%、256 条指令 −3.0%。
 
 **验证**：workspace 1512 passed / 0 failed / 19 ignored（+2）；三套矩阵 x86 195/3/0、
+riscv64 131/67/0、arm64 23/175/0；fmt `--check`/clippy `-D warnings`/
+`cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
+
+### S2（切片）：密集句柄表**收口**——全仓零 `HashMap<Value|Block|Inst>`（2026-09-17）
+
+把上一批登记在预算表里的 **32 处余量全部迁完**，并顺手清掉 `forge-ir`/`forge-codegen`
+里的同类表——**现在 `crates/**` 与根 `src/` 的生产代码里，以 `Value`/`Block`/`Inst`
+为键的 `HashMap` 为 0**。
+
+**本批迁移**：
+
+| 范围 | 表 |
+| --- | --- |
+| `forge-opt` 余量 | `scalar/{const_fold,sccp,gvn,gvn_pre}.rs`、`loops/{licm,loop_unroll}.rs`、`advanced/algebraic.rs`（struct 字段）、`ipa/{lto,func_specialize,inline}.rs` |
+| `forge-ir` | `analysis.rs`（`postorder_rank`、`preds_map`）、`loop_info.rs`（`header_to_loop`）、`ir_parser/semantics.rs`（`per_pred`） |
+| `forge-codegen` | `agg_expand::AggSlots`、`compiler::rewrite`、`liverange`（`ir_block_to_vblock`）、`lowering::roots` |
+
+**API 面**：给 `SecondaryMap` 补 `FromIterator<(K, V)>`（与 `HashMap::collect()` 同形，
+用于"按句柄顺序生成一批映射"）；`Function::apply_replacements` 与
+`DataFlowGraph::clone_inst` 的 `value_remap` 都改收 `&mut SecondaryMap<Value, Value>`。
+
+**守卫（零容忍，取代预算表）**：
+
+- `forge-opt/tests/entity_tables.rs::no_dense_handle_hashmaps_in_forge_opt`；
+- `forge-codegen/tests/entity_tables.rs::no_dense_handle_hashmaps_repo_wide`（扫
+  `crates/**` + 根 `src/`，**跳过注释行**（`use_list.rs` 文档里提到旧实现）、
+  **精确匹配键名**（不误伤 forge-hir 自己的 `HashMap<BlockId, Block>`）；
+- `clone_inst_takes_a_dense_remap` + 既有的 `apply_replacements_takes_a_dense_map`。
+
+**负向验证**：在 `loops/licm.rs` 临时插一处 `HashMap<Value, u64>` ⇒ 两个扫描用例各
+FAILED，并点名 `crates/middle/forge-opt/src/loops/licm.rs:247: [Value] …`；恢复后全绿。
+
+**唯一豁免（有可执行理由）**：`XReg`。`XReg { index, class }` 的 `Eq`/`Hash` 含 class
+——同一 index 配不同类是两个不同的键（`xreg_types`、`precolored`、`assignments`、
+`spill_slots`、`intervals`、`active`）。按 index 密化会把它们**合并**（语义变化），
+所以这些表保持 `HashMap`，由
+`forge-codegen/tests/entity_tables.rs::xreg_is_index_plus_class_so_not_dense` 钉住理由。
+
+**未做（如实记录）**：本切片**没有**做 opt 侧 A/B 计时——不宣称 pass 提速；宣称的是
+"密集句柄不再哈希"这一结构事实，以及它现在由零容忍扫描守卫。
+
+**验证**：workspace 1514 passed / 0 failed / 19 ignored（+2）；三套矩阵 x86 195/3/0、
 riscv64 131/67/0、arm64 23/175/0；fmt `--check`/clippy `-D warnings`/
 `cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
 

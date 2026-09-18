@@ -5,8 +5,9 @@
 
 use crate::{ConstValue, OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[derive(Default)]
 pub struct SccpPass;
@@ -43,7 +44,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         return Ok(result);
     }
 
-    let mut lattice: HashMap<Value, LatticeValue> = HashMap::new();
+    let mut lattice: SecondaryMap<Value, LatticeValue> = SecondaryMap::new();
     let mut reachable: HashSet<Block> = HashSet::new();
     let mut worklist: Vec<Block> = Vec::new();
     // 去重入队标记：同一块可能被多个用户/分支重复加入 worklist，
@@ -90,7 +91,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         for inst_id in inst_ids {
             let inst = &func.dfg.inst_data(*inst_id);
             if let Some(v) = inst.results.first().copied() {
-                let old = lattice.get(&v);
+                let old = lattice.get(v);
                 // Skip instructions that have already been constant-folded or
                 // that produce values from immediates rather than operands
                 // (Iconst, Fconst, StackAddr, GlobalAddr, etc.)
@@ -104,7 +105,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
                     evaluate_lattice(&inst.opcode, &inst.operands, &inst.immediates, ty, &lattice);
                 if !lattice_eq(old, &new) {
                     lattice.insert(v, new);
-                    if let Some(users) = uses_map.get(&v) {
+                    if let Some(users) = uses_map.get(v) {
                         for &user_block in users {
                             if reachable.contains(&user_block) && in_queue.insert(user_block) {
                                 worklist.push(user_block);
@@ -124,7 +125,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             };
         }
         if let Some((cond, then_block, _, else_block, _)) = func.dfg.term_branch(block_id) {
-            let known = match lattice.get(&cond) {
+            let known = match lattice.get(cond) {
                 Some(LatticeValue::Constant(cv)) => cv.to_bool(),
                 _ => None,
             };
@@ -160,7 +161,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         for inst_id in inst_ids {
             let inst = &func.dfg.inst_data(*inst_id);
             if let Some(v) = inst.results.first().copied()
-                && let Some(LatticeValue::Constant(cv)) = lattice.get(&v)
+                && let Some(LatticeValue::Constant(cv)) = lattice.get(v)
             {
                 match cv {
                     ConstValue::Int(big, _) | ConstValue::Float(big, _) => {
@@ -191,7 +192,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         let mut folded: Option<Block> = None;
         if let Some((cond, then_block, _, else_block, _)) =
             func.dfg.term_branch(Block::new(bi as u32))
-            && let Some(LatticeValue::Constant(cv)) = lattice.get(&cond)
+            && let Some(LatticeValue::Constant(cv)) = lattice.get(cond)
         {
             if let Some(true) = cv.to_bool() {
                 folded = Some(then_block);
@@ -224,11 +225,11 @@ fn evaluate_lattice(
     operands: &[Value],
     immediates: &[forge_ir::Immediate],
     ty: TypeId,
-    lattice: &HashMap<Value, LatticeValue>,
+    lattice: &SecondaryMap<Value, LatticeValue>,
 ) -> LatticeValue {
     let const_ops: smallvec::SmallVec<[ConstValue; 4]> = operands
         .iter()
-        .filter_map(|v| match lattice.get(v)? {
+        .filter_map(|v| match lattice.get(*v)? {
             LatticeValue::Constant(cv) => Some(cv.clone()),
             _ => None,
         })
@@ -252,15 +253,14 @@ fn lattice_eq(a: Option<&LatticeValue>, b: &LatticeValue) -> bool {
     }
 }
 
-fn collect_all_uses(func: &Function) -> HashMap<Value, HashSet<Block>> {
-    let mut uses: HashMap<Value, HashSet<Block>> = HashMap::new();
+fn collect_all_uses(func: &Function) -> SecondaryMap<Value, HashSet<Block>> {
+    let mut uses: SecondaryMap<Value, HashSet<Block>> = SecondaryMap::new();
     for bi in 0..func.dfg.block_count() {
         let block = &func.dfg.block(Block::new(bi as u32));
         for &inst_id in &block.inst_order {
             let inst = &func.dfg.inst_data(inst_id);
             for operand in &inst.operands {
-                uses.entry(*operand)
-                    .or_default()
+                uses.get_mut_or_default(*operand)
                     .insert(Block::new(bi as u32));
             }
         }

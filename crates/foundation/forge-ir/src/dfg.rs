@@ -10,6 +10,7 @@
 
 use super::debug_info::SourceLocation;
 use super::entity::*;
+use super::entity_map::SecondaryMap;
 use super::immediate::Immediate;
 use super::inst_flags::InstFlags;
 use super::mem_flags::MemFlags;
@@ -17,7 +18,6 @@ use super::metadata::AttachedMetadata;
 use super::opcode::Opcode;
 use super::terminator::TermKind;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================
@@ -407,14 +407,14 @@ impl DataFlowGraph {
         &mut self,
         inst: Inst,
         target_block: Block,
-        value_remap: &mut HashMap<Value, Value>,
+        value_remap: &mut SecondaryMap<Value, Value>,
     ) -> Inst {
         let (opcode, operands, immediates, result_tys, flags, mem_flags, metadata, loc) = {
             let src = &self.insts[inst.0 as usize];
             let operands: SmallVec<[Value; 4]> = src
                 .operands
                 .iter()
-                .map(|v| value_remap.get(v).copied().unwrap_or(*v))
+                .map(|v| value_remap.get(*v).copied().unwrap_or(*v))
                 .collect();
             let result_tys: SmallVec<[TypeId; 2]> = src
                 .results

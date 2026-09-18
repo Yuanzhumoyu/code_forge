@@ -4,7 +4,7 @@ use crate::analysis::{DominatorTree, block_successors_in_func};
 use crate::entity::*;
 use crate::entity_map::SecondaryMap;
 use crate::function::Function;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[derive(Clone, Debug)]
 pub struct LoopInfo {
@@ -30,7 +30,7 @@ pub struct LoopForest {
 impl LoopForest {
     pub fn build(func: &Function, dom_tree: &DominatorTree) -> Self {
         let mut loops: Vec<LoopInfo> = Vec::new();
-        let mut header_to_loop: HashMap<Block, usize> = HashMap::new();
+        let mut header_to_loop: SecondaryMap<Block, usize> = SecondaryMap::new();
 
         // Detect back-edges（用 Function 惰性 predecessors 缓存加速 collect_loop_body）
         let preds_map = func.predecessors();
@@ -38,7 +38,7 @@ impl LoopForest {
             for succ in func.dfg.block_successors(pred) {
                 if dom_tree.dominates(succ, pred) {
                     let header = succ;
-                    if let Some(&idx) = header_to_loop.get(&header) {
+                    if let Some(&idx) = header_to_loop.get(header) {
                         // P1-3：记录 latch（回边源块）
                         if !loops[idx].latches.contains(&pred) {
                             loops[idx].latches.push(pred);

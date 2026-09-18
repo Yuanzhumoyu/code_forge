@@ -6,6 +6,7 @@
 use super::cse::{ExprKey, is_cse_candidate};
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -52,7 +53,7 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
         } else {
             compute_avail_in(func, b, &avail_out)
         };
-        let ant_set = ant_in.get(&b).cloned().unwrap_or_default();
+        let ant_set = ant_in.get(b).cloned().unwrap_or_default();
         let earliest: HashSet<ExprId> = ant_set.difference(&avail_in).copied().collect();
 
         if earliest.is_empty() {
@@ -69,7 +70,7 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
 
             // Insert this expression in predecessor blocks where it's not available
             for &pred in &plist {
-                let pred_avail = avail_out.get(&pred).cloned().unwrap_or_default();
+                let pred_avail = avail_out.get(pred).cloned().unwrap_or_default();
                 if pred_avail.contains(&expr_id) {
                     continue; // Already available in this predecessor
                 }
@@ -88,7 +89,7 @@ pub fn run_pre(func: &mut Function) -> Result<PassResult, IrError> {
                 let new_val = insert_expression(func, pred, expr_key);
                 if let Some(v) = new_val {
                     // Update avail_out for this predecessor
-                    if let Some(ao) = avail_out.get_mut(&pred) {
+                    if let Some(ao) = avail_out.get_mut(pred) {
                         ao.insert(expr_id);
                     }
                     result.instructions_added += 1;
@@ -185,11 +186,11 @@ fn compute_gen_kill(
     func: &Function,
     expr_to_id: &HashMap<ExprKey, ExprId>,
 ) -> (
-    HashMap<Block, HashSet<ExprId>>,
-    HashMap<Block, HashSet<ExprId>>,
+    SecondaryMap<Block, HashSet<ExprId>>,
+    SecondaryMap<Block, HashSet<ExprId>>,
 ) {
-    let mut gen_map = HashMap::new();
-    let mut kill_map = HashMap::new();
+    let mut gen_map = SecondaryMap::new();
+    let mut kill_map = SecondaryMap::new();
     for bi in 0..func.dfg.block_count() {
         let block = &func.dfg.block(Block::new(bi as u32));
         let mut gen_set = HashSet::new();
@@ -235,11 +236,11 @@ fn compute_gen_kill(
 
 fn compute_avail(
     func: &Function,
-    gen_map: &HashMap<Block, HashSet<ExprId>>,
-    kill_map: &HashMap<Block, HashSet<ExprId>>,
-) -> HashMap<Block, HashSet<ExprId>> {
+    gen_map: &SecondaryMap<Block, HashSet<ExprId>>,
+    kill_map: &SecondaryMap<Block, HashSet<ExprId>>,
+) -> SecondaryMap<Block, HashSet<ExprId>> {
     let n = func.dfg.block_count();
-    let mut avail_out: HashMap<Block, HashSet<ExprId>> = HashMap::new();
+    let mut avail_out: SecondaryMap<Block, HashSet<ExprId>> = SecondaryMap::new();
     for bi in 0..n {
         avail_out.insert(Block::new(bi as u32), HashSet::new());
     }
@@ -257,10 +258,10 @@ fn compute_avail(
                 if plist.is_empty() {
                     HashSet::new()
                 } else {
-                    let mut inter = avail_out.get(&plist[0]).cloned().unwrap_or_default();
+                    let mut inter = avail_out.get(plist[0]).cloned().unwrap_or_default();
                     for p in &plist[1..] {
                         inter = inter
-                            .intersection(avail_out.get(p).unwrap_or(&HashSet::new()))
+                            .intersection(avail_out.get(*p).unwrap_or(&HashSet::new()))
                             .copied()
                             .collect();
                     }
@@ -268,12 +269,12 @@ fn compute_avail(
                 }
             };
             // avail_out = gen ∪ (avail_in − kill)
-            let gen_block = gen_map.get(&b).cloned().unwrap_or_default();
-            let kill_block = kill_map.get(&b).cloned().unwrap_or_default();
+            let gen_block = gen_map.get(b).cloned().unwrap_or_default();
+            let kill_block = kill_map.get(b).cloned().unwrap_or_default();
             let mut new_out = avail_in;
             new_out.retain(|e| !kill_block.contains(e));
             new_out.extend(gen_block);
-            if avail_out.get(&b) != Some(&new_out) {
+            if avail_out.get(b) != Some(&new_out) {
                 avail_out.insert(b, new_out);
                 changed = true;
             }
@@ -285,17 +286,17 @@ fn compute_avail(
 fn compute_avail_in(
     func: &Function,
     b: Block,
-    avail_out: &HashMap<Block, HashSet<ExprId>>,
+    avail_out: &SecondaryMap<Block, HashSet<ExprId>>,
 ) -> HashSet<ExprId> {
     let preds = func.predecessors().clone();
     let plist = preds.get(b).cloned().unwrap_or_default();
     if plist.is_empty() {
         return HashSet::new();
     }
-    let mut inter = avail_out.get(&plist[0]).cloned().unwrap_or_default();
+    let mut inter = avail_out.get(plist[0]).cloned().unwrap_or_default();
     for p in &plist[1..] {
         inter = inter
-            .intersection(avail_out.get(p).unwrap_or(&HashSet::new()))
+            .intersection(avail_out.get(*p).unwrap_or(&HashSet::new()))
             .copied()
             .collect();
     }
@@ -304,10 +305,10 @@ fn compute_avail_in(
 
 fn compute_ant(
     func: &Function,
-    gen_map: &HashMap<Block, HashSet<ExprId>>,
-) -> HashMap<Block, HashSet<ExprId>> {
+    gen_map: &SecondaryMap<Block, HashSet<ExprId>>,
+) -> SecondaryMap<Block, HashSet<ExprId>> {
     let n = func.dfg.block_count();
-    let mut ant_in = HashMap::with_capacity(n);
+    let mut ant_in = SecondaryMap::with_capacity(n);
     for bi in 0..n {
         ant_in.insert(Block::new(bi as u32), HashSet::new());
     }
@@ -332,18 +333,18 @@ fn compute_ant(
             let ant_out = if succs.is_empty() {
                 HashSet::new()
             } else {
-                let mut inter = ant_in.get(&succs[0]).cloned().unwrap_or_default();
+                let mut inter = ant_in.get(succs[0]).cloned().unwrap_or_default();
                 for s in &succs[1..] {
                     inter = inter
-                        .intersection(ant_in.get(s).unwrap_or(&HashSet::new()))
+                        .intersection(ant_in.get(*s).unwrap_or(&HashSet::new()))
                         .copied()
                         .collect();
                 }
                 inter
             };
-            let mut new_ant = gen_map.get(&b).cloned().unwrap_or_default();
+            let mut new_ant = gen_map.get(b).cloned().unwrap_or_default();
             new_ant.extend(ant_out);
-            if ant_in.get(&b) != Some(&new_ant) {
+            if ant_in.get(b) != Some(&new_ant) {
                 ant_in.insert(b, new_ant);
                 changed = true;
             }

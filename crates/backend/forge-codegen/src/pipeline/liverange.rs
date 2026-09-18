@@ -3,6 +3,7 @@
 //! 替代旧的 `HashMap<VReg, (usize, usize)>` 单区间表示，
 //! 支持 lifetime holes、use positions 和 spill weight 计算。
 
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -183,7 +184,7 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     let num_blocks = blocks.len();
 
     // 构建 IR Block → VCode block index 的映射
-    let mut ir_block_to_vblock: HashMap<Block, usize> = HashMap::new();
+    let mut ir_block_to_vblock: SecondaryMap<Block, usize> = SecondaryMap::new();
     for (idx, block) in blocks.iter().enumerate() {
         ir_block_to_vblock.insert(block.ir_block, idx);
     }
@@ -194,7 +195,7 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         for inst in &block.instructions {
             if inst.is_branch() {
                 for target_ir in inst.branch_targets().iter() {
-                    if let Some(&target_idx) = ir_block_to_vblock.get(target_ir) {
+                    if let Some(&target_idx) = ir_block_to_vblock.get(*target_ir) {
                         // 回边：跳转到 ≤ 当前索引的块
                         if target_idx <= block_idx {
                             // 标记循环体内所有块（从 target 到 branch）
@@ -288,7 +289,7 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         for inst in &block.instructions {
             if inst.is_branch() {
                 for target_ir in inst.branch_targets().iter() {
-                    if let Some(&target_idx) = ir_block_to_vblock.get(target_ir) {
+                    if let Some(&target_idx) = ir_block_to_vblock.get(*target_ir) {
                         block_succs[block_idx].push(target_idx);
                     }
                 }

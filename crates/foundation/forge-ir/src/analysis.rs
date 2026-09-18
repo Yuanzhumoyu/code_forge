@@ -6,7 +6,6 @@ use crate::entity::*;
 use crate::entity_map::SecondaryMap;
 use crate::function::Function;
 use crate::loop_info::LoopForest;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 // ============================================================
@@ -183,7 +182,7 @@ impl DominatorTree {
         let entry = func.entry();
 
         let postorder = compute_postorder(func, entry);
-        let postorder_rank: HashMap<Block, usize> =
+        let postorder_rank: SecondaryMap<Block, usize> =
             postorder.iter().enumerate().map(|(i, &b)| (b, i)).collect();
 
         let idom = compute_idom(func, entry, &postorder, &postorder_rank);
@@ -311,15 +310,15 @@ fn compute_idom(
     func: &Function,
     entry: Block,
     postorder: &[Block],
-    postorder_rank: &HashMap<Block, usize>,
+    postorder_rank: &SecondaryMap<Block, usize>,
 ) -> SecondaryMap<Block, Block> {
     // 一次构建前驱映射（替代每轮对每个 block 线性扫全函数，O(轮数×n²) → O(轮数×n)）。
-    let mut preds_map: HashMap<Block, Vec<Block>> = HashMap::new();
+    let mut preds_map: SecondaryMap<Block, Vec<Block>> = SecondaryMap::new();
     for (block, _bd) in func.dfg.blocks() {
         // CFG 构造容忍未终止的块（校验器会在坏 IR 上跑）：
         // "没有终结符" ⇒ 没有后继边，这是结构事实，不是静默回退。
         for succ in func.dfg.block_successors(block) {
-            preds_map.entry(succ).or_default().push(block);
+            preds_map.get_mut_or_default(succ).push(block);
         }
     }
 
@@ -333,7 +332,7 @@ fn compute_idom(
             if block == entry {
                 continue;
             }
-            let preds = preds_map.get(&block).map(|v| v.as_slice()).unwrap_or(&[]);
+            let preds = preds_map.get(block).map(|v| v.as_slice()).unwrap_or(&[]);
             let processed: Vec<Block> = preds
                 .iter()
                 .copied()
@@ -357,7 +356,7 @@ fn compute_idom(
 
 fn intersect(
     idom: &SecondaryMap<Block, Block>,
-    postorder_rank: &HashMap<Block, usize>,
+    postorder_rank: &SecondaryMap<Block, usize>,
     mut finger1: Block,
     mut finger2: Block,
 ) -> Block {
@@ -365,8 +364,8 @@ fn intersect(
     // higher rank = closer to entry. The deeper node has LOWER rank
     // and must be advanced up the idom chain.
     while finger1 != finger2 {
-        let rank1 = postorder_rank.get(&finger1).copied().unwrap_or(0);
-        let rank2 = postorder_rank.get(&finger2).copied().unwrap_or(0);
+        let rank1 = postorder_rank.get(finger1).copied().unwrap_or(0);
+        let rank2 = postorder_rank.get(finger2).copied().unwrap_or(0);
         if rank1 < rank2 {
             // finger1 is deeper (lower postorder rank) → advance it
             finger1 = idom.get(finger1).copied().unwrap_or(finger1);

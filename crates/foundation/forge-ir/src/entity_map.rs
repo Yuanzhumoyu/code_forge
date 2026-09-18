@@ -412,6 +412,20 @@ impl<K, V: Clone> Clone for SecondaryMap<K, V> {
     }
 }
 
+/// `(句柄, 值)` 迭代器 → 辅存（与 `HashMap` 的 `collect()` 同形；重复键后者胜）。
+///
+/// 用于把"按句柄顺序生成的一批映射"直接收集成密集表
+/// （如支配树的 `postorder_rank: Block → usize`）。
+impl<K: EntityRef, V> FromIterator<(K, V)> for SecondaryMap<K, V> {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut map = SecondaryMap::new();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
 impl<K, V: PartialEq> PartialEq for SecondaryMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
         self.elems == other.elems

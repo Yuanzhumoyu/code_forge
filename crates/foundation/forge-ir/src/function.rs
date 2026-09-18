@@ -1586,7 +1586,6 @@ mod tests {
     #[test]
     fn test_clone_inst_preserves_fields() {
         use crate::dfg::ValueDef;
-        use std::collections::HashMap;
 
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
@@ -1614,7 +1613,7 @@ mod tests {
             });
         }
 
-        let mut remap: HashMap<Value, Value> = HashMap::new();
+        let mut remap: SecondaryMap<Value, Value> = SecondaryMap::new();
         let new_inst = fb.func.dfg.clone_inst(x_inst, target, &mut remap);
 
         let orig = &fb.func.dfg.inst_data(x_inst);
@@ -1633,7 +1632,7 @@ mod tests {
         );
         assert_eq!(cloned.block, target, "克隆到目标块");
         // value_remap：旧结果 → 新结果
-        let new_x = remap.get(&x).expect("旧结果应映射到新结果");
+        let new_x = remap.get(x).expect("旧结果应映射到新结果");
         assert_eq!(fb.func.dfg.value_type(*new_x), Some(TypeId::I32));
         assert_eq!(*new_x, cloned.results[0]);
     }

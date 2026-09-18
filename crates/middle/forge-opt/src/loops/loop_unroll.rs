@@ -12,8 +12,9 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub struct LoopUnrollPass {
     factor: usize,
@@ -130,7 +131,7 @@ fn perform_unroll(
         }
 
         // Rewire: redirect header's branch to point to the first cloned body block
-        let cloned_first = block_remap.get(&first_body).copied();
+        let cloned_first = block_remap.get(first_body).copied();
         if let Some(cf) = cloned_first {
             redirect_branch_target(func, header, first_body, cf);
         }
@@ -205,9 +206,9 @@ fn clone_body_chain(
     body_blocks: &[Block],
     _header: Block,
     _body_set: &HashSet<Block>,
-) -> (HashMap<Block, Block>, HashMap<Value, Value>) {
-    let mut block_remap: HashMap<Block, Block> = HashMap::new();
-    let mut val_remap: HashMap<Value, Value> = HashMap::new();
+) -> (SecondaryMap<Block, Block>, SecondaryMap<Value, Value>) {
+    let mut block_remap: SecondaryMap<Block, Block> = SecondaryMap::new();
+    let mut val_remap: SecondaryMap<Value, Value> = SecondaryMap::new();
 
     // Phase 1: collect all data with immutable borrows
     struct BlockTemplate {
@@ -256,7 +257,7 @@ fn clone_body_chain(
     // metadata/loc/isel_strategy，并自动维护 val_remap——块参数映射已在
     // Phase 2 建立，克隆结果按顺序写入）
     for tmpl in &templates {
-        let new_block = block_remap[&tmpl.block];
+        let new_block = block_remap[tmpl.block];
 
         for &inst_id in &tmpl.insts {
             func.dfg.clone_inst(inst_id, new_block, &mut val_remap);
@@ -276,11 +277,11 @@ fn emit_cloned_terminator(
     func: &mut Function,
     dst: Block,
     src: Block,
-    val_remap: &HashMap<Value, Value>,
-    block_remap: &HashMap<Block, Block>,
+    val_remap: &SecondaryMap<Value, Value>,
+    block_remap: &SecondaryMap<Block, Block>,
 ) {
-    let rv = |v: Value| val_remap.get(&v).copied().unwrap_or(v);
-    let rb = |b: Block| block_remap.get(&b).copied().unwrap_or(b);
+    let rv = |v: Value| val_remap.get(v).copied().unwrap_or(v);
+    let rb = |b: Block| block_remap.get(b).copied().unwrap_or(b);
 
     match func.dfg.term_kind(src) {
         Some(TermKind::Jump) => {
@@ -544,11 +545,11 @@ mod tests {
 
         assert!(!block_remap.is_empty(), "Should create cloned block");
         // Both v3 and v4 should be remapped to distinct new values
-        assert!(val_remap.contains_key(&v3), "v3 should be remapped");
-        assert!(val_remap.contains_key(&v4), "v4 should be remapped");
+        assert!(val_remap.contains_key(v3), "v3 should be remapped");
+        assert!(val_remap.contains_key(v4), "v4 should be remapped");
         assert_ne!(
-            val_remap.get(&v3),
-            val_remap.get(&v4),
+            val_remap.get(v3),
+            val_remap.get(v4),
             "Different results should map to different values"
         );
     }

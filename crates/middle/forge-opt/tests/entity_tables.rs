@@ -1,115 +1,97 @@
-//! 句柄键表预算守卫（v3 S2 余项④：优化 pass 侧的密集句柄表）。
+//! 句柄键表纪律守卫（v3 S2 余项④：优化 pass 侧与全仓的密集句柄表）。
 //!
 //! `Value`/`Inst`/`Block` 都是**密集句柄**（`EntityRef`：下标即句柄），用它们做键的表
-//! 不该走 `HashMap`（每次访问一次 SipHash）。本批已迁移：
+//! 不该走 `HashMap`（每次访问一次 SipHash）。本项分两批完成：
 //!
-//! - `scalar/dead_code.rs`：`build_use_counts` → `SecondaryMap<Value, usize>`；
-//! - `scalar/copy_prop.rs`：`build_copy_map` → `SecondaryMap<Value, Value>`；
-//! - `scalar/cse.rs` / `scalar/gvn.rs`：`replacements` → `SecondaryMap<Value, Value>`；
-//! - `ipa/inline.rs`：`repl` → `SecondaryMap<Value, Value>`；
-//! - 核心 API：`Function::apply_replacements` 的参数由 `&HashMap` 改 `&SecondaryMap`
-//!   （重映射表天然是密集表；4 处调用点同步）。
+//! **第一批**（重映射表 / use-count 表）：`scalar/dead_code.rs::build_use_counts`、
+//! `scalar/copy_prop.rs::build_copy_map`、`scalar/cse.rs`/`scalar/gvn.rs` 的
+//! `replacements`、`ipa/inline.rs::repl`，以及核心 API
+//! `Function::apply_replacements` 改收 `&SecondaryMap<Value, Value>`。
 //!
-//! **剩余**的句柄键 `HashMap` 逐文件登记在下面的预算表里（精确相等 + 每条写原因）：
-//! 迁移一批就下调一批，新增一处即红。这样"还有多少没迁、为什么没迁"是**可数的**，
-//! 而不是靠记忆。
+//! **第二批**（余下全部）：`scalar/{const_fold,sccp,gvn,gvn_pre}.rs`、
+//! `loops/{licm,loop_unroll}.rs`、`advanced/algebraic.rs`、`ipa/{lto,func_specialize,inline}.rs`，
+//! 并顺带清掉 `forge-ir`（`analysis.rs` 的 `postorder_rank`/`preds_map`、`loop_info.rs`、
+//! `ir_parser/semantics.rs::per_pred`）与 `forge-codegen`（`agg_expand::AggSlots`、
+//! `compiler::rewrite`、`liverange`、`lowering::roots`）里的同类表。为此给
+//! `SecondaryMap` 补了 `FromIterator<(K, V)>`（与 `HashMap::collect()` 同形）。
 //!
-//! 注：本切片**未做** opt 侧 A/B 计时（未宣称 pass 提速）；宣称的是结构一致性
-//! （密集句柄不再哈希）与"余量表可数"。
+//! **`XReg` 是唯一豁免**：`XReg { index, class }` 的 `Eq`/`Hash` **含 class**，同一
+//! index 配不同类是两个不同的键；按 index 做下标的密集表会把它们合并（语义变化）。
+//! 见 `crates/backend/forge-codegen/tests/entity_tables.rs::xreg_is_index_plus_class_so_not_dense`。
+#![cfg(debug_assertions)]
 
 use std::path::{Path, PathBuf};
 
-/// `(文件名, 剩余处数, 为什么还剩这些)`
-const BUDGETS: &[(&str, usize, &str)] = &[
-    (
-        "gvn_pre.rs",
-        9,
-        "块级数据流表（gen/kill/avail_out：Block → HashSet<ExprId>）——块数远小于值数，收益低；迁它要连 6 处签名一起改，留作后续",
-    ),
-    (
-        "loop_unroll.rs",
-        6,
-        "循环展开的 val_remap/block_remap 及其两个传参签名（展开副本的临时重映射）",
-    ),
-    (
-        "gvn.rs",
-        5,
-        "const_map（Value → (Big, TypeId)）与 dom_children（Block → Vec<Block>）及其传参签名",
-    ),
-    (
-        "const_fold.rs",
-        5,
-        "collect_uses/def_map/known（per-instruction 常量折叠状态）及其传参签名",
-    ),
-    (
-        "sccp.rs",
-        4,
-        "lattice（Value → LatticeValue）与 collect_all_uses 及其传参签名",
-    ),
-    (
-        "algebraic.rs",
-        2,
-        "代数化简的 struct 字段 map/bnot_sources（改字段类型要连构造与全部使用点）",
-    ),
-    (
-        "lto.rs",
-        1,
-        "LTO 内联的 val_remap（与 inline.rs 同形态，跨函数重映射）",
-    ),
-    ("licm.rs", 1, "LICM 的 val_remap（hoist 后重映射）"),
-    (
-        "inline.rs",
-        1,
-        "内联的 value_map（参数/局部值重映射；repl 已迁）",
-    ),
-    ("func_specialize.rs", 1, "特化副本的 val_remap"),
-];
-
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-fn count_handle_hashmaps(path: &Path) -> usize {
-    let text =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("读不到 {}: {e}", path.display()));
-    ["HashMap<Value", "HashMap<Block", "HashMap<Inst"]
-        .iter()
-        .map(|pat| text.matches(pat).count())
-        .sum()
-}
-
-/// 每个文件的句柄键 `HashMap` 处数必须**恰好等于**预算（迁移一批请下调；
-/// 新增一处逐次哈希即红）。
+/// 全仓扫描：`crates/**` 与根 `src/` 的**代码**里不得再有以 `Value`/`Block`/`Inst`
+/// 为键的 `HashMap`（注释行不计；`BlockId`/`ValueId` 这类别的句柄类型不误伤）。
 #[test]
-fn handle_hashmap_budget_matches_measured() {
-    let root = src_root();
-    assert!(root.is_dir(), "src 目录不存在：{}", root.display());
-    let mut checked = 0usize;
-    for (file, budget, why) in BUDGETS {
-        // src 下的 scoped 子目录：找到该文件（不递归 `**`，直接按已知前缀找）
-        let path = find_file(&root, file).unwrap_or_else(|| panic!("找不到 src/**/{file}"));
-        let got = count_handle_hashmaps(&path);
-        assert_eq!(
-            got, *budget,
-            "{file} 的句柄键 HashMap 处数变了（实测 {got}，预算 {budget}；{why}）：\n\
-             - 新增了？Value/Inst/Block 是密集句柄，请改用 `SecondaryMap`（`forge_ir::entity_map`）；\n\
-             - 迁移了一批？请把预算下调到 {got}（预算表要反映现状）。"
-        );
-        checked += 1;
-    }
-    assert_eq!(checked, BUDGETS.len(), "预算表必须逐条被检查到");
+fn no_dense_handle_hashmaps_in_forge_opt() {
+    let root = repo_root();
+    let mut hits: Vec<String> = Vec::new();
+    walk_src(&root.join("crates/middle/forge-opt/src"), &root, &mut hits);
+    assert!(
+        hits.is_empty(),
+        "forge-opt 里仍以密集句柄为键用 HashMap（请改用 `forge_ir::entity_map::SecondaryMap`）：\n{}",
+        hits.join("\n")
+    );
 }
 
-fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    for e in std::fs::read_dir(dir).ok()?.flatten() {
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+}
+
+fn walk_src(dir: &Path, root: &Path, hits: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
-            if let Some(found) = find_file(&p, name) {
-                return Some(found);
-            }
-        } else if p.file_name().is_some_and(|n| n == name) {
-            return Some(p);
+            walk_src(&p, root, hits);
+            continue;
         }
+        if p.extension().is_none_or(|x| x != "rs") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let rel = p
+            .strip_prefix(root)
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (i, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if let Some(bad) = dense_handle_hashmap_in(line) {
+                hits.push(format!("{rel}:{}: [{bad}] {}", i + 1, line.trim()));
+            }
+        }
+    }
+}
+
+/// 只认**精确**的 `Value`/`Block`/`Inst` 键（不误伤 `BlockId` 等）。
+fn dense_handle_hashmap_in(line: &str) -> Option<&'static str> {
+    const KEYS: [&str; 3] = ["Value", "Block", "Inst"];
+    let mut rest = line;
+    while let Some(pos) = rest.find("HashMap<") {
+        let after = rest[pos + "HashMap<".len()..].trim_start();
+        if let Some(key) = KEYS.iter().find(|k| {
+            after.strip_prefix(**k).is_some_and(|r| {
+                r.starts_with(',')
+                    || r.starts_with('>')
+                    || r.starts_with(" ,")
+                    || r.starts_with(" >")
+            })
+        }) {
+            return Some(key);
+        }
+        rest = after;
     }
     None
 }
@@ -117,21 +99,29 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
 /// 核心 API 守卫：`apply_replacements` 必须收密集表（回退成 `HashMap` 即红）。
 #[test]
 fn apply_replacements_takes_a_dense_map() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("foundation/forge-ir/src/function.rs");
+    let path = repo_root().join("crates/foundation/forge-ir/src/function.rs");
     let text =
-        std::fs::read_to_string(&root).unwrap_or_else(|e| panic!("读不到 {}：{e}", root.display()));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
     assert!(
         text.contains(
             "fn apply_replacements(&mut self, replacements: &SecondaryMap<Value, Value>)"
         ),
-        "`Function::apply_replacements` 必须收 `&SecondaryMap<Value, Value>`（重映射表是密集表；\
-         v3 S2 余项④）"
+        "`Function::apply_replacements` 必须收 `&SecondaryMap<Value, Value>`（重映射表是密集表）"
     );
     assert!(
         !text.contains("fn apply_replacements(&mut self, replacements: &HashMap<Value, Value>)"),
         "`apply_replacements` 回退成 HashMap 了"
+    );
+}
+
+/// 核心 API 守卫：`clone_inst` 的 `value_remap` 同样必须是密集表。
+#[test]
+fn clone_inst_takes_a_dense_remap() {
+    let path = repo_root().join("crates/foundation/forge-ir/src/dfg.rs");
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
+    assert!(
+        text.contains("value_remap: &mut SecondaryMap<Value, Value>,"),
+        "`DataFlowGraph::clone_inst` 的 `value_remap` 必须是 `&mut SecondaryMap<Value, Value>`"
     );
 }

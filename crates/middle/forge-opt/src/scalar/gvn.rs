@@ -66,9 +66,9 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
     }
 
     // Build dominator children map (release dominator tree borrow before DFS)
-    let dom_children: HashMap<Block, Vec<Block>> = {
+    let dom_children: SecondaryMap<Block, Vec<Block>> = {
         let dt = func.dominator_tree();
-        let mut map = HashMap::new();
+        let mut map = SecondaryMap::new();
         for bi in 0..n {
             let block = Block::new(bi as u32);
             map.insert(block, dt.children(block).to_vec());
@@ -83,7 +83,7 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
     // Scope stack: top of stack is current block's scope
     let mut scopes: Vec<HashMap<ExprKey, Value>> = vec![];
     // Constant map: Value → (Big value, TypeId)
-    let mut const_map: HashMap<Value, (Big, TypeId)> = HashMap::new();
+    let mut const_map: SecondaryMap<Value, (Big, TypeId)> = SecondaryMap::new();
 
     // DFS from entry block
     let entry_id = func.entry();
@@ -120,7 +120,7 @@ fn try_const_fold(
     opcode: &Opcode,
     mapped_operands: &[Value],
     immediates: &[Immediate],
-    const_map: &HashMap<Value, (Big, TypeId)>,
+    const_map: &SecondaryMap<Value, (Big, TypeId)>,
 ) -> Option<(Big, TypeId)> {
     // 第三十五轮:统一走 const_fold::fold_opcode 权威实现(sccp.rs:277 先例;
     // 原 9 个 opcode 手写求值与 fold_opcode 逐行等价,truncate_to_type/
@@ -129,7 +129,7 @@ fn try_const_fold(
     let const_ops: smallvec::SmallVec<[ConstValue; 4]> = mapped_operands
         .iter()
         .map(|v| {
-            let (big, ty) = const_map.get(v)?;
+            let (big, ty) = const_map.get(*v)?;
             Some(ConstValue::Int(big.clone(), *ty))
         })
         .collect::<Option<smallvec::SmallVec<[ConstValue; 4]>>>()?;
@@ -161,10 +161,10 @@ fn gvn_lookup(scopes: &[HashMap<ExprKey, Value>], key: &ExprKey) -> Option<Value
 fn gvn_dfs(
     func: &mut Function,
     block_id: Block,
-    dom_children: &HashMap<Block, Vec<Block>>,
+    dom_children: &SecondaryMap<Block, Vec<Block>>,
     scopes: &mut Vec<HashMap<ExprKey, Value>>,
     replacements: &mut SecondaryMap<Value, Value>,
-    const_map: &mut HashMap<Value, (Big, TypeId)>,
+    const_map: &mut SecondaryMap<Value, (Big, TypeId)>,
     to_kill: &mut Vec<Inst>,
     result: &mut PassResult,
     alias: &AliasAnalysis,
@@ -308,7 +308,7 @@ fn gvn_dfs(
     }
 
     // 3. DFS children
-    if let Some(children) = dom_children.get(&block_id) {
+    if let Some(children) = dom_children.get(block_id) {
         for &child in children {
             gvn_dfs(
                 func,
