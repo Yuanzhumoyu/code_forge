@@ -1470,7 +1470,7 @@ mod tests {
     ///
     /// **断言 lane15（不是 lane0）**：D5 的缺陷正是"被调方只 load 32B"（lane8..15
     /// 丢失），lane0 断言对它是盲区。类型建在**同一个** TypeContext 上（跨上下文
-    /// TypeId 会越界 panic：`forge-ir/src/types.rs` 的 `get()`；旧写法用另一个 store
+    /// TypeId 会越界 panic：`forge-ir/src/ir/types.rs` 的 `get()`；旧写法用另一个 store
     /// 建 `vt`，在本机无 AVX-512 时直接 return 因而从未跑到）。
     #[cfg(target_arch = "x86_64")]
     #[test]

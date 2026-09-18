@@ -8,8 +8,8 @@
 //! 3. `TypeId::bits()` 是**历史视图**：`PTR` 恒 64、复合返回 0——本文件把它与
 //!    事实的差异显式钉住（不是靠注释）。
 
-use forge_ir::data_layout::DataLayout;
-use forge_ir::types::TypeStore;
+use forge_ir::ir::data_layout::DataLayout;
+use forge_ir::ir::types::TypeStore;
 use forge_ir::{TypeContext, TypeId};
 
 /// `scalar_bits` 是类型事实：标量给位宽、指针按 DataLayout、复合给 None。

@@ -44,7 +44,7 @@ use crate::pipeline::agg_expand::{AggSlots, UseJob, UseKind, UsePos};
 use crate::pipeline::alloc_result::AllocResult;
 use crate::pipeline::regalloc_bt::BacktrackingAllocator;
 use crate::{CompiledFunction, IrError, LowerCtx, MachineInst, VBlockId, VCode};
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 

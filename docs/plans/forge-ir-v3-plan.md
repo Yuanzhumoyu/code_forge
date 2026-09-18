@@ -1962,6 +1962,46 @@ agg job 一次"（不是逐指令），且那些函数在 DFG 写入之间夹短
 riscv64 131/67/0、arm64 23/175/0；fmt `--check`/clippy `-D warnings`/
 `cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
 
+### A0（目录归类）：`src/` 按职能分组（2026-09-19）
+
+**动机**（用户提出）：`forge-ir/src` 顶层平铺 30 个 `.rs`，可读性与可维护性变差；
+文本层（9,995 行）与核心混在同一层，看不出依赖方向。
+
+**做法**：顶层只留 `lib.rs` / `error.rs` / `verify.rs`，其余按职能进目录——
+
+| 目录 | 内容 |
+| --- | --- |
+| `entity/` | `mod.rs`（←`entity.rs` 句柄）、`map.rs`（←`entity_map.rs` 容器） |
+| `ir/` | types / dfg / function / opcode / constant / immediate / terminator / builder / metadata / symbol / data_layout / type_rules / inst_flags / mem_flags / isel_strategy |
+| `analysis/` | `mod.rs`（←`analysis.rs` 支配树）+ alias / loop_info / use_list / debug_info |
+| `util/` | big / imm_str / string_pool |
+| `text/` | `display.rs` + `parser/`（←`ir_parser/`，A0a 已落） |
+
+**公开面不变**：类型仍全部从 crate 根扁平导出（`forge_ir::Function`/`TypeId`/…），
+另**新增** `forge_ir::{EntityRef, EntitySet, PackedOption, PrimaryMap, SecondaryMap}`
+扁平导出（此前只有 `forge_ir::entity_map::SecondaryMap` 这条路径）。文本层规范路径
+`forge_ir::text::{parse_module, parse_function, function_to_string}`。
+
+**按"无需兼容旧版本结构"执行**：旧模块路径**直接删除**，不留别名、不留双入口；
+全仓 71 个 `.rs` 与 `grammar.lalrpop` 的路径引用同提交改写。组名取 `util` 而非
+`support`：`forge_opt::support` 已占用该名，两者经 `code_forge::prelude` 的 glob
+重导出会触发 `ambiguous glob re-exports`（实测警告后改名，改名即清零）。
+
+**踩到的两类真实坑**（记录以免重犯）：① `lalrpop_mod!` 的 include 串与
+`grammar.lalrpop` 里的 `crate::` 类型路径是**两处独立事实**——只改生成物不改语法文件
+会在下次重建时回退（已把语法文件里的 135 处 `crate::ir_parser::` 与 2 处
+`crate::big::` 一并改掉并强制重建验证）；② 群组移动后文件内的 `super::` 语义变了
+（`src/ir/function.rs` 的 `super::entity` 现在指 `ir::`）——按模块→全路径映射统一改
+`crate::…`。
+
+**守卫同步**（都是"路径写死"的静态守卫，不同步就会误报/漏报）：`read_path_budget.rs`
+的预算表、`forge-opt/tests/entity_tables.rs`、`entity_privatization.rs`（改指
+`src/entity/mod.rs`）、`text_feature_gate.rs`（核心集合 = `src/**` 去掉 `src/text/**`，
+并新增"`src/display.rs`/`src/ir_parser.rs` 不得复活"的断言）。
+
+**验证**：见 `CHANGELOG.md` 同日条目（fmt/clippy/workspace tests/语料/矩阵/release/doc
+逐条实测）。
+
 ## 7. 参考设计（外部）
 
 - Cranelift：two-map 实体容器与"刻意不支持删除"

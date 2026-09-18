@@ -24,7 +24,7 @@
 //! 守卫分两层：行为断言（未知架构名原样往返、宽度只跟布局字符串走）+ 源码断言
 //! （`src/` 里不得重现代码表、公开面不得出现 `String` 字段）。
 
-use forge_ir::data_layout::{DataLayout, TargetTriple};
+use forge_ir::ir::data_layout::{DataLayout, TargetTriple};
 use forge_ir::text::parser::parse_module;
 
 /// 读 `src/**/*.rs`，返回 (相对路径, 去掉 `#[cfg(test)]` 尾部的主体)。

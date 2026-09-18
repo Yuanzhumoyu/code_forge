@@ -1,13 +1,13 @@
 //! LLVM IR 解析器集成测试矩阵（各语法构造）。
 //!
-//! 使用 `forge_ir::text::parser`（Phase 7 切换 lib.rs 后为 `ir_parser`）。
+//! 使用 `forge_ir::text::parser`（目录归类后文本层统一在 `src/text/`）。
 //! 每个测试断言解析构建的 forge IR 结构（opcode/操作数/类型/terminator）。
 
-use forge_ir::opcode::Opcode;
+use forge_ir::ir::opcode::Opcode;
 use forge_ir::text::parser::{parse_function, parse_module};
 
 /// 按序收集函数内全部指令 opcode。
-fn opcodes(f: &forge_ir::function::Function) -> Vec<Opcode> {
+fn opcodes(f: &forge_ir::ir::function::Function) -> Vec<Opcode> {
     f.dfg
         .block_data_iter()
         .flat_map(|b| b.inst_order.iter())
@@ -298,16 +298,19 @@ fn saturating_extrema() {
 #[test]
 fn icmp_all_conditions() {
     for (name, want) in [
-        ("eq", forge_ir::opcode::IntCC::Equal),
-        ("ne", forge_ir::opcode::IntCC::NotEqual),
-        ("slt", forge_ir::opcode::IntCC::SignedLessThan),
-        ("sgt", forge_ir::opcode::IntCC::SignedGreaterThan),
-        ("sle", forge_ir::opcode::IntCC::SignedLessThanOrEqual),
-        ("sge", forge_ir::opcode::IntCC::SignedGreaterThanOrEqual),
-        ("ult", forge_ir::opcode::IntCC::UnsignedLessThan),
-        ("ugt", forge_ir::opcode::IntCC::UnsignedGreaterThan),
-        ("ule", forge_ir::opcode::IntCC::UnsignedLessThanOrEqual),
-        ("uge", forge_ir::opcode::IntCC::UnsignedGreaterThanOrEqual),
+        ("eq", forge_ir::ir::opcode::IntCC::Equal),
+        ("ne", forge_ir::ir::opcode::IntCC::NotEqual),
+        ("slt", forge_ir::ir::opcode::IntCC::SignedLessThan),
+        ("sgt", forge_ir::ir::opcode::IntCC::SignedGreaterThan),
+        ("sle", forge_ir::ir::opcode::IntCC::SignedLessThanOrEqual),
+        ("sge", forge_ir::ir::opcode::IntCC::SignedGreaterThanOrEqual),
+        ("ult", forge_ir::ir::opcode::IntCC::UnsignedLessThan),
+        ("ugt", forge_ir::ir::opcode::IntCC::UnsignedGreaterThan),
+        ("ule", forge_ir::ir::opcode::IntCC::UnsignedLessThanOrEqual),
+        (
+            "uge",
+            forge_ir::ir::opcode::IntCC::UnsignedGreaterThanOrEqual,
+        ),
     ] {
         let src = format!(
             "define i1 @f(i32 %a, i32 %b) {{\n  %e:\n    %r = icmp {name} i32 %a, i32 %b\n    ret i1 %r\n}}\n"
@@ -333,7 +336,7 @@ fn fcmp_ordered() {
     assert_eq!(inst.opcode, Opcode::Fcmp);
     assert_eq!(
         inst.immediates.first().and_then(|im| im.as_float_cc()),
-        Some(forge_ir::opcode::FloatCC::LessThan),
+        Some(forge_ir::ir::opcode::FloatCC::LessThan),
         "fcmp olt：条件须在 immediate 通道"
     );
 }
@@ -393,11 +396,11 @@ fn control_flow() {
     assert_eq!(f.dfg.block_count(), 3);
     assert_eq!(
         f.dfg.term_kind(forge_ir::Block::new(0)),
-        Some(forge_ir::terminator::TermKind::Branch)
+        Some(forge_ir::ir::terminator::TermKind::Branch)
     );
     assert_eq!(
         f.dfg.term_kind(forge_ir::Block::new(2)),
-        Some(forge_ir::terminator::TermKind::Unreachable)
+        Some(forge_ir::ir::terminator::TermKind::Unreachable)
     );
 }
 

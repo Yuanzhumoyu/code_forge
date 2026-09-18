@@ -7,9 +7,9 @@
 //! - 向量常量 (扁平字节池 + 段端序，insert_vector / insert_vector_with_endian)
 //! - 聚合常量（树形：标量/嵌套聚合，AggConst）
 
-use super::entity::{AggId, ConstId, Endianness};
-use crate::big::Big;
 use crate::entity::TypeId;
+use crate::entity::{AggId, ConstId, Endianness};
+use crate::util::big::Big;
 use std::collections::HashMap;
 
 /// 聚合常量子节点：标量（ConstId）或嵌套聚合（AggId）。

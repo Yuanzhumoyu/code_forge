@@ -16,9 +16,9 @@
 //! `check_immediates`/`check_gep_indices` 在每条指令上各取一次锁）。
 #![cfg(debug_assertions)]
 
-use forge_ir::builder::FunctionBuilder;
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::text::display::function_to_string;
-use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::Verifier;
 use forge_ir::{Function, Module, TypeId};
 

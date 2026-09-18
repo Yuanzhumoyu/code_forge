@@ -10,9 +10,9 @@
 //!
 //! 10k 随机模块 round-trip 0 失败；发现的 bug 应固定为回归测试。
 
-use forge_ir::dfg::BlockData;
-use forge_ir::function::{Function, Module};
-use forge_ir::immediate::Immediate;
+use forge_ir::ir::dfg::BlockData;
+use forge_ir::ir::function::{Function, Module};
+use forge_ir::ir::immediate::Immediate;
 use forge_ir::text::parser::parse_module;
 use std::collections::HashMap;
 
@@ -717,9 +717,9 @@ fn const_eq(f1: &Function, a: &Immediate, f2: &Function, b: &Immediate) -> bool 
 
 fn assert_inst_eq(
     f1: &Function,
-    i1: &forge_ir::dfg::Instruction,
+    i1: &forge_ir::ir::dfg::Instruction,
     f2: &Function,
-    i2: &forge_ir::dfg::Instruction,
+    i2: &forge_ir::ir::dfg::Instruction,
     text: &str,
 ) {
     assert_eq!(i1.opcode, i2.opcode, "opcode:\n{text}");

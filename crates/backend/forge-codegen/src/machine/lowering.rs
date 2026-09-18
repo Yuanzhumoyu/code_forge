@@ -5,7 +5,7 @@
 //! 临时寄存器分配器 + XReg→微指令寄存器字段映射 + 输入/输出。
 
 use crate::{LowerCtx, VBlockId};
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::{Block, IrError, Opcode, Value, XReg, XRegAllocator};
 
 /// 指令包 — DSL 中间指令（IR op）映射到微指令的返回结构，取代旧的 `Vec<Inst>`。

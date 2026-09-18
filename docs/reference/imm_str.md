@@ -11,7 +11,7 @@
   `Module` 维护三张 `HashMap<String, _>` 符号索引表，每次 `add_function` 都要
   `name.to_string()` 克隆一份堆字符串；
 - `display.rs` 的 NameResolver 每次打印都重建 `HashMap<Value, String>`，是热路径；
-- `ir_parser` / `verify` 中有大量 `"call".to_string()` 这类编译期字面量克隆；
+- `text::parser` / `verify` 中有大量 `"call".to_string()` 这类编译期字面量克隆；
 - 解析器 lexer 对每个 token 做一次 `lex.slice().to_string()` 堆分配。
 
 目标：设计一个**不可变字符串**类型，满足：
@@ -220,15 +220,15 @@ trait 实现：
 
 ### P1 — 字面量 + 解析器
 
-- [x] `ir_parser/semantics.rs` 函数名构造改 `ImmStr::from(trimmed)`（短函数名
+- [x] `src/text/parser/semantics.rs` 函数名构造改 `ImmStr::from(trimmed)`（短函数名
   内联零分配；长名单次 Arc 分配，不再 to_string + 二次拷贝）
 - [ ] `verify.rs` 字面量 — **评估后不迁移**：所有字面量都在错误构造路径
   （`errors.push(...)` 分支内，冷路径），且字段属 `VerifyError(String)`，迁移需
   连带改错误类型（明确不迁移），收益≈0
-- [ ] `ir_parser` lexer（lexer.rs:123-142）— **评估后不迁移**：token 生命周期短
+- [ ] `text::parser` lexer（`lexer.rs`:123-142）— **评估后不迁移**：token 生命周期短
   （lexer→parser→semantics 立即消费），grammar.lalrpop 生成代码改动面大、风险高；
   最终函数名已通过 `FunctionBuilder::new(impl Into<ImmStr>)` 受益
-- [ ] `ir_parser` AST（ast_items.rs）String 字段 → `ImmStr`（临时 AST，收益中等，
+- [ ] `text::parser` AST（`ast_items.rs`）String 字段 → `ImmStr`（临时 AST，收益中等，
   可选）
 
 ### 不迁移

@@ -18,9 +18,9 @@ mod common;
 use common::demo8_v12::TargetMachine;
 use forge_codegen::FunctionCompiler;
 use forge_ir::TypeId;
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::function::Function;
-use forge_ir::types::{FunctionSignature, TypeContext};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::function::Function;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 
 /// `fn f(a: i8) -> i8 { a + a + … }`（`extra` 条 `iadd`）。
 ///

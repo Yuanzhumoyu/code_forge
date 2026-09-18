@@ -20,7 +20,7 @@ use crate::block::BlockId;
 use crate::error::HirError;
 use crate::graph::{GraphValue, IrGraph, NodeId};
 use crate::registry::BrickRegistry;
-use forge_ir::opcode::{IntCC, Opcode};
+use forge_ir::ir::opcode::{IntCC, Opcode};
 use forge_ir::{Block, FunctionBuilder, TypeId, Value};
 use std::collections::HashMap;
 
@@ -549,7 +549,7 @@ fn parse_intcc_int(i: i64) -> Result<IntCC, HirError> {
 /// Extract a FloatCC from attrs.
 pub fn extract_floatcc(
     attrs: &HashMap<Symbol, AttrValue>,
-) -> Result<forge_ir::opcode::FloatCC, HirError> {
+) -> Result<forge_ir::ir::opcode::FloatCC, HirError> {
     let key = sym_intern("cond");
     let val = attrs
         .get(&key)
@@ -558,17 +558,17 @@ pub fn extract_floatcc(
     if let Some(s) = val.as_str() {
         let s_str = crate::attr::sym_lookup(s);
         match s_str.as_str() {
-            "ord" | "Ordered" => return Ok(forge_ir::opcode::FloatCC::Ordered),
-            "uno" | "Unordered" => return Ok(forge_ir::opcode::FloatCC::Unordered),
-            "eq" | "Equal" => return Ok(forge_ir::opcode::FloatCC::Equal),
-            "ne" | "NotEqual" => return Ok(forge_ir::opcode::FloatCC::NotEqual),
-            "lt" | "LessThan" => return Ok(forge_ir::opcode::FloatCC::LessThan),
+            "ord" | "Ordered" => return Ok(forge_ir::ir::opcode::FloatCC::Ordered),
+            "uno" | "Unordered" => return Ok(forge_ir::ir::opcode::FloatCC::Unordered),
+            "eq" | "Equal" => return Ok(forge_ir::ir::opcode::FloatCC::Equal),
+            "ne" | "NotEqual" => return Ok(forge_ir::ir::opcode::FloatCC::NotEqual),
+            "lt" | "LessThan" => return Ok(forge_ir::ir::opcode::FloatCC::LessThan),
             "le" | "LessThanOrEqual" => {
-                return Ok(forge_ir::opcode::FloatCC::LessThanOrEqual);
+                return Ok(forge_ir::ir::opcode::FloatCC::LessThanOrEqual);
             }
-            "gt" | "GreaterThan" => return Ok(forge_ir::opcode::FloatCC::GreaterThan),
+            "gt" | "GreaterThan" => return Ok(forge_ir::ir::opcode::FloatCC::GreaterThan),
             "ge" | "GreaterThanOrEqual" => {
-                return Ok(forge_ir::opcode::FloatCC::GreaterThanOrEqual);
+                return Ok(forge_ir::ir::opcode::FloatCC::GreaterThanOrEqual);
             }
             _ => {}
         }

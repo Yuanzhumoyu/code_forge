@@ -11,7 +11,7 @@
 use std::collections::HashSet;
 
 use forge_ir::Opcode;
-use forge_ir::opcode::{CondKind, FloatCC, IntCC, TypeRule};
+use forge_ir::ir::opcode::{CondKind, FloatCC, IntCC, TypeRule};
 
 /// **编译期**穷举：新增 `Opcode` 变体而不更新这里 / 不更新 `Opcode::name()`
 /// 都会编译失败。返回值是分支数，用于与 `Opcode::ALL` 对账。

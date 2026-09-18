@@ -31,7 +31,7 @@ fn no_dense_handle_hashmaps_in_forge_opt() {
     walk_src(&root.join("crates/middle/forge-opt/src"), &root, &mut hits);
     assert!(
         hits.is_empty(),
-        "forge-opt 里仍以密集句柄为键用 HashMap（请改用 `forge_ir::entity_map::SecondaryMap`）：\n{}",
+        "forge-opt 里仍以密集句柄为键用 HashMap（请改用 `forge_ir::entity::map::SecondaryMap`）：\n{}",
         hits.join("\n")
     );
 }
@@ -99,7 +99,7 @@ fn dense_handle_hashmap_in(line: &str) -> Option<&'static str> {
 /// 核心 API 守卫：`apply_replacements` 必须收密集表（回退成 `HashMap` 即红）。
 #[test]
 fn apply_replacements_takes_a_dense_map() {
-    let path = repo_root().join("crates/foundation/forge-ir/src/function.rs");
+    let path = repo_root().join("crates/foundation/forge-ir/src/ir/function.rs");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
     assert!(
@@ -117,7 +117,7 @@ fn apply_replacements_takes_a_dense_map() {
 /// 核心 API 守卫：`clone_inst` 的 `value_remap` 同样必须是密集表。
 #[test]
 fn clone_inst_takes_a_dense_remap() {
-    let path = repo_root().join("crates/foundation/forge-ir/src/dfg.rs");
+    let path = repo_root().join("crates/foundation/forge-ir/src/ir/dfg.rs");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
     assert!(

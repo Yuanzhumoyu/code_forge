@@ -6,7 +6,7 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashSet;
 
@@ -97,7 +97,7 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
             if matches!(inst.opcode, Opcode::Load | Opcode::Fload)
                 && inst
                     .mem_flags
-                    .contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+                    .contains(forge_ir::ir::mem_flags::MemFlags::VOLATILE)
             {
                 continue;
             }

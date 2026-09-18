@@ -14,14 +14,14 @@
 //!   而块内顺序表不含终结符，所以它是一条绕过 `set_terminator` 的改图路）；
 //! - 读者拿 `Arc` 快照：快照在本次调用内恒定，不被后续改写影响。
 
-use forge_ir::builder::FunctionBuilder;
+use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::{Block, InstFlags, Opcode, TypeId};
 use std::sync::Arc;
 
 /// 两个块 + 一个条件分支：`entry: br c, then, else`（三块都 return）。
 fn diamond() -> (forge_ir::Function, Block, Block, Block) {
-    let ctx = forge_ir::types::TypeContext::new();
-    let sig = forge_ir::types::FunctionSignature::new(&[], &[ctx.i32_ty()]);
+    let ctx = forge_ir::ir::types::TypeContext::new();
+    let sig = forge_ir::ir::types::FunctionSignature::new(&[], &[ctx.i32_ty()]);
     let mut fb = FunctionBuilder::new("f", ctx.clone(), sig);
     let (entry, _) = fb.create_entry_block();
     let then_b = fb.create_block();

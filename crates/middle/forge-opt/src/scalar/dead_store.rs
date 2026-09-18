@@ -193,7 +193,7 @@ mod tests {
         let p0 = b.stack_addr(0);
         let v1 = b.iconst_i32(1);
         let v2 = b.iconst_i32(2);
-        let flags = forge_ir::mem_flags::MemFlags::VOLATILE;
+        let flags = forge_ir::ir::mem_flags::MemFlags::VOLATILE;
         b.store_with_flags(v1, p0, flags);
         b.store_with_flags(v2, p0, flags);
         b.ret(&[]);
@@ -209,7 +209,7 @@ mod tests {
     /// （原子指令可能读/写同位置，保守清表）。
     #[test]
     fn dse_atomic_between_stores_blocks() {
-        use forge_ir::opcode::{AtomicRmwOp, Ordering};
+        use forge_ir::ir::opcode::{AtomicRmwOp, Ordering};
         let sig = FunctionSignature::new(&[], &[]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();

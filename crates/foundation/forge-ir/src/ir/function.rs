@@ -4,25 +4,25 @@
 //! `Module` 管理多个函数、全局变量、类型系统和模块元数据。
 
 use crate::ImmStr;
-use crate::entity_map::SecondaryMap;
+use crate::entity::map::SecondaryMap;
 use crate::error::IrError;
 
-use super::analysis::{AnalysisManager, AnalysisRevision, DominatorTree};
-use super::constant::ConstantPool;
-use super::data_layout::DataLayout;
-use super::data_layout::TargetTriple;
-use super::debug_info::DebugInfo;
-use super::dfg::{BlockData, DataFlowGraph, Instruction};
-use super::entity::*;
-use super::immediate::Immediate;
-use super::loop_info::LoopForest;
-use super::metadata::{AttachedMetadata, MetadataStore};
-use super::opcode::Opcode;
-use super::string_pool::InternedStr;
-use super::symbol::{Comdat, ComdatId, ComdatKind, SymbolInfo};
-use super::terminator::TermKind;
-use super::types::{CallConv, FunctionSignature, TypeContext};
-use super::use_list::UseLists;
+use crate::analysis::debug_info::DebugInfo;
+use crate::analysis::loop_info::LoopForest;
+use crate::analysis::use_list::UseLists;
+use crate::analysis::{AnalysisManager, AnalysisRevision, DominatorTree};
+use crate::entity::*;
+use crate::ir::constant::ConstantPool;
+use crate::ir::data_layout::DataLayout;
+use crate::ir::data_layout::TargetTriple;
+use crate::ir::dfg::{BlockData, DataFlowGraph, Instruction};
+use crate::ir::immediate::Immediate;
+use crate::ir::metadata::{AttachedMetadata, MetadataStore};
+use crate::ir::opcode::Opcode;
+use crate::ir::symbol::{Comdat, ComdatId, ComdatKind, SymbolInfo};
+use crate::ir::terminator::TermKind;
+use crate::ir::types::{CallConv, FunctionSignature, TypeContext};
+use crate::util::string_pool::InternedStr;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -817,9 +817,9 @@ impl Function {
         opcode: Opcode,
         block: Block,
         operands: SmallVec<[Value; 4]>,
-        immediates: SmallVec<[super::immediate::Immediate; 4]>,
+        immediates: SmallVec<[crate::ir::immediate::Immediate; 4]>,
         result_tys: &[TypeId],
-        flags: super::inst_flags::InstFlags,
+        flags: crate::ir::inst_flags::InstFlags,
     ) -> Inst {
         let inst = self.dfg.make_inst(
             opcode,
@@ -840,12 +840,12 @@ impl Function {
         opcode: Opcode,
         block: Block,
         operands: SmallVec<[Value; 4]>,
-        immediates: SmallVec<[super::immediate::Immediate; 4]>,
+        immediates: SmallVec<[crate::ir::immediate::Immediate; 4]>,
         result_tys: &[TypeId],
-        flags: super::inst_flags::InstFlags,
-        mem_flags: super::mem_flags::MemFlags,
+        flags: crate::ir::inst_flags::InstFlags,
+        mem_flags: crate::ir::mem_flags::MemFlags,
         metadata: SmallVec<[AttachedMetadata; 2]>,
-        loc: Option<super::debug_info::SourceLocation>,
+        loc: Option<crate::analysis::debug_info::SourceLocation>,
     ) -> Inst {
         let inst = self.dfg.make_inst_with_meta_and_loc(
             opcode,
@@ -1063,19 +1063,19 @@ pub struct GlobalVariable {
     ///
     /// **单写**（v3 方案 S5）：读 [`GlobalVariable::metadata`]、写
     /// [`GlobalVariable::attach_metadata`]。
-    pub(crate) metadata: Vec<crate::metadata::AttachedMetadata>,
+    pub(crate) metadata: Vec<crate::ir::metadata::AttachedMetadata>,
     /// ifunc（第二十九轮:IR 表示——`@f = ifunc <retty> (<params>), ptr @resolver`;
     /// ty 为返回类型;参数类型存解析层文本;resolver 为解析器名）。
     pub is_ifunc: bool,
-    pub ifunc_params: Vec<crate::imm_str::ImmStr>,
-    pub ifunc_resolver: Option<crate::imm_str::ImmStr>,
+    pub ifunc_params: Vec<crate::util::imm_str::ImmStr>,
+    pub ifunc_resolver: Option<crate::util::imm_str::ImmStr>,
 }
 
 /// 模块级别名：`@a = alias <ty>, <aliasee>`（aliasee 为常量表达式，文本还原）。
 pub struct GlobalAlias {
     pub name: ImmStr,
     pub ty: TypeId,
-    pub linkage: crate::symbol::Linkage,
+    pub linkage: crate::ir::symbol::Linkage,
     pub dso_local: bool,
     pub unnamed_addr: bool,
     /// aliasee 的**文本**（`ptr @b` / `(ptrtoint (ptr @h to i32))`）——含类型前缀，
@@ -1087,7 +1087,7 @@ pub struct GlobalAlias {
     pub aliasee_text: ImmStr,
     /// 别名尾 metadata 附加（**单写**：读 [`GlobalAlias::metadata`]、写
     /// [`GlobalAlias::attach_metadata`]）。
-    pub(crate) metadata: Vec<crate::metadata::AttachedMetadata>,
+    pub(crate) metadata: Vec<crate::ir::metadata::AttachedMetadata>,
 }
 
 impl GlobalVariable {
@@ -1130,7 +1130,7 @@ impl GlobalVariable {
         self
     }
 
-    pub fn with_linkage(mut self, linkage: super::symbol::Linkage) -> Self {
+    pub fn with_linkage(mut self, linkage: crate::ir::symbol::Linkage) -> Self {
         self.symbol.linkage = linkage;
         self
     }
@@ -1141,24 +1141,24 @@ impl GlobalVariable {
     }
 
     /// 全局尾 metadata（`(kind, node)` 对，按附加序）。
-    pub fn metadata(&self) -> &[crate::metadata::AttachedMetadata] {
+    pub fn metadata(&self) -> &[crate::ir::metadata::AttachedMetadata] {
         &self.metadata
     }
 
     /// 附加一条全局尾 metadata —— **全局变量附件的唯一写入口**（S5：metadata 单写）。
-    pub fn attach_metadata(&mut self, metadata: crate::metadata::AttachedMetadata) {
+    pub fn attach_metadata(&mut self, metadata: crate::ir::metadata::AttachedMetadata) {
         self.metadata.push(metadata);
     }
 }
 
 impl GlobalAlias {
     /// 别名尾 metadata（`(kind, node)` 对，按附加序）。
-    pub fn metadata(&self) -> &[crate::metadata::AttachedMetadata] {
+    pub fn metadata(&self) -> &[crate::ir::metadata::AttachedMetadata] {
         &self.metadata
     }
 
     /// 附加一条别名尾 metadata —— **别名附件的唯一写入口**（S5：metadata 单写）。
-    pub fn attach_metadata(&mut self, metadata: crate::metadata::AttachedMetadata) {
+    pub fn attach_metadata(&mut self, metadata: crate::ir::metadata::AttachedMetadata) {
         self.metadata.push(metadata);
     }
 }
@@ -1454,7 +1454,7 @@ mod tests {
 
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[(ctx.i32_ty(), "x")], &[ctx.i32_ty()]);
-        let mut fb = crate::builder::FunctionBuilder::new("test", ctx.clone(), sig);
+        let mut fb = crate::ir::builder::FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, params) = fb.create_block_with_params(&[(TypeId::I32, "x")]);
         let then_blk = fb.create_block();
         let else_blk = fb.create_block();
@@ -1492,11 +1492,11 @@ mod tests {
     /// RAUW 同步更新 DFG 操作数与 use-lists；kill 后 IR 仍有效。
     #[test]
     fn test_rauw_and_kill_keep_use_lists_fresh() {
-        use crate::dfg::ValueDef;
+        use crate::ir::dfg::ValueDef;
 
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
-        let mut fb = crate::builder::FunctionBuilder::new("test", ctx.clone(), sig);
+        let mut fb = crate::ir::builder::FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
         let a = fb.iconst_i32(1);
@@ -1553,11 +1553,11 @@ mod tests {
     /// replace_all_uses_and_kill：一体替换 + 删除。
     #[test]
     fn test_replace_all_uses_and_kill() {
-        use crate::dfg::ValueDef;
+        use crate::ir::dfg::ValueDef;
 
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
-        let mut fb = crate::builder::FunctionBuilder::new("test", ctx.clone(), sig);
+        let mut fb = crate::ir::builder::FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
         let a = fb.iconst_i32(1);
@@ -1585,11 +1585,11 @@ mod tests {
     /// 并自动维护 value_remap（旧结果 → 新结果）。
     #[test]
     fn test_clone_inst_preserves_fields() {
-        use crate::dfg::ValueDef;
+        use crate::ir::dfg::ValueDef;
 
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
-        let mut fb = crate::builder::FunctionBuilder::new("test", ctx.clone(), sig);
+        let mut fb = crate::ir::builder::FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         let target = fb.create_block();
         fb.switch_to_block(entry);
@@ -1604,10 +1604,10 @@ mod tests {
         };
         {
             let inst = fb.func.dfg.inst_mut(x_inst);
-            inst.flags = crate::inst_flags::InstFlags::MAY_UB;
+            inst.flags = crate::ir::inst_flags::InstFlags::MAY_UB;
             inst.set_isel_strategy(crate::IselStrategy::from_static("lea_sib:4"));
-            inst.loc = Some(crate::debug_info::SourceLocation {
-                file: Some(crate::imm_str::ImmStr::from("test.rs")),
+            inst.loc = Some(crate::analysis::debug_info::SourceLocation {
+                file: Some(crate::util::imm_str::ImmStr::from("test.rs")),
                 line: Some(42),
                 column: Some(7),
             });
@@ -1644,7 +1644,7 @@ mod tests {
         let mut dst = ConstantPool::new();
         let i = src.insert_int(42, 64);
         let f = src.insert_float(1.5f64.to_bits());
-        let b = src.insert_big(crate::big::Big::from_i128(1i128 << 100));
+        let b = src.insert_big(crate::util::big::Big::from_i128(1i128 << 100));
         let v = src.insert_vector(&[1, 2, 3, 4]);
         // dst 先插入一条让两池索引错开，验证重定位不依赖索引
         dst.insert_int(7, 8);

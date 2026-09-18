@@ -11,8 +11,8 @@
 //! 向量精化（[`vector_op`]）、display 拼装（[`llvm_mnemonic`]）。
 
 use crate::error::IrError;
-use crate::immediate::Immediate;
-use crate::opcode::{CondKind, FloatCC, IntCC, Opcode};
+use crate::ir::immediate::Immediate;
+use crate::ir::opcode::{CondKind, FloatCC, IntCC, Opcode};
 
 /// LLVM 指令名 → forge Opcode（标量基础；向量类型由 [`vector_op`] 精化）。
 ///

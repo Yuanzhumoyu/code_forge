@@ -60,7 +60,7 @@ pub enum MetadataVal {
     Int(i64),
     /// 超 i64 范围的大整数（第二十三轮 Big 化——lexer 保留精确值,
     /// DI 值域校验在 check_di_node 拒绝;display 输出原文）
-    IntBig(crate::big::Big),
+    IntBig(crate::util::big::Big),
     UInt(u64),
     Float(f64),
     Str(String),
@@ -111,21 +111,21 @@ pub fn split_md_field_tuple_lit(s: &str) -> MetadataVal {
 
 /// Big → 数值转换 helper（第二十三轮 IntLit Big 化——grammar reducer 用;
 /// 超界 → 上限哨兵,各值域校验自然拒绝）
-pub fn big_as_i64(n: &crate::big::Big) -> i64 {
+pub fn big_as_i64(n: &crate::util::big::Big) -> i64 {
     i64::try_from(n.clone()).unwrap_or(i64::MAX)
 }
-pub fn big_as_u32(n: &crate::big::Big) -> u32 {
+pub fn big_as_u32(n: &crate::util::big::Big) -> u32 {
     u32::try_from(n.clone()).unwrap_or(u32::MAX)
 }
-pub fn big_as_u64(n: &crate::big::Big) -> u64 {
+pub fn big_as_u64(n: &crate::util::big::Big) -> u64 {
     u64::try_from(n.clone()).unwrap_or(u64::MAX)
 }
 
 /// uselistorder 索引收集（第二十三轮消重——grammar 6 分支共用;
 /// rest 元素为 (Comma, IntLit) 的 lalrpop 展开）
 pub fn collect_uselistorder_idx<T>(
-    first: &crate::big::Big,
-    rest: Vec<(T, crate::big::Big)>,
+    first: &crate::util::big::Big,
+    rest: Vec<(T, crate::util::big::Big)>,
 ) -> Vec<i64> {
     let mut idx = vec![big_as_i64(first)];
     idx.extend(rest.into_iter().map(|(_, n)| big_as_i64(&n)));

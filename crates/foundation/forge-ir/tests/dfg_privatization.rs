@@ -44,8 +44,8 @@
 //! 自身实现、`self.values`（别的结构体字段）、`dfg.values()`/`dfg.insts()`
 //! 迭代访问器、注释行均不算。三个 arena 至此全部收口。
 
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::types::{FunctionSignature, TypeContext};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{CallConv, Function, ImmStr, Immediate, Inst, InstFlags, Opcode, TypeId, Value};
 
 /// 造一个含两个 i64 常量 + 一条 Iadd 的函数（值句柄齐全，便于越界对照）。

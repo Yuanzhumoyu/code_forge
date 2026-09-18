@@ -1,7 +1,7 @@
 //! 构建脚本：① lalrpop 生成 IR 文本解析器；② 从 `ops.toml` 生成指令元数据。
 //!
 //! ② 是 v3 方案 S1 的落地：`ops.toml` 是**指令清单与派生属性的单一事实源**，
-//! 生成的 `$OUT_DIR/opcode_gen.rs` 被 `src/opcode.rs` `include!`。
+//! 生成的 `$OUT_DIR/opcode_gen.rs` 被 `src/ir/opcode.rs` `include!`。
 //! 生成器 **fail-closed**：字段缺失/类型不对/名字或助记符重复/载荷未知
 //! 一律 `panic!` 中断构建（不静默跳过、不给默认名字）。
 

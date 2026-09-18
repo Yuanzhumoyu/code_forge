@@ -3,9 +3,9 @@
 //! 与 `Value` 操作数分离，存储指令的非 SSA 值操作数:
 //! 常量、块引用、函数引用、类型引用等。
 
-use super::entity::*;
-use crate::opcode::{FloatCC, IntCC};
-use crate::string_pool::InternedStr;
+use crate::entity::*;
+use crate::ir::opcode::{FloatCC, IntCC};
+use crate::util::string_pool::InternedStr;
 
 /// 非 Value 的操作数 — 编译时已知的常量或实体引用。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

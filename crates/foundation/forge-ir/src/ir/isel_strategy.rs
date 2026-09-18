@@ -41,7 +41,7 @@
 
 use std::fmt;
 
-use crate::imm_str::ImmStr;
+use crate::util::imm_str::ImmStr;
 
 /// 指令选择标签 —— 带名字的不透明句柄（见模块文档）。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

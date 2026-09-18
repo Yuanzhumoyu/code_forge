@@ -8,8 +8,8 @@
 //! 契约：①校验器对所有越界类型引用返回诊断（错误码 `BadTypeId`），不 panic；
 //! ②display 对越界 `TypeId` 输出占位符（`<bad-type:9999>`）而不是 panic。
 
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::types::{FunctionSignature, TypeContext};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::{Verifier, VerifyError};
 use forge_ir::{Module, SigRef, TypeId};
 

@@ -7,11 +7,11 @@
 
 use forge_ir::FunctionBuilder;
 use forge_ir::Value;
-use forge_ir::dfg::BlockData;
-use forge_ir::function::{Function, Module};
-use forge_ir::immediate::Immediate;
+use forge_ir::ir::dfg::BlockData;
+use forge_ir::ir::function::{Function, Module};
+use forge_ir::ir::immediate::Immediate;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::text::parser::parse_module;
-use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::{Verifier, VerifyError};
 
 /// parse₁ → display → parse₂，断言两次 forge IR 结构等价。
@@ -54,7 +54,7 @@ fn const_eq(f1: &Function, a: &Immediate, f2: &Function, b: &Immediate) -> bool 
                     (Some(ga), Some(gb))
                         if ga.ty == gb.ty && ga.children.len() == gb.children.len() =>
                     {
-                        use forge_ir::constant::AggChild;
+                        use forge_ir::ir::constant::AggChild;
                         ga.children
                             .iter()
                             .zip(&gb.children)
@@ -77,9 +77,9 @@ fn const_eq(f1: &Function, a: &Immediate, f2: &Function, b: &Immediate) -> bool 
 
 fn assert_inst_eq(
     f1: &Function,
-    i1: &forge_ir::dfg::Instruction,
+    i1: &forge_ir::ir::dfg::Instruction,
     f2: &Function,
-    i2: &forge_ir::dfg::Instruction,
+    i2: &forge_ir::ir::dfg::Instruction,
     text: &str,
 ) {
     assert_eq!(i1.opcode, i2.opcode, "opcode:\n{text}");
@@ -710,7 +710,7 @@ define i32 @f() {
 
 /// 收集模块 metadata 树中所有字符串值（Leaf/Tuple/Named 递归）。
 fn collect_metadata_strings(m: &Module) -> Vec<String> {
-    use forge_ir::metadata::{MetadataNode, MetadataValue};
+    use forge_ir::ir::metadata::{MetadataNode, MetadataValue};
     let mut out = Vec::new();
     for (_, node) in m.metadata_store.iter() {
         let vals: &[MetadataValue] = match node {

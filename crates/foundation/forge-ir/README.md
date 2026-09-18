@@ -15,20 +15,24 @@
 
 ## 结构
 
-| 模块 | 内容 |
-| --- | --- |
-| `entity` | 实体句柄：`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/`GlobalId`/`SigRef`/`VReg`/`XReg`/`PReg`/`RegClass` |
-| `entity_map` | 密集索引容器：`PrimaryMap`/`SecondaryMap`/`EntitySet`/`PackedOption` + `EntityRef`（S2） |
-| `dfg` | `DataFlowGraph`（`values`/`insts`/`blocks` 三个 arena——`values` 已私有化，见「arena 访问收口」）、`Instruction`、`BlockData` |
-| `function` | `Function`、`Module`、`Layout`、`GlobalVariable`/`GlobalAlias`（`analysis` 字段是 `AnalysisManager`） |
-| `types` | `TypeStore`（interner）、`TypeContext`、`FunctionSignature` |
-| `opcode` / `immediate` / `inst_flags` / `mem_flags` / `isel_strategy` | 指令操作码与附件（`opcode` 的枚举与派生表由 `ops.toml` 生成，见下） |
-| `builder` | `FunctionBuilder`（构造 IR 的唯一推荐入口） |
-| `use_list` / `analysis` / `loop_info` / `alias` | def-use 链、支配树与**惰性分析缓存管理器 `AnalysisManager`**（修订号自校验 + `Arc` 快照）、循环森林、最小别名分析 |
-| `constant` / `big` / `imm_str` / `string_pool` | 常量池（int/float/big/vector/aggregate）、任意精度、SSO 字符串 |
-| `verify` | `Verifier`（实测 33 个错误码 `VerifyError` / 19 个 `check_*` 检查函数 + 墓碑规范形态 `TombstoneNotCanonical`、越界类型句柄 `BadTypeId`/`BadSigRef`、严重级 `VerifySeverity`（`UnreachableBlock` 为唯一建议级）） |
-| `text::display` / `text::parser` | LLVM 文本输出与解析（logos + lalrpop；`src/text/`） |
-| `metadata` / `debug_info` / `symbol` / `data_layout` | 元数据、调试信息、符号、DataLayout 与 target triple（只作数据，不提供按架构名猜属性的查询——见「开放集合的边界」） |
+`src/` 按职能归类（2026-09-17）：顶层只剩 `lib.rs`（模块树 + 扁平重导出）、
+`error.rs`、`verify.rs` 三个文件，其余全是目录。**公开面不变**——所有类型仍从
+crate 根扁平导出（`forge_ir::Function`、`forge_ir::TypeId`、`forge_ir::SecondaryMap` …），
+目录只影响**模块路径**（`forge_ir::ir::function` 这类）。
+
+| 目录 | 模块 | 内容 |
+| --- | --- | --- |
+| `entity/` | `entity`（句柄）、`entity::map`（容器） | 实体句柄：`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/`GlobalId`/`SigRef`/`VReg`/`XReg`/`PReg`/`RegClass`；密集索引容器：`PrimaryMap`/`SecondaryMap`/`EntitySet`/`PackedOption` + `EntityRef`（S2） |
+| `ir/` | `ir::dfg` | `DataFlowGraph`（`values`/`insts`/`blocks` 三个 arena——已全部私有化，见「arena 访问收口」）、`Instruction`、`BlockData` |
+| `ir/` | `ir::function` | `Function`、`Module`、`Layout`、`GlobalVariable`/`GlobalAlias`（`analysis` 字段是 `AnalysisManager`） |
+| `ir/` | `ir::types`、`ir::type_rules`、`ir::data_layout` | `TypeStore`（interner）、`TypeContext`、`FunctionSignature`；形状类类型规则 `check_shape`；DataLayout 与 target triple |
+| `ir/` | `ir::opcode` / `ir::immediate` / `ir::inst_flags` / `ir::mem_flags` / `ir::isel_strategy` | 指令操作码与附件（`opcode` 的枚举与派生表由 `ops.toml` 生成，见下） |
+| `ir/` | `ir::builder` | `FunctionBuilder`（构造 IR 的唯一推荐入口） |
+| `ir/` | `ir::constant`、`ir::symbol`、`ir::metadata`、`ir::terminator` | 常量池（int/float/big/vector/aggregate）、符号、元数据附件、终结符 |
+| `analysis/` | `analysis`、`analysis::use_list`、`analysis::loop_info`、`analysis::alias`、`analysis::debug_info` | 支配树与**惰性分析缓存管理器 `AnalysisManager`**（修订号自校验 + `Arc` 快照）、def-use 链、循环森林、最小别名分析、调试位置 |
+| `util/` | `util::big`、`util::imm_str`、`util::string_pool` | 任意精度整数、SSO 字符串（`ImmStr`）、字符串池（**不叫 `support`**：forge-opt 已有同名模块，glob 重导出会撞名） |
+| `text/` | `text::display` / `text::parser` | LLVM 文本输出与解析（logos + lalrpop；`features = ["text"]` 门控的**唯一**开关点） |
+| 顶层 | `verify` | `Verifier`（实测 33 个错误码 `VerifyError` / 19 个 `check_*` 检查函数 + 墓碑规范形态 `TombstoneNotCanonical`、越界类型句柄 `BadTypeId`/`BadSigRef`、严重级 `VerifySeverity`（`UnreachableBlock` 为唯一建议级）） |
 
 crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**：`build.rs` 读它生成
 `$OUT_DIR/opcode_gen.rs`（`Opcode` 枚举、`ALL`/`INFOS`、名字与助记符映射、
@@ -43,7 +47,7 @@ crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**
 `MissingCondImmediate`/`WrongCondImmediate`。
 
 逐指令**类型规则族**同样声明在 `ops.toml`（`type_rule`，12 族）：`Verifier` 按族
-分派（穷举 match），形状类规则的实现只在 `src/type_rules.rs` 一份（`check_shape`，
+分派（穷举 match），形状类规则的实现只在 `src/ir/type_rules.rs` 一份（`check_shape`，
 builder 侧作为 debug 工具保留）；`Convert` 族的事实表是
 `convert = { src, dst, width }`。
 
@@ -171,7 +175,7 @@ AST 与诊断消息按设计例外）。两条规则由 `tests/open_set_boundary
 
 S0（2026-09-14）已落地的止血项与 S6 先行清偿见该文档 §6；**S1 已全部落地**
 （`ops.toml` + 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族，查表全 O(1)）；
-**S2 第一切片已落地**（`entity_map` 四个容器 + forge-ir 内部句柄键表迁移，
+**S2 第一切片已落地**（`entity::map`（归类前叫 `entity_map`）四个容器 + forge-ir 内部句柄键表迁移，
 句柄键 `HashMap` 45 → 31 处）；**S4 主体已落地**（终结符并入指令流）；
 **S5 第一切片已落地**（`isel_strategy` 类型化 + 字段私有化，2026-09-15）；
 **S5 第二切片已落地**（开放集合划边界：删掉 `TargetTriple` 的架构名查表、

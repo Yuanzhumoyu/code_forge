@@ -2,8 +2,8 @@
 //!
 //! 为 IR 指令附加源码位置信息，支持调试输出和未来的 DWARF 生成。
 
-use super::entity::Value;
-use super::imm_str::ImmStr;
+use crate::entity::Value;
+use crate::util::imm_str::ImmStr;
 use std::fmt;
 
 /// 源码位置。
@@ -52,7 +52,7 @@ impl fmt::Display for SourceLocation {
 #[derive(Clone, Debug, Default)]
 pub struct DebugInfo {
     /// 指令结果 Value → 源码位置的映射。
-    pub locations: crate::entity_map::SecondaryMap<Value, SourceLocation>,
+    pub locations: crate::entity::map::SecondaryMap<Value, SourceLocation>,
     /// 函数名（用于调试输出）。
     pub function_name: Option<ImmStr>,
 }

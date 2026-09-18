@@ -6,12 +6,12 @@
 //! - 命名 struct 按名去重 (支持递归类型)
 //! - 基本类型预填充为固定索引
 
-use super::data_layout::DataLayout;
-use super::entity::TypeId;
-use super::entity::{Endianness, SigRef};
-use super::imm_str::ImmStr;
-use super::string_pool::InternedStr;
-use super::string_pool::StringPool;
+use crate::entity::TypeId;
+use crate::entity::{Endianness, SigRef};
+use crate::ir::data_layout::DataLayout;
+use crate::util::imm_str::ImmStr;
+use crate::util::string_pool::InternedStr;
+use crate::util::string_pool::StringPool;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -389,7 +389,7 @@ impl TypeStore {
             {
                 // 第十四轮：两遍/三遍注册的占位升级——原位替换字段
                 // （前向引用占位 id 重填；真正的布局冲突由语义层报错）
-                let upgraded = crate::types::TypeEntry::Struct {
+                let upgraded = crate::ir::types::TypeEntry::Struct {
                     name: Some(name_id),
                     fields: fields.clone(),
                     is_packed: packed,

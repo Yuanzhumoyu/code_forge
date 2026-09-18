@@ -1,15 +1,15 @@
 //! IR 验证器 — 检查 SSA 属性、类型一致性、CFG 完整性。
 
-use super::dfg::{DataFlowGraph, Instruction, ValueDef};
-use super::entity::*;
-use super::function::Function;
-use super::opcode::{ConvertRule, Opcode, TypeClass, TypeRule, WidthRule};
-use super::terminator::TermKind;
-use super::types::{TypeContext, TypeEntry};
 use crate::Immediate;
-use crate::entity_map::SecondaryMap;
+use crate::entity::map::SecondaryMap;
+use crate::entity::*;
 use crate::error::IrError;
-use crate::types::TypeStore;
+use crate::ir::dfg::{DataFlowGraph, Instruction, ValueDef};
+use crate::ir::function::Function;
+use crate::ir::opcode::{ConvertRule, Opcode, TypeClass, TypeRule, WidthRule};
+use crate::ir::terminator::TermKind;
+use crate::ir::types::TypeStore;
+use crate::ir::types::{TypeContext, TypeEntry};
 use std::collections::HashSet;
 
 // ============================================================
@@ -810,7 +810,7 @@ impl Verifier {
     fn check_operand_types(
         &mut self,
         inst: Inst,
-        instruction: &super::dfg::Instruction,
+        instruction: &crate::ir::dfg::Instruction,
         defined: &SecondaryMap<Value, TypeId>,
         types: Option<&TypeStore>,
     ) {
@@ -846,11 +846,11 @@ impl Verifier {
                     .and_then(|v| defined.get(*v))
                     .copied();
                 let violations =
-                    crate::type_rules::check_shape(*op, &operand_tys, result_ty, &|t| {
+                    crate::ir::type_rules::check_shape(*op, &operand_tys, result_ty, &|t| {
                         types.map(|store| store.is_aggregate(t)).unwrap_or(false)
                     });
                 for v in violations {
-                    use crate::type_rules::ShapeViolation as SV;
+                    use crate::ir::type_rules::ShapeViolation as SV;
                     match v {
                         SV::OperandTypeMismatch { expected, found } => mismatch(
                             self,
@@ -946,7 +946,7 @@ impl Verifier {
     fn check_conversion(
         &mut self,
         inst: Inst,
-        instruction: &super::dfg::Instruction,
+        instruction: &crate::ir::dfg::Instruction,
         defined: &SecondaryMap<Value, TypeId>,
         types: Option<&TypeStore>,
     ) {
@@ -1148,7 +1148,7 @@ impl Verifier {
             // 比较条件 immediate（v3 S1：条件从变体载荷归一到 immediate 通道）
             // —— `Icmp`/`Fcmp` 必须恰好带一条对应类型的条件，缺/错都 fail-closed。
             if let Some(kind) = instruction.opcode.cond_kind() {
-                use crate::opcode::CondKind;
+                use crate::ir::opcode::CondKind;
                 let (expected, present) = match kind {
                     CondKind::IntCC => (
                         "IntCC",
@@ -1196,7 +1196,7 @@ impl Verifier {
             if instruction.opcode == Opcode::AtomicRmw
                 && let Some(Immediate::Uint(op)) = instruction.immediates.first()
             {
-                use crate::opcode::AtomicRmwOp as R;
+                use crate::ir::opcode::AtomicRmwOp as R;
                 let float_ops = matches!(
                     *op,
                     o if o == R::Fadd as u64 || o == R::Fsub as u64
@@ -1630,7 +1630,7 @@ impl Verifier {
         dfg: &DataFlowGraph,
         target_block: Block,
         args: &[Value],
-        target_data: &super::dfg::BlockData,
+        target_data: &crate::ir::dfg::BlockData,
     ) {
         for (idx, (&arg, &param_ty)) in args.iter().zip(target_data.params.iter()).enumerate() {
             if let Some(arg_ty) = dfg.value_type(arg)
@@ -2020,10 +2020,10 @@ impl Default for Verifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::FunctionBuilder;
-    use crate::inst_flags::InstFlags;
-    use crate::opcode::IntCC;
-    use crate::types::{FunctionSignature, TypeContext};
+    use crate::ir::builder::FunctionBuilder;
+    use crate::ir::inst_flags::InstFlags;
+    use crate::ir::opcode::IntCC;
+    use crate::ir::types::{FunctionSignature, TypeContext};
     use smallvec::SmallVec;
 
     /// 墓碑规范形态：置了 `tombstone` 却留着附件/操作数 → `TombstoneNotCanonical`。
@@ -2208,8 +2208,8 @@ mod tests {
             Opcode::Icmp,
             entry,
             smallvec::smallvec![f, f2],
-            smallvec::smallvec![crate::immediate::Immediate::IntCC(
-                crate::opcode::IntCC::SignedGreaterThan
+            smallvec::smallvec![crate::ir::immediate::Immediate::IntCC(
+                crate::ir::opcode::IntCC::SignedGreaterThan
             )],
             &[TypeId::BOOL],
             InstFlags::NONE,
@@ -2458,8 +2458,8 @@ mod tests {
             p,
             c,
             n,
-            crate::opcode::Ordering::AcquireRelease,
-            crate::opcode::Ordering::AcquireRelease,
+            crate::ir::opcode::Ordering::AcquireRelease,
+            crate::ir::opcode::Ordering::AcquireRelease,
             false,
         );
         fb.ret(&[v]);
@@ -2720,8 +2720,8 @@ mod tests {
         let mut func = fb.finish().expect("build");
 
         // Corrupt the DFG: add a value that points to a non-existent inst
-        func.dfg.values.push(crate::dfg::ValueData {
-            def: crate::dfg::ValueDef::Inst(Inst(99999), 0),
+        func.dfg.values.push(crate::ir::dfg::ValueData {
+            def: crate::ir::dfg::ValueDef::Inst(Inst(99999), 0),
             ty: TypeId::I32,
         });
 

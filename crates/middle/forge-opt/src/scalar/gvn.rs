@@ -30,7 +30,7 @@
 use super::cse::ExprKey;
 use crate::{ConstValue, OptimizationPass, PassResult};
 use forge_ir::IrError;
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -243,7 +243,7 @@ fn gvn_dfs(
         if super::cse::is_load_op(&inst.opcode)
             && inst
                 .mem_flags
-                .contains(forge_ir::mem_flags::MemFlags::VOLATILE)
+                .contains(forge_ir::ir::mem_flags::MemFlags::VOLATILE)
         {
             continue;
         }

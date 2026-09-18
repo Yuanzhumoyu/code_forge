@@ -14,7 +14,7 @@
 
 use crate::{ConstValue, OptimizationPass, PassResult};
 use forge_ir::IrError;
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use forge_ir::{Big, FloatFormat};
 
@@ -91,11 +91,11 @@ fn bit_mask(bits: u32) -> Big {
 /// 折叠 `extractvalue` 聚合字面量（3.1：immediates = [idx, Agg(id), Type]）。
 /// 标量提取 → 标量 ConstValue；嵌套聚合结果不折叠（值语义）。
 fn fold_extract_value(
-    pool: &forge_ir::constant::ConstantPool,
+    pool: &forge_ir::ir::constant::ConstantPool,
     immediates: &[Immediate],
     result_ty: TypeId,
 ) -> Result<Option<ConstValue>, IrError> {
-    use forge_ir::constant::AggChild;
+    use forge_ir::ir::constant::AggChild;
     let idx = match immediates.first() {
         Some(Immediate::Uint(i)) => *i as usize,
         _ => return Ok(None),
@@ -1289,7 +1289,7 @@ mod tests {
         assert!(result.changed, "聚合字面量 extractvalue 应折叠（%c = 2）");
         // %c 应为常量 2
         let def = func.dfg.value_def(Value::new(2)).cloned();
-        if let Some(forge_ir::dfg::ValueDef::Inst(iid, _)) = def {
+        if let Some(forge_ir::ir::dfg::ValueDef::Inst(iid, _)) = def {
             let inst = &func.dfg.inst_data(iid);
             assert!(
                 matches!(inst.opcode, Opcode::Iconst),

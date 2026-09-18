@@ -10,7 +10,7 @@ use crate::machine::pattern::{
 };
 use crate::machine::peephole::TargetPeephole;
 use crate::pipeline::compiler::{CompileState, atomic_op_from_u64};
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashSet;
 
@@ -225,7 +225,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     let Some(val) = dfg.value_data_opt(op) else {
                         continue;
                     };
-                    let forge_ir::dfg::ValueDef::Inst(def_ii, _) = val.def else {
+                    let forge_ir::ir::dfg::ValueDef::Inst(def_ii, _) = val.def else {
                         continue;
                     };
                     let def = &dfg.inst_data(def_ii);
@@ -536,11 +536,11 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             {
                 let fold_idx = (|| {
                     let def = dfg.value_data_opt(idx_v)?.def;
-                    let forge_ir::dfg::ValueDef::Inst(ii, _) = def else {
+                    let forge_ir::ir::dfg::ValueDef::Inst(ii, _) = def else {
                         return None;
                     };
                     let id = dfg.inst_data_opt(ii)?;
-                    if id.opcode != forge_ir::opcode::Opcode::Iconst {
+                    if id.opcode != forge_ir::ir::opcode::Opcode::Iconst {
                         return None;
                     }
                     let im = id.immediates.first()?;

@@ -55,7 +55,7 @@ pub struct NodeData {
     /// Output values produced by this node.
     pub results: SmallVec<[GraphValue; 2]>,
     /// Source location (optional, for debugging).
-    pub loc: Option<forge_ir::debug_info::SourceLocation>,
+    pub loc: Option<forge_ir::analysis::debug_info::SourceLocation>,
 }
 
 // ============================================================

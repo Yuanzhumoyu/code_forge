@@ -16,7 +16,7 @@
 //!
 //! 本模块只保留**判别**（[`TermKind`]）：种类是无载荷的，用于读取方分派。
 
-use super::opcode::Opcode;
+use crate::ir::opcode::Opcode;
 
 /// 终结符种类判别（**无载荷**）。
 ///

@@ -281,7 +281,7 @@ fn terminator_return_packet() {
     fb.ret(&[v]);
     let func = fb.finish().expect("build");
     let ret_value = func.dfg.term_return_values(entry).expect("ret 投影")[0];
-    let mut vmap = forge_ir::entity_map::SecondaryMap::new();
+    let mut vmap = forge_ir::entity::map::SecondaryMap::new();
     vmap.insert(ret_value, ret_val);
 
     let pack = tm
@@ -290,7 +290,7 @@ fn terminator_return_packet() {
             &func.dfg,
             entry,
             &vmap,
-            &forge_ir::entity_map::SecondaryMap::new(),
+            &forge_ir::entity::map::SecondaryMap::new(),
             &mut ctx,
         )
         .expect("lower Return");
@@ -339,8 +339,8 @@ fn terminator_jump_packet() {
         .lower_terminator(
             &func.dfg,
             b0,
-            &forge_ir::entity_map::SecondaryMap::new(),
-            &forge_ir::entity_map::SecondaryMap::new(),
+            &forge_ir::entity::map::SecondaryMap::new(),
+            &forge_ir::entity::map::SecondaryMap::new(),
             &mut ctx,
         )
         .expect("lower Jump");

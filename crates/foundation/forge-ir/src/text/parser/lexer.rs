@@ -550,12 +550,12 @@ pub enum Token {
         let (neg, digits) = lex.slice().strip_prefix('-').map(|r| (true, r)).unwrap_or((false, lex.slice()));
         let v = u64::from_str_radix(digits.trim_start_matches("0x").replace('_', "").as_str(), 16).unwrap_or(0);
         if neg {
-            crate::big::Big::Signed(-dashu::Integer::from(v))
+            crate::util::big::Big::Signed(-dashu::Integer::from(v))
         } else {
-            crate::big::Big::Unsigned(dashu::Natural::from(v))
+            crate::util::big::Big::Unsigned(dashu::Natural::from(v))
         }
     })]
-    HexLit(crate::big::Big),
+    HexLit(crate::util::big::Big),
     // 浮点十六进制字面量：`0xHBC00`（half）/`0xR3149`（bfloat）/`0xL...`
     // （fp128）/`0xM...`（x86_fp80）/`0xK...`/`0xJ...`（ppc_fp128）——
     // 前缀字母后为位模式 hex（第二十九轮:原宽松 0 丢位模式,
@@ -589,9 +589,9 @@ pub enum Token {
     // invalid-diexpression-large 的 u64::MAX vs 超限值自然区分）
     #[regex(r"-?[0-9]+", |lex| {
         let s = lex.slice();
-        crate::big::Big::Signed(s.parse::<dashu::Integer>().unwrap_or_default())
+        crate::util::big::Big::Signed(s.parse::<dashu::Integer>().unwrap_or_default())
     })]
-    IntLit(crate::big::Big),
+    IntLit(crate::util::big::Big),
     // metadata 裸 tuple 字面量（`operands: {!0, !3, !4}`——含 key 前缀整段
     // 合并,与非 metadata 语法及 `!named = !{...}` 定义不相交;
     // 单层嵌套 `!{}` 覆盖——generic-debug-node.ll;第二十一轮）
@@ -918,9 +918,9 @@ mod tests {
         assert_eq!(
             toks,
             vec![
-                Token::IntLit(crate::big::Big::from(42)),
-                Token::IntLit(crate::big::Big::from(-1)),
-                Token::HexLit(crate::big::Big::from(42u64)),
+                Token::IntLit(crate::util::big::Big::from(42)),
+                Token::IntLit(crate::util::big::Big::from(-1)),
+                Token::HexLit(crate::util::big::Big::from(42u64)),
                 Token::FloatLit(1.5),
                 Token::FloatLit(-0.25),
                 Token::StrLit("hello".to_string()),

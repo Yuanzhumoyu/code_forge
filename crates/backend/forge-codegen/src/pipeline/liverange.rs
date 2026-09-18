@@ -3,7 +3,7 @@
 //! 替代旧的 `HashMap<VReg, (usize, usize)>` 单区间表示，
 //! 支持 lifetime holes、use positions 和 spill weight 计算。
 
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use std::collections::{HashMap, HashSet};
 

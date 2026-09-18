@@ -2,8 +2,8 @@
 
 use forge_codegen::arch::x86_v12::{TargetMachine, ensure_registered};
 use forge_codegen::pipeline::compiler::FunctionCompiler;
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::types::{FunctionSignature, TypeContext};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{InstFlags, Opcode};
 
 #[test]

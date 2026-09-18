@@ -7,7 +7,7 @@
 //! 依赖约定:仅依赖 forge_ir 与 crate::pipeline::agg_const;
 //! 不依赖 CompileState(展开在 CompileState::new 之前执行——常量池克隆时序)。
 
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 
 /// 函数是否含 GEP(决定是否需要可变副本做 GEP 展开)。

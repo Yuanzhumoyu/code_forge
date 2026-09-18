@@ -26,7 +26,7 @@
 // 时即 `forge_codegen::IrError`）——必须**公开**，否则生成物只能活在库内部
 // （demo 夹具迁到 tests/ 正是踩到这一点）。
 pub use forge_ir::IrError;
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -105,7 +105,7 @@ pub mod prelude {
         LowerCtx, MachineInst, MemRef, RegisterClassInfo, VBlockId, VCodeBlock, avx_available,
         avx2_available,
     };
-    pub use forge_ir::entity_map::SecondaryMap;
+    pub use forge_ir::entity::map::SecondaryMap;
     pub use forge_ir::{
         AtomicRmwOp, Block, ConstId, DataFlowGraph, Endianness, FloatCC, FrameAccess, Immediate,
         Instruction, IntCC, IrError, IselStrategy, Opcode, PReg, PhysReg, RegClass, TermKind,
@@ -223,7 +223,7 @@ pub struct LowerCtx {
     /// cross-function relocation 的符号名 "@N")。
     pub current_func_ref: Option<FuncRef>,
     /// 当前 AtomicRmw 的操作数 (Immediate::Uint(op as u64) 解析)。
-    pub current_atomic_op: Option<forge_ir::opcode::AtomicRmwOp>,
+    pub current_atomic_op: Option<forge_ir::ir::opcode::AtomicRmwOp>,
     /// 当前指令引用的全局变量 (GlobalAddr 的 Immediate::Global)。
     pub current_global: Option<GlobalId>,
     /// StackAddr 的帧偏移（Immediate::Int）。
@@ -262,7 +262,7 @@ pub struct LowerCtx {
     /// 全部走这一份 `TypeStoreRef`——不再每条指令/每个属性各取一次锁。
     /// 由调用方在 lowering 入口用 `func.types.borrow()` 取（见
     /// `pipeline/compiler.rs`）。
-    pub type_store: Option<forge_ir::types::TypeStoreRef>,
+    pub type_store: Option<forge_ir::ir::types::TypeStoreRef>,
     /// 宿主「整数值寄存器池」类（`TargetRegInfo::value_gpr_class`）。
     /// lowering 里不能用 `RegClass::GPR64` 字面量——1 字节寄存器 ISA 的值池
     /// 是 GPR(1)。缺省 GPR64（`LowerCtx::new()` 的测试/直连场景）；

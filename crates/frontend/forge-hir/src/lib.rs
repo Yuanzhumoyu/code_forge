@@ -50,7 +50,7 @@ pub use forge_hir_macro::define_lowering;
 // Re-exports from forge_ir (so macro-generated code has access via ::forge_hir)
 pub use forge_ir::{
     self as ir, Block as IrBlock, FuncRef, FunctionSignature, IntCC, Module, TypeId,
-    opcode::{self as ir_opcode, FloatCC, IntCC as IrIntCC, Opcode},
+    ir::opcode::{self as ir_opcode, FloatCC, IntCC as IrIntCC, Opcode},
 };
 
 // Re-export forge_grammar for AstRef (used in macro-generated dispatch functions)

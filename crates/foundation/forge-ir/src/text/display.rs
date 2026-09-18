@@ -2,22 +2,22 @@
 //!
 //! 输出严格 LLVM IR 文本（`define i32 @add(i32 %a, i32 %b)`、类型化操作数、
 //! `icmp eq`/`sext ... to`、`ret`/`br`/`switch`/`unreachable`），可与
-//! `ir_parser`（logos+lalrpop）双向 round-trip：
+//! `parser`（logos+lalrpop）双向 round-trip：
 //! parse → display → parse 结构等价（见 tests/display_llvm.rs）。
 //! 约定：iconst/undef/poison 内联为操作数字面量（不输出指令行）；
 //! 块参数经 LLVM 扩展 `label %t(i32 %v)` 传递；Nop tombstone 省略；
 //! 名字由 NameResolver 消歧（%x/%x_1），参数名优先 value_names 绑定。
 
-use crate::dfg::{DataFlowGraph, Instruction, ValueDef};
+use crate::entity::map::SecondaryMap;
 use crate::entity::*;
-use crate::entity_map::SecondaryMap;
-use crate::function::{Function, Module};
-use crate::imm_str::ImmStr;
-use crate::immediate::Immediate;
-use crate::opcode::Opcode;
-use crate::terminator::TermKind;
+use crate::ir::dfg::{DataFlowGraph, Instruction, ValueDef};
+use crate::ir::function::{Function, Module};
+use crate::ir::immediate::Immediate;
+use crate::ir::opcode::Opcode;
+use crate::ir::terminator::TermKind;
+use crate::ir::types::{TypeEntry, TypeStore};
 use crate::text::parser::llvm_mapping::llvm_mnemonic;
-use crate::types::{TypeEntry, TypeStore};
+use crate::util::imm_str::ImmStr;
 use std::collections::HashSet;
 use std::fmt;
 
@@ -84,7 +84,7 @@ impl NameResolver {
         // 未定义引用占位值（前向引用——第二十九轮:display 输出 `%原始名`,
         // reparse 后同样成为占位,幂等）
         for (v, vd) in func.dfg.values() {
-            if let crate::dfg::ValueDef::UndefNamed(id) = vd.def {
+            if let crate::ir::dfg::ValueDef::UndefNamed(id) = vd.def {
                 let base = ImmStr::from(store.lookup_str(id));
                 values.insert(v, disambiguate(base, &mut used_values));
             }
@@ -127,7 +127,7 @@ impl fmt::Display for Module {
         }
         // comdat 声明：`$c = comdat any`（kind 统一 Any——声明语法 kind 丢弃）
         for i in 0..self.comdat_count() {
-            let cd = self.get_comdat(crate::symbol::ComdatId(i as u32));
+            let cd = self.get_comdat(crate::ir::symbol::ComdatId(i as u32));
             writeln!(f, "{} = comdat any", cd.name)?;
         }
         writeln!(f)?;
@@ -150,25 +150,25 @@ impl fmt::Display for Module {
                 ""
             };
             let linkage = match gv.symbol.linkage {
-                crate::symbol::Linkage::Private => "private ",
-                crate::symbol::Linkage::Internal => "internal ",
-                crate::symbol::Linkage::WeakAny => "weak ",
-                crate::symbol::Linkage::WeakODR => "weak_odr ",
-                crate::symbol::Linkage::LinkOnceAny => "linkonce ",
-                crate::symbol::Linkage::LinkOnceODR => "linkonce_odr ",
-                crate::symbol::Linkage::Appending => "appending ",
-                crate::symbol::Linkage::AvailableExternally => "available_externally ",
-                crate::symbol::Linkage::Common => "common ",
+                crate::ir::symbol::Linkage::Private => "private ",
+                crate::ir::symbol::Linkage::Internal => "internal ",
+                crate::ir::symbol::Linkage::WeakAny => "weak ",
+                crate::ir::symbol::Linkage::WeakODR => "weak_odr ",
+                crate::ir::symbol::Linkage::LinkOnceAny => "linkonce ",
+                crate::ir::symbol::Linkage::LinkOnceODR => "linkonce_odr ",
+                crate::ir::symbol::Linkage::Appending => "appending ",
+                crate::ir::symbol::Linkage::AvailableExternally => "available_externally ",
+                crate::ir::symbol::Linkage::Common => "common ",
                 _ => "",
             };
             let dll = match gv.symbol.dll_storage_class {
-                crate::symbol::DllStorageClass::DllImport => "dllimport ",
-                crate::symbol::DllStorageClass::DllExport => "dllexport ",
+                crate::ir::symbol::DllStorageClass::DllImport => "dllimport ",
+                crate::ir::symbol::DllStorageClass::DllExport => "dllexport ",
                 _ => "",
             };
             let vis = match gv.symbol.visibility {
-                crate::symbol::Visibility::Hidden => "hidden ",
-                crate::symbol::Visibility::Protected => "protected ",
+                crate::ir::symbol::Visibility::Hidden => "hidden ",
+                crate::ir::symbol::Visibility::Protected => "protected ",
                 _ => "",
             };
             let asp = if gv.addr_space != 0 {
@@ -244,9 +244,9 @@ impl fmt::Display for Module {
         // 模块级别名：@a = [internal] alias <ty>, <aliasee>
         for a in self.iter_global_aliases() {
             let link = match a.linkage {
-                crate::symbol::Linkage::Internal => "internal ",
-                crate::symbol::Linkage::Private => "private ",
-                crate::symbol::Linkage::WeakAny => "weak ",
+                crate::ir::symbol::Linkage::Internal => "internal ",
+                crate::ir::symbol::Linkage::Private => "private ",
+                crate::ir::symbol::Linkage::WeakAny => "weak ",
                 _ => "",
             };
             let dso = if a.dso_local { "dso_local " } else { "" };
@@ -270,7 +270,7 @@ impl fmt::Display for Module {
         // LLVM 类型定义：`%struct.X = type { ... }`
         let types = &store;
         for (name, tid) in types.named_structs() {
-            if let Some(crate::types::TypeEntry::Struct {
+            if let Some(crate::ir::types::TypeEntry::Struct {
                 fields, is_packed, ..
             }) = types.entry_opt(tid)
             {
@@ -309,7 +309,7 @@ impl fmt::Display for Module {
             if self.metadata_store.name_of(id).is_some() {
                 continue; // ① 已输出
             }
-            if matches!(node, crate::metadata::MetadataNode::Placeholder)
+            if matches!(node, crate::ir::metadata::MetadataNode::Placeholder)
                 && !referenced.contains(&id.0)
             {
                 continue;
@@ -371,17 +371,23 @@ impl<'a> FunctionDisplay<'a> {
     fn fmt_func_head(f: &mut fmt::Formatter<'_>, func: &Function) -> fmt::Result {
         let attrs = func.attributes;
         for (flag, name) in [
-            (crate::function::FunctionAttributes::NO_UNWIND, "nounwind"),
             (
-                crate::function::FunctionAttributes::INLINE_NEVER,
+                crate::ir::function::FunctionAttributes::NO_UNWIND,
+                "nounwind",
+            ),
+            (
+                crate::ir::function::FunctionAttributes::INLINE_NEVER,
                 "noinline",
             ),
             (
-                crate::function::FunctionAttributes::INLINE_ALWAYS,
+                crate::ir::function::FunctionAttributes::INLINE_ALWAYS,
                 "alwaysinline",
             ),
-            (crate::function::FunctionAttributes::NO_RECURSE, "norecurse"),
-            (crate::function::FunctionAttributes::OPT_NONE, "optnone"),
+            (
+                crate::ir::function::FunctionAttributes::NO_RECURSE,
+                "norecurse",
+            ),
+            (crate::ir::function::FunctionAttributes::OPT_NONE, "optnone"),
         ] {
             if attrs.contains(flag) {
                 write!(f, " {name}")?;
@@ -786,7 +792,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
         if matches!(instruction.opcode, Opcode::Store | Opcode::Fstore)
             && instruction
                 .mem_flags
-                .contains(crate::mem_flags::MemFlags::VOLATILE)
+                .contains(crate::ir::mem_flags::MemFlags::VOLATILE)
         {
             write!(f, " volatile")?;
         }
@@ -1063,9 +1069,9 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                         // 常量（iconst）经 fmt_operand_llvm 已带类型（`i32 1`）；变量补 `i32` 前缀
                         let is_const = matches!(
                             self.func.dfg.value_def(idx),
-                            Some(crate::dfg::ValueDef::Inst(inst, _))
+                            Some(crate::ir::dfg::ValueDef::Inst(inst, _))
                                 if self.func.dfg.inst_data_opt(*inst).map(|d| d.opcode)
-                                    == Some(crate::opcode::Opcode::Iconst)
+                                    == Some(crate::ir::opcode::Opcode::Iconst)
                         );
                         if is_const {
                             write!(f, ", {}", fmt_operand_llvm(self, idx))?;
@@ -1093,7 +1099,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                             if matches!(instruction.opcode, Opcode::InsertValue)
                                 && let Some(Immediate::Uint(idx)) = instruction.immediates.first()
                                 && let Some(agg) = self.func.constants.get_aggregate(*id)
-                                && let Some(crate::constant::AggChild::Scalar(cid)) =
+                                && let Some(crate::ir::constant::AggChild::Scalar(cid)) =
                                     agg.children.get(*idx as usize)
                             {
                                 let ety = store
@@ -1175,7 +1181,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     let store = self.store;
                     if instruction
                         .mem_flags
-                        .contains(crate::mem_flags::MemFlags::VOLATILE)
+                        .contains(crate::ir::mem_flags::MemFlags::VOLATILE)
                     {
                         write!(f, " volatile")?;
                     }
@@ -1421,7 +1427,7 @@ fn fmt_inst_metadata(
 }
 
 /// metadata 节点引用：命名节点输出 `!name`（name_of 反查），否则 `!N`。
-fn fmt_meta_ref(module: Option<&Module>, id: crate::metadata::MetadataId) -> String {
+fn fmt_meta_ref(module: Option<&Module>, id: crate::ir::metadata::MetadataId) -> String {
     match module.and_then(|m| m.metadata_store.name_of(id)) {
         Some(name) => format!("!{name}"),
         None => format!("!{}", id.0),
@@ -1648,7 +1654,7 @@ impl fmt::Display for TerminatorDisplay<'_> {
 /// 终结符尾 metadata 附加（LLVM：`ret i32 %x, !range !0` / `br ..., !prof !1`）。
 fn fmt_term_meta(
     f: &mut fmt::Formatter<'_>,
-    metadata: &[crate::metadata::AttachedMetadata],
+    metadata: &[crate::ir::metadata::AttachedMetadata],
     module: Option<&Module>,
 ) -> fmt::Result {
     for am in metadata {
@@ -1661,20 +1667,26 @@ fn fmt_term_meta(
 /// `[ 0, %entry ]` / `[ %b, %loop ]` / `[ undef, %l ]`。
 fn fmt_call_attrs(
     f: &mut fmt::Formatter<'_>,
-    attrs: crate::function::FunctionAttributes,
+    attrs: crate::ir::function::FunctionAttributes,
 ) -> fmt::Result {
     for (flag, name) in [
-        (crate::function::FunctionAttributes::NO_UNWIND, "nounwind"),
         (
-            crate::function::FunctionAttributes::INLINE_NEVER,
+            crate::ir::function::FunctionAttributes::NO_UNWIND,
+            "nounwind",
+        ),
+        (
+            crate::ir::function::FunctionAttributes::INLINE_NEVER,
             "noinline",
         ),
         (
-            crate::function::FunctionAttributes::INLINE_ALWAYS,
+            crate::ir::function::FunctionAttributes::INLINE_ALWAYS,
             "alwaysinline",
         ),
-        (crate::function::FunctionAttributes::NO_RECURSE, "norecurse"),
-        (crate::function::FunctionAttributes::OPT_NONE, "optnone"),
+        (
+            crate::ir::function::FunctionAttributes::NO_RECURSE,
+            "norecurse",
+        ),
+        (crate::ir::function::FunctionAttributes::OPT_NONE, "optnone"),
     ] {
         if attrs.contains(flag) {
             write!(f, " {name}")?;
@@ -1683,7 +1695,7 @@ fn fmt_call_attrs(
     Ok(())
 }
 
-fn fmt_param_attrs(pa: &crate::function::ParamAttributes) -> String {
+fn fmt_param_attrs(pa: &crate::ir::function::ParamAttributes) -> String {
     let mut out = String::new();
     for (on, name) in [
         (pa.signext, "signext"),
@@ -1789,8 +1801,8 @@ fn fmt_phi_value(
                 // 的错误十进制值（2026-09-14 审计发现）。
                 let width = match func.dfg.value_type(v) {
                     Some(ty) => match store.entry_opt(ty) {
-                        Some(crate::types::TypeEntry::Float { bits }) => *bits,
-                        Some(crate::types::TypeEntry::BFloat { bits }) => *bits,
+                        Some(crate::ir::types::TypeEntry::Float { bits }) => *bits,
+                        Some(crate::ir::types::TypeEntry::BFloat { bits }) => *bits,
                         _ => pool_width,
                     },
                     None => pool_width,
@@ -1878,7 +1890,7 @@ fn fmt_f64_literal(v: f64) -> String {
 /// 聚合标量元素文本（`i32 1` / `double 2`；按元素类型格式化）。
 fn fmt_agg_scalar(
     store: &TypeStore,
-    pool: &crate::constant::ConstantPool,
+    pool: &crate::ir::constant::ConstantPool,
     ety: TypeId,
     cid: crate::ConstId,
 ) -> String {
@@ -1887,13 +1899,13 @@ fn fmt_agg_scalar(
         // `%1 zeroinitializer` 展开出的 0 记在 i8 上），照池宽度打印会让文本与聚合
         // 类型不一致 ⇒ 往返漂移（实测 unnamed.ll：`i8 0` ↔ `i32 0`）。
         let ebits = match store.entry_opt(ety) {
-            Some(crate::types::TypeEntry::Int { bits }) => *bits,
+            Some(crate::ir::types::TypeEntry::Int { bits }) => *bits,
             _ => bits,
         };
         format!("i{ebits} {v}")
     } else if let Some(bits) = pool.get_float128(cid) {
         match store.entry_opt(ety) {
-            Some(crate::types::TypeEntry::Float { bits: 32 }) => {
+            Some(crate::ir::types::TypeEntry::Float { bits: 32 }) => {
                 format!("float {}", fmt_f32_literal(f32::from_bits(bits as u32)))
             }
             _ => format!("double {}", fmt_f64_literal(f64::from_bits(bits as u64))),
@@ -1906,10 +1918,10 @@ fn fmt_agg_scalar(
 /// 聚合常量池还原为 LLVM 聚合字面量文本（3.1：`[i32 1, i32 2]` / `{ i32 1, i64 2 }` 递归）。
 fn fmt_agg_const(
     store: &TypeStore,
-    pool: &crate::constant::ConstantPool,
+    pool: &crate::ir::constant::ConstantPool,
     id: crate::AggId,
 ) -> String {
-    use crate::constant::AggChild;
+    use crate::ir::constant::AggChild;
     let agg = match pool.get_aggregate(id) {
         Some(a) => a,
         None => return "<agg?>".to_string(),
@@ -1934,10 +1946,10 @@ fn fmt_agg_const(
         })
         .collect();
     match store.entry_opt(agg.ty) {
-        Some(crate::types::TypeEntry::Struct { is_packed, .. }) if *is_packed => {
+        Some(crate::ir::types::TypeEntry::Struct { is_packed, .. }) if *is_packed => {
             format!("<{{ {} }}>", inner.join(", "))
         }
-        Some(crate::types::TypeEntry::Struct { .. }) => format!("{{ {} }}", inner.join(", ")),
+        Some(crate::ir::types::TypeEntry::Struct { .. }) => format!("{{ {} }}", inner.join(", ")),
         _ => format!("[{}]", inner.join(", ")),
     }
 }
@@ -2134,7 +2146,7 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
 ///
 /// 用途见 `Display for Module` 里 metadata 段的注释：无人引用的空占位节点不打印。
 fn collect_referenced_metadata(module: &Module) -> std::collections::HashSet<u32> {
-    use crate::metadata::{MetadataNode, MetadataValue};
+    use crate::ir::metadata::{MetadataNode, MetadataValue};
     use std::collections::HashSet;
 
     fn walk_val(v: &MetadataValue, out: &mut HashSet<u32>) {
@@ -2241,10 +2253,10 @@ fn fmt_vconst_lane(
 
 /// metadata 节点序列化：`!{...}` / `!named(...)`。
 fn fmt_metadata_node(
-    store: &crate::metadata::MetadataStore,
-    node: &crate::metadata::MetadataNode,
+    store: &crate::ir::metadata::MetadataStore,
+    node: &crate::ir::metadata::MetadataNode,
 ) -> String {
-    use crate::metadata::MetadataNode;
+    use crate::ir::metadata::MetadataNode;
     match node {
         MetadataNode::Tuple(vals) => format!("!{{{}}}", fmt_metadata_vals(store, vals)),
         MetadataNode::Named {
@@ -2267,8 +2279,8 @@ fn fmt_metadata_node(
 }
 
 fn fmt_metadata_vals(
-    store: &crate::metadata::MetadataStore,
-    vals: &smallvec::SmallVec<[crate::metadata::MetadataValue; 4]>,
+    store: &crate::ir::metadata::MetadataStore,
+    vals: &smallvec::SmallVec<[crate::ir::metadata::MetadataValue; 4]>,
 ) -> String {
     vals.iter()
         .map(|v| fmt_metadata_val(store, v))
@@ -2277,10 +2289,10 @@ fn fmt_metadata_vals(
 }
 
 fn fmt_metadata_val(
-    store: &crate::metadata::MetadataStore,
-    v: &crate::metadata::MetadataValue,
+    store: &crate::ir::metadata::MetadataStore,
+    v: &crate::ir::metadata::MetadataValue,
 ) -> String {
-    use crate::metadata::MetadataValue;
+    use crate::ir::metadata::MetadataValue;
     match v {
         MetadataValue::String(s) => format!("\"{}\"", fmt_quoted(s)),
         MetadataValue::Uint(n) => n.to_string(),
@@ -2415,8 +2427,8 @@ fn value_as_literal(
             // `i{bits}` 类型漂移为标量,reparse 后类型不等）
             if matches!(
                 store.entry_opt(vty),
-                Some(crate::types::TypeEntry::Vector { .. })
-                    | Some(crate::types::TypeEntry::ScalableVector { .. })
+                Some(crate::ir::types::TypeEntry::Vector { .. })
+                    | Some(crate::ir::types::TypeEntry::ScalableVector { .. })
             ) {
                 return Some(ImmStr::from(format!(
                     "{} zeroinitializer",
@@ -2426,7 +2438,8 @@ fn value_as_literal(
             // ptr 类型的常量：零 → `ptr null`；非零 → `ptr {val}`（LLVM 15+
             // opaque ptr 常量语法——第二十九轮:原输出 `i64 {val}` 丢 PTR 类型,
             // GEP 表达式求值结果 roundtrip 后变 I64）；addrspace(N) 保留
-            if let Some(crate::types::TypeEntry::Pointer { addr_space }) = store.entry_opt(vty) {
+            if let Some(crate::ir::types::TypeEntry::Pointer { addr_space }) = store.entry_opt(vty)
+            {
                 let pfx = if *addr_space == 0 {
                     "ptr".to_string()
                 } else {
@@ -2449,13 +2462,13 @@ fn value_as_literal(
             // half → `0xH...`、bfloat → `0xR...`（第二十九轮）
             let ty = func.dfg.value_type(v)?;
             let hex = match store.get(ty) {
-                crate::types::TypeEntry::Float { bits: 16 } => {
+                crate::ir::types::TypeEntry::Float { bits: 16 } => {
                     format!("0xH{:04x}", bits as u16)
                 }
-                crate::types::TypeEntry::BFloat { .. } => {
+                crate::ir::types::TypeEntry::BFloat { .. } => {
                     format!("0xR{:04x}", bits as u16)
                 }
-                crate::types::TypeEntry::Float { bits: 32 } => format!("0x{:08x}", bits as u32),
+                crate::ir::types::TypeEntry::Float { bits: 32 } => format!("0x{:08x}", bits as u32),
                 _ => format!("0x{bits:016x}"),
             };
             Some(ImmStr::from(format!(
@@ -2512,12 +2525,15 @@ fn value_as_literal(
             let data = func.constants.get_vector(cid)?;
             let ty = func.dfg.value_type(v)?;
             let store_ref = store;
-            let &crate::types::TypeEntry::Vector { elem, len } = store_ref.get(ty) else {
+            let &crate::ir::types::TypeEntry::Vector { elem, len } = store_ref.get(ty) else {
                 return None;
             };
             // vector of ptr:数字 lane 无法表达——全零内联为 zeroinitializer,
             // 非全零不内联（走指令行 vconst 扩展;第二十九轮）
-            if matches!(store_ref.get(elem), crate::types::TypeEntry::Pointer { .. }) {
+            if matches!(
+                store_ref.get(elem),
+                crate::ir::types::TypeEntry::Pointer { .. }
+            ) {
                 if data.iter().all(|&b| b == 0) {
                     return Some(ImmStr::from(format!(
                         "{} zeroinitializer",
@@ -2559,8 +2575,8 @@ fn value_as_literal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::FunctionBuilder;
-    use crate::types::{FunctionSignature, TypeContext};
+    use crate::ir::builder::FunctionBuilder;
+    use crate::ir::types::{FunctionSignature, TypeContext};
 
     /// Helper: build a simple function returning i32 and return its text.
     fn display_simple_func(name: &str) -> String {

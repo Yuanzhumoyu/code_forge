@@ -77,7 +77,7 @@ fn handle_display_is_unchanged() {
     assert_eq!(format!("{}", VReg::new(5)), "%5");
 }
 
-/// 源码断言：`entity.rs` 里不得再有 `pub u32` 句柄字段（字段必须是 `pub(crate)`）。
+/// 源码断言：`entity/mod.rs` 里不得再有 `pub u32` 句柄字段（字段必须是 `pub(crate)`）。
 ///
 /// 编译器已经挡住 crate 外的构造/读索引，这条守卫挡的是**回潮**：把字段改回
 /// `pub u32` 能让全仓重新出现"凭空造句柄 + 表示泄漏"，而且不会有任何测试失败。
@@ -85,8 +85,9 @@ fn handle_display_is_unchanged() {
 fn no_public_handle_field_in_entity_rs() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src")
-        .join("entity.rs");
-    let text = std::fs::read_to_string(&path).expect("读 entity.rs");
+        .join("entity")
+        .join("mod.rs");
+    let text = std::fs::read_to_string(&path).expect("读 entity/mod.rs");
     const HANDLES: &[&str] = &[
         "Value", "Inst", "Block", "TypeId", "FuncRef", "ConstId", "AggId", "GlobalId", "SigRef",
         "VReg",
@@ -103,7 +104,7 @@ fn no_public_handle_field_in_entity_rs() {
             && HANDLES.contains(&name.trim())
             && !t.contains("pub(crate) u32")
         {
-            violations.push(format!("entity.rs:{}: {t}", i + 1));
+            violations.push(format!("entity/mod.rs:{}: {t}", i + 1));
         }
     }
     assert!(

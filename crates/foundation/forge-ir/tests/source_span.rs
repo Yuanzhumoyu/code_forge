@@ -13,8 +13,8 @@
 //! 合成指令（常量/占位）不会继承上一条的位置、phi/终结符的现状（尚未贯穿，
 //! 见计划 S7 余项）、以及位置不进文本层（打印-重解析仍幂等）。
 
-use forge_ir::function::Function;
-use forge_ir::opcode::Opcode;
+use forge_ir::ir::function::Function;
+use forge_ir::ir::opcode::Opcode;
 use forge_ir::text::parser::parse_module;
 
 /// `(行, 列)`；任一维缺失即视为无位置。

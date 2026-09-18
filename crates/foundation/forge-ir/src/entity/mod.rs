@@ -1,12 +1,18 @@
 //! IR 实体类型 — 零开销 newtype over u32。
 //!
-//! 所有实体都是 Copy + Eq + Hash，并实现 [`crate::entity_map::EntityRef`]，
+//! 所有实体都是 Copy + Eq + Hash，并实现 [`crate::entity::map::EntityRef`]，
 //! 因此可直接作为密集索引容器的键（v3 方案 **S2** 已落地
-//! [`PrimaryMap`](crate::entity_map::PrimaryMap) /
-//! [`SecondaryMap`](crate::entity_map::SecondaryMap) /
-//! [`EntitySet`](crate::entity_map::EntitySet) /
-//! [`PackedOption`](crate::entity_map::PackedOption)）。
+//! [`PrimaryMap`](crate::entity::map::PrimaryMap) /
+//! [`SecondaryMap`](crate::entity::map::SecondaryMap) /
+//! [`EntitySet`](crate::entity::map::EntitySet) /
+//! [`PackedOption`](crate::entity::map::PackedOption)）。
 //! 实体本身不携带数据，数据存储在 DataFlowGraph 的对应表中。
+//!
+//! 目录归类（2026-09-17）：实体容器（`PrimaryMap`/`SecondaryMap`/`EntitySet`/
+//! `PackedOption`）从 `src/entity_map.rs` 移入同目录的 `map.rs`，模块路径为
+//! `crate::entity::map`（扁平重导出照旧：`forge_ir::SecondaryMap`）。
+
+pub mod map;
 
 use std::fmt::{self, Display};
 

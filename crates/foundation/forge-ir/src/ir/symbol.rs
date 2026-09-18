@@ -8,7 +8,7 @@
 //!   `Comdat`, `ThreadLocalMode`, `UnnamedAddr`
 //! - Cranelift: simpler model with just `Linkage::Local/Exported/Preemptible`
 
-use super::imm_str::ImmStr;
+use crate::util::imm_str::ImmStr;
 
 // ============================================================
 // Visibility

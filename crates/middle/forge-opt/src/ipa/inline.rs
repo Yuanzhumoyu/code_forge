@@ -20,7 +20,7 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
-use forge_ir::entity_map::SecondaryMap;
+use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use smallvec::SmallVec;
 use std::collections::HashMap;

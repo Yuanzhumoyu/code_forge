@@ -1,7 +1,7 @@
 //! `features = ["text"]` 门控守卫（v3 方案 S7）。
 //!
-//! 文本层（`ir_parser` = logos 词法 + lalrpop 语法 + 语义构建；`display` = LLVM
-//! 文本打印）由 cargo feature `text`（默认开启）门控：关闭后 forge-ir 只剩内存
+//! 文本层（`text::parser` = logos 词法 + lalrpop 语法 + 语义构建；`text::display` =
+//! LLVM 文本打印）由 cargo feature `text`（默认开启）门控：关闭后 forge-ir 只剩内存
 //! IR，不再依赖 `logos`/`lalrpop-util`，`build.rs` 也不再生成 LALRPOP 表。
 //!
 //! **为什么需要守卫**：这个边界光靠"能编译"验证不了——只要有一个**核心**文件
@@ -9,8 +9,9 @@
 //! 关闭 feature 就编不过；而没人天天跑 `--no-default-features`，这种耦合会悄悄
 //! 长回来。所以这里做**源码级**断言（与 `dfg_privatization.rs` 同一风格）：
 //!
-//! 1. 核心文件（`src/*.rs` 去掉 `lib.rs` 与 `display.rs`、并跳过 `src/ir_parser/`）
-//!    不得出现 `ir_parser` 字样（**含注释**——注释里提它就意味着耦合意图）；
+//! 1. 核心文件（`src/**` 去掉 `lib.rs` 与文本层目录 `src/text/`）不得出现
+//!    `text::parser`/`text::display`/`crate::text::` 字样（**含注释**——注释里提它就
+//!    意味着耦合意图）；
 //! 2. `lib.rs` 里两个模块声明必须**恰好一次**且紧跟 `#[cfg(feature = "text")]`；
 //! 3. `Cargo.toml` 里 `text` 的依赖必须是 `dep:` 形式且两个运行时依赖 `optional`；
 //! 4. `build.rs` 里 LALRPOP 生成被 `CARGO_FEATURE_TEXT` 包住，而指令元数据
@@ -18,7 +19,7 @@
 //!
 //! 行为侧证据不在测试里（测试进程内再跑 cargo 会撞锁）：门禁命令是
 //! `cargo check -p forge-ir --no-default-features --lib`（`--lib` 是必须的——
-//! `tests/*.rs` 大量使用 `ir_parser`，它们本来就需要 `text`），已进 CI。
+//! `tests/*.rs` 大量使用文本层，它们本来就需要 `text`），已进 CI。
 //! 本文件自身不引用文本层，因此带不带 `text` 都能编译。
 
 use std::path::{Path, PathBuf};

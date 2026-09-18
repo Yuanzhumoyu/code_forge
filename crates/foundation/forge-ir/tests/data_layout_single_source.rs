@@ -15,9 +15,9 @@
 //! 存储里的那一份（无第二个副本可漂移）。
 
 use forge_ir::Module;
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::data_layout::DataLayout;
-use forge_ir::types::FunctionSignature;
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::data_layout::DataLayout;
+use forge_ir::ir::types::FunctionSignature;
 
 const DL32: &str = "e-m:e-p:32:32-i64:64-n8:16:32";
 const DL64: &str = "e-m:e-p:64:64-i64:64-n8:16:32:64";

@@ -10,12 +10,12 @@
 //! （新增错误码而不加测试会直接失败），所以这里不再写"共 N 个错误码"这种会漂的
 //! 数字。
 
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::function::Function;
-use forge_ir::immediate::Immediate;
-use forge_ir::opcode::{FloatCC, IntCC, Opcode};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::function::Function;
+use forge_ir::ir::immediate::Immediate;
+use forge_ir::ir::opcode::{FloatCC, IntCC, Opcode};
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::text::parser::parse_module;
-use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::{Verifier, VerifyError};
 use forge_ir::{CallConv, InstFlags, TypeId};
 
@@ -508,7 +508,7 @@ fn parse_accepts_opaque_type() {
     );
 }
 
-fn module_has_verify_error(m: forge_ir::function::Module) -> bool {
+fn module_has_verify_error(m: forge_ir::ir::function::Module) -> bool {
     let mut v = forge_ir::verify::Verifier::with_ctx(m.types.clone());
     let mut any = false;
     for f in m.iter_functions() {
@@ -530,7 +530,7 @@ fn parse_accepts_bare_second_operand() {
     let inst = f
         .dfg
         .insts()
-        .find(|(_, i)| i.opcode == forge_ir::opcode::Opcode::Iadd)
+        .find(|(_, i)| i.opcode == forge_ir::ir::opcode::Opcode::Iadd)
         .map(|(_, i)| i)
         .expect("iadd inst");
     assert_eq!(inst.operands.len(), 2);

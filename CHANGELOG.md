@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-19)
+
+- **forge-ir `src/` 目录归类（A0：A0a 文本层 + A0b 其余；可维护性重构）**：`src/` 顶层原来平铺 30 个 `.rs`（最大单文件 `text/parser/semantics.rs` 4,510 行），现按职能分组，顶层只剩 `lib.rs`/`error.rs`/`verify.rs`：`entity/{mod.rs←entity.rs, map.rs←entity_map.rs}`、`ir/{types,dfg,function,opcode,constant,immediate,terminator,builder,metadata,symbol,data_layout,type_rules,inst_flags,mem_flags,isel_strategy}.rs`、`analysis/{mod.rs←analysis.rs, alias, loop_info, use_list, debug_info}.rs`、`util/{big, imm_str, string_pool}.rs`、`text/{display.rs, parser/*}`。
+  **公开面不变**：类型仍全部从 crate 根扁平导出（`forge_ir::Function`/`TypeId`/…），并**新增** `forge_ir::{EntityRef, EntitySet, PackedOption, PrimaryMap, SecondaryMap}`（此前只有 `forge_ir::entity_map::SecondaryMap`）；文本层规范路径 `forge_ir::text::{parse_module, parse_function, function_to_string}`。
+  **无兼容层**（按"无需兼容旧版本结构"）：旧模块路径直接删除，不留别名/双入口；全仓 71 个 `.rs` + `grammar.lalrpop` 同提交改写（`crate::types::`→`crate::ir::types::` 等），`lalrpop_mod!` 生成路径改 `/text/parser/grammar.rs`，语法文件里 135 处 `crate::ir_parser::` 与 2 处 `crate::big::` 一并改（否则下次重建回退）。
+  两处真实坑（详见 `docs/plans/forge-ir-v3-plan.md` §6 的 A0 条目）：① `lalrpop_mod!` 的 include 串与 `grammar.lalrpop` 的类型路径是两处独立事实；② 群组移动后文件内 `super::` 语义变化，按"模块→全路径"统一改 `crate::…`。组名取 `util` 而非 `support`（`forge_opt::support` 已占用，两者经 `code_forge::prelude` 的 glob 重导出会 `ambiguous glob re-exports`，实测改名后清零）。
+  守卫同步（都是硬编码路径的静态守卫）：`read_path_budget.rs`（`src/ir/types.rs`）、`metadata_single_write.rs` 白名单（`ir/dfg.rs`/`ir/function.rs`）、`tombstone_semantics.rs`（`ir/dfg.rs`）、`forge-opt/tests/entity_tables.rs`（`src/ir/{function,dfg}.rs`）、`entity_privatization.rs`（`src/entity/mod.rs`）、`text_feature_gate.rs`（核心集合 = `src/**` 去掉 `src/text/**`，并新增"`src/display.rs`/`src/ir_parser.rs` 不得复活"断言）。**负向对照**：不改 `metadata_single_write.rs` 白名单 ⇒ 该用例 FAILED 并点名 `ir/dfg.rs` 三行；不改 `tombstone_semantics.rs` ⇒ FAILED 点名 `ir/dfg.rs`；恢复后全绿（两次失败证明这些守卫真的在扫路径，而不是"没扫到所以绿"）。
+  实测：workspace **1515 passed / 0 failed / 19 ignored**（与归类前同数）；LLVM 语料 **198 正向 / 254 正确拒绝 / 0 误收**、语料往返幂等 **189/189**（用例内 `assert_eq!` 精确断言）；三套 JIT 矩阵 x86 **195/3/0**、riscv64 **131/67/0**、arm64 **23/175/0**（均与归类前一致）；fmt `--check`、`clippy --workspace --exclude forge-rustc --all-targets --all-features -D warnings`、`clippy -p forge-ir --no-default-features --lib -D warnings`、`cargo check --release --all-targets`、`cargo doc -D warnings` 全干净。
+
+- **S8 拍板：只做二进制序列化；新增执行方案文档**：`docs/plans/forge-ir-s8-design.md` 记录拍板结果（A 二进制**做**、B MemorySSA-lite 与 C crate 拆分**不做**，触发条件保留），并修订 §2.4 的 `binary` feature 决策（**不加 feature 门控**：零依赖零耦合，门控只制造"只有开 feature 才编到"的验证盲区）。新增 `docs/plans/forge-ir-binary-serialization-plan.md`：格式 v1 的**字节级规范**（magic + varint 版本 + producer + 段表，`0x00 COMPAT`…`0x07 MODULE` 八段；LEB128/zigzag、字符串表、句柄 dense index、枚举显式判别值 + 穷举 match、`Big` 规范形式、函数段 `value_kinds` 两遍解码、`Cursor` fail-closed 与嵌套深度上限、`check_binary_compat` 版本策略、确定性约束），B1–B5 切片表（范围/产出/负向对照/估行），每片门禁命令与基线数字，风险对策表，外部参考（MLIR bytecode / LLVM BitCode / wasmtime 序列化），以及否决 `postcard`/`bincode`/`rkyv`/`serde` 的理由（零新依赖、偏移级 fail-closed、禁止 `HashMap` 遍历的确定性都是验收项）。
+
 ### Changed (2026-09-16)
 
 - **读写交错函数的"先写后读"：读数段合并（forge-ir v3 S3 余项②）**：`operand_to_value` 原来每个 arm 各取一次类型锁（metadata 判定、位模式判定、浮点位宽、向量元素类型、zeroinit 尺寸、const-expr 类型/尺寸，共 9 处）；现在在 `to_type`（**写**）之后取**一次**快照，把各 arm 需要的类型事实读进 `#[derive(Clone, Copy)] OperandTyFacts`，快照**不跨越**会 `strings.intern` 的 arm（跨越会触发整表 COW 克隆）。顺带合并 `build_inst` 的 `extractvalue` 索引链、`vconst` 的 `element_type`+`size_bytes`、`agg_const_from_operands` 的重复取锁。

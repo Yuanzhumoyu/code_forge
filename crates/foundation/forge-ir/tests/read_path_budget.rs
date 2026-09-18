@@ -54,7 +54,7 @@ const BUDGETS: &[(&str, usize, &str)] = &[
          vconst/agg_const 各 1）",
     ),
     (
-        "crates/foundation/forge-ir/src/types.rs",
+        "crates/foundation/forge-ir/src/ir/types.rs",
         13,
         "TypeContext 一次性查询封装（每次调用恰好 1 次）",
     ),

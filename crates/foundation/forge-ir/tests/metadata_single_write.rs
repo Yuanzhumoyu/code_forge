@@ -18,11 +18,11 @@
 //! 创建期的初始表仍走 `make_inst_with_meta_and_loc`（构造参数，不是"事后写"）。
 //! 追加语义：同一 kind 再次附加即多一条（与文本里多处 `!dbg !N` 一一对应）。
 
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::dfg::{TermMetadataAttach, ValueDef};
-use forge_ir::metadata::{AttachedMetadata, MetadataId, MetadataKind};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::dfg::{TermMetadataAttach, ValueDef};
+use forge_ir::ir::metadata::{AttachedMetadata, MetadataId, MetadataKind};
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::text::parser::parse_module;
-use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{CallConv, Function, Inst, InstFlags, Opcode, TypeId, Value};
 
 fn am(kind: MetadataKind, node: u32) -> AttachedMetadata {
@@ -176,19 +176,20 @@ fn metadata_writes_only_inside_the_single_entry() {
     ];
     // 白名单 = 各处 `attach_metadata(&mut self, ..)` 的实现体（同一行文本在
     // function.rs 出现 3 次：Function/GlobalVariable/GlobalAlias 三个载体）。
+    // 路径是 `src/` 下的相对路径（目录归类后为 `ir/…`）。
     const ALLOWED: &[(&str, &str, &str)] = &[
         (
-            "dfg.rs",
+            "ir/dfg.rs",
             "self.metadata.push(metadata);",
             "Instruction::attach_metadata 唯一写入口",
         ),
         (
-            "function.rs",
+            "ir/function.rs",
             "self.metadata.push(metadata);",
             "Function/GlobalVariable/GlobalAlias::attach_metadata 唯一写入口",
         ),
         (
-            "dfg.rs",
+            "ir/dfg.rs",
             "i.metadata.clear();",
             "墓碑化（DataFlowGraph::tombstone_inst_low）清掉陈旧附件——删除语义的一部分，\
              不是第三条写路径（S2 墓碑语义显式化）",

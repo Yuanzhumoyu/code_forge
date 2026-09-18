@@ -8,15 +8,15 @@
 //! 遵循 Cranelift 的实体-组件分离模式: 实体是 Copy 句柄,
 //! 数据存储在 Vec 中 (索引即实体 ID)。
 
-use super::debug_info::SourceLocation;
-use super::entity::*;
-use super::entity_map::SecondaryMap;
-use super::immediate::Immediate;
-use super::inst_flags::InstFlags;
-use super::mem_flags::MemFlags;
-use super::metadata::AttachedMetadata;
-use super::opcode::Opcode;
-use super::terminator::TermKind;
+use crate::analysis::debug_info::SourceLocation;
+use crate::entity::map::SecondaryMap;
+use crate::entity::*;
+use crate::ir::immediate::Immediate;
+use crate::ir::inst_flags::InstFlags;
+use crate::ir::mem_flags::MemFlags;
+use crate::ir::metadata::AttachedMetadata;
+use crate::ir::opcode::Opcode;
+use crate::ir::terminator::TermKind;
 use smallvec::SmallVec;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -36,7 +36,7 @@ pub enum ValueDef {
     AggConst(crate::AggId),
     /// 未定义引用占位（LLVM 前向引用/故意未定义值——operand_to_value
     /// 宽松保留名字,display 输出 `%name` 原样还原;第二十九轮）。
-    UndefNamed(crate::string_pool::InternedStr),
+    UndefNamed(crate::util::string_pool::InternedStr),
 }
 
 // ============================================================
@@ -66,9 +66,9 @@ pub struct Instruction {
     /// Memory access flags — meaningful for Load/Store; MemFlags::NONE otherwise.
     pub mem_flags: MemFlags,
     /// call 实参属性（与 operands[1..] 对齐；非 call 指令为空）。
-    pub param_attrs: SmallVec<[crate::function::ParamAttributes; 4]>,
+    pub param_attrs: SmallVec<[crate::ir::function::ParamAttributes; 4]>,
     /// call-site 函数属性（`call ... nounwind`；仅 call 指令）。
-    pub fn_attrs: crate::function::FunctionAttributes,
+    pub fn_attrs: crate::ir::function::FunctionAttributes,
     /// Attached metadata — TBAA, alias scope, alignment hints, etc.
     ///
     /// **单写**（v3 方案 S5）：读 [`Instruction::metadata`]、写
@@ -83,13 +83,13 @@ pub struct Instruction {
     /// (e.g. `"lea_sib:4"` for `Iadd(Imul(idx,4), base)` → LEA).
     /// `None` = default lowering.
     ///
-    /// 类型见 [`crate::isel_strategy::IselStrategy`]：标签名由目标 ISA 数据
+    /// 类型见 [`crate::ir::isel_strategy::IselStrategy`]：标签名由目标 ISA 数据
     /// 决定，forge-ir 不认识任何具体名字（无枚举/白名单/长度限制）。
     ///
     /// **字段私有**（v3 方案 S5 可见性）：读 [`Instruction::isel_strategy`]、
     /// 写 [`Instruction::set_isel_strategy`] / [`Instruction::clear_isel_strategy`]
     /// ——与 `BlockData.terminator` 同一约定，附件只经入口改。
-    pub(crate) isel_strategy: Option<crate::isel_strategy::IselStrategy>,
+    pub(crate) isel_strategy: Option<crate::ir::isel_strategy::IselStrategy>,
     /// **墓碑标志**（v3 方案 S2：墓碑语义显式化）。
     ///
     /// 删除是"标墓碑"而非回收槽位：`remove_inst` 把块内顺序表条目摘掉，就地墓碑化
@@ -128,17 +128,17 @@ impl Instruction {
     }
 
     /// 指令选择标签；`None` = 无标签（按 opcode 逐条降级）。
-    pub fn isel_strategy(&self) -> Option<&crate::isel_strategy::IselStrategy> {
+    pub fn isel_strategy(&self) -> Option<&crate::ir::isel_strategy::IselStrategy> {
         self.isel_strategy.as_ref()
     }
 
     /// 写指令选择标签（覆盖既有标签）。
-    pub fn set_isel_strategy(&mut self, strategy: crate::isel_strategy::IselStrategy) {
+    pub fn set_isel_strategy(&mut self, strategy: crate::ir::isel_strategy::IselStrategy) {
         self.isel_strategy = Some(strategy);
     }
 
     /// 摘除指令选择标签，返回被摘下的那个。
-    pub fn clear_isel_strategy(&mut self) -> Option<crate::isel_strategy::IselStrategy> {
+    pub fn clear_isel_strategy(&mut self) -> Option<crate::ir::isel_strategy::IselStrategy> {
         self.isel_strategy.take()
     }
 }
@@ -386,7 +386,7 @@ impl DataFlowGraph {
             loc,
             isel_strategy: None,
             param_attrs: SmallVec::new(),
-            fn_attrs: crate::function::FunctionAttributes::NONE,
+            fn_attrs: crate::ir::function::FunctionAttributes::NONE,
             tombstone: false,
         };
         // Push instruction to global table first (determines Inst.0 index),
@@ -560,7 +560,7 @@ impl DataFlowGraph {
             loc: None,
             isel_strategy: None,
             param_attrs: SmallVec::new(),
-            fn_attrs: crate::function::FunctionAttributes::NONE,
+            fn_attrs: crate::ir::function::FunctionAttributes::NONE,
             tombstone: false,
         });
         // **不登记 inst_order**：块内指令列表只含非终结符指令。
@@ -601,7 +601,7 @@ impl DataFlowGraph {
         // 只会误导 dump 与诊断（"删了但看起来还带 TBAA/融合标签"）。
         i.metadata.clear();
         i.param_attrs.clear();
-        i.fn_attrs = crate::function::FunctionAttributes::NONE;
+        i.fn_attrs = crate::ir::function::FunctionAttributes::NONE;
         i.isel_strategy = None;
     }
 
@@ -835,7 +835,7 @@ impl DataFlowGraph {
 
     /// 终结符种类（块未终止 = `None`）。
     pub fn term_kind(&self, b: Block) -> Option<TermKind> {
-        super::terminator::term_kind_of(&self.term_inst(b)?.opcode)
+        crate::ir::terminator::term_kind_of(&self.term_inst(b)?.opcode)
     }
 
     /// 终结符附件元数据（无终结符 / `unreachable` 则空切片）。
@@ -1246,7 +1246,7 @@ mod tests {
             b,
             SmallVec::new(),
             smallvec::smallvec![Immediate::Const(
-                crate::constant::ConstantPool::new().insert_int(1, 32)
+                crate::ir::constant::ConstantPool::new().insert_int(1, 32)
             )],
             &[ty],
             InstFlags::NONE,
@@ -1256,7 +1256,7 @@ mod tests {
             b,
             SmallVec::new(),
             smallvec::smallvec![Immediate::Const(
-                crate::constant::ConstantPool::new().insert_int(2, 32)
+                crate::ir::constant::ConstantPool::new().insert_int(2, 32)
             )],
             &[ty],
             InstFlags::NONE,
@@ -1267,14 +1267,16 @@ mod tests {
         let mut visited = 0;
         for inst in dfg.block_insts_mut(b) {
             assert_eq!(inst.opcode, Opcode::Iconst);
-            inst.set_isel_strategy(crate::isel_strategy::IselStrategy::from_static("tagged"));
+            inst.set_isel_strategy(crate::ir::isel_strategy::IselStrategy::from_static(
+                "tagged",
+            ));
             visited += 1;
         }
         assert_eq!(visited, 1, "墓碑指令应被跳过");
         assert_eq!(
             dfg.inst_data(i2)
                 .isel_strategy()
-                .map(crate::isel_strategy::IselStrategy::name),
+                .map(crate::ir::isel_strategy::IselStrategy::name),
             Some("tagged"),
             "可变迭代应写回"
         );

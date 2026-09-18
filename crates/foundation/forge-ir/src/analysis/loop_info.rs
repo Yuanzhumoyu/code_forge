@@ -1,9 +1,9 @@
 //! 循环森林 — 自然循环检测与分析。
 
 use crate::analysis::{DominatorTree, block_successors_in_func};
+use crate::entity::map::SecondaryMap;
 use crate::entity::*;
-use crate::entity_map::SecondaryMap;
-use crate::function::Function;
+use crate::ir::function::Function;
 use std::collections::HashSet;
 
 #[derive(Clone, Debug)]
@@ -202,8 +202,8 @@ fn compute_depth(loops: &[LoopInfo], idx: usize) -> u32 {
 mod tests {
     use super::*;
     use crate::analysis::DominatorTree;
-    use crate::builder::FunctionBuilder;
-    use crate::types::{FunctionSignature, TypeContext};
+    use crate::ir::builder::FunctionBuilder;
+    use crate::ir::types::{FunctionSignature, TypeContext};
 
     /// Build a function with a single loop:
     ///   entry → header → body → (back-edge to header or exit)

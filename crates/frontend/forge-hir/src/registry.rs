@@ -106,7 +106,7 @@ impl Default for BrickRegistry {
 mod tests {
     use super::*;
     use crate::atom::AtomSpec;
-    use forge_ir::opcode::Opcode;
+    use forge_ir::ir::opcode::Opcode;
 
     #[test]
     fn test_register_and_lookup_atom() {

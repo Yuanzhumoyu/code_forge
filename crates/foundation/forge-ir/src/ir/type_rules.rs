@@ -12,7 +12,7 @@
 //! 它们的判定依赖 `size_bytes`/指针/向量事实，builder 侧没有等价上下文。
 
 use crate::TypeId;
-use crate::opcode::{Opcode, TypeRule};
+use crate::ir::opcode::{Opcode, TypeRule};
 
 /// 形状规则违规（与具体错误类型无关——由调用方决定报错还是 panic）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,7 +136,7 @@ pub fn check_shape(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::opcode::Opcode;
+    use crate::ir::opcode::Opcode;
 
     fn viol(op: Opcode, ops: &[Option<TypeId>], res: Option<TypeId>) -> Vec<ShapeViolation> {
         check_shape(op, ops, res, &|_| false)

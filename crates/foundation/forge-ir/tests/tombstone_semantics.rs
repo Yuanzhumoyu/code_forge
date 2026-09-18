@@ -14,9 +14,9 @@
 //!   operands/immediates/附件 + use-lists 重登记，但**保留 `inst_order` 条目与
 //!   `results`**——大聚合展开等调用方之后仍要读那条被作废指令的结果值。
 
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::dfg::ValueDef;
-use forge_ir::types::{FunctionSignature, TypeContext};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::dfg::ValueDef;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{
     CallConv, Function, ImmStr, Immediate, Inst, InstFlags, IselStrategy, Opcode, TypeId,
 };
@@ -105,9 +105,9 @@ fn in_place_tombstone_keeps_results_and_clears_attachments() {
     // 给将被作废的指令挂满附件
     func.dfg
         .inst_mut(c)
-        .attach_metadata(forge_ir::metadata::AttachedMetadata {
-            kind: forge_ir::metadata::MetadataKind::TBAA,
-            node: forge_ir::metadata::MetadataId(0),
+        .attach_metadata(forge_ir::ir::metadata::AttachedMetadata {
+            kind: forge_ir::ir::metadata::MetadataKind::TBAA,
+            node: forge_ir::ir::metadata::MetadataId(0),
         });
     func.dfg
         .inst_mut(c)
@@ -130,7 +130,7 @@ fn in_place_tombstone_keeps_results_and_clears_attachments() {
     let _ = ValueDef::Param(func.entry_block.expect("entry"), 0);
 }
 
-/// 源码断言：`opcode = Opcode::Nop` 只允许出现在 `dfg.rs`（墓碑化的唯一实现）。
+/// 源码断言：`opcode = Opcode::Nop` 只允许出现在 `src/ir/dfg.rs`（墓碑化的唯一实现）。
 #[test]
 fn no_tombstone_writes_outside_dfg_rs() {
     fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, usize, String)>) {
@@ -150,8 +150,8 @@ fn no_tombstone_writes_outside_dfg_rs() {
                     .unwrap_or(&p)
                     .to_string_lossy()
                     .replace('\\', "/");
-                if rel == "dfg.rs" {
-                    continue; // 唯一实现
+                if rel == "ir/dfg.rs" {
+                    continue; // 唯一实现（目录归类后相对 `src/` 的路径）
                 }
                 let body = text.split("#[cfg(test)]").next().unwrap_or(&text);
                 for (i, line) in body.lines().enumerate() {

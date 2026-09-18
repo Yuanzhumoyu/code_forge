@@ -22,7 +22,7 @@ use std::collections::HashMap;
 /// 编译期守卫：`LowerCtx` 的三张 VReg 表必须是密集表（改了这里就编不过）。
 #[test]
 fn lowerctx_vreg_tables_are_dense() {
-    fn dense<K: forge_ir::entity_map::EntityRef, V>(_: &SecondaryMap<K, V>) {}
+    fn dense<K: forge_ir::entity::map::EntityRef, V>(_: &SecondaryMap<K, V>) {}
     let ctx = LowerCtx::new();
     dense(&ctx.vreg_classes);
     dense(&ctx.vreg_types);
@@ -90,7 +90,7 @@ fn no_dense_handle_hashmaps_repo_wide() {
     }
     assert!(
         hits.is_empty(),
-        "以下位置仍以密集句柄为键用 HashMap（应改用 `forge_ir::entity_map::SecondaryMap`；\
+        "以下位置仍以密集句柄为键用 HashMap（应改用 `forge_ir::entity::map::SecondaryMap`；\
          若确需 `XReg` 这类「键含 class」的句柄请在本守卫里写明理由）：\n{}",
         hits.join("\n")
     );

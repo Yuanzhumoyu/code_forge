@@ -58,7 +58,7 @@ fn label_survives_clone_inst() {
         .set_isel_strategy(IselStrategy::from_static("lea_sib:4"));
 
     let target = func.dfg.make_block();
-    let mut remap = forge_ir::entity_map::SecondaryMap::new();
+    let mut remap = forge_ir::entity::map::SecondaryMap::new();
     let cloned = func.dfg.clone_inst(iadd, target, &mut remap);
 
     let orig_tag = func

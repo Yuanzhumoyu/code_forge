@@ -65,12 +65,12 @@ pub(crate) fn error_offset(err: &ParseErr) -> usize {
 // ============================================================
 
 /// 解析 LLVM IR module（可含 target/define/declare 多个函数）。
-pub fn parse_module(source: &str) -> Result<crate::function::Module, IrError> {
+pub fn parse_module(source: &str) -> Result<crate::ir::function::Module, IrError> {
     semantics::parse_module(source)
 }
 
 /// 解析单个 LLVM IR 函数定义。
-pub fn parse_function(source: &str) -> Result<crate::function::Function, IrError> {
+pub fn parse_function(source: &str) -> Result<crate::ir::function::Function, IrError> {
     semantics::parse_function(source)
 }
 
@@ -337,7 +337,7 @@ mod semantics_tests {
         assert!(
             matches!(
                 f.dfg.term_kind(crate::Block(0)),
-                Some(crate::terminator::TermKind::Return)
+                Some(crate::ir::terminator::TermKind::Return)
             ),
             "ret terminator"
         );
@@ -442,7 +442,7 @@ mod semantics_tests {
         assert_eq!(m2.function_count(), 2, "declare + define round-trip");
     }
 
-    fn first_vconst_bytes(func: &crate::function::Function) -> Vec<u8> {
+    fn first_vconst_bytes(func: &crate::ir::function::Function) -> Vec<u8> {
         for (_, inst) in func.dfg.insts() {
             if matches!(inst.opcode, crate::Opcode::Vconst)
                 && let Some(crate::Immediate::Const(cid)) = inst.immediates.first()

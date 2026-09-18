@@ -1,11 +1,19 @@
 //! CFG 分析 — 支配树、前驱/后继、后序遍历。
 //!
 //! Cooper-Harvey-Kennedy 迭代算法计算立即支配者。
+//!
+//! 目录归类（2026-09-17）：`loop_info` / `use_list` / `debug_info` / `alias` 从
+//! `src/` 顶层移入本目录，模块路径由 `crate::loop_info` 变为 `crate::analysis::loop_info`。
 
+pub mod alias;
+pub mod debug_info;
+pub mod loop_info;
+pub mod use_list;
+
+use crate::analysis::loop_info::LoopForest;
+use crate::entity::map::SecondaryMap;
 use crate::entity::*;
-use crate::entity_map::SecondaryMap;
-use crate::function::Function;
-use crate::loop_info::LoopForest;
+use crate::ir::function::Function;
 use std::sync::{Arc, RwLock};
 
 // ============================================================
@@ -27,7 +35,7 @@ pub fn block_successors_in_func(func: &Function, block: Block) -> Vec<Block> {
 /// 修订号变了就自动重算（`invalidate()` 只是省下一次重算的显式优化）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AnalysisRevision {
-    /// [`crate::dfg::DataFlowGraph::cfg_revision`]：块增删、终结符写入、墓碑化的计数。
+    /// [`crate::ir::dfg::DataFlowGraph::cfg_revision`]：块增删、终结符写入、墓碑化的计数。
     pub cfg: u64,
     /// [`AnalysisManager::invalidations`]：显式 `invalidate()` 的次数。
     pub invalidations: u64,
@@ -423,8 +431,8 @@ fn compute_intervals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::FunctionBuilder;
-    use crate::types::{FunctionSignature, TypeContext};
+    use crate::ir::builder::FunctionBuilder;
+    use crate::ir::types::{FunctionSignature, TypeContext};
 
     #[test]
     fn test_dominator_tree_diamond() {

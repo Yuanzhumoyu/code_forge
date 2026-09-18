@@ -44,7 +44,7 @@ pub trait EntityRef: Copy + Eq + std::hash::Hash {
 macro_rules! entity_ref_impls {
     ($($t:ty),* $(,)?) => {
         $(
-            impl $crate::entity_map::EntityRef for $t {
+            impl $crate::entity::map::EntityRef for $t {
                 #[inline]
                 fn as_u32(self) -> u32 {
                     self.0

@@ -12,7 +12,7 @@
 //! 的根属性推导（镜像生成器的 `__attr` 闭包）在驱动侧完成（见
 //! pipeline/lowering.rs 的根属性助手），只复用这里的标量映射/宽度工具。
 
-use forge_ir::{Opcode, TypeId, types::TypeStore};
+use forge_ir::{Opcode, TypeId, ir::types::TypeStore};
 
 // ════════════════════════════════════════════════════════════════════
 // `when` 谓词（对根指令的派生属性求值）

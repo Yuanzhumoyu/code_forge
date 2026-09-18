@@ -30,35 +30,25 @@
 //! - Analysis (DomTree, LoopForest) stored in lazy `AnalysisCache`, not on `Function`
 
 // ============================================================
-// Legacy support — kept for dependent crates
+// 模块树（2026-09-17 目录归类）
 // ============================================================
-pub mod big;
-pub mod debug_info;
+//
+// 顶层只剩三个文件（本文件 + `error.rs` + `verify.rs`），其余按职能归入目录：
+//
+// - `entity/`：句柄（`mod.rs`）与实体容器（`map.rs`）
+// - `util/`：字符串与任意精度整数等基础设施（**不叫 `support`**：forge-opt 已有
+//   同名模块，两者经 `code_forge::prelude` 的 glob 重导出会撞名报警）
+// - `ir/`：核心 IR 数据模型（类型/常量/指令/函数/CFG/构建器/附件/符号）
+// - `analysis/`：支配树、循环、use-list、别名、调试位置
+// - `text/`：文本层（parser + display，`features = ["text"]` 门控）
+// - `verify.rs` / `error.rs`：校验与错误（单文件，保持顶层）
 
-// ============================================================
-// New module declarations
-// ============================================================
-pub mod alias;
 pub mod analysis;
-pub mod builder;
-pub mod constant;
-pub mod data_layout;
-pub mod dfg;
 pub mod entity;
-pub mod entity_map;
 pub mod error;
-pub mod function;
-pub mod imm_str;
-pub mod immediate;
-pub mod inst_flags;
-pub mod isel_strategy;
-pub mod loop_info;
-pub mod mem_flags;
-pub mod metadata;
-pub mod opcode;
-pub mod string_pool;
-pub mod symbol;
-pub mod terminator;
+pub mod ir;
+pub mod util;
+
 /// 文本层：LLVM 文本 IR 的**解析器**（`parser`）与**打印机**（`display`）。
 ///
 /// crate 里**唯一**的 `text` 门控点（目录归类后 `src/text/`）——关闭后核心 IR
@@ -68,52 +58,45 @@ pub mod terminator;
 /// 边界守卫见 `tests/text_feature_gate.rs`。
 #[cfg(feature = "text")]
 pub mod text;
-pub mod type_rules;
-pub mod types;
-pub mod use_list;
+
 pub mod verify;
 
 // ============================================================
 // Re-exports — flat namespace for all public types
 // ============================================================
 
-// Entity types
+// 实体句柄与容器（`SecondaryMap` 等容器直接扁平导出：密集句柄表的标准写法）
+pub use entity::map::{EntityRef, EntitySet, PackedOption, PrimaryMap, SecondaryMap};
 pub use entity::*;
 pub use error::IrError;
-pub use imm_str::*;
-pub use string_pool::InternedStr;
-pub use string_pool::StringPool;
+pub use util::imm_str::*;
+pub use util::string_pool::InternedStr;
+pub use util::string_pool::StringPool;
 
-// Types
-pub use data_layout::*;
-pub use types::*;
+// 类型系统与操作码
+pub use ir::data_layout::*;
+pub use ir::immediate::*;
+pub use ir::inst_flags::*;
+pub use ir::isel_strategy::IselStrategy;
+pub use ir::opcode::*;
+pub use ir::types::*;
 
-// Opcode + related
-pub use immediate::*;
-pub use inst_flags::*;
-pub use isel_strategy::IselStrategy;
-pub use opcode::*;
+// IR 数据结构
+pub use ir::builder::*;
+pub use ir::constant::*;
+pub use ir::dfg::*;
+pub use ir::function::*;
+pub use ir::terminator::*;
 
-// Data structures
-pub use constant::*;
-pub use dfg::*;
-pub use function::*;
-pub use terminator::*;
-pub use use_list::*;
-
-// Builder
-pub use builder::*;
-
-// Display (nothing to re-export, just Display impls)
-
-// Analysis
-pub use alias::*;
+// 分析
+pub use analysis::alias::*;
+pub use analysis::debug_info::*;
+pub use analysis::loop_info::*;
+pub use analysis::use_list::*;
 pub use analysis::*;
-pub use loop_info::*;
 
-// Verifier
+// 校验
 pub use verify::*;
 
-// Legacy re-exports
-pub use big::*;
-pub use debug_info::*;
+// 支撑类型
+pub use util::big::*;

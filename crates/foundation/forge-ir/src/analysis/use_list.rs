@@ -10,10 +10,10 @@
 //! （此前只覆盖指令操作数：pass 里对分支实参做 RAUW 会留下悬空实参，
 //! 而 `Verifier` 的 use-list 检查也看不见这一类）。
 
-use super::dfg::DataFlowGraph;
-use super::entity::{Block, Inst, Value};
-use crate::entity_map::SecondaryMap;
+use crate::entity::map::SecondaryMap;
+use crate::entity::{Block, Inst, Value};
 use crate::error::IrError;
+use crate::ir::dfg::DataFlowGraph;
 use smallvec::SmallVec;
 
 // ============================================================
@@ -261,10 +261,10 @@ impl UseLists {
 mod tests {
     use super::*;
     use crate::Block;
-    use crate::dfg::DataFlowGraph;
     use crate::entity::{Inst, TypeId};
-    use crate::inst_flags::InstFlags;
-    use crate::opcode::Opcode;
+    use crate::ir::dfg::DataFlowGraph;
+    use crate::ir::inst_flags::InstFlags;
+    use crate::ir::opcode::Opcode;
     use smallvec::SmallVec;
 
     fn make_test_dfg() -> (DataFlowGraph, Block, Value, Value, Value) {

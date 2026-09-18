@@ -10,7 +10,7 @@
 //! - `MetadataStore`: interning deduplication table
 //! - Attached to Instruction, Function, and Module
 
-use super::imm_str::ImmStr;
+use crate::util::imm_str::ImmStr;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 

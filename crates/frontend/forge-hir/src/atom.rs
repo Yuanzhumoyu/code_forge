@@ -5,7 +5,7 @@
 //! attributes, regions, and mapping to a backend `Opcode`.
 
 use crate::attr::{AttrValue, Symbol, sym_intern};
-use forge_ir::opcode::Opcode;
+use forge_ir::ir::opcode::Opcode;
 use forge_ir::{InternedStr, StringPool, TypeId};
 use std::fmt;
 use std::sync::{LazyLock, Mutex};

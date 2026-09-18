@@ -8,8 +8,8 @@
 //!
 //! 本文件用手工破坏的 IR 逐个钉住这条契约：**返回 `Err` 才行，panic 就是 bug**。
 
-use forge_ir::builder::FunctionBuilder;
-use forge_ir::types::{FunctionSignature, TypeContext};
+use forge_ir::ir::builder::FunctionBuilder;
+use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::{Verifier, VerifyError};
 use forge_ir::{Block, Inst, Value};
 

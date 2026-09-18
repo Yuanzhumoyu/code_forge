@@ -12,19 +12,19 @@
 //! let func = fb.finish().expect("build");
 //! ```
 
-use crate::types::Vector;
+use crate::ir::types::Vector;
 
 use crate::error::IrError;
 
-use super::debug_info::SourceLocation;
-use super::entity::*;
-use super::function::Function;
-use super::imm_str::ImmStr;
-use super::immediate::Immediate;
-use super::inst_flags::InstFlags;
-use super::mem_flags::MemFlags;
-use super::opcode::{FloatCC, IntCC, Opcode};
-use super::types::{FunctionSignature, TypeContext};
+use crate::analysis::debug_info::SourceLocation;
+use crate::entity::*;
+use crate::ir::function::Function;
+use crate::ir::immediate::Immediate;
+use crate::ir::inst_flags::InstFlags;
+use crate::ir::mem_flags::MemFlags;
+use crate::ir::opcode::{FloatCC, IntCC, Opcode};
+use crate::ir::types::{FunctionSignature, TypeContext};
+use crate::util::imm_str::ImmStr;
 use smallvec::SmallVec;
 
 // === 指令构建宏（IRBuilder 方法样板）===
@@ -244,7 +244,7 @@ impl FunctionBuilder {
     /// 显式指定端序。端序随常量记录进常量池，DSL 还原时按端序 from_le/from_be。
     ///
     /// ```
-    /// # use forge_ir::builder::FunctionBuilder;
+    /// # use forge_ir::ir::builder::FunctionBuilder;
     /// # use forge_ir::{TypeContext, FunctionSignature, TypeId};
     /// let sig = FunctionSignature::new(&[], &[TypeId::F32]);
     /// let mut b = FunctionBuilder::new("f", TypeContext::new(), sig);
@@ -271,7 +271,7 @@ impl FunctionBuilder {
     /// 空数组返回 `None`）。元素类型由 `T` 推导，向量类型为 `vector_ty(elem, N)`。
     ///
     /// ```
-    /// # use forge_ir::builder::FunctionBuilder;
+    /// # use forge_ir::ir::builder::FunctionBuilder;
     /// # use forge_ir::{TypeContext, FunctionSignature, TypeId};
     /// let sig = FunctionSignature::new(&[], &[TypeId::F32]);
     /// let mut b = FunctionBuilder::new("f", TypeContext::new(), sig);
@@ -419,7 +419,7 @@ impl FunctionBuilder {
             .iter()
             .map(|v| self.func.dfg.value_type(*v))
             .collect();
-        let violations = crate::type_rules::check_shape(
+        let violations = crate::ir::type_rules::check_shape(
             opcode,
             &operand_tys,
             result_tys.first().copied(),
@@ -718,10 +718,10 @@ impl FunctionBuilder {
 
     pub fn atomic_rmw(
         &mut self,
-        op: crate::opcode::AtomicRmwOp,
+        op: crate::ir::opcode::AtomicRmwOp,
         ptr: Value,
         val: Value,
-        ordering: crate::opcode::Ordering,
+        ordering: crate::ir::opcode::Ordering,
     ) -> Value {
         let t = self.type_of(val);
         self.emit1(
@@ -737,8 +737,8 @@ impl FunctionBuilder {
         ptr: Value,
         cmp: Value,
         new: Value,
-        ordering_success: crate::opcode::Ordering,
-        ordering_failure: crate::opcode::Ordering,
+        ordering_success: crate::ir::opcode::Ordering,
+        ordering_failure: crate::ir::opcode::Ordering,
         weak: bool,
     ) -> Value {
         let t = self.type_of(cmp);
@@ -755,7 +755,7 @@ impl FunctionBuilder {
             InstFlags::ATOMIC | InstFlags::SIDE_EFFECT,
         )
     }
-    pub fn fence(&mut self, ordering: crate::opcode::Ordering) {
+    pub fn fence(&mut self, ordering: crate::ir::opcode::Ordering) {
         self.emit(
             Opcode::Fence,
             vec![],
@@ -838,7 +838,7 @@ impl FunctionBuilder {
     /// 浮点常量的**值宽**（bits）——取自结果类型；拿不到类型信息时按 64 位
     /// （`fconst` 的参数宽度）兜底。位宽进常量池的去重键，f32/f64/f128 不再合并。
     fn float_const_width(&self, ty: TypeId) -> u16 {
-        use crate::types::TypeEntry;
+        use crate::ir::types::TypeEntry;
         match self.ctx.borrow().get(ty) {
             TypeEntry::Float { bits } => *bits,
             _ => 64,

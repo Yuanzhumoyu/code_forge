@@ -11,7 +11,7 @@
 //! 消费方：CSE / GVN（load 消重的 kill 精度）、LICM（load 外提判定）。
 //! 解析是惰性 memo 化的（按 Value 缓存），同一函数内多次查询无重复工作。
 
-use crate::entity_map::SecondaryMap;
+use crate::entity::map::SecondaryMap;
 use crate::*;
 use std::cell::RefCell;
 

@@ -11,21 +11,21 @@ use smallvec::SmallVec;
 use crate::CallConv;
 use crate::DataLayout;
 use crate::Endianness;
-use crate::builder::FunctionBuilder;
+use crate::entity::map::SecondaryMap;
 use crate::entity::{Block, FuncRef, GlobalId, TypeId, Value};
-use crate::entity_map::SecondaryMap;
-use crate::function::Function;
-use crate::function::FunctionAttributes;
-use crate::function::GlobalVariable;
-use crate::function::Module;
-use crate::imm_str::ImmStr;
-use crate::immediate::Immediate;
-use crate::inst_flags::InstFlags;
-use crate::mem_flags::MemFlags;
-use crate::opcode::AtomicRmwOp;
-use crate::opcode::Opcode;
-use crate::opcode::Ordering;
-use crate::types::{FunctionSignature, TypeContext, TypeEntry, TypeStore};
+use crate::ir::builder::FunctionBuilder;
+use crate::ir::function::Function;
+use crate::ir::function::FunctionAttributes;
+use crate::ir::function::GlobalVariable;
+use crate::ir::function::Module;
+use crate::ir::immediate::Immediate;
+use crate::ir::inst_flags::InstFlags;
+use crate::ir::mem_flags::MemFlags;
+use crate::ir::opcode::AtomicRmwOp;
+use crate::ir::opcode::Opcode;
+use crate::ir::opcode::Ordering;
+use crate::ir::types::{FunctionSignature, TypeContext, TypeEntry, TypeStore};
+use crate::util::imm_str::ImmStr;
 
 use super::ast_items::*;
 use super::lexer::TokenStream;
@@ -39,7 +39,7 @@ pub fn parse_module(source: &str) -> Result<Module, IrError> {
 }
 
 /// 解析单个 LLVM IR 函数（module 的第一个 define）。
-pub fn parse_function(source: &str) -> Result<crate::function::Function, IrError> {
+pub fn parse_function(source: &str) -> Result<crate::ir::function::Function, IrError> {
     let ast = parse_to_ast(source)?;
     for item in &ast.items {
         if let ParsedItem::Function(f) = item {
@@ -410,7 +410,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
     // id 分配策略：**先 reserve 全部显式数字 id（`!N = ...` 空占位），再 intern 命名
     // 节点**——命名 id 从数字区之后开始，永不与 `!N` 冲突（否则 `!t` 拿到 id 0 会被
     // `!0 = !{!t}` 的 insert_at 覆盖，造成自引用）。
-    let mut module_meta_store = crate::metadata::MetadataStore::new();
+    let mut module_meta_store = crate::ir::metadata::MetadataStore::new();
     // 数字区大小 = 显式 `!N = ...` 定义的最大 id + 1（命名节点 intern 从数字区后开始；
     // `!N` 数值引用必须 < 数字区——否则撞上命名节点 id）
     let max_num_meta_id = ast
@@ -426,8 +426,8 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
     for item in &ast.items {
         if let ParsedItem::Metadata(id, _) = item {
             module_meta_store.insert_at(
-                crate::metadata::MetadataId(*id),
-                crate::metadata::MetadataNode::Tuple(smallvec::smallvec![]),
+                crate::ir::metadata::MetadataId(*id),
+                crate::ir::metadata::MetadataNode::Tuple(smallvec::smallvec![]),
             );
         }
     }
@@ -445,7 +445,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
     for item in &ast.items {
         if let ParsedItem::Metadata(id, def) = item {
             let node = build_metadata_node(def, &mut module_meta_store, max_num_meta_id, false)?;
-            module_meta_store.insert_at(crate::metadata::MetadataId(*id), node);
+            module_meta_store.insert_at(crate::ir::metadata::MetadataId(*id), node);
         }
     }
     // 预处理：把函数/指令属性里的 `#N` 展开为组内具体属性名；
@@ -501,7 +501,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             ParsedItem::ComdatDecl(c) => {
                 // `$c = comdat any` 声明（重复声明报错——LLVM 符号表）
                 module
-                    .add_comdat(c, crate::symbol::ComdatKind::Any)
+                    .add_comdat(c, crate::ir::symbol::ComdatKind::Any)
                     .map_err(|e| IrError::Semantic(format!("comdat '{c}': {e}")))?;
             }
             _ => {}
@@ -605,7 +605,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 name,
                 field_tys
                     .iter()
-                    .map(|&t| crate::types::TypeField::new(t))
+                    .map(|&t| crate::ir::types::TypeField::new(t))
                     .collect(),
                 packed,
             );
@@ -629,7 +629,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 name,
                 field_tys
                     .iter()
-                    .map(|&t| crate::types::TypeField::new(t))
+                    .map(|&t| crate::ir::types::TypeField::new(t))
                     .collect(),
                 packed,
             );
@@ -652,16 +652,16 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 )));
             }
             let linkage = match a.linkage.as_deref() {
-                Some("internal") => crate::symbol::Linkage::Internal,
-                Some("private") => crate::symbol::Linkage::Private,
-                Some("external") => crate::symbol::Linkage::External,
-                Some("weak") => crate::symbol::Linkage::WeakAny,
+                Some("internal") => crate::ir::symbol::Linkage::Internal,
+                Some("private") => crate::ir::symbol::Linkage::Private,
+                Some("external") => crate::ir::symbol::Linkage::External,
+                Some("weak") => crate::ir::symbol::Linkage::WeakAny,
                 Some(other) => {
                     return Err(IrError::Semantic(format!(
                         "unsupported alias linkage `{other}`"
                     )));
                 }
-                None => crate::symbol::Linkage::External,
+                None => crate::ir::symbol::Linkage::External,
             };
             // 前向引用类型校验（opaque-ptr-invalid-forward-ref ×2）：
             // aliasee 为 `ptr addrspace(N) @name`（N≠0）且 @name 后定义时,
@@ -693,7 +693,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                     _ => {}
                 }
             }
-            let ga = crate::function::GlobalAlias {
+            let ga = crate::ir::function::GlobalAlias {
                 name: crate::ImmStr::from(a.name.trim_start_matches('@')),
                 ty,
                 linkage,
@@ -757,12 +757,11 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 gv.ifunc_params = g
                     .ifunc_params
                     .iter()
-                    .map(|s| crate::imm_str::ImmStr::from(s.clone()))
+                    .map(|s| crate::util::imm_str::ImmStr::from(s.clone()))
                     .collect();
-                gv.ifunc_resolver = g
-                    .ifunc_resolver
-                    .as_ref()
-                    .map(|r| crate::imm_str::ImmStr::from(r.trim_start_matches('@').to_string()));
+                gv.ifunc_resolver = g.ifunc_resolver.as_ref().map(|r| {
+                    crate::util::imm_str::ImmStr::from(r.trim_start_matches('@').to_string())
+                });
             }
             // 表达式 init 保留**文本**（display 原样输出；v3 S7：核心只存文本载荷）
             if let Some(GlobalInitVal::Expr(e)) = &g.init {
@@ -787,20 +786,20 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             // linkage（`private`/`internal`/`external`/weak 族）→ SymbolInfo
             if let Some(link) = &g.linkage {
                 let lk = match link.as_str() {
-                    "private" => crate::symbol::Linkage::Private,
-                    "internal" => crate::symbol::Linkage::Internal,
-                    "external" => crate::symbol::Linkage::External,
-                    "weak" => crate::symbol::Linkage::WeakAny,
-                    "weak_odr" => crate::symbol::Linkage::WeakODR,
-                    "linkonce" => crate::symbol::Linkage::LinkOnceAny,
-                    "linkonce_odr" => crate::symbol::Linkage::LinkOnceODR,
-                    "appending" => crate::symbol::Linkage::Appending,
-                    "available_externally" => crate::symbol::Linkage::AvailableExternally,
-                    "common" => crate::symbol::Linkage::Common,
-                    "extern_weak" => crate::symbol::Linkage::ExternalWeak,
+                    "private" => crate::ir::symbol::Linkage::Private,
+                    "internal" => crate::ir::symbol::Linkage::Internal,
+                    "external" => crate::ir::symbol::Linkage::External,
+                    "weak" => crate::ir::symbol::Linkage::WeakAny,
+                    "weak_odr" => crate::ir::symbol::Linkage::WeakODR,
+                    "linkonce" => crate::ir::symbol::Linkage::LinkOnceAny,
+                    "linkonce_odr" => crate::ir::symbol::Linkage::LinkOnceODR,
+                    "appending" => crate::ir::symbol::Linkage::Appending,
+                    "available_externally" => crate::ir::symbol::Linkage::AvailableExternally,
+                    "common" => crate::ir::symbol::Linkage::Common,
+                    "extern_weak" => crate::ir::symbol::Linkage::ExternalWeak,
                     // externally_initialized 是 global 修饰符（非 linkage）——
                     // 宽松映射 External（display 还原为 external——见 §7）
-                    "externally_initialized" => crate::symbol::Linkage::External,
+                    "externally_initialized" => crate::ir::symbol::Linkage::External,
                     other => return Err(IrError::Semantic(format!("unknown linkage {other}"))),
                 };
                 gv.symbol.linkage = lk;
@@ -808,8 +807,8 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             // dll storage（`dllimport`/`dllexport`）
             if let Some(dll) = &g.dll_storage {
                 gv.symbol.dll_storage_class = match dll.as_str() {
-                    "dllimport" => crate::symbol::DllStorageClass::DllImport,
-                    "dllexport" => crate::symbol::DllStorageClass::DllExport,
+                    "dllimport" => crate::ir::symbol::DllStorageClass::DllImport,
+                    "dllexport" => crate::ir::symbol::DllStorageClass::DllExport,
                     other => return Err(IrError::Semantic(format!("unknown dll storage {other}"))),
                 };
             }
@@ -826,7 +825,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 gv.addr_space = g.addr_space;
             }
             if g.thread_local {
-                gv.symbol.tls_model = Some(crate::symbol::TlsModel::GeneralDynamic);
+                gv.symbol.tls_model = Some(crate::ir::symbol::TlsModel::GeneralDynamic);
             }
             if let Some(v) = &g.visibility {
                 // 可见性冲突（LLVM：internal 与 hidden/protected 互斥）
@@ -837,9 +836,9 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                     )));
                 }
                 gv.symbol.visibility = match v.as_str() {
-                    "hidden" => crate::symbol::Visibility::Hidden,
-                    "protected" => crate::symbol::Visibility::Protected,
-                    _ => crate::symbol::Visibility::Default,
+                    "hidden" => crate::ir::symbol::Visibility::Hidden,
+                    "protected" => crate::ir::symbol::Visibility::Protected,
+                    _ => crate::ir::symbol::Visibility::Default,
                 };
             }
             if let Some(c) = &g.comdat {
@@ -1017,10 +1016,10 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
 /// 其余 kind（tbaa/range/align 等）LLVM 只要求节点存在、形状自由，保持宽松。
 /// 在 build_module 收尾统一校验（函数级 + 指令级 + 终结符级 metadata）。
 fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
-    use crate::metadata::{MetadataKind, MetadataNode};
+    use crate::ir::metadata::{MetadataKind, MetadataNode};
     let store = &module.metadata_store;
     let check = |kind: &MetadataKind, node: &MetadataNode| -> Result<(), IrError> {
-        use crate::metadata::MetadataValue;
+        use crate::ir::metadata::MetadataValue;
         match kind {
             // !dbg 宽松：正向用例（drop-debug-info 等）引用非 DILocation 节点
             // （旧格式/升级链）；DI 负向拒绝在 parse 层，不受本校验影响
@@ -1074,9 +1073,9 @@ fn validate_metadata_shapes(module: &Module) -> Result<(), IrError> {
 /// 取 metadata 节点：越界 → 语义错误（`MetadataStore::get` 现在返回 `Option`，
 /// 不再 panic；挂着的引用必须点名报错而不是静默跳过）。
 fn metadata_node_of(
-    store: &crate::metadata::MetadataStore,
-    id: crate::metadata::MetadataId,
-) -> Result<&crate::metadata::MetadataNode, IrError> {
+    store: &crate::ir::metadata::MetadataStore,
+    id: crate::ir::metadata::MetadataId,
+) -> Result<&crate::ir::metadata::MetadataNode, IrError> {
     store.get(id).ok_or_else(|| {
         IrError::Semantic(format!(
             "metadata 引用 !{} 不存在（store 内无该节点）",
@@ -1403,7 +1402,7 @@ fn pack_agg_init(
     let store = &store;
     let entry = store.get(ty);
     match entry {
-        crate::types::TypeEntry::Array { elem, len } => {
+        crate::ir::types::TypeEntry::Array { elem, len } => {
             if vals.len() as u64 != *len {
                 return Err(IrError::Semantic(format!(
                     "array init has {} elements, expected {len}",
@@ -1419,7 +1418,7 @@ fn pack_agg_init(
                 }
             }
         }
-        crate::types::TypeEntry::Struct {
+        crate::ir::types::TypeEntry::Struct {
             fields, is_packed, ..
         } => {
             if vals.len() != fields.len() {
@@ -1462,18 +1461,18 @@ fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<
     let bytes = match (v, store.get(ty)) {
         // 常量表达式元素（聚合内 `ptr @f` 等）：求字节（全局地址占位 0）
         (GlobalInitVal::Expr(e), _) => const_expr_bytes(ctx, e, ctx.size_bytes(ty) as u64)?,
-        (GlobalInitVal::Int(n), crate::types::TypeEntry::Int { bits: 8 }) => vec![*n as u8],
-        (GlobalInitVal::Int(n), crate::types::TypeEntry::Int { bits: 16 }) => {
+        (GlobalInitVal::Int(n), crate::ir::types::TypeEntry::Int { bits: 8 }) => vec![*n as u8],
+        (GlobalInitVal::Int(n), crate::ir::types::TypeEntry::Int { bits: 16 }) => {
             (*n as i16).to_le_bytes().to_vec()
         }
-        (GlobalInitVal::Int(n), crate::types::TypeEntry::Int { bits: 32 }) => {
+        (GlobalInitVal::Int(n), crate::ir::types::TypeEntry::Int { bits: 32 }) => {
             (*n as i32).to_le_bytes().to_vec()
         }
-        (GlobalInitVal::Int(n), crate::types::TypeEntry::Int { bits: 64 }) => {
+        (GlobalInitVal::Int(n), crate::ir::types::TypeEntry::Int { bits: 64 }) => {
             { *n }.to_le_bytes().to_vec()
         }
         // 非 8/16/32/64 位宽整数（i1 等）：按 ceil(bits/8) 字节低位存储
-        (GlobalInitVal::Int(n), crate::types::TypeEntry::Int { bits }) => {
+        (GlobalInitVal::Int(n), crate::ir::types::TypeEntry::Int { bits }) => {
             let size = std::cmp::max(1u32, (*bits).div_ceil(8)) as usize;
             let mut b = vec![0u8; size];
             let le = { *n }.to_le_bytes();
@@ -1482,20 +1481,20 @@ fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<
             }
             b
         }
-        (GlobalInitVal::UInt(n), crate::types::TypeEntry::Int { bits }) => {
+        (GlobalInitVal::UInt(n), crate::ir::types::TypeEntry::Int { bits }) => {
             let size = std::cmp::max(1u32, (*bits).div_ceil(8)) as usize;
             (*n).to_le_bytes()[..size].to_vec()
         }
-        (GlobalInitVal::Float(f), crate::types::TypeEntry::Float { bits: 32 }) => {
+        (GlobalInitVal::Float(f), crate::ir::types::TypeEntry::Float { bits: 32 }) => {
             (*f as f32).to_le_bytes().to_vec()
         }
-        (GlobalInitVal::Float(f), crate::types::TypeEntry::Float { bits: 64 }) => {
+        (GlobalInitVal::Float(f), crate::ir::types::TypeEntry::Float { bits: 64 }) => {
             { *f }.to_le_bytes().to_vec()
         }
-        (GlobalInitVal::Null, crate::types::TypeEntry::Pointer { .. }) => {
+        (GlobalInitVal::Null, crate::ir::types::TypeEntry::Pointer { .. }) => {
             vec![0u8; ctx.size_bytes(ty) as usize]
         }
-        (GlobalInitVal::Int(n), crate::types::TypeEntry::Pointer { .. }) => {
+        (GlobalInitVal::Int(n), crate::ir::types::TypeEntry::Pointer { .. }) => {
             vec![0u8; ctx.size_bytes(ty) as usize] // 整型指针常量按零处理（简化）
                 .into_iter()
                 .map(|_| 0u8)
@@ -1847,7 +1846,7 @@ fn build_function<'a>(
     func_refs: &HashMap<String, FuncRef>,
     global_refs: &HashMap<String, GlobalId>,
     ctx: &TypeContext,
-) -> Result<crate::function::Function, IrError> {
+) -> Result<crate::ir::function::Function, IrError> {
     let sig = signature_of(f, ctx);
     // 短函数名内联零分配；长名单次 Arc 分配（不再 to_string + 二次拷贝）。
     let name = ImmStr::from(f.name.trim_start_matches('@'));
@@ -2144,7 +2143,7 @@ fn build_function<'a>(
     }
 
     // 参数属性（`i32 signext %a`）+ 返回属性（`define signext i8`）→ ParamAttributes
-    let mut param_attrs: Vec<crate::function::ParamAttributes> =
+    let mut param_attrs: Vec<crate::ir::function::ParamAttributes> =
         Vec::with_capacity(f.param_attrs.len());
     for attrs in &f.param_attrs {
         param_attrs.push(parse_param_attrs(attrs, ctx)?);
@@ -2482,7 +2481,7 @@ fn build_inst<'a>(
                         .map(|a| a.children.clone())
                         .unwrap_or_default();
                     if (idx as usize) < children.len() {
-                        children[idx as usize] = crate::constant::AggChild::Scalar(elem_cid);
+                        children[idx as usize] = crate::ir::constant::AggChild::Scalar(elem_cid);
                     }
                     let new_agg = fb.func.constants.insert_aggregate(agg_ty, children);
                     let v = fb.emit1(
@@ -2533,7 +2532,7 @@ fn build_inst<'a>(
                                 .get_aggregate(*id)
                                 .and_then(|a| a.children.get(i as usize))
                             {
-                                Some(crate::constant::AggChild::Agg(aid)) => Some(*aid),
+                                Some(crate::ir::constant::AggChild::Agg(aid)) => Some(*aid),
                                 _ => None,
                             },
                             None => None,
@@ -2619,7 +2618,7 @@ fn build_inst<'a>(
             let ret_ty = to_type(ret_ty_pt, ctx);
             let ret_ty2 = ret_ty_pt.clone();
             // 实参属性（LLVM：`call i32 @f(i32 signext %a, ...)`）
-            let arg_attrs: Vec<crate::function::ParamAttributes> = inst.arg_attrs[1..]
+            let arg_attrs: Vec<crate::ir::function::ParamAttributes> = inst.arg_attrs[1..]
                 .iter()
                 .map(|a| parse_param_attrs(a, ctx))
                 .collect::<Result<_, _>>()?;
@@ -3351,8 +3350,8 @@ fn agg_const_from_operands(
 ) -> Result<crate::AggId, IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     let store = ctx.borrow();
-    use crate::constant::AggChild;
-    use crate::types::TypeEntry;
+    use crate::ir::constant::AggChild;
+    use crate::ir::types::TypeEntry;
     let mut children = Vec::new();
     for (i, e) in elems.iter().enumerate() {
         let ety = store.aggregate_elem_type(ty, i as u32).ok_or_else(|| {
@@ -3407,10 +3406,10 @@ fn agg_const_from_operands(
 fn zero_agg_child(
     fb: &mut FunctionBuilder,
     ety: crate::TypeId,
-    store: &crate::types::TypeStore,
-) -> Result<crate::constant::AggChild, IrError> {
-    use crate::constant::AggChild;
-    use crate::types::TypeEntry;
+    store: &crate::ir::types::TypeStore,
+) -> Result<crate::ir::constant::AggChild, IrError> {
+    use crate::ir::constant::AggChild;
+    use crate::ir::types::TypeEntry;
     match store.entry_opt(ety) {
         Some(TypeEntry::Int { bits }) => {
             Ok(AggChild::Scalar(fb.func.constants.insert_int(0, *bits)))
@@ -3497,7 +3496,7 @@ fn attach_inst_metadata<'a>(
         for (name, r) in &inst.metadata_attach {
             // 命名引用已在 build_module 预处理期解析为 Num；残留 Named 说明未定义。
             let id = match r {
-                MetadataRef::Num(id) => crate::metadata::MetadataId(*id),
+                MetadataRef::Num(id) => crate::ir::metadata::MetadataId(*id),
                 MetadataRef::Named(n) => {
                     return Err(IrError::Semantic(format!("unresolved named metadata !{n}")));
                 }
@@ -3505,7 +3504,7 @@ fn attach_inst_metadata<'a>(
             fb.func
                 .dfg
                 .inst_mut(ii)
-                .attach_metadata(crate::metadata::AttachedMetadata {
+                .attach_metadata(crate::ir::metadata::AttachedMetadata {
                     kind: metadata_kind_of(name)?,
                     node: id,
                 });
@@ -3515,8 +3514,8 @@ fn attach_inst_metadata<'a>(
 }
 
 /// metadata 附加名 → MetadataKind（13 个 LLVM 标准名；未知严格报错）。
-fn metadata_kind_of(name: &str) -> Result<crate::metadata::MetadataKind, IrError> {
-    use crate::metadata::MetadataKind::*;
+fn metadata_kind_of(name: &str) -> Result<crate::ir::metadata::MetadataKind, IrError> {
+    use crate::ir::metadata::MetadataKind::*;
     Ok(match name {
         "dbg" => DebugLoc,
         "tbaa" => TBAA,
@@ -3532,7 +3531,7 @@ fn metadata_kind_of(name: &str) -> Result<crate::metadata::MetadataKind, IrError
         "prof" => Prof,
         "fpmath" => FpMath,
         // LLVM 允许任意自定义 kind（`!foo` 等）；未知 kind 宽松放行（形状不校验）
-        other => crate::metadata::MetadataKind::Custom(ctx_strings_intern(other)),
+        other => crate::ir::metadata::MetadataKind::Custom(ctx_strings_intern(other)),
     })
 }
 
@@ -3545,17 +3544,17 @@ fn ctx_strings_intern(s: &str) -> crate::ImmStr {
 fn attach_metadata(
     name: &str,
     r: &MetadataRef,
-    store: &crate::metadata::MetadataStore,
-) -> Result<crate::metadata::AttachedMetadata, IrError> {
+    store: &crate::ir::metadata::MetadataStore,
+) -> Result<crate::ir::metadata::AttachedMetadata, IrError> {
     let id = match r {
-        MetadataRef::Num(id) => crate::metadata::MetadataId(*id),
+        MetadataRef::Num(id) => crate::ir::metadata::MetadataId(*id),
         MetadataRef::Named(n) => store
             .lookup_named(n)
             .ok_or_else(|| IrError::Semantic(format!("undefined named metadata !{n}")))?,
     };
     // 引用的节点 id 必须已定义（严格校验）
     let _ = store.get(id);
-    Ok(crate::metadata::AttachedMetadata {
+    Ok(crate::ir::metadata::AttachedMetadata {
         kind: metadata_kind_of(name)?,
         node: id,
     })
@@ -3565,14 +3564,14 @@ fn attach_metadata(
 /// 命名引用（`!{!t}`）经 lookup_named 解析——要求命名定义先于引用（文本顺序）。
 fn build_metadata_node(
     def: &MetadataNodeDef,
-    store: &mut crate::metadata::MetadataStore,
+    store: &mut crate::ir::metadata::MetadataStore,
     max_num_meta_id: u32,
     distinct: bool,
-) -> Result<crate::metadata::MetadataNode, IrError> {
-    use crate::metadata::{MetadataNode, MetadataValue};
+) -> Result<crate::ir::metadata::MetadataNode, IrError> {
+    use crate::ir::metadata::{MetadataNode, MetadataValue};
     fn val(
         v: &MetadataVal,
-        store: &mut crate::metadata::MetadataStore,
+        store: &mut crate::ir::metadata::MetadataStore,
         max_num_meta_id: u32,
         distinct: bool,
     ) -> Result<MetadataValue, IrError> {
@@ -3581,11 +3580,13 @@ fn build_metadata_node(
             // 超 i64 大整数——IR 层保留原文(display 精确输出);
             // DI 值域校验在 check_di_node 拒绝
             MetadataVal::IntBig(b) => {
-                MetadataValue::IntBig(crate::imm_str::ImmStr::from(b.to_string()))
+                MetadataValue::IntBig(crate::util::imm_str::ImmStr::from(b.to_string()))
             }
             MetadataVal::UInt(n) => MetadataValue::Uint(*n),
             MetadataVal::Float(f) => MetadataValue::Float(f.to_bits()),
-            MetadataVal::Str(s) => MetadataValue::String(crate::imm_str::ImmStr::from(s.clone())),
+            MetadataVal::Str(s) => {
+                MetadataValue::String(crate::util::imm_str::ImmStr::from(s.clone()))
+            }
             MetadataVal::Null => MetadataValue::Null,
             MetadataVal::Ref(id) => {
                 // 数字引用必须在数字区（显式 `!N =` 定义）内——否则撞上命名节点 id
@@ -3594,7 +3595,7 @@ fn build_metadata_node(
                         "metadata reference !{id} refers to undefined node"
                     )));
                 }
-                MetadataValue::Node(crate::metadata::MetadataId(*id))
+                MetadataValue::Node(crate::ir::metadata::MetadataId(*id))
             }
             MetadataVal::NamedRef(name) => {
                 let id = store.lookup_named(name).ok_or_else(|| {
@@ -3610,7 +3611,7 @@ fn build_metadata_node(
             // DI 批量校验在 Named 分支提前做）
             MetadataVal::Field(k, v) => {
                 return Ok(MetadataValue::Field(
-                    crate::imm_str::ImmStr::from(k.clone()),
+                    crate::util::imm_str::ImmStr::from(k.clone()),
                     Box::new(val(v, store, max_num_meta_id, distinct)?),
                 ));
             }
@@ -3634,7 +3635,7 @@ fn build_metadata_node(
             // DI 批量校验（第二十一轮）：必填字段/值域/重复/合法性/未知节点名
             check_di_node(name, vals, distinct)?;
             MetadataNode::Named {
-                name: crate::imm_str::ImmStr::from(name.clone()),
+                name: crate::util::imm_str::ImmStr::from(name.clone()),
                 ops: vals
                     .iter()
                     .map(|v| val(v, store, max_num_meta_id, distinct))
@@ -3868,8 +3869,12 @@ fn check_di_node(name: &str, vals: &[MetadataVal], distinct: bool) -> Result<(),
                     }
                     MetadataVal::IntBig(b) => {
                         let ok = match b {
-                            crate::big::Big::Signed(i) => *i <= dashu::Integer::from(u64::MAX),
-                            crate::big::Big::Unsigned(u) => *u <= dashu::Natural::from(u64::MAX),
+                            crate::util::big::Big::Signed(i) => {
+                                *i <= dashu::Integer::from(u64::MAX)
+                            }
+                            crate::util::big::Big::Unsigned(u) => {
+                                *u <= dashu::Natural::from(u64::MAX)
+                            }
                             _ => true,
                         };
                         if !ok {
@@ -4061,8 +4066,8 @@ fn check_di_node(name: &str, vals: &[MetadataVal], distinct: bool) -> Result<(),
 fn parse_param_attrs(
     attrs: &[String],
     ctx: &TypeContext,
-) -> Result<crate::function::ParamAttributes, IrError> {
-    let mut pa = crate::function::ParamAttributes::default();
+) -> Result<crate::ir::function::ParamAttributes, IrError> {
+    let mut pa = crate::ir::function::ParamAttributes::default();
     for a in attrs {
         match a.as_str() {
             "signext" => pa.signext = true,
@@ -4330,7 +4335,7 @@ fn operand_to_value<'a>(
             // 原样还原,reparse 幂等）
             fb.func.dfg.make_value(
                 ty,
-                crate::dfg::ValueDef::UndefNamed(
+                crate::ir::dfg::ValueDef::UndefNamed(
                     ctx.borrow_mut()
                         .strings
                         .intern(name.trim_start_matches('%')),
@@ -4574,23 +4579,23 @@ fn attach_term_metadata(
     }
     for (name, r) in metas {
         let id = match r {
-            MetadataRef::Num(id) => crate::metadata::MetadataId(*id),
+            MetadataRef::Num(id) => crate::ir::metadata::MetadataId(*id),
             MetadataRef::Named(n) => {
                 return Err(IrError::Semantic(format!("unresolved named metadata !{n}")));
             }
         };
-        let am = crate::metadata::AttachedMetadata {
+        let am = crate::ir::metadata::AttachedMetadata {
             kind: metadata_kind_of(name)?,
             node: id,
         };
         match fb.func.dfg.attach_term_metadata(block, am) {
-            crate::dfg::TermMetadataAttach::Attached => {}
-            crate::dfg::TermMetadataAttach::NoTerminator => {
+            crate::ir::dfg::TermMetadataAttach::Attached => {}
+            crate::ir::dfg::TermMetadataAttach::NoTerminator => {
                 return Err(IrError::Semantic(
                     "block has no terminator to attach metadata to".to_string(),
                 ));
             }
-            crate::dfg::TermMetadataAttach::Unreachable => {
+            crate::ir::dfg::TermMetadataAttach::Unreachable => {
                 return Err(IrError::Semantic(
                     "unreachable cannot carry metadata".to_string(),
                 ));

@@ -202,7 +202,7 @@ fn test_e2e_if_else() {
         .register_atom(
             forge_hir::atom::AtomSpec::new(
                 forge_hir::atom::arith::icmp(),
-                forge_ir::opcode::Opcode::Icmp,
+                forge_ir::ir::opcode::Opcode::Icmp,
             )
             .attr_str("cond")
             .input("lhs", forge_ir::TypeId::I32)
@@ -215,7 +215,7 @@ fn test_e2e_if_else() {
         .register_atom(
             forge_hir::atom::AtomSpec::new(
                 forge_hir::atom::cf::branch(),
-                forge_ir::opcode::Opcode::Nop,
+                forge_ir::ir::opcode::Opcode::Nop,
             )
             .input("cond", forge_ir::TypeId::BOOL)
             .clone(),
@@ -225,7 +225,7 @@ fn test_e2e_if_else() {
         .register_atom(
             forge_hir::atom::AtomSpec::new(
                 forge_hir::atom::cf::jump(),
-                forge_ir::opcode::Opcode::Nop,
+                forge_ir::ir::opcode::Opcode::Nop,
             )
             .clone(),
         )

@@ -20,8 +20,8 @@
 //! - `S<size>`: stack alignment
 use crate::error::IrError;
 
-use super::entity::Endianness;
-use super::imm_str::ImmStr;
+use crate::entity::Endianness;
+use crate::util::imm_str::ImmStr;
 use std::collections::HashMap;
 
 // ============================================================
