@@ -11,16 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-19)
+
+- **forge-ir 二进制序列化 B1+B2（IR bitcode v1：容器骨架 + 字符串表 + 类型段）**：新模块 `crates/foundation/forge-ir/src/binary/{mod,format,writer,reader,types}.rs`；公开 API `Module::{to_binary, to_binary_into, from_binary}` 与 `forge_ir::{IR_FORMAT_VERSION, SectionId, BinaryCompat, check_binary_compat}`，新错误变体 `IrError::BinaryDecode { offset, msg }`（`Display` 带偏移）。**不加 feature 门控**（零依赖、不依赖文本层 —— 对 `docs/plans/forge-ir-s8-design.md` §2.4 的修订）。
+  格式 v1：`magic "FORGEIR\0"`(8B) + varint 版本 + producer（varint 长度 + UTF-8，**头部自包含**）+ varint 段数 + 段表 `[u8 id | varint 绝对偏移 | varint 长度]` + 段体（按 id 升序，无对齐无填充）。已落段：`0x00 COMPAT`（flags=0，未知位置位即错）、`0x01 STRINGS`（`num` + 长度表 + 字节拼接，**逐条往返、不预留空串槽**）、`0x02 TYPES`（12 种类型 tag 全覆盖 + 命名类型表（按名排序）+ 签名表 + `DataLayout`（三张对齐表与指针表按 key 排序））。
+  fail-closed 纪律：`Cursor` 每次读先查剩余长度；长度字段先与剩余字节比对再分配（拒绝"声明 100 万段 / 4G 长度"）；varint 截断与溢出、未知段 id / 类型 tag / 调用约定 / mangling、段越界与重叠、重复段、重复字符串、非法 UTF-8、悬空 `TypeId`、预填充固定索引错位一律 `Err`（带偏移），**绝不 panic、绝不静默跳过**；`num = 0` 空池合法。
+  **负向对照（真实发生并修掉，两条都记在提交信息里）**：① `BinaryCompat.producer` 原写 `String` ⇒ `open_set_boundary.rs::no_plain_string_fields_on_public_ir_surface` FAILED 并点名该行（v3 S5 的"公开面不得有裸 `String`"守卫当场生效）→ 改 `ImmStr`；② `to_binary_into` 追加语义下 `finish()` 的头部长度断言按绝对长度比较会误报 → 改成按增量比较。
+  实测（本机 2026-09-19）：workspace **1658 passed / 0 failed / 19 ignored**（92 个测试目标；本片新增 42 例：`binary` 单测 16、类型库解码不变量单测 5、`tests/binary_format.rs` 21）；LLVM 语料 **198 正向 / 254 正确拒绝 / 0 误收**、语料往返幂等 189/189；JIT 矩阵 x86 **195/3/0**、riscv64 **131/67/0**、arm64 **23/175/0**；fmt `--check`、`clippy --workspace --exclude forge-rustc --all-targets --all-features -D warnings`、`clippy -p forge-ir --no-default-features --lib -D warnings`、`cargo check --release --all-targets`、`cargo doc -D warnings` 全干净。切片计划与逐片证据见
+  `docs/plans/forge-ir-binary-serialization-plan.md`。
+
 ### Changed (2026-09-19)
 
 - **forge-ir `src/` 目录归类（A0：A0a 文本层 + A0b 其余；可维护性重构）**：`src/` 顶层原来平铺 30 个 `.rs`（最大单文件 `text/parser/semantics.rs` 4,510 行），现按职能分组，顶层只剩 `lib.rs`/`error.rs`/`verify.rs`：`entity/{mod.rs←entity.rs, map.rs←entity_map.rs}`、`ir/{types,dfg,function,opcode,constant,immediate,terminator,builder,metadata,symbol,data_layout,type_rules,inst_flags,mem_flags,isel_strategy}.rs`、`analysis/{mod.rs←analysis.rs, alias, loop_info, use_list, debug_info}.rs`、`util/{big, imm_str, string_pool}.rs`、`text/{display.rs, parser/*}`。
   **公开面不变**：类型仍全部从 crate 根扁平导出（`forge_ir::Function`/`TypeId`/…），并**新增** `forge_ir::{EntityRef, EntitySet, PackedOption, PrimaryMap, SecondaryMap}`（此前只有 `forge_ir::entity_map::SecondaryMap`）；文本层规范路径 `forge_ir::text::{parse_module, parse_function, function_to_string}`。
   **无兼容层**（按"无需兼容旧版本结构"）：旧模块路径直接删除，不留别名/双入口；全仓 71 个 `.rs` + `grammar.lalrpop` 同提交改写（`crate::types::`→`crate::ir::types::` 等），`lalrpop_mod!` 生成路径改 `/text/parser/grammar.rs`，语法文件里 135 处 `crate::ir_parser::` 与 2 处 `crate::big::` 一并改（否则下次重建回退）。
   两处真实坑（详见 `docs/plans/forge-ir-v3-plan.md` §6 的 A0 条目）：① `lalrpop_mod!` 的 include 串与 `grammar.lalrpop` 的类型路径是两处独立事实；② 群组移动后文件内 `super::` 语义变化，按"模块→全路径"统一改 `crate::…`。组名取 `util` 而非 `support`（`forge_opt::support` 已占用，两者经 `code_forge::prelude` 的 glob 重导出会 `ambiguous glob re-exports`，实测改名后清零）。
-  守卫同步（都是硬编码路径的静态守卫）：`read_path_budget.rs`（`src/ir/types.rs`）、`metadata_single_write.rs` 白名单（`ir/dfg.rs`/`ir/function.rs`）、`tombstone_semantics.rs`（`ir/dfg.rs`）、`forge-opt/tests/entity_tables.rs`（`src/ir/{function,dfg}.rs`）、`entity_privatization.rs`（`src/entity/mod.rs`）、`text_feature_gate.rs`（核心集合 = `src/**` 去掉 `src/text/**`，并新增"`src/display.rs`/`src/ir_parser.rs` 不得复活"断言）。**负向对照**：不改 `metadata_single_write.rs` 白名单 ⇒ 该用例 FAILED 并点名 `ir/dfg.rs` 三行；不改 `tombstone_semantics.rs` ⇒ FAILED 点名 `ir/dfg.rs`；恢复后全绿（两次失败证明这些守卫真的在扫路径，而不是"没扫到所以绿"）。
+  守卫同步（都是硬编码路径的静态守卫）：`read_path_budget.rs`（`src/ir/types.rs`）、`metadata_single_write.rs` 白名单（`ir/dfg.rs`/`ir/function.rs`）、`tombstone_semantics.rs`（`ir/dfg.rs`）、`forge-opt/tests/entity_tables.rs`（`src/ir/{function,dfg}.rs`）、`entity_privatization.rs`（`src/entity/mod.rs`）、`text_feature_gate.rs`（核心集合 = `src/**` 去掉 `src/text/**`，并新增"`src/display.rs`/`src/ir_parser.rs` 不得复活"断言）。**负向对照**：不改 `metadata_single_write.rs` 白名单 ⇒ 该用例 FAILED 并点名 `ir/dfg.rs` 三行；不改 `tombstone_semantics.rs` ⇒ FAILED 点名
+  `ir/dfg.rs`；恢复后全绿（两次失败证明这些守卫真的在扫路径，而不是"没扫到所以绿"）。
   实测：workspace **1515 passed / 0 failed / 19 ignored**（与归类前同数）；LLVM 语料 **198 正向 / 254 正确拒绝 / 0 误收**、语料往返幂等 **189/189**（用例内 `assert_eq!` 精确断言）；三套 JIT 矩阵 x86 **195/3/0**、riscv64 **131/67/0**、arm64 **23/175/0**（均与归类前一致）；fmt `--check`、`clippy --workspace --exclude forge-rustc --all-targets --all-features -D warnings`、`clippy -p forge-ir --no-default-features --lib -D warnings`、`cargo check --release --all-targets`、`cargo doc -D warnings` 全干净。
 
-- **S8 拍板：只做二进制序列化；新增执行方案文档**：`docs/plans/forge-ir-s8-design.md` 记录拍板结果（A 二进制**做**、B MemorySSA-lite 与 C crate 拆分**不做**，触发条件保留），并修订 §2.4 的 `binary` feature 决策（**不加 feature 门控**：零依赖零耦合，门控只制造"只有开 feature 才编到"的验证盲区）。新增 `docs/plans/forge-ir-binary-serialization-plan.md`：格式 v1 的**字节级规范**（magic + varint 版本 + producer + 段表，`0x00 COMPAT`…`0x07 MODULE` 八段；LEB128/zigzag、字符串表、句柄 dense index、枚举显式判别值 + 穷举 match、`Big` 规范形式、函数段 `value_kinds` 两遍解码、`Cursor` fail-closed 与嵌套深度上限、`check_binary_compat` 版本策略、确定性约束），B1–B5 切片表（范围/产出/负向对照/估行），每片门禁命令与基线数字，风险对策表，外部参考（MLIR bytecode / LLVM BitCode / wasmtime 序列化），以及否决 `postcard`/`bincode`/`rkyv`/`serde` 的理由（零新依赖、偏移级 fail-closed、禁止 `HashMap` 遍历的确定性都是验收项）。
+- **S8 拍板：只做二进制序列化；新增执行方案文档**：`docs/plans/forge-ir-s8-design.md` 记录拍板结果（A 二进制**做**、B MemorySSA-lite 与 C crate 拆分**不做**，触发条件保留），并修订 §2.4 的 `binary` feature 决策（**不加 feature 门控**：零依赖零耦合，门控只制造"只有开 feature 才编到"的验证盲区）。新增 `docs/plans/forge-ir-binary-serialization-plan.md`：格式 v1 的**字节级规范**（magic + varint 版本 + producer + 段表，`0x00 COMPAT`…`0x07 MODULE` 八段；LEB128/zigzag、字符串表、句柄 dense index、枚举显式判别值 + 穷举 match、`Big` 规范形式、函数段 `value_kinds` 两遍解码、`Cursor` fail-closed 与嵌套深度上限、`check_binary_compat` 版本策略、确定性约束），
+  B1–B5 切片表（范围/产出/负向对照/估行），每片门禁命令与基线数字，风险对策表，外部参考（MLIR bytecode / LLVM BitCode / wasmtime 序列化），以及否决 `postcard`/`bincode`/`rkyv`/`serde` 的理由（零新依赖、偏移级 fail-closed、禁止 `HashMap` 遍历的确定性都是验收项）。
 
 ### Changed (2026-09-16)
 
@@ -66,7 +77,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   实测：workspace 1500 passed / 0 failed / 19 ignored；LLVM 语料 198/254/0、往返幂等 189/189、结构化往返 198/0。
 
 - **结构化 fuzz 扩面（forge-ir v3 S7 切片）**：`roundtrip_fuzz` 的全局生成器从 `global i32/i64 0|1|42` 扩到**保真矩阵**（i1/i5/i7/i24/i33/i128 十进制与十六进制、float/double/half/bfloat 的十进制与 `0x…` 位模式、`f0x…`、`zeroinitializer`、数组/结构体/`c"…"` 字符串聚合、向量字面量与 `splat`、常量表达式 init），断言侧新增**全局初始化字节对比**与**文本幂等**（`text1 == text2`）。10k 随机模块 0 失败。
-  扩面立刻挖出三处"值悄悄丢"（往返只比对 m1/m2 两边时看不见）并修掉：①**向量字面量全局初值根本无法解析**（lexer 把 `<4 x i32> <i32 3, …>` 整段当一个 token，`TypeAndInit` 只拆 `zeroinitializer`）——新增 `GlobalInitVal::Vector` + `VecConstLit` 分支 + `vec_init_bytes`（逐 lane 按元素类型打包，lane 数/类别不符一律报错）；②**`parse_vec_lanes` 把每个 lane 都读成 0**（把整段 `i32 3` 喂给 `parse::<i64>()`，前缀必然失败）——改为先拆元素类型前缀、类别由前缀决定，lane 文本前缀也取自元素类型（`<4 x i16>` 不再打 `i32`）；③**`c"…"` 转义的收尾引号被吃掉**（`trim_end_matches('"')` 复数剥引号）：`c"T\22"` = `[84,34]` 打印成 `c"T\""` 后回读只剩 `[84]`——改为各剥一层 `strip_prefix`/`strip_suffix`。
+  扩面立刻挖出三处"值悄悄丢"（往返只比对 m1/m2 两边时看不见）并修掉：①**向量字面量全局初值根本无法解析**（lexer 把 `<4 x i32> <i32 3, …>` 整段当一个 token，`TypeAndInit` 只拆 `zeroinitializer`）——新增 `GlobalInitVal::Vector` + `VecConstLit` 分支 + `vec_init_bytes`（逐 lane 按元素类型打包，lane 数/类别不符一律报错）；②**`parse_vec_lanes` 把每个 lane 都读成 0**（把整段 `i32 3` 喂给 `parse::<i64>()`，前缀必然失败）——改为先拆元素类型前缀、类别由前缀决定，lane 文本前缀也取自元素类型（`<4 x i16>` 不再打 `i32`）；③**`c"…"` 转义的收尾引号被吃掉**（`trim_end_matches('"')` 复数剥引号）：`c"T\22"` = `[84,34]` 打印成 `c"T\""` 后回读只剩 `[84]`——改为各剥一层
+  `strip_prefix`/`strip_suffix`。
   回归钉子：`fidelity::vector_literal_global_keeps_lane_values`、`fidelity::malformed_vector_initializer_is_rejected`、`fidelity::escaped_trailing_quote_in_c_string_survives`。负向验证：回退 lane 前缀剥离 / 回退 `decode_c_string` ⇒ 2 例 FAILED，注掉 grammar 分支（强制重建生成物）⇒ 向量保真用例 FAILED。
   实测：workspace 1495 passed / 0 failed / 19 ignored；LLVM 语料 198/254/0、语料往返幂等 189/189、`display_llvm` 结构化往返 198/0 均与基线一致。
 
@@ -91,7 +103,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   结果：语料往返漂移 **2 → 0**（幂等 189/189）；LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0 不变；`display_llvm` 结构化往返全绿。新增回归用例 `fidelity::half_and_bfloat_globals_roundtrip`（5 组）与 `fidelity::splat_constant_roundtrips_without_type_prefix`；负向验证（回退位模式映射 + splat 内层类型 + 强制重建）⇒ 3 例 FAILED，恢复后全绿。
   实测：workspace 1484 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
 
-- **聚合常量往返幂等：语料漂移 3 → 2（forge-ir v3 S7 切片）**：收掉 `unnamed.ll` 那条漂移，逐例打差异后定位两处根因，都在"聚合常量子元素"上：①浮点子元素被打印成整数字面量——`fmt_agg_scalar` 用 `format!("{}", f32)`，Rust 对 `4.0` 打 `"4"`，文本 `float 4` 回读成了 **i32** 常量（类型漂移）；现在用 `fmt_f32_literal`/`fmt_f64_literal` 保证带小数点或指数（`4` → `4.0`），非有限值给 hex 位模式。②聚合元素的零值被压成 i8 标量——`agg_const_from_operands` 对 `zeroinitializer`/`undef`/`poison`/`null` 元素一律 `insert_int(0, 8)`，元素类型是结构体时（`%1 zeroinitializer`）文本成了 `i8 0`，与聚合类型不符；现在新增 `zero_agg_child`：标量 → 零标量，**结构体/数组 → 递归零聚合**（`%1 { i32 0 }`）。③顺带修整数子元素：用**元素类型**位宽打印，而不是常量池里记的宽度。
+- **聚合常量往返幂等：语料漂移 3 → 2（forge-ir v3 S7 切片）**：收掉 `unnamed.ll` 那条漂移，逐例打差异后定位两处根因，都在"聚合常量子元素"上：①浮点子元素被打印成整数字面量——`fmt_agg_scalar` 用 `format!("{}", f32)`，Rust 对 `4.0` 打 `"4"`，文本 `float 4` 回读成了 **i32** 常量（类型漂移）；现在用 `fmt_f32_literal`/`fmt_f64_literal` 保证带小数点或指数（`4` → `4.0`），非有限值给 hex 位模式。②聚合元素的零值被压成 i8 标量——`agg_const_from_operands` 对 `zeroinitializer`/`undef`/`poison`/`null` 元素一律 `insert_int(0, 8)`，元素类型是结构体时（`%1 zeroinitializer`）文本成了 `i8 0`，与聚合类型不符；现在新增 `zero_agg_child`：标量 → 零标量，**结构体/数组 → 递归零聚合**（`%1
+  { i32 0 }`）。③顺带修整数子元素：用**元素类型**位宽打印，而不是常量池里记的宽度。
   结果：`unnamed.ll` 转幂等，往返漂移 **3 → 2**（余：`constant-splat.ll` 的 splat 展开与类型前缀、`float-literals.ll` 的 f16 hex 形态），幂等 **187/189**；LLVM 语料正向 **198/452**、负向正确拒绝 254、误接受 0 不变。新增回归用例 `fidelity::nested_zero_aggregate_roundtrips`；负向验证：临时关掉 `zero_agg_child` 的结构体分支 ⇒ 该用例 FAILED 且守卫报 `unnamed.ll` 为新漂移。
   实测：workspace 1482 passed / 0 failed / 19 ignored；x86 矩阵 195/3/0；riscv64 131/67/0。
 
@@ -223,7 +236,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-15)
 
-- **终结符写入口按形式化 + 读取面投影化（forge-ir v3 S4 子项 d）**：`Function` 新增按形式命名的写入口 `jump`/`branch`/`ret`/`switch`/`unreachable`/`invoke`/`resume` 与 `set_return_values`/`retarget_terminator`/`replace_terminator_args`；`set_terminator(Terminator)` 与 `rewrite_terminator` 收为 `pub(crate)`，**crate 外已无法构造或就地改写 `Terminator`**（实测残留写点 = 0）。DFG 新增 `TermKind` 判别与投影访问器（`term_branch`/`term_jump`/`term_return_values`/`term_switch`/`term_invoke`/`term_resume_value`/`term_is_unreachable`/`term_args_to`/`term_used_values`/`for_each_term_value`）。
+- **终结符写入口按形式化 + 读取面投影化（forge-ir v3 S4 子项 d）**：`Function` 新增按形式命名的写入口 `jump`/`branch`/`ret`/`switch`/`unreachable`/`invoke`/`resume` 与 `set_return_values`/`retarget_terminator`/`replace_terminator_args`；`set_terminator(Terminator)` 与 `rewrite_terminator` 收为 `pub(crate)`，**crate 外已无法构造或就地改写 `Terminator`**（实测残留写点 = 0）。DFG 新增 `TermKind`
+  判别与投影访问器（`term_branch`/`term_jump`/`term_return_values`/`term_switch`/`term_invoke`/`term_resume_value`/`term_is_unreachable`/`term_args_to`/`term_used_values`/`for_each_term_value`）。
   迁移 20 处构造点（builder 7 个方法委托、forge-opt 7 文件、codegen 3 处、解析器 phi 回填、loop_unroll 的 `clone_terminator` 改为按投影读+按形式写）；顺带修掉 codegen 中"手写逐块改 `inst.operands` 却不刷新 use-lists"的又一处 use-def 置空（改用 `replace_all_uses`）。
   目的：S4 主体（终结符并入指令流、删 `Terminator`）必须一次提交内完成，本步把表示相关的调用点收进少数访问器/写入口的实现体，使那次切换只需重写实现体。守卫 `tests/terminator_api.rs` 6 例（7 种形式的写↔投影读回、`TermKind` 判别一致、use-def 新鲜）。
 

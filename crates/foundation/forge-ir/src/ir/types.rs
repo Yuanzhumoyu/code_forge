@@ -113,6 +113,35 @@ enum TypeKey {
     Opaque,
 }
 
+/// 条目的去重键；`Function` **没有**去重键（签名的权威副本在 `signatures` 表里，
+/// 函数类型条目不去重）。
+///
+/// 单一事实源：`intern` 各调用点手工传的 key 必须与这里一致（二进制解码按此
+/// 重建去重表，写侧不落盘 key）。
+fn type_key(entry: &TypeEntry) -> Option<TypeKey> {
+    Some(match entry {
+        TypeEntry::Int { bits } => TypeKey::IntBits(*bits),
+        TypeEntry::Float { bits } => TypeKey::FloatBits(*bits),
+        TypeEntry::BFloat { bits } => TypeKey::BFloatBits(*bits),
+        TypeEntry::Vector { elem, len } => TypeKey::Vector(*elem, *len),
+        TypeEntry::ScalableVector { elem, min_len } => TypeKey::ScalableVector(*elem, *min_len),
+        TypeEntry::Array { elem, len } => TypeKey::Array(*elem, *len),
+        TypeEntry::Struct {
+            name: Some(name), ..
+        } => TypeKey::StructName(*name),
+        TypeEntry::Struct {
+            name: None,
+            fields,
+            is_packed,
+        } => TypeKey::StructAnon(fields.iter().map(|f| f.ty).collect(), *is_packed),
+        TypeEntry::Pointer { addr_space } => TypeKey::Pointer(*addr_space),
+        TypeEntry::Token => TypeKey::Token,
+        TypeEntry::Metadata => TypeKey::Metadata,
+        TypeEntry::Opaque => TypeKey::Opaque,
+        TypeEntry::Function { .. } => return None,
+    })
+}
+
 /// 类型存储 — 全局类型 interner。
 ///
 /// 一个 `TypeStore` 在 `Module` 中创建，跨所有函数共享。
@@ -290,6 +319,139 @@ impl TypeStore {
     /// 按文本名查类型（`%struct.X` 引用）。
     pub fn lookup_named(&self, name: &str) -> Option<TypeId> {
         self.named_types.get(&ImmStr::from(name)).copied()
+    }
+
+    // ============================================================
+    // 二进制序列化支持（B2）
+    // ============================================================
+    //
+    // 这些口只服务 `crate::binary`：条目/签名/命名类型的**只读快照** + 解码期的
+    // "按原样重建"。去重键的推导集中在 `type_key`（单一事实源），解码不落盘 key。
+
+    /// 条目快照（dense 顺序 = `TypeId` 顺序）。
+    pub(crate) fn entries(&self) -> &[TypeEntry] {
+        &self.entries
+    }
+
+    /// 签名表快照（`SigRef(i)` 即下标）。
+    pub(crate) fn signatures(&self) -> &[FunctionSignature] {
+        &self.signatures
+    }
+
+    /// 命名类型表，**按名字节序排序**（`HashMap` 迭代序不确定，直接落盘会让
+    /// 字节流不确定）。
+    pub(crate) fn named_types_sorted(&self) -> Vec<(ImmStr, TypeId)> {
+        let mut out: Vec<(ImmStr, TypeId)> = self
+            .named_types
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        out.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        out
+    }
+
+    /// 清空条目/去重表/命名类型/签名表，**保留**字符串池与 `DataLayout`。
+    ///
+    /// 只服务解码路径：随后必须经 [`TypeStore::insert_verbatim`] 按原样重建全部条目，
+    /// 再用 [`TypeStore::finish_binary_decode`] 校验固定索引不变量。
+    pub(crate) fn reset_for_binary_decode(&mut self) {
+        self.entries.clear();
+        self.dedup.clear();
+        self.named_types.clear();
+        self.signatures.clear();
+    }
+
+    /// **按原样**插入条目（保 dense 索引，不做去重查询）。
+    ///
+    /// 去重键按"**先出现者胜**"登记（`or_insert`）：预填充的保留空洞 `TypeId(9)`
+    /// 就是 `Int { bits: 0 }` 的重复条目，而真实 store 里它**不在**去重表中
+    /// （`with_data_layout` 对它是直接 `push`）。这与 `intern` 的"首个即答案"
+    /// 语义一致；文件里若再多出现同结构条目，也只是多几条不可达条目，
+    /// 不影响取值正确性（悬空引用另由 `finish_binary_decode` 拒绝）。
+    pub(crate) fn insert_verbatim(&mut self, entry: TypeEntry) -> TypeId {
+        let id = TypeId(self.entries.len() as u32);
+        if let Some(key) = type_key(&entry) {
+            self.dedup.entry(key).or_insert(id);
+        }
+        self.entries.push(entry);
+        id
+    }
+
+    /// 重建预填充句柄（`void_ty`…`ptr_ty`）并校验 0..15 的固定布局不变量。
+    ///
+    /// 校验方式：拿同 `DataLayout` 的新建 store 作为参照逐条比对前 16 条——
+    /// 不去重写一份期望表（预填充改动时这里自然跟着变，且 `TypeId::I32` 之类
+    /// 常量引用的正是这些固定索引）。
+    pub(crate) fn finish_binary_decode(&mut self) -> Result<(), String> {
+        let reference = TypeStore::with_data_layout(self.data_layout.clone());
+        if self.entries.len() < reference.entries.len() {
+            return Err(format!(
+                "条目数 {} 少于预填充的 {} 条（固定索引不变量缺失）",
+                self.entries.len(),
+                reference.entries.len()
+            ));
+        }
+        for (i, (got, want)) in self
+            .entries
+            .iter()
+            .zip(reference.entries.iter())
+            .enumerate()
+        {
+            if got != want {
+                return Err(format!(
+                    "预填充索引 {i} 与参照不符：文件 {got:?} ≠ 期望 {want:?}"
+                ));
+            }
+        }
+        self.void_ty = reference.void_ty;
+        self.bool_ty = reference.bool_ty;
+        self.i8_ty = reference.i8_ty;
+        self.i16_ty = reference.i16_ty;
+        self.i32_ty = reference.i32_ty;
+        self.i64_ty = reference.i64_ty;
+        self.f32_ty = reference.f32_ty;
+        self.f64_ty = reference.f64_ty;
+        self.ptr_ty = reference.ptr_ty;
+
+        // 悬空引用检查：解码进来的条目不得指向越界 `TypeId`（坏文件必须当场拒绝，
+        // 而不是让下游在 size/对齐查询处 panic）。
+        let count = self.entries.len() as u32;
+        let mut bad: Vec<String> = Vec::new();
+        for (i, entry) in self.entries.iter().enumerate() {
+            let mut push_bad = |what: &str, id: TypeId| {
+                if id.0 >= count {
+                    bad.push(format!("条目 {i} 的{what}引用越界 TypeId {}", id.0));
+                }
+            };
+            match entry {
+                TypeEntry::Vector { elem, .. }
+                | TypeEntry::ScalableVector { elem, .. }
+                | TypeEntry::Array { elem, .. } => push_bad("元素类型", *elem),
+                TypeEntry::Struct { fields, .. } => {
+                    for f in fields {
+                        push_bad("字段类型", f.ty);
+                    }
+                }
+                TypeEntry::Function { params, rets, .. } => {
+                    for p in params {
+                        push_bad("参数类型", *p);
+                    }
+                    for r in rets {
+                        push_bad("返回类型", *r);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (name, id) in &self.named_types {
+            if id.0 >= count {
+                bad.push(format!("命名类型 {name:?} 指向越界 TypeId {}", id.0));
+            }
+        }
+        if let Some(first) = bad.first() {
+            return Err(format!("{first}（共 {} 处悬空引用）", bad.len()));
+        }
+        Ok(())
     }
 
     /// 遍历命名 struct（display 输出 `%struct.X = type {...}` 定义行）。
@@ -1331,5 +1493,104 @@ mod tests {
         // 不同地址空间
         let p3 = store.pointer_ty(1);
         assert_ne!(p, p3);
+    }
+
+    // ============================================================
+    // 二进制解码支持（B2）：负向不变量
+    // ============================================================
+
+    /// 用"参照 store 的全部条目"重建一个 store（模拟解码路径）。
+    fn restore_from(reference: &TypeStore) -> TypeStore {
+        let mut store = TypeStore::with_data_layout(reference.data_layout.clone());
+        store.reset_for_binary_decode();
+        for entry in reference.entries() {
+            store.insert_verbatim(entry.clone());
+        }
+        store
+    }
+
+    #[test]
+    fn binary_decode_restores_verbatim_entries_and_dedup() {
+        let mut reference = TypeStore::new();
+        let named = reference.struct_named("S", vec![TypeField::new(TypeId::I32)], false);
+        let anon = reference.struct_anon(vec![TypeId::I8], false);
+        let vec_ty = reference.vector_ty(TypeId::F32, 4);
+        let token = reference.token_ty();
+
+        let mut store = restore_from(&reference);
+        assert_eq!(store.finish_binary_decode().expect("预填充齐全"), ());
+        assert_eq!(store.type_count(), reference.type_count());
+        for i in 0..reference.type_count() {
+            let id = TypeId(i as u32);
+            assert_eq!(store.get(id), reference.get(id), "条目 {i}");
+        }
+        // 去重表按"首个即答案"重建：intern 同一个结构返回原索引
+        assert_eq!(
+            store.struct_named("S", vec![TypeField::new(TypeId::I32)], false),
+            named
+        );
+        assert_eq!(store.struct_anon(vec![TypeId::I8], false), anon);
+        assert_eq!(store.vector_ty(TypeId::F32, 4), vec_ty);
+        assert_eq!(store.token_ty(), token);
+        // 保留空洞（索引 9 是 Int{0} 的重复条目）不参与去重
+        assert_eq!(store.get(TypeId(9)), &TypeEntry::Int { bits: 0 });
+        assert_eq!(store.int_ty(0), TypeId::VOID, "去重仍指向索引 0");
+    }
+
+    #[test]
+    fn binary_decode_rejects_missing_prefill() {
+        let reference = TypeStore::new();
+        let mut store = TypeStore::with_data_layout(reference.data_layout.clone());
+        store.reset_for_binary_decode();
+        // 只放 3 条 ⇒ 预填充不变量缺失
+        for entry in reference.entries().iter().take(3) {
+            store.insert_verbatim(entry.clone());
+        }
+        let err = store.finish_binary_decode().expect_err("条目不足必须报错");
+        assert!(err.contains("预填充"), "{err}");
+    }
+
+    #[test]
+    fn binary_decode_rejects_dangling_type_refs() {
+        let reference = TypeStore::new();
+        let mut store = restore_from(&reference);
+        // 悬空字段类型（越界 999）
+        store.insert_verbatim(TypeEntry::Struct {
+            name: None,
+            fields: vec![TypeField::new(TypeId(999))],
+            is_packed: false,
+        });
+        let err = store.finish_binary_decode().expect_err("悬空引用必须报错");
+        assert!(err.contains("悬空") || err.contains("越界"), "{err}");
+    }
+
+    #[test]
+    fn binary_decode_rejects_dangling_named_type() {
+        let reference = TypeStore::new();
+        let mut store = restore_from(&reference);
+        store.define_named("Bad", TypeId(999));
+        let err = store
+            .finish_binary_decode()
+            .expect_err("命名类型越界必须报错");
+        assert!(err.contains("悬空") || err.contains("越界"), "{err}");
+    }
+
+    #[test]
+    fn binary_decode_rejects_prefill_mismatch() {
+        let reference = TypeStore::new();
+        let mut store = TypeStore::with_data_layout(reference.data_layout.clone());
+        store.reset_for_binary_decode();
+        for (i, entry) in reference.entries().iter().enumerate() {
+            // 把索引 4（本应 I32）换掉 ⇒ 固定索引不变量被破坏
+            if i == 4 {
+                store.insert_verbatim(TypeEntry::Int { bits: 31 });
+            } else {
+                store.insert_verbatim(entry.clone());
+            }
+        }
+        let err = store
+            .finish_binary_decode()
+            .expect_err("预填充错位必须报错");
+        assert!(err.contains("预填充"), "{err}");
     }
 }

@@ -33,6 +33,14 @@ pub enum IrError {
     UnknownFloatCc(String),
     /// 除零(常量求值)。
     DivisionByZero,
+    /// 二进制解码失败(偏移 + 说明;魔数/版本/段表/截断/未知 tag 一律走这里,
+    /// **绝不 panic**)。
+    BinaryDecode {
+        /// 出错处相对字节流起点的偏移。
+        offset: usize,
+        /// 人类可读说明。
+        msg: String,
+    },
     /// 内部不变式违例(代码缺陷)。
     Internal(String),
 }
@@ -53,6 +61,9 @@ impl std::fmt::Display for IrError {
             IrError::UnknownIntCc(m) => write!(f, "Unknown integer calling convention: {m}"),
             IrError::UnknownFloatCc(m) => write!(f, "Unknown float calling convention: {m}"),
             IrError::DivisionByZero => write!(f, "Division by zero"),
+            IrError::BinaryDecode { offset, msg } => {
+                write!(f, "Binary decode error at offset {offset}: {msg}")
+            }
             IrError::Internal(m) => write!(f, "Internal error: {m}"),
         }
     }

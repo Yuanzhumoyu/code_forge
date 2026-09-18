@@ -40,10 +40,12 @@
 //   同名模块，两者经 `code_forge::prelude` 的 glob 重导出会撞名报警）
 // - `ir/`：核心 IR 数据模型（类型/常量/指令/函数/CFG/构建器/附件/符号）
 // - `analysis/`：支配树、循环、use-list、别名、调试位置
+// - `binary/`：二进制序列化（IR bitcode v1；**不随 feature 门控**，零依赖）
 // - `text/`：文本层（parser + display，`features = ["text"]` 门控）
 // - `verify.rs` / `error.rs`：校验与错误（单文件，保持顶层）
 
 pub mod analysis;
+pub mod binary;
 pub mod entity;
 pub mod error;
 pub mod ir;
@@ -97,6 +99,9 @@ pub use analysis::*;
 
 // 校验
 pub use verify::*;
+
+// 二进制序列化（格式版本/兼容检查；`Module::{to_binary,to_binary_into,from_binary}`）
+pub use binary::{BinaryCompat, IR_FORMAT_VERSION, SectionId, check_binary_compat};
 
 // 支撑类型
 pub use util::big::*;
