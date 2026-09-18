@@ -75,7 +75,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     let xreg = inst
                         .operands
                         .first()
-                        .and_then(|v| self.value_to_xreg.get(v).copied())
+                        .and_then(|v| self.value_to_xreg.get(*v).copied())
                         .unwrap_or_else(|| self.ctx.alloc_xreg(class));
                     if let Some(v) = inst.results.first().copied() {
                         let ty = func.dfg.value_type(v).unwrap_or(TypeId::VOID);
@@ -178,7 +178,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     // 寄存器——避免 insert 覆盖导致源块对该 value 的读取错位
                     // （write_bytes 内联循环的 count/循环变量寄存器被覆盖 bug，
                     // [WA-14]）。arg 未映射时保持 param_xregs 原值（行为不变）。
-                    if let Some(&existing) = self.value_to_xreg.get(&arg) {
+                    if let Some(&existing) = self.value_to_xreg.get(arg) {
                         param_xregs[i] = existing;
                     }
                     self.value_to_xreg.insert(arg, param_xregs[i]);
@@ -326,7 +326,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         use_lists: &UseLists,
         lowering: &dyn TargetLowering<Inst = I>,
     ) -> Result<(), IrError> {
-        let vblock_id = self.block_map[&block];
+        let vblock_id = self.block_map[block];
         self.vcode.switch_to_block(vblock_id);
 
         // S6：块内逆序预扫——匹配 [[pattern]]（内部节点单 use、同块），命中后
@@ -375,7 +375,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 let x = inst
                     .operands
                     .first()
-                    .and_then(|v| self.value_to_xreg.get(v).copied())
+                    .and_then(|v| self.value_to_xreg.get(*v).copied())
                     .or_else(|| Some(self.ctx.alloc_xreg(self.ctx.value_gpr_class)));
                 if let (Some(xr), Some(r)) = (x, inst.results.first()) {
                     if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
@@ -389,7 +389,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 x
             } else {
                 inst.results.first().copied().map(|v| {
-                    self.value_to_xreg.get(&v).copied().unwrap_or_else(|| {
+                    self.value_to_xreg.get(v).copied().unwrap_or_else(|| {
                         let result_ty = dfg.value_type(v).unwrap_or(TypeId::VOID);
                         // 值 XReg 保持池宽（int→GPR64、fp→FPR64）——spill/ABI/
                         // ScalarPair 打包等下游按 64 位 GPR 值约定工作（按类型
@@ -485,7 +485,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             if matches!(inst.opcode, Opcode::Alloca) {
                 let off = self
                     .alloca_offsets
-                    .get(&ii)
+                    .get(ii)
                     .copied()
                     .unwrap_or(-(self.ctx.slot_bytes.max(1) as i64));
                 self.ctx.current_alloca_offset = off - self.ctx.stack_slot_shift as i64;
@@ -608,7 +608,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 .results
                 .iter()
                 .map(|v| {
-                    self.value_to_xreg.get(v).copied().unwrap_or_else(|| {
+                    self.value_to_xreg.get(*v).copied().unwrap_or_else(|| {
                         let result_ty = dfg.value_type(*v).unwrap_or(TypeId::VOID);
                         // 按类型分派到多宽度类（I32→GPR(4) 池、F32/F64→FPR(8) 池、
                         // 动态 vector → VEC）
@@ -721,7 +721,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     }
 
     pub(crate) fn get_or_alloc_xreg(&mut self, val: Value, class: RegClass) -> XReg {
-        if let Some(xreg) = self.value_to_xreg.get(&val).copied() {
+        if let Some(xreg) = self.value_to_xreg.get(val).copied() {
             xreg
         } else {
             let xreg = self.ctx.alloc_xreg(class);

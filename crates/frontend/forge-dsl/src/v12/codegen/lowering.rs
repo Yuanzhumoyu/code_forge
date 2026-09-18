@@ -396,7 +396,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         };
         quote! {
             let val = values.first().copied()
-                .and_then(|x| value_to_xreg.get(&x)).copied()
+                .and_then(|x| value_to_xreg.get(x)).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
             if ctx.xreg_types.get(&val).is_some_and(|t| t.is_float()) {
                 #fpr_return_body
@@ -425,7 +425,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 // 被调方 Return 与调用方 ret_move 必须对称（否则 RDX 垃圾 →
                 // bool 部分读错 → checked_destructure 返回 0）。
                 if let Some(&__r2) = values.get(1)
-                    && let Some(&__v2) = value_to_xreg.get(&__r2)
+                    && let Some(&__v2) = value_to_xreg.get(__r2)
                 {
                     let __idx2 = __pack.push_inst(Inst::#ret_vn {
                         #mov_src: Reg::from_index(1, __DEFAULT_GPR_CLASS),
@@ -572,8 +572,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 &self,
                 dfg: &crate::prelude::DataFlowGraph,
                 block: crate::prelude::Block,
-                value_to_xreg: &std::collections::HashMap<crate::prelude::Value, crate::prelude::XReg>,
-                _block_to_vblock: &std::collections::HashMap<crate::prelude::Block, crate::prelude::VBlockId>,
+                value_to_xreg: &crate::prelude::SecondaryMap<crate::prelude::Value, crate::prelude::XReg>,
+                _block_to_vblock: &crate::prelude::SecondaryMap<crate::prelude::Block, crate::prelude::VBlockId>,
                 ctx: &mut crate::prelude::LowerCtx,
             ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
                 let mut __pack: crate::prelude::InstPacket<Self::Inst> =
@@ -593,7 +593,6 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                     Some(crate::prelude::TermKind::Branch) => {
                         let (cond_val, then_block, _then_args, else_block, _else_args) =
                             dfg.term_branch(block).expect("Branch 投影");
-                        let cond_val = &cond_val;
                         #branch_body
                     }
                     Some(crate::prelude::TermKind::Unreachable) => {
@@ -609,8 +608,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 &self,
                 _dfg: &crate::prelude::DataFlowGraph,
                 _block: crate::prelude::Block,
-                _value_to_xreg: &std::collections::HashMap<crate::prelude::Value, crate::prelude::XReg>,
-                _block_to_vblock: &std::collections::HashMap<crate::prelude::Block, crate::prelude::VBlockId>,
+                _value_to_xreg: &crate::prelude::SecondaryMap<crate::prelude::Value, crate::prelude::XReg>,
+                _block_to_vblock: &crate::prelude::SecondaryMap<crate::prelude::Block, crate::prelude::VBlockId>,
                 _ctx: &mut crate::prelude::LowerCtx,
             ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
                 Err(crate::prelude::IrError::Unsupported("v12 terminator lowering".into()))

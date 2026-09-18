@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **代码生成侧密集句柄表 → `SecondaryMap`（forge-ir v3 S2 余项④ 第一批）**：`LowerCtx::{vreg_classes,vreg_types,vreg_widths}`（VReg 键）与 `CompileState::{value_to_xreg,block_map,alloca_offsets}`（Value/Block/Inst 键）由 `HashMap` 换成 forge-ir 的 `SecondaryMap`（下标即句柄，不再逐次 SipHash）；`TargetLowering::lower_terminator` 的映射参数、`forge-dsl` 模板签名与 `prelude` 同步（值语义键 `.get(&x)` → `.get(x)`，并去掉模板里为借用而写的 `let cond_val = &cond_val;`）。
+  A/B 实测（demo8 夹具 `compile_raw`，release，500 次 × 7 轮取中位数）：64 条指令 **116.7µs → 103.3µs（−11.5%，区间不重叠）**；256 条指令 412.7µs → 400.5µs（−3.0%，尾部与噪声重叠）。首轮单次计时曾给出反向 +12%，重复测量后判定为噪声——文件头记下"单次计时不算证据"。
+  **`XReg` 键表未迁（如实记录）**：`XReg { index, class }` 的 `Eq`/`Hash` 含 class，同一 index 不同类是不同键；按 index 密化会合并条目（语义变化），故 `xreg_types`/`precolored`/`assignments`/`spill_slots`/`intervals`/`active` 保持 `HashMap`，待拍板"class 是否属于键"。新增守卫 3 例（`entity_tables.rs`：编译期 VReg 表密集性、源码级 `CompileState` 表密集性、XReg 键含 class 的可执行断言）。
+  实测：workspace 1510 passed / 0 failed / 19 ignored；x86 195/3/0、riscv64 131/67/0、arm64 23/175/0。
+
 - **`LowerCtx` 带类型快照：生成物侧不再逐指令取锁（forge-ir v3 S3 余项①）**：`LowerCtx.type_ctx: Option<TypeContext>` → **`type_store: Option<TypeStoreRef>`**（lowering 入口取一次快照，lowering 期间类型表只读；`TypeStoreRef` 是 owned，解除了"守卫借着 `func`"的借用约束）。宿主的 `reg_class_for`/`mem_opsize_for`/`type_bits_of`/`type_bits_or_default` 与 `machine/pattern.rs` 的三个属性助手（参数改 `Option<&TypeStore>`）全部改读快照；`forge-dsl` 的 `quote!` 模板（`lowering.rs` 11 处 `tc.borrow()` + `integration.rs` 的逐属性一次性读封装）改读 `ctx.type_store`；`compiler.rs` 的宽向量可行性门由"每指令 × 每类型取锁"收成函数入口一次。
   取证：临时给 `TypeContext::borrow` 加 `#[track_caller]` 后按 `文件:行` 聚合——最大头是 `compiler.rs:1845`（每指令取锁）；改前编译一个函数取锁 **15 次（1 条指令）→ 252 次（80 条指令）**，改后 **恒为 10**。
   新增守卫 3 例（`crates/backend/forge-codegen/tests/lowering_read_path.rs`）：快照次数不随 IR 规模增长且 ≤16、编译期 0 次整表克隆、源码级"模板不得再出现 `type_ctx`/`.borrow()`"。`read_path_budget.rs` 预算：`forge-dsl/.../lowering.rs` 11 → 0（回潮守卫）、`pipeline/compiler.rs` 23 → 21。负向验证：宽向量门改回每指令取锁 ⇒ 规模用例 FAILED（14 vs 251）。

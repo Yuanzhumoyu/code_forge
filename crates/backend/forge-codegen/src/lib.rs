@@ -26,6 +26,7 @@
 // 时即 `forge_codegen::IrError`）——必须**公开**，否则生成物只能活在库内部
 // （demo 夹具迁到 tests/ 正是踩到这一点）。
 pub use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -104,6 +105,7 @@ pub mod prelude {
         LowerCtx, MachineInst, MemRef, RegisterClassInfo, VBlockId, VCodeBlock, avx_available,
         avx2_available,
     };
+    pub use forge_ir::entity_map::SecondaryMap;
     pub use forge_ir::{
         AtomicRmwOp, Block, ConstId, DataFlowGraph, Endianness, FloatCC, FrameAccess, Immediate,
         Instruction, IntCC, IrError, IselStrategy, Opcode, PReg, PhysReg, RegClass, TermKind,
@@ -194,11 +196,14 @@ pub struct LowerCtx {
     /// 当前函数的常量池（用于解析 Iconst/Fconst 的索引）。
     pub constant_pool: Option<forge_ir::ConstantPool>,
     /// VReg → 寄存器类别映射（用于寄存器分配）。
-    pub vreg_classes: HashMap<VReg, RegClass>,
+    ///
+    /// **密集表**（v3 S2）：`VReg` 是 forge-ir 的密集句柄（已实现 `EntityRef`），
+    /// 下标即句柄——不必按句柄哈希。
+    pub vreg_classes: SecondaryMap<VReg, RegClass>,
     /// VReg → IR 类型映射（用于 `.if` 条件汇编中的类型查询）。
-    pub vreg_types: HashMap<VReg, TypeId>,
+    pub vreg_types: SecondaryMap<VReg, TypeId>,
     /// VReg → 字节宽度（用于寄存器分配器宽度感知）。
-    pub vreg_widths: HashMap<VReg, u8>,
+    pub vreg_widths: SecondaryMap<VReg, u8>,
     /// 是否为浮点返回值（影响 Return 降低时使用 RetVal 还是 RetValFloat）。
     pub is_float_return: bool,
     /// 是否 sret 返回（函数返回宽向量 >16 字节——隐藏 sret 指针参数占首
@@ -392,9 +397,9 @@ impl LowerCtx {
             stack_slot_shift: 0,
             max_stack_bytes: 0,
             max_stack_arg_bytes: 0,
-            vreg_classes: HashMap::new(),
-            vreg_types: HashMap::new(),
-            vreg_widths: HashMap::new(),
+            vreg_classes: SecondaryMap::new(),
+            vreg_types: SecondaryMap::new(),
+            vreg_widths: SecondaryMap::new(),
             default_opsize: 64,
             temp_vregs: HashSet::new(),
             zero_vreg: None,
@@ -472,7 +477,7 @@ impl LowerCtx {
     /// 查询 VReg 对应的 IR 类型是否为浮点类型。
     pub fn is_float_vreg(&self, vreg: VReg) -> bool {
         self.vreg_types
-            .get(&vreg)
+            .get(vreg)
             .map(|t| self.reg_class_for(t).is_fp())
             .unwrap_or(false)
     }

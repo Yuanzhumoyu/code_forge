@@ -96,7 +96,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | --- | --- | --- |
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
-| S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
+| S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`（§4 已判定不做）、两个下游 crate 内部句柄表——**代码生成侧六张密集句柄表已迁**（`LowerCtx::{vreg_classes,vreg_types,vreg_widths}` + `CompileState::{value_to_xreg,block_map,alloca_offsets}` → `SecondaryMap`，A/B −11.5%/−3.0%；见 §6 末）；**XReg 键表待拍板**（`XReg` 的键含 class，按 index 密化会合并不同类的条目 ⇒ 需先决定 class 是否属于键） |
 | S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`**已落地**（`LowerCtx::type_store` 快照；模板 11 处 `.borrow()` 清零 + 宽向量门"每指令取锁"收回入口，见 §6 末"LowerCtx 带类型快照"切片）②读写交错函数的"先写后读"结构改造；③**锁 → 快照已落地**（`TypeContext` 读快照 + `borrow_mut` COW、删 `Deref` 逃逸口，见 §6 末"锁 → 快照"切片） |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
@@ -1795,6 +1795,51 @@ S3 余项 ①（"forge-dsl 生成物侧 `tc.borrow()`，需 `LowerCtx` 带 store
 riscv64 131/67/0、arm64 23/175/0；LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0；
 语料往返 11 例全绿；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
 `cargo doc -D warnings` 全干净。
+
+### S2（切片）：代码生成侧密集句柄表（`SecondaryMap`）+ `XReg` 不可密化的实测理由（2026-09-17）
+
+S2 余项 ④ 的第一批：**键是密集句柄**的表换成 `SecondaryMap`（下标即句柄，不再逐次
+SipHash）。
+
+**迁移的六张表**：
+
+| 位置 | 表 | 键 |
+| --- | --- | --- |
+| `LowerCtx` | `vreg_classes` / `vreg_types` / `vreg_widths` | `VReg`（forge-ir 的 `EntityRef`） |
+| `CompileState`（lowering） | `value_to_xreg` / `block_map` / `alloca_offsets` | `Value` / `Block` / `Inst` |
+
+传参面同步：`TargetLowering::lower_terminator` 的两个映射参数改 `&SecondaryMap<…>`，
+生成器模板（`forge-dsl` 的 `lower_terminator` 签名）改 `crate::prelude::SecondaryMap`，
+`prelude` 增导出 `forge_ir::entity_map::SecondaryMap`；值语义键的取值点由 `.get(&x)`
+改 `.get(x)`，并去掉模板里为 `HashMap::get` 而写的 `let cond_val = &cond_val;`。
+
+**A/B 实测**（demo8 夹具 `compile_raw`，release，500 次 × 7 轮取中位数；临时探针跑完即删）：
+
+- 64 条指令：**116.7 µs → 103.3 µs（−11.5%）**，样本区间不重叠（116.7±9 vs 103.3±6）；
+- 256 条指令：412.7 µs → 400.5 µs（−3.0%），尾部与噪声重叠 ⇒ 只作方向性参考。
+
+**先测后信**：首轮单次计时给出"256 条指令 +12%"的反向结果，重复测量（7 轮 × 500 次）
+后判定为噪声——**单次计时不算证据**，这条也写进了守卫文件头。
+
+**`XReg` 不可密化（如实记录，未做）**：`XReg { index, class }` 的 `Eq`/`Hash` **含 class**
+——同一 index 配不同类是两个不同的键（`xreg_types`、`alloc_config::precolored`、
+`AllocResult::{assignments, spill_slots}`、regalloc 的 `intervals`/`active` 都是 XReg 键）。
+按 index 做下标的密集表会把它们**合并**，属语义变化 ⇒ 这些表保持 `HashMap`，直到先拍板
+"class 是否属于键"。`entity_tables.rs::xreg_is_index_plus_class_so_not_dense` 把这条事实
+钉成可执行断言（同一 index 不同类 ⇒ `HashMap` 里是两个条目）。
+
+**守卫**（新增 `crates/backend/forge-codegen/tests/entity_tables.rs`，3 例）：
+①`lowerctx_vreg_tables_are_dense`（编译期：三张表必须是 `SecondaryMap`，改成 `HashMap`
+直接编不过）；②`compile_state_tables_are_dense`（源码级：三张 `pub(crate)` 字段必须是
+`SecondaryMap`，`HashMap<` 回潮即红）；③`xreg_is_index_plus_class_so_not_dense`（XReg
+键语义 + A/B 数据记录）。
+
+**负向验证**：把 `value_to_xreg` 改回 `HashMap` ⇒ 编译失败（8 处调用点类型不符）；
+"整体一致回退"（连调用点一起改回）由源码级用例兜底。
+
+**验证**：workspace 1510 passed / 0 failed / 19 ignored（+3）；三套矩阵 x86 195/3/0、
+riscv64 131/67/0、arm64 23/175/0；fmt `--check`/clippy `-D warnings`/
+`cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
 
 ## 7. 参考设计（外部）
 

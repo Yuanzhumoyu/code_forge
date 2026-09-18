@@ -44,6 +44,7 @@ use crate::pipeline::agg_expand::{AggSlots, UseJob, UseKind, UsePos};
 use crate::pipeline::alloc_result::AllocResult;
 use crate::pipeline::regalloc_bt::BacktrackingAllocator;
 use crate::{CompiledFunction, IrError, LowerCtx, MachineInst, VBlockId, VCode};
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -2025,13 +2026,15 @@ pub(crate) struct CompileState<I: MachineInst> {
     /// 每条 vcode 指令的写死物理寄存器集（与 xreg_map/instructions 平行；
     /// 来自 lower 规则的 clobbers 声明，包级展开到包内每条指令）。
     pub(crate) inst_clobbers: Vec<Vec<(u32, crate::prelude::RegClass)>>,
-    pub(crate) value_to_xreg: HashMap<Value, XReg>,
-    pub(crate) block_map: HashMap<Block, VBlockId>,
+    /// IR 值 → XReg 映射（v3 S2：`Value` 是密集句柄 ⇒ `SecondaryMap`，不哈希）。
+    pub(crate) value_to_xreg: SecondaryMap<Value, XReg>,
+    /// IR 块 → VCode 块映射（同理：`Block` 是密集句柄）。
+    pub(crate) block_map: SecondaryMap<Block, VBlockId>,
     pub(crate) ctx: LowerCtx,
     pub(crate) param_xregs: Vec<XReg>,
     /// Alloca 指令 → 帧槽偏移（预扫描分配；lowering 时经 ctx.current_alloca_offset
-    /// 供 `lea_off rd, alloca_offset` 规则取用）。
-    pub(crate) alloca_offsets: HashMap<Inst, i64>,
+    /// 供 `lea_off rd, alloca_offset` 规则取用）。`Inst` 是密集句柄 ⇒ `SecondaryMap`。
+    pub(crate) alloca_offsets: SecondaryMap<Inst, i64>,
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
@@ -2085,11 +2088,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
             vcode: VCode::new(),
             xreg_map: Vec::new(),
             inst_clobbers: Vec::new(),
-            value_to_xreg: HashMap::new(),
-            block_map: HashMap::new(),
+            value_to_xreg: SecondaryMap::new(),
+            block_map: SecondaryMap::new(),
             ctx,
             param_xregs: Vec::new(),
-            alloca_offsets: HashMap::new(),
+            alloca_offsets: SecondaryMap::new(),
         }
     }
 
