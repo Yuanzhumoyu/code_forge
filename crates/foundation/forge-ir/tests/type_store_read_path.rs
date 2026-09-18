@@ -211,6 +211,80 @@ fn sig_ref(ctx: &TypeContext, ty: TypeId) -> forge_ir::SigRef {
     ctx.register_signature(FunctionSignature::new(&[(ty, "x")], &[ty]))
 }
 
+// ── 读写交错函数的"先写后读"结构（v3 S3 余项②）──
+
+fn src_locals(n: usize) -> String {
+    let mut s = String::from("define i32 @f(i32 %a) {\nentry:\n");
+    let mut acc = "%a".to_string();
+    for i in 0..n {
+        s.push_str(&format!("  %v{i} = add i32 {acc}, 1\n"));
+        acc = format!("%v{i}");
+    }
+    s.push_str(&format!("  ret i32 {acc}\n}}\n"));
+    s
+}
+
+fn src_floatbits(n: usize) -> String {
+    let mut s = String::from("define float @f(float %a) {\nentry:\n");
+    let mut acc = "%a".to_string();
+    for i in 0..n {
+        s.push_str(&format!("  %v{i} = fadd float {acc}, 0x3F800000\n"));
+        acc = format!("%v{i}");
+    }
+    s.push_str(&format!("  ret float {acc}\n}}\n"));
+    s
+}
+
+fn src_vec(n: usize) -> String {
+    let mut s = String::from("define void @f(ptr %p) {\nentry:\n");
+    for i in 0..n {
+        s.push_str(&format!(
+            "  store <4 x i32> <i32 1, i32 2, i32 3, i32 4>, ptr %p\n    ; {i}\n"
+        ));
+    }
+    s.push_str("  ret void\n}\n");
+    s
+}
+
+fn snapshots(src: &str) -> usize {
+    forge_ir::ir_parser::parse_module(src)
+        .unwrap_or_else(|e| panic!("parse 失败：{e}"))
+        .types
+        .debug_read_count()
+}
+
+/// 同一**读段**只取一次快照：位模式/向量字面量操作数不再比局部值多取锁。
+///
+/// "先写后读"结构（v3 S3 余项②）：`operand_to_value` 在 `to_type`（可能 intern 新类型，
+/// 写）之后取**一次**快照，把各 arm 需要的类型事实读成 `Copy` 局部量；快照不跨越会
+/// intern 字符串的 arm（跨越会触发整表 COW 克隆）。
+///
+/// **A/B 实测**（同夹具同解析器，仅差这次结构改造）：
+///
+/// | 形态（32 条指令） | 改前 | 改后 |
+/// | --- | --- | --- |
+/// | 局部值（公共路径） | 129 | 129（无回归） |
+/// | 浮点位模式 `fadd float … 0x3F800000` | 161 | **129**（每条 −1） |
+/// | 向量字面量 `store <4 x i32> <…>` | 224 | **192**（每条 −1） |
+#[test]
+fn operand_reads_share_one_snapshot() {
+    assert_eq!(
+        snapshots(&src_locals(32)),
+        129,
+        "公共路径基线（改前同为 129）"
+    );
+    assert_eq!(
+        snapshots(&src_floatbits(32)),
+        129,
+        "位模式操作数应与局部值取锁数相同（改前 161：多一次逐操作数取锁）"
+    );
+    assert_eq!(
+        snapshots(&src_vec(32)),
+        192,
+        "向量字面量 = 基线 + 每指令 1 次（lane 编码 helper）；改前 224"
+    );
+}
+
 // ── 锁 → 快照（v3 S3）：新语义的守卫 ──
 
 /// 快照是**不可变视图**：拿快照后 intern 新类型，旧快照看不到、新快照看得到。

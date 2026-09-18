@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **读写交错函数的"先写后读"：读数段合并（forge-ir v3 S3 余项②）**：`operand_to_value` 原来每个 arm 各取一次类型锁（metadata 判定、位模式判定、浮点位宽、向量元素类型、zeroinit 尺寸、const-expr 类型/尺寸，共 9 处）；现在在 `to_type`（**写**）之后取**一次**快照，把各 arm 需要的类型事实读进 `#[derive(Clone, Copy)] OperandTyFacts`，快照**不跨越**会 `strings.intern` 的 arm（跨越会触发整表 COW 克隆）。顺带合并 `build_inst` 的 `extractvalue` 索引链、`vconst` 的 `element_type`+`size_bytes`、`agg_const_from_operands` 的重复取锁。
+  确定性计数实测（新守卫 `type_store_read_path.rs::operand_reads_share_one_snapshot`）：32 条指令的浮点位模式 161 → **129**、向量字面量 224 → **192**（各 −1 次/指令），公共路径 129 不变（无回归）；静态预算 `ir_parser/semantics.rs` 24 → **15**；`write_path_never_clones_in_real_workload` 仍 0 次整表克隆。负向验证：`UInt` arm 改回逐操作数取锁 ⇒ 用例 FAILED（161 vs 129）。
+  实测：workspace 1515 passed / 0 failed / 19 ignored；x86 195/3/0、riscv64 131/67/0、arm64 23/175/0。
+
+- **新增 S8 可选项设计方案（待拍板）**：`docs/plans/forge-ir-s8-design.md` 逐个给出二进制序列化 / MemorySSA-lite / crate 边界拆分的现状基线（forge-ir 生产代码 25,245 行、文本层占 9,995 行≈40%、10 类实体句柄、6 类常量通道…）、数据模型与格式/表示设计、分期与验证方案、成本与触发条件；建议 A（二进制）可做、B/C 不做，并列出需要拍板的四个问题。`docs/README.md` 索引与 v3 计划 S8 行已指向该文。
+
 - **密集句柄表收口：全仓零 `HashMap<Value|Block|Inst>`（forge-ir v3 S2 余项④ 收官）**：把上批登记的 32 处余量全部迁完（`forge-opt` 的 `const_fold`/`sccp`/`gvn`/`gvn_pre`/`loop_unroll`/`licm`/`algebraic`/`lto`/`func_specialize`/`inline`），并清掉 `forge-ir`（`analysis` 的 `postorder_rank`/`preds_map`、`loop_info`、`ir_parser/semantics::per_pred`）与 `forge-codegen`（`agg_expand::AggSlots`、`compiler::rewrite`、`liverange`、`lowering::roots`）的同类表。
   为此给 `SecondaryMap` 补 `FromIterator<(K, V)>`（与 `HashMap::collect()` 同形），`Function::apply_replacements` 与 `DataFlowGraph::clone_inst` 的 `value_remap` 改收 `&mut SecondaryMap`。
   守卫由"预算表"升级为**零容忍扫描**：`forge-opt/tests/entity_tables.rs::no_dense_handle_hashmaps_in_forge_opt` + `forge-codegen/tests/entity_tables.rs::no_dense_handle_hashmaps_repo_wide`（扫 `crates/**` 与根 `src/`，跳过注释行、精确匹配键名以免误伤 forge-hir 的 `HashMap<BlockId, _>`）。负向验证：在 `loops/licm.rs` 插一处 `HashMap<Value, u64>` ⇒ 两个用例各 FAILED 并点名 `licm.rs:247: [Value]`。

@@ -25,7 +25,7 @@ use crate::mem_flags::MemFlags;
 use crate::opcode::AtomicRmwOp;
 use crate::opcode::Opcode;
 use crate::opcode::Ordering;
-use crate::types::{FunctionSignature, TypeContext, TypeEntry};
+use crate::types::{FunctionSignature, TypeContext, TypeEntry, TypeStore};
 
 use super::ast_items::*;
 use super::lexer::TokenStream;
@@ -2509,8 +2509,11 @@ fn build_inst<'a>(
                 let mut v = None;
                 let mut cur_ty = agg_ty;
                 let mut cur_agg = agg_id;
+                // 一次读快照覆盖整个索引链（循环内只发射指令、不改类型表；
+                // v3 S3 余项②：同一读段不逐次取锁）
+                let types = ctx.borrow();
                 for (k, &i) in idxs.iter().enumerate() {
-                    let ety = ctx.borrow().aggregate_elem_type(cur_ty, i).ok_or_else(|| {
+                    let ety = types.aggregate_elem_type(cur_ty, i).ok_or_else(|| {
                         IrError::Semantic(format!(
                             "extractvalue index {i} out of range for aggregate type"
                         ))
@@ -3057,11 +3060,18 @@ fn build_inst<'a>(
             .first()
             .map(|a| to_type(&a.ty, ctx))
             .unwrap_or_else(|| ctx.vector_ty(ctx.f32_ty(), 4));
-        let elem = ctx.borrow().element_type(ty).unwrap_or(ctx.f32_ty());
+        let (elem, ty_bytes) = {
+            // 一次读快照取两个事实（v3 S3 余项②：同一读段不重复取锁）
+            let types = ctx.borrow();
+            (
+                types.element_type(ty).unwrap_or(ctx.f32_ty()),
+                types.size_bytes(ty) as usize,
+            )
+        };
         let lanes: &[ParsedOperand] = &inst.args[1..];
         let lane_data: Vec<u8> = if lanes.is_empty() {
             // 无数据：退化为同尺寸零向量（结构 round-trip）
-            let size = ctx.borrow().size_bytes(ty) as usize;
+            let size = ty_bytes;
             vec![0u8; size]
         } else {
             let vl: Vec<VecLane> = lanes
@@ -3345,12 +3355,9 @@ fn agg_const_from_operands(
     use crate::types::TypeEntry;
     let mut children = Vec::new();
     for (i, e) in elems.iter().enumerate() {
-        let ety = ctx
-            .borrow()
-            .aggregate_elem_type(ty, i as u32)
-            .ok_or_else(|| {
-                IrError::Semantic("aggregate literal element out of range".to_string())
-            })?;
+        let ety = store.aggregate_elem_type(ty, i as u32).ok_or_else(|| {
+            IrError::Semantic("aggregate literal element out of range".to_string())
+        })?;
         let child = match &e.op {
             Operand::Int(n) => {
                 let bits = match store.get(ety) {
@@ -4262,6 +4269,42 @@ fn encode_lanes_to_bytes(
     Ok(data)
 }
 
+/// [`operand_to_value`] 需要的类型事实（**一次快照**取值，之后不再取锁）。
+///
+/// **"先写后读"结构（v3 S3 余项②）**：`to_type` 可能 intern 新类型（写），紧随其后取
+/// **一次**快照，把后面各 arm 需要的类型事实读成 `Copy` 局部量；各 arm 只用这些局部量。
+/// 快照**不跨越** arm——`Local`/`Global` arm 会 `strings.intern`（写），跨越它会让写侧
+/// 克隆整表（COW），且旧快照会变陈旧。
+#[derive(Clone, Copy)]
+struct OperandTyFacts {
+    /// `metadata` 类型（宽松占位 `undef`，metadata 语义不落 IR）。
+    is_metadata: bool,
+    /// 十六进制整数字面量按**位模式**解释的类型（`Float{16|32|64}` / `BFloat`）。
+    int_literal_is_bits: bool,
+    is_f32: bool,
+    is_float: bool,
+    is_vector: bool,
+    /// 向量元素类型（非向量为 `None`）。
+    elem: Option<TypeId>,
+    /// 类型字节数。
+    bytes: usize,
+}
+
+fn operand_ty_facts(types: &TypeStore, ty: TypeId) -> OperandTyFacts {
+    OperandTyFacts {
+        is_metadata: matches!(types.get(ty), TypeEntry::Metadata),
+        int_literal_is_bits: matches!(
+            types.get(ty),
+            TypeEntry::Float { bits: 16 | 32 | 64 } | TypeEntry::BFloat { .. }
+        ),
+        is_f32: matches!(types.get(ty), TypeEntry::Float { bits: 32 }),
+        is_float: matches!(types.get(ty), TypeEntry::Float { .. }),
+        is_vector: matches!(types.get(ty), TypeEntry::Vector { .. }),
+        elem: types.element_type(ty),
+        bytes: types.size_bytes(ty) as usize,
+    }
+}
+
 fn operand_to_value<'a>(
     op: &'a ParsedOperand,
     ctx: &TypeContext,
@@ -4273,9 +4316,12 @@ fn operand_to_value<'a>(
 ) -> Result<Value, IrError> {
     fb.switch_to_block(block);
     let ty = to_type(&op.ty, ctx);
+    // 先写（`to_type` 可能 intern 新类型）→ **一次**读快照取全部类型事实 →
+    // 之后各 arm 只用这些 Copy 局部量（见 [`OperandTyFacts`]）。
+    let facts = operand_ty_facts(&ctx.borrow(), ty);
     // metadata 类型参数（`metadata i32 0`——宽松占位 undef,metadata 语义
     // 不落 IR;第二十九轮重建）
-    if matches!(ctx.borrow().get(ty), crate::types::TypeEntry::Metadata) {
+    if facts.is_metadata {
         return Ok(fb.undef(ty));
     }
     let v = match &op.op {
@@ -4322,17 +4368,14 @@ fn operand_to_value<'a>(
         Operand::UInt(n) => {
             // 浮点类型的 hex 字面量是 bit 模式（LLVM：`float 0x3FC00000`）;
             // f32/f64 按位模式存;half/bfloat 低 16 位(第二十九轮重建)
-            if matches!(
-                ctx.borrow().get(ty),
-                TypeEntry::Float { bits: 16 | 32 | 64 } | TypeEntry::BFloat { .. }
-            ) {
+            if facts.int_literal_is_bits {
                 fb.fconst(*n, ty)
             } else {
                 fb.iconst(*n as i64, ty)
             }
         }
         Operand::Float(fv) => {
-            if matches!(ctx.borrow().get(ty), TypeEntry::Float { bits: 32 }) {
+            if facts.is_f32 {
                 let bits = (*fv as f32).to_bits() as u64;
                 fb.fconst(bits, ty)
             } else {
@@ -4343,7 +4386,7 @@ fn operand_to_value<'a>(
         Operand::Null => fb.iconst(0, ty),
         // 向量常量字面量 `<4 x float> <1.5, ...>` → 小端 vconst 值
         Operand::VecConst(lanes) => {
-            let elem = ctx.borrow().element_type(ty).ok_or_else(|| {
+            let elem = facts.elem.ok_or_else(|| {
                 IrError::Semantic("vector literal requires a vector type".to_string())
             })?;
             let data = encode_lanes_to_bytes(ctx, elem, lanes, false)?;
@@ -4358,8 +4401,8 @@ fn operand_to_value<'a>(
         }
         // zeroinitializer：零向量 / 零标量
         Operand::ZeroInit => {
-            let size = ctx.borrow().size_bytes(ty) as usize;
-            if matches!(ctx.borrow().get(ty), TypeEntry::Vector { .. }) {
+            let size = facts.bytes;
+            if facts.is_vector {
                 fb.vconst_bytes(vec![0u8; size], ty)
             } else {
                 fb.iconst(0, ty)
@@ -4369,15 +4412,15 @@ fn operand_to_value<'a>(
         //（整数按 i64 值；浮点按位模式——const_expr_value 对 Float 已 to_bits）
         Operand::ConstExpr(e) => {
             let v = const_expr_value(ctx, e)?;
-            match ctx.borrow().get(ty) {
-                TypeEntry::Float { bits: 32 } => fb.fconst(v as u64 & 0xFFFF_FFFF, ty),
-                TypeEntry::Float { .. } => fb.fconst(v as u64, ty),
+            if facts.is_f32 {
+                fb.fconst(v as u64 & 0xFFFF_FFFF, ty)
+            } else if facts.is_float {
+                fb.fconst(v as u64, ty)
+            } else if facts.is_vector {
                 // 向量常量（折叠值无意义）→ 零向量
-                TypeEntry::Vector { .. } => {
-                    let size = ctx.borrow().size_bytes(ty) as usize;
-                    fb.vconst_bytes(vec![0u8; size], ty)
-                }
-                _ => fb.iconst(v as i64, ty),
+                fb.vconst_bytes(vec![0u8; facts.bytes], ty)
+            } else {
+                fb.iconst(v as i64, ty)
             }
         }
         Operand::Undef => fb.emit1(Opcode::Undef, vec![], vec![], ty, InstFlags::NONE),

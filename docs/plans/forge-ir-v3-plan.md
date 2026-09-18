@@ -88,7 +88,9 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
   "重算 CFG/支配树并比对"；pass 后校验默认切 `PassVerify::Error`；`AnalysisManager`。
 - **H 文本层（S7）**：`features=["text"]` 门控（**不拆文件**）；span 贯穿；错误恢复；
   往返断言扩面；结构化 fuzz。LLVM 语料继续作为互操作硬门禁。
-- **I 可选项（S8，默认不做）**：二进制序列化、MemorySSA-lite、crate 边界拆分。
+- **I 可选项（S8，默认不做）**：二进制序列化、MemorySSA-lite、crate 边界拆分
+  ——**详细设计见 [`forge-ir-s8-design.md`](forge-ir-s8-design.md)**（含现状基线实测、逐候选
+  数据模型/格式设计/分期/验证方案/成本，以及需要拍板的四个问题）。
 
 ## 5. 分期与进度
 
@@ -97,12 +99,12 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`（§4 已判定不做）；两个下游 crate 内部句柄表——**已收口**：全仓生产代码里以 `Value`/`Block`/`Inst` 为键的 `HashMap` **为 0**（代码生成侧六表 + 优化 pass 全部 + forge-ir/forge-codegen 同类表；零容忍扫描守卫），唯一豁免是 `XReg`（键含 class，密化会合并不同类条目，理由钉在守卫里；见 §6 末三节） |
-| S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`**已落地**（`LowerCtx::type_store` 快照；模板 11 处 `.borrow()` 清零 + 宽向量门"每指令取锁"收回入口，见 §6 末"LowerCtx 带类型快照"切片）②读写交错函数的"先写后读"结构改造；③**锁 → 快照已落地**（`TypeContext` 读快照 + `borrow_mut` COW、删 `Deref` 逃逸口，见 §6 末"锁 → 快照"切片） |
+| S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`**已落地**（`LowerCtx::type_store` 快照；模板 11 处 `.borrow()` 清零 + 宽向量门"每指令取锁"收回入口，见 §6 末"LowerCtx 带类型快照"切片）②读写交错函数的"先写后读"结构改造**已落地**（`operand_to_value` 9 处取锁 → 1：`to_type` 写完后取一次快照读成 `Copy` 事实，快照不跨越会 intern 的 arm；索引链/vconst/agg_const 各合并；semantics 24 → 15，A/B 位模式与向量字面量各 −1 次/指令；见 §6 末"读数段合并"切片）③**锁 → 快照已落地**（`TypeContext` 读快照 + `borrow_mut` COW、删 `Deref` 逃逸口，见 §6 末"锁 → 快照"切片） |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
 | S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；**收官切片**（splat 逐 lane 广播 + 向量元素类型名不再靠猜）已落地，**S7 余项清零**（见 §6 末）；LLVM 语料（198/452）仍是硬门禁 |
-| S8 | 可选（二进制/MemorySSA/crate 边界） | 需拍板 |
+| S8 | 可选（二进制/MemorySSA/crate 边界） | **待拍板**：详细设计见 [`forge-ir-s8-design.md`](forge-ir-s8-design.md)（三个候选逐个给数据模型、格式/表示设计、分期、验证方案与触发条件；当前建议：A 可做、B/C 不做） |
 
 ### 每期固定门禁
 
@@ -1913,6 +1915,50 @@ FAILED，并点名 `crates/middle/forge-opt/src/loops/licm.rs:247: [Value] …`�
 "密集句柄不再哈希"这一结构事实，以及它现在由零容忍扫描守卫。
 
 **验证**：workspace 1514 passed / 0 failed / 19 ignored（+2）；三套矩阵 x86 195/3/0、
+riscv64 131/67/0、arm64 23/175/0；fmt `--check`/clippy `-D warnings`/
+`cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
+
+### S3（切片）：读写交错函数的"先写后读"——读数段合并（2026-09-17）
+
+S3 余项 ②。目标：**同一读段只取一次快照**，且快照**不跨越**会 intern 的写点（跨越会触发
+整表 COW 克隆，且旧快照会变陈旧）。
+
+**改前的形态**（`ir_parser/semantics.rs::operand_to_value`）：每个操作数按 arm 各取一次锁
+（头部 metadata 判定、`UInt` 位模式判定、`Float` 位宽判定、`VecConst` 元素类型、
+`ZeroInit` 尺寸+向量判定、`ConstExpr` 类型判定+尺寸）——9 处 `ctx.borrow()`。
+
+**改法**（三层，全部围绕"读成 Copy 事实"）：
+
+1. `to_type`（可能 intern，**写**）之后取**一次**快照，把各 arm 需要的类型事实读进
+   `#[derive(Clone, Copy)] struct OperandTyFacts`（`is_metadata`/`int_literal_is_bits`/
+   `is_f32`/`is_float`/`is_vector`/`elem`/`bytes`）；该临时快照在语句结束即释放，
+   **不跨越**会 `strings.intern` 的 `Local`/`Global` arm。
+2. 各 arm 改为读这些局部量（9 处取锁 → **1**），语义逐条等价（判据与原来同源）。
+3. 顺带合并另外三处读段：`build_inst` 的 `extractvalue` 索引链（循环内只发指令、不改类型
+   ⇒ 一次快照覆盖整链）、`vconst` arm 的 `element_type`+`size_bytes`、`agg_const_from_operands`
+   的重复取锁（复用它已经取好的快照）。
+
+**证据（确定性计数，不是计时）**：解析同形态模块统计 `TypeContext::debug_read_count`
+（新守卫 `type_store_read_path.rs::operand_reads_share_one_snapshot` 钉住）：
+
+| 32 条指令的形态 | 改前 | 改后 |
+| --- | --- | --- |
+| 局部值（公共路径） | 129 | **129**（无回归） |
+| 浮点位模式 `fadd float …, 0x3F800000` | 161 | **129**（每条指令 −1） |
+| 向量字面量 `store <4 x i32> <…>, ptr %p` | 224 | **192**（每条指令 −1） |
+
+静态预算随之下调：`read_path_budget.rs` 的 `ir_parser/semantics.rs` **24 → 15**
+（余下：4 个纯读助手各一次 + `to_type*` 命名查询 + `build_inst` 三处单点读 + 3 个只读助手）。
+`write_path_never_clones_in_real_workload` 仍为 **0 次整表克隆**（证明新快照没有跨越写点）。
+
+**负向验证**：把 `UInt` arm 改回逐操作数 `ctx.borrow()` ⇒
+`operand_reads_share_one_snapshot` **FAILED**（实测 161 vs 期望 129）；恢复后全绿。
+
+**未做（如实记录）**：`pipeline/compiler.rs` 的 20 处 `borrow()` 保持——它们是"每函数/每
+agg job 一次"（不是逐指令），且那些函数在 DFG 写入之间夹短读段；实测编译期快照总数恒为
+常数 10（`lowering_read_path.rs` 守卫），不是热点。
+
+**验证**：workspace 1515 passed / 0 failed / 19 ignored（+1）；三套矩阵 x86 195/3/0、
 riscv64 131/67/0、arm64 23/175/0；fmt `--check`/clippy `-D warnings`/
 `cargo check --release --all-targets`/`cargo doc -D warnings` 全干净。
 

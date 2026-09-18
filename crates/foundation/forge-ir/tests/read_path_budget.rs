@@ -47,8 +47,11 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/foundation/forge-ir/src/ir_parser/semantics.rs",
-        24,
-        "全在同时 intern 的函数里（读写交错，不能持长读锁）",
+        15,
+        "4 个纯读助手（pack_*_init / int_init_bytes / float_init_bytes）各一次 + \
+         `to_type*` 的命名查询 + `build_inst` 的 3 处单点读 + 3 个只读助手；\
+         读数段已按 v3 S3 余项② 合并（operand_to_value 9 → 1、extractvalue 索引链 1、\
+         vconst/agg_const 各 1）",
     ),
     (
         "crates/foundation/forge-ir/src/types.rs",
