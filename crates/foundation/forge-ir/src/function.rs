@@ -979,7 +979,7 @@ impl Function {
     /// （**终结符就是指令，天然包含在内**），**同步维护 use-lists**
     /// （单趟语义：不追溯链式映射——与 pass 现有批量替换行为一致）。
     /// 返回被替换的操作数总数。
-    pub fn apply_replacements(&mut self, replacements: &HashMap<Value, Value>) -> usize {
+    pub fn apply_replacements(&mut self, replacements: &SecondaryMap<Value, Value>) -> usize {
         let mut count = 0;
         // 指令操作数（含终结符指令）+ use-lists 同步
         //（dfg 与 use_lists 为不相交字段，可同时可变借用）
@@ -988,7 +988,7 @@ impl Function {
                 continue;
             }
             for (operand_idx, operand) in inst.operands.iter_mut().enumerate() {
-                if let Some(&replacement) = replacements.get(operand) {
+                if let Some(&replacement) = replacements.get(*operand) {
                     let old = *operand;
                     *operand = replacement;
                     self.use_lists

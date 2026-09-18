@@ -20,6 +20,7 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -233,7 +234,7 @@ pub fn inline_calls(
                 // 结果值 VOID 化，调用方的 `ret` 就返回一个 VOID 值
                 // —— 2026-09-14 严格校验实测的 `ReturnValueTypeMismatch
                 // { expected: I32, found: VOID }`（这是真实错码，不只是簿记问题）。
-                let mut repl: HashMap<Value, Value> = HashMap::new();
+                let mut repl: SecondaryMap<Value, Value> = SecondaryMap::new();
                 repl.insert(call_result, mapped_ret);
                 func.apply_replacements(&repl);
             }

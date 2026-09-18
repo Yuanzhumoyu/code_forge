@@ -30,6 +30,7 @@
 use super::cse::ExprKey;
 use crate::{ConstValue, OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -76,7 +77,7 @@ pub fn global_value_numbering(func: &mut Function) -> Result<PassResult, IrError
     };
 
     let mut result = PassResult::default();
-    let mut replacements: HashMap<Value, Value> = HashMap::new();
+    let mut replacements: SecondaryMap<Value, Value> = SecondaryMap::new();
     // 待删除的冗余表达式指令（循环后统一 kill）
     let mut to_kill: Vec<Inst> = Vec::new();
     // Scope stack: top of stack is current block's scope
@@ -162,7 +163,7 @@ fn gvn_dfs(
     block_id: Block,
     dom_children: &HashMap<Block, Vec<Block>>,
     scopes: &mut Vec<HashMap<ExprKey, Value>>,
-    replacements: &mut HashMap<Value, Value>,
+    replacements: &mut SecondaryMap<Value, Value>,
     const_map: &mut HashMap<Value, (Big, TypeId)>,
     to_kill: &mut Vec<Inst>,
     result: &mut PassResult,
@@ -256,7 +257,7 @@ fn gvn_dfs(
         let mapped_operands: smallvec::SmallVec<[Value; 4]> = inst
             .operands
             .iter()
-            .map(|v| replacements.get(v).copied().unwrap_or(*v))
+            .map(|v| replacements.get(*v).copied().unwrap_or(*v))
             .collect();
 
         // === Constant folding ===

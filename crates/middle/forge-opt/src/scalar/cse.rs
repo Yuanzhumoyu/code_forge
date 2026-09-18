@@ -15,6 +15,7 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 
@@ -199,7 +200,7 @@ pub(crate) fn is_cse_candidate(opcode: &Opcode) -> bool {
 pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult, IrError> {
     let mut result = PassResult::default();
     // Value → Value 替换映射（被消除的 result → 保留的 result）
-    let mut replacements: HashMap<Value, Value> = HashMap::new();
+    let mut replacements: SecondaryMap<Value, Value> = SecondaryMap::new();
     // 待删除的重复表达式指令（循环后统一 kill，避免与借用冲突）
     let mut to_kill: Vec<Inst> = Vec::new();
     // P1-5：别名分析（load 消重的 kill 精度）
@@ -266,7 +267,7 @@ pub fn eliminate_common_subexpressions(func: &mut Function) -> Result<PassResult
             let mapped_operands: Vec<Value> = inst
                 .operands
                 .iter()
-                .map(|v| replacements.get(v).copied().unwrap_or(*v))
+                .map(|v| replacements.get(*v).copied().unwrap_or(*v))
                 .collect();
 
             let ty = func.dfg.value_data(inst_result).ty;

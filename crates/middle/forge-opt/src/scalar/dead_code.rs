@@ -6,8 +6,9 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// 死代码消除 pass。
 #[derive(Default)]
@@ -103,7 +104,7 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
 
             // 检查是否有使用者
             if let Some(result_val) = inst.results.first().copied() {
-                let count = use_counts.get(&result_val).copied().unwrap_or(0);
+                let count = use_counts.get(result_val).copied().unwrap_or(0);
                 if count == 0 {
                     to_kill.push(*inst_id);
                     removed_this_round += 1;
@@ -127,8 +128,8 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
 ///
 /// 指令操作数部分来自官方 `UseLists`（各 pass 经 kill/RAUW/apply_replacements
 /// 维护的新鲜 def-use 链）；终结符参数不在 use-lists 记录范围，需补充计数。
-fn build_use_counts(func: &Function) -> HashMap<Value, usize> {
-    let mut counts: HashMap<Value, usize> = HashMap::new();
+fn build_use_counts(func: &Function) -> SecondaryMap<Value, usize> {
+    let mut counts: SecondaryMap<Value, usize> = SecondaryMap::new();
 
     for (value, _) in func.dfg.values() {
         let n = func.use_lists.use_count(value);
@@ -140,7 +141,7 @@ fn build_use_counts(func: &Function) -> HashMap<Value, usize> {
     // 终结符使用的值也计入（终结符是指令：`term_used_values` 即其操作数）
     for (block, _) in func.dfg.blocks() {
         for v in func.dfg.term_used_values(block) {
-            *counts.entry(v).or_insert(0) += 1;
+            *counts.get_mut_or_default(v) += 1;
         }
     }
 

@@ -5,8 +5,8 @@
 
 use crate::{OptimizationPass, PassResult};
 use forge_ir::IrError;
+use forge_ir::entity_map::SecondaryMap;
 use forge_ir::*;
-use std::collections::HashMap;
 
 /// 复制传播 pass。
 #[derive(Default)]
@@ -70,8 +70,8 @@ pub fn propagate_copies(func: &mut Function) -> Result<PassResult, IrError> {
 ///
 /// 解析链式 Copy：如果 `v3 = Copy(v2)` 且 `v2 = Copy(v1)`，
 /// 则 `v3 → v1`。
-fn build_copy_map(func: &Function) -> HashMap<Value, Value> {
-    let mut map: HashMap<Value, Value> = HashMap::new();
+fn build_copy_map(func: &Function) -> SecondaryMap<Value, Value> {
+    let mut map: SecondaryMap<Value, Value> = SecondaryMap::new();
 
     // 收集直接 Copy 映射
     for block in func.dfg.block_data_iter() {
@@ -87,12 +87,12 @@ fn build_copy_map(func: &Function) -> HashMap<Value, Value> {
     }
 
     // 解析链式 Copy：每个键追踪到最终的源
-    let keys: Vec<Value> = map.keys().copied().collect();
+    let keys: Vec<Value> = map.keys().collect();
     for start_value in keys {
         let mut current = start_value;
         let mut visited = Vec::new();
 
-        while let Some(&target) = map.get(&current) {
+        while let Some(&target) = map.get(current) {
             if visited.contains(&current) {
                 // 循环引用 — 停止追踪
                 break;
