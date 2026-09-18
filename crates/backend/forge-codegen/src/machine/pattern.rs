@@ -12,7 +12,7 @@
 //! 的根属性推导（镜像生成器的 `__attr` 闭包）在驱动侧完成（见
 //! pipeline/lowering.rs 的根属性助手），只复用这里的标量映射/宽度工具。
 
-use forge_ir::{Opcode, TypeContext, TypeId};
+use forge_ir::{Opcode, TypeId, types::TypeStore};
 
 // ════════════════════════════════════════════════════════════════════
 // `when` 谓词（对根指令的派生属性求值）
@@ -151,19 +151,19 @@ pub fn scalar_elem_id(t: TypeId) -> i64 {
 
 /// `rd`/`rs1_width`/`rs2_width` 的宽度（位）：向量 = `size_bytes × 8`，
 /// 标量 = `TypeId::bits()`。与生成器 `__a_rd/__a_rs1/__a_rs2` 一致。
-pub fn type_width_bits(t: TypeId, type_ctx: Option<&TypeContext>) -> i64 {
-    if type_ctx.is_some_and(|tc| tc.is_vector(t)) {
-        (type_ctx.map(|tc| tc.size_bytes(t)).unwrap_or(0) * 8) as i64
+pub fn type_width_bits(t: TypeId, types: Option<&TypeStore>) -> i64 {
+    if types.is_some_and(|s| s.is_vector(t)) {
+        (types.map(|s| s.size_bytes(t)).unwrap_or(0) * 8) as i64
     } else {
-        type_ctx.and_then(|tc| tc.scalar_bits(t)).unwrap_or(0) as i64
+        types.and_then(|s| s.scalar_bits(t)).unwrap_or(0) as i64
     }
 }
 
 /// `elem` 属性：向量 → 元素类型 id；标量 → 自身 id。与生成器 `__a_elem` 一致。
-pub fn type_elem_id(t: TypeId, type_ctx: Option<&TypeContext>) -> i64 {
-    if type_ctx.is_some_and(|tc| tc.is_vector(t)) {
-        type_ctx
-            .and_then(|tc| tc.element_type(t))
+pub fn type_elem_id(t: TypeId, types: Option<&TypeStore>) -> i64 {
+    if types.is_some_and(|s| s.is_vector(t)) {
+        types
+            .and_then(|s| s.element_type(t))
             .map(scalar_elem_id)
             .unwrap_or(0)
     } else {
@@ -172,10 +172,10 @@ pub fn type_elem_id(t: TypeId, type_ctx: Option<&TypeContext>) -> i64 {
 }
 
 /// `rd_vec`/`rs1_vec` 向量字节数标记：类型是向量 → Some(size_bytes)，否则 None。
-pub fn type_vec_bytes(t: TypeId, type_ctx: Option<&TypeContext>) -> Option<i64> {
-    type_ctx.and_then(|tc| {
-        if tc.is_vector(t) {
-            Some(tc.size_bytes(t) as i64)
+pub fn type_vec_bytes(t: TypeId, types: Option<&TypeStore>) -> Option<i64> {
+    types.and_then(|s| {
+        if s.is_vector(t) {
+            Some(s.size_bytes(t) as i64)
         } else {
             None
         }

@@ -859,6 +859,7 @@ use std::sync::{Arc, RwLock, RwLockWriteGuard};
 /// 代价与纪律（见 [`TypeContext`] 的"读路径纪律"）：快照是**不可变视图**，若它在
 /// 别人 intern 新类型时仍然存活，写侧必须克隆整表（COW）才算安全——所以"读快照
 /// 不要跨 intern"从"会死锁"变成了"会整表克隆"，仍由守卫钉住。
+#[derive(Clone)]
 pub struct TypeStoreRef(Arc<TypeStore>);
 
 impl Deref for TypeStoreRef {

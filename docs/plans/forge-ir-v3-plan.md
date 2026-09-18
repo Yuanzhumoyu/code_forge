@@ -97,7 +97,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | **S0** | 守卫与止血（12 项） | **已落地**（见 §6） |
 | S1 | 指令元数据单一事实源 | **已落地**：`ops.toml` + `build.rs` 生成枚举/派生表/名字与 LLVM 文本名映射/逐指令类型规则族 + 全部查表 O(1)（§6 第一~四步） |
 | S2 | 实体容器与密集索引 | **forge-ir 大部分收口**：四个容器已实现；内部主表 + `predecessors()`/`successors()`（含下游调用点）+ 支配树字段已迁移，句柄键 `HashMap` 45 → 10 处；**10 个裸 u32 句柄字段已私有化**（`::new`/`::index`，`ConstId` 为 `::from_raw`/`.raw()`）；**墓碑语义显式化**（`Instruction::is_tombstone` 唯一判据 + 唯一实现，见 §6 末）；余项：`ListPool`、两个下游 crate 内部句柄表 |
-| S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`（需 `LowerCtx` 带 store 的设计）②读写交错函数的"先写后读"结构改造；③**锁 → 快照已落地**（`TypeContext` 读快照 + `borrow_mut` COW、删 `Deref` 逃逸口，见 §6 末"锁 → 快照"切片） |
+| S3 | 类型系统去锁/所有权 | **大部分落地**：`TypeId::bits()`/`try_bits()` 已删除（76 处调用点迁移，指针宽度改按 DataLayout）、锁中毒不再 panic、类型事实 API（`scalar_bits`/`builtin_*`）+ 守卫测试、**`DataLayout` 单一数据源**（`set_data_layout` 原地更新共享存储；`Module.data_layout` 副本字段与 `TypeContext::with_data_layout` 删除）、**坏 IR 的越界 `TypeId`/`SigRef` 变诊断**（`entry_opt`/`signature_opt` + `BadTypeId`/`BadSigRef`）、**读路径纪律**（display 51→2、verify 13→1、compiler 30→23、semantics 32→24；运行时守卫 + `tests/read_path_budget.rs` 静态预算守卫钉死）；余项：①forge-dsl 生成物侧 `tc.borrow()`**已落地**（`LowerCtx::type_store` 快照；模板 11 处 `.borrow()` 清零 + 宽向量门"每指令取锁"收回入口，见 §6 末"LowerCtx 带类型快照"切片）②读写交错函数的"先写后读"结构改造；③**锁 → 快照已落地**（`TypeContext` 读快照 + `borrow_mut` COW、删 `Deref` 逃逸口，见 §6 末"锁 → 快照"切片） |
 | S4 | 终结符归一 + 完整 use-def | **已落地（主体完成）**：终结符并入指令流——7 个终结符 opcode、块实参即操作数、`Terminator` 枚举与 `UseSite` 双双删除；前置八项（entry fail-closed / LabelRef / use-def 补全 / 字段私有化 / 显式未终止 / 写入口 / 投影访问器 / 读取面迁移）见 §6 |
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
@@ -1749,6 +1749,51 @@ S3 余项 ③（"把锁换成快照式实现"）。**调用面早已显式化**�
 **验证**：workspace **1504 passed / 0 failed / 19 ignored**（+2）；x86 矩阵 195/3/0；
 riscv64 131/67/0；LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0；语料往返幂等
 189/189；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
+`cargo doc -D warnings` 全干净。
+
+### S3（切片）：`LowerCtx` 带类型快照——生成物侧不再逐指令取锁（2026-09-17）
+
+S3 余项 ①（"forge-dsl 生成物侧 `tc.borrow()`，需 `LowerCtx` 带 store 的设计"）。
+
+**改前实测**（取证手段：临时给 `TypeContext::borrow` 加 `#[track_caller]` +
+`FORGE_TRACE_SNAPSHOT`，跑编译探针后按 `文件:行` 聚合取锁点，随后撤掉）：
+
+- `forge-dsl` 的 `quote!` 模板里有 **11 处 `tc.borrow()`**（生成的 lowering 逐指令取锁）；
+  `gen_lowering_attrs()` 更在**每个属性**（`__a_rd`/`__a_rs1`/`__a_rs2`/`__a_elem`）上各调一次
+  `is_vector`/`size_bytes`/`scalar_bits`——每个"一次性读封装"**又是一次取锁**；
+- `compiler.rs` 的宽向量可行性门在"**每指令 × 每类型**"上各 `borrow()` 一次（探针里 299 次
+  取锁中的绝大多数来自它，`compiler.rs:1845`）；
+- 净效果：编译一个函数 **15 次（1 条指令）→ 252 次（80 条指令）≈ 每条指令 3 次**。
+
+**改法**：
+
+- `LowerCtx`：`type_ctx: Option<TypeContext>` → **`type_store: Option<TypeStoreRef>`**（lowering
+  入口取**一次快照**；lowering 期间类型表只读）。构造点用已经取好的快照 `store.clone()`
+  （Arc 克隆）——`TypeStoreRef` 是 owned，不再有"守卫借着 `func` 就不能 `&mut func`"的约束。
+- 宿主读口全部改读快照：`reg_class_for`/`mem_opsize_for`/`type_bits_of`/`type_bits_or_default`；
+  `machine/pattern.rs` 的三个属性助手（`type_width_bits`/`type_elem_id`/`type_vec_bytes`）
+  参数由 `Option<&TypeContext>` 改成 **`Option<&TypeStore>`**（显式传快照）。
+- 生成器模板（`forge-dsl` 的 `lowering.rs` 11 处 + `integration.rs` 13 处）改读 `ctx.type_store`；
+  `compiler.rs` 的宽向量门把"每指令取锁"提到函数入口一次。
+
+**证据**：
+
+- 探针（临时，跑完即删）实测取锁次数 **恒为 10**（1/2/5/10/80 条指令全为 10）——改前 15 → 252；
+- 新增 `crates/backend/forge-codegen/tests/lowering_read_path.rs`（3 例）：
+  ①`compile_type_snapshots_do_not_scale_with_ir_size`（不随规模增长且 ≤16）；
+  ②`compile_never_holds_a_snapshot_across_interning`（编译期 **0 次整表克隆**）；
+  ③`lowering_templates_stay_on_the_snapshot`（**源码级**：两个生成器模板文件不得再出现
+  `type_ctx`/`.borrow()`，且必须经 `ctx.type_store` 读类型）；
+- `read_path_budget.rs` 预算随之下调：`forge-dsl/.../lowering.rs` **11 → 0**（0 = 回潮守卫）、
+  `pipeline/compiler.rs` **23 → 21**（宽向量门 3 处 → 1 次入口快照；21 = 20 生产 + 1 测试辅助）。
+
+**负向验证**：把宽向量门改回"每指令 `types.borrow()`" ⇒
+`compile_type_snapshots_do_not_scale_with_ir_size` **FAILED**（1 条 14 次 vs 80 条 251 次）；
+恢复后 3 例全绿。
+
+**验证**：workspace 1507 passed / 0 failed / 19 ignored（+3）；三套矩阵 x86 195/3/0、
+riscv64 131/67/0、arm64 23/175/0；LLVM 语料正向 198/452、负向正确拒绝 254、误接受 0；
+语料往返 11 例全绿；fmt `--check`/clippy `-D warnings`/`cargo check --release --all-targets`/
 `cargo doc -D warnings` 全干净。
 
 ## 7. 参考设计（外部）

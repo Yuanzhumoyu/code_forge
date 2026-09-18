@@ -280,9 +280,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         if let Some(t) = ty {
                             let size = self
                                 .ctx
-                                .type_ctx
+                                .type_store
                                 .as_ref()
-                                .map(|tc| tc.borrow().size_bytes(t))
+                                .map(|s| s.size_bytes(t))
                                 .unwrap_or(self.ctx.slot_bytes as u32)
                                 .max(1) as u64;
                             let bytes = (size * count) as u32;
@@ -805,7 +805,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         inst: &Instruction,
         name: &str,
     ) -> Option<i64> {
-        let tc = self.ctx.type_ctx.as_ref();
+        let tc = self.ctx.type_store.as_deref();
         let r0 = inst.results.first().and_then(|v| dfg.value_type(*v));
         let o0 = inst.operands.first().and_then(|v| dfg.value_type(*v));
         let o1 = inst.operands.get(1).and_then(|v| dfg.value_type(*v));

@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-16)
 
+- **`LowerCtx` 带类型快照：生成物侧不再逐指令取锁（forge-ir v3 S3 余项①）**：`LowerCtx.type_ctx: Option<TypeContext>` → **`type_store: Option<TypeStoreRef>`**（lowering 入口取一次快照，lowering 期间类型表只读；`TypeStoreRef` 是 owned，解除了"守卫借着 `func`"的借用约束）。宿主的 `reg_class_for`/`mem_opsize_for`/`type_bits_of`/`type_bits_or_default` 与 `machine/pattern.rs` 的三个属性助手（参数改 `Option<&TypeStore>`）全部改读快照；`forge-dsl` 的 `quote!` 模板（`lowering.rs` 11 处 `tc.borrow()` + `integration.rs` 的逐属性一次性读封装）改读 `ctx.type_store`；`compiler.rs` 的宽向量可行性门由"每指令 × 每类型取锁"收成函数入口一次。
+  取证：临时给 `TypeContext::borrow` 加 `#[track_caller]` 后按 `文件:行` 聚合——最大头是 `compiler.rs:1845`（每指令取锁）；改前编译一个函数取锁 **15 次（1 条指令）→ 252 次（80 条指令）**，改后 **恒为 10**。
+  新增守卫 3 例（`crates/backend/forge-codegen/tests/lowering_read_path.rs`）：快照次数不随 IR 规模增长且 ≤16、编译期 0 次整表克隆、源码级"模板不得再出现 `type_ctx`/`.borrow()`"。`read_path_budget.rs` 预算：`forge-dsl/.../lowering.rs` 11 → 0（回潮守卫）、`pipeline/compiler.rs` 23 → 21。负向验证：宽向量门改回每指令取锁 ⇒ 规模用例 FAILED（14 vs 251）。
+  实测：workspace 1507 passed / 0 failed / 19 ignored；x86 195/3/0、riscv64 131/67/0、arm64 23/175/0；LLVM 语料 198/254/0。
+
 - **`TypeContext` 锁 → 快照：读路径不再持锁（forge-ir v3 S3 切片）**：`store: Arc<RwLock<TypeStore>>` → `Arc<RwLock<Arc<TypeStore>>>`——读写锁只护住那个 `Arc` 指针：`borrow()` 取锁只为克隆 `Arc` 后立刻放锁，返回新的 `TypeStoreRef`（`Deref<Target = TypeStore>`），读作用域不再持锁；`borrow_mut()` 返回 `TypeStoreMut`，`DerefMut` 走 `Arc::make_mut`（无快照存活时原地改，有快照存活时克隆整表）。同时**删除 `impl Deref for TypeContext { type Target = RwLock<TypeStore> }` 逃逸口**（把原始锁暴露给调用方，与"入口显式化"相反；全仓无使用者）。
   语义变化如实记录：读快照是不可变视图（拿快照后 intern，旧快照看不到新类型）；改前"读锁存活期间 `borrow_mut()`"会自锁死，现在合法并触发一次整表克隆——因此"读快照不跨 intern"从**死锁**强制变为**性能纪律**，由新增的 `debug_cow_clone_count`（仅 debug）钉住。
   新增守卫 2 例：`snapshot_is_isolated_from_later_interning`（快照存活时写入 ⇒ 恰好 1 次整表克隆 + 新旧快照可见性；该用例本身即"读快照与写可并存"的证据）、`write_path_never_clones_in_real_workload`（真实负载 0 次克隆）。负向验证：去掉 COW 计数 / 在 `int_ty` 里故意持快照跨 intern ⇒ 各 FAILED。**不宣称吞吐提升**（未做 A/B 基准），宣称的是结构性质与"真实负载 0 克隆"这一可测后果。

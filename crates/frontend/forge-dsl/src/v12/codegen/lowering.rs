@@ -355,7 +355,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 let __vbytes = ctx
                     .xreg_types
                     .get(&val)
-                    .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
                     .unwrap_or(__SLOT_BYTES as u32)
                     .max(__SLOT_BYTES as u32);
                 let __sidx = __pack.push_inst(if __vbytes == 64 {
@@ -401,16 +401,14 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             if ctx.xreg_types.get(&val).is_some_and(|t| t.is_float()) {
                 #fpr_return_body
             } else if ctx.xreg_types.get(&val).is_some_and(|t| {
-                ctx.type_ctx.as_ref().is_some_and(|tc| {
-                    let s = tc.borrow();
+                ctx.type_store.as_ref().is_some_and(|s| {
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
                 })
             }) {
                 // ≤16B 向量（V64/V128）按值返回：XMM0 全宽
                 #vec_return_body
             } else if ctx.xreg_types.get(&val).is_some_and(|t| {
-                ctx.type_ctx.as_ref().is_some_and(|tc| {
-                    let s = tc.borrow();
+                ctx.type_store.as_ref().is_some_and(|s| {
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
                 })
             }) {
@@ -678,9 +676,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         ) -> u64 {
             let t = results.first().and_then(|x| ctx.xreg_types.get(x));
             t.and_then(|&t| {
-                ctx.type_ctx
+                ctx.type_store
                     .as_ref()
-                    .and_then(|tc| tc.element_type(t).and_then(|e| tc.scalar_bits(e)))
+                    .and_then(|s| s.element_type(t).and_then(|e| s.scalar_bits(e)))
             })
             .map(|b| b as u64)
             .unwrap_or(32)
@@ -1362,7 +1360,7 @@ fn gen_call_lowering(
             let __vbytes = ctx
                 .xreg_types
                 .get(&__r)
-                .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
                 .unwrap_or(__SLOT_BYTES as u32)
                 .max(__SLOT_BYTES as u32);
             let __ridx = __pack.push_inst(if __vbytes == 64 {
@@ -1406,8 +1404,7 @@ fn gen_call_lowering(
             if ctx.xreg_types.get(&__r).is_some_and(|t| t.is_float()) {
                 #fpr_ret_stmt
             } else if ctx.xreg_types.get(&__r).is_some_and(|t| {
-                ctx.type_ctx.as_ref().is_some_and(|tc| {
-                    let s = tc.borrow();
+                ctx.type_store.as_ref().is_some_and(|s| {
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
                 })
             }) {
@@ -1599,7 +1596,7 @@ fn gen_call_lowering(
             let __vbytes = ctx
                 .xreg_types
                 .get(&__a)
-                .and_then(|t| ctx.type_ctx.as_ref().map(|tc| tc.borrow().size_bytes(*t)))
+                .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
                 .unwrap_or(__SLOT_BYTES as u32)
                 .max(__SLOT_BYTES as u32);
             // 槽偏移/帧需求：槽单位由元数据给出（`__SLOT_BYTES`；x86 = 8）——
@@ -1740,8 +1737,7 @@ fn gen_call_lowering(
                 // call 间天然死）。
                 let __sret = results.first().copied().is_some_and(|r| {
                     ctx.xreg_types.get(&r).is_some_and(|t| {
-                        ctx.type_ctx.as_ref().is_some_and(|tc| {
-                            let s = tc.borrow();
+                        ctx.type_store.as_ref().is_some_and(|s| {
                             (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
                         })
                     })
@@ -1988,8 +1984,7 @@ fn arg_move_loop(
     let stmt = if by_position {
         quote! {
             if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_ctx.as_ref().is_some_and(|tc| {
-                    let s = tc.borrow();
+                ctx.type_store.as_ref().is_some_and(|s| {
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
                 })
             }) {
@@ -1998,8 +1993,7 @@ fn arg_move_loop(
                 // 内的 #slot_var（=__pi）推进，此处 __pi 同步
                 __pi += 1;
             } else if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_ctx.as_ref().is_some_and(|tc| {
-                    let s = tc.borrow();
+                ctx.type_store.as_ref().is_some_and(|s| {
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
                 })
             }) {
@@ -2014,15 +2008,13 @@ fn arg_move_loop(
     } else {
         quote! {
             if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_ctx.as_ref().is_some_and(|tc| {
-                    let s = tc.borrow();
+                ctx.type_store.as_ref().is_some_and(|s| {
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
                 })
             }) {
                 #byref_stmt
             } else if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_ctx.as_ref().is_some_and(|tc| {
-                    let s = tc.borrow();
+                ctx.type_store.as_ref().is_some_and(|s| {
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
                 })
             }) {

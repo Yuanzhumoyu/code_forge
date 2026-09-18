@@ -102,31 +102,31 @@ pub(crate) fn compile_pred_guard(pred: &Pred, attr: &syn::Ident) -> TokenStream 
 pub(crate) fn gen_lowering_attrs() -> TokenStream {
     quote! {
         let __a_rd = results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_ctx.as_ref().is_some_and(|tc| tc.is_vector(*t)) {
-                (ctx.type_ctx.as_ref().map(|tc| tc.size_bytes(*t)).unwrap_or(0) * 8) as i64
+            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
             } else {
-                ctx.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(*t)).unwrap_or(0) as i64
+                ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
             }
         });
         let __a_rs1 = args.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_ctx.as_ref().is_some_and(|tc| tc.is_vector(*t)) {
-                (ctx.type_ctx.as_ref().map(|tc| tc.size_bytes(*t)).unwrap_or(0) * 8) as i64
+            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
             } else {
-                ctx.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(*t)).unwrap_or(0) as i64
+                ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
             }
         });
         let __a_rs2 = args.get(1).and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_ctx.as_ref().is_some_and(|tc| tc.is_vector(*t)) {
-                (ctx.type_ctx.as_ref().map(|tc| tc.size_bytes(*t)).unwrap_or(0) * 8) as i64
+            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
             } else {
-                ctx.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(*t)).unwrap_or(0) as i64
+                ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
             }
         });
         let __a_elem = results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_ctx.as_ref().is_some_and(|tc| tc.is_vector(*t)) {
-                ctx.type_ctx
+            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                ctx.type_store
                     .as_ref()
-                    .and_then(|tc| tc.element_type(*t))
+                    .and_then(|s| s.element_type(*t))
                     .map(elem_id_of)
                     .unwrap_or(0)
             } else {
@@ -137,8 +137,7 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
         // None。Store 无结果（elem 恒 None）时据此区分向量 store 与标量
         //（WA-37 D3：≤16B Direct 向量值的 Load/Store 需全宽向量内存移动）。
         let __a_rd_vec = results.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
-            ctx.type_ctx.as_ref().and_then(|tc| {
-                let s = tc.borrow();
+            ctx.type_store.as_ref().and_then(|s| {
                 if s.is_vector(*t) {
                     Some(s.size_bytes(*t) as i64)
                 } else {
@@ -147,8 +146,7 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
             })
         });
         let __a_rs1_vec = args.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
-            ctx.type_ctx.as_ref().and_then(|tc| {
-                let s = tc.borrow();
+            ctx.type_store.as_ref().and_then(|s| {
                 if s.is_vector(*t) {
                     Some(s.size_bytes(*t) as i64)
                 } else {

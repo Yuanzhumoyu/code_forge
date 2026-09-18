@@ -251,9 +251,13 @@ pub struct LowerCtx {
     /// 生成代码在规则 arm 尾部设置，编译器聚合到 inst_clobbers 供分配器避开。
     /// 值 = (物理寄存器编号, 寄存器类)。
     pub current_clobbers: Vec<(u32, RegClass)>,
-    /// 当前函数的类型上下文（动态 vector/scalable 类型 → 寄存器类的
-    /// 位宽感知推导，消除 RegClass::from_type_id 对动态类型的 GPR(8) 兜底）。
-    pub type_ctx: Option<forge_ir::TypeContext>,
+    /// 当前函数的类型**快照**（v3 S3 余项：lowering 入口取一次）。
+    ///
+    /// lowering 期间类型表**只读**（新类型都在 IR 构建期 intern 完），所以读路径
+    /// 全部走这一份 `TypeStoreRef`——不再每条指令/每个属性各取一次锁。
+    /// 由调用方在 lowering 入口用 `func.types.borrow()` 取（见
+    /// `pipeline/compiler.rs`）。
+    pub type_store: Option<forge_ir::types::TypeStoreRef>,
     /// 宿主「整数值寄存器池」类（`TargetRegInfo::value_gpr_class`）。
     /// lowering 里不能用 `RegClass::GPR64` 字面量——1 字节寄存器 ISA 的值池
     /// 是 GPR(1)。缺省 GPR64（`LowerCtx::new()` 的测试/直连场景）；
@@ -402,7 +406,7 @@ impl LowerCtx {
             slot_bytes: 8,
             vector_tiers: vec![16, 32, 64],
             type_map: Vec::new(),
-            type_ctx: None,
+            type_store: None,
         }
     }
 
@@ -425,23 +429,22 @@ impl LowerCtx {
         if let Some((_, rc)) = self.type_map.iter().find(|(t, _)| t == ty) {
             return *rc;
         }
-        if let Some(ctx) = &self.type_ctx {
-            let store = ctx.borrow();
-            if store.is_vector(*ty) || store.is_scalable_vector(*ty) {
-                let bytes = store.size_bytes(*ty);
-                // 最小的 ≥ 请求字节数的档位；超出最大档 → 最大档（宽度由类的
-                // reg_width 承载，spill/ABI 按类宽工作）。
-                let tier = self
-                    .vector_tiers
-                    .iter()
-                    .copied()
-                    .find(|t| (*t as u32) >= bytes)
-                    .or_else(|| self.vector_tiers.last().copied())
-                    // 未声明任何档位（手写后端/测试替身）：按**真实字节数**成类，
-                    // 不再回退 x86 的常量 64。
-                    .unwrap_or(bytes.max(1) as u16);
-                return RegClass::VEC(tier.max(1));
-            }
+        if let Some(store) = &self.type_store
+            && (store.is_vector(*ty) || store.is_scalable_vector(*ty))
+        {
+            let bytes = store.size_bytes(*ty);
+            // 最小的 ≥ 请求字节数的档位；超出最大档 → 最大档（宽度由类的
+            // reg_width 承载，spill/ABI 按类宽工作）。
+            let tier = self
+                .vector_tiers
+                .iter()
+                .copied()
+                .find(|t| (*t as u32) >= bytes)
+                .or_else(|| self.vector_tiers.last().copied())
+                // 未声明任何档位（手写后端/测试替身）：按**真实字节数**成类，
+                // 不再回退 x86 的常量 64。
+                .unwrap_or(bytes.max(1) as u16);
+            return RegClass::VEC(tier.max(1));
         }
         RegClass::from_type_id(*ty)
     }
@@ -496,9 +499,9 @@ impl LowerCtx {
     /// 位宽事实来源：`TypeContext::scalar_bits`（指针按 DataLayout）→ 内建标量表
     /// → 兜底 64（完全无信息时的寄存器安全默认）。
     fn type_bits_or_default(&self, ty: &TypeId) -> u32 {
-        self.type_ctx
+        self.type_store
             .as_ref()
-            .and_then(|tc| tc.scalar_bits(*ty))
+            .and_then(|store| store.scalar_bits(*ty))
             .or_else(|| ty.builtin_scalar_bits())
             .unwrap_or(64)
     }
@@ -527,8 +530,7 @@ impl LowerCtx {
     /// 机器码缺陷/SEGV）；这里优先用 TypeStore::size_bytes（聚合 → 真实
     /// 字节数，如 {i32,i32} → 64 位），基础类型回退到 bits() 路径。
     pub fn mem_opsize_for(&self, ty: &TypeId) -> u8 {
-        if let Some(tc) = &self.type_ctx {
-            let store = tc.borrow();
+        if let Some(store) = &self.type_store {
             let bytes = store.size_bytes(*ty);
             if bytes > 0 {
                 return (bytes as u8).saturating_mul(8).min(64);
@@ -537,11 +539,11 @@ impl LowerCtx {
         self.mem_opsize_from_type(ty)
     }
 
-    /// 值 → 标量位宽（生成的 lowering 用）：问 `type_ctx`（指针宽度按 DataLayout、
+    /// 值 → 标量位宽（生成的 lowering 用）：问类型快照（指针宽度按 DataLayout、
     /// 动态整数位宽也能答）；值未登记类型或非标量 → `None`。
     pub fn type_bits_of(&self, val: &XReg) -> Option<u32> {
         let ty = *self.xreg_types.get(val)?;
-        self.type_ctx.as_ref().and_then(|tc| tc.scalar_bits(ty))
+        self.type_store.as_ref().and_then(|s| s.scalar_bits(ty))
     }
 
     /// 分配一个新的整数类虚拟寄存器。

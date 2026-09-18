@@ -1785,20 +1785,21 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         //   引用传参（调用方栈拷贝 + 传指针 GPR；被调方入口从 [ptr] 加载）。
         // - 否则拒绝（ABI 仅寄存器传值，宽向量会静默截断）。
         let by_ref_limit = self.machine.abi().vector_by_ref_limit();
-        let types = &func.types;
+        // **一次快照**（v3 S3：`TypeStoreRef` 是 owned，不与下面 `func` 的借用冲突）——
+        // 原来每个参数/返回值/每个指令类型各 `borrow()` 一次（取锁次数 ∝ IR 规模）。
+        let types = func.types.borrow();
         let param_tys = func.param_types();
         let return_tys = func.return_types();
         let wide = param_tys
             .iter()
             .chain(&return_tys)
             .find(|t| {
-                let s = types.borrow();
-                (s.is_vector(**t) || s.is_scalable_vector(**t)) && s.size_bytes(**t) > 16
+                (types.is_vector(**t) || types.is_scalable_vector(**t))
+                    && types.size_bytes(**t) > 16
             })
             .copied();
         if let Some(ty) = wide {
-            let s = types.borrow();
-            let bytes = s.size_bytes(ty);
+            let bytes = types.size_bytes(ty);
             // S4：V512（64 字节）需 AVX-512F（EVEX 编码前提）——无则拒绝，
             // 防 EVEX 指令在非 AVX-512 机器非法指令崩溃。
             if bytes > 32 && !crate::avx512_available() {
@@ -1842,11 +1843,10 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                 .filter_map(|v| func.dfg.value_type(*v))
                 .collect();
             for ty in tys {
-                let s = types.borrow();
-                if !(s.is_vector(ty) || s.is_scalable_vector(ty)) {
+                if !(types.is_vector(ty) || types.is_scalable_vector(ty)) {
                     continue;
                 }
-                let bytes = s.size_bytes(ty);
+                let bytes = types.size_bytes(ty);
                 if bytes <= 16 {
                     continue;
                 }
@@ -2037,13 +2037,14 @@ pub(crate) struct CompileState<I: MachineInst> {
 impl<I: MachineInst + 'static> CompileState<I> {
     fn new<M: TargetMachine>(machine: &M, func: &Function) -> Self {
         // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
-        // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
-        // 不与 func 的 &mut 借用冲突。
+        // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取**一次快照**——守卫借的是
+        // 这个局部，不与 func 的 &mut 借用冲突；快照交给 LowerCtx（lowering 期间类型表
+        // 只读，生成代码不再逐指令取锁，见 v3 S3 余项①）。
         let types_ctx = func.types.clone();
         let store = types_ctx.borrow();
         let mut ctx = LowerCtx::new();
         ctx.call_conv = func.calling_convention;
-        ctx.type_ctx = Some(func.types.clone());
+        ctx.type_store = Some(store.clone());
         // 值/地址寄存器类与栈槽单位：全部由 TargetRegInfo 元数据提供
         //（DSL 从 [meta].value_gpr_width/addr_width/slot_bytes 生成）——
         // lowering 里不再出现 RegClass::GPR64/FPR64 字面量（1 字节寄存器 ISA
@@ -2191,12 +2192,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 self.ctx
                     .xreg_types
                     .get(v)
-                    .and_then(|t| {
-                        self.ctx
-                            .type_ctx
-                            .as_ref()
-                            .map(|tc| tc.borrow().size_bytes(*t))
-                    })
+                    .and_then(|t| self.ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
                     .map(|b| b as u16)
                     .unwrap_or(0)
             })
@@ -2664,7 +2660,7 @@ mod alloc_integration_tests {
         let v256 = tc.vector_ty(TypeId::F32, 8);
         let v512 = tc.vector_ty(TypeId::F32, 16);
         let mut ctx = LowerCtx::new();
-        ctx.type_ctx = Some(tc);
+        ctx.type_store = Some(tc.borrow());
         assert_eq!(ctx.reg_class_for(&v64), RegClass::VEC(16));
         assert_eq!(ctx.reg_class_for(&v128), RegClass::VEC(16));
         assert_eq!(ctx.reg_class_for(&v256), RegClass::VEC(32));

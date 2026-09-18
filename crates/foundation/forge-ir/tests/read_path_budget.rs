@@ -20,13 +20,15 @@
 //! - `types.rs`：13 处是 `TypeContext` 的**一次性查询封装**（`ctx.size_bytes(ty)`
 //!   这类），每次调用恰好 1 次读锁；多查询调用方应改用 `&TypeStore`（见
 //!   `type_store_read_path.rs` 的 `one_shot_type_context_accessors_take_one_lock`）。
-//! - `pipeline/compiler.rs`：7 处是各 `expand_*` 函数的入口一次取锁；16 处在
-//!   `rewrite_agg_value_uses`/`expand_large_aggs`/`expand_large_agg_params`/
-//!   `compile_with_alloc` 里——这些函数**显式 `drop` 守卫**（读写交错）或是编排点
-//!   （会调用到唯一的 `borrow_mut`），同样只能逐段取锁。
-//! - `forge-dsl/.../lowering.rs`：11 处是 `quote! { ... }` **模板文本**（生成的
-//!   lowering 代码在 codegen 期执行 `tc.borrow()`）——迁移它要动生成物与
-//!   `LowerCtx` 的形态，属于另一类改动（已单列在计划 §S3 余项里），故这里只锁预算。
+//! - `pipeline/compiler.rs`：20 处在生产路径——各 `expand_*`/`memoryize_*` 入口一次取锁，
+//!   其余在 `rewrite_agg_value_uses`/`expand_large_aggs`/`expand_large_agg_params`/
+//!   `compile_with_alloc` 里（**显式 `drop` 守卫**的读写交错段，或会调到唯一
+//!   `borrow_mut` 的编排点）；另有 1 处在 `#[cfg(test)]` 测试里（给 `LowerCtx` 取快照）。
+//!   v3 S3 余项①顺带收掉了宽向量门的"每指令取锁"（3 处 → 1 次入口快照）。
+//! - `forge-dsl/.../lowering.rs`：**0**（v3 S3 余项①已迁移）。这 11 处原本是
+//!   `quote! { ... }` 模板文本里的 `tc.borrow()`（生成的 lowering 在 codegen 期逐指令
+//!   取锁）；现在 `LowerCtx` 带**快照**（`type_store: Option<TypeStoreRef>`，lowering
+//!   入口取一次），模板改读快照。预算留 0 作为**回潮守卫**：模板里再出现逐次取锁即红。
 #![cfg(debug_assertions)]
 
 use std::path::PathBuf;
@@ -55,13 +57,13 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/compiler.rs",
-        23,
-        "7 处 expand_* 入口 + 16 处交错读段/编排点",
+        21,
+        "20 处生产路径（各 expand_*/memoryize_* 入口 + 读写交错短读段）+ 1 处测试辅助",
     ),
     (
         "crates/frontend/forge-dsl/src/v12/codegen/lowering.rs",
-        11,
-        "quote! 模板文本（生成物侧，另列余项）",
+        0,
+        "已迁移到快照（LowerCtx::type_store）；0 = 回潮守卫",
     ),
 ];
 
