@@ -40,7 +40,7 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
         eprintln!(
             "[forge] === IR dump: {} ===\n{}",
             tcx.def_path_str(instance.def_id()),
-            code_forge::ir::display::function_to_string(&func)
+            code_forge::ir::text::function_to_string(&func)
         );
         // ret values 数诊断（ScalarPair 双返回：被调方 Return 的 values 数
         // 决定是否生成 RDX 返回 mov——enumerate None 路径 r3.b 残留排查）

@@ -36,7 +36,7 @@
 //! atomicrmw volatile + fmax/uinc_wrap 等、fence syncscope、metadata 类型参数、
 //! ptrtoint/inttoptr 类型链校验（invalid_cast4 修回正确拒绝）。
 
-use forge_ir::ir_parser::parse_module;
+use forge_ir::text::parser::parse_module;
 use forge_ir::verify::Verifier;
 use std::fs;
 use std::path::Path;

@@ -36,7 +36,7 @@ use std::path::PathBuf;
 /// `(仓库相对路径, 预算处数, 为什么还剩这些)`
 const BUDGETS: &[(&str, usize, &str)] = &[
     (
-        "crates/foundation/forge-ir/src/display.rs",
+        "crates/foundation/forge-ir/src/text/display.rs",
         14,
         "2 处入口 + 12 处测试辅助",
     ),
@@ -46,7 +46,7 @@ const BUDGETS: &[(&str, usize, &str)] = &[
         "只剩 verify() 入口",
     ),
     (
-        "crates/foundation/forge-ir/src/ir_parser/semantics.rs",
+        "crates/foundation/forge-ir/src/text/parser/semantics.rs",
         15,
         "4 个纯读助手（pack_*_init / int_init_bytes / float_init_bytes）各一次 + \
          `to_type*` 的命名查询 + `build_inst` 的 3 处单点读 + 3 个只读助手；\

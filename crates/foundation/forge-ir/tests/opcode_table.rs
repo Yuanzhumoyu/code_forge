@@ -3,7 +3,7 @@
 //! 背景（2026-09-14 审计）：`Opcode` 的属性此前散在 6 张手写表里
 //! （`result_count`/`may_ub`/`has_side_effect`/`mnemonic`/`expected_operand_count`
 //! 以及 LLVM 文本名正反映射），已经发生漂移——`opcode.rs` 测试辅助 `all_opcodes()`
-//! 漏 10 个变体、`ir_parser/llvm_mapping.rs` 自述 105 与实际 109 不符。
+//! 漏 10 个变体、`text/parser/llvm_mapping.rs` 自述 105 与实际 109 不符。
 //! 本文件把"清单必须完整、名字必须唯一、查找必须可逆"变成 CI 可执行断言；
 //! 其中 `variant_name_exhaustive` 是**编译期**守卫（无 `_` 兜底臂的穷举 match：
 //! 新增变体不同步更新 `Opcode::name()` 即编译失败）。
@@ -378,13 +378,13 @@ fn llvm_name_table_is_consistent() {
         assert_eq!(op.info().llvm_parse, None);
         assert_eq!(Opcode::from_llvm_name(op.info().llvm), None);
     }
-    let err = forge_ir::ir_parser::llvm_mapping::opcode("icmp").expect_err("icmp 需要条件");
+    let err = forge_ir::text::parser::llvm_mapping::opcode("icmp").expect_err("icmp 需要条件");
     assert!(
         err.to_string().contains("condition"),
         "错误提示应说明需要条件，实际：{err}"
     );
     assert!(
-        forge_ir::ir_parser::llvm_mapping::opcode("nosuchopcode").is_err(),
+        forge_ir::text::parser::llvm_mapping::opcode("nosuchopcode").is_err(),
         "未知名字必须报错（不兜底）"
     );
 }

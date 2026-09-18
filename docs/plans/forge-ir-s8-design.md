@@ -18,8 +18,8 @@ S8 是 v3 方案里唯一"默认不做"的一期：三个候选彼此独立，�
 | 事实 | 数值 | 依据 |
 | --- | --- | --- |
 | `forge-ir` 生产代码 | **25,245 行** | `Get-ChildItem src -Recurse -Filter *.rs` 逐文件计行 |
-| 其中文本层（`ir_parser/**` + `display.rs`） | **9,995 行（≈40%）** | 同上 |
-| 最大单文件 | `ir_parser/semantics.rs` 4,510、`display.rs` 2,906、`verify.rs` 2,641 | 同上 |
+| 其中文本层（`src/text/**`：parser + display） | **9,995 行（≈40%）** | 同上 |
+| 最大单文件 | `text/parser/semantics.rs` 4,510、`text/display.rs` 2,906、`verify.rs` 2,641 | 同上 |
 | `forge-ir` 测试代码 | **8,540 行**（`tests/` + 各文件 `#[cfg(test)]` 未计） | `Get-ChildItem tests -Recurse` |
 | 运行期依赖 | `smallvec`、`thiserror`、`dashu`、`bitflags`；`logos`/`lalrpop-util` **optional**（`text`） | `crates/foundation/forge-ir/Cargo.toml` |
 | 实体句柄 | **10 类**（`Value, Inst, Block, TypeId, FuncRef, ConstId, GlobalId, SigRef, AggId, VReg`） | `entity.rs` 的 `entity_ref_impls!` |
@@ -170,15 +170,15 @@ pass 建基础设施违反"每期有可测收益"的既有纪律；②`alias.rs`
 
 ### 4.1 现状
 
-单 crate + `text` feature：`#[cfg(feature="text")]` 门控 `ir_parser/**` + `display.rs`
+单 crate + `text` feature：`#[cfg(feature="text")]` 门控 `src/text/**`（parser + display）
 （9,995 行，占 40%），可选依赖 `logos`/`lalrpop-util`；4 个下游 crate 依赖 forge-ir
 （`forge-opt`、`forge-codegen`、`forge-hir`、`forge-object`），另有根伞 crate。
 
 ### 4.2 方案 C1：拆出 `forge-ir-text`
 
-- **做法**：`ir_parser` + `display` + `llvm_mapping` 移到新 crate；`text` feature 删除。
+- **做法**：`text::parser` + `text::display` + `llvm_mapping` 移到新 crate；`text` feature 删除。
 - **收益**：`cargo check` 只编核心时不编 9,995 行；依赖图显式（谁用文本层一眼可见）。
-- **代价**：①`forge_ir::display::*` / `forge_ir::ir_parser::*` 路径全变——下游与
+- **代价**：①`forge_ir::text::*` 路径全变——下游与
   forge-ir 自身 8,540 行测试里大量引用（`format!("{}", m)` 依赖 `Display for Module`）；
   ②文本层需要读核心**内部**面（`TypeStore`、`ConstantPool` 字段、`MetadataStore` 空洞语义），
   拆开后要么把这些内部面公开（扩大公共面），要么把文本层需要的操作变成 trait（成本更高）；

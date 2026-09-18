@@ -20,8 +20,8 @@
 
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::dfg::{TermMetadataAttach, ValueDef};
-use forge_ir::ir_parser::parse_module;
 use forge_ir::metadata::{AttachedMetadata, MetadataId, MetadataKind};
+use forge_ir::text::parser::parse_module;
 use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{CallConv, Function, Inst, InstFlags, Opcode, TypeId, Value};
 

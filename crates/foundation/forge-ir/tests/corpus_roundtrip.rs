@@ -15,7 +15,7 @@
 //! 口径与 `llvm_assembler_compat.rs` 一致（`RUN: not llvm-as` + 文件名关键字判负向、
 //! split-file 取首子模块）——本文件只做往返断言，不重复统计正/负向收敛数。
 
-use forge_ir::ir_parser::parse_module;
+use forge_ir::text::parser::parse_module;
 
 /// 已知往返漂移（每条一行原因）。**必须被命中**：修好之后请从这里删掉，
 /// 否则测试会提示"条目已失效"。
@@ -113,7 +113,7 @@ fn positive_corpus_print_is_idempotent() {
 
 /// 本轮修掉的两类保真缺陷（回归钉住）。
 mod fidelity {
-    use forge_ir::ir_parser::parse_module;
+    use forge_ir::text::parser::parse_module;
 
     fn print(src: &str) -> String {
         parse_module(src)

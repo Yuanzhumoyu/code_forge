@@ -11,7 +11,7 @@
 //! **第二批**（余下全部）：`scalar/{const_fold,sccp,gvn,gvn_pre}.rs`、
 //! `loops/{licm,loop_unroll}.rs`、`advanced/algebraic.rs`、`ipa/{lto,func_specialize,inline}.rs`，
 //! 并顺带清掉 `forge-ir`（`analysis.rs` 的 `postorder_rank`/`preds_map`、`loop_info.rs`、
-//! `ir_parser/semantics.rs::per_pred`）与 `forge-codegen`（`agg_expand::AggSlots`、
+//! `text/parser/semantics.rs::per_pred`）与 `forge-codegen`（`agg_expand::AggSlots`、
 //! `compiler::rewrite`、`liverange`、`lowering::roots`）里的同类表。为此给
 //! `SecondaryMap` 补了 `FromIterator<(K, V)>`（与 `HashMap::collect()` 同形）。
 //!

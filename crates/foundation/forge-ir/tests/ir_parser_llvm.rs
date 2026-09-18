@@ -1,10 +1,10 @@
 //! LLVM IR 解析器集成测试矩阵（各语法构造）。
 //!
-//! 使用 `forge_ir::ir_parser_new`（Phase 7 切换 lib.rs 后为 `ir_parser`）。
+//! 使用 `forge_ir::text::parser`（Phase 7 切换 lib.rs 后为 `ir_parser`）。
 //! 每个测试断言解析构建的 forge IR 结构（opcode/操作数/类型/terminator）。
 
-use forge_ir::ir_parser::{parse_function, parse_module};
 use forge_ir::opcode::Opcode;
+use forge_ir::text::parser::{parse_function, parse_module};
 
 /// 按序收集函数内全部指令 opcode。
 fn opcodes(f: &forge_ir::function::Function) -> Vec<Opcode> {

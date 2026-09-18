@@ -78,7 +78,7 @@ fn invoke_landingpad_compile_rejected() {
 #[test]
 fn agg_param_over_16_bytes_rejected() {
     // >16 字节聚合常量参数：SysV 栈传递未实现 → Unsupported。
-    use forge_ir::ir_parser::parse_module;
+    use forge_ir::text::parser::parse_module;
     ensure_registered();
     let src = r#"
 define i32 @sum({i64, i64, i64, i64} %p) {

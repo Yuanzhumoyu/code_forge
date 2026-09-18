@@ -27,7 +27,7 @@ lalrpop_mod!(
         clippy::unnecessary_cast
     )]
     pub grammar,
-    "/ir_parser/grammar.rs"
+    "/text/parser/grammar.rs"
 );
 mod semantics;
 
@@ -118,7 +118,7 @@ pub(crate) fn format_parse_error(source: &str, err: &ParseErr) -> String {
         _ => match err {
             ParseError::UnrecognizedEof { .. } => msg.push_str("：输入在结构未结束时结束"),
             ParseError::User {
-                error: crate::ir_parser::lexer::LexError::BadChar { .. },
+                error: crate::text::parser::lexer::LexError::BadChar { .. },
             } => msg.push_str("：出现无法识别的字符"),
             ParseError::User { .. } => msg.push_str("：该写法不被文法接受"),
             _ => {}

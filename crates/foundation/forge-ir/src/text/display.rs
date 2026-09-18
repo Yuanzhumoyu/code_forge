@@ -8,16 +8,16 @@
 //! 块参数经 LLVM 扩展 `label %t(i32 %v)` 传递；Nop tombstone 省略；
 //! 名字由 NameResolver 消歧（%x/%x_1），参数名优先 value_names 绑定。
 
-use super::dfg::{DataFlowGraph, Instruction, ValueDef};
-use super::entity::*;
-use super::function::{Function, Module};
-use super::imm_str::ImmStr;
-use super::immediate::Immediate;
-use super::opcode::Opcode;
-use super::terminator::TermKind;
-use super::types::{TypeEntry, TypeStore};
+use crate::dfg::{DataFlowGraph, Instruction, ValueDef};
+use crate::entity::*;
 use crate::entity_map::SecondaryMap;
-use crate::ir_parser::llvm_mapping::llvm_mnemonic;
+use crate::function::{Function, Module};
+use crate::imm_str::ImmStr;
+use crate::immediate::Immediate;
+use crate::opcode::Opcode;
+use crate::terminator::TermKind;
+use crate::text::parser::llvm_mapping::llvm_mnemonic;
+use crate::types::{TypeEntry, TypeStore};
 use std::collections::HashSet;
 use std::fmt;
 

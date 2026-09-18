@@ -25,7 +25,7 @@
 //! （`src/` 里不得重现代码表、公开面不得出现 `String` 字段）。
 
 use forge_ir::data_layout::{DataLayout, TargetTriple};
-use forge_ir::ir_parser::parse_module;
+use forge_ir::text::parser::parse_module;
 
 /// 读 `src/**/*.rs`，返回 (相对路径, 去掉 `#[cfg(test)]` 尾部的主体)。
 fn src_bodies() -> Vec<(String, String)> {
@@ -170,7 +170,7 @@ fn no_host_arch_or_os_tables_in_src() {
 
 /// 源码断言 ②：IR **公开面**不得有裸 `String` 字段（开放字符串数据统一 `ImmStr`）。
 ///
-/// 覆盖边界：只看 `pub` 字段声明（`src/ir_parser/**` 是解析期 AST，按设计持有
+/// 覆盖边界：只看 `pub` 字段声明（`src/text/parser/**` 是解析期 AST，按设计持有
 /// 拥有的 `String`，不在此列）；诊断消息里的 `String` 是瞬态数据、字段非 `pub`，
 /// 也不在此列。`StringPool` 自身是 interner 实现，不是字段。
 #[test]
@@ -179,7 +179,7 @@ fn no_plain_string_fields_on_public_ir_surface() {
 
     let mut hits: Vec<(String, usize, String)> = Vec::new();
     for (file, body) in src_bodies() {
-        if file.starts_with("ir_parser/") {
+        if file.starts_with("text/parser/") {
             continue; // 解析期 AST：拥有的 String 是设计选择
         }
         for (i, line) in body.lines().enumerate() {

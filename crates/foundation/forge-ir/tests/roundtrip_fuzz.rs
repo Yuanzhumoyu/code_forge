@@ -13,7 +13,7 @@
 use forge_ir::dfg::BlockData;
 use forge_ir::function::{Function, Module};
 use forge_ir::immediate::Immediate;
-use forge_ir::ir_parser::parse_module;
+use forge_ir::text::parser::parse_module;
 use std::collections::HashMap;
 
 // ── 确定性 PRNG：xorshift64*（固定种子可复现，不依赖 rand 版本行为）──

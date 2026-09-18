@@ -209,8 +209,8 @@ fn check_uselistorder(
 }
 
 /// 终结符操作数中指定局部值的引用计数（第二十一轮 uselistorder use 计数）。
-fn count_term_uses(t: &crate::ir_parser::ast_items::ParsedTerminator, name: &str) -> u32 {
-    use crate::ir_parser::ast_items::ParsedTerminator;
+fn count_term_uses(t: &crate::text::parser::ast_items::ParsedTerminator, name: &str) -> u32 {
+    use crate::text::parser::ast_items::ParsedTerminator;
     let hit = |op: &ParsedOperand| -> u32 {
         match &op.op {
             Operand::Local(l) if l.trim_start_matches('%') == name => 1,
@@ -668,7 +668,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             // 其实际类型地址空间必须为 N,否则拒绝
             if let (
                 ParsedType::PtrAddrSpace(n),
-                crate::ir_parser::ast_items::ConstExpr::GlobalAddr(target),
+                crate::text::parser::ast_items::ConstExpr::GlobalAddr(target),
             ) = (&a.aliasee.0, &a.aliasee.1)
                 && *n != 0
             {
@@ -866,7 +866,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             for b in &f.blocks {
                 for inst in &b.insts {
                     if inst.opcode == "call"
-                        && let Some(crate::ir_parser::ast_items::ParsedOperand {
+                        && let Some(crate::text::parser::ast_items::ParsedOperand {
                             op: Operand::Global(n),
                             ..
                         }) = inst.args.first()
@@ -1121,7 +1121,7 @@ pub fn size_of_parsed_type(t: &ParsedType) -> u64 {
 
 /// 递归求值为整数（全局地址占位 0；float 按位模式）。
 fn const_expr_value(_ctx: &TypeContext, e: &ConstExpr) -> Result<i128, IrError> {
-    use crate::ir_parser::ast_items::ConstExpr;
+    use crate::text::parser::ast_items::ConstExpr;
     Ok(match e {
         ConstExpr::GlobalAddr(_) => 0,
         ConstExpr::Int(n) => *n as i128,
@@ -2002,7 +2002,7 @@ fn build_function<'a>(
                     return Err(IrError::Semantic(format!(
                         "'{name}' defined with type '{}' but expected '{}'",
                         ctx.fmt_type(ty),
-                        crate::ir_parser::ast_items::fmt_parsed_type(sty),
+                        crate::text::parser::ast_items::fmt_parsed_type(sty),
                     )));
                 }
                 check_uselistorder(name, idx, &|_| true, Some(idx.len() as u32))?;
@@ -2630,7 +2630,7 @@ fn build_inst<'a>(
                 .args
                 .last()
                 .map(|a| {
-                    matches!(a.ty, crate::ir_parser::ast_items::ParsedType::Void)
+                    matches!(a.ty, crate::text::parser::ast_items::ParsedType::Void)
                         && matches!(a.op, Operand::Undef)
                 })
                 .unwrap_or(false);

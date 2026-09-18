@@ -10,7 +10,7 @@ use forge_ir::Value;
 use forge_ir::dfg::BlockData;
 use forge_ir::function::{Function, Module};
 use forge_ir::immediate::Immediate;
-use forge_ir::ir_parser::parse_module;
+use forge_ir::text::parser::parse_module;
 use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::{Verifier, VerifyError};
 
@@ -1328,7 +1328,7 @@ define i32 @main() {
 fn parse_rejects_unknown_const_expr_op() {
     // 未知常量表达式操作名 → 语义错误
     assert!(
-        forge_ir::ir_parser::parse_module(
+        forge_ir::text::parser::parse_module(
             "@h = global i32 0
 @g = global i32 frobnicate (ptr @h to i32)
 define i32 @main() {
@@ -1406,7 +1406,7 @@ fn parse_accepts_invoke_forward_reference() {
     // 第十一轮语义变更：invoke/call 到未声明函数（含前向 ifunc 等）——
     // LLVM 隐式声明允许，注册宽松占位（void() 签名）
     assert!(
-        forge_ir::ir_parser::parse_module(
+        forge_ir::text::parser::parse_module(
             "define void @f() {
   %entry:
     invoke void @missing() to label %ok unwind label %pad
@@ -1474,7 +1474,7 @@ define void @f() personality ptr @__gxx_personality_v0 {
 fn parse_rejects_unknown_landingpad_clause() {
     // landingpad 未知子句 → 语义错误
     assert!(
-        forge_ir::ir_parser::parse_module(
+        forge_ir::text::parser::parse_module(
             "define void @f() {
   %e:
     %l = landingpad { ptr, i32 } frobnicate
@@ -1704,7 +1704,7 @@ fn roundtrip_fconst_inline() {
 
 #[test]
 fn roundtrip_all_assembler_cases() {
-    use forge_ir::ir_parser::parse_module;
+    use forge_ir::text::parser::parse_module;
     use std::panic::catch_unwind;
     // is_negative 判定与 llvm_assembler_compat.rs 保持一致（RUN 指令 + 文件名关键字）
     let is_neg = |name: &str, src: &str| -> bool {

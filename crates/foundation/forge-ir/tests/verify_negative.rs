@@ -13,8 +13,8 @@
 use forge_ir::builder::FunctionBuilder;
 use forge_ir::function::Function;
 use forge_ir::immediate::Immediate;
-use forge_ir::ir_parser::parse_module;
 use forge_ir::opcode::{FloatCC, IntCC, Opcode};
+use forge_ir::text::parser::parse_module;
 use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::{Verifier, VerifyError};
 use forge_ir::{CallConv, InstFlags, TypeId};

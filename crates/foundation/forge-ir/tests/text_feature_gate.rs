@@ -32,15 +32,15 @@ fn read(rel: &str) -> String {
         .unwrap_or_else(|e| panic!("读不到 {rel}：{e}"))
 }
 
-/// 收集 `src/` 下的 `.rs`（跳过文本层本体 `src/ir_parser/`），返回相对 `src/` 的路径。
+/// 收集 `src/` 下的 `.rs`（跳过文本层本体 `src/text/`），返回相对 `src/` 的路径。
 fn collect_core_sources(dir: &Path, root: &Path, out: &mut Vec<PathBuf>) {
     let entries =
         std::fs::read_dir(dir).unwrap_or_else(|e| panic!("读不到 {}：{e}", dir.display()));
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
-            if p.file_name().is_some_and(|n| n == "ir_parser") {
-                continue; // 文本层本体（及其 llvm_mapping/lexer/grammar 生成物）
+            if p.file_name().is_some_and(|n| n == "text") {
+                continue; // 文本层本体（`src/text/`：parser + display）
             }
             collect_core_sources(&p, root, out);
         } else if p.extension().is_some_and(|x| x == "rs") {
@@ -64,14 +64,13 @@ fn core_sources_do_not_reference_the_text_layer() {
     let mut hits = Vec::new();
     for rel in &files {
         let rel_str = rel.to_string_lossy().replace('\\', "/");
-        // `lib.rs` 持有模块声明（守卫 2 单独钉）、`display.rs` 是门控模块本体
-        // （它引用 `ir_parser::llvm_mapping` 是允许的）。
-        if rel_str == "lib.rs" || rel_str == "display.rs" {
+        // `lib.rs` 持有模块声明（守卫 2 单独钉）；文本层本体已在遍历时跳过。
+        if rel_str == "lib.rs" {
             continue;
         }
         let text = read(&format!("src/{rel_str}"));
         for (i, line) in text.lines().enumerate() {
-            for needle in ["ir_parser", "crate::display", "super::display"] {
+            for needle in ["text::parser", "text::display", "crate::text::"] {
                 if line.contains(needle) {
                     hits.push(format!("src/{rel_str}:{}: {}", i + 1, line.trim()));
                 }
@@ -86,32 +85,40 @@ fn core_sources_do_not_reference_the_text_layer() {
     );
 }
 
-/// **守卫 2**：`lib.rs` 的两个模块声明恰好一次，且紧跟 `#[cfg(feature = "text")]`。
+/// **守卫 2**：`lib.rs` 的 `pub mod text;` 恰好一次，且紧跟 `#[cfg(feature = "text")]`。
+///
+/// 目录归类后 crate 里**唯一**的门控点就是它（`src/text/{parser,display}` 整块被门控）。
 #[test]
 fn text_modules_are_feature_gated() {
     let lib = read("src/lib.rs");
     let lines: Vec<&str> = lib.lines().collect();
-    for module in ["display", "ir_parser"] {
-        let decl = format!("pub mod {module};");
-        assert_eq!(
-            lib.matches(&decl).count(),
-            1,
-            "`{decl}` 应恰好声明一次（重复声明意味着可能有一处没门控）"
-        );
-        let idx = lines
-            .iter()
-            .position(|l| l.trim() == decl)
-            .unwrap_or_else(|| panic!("lib.rs 里找不到 `{decl}`"));
-        // 往上找最近的非空、非注释行——它必须就是 cfg 属性（文档注释允许夹在中间）。
-        let prev = lines[..idx]
-            .iter()
-            .rev()
-            .map(|l| l.trim())
-            .find(|t| !t.is_empty() && !t.starts_with("//"))
-            .unwrap_or_else(|| panic!("`{decl}` 之前没有代码行"));
-        assert_eq!(
-            prev, "#[cfg(feature = \"text\")]",
-            "`{decl}` 必须由 `#[cfg(feature = \"text\")]` 门控（实测上一行：`{prev}`）"
+    let decl = "pub mod text;";
+    assert_eq!(
+        lib.matches(decl).count(),
+        1,
+        "`{decl}` 应恰好声明一次（重复声明意味着可能有一处没门控）"
+    );
+    let idx = lines
+        .iter()
+        .position(|l| l.trim() == decl)
+        .unwrap_or_else(|| panic!("lib.rs 里找不到 `{decl}`"));
+    // 往上找最近的非空、非注释行——它必须就是 cfg 属性（文档注释允许夹在中间）。
+    let prev = lines[..idx]
+        .iter()
+        .rev()
+        .map(|l| l.trim())
+        .find(|t| !t.is_empty() && !t.starts_with("//"))
+        .unwrap_or_else(|| panic!("`{decl}` 之前没有代码行"));
+    assert_eq!(
+        prev, "#[cfg(feature = \"text\")]",
+        "`{decl}` 必须由 `#[cfg(feature = \"text\")]` 门控（实测上一行：`{prev}`）"
+    );
+    // 文本层是**目录**：`src/text/{parser,display}` 整块在门控之内 ⇒ 核心目录里不许再有
+    // 独立的 `display.rs`/`ir_parser.rs`（防止有人把文件搬回来绕过门控）。
+    for stale in ["src/display.rs", "src/ir_parser.rs"] {
+        assert!(
+            !manifest_dir().join(stale).exists(),
+            "`{stale}` 不该存在——文本层统一在 `src/text/`（目录归类 + 门控唯一入口）"
         );
     }
 }

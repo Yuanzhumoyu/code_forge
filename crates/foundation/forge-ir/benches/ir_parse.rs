@@ -8,7 +8,7 @@
 //! 5.1 grammar 拆分二次评估：增量编译 ~2s（<15s 阈值），暂不拆分。
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use forge_ir::ir_parser::parse_module;
+use forge_ir::text::parser::parse_module;
 
 /// 中等规模模块（含全局、常量表达式、聚合、多函数、异常处理）——覆盖文本层
 /// 主要语法路径的解析吞吐。

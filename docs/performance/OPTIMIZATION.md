@@ -331,7 +331,7 @@ lowering 22-27%，emit ~10%。**regalloc（BacktrackingAllocator）是 codegen
 build.rs 生成）** 重写，**严格 LLVM IR 语法**，**全 105 opcode**，**彻底替换**
 （删旧 ir_parser.rs 与 forge-grammar 依赖）。
 
-**架构**（crates/foundation/forge-ir/src/ir_parser/）：
+**架构**（crates/foundation/forge-ir/src/ir_parser/，2026-09-17 目录归类后为 `src/text/parser/`）：
 
 - `lexer.rs`：logos token（关键字/类型/`@`/`%`/字面量/标点/`;` 注释）；
   Token 值类型化（IntTy(u16)/FloatTy(u16)/VecTy(VecElem 枚举)/IntLit(i64)/

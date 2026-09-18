@@ -17,7 +17,7 @@
 //! 本文件把这几条钉住：位置在、源码行与插入符在、期望集合有界、内部 Debug 形态
 //! 不再泄漏、词法错误（非法字符）也有位置。
 
-use forge_ir::ir_parser::parse_module;
+use forge_ir::text::parser::parse_module;
 
 fn parse_err(src: &str) -> String {
     match parse_module(src) {
@@ -167,7 +167,7 @@ fn recovery_never_accepts_invalid_source() {
     // 但源码里有错误 ⇒ 必须仍然 Err。
     let src = "define i32 @f() {\nentry:\n  %a = zzz 1\n  ret i32 0\n}\n";
     assert!(
-        forge_ir::ir_parser::parse_module(src).is_err(),
+        forge_ir::text::parser::parse_module(src).is_err(),
         "恢复不得让非法源码变成 Ok"
     );
 }
@@ -190,7 +190,7 @@ fn recovery_stops_when_no_progress() {
 #[test]
 fn semantic_errors_still_report_first_only() {
     let src = "define i32 @f() {\nentry:\n  zzz\n  yyy\n  ret i32 0\n}\n";
-    let err = match forge_ir::ir_parser::parse_module(src) {
+    let err = match forge_ir::text::parser::parse_module(src) {
         Err(forge_ir::IrError::Semantic(m)) => m,
         Err(other) => panic!("期望语义错误，实际 {other}"),
         Ok(_) => panic!("期望语义错误，实际解析成功"),

@@ -6,7 +6,7 @@
 
 ```text
 前端（HIR / mini_c / LLVM 文本）
-        │  FunctionBuilder / ir_parser
+        │  FunctionBuilder / text::parser
         ▼
    forge-ir（本 crate）──► forge-opt（pass 流水线）──► forge-codegen（机器 IR + 编码）
         │                                                        │
@@ -27,7 +27,7 @@
 | `use_list` / `analysis` / `loop_info` / `alias` | def-use 链、支配树与**惰性分析缓存管理器 `AnalysisManager`**（修订号自校验 + `Arc` 快照）、循环森林、最小别名分析 |
 | `constant` / `big` / `imm_str` / `string_pool` | 常量池（int/float/big/vector/aggregate）、任意精度、SSO 字符串 |
 | `verify` | `Verifier`（实测 33 个错误码 `VerifyError` / 19 个 `check_*` 检查函数 + 墓碑规范形态 `TombstoneNotCanonical`、越界类型句柄 `BadTypeId`/`BadSigRef`、严重级 `VerifySeverity`（`UnreachableBlock` 为唯一建议级）） |
-| `display` / `ir_parser` | LLVM 文本输出（logos + lalrpop 解析） |
+| `text::display` / `text::parser` | LLVM 文本输出与解析（logos + lalrpop；`src/text/`） |
 | `metadata` / `debug_info` / `symbol` / `data_layout` | 元数据、调试信息、符号、DataLayout 与 target triple（只作数据，不提供按架构名猜属性的查询——见「开放集合的边界」） |
 
 crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**：`build.rs` 读它生成
@@ -122,7 +122,7 @@ os_name}` 三个架构名/OS 名查表，表外架构两个都返回 `false`；�
 （由 ISA `[meta] addr_width` 派生），与 `target triple` 的架构名无关。
 
 规则二：后两类的字符串数据一律用 `ImmStr`（SSO 内联 + `Arc<str>` 共享，
-`Clone` O(1)），IR 公开面不出现裸 `String` 字段（`src/ir_parser/**` 的解析期
+`Clone` O(1)），IR 公开面不出现裸 `String` 字段（`src/text/parser/**` 的解析期
 AST 与诊断消息按设计例外）。两条规则由 `tests/open_set_boundary.rs` 钉住
 （行为断言：未知架构名原样往返、宽度只跟布局数据走；源码断言：不得重现代码表、
 公开面不得出现 `String` 字段，且已用负向探针验证守卫会失败）。

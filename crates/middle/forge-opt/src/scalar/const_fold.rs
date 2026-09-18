@@ -1282,7 +1282,7 @@ mod tests {
     %c = extractvalue [2 x i32] [i32 1, i32 2], 1
     ret i32 %c
 }";
-        let module = crate::ir_parser::parse_module(src).expect("parse");
+        let module = forge_ir::text::parse_module(src).expect("parse");
         let mut func = module.iter_functions().next().unwrap().clone();
         let pass = ConstFoldPass::new();
         let result = pass.run_on_function(&mut func).unwrap();

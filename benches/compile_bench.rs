@@ -407,7 +407,7 @@ fn bench_ir_build_big_loop(c: &mut Criterion) {
 fn bench_ir_parse_simple_add(c: &mut Criterion) {
     c.bench_function("ir_parse_simple_add", |b| {
         b.iter(|| {
-            let f = forge_ir::ir_parser::parse_function(black_box(IR_SIMPLE_ADD))
+            let f = forge_ir::text::parser::parse_function(black_box(IR_SIMPLE_ADD))
                 .unwrap_or_else(|e| panic!("ir_parse_simple_add: {e}"));
             black_box(f);
         });
@@ -417,7 +417,7 @@ fn bench_ir_parse_simple_add(c: &mut Criterion) {
 fn bench_ir_parse_mul_add(c: &mut Criterion) {
     c.bench_function("ir_parse_mul_add", |b| {
         b.iter(|| {
-            let f = forge_ir::ir_parser::parse_function(black_box(IR_MUL_ADD))
+            let f = forge_ir::text::parser::parse_function(black_box(IR_MUL_ADD))
                 .unwrap_or_else(|e| panic!("ir_parse_mul_add: {e}"));
             black_box(f);
         });
@@ -427,7 +427,7 @@ fn bench_ir_parse_mul_add(c: &mut Criterion) {
 fn bench_ir_parse_dot_product(c: &mut Criterion) {
     c.bench_function("ir_parse_dot_product", |b| {
         b.iter(|| {
-            let f = forge_ir::ir_parser::parse_function(black_box(IR_DOT_PRODUCT))
+            let f = forge_ir::text::parser::parse_function(black_box(IR_DOT_PRODUCT))
                 .unwrap_or_else(|e| panic!("ir_parse_dot_product: {e}"));
             black_box(f);
         });
@@ -437,7 +437,7 @@ fn bench_ir_parse_dot_product(c: &mut Criterion) {
 fn bench_ir_parse_loop_sum(c: &mut Criterion) {
     c.bench_function("ir_parse_loop_sum", |b| {
         b.iter(|| {
-            let f = forge_ir::ir_parser::parse_function(black_box(IR_LOOP_SUM))
+            let f = forge_ir::text::parser::parse_function(black_box(IR_LOOP_SUM))
                 .unwrap_or_else(|e| panic!("ir_parse_loop_sum: {e}"));
             black_box(f);
         });
@@ -447,7 +447,7 @@ fn bench_ir_parse_loop_sum(c: &mut Criterion) {
 fn bench_ir_parse_complex(c: &mut Criterion) {
     c.bench_function("ir_parse_complex", |b| {
         b.iter(|| {
-            let f = forge_ir::ir_parser::parse_function(black_box(IR_COMPLEX_TEXT))
+            let f = forge_ir::text::parser::parse_function(black_box(IR_COMPLEX_TEXT))
                 .unwrap_or_else(|e| panic!("ir_parse_complex: {e}"));
             black_box(f);
         });
@@ -459,7 +459,7 @@ fn bench_ir_parse_multi_func(c: &mut Criterion) {
     c.bench_function("ir_parse_multi_func", |b| {
         b.iter(|| {
             for src in srcs {
-                let f = forge_ir::ir_parser::parse_function(black_box(src))
+                let f = forge_ir::text::parser::parse_function(black_box(src))
                     .unwrap_or_else(|e| panic!("ir_parse_multi_func: {e}"));
                 black_box(f);
             }
@@ -481,7 +481,7 @@ fn bench_ir_parse_big_text(c: &mut Criterion) {
     let src = ir_text_many_ops(IR_BIG_TEXT_N);
     c.bench_function("ir_parse_big_text_256", |b| {
         b.iter(|| {
-            let f = forge_ir::ir_parser::parse_function(black_box(&src))
+            let f = forge_ir::text::parser::parse_function(black_box(&src))
                 .unwrap_or_else(|e| panic!("ir_parse_big_text_256: {e}"));
             black_box(f);
         });
@@ -1512,7 +1512,7 @@ mod tests {
             ("IR_LOOP_SUM", super::IR_LOOP_SUM),
             ("IR_COMPLEX_TEXT", super::IR_COMPLEX_TEXT),
         ] {
-            let f = forge_ir::ir_parser::parse_function(src)
+            let f = forge_ir::text::parser::parse_function(src)
                 .unwrap_or_else(|e| panic!("{name} failed to parse: {e}"));
             assert!(
                 super::count_ir_insts(&f) >= 2,
@@ -1525,7 +1525,7 @@ mod tests {
     #[test]
     fn ir_text_many_ops_generated_scales() {
         let src = super::ir_text_many_ops(super::IR_BIG_TEXT_N);
-        let f = forge_ir::ir_parser::parse_function(&src)
+        let f = forge_ir::text::parser::parse_function(&src)
             .unwrap_or_else(|e| panic!("big text failed to parse: {e}"));
         assert!(
             super::count_ir_insts(&f) >= super::IR_BIG_TEXT_N,

@@ -17,7 +17,7 @@
 #![cfg(debug_assertions)]
 
 use forge_ir::builder::FunctionBuilder;
-use forge_ir::display::function_to_string;
+use forge_ir::text::display::function_to_string;
 use forge_ir::types::{FunctionSignature, TypeContext};
 use forge_ir::verify::Verifier;
 use forge_ir::{Function, Module, TypeId};
@@ -247,7 +247,7 @@ fn src_vec(n: usize) -> String {
 }
 
 fn snapshots(src: &str) -> usize {
-    forge_ir::ir_parser::parse_module(src)
+    forge_ir::text::parser::parse_module(src)
         .unwrap_or_else(|e| panic!("parse 失败：{e}"))
         .types
         .debug_read_count()
@@ -342,7 +342,7 @@ fn write_path_never_clones_in_real_workload() {
     let _ = ctx.vector_ty(ctx.i32_ty(), 8);
     let _ = ctx.int_ty(24);
     // 2) 文本层（解析器内部大量 interning）
-    let parsed = forge_ir::ir_parser::parse_module(
+    let parsed = forge_ir::text::parser::parse_module(
         "define i32 @f(i32 %a) {\nentry:\n  %x = add i32 %a, 1\n  ret i32 %x\n}\n",
     )
     .expect("parse");

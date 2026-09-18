@@ -302,7 +302,7 @@ ModuleItem: ParsedItem = {
     // uselistorder：`uselistorder <ty> <val>, { 1, 0 }` / `uselistorder_bb label %l, { 0, 1 }`
     // （LLVM use-list 顺序指令——解析后宽松丢弃；第十一轮）
     UselistorderKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
-        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        let idx = crate::text::parser::ast_items::collect_uselistorder_idx(&_first, _rest);
         
         let name = match _v {
             Operand::Global(g) => g,
@@ -312,7 +312,7 @@ ModuleItem: ParsedItem = {
         ParsedItem::UselistOrder(name, idx, t)
     },
     UselistorderBbKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
-        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        let idx = crate::text::parser::ast_items::collect_uselistorder_idx(&_first, _rest);
         
         let name = match _v {
             Operand::Global(g) => g,
@@ -352,7 +352,7 @@ MetadataVal: MetadataVal = {
         Ok(v) => MetadataVal::Int(v),
         Err(_) => MetadataVal::IntBig(n),
     },
-    <n: HexLit> => MetadataVal::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <n: HexLit> => MetadataVal::UInt(crate::text::parser::ast_items::big_as_u64(&n)),
     <f: FloatLit> => MetadataVal::Float(f),
     <s: StrLit> => MetadataVal::Str(s),
     // LLVM metadata 字符串：`!"hello"`（带 Bang）
@@ -381,7 +381,7 @@ MetadataVal: MetadataVal = {
     // `key: {!0, !3, !4}` 裸 tuple 整段（lexer 合并 token——
     // generic-debug-node.ll；第二十一轮）
     <t: MetadataFieldTupleLit> => {
-        crate::ir_parser::ast_items::split_md_field_tuple_lit(&t)
+        crate::text::parser::ast_items::split_md_field_tuple_lit(&t)
     },
     // 类型化值（LLVM：`!{i32 1}` / `!{ptr null}`）——类型丢弃（内部值等价）
     <_ty: Type> <v: Value> => match v {
@@ -399,7 +399,7 @@ MetadataValPrim: MetadataVal = {
         Ok(v) => MetadataVal::Int(v),
         Err(_) => MetadataVal::IntBig(n),
     },
-    <n: HexLit> => MetadataVal::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <n: HexLit> => MetadataVal::UInt(crate::text::parser::ast_items::big_as_u64(&n)),
     // Tuple 值（`operands: {!0, !3, !4}`——generic-debug-node.ll；裸 LBrace
     // grammar 分支与 Type 的匿名结构冲突,改 lexer 合并(裸 `{` 后跟 `!N`
     // 形态与非 metadata 语法不相交);第二十一轮
@@ -462,11 +462,11 @@ CommaAttach: (String, MetadataRef) = {
 // 收不到 IntTy，必须整 token 拆出类型与 ZeroInit init。
 TypeAndInit: (ParsedType, Option<GlobalInitVal>) = {
     <t: Type> => (t, None),
-    <lit: ZeroInitLit> => (crate::ir_parser::ast_items::split_scalar_ty(&lit), Some(GlobalInitVal::ZeroInit)),
-    <lit: VecZeroInitLit> => (crate::ir_parser::ast_items::split_vec_const_lit(&lit).0, Some(GlobalInitVal::ZeroInit)),
+    <lit: ZeroInitLit> => (crate::text::parser::ast_items::split_scalar_ty(&lit), Some(GlobalInitVal::ZeroInit)),
+    <lit: VecZeroInitLit> => (crate::text::parser::ast_items::split_vec_const_lit(&lit).0, Some(GlobalInitVal::ZeroInit)),
     // 向量字面量同上：`<4 x i32> <i32 3, …>` 也是单 token（VecConstLit）
     <lit: VecConstLit> => {
-        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
+        let (ty, lanes) = crate::text::parser::ast_items::split_vec_const_lit(&lit);
         (ty, Some(GlobalInitVal::Vector(lanes)))
     },
 };
@@ -495,7 +495,7 @@ GlobalDef: ParsedGlobal = {
         is_ifunc: true,
         ifunc_params: params
             .iter()
-            .map(|(ty, _, _)| crate::ir_parser::ast_items::fmt_parsed_type(ty))
+            .map(|(ty, _, _)| crate::text::parser::ast_items::fmt_parsed_type(ty))
             .collect(),
         ifunc_resolver: match &_r.op {
             Operand::Global(g) => Some(g.clone()),
@@ -522,7 +522,7 @@ GlobalDef: ParsedGlobal = {
         is_ifunc: true,
         ifunc_params: params
             .iter()
-            .map(|(ty, _, _)| crate::ir_parser::ast_items::fmt_parsed_type(ty))
+            .map(|(ty, _, _)| crate::text::parser::ast_items::fmt_parsed_type(ty))
             .collect(),
         ifunc_resolver: Some(_r),
     },
@@ -552,13 +552,13 @@ GlobalDef: ParsedGlobal = {
     // L6 裸全局引用;`@B = global ptr @A` 形态,GlobalId 后 Eq vs 换行的
     // 2-lookahead 歧义经 lexer 消解;第二十一轮）
     <name: GlobalId> Eq <g: GlobalPtrInitKw> <tail: GlobalTail?> => {
-        let (ty, target) = crate::ir_parser::ast_items::split_global_ptr_init(&g);
+        let (ty, target) = crate::text::parser::ast_items::split_global_ptr_init(&g);
         ParsedGlobal {
             name: name,
             is_constant: false,
             ty,
             init: Some(GlobalInitVal::Expr(Box::new(
-                crate::ir_parser::ast_items::ConstExpr::GlobalAddr(target),
+                crate::text::parser::ast_items::ConstExpr::GlobalAddr(target),
             ))),
             align: tail.as_ref().map(|t| t.0).unwrap_or(0),
             linkage: None,
@@ -644,7 +644,7 @@ GlobalDef: ParsedGlobal = {
 
 // 地址空间值（数字或符号化字符串——符号化宽松 0）
 AddrSpaceVal: i64 = {
-    <n: IntLit> => crate::ir_parser::ast_items::big_as_i64(&n),
+    <n: IntLit> => crate::text::parser::ast_items::big_as_i64(&n),
     <_s: StrLit> => 0,
     // 标识符形态（LLVM：addrspace(D)——平台符号化地址空间）
     <_i: Ident> => 0,
@@ -652,7 +652,7 @@ AddrSpaceVal: i64 = {
 
 // 全局地址空间前缀：`addrspace(N)`
 GlobalAddrSpace: u32 = {
-    AddrspaceKw LParen <n: IntLit> RParen => crate::ir_parser::ast_items::big_as_u32(&n),
+    AddrspaceKw LParen <n: IntLit> RParen => crate::text::parser::ast_items::big_as_u32(&n),
     // 符号化地址空间（LLVM：addrspace("G")——AArch64 等按名寻址）——宽松 0
     AddrspaceKw LParen <_s: StrLit> RParen => 0,
 };
@@ -684,7 +684,7 @@ GlobalTail: (u64, Option<String>, Option<String>, Vec<(String, MetadataRef)>) = 
 
 // 全局尾部单项（以 Comma 开头完整匹配）
 GlobalTailOpt: (String, u64, Option<String>, Option<String>, Option<(String, MetadataRef)>) = {
-    Comma Align <n: IntLit> => ("align".to_string(), crate::ir_parser::ast_items::big_as_u64(&n), None, None, None),
+    Comma Align <n: IntLit> => ("align".to_string(), crate::text::parser::ast_items::big_as_u64(&n), None, None, None),
     Comma Section <s: StrLit> => ("section".to_string(), 0u64, Some(s), None, None),
     Comma ComdatKw LParen <c: ComdatName> RParen => ("comdat".to_string(), 0u64, None, Some(c), None),
     // 无括号 comdat（`constant [7 x i8] c"...", comdat, align 1`——第十五轮）
@@ -757,8 +757,8 @@ GlobalSymKw: String = {
 };
 
 GlobalInit: GlobalInitVal = {
-    <n: IntLit> => GlobalInitVal::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
-    <n: HexLit> => GlobalInitVal::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <n: IntLit> => GlobalInitVal::Int(crate::text::parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => GlobalInitVal::UInt(crate::text::parser::ast_items::big_as_u64(&n)),
     <f: FloatLit> => GlobalInitVal::Float(f),
     <fh: HexFloatLit> => GlobalInitVal::Float(fh),
     // 浮点十六进制**位模式**（`0xH7C00` / `f0x01e3`）当作整数位模式走 GlobalInitVal::Int，
@@ -767,7 +767,7 @@ GlobalInit: GlobalInitVal = {
     <fh: FloatHexLit> => GlobalInitVal::Int(fh),
     Null => GlobalInitVal::Null,
     <c: CString> => GlobalInitVal::Str(
-        crate::ir_parser::ast_items::decode_c_string(&c),
+        crate::text::parser::ast_items::decode_c_string(&c),
     ),
     <_z: ZeroInitLit> => GlobalInitVal::ZeroInit,
     <_z: VecZeroInitLit> => GlobalInitVal::ZeroInit,
@@ -811,11 +811,11 @@ ConvCastOp: String = {
 // 常量表达式（3.3）：`<name> (<ty> <value> to <ty>)`（ptrtoint/inttoptr/bitcast/
 // addrspacecast 是 lexer 专用 token；getelementptr 走 Ident）与
 // `getelementptr (<indexed_ty>, <ty> <ptr>, <ty> <idx>, ...)`。
-GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
+GlobalConstExpr: crate::text::parser::ast_items::ConstExpr = {
     // 二元折叠表达式：`add nuw nsw (i64 <l>, i64 <r>)`（flags 可选；
     // 操作数带类型前缀或嵌套表达式——ExprOperand 双形态）
     <op: BinaryOp> <flags: InstFlagSeq> LParen <l: ExprOperand> Comma <r: ExprOperand> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::Binary {
+        crate::text::parser::ast_items::ConstExpr::Binary {
             op,
             flags,
             lhs: Box::new(l.1),
@@ -824,10 +824,10 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
     },
     // `splat (i1 true)`（LLVM 18+ splat 常量表达式——宽松折叠为 0）
     <_op: Ident> LParen <_e: ExprOperand> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::Unsupported("splat".to_string())
+        crate::text::parser::ast_items::ConstExpr::Unsupported("splat".to_string())
     },
     <op: BinaryOp> LParen <l: ExprOperand> Comma <r: ExprOperand> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::Binary {
+        crate::text::parser::ast_items::ConstExpr::Binary {
             op,
             flags: vec![],
             lhs: Box::new(l.1),
@@ -838,19 +838,19 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
     // 至语义层值级校验：base 指针类 / key i32 常量 / int_disc i64 常量 /
     // addr_disc 指针类；校验通过宽松求值 0。第十四轮多参数形态因负向漂移
     // 回滚（+2 = invalid-ptrauth-const3/4）——本轮语法四参数 + 值级校验配套）
-    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k]),
-    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> Comma <_d: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k, _d]),
-    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> Comma <_d: ExprOperand> Comma <_a: ExprOperand> RParen => crate::ir_parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k, _d, _a]),
+    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> RParen => crate::text::parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k]),
+    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> Comma <_d: ExprOperand> RParen => crate::text::parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k, _d]),
+    PtrauthKw LParen <_op: ExprOperand> Comma <_k: ExprOperand> Comma <_d: ExprOperand> Comma <_a: ExprOperand> RParen => crate::text::parser::ast_items::ConstExpr::Ptrauth(vec![_op, _k, _d, _a]),
     // blockaddress（`ptr blockaddress(@f, %label)`——宽松 0；第十六轮 pr119818）
-    BlockaddressKw LParen <_f: GlobalId> Comma <_l: LocalId> RParen => crate::ir_parser::ast_items::ConstExpr::Int(0),
+    BlockaddressKw LParen <_f: GlobalId> Comma <_l: LocalId> RParen => crate::text::parser::ast_items::ConstExpr::Int(0),
     // splat（LLVM 18+：`splat (i32 7)`——向量广播常量）。**保留表达式**而不是折成
     // 空向量（折成 `<1 x i32> zeroinitializer` 会同时丢值与类型，实测
     // constant-splat.ll 往返漂移）；字节级广播求值仍未实现（`const_expr_bytes` 宽松值）
     SplatKw LParen <op: ExprOperand> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::Splat(op.0, Box::new(op.1))
+        crate::text::parser::ast_items::ConstExpr::Splat(op.0, Box::new(op.1))
     },
     Ptrtoint LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::PtrToInt {
+        crate::text::parser::ast_items::ConstExpr::PtrToInt {
             op_ty: op.0,
             op: Box::new(op.1),
             to_ty,
@@ -858,7 +858,7 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
     },
     // ptrtoaddr（LLVM 新常量表达式：`ptrtoaddr (ptr @x to i64)`）——宽松同 ptrtoint
     PtrtoaddrKw LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::PtrToInt {
+        crate::text::parser::ast_items::ConstExpr::PtrToInt {
             op_ty: op.0,
             op: Box::new(op.1),
             to_ty,
@@ -867,7 +867,7 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
     // 转换折叠表达式：`trunc (i64 42 to i32)` / `zext (...) to i64` /
     // `sext (...) to ...`（Trunc/Zext/Sext 是 lexer 专用 token）
     <op: ConvCastOp> LParen <src: ExprOperand> To <to_ty: ValueType> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::Cast {
+        crate::text::parser::ast_items::ConstExpr::Cast {
             op,
             src_ty: src.0,
             src: Box::new(src.1),
@@ -875,28 +875,28 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
         }
     },
     Inttoptr LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::IntToPtr {
+        crate::text::parser::ast_items::ConstExpr::IntToPtr {
             op_ty: op.0,
             op: Box::new(op.1),
             to_ty,
         }
     },
     Bitcast LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::Bitcast {
+        crate::text::parser::ast_items::ConstExpr::Bitcast {
             op_ty: op.0,
             op: Box::new(op.1),
             to_ty,
         }
     },
     AddrspaceCastKw LParen <op: ExprOperand> To <to_ty: ValueType> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::AddrSpaceCast {
+        crate::text::parser::ast_items::ConstExpr::AddrSpaceCast {
             op_ty: op.0,
             op: Box::new(op.1),
             to_ty,
         }
     },
     GetElementPtr LParen <indexed_ty: Type> Comma <op: ExprOperand> <rest: (Comma <ExprOperand>)*> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::GetElementPtr {
+        crate::text::parser::ast_items::ConstExpr::GetElementPtr {
             indexed_ty,
             op_ty: op.0,
             ptr: Box::new(op.1),
@@ -906,7 +906,7 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
     // `getelementptr inbounds (...)` / `getelementptr nuw inrange(-8, 16) (...)`
     //（M3 标志类：flags 解析后丢弃——与现有 Inbounds 变体行为一致）
     GetElementPtr <_flags: GepFlagSeq> LParen <indexed_ty: Type> Comma <op: ExprOperand> <rest: (Comma <ExprOperand>)*> RParen => {
-        crate::ir_parser::ast_items::ConstExpr::GetElementPtr {
+        crate::text::parser::ast_items::ConstExpr::GetElementPtr {
             indexed_ty,
             op_ty: op.0,
             ptr: Box::new(op.1),
@@ -917,46 +917,46 @@ GlobalConstExpr: crate::ir_parser::ast_items::ConstExpr = {
 
 // 表达式操作数：`<ty> <value>`（叶子）或嵌套表达式（`bitcast (ptr @h to ptr)`，
 // 自身带括号、无类型前缀——op_ty 用 Void 占位，display 按 op 类型判定输出）。
-ExprOperand: (crate::ir_parser::ast_items::ParsedType, crate::ir_parser::ast_items::ConstExpr) = {
+ExprOperand: (crate::text::parser::ast_items::ParsedType, crate::text::parser::ast_items::ConstExpr) = {
     <ty: ValueType> <v: ExprValue> => (ty, v),
     <e: GlobalConstExpr> => (
-        crate::ir_parser::ast_items::ParsedType::Void,
+        crate::text::parser::ast_items::ParsedType::Void,
         e,
     ),
     // 向量常量（lexer 合并单 token）：`<2 x i64> <i64 1, i64 1>`（GEP 向量索引）
     <lit: VecConstLit> => {
-        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
-        let expr = crate::ir_parser::ast_items::ConstExpr::Vector(ty.clone(), lanes);
+        let (ty, lanes) = crate::text::parser::ast_items::split_vec_const_lit(&lit);
+        let expr = crate::text::parser::ast_items::ConstExpr::Vector(ty.clone(), lanes);
         (ty, expr)
     },
     // 向量 zeroinitializer（lexer 合并单 token）：`<2 x ptr> zeroinitializer`
     <lit: VecZeroInitLit> => {
-        let ty = crate::ir_parser::ast_items::split_vec_const_lit(&lit).0;
-        let expr = crate::ir_parser::ast_items::ConstExpr::Vector(ty.clone(), vec![]);
+        let ty = crate::text::parser::ast_items::split_vec_const_lit(&lit).0;
+        let expr = crate::text::parser::ast_items::ConstExpr::Vector(ty.clone(), vec![]);
         (ty, expr)
     },
 };
 
-ExprValue: crate::ir_parser::ast_items::ConstExpr = {
-    <g: GlobalId> => crate::ir_parser::ast_items::ConstExpr::GlobalAddr(
+ExprValue: crate::text::parser::ast_items::ConstExpr = {
+    <g: GlobalId> => crate::text::parser::ast_items::ConstExpr::GlobalAddr(
         g.trim_start_matches('@').to_string(),
     ),
-    <n: IntLit> => crate::ir_parser::ast_items::ConstExpr::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
-    <n: HexLit> => crate::ir_parser::ast_items::ConstExpr::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <n: IntLit> => crate::text::parser::ast_items::ConstExpr::Int(crate::text::parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => crate::text::parser::ast_items::ConstExpr::UInt(crate::text::parser::ast_items::big_as_u64(&n)),
     // 浮点十六进制位模式（`f0x01e3`）——保留位模式供常量表达式求值
-    <n: FloatHexLit> => crate::ir_parser::ast_items::ConstExpr::UInt(n as u64),
-    <f: FloatLit> => crate::ir_parser::ast_items::ConstExpr::Float(f),
-    True => crate::ir_parser::ast_items::ConstExpr::Int(1),
-    False => crate::ir_parser::ast_items::ConstExpr::Int(0),
-    Null => crate::ir_parser::ast_items::ConstExpr::Null,
-    Undef => crate::ir_parser::ast_items::ConstExpr::Undef,
-    Poison => crate::ir_parser::ast_items::ConstExpr::Poison,
+    <n: FloatHexLit> => crate::text::parser::ast_items::ConstExpr::UInt(n as u64),
+    <f: FloatLit> => crate::text::parser::ast_items::ConstExpr::Float(f),
+    True => crate::text::parser::ast_items::ConstExpr::Int(1),
+    False => crate::text::parser::ast_items::ConstExpr::Int(0),
+    Null => crate::text::parser::ast_items::ConstExpr::Null,
+    Undef => crate::text::parser::ast_items::ConstExpr::Undef,
+    Poison => crate::text::parser::ast_items::ConstExpr::Poison,
     // 嵌套表达式：`bitcast (ptr @h to ptr)` 作为操作数（括号包裹）
     LParen <e: GlobalConstExpr> RParen => e,
     // 向量常量（常量表达式位置）：`<2 x i32> <i32 3, i32 4>`
     <lit: VecConstLit> => {
-        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
-        crate::ir_parser::ast_items::ConstExpr::Vector(ty, lanes)
+        let (ty, lanes) = crate::text::parser::ast_items::split_vec_const_lit(&lit);
+        crate::text::parser::ast_items::ConstExpr::Vector(ty, lanes)
     },
     // 嵌套二元折叠表达式（带类型前缀的 ExprOperand 值位置）：
     // `i64 add (i64 <l>, i64 <r>)`——`<ty: ValueType> <v: ExprValue>` 中
@@ -974,7 +974,7 @@ GlobalAggElem: GlobalInitVal = {
         // 嵌套聚合（`[4 x ptr] [ptr null, ...]`——带类型前缀的嵌套 init；
         // 第十一轮 vtable 摘要类）：Agg 透传，元素递归转换
         Operand::Agg(v) => {
-            fn conv(p: crate::ir_parser::ast_items::ParsedOperand) -> GlobalInitVal {
+            fn conv(p: crate::text::parser::ast_items::ParsedOperand) -> GlobalInitVal {
                 match p.op {
                     Operand::Int(n) => GlobalInitVal::Int(n),
                     Operand::UInt(n) => GlobalInitVal::UInt(n),
@@ -1004,7 +1004,7 @@ GlobalAggElem: GlobalInitVal = {
 
 
 AlignOpt: u32 = {
-    Comma Align <n: IntLit> => crate::ir_parser::ast_items::big_as_u32(&n),
+    Comma Align <n: IntLit> => crate::text::parser::ast_items::big_as_u32(&n),
 };
 
 TargetSpec: (String, String) = {
@@ -1317,8 +1317,8 @@ FuncRetKw: String = {
     Nonnull => "nonnull".to_string(),
     InregKw => "inreg".to_string(),
     Align <n: IntLit> => format!("align {n}"),
-    ByvalKw LParen <t: Type> RParen => format!("byval({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
-    SretKw LParen <t: Type> RParen => format!("sret({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    ByvalKw LParen <t: Type> RParen => format!("byval({})", crate::text::parser::ast_items::fmt_parsed_type(&t)),
+    SretKw LParen <t: Type> RParen => format!("sret({})", crate::text::parser::ast_items::fmt_parsed_type(&t)),
     // captures(<mode>, <mode>...)：LLVM 参数捕获属性（none/address/provenance
     // ——开放值列表）
     CapturesKw LParen <v: CapturesVal> <rest: (Comma CapturesVal)*> RParen => {
@@ -1329,7 +1329,7 @@ FuncRetKw: String = {
         format!("captures({})", parts.join(", "))
     },
     // byref 必须带类型参数（LLVM：`ptr byref(i32)`——裸 byref 拒绝，见 §7）
-    ByrefKw LParen <t: Type> RParen => format!("byref({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    ByrefKw LParen <t: Type> RParen => format!("byref({})", crate::text::parser::ast_items::fmt_parsed_type(&t)),
     // dereferenceable(N)/dereferenceable_or_null(N)（第十一轮专用 token——
     // Ident 开放形态与命名调用约定 `Ident <ret: Type>` 的 LParen 闭包冲突）
     DereferenceableKw LParen <n: IntLit> RParen => format!("dereferenceable({n})"),
@@ -1429,8 +1429,8 @@ ParamAttr: String = {
     Align LParen <n: IntLit> RParen => format!("align {n}"),
     // 类型参数属性（LLVM：`byval(%struct.S)` / `sret(%struct.S)`）——
     // 类型经 fmt_parsed_type 序列化为文本，semantics 解析回 TypeId。
-    ByvalKw LParen <t: Type> RParen => format!("byval({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
-    SretKw LParen <t: Type> RParen => format!("sret({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    ByvalKw LParen <t: Type> RParen => format!("byval({})", crate::text::parser::ast_items::fmt_parsed_type(&t)),
+    SretKw LParen <t: Type> RParen => format!("sret({})", crate::text::parser::ast_items::fmt_parsed_type(&t)),
     // captures(<mode>, <mode>...)：LLVM 参数捕获属性（none/address/provenance
     // ——开放值列表）
     CapturesKw LParen <v: CapturesVal> <rest: (Comma CapturesVal)*> RParen => {
@@ -1441,7 +1441,7 @@ ParamAttr: String = {
         format!("captures({})", parts.join(", "))
     },
     // byref 必须带类型参数（LLVM：`ptr byref(i32)`——裸 byref 拒绝，见 §7）
-    ByrefKw LParen <t: Type> RParen => format!("byref({})", crate::ir_parser::ast_items::fmt_parsed_type(&t)),
+    ByrefKw LParen <t: Type> RParen => format!("byref({})", crate::text::parser::ast_items::fmt_parsed_type(&t)),
     // dereferenceable(N)/dereferenceable_or_null(N)（第十一轮专用 token——
     // Ident 开放形态与命名调用约定 `Ident <ret: Type>` 的 LParen 闭包冲突）
     DereferenceableKw LParen <n: IntLit> RParen => format!("dereferenceable({n})"),
@@ -1460,7 +1460,7 @@ ParamList: Vec<(ParsedType, String, Vec<String>)> = {
 // uselistorder 语句（终结符后允许；LLVM use-list 特例）——(值名, 索引) 收集
 UselistorderStmt: (String, Vec<i64>, ParsedType) = {
     UselistorderKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
-        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        let idx = crate::text::parser::ast_items::collect_uselistorder_idx(&_first, _rest);
         
         let name = match _v {
             Operand::Global(g) => g,
@@ -1470,12 +1470,12 @@ UselistorderStmt: (String, Vec<i64>, ParsedType) = {
         (name, idx, t)
     },
     UselistorderKw LabelTy <_v: LocalId> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
-        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        let idx = crate::text::parser::ast_items::collect_uselistorder_idx(&_first, _rest);
         
         (_v, idx, ParsedType::Void)
     },
     UselistorderBbKw <t: Type> <_v: Value> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
-        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        let idx = crate::text::parser::ast_items::collect_uselistorder_idx(&_first, _rest);
         
         let name = match _v {
             Operand::Global(g) => g,
@@ -1485,7 +1485,7 @@ UselistorderStmt: (String, Vec<i64>, ParsedType) = {
         (name, idx, t)
     },
     UselistorderBbKw LabelTy <_v: LocalId> Comma LBrace <_first: IntLit> <_rest: (Comma IntLit)*> RBrace => {
-        let idx = crate::ir_parser::ast_items::collect_uselistorder_idx(&_first, _rest);
+        let idx = crate::text::parser::ast_items::collect_uselistorder_idx(&_first, _rest);
         
         (_v, idx, ParsedType::Void)
     },
@@ -1499,7 +1499,7 @@ Body: Vec<ParsedBlock> = {
 
 Block: ParsedBlock = {
     <label: BlockLabel> Colon <insts: (<SpannedInst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => {
-        let (insts, inst_spans) = crate::ir_parser::ast_items::split_spanned_insts(insts);
+        let (insts, inst_spans) = crate::text::parser::ast_items::split_spanned_insts(insts);
         ParsedBlock {
             label: label.0,
             label_is_num: label.1,
@@ -1513,7 +1513,7 @@ Block: ParsedBlock = {
     },
     // LLVM 合法语法：入口块可省略 label（`define void @f() { %a = ... }`）
     <insts: (<SpannedInst>)*> <term: Terminator> <tail: (UselistorderStmt)*> => {
-        let (insts, inst_spans) = crate::ir_parser::ast_items::split_spanned_insts(insts);
+        let (insts, inst_spans) = crate::text::parser::ast_items::split_spanned_insts(insts);
         ParsedBlock {
             label: "entry".to_string(),
             uselistorders: tail,
@@ -1541,7 +1541,7 @@ BlockLabel: (String, bool) = {
         let raw = n.trim_start_matches('%');
         if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
             (
-                String::from_utf8_lossy(&crate::ir_parser::ast_items::decode_c_string(
+                String::from_utf8_lossy(&crate::text::parser::ast_items::decode_c_string(
                     &raw[1..raw.len() - 1].to_string(),
                 ))
                 .into_owned(),
@@ -1575,15 +1575,15 @@ InstBody: ParsedInst = {
     // #dbg_* debug record 参数形态校验（第二十一轮——终结符后无位置自动
     // 拒绝 dbg-record-invalid-0;未知类型 lexer 拒绝 invalid-4;第 2/4 参
     // 必须 !ref 拒绝 invalid-2/6;参数计数拒绝 invalid-7/8）
-    DbgValueKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
-    DbgDeclareKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
-    DbgDeclareValueKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
-    DbgLabelKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    DbgValueKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::text::parser::ast_items::dbg_record_inst(),
+    DbgDeclareKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::text::parser::ast_items::dbg_record_inst(),
+    DbgDeclareValueKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::text::parser::ast_items::dbg_record_inst(),
+    DbgLabelKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> RParen => crate::text::parser::ast_items::dbg_record_inst(),
     // dbg_assign:7 参（value, !value_md, !expr, !id, addr, !expr, !loc——
     // metadata-use-uselistorder.ll 的完整形态）
-    DbgAssignKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> Comma <_e: DbgArg> Comma <_f: DbgArg> Comma <_g: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    DbgAssignKw LParen <_a: DbgArg> Comma <_b: MdRef> Comma <_c: DbgArg> Comma <_d: MdRef> Comma <_e: DbgArg> Comma <_f: DbgArg> Comma <_g: MdRef> RParen => crate::text::parser::ast_items::dbg_record_inst(),
     // dbg_kill:2 参（value, !loc）
-    DbgKillKw LParen <_a: DbgArg> Comma <_b: MdRef> RParen => crate::ir_parser::ast_items::dbg_record_inst(),
+    DbgKillKw LParen <_a: DbgArg> Comma <_b: MdRef> RParen => crate::text::parser::ast_items::dbg_record_inst(),
     // fneg（LLVM 浮点取负：`fneg fast <3 x float> %vec`）
     FnegKw <flags: InstFlagSeq> <t: Type> <v: Value> <metas: CommaAttach*> => ParsedInst {
         endian: false,
@@ -1741,10 +1741,10 @@ InstBody: ParsedInst = {
         args: {
             let mut v = vec![
                 ParsedOperand { ty: aggty, op: aggv },
-                ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&idx)) },
+                ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::text::parser::ast_items::big_as_i64(&idx)) },
             ];
             for (_, n) in rest {
-                v.push(ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)) });
+                v.push(ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::text::parser::ast_items::big_as_i64(&n)) });
             }
             v
         },
@@ -1783,7 +1783,7 @@ InstBody: ParsedInst = {
         args: vec![
             ParsedOperand { ty: aggty, op: aggv },
             elem,
-            ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&idx)) },
+            ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::text::parser::ast_items::big_as_i64(&idx)) },
         ],
     },
     // 原子指令（LLVM 语法）：
@@ -2369,7 +2369,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Load <_a: Ident> <_e: ElementwiseKw?> <val: Type> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
         endian: false,
         volatile: false,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "load".to_string(),
         cond: None,
@@ -2403,7 +2403,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Load <_a: Ident> Volatile <_e: ElementwiseKw?> <val: Type> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
         endian: false,
         volatile: true,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "load".to_string(),
         cond: None,
@@ -2437,7 +2437,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Load <val: Type> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
         endian: false,
         volatile: false,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "load".to_string(),
         cond: None,
@@ -2471,7 +2471,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Load Volatile <val: Type> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: MetadataAttach*> => ParsedInst {
         endian: false,
         volatile: true,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "load".to_string(),
         cond: None,
@@ -2505,7 +2505,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Store <_a: Ident> <val: TypeOp> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
         endian: false,
         volatile: false,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "store".to_string(),
         cond: None,
@@ -2533,7 +2533,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Store <_a: Ident> Volatile <val: TypeOp> Comma <addr: TypeOp> <_sync: SyncScope?> <ord: Ident> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
         endian: false,
         volatile: true,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "store".to_string(),
         cond: None,
@@ -2554,7 +2554,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
         cond: None,
         phi_incomings: vec![],
         args: vec![
-            ParsedOperand { ty: crate::ir_parser::ast_items::ParsedType::Named(nty), op: nv },
+            ParsedOperand { ty: crate::text::parser::ast_items::ParsedType::Named(nty), op: nv },
             addr,
         ],
         arg_attrs: vec![],
@@ -2579,7 +2579,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Store <val: TypeOp> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: CommaAttach*> => ParsedInst {
         endian: false,
         volatile: false,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "store".to_string(),
         cond: None,
@@ -2607,7 +2607,7 @@ CmpxchgKw <ptr: TypeOp> Comma <cmp: TypeOp> Comma <new: TypeOp> <_sync: SyncScop
     Store Volatile <val: TypeOp> Comma <addr: TypeOp> Comma Align <n: IntLit> <metas: MetadataAttach*> => ParsedInst {
         endian: false,
         volatile: true,
-        align: crate::ir_parser::ast_items::big_as_u64(&n),
+        align: crate::text::parser::ast_items::big_as_u64(&n),
         result: None,
         opcode: "store".to_string(),
         cond: None,
@@ -2891,8 +2891,8 @@ LandingPadClause: (String, Option<ParsedOperand>) = {
 // alloca 尾选项（任意顺序，每个以 Comma 开头完整匹配：`<ty> <count>` / `align N` / `addrspace(N)`）
 AllocaOpt: (String, Option<ParsedOperand>, u64) = {
     Comma <n: TypeOp> => ("count".to_string(), Some(n), 0u64),
-    Comma Align <a: IntLit> => ("align".to_string(), None, crate::ir_parser::ast_items::big_as_u64(&a)),
-    Comma AddrspaceKw LParen <n: IntLit> RParen => ("addrspace".to_string(), None, crate::ir_parser::ast_items::big_as_u64(&n)),
+    Comma Align <a: IntLit> => ("align".to_string(), None, crate::text::parser::ast_items::big_as_u64(&a)),
+    Comma AddrspaceKw LParen <n: IntLit> RParen => ("addrspace".to_string(), None, crate::text::parser::ast_items::big_as_u64(&n)),
     // 符号化地址空间（alloca i32, addrspace("A")）——宽松 0
     Comma AddrspaceKw LParen <_s: StrLit> RParen => ("addrspace".to_string(), None, 0u64),
 };
@@ -2910,15 +2910,15 @@ PhiIncomingList: Vec<PhiIncoming> = {
 PhiIncoming: PhiIncoming = {
     LBracket <v: PhiValue> Comma <l: LocalId> RBracket => PhiIncoming {
         val: v,
-        pred: crate::ir_parser::ast_items::LabelRef::named(l.trim_start_matches('%').to_string()),
+        pred: crate::text::parser::ast_items::LabelRef::named(l.trim_start_matches('%').to_string()),
     },
 };
 
 // phi 入边值：`%name` 或裸字面量（类型由 phi 头类型决定；这里 ty 仅占位）
 PhiValue: ParsedOperand = {
     <l: LocalId> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Local(l) },
-    <n: IntLit> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)) },
-    <n: HexLit> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)) },
+    <n: IntLit> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Int(crate::text::parser::ast_items::big_as_i64(&n)) },
+    <n: HexLit> => ParsedOperand { ty: ParsedType::Int(32), op: Operand::UInt(crate::text::parser::ast_items::big_as_u64(&n)) },
     <f: FloatLit> => ParsedOperand { ty: ParsedType::Float(32), op: Operand::Float(f) },
     Undef => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Undef },
     Poison => ParsedOperand { ty: ParsedType::Int(32), op: Operand::Poison },
@@ -2946,8 +2946,8 @@ AtomicOp: String = {
 CmpScalarValue: Operand = {
     <v: LocalId> => Operand::Local(v),
     <g: GlobalId> => Operand::Global(g),
-    <n: IntLit> => Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
-    <n: HexLit> => Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <n: IntLit> => Operand::Int(crate::text::parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => Operand::UInt(crate::text::parser::ast_items::big_as_u64(&n)),
     // 浮点十六进制位模式（宽松 0）
     <n: FloatHexLit> => Operand::UInt(n as u64),
     <f: FloatLit> => Operand::Float(f),
@@ -2994,8 +2994,8 @@ VconstLanes: Vec<Operand> = {
 };
 
 VconstLane: Operand = {
-    <n: IntLit> => Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
-    <n: HexLit> => Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <n: IntLit> => Operand::Int(crate::text::parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => Operand::UInt(crate::text::parser::ast_items::big_as_u64(&n)),
     // 浮点十六进制位模式（宽松 0）
     <n: FloatHexLit> => Operand::UInt(n as u64),
     <f: FloatLit> => Operand::Float(f),
@@ -3019,7 +3019,7 @@ CallArgList: (Vec<ParsedOperand>, Vec<Vec<String>>) = {
             attrs.push(a);
         }
         ops.push(ParsedOperand {
-            ty: crate::ir_parser::ast_items::ParsedType::Void,
+            ty: crate::text::parser::ast_items::ParsedType::Void,
             op: Operand::Undef,
         });
         attrs.push(vec![]);
@@ -3056,7 +3056,7 @@ CallArg: (ParsedOperand, Vec<String>) = {
     <ty: ValueType> ElementtypeFnKw <v: Value> => (ParsedOperand { ty, op: v }, vec![]),
     // 命名类型参数（`call %ty @f(%ty %arg)`——%ty 是 type 定义；第十二轮）
     <ty: LocalId> <v: Value> => (
-        ParsedOperand { ty: crate::ir_parser::ast_items::ParsedType::Named(ty), op: v },
+        ParsedOperand { ty: crate::text::parser::ast_items::ParsedType::Named(ty), op: v },
         vec![],
     ),
     // metadata 类型参数（调试 intrinsic）：`metadata i32 0`（类型化值）/
@@ -3116,16 +3116,16 @@ TypeOp: ParsedOperand = {
     },
     // 向量常量字面量（lexer 单 token）：`<4 x float> <1.5, 2.5, -3.5, 4.25>`
     <lit: VecConstLit> => {
-        let (ty, lanes) = crate::ir_parser::ast_items::split_vec_const_lit(&lit);
+        let (ty, lanes) = crate::text::parser::ast_items::split_vec_const_lit(&lit);
         ParsedOperand { ty: ty, op: Operand::VecConst(lanes) }
     },
     // `zeroinitializer` 关键字（lexer 单 token，标量/向量）
     <lit: ZeroInitLit> => ParsedOperand {
-        ty: crate::ir_parser::ast_items::split_scalar_ty(&lit),
+        ty: crate::text::parser::ast_items::split_scalar_ty(&lit),
         op: Operand::ZeroInit,
     },
     <lit: VecZeroInitLit> => ParsedOperand {
-        ty: crate::ir_parser::ast_items::split_vec_const_lit(&lit).0,
+        ty: crate::text::parser::ast_items::split_vec_const_lit(&lit).0,
         op: Operand::ZeroInit,
     },
 
@@ -3133,19 +3133,19 @@ TypeOp: ParsedOperand = {
     // `metadata i32 0`（类型化值——op 取内层值）/ `metadata !10` /
     // `metadata !{}` / `metadata !name`（引用——宽松 Undef）
     MetadataKw <op: TypeOp> => ParsedOperand {
-        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        ty: crate::text::parser::ast_items::ParsedType::Metadata,
         op: op.op,
     },
     MetadataKw <_n: MetadataIdKw> => ParsedOperand {
-        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        ty: crate::text::parser::ast_items::ParsedType::Metadata,
         op: Operand::Undef,
     },
     MetadataKw <_n: MetadataNameKw> => ParsedOperand {
-        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        ty: crate::text::parser::ast_items::ParsedType::Metadata,
         op: Operand::Undef,
     },
     MetadataKw <_n: MetadataNodeDef> => ParsedOperand {
-        ty: crate::ir_parser::ast_items::ParsedType::Metadata,
+        ty: crate::text::parser::ast_items::ParsedType::Metadata,
         op: Operand::Undef,
     },
 };
@@ -3177,15 +3177,15 @@ GepFlag: String = {
 
 // 带可选块参数的标签引用：label %t / label %t(i32 %v, i64 %w)
 // 标签引用：`%N`（纯数字）→ 数字块 id 引用；`%"2"`/`%-3`/`%name` → 字符串标签名。
-LabelRef: crate::ir_parser::ast_items::LabelRef = {
+LabelRef: crate::text::parser::ast_items::LabelRef = {
     LabelTy <t: LocalId> => {
         // `%"2"` 带引号字符串标签 → 去引号解码（lexer 产出含引号的 LocalId）；
         // `%2`/`%name` → 数字 id 引用或字符串名
         let raw = t.trim_start_matches('%');
         if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-            crate::ir_parser::ast_items::LabelRef {
+            crate::text::parser::ast_items::LabelRef {
                 name: String::from_utf8_lossy(
-                    &crate::ir_parser::ast_items::decode_c_string(
+                    &crate::text::parser::ast_items::decode_c_string(
                         &raw[1..raw.len() - 1].to_string(),
                     ),
                 )
@@ -3193,12 +3193,12 @@ LabelRef: crate::ir_parser::ast_items::LabelRef = {
                 is_num: false,
             }
         } else {
-            crate::ir_parser::ast_items::LabelRef::named(raw.to_string())
+            crate::text::parser::ast_items::LabelRef::named(raw.to_string())
         }
     },
     // 字符串标签引用（LLVM：`br label %"2"` 的引号形态已由 LocalId 处理；
     // 本分支兜底裸引号串）
-    LabelTy <t: StrLit> => crate::ir_parser::ast_items::LabelRef {
+    LabelTy <t: StrLit> => crate::text::parser::ast_items::LabelRef {
         name: t,
         is_num: false,
     },
@@ -3230,14 +3230,14 @@ Terminator: ParsedTerminator = {
     // callbr（终结符）：`callbr <retty> @callee(args) to label %cont [label %kill, ...]`
     // （LLVM 间接跳转调用——宽松按 Jump 处理，标签列表丢弃）
     CallbrKw <_ret: Type> <_callee: Value> LParen <_args: CallArgList> RParen To LabelTy <_n: LocalId> LBracket LabelTy <_l: LocalId> <_rest: (Comma LabelTy LocalId)*> RBracket <metas: CommaAttach*> => ParsedTerminator::Jump(
-        crate::ir_parser::ast_items::LabelRef::named(_n.trim_start_matches('%').to_string()),
+        crate::text::parser::ast_items::LabelRef::named(_n.trim_start_matches('%').to_string()),
         metas,
     ),
     Ret VoidTy <metas: CommaAttach*> => ParsedTerminator::Return(vec![], metas),
     // ret 命名类型值（`ret %ty %copy`——%ty 是 type 定义；第十二轮）
     Ret <ty: LocalId> <v: Value> <metas: CommaAttach*> => ParsedTerminator::Return(
         vec![ParsedOperand {
-            ty: crate::ir_parser::ast_items::ParsedType::Named(ty),
+            ty: crate::text::parser::ast_items::ParsedType::Named(ty),
             op: v,
         }],
         metas,
@@ -3258,8 +3258,8 @@ Terminator: ParsedTerminator = {
             callee: format_operand_callee(&callee),
             ret_ty: ret,
             args: args.0,
-            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
-            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            normal: crate::text::parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::text::parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
             metas,
         }
     },
@@ -3270,8 +3270,8 @@ Terminator: ParsedTerminator = {
             callee: format_operand_callee(&callee),
             ret_ty: ret,
             args: args.0,
-            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
-            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            normal: crate::text::parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::text::parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
             metas,
         }
     },
@@ -3284,8 +3284,8 @@ Terminator: ParsedTerminator = {
             callee: format_operand_callee(&callee),
             ret_ty: ret,
             args: args.0,
-            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
-            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            normal: crate::text::parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::text::parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
             metas,
         }
     },
@@ -3295,8 +3295,8 @@ Terminator: ParsedTerminator = {
             callee: format_operand_callee(&callee),
             ret_ty: ret,
             args: args.0,
-            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
-            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            normal: crate::text::parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::text::parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
             metas,
         }
     },
@@ -3306,8 +3306,8 @@ Terminator: ParsedTerminator = {
             callee: format_operand_callee(&callee),
             ret_ty: ret,
             args: args.0,
-            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
-            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            normal: crate::text::parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::text::parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
             metas,
         }
     },
@@ -3317,8 +3317,8 @@ Terminator: ParsedTerminator = {
             callee: format_operand_callee(&callee),
             ret_ty: ret,
             args: args.0,
-            normal: crate::ir_parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
-            unwind: crate::ir_parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
+            normal: crate::text::parser::ast_items::LabelRef::named(norm.trim_start_matches('%').to_string()),
+            unwind: crate::text::parser::ast_items::LabelRef::named(unw.trim_start_matches('%').to_string()),
             metas,
         }
     },
@@ -3327,9 +3327,9 @@ Terminator: ParsedTerminator = {
     Unreachable <_metas: CommaAttach*> => ParsedTerminator::Unreachable,
 };
 
-SwitchCase: (i64, crate::ir_parser::ast_items::LabelRef) = {
+SwitchCase: (i64, crate::text::parser::ast_items::LabelRef) = {
     <_ty: ValueType> <n: IntLit> Comma <t: LabelRef> => {
-        (crate::ir_parser::ast_items::big_as_i64(&n), t)
+        (crate::text::parser::ast_items::big_as_i64(&n), t)
     },
 };
 
@@ -3350,7 +3350,7 @@ Type: ParsedType = {
     Target LParen <args: TargetArgList> RParen =>? {
         if args.0 == "type" && args.1 {
             Err(lalrpop_util::ParseError::User {
-                error: crate::ir_parser::lexer::LexError::Rejected,
+                error: crate::text::parser::lexer::LexError::Rejected,
             })
         } else {
             Ok(ParsedType::Opaque)
@@ -3387,11 +3387,11 @@ ValueType: ParsedType = {
     <t: VecTy> => ParsedType::Vec(t.len, Box::new(t.elem.into())),
     <t: VscaleTy> => ParsedType::VecScalable(t.len, Box::new(t.elem.into())),
     // ptr addrspace(N)
-    PtrTy AddrspaceKw LParen <n: IntLit> RParen => ParsedType::PtrAddrSpace(crate::ir_parser::ast_items::big_as_u32(&n)),
+    PtrTy AddrspaceKw LParen <n: IntLit> RParen => ParsedType::PtrAddrSpace(crate::text::parser::ast_items::big_as_u32(&n)),
     // 符号化地址空间（LLVM：ptr addrspace("G")）——宽松 0
     PtrTy AddrspaceKw LParen <_s: StrLit> RParen => ParsedType::PtrAddrSpace(0),
     LBracket <n: IntLit> X <t: Type> RBracket => {
-        ParsedType::Array(crate::ir_parser::ast_items::big_as_u64(&n), Box::new(t))
+        ParsedType::Array(crate::text::parser::ast_items::big_as_u64(&n), Box::new(t))
     },
     LBrace RBrace => ParsedType::Struct(vec![]),
     LBrace <tys: StructList> RBrace => ParsedType::Struct(tys),
@@ -3414,8 +3414,8 @@ StructList: Vec<ParsedType> = {
 Value: Operand = {
     <v: LocalId> => Operand::Local(v),
     <g: GlobalId> => Operand::Global(g),
-    <n: IntLit> => Operand::Int(crate::ir_parser::ast_items::big_as_i64(&n)),
-    <n: HexLit> => Operand::UInt(crate::ir_parser::ast_items::big_as_u64(&n)),
+    <n: IntLit> => Operand::Int(crate::text::parser::ast_items::big_as_i64(&n)),
+    <n: HexLit> => Operand::UInt(crate::text::parser::ast_items::big_as_u64(&n)),
     // 浮点十六进制位模式（宽松 0）
     <n: FloatHexLit> => Operand::UInt(n as u64),
     <f: FloatLit> => Operand::Float(f),
@@ -3453,7 +3453,7 @@ AggListElem: ParsedOperand = {
     <t: TypeOp> => t,
     // 命名类型聚合元素（`{ %1 { i32 4 }, ... }`——%1 是 type 定义；第十四轮）
     <nty: LocalId> <nv: Value> => ParsedOperand {
-        ty: crate::ir_parser::ast_items::ParsedType::Named(nty),
+        ty: crate::text::parser::ast_items::ParsedType::Named(nty),
         op: nv,
     },
     // 嵌套聚合（非空——`{{}}` 与"空 struct 类型 + 值"的 TypeOp 在 LALR(1)
