@@ -716,6 +716,18 @@ fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     }
     for inst in &m.instructions {
         if let Err(msg) = check_instruction(m, inst) {
+            // 模板展开出的实例：把错误锚回**模板声明**（`[[templates.X]]`），
+            // 而不是一个在源里根本不存在的 `[[instructions.实例名]]`。
+            let msg = match &inst.from_template {
+                Some(t) => msg
+                    .replacen(
+                        &format!("[[instructions.{}]]", inst.name),
+                        &format!("[[templates.{t}]]"),
+                        1,
+                    )
+                    .replacen("[[instructions]]", &format!("[[templates.{t}]]"), 1),
+                None => msg,
+            };
             d.push_anchored(idx, &msg);
         }
     }

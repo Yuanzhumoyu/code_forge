@@ -25,6 +25,7 @@
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
   - [`[[instructions]]` — 指令](#instructions--指令)
   - [`[[families]]` — 参数化指令族](#families--参数化指令族)
+  - [`[[templates]]` — 参数化模板（v18 S2，取代 `[[families]]` 与 `[[aliases]]`）](#templates--参数化模板v18-s2取代-families-与-aliases)
   - [结构化谓词](#结构化谓词)
   - [`[[lowering]]` — 指令选择](#lowering--指令选择)
   - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
@@ -492,6 +493,44 @@ roles = ["fpr_mov_f64"]         # 变体级语义角色（家族里个别变体�
 族展开 = 每个 variant 生成一条完整指令；`{name}` 占位符（族模板内）= 变体名小写，
 实现共享 asm 的助记符继承。家族共享 `ops`/`enc` 键（`modrm` 引用 `ops` 的名字），
 故可放在家族层；`roles` 一般在变体级声明。
+
+## `[[templates]]` — 参数化模板（v18 S2，取代 `[[families]]` 与 `[[aliases]]`）
+
+> **状态**：v18 S2 起的新机制（破坏性；`[[families]]` 与 `[[aliases]]` 将被删除——
+> arm64 已迁移，见 `docs/plans/forge-dsl-v18-plan.md` §7）。动机是**实测出来的**：
+> arm64 有 38 对指令只差 sf 位/寄存器槽/opcode（76/89 = 85%）、riscv 有 16 对 S/D
+> （41%），而旧 `[[families]]` 的变体**无法覆盖 `ops`/`form`/enc 键**，只能整条复制。
+
+```toml
+[[templates]]
+name   = "ADDIMM{x}"                     # 实例名（`{参数}` 逐行替换）；或 names = [...]
+ref    = "add"                           # 引用名：全部实例自动并入别名（取代手写 [[aliases]]）
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x91, 0x11] }
+body   = { form = "ALUIMM", opcode = "{opcode}", \
+           ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], \
+           asm = "add {dst}, {src}, #{imm}" }
+
+[[templates.overrides]]                  # 逐行补丁（表递归合并、列表整体覆盖）
+row   = 0
+body  = { roles = ["frame_free"] }
+```
+
+语义（与 `[[lowering]].vary` 同一套"等长列表按下标 zip"）：
+
+- `params` 各列表**等长**，行数 = 实例数；空表/空列表/不等长都是编译期错误；
+- 字符串字段里的 `{参数}` 做文本替换；**整串就是 `{参数}`** 时保留参数类型
+  （`opcode = "{opcode}"` 得到的仍是整数）；
+- `name`/`names` 给实例名；`ref` 单值 = 全部实例共用（多态分派），含 `{参数}` = 逐实例
+  各得一个 1:1 引用名；
+- 展开在**解析期**完成：下游（校验/代码生成）只看到普通指令与别名，生成器一行未改；
+- 诊断仍指向**模板声明行**（消息前缀改写为 `[[templates.X]]`），不会指向一个源里
+  不存在的 `[[instructions.实例名]]`。
+
+**实测收益（arm64 迁移，2026-09-19）**：`isa/arm64_v12.toml` 1,125 → **731 行（−35%）**，
+32 条模板取代 64 个手写块 + **29 条手写 `[[aliases]]`（全删）**；黄金测试
+（`arm64_v12_tests` 12 例 + `arm64_v12_tm_tests` 6 例）与 arm64 JIT 矩阵
+（23 passed / 175 skipped / 0 failed）不变，生成代码里的 `Inst::` 名字集合**逐一相同**
+（90 个，前后 diff 为空）。
 
 ## 结构化谓词
 

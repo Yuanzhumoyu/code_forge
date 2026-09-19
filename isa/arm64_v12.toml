@@ -181,129 +181,6 @@ asm = "nop"
 #   sub x5,x6,#42=D100A8C5；subs x5,x6,#42=F100A8C5
 
 [[instructions]]
-name = "ADDIMMX"
-roles = ["frame_free"]
-form = "ALUIMM"
-opcode = 0x91
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "add {dst}, {src}, #{imm}"
-
-[[instructions]]
-name = "ADDIMMW"
-form = "ALUIMM"
-opcode = 0x11
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "add {dst}, {src}, #{imm}"
-
-[[instructions]]
-name = "ADDSIMMX"
-form = "ALUIMM"
-opcode = 0xB1
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "adds {dst}, {src}, #{imm}"
-
-[[instructions]]
-name = "ADDSIMMW"
-form = "ALUIMM"
-opcode = 0x31
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "adds {dst}, {src}, #{imm}"
-
-[[instructions]]
-name = "SUBIMMX"
-roles = ["frame_alloc"]
-form = "ALUIMM"
-opcode = 0xD1
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "sub {dst}, {src}, #{imm}"
-
-[[instructions]]
-name = "SUBIMMW"
-form = "ALUIMM"
-opcode = 0x51
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "sub {dst}, {src}, #{imm}"
-
-[[instructions]]
-name = "SUBSIMMX"
-form = "ALUIMM"
-opcode = 0xF1
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "subs {dst}, {src}, #{imm}"
-
-[[instructions]]
-name = "SUBSIMMW"
-form = "ALUIMM"
-opcode = 0x71
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "subs {dst}, {src}, #{imm}"
-
-# ── ADD/SUB (shifted register, LSL#0) ──
-# oracle 校验样本：add x5,x6,x2=8B0200C5；add w5,w6,w2=0B0200C5
-
-[[instructions]]
-name = "ADDREGX"
-form = "ALUREG"
-opcode = 0x8B
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "add {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "ADDREGW"
-form = "ALUREG"
-opcode = 0x0B
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "add {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "SUBREGX"
-form = "ALUREG"
-opcode = 0xCB
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "sub {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "SUBREGW"
-form = "ALUREG"
-opcode = 0x4B
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "sub {dst}, {src}, {src2}"
-
-# ADDS/SUBS (shifted reg, LSL#0)
-# oracle：adds x5,x6,x7=AB0700C5、subs w5,w6,w7=6B0700C5
-
-[[instructions]]
-name = "ADDSREGX"
-form = "ALUREG"
-opcode = 0xAB
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "adds {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "ADDSREGW"
-form = "ALUREG"
-opcode = 0x2B
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "adds {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "SUBSREGX"
-form = "ALUREG"
-opcode = 0xEB
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "subs {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "SUBSREGW"
-form = "ALUREG"
-opcode = 0x6B
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "subs {dst}, {src}, {src2}"
-
-# ── B/BL ──
-# oracle 校验样本：b .=14000000；bl .=94000000
-
-[[instructions]]
 name = "B"
 roles = ["jump", "epilogue_jump"]
 form = "BREL"
@@ -321,226 +198,6 @@ asm = "bl {target}"
 # ── 逻辑寄存器 AND/BIC/ORR/ORN/EOR/EON（寄存器三操作数）──
 # oracle：and x0,x1,x2=8A020020（W=0A…）、bic x6,x7,x8=8A2800E6（N 位=1）、
 #   orr=AA/2A、orn x6,x7,x8=AA2800E6、eor=CA/4A、eon x6,x7,x8=CA2800E6
-
-[[instructions]]
-name = "ANDREGX"
-form = "ALUREG"
-opcode = 0x8A
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "and {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "ANDREGW"
-form = "ALUREG"
-opcode = 0x0A
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "and {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "BICREGX"
-form = "ALUREG"
-opcode = 0x8A
-fields = { nbit = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "bic {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "BICREGW"
-form = "ALUREG"
-opcode = 0x0A
-fields = { nbit = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "bic {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "ORRREGX"
-form = "ALUREG"
-opcode = 0xAA
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "orr {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "ORRREGW"
-form = "ALUREG"
-opcode = 0x2A
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "orr {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "ORNREGX"
-form = "ALUREG"
-opcode = 0xAA
-fields = { nbit = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "orn {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "ORNREGW"
-form = "ALUREG"
-opcode = 0x2A
-fields = { nbit = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "orn {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "EORREGX"
-form = "ALUREG"
-opcode = 0xCA
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "eor {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "EORREGW"
-form = "ALUREG"
-opcode = 0x4A
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "eor {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "EONREGX"
-form = "ALUREG"
-opcode = 0xCA
-fields = { nbit = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "eon {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "EONREGW"
-form = "ALUREG"
-opcode = 0x4A
-fields = { nbit = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "eon {dst}, {src}, {src2}"
-
-# ── MOV 别名（ORR rd, xzr, rm；X/W）──
-# oracle：mov x9,x10=AA0A03E9、mov w9,w10=2A0A03E9（rn=31 常量）
-
-[[instructions]]
-name = "MOVX"
-roles = ["gpr_mov"]
-form = "MOVR"
-opcode = 0xAA
-fields = { rn = 31 }
-ops = ["dst:r64:out", "src2:r64"]
-asm = "mov {dst}, {src2}"
-
-[[instructions]]
-name = "MOVW"
-form = "MOVR"
-opcode = 0x2A
-fields = { rn = 31 }
-ops = ["dst:r32:out", "src2:r32"]
-asm = "mov {dst}, {src2}"
-
-# ── CMP/CMN（SUBS/ADDS/SUBS-REG 目标=xzr 别名；rd=31 常量）──
-# oracle：cmp x0,#5=F100141F、cmp w0,#5=7100141F、cmn x0,#5=B100141F、
-#   cmp x1,x2=EB02003F、cmp w1,w2=6B02003F
-
-[[instructions]]
-name = "CMPIMMX"
-form = "CMPIMM"
-opcode = 0xF1
-fields = { rd = 31 }
-ops = ["src:r64", "imm:imm12u"]
-asm = "cmp {src}, #{imm}"
-
-[[instructions]]
-name = "CMPIMMW"
-form = "CMPIMM"
-opcode = 0x71
-fields = { rd = 31 }
-ops = ["src:r32", "imm:imm12u"]
-asm = "cmp {src}, #{imm}"
-
-[[instructions]]
-name = "CMNIMMX"
-form = "CMPIMM"
-opcode = 0xB1
-fields = { rd = 31 }
-ops = ["src:r64", "imm:imm12u"]
-asm = "cmn {src}, #{imm}"
-
-[[instructions]]
-name = "CMNIMMW"
-form = "CMPIMM"
-opcode = 0x31
-fields = { rd = 31 }
-ops = ["src:r32", "imm:imm12u"]
-asm = "cmn {src}, #{imm}"
-
-[[instructions]]
-name = "CMPREGX"
-form = "CMPREG"
-opcode = 0xEB
-fields = { rd = 31 }
-ops = ["src:r64", "src2:r64"]
-asm = "cmp {src}, {src2}"
-
-[[instructions]]
-name = "CMPREGW"
-form = "CMPREG"
-opcode = 0x6B
-fields = { rd = 31 }
-ops = ["src:r32", "src2:r32"]
-asm = "cmp {src}, {src2}"
-
-# ── MOVZ/MOVN/MOVK（hw=0 变体）──
-# 顶层常量 = (word>>23)&0x1FF（[31:23]，含 bit23=1 的 100101）：
-#   movz x0,#0=D2800000 → 0x1A5；movz w=0xA5；movn x=0x125；movn w=0x25；
-#   movk x=0x1E5；movk w=0xE5
-
-[[instructions]]
-name = "MOVZX"
-form = "MOVW16"
-opcode = 0x1A5
-fields = { hw = 0 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movz {dst}, #{imm}"
-
-[[instructions]]
-name = "MOVZW"
-form = "MOVW16"
-opcode = 0xA5
-fields = { hw = 0 }
-ops = ["dst:r32:out", "imm:imm16u"]
-asm = "movz {dst}, #{imm}"
-
-[[instructions]]
-name = "MOVNX"
-form = "MOVW16"
-opcode = 0x125
-fields = { hw = 0 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movn {dst}, #{imm}"
-
-[[instructions]]
-name = "MOVNW"
-form = "MOVW16"
-opcode = 0x25
-fields = { hw = 0 }
-ops = ["dst:r32:out", "imm:imm16u"]
-asm = "movn {dst}, #{imm}"
-
-[[instructions]]
-name = "MOVKX"
-form = "MOVW16"
-opcode = 0x1E5
-fields = { hw = 0 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movk {dst}, #{imm}"
-
-[[instructions]]
-name = "MOVKW"
-form = "MOVW16"
-opcode = 0xE5
-fields = { hw = 0 }
-ops = ["dst:r32:out", "imm:imm16u"]
-asm = "movk {dst}, #{imm}"
-
-# ── MOVZ/MOVK hw 变体（P3① 大立即数多序列；位型 = 基址 | hw<<21 | imm16<<5）──
-#   movz x0,#0xABCD,lsl#16 = D2A0ABCD（hw1）；lsl#32 = D2C0…（hw2）；lsl#48 = D2E0…（hw3）
-#   movz w0,#0xABCD,lsl#16 = 52A0ABCD（hw1）；movk x 同族 hw1/2 = F2A0/F2C0…
-# 分片序（低→高）：f0=[15:0] f1=[31:16] f2=[47:32] f3=[63:48]
 
 [[instructions]]
 name = "MOVZX1"   # movz x, #imm16, lsl #16
@@ -591,57 +248,6 @@ ops = ["dst:r64:out", "imm:imm16u"]
 asm = "movk {dst}, #{imm}, lsl #32"
 
 # ─────────────────────────── 别名 ───────────────────────────
-
-[[aliases]]
-name = "and"
-insts = ["ANDREGX", "ANDREGW"]
-
-[[aliases]]
-name = "bic"
-insts = ["BICREGX", "BICREGW"]
-
-[[aliases]]
-name = "orr"
-insts = ["ORRREGX", "ORRREGW"]
-
-[[aliases]]
-name = "orn"
-insts = ["ORNREGX", "ORNREGW"]
-
-[[aliases]]
-name = "eor"
-insts = ["EORREGX", "EORREGW"]
-
-[[aliases]]
-name = "eon"
-insts = ["EONREGX", "EONREGW"]
-
-[[aliases]]
-name = "mov"
-insts = ["MOVX", "MOVW"]
-
-[[aliases]]
-name = "movz"
-insts = ["MOVZX", "MOVZW"]
-
-[[aliases]]
-name = "movn"
-insts = ["MOVNX", "MOVNW"]
-
-[[aliases]]
-name = "movk"
-insts = ["MOVKX", "MOVKW"]
-
-[[aliases]]
-name = "cmp"
-insts = ["CMPIMMX", "CMPIMMW", "CMPREGX", "CMPREGW"]
-
-[[aliases]]
-name = "cmn"
-insts = ["CMNIMMX", "CMNIMMW"]
-
-
-# ─────────────────────────── 编码形式 ───────────────────────────
 
 [[forms]]
 name = "MULADD"   # MADD/MSUB：rd rn ra rm（位低→高）
@@ -702,90 +308,6 @@ width = 19
 # X msub 9B069CA4、W 1B069CA4（o0=1）；mul= madd ra=31（9B027C20/1B027C20）
 
 [[instructions]]
-name = "MADDX"
-form = "MULADD"
-opcode = 0x4D8
-ops = ["dst:r64:out", "src:r64", "acc:r64", "src2:r64"]
-asm = "madd {dst}, {src}, {src2}, {acc}"
-
-[[instructions]]
-name = "MADDW"
-form = "MULADD"
-opcode = 0xD8
-ops = ["dst:r32:out", "src:r32", "acc:r32", "src2:r32"]
-asm = "madd {dst}, {src}, {src2}, {acc}"
-
-[[instructions]]
-name = "MSUBX"
-form = "MULADD"
-opcode = 0x4D8
-fields = { o0 = 1 }
-ops = ["dst:r64:out", "src:r64", "acc:r64", "src2:r64"]
-asm = "msub {dst}, {src}, {src2}, {acc}"
-
-[[instructions]]
-name = "MSUBW"
-form = "MULADD"
-opcode = 0xD8
-fields = { o0 = 1 }
-ops = ["dst:r32:out", "src:r32", "acc:r32", "src2:r32"]
-asm = "msub {dst}, {src}, {src2}, {acc}"
-
-[[instructions]]
-name = "MULX"
-form = "MUL3"
-opcode = 0x4D8
-fields = { ra = 31 }
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "mul {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "MULW"
-form = "MUL3"
-opcode = 0xD8
-fields = { ra = 31 }
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "mul {dst}, {src}, {src2}"
-
-# ── 除法 SDIV/UDIV（op2d 区分）──
-# sdiv x0,x1,x2=9AC20C20 → mtop=0x4D6、op2d=3；udiv=9AC20820 op2d=2（W 去 sf）
-
-[[instructions]]
-name = "SDIVX"
-form = "DIV2A"
-opcode = 0x4D6
-fields = { op2d = 3 }
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "sdiv {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "SDIVW"
-form = "DIV2A"
-opcode = 0xD6
-fields = { op2d = 3 }
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "sdiv {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "UDIVX"
-form = "DIV2A"
-opcode = 0x4D6
-fields = { op2d = 2 }
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "udiv {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "UDIVW"
-form = "DIV2A"
-opcode = 0xD6
-fields = { op2d = 2 }
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "udiv {dst}, {src}, {src2}"
-
-# ── BR/BLR/RET ──
-# oracle：br x3=D61F0060、blr x3=D63F0060、ret=D65F03C0（rn=30 常量）
-
-[[instructions]]
 name = "BR"
 form = "BRREG2"
 opcode = 0xD61F
@@ -812,105 +334,6 @@ asm = "ret"
 # oracle：cbz x0,.=B4000000、cbnz w1,.=35000001
 
 [[instructions]]
-name = "CBZX"
-roles = ["branch"]
-form = "CBZF"
-opcode = 0xB4
-ops = ["src:r64", "target:off19"]
-asm = "cbz {src}, {target}"
-
-[[instructions]]
-name = "CBZW"
-form = "CBZF"
-opcode = 0x34
-ops = ["src:r32", "target:off19"]
-asm = "cbz {src}, {target}"
-
-[[instructions]]
-name = "CBNZX"
-form = "CBZF"
-opcode = 0xB5
-ops = ["src:r64", "target:off19"]
-asm = "cbnz {src}, {target}"
-
-[[instructions]]
-name = "CBNZW"
-form = "CBZF"
-opcode = 0x35
-ops = ["src:r32", "target:off19"]
-asm = "cbnz {src}, {target}"
-
-# ── CSEL 族（cond 数值槽；位低→高 rd rn cond rm）──
-# 布局：sf op 0 11010100 00 Rm cond op2 1 1 Rn Rd
-#   csel：op=0、op2=0（X mtop: 9A820020 >>21=0x4D4? oracle 推：见下方逐条）
-#   csinc op2=1、csinv op=1 op2=0、csneg op=1 op2=1
-# oracle 实测字：csel x0,x1,x2,eq=9A820020、csinc x0,x1,x2,eq=9A820420、
-#   csinv x4,x5,x6,ne=DA8610A4、csneg w4,w5,w6,gt=5A86C4A4
-
-[[instructions]]
-name = "CSELX"
-form = "CSEL4"
-opcode = 0x4D4
-ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
-asm = "csel {dst}, {src}, {src2}, #{condx}"
-
-[[instructions]]
-name = "CSELW"
-form = "CSEL4"
-opcode = 0xD4
-ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
-asm = "csel {dst}, {src}, {src2}, #{condx}"
-
-[[instructions]]
-name = "CSINCX"
-form = "CSEL4"
-opcode = 0x4D4
-fields = { csop2 = 1 }
-ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
-asm = "csinc {dst}, {src}, {src2}, #{condx}"
-
-[[instructions]]
-name = "CSINCW"
-form = "CSEL4"
-opcode = 0xD4
-fields = { csop2 = 1 }
-ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
-asm = "csinc {dst}, {src}, {src2}, #{condx}"
-
-[[instructions]]
-name = "CSINVX"
-form = "CSEL4"
-opcode = 0x6D4
-ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
-asm = "csinv {dst}, {src}, {src2}, #{condx}"
-
-[[instructions]]
-name = "CSINVW"
-form = "CSEL4"
-opcode = 0x2D4
-ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
-asm = "csinv {dst}, {src}, {src2}, #{condx}"
-
-[[instructions]]
-name = "CSNEGX"
-form = "CSEL4"
-opcode = 0x6D4
-fields = { csop2 = 1 }
-ops = ["dst:r64:out", "src:r64", "condx:cond4", "src2:r64"]
-asm = "csneg {dst}, {src}, {src2}, #{condx}"
-
-[[instructions]]
-name = "CSNEGW"
-form = "CSEL4"
-opcode = 0x2D4
-fields = { csop2 = 1 }
-ops = ["dst:r32:out", "src:r32", "condx:cond4", "src2:r32"]
-asm = "csneg {dst}, {src}, {src2}, #{condx}"
-
-# ── B.cond（cond 数值槽）──
-# oracle：b.eq .=54000000；b.ne 8 = 54000041（imm19=2）
-
-[[instructions]]
 name = "BCOND"
 form = "CBZF"
 opcode = 0x54
@@ -919,60 +342,6 @@ ops = ["target:off19"]
 asm = "b.eq {target}"
 
 # ── 别名 ──
-
-[[aliases]]
-name = "madd"
-insts = ["MADDX", "MADDW"]
-
-[[aliases]]
-name = "msub"
-insts = ["MSUBX", "MSUBW"]
-
-[[aliases]]
-name = "mul"
-insts = ["MULX", "MULW"]
-
-[[aliases]]
-name = "sdiv"
-insts = ["SDIVX", "SDIVW"]
-
-[[aliases]]
-name = "udiv"
-insts = ["UDIVX", "UDIVW"]
-
-[[aliases]]
-name = "cbz"
-insts = ["CBZX", "CBZW"]
-
-[[aliases]]
-name = "cbnz"
-insts = ["CBNZX", "CBNZW"]
-
-[[aliases]]
-name = "csel"
-insts = ["CSELX", "CSELW"]
-
-[[aliases]]
-name = "csinc"
-insts = ["CSINCX", "CSINCW"]
-
-[[aliases]]
-name = "csinv"
-insts = ["CSINVX", "CSINVW"]
-
-[[aliases]]
-name = "csneg"
-insts = ["CSNEGX", "CSNEGW"]
-
-# ═════════════════════════════ A4：加载/存储（最小集） ═══════════════════════════
-# LDR/STR 无符号 imm12：size[31:30] 111 001 opc[23:22] imm12[21:10] Rn Rt
-#   top8: X=0xF9、W=0xB9、H=0x79、B=0x39；opc2: STR=0、LDR=1
-# LDUR/STUR 未缩放：size 111 000 opc imm9[20:12] Rn Rt
-#   top8: X=0xF8、W=0xB8、H=0x78、B=0x38；opc2: STUR=0、LDUR=1
-# ⚠️ 无符号 imm12 语义=**缩放单元**（编码存 imm12；真实字节偏移=imm12<<scale）：
-#   DSL 无 encode 变换钩子，asm 文本与 golden 用缩放值；P2 帧/ABI 由后端换算。
-
-# ─────────────────────────── 编码形式 ───────────────────────────
 
 [[forms]]
 name = "LSUI"     # LDR/STR(unsigned)：rt rn imm12s
@@ -1066,32 +435,6 @@ asm = "stur {src}, [{base}, #{off}]"
 
 # ── 别名 ──
 
-[[aliases]]
-name = "ldr"
-insts = ["LDRX", "LDRW"]
-
-[[aliases]]
-name = "str"
-insts = ["STRX", "STRW"]
-
-[[aliases]]
-name = "ldur"
-insts = ["LDURX", "LDURW"]
-
-[[aliases]]
-name = "stur"
-insts = ["STURX", "STURW"]
-
-# ═════════════════════════════ A5：寄存器对 LDP/STP（offset） ═══════════════════════════
-# 布局：opc[31:30] 101 index[24:22] imm7[21:15] Rt2[14:10] Rn Rt
-#   X 对 top6=0x2A（opc=10）、W 对=0x0A（opc=00）；index: STP=4/LDP=5
-# oracle：stp x0,x1,[x2]=A9000440、ldp x0,x1,[x2]=A9400440、
-#   ldp x2,x3,[x4,#16]=A9410C82（imm7=2 缩放）、stp w0,w1,[x2]=29000440、
-#   ldp w0,w1,[x2,#8]=29410440（imm7=1）
-# ⚠️ imm7 语义=**对元素缩放单元**（X 对 ×8、W 对 ×4），asm/golden 存缩放值
-
-# ─────────────────────────── 编码形式 ───────────────────────────
-
 [[forms]]
 name = "PAIR"     # LDP/STP：rt rn rt2 imm7（位低→高）
 opcode_field = "op8"
@@ -1132,29 +475,6 @@ ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7u"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 
 # ── 别名 ──
-
-[[aliases]]
-name = "stp"
-insts = ["STPX", "STPW"]
-
-[[aliases]]
-name = "ldp"
-insts = ["LDPX", "LDPW"]
-
-# ════════════════════════════════════════════════════════════
-# B2：接入 TargetMachine（AAPCS64 子集 + 帧 + lowering）
-# ════════════════════════════════════════════════════════════
-# 帧/ABI 事实（AAPCS64）：
-#   sp = X31（Reg::SP）、fp = X29、lr = X30（return address）；
-#   参数 a0-a7 = X0-X7；返回 x0；callee-saved = X19-X28 + fp + lr；
-#   scratch = X16/X17（IP0/IP1，spill 用）；X18 平台寄存器保留。
-# 帧布局镜像 riscv64_v12 的 fp-inside：sub sp → 存 lr/fp 到
-# [sp+frame-8]/[sp+frame-16] → fp=sp+frame → @push_callee（X19-X28
-# 按需保存到 [sp+frame-16-(k+1)*8]）→ @move_args。
-# ⚠️ imm 语义说明：本 DSL 无 encode 变换钩子——A64 的 LDR/STR 无符号
-# imm12 与 LDP/STP imm7 都是"缩放单元"（真实字节偏移 = imm << scale），
-# 帧/ABI 层一律改用 **LDUR/STUR（imm9 真字节偏移，±256）** 保证字节
-# 语义正确；帧 ≥ ~256B 时 imm9 越界 → encode 报错（显式失败不静默截断）。
 
 [stack]
 slot = 8
@@ -1341,3 +661,211 @@ insts = ["EORREGW {out}, {0}, {1}"]
 [[lowering]]
 op = "Bxor"
 insts = ["EORREGX {out}, {0}, {1}"]
+
+# ═══════════════════════ 参数化模板（v18 S2：X/W 对）═══════════════════════
+# 一处声明 → 两条指令（sf 位、寄存器槽、opcode 逐行给）；`ref` 自动进别名表，
+# 取代原来的 29 条 [[aliases]]（手写清单会漂移，见方案 §2.3）。
+
+[[templates]]
+name = "ADDIMM{x}"
+ref = "add"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x91, 0x11] }
+body = { form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "add {dst}, {src}, #{imm}" }
+[[templates.overrides]]
+row = 0
+body = { roles = ["frame_free"] }
+
+[[templates]]
+name = "ADDSIMM{x}"
+ref = "adds"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xB1, 0x31] }
+body = { form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "adds {dst}, {src}, #{imm}" }
+
+[[templates]]
+name = "SUBIMM{x}"
+ref = "sub"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xD1, 0x51] }
+body = { form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "sub {dst}, {src}, #{imm}" }
+[[templates.overrides]]
+row = 0
+body = { roles = ["frame_alloc"] }
+
+[[templates]]
+name = "SUBSIMM{x}"
+ref = "subs"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xF1, 0x71] }
+body = { form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "subs {dst}, {src}, #{imm}" }
+
+[[templates]]
+name = "ADDREG{x}"
+ref = "add"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x8B, 0x0B] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "add {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "SUBREG{x}"
+ref = "sub"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xCB, 0x4B] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sub {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "ADDSREG{x}"
+ref = "adds"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xAB, 0x2B] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "adds {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "SUBSREG{x}"
+ref = "subs"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xEB, 0x6B] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "subs {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "ANDREG{x}"
+ref = "and"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x8A, 0x0A] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "and {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "BICREG{x}"
+ref = "bic"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x8A, 0x0A] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "bic {dst}, {src}, {src2}", fields = { nbit = 1 } }
+
+[[templates]]
+name = "ORRREG{x}"
+ref = "orr"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xAA, 0x2A] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orr {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "ORNREG{x}"
+ref = "orn"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xAA, 0x2A] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orn {dst}, {src}, {src2}", fields = { nbit = 1 } }
+
+[[templates]]
+name = "EORREG{x}"
+ref = "eor"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xCA, 0x4A] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eor {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "EONREG{x}"
+ref = "eon"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xCA, 0x4A] }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eon {dst}, {src}, {src2}", fields = { nbit = 1 } }
+
+[[templates]]
+name = "MOV{x}"
+ref = "mov"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xAA, 0x2A] }
+body = { form = "MOVR", opcode = "{opcode}", ops = ["dst:{slot}:out", "src2:{slot}"], asm = "mov {dst}, {src2}", fields = { rn = 31 } }
+[[templates.overrides]]
+row = 0
+body = { roles = ["gpr_mov"] }
+
+[[templates]]
+name = "CMPIMM{x}"
+ref = "cmp"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xF1, 0x71] }
+body = { form = "CMPIMM", opcode = "{opcode}", ops = ["src:{slot}", "imm:imm12u"], asm = "cmp {src}, #{imm}", fields = { rd = 31 } }
+
+[[templates]]
+name = "CMNIMM{x}"
+ref = "cmn"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xB1, 0x31] }
+body = { form = "CMPIMM", opcode = "{opcode}", ops = ["src:{slot}", "imm:imm12u"], asm = "cmn {src}, #{imm}", fields = { rd = 31 } }
+
+[[templates]]
+name = "CMPREG{x}"
+ref = "cmp"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xEB, 0x6B] }
+body = { form = "CMPREG", opcode = "{opcode}", ops = ["src:{slot}", "src2:{slot}"], asm = "cmp {src}, {src2}", fields = { rd = 31 } }
+
+[[templates]]
+name = "MOVZ{x}"
+ref = "movz"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x1A5, 0xA5] }
+body = { form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movz {dst}, #{imm}", fields = { hw = 0 } }
+
+[[templates]]
+name = "MOVN{x}"
+ref = "movn"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x125, 0x25] }
+body = { form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movn {dst}, #{imm}", fields = { hw = 0 } }
+
+[[templates]]
+name = "MOVK{x}"
+ref = "movk"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x1E5, 0xE5] }
+body = { form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movk {dst}, #{imm}", fields = { hw = 0 } }
+
+[[templates]]
+name = "MADD{x}"
+ref = "madd"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x4D8, 0xD8] }
+body = { form = "MULADD", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "acc:{slot}", "src2:{slot}"], asm = "madd {dst}, {src}, {src2}, {acc}" }
+
+[[templates]]
+name = "MSUB{x}"
+ref = "msub"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x4D8, 0xD8] }
+body = { form = "MULADD", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "acc:{slot}", "src2:{slot}"], asm = "msub {dst}, {src}, {src2}, {acc}", fields = { o0 = 1 } }
+
+[[templates]]
+name = "MUL{x}"
+ref = "mul"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x4D8, 0xD8] }
+body = { form = "MUL3", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "mul {dst}, {src}, {src2}", fields = { ra = 31 } }
+
+[[templates]]
+name = "SDIV{x}"
+ref = "sdiv"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x4D6, 0xD6] }
+body = { form = "DIV2A", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sdiv {dst}, {src}, {src2}", fields = { op2d = 3 } }
+
+[[templates]]
+name = "UDIV{x}"
+ref = "udiv"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x4D6, 0xD6] }
+body = { form = "DIV2A", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "udiv {dst}, {src}, {src2}", fields = { op2d = 2 } }
+
+[[templates]]
+name = "CBZ{x}"
+ref = "cbz"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xB4, 0x34] }
+body = { form = "CBZF", opcode = "{opcode}", ops = ["src:{slot}", "target:off19"], asm = "cbz {src}, {target}" }
+[[templates.overrides]]
+row = 0
+body = { roles = ["branch"] }
+
+[[templates]]
+name = "CBNZ{x}"
+ref = "cbnz"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0xB5, 0x35] }
+body = { form = "CBZF", opcode = "{opcode}", ops = ["src:{slot}", "target:off19"], asm = "cbnz {src}, {target}" }
+
+[[templates]]
+name = "CSEL{x}"
+ref = "csel"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x4D4, 0xD4] }
+body = { form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csel {dst}, {src}, {src2}, #{condx}" }
+
+[[templates]]
+name = "CSINC{x}"
+ref = "csinc"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x4D4, 0xD4] }
+body = { form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csinc {dst}, {src}, {src2}, #{condx}", fields = { csop2 = 1 } }
+
+[[templates]]
+name = "CSINV{x}"
+ref = "csinv"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x6D4, 0x2D4] }
+body = { form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csinv {dst}, {src}, {src2}, #{condx}" }
+
+[[templates]]
+name = "CSNEG{x}"
+ref = "csneg"
+params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x6D4, 0x2D4] }
+body = { form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csneg {dst}, {src}, {src2}, #{condx}", fields = { csop2 = 1 } }

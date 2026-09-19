@@ -23,6 +23,8 @@ mod validate;
 #[cfg(test)]
 mod diag_matrix_tests;
 #[cfg(test)]
+mod template_tests;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use model::V12Model;

@@ -147,6 +147,104 @@ fn instruction_names(src: &str) -> Vec<String> {
     out
 }
 
+/// 抽出 `[[templates]]` 展开出的**实例名**（v18 S2 起指令名可以由模板生成）。
+///
+/// 天真展开：读 `params` 里**字符串值**的笛卡尔积替换 `name = "A{x}{y}"` 的占位符
+/// （整数参数不参与命名；`names = [...]` 直接用）。守卫只需要"知道这些名字存在"，
+/// 不必与生成器完全一致——多收几个名字最多让守卫更严。
+fn template_instance_names(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_block = false;
+    let mut names_pat: Option<String> = None;
+    let mut explicit: Vec<String> = Vec::new();
+    let mut params: Vec<(String, Vec<String>)> = Vec::new();
+    let flush = |pat: &Option<String>,
+                 explicit: &[String],
+                 params: &[(String, Vec<String>)],
+                 out: &mut Vec<String>| {
+        if !explicit.is_empty() {
+            out.extend(explicit.iter().cloned());
+            return;
+        }
+        let Some(pat) = pat else { return };
+        let mut acc = vec![pat.clone()];
+        for (k, vals) in params {
+            let needle = format!("{{{k}}}");
+            if !acc.iter().any(|s| s.contains(&needle)) {
+                continue;
+            }
+            let mut next = Vec::new();
+            for s in &acc {
+                for v in vals {
+                    next.push(s.replace(&needle, v));
+                }
+            }
+            acc = next;
+        }
+        out.extend(acc);
+    };
+    for line in src.lines() {
+        let t = line.trim();
+        if t.starts_with("[[templates]]") {
+            flush(&names_pat, &explicit, &params, &mut out);
+            in_block = true;
+            names_pat = None;
+            explicit.clear();
+            params.clear();
+            continue;
+        }
+        if t.starts_with("[[") || (t.starts_with('[') && t.ends_with(']')) {
+            if in_block {
+                flush(&names_pat, &explicit, &params, &mut out);
+            }
+            in_block = false;
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("name = \"")
+            && let Some(end) = rest.find('"')
+        {
+            names_pat = Some(rest[..end].to_string());
+        } else if let Some(rest) = t.strip_prefix("names = [")
+            && let Some(end) = rest.find(']')
+        {
+            for v in rest[..end].split(',') {
+                let v = v.trim().trim_matches('"');
+                if !v.is_empty() {
+                    explicit.push(v.to_string());
+                }
+            }
+        } else if let Some(rest) = t.strip_prefix("params = {")
+            && let Some(end) = rest.find('}')
+        {
+            for item in rest[..end].split(',') {
+                let Some((k, v)) = item.split_once('=') else {
+                    continue;
+                };
+                let key = k.trim().to_string();
+                let vals: Vec<String> = v
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| s.starts_with('"'))
+                    .map(|s| s.trim_matches('"').to_string())
+                    .collect();
+                if !vals.is_empty() {
+                    params.push((key, vals));
+                }
+            }
+        }
+    }
+    if in_block {
+        flush(&names_pat, &explicit, &params, &mut out);
+    }
+    out
+}
+
 /// 收集全部 ISA 常量（指令名 + 寄存器名/前缀）。
 fn isa_constants() -> (Vec<String>, Vec<String>, usize) {
     let dir = repo_root().join("isa");
@@ -169,6 +267,7 @@ fn isa_constants() -> (Vec<String>, Vec<String>, usize) {
         };
         files += 1;
         insts.extend(instruction_names(&text));
+        insts.extend(template_instance_names(&text));
         regs.extend(quoted_in_arrays(&text));
         regs.extend(prefixes(&text));
     }

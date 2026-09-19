@@ -41,5 +41,15 @@ pub fn parse(source: &str) -> Result<V12Model, V12Error> {
         expanded.extend(rows);
     }
     model.lowering = expanded;
+    // `[[templates]]` 展开（v18 S2）：实例拼进指令表，`ref` 合成别名——下游只见普通指令。
+    model.expand_templates().map_err(|msg| {
+        let idx = diag::DeclIndex::build(source);
+        let a = idx.anchor(&msg);
+        V12Error::Parse {
+            line: a.line,
+            col: a.col,
+            msg,
+        }
+    })?;
     Ok(model)
 }

@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-19)
+
+- **ISA-DSL 参数化模板 `[[templates]]`（v18 S2）：一处声明 → N 条指令，自动派生别名**。动机是实测出来的重复：`isa/arm64_v12.toml` 有 **38 对**指令只差 sf 位/寄存器槽/opcode（76/89 = 85%）、`isa/riscv64_v12.toml` 有 **16 对** S/D（41%），而旧 `[[families]]` 的变体**无法覆盖 `ops`/`form`/enc 键**，只能整条复制；与之配套的 `[[aliases]]` 还是手写清单（x86 25 条 / arm64 29 条，且已见漂移：`vaddps` 漏了 `VADDPS_ZMM_MASKZ`）。
+  新机制：`params` 等长列表按下标 zip（与 `[[lowering]].vary` 同语义）；字符串字段里 `{参数}` 做文本替换、**整串就是 `{参数}`** 时保留参数类型（`opcode = "{opcode}"` 仍是整数）；`name`/`names` 给实例名；`ref` 自动派生别名（单值 = 多态共用，含 `{参数}` = 逐实例）；`[[templates.overrides]]` 逐行打补丁（表递归合并）。展开在**解析期**完成 ⇒ 下游（校验/代码生成）只看到普通指令与别名，`codegen` 一行未改；展开出的实例若非法，诊断前缀改回 `[[templates.X]]`，位置落在模板声明行。
+  **arm64 首例迁移**：`isa/arm64_v12.toml` **1,125 → 731 行（−35%）**，32 条模板取代 64 个手写指令块、**29 条手写 `[[aliases]]` 全删**；黄金测试（`arm64_v12_tests` 12 例 + `arm64_v12_tm_tests` 6 例）通过、arm64 JIT 矩阵 **23 passed / 175 skipped / 0 failed** 不变、生成代码里的 `Inst::` 名字集合 **90 个前后 diff 为空**、arm64 生成代码 644,018 → 636,986 B。
+  证据与文档：`src/v12/template_tests.rs`（10 例：展开/类型保留/逐实例 ref/补丁合并/五类失败路径/lowering 引用实例名）、`v12/model.rs::Template` 文档、`docs/reference/isa-dsl.md` 新增 `[[templates]]` 节、`docs/reference/isa-dsl-errors.md` 增模板错误表、方案 §7/§12.7 记录实测与剩余迁移（riscv/x86，以及删除 `[[families]]`/`[[aliases]]` 旧节）、通用性守卫扩展为也识别模板实例名（arm64 迁移后 `ADDIMMX` 不再是 `[[instructions]]` 字面量）。
+
 ### Changed (2026-09-19)
 
 - **ISA-DSL 诊断升级（v18 S1）：一次列全 + 精确到键行 + 错误码；`[emit]`/`[spill]` 从"完全不校验"变为编译期校验**。执行方案 `docs/plans/forge-dsl-v18-plan.md`（用户口径：允许破坏性更新、无需兼容旧版本、兼顾体验、足够通用），本条目是其中的 S1 切片。

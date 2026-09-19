@@ -274,6 +274,7 @@ fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> 
                 implicit_regs: None,
                 global_reloc: None,
                 roles: var.roles.clone(),
+                from_template: None,
             });
         }
     }
