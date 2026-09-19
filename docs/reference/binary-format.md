@@ -83,6 +83,7 @@ offset 0   magic "FORGEIR\0"（8 字节）
 | `ImmStr` / 字符串 | varint 索引 → STRINGS 段（**绝不裸写长度+字节**） |
 | 句柄（`Value`/`Inst`/`Block`/`TypeId`/`ConstId`/`AggId`/`GlobalId`/`SigRef`/`MetadataId`/`ComdatId`/`FuncRef`） | varint dense index（顺序即 id） |
 | `Big` | 变体 tag + payload（见下） |
+| metadata 嵌套（`MetadataValue::Field` 递归） | 递归 + **深度上限 64**（`MAX_METADATA_DEPTH`，超过即 `Err`）——不可信输入不得把解码器栈打爆（进程 abort，不是可捕获错误） |
 | 位集合（`InstFlags`/`MemFlags`/`FunctionAttributes`） | 底层整数原样（未知位保留） |
 | 枚举（`Linkage`/`Visibility`/`DllStorageClass`/`TlsModel`/`MetadataKind`/`ComdatKind`/`CallConv`/`TypeEntry`/`Immediate`/`ValueDef`/`MetadataNode`/`MetadataValue`/`IntCC`/`FloatCC`） | 显式判别值 + 载荷，读侧**穷举 match**（新增变体编译期报错） |
 | `Opcode` | **名字**的 STRINGS 索引（`ops.toml` 是单一事实源；读侧 `from_name`，未知名即 `Err`） |

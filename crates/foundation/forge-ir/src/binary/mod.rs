@@ -80,13 +80,21 @@ impl Module {
     }
 
     /// 序列化并**追加**到 `out`（供调用方复用缓冲；`out` 原内容保留）。
+    ///
+    /// # Panics
+    ///
+    /// 编码侧假定**自洽的 IR**（句柄都来自本模块的类型库/常量池——这是本仓的既有
+    /// 不变量）。若发现不自洽（例如某 `InternedStr` 句柄不在模块的字符串池里），
+    /// 会**带原因 panic** 而不是静默写一个错索引：静默降级在这里等于产出坏字节流，
+    /// 比当场失败危险得多。解码侧相反——**任何输入都不 panic**（见 [`Module::from_binary`]）。
     pub fn to_binary_into(&self, out: &mut Vec<u8>) {
         encode_module(self, out);
     }
 
     /// 从字节流重建模块。
     ///
-    /// 截断/版本不符/未知段/段越界/字符串表重复/非法 UTF-8 一律 `Err`（不 panic）。
+    /// 截断/版本不符/未知段/段越界/字符串表重复/非法 UTF-8/metadata 嵌套超限
+    /// 一律 `Err`（带偏移，**不 panic**）。
     pub fn from_binary(bytes: &[u8]) -> Result<Module, IrError> {
         decode_module(bytes)
     }

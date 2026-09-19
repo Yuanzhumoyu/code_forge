@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-19)
+
+- **补上二进制解码的 metadata 嵌套深度上限（执行方案 §2.6 承诺项）**：`MetadataValue::Field` 是递归结构，解码器原先会一直递归到输入末尾——一条 `Field(k, Field(k, Field(k, …)))` 就能把**解码器的栈打爆**（进程 abort，而不是可捕获的 `Err`）。现在 `MAX_METADATA_DEPTH = 64`，超过即 `IrError::BinaryDecode`（带偏移）；负向用例含 **5000 层**嵌套（必须在到达上限时返回，而不是递归到底），另有 8 层正常解码的正向对照。同步把"编码侧假定自洽 IR、不自洽时**带原因 panic**；解码侧任何输入都不 panic"写进 `Module::{to_binary_into, from_binary}` 的 API 文档，参考文档 §5 的原语表补上该上限。
+  实测（本机 2026-09-19）：workspace **1690 passed / 0 failed / 19 ignored**；语料 198 正向 / 254 正确拒绝 / 0 误收（198 例二进制往返仍全部文本一致 + 字节幂等）；fmt/clippy 两道门/release/doc/markdownlint 全干净。
+
 ### Added (2026-09-19)
 
 - **forge-ir 二进制序列化 B5（METADATA/GLOBALS/MODULE 段 + 语料端到端 + 格式规范文档）**：`binary/meta.rs`（metadata 节点表按 id 顺序 + 命名表按名排序）、`binary/globals.rs`（全局/别名/comdat + 模块三元组·源文件·模块 asm）。回放纪律：metadata 节点**按原样落位**（不用 `intern`——显式 `!N` 经 `insert_at` 预分配槽位、arena 允许同内容两条，`intern` 会折叠导致 id 整体错位；节点内 `Node(id)` 只校验 `< 节点总数`，**前向引用合法**）；全局/别名/comdat 一律经 `Module::{add_global, add_global_alias, add_comdat}` 回放，名字索引表随之重建、重名 fail-closed；附件 `MetadataId` 在解码末尾做悬空引用校验。

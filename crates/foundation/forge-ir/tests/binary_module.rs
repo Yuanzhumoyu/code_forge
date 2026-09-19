@@ -586,6 +586,33 @@ fn test_sections_of(bytes: &[u8]) -> Vec<(u8, usize, usize)> {
 }
 
 #[test]
+fn deep_metadata_nesting_is_rejected_without_stack_overflow() {
+    // 嵌套深度上限（64）：`Field(k, Field(k, …))` 递归解码必须给上界，
+    // 否则不可信输入能把解码器栈打爆（进程 abort，而非可捕获的 Err）。
+    fn nested(levels: usize) -> Vec<u8> {
+        let mut node = vec![0u8]; // Leaf
+        for _ in 0..levels {
+            node.push(7); // Field
+            put_varint(&mut node, 0); // key 字符串索引 0 = "k"
+        }
+        node.extend_from_slice(&[2, 2]); // 最内层 Int(1)：tag 2 + zigzag(1) = 2
+        node
+    }
+    // 浅层（8 层）正常解码
+    let ok = metadata_only(&[nested(8)]);
+    let back = Module::from_binary(&ok).expect("8 层嵌套应可解码");
+    assert_eq!(back.metadata_store.len(), 1);
+
+    // 65 层已超过上限 ⇒ Err
+    let e = decode_err(&metadata_only(&[nested(65)]));
+    assert!(msg_of(&e).contains("嵌套"), "{e:?}");
+
+    // 5000 层：必须在**爆栈之前**拒绝（走到上限就返回，不递归到底）
+    let e = decode_err(&metadata_only(&[nested(5000)]));
+    assert!(msg_of(&e).contains("嵌套"), "{e:?}");
+}
+
+#[test]
 fn unknown_comdat_kind_is_rejected() {
     let mut globals = Vec::new();
     put_varint(&mut globals, 0); // 全局

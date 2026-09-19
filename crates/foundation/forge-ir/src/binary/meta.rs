@@ -16,6 +16,13 @@ use super::format::SectionId;
 use super::reader::Cursor;
 use super::writer::{self, Writer};
 
+/// metadata 值的**嵌套深度上限**（`MetadataValue::Field` 递归）。
+///
+/// 解码递归必须在读**不可信输入**时给深度上界：否则一条
+/// `Field(k, Field(k, Field(k, …)))` 就能把解码器的栈打爆（进程 abort，
+/// 而不是可捕获的错误）。64 远超真实 DI/metadata 的嵌套（语料实测个位数）。
+pub(crate) const MAX_METADATA_DEPTH: usize = 64;
+
 fn err<T>(offset: usize, msg: impl Into<String>) -> Result<T, IrError> {
     Err(IrError::BinaryDecode {
         offset,
@@ -184,8 +191,8 @@ fn decode_node(
 ) -> Result<MetadataNode, IrError> {
     let at = c.offset();
     Ok(match c.read_u8()? {
-        0 => MetadataNode::Leaf(decode_value(c, strings, total)?),
-        1 => MetadataNode::Tuple(decode_values(c, strings, total)?.into()),
+        0 => MetadataNode::Leaf(decode_value(c, strings, total, 0)?),
+        1 => MetadataNode::Tuple(decode_values(c, strings, total, 0)?.into()),
         2 => {
             let at = c.offset();
             let name_idx = c.read_usize()?;
@@ -196,7 +203,7 @@ fn decode_node(
                     offset: at,
                     msg: format!("字符串索引 {name_idx} 越界（表长 {}）", strings.len()),
                 })?;
-            let ops = decode_values(c, strings, total)?.into();
+            let ops = decode_values(c, strings, total, 0)?.into();
             let distinct = read_bool(c)?;
             MetadataNode::Named {
                 name,
@@ -213,6 +220,7 @@ fn decode_values(
     c: &mut Cursor<'_>,
     strings: &[ImmStr],
     total: usize,
+    depth: usize,
 ) -> Result<Vec<MetadataValue>, IrError> {
     let n_at = c.offset();
     let n = c.read_usize()?;
@@ -221,7 +229,7 @@ fn decode_values(
     }
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
-        out.push(decode_value(c, strings, total)?);
+        out.push(decode_value(c, strings, total, depth)?);
     }
     Ok(out)
 }
@@ -230,7 +238,14 @@ fn decode_value(
     c: &mut Cursor<'_>,
     strings: &[ImmStr],
     total: usize,
+    depth: usize,
 ) -> Result<MetadataValue, IrError> {
+    if depth > MAX_METADATA_DEPTH {
+        return err(
+            c.offset(),
+            format!("metadata 嵌套超过 {MAX_METADATA_DEPTH} 层（拒绝：防解码器栈溢出）"),
+        );
+    }
     let at = c.offset();
     Ok(match c.read_u8()? {
         0 => {
@@ -272,7 +287,7 @@ fn decode_value(
                 offset: k_at,
                 msg: format!("字符串索引 {idx} 越界（表长 {}）", strings.len()),
             })?;
-            MetadataValue::Field(key, Box::new(decode_value(c, strings, total)?))
+            MetadataValue::Field(key, Box::new(decode_value(c, strings, total, depth + 1)?))
         }
         other => return err(at, format!("未知 metadata 值 tag {other}")),
     })
