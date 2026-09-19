@@ -275,9 +275,10 @@ fn check_binary_compat_reports_header() {
             SectionId::Compat,
             SectionId::Strings,
             SectionId::Types,
-            SectionId::Consts
+            SectionId::Consts,
+            SectionId::Funcs
         ],
-        "B1–B3 写 COMPAT + STRINGS + TYPES + CONSTS"
+        "B1–B4 写 COMPAT + STRINGS + TYPES + CONSTS + FUNCS"
     );
 }
 

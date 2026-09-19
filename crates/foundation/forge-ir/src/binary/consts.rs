@@ -24,43 +24,50 @@ use super::writer::{self, Writer};
 /// 写 CONSTS 段（段体缓冲由调用方装回 writer）。
 pub(crate) fn encode_consts(pool: &ConstantPool, w: &mut Writer) {
     let mut body = Vec::new();
+    encode_pool(pool, &mut body, w);
+    w.assign_section(SectionId::Consts, body);
+}
+
+/// 写一个常量池的五通道体（**段级与函数级共用**：模块的 `CONSTS` 段、
+/// 每个函数记录里的 `constants` 字段都走这里）。
+pub(crate) fn encode_pool(pool: &ConstantPool, body: &mut Vec<u8>, _w: &mut Writer) {
     let (int_n, float_n, big_n, vec_n, agg_n) = pool.channel_counts();
 
     // --- int ---
-    writer::put_varint(&mut body, int_n as u64);
+    writer::put_varint(body, int_n as u64);
     for i in 0..int_n {
         let id = ConstId::pack(ConstId::TAG_INT, i as u32);
         let (value, bits) = pool.get_int(id).expect("int 通道逐条存在");
-        writer::put_zigzag_i128(&mut body, value);
-        writer::put_varint(&mut body, u64::from(bits));
+        writer::put_zigzag_i128(body, value);
+        writer::put_varint(body, u64::from(bits));
     }
 
     // --- float ---
-    writer::put_varint(&mut body, float_n as u64);
+    writer::put_varint(body, float_n as u64);
     for i in 0..float_n {
         let id = ConstId::pack(ConstId::TAG_FLOAT, i as u32);
         let (bits, width) = pool.get_float_with_width(id).expect("float 通道逐条存在");
-        writer::put_varint_u128(&mut body, bits);
-        writer::put_varint(&mut body, u64::from(width));
+        writer::put_varint_u128(body, bits);
+        writer::put_varint(body, u64::from(width));
     }
 
     // --- big ---
-    writer::put_varint(&mut body, big_n as u64);
+    writer::put_varint(body, big_n as u64);
     for i in 0..big_n {
         let id = ConstId::pack(ConstId::TAG_BIG, i as u32);
         let value = pool.get_big(id).expect("big 通道逐条存在");
-        encode_big(&mut body, value);
+        encode_big(body, value);
     }
 
     // --- vector（字节 + 端序）---
-    writer::put_varint(&mut body, vec_n as u64);
+    writer::put_varint(body, vec_n as u64);
     for i in 0..vec_n {
         let id = ConstId::pack(ConstId::TAG_VEC, i as u32);
         let data = pool.get_vector(id).expect("vector 通道逐条存在");
         let endian = pool.get_vector_endian(id).expect("vector 端序与数据同生");
-        writer::put_len_prefixed(&mut body, data);
+        writer::put_len_prefixed(body, data);
         writer::put_u8(
-            &mut body,
+            body,
             match endian {
                 Endianness::Little => 0,
                 Endianness::Big => 1,
@@ -69,28 +76,26 @@ pub(crate) fn encode_consts(pool: &ConstantPool, w: &mut Writer) {
     }
 
     // --- aggregate（树形：标量子 + 嵌套聚合子）---
-    writer::put_varint(&mut body, agg_n as u64);
+    writer::put_varint(body, agg_n as u64);
     for i in 0..agg_n {
         let agg = pool
             .get_aggregate(AggId::new(i as u32))
             .expect("aggregate 通道逐条存在");
-        writer::put_varint(&mut body, u64::from(agg.ty.0));
-        writer::put_varint(&mut body, agg.children.len() as u64);
+        writer::put_varint(body, u64::from(agg.ty.0));
+        writer::put_varint(body, agg.children.len() as u64);
         for child in &agg.children {
             match child {
                 AggChild::Scalar(id) => {
-                    writer::put_u8(&mut body, 0);
-                    writer::put_varint(&mut body, u64::from(id.raw()));
+                    writer::put_u8(body, 0);
+                    writer::put_varint(body, u64::from(id.raw()));
                 }
                 AggChild::Agg(id) => {
-                    writer::put_u8(&mut body, 1);
-                    writer::put_varint(&mut body, u64::from(id.0));
+                    writer::put_u8(body, 1);
+                    writer::put_varint(body, u64::from(id.0));
                 }
             }
         }
     }
-
-    w.assign_section(SectionId::Consts, body);
 }
 
 /// `Big` 三个变体：有符号整数 / 无符号整数 / 任意精度实数。
@@ -133,7 +138,12 @@ fn err<T>(offset: usize, msg: impl Into<String>) -> Result<T, IrError> {
 
 /// 读 CONSTS 段并**填充**常量池（池由调用方以 `ConstantPool::new()` 起手：
 /// 预置的两个 bool 槽会被文件里同序的前两条 int 条目经去重命中）。
-pub(crate) fn decode_consts(pool: &mut ConstantPool, mut c: Cursor<'_>) -> Result<(), IrError> {
+pub(crate) fn decode_consts(pool: &mut ConstantPool, c: Cursor<'_>) -> Result<(), IrError> {
+    decode_pool(pool, &mut c.clone())
+}
+
+/// 读一个常量池的五通道体（**段级与函数级共用**，见 [`encode_pool`]）。
+pub(crate) fn decode_pool(pool: &mut ConstantPool, c: &mut Cursor<'_>) -> Result<(), IrError> {
     // --- int ---
     let n_at = c.offset();
     let n = c.read_usize()?;
@@ -203,7 +213,7 @@ pub(crate) fn decode_consts(pool: &mut ConstantPool, mut c: Cursor<'_>) -> Resul
     }
     for i in 0..n {
         let at = c.offset();
-        let value = decode_big(&mut c)?;
+        let value = decode_big(c)?;
         let id = pool.insert_big(value);
         if id.index() as usize != i {
             return err(

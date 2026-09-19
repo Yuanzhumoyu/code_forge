@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **forge-ir 二进制序列化 B4（FUNCS 段：函数 + `dfg` + layout）**：`binary/funcs.rs` 每个函数写名字/签名/调用约定/属性位/开放属性/符号（linkage·visibility·dll·section·comdat·TLS 模型·三个布尔）/`is_const`/personality/参数与返回属性/函数级 metadata/`debug_info`（`locations` + 函数名）/值名与块名/**每函数常量池**（与模块 `CONSTS` 共用同一份五通道编码器）/`dfg`/`layout`/入口块。
+  `dfg` 侧：每个值写**显式 `ValueDef`**（`Inst(i,k)`/`Param(b,k)`/`AggConst`/`UndefNamed`）+ 类型；指令写 opcode **名字**（`ops.toml` 是单一事实源，读侧 `from_name` 解析，未知名即错——不受枚举声明顺序影响）、块、结果、操作数、11 种 immediates、`InstFlags`/`MemFlags`、调用点属性、metadata、`loc`、`isel_strategy`、墓碑位；块写参数类型/参数值/块内顺序/终结符。**use-lists 不落盘**，解码后按指令操作数重建（终结符指令在 `insts` 里，同样登记）。
+  **解码后结构校验 `validate_dfg`**（"顺序即索引"不靠隐式假设）：值类型在界内、每条 `ValueDef` 回指一致（指令第 k 个结果 / 块第 k 个参数）、指令结果反向回指、操作数/结果/块参数类型/块顺序表/终结符/布局/入口块全部在界内——任一处不一致即 `Err`（带偏移）。解码写 arena 走新增的 `DataFlowGraph::{push_value_verbatim,push_inst_verbatim,push_block_verbatim}`（保 dense 索引、不触发 `make_*` 的附带登记），metadata 走既有唯一写入口 `attach_metadata`——两处都满足既有守卫（`dfg_privatization.rs` 的"arena 只能经受限 API 访问"、`metadata_single_write.rs` 的"附件只能经唯一写入口"），**未给守卫加白名单**。
+  负向对照（全部实测为 `Err`）：未知 opcode 名、未知调用约定、value kind 与密集索引不一致、悬空操作数、未知 immediate tag、越界值类型、FUNCS 段体任意截断前缀（逐字节扫描不 panic）。
+  实测（本机 2026-09-19）：workspace **1676 passed / 0 failed / 19 ignored**（B4 新增 11 例：往返/幂等/校验器/6 项负向/截断扫描/空模块段存在性）；往返用例同时断言**解码后函数过 `Verifier`**；语料 198 正向 / 254 正确拒绝 / 0 误收；矩阵 x86 195/3/0、riscv64 131/67/0、arm64 23/175/0（架构无关，未受影响）；fmt/clippy 两道门/release/doc 全干净。
 - **forge-ir 二进制序列化 B3（CONSTS 段：五通道常量）**：`binary/consts.rs` 逐条按池内索引写 int/float/big/vector/aggregate 五通道，解码按**同序** `insert_*` 重建 ⇒ `ConstId`/`AggId` 的密集索引逐位不变（`bool_const` 的固定槽位也因此原样保留）。`Big` 三变体全覆盖：`Signed`/`Unsigned` 用 dashu 的小端补码字节，`Float` 写 `repr()` 的归一化有效数 + 指数 + **`Context::precision`**。
   **实现坑（负向用例抓出并修掉）**：`Big::Float` 只写 `(significand, exponent)` 会**丢精度上下文**——`Repr::into_parts()` 会把有效数归一化，`from_parts` 又把精度重置为"有效数位数"，于是 1.5 的 `prec: 53` 变成 `prec: 2`（值相同、精度不同，Debug 逐字符对比当场暴露）；改为写 `precision()` 并用 `Repr::new` + `Context::new` + `Real::from_repr` 重建后逐字符一致。
   fail-closed 负向对照（全部实测为 `Err`）：重复常量（`insert_*` 返回索引与位置不符）、未知 `Big` 变体 tag、未知向量端序 tag、聚合标量子越界、聚合**前向/自引用**（防环）、`i128`/`u128` varint 溢出（第 19 字节越界位、20 字节续位）。

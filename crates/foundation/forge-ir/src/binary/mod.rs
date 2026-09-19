@@ -27,6 +27,7 @@
 
 mod consts;
 pub mod format;
+mod funcs;
 mod reader;
 mod types;
 mod writer;
@@ -117,6 +118,8 @@ fn encode_module(module: &Module, out: &mut Vec<u8>) {
     types::encode_types(&module.types.borrow(), &mut w);
     // CONSTS：五通道（int/float/big/vector/aggregate）。
     consts::encode_consts(&module.constants, &mut w);
+    // FUNCS：函数表（签名/属性/符号 + 每函数常量池 + dfg + layout）。
+    funcs::encode_funcs(module, &mut w);
     w.finish(out);
 }
 
@@ -142,6 +145,11 @@ fn decode_module(bytes: &[u8]) -> Result<Module, IrError> {
     if let Some(cursor) = reader.section(SectionId::Consts) {
         consts::decode_consts(&mut module.constants, cursor)?;
     }
-    // B4+：METADATA → FUNCS → GLOBALS → MODULE（见执行方案 §2.2）
+    // FUNCS（依赖 TYPES/CONSTS：句柄按模块类型库与常量池校验）。
+    if let Some(cursor) = reader.section(SectionId::Funcs) {
+        let type_count = module.types.borrow().type_count();
+        funcs::decode_funcs(&mut module, cursor, reader.strings(), type_count)?;
+    }
+    // B5：METADATA → GLOBALS → MODULE（见执行方案 §2.2）
     Ok(module)
 }

@@ -62,6 +62,19 @@ impl FunctionAttributes {
     pub const NO_RED_ZONE: Self = Self(1 << 16); // no red zone in stack frame
     pub const SPECULATABLE: Self = Self(1 << 17); // safe to speculate
 
+    /// 二进制序列化层：原始位模式（写侧）。
+    ///
+    /// 位集合按 u32 **原样落盘**——未知位保留而不报错（属性位是开放演进面，
+    /// 丢位才是数据损失；语义变更由格式版本号兜底）。
+    pub(crate) fn bits(self) -> u32 {
+        self.0
+    }
+
+    /// 二进制序列化层：由位模式还原（读侧）。
+    pub(crate) fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
     pub const fn contains(self, attr: Self) -> bool {
         (self.0 & attr.0) != 0
     }

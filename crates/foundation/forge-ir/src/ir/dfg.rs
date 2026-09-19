@@ -1086,6 +1086,42 @@ impl DataFlowGraph {
             .enumerate()
             .map(|(i, vd)| (Value(i as u32), vd))
     }
+
+    // ============================================================
+    // 二进制解码专用：按原样重建三个 arena
+    // ============================================================
+    //
+    // 解码器必须**逐位复现** dense 索引（值/指令/块的编号即下标），因此不能用
+    // `make_*`（它们会分配新编号、并按各自的规则做附带登记）。这三个口只做
+    // "按顺序 push"，其余不变量由解码器自己负责：
+    //
+    // - use-lists：解码完 `insts` 后由 `Function::use_lists` 逐条
+    //   `record_inst` 重建（不落盘、不双写）；
+    // - `cfg_revision`：新建 DFG 的修订号即"新鲜"，解码后无陈旧缓存可言；
+    // - 结构校验：`binary::funcs::validate_dfg` 逐条回查悬空句柄与
+    //   value kind 一致性（见 `docs/plans/forge-ir-binary-serialization-plan.md` §2.4）。
+
+    /// 按原样追加一个值（返回其句柄；编号 = 当前长度）。
+    pub(crate) fn push_value_verbatim(&mut self, data: ValueData) -> Value {
+        let id = Value(self.values.len() as u32);
+        self.values.push(data);
+        id
+    }
+
+    /// 按原样追加一条指令（返回其句柄；编号 = 当前长度）。
+    pub(crate) fn push_inst_verbatim(&mut self, inst: Instruction) -> Inst {
+        let id = Inst(self.insts.len() as u32);
+        self.insts.push(inst);
+        id
+    }
+
+    /// 按原样追加一个块（返回其句柄；编号 = 当前长度）。
+    pub(crate) fn push_block_verbatim(&mut self, block: BlockData) -> Block {
+        let id = Block(self.blocks.len() as u32);
+        self.blocks.push(block);
+        id
+    }
+
     pub fn insts(&self) -> impl Iterator<Item = (Inst, &Instruction)> {
         self.insts
             .iter()

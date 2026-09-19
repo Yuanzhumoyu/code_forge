@@ -73,22 +73,46 @@ offset 0   ┌ magic：8 字节 ASCII "FORGEIR\0"
 | 字符串 / `ImmStr` | varint 索引（指向 STRINGS 段） | 走 STRINGS 段，绝不裸写长度+字节 |
 | 句柄（`Value`/`Inst`/`Block`/`TypeId`/…） | varint dense index | 顺序即 id：读侧按出现顺序重建，**不写"上一次解析的编号"** |
 | 枚举（`Opcode`/`TypeEntry`/`Ordering`/`AtomicRmwOp`/`MetadataNode`/…） | u8/u16 判别值 + 载荷 | 读侧**穷举 match**：新增变体编译期报错，不会静默错位 |
-| `Big` | 符号 1 字节 + varint 字节长 + LE 字节 | 规范形式：无前导零、零只有正号 |
+| `Big` | 变体 1 字节 + payload（见下） | `Signed`/`Unsigned`：varint 字节长 + dashu 小端补码字节；`Float`：有效数 + zigzag 指数 + **精度**（`Context::precision`，0 = 无限） |
 | metadata 嵌套 | 递归 + **深度上限**（见 §2.6） | 恶意深嵌套不得把解码器打爆栈 |
+
+**实现细化（B1–B4 已落）**：
+
+- `Opcode` 不写判别值而写**名字**（STRINGS 段索引）：`ops.toml` 是单一事实源，
+  读侧 `Opcode::from_name` 解析、未知名即 `Err` —— 变体增删/改名都会显式报错，
+  且不受枚举声明顺序影响；比手写判别表更抗漂移（手写表还会与生成物两处维护）。
+- `InstFlags`/`MemFlags`/`FunctionAttributes` 是**位集合**（不是判别式）：按底层
+  `u32`/`u16` 原样落盘（`from_bits_retain`），未知位保留而不报错——丢位才是数据损失，
+  未知位本身无语义；语义变更由格式版本号兜底。
+- `Big::Float` 的精度必须落盘：`Repr::into_parts()` 会把有效数归一化，
+  `Real::from_parts` 又把精度重置为"有效数位数"（1.5 的 `prec: 53` → `prec: 2`，
+  值相同、精度不同）。写 `repr().significand()/exponent()` + `precision()`，
+  读侧用 `Repr::new` + `Context::new` + `Real::from_repr` 重建。
+- 每函数常量池与模块 `CONSTS` 段**共用同一份五通道编码器**（`encode_pool`/`decode_pool`）。
 
 ### 2.4 函数段的两遍解码（关键设计）
 
 `DataFlowGraph` 里值的 dense 顺序 = **块参数先建、指令结果后建**。为保证"顺序即 id"
 在解码侧精确复现，FUNCS 段对每个函数写出：
 
-1. `value_kinds`：varint 个数 + 每个值的 1 字节 kind（`0` = 块参数，`1` = 指令结果）；
-2. 块表：块数，每块 `{ 名字, 参数个数, 各参数类型, 各参数的值索引 }`；
-3. 指令表：指令数，每条 `{ opcode, 结果个数, 结果值索引, 操作数, immediates, flags, mem_flags, 附件, loc, isel_strategy }`；
-4. `layout`：块顺序、入口块、函数参数表。
+1. `values`：值数 + 每个值的**显式 `ValueDef`**（`Inst(inst, k)` / `Param(block, k)` /
+   `AggConst(AggId)` / `UndefNamed(str)`）+ 该值的类型；
+2. 指令表：指令数，每条 `{ opcode 名, 所属块, 结果值, 操作数, immediates, flags,
+   mem_flags, 调用点属性, metadata, loc, isel_strategy, 墓碑位 }`；
+3. 块表：块数，每块 `{ 参数类型, 参数值, 块内指令顺序, 终结符指令 }`；
+4. `layout`（块顺序）+ 入口块。
 
-解码器据此**校验**：块参数与指令结果按 `value_kinds` 顺序恰好覆盖 `0..value_count`，
-且每条指令的结果索引等于"轮到它的下一个索引"；任何不一致 → `Err`（而不是"猜一个"）。
-这条显式表把"隐式假设构造顺序"变成**可校验的数据**，代价每值 1 字节。
+**实现细化（B4 已落）**：草案里的"每值 1 字节 kind"落地为**每值一条显式 `ValueDef`**
+（kind + 归属索引），信息更强（kind 说"块参数还是指令结果"，`ValueDef` 还说出是哪条
+指令的第几个结果 / 哪个块的第几个参数）。解码后由 `validate_dfg` 逐条回查：
+
+- 每条 `ValueDef::Inst(i,k)` ⇒ 指令 `i` 的第 `k` 个结果确实是自己；
+- 每条 `ValueDef::Param(b,k)` ⇒ 块 `b` 的第 `k` 个参数值确实是自己；
+- 反向：每条指令的每个结果的定义必须回指到该指令；
+- 值类型 / 操作数 / 结果 / 块参数类型 / 块顺序表 / 终结符 / 布局 / 入口块全部在界内。
+
+任何一处不一致即 `Err`（带偏移），**不"猜一个"**；`use_lists` 不落盘，解码后按指令
+操作数重建（终结符指令也在 `insts` 里，同样登记）。
 
 ### 2.5 字符串表
 
@@ -252,5 +276,5 @@ JIT 矩阵 x86 195/3/0、riscv64 131/67/0、arm64 23/175/0。
 | B1 | （与 B2 同提交） | 容器 + STRINGS：`binary` 单测（原语 varint/zigzag/Option/长度前缀的已知字节 + `Cursor` 截断/溢出/非法 UTF-8/越界四类 fail-closed）、`tests/binary_format.rs` 的空模块往返、池逐条往返、编码确定性 + `decode→encode` 幂等、`to_binary_into` 追加语义、`check_binary_compat`；负向：**任意截断前缀（0..len-1）全部 `Err` 且不 panic**、坏魔数（偏移 0）、版本不符、未知段 id、未知 COMPAT flag 位、重复字符串、段数炸弹（100 万段）。**负向对照实测**：`BinaryCompat.producer: String` ⇒ `open_set_boundary.rs::no_plain_string_fields_on_public_ir_surface` FAILED 并点名该行（v3 S5 守卫当场生效）→ 改 `ImmStr`；`to_binary_into` 追加语义下 `finish()` 的头部长度断言（按绝对长度比）误报 → 改为按增量比。 | 2026-09-19 |
 | B2 | | TYPES：类型条目 12 种 tag 全覆盖（Int/Float/BFloat/Vector/ScalableVector/Array/Struct 含命名字段/Pointer/Function/Token/Metadata/Opaque）、命名类型表（按名排序 ⇒ 字节确定）、签名表（含 `CallConv::Custom(42)` 与 variadic）、`DataLayout`（三张对齐表 + 指针表按 key 排序）。往返断言：条目**逐字段相等**（含 `InternedStr` 句柄，因字符串表不预留槽 ⇒ 句柄与索引恒等）、命名类型查回一致、签名逐字段一致、`DataLayout` 逐字段一致（不用 `{:?}`——内部 `HashMap` 的 Debug 序随实例随机种子变化）。负向：未知类型 tag、TYPES 段体截断（读到一半即错）、悬空 `TypeId`（条目引用 / 命名类型引用，单测级）、预填充固定索引错位（单测级）、`num=0` 空池合法（不再是错误）。 | 2026-09-19 |
 | B3 | | CONSTS：五通道（int/float/big/vector/aggregate）逐条按索引写、按同序 `insert_*` 重建（`ConstId`/`AggId` 逐位不变）。覆盖：负 i128、`i128::MIN/MAX`、**同一位模式的 f32/f64 必须各留一条**（值宽进 key）、NaN 载荷、`Big` 三变体（`Signed`/`Unsigned`/`Float`，实数写 `sig + exp + 精度`）、两种端序的向量、嵌套聚合（`Scalar` + `Agg` 子）。负向：重复常量（`insert_int` 返回索引与位置不符）、未知 `Big` 变体 tag、未知端序 tag、聚合标量子越界、聚合**前向/自引用**（防环）、`i128`/`u128` varint 溢出（第 19 字节越界位 + 20 字节续位）。**实现坑（已修）**：`Big::Float` 的 `into_parts` 会把有效数归一化，只写 `(sig, exp)` 会丢 `Context::precision`（1.5 的 prec 53 → 2，"值相同、精度不同"）——改为写 `repr().significand()/exponent()` + `precision()`，并用 `Repr::new` + `Context::new` + `Real::from_repr` 重建（Debug 逐字符一致）。 | 2026-09-19 |
-| B4 | | | |
+| B4 | | FUNCS：每函数记录 = 名字/签名/调用约定/属性/开放属性/符号（linkage·visibility·dll·section·comdat·TLS 模型·三个布尔）/`is_const`/personality/参数与返回属性/函数级 metadata/`debug_info`（`locations` + 函数名）/值名与块名（`InternedStr` 按内容落表）/**每函数常量池**（与模块 `CONSTS` 同一份五通道编码器）/`dfg`/`layout`/入口块。`dfg` 侧：每个值写**显式 `ValueDef`**（`Inst(i,k)` / `Param(b,k)` / `AggConst` / `UndefNamed`）+ 类型；指令写 opcode **名字**（`ops.toml` 是单一事实源，读侧 `from_name` 解析，未知名即错）、块、结果、操作数、immediates（11 变体）、`InstFlags`/`MemFlags` 位、调用点属性、metadata、`loc`、`isel_strategy`、墓碑位；块写参数类型/参数值/块内顺序/终结符。**use-lists 不落盘**，解码后按指令操作数重建（终结符指令在列）。**解码后校验**（`validate_dfg`）：值类型在界内、每条 `ValueDef` 回指一致（指令第 k 个结果 / 块第 k 个参数 / 结果值反向回指）、操作数与结果在界内、块参数类型在界内、块顺序表与终结符在界内、布局与入口块在界内——任一处不一致即 `Err`（"顺序即索引"不靠隐式假设）。负向：未知 opcode 名、未知调用约定、value kind 与密集索引不一致、悬空操作数、未知 immediate tag、越界值类型、FUNCS 段体任意截断前缀。 | 2026-09-19 |
 | B5 | | | |

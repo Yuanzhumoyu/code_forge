@@ -145,7 +145,7 @@ fn encode_signature(out: &mut Vec<u8>, sig: &FunctionSignature, w: &mut Writer) 
     writer::put_u8(out, u8::from(sig.variadic));
 }
 
-fn encode_call_conv(out: &mut Vec<u8>, cc: CallConv) {
+pub(crate) fn encode_call_conv(out: &mut Vec<u8>, cc: CallConv) {
     // 判别值固定；新增变体时这里的 match 会编译期失败（不会静默错位）。
     let tag: u8 = match cc {
         CallConv::Default => 0,
@@ -580,7 +580,7 @@ fn decode_signature(
     })
 }
 
-fn decode_call_conv(c: &mut Cursor<'_>) -> Result<CallConv, IrError> {
+pub(crate) fn decode_call_conv(c: &mut Cursor<'_>) -> Result<CallConv, IrError> {
     let at = c.offset();
     Ok(match c.read_u8()? {
         0 => CallConv::Default,
