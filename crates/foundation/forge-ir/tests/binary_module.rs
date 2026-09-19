@@ -363,6 +363,7 @@ fn llvm_corpus_binary_roundtrip_is_text_identical() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/llvm_assembler_cases");
     let mut checked = 0usize;
     let mut total_bytes = 0usize;
+    let mut total_src = 0usize;
     let mut max_bytes = 0usize;
     let mut max_case = String::new();
     let mut failures: Vec<(String, String)> = Vec::new();
@@ -422,6 +423,7 @@ fn llvm_corpus_binary_roundtrip_is_text_identical() {
         }
         checked += 1;
         total_bytes += bytes.len();
+        total_src += src.len();
         if bytes.len() > max_bytes {
             max_bytes = bytes.len();
             max_case = name.clone();
@@ -442,8 +444,12 @@ fn llvm_corpus_binary_roundtrip_is_text_identical() {
     // 基线（2026-09-19 实测）：189 个正向用例可解析 ⇒ 全部往返文本一致
     assert!(checked >= 189, "往返覆盖数偏低：{checked}");
     // 尺寸基线：只打印，不设阈值（压缩/演进时重新采集）
+    // 尺寸基线：只打印，不设阈值（压缩/演进时重新采集）。
+    // 同时给"字节流 vs 源码文本"的比值——二进制缓存是否划算的直接依据。
     eprintln!(
-        "binary size baseline: cases={checked} total={total_bytes}B max={max_bytes}B ({max_case}) avg={}B",
+        "binary size baseline: cases={checked} src_total={total_src}B bin_total={total_bytes}B \
+         ratio={:.2}x max={max_bytes}B ({max_case}) avg_bin={}B",
+        total_bytes as f64 / total_src.max(1) as f64,
         total_bytes / checked.max(1)
     );
 }

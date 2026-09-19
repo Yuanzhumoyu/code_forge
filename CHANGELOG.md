@@ -20,6 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **二进制格式有了可运行的消费者 + 吞吐/尺寸基线**：新增示例 `crates/foundation/forge-ir/examples/ir_binary.rs`（只用公开 API —— 示例是独立 crate，因此同时是"公开面够不够用"的编译期检验）：默认模式做 parse → `to_binary` → `from_binary` → 逐函数 `Verifier` → 文本一致 → 字节幂等，并打印每文件的源码/字节流尺寸与 parse/encode/decode 耗时；`--check` 只读头部报 `check_binary_compat`（版本/producer/段表）；`--write <dir>` 落盘 `.fir`。新增 `benches/ir_binary.rs`（`cargo bench -p forge-ir --bench ir_binary`）量编解码吞吐。
+  首次采集（本机 2026-09-19）：中等模块（884 B 文本 → 1,335 B 字节流）encode **21.9 µs / ~58 MiB·s⁻¹**、decode **77.2 µs / ~16.5 MiB·s⁻¹**（解码慢 ~3.5×：每次读都查剩余长度、重建三个 arena、回查 value kind 并重建 use-lists）；198 个正向语料的**源码文本 408,810 B → 字节流 241,440 B（0.59×，未压缩）**。数字记入 `docs/performance/bench_baseline.md`，命令与口径见 `docs/reference/binary-format.md` §9/§10。
+
 - **二进制往返的 fuzz 扩面：同一批随机模块走二进制（执行方案 §2.5 验收项）**：`tests/roundtrip_fuzz.rs` 的生成器与 `fuzz_roundtrip` 扩展为"文本往返 + 二进制往返"同批断言——默认 **10_000** 个随机模块（含第二固定种子 500 个）每个都额外做 `to_binary` → `from_binary`：①结构等价（模块/块/指令/终结符/常量/全局初始化字节，复用既有 `assert_modules_eq`/`assert_globals_eq`）；②解码后**文本打印与首次一致**；③`decode → encode` 与首次编码**逐字节相同**。本机实测 2 passed / 0 failed，整支 ~29 s（可 `FORGE_FUZZ_ITERS`/`FORGE_FUZZ_SEED` 覆盖复现）。
 
 - **forge-ir 二进制序列化 B5（METADATA/GLOBALS/MODULE 段 + 语料端到端 + 格式规范文档）**：`binary/meta.rs`（metadata 节点表按 id 顺序 + 命名表按名排序）、`binary/globals.rs`（全局/别名/comdat + 模块三元组·源文件·模块 asm）。回放纪律：metadata 节点**按原样落位**（不用 `intern`——显式 `!N` 经 `insert_at` 预分配槽位、arena 允许同内容两条，`intern` 会折叠导致 id 整体错位；节点内 `Node(id)` 只校验 `< 节点总数`，**前向引用合法**）；全局/别名/comdat 一律经 `Module::{add_global, add_global_alias, add_comdat}` 回放，名字索引表随之重建、重名 fail-closed；附件 `MetadataId` 在解码末尾做悬空引用校验。

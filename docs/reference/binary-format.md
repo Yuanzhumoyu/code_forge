@@ -177,12 +177,24 @@ name | signature | call_conv | attributes | extra_attrs
 | 证据 | 结果（2026-09-19 本机实测） |
 | --- | --- |
 | LLVM `test/Assembler` 正向语料二进制往返 | **198/198** 文本打印逐字符一致 + 编码幂等 |
-| 尺寸基线 | 合计 **241,440 B**、最大 **31,038 B**（`auto_upgrade_nvvm_intrinsics.ll`）、平均 **1,219 B** |
+| 尺寸基线 | 源码文本合计 **408,810 B** → 字节流合计 **241,440 B**（**0.59×**，未压缩）、最大 **31,038 B**（`auto_upgrade_nvvm_intrinsics.ll`）、平均 **1,219 B** |
+| fuzz 往返 | 随机模块 **10,500**（默认 10,000 + 固定种子 500）结构等价 + 文本一致 + 字节幂等，0 失败 |
+| 吞吐（`cargo bench -p forge-ir --bench ir_binary`） | encode ~21.9 µs / ~58 MiB·s⁻¹；decode ~77.2 µs / ~16.5 MiB·s⁻¹（中等模块 1,335 B）——数字与完整表在 `docs/performance/bench_baseline.md` |
 | 空模块 | 恒定写 8 个段；往返后池/常量槽逐条相同 |
-| 负向对照 | 截断前缀（逐字节扫描）、坏魔数、版本不符、未知段 id/COMPAT 位、重复字符串/常量/metadata、悬空 `TypeId`/`ConstId`/`AggId`/操作数/值类型/metadata 附件、未知 opcode 名/枚举 tag/端序、value kind 不一致、聚合前向引用 —— 全部 `Err` 且不 panic |
-| 回归 | workspace 1689 passed / 0 failed / 19 ignored；语料 198 正向 / 254 正确拒绝 / 0 误收；矩阵 x86 195/3/0、riscv64 131/67/0、arm64 23/175/0 |
+| 负向对照 | 截断前缀（逐字节扫描）、坏魔数、版本不符、未知段 id/COMPAT 位、重复字符串/常量/metadata、悬空 `TypeId`/`ConstId`/`AggId`/操作数/值类型/metadata 附件、未知 opcode 名/枚举 tag/端序、value kind 不一致、聚合前向引用、metadata 嵌套 65/5000 层 —— 全部 `Err` 且不 panic |
+| 回归 | workspace 1692 passed / 0 failed / 19 ignored；语料 198 正向 / 254 正确拒绝 / 0 误收；矩阵 x86 195/3/0、riscv64 131/67/0、arm64 23/175/0 |
 
-## 10. 已知限制
+## 10. 消费者与工具
+
+- **示例 CLI**：`cargo run -p forge-ir --example ir_binary -- [--check] [--write <dir>] <file.ll>…`
+  只用公开 API（示例是独立 crate ⇒ 也是"公开面够不够用"的编译期检验）：
+  默认模式做 parse → encode → decode → 逐函数 `Verifier` → 文本一致 → 字节幂等，
+  并打印每文件的源码/字节流尺寸与 parse/encode/decode 耗时；`--check` 只读头部报
+  `check_binary_compat`（版本/producer/段表）；`--write <dir>` 把字节流落盘为 `.fir`。
+- **基准**：`cargo bench -p forge-ir --bench ir_binary`（文本层解析吞吐见
+  `--bench ir_parse`；两者共同回答"缓存省了多少"）。
+
+## 11. 已知限制
 
 - 不压缩：字节数是"正确性优先"的基线，压缩属未来工作（有基线可对照）。
 - 文本打印的**多别名 metadata**：2026-09-19 起已修——display 对每个名字各打印一行

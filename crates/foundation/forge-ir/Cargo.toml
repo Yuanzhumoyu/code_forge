@@ -32,3 +32,8 @@ criterion = "0.8.2"
 [[bench]]
 name = "ir_parse"
 harness = false
+
+# 二进制层编解码吞吐（文本层解析吞吐见 ir_parse；两者共同回答"缓存省了多少"）
+[[bench]]
+name = "ir_binary"
+harness = false

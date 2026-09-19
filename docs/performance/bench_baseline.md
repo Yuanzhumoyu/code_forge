@@ -17,6 +17,25 @@ default run.
 > codegen/throughput 数据供参考。优化结论基于结构性代码分析（见文末
 > 「优化建议」），不依赖噪声数值。
 
+## ir_binary（2026-09-19 首次采集）
+
+命令：`cargo bench -p forge-ir --bench ir_binary`（`--warm-up-time 1 --measurement-time 2`）
+夹具：中等模块（884 B 文本；globals 含常量表达式/聚合、metadata、命名类型、两个函数）→
+字节流 1335 B（1.51×），2 函数。
+
+| Benchmark | time (µs, 中位数) | 吞吐 |
+| --------- | ----------------: | ---: |
+| ir_binary/encode | 21.9（19.3–24.9） | ~58 MiB/s |
+| ir_binary/decode | 77.2（75.8–78.6） | ~16.5 MiB/s |
+
+解码比编码慢约 3.5×：解码要在每次读上做剩余长度检查、重建三个 arena、逐条回查
+value kind 一致性并重建 use-lists（编码侧假定自洽 IR，不做校验）。**先有基线再谈
+压缩**——压缩属未来工作，届时与本表对照。
+
+尺寸基线（198 个 LLVM `test/Assembler` 正向用例，`tests/binary_module.rs` 打印）：
+源码文本合计 **408,810 B** → 字节流合计 **241,440 B**（**0.59×**，未压缩），
+最大单例 31,038 B（`auto_upgrade_nvvm_intrinsics.ll`），平均 1,219 B/例。
+
 ## ir_build
 
 | Benchmark | time (µs) |
