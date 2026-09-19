@@ -117,6 +117,7 @@ operand_fields = []
 
 [[instructions]]
 name = "ADD8"
+ref = "add"
 form = "R"
 opcode = 0x10
 ops = ["dst:a8:out", "src:a8", "src2:a8"]
@@ -124,6 +125,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SUB8"
+ref = "sub"
 form = "R"
 opcode = 0x11
 ops = ["dst:a8:out", "src:a8", "src2:a8"]
@@ -131,6 +133,7 @@ asm = "sub {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MOV8"
+ref = "mov"
 roles = ["gpr_mov"]
 form = "RR"
 opcode = 0x20
@@ -139,6 +142,7 @@ asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV8_R_IMM8"
+ref = "mov"
 form = "RI2"
 opcode = 0x21
 ops = ["dst:a8:out", "imm:imm8"]
@@ -250,18 +254,6 @@ store = "ST8 {0}, A6, {1}"
 base = "A6"
 
 # ── 显式别名（多态引用名 → 指令名列表）──
-[[aliases]]
-name = "mov"
-insts = ["MOV8", "MOV8_R_IMM8"]
-
-[[aliases]]
-name = "add"
-insts = ["ADD8"]
-
-[[aliases]]
-name = "sub"
-insts = ["SUB8"]
-
 [[lowering]]
 op = "Iadd"
 insts = ["add {out}, {0}, {1}"]

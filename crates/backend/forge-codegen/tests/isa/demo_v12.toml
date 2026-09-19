@@ -122,6 +122,7 @@ operand_fields = []
 # add：同一助记符，三宽度版本 → 按操作数实际类自动分发
 [[instructions]]
 name = "ADD16"
+ref = "add"
 form = "R"
 opcode = 0x10
 ops = ["dst:r16:out", "src:r16", "src2:r16"]
@@ -129,6 +130,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "ADD32"
+ref = "add"
 form = "R"
 opcode = 0x11
 ops = ["dst:r32:out", "src:r32", "src2:r32"]
@@ -136,6 +138,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "ADD64"
+ref = "add"
 form = "R"
 opcode = 0x12
 ops = ["dst:r64:out", "src:r64", "src2:r64"]
@@ -144,6 +147,7 @@ asm = "add {dst}, {src}, {src2}"
 # mov：同上，二操作数
 [[instructions]]
 name = "MOV16"
+ref = "mov"
 form = "RR"
 opcode = 0x20
 ops = ["dst:r16:out", "src:r16"]
@@ -151,6 +155,7 @@ asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV32"
+ref = "mov"
 form = "RR"
 opcode = 0x21
 ops = ["dst:r32:out", "src:r32"]
@@ -158,6 +163,7 @@ asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV64"
+ref = "mov"
 roles = ["gpr_mov"]
 form = "RR"
 opcode = 0x22
@@ -167,6 +173,7 @@ asm = "mov {dst}, {src}"
 # mov 立即数（16 位常量；RI form rd = imm）
 [[instructions]]
 name = "MOV16_R_IMM16"
+ref = "mov"
 form = "RI"
 opcode = 0x23
 ops = ["dst:r16:out", "imm:imm16"]
@@ -257,14 +264,6 @@ insts = ["RET"]
 # 无需手写 add16/add32/add64 三条 lowering）。
 
 # ── 显式别名（S10e）：多态引用名 → 指令名列表 ──
-[[aliases]]
-name = "add"
-insts = ["ADD16", "ADD32", "ADD64"]
-
-[[aliases]]
-name = "mov"
-insts = ["MOV16", "MOV32", "MOV64", "MOV16_R_IMM16"]
-
 [[lowering]]
 op = "Iadd"
 vary = { rs1_width = [16, 32, 64] }

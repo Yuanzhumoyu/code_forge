@@ -9,7 +9,7 @@
 //!
 //! 从仓库根 `isa/*.toml`（发行后端）里**读出**该 ISA 的：
 //!
-//! 1. **指令名**（`[[instructions]].name` 与 `[[families.variants]].name`）；
+//! 1. **指令名**（`[[instructions]].name` 与 `[[templates]].rows[].inst`）；
 //! 2. **物理寄存器名**（`[reg.*].names` 列表，以及生成式声明的 `prefix`）；
 //!
 //! 然后在 `src/**`（除 `tests.rs` 与 `#[cfg(test)]` 之后的部分）里查找这些名字的**字符串
@@ -122,13 +122,13 @@ fn prefixes(src: &str) -> Vec<String> {
     out
 }
 
-/// 抽出某个 TOML 里声明的指令名（`[[instructions]]` / `[[families.variants]]` 块内）。
+/// 抽出某个 TOML 里声明的指令名（`[[instructions]]` 块内）。
 fn instruction_names(src: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_block = false;
     for line in src.lines() {
         let t = line.trim();
-        if t.starts_with("[[instructions]]") || t.starts_with("[[families.variants]]") {
+        if t.starts_with("[[instructions]]") {
             in_block = true;
             continue;
         }
@@ -147,100 +147,37 @@ fn instruction_names(src: &str) -> Vec<String> {
     out
 }
 
-/// 抽出 `[[templates]]` 展开出的**实例名**（v18 S2 起指令名可以由模板生成）。
+/// 一行里所有 `inst = "X"` 的取值（`insts`/`min_inst` 之类不会被误取：
+/// `inst` 前必须是行首或非标识符字符）。
+fn inst_literals(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(pos) = line[i..].find("inst = \"") {
+        let abs = i + pos;
+        let prev_ok = !line[..abs]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let start = abs + "inst = \"".len();
+        let Some(end) = line[start..].find('"') else {
+            break;
+        };
+        if prev_ok {
+            out.push(line[start..start + end].to_string());
+        }
+        i = start + end + 1;
+    }
+    out
+}
+
+/// 抽出 `[[templates]]` 展开出的**实例名**（v18 S2c：`rows` 里的 `inst`）。
 ///
-/// 天真展开：读 `params` 里**字符串值**的笛卡尔积替换 `name = "A{x}{y}"` 的占位符
-/// （整数参数不参与命名；`names = [...]` 直接用）。守卫只需要"知道这些名字存在"，
-/// 不必与生成器完全一致——多收几个名字最多让守卫更严。
+/// 两种等价书写都认：`rows = [ { inst = "X", … }, … ]`（可跨行）与
+/// `[[templates.rows]]` + `inst = "X"`。守卫只需要"知道这些名字存在"。
 fn template_instance_names(src: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut in_block = false;
-    let mut names_pat: Option<String> = None;
-    let mut explicit: Vec<String> = Vec::new();
-    let mut params: Vec<(String, Vec<String>)> = Vec::new();
-    let flush = |pat: &Option<String>,
-                 explicit: &[String],
-                 params: &[(String, Vec<String>)],
-                 out: &mut Vec<String>| {
-        if !explicit.is_empty() {
-            out.extend(explicit.iter().cloned());
-            return;
-        }
-        let Some(pat) = pat else { return };
-        let mut acc = vec![pat.clone()];
-        for (k, vals) in params {
-            let needle = format!("{{{k}}}");
-            if !acc.iter().any(|s| s.contains(&needle)) {
-                continue;
-            }
-            let mut next = Vec::new();
-            for s in &acc {
-                for v in vals {
-                    next.push(s.replace(&needle, v));
-                }
-            }
-            acc = next;
-        }
-        out.extend(acc);
-    };
     for line in src.lines() {
-        let t = line.trim();
-        if t.starts_with("[[templates]]") {
-            flush(&names_pat, &explicit, &params, &mut out);
-            in_block = true;
-            names_pat = None;
-            explicit.clear();
-            params.clear();
-            continue;
-        }
-        if t.starts_with("[[") || (t.starts_with('[') && t.ends_with(']')) {
-            if in_block {
-                flush(&names_pat, &explicit, &params, &mut out);
-            }
-            in_block = false;
-            continue;
-        }
-        if !in_block {
-            continue;
-        }
-        if let Some(rest) = t.strip_prefix("name = \"")
-            && let Some(end) = rest.find('"')
-        {
-            names_pat = Some(rest[..end].to_string());
-        } else if let Some(rest) = t.strip_prefix("names = [")
-            && let Some(end) = rest.find(']')
-        {
-            for v in rest[..end].split(',') {
-                let v = v.trim().trim_matches('"');
-                if !v.is_empty() {
-                    explicit.push(v.to_string());
-                }
-            }
-        } else if let Some(rest) = t.strip_prefix("params = {")
-            && let Some(end) = rest.find('}')
-        {
-            for item in rest[..end].split(',') {
-                let Some((k, v)) = item.split_once('=') else {
-                    continue;
-                };
-                let key = k.trim().to_string();
-                let vals: Vec<String> = v
-                    .trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| s.starts_with('"'))
-                    .map(|s| s.trim_matches('"').to_string())
-                    .collect();
-                if !vals.is_empty() {
-                    params.push((key, vals));
-                }
-            }
-        }
-    }
-    if in_block {
-        flush(&names_pat, &explicit, &params, &mut out);
+        out.extend(inst_literals(line));
     }
     out
 }

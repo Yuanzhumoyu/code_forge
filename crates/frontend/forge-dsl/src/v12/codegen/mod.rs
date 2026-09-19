@@ -230,7 +230,7 @@ fn gen_mem_support(model: &V12Model, _infos: &[InstInfo]) -> Result<TokenStream,
 }
 
 /// 单条指令的生成信息：form 解析 + 操作数→位域绑定 + mnemonic/asm 模板。
-/// `inst` 为 owned（families 展开后每个 variant 是一条合成指令）。
+/// `inst` 为 owned（`[[templates]]` 展开在解析期完成，这里就是完整指令表）。
 pub(crate) struct InstInfo<'a> {
     inst: Instruction,
     /// **已解析的编码键**：`form` 预设 ⊕ 指令级逐键覆盖（`EncKeys::over`）。
@@ -242,42 +242,8 @@ pub(crate) struct InstInfo<'a> {
 }
 
 fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> {
-    // 展开 families：每个 variant 合成一条指令（family.fields 共享 +
-    // variant.fields 覆盖；form 共享；asm = 家族模板 {name} → 变体名小写）
-    let mut insts: Vec<Instruction> = m.instructions.clone();
-    for fam in &m.families {
-        for var in &fam.variants {
-            let mut fields = fam.fields.clone().unwrap_or_default();
-            if let Some(vf) = &var.fields {
-                for (k, v) in vf {
-                    fields.insert(k.clone(), *v);
-                }
-            }
-            let asm = var
-                .asm
-                .clone()
-                .unwrap_or_else(|| fam.asm.replace("{name}", &var.name.to_lowercase()));
-            insts.push(Instruction {
-                name: var.name.clone(),
-                form: Some(fam.form.clone()),
-                opcode: var.opcode.or(fam.opcode),
-                fields: if fields.is_empty() {
-                    None
-                } else {
-                    Some(fields)
-                },
-                ops: fam.ops.clone(),
-                asm,
-                when: var.when.clone(),
-                enc: fam.enc.clone(),
-                effect: Vec::new(),
-                implicit_regs: None,
-                global_reloc: None,
-                roles: var.roles.clone(),
-                from_template: None,
-            });
-        }
-    }
+    // `[[templates]]` 已在解析期展开进 `m.instructions`（`v18 S2`），此处直接用。
+    let insts: Vec<Instruction> = m.instructions.clone();
     let mut out = Vec::new();
     for inst in &insts {
         // 编码键 = form 预设（可省略）⊕ 指令级逐键覆盖（指令优先）

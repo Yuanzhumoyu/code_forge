@@ -6,7 +6,8 @@
 //!
 //! 模型范围：`[meta]` / `[reg.*]` / `[conventions.bitfields]`（+modrm）/
 //! `[[operand_slots]]` / `[[forms]]`（语义键）/ `[[instructions]]` /
-//! `[[families]]` / `[[lowering]]`（符号化操作数）/ `[abi]` / `[emit]`；
+//! `[[templates]]`（`body` + `rows`，唯一复用机制）/ `[[lowering]]`（符号化操作数）/
+//! `[abi]` / `[emit]`；
 //! 代码生成见 `codegen`（自包含 encode/decode/asm + TargetMachine 集成层）。
 
 #![cfg_attr(not(test), allow(dead_code))]

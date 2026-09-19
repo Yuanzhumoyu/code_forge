@@ -570,8 +570,9 @@ asm = "nop"
     }
 }
 
+/// 模板行必须给出编码信息（`opcode` 或 `fields`），否则校验失败。
 #[test]
-fn validation_family_variant_needs_opcode() {
+fn validation_template_row_needs_encoding() {
     let doc = r#"
 [meta]
 name = "x"
@@ -583,21 +584,15 @@ kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-[[families]]
+[[templates]]
 name = "F"
-form = "R"
-ops = ["dst:g:out"]
-asm = "f {dst}"
-[[families.variants]]
-name = "V1"
+body = { form = "R", ops = ["dst:g:out"], asm = "f {dst}" }
+rows = [ { inst = "V1" } ]
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         V12Error::Validation { msg, .. } => {
-            assert!(
-                msg.contains("variant needs `opcode` or `fields`"),
-                "msg: {msg}"
-            );
+            assert!(msg.contains("缺少编码信息"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -1447,19 +1442,24 @@ fn lowering_allows_same_insts_with_different_when() {
     parse_and_validate(&lowering_doc(rule)).expect("when 不同不算重复");
 }
 
-/// families 展开出的变体指令名也算已声明（`{name}` → 变体名小写）。
+/// 模板展开出的实例指令名也算已声明（实例名 = `rows[].inst`）。
 #[test]
-fn lowering_accepts_family_name() {
-    let rule = "[[families]]\nname = \"F\"\nform = \"RR\"\n\
-                ops = [\"dst:g:out\", \"src:g\"]\nasm = \"{name} {dst}, {src}\"\n\
-                [[families.variants]]\nname = \"NEG\"\nopcode = 9\n\
+fn lowering_accepts_template_instance_name() {
+    let rule = "[[templates]]\nname = \"F\"\n\
+                body = { form = \"RR\", ops = [\"dst:g:out\", \"src:g\"], \
+                asm = \"{inst.lower} {dst}, {src}\" }\n\
+                rows = [ { inst = \"NEG\", opcode = 9 } ]\n\
                 [[lowering]]\nop = \"Ineg\"\ninsts = [\"NEG {out}, {0}\"]";
-    parse_and_validate(&lowering_doc(rule)).expect("family 变体指令名必须被识别");
+    parse_and_validate(&lowering_doc(rule)).expect("模板实例指令名必须被识别");
 }
 
-// ─────────── S10e：显式 [[aliases]] 解析（多态 / 1:1 / 校验） ───────────
+// ─────────── 指令级 `ref`（多态引用 / 1:1 / 校验） ───────────
+//
+// 旧 `[[aliases]]` 已并入指令属性：`ref = "名字"`。多条指令共用同一个 `ref`
+// 即多态引用（原先"别名指向多成员"的场景），单条指令给 `ref` 即 1:1 引用。
+// `ref` 与指令名同池（lowering/pattern/emit 行首按它分派），故不得与指令名冲突。
 
-fn aliases_doc(extra: &str) -> String {
+fn ref_doc(r16: &str, r32: &str, extra: &str) -> String {
     format!(
         r#"
 [meta]
@@ -1482,13 +1482,13 @@ opcode_field = "opcode"
 operand_fields = ["rd", "rs1"]
 [[instructions]]
 name = "MOV16"
-form = "RR"
+{r16}form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
 asm = "mov {{dst}}, {{src}}"
 [[instructions]]
 name = "MOV32"
-form = "RR"
+{r32}form = "RR"
 opcode = 2
 ops = ["dst:g:out", "src:g"]
 asm = "mov {{dst}}, {{src}}"
@@ -1497,77 +1497,53 @@ asm = "mov {{dst}}, {{src}}"
     )
 }
 
+/// 注入一行 `ref = "名字"`（空名字用于"ref 不能为空"用例）。
+fn ref_line(name: &str) -> String {
+    format!("ref = \"{name}\"\n")
+}
+
 #[test]
-fn aliases_polymorphic_lowering_accepted() {
-    // 别名指向多成员指令；lowering 首词引用别名名 → 解析通过（多态分派在 codegen 消歧）
-    let doc = aliases_doc(
-        "[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\", \"MOV32\"]\n\
-         [[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]",
+fn ref_polymorphic_lowering_accepted() {
+    // 两条指令共用 `ref = "mov"`；lowering 引用该引用名 → 解析通过
+    //（具体选哪条由 codegen 按操作数签名消歧）
+    let doc = ref_doc(
+        &ref_line("mov"),
+        &ref_line("mov"),
+        "[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]",
     );
-    parse_and_validate(&doc).expect("多态别名 + lowering 引用别名必须通过");
+    parse_and_validate(&doc).expect("多态 ref + lowering 引用必须通过");
 }
 
 #[test]
-fn aliases_1_to_1_lowering_accepted() {
-    // 别名指向单成员指令（1:1）——等价于直接引用指令名，仍须被 lowering 接受
-    let doc = aliases_doc(
-        "[[aliases]]\nname = \"copy\"\ninsts = [\"MOV16\"]\n\
-         [[lowering]]\nop = \"Copy\"\ninsts = [\"copy {out}, {0}\"]",
+fn ref_1_to_1_lowering_accepted() {
+    // 单条指令给 `ref`（1:1）——等价于直接引用指令名，仍须被 lowering 接受
+    let doc = ref_doc(
+        &ref_line("copy"),
+        "",
+        "[[lowering]]\nop = \"Copy\"\ninsts = [\"copy {out}, {0}\"]",
     );
-    parse_and_validate(&doc).expect("1:1 别名 + lowering 引用别名必须通过");
+    parse_and_validate(&doc).expect("1:1 ref + lowering 引用必须通过");
 }
 
 #[test]
-fn aliases_reject_conflict_with_inst_name() {
-    let doc = aliases_doc("[[aliases]]\nname = \"MOV16\"\ninsts = [\"MOV32\"]");
+fn ref_rejects_conflict_with_inst_name() {
+    // 引用名与指令名同池：`MOV32` 已被指令占用
+    let doc = ref_doc(&ref_line("MOV32"), "", "");
     let msg = match parse_and_validate(&doc).unwrap_err() {
         V12Error::Validation { msg, .. } => msg,
         other => panic!("expected Validation error, got {other:?}"),
     };
-    assert!(msg.contains("别名名与指令名冲突"), "msg: {msg}");
+    assert!(msg.contains("与指令名冲突"), "msg: {msg}");
 }
 
 #[test]
-fn aliases_reject_unknown_member() {
-    let doc = aliases_doc("[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\", \"NOPE\"]");
+fn ref_rejects_empty() {
+    let doc = ref_doc(&ref_line(""), "", "");
     let msg = match parse_and_validate(&doc).unwrap_err() {
         V12Error::Validation { msg, .. } => msg,
         other => panic!("expected Validation error, got {other:?}"),
     };
-    assert!(msg.contains("成员指令 'NOPE' 未声明"), "msg: {msg}");
-}
-
-#[test]
-fn aliases_reject_empty_insts() {
-    let doc = aliases_doc("[[aliases]]\nname = \"mov\"\ninsts = []");
-    let msg = match parse_and_validate(&doc).unwrap_err() {
-        V12Error::Validation { msg, .. } => msg,
-        other => panic!("expected Validation error, got {other:?}"),
-    };
-    assert!(msg.contains("insts must not be empty"), "msg: {msg}");
-}
-
-#[test]
-fn aliases_reject_duplicate_member() {
-    let doc = aliases_doc("[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\", \"MOV16\"]");
-    let msg = match parse_and_validate(&doc).unwrap_err() {
-        V12Error::Validation { msg, .. } => msg,
-        other => panic!("expected Validation error, got {other:?}"),
-    };
-    assert!(msg.contains("成员指令 'MOV16' 重复"), "msg: {msg}");
-}
-
-#[test]
-fn aliases_reject_duplicate_name() {
-    let doc = aliases_doc(
-        "[[aliases]]\nname = \"mov\"\ninsts = [\"MOV16\"]\n\
-         [[aliases]]\nname = \"mov\"\ninsts = [\"MOV32\"]",
-    );
-    let msg = match parse_and_validate(&doc).unwrap_err() {
-        V12Error::Validation { msg, .. } => msg,
-        other => panic!("expected Validation error, got {other:?}"),
-    };
-    assert!(msg.contains("别名名重复"), "msg: {msg}");
+    assert!(msg.contains("ref 不能为空"), "msg: {msg}");
 }
 
 // ─────────── S2：vary 行表 / in 谓词 / 特异性裁决 / 死规则 ───────────

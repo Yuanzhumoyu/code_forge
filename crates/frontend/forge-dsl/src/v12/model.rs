@@ -50,17 +50,11 @@ pub struct V12Model {
     /// 指令（`[[instructions]]`）。
     #[serde(default)]
     pub instructions: Vec<Instruction>,
-    /// 参数化指令族（`[[families]]`）。
-    #[serde(default)]
-    pub families: Vec<Family>,
+
     /// 参数化指令模板（`[[templates]]`，v18 S2）：解析期展开为指令 + 别名。
     #[serde(default)]
     pub templates: Vec<Template>,
-    /// 显式别名（`[[aliases]]`，S10e）：引用名 → 指令名列表。lowering/pattern/
-    /// emit 模板行首用此引用名（或直接指令名）指向指令；一个引用名映射多条
-    /// 指令 = 多态分派（按操作数签名消歧）。
-    #[serde(default)]
-    pub aliases: Vec<Alias>,
+
     /// 指令选择规则（`[[lowering]]`）。
     #[serde(default)]
     pub lowering: Vec<Lowering>,
@@ -1258,6 +1252,11 @@ pub struct Instruction {
     /// 指向 `[[instructions]]` 节头。
     #[serde(skip, default)]
     pub from_template: Option<Box<str>>,
+    /// **引用名**（`ref`，v18 S2）：lowering/pattern/emit 模板行首可用它指向本指令；
+    /// **多条指令共用一个 `ref`** 即"多态引用"（按操作数签名分派）——原先的
+    /// `[[aliases]]` 就是"几条指令共用同一个 ref"。
+    #[serde(default, rename = "ref")]
+    pub reference: Option<String>,
 }
 
 /// 指令的**语义角色**（v15-S4）。
@@ -1414,115 +1413,240 @@ pub struct OperandUse {
     pub field: Option<String>,
 }
 
-// ──────────────────────── [[families]] ────────────────────────
-
-/// 参数化指令族：共享 form/操作数布局的变体集合。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Family {
-    pub name: String,
-    pub form: String,
-    /// 家族共享主 opcode（v16）；variant.opcode 覆盖（riscv R 型 opcode=0x33）。
-    #[serde(default)]
-    pub opcode: Option<u64>,
-    /// 家族共享固定字段（如 SSE 的 prefix/w）；variant.fields 覆盖/追加。
-    #[serde(default)]
-    pub fields: Option<BTreeMap<String, u64>>,
-    /// 家族共享命名操作数声明（同 [`Instruction::ops`]）。
-    #[serde(default)]
-    pub ops: Option<Vec<String>>,
-    /// 家族共享编码键覆盖（同 [`Instruction::enc`]）——`modrm` 映射引用 `ops`
-    /// 的名字，family 内全部变体共用同一份声明，故可放在家族层。
-    #[serde(flatten)]
-    pub enc: EncKeys,
-    /// 家族共享 asm 模板（完整格式；`{name}` 占位符替换为变体名小写 =
-    /// 变体助记符）。
-    pub asm: String,
-    pub variants: Vec<FamilyVariant>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FamilyVariant {
-    pub name: String,
-    #[serde(default)]
-    pub opcode: Option<u64>,
-    #[serde(default)]
-    pub fields: Option<BTreeMap<String, u64>>,
-    /// 变体级 asm 覆盖（罕见；缺省用家族模板 `{name}` 展开）。
-    #[serde(default)]
-    pub asm: Option<String>,
-    /// 变体级语义角色（见 [`Role`]）——家族里只有个别变体担任 ABI 角色
-    /// （如 SSE 家族里 MOVSD 是 f64 移动、MOVAPS 是向量全宽移动）。
-    #[serde(default)]
-    pub roles: Vec<Role>,
-    #[serde(default)]
-    pub when: Option<toml::Value>,
-}
-
 // ──────────────────────── [[templates]] ────────────────────────
 
-/// 参数化指令模板（v18 S2）：**一处声明 → N 条具体指令**。
+/// 参数化指令模板（v18 S2）：**一处声明 → N 条具体指令**，本 DSL 唯一的"指令分组"机制。
 ///
-/// 与 `[[families]]` 的区别（后者 S2 起删除）：
+/// 取代 v17 的三套并行机制（`[[families]]` / `[[aliases]]` / 早期 `[[templates]]` 的平行
+/// 参数表）——用户明确要求"只能保留一个，不然容易导致使用负担"。
 ///
-/// - 参数域 `params` 是**等长列表按下标 zip**（与 [`Lowering::vary`] 同语义、同一实现），
-///   实例可逐行替换**任意字符串字段**（`ops`/`asm`/`name`/`ref`/`form`/enc 键）；
-/// - `{param}` 若**独占整个字符串**（如 `opcode = "{op}"`），替换保留参数的类型
-///   （整数仍是整数）——因此 `opcode`/`fields` 的值也能逐行给；
-/// - `ref` 自动派生别名（取代手写 `[[aliases]]`）：单值 = 全部实例共用（多态分派），
-///   `"{m}"` 插值 = 每实例各得一个 1:1 引用名；
-/// - `[[templates.overrides]]` 给个别行打补丁（如只给 64 位版一个语义角色）。
-///
-/// 展开在**解析期**完成（与 `vary` 一样）：下游（校验/生成）只看到普通
-/// [`Instruction`] 与 [`Alias`]，生成器一行都不用改。展开出的指令带
-/// `from_template = Some(模板名)`，诊断因此仍能指回模板声明行。
+/// - **行（`[[templates.rows]]`）是唯一的事实载体**：每行一条指令，键值都是 TOML 值
+///   （可嵌套数组/表），不需要人工对齐多列平行列表；
+/// - **`body` 是共享默认值**：行的同名字段覆盖它，表（如 `fields`/`modrm`）**递归合并**；
+///   不给 `body` 就是"一组各自独立的指令"（原先 `[[aliases]]` 的场景）；
+/// - **插值**：字符串可写 `{键}`（该行的键）与 `{inst}`（实例名），`{键.lower}` 取小写
+///   （原先 `[[families]]` 的"变体名小写即助记符"由此显式表达）；
+///   **整串恰为一个占位符**时保留值的类型（`opcode = "{opcode}"` 仍是整数）；
+/// - **`ref`**：行（或 `body`）上的**引用名**——多条指令共用一个 `ref` 即"多态引用"
+///   （lowering/pattern/emit 行首可用，按操作数签名分派）；原先的 `[[aliases]]` 就是
+///   "几条指令共用同一个 ref"。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Template {
-    /// 实例名（可含 `{参数}`），如 `"ADDIMM{x}"`。与 `names` 二选一。
+    /// 模板名（诊断用；缺省取首行的 `inst`）。
     #[serde(default)]
     pub name: Option<String>,
-    /// 逐行实例名（与参数域等长）。与 `name` 二选一。
+    /// 共享指令体（指令字段的默认值；可省略）。
     #[serde(default)]
-    pub names: Option<Vec<String>>,
-    /// 参数域：名字 → 取值列表（各列表**等长**，按下标 zip）。
-    pub params: BTreeMap<String, Vec<toml::Value>>,
-    /// 引用名（进 `[[aliases]]`）：单值字符串、或含 `{参数}` 的插值模板。
-    #[serde(default, rename = "ref")]
-    pub ref_name: Option<String>,
-    /// 指令体（TOML 内联表，形状 = [`Instruction`]；字符串里的 `{参数}` 被替换）。
-    pub body: toml::Value,
-    /// 逐行补丁（`row` = 参数行下标）。
-    #[serde(default)]
-    pub overrides: Vec<TemplateOverride>,
+    pub body: Option<toml::Table>,
+    /// 行：每行一条指令实例（`inst` 必填，其余键即指令字段）。
+    pub rows: Vec<TemplateRow>,
 }
 
-/// 模板的逐行补丁：把 `body` 的对应键覆盖/合并（表递归合并）。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TemplateOverride {
-    /// 参数行下标（0-based）。
-    pub row: usize,
-    /// 覆盖内容（形状 = [`Instruction`] 的子集；表递归合并）。
-    pub body: toml::Value,
-}
-
-// ──────────────────────── [[aliases]] ────────────────────────
-
-/// 显式别名：一个**引用名**映射到一条或多条指令（多态分派）。
+/// 模板的一行：`inst` = 实例名，其余键是**任意指令字段**（可含 `ref`）。
 ///
-/// lowering/pattern/emit 模板的行首词不再是汇编助记符，而是本表的名字（或
-/// 指令自身的 `name`）。单成员 = 1:1 别名（可读的助记符名 → 内部指令名）；
-/// 多成员 = 多态（如 `mov` → MOV_R_RM/MOV_RM_R/…，按操作数签名消歧）。
+/// 故意**不** `deny_unknown_fields`：行键空间就是指令字段空间，由 `Instruction` 的反序列化
+/// 拒绝拼错的键（错误消息点名哪一行/哪个实例）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Alias {
-    /// 引用名（lowering/pattern/emit 行首词）。
-    pub name: String,
-    /// 成员指令名列表（每个都是已声明的 `[[instructions.*]]` 或
-    /// `[[families.*.variants.*]]` 的 `name`）。
-    pub insts: Vec<String>,
+pub struct TemplateRow {
+    /// 实例名（进 `Inst` 枚举与指令表；全 ISA 唯一）。
+    pub inst: String,
+    /// 该行的指令字段。
+    #[serde(flatten)]
+    pub fields: toml::Table,
+}
+
+/// 表递归合并：`src` 覆盖 `dst`；两边都是表时递归，其它情况整体替换。
+pub(crate) fn deep_merge(dst: &mut toml::Table, src: &toml::Table) {
+    for (k, v) in src {
+        match (dst.get_mut(k), v) {
+            (Some(toml::Value::Table(d)), toml::Value::Table(s)) => deep_merge(d, s),
+            _ => {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+    }
+}
+
+/// 值的文本形态（插值用）：字符串原样，其余用 TOML 文本。
+fn value_text(v: &toml::Value) -> String {
+    match v {
+        toml::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// 把字符串里的 `{键}` / `{键.lower}` 换成该行的取值。
+///
+/// - **只替换"行里真有这个键"的占位符**：其余 `{…}` 原样保留（那是内层 DSL 的占位符，
+///   如 `asm` 里的 `{rd}`/`{imm}`——由操作数校验负责它们的正确性）；
+/// - 整串恰为一个占位符 ⇒ 直接返回该值（**保留类型**）；
+/// - 否则做文本替换后继续递归（支持多个占位符与混合文本）。
+fn subst(v: &toml::Value, vars: &toml::Table, path: &str) -> Result<toml::Value, String> {
+    let _ = path;
+    match v {
+        toml::Value::String(s) => {
+            let mut pos = 0usize;
+            while let Some(rel_open) = s[pos..].find('{') {
+                let open = pos + rel_open;
+                let Some(rel_close) = s[open..].find('}') else {
+                    break;
+                };
+                let close = open + rel_close;
+                let raw = &s[open + 1..close];
+                let (key, lower) = match raw.strip_suffix(".lower") {
+                    Some(k) => (k, true),
+                    None => (raw, false),
+                };
+                if let Some(val) = vars.get(key) {
+                    let resolved = if lower {
+                        toml::Value::String(value_text(val).to_lowercase())
+                    } else {
+                        val.clone()
+                    };
+                    if open == 0 && close == s.len() - 1 {
+                        return Ok(resolved);
+                    }
+                    let mut next = String::with_capacity(s.len());
+                    next.push_str(&s[..open]);
+                    next.push_str(&value_text(&resolved));
+                    next.push_str(&s[close + 1..]);
+                    return subst(&toml::Value::String(next), vars, path);
+                }
+                // 不是本行的键 ⇒ 内层 DSL 的占位符，跳过它继续找下一个
+                pos = close + 1;
+            }
+            Ok(v.clone())
+        }
+        toml::Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                out.push(subst(it, vars, path)?);
+            }
+            Ok(toml::Value::Array(out))
+        }
+        toml::Value::Table(t) => {
+            let mut out = toml::map::Map::new();
+            for (k, val) in t {
+                out.insert(k.clone(), subst(val, vars, path)?);
+            }
+            Ok(toml::Value::Table(out))
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+/// 收集值里引用的插值键（`{key}` / `{key.lower}`），递归进数组与表。
+fn referenced_keys(v: &toml::Value, out: &mut std::collections::BTreeSet<String>) {
+    match v {
+        toml::Value::String(s) => {
+            let mut pos = 0usize;
+            while let Some(rel) = s[pos..].find('{') {
+                let open = pos + rel;
+                let Some(end) = s[open..].find('}') else {
+                    break;
+                };
+                let close = open + end;
+                let raw = &s[open + 1..close];
+                let key = raw.strip_suffix(".lower").unwrap_or(raw);
+                out.insert(key.to_string());
+                pos = close + 1;
+            }
+        }
+        toml::Value::Array(items) => {
+            for it in items {
+                referenced_keys(it, out);
+            }
+        }
+        toml::Value::Table(t) => {
+            for (_, val) in t {
+                referenced_keys(val, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+impl Template {
+    /// 模板的展示名（诊断用）。
+    pub fn label(&self, index: usize) -> String {
+        self.name
+            .clone()
+            .or_else(|| self.rows.first().map(|r| r.inst.clone()))
+            .unwrap_or_else(|| format!("#{index}"))
+    }
+
+    /// 展开为指令列表（每行一条）。
+    ///
+    /// 行键分三类（规则由 `body` 唯一决定）：
+    ///
+    /// - `body` 里**有**这个键 ⇒ 行值覆盖它（表递归合并）；
+    /// - `body` 里**没有**、但 body 的字符串用 `{键}` 引用了它 ⇒ **纯参数**，
+    ///   只参与插值、不进指令字段（如 `slot = "r64"`）；
+    /// - 其余（body 没有、也没被引用）⇒ 当作**指令字段**（拼错会被 `Instruction`
+    ///   的反序列化点名拒绝，例如把 `slot` 写成 `slott`）。
+    pub fn expand(&self, index: usize) -> Result<Vec<Instruction>, String> {
+        let label = self.label(index);
+        let path = format!("[[templates.{label}]]");
+        if self.rows.is_empty() {
+            return Err(format!("{path}: rows 不能为空（模板至少要一行）"));
+        }
+        let body = self.body.clone().unwrap_or_default();
+        let mut referenced = std::collections::BTreeSet::new();
+        for (_, v) in &body {
+            referenced_keys(v, &mut referenced);
+        }
+        let mut out = Vec::with_capacity(self.rows.len());
+        for (r, row) in self.rows.iter().enumerate() {
+            if row.inst.trim().is_empty() {
+                return Err(format!("{path}: 第 {r} 行的 `inst` 不能为空"));
+            }
+            let mut table = body.clone();
+            for (k, v) in &row.fields {
+                if !body.contains_key(k) && referenced.contains(k) {
+                    continue; // 纯参数：只参与插值
+                }
+                match (table.get_mut(k), v) {
+                    (Some(toml::Value::Table(dst)), toml::Value::Table(src)) => {
+                        deep_merge(dst, src)
+                    }
+                    _ => {
+                        table.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            let mut vars = row.fields.clone();
+            vars.insert("inst".to_string(), toml::Value::String(row.inst.clone()));
+            for (_, v) in table.iter_mut() {
+                *v = subst(v, &vars, &path)?;
+            }
+            table.insert("name".to_string(), toml::Value::String(row.inst.clone()));
+            let mut inst: Instruction = toml::Value::Table(table)
+                .try_into()
+                .map_err(|e| format!("{path}: 行 '{name}' 的字段非法：{e}", name = row.inst))?;
+            inst.from_template = Some(label.clone().into());
+            out.push(inst);
+        }
+        Ok(out)
+    }
+}
+
+impl V12Model {
+    /// 展开全部 `[[templates]]`：实例拼进 `instructions`。
+    ///
+    /// 在**解析期**调用（`parse` 在展开 `lowering.vary` 之后），因此下游（校验/生成）
+    /// 只看到普通指令与它们的 `ref`——生成器无需感知模板。
+    pub fn expand_templates(&mut self) -> Result<(), String> {
+        if self.templates.is_empty() {
+            return Ok(());
+        }
+        let mut expanded: Vec<Instruction> = Vec::new();
+        for (i, t) in self.templates.iter().enumerate() {
+            expanded.extend(t.expand(i)?);
+        }
+        self.instructions.extend(expanded);
+        Ok(())
+    }
 }
 
 // ──────────────────────── [[lowering]] ────────────────────────
@@ -1581,196 +1705,6 @@ impl VaryValue {
             VaryValue::Int(v) => Some(*v),
             VaryValue::Str(_) => None,
         }
-    }
-}
-
-impl Template {
-    /// 模板的展示名（诊断用）。
-    pub fn label(&self, index: usize) -> String {
-        self.name
-            .clone()
-            .or_else(|| self.names.as_ref().and_then(|n| n.first().cloned()))
-            .unwrap_or_else(|| format!("#{index}"))
-    }
-
-    /// 展开为 `(实例名, 引用名, Instruction)` 列表。
-    ///
-    /// 规则见 [`Template`] 的文档；任一不满足即 `Err`（消息带 `[[templates.…]]` 前缀，
-    /// 由诊断层锚到模板声明行）。
-    pub fn expand(
-        &self,
-        index: usize,
-    ) -> Result<Vec<(String, Option<String>, Instruction)>, String> {
-        let label = self.label(index);
-        let path = format!("[[templates.{label}]]");
-        if self.params.is_empty() {
-            return Err(format!("{path}: params 不能为空（模板至少要一个参数域）"));
-        }
-        let rows = self.params.values().next().map(Vec::len).unwrap_or(0);
-        if rows == 0 {
-            return Err(format!("{path}: params 的取值列表不能为空"));
-        }
-        for (k, v) in &self.params {
-            if v.len() != rows {
-                return Err(format!(
-                    "{path}: params 各列表必须等长（按下标 zip 成行）——'{k}' 长 {} ≠ {rows}",
-                    v.len()
-                ));
-            }
-        }
-        if let Some(names) = &self.names
-            && names.len() != rows
-        {
-            return Err(format!(
-                "{path}: names 长 {} ≠ 参数行数 {rows}",
-                names.len()
-            ));
-        }
-        if self.name.is_none() && self.names.is_none() {
-            return Err(format!("{path}: 必须给 name（可含 {{参数}}）或 names"));
-        }
-        let mut out = Vec::with_capacity(rows);
-        for row in 0..rows {
-            let mut table = match &self.body {
-                toml::Value::Table(t) => t.clone(),
-                other => {
-                    return Err(format!(
-                        "{path}: body 必须是内联表（指令字段的集合），got {}",
-                        other.type_str()
-                    ));
-                }
-            };
-            // 逐键替换（字符串里的 {参数}）
-            for (_, v) in table.iter_mut() {
-                *v = self.subst(v, row, &path)?;
-            }
-            // 逐行补丁（表递归合并）
-            for ov in self.overrides.iter().filter(|o| o.row == row) {
-                let toml::Value::Table(patch) = &ov.body else {
-                    return Err(format!("{path}: overrides[row = {row}].body 必须是内联表"));
-                };
-                for (k, v) in patch {
-                    let subst = self.subst(v, row, &path)?;
-                    match table.get_mut(k) {
-                        Some(toml::Value::Table(dst)) => {
-                            if let toml::Value::Table(src) = subst {
-                                dst.extend(src);
-                                continue;
-                            }
-                            table.insert(k.clone(), subst);
-                        }
-                        _ => {
-                            table.insert(k.clone(), subst);
-                        }
-                    }
-                }
-            }
-            // 实例名：names[row] 或 name 插值（再进 body，指令名与实例名同源）
-            let inst_name = match &self.names {
-                Some(names) => names[row].clone(),
-                None => self.interpolate(self.name.as_deref().unwrap_or_default(), row),
-            };
-            table.insert("name".to_string(), toml::Value::String(inst_name.clone()));
-            let inst: Instruction = toml::Value::Table(table.clone())
-                .try_into()
-                .map_err(|e| format!("{path}: 实例 '{inst_name}' 的 body 非法：{e}"))?;
-            let mut inst = inst;
-            inst.from_template = Some(label.clone().into());
-            let ref_name = self.ref_name.as_ref().map(|r| self.interpolate(r, row));
-            out.push((inst_name, ref_name, inst));
-        }
-        Ok(out)
-    }
-
-    /// 文本插值：把 `{参数}` 换成该行取值（`as_text`）。
-    fn interpolate(&self, text: &str, row: usize) -> String {
-        let mut out = text.to_string();
-        for (k, vals) in &self.params {
-            if let Some(v) = vals.get(row) {
-                out = out.replace(&format!("{{{k}}}"), &vary_text(v));
-            }
-        }
-        out
-    }
-
-    /// 值替换：字符串里出现 `{参数}` 时替换；**整串就是 `{参数}`** 时保留参数类型
-    /// （整数仍是整数，故 `opcode = "{op}"` 可用）。
-    fn subst(&self, v: &toml::Value, row: usize, path: &str) -> Result<toml::Value, String> {
-        match v {
-            toml::Value::String(s) => {
-                for (k, vals) in &self.params {
-                    let needle = format!("{{{k}}}");
-                    if !s.contains(&needle) {
-                        continue;
-                    }
-                    let Some(val) = vals.get(row) else {
-                        return Err(format!("{path}: 参数 '{k}' 缺第 {row} 行取值"));
-                    };
-                    if s == &needle {
-                        return Ok(val.clone());
-                    }
-                    let text = vary_text(val);
-                    return self.subst(&toml::Value::String(s.replace(&needle, &text)), row, path);
-                }
-                Ok(v.clone())
-            }
-            toml::Value::Array(items) => {
-                let mut out = Vec::with_capacity(items.len());
-                for it in items {
-                    out.push(self.subst(it, row, path)?);
-                }
-                Ok(toml::Value::Array(out))
-            }
-            toml::Value::Table(t) => {
-                let mut out = toml::map::Map::new();
-                for (k, val) in t {
-                    out.insert(k.clone(), self.subst(val, row, path)?);
-                }
-                Ok(toml::Value::Table(out))
-            }
-            other => Ok(other.clone()),
-        }
-    }
-}
-
-/// 参数值的替换文本（整数直接十进制；字符串原样）。
-fn vary_text(v: &toml::Value) -> String {
-    match v {
-        toml::Value::Integer(i) => i.to_string(),
-        toml::Value::String(s) => s.clone(),
-        toml::Value::Boolean(b) => b.to_string(),
-        other => other.to_string(),
-    }
-}
-
-impl V12Model {
-    /// 展开全部 `[[templates]]`：把实例拼进 `instructions`，并按 `ref` 合成 `[[aliases]]`。
-    ///
-    /// 在**解析期**调用（`parse` 在展开 `lowering.vary` 之后），因此下游（校验/生成）
-    /// 只看到普通指令与别名——生成器无需感知模板。
-    pub fn expand_templates(&mut self) -> Result<(), String> {
-        if self.templates.is_empty() {
-            return Ok(());
-        }
-        // 模板 → 引用名 → 成员（保持声明序，供别名合成）
-        let mut ref_members: Vec<(String, Vec<String>)> = Vec::new();
-        let mut expanded: Vec<Instruction> = Vec::new();
-        for (i, t) in self.templates.iter().enumerate() {
-            for (name, ref_name, inst) in t.expand(i)? {
-                if let Some(r) = ref_name {
-                    match ref_members.iter_mut().find(|(n, _)| *n == r) {
-                        Some((_, members)) => members.push(name),
-                        None => ref_members.push((r, vec![name])),
-                    }
-                }
-                expanded.push(inst);
-            }
-        }
-        self.instructions.extend(expanded);
-        for (name, insts) in ref_members {
-            self.aliases.push(Alias { name, insts });
-        }
-        Ok(())
     }
 }
 

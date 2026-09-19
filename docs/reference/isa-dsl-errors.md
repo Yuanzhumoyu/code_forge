@@ -34,9 +34,8 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 | `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空、`prefix_scan` 条目非法 |
 | `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class`/`classes` 未声明、`byte_reg` 用错组 |
 | `DSL-FORM` | `[[forms]]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
-| `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields` |
-| `DSL-FAMILY` / `DSL-TEMPLATE` | `[[families]]` / `[[templates]]` | 族/模板重名、变体空、`form` 未声明、v18 模板参数域不等长（S2） |
-| `DSL-ALIAS` | `[[aliases]]` | 别名与指令名冲突、成员未声明/重复、空 `insts` |
+| `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突 |
+| `DSL-TEMPLATE` | `[[templates]]` 展开出的实例 | 实例的 `form` 未声明、操作数槽未声明、缺少编码信息等——消息前缀是 `[[templates.X]]`（X = 模板名），模板行本身的错误同样归这里 |
 | `DSL-LOWER` | `[[lowering]]` | 引用名未声明、占位符未知、**`when` 属性未知**（恒假 ⇒ 规则永不命中）、完全重复、死规则 |
 | `DSL-PATTERN` | `[[pattern]]` | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知 |
 | `DSL-ABI` | `[abi]` | 寄存器名未在 `[reg.*]` 声明（scratch/reserved/ret_regs/call_clobbers/call_ret_reg/callee_saved/arg_class） |
@@ -66,29 +65,30 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 
 ### 3.4 `[emit.prologue].insts[i]: 未知指令引用 'X'` / `未知伪指令 '@x'` / `未知占位符 '{x}'`
 
-`[emit]` 与 `[spill.*]` 模板只能引用**已声明指令名或 `[[aliases]]` 名**，`@` 伪指令只认
+`[emit]` 与 `[spill.*]` 模板只能引用**已声明指令名或引用名（指令的 `ref`）**，`@` 伪指令只认
 `@push_callee` / `@pop_callee` / `@frame_alloc` / `@frame_free` / `@move_args`，
 `[emit]` 占位符只认 `{frame_size}` / `{frame_size_neg}` / `{frame_size_mN}` / `{callee_saved_bytes}`，
 `[spill]` 只认编号 `{N}`。**为什么硬报**：S0 基线实测这些位置**完全不校验**——把
 `MOV64_RR` 写成 `MOV64_R` 要等到生成代码编译甚至运行时才暴露（见方案 §12.4）。
 
-### 3.5 `[[templates.X]]: …`（v18 S2）
+### 3.5 `[[templates.X]]: …`（v18 S2c）
 
 模板展开发生在**解析期**，因此模板自身的错误是 `DSL-TOML`（解析阶段，带 `[[templates.X]]`
-前缀与行号），展开出的指令若非法（如定宽字段未声明）则报 `DSL-INST`，但消息前缀会被改写回
-`[[templates.X]]`——位置始终落在**模板声明行**，不会指向源里不存在的 `[[instructions.实例名]]`。
+前缀与行号），展开出的指令若非法则报 `DSL-TEMPLATE`（消息前缀是 `[[templates.X]]`，X = 模板名）。
+无论哪种，位置都落在**模板声明**上（块内还会精准到出错的那一行 / 那个 `inst`），不会指向源里
+不存在的 `[[instructions.实例名]]`。
 
 常见消息与修法：
 
 | 消息 | 修法 |
 | --- | --- |
-| `params 不能为空` / `params 的取值列表不能为空` | 模板至少要一个参数域，且每个域非空 |
-| `params 各列表必须等长（按下标 zip 成行）——'k' 长 M ≠ N` | 补齐短的那一列 |
-| `names 长 M ≠ 参数行数 N` | `names` 与参数域等长，或改用 `name = "前缀{参数}"` |
-| `必须给 name（可含 {参数}）或 names` | 模板实例必须有名字 |
+| `rows 不能为空（模板至少要一行）` | 模板至少要写一行 `{ inst = "…" }` |
+| `第 N 行的 inst 不能为空` | 补上 `inst`（= 指令名，全 ISA 唯一） |
+| `行 'NAME' 的字段非法：unknown field 'k'` | 行键写错了：`body` 里有同名键 = 覆盖，body 用 `{k}` 引用的 = 纯参数，其余都会被 `Instruction` 当字段解析 |
+| `指令缺少编码信息——至少要给 opcode/fields，或 opcode_reg/modrm/vex/evex/imm 之一` | 该指令没有任何编码来源（`form` 只给 `opcode_field` 之类的修饰不算） |
+| `ref 不能为空` / `ref 'X' 与指令名冲突（引用名与指令名同池）` | `ref` 要么省略，要么给一个不与任何指令名重名的非空名字 |
+| `duplicate instruction name 'X'` | 模板实例名与别的指令/实例重名（模板之间、模板与手写指令之间同池） |
 | `body 必须是内联表（指令字段的集合）` | `body = { … }`，不能是字符串/数组 |
-| `实例 'NAME' 的 body 非法：…` | 按内层 serde 消息补字段（通常是 `asm`/`form`/`ops`） |
-| `overrides[row = N].body 必须是内联表` | `[[templates.overrides]]` 的 `body` 用内联表 |
 
 ### 3.6 位置看起来不对？
 

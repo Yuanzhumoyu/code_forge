@@ -35,24 +35,17 @@ use quote::{format_ident, quote};
 
 /// 入口：`pub(crate)` 由 `integration::gen_integration()` 调用。
 pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
-    // 引用名 → 候选指令：指令 `name`（一对一）或显式 `[[aliases]]`（多态）。
+    // 引用名 → 候选指令：每条指令登记自己的 `name`，并（若有）登记它的 `ref`。
+    // **多条指令共用一个 `ref`** 就是多态引用（原先 `[[aliases]]` 的语义）。
     // 同引用名多形状（如 add reg,reg 与 add reg,imm）→ 由 gen_lowering_insts
     // 按模板操作数 token 类型消歧（reg/imm/mem/cond）。
     let mut ref_to_infos: std::collections::HashMap<&str, Vec<&InstInfo>> =
         std::collections::HashMap::new();
     for i in infos {
         ref_to_infos.entry(&i.inst.name).or_default().push(i);
-    }
-    for a in &model.aliases {
-        let mut members = Vec::with_capacity(a.insts.len());
-        for name in &a.insts {
-            let info = infos
-                .iter()
-                .find(|i| &i.inst.name == name)
-                .ok_or_else(|| format!("[[aliases.{}]]: 成员指令 '{name}' 未声明", a.name))?;
-            members.push(info);
+        if let Some(r) = &i.inst.reference {
+            ref_to_infos.entry(r.as_str()).or_default().push(i);
         }
-        ref_to_infos.entry(&a.name).or_default().extend(members);
     }
     let name_to_vn = ref_to_infos;
 

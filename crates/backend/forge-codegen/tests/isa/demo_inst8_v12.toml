@@ -96,6 +96,7 @@ asm = "nop"
 
 [[instructions]]
 name = "ADD8"
+ref = "add"
 form = "R3"
 opcode = 1
 ops = ["dst:r2:out", "src:r2", "src2:r2"]
@@ -103,6 +104,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MOV8"
+ref = "mov"
 roles = ["gpr_mov"]
 form = "R2"
 opcode = 2
@@ -118,10 +120,3 @@ ops = ["src:r2", "target:lab"]
 asm = "brz {src}, {target}"
 
 # ── 显式别名（多态引用名 → 指令名列表）──
-[[aliases]]
-name = "add"
-insts = ["ADD8"]
-
-[[aliases]]
-name = "mov"
-insts = ["MOV8"]

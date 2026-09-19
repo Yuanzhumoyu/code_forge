@@ -184,9 +184,7 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "operand_slots" => "DSL-SLOT",
         "forms" => "DSL-FORM",
         "instructions" => "DSL-INST",
-        "families" => "DSL-FAMILY",
         "templates" => "DSL-TEMPLATE",
-        "aliases" => "DSL-ALIAS",
         "lowering" => "DSL-LOWER",
         "pattern" => "DSL-PATTERN",
         "abi" => "DSL-ABI",
@@ -204,10 +202,8 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
 /// | 源写法 | 键 |
 /// | --- | --- |
 /// | `[[instructions]]` + `name = "X"` | `("instructions", "X")` |
-/// | `[[families.variants]]` + `name = "X"` | `("instructions", "X")`（同命名空间）+ `("families.variants", "X")` |
-/// | `[[forms]]` / `[[operand_slots]]` / `[[aliases]]` / `[[templates]]` + `name` | 同名节 |
+/// | `[[forms]]` / `[[operand_slots]]` / `[[templates]]` / `[[templates.rows]]` + `name`/`inst` | 同名节 |
 /// | `[[lowering]]` + `op = "X"` | `("lowering", "X")` |
-/// | `[[families]]` + `name` | `("families", "X")` |
 /// | `[reg.gpr8]` | `("reg", "gpr8")` |
 /// | `[spill.GPR]` | `("spill", "GPR")` |
 /// | `[meta]`/`[stack]`/`[abi]`/`[emit]`/`[types]` | `(kind, "")` |
@@ -305,14 +301,6 @@ impl DeclIndex {
                         .entry((r.kind.clone(), n.clone()))
                         .or_default()
                         .push(decl);
-                    // 族变体与指令同命名空间（校验器消息用 [[families.variants.X]]，
-                    // 但生成器/角色表把它们当指令看待）。
-                    if r.kind == "families.variants" {
-                        idx.decls
-                            .entry(("instructions".into(), n.clone()))
-                            .or_default()
-                            .push(decl);
-                    }
                 }
                 None => {
                     idx.decls

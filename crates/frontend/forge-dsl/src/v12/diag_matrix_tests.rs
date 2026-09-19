@@ -12,7 +12,7 @@
 use super::diag::Diag;
 use super::parse_and_validate;
 
-/// 合法骨架（riscv 风格定宽 ISA，含 lowering / aliases / abi / emit / spill）。
+/// 合法骨架（riscv 风格定宽 ISA，含 lowering / ref / abi / emit / spill）。
 const BASE: &str = r#"
 [meta]
 name = "s1_base"
@@ -48,14 +48,11 @@ operand_fields = ["rd", "rs1", "rs2"]
 [[instructions]]
 name = "ADD"
 form = "R"
+ref = "add"
 opcode = 0x33
 fields = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
 asm = "add {dst}, {src}, {src2}"
-
-[[aliases]]
-name = "add"
-insts = ["ADD"]
 
 [[lowering]]
 op = "Iadd"
@@ -202,41 +199,42 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "nope",
         ),
         (
-            "family 重复名",
+            "模板行缺编码信息",
             plus(
-                "[[families]]\nname = \"F\"\nform = \"R\"\nopcode = 0x33\nasm = \"f {0}\"\n\
-                 [[families.variants]]\nname = \"V1\"\nopcode = 0x33\n\
-                 [[families.variants]]\nname = \"V1\"\nopcode = 0x34",
+                "[[templates]]\nname = \"F\"\n\
+                 body = { form = \"R\", ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
+                 rows = [ { inst = \"V1\" } ]",
             ),
-            "DSL-FAMILY",
-            "V1",
+            "DSL-TEMPLATE",
+            "编码信息",
         ),
         (
-            "family 未知 form",
+            "模板实例重名",
             plus(
-                "[[families]]\nname = \"F2\"\nform = \"NOPE\"\nopcode = 0x33\nasm = \"f {0}\"\n\
-                 [[families.variants]]\nname = \"V2\"\nopcode = 0x33",
+                "[[templates]]\nname = \"F\"\n\
+                 body = { form = \"R\", opcode = 0x33, ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
+                 rows = [ { inst = \"V1\" }, { inst = \"V1\" } ]",
             ),
-            "DSL-FAMILY",
-            "NOPE",
+            "DSL-INST",
+            "duplicate instruction name",
         ),
         (
-            "别名与指令名冲突",
-            plus("[[aliases]]\nname = \"ADD\"\ninsts = [\"ADD\"]"),
-            "DSL-ALIAS",
-            "ADD",
+            "引用名与指令名冲突",
+            plus(
+                "[[instructions]]\nname = \"SUB\"\nref = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
+                 fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
+            ),
+            "DSL-INST",
+            "与指令名冲突",
         ),
         (
-            "别名成员未声明",
-            plus("[[aliases]]\nname = \"sub\"\ninsts = [\"NOPE\"]"),
-            "DSL-ALIAS",
-            "NOPE",
-        ),
-        (
-            "别名成员重复",
-            plus("[[aliases]]\nname = \"add2\"\ninsts = [\"ADD\", \"ADD\"]"),
-            "DSL-ALIAS",
-            "ADD",
+            "引用名为空",
+            plus(
+                "[[instructions]]\nname = \"SUB\"\nref = \"\"\nform = \"R\"\nopcode = 0x33\n\
+                 fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
+            ),
+            "DSL-INST",
+            "ref 不能为空",
         ),
         (
             "lowering 未知引用",
@@ -337,6 +335,16 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             ),
             "DSL-SPILL",
             "NOPE",
+        ),
+        (
+            "模板 rows 为空",
+            plus(
+                "[[templates]]\nname = \"F\"\n\
+                 body = { form = \"R\", opcode = 0x33, ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
+                 rows = []",
+            ),
+            "DSL-TOML",
+            "rows 不能为空",
         ),
     ];
 

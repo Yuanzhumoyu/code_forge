@@ -24,8 +24,7 @@
   - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
   - [`[[instructions]]` — 指令](#instructions--指令)
-  - [`[[families]]` — 参数化指令族](#families--参数化指令族)
-  - [`[[templates]]` — 参数化模板（v18 S2，取代 `[[families]]` 与 `[[aliases]]`）](#templates--参数化模板v18-s2取代-families-与-aliases)
+  - [`[[templates]]` — 参数化指令模板（唯一复用机制）](#templates--参数化指令模板唯一复用机制)
   - [结构化谓词](#结构化谓词)
   - [`[[lowering]]` — 指令选择](#lowering--指令选择)
   - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
@@ -475,72 +474,75 @@ lo12）。生成器按此字段生成 encoder reloc arm，替代按指令名特�
 无独立 `mnemonic` 字段）。`implicit_regs` 是显式隐式寄存器声明（x86 shift 用 CL、
 idiv 用 RAX:RDX、cqo 写 RDX），生成的 `MachineInst::clobbers()` 供 regalloc 避开。
 
-## `[[families]]` — 参数化指令族
+## `[[templates]]` — 参数化指令模板（唯一复用机制）
 
-```toml
-[[families]]
-name = "MOVSD_M"                # 3 操作数指令族（mnemonic 由变体名小写生成）
-form = "MRR_0F_FIX64"
-ops = ["dst:fpr:out", "src:mem"]      # 家族共享命名操作数（同 Instruction.ops）
-modrm = { reg = "dst", rm = "[src]" } # 家族共享编码键覆盖（引用 ops 的名字）
-asm = "movsd {dst}, {1}"        # 变体 asm 可引用 `{name}` 占位符继承族模板
-[[families.variants]]
-name = "MOVSD_RR"               # 变体名小写 = 助记符（movsd_rr）；同名不同形状按操作数签名消歧
-opcode = 0x10
-roles = ["fpr_mov_f64"]         # 变体级语义角色（家族里个别变体担任 ABI 角色）
-```
-
-族展开 = 每个 variant 生成一条完整指令；`{name}` 占位符（族模板内）= 变体名小写，
-实现共享 asm 的助记符继承。家族共享 `ops`/`enc` 键（`modrm` 引用 `ops` 的名字），
-故可放在家族层；`roles` 一般在变体级声明。
-
-## `[[templates]]` — 参数化模板（v18 S2，取代 `[[families]]` 与 `[[aliases]]`）
-
-> **状态**：v18 S2 起的新机制（破坏性；`[[families]]` 与 `[[aliases]]` 将被删除——
-> arm64 已迁移，见 `docs/plans/forge-dsl-v18-plan.md` §7）。动机是**实测出来的**：
-> arm64 有 38 对指令只差 sf 位/寄存器槽/opcode（76/89 = 85%）、riscv 有 16 对 S/D
-> （41%），而旧 `[[families]]` 的变体**无法覆盖 `ops`/`form`/enc 键**，只能整条复制。
+> **状态**：v18 S2c 起是**唯一**的指令定义/复用机制——`[[families]]` 与 `[[aliases]]`
+> 已删除（不是并存）。两个旧场景各自变成一条普通规则：**多条指令共用一份声明** →
+> `[[templates]]` 的 `body` + `rows`；**一个引用名指向多条指令** → 指令属性 `ref`。
 
 ```toml
 [[templates]]
-name   = "ADDIMM{x}"                     # 实例名（`{参数}` 逐行替换）；或 names = [...]
-ref    = "add"                           # 引用名：全部实例自动并入别名（取代手写 [[aliases]]）
-params = { x = ["X", "W"], slot = ["r64", "r32"], opcode = [0x91, 0x11] }
-body   = { form = "ALUIMM", opcode = "{opcode}", \
-           ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], \
-           asm = "add {dst}, {src}, #{imm}" }
-
-[[templates.overrides]]                  # 逐行补丁（表递归合并、列表整体覆盖）
-row   = 0
-body  = { roles = ["frame_free"] }
+name = "ADDIMM"                       # 模板名（诊断用；缺省取首行 inst）
+body = { ref = "add",                 # body = 全模板共享的指令字段（可省略）
+         form = "ALUIMM", opcode = "{opcode}",
+         ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"],
+         asm = "add {dst}, {src}, #{imm}" }
+rows = [                              # 每行一条指令：inst 必填，其余键是该行的取值/字段
+  { inst = "ADDIMMX", slot = "r64", opcode = 0x91, roles = ["frame_free"] },
+  { inst = "ADDIMMW", slot = "r32", opcode = 0x11 },
+]
 ```
 
-语义（与 `[[lowering]].vary` 同一套"等长列表按下标 zip"）：
+三句话讲完语义：
 
-- `params` 各列表**等长**，行数 = 实例数；空表/空列表/不等长都是编译期错误；
-- 字符串字段里的 `{参数}` 做文本替换；**整串就是 `{参数}`** 时保留参数类型
-  （`opcode = "{opcode}"` 得到的仍是整数）；
-- `name`/`names` 给实例名；`ref` 单值 = 全部实例共用（多态分派），含 `{参数}` = 逐实例
-  各得一个 1:1 引用名；
-- 展开在**解析期**完成：下游（校验/代码生成）只看到普通指令与别名，生成器一行未改；
-- 诊断仍指向**模板声明行**（消息前缀改写为 `[[templates.X]]`），不会指向一个源里
-  不存在的 `[[instructions.实例名]]`。
+- **`rows` 是事实载体**：一行 = 一条指令，`inst` = 指令名（全 ISA 唯一）；
+- **`body` 是共享默认值**：行里的同名字段覆盖它，表（`fields`/`modrm`/…）**递归合并**；
+  不给 `body` 就是"一组各自独立的指令"（原先 `[[aliases]]` 的常见形态）；
+- **插值**：字符串里的 `{键}` 取该行的值（`{inst}` = 实例名，`{键.lower}` 取小写）；
+  整串恰为一个占位符时**保留类型**（`opcode = "{opcode}"` 得到的仍是整数）；不是本行键的
+  `{…}`（如 asm 里的 `{dst}`）原样留着，交给 asm/操作数校验。
 
-**实测收益（三 ISA 迁移，2026-09-19）**：
+行键分三类，规则**只由 `body` 决定**（不需要记额外语法）：
 
-| ISA | TOML 行数 | 模板条 | 别名 | 验证 |
-| --- | ---: | ---: | ---: | --- |
-| arm64 | 1,125 → **731（−35%）** | 32 | 29 → **0** | 黄金 12+6、矩阵 23/175/0、`Inst::` 90 个 diff 空 |
-| riscv64 | 1,754 → **1,606（−8.4%）** | 15 | 0 | 黄金 12+4、矩阵 131/67/0、`Inst::` 117 个 diff 空 |
-| x86 | 3,356 → **3,324（−1%）** | 1 | 25 → 23 | 编码臂 SHA-256 逐字节相同、黄金 61 例、矩阵 195/3/0 |
+| 行键 | 含义 |
+| --- | --- |
+| `body` 里有同名键 | **覆盖**它（表递归合并，其余整体替换） |
+| `body` 没有、但 body 字符串用 `{键}` 引用了它 | **纯参数**：只参与插值，不进指令字段（如 `slot`） |
+| 其余 | **指令字段**（拼错被 `Instruction` 反序列化点名拒绝，错误消息带模板名与实例名） |
 
-### 三个"复用"机制的分工（实测得出，**互补而非取代**）
+`ref` 就是普通指令字段：写在 `body` 里 = 全模板共用（多态引用），写在行里 = 该行特有。
+多条指令共用同一个 `ref` 时，lowering/pattern/emit 的行首可写这个引用名，codegen 按操作数
+签名（reg/imm/mem/cond）消歧。`ref` 与指令名同池，故不得与任何指令名重名。
 
-| 场景 | 用哪个 | 为什么 |
-| --- | --- | --- |
-| 同一条指令、参数化**取值**（类型后缀 / sf 位 / 位宽 / opcode） | `[[templates]]` | 一行参数表 = 一族指令；`ref` 自动派生别名 |
-| N 个**不同助记符**共享一种编码形状，助记符可由变体名派生 | `[[families]]` | `{name}` = 变体名小写；模板要并排两列（名字 + 助记符）且**派生不出带点的助记符**（`fadd.s`） |
-| 一个引用名 → **异质**指令（lowering 按操作数签名分派） | `[[aliases]]` | 如 x86 `mov` → `MOV_R_RM`/`MOV_R8_RM8`/`MOV_RM_R`/`MOV_RM8_R64`/`MOV64_RR`，它们不同族 |
+**写法要点**：
+
+- `rows` 是 TOML 数组：`rows = [ { … }, … ]`（一行一条，推荐）与 `[[templates.rows]]`
+  是**同一个结构的两种写法**（TOML 数组的两种拼法），后者适合字段多、需要换行的行；
+- 展开在**解析期**完成：下游（校验/代码生成）只看到普通指令，生成器一行未改；
+- 诊断锚在**模板声明**：消息前缀改写为 `[[templates.X]]`（X = 模板名），并在块内精准
+  到出错的那一行/那个 `inst`——不会指向源里根本不存在的 `[[instructions.实例名]]`；
+- `rows` 为空、`inst` 为空、行键拼错的参数名、`body` 非内联表都是编译期错误。
+
+**旧写法的对应关系**（迁移只需这三条）：
+
+| 原先的写法 | 现在的写法 |
+| --- | --- |
+| `[[families]]` + `[[families.variants]]` | 一个 `[[templates]]`：族级字段进 `body`，每个变体一行 `{ inst = "…", … }`；助记符继承写 `asm = "{inst.lower} …"` |
+| `[[aliases]]`（`name` + `insts` 列表） | 在成员指令上写 `ref = "名字"`（多条指令共用一个 `ref` = 多态） |
+| `[[templates]]` + `params` + `[[templates.overrides]]` | 同一张 `rows` 表：参数取值写成行键，逐行补丁直接写进那一行 |
+
+**实测收益（三 ISA 统一迁移，2026-09-19）**：
+
+| ISA | TOML 行数 | 三种机制 | 指令数 | 验证 |
+| --- | ---: | --- | ---: | --- |
+| arm64 | 871 → **891（+2.3%）** | families 0 / aliases 0 / templates 32 → **templates 32** | 89 | 生成代码**逐字节相同**、黄金 12+6、矩阵 23/175/0 |
+| riscv64 | 1,899 → **1,802（−5.1%）** | families 4 / templates 15 → **templates 19** | 116 | 每函数 token 多重集相同（只差顺序）、黄金 12+4、矩阵 131/67/0 |
+| x86 | 3,887 → **3,678（−5.4%）** | families 10 / aliases 23 / templates 1 → **templates 11** | 197 | 每函数 token 多重集相同、黄金 61 例、矩阵 195/3/0 |
+
+arm64 略增是**换来的**：原先 2 行指令用"平行数组按列 zip"（`params`）写得极紧凑，但列间
+必须逐行对齐、加一条变体要改 3 个数组；现在一行一条指令自解释，代价是每条模板多 2 行。
+riscv/x86 则是净减：原先的 `[[families]]` 变体块（每个 2–3 行、只能覆盖 `fields`/`opcode`/
+`roles`）折成一行。
 
 x86 只降 1% 的原因：x86 剩余的同 asm/同 ops 组差在**编码键**（`form` 预设有无、`opsize`、
 内联 vs preset），那是不同编码而非可参数化的取值——统一它们属于语义重构。
@@ -913,12 +915,14 @@ demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
 
 **发行后端**（库本体，`crates/backend/forge-codegen/src/arch/`）：
 
-- **`isa/x86_v12.toml`**：140 条 `[[instructions]]` + 51 条 families 变体 + 2 条
-  `[[pattern]]`，19 个 form 预设，208 条 lowering。变长语义键，接 TargetMachine；
-  jit 矩阵 195 passed / 3 skipped / 0 failed。
-- **`isa/riscv64_v12.toml`**：117 条指令，定宽试点（QEMU 真执行验证）；jit 矩阵
-  131 passed / 67 skipped / 0 failed。`[abi.frame] layout = "fp-inside"` 全推导。
-- **`isa/arm64_v12.toml`**：A64 定宽后端（golden 依据见
+- **`isa/x86_v12.toml`**：142 条 `[[instructions]]` + 11 条 `[[templates]]`（55 行 →
+  共 197 条指令）+ 2 条 `[[pattern]]`，19 个 form 预设，220 条 lowering。变长语义键，
+  接 TargetMachine；jit 矩阵 195 passed / 3 skipped / 0 failed。
+- **`isa/riscv64_v12.toml`**：48 条 `[[instructions]]` + 19 条 `[[templates]]`（68 行 →
+  共 116 条指令），定宽试点（QEMU 真执行验证）；jit 矩阵 131 passed / 67 skipped /
+  0 failed。`[abi.frame] layout = "fp-inside"` 全推导。
+- **`isa/arm64_v12.toml`**：25 条 `[[instructions]]` + 32 条 `[[templates]]`（64 行 →
+  共 89 条指令），A64 定宽后端（golden 依据见
   `docs/reference/aarch64-encoding-ref.md`）。
 
 **测试夹具**（**不在库里**，`crates/backend/forge-codegen/tests/isa/`；由

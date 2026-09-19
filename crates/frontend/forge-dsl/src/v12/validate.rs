@@ -25,8 +25,7 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     collect(d, idx, validate_operand_slots(m));
     collect(d, idx, validate_forms(m));
     validate_instructions_all(m, idx, d);
-    collect(d, idx, validate_families(m));
-    collect(d, idx, validate_aliases(m));
+    collect(d, idx, validate_references(m));
     validate_lowering_all(m, idx, d);
     collect(d, idx, validate_patterns(m));
     collect(d, idx, validate_abi(m));
@@ -671,7 +670,7 @@ fn form_exists(m: &V12Model, name: &str) -> bool {
 fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     // 角色全 ISA 唯一：同一个语义位置有两条候选时生成器（collect_inst_infos
     // 的 .find）只会取第一条，静默丢掉另一条——直接拒绝。[[instructions]] 与
-    // [[families.variants]] 展开后在同一命名空间（变体名 = 指令名），都要查。
+    // `[[templates]]` 展开在解析期完成，此处看到的就是完整指令表。
     let mut role_owner: std::collections::BTreeMap<Role, &str> = Default::default();
     for inst in &m.instructions {
         for r in &inst.roles {
@@ -686,21 +685,7 @@ fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
             }
         }
     }
-    for fam in &m.families {
-        for var in &fam.variants {
-            for r in &var.roles {
-                if let Some(prev) = role_owner.insert(*r, var.name.as_str()) {
-                    d.push_anchored(
-                        idx,
-                        &format!(
-                            "[[families.variants.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
-                            var.name
-                        ),
-                    );
-                }
-            }
-        }
-    }
+
     let mut seen = BTreeSet::new();
     for inst in &m.instructions {
         if !seen.insert(inst.name.clone()) {
@@ -811,106 +796,62 @@ fn check_instruction(m: &V12Model, inst: &Instruction) -> Result<(), String> {
             }
         }
     }
-    Ok(())
-}
-
-// ──────────────────────── [[families]] ────────────────────────
-
-fn validate_families(m: &V12Model) -> Result<(), String> {
-    let mut fseen = BTreeSet::new();
-    for fam in &m.families {
-        if !fseen.insert(fam.name.clone()) {
-            return Err(format!(
-                "[[families]]: duplicate family name '{}'",
-                fam.name
-            ));
-        }
-        if !form_exists(m, &fam.form) {
-            return Err(format!(
-                "[[families.{}]]: form '{}' is not declared in [[forms]]",
-                fam.name, fam.form
-            ));
-        }
-        if fam.variants.is_empty() {
-            return Err(format!(
-                "[[families.{}]]: at least one variant is required",
-                fam.name
-            ));
-        }
-        let mut vseen = BTreeSet::new();
-        for v in &fam.variants {
-            if !vseen.insert(v.name.clone()) {
-                return Err(format!(
-                    "[[families.{}.variants]]: duplicate variant name '{}'",
-                    fam.name, v.name
-                ));
-            }
-            if v.opcode.is_none() && v.fields.is_none() {
-                return Err(format!(
-                    "[[families.{}.variants.{}]]: variant needs `opcode` or `fields`",
-                    fam.name, v.name
-                ));
-            }
-        }
+    // 编码信息下限：至少要有一个**编码来源**（`opcode`/`fields`，或任一变长编码键）。
+    // 原先只对 `[[families]]` 变体检查；S2c 统一机制后族/模板/指令同一套，故对所有
+    // 指令生效——什么都不编码的指令会生成"空编码臂"，是静默错。
+    // 注意 `opcode_field`/`operand_fields`/`prefix`/`opsize`/`rex_w` 只是**修饰**：
+    // 只有它们（form 预设给的）而没有主编码，仍属缺编码信息。
+    let has_enc = inst.opcode.is_some()
+        || inst.fields.is_some()
+        || enc.opcode_reg.is_some()
+        || enc.imm.is_some()
+        || enc.escape.is_some()
+        || enc.modrm.is_some()
+        || enc.modrm_fixed.is_some()
+        || enc.vex.is_some()
+        || enc.evex.is_some();
+    if !has_enc {
+        return Err(format!(
+            "[[instructions.{}]]: 指令缺少编码信息——至少要给 `opcode`/`fields`，\
+             或 `opcode_reg`/`modrm`/`vex`/`evex`/`imm` 之一",
+            inst.name
+        ));
     }
     Ok(())
 }
 
 // ──────────────────────── [[lowering]] ────────────────────────
 
-/// 全部已声明的指令 `name`（`[[instructions.*]]` + `[[families.*.variants.*]]`）。
-/// lowering/pattern/emit 模板的行首可引用其任一。
+/// 全部指令名（含 `[[templates]]` 展开出的实例——展开发生在解析期，此处看到的
+/// 就是完整指令表）。lowering/pattern/emit 模板行首可引用其任一。
 fn declared_names(m: &V12Model) -> BTreeSet<String> {
-    let mut out: BTreeSet<String> = m.instructions.iter().map(|i| i.name.clone()).collect();
-    for f in &m.families {
-        for v in &f.variants {
-            out.insert(v.name.clone());
+    m.instructions.iter().map(|i| i.name.clone()).collect()
+}
+
+/// 引用名全集 = 指令名 ∪ 各指令声明的 `ref`。lowering/pattern/emit 行首必须命中其一。
+fn declared_refs(m: &V12Model) -> BTreeSet<String> {
+    let mut out = declared_names(m);
+    for i in &m.instructions {
+        if let Some(r) = &i.reference {
+            out.insert(r.clone());
         }
     }
     out
 }
 
-/// 全部已声明的别名 `name`（`[[aliases.*]]`）。
-fn declared_aliases(m: &V12Model) -> BTreeSet<String> {
-    m.aliases.iter().map(|a| a.name.clone()).collect()
-}
-
-/// 引用名全集 = 指令名 ∪ 别名名。lowering/pattern/emit 模板行首必须命中其一。
-fn declared_refs(m: &V12Model) -> BTreeSet<String> {
-    let mut out = declared_names(m);
-    out.extend(declared_aliases(m));
-    out
-}
-
-/// `[[aliases]]` 校验：名非空/唯一/不与指令名冲突；成员非空且都指向已声明指令。
-fn validate_aliases(m: &V12Model) -> Result<(), String> {
+/// `ref` 校验：非空、不与指令名冲突（`ref` 与指令名同池——都是 lowering 行首的引用名）。
+fn validate_references(m: &V12Model) -> Result<(), String> {
     let names = declared_names(m);
-    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for (i, a) in m.aliases.iter().enumerate() {
-        let path = format!("[[aliases.{}]]", a.name);
-        if a.name.trim().is_empty() {
-            return Err(format!("[[aliases]] #{i}: name must not be empty"));
+    for i in &m.instructions {
+        let Some(r) = &i.reference else { continue };
+        if r.trim().is_empty() {
+            return Err(format!("[[instructions.{}]]: ref 不能为空", i.name));
         }
-        if names.contains(&a.name) {
+        if names.contains(r) {
             return Err(format!(
-                "{path}: 别名名与指令名冲突（'{0}' 已是指令）",
-                a.name
+                "[[instructions.{}]]: ref '{r}' 与指令名冲突（引用名与指令名同池）",
+                i.name
             ));
-        }
-        if !seen.insert(&a.name) {
-            return Err(format!("{path}: 别名名重复"));
-        }
-        if a.insts.is_empty() {
-            return Err(format!("{path}: insts must not be empty"));
-        }
-        let mut member_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for name in &a.insts {
-            if !names.contains(name) {
-                return Err(format!("{path}: 成员指令 '{name}' 未声明"));
-            }
-            if !member_seen.insert(name) {
-                return Err(format!("{path}: 成员指令 '{name}' 重复"));
-            }
         }
     }
     Ok(())
@@ -1254,7 +1195,7 @@ fn validate_emit_line(
     if !refs.contains(first) {
         d.push_anchored(
             idx,
-            &format!("{at}: 未知指令引用 '{first}'（须是已声明指令名或 [[aliases]] 名）"),
+            &format!("{at}: 未知指令引用 '{first}'（须是已声明指令名或某条指令的 ref）"),
         );
     }
     for ph in placeholder_tokens(line) {
@@ -1291,7 +1232,7 @@ fn validate_spill_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
             if !refs.contains(first) {
                 d.push_anchored(
                     idx,
-                    &format!("{path}: 未知指令引用 '{first}'（须是已声明指令名或 [[aliases]] 名）"),
+                    &format!("{path}: 未知指令引用 '{first}'（须是已声明指令名或某条指令的 ref）"),
                 );
             }
             for ph in placeholder_tokens(tpl) {
