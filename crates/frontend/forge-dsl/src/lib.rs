@@ -109,8 +109,10 @@ fn compile_source_v12(
     isa_path: &std::path::Path,
     krate: Option<&proc_macro2::TokenStream>,
 ) -> Result<proc_macro2::TokenStream, String> {
-    let model = v12::parse_and_validate(source).map_err(|e| e.to_string())?;
-    let inner = v12::codegen::generate(&model).map_err(|e| v12::anchor_msg(source, &e))?;
+    // 诊断一次列全（S1）：`render(Some(path))` 每行都带可点击的 `路径:行:列: 码:`。
+    let model = v12::parse_and_validate(source).map_err(|e| e.render(Some(isa_path)))?;
+    let inner =
+        v12::codegen::generate(&model).map_err(|e| v12::anchor_msg(source, isa_path, &e))?;
     // 宿主 crate 路径：改写生成物里的路径根（见 `rewrite_path_roots`）。
     let inner = match krate {
         Some(k) => rewrite_path_roots(inner, k),

@@ -435,10 +435,28 @@ S1/S3 落地时必须改写——它是"基线钉"）。
 ### 12.5 通用性守卫（S0 新增）
 
 `crates/frontend/forge-dsl/tests/generality_guard.rs`：从 `isa/*.toml` **读出** 397 个指令名与
-225 个寄存器名，再扫 `src/**`（除 `tests.rs` 与 `#[cfg(test)]`）里的字符串字面量。
+225 个寄存器名，再扫 `src/**`（除 `tests.rs` 与 `cfg(test)`）里的字符串字面量。
 
 - **首次运行（空白名单）= 失败 12 处**，其中 5 处为真欠账、7 处为抽取器误报；
 - 修正抽取器（`prefix` 只在 `[reg.*]` 块内取、剔除 IR 类型常量名 `F16/F32/...` 与类名撞名）后，
   真欠账 5 行（含 `lowering.rs` 的 `IntCC` 两行与 `"X1"` 缺省、`frame.rs` 的 `R10` 回退与
-  `"MOV_RM8_R64"` 回退）进白名单并注明"由 S3 删除"；
+  `"MOV64_RM8_R64"` 回退）进白名单并注明"由 S3 删除"；
 - 白名单防腐烂：每条必须被命中，S3 收尾时必须清空。
+
+### 12.6 S1 落地后的诊断行为（与 §12.4 对照）
+
+| 场景 | S0（改造前） | S1（现在） |
+| --- | --- | --- |
+| 三处独立错误（未知 form + 重名 + 未知 `when` 属性） | 只报 1 条 | **3 条一次给全**，各带 `路径:行:列: 码` |
+| 重复声明 | 只报"重名"，位置落在首处声明 | 指向**后出现**的那一处 + 附注 `同名声明也出现在 行:列` |
+| 未知 `when` 属性 | 位置到 `[[lowering.OP]]` 声明行 | 精确到**出错的 `when = …` 键行** |
+| `[emit]`/`[spill]` 引用不存在的指令/伪指令/占位符 | **通过校验**（只查非空） | 编译期错误 + 键行位置（错误码 `DSL-EMIT`/`DSL-SPILL`） |
+| 无名节的错误（`[stack].align = 0`） | 退化为 `1:1` | 落在该节块内（节头 / 键行） |
+| 错误条数上限 | 无（一次一条） | 32 条 + `（另有 N 条错误未列出）` |
+
+交付物：`v12/diag.rs`（`Diag`/`Diags`/`DeclIndex`：节级错误码、块内精准定位、附注、上限）、
+`validate_all`（收集式驱动 + 指令/lowering 逐条收集）、`validate_emit_all`/`validate_spill_all`
+（引用名 + 伪指令 + 占位符 + `base` 寄存器全校验）、`src/v12/diag_matrix_tests.rs`（**30 例**矩阵 +
+多错并列 + 附注 + 上限 + 头条精确位置）、`docs/reference/isa-dsl-errors.md`（错误码目录）。
+门禁：fmt/clippy 两道/`cargo test -p forge-dsl`（135 + 2 + 1）/`cargo clean -p forge-codegen`
+后 `cargo check -p forge-codegen`（**三份发行谱通过新校验**，34.7 s）/三架构矩阵/语料/doc/markdownlint。

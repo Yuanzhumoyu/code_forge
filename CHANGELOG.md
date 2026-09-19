@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-19)
+
+- **ISA-DSL 诊断升级（v18 S1）：一次列全 + 精确到键行 + 错误码；`[emit]`/`[spill]` 从"完全不校验"变为编译期校验**。执行方案 `docs/plans/forge-dsl-v18-plan.md`（用户口径：允许破坏性更新、无需兼容旧版本、兼顾体验、足够通用），本条目是其中的 S1 切片。
+  诊断侧：`validate` 从"14 个校验器 fail-fast、一次只报第一条"改为**收集式**（节级 + 逐条声明，最多 32 条，超出追加"另有 N 条"）；定位从"`source.find("name = …")` 全局启发式（同名会指错、抽不出就退化 `1:1`）"改为**声明索引**（一次预扫建"节 + 名字 → 块行范围"，块内再用消息里引号点名的值精确定位到**出错的键行**）；重复声明指向**后出现**的那一处并附注另一处位置；错误码 `DSL-<节>` 稳定可过滤，目录见 `docs/reference/isa-dsl-errors.md`。
+  校验侧补上两个"未校验的名字引用面"：`[emit.prologue/epilogue].insts` 与 `[spill.*].load/store` 现在校验指令引用名、`@` 伪指令（`@push_callee`/`@pop_callee`/`@frame_alloc`/`@frame_free`/`@move_args`）、占位符（emit：`{frame_size}`/`{frame_size_neg}`/`{frame_size_mN}`/`{callee_saved_bytes}`；spill：编号 `{N}`）与 `base` 寄存器名。**这会拒绝此前静默通过的 spec**（S0 基线实测：`[emit]` 里写 `NO_SUCH_INST`、`@nope`、`{bogus}` 全部 `<ok>`），三份发行谱已实测通过新校验。
+  证据：`src/v12/diag_matrix_tests.rs`（30 例错误码/位置矩阵 + 多错并列 + 附注 + 上限 + 头条精确位置）、`v12/diag.rs` 单测（索引/精准定位/渲染/上限）、S0→S1 对照表在方案 §12.4/§12.6；`cargo clean -p forge-codegen` 后 `cargo check -p forge-codegen` 通过（34.7 s）。
+  同批修掉两处 doc/code 漂移：`docs/README.md` 里 `reference/isa-dsl.md` 标注"文档 v15 / 代码 v16–v17"与 `reference/binary-format.md` 更新为 v2。
+
 ### Fixed (2026-09-19)
 
 - **文本打印不再丢"多别名 metadata"的名字**（二进制语料往返测试顺带暴露的老问题）：一个 metadata 节点被多个名字指向时（`!foo` 与 `!\23pragma` 内容相同 ⇒ `intern`/`insert_at` 去重成同一节点），display 原先每节点只打印**一个**名字（且 `MetadataStore::name_of` 用 `HashMap::iter().find(...)`，打哪个随实例随机种子变化）⇒ **丢名字 + 输出不确定**。现在 display 对每个别名各打印一行（名字按字节序 ⇒ 同输入同输出），新增回归用例 `display_llvm.rs::named_metadata_prints_every_alias`（两行都在 + 再解析再打印逐字节相同；改前必失败）；参考文档"已知限制"一节相应移除该项（现 §12）。

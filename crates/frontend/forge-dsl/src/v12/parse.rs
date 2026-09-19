@@ -30,8 +30,13 @@ pub fn parse(source: &str) -> Result<V12Model, V12Error> {
     let mut expanded = Vec::with_capacity(model.lowering.len());
     for rule in &model.lowering {
         let rows = rule.expand_vary().map_err(|msg| {
-            let (line, col) = diag::anchor(source, &msg);
-            V12Error::Parse { line, col, msg }
+            let idx = diag::DeclIndex::build(source);
+            let a = idx.anchor(&msg);
+            V12Error::Parse {
+                line: a.line,
+                col: a.col,
+                msg,
+            }
         })?;
         expanded.extend(rows);
     }

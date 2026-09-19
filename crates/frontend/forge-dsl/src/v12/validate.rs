@@ -1,27 +1,37 @@
 //! v12 语义校验：引用完整 / 位域越界 / 重复声明 / 类型约束。
 //!
-//! 错误信息带 TOML 路径（如 `[[instructions.MOV_R_RM]]`），便于定位。
+//! 错误信息带 TOML 路径（如 `[[instructions.MOV_R_RM]]`），由 [`super::diag::DeclIndex`]
+//! 换算成精确 `行:列`。**S1 起收集全部错误**：每个"按节"的校验器各报一条，
+//! 逐条校验器（指令 / lowering / 模板）对每条声明各报一条，最后由 `Diags` 一次渲染。
 
+use super::diag::{DeclIndex, Diags};
 use super::model::*;
 use super::shared::parse_u64;
 use std::collections::BTreeSet;
 
-pub fn validate(m: &V12Model) -> Result<(), String> {
-    validate_meta(m)?;
-    validate_regs(m)?;
-    validate_widths(m)?;
-    validate_conventions(m)?;
-    validate_operand_slots(m)?;
-    validate_forms(m)?;
-    validate_instructions(m)?;
-    validate_families(m)?;
-    validate_aliases(m)?;
-    validate_lowering(m)?;
-    validate_patterns(m)?;
-    validate_abi(m)?;
-    validate_emit(m)?;
-    validate_spill(m)?;
-    Ok(())
+/// 逐节收集：每节最多一条（节内逐条收集的见 `*_all`）。
+fn collect(d: &mut Diags, idx: &DeclIndex, r: Result<(), String>) {
+    if let Err(msg) = r {
+        d.push_anchored(idx, &msg);
+    }
+}
+
+/// 全部校验（收集式，一次报全）。
+pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
+    collect(d, idx, validate_meta(m));
+    collect(d, idx, validate_regs(m));
+    collect(d, idx, validate_widths(m));
+    collect(d, idx, validate_conventions(m));
+    collect(d, idx, validate_operand_slots(m));
+    collect(d, idx, validate_forms(m));
+    validate_instructions_all(m, idx, d);
+    collect(d, idx, validate_families(m));
+    collect(d, idx, validate_aliases(m));
+    validate_lowering_all(m, idx, d);
+    collect(d, idx, validate_patterns(m));
+    collect(d, idx, validate_abi(m));
+    validate_emit_all(m, idx, d);
+    validate_spill_all(m, idx, d);
 }
 
 // ─────────────────────────── [meta] ───────────────────────────
@@ -655,7 +665,10 @@ fn form_exists(m: &V12Model, name: &str) -> bool {
 
 // ──────────────────── [[instructions]] ────────────────────
 
-fn validate_instructions(m: &V12Model) -> Result<(), String> {
+/// 逐条收集：角色唯一性 + 重名（整表层）各报一次，然后**每条指令**各报一条。
+///
+/// 重名诊断由 `DeclIndex` 自动附注"同名声明也出现在 行:列"（S1 新增能力）。
+fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     // 角色全 ISA 唯一：同一个语义位置有两条候选时生成器（collect_inst_infos
     // 的 .find）只会取第一条，静默丢掉另一条——直接拒绝。[[instructions]] 与
     // [[families.variants]] 展开后在同一命名空间（变体名 = 指令名），都要查。
@@ -663,10 +676,13 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
     for inst in &m.instructions {
         for r in &inst.roles {
             if let Some(prev) = role_owner.insert(*r, inst.name.as_str()) {
-                return Err(format!(
-                    "[[instructions.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
-                    inst.name
-                ));
+                d.push_anchored(
+                    idx,
+                    &format!(
+                        "[[instructions.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
+                        inst.name
+                    ),
+                );
             }
         }
     }
@@ -674,10 +690,13 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
         for var in &fam.variants {
             for r in &var.roles {
                 if let Some(prev) = role_owner.insert(*r, var.name.as_str()) {
-                    return Err(format!(
-                        "[[families.variants.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
-                        var.name
-                    ));
+                    d.push_anchored(
+                        idx,
+                        &format!(
+                            "[[families.variants.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
+                            var.name
+                        ),
+                    );
                 }
             }
         }
@@ -685,85 +704,98 @@ fn validate_instructions(m: &V12Model) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     for inst in &m.instructions {
         if !seen.insert(inst.name.clone()) {
+            // 重复声明：诊断落在**后出现**的那一处，并附注首次声明（索引里的同名位置）。
+            d.push_duplicate(
+                idx,
+                &format!(
+                    "[[instructions.{}]]: duplicate instruction name '{}'",
+                    inst.name, inst.name
+                ),
+            );
+        }
+    }
+    for inst in &m.instructions {
+        if let Err(msg) = check_instruction(m, inst) {
+            d.push_anchored(idx, &msg);
+        }
+    }
+}
+
+/// 单条指令的全部校验（原 `validate_instructions` 的循环体）。
+fn check_instruction(m: &V12Model, inst: &Instruction) -> Result<(), String> {
+    if let Some(f) = &inst.form
+        && !form_exists(m, f)
+    {
+        return Err(format!(
+            "[[instructions.{}]]: form '{f}' is not declared in [[forms]]",
+            inst.name
+        ));
+    }
+    // global_reloc 值域由 `GlobalReloc` 枚举在反序列化期强制
+    let asm = inst.asm.clone();
+    if asm.trim().is_empty() {
+        return Err(format!(
+            "[[instructions.{}]]: asm must not be empty",
+            inst.name
+        ));
+    }
+    // 操作数声明（asm 占位符内联）：解析 + 槽存在/角色合法/序号连续校验
+    let (uses, _) = super::codegen::parse_asm_decl(&asm, inst.ops.as_deref(), &inst.name)?;
+    for op in &uses {
+        if !slot_exists(m, &op.slot) {
             return Err(format!(
-                "[[instructions]]: duplicate instruction name '{}'",
-                inst.name
+                "[[instructions.{}]]: operand slot '{}' is not declared in [[operand_slots]] (asm '{}')",
+                inst.name, op.slot, asm
             ));
         }
-        if let Some(f) = &inst.form
-            && !form_exists(m, f)
+        if let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot)
+            && let (Some(r), Some(roles)) = (op.role, &slot.roles)
         {
-            return Err(format!(
-                "[[instructions.{}]]: form '{f}' is not declared in [[forms]]",
-                inst.name
-            ));
-        }
-        // global_reloc 值域由 `GlobalReloc` 枚举在反序列化期强制
-        let asm = inst.asm.clone();
-        if asm.trim().is_empty() {
-            return Err(format!(
-                "[[instructions.{}]]: asm must not be empty",
-                inst.name
-            ));
-        }
-        // 操作数声明（asm 占位符内联）：解析 + 槽存在/角色合法/序号连续校验
-        let (uses, _) = super::codegen::parse_asm_decl(&asm, inst.ops.as_deref(), &inst.name)?;
-        for op in &uses {
-            if !slot_exists(m, &op.slot) {
+            // 兼容性：InOut 槽支持 in/out/inout（读改写能力的子集）；
+            // In 槽仅 in、Out 槽仅 out。
+            let ok = roles.iter().any(|x| match x {
+                OperandRole::InOut => true,
+                OperandRole::In => r == OperandRole::In,
+                OperandRole::Out => r == OperandRole::Out,
+            });
+            if !ok {
                 return Err(format!(
-                    "[[instructions.{}]]: operand slot '{}' is not declared in [[operand_slots]] (asm '{}')",
-                    inst.name, op.slot, asm
-                ));
-            }
-            if let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot)
-                && let (Some(r), Some(roles)) = (op.role, &slot.roles)
-            {
-                // 兼容性：InOut 槽支持 in/out/inout（读改写能力的子集）；
-                // In 槽仅 in、Out 槽仅 out。
-                let ok = roles.iter().any(|x| match x {
-                    OperandRole::InOut => true,
-                    OperandRole::In => r == OperandRole::In,
-                    OperandRole::Out => r == OperandRole::Out,
-                });
-                if !ok {
-                    return Err(format!(
-                        "[[instructions.{}]]: operand role {:?} not allowed by slot '{}' roles {:?}",
-                        inst.name, r, op.slot, roles
-                    ));
-                }
-            }
-        }
-        // 定宽（opcode_field 存在）要求操作数数量 ≤ operand_fields。
-        // 键取 form 预设 ⊕ 指令级覆盖（与 codegen 的 `EncKeys::over` 同语义）。
-        let preset = inst
-            .form
-            .as_ref()
-            .and_then(|n| m.forms.iter().find(|f| &f.name == n))
-            .map(|f| f.keys.clone())
-            .unwrap_or_default();
-        let enc = inst.enc.over(&preset);
-        let is_fixed = enc.opcode_field.is_some();
-        if is_fixed {
-            let of_len = enc.operand_fields.as_ref().map(|f| f.len()).unwrap_or(0);
-            if uses.len() > of_len {
-                return Err(format!(
-                    "[[instructions.{}]]: {} operands exceed operand_fields count {}",
-                    inst.name,
-                    uses.len(),
-                    of_len
+                    "[[instructions.{}]]: operand role {:?} not allowed by slot '{}' roles {:?}",
+                    inst.name, r, op.slot, roles
                 ));
             }
         }
-        if let Some(fields) = &inst.fields
-            && is_fixed
-        {
-            for k in fields.keys() {
-                if !m.conventions.bitfields.contains_key(k) {
-                    return Err(format!(
-                        "[[instructions.{}]]: fixed field '{k}' is not declared in [conventions.bitfields]",
-                        inst.name
-                    ));
-                }
+    }
+    // 定宽（opcode_field 存在）要求操作数数量 ≤ operand_fields。
+    // 键取 form 预设 ⊕ 指令级覆盖（与 codegen 的 `EncKeys::over` 同语义）。
+    let preset = inst
+        .form
+        .as_ref()
+        .and_then(|n| m.forms.iter().find(|f| &f.name == n))
+        .map(|f| f.keys.clone())
+        .unwrap_or_default();
+    let enc = inst.enc.over(&preset);
+    let is_fixed = enc.opcode_field.is_some();
+    if is_fixed {
+        let of_len = enc.operand_fields.as_ref().map(|f| f.len()).unwrap_or(0);
+        if uses.len() > of_len {
+            return Err(format!(
+                "[[instructions.{}]]: {} operands exceed operand_fields count {}",
+                inst.name,
+                uses.len(),
+                of_len
+            ));
+        }
+    }
+    if let Some(fields) = &inst.fields
+        && is_fixed
+    {
+        for k in fields.keys() {
+            if !m.conventions.bitfields.contains_key(k) {
+                return Err(format!(
+                    "[[instructions.{}]]: fixed field '{k}' is not declared in [conventions.bitfields]",
+                    inst.name
+                ));
             }
         }
     }
@@ -872,7 +904,7 @@ fn validate_aliases(m: &V12Model) -> Result<(), String> {
     Ok(())
 }
 
-/// `[[lowering]]` 校验。
+/// `[[lowering]]` 校验（逐条收集 + 死规则检测）。
 ///
 /// 历史状态：本函数只查 `op`/`insts` 非空（14 行），于是三类写错**静默通过**：
 /// 1. 助记符打错 → 直到 codegen 才报，且消息无位置；
@@ -881,46 +913,64 @@ fn validate_aliases(m: &V12Model) -> Result<(), String> {
 /// 3. `when` 属性名打错 → `pred::eval` 对未知属性返回 false，规则**永不命中**，
 ///    既不报错也不生效（最难查的一类）。
 ///
-/// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测。
-fn validate_lowering(m: &V12Model) -> Result<(), String> {
+/// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测；S1 起**逐条收集**。
+fn validate_lowering_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     let refs = declared_refs(m);
     // (op, 规范化 when, insts) → 首次出现的下标；用于重复检测
     let mut seen: std::collections::HashMap<(String, String, Vec<String>), usize> =
         std::collections::HashMap::new();
     for (i, l) in m.lowering.iter().enumerate() {
         if l.op.trim().is_empty() {
-            return Err(format!("[[lowering]] #{i}: op must not be empty"));
+            d.push_anchored(idx, &format!("[[lowering]] #{i}: op must not be empty"));
+            continue;
         }
         let path = format!("[[lowering.{}]]", l.op);
         if l.insts.is_empty() {
-            return Err(format!("{path}: insts must not be empty"));
+            d.push_anchored(idx, &format!("{path}: insts must not be empty"));
+            continue;
         }
-        validate_inst_lines(&path, &l.insts, &refs, &[])?;
+        if let Err(msg) = validate_inst_lines(&path, &l.insts, &refs, &[]) {
+            d.push_anchored(idx, &msg);
+        }
         let when_key = match &l.when {
             None => String::new(),
-            Some(v) => {
-                let p = super::pred::parse(v).map_err(|e| format!("{path}.when: {e}"))?;
-                let mut attrs = Vec::new();
-                super::pred::attrs_of(&p, &mut attrs);
-                for a in &attrs {
-                    if !super::pred::PRED_ATTRS.contains(&a.as_str()) {
-                        return Err(format!(
-                            "{path}.when: 未知属性 '{a}'（可用：{}）——未知属性恒为假，规则永不命中",
-                            super::pred::PRED_ATTRS.join("/")
-                        ));
-                    }
+            Some(v) => match super::pred::parse(v) {
+                Err(e) => {
+                    d.push_anchored(idx, &format!("{path}.when: {e}"));
+                    continue;
                 }
-                format!("{p:?}")
-            }
+                Ok(p) => {
+                    let mut attrs = Vec::new();
+                    super::pred::attrs_of(&p, &mut attrs);
+                    let mut ok = true;
+                    for a in &attrs {
+                        if !super::pred::PRED_ATTRS.contains(&a.as_str()) {
+                            d.push_anchored(
+                                idx,
+                                &format!(
+                                    "{path}.when: 未知属性 '{a}'（可用：{}）——未知属性恒为假，规则永不命中",
+                                    super::pred::PRED_ATTRS.join("/")
+                                ),
+                            );
+                            ok = false;
+                        }
+                    }
+                    if !ok {
+                        continue;
+                    }
+                    format!("{p:?}")
+                }
+            },
         };
         let key = (l.op.clone(), when_key, l.insts.clone());
         if let Some(first) = seen.insert(key, i) {
-            return Err(format!(
-                "{path}: 与 #{first} 完全重复（同 op、同 when、同 insts）——删掉一条"
-            ));
+            d.push_anchored(
+                idx,
+                &format!("{path}: 与 #{first} 完全重复（同 op、同 when、同 insts）——删掉一条"),
+            );
         }
     }
-    validate_lowering_order(m)
+    collect(d, idx, validate_lowering_order(m));
 }
 
 /// 死规则检测：按**裁决序**（`V12Model::lowering_by_op`）逐对判断前序规则是否
@@ -1121,33 +1171,146 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
 
 // ───────────────────────── [emit] ─────────────────────────
 
-fn validate_emit(m: &V12Model) -> Result<(), String> {
+/// `[emit]` 模板合法的 `@` 伪指令（DSL 侧 `codegen/frame.rs::gen_emit_pseudo` 的实现集）。
+///
+/// v15 文档只列了 `@push_callee`/`@frame_alloc`/`@frame_dealloc`/`@pop_callee`——
+/// `@frame_dealloc` 这个名字**在代码里不存在**（实际是 `@frame_free`），
+/// 且 `@move_args` 没被文档提到。S1 把它变成唯一事实源（文档与验证器同表）。
+const EMIT_PSEUDOS: &[&str] = &[
+    "push_callee",
+    "pop_callee",
+    "frame_alloc",
+    "frame_free",
+    "move_args",
+];
+
+/// `[emit]` 模板合法的占位符（`frame.rs` 的实现集）。
+const EMIT_PLACEHOLDERS: &[&str] = &["frame_size", "frame_size_neg", "callee_saved_bytes"];
+
+/// `[emit]` 校验（S1：从"只查非空"升级为引用名 + 伪指令 + 占位符全覆盖）。
+///
+/// 为什么重要：`[emit.prologue].insts` 里写错一个指令名或占位符，旧实现要等到
+/// codegen（甚至生成代码编译）才炸，且没有任何位置信息。
+fn validate_emit_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     let Some(em) = &m.emit else {
-        return Ok(());
+        return;
     };
-    if let Some(p) = &em.prologue
-        && p.insts.is_empty()
-    {
-        return Err("[emit.prologue].insts must not be empty".into());
+    let refs = declared_refs(m);
+    for (which, block) in [("prologue", &em.prologue), ("epilogue", &em.epilogue)] {
+        let Some(b) = block else { continue };
+        let path = format!("[emit.{which}]");
+        if b.insts.is_empty() {
+            d.push_anchored(idx, &format!("{path}.insts must not be empty"));
+            continue;
+        }
+        for (i, line) in b.insts.iter().enumerate() {
+            validate_emit_line(&refs, &format!("{path}.insts[{i}]"), line, idx, d);
+        }
     }
-    if let Some(e) = &em.epilogue
-        && e.insts.is_empty()
-    {
-        return Err("[emit.epilogue].insts must not be empty".into());
+}
+
+/// 一行 emit 模板：`@伪指令` 或 `指令引用 op0, op1, …`。
+fn validate_emit_line(
+    refs: &BTreeSet<String>,
+    at: &str,
+    line: &str,
+    idx: &DeclIndex,
+    d: &mut Diags,
+) {
+    let t = line.trim();
+    if let Some(pseudo) = t.strip_prefix('@') {
+        if !EMIT_PSEUDOS.contains(&pseudo.trim()) {
+            d.push_anchored(
+                idx,
+                &format!(
+                    "{at}: 未知伪指令 '@{pseudo}'（可用：{}）",
+                    EMIT_PSEUDOS
+                        .iter()
+                        .map(|p| format!("@{p}"))
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                ),
+            );
+        }
+        return;
     }
-    Ok(())
+    let first = t.split_whitespace().next().unwrap_or("");
+    if first.is_empty() {
+        d.push_anchored(idx, &format!("{at}: 空模板行"));
+        return;
+    }
+    if !refs.contains(first) {
+        d.push_anchored(
+            idx,
+            &format!("{at}: 未知指令引用 '{first}'（须是已声明指令名或 [[aliases]] 名）"),
+        );
+    }
+    for ph in placeholder_tokens(line) {
+        let inner = ph.trim_matches(|c| c == '{' || c == '}');
+        let ok = EMIT_PLACEHOLDERS.contains(&inner)
+            || inner
+                .strip_prefix("frame_size_m")
+                .is_some_and(|n| n.parse::<i64>().is_ok());
+        if !ok {
+            d.push_anchored(
+                idx,
+                &format!(
+                    "{at}: 未知占位符 '{ph}'（可用：{{frame_size}} / {{frame_size_neg}} / \
+                     {{frame_size_mN}} / {{callee_saved_bytes}}）"
+                ),
+            );
+        }
+    }
 }
 
 // ───────────────────────── [spill.*] ─────────────────────────
 
-fn validate_spill(m: &V12Model) -> Result<(), String> {
+/// `[spill.*]` 校验（S1：引用名 + `{N}` 占位符 + 基址寄存器名）。
+fn validate_spill_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
+    let refs = declared_refs(m);
     for (name, s) in &m.spill {
-        if s.load.trim().is_empty() {
-            return Err(format!("[spill.{name}].load must not be empty"));
+        for (kind, tpl) in [("load", &s.load), ("store", &s.store)] {
+            let path = format!("[spill.{name}].{kind}");
+            if tpl.trim().is_empty() {
+                d.push_anchored(idx, &format!("{path} must not be empty"));
+                continue;
+            }
+            let first = tpl.split_whitespace().next().unwrap_or("");
+            if !refs.contains(first) {
+                d.push_anchored(
+                    idx,
+                    &format!("{path}: 未知指令引用 '{first}'（须是已声明指令名或 [[aliases]] 名）"),
+                );
+            }
+            for ph in placeholder_tokens(tpl) {
+                let inner = ph.trim_matches(|c| c == '{' || c == '}');
+                if inner.parse::<usize>().is_err() {
+                    d.push_anchored(
+                        idx,
+                        &format!(
+                            "{path}: 未知占位符 '{ph}'——spill 模板只接受编号操作数 {{N}}\
+                             （{{0}} = 寄存器、{{1}} = 帧偏移）"
+                        ),
+                    );
+                }
+            }
         }
-        if s.store.trim().is_empty() {
-            return Err(format!("[spill.{name}].store must not be empty"));
+        if let Some(base) = &s.base {
+            let mut declared: BTreeSet<String> = BTreeSet::new();
+            for (rc, g) in &m.reg {
+                if let Ok(names) = super::shared::group_names(g) {
+                    declared.extend(names);
+                }
+                let _ = rc;
+            }
+            if !declared.contains(base.as_str()) {
+                d.push_anchored(
+                    idx,
+                    &format!(
+                        "[spill.{name}].base: 物理寄存器名 \"{base}\" 不在任何已声明 [reg.*] 组内"
+                    ),
+                );
+            }
         }
     }
-    Ok(())
 }

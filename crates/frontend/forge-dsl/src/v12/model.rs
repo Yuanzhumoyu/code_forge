@@ -108,7 +108,7 @@ impl V12Model {
             .max_by_key(|rc| rc.width())
             .copied()
             .ok_or_else(|| {
-                "[meta]/[reg.*]: 未声明任何 GPR 组（如 [reg.gpr8]）——\
+                "[reg.*]/[meta]: 未声明任何 GPR 组（如 [reg.gpr8]）——\
                  整数/地址寄存器组是必需的"
                     .to_string()
             })
