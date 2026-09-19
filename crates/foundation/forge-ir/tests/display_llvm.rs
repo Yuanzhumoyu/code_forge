@@ -235,6 +235,34 @@ fn assert_modules_eq(m1: &Module, m2: &Module, text: &str) {
 
 // ── 基础 round-trip ────────────────────────────────────────
 
+/// 一个 metadata 节点被**多个名字**指向（内容相同 ⇒ 去重成同一节点）时，
+/// 每个名字都必须打印一行——只打一个会丢名字（文本往返不保真）。
+///
+/// 2026-09-19：二进制语料往返测试（`binary_module.rs` 的 `named-metadata.ll`）
+/// 顺带暴露的老问题；同时 `MetadataStore::name_of` 的不确定性也在这里被钉住
+/// （名字按字节序输出 ⇒ 同输入同输出）。
+#[test]
+fn named_metadata_prints_every_alias() {
+    let src = "!0 = !{!\"zero\"}
+!1 = !{!\"one\"}
+!foo = !{!0, !1}
+!\\23pragma = !{!0, !1}
+";
+    let m1 = parse_module(src).expect("parse");
+    let text = m1.to_string();
+    assert!(
+        text.contains("!foo = !{!0, !1}"),
+        "别名 !foo 必须打印：\n{text}"
+    );
+    assert!(
+        text.contains("!\\23pragma = !{!0, !1}"),
+        "别名 !\\23pragma 必须打印（同一节点多名字都要输出）：\n{text}"
+    );
+    // 幂等：再解析再打印必须逐字节相同（名字顺序确定）
+    let m2 = parse_module(&text).expect("reparse");
+    assert_eq!(text, m2.to_string(), "命名 metadata 打印不幂等");
+}
+
 #[test]
 fn roundtrip_simple_function() {
     assert_roundtrip(

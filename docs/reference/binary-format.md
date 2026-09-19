@@ -185,6 +185,6 @@ name | signature | call_conv | attributes | extra_attrs
 ## 10. 已知限制
 
 - 不压缩：字节数是"正确性优先"的基线，压缩属未来工作（有基线可对照）。
-- display 每节点只打印**一个**名字：一个节点被多个名字指向（`!foo` 与 `!\23pragma`
-  内容相同 ⇒ 去重成一个节点）时文本会丢名字——**既有限制**，与二进制层无关；
-  二进制层两条名字都保真。（`MetadataStore::names_of` 给出全部名字。）
+- 文本打印的**多别名 metadata**：2026-09-19 起已修——display 对每个名字各打印一行
+  （名字按字节序 ⇒ 输出确定；`MetadataStore::names_of` 给出全部别名），
+  `tests/display_llvm.rs::named_metadata_prints_every_alias` 钉住。

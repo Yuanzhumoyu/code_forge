@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed (2026-09-19)
 
+- **文本打印不再丢"多别名 metadata"的名字**（二进制语料往返测试顺带暴露的老问题）：一个 metadata 节点被多个名字指向时（`!foo` 与 `!\23pragma` 内容相同 ⇒ `intern`/`insert_at` 去重成同一节点），display 原先每节点只打印**一个**名字（且 `MetadataStore::name_of` 用 `HashMap::iter().find(...)`，打哪个随实例随机种子变化）⇒ **丢名字 + 输出不确定**。现在 display 对每个别名各打印一行（名字按字节序 ⇒ 同输入同输出），新增回归用例 `display_llvm.rs::named_metadata_prints_every_alias`（两行都在 + 再解析再打印逐字节相同；改前必失败）；参考文档 §10 的"已知限制"相应移除。
+
 - **补上二进制解码的 metadata 嵌套深度上限（执行方案 §2.6 承诺项）**：`MetadataValue::Field` 是递归结构，解码器原先会一直递归到输入末尾——一条 `Field(k, Field(k, Field(k, …)))` 就能把**解码器的栈打爆**（进程 abort，而不是可捕获的 `Err`）。现在 `MAX_METADATA_DEPTH = 64`，超过即 `IrError::BinaryDecode`（带偏移）；负向用例含 **5000 层**嵌套（必须在到达上限时返回，而不是递归到底），另有 8 层正常解码的正向对照。同步把"编码侧假定自洽 IR、不自洽时**带原因 panic**；解码侧任何输入都不 panic"写进 `Module::{to_binary_into, from_binary}` 的 API 文档，参考文档 §5 的原语表补上该上限。
   实测（本机 2026-09-19）：workspace **1690 passed / 0 failed / 19 ignored**；语料 198 正向 / 254 正确拒绝 / 0 误收（198 例二进制往返仍全部文本一致 + 字节幂等）；fmt/clippy 两道门/release/doc/markdownlint 全干净。
 

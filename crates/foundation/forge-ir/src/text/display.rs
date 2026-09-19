@@ -289,14 +289,13 @@ impl fmt::Display for Module {
         // metadata 输出（v3 S7 往返幂等）：
         //
         // ① **命名 metadata 先输出**（LLVM 风格）——命名节点在 store 里的 id 取决于
-        //    解析顺序（显式 `!N` 区之后），把它固定在数字节点之前，打印文本就与 id 无关；
-        // ② 再按 id 顺序输出数字节点，**跳过无人引用的空洞占位**（`Placeholder`——
-        //    解析器给显式 `!N` 预留槽位时补齐的空位）：它们打印出来会让往返不幂等
-        //    （二次解析后空位被物化并打印，id 整体后移）。写明的 `!N = !{}` 是
-        //    `Tuple([])`，仍照打；被引用的空洞也照打（reparse 时 `!N` 不能未定义——
-        //    第二十九轮踩过：跳过空节点造成 ID 空洞 → semantics 越界 panic）。
+        //    解析顺序（显式 `!N` 区之后），把它固定在数字节点之前，打印文本就与 id 无关。
+        //
+        //    一个节点可以被**多个名字**指向（去重：`!foo` 与 `!\23pragma` 内容相同时
+        //    是同一个节点）。每条名字都打印一行——只打一个会**丢名字**（文本往返不
+        //    保真）。名字按字节序（`names_of` 排序）⇒ 输出确定。
         for (id, node) in self.metadata_store.iter() {
-            if let Some(name) = self.metadata_store.name_of(id) {
+            for name in self.metadata_store.names_of(id) {
                 writeln!(
                     f,
                     "!{name} = {}",
@@ -306,7 +305,7 @@ impl fmt::Display for Module {
         }
         let referenced = collect_referenced_metadata(self);
         for (id, node) in self.metadata_store.iter() {
-            if self.metadata_store.name_of(id).is_some() {
+            if !self.metadata_store.names_of(id).is_empty() {
                 continue; // ① 已输出
             }
             if matches!(node, crate::ir::metadata::MetadataNode::Placeholder)
