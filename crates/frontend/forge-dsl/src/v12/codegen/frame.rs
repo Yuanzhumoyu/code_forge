@@ -818,13 +818,20 @@ fn gen_emit_pseudo(
                     ));
                 },
             };
-            // 栈参数收参的 scratch 寄存器（[abi].scratch 首项，缺省 R10）
-            // 与 callee-saved 区字节数（sp_base 计算常量）。
-            let scratch0 = abi
-                .scratch
-                .first()
-                .map(|s| format_ident!("{s}"))
-                .unwrap_or_else(|| format_ident!("R10"));
+            // 栈参数收参的 scratch 寄存器（`[abi].scratch` 首项）与 callee-saved 区
+            // 字节数（sp_base 计算常量）。**只在真的要走栈参数收参时**要求声明
+            //（无栈参数的 ISA 不需要 scratch）；缺声明 = 生成期明确报错——
+            // 不回退到某个 ISA 的寄存器名（那等于把别家的命名约定写进通用生成器）。
+            let scratch0 = match abi.scratch.first() {
+                Some(s) => format_ident!("{s}"),
+                None if has_shadow => {
+                    return Err("move_args: 本 ISA 声明了 [abi.stack_args].shadow_bytes，\
+                                但 [abi].scratch 未声明——栈参数收参需要一个临时寄存器\
+                                （不按某个 ISA 的寄存器名兜底）"
+                        .into());
+                }
+                None => format_ident!("__unused_scratch"),
+            };
             let cs_bytes = callee_saved_bytes_lit;
             // 浮点参数移动：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键
             //（缺省 "MOVSD"/"MOVSS"；fpr out, fpr in）。
@@ -1149,11 +1156,10 @@ fn gen_emit_pseudo(
                 //（否则分支体引用不存在的 Reg/Inst 变体）。
                 _ => quote! {},
             };
-            // spilled 的寄存器参数（位置 < n）收参到 spill 槽：ABI 寄存器
-            // 值 → scratch → spill 槽。需要 MOV 指令（GprMov 角色）+ 角色
-            // stack_arg_store（reg→mem）；无栈参数 ISA（riscv/demo）也有 spilled
-            // 参数 → 用通用 mov/spill 模板（inst 存在性检查兜底：无 mov 时跳过）。
-            let has_mov_inst = inst_exists(infos, "MOV_RM8_R64");
+            // spilled 的寄存器参数（位置 < n）收参到 spill 槽：需要 MOV 指令
+            //（`roles = ["gpr_mov"]`，**按角色查**——不再按 x86 指令名
+            // `MOV_RM8_R64` 探测）+ 角色 stack_arg_store（reg→mem）。
+            let has_mov_inst = !move_inst.is_empty();
             let spilled_int_receive: TokenStream = match (
                 has_stack_arg && has_mov_inst,
                 store_triple.as_ref(),

@@ -1443,12 +1443,27 @@ fn gen_call_lowering(
     let call_body: TokenStream = if op_name == "Call" {
         match call_f.first() {
             Some(_) => {
-                let ret_reg = abi.call_ret_reg.clone().unwrap_or_else(|| "X1".to_string());
-                let ret_ident = format_ident!("{ret_reg}");
                 let info = infos
                     .iter()
                     .find(|i| i.inst.name == call_inst)
                     .ok_or_else(|| format!("call_inst '{call_inst}' 不存在"))?;
+                // 返回地址寄存器：[abi].call_ret_reg。**只在 call 指令确有
+                // Out/InOut Reg 槽时才需要**（x86 的 CALL 无此槽）；缺声明 =
+                // 生成期明确报错，不回退到某个 ISA 的寄存器名。
+                let needs_ret_reg = info.operands.iter().any(|(_, _, slot, role)| {
+                    slot.kind == OperandKind::Reg
+                        && matches!(role, OperandRole::Out | OperandRole::InOut)
+                });
+                let ret_ident = match (abi.call_ret_reg.as_deref(), needs_ret_reg) {
+                    (Some(r), _) => format_ident!("{r}"),
+                    (None, false) => format_ident!("__unused_ret_reg"),
+                    (None, true) => {
+                        return Err(format!(
+                            "[abi].call_ret_reg 未声明，但 call 指令 '{call_inst}' 有\
+                             返回地址寄存器槽（Out/InOut Reg）——不按某个 ISA 的寄存器名兜底"
+                        ));
+                    }
+                };
                 let fields: Vec<TokenStream> = info
                     .operands
                     .iter()
@@ -1490,12 +1505,26 @@ fn gen_call_lowering(
         let ci_f = fids(&ci_inst);
         match ci_f.first() {
             Some(_) => {
-                let ret_reg = abi.call_ret_reg.clone().unwrap_or_else(|| "X1".to_string());
-                let ret_ident = format_ident!("{ret_reg}");
                 let info = infos
                     .iter()
                     .find(|i| i.inst.name == ci_inst)
                     .ok_or_else(|| format!("call_indirect_inst '{ci_inst}' 不存在"))?;
+                // 同上：只有 call_indirect 指令确有 Out/InOut Reg 槽时才需要
+                // `[abi].call_ret_reg`（x86 的 CALL_RM 无此槽）。
+                let needs_ret_reg = info.operands.iter().any(|(_, _, slot, role)| {
+                    slot.kind == OperandKind::Reg
+                        && matches!(role, OperandRole::Out | OperandRole::InOut)
+                });
+                let ret_ident = match (abi.call_ret_reg.as_deref(), needs_ret_reg) {
+                    (Some(r), _) => format_ident!("{r}"),
+                    (None, false) => format_ident!("__unused_ret_reg"),
+                    (None, true) => {
+                        return Err(format!(
+                            "[abi].call_ret_reg 未声明，但 call_indirect 指令 '{ci_inst}' 有\
+                             返回地址寄存器槽（Out/InOut Reg）——不按某个 ISA 的寄存器名兜底"
+                        ));
+                    }
+                };
                 let mut ctor: Vec<TokenStream> = Vec::new();
                 let mut binds: Vec<TokenStream> = Vec::new();
                 for (idx, (_, fid, slot, role)) in info.operands.iter().enumerate() {
