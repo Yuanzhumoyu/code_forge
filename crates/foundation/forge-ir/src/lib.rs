@@ -101,7 +101,10 @@ pub use analysis::*;
 pub use verify::*;
 
 // 二进制序列化（格式版本/兼容检查；`Module::{to_binary,to_binary_into,from_binary}`）
-pub use binary::{BinaryCompat, IR_FORMAT_VERSION, SectionId, check_binary_compat};
+// + 文件级 IR 缓存（内容键、自愈；`IrCache`）
+pub use binary::{
+    BinaryCompat, CacheKey, IR_FORMAT_VERSION, IrCache, SectionId, check_binary_compat,
+};
 
 // 支撑类型
 pub use util::big::*;

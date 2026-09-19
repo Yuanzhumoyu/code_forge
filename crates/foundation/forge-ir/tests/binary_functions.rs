@@ -10,6 +10,7 @@
 //!    悬空操作数 / 未知 immediate tag / 越界值类型 —— 全部 `Err`（带偏移），不 panic。
 
 use forge_ir::ir::metadata::{AttachedMetadata, MetadataKind, MetadataNode, MetadataValue};
+use forge_ir::util::string_pool::InternedStr;
 use forge_ir::{
     Block, FuncRef, FunctionAttributes, FunctionBuilder, FunctionSignature, IR_FORMAT_VERSION,
     ImmStr, Inst, IntCC, IrError, IselStrategy, Module, Opcode, SectionId, SourceLocation, TypeId,
@@ -46,8 +47,8 @@ fn read_varint(bytes: &[u8], pos: &mut usize) -> u64 {
     }
 }
 
-/// 段表条目 `(id, offset, len)`。
-fn sections_of(bytes: &[u8]) -> Vec<(u8, usize, usize)> {
+/// 段表条目 `(id, offset, len, raw_len)`（`raw_len > 0` = 段体是压缩体）。
+fn sections_of(bytes: &[u8]) -> Vec<(u8, usize, usize, usize)> {
     let mut pos = 8;
     let _version = read_varint(bytes, &mut pos);
     let producer_len = read_varint(bytes, &mut pos) as usize;
@@ -59,33 +60,27 @@ fn sections_of(bytes: &[u8]) -> Vec<(u8, usize, usize)> {
         pos += 1;
         let offset = read_varint(bytes, &mut pos) as usize;
         let len = read_varint(bytes, &mut pos) as usize;
-        out.push((id, offset, len));
+        let raw_len = read_varint(bytes, &mut pos) as usize;
+        out.push((id, offset, len, raw_len));
     }
     out
 }
 
-/// 字符串表内容（用于在负向夹具里引用真实索引）。
+/// 字符串池内容（用于在负向夹具里引用真实索引）。
+///
+/// 走**解码后的池**而不是 raw 段体：v2 起 STRINGS 段通常是压缩体，测试侧不该自带
+/// 解压器。写侧先 `intern_pool` 整池登记，故池内容恰是 STRINGS 表的**前缀**且顺序
+/// 一致 ⇒ 池内索引就是表索引（后续段追加的字符串排在池后）。
 fn strings_of(bytes: &[u8]) -> Vec<String> {
-    let (_, off, len) = sections_of(bytes)
-        .into_iter()
-        .find(|(id, _, _)| *id == SectionId::Strings.as_u8())
-        .expect("STRINGS 段");
-    let body = &bytes[off..off + len];
-    let mut pos = 0;
-    let num = read_varint(body, &mut pos) as usize;
-    let mut lens = Vec::with_capacity(num);
-    for _ in 0..num {
-        lens.push(read_varint(body, &mut pos) as usize);
-    }
-    let mut out = Vec::with_capacity(num);
-    for l in lens {
-        out.push(String::from_utf8(body[pos..pos + l].to_vec()).expect("utf8"));
-        pos += l;
-    }
-    out
+    let m = Module::from_binary(bytes).expect("参考模块必须可解码");
+    let store = m.types.borrow();
+    (0..store.strings.len())
+        .map(|i| store.strings.lookup(InternedStr(i as u32)).to_string())
+        .collect()
 }
 
-fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+/// 测试侧装配一个完整流（`raw_len = 0` 表示段体原样存放）。
+fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>, usize)]) -> Vec<u8> {
     fn vlen(mut v: u64) -> usize {
         let mut n = 1;
         while v >= 0x80 {
@@ -103,9 +98,10 @@ fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>)]) -> Vec
             + vlen(producer.len() as u64)
             + producer.len()
             + vlen(sections.len() as u64);
-        for (i, (_, body)) in sections.iter().enumerate() {
+        for (i, (_, body, raw_len)) in sections.iter().enumerate() {
             offsets[i] = off;
-            size += 1 + vlen(off) + vlen(body.len() as u64);
+            // 条目 = id(1) + offset + len + raw_len
+            size += 1 + vlen(off) + vlen(body.len() as u64) + vlen(*raw_len as u64);
             off += body.len() as u64;
         }
         if size == header_len {
@@ -119,33 +115,40 @@ fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>)]) -> Vec
     put_varint(&mut out, producer.len() as u64);
     out.extend_from_slice(producer.as_bytes());
     put_varint(&mut out, sections.len() as u64);
-    for (i, (id, body)) in sections.iter().enumerate() {
+    for (i, (id, body, raw_len)) in sections.iter().enumerate() {
         out.push(*id);
         put_varint(&mut out, offsets[i]);
         put_varint(&mut out, body.len() as u64);
+        put_varint(&mut out, *raw_len as u64);
     }
     assert_eq!(out.len(), header_len);
-    for (_, body) in sections {
+    for (_, body, _) in sections {
         out.extend_from_slice(body);
     }
     out
 }
 
-/// 用给定的 FUNCS 段体替换一份真实编码里的 FUNCS 段（其余段原样保留）。
-fn with_funcs_body(real: &[u8], funcs_body: Vec<u8>) -> Vec<u8> {
+/// 用给定的 FUNCS 段体替换一份真实编码里的 FUNCS 段（其余段**连同 `raw_len`
+/// 原样搬运**，压缩段照旧是压缩段）。`funcs_raw_len = 0` = 新段体未压缩。
+fn with_funcs_body_raw(real: &[u8], funcs_body: Vec<u8>, funcs_raw_len: usize) -> Vec<u8> {
     let producer = check_binary_compat(real)
         .expect("头部")
         .producer
         .to_string();
-    let mut sections: Vec<(u8, Vec<u8>)> = Vec::new();
-    for (id, off, len) in sections_of(real) {
+    let mut sections: Vec<(u8, Vec<u8>, usize)> = Vec::new();
+    for (id, off, len, raw_len) in sections_of(real) {
         if id == SectionId::Funcs.as_u8() {
             continue;
         }
-        sections.push((id, real[off..off + len].to_vec()));
+        sections.push((id, real[off..off + len].to_vec(), raw_len));
     }
-    sections.push((SectionId::Funcs.as_u8(), funcs_body));
+    sections.push((SectionId::Funcs.as_u8(), funcs_body, funcs_raw_len));
     build_stream(u64::from(IR_FORMAT_VERSION), &producer, &sections)
+}
+
+/// 同上，但新 FUNCS 段体按**未压缩**存放（负向夹具一律走这条）。
+fn with_funcs_body(real: &[u8], funcs_body: Vec<u8>) -> Vec<u8> {
+    with_funcs_body_raw(real, funcs_body, 0)
 }
 
 /// 最小函数记录夹具：固定头部 + 调用方给的 `values`/`insts`/`blocks`/`layout`。
@@ -598,13 +601,15 @@ fn value_type_out_of_range_is_rejected() {
 #[test]
 fn truncated_funcs_body_is_rejected() {
     let real = reference_module().to_binary();
-    let (_, off, len) = sections_of(&real)
+    let (_, off, len, raw_len) = sections_of(&real)
         .into_iter()
-        .find(|(id, _, _)| *id == SectionId::Funcs.as_u8())
+        .find(|(id, _, _, _)| *id == SectionId::Funcs.as_u8())
         .expect("FUNCS 段");
     let body = real[off..off + len].to_vec();
     for cut in 1..body.len() {
-        let bytes = with_funcs_body(&real, body[..cut].to_vec());
+        // 保留原始 `raw_len`：FUNCS 段是压缩体时，走的是"解压失败即 Err"这条路径
+        // （而不是把压缩字节当段体解析）。
+        let bytes = with_funcs_body_raw(&real, body[..cut].to_vec(), raw_len);
         let e = decode_err(&bytes);
         assert!(
             matches!(e, IrError::BinaryDecode { .. }),

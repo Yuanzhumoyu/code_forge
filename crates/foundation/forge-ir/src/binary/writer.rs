@@ -13,6 +13,7 @@ use crate::util::imm_str::ImmStr;
 use crate::util::string_pool::InternedStr;
 
 use super::format::{IR_FORMAT_VERSION, MAGIC, PRODUCER, SectionId};
+use super::pack;
 
 // ============================================================
 // 编码原语（小端字节序；长度一律 varint）
@@ -228,21 +229,39 @@ impl Writer {
         }
         self.sections.sort_by_key(|(id, _)| id.as_u8());
 
+        // 压缩决策：**只在真的更小时**才存压缩体（v2 的 `raw_len` 语义见
+        // `format::IR_FORMAT_VERSION`）。无旋钮、无开关 ⇒ 同输入同输出；
+        // 不可压缩的段体原样存，永不"越压越大"。哈希 scratch 跨段复用（一个
+        // `Packer` 压全部段），否则每段重建 256 KiB 哈希表会把编码热路径吃穿。
+        let mut packer = pack::Packer::new();
+        let bodies: Vec<(SectionId, Vec<u8>, u64)> = self
+            .sections
+            .drain(..)
+            .map(|(id, body)| {
+                let packed = packer.pack(&body);
+                if packed.len() < body.len() {
+                    (id, packed, body.len() as u64)
+                } else {
+                    (id, body, 0)
+                }
+            })
+            .collect();
+
         // 段表里的 offset 是绝对偏移 = 头部长度 + 之前段体长度之和；而头部长度
         // 又取决于 offset 的 varint 长度 ⇒ 取不动点（偏移随头部长度单调，通常
         // 2 轮收敛；这里给 8 轮上限并在未收敛时 debug 断言）。
         let mut header_len = 0usize;
-        let mut offsets = vec![0u64; self.sections.len()];
+        let mut offsets = vec![0u64; bodies.len()];
         for _ in 0..8 {
             let mut off = header_len as u64;
             let mut size = MAGIC.len()
                 + varint_len(u64::from(IR_FORMAT_VERSION))
                 + varint_len(PRODUCER.len() as u64)
                 + PRODUCER.len()
-                + varint_len(self.sections.len() as u64);
-            for (i, (_, body)) in self.sections.iter().enumerate() {
+                + varint_len(bodies.len() as u64);
+            for (i, (_, body, raw_len)) in bodies.iter().enumerate() {
                 offsets[i] = off;
-                size += 1 + varint_len(off) + varint_len(body.len() as u64);
+                size += 1 + varint_len(off) + varint_len(body.len() as u64) + varint_len(*raw_len);
                 off += body.len() as u64;
             }
             if size == header_len {
@@ -257,10 +276,11 @@ impl Writer {
                     + varint_len(u64::from(IR_FORMAT_VERSION))
                     + varint_len(PRODUCER.len() as u64)
                     + PRODUCER.len()
-                    + varint_len(self.sections.len() as u64);
-                for (i, (_, body)) in self.sections.iter().enumerate() {
+                    + varint_len(bodies.len() as u64);
+                for (i, (_, body, raw_len)) in bodies.iter().enumerate() {
                     debug_assert_eq!(offsets[i], off);
-                    size += 1 + varint_len(off) + varint_len(body.len() as u64);
+                    size +=
+                        1 + varint_len(off) + varint_len(body.len() as u64) + varint_len(*raw_len);
                     off += body.len() as u64;
                 }
                 size
@@ -269,19 +289,21 @@ impl Writer {
             "段表不动点未收敛"
         );
 
-        // 头部（自包含）：魔数 + 版本 + producer + 段数 + 段表。
+        // 头部（自包含）：魔数 + 版本 + producer + 段数 + 段表
+        // （段表条目：id | 绝对偏移 | 段体长度 | 解压后长度（0 = 未压缩））。
         out.extend_from_slice(&MAGIC);
         put_varint(out, u64::from(IR_FORMAT_VERSION));
         put_str(out, PRODUCER);
-        put_varint(out, self.sections.len() as u64);
-        for (i, (id, body)) in self.sections.iter().enumerate() {
+        put_varint(out, bodies.len() as u64);
+        for (i, (id, body, raw_len)) in bodies.iter().enumerate() {
             put_u8(out, id.as_u8());
             put_varint(out, offsets[i]);
             put_varint(out, body.len() as u64);
+            put_varint(out, *raw_len);
         }
         debug_assert_eq!(out.len() - start, header_len, "头部长度与段表推算不一致");
 
-        for (_, body) in &self.sections {
+        for (_, body, _) in &bodies {
             out.extend_from_slice(body);
         }
     }

@@ -25,15 +25,18 @@
 //!   `StringPool` 与编码前**逐条相同**（含空串在内，不多不少）。
 //! - 完整规范与切片计划见 `docs/plans/forge-ir-binary-serialization-plan.md`。
 
+mod cache;
 mod consts;
 pub mod format;
 mod funcs;
 mod globals;
 mod meta;
+mod pack;
 mod reader;
 mod types;
 mod writer;
 
+pub use cache::{CacheKey, IrCache};
 pub use format::{IR_FORMAT_VERSION, MAGIC, PRODUCER, SectionId};
 
 use crate::error::IrError;

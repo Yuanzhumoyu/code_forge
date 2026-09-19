@@ -40,7 +40,15 @@ fn put_varint(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
+/// 测试侧装配一个流（段体一律**未压缩**，`raw_len = 0`）。
 fn build_stream(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let sections: Vec<(u8, Vec<u8>, usize)> =
+        sections.iter().map(|(id, b)| (*id, b.clone(), 0)).collect();
+    build_stream_verbatim(&sections)
+}
+
+/// 同上，但可携带 `raw_len`（真实编码里的压缩段要连 `raw_len` 一起搬运才解得出）。
+fn build_stream_verbatim(sections: &[(u8, Vec<u8>, usize)]) -> Vec<u8> {
     fn vlen(mut v: u64) -> usize {
         let mut n = 1;
         while v >= 0x80 {
@@ -56,9 +64,10 @@ fn build_stream(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
         let mut off = header_len as u64;
         let mut size =
             8 + 1 + vlen(producer.len() as u64) + producer.len() + vlen(sections.len() as u64);
-        for (i, (_, body)) in sections.iter().enumerate() {
+        for (i, (_, body, raw_len)) in sections.iter().enumerate() {
             offsets[i] = off;
-            size += 1 + vlen(off) + vlen(body.len() as u64);
+            // 条目 = id(1) + offset + len + raw_len
+            size += 1 + vlen(off) + vlen(body.len() as u64) + vlen(*raw_len as u64);
             off += body.len() as u64;
         }
         if size == header_len {
@@ -72,13 +81,14 @@ fn build_stream(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
     put_varint(&mut out, producer.len() as u64);
     out.extend_from_slice(producer.as_bytes());
     put_varint(&mut out, sections.len() as u64);
-    for (i, (id, body)) in sections.iter().enumerate() {
+    for (i, (id, body, raw_len)) in sections.iter().enumerate() {
         out.push(*id);
         put_varint(&mut out, offsets[i]);
         put_varint(&mut out, body.len() as u64);
+        put_varint(&mut out, *raw_len as u64);
     }
     assert_eq!(out.len(), header_len);
-    for (_, body) in sections {
+    for (_, body, _) in sections {
         out.extend_from_slice(body);
     }
     out
@@ -443,7 +453,6 @@ fn llvm_corpus_binary_roundtrip_is_text_identical() {
     );
     // 基线（2026-09-19 实测）：189 个正向用例可解析 ⇒ 全部往返文本一致
     assert!(checked >= 189, "往返覆盖数偏低：{checked}");
-    // 尺寸基线：只打印，不设阈值（压缩/演进时重新采集）
     // 尺寸基线：只打印，不设阈值（压缩/演进时重新采集）。
     // 同时给"字节流 vs 源码文本"的比值——二进制缓存是否划算的直接依据。
     eprintln!(
@@ -547,21 +556,22 @@ fn dangling_metadata_attachment_is_rejected() {
 
     // 真实模块：附件必然在界内 ⇒ 正常解码；把 METADATA 段体替成"0 节点"后，
     // 附件就变成悬空 ⇒ 必须被 validate_metadata_refs 拒绝。
-    let mut sections: Vec<(u8, Vec<u8>)> = Vec::new();
-    for (id, off, len) in test_sections_of(&real) {
+    let mut sections: Vec<(u8, Vec<u8>, usize)> = Vec::new();
+    for (id, off, len, raw_len) in test_sections_of(&real) {
         if id == SectionId::Metadata.as_u8() {
-            sections.push((id, metadata_body(&[])));
+            sections.push((id, metadata_body(&[]), 0));
         } else {
-            sections.push((id, real[off..off + len].to_vec()));
+            // 压缩段连 `raw_len` 一起搬运，否则解不出原段体。
+            sections.push((id, real[off..off + len].to_vec(), raw_len));
         }
     }
-    let broken = build_stream(&sections);
+    let broken = build_stream_verbatim(&sections);
     let e = decode_err(&broken);
     assert!(msg_of(&e).contains("越界节点"), "{e:?}");
 }
 
-/// 测试侧段表解析。
-fn test_sections_of(bytes: &[u8]) -> Vec<(u8, usize, usize)> {
+/// 测试侧段表解析（`(id, offset, len, raw_len)`）。
+fn test_sections_of(bytes: &[u8]) -> Vec<(u8, usize, usize, usize)> {
     fn read_varint(bytes: &[u8], pos: &mut usize) -> u64 {
         let mut result = 0u64;
         let mut shift = 0;
@@ -586,7 +596,8 @@ fn test_sections_of(bytes: &[u8]) -> Vec<(u8, usize, usize)> {
         pos += 1;
         let offset = read_varint(bytes, &mut pos) as usize;
         let len = read_varint(bytes, &mut pos) as usize;
-        out.push((id, offset, len));
+        let raw_len = read_varint(bytes, &mut pos) as usize;
+        out.push((id, offset, len, raw_len));
     }
     out
 }

@@ -14,6 +14,7 @@ use crate::error::IrError;
 use crate::util::imm_str::ImmStr;
 
 use super::format::{IR_FORMAT_VERSION, MAGIC, SectionId};
+use super::pack;
 
 // ============================================================
 // 错误构造
@@ -187,7 +188,10 @@ impl<'a> Cursor<'a> {
 pub(crate) struct SectionEntry {
     pub(crate) id: SectionId,
     pub(crate) offset: usize,
+    /// 段体在流里的字节数（压缩体也算这个长度）。
     pub(crate) len: usize,
+    /// `0` = 段体未压缩；`> 0` = 段体经 `pack` 压缩、解压后为该字节数（v2）。
+    pub(crate) raw_len: usize,
 }
 
 /// 头部解析结果。
@@ -236,13 +240,13 @@ pub(crate) fn parse_header(bytes: &[u8]) -> Result<Header, IrError> {
 
     let count_at = c.offset();
     let count = c.read_usize()?;
-    // 每条段表条目至少 3 字节（id + offset + len）⇒ 条数不得超过剩余字节数的 1/3。
-    if count > c.remaining() / 3 {
+    // 每条段表条目至少 4 字节（id + offset + len + raw_len）⇒ 条数不得超过剩余字节数的 1/4。
+    if count > c.remaining() / 4 {
         return decode_err(
             count_at,
             format!(
                 "段表声明 {count} 段，但剩余字节只够 {} 段",
-                c.remaining() / 3
+                c.remaining() / 4
             ),
         );
     }
@@ -259,6 +263,15 @@ pub(crate) fn parse_header(bytes: &[u8]) -> Result<Header, IrError> {
         let offset = c.read_usize()?;
         let len_at = c.offset();
         let len = c.read_usize()?;
+        let raw_len_at = c.offset();
+        let raw_len = c.read_usize()?;
+        // 解压后长度只允许"未压缩（0）"或"合理范围内"（防解压炸弹；见 pack 的常量）。
+        if raw_len > 0 {
+            pack::check_ratio(len, raw_len).map_err(|msg| IrError::BinaryDecode {
+                offset: raw_len_at,
+                msg: format!("段 {} 的 raw_len 不可信：{msg}", id.name()),
+            })?;
+        }
         let end = offset.checked_add(len).ok_or(IrError::BinaryDecode {
             offset: offset_at,
             msg: format!("段 {} 的 offset+len 溢出", id.name()),
@@ -276,7 +289,12 @@ pub(crate) fn parse_header(bytes: &[u8]) -> Result<Header, IrError> {
         if sections.iter().any(|e| e.id == id) {
             return decode_err(id_at, format!("段 {} 重复出现", id.name()));
         }
-        sections.push(SectionEntry { id, offset, len });
+        sections.push(SectionEntry {
+            id,
+            offset,
+            len,
+            raw_len,
+        });
     }
     let header_end = c.offset();
     for e in &sections {
@@ -325,8 +343,10 @@ pub(crate) fn parse_header(bytes: &[u8]) -> Result<Header, IrError> {
 ///
 /// 校验：每段合法 UTF-8、**无重复**（表是"内容 → 索引"的单射，重复说明文件被改过
 /// 或写侧有 bug）。`num == 0`（空池）合法——表不预留空串槽。
-pub(crate) fn decode_strings(bytes: &[u8], entry: SectionEntry) -> Result<Vec<ImmStr>, IrError> {
-    let mut c = Cursor::at(bytes, entry.offset);
+///
+/// `body` 是**段体本身**（调用方已按需解压），因此错误里的 `offset` 是段体内偏移。
+pub(crate) fn decode_strings(body: &[u8]) -> Result<Vec<ImmStr>, IrError> {
+    let mut c = Cursor::new(body);
     let num_at = c.offset();
     let num = c.read_usize()?;
     // 长度表：每项至少 1 字节 ⇒ 数量不得超过剩余字节数。
@@ -358,7 +378,8 @@ pub(crate) fn decode_strings(bytes: &[u8], entry: SectionEntry) -> Result<Vec<Im
 // Reader
 // ============================================================
 
-/// 模块读取器：头部 + 段表 + 字符串表（段体按需切片）。
+/// 模块读取器：头部 + 段表 + 字符串表（段体按需切片；压缩段体在 `parse` 时**一次性**
+/// 解压到 `decoded`，因此 `section()` 对调用方仍是"给我一个游标"）。
 ///
 /// `header`/`bytes` 只被段访问器读（B2 起使用，B1 只有单测覆盖）——整结构体加
 /// `allow(dead_code)` 而不是逐个字段，避免"字段被 dead 方法读"的连锁告警。
@@ -368,10 +389,14 @@ pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     header: Header,
     strings: Vec<ImmStr>,
+    /// 解压后的段体（v2 压缩段；`raw_len == 0` 的段不在此表里）。**含 STRINGS**：
+    /// 否则同一段"压了"与"没压"两种形态下 `section()` 的行为会不一致。
+    decoded: Vec<(SectionId, Vec<u8>)>,
 }
 
 impl<'a> Reader<'a> {
-    /// 解析头部与字符串表，并校验 COMPAT 段（未知 flag 位即错）。
+    /// 解析头部与字符串表，校验 COMPAT 段（未知 flag 位即错），并**解压全部压缩段体**
+    /// （解压失败即在此处报错——fail-closed，绝不把坏段体交给下游）。
     pub(crate) fn parse(bytes: &'a [u8]) -> Result<Self, IrError> {
         let header = parse_header(bytes)?;
         if let Some(entry) = header.section(SectionId::Compat) {
@@ -391,11 +416,26 @@ impl<'a> Reader<'a> {
                 offset: 0,
                 msg: "缺 STRINGS 段".to_string(),
             })?;
-        let strings = decode_strings(bytes, strings_entry)?;
+        // STRINGS 段自身也可能被压缩（字符串表通常很值得压）。
+        let strings_raw = decompress_entry(bytes, &strings_entry)?;
+        let strings = decode_strings(&strings_raw)?;
+
+        // 其余压缩段体一次性解压（数量 ≤ 7，代价可忽略；换来 `section()` 的简单签名）。
+        let mut decoded = Vec::new();
+        if strings_entry.raw_len > 0 {
+            decoded.push((SectionId::Strings, strings_raw));
+        }
+        for entry in &header.sections {
+            if entry.raw_len > 0 && entry.id != SectionId::Strings {
+                let raw = decompress_entry(bytes, entry)?;
+                decoded.push((entry.id, raw));
+            }
+        }
         Ok(Self {
             bytes,
             header,
             strings,
+            decoded,
         })
     }
 
@@ -409,12 +449,35 @@ impl<'a> Reader<'a> {
     }
 
     /// 取某段体的游标；段不存在返回 `None`（缺失 = 空，不属于损坏）。
+    ///
+    /// 压缩段返回的是**解压后**的字节（`decoded` 里的副本），因此返回的游标借的是
+    /// `&self` 而不是 `&'a [u8]`。
     #[allow(dead_code)] // B2+ 各段 reader 使用；B1 只有单测覆盖
-    pub(crate) fn section(&self, id: SectionId) -> Option<Cursor<'a>> {
-        self.header
-            .section(id)
-            .map(|e| Cursor::at(self.bytes, e.offset))
+    pub(crate) fn section(&self, id: SectionId) -> Option<Cursor<'_>> {
+        let entry = self.header.section(id)?;
+        if entry.raw_len > 0 {
+            let raw = self
+                .decoded
+                .iter()
+                .find(|(sid, _)| *sid == id)
+                .map(|(_, body)| body.as_slice())?;
+            Some(Cursor::new(raw))
+        } else {
+            Some(Cursor::at(self.bytes, entry.offset))
+        }
     }
+}
+
+/// 取段体原始字节（压缩则解压，返回**拥有**的缓冲）。
+fn decompress_entry(bytes: &[u8], entry: &SectionEntry) -> Result<Vec<u8>, IrError> {
+    let body = &bytes[entry.offset..entry.offset + entry.len];
+    if entry.raw_len == 0 {
+        return Ok(body.to_vec());
+    }
+    pack::unpack(body, entry.raw_len).map_err(|msg| IrError::BinaryDecode {
+        offset: entry.offset,
+        msg: format!("段 {} 解压失败：{msg}", entry.id.name()),
+    })
 }
 
 #[cfg(test)]
@@ -423,8 +486,20 @@ mod tests {
     use crate::binary::writer::{put_str, put_u8, put_varint, varint_len};
 
     /// 独立实现的头部/段表装配（**不调用被测的 `writer::finish`**，避免"用被测代码
-    /// 造夹具"）：算法相同，但这里手写，可用它交叉验证布局。
+    /// 造夹具"）：算法相同，但这里手写，可用它交叉验证布局。段体一律未压缩
+    /// （`raw_len = 0`）；要造压缩段用 [`build_stream_raw`]。
     fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+        let sections: Vec<(u8, Vec<u8>, usize)> =
+            sections.iter().map(|(id, b)| (*id, b.clone(), 0)).collect();
+        build_stream_raw(version, producer, &sections)
+    }
+
+    /// 同上，但每条段表条目可携带 `raw_len`（`> 0` = 段体是压缩体）。
+    fn build_stream_raw(
+        version: u64,
+        producer: &str,
+        sections: &[(u8, Vec<u8>, usize)],
+    ) -> Vec<u8> {
         let mut header_len = 0usize;
         let mut offsets = vec![0u64; sections.len()];
         loop {
@@ -434,9 +509,13 @@ mod tests {
                 + varint_len(producer.len() as u64)
                 + producer.len()
                 + varint_len(sections.len() as u64);
-            for (i, (_, body)) in sections.iter().enumerate() {
+            for (i, (_, body, raw_len)) in sections.iter().enumerate() {
                 offsets[i] = off;
-                size += 1 + varint_len(off) + varint_len(body.len() as u64);
+                // 条目 = id(1) + offset + len + raw_len
+                size += 1
+                    + varint_len(off)
+                    + varint_len(body.len() as u64)
+                    + varint_len(*raw_len as u64);
                 off += body.len() as u64;
             }
             if size == header_len {
@@ -449,13 +528,14 @@ mod tests {
         put_varint(&mut out, version);
         put_str(&mut out, producer);
         put_varint(&mut out, sections.len() as u64);
-        for (i, (id, body)) in sections.iter().enumerate() {
+        for (i, (id, body, raw_len)) in sections.iter().enumerate() {
             put_u8(&mut out, *id);
             put_varint(&mut out, offsets[i]);
             put_varint(&mut out, body.len() as u64);
+            put_varint(&mut out, *raw_len as u64);
         }
         assert_eq!(out.len(), header_len, "夹具头部长度推算");
-        for (_, body) in sections {
+        for (_, body, _) in sections {
             out.extend_from_slice(body);
         }
         out
@@ -673,7 +753,7 @@ mod tests {
         assert!(reader.strings().is_empty());
     }
 
-    /// 显式指定段偏移的装配（用于构造"越界/重叠"这类损坏流）。
+    /// 显式指定段偏移的装配（用于构造"越界/重叠"这类损坏流）；段体一律未压缩。
     fn raw_stream(
         version: u64,
         producer: &str,
@@ -687,7 +767,7 @@ mod tests {
             + varint_len(entries.len() as u64)
             + entries
                 .iter()
-                .map(|(_, off, len)| 1 + varint_len(*off) + varint_len(*len))
+                .map(|(_, off, len)| 1 + varint_len(*off) + varint_len(*len) + 1) // + raw_len = 0
                 .sum::<usize>();
         let mut out = Vec::new();
         out.extend_from_slice(&MAGIC);
@@ -698,6 +778,7 @@ mod tests {
             put_u8(&mut out, *id);
             put_varint(&mut out, *off);
             put_varint(&mut out, *len);
+            put_varint(&mut out, 0); // raw_len = 0：未压缩
         }
         assert_eq!(out.len(), header_len, "夹具头部长度推算");
         let _ = header_len;
@@ -705,6 +786,68 @@ mod tests {
             out.extend_from_slice(body);
         }
         out
+    }
+
+    #[test]
+    fn reader_decompresses_packed_section() {
+        // 够长且重复度高（短于 `MIN_PACK_INPUT` 的段体不建表、压不小 ⇒ 测不到这条路径）
+        let raw = strings_body(&["", "alpha", &"alpha".repeat(20)]);
+        let packed = pack::pack(&raw);
+        assert!(packed.len() < raw.len(), "夹具的前提：这个段体真的更小");
+        let stream = build_stream_raw(
+            u64::from(IR_FORMAT_VERSION),
+            "test 0.0.0",
+            &[
+                (SectionId::Compat.as_u8(), vec![0x00], 0),
+                (SectionId::Strings.as_u8(), packed, raw.len()),
+            ],
+        );
+        let reader = Reader::parse(&stream).expect("压缩段必须可解");
+        assert_eq!(reader.strings().len(), 3);
+        assert_eq!(reader.strings()[1].as_str(), "alpha");
+        assert_eq!(reader.strings()[2].as_str(), "alpha".repeat(20));
+        // `section()` 对压缩段返回的是**解压后**的游标（调用方不必感知压缩）
+        let mut c = reader.section(SectionId::Strings).expect("STRINGS 段");
+        let n = c.remaining();
+        assert_eq!(
+            c.read_bytes(n).expect("读完"),
+            raw.as_slice(),
+            "解压结果必须与未压缩段体逐字节相同"
+        );
+    }
+
+    #[test]
+    fn reader_rejects_untrusted_raw_len() {
+        let raw = strings_body(&["", "alpha", &"alpha".repeat(20)]);
+        let packed = pack::pack(&raw);
+        // (a) 声明比实际少 1 字节：解压产出与声明不符（或尾随数据）⇒ 拒
+        let stream = build_stream_raw(
+            u64::from(IR_FORMAT_VERSION),
+            "test 0.0.0",
+            &[
+                (SectionId::Compat.as_u8(), vec![0x00], 0),
+                (SectionId::Strings.as_u8(), packed.clone(), raw.len() - 1),
+            ],
+        );
+        let e = Reader::parse(&stream).expect_err("raw_len 不符必须错");
+        assert!(
+            matches!(e, IrError::BinaryDecode { .. }),
+            "必须是有偏移的解码错误：{e:?}"
+        );
+        // (b) 声明 4 GiB：超过单段上限，连解压都不该开始
+        let stream = build_stream_raw(
+            u64::from(IR_FORMAT_VERSION),
+            "test 0.0.0",
+            &[
+                (SectionId::Compat.as_u8(), vec![0x00], 0),
+                (SectionId::Strings.as_u8(), packed, 4 << 30),
+            ],
+        );
+        let e = Reader::parse(&stream).expect_err("解压炸弹必须错");
+        match e {
+            IrError::BinaryDecode { msg, .. } => assert!(msg.contains("raw_len"), "消息：{msg}"),
+            other => panic!("错误类型错误：{other:?}"),
+        }
     }
 
     #[test]

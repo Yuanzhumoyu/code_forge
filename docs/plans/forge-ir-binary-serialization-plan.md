@@ -20,9 +20,19 @@ panic、绝不静默丢数据）。
 - 不做惰性解析/延迟加载（先正确与确定，懒加载是另一个工程）；
 - 不序列化**可重算**的东西（`use_lists`、去重表、分析缓存——落盘即双写源）；
 - 不引入任何新依赖（见 §7 对 postcard/bincode/rkyv/serde 的比较与否决）；
-- 不做压缩、不做 mmap、不做跨进程共享内存。
+- 不做 mmap、不做跨进程共享内存。
+
+> **v2 增量（2026-09-19 追加，用户当日指令"实现压缩"）**：B1–B5 落地后在 v1 之上加了
+> **段体压缩**（段表加第 4 字段 `raw_len`，`IR_FORMAT_VERSION` 升到 2，无兼容读取）。
+> 详见 §4 的 `C1` 行、§9 的 `C1` 验收行与 `docs/reference/binary-format.md` §8。
+> 压缩**不是** v1 的非目标被推翻，而是"先有正确性基线、再按度量优化体积"这条顺序的
+> 第二步：v1 的尺寸/吞吐基线先落地，压缩才有对照物。
 
 ## 2. 格式 v1（字节级规范）
+
+> 下面是 B1–B5 落地时的 v1 规范（段表 3 字段）。v2 只改了两处：段表加第 4 字段
+> `raw_len`、段体可压（§4 `C1`）；v1 其余字节级设计一字未动。现行规范文本是
+> `docs/reference/binary-format.md`（v2）。
 
 ### 2.1 容器布局
 
@@ -203,6 +213,8 @@ crates/foundation/forge-ir/src/binary/
 | B3 | CONSTS 段（int/float/big/vector/aggregate/字符串） | 常量往返（含 `Big` 符号+字节、NaN 载荷、向量端序） | 非法 `ConstId` tag ⇒ `Err`；`Big` 前导零与非规范零 ⇒ 写侧规范、读侧 `Err` | 300–450 |
 | B4 | FUNCS 段（`value_kinds` + 块 + 指令 + `layout` + 属性/附件/`loc`） | 函数体往返（fuzz 10k + 语料） | 中间截断 ⇒ `Err` 且偏移落在该段内；`value_kinds` 与结果索引不一致 ⇒ `Err` | 450–650 |
 | B5 | METADATA / GLOBALS / MODULE 段 + 全模块语料 + `docs/reference/binary-format.md` | 全模块往返 + 尺寸基线 + 参考文档 | 段重叠/越界 ⇒ `Err`；未知 flag 位 ⇒ `Err`；198 语料往返幂等 | 300–450 |
+| C1 | **v2 段体压缩**：段表加 `raw_len`、自研零依赖 LZ77（`pack.rs`）、写侧"只更小才压"、读侧解压 + 炸弹防护 | 体积减半 + 参考文档 §8 + 基线对照表 | 坏压缩段（坏首字节 / `raw_len` 不符 / 截断）⇒ `Err`；超单段上限 / 超压缩比 ⇒ `Err`；"压缩体必须严格更小"不变量 | 350–500 |
+| C2 | **消费方缓存**：`binary/cache.rs` 的 `IrCache`（内容键、自愈、原子落盘）+ 基准/示例接线 + 盈亏实测 | 公开 API + `tests/binary_cache.rs` + 两组尺度的基准对照 | 坏条目 ⇒ 当 miss 且被覆盖修复；不同源码不命中；`build` 失败不落盘；临时文件不算条目 | 200–300 |
 
 **每片完成即跑 §5 门禁并提交**（不跨片合提交），提交信息写清"本片新增/修了什么 +
 负向对照的实测结论"。
@@ -278,3 +290,31 @@ JIT 矩阵 x86 195/3/0、riscv64 131/67/0、arm64 23/175/0。
 | B3 | d62989d | CONSTS：五通道（int/float/big/vector/aggregate）逐条按索引写、按同序 `insert_*` 重建（`ConstId`/`AggId` 逐位不变）。覆盖：负 i128、`i128::MIN/MAX`、**同一位模式的 f32/f64 必须各留一条**（值宽进 key）、NaN 载荷、`Big` 三变体（`Signed`/`Unsigned`/`Float`，实数写 `sig + exp + 精度`）、两种端序的向量、嵌套聚合（`Scalar` + `Agg` 子）。负向：重复常量（`insert_int` 返回索引与位置不符）、未知 `Big` 变体 tag、未知端序 tag、聚合标量子越界、聚合**前向/自引用**（防环）、`i128`/`u128` varint 溢出（第 19 字节越界位 + 20 字节续位）。**实现坑（已修）**：`Big::Float` 的 `into_parts` 会把有效数归一化，只写 `(sig, exp)` 会丢 `Context::precision`（1.5 的 prec 53 → 2，"值相同、精度不同"）——改为写 `repr().significand()/exponent()` + `precision()`，并用 `Repr::new` + `Context::new` + `Real::from_repr` 重建（Debug 逐字符一致）。 | 2026-09-19 |
 | B4 | 45308b3 | FUNCS：每函数记录 = 名字/签名/调用约定/属性/开放属性/符号（linkage·visibility·dll·section·comdat·TLS 模型·三个布尔）/`is_const`/personality/参数与返回属性/函数级 metadata/`debug_info`（`locations` + 函数名）/值名与块名（`InternedStr` 按内容落表）/**每函数常量池**（与模块 `CONSTS` 同一份五通道编码器）/`dfg`/`layout`/入口块。`dfg` 侧：每个值写**显式 `ValueDef`**（`Inst(i,k)` / `Param(b,k)` / `AggConst` / `UndefNamed`）+ 类型；指令写 opcode **名字**（`ops.toml` 是单一事实源，读侧 `from_name` 解析，未知名即错）、块、结果、操作数、immediates（11 变体）、`InstFlags`/`MemFlags` 位、调用点属性、metadata、`loc`、`isel_strategy`、墓碑位；块写参数类型/参数值/块内顺序/终结符。**use-lists 不落盘**，解码后按指令操作数重建（终结符指令在列）。**解码后校验**（`validate_dfg`）：值类型在界内、每条 `ValueDef` 回指一致（指令第 k 个结果 / 块第 k 个参数 / 结果值反向回指）、操作数与结果在界内、块参数类型在界内、块顺序表与终结符在界内、布局与入口块在界内——任一处不一致即 `Err`（"顺序即索引"不靠隐式假设）。负向：未知 opcode 名、未知调用约定、value kind 与密集索引不一致、悬空操作数、未知 immediate tag、越界值类型、FUNCS 段体任意截断前缀。 | 2026-09-19 |
 | B5 | ecb9ef9（补丁：3397576 metadata 深度上限、1cb05cc fuzz 扩面、d9d391f 打印多别名） | METADATA（节点表按 id 顺序 + 命名表按名排序；**按原样落位**，不用 `intern` 回放——显式 `!N` 经 `insert_at` 预分配槽位、arena 允许同内容两条，`intern` 会折叠致 id 错位；节点内 `Node(id)` 只校验 `< 节点总数`，**前向引用合法**）、GLOBALS（全局/别名/comdat 经 `Module::add_*` 回放，名字索引表随之重建、重名 fail-closed）、MODULE（三元组/源文件/模块 asm）+ 附件 `MetadataId` 的悬空引用校验。**语料端到端**：`tests/binary_module.rs` 对 LLVM `test/Assembler` 全部正向用例做 parse → `to_binary` → `from_binary`，断言**文本打印逐字符一致** + `decode → encode` 逐字节幂等：**198/198 通过**（尺寸基线：合计 241,440 B、最大 31,038 B（`auto_upgrade_nvvm_intrinsics.ll`）、平均 1,219 B）；负向：未知 metadata 节点/值 tag、越界节点引用、附件悬空、未知 comdat kind、截断、**metadata 嵌套 65/5000 层**（深度上限 64）。**fuzz 扩面**：`tests/roundtrip_fuzz.rs` 同批随机模块（默认 10,000 + 固定种子 500）全部额外走二进制往返（结构等价 + 文本一致 + 字节幂等），本机 2 passed / 0 failed、~29 s。规范文本落地为 `docs/reference/binary-format.md`（索引进 `docs/README.md`）。**顺带修掉一处既有不确定性**：`MetadataStore::name_of` 原用 `HashMap::iter().find(...)`，一个 id 被多个名字指向时输出随实例随机种子变化（display 随之不确定）→ 改为取字节序最小者，并加 `names_of` 返回全部别名（打印器"每节点只打一个名字"的丢名字也一并修掉——display 现在对每个别名各打一行（名字按字节序），`tests/display_llvm.rs::named_metadata_prints_every_alias` 钉住）。 | 2026-09-19 |
+| C1 | 见 `git log --oneline -- crates/foundation/forge-ir/src/binary/pack.rs`（首个 pack.rs 提交） | **v2 段体压缩**。格式：段表第 4 字段 `raw_len`（`0` = 原样存放、`> 0` = 解压后长度）；写侧**只在压缩体严格更小时**才压（无旋钮 ⇒ 确定性，且永不"越压越大"）；解码侧段边界与解压后的段体与 v1 逐字节相同。算法：自研零依赖 LZ77 变体（`pack.rs`，token = 偶数字面量段 / 奇数回引段 + 距离 varint；窗口 64 KiB、最小匹配 4、单 token ≤ 64 KiB、哈希表长随输入自适应且跨段复用）。**实测体积**：语料 241,440 → **121,257 B（×0.50）**，对源码文本 0.59× → **0.30×**，最大单例 31,038 → 8,482 B。**实测吞吐**：encode 21.9 → **22.5 µs**（三次运行 22.1/30.5/22.5 的中位数 ⇒ 压缩成本落在计时噪声内；中途"每段新建 256 KiB 哈希表"版本实测 184.1 µs，改 scratch 复用 + 自适应表长后回到基线量级，再把表长下限 12→10 无可测收益 ⇒ 剩余成本在搜索不在建表）、decode 77.2 → **42.9 µs**（三次运行 43.5/42.9/32.0；字节少 28% ⇒ 读侧游标/切片/校验都少）。本机同点波动可达 ~1.7×（同一版代码曾测得 45.2 µs 与 26.0 µs），故一律按"方向 + 多次运行"记录。**负向对照**：坏压缩段首字节（空字面量 token）、`raw_len` 低位翻转（产出与声明不符）、压缩体截断 ⇒ 全部 `Err`；解压炸弹两路（超单段上限 256 MiB、超压缩比 65536×）在**进入解压循环前**即拒；`packed_entries_are_always_strictly_smaller` 钉住"压缩体必须严格更小"不变量，`repetitive_strings_section_is_packed_and_roundtrips` 用**测试侧独立核算**的未压缩段体长度校验 `raw_len`。**测试侧影响**：三个集成测试文件的段表解析/装配、`reader.rs` 单测夹具、`binary_functions.rs` 的"真实编码 + 打补丁"夹具都要带上第 4 字段（压缩段必须连 `raw_len` 一起搬运才解得出，否则会把压缩体当段体解析）。 | 2026-09-19 |
+| C2 | 见 `git log --oneline -- crates/foundation/forge-ir/src/binary/cache.rs`（首个 cache.rs 提交） | **消费方缓存** `IrCache`：内容键（源码 + 格式版本 + producer 的 128 位指纹）、目录存储、`load`/`store`/`get_or_insert_with`/`entry_path`/`entry_count`；**自愈**（坏条目当 miss，miss 时重算并覆盖）+ **原子落盘**（临时文件 + `rename`）+ **失败不缓存**（`build` 返回 `None` 不落盘）。测试 `tests/binary_cache.rs` 4 例（键只依赖内容、命中逐字节一致、坏条目自愈、命中不再调 `build`、不同源码不命中、临时文件不算条目）。**接线**：`benches/ir_binary.rs` 增 `ir_binary_cache`（884 B）与 `ir_binary_cache_large`（43 KB）两组，各自拆出 `parse_text`/`cache_hit`/`read_entry`/`decode_entry`；示例加 `--cache <dir>`（打印 HIT/MISS）。**实测盈亏**：884 B 文本命中 126.2 / 114.3 / 195.0 µs vs 解析 77.3 / 94.1 / 84.3 µs（**亏 1.2–2.3×**，文件读取固定成本 75–204 µs 主导）；43 KB 文本命中 723.2 / 1145.9 / 946.1 µs vs 解析 1834.7 / 2319.9 / 2192.0 µs（**赚 2.0–2.5×**）；452 文件夹具端到端 272/155 ms（不缓存）vs 179/194 ms（缓存）⇒ **无可测收益**（332 个文件本就解析失败、可解析的 119 个都太小）。三次运行全值见 `docs/performance/bench_baseline.md`。**用法约定**：机制保留，但**不进正确性测试**（会短路"文本 → 模块"，让测试少测解析器一层）。 | 2026-09-19 |
+
+## 10. 消费方缓存（C2）与 rustc e2e 的 IR 级缓存（收益③，评估结论：不做）
+
+### 10.1 C2：`IrCache`（已实现）
+
+`crates/foundation/forge-ir/src/binary/cache.rs`：内容键 + 目录存储 + 自愈，公开面是
+`forge_ir::{IrCache, CacheKey}`。完整数字与用法约定见 §9 的 C2 行、参考文档 §11 与
+`docs/performance/bench_baseline.md`。
+
+### 10.2 收益③（rustc e2e 的 IR 级缓存）：评估结论 = **不做**
+
+前两条是实测事实，第三条是判断（已注明）：
+
+1. **没有可缓存的解析步骤**：`crates/tools/forge-rustc/` 整个 crate 里
+   `parse_module` / `from_binary` / `to_binary` **零命中**——forge-rustc 是 rustc 的
+   **codegen 后端**，IR 直接从 rustc MIR 在进程内降低（`src/lower/*.rs`），从不读文本
+   IR。所以"IR 级缓存"在 e2e 里没有可跳过的解析成本。
+2. **规模量级不匹配**：整支 198 文件语料的 parse+encode+decode+文本对照合计约 0.9 s
+   （`tests/binary_module.rs` 实测），而单个 e2e 用例是"起 rustc 进程、降低、codegen、
+   链接、运行产物"的秒级工作（超时/重试口径见 `crates/tools/forge-rustc/tests/e2e.rs`）。
+   即使缓存能省掉全部解析，占比也在噪声里。
+3. **判断**：要缓存就得键在 MIR/def-path 上，而 rustc MIR 不是稳定可序列化格式（跨
+   nightly 漂移），缓存层会变成"每次工具链升级必须整体失效"的负担；而**产物级**缓存
+   本来就是 rustc 自己的职责（`-C incremental`），不是 IR 序列化层的。触发条件：若
+   将来 forge-rustc 改为"读文本 IR 文件"的前端，或出现单次运行内重复读同一份 IR 的
+   路径，可直接按 C2 的 `IrCache` 接线。

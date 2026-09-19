@@ -74,6 +74,9 @@ struct Entry {
     id_pos: usize,
     offset: usize,
     len: usize,
+    /// 解压后长度（`0` = 段体原样存放）；`raw_len_pos` 是该 varint 的起始偏移。
+    raw_len: usize,
+    raw_len_pos: usize,
 }
 
 /// 测试侧解析真实编码产物的头部 + 段表（用于"打补丁"式负向用例）。
@@ -91,18 +94,29 @@ fn parse_entries(bytes: &[u8]) -> Vec<Entry> {
         pos += 1;
         let offset = read_varint(bytes, &mut pos) as usize;
         let len = read_varint(bytes, &mut pos) as usize;
+        let raw_len_pos = pos;
+        let raw_len = read_varint(bytes, &mut pos) as usize;
         entries.push(Entry {
             id,
             id_pos,
             offset,
             len,
+            raw_len,
+            raw_len_pos,
         });
     }
     entries
 }
 
-/// 测试侧装配一个完整流（用于构造结构性损坏的字节流）。
+/// 测试侧装配一个完整流（段体一律**未压缩**）。
 fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let sections: Vec<(u8, Vec<u8>, usize)> =
+        sections.iter().map(|(id, b)| (*id, b.clone(), 0)).collect();
+    build_stream_raw(version, producer, &sections)
+}
+
+/// 同上，但每条段表条目可携带 `raw_len`（`> 0` = 段体是压缩体，值 = 解压后长度）。
+fn build_stream_raw(version: u64, producer: &str, sections: &[(u8, Vec<u8>, usize)]) -> Vec<u8> {
     let mut header_len = 0usize;
     let mut offsets = vec![0u64; sections.len()];
     loop {
@@ -112,9 +126,11 @@ fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>)]) -> Vec
             + varint_len(producer.len() as u64)
             + producer.len()
             + varint_len(sections.len() as u64);
-        for (i, (_, body)) in sections.iter().enumerate() {
+        for (i, (_, body, raw_len)) in sections.iter().enumerate() {
             offsets[i] = off;
-            size += 1 + varint_len(off) + varint_len(body.len() as u64);
+            // 条目 = id(1) + offset + len + raw_len
+            size +=
+                1 + varint_len(off) + varint_len(body.len() as u64) + varint_len(*raw_len as u64);
             off += body.len() as u64;
         }
         if size == header_len {
@@ -128,13 +144,14 @@ fn build_stream(version: u64, producer: &str, sections: &[(u8, Vec<u8>)]) -> Vec
     put_varint(&mut out, producer.len() as u64);
     out.extend_from_slice(producer.as_bytes());
     put_varint(&mut out, sections.len() as u64);
-    for (i, (id, body)) in sections.iter().enumerate() {
+    for (i, (id, body, raw_len)) in sections.iter().enumerate() {
         out.push(*id);
         put_varint(&mut out, offsets[i]);
         put_varint(&mut out, body.len() as u64);
+        put_varint(&mut out, *raw_len as u64);
     }
     assert_eq!(out.len(), header_len, "夹具头部长度");
-    for (_, body) in sections {
+    for (_, body, _) in sections {
         out.extend_from_slice(body);
     }
     out
@@ -858,4 +875,144 @@ fn binary_decode_error_display_carries_offset() {
     let text = e.to_string();
     assert!(text.contains("offset 0"), "{text}");
     assert!(text.contains("Binary decode error"), "{text}");
+}
+
+// ============================================================
+// v2：段体压缩（段表第 4 字段 `raw_len`）
+// ============================================================
+
+/// 高度可压缩的夹具：池里 200 条共享长前缀的字符串（相邻条目互为长匹配）。
+fn compressible_module() -> Module {
+    let m = Module::new();
+    {
+        let mut store = m.types.borrow_mut();
+        for i in 0..200u32 {
+            store
+                .strings
+                .intern(format!("forge_ir_compressible_identifier_{i:04}_tail"));
+        }
+    }
+    m
+}
+
+#[test]
+fn repetitive_strings_section_is_packed_and_roundtrips() {
+    let m = compressible_module();
+    let bytes = m.to_binary();
+    let pool = pool_snapshot(&m);
+    let refs: Vec<&str> = pool.iter().map(String::as_str).collect();
+    let raw_body = strings_body(&refs);
+    let entry = parse_entries(&bytes)
+        .into_iter()
+        .find(|e| e.id == SectionId::Strings.as_u8())
+        .expect("STRINGS 段");
+
+    // 独立核算未压缩段体长度：本夹具的 STRINGS 表 = 池（不含额外登记项），
+    // 编码形态 = num + 长度表 + 字节拼接（测试侧自实现，不调库内 encoder）。
+    assert_eq!(
+        entry.raw_len,
+        raw_body.len(),
+        "raw_len 必须恰是未压缩段体长度"
+    );
+    assert!(
+        entry.len < entry.raw_len,
+        "重复度极高的 STRINGS 段必须被压缩（压缩体 {} B < 原体 {} B）",
+        entry.len,
+        entry.raw_len
+    );
+    assert!(
+        entry.raw_len >= entry.len * 4,
+        "压缩率过低（{} B → {} B），压缩器实现有退化",
+        entry.raw_len,
+        entry.len
+    );
+    // 整流的省字节是真实的（不是"段表记账"省出来的）
+    assert!(
+        bytes.len() < raw_body.len(),
+        "整字节流（{} B）必须小于未压缩的单个 STRINGS 段体（{} B）",
+        bytes.len(),
+        raw_body.len()
+    );
+
+    let back = Module::from_binary(&bytes).expect("解码压缩流");
+    assert_eq!(pool_snapshot(&back), pool, "压缩段解码后池逐条相同");
+    assert_eq!(
+        lookup(&back, "forge_ir_compressible_identifier_0199_tail"),
+        "forge_ir_compressible_identifier_0199_tail"
+    );
+    assert_eq!(back.to_binary(), bytes, "压缩决策确定性 + 编码幂等");
+}
+
+#[test]
+fn packed_entries_are_always_strictly_smaller() {
+    // 不变量：`raw_len > 0` ⇒ 压缩体严格更小。压缩器"绝不让文件变大"是可预期行为，
+    // 也是"无旋钮、只看结果"这条设计的可检验面。
+    for m in [Module::new(), compressible_module()] {
+        let bytes = m.to_binary();
+        let entries = parse_entries(&bytes);
+        assert_eq!(entries.len(), 8, "八段恒在");
+        for e in entries {
+            assert!(
+                e.raw_len == 0 || e.len < e.raw_len,
+                "段 {} 存了不更小的压缩体（{} B → 声明 {} B）",
+                e.id,
+                e.len,
+                e.raw_len
+            );
+        }
+    }
+}
+
+#[test]
+fn corrupt_packed_section_is_rejected() {
+    let bytes = compressible_module().to_binary();
+    let entry = parse_entries(&bytes)
+        .into_iter()
+        .find(|e| e.raw_len > 0)
+        .expect("该夹具至少有一个压缩段");
+
+    // (a) 段体首字节置 0 ⇒ 字面量段长度为 0（空 token 非法）
+    let mut broken = bytes.clone();
+    broken[entry.offset] = 0x00;
+    let e = decode_err(&broken);
+    assert!(msg_of(&e).contains("packed"), "{e:?}");
+
+    // (b) `raw_len` 低位翻转 ⇒ 解压产出与声明长度不符（多一字节 = 输入耗尽失败；
+    //     少一字节 = 尾随数据），两条路径都不是"猜一个长度凑合"。
+    let mut broken = bytes.clone();
+    broken[entry.raw_len_pos] ^= 0x01;
+    let e = decode_err(&broken);
+    assert!(matches!(e, IrError::BinaryDecode { .. }), "{e:?}");
+
+    // (c) 压缩体截断（文件在压缩段中间结束）⇒ 段越界，不是部分解压
+    let cut = entry.offset + entry.len - 1;
+    let e = decode_err(&bytes[..cut]);
+    assert!(matches!(e, IrError::BinaryDecode { .. }), "{e:?}");
+}
+
+#[test]
+fn decompression_bomb_is_rejected() {
+    // (a) 单段解压上限（256 MiB）：压缩体 8 KiB 过得了比率检查，声明 300 MiB 仍被拒。
+    let stream = build_stream_raw(
+        u64::from(IR_FORMAT_VERSION),
+        "test 0.0.0",
+        &[
+            (SectionId::Compat.as_u8(), vec![0x00], 0),
+            (SectionId::Strings.as_u8(), vec![0u8; 8 * 1024], 300 << 20),
+        ],
+    );
+    let e = decode_err(&stream);
+    assert!(msg_of(&e).contains("上限"), "{e:?}");
+
+    // (b) 压缩比上限：16 字节压缩体声称 1 GiB ⇒ 在算比率时早退（不进解压循环）。
+    let stream = build_stream_raw(
+        u64::from(IR_FORMAT_VERSION),
+        "test 0.0.0",
+        &[
+            (SectionId::Compat.as_u8(), vec![0x00], 0),
+            (SectionId::Strings.as_u8(), vec![0u8; 16], 1 << 30),
+        ],
+    );
+    let e = decode_err(&stream);
+    assert!(msg_of(&e).contains("raw_len"), "{e:?}");
 }

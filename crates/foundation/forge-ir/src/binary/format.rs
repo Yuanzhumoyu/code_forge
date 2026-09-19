@@ -12,7 +12,14 @@ pub const MAGIC: [u8; 8] = *b"FORGEIR\0";
 /// 写侧写入、读侧比对；不相等即 `IrError::BinaryDecode`——**不做兼容层**
 /// （仓库既有决策"无需兼容旧版本结构"）。演进规则：只允许"加段 + 升版本"，
 /// 已发布段的字段顺序不再改。
-pub const IR_FORMAT_VERSION: u16 = 1;
+///
+/// 版本史：
+/// - **1**（2026-09-19）：容器 + STRINGS/TYPES/CONSTS/METADATA/FUNCS/GLOBALS/MODULE，
+///   段表条目 `{ id, offset, len }`；
+/// - **2**（2026-09-19）：段表条目增 `raw_len`（`0` = 段体未压缩，`>0` = 该段体经
+///   [`crate::binary::pack`] 压缩、解压后为该字节数）。压缩**只在真的更小时启用**，
+///   因此不作开关、无旋钮，也不影响段的解码顺序与语义。
+pub const IR_FORMAT_VERSION: u16 = 2;
 
 /// producer 串（写入头部，**仅用于诊断**；跨版本不保证字节流逐字节相同）。
 ///
