@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **forge-ir 二进制序列化 B3（CONSTS 段：五通道常量）**：`binary/consts.rs` 逐条按池内索引写 int/float/big/vector/aggregate 五通道，解码按**同序** `insert_*` 重建 ⇒ `ConstId`/`AggId` 的密集索引逐位不变（`bool_const` 的固定槽位也因此原样保留）。`Big` 三变体全覆盖：`Signed`/`Unsigned` 用 dashu 的小端补码字节，`Float` 写 `repr()` 的归一化有效数 + 指数 + **`Context::precision`**。
+  **实现坑（负向用例抓出并修掉）**：`Big::Float` 只写 `(significand, exponent)` 会**丢精度上下文**——`Repr::into_parts()` 会把有效数归一化，`from_parts` 又把精度重置为"有效数位数"，于是 1.5 的 `prec: 53` 变成 `prec: 2`（值相同、精度不同，Debug 逐字符对比当场暴露）；改为写 `precision()` 并用 `Repr::new` + `Context::new` + `Real::from_repr` 重建后逐字符一致。
+  fail-closed 负向对照（全部实测为 `Err`）：重复常量（`insert_*` 返回索引与位置不符）、未知 `Big` 变体 tag、未知向量端序 tag、聚合标量子越界、聚合**前向/自引用**（防环）、`i128`/`u128` varint 溢出（第 19 字节越界位、20 字节续位）。
+  实测（本机 2026-09-19）：workspace **1668 passed / 0 failed / 19 ignored**；语料 198 正向 / 254 正确拒绝 / 0 误收；fmt `--check`、clippy 两道门、`cargo check --release --all-targets`、`cargo doc -D warnings` 全干净。
+
 - **forge-ir 二进制序列化 B1+B2（IR bitcode v1：容器骨架 + 字符串表 + 类型段）**：新模块 `crates/foundation/forge-ir/src/binary/{mod,format,writer,reader,types}.rs`；公开 API `Module::{to_binary, to_binary_into, from_binary}` 与 `forge_ir::{IR_FORMAT_VERSION, SectionId, BinaryCompat, check_binary_compat}`，新错误变体 `IrError::BinaryDecode { offset, msg }`（`Display` 带偏移）。**不加 feature 门控**（零依赖、不依赖文本层 —— 对 `docs/plans/forge-ir-s8-design.md` §2.4 的修订）。
   格式 v1：`magic "FORGEIR\0"`(8B) + varint 版本 + producer（varint 长度 + UTF-8，**头部自包含**）+ varint 段数 + 段表 `[u8 id | varint 绝对偏移 | varint 长度]` + 段体（按 id 升序，无对齐无填充）。已落段：`0x00 COMPAT`（flags=0，未知位置位即错）、`0x01 STRINGS`（`num` + 长度表 + 字节拼接，**逐条往返、不预留空串槽**）、`0x02 TYPES`（12 种类型 tag 全覆盖 + 命名类型表（按名排序）+ 签名表 + `DataLayout`（三张对齐表与指针表按 key 排序））。
   fail-closed 纪律：`Cursor` 每次读先查剩余长度；长度字段先与剩余字节比对再分配（拒绝"声明 100 万段 / 4G 长度"）；varint 截断与溢出、未知段 id / 类型 tag / 调用约定 / mangling、段越界与重叠、重复段、重复字符串、非法 UTF-8、悬空 `TypeId`、预填充固定索引错位一律 `Err`（带偏移），**绝不 panic、绝不静默跳过**；`num = 0` 空池合法。

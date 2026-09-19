@@ -99,14 +99,43 @@ impl<'a> Cursor<'a> {
         })
     }
 
-    /// 读 zigzag + LEB128 的有符号数。
+    /// 读 zigzag + LEB128 的有符号数（i64 版；i128 见 [`Cursor::read_zigzag_i128`]）。
     ///
-    /// B1 尚未有消费方（B2 起常量/偏移用到），但原语与格式同批落地并自带单测，
+    /// B1 尚未有消费方（B3 起有符号常量用到），但原语与格式同批落地并自带单测，
     /// 避免"用到才加"造成的格式漂移。
-    #[allow(dead_code)]
     pub(crate) fn read_zigzag(&mut self) -> Result<i64, IrError> {
         let zz = self.read_varint()?;
         Ok(((zz >> 1) as i64) ^ -((zz & 1) as i64))
+    }
+
+    /// 读 LEB128 无符号 varint（u128；最多 19 字节，溢出即错）。
+    #[allow(dead_code)] // B3 起使用（i128 常量/`Big` 的指数）
+    pub(crate) fn read_varint_u128(&mut self) -> Result<u128, IrError> {
+        let start = self.pos;
+        let mut result = 0u128;
+        let mut shift = 0u32;
+        loop {
+            if shift > 127 {
+                return decode_err(start, "varint 超过 128 位");
+            }
+            let byte = self.read_u8()?;
+            let low = u128::from(byte & 0x7f);
+            if shift == 126 && low > 3 {
+                return decode_err(start, "varint 溢出 u128");
+            }
+            result |= low << shift;
+            if byte & 0x80 == 0 {
+                return Ok(result);
+            }
+            shift += 7;
+        }
+    }
+
+    /// 读 zigzag + LEB128 的 i128（常量池整数）。
+    #[allow(dead_code)] // B3 起使用
+    pub(crate) fn read_zigzag_i128(&mut self) -> Result<i128, IrError> {
+        let zz = self.read_varint_u128()?;
+        Ok(((zz >> 1) as i128) ^ -((zz & 1) as i128))
     }
 
     /// 读 `n` 字节（越界即错）。
@@ -500,6 +529,37 @@ mod tests {
             matches!(e, IrError::BinaryDecode { offset: 1, .. }),
             "{e:?}"
         );
+    }
+
+    #[test]
+    fn i128_varint_roundtrips_and_rejects_overflow() {
+        for v in [
+            0i128,
+            1,
+            -1,
+            i64::MAX as i128,
+            i64::MIN as i128,
+            i128::MAX,
+            i128::MIN,
+            123456789012345678901234567890,
+        ] {
+            let mut buf = Vec::new();
+            crate::binary::writer::put_zigzag_i128(&mut buf, v);
+            let mut c = Cursor::new(&buf);
+            assert_eq!(c.read_zigzag_i128().expect("回读"), v, "i128 zigzag({v})");
+        }
+        // 20 字节全续位 ⇒ 溢出（shift 超过 127）
+        let e = Cursor::new(&[0xff; 20])
+            .read_varint_u128()
+            .expect_err("超长 varint 必须错");
+        assert!(matches!(e, IrError::BinaryDecode { .. }), "{e:?}");
+        // 第 19 字节（shift=126）只允许低 2 位
+        let mut bytes = vec![0xff; 18];
+        bytes.push(0x7f); // shift=126、低 7 位 = 0x7f > 3 ⇒ 溢出
+        let e = Cursor::new(&bytes)
+            .read_varint_u128()
+            .expect_err("第 19 字节越界位必须错");
+        assert!(matches!(e, IrError::BinaryDecode { .. }), "{e:?}");
     }
 
     #[test]

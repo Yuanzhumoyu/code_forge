@@ -40,10 +40,28 @@ pub(crate) fn put_varint(out: &mut Vec<u8>, mut v: u64) {
 ///
 /// B1 尚未有消费方（B2 起有符号常量用到），但原语与格式同批落地并自带单测，
 /// 避免"用到才加"造成的格式漂移。
-#[allow(dead_code)]
 pub(crate) fn put_zigzag(out: &mut Vec<u8>, v: i64) {
     let zz = ((v << 1) ^ (v >> 63)) as u64;
     put_varint(out, zz);
+}
+
+/// 写 LEB128 无符号 varint（u128；最多 19 字节）。
+pub(crate) fn put_varint_u128(out: &mut Vec<u8>, mut v: u128) {
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// 写 zigzag + LEB128（i128；常量池的整数常量用）。
+pub(crate) fn put_zigzag_i128(out: &mut Vec<u8>, v: i128) {
+    let zz = ((v << 1) ^ (v >> 127)) as u128;
+    put_varint_u128(out, zz);
 }
 
 /// 写 varint 长度前缀 + 原始字节。
@@ -308,6 +326,30 @@ mod tests {
         let mut buf = Vec::new();
         put_zigzag(&mut buf, i64::MIN);
         assert_eq!(buf.len(), 10);
+    }
+
+    #[test]
+    fn i128_zigzag_is_compact_and_exact() {
+        // 小值 1 字节；i128::MIN 的 zigzag = u128::MAX（19 字节 varint）。
+        let mut buf = Vec::new();
+        put_zigzag_i128(&mut buf, -1);
+        assert_eq!(buf, vec![0x01], "zigzag(-1) = 1");
+        let mut buf = Vec::new();
+        put_zigzag_i128(&mut buf, 5);
+        assert_eq!(buf, vec![0x0a], "zigzag(5) = 10");
+        let mut buf = Vec::new();
+        put_zigzag_i128(&mut buf, i128::MIN);
+        assert_eq!(buf.len(), 19, "i128::MIN 的 zigzag 是 u128::MAX（19 字节）");
+        let mut buf = Vec::new();
+        put_varint_u128(&mut buf, u128::MAX);
+        assert_eq!(buf.len(), 19, "u128::MAX 是 19 字节 varint");
+        // 已知边界：u128 的 18 字节上限（7*18 = 126 位）
+        let mut buf = Vec::new();
+        put_varint_u128(&mut buf, (1u128 << 126) - 1);
+        assert_eq!(buf.len(), 18);
+        let mut buf = Vec::new();
+        put_varint_u128(&mut buf, 1u128 << 126);
+        assert_eq!(buf.len(), 19);
     }
 
     #[test]

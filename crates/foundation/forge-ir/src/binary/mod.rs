@@ -25,6 +25,7 @@
 //!   `StringPool` 与编码前**逐条相同**（含空串在内，不多不少）。
 //! - 完整规范与切片计划见 `docs/plans/forge-ir-binary-serialization-plan.md`。
 
+mod consts;
 pub mod format;
 mod reader;
 mod types;
@@ -114,13 +115,15 @@ fn encode_module(module: &Module, out: &mut Vec<u8>) {
     }
     // TYPES：条目 + 命名类型 + 签名表 + DataLayout。
     types::encode_types(&module.types.borrow(), &mut w);
+    // CONSTS：五通道（int/float/big/vector/aggregate）。
+    consts::encode_consts(&module.constants, &mut w);
     w.finish(out);
 }
 
-/// 解码一个模块（B1–B2：COMPAT + STRINGS + TYPES；后续切片按依赖顺序追加）。
+/// 解码一个模块（B1–B3：COMPAT + STRINGS + TYPES + CONSTS；后续切片按依赖顺序追加）。
 fn decode_module(bytes: &[u8]) -> Result<Module, IrError> {
     let reader = reader::Reader::parse(bytes)?;
-    let module = Module::new();
+    let mut module = Module::new();
     {
         let mut store = module.types.borrow_mut();
         for (i, s) in reader.strings().iter().enumerate() {
@@ -135,6 +138,10 @@ fn decode_module(bytes: &[u8]) -> Result<Module, IrError> {
         let mut store = module.types.borrow_mut();
         types::decode_types(&mut store, cursor, reader.strings())?;
     }
-    // B3+：CONSTS → METADATA → FUNCS → GLOBALS → MODULE（见执行方案 §2.2）
+    // CONSTS（聚合常量引用标量常量，段内自带先后序）。
+    if let Some(cursor) = reader.section(SectionId::Consts) {
+        consts::decode_consts(&mut module.constants, cursor)?;
+    }
+    // B4+：METADATA → FUNCS → GLOBALS → MODULE（见执行方案 §2.2）
     Ok(module)
 }

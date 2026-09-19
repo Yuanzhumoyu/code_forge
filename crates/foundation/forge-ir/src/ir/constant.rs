@@ -325,6 +325,25 @@ impl ConstantPool {
         self.total_len()
     }
 
+    // ============================================================
+    // 二进制序列化支持（B3）
+    // ============================================================
+
+    /// 各通道条目数 `(int, float, big, vector, aggregate)`。
+    ///
+    /// 写侧按这些计数逐条取（`get_int`/`get_float_with_width`/`get_big`/
+    /// `get_vector`+`get_vector_endian`/`get_aggregate`），解码侧按同序
+    /// `insert_*` 重建——**顺序即索引**，因此 `ConstId`/`AggId` 逐位不变。
+    pub(crate) fn channel_counts(&self) -> (usize, usize, usize, usize, usize) {
+        (
+            self.int_consts.len(),
+            self.float_consts.len(),
+            self.big_consts.len(),
+            self.vec_offsets.len(),
+            self.aggregates.len(),
+        )
+    }
+
     /// 解析 ConstId 为 i64 值 (自动根据 tag 分发到 int/big 池)。
     /// 超出 i64 范围的宽常量返回 None（不再静默截断）。
     pub fn resolve_int(&self, id: ConstId) -> Option<i64> {
