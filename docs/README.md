@@ -13,6 +13,7 @@
 | `reference/isa-dsl.md` | ISA-DSL **v15** 语法规范（唯一 DSL 语法，逐项对代码核对） | active |
 | `reference/aarch64-encoding-ref.md` | A64 整数核心指令编码参考（isa 表/golden 测试依据，尾节含 arm64_v12 实现状态） | active |
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
+| `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode v1）规范：容器/段/原语/各段细节/确定性/版本策略/验证基线/已知限制 | active |
 
 ## forge-ir/ — forge-ir 工作流（活跃）
 

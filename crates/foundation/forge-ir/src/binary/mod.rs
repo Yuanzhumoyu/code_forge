@@ -28,6 +28,8 @@
 mod consts;
 pub mod format;
 mod funcs;
+mod globals;
+mod meta;
 mod reader;
 mod types;
 mod writer;
@@ -118,8 +120,13 @@ fn encode_module(module: &Module, out: &mut Vec<u8>) {
     types::encode_types(&module.types.borrow(), &mut w);
     // CONSTS：五通道（int/float/big/vector/aggregate）。
     consts::encode_consts(&module.constants, &mut w);
+    // METADATA：节点表 + 命名表（必须在 FUNCS/GLOBALS 之前：它们是附件 id 的来源）。
+    meta::encode_metadata(&module.metadata_store, &mut w);
     // FUNCS：函数表（签名/属性/符号 + 每函数常量池 + dfg + layout）。
     funcs::encode_funcs(module, &mut w);
+    // GLOBALS：全局变量/别名/comdat；MODULE：三元组/源文件/模块 asm。
+    globals::encode_globals(module, &mut w);
+    globals::encode_module_section(module, &mut w);
     w.finish(out);
 }
 
@@ -145,11 +152,60 @@ fn decode_module(bytes: &[u8]) -> Result<Module, IrError> {
     if let Some(cursor) = reader.section(SectionId::Consts) {
         consts::decode_consts(&mut module.constants, cursor)?;
     }
+    // METADATA（必须先于 FUNCS/GLOBALS：附件 id 指向这里的节点）。
+    if let Some(cursor) = reader.section(SectionId::Metadata) {
+        meta::decode_metadata(&mut module.metadata_store, cursor, reader.strings())?;
+    }
     // FUNCS（依赖 TYPES/CONSTS：句柄按模块类型库与常量池校验）。
     if let Some(cursor) = reader.section(SectionId::Funcs) {
         let type_count = module.types.borrow().type_count();
         funcs::decode_funcs(&mut module, cursor, reader.strings(), type_count)?;
     }
-    // B5：METADATA → GLOBALS → MODULE（见执行方案 §2.2）
+    // GLOBALS（全局/别名/comdat 经 add_* 回放：名字索引表随之重建）。
+    if let Some(cursor) = reader.section(SectionId::Globals) {
+        globals::decode_globals(&mut module, cursor, reader.strings())?;
+    }
+    // MODULE（三元组/源文件/模块 asm）。
+    if let Some(cursor) = reader.section(SectionId::Module) {
+        globals::decode_module_section(&mut module, cursor, reader.strings())?;
+    }
+    validate_metadata_refs(&module).map_err(|msg| IrError::BinaryDecode {
+        offset: bytes.len(),
+        msg,
+    })?;
     Ok(module)
+}
+
+/// 附件 metadata 的**悬空引用**校验：函数头/指令/全局/别名的每个 `MetadataId`
+/// 必须落在 `metadata_store` 的节点数之内。
+///
+/// 解码顺序保证 METADATA 段先于 FUNCS/GLOBALS，因此这里只需查界——越界即文件
+/// 自称引用了不存在的节点（fail-closed，不让下游 display/verifier 去猜）。
+fn validate_metadata_refs(module: &Module) -> Result<(), String> {
+    let store_len = module.metadata_store.len() as u32;
+    let check =
+        |what: &str, list: &[crate::ir::metadata::AttachedMetadata]| -> Result<(), String> {
+            for m in list {
+                if m.node.0 >= store_len {
+                    return Err(format!(
+                        "{what} 的 metadata 附件指向越界节点 {}（节点数 {store_len}）",
+                        m.node.0
+                    ));
+                }
+            }
+            Ok(())
+        };
+    for f in module.iter_functions() {
+        check(&format!("函数 {}", f.name), f.metadata())?;
+        for (inst, data) in f.dfg.all_insts() {
+            check(&format!("函数 {} 的指令 {inst}", f.name), data.metadata())?;
+        }
+    }
+    for (_, g) in module.iter_globals() {
+        check(&format!("全局 {}", g.name), g.metadata())?;
+    }
+    for a in module.iter_global_aliases() {
+        check(&format!("别名 {}", a.name), a.metadata())?;
+    }
+    Ok(())
 }

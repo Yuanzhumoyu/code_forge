@@ -173,6 +173,15 @@ impl MetadataStore {
         }
     }
 
+    /// 二进制序列化层：命名表，**按名字节序排序**（`HashMap` 迭代序不确定，
+    /// 直接落盘会让字节流不确定）。
+    pub(crate) fn names_sorted(&self) -> Vec<(ImmStr, MetadataId)> {
+        let mut out: Vec<(ImmStr, MetadataId)> =
+            self.names.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        out.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        out
+    }
+
     /// Intern a metadata node and return its ID.
     pub fn intern(&mut self, node: MetadataNode) -> MetadataId {
         if let Some(&existing) = self.dedup.get(&node) {
@@ -195,11 +204,35 @@ impl MetadataStore {
     }
 
     /// 反查：id → 命名（display 还原 `!t`；未命名返回 None）。
+    ///
+    /// **确定性**：`names` 是 `HashMap`，"找第一个"会随实例的随机种子变化——
+    /// 一个 id 若被多个名字指向（`!foo` 与 `!\23pragma` 内容相同时
+    /// `insert_at`/`intern` 会去重成同一个节点），`name_of` 的输出就会时好时坏，
+    /// display 也随之不确定（2026-09-19 二进制语料往返测试抓到）。这里取**字节序
+    /// 最小**的名字，保证同输入同输出。
+    ///
+    /// 已知限制（**既有**，非本轮引入）：display 每个节点只打印一个名字，
+    /// 因此"一个节点多个别名"的文本会丢名字；要修得让打印器遍历全部别名。
     pub fn name_of(&self, id: MetadataId) -> Option<String> {
-        self.names
+        let mut best: Option<&ImmStr> = None;
+        for (name, target) in &self.names {
+            if *target == id && best.is_none_or(|b| name.as_str() < b.as_str()) {
+                best = Some(name);
+            }
+        }
+        best.map(|k| k.to_string())
+    }
+
+    /// 该 id 的**全部**名字，按字节序排序（诊断/测试用）。
+    pub fn names_of(&self, id: MetadataId) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .names
             .iter()
-            .find(|(_, v)| **v == id)
+            .filter(|(_, v)| **v == id)
             .map(|(k, _)| k.to_string())
+            .collect();
+        out.sort();
+        out
     }
 
     /// 遍历全部节点（display 序列化用）。
@@ -231,6 +264,19 @@ impl MetadataStore {
         }
         self.dedup.entry(node.clone()).or_insert(id);
         self.nodes[id.0 as usize] = node;
+    }
+
+    /// 二进制序列化层：**按原样**把节点放到下一个 id（不做去重查询/不重排）。
+    ///
+    /// 为什么不能用 `intern` 回放：显式 `!N` 编号的模块经
+    /// [`MetadataStore::insert_at`] 预分配槽位，arena 里**允许出现内容相同的两条**
+    /// （各自的 id 都有引用者），`intern` 会把后一条折叠掉 ⇒ id 整体错位。
+    /// 去重表按"先出现者胜"补齐，与 `intern`/`insert_at` 的口径一致。
+    pub(crate) fn push_verbatim(&mut self, node: MetadataNode) -> MetadataId {
+        let id = MetadataId(self.nodes.len() as u32);
+        self.nodes.push(node.clone());
+        self.dedup.entry(node).or_insert(id);
+        id
     }
 
     /// Look up a metadata node by ID（越界返回 `None`——历史实现直接索引 panic）。

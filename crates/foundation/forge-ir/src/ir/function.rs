@@ -1165,6 +1165,19 @@ impl GlobalVariable {
 }
 
 impl GlobalAlias {
+    /// 构造一条别名（`aliasee_text` 是含类型前缀的 aliasee 文本，见字段文档）。
+    pub fn new(name: impl Into<ImmStr>, ty: TypeId, aliasee_text: impl Into<ImmStr>) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+            linkage: crate::ir::symbol::Linkage::External,
+            dso_local: false,
+            unnamed_addr: false,
+            aliasee_text: aliasee_text.into(),
+            metadata: Vec::new(),
+        }
+    }
+
     /// 别名尾 metadata（`(kind, node)` 对，按附加序）。
     pub fn metadata(&self) -> &[crate::ir::metadata::AttachedMetadata] {
         &self.metadata

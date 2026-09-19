@@ -31,13 +31,13 @@ use crate::ir::immediate::Immediate;
 use crate::ir::inst_flags::InstFlags;
 use crate::ir::isel_strategy::IselStrategy;
 use crate::ir::mem_flags::MemFlags;
-use crate::ir::metadata::{AttachedMetadata, MetadataId, MetadataKind};
-use crate::ir::symbol::{DllStorageClass, Linkage, SymbolInfo, TlsModel, Visibility};
 use crate::util::imm_str::ImmStr;
 use crate::util::string_pool::InternedStr;
 
 use super::consts;
 use super::format::SectionId;
+use super::globals::{decode_symbol, encode_symbol};
+use super::meta::{decode_attached, encode_attached};
 use super::reader::Cursor;
 use super::types::{decode_call_conv, encode_call_conv};
 use super::writer::{self, Writer};
@@ -177,11 +177,7 @@ fn encode_function(out: &mut Vec<u8>, f: &Function, w: &mut Writer) {
     put_opt_handle(out, f.personality.map(|r| r.0));
     encode_param_attr_list(out, w, &f.param_attrs);
     encode_param_attr_list(out, w, &f.ret_attrs);
-    writer::put_varint(out, f.metadata().len() as u64);
-    for m in f.metadata() {
-        encode_metadata_kind(out, w, &m.kind);
-        put_handle(out, m.node.0);
-    }
+    encode_attached(out, w, f.metadata());
     // debug_info
     writer::put_option_tag(out, f.debug_info.is_some());
     if let Some(dbg) = &f.debug_info {
@@ -215,58 +211,6 @@ fn encode_function(out: &mut Vec<u8>, f: &Function, w: &mut Writer) {
     put_opt_handle(out, f.entry_block.map(|b| b.0));
 }
 
-fn encode_symbol(out: &mut Vec<u8>, w: &mut Writer, s: &SymbolInfo) {
-    writer::put_u8(
-        out,
-        match s.linkage {
-            Linkage::External => 0,
-            Linkage::AvailableExternally => 1,
-            Linkage::LinkOnceAny => 2,
-            Linkage::LinkOnceODR => 3,
-            Linkage::WeakAny => 4,
-            Linkage::WeakODR => 5,
-            Linkage::Appending => 6,
-            Linkage::Internal => 7,
-            Linkage::Private => 8,
-            Linkage::ExternalWeak => 9,
-            Linkage::Common => 10,
-        },
-    );
-    writer::put_u8(
-        out,
-        match s.visibility {
-            Visibility::Default => 0,
-            Visibility::Hidden => 1,
-            Visibility::Protected => 2,
-        },
-    );
-    writer::put_u8(
-        out,
-        match s.dll_storage_class {
-            DllStorageClass::Default => 0,
-            DllStorageClass::DllImport => 1,
-            DllStorageClass::DllExport => 2,
-        },
-    );
-    put_opt_str(out, w, s.section.as_ref());
-    put_opt_handle(out, s.comdat.map(|c| c.0));
-    writer::put_option_tag(out, s.tls_model.is_some());
-    if let Some(t) = s.tls_model {
-        writer::put_u8(
-            out,
-            match t {
-                TlsModel::GeneralDynamic => 0,
-                TlsModel::LocalDynamic => 1,
-                TlsModel::InitialExec => 2,
-                TlsModel::LocalExec => 3,
-            },
-        );
-    }
-    put_bool(out, s.unnamed_addr);
-    put_bool(out, s.can_discard);
-    put_bool(out, s.dso_local);
-}
-
 fn encode_param_attr_list(out: &mut Vec<u8>, w: &mut Writer, list: &[ParamAttributes]) {
     writer::put_varint(out, list.len() as u64);
     for a in list {
@@ -286,31 +230,6 @@ fn encode_param_attr_list(out: &mut Vec<u8>, w: &mut Writer, list: &[ParamAttrib
         for e in &a.extra {
             put_str(out, w, e);
         }
-    }
-}
-
-fn encode_metadata_kind(out: &mut Vec<u8>, w: &mut Writer, k: &MetadataKind) {
-    writer::put_u8(
-        out,
-        match k {
-            MetadataKind::DebugLoc => 0,
-            MetadataKind::TBAA => 1,
-            MetadataKind::TBAAStruct => 2,
-            MetadataKind::AliasScope => 3,
-            MetadataKind::NoAlias => 4,
-            MetadataKind::Range => 5,
-            MetadataKind::NonNull => 6,
-            MetadataKind::Align => 7,
-            MetadataKind::Dereferenceable => 8,
-            MetadataKind::NoUndef => 9,
-            MetadataKind::Loop => 10,
-            MetadataKind::Prof => 11,
-            MetadataKind::FpMath => 12,
-            MetadataKind::Custom(_) => 13,
-        },
-    );
-    if let MetadataKind::Custom(name) = k {
-        put_str(out, w, name);
     }
 }
 
@@ -405,11 +324,7 @@ fn encode_inst(
     writer::put_varint(out, u64::from(inst.mem_flags.bits()));
     encode_param_attr_list(out, w, &inst.param_attrs);
     writer::put_varint(out, u64::from(inst.fn_attrs.bits()));
-    writer::put_varint(out, inst.metadata().len() as u64);
-    for m in inst.metadata() {
-        encode_metadata_kind(out, w, &m.kind);
-        put_handle(out, m.node.0);
-    }
+    encode_attached(out, w, inst.metadata());
     writer::put_option_tag(out, inst.loc.is_some());
     if let Some(loc) = &inst.loc {
         encode_source_location(out, w, loc);
@@ -536,15 +451,8 @@ fn decode_function(
     f.personality = read_opt(c, |c| Ok(FuncRef(read_u32(c, "personality 引用")?)))?;
     f.param_attrs = decode_param_attr_list(c, strings)?;
     f.ret_attrs = decode_param_attr_list(c, strings)?;
-    let n_at = c.offset();
-    let n = c.read_usize()?;
-    if n > c.remaining() {
-        return err(n_at, format!("函数 metadata 声明 {n} 条，剩余字节不足"));
-    }
-    for _ in 0..n {
-        let kind = decode_metadata_kind(c, strings)?;
-        let node = MetadataId(read_u32(c, "metadata 节点")?);
-        f.attach_metadata(AttachedMetadata { kind, node });
+    for m in decode_attached(c, strings)? {
+        f.attach_metadata(m);
     }
     // debug_info
     f.debug_info = read_opt(c, |c| {
@@ -623,63 +531,6 @@ fn rebuild_use_lists(f: &mut Function) {
     }
 }
 
-fn decode_symbol(c: &mut Cursor<'_>, strings: &[ImmStr]) -> Result<SymbolInfo, IrError> {
-    let at = c.offset();
-    let linkage = match c.read_u8()? {
-        0 => Linkage::External,
-        1 => Linkage::AvailableExternally,
-        2 => Linkage::LinkOnceAny,
-        3 => Linkage::LinkOnceODR,
-        4 => Linkage::WeakAny,
-        5 => Linkage::WeakODR,
-        6 => Linkage::Appending,
-        7 => Linkage::Internal,
-        8 => Linkage::Private,
-        9 => Linkage::ExternalWeak,
-        10 => Linkage::Common,
-        other => return err(at, format!("未知 linkage tag {other}")),
-    };
-    let at = c.offset();
-    let visibility = match c.read_u8()? {
-        0 => Visibility::Default,
-        1 => Visibility::Hidden,
-        2 => Visibility::Protected,
-        other => return err(at, format!("未知 visibility tag {other}")),
-    };
-    let at = c.offset();
-    let dll_storage_class = match c.read_u8()? {
-        0 => DllStorageClass::Default,
-        1 => DllStorageClass::DllImport,
-        2 => DllStorageClass::DllExport,
-        other => return err(at, format!("未知 dll 存储类 tag {other}")),
-    };
-    let section = read_opt(c, |c| read_str(c, strings))?;
-    let comdat = read_opt(c, |c| {
-        Ok(crate::ir::symbol::ComdatId(read_u32(c, "comdat 引用")?))
-    })?;
-    let tls_model = read_opt(c, |c| {
-        let at = c.offset();
-        Ok(match c.read_u8()? {
-            0 => TlsModel::GeneralDynamic,
-            1 => TlsModel::LocalDynamic,
-            2 => TlsModel::InitialExec,
-            3 => TlsModel::LocalExec,
-            other => return err(at, format!("未知 TLS 模型 tag {other}")),
-        })
-    })?;
-    Ok(SymbolInfo {
-        linkage,
-        visibility,
-        dll_storage_class,
-        section,
-        comdat,
-        tls_model,
-        unnamed_addr: read_bool(c)?,
-        can_discard: read_bool(c)?,
-        dso_local: read_bool(c)?,
-    })
-}
-
 fn decode_param_attr_list(
     c: &mut Cursor<'_>,
     strings: &[ImmStr],
@@ -715,27 +566,6 @@ fn decode_param_attr_list(
         out.push(a);
     }
     Ok(out)
-}
-
-fn decode_metadata_kind(c: &mut Cursor<'_>, strings: &[ImmStr]) -> Result<MetadataKind, IrError> {
-    let at = c.offset();
-    Ok(match c.read_u8()? {
-        0 => MetadataKind::DebugLoc,
-        1 => MetadataKind::TBAA,
-        2 => MetadataKind::TBAAStruct,
-        3 => MetadataKind::AliasScope,
-        4 => MetadataKind::NoAlias,
-        5 => MetadataKind::Range,
-        6 => MetadataKind::NonNull,
-        7 => MetadataKind::Align,
-        8 => MetadataKind::Dereferenceable,
-        9 => MetadataKind::NoUndef,
-        10 => MetadataKind::Loop,
-        11 => MetadataKind::Prof,
-        12 => MetadataKind::FpMath,
-        13 => MetadataKind::Custom(read_str(c, strings)?),
-        other => return err(at, format!("未知 metadata kind tag {other}")),
-    })
 }
 
 fn decode_source_location(
@@ -907,15 +737,8 @@ fn decode_inst(c: &mut Cursor<'_>, strings: &[ImmStr]) -> Result<Instruction, Ir
     inst.mem_flags = MemFlags::from_bits_retain(read_u16(c, "内存 flags")?);
     inst.param_attrs = decode_param_attr_list(c, strings)?.into();
     inst.fn_attrs = FunctionAttributes::from_bits(read_u32(c, "调用点函数属性")?);
-    let n_at = c.offset();
-    let mn = c.read_usize()?;
-    if mn > c.remaining() {
-        return err(n_at, format!("指令 metadata 声明 {mn} 条，剩余字节不足"));
-    }
-    for _ in 0..mn {
-        let kind = decode_metadata_kind(c, strings)?;
-        let node = MetadataId(read_u32(c, "metadata 节点")?);
-        inst.attach_metadata(AttachedMetadata { kind, node });
+    for m in decode_attached(c, strings)? {
+        inst.attach_metadata(m);
     }
     inst.loc = read_opt(c, |c| decode_source_location(c, strings))?;
     inst.isel_strategy = read_opt(c, |c| {

@@ -276,9 +276,12 @@ fn check_binary_compat_reports_header() {
             SectionId::Strings,
             SectionId::Types,
             SectionId::Consts,
-            SectionId::Funcs
+            SectionId::Metadata,
+            SectionId::Funcs,
+            SectionId::Globals,
+            SectionId::Module
         ],
-        "B1–B4 写 COMPAT + STRINGS + TYPES + CONSTS + FUNCS"
+        "B1–B5 写全部 8 个段（COMPAT/STRINGS/TYPES/CONSTS/METADATA/FUNCS/GLOBALS/MODULE）"
     );
 }
 
