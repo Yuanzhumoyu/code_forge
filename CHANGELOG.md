@@ -16,7 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **ISA-DSL 参数化模板 `[[templates]]`（v18 S2）：一处声明 → N 条指令，自动派生别名**。动机是实测出来的重复：`isa/arm64_v12.toml` 有 **38 对**指令只差 sf 位/寄存器槽/opcode（76/89 = 85%）、`isa/riscv64_v12.toml` 有 **16 对** S/D（41%），而旧 `[[families]]` 的变体**无法覆盖 `ops`/`form`/enc 键**，只能整条复制；与之配套的 `[[aliases]]` 还是手写清单（x86 25 条 / arm64 29 条，且已见漂移：`vaddps` 漏了 `VADDPS_ZMM_MASKZ`）。
   新机制：`params` 等长列表按下标 zip（与 `[[lowering]].vary` 同语义）；字符串字段里 `{参数}` 做文本替换、**整串就是 `{参数}`** 时保留参数类型（`opcode = "{opcode}"` 仍是整数）；`name`/`names` 给实例名；`ref` 自动派生别名（单值 = 多态共用，含 `{参数}` = 逐实例）；`[[templates.overrides]]` 逐行打补丁（表递归合并）。展开在**解析期**完成 ⇒ 下游（校验/代码生成）只看到普通指令与别名，`codegen` 一行未改；展开出的实例若非法，诊断前缀改回 `[[templates.X]]`，位置落在模板声明行。
   **arm64 首例迁移**：`isa/arm64_v12.toml` **1,125 → 731 行（−35%）**，32 条模板取代 64 个手写指令块、**29 条手写 `[[aliases]]` 全删**；黄金测试（`arm64_v12_tests` 12 例 + `arm64_v12_tm_tests` 6 例）通过、arm64 JIT 矩阵 **23 passed / 175 skipped / 0 failed** 不变、生成代码里的 `Inst::` 名字集合 **90 个前后 diff 为空**、arm64 生成代码 644,018 → 636,986 B。
-  证据与文档：`src/v12/template_tests.rs`（10 例：展开/类型保留/逐实例 ref/补丁合并/五类失败路径/lowering 引用实例名）、`v12/model.rs::Template` 文档、`docs/reference/isa-dsl.md` 新增 `[[templates]]` 节、`docs/reference/isa-dsl-errors.md` 增模板错误表、方案 §7/§12.7 记录实测与剩余迁移（riscv/x86，以及删除 `[[families]]`/`[[aliases]]` 旧节）、通用性守卫扩展为也识别模板实例名（arm64 迁移后 `ADDIMMX` 不再是 `[[instructions]]` 字面量）。
+  证据与文档：`src/v12/template_tests.rs`（10 例：展开/类型保留/逐实例 ref/补丁合并/五类失败路径/lowering 引用实例名）、`v12/model.rs::Template` 文档、`docs/reference/isa-dsl.md` 新增 `[[templates]]` 节、`docs/reference/isa-dsl-errors.md` 增模板错误表、方案 §7/§12.7 记录实测、通用性守卫扩展为也识别模板实例名（arm64 迁移后 `ADDIMMX` 不再是 `[[instructions]]` 字面量）。
+
+- **ISA-DSL S2 续：riscv 与 x86 定向迁移（三 ISA 全覆盖）**。riscv `1,754 → 1,606 行（−8.4%）`：15 条模板取代 30 个 `_S`/`_W` ↔ `_D` 指令块（`funct7`/`funct3` 逐行给、助记符后缀 `.{pl}` 插值）——顺带证明 **`[[families]]` 表达不了这类对**（族模板 `{name}` 只能派生"变体名小写"，得不到 `fadd.s` 这种带点助记符，这正是它此前只能手写两份的原因）。x86 `3,356 → 3,324 行（−1%）`：`movzx`/`movsx` 的 R8/R16 四条合成 1 条模板（`ref = "{mn}"` 顺带取代 2 条手写 `[[aliases]]`），四条指令的**生成编码臂文本 SHA-256 逐字节相同**。
+  **设计修正（实测得出，写进方案 §7 与参考文档）**：`[[templates]]`/`[[families]]`/`[[aliases]]` 三者**互补而非取代**——参数化取值用模板；N 个不同助记符共享一种形状（且助记符可由变体名派生）用族；一个引用名映射**异质**指令（x86 `mov` → 5 条不同族指令）用别名。x86 只降 1% 的原因也记为实测结论：x86 剩余的同 asm/同 ops 组差在**编码键**（`form` 预设有无、`opsize`、内联 vs preset），是不同编码而非可参数化取值，统一它们属于语义重构。
+  验证：三 ISA 的 `Inst::` 名字集合前后 diff 为空（90 / 117 / 198）、黄金测试（arm64 12+6、riscv 12+4、x86 61 例）与三架构 JIT 矩阵（195/3/0、131/67/0、23/175/0）全不变。
 
 ### Changed (2026-09-19)
 

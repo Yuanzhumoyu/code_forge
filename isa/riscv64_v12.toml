@@ -375,46 +375,6 @@ asm = "mv {dst}, {src}"
 # ── R 型整数（opcode 0x33）──
 
 [[instructions]]
-name = "FADD_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x00 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fadd.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FSUB_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x04 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fsub.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FMUL_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x08 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fmul.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FDIV_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x0C }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fdiv.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FSQRT_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x2C }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "fsqrt.s {dst}, {src}"
-
-[[instructions]]
 name = "FSGNJ_S"
 form = "R"
 opcode = 0x53
@@ -471,143 +431,12 @@ ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.w {dst}, {src}"
 
 [[instructions]]
-name = "FLT_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x50 }
-ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
-asm = "flt.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FEQ_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 2, funct7 = 0x50 }
-ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
-asm = "feq.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FLE_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x50 }
-ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
-asm = "fle.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FMIN_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x14 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fmin.s {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FMAX_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x14 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fmax.s {dst}, {src}, {src2}"
-
-[[instructions]]
 name = "FMV_W_X"
 form = "R"
 opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x78 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.w.x {dst}, {src}"
-
-[[instructions]]
-name = "FMV_X_W"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x70 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fmv.x.w {dst}, {src}"
-
-# ── 内存浮点 ──
-# ── F64（D 变体）：funct7 = S | 0x01（LLVM 对照：fadd.d=0x01、feq.d=0x51）──
-
-[[instructions]]
-name = "FADD_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x01 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fadd.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FSUB_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x05 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fsub.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FMUL_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x09 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fmul.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FDIV_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x0D }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fdiv.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FSQRT_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x2D }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "fsqrt.d {dst}, {src}"
-
-[[instructions]]
-name = "FLE_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x51 }
-ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
-asm = "fle.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FLT_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x51 }
-ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
-asm = "flt.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FEQ_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 2, funct7 = 0x51 }
-ops = ["dst:gpr:out", "src:fpr", "src2:fpr"]
-asm = "feq.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FMIN_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x15 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fmin.d {dst}, {src}, {src2}"
-
-[[instructions]]
-name = "FMAX_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x15 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "fmax.d {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "FCVT_W_D_RTZ"
@@ -680,14 +509,6 @@ opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x79 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.d.x {dst}, {src}"
-
-[[instructions]]
-name = "FMV_X_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x71 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fmv.x.d {dst}, {src}"
 
 [[instructions]]
 name = "FLD"
@@ -858,70 +679,6 @@ opcode = 0x33
 fields = { funct3 = 5, funct7 = 0x68, rs2 = 8 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "rev8 {dst}, {src}"
-
-[[instructions]]
-name = "AMOADD_W"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 0, funct3 = 2 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "amoadd.w {dst}, {src2}, ({src})"
-
-[[instructions]]
-name = "AMOADD_D"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 0, funct3 = 3 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "amoadd.d {dst}, {src2}, ({src})"
-
-[[instructions]]
-name = "AMOSWAP_W"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 1, funct3 = 2 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "amoswap.w {dst}, {src2}, ({src})"
-
-[[instructions]]
-name = "AMOSWAP_D"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 1, funct3 = 3 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "amoswap.d {dst}, {src2}, ({src})"
-
-[[instructions]]
-name = "LR_W"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 2, funct3 = 2, rs2 = 0 }
-ops = ["dst:gpr:out", "src:gpr"]
-asm = "lr.w {dst}, ({src})"
-
-[[instructions]]
-name = "LR_D"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 2, funct3 = 3, rs2 = 0 }
-ops = ["dst:gpr:out", "src:gpr"]
-asm = "lr.d {dst}, ({src})"
-
-[[instructions]]
-name = "SC_W"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 3, funct3 = 2 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "sc.w {dst}, {src2}, ({src})"
-
-[[instructions]]
-name = "SC_D"
-form = "R"
-opcode = 0x2F
-fields = { funct5 = 3, funct3 = 3 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "sc.d {dst}, {src2}, ({src})"
 
 [[instructions]]
 name = "AUIPC"
@@ -2060,3 +1817,83 @@ insts = [
     "SLLI {g}, {g}, 32",
     "OR {out}, {g}, {g1}",
 ]
+
+# ═══════════════════════ 参数化模板（v18 S2：单精度/双精度对）═══════════════════════
+# 一处声明 → 两条指令（类型后缀、mnemonic 后缀、funct7/funct3 逐行给）。
+# `[[families]]` 无法表达这类对：族模板的 `{name}` 只能派生"变体名小写"，
+# 得不到 `fadd.s` 这种**带点**的助记符——这是它们此前只能手写两份的原因。
+
+[[templates]]
+name = "FADD_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x00, 0x01] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fadd.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FSUB_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x04, 0x05] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fsub.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FMUL_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x08, 0x09] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmul.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FDIV_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x0C, 0x0D] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fdiv.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FSQRT_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x2C, 0x2D] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr"], asm = "fsqrt.{pl} {dst}, {src}" }
+
+[[templates]]
+name = "FLT_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x50, 0x51] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "flt.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FEQ_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x50, 0x51] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 2, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "feq.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FLE_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x50, 0x51] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "fle.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FMIN_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x14, 0x15] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmin.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FMAX_{p}"
+params = { p = ["S", "D"], pl = ["s", "d"], funct7 = [0x14, 0x15] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmax.{pl} {dst}, {src}, {src2}" }
+
+[[templates]]
+name = "FMV_X_{p}"
+params = { p = ["W", "D"], pl = ["w", "d"], funct7 = [0x70, 0x71] }
+body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr"], asm = "fmv.x.{pl} {dst}, {src}" }
+
+[[templates]]
+name = "AMOADD_{p}"
+params = { p = ["W", "D"], pl = ["w", "d"], funct3 = [2, 3] }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoadd.{pl} {dst}, {src2}, ({src})" }
+
+[[templates]]
+name = "AMOSWAP_{p}"
+params = { p = ["W", "D"], pl = ["w", "d"], funct3 = [2, 3] }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 1, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoswap.{pl} {dst}, {src2}, ({src})" }
+
+[[templates]]
+name = "LR_{p}"
+params = { p = ["W", "D"], pl = ["w", "d"], funct3 = [2, 3] }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 2, funct3 = "{funct3}", rs2 = 0 }, ops = ["dst:gpr:out", "src:gpr"], asm = "lr.{pl} {dst}, ({src})" }
+
+[[templates]]
+name = "SC_{p}"
+params = { p = ["W", "D"], pl = ["w", "d"], funct3 = [2, 3] }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 3, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "sc.{pl} {dst}, {src2}, ({src})" }

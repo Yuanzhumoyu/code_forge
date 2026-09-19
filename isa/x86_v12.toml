@@ -459,27 +459,6 @@ opsize = "max"
 ops = ["src:gprx", "src2:gprx"]
 asm = "test {src2}, {src}"
 
-# movzx：8 位源（REX.W + 0F B6）与 16 位源（66 REX.W 0F B7）合并助记符——
-# 源槽宽度自动分发（gpr1b → B6、gpr2 → B7）。REX.W 保证 64 位 dest 全零扩展。
-[[instructions]]
-name = "MOVZX_R8_RM"
-form = "MRR_0F_NOOS"
-opcode = 0xB6
-fields = { prefix = 0, w = 1 }
-ops = ["dst:gpr:out", "src:gpr1b"]
-asm = "movzx {dst}, {src}"
-
-[[instructions]]
-name = "MOVZX_R16_RM"
-form = "MRR_0F_NOOS"
-opcode = 0xB7
-fields = { prefix = 0x66, w = 1 }
-ops = ["dst:gpr:out", "src:gpr2"]
-asm = "movzx {dst}, {src}"
-
-# movzx 内存源（窄 load 零扩展读——窄值寄存器必须高位清零，否则后续
-# 32/64 位比较/算术带高位垃圾（u8 比较误判实证——v14 字节宽度修复）。
-# 8 位：REX.W 0F B6（源内存 1 字节）；16 位：66 REX.W 0F B7。
 [[instructions]]
 name = "MOVZX_R8_MEM"
 modrm = { rm = "[src]" }
@@ -501,23 +480,6 @@ opcode = 0xB7
 fields = { prefix = 0x66, w = 1 }
 ops = ["dst:gpr:out", "src:gprx"]
 asm = "movzx {dst}, [{src}]"
-
-# movsx：8 位源（REX.W + 0F BE）与 16 位源（66 REX.W 0F BF）合并助记符。
-[[instructions]]
-name = "MOVSX_R8_RM"
-form = "MRR_0F_NOOS"
-opcode = 0xBE
-fields = { prefix = 0, w = 1 }
-ops = ["dst:gpr:out", "src:gpr1b"]
-asm = "movsx {dst}, {src}"
-
-[[instructions]]
-name = "MOVSX_R16_RM"
-form = "MRR_0F_NOOS"
-opcode = 0xBF
-fields = { prefix = 0x66, w = 1 }
-ops = ["dst:gpr:out", "src:gpr2"]
-asm = "movsx {dst}, {src}"
 
 [[instructions]]
 name = "CMPXCHG_RM_R"
@@ -2111,16 +2073,8 @@ name = "mov"
 insts = ["MOV_R_RM", "MOV_R8_RM8", "MOV_RM_R", "MOV_RM8_R64", "MOV64_RR"]
 
 [[aliases]]
-name = "movsx"
-insts = ["MOVSX_R8_RM", "MOVSX_R16_RM"]
-
-[[aliases]]
 name = "movsxd"
 insts = ["MOVSXD_R_RM"]
-
-[[aliases]]
-name = "movzx"
-insts = ["MOVZX_R8_RM", "MOVZX_R16_RM"]
 
 [[aliases]]
 name = "or"
@@ -3922,3 +3876,12 @@ insts = [
     "MOVSD {out}, {0}",
     "SUBSD {out}, {f1}",
 ]
+
+# ═══════════════════ 参数化模板（v18 S2：movzx/movsx 的 R8/R16 对）═══════════════════
+# 4 条指令结构完全相同（同 form、同 fields 形状、同 ops 形状），只差 opcode/prefix/
+# 源槽/助记符；`ref = "{mn}"` 顺带取代原先两条手写 [[aliases]]（movzx/movsx）。
+[[templates]]
+names  = ["MOVZX_R8_RM", "MOVZX_R16_RM", "MOVSX_R8_RM", "MOVSX_R16_RM"]
+ref    = "{mn}"
+params = { mn = ["movzx", "movzx", "movsx", "movsx"], opcode = [0xB6, 0xB7, 0xBE, 0xBF], pfx = [0, 0x66, 0, 0x66], slot = ["gpr1b", "gpr2", "gpr1b", "gpr2"] }
+body   = { form = "MRR_0F_NOOS", opcode = "{opcode}", fields = { prefix = "{pfx}", w = 1 }, ops = ["dst:gpr:out", "src:{slot}"], asm = "{mn} {dst}, {src}" }
