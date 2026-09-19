@@ -275,8 +275,13 @@ reg_field = "modrm_reg"        # （定宽 ISA；变长 x86 直接用 ModRM 字�
 rm_field = "modrm_rm"
 force_disp_base = [5, 13]      # mod=00+rm=101 是 RIP-rel，须强制位移
 
-[conventions.cond]             # 条件码表（name → 编码值）；缺省 = x86 16 项
-o = 0x0                        # (o/no/b/ae/e/ne/be/a/s/ns/p/np/l/ge/le/g ↔ 0..15)
+[conventions.cond]             # 条件码表（**唯一一份**，见下节）；不写 = 本 ISA 没有条件码
+o   = { code = 0 }             # 纯汇编名（不映射 IR 条件）：o/no/s/ns/p/pe/np/po 等
+b   = { code = 2, ir = "ult" } # 汇编名 + 它实现的 IR 条件
+c   = { code = 2 }             # 同码别名（反汇编取同码里字母序最小的名字 → "b"）
+e   = { code = 4, ir = "eq" }
+z   = { code = 4 }
+eq  = 4                        # 简写 = { code = 4 }，且 ir 取键名（键名恰是 IR 条件名时）
 
 [conventions.prefix_scan]      # 可选：变长解码前缀扫描表（缺省 = x86 扫描集）
 [[conventions.prefix_scan]]
@@ -287,6 +292,23 @@ effects = ["opsize16"]
 > **S1 删除**：`[conventions.rex]`（`w_opsize`）与 `[conventions.opsize_prefix]`
 > 已移除——它们 codegen 从不读取，66 前缀与 REX.W 在 `vlen.rs` 里按 `__opsize`
 > 硬编码。写这两个表现在直接 `deny_unknown_fields` 报错。
+
+### `[conventions.cond]` — 条件码表（一张表，三处用）
+
+| 用途 | 怎么用 |
+| --- | --- |
+| **汇编** | `kind = "cond"` 的槽按**键名**（大小写不敏感）解析 |
+| **反汇编** | 编码 → 该编码里**字母序最小**的名字（`b`/`c`/`nae` 同码 → 渲染 `b`） |
+| **lowering `{cc}`** | 当前 IR 条件 → 本 ISA 编码，按条目的 `ir` 字段查（不是按名猜） |
+
+- 键 = **本 ISA 汇编/反汇编可见的条件名**（`e`/`z`/`b`/…）；`code` ∈ `0..=15`
+  （进 `cond` 槽 / opcode 低 4 位）。
+- `ir` = 该名实现哪个 **IR 整数条件**（`eq` / `ne` / `slt` / `sle` / `sgt` / `sge` /
+  `ult` / `ule` / `ugt` / `uge`）。省略时：键名恰是 IR 条件名 ⇒ 取键名，否则是
+  **纯汇编别名**（不映射 IR）。
+- **用到 `{cc}` 的 ISA 必须把 10 个 IR 条件映射全**——缺哪个编译期就点名哪个
+  （运行期会静默退化成 0 = 溢出条件，是最难查的一类错）。`cond` 槽则需要表存在。
+- v18 S3b 起**不再有 x86 缺省表**：不声明就没有条件码能力，用到即报错。
 
 位域支持**散布位段**（`pieces`）：立即数分段放置（S/U/B/J 型）。编码
 `word |= ((value >> shift) & mask) << offset`；解码 `value |= ((word >> offset)
@@ -648,7 +670,7 @@ insts = ["cvttsd2si {out}, {0}"]
 | `{imm0}` / `{imm0_sub4}` | `current_immediates[0]`（lane 索引；sub4 = 值-4） |
 | `{shufps_imm8}` / `{shufps_imm8_hi}` | SHUFPS mask 常量（低/高 2 位字段） |
 | `{vconst_lo2}` / `{vconst_lo}` / `{vconst_hi}` / `{vconst_lo_hi}` / `{vconst_hi_hi}` | 向量常量字节池拆分（V64/V128/V256 lane 位模式） |
-| `{cc}` | Icmp 条件码（`__cc`） |
+| `{cc}` | 当前 IR 比较条件 → 本 ISA 条件码（**查 `[conventions.cond]` 的 `ir` 字段**；宿主函数 `intcc_name` 只做"IR 码 → 条件名"） |
 | `{global}` | `ctx.current_global` 的 GlobalId（**负编码 -(id+1)**，配 `MOVABS_GLOBAL` → ABS8 重定位） |
 
 > **占位符单一注册表**：所有占位符的 token 分类、临时声明、xreg 绑定、ctor 表达式

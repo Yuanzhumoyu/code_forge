@@ -660,10 +660,19 @@ pub struct Conventions {
     /// ModRM 结构约定（x86 家族）。
     #[serde(default)]
     pub modrm: Option<ModrmConvention>,
-    /// 条件码表（name → 编码值）。cond 槽必须引用本表；缺省 = x86 16 项
-    /// （o/no/b/ae/e/ne/be/a/s/ns/p/np/l/ge/le/g ↔ 0..15）。
-    #[serde(default)]
-    pub cond: Option<BTreeMap<String, u64>>,
+    /// 条件码表：**键 = 本 ISA 汇编/反汇编可见的条件名**（`e`/`z`/`b`/…），
+    /// 每条给出编码与它实现的 IR 条件（见 [`CondEntry`]）。
+    ///
+    /// 三种用途共用这一张表（不需要第二处声明）：
+    ///
+    /// 1. 汇编：`cond` 槽解析这些名字；
+    /// 2. 反汇编：编码 → 该编码**字母序最小**的名字（渲染用）；
+    /// 3. lowering：`{cc}` 占位符 = 当前 IR 条件 → 本 ISA 编码，按 `ir` 字段查表。
+    ///
+    /// 缺省（未声明）= 该 ISA 不能用 `cond` 槽、也不能在 lowering 里用 `{cc}`
+    /// （**不再回退 x86 的 16 项表**；真的用到就报错）。
+    #[serde(default, deserialize_with = "de_cond_map")]
+    pub cond: Option<BTreeMap<String, CondEntry>>,
     /// 变长解码前缀扫描表：条目 = 单字节或范围 + 效果集
     /// （"opsize16"/"lock"/"repe"/"repne"/"addr16"/"rex"）。缺省 = x86 扫描集。
     #[serde(default)]
@@ -679,6 +688,100 @@ pub struct Conventions {
 #[serde(deny_unknown_fields)]
 pub struct MemTemplate {
     pub template: String,
+}
+
+/// IR 整数条件的规范名（与 `forge_ir::INTCC_NAMES` / `IntCC::mnemonic()` 一一对应）。
+///
+/// 这是**宿主契约**、不是 ISA 数据：`[conventions.cond]` 的 `ir` 字段用它作键空间。
+/// forge-dsl 是 proc-macro crate（不依赖 forge-ir），故在此复述一份；两边的
+/// 一致性由 x86 编译期校验 + 三架构 JIT 矩阵的比较用例端到端守着（若名字漂移，
+/// 该 ISA 的 `{cc}` 会退化成 0 = 溢出条件，矩阵立刻红）。
+pub const IR_INT_COND_NAMES: [&str; 10] = [
+    "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
+];
+
+/// 条件码表的一条：本 ISA 的条件名 → 编码（+ 它实现哪个 IR 条件）。
+///
+/// 允许两种写法（同一张表，值的长短写法）：
+///
+/// ```toml
+/// [conventions.cond]
+/// eq  = 4                              # 简写 = { code = 4 }；`ir` 取键名
+/// e   = { code = 4, ir = "eq" }        # 全写：汇编名 `e` 实现 IR 条件 `eq`
+/// z   = { code = 4 }                   # 纯汇编别名（不映射 IR 条件）
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CondEntry {
+    /// 本 ISA 的编码（进 `cond` 槽 / opcode 低 4 位）——**0..=15**（4 位字段）。
+    pub code: u64,
+    /// 该名对应的 IR 整数条件（[`IR_INT_COND_NAMES`] 之一）。
+    ///
+    /// 缺省 = 键名本身（键名恰是 IR 条件名时，如 `eq = 4`）；`ir = ""` 显式声明
+    /// "纯汇编别名，不映射 IR 条件"。
+    #[serde(default)]
+    pub ir: Option<String>,
+}
+
+impl CondEntry {
+    /// 该条目映射的 IR 条件名：显式 `ir`，或键名恰为规范名时的键名；纯别名 → `None`。
+    pub fn ir_condition<'a>(&'a self, key: &'a str) -> Option<&'a str> {
+        match self.ir.as_deref() {
+            Some("") => None,
+            Some(x) => Some(x),
+            None if IR_INT_COND_NAMES.contains(&key) => Some(key),
+            None => None,
+        }
+    }
+}
+
+/// `[conventions.cond]` 的值：整数简写或 [`CondEntry`]（`untagged`）。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum CondEntryOrCode {
+    Code(u64),
+    Entry(CondEntry),
+}
+
+impl From<CondEntryOrCode> for CondEntry {
+    fn from(v: CondEntryOrCode) -> Self {
+        match v {
+            CondEntryOrCode::Code(code) => CondEntry { code, ir: None },
+            CondEntryOrCode::Entry(e) => e,
+        }
+    }
+}
+
+/// `[conventions.cond]` 的反序列化：整数值 = `{ code = n }` 简写。
+fn de_cond_map<'de, D>(d: D) -> Result<Option<BTreeMap<String, CondEntry>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<BTreeMap<String, CondEntryOrCode>>::deserialize(d)?;
+    Ok(raw.map(|m| m.into_iter().map(|(k, v)| (k, v.into())).collect()))
+}
+
+impl V12Model {
+    /// `[conventions.cond]` 的"IR 条件 → 本 ISA 编码"有序表（按 [`IR_INT_COND_NAMES`]
+    /// 的规范顺序，只含已映射的条件）。
+    ///
+    /// lowering 的 `{cc}` 占位符按这个顺序发 match 臂；校验器用"是否覆盖全部 10 个"
+    /// 决定一个用到 `{cc}` 的 ISA 是否可以编译。
+    pub fn cond_ir_codes(&self) -> Vec<(&'static str, u64)> {
+        let Some(table) = self.conventions.cond.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for name in IR_INT_COND_NAMES {
+            if let Some((_, e)) = table
+                .iter()
+                .find(|(k, e)| e.ir_condition(k.as_str()) == Some(name))
+            {
+                out.push((name, e.code));
+            }
+        }
+        out
+    }
 }
 
 /// 前缀扫描条目：`byte`（单字节）与 `range`（如 "0x40..0x4F"）二选一。

@@ -103,38 +103,42 @@ names = ["K0","K1","K2","K3","K4","K5","K6","K7"]
 [conventions.modrm]
 force_disp_base = [5, 13]
 
-# v13：条件码表（缺省即此表；jcc/setcc/cmovcc 的 cond 槽查表）
+# v13/v18-S3b：条件码表（**唯一一份**；jcc/setcc/cmovcc 的 cond 槽查它、
+# 反汇编按码渲染、lowering 的 `{cc}` 按 ir 字段查它）。
+#   键   = 汇编/反汇编可见的条件名（反汇编取同码里字母序最小者）
+#   code = 编码（进 opcode 低 4 位）
+#   ir   = 该名实现的 IR 整数条件（仅有符号/无符号比较的 10 个；纯别名省略）
 [conventions.cond]
-o = 0
-no = 1
-b = 2
-c = 2
-nae = 2
-ae = 3
-nb = 3
-nc = 3
-e = 4
-z = 4
-ne = 5
-nz = 5
-be = 6
-na = 6
-a = 7
-nbe = 7
-s = 8
-ns = 9
-p = 10
-pe = 10
-np = 11
-po = 11
-l = 12
-nge = 12
-ge = 13
-nl = 13
-le = 14
-ng = 14
-g = 15
-nle = 15
+o   = { code = 0 }
+no  = { code = 1 }
+b   = { code = 2, ir = "ult" }
+c   = { code = 2 }
+nae = { code = 2 }
+ae  = { code = 3, ir = "uge" }
+nb  = { code = 3 }
+nc  = { code = 3 }
+e   = { code = 4, ir = "eq" }
+z   = { code = 4 }
+ne  = { code = 5, ir = "ne" }
+nz  = { code = 5 }
+be  = { code = 6, ir = "ule" }
+na  = { code = 6 }
+a   = { code = 7, ir = "ugt" }
+nbe = { code = 7 }
+s   = { code = 8 }
+ns  = { code = 9 }
+p   = { code = 10 }
+pe  = { code = 10 }
+np  = { code = 11 }
+po  = { code = 11 }
+l   = { code = 12, ir = "slt" }
+nge = { code = 12 }
+ge  = { code = 13, ir = "sge" }
+nl  = { code = 13 }
+le  = { code = 14, ir = "sle" }
+ng  = { code = 14 }
+g   = { code = 15, ir = "sgt" }
+nle = { code = 15 }
 
 # v13：变长解码前缀扫描表（缺省即此表；66/F0/F2/F3/67/REX 扫描集）
 [[conventions.prefix_scan]]

@@ -100,29 +100,30 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             } else {
                 quote! { ctx.current_clobbers = vec![#(#clobbers),*]; }
             };
-            // Icmp 特殊：__cc = 条件码（setcc 用；其他 op 恒 0）。
-            // 条件已归一到 immediate 通道（v3 S1）：宿主把
-            // `Immediate::IntCC` 折成 `IntCC::code()`（1..=10）放进
-            // `current_immediates[0]`，这里解出 `IntCC` 再映射到 x86 的 setcc 编码。
-            let cc_bind: TokenStream = if rule.op == "Icmp" {
+            // `{cc}` 占位符：__cc = 当前 IR 条件 → 本 ISA 编码（其他规则不发射绑定）。
+            // 条件已归一到 immediate 通道（v3 S1）：宿主把 `Immediate::IntCC`
+            // 折成 `IntCC::code()`（1..=10）放进 `current_immediates[0]`；这里用
+            // **宿主函数**把它折成 IR 条件的规范名（`"eq"`…`"uge"`），再查 ISA 的
+            // `[conventions.cond]`（按 `ir` 字段）得到**本 ISA 的编码**——生成代码里
+            // 不出现 `IntCC`，映射完全是数据（v18 S3b；此前是硬编码的 x86 setcc 表）。
+            let cc_bind: TokenStream = if rule.insts.iter().any(|s| s.contains("{cc}")) {
+                let arms: Vec<TokenStream> = model
+                    .cond_ir_codes()
+                    .into_iter()
+                    .map(|(name, code)| {
+                        let lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
+                        let c = code as u8;
+                        quote! { Some(#lit) => #c, }
+                    })
+                    .collect();
                 quote! {
-                    let __cc: u8 = match op {
-                        crate::prelude::Opcode::Icmp => {
-                            use crate::prelude::IntCC::*;
-                            let __raw = ctx.current_immediates.first().copied().unwrap_or(0) as u8;
-                            match crate::prelude::IntCC::from_code(__raw) {
-                                Some(cond) => match cond {
-                                    Equal => 4, NotEqual => 5,
-                                    SignedLessThan => 12, SignedLessThanOrEqual => 14,
-                                    SignedGreaterThan => 15, SignedGreaterThanOrEqual => 13,
-                                    UnsignedLessThan => 2, UnsignedLessThanOrEqual => 6,
-                                    UnsignedGreaterThan => 7, UnsignedGreaterThanOrEqual => 3,
-                                },
-                                // 条件缺失/未知码 = 坏 IR（Verifier 的
-                                // MissingCondImmediate 会先报），生成代码不猜条件。
-                                None => 0,
-                            }
-                        }
+                    let __cc: u8 = match crate::prelude::intcc_name(
+                        ctx.current_immediates.first().copied().unwrap_or(0) as u8,
+                    ) {
+                        #(#arms)*
+                        // 未知码 = 坏 IR（Verifier 的 MissingCondImmediate 会先报）；
+                        // 本 ISA 未映射的条件已在**编译期**拒绝（validate 层），
+                        // 故这里不猜条件。
                         _ => 0,
                     };
                 }

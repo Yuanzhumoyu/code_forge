@@ -7,7 +7,7 @@
 use super::diag::{DeclIndex, Diags};
 use super::model::*;
 use super::shared::parse_u64;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// 逐节收集：每节最多一条（节内逐条收集的见 `*_all`）。
 fn collect(d: &mut Diags, idx: &DeclIndex, r: Result<(), String>) {
@@ -22,6 +22,7 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     collect(d, idx, validate_regs(m));
     collect(d, idx, validate_widths(m));
     collect(d, idx, validate_conventions(m));
+    collect(d, idx, validate_cond(m));
     collect(d, idx, validate_operand_slots(m));
     collect(d, idx, validate_forms(m));
     validate_instructions_all(m, idx, d);
@@ -508,6 +509,83 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             .map_err(|e| format!("[conventions.mem]: {e}"))?;
         super::codegen::mem::validate_mem_template(&items)
             .map_err(|e| format!("[conventions.mem]: {e}"))?;
+    }
+    Ok(())
+}
+
+/// `[conventions.cond]` 校验（v18 S3b 条件码数据化）。
+///
+/// 这张表同时服务三处（汇编解析名、反汇编渲染名、lowering 的 `{cc}`），因此校验也
+/// 三面都盖：
+///
+/// 1. 键非空、`code` 落在 4 位条件字段内（0..=15）；
+/// 2. `ir` 必须是 [`IR_INT_COND_NAMES`] 之一，且**每个 IR 条件只能被映射一次**
+///    （否则 `{cc}` 该取哪个编码就没有答案）；
+/// 3. **用到 `cond` 槽却没有表** ⇒ 报错（v18 S3b 起不再回退 x86 的 16 项表）；
+///    **用到 `{cc}` 却没把 10 个 IR 条件映射全** ⇒ 报错（缺的那个会在运行期
+///    静默退化成 0 = 溢出条件，是最难查的一类错）。
+fn validate_cond(m: &V12Model) -> Result<(), String> {
+    let table = m.conventions.cond.as_ref();
+    if let Some(t) = table {
+        if t.is_empty() {
+            return Err(
+                "[conventions.cond]: 条件码表不能为空（要么整节不写，要么至少一条）".into(),
+            );
+        }
+        let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
+        for (name, e) in t {
+            if name.trim().is_empty() {
+                return Err("[conventions.cond]: 条件名不能为空".into());
+            }
+            if e.code > 15 {
+                return Err(format!(
+                    "[conventions.cond.{name}]: code {} 超出条件字段宽度（4 位，0..=15）",
+                    e.code
+                ));
+            }
+            if let Some(ir) = e.ir_condition(name.as_str()) {
+                if !IR_INT_COND_NAMES.contains(&ir) {
+                    return Err(format!(
+                        "[conventions.cond.{name}].ir '{ir}' 不是 IR 整数条件名（可用：{}）",
+                        IR_INT_COND_NAMES.join(" / ")
+                    ));
+                }
+                if let Some(prev) = owner.insert(ir, name) {
+                    return Err(format!(
+                        "[conventions.cond]: IR 条件 '{ir}' 被 '{prev}' 与 '{name}' 重复映射\
+                         （每个 IR 条件只能映射到一个编码）"
+                    ));
+                }
+            }
+        }
+    }
+    // `cond` 槽（汇编侧）需要表
+    if table.is_none()
+        && let Some(slot) = m.operand_slots.iter().find(|s| s.kind == OperandKind::Cond)
+    {
+        return Err(format!(
+            "[conventions.cond]: 操作数槽 '{}' 的 kind = \"cond\" 需要条件码表——\
+             声明 [conventions.cond]（键 = 本 ISA 汇编可见的条件名）",
+            slot.name
+        ));
+    }
+    // `{cc}`（lowering 侧）需要**全部** IR 整数条件
+    if m.lowering
+        .iter()
+        .any(|r| r.insts.iter().any(|s| s.contains("{cc}")))
+    {
+        let missing: Vec<&str> = IR_INT_COND_NAMES
+            .iter()
+            .copied()
+            .filter(|n| !m.cond_ir_codes().iter().any(|(k, _)| k == n))
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "[[lowering]]: 用了 `{{cc}}`（当前 IR 条件 → 本 ISA 编码）但 [conventions.cond] \
+                 没把所有 IR 整数条件映射全——缺 {}（每条用 ir = \"<条件名>\" 指出它实现哪个条件）",
+                missing.join(" / ")
+            ));
+        }
     }
     Ok(())
 }

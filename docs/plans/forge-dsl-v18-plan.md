@@ -217,27 +217,26 @@ rows = [
   编码来源（`opcode`/`fields`/`opcode_reg`/`modrm`/`vex`/`evex`/`imm`）。
 - 两种等价书写都支持：`rows = [ { … }, … ]`（推荐，一行一条）与 `[[templates.rows]]`。
 
-### 5.3 条件码数据化（删除 x86 硬编码）
+### 5.3 条件码数据化（删除 x86 硬编码）— **已落地（S3b）**
 
 ```toml
-# [conventions.cond] 的键 = IR 条件名（与 IntCC/FloatCC 语义一一对应），值 = 本 ISA 的编码
+# [conventions.cond] 的键 = 本 ISA 汇编/反汇编可见的条件名；每条给编码 + 它实现哪个 IR 条件
 [conventions.cond]
-eq = 4
-ne = 5
-slt = 12
-sge = 13
-sgt = 15
-sle = 14
-ult = 2
-ule = 6
-ugt = 7
-uge = 3
+b   = { code = 2, ir = "ult" }
+c   = { code = 2 }              # 同码别名（渲染取同码字母序最小名）
+e   = { code = 4, ir = "eq" }
+z   = { code = 4 }
+eq  = 4                         # 简写 = { code = 4 }，ir 取键名（键名恰是 IR 条件名时）
 ```
 
-- `{cc}` 占位符 = "当前 IR 条件 → 本 ISA 编码"，由表驱动；删掉 `lowering.rs:110-138` 的 x86 表与
-  `asm.rs:396` 的 x86 缺省（缺表 = 明确报错，不再静默按 x86）。
-- `cond` 槽的**名字表**由同一份数据派生（可另给别名组，如 `e`/`z` 同指 `eq`）。
-- arm64 由此获得全 16 条件：`ops = ["cond:cond", "target:off19"]`、`asm = "b.{cond} {target}"` 一条声明。
+- 一张表服务三处：汇编解析（cond 槽按名）、反汇编渲染（码 → 字母序最小名）、
+  lowering 的 `{cc}`（**按 `ir` 字段**查，不再按名猜）；
+- `lowering.rs` 的 x86 setcc 硬编码表与 `asm.rs` 的 `cond_default()`（x86 16 项缺省）
+  已删除；宿主只留"IR 条件码 → 条件名"（`forge_ir::intcc_name`），生成代码里不出现
+  `IntCC`（通用性守卫的 2 条欠账随之删除，**白名单清空**）；
+- 校验：`code ≤ 15`、`ir` 必须是 10 个规范名之一且无重复映射、`cond` 槽需要表、
+  **用了 `{cc}` 就必须映射全 10 个 IR 条件**（否则运行期静默退化成 0）；
+- arm64 由此获得全 16 条件（S3c 落地 `b.cond`）。
 
 ### 5.4 `[[reloc]]` — 重定位数据化（取代 `global_reloc` 枚举）
 
@@ -340,6 +339,25 @@ value = "big"
 | **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | 生成代码 token 数 −≥40%、`cargo check -p forge-codegen` −≥20% | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
 
 **建议顺序**：S0 → S1 → S2 → S3 → S6 →（S7）→ S4 → S5 →（S8）。
+
+**S3 进度**：
+
+- **S3a 已落地（2026-09-19）**：三处"别家常量兜底"改 fail-closed——`frame.rs` 的 `R10`
+  scratch 缺省与 `MOV_RM8_R64` 指令名探测（改按 `roles = ["gpr_mov"]`）、`lowering.rs`
+  两处 `X1` 返回地址寄存器缺省；缺声明一律生成期报错，且只在真的需要时要求
+  （无栈参数 / call 指令没有返回槽的 ISA 不受影响）。生成代码**逐字节不变**（8 个模块
+  dump 对照），新增两条负向用例（用真实 x86/riscv 谱删声明构造）。
+- **S3b 已落地（2026-09-19）**：条件码数据化——`[conventions.cond]` 变成
+  `名 → { code, ir? }`（含整数简写）；一张表服务汇编解析、反汇编渲染与 lowering 的
+  `{cc}`；删掉 `lowering.rs` 的 x86 setcc 表与 `asm.rs` 的 `cond_default()`（x86 16 项
+  缺省）；宿主新增 `forge_ir::intcc_name`（IR 码 → 条件名），**生成代码不再出现
+  `IntCC`**，`generality_guard` 的 `ALLOWED` **清空**。新增 8 条条件码用例；
+  x86 生成代码的 `{cc}` 映射与旧硬编码表逐条相同（`eq→4 / ne→5 / slt→12 / sle→14 /
+  sgt→15 / sge→13 / ult→2 / ule→6 / ugt→7 / uge→3`），x86 JIT 矩阵 195/3/0（含比较
+  用例，端到端跑过 `{cc}`）不变。
+- 余下：**S3c** arm64 `b.cond` 全 16 条件（含"助记符里带条件"的汇编/反汇编支持）、
+  **S3d** `[[reloc]]` 取代 `GlobalReloc`、**S3e** `[[pseudo]]`、**S3f** `[[derive]]`。
+
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 
 **S2 进度（S2a–S2c 全部落地，2026-09-19）**：机制 + 校验 + 测试已落地，三个发行 ISA 与全部夹具

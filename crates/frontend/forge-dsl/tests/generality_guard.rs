@@ -27,26 +27,11 @@
 
 /// 允许出现的行：(文件后缀, 该行 trim 后的内容, 理由)。
 ///
-/// 空列表 = 生成期代码里不允许任何 ISA 常量。当前条目都是**已知欠账**，
-/// 每条都注明由哪个切片删除（`docs/plans/forge-dsl-v18-plan.md` §7）——
-/// S3 收尾时本列表必须回到空（防腐烂检查会强迫删除条目）。
-///
-/// v18 S3a 已删掉三条"回退到某个 ISA 的常量"：`frame.rs` 的 `R10` scratch 缺省与
-/// `MOV_RM8_R64` 指令名探测（改按 `roles = ["gpr_mov"]`）+ `lowering.rs` 的 `X1`
-/// 返回地址寄存器缺省——现在缺声明一律**生成期报错**（fail-closed）。
+/// **空列表 = 生成期代码里不允许任何 ISA 常量**（v18 S3 的目标状态，已达成）：
+/// 指令名、寄存器名、条件码一律来自 `isa/*.toml`。防腐烂检查会强迫删除失效条目，
+/// 所以这里保持为空并让新欠账显式加进来（带理由 + 删除它的切片）。
 #[allow(clippy::type_complexity)]
-const ALLOWED: &[(&str, &str, &str)] = &[
-    (
-        "lowering.rs",
-        "use crate::prelude::IntCC::*;",
-        "S0 基线欠账（S3b 删）：IR 条件 → 本 ISA 编码的映射必须走 [conventions.cond]",
-    ),
-    (
-        "lowering.rs",
-        "match crate::prelude::IntCC::from_code(__raw) {",
-        "S0 基线欠账（S3b 删）：同上（x86 setcc 码表硬编码在通用 lowering 生成器里）",
-    ),
-];
+const ALLOWED: &[(&str, &str, &str)] = &[];
 
 /// 与"名字"无关的禁止标识符（IR 条件 → ISA 编码的映射必须走数据）。
 const FORBIDDEN_IDENTS: &[&str] = &["IntCC", "FloatCC"];

@@ -92,6 +92,24 @@ impl IntCC {
     }
 }
 
+/// 整数条件的**全部规范名**（与 [`IntCC::code`] 一一对应，顺序 = 码序）。
+///
+/// 这是"IR 条件"这一侧的唯一名单：ISA 数据（`[conventions.cond]` 的 `ir` 字段）
+/// 用它作为键空间，生成器用它校验"每个条件都映射到了本 ISA 的编码"。
+pub const INTCC_NAMES: [&str; 10] = [
+    "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
+];
+
+/// IR 整数条件码（[`IntCC::code`]）→ 规范名（[`IntCC::mnemonic`]）；未知码 → `None`。
+///
+/// 生成器用它把 `LowerCtx::current_immediates[0]` 里的条件码折成
+/// `[conventions.cond]` 的键——这样**生成的代码里不出现 `IntCC`**：
+/// "IR 条件 → 本 ISA 编码"的映射完全由 ISA 数据给出（见
+/// `docs/reference/isa-dsl.md` 的"条件码"一节）。
+pub fn intcc_name(code: u8) -> Option<&'static str> {
+    IntCC::from_code(code).map(|c| c.mnemonic())
+}
+
 /// 浮点比较条件（LLVM `fcmp` 的 16 个谓词）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FloatCC {

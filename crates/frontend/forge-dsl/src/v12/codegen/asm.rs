@@ -393,42 +393,6 @@ fn gen_lexer_ts(_model: &V12Model) -> Result<TokenStream, String> {
     })
 }
 
-/// x86 缺省条件码表（`[conventions.cond]` 未声明时使用；含别名）。
-fn cond_default() -> Vec<(&'static str, u64)> {
-    vec![
-        ("o", 0),
-        ("no", 1),
-        ("b", 2),
-        ("c", 2),
-        ("nae", 2),
-        ("ae", 3),
-        ("nb", 3),
-        ("nc", 3),
-        ("e", 4),
-        ("z", 4),
-        ("ne", 5),
-        ("nz", 5),
-        ("be", 6),
-        ("na", 6),
-        ("a", 7),
-        ("nbe", 7),
-        ("s", 8),
-        ("ns", 9),
-        ("p", 10),
-        ("pe", 10),
-        ("np", 11),
-        ("po", 11),
-        ("l", 12),
-        ("nge", 12),
-        ("ge", 13),
-        ("nl", 13),
-        ("le", 14),
-        ("ng", 14),
-        ("g", 15),
-        ("nle", 15),
-    ]
-}
-
 /// 生成共享解析原语（按需：仅当 ISA 使用对应槽类别时发出）。
 fn gen_asm_primitives(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStream, String> {
     let has_reg = infos.iter().any(|i| {
@@ -756,19 +720,19 @@ fn gen_asm_primitives(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStrea
         });
     }
     if has_cond {
-        // 条件码表：声明优先，缺省 x86
-        let table = model
-            .conventions
-            .cond
-            .as_ref()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), *v)).collect::<Vec<_>>())
-            .unwrap_or_else(|| {
-                cond_default()
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v))
-                    .collect()
-            });
-        // 按编码值分组别名（b|c|nae => 2）
+        // 条件码表：**必须由 ISA 声明**（v18 S3b 起不再回退 x86 的 16 项表——
+        // 那等于把别家的条件名与编码写进通用生成器）。键 = 汇编可见的名字。
+        let Some(table) = model.conventions.cond.as_ref() else {
+            return Err(
+                "[conventions.cond]: 本 ISA 有 `cond` 槽操作数，必须声明条件码表\
+                 （键 = 汇编可见的条件名；每条给 code，并用 ir = \"<IR 条件名>\" 指出\
+                 它实现哪个 IR 整数条件）——不按某个 ISA 的表兜底"
+                    .into(),
+            );
+        };
+        let table: Vec<(String, u64)> = table.iter().map(|(k, e)| (k.clone(), e.code)).collect();
+        // 按编码值分组别名（b|c|nae => 2）；渲染取该编码**字母序最小**的名字
+        //（BTreeMap 迭代序 = 字母序，故与 S3b 之前的行为逐字节一致）。
         let mut by_code: BTreeMap<u64, Vec<String>> = BTreeMap::new();
         for (k, v) in &table {
             by_code.entry(*v).or_default().push(k.clone());

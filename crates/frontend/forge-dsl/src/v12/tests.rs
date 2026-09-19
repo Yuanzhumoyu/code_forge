@@ -891,6 +891,171 @@ fn codegen_requires_call_ret_reg_when_call_has_ret_slot() {
     );
 }
 
+// ───────────────── S3b：条件码数据化（[conventions.cond] 单表三用） ─────────────────
+
+/// 条件码最小模型：`[conventions.cond]` 由 `tbl` 给出，`extra` 追加载荷。
+///
+/// 表同时服务三处——汇编解析（cond 槽）、反汇编渲染（按码取字母序最小名）、
+/// lowering 的 `{cc}`（按 `ir` 字段）。
+fn gen_cond_doc(tbl: &str, extra: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "x"
+default_inst_width = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = {{ offset = 0,  width = 8 }}
+rd     = {{ offset = 8,  width = 3 }}
+cc     = {{ offset = 11, width = 4 }}
+[conventions.cond]
+{tbl}
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+[[operand_slots]]
+name = "cc"
+kind = "cond"
+[[forms]]
+name = "C"
+opcode_field = "opcode"
+operand_fields = ["rd", "cc"]
+[[instructions]]
+name = "SETC"
+form = "C"
+opcode = 0x90
+ops = ["dst:g:out", "cond:cc"]
+asm = "setc {{dst}}, {{cond}}"
+{extra}
+"#
+    )
+}
+
+/// 10 个 IR 整数条件全部映射（全写形式：汇编名 + `ir`）。
+const CC_ALL_FULL: &str = r#"
+eq  = { code = 4,  ir = "eq" }
+ne  = { code = 5,  ir = "ne" }
+slt = { code = 12, ir = "slt" }
+sle = { code = 14, ir = "sle" }
+sgt = { code = 15, ir = "sgt" }
+sge = { code = 13, ir = "sge" }
+ult = { code = 2,  ir = "ult" }
+ule = { code = 6,  ir = "ule" }
+ugt = { code = 7,  ir = "ugt" }
+uge = { code = 3,  ir = "uge" }
+"#;
+
+/// 同一个表的**简写**形式（键名恰是 IR 条件名 ⇒ `ir` 取键名）。
+const CC_ALL_SHORT: &str = r#"
+eq = 4
+ne = 5
+slt = 12
+sle = 14
+sgt = 15
+sge = 13
+ult = 2
+ule = 6
+ugt = 7
+uge = 3
+"#;
+
+fn cc_rule() -> &'static str {
+    "[[lowering]]\nop = \"Icmp\"\ninsts = [\"SETC {out}, {cc}\"]"
+}
+
+/// `{cc}` 的生成代码按 `ir` 字段查表得到本 ISA 编码，且**不出现 `IntCC`**。
+#[test]
+fn cond_cc_arms_come_from_the_table() {
+    for tbl in [CC_ALL_FULL, CC_ALL_SHORT] {
+        let doc = gen_cond_doc(tbl, cc_rule());
+        let model = parse_and_validate(&doc).expect("合法条件码表");
+        // 生成物是 token 串，空格由 `to_string` 决定 ⇒ 比较前去掉空白。
+        let s: String = super::codegen::generate(&model)
+            .unwrap()
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for (name, code) in [
+            ("eq", 4),
+            ("ne", 5),
+            ("slt", 12),
+            ("sle", 14),
+            ("sgt", 15),
+            ("sge", 13),
+            ("ult", 2),
+            ("ule", 6),
+            ("ugt", 7),
+            ("uge", 3),
+        ] {
+            let needle = format!("Some(\"{name}\")=>{code}u8");
+            assert!(s.contains(&needle), "生成的 {{cc}} 表缺 `{needle}`：{s}");
+        }
+        assert!(!s.contains("IntCC"), "生成代码不得点名 IntCC：{s}");
+        assert!(s.contains("intcc_name("), "应经宿主函数折成 IR 条件名：{s}");
+    }
+}
+
+/// 用 `{cc}` 却漏映射 IR 条件 ⇒ 编译期报错并点名缺哪些（运行期会静默退化成 0）。
+#[test]
+fn cond_cc_requires_all_ir_conditions() {
+    let doc = gen_cond_doc("eq = 4\nne = 5\n", cc_rule());
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("没把所有 IR 整数条件映射全"), "msg: {msg}");
+    assert!(msg.contains("slt"), "缺项清单应含 slt：{msg}");
+    assert!(msg.contains("uge"), "缺项清单应含 uge：{msg}");
+}
+
+/// `cond` 槽没有条件码表 ⇒ 报错（v18 S3b 起不再回退 x86 的 16 项表）。
+#[test]
+fn cond_slot_without_table_is_rejected() {
+    let doc = gen_cond_doc("", "").replace("[conventions.cond]\n", "");
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("需要条件码表"), "msg: {msg}");
+}
+
+/// 空表 = 声明了却什么都没给 ⇒ 报错（区别于"整节不写"）。
+#[test]
+fn cond_empty_table_is_rejected() {
+    let msg = validation_msg(&gen_cond_doc("", ""));
+    assert!(msg.contains("不能为空"), "msg: {msg}");
+}
+
+/// `code` 必须落进 4 位条件字段。
+#[test]
+fn cond_code_beyond_four_bits_is_rejected() {
+    let msg = validation_msg(&gen_cond_doc("eq = { code = 16, ir = \"eq\" }\n", ""));
+    assert!(msg.contains("超出条件字段宽度"), "msg: {msg}");
+}
+
+/// `ir` 必须是 IR 整数条件名。
+#[test]
+fn cond_unknown_ir_condition_is_rejected() {
+    let msg = validation_msg(&gen_cond_doc("e = { code = 4, ir = \"nope\" }\n", ""));
+    assert!(msg.contains("不是 IR 整数条件名"), "msg: {msg}");
+    assert!(msg.contains("eq"), "应列出可用条件名：{msg}");
+}
+
+/// 同一个 IR 条件不能被映射两次（否则 `{cc}` 该取哪个编码没有答案）。
+#[test]
+fn cond_duplicate_ir_mapping_is_rejected() {
+    let msg = validation_msg(&gen_cond_doc(
+        "e = { code = 4, ir = \"eq\" }\ne2 = { code = 4, ir = \"eq\" }\n",
+        "",
+    ));
+    assert!(msg.contains("重复映射"), "msg: {msg}");
+}
+
+/// 纯汇编别名（不写 `ir`、键名也不是 IR 条件名）合法：`{cc}` 不要求它。
+#[test]
+fn cond_pure_asm_alias_has_no_ir_mapping() {
+    let doc = gen_cond_doc("z = 4\n", "");
+    let model = parse_and_validate(&doc).expect("纯别名合法");
+    assert!(model.cond_ir_codes().is_empty(), "纯别名不该产生 IR 映射");
+}
+
 // ───────────────── 结构完善：asm 完整格式 + 通用模板段 ─────────────────
 
 /// 定宽最小模型（供 codegen 测试）。

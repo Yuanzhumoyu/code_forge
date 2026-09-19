@@ -13,6 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **ISA-DSL 条件码数据化（v18 S3b）：`[conventions.cond]` 一张表服务三处，删掉 x86 硬编码表与缺省；通用性守卫白名单清空**。表从 `名 = 编码` 变成 `名 = { code, ir? }`（也接受整数简写 `eq = 4`，此时 `ir` 取键名）：键 = 本 ISA 汇编/反汇编可见的条件名，`code` ∈ 0..=15，`ir` = 它实现哪个 IR 整数条件（`eq/ne/slt/sle/sgt/sge/ult/ule/ugt/uge`）。三处用途：**汇编**按名解析 `cond` 槽、**反汇编**按码取同码里字母序最小的名（渲染与 S3b 前逐字节一致）、**lowering 的 `{cc}`** 按 `ir` 字段查本 ISA 编码。
+  删掉两处 x86 硬编码：`lowering.rs` 的 `IntCC → setcc 编码` match（生成代码里不再出现 `IntCC`）与 `asm.rs` 的 `cond_default()`（未声明表时的 x86 16 项缺省）——现在"没声明就没有条件码能力，用到即报错"。宿主新增 `forge_ir::intcc_name(码) → 条件名`，把"IR 条件"这一侧的键空间收敛到一处（`INTCC_NAMES`/`IntCC::mnemonic`）。
+  新增校验（`validate_cond`）：表非空、`code ≤ 15`（4 位条件字段）、`ir` 必须是 10 个规范名之一、**一个 IR 条件只能被映射一次**、`cond` 槽需要表、**用了 `{cc}` 就必须把 10 个条件映射全**（否则运行期静默退化成 0 = 溢出条件，是最难查的一类错）。
+  证据：x86 生成代码的 `{cc}` 映射与新表逐条相同（`eq→4 / ne→5 / slt→12 / sle→14 / sgt→15 / sge→13 / ult→2 / ule→6 / ugt→7 / uge→3`），x86/riscv/arm64 其余生成物只在"未使用的 `__cc` 绑定"上变小；x86 黄金/汇编/解码 78 例 + 三架构 JIT 矩阵（195/3/0、131/67/0）不变；`tests/generality_guard.rs` 的 `ALLOWED` **清空**（生成期代码里已无任何 ISA 常量：指令名、寄存器名、条件码全来自 `isa/*.toml`）。文档：`docs/reference/isa-dsl.md` 新增"条件码表（一张表，三处用）"、`isa-dsl-errors.md` 增条件码错误表、方案 §5.3/§7。
+
+- **ISA-DSL 三处"别家常量兜底"改 fail-closed（v18 S3a）：缺失的 ABI 声明不再回退到某个 ISA 的寄存器名/指令名**。①`frame.rs` 的栈参数收参 scratch 寄存器原先在 `[abi].scratch` 缺失时回退 x86 的 `R10`（生成的代码引用 `Reg::R10`——非 x86 ISA 直接编译不过）；②spilled 寄存器参数收参需要 MOV 时原先用 `inst_exists(infos, "MOV_RM8_R64")` **按 x86 指令名**探测，而同一函数里 `move_inst` 早已由 `roles = ["gpr_mov"]` 派生；③`lowering.rs` 的 Call/CallIndirect 两处在 `[abi].call_ret_reg` 缺失时回退 riscv 的 `X1`。现在三处都**生成期明确报错**，且**只在真的需要时才要求**（无栈参数的 ISA 不需要 scratch；call 指令没有 Out/InOut Reg 槽的 x86 不需要 `call_ret_reg`）。
+  证据：三发行 ISA + 5 个夹具的 `FGE_DEBUG_GEN` dump 与改前**逐字节相同**（对现网谱是纯收紧），新增两条负向用例——真实 x86 谱删掉 `scratch` → 报错点名 `[abi].scratch`；真实 riscv 谱删掉 `call_ret_reg` → 报错点名 `call_ret_reg`。
+
 - **ISA-DSL 定义指令的机制统一为**一个**（v18 S2c）：`[[templates]]` + `rows` + 指令属性 `ref`，`[[families]]`/`[[aliases]]` 全删**。起因是评审意见——同一件事有 `[[templates]]`/`[[families]]`/`[[aliases]]` 三个模块、三套校验、三种诊断前缀，是使用负担（"只能保留一个"）。
   合并规则只有两条：**多条指令共用一份声明** → 模板的 `body`（共享字段，可省略）+ `rows`（每行一条指令：`inst` 必填，其余键是取值/字段）；**一个引用名指向多条指令** → 指令上的 `ref`（多条共用同一 `ref` = 多态分派，取代 `[[aliases]]`）。
   行键分三类且**只由 `body` 决定**：body 里有同名键 ⇒ 覆盖（表递归合并）；body 没有但被 `{键}` 引用 ⇒ 纯参数（只插值）；其余 ⇒ 指令字段（拼错由 `Instruction` 反序列化点名拒绝）。`{inst}`/`{键.lower}` 派生实例名与助记符，整串恰为占位符时保留类型。`rows` 是 TOML 数组，`rows = [ { … }, … ]`（一行一条）与 `[[templates.rows]]` 是同一结构的两种写法。

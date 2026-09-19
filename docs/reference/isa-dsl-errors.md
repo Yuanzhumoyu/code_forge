@@ -31,7 +31,7 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 | `DSL-REG` | `[reg.*]` | 缺 GPR 组、`names`/`count` 不一致、组名宽度非法、生成式声明参数不全 |
 | `DSL-STACK` | `[stack]` | `slot`/`align`/`fp_save` 为 0 或未指向已声明组 |
 | `DSL-TYPES` | `[types]` | 类型名非法、目标寄存器组未声明、类宽 < 类型宽（会静默截断） |
-| `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空、`prefix_scan` 条目非法 |
+| `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空/`code` 超 4 位/`ir` 名非法或重复映射、`cond` 槽却没有表、用了 `{cc}` 却没映射全 10 个 IR 条件、`prefix_scan` 条目非法 |
 | `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class`/`classes` 未声明、`byte_reg` 用错组 |
 | `DSL-FORM` | `[[forms]]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
 | `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突 |
@@ -90,7 +90,20 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 | `duplicate instruction name 'X'` | 模板实例名与别的指令/实例重名（模板之间、模板与手写指令之间同池） |
 | `body 必须是内联表（指令字段的集合）` | `body = { … }`，不能是字符串/数组 |
 
-### 3.6 位置看起来不对？
+### 3.6 条件码（`[conventions.cond]`，v18 S3b）
+
+键 = 本 ISA 汇编/反汇编可见的条件名，`code` 是编码，`ir` 是它实现的 IR 整数条件。
+
+| 消息 | 修法 |
+| --- | --- |
+| `条件码表不能为空（要么整节不写，要么至少一条）` | 删掉空的 `[conventions.cond]`，或补上条目 |
+| `code M 超出条件字段宽度（4 位，0..=15）` | 条件码占 opcode 低 4 位（定宽 ISA 的 cond 位域同理），编码值改到 0..=15 |
+| `ir 'X' 不是 IR 整数条件名（可用：eq / ne / …）` | `ir` 只认那 10 个名字；纯汇编别名请省略 `ir`（键名不是 IR 条件名时自动视为别名） |
+| `IR 条件 'eq' 被 'e' 与 'e2' 重复映射` | 一个 IR 条件只能映射到一个编码（否则 `{cc}` 取谁没有答案） |
+| `操作数槽 'X' 的 kind = "cond" 需要条件码表` | 声明 `[conventions.cond]`（v18 S3b 起不再回退 x86 的 16 项表） |
+| `用了 {cc} 但 [conventions.cond] 没把所有 IR 整数条件映射全——缺 slt / uge` | 给缺的条件各找一条汇编名加 `ir = "<条件名>"`（漏映射会在运行期静默退化成 0 = 溢出条件） |
+
+### 3.7 位置看起来不对？
 
 - 诊断指向**声明行**（`name = …` / `op = …` / 节头）是正常的；
 - 若消息里用引号点名了出错的值（`'MRR_TYPO'`、`'rd_width'`、`'{bogus}'`），定位会进一步
