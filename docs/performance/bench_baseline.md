@@ -17,6 +17,32 @@ default run.
 > codegen/throughput 数据供参考。优化结论基于结构性代码分析（见文末
 > 「优化建议」），不依赖噪声数值。
 
+## ir_dsl（2026-09-19 首次采集：ISA-DSL 生成期成本基线）
+
+命令：`cargo clean -p forge-codegen` + `FGE_DEBUG_GEN=1 cargo check -p forge-codegen`
+（`FGE_DEBUG_GEN` 把每个 `isa_from_file!` 生成模块 dump 到 `%TEMP%\forge_gen_<stem>.rs`）。
+用途：`docs/plans/forge-dsl-v18-plan.md` 的 S0 基线，S8（生成物减薄）以此为对照。
+
+| 生成模块 | 字节 | 行（未格式化 token 串） |
+| --- | ---: | ---: |
+| `forge_gen_x86_v12.rs` | 2,986,514 | 40,317 |
+| `forge_gen_riscv64_v12.rs` | 1,263,470 | 21,638 |
+| `forge_gen_arm64_v12.rs` | 644,018 | 9,241 |
+| 合计 | **4,894,002** | **71,196** |
+
+| 指标 | 实测 |
+| --- | --- |
+| `cargo clean -p forge-codegen` 后 `cargo check -p forge-codegen` | **36.7 s / 37.9 s**（两次） |
+| 随后空跑 `cargo check -p forge-codegen` | **0.4 s**（三次 0.81 / 0.40 / 0.41 s；紧跟 cold 的第一次 2.6 s） |
+
+规格规模（`isa/*.toml`）：x86 3,356 行（146 指令 + 51 族变体 + 25 别名 + 220 lowering）、
+riscv64 1,754 行（78 + 38 + 0 + 110）、arm64 1,125 行（89 + 0 + 29 + 19），合计 **6,235 行**。
+生成器 + 模型 15,976 行；生成面手写测试 2,952 行。
+
+> **测量口径**：首轮曾测到 96.9 s / 70.6 s 的偏大值（与后台任务重叠）；上表为单独重跑的稳定值。
+> 生成代码是 `proc_macro2::TokenStream::to_string()` 的**未格式化**产物，字节数比"正常格式化后的行数"
+> 更能反映编译器要吃的规模。
+
 ## ir_binary（2026-09-19 首次采集；2026-09-19 补 v2 压缩对照）
 
 命令：`cargo bench -p forge-ir --bench ir_binary`（criterion 默认采样）。

@@ -21,6 +21,8 @@ pub(crate) mod shared;
 mod validate;
 
 #[cfg(test)]
+mod s0_baseline_tests;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use model::V12Model;

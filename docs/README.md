@@ -31,6 +31,7 @@
 | `plans/forge-ir-v3-plan.md` | forge-ir v3 改进方案（S0–S7 已落地，逐切片带实证与守卫；S8 见下条） | progress |
 | `plans/forge-ir-s8-design.md` | forge-ir S8 可选项设计（二进制序列化 / MemorySSA-lite / crate 拆分：逐个给设计与成本、验证方案、触发条件；2026-09-19 拍板：**只做二进制序列化**，另两项不做） | progress |
 | `plans/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化**执行方案**（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照、基线数字） | progress |
+| `plans/forge-dsl-v18-plan.md` | forge-dsl 改进方案（ISA-DSL v18：参数化模板取代 families/aliases、条件码/重定位/伪指令数据化、宽度三态、诊断与生成自测；S0 基线实测 + S0–S8 切片） | progress |
 
 ## performance/ — 基准与优化
 
