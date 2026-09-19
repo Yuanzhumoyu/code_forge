@@ -1,6 +1,9 @@
 //! round-trip fuzz：随机生成**合法** LLVM IR 文本 → parse₁ → display → parse₂，
 //! 断言两次 forge IR 结构等价（模块/块/指令/终结符/常量池值）且无 panic。
 //!
+//! 同一批随机模块**同时**走二进制往返（`to_binary` → `from_binary`）：结构等价 +
+//! 文本一致 + 字节流幂等（执行方案 §2.5 的"fuzz 扩面"验收项）。
+//!
 //! 生成器只产出文本层支持的类型/指令/常量（全部按比例抽样），SSA 顺序定义、
 //! 类型匹配、终结符在块尾等合法性约束由生成器内部保证。
 //!
@@ -831,6 +834,37 @@ fn fuzz_roundtrip(src: &str, seed: u64, iter: usize) {
     // 与第 1 轮逐字节相同——全局/元数据的打印规范化若有残留漂移会在这里现形。
     let text2 = m2.to_string();
     assert_eq!(text1, text2, "[seed={seed:#x} iter={iter}] 文本不幂等");
+
+    // ── 二进制往返（同强度、同一批随机模块）──
+    //
+    // 判据三条：
+    // 1. `from_binary(to_binary(m))` 与原模块**结构等价**（模块/块/指令/终结符/常量）；
+    // 2. 解码后文本打印与首次一致（文本是"用户可见语义"的规范形）；
+    // 3. `decode → encode` 与首次编码**逐字节相同**（编码幂等 ⇒ 无隐藏状态、
+    //    无非确定顺序）。
+    let bytes = m1.to_binary();
+    let m3 = Module::from_binary(&bytes).unwrap_or_else(|e| {
+        panic!("[seed={seed:#x} iter={iter}] binary decode failed:\n{text1}\n{e:?}")
+    });
+    assert_modules_eq(&m1, &m3, &text1);
+    assert_globals_eq(&m1, &m3, &text1);
+    let text3 = m3.to_string();
+    assert_eq!(
+        text3, text1,
+        "[seed={seed:#x} iter={iter}] 二进制往返后文本不一致"
+    );
+    let bytes2 = m3.to_binary();
+    assert_eq!(
+        bytes2.len(),
+        bytes.len(),
+        "[seed={seed:#x} iter={iter}] 字节长度不幂等"
+    );
+    assert!(
+        bytes2 == bytes,
+        "[seed={seed:#x} iter={iter}] 字节流不幂等（{} vs {} 字节）",
+        bytes.len(),
+        bytes2.len()
+    );
 }
 
 fn run_fuzz(seed: u64, iters: usize) {

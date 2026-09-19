@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **二进制往返的 fuzz 扩面：同一批随机模块走二进制（执行方案 §2.5 验收项）**：`tests/roundtrip_fuzz.rs` 的生成器与 `fuzz_roundtrip` 扩展为"文本往返 + 二进制往返"同批断言——默认 **10_000** 个随机模块（含第二固定种子 500 个）每个都额外做 `to_binary` → `from_binary`：①结构等价（模块/块/指令/终结符/常量/全局初始化字节，复用既有 `assert_modules_eq`/`assert_globals_eq`）；②解码后**文本打印与首次一致**；③`decode → encode` 与首次编码**逐字节相同**。本机实测 2 passed / 0 failed，整支 ~29 s（可 `FORGE_FUZZ_ITERS`/`FORGE_FUZZ_SEED` 覆盖复现）。
+
 - **forge-ir 二进制序列化 B5（METADATA/GLOBALS/MODULE 段 + 语料端到端 + 格式规范文档）**：`binary/meta.rs`（metadata 节点表按 id 顺序 + 命名表按名排序）、`binary/globals.rs`（全局/别名/comdat + 模块三元组·源文件·模块 asm）。回放纪律：metadata 节点**按原样落位**（不用 `intern`——显式 `!N` 经 `insert_at` 预分配槽位、arena 允许同内容两条，`intern` 会折叠导致 id 整体错位；节点内 `Node(id)` 只校验 `< 节点总数`，**前向引用合法**）；全局/别名/comdat 一律经 `Module::{add_global, add_global_alias, add_comdat}` 回放，名字索引表随之重建、重名 fail-closed；附件 `MetadataId` 在解码末尾做悬空引用校验。
   **语料端到端**（`tests/binary_module.rs`）：LLVM `test/Assembler` 全部正向用例 parse → `to_binary` → `from_binary`，断言文本打印**逐字符一致** + `decode → encode` 逐字节幂等 —— **198/198 通过**；尺寸基线：合计 **241,440 B**、最大 **31,038 B**（`auto_upgrade_nvvm_intrinsics.ll`）、平均 **1,219 B**（作为后续压缩/演进的对照）。
   **顺带修掉一处既有不确定性**（语料往返测试抓到）：`MetadataStore::name_of` 原用 `HashMap::iter().find(...)` 反查，一个 id 被多个名字指向时（`!foo` 与 `!\23pragma` 内容相同 ⇒ 去重成一个节点）返回值随实例随机种子变化，display 输出随之不确定 → 改为取**字节序最小**者，并新增 `names_of` 返回全部别名；打印器"每节点只打一个名字"（多别名时丢名字）是**既有限制**，已记录在参考文档 §10，本轮不动。
