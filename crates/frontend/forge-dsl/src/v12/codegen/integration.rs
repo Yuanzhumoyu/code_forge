@@ -99,7 +99,51 @@ pub(crate) fn compile_pred_guard(pred: &Pred, attr: &syn::Ident) -> TokenStream 
 /// lowering 谓词的运行时属性源：预计算到 Option<i64> 局部（避免闭包捕获 ctx）。
 /// `cond` = Fcmp/Icmp 条件 id（fcmp_id/icmp_id；非比较 op 恒 0）。
 /// `elem` = 结果类型 id（向量 → 元素类型 id；F32=1/F64=2/I32=3/I64=4）。
-pub(crate) fn gen_lowering_attrs() -> TokenStream {
+pub(crate) fn gen_lowering_attrs(model: &V12Model) -> TokenStream {
+    // 核心属性分派臂（唯一事实源与 `pred::PRED_ATTRS` 对应）。
+    let core_arms = quote! {
+        "rd" => __a_rd,
+        "rs1_width" => __a_rs1,
+        "rs2_width" => __a_rs2,
+        "rd_vec" => __a_rd_vec,
+        "rs1_vec" => __a_rs1_vec,
+        "elem" => __a_elem,
+        "cond" => __a_cond,
+        "imm0" => __a_imm0,
+        "iconst" => __a_iconst,
+    };
+    // `[[derive]]`（v18 S3f）：派生属性 = 真(1)/假(0)，判定走**核心属性**上的谓词
+    // 表达式（解析期已确认 expr 只引用核心属性）。
+    let derive_arms: Vec<TokenStream> = model
+        .derived_preds
+        .iter()
+        .map(|(name, pred)| {
+            let guard = compile_pred_guard(pred, &format_ident!("__attr_core"));
+            let lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
+            quote! { #lit => Some(if #guard { 1 } else { 0 }), }
+        })
+        .collect();
+    // 无派生时直接就是 `__attr`——生成的代码与引入本能力之前**逐字相同**
+    //（"零行为变化"用 dump 对照证明）。有派生时才多一层 `__attr_core`。
+    let attr_decl = if derive_arms.is_empty() {
+        quote! {
+            let __attr = |name: &str| -> Option<i64> {
+                match name { #core_arms _ => None, }
+            };
+        }
+    } else {
+        quote! {
+            let __attr_core = |name: &str| -> Option<i64> {
+                match name { #core_arms _ => None, }
+            };
+            let __attr = |name: &str| -> Option<i64> {
+                match name {
+                    #(#derive_arms)*
+                    _ => __attr_core(name),
+                }
+            };
+        }
+    };
     quote! {
         let __a_rd = results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
             if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
@@ -173,20 +217,8 @@ pub(crate) fn gen_lowering_attrs() -> TokenStream {
         let __a_iconst = ctx.constant_pool.as_ref().and_then(|p| {
             p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index))
         });
-        let __attr = |name: &str| -> Option<i64> {
-            match name {
-                "rd" => __a_rd,
-                "rs1_width" => __a_rs1,
-                "rs2_width" => __a_rs2,
-                "rd_vec" => __a_rd_vec,
-                "rs1_vec" => __a_rs1_vec,
-                "elem" => __a_elem,
-                "cond" => __a_cond,
-                "imm0" => __a_imm0,
-                "iconst" => __a_iconst,
-                _ => None,
-            }
-        };
+        // 核心属性表（派生为空时它就是 `__attr`；见函数头的 `attr_decl`）。
+        #attr_decl
     }
 }
 

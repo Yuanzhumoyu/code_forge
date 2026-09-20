@@ -50,7 +50,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     let name_to_vn = ref_to_infos;
 
     let mut arms: Vec<TokenStream> = Vec::new();
-    let lowering_attrs = gen_lowering_attrs();
+    let lowering_attrs = gen_lowering_attrs(model);
     // Call/CallIndirect：专用 lowering（参数→ABI 寄存器、函数符号 reloc、
     // 返回值移动）——动态参数数/类型分派无法用静态模板表达；无 TOML 规则。
     arms.push(gen_call_lowering("Call", infos, model)?);

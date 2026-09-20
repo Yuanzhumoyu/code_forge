@@ -23,6 +23,7 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     collect(d, idx, validate_widths(m));
     collect(d, idx, validate_conventions(m));
     collect(d, idx, validate_cond(m));
+    collect(d, idx, validate_derives(m));
     collect(d, idx, validate_relocs(m));
     collect(d, idx, validate_operand_slots(m));
     collect(d, idx, validate_forms(m));
@@ -510,6 +511,36 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             .map_err(|e| format!("[conventions.mem]: {e}"))?;
         super::codegen::mem::validate_mem_template(&items)
             .map_err(|e| format!("[conventions.mem]: {e}"))?;
+    }
+    Ok(())
+}
+
+/// `[[derive]]` 校验（v18 S3f 派生谓词属性）。
+///
+/// 解析期已查过：名称非空/唯一/不与核心属性重名、`expr` 语法合法。这里查语义：
+/// **派生只能引用核心属性**（不支持派生引用派生——见 `expand_derives` 的理由），
+/// 且 `expr` 里出现的每个属性名都必须是核心属性。
+fn validate_derives(m: &V12Model) -> Result<(), String> {
+    for d in &m.derive {
+        let Some(pred) = m.derived_preds.get(&d.name) else {
+            continue;
+        };
+        let mut attrs = Vec::new();
+        super::pred::attrs_of(pred, &mut attrs);
+        for a in &attrs {
+            if !super::pred::PRED_ATTRS.contains(&a.as_str()) {
+                let hint = if m.derive.iter().any(|o| &o.name == a) {
+                    "（派生不能引用派生——把这条条件直接写进 expr）"
+                } else {
+                    ""
+                };
+                return Err(format!(
+                    "[[derive.{}]] expr: 未知属性 '{a}'{hint}（可用：{}）",
+                    d.name,
+                    super::pred::PRED_ATTRS.join(" / ")
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1006,6 +1037,8 @@ fn validate_references(m: &V12Model) -> Result<(), String> {
 /// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测；S1 起**逐条收集**。
 fn validate_lowering_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     let refs = declared_refs(m);
+    // `when` 可用属性 = 核心属性 + `[[derive]]` 名（v18 S3f）
+    let pred_attrs = m.pred_attr_names();
     // (op, 规范化 when, insts) → 首次出现的下标；用于重复检测
     let mut seen: std::collections::HashMap<(String, String, Vec<String>), usize> =
         std::collections::HashMap::new();
@@ -1034,12 +1067,12 @@ fn validate_lowering_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
                     super::pred::attrs_of(&p, &mut attrs);
                     let mut ok = true;
                     for a in &attrs {
-                        if !super::pred::PRED_ATTRS.contains(&a.as_str()) {
+                        if !pred_attrs.iter().any(|x| x == a) {
                             d.push_anchored(
                                 idx,
                                 &format!(
                                     "{path}.when: 未知属性 '{a}'（可用：{}）——未知属性恒为假，规则永不命中",
-                                    super::pred::PRED_ATTRS.join("/")
+                                    pred_attrs.join("/")
                                 ),
                             );
                             ok = false;
@@ -1174,16 +1207,17 @@ fn validate_patterns(m: &V12Model) -> Result<(), String> {
         let extra: Vec<String> = vars.iter().map(|v| format!("{{{v}}}")).collect();
         validate_inst_lines(&path, &p.insts, &refs, &extra)?;
 
-        // when 属性名 ∈ PRED_ATTRS（与 lowering 一致——未知属性恒假，模式永不命中）。
+        // when 属性名 ∈ 核心属性 ∪ [[derive]]（与 lowering 一致——未知属性恒假，模式永不命中）。
         if let Some(w) = &p.when {
             let pred = super::pred::parse(w).map_err(|e| format!("{path}.when: {e}"))?;
             let mut attrs = Vec::new();
             super::pred::attrs_of(&pred, &mut attrs);
+            let known = m.pred_attr_names();
             for a in &attrs {
-                if !super::pred::PRED_ATTRS.contains(&a.as_str()) {
+                if !known.iter().any(|x| x == a) {
                     return Err(format!(
                         "{path}.when: 未知属性 '{a}'（可用：{}）",
-                        super::pred::PRED_ATTRS.join("/")
+                        known.join("/")
                     ));
                 }
             }

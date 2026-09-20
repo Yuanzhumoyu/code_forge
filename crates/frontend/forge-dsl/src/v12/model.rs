@@ -59,6 +59,14 @@ pub struct V12Model {
     #[serde(default)]
     pub reloc: Vec<RelocDef>,
 
+    /// 派生谓词属性（`[[derive]]`，v18 S3f）：给 `when` 用的命名布尔属性。
+    #[serde(default)]
+    pub derive: Vec<DeriveDef>,
+
+    /// 展开后的派生谓词（解析期由 [`V12Model::expand_derives`] 填；不进 TOML）。
+    #[serde(skip, default)]
+    pub derived_preds: BTreeMap<String, super::pred::Pred>,
+
     /// 指令选择规则（`[[lowering]]`）。
     #[serde(default)]
     pub lowering: Vec<Lowering>,
@@ -1495,6 +1503,37 @@ pub enum Effect {
     Move,
 }
 
+/// `[[derive]]` — 派生谓词属性（v18 S3f）。
+///
+/// 给 `[[lowering]]`/`[[pattern]]` 的 `when` 用一个**有名字的布尔属性**，值 = 1/0：
+///
+/// ```toml
+/// [[derive]]
+/// name = "is_64"
+/// expr = { eq = ["rs1_width", 64] }
+///
+/// [[lowering]]
+/// op = "Iadd"
+/// when = { eq = ["is_64", 1] }
+/// ```
+///
+/// 规则：
+///
+/// - `expr` 就是普通的结构化谓词（与 `when` 同一套语法与校验）；
+/// - 派生可以引用**别的派生**（解析期展开成基础属性上的表达式，故不是递归求值）；
+/// - 名字不得与[核心属性](super::pred::PRED_ATTRS)重名（否则静默遮蔽）；
+/// - 依赖属性缺失时该派生为**假**（与核心属性"未知即假"一致）。
+///
+/// 展开在解析期完成，下游（校验/生成）只看到基础属性上的谓词——生成器不改判定逻辑。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeriveDef {
+    /// 属性名（`when` 里按此引用）。
+    pub name: String,
+    /// 谓词表达式（与 `[[lowering]].when` 同语法）。
+    pub expr: toml::Value,
+}
+
 /// `[[reloc]]` — 重定位表项（v18 S3d，取代 `GlobalReloc` 枚举）。
 ///
 /// 指令只写 `reloc = "<name>"` 引用本表；**语义是宿主契约**（有限、ISA 无关：
@@ -1881,12 +1920,60 @@ impl V12Model {
     }
 }
 
+impl V12Model {
+    /// 谓词属性全集：核心属性（[`super::pred::PRED_ATTRS`]）+ `[[derive]]` 名。
+    ///
+    /// 校验器与 `vary` 的"键是谓词属性还是纯替换变量"判定同读这一份。
+    pub fn pred_attr_names(&self) -> Vec<String> {
+        let mut out: Vec<String> = super::pred::PRED_ATTRS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        out.extend(self.derive.iter().map(|d| d.name.clone()));
+        out
+    }
+
+    /// 展开 `[[derive]]`（解析期）：把 `expr` 解析成谓词 AST，存进
+    /// `derived_preds`（下游只认展开后的谓词）。
+    ///
+    /// 错误（Parse 阶段，消息可直接锚到声明）：名称为空/重复/与核心属性重名、
+    /// `expr` 不是合法谓词。**派生只能引用核心属性**（不支持派生引用派生）——
+    /// 那样做要么得给"属性名出现在值位置"设计代换语义（`eq = [is_64, 0]` 该展开成
+    /// 什么？），要么得引入递归求值；两者都会把"谓词是纯数据"这条边界弄糊，
+    /// 所以这里直接拒绝，由校验器给出明确错误。
+    pub fn expand_derives(&mut self) -> Result<(), String> {
+        if self.derive.is_empty() {
+            return Ok(());
+        }
+        let mut out: BTreeMap<String, super::pred::Pred> = BTreeMap::new();
+        for d in &self.derive {
+            if d.name.trim().is_empty() {
+                return Err("[[derive]]: name 不能为空".into());
+            }
+            if super::pred::PRED_ATTRS.contains(&d.name.as_str()) {
+                return Err(format!(
+                    "[[derive.{}]]: 名字与核心谓词属性重名（核心属性：{}）——换个名字，别遮蔽它",
+                    d.name,
+                    super::pred::PRED_ATTRS.join(" / ")
+                ));
+            }
+            let pred = super::pred::parse(&d.expr)
+                .map_err(|e| format!("[[derive.{}]] expr: {e}", d.name))?;
+            if out.insert(d.name.clone(), pred).is_some() {
+                return Err(format!("[[derive.{}]]: 名字重复", d.name));
+            }
+        }
+        self.derived_preds = out;
+        Ok(())
+    }
+}
+
 impl Lowering {
     /// 展开 `vary` 行表 → 多条具体规则（无 `vary` 时返回自身单元素）。
     ///
     /// 每行：模板里 `{键}` 换成该行取值；键若是谓词属性（`PRED_ATTRS`）则
     /// 额外把 `eq = [键, 值]` 合入 `when`（与原 `when` 取 `and`）。
-    pub fn expand_vary(&self) -> Result<Vec<Lowering>, String> {
+    pub fn expand_vary(&self, pred_attrs: &[String]) -> Result<Vec<Lowering>, String> {
         let Some(vary) = &self.vary else {
             return Ok(vec![self.clone()]);
         };
@@ -1919,7 +2006,7 @@ impl Lowering {
                         *line = line.replace(&needle, &text);
                     }
                 }
-                if crate::v12::pred::PRED_ATTRS.contains(&k.as_str()) {
+                if pred_attrs.iter().any(|a| a == k) {
                     let iv = val.as_int().ok_or_else(|| {
                         format!("{path}: '{k}' 是谓词属性，取值必须是整数，got {val:?}")
                     })?;

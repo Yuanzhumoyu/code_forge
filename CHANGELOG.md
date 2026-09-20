@@ -13,6 +13,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **ISA-DSL 派生谓词属性 `[[derive]]`（v18 S3f）：给重复出现的 `when` 条件起名字**。同一条件在多条 lowering 规则里重复时，一次声明、多处引用：
+
+  ```toml
+  [[derive]]
+  name = "is_64"
+  expr = { eq = ["rs1_width", 64] }
+
+  [[lowering]]
+  op = "Iadd"
+  when = { eq = ["is_64", 1] }
+  insts = ["ADD64 {out}, {0}, {1}"]
+  ```
+
+  `expr` 复用结构化谓词（同一份解析与校验），派生属性取值 = 1（真）/0（假），用 `eq`/`ne`/`in` 引用；展开在**解析期**——生成期的 `__attr` 只多一个派生臂（判定走核心属性表 `__attr_core`），谓词判定逻辑一行未改。名字不得与核心属性重名（否则静默遮蔽）、不得引用另一个派生（属性名出现在值位置的代换语义不唯一，如实拒绝并提示"派生不能引用派生"）；派生名可出现在 `vary` 里，与核心属性同待遇（自动追加 `eq = [名字, 行值]`）。错误码 `DSL-DERIVE`。
+  **零成本**：没有 `[[derive]]` 时生成的属性表与引入前**逐字相同**（8 个模块 dump 逐个 `identical=True`）——三发行 ISA 与夹具都没用它，所以三架构 JIT 矩阵与全部黄金值不变。
+  证据：新增 6 条用例（`when` 引用派生 + 生成的派生臂、无派生时不新增一层、`vary` 用派生名、核心属性重名、重名、`expr` 非法/类型错、派生引用派生）；文档 `docs/reference/isa-dsl.md` 结构化谓词节补 `[[derive]]` 小节与 `iconst` 行、`isa-dsl-errors.md` 增 `DSL-DERIVE`、方案 §5.6 改记为已落地并说明"数值派生（`sub` 等算术节点）未实现"的理由。
+
 - **ISA-DSL 重定位数据化（v18 S3d）：`[[reloc]]` 取代 `GlobalReloc` 枚举**。指令侧只写引用名（`reloc = "abs64"`），语义与绑定槽在表里：
 
   ```toml

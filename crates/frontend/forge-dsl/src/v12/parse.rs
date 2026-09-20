@@ -27,17 +27,23 @@ pub fn parse(source: &str) -> Result<V12Model, V12Error> {
             msg: format!("TOML: {e}"),
         }
     })?;
+    // `[[derive]]` 展开（v18 S3f）：先于 `vary`——`vary` 的"键是谓词属性还是纯替换
+    // 变量"判定要看派生名。
+    let anchor_err = |msg: String| {
+        let idx = diag::DeclIndex::build(source);
+        let a = idx.anchor(&msg);
+        V12Error::Parse {
+            line: a.line,
+            col: a.col,
+            msg,
+        }
+    };
+    model.expand_derives().map_err(anchor_err)?;
     let mut expanded = Vec::with_capacity(model.lowering.len());
     for rule in &model.lowering {
-        let rows = rule.expand_vary().map_err(|msg| {
-            let idx = diag::DeclIndex::build(source);
-            let a = idx.anchor(&msg);
-            V12Error::Parse {
-                line: a.line,
-                col: a.col,
-                msg,
-            }
-        })?;
+        let rows = rule
+            .expand_vary(&model.pred_attr_names())
+            .map_err(anchor_err)?;
         expanded.extend(rows);
     }
     model.lowering = expanded;
