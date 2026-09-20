@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-20)
+
+- **`forge-isa` CLI（v18 S7b）：写 TOML 时不必接后端就能校验、看展开结果、做规格 diff**。新增 `crates/tools/forge-isa`（bin，唯一依赖 `forge-isa-dsl`；手写参数解析与 JSON 发射器，不引 `clap`/`serde_json`）：
+
+  | 命令 | 作用 |
+  | --- | --- |
+  | `validate <谱.toml>…` | 解析 + 校验，打印**全部**诊断（`路径:行:列: 码: 消息` + 附注），有错退出 1 |
+  | `insts <谱.toml>` | 展开后的指令与生效规格：字长（位/字节）、form、opcode、ops、编码键、`ref`、`reloc`、来源模板与行号、asm |
+  | `explain <谱.toml> <指令名>` | 单条指令的完整来源：哪个模板的哪一行 + 该行与 `body` 的键 + 生效规格逐字段 |
+  | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段，`字段: A → B`）——迁移前后"展开后有效规格"对照 |
+
+  `--json` 给机读输出；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。示例：`cargo run -p forge-isa -- explain isa/arm64_v12.toml ADDREGW` → `来源：[[templates.ADDREG]] 第 2 行` + 生效编码键。
+  实现：新增 `forge-isa-dsl::report` 投影层（`IsaSummary`/`InstRow`/`Explain`/`SpecDiff`），**复用**编译器的 `collect_inst_infos`（form 预设 ⊕ 指令级覆盖的同一份判定），编码键清单由 `EncKeys` 的 serde 折出——不维护第二份键名表，新增编码键自动出现在三个子命令里。
+  证据：`forge-isa` 10 条集成测试（跑真实二进制）+ `report` 6 条单测；`forge-isa-dsl` 182 单测；三份发行 ISA `validate` 全 OK；`insts isa/riscv64_v12.toml` = `116 条指令 / 19 条模板 / 110 条 lowering`；混合字长夹具 JSON 给出 `CADD16/CMOV16 = 16 位（2 字节）`、`LNOP32/LADD32 = 32 位（4 字节）`。
+  文档：`docs/reference/isa-dsl.md` 新增「工具链：`forge-isa` CLI」节 + TOC；方案 §7「S7 进度」补 S7b 已落地。
+
 ### Changed (2026-09-20)
 
 - **ISA-DSL 拆成两个 crate（v18 S7a）：`forge-isa-dsl`（编译器本体）+ `forge-dsl`（薄 proc-macro）**。原 `forge-dsl`（proc-macro）里的模型/解析/校验/诊断/代码生成整体搬进新的普通 lib **`forge-isa-dsl`**（`crates/frontend/forge-isa-dsl`，含 `v12/` 与 `assembler/`，以及两个反回潮守卫测试）；`forge-dsl` 只剩 `isa_from_file!` 的参数解析并调 `forge_isa_dsl::expand_file`。宏的使用方式与**生成代码逐字节不变**。

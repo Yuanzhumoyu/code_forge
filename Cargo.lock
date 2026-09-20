@@ -594,6 +594,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-isa"
+version = "0.1.0"
+dependencies = [
+ "forge-isa-dsl",
+]
+
+[[package]]
 name = "forge-isa-dsl"
 version = "0.2.0"
 dependencies = [

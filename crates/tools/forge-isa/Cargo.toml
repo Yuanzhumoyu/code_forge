@@ -1,0 +1,12 @@
+[package]
+name = "forge-isa"
+version = "0.1.0"
+edition = "2024"
+description = "ISA-DSL toolchain CLI: validate / insts / explain / diff"
+
+[[bin]]
+name = "forge-isa"
+path = "src/main.rs"
+
+[dependencies]
+forge-isa-dsl = { path = "../../frontend/forge-isa-dsl" }

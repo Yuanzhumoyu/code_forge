@@ -250,17 +250,20 @@ fn gen_mem_support(model: &V12Model, _infos: &[InstInfo]) -> Result<TokenStream,
 
 /// 单条指令的生成信息：form 解析 + 操作数→位域绑定 + mnemonic/asm 模板。
 /// `inst` 为 owned（`[[templates]]` 展开在解析期完成，这里就是完整指令表）。
+///
+/// 字段 `pub(crate)`：`report`（CLI 的 `insts`/`explain`/`diff`，v18 S7b）直接读它，
+/// 不重复实现"form 预设 ⊕ 指令级逐键覆盖"的判定（单一事实源）。
 pub(crate) struct InstInfo<'a> {
-    inst: Instruction,
+    pub(crate) inst: Instruction,
     /// **已解析的编码键**：`form` 预设 ⊕ 指令级逐键覆盖（`EncKeys::over`）。
     /// 下游只读这一份，不再各自 `inst.x.or(form.x)`——覆盖语义单点实现。
-    form: EncKeys,
-    vn: syn::Ident,
+    pub(crate) form: EncKeys,
+    pub(crate) vn: syn::Ident,
     /// 操作数绑定：(位域名, 字段标识, 槽, 角色)。
-    operands: Vec<(String, syn::Ident, &'a OperandSlot, OperandRole)>,
+    pub(crate) operands: Vec<(String, syn::Ident, &'a OperandSlot, OperandRole)>,
 }
 
-fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> {
+pub(crate) fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>>, String> {
     // `[[templates]]` 已在解析期展开进 `m.instructions`（`v18 S2`），此处直接用。
     let insts: Vec<Instruction> = m.instructions.clone();
     let mut out = Vec::new();

@@ -558,9 +558,27 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   引用更新：`lowering_read_path.rs`/`read_path_budget.rs` 的源码路径表、
   `entity_privatization.rs` 注释、`isa-dsl.md`/`isa-dsl-errors.md`/本方案与 CLAUDE.md
   的 crate 图与路径（archive 内历史文档不动）。
-- **S7b–S7e 待做**：`forge-isa` CLI（`validate`/`explain`/`schema`/`insts`/`diff`/`fmt`）、
-  JSON Schema + 三方一致守卫、§5.8 组合与部件（`include`/`[[override]]` + `name`/`parts`
-  参数）、文档重写（教程 + 归档旧语法 + 索引/状态头）。
+- **S7b 已落地（2026-09-20）**：新增 `crates/tools/forge-isa`（bin，依赖只有
+  `forge-isa-dsl`；手写参数解析、手写 JSON 发射器——不引 `clap`/`serde_json`，与
+  §10.4 一致）。子命令：`validate`（全部诊断 + `路径:行:列: 码:` + 有错退出 1）、
+  `insts`（展开后指令 + 生效规格：字长/ form / opcode / ops / 编码键 / `ref` /
+  `reloc` / 来源模板与行号 / asm）、`explain`（单条指令的模板 provenance：哪个模板
+  哪一行 + 该行与 `body` 的键 + 生效规格逐字段）、`diff`（两份谱的规格 diff：
+  增/删/改字段）。退出码 0/1/2；`--json` 机读。
+  实现要点：新增 `forge-isa-dsl::report` 投影层（`IsaSummary`/`InstRow`/`Explain`/
+  `SpecDiff` + `validate`/`insts`/`explain`/`diff`），**复用** `codegen::collect_inst_infos`
+  的"form 预设 ⊕ 指令级覆盖"判定（`InstInfo` 字段改 `pub(crate)`），编码键清单由
+  `EncKeys` 的 serde 折出（**不维护第二份键名表**）。
+  证据：`forge-isa` 10 条集成测试（真实二进制：好/坏谱、`insts` 文本与 JSON 合法性、
+  `explain` 的 `[[templates.ADDREG]] 第 2 行`、未知指令、`diff` 相同/不同、用法错误
+  退出 2、`--help`/`--version`）+ `report` 6 条单测（内联最小谱：模板展开 provenance、
+  生效编码键、未知指令候选、diff 增/删/改、坏谱传播诊断）；`forge-isa-dsl` 182 单测。
+  实测（本机 2026-09-20）：三份发行 ISA `validate` 全 OK；`insts isa/riscv64_v12.toml`
+  报 `116 条指令 / 19 条模板 / 110 条 lowering`；混合字长夹具的 `insts --json` 给出
+  `CADD16/CMOV16 = 16 位（2 字节）`、`LNOP32/LADD32 = 32 位（4 字节）`。
+- **S7c–S7e 待做**：JSON Schema + 三方一致守卫；§5.8 组合与部件（`include`/`[[override]]`
+  深合并，以及 `isa_from_file!` 的 `name`/`parts` 参数）；CLI 的 `schema`/`fmt` 子命令；
+  文档重写（教程 + 归档旧语法 + 索引/状态头）。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 

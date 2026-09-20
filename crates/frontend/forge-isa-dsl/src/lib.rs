@@ -13,6 +13,7 @@
 //! 移除——无兼容层、无转换工具、无逃生门。模型/校验/生成见 [`v12`] 模块。
 
 mod assembler;
+pub mod report;
 mod v12;
 
 pub use v12::V12Error;

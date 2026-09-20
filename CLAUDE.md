@@ -301,6 +301,11 @@ let name = node.get_text("name")?;
   **两条矩阵是两套能力集，改类表/值池/ABI 必须都跑**（2026-09-13 实测：x86 全绿
   而 riscv 的 7 个 fcmp 错值，正是 riscv 通道抓到的）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。
+- **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff <谱.toml>`——
+  不接后端就能校验（全部诊断 + 行:列）、看**展开后**的指令与生效编码键、查单条指令的
+  模板 provenance（哪个模板哪一行）、以及两份谱的规格 diff（迁移前后对照）。
+  `--json` 机读；退出码 0/1/2。实现 = `forge-isa-dsl::report` 投影层 + CLI 薄层，
+  复用 `collect_inst_infos` 的"form 预设 ⊕ 指令覆盖"判定（不重复实现）。
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。

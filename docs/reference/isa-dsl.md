@@ -41,6 +41,7 @@
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
   - [asm 模板](#asm-模板)
   - [代码生成输出](#代码生成输出)
+  - [工具链：`forge-isa` CLI（v18 S7b）](#工具链forge-isa-cliv18-s7b)
   - [生成期自测（`__spec_tests`，v18 S6）](#生成期自测__spec_testsv18-s6)
   - [已有 ISA 谱](#已有-isa-谱)
 
@@ -1095,6 +1096,35 @@ demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
   前缀；定宽 ISA = 0）。生成 `decode_partial` 内部函数。
 - **大端变长 imm**：`imm_read_ts` 按 `[meta].endian` 装配（little → `from_le_bytes`、
   big → `from_be_bytes`）。
+
+### 工具链：`forge-isa` CLI（v18 S7b）
+
+`crates/tools/forge-isa`（`cargo run -p forge-isa -- <子命令>`）对**谱文件**做只读检查，
+不生成代码——写 TOML 时不必先接进后端就能看诊断与生效规格：
+
+| 命令 | 作用 |
+| --- | --- |
+| `validate <谱.toml>…` | 解析 + 校验，打印**全部**诊断（`路径:行:列: 码: 消息` + 附注），有错退出 1 |
+| `insts <谱.toml>` | 列出**展开后**的指令与生效规格：字长（位/字节）、form、opcode、ops、编码键、`ref`、`reloc`、来源模板与行号、asm |
+| `explain <谱.toml> <指令名>` | 单条指令的完整来源：来自哪个模板的哪一行、该行与模板 `body` 的键、生效规格逐字段 |
+| `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），逐字段列出 `字段: A → B` |
+
+约定：默认人类可读，`--json` 给机读输出（手写发射器，不引 `serde_json`——与方案 §10.4
+"不新增依赖"一致）；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。
+
+```bash
+cargo run -p forge-isa -- validate isa/x86_v12.toml
+cargo run -p forge-isa -- insts isa/riscv64_v12.toml
+cargo run -p forge-isa -- explain isa/arm64_v12.toml ADDREGW
+cargo run -p forge-isa -- diff old.toml new.toml          # 迁移前后"展开后有效规格"对照
+```
+
+实现要点：指令的"生效规格"直接取编译器的 `codegen::collect_inst_infos`（form 预设 ⊕
+指令级覆盖的**同一份**判定），CLI 侧只做投影（`forge_isa_dsl::report`），**不重复实现**
+编码键合并；编码键清单由 `EncKeys` 的 serde 序列化折出，**不维护第二份键名表**（新增
+编码键自动出现在 `insts`/`explain`/`diff` 里）。集成测试跑真实二进制
+（`crates/tools/forge-isa/tests/cli_tests.rs`），覆盖好/坏谱、JSON 合法性、模板
+provenance、未知指令、用法错误退出码。
 
 ### 生成期自测（`__spec_tests`，v18 S6）
 

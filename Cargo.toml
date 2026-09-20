@@ -15,6 +15,7 @@ members = [
     "crates/tools/forge-rustc",
     "crates/tools/forge-tests",
     "crates/tools/cargo-forge",
+    "crates/tools/forge-isa",
     "examples/mini_c",
 ]
 resolver = "3"
