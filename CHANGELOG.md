@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-20)
 
+- **ISA-DSL 的 JSON Schema + `#:schema` 编辑器补全（v18 S7c），三方一致由守卫钉住**。`forge-isa-dsl::schema`（手写发射器，不引 `schemars`）把谱的 TOML 结构发射成 JSON Schema（draft 2020-12，32 个节定义 + 18 个根键，含必填/可选/编码键与节级说明）；`forge-isa schema [--out <file>]` 打印或写出，仓库根的 `isa-dsl.schema.json` 由它生成并签入；3 个发行 ISA + 6 个夹具的 TOML 顶部加 `#:schema <相对路径>` 注释，Taplo 等语言服务据此补全。
+  **三方守卫**（`crates/frontend/forge-isa-dsl/tests/schema_guard.rs`，5 条）：① schema 每节的键集与 `v12/model.rs` 对应结构体的 `pub` 字段**逐键相等**（`#[serde(skip)]` 内部字段须在 `INTERNAL_FIELDS` 登记；`#[serde(flatten)]` 字段须在 `FLATTEN_FIELDS` 登记）；② 内部字段表不得过时；③ `docs/reference/isa-dsl.md` 新增的「键总览（速查表）」区段与 `schema::markdown_table()` **逐字相同**——文档里的键表不再手抄；④ 签入的 `isa-dsl.schema.json` 与发射器逐字相同；⑤ `--nocapture` 打印可粘贴的表格。守卫在落地时就抓到三处漂移（`enc` 被误当键、`Pattern` 的 `r#match`/TOML `match` 漏写、`[[pattern]].when` 未登记）。
+  文档：`docs/reference/isa-dsl.md` 新增「键总览（速查表，v18 S7c）」节（机器校验的键表）+ 工具链节的 `schema` 与 `#:schema` 说明 + TOC；方案 §7「S7 进度」补 S7c。
+
+### Added (2026-09-20)
+
 - **`forge-isa` CLI（v18 S7b）：写 TOML 时不必接后端就能校验、看展开结果、做规格 diff**。新增 `crates/tools/forge-isa`（bin，唯一依赖 `forge-isa-dsl`；手写参数解析与 JSON 发射器，不引 `clap`/`serde_json`）：
 
   | 命令 | 作用 |

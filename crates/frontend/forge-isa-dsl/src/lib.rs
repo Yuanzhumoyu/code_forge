@@ -14,6 +14,7 @@
 
 mod assembler;
 pub mod report;
+pub mod schema;
 mod v12;
 
 pub use v12::V12Error;

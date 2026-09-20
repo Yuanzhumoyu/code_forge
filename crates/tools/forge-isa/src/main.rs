@@ -28,6 +28,7 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
                                              单条指令的来源（模板行 + 生效编码键）
   forge-isa diff     <a.toml> <b.toml> [--json]
                                              两份谱的规格 diff（增/删/改字段）
+  forge-isa schema   [--out <file>]         打印（或写出）ISA-DSL 的 JSON Schema
   forge-isa --help | --version
 
 退出码：0 = 成功；1 = 诊断或失败；2 = 用法错误。";
@@ -87,7 +88,46 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             };
             Ok(cmd_diff(a, b, json))
         }
+        "schema" => {
+            // `--out <file>`：写文件（仓库根的 `isa-dsl.schema.json` 就是这样生成的）；
+            // 缺省打印到 stdout。
+            let out = flag_value(&args[1..], "--out")?;
+            Ok(cmd_schema(out))
+        }
         other => Err(format!("未知子命令 `{other}`")),
+    }
+}
+
+/// 取 `--flag <值>` 的值（缺省 `None`）。
+fn flag_value(args: &[String], flag: &str) -> Result<Option<PathBuf>, String> {
+    for (i, a) in args.iter().enumerate() {
+        if a == flag {
+            let Some(v) = args.get(i + 1) else {
+                return Err(format!("`{flag}` 需要一个取值"));
+            };
+            return Ok(Some(PathBuf::from(v)));
+        }
+    }
+    Ok(None)
+}
+
+fn cmd_schema(out: Option<PathBuf>) -> ExitCode {
+    let schema = forge_isa_dsl::schema::schema_json();
+    match out {
+        Some(path) => match std::fs::write(&path, schema) {
+            Ok(()) => {
+                println!("写出 {}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("写 {} 失败：{e}", path.display());
+                ExitCode::from(1)
+            }
+        },
+        None => {
+            print!("{schema}");
+            ExitCode::SUCCESS
+        }
     }
 }
 

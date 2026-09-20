@@ -576,9 +576,27 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   实测（本机 2026-09-20）：三份发行 ISA `validate` 全 OK；`insts isa/riscv64_v12.toml`
   报 `116 条指令 / 19 条模板 / 110 条 lowering`；混合字长夹具的 `insts --json` 给出
   `CADD16/CMOV16 = 16 位（2 字节）`、`LNOP32/LADD32 = 32 位（4 字节）`。
-- **S7c–S7e 待做**：JSON Schema + 三方一致守卫；§5.8 组合与部件（`include`/`[[override]]`
-  深合并，以及 `isa_from_file!` 的 `name`/`parts` 参数）；CLI 的 `schema`/`fmt` 子命令；
-  文档重写（教程 + 归档旧语法 + 索引/状态头）。
+- **S7c 已落地（2026-09-20）**：JSON Schema + 三方一致守卫。
+  `forge-isa-dsl::schema`（手写发射器，不引 `schemars`）把 ISA-DSL TOML 的结构发射成
+  JSON Schema（draft 2020-12；32 个节定义 + 18 个根键，含必填/可选/flatten 编码键与
+  节级说明）；新子命令 `forge-isa schema [--out <file>]` 打印/写出，仓库根的
+  `isa-dsl.schema.json` 由它生成并签入。9 份谱（3 发行 + 6 夹具）顶部加
+  `#:schema <相对路径>` 注释，Taplo 等编辑器据此补全。
+  **三方守卫**（`crates/frontend/forge-isa-dsl/tests/schema_guard.rs`，5 条）：
+  ① `schema_matches_model_structs`——schema 每节的键集与 `v12/model.rs` 对应结构体的
+  `pub` 字段**逐键相等**（`#[serde(skip)]` 的内部字段须在 `INTERNAL_FIELDS` 显式登记；
+  `#[serde(flatten)]` 字段须在 `FLATTEN_FIELDS` 登记并把目标结构体的键并入）；
+  ② `internal_fields_are_real_and_skipped`——内部字段表不得过时；
+  ③ `docs_key_table_matches_schema`——`docs/reference/isa-dsl.md` 新增的「键总览
+  （速查表）」区段（`<!-- BEGIN/END: schema-keys -->`）与 `schema::markdown_table()`
+  **逐字相同**（文档因此不再是"手抄列表"）；④ `checked_in_schema_file_is_up_to_date`
+  ——签入的 `isa-dsl.schema.json` 与发射器逐字相同；⑤ `print_schema_key_table`
+  ——`--nocapture` 打印可粘贴的表格。
+  落地过程中守卫立刻抓到三处漂移（`[[instructions]].enc` 被误当键、`Pattern` 的
+  `r#match`（TOML 键 `match`）漏写、`[[pattern]].when` 未登记）——这正是这条守卫的用途。
+- **S7d–S7e 待做**：§5.8 组合与部件（`include`/`[[override]]` 深合并 + 来源文件名诊断，
+  以及 `isa_from_file!` 的 `name`/`parts` 参数）；CLI 的 `fmt` 子命令；文档重写
+  （教程 + 归档旧语法 + 索引/状态头）。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 

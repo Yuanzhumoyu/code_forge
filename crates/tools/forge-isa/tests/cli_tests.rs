@@ -174,7 +174,40 @@ fn help_and_version() {
     let help = run(&["--help"]);
     assert_eq!(help.code, 0);
     assert!(help.stdout.contains("validate"), "{}", help.stdout);
+    assert!(help.stdout.contains("schema"), "{}", help.stdout);
     let ver = run(&["--version"]);
     assert_eq!(ver.code, 0);
     assert!(ver.stdout.contains("forge-isa "), "{}", ver.stdout);
+}
+
+#[test]
+fn schema_prints_json_and_writes_file() {
+    let out = run(&["schema"]);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let t = out.stdout.trim();
+    assert!(t.starts_with('{') && t.ends_with('}'), "{t}");
+    assert!(t.contains("\"$schema\""), "{t}");
+    assert!(t.contains("\"encoding\""), "{t}");
+    assert!(t.contains("\"kind\""), "{t}");
+
+    // `--out` 写出的内容与 stdout 相同（仓库根那份 `isa-dsl.schema.json` 就是这样生成的）。
+    let file =
+        std::env::temp_dir().join(format!("forge_isa_cli_schema_{}.json", std::process::id()));
+    let w = run(&["schema", "--out", file.to_str().unwrap()]);
+    assert_eq!(w.code, 0, "stderr={}", w.stderr);
+    let written = std::fs::read_to_string(&file).expect("读到写出的 schema");
+    let _ = std::fs::remove_file(&file);
+    assert_eq!(written.trim_end(), t, "--out 内容应与 stdout 一致");
+}
+
+#[test]
+fn validate_accepts_schema_comment() {
+    // `#:schema` 只是 TOML 注释：不得影响解析（编辑器补全用）。
+    let spec = temp_spec(
+        "with_schema_comment.toml",
+        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr4]\ncount = 8\n[[operand_slots]]\nname = \"g\"\nkind = \"reg\"\nclass = \"gpr4\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[[forms]]\nname = \"R\"\nopcode_field = \"op\"\noperand_fields = [\"rd\"]\n[conventions.bitfields]\nop = { offset = 0, width = 8 }\nrd = { offset = 8, width = 3 }\n",
+    );
+    let out = run(&["validate", spec.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&spec);
+    assert_eq!(out.code, 0, "stdout={}", out.stdout);
 }

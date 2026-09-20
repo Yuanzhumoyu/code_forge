@@ -21,6 +21,7 @@
 - [ISA-DSL v15 — 语法规范（唯一 DSL 语法）](#isa-dsl-v15--语法规范唯一-dsl-语法)
   - [目录](#目录)
   - [v15 迭代总览（S1–S6）](#v15-迭代总览s1s6)
+  - [键总览（速查表，v18 S7c）](#键总览速查表v18-s7c)
   - [快速开始](#快速开始)
   - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
   - [`[encoding]` — 指令宽度三态](#encoding--指令宽度三态v18-s4)
@@ -62,6 +63,58 @@ lowering 里 66 条同 op + 逐字节相同 insts、只差 when）、以及 16 �
 | S4 | `[abi]` 13 个 `*_inst` 名指针 + `tags` → 指令上的 `roles` 枚举；删 16 处 x86 硬编码默认 |
 | S5 | `[abi.frame]` 4 个 riscv 旋钮 → `layout` 枚举 + 运行期推导；`{callee_saved_bytes}` 占位符替掉 x86 尾声魔法数 56 |
 | S6 | `[[pattern]]` 树型多 op 匹配（新增能力）；删 `ext/pattern_isel.rs` 死模块 |
+
+## 键总览（速查表，v18 S7c）
+
+下表由 `forge-isa-dsl` 的 JSON Schema 表**生成**（`schema::markdown_table()`），并由
+`crates/frontend/forge-isa-dsl/tests/schema_guard.rs` **逐字校验**：
+
+- 表的每一行 ↔ schema（`[encoding].kind` 这类键的枚举值在 `forge-isa schema` 的
+  输出里；本表列出**键**，不列取值域）；
+- schema 的每一节 ↔ `v12/model.rs` 的结构体 `pub` 字段（`#[serde(skip)]` 的内部字段
+  除外，见守卫里的 `INTERNAL_FIELDS`）；
+- 因此「模型改了忘了写 schema」「schema 写了模型不认的键」「文档没跟上」三类漂移都会
+  让 `cargo test -p forge-isa-dsl --test schema_guard` 变红。
+
+`*` = 编码键（`[[forms]]` 预设与 `[[instructions]]` **共用同一组**，指令逐键覆盖）。
+
+<!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
+
+| 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
+| --- | --- | --- | --- |
+| `<root>` | `meta` | `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `emit` `spill` | ISA 谱根（单文件；多文件组合见方案 §5.8，未实现） |
+| `[meta]` | `name` | `version` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
+| `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
+| `[reg.<name>]` | — | `names` `prefix` `base_index` `count` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位） |
+| `[stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（缺省全部派生） |
+| `[types]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射；键 = 类型名（允许额外键） |
+| `[conventions.bitfields.<name>]` | — | `offset` `width` `pieces` | 命名位域：offset/width，或 pieces 列出散布位段 |
+| `[[conventions.bitfields.<name>.pieces]]` | `offset` `width` | `shift` | 散布位段：`value >> shift` 取 width 位放在 offset |
+| `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
+| `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
+| `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集） |
+| `[conventions.mem]` | `template` | — | 内存操作数文本模板（缺省 x86 `[{base}+{index}*{scale}+{disp}]`） |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
+| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `implicit_regs` `reloc` `width` `reference` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先） |
+| `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
+| `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
+| `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
+| `[[pseudo]]` | `name` `params` `emit` | — | 汇编器伪指令：文本级多指令展开（v18 S3e） |
+| `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
+| `[[pattern]]` | `insts` | `when` `match` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
+| `[abi]` | — | `frame_padding` `stack_args` `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
+| `[abi.frame]` | — | `sp` `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧布局 |
+| `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
+| `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
+| `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
+| `[emit]` | — | `prologue` `epilogue` `align_pad` `epilogue_label` | 序言/尾声块引用 |
+| `[spill.<name>]` | — | `load` `store` `base` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
+| `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
+| `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
+| `[[templates.rows]]` | `inst` | — | 模板行：`inst` + 任意指令字段（含 `ref`）（允许额外键） |
+| `[emit.<block>]` | — | `insts` | 序言/尾声块内容 |
+<!-- END: schema-keys -->
 
 ## 快速开始
 
@@ -1108,6 +1161,7 @@ demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
 | `insts <谱.toml>` | 列出**展开后**的指令与生效规格：字长（位/字节）、form、opcode、ops、编码键、`ref`、`reloc`、来源模板与行号、asm |
 | `explain <谱.toml> <指令名>` | 单条指令的完整来源：来自哪个模板的哪一行、该行与模板 `body` 的键、生效规格逐字段 |
 | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），逐字段列出 `字段: A → B` |
+| `schema [--out <file>]` | 打印/写出 ISA-DSL 的 **JSON Schema**（仓库根的 `isa-dsl.schema.json` 由此生成） |
 
 约定：默认人类可读，`--json` 给机读输出（手写发射器，不引 `serde_json`——与方案 §10.4
 "不新增依赖"一致）；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。
@@ -1117,7 +1171,19 @@ cargo run -p forge-isa -- validate isa/x86_v12.toml
 cargo run -p forge-isa -- insts isa/riscv64_v12.toml
 cargo run -p forge-isa -- explain isa/arm64_v12.toml ADDREGW
 cargo run -p forge-isa -- diff old.toml new.toml          # 迁移前后"展开后有效规格"对照
+cargo run -p forge-isa -- schema --out isa-dsl.schema.json  # 重新生成编辑器补全用 schema
 ```
+
+**编辑器补全（`#:schema`，v18 S7c）**：每份谱（3 个发行 ISA + 6 个夹具）顶部有一行
+`#:schema <相对路径>` 注释——Taplo 等 TOML 语言服务据此加载仓库根的
+`isa-dsl.schema.json`，给出键补全/类型提示。该 schema 由
+`forge-isa-dsl::schema`（手写发射器）生成，**三方一致由守卫钉住**：
+
+| 方向 | 守卫 | 抓什么 |
+| --- | --- | --- |
+| 模型 ↔ schema | `crates/frontend/forge-isa-dsl/tests/schema_guard.rs::schema_matches_model_structs` | schema 表与 `v12/model.rs` 各结构体的 `pub` 字段**逐键相等**（`#[serde(skip)]` 的内部字段在 `INTERNAL_FIELDS` 里显式登记） |
+| schema ↔ 文档 | 同文件 `docs_key_table_matches_schema` | 本文档上面的「键总览（速查表）」与该 schema **逐字相同**（改 schema 必须同步那段） |
+| schema ↔ 仓库产物 | 同文件 `checked_in_schema_file_is_up_to_date` | `isa-dsl.schema.json` 与 `schema_json()` 逐字相同（防止签入的产物过期） |
 
 实现要点：指令的"生效规格"直接取编译器的 `codegen::collect_inst_infos`（form 预设 ⊕
 指令级覆盖的**同一份**判定），CLI 侧只做投影（`forge_isa_dsl::report`），**不重复实现**
