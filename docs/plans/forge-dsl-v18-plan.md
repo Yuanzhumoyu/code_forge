@@ -355,8 +355,15 @@ value = "big"
   x86 生成代码的 `{cc}` 映射与旧硬编码表逐条相同（`eq→4 / ne→5 / slt→12 / sle→14 /
   sgt→15 / sge→13 / ult→2 / ule→6 / ugt→7 / uge→3`），x86 JIT 矩阵 195/3/0（含比较
   用例，端到端跑过 `{cc}`）不变。
-- 余下：**S3c** arm64 `b.cond` 全 16 条件（含"助记符里带条件"的汇编/反汇编支持）、
-  **S3d** `[[reloc]]` 取代 `GlobalReloc`、**S3e** `[[pseudo]]`、**S3f** `[[derive]]`。
+- **S3c 已落地（2026-09-19）**：arm64 条件码符号化 + `b.cond`——`[conventions.cond]`
+  给出 A64 的 16 个条件名（+`hs`/`lo` 别名，无 `ir` 映射），CSEL 族的 `cond4` 槽改成
+  `kind = "cond"`（汇编/反汇编写符号名，不再是 `#0`）；新增 `B.cond` 模板 16 行
+  （助记符 `b.{cname}` 由行键插值、条件码是 `[3:0]` 的固定位域 `bcond`），14 个 A64
+  合法条件逐个对照 `docs/reference/aarch64-encoding-ref.md` 的条件码表验证字节 + 汇编↔
+  反汇编往返 + 别名同码；顺带**删除**原先那条错的 `BCOND` 存根（目标塞进 `rt=[4:0]`、
+  条件恒 0 且落在 `[15:12]`、imm19 恒 0——不是合法 B.cond，也无人使用）。固定宽解码器
+  补上 `cond` 槽的 `u8` 绑定（定宽 ISA 的第一个 cond 槽）。
+- 余下：**S3d** `[[reloc]]` 取代 `GlobalReloc`、**S3e** `[[pseudo]]`、**S3f** `[[derive]]`。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 

@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **ISA-DSL arm64 条件码符号化 + `b.cond` 全条件（v18 S3c）**：`isa/arm64_v12.toml` 新增 `[conventions.cond]`（A64 的 16 个条件名 `eq/ne/cs/cc/mi/pl/vs/vc/hi/ls/ge/lt/gt/le/al/nv` + `hs`/`lo` 同码别名；**不写 `ir`**——arm64 的 lowering 目前不用 `{cc}`，将来加 Icmp lowering 时 validate 会强制补全 10 个），CSEL 族的 `cond4` 槽从 `kind = "imm"`（写成 `#0`）改为 `kind = "cond"`：汇编/反汇编现在用**符号名**（`csel x0, x1, x2, eq`，反汇编渲染同码首选名 `hs`→`cs`）。
+  新增 `B.cond`：一条 `[[templates]]` 16 行——`asm = "b.{cname} {target}"`（助记符用行键插值，这是"条件在助记符里"的通用写法）+ 条件码做成固定位域 `bcond = [3:0]`（opcode `0x54` 进 `[31:24]`、imm19 在 `[23:5]`、bit4 恒 0）。**14 个 A64 合法条件**（`[3:0]=111x` 保留）逐个对照 `docs/reference/aarch64-encoding-ref.md` §4 的条件码表验证字节：`b.eq 0`=0x54000000、`b.ne 0`=0x54000001、`b.hs 0`=0x54000002、`b.gt 0`=0x5400000C、`b.le 0`=0x5400000D、`b.eq 2`=0x54000040（偏移进 imm19），外加汇编↔反汇编往返与 `b.hs`≡`b.cs`、`b.lo`≡`b.cc` 同码断言。
+  顺带**删除**原先那条错的 `BCOND` 存根（`form = "CBZF"` + `fields = { cond = 0 }`：目标被放进 `rt=[4:0]`、条件恒 0 且落在 `[15:12]`、imm19 恒 0——从来不是合法 B.cond，也无人使用；`b.eq` 之前被它抢先匹配）。
+  生成器侧补一个缺口：**定宽解码器**原先对非 Reg 槽一律产出 `i64`，cond 槽在 `Inst` 里是 `u8` ⇒ 补上 `OperandKind::Cond => raw as u8`（arm64 是定宽 ISA 的第一个 cond 槽用例）。
+  文档：`docs/reference/isa-dsl.md` 的条件码节补"条件当操作数 / 条件在助记符里"两种写法、`aarch64-encoding-ref.md` 记 S3c 进展并更新"待做"、方案 §7 记 S3c。
+
 - **ISA-DSL 条件码数据化（v18 S3b）：`[conventions.cond]` 一张表服务三处，删掉 x86 硬编码表与缺省；通用性守卫白名单清空**。表从 `名 = 编码` 变成 `名 = { code, ir? }`（也接受整数简写 `eq = 4`，此时 `ir` 取键名）：键 = 本 ISA 汇编/反汇编可见的条件名，`code` ∈ 0..=15，`ir` = 它实现哪个 IR 整数条件（`eq/ne/slt/sle/sgt/sge/ult/ule/ugt/uge`）。三处用途：**汇编**按名解析 `cond` 槽、**反汇编**按码取同码里字母序最小的名（渲染与 S3b 前逐字节一致）、**lowering 的 `{cc}`** 按 `ir` 字段查本 ISA 编码。
   删掉两处 x86 硬编码：`lowering.rs` 的 `IntCC → setcc 编码` match（生成代码里不再出现 `IntCC`）与 `asm.rs` 的 `cond_default()`（未声明表时的 x86 16 项缺省）——现在"没声明就没有条件码能力，用到即报错"。宿主新增 `forge_ir::intcc_name(码) → 条件名`，把"IR 条件"这一侧的键空间收敛到一处（`INTCC_NAMES`/`IntCC::mnemonic`）。
   新增校验（`validate_cond`）：表非空、`code ≤ 15`（4 位条件字段）、`ir` 必须是 10 个规范名之一、**一个 IR 条件只能被映射一次**、`cond` 槽需要表、**用了 `{cc}` 就必须把 10 个条件映射全**（否则运行期静默退化成 0 = 溢出条件，是最难查的一类错）。

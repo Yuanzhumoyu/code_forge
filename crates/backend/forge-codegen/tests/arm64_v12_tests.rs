@@ -113,11 +113,55 @@ fn golden_a3_mul_div_br_cbz_csel() {
     // CBZ/CBNZ
     assert_eq!(enc("cbz x0, 0"), word_le(0xB4000000));
     assert_eq!(enc("cbnz w1, 0"), word_le(0x35000001));
-    // CSEL 族
-    assert_eq!(enc("csel x0, x1, x2, #0"), word_le(0x9A820020)); // eq
-    assert_eq!(enc("csinc x0, x1, x2, #0"), word_le(0x9A820420));
-    assert_eq!(enc("csinv x4, x5, x6, #1"), word_le(0xDA8610A4)); // ne
-    assert_eq!(enc("csneg w4, w5, w6, #12"), word_le(0x5A86C4A4)); // gt
+    // CSEL 族（v18 S3c：条件码写**符号名**，不再写 `#N` 立即数）
+    assert_eq!(enc("csel x0, x1, x2, eq"), word_le(0x9A820020));
+    assert_eq!(enc("csinc x0, x1, x2, eq"), word_le(0x9A820420));
+    assert_eq!(enc("csinv x4, x5, x6, ne"), word_le(0xDA8610A4));
+    assert_eq!(enc("csneg w4, w5, w6, gt"), word_le(0x5A86C4A4));
+    // 同码别名（hs↔cs、lo↔cc）得到同一字节；反汇编渲染首选名
+    assert_eq!(enc("csel x0, x1, x2, hs"), enc("csel x0, x1, x2, cs"));
+    assert_eq!(enc("csel x0, x1, x2, lo"), enc("csel x0, x1, x2, cc"));
+    assert_eq!(
+        disassemble(&assemble("csel x0, x1, x2, hs").unwrap()),
+        "csel X0, X1, X2, cs"
+    );
+    // B.cond：B.cond 全 14 条件（AL/NV 是保留编码，A64 不允许）
+    for (name, code) in [
+        ("eq", 0u32),
+        ("ne", 1),
+        ("cs", 2),
+        ("cc", 3),
+        ("mi", 4),
+        ("pl", 5),
+        ("vs", 6),
+        ("vc", 7),
+        ("hi", 8),
+        ("ls", 9),
+        ("ge", 10),
+        ("lt", 11),
+        ("gt", 12),
+        ("le", 13),
+    ] {
+        let asm = format!("b.{name} 0");
+        assert_eq!(
+            enc(&asm),
+            word_le(0x5400_0000 | code),
+            "B.cond {name} 编码（[3:0]=cond）"
+        );
+        // 反汇编往返：渲染回符号名
+        let inst = assemble(&asm).unwrap();
+        assert_eq!(disassemble(&inst), asm, "B.cond 反汇编往返");
+    }
+    // 偏移进 imm19（[23:5]）；别名同码
+    assert_eq!(enc("b.eq 2"), word_le(0x54000040));
+    assert_eq!(enc("b.ne 2"), word_le(0x54000041));
+    assert_eq!(enc("b.hs 0"), enc("b.cs 0"), "hs 是 cs 的别名");
+    assert_eq!(enc("b.lo 0"), enc("b.cc 0"), "lo 是 cc 的别名");
+    // 汇编→反汇编保持写下的拼写（别名各有一行模板）；
+    // 经**解码**则规范化为同码首选名（`cs`/`cc` 在表里字母序最小）。
+    assert_eq!(disassemble(&assemble("b.hs 0").unwrap()), "b.hs 0");
+    let (decoded, _) = decode(&enc("b.hs 0")).unwrap();
+    assert_eq!(disassemble(&decoded), "b.cs 0", "解码按同码首选名渲染");
 }
 
 #[test]

@@ -203,8 +203,19 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
   forge-rustc aarch64 注册（d78debd，能力边界注释在 compile.rs）、CI
   qemu-system-arm 门禁（dcb42e7，Test(Linux) 装 qemu-system-arm 提供
   qemu-system-aarch64）。
+- v18 S3c（2026-09-19）：**条件码符号化 + B.cond 全条件**——`[conventions.cond]` 给出
+  A64 的 16 个条件名（+ `hs`/`lo` 别名），CSEL 族的 `cond4` 槽改成 `kind = "cond"`，
+  汇编/反汇编用**符号名**（`csel x0, x1, x2, eq`，不再是 `#0`）；新增 `B.cond` 16 行
+  模板（`b.{cname}` 助记符插值 + `bcond` 固定位域 = `[3:0]`，`[31:24]=0x54`、
+  imm19 在 `[23:5]`、bit4=0），**14 个 A64 合法条件**逐个对照本文 §4 的条件码表
+  验证字节（`b.eq 0`=0x54000000、`b.ne 0`=0x54000001、`b.gt 0`=0x5400000C、
+  `b.le 0`=0x5400000D、`b.eq 2`=0x54000040 …），并覆盖汇编↔反汇编往返与别名同码。
+  同时**删除**原先那条错的 `BCOND` 存根（`form = "CBZF"` + `fields = { cond = 0 }`：
+  目标被放进 `rt=[4:0]`、条件恒 0 且落在 `[15:12]`、imm19 恒 0——从来不是合法 B.cond，
+  也无人使用）。
 - 待做（下一阶段）：Icmp lowering（cset/cond 码）使矩阵 Block 用例
-  （conditional_branch/loop/if_else_chain）转正；跨函数 Call（BL）经
-  reloc patcher + Call lowering 路径。
+  （conditional_branch/loop/if_else_chain）转正——S3c 已把**编码侧**（条件码符号化、
+  `b.cond`）备齐，缺的是 `Subs/Ands → NZCV + B.cond` 的 lowering 规则与
+  `br`/`select` 融合路径；跨函数 Call（BL）经 reloc patcher + Call lowering 路径。
 - 验证基准：本机 LLVM clang --target=aarch64-none-elf + llvm-objdump
   oracle 逐字对照 + tm 测试 + QEMU 矩阵真跑（钉版 nightly-2026-09-05）。

@@ -73,7 +73,8 @@ word  = { offset = 0,  width = 32 } # 全字常量（NOP）
 ra    = { offset = 10, width = 5 }   # MADD/MSUB 累加器
 o0    = { offset = 15, width = 1 }   # madd=0 / msub=1
 op2d  = { offset = 10, width = 6 }   # sdiv=000011 / udiv=000010（位[15:10]）
-cond  = { offset = 12, width = 4 }   # CSEL/B.cond 条件码（A64：eq0..nv15）
+cond  = { offset = 12, width = 4 }   # CSEL/CSINC/CSINV/CSNEG 条件码（[15:12]）
+bcond = { offset = 0,  width = 4 }   # B.cond 条件码（[3:0]；bit4 恒 0，未用位天然 0）
 csop2 = { offset = 10, width = 2 }   # CSEL 族 op2（sel=0 inc=1）
 mtop  = { offset = 21, width = 11 }  # 乘除/条件族顶层 [31:21]（含 sf）
 b16   = { offset = 16, width = 16 }  # BR/BLR/RET 顶层 [31:16]
@@ -88,6 +89,31 @@ p6    = { offset = 26, width = 6 }   # LDP/STP 顶层 [31:26]（X=0x2A/W=0x0A）
 idx3  = { offset = 22, width = 3 }   # LDP/STP index（100 off STP/101 off LDP）
 rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
 imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元）
+
+# A64 条件码（v18 S3c）：键 = 汇编/反汇编可见的条件名，code = 4 位编码。
+# 这张表两处用：CSEL 族的 `cond` 槽（符号名）与下面 B.cond 模板的固定字段。
+# 不写 `ir` = 不映射 IR 整数条件（本 ISA 的 lowering 目前不用 `{cc}`；
+# 将来加 Icmp lowering 时再补 ir，validate 会强制补全 10 个）。
+[conventions.cond]
+eq = 0
+ne = 1
+cs = 2
+hs = 2
+cc = 3
+lo = 3
+mi = 4
+pl = 5
+vs = 6
+vc = 7
+hi = 8
+ls = 9
+ge = 10
+lt = 11
+gt = 12
+le = 13
+al = 14
+nv = 15
+
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
@@ -293,7 +319,7 @@ operand_fields = ["rd", "rn", "cond", "rm"]
 
 [[operand_slots]]
 name = "cond4"
-kind = "imm"
+kind = "cond"
 signed = false
 width = 4
 
@@ -329,17 +355,6 @@ form = "RETF"
 opcode = 0xD65F
 fields = { rn = 30 }
 asm = "ret"
-
-# ── CBZ/CBNZ ×X/W ──
-# oracle：cbz x0,.=B4000000、cbnz w1,.=35000001
-
-[[instructions]]
-name = "BCOND"
-form = "CBZF"
-opcode = 0x54
-fields = { cond = 0 }
-ops = ["target:off19"]
-asm = "b.eq {target}"
 
 # ── 别名 ──
 
@@ -864,29 +879,55 @@ rows = [
 ]
 [[templates]]
 name = "CSEL"
-body = { ref = "csel", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csel {dst}, {src}, {src2}, #{condx}" }
+body = { ref = "csel", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csel {dst}, {src}, {src2}, {cc}" }
 rows = [
   { inst = "CSELX", slot = "r64", opcode = 0x4D4 },
   { inst = "CSELW", slot = "r32", opcode = 0xD4 },
 ]
 [[templates]]
 name = "CSINC"
-body = { ref = "csinc", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csinc {dst}, {src}, {src2}, #{condx}", fields = { csop2 = 1 } }
+body = { ref = "csinc", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csinc {dst}, {src}, {src2}, {cc}", fields = { csop2 = 1 } }
 rows = [
   { inst = "CSINCX", slot = "r64", opcode = 0x4D4 },
   { inst = "CSINCW", slot = "r32", opcode = 0xD4 },
 ]
 [[templates]]
 name = "CSINV"
-body = { ref = "csinv", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csinv {dst}, {src}, {src2}, #{condx}" }
+body = { ref = "csinv", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csinv {dst}, {src}, {src2}, {cc}" }
 rows = [
   { inst = "CSINVX", slot = "r64", opcode = 0x6D4 },
   { inst = "CSINVW", slot = "r32", opcode = 0x2D4 },
 ]
 [[templates]]
 name = "CSNEG"
-body = { ref = "csneg", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "condx:cond4", "src2:{slot}"], asm = "csneg {dst}, {src}, {src2}, #{condx}", fields = { csop2 = 1 } }
+body = { ref = "csneg", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csneg {dst}, {src}, {src2}, {cc}", fields = { csop2 = 1 } }
 rows = [
   { inst = "CSNEGX", slot = "r64", opcode = 0x6D4 },
   { inst = "CSNEGW", slot = "r32", opcode = 0x2D4 },
+]
+
+# ── B.cond（v18 S3c）：条件码在 [3:0]（固定字段 `bcond`），助记符由 `{cname}` 插值 ──
+# A64 的 B.cond 只允许 cond ≠ AL(1110)/NV(1111)（`[3:0]=111x` 保留）；`hs`/`lo` 是
+# `cs`/`cc` 的**同码别名**（表里已声明），故各给一行让汇编器也认这两个拼写
+# （反汇编只会渲染首选名 `cs`/`cc`）。表里的 `al`/`nv` 供 CSEL 族使用。
+[[templates]]
+name = "BCOND"
+body = { form = "BCF", opcode = 0x54, ops = ["target:off19"], asm = "b.{cname} {target}" }
+rows = [
+  { inst = "B_EQ", cname = "eq", fields = { bcond = 0 } },
+  { inst = "B_NE", cname = "ne", fields = { bcond = 1 } },
+  { inst = "B_CS", cname = "cs", fields = { bcond = 2 } },
+  { inst = "B_HS", cname = "hs", fields = { bcond = 2 } },
+  { inst = "B_CC", cname = "cc", fields = { bcond = 3 } },
+  { inst = "B_LO", cname = "lo", fields = { bcond = 3 } },
+  { inst = "B_MI", cname = "mi", fields = { bcond = 4 } },
+  { inst = "B_PL", cname = "pl", fields = { bcond = 5 } },
+  { inst = "B_VS", cname = "vs", fields = { bcond = 6 } },
+  { inst = "B_VC", cname = "vc", fields = { bcond = 7 } },
+  { inst = "B_HI", cname = "hi", fields = { bcond = 8 } },
+  { inst = "B_LS", cname = "ls", fields = { bcond = 9 } },
+  { inst = "B_GE", cname = "ge", fields = { bcond = 10 } },
+  { inst = "B_LT", cname = "lt", fields = { bcond = 11 } },
+  { inst = "B_GT", cname = "gt", fields = { bcond = 12 } },
+  { inst = "B_LE", cname = "le", fields = { bcond = 13 } },
 ]

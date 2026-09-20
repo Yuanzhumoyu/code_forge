@@ -937,6 +937,9 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             let raw = extract_ts(bf);
             let expr: TokenStream = match slot.kind {
                 OperandKind::Reg => field_ctor_expr(slot, quote! { #raw as u32 }),
+                // 条件码槽在 `Inst` 里是 `u8`（与编码侧 `*fid as u64` 对称）——
+                // 定宽 ISA 的第一个 cond 槽用例（arm64 `cond4`，v18 S3c）。
+                OperandKind::Cond => quote! { #raw as u8 },
                 _ => {
                     let signed = slot.signed.unwrap_or(false) || slot.kind == OperandKind::Label;
                     if signed {

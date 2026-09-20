@@ -310,6 +310,28 @@ effects = ["opsize16"]
   （运行期会静默退化成 0 = 溢出条件，是最难查的一类错）。`cond` 槽则需要表存在。
 - v18 S3b 起**不再有 x86 缺省表**：不声明就没有条件码能力，用到即报错。
 
+**两种"条件出现在语法里"的写法**（都用这张表，不需要第二处声明）：
+
+```toml
+# 1) 条件当**操作数**：槽 kind = "cond"，汇编/反汇编按名解析与渲染
+[[instructions]]
+name = "CSELX"
+ops = ["dst:r64:out", "src:r64", "cc:cond4", "src2:r64"]   # cond4 槽 kind = "cond"
+asm = "csel {dst}, {src}, {src2}, {cc}"
+
+# 2) 条件在**助记符里**（A64 `b.eq`）：条件码做成固定字段，助记符用行键插值
+[[templates]]
+name = "BCOND"
+body = { form = "BCF", opcode = 0x54, ops = ["target:off19"], asm = "b.{cname} {target}" }
+rows = [
+  { inst = "B_EQ", cname = "eq", fields = { bcond = 0 } },   # bcond = [3:0] 的固定位域
+  { inst = "B_HS", cname = "hs", fields = { bcond = 2 } },   # 同码别名各给一行
+]
+```
+
+写法 2 里写下的别名拼写会原样往返（`b.hs` → `b.hs`）；**解码**后按同码首选名渲染
+（`b.cs`）。写法 1 的别名直接由 `cond` 槽渲染成首选名（`csel …, hs` → `csel …, cs`）。
+
 位域支持**散布位段**（`pieces`）：立即数分段放置（S/U/B/J 型）。编码
 `word |= ((value >> shift) & mask) << offset`；解码 `value |= ((word >> offset)
 & mask) << shift`（可逆）。
