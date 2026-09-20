@@ -545,15 +545,10 @@ dependencies = [
 name = "forge-dsl"
 version = "0.2.0"
 dependencies = [
- "bitvec",
- "logos",
+ "forge-isa-dsl",
  "proc-macro2",
  "quote",
- "serde",
  "syn 3.0.4",
- "thiserror",
- "toml",
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -596,6 +591,21 @@ dependencies = [
  "smallvec",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "forge-isa-dsl"
+version = "0.2.0"
+dependencies = [
+ "bitvec",
+ "logos",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "syn 3.0.4",
+ "thiserror",
+ "toml",
+ "unicode-segmentation",
 ]
 
 [[package]]

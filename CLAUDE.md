@@ -177,7 +177,8 @@ code-forge (root umbrella)
 ├── forge-mem         (no internal deps)
 ├── forge-opt         → forge-ir
 ├── forge-codegen     → forge-ir, forge-opt, forge-mem, forge-dsl
-├── forge-dsl         (proc-macro; 无内部依赖——v12 自包含，不依赖 forge-grammar/lalrpop)
+├── forge-dsl         (proc-macro 薄层：解析 isa_from_file! 参数 → forge-isa-dsl)
+├── forge-isa-dsl     (普通 lib：ISA-DSL 编译器本体——模型/解析/校验/诊断/代码生成)
 ├── forge-grammar     (no internal deps)
 ├── forge-hir-macro   (no internal deps)
 ├── forge-hir         → forge-ir, forge-grammar, forge-hir-macro
@@ -202,9 +203,10 @@ code-forge (root umbrella)
    Both live in forge-codegen. Cannot split into separate crates without first refactoring
    to remove the cycle.
 
-3. **Proc-macro limitation** — `forge-dsl` is a proc-macro crate; Rust prohibits proc-macro
-   crates from exporting non-proc-macro items. Types like `MemRef` must be defined in
-   forge-codegen, not forge-dsl.
+3. **Proc-macro limitation** — `forge-dsl` 是 proc-macro crate；Rust 禁止它导出非宏项。
+   因此**编译器本体在 `forge-isa-dsl`**（普通 lib：模型/解析/校验/诊断/代码生成 +
+   `expand_file`/`validate_file` 入口），`forge-dsl` 只解析 `isa_from_file!` 参数并调它
+   （v18 S7a）。同理 `MemRef` 等生成物要用的类型定义在 forge-codegen，不在 DSL crate。
 
 4. **v12 自包含 asm** — v12 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
    lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait

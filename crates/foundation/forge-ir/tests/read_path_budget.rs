@@ -64,7 +64,7 @@ const BUDGETS: &[(&str, usize, &str)] = &[
         "20 处生产路径（各 expand_*/memoryize_* 入口 + 读写交错短读段）+ 1 处测试辅助",
     ),
     (
-        "crates/frontend/forge-dsl/src/v12/codegen/lowering.rs",
+        "crates/frontend/forge-isa-dsl/src/v12/codegen/lowering.rs",
         0,
         "已迁移到快照（LowerCtx::type_store）；0 = 回潮守卫",
     ),

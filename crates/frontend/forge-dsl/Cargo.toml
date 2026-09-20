@@ -2,18 +2,13 @@
 name = "forge-dsl"
 version = "0.2.0"
 edition = "2024"
-description = "ISA-DSL v12: TOML-driven ISA code generator with proc macros (strict TOML, no v11 string layer)"
+description = "ISA-DSL v18 proc-macro: thin wrapper over forge-isa-dsl (isa_from_file!)"
 
 [lib]
 proc-macro = true
 
 [dependencies]
-toml = "1.1.5"
-serde = { version = "1.0.229", features = ["derive"] }
+forge-isa-dsl = { path = "../forge-isa-dsl" }
 syn = { version = "3.0.4", features = ["full"] }
 quote = "1.0.47"
 proc-macro2 = "1.0.107"
-thiserror = "2.0.20"
-logos = "0.16.1"
-unicode-segmentation = "1.13.2"
-bitvec = "1.1.1" 

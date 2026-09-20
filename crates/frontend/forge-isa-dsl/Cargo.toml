@@ -1,0 +1,16 @@
+[package]
+name = "forge-isa-dsl"
+version = "0.2.0"
+edition = "2024"
+description = "ISA-DSL v18 compiler (plain lib): TOML model, validation, diagnostics, code generation"
+
+[dependencies]
+toml = "1.1.5"
+serde = { version = "1.0.229", features = ["derive"] }
+syn = { version = "3.0.4", features = ["full"] }
+quote = "1.0.47"
+proc-macro2 = "1.0.107"
+thiserror = "2.0.20"
+logos = "0.16.1"
+unicode-segmentation = "1.13.2"
+bitvec = "1.1.1"

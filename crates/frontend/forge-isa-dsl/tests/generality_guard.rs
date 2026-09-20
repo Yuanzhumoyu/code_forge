@@ -43,7 +43,7 @@ const IR_TYPE_IDENTS: &[&str] = &[
     "V128", "V256",
 ];
 
-/// 仓库根：`crates/frontend/forge-dsl` 上溯三级。
+/// 仓库根：`crates/frontend/forge-isa-dsl` 上溯三级。
 fn repo_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }

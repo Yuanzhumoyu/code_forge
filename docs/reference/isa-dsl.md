@@ -1,12 +1,16 @@
 # ISA-DSL v15 — 语法规范（唯一 DSL 语法）
 
-> 本文档对应 `forge-dsl`（crate 名 `forge_dsl`，proc-macro）当前的 **v15** schema，
-> 与仓库当前代码逐项核对（`crates/frontend/forge-dsl/src/v12/`、`isa/x86_v12.toml`、
+> 本文档对应 ISA-DSL 的**现行 schema**（标题里的 "v15" 是历史遗留：正文已含 v18 的
+> 全部节——`[[templates]]` 唯一复用机制、`[encoding]` 宽度三态、`[[reloc]]`/`[[pseudo]]`/
+> `[[derive]]`/生成期自测；**语义重写**见 `docs/plans/forge-dsl-v18-plan.md` §11，属 S7e）。
+> 实现自 v18 S7a 起拆成两个 crate：`forge-isa-dsl`（普通 lib = 编译器本体：模型/解析/
+> 校验/诊断/代码生成）+ `forge-dsl`（薄 proc-macro：只解析 `isa_from_file!` 参数并调前者）。
+> 与仓库当前代码逐项核对（`crates/frontend/forge-isa-dsl/src/v12/`、`isa/x86_v12.toml`、
 > `isa/riscv64_v12.toml`）。
 >
-> **命名说明**：DSL 生成器的 Rust 模块路径仍是 `v12/`（`crates/frontend/forge-dsl/
-> src/v12/`，历史遗留命名，稳定不动）；"v15" 是 schema 的迭代号（v15-S1…S6 破坏性
-> 简化），`[meta].version` 是自由字符串（当前两份谱写 `"13.0"`），三者互相独立。
+> **命名说明**：DSL 生成器的 Rust 模块路径仍是 `v12/`（`crates/frontend/forge-isa-dsl/
+> src/v12/`，历史遗留命名，稳定不动）；`[meta].version` 是自由字符串，与 schema
+> 迭代号（当前 v18）无关。
 > **v11 语法层**（`encoding` 字符串 + `@原语`、紧凑 `fields` 串、`when` 谓词串、
 > asm 隐式魔法名）已整体移除——无兼容层、无转换工具、无逃生门。v11 风格文件解析
 > 必然失败（`deny_unknown_fields`）。历史设计决策与迭代记录见
@@ -706,7 +710,7 @@ x86 只降 1% 的原因：x86 剩余的同 asm/同 ops 组差在**编码键**（
 
 纯 TOML 数据的小型谓词语言（无字符串）：`and` / `or` / `not` / `eq` / `ne` /
 `lt` / `le` / `gt` / `ge` / `in`，操作数属性引用，求值实现见
-`crates/frontend/forge-dsl/src/v12/pred.rs`（lowering 经 `gen_lowering_attrs`
+`crates/frontend/forge-isa-dsl/src/v12/pred.rs`（lowering 经 `gen_lowering_attrs`
 求值，谓词 false → 该规则不匹配，落入下一条或 Unsupported）。`in`（S2）=
 集合成员：`in = [attr, [v1, v2, ...]]`。
 

@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-20)
+
+- **ISA-DSL 拆成两个 crate（v18 S7a）：`forge-isa-dsl`（编译器本体）+ `forge-dsl`（薄 proc-macro）**。原 `forge-dsl`（proc-macro）里的模型/解析/校验/诊断/代码生成整体搬进新的普通 lib **`forge-isa-dsl`**（`crates/frontend/forge-isa-dsl`，含 `v12/` 与 `assembler/`，以及两个反回潮守卫测试）；`forge-dsl` 只剩 `isa_from_file!` 的参数解析并调 `forge_isa_dsl::expand_file`。宏的使用方式与**生成代码逐字节不变**。
+  动机：proc-macro crate 不能导出非宏项，而 ISA-DSL 的校验/`explain`/JSON Schema/`insts`/`diff`/CLI 都要在宏之外可用（S7b/S7c 的前提）。
+  新公开面（`forge-isa-dsl`）：`expand_file(path, &ExpandOptions)`、`expand_str(source, mod_name, path)`、`validate_source`/`validate_file`（返回渲染好的诊断行）、`read_isa_file`、`dump_generated`、`ExpandOptions { krate, spec_tests }`。
+  验证：临时 worktree 检出 S6 末状态（`113209c`）与本片各 dump 一次生成代码，路径前缀归一化后 x86/riscv64/arm64 + 6 个夹具共 9 个模块 **token 序列完全相同**（原始 dump 的行折叠差异只来自 rustc token 打印器对路径长度的换行启发式）；`forge-isa-dsl` 176 单测 + 2 `generality_guard` + 1 `no_hardcoded_widths` 全绿，`forge-dsl` 1 条参数解析单测；`forge-codegen` 全部 target、workspace 99 个 target、三架构 JIT 矩阵 195/3/0、131/67/0、23/175/0 不变；clippy（拆分后的三种组合）、release check（`--exclude forge-rustc`）、rustdoc、markdownlint 全干净。
+
 ### Added (2026-09-20)
 
 - **ISA-DSL 生成期自测 `__spec_tests`（v18 S6）：每条指令自动进回归网**。生成器在 ISA 模块里再吐一个 `#[cfg(test)] mod __spec_tests`——写 TOML 的人不必再手抄"这条指令编出来是不是这几个字节"：

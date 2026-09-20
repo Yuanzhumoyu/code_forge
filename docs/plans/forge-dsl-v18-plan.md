@@ -3,7 +3,7 @@
 > 状态：[progress]（2026-09-19 撰写）。用户 2026-09-19 拍板口径：**允许破坏性更新、无需兼容旧版本、
 > 可参考网络上的设计方案、需兼顾用户体验、需足够通用而非服务于个别指令集**。
 >
-> 现行实现：`crates/frontend/forge-dsl/src/v12/`（生成器内部仍叫 `v12`，schema 已迭代到 v17——
+> 现行实现：`crates/frontend/forge-isa-dsl/src/v12/`（生成器内部仍叫 `v12`，schema 已迭代到 v17——
 > 命名本身就是本方案要修的问题之一）。v18 语法规范落地后重写 `docs/reference/isa-dsl.md`，
 > 旧语法（v12–v17）整篇归档 `docs/archive/isa-dsl-v12-v17.md`。
 > 文中一切数字为本机实测（命令与日期随行标注），**以代码与测试为准**。
@@ -538,6 +538,30 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   入口和断言都不同，保留。arm64 指令数由 89 更正为 **104**（S3c 加了 16 行 `b.cond`
   模板、删了错的 `BCOND` 存根，文档与 S6 目标数一并更正）。
 
+**S7 进度（工具链与文档）**：
+
+- **S7a 拆 crate 已落地（2026-09-20）**：新增普通 lib **`forge-isa-dsl`**
+  （`crates/frontend/forge-isa-dsl`）= ISA-DSL 编译器本体——`v12/`（模型/解析/校验/
+  诊断/代码生成）+ `assembler/`（asm 规范层）+ 两个反回潮守卫测试；
+  **`forge-dsl` 退化为薄 proc-macro**（只剩 `IsaArgs` 解析 + 调
+  `forge_isa_dsl::expand_file`）。公开入口：`expand_file`（宏路径）、`expand_str`
+  （源码字符串，S7b CLI 用）、`validate_source`/`validate_file`（诊断行）、
+  `read_isa_file`/`dump_generated`、`ExpandOptions { krate, spec_tests }`。
+  动机：proc-macro crate 不能导出非宏项，而校验/`explain`/JSON Schema/`insts`/`diff`
+  都要在宏之外可用（S7b/S7c 的前提）。
+  证据：**生成代码 token 逐字节不变**——9 个模块（x86/riscv64/arm64 + 6 夹具）在
+  S6 末状态（临时 worktree `113209c`）与本片各 dump 一次，路径前缀归一化后
+  `token 序列完全相同`（`target/s6base_*.rs` vs `target/s7a_*.rs`；原始 dump 的行折叠
+  差异只来自 rustc token 打印器对**路径长度**的换行启发式）。测试搬迁：`forge-isa-dsl`
+  176 单测 + 2 generality_guard + 1 no_hardcoded_widths；`forge-dsl` 只剩 1 条参数
+  解析单测；`forge-codegen` 全部 target 不变（黄金值/JIT 矩阵不动）。
+  引用更新：`lowering_read_path.rs`/`read_path_budget.rs` 的源码路径表、
+  `entity_privatization.rs` 注释、`isa-dsl.md`/`isa-dsl-errors.md`/本方案与 CLAUDE.md
+  的 crate 图与路径（archive 内历史文档不动）。
+- **S7b–S7e 待做**：`forge-isa` CLI（`validate`/`explain`/`schema`/`insts`/`diff`/`fmt`）、
+  JSON Schema + 三方一致守卫、§5.8 组合与部件（`include`/`[[override]]` + `name`/`parts`
+  参数）、文档重写（教程 + 归档旧语法 + 索引/状态头）。
+
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 
 **S2 进度（S2a–S2c 全部落地，2026-09-19）**：机制 + 校验 + 测试已落地，三个发行 ISA 与全部夹具
@@ -662,7 +686,7 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
 ### 12.4 诊断行为基线（S0 取证）
 
 命令：`cargo test -p forge-dsl --lib s0_baseline -- --nocapture`。夹具见
-`crates/frontend/forge-dsl/src/v12/s0_baseline_tests.rs`（该文件**故意断言现状**，
+`crates/frontend/forge-isa-dsl/src/v12/s0_baseline_tests.rs`（该文件**故意断言现状**，
 S1/S3 落地时必须改写——它是"基线钉"）。
 
 | 坏 spec | 现状输出 | 结论 |
@@ -674,7 +698,7 @@ S1/S3 落地时必须改写——它是"基线钉"）。
 
 ### 12.5 通用性守卫（S0 新增）
 
-`crates/frontend/forge-dsl/tests/generality_guard.rs`：从 `isa/*.toml` **读出** 397 个指令名与
+`crates/frontend/forge-isa-dsl/tests/generality_guard.rs`：从 `isa/*.toml` **读出** 397 个指令名与
 225 个寄存器名，再扫 `src/**`（除 `tests.rs` 与 `cfg(test)`）里的字符串字面量。
 
 - **首次运行（空白名单）= 失败 12 处**，其中 5 处为真欠账、7 处为抽取器误报；

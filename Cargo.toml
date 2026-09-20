@@ -4,6 +4,7 @@ members = [
     "crates/foundation/forge-ir",
     "crates/foundation/forge-mem",
     "crates/frontend/forge-grammar",
+    "crates/frontend/forge-isa-dsl",
     "crates/frontend/forge-dsl",
     "crates/frontend/forge-hir",
     "crates/frontend/forge-hir-macro",

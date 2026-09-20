@@ -1,7 +1,7 @@
 # ISA-DSL 错误码目录（v18 S1）
 
 > 状态：[active]（2026-09-19 起；2026-09-20 补 `DSL-ENCODING` 与 §3.7 `[encoding]` 三态）。对应实现：
-> `crates/frontend/forge-dsl/src/v12/diag.rs`（诊断收集与定位）、`validate.rs`（各节校验）、
+> `crates/frontend/forge-isa-dsl/src/v12/diag.rs`（诊断收集与定位）、`validate.rs`（各节校验）、
 > `model.rs`（模型级派生与 gate）。执行方案见 `docs/plans/forge-dsl-v18-plan.md` §7「S1 诊断与校验」。
 
 ## 1. 诊断长什么样

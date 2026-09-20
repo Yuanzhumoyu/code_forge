@@ -10,7 +10,7 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| `reference/isa-dsl.md` | ISA-DSL 语法规范（**文档停在 v15；代码 schema 已到 v16/v17**——v18 重写见 `plans/forge-dsl-v18-plan.md`） | active |
+| `reference/isa-dsl.md` | ISA-DSL 语法规范（正文已含 v18 各节：`[[templates]]` 唯一复用机制、`[encoding]` 宽度三态、`[[reloc]]`/`[[pseudo]]`/`[[derive]]`、生成期自测；标题里的 "v15" 是历史遗留，语义重写见 `plans/forge-dsl-v18-plan.md` §11/S7e） | active |
 | `reference/isa-dsl-errors.md` | ISA-DSL 错误码目录（诊断格式、节级错误码、常见修法；v18 S1 起一次列全 + 精确到键行） | active |
 | `reference/aarch64-encoding-ref.md` | A64 整数核心指令编码参考（isa 表/golden 测试依据，尾节含 arm64_v12 实现状态） | active |
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
@@ -32,7 +32,7 @@
 | `plans/forge-ir-v3-plan.md` | forge-ir v3 改进方案（S0–S7 已落地，逐切片带实证与守卫；S8 见下条） | progress |
 | `plans/forge-ir-s8-design.md` | forge-ir S8 可选项设计（二进制序列化 / MemorySSA-lite / crate 拆分：逐个给设计与成本、验证方案、触发条件；2026-09-19 拍板：**只做二进制序列化**，另两项不做） | progress |
 | `plans/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化**执行方案**（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照、基线数字） | progress |
-| `plans/forge-dsl-v18-plan.md` | forge-dsl 改进方案（ISA-DSL v18：`[[templates]]` 为唯一指令复用机制——`body`+`rows` 取代 families、指令属性 `ref` 取代 aliases、条件码/重定位/伪指令数据化、宽度三态、诊断与生成自测；S0 基线实测 + S0–S8 切片） | progress |
+| `plans/forge-dsl-v18-plan.md` | forge-dsl 改进方案（ISA-DSL v18：`[[templates]]` 为唯一指令复用机制——`body`+`rows` 取代 families、指令属性 `ref` 取代 aliases、条件码/重定位/伪指令数据化、宽度三态、诊断、生成自测、拆 crate+CLI；S0 基线实测 + S0–S8 切片；S0–S4/S6/S7a 已落地） | progress |
 
 ## performance/ — 基准与优化
 

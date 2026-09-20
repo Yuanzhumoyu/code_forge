@@ -17,7 +17,7 @@
 //!
 //! 迁移面（编译器逐条点名，非文本猜测）：本仓 178 + 45 处编译错误，含
 //! ① 构造点 `X(n)` → `X::new(n)`；② 索引读 `x.0` → `x.index()`；
-//! ③ **DSL 生成器模板**（`forge-dsl/src/v12/codegen/{lowering,placeholder,machine,integration}.rs`
+//! ③ **DSL 生成器模板**（`forge-isa-dsl/src/v12/codegen/{lowering,placeholder,machine,integration}.rs`
 //!    里的 `quote!` 文本，32 处）；④ `forge-rustc`（本机不可编译，改为文本审计 +
 //!    定点修补：`FuncRef`/`GlobalId`/`Block` 构造与 `block_id.0`）。
 
