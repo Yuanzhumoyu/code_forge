@@ -14,40 +14,56 @@ use proc_macro2::TokenTree;
 mod assembler;
 mod v12;
 
-/// `isa_from_file!` 的参数：`"path/to/arch.toml"[, krate = <path>]`。
+/// `isa_from_file!` 的参数：`"path/to/arch.toml"[, krate = <path>][, spec_tests = <bool>]`。
 struct IsaArgs {
     path: syn::LitStr,
     /// 宿主 crate 路径：生成代码里的 `crate::…` 改写为该路径（缺省 = `crate`，
     /// 即"生成在哪个 crate 里、就属于哪个 crate"）。
     krate: Option<syn::Path>,
+    /// 是否生成 `#[cfg(test)] mod __spec_tests`（v18 S6，缺省 true）。
+    /// 关掉它的理由只有一个：同一份谱被**多个测试二进制**反复展开（夹具谱住在
+    /// `tests/common/mod.rs`），生成的自测会在每个二进制里重复跑——那里显式关掉，
+    /// 由专门的用例二进制打开（见 `crates/backend/forge-codegen/tests/spec_tests_v12.rs`）。
+    spec_tests: Option<bool>,
 }
 
 impl syn::parse::Parse for IsaArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let path: syn::LitStr = input.parse()?;
         let mut krate = None;
+        let mut spec_tests = None;
         while !input.is_empty() {
             input.parse::<syn::Token![,]>()?;
             if input.is_empty() {
                 break; // 允许尾随逗号
             }
             let key: syn::Ident = input.parse()?;
-            if key != "krate" {
-                return Err(syn::Error::new(
-                    key.span(),
-                    format!("未知参数 `{key}`（`isa_from_file!` 仅支持 `krate = <path>`）"),
-                ));
-            }
             input.parse::<syn::Token![=]>()?;
-            krate = Some(input.parse::<syn::Path>()?);
+            match key.to_string().as_str() {
+                "krate" => krate = Some(input.parse::<syn::Path>()?),
+                "spec_tests" => spec_tests = Some(input.parse::<syn::LitBool>()?.value),
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!(
+                            "未知参数 `{other}`（`isa_from_file!` 支持 `krate = <path>`\
+                             与 `spec_tests = <bool>`）"
+                        ),
+                    ));
+                }
+            }
         }
-        Ok(Self { path, krate })
+        Ok(Self {
+            path,
+            krate,
+            spec_tests,
+        })
     }
 }
 
-/// `isa_from_file!("path/to/arch.toml"[, krate = 宿主路径])` — v12 唯一语法 ISA：
-/// 生成自包含 encode/decode/asm 模块 + TargetMachine 集成层。生成模块名 =
-/// 文件 stem（非 meta.name；v12 文档化约定）。
+/// `isa_from_file!("path/to/arch.toml"[, krate = 宿主路径][, spec_tests = <bool>])`
+/// — v12 唯一语法 ISA：生成自包含 encode/decode/asm 模块 + TargetMachine 集成层。
+/// 生成模块名 = 文件 stem（非 meta.name；v12 文档化约定）。
 ///
 /// `krate` 让生成代码**不依赖"被生成在 forge-codegen 内部"这一事实**：给出宿主
 /// crate 路径后，生成物里的 `crate::…` 全部改写为 `<krate>::…`、`forge_ir::…`
@@ -80,19 +96,21 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
     );
     // 仅当显式给出宿主路径时才改写（缺省路径保持生成物逐字节不变）。
     let krate: Option<proc_macro2::TokenStream> = args.krate.as_ref().map(|p| quote::quote!(#p));
-    let a: TokenStream = compile_source_v12(&content, &mod_name, &resolved, krate.as_ref())
-        .inspect(|ts| dump_generated(&path, ts))
-        .map(Into::into)
-        .unwrap_or_else(|e| {
-            // `路径:行:列: 消息`——终端与 IDE 均可点击跳到 TOML 出错处。
-            // proc 宏无法给出 TOML 内的 Span，故位置走消息前缀而非 rustc 诊断。
-            syn::Error::new(
-                proc_macro2::Span::call_site(),
-                format!("ISA-DSL error\n{}:{e}", resolved.display()),
-            )
-            .to_compile_error()
-            .into()
-        });
+    let spec_tests = args.spec_tests.unwrap_or(true);
+    let a: TokenStream =
+        compile_source_v12(&content, &mod_name, &resolved, krate.as_ref(), spec_tests)
+            .inspect(|ts| dump_generated(&path, ts))
+            .map(Into::into)
+            .unwrap_or_else(|e| {
+                // `路径:行:列: 消息`——终端与 IDE 均可点击跳到 TOML 出错处。
+                // proc 宏无法给出 TOML 内的 Span，故位置走消息前缀而非 rustc 诊断。
+                syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!("ISA-DSL error\n{}:{e}", resolved.display()),
+                )
+                .to_compile_error()
+                .into()
+            });
     a
 }
 
@@ -108,11 +126,12 @@ fn compile_source_v12(
     mod_name: &syn::Ident,
     isa_path: &std::path::Path,
     krate: Option<&proc_macro2::TokenStream>,
+    spec_tests: bool,
 ) -> Result<proc_macro2::TokenStream, String> {
     // 诊断一次列全（S1）：`render(Some(path))` 每行都带可点击的 `路径:行:列: 码:`。
     let model = v12::parse_and_validate(source).map_err(|e| e.render(Some(isa_path)))?;
-    let inner =
-        v12::codegen::generate(&model).map_err(|e| v12::anchor_msg(source, isa_path, &e))?;
+    let inner = v12::codegen::generate_with(&model, spec_tests)
+        .map_err(|e| v12::anchor_msg(source, isa_path, &e))?;
     // 宿主 crate 路径：改写生成物里的路径根（见 `rewrite_path_roots`）。
     let inner = match krate {
         Some(k) => rewrite_path_roots(inner, k),
@@ -259,15 +278,24 @@ mod tests {
         assert!(out.contains("forge_codegen :: ir :: PhysReg"), "{out}");
     }
 
-    /// 参数解析：缺省无 `krate`；`krate = path` 可解析；未知键报错。
+    /// 参数解析：缺省无 `krate`/`spec_tests`；显式给出可解析；未知键报错。
     #[test]
     fn parse_args() {
         let a: IsaArgs = syn::parse2(quote! { "isa/x86_v12.toml" }).expect("缺省");
         assert!(a.krate.is_none());
+        assert_eq!(a.spec_tests, None, "缺省 = 生成自测（true）");
         assert_eq!(a.path.value(), "isa/x86_v12.toml");
         let b: IsaArgs =
             syn::parse2(quote! { "tests/isa/demo_v12.toml", krate = forge_codegen }).expect("显式");
         assert!(b.krate.is_some());
+        let c: IsaArgs = syn::parse2(quote! {
+            "tests/isa/demo_v12.toml", krate = forge_codegen, spec_tests = false
+        })
+        .expect("两个参数");
+        assert!(c.krate.is_some());
+        assert_eq!(c.spec_tests, Some(false));
+        let d: IsaArgs = syn::parse2(quote! { "x.toml", spec_tests = true, }).expect("尾随逗号");
+        assert_eq!(d.spec_tests, Some(true));
         let err = match syn::parse2::<IsaArgs>(quote! { "x.toml", nope = a }) {
             Ok(_) => panic!("未知参数必须报错"),
             Err(e) => e,

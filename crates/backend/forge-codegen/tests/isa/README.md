@@ -19,4 +19,6 @@
 
 回归守卫：`tests/library_surface.rs`（库源码/仓库根 `isa/` 不得再出现 demo 谱）。
 字宽方向的规范见 `docs/reference/isa-dsl.md` 的「`[encoding]` — 指令宽度三态」与
-「指令字宽」两节。
+「指令字宽」两节；生成期自测（v18 S6）见同文档「生成期自测（`__spec_tests`）」节
+——夹具在 `tests/common/mod.rs` 里用 `spec_tests = false` 宿住（避免同一份谱被多个
+测试二进制重复展开），由 `tests/spec_tests_v12.rs` 重新打开其中三个极端形状夹具。

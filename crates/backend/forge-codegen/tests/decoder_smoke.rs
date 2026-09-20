@@ -123,7 +123,8 @@ fn x86_byte_mov_spec_bytes() {
 fn x86_evex_roundtrip() {
     // EVEX（AVX-512）：62 + P0/P1/P2 + opcode + ModRM；ZMM reg-reg
     roundtrip_asm("x86_vaddps_zmm", "vaddps ZMM0, ZMM1, ZMM2");
-    roundtrip_asm("x86_vaddps_zmm_hi", "vaddps ZMM16, ZMM17, ZMM18"); // R'/V' 第 4 位
+    roundtrip_asm("x86_vaddps_zmm_hi", "vaddps ZMM16, ZMM17, ZMM18"); // R'/V'/X' 第 5 位
+    roundtrip_asm("x86_vaddps_zmm_ref", "vaddps ZMM15, ZMM24, ZMM3"); // 公开参照例
     roundtrip_asm("x86_vsubps_zmm", "vsubps ZMM3, ZMM4, ZMM5");
     // 同助记符按操作数类分发：xmm → VEX，zmm → EVEX
     roundtrip_asm("x86_vaddps_xmm", "vaddps XMM0, XMM1, XMM2");
@@ -135,10 +136,19 @@ fn x86_evex_spec_bytes() {
     // vaddps zmm0, zmm1, zmm2 → 62 F1 74 48 58 C2（mm=01、vvvv=~1、L'L=10、V'=1）
     let b = encode(&assemble("vaddps ZMM0, ZMM1, ZMM2").unwrap()).unwrap();
     assert_eq!(b, vec![0x62, 0xF1, 0x74, 0x48, 0x58, 0xC2]);
-    // zmm 高半：vaddps zmm16, zmm17, zmm18 → R=0（reg bit4=1）、V'=0（src bit4=1）、
-    // R'/B'=1（reg/rm bit3=0）：62 E1 74 40 58 C2
+    // zmm 高半：vaddps zmm16, zmm17, zmm18 → R=1（reg bit3=0，反存）、R'=0（reg bit4=1）、
+    // B'=1（rm bit3=0）、**X'=0（rm bit4=1）**：62 A1 74 40 58 C2
+    //
+    // 注意：X' 在**寄存器直寻址**下是 ModRM.rm 的第 5 位（EVEX 的 rm = X':B':rm[2:0]），
+    // 内存形式下才是 SIB index 的 bit3。旧实现两种形态都用 index，导致 zmm16-31 当 rm
+    // 时**静默丢掉第 5 位**（`vaddps zmm16, zmm17, zmm18` 会编成 rm=zmm2）；
+    // v18 S6 的生成自测（高编号寄存器视图）抓到并修好，本行黄金值随之更正。
     let b = encode(&assemble("vaddps ZMM16, ZMM17, ZMM18").unwrap()).unwrap();
-    assert_eq!(b, vec![0x62, 0xE1, 0x74, 0x40, 0x58, 0xC2]);
+    assert_eq!(b, vec![0x62, 0xA1, 0x74, 0x40, 0x58, 0xC2]);
+    // 独立参照（公开的 x86 机器码讲解，R/R'/X'/B/V'/L'L 一次全命中）：
+    // vaddps zmm15, zmm24, zmm3 → 62 71 3C 40 58 FB
+    let b = encode(&assemble("vaddps ZMM15, ZMM24, ZMM3").unwrap()).unwrap();
+    assert_eq!(b, vec![0x62, 0x71, 0x3C, 0x40, 0x58, 0xFB]);
     // vaddps xmm0,... 仍走 VEX（fpr 槽，三操作数 vvvv=~src1 → 74）
     let b = encode(&assemble("vaddps XMM0, XMM1, XMM2").unwrap()).unwrap();
     assert_eq!(b, vec![0xC4, 0xE1, 0x74, 0x58, 0xC2]);

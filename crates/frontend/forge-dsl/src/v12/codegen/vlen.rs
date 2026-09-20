@@ -667,6 +667,13 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
             } else {
                 quote! { let __idx: u8 = 4; let __sc: u8 = 0; }
             };
+            // EVEX P0 的 X' 位：内存形式 = SIB index bit3（无索引 → 1）；
+            // 寄存器直寻址 = rm bit4（ModRM.rm 的第 5 位，ZMM16-31 全靠它）。
+            let x_expr: TokenStream = if is_mem {
+                quote! { if (__idx & 8) != 0 { 0u8 } else { 1u8 } }
+            } else {
+                quote! { if (__rm & 16) != 0 { 0u8 } else { 1u8 } }
+            };
             // vvvv = 既非 reg 也非 rm 的那个操作数（v14 的 rr → 2、rr_src2 → 1）
             let vv_idx = ctx
                 .modrm
@@ -728,9 +735,14 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &V12Model) -> Result<To
                 let __rm = #rm;
                 #idx_bind
                 __bytes.push(0x62u8);
-                // P0: R'(7) X'(6) B'(5) R(4) 0(3) 0(2) mm(1-0)；X' = ~index bit3（无索引 → 1）
+                // P0: R'(7) X'(6) B'(5) R(4) 0(3) 0(2) mm(1-0)（各位取反存储）
+                //   reg：R = reg bit3、R' = reg bit4；
+                //   rm ：B' = rm bit3；**X' 在寄存器直寻址（mod=11）下兼作 rm bit4**
+                //        （AVX-512：ModRM.rm 的 5 位 = X'B'rm[2:0]），内存形式下 X' 仍是
+                //        SIB index bit3（无索引 → 1）。这一位曾是**静默丢弃**：ZMM16-31
+                //        编出来会变成 ZMM0-15（v18 S6 生成自测的高编号寄存器视图抓到）。
                 let __b: u8 = if (__rm & 8) != 0 { 0 } else { 1 };
-                let __x: u8 = if (__idx & 8) != 0 { 0 } else { 1 };
+                let __x: u8 = #x_expr;
                 let __r: u8 = if (__reg & 8) != 0 { 0 } else { 1 };
                 let __r4: u8 = if (__reg & 16) != 0 { 0 } else { 1 };
                 __bytes.push(((__r << 7) | (__x << 6) | (__b << 5) | (__r4 << 4)
@@ -1468,7 +1480,11 @@ fn gen_vlen_evex_decode_arm(
                         // 同 VEX：rm 槽为 reg 类 = 仅基址 [base]（v15 合法形态）
                         field_ctor_expr(slot, quote! { __base })
                     } else {
-                        field_ctor_expr(slot, quote! { (__modrm & 7) as u32 | (__b << 3) })
+                        // ModRM.rm 的 5 位 = X'B'rm[2:0]（ZMM16-31 用 X'）。
+                        field_ctor_expr(
+                            slot,
+                            quote! { (__modrm & 7) as u32 | (__b << 3) | (__x << 4) },
+                        )
                     }
                 } else if has_src {
                     field_ctor_expr(slot, quote! { __vvvv as u32 })
@@ -1584,6 +1600,8 @@ fn gen_vlen_evex_decode_arm(
             if (__modrm >> 6) == 3 {
                 let __r: u32 = ((!((__p0 >> 7) & 1)) & 1) as u32;
                 let __b: u32 = ((!((__p0 >> 5) & 1)) & 1) as u32;
+                // X' 在寄存器直寻址下是 ModRM.rm 的 bit4（ZMM16-31）。
+                let __x: u32 = ((!((__p0 >> 6) & 1)) & 1) as u32;
                 let __r4: u32 = ((!((__p0 >> 4) & 1)) & 1) as u32;
                 let __vvvv: u32 = ((!(((__p1 >> 3) & 0xF) as u32)) & 0xF)
                     | (((!((__p2 >> 3) & 1)) & 1) as u32) << 4;

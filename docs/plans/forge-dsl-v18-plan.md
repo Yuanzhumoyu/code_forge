@@ -347,6 +347,37 @@ value = "big"
 
 多文件诊断带**来源文件名**。`isa_from_file!` 参数扩展：`name = "..."`（模块名覆盖）、
 `parts = ["encode", "decode", "asm", "tm"]`（部件选择）、`krate = ...`（保留）。
+**已落地的只有** `krate = ...` 与 `spec_tests = <bool>`（S6 引入，见 §5.9）；`name`/`parts`
+仍未实现（`parts` 属于 S7/S8 的生成物减薄范畴）。
+
+### 5.9 生成期自测 `__spec_tests`（新增能力，S6 已落地）
+
+生成器在 ISA 模块里再吐一个 `#[cfg(test)] mod __spec_tests`：**每条指令**（含
+`[[templates]]` 展开出的实例）一条用例，外加一条覆盖率自检。断言的是**闭环不变式**：
+
+| 断言 | 抓什么 |
+| --- | --- |
+| `encode` 成功 ∧ 长度 = 该指令字长（`prefix_scan` 除外） | 字长声明与编码不一致 |
+| `decode(bytes)` 成功 ∧ 消费 `bytes.len()` | 解码少读/多读 |
+| `encode(decode(bytes)) == bytes` | 编码/解码不对称 |
+| `decode_partial` 与 `decode` 一致 | 两条解码入口分叉 |
+| 解码字段**值**原样（立即数按位域语义、条件码、寄存器索引、内存 base/disp） | 对称的位序/槽位错位（如 reg/rm 互换、第 5 位丢失） |
+| 文本闭环：`disassemble → assemble` 成功 ∧ 文本幂等 ∧ 再编码稳定；文本**唯一**的指令还要求字节相等 | 汇编/反汇编不对称、操作数序错、内存模板不闭合 |
+| 立即数边界：`min`/`max` 可编码并原样解码，`min-1`/`max+1` 在 `encode` 处**报错** | P0-16 那类"静默截断/掩码"（判据与 `gen_encode` 共享 `imm_encode_checked`，不做假保证） |
+
+覆盖维度：**宽度视图**（多类槽逐宽度各一条：x86 `gprx` 的 16/32/64 位走 66 前缀 /
+无 REX.W / REX.W 三条不同路径）与**高编号寄存器视图**（每组最高几个索引：x86 的
+REX.R/B/X、8 位寄存器的 REX 强制、EVEX 的 ZMM16-31）。
+
+**输出物**（生成模块里的常量，供外部守卫核对）：`SPEC_TOTAL` / `SPEC_COVERED` /
+`SPEC_CASES` / `SPEC_SKIPPED`（名字 + 原因，S6 判据 = 空）/ `SPEC_TEXT_AMBIGUOUS`
+（同名同形、编码不同 ⇒ 文本分不清，只要求文本幂等与自洽）。`isa_from_file!` 新增
+`spec_tests = <bool>`（缺省 true）；夹具谱在 `tests/common/mod.rs` 里显式关掉
+（同一份谱被多个测试二进制包含会重复跑），由 `tests/spec_tests_v12.rs` 打开三个
+极端形状的夹具。
+
+**S6 实测抓到并修掉的真缺陷**（详见 §7 S6 进度）：riscv W 变体移位量的静默掩码、
+x86 EVEX 寄存器直寻址丢失 rm bit4（ZMM16-31）。
 
 ## 6. 删除与改名总表
 
@@ -377,13 +408,14 @@ value = "big"
 | **S3** 数据化 | cond / reloc / pseudo / derive | 删 x86 硬编码；arm64 得 `b.cond` 全 16 条件；`[[reloc]]`、`[[pseudo]]`、`[[derive]]` | arm64 16 条件编码对照 `docs/reference/aarch64-encoding-ref.md` 黄金值 + 反汇编往返；x86 `cond` 语义不变；`generality_guard` 白名单清空 | 通用性实质提升 |
 | **S4** 宽度三态 ✅ 已落地 | `[encoding]` + 逐指令 `width` | mixed 解码（按宽度分组 trie）+ 新夹具 `demo_mixed16_32_v12.toml` | 新夹具黄金字节全绿；x86/riscv/arm64 不回归 | 打开 RVC/Thumb 类 ISA |
 | **S5** 降低语言升级 | 结构化 `insts` + `[[sequences]]` + 属性补齐 + pattern 统一 | `lowering.emit` 表形式（`inst`/`let`/`select`/`switch`）；共享序列；pattern 与 lowering 同一裁决序与死规则检测 | x86 220 条 lowering 下降 ≥15%；黄金值不变 | 中收益、风险最高（可延后） |
-| **S6** 生成自测 | 生成 `__spec_tests`（`cfg(test)`） | 每指令 encode↔decode↔encode、disassemble↔assemble↔encode、立即数边界（min/max/min−1/max+1）、全宽度视图 | 覆盖 x86 197 / riscv 116 / arm64 89（100%）；命中缺陷即修并记录；样板测试可删减 | 每条新指令自动进回归网 |
+| **S6** 生成自测 ✅ 已落地 | 生成 `__spec_tests`（`cfg(test)`） | 每指令 encode↔decode↔encode、disassemble↔assemble↔encode、立即数边界（min/max/min−1/max+1）、全宽度视图 | 覆盖 x86 197 / riscv64 116 / arm64 104（100%，零跳过）；命中 2 处真缺陷并修掉（riscv W 移位量静默掩码、x86 EVEX rm 第 5 位） | 每条新指令自动进回归网 |
 | **S7** 工具链与文档 | 拆 crate + CLI + 文档 | `forge-isa-dsl`（普通 lib）+ `forge-dsl`（薄 proc-macro）；`forge-isa` CLI：`validate`/`explain`/`schema`/`fmt`/`diff`/`insts`；JSON Schema + `#:schema`；文档重写 | schema ↔ 文档 ↔ JSON Schema 三方针守卫；CLI 集成测试；`isa_from_file!` 新参数用例 | UX 与可维护性长期收益 |
 | **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | 生成代码 token 数 −≥40%、`cargo check -p forge-codegen` −≥20% | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
 
-**建议顺序**：S0 → S1 → S2 → S3 → S4（以上均已落地）→ S6 →（S7）→ S5 →（S8）。
+**建议顺序**：S0 → S1 → S2 → S3 → S4 → S6（以上均已落地）→ S7 → S5 →（S8）。
 S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动，越早定下来，S6 生成的
-`__spec_tests` 与 S7 的 JSON Schema 才不用二次改写。
+`__spec_tests` 与 S7 的 JSON Schema 才不用二次改写。S6 提前到 S7 之前：自测是
+**回归网**，先有网再拆 crate/重写文档，后续每一步都有人接着。
 
 **S3 进度**：
 
@@ -465,6 +497,46 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   调用；两文件最后改动是 2026-09-04 `ac612d1`，与本片无关（CI 只跑 debug 的
   `cargo check -p forge-rustc`）。故本片的 release 门禁按
   `--exclude forge-rustc` 跑。
+
+**S6 进度（生成自测，2026-09-20 已落地）**：
+
+- 新增 `v12/codegen/spec.rs`：生成 `#[cfg(test)] pub(crate) mod __spec_tests`，
+  **每条指令**一条用例（`encode`/`decode`/`decode_partial` 闭环、编码长度、解码字段
+  值原样、`disassemble→assemble` 文本闭环与幂等、立即数 min/max 原样 + min−1/max+1
+  必报错）+ 一条覆盖率自检（零跳过）。断言的是**闭环不变式**，黄金值仍由各 ISA 的
+  编码参考文档与既有测试守着（自测抓"不对称"，黄金值抓"字节对不对"）。
+- **覆盖维度**：宽度视图（多类槽逐宽度：x86 `gprx` 的 16/32/64 位走 66 前缀 /
+  无 REX.W / REX.W）+ 高编号寄存器视图（每组最高几个索引：REX.R/B/X、8 位寄存器的
+  REX 强制、EVEX 的 ZMM16-31）。用例数 = 指令数 × 视图数。
+- **输出物**：`SPEC_TOTAL` / `SPEC_COVERED` / `SPEC_CASES` / `SPEC_SKIPPED`（名字+原因）/
+  `SPEC_TEXT_AMBIGUOUS`（同名同形、编码不同 ⇒ 文本分不清）；`isa_from_file!` 新增
+  `spec_tests = <bool>`（缺省 true），夹具谱在 `tests/common/mod.rs` 关掉、由
+  `tests/spec_tests_v12.rs` 打开三个极端形状夹具；外部守卫
+  `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（`#[cfg(test)]`，**必须放在
+  lib.rs 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）钉死指令总数
+  （197/116/104）、零跳过、歧义名单（31/4/0）。
+- **当场抓到的真缺陷（已修）**：
+  1. **riscv W 变体移位量静默掩码**：`SLLW/SRLW/SRAW` 的 `shamt` 槽声明 6 位，而
+     form `SHIFT5` 的字段只有 5 位 ⇒ `sllw rd, rs1, 32..63` 被静默编成 `n-32`
+     （不报错）。修法：ISA 数据里加 `shamt_w`（5 位）槽并让三条 W 指令用它——现在
+     越界会在 `encode` 处报错（`imm_encode_checked`）。
+  2. **x86 EVEX 寄存器直寻址丢第 5 位**：EVEX 的寄存器形式 `ModRM.rm` 是
+     `EVEX.X':B':rm[2:0]`（内存形式 X' 才是 SIB index bit3），而编码/解码两侧都只
+     用了 4 位 ⇒ **ZMM16-31 当 rm 时静默编成 ZMM0-15**（`vaddps zmm16, zmm17, zmm18`
+     旧输出 `62 E1 74 40 58 C2` 实际是 `rm=zmm2`）。修法：`vlen.rs` 的 EVEX 编码在
+     非内存形态用 `rm bit4` 生成 X'、解码把 X' 并回 rm[4]；黄金值更正为
+     `62 A1 74 40 58 C2`，并新增**公开参照例** `vaddps zmm15, zmm24, zmm3` →
+     `62 71 3C 40 58 FB`（一次命中 R/R'/X'/B/V'/L'L）作为独立佐证。
+  3. 灵敏度验证（一次性实验，未留痕）：把解码侧 `opsize16` 的 `__opsize` 从 2 改成
+     4 ⇒ 全部 `*_vw2` 用例立刻红（证明宽度视图确实走在 66 前缀路径上，且自测能抓
+     编码/解码分歧）。
+- 覆盖结果：x86 197 + riscv64 116 + arm64 104 = **417 条指令全部覆盖、零跳过**；
+  用例数 x86 427 / riscv64 179 / arm64 258（含视图）；`cargo test -p forge-codegen`
+  26 个 target 全绿。
+- 样板测试**未删减**：`decoder_smoke.rs` 覆盖 `TargetMachine` 组件路径（`tm.encoder()`/
+  `tm.decoder()` + 手写汇编文本 + R8 等高编号寄存器 + 具体字节黄金值），与生成自测的
+  入口和断言都不同，保留。arm64 指令数由 89 更正为 **104**（S3c 加了 16 行 `b.cond`
+  模板、删了错的 `BCOND` 存根，文档与 S6 目标数一并更正）。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 

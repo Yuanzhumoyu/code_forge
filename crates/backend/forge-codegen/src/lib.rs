@@ -650,3 +650,12 @@ mod type_map_tests {
         assert_eq!(ctx.reg_class_for(&TypeId::I32), RegClass::GPR(4));
     }
 }
+
+/// v18 S6：生成期自测的覆盖率守卫（读生成模块里的 `__spec_tests` 常量——那里随
+/// TOML 自动更新，这里钉"是否仍在覆盖全部指令"）。
+///
+/// **必须放在文件末尾**：本仓的"宿主写死寄存器类"守卫
+/// （`tests/no_hardcoded_widths.rs`）按**第一个** `#[cfg(test)]` 截断扫描，
+/// 在前面插 `#[cfg(test)]` 项会让它漏扫后面的生产代码。
+#[cfg(test)]
+mod spec_coverage_guard;

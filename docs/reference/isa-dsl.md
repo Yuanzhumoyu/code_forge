@@ -37,6 +37,7 @@
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
   - [asm 模板](#asm-模板)
   - [代码生成输出](#代码生成输出)
+  - [生成期自测（`__spec_tests`，v18 S6）](#生成期自测__spec_testsv18-s6)
   - [已有 ISA 谱](#已有-isa-谱)
 
 ---
@@ -1091,6 +1092,57 @@ demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
 - **大端变长 imm**：`imm_read_ts` 按 `[meta].endian` 装配（little → `from_le_bytes`、
   big → `from_be_bytes`）。
 
+### 生成期自测（`__spec_tests`，v18 S6）
+
+生成器在 ISA 模块里额外吐一个 `#[cfg(test)] pub(crate) mod __spec_tests`：**每条指令**
+（含 `[[templates]]` 展开出的实例）自动得到一条规格用例 + 一条覆盖率自检。写 TOML 的
+人因此不必再手抄"这条指令编出来是不是这几个字节"——新指令进 TOML 就进回归网。
+
+断言的**不是黄金字节**（那是各 ISA 编码参考文档与其测试的职责），而是**闭环不变式**：
+
+| 断言 | 抓什么 |
+| --- | --- |
+| `encode` 成功 ∧ 长度 = 该指令字长（`prefix_scan` 除外） | 字长声明与编码不一致 |
+| `decode(bytes)` 成功 ∧ 消费 `bytes.len()` | 解码少读/多读 |
+| `encode(decode(bytes)) == bytes` | 编码/解码不对称 |
+| `decode_partial` 与 `decode` 一致 | 两条解码入口分叉 |
+| 解码字段**值**原样（立即数按位域语义、条件码、寄存器索引、内存 base/disp） | 对称的位序/槽位错位（reg/rm 互换、扩展位丢失） |
+| `disassemble → assemble` 成功 ∧ 文本幂等 ∧ 再编码稳定；文本唯一的指令还要求字节相等 | 汇编/反汇编不对称、操作数序错、内存模板不闭合 |
+| 立即数边界：`min`/`max` 可编码并原样解码，`min-1`/`max+1` 在 `encode` 处**报错** | 静默截断/掩码（判据与编码器共享 `imm_encode_checked`，不做假保证） |
+
+覆盖维度：**宽度视图**（多类寄存器槽逐宽度各一条——x86 `gprx` 的 16/32/64 位分别走
+66 前缀 / 无 REX.W / REX.W）+ **高编号寄存器视图**（每组最高几个索引：x86 的
+REX.R/B/X、8 位寄存器的 REX 强制、EVEX 的 ZMM16-31）。
+
+生成模块导出的常量（外部守卫 `src/spec_coverage_guard.rs` 读它们）：
+
+| 常量 | 含义 |
+| --- | --- |
+| `SPEC_TOTAL` | 展开后的指令数（守卫里钉死：x86 197 / riscv64 116 / arm64 104） |
+| `SPEC_COVERED` | 自动覆盖的指令数（= `SPEC_TOTAL` 才叫全指令覆盖） |
+| `SPEC_CASES` | 用例数（指令 × 宽度/高寄存器视图） |
+| `SPEC_SKIPPED` | 未能自动构造操作数的指令（名字 + 原因）——S6 判据：**必须为空** |
+| `SPEC_TEXT_AMBIGUOUS` | 汇编文本不唯一的指令（同名同形、编码不同，如 x86 `89`/`8B` 两条 `mov r/m, r`）——只要求文本幂等与自洽 |
+
+**`isa_from_file!` 的第三个参数**：`spec_tests = <bool>`（缺省 `true`）。
+
+```rust
+forge_dsl::isa_from_file!("isa/my_isa.toml");                     // 生成自测（缺省）
+forge_dsl::isa_from_file!("tests/isa/demo.toml",
+    krate = forge_codegen, spec_tests = false);                    // 关掉
+```
+
+关掉的理由只有一个：同一份谱被**多个测试二进制**反复展开（夹具谱住在
+`tests/common/mod.rs`），生成的自测会在每个二进制里重复跑——那里关掉，由
+`crates/backend/forge-codegen/tests/spec_tests_v12.rs` 打开三个极端形状的夹具
+（1 字节寄存器 / 12 位字 / 混合字长）。
+
+自测跑在 `cargo test -p forge-codegen --lib`（生成在库内）或对应测试二进制里
+（`krate = …` 生成在测试 crate 里）。S6 落地时它当场抓到两处真缺陷：
+riscv W 变体移位量 32..63 被静默掩码成 `n-32`、x86 EVEX 寄存器直寻址丢掉
+ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
+`docs/plans/forge-dsl-v18-plan.md` §7「S6 进度」。
+
 ## 已有 ISA 谱
 
 **发行后端**（库本体，`crates/backend/forge-codegen/src/arch/`）：
@@ -1101,8 +1153,8 @@ demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
 - **`isa/riscv64_v12.toml`**：48 条 `[[instructions]]` + 19 条 `[[templates]]`（68 行 →
   共 116 条指令），定宽试点（QEMU 真执行验证）；jit 矩阵 131 passed / 67 skipped /
   0 failed。`[abi.frame] layout = "fp-inside"` 全推导。
-- **`isa/arm64_v12.toml`**：25 条 `[[instructions]]` + 32 条 `[[templates]]`（64 行 →
-  共 89 条指令），A64 定宽后端（golden 依据见
+- **`isa/arm64_v12.toml`**：24 条 `[[instructions]]` + 33 条 `[[templates]]`（80 行 →
+  共 104 条指令，含 S3c 的 `b.cond` 16 行），A64 定宽后端（golden 依据见
   `docs/reference/aarch64-encoding-ref.md`）。
 
 **测试夹具**（**不在库里**，`crates/backend/forge-codegen/tests/isa/`；由

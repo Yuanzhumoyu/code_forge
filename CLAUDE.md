@@ -302,6 +302,17 @@ let name = node.get_text("name")?;
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
+- **生成期自测（v18 S6）**：`isa_from_file!` 默认在生成模块里带
+  `#[cfg(test)] mod __spec_tests`（每指令一条规格用例：`encode∘decode`/`decode∘encode`
+  字节稳定、`decode_partial` 一致、解码字段值原样、`disassemble→assemble` 文本幂等、
+  立即数边界「min/max 可编码 + min−1/max+1 必报错」；覆盖维度 = 宽度视图 × 高编号
+  寄存器视图）。用例随 TOML 自动更新，**不要手抄这类样板测试**；"字节对不对"仍由
+  `docs/reference/aarch64-encoding-ref.md` 一类参考文档 + 各 ISA 黄金值测试守。
+  同一份谱要被多个测试二进制包含时（`tests/common/mod.rs`）用
+  `spec_tests = false` 关掉，另开一个用例二进制打开（见 `tests/spec_tests_v12.rs`）。
+  覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
+  x86 197 / riscv64 116 / arm64 104、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
+  必须放在 `lib.rs` 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）。
 - **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局/指令字宽一律由
   TOML 派生（`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/
   `value_gpr_width`/`value_fpr_width`/`vector_tiers`；`[encoding]`：**宽度三态**

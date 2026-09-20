@@ -13,6 +13,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-20)
 
+- **ISA-DSL 生成期自测 `__spec_tests`（v18 S6）：每条指令自动进回归网**。生成器在 ISA 模块里再吐一个 `#[cfg(test)] mod __spec_tests`——写 TOML 的人不必再手抄"这条指令编出来是不是这几个字节"：
+
+  | 断言 | 抓什么 |
+  | --- | --- |
+  | `encode` 成功 ∧ 长度 = 该指令字长（`prefix_scan` 除外） | 字长声明与编码不一致 |
+  | `decode(bytes)` 成功 ∧ 消费 `bytes.len()` | 解码少读/多读 |
+  | `encode∘decode` 与 `decode∘encode` 字节稳定 | 编码/解码不对称 |
+  | 解码字段**值**原样（立即数按位域语义、条件码、寄存器索引、内存 base/disp） | 对称的位序/槽位错位（reg/rm 互换、扩展位丢失） |
+  | `disassemble → assemble` 成功 ∧ 文本幂等 ∧ 再编码稳定；文本唯一时还要求字节相等 | 汇编/反汇编不对称、操作数序错、内存模板不闭合 |
+  | 立即数 `min`/`max` 原样、`min−1`/`max+1` 在 `encode` 处**报错** | 静默截断/掩码（判据与编码器共享 `imm_encode_checked`） |
+
+  覆盖维度 = **宽度视图**（多类槽逐宽度：x86 `gprx` 的 16/32/64 位分别走 66 前缀 / 无 REX.W / REX.W）× **高编号寄存器视图**（每组最高几个索引：REX.R/B/X、8 位寄存器的 REX 强制、EVEX 的 ZMM16-31）。断言的是**闭环不变式**，"字节对不对"仍由各 ISA 的编码参考文档与既有黄金值测试守着。
+  生成模块导出 `SPEC_TOTAL`/`SPEC_COVERED`/`SPEC_CASES`/`SPEC_SKIPPED`（名字+原因，S6 判据：空）/`SPEC_TEXT_AMBIGUOUS`（同名同形、编码不同 ⇒ 文本分不清）；外部守卫 `src/spec_coverage_guard.rs` 钉死指令总数（x86 197 / riscv64 116 / arm64 104）、零跳过与歧义名单（31/4/0）。`isa_from_file!` 新增第三参数 `spec_tests = <bool>`（缺省 true）；夹具谱（`tests/common/mod.rs`，同一份谱被多个测试二进制包含）显式关掉，由 `tests/spec_tests_v12.rs` 打开三个极端形状夹具（1 字节寄存器 / 12 位字 / 混合字长）。
+  覆盖结果：**417 条指令全部覆盖、零跳过**（用例数 x86 427 / riscv64 179 / arm64 258）；`cargo test -p forge-codegen` 26 个 target、workspace 97 个 target、三架构 JIT 矩阵 195/3/0、131/67/0、23/175/0 全部不变。
+
+- **S6 当场抓到的两处真缺陷（已修）**：① riscv `SLLW/SRLW/SRAW` 的移位量共用了 6 位 `shamt` 槽而字段只有 5 位 ⇒ `sllw rd, rs1, 32..63` 被**静默编成 `n−32`**（不报错）；修法是 ISA 数据里加 `shamt_w`（5 位）槽并让三条 W 指令用它，越界现在在 `encode` 处报错。② x86 EVEX 寄存器直寻址的 `ModRM.rm` 是 `EVEX.X':B':rm[2:0]`（内存形式下 X' 才是 SIB index bit3），编码/解码两侧都只用了 4 位 ⇒ **ZMM16-31 当 rm 时静默编成 ZMM0-15**（`vaddps zmm16, zmm17, zmm18` 旧输出 `62 E1 74 40 58 C2` 实际是 `rm=zmm2`）；修法是非内存形态用 rm bit4 生成/还原 X'，黄金值更正为 `62 A1 74 40 58 C2`，并新增独立公开参照例 `vaddps zmm15, zmm24, zmm3` → `62 71 3C 40 58 FB`。
+  文档：`docs/reference/isa-dsl.md` 新增「生成期自测（`__spec_tests`）」节（断言表 + 覆盖维度 + 常量 + `spec_tests` 参数）、方案 §5.9 与 §7「S6 进度」、arm64 指令数由 89 更正为 104（S3c 的 `b.cond` 16 行）。
+
+### Added (2026-09-20)
+
 - **ISA-DSL 指令宽度三态 `[encoding]`（v18 S4）：拆掉"一个 ISA 一个字长"的假设，打开 RVC/Thumb 类混合字长 ISA**。`[meta]` 的四个宽度散键（`default_inst_width` / `variable_length` / `max_inst_len` / `default_opsize`）删掉，收敛成独立的一段，**逐指令** `width` 由指令（或模板行）自己写：
 
   ```toml

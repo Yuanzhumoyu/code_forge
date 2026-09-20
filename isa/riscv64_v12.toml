@@ -102,6 +102,15 @@ kind = "imm"
 signed = false
 width = 6
 
+# W 变体（RV64 32 位语义）的移位量：字段只有 5 位（`shamt5`，bit25 归 funct7）。
+# **必须独立于 `shamt`（6 位）**——共用 6 位槽会让 `sllw rd, rs1, 32..63` 静默
+# 掩码成 `shamt - 32` 而不是报错（v18 S6 生成自测抓到的第一处真缺陷）。
+[[operand_slots]]
+name = "shamt_w"
+kind = "imm"
+signed = false
+width = 5
+
 [[operand_slots]]
 name = "off_b"
 kind = "label"
@@ -596,7 +605,7 @@ name = "SLLW"
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 1, funct7 = 0x00 }
-ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "sllw {dst}, {src}, {imm}"
 
 [[instructions]]
@@ -604,7 +613,7 @@ name = "SRLW"
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 5, funct7 = 0x00 }
-ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "srlw {dst}, {src}, {imm}"
 
 [[instructions]]
@@ -612,7 +621,7 @@ name = "SRAW"
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 5, funct7 = 0x20 }
-ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
+ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "sraw {dst}, {src}, {imm}"
 
 [[instructions]]

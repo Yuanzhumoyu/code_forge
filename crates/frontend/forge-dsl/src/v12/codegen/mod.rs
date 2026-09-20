@@ -36,6 +36,8 @@ pub(crate) mod machine;
 pub(crate) mod mem;
 /// 占位符注册表——lowering 模板 `{...}` token 的唯一事实源（第三轮重构）。
 pub(crate) mod placeholder;
+/// v18 S6：生成期自测（`#[cfg(test)] mod __spec_tests`）。
+pub(crate) mod spec;
 /// 变长（VEX/EVEX/前缀扫描）encode/decode——x86 专用机制，独立文件组织。
 pub(crate) mod vlen;
 
@@ -163,6 +165,13 @@ fn semantic_operand_name(op: &OperandUse, slot: &OperandSlot, _i: usize) -> Stri
 // ─────────────────────────────── 入口 ───────────────────────────────
 
 pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
+    generate_with(model, true)
+}
+
+/// [`generate`] 的可选项版本：`spec_tests` 控制是否生成 `#[cfg(test)] mod
+/// __spec_tests`（v18 S6）。夹具谱在 `tests/common/mod.rs` 里会被多个测试二进制
+/// 反复展开，故那里显式关掉、由专门的用例二进制打开（见 `isa_from_file!` 参数）。
+pub fn generate_with(model: &V12Model, spec_tests: bool) -> Result<TokenStream, String> {
     // 只有 `prefix_scan`（x86 风格前缀链）走 `vlen.rs` 的定长切片路径；
     // `fixed` 与 `mixed` 都按位域编解码（`mixed` 逐指令取字长）。
     let prefix_scan = model.is_prefix_scan();
@@ -191,6 +200,12 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     };
     let disasm_fn = asm::gen_disassemble(&infos)?;
     let asm_fn = asm::gen_assemble(&infos, model)?;
+    // v18 S6：生成期自测（每条指令的规格往返 + 边界）。
+    let spec_tests_ts = if spec_tests {
+        spec::gen_spec_tests(&infos, model)?
+    } else {
+        quote! {}
+    };
     // 迭代 5：TargetMachine 集成层（MachineInst/Encoder/Decoder/ABI/
     // FrameLowering/Lowering/TargetMachine 组装）。
     let integration = integration::gen_integration(&infos, model)?;
@@ -206,6 +221,8 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
         #asm_fn
         // ── v12 TargetMachine 集成层（迭代 5）──
         #integration
+        // ── 生成期自测（v18 S6，`cfg(test)`）──
+        #spec_tests_ts
     })
 }
 
@@ -674,26 +691,10 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             let bf = get_bf(m, fname)?;
             // P0-16：立即数槽 encode 前范围检查——原实现 `value & mask`
             // 静默截断溢出（riscv imm12 传 -3000 → 掩码后错值，大帧栈错位）。
-            // 仅在**真用户立即数**（Imm 槽、无 `reloc`（重定位）负编码语义、非
-            // 预移位散布位域）时检查：
-            // - 重定位指令（`reloc`，v18 S3d）的负编码（-(id+1)）是链接期内部值，跳过；
-            // - **预移位**散布位域（如 riscv LUI 的 imm20：
-            //   `{offset=12,width=20,shift=12}`——槽存的是已左移 12 位的
-            //   值，值域为完整 32 位）跳过，否则 fconst hi20 误报；
-            // - **标准散布**（S 型 imm_s：`{offset=7,shift=0}`+
-            //   `{offset=25,shift=5}`——槽存真实值，值域 = 位段总宽）**要
-            //   检查**——store 偏移超 imm12 范围此前静默截断为错值；
-            // - label 槽的块号/函数引用占位（-(f+1)）跳过。
-            let is_preshifted_pieces = bf
-                .pieces
-                .as_ref()
-                .is_some_and(|ps| !ps.is_empty() && ps.iter().all(|p| p.offset == p.shift));
-            let is_global_encoded = info.inst.reloc.is_some();
-            if slot.kind == OperandKind::Imm
-                && !is_global_encoded
-                && !is_preshifted_pieces
-                && let Some((lo, hi)) = slot.imm_range()
-            {
+            // 判据（重定位指令 / 预移位散布位域 / `prefix_scan` 一律不检查）与
+            // 生成期自测 `__spec_tests` 共享 [`spec::imm_encode_checked`]——
+            // 同一份规则不在两处各写一遍（自测不做假保证）。
+            if let Some((lo, hi)) = spec::imm_encode_checked(m, info, slot, fname) {
                 stmts.push(quote! {
                     let __v = *#fid as i64;
                     if !(#lo..=#hi).contains(&__v) {
