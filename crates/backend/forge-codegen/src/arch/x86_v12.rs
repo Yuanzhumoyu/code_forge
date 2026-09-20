@@ -113,23 +113,3 @@ mod tests {
         assert_eq!(f(-7, 100), 93, "v12 JIT add(-7,100) 应返回 93");
     }
 }
-// touch
-// touch2
-// touch3
-// touch4
-// touch5
-// touch6
-
-// touch14
-
-// touch15
-
-// t
-
-// touch16
-
-// touch17
-
-// touch18
-
-// touch19

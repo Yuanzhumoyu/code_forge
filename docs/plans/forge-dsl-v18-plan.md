@@ -652,6 +652,27 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   `[[aliases]]` 三合一就是先例），收益却 ≤5% / 0，故不做。
   ③ 原目标的 "x86 下降 ≥15%" 实测**不可达**：真实重复只有 10.5%（其余是"每个属性组合各有
   自己的序列"这种本质数据，不是冗余）。本切片以实测数字为准，目标按此修正。
+- **S8 度量结论（2026-09-21，代码基线 a33a814）**：先按方案要求"以度量决定"，采到了
+  生成物归因（`docs/performance/bench_baseline.md` 的「S8 立项度量」节，含固定采集命令）。
+  要点：
+  ① **`tm`（TargetMachine 集成层）是最大块**（x86 45.5% / riscv 49.1% / arm64 25.5%），
+  而 `tm` 的 89–91% 集中在两个 impl：`TargetLowering for Lowering`（逐**规则**的发射臂，
+  x86 612 KB）与 `MachineInst for Inst`（逐**指令**的样板臂：uses/defs/reg_field/effects/
+  clobbers，x86 185 KB、arm64 91 KB）；
+  ② ISA 无关的静态胶水（frame/ABI/encoder/reginfo）只占 tm 的 1–7% —— **不是**减薄的主要空间；
+  ③ `spec_tests` 占展开文本 22–41%，但在 `cargo check` 非测试构建里成本 ≈ 0
+  （27.4 s vs 29.9 s，噪声内）——外置自测**没有收益，不做**。
+  **建议分两步**：
+  - **S8a（推荐先做，纯等价重写）**：把 `impl MachineInst for Inst` 的逐指令臂换成
+    **生成期发射的静态表**（每个 `Inst` 变体一行：use/def 字段掩码、reg_field 顺序、
+    effect 位），宿主 `forge-codegen` 提供通用实现查表。预期削减 x86 185 KB、arm64 91 KB、
+    riscv 116 KB ≈ **整模块 10–13%（三 ISA 合计 ~392 KB / 4.06 MB ≈ 9.6%）**，
+    风险中低（语义不变，用黄金值 + JIT 矩阵 + 生成物 token 对比守）。
+  - **S8b（大，风险高）**：把 `TargetLowering` 的逐规则发射臂表化、解释器下沉 runtime；
+    收益上限 ~33%（x86 612 KB / 1.85 MB），但要把"构造 Inst + 临时寄存器绑定 + clobber"
+    这套逻辑变成通用解释器，改动覆盖 `codegen/lowering.rs` 与宿主 lowering 面 —— 建议
+    在 S8a 之后按新度量再决定。
+  两条都需用户拍板（方案把 S8 标为"可选，按度量决定"）。
 - **S5c 已落地（2026-09-21）**：`[[pattern]]` 与 `[[lowering]]` **统一裁决序**——
   新增 `Pattern.priority`（与 lowering 同语义：大者先试），裁决序 = (`priority` 降,
   匹配树 Op 节点数降, `when` 叶子数降, 声明序升)，并抽成 `V12Model::pattern_order()`
