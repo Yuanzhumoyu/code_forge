@@ -121,16 +121,3 @@ pub(crate) fn parse_and_validate(source: &str) -> Result<V12Model, V12Error> {
         diags: diags.into_items(),
     })
 }
-
-/// 给生成器的裸消息补上 `路径:行:列` 前缀（codegen 的错误不经 `V12Error`）。
-pub(crate) fn anchor_msg(source: &str, isa_path: &std::path::Path, msg: &str) -> String {
-    let idx = diag::DeclIndex::build(source);
-    let a = idx.anchor(msg);
-    format!(
-        "{}:{}:{}: {}: {msg}",
-        isa_path.display(),
-        a.line,
-        a.col,
-        a.code
-    )
-}

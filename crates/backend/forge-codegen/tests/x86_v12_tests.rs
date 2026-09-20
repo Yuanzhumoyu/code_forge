@@ -80,7 +80,7 @@ fn opsize_prefix_and_rex_w() {
     ];
     for (gpr, dest, src, expected) in cases {
         let v12b = encode(&Inst::MovRRm {
-            dest: Reg::from_index(*dest, *gpr),
+            dst: Reg::from_index(*dest, *gpr),
             src: Reg::from_index(*src, *gpr),
         })
         .unwrap();
@@ -224,7 +224,7 @@ fn mem_spec_bytes() {
         ("mov [RAX], RBX", &[0x48, 0x89, 0x18]),
         // movsd XMM0, [RAX] — F2 48?? 不——F2 0F 10（64 位无 REX.W；base=RAX<8）
         ("movsd XMM0, [RAX]", &[0xF2, 0x0F, 0x10, 0x00]),
-        // mov RAX, RBX — 48 89 /r（reg=src: 3, rm=dest: 0；mov64rr 已合并）
+        // mov RAX, RBX — 48 89 /r（reg=src: 3, rm=dst: 0；mov64rr 已合并）
         ("mov RAX, RBX", &[0x48, 0x89, 0xD8]),
         // mov RAX, [rbp+8] — RBP ∈ force_disp_base → mod=01 + disp8
         ("mov RAX, [RBP+8]", &[0x48, 0x8B, 0x45, 0x08]),
@@ -305,52 +305,52 @@ fn all_insts() -> Vec<Inst> {
     vec![
         // @modrm（opsize 各值）
         MovRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(8, forge_ir::RegClass::GPR64),
             src: Reg::from_index(9, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovRRm {
-            dest: Reg::from_index(2, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(2, forge_ir::RegClass::GPR64),
             src: Reg::from_index(3, forge_ir::RegClass::GPR64),
         },
         MovsxdRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         AddRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         SubRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         ImulRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         XorRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         AndRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         OrRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         CmpRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
@@ -361,28 +361,28 @@ fn all_insts() -> Vec<Inst> {
             src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovzxR8Rm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR(1)),
         },
         MovzxR16Rm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR(2)),
         },
         MovsxR8Rm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR(1)),
         },
         MovsxR16Rm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR(2)),
         },
         CmpxchgRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         XaddRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         BtRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
@@ -402,35 +402,35 @@ fn all_insts() -> Vec<Inst> {
         },
         MovRm8R64 {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovR8Rm64 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         // @modrm_imm32
         AddRImm32 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             imm: 42,
         },
         AddRImm32 {
-            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(8, forge_ir::RegClass::GPR64),
             imm: -1,
         },
         OrRImm32 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             imm: 42,
         },
         AndRImm32 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             imm: 42,
         },
         SubRImm32 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             imm: 42,
         },
         XorRImm32 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             imm: 42,
         },
         CmpRImm32 {
@@ -444,51 +444,51 @@ fn all_insts() -> Vec<Inst> {
         // @sse_rr / 合并后的 movzx（MOVZX_R8_RM/R16_RM；v13 删除了重复的
         // MOVZX_B/MOVZX_W 变体）。源是 8/16 位寄存器（gpr1/gpr2 类）。
         MovzxR8Rm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR(1)),
         },
         MovzxR16Rm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR(2)),
         },
         Sqrtsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Sqrtsd {
-            dest: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(7, forge_ir::RegClass::FPR(16)),
         },
         Sqrtss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Cvtsi2sd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Cvtsd2si {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Cvttsd2si {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Cvtsd2ss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Cvtss2sd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Andpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Xorpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Comisd {
@@ -500,56 +500,56 @@ fn all_insts() -> Vec<Inst> {
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         MovsdXmmFreg {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Cvtsi2ss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovdFregIreg {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovdIregFreg {
             src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Punpckldq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Punpcklqdq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Punpckhdq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Movss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Movsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         // @modrm_mem（迭代 3b）
         XaddMemR {
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
             src: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         XaddMemR {
-            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(8, forge_ir::RegClass::GPR64),
             src: Reg::from_index(9, forge_ir::RegClass::GPR64),
         },
         XchgMemR {
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
             src: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         XchgMemR {
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
             src: Reg::from_index(4, forge_ir::RegClass::GPR64),
         }, // base=RSP → SIB
         SubMemR {
@@ -569,7 +569,7 @@ fn all_insts() -> Vec<Inst> {
             src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         MovRMem {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         StoreMemR {
@@ -577,7 +577,7 @@ fn all_insts() -> Vec<Inst> {
             src2: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         MovsdRMem {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::GPR64),
         },
         MovsdMemR {
@@ -586,10 +586,10 @@ fn all_insts() -> Vec<Inst> {
         },
         Mov64Rr {
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
         },
         Mov64Rm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             mem: MemRef {
                 base: Reg::from_index(2, forge_ir::RegClass::GPR64),
                 disp: 0,
@@ -598,7 +598,7 @@ fn all_insts() -> Vec<Inst> {
             },
         },
         Mov64Rm {
-            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(8, forge_ir::RegClass::GPR64),
             mem: MemRef {
                 base: Reg::from_index(4, forge_ir::RegClass::GPR64),
                 disp: -8,
@@ -616,7 +616,7 @@ fn all_insts() -> Vec<Inst> {
             },
         },
         MovsdRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             mem: MemRef {
                 base: Reg::from_index(2, forge_ir::RegClass::GPR64),
                 disp: 8,
@@ -635,218 +635,218 @@ fn all_insts() -> Vec<Inst> {
         },
         // 家族展开（SSE 5 家族）
         Movsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Minsd {
-            dest: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(7, forge_ir::RegClass::FPR(16)),
         },
         Maxsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Addsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Subsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Mulsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Divsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Addss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Subss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Mulss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Divss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Movaps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Addps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Subps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Mulps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Divps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Xorps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Andps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Orps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Addpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Subpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Mulpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Divpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Paddd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Psubd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Paddq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Psubq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         // VEX（三操作数/无源/imm）
         Vaddps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vaddps {
-            dest: Reg::from_index(5, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(5, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(6, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(7, forge_ir::RegClass::FPR(16)),
         },
         Vsubps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vmulps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vdivps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vxorps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vandps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vaddpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vsubpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vmulpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vdivpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vmovaps {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vbroadcastss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vbroadcastsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpxor {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpaddd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpsubd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpaddq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpsubq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vpmulld {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Vextractf128 {
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             imm: 0,
         },
         Vinsertf128 {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(2, forge_ir::RegClass::FPR(16)),
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
             imm: 1,
@@ -859,24 +859,24 @@ fn all_insts() -> Vec<Inst> {
             src: Reg::from_index(8, forge_ir::RegClass::GPR64),
         },
         Pop {
-            dest: Reg::from_index(3, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(3, forge_ir::RegClass::GPR64),
         },
         Pop {
-            dest: Reg::from_index(9, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(9, forge_ir::RegClass::GPR64),
         },
         MovRegImm64 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             imm: 0x1234,
         },
         MovRegImm64 {
-            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(8, forge_ir::RegClass::GPR64),
             imm: -1,
         },
         BswapR {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
         },
         BswapR {
-            dest: Reg::from_index(12, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(12, forge_ir::RegClass::GPR64),
         },
         // 控制流（迭代 6）
         Ret,
@@ -891,17 +891,14 @@ fn all_insts() -> Vec<Inst> {
         CallRm {
             src: Reg::from_index(3, forge_ir::RegClass::GPR64),
         },
-        JccRel32 { cond: 4, target: 0 },
-        JccRel32 {
-            cond: 15,
-            target: -1,
-        },
+        JccRel32 { cc: 4, target: 0 },
+        JccRel32 { cc: 15, target: -1 },
         SetccRm8 {
-            dest: Reg::from_index(2, forge_ir::RegClass::GPR64),
-            cond: 5,
+            dst: Reg::from_index(2, forge_ir::RegClass::GPR64),
+            cc: 5,
         },
         LeaR64Sib {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             mem: MemRef {
                 base: Reg::from_index(5, forge_ir::RegClass::GPR64),
                 disp: 8,
@@ -910,7 +907,7 @@ fn all_insts() -> Vec<Inst> {
             },
         },
         LeaRbpOff {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             mem: MemRef {
                 base: Reg::from_index(5, forge_ir::RegClass::GPR64),
                 disp: -8,
@@ -919,25 +916,25 @@ fn all_insts() -> Vec<Inst> {
             },
         },
         CmovccRRm {
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
             src: Reg::from_index(2, forge_ir::RegClass::GPR64),
-            cond: 5,
+            cc: 5,
         },
         RoundsdI {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
             imm: 3,
         },
         Pmulld {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         MovqXmmR64 {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         MovqR64Xmm {
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
             src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
         },
         MovapsMr {
@@ -945,15 +942,15 @@ fn all_insts() -> Vec<Inst> {
             src2: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
         },
         LzcntR {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         TzcntR {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         PopcntR {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
     ]
@@ -978,23 +975,23 @@ fn decode_identity_canonical() {
     // 规范指令（非别名）：decode(encode(X)) == X
     let canonical = [
         Inst::MovRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::MovRRm {
-            dest: Reg::from_index(8, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(8, forge_ir::RegClass::GPR64),
             src: Reg::from_index(9, forge_ir::RegClass::GPR64),
         },
         Inst::MovsxdRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::AddRmR {
             src: Reg::from_index(0, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(1, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::ImulRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::CmpRmR {
@@ -1002,7 +999,7 @@ fn decode_identity_canonical() {
             src2: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::AddRImm32 {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             imm: 42,
         },
         Inst::CmpRImm32 {
@@ -1010,15 +1007,15 @@ fn decode_identity_canonical() {
             imm: -1,
         },
         Inst::Sqrtsd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Inst::Cvtsi2sd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::Andpd {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Inst::Comiss {
@@ -1026,11 +1023,11 @@ fn decode_identity_canonical() {
             src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Inst::Movss {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
         Inst::Punpcklqdq {
-            dest: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
             src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
         },
     ];

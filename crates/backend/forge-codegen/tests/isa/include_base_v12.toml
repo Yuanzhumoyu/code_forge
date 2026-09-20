@@ -1,0 +1,30 @@
+# demo_include_v12（base 片段）—— `include` 组合的**被包含**部分（v18 S7d）
+#
+# 与 `include_root_v12.toml` 一起验证：数组节按 include 序追加、表节跨文件合并、
+# 以及 `[[override]]` 显式覆盖（根文件把 base 的 `[meta].version` 改掉）。
+
+[reg.gpr4]
+names = ["R0", "R1", "R2", "R3"]
+
+[conventions.bitfields]
+op  = { offset = 12, width = 4 }
+rd  = { offset = 8, width = 4 }
+rs1 = { offset = 4, width = 4 }
+
+[[operand_slots]]
+name = "r"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+
+[[forms]]
+name = "RR"
+opcode_field = "op"
+operand_fields = ["rd", "rs1"]
+
+[[instructions]]
+name = "IADD"
+form = "RR"
+opcode = 1
+ops = ["dst:r:out", "src:r"]
+asm = "iadd {dst}, {src}"

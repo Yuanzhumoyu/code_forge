@@ -211,3 +211,148 @@ fn validate_accepts_schema_comment() {
     let _ = std::fs::remove_file(&spec);
     assert_eq!(out.code, 0, "stdout={}", out.stdout);
 }
+
+// ───────────────── 多文件组合：include / [[override]] / fmt（v18 S7d）─────────────────
+
+/// 建一个临时目录：`frag.toml`（片段）+ `root.toml`（include 它）。返回 (目录, 根路径)。
+fn temp_multi_file(name: &str, frag: &str, root: &str) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("forge_isa_cli_inc_{}_{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+    std::fs::write(dir.join("frag.toml"), frag).expect("写片段");
+    let root_path = dir.join("root.toml");
+    std::fs::write(&root_path, root).expect("写根");
+    (dir, root_path)
+}
+
+/// 多文件谱（夹具：片段 + 根 + `[[override]]`）能通过校验，且两条指令都在。
+#[test]
+fn validate_and_insts_accept_multi_file_spec() {
+    let root = fixture("include_root_v12.toml");
+    let v = run(&["validate", &root]);
+    assert_eq!(v.code, 0, "stdout={}", v.stdout);
+    assert!(v.stdout.contains("ISA = demo_include_v12"), "{}", v.stdout);
+
+    let i = run(&["insts", &root]);
+    assert_eq!(i.code, 0, "stderr={}", i.stderr);
+    assert!(i.stdout.contains("2 条指令"), "{}", i.stdout);
+    assert!(
+        i.stdout.contains("IADD") && i.stdout.contains("ISUB"),
+        "片段里的 IADD 与根里的 ISUB 都应在：{}",
+        i.stdout
+    );
+    // 根文件的 `[[override]] key = "meta.version"` 生效（片段的旧值被替换）。
+    assert!(i.stdout.contains("18.0-include"), "{}", i.stdout);
+
+    let j = run(&["insts", &root, "--json"]);
+    assert_eq!(j.code, 0, "stderr={}", j.stderr);
+    assert!(
+        j.stdout.contains("\"version\":\"18.0-include\""),
+        "{}",
+        j.stdout
+    );
+}
+
+/// `fmt`：把多文件谱折叠成单文件——写出的文本**不含** `include`/`[[override]]`，
+/// 仍能独立校验，且与 stdout 一致；再 fmt 一次结果不变（幂等）。
+#[test]
+fn fmt_folds_multi_file_into_single_spec() {
+    let root = fixture("include_root_v12.toml");
+    let out_file =
+        std::env::temp_dir().join(format!("forge_isa_cli_fmt_{}.toml", std::process::id()));
+    let w = run(&["fmt", &root, "--out", out_file.to_str().unwrap()]);
+    assert_eq!(w.code, 0, "stderr={}", w.stderr);
+    assert!(w.stdout.contains("来源 2 个文件"), "{}", w.stdout);
+
+    let folded = std::fs::read_to_string(&out_file).expect("读折叠结果");
+    assert!(
+        !folded.lines().any(|l| l.starts_with("include =")),
+        "折叠后不应含组合键 `include`：\n{folded}"
+    );
+    assert!(
+        !folded
+            .lines()
+            .any(|l| l.trim_start().starts_with("[[override]]")),
+        "折叠后不应含组合键 `[[override]]`：\n{folded}"
+    );
+    assert!(
+        folded.contains("IADD") && folded.contains("ISUB"),
+        "折叠后两条指令都在"
+    );
+
+    // stdout（不带 --out）= 同一份文本。
+    let s = run(&["fmt", &root]);
+    assert_eq!(s.code, 0, "stderr={}", s.stderr);
+    assert_eq!(
+        s.stdout.trim_end(),
+        folded.trim_end(),
+        "stdout 与 --out 应一致"
+    );
+
+    // 折叠结果是一份独立可用的谱。
+    let v = run(&["validate", out_file.to_str().unwrap()]);
+    assert_eq!(v.code, 0, "stdout={}", v.stdout);
+
+    // 幂等：对折叠结果再 fmt，逐字不变。
+    let again = run(&["fmt", out_file.to_str().unwrap()]);
+    assert_eq!(again.code, 0, "stderr={}", again.stderr);
+    assert_eq!(again.stdout.trim_end(), folded.trim_end(), "fmt 应幂等");
+    let _ = std::fs::remove_file(&out_file);
+}
+
+/// 多文件诊断指向**真正写那一行的文件**（不是合并文本的行号）。
+#[test]
+fn diagnostics_point_at_the_included_file() {
+    // 片段里故意写一个未声明的寄存器类：错误必须落在 `frag.toml` 上。
+    let (dir, root) = temp_multi_file(
+        "diag",
+        "[reg.gpr4]\ncount = 4\n\n[[operand_slots]]\nname = \"r\"\nkind = \"reg\"\nclass = \"nope\"\n",
+        "include = [\"frag.toml\"]\n\n[meta]\nname = \"multi\"\n\n[encoding]\nkind = \"fixed\"\nbits = 16\n\n[[instructions]]\nname = \"BAD\"\nopcode = 1\nops = [\"d:r:out\"]\nasm = \"bad {d}\"\n",
+    );
+    let out = run(&["validate", root.to_str().unwrap()]);
+    assert_eq!(out.code, 1, "应报错：{}", out.stdout);
+    assert!(
+        out.stdout.contains("frag.toml:"),
+        "诊断应指向片段文件：{}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("读不到文件"),
+        "不应退化成「读不到文件」：{}",
+        out.stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 缺文件 / 覆盖目标不存在 —— 两种都必须是**点名具体文件/键**的明确错误。
+#[test]
+fn include_errors_are_explicit() {
+    let (dir, root) = temp_multi_file(
+        "missing",
+        "[reg.gpr4]\ncount = 4\n",
+        "include = [\"nope.toml\"]\n[meta]\nname = \"x\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n",
+    );
+    let out = run(&["validate", root.to_str().unwrap()]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stdout.contains("nope.toml"),
+        "错误应点名缺的 include 文件：{}",
+        out.stdout
+    );
+
+    // `[[override]]` 指向不存在的键 → 明确报错（拼错不静默）。
+    let (dir2, root2) = temp_multi_file(
+        "override",
+        "[reg.gpr4]\ncount = 4\n",
+        "include = [\"frag.toml\"]\n[[override]]\nkey = \"meta.version\"\nvalue = \"9\"\n[meta]\nname = \"x\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n",
+    );
+    let out2 = run(&["validate", root2.to_str().unwrap()]);
+    assert_eq!(out2.code, 1);
+    assert!(
+        out2.stdout.contains("meta.version"),
+        "错误应点名覆盖键：{}",
+        out2.stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dir2);
+}

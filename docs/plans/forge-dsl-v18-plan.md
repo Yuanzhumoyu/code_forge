@@ -347,8 +347,20 @@ value = "big"
 
 多文件诊断带**来源文件名**。`isa_from_file!` 参数扩展：`name = "..."`（模块名覆盖）、
 `parts = ["encode", "decode", "asm", "tm"]`（部件选择）、`krate = ...`（保留）。
-**已落地的只有** `krate = ...` 与 `spec_tests = <bool>`（S6 引入，见 §5.9）；`name`/`parts`
-仍未实现（`parts` 属于 S7/S8 的生成物减薄范畴）。
+
+**实现与上面草案的差异（S7d 落地时确认）**：
+
+- `parts` 的四块是 `encode` / `decode` / `asm` / `tm`；`Inst` 枚举、`Reg` 枚举、
+  寄存器名表与内存支撑是**任何部件的公共前提**（`Inst` 的 Reg 字段类型就是 `Reg`），
+  恒定生成；位域助手 `__place`/`__bits` 跟着 encode/decode 走。
+- `parts` 受限时**必须** `spec_tests = false`：生成期自测要 encode/decode/asm 全部，
+  否则编译期明确报错（不悄悄生成一份跑不过的自测）。
+- 合并语义 = **按块合并**（不是任意深度的"深合并"）：数组节按 include 序追加；
+  重复的 `[表头]` 视为同一节的续写；同名标量冲突报错（要用 `[[override]]`）。
+  理由：TOML 没有"合并"语义，按块合并的规则可以用一句话讲清、且与"后出现覆盖前出现"
+  的隐式规则彻底区分开。
+- `include` / `[[override]]` 是**组合键**，合并后不再出现在文本里；模型登记它们只为
+  schema/编辑器/文档键表一致，裸文本入口带这两个键会明确报错。
 
 ### 5.9 生成期自测 `__spec_tests`（新增能力，S6 已落地）
 
@@ -594,9 +606,25 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   ——`--nocapture` 打印可粘贴的表格。
   落地过程中守卫立刻抓到三处漂移（`[[instructions]].enc` 被误当键、`Pattern` 的
   `r#match`（TOML 键 `match`）漏写、`[[pattern]].when` 未登记）——这正是这条守卫的用途。
-- **S7d–S7e 待做**：§5.8 组合与部件（`include`/`[[override]]` 深合并 + 来源文件名诊断，
-  以及 `isa_from_file!` 的 `name`/`parts` 参数）；CLI 的 `fmt` 子命令；文档重写
-  （教程 + 归档旧语法 + 索引/状态头）。
+- **S7d 已落地（2026-09-21）**：§5.8 组合与部件全部实现——`include`/`[[override]]`
+  多文件合并（递归深度 8、成环/重复包含报错、同名标量冲突报错并提示用 `[[override]]`、
+  诊断按来源文件映射：`路径:行:列` 指向真正写那一行的那份文件）、`isa_from_file!` 的
+  `name`/`parts` 参数、CLI `fmt` 子命令（多文件折叠成单文件）。**同轮修掉一处字段名缺陷**：
+  生成 `Inst` 变体的字段名此前取自定宽 ISA 的位域名（`[forms].operand_fields` 的
+  `rd`/`rs1`）或变长 ISA 的语义名（`dest`/`cond`），`ops` 里作者声明的名字**只用于 asm
+  模板**——于是 `ops = ["dst:r:out", "src:r"]` 生成出 `Inst::Iadd { rd, rs1 }`。现在
+  **字段名 = `ops` 声明的名字**（`dst`/`src`），位域名/语义角色名退回纯内部编码键；
+  关键字 → `r#type`、数字开头 → `_8bit`，不做语义改名。守卫：
+  `forge-isa-dsl/tests/field_names.rs`（定宽 + 变长 + 关键字/数字三种形态）、
+  `forge-isa-dsl/tests/parts_selection.rs`、`forge-codegen/tests/include_v12_tests.rs`
+  （多文件谱的黄金字节 + 只开 `encode` 的模块真编译）；CLI 侧 4 条新用例（多文件 validate/insts、
+  `fmt` 折叠与幂等、诊断指向片段文件、缺 include / 覆盖键不存在必须点名）。
+  `include`/`[[override]]` 同时进了模型 + JSON Schema + 文档键表（三方针守卫覆盖），
+  裸文本（未经加载器）带这两个键会**明确报错**而不是静默忽略。
+  生成物 token 级对照（`demo_inst12_v12`，基线 vs 现在）：只有
+  `rd→dst`(32) / `rs1→src`(32) / `rs2→src2`(16) 共 80 处标识符改名，编码 token 零变化
+  （证据 `target/s7d_field_rename_evidence.txt`；三个 ISA 的黄金字节/规格自测全绿）。
+- **S7e 待做**：文档重写（教程 + 归档旧语法 + 索引/状态头）。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 

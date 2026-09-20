@@ -30,6 +30,7 @@
   - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
   - [`[[instructions]]` — 指令](#instructions--指令)
+  - [多文件组合（`include` / `[[override]]`，v18 S7d）](#多文件组合include--overridev18-s7d)
   - [`[[templates]]` — 参数化指令模板（唯一复用机制）](#templates--参数化指令模板唯一复用机制)
   - [`[[reloc]]` — 重定位表](#reloc--重定位表v18-s3d)
   - [`[[pseudo]]` — 汇编器伪指令](#pseudo--汇编器伪指令v18-s3e)
@@ -76,13 +77,12 @@ lowering 里 66 条同 op + 逐字节相同 insts、只差 when）、以及 16 �
 - 因此「模型改了忘了写 schema」「schema 写了模型不认的键」「文档没跟上」三类漂移都会
   让 `cargo test -p forge-isa-dsl --test schema_guard` 变红。
 
-`*` = 编码键（`[[forms]]` 预设与 `[[instructions]]` **共用同一组**，指令逐键覆盖）。
+`†` = 编码键（`[[forms]]` 预设与 `[[instructions]]` **共用同一组**，指令逐键覆盖）。
 
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
-
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `emit` `spill` | ISA 谱根（单文件；多文件组合见方案 §5.8，未实现） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `emit` `spill` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位） |
@@ -114,6 +114,7 @@ lowering 里 66 条同 op + 逐字节相同 insts、只差 when）、以及 16 �
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
 | `[[templates.rows]]` | `inst` | — | 模板行：`inst` + 任意指令字段（含 `ref`）（允许额外键） |
 | `[emit.<block>]` | — | `insts` | 序言/尾声块内容 |
+| `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |
 <!-- END: schema-keys -->
 
 ## 快速开始
@@ -137,6 +138,33 @@ forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
 `forge_ir::…` → `<路径>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir;`）。
 缺省（不写 `krate`）保持"生成在哪个 crate 就属于哪个 crate"的历史行为，生成物
 逐字节不变。生成代码所需的运行面（公开 API 清单）见「生成代码依赖的运行面」一节。
+
+`isa_from_file!` 的完整参数表（v18 S7d 起四个）：
+
+| 参数 | 缺省 | 作用 |
+| --- | --- | --- |
+| `krate = <路径>` | 不写 = `crate::`（生成在宿主内部） | 路径根改写（生成到别的 crate / `tests/`） |
+| `spec_tests = <bool>` | `true` | 是否生成 `#[cfg(test)] mod __spec_tests`（见「生成期自测」） |
+| `name = "…"` | 文件 stem | 覆盖生成模块名（同一份谱展开多次时必须给，否则模块重名） |
+| `parts = ["encode", …]` | 四块全开 | 只生成选中的部件：`encode`/`decode`/`asm`/`tm`（见下） |
+
+`parts` 用于**生成物减薄**：例如只要编解码器、不要 TargetMachine 集成层时写
+`parts = ["encode", "decode"]`——`Inst` 枚举、`Reg` 枚举、寄存器名表与内存支撑是
+任何部件的公共前提，恒定生成；`parts` 受限时必须 `spec_tests = false`（生成期自测
+要用 encode/decode/asm 全部，否则编译期明确报错而不是悄悄生成跑不过的测试）。
+用例：`crates/frontend/forge-isa-dsl/tests/parts_selection.rs`（token 文本级断言）
+与 `crates/backend/forge-codegen/tests/include_v12_tests.rs`（同一份谱再展开一个
+只有编码器的模块，真实编译并跑通）。
+
+```rust
+forge_dsl::isa_from_file!(
+    "tests/isa/demo_v12.toml",
+    krate = forge_codegen,
+    spec_tests = false,
+    name = "demo_enc_only",
+    parts = ["encode"]
+);
+```
 
 `isa_from_file!` 生成 `pub mod <file_stem>` 自包含模块：`Reg` 物理寄存器枚举、
 `Inst` 指令枚举、`encode` / `decode` / `disassemble` / `assemble` 自由函数，以及
@@ -499,8 +527,11 @@ modrm = { reg = "dst", rm = "src2" }
 [[forms]]
 name = "R"                     # riscv R-type（定宽）
 opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
+operand_fields = ["rd", "rs1", "rs2"]   # = **位域名**（编码位置），按下标绑定 ops 的第 i 个操作数
 ```
+
+`operand_fields` 里的名字是 `[conventions.bitfields]` 的**位域名**（上例 `rd`/`rs1`/`rs2`），
+只决定"第 i 个操作数编到哪个位域"；指令的 `ops` 名字与生成字段名不受它影响（v18 S7d）。
 
 `modrm` 的显式映射（S3）：`modrm = { reg = <操作数名 | 固定扩展码>, rm = <操作数名> }`
 ——哪个命名操作数进 `reg` 字段、哪个进 `rm` 字段直接写出来。`reg = 3` = 固定扩展码
@@ -550,8 +581,8 @@ name = "ADD"                   # riscv R-type（定宽位域绑定）
 form = "R"
 opcode = 0x33
 fields = { funct3 = 0, funct7 = 0 }   # 固定字段值，按位域名引用
-ops = ["rd:gpr:out", "rs1:gpr", "rs2:gpr"]
-asm = "add {rd}, {rs1}, {rs2}"        # 操作数按 form.operand_fields 位置绑定位域
+ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
+asm = "add {dst}, {src}, {src2}"      # 名字 = asm 占位符 = 生成的 Inst 字段名
 effect = ["Pure"]
 
 [[instructions]]
@@ -578,6 +609,16 @@ asm = "movabs {0}, {1}"
 bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角色]}` **已删除**，
 无兼容层。`collect_inst_infos` 把 `{名字}` 规范化成 `{序号}` 后交给下游，生成器
 （asm/machine/decode）只认索引、不感知命名。
+
+**声明名 = 生成的 `Inst` 字段名**（v18 S7d）：`ops = ["dst:r:out", "src:r"]`
+生成 `Inst::Iadd { dst, src }`——作者在 DSL 里写的名字就是用户面看到的字段名
+（定宽与变长的指令一律如此）。**编码键名与之彻底分离**：定宽 ISA 的位域名
+（`[forms].operand_fields` 的 `rd`/`rs1`…）与变长 ISA 的语义角色名（`dest`/`src`/
+`cond`/`mem`/`imm`/`target`）只在生成器内部用于查 `[conventions.bitfields]`、
+modrm 角色与立即数编码表，**不再冒充字段名**（历史实现把位域名当字段名，于是
+`ops` 里写的 `dst`/`src` 在用户面毫无意义）。名字不能直接作标识符时按最小规则归一：
+Rust 关键字 → 原始标识符（`type` → `r#type`）、数字开头 → 前缀 `_`（`8bit` → `_8bit`），
+**不做语义改名**。守卫：`crates/frontend/forge-isa-dsl/tests/field_names.rs`。
 
 **指令级编码键覆盖**（S3）：指令 `#[serde(flatten)]` 直接内联 `EncKeys`，逐键压过
 `form` 预设。例如 `form = "MRR"` 但某条需要 `rex_w = "always"`——直接写在本指令，
@@ -624,6 +665,43 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 **asm 占位符语法**：有 `ops` 时 `{名字}` 引用；助记符 = asm 首词（唯一事实来源，
 无独立 `mnemonic` 字段）。`implicit_regs` 是显式隐式寄存器声明（x86 shift 用 CL、
 idiv 用 RAX:RDX、cqo 写 RDX），生成的 `MachineInst::clobbers()` 供 regalloc 避开。
+
+## 多文件组合（`include` / `[[override]]`，v18 S7d）
+
+大 ISA（或"公共骨架 + 各扩展"）不必挤在一个文件里：
+
+```toml
+# riscv_fd.toml（根文件）
+include = ["common/rv_base.toml"]        # 数组；相对**本文件**所在目录解析
+
+[[override]]                             # 显式覆盖被包含文件里的某个键
+key = "meta.version"
+value = "18.0-fd"
+```
+
+合并规则（实现在 `forge_isa_dsl::loader`，单点、可测）：
+
+- **include 序在前、根文件在后**：数组节（`[[instructions]]`/`[[operand_slots]]`/
+  `[[forms]]`/`[[templates]]`…）因此天然"先公共后扩展"；
+- **表节合并**：`[meta]`/`[conventions.bitfields]` 这类表跨文件合并，重复的
+  `[表头]` 视为续写（同一节的键写在不同文件里是允许的）；
+- **同名标量冲突报错**（消息带两个来源文件与 `include` 链），要用
+  `[[override]]` 显式覆盖——取代"后出现的赢"这种隐式规则；
+- **`[[override]]` 的 `key` 是点分路径**（`meta.version`、
+  `conventions.cond.eq.code`），`value` 是新值；覆盖目标在所有文件里都不存在时报错
+  （拼错的键不会静默生效）；
+- **诊断指向真正写那一行的文件**：多文件谱的 `路径:行:列` 是合并后的来源映射，
+  不是"合并文本里的第 N 行"；
+- **递归深度上限 8**；同一文件被包含两次（含成环）报错；
+- 生成物登记**所有来源文件**的 `include_bytes!`，改任一片段都触发重编译。
+
+`include` 与 `[[override]]` 是**组合键**：合并后的文本里不再出现它们，因此模型
+（`deny_unknown_fields`）看不到；若绕过加载器直接把裸文本交给解析器，校验会明确
+报错而不是静默忽略（`forge-isa validate`/`isa_from_file!`/`expand_file` 都走加载器）。
+
+`forge-isa fmt <谱.toml>`（`--out <文件>`）打印/写出**合并后的单文件谱**——把
+"多文件"折叠成一份可读、可继续编辑、可单文件分发的 TOML（夹具
+`crates/backend/forge-codegen/tests/isa/include_root_v12.toml` 就是活例子）。
 
 ## `[[reloc]]` — 重定位表（v18 S3d）
 
@@ -1095,11 +1173,11 @@ memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄�
 - **自包含部分**：`Reg` 枚举、`Inst` 枚举、`encode(&Inst) -> Result<Vec<u8>, String>`、
   `decode(&[u8]) -> Option<(Inst, usize)>`、`disassemble(&Inst) -> String`、
   `assemble(&str) -> Result<Inst, String>`——仅依赖 std。
-- **Inst 字段类型化**：寄存器操作数为 `Reg` 枚举（`MovRRm { dest: Reg, src: Reg,
-  opsize: u8 }`、riscv `Add { rd: Reg, rs1: Reg, rs2: Reg }`），opsize → `u8`、
-  cond → `u8`、mem → `MemRef`、imm/label → `i64`；字段名按操作数语义生成
-  （out→dest/rd、in→src/rs1/rs2、cond→cond、rel→target 等），不再有裸 `u32` 位置
-  字段（op0/op1/op2）。regalloc 经 `Reg::from_index(phys, <槽位 RegClass>)` 回填。
+- **Inst 字段类型化**：寄存器操作数为 `Reg` 枚举（x86 `MovRmR { src: Reg, dst: Reg }`、
+  riscv `Add { dst: Reg, src: Reg, src2: Reg }`），opsize → `u8`、cond → `u8`、
+  mem → `MemRef`、imm/label → `i64`；**字段名 = `ops` 里声明的操作数名**（v18 S7d，
+  见「`[[instructions]]`」节的「声明名 = 生成的 `Inst` 字段名」），不再有裸 `u32`
+  位置字段（op0/op1/op2）。regalloc 经 `Reg::from_index(phys, <槽位 RegClass>)` 回填。
 - **集成层**：`TargetMachine`（组合 `IsaInfo`/`RegInfo`/`ABI`/`Lowering`/`Encoder`/
   `FrameLowering`/`Disassembler`/`Assembler`/`Decoder`）、`MachineInst`（uses/defs/
   reg_field/set_reg_field/effects/branch_targets/clobbers）、`ensure_registered()`
@@ -1162,6 +1240,7 @@ demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
 | `explain <谱.toml> <指令名>` | 单条指令的完整来源：来自哪个模板的哪一行、该行与模板 `body` 的键、生效规格逐字段 |
 | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），逐字段列出 `字段: A → B` |
 | `schema [--out <file>]` | 打印/写出 ISA-DSL 的 **JSON Schema**（仓库根的 `isa-dsl.schema.json` 由此生成） |
+| `fmt <谱.toml> [--out <file>]` | 打印/写出**合并后的单文件谱**（多文件 `include` 折叠成一份；v18 S7d） |
 
 约定：默认人类可读，`--json` 给机读输出（手写发射器，不引 `serde_json`——与方案 §10.4
 "不新增依赖"一致）；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。
@@ -1172,6 +1251,7 @@ cargo run -p forge-isa -- insts isa/riscv64_v12.toml
 cargo run -p forge-isa -- explain isa/arm64_v12.toml ADDREGW
 cargo run -p forge-isa -- diff old.toml new.toml          # 迁移前后"展开后有效规格"对照
 cargo run -p forge-isa -- schema --out isa-dsl.schema.json  # 重新生成编辑器补全用 schema
+cargo run -p forge-isa -- fmt tests/isa/include_root_v12.toml   # 多文件 → 单文件（stdout）
 ```
 
 **编辑器补全（`#:schema`，v18 S7c）**：每份谱（3 个发行 ISA + 6 个夹具）顶部有一行

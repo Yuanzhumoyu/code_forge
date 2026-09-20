@@ -1,0 +1,36 @@
+#:schema ../../../isa-dsl.schema.json
+# demo_include_v12（根文件）—— `include` 组合的**根**部分（v18 S7d）
+#
+# 组合语义（方案 §5.8，见 `forge-isa-dsl::loader`）：
+#   - include 序在前、根文件在后 ⇒ `[[instructions]]`/`[[operand_slots]]` 按序追加；
+#   - 表节（`[meta]`/`[conventions.bitfields]`）跨文件**合并**（重复头改点分续写）；
+#   - 同名标量冲突必须显式 `[[override]]`（这里把 base 的 `[meta].version` 覆盖成
+#     根文件的值——`version` 只出现在 base，覆盖后以根为准）。
+
+include = ["include_base_v12.toml"]
+
+[[override]]
+key = "meta.version"
+value = "18.0-include"
+
+[meta]
+name = "demo_include_v12"
+version = "0.1"
+endian = "little"
+mode = 32
+addr_width = 4
+value_gpr_width = 4
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+[encoding]
+kind = "fixed"
+bits = 16
+
+[[instructions]]
+name = "ISUB"
+form = "RR"
+opcode = 2
+ops = ["dst:r:out", "src:r"]
+asm = "isub {dst}, {src}"

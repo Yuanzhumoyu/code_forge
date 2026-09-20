@@ -23,6 +23,18 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct V12Model {
     pub meta: Meta,
+    /// 多文件组合（`include = [...]`，v18 S7d，见 `forge_isa_dsl::loader`）。
+    ///
+    /// **由 loader 消费**：合并后的文本里不再出现该键（所以正常路径下这里恒为空）。
+    /// 在模型里登记它，是为了让 JSON Schema / 编辑器补全 / 文档键表认识这个键；
+    /// 若有人绕过 loader 直接把**裸文本**交给解析器，校验会明确报错（见
+    /// `validate_all`），不会静默忽略。
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// 显式覆盖（`[[override]]`，v18 S7d；`override` 是 Rust 保留字 → 生字段名 `r#override`）。
+    /// 同上：由 loader 消费，正常路径恒为空。
+    #[serde(default)]
+    pub r#override: Vec<OverrideDef>,
     /// 指令编码宽度三态（`[encoding]`，v18 S4）。**可省**：省略 = 缺省
     /// `kind = "fixed"` 且**不给 bits**（尚未声明字长的骨架文档），真正需要字长的
     /// 生成期会在 `inst_bytes()` 处明确报错——省略整段不会被静默当成定宽 32。
@@ -1735,18 +1747,36 @@ pub enum RelocSemantics {
     PcRelative,
 }
 
-/// 操作数使用：槽 + 角色 + （定宽）位域绑定。
+/// `[[override]]` 表项（v18 S7d）：`key` = 点分路径，`value` = 新值。
+///
+/// 与 `include` 一样属于**组合键**：loader 用它替换被包含文件里的旧行，
+/// 合并文本里既没有 `[[override]]` 块、也没有旧行。模型登记只为 schema/文档一致。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverrideDef {
+    /// 点分路径，如 `meta.version` / `conventions.cond.eq.code`。
+    pub key: String,
+    /// 新值（TOML 标量或数组；loader 渲染成 `key = <值>` 一行）。
+    pub value: toml::Value,
+}
+
+/// 操作数使用：**DSL 声明的名字** + 槽 + 角色（`ops = ["dst:r:out", …]`）。
+///
+/// 名字是作者面唯一的事实源：它既是 `asm` 模板里的占位符名（`{dst}`），
+/// 也是**生成的 `Inst` 变体字段名**（v18 S7d）。编码位置（位域名 / modrm 角色）
+/// 另行派生，不再借用名字——历史实现把"位域名"直接当字段名，于是
+/// `ops = ["dst:r:out", "src:r"]` 生成出 `Inst::Iadd { rd, rs1 }`：
+/// 作者写的名字在用户面**完全没有意义**。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperandUse {
+    /// `ops` 里声明的操作数名（= `asm` 占位符名 = 生成字段名）。
+    pub name: String,
     /// [[operand_slots]] 槽名。
     pub slot: String,
     /// 角色覆盖（缺省 "in"）。
     #[serde(default)]
     pub role: Option<OperandRole>,
-    /// 定宽：该操作数编码到的位域名（rd/rs1/rs2...）。
-    #[serde(default)]
-    pub field: Option<String>,
 }
 
 // ──────────────────────── [[templates]] ────────────────────────

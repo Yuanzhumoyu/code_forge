@@ -154,7 +154,7 @@ fn macro_expansion() {
     ));
     assert_eq!(insts.len(), 2, "insts={:?}", insts);
     assert!(matches!(&insts[0], Inst::Mov16 { .. }));
-    assert!(matches!(&insts[1], Inst::Addi16 { imm16: 7, .. }));
+    assert!(matches!(&insts[1], Inst::Addi16 { imm: 7, .. }));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn macro_nested_expansion() {
     ));
     assert_eq!(insts.len(), 2, "insts={:?}", insts);
     assert!(matches!(&insts[0], Inst::Mov16 { .. }));
-    assert!(matches!(&insts[1], Inst::Addi16 { imm16: 9, .. }));
+    assert!(matches!(&insts[1], Inst::Addi16 { imm: 9, .. }));
 }
 
 #[test]

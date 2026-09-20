@@ -13,11 +13,96 @@
 //! 移除——无兼容层、无转换工具、无逃生门。模型/校验/生成见 [`v12`] 模块。
 
 mod assembler;
+pub mod loader;
 pub mod report;
 pub mod schema;
 mod v12;
 
 pub use v12::V12Error;
+
+/// 生成**部件**选择（`parts = [...]`，v18 S7d；方案 §5.8）。
+///
+/// `Inst` 枚举、寄存器表、内存支撑（`MemRef`/`__render_mem`）是任何部件的公共前提，
+/// **恒定生成**；这里只控制四块可选件。缺省全开（= 历史行为，逐字节不变）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parts {
+    /// `encode()`（含位域助手 `__place`/`__bits`）。
+    pub encode: bool,
+    /// `decode()` / `decode_partial()`。
+    pub decode: bool,
+    /// `disassemble()` / `assemble()`。
+    pub asm: bool,
+    /// TargetMachine 集成层（Encoder/Decoder/ABI/Lowering/FrameLowering/RegInfo/IsaInfo）。
+    pub tm: bool,
+}
+
+impl Default for Parts {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+impl Parts {
+    /// 全开（缺省）。
+    pub fn all() -> Self {
+        Self {
+            encode: true,
+            decode: true,
+            asm: true,
+            tm: true,
+        }
+    }
+
+    /// 是否全开（决定能否打开生成期自测）。
+    pub fn is_full(&self) -> bool {
+        *self == Self::all()
+    }
+
+    /// 从 `parts = [...]` 的名字表构造；未知名字/空表报错（错误消息列出可用名）。
+    pub fn from_names(names: &[String]) -> Result<Self, String> {
+        if names.is_empty() {
+            return Err("parts 不能为空数组（省略该参数 = 四块全开）".into());
+        }
+        let mut p = Self {
+            encode: false,
+            decode: false,
+            asm: false,
+            tm: false,
+        };
+        for n in names {
+            match n.as_str() {
+                "encode" => p.encode = true,
+                "decode" => p.decode = true,
+                "asm" => p.asm = true,
+                "tm" => p.tm = true,
+                other => {
+                    return Err(format!(
+                        "未知部件 `{other}`（可用：encode / decode / asm / tm）"
+                    ));
+                }
+            }
+        }
+        Ok(p)
+    }
+
+    /// 当前部件名列表（错误消息 / 诊断用）。
+    pub fn names(&self) -> String {
+        let mut v = Vec::new();
+        if self.encode {
+            v.push("encode");
+        }
+        if self.decode {
+            v.push("decode");
+        }
+        if self.asm {
+            v.push("asm");
+        }
+        if self.tm {
+            v.push("tm");
+        }
+        v.join(", ")
+    }
+}
 
 /// `isa_from_file!` 的展开选项（宏参数 → 本 crate 的入口参数）。
 #[derive(Debug, Clone, Default)]
@@ -28,14 +113,20 @@ pub struct ExpandOptions {
     pub krate: Option<String>,
     /// 是否生成 `#[cfg(test)] mod __spec_tests`（v18 S6；缺省 true）。
     pub spec_tests: bool,
+    /// 模块名覆盖（`name = "..."`）：生成 `pub mod <name>`（缺省 = 文件 stem）。
+    pub name: Option<String>,
+    /// 部件选择（`parts = [...]`）：缺省全开。
+    pub parts: Parts,
 }
 
 impl ExpandOptions {
-    /// 宏缺省：`krate = None`、`spec_tests = true`。
+    /// 宏缺省：`krate = None`、`spec_tests = true`、`name = None`、`parts` 全开。
     pub fn new() -> Self {
         Self {
             krate: None,
             spec_tests: true,
+            name: None,
+            parts: Parts::all(),
         }
     }
 }
@@ -45,18 +136,52 @@ impl ExpandOptions {
 /// `path` 可以是相对路径（相对当前目录 → `CARGO_MANIFEST_DIR` → workspace 根，
 /// 见 [`read_isa_file`]）。错误已带 `路径:行:列: 错误码` 前缀（可点击）。
 pub fn expand_file(path: &str, opts: &ExpandOptions) -> Result<proc_macro2::TokenStream, String> {
-    let (content, resolved) = read_isa_file(path)?;
-    let mod_name = module_name(path);
+    let (_, resolved) = read_isa_file(path)?;
+    let spec = loader::LoadedSpec::load(&resolved)?;
+    // `name = "..."` 覆盖模块名（缺省 = 文件 stem）。
+    let mod_name = match &opts.name {
+        Some(n) => syn::Ident::new(n, proc_macro2::Span::call_site()),
+        None => module_name(path),
+    };
     let krate: Option<proc_macro2::TokenStream> = opts.krate.as_ref().map(|p| path_tokens(p));
-    let ts = expand_source(
-        &content,
+    let ts = expand_loaded(
+        &spec,
         &mod_name,
-        &resolved,
         krate.as_ref(),
         opts.spec_tests,
+        opts.parts,
     )?;
     dump_generated(path, &ts);
     Ok(ts)
+}
+
+/// 渲染错误：每条诊断的合并行 → (来源文件, 文件内行)，输出可点击的
+/// `路径:行:列: 码: 消息`（多文件谱因此指向**真正写那一行的文件**）。
+pub fn render_error_for(spec: &loader::LoadedSpec, err: &V12Error) -> String {
+    let mut out = String::new();
+    for d in err.diags() {
+        let (file, line) = spec.map_line(d.line);
+        out.push_str(&format!(
+            "{}:{}:{}: {}: {}\n",
+            file.display(),
+            line,
+            d.col,
+            d.code,
+            d.msg
+        ));
+        for n in &d.notes {
+            out.push_str(&format!("  = {n}\n"));
+        }
+    }
+    out
+}
+
+/// 生成期裸消息 → 带 `路径:行:列` 前缀（同样按来源文件映射）。
+fn anchor_msg_for(spec: &loader::LoadedSpec, msg: &str) -> String {
+    let idx = v12::diag::DeclIndex::build(&spec.text);
+    let a = idx.anchor(msg);
+    let (file, line) = spec.map_line(a.line);
+    format!("{}:{}:{}: {}: {msg}", file.display(), line, a.col, a.code)
 }
 
 /// 从**源码字符串**展开（CLI/测试用；不做路径改写——那是宏参数的职责）。
@@ -84,13 +209,23 @@ pub fn validate_source(source: &str, isa_path: &std::path::Path) -> Result<(), V
     }
 }
 
-/// 校验一个谱文件（读文件的便捷包装；文件读不到按一条诊断返回）。
+/// 校验一个谱文件（**支持 `include`**：多文件谱的诊断按来源文件渲染）。
 pub fn validate_file(path: &str) -> Result<(), Vec<String>> {
-    let (content, resolved) = match read_isa_file(path) {
+    let (_, resolved) = match read_isa_file(path) {
         Ok(v) => v,
         Err(e) => return Err(vec![e]),
     };
-    validate_source(&content, &resolved)
+    let spec = match loader::LoadedSpec::load(&resolved) {
+        Ok(s) => s,
+        Err(e) => return Err(vec![e]),
+    };
+    match v12::parse_and_validate(&spec.text) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(render_error_for(&spec, &e)
+            .lines()
+            .map(str::to_string)
+            .collect()),
+    }
 }
 
 /// 文件 stem → 生成模块名（小写、`-` → `_`）。
@@ -128,19 +263,51 @@ fn expand_source(
     krate: Option<&proc_macro2::TokenStream>,
     spec_tests: bool,
 ) -> Result<proc_macro2::TokenStream, String> {
-    // 诊断一次列全（S1）：`render(Some(path))` 每行都带可点击的 `路径:行:列: 码:`。
-    let model = v12::parse_and_validate(source).map_err(|e| e.render(Some(isa_path)))?;
-    let inner = v12::codegen::generate_with(&model, spec_tests)
-        .map_err(|e| v12::anchor_msg(source, isa_path, &e))?;
+    let spec = loader::LoadedSpec::from_text(source.to_string(), isa_path);
+    expand_loaded(&spec, mod_name, krate, spec_tests, Parts::all())
+}
+
+/// 展开**已加载**的谱（`include` 已合并、诊断带来源文件）。
+fn expand_loaded(
+    spec: &loader::LoadedSpec,
+    mod_name: &syn::Ident,
+    krate: Option<&proc_macro2::TokenStream>,
+    spec_tests: bool,
+    parts: Parts,
+) -> Result<proc_macro2::TokenStream, String> {
+    // 生成期自测要用 encode/decode/asm 全部部件——部件受限时明确报错，
+    // 而不是悄悄生成一份编译不过的自测。
+    if spec_tests && !parts.is_full() {
+        return Err(format!(
+            "parts = [{}] 时不能生成生成期自测（`__spec_tests` 需要 encode/decode/asm 全部）\
+             ——请显式写 `spec_tests = false`，或去掉 parts",
+            parts.names()
+        ));
+    }
+    // 诊断一次列全（S1）：每行都带可点击的 `路径:行:列: 码:`（按来源文件映射）。
+    let model = v12::parse_and_validate(&spec.text).map_err(|e| render_error_for(spec, &e))?;
+    let inner = v12::codegen::generate_with_parts(&model, spec_tests, parts)
+        .map_err(|e| anchor_msg_for(spec, &e))?;
     // 宿主 crate 路径：改写生成物里的路径根（见 `rewrite_path_roots`）。
     let inner = match krate {
         Some(k) => rewrite_path_roots(inner, k),
         None => inner,
     };
-    let dep = isa_path.to_string_lossy().replace('\\', "/");
+    // `include_bytes!` 是 stable 上唯一能让 rustc 登记编译依赖的方式：
+    // **每个来源文件**都要登记（多文件谱里改 include 也必须触发重编译）。
+    let deps: Vec<syn::LitStr> = spec
+        .sources
+        .iter()
+        .map(|p| {
+            syn::LitStr::new(
+                &p.to_string_lossy().replace('\\', "/"),
+                proc_macro2::Span::call_site(),
+            )
+        })
+        .collect();
     Ok(quote::quote! {
         pub mod #mod_name {
-            const _: &[u8] = include_bytes!(#dep);
+            #(const _: &[u8] = include_bytes!(#deps);)*
             #inner
         }
     })
@@ -237,6 +404,23 @@ pub fn dump_generated(path: &str, ts: &proc_macro2::TokenStream) {
 mod tests {
     use super::*;
     use quote::quote;
+
+    /// v18 S7d：`parts` 名字解析（未知名/空表报错，错误消息列举可用名）。
+    #[test]
+    fn parts_from_names() {
+        let all = Parts::all();
+        assert!(all.is_full());
+        assert_eq!(all.names(), "encode, decode, asm, tm");
+        let p = Parts::from_names(&["asm".to_string(), "tm".to_string()]).expect("两个部件");
+        assert!(p.asm && p.tm && !p.encode && !p.decode);
+        assert!(!p.is_full());
+        assert_eq!(p.names(), "asm, tm");
+        let e = Parts::from_names(&["nope".to_string()]).unwrap_err();
+        assert!(e.contains("未知部件"), "{e}");
+        assert!(e.contains("encode / decode / asm / tm"), "{e}");
+        let e = Parts::from_names(&[]).unwrap_err();
+        assert!(e.contains("空数组"), "{e}");
+    }
 
     /// `crate::…` 改写为宿主路径；`pub(crate)` 等可见性标记**不**被改写。
     #[test]

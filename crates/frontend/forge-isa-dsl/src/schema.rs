@@ -55,6 +55,8 @@ pub const SECTIONS: &[Section] = &[
         model: "V12Model",
         required: &["meta"],
         optional: &[
+            "include",
+            "override",
             "encoding",
             "reg",
             "conventions",
@@ -75,7 +77,7 @@ pub const SECTIONS: &[Section] = &[
         ],
         flatten: &[],
         additional: false,
-        doc: "ISA 谱根（单文件；多文件组合见方案 §5.8，未实现）",
+        doc: "ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型）",
     },
     Section {
         path: "[meta]",
@@ -406,6 +408,15 @@ pub const SECTIONS: &[Section] = &[
         flatten: &[],
         additional: false,
         doc: "序言/尾声块内容",
+    },
+    Section {
+        path: "[[override]]",
+        model: "OverrideDef",
+        required: &["key", "value"],
+        optional: &[],
+        flatten: &[],
+        additional: false,
+        doc: "多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费）",
     },
 ];
 

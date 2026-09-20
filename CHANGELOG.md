@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-21)
+
+- **ISA-DSL 多文件组合 `include` / `[[override]]` + 部件选择 `parts` + CLI `fmt`（v18 S7d）**。新增 `forge-isa-dsl::loader`（递归 `include`，深度上限 8、重复/成环报错、**按块合并**：数组节按 include 序追加、重复 `[表头]` 视为同节续写、同名标量冲突报错并提示改用 `[[override]]`），`[[override]] key = "点分路径" value = …` 显式覆盖被包含文件里的键（目标不存在即报错，拼错不静默）；诊断带**来源文件映射**——`路径:行:列` 指向真正写那一行的那份文件；生成物对**每个来源文件**都登记 `include_bytes!`（改任一片段都触发重编译）。
+  `isa_from_file!` 参数扩到四个：`krate` / `spec_tests` / **`name = "…"`**（模块名覆盖，同一份谱展开多次必需）/ **`parts = ["encode", "decode", "asm", "tm"]`**（部件选择：`Inst`/`Reg` 枚举与寄存器表是任何部件的公共前提，恒定生成；受限时必须 `spec_tests = false`，否则编译期明确报错）。CLI 新增 `fmt [--out <file>]`：把多文件谱折叠成一份单文件 TOML（可继续编辑、可单文件分发、可独立校验、幂等）。
+  `include`/`[[override]]` 同时进 `V12Model` + JSON Schema + 文档键表（三方针守卫覆盖）；绕过加载器把**裸文本**交给解析器时，带这两个组合键会明确报错而不是静默忽略。修掉 `report::validate_file` 把加载器消息改写成「读不到文件：<根路径>」的问题（缺 include / 覆盖键不存在时现在是点名文件与键的可诊断错误）。
+  文档：`docs/reference/isa-dsl.md` 新增「多文件组合（`include` / `[[override]]`，v18 S7d）」节 + `isa_from_file!` 四参数表 + `fmt` 命令；方案 §5.8 改写为落地形态；夹具 README 增列 `include_root_v12` / `include_base_v12`。
+  用例：`forge-isa-dsl/tests/parts_selection.rs`（7）、`forge-codegen/tests/include_v12_tests.rs`（7，含多文件黄金字节 + 只开 `encode` 的模块真编译）、`forge-isa/tests/cli_tests.rs` 增至 16（多文件 validate/insts、`fmt` 折叠与幂等、诊断指向片段文件、缺 include / 覆盖键不存在必须点名）。
+
+### Changed (2026-09-21)
+
+- **生成 `Inst` 变体的字段名 = `ops` 里声明的操作数名（v18 S7d 修正）**。此前字段名另取一套：定宽 ISA 取位域名（`[forms].operand_fields` 的 `rd`/`rs1`），变长 ISA 取语义角色名（`dest`/`cond`/`mem`/`imm`/`target`）——`ops` 里作者写的名字**只用于 asm 模板**，于是 `ops = ["dst:r:out", "src:r"]` 生成出 `Inst::Iadd { rd, rs1 }`：作者声明的名字在用户面没有任何意义，位域名还泄漏成了 API。
+  现在**字段名就是声明名**（`Inst::Iadd { dst, src }`、x86 `MovRmR { src, dst }`、条件码 `JccRel32 { cc, target }`），位域名/语义角色名退回纯内部**编码键**（只用于查 `[conventions.bitfields]`、modrm 角色与立即数编码表）。名字不能直接作标识符时按最小规则归一：Rust 关键字 → 原始标识符（`type` → `r#type`）、数字开头 → 前缀 `_`（`8bit` → `_8bit`），**不做语义改名**。
+  **编码行为零变化**：`demo_inst12_v12` 生成物 token 级对照（v18 S7a 基线 vs 现在）只有 `rd→dst`(32)/`rs1→src`(32)/`rs2→src2`(16) 共 80 处标识符改名，未触碰任何编码 token（证据 `target/s7d_field_rename_evidence.txt`）；三个 ISA 的黄金字节测试、417 条指令的生成期自测、三条 JIT 矩阵全绿。
+  守卫与迁移：新增 `forge-isa-dsl/tests/field_names.rs`（定宽用声明名而非位域名、关键字原始化、数字开头加前缀、变长 ISA 按声明名）；`OperandUse` 的死字段 `field` 删除，改为携带**声明名** `name`；`crates/backend/forge-codegen/tests/*` 的引用同步改名（`dest`→`dst`、`rd`/`rs1`/`rs2`→`dst`/`src`/`src2`、`imm*`→`imm`、label 域→`target`、`cond`→`cc`）。文档：`docs/reference/isa-dsl.md` 的「命名操作数」「`[[forms]]`」「代码生成输出」三节改写为"声明名 = 字段名，位域名 = 编码位置"。
+
 ### Added (2026-09-20)
 
 - **ISA-DSL 的 JSON Schema + `#:schema` 编辑器补全（v18 S7c），三方一致由守卫钉住**。`forge-isa-dsl::schema`（手写发射器，不引 `schemars`）把谱的 TOML 结构发射成 JSON Schema（draft 2020-12，32 个节定义 + 18 个根键，含必填/可选/编码键与节级说明）；`forge-isa schema [--out <file>]` 打印或写出，仓库根的 `isa-dsl.schema.json` 由它生成并签入；3 个发行 ISA + 6 个夹具的 TOML 顶部加 `#:schema <相对路径>` 注释，Taplo 等语言服务据此补全。

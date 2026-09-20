@@ -285,6 +285,19 @@ pub(crate) fn inst_reg_imm_fids<'a>(
         .collect();
     Some((regs, imms))
 }
+/// **只**生成 `Reg` 枚举 + `PhysReg` impl + 三个类常量（v18 S7d）。
+///
+/// 这些不是"TargetMachine 集成层"的私产：`Inst` 的 Reg 字段类型就是 `Reg`，
+/// 因此 `parts` 不含 `tm` 时（只要生成 encode/decode/asm）也必须发射。
+/// `tm` 在时由 [`gen_integration`] 负责（保持生成物逐字节不变）。
+pub fn gen_reg_enum_only(model: &V12Model) -> Result<TokenStream, String> {
+    let reg_enum = super::machine::gen_reg_enum(model)?;
+    Ok(quote! {
+        use forge_ir::PhysReg;
+        #reg_enum
+    })
+}
+
 /// 生成集成层组件（Reg 枚举 + MachineInst + Encoder + Decoder + Disasm +
 /// Assembler + ABI + FrameLowering + Lowering + TargetMachine）。
 pub fn gen_integration(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {

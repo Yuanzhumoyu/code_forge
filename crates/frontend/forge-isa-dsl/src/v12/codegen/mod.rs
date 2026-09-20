@@ -145,9 +145,49 @@ pub(crate) fn field_ctor_expr_view(
     }
 }
 
+/// DSL 操作数名 → Rust 字段标识符（v18 S7d）。
+///
+/// 名字全部来自 `ops = ["dst:r:out", …]` 的 `dst`——作者写什么，用户面就看到什么。
+/// 归一化只处理"不能直接当标识符"的情况（数字开头/含 `-` → `_`；Rust 关键字 →
+/// 原始标识符 `r#…`；`self`/`Self`/`super`/`crate` 不能原始化 → 末尾加 `_`），
+/// 不做任何语义改名。
+fn operand_field_ident(name: &str, inst_name: &str, i: usize) -> Result<syn::Ident, String> {
+    let span = proc_macro2::Span::call_site();
+    let mut s = String::with_capacity(name.len() + 1);
+    for (n, ch) in name.chars().enumerate() {
+        let ch = if ch.is_ascii_alphanumeric() || ch == '_' {
+            ch
+        } else {
+            '_'
+        };
+        if n == 0 && ch.is_ascii_digit() {
+            s.push('_');
+        }
+        s.push(ch);
+    }
+    if s.is_empty() {
+        return Err(format!(
+            "[[instructions.{inst_name}]].ops[{i}]: 操作数名 '{name}' 不能作为 Rust 字段名"
+        ));
+    }
+    // 普通标识符 → 直接用；关键字 → 原始标识符；不可原始化 → 加后缀。
+    if let Ok(id) = syn::parse_str::<syn::Ident>(&s) {
+        return Ok(id);
+    }
+    if !matches!(s.as_str(), "self" | "Self" | "super" | "crate" | "extern")
+        && syn::parse_str::<syn::Ident>(&format!("r#{s}")).is_ok()
+    {
+        return Ok(syn::Ident::new_raw(&s, span));
+    }
+    Ok(syn::Ident::new(&format!("{s}_"), span))
+}
+
 /// 变长 ISA 的语义化操作数名（替代位置名 op{i}，恢复 v11 可读性）：
 /// Reg out→dest、Reg in→src/src2/src3、cond→cond、
 /// mem→mem、imm→imm、label→target；重名时追加序号。
+///
+/// **只是编码键名**（查 `[conventions.bitfields]` / modrm 角色 / 立即数编码表），
+/// 与生成的 Rust 字段名无关（后者见 [`operand_field_ident`]）。
 fn semantic_operand_name(op: &OperandUse, slot: &OperandSlot, _i: usize) -> String {
     match slot.kind {
         OperandKind::Reg => match op.role {
@@ -172,6 +212,17 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
 /// __spec_tests`（v18 S6）。夹具谱在 `tests/common/mod.rs` 里会被多个测试二进制
 /// 反复展开，故那里显式关掉、由专门的用例二进制打开（见 `isa_from_file!` 参数）。
 pub fn generate_with(model: &V12Model, spec_tests: bool) -> Result<TokenStream, String> {
+    generate_with_parts(model, spec_tests, crate::Parts::all())
+}
+
+/// [`generate_with`] 的**部件级**版本（v18 S7d）：`parts` 控制四块可选件是否发射。
+/// `Inst` 枚举 / 寄存器表 / 内存支撑恒定发射（任何部件都依赖它们）；位域助手
+/// `__place`/`__bits` 跟着 encode/decode 走。
+pub fn generate_with_parts(
+    model: &V12Model,
+    spec_tests: bool,
+    parts: crate::Parts,
+) -> Result<TokenStream, String> {
     // 只有 `prefix_scan`（x86 风格前缀链）走 `vlen.rs` 的定长切片路径；
     // `fixed` 与 `mixed` 都按位域编解码（`mixed` 逐指令取字长）。
     let prefix_scan = model.is_prefix_scan();
@@ -198,8 +249,37 @@ pub fn generate_with(model: &V12Model, spec_tests: bool) -> Result<TokenStream, 
     } else {
         gen_bit_helpers()
     };
-    let disasm_fn = asm::gen_disassemble(&infos)?;
-    let asm_fn = asm::gen_assemble(&infos, model)?;
+    // ── 可选部件（`parts = [...]`，v18 S7d）──
+    let (disasm_fn, asm_fn) = if parts.asm {
+        (
+            asm::gen_disassemble(&infos)?,
+            asm::gen_assemble(&infos, model)?,
+        )
+    } else {
+        (quote! {}, quote! {})
+    };
+    let encode_fn = if parts.encode {
+        encode_fn
+    } else {
+        quote! {}
+    };
+    let decode_fn = if parts.decode {
+        decode_fn
+    } else {
+        quote! {}
+    };
+    let bit_helpers = if parts.encode || parts.decode {
+        bit_helpers
+    } else {
+        quote! {}
+    };
+    // `Reg` 枚举/`PhysReg` impl/类常量是 `Inst` 字段类型的前提：`tm` 部件不在时
+    // 必须单独发射（`tm` 在时由集成层发射，生成物因此逐字节不变）。
+    let reg_enum = if parts.tm {
+        quote! {}
+    } else {
+        integration::gen_reg_enum_only(model)?
+    };
     // v18 S6：生成期自测（每条指令的规格往返 + 边界）。
     let spec_tests_ts = if spec_tests {
         spec::gen_spec_tests(&infos, model)?
@@ -208,7 +288,11 @@ pub fn generate_with(model: &V12Model, spec_tests: bool) -> Result<TokenStream, 
     };
     // 迭代 5：TargetMachine 集成层（MachineInst/Encoder/Decoder/ABI/
     // FrameLowering/Lowering/TargetMachine 组装）。
-    let integration = integration::gen_integration(&infos, model)?;
+    let integration = if parts.tm {
+        integration::gen_integration(&infos, model)?
+    } else {
+        quote! {}
+    };
     Ok(quote! {
         // ── v12 生成模块（迭代 2/3/3b：自包含 encode/decode/asm）──
         #reg_tables
@@ -219,6 +303,7 @@ pub fn generate_with(model: &V12Model, spec_tests: bool) -> Result<TokenStream, 
         #decode_fn
         #disasm_fn
         #asm_fn
+        #reg_enum
         // ── v12 TargetMachine 集成层（迭代 5）──
         #integration
         // ── 生成期自测（v18 S6，`cfg(test)`）──
@@ -359,34 +444,32 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>
                         inst.name, op.slot, asm
                     )
                 })?;
-            // 字段名：定宽 → 位域名（operand_fields[i] 或 field 覆盖）；
-            // 变长 → 语义名（dest/src/cond/mem/imm/target；field 覆盖优先）。
-            let field = if fixed {
-                if let Some(f) = &op.field {
-                    f.clone()
-                } else {
-                    of.and_then(|f| f.get(i)).cloned().ok_or_else(|| {
-                        format!(
-                            "[[instructions.{}]]: operand {} missing operand_fields entry",
-                            inst.name, i
-                        )
-                    })?
-                }
+            // ① **编码键名**（`fname`）：定宽 → 位域名（`operand_fields[i]`，查
+            // `[conventions.bitfields]` 用）；变长 → 语义角色名（dest/src/cond/mem/imm/
+            // target，查 modrm 角色与立即数编码表用）。**只用于编码**，改名会影响编码。
+            let fname = if fixed {
+                of.and_then(|f| f.get(i)).cloned().ok_or_else(|| {
+                    format!(
+                        "[[instructions.{}]]: operand {} missing operand_fields entry",
+                        inst.name, i
+                    )
+                })?
             } else {
-                op.field.clone().unwrap_or_else(|| {
-                    let mut name = semantic_operand_name(op, slot, i);
-                    // 重名去重：src→src2/src3、dest→dest2、imm→imm2 …
-                    let mut n = 2;
-                    while operands.iter().any(|(f, _, _, _)| f == &name) {
-                        name = format!("{}{}", semantic_operand_name(op, slot, i), n);
-                        n += 1;
-                    }
-                    name
-                })
+                let mut name = semantic_operand_name(op, slot, i);
+                // 重名去重：src→src2/src3、dest→dest2、imm→imm2 …
+                let mut n = 2;
+                while operands.iter().any(|(f, _, _, _)| f == &name) {
+                    name = format!("{}{}", semantic_operand_name(op, slot, i), n);
+                    n += 1;
+                }
+                name
             };
-            let fid = format_ident!("{}", field);
+            // ② **Rust 字段名**（`fid`）：**就是 `ops` 里作者声明的名字**（v18 S7d）。
+            // 定宽 ISA 不再拿位域名（rd/rs1）冒充字段名，变长 ISA 也不再用
+            // dest/src 之类语义名覆盖作者写下的 dst/src。
+            let fid = operand_field_ident(&op.name, &inst.name, i)?;
             let role = op.role.unwrap_or(OperandRole::In);
-            operands.push((field, fid, slot, role));
+            operands.push((fname, fid, slot, role));
         }
         out.push(InstInfo {
             // asm 规范化：命名形态的 `{dst}` 已换成 `{1}`，下游（asm/machine/
@@ -406,17 +489,13 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>
 /// 从 asm 模板解析：首词 = 助记符；操作数占位符 `{i:[槽:角色]}` 内联声明。
 /// 返回 (助记符, 操作数声明表，按序号排序且连续)。
 /// validate.rs 也调用本函数做操作数校验（槽存在/角色合法/序号连续）。
-/// 解析 `ops = ["名字:槽[:角色]", …]`：返回 (名字表, 操作数用法表)，序即编码序。
-fn parse_ops_list(
-    ops: &[String],
-    inst_name: &str,
-) -> Result<(Vec<String>, Vec<OperandUse>), String> {
+/// 解析 `ops = ["名字:槽[:角色]", …]`：返回操作数用法表（含**声明名**），序即编码序。
+fn parse_ops_list(ops: &[String], inst_name: &str) -> Result<Vec<OperandUse>, String> {
     let ctx = || format!("[[instructions.{inst_name}]].ops");
     if ops.is_empty() {
         return Err(format!("{}: 不能为空数组（省略该键即可）", ctx()));
     }
-    let mut names = Vec::with_capacity(ops.len());
-    let mut uses = Vec::with_capacity(ops.len());
+    let mut uses: Vec<OperandUse> = Vec::with_capacity(ops.len());
     for (i, entry) in ops.iter().enumerate() {
         let mut parts = entry.split(':').map(str::trim);
         let name = parts.next().unwrap_or("");
@@ -431,7 +510,7 @@ fn parse_ops_list(
         if name.is_empty() || slot.is_empty() {
             return Err(format!("{}[{i}] '{entry}': 名字与槽都不能为空", ctx()));
         }
-        if names.iter().any(|n| n == name) {
+        if uses.iter().any(|u| u.name == name) {
             return Err(format!("{}[{i}]: 操作数名 '{name}' 重复", ctx()));
         }
         let role = match role {
@@ -445,14 +524,13 @@ fn parse_ops_list(
                 ));
             }
         };
-        names.push(name.to_string());
         uses.push(OperandUse {
+            name: name.to_string(),
             slot: slot.to_string(),
             role: Some(role),
-            field: None,
         });
     }
-    Ok((names, uses))
+    Ok(uses)
 }
 
 /// 命名 asm 模板 → 索引形态：`{dst}` → `{1}`（按 `ops` 声明序）。
@@ -518,7 +596,8 @@ pub(crate) fn parse_asm_decl(
         }
         return Ok((Vec::new(), asm.to_string()));
     };
-    let (names, uses) = parse_ops_list(list, inst_name)?;
+    let uses = parse_ops_list(list, inst_name)?;
+    let names: Vec<String> = uses.iter().map(|u| u.name.clone()).collect();
     let norm_asm = normalize_named_template(asm, &names, inst_name)?;
     let segs = asm::parse_template(&norm_asm)?;
     for (n, name) in names.iter().enumerate() {

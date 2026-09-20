@@ -17,6 +17,8 @@ use crate::v12::model::{EncodingKind, RegClass, V12Model};
 /// 一条诊断（渲染与 JSON 都用它）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagLine {
+    /// 来源文件（多文件谱里诊断可能落在 include 的文件上；单文件 = 根文件）。
+    pub file: Option<String>,
     /// 节级错误码（`DSL-INST`/`DSL-TEMPLATE`/…）。
     pub code: String,
     /// ISA TOML 内 1-based 行/列。
@@ -31,6 +33,7 @@ impl DiagLine {
     /// 无位置的整条消息（生成期错误、文件读不到等）。
     pub fn plain(msg: &str) -> Self {
         Self {
+            file: None,
             code: "DSL-OTHER".into(),
             line: 1,
             col: 1,
@@ -50,6 +53,7 @@ impl From<&V12Error> for Vec<DiagLine> {
         e.diags()
             .into_iter()
             .map(|d| DiagLine {
+                file: None,
                 code: d.code.to_string(),
                 line: d.line,
                 col: d.col,
@@ -246,6 +250,7 @@ pub fn explain(source: &str, name: &str) -> Result<Explain, Vec<DiagLine>> {
         let mut names: Vec<&str> = infos.iter().map(|i| i.inst.name.as_str()).collect();
         names.sort_unstable();
         vec![DiagLine {
+            file: None,
             code: "DSL-INST".into(),
             line: 1,
             col: 1,
@@ -359,14 +364,23 @@ pub fn class_name(c: RegClass) -> String {
 
 /// 读文件 + 校验（CLI 的 `validate <file>` 用）；返回 (渲染好的诊断行, ISA 名)。
 pub fn validate_file(path: &Path) -> (Vec<DiagLine>, Option<String>) {
-    let Ok(source) = std::fs::read_to_string(path) else {
-        return (
-            vec![DiagLine::plain(&format!("读不到文件：{}", path.display()))],
-            None,
-        );
+    // 加载失败（缺 include / 成环 / 同名标量冲突 / `[[override]]` 目标不存在…）：
+    // **原样**把加载器的消息交出去。不要改写成"读不到文件：<根路径>"——那会把
+    // "片段缺文件"这类真正可诊断的问题伪装成"根文件读不到"（v18 S7d 修）。
+    let spec = match crate::loader::LoadedSpec::load(path) {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                e.lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(DiagLine::plain)
+                    .collect(),
+                None,
+            );
+        }
     };
-    let diags = validate(&source);
-    let name = crate::v12::parse_and_validate(&source)
+    let diags = validate_loaded(&spec);
+    let name = crate::v12::parse_and_validate(&spec.text)
         .ok()
         .map(|m| m.meta.name);
     (diags, name)
@@ -380,6 +394,64 @@ pub fn read_source(path: &Path) -> Result<String, Vec<DiagLine>> {
             path.display()
         ))]
     })
+}
+
+// ─────────────────── 多文件谱（include）入口（v18 S7d）───────────────────
+//
+// 注意：这些**必须排在 `mod tests` 之前**——clippy 的 `items_after_test_module`
+// 会拒绝"测试模块之后还有条目"（它抓的正是"新代码顺手加在文件末尾"）。
+
+/// 把诊断的合并行号映射回来源文件（[`crate::loader::LoadedSpec::map_line`]）。
+fn map_files(spec: &crate::loader::LoadedSpec, diags: &mut [DiagLine]) {
+    for d in diags.iter_mut() {
+        let (file, line) = spec.map_line(d.line);
+        d.file = Some(file.display().to_string());
+        d.line = line;
+    }
+}
+
+/// 校验已加载的谱（支持 `include`；诊断带来源文件）。
+pub fn validate_loaded(spec: &crate::loader::LoadedSpec) -> Vec<DiagLine> {
+    let mut d = validate(&spec.text);
+    map_files(spec, &mut d);
+    d
+}
+
+/// 展开已加载的谱（支持 `include`；诊断带来源文件）。
+pub fn insts_loaded(
+    spec: &crate::loader::LoadedSpec,
+) -> Result<(IsaSummary, Vec<InstRow>), Vec<DiagLine>> {
+    insts(&spec.text).map_err(|mut d| {
+        map_files(spec, &mut d);
+        d
+    })
+}
+
+/// 单条指令解释（支持 `include`）。
+pub fn explain_loaded(
+    spec: &crate::loader::LoadedSpec,
+    name: &str,
+) -> Result<Explain, Vec<DiagLine>> {
+    explain(&spec.text, name).map_err(|mut d| {
+        map_files(spec, &mut d);
+        d
+    })
+}
+
+/// 两份谱的规格 diff（支持 `include`）。
+pub fn diff_loaded(
+    a: &crate::loader::LoadedSpec,
+    b: &crate::loader::LoadedSpec,
+) -> Result<SpecDiff, Vec<DiagLine>> {
+    diff(&a.text, &b.text).map_err(|mut d| {
+        map_files(a, &mut d);
+        d
+    })
+}
+
+/// 读文件 + 展开为 [`crate::loader::LoadedSpec`]（CLI 用；读不到/include 错按诊断返回）。
+pub fn load_spec(path: &Path) -> Result<crate::loader::LoadedSpec, Vec<DiagLine>> {
+    crate::loader::LoadedSpec::load(path).map_err(|e| vec![DiagLine::plain(&e)])
 }
 
 #[cfg(test)]

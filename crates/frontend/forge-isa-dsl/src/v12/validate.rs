@@ -18,6 +18,22 @@ fn collect(d: &mut Diags, idx: &DeclIndex, r: Result<(), String>) {
 
 /// 全部校验（收集式，一次报全）。
 pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
+    // 组合键（`include` / `[[override]]`）由 `forge_isa_dsl::loader` 在**合并阶段**
+    // 消费；走到这里说明文本没经过 loader（裸文本入口），此时它们不生效——必须
+    // 明确报错，否则"写了 include 却没被包含"会静默变成一个缺指令的谱。
+    if !m.include.is_empty() || !m.r#override.is_empty() {
+        let which = if !m.include.is_empty() {
+            "include"
+        } else {
+            "[[override]]"
+        };
+        d.push_anchored(
+            idx,
+            &format!(
+                "{which} 需要经多文件加载器展开：请用 `isa_from_file!` / `forge-isa` CLI /                  `forge_isa_dsl::expand_file`（它们自动处理 include 与 [[override]]），                 或把结果合并成单文件"
+            ),
+        );
+    }
     collect(d, idx, validate_meta(m));
     collect(d, idx, validate_encoding(m));
     collect(d, idx, validate_regs(m));

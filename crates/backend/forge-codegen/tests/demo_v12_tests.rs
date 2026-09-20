@@ -148,7 +148,7 @@ fn parse_insts_two_pass_labels() {
     assert_eq!(insts.len(), 3);
     // label 槽回填为 Block 索引（两处引用同一 loop = 块 1）
     match (&insts[0], &insts[2]) {
-        (Inst::Brz { imm16: a, .. }, Inst::Brz { imm16: b, .. }) => {
+        (Inst::Brz { target: a, .. }, Inst::Brz { target: b, .. }) => {
             assert_eq!(*a, 1);
             assert_eq!(*b, 1);
         }
@@ -199,7 +199,7 @@ fn parse_insts_directives() {
     assert_eq!(insts[0], Inst::Raw(vec![0xde, 0xad, 0xbe, 0xef]));
     assert!(matches!(insts[1], Inst::Mov32 { .. }));
     // 标签 loop → 块 2（nop 所在）
-    assert!(matches!(&insts[3], Inst::Brz { imm16: 2, .. }));
+    assert!(matches!(&insts[3], Inst::Brz { target: 2, .. }));
     // 总字节 = 4 + 4 + 4 + 4 = 16（align 对齐）
     let total: usize = insts.iter().map(|i| encode(i).unwrap().len()).sum();
     assert_eq!(total, 16);

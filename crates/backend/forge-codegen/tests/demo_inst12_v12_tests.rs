@@ -45,9 +45,9 @@ fn twelve_bit_word_is_two_bytes() {
     assert_eq!(
         inst,
         Inst::Add12 {
-            rd: Reg::A1,
-            rs1: Reg::A2,
-            rs2: Reg::A3,
+            dst: Reg::A1,
+            src: Reg::A2,
+            src2: Reg::A3,
         }
     );
 }

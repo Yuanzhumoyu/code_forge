@@ -29,6 +29,8 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
   forge-isa diff     <a.toml> <b.toml> [--json]
                                              两份谱的规格 diff（增/删/改字段）
   forge-isa schema   [--out <file>]         打印（或写出）ISA-DSL 的 JSON Schema
+  forge-isa fmt      <谱.toml> [--out <file>] 打印（或写出）**合并后**的规范文稿
+                                             （include 展开 + override 应用，供人核对）
   forge-isa --help | --version
 
 退出码：0 = 成功；1 = 诊断或失败；2 = 用法错误。";
@@ -88,6 +90,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             };
             Ok(cmd_diff(a, b, json))
         }
+        "fmt" => {
+            let out = flag_value(&args[1..], "--out")?;
+            let files = paths(&args[1..], &["--out"])?;
+            // `--out <file>` 的值会被 paths() 当成位置参数 → 允许 1~2 个并取第一个。
+            let Some(file) = files.first() else {
+                return Err("fmt 需要一个谱文件".into());
+            };
+            Ok(cmd_fmt(file, out))
+        }
         "schema" => {
             // `--out <file>`：写文件（仓库根的 `isa-dsl.schema.json` 就是这样生成的）；
             // 缺省打印到 stdout。
@@ -109,6 +120,45 @@ fn flag_value(args: &[String], flag: &str) -> Result<Option<PathBuf>, String> {
         }
     }
     Ok(None)
+}
+
+/// `fmt`：把 **include 展开 + override 应用**后的规范文稿打出来（人工核对用）。
+///
+/// 不做"原地重排/美化"——那会丢掉注释与用户排版；它的价值是让多文件谱有一个
+/// **确定性、可 diff** 的等价单文件视图（诊断的行号也指向这份文稿）。
+fn cmd_fmt(file: &Path, out: Option<PathBuf>) -> ExitCode {
+    let spec = match report::load_spec(file) {
+        Ok(s) => s,
+        Err(d) => {
+            print_diags(file, &d);
+            return ExitCode::from(1);
+        }
+    };
+    match out {
+        Some(path) => match std::fs::write(&path, &spec.text) {
+            Ok(()) => {
+                println!(
+                    "写出 {}（来源 {} 个文件：{}）",
+                    path.display(),
+                    spec.sources.len(),
+                    spec.sources
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("写 {} 失败：{e}", path.display());
+                ExitCode::from(1)
+            }
+        },
+        None => {
+            print!("{}", spec.text);
+            ExitCode::SUCCESS
+        }
+    }
 }
 
 fn cmd_schema(out: Option<PathBuf>) -> ExitCode {
@@ -153,14 +203,14 @@ fn paths(args: &[String], flags: &[&str]) -> Result<Vec<PathBuf>, String> {
 /// 打印诊断（`路径:行:列: 码: 消息` + 附注），返回是否有错。
 fn print_diags(path: &Path, diags: &[DiagLine]) -> bool {
     for d in diags {
-        println!(
-            "{}:{}:{}: {}: {}",
-            path.display(),
-            d.line,
-            d.col,
-            d.code,
-            d.msg
-        );
+        // 多文件谱：诊断自带来源文件（include 里的错要指向那个文件）；否则用根文件。
+        let shown = d.file.as_deref().unwrap_or("");
+        let shown = if shown.is_empty() {
+            path.display().to_string()
+        } else {
+            shown.to_string()
+        };
+        println!("{}:{}:{}: {}: {}", shown, d.line, d.col, d.code, d.msg);
         for n in &d.notes {
             println!("  = {n}");
         }
@@ -191,14 +241,14 @@ fn cmd_validate(files: &[PathBuf]) -> ExitCode {
 }
 
 fn cmd_insts(file: &Path, json: bool) -> ExitCode {
-    let source = match report::read_source(file) {
+    let spec = match report::load_spec(file) {
         Ok(s) => s,
         Err(d) => {
             print_diags(file, &d);
             return ExitCode::from(1);
         }
     };
-    match report::insts(&source) {
+    match report::insts_loaded(&spec) {
         Err(diags) => {
             print_diags(file, &diags);
             ExitCode::from(1)
@@ -278,14 +328,14 @@ fn inst_line(r: &InstRow) -> String {
 }
 
 fn cmd_explain(file: &Path, inst: &str, json: bool) -> ExitCode {
-    let source = match report::read_source(file) {
+    let spec = match report::load_spec(file) {
         Ok(s) => s,
         Err(d) => {
             print_diags(file, &d);
             return ExitCode::from(1);
         }
     };
-    match report::explain(&source, inst) {
+    match report::explain_loaded(&spec, inst) {
         Err(diags) => {
             print_diags(file, &diags);
             ExitCode::from(1)
@@ -334,14 +384,14 @@ fn print_explain(e: &Explain) {
 }
 
 fn cmd_diff(a: &Path, b: &Path, json: bool) -> ExitCode {
-    let (sa, sb) = match (report::read_source(a), report::read_source(b)) {
+    let (sa, sb) = match (report::load_spec(a), report::load_spec(b)) {
         (Ok(x), Ok(y)) => (x, y),
         (Err(d), _) | (_, Err(d)) => {
             print_diags(a, &d);
             return ExitCode::from(1);
         }
     };
-    match report::diff(&sa, &sb) {
+    match report::diff_loaded(&sa, &sb) {
         Err(diags) => {
             print_diags(a, &diags);
             ExitCode::from(1)

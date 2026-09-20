@@ -26,9 +26,9 @@ fn target_machine_assembles() {
 #[test]
 fn machine_inst_queries() {
     use forge_codegen::x86_v12::{Inst, Reg};
-    // movrr rax, rbx:op0=dest(out)=RAX, op1=src(in)=RBX, op2=opsize
+    // movrr rax, rbx:op0=dst(out)=RAX, op1=src(in)=RBX, op2=opsize
     let inst = Inst::MovRRm {
-        dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+        dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
         src: Reg::from_index(3, forge_ir::RegClass::GPR64),
     };
     let uses: smallvec::SmallVec<[u32; 4]> = inst.uses();
@@ -36,7 +36,7 @@ fn machine_inst_queries() {
     let want_uses: smallvec::SmallVec<[u32; 4]> = smallvec::smallvec![3u32];
     let want_defs: smallvec::SmallVec<[u32; 2]> = smallvec::smallvec![0u32];
     assert_eq!(uses, want_uses, "movrr uses = src");
-    assert_eq!(defs, want_defs, "movrr defs = dest");
+    assert_eq!(defs, want_defs, "movrr defs = dst");
     // reg_field 顺序 = 操作数序(Reg 位置序):op0 → 0, op1 → 1
     assert_eq!(inst.reg_field(0), 0);
     assert_eq!(inst.reg_field(1), 3);
@@ -45,8 +45,8 @@ fn machine_inst_queries() {
     m.set_reg_field(0, 8, forge_ir::RegClass::GPR64);
     m.set_reg_field(1, 9, forge_ir::RegClass::GPR64);
     match m {
-        Inst::MovRRm { dest, src, .. } => {
-            assert_eq!(dest.to_index(), 8);
+        Inst::MovRRm { dst, src, .. } => {
+            assert_eq!(dst.to_index(), 8);
             assert_eq!(src.to_index(), 9);
         }
         _ => panic!("expected MovRRm"),
@@ -63,7 +63,7 @@ fn encoder_decoder_via_tm() {
     use forge_codegen::x86_v12::Inst;
     let tm = forge_codegen::x86_v12::TargetMachine::new();
     let inst = Inst::MovRRm {
-        dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+        dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
         src: Reg::from_index(3, forge_ir::RegClass::GPR64),
     };
     let mut sink = forge_codegen::CodeSink::default();
@@ -81,7 +81,7 @@ fn encoder_decoder_via_tm() {
     assert_eq!(
         dec,
         Inst::MovRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
             src: Reg::from_index(3, forge_ir::RegClass::GPR64),
         }
     );
@@ -95,7 +95,7 @@ fn encoder_decoder_via_tm() {
         insts,
         vec![Inst::MovRmR {
             src: Reg::from_index(3, forge_ir::RegClass::GPR64),
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR64),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
         }]
     );
     // "mov eax, ebx"（32 位）→ MOV_R_RM（0x8B 方向）
@@ -103,7 +103,7 @@ fn encoder_decoder_via_tm() {
     assert_eq!(
         insts,
         vec![Inst::MovRRm {
-            dest: Reg::from_index(0, forge_ir::RegClass::GPR(4)),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR(4)),
             src: Reg::from_index(3, forge_ir::RegClass::GPR(4)),
         }]
     );
@@ -153,8 +153,8 @@ fn lowering_iadd_packet() {
     assert_eq!(m1[1], (out, 1u8, true), "AddRmR field1 = out(def)");
     // 占位字段 = from_index(0)（regalloc 前）
     match &pack.insts[0] {
-        Inst::MovRRm { dest, src, .. } => {
-            assert_eq!(dest.to_index(), 0);
+        Inst::MovRRm { dst, src, .. } => {
+            assert_eq!(dst.to_index(), 0);
             assert_eq!(src.to_index(), 0);
         }
         _ => unreachable!(),
@@ -229,7 +229,7 @@ fn frame_epilogue_bytes() {
     let mut sink = forge_codegen::CodeSink::default();
     fl.emit_epilogue(0, &rm, &mut sink).expect("epilogue");
     let bytes = sink.bytes();
-    // mov64rr rsp, rbp(48 89 ec: reg=src: rbp=5、rm=dest: rsp=4 → 0xEC) +
+    // mov64rr rsp, rbp(48 89 ec: reg=src: rbp=5、rm=dst: rsp=4 → 0xEC) +
     // sub rsp, 56(48 81 ec 38 00 00 00：rsp=rbp-56 到 callee-saved 区) +
     // pop r15..rbx + pop rbp(5d) + ret(c3)
     assert_eq!(&bytes[0..3], &[0x48, 0x89, 0xEC], "mov64rr rsp, rbp");
@@ -294,7 +294,7 @@ fn terminator_return_packet() {
             &mut ctx,
         )
         .expect("lower Return");
-    // MOV_RM8_R64(0x89: reg=src: val、rm=dest: RAX)——与 v11 一致：不生成 RET，
+    // MOV_RM8_R64(0x89: reg=src: val、rm=dst: RAX)——与 v11 一致：不生成 RET，
     // return block 经 epilogue_jump 跳到 epilogue 统一恢复。
     assert_eq!(
         pack.insts.len(),

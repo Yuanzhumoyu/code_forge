@@ -301,15 +301,26 @@ let name = node.get_text("name")?;
   **两条矩阵是两套能力集，改类表/值池/ABI 必须都跑**（2026-09-13 实测：x86 全绿
   而 riscv 的 7 个 fcmp 错值，正是 riscv 通道抓到的）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。
-- **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema <谱.toml>`——
+- **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt <谱.toml>`——
   不接后端就能校验（全部诊断 + 行:列）、看**展开后**的指令与生效编码键、查单条指令的
   模板 provenance（哪个模板哪一行）、两份谱的规格 diff（迁移前后对照）、打印/写出 JSON
-  Schema。`--json` 机读；退出码 0/1/2。实现 = `forge-isa-dsl::report` + `::schema` 投影层 +
-   CLI 薄层，复用 `collect_inst_infos` 的"form 预设 ⊕ 指令覆盖"判定（不重复实现）。
+  Schema、把多文件谱 `fmt` 折叠成单文件（v18 S7d）。`--json` 机读；退出码 0/1/2。
+  实现 = `forge-isa-dsl::report` + `::schema` 投影层 + CLI 薄层，复用
+  `collect_inst_infos` 的"form 预设 ⊕ 指令覆盖"判定（不重复实现）。
   **三方针守卫必须改三处一起改**：schema 表（`src/schema.rs`）↔ `v12/model.rs` 结构体字段
   ↔ `docs/reference/isa-dsl.md` 的「键总览（速查表）」区段 + 签入的 `isa-dsl.schema.json`
   （`cargo test -p forge-isa-dsl --test schema_guard` 全钉住；重新生成 schema 用
   `cargo run -p forge-isa -- schema --out isa-dsl.schema.json`）。
+- **多文件谱（v18 S7d）**：`include = ["…"]` + `[[override]]` 由 `forge-isa-dsl::loader`
+  消费（按块合并；数组节按 include 序追加、重复 `[表头]` 视为续写、同名标量冲突报错）；
+  它是所有公开入口（`isa_from_file!`/`expand_file`/`validate_file`/CLI）的必经之路，
+  诊断按来源文件映射，生成物对**每个来源**登记 `include_bytes!`。`include`/`[[override]]`
+  是组合键（合并后不存在），裸文本入口带它们会明确报错。
+- **生成字段名 = `ops` 声明的名字（v18 S7d 修正）**：`ops = ["dst:r:out", "src:r"]`
+  ⇒ `Inst::Iadd { dst, src }`；`[forms].operand_fields` 的名字（`rd`/`rs1`）与变长 ISA 的
+  语义名（`dest`/`cond`）**只是内部编码键**（查 `[conventions.bitfields]`/modrm 角色/立即数
+  表），不得再泄漏成字段名。关键字 → `r#type`、数字开头 → `_8bit`（最小归一，不做语义改名）；
+  守卫 `crates/frontend/forge-isa-dsl/tests/field_names.rs`。
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
@@ -404,7 +415,9 @@ x86 forms 47 → 19，37 条指令直接内联编码键（不再有 `MRR_0F_NOOS
 
 命名操作数（v15-S3c）：`ops = ["src:gprx", "dst:gprx:inout"]` **数组序 = 编码序**
 （modrm reg/rm、定宽位域绑定都按这个序；角色缺省 `in`），`asm` 只用 `{名字}`
-**引用**——声明与打印彻底分离。`opsize` 因此能写 `opsize = "dst"`（自解释），
+**引用**——声明与打印彻底分离。**声明名同时就是生成的 `Inst` 字段名**（v18 S7d：
+`ops = ["dst:r:out", "src:r"]` ⇒ `Inst::Iadd { dst, src }`；位域名/语义角色名只是
+内部编码键）。`opsize` 因此能写 `opsize = "dst"`（自解释），
 取代 `"s1"` 这种"读者无法判断指哪个"的位置引用（v14 那个把 64 位指针截成 32 位的
 bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角色]}` **已删除**，
 无兼容层。`collect_inst_infos` 把 `{名字}` 规范化成 `{序号}` 后交给下游，

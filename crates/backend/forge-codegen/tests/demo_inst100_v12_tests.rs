@@ -63,9 +63,9 @@ fn hundred_bit_word_is_thirteen_bytes() {
     assert_eq!(
         inst,
         Inst::Add100 {
-            rd: Reg::A1,
-            rs1: Reg::A2,
-            rs2: Reg::A3,
+            dst: Reg::A1,
+            src: Reg::A2,
+            src2: Reg::A3,
         }
     );
     // 高位寄存器（4 位域）也要能往返
@@ -74,8 +74,8 @@ fn hundred_bit_word_is_thirteen_bytes() {
     assert_eq!(
         decode(&wide).map(|(i, _)| i),
         Some(Inst::Mov100 {
-            rd: Reg::A15,
-            rs1: Reg::A9,
+            dst: Reg::A15,
+            src: Reg::A9,
         })
     );
 }

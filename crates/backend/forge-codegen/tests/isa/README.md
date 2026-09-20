@@ -13,9 +13,13 @@
 | `demo_inst12_v12.toml` | **12 位指令字**（非 8 倍数）：2 字节存储 + 填充位必须为 0 |
 | `demo_inst100_v12.toml` | **100 位指令字**（13 字节，超机器字）：位域落在 bit 92..100 |
 | `demo_mixed16_32_v12.toml` | **混合字长**（`[encoding] kind = "mixed"`，`widths = [16, 32]`）：低 2 位判别短/长编码，解码按字长升序分组 |
+| `include_root_v12.toml` + `include_base_v12.toml` | **多文件组合**（v18 S7d）：根文件 `include` 片段 + `[[override]]` 覆盖 `[meta].version`；两份谱的指令合成一个模块（用例 `tests/include_v12_tests.rs`） |
 
 宿住方式见 `tests/common/mod.rs`：`forge_dsl::isa_from_file!("…", krate = forge_codegen)`
 让生成代码落在测试 crate 里、且依赖面只有 `forge_codegen` 的公开 API。
+`include_root_v12.toml` 在那里被展开**两次**：一次默认（全部件），一次用
+`name = "include_enc_v12"` + `parts = ["encode"]`（同一份谱只生成编码器，证明部件选择
+在真实宏路径上成立）。
 
 回归守卫：`tests/library_surface.rs`（库源码/仓库根 `isa/` 不得再出现 demo 谱）。
 字宽方向的规范见 `docs/reference/isa-dsl.md` 的「`[encoding]` — 指令宽度三态」与

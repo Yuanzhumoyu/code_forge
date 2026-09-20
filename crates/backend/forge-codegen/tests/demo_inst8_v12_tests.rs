@@ -56,9 +56,9 @@ fn instruction_word_is_one_byte() {
     assert_eq!(
         inst,
         Inst::Add8 {
-            rd: Reg::A1,
-            rs1: Reg::A2,
-            rs2: Reg::A3,
+            dst: Reg::A1,
+            src: Reg::A2,
+            src2: Reg::A3,
         }
     );
 }
@@ -129,8 +129,8 @@ fn branch_fixup_uses_word_width() {
     let mut sink = CodeSink::default();
     sink.set_patcher(Arc::new(LabelFieldPatcher));
     let inst = Inst::Brz8 {
-        rs1: Reg::A1,
-        lab: 1, // label 槽在 IR 里是块号（正数 → use_label_at；负数 = 函数符号）
+        src: Reg::A1,
+        target: 1, // label 槽在 IR 里是块号（正数 → use_label_at；负数 = 函数符号）
     };
     tm.encoder()
         .encode(&inst, &AllocResult::new(), &mut sink)

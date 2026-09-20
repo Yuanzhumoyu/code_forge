@@ -243,21 +243,21 @@ fn scattered_imm_range_check() {
 fn scattered_imm_encode_range_check() {
     // 合法：encode 通过
     let ok = Inst::Sw {
-        rs2: Reg::X1,
-        rs1: Reg::X2,
-        imm_s: 2047,
+        src: Reg::X1,
+        src2: Reg::X2,
+        imm: 2047,
     };
-    assert!(encode(&ok).is_ok(), "imm_s=2047 应可编码");
+    assert!(encode(&ok).is_ok(), "imm=2047 应可编码");
     // 越界：encode 报错（不静默截断）
     for imm in [-2049i64, 2048, 3000, -3000] {
         let inst = Inst::Sw {
-            rs2: Reg::X1,
-            rs1: Reg::X2,
-            imm_s: imm,
+            src: Reg::X1,
+            src2: Reg::X2,
+            imm,
         };
         assert!(
             encode(&inst).is_err(),
-            "imm_s={imm} 超 [-2048, 2047] 应报错（P0-16 散布位域检查）"
+            "imm={imm} 超 [-2048, 2047] 应报错（P0-16 散布位域检查）"
         );
     }
 }
@@ -330,57 +330,58 @@ fn disassemble_known_texts() {
 
 #[test]
 fn inst_enum_shapes() {
-    // Inst 字段类型：reg → Reg 枚举，imm/label → i64（枚举形状抽查）
+    // Inst 字段名 = `ops` 里声明的名字（`ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]`
+    // 等），字段类型：reg → Reg 枚举，imm/label → i64（枚举形状抽查）。
     let add = assemble("add X1, X2, X3").unwrap();
     assert_eq!(
         add,
         Inst::Add {
-            rd: Reg::X1,
-            rs1: Reg::X2,
-            rs2: Reg::X3
+            dst: Reg::X1,
+            src: Reg::X2,
+            src2: Reg::X3
         }
     );
     let addi = assemble("addi X1, X2, -1").unwrap();
     assert_eq!(
         addi,
         Inst::Addi {
-            rd: Reg::X1,
-            rs1: Reg::X2,
-            imm12: -1
+            dst: Reg::X1,
+            src: Reg::X2,
+            imm: -1
         }
     );
     let sd = assemble("sd X1, 8(X2)").unwrap();
     assert_eq!(
         sd,
         Inst::Sd {
-            rs2: Reg::X1,
-            rs1: Reg::X2,
-            imm_s: 8
+            src: Reg::X1,
+            src2: Reg::X2,
+            imm: 8
         }
     );
     let beq = assemble("beq X1, X2, 8").unwrap();
     assert_eq!(
         beq,
         Inst::Beq {
-            rs1: Reg::X1,
-            rs2: Reg::X2,
-            imm_b: 8
+            src: Reg::X1,
+            src2: Reg::X2,
+            target: 8
         }
     );
     let jal = assemble("jal X1, 8").unwrap();
     assert_eq!(
         jal,
         Inst::Jal {
-            rd: Reg::X1,
-            imm_j: 8
+            dst: Reg::X1,
+            target: 8
         }
     );
     let lui = assemble("lui X1, 4096").unwrap();
     assert_eq!(
         lui,
         Inst::Lui {
-            rd: Reg::X1,
-            imm20: 4096
+            dst: Reg::X1,
+            imm: 4096
         }
     );
     assert_eq!(assemble("fence").unwrap(), Inst::Fence);
