@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-21)
+
+- **`[[lowering]].op` 支持名单：一条规则服务多个同类 op（v18 S5）**。`op = ["Copy", "Uextend", "Freeze", "Ptrtoint", "Inttoptr"]` 等价于把这五条逐条写开，但**只维护一份发射序列**（改一处不会漏另外四处）。名单在解析期展开成逐 op 的规则，名单序 = 展开序，因此每个 op 内部的裁决序与逐条写开**完全一致**；空名/重名报错。
+  随迁移落地（数字为**声明数**；`forge-isa insts` 报的是 `vary`/`op` 展开后的执行规则数）：x86 同 op 冗余 `when` 折叠 13 组 + 跨 op 归并 6 组（**220 → 197 条声明（−10.5%）**，展开后执行规则 299 → 286；TOML 3,693 → 3,518 行）；riscv 3 组（**110 → 106 条声明（−3.6%）**，展开后仍 110）；arm64 不变。
+  **等价证据**：逐 op 在**同一属性空间**上比较迁移前后的判定函数（属性取值 ∪ {v±1, 0, 哨兵}，按 (`priority` 降, 叶子数降, 声明序升) 取首条命中）——x86 100 op / 2,155 格、riscv 61/352、arm64 8/61 **逐格相同**；`cargo test -p forge-codegen`（27 个测试二进制，含全部黄金字节与 417 条指令的规格自测）与三架构 JIT 矩阵（195/3/0、131/67/0、23/175/0）全绿。
+  **按实测收窄**（不做，附数字）：① `lowering.emit` 结构化表（`inst`/`let`/`select`/`switch`）——族式 op 在多个属性上同时分派，表格化的规则数收益 ≤5%，而 `vary` 已覆盖其绝大多数形态；② `[[sequences]]`——跨 op 的长序列复用实测为 **0**（x86 88 条长序列、77 个不同序列，无一跨 op 重复）。两条都会引入第二个参数化机制（与 S2c「三机制合一」的结论相悖）却只值 ≤5%/0，故不做；方案里"x86 ≥15%"的目标实测不可达（真实冗余 10.5%），已按实测修正。
+  文档：`docs/reference/isa-dsl.md` 的 `[[lowering]]` 节补 `op` 名单与"为什么不加 emit/sequences"（含数字）；`isa-dsl-errors.md` 补 §3.9；方案 §7 记 S5 进度与 S5c 待办。
+
 ### Fixed (2026-09-21)
 
 - **`#:schema` 编辑器补全：指令的 `ref` 键被 schema 写成了 `reference`（v18 S7e 修）**。模型的字段名是 `reference` + `#[serde(rename = "ref")]`，而 JSON Schema 发射器按字段名发射，于是**所有用 `ref` 的谱都被编辑器标红**（`isa/x86_v12.toml` 35 处，Taplo + `#:schema`）。

@@ -795,7 +795,7 @@ op = "StackAddr"
 insts = ["ADDI {out}, X8, {off}"]
 
 [[lowering]]
-op = "Copy"
+op = ["Copy", "Sextend", "Freeze"]
 insts = ["MOV_RM8_R64 {out}, {0}"]
 # ── 补全 lowering（B2 遗留：位运算/移位/比较/调用）──
 
@@ -992,10 +992,6 @@ insts = [
 #    slli+srli 清零高 32 位（32→64）；Ireduce 按结果宽截断──
 
 [[lowering]]
-op = "Sextend"
-insts = ["MOV_RM8_R64 {out}, {0}"]
-
-[[lowering]]
 op = "Uextend"
 when = { eq = ["rs1_width", 8] }
 insts = ["ANDI {out}, {0}, 255"]
@@ -1008,7 +1004,7 @@ when = { eq = ["rs1_width", 16] }
 insts = ["SLLI {out}, {0}, 48", "SRLI {out}, {out}, 48"]
 
 [[lowering]]
-op = "Uextend"
+op = ["Uextend", "Ireduce"]
 insts = ["SLLI {out}, {0}, 32", "SRLI {out}, {out}, 32"]
 
 [[lowering]]
@@ -1022,12 +1018,6 @@ when = { eq = ["rd", 16] }
 # 0xFFFF 超出 imm12 有符号范围 ±2047（旧 andi 65535 依赖掩码截断侥幸
 # 正确）——用 slli/srli 清零高 48 位
 insts = ["SLLI {out}, {0}, 48", "SRLI {out}, {out}, 48"]
-
-[[lowering]]
-op = "Ireduce"
-insts = ["SLLI {out}, {0}, 32", "SRLI {out}, {out}, 32"]
-
-# ── Abs：|x| = (x ^ (x>>63)) - (x>>63)（64 位；i32 值符号扩展后正确）──
 
 [[lowering]]
 op = "Abs"
@@ -1061,10 +1051,6 @@ insts = ["SLTIU {out}, {0}, 1"]
 [[lowering]]
 op = "IsNotNull"
 insts = ["SLTU {out}, X0, {0}"]
-
-[[lowering]]
-op = "Freeze"
-insts = ["MOV_RM8_R64 {out}, {0}"]
 
 [[lowering]]
 op = "Trap"
@@ -1652,7 +1638,6 @@ insts = [
 ]
 
 
-
 # ── Nop / Undef / Poison / Bitreverse ──
 # Undef/Poison 语义自由 → 返回 0（xor 清零，与 x86 一致）。
 
@@ -1661,15 +1646,8 @@ op = "Nop"
 insts = ["NOP"]
 
 [[lowering]]
-op = "Undef"
+op = ["Undef", "Poison"]
 insts = ["XOR {out}, {out}, {out}"]
-
-[[lowering]]
-op = "Poison"
-insts = ["XOR {out}, {out}, {out}"]
-
-# Bitreverse：SWAR 分治（Hacker's Delight）——每步 (x & mask)<<k | (x>>k) & mask，
-# 掩码逐次构造用完即弃（不长期占用临时）。5 级 + 32 位交换。
 
 [[lowering]]
 op = "Bitreverse"

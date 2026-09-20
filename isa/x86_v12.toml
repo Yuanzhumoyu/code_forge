@@ -1989,19 +1989,7 @@ insts = ["mov {out}, {0}", "IMUL_R_RM {out}, {1}"]
 
 [[lowering]]
 op = "Icmp"
-when = { eq = ["rs1_width", 32] }
 insts = ["xor {out}, {out}", "cmp {1}, {0}", "SETCC_RM8 {out}, {cc}"]
-
-[[lowering]]
-op = "Icmp"
-insts = ["xor {out}, {out}", "cmp {1}, {0}", "SETCC_RM8 {out}, {cc}"]
-
-# ── mini_c 核心（迭代 6 续：load/store/copy/extend/not）──
-# Load/Store 按内存宽度（u8 → 1 字节、i16 → 2、i32 → 4、i64 → 8）：宽
-# load/store 越界（曾致 params/loop/除法 5 用例失败；u8 曾 8 字节读侥幸）。
-# v14：窄 load（8/16 位）用 movzx 内存形式——零扩展写全 64 位寄存器（窄值
-# 高位约定 lib.rs），否则后续 32 位 cmp/算术带高位垃圾（u8 比较误判实证）；
-# mov gprx auto 16/32/64（mem/store 统一）；8 位 store 独立 opcode 88（gpr1b）。
 
 [[lowering]]
 op = "Load"
@@ -2078,7 +2066,7 @@ op = "Store"
 insts = ["STORE_MEM_R [{0}], {1}"]
 
 [[lowering]]
-op = "Copy"
+op = ["Copy", "Uextend", "Ireduce", "Freeze", "Ptrtoint", "Inttoptr"]
 insts = ["mov {out}, {0}"]
 
 # ── Sextend：按源宽分派——8/16 位源 movsx（0F BE/BF，源槽 gpr1b/gpr2
@@ -2201,32 +2189,6 @@ when = { eq = ["rs1_width", 16] }
 insts = ["movzx {out}, {0}"]
 
 [[lowering]]
-op = "Uextend"
-insts = ["mov {out}, {0}"]
-
-# ── Ireduce：截断（32 位写自动零扩展高位）──
-
-[[lowering]]
-op = "Ireduce"
-when = { eq = ["rd", 32] }
-insts = ["mov {out}, {0}"]
-
-[[lowering]]
-op = "Ireduce"
-insts = ["mov {out}, {0}"]
-
-# ── 旋转（CL 隐式计数）──
-
-[[lowering]]
-op = "Rotl"
-when = { eq = ["rs1_width", 32] }
-insts = [
-    "mov {out}, {0}",
-    "mov RCX, {1}",
-    "ROL_RM {out}",
-]
-
-[[lowering]]
 op = "Rotl"
 insts = [
     "mov {out}, {0}",
@@ -2236,22 +2198,11 @@ insts = [
 
 [[lowering]]
 op = "Rotr"
-when = { eq = ["rs1_width", 32] }
 insts = [
     "mov {out}, {0}",
     "mov RCX, {1}",
     "ROR_RM {out}",
 ]
-
-[[lowering]]
-op = "Rotr"
-insts = [
-    "mov {out}, {0}",
-    "mov RCX, {1}",
-    "ROR_RM {out}",
-]
-
-# ── 极值（cmp + cmov；ge=13/le=14/ae=3/be=6）──
 
 [[lowering]]
 op = "Smin"
@@ -2287,26 +2238,11 @@ insts = [
 op = "Clz"
 # 32 位输入用 lzcntl（gpr32 类）；否则 64 位 lzcntq——否则 32 位输入
 # 被零扩展后 lzcntq 返回 63 而非 31（u32::leading_zeros 错值）。
-when = { eq = ["rs1_width", 32] }
-insts = ["mov {out}, {0}", "LZCNT_R {out}, {0}"]
-
-[[lowering]]
-op = "Clz"
 insts = ["mov {out}, {0}", "LZCNT_R {out}, {0}"]
 
 [[lowering]]
 op = "Ctz"
-when = { eq = ["rs1_width", 32] }
 insts = ["mov {out}, {0}", "TZCNT_R {out}, {0}"]
-
-[[lowering]]
-op = "Ctz"
-insts = ["mov {out}, {0}", "TZCNT_R {out}, {0}"]
-
-[[lowering]]
-op = "Popcnt"
-when = { eq = ["rs1_width", 32] }
-insts = ["mov {out}, {0}", "POPCNT_R {out}, {0}"]
 
 [[lowering]]
 op = "Popcnt"
@@ -2327,10 +2263,6 @@ op = "IsNotNull"
 insts = ["xor {out}, {out}", "TEST_RM_R {0}, {0}", "SETCC_RM8 {out}, 5"]
 
 [[lowering]]
-op = "Freeze"
-insts = ["mov {out}, {0}"]
-
-[[lowering]]
 op = "Trap"
 insts = ["UD2"]
 
@@ -2348,31 +2280,11 @@ insts = ["LEA_R64_SIB {out}, [RBP+{alloca}]"]
 
 [[lowering]]
 op = "SaddOverflow"
-when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "add {1}, {out}",
     "SETCC_RM8 {out2}, 0",
-]
-
-[[lowering]]
-op = "SaddOverflow"
-insts = [
-    "xor {out2}, {out2}",
-    "mov {out}, {0}",
-    "add {1}, {out}",
-    "SETCC_RM8 {out2}, 0",
-]
-
-[[lowering]]
-op = "UaddOverflow"
-when = { eq = ["rs1_width", 32] }
-insts = [
-    "xor {out2}, {out2}",
-    "mov {out}, {0}",
-    "add {1}, {out}",
-    "SETCC_RM8 {out2}, 2",
 ]
 
 [[lowering]]
@@ -2386,31 +2298,11 @@ insts = [
 
 [[lowering]]
 op = "SsubOverflow"
-when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "sub {1}, {out}",
     "SETCC_RM8 {out2}, 0",
-]
-
-[[lowering]]
-op = "SsubOverflow"
-insts = [
-    "xor {out2}, {out2}",
-    "mov {out}, {0}",
-    "sub {1}, {out}",
-    "SETCC_RM8 {out2}, 0",
-]
-
-[[lowering]]
-op = "UsubOverflow"
-when = { eq = ["rs1_width", 32] }
-insts = [
-    "xor {out2}, {out2}",
-    "mov {out}, {0}",
-    "sub {1}, {out}",
-    "SETCC_RM8 {out2}, 2",
 ]
 
 [[lowering]]
@@ -2424,36 +2316,11 @@ insts = [
 
 [[lowering]]
 op = "SmulOverflow"
-when = { eq = ["rs1_width", 32] }
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "IMUL_R_RM {out}, {1}",
     "SETCC_RM8 {out2}, 0",
-]
-
-[[lowering]]
-op = "SmulOverflow"
-insts = [
-    "xor {out2}, {out2}",
-    "mov {out}, {0}",
-    "IMUL_R_RM {out}, {1}",
-    "SETCC_RM8 {out2}, 0",
-]
-
-[[lowering]]
-op = "UmulOverflow"
-when = { eq = ["rs1_width", 32] }
-insts = [
-    "mov {out}, {0}",
-    "IMUL_R_RM {out}, {1}",
-    "xor {out2}, {out2}",
-    "cmp {0}, {out}",
-    "SETCC_RM8 {out2}, 2",
-    "xor {g}, {g}",
-    "TEST_RM_R {1}, {1}",
-    "SETCC_RM8 {g}, 5",
-    "and {g}, {out2}",
 ]
 
 [[lowering]]
@@ -2469,8 +2336,6 @@ insts = [
     "SETCC_RM8 {g}, 5",
     "and {g}, {out2}",
 ]
-
-# ── 饱和 4 条（clamp 序列；t1..t4 临时）──
 
 [[lowering]]
 op = "SaddSat"
@@ -2846,7 +2711,7 @@ when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 2] } ] }
 insts = ["CVTSI2SD {out}, {0}"]
 
 [[lowering]]
-op = "Sitofp"
+op = ["Sitofp", "Uitofp"]
 when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 2] } ] }
 insts = ["CVTSI2SD {out}, {0}"]
 
@@ -2856,14 +2721,14 @@ when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
 insts = ["CVTSI2SS {out}, {0}"]
 
 [[lowering]]
-op = "Sitofp"
+op = ["Sitofp", "Uitofp"]
 when = { eq = ["rs1_width", 64] }
 insts = ["CVTSI2SS {out}, {0}"]
 
 # ── Fptosi（浮点 → 整数，截断向零；elem 结果整数类型）──
 
 [[lowering]]
-op = "Fptosi"
+op = ["Fptosi", "Fptoui"]
 when = { and = [ { eq = ["rs1_width", 64] }, { in = ["elem", [3, 4]] } ] }
 insts = ["CVTTSD2SI {out}, {0}"]
 
@@ -2873,7 +2738,7 @@ when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 4] } ] }
 insts = ["CVTTSS2SI {out}, {0}"]
 
 [[lowering]]
-op = "Fptosi"
+op = ["Fptosi", "Fptoui"]
 when = { eq = ["rs1_width", 32] }
 insts = ["CVTTSS2SI {out}, {0}"]
 
@@ -2881,17 +2746,7 @@ insts = ["CVTTSS2SI {out}, {0}"]
 
 [[lowering]]
 op = "Fptoui"
-when = { and = [ { eq = ["rs1_width", 64] }, { in = ["elem", [3, 4]] } ] }
-insts = ["CVTTSD2SI {out}, {0}"]
-
-[[lowering]]
-op = "Fptoui"
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 3] } ] }
-insts = ["CVTTSS2SI {out}, {0}"]
-
-[[lowering]]
-op = "Fptoui"
-when = { eq = ["rs1_width", 32] }
 insts = ["CVTTSS2SI {out}, {0}"]
 
 [[lowering]]
@@ -2903,19 +2758,6 @@ insts = ["mov {g}, {0}", "CVTSI2SD {out}, {g}"]
 op = "Uitofp"
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
 insts = ["mov {g}, {0}", "CVTSI2SS {out}, {g}"]
-
-[[lowering]]
-op = "Uitofp"
-when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 2] } ] }
-insts = ["CVTSI2SD {out}, {0}"]
-
-[[lowering]]
-op = "Uitofp"
-when = { eq = ["rs1_width", 64] }
-insts = ["CVTSI2SS {out}, {0}"]
-
-# ── Fcopysign：GPR 位操作（F32 → 32 位掩码 / F64 → 64 位掩码；
-#    F32 结果只取低 32 位，高 32 位无定义）──
 
 [[lowering]]
 op = "Fcopysign"
@@ -3566,25 +3408,8 @@ insts = [
 # ── Ptrtoint / Inttoptr：x86 指针 = i64，直拷 ──
 
 [[lowering]]
-op = "Ptrtoint"
-insts = ["mov {out}, {0}"]
-
-[[lowering]]
-op = "Inttoptr"
-insts = ["mov {out}, {0}"]
-
-# ── Undef / Poison：清零（Poison 语义为 deferred UB，任意值可接受）──
-
-[[lowering]]
-op = "Undef"
+op = ["Undef", "Poison"]
 insts = ["xor {out}, {out}"]
-
-[[lowering]]
-op = "Poison"
-insts = ["xor {out}, {out}"]
-
-# ── GlobalAddr：mov 符号地址 + ABS8 重定位（JIT 符号表按 "G{id}" 注册；
-#    编码层 imm<0 表示 GlobalId，encoder 转 ABS8 reloc，非 JIT 后端同样可用）──
 
 [[lowering]]
 op = "GlobalAddr"

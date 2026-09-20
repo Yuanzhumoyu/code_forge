@@ -341,7 +341,7 @@ pub fn gen_integration(infos: &[InstInfo], model: &V12Model) -> Result<TokenStre
 /// lowering op 后矩阵用例自动转绿。Call/CallIndirect（ABI 专用生成路径）
 /// 与 GEP 等无 `[[lowering]]` 条目的 op 由消费方补充声明。
 fn gen_supported_ops(model: &V12Model) -> TokenStream {
-    let mut ops: Vec<&str> = model.lowering.iter().map(|l| l.op.as_str()).collect();
+    let mut ops: Vec<&str> = model.lowering.iter().map(|l| l.op.name()).collect();
     ops.sort_unstable();
     ops.dedup();
     let items: Vec<TokenStream> = ops.iter().map(|op| quote! { #op }).collect();

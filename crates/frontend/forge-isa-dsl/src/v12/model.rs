@@ -2021,8 +2021,12 @@ impl V12Model {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lowering {
-    /// IR 操作名（"Iadd"）。
-    pub op: String,
+    /// IR 操作名（`"Iadd"`），或**一组同类 op**（`["Copy", "Uextend", "Freeze"]`）。
+    ///
+    /// 名单 = "这几条 op 的 lowering 完全一样，只维护一份序列"；解析期展开成逐 op 的
+    /// 规则（顺序按名单序，因此每个 op 内部的裁决序与逐条写开时一致）。收益实测：
+    /// x86 220 → 210 条声明、riscv 110 → 106（等价性由 `expand_ops` + 既有死规则检测守）。
+    pub op: OpsField,
     /// 符号化指令模板：`"{out} = MOV_R_RM {0}, {1}"`。
     pub insts: Vec<String>,
     /// 结构化谓词（宽度条件化 lowering）。
@@ -2047,6 +2051,33 @@ pub struct Lowering {
     /// （`rd/elem/imm0` 三个约束）。其余场合留空，让特异性自动裁决。
     #[serde(default)]
     pub priority: Option<i32>,
+}
+
+/// `[[lowering]].op` 的两种写法：单个名字，或一组名字（TOML 里同键同时接受
+/// 字符串与字符串数组——`op = "Iadd"` / `op = ["Copy", "Uextend"]`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OpsField {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl OpsField {
+    /// 单个 op 名（**展开后**每条规则恰好一个；未展开时取第一个，仅用于诊断）。
+    pub fn name(&self) -> &str {
+        match self {
+            OpsField::One(s) => s,
+            OpsField::Many(v) => v.first().map(String::as_str).unwrap_or(""),
+        }
+    }
+
+    /// 名字列表（原名或名单原序）。
+    pub fn names(&self) -> Vec<String> {
+        match self {
+            OpsField::One(s) => vec![s.clone()],
+            OpsField::Many(v) => v.clone(),
+        }
+    }
 }
 
 /// `vary` 的取值：整数（可作谓词值）或字符串（只作模板替换）。
@@ -2085,9 +2116,10 @@ impl V12Model {
     pub fn lowering_by_op(&self) -> Vec<(&str, Vec<&Lowering>)> {
         let mut by_op: Vec<(&str, Vec<(usize, &Lowering)>)> = Vec::new();
         for (i, rule) in self.lowering.iter().enumerate() {
-            match by_op.iter_mut().find(|(op, _)| *op == rule.op.as_str()) {
+            let op = rule.op.name();
+            match by_op.iter_mut().find(|(o, _)| *o == op) {
                 Some((_, rules)) => rules.push((i, rule)),
-                None => by_op.push((rule.op.as_str(), vec![(i, rule)])),
+                None => by_op.push((op, vec![(i, rule)])),
             }
         }
         by_op
@@ -2157,6 +2189,39 @@ impl V12Model {
 }
 
 impl Lowering {
+    /// 展开 `op` 名单 → 每条 op 一条规则（单个 op 时返回自身单元素）。
+    ///
+    /// 名单是"这几条 op 的 lowering 完全一样"，因此展开只是复制规则、换掉 op 名；
+    /// 名单序 = 展开序（每个 op 内部的规则相对顺序与逐条写开时**完全一致**，
+    /// 于是既有的 (`priority`, 谓词叶子数, 声明序) 裁决结果不变）。
+    pub fn expand_ops(&self) -> Result<Vec<Lowering>, String> {
+        let names = self.op.names();
+        let path = format!("[[lowering.{}]].op", self.op.name());
+        if names.is_empty() {
+            return Err(format!("{path}: op 名单不能为空"));
+        }
+        let mut seen: Vec<&str> = Vec::with_capacity(names.len());
+        for n in &names {
+            if n.trim().is_empty() {
+                return Err(format!("{path}: op 名不能为空"));
+            }
+            if seen.contains(&n.as_str()) {
+                return Err(format!("{path}: op '{n}' 在名单里重复"));
+            }
+            seen.push(n.as_str());
+        }
+        if names.len() == 1 {
+            return Ok(vec![self.clone()]);
+        }
+        Ok(names
+            .into_iter()
+            .map(|n| Lowering {
+                op: OpsField::One(n),
+                ..self.clone()
+            })
+            .collect())
+    }
+
     /// 展开 `vary` 行表 → 多条具体规则（无 `vary` 时返回自身单元素）。
     ///
     /// 每行：模板里 `{键}` 换成该行取值；键若是谓词属性（`PRED_ATTRS`）则
@@ -2165,7 +2230,7 @@ impl Lowering {
         let Some(vary) = &self.vary else {
             return Ok(vec![self.clone()]);
         };
-        let path = format!("[[lowering.{}]].vary", self.op);
+        let path = format!("[[lowering.{}]].vary", self.op.name());
         if vary.is_empty() {
             return Err(format!("{path}: 不能为空表"));
         }

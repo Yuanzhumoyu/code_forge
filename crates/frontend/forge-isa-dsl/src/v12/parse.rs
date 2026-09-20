@@ -41,10 +41,14 @@ pub fn parse(source: &str) -> Result<V12Model, V12Error> {
     model.expand_derives().map_err(anchor_err)?;
     let mut expanded = Vec::with_capacity(model.lowering.len());
     for rule in &model.lowering {
-        let rows = rule
-            .expand_vary(&model.pred_attr_names())
-            .map_err(anchor_err)?;
-        expanded.extend(rows);
+        // 先展开 `op` 名单（一个规则服务多个同类 op）→ 再展开 `vary` 行表。
+        // 两步都在解析期完成，下游（校验/生成/报告）只见"一个 op、一行取值"的规则。
+        for one in rule.expand_ops().map_err(anchor_err)? {
+            let rows = one
+                .expand_vary(&model.pred_attr_names())
+                .map_err(anchor_err)?;
+            expanded.extend(rows);
+        }
     }
     model.lowering = expanded;
     // `[[templates]]` 展开（v18 S2）：实例拼进指令表，`ref` 合成别名——下游只见普通指令。

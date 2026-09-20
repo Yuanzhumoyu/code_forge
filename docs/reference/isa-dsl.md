@@ -899,6 +899,28 @@ insts = ["ADD64 {out}, {0}, {1}"]
 
 ## `[[lowering]]` — 指令选择
 
+一条规则 = **op + 条件 + 发射序列**；同 op 的多条规则按
+(`priority` 降, 谓词叶子数降, 声明序升) 裁决，第一条命中的赢（见下「裁决序与死规则」）。
+
+```toml
+[[lowering]]
+op = ["Copy", "Uextend", "Freeze", "Ptrtoint", "Inttoptr"]   # 或单个字符串
+insts = ["mov {out}, {0}"]
+```
+
+`op` 可以是**一组同类 op**（v18 S5）：这几条 op 的 lowering 完全一样时只维护一份序列
+——比抄五遍更不容易改漏（x86 用它对 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、
+Sitofp/Uitofp、Fptosi/Fptoui、Undef/Poison 等 6 组去重）。名单在**解析期展开成逐 op 的
+规则**，每个 op 内部的相对顺序与逐条写开完全一致，因此裁决结果不变（名单序 = 展开序）。
+名单里不得有空名或重名。
+
+> **为什么只有这一个新键**：方案里还提过 `lowering.emit` 表形式（`inst`/`let`/`select`/
+> `switch`）与 `[[sequences]]` 共享序列。实测（2026-09-21，先按 `vary` 展开成具体规则再判定
+> 等价）：结构化 emit 的表只值 ~5%（族式 op 的规则在**多个属性上**同时分派，表格并不会更短），
+> `[[sequences]]` 的长序列**跨 op 复用为 0**（x86 88 条长序列里 0 条与别的 op 相同）。
+> `vary` 已经覆盖"同一模板按行代入"的绝大多数形态，再加第二个参数化机制只会增加使用负担
+> ——因此**不做**（结论与数据记在方案 §7 的 S5 进度里）。
+
 ```toml
 [[lowering]]
 op = "Iadd"
@@ -1343,7 +1365,9 @@ ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
 **发行后端**（库本体，`crates/backend/forge-codegen/src/arch/`）：
 
 - **`isa/x86_v12.toml`**：142 条 `[[instructions]]` + 11 条 `[[templates]]`（55 行 →
-  共 197 条指令）+ 2 条 `[[pattern]]`，19 个 form 预设，220 条 lowering。变长语义键，
+  共 197 条指令）+ 2 条 `[[pattern]]`，19 个 form 预设，`[[lowering]]` **197 条声明**（v18 S5
+  迁移后；迁移前 220 条，见「`[[lowering]]`」节的 `op` 名单）——`forge-isa insts` 报的是
+  `vary`/`op` 展开后的**执行规则数**（x86 286 / riscv 110 / arm64 19）。变长语义键，
   接 TargetMachine；jit 矩阵 195 passed / 3 skipped / 0 failed。
 - **`isa/riscv64_v12.toml`**：48 条 `[[instructions]]` + 19 条 `[[templates]]`（68 行 →
   共 116 条指令），定宽试点（QEMU 真执行验证）；jit 矩阵 131 passed / 67 skipped /

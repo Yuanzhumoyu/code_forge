@@ -1165,7 +1165,11 @@ fn derive_name_in_vary_is_a_predicate_attr() {
          [[lowering]]\nop = \"Copy\"\nvary = { is_64 = [1, 0], m = [\"MOV\", \"MOV\"] }\ninsts = [\"{m} {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("vary 用派生名必须通过");
-    let rs: Vec<_> = m.lowering.iter().filter(|r| r.op == "Copy").collect();
+    let rs: Vec<_> = m
+        .lowering
+        .iter()
+        .filter(|r| r.op.name() == "Copy")
+        .collect();
     assert_eq!(rs.len(), 2, "两行 → 两条规则");
     let whens: Vec<String> = rs.iter().map(|r| format!("{:?}", r.when)).collect();
     assert!(
@@ -2101,7 +2105,11 @@ fn vary_expands_rows_and_adds_predicates() {
          vary = { elem = [1, 2], m = [\"MOV\", \"MOV\"] }\ninsts = [\"{m} {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("vary 必须展开");
-    let rs: Vec<_> = m.lowering.iter().filter(|r| r.op == "Vadd").collect();
+    let rs: Vec<_> = m
+        .lowering
+        .iter()
+        .filter(|r| r.op.name() == "Vadd")
+        .collect();
     assert_eq!(rs.len(), 2, "两行 → 两条具体规则");
     for r in &rs {
         assert!(r.vary.is_none(), "展开后 vary 必须清空");
@@ -2140,6 +2148,75 @@ fn vary_predicate_attr_needs_integer() {
         other => panic!("expected Parse error, got {other:?}"),
     };
     assert!(msg.contains("必须是整数"), "msg: {msg}");
+}
+
+/// S5a：`op` 名单 = 一条规则服务多个同类 op，解析期展开成逐 op 的规则。
+#[test]
+fn op_list_expands_to_one_rule_per_op() {
+    let doc = lowering_doc(
+        "[[lowering]]\nop = [\"Copy\", \"Uextend\", \"Freeze\"]\ninsts = [\"MOV {out}, {0}\"]",
+    );
+    let m = parse_and_validate(&doc).expect("op 名单必须通过");
+    assert_eq!(m.lowering.len(), 3, "3 个 op → 3 条规则");
+    let names: Vec<&str> = m.lowering.iter().map(|r| r.op.name()).collect();
+    assert_eq!(names, ["Copy", "Uextend", "Freeze"], "展开序 = 名单序");
+    for r in &m.lowering {
+        assert_eq!(r.insts, vec!["MOV {out}, {0}"], "三个 op 共用同一份序列");
+        assert_eq!(r.op.names().len(), 1, "展开后每条规则只有一个 op");
+    }
+    assert_eq!(m.lowering_by_op().len(), 3, "按 op 分组 = 3 组");
+}
+
+/// S5a：名单展开后，**每个 op 内部的规则相对顺序**与逐条写开完全一致（裁决序不变）。
+#[test]
+fn op_list_keeps_declaration_order_within_each_op() {
+    let doc = lowering_doc(
+        "[[lowering]]\nop = [\"A\", \"B\"]\ninsts = [\"MOV {out}, {0}\"]\n\n\
+         [[lowering]]\nop = \"A\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]",
+    );
+    let m = parse_and_validate(&doc).expect("名单 + 具体规则必须通过");
+    let by_op = m.lowering_by_op();
+    // 每个 op 的规则数（名单那条给 A/B 各一条；具体那条只给 A）
+    let count = |name: &str| {
+        by_op
+            .iter()
+            .find(|(op, _)| *op == name)
+            .map(|(_, rs)| rs.len())
+            .unwrap_or(0)
+    };
+    assert_eq!(count("A"), 2, "A：名单那条 + 具体那条");
+    assert_eq!(count("B"), 1, "B：只有名单那条");
+    // 裁决序 = (priority 降, 谓词叶子数降, 声明序升)：带 when 的那条（1 叶子）先试。
+    let a_rules: &Vec<_> = &by_op.iter().find(|(op, _)| *op == "A").unwrap().1;
+    assert!(a_rules[0].when.is_some(), "叶子多的排前面");
+    assert!(a_rules[1].when.is_none(), "名单那条无 when");
+    assert_eq!(a_rules[1].insts, vec!["MOV {out}, {0}"], "名单那条的序列");
+}
+
+/// S5a：名单里的空名 / 重复名必须报错（而不是静默产生两条同名规则）。
+#[test]
+fn op_list_rejects_empty_and_duplicate_names() {
+    for (body, want) in [
+        (
+            "[[lowering]]\nop = []\ninsts = [\"MOV {out}, {0}\"]",
+            "不能为空",
+        ),
+        (
+            "[[lowering]]\nop = [\"Copy\", \"\"]\ninsts = [\"MOV {out}, {0}\"]",
+            "op 名不能为空",
+        ),
+        (
+            "[[lowering]]\nop = [\"Copy\", \"Copy\"]\ninsts = [\"MOV {out}, {0}\"]",
+            "重复",
+        ),
+    ] {
+        let doc = lowering_doc(body);
+        let msg = match parse_and_validate(&doc).unwrap_err() {
+            V12Error::Parse { msg, .. } => msg,
+            other => panic!("expected Parse error, got {other:?}"),
+        };
+        assert!(msg.contains(want), "期望 {want:?}，实际：{msg}");
+    }
 }
 
 #[test]

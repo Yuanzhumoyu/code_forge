@@ -405,6 +405,12 @@ v12 结构化谓词：属性表 = `v12/pred.rs` 的 `PRED_ATTRS`（`rd`/`rs1_wid
 `imm0` = `current_immediates[0]`（Vextract/Vinsert lane 索引、AtomicRmw op
 判别值 Xchg=0/Add=1/Sub=2）。
 
+`[[lowering]].op` **可以是名单**（v18 S5）：`op = ["Copy", "Uextend", "Freeze"]` = 这几条 op
+的 lowering 完全一样，只维护一份序列（解析期展开成逐 op 规则，名单序 = 展开序，裁决结果不变）。
+x86 用它把 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、Sitofp/Uitofp、Fptosi/Fptoui、Undef/Poison
+等 6 组去重（220 → 197 条声明）。**不加** `lowering.emit`/`[[sequences]]`：实测表格化的规则数
+收益 ≤5%、长序列跨 op 复用为 0，而 `vary` 已覆盖同一模板按行代入的形态（详见方案 §7 S5 进度）。
+
 `[[lowering]]` 的两个消重/去序键（v15-S2）：
 
 - `vary = { attr = [...], name = [...] }`：各列表**等长**，按下标 zip 成行展开。

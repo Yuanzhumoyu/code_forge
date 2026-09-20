@@ -1270,11 +1270,13 @@ fn validate_lowering_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     let mut seen: std::collections::HashMap<(String, String, Vec<String>), usize> =
         std::collections::HashMap::new();
     for (i, l) in m.lowering.iter().enumerate() {
-        if l.op.trim().is_empty() {
+        if l.op.name().trim().is_empty() {
             d.push_anchored(idx, &format!("[[lowering]] #{i}: op must not be empty"));
             continue;
         }
-        let path = format!("[[lowering.{}]]", l.op);
+        // 展开后每条规则只有一个 op（`expand_ops` 在解析期完成）；名单写法在这里
+        // 只会出现于"解析未展开"的直接构造（测试），故用 name() 取首个即够。
+        let path = format!("[[lowering.{}]]", l.op.name());
         if l.insts.is_empty() {
             d.push_anchored(idx, &format!("{path}: insts must not be empty"));
             continue;
@@ -1312,7 +1314,7 @@ fn validate_lowering_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
                 }
             },
         };
-        let key = (l.op.clone(), when_key, l.insts.clone());
+        let key = (l.op.name().to_string(), when_key, l.insts.clone());
         if let Some(first) = seen.insert(key, i) {
             d.push_anchored(
                 idx,

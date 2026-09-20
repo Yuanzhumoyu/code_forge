@@ -90,7 +90,7 @@ effect = ["Branch"]
 $ cargo run -p forge-isa -- validate toy16.toml
 OK（ISA = toy16）
 $ cargo run -p forge-isa -- insts toy16.toml
-# toy16 （schema 16 位；encoding = fixed 16 位；4 条指令 / 0 条模板 / 0 条 lowering）
+# toy16 （version -；encoding = fixed 16 位；4 条指令 / 0 条模板 / 0 条 lowering）
 ADD  ...
 ```
 

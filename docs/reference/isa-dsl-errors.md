@@ -154,7 +154,18 @@
 | `parts = [encode] 时不能生成生成期自测（\`__spec_tests\` 需要 encode/decode/asm 全部）——请显式写 \`spec_tests = false\`，或去掉 parts` | 关掉自测或放开部件 |
 | `未知部件 \`encoder\`（可用：encode / decode / asm / tm）` | 部件名只有四个 |
 
-### 3.9 位置看起来不对？
+### 3.9 `[[lowering]].op` 名单（v18 S5）
+
+`op` 也可以写成一组同类 op（`op = ["Copy", "Uextend", "Freeze"]`）；名单在**解析期**展开成
+逐 op 的规则（顺序 = 名单序），因此下面两条是解析期错误：
+
+| 消息 | 修法 |
+| --- | --- |
+| `[[lowering.X]].op: op 名单不能为空` | `op = []` 无意义：删掉这条规则，或写具体 op |
+| `[[lowering.X]].op: op 名不能为空` | 名单里混进了空串 |
+| `[[lowering.X]].op: op 'Y' 在名单里重复` | 同一个 op 在一条规则里列了两次（展开后会撞车） |
+
+### 3.10 位置看起来不对？
 
 - 诊断指向**声明行**（`name = …` / `op = …` / 节头）是正常的；
 - 若消息里用引号点名了出错的值（`'MRR_TYPO'`、`'rd_width'`、`'{bogus}'`），定位会进一步
