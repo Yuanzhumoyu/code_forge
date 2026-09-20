@@ -1008,12 +1008,10 @@ fn gen_patterns(
         });
     }
 
-    // 裁决序：Op 节点数降 / when 叶子数降 / 声明序升（大者先试）。
-    let mut order: Vec<usize> = (0..emitted.len()).collect();
-    order.sort_by_key(|&i| {
-        let e = &emitted[i];
-        (-(e.nodes as i64), -(e.guard_leaves as i64), e.idx as i64)
-    });
+    // 裁决序：与校验器共读 `V12Model::pattern_order()`（v18 S5c 起统一）——
+    // (`priority` 降, 匹配树 Op 节点数降, `when` 叶子数降, 声明序升)。
+    // `emitted` 按声明序构建，故其下标 == `[[pattern]]` 声明下标。
+    let order: Vec<usize> = model.pattern_order()?;
 
     // PatternSpec 表（按裁决序）。
     let entries: Vec<TokenStream> = order

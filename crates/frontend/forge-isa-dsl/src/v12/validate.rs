@@ -1452,6 +1452,31 @@ fn validate_patterns(m: &V12Model) -> Result<(), String> {
             }
         }
     }
+
+    // 死模式检测（v18 S5c）：**匹配树结构相同**的两个模式，若裁决序里靠前的那个
+    // `when` 覆盖靠后的那个，后者永远轮不到（写了既不报错也不生效）。
+    // 只在结构相同时判定——不同树之间的覆盖关系不做推断（保守：宁可漏报不误报）。
+    let order = m.pattern_order()?;
+    let mut trees: Vec<super::match_tree::MatchNode> = Vec::with_capacity(order.len());
+    let mut domains: Vec<super::pred::RuleDomain> = Vec::with_capacity(order.len());
+    for &i in &order {
+        let p = &m.pattern[i];
+        trees.push(super::match_tree::parse(&p.r#match)?);
+        let pred = match &p.when {
+            None => None,
+            Some(v) => Some(super::pred::parse(v)?),
+        };
+        domains.push(super::pred::domain_of(pred.as_ref()));
+    }
+    for (j, &pj) in order.iter().enumerate() {
+        for (di, &pi) in order[..j].iter().enumerate() {
+            if trees[di] == trees[j] && super::pred::subsumes(&domains[di], &domains[j]) {
+                return Err(format!(
+                    "[[pattern]] #{pj} 是死模式——裁决序里靠前的 [[pattern]] #{pi}                      （同一匹配树，priority 降 / Op 节点数降 / when 叶子数降 / 声明序升）                     已覆盖它的全部取值域。删掉它，或给它更高的 priority"
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-21)
 
+- **`[[pattern]]` 与 `[[lowering]]` 统一裁决序 + 死模式检测（v18 S5c）**。`[[pattern]]` 新增 `priority`（与 `[[lowering]].priority` 同语义：大者先试），裁决序统一为 (`priority` 降, 匹配树 Op 节点数降, `when` 谓词叶子数降, 声明序升)；
+  此前 pattern 的排序只写在 codegen 里（没有 `priority`），现在抽成 `V12Model::pattern_order()`，**codegen 与校验器共读一份**。新增**死模式检测**：匹配树结构相同、且裁决序在前者的 `when` 完全覆盖后者 → 编译期报错并点出两个 `[[pattern]]` 下标（不同树之间不做覆盖推断——保守，宁可漏报不误报；与 lowering 的死规则检测同口径）。x86 现有两条 pattern 都没有 `priority`、新旧排序键等价 ⇒ **生成物不变**（黄金值与 JIT 矩阵照旧）。`isa-dsl.md` 的 `[[pattern]]` 节、`isa-dsl-errors.md` §3.10 同步；键速查表与 `isa-dsl.schema.json` 因新增 `priority` 键重新生成。
+
 - **`[[lowering]].op` 支持名单：一条规则服务多个同类 op（v18 S5）**。`op = ["Copy", "Uextend", "Freeze", "Ptrtoint", "Inttoptr"]` 等价于把这五条逐条写开，但**只维护一份发射序列**（改一处不会漏另外四处）。名单在解析期展开成逐 op 的规则，名单序 = 展开序，因此每个 op 内部的裁决序与逐条写开**完全一致**；空名/重名报错。
   随迁移落地（数字为**声明数**；`forge-isa insts` 报的是 `vary`/`op` 展开后的执行规则数）：x86 同 op 冗余 `when` 折叠 13 组 + 跨 op 归并 6 组（**220 → 197 条声明（−10.5%）**，展开后执行规则 299 → 286；TOML 3,693 → 3,518 行）；riscv 3 组（**110 → 106 条声明（−3.6%）**，展开后仍 110）；arm64 不变。
   **等价证据**：逐 op 在**同一属性空间**上比较迁移前后的判定函数（属性取值 ∪ {v±1, 0, 哨兵}，按 (`priority` 降, 叶子数降, 声明序升) 取首条命中）——x86 100 op / 2,155 格、riscv 61/352、arm64 8/61 **逐格相同**；`cargo test -p forge-codegen`（27 个测试二进制，含全部黄金字节与 417 条指令的规格自测）与三架构 JIT 矩阵（195/3/0、131/67/0、23/175/0）全绿。

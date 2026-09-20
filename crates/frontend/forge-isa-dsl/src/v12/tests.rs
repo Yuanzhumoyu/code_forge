@@ -1936,6 +1936,22 @@ asm = "mov {{dst}}, {{src}}"
     )
 }
 
+/// `[[pattern]]` 宿主谱：在最小谱基础上补几条指令，供 pattern 的 `insts` 引用。
+fn pattern_doc(patterns: &str) -> String {
+    let mut doc = lowering_doc("");
+    for (i, name) in ["ADD", "SUB", "MUL", "ADDSS", "SUBSS"].iter().enumerate() {
+        doc.push_str(&format!(
+            "\n[[instructions]]\nname = \"{name}\"\nform = \"RR\"\nopcode = {}\n\
+             ops = [\"dst:g:out\", \"src:g\"]\nasm = \"{lower} {{dst}}, {{src}}\"\n",
+            i + 2,
+            name = name,
+            lower = name.to_lowercase(),
+        ));
+    }
+    doc.push_str(patterns);
+    doc
+}
+
 fn lowering_err(rule: &str) -> String {
     match parse_and_validate(&lowering_doc(rule)).unwrap_err() {
         V12Error::Validation { msg, .. } => msg,
@@ -2217,6 +2233,59 @@ fn op_list_rejects_empty_and_duplicate_names() {
         };
         assert!(msg.contains(want), "期望 {want:?}，实际：{msg}");
     }
+}
+
+/// S5c：`[[pattern]]` 的裁决序 = (`priority` 降, Op 节点数降, when 叶子数降, 声明序升)。
+#[test]
+fn pattern_order_uses_priority_then_specificity() {
+    // A：单节点树、无 when；B：两节点树、无 when；C：单节点树 + 1 个 when 叶子但 priority=1。
+    let doc = pattern_doc(
+        "[[pattern]]\nmatch = \"Fadd(a, b)\"\ninsts = [\"ADD {out}, {a}, {b}\"]\n\n\
+         [[pattern]]\nmatch = \"Fadd(Fmul(a, b), c)\"\ninsts = [\"MOV {out}, {a}\", \"MUL {out}, {b}\", \"ADD {out}, {c}\"]\n\n\
+         [[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\npriority = 5\ninsts = [\"ADDSS {out}, {a}, {b}\"]",
+    );
+    let m = parse_and_validate(&doc).expect("pattern 必须通过");
+    let order = m.pattern_order().expect("裁决序");
+    // priority=5 的排第一；其余按 Op 节点数降（B=3 节点 > A=1 节点）。
+    assert_eq!(order[0], 2, "priority 最大者先");
+    assert_eq!(order[1], 1, "其次 Op 节点数多的");
+    assert_eq!(order[2], 0, "最后是同形状但无 priority 的");
+}
+
+/// S5c：同一匹配树、`when` 被前序模式覆盖 → 死模式，编译期报错。
+#[test]
+fn dead_pattern_is_rejected() {
+    let doc = pattern_doc(
+        "[[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { le = [\"elem\", 2] }\ninsts = [\"ADD {out}, {a}, {b}\"]\n\n\
+         [[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"ADDSS {out}, {a}, {b}\"]",
+    );
+    // `V12Error` 只有 Parse/Validation 两个变体（死模式属校验期，但两种都接受）。
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } | V12Error::Parse { msg, .. } => msg,
+    };
+    assert!(msg.contains("死模式"), "msg: {msg}");
+}
+
+/// S5c：同一匹配树 + 同一 `when`（完全重复）也是死模式。
+#[test]
+fn duplicate_pattern_is_rejected() {
+    let one = "[[pattern]]\nmatch = \"Fadd(a, b)\"\ninsts = [\"ADD {out}, {a}, {b}\"]";
+    let doc = pattern_doc(&format!("{one}\n\n{one}"));
+    // `V12Error` 只有 Parse/Validation 两个变体（死模式属校验期，但两种都接受）。
+    let msg = match parse_and_validate(&doc).unwrap_err() {
+        V12Error::Validation { msg, .. } | V12Error::Parse { msg, .. } => msg,
+    };
+    assert!(msg.contains("死模式"), "msg: {msg}");
+}
+
+/// S5c：**不同**匹配树之间不做覆盖推断（保守：不误报）。
+#[test]
+fn different_trees_are_not_dead() {
+    let doc = pattern_doc(
+        "[[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"ADDSS {out}, {a}, {b}\"]\n\n\
+         [[pattern]]\nmatch = \"Fsub(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"SUBSS {out}, {a}, {b}\"]",
+    );
+    assert!(parse_and_validate(&doc).is_ok(), "不同树不应报死模式");
 }
 
 #[test]

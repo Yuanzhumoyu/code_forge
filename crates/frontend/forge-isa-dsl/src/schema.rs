@@ -290,7 +290,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[[pattern]]",
         model: "Pattern",
         required: &["insts"],
-        optional: &["when", "match"],
+        optional: &["when", "match", "priority"],
         flatten: &[],
         additional: false,
         doc: "树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`）",

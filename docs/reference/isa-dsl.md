@@ -117,7 +117,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
 | `[[pseudo]]` | `name` `params` `emit` | — | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
-| `[[pattern]]` | `insts` | `when` `match` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
+| `[[pattern]]` | `insts` | `when` `match` `priority` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
 | `[abi]` | — | `frame_padding` `stack_args` `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
 | `[abi.frame]` | — | `sp` `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧布局 |
 | `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
@@ -1025,6 +1025,15 @@ insts = ["cvttsd2si {out}, {0}"]
   并即时 patch）；imm≥0 为普通 64 位立即数。
 
 ## `[[pattern]]` — 树型多指令匹配
+
+**裁决序与 `[[lowering]]` 统一**（v18 S5c）：(`priority` 降, 匹配树 Op 节点数降, `when`
+谓词叶子数降, 声明序升)——祖先匹配树、更具体的 `when` 先试；`priority` 用于"故意让更宽的
+模式赢"（与 lowering 同语义，缺省 0）。判定序在 codegen（生成 `__PATTERNS` 表与分派臂）与
+校验器之间**共读同一份**（`V12Model::pattern_order()`），不会两边各排一次。
+
+**死模式检测**（同片新增）：**匹配树结构相同**的两个模式，若裁决序里靠前的那个 `when`
+覆盖靠后的那个，后者永远轮不到 → 编译期报错（"死模式"，消息给出两个 `[[pattern]]` 下标）。
+不同树之间的覆盖关系**不推断**（保守：宁可漏报不误报）。
 
 **S6 新增能力（opt-in）**：声明一棵 IR **匹配树**与一段发射序列。运行期 lowering
 驱动在块内逆序预扫时，把命中整棵子树的 IR 值合并成一次 `lower_pattern` 发射（叶

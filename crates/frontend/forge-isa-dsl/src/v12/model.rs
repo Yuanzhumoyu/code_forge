@@ -2144,6 +2144,42 @@ impl V12Model {
     /// 谓词属性全集：核心属性（[`super::pred::PRED_ATTRS`]）+ `[[derive]]` 名。
     ///
     /// 校验器与 `vary` 的"键是谓词属性还是纯替换变量"判定同读这一份。
+    /// `[[pattern]]` 的裁决序（返回**声明下标**的排序结果）：v18 S5c 起与
+    /// `[[lowering]]` 用同一套键——(`priority` 降, 匹配树 Op 节点数降, `when` 谓词
+    /// 叶子数降, 声明序升)；后两者合起来就是"特异性降序"。
+    ///
+    /// codegen（生成 `__PATTERNS` 表与分派臂）与校验器（死模式检测）**共读这一份**，
+    /// 消除"两边各排一次、排法不一致"的风险。
+    pub fn pattern_order(&self) -> Result<Vec<usize>, String> {
+        let mut keys: Vec<(i32, i32, i32)> = Vec::with_capacity(self.pattern.len());
+        for (i, p) in self.pattern.iter().enumerate() {
+            let tree = crate::v12::match_tree::parse(&p.r#match)
+                .map_err(|e| format!("[[pattern]] #{i}.match: {e}"))?;
+            let mut nodes = 0usize;
+            fn count(n: &crate::v12::match_tree::MatchNode, acc: &mut usize) {
+                if let crate::v12::match_tree::MatchNode::Op { args, .. } = n {
+                    *acc += 1;
+                    for a in args {
+                        count(a, acc);
+                    }
+                }
+            }
+            count(&tree, &mut nodes);
+            let leaves = match &p.when {
+                None => 0,
+                Some(v) => {
+                    let pred = crate::v12::pred::parse(v)
+                        .map_err(|e| format!("[[pattern]] #{i}.when: {e}"))?;
+                    crate::v12::pred::leaf_count(&pred)
+                }
+            };
+            keys.push((p.priority.unwrap_or(0), nodes as i32, leaves as i32));
+        }
+        let mut order: Vec<usize> = (0..self.pattern.len()).collect();
+        order.sort_by_key(|&i| (-keys[i].0, -keys[i].1, -keys[i].2, i));
+        Ok(order)
+    }
+
     pub fn pred_attr_names(&self) -> Vec<String> {
         let mut out: Vec<String> = super::pred::PRED_ATTRS
             .iter()
@@ -2317,6 +2353,12 @@ pub struct Pattern {
     /// [`crate::v12::match_tree::parse`]。
     #[serde(rename = "match")]
     pub r#match: String,
+    /// 显式优先级（缺省 0，大者先试）——与 `[[lowering]].priority` **同语义**（v18 S5c）。
+    ///
+    /// 裁决序 = (`priority` 降, 匹配树 Op 节点数降, `when` 谓词叶子数降, 声明序升)；
+    /// 只在"故意让更宽的模式赢过更具体的模式"时才需要。
+    #[serde(default)]
+    pub priority: Option<i32>,
     /// 根指令派生属性上的结构化谓词（与 `[[lowering]].when` 同语法）——
     /// 两个结构相同、只差守卫（如 f32 vs f64）的模式靠它区分。
     #[serde(default)]
