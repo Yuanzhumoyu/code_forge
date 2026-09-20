@@ -10,7 +10,8 @@
 docs/
 ├── README.md              # 文档总索引 + 状态图例
 ├── reference/             # 现行规范/设计参考 [active]
-│   ├── isa-dsl.md             # ISA-DSL v15 唯一语法规范（改 isa/*.toml 先看它）
+│   ├── isa-dsl.md             # ISA-DSL v18 唯一语法规范（改 isa/*.toml 先看它）
+│   ├── isa-dsl-errors.md      # ISA-DSL 错误码目录（报错看不懂先看它）
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64_v12 后端/golden 依据）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── forge-ir/              # forge-ir 工作流 [active]
@@ -24,11 +25,13 @@ docs/
 │   ├── bench_baseline.md      # 基线 + 历轮实测
 │   └── codegen_stage_profile.md # codegen stage 占比
 ├── guides/                # 工具与方法
+│   ├── isa-dsl-tutorial.md    # ISA-DSL 30 分钟接入教程（新 ISA 从这里开始）
 │   ├── coverage.md            # cargo-llvm-cov 覆盖率工作流
 │   └── lint.md                # markdownlint 检查命令 + 存量基线（写文档后自查）
 └── archive/               # 历史归档（⚠️ 内容以其记录时点为准）
     ├── README.md              # 归档图例与清单
     ├── roadmap-status.md / isa-dsl-v12-roadmap.md / asm-dec-generic-design-v2.md
+    ├── isa-dsl-v12-v17.md     # ISA-DSL v12–v17 语法史 + v18 删除/改名总表
     ├── ymm-abi-plan.md        # YMM ABI 方案（2026-09-10 核查完成 → 归档）
     ├── hir-shrink-plan.md     # HIR/mini_c 收缩（同日均告终结 → 归档）
     ├── clippy-fixes.md / coverage-history.md
@@ -46,7 +49,11 @@ docs/
 - **forge-ir 的轮次纪元不统一**（audit 第 47 轮 ≠ roadmap 第 31 轮）——都已在
   archive/forge-ir/，继续 forge-ir 迭代请按 `docs/forge-ir/README.md` 约定新开记录；
 - **archive 内"已实现/待办"不代表代码现状**——改代码/加测试前以源码与 test 为准；
-- ISA-DSL 只有 v15（`reference/isa-dsl.md`）是现行语法；v12/v13 文档全在 archive。
+- ISA-DSL 现行语法是 **v18**（`reference/isa-dsl.md`）；v12–v17 的语法与删除总表在
+  `archive/isa-dsl-v12-v17.md`，v12 路线图在 `archive/isa-dsl-v12-roadmap.md`。
+  注意区分三种"版本号"：DSL 语法版本（v18，靠文档/CHANGELOG 追踪，**不写进 TOML**）、
+  `[meta].version`（ISA 自己的自由字符串）、以及 `isa/*_v12.toml`/`src/v12/` 这类**历史命名**
+  （生成器与谱的文件名，稳定不动）。
 
 ## Markdown 文档规范（格式基准：markdownlint v0.41.1）
 
@@ -190,14 +197,14 @@ code-forge (root umbrella)
 
 ### Key Architecture Rules
 
-1. **`isa_from_file!`（v12 唯一语法）默认生成 `crate::` 路径** — 即"生成在哪个
+1. **`isa_from_file!`（现行 ISA-DSL v18 语法）默认生成 `crate::` 路径** — 即"生成在哪个
    crate 里就属于哪个 crate"（`crate::prelude::*`、`crate::machine::*` 在该 crate 内解析）。
-   生成模块名 = 文件 stem。**在别的 crate（含 `tests/`）里生成**时给第二个参数
-   `krate = <宿主路径>`：生成物里的 `crate::…` 改写为 `<宿主>::…`、`forge_ir::…`
+   生成模块名 = 文件 stem（可用 `name = "…"` 覆盖）。**在别的 crate（含 `tests/`）里生成**时给
+   第二个参数 `krate = <宿主路径>`：生成物里的 `crate::…` 改写为 `<宿主>::…`、`forge_ir::…`
    改写为 `<宿主>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir;`），因此
    生成代码只依赖宿主的**公开面**——demo 夹具正是这样住在
    `tests/isa/*.toml` + `tests/common/mod.rs`（`krate = forge_codegen`）而不进库本体。
-   库本体只有真实后端：`arch/{x86,arm64,riscv64}_v12.rs`。
+   库本体只有真实后端：`arch/{x86,arm64,riscv64}_v12.rs`（文件名里的 v12 是历史命名）。
 
 2. **Assembler/JIT coupling** — `Assembler` trait ↔ `JitCompiler` are circularly coupled.
    Both live in forge-codegen. Cannot split into separate crates without first refactoring
@@ -311,6 +318,11 @@ let name = node.get_text("name")?;
   ↔ `docs/reference/isa-dsl.md` 的「键总览（速查表）」区段 + 签入的 `isa-dsl.schema.json`
   （`cargo test -p forge-isa-dsl --test schema_guard` 全钉住；重新生成 schema 用
   `cargo run -p forge-isa -- schema --out isa-dsl.schema.json`）。
+  三条要点：① schema 里的键必须是**用户在 TOML 里实际写的键**——字段名与 TOML 键不同时以
+  `#[serde(rename = "…")]` 为准（`reference`/`ref` 曾因此让编辑器把 `isa/x86_v12.toml` 的
+  35 处 `ref` 全部标红）；② `schema_guard.rs::shipped_specs_only_use_schema_keys` 直接拿
+  `isa/*.toml` + 夹具当输入，任何"schema 与真实谱不符"都会红；③ 自由表（`fields = {…}`、
+  `[[templates]].body`、`when = {…}`）在 schema 里没有子约束，守卫也**不**下钻它们。
 - **多文件谱（v18 S7d）**：`include = ["…"]` + `[[override]]` 由 `forge-isa-dsl::loader`
   消费（按块合并；数组节按 include 序追加、重复 `[表头]` 视为续写、同名标量冲突报错）；
   它是所有公开入口（`isa_from_file!`/`expand_file`/`validate_file`/CLI）的必经之路，

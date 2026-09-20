@@ -1,26 +1,29 @@
-# ISA-DSL v15 — 语法规范（唯一 DSL 语法）
+# ISA-DSL v18 — 语法规范（唯一 DSL 语法）
 
-> 本文档对应 ISA-DSL 的**现行 schema**（标题里的 "v15" 是历史遗留：正文已含 v18 的
-> 全部节——`[[templates]]` 唯一复用机制、`[encoding]` 宽度三态、`[[reloc]]`/`[[pseudo]]`/
-> `[[derive]]`/生成期自测；**语义重写**见 `docs/plans/forge-dsl-v18-plan.md` §11，属 S7e）。
-> 实现自 v18 S7a 起拆成两个 crate：`forge-isa-dsl`（普通 lib = 编译器本体：模型/解析/
-> 校验/诊断/代码生成）+ `forge-dsl`（薄 proc-macro：只解析 `isa_from_file!` 参数并调前者）。
-> 与仓库当前代码逐项核对（`crates/frontend/forge-isa-dsl/src/v12/`、`isa/x86_v12.toml`、
-> `isa/riscv64_v12.toml`）。
+> 状态：[active]（2026-09-21 定稿；v18 全部切片 S0–S7 已落地）。**这是 ISA 谱（`isa/*.toml`）的
+> 唯一现行规范**——写/改谱先看本文。
 >
-> **命名说明**：DSL 生成器的 Rust 模块路径仍是 `v12/`（`crates/frontend/forge-isa-dsl/
-> src/v12/`，历史遗留命名，稳定不动）；`[meta].version` 是自由字符串，与 schema
-> 迭代号（当前 v18）无关。
+> | 想做什么 | 看哪里 |
+> | --- | --- |
+> | 30 分钟接入一个小 ISA | [`docs/guides/isa-dsl-tutorial.md`](../guides/isa-dsl-tutorial.md) |
+> | 报错看不懂 / 常见修法 | [`docs/reference/isa-dsl-errors.md`](isa-dsl-errors.md) |
+> | v12–v17 旧语法与 v18 删除总表 | [`docs/archive/isa-dsl-v12-v17.md`](../archive/isa-dsl-v12-v17.md) |
+> | 为什么这样设计 / 逐节变更动机 | [`docs/plans/forge-dsl-v18-plan.md`](../plans/forge-dsl-v18-plan.md) |
+>
+> 实现自 v18 S7a 起拆成两个 crate：`forge-isa-dsl`（普通 lib = 编译器本体：模型/解析/
+> 校验/诊断/代码生成/加载器）+ `forge-dsl`（薄 proc-macro：只解析 `isa_from_file!` 参数并调前者）。
+> **命名说明**：生成器的 Rust 模块路径仍是 `v12/`（`crates/frontend/forge-isa-dsl/src/v12/`，
+> 历史遗留命名，稳定不动）；`[meta].version` 是 ISA 自己的自由版本串，与 DSL 语法版本无关，
+> 也不参与任何校验。
 > **v11 语法层**（`encoding` 字符串 + `@原语`、紧凑 `fields` 串、`when` 谓词串、
-> asm 隐式魔法名）已整体移除——无兼容层、无转换工具、无逃生门。v11 风格文件解析
-> 必然失败（`deny_unknown_fields`）。历史设计决策与迭代记录见
-> [`docs/archive/isa-dsl-v12-roadmap.md`](../archive/isa-dsl-v12-roadmap.md)。
+> asm 隐式魔法名）已整体移除；v12–v17 的 `[[families]]`/`[[aliases]]` 与 v14 写法同样无兼容层——
+> 解析必然失败（`deny_unknown_fields`），迁移对照见归档文档。
 
 ## 目录
 
-- [ISA-DSL v15 — 语法规范（唯一 DSL 语法）](#isa-dsl-v15--语法规范唯一-dsl-语法)
+- [ISA-DSL v18 — 语法规范（唯一 DSL 语法）](#isa-dsl-v18--语法规范唯一-dsl-语法)
   - [目录](#目录)
-  - [v15 迭代总览（S1–S6）](#v15-迭代总览s1s6)
+  - [版本与现状（v18）](#版本与现状v18)
   - [键总览（速查表，v18 S7c）](#键总览速查表v18-s7c)
   - [快速开始](#快速开始)
   - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
@@ -49,21 +52,33 @@
 
 ---
 
-## v15 迭代总览（S1–S6）
+## 版本与现状（v18）
 
-v14 是 v12 的增量扩展，沉淀出三类结构性债务：`[[forms]]` 组合爆炸（x86 47 个
-form 里 17 个只被一条指令用）、`when` 表达力不足导致的复制粘贴（x86 261 条
-lowering 里 66 条同 op + 逐字节相同 insts、只差 when）、以及 16 处 x86 指令名
-硬编码默认值。v15 分六步做了破坏性简化（每步门禁全绿、逐字节等价）：
+v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住这几条"唯一"：
 
-| 阶段 | 内容 |
-| --- | --- |
-| S1 | 删死键（`forms.opcode_bytes`/`operand_slots.field_width`/`values`/`forms.operand_slots`/`[conventions.rex]`/`[conventions.opsize_prefix]`/死 form）；`Spanned` 行号诊断；`include_bytes!` 依赖跟踪（删 `touch` workaround）；补齐 lowering 校验；字符串键枚举化 |
-| S2 | lowering `vary` 行表 + `in` 集合谓词 + 特异性排序（去声明序依赖）+ 重复/死规则编译期报错 |
-| S3 | 命名操作数（`ops` 声明、`asm` 只引用）；`modrm` 六魔法串 → 显式映射；`[[forms]]` 降为可选预设（指令逐键覆盖）；`opsize` 单位统一为位 |
-| S4 | `[abi]` 13 个 `*_inst` 名指针 + `tags` → 指令上的 `roles` 枚举；删 16 处 x86 硬编码默认 |
-| S5 | `[abi.frame]` 4 个 riscv 旋钮 → `layout` 枚举 + 运行期推导；`{callee_saved_bytes}` 占位符替掉 x86 尾声魔法数 56 |
-| S6 | `[[pattern]]` 树型多 op 匹配（新增能力）；删 `ext/pattern_isel.rs` 死模块 |
+| 唯一 | 取代了什么 | 本节 |
+| --- | --- | --- |
+| `[[templates]]`（`body` + `rows`） | `[[families]]` 族变体、v14 的参数表模板 | [模板](#templates--参数化指令模板唯一复用机制) |
+| 指令属性 `ref` | `[[aliases]]` 别名清单 | 同上 |
+| 命名操作数 `ops` + `asm` 只引用 `{名字}` | v14 的 asm 内联声明 `{i:[槽:角色]}`、位置名 `s0`/`s1` | [`[[instructions]]`](#instructions--指令) |
+| `[encoding]` 宽度三态 | `[meta].default_inst_width`/`variable_length`/`max_inst_len` | [`[encoding]`](#encoding--指令宽度三态v18-s4) |
+| `[[reloc]]` / `[[pseudo]]` / `[[derive]]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
+| `[conventions.cond]`（数据表） | 生成器里的 x86 条件码表 | [`[conventions]`](#conventions--isa-约定) |
+| `include` + `[[override]]` | "后出现的赢"这种隐式覆盖 | [多文件组合](#多文件组合include--overridev18-s7d) |
+| 生成期自测 `__spec_tests` | 手抄的样板往返测试 | [生成期自测](#生成期自测__spec_testsv18-s6) |
+
+**v18 相对 v14/v15 的关键承诺**：
+
+1. **通用，不服务个别指令集**——生成器里不再有某个 ISA 的缺省（条件码表、前缀扫描、
+   `[abi]` 旋钮、宽度类）：缺声明就 fail-closed 报错，而不是静默套别家形状；
+2. **数据化**——条件码、重定位语义、伪指令、派生谓词、内存操作数文本、指令字宽都写在 TOML 里；
+3. **作者面一致**——`ops` 里声明的名字同时是 `asm` 占位符名与生成的 `Inst` 字段名；
+   位域名 / 语义角色名只做内部编码键；
+4. **一次列全的诊断** + 可点击的 `路径:行:列`（多文件谱指向真正写那一行的文件）；
+5. **每条指令自动进回归网**（生成期自测），CLI 不接后端就能校验/查看展开结果/做规格 diff。
+
+> 历史：v15 的 S1–S6（删死键、`vary` 行表、命名操作数、`roles` 枚举、帧布局推导、`[[pattern]]`）
+> 与 v16/v17 的增量，都记在 [`docs/archive/isa-dsl-v12-v17.md`](../archive/isa-dsl-v12-v17.md)。
 
 ## 键总览（速查表，v18 S7c）
 
@@ -96,7 +111,7 @@ lowering 里 66 条同 op + 逐字节相同 insts、只差 when）、以及 16 �
 | `[conventions.mem]` | `template` | — | 内存操作数文本模板（缺省 x86 `[{base}+{index}*{scale}+{disp}]`） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
-| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `implicit_regs` `reloc` `width` `reference` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先） |
+| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `implicit_regs` `reloc` `width` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
@@ -182,7 +197,7 @@ TargetMachine 集成层（`TargetMachine` / `Encoder` / `Decoder` / `Disassemble
 ```toml
 [meta]
 name = "x86_64_v12"          # Registry 注册名（ensure_registered 用它）
-version = "13.0"             # 自由字符串（与 schema 迭代号 v15 无关）
+version = "13.0"             # 自由字符串（与 DSL 语法版本 v18 无关）
 endian = "little"            # 缺省 little
 mode = 64                    # 缺省 64
 case_insensitive_regs = true # 可选：寄存器解析大小写不敏感
@@ -1346,4 +1361,11 @@ ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
 - **`demo_mixed16_32_v12.toml`**：**混合字长**夹具（`kind = "mixed"`、
   `widths = [16, 32]`，低 2 位判别短/长编码）；用例见
   `tests/demo_mixed16_32_v12_tests.rs`。
-- 库表面守卫 `tests/library_surface.rs` 保证夹具谱不会回到 `src/` 或仓库根 `isa/`。
+- **`demo_inst8/12/100_v12.toml`**：指令字宽夹具（8 / 12 / 100 位；100 位 = 13 字节，
+  位域落在机器字之外）。
+- **`include_root_v12.toml` + `include_base_v12.toml`**（v18 S7d）：**多文件组合**夹具
+  （`include` 片段 + `[[override]]`）；同一份谱在 `tests/common/mod.rs` 里再用
+  `name`/`parts = ["encode"]` 展开一个"只有编码器"的模块；用例见
+  `tests/include_v12_tests.rs`。
+- 夹具清单与用途另见 `crates/backend/forge-codegen/tests/isa/README.md`；
+  库表面守卫 `tests/library_surface.rs` 保证夹具谱不会回到 `src/` 或仓库根 `isa/`。

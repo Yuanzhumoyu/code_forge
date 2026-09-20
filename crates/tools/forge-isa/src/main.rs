@@ -258,8 +258,10 @@ fn cmd_insts(file: &Path, json: bool) -> ExitCode {
                 println!("{}", insts_json(&isa, &rows));
             } else {
                 println!(
-                    "# {} （schema {}；encoding = {}；{} 条指令 / {} 条模板 / {} 条 lowering）",
+                    "# {} （version {}；encoding = {}；{} 条指令 / {} 条模板 / {} 条 lowering）",
                     isa.name,
+                    // `[meta].version`（缺省 = `-`）。这里不能叫 "schema"：它是 ISA 自己的
+                    // 版本串，DSL 语法版本靠文档/CHANGELOG 追踪，不写进 TOML。
                     isa.version.as_deref().unwrap_or("-"),
                     kind_text(&isa),
                     isa.instructions,

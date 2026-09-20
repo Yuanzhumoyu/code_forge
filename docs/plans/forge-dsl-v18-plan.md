@@ -155,6 +155,11 @@ include = ["common/rv_base.toml"]        # 可选：多文件组合（见 5.7）
 
 `[meta].version` 改为 **ISA 自己的版本串**（自由字符串，与 schema 无关）；生成器模块 `src/v12/` 改名 `src/schema/`。
 
+> **落地修正（2026-09-21，S7e 复核）**：本节**未按此实现**——顶层 `schema = 18` 与顶层 `name`
+> 都没有加，`[meta].name`/`[meta].version`/`[meta].mode` 保留原样，生成器仍在 `src/v12/`。
+> 事实源是本文档 + 代码，不是 TOML 里的版本键。以现行规范
+> [`docs/reference/isa-dsl.md`](../reference/isa-dsl.md) 为准。
+
 ### 5.2 `[[templates]]` — 参数化指令（唯一复用机制）
 
 > **状态**：S2 初版按"参数域等长按下标 zip"（`params`）实现，**S2c 改为 `body` + `rows`
@@ -624,7 +629,19 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   生成物 token 级对照（`demo_inst12_v12`，基线 vs 现在）：只有
   `rd→dst`(32) / `rs1→src`(32) / `rs2→src2`(16) 共 80 处标识符改名，编码 token 零变化
   （证据 `target/s7d_field_rename_evidence.txt`；三个 ISA 的黄金字节/规格自测全绿）。
-- **S7e 待做**：文档重写（教程 + 归档旧语法 + 索引/状态头）。
+- **S7e 已落地（2026-09-21）**：文档重写完成——`docs/reference/isa-dsl.md` 去掉 "v15" 历史
+  标题、"v15 迭代总览" 段移入归档，改为「版本与现状（v18）」+ 四份入口指引；新增教程
+  [`docs/guides/isa-dsl-tutorial.md`](../guides/isa-dsl-tutorial.md)（玩具 ISA TOY16：骨架 → 操作数槽 →
+  指令 → 模板 → 生成期自测 → CLI 自查，示例谱本机实跑 `validate`/`insts` 通过）与归档
+  [`docs/archive/isa-dsl-v12-v17.md`](../archive/isa-dsl-v12-v17.md)（v12–v17 语法史 + v18 删除/改名总表 +
+  本节 §5.1 未采纳说明）；`isa-dsl-errors.md` 补 §3.8（多文件组合/`parts` 的加载期与编译期错误，
+  并把 §3.8 旧"位置"节改为 §3.9）；`docs/README.md`/`CLAUDE.md` 索引与 v15→v18 陈述同步；
+  `bench_baseline.md` 补 v18 落地后的规格规模与"生成代码采集口径"提醒。
+  同轮**修掉一个真实缺陷**：JSON Schema 把指令的 `ref` 写成了模型字段名 `reference`，
+  于是编辑器（Taplo + `#:schema`）把 `isa/x86_v12.toml` 里 35 处 `ref = …` 全部标成未知键。
+  修法：schema 写 TOML 实际键 `ref` + 守卫按 `#[serde(rename = "…")]` 取键名 +
+  新增 `schema_guard.rs::shipped_specs_only_use_schema_keys`（拿真实谱当输入，直接钉住
+  "schema ↔ 签入的谱"这一层）；docs 键表与 `isa-dsl.schema.json` 同步重新生成。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 
@@ -703,13 +720,13 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
 
 ## 11. 文档落地清单
 
-- 本方案 `docs/plans/forge-dsl-v18-plan.md`（已落地）
-- 重写 `docs/reference/isa-dsl.md`（v18 语法：一节一概念 + 迁移对照 + 生成代码契约）
-- 新增 `docs/guides/isa-dsl-tutorial.md`（30 分钟接入一个小 ISA：寄存器组 → 位域 → 模板 → asm → 自测）
-- 新增 `docs/reference/isa-dsl-errors.md`（错误码目录：码、含义、典型修法）
-- 归档 `docs/archive/isa-dsl-v12-v17.md`（旧语法 + v15 的 S1–S6 + v16/v17 增量）
-- 更新 `CLAUDE.md` 的 ISA-DSL 节（去掉 v12/v15 混述）、`CHANGELOG.md`、`docs/README.md` 索引
-- `docs/performance/bench_baseline.md` 增 DSL 段（S0 基线：生成代码规模、编译时间、诊断响应）
+- ✅ 本方案 `docs/plans/forge-dsl-v18-plan.md`（已落地）
+- ✅ 重写 `docs/reference/isa-dsl.md`（v18 语法：标题去 v15、版本与现状、一节一概念、生成代码契约）
+- ✅ 新增 `docs/guides/isa-dsl-tutorial.md`（30 分钟接入一个小 ISA：寄存器组 → 位域 → 槽 → 指令 → 模板 → 自测）
+- ✅ `docs/reference/isa-dsl-errors.md`（S1 建、S7e 补多文件组合与 `parts`）
+- ✅ 归档 `docs/archive/isa-dsl-v12-v17.md`（旧语法 + v15 的 S1–S6 + v16/v17 增量 + 未采纳改名）
+- ✅ 更新 `CLAUDE.md` 的 ISA-DSL 节（去掉 v12/v15 混述）、`CHANGELOG.md`、`docs/README.md` 索引
+- ✅ `docs/performance/bench_baseline.md` 的 `ir_dsl` 段（S0 基线 + S2c + S7d 三个时点的规模与口径）
 
 ## 12. 附录：S0 基线实测
 

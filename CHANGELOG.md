@@ -11,7 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-21)
+
+- **`#:schema` 编辑器补全：指令的 `ref` 键被 schema 写成了 `reference`（v18 S7e 修）**。模型的字段名是 `reference` + `#[serde(rename = "ref")]`，而 JSON Schema 发射器按字段名发射，于是**所有用 `ref` 的谱都被编辑器标红**（`isa/x86_v12.toml` 35 处，Taplo + `#:schema`）。
+  现在 schema 发的是 TOML 里实际写的键 `ref`；三方守卫按 `#[serde(rename = "…")]` 取键名，并新增 `schema_guard.rs::shipped_specs_only_use_schema_keys`——**直接拿 `isa/*.toml` 与全部夹具当输入**，任何"schema 与真实谱不符"都会红（自由表 `fields = {…}`/`[[templates]].body`/`when = {…}` 在 schema 里本无子约束，守卫也不下钻）。`docs/reference/isa-dsl.md` 的键速查表与签入的 `isa-dsl.schema.json` 同步重新生成。
+- 顺带修 `forge-isa insts` 表头把 `[meta].version` 标成 `schema`：它是 ISA 自己的版本串，与 DSL 语法版本无关，
+  现在标 `version`（`[meta].version` 缺省时显示 `-`）。
+
 ### Added (2026-09-21)
+
+- **ISA-DSL 文档重写（v18 S7e）**：`docs/reference/isa-dsl.md` 去掉 "v15" 历史标题与 v15 迭代总览段（移入归档），改为「版本与现状（v18）」——一张"唯一机制 ↔ 取代了什么"对照表 + 五条承诺；
+  新增 **[`docs/guides/isa-dsl-tutorial.md`](docs/guides/isa-dsl-tutorial.md)**（30 分钟接入玩具 ISA TOY16：骨架 → 操作数槽 → 指令 → `[[templates]]` → 生成期自测 → CLI 自查，示例谱本机实跑 `validate`/`insts`/`explain` 通过）；
+  新增归档 **[`docs/archive/isa-dsl-v12-v17.md`](docs/archive/isa-dsl-v12-v17.md)**（v12–v17 语法史 + v18 删除/改名总表 + 方案里提过但未采纳的改名）；
+  `isa-dsl-errors.md` 补「多文件组合与部件选择」错误表（缺 include / 成环 / 同名标量冲突 / `[[override]]` 目标不存在 / `parts` + `spec_tests` 冲突）与多文件诊断定位说明；
+  `docs/README.md`、`CLAUDE.md`（文档地图 + 三版本号辨析 + 三方守卫三条要点）同步；`bench_baseline.md` 的 `ir_dsl` 段补 v18 落地后的规格规模与**生成代码采集口径**提醒（S8 对照必须固定同一命令）。
 
 - **ISA-DSL 多文件组合 `include` / `[[override]]` + 部件选择 `parts` + CLI `fmt`（v18 S7d）**。新增 `forge-isa-dsl::loader`（递归 `include`，深度上限 8、重复/成环报错、**按块合并**：数组节按 include 序追加、重复 `[表头]` 视为同节续写、同名标量冲突报错并提示改用 `[[override]]`），`[[override]] key = "点分路径" value = …` 显式覆盖被包含文件里的键（目标不存在即报错，拼错不静默）；诊断带**来源文件映射**——`路径:行:列` 指向真正写那一行的那份文件；生成物对**每个来源文件**都登记 `include_bytes!`（改任一片段都触发重编译）。
   `isa_from_file!` 参数扩到四个：`krate` / `spec_tests` / **`name = "…"`**（模块名覆盖，同一份谱展开多次必需）/ **`parts = ["encode", "decode", "asm", "tm"]`**（部件选择：`Inst`/`Reg` 枚举与寄存器表是任何部件的公共前提，恒定生成；受限时必须 `spec_tests = false`，否则编译期明确报错）。CLI 新增 `fmt [--out <file>]`：把多文件谱折叠成一份单文件 TOML（可继续编辑、可单文件分发、可独立校验、幂等）。

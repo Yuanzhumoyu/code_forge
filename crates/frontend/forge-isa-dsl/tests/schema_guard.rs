@@ -63,7 +63,11 @@ const FLATTEN_FIELDS: &[(&str, &str, &str)] = &[
 const TABLE_BEGIN: &str = "<!-- BEGIN: schema-keys";
 const TABLE_END: &str = "<!-- END: schema-keys -->";
 
-/// 从模型源码里抽 `pub struct X { … }` 的字段：`(pub 字段, 是否 #[serde(skip)])`。
+/// 从模型源码里抽 `pub struct X { … }` 的字段：`(TOML 键, 是否 #[serde(skip)])`。
+///
+/// **TOML 键**：`#[serde(rename = "…")]` 优先，否则是字段名（`r#match` → `match`）。
+/// 不处理 rename 就等于把"字段名"当成"用户写的键"，`reference`/`ref` 这类改名会被
+/// 误判为一致——编辑器却会对每一行 `ref = …` 报未知键（2026-09-21 实测 S7e）。
 fn model_structs() -> Vec<(String, Vec<(String, bool)>)> {
     let src =
         std::fs::read_to_string(repo_root().join("crates/frontend/forge-isa-dsl/src/v12/model.rs"))
@@ -89,11 +93,17 @@ fn model_structs() -> Vec<(String, Vec<(String, bool)>)> {
         let mut fields = Vec::new();
         let mut depth = 1i32;
         let mut pending_skip = false;
+        let mut pending_rename: Option<String> = None;
         let mut k = j + 1;
         while k < lines.len() && depth > 0 {
             let lt = lines[k].trim();
-            if lt.starts_with("#[") && lt.contains("skip") {
-                pending_skip = true;
+            if lt.starts_with("#[") {
+                if lt.contains("skip") {
+                    pending_skip = true;
+                }
+                if let Some(after) = lt.split("rename = \"").nth(1) {
+                    pending_rename = after.split('"').next().map(str::to_string);
+                }
             }
             depth += lt.matches('{').count() as i32;
             depth -= lt.matches('}').count() as i32;
@@ -102,7 +112,8 @@ fn model_structs() -> Vec<(String, Vec<(String, bool)>)> {
             {
                 // raw 标识符（`r#match`）在 TOML 里就是 `match`。
                 let fname = fname.trim().trim_start_matches("r#").to_string();
-                fields.push((fname, pending_skip));
+                let key = pending_rename.take().unwrap_or(fname);
+                fields.push((key, pending_skip));
                 pending_skip = false;
             }
             k += 1;
@@ -275,6 +286,219 @@ fn checked_in_schema_file_is_up_to_date() {
     );
     // 顺手校验它是**合法 JSON**（自带极小校验器——测试里不引 JSON 库，§10.4）。
     check_json(&on_disk);
+}
+
+/// **签入的谱 ↔ schema**：`isa/*.toml` 与测试夹具里出现的**每一个键**都必须被 schema
+/// 认识（各节都是 `additionalProperties: false`）。
+///
+/// 为什么单独要这条：模型 ↔ schema 的对照只看"结构体字段 ↔ 节键集"，看不见
+/// "用户实际写的键"——`#[serde(rename = "ref")]` 的字段名是 `reference`，schema 一度写成
+/// `reference`，于是编辑器对 `isa/x86_v12.toml` 里 35 处 `ref = …` 全部标红（2026-09-21
+/// 实测）。这条守卫直接拿**真实谱**当输入，把这一类"schema 与谱不符"钉死。
+#[test]
+fn shipped_specs_only_use_schema_keys() {
+    let root = repo_root();
+    let mut specs: Vec<PathBuf> = Vec::new();
+    for e in std::fs::read_dir(root.join("isa")).expect("读 isa/") {
+        let p = e.expect("entry").path();
+        if p.extension().is_some_and(|x| x == "toml") {
+            specs.push(p);
+        }
+    }
+    for e in std::fs::read_dir(root.join("crates/backend/forge-codegen/tests/isa")).expect("读夹具")
+    {
+        let p = e.expect("entry").path();
+        if p.extension().is_some_and(|x| x == "toml") {
+            specs.push(p);
+        }
+    }
+    assert!(
+        specs.len() >= 9,
+        "只找到 {} 份谱，路径疑似不对",
+        specs.len()
+    );
+
+    let mut bad: Vec<String> = Vec::new();
+    for spec in &specs {
+        let text = read_lf(spec).expect("读谱");
+        let table: toml::Table = toml::from_str(&text).expect("谱必须是合法 TOML");
+        check_keys(&table, &[], &mut bad);
+        // 多文件谱：被 include 的片段单独也是合法谱吗？不要求（它可能只是半张表），
+        // 但它里面的键会随合并结果进入模型——因此把片段也按同一套键集检查一遍
+        // （它们同样带 `#:schema`，编辑器也会校验）。
+    }
+    for spec in &specs {
+        let text = read_lf(spec).expect("读谱");
+        for inc in include_targets(&text) {
+            let p = spec.parent().expect("父目录").join(inc);
+            let Ok(t) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            let table: toml::Table = toml::from_str(&t.replace("\r\n", "\n")).expect("片段 TOML");
+            check_keys(&table, &[], &mut bad);
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "以下键不在 JSON Schema 里（编辑器会对这些谱报未知键）：\n  {}\n\
+         修法：把 TOML 里**实际写的键**加进 `src/schema.rs` 对应节（字段名与 TOML 键不同时\n\
+         以 `#[serde(rename = \"…\")]` 为准，见 schema_guard.rs::model_structs）。",
+        bad.join("\n  ")
+    );
+}
+
+/// 谱里的 `include = [...]` 目标（相对该文件）。
+fn include_targets(text: &str) -> Vec<String> {
+    let Ok(t) = toml::from_str::<toml::Table>(text) else {
+        return Vec::new();
+    };
+    t.get("include")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 递归检查一张表的键是否都在 `SECTIONS` 允许的范围内。
+///
+/// 规则：`path` 处若正好匹配某个节，则键必须在该节（+`ENC_KEYS` flatten）里，且
+/// `additional = false` 的节不允许额外键；否则 `path` 是**中间表**，键必须是某个节
+/// 路径的下一段（含 `<name>` 通配）。**只有"下面还有节"的子表才继续下钻**——
+/// `fields = { hw = 0 }`、`[[templates]].body`、`when = { eq = [...] }` 这类自由表的
+/// 内容在 schema 里本就没有约束（属性只有 description、没有子 schema），编辑器不会报错，
+/// 守卫也不该报。
+fn check_keys(table: &toml::Table, path: &[String], bad: &mut Vec<String>) {
+    let (allowed, additional, section_matched) = allowed_at(path);
+    for (key, value) in table {
+        if section_matched {
+            if !additional && !allowed.contains(key.as_str()) {
+                bad.push(format!("{}: {}", render_path(path, key), key));
+                continue;
+            }
+        } else if !is_intermediate_child(path, key) {
+            bad.push(format!("{}: {}", render_path(path, key), key));
+            continue;
+        }
+        let child_path: Vec<String> = path.iter().cloned().chain([key.clone()]).collect();
+        // ① 下面还有节 → 正常下钻（由节校验内容）。
+        //    注意必须**先**判断这个：`[conventions.modrm]` 是真正的节，而指令/form 上的
+        //    `modrm = { … }` 才是"内联子表"，两者同名（2026-09-21 实测踩过）。
+        if has_section_below(&child_path) {
+            match value {
+                toml::Value::Table(t) => check_keys(t, &child_path, bad),
+                toml::Value::Array(items) => {
+                    for it in items {
+                        if let Some(t) = it.as_table() {
+                            check_keys(t, &child_path, bad);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        // ② 内联子表（`modrm`/`vex`/`evex`）：schema 里是"内联子表"节，键集单独给。
+        if let Some(keys) = inline_table_keys(key) {
+            if let Some(t) = value.as_table() {
+                for k2 in t.keys() {
+                    if !keys.contains(&k2.as_str()) {
+                        bad.push(format!("{}.{k2}: {k2}", render_path(path, key)));
+                    }
+                }
+            }
+            continue;
+        }
+        // ③ 自由表（`fields = {…}`、`[[templates]].body`、`when = {…}`）：内容不受约束。
+    }
+}
+
+/// `path` 下面（含自身）是否还有节？`false` = 自由表，内容不受 schema 约束。
+fn has_section_below(path: &[String]) -> bool {
+    SECTIONS.iter().any(|s| {
+        let Some(segs) = section_segments(s.path) else {
+            return false;
+        };
+        segs.len() >= path.len() && segs_match(&segs[..path.len()], path)
+    })
+}
+
+/// schema 里以"内联子表"节描述的键（它们不是 TOML 路径，单独列出）。
+/// 与 `src/schema.rs` 里那两条"内联子表"节保持一致。
+fn inline_table_keys(key: &str) -> Option<&'static [&'static str]> {
+    match key {
+        "modrm" | "modrm_fixed" => Some(&["reg", "rm"]),
+        "vex" | "evex" => Some(&["map", "pp", "w", "l", "b", "z", "disp_scale"]),
+        _ => None,
+    }
+}
+
+/// `path` 处的节：`(允许的键, 是否允许额外键, 是否匹配到节)`。
+fn allowed_at(path: &[String]) -> (BTreeSet<&'static str>, bool, bool) {
+    let mut keys: BTreeSet<&'static str> = BTreeSet::new();
+    let mut additional = false;
+    let mut matched = false;
+    for s in SECTIONS {
+        let Some(segs) = section_segments(s.path) else {
+            continue; // "内联子表"节：不是 TOML 路径
+        };
+        if segs.len() != path.len() || !segs_match(&segs, path) {
+            continue;
+        }
+        matched = true;
+        additional |= s.additional;
+        keys.extend(s.required.iter().copied());
+        keys.extend(s.optional.iter().copied());
+        keys.extend(s.flatten.iter().copied());
+    }
+    (keys, additional, matched)
+}
+
+/// `path` 是否是某个节路径的前缀，且 `key` 是它的下一段。
+fn is_intermediate_child(path: &[String], key: &str) -> bool {
+    SECTIONS.iter().any(|s| {
+        let Some(segs) = section_segments(s.path) else {
+            return false;
+        };
+        segs.len() > path.len()
+            && segs_match(&segs[..path.len()], path)
+            && (segs[path.len()].starts_with('<') || segs[path.len()] == key)
+    })
+}
+
+/// 节路径 → 段（`<name>`/`<block>`/`<key>` 等通配段保留 `<`）。无法解析的（内联子表）返回 `None`。
+fn section_segments(path: &str) -> Option<Vec<&str>> {
+    if path == "<root>" {
+        return Some(Vec::new());
+    }
+    if path.contains('（') || path.contains(" / ") {
+        return None; // `enc / vex / evex / modrm（内联子表）` 之类
+    }
+    let inner = path
+        .trim_start_matches("[[")
+        .trim_start_matches('[')
+        .trim_end_matches("]]")
+        .trim_end_matches(']');
+    Some(inner.split('.').collect())
+}
+
+fn segs_match(pattern: &[&str], path: &[String]) -> bool {
+    pattern.len() == path.len()
+        && pattern
+            .iter()
+            .zip(path.iter())
+            .all(|(p, a)| p.starts_with('<') || *p == a.as_str())
+}
+
+fn render_path(path: &[String], key: &str) -> String {
+    if path.is_empty() {
+        format!("<root>.{key}")
+    } else {
+        format!("{}.{key}", path.join("."))
+    }
 }
 
 /// 极小 JSON 校验器（结构 + 字符串转义 + 字面量）：足以证明发射器不会产出

@@ -1,17 +1,24 @@
-# ISA-DSL 错误码目录（v18 S1）
+# ISA-DSL 错误码目录（v18）
 
-> 状态：[active]（2026-09-19 起；2026-09-20 补 `DSL-ENCODING` 与 §3.7 `[encoding]` 三态）。对应实现：
+> 状态：[active]（2026-09-19 起；2026-09-20 补 `DSL-ENCODING` 与 §3.7 `[encoding]` 三态；
+> 2026-09-21 补 §3.8 多文件组合与 `parts`）。对应实现：
 > `crates/frontend/forge-isa-dsl/src/v12/diag.rs`（诊断收集与定位）、`validate.rs`（各节校验）、
-> `model.rs`（模型级派生与 gate）。执行方案见 `docs/plans/forge-dsl-v18-plan.md` §7「S1 诊断与校验」。
+> `model.rs`（模型级派生与 gate）、`src/loader.rs`（多文件组合的加载期错误）。
+> 语法规范见 [`docs/reference/isa-dsl.md`](isa-dsl.md)，教程见
+> [`docs/guides/isa-dsl-tutorial.md`](../guides/isa-dsl-tutorial.md)；
+> 执行方案见 [`docs/plans/forge-dsl-v18-plan.md`](../plans/forge-dsl-v18-plan.md) §7。
 
 ## 1. 诊断长什么样
 
 一条诊断 = `路径:行:列: 错误码: 消息`，**一行一条**，可直接点击跳到 ISA TOML 的出错处：
 
 ```text
-D:/repo/isa/x86_v12.toml:1832:1: DSL-INST: [[instructions.SUB_RM_R]]: form 'MRR_TYPO' is not declared in [[forms]]
-D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性 'rd_width'（可用：rd/rs1_width/…）——未知属性恒为假，规则永不命中
+<repo>/isa/x86_v12.toml:1832:1: DSL-INST: [[instructions.SUB_RM_R]]: form 'MRR_TYPO' is not declared in [[forms]]
+<repo>/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性 'rd_width'（可用：rd/rs1_width/…）——未知属性恒为假，规则永不命中
 ```
+
+（上例是**示意**（把某条指令的 form 名写错、把谓词属性名写错后实测的输出形状）：路径与行号随
+谱内容漂移，以符号名与消息文本为准。跑 `forge-isa validate <你的谱>` 得到的才是当前真实位置。）
 
 - **行:列**：由**声明索引**给出（一次预扫建立"节 + 名字 → 块行范围"），不会像旧实现那样
   用 `source.find` 全局搜名字而指到别处；块内还能进一步精确定位到**出错的那个键行**
@@ -125,9 +132,33 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 | `[[instructions.X]]: width = N 不能替代 [encoding].bits` | `fixed` 且没写 `bits`：请在 `[encoding].bits` 声明一次，而不是逐条写 `width` |
 | `[[instructions.X]]: prefix_scan ISA 不得写 width` | 前缀扫描式的字长由前缀链决定，删掉 `width` |
 
-### 3.8 位置看起来不对？
+### 3.8 多文件组合与部件选择（v18 S7d）
+
+`include` / `[[override]]` 在**加载期**（`forge-isa-dsl::loader`）处理，所以这类错误不带
+`路径:行:列`（还不是"某一行的语法/语义错"），但一定点名**具体文件或键**：
+
+| 消息 | 修法 |
+| --- | --- |
+| `Cannot read ISA file 'nope.toml'` | `include` 里的路径相对**写这一行的文件**解析；检查拼写与相对位置 |
+| `include 成环 / 同一文件被包含两次` | 公共片段只能被包含一次（A→B→A 也会被拒）；把公共部分再抽一层或改用 `[[override]]` |
+| `同名标量冲突：<键> 在 <文件A> 与 <文件B> 都给了值` | 表节跨文件合并，但同一个**标量键**只能有一处给值；要覆盖就写 `[[override]]`（消息里 `<键>`/`<文件>` 是占位符，实际会填上键名与两个来源文件） |
+| `[[override]] key = "…" 在任何文件里都没有对应的 \`… = …\` 行` | 覆盖只能改**已存在**的键（拼错了？还是要新增键？新增直接写在根文件里） |
+| `[[override]] key = "…" 缺少 \`value\`` | 显式覆盖必须给新值 |
+| `[[override]] key = "…"：目标表 [节名] 在合并结果里不存在` | 被包含文件里没有这一节（先确认节名，或把该节写进根文件） |
+| `include 需要经多文件加载器展开`（或 `[[override]]` 版本） | 用 `isa_from_file!` / `forge-isa` CLI / `forge_isa_dsl::expand_file` 这些入口（它们自动处理 include 与 override），不要绕过去把裸文本交给解析器 |
+
+`isa_from_file!` 的 `parts` 参数是**编译期**错误（不是诊断）：
+
+| 消息 | 修法 |
+| --- | --- |
+| `parts = [encode] 时不能生成生成期自测（\`__spec_tests\` 需要 encode/decode/asm 全部）——请显式写 \`spec_tests = false\`，或去掉 parts` | 关掉自测或放开部件 |
+| `未知部件 \`encoder\`（可用：encode / decode / asm / tm）` | 部件名只有四个 |
+
+### 3.9 位置看起来不对？
 
 - 诊断指向**声明行**（`name = …` / `op = …` / 节头）是正常的；
 - 若消息里用引号点名了出错的值（`'MRR_TYPO'`、`'rd_width'`、`'{bogus}'`），定位会进一步
   收到**该值所在的行**（限制在同一个声明块内，不会跨声明乱指）；
+- **多文件谱**：诊断里的 `路径:行:列` 是**来源文件**里的位置（合并前的行号），不是"合并文本的
+  第 N 行"——直接点开就能看到出错的那一行；
 - 完全抽不出节/名字时退化为 `1:1`——这种情况属于应当补节前缀的消息，欢迎报 bug。

@@ -230,7 +230,11 @@ pub const SECTIONS: &[Section] = &[
             "implicit_regs",
             "reloc",
             "width",
-            "reference",
+            // TOML 键是 `ref`（模型字段名 `reference` + `#[serde(rename = "ref")]`）。
+            // 守卫按 `#[serde(rename = …)]` 取键名，所以这里必须写 **用户在 TOML 里
+            // 实际写的那个键**——写字段名会让编辑器对每一行 `ref = …` 报未知键
+            // （2026-09-21 实测：`isa/x86_v12.toml` 的 35 处 `ref` 全部被 Taplo 标红）。
+            "ref",
         ],
         // 编码键是 `#[serde(flatten)]` 的 EncKeys：直接在指令上写（不写 `enc = {...}`）。
         flatten: ENC_KEYS,

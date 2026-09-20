@@ -10,8 +10,8 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| `reference/isa-dsl.md` | ISA-DSL 语法规范（正文已含 v18 各节：`[[templates]]` 唯一复用机制、`[encoding]` 宽度三态、`[[reloc]]`/`[[pseudo]]`/`[[derive]]`、生成期自测；标题里的 "v15" 是历史遗留，语义重写见 `plans/forge-dsl-v18-plan.md` §11/S7e） | active |
-| `reference/isa-dsl-errors.md` | ISA-DSL 错误码目录（诊断格式、节级错误码、常见修法；v18 S1 起一次列全 + 精确到键行） | active |
+| `reference/isa-dsl.md` | **ISA-DSL v18 语法规范（现行唯一语法）**：键速查表（机器校验）、逐节语法、生成代码契约、`forge-isa` CLI、生成期自测 | active |
+| `reference/isa-dsl-errors.md` | ISA-DSL 错误码目录（诊断格式、节级错误码、常见修法；含多文件组合与 `parts` 的加载期/编译期错误） | active |
 | `reference/aarch64-encoding-ref.md` | A64 整数核心指令编码参考（isa 表/golden 测试依据，尾节含 arm64_v12 实现状态） | active |
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
 | `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode **v2**：段体压缩 + 段表 `raw_len`）规范：容器/段/原语/各段细节/压缩/确定性/版本策略/验证基线/消费者/已知限制 | active |
@@ -32,7 +32,7 @@
 | `plans/forge-ir-v3-plan.md` | forge-ir v3 改进方案（S0–S7 已落地，逐切片带实证与守卫；S8 见下条） | progress |
 | `plans/forge-ir-s8-design.md` | forge-ir S8 可选项设计（二进制序列化 / MemorySSA-lite / crate 拆分：逐个给设计与成本、验证方案、触发条件；2026-09-19 拍板：**只做二进制序列化**，另两项不做） | progress |
 | `plans/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化**执行方案**（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照、基线数字） | progress |
-| `plans/forge-dsl-v18-plan.md` | forge-dsl 改进方案（ISA-DSL v18：`[[templates]]` 为唯一指令复用机制——`body`+`rows` 取代 families、指令属性 `ref` 取代 aliases、条件码/重定位/伪指令数据化、宽度三态、诊断、生成自测、拆 crate+CLI；S0 基线实测 + S0–S8 切片；S0–S4/S6/S7a 已落地） | progress |
+| `plans/forge-dsl-v18-plan.md` | forge-dsl 改进方案（ISA-DSL v18：`[[templates]]` 为唯一指令复用机制——`body`+`rows` 取代 families、指令属性 `ref` 取代 aliases、条件码/重定位/伪指令数据化、宽度三态、诊断、生成自测、拆 crate+CLI、多文件组合与部件选择；S0 基线实测 + S0–S8 切片；**S0–S4/S6/S7 全部落地**，S5/S8 待做） | progress |
 
 ## performance/ — 基准与优化
 
@@ -47,6 +47,7 @@
 
 | 文件 | 内容 |
 | --- | --- |
+| `guides/isa-dsl-tutorial.md` | ISA-DSL 教程：30 分钟接入一个小 ISA（骨架 → 操作数槽 → 指令 → 模板 → 生成期自测 → CLI 自查） |
 | `guides/coverage.md` | cargo-llvm-cov 覆盖率工作流（CI Coverage job 现行方法） |
 | `guides/lint.md` | markdownlint 检查命令/豁免形式/存量基线（写文档后自查） |
 
@@ -57,7 +58,8 @@
 | `archive/roadmap-status.md` | v14-forge-ir-redesign 路线图交接（2026-08；自述 2026-09 大幅过期，开放项移交 forge-rustc WORKAROUNDS/README） |
 | `archive/ymm-abi-plan.md` | YMM ABI（>128 位向量传参）方案（**2026-09-10 核查后归档**：S1-S5/D2-D6 全部落地；残余移交 WORKAROUNDS WA-37 与 CLAUDE.md SIMD 矩阵） |
 | `archive/hir-shrink-plan.md` | HIR/mini_c 收缩方案（**2026-09-10 归档**：点 1/2/3 落地、点 5 前提不成立而删除、点 4 决定不做；收益结论下调） |
-| `archive/isa-dsl-v12-roadmap.md` | ISA-DSL v12 历史（现行规范 = reference/isa-dsl v15） |
+| `archive/isa-dsl-v12-v17.md` | ISA-DSL v12–v17 语法史 + v18 删除/改名总表（**2026-09-21 归档**：现行规范 = `reference/isa-dsl.md` v18） |
+| `archive/isa-dsl-v12-roadmap.md` | ISA-DSL v12 历史（现行规范 = `reference/isa-dsl.md` v18） |
 | `archive/asm-dec-generic-design-v2.md` | 汇编器/解码器 v2 设计提案（v13 已落地，v15 演进） |
 | `archive/clippy-fixes.md` | 2026-07 clippy 清零单次记录 |
 | `archive/coverage-history.md` | Windows 本地覆盖率接入诊断 + 审查驱动补测交付（2026-07/08） |
