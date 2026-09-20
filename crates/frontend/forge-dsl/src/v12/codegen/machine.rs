@@ -689,6 +689,114 @@ pub(crate) fn gen_disasm(_infos: &[InstInfo]) -> Result<TokenStream, String> {
 
 // ─────────────────────── TargetAssembler ───────────────────────
 
+/// `[[pseudo]]` 的展开助手（v18 S3e）。
+///
+/// 生成两个函数：
+///
+/// - `__pseudo_expand(line, depth, out)`：行首词命中某个伪指令名 ⇒ 按 `params` 位置
+///   切分实参、逐行把 `{参数}` 替换成实参文本 push 进 `out`，返回 `true`；不是伪指令
+///   返回 `false`。展开出的行**递归**再判一次（emit 行可以是别的伪指令），
+///   深度上限 16（自引用即报错，不会栈溢出）。
+/// - `__split_args(s)`：**顶层**逗号切分（`()`/`[]` 内的逗号不算——`li x1, (a + b)`
+///   与 `lw x1, [x2, #4]` 都按 2 个参数切）。
+///
+/// 没有 `[[pseudo]]` 的 ISA 返回空 token（生成的代码与引入本能力之前逐字相同）。
+fn gen_pseudo_helpers(model: &V12Model) -> TokenStream {
+    if model.pseudo.is_empty() {
+        return quote! {};
+    }
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for p in &model.pseudo {
+        let name_lit = syn::LitStr::new(&p.name, proc_macro2::Span::call_site());
+        let params_lit = syn::LitStr::new(&p.params.join(", "), proc_macro2::Span::call_site());
+        let n = p.params.len();
+        // 实参绑定：__a0..__a{n-1}
+        let binds: Vec<TokenStream> = (0..n)
+            .map(|i| {
+                let id = format_ident!("__a{i}");
+                quote! { let #id = args[#i].trim(); }
+            })
+            .collect();
+        // 每行 emit：String::from(模板) + 逐个参数 replace
+        let emits: Vec<TokenStream> = p
+            .emit
+            .iter()
+            .map(|line| {
+                let lit = syn::LitStr::new(line.trim(), proc_macro2::Span::call_site());
+                let reps: Vec<TokenStream> = p
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let ph =
+                            syn::LitStr::new(&format!("{{{a}}}"), proc_macro2::Span::call_site());
+                        let id = format_ident!("__a{i}");
+                        quote! { __l = __l.replace(#ph, #id); }
+                    })
+                    .collect();
+                quote! {
+                    {
+                        let mut __l = String::from(#lit);
+                        #(#reps)*
+                        out.push(__l);
+                    }
+                }
+            })
+            .collect();
+        arms.push(quote! {
+            if head == #name_lit {
+                let args = __split_args(rest);
+                if args.len() != #n {
+                    return Err(format!(
+                        "伪指令 '{}' 需要 {} 个参数（{}），实际 {}",
+                        #name_lit, #n, #params_lit, args.len()
+                    ));
+                }
+                #(#binds)*
+                #(#emits)*
+                return Ok(true);
+            }
+        });
+    }
+    quote! {
+        /// 顶层逗号切分（尊重 `()`/`[]`：`li x1, (a + b)`、`lw x1, [x2, #4]` 都算 2 段）。
+        fn __split_args(s: &str) -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            let mut depth = 0i32;
+            let mut cur = String::new();
+            for ch in s.chars() {
+                match ch {
+                    '(' | '[' => { depth += 1; cur.push(ch); }
+                    ')' | ']' => { depth -= 1; cur.push(ch); }
+                    ',' if depth == 0 => { out.push(cur.trim().to_string()); cur.clear(); }
+                    _ => cur.push(ch),
+                }
+            }
+            if !cur.trim().is_empty() {
+                out.push(cur.trim().to_string());
+            }
+            out
+        }
+
+        /// 伪指令展开：`Ok(true)` = 该行是伪指令（展开结果已 push 进 `out`）。
+        ///
+        /// 递归展开（emit 行可以是别的伪指令），`depth` 上限 16 防自引用成环。
+        fn __pseudo_expand(line: &str, depth: usize, out: &mut Vec<String>)
+            -> Result<bool, String>
+        {
+            if depth > 16 {
+                return Err("伪指令展开超过 16 层（emit 里嵌套了自身?）".into());
+            }
+            let (head, rest) = match line.trim().split_once(char::is_whitespace) {
+                Some((h, r)) => (h, r.trim()),
+                None => (line.trim(), ""),
+            };
+            #(#arms)*
+            Ok(false)
+        }
+    }
+}
+
 pub(crate) fn gen_assembler(model: &V12Model) -> TokenStream {
     let comment = model.meta.comment_char.chars().next().unwrap_or('#');
     let label_suf = model.meta.label_suffix.clone();
@@ -697,6 +805,35 @@ pub(crate) fn gen_assembler(model: &V12Model) -> TokenStream {
     let dir_pre = model.meta.directive_prefix.clone();
     let dir_pre_lit = syn::LitStr::new(&dir_pre, proc_macro2::Span::call_site());
     let align_pad = model.emit.as_ref().and_then(|e| e.align_pad).unwrap_or(0);
+    // `[[pseudo]]` 展开（v18 S3e）：按名生成匹配臂 + 逐行文本替换。没有伪指令的 ISA
+    // 不生成任何东西（生成的代码逐字不变）。
+    let pseudo_helpers = gen_pseudo_helpers(model);
+    // 调用点也只在有伪指令时生成（否则会引用不存在的助手函数）。
+    let pseudo_call: TokenStream = if model.pseudo.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            {
+                let mut __plines: Vec<String> = Vec::new();
+                if __pseudo_expand(rest, 0, &mut __plines)
+                    .map_err(|e| line_err(AsmError::Other(e)))?
+                {
+                    for __pl in &__plines {
+                        let (inst, syms) =
+                            __assemble(__pl).map_err(|e| line_err(AsmError::Other(e)))?;
+                        __offset += encode(&inst)
+                            .map_err(|e| line_err(AsmError::Other(e)))?
+                            .len() as u64;
+                        for (oi, s) in syms {
+                            pending.push((insts.len(), oi, s, __line_no + 1));
+                        }
+                        insts.push(inst);
+                    }
+                    continue;
+                }
+            }
+        }
+    };
     quote! {
         pub struct Assembler;
 
@@ -887,6 +1024,10 @@ pub(crate) fn gen_assembler(model: &V12Model) -> TokenStream {
                         }
                         continue;
                     }
+                    // 伪指令展开（v18 S3e）：行首词命中 `[[pseudo]]` 名 → 按 params
+                    // 位置切分实参、代入 emit 模板，展开出的每一行再走同一套展开
+                    //（emit 行可以是别的伪指令；深度上限 16 防环）。
+                    #pseudo_call
                     let (inst, syms) = __assemble(rest).map_err(|e| line_err(AsmError::Other(e)))?;
                     __offset += encode(&inst).map_err(|e| line_err(AsmError::Other(e)))?.len() as u64;
                     for (oi, s) in syms {
@@ -913,6 +1054,8 @@ pub(crate) fn gen_assembler(model: &V12Model) -> TokenStream {
         fn strip_comment(line: &str, c: char) -> &str {
             line.split_once(c).map_or(line, |(head, _)| head)
         }
+
+        #pseudo_helpers
 
         /// `.byte` 值求值：表达式（数字/符号常量/算术）→ u8。
         /// 越界（<0 或 >255）返回 None（调用方报错，不静默截断）。

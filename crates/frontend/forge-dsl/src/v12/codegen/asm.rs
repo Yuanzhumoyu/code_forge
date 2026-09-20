@@ -992,6 +992,34 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &V12Model) -> Result<Token
         seen.push(sig);
         tries.push(gen_assemble_try_tok(info, case_insensitive)?);
     }
+    // `[[pseudo]]`（v18 S3e）：单条 API 只接受展开成 1 条的伪指令；多条明确报错，
+    // 让调用方改用 `parse_insts`（整段汇编）。
+    let pseudo_single: TokenStream = if model.pseudo.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            {
+                let mut __plines: Vec<String> = Vec::new();
+                if __pseudo_expand(text, 0, &mut __plines)? {
+                    if __plines.len() != 1 {
+                        return Err(format!(
+                            "伪指令展开为 {} 条指令——单条 assemble() 装不下，\
+                             请用 TargetAssembler::parse_insts（整段汇编）",
+                            __plines.len()
+                        ));
+                    }
+                    let (inst, syms) = __assemble(&__plines[0])?;
+                    if !syms.is_empty() {
+                        return Err(
+                            "label operands require TargetAssembler::parse_insts (two-pass layout)"
+                                .into(),
+                        );
+                    }
+                    return Ok(inst);
+                }
+            }
+        }
+    };
     Ok(quote! {
         #lexer
         #primitives
@@ -1030,7 +1058,11 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &V12Model) -> Result<Token
             true
         }
         /// 汇编单条文本 → 指令（token 驱动；左→右整模板扫描，多 form 按类型签名自动分发）。
+        ///
+        /// `[[pseudo]]`（v18 S3e）：只有**展开成 1 条指令**的伪指令能走这个 API
+        /// （多条展开要用 `TargetAssembler::parse_insts`——单条 API 装不下多条）。
         pub fn assemble(text: &str) -> Result<Inst, String> {
+            #pseudo_single
             let (inst, syms) = __assemble(text)?;
             if syms.is_empty() {
                 Ok(inst)

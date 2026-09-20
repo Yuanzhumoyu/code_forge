@@ -24,6 +24,7 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     collect(d, idx, validate_conventions(m));
     collect(d, idx, validate_cond(m));
     collect(d, idx, validate_derives(m));
+    collect(d, idx, validate_pseudos(m));
     collect(d, idx, validate_relocs(m));
     collect(d, idx, validate_operand_slots(m));
     collect(d, idx, validate_forms(m));
@@ -511,6 +512,101 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             .map_err(|e| format!("[conventions.mem]: {e}"))?;
         super::codegen::mem::validate_mem_template(&items)
             .map_err(|e| format!("[conventions.mem]: {e}"))?;
+    }
+    Ok(())
+}
+
+/// `[[pseudo]]` 校验（v18 S3e 汇编器伪指令）。
+///
+/// 伪指令是**汇编期**行为，编译器看不到它的调用点，因此声明侧必须自洽：
+///
+/// - 名字非空、唯一、**不得与任何指令助记符重名**（重名会让汇编器永远匹配不到它，
+///   或静默遮蔽——两者都是最难查的一类错）；
+/// - `params` 非空、每项非空、唯一；
+/// - `emit` 非空、每行非空；行首词必须是**已声明指令助记符或别的伪指令名**
+///   （或 `.` 开头的伪指令），否则那是拼错；
+/// - 每行的 `{…}` 必须是已声明参数（拼错即报），且**每个参数都至少用一次**
+///   （没用到的参数几乎总是写错了名字）。
+fn validate_pseudos(m: &V12Model) -> Result<(), String> {
+    if m.pseudo.is_empty() {
+        return Ok(());
+    }
+    // 指令助记符（asm 首词）+ 伪指令名（emit 行首的合法取值）
+    let mut mnemonics: BTreeSet<String> = BTreeSet::new();
+    for inst in &m.instructions {
+        if let Some(w) = inst.asm.split_whitespace().next()
+            && !w.is_empty()
+        {
+            mnemonics.insert(w.to_string());
+        }
+    }
+    let pseudo_names: BTreeSet<&str> = m.pseudo.iter().map(|p| p.name.as_str()).collect();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for p in &m.pseudo {
+        if p.name.trim().is_empty() {
+            return Err("[[pseudo]]: name 不能为空".into());
+        }
+        if !seen.insert(p.name.as_str()) {
+            return Err(format!("[[pseudo.{}]]: 伪指令名重复", p.name));
+        }
+        if mnemonics.contains(&p.name) {
+            return Err(format!(
+                "[[pseudo.{}]]: 伪指令名与指令助记符重名——汇编器会先匹配到指令，伪指令永不生效",
+                p.name
+            ));
+        }
+        if p.params.is_empty() {
+            return Err(format!("[[pseudo.{}]]: params 不能为空", p.name));
+        }
+        let mut pseen: BTreeSet<&str> = BTreeSet::new();
+        for a in &p.params {
+            if a.trim().is_empty() {
+                return Err(format!("[[pseudo.{}]]: params 里的名字不能为空", p.name));
+            }
+            if !pseen.insert(a.as_str()) {
+                return Err(format!("[[pseudo.{}]]: 参数 '{a}' 重复", p.name));
+            }
+        }
+        if p.emit.is_empty() {
+            return Err(format!(
+                "[[pseudo.{}]]: emit 不能为空（至少要展开出一行）",
+                p.name
+            ));
+        }
+        let mut used: BTreeSet<String> = BTreeSet::new();
+        for line in &p.emit {
+            let l = line.trim();
+            if l.is_empty() {
+                return Err(format!("[[pseudo.{}]]: emit 里有空行", p.name));
+            }
+            let head = l.split_whitespace().next().unwrap_or("");
+            if !head.starts_with('.') && !mnemonics.contains(head) && !pseudo_names.contains(head) {
+                return Err(format!(
+                    "[[pseudo.{}]]: emit 行 '{l}' 的首词 '{head}' 既不是指令助记符、\
+                     也不是别的伪指令名（拼错了？）",
+                    p.name
+                ));
+            }
+            for tok in placeholder_tokens(l) {
+                let name = tok.trim_start_matches('{').trim_end_matches('}');
+                if !pseen.contains(name) {
+                    return Err(format!(
+                        "[[pseudo.{}]]: emit 里的 '{{{name}}}' 不是声明过的参数（可用：{}）",
+                        p.name,
+                        p.params.join(" / ")
+                    ));
+                }
+                used.insert(name.to_string());
+            }
+        }
+        for a in &p.params {
+            if !used.contains(a.as_str()) {
+                return Err(format!(
+                    "[[pseudo.{}]]: 参数 '{a}' 在 emit 里没用到（写错了名字？）",
+                    p.name
+                ));
+            }
+        }
     }
     Ok(())
 }

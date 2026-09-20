@@ -1155,6 +1155,98 @@ fn derive_cannot_reference_another_derive() {
     assert!(msg.contains("派生不能引用派生"), "应给出提示：{msg}");
 }
 
+// ───────────────── S3e：[[pseudo]] 汇编器伪指令 ─────────────────
+
+/// 合法伪指令：声明侧自洽即可（`emit` 行首是指令助记符、`{…}` 都是参数、参数都用上）。
+#[test]
+fn pseudo_decl_compiles_into_expander() {
+    let doc = lowering_doc(
+        "[[pseudo]]\nname = \"mv\"\nparams = [\"dst\", \"src\"]\nemit = [\"mov {dst}, {src}\"]",
+    );
+    let m = parse_and_validate(&doc).expect("合法伪指令必须通过");
+    let s: String = super::codegen::generate(&m)
+        .unwrap()
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(s.contains("__pseudo_expand"), "应生成展开器：{s}");
+    assert!(s.contains("__split_args"), "应生成顶层逗号切分：{s}");
+    assert!(s.contains("伪指令"), "展开器里应有参数个数检查：{s}");
+}
+
+/// 没有伪指令时**不生成**任何展开器（生成的代码逐字不变）。
+#[test]
+fn pseudo_absent_keeps_assembler_unchanged() {
+    let m = parse_and_validate(&lowering_doc("")).expect("合法");
+    let s = super::codegen::generate(&m).unwrap().to_string();
+    assert!(!s.contains("__pseudo_expand"), "不该生成展开器：{s}");
+    assert!(!s.contains("__split_args"), "不该生成切分器：{s}");
+}
+
+/// 伪指令名与指令助记符重名 ⇒ 报错（否则汇编器永远匹配不到它）。
+#[test]
+fn pseudo_name_must_not_shadow_mnemonic() {
+    let doc = lowering_doc(
+        "[[pseudo]]\nname = \"mov\"\nparams = [\"dst\", \"src\"]\nemit = [\"mov {dst}, {src}\"]",
+    );
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("与指令助记符重名"), "msg: {msg}");
+}
+
+/// 伪指令名重复 / 参数为空 / 参数重复 ⇒ 报错。
+#[test]
+fn pseudo_decl_shape_is_validated() {
+    let dup = lowering_doc(
+        "[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"mov {a}, {a}\"]\n\
+         [[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"mov {a}, {a}\"]",
+    );
+    assert!(validation_msg(&dup).contains("伪指令名重复"), "{dup}");
+
+    let no_params =
+        lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = []\nemit = [\"mov {a}, {a}\"]");
+    assert!(validation_msg(&no_params).contains("params 不能为空"));
+
+    let dup_param = lowering_doc(
+        "[[pseudo]]\nname = \"mv\"\nparams = [\"a\", \"a\"]\nemit = [\"mov {a}, {a}\"]",
+    );
+    assert!(validation_msg(&dup_param).contains("参数 'a' 重复"));
+}
+
+/// `emit` 的空行/空表、行首词拼错、`{…}` 不是参数、参数没用到 ⇒ 都要报错。
+#[test]
+fn pseudo_emit_is_validated() {
+    let empty = lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = []");
+    assert!(validation_msg(&empty).contains("emit 不能为空"));
+
+    let blank = lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"  \"]");
+    assert!(validation_msg(&blank).contains("emit 里有空行"));
+
+    let typo_head =
+        lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"moov {a}, {a}\"]");
+    assert!(validation_msg(&typo_head).contains("既不是指令助记符"));
+
+    let typo_ph =
+        lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"mov {aa}, {a}\"]");
+    let msg = validation_msg(&typo_ph);
+    assert!(msg.contains("不是声明过的参数"), "msg: {msg}");
+
+    let unused = lowering_doc(
+        "[[pseudo]]\nname = \"mv\"\nparams = [\"a\", \"b\"]\nemit = [\"mov {a}, {a}\"]",
+    );
+    assert!(validation_msg(&unused).contains("没用到"));
+}
+
+/// 伪指令的 `emit` 行可以是**别的伪指令名**（递归展开由运行时做，声明期只查名字存在）。
+#[test]
+fn pseudo_may_emit_another_pseudo() {
+    let doc = lowering_doc(
+        "[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"mov {a}, {a}\"]\n\
+         [[pseudo]]\nname = \"twice\"\nparams = [\"a\", \"b\"]\nemit = [\"mv {a}\", \"mv {b}\"]",
+    );
+    parse_and_validate(&doc).expect("emit 引用别的伪指令必须通过");
+}
+
 // ───────────────── 结构完善：asm 完整格式 + 通用模板段 ─────────────────
 
 /// 定宽最小模型（供 codegen 测试）。

@@ -1352,6 +1352,19 @@ name = "pcrel_lo"
 semantics = "pc_relative"
 slot = "imm12"
 
+# ── 汇编器伪指令（v18 S3e）：`li rd, imm` → lui + addi（32 位符号扩展形式）──
+# 汇编期文本展开：实参按 `{名字}` 代入 emit 行，算术由既有表达式求值器算
+#（`li a0, 0x1234` 与 `li a0, (1 << 12) + 0x234` 等价）。hi20 走 imm20 槽
+#（预移位位域，编码器负责 >>12），lo12 取符号扩展的低 12 位——与 lowering 里
+# Iconst 的 `{iconst_hi20}`/`{iconst_lo12}` 同一套算术。
+[[pseudo]]
+name = "li"
+params = ["rd", "imm"]
+emit = [
+    "lui {rd}, ({imm} + 0x800)",
+    "addi {rd}, {rd}, ((({imm} + 0x800) & 0xfff) - 0x800)",
+]
+
 [[lowering]]
 op = "GlobalAddr"
 insts = [

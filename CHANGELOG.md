@@ -13,6 +13,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **ISA-DSL 汇编器伪指令 `[[pseudo]]`（v18 S3e）：汇编期的文本级多指令展开**。`.equ`/`.macro` 的结构化兄弟——不碰编码器、不碰 lowering：`parse_insts` 遇到以伪指令名开头的行，就按 `params` 位置切分实参、逐行把 `{参数}` 换成实参文本，再让**同一套汇编器**装配展开出的每一行。
+
+  ```toml
+  [[pseudo]]
+  name = "li"                     # 汇编可见的助记符（不得与指令助记符重名）
+  params = ["rd", "imm"]          # 位置实参名（emit 里用 `{名字}` 引用）
+  emit = [
+    "lui {rd}, ({imm} + 0x800)",
+    "addi {rd}, {rd}, ((({imm} + 0x800) & 0xfff) - 0x800)",
+  ]
+  ```
+
+  实参按**顶层逗号**切分（`()`/`[]` 内的逗号不算，故 `li x1, (a + b)` 与内存操作数 `[x2, #4]` 都能写）；emit 行里的算术由**既有表达式求值器**求值（`+ - * / % << >> & | ^ ~`、括号、`.equ` 符号）——**不引入第二套表达式语言**；emit 行可以是**别的伪指令**（递归展开，深度上限 16 防自引用成环）；单条 `assemble()` API 只接受展开成 1 条的伪指令，多条要用 `TargetAssembler::parse_insts`（错误消息指引）。
+  riscv 的 `li` 是实际用例：`li x10, 0x1234` → `lui x10, 1`（0x00001537）+ `addi x10, x10, 0x234`（0x23450513），与 lowering 里 `Iconst` 用的 `{iconst_hi20}`/`{iconst_lo12}` 完全同一套算术（逐值对照 0/-1/0x800/表达式实参/与普通指令混排）。
+  新增校验 `validate_pseudos`（错误码 `DSL-PSEUDO`）：名字非空/唯一/**不得与指令助记符重名**（重名会让汇编器永远匹配不到它）；`params` 非空唯一；`emit` 非空、行首词必须是指令助记符或别的伪指令名；`{…}` 必须是声明的参数且**每个参数都得用到**。**没有 `[[derive]]`/`[[pseudo]]` 的 ISA 不生成任何展开器代码**（x86/arm64 与 5 个夹具的生成物只差 `assemble()` 那 2 行新增文档注释）。
+  未实现（如实记录，不做半成品）：按谓词分派同名多条（汇编期没有 IR 属性可判）、`pseudo_fold`（反汇编折叠回伪指令——那是指令级模式识别，与 `[[pattern]]` 同类问题）。
+  证据：forge-dsl 175 + 2 + 1（新增 6 条声明侧用例）、`forge-codegen` 全部套件（`asm_enhance_tests` 15 条，新增 2 条 riscv 行为用例）、三架构 JIT 矩阵（195/3/0、131/67/0、23/175/0）、clippy、release、rustdoc、markdownlint 全干净。
+
 - **ISA-DSL 派生谓词属性 `[[derive]]`（v18 S3f）：给重复出现的 `when` 条件起名字**。同一条件在多条 lowering 规则里重复时，一次声明、多处引用：
 
   ```toml

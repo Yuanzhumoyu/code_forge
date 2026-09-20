@@ -67,6 +67,10 @@ pub struct V12Model {
     #[serde(skip, default)]
     pub derived_preds: BTreeMap<String, super::pred::Pred>,
 
+    /// 汇编器伪指令（`[[pseudo]]`，v18 S3e）：汇编期的文本级多指令展开。
+    #[serde(default)]
+    pub pseudo: Vec<PseudoDef>,
+
     /// 指令选择规则（`[[lowering]]`）。
     #[serde(default)]
     pub lowering: Vec<Lowering>,
@@ -1501,6 +1505,47 @@ pub enum Effect {
     Trap,
     /// 纯寄存器移动（regalloc 的 coalesce 依据；效果语义等同 `Pure`）。
     Move,
+}
+
+/// `[[pseudo]]` — 汇编器伪指令（v18 S3e）。
+///
+/// 汇编期的**文本级**多指令展开（`.equ`/`.macro` 的结构化兄弟）：不碰编码器、
+/// 不碰 lowering——`parse_insts` 遇到以伪指令名开头的行，就按 `params` 位置切分实参、
+/// 逐行代入 `emit` 模板，再让**同一套汇编器**装配展开出的每一行。
+///
+/// ```toml
+/// [[pseudo]]
+/// name = "li"                     # 汇编可见的助记符（不得与指令助记符重名）
+/// params = ["rd", "imm"]          # 位置实参名（emit 里用 `{名字}` 引用）
+/// emit = [
+///   "lui {rd}, (({imm} + 0x800) >> 12)",
+///   "addi {rd}, {rd}, ({imm} - ((({imm} + 0x800) >> 12) << 12))",
+/// ]
+/// ```
+///
+/// 规则：
+///
+/// - 实参按**顶层逗号**切分（`()`/`[]` 内的逗号不算，故 `li x1, (a + b)` 与
+///   内存操作数都能写），个数必须与 `params` 一致；
+/// - `emit` 行就是普通汇编文本，其中的**算术表达式由既有表达式求值器求值**
+///   （`+ - * / % << >> & | ^ ~`、括号、`.equ` 符号）——本能力不引入新的表达式语言；
+/// - 实参是**文本**：写 `{imm}` 做算术时请自己加括号（`({imm} + 0x800)`），否则会
+///   撞上运算符优先级；
+/// - `emit` 行可以是**别的伪指令**（递归展开，深度上限 16 防环）；
+/// - 单指令 `assemble()` API 只接受**展开成 1 条指令**的伪指令；多条要用
+///   `TargetAssembler::parse_insts`（整段汇编）。
+///
+/// 未实现（如实记录）：按谓词分派同名多条（汇编期没有 IR 属性可判）、
+/// `pseudo_fold`（反汇编折叠回伪指令——那是指令级模式识别，属另一件事）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PseudoDef {
+    /// 助记符（汇编可见；不得与任何指令助记符或别的伪指令重名）。
+    pub name: String,
+    /// 位置实参名（非空、唯一）。
+    pub params: Vec<String>,
+    /// 展开模板行（至少一行；`{参数}` 会被实参文本替换）。
+    pub emit: Vec<String>,
 }
 
 /// `[[derive]]` — 派生谓词属性（v18 S3f）。

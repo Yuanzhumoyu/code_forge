@@ -222,3 +222,51 @@ fn error_equ_bad_expr() {
     let err = asm.parse_insts(".equ X, 1+\n").unwrap_err();
     assert!(format!("{err}").contains("line 1"), "err: {err:?}");
 }
+
+// ─────────────────── [[pseudo]] 伪指令展开（S3e）───────────────────
+
+fn rv_words(src: &str) -> Vec<u32> {
+    rv_parse(src)
+        .iter()
+        .map(|i| {
+            let b = forge_codegen::riscv64_v12::encode(i).unwrap();
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        })
+        .collect()
+}
+
+/// `li rd, imm` → `lui` + `addi`：逐值对照 RISC-V 规范分解
+/// （hi20 = (v + 0x800) >> 12、lo12 = 符号扩展的低 12 位）。
+#[test]
+fn pseudo_li_expands_to_lui_addi() {
+    // lui x10, 0x1；addi a0, a0, 0x234
+    assert_eq!(rv_words("li x10, 0x1234\n"), vec![0x0000_1537, 0x2345_0513]);
+    // 小值：lui x10, 0 + addi x10, x10, 0
+    assert_eq!(rv_words("li x10, 0\n"), vec![0x0000_0537, 0x0005_0513]);
+    // -1：lui a0, 0 + addi a0, a0, -1（imm12 = 0xFFF）
+    assert_eq!(rv_words("li x10, -1\n"), vec![0x0000_0537, 0xFFF5_0513]);
+    // 0x800：hi 进位 + lo = -2048（imm12 = 0x800）
+    assert_eq!(rv_words("li x10, 0x800\n"), vec![0x0000_1537, 0x8005_0513]);
+    // 表达式实参走既有表达式求值器（与字面量结果一致）
+    assert_eq!(
+        rv_words("li x10, (1 << 12) + 0x234\n"),
+        rv_words("li x10, 0x1234\n")
+    );
+    // 多条：伪指令与普通指令混排，偏移不错位
+    assert_eq!(rv_words("li x10, 0x1234\nnop\n").len(), 3);
+}
+
+/// 参数个数不符 / 单条 API 装不下多条展开 ⇒ 明确报错。
+#[test]
+fn pseudo_errors_are_explicit() {
+    let asm = forge_codegen::riscv64_v12::Assembler;
+    let err = asm.parse_insts("li a0\n").unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("需要 2 个参数"), "msg: {msg}");
+
+    let err = forge_codegen::riscv64_v12::assemble("li x10, 0x1234").unwrap_err();
+    assert!(
+        err.contains("parse_insts"),
+        "单条 API 应指引改用 parse_insts：{err}"
+    );
+}
