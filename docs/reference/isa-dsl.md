@@ -19,6 +19,7 @@
   - [v15 迭代总览（S1–S6）](#v15-迭代总览s1s6)
   - [快速开始](#快速开始)
   - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
+  - [`[encoding]` — 指令宽度三态](#encoding--指令宽度三态v18-s4)
   - [宽度元数据（去「宽度写死」）](#宽度元数据去宽度写死)
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
   - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
@@ -97,11 +98,6 @@ name = "x86_64_v12"          # Registry 注册名（ensure_registered 用它）
 version = "13.0"             # 自由字符串（与 schema 迭代号 v15 无关）
 endian = "little"            # 缺省 little
 mode = 64                    # 缺省 64
-default_inst_width = 32      # 定宽 ISA（riscv64_v12）；变长 ISA 省略
-variable_length = true       # 变长 ISA（x86）；与 default_inst_width 互斥
-max_inst_len = 15            # 变长 ISA 最大指令长度
-default_opsize = 64          # 可选：变长 ISA 无显式 opsize 的 form 在 decode 时
-                             # 的 __opsize 初始值（位；缺省 4 = 32 位）
 case_insensitive_regs = true # 可选：寄存器解析大小写不敏感
 mnemonic_case = "insensitive" # insensitive（缺省）/ sensitive
 comment_char = "#"           # 行注释起始字符（缺省 "#"）
@@ -129,9 +125,58 @@ prefix = "XMM"                # 生成式：XMM0, XMM1, …
 base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
 ```
 
+指令字宽**不再**写在 `[meta]`——它是独立的 `[encoding]` 段（见下节）。
+
 寄存器物理编号 = **组内索引**（`Reg::to_index()`），这是 v12 与 v11
 （`16+i` 浮点索引，产生非规范字节）的根本区别。`[reg.*]` 的组名编码宽度
 （`gpr8`/`fpr4`/`vec8`/`kreg8`），`RegClass` 四族 GPR/FPR/VEC/KReg 各带字节宽。
+
+## `[encoding]` — 指令宽度三态（v18 S4）
+
+v18 把"一个 ISA 一个字长"的假设拆成**三态**，四个宽度散键从 `[meta]` 收敛到
+独立段：模型决定**编码、解码、能力集**三条路径，而不是几个互斥布尔：
+
+```toml
+[encoding]
+kind = "fixed"          # fixed | mixed | prefix_scan（必填）
+bits = 32               # fixed：字长（位，任意 ≥ 1）
+
+# ── kind = "mixed"（短编码与长编码共存，如 RVC/Thumb）──
+# bits = 16             # 可选：逐指令 width 缺省时用它
+# widths = [16, 32]     # 必填：允许的字长集（位；不得重复）
+
+# ── kind = "prefix_scan"（x86：长度由前缀链决定）──
+# max_len = 15          # 可选：最长指令字节数（缺省 15）
+
+default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode 时的
+                        # `__opsize` 初值（**位**；生成代码里是字节）
+```
+
+| `kind` | 字长来源 | 编码 | 解码 | 能力集（`IsaCapabilities`） |
+| --- | --- | --- | --- | --- |
+| `fixed` | `bits`（全 ISA 一个） | 位域 → 字节数组 | 单棵位级 trie | `variable_length = false`，`fixed_inst_size` = `min_inst_len` = `max_inst_len` = `bits/8` |
+| `mixed` | 逐指令 `width`（缺省 `bits`） | 按该指令字长发字节 | 按 `widths` **升序**分组，每组一棵 trie，"首个完整匹配即停" | `variable_length = true`，`fixed_inst_size = 0`，min/max = 最窄/最宽字长 |
+| `prefix_scan` | 前缀链（逐指令变长） | `codegen/vlen.rs`（ModRM/REX/VEX…） | 变长切片 + 前缀扫描 | `variable_length = true`，`min_inst_len = 1`，`max_inst_len = max_len` |
+
+- **逐指令 `width`**（`[[instructions]]` 与 `[[templates]]` 的行；**位**）：
+  `mixed` 下必填（或用 `[encoding].bits` 作缺省）、`fixed` 下允许显式重复 `bits`
+  （自解释）但写别的值报错、`prefix_scan` 下不得写。
+- **三态的键结构性互斥**：`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、
+  `mixed` 写 `max_len` 都在校验期报错——"声明了却不生效"不会溜到生成期。
+- **`mixed` 的分组判别位**由 ISA 自己保证：短编码与长编码必须在低位互斥
+  （如 `[1:0] = 00` vs `11`，RVC/Thumb 同构），否则"首个匹配即停"会把长指令
+  误判成短指令。夹具 `demo_mixed16_32_v12.toml` 用低 2 位判别。
+- **`decode_partial`**（部分匹配偏移，供 `DecodeError::InvalidBytes(n)`）：
+  `fixed` = 短于字长 → `Err(len)`；`mixed` = 短于**最短**字长 → `Err(len)`，
+  否则 `0`（完整长度但无匹配 = 非法字节流，不是截断）。
+- **label/global fixup 宽度**：`fixed`/`mixed` = **该指令**字长；
+  `prefix_scan` 恒 4（x86 rel32）。位段重排仍由该 ISA 的 `RelocPatcher` 负责。
+- **省略整个 `[encoding]`** = 缺省 `kind = "fixed"` 且不给 `bits` 的骨架文档：
+  解析与校验通过，生成期在 `inst_bytes()` 处报"bits 缺失"——省略整段
+  **不会**被静默当成定宽 32。此时逐指令 `width` 也不能替代 `bits`（报错）。
+
+用例：`crates/backend/forge-codegen/tests/demo_mixed16_32_v12_tests.rs`
+（`kind = "mixed"` 的黄金字节、按宽度分组的解码、编解码往返、截断阈值、能力集）。
 
 ## 宽度元数据（去「宽度写死」）
 
@@ -157,14 +202,14 @@ base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
 | `[stack].align` | 字节 | `slot` | 栈对齐（prologue 帧分配对齐；x86 = 16） |
 | `[stack].fp_save` | 字节 | `addr_width` | `RegInfo::frame_pointer_overhead()` |
 | `[meta].vector_tiers` | 字节（升序） | `[16, 32, 64]` | 向量类档位（`reg_class_for` 取最小 ≥ 请求值） |
-| `[meta].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
+| `[encoding].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
 | `[abi.frame].fp_push_bytes` | 字节 | 地址类宽度 | prologue 在帧指针上方 push 的字节数 |
 | `[abi.arg_class].limit` | 位 | — | 向量 by-value 阈值（超过则 by-ref 传参），同时是收参侧 by-value 判定 |
 
 显式宽度键必须指向**已声明组**（如 `addr_width = 2` 要求存在 `[reg.gpr2]`），
 否则 `validate` 报错；`vector_tiers` 必须严格升序且非 0。
 
-### 指令字宽（`[meta].default_inst_width`，**无白名单/上限**）
+### 指令字宽（`[encoding].bits` / 逐指令 `width`，**无白名单/上限**）
 
 定宽 ISA 的指令字宽是 ISA 数据，可写**任意 ≥ 1 位**（不只是 32）：
 
@@ -173,8 +218,10 @@ base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
   位域读写走生成的 `__place` / `__bits` 助手，因此字长**不受 u64/u128 限制**，
   位域可以落在机器字之外（如 bit 92..100）、跨字节或非字节对齐；
 - **大端 ISA**（`[meta].endian = "big"`）的内存序 = 该字节数组反转；
-- `variable_length = true` 与 `default_inst_width` 互斥（前者没有固定字长）；
-- 定宽 label/global fixup 的 `RelocKind` 宽度 = 字长的字节数（历史实现写死 4）；
+- `kind = "prefix_scan"` 是唯一的"无固定字长"形态（`bits` 与它互斥）；
+  `mixed` 逐指令取 `width`，每一条指令的字长同样可以任意；
+- 定宽/混合 label/global fixup 的 `RelocKind` 宽度 = **该指令**字长的字节数
+  （历史实现写死 4）；
 - 非 8 倍数位宽时，末字节的**填充位必须为 0**——各 arm 的"补集零 guard"按字节
   生成，填充位置 1 的字不匹配任何指令（`None`，不静默按低位解码）。
 
@@ -246,7 +293,7 @@ i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更�
 ### 最小示例
 
 `crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/
-`value_gpr_width` = 1、`[stack] slot/align/fp_save` = 1，`default_opsize = 8`）是这条路径的
+`value_gpr_width` = 1、`[stack] slot/align/fp_save` = 1、`[encoding] default_opsize = 8`）是这条路径的
 回归夹具：`tests/demo8_v12_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
 sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 可承载；
 `i16/i32/i64/ptr` 与 `f32/f64/v64/v128/v256` 全部 `None`）、编码布局、
@@ -1064,4 +1111,7 @@ demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
 - **`demo_v12.toml`**：同助记符多宽度自动分发演示基线。
 - **`demo8_v12.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，宽度
   元数据全 = 1）；用例见 `tests/demo8_v12_tests.rs`。
+- **`demo_mixed16_32_v12.toml`**：**混合字长**夹具（`kind = "mixed"`、
+  `widths = [16, 32]`，低 2 位判别短/长编码）；用例见
+  `tests/demo_mixed16_32_v12_tests.rs`。
 - 库表面守卫 `tests/library_surface.rs` 保证夹具谱不会回到 `src/` 或仓库根 `isa/`。

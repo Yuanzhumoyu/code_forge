@@ -1,0 +1,118 @@
+# ============================================================
+# demo_mixed16_32_v12 — **混合字长** ISA（16 位短编码 + 32 位长编码共存）
+# ============================================================
+#
+# 目的（v18 S4 宽度三态）：证明编码宽度不再是"一个 ISA 一个字长"的假设——
+# `[encoding].kind = "mixed"` + `widths = [16, 32]` 让**逐指令** `width` 决定字长，
+# 编码按该指令字长发字节、解码按 `widths` **升序**分组尝试（短编码优先）。
+#
+# 低 2 位是分组判别位（RVC/Thumb 同构）：
+#   - 16 位短编码：bits[1:0] = 00（`fields = { sel = 0 }`）
+#   - 32 位长编码：bits[1:0] = 11（`fields = { sel = 3 }`）
+# 因此长编码的低 16 位永远不可能匹配任何短编码（前缀互斥）——"首个完整匹配即停"
+# 不会把长指令误判成短指令。
+#
+# 位域一律用**全位宽**表示（rd/rs1 取 3 位、imm12 取下 12 位），与真实 ISA 同形。
+#
+# 验证：crates/backend/forge-codegen/tests/demo_mixed16_32_v12_tests.rs
+
+[meta]
+name = "demo_mixed16_32_v12"
+version = "18.0"
+endian = "little"
+mode = 32
+addr_width = 4
+value_gpr_width = 4
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# 混合字长：16 位短编码 + 32 位长编码（bits = 缺省字长，逐指令 width 覆盖）
+[encoding]
+kind = "mixed"
+bits = 16
+widths = [16, 32]
+
+# ─────────────────────────── 寄存器组 ───────────────────────────
+
+[reg.gpr4]
+base_index = 0
+names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7"]
+
+# ─────────────────────────── 位域 ───────────────────────────
+
+[conventions.bitfields]
+sel   = { offset = 0,  width = 2 }   # 分组判别位：短编码 0、长编码 3
+rd    = { offset = 2,  width = 3 }   # 目的寄存器（两形态共用低 5 位布局）
+rs1   = { offset = 5,  width = 3 }   # 源寄存器
+cop   = { offset = 13, width = 3 }   # 短编码 opcode（[15:13]）
+lop   = { offset = 25, width = 7 }   # 长编码 opcode（[31:25]）
+imm12 = { offset = 13, width = 12 }  # 长编码立即数（[24:13]）
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "r"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "i12"
+kind = "imm"
+signed = true
+width = 12
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "C16"      # 16 位：两个寄存器
+opcode_field = "cop"
+operand_fields = ["rd", "rs1"]
+
+[[forms]]
+name = "L32I"     # 32 位：两个寄存器 + 12 位立即数
+opcode_field = "lop"
+operand_fields = ["rd", "rs1", "imm12"]
+
+[[forms]]
+name = "L32N"     # 32 位：无操作数
+opcode_field = "lop"
+operand_fields = []
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+[[instructions]]
+name = "CADD16"
+width = 16
+form = "C16"
+opcode = 1
+fields = { sel = 0 }
+ops = ["dst:r:out", "src:r"]
+asm = "cadd {dst}, {src}"
+
+[[instructions]]
+name = "CMOV16"
+width = 16
+form = "C16"
+opcode = 2
+fields = { sel = 0 }
+ops = ["dst:r:out", "src:r"]
+asm = "cmov {dst}, {src}"
+
+[[instructions]]
+name = "LNOP32"
+width = 32
+form = "L32N"
+opcode = 1
+fields = { sel = 3 }
+asm = "lnop"
+
+[[instructions]]
+name = "LADD32"
+width = 32
+form = "L32I"
+opcode = 2
+fields = { sel = 3 }
+ops = ["dst:r:out", "src:r", "imm:i12"]
+asm = "ladd {dst}, {src}, {imm}"

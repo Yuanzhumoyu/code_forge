@@ -23,6 +23,11 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct V12Model {
     pub meta: Meta,
+    /// 指令编码宽度三态（`[encoding]`，v18 S4）。**可省**：省略 = 缺省
+    /// `kind = "fixed"` 且**不给 bits**（尚未声明字长的骨架文档），真正需要字长的
+    /// 生成期会在 `inst_bytes()` 处明确报错——省略整段不会被静默当成定宽 32。
+    #[serde(default)]
+    pub encoding: Encoding,
     /// 寄存器组（`[reg.NAME]`）。
     pub reg: BTreeMap<RegClass, RegGroup>,
     /// ISA 约定（位域/ModRM/REX/操作数宽度前缀）。
@@ -205,7 +210,7 @@ impl V12Model {
         }
     }
 
-    /// **定宽**指令字长（字节）：`ceil([meta].default_inst_width / 8)`。
+    /// **定宽**指令字长（字节）：`ceil([encoding].bits / 8)`。
     ///
     /// **无宽度白名单、无上限**：任何 ≥ 1 位的字宽都成立（含非 8 倍数位宽，如
     /// 12 位 = 2 字节；尾部填充位必须为 0——生成代码的"补集零 guard"保证）。
@@ -217,21 +222,81 @@ impl V12Model {
     /// 字长不受任何机器字限制。唯一的天然边界是**单个位域 ≤ 64 位**：位域值承载
     /// 在 `Inst` 的 `i64` 操作数与 u64 常量键上，> 64 位的单域需要更宽的值表示
     /// （与字长无关——一个字可以有很多 ≤64 位的域）。
+    ///
+    /// 仅 `kind = "fixed"` 可用（mixed/prefix_scan 没有单一字长）。
     pub(crate) fn inst_bytes(&self) -> Result<u32, String> {
-        if self.meta.variable_length {
-            return Err(
-                "[meta]: variable_length = true 的 ISA 没有固定指令字长（inst_bytes 不可用）"
-                    .into(),
-            );
+        match self.encoding.kind {
+            EncodingKind::Fixed => {}
+            EncodingKind::Mixed => {
+                return Err(
+                    "[encoding]: kind = \"mixed\" 的 ISA 没有单一指令字长（按 `width` 逐指令取）"
+                        .into(),
+                );
+            }
+            EncodingKind::PrefixScan => {
+                return Err(
+                    "[encoding]: kind = \"prefix_scan\" 的 ISA 没有固定指令字长（inst_bytes 不可用）"
+                        .into(),
+                );
+            }
         }
-        let bits = self.meta.default_inst_width.ok_or_else(|| {
-            "[meta].default_inst_width 缺失：定宽 ISA 必须声明指令字宽（位；8/16/32/64/任意）"
+        let bits = self.encoding.bits.ok_or_else(|| {
+            "[encoding].bits 缺失：kind = \"fixed\" 必须声明指令字宽（位；8/16/32/64/任意）"
                 .to_string()
         })?;
         if bits == 0 {
-            return Err("[meta].default_inst_width must be > 0".into());
+            return Err("[encoding].bits must be > 0".into());
         }
         Ok(bits.div_ceil(8))
+    }
+
+    /// 变长（mixed / prefix_scan）？
+    pub(crate) fn is_variable_length(&self) -> bool {
+        !matches!(self.encoding.kind, EncodingKind::Fixed)
+    }
+
+    /// 前缀扫描式变长（x86 风格：长度由前缀链决定）？
+    ///
+    /// 只有这种编码走 `codegen/vlen.rs` 的定长切片译码路径；`mixed`
+    /// （按字长分组编码）与 `fixed` 共用定长位域编解码。
+    pub(crate) fn is_prefix_scan(&self) -> bool {
+        matches!(self.encoding.kind, EncodingKind::PrefixScan)
+    }
+
+    /// 该指令的字长（字节）：`width`（位，逐指令）> `[encoding].bits`（缺省字长）。
+    ///
+    /// `kind = "fixed"` 时 `width` 允许显式重复 `bits`（便于单指令自解释），
+    /// 但不允许与 `bits` 不一致。
+    pub(crate) fn inst_width_bytes(&self, inst: &Instruction) -> Result<u32, String> {
+        let bits = match inst.width.or(self.encoding.bits) {
+            Some(b) => b,
+            None => {
+                return Err(format!(
+                    "[[instructions.{}]]: 缺少指令字长——`kind = \"mixed\"` 时必须给 `width`\
+                     （或给 [encoding].bits 作缺省字长）",
+                    inst.name
+                ));
+            }
+        };
+        if bits == 0 {
+            return Err(format!("[[instructions.{}]]: width must be > 0", inst.name));
+        }
+        Ok(bits.div_ceil(8))
+    }
+
+    /// 全部允许的指令字长（字节，升序去重）——`fixed` 一个、`mixed` 若干、`prefix_scan` 空。
+    pub(crate) fn encoding_width_bytes(&self) -> Vec<u32> {
+        let mut out: Vec<u32> = match self.encoding.kind {
+            EncodingKind::Fixed => self.encoding.bits.into_iter().collect(),
+            EncodingKind::Mixed => self.encoding.widths.clone(),
+            EncodingKind::PrefixScan => Vec::new(),
+        }
+        .into_iter()
+        .map(|b| b.div_ceil(8))
+        .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// 向量类字节档位（升序）：`[meta].vector_tiers` > `[16, 32, 64]`
@@ -369,15 +434,6 @@ pub struct Meta {
     /// 默认模式（x86 64 位模式 = 64）。
     #[serde(default = "default_mode")]
     pub mode: u8,
-    /// 定宽指令编码（riscv/aarch64 = 32）。缺省 → 变长 ISA。
-    #[serde(default)]
-    pub default_inst_width: Option<u32>,
-    /// 变长 ISA 标志（x86）。与 `default_inst_width` 互斥。
-    #[serde(default)]
-    pub variable_length: bool,
-    /// 变长 ISA 最大指令长度（x86 = 15）。
-    #[serde(default)]
-    pub max_inst_len: Option<u8>,
     /// 控制寄存器解析是否大小写不敏感。
     #[serde(default)]
     pub case_insensitive_regs: Option<bool>,
@@ -396,12 +452,6 @@ pub struct Meta {
     /// 伪指令前缀（缺省 "."）。
     #[serde(default = "default_directive_prefix")]
     pub directive_prefix: String,
-    /// 缺省 opsize（位；如 32/64）。无显式 opsize 语义的 form 在 decode 时
-    /// 的 `__opsize` 初始值（影响 REX.W/宽度 guard 的缺省判定）。缺省 None
-    /// = 现状（decode 初始 4 = 32 位）。**位**为单位；生成代码里的 `__opsize`
-    /// 是**字节**（= 本值 / 8）。
-    #[serde(default)]
-    pub default_opsize: Option<u8>,
     /// 主 GPR 类宽度（**字节**）。缺省 = 已声明 GPR 组中最宽者（x86 = 8）。
     /// 主 GPR 类是：名字/索引解析锚点、`__DEFAULT_GPR_CLASS`、寄存器槽类。
     #[serde(default)]
@@ -1366,6 +1416,10 @@ pub struct Instruction {
     /// 重定位的"语义"（absolute/pc_relative）与绑定的槽都在表里，指令只写名字。
     #[serde(default, rename = "reloc")]
     pub reloc: Option<String>,
+    /// **指令字长**（位，v18 S4）：`kind = "mixed"` 时逐指令给；`kind = "fixed"` 时
+    /// 可省略（取 `[encoding].bits`），显式给出时必须与之一致。
+    #[serde(default)]
+    pub width: Option<u32>,
     /// 展开来源（v18 S2）：由 `[[templates.NAME]]` 展开而来时记下模板名。
     ///
     /// 不参与序列化（`serde(skip)`）；诊断据此把错误锚回**模板声明行**而不是
@@ -1377,6 +1431,65 @@ pub struct Instruction {
     /// `[[aliases]]` 就是"几条指令共用同一个 ref"。
     #[serde(default, rename = "ref")]
     pub reference: Option<String>,
+}
+
+/// `[encoding]` — 指令编码宽度**三态**（v18 S4，取代 `[meta].default_inst_width` /
+/// `variable_length` / `max_inst_len` / `default_opsize`）。
+///
+/// ```toml
+/// [encoding]
+/// kind = "fixed"          # fixed | mixed | prefix_scan
+/// bits = 32               # fixed：字长（位，任意 ≥ 1）
+/// # mixed：widths = [16, 32]（允许的字长集；指令逐条给 width，缺省取 bits）
+/// # prefix_scan：max_len = 15（最长字节数；前缀扫描表在 [conventions.prefix_scan]）
+/// # default_opsize = 32   # 可选：无显式 opsize 的 form 在 decode 时的 __opsize 初值
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Encoding {
+    /// 三态之一。
+    pub kind: EncodingKind,
+    /// `fixed`：指令字长（位）；`mixed`：可选缺省字长（指令 `width` 缺省时用它）。
+    #[serde(default)]
+    pub bits: Option<u32>,
+    /// `mixed`：允许的字长集（位；非空、> 0；解码按升序尝试）。
+    #[serde(default)]
+    pub widths: Vec<u32>,
+    /// `prefix_scan`：最长指令字节数（缺省 15）。
+    #[serde(default)]
+    pub max_len: Option<u8>,
+    /// 缺省 opsize（位；如 32/64）。无显式 opsize 语义的 form 在 decode 时的
+    /// `__opsize` 初始值（影响 REX.W/宽度 guard 的缺省判定）。缺省 None
+    /// = 现状（decode 初始 4 = 32 位）。**位**为单位；生成代码里的 `__opsize`
+    /// 是**字节**（= 本值 / 8）。
+    #[serde(default)]
+    pub default_opsize: Option<u8>,
+}
+
+/// 指令编码的三种形态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EncodingKind {
+    /// 单一字长（riscv64/arm64 与各 demo 夹具）。
+    Fixed,
+    /// 混合字长（如 RVC/Thumb：16 与 32 位共存）——解码按 `widths` 升序尝试。
+    Mixed,
+    /// 变长 + 前缀扫描（x86：1..=15 字节，扫描表在 `[conventions.prefix_scan]`）。
+    PrefixScan,
+}
+
+/// `[encoding]` 段的默认值：`kind = "fixed"` 但**不给 bits** ⇒ 定宽路径会在
+/// `inst_bytes()` 处明确报错（"必须声明字宽"），因此省略整段不会被静默当成定宽 32。
+impl Default for Encoding {
+    fn default() -> Self {
+        Self {
+            kind: EncodingKind::Fixed,
+            bits: None,
+            widths: Vec::new(),
+            max_len: None,
+            default_opsize: None,
+        }
+    }
 }
 
 /// 指令的**语义角色**（v15-S4）。

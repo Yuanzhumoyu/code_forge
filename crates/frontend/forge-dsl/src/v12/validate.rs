@@ -19,6 +19,7 @@ fn collect(d: &mut Diags, idx: &DeclIndex, r: Result<(), String>) {
 /// 全部校验（收集式，一次报全）。
 pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     collect(d, idx, validate_meta(m));
+    collect(d, idx, validate_encoding(m));
     collect(d, idx, validate_regs(m));
     collect(d, idx, validate_widths(m));
     collect(d, idx, validate_conventions(m));
@@ -37,6 +38,131 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     validate_spill_all(m, idx, d);
 }
 
+// ─────────────────────────── [encoding] ───────────────────────────
+
+/// `[encoding]` 校验（v18 S4 宽度三态）。
+///
+/// 三态各自的**必填/禁用**关系必须在编译期钉死，否则"声明了却不生效"这类错
+/// 会在几层之后才浮现：
+///
+/// - `fixed`：`bits` > 0（写了 0 就是写错）；`widths`/`max_len` 不适用（写了就是写错了）。
+///   **`[encoding]` 整个省略**（= 缺省 `kind = "fixed"` 且无 `bits`）是合法的骨架文档——
+///   字长由生成期 `inst_bytes()` 明确报错，不在解析期拦。
+/// - `mixed`：`widths` 必填非空、每项 > 0、去重后至少一项；`bits`（缺省字长）可省；
+///   每条指令的 `width`（若给）必须落在 `widths` 里；
+/// - `prefix_scan`：`max_len` 可省（缺省 15），必须 > 0；`bits`/`widths` 不适用；
+/// - 无论哪种：指令的 `width`（若给）> 0，且 `fixed` 下必须等于 `bits`
+///   （显式重复允许，写别的值就是写错了）。
+fn validate_encoding(m: &V12Model) -> Result<(), String> {
+    let e = &m.encoding;
+    if e.default_opsize == Some(0) {
+        return Err("[encoding].default_opsize must be > 0".into());
+    }
+    match e.kind {
+        EncodingKind::Fixed => {
+            if e.bits == Some(0) {
+                return Err("[encoding].bits must be > 0".into());
+            }
+            if !e.widths.is_empty() {
+                return Err(
+                    "[encoding].widths 只适用于 kind = \"mixed\"（fixed 只有一个字长，写 bits）"
+                        .into(),
+                );
+            }
+            if e.max_len.is_some() {
+                return Err(
+                    "[encoding].max_len 只适用于 kind = \"prefix_scan\"（fixed 的字长写 bits）"
+                        .into(),
+                );
+            }
+        }
+        EncodingKind::Mixed => {
+            if e.widths.is_empty() {
+                return Err(
+                    "[encoding].widths 不能为空：kind = \"mixed\" 必须列出允许的字长集（位）"
+                        .into(),
+                );
+            }
+            if e.widths.contains(&0) {
+                return Err("[encoding].widths 里的字长必须 > 0".into());
+            }
+            let mut sorted = e.widths.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            if sorted.len() != e.widths.len() {
+                return Err("[encoding].widths 里有重复字长（同一字长写一次即可）".into());
+            }
+            if e.max_len.is_some() {
+                return Err("[encoding].max_len 只适用于 kind = \"prefix_scan\"".into());
+            }
+            if let Some(bits) = e.bits
+                && !e.widths.contains(&bits)
+            {
+                return Err(format!(
+                    "[encoding].bits ({bits}) 必须也在 widths 里（它是 width 缺省值）"
+                ));
+            }
+        }
+        EncodingKind::PrefixScan => {
+            if let Some(l) = e.max_len
+                && l == 0
+            {
+                return Err("[encoding].max_len must be > 0".into());
+            }
+            if e.bits.is_some() {
+                return Err(
+                    "[encoding].bits 只适用于 kind = \"fixed\"/\"mixed\"（prefix_scan 是逐指令变长）"
+                        .into(),
+                );
+            }
+            if !e.widths.is_empty() {
+                return Err("[encoding].widths 只适用于 kind = \"mixed\"".into());
+            }
+        }
+    }
+    // 逐指令 width
+    for inst in &m.instructions {
+        let Some(w) = inst.width else { continue };
+        if w == 0 {
+            return Err(format!("[[instructions.{}]]: width must be > 0", inst.name));
+        }
+        match e.kind {
+            EncodingKind::Fixed => {
+                if e.bits.is_none() {
+                    return Err(format!(
+                        "[[instructions.{}]]: width = {w} 不能替代 [encoding].bits\
+                         （kind = \"fixed\" 全 ISA 只有一个字长，请在 [encoding].bits 声明一次）",
+                        inst.name
+                    ));
+                }
+                if Some(w) != e.bits {
+                    return Err(format!(
+                        "[[instructions.{}]]: width {w} 与 [encoding].bits ({}) 不一致\
+                         （fixed ISA 只有一个字长）",
+                        inst.name,
+                        e.bits.unwrap_or(0)
+                    ));
+                }
+            }
+            EncodingKind::Mixed => {
+                if !e.widths.contains(&w) {
+                    return Err(format!(
+                        "[[instructions.{}]]: width {w} 不在 [encoding].widths ({:?}) 里",
+                        inst.name, e.widths
+                    ));
+                }
+            }
+            EncodingKind::PrefixScan => {
+                return Err(format!(
+                    "[[instructions.{}]]: prefix_scan ISA 不得写 width（字长由前缀扫描决定）",
+                    inst.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 // ─────────────────────────── [meta] ───────────────────────────
 
 fn validate_meta(m: &V12Model) -> Result<(), String> {
@@ -45,20 +171,6 @@ fn validate_meta(m: &V12Model) -> Result<(), String> {
         return Err(format!(
             "[meta].name '{name}' is not a valid ISA name (letters/digits/_/-, must start with a letter or _)"
         ));
-    }
-    if m.meta.default_inst_width.is_some() && m.meta.variable_length {
-        return Err(
-            "[meta]: `default_inst_width` (fixed-width) conflicts with `variable_length = true`"
-                .into(),
-        );
-    }
-    if m.meta.default_inst_width == Some(0) {
-        return Err("[meta].default_inst_width must be > 0".into());
-    }
-    if let Some(l) = m.meta.max_inst_len
-        && l == 0
-    {
-        return Err("[meta].max_inst_len must be > 0".into());
     }
     if m.meta.comment_char.chars().count() != 1 {
         return Err("[meta].comment_char must be exactly one char".into());
@@ -217,10 +329,10 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
             prev = *t;
         }
     }
-    if let Some(bits) = m.meta.default_opsize {
+    if let Some(bits) = m.encoding.default_opsize {
         if bits == 0 || bits % 8 != 0 {
             return Err(format!(
-                "[meta].default_opsize = {bits} 必须是 8 的倍数（单位：位）"
+                "[encoding].default_opsize = {bits} 必须是 8 的倍数（单位：位）"
             ));
         }
         let want = (bits / 8) as u16;
@@ -230,7 +342,7 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
             .any(|rc| matches!(rc, RegClass::GPR(w) if *w == want))
         {
             return Err(format!(
-                "[meta].default_opsize = {bits}（{want} 字节）没有对应的 [reg.gpr{want}] 组"
+                "[encoding].default_opsize = {bits}（{want} 字节）没有对应的 [reg.gpr{want}] 组"
             ));
         }
     }
@@ -441,11 +553,14 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             }
         }
     }
-    // 定宽 ISA：每个位域必须落在指令字内（字宽 = ISA 数据；历史实现把
-    // "定宽 = 32 位"写死在 codegen，超宽位域会被静默移位出字/截断）。
-    if !m.meta.variable_length
-        && let Some(bits) = m.meta.default_inst_width
-    {
+    // 定宽/混合字长 ISA：每个位域必须落在**最宽**指令字内（字宽 = ISA 数据；
+    // 历史实现把"定宽 = 32 位"写死在 codegen，超宽位域会被静默移位出字/截断）。
+    let widest = match m.encoding.kind {
+        EncodingKind::Fixed => m.encoding.bits,
+        EncodingKind::Mixed => m.encoding.widths.iter().copied().max(),
+        EncodingKind::PrefixScan => None,
+    };
+    if let Some(bits) = widest {
         for (name, bf) in &conv.bitfields {
             let hi = match &bf.pieces {
                 Some(ps) => ps.iter().map(|p| p.offset + p.width).max(),
@@ -456,7 +571,7 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
             {
                 return Err(format!(
                     "[conventions.bitfields.{name}]: 位域最高位 {hi} 超出指令字宽 {bits} 位\
-                     （[meta].default_inst_width；请缩短位域或加宽指令字）"
+                     （[encoding]；请缩短位域或加宽指令字）"
                 ));
             }
         }

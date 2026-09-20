@@ -29,9 +29,7 @@ name = "demo8_v12"
 version = "15.0"
 endian = "little"
 mode = 8
-default_inst_width = 32
 # 位（= 生成代码里 __opsize 的 1 字节）
-default_opsize = 8
 addr_width = 1
 value_gpr_width = 1
 case_insensitive_regs = true
@@ -40,6 +38,10 @@ label_suffix = ":"
 mnemonic_case = "insensitive"
 
 # ─────────────────────────── 寄存器组（唯一，1 字节）───────────────────────────
+[encoding]
+kind = "fixed"
+bits = 32
+default_opsize = 8
 
 [reg.gpr1]
 base_index = 0

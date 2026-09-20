@@ -177,6 +177,7 @@ pub struct Anchor {
 pub(crate) fn section_code(kind: &str) -> &'static str {
     match kind {
         "meta" => "DSL-META",
+        "encoding" => "DSL-ENCODING",
         "reg" => "DSL-REG",
         "stack" => "DSL-STACK",
         "types" => "DSL-TYPES",
@@ -551,6 +552,15 @@ insts = ["ADD {out}, {0}, {1}"]
         );
         let z = idx.anchor("完全没有前缀的消息");
         assert_eq!((z.line, z.col), (1, 1));
+    }
+
+    #[test]
+    fn encoding_section_gets_its_own_code() {
+        let doc = "[meta]\nname = \"x\"\n[encoding]\nkind = \"fixed\"\nwidths = [16]\n";
+        let idx = DeclIndex::build(doc);
+        let a = idx.anchor("[encoding].widths 只适用于 kind = \"mixed\"");
+        assert_eq!(a.code, "DSL-ENCODING");
+        assert_eq!((a.line, a.col), (3, 1), "无名节落到 [encoding] 节头");
     }
 
     #[test]

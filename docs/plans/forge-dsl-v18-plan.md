@@ -306,7 +306,7 @@ insts = ["ADD64 {out}, {0}, {1}"]
   算术节点，加它要同时动解析器与两条求值路径（`pred::eval` 与
   `compile_pred_guard`）——留待真有 ISA 需要时按同一份 AST 扩展。
 
-### 5.7 指令宽度三态（新增能力）
+### 5.7 指令宽度三态（新增能力，S4 已落地）
 
 ```toml
 [encoding]
@@ -319,6 +319,22 @@ bits = 32
 `Instruction`/`[[templates]]` 可写 `width = 16`（缺省 = `[encoding].bits`；`mixed` 时必填或按 form 给）。
 定宽解码把现有位级 trie 扩展为**按宽度分组 + 组内 trie**；`mixed` 按 `widths` 顺序尝试、首个完整匹配即停。
 新增夹具 `demo_mixed16_32_v12.toml` 证明通用性。
+
+**落地时的取舍（与本节草案的差异）**：
+
+- `prefixes` 前缀效果表**未做**：x86 的前缀语义已在 `[conventions.prefix_scan]` +
+  `vlen.rs` 里，S4 只需把"最长长度"换成 `max_len`；再造一张 `[encoding].prefixes`
+  是同一事实两处声明（真要引入应作为独立的 S 片，届时删掉旧表）。
+- `mixed` 的短/长判别位是 **ISA 自己的责任**：`decode` 按字长升序尝试、首个完整
+  匹配即停，若短编码不把长编码的低位排除掉，长指令会被误判成短的（夹具用低 2 位
+  `sel` 判别；文档与夹具注释都写明）。校验器无法通用地证明互斥，故不做假保证。
+- `decode_partial` 的截断阈值：`fixed` = 字长、`mixed` = **最短**字长，
+  否则"长度够但无匹配"会被当成截断（那是非法字节流）。
+- 能力集：`fixed` → `fixed_inst_size = bits/8 = min = max`；`mixed` →
+  `fixed_inst_size = 0`、min/max = 最窄/最宽、`variable_length = true`；
+  `prefix_scan` → min = 1、max = `max_len`。
+- 省略整个 `[encoding]` 保持"骨架文档合法、生成期报缺字长"（旧
+  `default_inst_width` 缺省时的行为），不静默当 32。
 
 ### 5.8 组合与部件（新增）
 
@@ -359,13 +375,15 @@ value = "big"
 | **S1** 诊断与校验 | 不换语法 | `Diags`（code + span + msg + notes + suggestions，收集式，≤32 + 计数）；**声明索引**（一次预扫建"节 + 名字 → 精确 span"，替代 `source.find` 启发式）；`[emit]`/`[spill]` 引用名与占位符校验；错误码目录 | 坏 spec 矩阵 ≥30 例断言条数/位置/建议；把 `MOV64_RR` 写成 `MOV64_R` 必须**编译期**报并点名行号 | 立刻可用 |
 | **S2** 参数化模板 | `[[templates]]` 取代 families + aliases | 迁移 arm64（38 对）、riscv（16 对）、x86（SSE 族与宽度变体） | 全指令编码逐字节不变；arm64 TOML −30%、riscv/x86 −10% 行数；新增"实例不可区分/名冲突/域不等长"负向用例 | 核心收益 |
 | **S3** 数据化 | cond / reloc / pseudo / derive | 删 x86 硬编码；arm64 得 `b.cond` 全 16 条件；`[[reloc]]`、`[[pseudo]]`、`[[derive]]` | arm64 16 条件编码对照 `docs/reference/aarch64-encoding-ref.md` 黄金值 + 反汇编往返；x86 `cond` 语义不变；`generality_guard` 白名单清空 | 通用性实质提升 |
-| **S4** 宽度三态 | `[encoding]` + 逐指令 `width` | mixed 解码（按宽度分组 trie）+ 新夹具 `demo_mixed16_32_v12.toml` | 新夹具黄金字节全绿；x86/riscv/arm64 不回归 | 打开 RVC/Thumb 类 ISA |
+| **S4** 宽度三态 ✅ 已落地 | `[encoding]` + 逐指令 `width` | mixed 解码（按宽度分组 trie）+ 新夹具 `demo_mixed16_32_v12.toml` | 新夹具黄金字节全绿；x86/riscv/arm64 不回归 | 打开 RVC/Thumb 类 ISA |
 | **S5** 降低语言升级 | 结构化 `insts` + `[[sequences]]` + 属性补齐 + pattern 统一 | `lowering.emit` 表形式（`inst`/`let`/`select`/`switch`）；共享序列；pattern 与 lowering 同一裁决序与死规则检测 | x86 220 条 lowering 下降 ≥15%；黄金值不变 | 中收益、风险最高（可延后） |
 | **S6** 生成自测 | 生成 `__spec_tests`（`cfg(test)`） | 每指令 encode↔decode↔encode、disassemble↔assemble↔encode、立即数边界（min/max/min−1/max+1）、全宽度视图 | 覆盖 x86 197 / riscv 116 / arm64 89（100%）；命中缺陷即修并记录；样板测试可删减 | 每条新指令自动进回归网 |
 | **S7** 工具链与文档 | 拆 crate + CLI + 文档 | `forge-isa-dsl`（普通 lib）+ `forge-dsl`（薄 proc-macro）；`forge-isa` CLI：`validate`/`explain`/`schema`/`fmt`/`diff`/`insts`；JSON Schema + `#:schema`；文档重写 | schema ↔ 文档 ↔ JSON Schema 三方针守卫；CLI 集成测试；`isa_from_file!` 新参数用例 | UX 与可维护性长期收益 |
 | **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | 生成代码 token 数 −≥40%、`cargo check -p forge-codegen` −≥20% | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
 
-**建议顺序**：S0 → S1 → S2 → S3 → S6 →（S7）→ S4 → S5 →（S8）。
+**建议顺序**：S0 → S1 → S2 → S3 → S4（以上均已落地）→ S6 →（S7）→ S5 →（S8）。
+S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动，越早定下来，S6 生成的
+`__spec_tests` 与 S7 的 JSON Schema 才不用二次改写。
 
 **S3 进度**：
 
@@ -412,6 +430,41 @@ value = "big"
   **没有伪指令的 ISA 不生成任何展开器代码**（x86/arm64 与 5 个夹具的 dump 只差
   `assemble()` 那 2 行新增文档注释，riscv 多 97 行展开器）。
 - 至此 **S3 全部落地**（S3a–S3f）。
+
+**S4 进度（宽度三态，2026-09-20 全部落地）**：
+
+- `[encoding]` 三态取代 `[meta]` 的 4 个宽度散键（`default_inst_width` /
+  `variable_length` / `max_inst_len` / `default_opsize`），并新增**逐指令 `width`**
+  （`[[instructions]]` 与 `[[templates]]` 的行都能写）。
+- `kind = "fixed"`：全 ISA 一个字长（= 旧 `default_inst_width` 语义）。三个发行 ISA
+  与 5 个夹具的生成代码**逐字节不变**，只有两处预期差异：能力集 `fixed_inst_size`
+  由 `0` 变成真实字长（`4u32`，以前定宽 ISA 报 0 = "未知"）、文档字符串里的
+  `[meta].default_inst_width` 改名 `[encoding].bits`。
+- `kind = "mixed"`（**新能力**）：按 `widths` **升序**分组——每个字长一棵 trie，
+  "首个完整匹配即停"（短编码优先，RVC/Thumb 同构）。新夹具
+  `demo_mixed16_32_v12.toml`（低 2 位判别短/长编码，`sel = 0` vs `3`）+ 5 条用例
+  （黄金字节、分组解码与消费字节数、编解码往返、`decode_partial` 截断阈值 =
+  最短字长、能力集 = `variable_length` + min/max = 最窄/最宽）。
+- `kind = "prefix_scan"`：x86 走原有 `vlen.rs` 变长路径（`max_len`，缺省 15），
+  生成代码不变。分派从"`variable_length` 二分"改成按 `is_prefix_scan()` 三态分派
+  （`fixed`/`mixed` 共用定长位域编解码）。
+- 校验期**结构性互斥**：`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、
+  `mixed` 写 `max_len`、逐指令 `width` 不在 `widths` 里或与 `bits` 不一致——全部
+  编译期报错；诊断新增 `DSL-ENCODING`。**省略整个 `[encoding]`** = `fixed` 且无
+  `bits` 的骨架文档（解析/校验通过、生成期 `inst_bytes()` 报"bits 缺失"）——
+  省略整段不会被静默当成定宽 32；此时逐指令 `width` 也不能替代 `bits`。
+- 迁移面：`isa/{x86,riscv64,arm64}_v12.toml` + 5 个 demo 夹具 + `forge-dsl` 测试内
+  30 处内联 TOML。
+- 证据：`cargo test -p forge-dsl` 175 + 2 + 1 全绿；workspace 测试 96 个 target
+  全绿（`-j 1`）；三架构 JIT 矩阵 **x86 195/3/0、riscv64 131/67/0、arm64 23/175/0**
+  （与 S3 完全相同）；生成代码对拍（`target/s4before_forge_gen_*.rs` ← S3 末
+  状态、`target/s4after_forge_gen_*.rs` ← 本片）8 个模块差异仅上述两处。
+- **顺带发现（未修，超出本片范围）**：`cargo check --workspace --release
+  --all-targets` 在 `forge-rustc` 上报 `cannot find function assert_assignable`
+  ——`types.rs` 里该函数是 `#[cfg(debug_assertions)]`，而 `lower/place.rs` 无条件
+  调用；两文件最后改动是 2026-09-04 `ac612d1`，与本片无关（CI 只跑 debug 的
+  `cargo check -p forge-rustc`）。故本片的 release 门禁按
+  `--exclude forge-rustc` 跑。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 

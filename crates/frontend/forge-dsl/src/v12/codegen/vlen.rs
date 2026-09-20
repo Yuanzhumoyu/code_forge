@@ -2,7 +2,7 @@
 //!
 //! 从 `codegen/mod.rs` 拆分（原 818-3010 行）：变长 ISA（x86）的字段语义、
 //! VEX/EVEX/前缀扫描与字节前缀决策树集中于此；定宽 ISA（riscv）不经过本
-//! 模块（`generate()` 按 `meta.variable_length` 分派）。复用父模块的
+//! 模块（`generate()` 按 `[encoding].kind = "prefix_scan"` 分派）。复用父模块的
 //! `field_ctor_expr`/`sign_extend_ts`（位域工具）与 `shared::parse_u64`。
 
 use super::super::model::*;
@@ -2084,10 +2084,10 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &V12Model) -> Result<To
     check_dec_trie_overlaps(&nodes)?;
     let dispatch = emit_dec_trie(&nodes, 0, 0);
     let scan_loop = gen_prefix_scan_loop(model)?;
-    // E-②：default_opsize（[meta].default_opsize，位）作为 decode 的 __opsize
+    // E-②：default_opsize（[encoding].default_opsize，位）作为 decode 的 __opsize
     // 初始值（无前缀时的缺省宽度；缺省 4 = 32 位——现状语义）。
     let default_opsize: u16 = model
-        .meta
+        .encoding
         .default_opsize
         .map(|b| (b / 8) as u16)
         .unwrap_or(4);

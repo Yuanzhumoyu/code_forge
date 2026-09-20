@@ -190,7 +190,7 @@ pub(crate) fn gen_frame_lowering(
     } else {
         (format_ident!("dest"), format_ident!("target"))
     };
-    let epilogue_jump_body: TokenStream = if has_jump && model.meta.variable_length {
+    let epilogue_jump_body: TokenStream = if has_jump && model.is_prefix_scan() {
         quote! {
             // 变长（x86 JMP_REL32 语义）：label 槽 = 块号 → encoder 编码 +
             // use_label_at（REL4 fixup = 指令末尾 rel32 占位）。

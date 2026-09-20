@@ -16,7 +16,9 @@ use super::parse_and_validate;
 const BASE: &str = r#"
 [meta]
 name = "s1_base"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 
 [reg.gpr8]
 names = ["X0", "X1", "X2", "X3", "X8", "X9", "X10"]

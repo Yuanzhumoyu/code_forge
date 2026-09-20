@@ -304,8 +304,10 @@ let name = node.get_text("name")?;
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
 - **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局/指令字宽一律由
   TOML 派生（`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/
-  `value_gpr_width`/`value_fpr_width`/`vector_tiers`/`default_inst_width`（**任意
-  ≥ 1 位，无白名单/上限**）；`[stack]`：`slot`/`align`/`fp_save`；
+  `value_gpr_width`/`value_fpr_width`/`vector_tiers`；`[encoding]`：**宽度三态**
+  `kind = "fixed"|"mixed"|"prefix_scan"` + `bits`/`widths`/`max_len`/`default_opsize`
+  （v18 S4，**任意 ≥ 1 位，无白名单/上限**，逐指令 `width` 可覆盖 `bits`）；
+  `[stack]`：`slot`/`align`/`fp_save`；
   `[abi.stack_args]`：`callee_base`/`caller_base`/`first_offset_slots`/`stride_slots`/
   `shadow_bytes`；优先级 显式键 > 派生 > **报错**）。定宽指令字在生成代码里是
   **字节数组**（`[u8; ceil(位/8)]` + `__place`/`__bits`），位域可落在机器字之外

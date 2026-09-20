@@ -11,6 +11,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-20)
+
+- **ISA-DSL 指令宽度三态 `[encoding]`（v18 S4）：拆掉"一个 ISA 一个字长"的假设，打开 RVC/Thumb 类混合字长 ISA**。`[meta]` 的四个宽度散键（`default_inst_width` / `variable_length` / `max_inst_len` / `default_opsize`）删掉，收敛成独立的一段，**逐指令** `width` 由指令（或模板行）自己写：
+
+  ```toml
+  [encoding]
+  kind = "fixed"          # fixed | mixed | prefix_scan
+  bits = 32               # fixed：字长（位，任意 ≥ 1）
+
+  # kind = "mixed"（16 位短编码 + 32 位长编码共存）
+  # bits = 16             # 可选：逐指令 width 的缺省
+  # widths = [16, 32]     # 必填：允许的字长集（解码按升序分组尝试）
+
+  # kind = "prefix_scan"（x86：长度由前缀链决定）
+  # max_len = 15          # 可选：最长指令字节数（缺省 15）
+
+  default_opsize = 32     # 可选（原 [meta].default_opsize 归位到本段）
+  ```
+
+  - `fixed`：全 ISA 一个字长（= 旧 `default_inst_width` 语义），编码/解码路径与生成物**逐字节不变**；三发行 ISA 与 5 个夹具全部迁移到本段。
+  - `mixed`（**新能力**）：编码按该指令字长发字节；解码**按 `widths` 升序分组**、每组一棵位级 trie、"首个完整匹配即停"（短编码优先，RVC/Thumb 同构）。新夹具 `crates/backend/forge-codegen/tests/isa/demo_mixed16_32_v12.toml`（低 2 位判别短/长编码：`sel = 0` vs `3`）+ `tests/demo_mixed16_32_v12_tests.rs` 5 条用例（黄金字节、按宽度分组解码与消费字节数、编解码往返、`decode_partial` 截断阈值 = 最短字长、能力集）。
+  - `prefix_scan`：x86 走原有 `vlen.rs` 变长路径，只把"最长长度"换成 `max_len`；分派从"变长/定宽二分"改为按 `is_prefix_scan()` 三态分派（`fixed`/`mixed` 共用定宽位域编解码）。
+  - **校验期结构性互斥**（错误码 `DSL-ENCODING`）：`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、`mixed` 写 `max_len`、逐指令 `width` 不在 `widths` 里或与 `bits` 不一致 → 编译期报错；**省略整个 `[encoding]`** 仍是合法骨架文档（= `fixed` 且无 `bits`），生成期 `inst_bytes()` 报"bits 缺失"——省略整段不会被静默当成定宽 32，逐指令 `width` 也不能替代 `bits`。
+  - 能力集（`IsaCapabilities`）由三态派生：`fixed` → `fixed_inst_size` = `min` = `max` = `bits/8`（定宽 ISA 以前报 `0` = 未知，现在是真实字长）；`mixed` → `fixed_inst_size = 0`、min/max = 最窄/最宽、`variable_length = true`；`prefix_scan` → min = 1、max = `max_len`。
+  - 未做（如实记录）：草案里的 `[encoding].prefixes` 前缀效果表——x86 前缀语义已在 `[conventions.prefix_scan]` + `vlen.rs`，再造一张表是同一事实两处声明。`mixed` 的短/长判别位由 ISA 自己保证互斥（校验器无法通用地证明，不做假保证），文档与夹具注释写明。
+  - 证据：`cargo test -p forge-dsl` 175 + 2 + 1 全绿；workspace 测试 96 个 target 全绿；三架构 JIT 矩阵 **x86 195/3/0、riscv64 131/67/0、arm64 23/175/0**（与 S3 完全相同）；生成代码对拍（8 个模块）差异仅"文档字符串 `[meta].default_inst_width` → `[encoding].bits`"与上述能力集字长；clippy 两道、release check（`--exclude forge-rustc`，见下）、rustdoc、markdownlint 全干净。
+  - 顺带发现（未修，超出本片范围）：`cargo check --workspace --release --all-targets` 在 `forge-rustc` 上失败——`types.rs::assert_assignable` 是 `#[cfg(debug_assertions)]` 而 `lower/place.rs` 无条件调用（两文件最后改动 2026-09-04，与本片无关；CI 只跑 debug 的 `cargo check -p forge-rustc`）。
+
 ### Added (2026-09-19)
 
 - **ISA-DSL 汇编器伪指令 `[[pseudo]]`（v18 S3e）：汇编期的文本级多指令展开**。`.equ`/`.macro` 的结构化兄弟——不碰编码器、不碰 lowering：`parse_insts` 遇到以伪指令名开头的行，就按 `params` 位置切分实参、逐行把 `{参数}` 换成实参文本，再让**同一套汇编器**装配展开出的每一行。

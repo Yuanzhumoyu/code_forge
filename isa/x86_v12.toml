@@ -47,8 +47,6 @@ name = "x86_64_v12"
 version = "13.0"
 endian = "little"
 mode = 64
-variable_length = true
-max_inst_len = 15
 case_insensitive_regs = true
 # v13 语法键（缺省值与显式声明一致，此处显式化供文档/校验）
 comment_char = "#"
@@ -60,6 +58,9 @@ directive_prefix = "."
 # GPR 四宽度视图共用物理编号 0-15（base_index=0）：同一物理寄存器的
 # 8/16/32/64 位视图。opsize 由操作数寄存器宽度自动推导（Phase 2 起）。
 # gpr8 不含 AH/CH/DH/BH（v12 byte_reg 强制 REX，索引 4-7 恒为 SPL/BPL/SIL/DIL）。
+[encoding]
+kind = "prefix_scan"
+max_len = 15
 
 [reg.gpr8]
 names = ["RAX","RCX","RDX","RBX","RSP","RBP","RSI","RDI",

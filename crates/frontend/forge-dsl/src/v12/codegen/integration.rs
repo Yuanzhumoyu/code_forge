@@ -379,10 +379,26 @@ fn gen_isa_info(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStream, Str
     let name_str = &model.meta.name;
     let version_str = model.meta.version.as_deref().unwrap_or("");
     let mode = model.meta.mode;
-    let vl = model.meta.variable_length;
+    let vl = model.is_variable_length();
     let n_insts = infos.len();
-    let max_inst_len = model.meta.max_inst_len.unwrap_or(if vl { 15 } else { 4 });
-    let min_inst_len: u8 = if vl { 1 } else { 4 };
+    // 能力集按 `[encoding].kind` 三态派生（v18 S4）：
+    // - fixed：单字长 → fixed_inst_size = 字长、min = max = 字长；
+    // - mixed：字长集 → variable_length = true、min/max = 最窄/最宽字长；
+    // - prefix_scan：逐指令变长 → min = 1、max = max_len（缺省 15）。
+    let (fixed_inst_size, min_inst_len, max_inst_len): (u32, u8, u8) = match model.encoding.kind {
+        EncodingKind::Fixed => {
+            let b = model.inst_bytes()?;
+            (b, b as u8, b as u8)
+        }
+        EncodingKind::Mixed => {
+            let mut ws = model.encoding_width_bytes();
+            if ws.is_empty() {
+                ws.push(1);
+            }
+            (0, ws[0] as u8, ws[ws.len() - 1] as u8)
+        }
+        EncodingKind::PrefixScan => (0, 1, model.encoding.max_len.unwrap_or(15)),
+    };
     let endian = if model.meta.endian == Endian::Big {
         quote! { forge_ir::Endianness::Big }
     } else {
@@ -399,7 +415,7 @@ fn gen_isa_info(model: &V12Model, infos: &[InstInfo]) -> Result<TokenStream, Str
             fn capabilities(&self) -> crate::machine::isa_info::IsaCapabilities {
                 crate::machine::isa_info::IsaCapabilities {
                     variable_length: #vl,
-                    fixed_inst_size: 0,
+                    fixed_inst_size: #fixed_inst_size,
                     prefix_layers: 1,
                     addressing_modes: &[],
                     simd_widths: &[],

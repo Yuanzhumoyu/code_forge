@@ -456,16 +456,25 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
     // 定宽（riscv）：label 槽（off_j/off_b）是散布位段，fixup 位置 = 指令
     // 起始，reloc = Relative(4,0)（相对指令地址本身；位段重排由
     // RiscvRelocPatcher 编码）。
-    let fixed = !model.meta.variable_length;
-    // 定宽 ISA 的 fixup 宽度 = 指令字长（ISA 数据；历史实现写死 4 字节）。
-    // 位段重排（riscv JAL/B 型、arm64 imm26…）由该 ISA 的 `RelocPatcher` 做。
-    let fixed_bytes: u32 = if fixed { model.inst_bytes()? } else { 4 };
-    // 无后缀字面量（`4` 而非 `4u32`）：32 位 ISA 的生成代码与去写死前逐字节一致。
-    let fixed_bytes_lit = proc_macro2::Literal::u32_unsuffixed(fixed_bytes);
+    // fixed 与 mixed 的 label 槽都散布在位段中（fixup 从指令起始算），
+    // 只有 prefix_scan 的 label 是尾部连续 imm。
+    let fixed = !model.is_prefix_scan();
+    // 定宽/混合字长 ISA 的 fixup 宽度 = **该指令**的字长（v18 S4：fixed 全 ISA 相同、
+    // mixed 逐指令）；变长 ISA 固定 4。位段重排（riscv JAL/B 型、arm64 imm26…）由
+    // 该 ISA 的 `RelocPatcher` 做。label 与 global 两类 fixup 共用这个宽度。
+    let fixed_bytes_of = |inst: &Instruction| -> Result<u32, String> {
+        if fixed {
+            model.inst_width_bytes(inst)
+        } else {
+            Ok(4)
+        }
+    };
     // 含 Label 槽的指令：encode 后对 fixup 位置 use_label_at（块号 → 实际偏移）。
     let mut label_arms: Vec<TokenStream> = Vec::new();
     for info in infos {
         let vn = &info.vn;
+        // fixup 宽度 = 本指令字长（fixed/mixed；变长 ISA 恒 4）
+        let fixed_bytes_lit = proc_macro2::Literal::u32_unsuffixed(fixed_bytes_of(&info.inst)?);
         // 找 Label 槽的操作数 (位置, fid)
         if let Some(fid) = info
             .operands
@@ -538,7 +547,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
     // - `absolute`（x86 MOVABS_GLOBAL，槽 imm64）：fixup = 指令末尾该槽的字节区间
     //   （槽宽即补丁宽度），reloc = Absolute(槽字节数)；
     // - `pc_relative`（riscv AUIPC_GLOBAL/ADDI_GLOBAL）：fixup = 指令起始，
-    //   补丁宽度 = 指令字长（`[meta].default_inst_width`），
+    //   补丁宽度 = 指令字长（`[encoding].bits`），
     //   reloc = Relative(字长, 0)；patcher 按 opcode 0x17/0x13 分写 hi20/lo12 位段。
     let mut global_arms: Vec<TokenStream> = Vec::new();
     for info in infos {
@@ -575,6 +584,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
             .and_then(|s| s.width)
             .unwrap_or(64);
         let slot_bytes_lit = proc_macro2::Literal::u32_unsuffixed(slot_bits.div_ceil(8));
+        let reloc_bytes_lit = proc_macro2::Literal::u32_unsuffixed(fixed_bytes_of(&info.inst)?);
         let addend = def.addend.unwrap_or(0);
         let body = match def.semantics {
             RelocSemantics::Absolute => quote! {
@@ -606,7 +616,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                 if imm < 0 {
                     sink.add_reloc(
                         __base,
-                        crate::RelocKind::Relative(#fixed_bytes_lit, 0),
+                        crate::RelocKind::Relative(#reloc_bytes_lit, 0),
                         &format!("G{}", -imm - 1),
                         #addend,
                     );

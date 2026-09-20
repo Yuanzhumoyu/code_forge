@@ -22,13 +22,15 @@ name = "demo_v12"
 version = "13.0"
 endian = "little"
 mode = 64
-default_inst_width = 32
 case_insensitive_regs = true
 comment_char = "#"
 label_suffix = ":"
 mnemonic_case = "insensitive"
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
+[encoding]
+kind = "fixed"
+bits = 32
 
 [reg.gpr2]
 base_index = 0

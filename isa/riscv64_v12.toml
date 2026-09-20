@@ -20,7 +20,6 @@ name = "riscv64_v12"
 version = "13.0"
 endian = "little"
 mode = 64
-default_inst_width = 32
 case_insensitive_regs = true
 # v13 语法键（显式化；缺省值一致）
 comment_char = "#"
@@ -29,6 +28,9 @@ mnemonic_case = "insensitive"
 directive_prefix = "."
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
+[encoding]
+kind = "fixed"
+bits = 32
 
 [reg.gpr8]
 names = [

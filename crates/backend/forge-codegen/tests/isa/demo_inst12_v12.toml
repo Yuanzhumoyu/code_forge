@@ -23,8 +23,6 @@ version = "15.0"
 endian = "little"
 mode = 8
 # 12 位字（非 8 倍数；1..=64 位任意取值，无白名单）
-default_inst_width = 12
-default_opsize = 8
 addr_width = 1
 value_gpr_width = 1
 case_insensitive_regs = true
@@ -33,6 +31,10 @@ label_suffix = ":"
 mnemonic_case = "insensitive"
 
 # ─────────────────────────── 寄存器组（8 个 1 字节寄存器）───────────────────────────
+[encoding]
+kind = "fixed"
+bits = 12
+default_opsize = 8
 
 [reg.gpr1]
 base_index = 0

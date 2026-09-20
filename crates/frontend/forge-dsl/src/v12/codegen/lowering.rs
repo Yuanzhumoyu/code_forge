@@ -177,7 +177,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     let has_test = inst_exists(infos, &test_inst);
     // 定宽跳转（JAL 语义）：jump_inst 指令存在即启用（非按 ISA 形态猜——
     // demo 等无跳转指令的定宽 ISA 自然降级，不生成不存在的变体引用）。
-    let has_jal = has_jmp && !model.meta.variable_length;
+    let has_jal = has_jmp && !model.is_prefix_scan();
     // 定宽（riscv）跳转：JAL x0（rd=index0、label 槽 = 块号 → encoder 定宽
     // fixup Relative(4,0)）。JAL 字段 = [dest(gpr out), target(label)]。
     let jal_f = inst_fids(infos, &jump_inst);

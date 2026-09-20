@@ -14,7 +14,9 @@ name = "riscv64_v12"
 version = "12.0"
 endian = "little"
 mode = 64
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 
 [reg.gpr8]
 names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "X11",
@@ -59,8 +61,8 @@ asm = "add {dst}, {src}, {src2}"
 fn parse_minimal_riscv_style() {
     let m = parse_and_validate(RISCV_DOC).expect("valid riscv-style doc must parse");
     assert_eq!(m.meta.name, "riscv64_v12");
-    assert_eq!(m.meta.default_inst_width, Some(32));
-    assert!(!m.meta.variable_length);
+    assert_eq!(m.encoding.bits, Some(32));
+    assert!(!m.is_variable_length());
     assert_eq!(m.reg[&RegClass::GPR(8)].names.as_ref().unwrap().len(), 32);
     assert_eq!(m.conventions.bitfields.len(), 6);
     assert_eq!(m.conventions.bitfields["rd"].offset, Some(7));
@@ -85,8 +87,9 @@ name = "x86_64"
 version = "12.0"
 endian = "little"
 mode = 64
-variable_length = true
-max_inst_len = 15
+[encoding]
+kind = "prefix_scan"
+max_len = 15
 
 [reg.gpr8]
 names = ["RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI",
@@ -129,8 +132,8 @@ rex = "auto"
 #[test]
 fn parse_x86_conventions() {
     let m = parse_and_validate(X86_DOC).expect("valid x86-style doc must parse");
-    assert!(m.meta.variable_length);
-    assert_eq!(m.meta.max_inst_len, Some(15));
+    assert!(m.is_variable_length());
+    assert_eq!(m.encoding.max_len, Some(15));
     // 生成式寄存器组：count + prefix
     assert_eq!(m.reg[&RegClass::FPR(16)].count, Some(16));
     assert_eq!(m.reg[&RegClass::FPR(16)].prefix.as_deref(), Some("XMM"));
@@ -160,7 +163,7 @@ class = "gpr"
     let m = parse_and_validate(doc).expect("valid");
     assert_eq!(m.meta.endian, Endian::Little);
     assert_eq!(m.meta.mode, 64);
-    assert_eq!(m.meta.default_inst_width, None);
+    assert_eq!(m.encoding.bits, None);
     let slot = &m.operand_slots[0];
     assert_eq!(slot.roles, None); // 缺省 ["in"]，模型层保持 None
     assert_eq!(slot.signed, None);
@@ -619,13 +622,17 @@ class = "gpr"
     }
 }
 
+/// `[encoding]` 三态的结构化互斥（v18 S4）：三态的键不能互相串用，缺必填即报。
 #[test]
-fn validation_fixed_vs_variable_conflict() {
+fn validation_encoding_kinds_are_structurally_exclusive() {
+    // fixed + widths = 写错了（widths 只属于 mixed）
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
-variable_length = true
+[encoding]
+kind = "fixed"
+bits = 32
+widths = [16, 32]
 [reg.gpr4]
 count = 8
 [[operand_slots]]
@@ -633,16 +640,63 @@ name = "g"
 kind = "reg"
 class = "gpr"
 "#;
-    let err = parse_and_validate(doc).unwrap_err();
-    match err {
-        V12Error::Validation { msg, .. } => {
-            assert!(
-                msg.contains("conflicts with `variable_length = true`"),
-                "msg: {msg}"
-            );
-        }
-        other => panic!("expected Validation error, got {other:?}"),
-    }
+    let msg = validation_msg(doc);
+    assert!(msg.contains("widths 只适用于"), "msg: {msg}");
+
+    // prefix_scan + bits = 写错了（变长 ISA 没有单一字长）
+    let doc = r#"
+[meta]
+name = "x"
+[encoding]
+kind = "prefix_scan"
+bits = 32
+[reg.gpr4]
+count = 8
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+"#;
+    let msg = validation_msg(doc);
+    assert!(msg.contains("bits 只适用于"), "msg: {msg}");
+
+    // fixed 缺 bits 且指令写 width：逐指令 width **不能替代** bits
+    // （全 ISA 只有一个字长，声明一次即可）。
+    let doc = r#"
+[meta]
+name = "x"
+[encoding]
+kind = "fixed"
+[reg.gpr4]
+count = 8
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+[[instructions]]
+name = "I"
+width = 32
+opcode = 1
+asm = "i"
+"#;
+    let msg = validation_msg(doc);
+    assert!(msg.contains("不能替代 [encoding].bits"), "msg: {msg}");
+
+    // 省略整个 [encoding] = **合法骨架文档**（还没定字长），但生成期必须报
+    // "bits 缺失"——省略整段不会被静默当成定宽 32。
+    let doc = r#"
+[meta]
+name = "x"
+[reg.gpr4]
+count = 8
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr"
+"#;
+    let m = parse_and_validate(doc).expect("无 [encoding] 的骨架文档解析/校验合法");
+    let err = super::codegen::generate(&m).unwrap_err();
+    assert!(err.contains("bits 缺失"), "err: {err}");
 }
 
 #[test]
@@ -676,7 +730,9 @@ fn codegen_big_endian_decode_reads_be() {
 [meta]
 name = "x"
 endian = "big"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -717,7 +773,9 @@ fn codegen_align_pad_emit_key() {
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -762,7 +820,9 @@ fn codegen_scatter_pieces_rejected_in_single_contexts() {
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -794,7 +854,9 @@ fn codegen_generates_core_surface() {
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -902,7 +964,9 @@ fn gen_cond_doc(tbl: &str, extra: &str) -> String {
         r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -1255,7 +1319,9 @@ fn gen_min_model(inst_body: &str) -> super::model::V12Model {
         r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -1323,7 +1389,9 @@ fn operand_first_asm_scans_without_mnemonic() {
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -1368,7 +1436,9 @@ fn missing_asm_is_parse_error() {
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -1401,7 +1471,9 @@ fn validate_asm_placeholder_must_be_declared() {
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -1481,7 +1553,9 @@ fn generic_template_out_of_range_rejected() {
     let doc = r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -1528,7 +1602,9 @@ fn reloc_doc(reloc_tbl: &str, inst_reloc: &str) -> String {
         r#"
 [meta]
 name = "t"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [[operand_slots]]
@@ -1688,7 +1764,9 @@ fn effect_move_label_parses() {
     let doc = r#"
 [meta]
 name = "t"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [[operand_slots]]
@@ -1825,7 +1903,9 @@ fn lowering_doc(rule: &str) -> String {
         r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -1927,7 +2007,9 @@ fn ref_doc(r16: &str, r32: &str, extra: &str) -> String {
         r#"
 [meta]
 name = "x"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -2149,8 +2231,9 @@ fn instruction_without_form_carries_all_enc_keys() {
     let doc = r#"
 [meta]
 name = "x"
-variable_length = true
-max_inst_len = 15
+[encoding]
+kind = "prefix_scan"
+max_len = 15
 [reg.gpr8]
 count = 16
 [[operand_slots]]
@@ -2182,7 +2265,8 @@ fn instruction_enc_keys_override_form_preset() {
     let doc = r#"
 [meta]
 name = "x"
-variable_length = true
+[encoding]
+kind = "prefix_scan"
 [reg.gpr8]
 count = 16
 [[operand_slots]]
@@ -2252,7 +2336,8 @@ fn named_ops_declare_and_reference() {
     let doc = r#"
 [meta]
 name = "x"
-variable_length = true
+[encoding]
+kind = "prefix_scan"
 [reg.gpr8]
 count = 16
 [[operand_slots]]
@@ -2331,7 +2416,8 @@ fn ops_doc(body: &str) -> String {
         r#"
 [meta]
 name = "x"
-variable_length = true
+[encoding]
+kind = "prefix_scan"
 [reg.gpr8]
 count = 16
 [[operand_slots]]
@@ -2401,7 +2487,8 @@ fn modrm_doc(modrm: &str) -> String {
         r#"
 [meta]
 name = "x"
-variable_length = true
+[encoding]
+kind = "prefix_scan"
 [reg.gpr8]
 count = 16
 [[operand_slots]]
@@ -2426,7 +2513,8 @@ asm = "i {{dst}}, {{src}}"
 const PATTERN_BASE: &str = r#"
 [meta]
 name = "x"
-variable_length = true
+[encoding]
+kind = "prefix_scan"
 [reg.gpr8]
 count = 16
 [[operand_slots]]
@@ -2586,7 +2674,9 @@ fn conventions_mem_validation() {
     let base = r#"
 [meta]
 name = "mips"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -2671,12 +2761,24 @@ fn stack_args_requires_role_tags() {
 /// 仅声明 1 字节 GPR 组的 ISA：全部类/宽度必须由元数据派生，
 /// 历史实现锚定 `GPR(8).or(GPR(4))` → 名字表为空（静默失效）。
 fn one_byte_doc(meta_extra: &str) -> String {
+    one_byte_doc_at(meta_extra, "")
+}
+
+/// 同上，但额外键进 **`[encoding]`**（`default_opsize` 等编码期键，v18 S4 归位）。
+fn one_byte_doc_enc(enc_extra: &str) -> String {
+    one_byte_doc_at("", enc_extra)
+}
+
+fn one_byte_doc_at(meta_extra: &str, enc_extra: &str) -> String {
     format!(
         r#"
 [meta]
 name = "tiny8"
-default_inst_width = 32
 {meta_extra}
+[encoding]
+kind = "fixed"
+bits = 32
+{enc_extra}
 [reg.gpr1]
 names = ["A0", "A1", "A2", "A3"]
 [[operand_slots]]
@@ -2803,19 +2905,19 @@ fn width_metadata_explicit_key_needs_group() {
     assert!(msg.contains("slot"), "msg: {msg}");
 }
 
-/// `[meta].default_opsize`（位）必须与某个已声明 GPR 组一致
+/// `[encoding].default_opsize`（位）必须与某个已声明 GPR 组一致
 /// （生成代码里的 `__opsize` 是字节，1 字节 ISA 需显式声明 8）。
 #[test]
 fn width_metadata_default_opsize_needs_matching_group() {
-    let m = parse_and_validate(&one_byte_doc("default_opsize = 8")).expect("合法");
-    assert_eq!(m.meta.default_opsize, Some(8));
-    let msg = validation_msg(&one_byte_doc("default_opsize = 8").replace("gpr1", "gpr8"));
+    let m = parse_and_validate(&one_byte_doc_enc("default_opsize = 8")).expect("合法");
+    assert_eq!(m.encoding.default_opsize, Some(8));
+    let msg = validation_msg(&one_byte_doc_enc("default_opsize = 8").replace("gpr1", "gpr8"));
     // 注意：替换后 class = "gpr8" 与组一致，但 default_opsize=8 找不到 gpr1 → 报错。
     assert!(
         msg.contains("default_opsize"),
         "1 字节 opsize 必须要求 [reg.gpr1]：{msg}"
     );
-    let msg = validation_msg(&one_byte_doc("default_opsize = 12"));
+    let msg = validation_msg(&one_byte_doc_enc("default_opsize = 12"));
     assert!(msg.contains("8 的倍数"), "msg: {msg}");
 }
 
@@ -2828,7 +2930,9 @@ fn two_view_doc(extra: &str) -> String {
         r#"
 [meta]
 name = "twoview"
-default_inst_width = 32
+[encoding]
+kind = "fixed"
+bits = 32
 [reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 [reg.gpr4]
@@ -3117,7 +3221,7 @@ fn types_ptr_uses_isa_address_width() {
 
 // ─────────── B6：指令字宽 = ISA 数据（任意 1..=64 位，无白名单） ───────────
 
-/// 定宽 ISA 的指令字宽取自 `[meta].default_inst_width`，字节数 = `ceil(位/8)`。
+/// 定宽 ISA 的指令字宽取自 `[encoding].bits`，字节数 = `ceil(位/8)`。
 /// 用"低位 opcode + 补集零 guard"形式——**任何字宽**都成立（含 > 64 位：
 /// 单个位域 ≤ 64 位是值表示上限，与字长无关）。
 fn word_doc(bits: u32) -> String {
@@ -3126,7 +3230,9 @@ fn word_doc(bits: u32) -> String {
         r#"
 [meta]
 name = "w{b}"
-default_inst_width = {bits}
+[encoding]
+kind = "fixed"
+bits = {bits}
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -3184,7 +3290,9 @@ fn inst_width_field_over_64_bits_rejected() {
     let doc = r#"
 [meta]
 name = "wide"
-default_inst_width = 100
+[encoding]
+kind = "fixed"
+bits = 100
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -3222,7 +3330,9 @@ fn inst_width_drives_reloc_width() {
             r#"
 [meta]
 name = "br{b}"
-default_inst_width = {bits}
+[encoding]
+kind = "fixed"
+bits = {bits}
 [reg.gpr4]
 count = 8
 [conventions.bitfields]
@@ -3275,7 +3385,9 @@ fn inst_width_rejects_bitfield_beyond_word() {
             r#"
 [meta]
 name = "fit"
-default_inst_width = 12
+[encoding]
+kind = "fixed"
+bits = 12
 [reg.gpr4]
 count = 8
 [conventions.bitfields]

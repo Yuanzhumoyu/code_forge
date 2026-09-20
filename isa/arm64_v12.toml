@@ -19,7 +19,6 @@ name = "arm64_v12"
 version = "0.1.0"
 endian = "little"
 mode = 64
-default_inst_width = 32
 case_insensitive_regs = true
 comment_char = "#"
 label_suffix = ":"
@@ -30,6 +29,9 @@ directive_prefix = "."
 # X0-X30（gpr8，64 位）与 W0-W30（gpr4，32 位）共享物理编号 0-30
 # （A64 中 Xn/Wn 是同一寄存器组的不同宽度视图）。SP/XZR（31 号上下
 # 文语义）后续迭代。
+[encoding]
+kind = "fixed"
+bits = 32
 
 [reg.gpr8]
 base_index = 0

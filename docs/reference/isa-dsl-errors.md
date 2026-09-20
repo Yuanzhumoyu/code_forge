@@ -1,8 +1,8 @@
 # ISA-DSL 错误码目录（v18 S1）
 
-> 状态：[active]（2026-09-19 起）。对应实现：`crates/frontend/forge-dsl/src/v12/diag.rs`
-> （诊断收集与定位）、`validate.rs`（各节校验）、`model.rs`（模型级派生与 gate）。
-> 执行方案见 `docs/plans/forge-dsl-v18-plan.md` §7「S1 诊断与校验」。
+> 状态：[active]（2026-09-19 起；2026-09-20 补 `DSL-ENCODING` 与 §3.7 `[encoding]` 三态）。对应实现：
+> `crates/frontend/forge-dsl/src/v12/diag.rs`（诊断收集与定位）、`validate.rs`（各节校验）、
+> `model.rs`（模型级派生与 gate）。执行方案见 `docs/plans/forge-dsl-v18-plan.md` §7「S1 诊断与校验」。
 
 ## 1. 诊断长什么样
 
@@ -27,7 +27,8 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 | 错误码 | 对应节 | 典型问题 |
 | --- | --- | --- |
 | `DSL-TOML` | TOML 语法/结构 | 键名打错（`deny_unknown_fields`）、表重复、缺必填字段 |
-| `DSL-META` | `[meta]` | ISA 名非法、`default_inst_width` 与 `variable_length` 冲突、`comment_char` 不是单字符 |
+| `DSL-META` | `[meta]` | ISA 名非法、`comment_char` 不是单字符、宽度键指向未声明的组 |
+| `DSL-ENCODING` | `[encoding]`（v18 S4） | `kind` 与键结构不匹配（`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、`mixed` 写 `max_len`）、`widths` 为空/重复/含 0、`bits = 0`、`default_opsize = 0`、逐指令 `width` 不在 `widths` 里或与 `bits` 不一致、`prefix_scan` 下写 `width` |
 | `DSL-REG` | `[reg.*]` | 缺 GPR 组、`names`/`count` 不一致、组名宽度非法、生成式声明参数不全 |
 | `DSL-STACK` | `[stack]` | `slot`/`align`/`fp_save` 为 0 或未指向已声明组 |
 | `DSL-TYPES` | `[types]` | 类型名非法、目标寄存器组未声明、类宽 < 类型宽（会静默截断） |
@@ -106,7 +107,25 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 | `操作数槽 'X' 的 kind = "cond" 需要条件码表` | 声明 `[conventions.cond]`（v18 S3b 起不再回退 x86 的 16 项表） |
 | `用了 {cc} 但 [conventions.cond] 没把所有 IR 整数条件映射全——缺 slt / uge` | 给缺的条件各找一条汇编名加 `ir = "<条件名>"`（漏映射会在运行期静默退化成 0 = 溢出条件） |
 
-### 3.7 位置看起来不对？
+### 3.7 指令宽度三态（`[encoding]`，v18 S4）
+
+`[encoding]` 是**独立的段**（`[meta]` 不再有 `default_inst_width`/`variable_length`/
+`max_inst_len`/`default_opsize`）。三态的键结构性互斥，在**校验期**就报，不会留到生成期。
+
+| 消息 | 修法 |
+| --- | --- |
+| `[encoding].bits 缺失：kind = "fixed" 必须声明指令字宽` | 只出现在**完全省略 `[encoding]`** 的骨架文档上，且由生成期（`inst_bytes()`）报——补上 `[encoding] bits = <位>` |
+| `[encoding].widths 只适用于 kind = "mixed"` | `fixed` 只有一个字长（写 `bits`）；要混合字长把 `kind` 改成 `"mixed"` |
+| `[encoding].max_len 只适用于 kind = "prefix_scan"` | `max_len` 是前缀扫描式变长的上限；定宽/混合不需要 |
+| `[encoding].bits 只适用于 kind = "fixed"/"mixed"` | `prefix_scan` 是逐指令变长，删掉 `bits`（最长长度写 `max_len`） |
+| `[encoding].widths 不能为空` / `widths 里的字长必须 > 0` / `widths 里有重复字长` | `mixed` 必须给出非空、无重复、每项 > 0 的字长集 |
+| `[encoding].bits 必须也在 widths 里（它是 width 缺省值）` | `bits` 是逐指令 `width` 的缺省，必须属于 `widths` |
+| `[[instructions.X]]: width N 不在 [encoding].widths (…) 里` | 逐指令字长必须是 `widths` 的成员（解码按字长分组，成员外无法解码） |
+| `[[instructions.X]]: width N 与 [encoding].bits (M) 不一致` | `fixed` 全 ISA 一个字长；`width` 只是自解释的重复，写别的值就是错的 |
+| `[[instructions.X]]: width = N 不能替代 [encoding].bits` | `fixed` 且没写 `bits`：请在 `[encoding].bits` 声明一次，而不是逐条写 `width` |
+| `[[instructions.X]]: prefix_scan ISA 不得写 width` | 前缀扫描式的字长由前缀链决定，删掉 `width` |
+
+### 3.8 位置看起来不对？
 
 - 诊断指向**声明行**（`name = …` / `op = …` / 节头）是正常的；
 - 若消息里用引号点名了出错的值（`'MRR_TYPO'`、`'rd_width'`、`'{bogus}'`），定位会进一步

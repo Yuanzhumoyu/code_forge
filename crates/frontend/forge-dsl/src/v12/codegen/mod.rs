@@ -16,7 +16,7 @@
 //!   asm 模板驱动（`{0}`/`{1}` 占位符，mnemonic 与模板分离），支持 simple、
 //!   memory（`{I}({J})`）与 memory0（`({J})`）三种操作数形状。
 //!
-//! 迭代 2 范围：`meta.default_inst_width == 32` 的定宽 ISA（riscv64 试点）；
+//! 迭代 2 范围：`[encoding].bits == 32` 的定宽 ISA（riscv64 试点）；
 //! 变长 form（modrm/vex 语义键）与 64/16 位定宽在迭代 3+ 支持。
 
 use super::model::*;
@@ -134,7 +134,7 @@ pub(crate) fn field_ctor_expr_view(
         }
         None => {
             // 多类 GPR（宽度视图）：按 decode 扫描出的 `__opsize`（**字节**，
-            // 由 `[meta].default_opsize` 提供缺省）选择视图——assemble/encode
+            // 由 `[encoding].default_opsize` 提供缺省）选择视图——assemble/encode
             // 侧已按实际寄存器宽度还原，decode 反向。
             quote! {
                 <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(__opsize),#v)).unwrap()
@@ -163,17 +163,19 @@ fn semantic_operand_name(op: &OperandUse, slot: &OperandSlot, _i: usize) -> Stri
 // ─────────────────────────────── 入口 ───────────────────────────────
 
 pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
-    let variable = model.meta.variable_length;
-    // 定宽 ISA 的指令字长是 ISA 数据（`[meta].default_inst_width` ∈ {8,16,32,64}）；
-    // 变长 ISA 无固定字长。字长非法/缺失在此报错（不再只认 32）。
-    if !variable {
+    // 只有 `prefix_scan`（x86 风格前缀链）走 `vlen.rs` 的定长切片路径；
+    // `fixed` 与 `mixed` 都按位域编解码（`mixed` 逐指令取字长）。
+    let prefix_scan = model.is_prefix_scan();
+    // 定宽 ISA 的指令字长是 ISA 数据（`[encoding].bits`）；
+    // `mixed` 逐指令取 `width`，无单一字长。字长非法/缺失在此报错（不再只认 32）。
+    if !model.is_variable_length() {
         model.inst_bytes()?;
     }
     let infos = collect_inst_infos(model)?;
     let reg_tables = gen_reg_tables(model)?;
     let mem_support = gen_mem_support(model, &infos)?;
     let inst_enum = gen_inst_enum(&infos);
-    let (encode_fn, decode_fn) = if variable {
+    let (encode_fn, decode_fn) = if prefix_scan {
         (
             vlen::gen_vlen_encode(&infos, model)?,
             vlen::gen_vlen_decode(&infos, model)?,
@@ -181,8 +183,8 @@ pub fn generate(model: &V12Model) -> Result<TokenStream, String> {
     } else {
         (gen_encode(&infos, model)?, gen_decode(&infos, model)?)
     };
-    // 定宽字位域助手（`__place`/`__bits`，字节数组字，字长任意）——仅定宽路径用。
-    let bit_helpers = if variable {
+    // 定宽字位域助手（`__place`/`__bits`，字节数组字，字长任意）——fixed/mixed 路径用。
+    let bit_helpers = if prefix_scan {
         quote! {}
     } else {
         gen_bit_helpers()
@@ -637,11 +639,11 @@ fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
 
 fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
     let little = m.meta.endian == Endian::Little;
-    // 指令字长（字节，= ceil(位宽/8)）——定宽 ISA 的 ISA 数据，**无宽度白名单/上限**。
+    // 指令字长（字节，= ceil(位宽/8)）——**逐指令**取 ISA 数据（v18 S4：fixed 全 ISA
+    // 同一个字长、mixed 逐指令 `width`），**无宽度白名单/上限**。
     // 字表示为**字节数组**（`[u8; n]`，LE 位序：bit 0 = 第 0 字节 LSB），位域写入
     // 走生成的 `__place` 助手；因此字长不受 u64/u128 限制（任意位宽，含非 8 倍数）。
     // 大端 ISA：内存序 = 字节数组反转（bit 0 落在最后一个字节的 LSB）。
-    let inst_len_lit = proc_macro2::Literal::u32_unsuffixed(m.inst_bytes()?);
     let out = if little {
         quote! { Ok(__word.to_vec()) }
     } else {
@@ -650,6 +652,7 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
     let mut arms = Vec::new();
     for info in infos {
         let vn = &info.vn;
+        let inst_len_lit = proc_macro2::Literal::u32_unsuffixed(m.inst_width_bytes(&info.inst)?);
         let opcode_field = single_field(
             m,
             info.form.opcode_field.as_deref().unwrap(),
@@ -734,7 +737,7 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
         });
     }
     Ok(quote! {
-        /// 编码单条指令为字节（定宽：`ceil([meta].default_inst_width / 8)` 字节，
+        /// 编码单条指令为字节（定宽：`ceil([encoding].bits / 8)` 字节，
         /// 字长任意；`[meta].endian` 决定内存字节序）。
         pub fn encode(inst: &Inst) -> Result<Vec<u8>, String> {
             match inst {
@@ -886,12 +889,16 @@ fn emit_bit_trie(nodes: &[BitTrieNode], idx: usize) -> TokenStream {
     body
 }
 
-fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
+/// 一个"宽度组"的解码体：`(读字表达式, 分派语句)`。
+///
+/// 组 = 字长相同的全部指令（fixed ISA 只有一组；mixed 每个 `widths` 一项一组）。
+/// 组内建**位级 trie**（常量位段），叶子里做补集零 guard + 字段提取。
+fn gen_decode_group(
+    infos: &[&InstInfo],
+    m: &V12Model,
+    inst_bytes: u32,
+) -> Result<(TokenStream, TokenStream), String> {
     let little = m.meta.endian == Endian::Little;
-    // 指令字长（字节）：ISA 数据（`[meta].default_inst_width`），**无白名单/上限**。
-    // 字表示为字节数组（LE 位序），各 arm 的常量位段比较与字段提取都走生成的
-    // `__bits` 助手——字长不受 u64/u128 限制。
-    let inst_bytes = m.inst_bytes()?;
     let inst_len_lit = proc_macro2::Literal::u32_unsuffixed(inst_bytes);
     let mut groups: Vec<BitTrieGroup> = Vec::new();
     for info in infos {
@@ -981,32 +988,114 @@ fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             __be
         }}
     };
-    Ok(quote! {
-        /// 解码定宽指令字（`ceil([meta].default_inst_width / 8)` 字节，字长任意）；
-        /// 常量位段位级决策树（叶节点优先，叶内声明序），无匹配 → None。
-        /// 返回 (指令, 消费字节数) = 字长的字节数。
-        pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
-            if bytes.len() < #inst_len_lit as usize {
-                return None;
-            }
-            let __word: Vec<u8> = #read;
-            #dispatch
-            None
-        }
+    Ok((read, dispatch))
+}
 
-        /// 解码并报告部分匹配偏移：定宽 ISA 失败 → Err(bytes.len() 不足 ? len : 0)。
-        /// 供 `TargetDecoder::decode` 的 `DecodeError::InvalidBytes(n)` 使用。
-        pub fn decode_partial(bytes: &[u8]) -> Result<(Inst, usize), usize> {
-            match decode(bytes) {
-                Some(r) => Ok(r),
-                None => Err(if bytes.len() < #inst_len_lit as usize {
-                    bytes.len()
-                } else {
-                    0
-                }),
-            }
+/// `decode` 的生成：`fixed` 单组；`mixed` 按 `widths` 升序分组，**首个完整匹配即停**。
+fn gen_decode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
+    match m.encoding.kind {
+        EncodingKind::Fixed => {
+            // 指令字长（字节）：ISA 数据（`[encoding].bits`），**无白名单/上限**。
+            // 字表示为字节数组（LE 位序），各 arm 的常量位段比较与字段提取都走生成的
+            // `__bits` 助手——字长不受 u64/u128 限制。
+            let inst_bytes = m.inst_bytes()?;
+            let inst_len_lit = proc_macro2::Literal::u32_unsuffixed(inst_bytes);
+            let all: Vec<&InstInfo> = infos.iter().collect();
+            let (read, dispatch) = gen_decode_group(&all, m, inst_bytes)?;
+            Ok(quote! {
+                /// 解码定宽指令字（`ceil([encoding].bits / 8)` 字节，字长任意）；
+                /// 常量位段位级决策树（叶节点优先，叶内声明序），无匹配 → None。
+                /// 返回 (指令, 消费字节数) = 字长的字节数。
+                pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
+                    if bytes.len() < #inst_len_lit as usize {
+                        return None;
+                    }
+                    let __word: Vec<u8> = #read;
+                    #dispatch
+                    None
+                }
+
+                /// 解码并报告部分匹配偏移：定宽 ISA 失败 → Err(bytes.len() 不足 ? len : 0)。
+                /// 供 `TargetDecoder::decode` 的 `DecodeError::InvalidBytes(n)` 使用。
+                pub fn decode_partial(bytes: &[u8]) -> Result<(Inst, usize), usize> {
+                    match decode(bytes) {
+                        Some(r) => Ok(r),
+                        None => Err(if bytes.len() < #inst_len_lit as usize {
+                            bytes.len()
+                        } else {
+                            0
+                        }),
+                    }
+                }
+            })
         }
-    })
+        EncodingKind::Mixed => {
+            // 按字长分组：同一字长的指令一个 trie；`decode` 按 widths **升序**依次尝试
+            //（16 位指令在前——RVC/Thumb 类短编码优先），首个完整匹配即停。
+            let mut widths: Vec<u32> = Vec::new();
+            for info in infos {
+                let w = m.inst_width_bytes(&info.inst)?;
+                if !widths.contains(&w) {
+                    widths.push(w);
+                }
+            }
+            widths.sort_unstable();
+            let mut fns: Vec<TokenStream> = Vec::new();
+            let mut calls: Vec<TokenStream> = Vec::new();
+            for w in &widths {
+                let subset: Vec<&InstInfo> = infos
+                    .iter()
+                    .filter(|i| m.inst_width_bytes(&i.inst) == Ok(*w))
+                    .collect();
+                let (read, dispatch) = gen_decode_group(&subset, m, *w)?;
+                let fn_name = format_ident!("__decode_w{}", w);
+                let len_lit = proc_macro2::Literal::u32_unsuffixed(*w);
+                fns.push(quote! {
+                    fn #fn_name(bytes: &[u8]) -> Option<(Inst, usize)> {
+                        if bytes.len() < #len_lit as usize {
+                            return None;
+                        }
+                        let __word: Vec<u8> = #read;
+                        #dispatch
+                        None
+                    }
+                });
+                calls.push(quote! {
+                    if let Some(__r) = #fn_name(bytes) {
+                        return Some(__r);
+                    }
+                });
+            }
+            let min_w = *widths.first().unwrap_or(&1);
+            let min_lit = proc_macro2::Literal::u32_unsuffixed(min_w);
+            Ok(quote! {
+                #(#fns)*
+
+                /// 解码混合字长指令字（v18 S4）：按 `[encoding].widths` **升序**尝试，
+                /// 首个完整匹配即停。返回 (指令, 消费字节数 = 该指令字长)。
+                pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
+                    #(#calls)*
+                    None
+                }
+
+                /// 解码并报告部分匹配偏移：短于**最短**字长 ⇒ 截断（Err(len)），否则 0。
+                pub fn decode_partial(bytes: &[u8]) -> Result<(Inst, usize), usize> {
+                    match decode(bytes) {
+                        Some(r) => Ok(r),
+                        None => Err(if bytes.len() < #min_lit as usize {
+                            bytes.len()
+                        } else {
+                            0
+                        }),
+                    }
+                }
+            })
+        }
+        EncodingKind::PrefixScan => Err(format!(
+            "prefix_scan ISA 走变长解码路径（widths={:?} 不适用）",
+            m.encoding.widths
+        )),
+    }
 }
 
 /// 补集零 guard：未覆盖位必须为 0——按字节生成 `(__word[i] & mask) == 0` 合取
