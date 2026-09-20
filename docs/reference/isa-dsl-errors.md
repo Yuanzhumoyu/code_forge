@@ -34,7 +34,8 @@ D:/repo/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性
 | `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空/`code` 超 4 位/`ir` 名非法或重复映射、`cond` 槽却没有表、用了 `{cc}` 却没映射全 10 个 IR 条件、`prefix_scan` 条目非法 |
 | `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class`/`classes` 未声明、`byte_reg` 用错组 |
 | `DSL-FORM` | `[[forms]]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
-| `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突 |
+| `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突、`reloc` 名字未声明/绑定的槽不在操作数里 |
+| `DSL-RELOC` | `[[reloc]]`（v18 S3d） | 名字为空/重复、`slot` 未声明或不是 `imm` 槽、`semantics` 不是宿主已知语义（由 serde 在反序列化期拒绝） |
 | `DSL-TEMPLATE` | `[[templates]]` 展开出的实例 | 实例的 `form` 未声明、操作数槽未声明、缺少编码信息等——消息前缀是 `[[templates.X]]`（X = 模板名），模板行本身的错误同样归这里 |
 | `DSL-LOWER` | `[[lowering]]` | 引用名未声明、占位符未知、**`when` 属性未知**（恒假 ⇒ 规则永不命中）、完全重复、死规则 |
 | `DSL-PATTERN` | `[[pattern]]` | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知 |

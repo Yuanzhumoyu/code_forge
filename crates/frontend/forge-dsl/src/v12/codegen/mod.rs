@@ -671,9 +671,9 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
             let bf = get_bf(m, fname)?;
             // P0-16：立即数槽 encode 前范围检查——原实现 `value & mask`
             // 静默截断溢出（riscv imm12 传 -3000 → 掩码后错值，大帧栈错位）。
-            // 仅在**真用户立即数**（Imm 槽、无 global_reloc 负编码语义、非
+            // 仅在**真用户立即数**（Imm 槽、无 `reloc`（重定位）负编码语义、非
             // 预移位散布位域）时检查：
-            // - global_reloc 指令的负编码（-(id+1)）是链接期内部值，跳过；
+            // - 重定位指令（`reloc`，v18 S3d）的负编码（-(id+1)）是链接期内部值，跳过；
             // - **预移位**散布位域（如 riscv LUI 的 imm20：
             //   `{offset=12,width=20,shift=12}`——槽存的是已左移 12 位的
             //   值，值域为完整 32 位）跳过，否则 fconst hi20 误报；
@@ -685,7 +685,7 @@ fn gen_encode(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
                 .pieces
                 .as_ref()
                 .is_some_and(|ps| !ps.is_empty() && ps.iter().all(|p| p.offset == p.shift));
-            let is_global_encoded = info.inst.global_reloc.is_some();
+            let is_global_encoded = info.inst.reloc.is_some();
             if slot.kind == OperandKind::Imm
                 && !is_global_encoded
                 && !is_preshifted_pieces

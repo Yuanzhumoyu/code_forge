@@ -13,6 +13,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-19)
 
+- **ISA-DSL 重定位数据化（v18 S3d）：`[[reloc]]` 取代 `GlobalReloc` 枚举**。指令侧只写引用名（`reloc = "abs64"`），语义与绑定槽在表里：
+
+  ```toml
+  [[reloc]]
+  name = "abs64"            # 指令引用：reloc = "abs64"
+  semantics = "absolute"    # 宿主语义（有限、ISA 无关）：absolute / pc_relative
+  slot = "imm64"            # 绑定到哪个操作数槽（须是 imm 槽）
+  addend = 0                # 可选：重定位值的链接期加减
+  ```
+
+  两种语义的 fixup 落点由**数据**决定：`absolute` → 指令末尾该槽的字节区间（补丁宽度 = `ceil(槽宽/8)`，x86 `MOVABS_GLOBAL` 的 imm64 → `Absolute(8)`）；`pc_relative` → 指令起始（补丁宽度 = 指令字长，riscv `AUIPC_GLOBAL`/`ADDI_GLOBAL` → `Relative(4, 0)`）。**宿主语义集合就是 `RelocKind` 的两态**——计划里列的 `hi20`/`lo12`/`got`/`tls_*` 属于"新增语义才需要宿主代码"那一侧，等真有 ISA 用到再加；ISA 特有的**位段写入**（arm64 写 imm26/imm19、riscv 按 opcode 0x17/0x13 分写 hi20/lo12）仍留在各 ISA 的 reloc patcher，这是数据之外唯一的宿主代码。
+  删除 `GlobalReloc{Abs8,PcrelHi,PcrelLo}` 与 `Instruction.global_reloc`（无兼容层）；新增 `validate_relocs`（名字非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须在表里、该指令确实有那个槽的操作数）与错误码 `DSL-RELOC`。
+  证据：生成代码只在重定位臂上从 `ABS8`（定义即 `Absolute(8)`）变成 `Absolute(8)`、addend 字面量 `0` → `0i64` —— **语义等价**（x86 6 行、riscv 4 行差异，其余模块逐字节相同）；三架构 JIT 矩阵不变（x86 195/3/0、riscv 131/67/0、arm64 23/175/0；x86/riscv 矩阵含 `GlobalAddr` 用例，端到端跑过重定位）；新增 7 条 reloc 用例（解析 + 生成 `Relative(4,0)`/`Absolute(ceil(槽宽/8))`、未声明名、坏槽、重名、槽不在操作数里、语义名非法）。
+  文档：`docs/reference/isa-dsl.md` 新增 `[[reloc]]` 节（含两语义的 fixup 表）并更新 `reloc` 字段、`isa-dsl-errors.md` 增 `DSL-RELOC`、方案 §5.4/§7。
+
 - **ISA-DSL arm64 条件码符号化 + `b.cond` 全条件（v18 S3c）**：`isa/arm64_v12.toml` 新增 `[conventions.cond]`（A64 的 16 个条件名 `eq/ne/cs/cc/mi/pl/vs/vc/hi/ls/ge/lt/gt/le/al/nv` + `hs`/`lo` 同码别名；**不写 `ir`**——arm64 的 lowering 目前不用 `{cc}`，将来加 Icmp lowering 时 validate 会强制补全 10 个），CSEL 族的 `cond4` 槽从 `kind = "imm"`（写成 `#0`）改为 `kind = "cond"`：汇编/反汇编现在用**符号名**（`csel x0, x1, x2, eq`，反汇编渲染同码首选名 `hs`→`cs`）。
   新增 `B.cond`：一条 `[[templates]]` 16 行——`asm = "b.{cname} {target}"`（助记符用行键插值，这是"条件在助记符里"的通用写法）+ 条件码做成固定位域 `bcond = [3:0]`（opcode `0x54` 进 `[31:24]`、imm19 在 `[23:5]`、bit4 恒 0）。**14 个 A64 合法条件**（`[3:0]=111x` 保留）逐个对照 `docs/reference/aarch64-encoding-ref.md` §4 的条件码表验证字节：`b.eq 0`=0x54000000、`b.ne 0`=0x54000001、`b.hs 0`=0x54000002、`b.gt 0`=0x5400000C、`b.le 0`=0x5400000D、`b.eq 2`=0x54000040（偏移进 imm19），外加汇编↔反汇编往返与 `b.hs`≡`b.cs`、`b.lo`≡`b.cc` 同码断言。
   顺带**删除**原先那条错的 `BCOND` 存根（`form = "CBZF"` + `fields = { cond = 0 }`：目标被放进 `rt=[4:0]`、条件恒 0 且落在 `[15:12]`、imm19 恒 0——从来不是合法 B.cond，也无人使用；`b.eq` 之前被它抢先匹配）。

@@ -1723,7 +1723,7 @@ imm = 0x40
 ops = ["dst:gpr:out", "imm:imm64"]
 asm = "mov {dst}, {imm}"
 effect = ["Pure"]
-global_reloc = "abs8"
+reloc = "abs64"
 
 [[instructions]]
 name = "CMOVCC_R_RM"
@@ -1945,6 +1945,14 @@ insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@move_args", "@frame_
 
 [emit.epilogue]
 insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, {callee_saved_bytes}", "@pop_callee", "POP RBP", "RET"]
+
+# ── 重定位表（v18 S3d）：指令写 `reloc = "<名>"`，语义与绑定槽在此 ──
+# x86 的全局地址用 10 字节移动绝对立即数：fixup = 指令末尾 imm64 的 8 字节，
+# 宿主语义 = Absolute(8)（补丁宽度取自槽宽）。
+[[reloc]]
+name = "abs64"
+semantics = "absolute"
+slot = "imm64"
 
 # ── 引用名（多态分派）：见各指令的 `ref`（S10e 的 [[aliases]] 已并入指令属性）──
 [[lowering]]

@@ -185,6 +185,7 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "forms" => "DSL-FORM",
         "instructions" => "DSL-INST",
         "templates" => "DSL-TEMPLATE",
+        "reloc" => "DSL-RELOC",
         "lowering" => "DSL-LOWER",
         "pattern" => "DSL-PATTERN",
         "abi" => "DSL-ABI",

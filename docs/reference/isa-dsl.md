@@ -25,6 +25,7 @@
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
   - [`[[instructions]]` — 指令](#instructions--指令)
   - [`[[templates]]` — 参数化指令模板（唯一复用机制）](#templates--参数化指令模板唯一复用机制)
+  - [`[[reloc]]` — 重定位表（v18 S3d）](#reloc--重定位表v18-s3d)
   - [结构化谓词](#结构化谓词)
   - [`[[lowering]]` — 指令选择](#lowering--指令选择)
   - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
@@ -458,8 +459,8 @@ roles = ["ret"]
 asm = "ret"
 
 [[instructions]]
-name = "MOVABS_GLOBAL"         # 全局地址重定位语义
-global_reloc = "abs8"          # abs8 / pcrel_hi / pcrel_lo
+name = "MOVABS_GLOBAL"         # 全局地址重定位：只写引用名，语义在 [[reloc]] 表里
+reloc = "abs64"
 asm = "movabs {0}, {1}"
 ```
 
@@ -510,13 +511,40 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 `VMOVUPS_ZMM_MR` 上）——生成器只认角色，**不按指令名探测、也不做"非对齐优先/对齐
 兜底"的隐式回退**（那样等于把某个 ISA 的指令名约定写进通用生成器）。
 
-**`global_reloc`**（枚举）：`abs8`（x86 MOVABS_GLOBAL：imm 槽 <0 编码 GlobalId
-→ ABS8 `"G{id}"`）、`pcrel_hi`/`pcrel_lo`（riscv AUIPC/ADDI 的 PC-relative hi20/
-lo12）。生成器按此字段生成 encoder reloc arm，替代按指令名特判。
+**`reloc`**（引用名，v18 S3d）：指令声明它用哪个 `[[reloc]]` 表项；语义与绑定槽都在表里
+（见下节）。生成器据此发 encoder 重定位臂，不按指令名特判。
 
 **asm 占位符语法**：有 `ops` 时 `{名字}` 引用；助记符 = asm 首词（唯一事实来源，
 无独立 `mnemonic` 字段）。`implicit_regs` 是显式隐式寄存器声明（x86 shift 用 CL、
 idiv 用 RAX:RDX、cqo 写 RDX），生成的 `MachineInst::clobbers()` 供 regalloc 避开。
+
+## `[[reloc]]` — 重定位表（v18 S3d）
+
+```toml
+[[reloc]]
+name = "abs64"                 # 指令引用：reloc = "abs64"
+semantics = "absolute"         # 宿主语义（有限集合）：absolute / pc_relative
+slot = "imm64"                 # 绑定到哪个操作数槽（须是 imm 槽）
+addend = 0                     # 可选：重定位值的链接期加减（缺省 0）
+
+[[reloc]]                      # riscv 的 %pcrel_hi/%pcrel_lo 对（patcher 按 opcode 分写位段）
+name = "pcrel_hi"
+semantics = "pc_relative"
+slot = "imm20"
+```
+
+| 语义 | fixup 落点 | 宿主 `RelocKind` |
+| --- | --- | --- |
+| `absolute` | 指令**末尾该槽的字节区间**（补丁宽度 = `ceil(槽宽/8)`） | `Absolute(槽字节数)` |
+| `pc_relative` | **指令起始**（补丁宽度 = 指令字长） | `Relative(字长, 0)` |
+
+- **语义是宿主契约**（有限、ISA 无关）：新增语义才需要宿主代码；具体把重定位值写进
+  哪些**位段**由该 ISA 的 reloc patcher 负责（arm64 写 imm26/imm19、riscv 按
+  opcode 0x17/0x13 分写 hi20/lo12）——这是 ISA 数据之外唯一的宿主代码。
+- 指令侧只有 `reloc = "<名>"`：编码器对该指令发固定重定位（汇编期 imm 槽 < 0 时
+  = 全局符号引用 `"G{id}"`，≥ 0 时是普通立即数），**不按指令名特判**。
+- 校验：表项名非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须存在、
+  该指令确实有那个槽的操作数、语义名必须是宿主已知的两个之一。
 
 ## `[[templates]]` — 参数化指令模板（唯一复用机制）
 

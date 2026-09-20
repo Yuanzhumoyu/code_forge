@@ -23,6 +23,7 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     collect(d, idx, validate_widths(m));
     collect(d, idx, validate_conventions(m));
     collect(d, idx, validate_cond(m));
+    collect(d, idx, validate_relocs(m));
     collect(d, idx, validate_operand_slots(m));
     collect(d, idx, validate_forms(m));
     validate_instructions_all(m, idx, d);
@@ -513,6 +514,64 @@ fn validate_conventions(m: &V12Model) -> Result<(), String> {
     Ok(())
 }
 
+/// `[[reloc]]` 校验（v18 S3d 重定位数据化）。
+///
+/// - 表项名非空、唯一；
+/// - `slot` 必须已声明且是 `kind = "imm"` 的槽（absolute 的补丁宽度 = 槽宽；
+///   pc_relative 的 fixup 落在指令起始，槽只是"这条指令把重定位值承载在哪"）；
+/// - 指令的 `reloc = "<名>"` 必须指向已声明表项，且该指令确实有那个槽的操作数。
+fn validate_relocs(m: &V12Model) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for r in &m.reloc {
+        if r.name.trim().is_empty() {
+            return Err("[[reloc]]: name must not be empty".into());
+        }
+        if !seen.insert(r.name.clone()) {
+            return Err(format!("[[reloc.{}]]: 重定位名重复", r.name));
+        }
+        let Some(slot) = m.operand_slots.iter().find(|s| s.name == r.slot) else {
+            return Err(format!(
+                "[[reloc.{}]]: 绑定的操作数槽 '{}' 未在 [[operand_slots]] 声明",
+                r.name, r.slot
+            ));
+        };
+        if slot.kind != OperandKind::Imm {
+            return Err(format!(
+                "[[reloc.{}]]: 绑定的槽 '{}' 必须是 imm 槽（重定位值要写进一个数值槽），实际是 {:?}",
+                r.name, r.slot, slot.kind
+            ));
+        }
+    }
+    for inst in &m.instructions {
+        let Some(name) = inst.reloc.as_deref() else {
+            continue;
+        };
+        let Some(def) = m.reloc.iter().find(|r| r.name == name) else {
+            return Err(format!(
+                "[[instructions.{}]]: reloc '{name}' 未在 [[reloc]] 声明（可用：{}）",
+                inst.name,
+                if m.reloc.is_empty() {
+                    "<空>".to_string()
+                } else {
+                    m.reloc
+                        .iter()
+                        .map(|r| r.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                }
+            ));
+        };
+        let ops = super::codegen::parse_asm_decl(&inst.asm, inst.ops.as_deref(), &inst.name)?.0;
+        if !ops.iter().any(|o| o.slot == def.slot) {
+            return Err(format!(
+                "[[instructions.{}]]: reloc '{name}' 绑定的槽 '{}' 不在该指令的操作数里（asm '{}'）",
+                inst.name, def.slot, inst.asm
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `[conventions.cond]` 校验（v18 S3b 条件码数据化）。
 ///
 /// 这张表同时服务三处（汇编解析名、反汇编渲染名、lowering 的 `{cc}`），因此校验也
@@ -806,7 +865,7 @@ fn check_instruction(m: &V12Model, inst: &Instruction) -> Result<(), String> {
             inst.name
         ));
     }
-    // global_reloc 值域由 `GlobalReloc` 枚举在反序列化期强制
+    // `reloc` 的取值域由 `validate_relocs` 校验（名字须在 [[reloc]] 表里）
     let asm = inst.asm.clone();
     if asm.trim().is_empty() {
         return Err(format!(

@@ -1329,12 +1329,12 @@ asm = "bad {dst}, {srcc}"
     }
 }
 
-// ─────────────────────── global_reloc（P2 模型化字段）───────────────────────
+// ─────────────────────── [[reloc]]（v18 S3d 重定位数据化）───────────────────────
 
-/// `global_reloc = "pcrel_hi"` 合法解析。
-#[test]
-fn global_reloc_pcrel_parses() {
-    let doc = r#"
+/// 重定位夹具：`[[reloc]]` 表 + 一条引用它的指令（pc_relative / 20 位立即数槽）。
+fn reloc_doc(reloc_tbl: &str, inst_reloc: &str) -> String {
+    format!(
+        r#"
 [meta]
 name = "t"
 default_inst_width = 32
@@ -1349,77 +1349,146 @@ name = "imm20"
 kind = "imm"
 width = 20
 [conventions.bitfields]
-rd = { offset = 7, width = 5 }
-opcode = { offset = 0, width = 7 }
-imm20 = { pieces = [ { offset = 12, width = 20, shift = 12 } ] }
+rd = {{ offset = 7, width = 5 }}
+opcode = {{ offset = 0, width = 7 }}
+imm20 = {{ pieces = [ {{ offset = 12, width = 20, shift = 12 }} ] }}
 [[forms]]
 name = "U"
 opcode_field = "opcode"
 operand_fields = ["rd", "imm20"]
+{reloc_tbl}
 [[instructions]]
 name = "AUIPC_GLOBAL"
 form = "U"
 opcode = 0x17
 ops = ["dst:g:out", "imm:imm20"]
-asm = "auipc.g {dst}, {imm}"
-global_reloc = "pcrel_hi"
-"#;
-    let m = parse_and_validate(doc).expect("valid doc with global_reloc must parse");
+asm = "auipc.g {{dst}}, {{imm}}"
+{inst_reloc}
+"#
+    )
+}
+
+/// 合法表项：指令只写 `reloc = "<名>"`，语义/绑定槽在表里。
+#[test]
+fn reloc_ref_resolves_through_the_table() {
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"pcrel_hi\"\nsemantics = \"pc_relative\"\nslot = \"imm20\"\n",
+        "reloc = \"pcrel_hi\"",
+    );
+    let m = parse_and_validate(&doc).expect("合法 reloc 表必须通过");
     let inst = m
         .instructions
         .iter()
         .find(|i| i.name == "AUIPC_GLOBAL")
         .expect("instruction present");
-    assert_eq!(
-        inst.global_reloc,
-        Some(crate::v12::model::GlobalReloc::PcrelHi)
+    assert_eq!(inst.reloc.as_deref(), Some("pcrel_hi"));
+    assert_eq!(m.reloc.len(), 1);
+    assert_eq!(m.reloc[0].name, "pcrel_hi");
+    // 生成期：encoder 发 `Relative(字长, 0)` 的 "G{id}" 重定位
+    let s: String = super::codegen::generate(&m)
+        .unwrap()
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(
+        s.contains("RelocKind::Relative(4,0)"),
+        "pc_relative 应发相对重定位：{s}"
     );
+    assert!(s.contains("\"G{}\""), "符号名应为 G{{id}}：{s}");
 }
 
-/// `global_reloc = "bogus"` → 校验拒绝。
+/// 指令引用了未声明的重定位名 ⇒ 编译期报错并列出可用名。
 #[test]
-fn global_reloc_invalid_rejected() {
-    let doc = r#"
-[meta]
-name = "t"
-default_inst_width = 32
-[reg.gpr4]
-count = 8
-[[operand_slots]]
-name = "g"
-kind = "reg"
-class = "gpr4"
-[[operand_slots]]
-name = "imm20"
-kind = "imm"
-width = 20
-[conventions.bitfields]
-rd = { offset = 7, width = 5 }
-opcode = { offset = 0, width = 7 }
-imm20 = { pieces = [ { offset = 12, width = 20, shift = 12 } ] }
-[[forms]]
-name = "U"
-opcode_field = "opcode"
-operand_fields = ["rd", "imm20"]
-[[instructions]]
-name = "BAD"
-form = "U"
-opcode = 0x17
-ops = ["dst:g:out", "imm:imm20"]
-asm = "bad {dst}, {imm}"
-global_reloc = "bogus"
-"#;
-    let err = parse_and_validate(doc).unwrap_err();
-    // S1：global_reloc 改枚举后由 serde 在反序列化期拒绝——错误更早、且自带
-    // 候选列表与 TOML 行号（原先是手写 validate 分支）。
-    match err {
-        V12Error::Parse { msg, line, .. } => {
-            assert!(msg.contains("bogus"), "msg: {msg}");
-            assert!(msg.contains("abs8"), "需列出候选: {msg}");
-            assert_eq!(line, 29, "行号指向 global_reloc 那一行");
-        }
-        other => panic!("expected Parse error, got {other:?}"),
-    }
+fn reloc_unknown_name_rejected() {
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"pcrel_hi\"\nsemantics = \"pc_relative\"\nslot = \"imm20\"\n",
+        "reloc = \"bogus\"",
+    );
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("未在 [[reloc]] 声明"), "msg: {msg}");
+    assert!(msg.contains("pcrel_hi"), "应列出可用名：{msg}");
+}
+
+/// 表项绑定的槽未声明 / 不是 imm 槽 ⇒ 报错。
+#[test]
+fn reloc_bad_slot_rejected() {
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"x\"\nsemantics = \"pc_relative\"\nslot = \"nope\"\n",
+        "",
+    );
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("未在 [[operand_slots]] 声明"), "msg: {msg}");
+
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"x\"\nsemantics = \"pc_relative\"\nslot = \"g\"\n",
+        "",
+    );
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("必须是 imm 槽"), "msg: {msg}");
+}
+
+/// 表项名重复 ⇒ 报错。
+#[test]
+fn reloc_duplicate_name_rejected() {
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"x\"\nsemantics = \"pc_relative\"\nslot = \"imm20\"\n\
+         [[reloc]]\nname = \"x\"\nsemantics = \"absolute\"\nslot = \"imm20\"\n",
+        "",
+    );
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("重定位名重复"), "msg: {msg}");
+}
+
+/// 指令有 reloc 但操作数里没有那个槽 ⇒ 报错（否则 encoder 会 panic 到 unreachable）。
+#[test]
+fn reloc_slot_not_in_operands_rejected() {
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"x\"\nsemantics = \"absolute\"\nslot = \"imm20\"\n",
+        "reloc = \"x\"\nfields = { rd = 0 }",
+    )
+    .replace(
+        "ops = [\"dst:g:out\", \"imm:imm20\"]",
+        "ops = [\"dst:g:out\"]",
+    )
+    .replace("asm = \"auipc.g {dst}, {imm}\"", "asm = \"auipc.g {dst}\"");
+    let msg = validation_msg(&doc);
+    assert!(msg.contains("不在该指令的操作数里"), "msg: {msg}");
+}
+
+/// `absolute` 语义的补丁宽度取自**槽宽**（不是写死的 8 字节）：64 位槽 → Absolute(8)、
+/// 32 位槽 → Absolute(4)。
+#[test]
+fn reloc_absolute_width_comes_from_slot() {
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"abs\"\nsemantics = \"absolute\"\nslot = \"imm20\"\n",
+        "reloc = \"abs\"",
+    );
+    let m = parse_and_validate(&doc).expect("合法");
+    let s: String = super::codegen::generate(&m)
+        .unwrap()
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    // imm20 → 20 位 → ceil(20/8) = 3 字节
+    assert!(s.contains("Absolute(3)"), "补丁宽度应 = ceil(槽宽/8)：{s}");
+}
+
+/// 语义名非法 ⇒ serde 拒绝（宿主语义是有限集合）。
+#[test]
+fn reloc_semantics_must_be_host_known() {
+    let doc = reloc_doc(
+        "[[reloc]]\nname = \"x\"\nsemantics = \"got\"\nslot = \"imm20\"\n",
+        "",
+    );
+    let err = parse_and_validate(&doc).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(msg.contains("got"), "msg: {msg}");
+    assert!(
+        msg.contains("pc_relative") || msg.contains("absolute"),
+        "应列出可用语义：{msg}"
+    );
 }
 
 /// `effect = ["Move"]` 语义标签解析（is_move 声明，替代指令名前缀启发式）。

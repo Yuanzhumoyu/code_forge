@@ -238,18 +238,27 @@ eq  = 4                         # 简写 = { code = 4 }，ir 取键名（键名�
   **用了 `{cc}` 就必须映射全 10 个 IR 条件**（否则运行期静默退化成 0）；
 - arm64 由此获得全 16 条件（S3c 落地 `b.cond`）。
 
-### 5.4 `[[reloc]]` — 重定位数据化（取代 `global_reloc` 枚举）
+### 5.4 `[[reloc]]` — 重定位数据化（取代 `global_reloc` 枚举）— **已落地（S3d）**
 
 ```toml
 [[reloc]]
 name = "abs64"                  # 指令引用：reloc = "abs64"
-semantics = "absolute"          # 宿主契约（有限、ISA 无关）：absolute | pc_relative | hi20 | lo12 | got | tls_*
-slot = "imm"                    # 绑定到哪个操作数槽
-addend = 0                      # 可选：编码期加减
+semantics = "absolute"          # 宿主语义（有限、ISA 无关）：absolute | pc_relative
+slot = "imm64"                  # 绑定到哪个操作数槽（须是 imm 槽）
+addend = 0                      # 可选：重定位值的链接期加减
 ```
 
-宿主保留**有限语义集**（不是每个 ISA 一个 patcher）；新增语义才需要宿主代码。
-删除 `GlobalReloc{Abs8,PcrelHi,PcrelLo}` 与 `Instruction.global_reloc`，改 `Instruction.reloc: Option<String>`。
+- 删除 `GlobalReloc{Abs8,PcrelHi,PcrelLo}` 与 `Instruction.global_reloc`，改
+  `Instruction.reloc: Option<String>`；指令只写引用名；
+- **宿主语义集合就是 `RelocKind` 的两态**：`absolute` → `Absolute(ceil(槽宽/8))`
+  （fixup = 指令末尾该槽的字节区间）、`pc_relative` → `Relative(指令字长, 0)`
+  （fixup = 指令起始）。计划里列的 `hi20`/`lo12`/`got`/`tls_*` 属于"新增语义才需要
+  宿主代码"的那一侧——等真有 ISA 用到再加，届时也是往这个枚举里加一个变体，
+  而不是把 ISA 特有形状塞进生成器；
+- ISA 特有的**位段写入**仍在该 ISA 的 reloc patcher 里（arm64 写 imm26/imm19、
+  riscv 按 opcode 0x17/0x13 分写 hi20/lo12）——这是"数据之外唯一的宿主代码"。
+- 校验：名字非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须在表里、
+  该指令确实有那个槽的操作数；错误码 `DSL-RELOC`。
 
 ### 5.5 `[[pseudo]]` — 汇编器伪指令（新增）
 
@@ -363,7 +372,16 @@ value = "big"
   反汇编往返 + 别名同码；顺带**删除**原先那条错的 `BCOND` 存根（目标塞进 `rt=[4:0]`、
   条件恒 0 且落在 `[15:12]`、imm19 恒 0——不是合法 B.cond，也无人使用）。固定宽解码器
   补上 `cond` 槽的 `u8` 绑定（定宽 ISA 的第一个 cond 槽）。
-- 余下：**S3d** `[[reloc]]` 取代 `GlobalReloc`、**S3e** `[[pseudo]]`、**S3f** `[[derive]]`。
+- **S3d 已落地（2026-09-19）**：重定位数据化——`[[reloc]]`（`name`/`semantics`/`slot`/`addend`）
+  取代 `GlobalReloc` 枚举与 `Instruction.global_reloc`，指令只写 `reloc = "<名>"`；
+  宿主语义集合 = `RelocKind` 的两态（`absolute` → `Absolute(ceil(槽宽/8))`、
+  `pc_relative` → `Relative(指令字长, 0)`），ISA 特有的位段写入仍在各 ISA 的
+  reloc patcher；x86 `MOVABS_GLOBAL` → `reloc = "abs64"`、riscv `AUIPC_GLOBAL`/
+  `ADDI_GLOBAL` → `pcrel_hi`/`pcrel_lo`。生成代码只在重定位臂上从 `ABS8`（= `Absolute(8)`）
+  变成 `Absolute(8)`、addend 字面量 `0` → `0i64`——**语义等价**；三架构 JIT 矩阵
+  （含 x86/riscv 的 GlobalAddr 用例）不变。新增 7 条 reloc 用例（解析、宽度来自槽宽、
+  未声明名/坏槽/重名/槽不在操作数里/语义名非法）。
+- 余下：**S3e** `[[pseudo]]`、**S3f** `[[derive]]`。
 
 **最小可用子集**：S0 + S1 + S2 + S3；**可在 S3 后叫停**并保留全部价值。
 

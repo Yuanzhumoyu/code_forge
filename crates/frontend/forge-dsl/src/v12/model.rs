@@ -55,6 +55,10 @@ pub struct V12Model {
     #[serde(default)]
     pub templates: Vec<Template>,
 
+    /// 重定位表（`[[reloc]]`，v18 S3d）：指令用 `reloc = "<name>"` 引用。
+    #[serde(default)]
+    pub reloc: Vec<RelocDef>,
+
     /// 指令选择规则（`[[lowering]]`）。
     #[serde(default)]
     pub lowering: Vec<Lowering>,
@@ -1345,10 +1349,11 @@ pub struct Instruction {
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
     #[serde(default)]
     pub implicit_regs: Option<Vec<String>>,
-    /// 全局地址重定位语义（GlobalAddr lowering 专用指令）——生成器按此字段
-    /// 生成 encoder reloc arm，替代按指令名特判。
-    #[serde(default)]
-    pub global_reloc: Option<GlobalReloc>,
+    /// **重定位引用名**（`reloc`，v18 S3d）：GlobalAddr lowering 专用指令声明它用哪个
+    /// `[[reloc]]` 表项——生成器据此发 encoder reloc arm，不按指令名特判。
+    /// 重定位的"语义"（absolute/pc_relative）与绑定的槽都在表里，指令只写名字。
+    #[serde(default, rename = "reloc")]
+    pub reloc: Option<String>,
     /// 展开来源（v18 S2）：由 `[[templates.NAME]]` 展开而来时记下模板名。
     ///
     /// 不参与序列化（`serde(skip)`）；诊断据此把错误锚回**模板声明行**而不是
@@ -1490,16 +1495,47 @@ pub enum Effect {
     Move,
 }
 
-/// 全局地址重定位语义。
+/// `[[reloc]]` — 重定位表项（v18 S3d，取代 `GlobalReloc` 枚举）。
+///
+/// 指令只写 `reloc = "<name>"` 引用本表；**语义是宿主契约**（有限、ISA 无关：
+/// [`RelocSemantics`]），"这条指令把重定位值编进哪个槽"是本表的数据。
+///
+/// ```toml
+/// [[reloc]]
+/// name = "abs64"                 # 指令引用：reloc = "abs64"
+/// semantics = "absolute"         # 宿主语义（absolute / pc_relative）
+/// slot = "imm64"                 # 绑定到哪个操作数槽（fixup 落点由它派生）
+/// addend = 0                     # 可选：重定位值的链接期加减
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelocDef {
+    /// 引用名（指令的 `reloc` 字段用它；全 ISA 唯一）。
+    pub name: String,
+    /// 宿主语义——有限集合，新增语义才需要宿主代码。
+    pub semantics: RelocSemantics,
+    /// 绑定的操作数槽（须是 `kind = "imm"` 的槽）。
+    pub slot: String,
+    /// 重定位值的链接期加减（缺省 0）。
+    #[serde(default)]
+    pub addend: Option<i64>,
+}
+
+/// 重定位的**宿主语义**（与宿主 `RelocKind` 一一对应）。
+///
+/// - `absolute`：把符号的绝对地址写进本指令绑定的槽（fixup = 指令末尾该槽的
+///   字节区间 ⇒ 槽宽即补丁宽度，如 x86 `MOVABS_GLOBAL` 的 imm64）；
+/// - `pc_relative`：写 `目标 − 指令起始`（fixup = 指令起始；补丁宽度 = 指令字长）。
+///   具体落到哪些位段由**该 ISA 的 reloc patcher** 决定（riscv 按 opcode 分写
+///   hi20/lo12，arm64 写 imm26/imm19）——那是 ISA 数据之外唯一的宿主代码，
+///   "新增语义才需要宿主代码"这条边界由本枚举守住。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GlobalReloc {
-    /// imm 槽 < 0 时编码 GlobalId → ABS8 `"G{id}"`（x86 MOVABS_GLOBAL）。
-    Abs8,
-    /// PC-relative hi20（riscv AUIPC_GLOBAL；patcher 按 opcode 分写位段）。
-    PcrelHi,
-    /// PC-relative lo12（riscv ADDI_GLOBAL）。
-    PcrelLo,
+pub enum RelocSemantics {
+    /// 绝对地址（宿主 `RelocKind::Absolute(槽字节数)`）。
+    Absolute,
+    /// PC 相对（宿主 `RelocKind::Relative(指令字长, 0)`）。
+    PcRelative,
 }
 
 /// 操作数使用：槽 + 角色 + （定宽）位域绑定。

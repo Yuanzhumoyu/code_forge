@@ -569,7 +569,7 @@ form = "U"
 opcode = 0x17
 ops = ["dst:gpr:out", "imm:imm20"]
 asm = "auipc {dst}, {imm}"
-global_reloc = "pcrel_hi"
+reloc = "pcrel_hi"
 
 [[instructions]]
 name = "ADDI_GLOBAL"
@@ -578,7 +578,7 @@ opcode = 0x13
 fields = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "addi {dst}, {src}, {imm}"
-global_reloc = "pcrel_lo"
+reloc = "pcrel_lo"
 
 
 [[instructions]]
@@ -1338,9 +1338,19 @@ insts = [
     "SRLI {out}, {out}, 32",
 ]
 
-# ── GlobalAddr：auipc+addi PC-relative（encoder 特判 AUIPC_GLOBAL/
-#    ADDI_GLOBAL 的 imm<0 → Relative(4,0) "G{id}" reloc；patcher 按
-#    opcode 0x17=auipc 写 hi20、0x13=addi 写 lo12）──
+# ── GlobalAddr：auipc+addi PC-relative（v18 S3d：重定位来自 [[reloc]] 表；
+#    encoder 对 imm<0 发 Relative(4,0) 的 "G{id}"；patcher 按 opcode
+#    0x17=auipc 写 hi20、0x13=addi 写 lo12）──
+
+[[reloc]]
+name = "pcrel_hi"
+semantics = "pc_relative"
+slot = "imm20"
+
+[[reloc]]
+name = "pcrel_lo"
+semantics = "pc_relative"
+slot = "imm12"
 
 [[lowering]]
 op = "GlobalAddr"

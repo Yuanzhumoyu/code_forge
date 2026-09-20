@@ -532,46 +532,73 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
         }
     }
     let label_arms = label_arms;
-    // GlobalAddr 专用指令（TOML 声明 `global_reloc`）：imm 槽 < 0 时编码
-    // GlobalId（-(id+1)）→ 重定位 "G{id}"（JIT/QEMU 打包按全局变量注册）；
-    // >= 0 时是普通立即数。三种语义：
-    // - "abs8"（x86 MOVABS_GLOBAL）：符号在指令末尾 8 字节（imm64），
-    //   reloc = ABS8；
-    // - "pcrel_hi"/"pcrel_lo"（riscv AUIPC_GLOBAL/ADDI_GLOBAL）：定宽字长
-    //   （`[meta].default_inst_width`，riscv = 4 字节），
-    //   fixup = 指令起始，reloc = Relative(字长,0)；patcher 按 opcode 0x17/0x13
-    //   分写 hi20/lo12 位段。
+    // GlobalAddr 专用指令（TOML 声明 `reloc = "<名>"`，v18 S3d 起查 `[[reloc]]` 表）：
+    // imm 槽 < 0 时编码 GlobalId（-(id+1)）→ 重定位 "G{id}"（JIT/QEMU 打包按全局
+    // 变量注册）；>= 0 时是普通立即数。语义来自表项：
+    // - `absolute`（x86 MOVABS_GLOBAL，槽 imm64）：fixup = 指令末尾该槽的字节区间
+    //   （槽宽即补丁宽度），reloc = Absolute(槽字节数)；
+    // - `pc_relative`（riscv AUIPC_GLOBAL/ADDI_GLOBAL）：fixup = 指令起始，
+    //   补丁宽度 = 指令字长（`[meta].default_inst_width`），
+    //   reloc = Relative(字长, 0)；patcher 按 opcode 0x17/0x13 分写 hi20/lo12 位段。
     let mut global_arms: Vec<TokenStream> = Vec::new();
     for info in infos {
-        let Some(kind) = info.inst.global_reloc else {
+        let Some(reloc_name) = info.inst.reloc.as_deref() else {
             continue;
         };
+        let def = model
+            .reloc
+            .iter()
+            .find(|r| r.name == reloc_name)
+            .ok_or_else(|| {
+                format!(
+                    "[[instructions.{}]]: reloc '{reloc_name}' 未在 [[reloc]] 声明",
+                    info.inst.name
+                )
+            })?;
         let vn = &info.vn;
-        // 指令的 imm 槽字段（MOVABS_GLOBAL 是第 2 操作数；riscv 对是唯一 imm）
-        let imm_fid = info
+        // 绑定的槽 → Inst 字段名 + 槽字节数（absolute 的补丁宽度）
+        let slot_fid = info
             .operands
             .iter()
-            .find(|(_, _, s, _)| s.kind == OperandKind::Imm)
+            .find(|(_, _, s, _)| s.name == def.slot)
             .map(|(_, fid, _, _)| fid.clone())
-            .unwrap_or_else(|| format_ident!("imm"));
-        let body = match kind {
-            GlobalReloc::Abs8 => quote! {
+            .ok_or_else(|| {
+                format!(
+                    "[[instructions.{}]]: reloc '{reloc_name}' 绑定的槽 '{}' 不在该指令的操作数里",
+                    info.inst.name, def.slot
+                )
+            })?;
+        let slot_bits = model
+            .operand_slots
+            .iter()
+            .find(|s| s.name == def.slot)
+            .and_then(|s| s.width)
+            .unwrap_or(64);
+        let slot_bytes_lit = proc_macro2::Literal::u32_unsuffixed(slot_bits.div_ceil(8));
+        let addend = def.addend.unwrap_or(0);
+        let body = match def.semantics {
+            RelocSemantics::Absolute => quote! {
                 let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
                 let imm = match inst {
-                    Inst::#vn { #imm_fid, .. } => *#imm_fid,
+                    Inst::#vn { #slot_fid, .. } => *#slot_fid,
                     _ => unreachable!(),
                 };
-                let fixup = sink.offset() + bytes.len() - 8;
+                let fixup = sink.offset() + bytes.len() - #slot_bytes_lit as usize;
                 sink.put_bytes(&bytes);
                 if imm < 0 {
-                    sink.add_reloc(fixup, crate::RelocKind::ABS8, &format!("G{}", -imm - 1), 0);
+                    sink.add_reloc(
+                        fixup,
+                        crate::RelocKind::Absolute(#slot_bytes_lit),
+                        &format!("G{}", -imm - 1),
+                        #addend,
+                    );
                 }
                 Ok(())
             },
-            GlobalReloc::PcrelHi | GlobalReloc::PcrelLo => quote! {
+            RelocSemantics::PcRelative => quote! {
                 let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
                 let imm = match inst {
-                    Inst::#vn { #imm_fid, .. } => *#imm_fid,
+                    Inst::#vn { #slot_fid, .. } => *#slot_fid,
                     _ => unreachable!(),
                 };
                 let __base = sink.offset();
@@ -581,7 +608,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &V12Model) -> Result<TokenS
                         __base,
                         crate::RelocKind::Relative(#fixed_bytes_lit, 0),
                         &format!("G{}", -imm - 1),
-                        0,
+                        #addend,
                     );
                 }
                 Ok(())
