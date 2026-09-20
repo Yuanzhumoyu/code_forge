@@ -25,6 +25,18 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
+/// 读仓库文本文件并把行尾归一成 LF。
+///
+/// **为什么必须归一**：Windows 上 git 按 `core.autocrlf` 把签入文本检出成 CRLF，而
+/// 我们的发射器产出 LF——直接逐字比较会在 Windows CI 上假红（2026-09-20 CI #146
+/// 实测：`checked_in_schema_file_is_up_to_date` 与 `docs_key_table_matches_schema`
+/// 只在 Test (Windows) 失败，Linux/macOS 通过）。
+fn read_lf(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.replace("\r\n", "\n"))
+}
+
 /// 模型的内部字段（`#[serde(skip)]`，**故意**不入 schema）。
 /// 每条都要有理由：新增内部字段时必须来这里登记（否则守卫报"模型有、schema 无"）。
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
@@ -195,7 +207,7 @@ fn internal_fields_are_real_and_skipped() {
 /// 文档的键速查表区段（含标记之间的内容）。
 fn docs_table_region() -> String {
     let path = repo_root().join("docs/reference/isa-dsl.md");
-    let docs = std::fs::read_to_string(&path).expect("读 docs/reference/isa-dsl.md");
+    let docs = read_lf(&path).expect("读 docs/reference/isa-dsl.md");
     let Some(start) = docs.find(TABLE_BEGIN) else {
         panic!("docs/reference/isa-dsl.md 缺少键速查表起始标记 `{TABLE_BEGIN}`");
     };
@@ -249,9 +261,9 @@ fn print_schema_key_table() {
 #[test]
 fn checked_in_schema_file_is_up_to_date() {
     let path = repo_root().join("isa-dsl.schema.json");
-    let on_disk = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+    let on_disk = read_lf(&path).unwrap_or_else(|| {
         panic!(
-            "读不到 {}：{e}（跑 `cargo run -p forge-isa -- schema --out isa-dsl.schema.json` 生成）",
+            "读不到 {}（跑 `cargo run -p forge-isa -- schema --out isa-dsl.schema.json` 生成）",
             path.display()
         )
     });
