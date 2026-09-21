@@ -360,6 +360,13 @@ let name = node.get_text("name")?;
   跟着 op 臂走 = 每个 op 重复一份（x86 曾 100 份 = 243 KB 生成物，`tm` 770→512 KB）。
   守卫 = `crates/frontend/forge-isa-dsl/tests/lowering_attrs_once.rs`。剩余的大头是
   每条规则各自的发射序列（x86 C 段 334 KB），表化需通用解释器，未做。
+- **生成物短名折叠（v18 S8c）**：生成器最后一道 token 后处理
+  （`forge-isa-dsl/src/lib.rs::fold_short_forms`，跑在 `rewrite_path_roots` **之前**）
+  把三种长形折成短名：`Reg::from_index(…)` / `<Reg as forge_ir::PhysReg>::from_index(…)`
+  → `__ph(…)`、`…::to_index(…)` → `__ti(…)`、`forge_ir::RegClass` → `__RC`。
+  短名定义（`type __RC = …` + `fn __ph/__ti`）发射在模块开头、折叠**之后**，因此自己走
+  正常路径改写——**在生成器里新写这三处长形会被 `tests/short_form_fold.rs` 抓住**
+  （生成主体里必须一处不剩）。实测三步累计：x86 −29.6% / riscv −35.8% / arm64 −22.1%。
 - **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局/指令字宽一律由
   TOML 派生（`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/
   `value_gpr_width`/`value_fpr_width`/`vector_tiers`；`[encoding]`：**宽度三态**

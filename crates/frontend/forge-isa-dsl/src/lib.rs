@@ -288,10 +288,17 @@ fn expand_loaded(
     let model = v12::parse_and_validate(&spec.text).map_err(|e| render_error_for(spec, &e))?;
     let inner = v12::codegen::generate_with_parts(&model, spec_tests, parts)
         .map_err(|e| anchor_msg_for(spec, &e))?;
-    // 宿主 crate 路径：改写生成物里的路径根（见 `rewrite_path_roots`）。
+    // 短名折叠（S8c，纯等价）→ 宿主 crate 路径改写（见各自文档）。
+    let inner = fold_short_forms(inner);
     let inner = match krate {
         Some(k) => rewrite_path_roots(inner, k),
         None => inner,
+    };
+    // 短名定义：折叠**之后**发射（自己写全路径），同样按宿主 crate 改写。
+    let helpers = short_form_helpers();
+    let helpers = match krate {
+        Some(k) => rewrite_path_roots(helpers, k),
+        None => helpers,
     };
     // `include_bytes!` 是 stable 上唯一能让 rustc 登记编译依赖的方式：
     // **每个来源文件**都要登记（多文件谱里改 include 也必须触发重编译）。
@@ -308,9 +315,136 @@ fn expand_loaded(
     Ok(quote::quote! {
         pub mod #mod_name {
             #(const _: &[u8] = include_bytes!(#deps);)*
+            #helpers
             #inner
         }
     })
+}
+
+/// 生成物内部**短名折叠**（v18 S8c）：纯等价改写，唯一目的是缩短生成代码（token 数）。
+///
+/// - `forge_ir :: RegClass` → `__RC`（模块内 `type __RC = forge_ir::RegClass;`）；
+/// - `Reg :: from_index (…)` 与 `< Reg as forge_ir :: PhysReg > :: from_index (…)`
+///   → `__ph (…)`（模块内 `#[inline] fn __ph(idx: u32, class: __RC) -> Reg`）；
+/// - `< Reg as forge_ir :: PhysReg > :: to_index (…)` → `__ti (…)`（薄封装）。
+///
+/// 这几处是生成物里出现最多的长文本（x86 里 `Reg::from_index` 1,700 处、
+/// `forge_ir::RegClass` 1,400 处），折叠后每处省 20–28 B 且**语义完全不变**。
+/// 只认**路径/调用位置**（后随 `::`、调用组必须是小括号），因此不会碰字符串字面量；
+/// 参数组**递归折叠**（否则 `from_index(…, forge_ir::RegClass::…)` 里的路径会漏）。
+fn fold_short_forms(ts: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    let toks: Vec<proc_macro2::TokenTree> = ts.into_iter().collect();
+    let mut out = proc_macro2::TokenStream::new();
+    let mut i = 0;
+    while i < toks.len() {
+        // `<Reg as forge_ir::PhysReg>::from_index(<组>)` / `:: to_index(<组>)`
+        if is_punct(toks.get(i), '<')
+            && ident_is(toks.get(i + 1), "Reg")
+            && ident_is(toks.get(i + 2), "as")
+            && ident_is(toks.get(i + 3), "forge_ir")
+            && is_colon2(&toks, i + 4)
+            && ident_is(toks.get(i + 6), "PhysReg")
+            && is_punct(toks.get(i + 7), '>')
+            && is_colon2(&toks, i + 8)
+            && (ident_is(toks.get(i + 10), "from_index") || ident_is(toks.get(i + 10), "to_index"))
+            && let Some(proc_macro2::TokenTree::Group(g)) = toks.get(i + 11)
+            && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+        {
+            out.extend(folded_call(&toks[i + 10], g));
+            i += 12;
+            continue;
+        }
+        // `Reg::from_index(<组>)`
+        if ident_is(toks.get(i), "Reg")
+            && is_colon2(&toks, i + 1)
+            && ident_is(toks.get(i + 3), "from_index")
+            && let Some(proc_macro2::TokenTree::Group(g)) = toks.get(i + 4)
+            && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+        {
+            out.extend(folded_call(&toks[i + 3], g));
+            i += 5;
+            continue;
+        }
+        // `forge_ir::RegClass`
+        if ident_is(toks.get(i), "forge_ir")
+            && is_colon2(&toks, i + 1)
+            && ident_is(toks.get(i + 3), "RegClass")
+        {
+            out.extend([proc_macro2::TokenTree::Ident(proc_macro2::Ident::new(
+                "__RC",
+                proc_macro2::Span::call_site(),
+            ))]);
+            i += 4;
+            continue;
+        }
+        match &toks[i] {
+            proc_macro2::TokenTree::Group(g) => {
+                let inner = fold_short_forms(g.stream());
+                let mut ng = proc_macro2::Group::new(g.delimiter(), inner);
+                ng.set_span(g.span());
+                out.extend([proc_macro2::TokenTree::Group(ng)]);
+            }
+            other => out.extend([other.clone()]),
+        }
+        i += 1;
+    }
+    out
+}
+
+/// `from_index` / `to_index` 调用 → 短名调用（参数组递归折叠）。
+fn folded_call(
+    method: &proc_macro2::TokenTree,
+    args: &proc_macro2::Group,
+) -> proc_macro2::TokenStream {
+    let short = if ident_is(Some(method), "to_index") {
+        "__ti"
+    } else {
+        "__ph"
+    };
+    let mut ng = proc_macro2::Group::new(args.delimiter(), fold_short_forms(args.stream()));
+    ng.set_span(args.span());
+    let mut call = proc_macro2::TokenStream::new();
+    call.extend([
+        proc_macro2::TokenTree::Ident(proc_macro2::Ident::new(short, args.span())),
+        proc_macro2::TokenTree::Group(ng),
+    ]);
+    call
+}
+
+fn is_punct(tt: Option<&proc_macro2::TokenTree>, ch: char) -> bool {
+    matches!(tt, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ch)
+}
+
+fn ident_is(tt: Option<&proc_macro2::TokenTree>, name: &str) -> bool {
+    matches!(tt, Some(proc_macro2::TokenTree::Ident(i)) if i == name)
+}
+
+fn is_colon2(toks: &[proc_macro2::TokenTree], i: usize) -> bool {
+    is_punct(toks.get(i), ':') && is_punct(toks.get(i + 1), ':')
+}
+
+/// `fold_short_forms` 折叠出来的短名定义（模块内发射一次）。
+///
+/// 放在折叠**之后**发射，所以这两行自己仍写全路径——再由 `rewrite_path_roots`
+/// 按宿主 crate 改写（否则跨 crate 生成时 `forge_ir::` 会指错）。
+fn short_form_helpers() -> proc_macro2::TokenStream {
+    quote::quote! {
+        /// 生成物内部短名（v18 S8c）：`forge_ir::RegClass` 的别名。
+        #[allow(dead_code)]
+        type __RC = forge_ir::RegClass;
+        /// 生成物内部短名（v18 S8c）：`Reg::from_index` 的薄封装（占位寄存器构造）。
+        #[allow(dead_code)]
+        #[inline]
+        fn __ph(idx: u32, class: forge_ir::RegClass) -> Reg {
+            <Reg as forge_ir::PhysReg>::from_index(idx, class)
+        }
+        /// 生成物内部短名（v18 S8c）：`Reg::to_index` 的薄封装。
+        #[allow(dead_code)]
+        #[inline]
+        fn __ti(r: Reg) -> u32 {
+            forge_ir::PhysReg::to_index(r)
+        }
+    }
 }
 
 /// 把**生成物**里的路径根改写到宿主 crate：
