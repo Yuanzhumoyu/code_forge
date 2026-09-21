@@ -755,7 +755,7 @@ asm = "punpckhdq {dst}, {src}"
 
 [[instructions]]
 name = "MOVSS"
-roles = ["fpr_mov_f32"]
+roles = [{ role = "fpr_mov", bits = 32 }]
 form = "SSE_RR"
 opcode = 0x10
 fields = { prefix = 0xF3, w = 0 }
@@ -1089,7 +1089,7 @@ effect = ["Pure"]
 name = "SD_BIN"
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, fields = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
-  { inst = "MOVSD", roles = ["fpr_mov_f64"], opcode = 0x10 },
+  { inst = "MOVSD", roles = [{ role = "fpr_mov", bits = 64 }], opcode = 0x10 },
   { inst = "MINSD", opcode = 0x5D },
   { inst = "MAXSD", opcode = 0x5F },
   { inst = "ADDSD", opcode = 0x58 },
@@ -1217,7 +1217,7 @@ asm = "vmovaps {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_ZMM_MEM"
 ref = "vmovups"
-roles = ["wide_vec_load_64"]
+roles = [{ role = "wide_vec_load", bits = 512 }]
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x10
@@ -1229,7 +1229,7 @@ asm = "vmovups {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_ZMM_MR"
 ref = "vmovups"
-roles = ["wide_vec_store_64"]
+roles = [{ role = "wide_vec_store", bits = 512 }]
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x11
@@ -1304,7 +1304,7 @@ asm = "vmovaps {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_RM"
 ref = "vmovups"
-roles = ["wide_vec_load_32"]
+roles = [{ role = "wide_vec_load", bits = 256 }]
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x10
@@ -1316,7 +1316,7 @@ asm = "vmovups {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_MR"
 ref = "vmovups"
-roles = ["wide_vec_store_32"]
+roles = [{ role = "wide_vec_store", bits = 256 }]
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x11

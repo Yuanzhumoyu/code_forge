@@ -6,7 +6,7 @@
 
 use super::super::model::*;
 use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
-use super::lowering::{inst_by_role, reg_mem_fids, role_name};
+use super::lowering::{inst_by_role_for, reg_mem_fids, role_name, role_name_for};
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -835,8 +835,8 @@ fn gen_emit_pseudo(
             let cs_bytes = callee_saved_bytes_lit;
             // 浮点参数移动：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键
             //（缺省 "MOVSD"/"MOVSS"；fpr out, fpr in）。
-            let fpr_mov64 = role_name(infos, Role::FprMovF64).unwrap_or_default();
-            let fpr_mov32 = role_name(infos, Role::FprMovF32).unwrap_or_default();
+            let fpr_mov64 = role_name_for(infos, Role::FprMov, 64).unwrap_or_default();
+            let fpr_mov32 = role_name_for(infos, Role::FprMov, 32).unwrap_or_default();
             let fpr_fids = inst_fids(infos, &fpr_mov64);
             let has_fpr_mov = fpr_fids.len() >= 2 && inst_fids(infos, &fpr_mov32).len() >= 2;
             let (f_dest, f_src) = if fpr_fids.len() >= 2 {
@@ -907,9 +907,10 @@ fn gen_emit_pseudo(
             //（不静默截断）。
             let mut byref_32: Option<TokenStream> = None;
             let mut byref_64: Option<TokenStream> = None;
-            for (role, width) in [(Role::WideVecLoad32, 32u16), (Role::WideVecLoad64, 64u16)] {
-                let Some(info) = inst_by_role(infos, role) else {
-                    continue; // 本 ISA 未声明该角色 → 该宽度不可用（下方给 Unsupported）
+            // 宽度是**字节**（32 = V256、64 = V512），角色声明里写的是**位**（256/512）。
+            for width in [32u16, 64u16] {
+                let Some(info) = inst_by_role_for(infos, Role::WideVecLoad, width * 8) else {
+                    continue; // 本 ISA 未声明该宽度的角色 → 该宽度不可用（下方给 Unsupported）
                 };
                 let (d_fid, m_fid, _) = reg_mem_fids(info);
                 let (Some(d_fid), Some(m_fid)) = (d_fid, m_fid) else {

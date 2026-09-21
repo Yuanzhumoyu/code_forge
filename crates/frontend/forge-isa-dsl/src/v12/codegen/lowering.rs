@@ -256,8 +256,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // epilogue 统一恢复 callee-saved 后 ret（否则栈不平衡崩溃）。
     // 浮点移动指令由 `[abi].fpr_mov_inst`/`fpr_mov_inst32` 键指定
     //（缺省 "MOVSD"/"MOVSS"），变体名与字段均按键派生——不做名判断。
-    let fpr_mov64 = role_name(infos, Role::FprMovF64).unwrap_or_default();
-    let fpr_mov32 = role_name(infos, Role::FprMovF32).unwrap_or_default();
+    let fpr_mov64 = role_name_for(infos, Role::FprMov, 64).unwrap_or_default();
+    let fpr_mov32 = role_name_for(infos, Role::FprMov, 32).unwrap_or_default();
     let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
     let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
     let fpr_mov_fids = inst_fids(infos, &fpr_mov64);
@@ -1231,8 +1231,8 @@ fn gen_call_lowering(
     // 浮点移动指令：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键（缺省
     // "MOVSD"/"MOVSS"）——缺失 → 浮点路径 Unsupported（防生成代码引用
     // 不存在的 Inst 变体；demo 等无浮点 ISA 的 Call 整体降级）。
-    let fpr_mov64 = role_name(infos, Role::FprMovF64).unwrap_or_default();
-    let fpr_mov32 = role_name(infos, Role::FprMovF32).unwrap_or_default();
+    let fpr_mov64 = role_name_for(infos, Role::FprMov, 64).unwrap_or_default();
+    let fpr_mov32 = role_name_for(infos, Role::FprMov, 32).unwrap_or_default();
     let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
     let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
     let sd_f = fids(&fpr_mov64);
@@ -2119,22 +2119,71 @@ fn arg_move_loop(
 /// 取代 v14 的「`[abi].*_inst` 名指针 + 生成器里 x86 指令名硬编码兜底」：
 /// 缺角色时调用方给出带角色名的 `Unsupported`，不会静默去查别的 ISA 的名字。
 pub(crate) fn inst_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Option<&'a InstInfo<'a>> {
-    infos.iter().find(|i| i.inst.roles.contains(&role))
-}
-
-/// 角色对应的指令名；缺角色 → 带角色名的错误。
-pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String> {
-    inst_by_role(infos, role)
-        .map(|i| i.inst.name.clone())
-        .ok_or_else(|| format!("本 ISA 未声明 roles = [\"{role}\"] 的指令"))
-}
-
-/// 按语义角色收集指令（宽向量 by-ref 那几个角色，允许多条时取全部）。
-pub(crate) fn insts_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Vec<&'a InstInfo<'a>> {
     infos
         .iter()
-        .filter(|i| i.inst.roles.contains(&role))
-        .collect()
+        .find(|i| i.inst.roles.iter().any(|d| d.is(role)))
+}
+
+/// 按 **(角色, 位宽)** 查指令（v18 S9）：有宽度语义的角色（`fpr_mov`、`wide_vec_load/
+/// store`）可以声明多条，靠声明里的 `bits` 区分。
+pub(crate) fn inst_by_role_for<'a>(
+    infos: &'a [InstInfo<'a>],
+    role: Role,
+    bits: u16,
+) -> Option<&'a InstInfo<'a>> {
+    infos.iter().find(|i| {
+        i.inst
+            .roles
+            .iter()
+            .any(|d| d.is(role) && d.bits() == Some(bits))
+    })
+}
+
+/// 角色对应的指令名；缺角色 → 带角色名的错误；**同名多宽度 → 明确要求按宽度解析**。
+pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String> {
+    let hits: Vec<&InstInfo> = infos
+        .iter()
+        .filter(|i| i.inst.roles.iter().any(|d| d.is(role)))
+        .collect();
+    match hits.as_slice() {
+        [] => Err(format!("本 ISA 未声明 roles = [\"{role}\"] 的指令")),
+        [one] => Ok(one.inst.name.clone()),
+        many => Err(format!(
+            "角色 \"{role}\" 有 {} 条声明（{}）——有宽度语义的角色必须按宽度解析（bits）",
+            many.len(),
+            many.iter()
+                .map(|i| i.inst.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        )),
+    }
+}
+
+/// 按 **(角色, 位宽)** 取指令名（v18 S9）；选不到 → 明确 `Unsupported` 消息
+/// （带请求位宽与已声明的位宽集合，不猜、不回退）。
+pub(crate) fn role_name_for(infos: &[InstInfo], role: Role, bits: u16) -> Result<String, String> {
+    if let Some(i) = inst_by_role_for(infos, role, bits) {
+        return Ok(i.inst.name.clone());
+    }
+    let mut have: Vec<String> = infos
+        .iter()
+        .flat_map(|i| i.inst.roles.iter())
+        .filter(|d| d.is(role))
+        .map(|d| match d.bits() {
+            Some(b) => b.to_string(),
+            None => "（未写 bits）".to_string(),
+        })
+        .collect();
+    have.sort();
+    have.dedup();
+    Err(format!(
+        "本 ISA 未声明 roles = [{{ role = \"{role}\", bits = {bits} }}] 的指令（已声明位宽：{}）",
+        if have.is_empty() {
+            "无".to_string()
+        } else {
+            have.join(" / ")
+        }
+    ))
 }
 
 /// 从指令操作数结构提取语义化字段名 + Reg 操作数序号：
@@ -2174,16 +2223,23 @@ pub(crate) fn collect_byref_insts(
     std::collections::HashMap<&'static str, (syn::Ident, syn::Ident, syn::Ident, u8)>,
     bool,
 ) {
-    const ROLES: [(&str, Role); 5] = [
-        ("wide_vec_store_32", Role::WideVecStore32),
-        ("wide_vec_store_64", Role::WideVecStore64),
-        ("wide_vec_load_32", Role::WideVecLoad32),
-        ("wide_vec_load_64", Role::WideVecLoad64),
-        ("frame_rbp_addr", Role::FrameAddr),
+    // 键保持宿主侧既有字符串（`wide_vec_load_32` = 32 **字节** = bits 256）；`bits = 0`
+    // = 该角色无宽度语义（如 `frame_addr`），按唯一角色查。
+    const ROLES: [(&str, Role, u16); 5] = [
+        ("wide_vec_store_32", Role::WideVecStore, 256),
+        ("wide_vec_store_64", Role::WideVecStore, 512),
+        ("wide_vec_load_32", Role::WideVecLoad, 256),
+        ("wide_vec_load_64", Role::WideVecLoad, 512),
+        ("frame_rbp_addr", Role::FrameAddr, 0),
     ];
     let mut m = std::collections::HashMap::new();
-    for (key, role) in ROLES {
-        if let Some(info) = insts_by_role(infos, role).first()
+    for (key, role, bits) in ROLES {
+        let hit = if bits == 0 {
+            inst_by_role(infos, role)
+        } else {
+            inst_by_role_for(infos, role, bits)
+        };
+        if let Some(info) = hit
             && let (Some(reg), Some(mem), idx) = reg_mem_fids(info)
         {
             m.insert(key, (info.vn.clone(), reg, mem, idx));

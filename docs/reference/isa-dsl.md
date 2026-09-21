@@ -645,15 +645,26 @@ serde 报错）。`MachineInst::is_branch/is_call/is_ret/is_move` 与 `effects()
 **全部从 effect 标签派生**——生成器**不以指令名作判断依据**。`Move` = 纯 reg→reg
 copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `Pure`。
 
-**`roles` 语义角色**（S4）：指令声明自己担任的 ABI/帧/参数角色，生成器按角色查
-指令，取代 `[abi]` 的 13 个 `*_inst` 名指针与 v14 的 `tags` 字符串标签。每个角色
-全 ISA 唯一（validate 强制）。完整角色枚举：
+**`roles` 语义角色**（S4，v18 S9 起支持带宽度声明）：指令声明自己担任的 ABI/帧/参数
+角色，生成器按角色查指令，取代 `[abi]` 的 13 个 `*_inst` 名指针与 v14 的 `tags`
+字符串标签。
+
+条目有两种写法，**同一个机制**：
+
+- `"gpr_mov"` —— 无宽度语义的角色，全 ISA 唯一（validate 强制）；
+- `{ role = "fpr_mov", bits = 32 }` —— **有宽度语义**的角色：同角色可以有多条声明，
+  靠 `bits`（**位宽**，与 `opsize`/`[encoding].bits` 同单位）区分，(角色, 位宽) 唯一。
+  x86 的 `MOVSS`/`MOVSD` 就是这种：两者共用 `fpr` 槽，槽本身分不出 32/64，
+  因此宽度必须写在角色声明上（v18 S9 之前是把它编进角色名 `fpr_mov_f32`/`_f64`，
+  其它位宽的 ISA 无法接入）。
+
+完整角色枚举：
 
 | 角色 | 语义 |
 | --- | --- |
 | `gpr_mov` | 整数寄存器移动（收参 / Copy / 溢出前搬运） |
 | `ret_mov` | 返回值 → 返回寄存器移动 |
-| `fpr_mov_f64` / `fpr_mov_f32` | f64 / f32 标量寄存器移动 |
+| `fpr_mov` | 标量浮点寄存器移动（**宽度写在声明里**：`bits = 32`/`64`） |
 | `vec_mov` | ≤16B 向量按值全宽移动（x86 MOVAPS） |
 | `call` / `call_indirect` | 直接 / 间接调用 |
 | `ret` / `jump` / `branch` | 返回 / 无条件跳转 / 条件分支 |
@@ -661,8 +672,8 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | `push` / `pop` | 硬件 push / pop（callee-saved 保存；缺则回退 `[spill.*]`） |
 | `frame_alloc` / `frame_free` | 帧分配 / 释放（`@frame_alloc`/`@frame_free`） |
 | `epilogue_jump` | 尾声跳转（缺省用 `jump`） |
-| `wide_vec_store_32` / `wide_vec_store_64` | 宽向量 by-ref 调用方栈拷贝 store |
-| `wide_vec_load_32` / `wide_vec_load_64` | 宽向量 by-ref/sret 收参与回读 load |
+| `wide_vec_store` | 宽向量 by-ref 调用方栈拷贝 store（宽度写在声明里：`bits = 256`/`512`） |
+| `wide_vec_load` | 宽向量 by-ref/sret 收参与回读 load（同上） |
 | `frame_addr` | 帧内 `[FP+disp]` 地址计算（sret/by-ref 临时槽） |
 | `stack_arg_load` / `stack_arg_store` | 栈参数收参 load / 传参 store |
 

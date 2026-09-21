@@ -1414,10 +1414,11 @@ pub struct Instruction {
     /// `is_branch` / `is_call` / `is_ret` / `is_move`（TargetMachine 集成）。
     #[serde(default)]
     pub effect: Vec<Effect>,
-    /// 语义角色（见 [`Role`]）——生成器按角色查指令，取代 `[abi]` 的 13 个
-    /// `*_inst` 名指针与 v14 的 `tags` 字符串标签。每个角色全 ISA 唯一。
+    /// 语义角色声明（见 [`Role`]/[`RoleDecl`]）——生成器按角色查指令，取代 `[abi]`
+    /// 的 13 个 `*_inst` 名指针与 v14 的 `tags` 字符串标签。
+    /// 无宽度语义的角色全 ISA 唯一；有宽度语义的角色按 **(角色, 位宽)** 唯一。
     #[serde(default)]
-    pub roles: Vec<Role>,
+    pub roles: Vec<RoleDecl>,
     /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
     /// 在本指令点避开（MachineInst::clobbers）。与 lowering 模板的显式物理
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
@@ -1520,10 +1521,10 @@ pub enum Role {
     GprMov,
     /// 返回值 → 返回寄存器的移动。
     RetMov,
-    /// f64 标量寄存器移动。
-    FprMovF64,
-    /// f32 标量寄存器移动。
-    FprMovF32,
+    /// 标量浮点寄存器移动。**宽度写在角色声明里**
+    /// （`roles = [{ role = "fpr_mov", bits = 32 }]`；x86 的 MOVSS/MOVSD 共用 `fpr` 槽，
+    /// 槽本身分不出 32/64）。
+    FprMov,
     /// ≤16B 向量按值的**全宽**寄存器移动（x86 MOVAPS；缺则向量 by-value 不支持）。
     VecMov,
     /// 直接调用（函数符号 reloc）。
@@ -1548,18 +1549,11 @@ pub enum Role {
     FrameFree,
     /// 尾声跳转（缺省用 `jump`；需要不同指令时单独声明）。
     EpilogueJump,
-    /// 宽向量 by-ref：调用方栈拷贝 store（32 字节）。
-    #[serde(rename = "wide_vec_store_32")]
-    WideVecStore32,
-    /// 宽向量 by-ref：调用方栈拷贝 store（64 字节）。
-    #[serde(rename = "wide_vec_store_64")]
-    WideVecStore64,
-    /// 宽向量 by-ref/sret：收参与回读 load（32 字节）。
-    #[serde(rename = "wide_vec_load_32")]
-    WideVecLoad32,
-    /// 宽向量 by-ref/sret：收参与回读 load（64 字节）。
-    #[serde(rename = "wide_vec_load_64")]
-    WideVecLoad64,
+    /// 宽向量 by-ref：调用方栈拷贝 store。**宽度写进角色声明的 `bits`**
+    /// （如 `{ role = "wide_vec_store", bits = 256 }` = 32 字节）。
+    WideVecStore,
+    /// 宽向量 by-ref/sret：收参与回读 load。**宽度同上**。
+    WideVecLoad,
     /// 帧内 `[FP+disp]` 地址计算（sret / by-ref 临时槽）。
     FrameAddr,
     /// 栈参数收参 load（第 5+ 个参数从 `[FP+shadow+…]` 取）。
@@ -1581,8 +1575,7 @@ fn serde_json_name(r: &Role) -> &'static str {
     match r {
         Role::GprMov => "gpr_mov",
         Role::RetMov => "ret_mov",
-        Role::FprMovF64 => "fpr_mov_f64",
-        Role::FprMovF32 => "fpr_mov_f32",
+        Role::FprMov => "fpr_mov",
         Role::VecMov => "vec_mov",
         Role::Call => "call",
         Role::CallIndirect => "call_indirect",
@@ -1595,13 +1588,62 @@ fn serde_json_name(r: &Role) -> &'static str {
         Role::FrameAlloc => "frame_alloc",
         Role::FrameFree => "frame_free",
         Role::EpilogueJump => "epilogue_jump",
-        Role::WideVecStore32 => "wide_vec_store_32",
-        Role::WideVecStore64 => "wide_vec_store_64",
-        Role::WideVecLoad32 => "wide_vec_load_32",
-        Role::WideVecLoad64 => "wide_vec_load_64",
+        Role::WideVecStore => "wide_vec_store",
+        Role::WideVecLoad => "wide_vec_load",
         Role::FrameAddr => "frame_addr",
         Role::StackArgLoad => "stack_arg_load",
         Role::StackArgStore => "stack_arg_store",
+    }
+}
+
+/// 角色**声明**（`[[instructions]].roles` 的条目，v18 S9）。
+///
+/// 两种写法，同一个机制：
+///
+/// - `"gpr_mov"` —— 无宽度语义的角色（唯一即可）；
+/// - `{ role = "fpr_mov", bits = 32 }` —— 有宽度语义的角色：**位宽写出来**
+///   （x86 的 MOVSS/MOVSD 共用 `fpr` 槽，槽本身分不出 32/64；宽度是数据，不是名字的一部分）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RoleDecl {
+    /// 无宽度语义：`roles = ["gpr_mov"]`。
+    Plain(Role),
+    /// 有宽度语义：`roles = [{ role = "fpr_mov", bits = 32 }]`。
+    Sized {
+        role: Role,
+        /// 位宽（与 `opsize`/`[encoding].bits` 同单位；`fpr_mov` 32/64、
+        /// `wide_vec_load`/`wide_vec_store` 256/512）。
+        bits: u16,
+    },
+}
+
+impl RoleDecl {
+    /// 角色本体。
+    pub fn role(&self) -> Role {
+        match self {
+            RoleDecl::Plain(r) => *r,
+            RoleDecl::Sized { role, .. } => *role,
+        }
+    }
+    /// 声明的位宽（无宽度语义 → None）。
+    pub fn bits(&self) -> Option<u16> {
+        match self {
+            RoleDecl::Plain(_) => None,
+            RoleDecl::Sized { bits, .. } => Some(*bits),
+        }
+    }
+    /// 是否就是这个角色（不比较宽度；按宽度选请用 `role_name_for`）。
+    pub fn is(&self, r: Role) -> bool {
+        self.role() == r
+    }
+}
+
+impl fmt::Display for RoleDecl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RoleDecl::Plain(r) => f.write_str(serde_json_name(r)),
+            RoleDecl::Sized { role, bits } => write!(f, "{}={}bit", serde_json_name(role), bits),
+        }
     }
 }
 

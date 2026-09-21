@@ -1063,20 +1063,40 @@ fn form_exists(m: &V12Model, name: &str) -> bool {
 ///
 /// 重名诊断由 `DeclIndex` 自动附注"同名声明也出现在 行:列"（S1 新增能力）。
 fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
-    // 角色全 ISA 唯一：同一个语义位置有两条候选时生成器（collect_inst_infos
-    // 的 .find）只会取第一条，静默丢掉另一条——直接拒绝。[[instructions]] 与
-    // `[[templates]]` 展开在解析期完成，此处看到的就是完整指令表。
-    let mut role_owner: std::collections::BTreeMap<Role, &str> = Default::default();
+    // 角色唯一性（v18 S9）：键是 **(角色, 位宽)**——有宽度语义的角色
+    // （`roles = [{ role = "fpr_mov", bits = 32 }]`）可以有多条，靠 `bits` 区分；
+    // 无宽度语义的角色（`"gpr_mov"`）仍旧全 ISA 唯一。同一角色一处写 bits、一处不写
+    // = 歧义，也拒绝。
+    let mut role_owner: std::collections::BTreeMap<Role, Vec<(Option<u16>, &str)>> =
+        Default::default();
     for inst in &m.instructions {
         for r in &inst.roles {
-            if let Some(prev) = role_owner.insert(*r, inst.name.as_str()) {
-                d.push_anchored(
-                    idx,
-                    &format!(
-                        "[[instructions.{}]]: 角色 \"{r}\" 已由 {prev} 声明——每个角色全 ISA 唯一",
-                        inst.name
-                    ),
-                );
+            role_owner
+                .entry(r.role())
+                .or_default()
+                .push((r.bits(), inst.name.as_str()));
+        }
+    }
+    for (role, owners) in &role_owner {
+        for (i, (bits, name)) in owners.iter().enumerate() {
+            for (obits, oname) in &owners[i + 1..] {
+                if bits == obits {
+                    d.push_anchored(
+                        idx,
+                        &format!(
+                            "[[instructions.{name}]]: 角色 \"{role}\" 与 {oname} 冲突——\
+                             同角色同宽度只能有一条声明（不同宽度请写 `bits`）"
+                        ),
+                    );
+                } else if bits.is_none() != obits.is_none() {
+                    d.push_anchored(
+                        idx,
+                        &format!(
+                            "[[instructions.{name}]]: 角色 \"{role}\" 与 {oname} 冲突——\
+                             同一角色不能一处写 `bits`、一处不写"
+                        ),
+                    );
+                }
             }
         }
     }
