@@ -49,7 +49,9 @@ fn lowering_attrs_emitted_once() {
             );
         }
         // 有多个 op 臂才算真的钉住了（否则"只出现一次"是废话）。
-        let arms = text.matches("let mut __pack = crate :: prelude :: InstPacket :: new ()").count();
+        let arms = text
+            .matches("let mut __pack = crate :: prelude :: InstPacket :: new ()")
+            .count();
         assert!(
             arms > 1,
             "{name}: 只找到 {arms} 个 lowering op 臂，测试失去意义"
