@@ -9,7 +9,6 @@ use super::super::shared::group_names;
 use super::InstInfo;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::HashMap;
 
 // ─────────────────────── Reg 枚举（物理寄存器）───────────────────────
 
@@ -175,22 +174,26 @@ pub(crate) fn gen_machine_inst(
     infos: &[InstInfo],
     model: &V12Model,
 ) -> Result<TokenStream, String> {
-    let mut use_arms = Vec::new();
-    let mut def_arms = Vec::new();
-    let mut use_c_arms = Vec::new();
-    let mut def_c_arms = Vec::new();
+    // v18 S8a：8 个"每指令一条臂"的方法 → **一行形状表** + 两个紧凑字段访问器。
+    // 见 `__Shape`：`uses`/`defs`（Reg 字段序号）、`def_reuse`（def 的 ReuseInput 目标）、
+    // `n_regs`（Reg 字段个数，= reg_field/settable 的域）、`classes`（每 Reg 字段的
+    // 槽类索引：0 = 多类槽用运行期 class，n = `__SLOT_CLASSES[n-1]`）、
+    // `effects`（effect 序列索引，0xFF = 空）。
+    let mut shape_rows: Vec<TokenStream> = Vec::new();
+    let mut shape_index_arms: Vec<TokenStream> = Vec::new();
+    let mut reg_slot_arms: Vec<TokenStream> = Vec::new();
+    let mut set_reg_slot_arms: Vec<TokenStream> = Vec::new();
+    // 去重的槽类表（`__SLOT_CLASSES`）与 effect 序列表（`__EFFECT_SETS`）。
+    let mut slot_classes: Vec<TokenStream> = Vec::new();
+    let mut slot_class_texts: Vec<String> = Vec::new();
+    let mut effect_sets: Vec<TokenStream> = Vec::new();
+    let mut effect_set_texts: Vec<String> = Vec::new();
     let mut branch_arms = Vec::new();
     let mut call_arms = Vec::new();
     let mut ret_arms = Vec::new();
     let mut move_arms = Vec::new();
-    let mut effects_arms = Vec::new();
     let mut branch_targets_arms = Vec::new();
     let mut implicit_arms: Vec<TokenStream> = Vec::new();
-    let mut reg_field_arms: Vec<TokenStream> = Vec::new();
-    let mut set_reg_field_arms: Vec<TokenStream> = Vec::new();
-    // 字段可改写性（regalloc 对 spilled def 的 fail-closed 校验用，见 WA-40）：
-    // 只有 reg_field_entries 里登记的字段能被 set_reg_field 改写。
-    let mut reg_field_settable_arms: Vec<TokenStream> = Vec::new();
     // 物理寄存器名 → 索引（implicit_regs 解析用）。锚点 = **元数据派生**的
     // 主 GPR 类（`[meta].default_gpr_width` > 最宽已声明组），缺组即 Err——
     // 历史实现锚定 `GPR(8).or(GPR(4))`，1 字节寄存器 ISA 会得到空表并静默
@@ -201,6 +204,8 @@ pub(crate) fn gen_machine_inst(
 
     for info in infos {
         let vn = &info.vn;
+        // effect 标签（本循环多处用：is_branch/is_call/is_ret/effects/is_move）
+        let eff = &info.inst.effect;
         // implicit_regs：指令隐式破坏的物理寄存器（cqo 的 RDX、idiv 的
         // RAX/RDX）→ MachineInst::clobbers（regalloc 在本指令点避开）。
         // 名字解析 **fail-closed**：解析不到即生成期报错（历史实现 `filter_map`
@@ -224,125 +229,137 @@ pub(crate) fn gen_machine_inst(
         }
 
         // Reg 操作数按操作数序收集角色（操作数级 role 优先，缺省 In）。
-        // 与 v11 一致：每变体一条 arm，模式列出全部 use/def 字段 + `..`；
-        // reg_field 序号 = 该变体 Reg 操作数的位置序（lowering 同序 map_reg_field）。
-        let mut use_fids: Vec<&syn::Ident> = Vec::new();
-        let mut def_fids: Vec<&syn::Ident> = Vec::new();
-        let mut reg_field_entries: Vec<(usize, &syn::Ident, &OperandSlot)> = Vec::new();
-        let mut reg_field_idx = 0usize;
+        // `reg_field` 序号 = 该变体 Reg 操作数的位置序（lowering 同序 map_reg_field），
+        // 因此 uses/defs 存的是**序号**（不是字段名），访问器再按序号取字段值。
+        let mut use_idxs: Vec<u8> = Vec::new();
+        let mut def_idxs: Vec<u8> = Vec::new();
+        let mut reg_fields: Vec<(usize, &syn::Ident, &OperandSlot)> = Vec::new();
         for (_, fid, slot, role) in info.operands.iter() {
             if slot.kind != OperandKind::Reg {
                 continue;
             }
+            let idx = reg_fields.len();
             match role {
-                OperandRole::In => use_fids.push(fid),
-                OperandRole::Out => def_fids.push(fid),
+                OperandRole::In => use_idxs.push(idx as u8),
+                OperandRole::Out => def_idxs.push(idx as u8),
                 OperandRole::InOut => {
-                    use_fids.push(fid);
-                    def_fids.push(fid);
+                    use_idxs.push(idx as u8);
+                    def_idxs.push(idx as u8);
                 }
             }
-            reg_field_entries.push((reg_field_idx, fid, slot));
-            reg_field_idx += 1;
+            reg_fields.push((idx, fid, slot));
         }
-
-        // uses/defs：列出全部字段的 arm（无字段变体用 `..` 兜底）
-        if use_fids.is_empty() {
-            use_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
-            use_c_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
-        } else {
-            let vals: Vec<_> = use_fids.iter().map(|f| quote! { #f.to_index() }).collect();
-            let any: Vec<_> = use_fids
-                .iter()
-                .map(|_| quote! { crate::machine::inst::OperandConstraint::Any })
-                .collect();
-            use_arms.push(
-                quote! { Inst::#vn { #(#use_fids),*, .. } => smallvec::smallvec![#(#vals),*] },
-            );
-            use_c_arms.push(
-                quote! { Inst::#vn { #(#use_fids),*, .. } => smallvec::smallvec![#(#any),*] },
-            );
-        }
-        if def_fids.is_empty() {
-            def_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
-            def_c_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
-        } else {
-            let vals: Vec<_> = def_fids.iter().map(|f| quote! { #f.to_index() }).collect();
-            // P1-1：InOut 角色的 def 约束 = ReuseInput(对应 use 序号)——两地址
-            // 指令（add dst, src → dst 复用 src 寄存器）。use 序号 = use_fids
-            // 中该字段的位置（InOut 同时出现在 use 与 def）。
-            let use_pos: HashMap<&syn::Ident, usize> =
-                use_fids.iter().enumerate().map(|(i, f)| (*f, i)).collect();
-            let any: Vec<_> = def_fids
-                .iter()
-                .map(|f| {
-                    match use_pos.get(*f) {
-                        // InOut def：复用对应 use 寄存器
-                        Some(&idx) => {
-                            quote! { crate::machine::inst::OperandConstraint::ReuseInput(#idx) }
+        let n_regs = reg_fields.len();
+        let fids: Vec<&syn::Ident> = reg_fields.iter().map(|(_, f, _)| *f).collect();
+        // def 的 ReuseInput：InOut 字段复用它在 use 列表里的位置（两地址指令）。
+        let def_reuse: Vec<u8> = def_idxs
+            .iter()
+            .map(|d| {
+                use_idxs
+                    .iter()
+                    .position(|u| u == d)
+                    .map(|p| p as u8)
+                    .unwrap_or(0xFF)
+            })
+            .collect();
+        // 每 Reg 字段的槽类编码：单类槽 → 索引+1；多类槽（class=None）→ 0。
+        let mut class_codes: Vec<u8> = Vec::with_capacity(n_regs);
+        for (_, _, slot) in &reg_fields {
+            match &slot.class {
+                Some(_) => {
+                    let expr = super::reg_class_expr(slot);
+                    let text = expr.to_string();
+                    let idx = match slot_class_texts.iter().position(|x| *x == text) {
+                        Some(i) => i,
+                        None => {
+                            slot_classes.push(super::reg_class_expr(slot));
+                            slot_class_texts.push(text);
+                            slot_classes.len() - 1
                         }
-                        // 纯 Out def：Any
-                        None => quote! { crate::machine::inst::OperandConstraint::Any },
-                    }
-                })
-                .collect();
-            def_arms.push(
-                quote! { Inst::#vn { #(#def_fids),*, .. } => smallvec::smallvec![#(#vals),*] },
-            );
-            def_c_arms.push(
-                quote! { Inst::#vn { #(#def_fids),*, .. } => smallvec::smallvec![#(#any),*] },
-            );
+                    };
+                    class_codes.push(idx as u8 + 1);
+                }
+                None => class_codes.push(0),
+            }
         }
 
-        // reg_field/set_reg_field：按该变体 Reg 操作数的位置序（与 map_reg_field 的
-        // reg_field_i 一致）。reg_field(i) 返回第 i 个 Reg 操作数的物理索引；
-        // set_reg_field(i, preg) 用 `Reg::from_index` 回填（regalloc 后）。
-        if reg_field_entries.is_empty() {
-            reg_field_arms.push(quote! { Inst::#vn { .. } => 0 });
-            set_reg_field_arms.push(quote! { Inst::#vn { .. } => {} });
-            reg_field_settable_arms.push(quote! { Inst::#vn { .. } => false });
+        // effects：按 TOML 声明序取 effect 序列（0xFF = 空），同序去重。
+        let eff_kinds: Vec<TokenStream> = eff
+            .iter()
+            .map(|e| match e {
+                Effect::Pure | Effect::Move => quote! { crate::prelude::EffectKind::Pure },
+                Effect::Read => quote! { crate::prelude::EffectKind::Read },
+                Effect::Write => quote! { crate::prelude::EffectKind::Write },
+                Effect::Branch => quote! { crate::prelude::EffectKind::Branch },
+                Effect::Jump => quote! { crate::prelude::EffectKind::Jump },
+                Effect::Call => quote! { crate::prelude::EffectKind::Call },
+                Effect::Ret => quote! { crate::prelude::EffectKind::Ret },
+                Effect::Trap => quote! { crate::prelude::EffectKind::Trap },
+            })
+            .collect();
+        let eff_idx: u8 = if eff_kinds.is_empty() {
+            0xFF
         } else {
-            let fids: Vec<_> = reg_field_entries.iter().map(|(_, fid, _)| fid).collect();
-            let field_idxs: Vec<_> = reg_field_entries.iter().map(|(idx, _, _)| idx).collect();
-            let rf_arms: Vec<_> = reg_field_entries
-                .iter()
-                .map(|(idx, fid, _)| quote! { #idx => #fid.to_index() })
-                .collect();
-            let srf_arms: Vec<_> = reg_field_entries
-                .iter()
-                .map(|(idx, fid, slot)| {
-                    if slot.class.is_some() {
-                        // 单类槽：宽度由指令声明（槽 class）——regalloc 的 PReg
-                        // 恒为池宽（x86 统一 GPR(8) 64 位池编号），窄槽指令（如
-                        // [gpr32]）的宽度必须在回填时按槽强制，不能取 PReg。
-                        let cls = super::reg_class_expr(slot);
-                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, #cls) }
-                    } else {
-                        // 多类槽（gprx：class=None，classes 列表）：宽度由
-                        // regalloc 传入的 class 决定（携带 IR 值宽度——I32 →
-                        // GPR(4)/EAX 视图）。若无此传导，回填退化 64 位视图、
-                        // encode opsize 恒 64（auto 宽度分发失效——WA-35）。
-                        // 仅接受 GPR 族 class（gprx 只收 GPR）：浮点/向量值误配
-                        // 进 gprx 槽（如 F64 store 穷举）时回退**主 GPR 类**
-                        //（元数据派生；1 字节寄存器 ISA = GPR(1)）——传 FPR(w)
-                        // 会给 fpr8(MM) 组 id 越界（coverage 实证）。
-                        quote! { #idx => *#fid = <Reg as forge_ir::PhysReg>::from_index(preg, if class.is_int() { class } else { __DEFAULT_GPR_CLASS }) }
-                    }
-                })
-                .collect();
-            reg_field_arms.push(quote! {
-                Inst::#vn { #(#fids),*, .. } => match i { #(#rf_arms,)* _ => 0 }
-            });
-            set_reg_field_arms.push(quote! {
-                Inst::#vn { #(#fids),*, .. } => match i { #(#srf_arms,)* _ => {} }
-            });
-            reg_field_settable_arms.push(quote! {
-                Inst::#vn { .. } => match i { #(#field_idxs => true,)* _ => false }
-            });
+            let text = quote! { #(#eff_kinds),* }.to_string();
+            match effect_set_texts.iter().position(|x| *x == text) {
+                Some(i) => i as u8,
+                None => {
+                    effect_sets.push(quote! { &[#(#eff_kinds),*] });
+                    effect_set_texts.push(text);
+                    (effect_sets.len() - 1) as u8
+                }
+            }
+        };
+
+        // 形状行 + 两个字段访问器（`[f1, f2][i]`：Reg 字段序 = reg_field 序号）。
+        let uses_lit = use_idxs
+            .iter()
+            .map(|i| proc_macro2::Literal::u8_unsuffixed(*i));
+        let defs_lit = def_idxs
+            .iter()
+            .map(|i| proc_macro2::Literal::u8_unsuffixed(*i));
+        let reuse_lit = def_reuse
+            .iter()
+            .map(|i| proc_macro2::Literal::u8_unsuffixed(*i));
+        let cls_lit = class_codes
+            .iter()
+            .map(|i| proc_macro2::Literal::u8_unsuffixed(*i));
+        let n_regs_lit = proc_macro2::Literal::u8_unsuffixed(n_regs as u8);
+        let eff_lit = proc_macro2::Literal::u8_unsuffixed(eff_idx);
+        shape_rows.push(quote! {
+            __Shape {
+                uses: &[#(#uses_lit),*],
+                defs: &[#(#defs_lit),*],
+                def_reuse: &[#(#reuse_lit),*],
+                n_regs: #n_regs_lit,
+                classes: &[#(#cls_lit),*],
+                effects: #eff_lit,
+            }
+        });
+        let row_idx = shape_rows.len() - 1;
+        shape_index_arms.push(quote! { Inst::#vn { .. } => #row_idx });
+        if reg_fields.is_empty() {
+            reg_slot_arms.push(quote! { Inst::#vn { .. } => None });
+            set_reg_slot_arms.push(quote! { Inst::#vn { .. } => false });
+        } else {
+            // 注意两层解引用：`&self` 上的匹配让 `fid` 绑定成 `&Reg`，
+            // 于是 `[fid, …]` 是 `[&Reg; n]`，`.get(i)` 给 `Option<&&Reg>`，
+            // 两次 `.copied()` 才回到 `Option<Reg>`。
+            reg_slot_arms.push(
+                quote! { Inst::#vn { #(#fids),*, .. } => [#(#fids),*].get(i).copied().copied() },
+            );
+            // 可写侧**不能**返回 `Option<&mut Reg>`：`[fid, …]` 是临时数组，
+            // 从它里面取出的 `&mut Reg` 生命周期被绑定到该临时值（E0515）。
+            // 改成"就地写入 + 报告是否命中"，写动作发生在数组存活期内。
+            set_reg_slot_arms.push(
+                quote! { Inst::#vn { #(#fids),*, .. } => match [#(#fids),*].get_mut(i) {
+                    Some(r) => { **r = reg; true }
+                    None => false,
+                } },
+            );
         }
 
         // effect → is_branch/is_call/is_ret/effects
-        let eff = &info.inst.effect;
         let is_jumpy = |e: &&Effect| matches!(e, Effect::Branch | Effect::Jump);
         if eff.iter().any(|e| is_jumpy(&e)) {
             branch_arms.push(quote! { Inst::#vn { .. } => true });
@@ -365,33 +382,13 @@ pub(crate) fn gen_machine_inst(
                 Inst::#vn { #fid, .. } => smallvec::smallvec![crate::prelude::Block::new(*#fid as u32)]
             });
         }
-        let eff_kinds: Vec<TokenStream> = eff
-            .iter()
-            .map(|e| match e {
-                Effect::Pure => quote! { crate::prelude::EffectKind::Pure },
-                Effect::Read => quote! { crate::prelude::EffectKind::Read },
-                Effect::Write => quote! { crate::prelude::EffectKind::Write },
-                Effect::Branch => quote! { crate::prelude::EffectKind::Branch },
-                Effect::Jump => quote! { crate::prelude::EffectKind::Jump },
-                Effect::Call => quote! { crate::prelude::EffectKind::Call },
-                Effect::Ret => quote! { crate::prelude::EffectKind::Ret },
-                Effect::Trap => quote! { crate::prelude::EffectKind::Trap },
-                Effect::Move => quote! { crate::prelude::EffectKind::Pure }, // Move 是纯运算
-            })
-            .collect();
-        if eff_kinds.is_empty() {
-            effects_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![] });
-        } else {
-            effects_arms.push(quote! { Inst::#vn { .. } => smallvec::smallvec![#(#eff_kinds),*] });
-        }
-
         // is_move：effect 含 "Move"（纯寄存器移动，TOML 显式声明）且
         // 1 def + 1 use。**删除指令名前缀启发式**（MOV_/MOVR）——语义由
         // effect 标签表达，与指令名解耦（LLVM TableGen flags 同思路）。
         let is_move_decl = eff.contains(&Effect::Move);
-        if is_move_decl && def_fids.len() == 1 && use_fids.len() == 1 {
-            let d = def_fids[0];
-            let u = use_fids[0];
+        if is_move_decl && def_idxs.len() == 1 && use_idxs.len() == 1 {
+            let d = fids[usize::from(def_idxs[0])];
+            let u = fids[usize::from(use_idxs[0])];
             if d != u {
                 move_arms.push(
                     quote! { Inst::#vn { #d, #u, .. } => Some((#d.to_index(), #u.to_index())) },
@@ -400,22 +397,103 @@ pub(crate) fn gen_machine_inst(
         }
     }
 
+    // `Inst::Raw` 用一行空形状（表尾）。
+    shape_rows.push(quote! {
+        __Shape {
+            uses: &[], defs: &[], def_reuse: &[], n_regs: 0, classes: &[], effects: 0xFF,
+        }
+    });
+    let raw_row = shape_rows.len() - 1;
+    shape_index_arms.push(quote! { Inst::Raw(_) => #raw_row });
+    reg_slot_arms.push(quote! { Inst::Raw(_) => None });
+    set_reg_slot_arms.push(quote! { Inst::Raw(_) => false });
+
     Ok(quote! {
+        /// 每条指令的**形状**（v18 S8a）：uses/defs/reg_field/约束/effect 的单一事实源。
+        ///
+        /// 此前 8 个方法各自生成一套"每指令一条臂"的 match（x86 合计 ~185 KB）；
+        /// 现在只有这一张表 + 两个字段访问器，方法是通用循环。
+        #[derive(Clone, Copy)]
+        pub(crate) struct __Shape {
+            /// Reg 字段序号（use 角色），按字段序。
+            pub uses: &'static [u8],
+            /// Reg 字段序号（def 角色），按字段序。
+            pub defs: &'static [u8],
+            /// 与 `defs` 等长：0xFF = `OperandConstraint::Any`，否则 = 复用的 use 位置。
+            pub def_reuse: &'static [u8],
+            /// Reg 字段个数（= `reg_field`/`is_reg_field_settable` 的域）。
+            /// 可改写性只由这里决定：非 Reg 字段（立即数/内存/标签）不可改写，
+            /// regalloc 对落在不可改写字段上的 spilled def 是 fail-closed 报错（WA-40）。
+            pub n_regs: u8,
+            /// 与 Reg 字段序等长：0 = 多类槽（用运行期 class），n = `__SLOT_CLASSES[n-1]`。
+            pub classes: &'static [u8],
+            /// `__EFFECT_SETS` 下标（0xFF = 无 effect）。
+            pub effects: u8,
+        }
+        static __SHAPES: &[__Shape] = &[ #(#shape_rows),* ];
+        static __SLOT_CLASSES: &[forge_ir::RegClass] = &[ #(#slot_classes),* ];
+        static __EFFECT_SETS: &[&[crate::prelude::EffectKind]] = &[ #(#effect_sets),* ];
+        impl Inst {
+            #[inline]
+            fn __shape(&self) -> &'static __Shape {
+                &__SHAPES[match self { #(#shape_index_arms,)* }]
+            }
+            /// 第 i 个 **Reg 字段**的值（越界 = None）。i 是 `reg_field` 序号。
+            #[inline]
+            fn __reg_slot(&self, i: usize) -> Option<Reg> {
+                match self { #(#reg_slot_arms,)* }
+            }
+            /// 把第 i 个 Reg 字段写成 `reg`（越界 = 不写，返回 false）。
+            /// i 是 `reg_field` 序号。
+            #[inline]
+            fn __set_reg_slot(&mut self, i: usize, reg: Reg) -> bool {
+                match self { #(#set_reg_slot_arms,)* }
+            }
+        }
         impl crate::prelude::MachineInst for Inst {
             fn uses(&self) -> smallvec::SmallVec<[u32; 4]> {
-                match self { #(#use_arms,)* Inst::Raw(_) => smallvec::smallvec![] }
+                let mut out = smallvec::SmallVec::new();
+                for &f in self.__shape().uses {
+                    if let Some(r) = self.__reg_slot(usize::from(f)) {
+                        out.push(r.to_index());
+                    }
+                }
+                out
             }
             fn defs(&self) -> smallvec::SmallVec<[u32; 2]> {
-                match self { #(#def_arms,)* Inst::Raw(_) => smallvec::smallvec![] }
+                let mut out = smallvec::SmallVec::new();
+                for &f in self.__shape().defs {
+                    if let Some(r) = self.__reg_slot(usize::from(f)) {
+                        out.push(r.to_index());
+                    }
+                }
+                out
             }
             fn use_constraints(&self) -> smallvec::SmallVec<[crate::machine::inst::OperandConstraint; 4]> {
-                match self { #(#use_c_arms,)* Inst::Raw(_) => smallvec::smallvec![] }
+                let n = usize::from(self.__shape().uses.len() as u8);
+                let mut out = smallvec::SmallVec::new();
+                for _ in 0..n {
+                    out.push(crate::machine::inst::OperandConstraint::Any);
+                }
+                out
             }
             fn def_constraints(&self) -> smallvec::SmallVec<[crate::machine::inst::OperandConstraint; 2]> {
-                match self { #(#def_c_arms,)* Inst::Raw(_) => smallvec::smallvec![] }
+                let mut out = smallvec::SmallVec::new();
+                for &r in self.__shape().def_reuse {
+                    out.push(if r == 0xFF {
+                        crate::machine::inst::OperandConstraint::Any
+                    } else {
+                        crate::machine::inst::OperandConstraint::ReuseInput(usize::from(r))
+                    });
+                }
+                out
             }
             fn effects(&self) -> smallvec::SmallVec<[crate::prelude::EffectKind; 2]> {
-                match self { #(#effects_arms,)* Inst::Raw(_) => smallvec::smallvec![] }
+                let mut out = smallvec::SmallVec::new();
+                if let Some(set) = __EFFECT_SETS.get(usize::from(self.__shape().effects)) {
+                    out.extend_from_slice(set);
+                }
+                out
             }
             fn is_branch(&self) -> bool {
                 match self { #(#branch_arms,)* _ => false }
@@ -436,13 +514,29 @@ pub(crate) fn gen_machine_inst(
                 match self { #(#move_arms,)* _ => None }
             }
             fn reg_field(&self, i: usize) -> u32 {
-                match self { #(#reg_field_arms,)* Inst::Raw(_) => 0 }
+                self.__reg_slot(i).map_or(0, |r| r.to_index())
             }
             fn set_reg_field(&mut self, i: usize, preg: u32, class: forge_ir::RegClass) {
-                match self { #(#set_reg_field_arms,)* Inst::Raw(_) => {} }
+                let sh = self.__shape();
+                if i >= usize::from(sh.n_regs) {
+                    return;
+                }
+                // 单类槽：宽度由指令声明（槽 class）强制；多类槽：用运行期 class
+                // （regalloc 携带 IR 值宽度），非整数类回退主 GPR 类（元数据派生）。
+                let code = sh.classes.get(i).copied().unwrap_or(0);
+                let cls = if code == 0 {
+                    if class.is_int() {
+                        class
+                    } else {
+                        __DEFAULT_GPR_CLASS
+                    }
+                } else {
+                    __SLOT_CLASSES[usize::from(code) - 1]
+                };
+                self.__set_reg_slot(i, <Reg as forge_ir::PhysReg>::from_index(preg, cls));
             }
             fn is_reg_field_settable(&self, i: usize) -> bool {
-                match self { #(#reg_field_settable_arms,)* Inst::Raw(_) => false }
+                i < usize::from(self.__shape().n_regs)
             }
         }
     })

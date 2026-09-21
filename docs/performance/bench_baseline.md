@@ -96,8 +96,12 @@ riscv 1,263,918 → 1,264,082 B、x86 2,979,650 → 2,977,866 B，两边的差�
 `forge_isa_dsl::expand_file(path, &ExpandOptions { spec_tests, parts, .. })` 把生成物
 `to_string()` 后量字节数；用 `parts` 单件生成做归因：
 
-`S_all = base + encode + decode + asm + tm`（base = `Inst`/`Reg`/内存支撑/寄存器表，
-恒定发射）；单件 = base + 该件 ⇒ `base = (Σ单件 − S_all) / 3`。
+`S_all = base + Σ纯件 + tm`（`base` = 四件全关时仍会发射的支撑代码——`Inst`/`Reg`/内存支撑/
+寄存器表；单件 = `base` + 该件）。注意上表 `encode`/`decode`/`asm`/`base` 四列是
+**相减分解的粗归因**（由 `Σ单件 − 无tm` 得到）：x86 与"四件全关"的直接实测 36,122 B 一致，
+riscv64/arm64 则分别与直接实测的 20,385 / 19,755 B 差 382 B（合并件的总长比"base + Σ件"小
+1,146 B，说明部件间有少量共享代码）。**精确结论只用直接实测的四列**：全部件 / +spec_tests /
+其中 tm / spec。
 
 | ISA | 全部件 | +spec_tests | 其中 tm | encode | decode | asm | base | spec |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -126,6 +130,48 @@ riscv 1,263,918 → 1,264,082 B、x86 2,979,650 → 2,977,866 B，两边的差�
 "把自测外置以加快构建"没有收益——不要再打它的主意。
 
 > 结论与建议见 `docs/plans/forge-dsl-v18-plan.md` §7「S8 度量结论」。
+
+### S8a 落地度量（2026-09-21；同树 A/B，只切 `v12/codegen/machine.rs`）
+
+**采集命令**（与上一节同一 harness：用 `parts` 开关分别取"全部件 / 无tm / 单件 / tm"，
+`spec_tests` 开关取自测增量，全部 `to_string().len()`）：
+
+```bash
+# A、B 两轮各跑一次（B = git checkout -- crates/frontend/forge-isa-dsl/src/v12/codegen/machine.rs）
+cargo test -p forge-isa-dsl --test zz_tmp_s8a -- --nocapture
+```
+
+| ISA | 全部件 before → after | 其中 `tm` | `无tm`（对照） | +`spec_tests` |
+| --- | --- | --- | --- | --- |
+| x86 | 1,434,080 → **1,326,559（−7.5%）** | 877,869 → **770,348（−107,521，−12.2%）** | 592,333 → 592,333（不变） | 1,851,847 → **1,744,326（−5.8%）** |
+| riscv64 | 789,070 → **720,133（−8.7%）** | 548,318 → **479,381（−68,937，−12.6%）** | 261,137 → 261,137（不变） | 1,074,439 → **1,005,502（−6.4%）** |
+| arm64 | 395,225 → **344,283（−12.9%）** | 192,204 → **141,262（−50,942，−26.5%）** | 222,776 → 222,776（不变） | 674,268 → **623,326（−7.6%）** |
+
+**机制**：`impl MachineInst for Inst` 的 8 个"每指令一条臂"方法（uses/defs/`use_constraints`/
+`def_constraints`/effects/`reg_field`/`set_reg_field`/`is_reg_field_settable`）换成
+**每变体一行的静态形状表** `__SHAPES` + `__SLOT_CLASSES`/`__EFFECT_SETS` 两张去重表 +
+3 个通用字段访问器。8 个方法体里的 `Inst::` 臂数（`text.matches("Inst ::").count()`）：
+
+| ISA | before（每方法 = 指令数 + 1） | after |
+| --- | ---: | ---: |
+| x86 | 198 × 8 = 1,584 | **0** |
+| riscv64 | 117 × 8 = 936 | **0** |
+| arm64 | 105 × 8 = 840 | **0** |
+
+**`cargo check -p forge-codegen` 成本（`cargo clean -p forge-codegen` 后单跑，各两轮）**：
+
+| 配置 | 第一轮 | 第二轮（复测） |
+| --- | ---: | ---: |
+| 带 S8a | 32.6 s | 24.6 s |
+| 基线（revert `machine.rs`） | 31.1 s | 24.3 s |
+
+⇒ 生成物文本 −7.5% 在 `cargo check` 上**测不出差别**（两轮互有胜负、差值 0.3 s 在噪声内）：
+rustc 成本不随这几万字节线性变化。**S8 立项时的 `cargo check −≥20%` 验收，S8a 单独做不到**。
+
+**未达原估计**：立项估 x86 可回收 185 KB（`MachineInst` 臂表总量）、"整模块 −10~13%"；
+实测回收 107,521 B（−12.2% 的**是 `tm`**，整模块 −7.5%），差在形状表与访问器自身要 ~78 KB。
+另：`spec_tests` 增量（22–41% 的展开文本）在非测试构建里成本 ≈ 0（见上一节），S8a 不动它。
+下一步若要够到 S8 行的原验收，只剩 S8b（`TargetLowering` 臂表化，x86 上限 ~33%）。
 
 ## ir_binary（2026-09-19 首次采集；2026-09-19 补 v2 压缩对照）
 

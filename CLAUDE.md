@@ -347,6 +347,14 @@ let name = node.get_text("name")?;
   覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
   x86 197 / riscv64 116 / arm64 104、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
   必须放在 `lib.rs` 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）。
+- **生成物形状表（v18 S8a）**：`impl MachineInst for Inst` 的 8 个查询方法
+  （`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/`reg_field`/`set_reg_field`/
+  `is_reg_field_settable`）在生成物里**不许再逐指令展开**——它们读每变体一行的
+  `__SHAPES`（+ `__SLOT_CLASSES`/`__EFFECT_SETS` 两张去重表）与 3 个访问器
+  （`__shape`/`__reg_slot`/`__set_reg_slot`，见 `v12/codegen/machine.rs`）。
+  守卫 = `crates/frontend/forge-isa-dsl/tests/machine_shape_table.rs`（钉"8 个方法体零
+  `Inst::` 臂" + "形状表与两个访问器覆盖同一批变体、行数 = 变体数"）；实测数字见
+  `docs/performance/bench_baseline.md` 的「S8a 落地度量」（`tm` −12~26%，整模块 −7.5~12.9%）。
 - **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局/指令字宽一律由
   TOML 派生（`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/
   `value_gpr_width`/`value_fpr_width`/`vector_tiers`；`[encoding]`：**宽度三态**

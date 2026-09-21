@@ -427,7 +427,7 @@ x86 EVEX 寄存器直寻址丢失 rm bit4（ZMM16-31）。
 | **S5** 降低语言升级 ✅ 已落地（范围按实测收窄） | `[[lowering]].op` 名单 + pattern/lowering 统一裁决序与死规则检测 | `op = [\"Copy\", \"Uextend\", …]`（一条规则服务多个同类 op，解析期展开）；`V12Model::pattern_order()` 供 codegen 与校验器共读；死模式检测 | x86 lowering **声明** 220 → **197（−10.5%）**、riscv 110 → 106；逐 op 判定函数**逐格等价** + 黄金值/JIT 矩阵不变 | 已交付（原目标的 emit 表与 `[[sequences]]` 经实测 ≤5% / 0 收益 → 不做，见下 S5 进度） |
 | **S6** 生成自测 ✅ 已落地 | 生成 `__spec_tests`（`cfg(test)`） | 每指令 encode↔decode↔encode、disassemble↔assemble↔encode、立即数边界（min/max/min−1/max+1）、全宽度视图 | 覆盖 x86 197 / riscv64 116 / arm64 104（100%，零跳过）；命中 2 处真缺陷并修掉（riscv W 移位量静默掩码、x86 EVEX rm 第 5 位） | 每条新指令自动进回归网 |
 | **S7** 工具链与文档 | 拆 crate + CLI + 文档 | `forge-isa-dsl`（普通 lib）+ `forge-dsl`（薄 proc-macro）；`forge-isa` CLI：`validate`/`explain`/`schema`/`fmt`/`diff`/`insts`；JSON Schema + `#:schema`；文档重写 | schema ↔ 文档 ↔ JSON Schema 三方针守卫；CLI 集成测试；`isa_from_file!` 新参数用例 | UX 与可维护性长期收益 |
-| **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | 生成代码 token 数 −≥40%、`cargo check -p forge-codegen` −≥20% | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
+| **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | **S8a ✅ 已落地**：`impl MachineInst for Inst` 的 8 个逐指令方法 → 每变体一行的 `__SHAPES` 形状表 + 3 个通用访问器（实测 `tm` −12.2% / −12.6% / −26.5%，整模块 −7.5% / −8.7% / −12.9%）；S8b（`TargetLowering` 臂表化）待定 | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
 
 **建议顺序**：S0 → S1 → S2 → S3 → S4 → S6（以上均已落地）→ S7 → S5 →（S8）。
 S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动，越早定下来，S6 生成的
@@ -673,6 +673,43 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
     这套逻辑变成通用解释器，改动覆盖 `codegen/lowering.rs` 与宿主 lowering 面 —— 建议
     在 S8a 之后按新度量再决定。
   两条都需用户拍板（方案把 S8 标为"可选，按度量决定"）。
+- **S8a 已落地（2026-09-21，用户拍板"先做 S8a"）**：`impl MachineInst for Inst` 的 8 个
+  "每指令一条臂"的方法（`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/
+  `reg_field`/`set_reg_field`/`is_reg_field_settable`）改为**每变体一行的形状表**：
+  生成期发射 `__SHAPES: &[__Shape]`（`uses`/`defs` = Reg 字段序号表、`def_reuse` = InOut
+  复用哪个 use 位置、`n_regs`、`classes` = 槽类索引、`effects` = effect 序列索引）+
+  两张去重表 `__SLOT_CLASSES`/`__EFFECT_SETS` + 三个通用访问器（`__shape` 按变体取行、
+  `__reg_slot` 取第 i 个 Reg 字段、`__set_reg_slot` 就地回填），宿主侧是纯循环；
+  `Inst::Raw` 用表尾空行。语义逐条对齐：`use_constraints` 全 `Any`、`def_constraints` =
+  InOut 用 `ReuseInput(use 位置)` 否则 `Any`、`effects` 保 TOML 声明序（`Move → Pure`
+  但 `is_move` 仍置）、`reg_field` 越界 → 0、单类槽强制槽 class / 多类槽用运行期 class
+  且非整数类回退 `__DEFAULT_GPR_CLASS`。
+
+  **实测（同树 A/B：同一工作树只切 `machine.rs`，采集口径见
+  [`docs/performance/bench_baseline.md`](../performance/bench_baseline.md) 的「S8a 落地度量」）**：
+
+  | ISA | 整模块（全部件） | 其中 `tm` | +`spec_tests`（测试构建输入） |
+  | --- | --- | --- | --- |
+  | x86 | 1,434,080 → **1,326,559（−107,521，−7.5%）** | 877,869 → **770,348（−12.2%）** | 1,851,847 → **1,744,326（−5.8%）** |
+  | riscv64 | 789,070 → **720,133（−68,937，−8.7%）** | 548,318 → **479,381（−12.6%）** | 1,074,439 → **1,005,502（−6.4%）** |
+  | arm64 | 395,225 → **344,283（−50,942，−12.9%）** | 192,204 → **141,262（−26.5%）** | 674,268 → **623,326（−7.6%）** |
+
+  `无tm`（encode+decode+asm）三 ISA 前后**逐字节相同**（592,333 / 261,137 / 222,776）——
+  改动只落在 `tm`，等价性由此先钉一道；8 个方法体里的 `Inst::` 臂数从
+  **每 ISA（指令数 + 1）× 8** 直接归零（x86 1,584 → 0）。
+  新守卫 `crates/frontend/forge-isa-dsl/tests/machine_shape_table.rs` 钉两条不变量：
+  ① 这 8 个方法体里不许再出现任何 `Inst::` 臂；② 形状表与两个字段访问器覆盖**同一批变体**
+  且行数 = 变体数（漏一个变体 = 那条指令的 `uses`/`defs`/`reg_field` 静默变空，是这次
+  重写最危险的失败模式）。语义等价另有三道：`cargo test -p forge-codegen` 27 个二进制
+  全绿（含 930 条生成期规格自测与全部黄金字节）、三架构 JIT 矩阵 **195/3/0、131/67/0、
+  23/175/0**（与基线逐数字相同）、`v12_integration_tests` 的 `reg_field`/`set_reg_field`
+  断言。
+
+  **如实修正原估计**：立项时估 x86 `MachineInst` 臂表值 185 KB、"整模块 −10~13%"；
+  实测只回收 107,521 B，因为表本身 + 三个访问器的逐变体臂要 ~78 KB。也就是说
+  **−12.2% 落在 `tm` 上，不是整模块**（整模块 −7.5%）。要够到 S8 行的原验收
+  （token −≥40% / `cargo check` −≥20%）只剩 S8b（`TargetLowering` 臂表化，x86 上限 ~33%
+  的生成物），风险高，仍按"以度量决定"待拍板。
 - **S5c 已落地（2026-09-21）**：`[[pattern]]` 与 `[[lowering]]` **统一裁决序**——
   新增 `Pattern.priority`（与 lowering 同语义：大者先试），裁决序 = (`priority` 降,
   匹配树 Op 节点数降, `when` 叶子数降, 声明序升)，并抽成 `V12Model::pattern_order()`
