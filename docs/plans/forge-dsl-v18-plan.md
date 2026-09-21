@@ -817,7 +817,7 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
 | 角色 | 消费点 | x86 TOML 声明 |
 | --- | --- | --- |
 | `FprMovF64` / `FprMovF32` | `lowering.rs:259-260`、`lowering.rs:1234-1235`、`frame.rs:838-839` | `MOVSD`（fpr_mov_f64）、`MOVSS`（fpr_mov_f32） |
-| `WideVecLoad32` / `_64` | `frame.rs:910` 的 `[(Role::WideVecLoad32, 32u16), (Role::WideVecLoad64, 64u16)]`、`lowering.rs:2178-2181` 的角色串表 | `wide_vec_load_32/_64`（VMOVUPS_256_* / VMOVUPS_512_*） |
+| `WideVecLoad32` / `_64` | `frame.rs:910` 的 `[(Role::WideVecLoad32, 32u16), (Role::WideVecLoad64, 64u16)]`、`lowering.rs:2178-2181` 的角色串表 | `wide_vec_load_32/_64`（`VMOVUPS_256_*` / `VMOVUPS_512_*`） |
 | `WideVecStore32` / `_64` | 同上 | `wide_vec_store_32/_64` |
 
 注意 `frame.rs:910` 本来就是 `(role, width)` 的**成对表**——宽度已经是运行期参数，
@@ -860,6 +860,7 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
    （`fpr_mov_f32` → `fpr_mov` 等），CHANGELOG 记一条 breaking（TOML 侧改 6 行）。
 9. **不做的事**：不给角色加"宽度表达式"（如 `fpr_mov[T]`）——那是第二个机制；
    也不把宽度塞进 `[abi]` 新表，因为**指令自己的槽已经携带了宽度**，再声明一遍就是双份事实。
+
 - **S5c 已落地（2026-09-21）**：`[[pattern]]` 与 `[[lowering]]` **统一裁决序**——
   新增 `Pattern.priority`（与 lowering 同语义：大者先试），裁决序 = (`priority` 降,
   匹配树 Op 节点数降, `when` 叶子数降, 声明序升)，并抽成 `V12Model::pattern_order()`
