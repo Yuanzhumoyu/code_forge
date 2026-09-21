@@ -427,7 +427,7 @@ x86 EVEX 寄存器直寻址丢失 rm bit4（ZMM16-31）。
 | **S5** 降低语言升级 ✅ 已落地（范围按实测收窄） | `[[lowering]].op` 名单 + pattern/lowering 统一裁决序与死规则检测 | `op = [\"Copy\", \"Uextend\", …]`（一条规则服务多个同类 op，解析期展开）；`V12Model::pattern_order()` 供 codegen 与校验器共读；死模式检测 | x86 lowering **声明** 220 → **197（−10.5%）**、riscv 110 → 106；逐 op 判定函数**逐格等价** + 黄金值/JIT 矩阵不变 | 已交付（原目标的 emit 表与 `[[sequences]]` 经实测 ≤5% / 0 收益 → 不做，见下 S5 进度） |
 | **S6** 生成自测 ✅ 已落地 | 生成 `__spec_tests`（`cfg(test)`） | 每指令 encode↔decode↔encode、disassemble↔assemble↔encode、立即数边界（min/max/min−1/max+1）、全宽度视图 | 覆盖 x86 197 / riscv64 116 / arm64 104（100%，零跳过）；命中 2 处真缺陷并修掉（riscv W 移位量静默掩码、x86 EVEX rm 第 5 位） | 每条新指令自动进回归网 |
 | **S7** 工具链与文档 | 拆 crate + CLI + 文档 | `forge-isa-dsl`（普通 lib）+ `forge-dsl`（薄 proc-macro）；`forge-isa` CLI：`validate`/`explain`/`schema`/`fmt`/`diff`/`insts`；JSON Schema + `#:schema`；文档重写 | schema ↔ 文档 ↔ JSON Schema 三方针守卫；CLI 集成测试；`isa_from_file!` 新参数用例 | UX 与可维护性长期收益 |
-| **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | **S8a ✅ / S8b-1 ✅ / S8c ✅ 已落地；S8b-2 经度量判定不做，S8 收尾**。累计 vs S0 基线：x86 −29.6% / riscv −35.8% / arm64 −22.1%（`+spec_tests` 侧 −22.7~32.9%）。原验收（token −≥40% / `cargo check` −≥20%）**未达到**，如实记录 | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
+| **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | **S8a ✅ / S8b-1 ✅ / S8c ✅ / S8d ✅；S8b-2 经度量判定不做，S8 收尾**。累计 vs S0 基线：x86 −29.6% / riscv −35.6% / arm64 −21.4%（`+spec_tests` 侧 −22~33%）。原验收（token −≥40% / `cargo check` −≥20%）**未达到**，如实记录；S8d 另修掉"谓词属性全量预计算 + 运行时名字分派"两处浪费与 285 处死 `__cc` 绑定 | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
 
 **建议顺序**：S0 → S1 → S2 → S3 → S4 → S6（以上均已落地）→ S7 → S5 →（S8）。
 S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动，越早定下来，S6 生成的
@@ -775,7 +775,33 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
     S8 行原验收（token −≥40% / `cargo check` −≥20%）**未达到**，如实记录（`cargo check`
     侧 S8a 实测无差别；token 侧做到 −22~36%）。数字与口径见
     [`docs/performance/bench_baseline.md`](../performance/bench_baseline.md) 的
-    「S8a / S8b-1 / S8b-2 / S8c」四节。
+    「S8a / S8b-1 / S8b-2 / S8c / S8d」五节。
+- **S8d 已落地（2026-09-21，用户 review 指出）**：`gen_lowering_attrs` 生成的两处浪费——
+  ① 谓词求值走 `__attr(name)` 的运行时 `match name { "rd" => __a_rd, … }` **字符串分派**
+  （属性名在生成期就已知，这层转换没用）；② 9 个属性**每次 `lower_inst` 调用全算一遍**，
+  `when` 用不到的（`elem`/`iconst`/`cond`…）对那些 op 是白算。顺带发现一处死代码：
+  不用 `{cc}` 的规则也发射 `let __cc: u8 = 0;`（x86 285 处）。
+
+  改法：谓词名在生成期解析成具体方法（`attr_expr` → `__ac . <属性> (&*ctx)`）；
+  `__AC<'x>` = `done` 位图 + `v: [Option<i64>; 9]` + `op`/`args`/`results` 三个共享借用
+  （不借 `ctx`，不影响后面的 `&mut ctx`）；9 个属性各是
+  `#[inline] fn <名>(&mut self, ctx: &LowerCtx) -> Option<i64>`，**没算过才算、算过复用**
+  （旧实现"每次调用每属性最多算一次"的语义不变，只是从"全部预计算"变成"按需"）；
+  `{cc}` 绑定只在真用 `{cc}` 的规则里发射。
+
+  实测（同树 A/B）：
+
+  | ISA | 全部件 | `tm` | +`spec_tests` | 死 `__cc` 绑定 |
+  | --- | --- | --- | --- | ---: |
+  | x86 | 1,009,513 → **1,009,156（−357）** | 467,395 → 467,038 | 1,337,012 → 1,336,655 | 285 → **0** |
+  | riscv64 | 506,886 → 508,229（+1,343） | 288,793 → 290,136 | 720,995 → 722,338 | 110 → **0** |
+  | arm64 | 307,685 → 310,464（+2,779） | 120,648 → 123,427 | 521,064 → 523,843 | 19 → **0** |
+
+  **尺寸基本持平**（x86 −0.04%、riscv +0.26%、arm64 +0.9%）：省下的是死 `__cc` 与
+  `__attr` 闭包，多出的是 9 个方法与变长的调用点；换到的是**每次调用的属性求值数从固定 9
+  降到实际引用数**（多数 op 0~2 个）＋每次谓词求值少一次 9 臂字符串 match。
+  守卫 `tests/lowering_attrs_once.rs` + 三个单测（见 bench 该节）。
+  四步累计：x86 **−29.6%** / riscv **−35.6%** / arm64 **−21.4%**（对照 S0 基线）。
 - **S5c 已落地（2026-09-21）**：`[[pattern]]` 与 `[[lowering]]` **统一裁决序**——
   新增 `Pattern.priority`（与 lowering 同语义：大者先试），裁决序 = (`priority` 降,
   匹配树 Op 节点数降, `when` 叶子数降, 声明序升)，并抽成 `V12Model::pattern_order()`

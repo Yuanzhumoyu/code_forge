@@ -61,24 +61,26 @@ pub(crate) fn parse_i64_lit(text: &str) -> Result<i64, ()> {
     Ok(if neg { v.wrapping_neg() } else { v })
 }
 
-/// 结构化谓词 → Rust 布尔表达式（`__attr(name) -> Option<i64>` 求值；
-/// 未知属性 → false，与 pred.rs eval 语义一致）。
-pub(crate) fn compile_pred_guard(pred: &Pred, attr: &syn::Ident) -> TokenStream {
+/// 结构化谓词 → Rust 布尔表达式（属性**按需**取，见 [`attr_expr`]）。
+///
+/// v18 S8d：谓词引用的属性名在**生成期**就已知，所以直接展开成具体的属性助手调用，
+/// 不再经过运行时 `match name { "rd" => … }` 字符串分派。
+pub(crate) fn compile_pred_guard(pred: &Pred, model: &V12Model) -> TokenStream {
     match pred {
         Pred::And(ps) => {
-            let gs: Vec<_> = ps.iter().map(|p| compile_pred_guard(p, attr)).collect();
+            let gs: Vec<_> = ps.iter().map(|p| compile_pred_guard(p, model)).collect();
             quote! { (#(#gs)&&*) }
         }
         Pred::Or(ps) => {
-            let gs: Vec<_> = ps.iter().map(|p| compile_pred_guard(p, attr)).collect();
+            let gs: Vec<_> = ps.iter().map(|p| compile_pred_guard(p, model)).collect();
             quote! { (#(#gs)||*) }
         }
         Pred::Not(p) => {
-            let g = compile_pred_guard(p, attr);
+            let g = compile_pred_guard(p, model);
             quote! { !(#g) }
         }
         Pred::Cmp(op, name, want) => {
-            let n = syn::LitStr::new(name, proc_macro2::Span::call_site());
+            let src = attr_expr(name, model);
             let f = match op {
                 CmpOp::Eq => quote! { == },
                 CmpOp::Ne => quote! { != },
@@ -87,139 +89,198 @@ pub(crate) fn compile_pred_guard(pred: &Pred, attr: &syn::Ident) -> TokenStream 
                 CmpOp::Gt => quote! { > },
                 CmpOp::Ge => quote! { >= },
             };
-            quote! { #attr(#n).map_or(false, |__g| __g #f #want) }
+            quote! { #src.map_or(false, |__g| __g #f #want) }
         }
         Pred::In(name, vals) => {
-            let n = syn::LitStr::new(name, proc_macro2::Span::call_site());
-            quote! { #attr(#n).map_or(false, |__g| [#(#vals),*].contains(&__g)) }
+            let src = attr_expr(name, model);
+            quote! { #src.map_or(false, |__g| [#(#vals),*].contains(&__g)) }
         }
     }
 }
 
-/// lowering 谓词的运行时属性源：预计算到 Option<i64> 局部（避免闭包捕获 ctx）。
-/// `cond` = Fcmp/Icmp 条件 id（fcmp_id/icmp_id；非比较 op 恒 0）。
-/// `elem` = 结果类型 id（向量 → 元素类型 id；F32=1/F64=2/I32=3/I64=4）。
-pub(crate) fn gen_lowering_attrs(model: &V12Model) -> TokenStream {
-    // 核心属性分派臂（唯一事实源与 `pred::PRED_ATTRS` 对应）。
-    let core_arms = quote! {
-        "rd" => __a_rd,
-        "rs1_width" => __a_rs1,
-        "rs2_width" => __a_rs2,
-        "rd_vec" => __a_rd_vec,
-        "rs1_vec" => __a_rs1_vec,
-        "elem" => __a_elem,
-        "cond" => __a_cond,
-        "imm0" => __a_imm0,
-        "iconst" => __a_iconst,
-    };
-    // `[[derive]]`（v18 S3f）：派生属性 = 真(1)/假(0)，判定走**核心属性**上的谓词
-    // 表达式（解析期已确认 expr 只引用核心属性）。
-    let derive_arms: Vec<TokenStream> = model
-        .derived_preds
-        .iter()
-        .map(|(name, pred)| {
-            let guard = compile_pred_guard(pred, &format_ident!("__attr_core"));
-            let lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
-            quote! { #lit => Some(if #guard { 1 } else { 0 }), }
-        })
-        .collect();
-    // 无派生时直接就是 `__attr`——生成的代码与引入本能力之前**逐字相同**
-    //（"零行为变化"用 dump 对照证明）。有派生时才多一层 `__attr_core`。
-    let attr_decl = if derive_arms.is_empty() {
-        quote! {
-            let __attr = |name: &str| -> Option<i64> {
-                match name { #core_arms _ => None, }
-            };
+/// 单个属性在**使用点**的取值表达式（v18 S8d）。
+///
+/// - 核心属性（[`crate::v12::pred::PRED_ATTRS`]）→
+///   `__ac_get(&mut __ac, 槽, || __a_<名>(op, args, results, &*ctx))`：
+///   只有该谓词真的被求值时才算，且同一次 `lower_inst` 调用里复用（`__AC::done` 位图）；
+/// - `[[derive]]` 派生属性 → **生成期展开**成它自己的谓词表达式（解析期已保证
+///   `expr` 只引用核心属性），得到 `Some(1/0)`——同样没有运行时名字查找；
+/// - 未知属性 → `None`（恒假，与 `pred::eval` 一致；名字写错由校验器报错）。
+fn attr_expr(name: &str, model: &V12Model) -> TokenStream {
+    if let Some(slot) = crate::v12::pred::PRED_ATTRS.iter().position(|a| *a == name) {
+        let f = format_ident!("{name}");
+        let _ = slot;
+        return quote! { __ac . #f(&*ctx) };
+    }
+    match model.derived_preds.get(name) {
+        Some(pred) => {
+            let inner = compile_pred_guard(pred, model);
+            quote! { Some(if #inner { 1i64 } else { 0i64 }) }
         }
-    } else {
-        quote! {
-            let __attr_core = |name: &str| -> Option<i64> {
-                match name { #core_arms _ => None, }
-            };
-            let __attr = |name: &str| -> Option<i64> {
-                match name {
-                    #(#derive_arms)*
-                    _ => __attr_core(name),
+        None => quote! { None },
+    }
+}
+
+/// 谓词属性的运行时源（v18 S8d）：**每调用一份缓存 + 每个核心属性一个按需方法**。
+///
+/// 与旧实现的区别（旧实现把 9 个 `let __a_* = …` 与 `let __attr = |name| match name {…}`
+/// 一起发射在 `lower_inst` 里，且每次调用都先把 9 个算一遍）：
+///
+/// 1. **按需**：属性只在真的被谓词求值时才算——`when` 里用不到 `elem`/`iconst` 的 op
+///    一次都不算；
+/// 2. **无字符串分派**：谓词名在生成期已解析成具体方法调用（见 [`compile_pred_guard`]）；
+/// 3. **仍只算一次**：`done` 位图保证同一次调用内重复引用不重算；
+/// 4. `op`/`args`/`results` 借进 `__AC`（都是共享引用，**不借 `ctx`**，所以后面的
+///    `&mut ctx`（临时寄存器分配）不受影响），调用点因此能写得很短。
+pub(crate) fn gen_lowering_attrs() -> Result<TokenStream, String> {
+    let attrs = crate::v12::pred::PRED_ATTRS;
+    let n = attrs.len();
+    let mut methods = Vec::with_capacity(n);
+    for (i, name) in attrs.iter().enumerate() {
+        let m = format_ident!("{name}");
+        let slot = i as u8;
+        let body = core_attr_body(name)?;
+        methods.push(quote! {
+            /// 谓词属性（v18 S8d）：按需算，本次调用内算过就复用。
+            #[inline]
+            fn #m(&mut self, ctx: &crate::prelude::LowerCtx) -> Option<i64> {
+                let bit = 1u16 << #slot;
+                if self.done & bit == 0 {
+                    self.v[#slot as usize] = { #body };
+                    self.done |= bit;
                 }
-            };
+                self.v[#slot as usize]
+            }
+        });
+    }
+    Ok(quote! {
+        /// 谓词属性源（v18 S8d）：`done` 位图 + 取值表 + 三个上下文借用。
+        struct __AC<'__x> {
+            done: u16,
+            v: [Option<i64>; #n],
+            op: &'__x crate::prelude::Opcode,
+            args: &'__x [crate::prelude::XReg],
+            results: &'__x [crate::prelude::XReg],
         }
-    };
-    quote! {
-        let __a_rd = results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
-                (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
-            } else {
-                ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+
+        impl<'__x> __AC<'__x> {
+            #[inline]
+            fn new(
+                op: &'__x crate::prelude::Opcode,
+                args: &'__x [crate::prelude::XReg],
+                results: &'__x [crate::prelude::XReg],
+            ) -> Self {
+                Self { done: 0, v: [None; #n], op, args, results }
             }
-        });
-        let __a_rs1 = args.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
-                (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
-            } else {
-                ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
-            }
-        });
-        let __a_rs2 = args.get(1).and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
-                (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
-            } else {
-                ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
-            }
-        });
-        let __a_elem = results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-            if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
-                ctx.type_store
-                    .as_ref()
-                    .and_then(|s| s.element_type(*t))
-                    .map(elem_id_of)
-                    .unwrap_or(0)
-            } else {
-                elem_id_of(*t)
-            }
-        });
+
+            #(#methods)*
+        }
+    })
+}
+
+/// 核心属性的求值表达式（生成期按名字展开；`self.args`/`self.results`/`self.op`/`ctx`）。
+///
+/// **新增 [`crate::v12::pred::PRED_ATTRS`] 项必须同步这里**——不同步会在生成期报错
+/// （不是静默生成一个恒假的属性）。
+fn core_attr_body(name: &str) -> Result<TokenStream, String> {
+    Ok(match name {
+        "rd" => quote! {
+            self.results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+                } else {
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                }
+            })
+        },
+        "rs1_width" => quote! {
+            self.args.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+                } else {
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                }
+            })
+        },
+        "rs2_width" => quote! {
+            self.args.get(1).and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+                } else {
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                }
+            })
+        },
+        "elem" => quote! {
+            self.results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    ctx.type_store
+                        .as_ref()
+                        .and_then(|s| s.element_type(*t))
+                        .map(elem_id_of)
+                        .unwrap_or(0)
+                } else {
+                    elem_id_of(*t)
+                }
+            })
+        },
         // 向量大小标记（字节）：结果/实参是向量类型 → Some(size_bytes)，否则
         // None。Store 无结果（elem 恒 None）时据此区分向量 store 与标量
         //（WA-37 D3：≤16B Direct 向量值的 Load/Store 需全宽向量内存移动）。
-        let __a_rd_vec = results.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
-            ctx.type_store.as_ref().and_then(|s| {
-                if s.is_vector(*t) {
-                    Some(s.size_bytes(*t) as i64)
-                } else {
-                    None
-                }
+        "rd_vec" => quote! {
+            self.results.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+                ctx.type_store.as_ref().and_then(|s| {
+                    if s.is_vector(*t) {
+                        Some(s.size_bytes(*t) as i64)
+                    } else {
+                        None
+                    }
+                })
             })
-        });
-        let __a_rs1_vec = args.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
-            ctx.type_store.as_ref().and_then(|s| {
-                if s.is_vector(*t) {
-                    Some(s.size_bytes(*t) as i64)
-                } else {
-                    None
-                }
+        },
+        "rs1_vec" => quote! {
+            self.args.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+                ctx.type_store.as_ref().and_then(|s| {
+                    if s.is_vector(*t) {
+                        Some(s.size_bytes(*t) as i64)
+                    } else {
+                        None
+                    }
+                })
             })
-        });
+        },
         // 比较条件走 immediate 通道（v3 S1）：宿主 lowering 把
         // `Immediate::IntCC`/`FloatCC` 折成 `IntCC::code()`/`FloatCC::code()`
         // （规范条件码 1..=10 / 1..=16，与 TOML 的 `cond` 谓词同一份映射），
         // 因此这里直接读 `current_immediates[0]` ——不再需要每 ISA 生成
         // `icmp_id`/`fcmp_id` 两张重复的数字映射表。
-        let __a_cond = match op {
-            crate::prelude::Opcode::Icmp | crate::prelude::Opcode::Fcmp => {
-                ctx.current_immediates.first().copied().map(|v| v as i64)
+        "cond" => quote! {
+            match self.op {
+                crate::prelude::Opcode::Icmp | crate::prelude::Opcode::Fcmp => {
+                    ctx.current_immediates.first().copied().map(|v| v as i64)
+                }
+                _ => None,
             }
-            _ => None,
-        };
-        let __a_imm0 = ctx.current_immediates.first().copied().map(|v| v as i64);
+        },
+        "imm0" => quote! {
+            ctx.current_immediates.first().copied().map(|v| v as i64)
+        },
         // `iconst` = 当前指令常量池解析出的**真值**（signed i64）。
         // 与 `imm0` 的区别：Iconst 的 immediate 是 `Immediate::Const(cid)`
         // （builder 统一 `insert_int` 入池），imm0 只是池索引（正数）——
         // 判断符号/大小必须用池解析值。Constant 引用恒以 cid 指向池条目。
-        let __a_iconst = ctx.constant_pool.as_ref().and_then(|p| {
-            p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index))
-        });
-        // 核心属性表（派生为空时它就是 `__attr`；见函数头的 `attr_decl`）。
-        #attr_decl
-    }
+        "iconst" => quote! {
+            ctx.constant_pool.as_ref().and_then(|p| {
+                p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index))
+            })
+        },
+        other => {
+            return Err(format!(
+                "v18 S8d：核心谓词属性 `{other}` 没有对应的求值表达式——\
+                 `pred::PRED_ATTRS` 新增项时必须同步 codegen/integration.rs::core_attr_body"
+            ));
+        }
+    })
 }
 
 /// 指令存在性（按 name 精确匹配，**与操作数无关**——RET/NOP 等无操作数

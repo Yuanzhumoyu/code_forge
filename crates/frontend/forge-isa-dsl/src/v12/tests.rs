@@ -1122,7 +1122,8 @@ fn cond_pure_asm_alias_has_no_ir_mapping() {
 
 // ───────────────── S3f：[[derive]] 派生谓词属性 ─────────────────
 
-/// 派生属性可用于 `when`，并在生成的 `__attr` 里得到自己的臂（判定走核心属性表）。
+/// 派生属性可用于 `when`：**生成期展开**成它自己的谓词表达式（求值走核心属性助手），
+/// 不再经过运行时 `__attr(name)` 名字查找（v18 S8d）。
 #[test]
 fn derive_attr_is_usable_in_when() {
     let doc = lowering_doc(
@@ -1140,21 +1141,61 @@ fn derive_attr_is_usable_in_when() {
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
-    assert!(s.contains("\"is_64\"=>"), "生成的 __attr 应有派生臂：{s}");
-    assert!(s.contains("__attr_core("), "派生判定应走核心属性表：{s}");
-    assert!(s.contains("\"rs1_width\""), "派生表达式引用核心属性：{s}");
+    // 派生名展开成 `Some(if <核心属性谓词> {1} else {0})`，核心属性经 `__ac_get` 按需取。
+    assert!(s.contains("Some(if"), "派生属性应在使用点展开：{s}");
+    assert!(
+        s.contains("__ac.rs1_width(&*ctx)"),
+        "派生表达式应引用核心属性助手（rs1_width → 槽 1）：{s}"
+    );
+    assert!(!s.contains("__attr"), "不应再有运行时名字分派：{s}");
 }
 
-/// 没有派生时生成的属性表与引入本能力之前**逐字相同**（不新增 `__attr_core` 层）。
+/// 核心属性谓词直接展开成属性助手调用（无 `__attr(name)` 字符串分派，v18 S8d）。
 #[test]
-fn derive_absent_keeps_attr_table_unchanged() {
+fn core_attr_guard_uses_helper_directly() {
     let doc = lowering_doc(
         "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_width\", 64] }\ninsts = [\"MOV {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("合法");
+    let raw = super::codegen::generate(&m).unwrap().to_string();
+    assert!(!raw.contains("__attr"), "不应再有 `__attr`：{raw}");
+    assert!(
+        !raw.contains("__attr_core"),
+        "不应再有 `__attr_core`：{raw}"
+    );
+    let s: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        s.contains("__ac.rs1_width(&*ctx)"),
+        "谓词应直接取属性方法：{s}"
+    );
+    // 9 个核心属性各有一个助手（按需调用；`__ac_get` 保证每次调用每属性最多算一次）。
+    for a in crate::v12::pred::PRED_ATTRS {
+        assert!(
+            s.contains(&format!("fn{a}(&mutself,ctx:")),
+            "缺属性助手 `__a_{a}`：{s}"
+        );
+    }
+    assert!(
+        s.contains("struct__AC<'__x>{done:u16"),
+        "缺少按需缓存表：{s}"
+    );
+}
+
+/// 不用 `{cc}` 的规则不发射 `let __cc: u8 = 0;`（死代码，v18 S8d 修）。
+#[test]
+fn cc_binding_only_emitted_when_used() {
+    let plain = lowering_doc("[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]");
+    let m = parse_and_validate(&plain).expect("合法");
     let s = super::codegen::generate(&m).unwrap().to_string();
-    assert!(!s.contains("__attr_core"), "无派生时不应多一层：{s}");
-    assert!(s.contains("__attr"), "{s}");
+    assert!(
+        !s.contains("__cc"),
+        "不用 `{{cc}}` 的降低规则不该出现 `__cc`（连 `let __cc: u8 = 0;` 也是死代码）：{s}"
+    );
+
+    let with_cc = gen_cond_doc(CC_ALL_SHORT, cc_rule());
+    let m = parse_and_validate(&with_cc).expect("带 {cc} 的规则合法");
+    let s = super::codegen::generate(&m).unwrap().to_string();
+    assert!(s.contains("__cc"), "用 `{{cc}}` 时必须发射条件绑定：{s}");
 }
 
 /// 派生名可以出现在 `vary` 里：自动追加 `eq = [名, 值]` 到 `when`（与核心属性一致）。

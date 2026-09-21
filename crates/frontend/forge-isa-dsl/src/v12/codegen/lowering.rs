@@ -50,12 +50,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     let name_to_vn = ref_to_infos;
 
     let mut arms: Vec<TokenStream> = Vec::new();
-    // 谓词属性绑定（`__a_*` + `__attr` 闭包，约 2.5 KB）**与 op 无关**，只与
-    // `args`/`results`/`ctx` 有关 ⇒ 发射一次、放在 `match op` 之前（v18 S8b-1）。
-    // 历史实现把它塞进每个 op 臂（x86 100 份相同文本 = 243 KB 生成物的纯重复）。
-    // 求值时机不变：整个 `lower_inst` 调用仍只算一次，值也仍是 `Option<i64>`
-    // 局部（闭包只捕获这些值，不捕获 `ctx`，因此不挡后面的 `&mut ctx`）。
-    let lowering_attrs = gen_lowering_attrs(model);
+    // 谓词属性源（v18 S8b-1 / S8d）：`__AC` 缓存 + 每属性一个助手，**与 op 无关**，
+    // 只发射一次、放在 `match op` 之前。历史实现把它塞进每个 op 臂（x86 100 份
+    // 相同文本 = 243 KB 生成物的纯重复）；S8d 起属性**按需**算（旧实现每次
+    // `lower_inst` 都把 9 个属性全算一遍），且谓词名在生成期就解析成具体助手调用
+    // （不再有 `match name { "rd" => … }` 字符串分派）。
+    let lowering_attrs = gen_lowering_attrs()?;
     // Call/CallIndirect：专用 lowering（参数→ABI 寄存器、函数符号 reloc、
     // 返回值移动）——动态参数数/类型分派无法用静态模板表达；无 TOML 规则。
     arms.push(gen_call_lowering("Call", infos, model)?);
@@ -105,7 +105,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             } else {
                 quote! { ctx.current_clobbers = vec![#(#clobbers),*]; }
             };
-            // `{cc}` 占位符：__cc = 当前 IR 条件 → 本 ISA 编码（其他规则不发射绑定）。
+            // `{cc}` 占位符：__cc = 当前 IR 条件 → 本 ISA 编码。**只有真的用 `{cc}`
+            // 的规则才发射绑定**（`{cc}` 在 `placeholder.rs` 里唯一映射到 `__cc`，
+            // 见那里的 `ctor: |_| quote!{ __cc }`）——不用 `{cc}` 的规则连
+            // `let __cc: u8 = 0;` 都不该有，那是永远读不到的代码。
             // 条件已归一到 immediate 通道（v3 S1）：宿主把 `Immediate::IntCC`
             // 折成 `IntCC::code()`（1..=10）放进 `current_immediates[0]`；这里用
             // **宿主函数**把它折成 IR 条件的规范名（`"eq"`…`"uge"`），再查 ISA 的
@@ -133,7 +136,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                     };
                 }
             } else {
-                quote! { let __cc: u8 = 0; }
+                // 不用 `{cc}` ⇒ 没有任何 token 引用 `__cc` ⇒ 不发射（此前的
+                // `let __cc: u8 = 0;` 是死代码，x86 上约占 900 处）。
+                quote! {}
             };
             let body = quote! {
                 #cc_bind
@@ -147,7 +152,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 Some(v) => {
                     let pred = pred::parse(v)
                         .map_err(|e| format!("[[lowering.{}]] when: {e}", rule.op.name()))?;
-                    let guard = compile_pred_guard(&pred, &format_ident!("__attr"));
+                    let guard = compile_pred_guard(&pred, model);
                     chain = quote! { if #guard { #body } else { #chain } };
                 }
                 None => {
@@ -732,6 +737,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
 
         #(#pattern_statics)*
 
+        #lowering_attrs
+
         pub struct Lowering;
 
         impl crate::machine::lowering::TargetLowering for Lowering {
@@ -747,7 +754,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 let rd = results.first().copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
                 let rd2 = results.get(1).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
                 #op_binds
-                #lowering_attrs
+                // 谓词属性源（S8d）：整个 `lower_inst` 调用共用一份；
+                // 被谓词引用到的属性才会被算（每次调用每属性最多算一次）。
+                let mut __ac = __AC::new(op, args, results);
                 match op { #(#arms,)* _ => Err(crate::prelude::IrError::Unsupported("v12 lowering".into())) }
             }
 

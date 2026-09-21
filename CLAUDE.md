@@ -355,11 +355,18 @@ let name = node.get_text("name")?;
   守卫 = `crates/frontend/forge-isa-dsl/tests/machine_shape_table.rs`（钉"8 个方法体零
   `Inst::` 臂" + "形状表与两个访问器覆盖同一批变体、行数 = 变体数"）；实测数字见
   `docs/performance/bench_baseline.md` 的「S8a 落地度量」（`tm` −12~26%，整模块 −7.5~12.9%）。
-- **谓词属性块只发射一次（v18 S8b-1）**：`gen_lowering_attrs` 的 `__a_*` + `__attr`
-  共 ~2.5 KB **与 op 无关**，只能放在 `lower_inst` 的 `match op` **之前**发射一次；
-  跟着 op 臂走 = 每个 op 重复一份（x86 曾 100 份 = 243 KB 生成物，`tm` 770→512 KB）。
+- **谓词属性：按需 + 无名字分派（v18 S8b-1 / S8d）**：`gen_lowering_attrs` 生成的属性源
+  在生成物里**只发射一次**（放在 `lower_inst` 的 `match op` 之前；跟着 op 臂走 = 每个
+  op 重复一份 2.5 KB，x86 曾 100 份 = 243 KB），并且是
+  `__AC<'x>`（`done` 位图 + `v: [Option<i64>; 9]` + `op`/`args`/`results` 共享借用）
+  加每个核心属性一个 `#[inline] fn <名>(&mut self, ctx: &LowerCtx) -> Option<i64>`
+  （**没算过才算**，因此"每次 `lower_inst` 每属性最多算一次"仍然成立，但**不需要的属性
+  一次都不算**——旧实现每次都把 9 个全算一遍）。谓词名在**生成期**解析成
+  `__ac . <属性> (&*ctx)`（见 `compile_pred_guard`/`attr_expr`），**不得**再引入
+  `__attr(name)` 之类的运行时字符串分派；`[[derive]]` 派生属性也在生成期展开。
+  另外：不用 `{cc}` 的降低规则**不发射** `let __cc: u8 = 0;`（死代码，S8d 修）。
   守卫 = `crates/frontend/forge-isa-dsl/tests/lowering_attrs_once.rs`。剩余的大头是
-  每条规则各自的发射序列（x86 C 段 334 KB），表化需通用解释器，未做。
+  每条规则各自的发射序列（x86 C 段 334 KB），表化需通用解释器，度量后判定不做。
 - **生成物短名折叠（v18 S8c）**：生成器最后一道 token 后处理
   （`forge-isa-dsl/src/lib.rs::fold_short_forms`，跑在 `rewrite_path_roots` **之前**）
   把三种长形折成短名：`Reg::from_index(…)` / `<Reg as forge_ir::PhysReg>::from_index(…)`
