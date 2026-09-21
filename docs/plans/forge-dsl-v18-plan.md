@@ -829,24 +829,40 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
    - `FprMovF64`/`FprMovF32` → **`FprMov`**（TOML `fpr_mov`）；
    - `WideVecLoad32`/`WideVecLoad64` → **`WideVecLoad`**（TOML `wide_vec_load`）；
    - `WideVecStore32`/`WideVecStore64` → **`WideVecStore`**（TOML `wide_vec_store`）。
-2. **同角色可以有多条指令，靠"宽度"区分**：宽度取自**指令自己声明的槽**（已有的数据，
-   不新增 TOML 键）：
-   - `fpr_mov`：取该指令**FPR 槽的位宽**（`[reg.*]` 的位宽；x86 `MOVSS` 32、`MOVSD` 64）；
-   - `wide_vec_load`/`wide_vec_store`：取该指令**向量槽的字节宽**（`VEC(32)`/`VEC(64)`，
-     即现有的 `rd_vec`/`rs1_vec` 语义来源）。
-3. **解析 API 拆两支**（`v12/model.rs`）：
+2. **同角色可以有多条指令，靠"声明的宽度"区分**（宽度是**数据**，不是名字的一部分）。
+   ⚠️ **设计修正（写实现前核对真实谱发现）**：最初打算"宽度取自指令自己的槽"，但
+   `isa/x86_v12.toml` 里 `MOVSS` 与 `MOVSD_XMM_FREG` **用的是同一个 `fpr` 槽**
+   （`ops = ["dst:fpr:out", "src:fpr"]`，`fpr` 是多宽度槽），槽里没有 32/64 的区分；
+   `opsize` 也只出现在它们的内存 form（`MRR_MEM_0F_FIX32`）上。也就是说
+   **x86 自己就是靠"哪个指令"来区分宽度的**，槽派生宽度不成立。
+   因此宽度改为**在角色声明处显式写出**，但仍是**同一个机制**（`roles` 列表），
+   条目允许两种写法：
+
+   ```toml
+   roles = ["gpr_mov"]                      # 无宽度语义的角色（唯一即可）
+   roles = [{ role = "fpr_mov", bits = 32 }] # 有宽度语义的角色：位宽写出来
+   roles = [{ role = "fpr_mov", bits = 64 }]
+   ```
+
+   单位统一用**位**（与 `opsize`/`[encoding].bits` 一致，避免再次出现"字节 vs 位"的
+   歧义——v14 `"r8"` 就是这么错过的）：`fpr_mov` 32/64、`wide_vec_load`/`wide_vec_store`
+   256/512。serde 用 `#[serde(untagged)] enum RoleDecl { Plain(Role), Sized { role, bits } }`，
+   `Instruction.roles: Vec<RoleDecl>`，并给现有 `.contains(&role)` 调用点一个
+   `RoleDecl::is(role)`（无宽度角色照旧命中；有宽度的角色必须显式给宽度）。
+3. **解析 API 拆两支**（`v12/codegen/lowering.rs`）：
    - `role_name(role)`：**唯一**角色（`Call`/`Ret`/`Jump`/`…`）——多条声明报错（保持现状语义）；
-   - `role_name_for(role, width)`：**按宽度解析**的角色——在所有声明该角色的指令里选
-     "槽宽度 == 请求宽度"的那一条；没有匹配 ⇒ 明确的 `Unsupported`（消息带请求宽度与
+   - `role_name_for(role, bits)`：**按宽度解析**的角色——在所有声明该角色的指令里选
+     "声明宽度 == 请求宽度"的那一条；没有匹配 ⇒ 明确的 `Unsupported`（消息带请求宽度与
      已声明的宽度集合，不猜、不回退）。
-4. **校验放宽**：`validate.rs:1069` 的 `role_owner: BTreeMap<Role, &str>`（"每角色唯一"）
-   改成 `BTreeMap<(Role, u16), &str>`：**同角色同宽度重复 ⇒ 报错**（点出两条指令名与宽度），
-   同角色不同宽度 ⇒ 合法。无宽度概念的角色统一记宽度 0，等于保持"唯一"。
+4. **校验收紧为按 (角色, 宽度)**：`validate.rs:1069` 的 `role_owner: BTreeMap<Role, &str>`
+   改成 `BTreeMap<(Role, Option<u16>), &str>`：**同角色同宽度（含两个都不写宽度）⇒ 报错**
+   并点出两条指令名；同角色不同宽度 ⇒ 合法；同一角色一处写宽度、一处不写 ⇒ 报错（歧义）。
 5. **生成器改动**：三处 `role_name(Role::FprMovF64/F32)` → `role_name_for(Role::FprMov, 64/32)`；
-   `frame.rs:910` 的成对表 → `for role in [WideVecLoad, WideVecStore] { for w in [32u16, 64] }`；
-   `lowering.rs:2178-2181` 的表键去掉后缀。
-6. **TOML 迁移（仅 x86 三处 6 条）**：`roles = ["fpr_mov_f64"]` → `["fpr_mov"]` …；
-   语义不变（宽度仍由同一条指令的槽决定），所以**黄金字节必须逐字节不变**。
+   `frame.rs:910` 的成对表 → 两角色 × 两宽度（256/512 位）；`lowering.rs:2178-2181` 的表键
+   去掉后缀（键由"角色 + 宽度"拼出，保持宿主侧字符串不变）。
+6. **TOML 迁移（仅 x86 六条）**：`roles = ["fpr_mov_f64"]` → `roles = [{ role = "fpr_mov",
+   bits = 64 }]`，`["wide_vec_load_32"]` → `[{ role = "wide_vec_load", bits = 256 }]` 等；
+   解析结果必须与现在**完全一致**（同一条指令仍选中同一个名字），因此**黄金字节逐字节不变**。
 7. **证据/门禁**：
    - 黄金字节 + 三架构 JIT 矩阵 + 全部生成期自测不变（等价性主证据）；
    - **新增非 32/64 位宽夹具**：在 `crates/backend/forge-codegen/tests/isa/` 里加一个
