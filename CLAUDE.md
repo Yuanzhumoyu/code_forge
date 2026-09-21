@@ -355,6 +355,11 @@ let name = node.get_text("name")?;
   守卫 = `crates/frontend/forge-isa-dsl/tests/machine_shape_table.rs`（钉"8 个方法体零
   `Inst::` 臂" + "形状表与两个访问器覆盖同一批变体、行数 = 变体数"）；实测数字见
   `docs/performance/bench_baseline.md` 的「S8a 落地度量」（`tm` −12~26%，整模块 −7.5~12.9%）。
+- **谓词属性块只发射一次（v18 S8b-1）**：`gen_lowering_attrs` 的 `__a_*` + `__attr`
+  共 ~2.5 KB **与 op 无关**，只能放在 `lower_inst` 的 `match op` **之前**发射一次；
+  跟着 op 臂走 = 每个 op 重复一份（x86 曾 100 份 = 243 KB 生成物，`tm` 770→512 KB）。
+  守卫 = `crates/frontend/forge-isa-dsl/tests/lowering_attrs_once.rs`。剩余的大头是
+  每条规则各自的发射序列（x86 C 段 334 KB），表化需通用解释器，未做。
 - **宽度元数据（去「宽度写死」）**：寄存器类/宽度/栈槽/栈参数布局/指令字宽一律由
   TOML 派生（`[meta]`：`default_gpr_width`/`default_fpr_width`/`addr_width`/
   `value_gpr_width`/`value_fpr_width`/`vector_tiers`；`[encoding]`：**宽度三态**

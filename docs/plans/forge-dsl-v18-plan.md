@@ -427,7 +427,7 @@ x86 EVEX 寄存器直寻址丢失 rm bit4（ZMM16-31）。
 | **S5** 降低语言升级 ✅ 已落地（范围按实测收窄） | `[[lowering]].op` 名单 + pattern/lowering 统一裁决序与死规则检测 | `op = [\"Copy\", \"Uextend\", …]`（一条规则服务多个同类 op，解析期展开）；`V12Model::pattern_order()` 供 codegen 与校验器共读；死模式检测 | x86 lowering **声明** 220 → **197（−10.5%）**、riscv 110 → 106；逐 op 判定函数**逐格等价** + 黄金值/JIT 矩阵不变 | 已交付（原目标的 emit 表与 `[[sequences]]` 经实测 ≤5% / 0 收益 → 不做，见下 S5 进度） |
 | **S6** 生成自测 ✅ 已落地 | 生成 `__spec_tests`（`cfg(test)`） | 每指令 encode↔decode↔encode、disassemble↔assemble↔encode、立即数边界（min/max/min−1/max+1）、全宽度视图 | 覆盖 x86 197 / riscv64 116 / arm64 104（100%，零跳过）；命中 2 处真缺陷并修掉（riscv W 移位量静默掩码、x86 EVEX rm 第 5 位） | 每条新指令自动进回归网 |
 | **S7** 工具链与文档 | 拆 crate + CLI + 文档 | `forge-isa-dsl`（普通 lib）+ `forge-dsl`（薄 proc-macro）；`forge-isa` CLI：`validate`/`explain`/`schema`/`fmt`/`diff`/`insts`；JSON Schema + `#:schema`；文档重写 | schema ↔ 文档 ↔ JSON Schema 三方针守卫；CLI 集成测试；`isa_from_file!` 新参数用例 | UX 与可维护性长期收益 |
-| **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | **S8a ✅ 已落地**：`impl MachineInst for Inst` 的 8 个逐指令方法 → 每变体一行的 `__SHAPES` 形状表 + 3 个通用访问器（实测 `tm` −12.2% / −12.6% / −26.5%，整模块 −7.5% / −8.7% / −12.9%）；S8b（`TargetLowering` 臂表化）待定 | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
+| **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | **S8a ✅ 已落地**：`MachineInst` 8 个逐指令方法 → `__SHAPES` 形状表 + 3 个访问器；**S8b-1 ✅ 已落地**：谓词属性样板从每个 op 臂移出、`match op` 前发射一次（x86 `tm` 再 −33.6%）。累计 vs S0 基线：x86 −25.5% / riscv −28.6% / arm64 −17.5%；S8b-2（发射序列表化，需解释器）待定 | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
 
 **建议顺序**：S0 → S1 → S2 → S3 → S4 → S6（以上均已落地）→ S7 → S5 →（S8）。
 S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动，越早定下来，S6 生成的
@@ -710,6 +710,29 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   **−12.2% 落在 `tm` 上，不是整模块**（整模块 −7.5%）。要够到 S8 行的原验收
   （token −≥40% / `cargo check` −≥20%）只剩 S8b（`TargetLowering` 臂表化，x86 上限 ~33%
   的生成物），风险高，仍按"以度量决定"待拍板。
+- **S8b 立项度量 + S8b-1 已落地（2026-09-21）**：先按"以度量决定"把
+  `impl TargetLowering for Lowering` 按 op 臂切开量了三段（数字见
+  [`docs/performance/bench_baseline.md`](../performance/bench_baseline.md) 的「S8b 立项度量」）：
+  **A 谓词属性样板 43–56%、C 发射序列 32–55%、B `when` 分派 <1%**。关键发现：
+  A 段**与 op 无关**——x86 的 100 个 op 臂里是**同一段 2,433 B 文本**逐字节重复
+  （riscv 61 份、arm64 8 份），因为 `gen_lowering_attrs(model)` 本来就只算一次，
+  只是被注入到每个臂里（源码侧 `arms.push` 的 `#lowering_attrs`）。
+
+  **S8b-1 = 把该块提到 `match op` 之前发射一次**（属性求值时机与次数不变；值仍是
+  `Option<i64>` 局部，闭包不捕获 `ctx`，不挡 emit 里的 `&mut ctx`）：
+
+  | ISA | `tm` | 全部件 | +`spec_tests` |
+  | --- | --- | --- | --- |
+  | x86 | 770,348 → **511,774（−33.6%）** | 1,326,559 → **1,067,985（−19.5%）** | 1,744,326 → **1,485,752（−14.8%）** |
+  | riscv64 | 479,381 → **322,753（−32.7%）** | 720,133 → **563,505（−21.7%）** | 1,005,502 → **848,874（−15.6%）** |
+  | arm64 | 141,262 → **123,176（−12.8%）** | 344,283 → **326,197（−5.3%）** | 623,326 → **605,240（−2.9%）** |
+
+  累计对照 S0 立项基线：x86 1,434,080 → 1,067,985（**−25.5%**）、riscv 789,070 → 563,505
+  （**−28.6%**）、arm64 395,225 → 326,197（**−17.5%**）。该块出现次数 100/61/8 → **1**，
+  守卫 `crates/frontend/forge-isa-dsl/tests/lowering_attrs_once.rs` 钉住这条不变量。
+  **仍未做（待拍板）**：S8b-2——x86 的 C 段 334 KB（944 条发射臂）是真正的每条规则数据，
+  表化需要通用解释器（构造 Inst + 字段绑定 + clobber 数据化 + 宿主循环），收益上限 ~250 KB
+  但风险高；另有 ~60–100 KB 的机械 token-golf（占位构造短别名、路径别名），零语义风险、锦上添花。
 - **S5c 已落地（2026-09-21）**：`[[pattern]]` 与 `[[lowering]]` **统一裁决序**——
   新增 `Pattern.priority`（与 lowering 同语义：大者先试），裁决序 = (`priority` 降,
   匹配树 Op 节点数降, `when` 叶子数降, 声明序升)，并抽成 `V12Model::pattern_order()`

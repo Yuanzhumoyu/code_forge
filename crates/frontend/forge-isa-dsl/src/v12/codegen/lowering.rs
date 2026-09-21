@@ -50,6 +50,11 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     let name_to_vn = ref_to_infos;
 
     let mut arms: Vec<TokenStream> = Vec::new();
+    // 谓词属性绑定（`__a_*` + `__attr` 闭包，约 2.5 KB）**与 op 无关**，只与
+    // `args`/`results`/`ctx` 有关 ⇒ 发射一次、放在 `match op` 之前（v18 S8b-1）。
+    // 历史实现把它塞进每个 op 臂（x86 100 份相同文本 = 243 KB 生成物的纯重复）。
+    // 求值时机不变：整个 `lower_inst` 调用仍只算一次，值也仍是 `Option<i64>`
+    // 局部（闭包只捕获这些值，不捕获 `ctx`，因此不挡后面的 `&mut ctx`）。
     let lowering_attrs = gen_lowering_attrs(model);
     // Call/CallIndirect：专用 lowering（参数→ABI 寄存器、函数符号 reloc、
     // 返回值移动）——动态参数数/类型分派无法用静态模板表达；无 TOML 规则。
@@ -152,7 +157,6 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         }
         arms.push(quote! {
             crate::prelude::Opcode::#op_ident { .. } => {
-                #lowering_attrs
                 let mut __pack = crate::prelude::InstPacket::new();
                 #chain
             }
@@ -743,6 +747,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 let rd = results.first().copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
                 let rd2 = results.get(1).copied().unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
                 #op_binds
+                #lowering_attrs
                 match op { #(#arms,)* _ => Err(crate::prelude::IrError::Unsupported("v12 lowering".into())) }
             }
 
