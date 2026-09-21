@@ -428,8 +428,9 @@ x86 EVEX 寄存器直寻址丢失 rm bit4（ZMM16-31）。
 | **S6** 生成自测 ✅ 已落地 | 生成 `__spec_tests`（`cfg(test)`） | 每指令 encode↔decode↔encode、disassemble↔assemble↔encode、立即数边界（min/max/min−1/max+1）、全宽度视图 | 覆盖 x86 197 / riscv64 116 / arm64 104（100%，零跳过）；命中 2 处真缺陷并修掉（riscv W 移位量静默掩码、x86 EVEX rm 第 5 位） | 每条新指令自动进回归网 |
 | **S7** 工具链与文档 | 拆 crate + CLI + 文档 | `forge-isa-dsl`（普通 lib）+ `forge-dsl`（薄 proc-macro）；`forge-isa` CLI：`validate`/`explain`/`schema`/`fmt`/`diff`/`insts`；JSON Schema + `#:schema`；文档重写 | schema ↔ 文档 ↔ JSON Schema 三方针守卫；CLI 集成测试；`isa_from_file!` 新参数用例 | UX 与可维护性长期收益 |
 | **S8** 生成物减薄（可选） | 静态逻辑下沉 `forge-codegen::runtime`，生成物只留表 + 分派 | **S8a ✅ / S8b-1 ✅ / S8c ✅ / S8d ✅；S8b-2 经度量判定不做，S8 收尾**。累计 vs S0 基线：x86 −29.6% / riscv −35.6% / arm64 −21.4%（`+spec_tests` 侧 −22~33%）。原验收（token −≥40% / `cargo check` −≥20%）**未达到**，如实记录；S8d 另修掉"谓词属性全量预计算 + 运行时名字分派"两处浪费与 285 处死 `__cc` 绑定 | 以 S0 基线对比；黄金值与矩阵不变 | 按度量决定 |
+| **S9** 角色去宽度化 | `Role` 去掉把位宽编进名字的变体（`fpr_mov_f32`/`fpr_mov_f64`、`wide_vec_load_32`/`_64`、`wide_vec_store_32`/`_64`）→ `fpr_mov`/`wide_vec_load`/`wide_vec_store` + **按宽度解析** | 角色解析拆成 `role_name(role)`（唯一角色）与 `role_name_for(role, 宽度)`（同角色多指令时按指令自己的**槽宽度**选）；校验从"每角色唯一"放宽为"每 (角色, 宽度) 唯一"；x86 三处 TOML 迁移 | 黄金字节（MOVSS/MOVSD 解析结果不变）+ 三架构 JIT 矩阵不变；新增"16 位 FPR 夹具"证明非 32/64 位宽可接入；新增"同角色同宽度重复 ⇒ 编译期报错"负向用例 | 打开任意位宽的 ISA（当前 32/64 是硬编码的） |
 
-**建议顺序**：S0 → S1 → S2 → S3 → S4 → S6（以上均已落地）→ S7 → S5 →（S8）。
+**建议顺序**：S0 → S1 → S2 → S3 → S4 → S6（以上均已落地）→ S7 → S5 →（S8）→（S9）。
 S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动，越早定下来，S6 生成的
 `__spec_tests` 与 S7 的 JSON Schema 才不用二次改写。S6 提前到 S7 之前：自测是
 **回归网**，先有网再拆 crate/重写文档，后续每一步都有人接着。
@@ -802,6 +803,63 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
   降到实际引用数**（多数 op 0~2 个）＋每次谓词求值少一次 9 臂字符串 match。
   守卫 `tests/lowering_attrs_once.rs` + 三个单测（见 bench 该节）。
   四步累计：x86 **−29.6%** / riscv **−35.6%** / arm64 **−21.4%**（对照 S0 基线）。
+
+## 7.1 S9 设计：角色去宽度化（`Role` 不再把位宽编进名字）
+
+**问题（用户 review）**：`Role` 里 `FprMovF32`/`FprMovF64`、`WideVecLoad32`/`_64`、
+`WideVecStore32`/`_64` 把**具体位宽写死在角色名里**，等于把 x86 的 32/64 位、32/64 字节
+当成了 ISA 通用事实——别的位宽（16 位 FPR、128 字节向量）根本没有对应的角色可用，
+只能改 DSL 源码才能接入。这与 v18「宽度一律由数据派生、任意位宽无白名单」的原则相悖
+（S4 已经把**指令字宽**的数据化做完了，角色这一层漏了）。
+
+**现状盘点**（实现时的改动面）：
+
+| 角色 | 消费点 | x86 TOML 声明 |
+| --- | --- | --- |
+| `FprMovF64` / `FprMovF32` | `lowering.rs:259-260`、`lowering.rs:1234-1235`、`frame.rs:838-839` | `MOVSD`（fpr_mov_f64）、`MOVSS`（fpr_mov_f32） |
+| `WideVecLoad32` / `_64` | `frame.rs:910` 的 `[(Role::WideVecLoad32, 32u16), (Role::WideVecLoad64, 64u16)]`、`lowering.rs:2178-2181` 的角色串表 | `wide_vec_load_32/_64`（VMOVUPS_256_* / VMOVUPS_512_*） |
+| `WideVecStore32` / `_64` | 同上 | `wide_vec_store_32/_64` |
+
+注意 `frame.rs:910` 本来就是 `(role, width)` 的**成对表**——宽度已经是运行期参数，
+只是被迫写成了两个角色；这正是"该按宽度解析"的直接证据。
+
+**新设计**：
+
+1. **角色变少、宽度成为参数**：
+   - `FprMovF64`/`FprMovF32` → **`FprMov`**（TOML `fpr_mov`）；
+   - `WideVecLoad32`/`WideVecLoad64` → **`WideVecLoad`**（TOML `wide_vec_load`）；
+   - `WideVecStore32`/`WideVecStore64` → **`WideVecStore`**（TOML `wide_vec_store`）。
+2. **同角色可以有多条指令，靠"宽度"区分**：宽度取自**指令自己声明的槽**（已有的数据，
+   不新增 TOML 键）：
+   - `fpr_mov`：取该指令**FPR 槽的位宽**（`[reg.*]` 的位宽；x86 `MOVSS` 32、`MOVSD` 64）；
+   - `wide_vec_load`/`wide_vec_store`：取该指令**向量槽的字节宽**（`VEC(32)`/`VEC(64)`，
+     即现有的 `rd_vec`/`rs1_vec` 语义来源）。
+3. **解析 API 拆两支**（`v12/model.rs`）：
+   - `role_name(role)`：**唯一**角色（`Call`/`Ret`/`Jump`/`…`）——多条声明报错（保持现状语义）；
+   - `role_name_for(role, width)`：**按宽度解析**的角色——在所有声明该角色的指令里选
+     "槽宽度 == 请求宽度"的那一条；没有匹配 ⇒ 明确的 `Unsupported`（消息带请求宽度与
+     已声明的宽度集合，不猜、不回退）。
+4. **校验放宽**：`validate.rs:1069` 的 `role_owner: BTreeMap<Role, &str>`（"每角色唯一"）
+   改成 `BTreeMap<(Role, u16), &str>`：**同角色同宽度重复 ⇒ 报错**（点出两条指令名与宽度），
+   同角色不同宽度 ⇒ 合法。无宽度概念的角色统一记宽度 0，等于保持"唯一"。
+5. **生成器改动**：三处 `role_name(Role::FprMovF64/F32)` → `role_name_for(Role::FprMov, 64/32)`；
+   `frame.rs:910` 的成对表 → `for role in [WideVecLoad, WideVecStore] { for w in [32u16, 64] }`；
+   `lowering.rs:2178-2181` 的表键去掉后缀。
+6. **TOML 迁移（仅 x86 三处 6 条）**：`roles = ["fpr_mov_f64"]` → `["fpr_mov"]` …；
+   语义不变（宽度仍由同一条指令的槽决定），所以**黄金字节必须逐字节不变**。
+7. **证据/门禁**：
+   - 黄金字节 + 三架构 JIT 矩阵 + 全部生成期自测不变（等价性主证据）；
+   - **新增非 32/64 位宽夹具**：在 `crates/backend/forge-codegen/tests/isa/` 里加一个
+     `fpr_mov` 声明在 **16 位 FPR**（`FPR(2)`）槽上的夹具（或扩 `demo8_v12`），
+     配一条单测断言 `role_name_for(FprMov, 16)` 能选到它——这才叫"任意位宽可接入"；
+   - **负向用例**：同一角色 + 同一宽度声明两次 ⇒ 编译期报错并点出两条指令名；
+   - 守卫：`generality_guard`（扫 `src/**` 里的位宽字面量）白名单同步收窄，
+     确保没有新的 `32`/`64` 硬编码混进角色解析路径。
+8. **文档**：`docs/reference/isa-dsl.md` 的角色表（`roles = [...]` 键 + 每角色语义）与
+   §"宽度元数据"同步；`docs/archive/isa-dsl-v12-v17.md` 的删除/改名总表加一行
+   （`fpr_mov_f32` → `fpr_mov` 等），CHANGELOG 记一条 breaking（TOML 侧改 6 行）。
+9. **不做的事**：不给角色加"宽度表达式"（如 `fpr_mov[T]`）——那是第二个机制；
+   也不把宽度塞进 `[abi]` 新表，因为**指令自己的槽已经携带了宽度**，再声明一遍就是双份事实。
 - **S5c 已落地（2026-09-21）**：`[[pattern]]` 与 `[[lowering]]` **统一裁决序**——
   新增 `Pattern.priority`（与 lowering 同语义：大者先试），裁决序 = (`priority` 降,
   匹配树 Op 节点数降, `when` 叶子数降, 声明序升)，并抽成 `V12Model::pattern_order()`
