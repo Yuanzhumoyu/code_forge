@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-22)
+
+- **角色去宽度化：`Role` 不再把位宽编进名字（v18 S9，破坏性 / 只需改 TOML 6 行）**。原先 `roles` 里是 `fpr_mov_f32` / `fpr_mov_f64` / `wide_vec_store_32` / `_64` / `wide_vec_load_32` / `_64`——位宽被写死进角色名，别的位宽的 ISA 接不进来（等于把 x86 的 32/64 当成 ISA 通用事实）。现在角色名去掉宽度后缀（`fpr_mov` / `wide_vec_store` / `wide_vec_load`），宽度**写在角色声明里**：`roles = [{ role = "fpr_mov", bits = 32 }]`（单位是**位**，与 `opsize`/`[encoding].bits` 一致；无宽度语义的角色照旧写 `"gpr_mov"`）。
+  生成器按 **(角色, 位宽)** 解析（`role_name_for`），选不到时错误消息给出**请求位宽 + 已声明位宽集合**；校验同样按 (角色, 位宽) 唯一——同角色同宽度声明两次、或同一角色一处写 `bits` 一处不写，都在**编译期**报错并点出两条指令名。`isa/x86_v12.toml` 改了 6 行（`MOVSS`/`MOVSD`/`VMOVUPS_256_*`/`VMOVUPS_512_*`），**生成的机器码逐字节不变**（黄金字节 + 三架构 JIT 矩阵与基线逐数字相同；另有两例守卫：任意位宽 16/24 合法、同 (角色,位宽) 冲突必报）。设计动机、证据与"为什么宽度不能从槽派生"（`MOVSS`/`MOVSD` 共用 `fpr` 槽）见 `docs/plans/forge-dsl-v18-plan.md` §7.1。
+
 ### Changed (2026-09-21)
 
 - **`[[pattern]]` 与 `[[lowering]]` 统一裁决序 + 死模式检测（v18 S5c）**。`[[pattern]]` 新增 `priority`（与 `[[lowering]].priority` 同语义：大者先试），裁决序统一为 (`priority` 降, 匹配树 Op 节点数降, `when` 谓词叶子数降, 声明序升)；

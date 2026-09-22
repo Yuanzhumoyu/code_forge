@@ -355,6 +355,15 @@ let name = node.get_text("name")?;
   守卫 = `crates/frontend/forge-isa-dsl/tests/machine_shape_table.rs`（钉"8 个方法体零
   `Inst::` 臂" + "形状表与两个访问器覆盖同一批变体、行数 = 变体数"）；实测数字见
   `docs/performance/bench_baseline.md` 的「S8a 落地度量」（`tm` −12~26%，整模块 −7.5~12.9%）。
+- **角色声明带宽度（v18 S9）**：`[[instructions]].roles` 的条目有两种写法——`"gpr_mov"`
+  （无宽度语义，全 ISA 唯一）与 `{ role = "fpr_mov", bits = 32 }`（**有宽度语义**：同角色
+  可多条，按 (角色, 位宽) 唯一，单位是**位**）。生成器按宽度查：`role_name_for(role, bits)`
+  / `inst_by_role_for(…)`，选不到就明确 `Unsupported`（消息带请求位宽 + 已声明的位宽集合）；
+  同角色同宽度重复、或同一角色一处写 `bits` 一处不写 ⇒ `validate` 编译期报错。
+  **不要把位宽编进角色名**（S9 之前是 `fpr_mov_f32`/`wide_vec_load_64` 这类，别的位宽的
+  ISA 无法接入；`MOVSS`/`MOVSD` 共用 `fpr` 槽，槽也分不出 32/64——宽度必须在声明里）。
+  守卫 `crates/frontend/forge-isa-dsl/tests/role_widths.rs`（真实谱变异：16/24 位合法、
+  同 (角色,位宽) 冲突必报）；角色表见 `docs/reference/isa-dsl.md`。
 - **谓词属性：按需 + 无名字分派（v18 S8b-1 / S8d）**：`gen_lowering_attrs` 生成的属性源
   在生成物里**只发射一次**（放在 `lower_inst` 的 `match op` 之前；跟着 op 臂走 = 每个
   op 重复一份 2.5 KB，x86 曾 100 份 = 243 KB），并且是

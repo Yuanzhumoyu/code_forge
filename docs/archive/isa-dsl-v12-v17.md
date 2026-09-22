@@ -82,6 +82,7 @@ asm = "add {0:[gprx:inout]}, {1:[gprx]}"
 | `[conventions.mem]`（v16，未文档化） | 保留并文档化 | 已是数据 |
 | 生成器内 x86 缺省（cond / prefix_scan / `[abi]` / `value_fpr_width` / `vector_tiers`） | 必填或 fail-closed 报错 | 不再静默给别家形状 |
 | `[abi]` 的 13 个 `*_inst` 名指针 + `tags` | 指令上的 `roles = ["gpr_mov", …]` | 生成器按角色查指令，不按指令名特判 |
+| 把位宽编进角色名（v18 S9 前的 `fpr_mov_f32`/`fpr_mov_f64`、`wide_vec_store_32`/`_64`、`wide_vec_load_32`/`_64`） | `roles = [{ role = "fpr_mov", bits = 32 }]` 这类**带宽度声明**（角色名去掉宽度后缀） | 宽度是数据、不是名字的一部分；同角色多条按 (角色, 位宽) 唯一，其它位宽的 ISA 无需改 DSL 源码即可接入 |
 
 另有 v18 新增的机制（`[[reloc]]` / `[[pseudo]]` / `[[derive]]` / `include` + `[[override]]` /
 `isa_from_file!` 的 `name`/`parts` / 生成期自测）——这些**不是**历史，见现行规范。
