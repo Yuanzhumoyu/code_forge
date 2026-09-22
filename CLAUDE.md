@@ -312,7 +312,8 @@ let name = node.get_text("name")?;
   `expected R_PAREN`（成对，riscv64 15 / arm64 4 / 夹具 9、6，**x86 0**）是 **RA 侧
   展开管线的问题**——生成物用 RA 自己的解析器解析零 `ERROR` 节点，`rustc`/`clippy`/
   门禁全绿。二分已收敛到"`encode` 与至少一个别的部件同时生成"且只在定宽/混合字长 ISA
-  上出现；**别再从头排查**，方法与全部证据见
+  上出现；**别再从头排查**，也别再试 span 卫生性（`Span::mixed_site()` 实测**无效**：
+  诊断条数逐文件不变，且它不破坏 `forge-codegen` 测试）。方法与全部证据见
   [`docs/guides/rust-analyzer-notes.md`](docs/guides/rust-analyzer-notes.md)
   （含"字符串续行被判 `Invalid escape`"这一类已修项）。一切以 rustc 与门禁为准。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt <谱.toml>`——

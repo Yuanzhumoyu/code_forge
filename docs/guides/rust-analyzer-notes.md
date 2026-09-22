@@ -17,9 +17,11 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 （成对出现，各 N 条 ⇒ 该行共 2N 条。）**`cargo build/check/test/clippy` 全绿**，与这些
 诊断无关。
 
-**实测分布**（2026-09-22，`rust-analyzer diagnostics <file>`，本机）：
+**实测分布**（2026-09-22，`rust-analyzer diagnostics <file>`，本机）。计数单位是**对**
+（每对 = 一条 `expected expression` + 一条 `expected R_PAREN`，同一 span；日志里按
+`file …: Error SyntaxError` 分组后 2 条 = 1 对）：
 
-| 文件 | 条数（每类） |
+| 文件 | 对数（每类） |
 | --- | ---: |
 | `src/arch/riscv64_v12.rs` | 15 |
 | `src/arch/arm64_v12.rs` | 4 |
@@ -56,9 +58,26 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 （arm64、riscv64、demo 夹具）上出现，**变长 `prefix_scan`（x86）从不出现**。
 据此判断为 **RA 侧 proc-macro 展开管线的问题**（我们的 token 流本身合法），不是本仓缺陷。
 
-**状态**：**未修**（不阻塞任何门禁）。若将来要动，候选方向是生成器侧给 token 换 span
-（`Span::mixed_site()`）看是否绕过 RA 的映射缺陷——属于实验性改动，需先跑上面第 1 条
-的 `rust-analyzer parse` 与第 5/6 条的证据链确认方向。
+**补充线索**：诊断的 span 是**调用行上宏路径那一段**——`src/arch/riscv64_v12.rs`
+第 6 行（RA 的 `LineCol` 0 基第 5 行）`col 0..25` 正好是 `forge_dsl::isa_from_file!`
+这 25 个字符。也就是说 RA 把"展开结果没解析成功"的位置**回填到宏路径本身**，
+而不是任何具体 token 或生成物内部位置。
+
+**状态**：**未修**（不阻塞任何门禁）。
+
+**已试过且无效的方向（2026-09-22 实测，别再试）**：
+
+- **给生成物 token 换 span 卫生性**：在 `expand_loaded` 里对生成好的 `inner`/`helpers`
+  整体调 `set_spans(ts, Span::mixed_site())`（commit 前已回退）。结果：
+  `cargo build -p forge-isa-dsl` 无警告、`cargo test -p forge-codegen`（27 个二进制）
+  全绿——**没有卫生性破坏**，但 RA 诊断条数**逐文件一模一样**
+  （`src/arch/arm64_v12.rs` 4 对、`src/arch/riscv64_v12.rs` 15 对、
+  `tests/common/mod.rs` 9 对、`tests/spec_tests_v12.rs` 6 对，与上表改动前完全一致）
+  ⇒ 与 span / 卫生性、与 token 的 `SyntaxContext` **无关**，此路不通。
+
+同一次 RA 运行里还能看到 `forge_rustc` 的 `unresolved-extern-crate` / `E0282`
+等诊断——它需要 rustc 私有组件才成立，本机 RA 配不全，属同类"RA 环境性"噪声；
+`cargo check -p forge-rustc` 门禁是绿的。
 
 **二分方法（可复用，别只看调用行）**：
 
@@ -70,8 +89,12 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 rust-analyzer diagnostics crates/backend/forge-codegen/tests/zz_ra_probe.rs > target/ra.log 2>&1
 # 3. 统计：注意 RA 的 LineCol 是 **0 基**，且文件路径里含盘符冒号，
 #    正则要用 file (.+?\.rs): Error SyntaxError ... from LineCol \{ line: (\d+)
+#    这一正则数的是**条数**（2 条 = 1 对），写进上表前除以 2。
 # 4. 跑完删探针文件，保持工作树干净。
 ```
+
+**注意**：`rust-analyzer diagnostics <单个文件>` 打出来的日志是**整个工作区**的诊断
+（含 `forge_rustc` 等别的 crate），按文件分组统计，别把总量当成本文件条数。
 
 ## 2. `Invalid escape`（已修，v18 S10a）
 
