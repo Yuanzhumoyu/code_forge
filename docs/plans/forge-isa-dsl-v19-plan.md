@@ -114,6 +114,15 @@
 **顺序与理由**：V0（定范围）→ V1/V2（通用性地基）→ V3/V4（作者可见收益，可独立交付）→
 V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
 
+**进度**：
+
+- ✅ **V0 已落地（2026-09-23）**：数字与口径见 §10。三条影响后续设计的关键发现：
+  ① 生成不是瓶颈（三谱 687 ms；改被扫描源文件后整个 `cargo check` 2.82 s，随后 fresh）；
+  ② **终结指令不走 `[[lowering]].op`**（生成的 `lower_terminator` 按 `TermKind` 分派，
+  谱里根本没有 `op = "Jmp"/"Br"/"Ret"`）⇒ V4 的 lint 必须把"终结指令/宿主管线处理/真缺口"
+  分三类报，否则一上手就是上百条误报；③ runtime 迁移清单已锁定（10 个 `machine` 子模块 +
+  9 个顶层项），两处硬耦合是 `pipeline::emit::LabelRef` 与 `prelude`。
+
 ## 6. 迁移与文档落地
 
 **v18 退役（已完成于 2026-09-23，D0）**：`docs/plans/forge-dsl-v18-plan.md` →
@@ -179,13 +188,77 @@ npx markdownlint-cli2 <改动文档>
 
 ## 10. 附录：v19 S0 基线
 
-> 由 V0 填写（命令 + 日期 + 数字）。当前占位，勿引用未填项。
+> 采集日期 **2026-09-23**，本机（Windows x86_64，nightly-2026-09-05）。脚本：`target/v0_metrics.py`
+> （op 覆盖 + 测试规模 + 运行面）、`target/v0_op_gap.py`（缺口原始清单）、临时用例
+> `cargo test -p forge-isa-dsl --test zz_v0_metrics -- --nocapture`（规模/耗时，跑完已删）。
+> 口径：字节数 = `expand_file` 产出的 token 文本长度（= build script 落盘件正文，v18 S10d 起的紧凑打印）。
 
-| 项 | 数值 | 采集命令/日期 |
-| --- | --- | --- |
-| 生成物规模（三 ISA，全部件 / `tm` / `+spec_tests`） | 待填 | `FGE_DEBUG_GEN=1` dump + 字节数 |
-| 生成耗时（每谱，build script 内预生成） | 待填 | 计时脚本 |
-| `cargo check -p forge-codegen` 干净/增量 | 待填 | 计时 |
-| 生成物运行面（路径清单 + 字节数） | 待填 | 守卫脚本输出 |
-| `ops.toml` vs 谱 lowering 的能力缺口 | 待填 | `forge-isa` + `SUPPORTED_OPS` |
-| 手写黄金测试规模（行/断言） | 待填 | 逐文件统计 |
+### 10.1 生成物规模与生成耗时
+
+| ISA | 全部件 + `spec_tests` | 全部件 | 无 `tm`（enc+dec+asm） | enc+dec | 生成耗时（全部件+spec_tests） |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| x86 | 1,336,624 | 1,009,125 | 576,413 | 423,292 | 371 ms |
+| riscv64 | 722,311 | 508,202 | 237,771 | 127,905 | 184 ms |
+| arm64 | 523,816 | 310,437 | 206,101 | 107,080 | 132 ms |
+
+三个发行谱合计 **687 ms**；`forge-codegen` 全量预生成（14 处调用点含夹具变体）在 build script 里
+完成，实测改一个被扫描源文件后整个 `cargo check` 只用 2.82 s（见 10.2）。
+
+### 10.2 编译时间分档（`cargo check -p forge-codegen`）
+
+| 场景 | 耗时 |
+| --- | ---: |
+| 冷（`cargo clean -p forge-codegen` 之后） | **57.0 s** |
+| 增量、无改动 | 23.8 s |
+| 改一个**被扫描的源文件**（build script 重跑 + 14 份重新生成 + 编 lib） | **2.82 s** |
+| 紧随其后（应 fresh） | 0.45 s |
+
+⇒ 生成（含落盘）不是瓶颈（<1 s），冷启动时间由 rustc 解析 1.3 MB 生成物 + 编译 crate 主导；
+**无重编循环**（第 4 次 0.45 s 证明）。
+
+### 10.3 能力缺口（116 个 op 分四类 —— 这是 V4 lint 的口径基础）
+
+| ISA | 谱 `[[lowering]]`/`[[pattern]]` 覆盖 | 终结指令（生成的 `lower_terminator` 按 `TermKind` 分派） | 宿主管线处理 | 真缺口 |
+| --- | ---: | ---: | ---: | ---: |
+| x86 | 100 | 6 | 7 | **3**（`AddrSpaceCast` `Resume` `VaArg`） |
+| riscv64 | 61 | 6 | 7 | **42**（浮点/向量/指针转换一整套） |
+| arm64 | 8 | 6 | 7 | **95**（几乎全部整数/浮点/内存 op） |
+
+**V0 的关键发现（纠正了"全体都缺 16 个 op"的粗口径）**：
+
+1. **终结指令不走 `[[lowering]].op`**：生成器为每个 ISA 生成 `lower_terminator`，按 IR 的
+   `TermKind`（Return/Jump/Branch/Switch/Invoke）分派；谱里因此根本**没有** `op = "Jmp"`/`"Br"`/
+   `"Ret"`，`forge-codegen/src` 里也没有 `Opcode::Jmp`/`Opcode::Br`（零出现）。把
+   `Br/Jmp/Ret/Switch/Unreachable/Invoke` 算成"缺口"是**误报**。
+2. **7 个 op 由宿主管线直接处理**（`Bitcast`/`Call`/`CallIndirect`/`ExtractValue`/`InsertValue`/
+   `GetElementPtr`/`LandingPad`，宿主里有 `Opcode::X` 直查）——也不是谱侧缺口。
+3. 真正的缺口只有 **`AddrSpaceCast`/`Resume`/`VaArg`**（宿主与谱都没有）+ 各 ISA 自己没做的
+   lowering（riscv 42 / arm64 95，属**谱侧工作量**而非 DSL 缺陷）。
+4. 因此 **V4 的 lint 必须把三类分开报**（终结指令 / 宿主管线 / 真缺口），否则一上手就是
+   上百条误报。
+
+### 10.4 生成物的宿主依赖面（V1 的迁移清单）
+
+从最大生成物（`forge_gen_x86_v12_28fd384c3571d4ee.rs`，1,336,872 B）机械抽取：**183 条**不同的
+`crate::…` 路径，归约为
+
+- **`machine` 子模块 10 个**（29 条具体路径）：`abi`（`FrameLayout`/`FrameLayoutKind`/`TargetABI`）、
+  `assembler`（`AsmError`/`TargetAssembler`）、`decoder`（`DecodeError`/`TargetDecoder`）、
+  `disasm`、`encoder`、`frame`、`inst`（`OperandConstraint`）、`isa_info`
+  （`IsaCapabilities`/`IsaInfo`/`RegisterClassInfo`）、`lowering`、`pattern`
+  （`PatPred`/`PatTerm`/`PatCmp`/`PatternSpec`）、`reg_info`（`TargetRegInfo`/`class_for_type_in_pool`）、
+  `reloc_patcher`、`target`（`TargetMachine`）。
+- **顶层 9 项**：`AllocResult`、`CodeSink`、`EncodeError`、`IrError`、`Registry`、`RelocKind`、
+  `impl_erased_target_machine!`、`pipeline`、`prelude`。
+
+**两处硬耦合（V1 必须先解）**：① 编码器里的重定位写回直接用
+`crate::pipeline::emit::LabelRef`；② 大量类型经 `crate::prelude::…` 引用（`EffectKind` 等），
+说明 runtime 必须自带 `prelude` 与 `LabelRef`/`CodeSink`/`AllocResult` 这几个数据型。
+
+### 10.5 手写测试规模（V3 迁移对象）
+
+`crates/backend/forge-codegen/tests/*.rs` 合计 **5,683 行 / 626 条断言**；承载黄金字节的主要是
+`x86_v12_tests.rs`（1,160 行/22 断言，黄金表是数据）、`arm64_v12_tests.rs`（285/109）、
+`riscv64_v12_tests.rs`（390/27）、`v12_integration_tests.rs`（353/49），以及 6 个夹具文件
+（`demo*`/`include_v12_tests.rs`，合计 ≈1,120 行）。V3 的目标是"发行 ISA 的黄金字节进谱"，
+夹具与集成/ABI/JIT 断言留在 Rust。
