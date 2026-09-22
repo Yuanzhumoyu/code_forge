@@ -40,7 +40,7 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         &self,
         _encoder: &std::sync::Arc<dyn super::encoder::TargetEncoder<Inst = Self::Inst>>,
         _reg_map: &AllocResult,
-        _epilogue_block: crate::pipeline::emit::LabelRef,
+        _epilogue_block: crate::emit::LabelRef,
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {
         // 默认实现：未覆盖的 ISA 报错而非 panic（错误优雅传播）

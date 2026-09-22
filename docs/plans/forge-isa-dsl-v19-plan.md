@@ -122,6 +122,17 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   谱里根本没有 `op = "Jmp"/"Br"/"Ret"`）⇒ V4 的 lint 必须把"终结指令/宿主管线处理/真缺口"
   分三类报，否则一上手就是上百条误报；③ runtime 迁移清单已锁定（10 个 `machine` 子模块 +
   9 个顶层项），两处硬耦合是 `pipeline::emit::LabelRef` 与 `prelude`。
+- 🚧 **V1a 已落地（2026-09-23）**：生成物运行面拆成 **`crates/foundation/forge-isa-runtime`**
+  （3,669 行：`machine/*` 的 trait 与数据型、`LowerCtx`/`MemRef`、`AllocResult`/`CodeSink`/
+  `LabelRef`/`CompiledFunction`/`RelocKind`、`Registry`、`VCode` 数据型、CPU 能力探测、生成物
+  `prelude`）。`forge-codegen` 降到 10,037 行并保留同名 re-export（内部路径不变）。新守卫
+  `runtime_surface.rs`（依赖面只允许 forge-ir/smallvec/thiserror；源码不得出现
+  `forge_codegen`/`crate::pipeline`），「反宽度写死」守卫按归属一分为二（runtime 12 条 /
+  codegen 4 条，失效条目仍强制删除）。证据：`cargo tree -p forge-isa-runtime` 不含
+  forge-codegen；`cargo test -p forge-codegen` **27/27 二进制全绿**；clippy `-D warnings` 干净。
+  **V1b 未做**：生成物改指绝对路径 `forge_isa_runtime::…` 并删 `krate`/`rewrite_path_roots`；
+  `impl_erased_target_machine!` 带 `pipeline = <路径>` 参数搬进 runtime（现在留在 codegen，
+  因此第三方宿主暂时不能用 `tm` 部件——G1 的实证要等 V1b/V2）。
 
 ## 6. 迁移与文档落地
 

@@ -1,0 +1,10 @@
+[package]
+name = "forge-isa-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "ISA-DSL generated-code runtime surface: machine traits, lowering data types, prelude"
+
+[dependencies]
+forge-ir = { path = "../../foundation/forge-ir" }
+smallvec = "1.16.0"
+thiserror = "2.0.20"

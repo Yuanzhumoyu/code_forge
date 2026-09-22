@@ -3,7 +3,9 @@
 //! 背景（2026-09-12 去「寄存器宽度写死」）：宿主的寄存器类/栈槽单位曾写死为
 //! x86 的 8 字节（`GPR64`/`FPR64`、栈槽 8 字节对齐、scratch 类 `GPR64`、类表
 //! 9 项写死数组），1 字节寄存器 ISA 无法通过元数据表达自己。修完后用本守卫
-//! 防止回潮：`src/**`（`#[cfg(test)]` 之前的部分）里出现写死类字面量即失败；
+//! 防止回潮（v19 V1 由 forge-codegen 迁入）：`src/**` 里出现写死类字面量即失败。
+//! 生成物的运行面现在归本 crate，因此这条纪律也跟到这里；白名单条目必须被命中，
+//! 失效条目会被强制删除（与 forge-codegen 的同名守卫同一套规则）。
 //! 2026-09-23（v19 V1）：生成物运行面（`machine/*`、`LowerCtx`、`AllocResult`）已迁到
 //! `forge-isa-runtime`，对应的白名单条目随之迁入该 crate 的同名守卫；本文件只保留
 //! 仍住在 forge-codegen 的文件（`pipeline/alloc_config.rs` 等）。
@@ -52,20 +54,63 @@ const FORBIDDEN: &[&str] = &[
 /// 白名单：(相对 `src/` 的路径, 该行 trim 后的内容, 理由)。
 const ALLOWED: &[(&str, &str, &str)] = &[
     (
-        "pipeline/alloc_config.rs",
-        "RegClass::GPR64,",
-        "RegAllocConfig::new：测试辅助构造（生产路径走 build_regalloc_config）",
+        "ctx.rs",
+        "value_gpr_class: RegClass::GPR64,",
+        "LowerCtx::new 的缺省 = 历史值（CompileState::new 立即用机器元数据覆盖；\
+         直连 LowerCtx 的工具/测试保持历史语义）",
     ),
-    ("pipeline/alloc_config.rs", "RegClass::FPR64,", "同上"),
     (
-        "pipeline/alloc_config.rs",
-        "main_gpr_class: RegClass::GPR64,",
+        "ctx.rs",
+        "value_fpr_class: RegClass::FPR64,",
+        "同上（FPR(8) = f64 值池，历史语义）",
+    ),
+    ("ctx.rs", "addr_class: RegClass::GPR64,", "同上"),
+    (
+        "machine/encoder.rs",
+        "let xreg = forge_ir::XReg::new(vreg, forge_ir::RegClass::GPR64);",
+        "`encoded_size` 的 trait 默认实现只造 dummy 映射用于**估尺寸**，类不参与字节数",
+    ),
+    (
+        "machine/encoder.rs",
+        "forge_ir::PReg::new(vreg % 16, forge_ir::RegClass::GPR64),",
         "同上",
     ),
     (
-        "pipeline/alloc_config.rs",
-        "main_fpr_class: RegClass::FPR64,",
+        "machine/lowering.rs",
+        "self.xregs.alloc_default(forge_ir::RegClass::GPR64);",
+        "InstPacket::append 的占位分配：仅推进 XReg 编号计数器，类被立即丢弃",
+    ),
+    (
+        "machine/reg_info.rs",
+        "RegClass::GPR64",
+        "TargetRegInfo::default_gpr_class 的 trait 缺省（无 ISA 元数据时的历史值；\
+         DSL ISA 一律覆写）",
+    ),
+    (
+        "machine/reg_info.rs",
+        "RegClass::FPR64",
+        "TargetRegInfo::default_fpr_class 的 trait 缺省（同上）",
+    ),
+    (
+        "machine/reg_info.rs",
+        "RegClass::FPR(8)",
+        "TargetRegInfo::value_fpr_class 的 trait 缺省 = 历史 FPR64（f64 值池宽），\
+         **不等于** default_fpr_class（后者是 ABI/SSE 占位基准，x86 = FPR(16)）",
+    ),
+    (
+        "alloc_result.rs",
+        "XReg::new(i, RegClass::GPR64),",
+        "dummy_for_sizing：假分配记录（尺寸估算），不是真实分配",
+    ),
+    (
+        "alloc_result.rs",
+        "PReg::new(i % 16, RegClass::GPR64),",
         "同上",
+    ),
+    (
+        "alloc_result.rs",
+        ".unwrap_or(RegClass::GPR64)",
+        "vreg_class 对**未分配** vreg 的历史缺省（调用方只在已分配时读）",
     ),
 ];
 fn scan_dir(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, usize, String)>) {

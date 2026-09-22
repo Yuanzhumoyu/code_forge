@@ -534,6 +534,7 @@ dependencies = [
  "forge-dsl",
  "forge-ir",
  "forge-isa-dsl",
+ "forge-isa-runtime",
  "forge-mem",
  "forge-opt",
  "log",
@@ -614,6 +615,15 @@ dependencies = [
  "thiserror",
  "toml",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "forge-isa-runtime"
+version = "0.1.0"
+dependencies = [
+ "forge-ir",
+ "smallvec",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
 #[cfg(feature = "jit")]
 pub mod jit;
-pub mod output_types;
-pub mod registry;
+
+pub use forge_isa_runtime::{output_types, registry};

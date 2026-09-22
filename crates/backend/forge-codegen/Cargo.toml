@@ -6,6 +6,7 @@ description = "Forge Codegen: backend framework with lowering, register allocati
 
 [dependencies]
 forge-ir = { path = "../../foundation/forge-ir" }
+forge-isa-runtime = { path = "../../foundation/forge-isa-runtime" }
 forge-opt = { path = "../../middle/forge-opt" }
 forge-mem = { path = "../../foundation/forge-mem" }
 forge-dsl = { path = "../../frontend/forge-dsl" }

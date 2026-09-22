@@ -1,15 +1,12 @@
 pub mod agg_const;
 pub mod agg_expand;
 pub mod alloc_config;
-pub mod alloc_result;
 pub mod compiler;
 pub mod emission;
-pub mod emit;
 pub mod frame_layout;
 pub mod liverange;
 pub mod lowering;
 pub mod regalloc_bt;
-pub mod vcode;
 
 use std::sync::OnceLock;
 
@@ -43,3 +40,5 @@ pub(crate) fn trace_enabled(key: &'static str) -> bool {
         .copied()
         .unwrap_or(false)
 }
+
+pub use forge_isa_runtime::{alloc_result, emit, vcode};

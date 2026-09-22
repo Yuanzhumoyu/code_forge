@@ -5,7 +5,7 @@
 //! that haven't been bound yet; `finish()` patches all pending fixups.
 
 use crate::machine::reloc_patcher::RelocPatcher;
-use crate::runtime::output_types::{RelocKind, Relocation};
+use crate::{RelocKind, Relocation};
 use forge_ir::Block;
 use forge_ir::ImmStr;
 use std::sync::Arc;

@@ -78,7 +78,7 @@ pub trait TargetABI: Send + Sync + 'static {
 
     /// 声明式帧布局：`[abi.frame].layout`（fp-inside/fp-outside）+
     /// `fp_push_bytes`。min_frame / callee_saved_bytes / stack_slot_shift
-    /// 三数值由 [`crate::pipeline::frame_layout::frame_layout_info`] 从本结构
+    /// 三数值由 `pipeline::frame_layout::frame_layout_info` 从本结构
     /// + reg_info 推导，不再有 `min_frame_bytes` 等魔法数方法。
     fn frame_layout(&self) -> FrameLayout {
         FrameLayout::default()

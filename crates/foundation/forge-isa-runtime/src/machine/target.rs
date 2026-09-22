@@ -115,30 +115,3 @@ pub trait ErasedTargetMachine: Send + Sync {
         func: &forge_ir::Function,
     ) -> Result<crate::CompiledFunction, forge_ir::IrError>;
 }
-
-/// 为具体 TargetMachine 类型实现 ErasedTargetMachine。
-///
-/// 要求目标类型实现 `Clone`（所有字段为 `Arc`，因此廉价）。
-///
-/// # Example
-/// ```ignore
-/// impl_erased_target_machine!(X86TargetMachine);
-/// ```
-#[macro_export]
-macro_rules! impl_erased_target_machine {
-    ($tm:ty) => {
-        impl $crate::machine::target::ErasedTargetMachine for $tm {
-            fn erased_name(&self) -> &str {
-                $crate::machine::target::TargetMachine::isa_info(self).name()
-            }
-
-            fn compile(
-                &self,
-                func: &$crate::ir::Function,
-            ) -> Result<$crate::CompiledFunction, $crate::ir::IrError> {
-                let compiler = $crate::pipeline::compiler::FunctionCompiler::new(self.clone());
-                compiler.compile_raw(func)
-            }
-        }
-    };
-}
