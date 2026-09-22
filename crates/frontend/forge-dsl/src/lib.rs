@@ -70,8 +70,7 @@ impl syn::parse::Parse for IsaArgs {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "未知参数 `{other}`（`isa_from_file!` 支持 `krate = <path>`、\
-                             `spec_tests = <bool>`、`name = \"…\"`、`parts = [\"encode\", …]`）"
+                            "未知参数 `{other}`（`isa_from_file!` 支持 `krate = <path>`、`spec_tests = <bool>`、`name = \"…\"`、`parts = [\"encode\", …]`）"
                         ),
                     ));
                 }

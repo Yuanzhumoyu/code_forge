@@ -250,9 +250,7 @@ pub(crate) fn gen_frame_lowering(
         Some(fp) => fp,
         None if needs_default_base => {
             return Err(
-                "[spill.*]: 存在未声明 base 的溢出模板，但 [abi.frame].fp 缺失——spill 基址\
-                 缺省取帧指针，不能回退 x86 的 \"RBP\"（生成期 fail-closed：请声明 \
-                 [abi.frame].fp 或在每个 [spill.*] 显式写 base）"
+                "[spill.*]: 存在未声明 base 的溢出模板，但 [abi.frame].fp 缺失——spill 基址缺省取帧指针，不能回退 x86 的 \"RBP\"（生成期 fail-closed：请声明 [abi.frame].fp 或在每个 [spill.*] 显式写 base）"
                     .to_string(),
             );
         }
@@ -732,9 +730,7 @@ fn gen_emit_pseudo(
                 }
                 None if has_shadow => {
                     return Err(format!(
-                        "move_args: [abi.stack_args].shadow_bytes 已声明，但 \
-                         [abi.frame].{callee_base_kind} 缺失——栈参数内存基址需要\
-                         {}（不再回退字面量 \"RBP\"）",
+                        "move_args: [abi.stack_args].shadow_bytes 已声明，但 [abi.frame].{callee_base_kind} 缺失——栈参数内存基址需要{}（不再回退字面量 \"RBP\"）",
                         if callee_base_kind == "sp" {
                             "栈指针"
                         } else {
@@ -778,8 +774,7 @@ fn gen_emit_pseudo(
                     else {
                         if has_shadow {
                             return Err(format!(
-                                "move_args: [abi.stack_args].shadow_bytes 已声明，但本 ISA 缺 \
-                             roles = [\"{role}\"] 的指令（不按指令名兜底）"
+                                "move_args: [abi.stack_args].shadow_bytes 已声明，但本 ISA 缺 roles = [\"{role}\"] 的指令（不按指令名兜底）"
                             ));
                         }
                         return Ok(None);
@@ -813,8 +808,7 @@ fn gen_emit_pseudo(
                 },
                 _ => quote! {
                     return Err(crate::IrError::Emit(
-                        "v12 move_args: 本 ISA 不支持栈参数（未声明 [abi.stack_args] / \
-                         roles = [\"stack_arg_load\"] 的指令）".into(),
+                        "v12 move_args: 本 ISA 不支持栈参数（未声明 [abi.stack_args] / roles = [\"stack_arg_load\"] 的指令）".into(),
                     ));
                 },
             };
@@ -825,9 +819,7 @@ fn gen_emit_pseudo(
             let scratch0 = match abi.scratch.first() {
                 Some(s) => format_ident!("{s}"),
                 None if has_shadow => {
-                    return Err("move_args: 本 ISA 声明了 [abi.stack_args].shadow_bytes，\
-                                但 [abi].scratch 未声明——栈参数收参需要一个临时寄存器\
-                                （不按某个 ISA 的寄存器名兜底）"
+                    return Err("move_args: 本 ISA 声明了 [abi.stack_args].shadow_bytes，但 [abi].scratch 未声明——栈参数收参需要一个临时寄存器（不按某个 ISA 的寄存器名兜底）"
                         .into());
                 }
                 None => format_ident!("__unused_scratch"),
@@ -944,8 +936,7 @@ fn gen_emit_pseudo(
                         #s32
                     } else {
                         return Err(crate::IrError::Emit(
-                            "v12 by-ref vector arg: unsupported width (仅支持 32B/64B 向量；\
-                             其它 >32B 宽度无 load 变体)".into(),
+                            "v12 by-ref vector arg: unsupported width (仅支持 32B/64B 向量；其它 >32B 宽度无 load 变体)".into(),
                         ));
                     }
                 },
@@ -953,8 +944,7 @@ fn gen_emit_pseudo(
                 (None, Some(s64)) => s64,
                 (None, None) => quote! {
                     return Err(crate::IrError::Emit(
-                        "v12 by-ref vector arg load missing（本 ISA 未声明 \
-                         roles = [\"wide_vec_load_32\"] / [\"wide_vec_load_64\"] 的指令）".into(),
+                        "v12 by-ref vector arg load missing（本 ISA 未声明 roles = [\"wide_vec_load_32\"] / [\"wide_vec_load_64\"] 的指令）".into(),
                     ));
                 },
             };
@@ -1386,8 +1376,7 @@ fn gen_fpr_spill_dispatch(
             // 理论到不了（档位即来自已声明键）；留作防御性 fail-closed。
             None => quote! {
                 return Err(crate::IrError::Unsupported(format!(
-                    "FPR spill {}: 本 ISA 未声明 [spill.{}]（{} 字节）——不退回窄搬运\
-                     （会静默截断向量高半区）",
+                    "FPR spill {}: 本 ISA 未声明 [spill.{}]（{} 字节）——不退回窄搬运（会静默截断向量高半区）",
                     #what, #key, #w
                 )));
             },

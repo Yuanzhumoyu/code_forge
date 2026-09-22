@@ -48,10 +48,7 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     (
         "crates/foundation/forge-ir/src/text/parser/semantics.rs",
         15,
-        "4 个纯读助手（pack_*_init / int_init_bytes / float_init_bytes）各一次 + \
-         `to_type*` 的命名查询 + `build_inst` 的 3 处单点读 + 3 个只读助手；\
-         读数段已按 v3 S3 余项② 合并（operand_to_value 9 → 1、extractvalue 索引链 1、\
-         vconst/agg_const 各 1）",
+        "4 个纯读助手（pack_*_init / int_init_bytes / float_init_bytes）各一次 + `to_type*` 的命名查询 + `build_inst` 的 3 处单点读 + 3 个只读助手；读数段已按 v3 S3 余项② 合并（operand_to_value 9 → 1、extractvalue 索引链 1、vconst/agg_const 各 1）",
     ),
     (
         "crates/foundation/forge-ir/src/ir/types.rs",
@@ -100,9 +97,7 @@ fn borrow_site_budget_matches_measured() {
         let got = count_borrows(&path);
         assert_eq!(
             got, *budget,
-            "{rel} 的 `borrow()` 处数变了（实测 {got}，预算 {budget}；{why}）：\n\
-             - 新增了逐次取锁？请改成入口取一次、把 `&TypeStore` 传下去；\n\
-             - 迁移完成了一批？请把预算下调到 {got}。"
+            "{rel} 的 `borrow()` 处数变了（实测 {got}，预算 {budget}；{why}）：\n- 新增了逐次取锁？请改成入口取一次、把 `&TypeStore` 传下去；\n- 迁移完成了一批？请把预算下调到 {got}。"
         );
         checked += 1;
     }

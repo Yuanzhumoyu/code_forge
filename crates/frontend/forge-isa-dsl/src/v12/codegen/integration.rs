@@ -276,8 +276,7 @@ fn core_attr_body(name: &str) -> Result<TokenStream, String> {
         },
         other => {
             return Err(format!(
-                "v18 S8d：核心谓词属性 `{other}` 没有对应的求值表达式——\
-                 `pred::PRED_ATTRS` 新增项时必须同步 codegen/integration.rs::core_attr_body"
+                "v18 S8d：核心谓词属性 `{other}` 没有对应的求值表达式——`pred::PRED_ATTRS` 新增项时必须同步 codegen/integration.rs::core_attr_body"
             ));
         }
     })
@@ -768,8 +767,7 @@ fn resolve_frame_reg(
     }
     if let Some(n) = declared {
         return Err(format!(
-            "{key}: 声明为 \"{n}\" 但不在 [reg.{main_group}] 组内——请改成该组内的寄存器名\
-             （生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
+            "{key}: 声明为 \"{n}\" 但不在 [reg.{main_group}] 组内——请改成该组内的寄存器名（生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
         ));
     }
     // 未声明 → 惯例名（RSP/SP、RBP/FP）。
@@ -782,9 +780,7 @@ fn resolve_frame_reg(
     }
     if frame_declared {
         return Err(format!(
-            "{key}: 未声明，且惯例名 {conventional:?} 不在 [reg.{main_group}] 组内——\
-             请在 [abi.frame] 显式声明该寄存器在 TOML 中的名字\
-             （生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
+            "{key}: 未声明，且惯例名 {conventional:?} 不在 [reg.{main_group}] 组内——请在 [abi.frame] 显式声明该寄存器在 TOML 中的名字（生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
         ));
     }
     // 未声明 [abi.frame]：索引 0 占位（类由元数据派生，指向真实存在的主 GPR 寄存器）。

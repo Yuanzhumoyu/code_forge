@@ -138,8 +138,7 @@ impl V12Model {
             .max_by_key(|rc| rc.width())
             .copied()
             .ok_or_else(|| {
-                "[reg.*]/[meta]: 未声明任何 GPR 组（如 [reg.gpr8]）——\
-                 整数/地址寄存器组是必需的"
+                "[reg.*]/[meta]: 未声明任何 GPR 组（如 [reg.gpr8]）——整数/地址寄存器组是必需的"
                     .to_string()
             })
     }
@@ -284,8 +283,7 @@ impl V12Model {
             Some(b) => b,
             None => {
                 return Err(format!(
-                    "[[instructions.{}]]: 缺少指令字长——`kind = \"mixed\"` 时必须给 `width`\
-                     （或给 [encoding].bits 作缺省字长）",
+                    "[[instructions.{}]]: 缺少指令字长——`kind = \"mixed\"` 时必须给 `width`（或给 [encoding].bits 作缺省字长）",
                     inst.name
                 ));
             }
@@ -330,8 +328,7 @@ impl V12Model {
         for (ty, target) in map {
             if type_id_ident(ty).is_none() {
                 return Err(format!(
-                    "[types].{ty}: 未知类型名（可用：bool/i8/i16/i32/i64/i128/f16/f32/f64/f128/\
-                     ptr/v64/v128/v256/void）"
+                    "[types].{ty}: 未知类型名（可用：bool/i8/i16/i32/i64/i128/f16/f32/f64/f128/ptr/v64/v128/v256/void）"
                 ));
             }
             let t = target.trim();
@@ -381,8 +378,7 @@ impl V12Model {
                         && *prev_bytes != bytes
                     {
                         return Err(format!(
-                            "[abi.arg_class]: 多个 by-ref 类的阈值冲突（{prev} = {prev_bytes} 字节 vs \
-                             {name} = {bytes} 字节）——阈值必须唯一，否则 ABI 依声明序而变"
+                            "[abi.arg_class]: 多个 by-ref 类的阈值冲突（{prev} = {prev_bytes} 字节 vs {name} = {bytes} 字节）——阈值必须唯一，否则 ABI 依声明序而变"
                         ));
                     }
                     found.get_or_insert((name.to_string(), bytes));
@@ -390,8 +386,7 @@ impl V12Model {
                 // 无 by-ref 策略却写了 limit：按值类没有阈值语义。
                 (None, Some(bits)) => {
                     return Err(format!(
-                        "[abi.arg_class.{name}]: 声明了 `limit = {bits}` 但 strategy 不是 \
-                         \"by-ref\"——按值传参的类没有阈值语义（写 strategy = \"by-ref\" 或删掉 limit）"
+                        "[abi.arg_class.{name}]: 声明了 `limit = {bits}` 但 strategy 不是 \"by-ref\"——按值传参的类没有阈值语义（写 strategy = \"by-ref\" 或删掉 limit）"
                     ));
                 }
                 (None, None) => {}

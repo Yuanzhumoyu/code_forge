@@ -599,9 +599,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let w = layout_bytes(self.tcx, substs_first_ty(&substs).unwrap_or(fty));
                 if w == 0 || w > 8 {
                     return Err(ForgeError::Message(format!(
-                        "{}: 原子 intrinsic {name}: {w} 字节原子不支持（CMPXCHG 循环 \
-                         覆盖 1/2/4/8 字节——i8/u8/i16/u16/i32/i64/usize/isize/\
-                         AtomicBool(u8)）",
+                        "{}: 原子 intrinsic {name}: {w} 字节原子不支持（CMPXCHG 循环 覆盖 1/2/4/8 字节——i8/u8/i16/u16/i32/i64/usize/isize/AtomicBool(u8)）",
                         self.fn_name
                     )));
                 }
