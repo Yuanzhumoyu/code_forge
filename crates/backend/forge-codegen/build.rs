@@ -1,12 +1,19 @@
-//! 构建脚本：跟踪 `isa/*.toml` 变更。
+//! 构建脚本：跟踪 `isa/*.toml` 变更 + **预生成 ISA 生成物**（v18 S10d）。
 //!
-//! 背景：`isa_from_file!` 是 proc-macro，运行时用 `std::fs::read_to_string`
-//! 读取 TOML——cargo 无法感知 proc-macro 内部读取的文件，修改 TOML 不会
-//! 触发 forge-codegen 重编（历史上需手动 `cargo clean -p forge-codegen`）。
+//! 背景一（依赖跟踪）：`isa_from_file!` 是 proc-macro，运行时用 `std::fs::read_to_string`
+//! 读取 TOML——cargo 无法感知 proc-macro 内部读取的文件，修改 TOML 不会触发
+//! forge-codegen 重编（历史上需手动 `cargo clean -p forge-codegen`）。
 //!
 //! 方案：`cargo:rerun-if-changed` 声明 TOML 依赖 + 把 TOML 的修改时间写入
 //! OUT_DIR 下的 probe 文件，forge-codegen 的 lib.rs `include!` 该 probe——
 //! TOML 变化 → probe 变化 → lib 重编 → 宏重新读取 TOML。
+//!
+//! 背景二（生成物落盘，v18 S10d）：生成物改由 `$OUT_DIR/forge_gen_<模块>_<参数哈希>.rs`
+//! 承载，展开只剩一句 `include!`（原因见 `forge-isa-dsl` 的 `gen_file` 模块头：
+//! rust-analyzer 对"proc 宏展开出来的 1 MB token"会报假阳性语法错）。RA **只在分析开始前**
+//! 登记一次可加载文件，所以必须在这里预生成一遍——它自己会跑 build script。
+//!
+//! 顺序无关：宏侧仍会生成（内容相同则不落盘），因此本脚本缺席也能编译。
 
 use std::path::PathBuf;
 
@@ -39,4 +46,10 @@ fn main() {
 
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::write(out.join("isa_probe.rs"), stamp).expect("write isa_probe.rs");
+
+    // v18 S10d：为库里每一处 `isa_from_file!` 预生成一份落盘件（含 rerun-if-changed）。
+    match forge_isa_dsl::pregenerate_host() {
+        Ok(n) => println!("cargo:warning=forge-codegen: 预生成 {n} 份 ISA 生成物到 OUT_DIR"),
+        Err(e) => panic!("ISA 生成物预生成失败：{e}"),
+    }
 }

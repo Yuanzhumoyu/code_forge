@@ -22,5 +22,12 @@ parallel = ["dep:rayon", "forge-opt/parallel"]
 # JIT 运行时（JitCompiler + 符号解析）——关闭时仅剩 compile_raw 静态编译路径
 jit = []
 
+# build script 预生成 ISA 生成物（v18 S10d）：扫 src/tests/benches/examples 里的
+# `isa_from_file!` 调用，把生成物写进 $OUT_DIR，供 `include!` 在**分析开始前**就能加载
+# （rust-analyzer 看不见分析开始后才由 proc 宏写出的文件）。详见 forge-isa-dsl 的
+# `gen_file` 模块头。
+[build-dependencies]
+forge-isa-dsl = { path = "../../frontend/forge-isa-dsl" }
+
 [lints.clippy.type_complexity]
 level = "allow"

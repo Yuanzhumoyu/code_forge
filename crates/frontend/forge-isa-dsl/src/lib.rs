@@ -13,11 +13,17 @@
 //! 移除——无兼容层、无转换工具、无逃生门。模型/校验/生成见 [`v12`] 模块。
 
 mod assembler;
+/// 生成物落盘与宿主预生成（v18 S10d）。
+pub mod gen_file;
 pub mod loader;
 pub mod report;
 pub mod schema;
 mod v12;
 
+pub use gen_file::{
+    MacroArgs, expand_file_emitted, generated_dir, generated_file_name, parse_macro_args,
+    pregenerate_host,
+};
 pub use v12::V12Error;
 
 /// 生成**部件**选择（`parts = [...]`，v18 S7d；方案 §5.8）。
@@ -138,11 +144,7 @@ impl ExpandOptions {
 pub fn expand_file(path: &str, opts: &ExpandOptions) -> Result<proc_macro2::TokenStream, String> {
     let (_, resolved) = read_isa_file(path)?;
     let spec = loader::LoadedSpec::load(&resolved)?;
-    // `name = "..."` 覆盖模块名（缺省 = 文件 stem）。
-    let mod_name = match &opts.name {
-        Some(n) => syn::Ident::new(n, proc_macro2::Span::call_site()),
-        None => module_name(path),
-    };
+    let mod_name = resolve_mod_name(path, opts);
     let krate: Option<proc_macro2::TokenStream> = opts.krate.as_ref().map(|p| path_tokens(p));
     let ts = expand_loaded(
         &spec,
@@ -153,6 +155,16 @@ pub fn expand_file(path: &str, opts: &ExpandOptions) -> Result<proc_macro2::Toke
     )?;
     dump_generated(path, &ts);
     Ok(ts)
+}
+
+/// 模块名解析：`name = "…"` 覆盖，缺省 = 文件 stem。
+///
+/// `pub(crate)`：`gen_file` 的落盘文件名要用同一个解析结果。
+pub(crate) fn resolve_mod_name(path: &str, opts: &ExpandOptions) -> syn::Ident {
+    match &opts.name {
+        Some(n) => syn::Ident::new(n, proc_macro2::Span::call_site()),
+        None => module_name(path),
+    }
 }
 
 /// 渲染错误：每条诊断的合并行 → (来源文件, 文件内行)，输出可点击的
@@ -207,6 +219,16 @@ pub fn validate_source(source: &str, isa_path: &std::path::Path) -> Result<(), V
             .map(str::to_string)
             .collect()),
     }
+}
+
+/// 一个谱的**全部来源文件**（绝对路径；多文件谱含 `include` 进来的每一份）。
+///
+/// build script 用它给每份来源登记 `cargo:rerun-if-changed` —— 改任一 include 分片都要
+/// 触发重新生成，否则生成物会与谱不一致。
+pub fn spec_source_files(path: &str) -> Result<Vec<std::path::PathBuf>, String> {
+    let (_, resolved) = read_isa_file(path)?;
+    let spec = loader::LoadedSpec::load(&resolved)?;
+    Ok(spec.sources.clone())
 }
 
 /// 校验一个谱文件（**支持 `include`**：多文件谱的诊断按来源文件渲染）。

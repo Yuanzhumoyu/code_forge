@@ -96,6 +96,35 @@ ADD  ...
 
 `insts` 打印的是**展开后**的指令与生效编码键——比读 TOML 更接近生成物。
 
+### 接到 Rust 里：宿主 crate 的两处三行（v18 S10d 起必须）
+
+生成物是 `$OUT_DIR` 下的**文件**（`isa_from_file!` 只展开成一句 `include!`），由宿主的
+build script 预生成——**没有 build script 就编译不过**（fail-closed，报错里直接给这两步）：
+
+```toml
+# Cargo.toml
+[build-dependencies]
+forge-isa-dsl = { path = "../../frontend/forge-isa-dsl" }
+```
+
+```rust
+// build.rs
+fn main() {
+    forge_isa_dsl::pregenerate_host().expect("ISA 预生成失败");
+}
+```
+
+```rust
+// src/arch/toy16.rs
+forge_dsl::isa_from_file!("isa/toy16.toml");
+pub use self::toy16::*;
+```
+
+为什么不让宏自己写文件：rust-analyzer 只在分析开始前加载一次文件集（宏写出的文件它
+看不见，会报几十条 "unresolved import"），而且 `TokenStream::to_string()` 在 proc 宏里
+与普通二进制里打印结果不同——两侧都写会互相覆盖。完整实测见
+[`docs/guides/rust-analyzer-notes.md`](rust-analyzer-notes.md) §1。
+
 ## 1. 四步骨架：元信息 → 宽度 → 寄存器 → 位域
 
 | 步骤 | 写什么 | 生成的什么 |

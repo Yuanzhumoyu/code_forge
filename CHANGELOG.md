@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-23)
+
+- **编辑器里 `isa_from_file!` 那几行的假阳性语法错全部消失（v18 S10d）**。rust-analyzer 一直在 `crates/backend/forge-codegen/src/arch/*.rs` 与 4 个测试夹具文件的 `isa_from_file!(…)` 行上报成对的 `expected expression` / `expected R_PAREN`（实测 riscv64 15 对 / arm64 4 对 / 夹具 9、6 对，x86 0），而 `cargo build/check/test/clippy` 一直全绿。
+  根因是"整份生成物（x86 全部件 1.0 MB token）作为**宏展开结果**"撑出来的 RA 展开管线问题；修法是让生成物走**文件**这条路：落到 `$OUT_DIR/forge_gen_<模块名>_<参数哈希>.rs`，`isa_from_file!` 只展开成一句 `include!(concat!(env!("OUT_DIR"), "/…"))`。实测四类文件 **68 条 → 0**，且没有引入新的 unresolved import。
+  两条踩过的坑（`docs/guides/rust-analyzer-notes.md` §1 有完整证据）：① RA 只加载"分析开始前"就存在的文件——宏在展开期写出的文件它会报 `failed to load file`，随后生成模块的项在 20+ 个文件里全变 unresolved（**比原来更糟**），所以生成物改由**宿主 build script** 预生成；② `TokenStream::to_string()` 在 proc 宏里（rustc 美化打印）与普通二进制里（紧凑打印）**文本不同**，两侧都写会互相覆盖、每轮重编，因此只允许 build script 一个写者。反面也试过：给生成物 token 整体换 `Span::mixed_site()` **完全无效**（诊断逐文件一模一样）。
+
+### Changed (2026-09-23)
+
+- **宿主 crate 需要 build script 预生成 ISA 生成物（v18 S10d，破坏性 / 两处三行）**。`Cargo.toml` 加 `[build-dependencies] forge-isa-dsl = { path = … }`，`build.rs` 里 `forge_isa_dsl::pregenerate_host().expect(…)`
+  ——它扫 `src/ tests/ benches/ examples/` 里每一处 `isa_from_file!`，按**同一份**参数解析生成到 `$OUT_DIR`，并登记 `cargo:rerun-if-changed`（谱的全部来源文件 + 被扫描的源文件与目录）。
+  没接就**编译期**报错并点名这两步（fail-closed，而不是悄悄让生成模块变空）。`forge-codegen` 已就位；落盘件里带 `#[allow(warnings, clippy::all)]`（生成物不再享受"宏展开不 lint"的豁免，实测不加会多 223 条风格类警告）。
+  `forge_isa_dsl::expand_file`（完整 token 流入口，CLI 与各守卫测试用）语义不变。
+
 ### Changed (2026-09-22)
 
 - **角色去宽度化：`Role` 不再把位宽编进名字（v18 S9，破坏性 / 只需改 TOML 6 行）**。原先 `roles` 里是 `fpr_mov_f32` / `fpr_mov_f64` / `wide_vec_store_32` / `_64` / `wide_vec_load_32` / `_64`——位宽被写死进角色名，别的位宽的 ISA 接不进来（等于把 x86 的 32/64 当成 ISA 通用事实）。现在角色名去掉宽度后缀（`fpr_mov` / `wide_vec_store` / `wide_vec_load`），宽度**写在角色声明里**：`roles = [{ role = "fpr_mov", bits = 32 }]`（单位是**位**，与 `opsize`/`[encoding].bits` 一致；无宽度语义的角色照旧写 `"gpr_mov"`）。

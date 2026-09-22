@@ -212,10 +212,16 @@ code-forge (root umbrella)
 
 3. **Proc-macro limitation** — `forge-dsl` 是 proc-macro crate；Rust 禁止它导出非宏项。
    因此**编译器本体在 `forge-isa-dsl`**（普通 lib：模型/解析/校验/诊断/代码生成 +
-   `expand_file`/`validate_file` 入口），`forge-dsl` 只解析 `isa_from_file!` 参数并调它
-   （v18 S7a）。同理 `MemRef` 等生成物要用的类型定义在 forge-codegen，不在 DSL crate。
+   `expand_file`/`validate_file` 入口），`forge-dsl` 只是**纯转发**（v18 S10d 起连参数
+   解析都在 `forge-isa-dsl::gen_file::parse_macro_args`，因为 build script 预生成要走
+   同一份解析）。同理 `MemRef` 等生成物要用的类型定义在 forge-codegen，不在 DSL crate。
 
-4. **v12 自包含 asm** — v12 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
+4. **生成物由 build script 生成，不是宏**（v18 S10d）——`forge-codegen/build.rs` 调
+   `forge_isa_dsl::pregenerate_host()`；生成物落在 `$OUT_DIR`，宏只发 `include!`。
+   两条硬约束（RA 只能加载分析开始前存在的文件；`TokenStream::to_string()` 上下文相关）
+   见 `docs/guides/rust-analyzer-notes.md` §1 与本文件 Testing Notes。
+
+5. **v12 自包含 asm** — v12 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
    lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait
    （`crate::machine::assembler`）仅要求 `parse_insts`。
 
@@ -232,6 +238,14 @@ pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
 forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
 ```
 
+> **宿主必须接 build script（v18 S10d）**：生成物是 `$OUT_DIR` 下的**文件**
+> （`forge_gen_<模块名>_<参数哈希>.rs`），`isa_from_file!` 只展开成一句 `include!`；
+> 文件由 build script 预生成——`build.rs` 里 `forge_isa_dsl::pregenerate_host()`，
+> `Cargo.toml` 里 `[build-dependencies] forge-isa-dsl = { path = … }`（`forge-codegen`
+> 两者都已就位）。没接就**编译期**报错并点名这两步。原因（RA 只能加载分析开始前存在的
+> 文件 + `TokenStream::to_string()` 上下文相关）见
+> [`docs/guides/rust-analyzer-notes.md`](docs/guides/rust-analyzer-notes.md) §1，
+> 规范见 `docs/reference/isa-dsl.md`「宿主接入」。
 > 注：生成模块导出的是 `TargetMachine`（组合 IsaInfo/RegInfo/ABI/Lowering/Encoder/
 > FrameLowering/Disassembler/Assembler/**Decoder**），**没有 `Isa` 类型**；
 > 无 `register_backend!` 宏。v11 后端（x86_64/aarch64/riscv64/wasm32/minimal_sd）
@@ -308,14 +322,30 @@ let name = node.get_text("name")?;
   **两条矩阵是两套能力集，改类表/值池/ABI 必须都跑**（2026-09-13 实测：x86 全绿
   而 riscv 的 7 个 fcmp 错值，正是 riscv 通道抓到的）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。
-- **rust-analyzer 假阳性**：`isa_from_file!` 调用行上的 `expected expression` /
-  `expected R_PAREN`（成对，riscv64 15 / arm64 4 / 夹具 9、6，**x86 0**）是 **RA 侧
-  展开管线的问题**——生成物用 RA 自己的解析器解析零 `ERROR` 节点，`rustc`/`clippy`/
-  门禁全绿。二分已收敛到"`encode` 与至少一个别的部件同时生成"且只在定宽/混合字长 ISA
-  上出现；**别再从头排查**，也别再试 span 卫生性（`Span::mixed_site()` 实测**无效**：
-  诊断条数逐文件不变，且它不破坏 `forge-codegen` 测试）。方法与全部证据见
-  [`docs/guides/rust-analyzer-notes.md`](docs/guides/rust-analyzer-notes.md)
-  （含"字符串续行被判 `Invalid escape`"这一类已修项）。一切以 rustc 与门禁为准。
+- **rust-analyzer 假阳性（v18 S10d 已修）**：`isa_from_file!` 调用行上曾报成对的
+  `expected expression` / `expected R_PAREN`（riscv64 15 对 / arm64 4 对 / 夹具 9、6 对，
+  **x86 0**）——那是"整份生成物作为宏展开结果"撑出来的 RA 展开管线问题（生成物用 RA 自己的
+  解析器解析零 `ERROR` 节点，`rustc`/`clippy`/门禁一直全绿）。修法 = **生成物落 `$OUT_DIR`
+  文件 + 展开只剩一句 `include!`**，文件由宿主 build script 预生成（见下一条）。实测四类
+  文件 **68 条 → 0**，且没有引入新的 unresolved import（这个反面指标必须一起看）。
+  **改用 `include!` 后有两条实测约束，别再试别的路子**：① RA 只加载"分析开始前"就存在的
+  文件——宏在展开期写出的文件 RA 报 `failed to load file`（文件确实存在），随后生成模块的项
+  在 20+ 个文件里全变 unresolved；② `TokenStream::to_string()` **上下文相关**（proc 宏里是
+  rustc 美化打印、普通二进制里是紧凑打印，x86 2.66 MB vs 1.34 MB），两侧都写会互相覆盖、
+  每轮重编。别再试 span 卫生性（`Span::mixed_site()` 实测**无效**：诊断逐文件一模一样）。
+  全部证据、二分方法与踩过的坑见
+  [`docs/guides/rust-analyzer-notes.md`](docs/guides/rust-analyzer-notes.md)（含"字符串续行
+  被判 `Invalid escape`"这一类已修项）。一切以 rustc 与门禁为准。
+- **生成物落盘（v18 S10d）**：`isa_from_file!` 展开成
+  `include!(concat!(env!("OUT_DIR"), "/forge_gen_<模块名>_<参数哈希>.rs"))`；文件由
+  `forge_isa_dsl::pregenerate_host()`（宿主 build script，扫 `src/ tests/ benches/
+  examples/` 里每一处调用）写。三条不变量：① 文件名**只由参数**决定（改谱后路径不变，
+  同一份谱的不同变体落到不同文件）；② 文件里带 `#[allow(warnings, clippy::all)]`
+  （生成物不再享受"宏展开不 lint"的豁免，否则 `-D warnings` 门禁多 223 条风格警告）；
+  ③ **单一写者**（只有 build script 写，宏侧只发 `include!`，文件缺失 fail-closed 报
+  接入两步）。`forge_isa_dsl::expand_file` 仍返回**完整 token 流**，CLI 与各生成物守卫
+  测试继续用它；守卫 = `gen_file` 的 4 条单测（展开形状、文件名只由参数决定、落盘件是
+  合法 Rust 文件、宿主扫描能找到调用）。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt <谱.toml>`——
   不接后端就能校验（全部诊断 + 行:列）、看**展开后**的指令与生效编码键、查单条指令的
   模板 provenance（哪个模板哪一行）、两份谱的规格 diff（迁移前后对照）、打印/写出 JSON

@@ -7,7 +7,7 @@ description = "ISA-DSL v18 compiler (plain lib): TOML model, validation, diagnos
 [dependencies]
 toml = "1.1.5"
 serde = { version = "1.0.229", features = ["derive"] }
-syn = { version = "3.0.4", features = ["full"] }
+syn = { version = "3.0.4", features = ["full", "visit"] }
 quote = "1.0.47"
 proc-macro2 = "1.0.107"
 thiserror = "2.0.20"

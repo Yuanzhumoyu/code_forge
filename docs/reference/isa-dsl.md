@@ -26,18 +26,27 @@
   - [版本与现状（v18）](#版本与现状v18)
   - [键总览（速查表，v18 S7c）](#键总览速查表v18-s7c)
   - [快速开始](#快速开始)
+    - [宿主接入（**必须**：v18 S10d 起生成物由 build script 预生成）](#宿主接入必须v18-s10d-起生成物由-build-script-预生成)
   - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
-  - [`[encoding]` — 指令宽度三态](#encoding--指令宽度三态v18-s4)
+  - [`[encoding]` — 指令宽度三态（v18 S4）](#encoding--指令宽度三态v18-s4)
   - [宽度元数据（去「宽度写死」）](#宽度元数据去宽度写死)
+    - [键与派生规则](#键与派生规则)
+    - [指令字宽（`[encoding].bits` / 逐指令 `width`，**无白名单/上限**）](#指令字宽encodingbits--逐指令-width无白名单上限)
+    - [生成的访问器](#生成的访问器)
+    - [fail-closed 契约](#fail-closed-契约)
+    - [`[types]` — 类型 → 类（ISA 数据，B2 接口通用化）](#types--类型--类isa-数据b2-接口通用化)
+    - [最小示例](#最小示例)
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
+    - [`[conventions.cond]` — 条件码表（一张表，三处用）](#conventionscond--条件码表一张表三处用)
   - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
   - [`[[instructions]]` — 指令](#instructions--指令)
   - [多文件组合（`include` / `[[override]]`，v18 S7d）](#多文件组合include--overridev18-s7d)
+  - [`[[reloc]]` — 重定位表（v18 S3d）](#reloc--重定位表v18-s3d)
+  - [`[[pseudo]]` — 汇编器伪指令（v18 S3e）](#pseudo--汇编器伪指令v18-s3e)
   - [`[[templates]]` — 参数化指令模板（唯一复用机制）](#templates--参数化指令模板唯一复用机制)
-  - [`[[reloc]]` — 重定位表](#reloc--重定位表v18-s3d)
-  - [`[[pseudo]]` — 汇编器伪指令](#pseudo--汇编器伪指令v18-s3e)
   - [结构化谓词](#结构化谓词)
+    - [`[[derive]]` — 给谓词起名字（v18 S3f）](#derive--给谓词起名字v18-s3f)
   - [`[[lowering]]` — 指令选择](#lowering--指令选择)
   - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
   - [`[abi]` — 调用约定](#abi--调用约定)
@@ -46,8 +55,11 @@
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
   - [asm 模板](#asm-模板)
   - [代码生成输出](#代码生成输出)
-  - [工具链：`forge-isa` CLI（v18 S7b）](#工具链forge-isa-cliv18-s7b)
-  - [生成期自测（`__spec_tests`，v18 S6）](#生成期自测__spec_testsv18-s6)
+    - [生成代码依赖的运行面（generated-code runtime surface）](#生成代码依赖的运行面generated-code-runtime-surface)
+    - [汇编器能力（`TargetAssembler::parse_insts`）](#汇编器能力targetassemblerparse_insts)
+    - [解码器能力](#解码器能力)
+    - [工具链：`forge-isa` CLI（v18 S7b）](#工具链forge-isa-cliv18-s7b)
+    - [生成期自测（`__spec_tests`，v18 S6）](#生成期自测__spec_testsv18-s6)
   - [已有 ISA 谱](#已有-isa-谱)
 
 ---
@@ -149,10 +161,46 @@ pub use self::my_isa::*; // 模块名 = 文件 stem（小写、`-` → `_`）
 forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
 ```
 
+### 宿主接入（**必须**：v18 S10d 起生成物由 build script 预生成）
+
+生成物不是宏展开出来的，而是 `$OUT_DIR/forge_gen_<模块名>_<参数哈希>.rs` 这个**文件**，
+`isa_from_file!` 只展开成一句 `include!(concat!(env!("OUT_DIR"), "/…"))`。原因见
+`docs/guides/rust-analyzer-notes.md` §1（RA 只能在分析开始前加载那时已存在的文件；且
+`TokenStream::to_string()` 在 proc 宏里与普通二进制里打印结果不同，因此只允许一个写者）。
+
+宿主 crate 需要两处各三行：
+
+```toml
+# Cargo.toml
+[build-dependencies]
+forge-isa-dsl = { path = "../../frontend/forge-isa-dsl" }
+```
+
+```rust
+// build.rs
+fn main() {
+    // 扫 src/ tests/ benches/ examples/ 里每一处 isa_from_file!，预生成到 $OUT_DIR，
+    // 并登记 cargo:rerun-if-changed（谱的全部来源文件 + 被扫描的源文件与目录）。
+    forge_isa_dsl::pregenerate_host().expect("ISA 预生成失败");
+}
+```
+
+没接入时**编译期**就会明确报错（fail-closed，消息里给的是这两步），而不是悄悄让生成
+模块变空——空模块会让下游几十个文件报 "unresolved import"，更难查。
+
 `krate = <路径>` 把生成代码里的路径根改写：`crate::…` → `<路径>::…`、
 `forge_ir::…` → `<路径>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir;`）。
-缺省（不写 `krate`）保持"生成在哪个 crate 就属于哪个 crate"的历史行为，生成物
-逐字节不变。生成代码所需的运行面（公开 API 清单）见「生成代码依赖的运行面」一节。
+缺省（不写 `krate`）保持"生成在哪个 crate 就属于哪个 crate"的历史行为。生成代码所需的
+运行面（公开 API 清单）见「生成代码依赖的运行面」一节。
+
+**生成物文件的三条性质**（改生成管线前先看 `forge-isa-dsl/src/gen_file.rs` 模块头）：
+
+1. 文件名 = **参数哈希**（谱路径 + `krate`/`spec_tests`/`name`/`parts`），与内容无关——
+   同一调用点改谱后路径不变（RA/缓存才认得），同一份谱的不同变体落到**不同**文件；
+2. 文件里带 `#[allow(warnings, clippy::all)]`：以前生成物是宏展开结果、rustc/clippy 一律
+   不 lint 它；改成文件后必须显式恢复（否则实测多出 223 条风格类警告，`-D warnings`
+   门禁直接红）；
+3. 只有 build script 写它（单一写者），宏侧只读路径——两侧都写会互相覆盖并造成每轮重编。
 
 `isa_from_file!` 的完整参数表（v18 S7d 起四个）：
 
@@ -191,6 +239,8 @@ TargetMachine 集成层（`TargetMachine` / `Encoder` / `Decoder` / `Disassemble
 **S1 起**：生成模块内嵌 `include_bytes!(<TOML 绝对路径>)`，rustc 把 TOML 当编译
 依赖——改 `isa/*.toml` 直接触发重编译，**不再需要手动 `touch arch/<isa>.rs`**。
 `FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
+**S10d 起**（v18）这段模块代码住在 `$OUT_DIR/forge_gen_<模块名>_<参数哈希>.rs` 里，
+由宿主 build script 写（见「宿主接入」；文件名稳定、内容变路径不变）。
 
 ## `[meta]` — 元信息与寄存器组
 

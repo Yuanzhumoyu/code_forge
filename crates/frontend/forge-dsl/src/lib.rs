@@ -3,88 +3,15 @@
 //! 真正的能力（TOML 模型 / 校验 / 诊断 / 代码生成）在 [`forge_isa_dsl`]（普通 lib）里；
 //! 本 crate 只做两件事：
 //!
-//! 1. 解析 `isa_from_file!` 的参数（`krate` / `spec_tests` / `name` / `parts`）；
-//! 2. 调 [`forge_isa_dsl::expand_file`]，把生成的 `TokenStream` 交回编译器。
+//! 1. 把 `isa_from_file!` 的实参交给 [`forge_isa_dsl::parse_macro_args`]（参数语义在
+//!    DSL crate 里，build script 预生成走**同一份**解析——v18 S10d）；
+//! 2. 调 [`forge_isa_dsl::expand_file_emitted`]，把"生成物落盘 + 一句 `include!`"的
+//!    `TokenStream` 交回编译器。
 //!
 //! 拆分的理由：proc-macro crate **不能导出非宏项**，而 ISA-DSL 的校验/解释/Schema/CLI
 //! 都需要在宏之外可用（v18 方案 §7 S7）。
 
 use proc_macro::TokenStream;
-
-/// `isa_from_file!` 的参数：
-/// `"path/to/arch.toml"[, krate = <path>][, spec_tests = <bool>][, name = "…"][, parts = ["encode", …]]`。
-struct IsaArgs {
-    path: syn::LitStr,
-    /// 宿主 crate 路径：生成代码里的 `crate::…` 改写为该路径（缺省 = `crate`，
-    /// 即"生成在哪个 crate 里、就属于哪个 crate"）。
-    krate: Option<syn::Path>,
-    /// 是否生成 `#[cfg(test)] mod __spec_tests`（v18 S6，缺省 true）。
-    /// 关掉它的理由只有一个：同一份谱被**多个测试二进制**反复展开（夹具谱住在
-    /// `tests/common/mod.rs`），生成的自测会在每个二进制里重复跑——那里显式关掉，
-    /// 由专门的用例二进制打开（见 `crates/backend/forge-codegen/tests/spec_tests_v12.rs`）。
-    spec_tests: Option<bool>,
-    /// 模块名覆盖（`name = "..."`；缺省 = 文件 stem）。
-    name: Option<String>,
-    /// 部件选择（`parts = ["encode", …]`；缺省四块全开）。见 [`forge_isa_dsl::Parts`]。
-    parts: Option<Vec<String>>,
-}
-
-impl syn::parse::Parse for IsaArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let path: syn::LitStr = input.parse()?;
-        let mut krate = None;
-        let mut spec_tests = None;
-        let mut name = None;
-        let mut parts = None;
-        while !input.is_empty() {
-            input.parse::<syn::Token![,]>()?;
-            if input.is_empty() {
-                break; // 允许尾随逗号
-            }
-            let key: syn::Ident = input.parse()?;
-            input.parse::<syn::Token![=]>()?;
-            match key.to_string().as_str() {
-                "krate" => krate = Some(input.parse::<syn::Path>()?),
-                "spec_tests" => spec_tests = Some(input.parse::<syn::LitBool>()?.value),
-                "name" => name = Some(input.parse::<syn::LitStr>()?.value()),
-                "parts" => {
-                    let arr = input.parse::<syn::ExprArray>()?;
-                    let mut v = Vec::new();
-                    for e in arr.elems {
-                        match e {
-                            syn::Expr::Lit(syn::ExprLit {
-                                lit: syn::Lit::Str(s),
-                                ..
-                            }) => v.push(s.value()),
-                            other => {
-                                return Err(syn::Error::new_spanned(
-                                    other,
-                                    "parts 的元素必须是字符串字面量（encode / decode / asm / tm）",
-                                ));
-                            }
-                        }
-                    }
-                    parts = Some(v);
-                }
-                other => {
-                    return Err(syn::Error::new(
-                        key.span(),
-                        format!(
-                            "未知参数 `{other}`（`isa_from_file!` 支持 `krate = <path>`、`spec_tests = <bool>`、`name = \"…\"`、`parts = [\"encode\", …]`）"
-                        ),
-                    ));
-                }
-            }
-        }
-        Ok(Self {
-            path,
-            krate,
-            spec_tests,
-            name,
-            parts,
-        })
-    }
-}
 
 /// `isa_from_file!("path/to/arch.toml"[, krate = 宿主路径][, spec_tests = <bool>]
 /// [, name = "…"][, parts = ["encode", …]])`
@@ -95,32 +22,18 @@ impl syn::parse::Parse for IsaArgs {
 /// crate 路径后，生成物里的 `crate::…` 全部改写为 `<krate>::…`、`forge_ir::…`
 /// 改写为 `<krate>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir`）。
 /// 用途：把 ISA 谱放在**测试**或其它 crate 里生成（demo 夹具不再进库本体）；
-/// 缺省参数保持逐字节兼容（生成物与历史完全一致）。
+/// 缺省 `krate` 保持"生成在哪个 crate 就属于哪个 crate"（路径根仍是 `crate::`）。
+///
+/// v18 S10d 起生成物**不再**是宏展开结果：它由宿主 build script 预生成成
+/// `$OUT_DIR/forge_gen_<模块名>_<参数哈希>.rs`，本宏只发一句 `include!`
+/// （见 [`forge_isa_dsl::expand_file_emitted`] 与 `docs/reference/isa-dsl.md`「宿主接入」）。
 #[proc_macro]
 pub fn isa_from_file(input: TokenStream) -> TokenStream {
-    let args: IsaArgs = match syn::parse(input) {
+    let args = match forge_isa_dsl::parse_macro_args(input.into()) {
         Ok(a) => a,
         Err(e) => return e.to_compile_error().into(),
     };
-    let path = args.path.value();
-    let parts = match &args.parts {
-        Some(names) => match forge_isa_dsl::Parts::from_names(names) {
-            Ok(p) => p,
-            Err(e) => {
-                return syn::Error::new(proc_macro2::Span::call_site(), e)
-                    .to_compile_error()
-                    .into();
-            }
-        },
-        None => forge_isa_dsl::Parts::all(),
-    };
-    let opts = forge_isa_dsl::ExpandOptions {
-        krate: args.krate.as_ref().map(|p| quote::quote!(#p).to_string()),
-        spec_tests: args.spec_tests.unwrap_or(true),
-        name: args.name.clone(),
-        parts,
-    };
-    match forge_isa_dsl::expand_file(&path, &opts) {
+    match forge_isa_dsl::expand_file_emitted(&args) {
         Ok(ts) => ts.into(),
         Err(e) => {
             // `路径:行:列: 消息`——终端与 IDE 均可点击跳到 TOML 出错处。
@@ -137,49 +50,43 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// 参数解析：缺省无 `krate`/`spec_tests`；显式给出可解析；未知键报错。
+    ///
+    /// v18 S10d 起参数语义住在 `forge_isa_dsl`（build script 预生成走同一份解析），
+    /// 本用例钉的是**宏侧入口**仍然按这套语义工作。
     #[test]
     fn parse_args() {
-        let a: IsaArgs = syn::parse2(quote::quote! { "isa/x86_v12.toml" }).expect("缺省");
-        assert!(a.krate.is_none());
-        assert_eq!(a.spec_tests, None, "缺省 = 生成自测（true）");
-        assert_eq!(a.path.value(), "isa/x86_v12.toml");
-        let b: IsaArgs = syn::parse2(quote::quote! {
+        let a =
+            forge_isa_dsl::parse_macro_args(quote::quote! { "isa/x86_v12.toml" }).expect("缺省");
+        assert!(a.opts.krate.is_none());
+        assert!(a.opts.spec_tests, "缺省 = 生成自测（true）");
+        assert_eq!(a.path, "isa/x86_v12.toml");
+        let b = forge_isa_dsl::parse_macro_args(quote::quote! {
             "tests/isa/demo_v12.toml", krate = forge_codegen
         })
         .expect("显式");
-        assert!(b.krate.is_some());
-        let c: IsaArgs = syn::parse2(quote::quote! {
+        assert!(b.opts.krate.is_some());
+        let c = forge_isa_dsl::parse_macro_args(quote::quote! {
             "tests/isa/demo_v12.toml", krate = forge_codegen, spec_tests = false
         })
         .expect("两个参数");
-        assert!(c.krate.is_some());
-        assert_eq!(c.spec_tests, Some(false));
-        let d: IsaArgs =
-            syn::parse2(quote::quote! { "x.toml", spec_tests = true, }).expect("尾随逗号");
-        assert_eq!(d.spec_tests, Some(true));
-        let e: IsaArgs = syn::parse2(quote::quote! {
+        assert!(!c.opts.spec_tests);
+        let d = forge_isa_dsl::parse_macro_args(quote::quote! { "x.toml", spec_tests = true, })
+            .expect("尾随逗号");
+        assert!(d.opts.spec_tests);
+        let e = forge_isa_dsl::parse_macro_args(quote::quote! {
             "tests/isa/include_root_v12.toml", krate = forge_codegen,
             spec_tests = false, name = "my_isa",
             parts = ["encode", "decode"]
         })
         .expect("v18 S7d 新参数");
-        assert_eq!(e.name.as_deref(), Some("my_isa"));
-        assert_eq!(
-            e.parts.as_deref(),
-            Some(&["encode".to_string(), "decode".to_string()][..])
-        );
-        let err = match syn::parse2::<IsaArgs>(quote::quote! { "x.toml", parts = [1, 2] }) {
-            Ok(_) => panic!("parts 元素必须是字符串"),
-            Err(e) => e,
-        };
+        assert_eq!(e.opts.name.as_deref(), Some("my_isa"));
+        assert_eq!(e.opts.parts.names(), "encode, decode");
+        let err = forge_isa_dsl::parse_macro_args(quote::quote! { "x.toml", parts = [1, 2] })
+            .expect_err("parts 元素必须是字符串");
         assert!(err.to_string().contains("字符串字面量"), "{err}");
-        let err = match syn::parse2::<IsaArgs>(quote::quote! { "x.toml", nope = a }) {
-            Ok(_) => panic!("未知参数必须报错"),
-            Err(e) => e,
-        };
+        let err = forge_isa_dsl::parse_macro_args(quote::quote! { "x.toml", nope = a })
+            .expect_err("未知参数必须报错");
         assert!(err.to_string().contains("未知参数"), "{err}");
     }
 }

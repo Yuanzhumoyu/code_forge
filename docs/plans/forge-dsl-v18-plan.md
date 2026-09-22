@@ -931,6 +931,60 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
 > x86 剩余的同 asm/同 ops 组仍差在**编码键**（`form` 预设有无、`opsize`、内联 vs preset），
 > 那是**不同编码**而非可参数化的取值，统一它们属于语义重构（风险大于收益，不做）。
 
+## 7.2 S10 系列：rust-analyzer 假阳性（计划外，用户报告的插曲）
+
+**来源**：计划表 S9 之后没有排片；S10 是用户报告"编辑器里 `isa_from_file!` 那几行报
+`expected expression` / `expected R_PAREN`"后开的插曲。全部证据与可复用二分方法落在
+[`docs/guides/rust-analyzer-notes.md`](../guides/rust-analyzer-notes.md)（本节的结论在那里有完整版）。
+
+| 片 | 内容 | 结果 |
+| --- | --- | --- |
+| **S10a** | `Invalid escape`（22 处，6 个文件）——RA 把 Rust 字符串续行判成非法转义 | **已修**：并成一行，字符串值逐字节不变（`1405047`） |
+| **S10b** | 症状定位：`expected expression`/`expected R_PAREN` 成对出现在宏路径 span 上 | **诊断为 RA 侧**：生成物用 RA 自己的解析器解析零 `ERROR` 节点；二分收敛到"`encode` + 至少一个别的部件"，且只在定宽/混合字长 ISA 上 |
+| **S10c** | 候选修法：生成物 token 整体换 `Span::mixed_site()` | **否定**：诊断对数逐文件完全不变（arm64 4 对 / riscv64 15 对 / 夹具 9、6 对），与 span/卫生性无关；已回退，否定结果入库（`64bd274`） |
+| **S10d** | 生成物落文件 + `include!`（用户选定方向） | **已修**：四类文件 SyntaxError 68 条 → **0**，且不引入新的 unresolved import；见下 |
+
+### S10d 设计（生成物落文件 + build script 预生成）
+
+**做法**：`isa_from_file!` 的展开从"1.0 MB token 的 `pub mod`"变成**一句**
+`include!(concat!(env!("OUT_DIR"), "/forge_gen_<模块名>_<参数哈希>.rs"))`；生成物文件由
+**宿主 build script 预生成**（`forge_isa_dsl::pregenerate_host()` 扫宿主 crate 的
+`src/ tests/ benches/ examples/` 里每一处调用，按同一份参数解析生成，并登记
+`cargo:rerun-if-changed`）。`expand_file`（工具链/守卫测试用的完整 token 流入口）不变。
+
+**两条实测约束**（决定了"必须 build script + 单一写者"，别再试别的路子）：
+
+1. **RA 只在分析开始前登记一次可加载文件**：宏在展开期写出的文件，RA 报
+   `macro-error: failed to load file …`（文件确实存在、mtime 早于诊断），随后生成模块的
+   项在 20+ 个文件里全变 "unresolved import"——比原来的假阳性**更糟**。build script
+   产物则正常（同仓 `forge-ir` 的 `$OUT_DIR/opcode_gen.rs` 一直是这么被加载的）。
+2. **`TokenStream::to_string()` 上下文相关**：同一 token 流在 proc 宏里（rustc 美化打印）
+   与普通二进制里（proc-macro2 紧凑打印）文本不同（x86 全部件 2,655,722 B vs
+   1,336,624 B）⇒ 两侧都写文件会互相覆盖、每轮重编。因此**只允许 build script 写**，
+   宏侧只发 `include!`；文件缺失 fail-closed 报出接入两步。
+
+**实测**：
+
+| 项 | 数值 |
+| --- | --- |
+| RA `SyntaxError`（四类文件合计） | **68 条 → 0**（15+4+9+6 对 → 0/0/0/0） |
+| RA 新引入的 `RustcHardError` | **0**（这是必须一起看的反面指标） |
+| 生成物文件 | x86 1,336,624 B / riscv64 692,982 B / arm64 500,071 B（紧凑打印，含头部与 lint 门闩） |
+| 预生成调用点 | forge-codegen 共 **14** 处（3 发行后端 + 6 夹具 × 变体） |
+| 生成物 lint | 加 `#[allow(warnings, clippy::all)]` 前 `cargo check -p forge-codegen` 多 **223** 条警告（`unused_parens` 191、`non_snake_case` 6、`dead_code` 8…），加后 **0** |
+| cargo 交互 | 干净构建后连续两次构建 0.25 s（fresh）；改 TOML 只多编**一轮**（4.4 s）随后 fresh——无重编循环 |
+
+**代价（如实记）**：宿主 crate 必须加 build script 与 `[build-dependencies] forge-isa-dsl`
+（各三行，见 `docs/reference/isa-dsl.md`「宿主接入」）；生成物文本由 build script 的打印器
+决定（proc-macro2 紧凑打印，2.6 MB → 1.3 MB 也让 rustc 少解析一半空白）；生成物
+不再是宏展开结果，因此必须显式 `#[allow(warnings, clippy::all)]` 才能保住 `-D warnings`
+门禁。
+
+**验收**：`cargo test -p forge-codegen` 27 个二进制全绿（含 930 条生成期规格用例与全部
+黄金字节）、`cargo test -p forge-isa-dsl` 210 单测（含 S10d 新增 4 条：展开形状、文件名
+只由参数决定、落盘件是合法 Rust 文件、宿主扫描能找到调用）、三架构 JIT 矩阵与其余门禁见
+提交记录。
+
 ## 8. 迁移
 
 1. **迁移面**：`isa/{x86_v12,riscv64_v12,arm64_v12}.toml`（实测 6,235 行）+ 5 个夹具 +
