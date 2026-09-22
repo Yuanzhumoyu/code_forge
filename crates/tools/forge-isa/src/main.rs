@@ -10,7 +10,7 @@
 //! | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），`explain` 的文本即可用来核对迁移等价 |
 //!
 //! 约定：默认人类可读输出，`--json` 走机读（手写发射器，不引 `serde_json`——
-//! 与"不新增依赖"的显式假设一致，见 `docs/plans/forge-dsl-v18-plan.md` §10.4）。
+//! 与"不新增依赖"的显式假设一致，见 `docs/archive/forge-dsl-v18-plan.md` §10.4）。
 //! 退出码：`0` 成功、`1` 诊断/失败、`2` 用法错误。
 
 use std::path::{Path, PathBuf};

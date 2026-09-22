@@ -32,7 +32,7 @@
 | `plans/forge-ir-v3-plan.md` | forge-ir v3 改进方案（S0–S7 已落地，逐切片带实证与守卫；S8 见下条） | progress |
 | `plans/forge-ir-s8-design.md` | forge-ir S8 可选项设计（二进制序列化 / MemorySSA-lite / crate 拆分：逐个给设计与成本、验证方案、触发条件；2026-09-19 拍板：**只做二进制序列化**，另两项不做） | progress |
 | `plans/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化**执行方案**（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照、基线数字） | progress |
-| `plans/forge-dsl-v18-plan.md` | forge-dsl 改进方案（ISA-DSL v18：`[[templates]]` 为唯一指令复用机制——`body`+`rows` 取代 families、指令属性 `ref` 取代 aliases、条件码/重定位/伪指令数据化、宽度三态、诊断、生成自测、拆 crate+CLI、多文件组合与部件选择；S0 基线实测 + S0–S8 切片；**S0–S4/S6/S7 全部落地**，S5/S8 待做） | progress |
+| `plans/forge-isa-dsl-v19-plan.md` | forge-isa-dsl 改进方案（ISA-DSL v19：**可独立接入**——生成物只依赖 `forge-isa-runtime`、删 `krate`；**数据化验证**——谱内 `[[vectors]]` + `forge-isa test`；**规范体检**——`forge-isa lint`；**参数化变体**——一份源谱出 RV32/RV64；V0–V7 切片（MVP = V0–V4 + V6 确定性部分），外部参考 TableGen/ISLE/decodetree/SLEIGH/GCC .md/Sail 的对比与取舍见 §3） | progress |
 
 ## performance/ — 基准与优化
 
@@ -60,6 +60,7 @@
 | `archive/hir-shrink-plan.md` | HIR/mini_c 收缩方案（**2026-09-10 归档**：点 1/2/3 落地、点 5 前提不成立而删除、点 4 决定不做；收益结论下调） |
 | `archive/isa-dsl-v12-v17.md` | ISA-DSL v12–v17 语法史 + v18 删除/改名总表（**2026-09-21 归档**：现行规范 = `reference/isa-dsl.md` v18） |
 | `archive/isa-dsl-v12-roadmap.md` | ISA-DSL v12 历史（现行规范 = `reference/isa-dsl.md` v18） |
+| `archive/forge-dsl-v18-plan.md` | forge-dsl v18 执行方案（**2026-09-23 归档**：S0–S10 全部落地或经度量判定不做；S0 立项基线、S8/S9/S10 的实测数字仍是 `performance/bench_baseline.md` 与 CHANGELOG 的证据出处；现行方案 = `plans/forge-isa-dsl-v19-plan.md`） |
 | `archive/asm-dec-generic-design-v2.md` | 汇编器/解码器 v2 设计提案（v13 已落地，v15 演进） |
 | `archive/clippy-fixes.md` | 2026-07 clippy 清零单次记录 |
 | `archive/coverage-history.md` | Windows 本地覆盖率接入诊断 + 审查驱动补测交付（2026-07/08） |

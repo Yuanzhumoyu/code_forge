@@ -2,7 +2,7 @@
 //!
 //! 背景：ISA-DSL 的既有纪律是"ISA 形状全在数据里（`isa/*.toml`），生成器只处理数据"。
 //! 但历史上多次回潮——`lowering.rs` 里硬编码 x86 的 `IntCC → setcc` 码表、`asm.rs` 里
-//! 内建 x86 条件码缺省表（详见 `docs/plans/forge-dsl-v18-plan.md` §2.4/§2.8）。
+//! 内建 x86 条件码缺省表（详见 `docs/archive/forge-dsl-v18-plan.md` §2.4/§2.8）。
 //! 本守卫把这条纪律变成会失败的测试。
 //!
 //! # 判据（数据驱动，不维护手写名单）

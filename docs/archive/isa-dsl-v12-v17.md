@@ -4,7 +4,7 @@
 > 不代表代码现状。**现行语法 = [`docs/reference/isa-dsl.md`](../reference/isa-dsl.md)（v18）**；
 > 错误码目录见 [`docs/reference/isa-dsl-errors.md`](../reference/isa-dsl-errors.md)；
 > 30 分钟上手见 [`docs/guides/isa-dsl-tutorial.md`](../guides/isa-dsl-tutorial.md)；
-> 变更动机与逐节设计见 [`docs/plans/forge-dsl-v18-plan.md`](../plans/forge-dsl-v18-plan.md)。
+> 变更动机与逐节设计见 [`docs/archive/forge-dsl-v18-plan.md`](forge-dsl-v18-plan.md)。
 > v12 时代的路线图另见 [`docs/archive/isa-dsl-v12-roadmap.md`](isa-dsl-v12-roadmap.md)。
 
 v18 是**破坏性重设计**（用户明确"允许破坏性更新、无需兼容旧版本"）：旧写法不保留兼容层，
@@ -44,7 +44,7 @@ asm = "add {0:[gprx:inout]}, {1:[gprx]}"
 
 ## 3. v15（S1–S6）：六步破坏性简化
 
-每步门禁全绿、逐字节等价（细节见当时的提交与 `docs/plans/forge-dsl-v18-plan.md`）：
+每步门禁全绿、逐字节等价（细节见当时的提交与 `docs/archive/forge-dsl-v18-plan.md`）：
 
 | 阶段 | 内容 |
 | --- | --- |

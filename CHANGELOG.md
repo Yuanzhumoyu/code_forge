@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed (2026-09-22)
 
 - **角色去宽度化：`Role` 不再把位宽编进名字（v18 S9，破坏性 / 只需改 TOML 6 行）**。原先 `roles` 里是 `fpr_mov_f32` / `fpr_mov_f64` / `wide_vec_store_32` / `_64` / `wide_vec_load_32` / `_64`——位宽被写死进角色名，别的位宽的 ISA 接不进来（等于把 x86 的 32/64 当成 ISA 通用事实）。现在角色名去掉宽度后缀（`fpr_mov` / `wide_vec_store` / `wide_vec_load`），宽度**写在角色声明里**：`roles = [{ role = "fpr_mov", bits = 32 }]`（单位是**位**，与 `opsize`/`[encoding].bits` 一致；无宽度语义的角色照旧写 `"gpr_mov"`）。
-  生成器按 **(角色, 位宽)** 解析（`role_name_for`），选不到时错误消息给出**请求位宽 + 已声明位宽集合**；校验同样按 (角色, 位宽) 唯一——同角色同宽度声明两次、或同一角色一处写 `bits` 一处不写，都在**编译期**报错并点出两条指令名。`isa/x86_v12.toml` 改了 6 行（`MOVSS`/`MOVSD`/`VMOVUPS_256_*`/`VMOVUPS_512_*`），**生成的机器码逐字节不变**（黄金字节 + 三架构 JIT 矩阵与基线逐数字相同；另有两例守卫：任意位宽 16/24 合法、同 (角色,位宽) 冲突必报）。设计动机、证据与"为什么宽度不能从槽派生"（`MOVSS`/`MOVSD` 共用 `fpr` 槽）见 `docs/plans/forge-dsl-v18-plan.md` §7.1。
+  生成器按 **(角色, 位宽)** 解析（`role_name_for`），选不到时错误消息给出**请求位宽 + 已声明位宽集合**；校验同样按 (角色, 位宽) 唯一——同角色同宽度声明两次、或同一角色一处写 `bits` 一处不写，都在**编译期**报错并点出两条指令名。`isa/x86_v12.toml` 改了 6 行（`MOVSS`/`MOVSD`/`VMOVUPS_256_*`/`VMOVUPS_512_*`），**生成的机器码逐字节不变**（黄金字节 + 三架构 JIT 矩阵与基线逐数字相同；另有两例守卫：任意位宽 16/24 合法、同 (角色,位宽) 冲突必报）。设计动机、证据与"为什么宽度不能从槽派生"（`MOVSS`/`MOVSD` 共用 `fpr` 槽）见 `docs/archive/forge-dsl-v18-plan.md` §7.1。
 
 ### Changed (2026-09-21)
 
@@ -229,7 +229,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-09-19)
 
-- **ISA-DSL 诊断升级（v18 S1）：一次列全 + 精确到键行 + 错误码；`[emit]`/`[spill]` 从"完全不校验"变为编译期校验**。执行方案 `docs/plans/forge-dsl-v18-plan.md`（用户口径：允许破坏性更新、无需兼容旧版本、兼顾体验、足够通用），本条目是其中的 S1 切片。
+- **ISA-DSL 诊断升级（v18 S1）：一次列全 + 精确到键行 + 错误码；`[emit]`/`[spill]` 从"完全不校验"变为编译期校验**。执行方案 `docs/archive/forge-dsl-v18-plan.md`（用户口径：允许破坏性更新、无需兼容旧版本、兼顾体验、足够通用），本条目是其中的 S1 切片。
   诊断侧：`validate` 从"14 个校验器 fail-fast、一次只报第一条"改为**收集式**（节级 + 逐条声明，最多 32 条，超出追加"另有 N 条"）；定位从"`source.find("name = …")` 全局启发式（同名会指错、抽不出就退化 `1:1`）"改为**声明索引**（一次预扫建"节 + 名字 → 块行范围"，块内再用消息里引号点名的值精确定位到**出错的键行**）；重复声明指向**后出现**的那一处并附注另一处位置；错误码 `DSL-<节>` 稳定可过滤，目录见 `docs/reference/isa-dsl-errors.md`。
   校验侧补上两个"未校验的名字引用面"：`[emit.prologue/epilogue].insts` 与 `[spill.*].load/store` 现在校验指令引用名、`@` 伪指令（`@push_callee`/`@pop_callee`/`@frame_alloc`/`@frame_free`/`@move_args`）、占位符（emit：`{frame_size}`/`{frame_size_neg}`/`{frame_size_mN}`/`{callee_saved_bytes}`；spill：编号 `{N}`）与 `base` 寄存器名。**这会拒绝此前静默通过的 spec**（S0 基线实测：`[emit]` 里写 `NO_SUCH_INST`、`@nope`、`{bogus}` 全部 `<ok>`），三份发行谱已实测通过新校验。
   证据：`src/v12/diag_matrix_tests.rs`（30 例错误码/位置矩阵 + 多错并列 + 附注 + 上限 + 头条精确位置）、`v12/diag.rs` 单测（索引/精准定位/渲染/上限）、S0→S1 对照表在方案 §12.4/§12.6；`cargo clean -p forge-codegen` 后 `cargo check -p forge-codegen` 通过（34.7 s）。

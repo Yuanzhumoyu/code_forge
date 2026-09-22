@@ -8,7 +8,7 @@
 > | 30 分钟接入一个小 ISA | [`docs/guides/isa-dsl-tutorial.md`](../guides/isa-dsl-tutorial.md) |
 > | 报错看不懂 / 常见修法 | [`docs/reference/isa-dsl-errors.md`](isa-dsl-errors.md) |
 > | v12–v17 旧语法与 v18 删除总表 | [`docs/archive/isa-dsl-v12-v17.md`](../archive/isa-dsl-v12-v17.md) |
-> | 为什么这样设计 / 逐节变更动机 | [`docs/plans/forge-dsl-v18-plan.md`](../plans/forge-dsl-v18-plan.md) |
+> | 为什么这样设计 / 逐节变更动机 | [`docs/archive/forge-dsl-v18-plan.md`](../archive/forge-dsl-v18-plan.md) |
 >
 > 实现自 v18 S7a 起拆成两个 crate：`forge-isa-dsl`（普通 lib = 编译器本体：模型/解析/
 > 校验/诊断/代码生成/加载器）+ `forge-dsl`（薄 proc-macro：只解析 `isa_from_file!` 参数并调前者）。
@@ -1428,7 +1428,7 @@ forge_dsl::isa_from_file!("tests/isa/demo.toml",
 （`krate = …` 生成在测试 crate 里）。S6 落地时它当场抓到两处真缺陷：
 riscv W 变体移位量 32..63 被静默掩码成 `n-32`、x86 EVEX 寄存器直寻址丢掉
 ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
-`docs/plans/forge-dsl-v18-plan.md` §7「S6 进度」。
+`docs/archive/forge-dsl-v18-plan.md` §7「S6 进度」。
 
 ## 已有 ISA 谱
 

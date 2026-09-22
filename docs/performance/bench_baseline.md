@@ -21,7 +21,7 @@ default run.
 
 命令：`cargo clean -p forge-codegen` + `FGE_DEBUG_GEN=1 cargo check -p forge-codegen`
 （`FGE_DEBUG_GEN` 把每个 `isa_from_file!` 生成模块 dump 到 `%TEMP%\forge_gen_<stem>.rs`）。
-用途：`docs/plans/forge-dsl-v18-plan.md` 的 S0 基线，S8（生成物减薄）以此为对照。
+用途：`docs/archive/forge-dsl-v18-plan.md` 的 S0 基线，S8（生成物减薄）以此为对照。
 
 | 生成模块 | 字节 | 行（未格式化 token 串） |
 | --- | ---: | ---: |
@@ -66,7 +66,7 @@ SHA-256 **逐字节相同**；黄金测试与 JIT 矩阵（x86 195/3/0、riscv 1
 再 dump，否则基线是脏的）：arm64 与 5 个夹具**逐字节相同**（636,986 B 等）；
 riscv 1,263,918 → 1,264,082 B、x86 2,979,650 → 2,977,866 B，两边的差异只是
 `Inst` 枚举/编码臂/解码 trie 的**语句顺序**（每函数 token 多重集完全相同）——原因见
-`docs/plans/forge-dsl-v18-plan.md` §12.8。黄金测试与三架构 JIT 矩阵不变
+`docs/archive/forge-dsl-v18-plan.md` §12.8。黄金测试与三架构 JIT 矩阵不变
 （23/175/0、131/67/0、195/3/0）。
 
 **v18 全部切片落地后的规格规模（S7d 时点，2026-09-21）**——S3d/S3e/S4/S7c/S7d 又给三份谱
@@ -129,7 +129,7 @@ riscv64/arm64 则分别与直接实测的 20,385 / 19,755 B 差 382 B（合并�
 ⇒ **生成期自测在非测试构建里成本 ≈ 0**（`#[cfg(test)]` 让 rustc 直接跳过模块体），
 "把自测外置以加快构建"没有收益——不要再打它的主意。
 
-> 结论与建议见 `docs/plans/forge-dsl-v18-plan.md` §7「S8 度量结论」。
+> 结论与建议见 `docs/archive/forge-dsl-v18-plan.md` §7「S8 度量结论」。
 
 ### S8a 落地度量（2026-09-21；同树 A/B，只切 `v12/codegen/machine.rs`）
 

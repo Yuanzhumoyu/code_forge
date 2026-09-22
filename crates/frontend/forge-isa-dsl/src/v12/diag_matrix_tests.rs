@@ -2,7 +2,7 @@
 //!
 //! 取代 S0 的 `s0_baseline_tests.rs`（那份基线钉记录了旧行为：fail-fast 单错、
 //! 无名节退化 1:1、`[emit]`/`[spill]` 完全不校验；实测记录保留在
-//! `docs/plans/forge-dsl-v18-plan.md` §12.4）。
+//! `docs/archive/forge-dsl-v18-plan.md` §12.4）。
 //!
 //! 断言方式：**位置的期望值由文档文本自己算出**（`line_of(doc, needle)` 找含该声明的行），
 //! 因此"诊断指到哪一行"是可复核的，而不是把行号抄死在测试里。

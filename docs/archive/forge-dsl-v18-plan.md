@@ -1,5 +1,11 @@
 # forge-dsl 改进方案（ISA-DSL v18）
 
+> ⚠️ **ARCHIVED（2026-09-23）**：v18 的 S0–S10 切片**全部落地，或经度量判定不做**，本方案已退役、
+> 不再维护。**现行执行方案**见 [`docs/plans/forge-isa-dsl-v19-plan.md`](../plans/forge-isa-dsl-v19-plan.md)。
+> 本文保留为**历史证据**：S0 立项基线、S8/S8b-1/S8b-2/S8c/S8d/S9/S10a–S10d 的实测数字与"为什么
+> 不做"的判定仍被 `docs/performance/bench_baseline.md`、`docs/reference/isa-dsl.md`、`CHANGELOG.md`
+> 引用，引用时注明"以记录时点为准"。
+>
 > 状态：[progress]（2026-09-19 撰写）。用户 2026-09-19 拍板口径：**允许破坏性更新、无需兼容旧版本、
 > 可参考网络上的设计方案、需兼顾用户体验、需足够通用而非服务于个别指令集**。
 >
@@ -1030,7 +1036,7 @@ S4 提前到 S6 之前：宽度三态是**语法/生成期**的破坏性改动�
 
 ## 11. 文档落地清单
 
-- ✅ 本方案 `docs/plans/forge-dsl-v18-plan.md`（已落地）
+- ✅ 本方案 `docs/archive/forge-dsl-v18-plan.md`（已落地）
 - ✅ 重写 `docs/reference/isa-dsl.md`（v18 语法：标题去 v15、版本与现状、一节一概念、生成代码契约）
 - ✅ 新增 `docs/guides/isa-dsl-tutorial.md`（30 分钟接入一个小 ISA：寄存器组 → 位域 → 槽 → 指令 → 模板 → 自测）
 - ✅ `docs/reference/isa-dsl-errors.md`（S1 建、S7e 补多文件组合与 `parts`）

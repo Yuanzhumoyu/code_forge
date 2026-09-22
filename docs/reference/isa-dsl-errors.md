@@ -6,7 +6,7 @@
 > `model.rs`（模型级派生与 gate）、`src/loader.rs`（多文件组合的加载期错误）。
 > 语法规范见 [`docs/reference/isa-dsl.md`](isa-dsl.md)，教程见
 > [`docs/guides/isa-dsl-tutorial.md`](../guides/isa-dsl-tutorial.md)；
-> 执行方案见 [`docs/plans/forge-dsl-v18-plan.md`](../plans/forge-dsl-v18-plan.md) §7。
+> 执行方案见 [`docs/archive/forge-dsl-v18-plan.md`](../archive/forge-dsl-v18-plan.md) §7。
 
 ## 1. 诊断长什么样
 

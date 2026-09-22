@@ -18,7 +18,8 @@ docs/
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
 ├── plans/                 # 有未完成工作的专项方案 [progress]
-│   └── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
+│   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
+│   └── forge-isa-dsl-v19-plan.md    # ISA-DSL v19 现行方案（独立运行时 crate / 向量 / lint / 变体）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
