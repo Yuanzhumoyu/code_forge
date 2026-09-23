@@ -88,6 +88,11 @@ pub(crate) fn gen_spec_tests(infos: &[InstInfo], m: &V12Model) -> Result<TokenSt
         .collect();
     let amby = group_ambiguous_by_key(&cases, &keys, infos);
 
+    // 谱内向量（v19 V3）：作者写在 `[[vectors]]` 里的字节/错误断言，形态已由
+    // `validate::validate_vectors` 钉过，这里直接发射用例（不再判内容）。
+    let vector_tests = gen_vector_tests(m);
+    let n_vectors = m.vectors.len();
+
     let mut used_names: Vec<String> = Vec::new();
     let mut bodies: Vec<TokenStream> = Vec::new();
     let mut skipped: Vec<(String, String)> = Vec::new();
@@ -172,6 +177,8 @@ pub(crate) fn gen_spec_tests(infos: &[InstInfo], m: &V12Model) -> Result<TokenSt
             /// 汇编文本不唯一的指令（同名同形、编码不同）：文本本就分不清是哪一条，
             /// 故不要求 `disasm → asm → encode` 回到同一字节，只要求文本幂等与自洽。
             pub(crate) const SPEC_TEXT_AMBIGUOUS: &[&str] = &[#(#amb_ts),*];
+            /// 谱内 `[[vectors]]` 的条数（v19 V3）：由作者声明，不参与覆盖率判据。
+            pub(crate) const SPEC_VECTORS: usize = #n_vectors;
 
             /// 覆盖率自检：全指令覆盖（有跳过就报出名字与原因）。
             #[test]
@@ -250,8 +257,148 @@ pub(crate) fn gen_spec_tests(infos: &[InstInfo], m: &V12Model) -> Result<TokenSt
             }
 
             #(#bodies)*
+
+            // ── 谱内测试向量（`[[vectors]]`，v19 V3）──
+            #(#vector_tests)*
         }
     })
+}
+
+/// 把 `[[vectors]]` 翻成用例（v19 V3）。
+///
+/// 四种形态与 `validate::validate_vectors` 的判据一一对应（那里挡"写坏的向量"，
+/// 这里断言"写错的字节"）：
+///
+/// - `asm` + `bytes`：`assemble → encode` 逐字节相等，且 `decode` 吃满、再编码一致；
+/// - `asm` + `error`：`assemble` 或 `encode` 必须失败且消息包含子串；
+/// - `bytes` + `error = "DECODE"`：`decode` 必须失败（`partial` 另钉 `decode_partial`）；
+/// - `bytes`：`decode` 成功且再编码逐字节相等。
+///
+/// 用例名 `spec_vector_<下标>`（下标从 0 起，与谱里 `[[vectors]]` 的顺序一致）；
+/// 消息都带 `[向量 N]` 前缀——libtest 只报用例名与 panic 文本，下标能让作者直接回谱里定位。
+fn gen_vector_tests(m: &V12Model) -> Vec<TokenStream> {
+    let mut out = Vec::with_capacity(m.vectors.len());
+    for (i, v) in m.vectors.iter().enumerate() {
+        let doc_text = match &v.comment {
+            Some(c) => c.clone(),
+            None => vector_summary(v, i),
+        };
+        let doc = syn::LitStr::new(&doc_text, proc_macro2::Span::call_site());
+        let tag = syn::LitStr::new(&format!("[向量 {i}]"), proc_macro2::Span::call_site());
+        let ident = syn::Ident::new(&format!("spec_vector_{i}"), proc_macro2::Span::call_site());
+        let byte_lits: Vec<proc_macro2::Literal> = v
+            .bytes
+            .iter()
+            .flatten()
+            .map(|b| proc_macro2::Literal::u8_unsuffixed(*b as u8))
+            .collect();
+        let asm_lit = v
+            .asm
+            .as_ref()
+            .map(|a| syn::LitStr::new(a, proc_macro2::Span::call_site()));
+        let body = match (asm_lit.as_ref(), &v.error, v.partial, v.bytes.is_some()) {
+            // 正向：assemble → encode == bytes，且 decode 吃满 + 再编码一致
+            (Some(asm), None, _, true) => quote! {
+                let tag = #tag;
+                let want: &[u8] = &[#(#byte_lits),*];
+                let text = #asm;
+                let inst = assemble(text)
+                    .unwrap_or_else(|e| panic!("{tag} assemble {text:?} 失败: {e}"));
+                let got = encode(&inst)
+                    .unwrap_or_else(|e| panic!("{tag} encode {text:?} 失败: {e}"));
+                assert_eq!(got.as_slice(), want, "{tag} {text:?} 编码字节不符");
+                let (back, used) = decode(want)
+                    .unwrap_or_else(|| panic!("{tag} decode {want:02x?} 返回 None"));
+                assert_eq!(used, want.len(), "{tag} decode 未吃满 {want:02x?}");
+                let re = encode(&back).unwrap_or_else(|e| panic!("{tag} 再编码失败: {e}"));
+                assert_eq!(re.as_slice(), want, "{tag} decode∘encode 字节不稳");
+            },
+            // 汇编负向：assemble 或 encode 必须失败，消息含子串
+            (Some(asm), Some(err), _, _) => {
+                let err_lit = syn::LitStr::new(err, proc_macro2::Span::call_site());
+                quote! {
+                    let tag = #tag;
+                    let text = #asm;
+                    let want = #err_lit;
+                    let msg = match assemble(text) {
+                        Ok(inst) => match encode(&inst) {
+                            Ok(b) => panic!("{tag} {text:?} 本应失败，却编出 {b:02x?}"),
+                            Err(e) => e,
+                        },
+                        Err(e) => e,
+                    };
+                    assert!(
+                        msg.contains(want),
+                        "{tag} {text:?} 的错误消息不含 {want:?}: {msg}"
+                    );
+                }
+            }
+            // 解码负向：decode 必须失败（partial 另钉 decode_partial 的消费量）
+            (None, Some(_), partial, true) => {
+                let partial_ts = match partial {
+                    Some(p) => {
+                        let lit = proc_macro2::Literal::usize_unsuffixed(p);
+                        quote! {
+                            assert_eq!(
+                                decode_partial(want),
+                                Err(#lit),
+                                "{tag} decode_partial 应在第 {} 字节处拒绝 {want:02x?}",
+                                #lit
+                            );
+                        }
+                    }
+                    None => quote! {},
+                };
+                quote! {
+                    let tag = #tag;
+                    let want: &[u8] = &[#(#byte_lits),*];
+                    assert!(
+                        decode(want).is_none(),
+                        "{tag} decode {want:02x?} 本应失败，却解出了指令"
+                    );
+                    #partial_ts
+                }
+            }
+            // 解码正向：decode 成功且再编码等于原字节
+            (None, None, _, true) => quote! {
+                let tag = #tag;
+                let want: &[u8] = &[#(#byte_lits),*];
+                let (inst, used) = decode(want)
+                    .unwrap_or_else(|| panic!("{tag} decode {want:02x?} 返回 None"));
+                assert_eq!(used, want.len(), "{tag} decode 未吃满 {want:02x?}");
+                let re = encode(&inst).unwrap_or_else(|e| panic!("{tag} 再编码失败: {e}"));
+                assert_eq!(re.as_slice(), want, "{tag} decode∘encode 字节不稳");
+            },
+            // 其余组合已被 `validate_vectors` 拦下——这里 fail-closed，不静默跳过。
+            _ => {
+                let msg = syn::LitStr::new(
+                    &format!("[[vectors]] 第 {i} 条形态非法（validate 应已报错）"),
+                    proc_macro2::Span::call_site(),
+                );
+                quote! { compile_error!(#msg); }
+            }
+        };
+        out.push(quote! {
+            #[doc = #doc]
+            #[test]
+            fn #ident() {
+                #body
+            }
+        });
+    }
+    out
+}
+
+/// 没写 `comment` 时的用例文档注释（形态 + 内容摘要）。
+fn vector_summary(v: &crate::v12::model::Vector, i: usize) -> String {
+    let what = match (&v.asm, &v.error, v.bytes.is_some()) {
+        (Some(a), None, true) => format!("assemble({a:?}) → encode == bytes"),
+        (Some(a), Some(e), _) => format!("assemble({a:?}) 必须失败且消息含 {e:?}"),
+        (None, Some(_), true) => "decode(bytes) 必须失败".to_string(),
+        (None, None, true) => "decode(bytes) 成功且再编码一致".to_string(),
+        _ => "（形态非法，见 validate 诊断）".to_string(),
+    };
+    format!("谱内向量 #{i}：{what}")
 }
 
 /// 该 imm 字段的"解码还原值"投影：给定用户值 `v`，解码应当还原出什么。

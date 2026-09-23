@@ -105,7 +105,7 @@
 | **V0** 基线取证 | 生成耗时/规模、编译时间分档、覆盖缺口、运行面清单、黄金测试规模 | 本文 §10 基线表；机器可读"生成物运行面表"（V1 的迁移清单）；`ops.toml` 有而谱里无 lowering 的**缺口清单** | 数字可复现（命令写进文档）；缺口清单与矩阵 skip 对得上 | 立刻可用（给 V1/V4 定范围） |
 | **V1** 拆 `forge-isa-runtime`（**破坏性**） | 新 crate：`machine/*` + `runtime/{output_types,registry}` + `AllocResult`/`CodeSink`/`LabelRef`；解三处 `machine→pipeline` 引用：数据型上移，管线走 runtime 的 `Pipeline` trait，`impl_erased_target_machine!` 移入 runtime | 生成物只依赖 runtime；`forge-codegen` 变成 runtime 下游（保留 JIT/regalloc/emission/arch） | `cargo tree -p forge-isa-runtime` 只含 forge-ir；新守卫 `runtime_has_no_pipeline_dep.rs`；三后端 930 条规格用例 + 黄金 + 矩阵 195/3/0、131/67/0、23/175/0 逐数字不变 | 通用性的**前置条件** |
 | ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
-| **V3** `[[vectors]]` 数据化测试 | `{ asm, bytes }`、`{ asm, error = "<码>" }`、`{ bytes, error = "DECODE", partial = N }`；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价**（脚本 dump 前后 sha256 比对）；手写测试行数 −≥50%（前后数字入库）；负向向量钉错误码 | G2；作者体验立刻变好 |
+| 🚧 **V3** `[[vectors]]` 数据化测试 | `{ asm, bytes }`、`{ asm, error = "<码>" }`、`{ bytes, error = "DECODE", partial = N }`、`{ bytes }`（解码正向）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价**（脚本 dump 前后 sha256 比对）；手写测试行数 −≥50%（前后数字入库）；负向向量钉错误码 | G2；作者体验立刻变好。**V3a 已落地（riscv64 全量迁移 + CLI）**，V3b = x86/arm64 迁移与总账 |
 | **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降 |
 | **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants` + 值条件列 `vary` 下沉到 `[[templates]]` | RV32 从同一 riscv64 谱生成（投影：encode/decode/asm，不注册）；`explain` 显示参数生效点 | 与独立 RV32 表或 QEMU 32 位用例对拍；矩阵/覆盖守卫显式登记变体期望 | G4；臂/扩展式复用的验证 |
 | **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关" |
@@ -189,6 +189,42 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   **上面那条守卫假阳性由此得到反向印证**：run 178 里 `Test (Linux)`（"Test remaining
   workspace"）、`Test (macOS)`、`Test (Windows)`、`Coverage` **四项红的都是
   `forge-isa-runtime` 的这条测试**（V1b 把宏搬进 runtime 时引入），V2 修掉后 run 179 四项全绿。
+
+**V3a 已落地（2026-09-23，riscv64 试点 + CLI）**：
+
+- **谱内 `[[vectors]]`（四种形态）**：`{asm, bytes}` 正向（`assemble → encode` 逐字节相等，
+  `decode` 必须吃满且再编码一致）、`{asm, error = "<子串>"}` 汇编/编码负向、
+  `{bytes, error = "DECODE"[, partial]}` 解码负向（`partial` 钉 `decode_partial` 的消费量、
+  允许**截断输入**）、`{bytes}` 解码正向。形态校验在 `validate_vectors`（缺 asm/bytes、
+  正负同给、定宽字长不符、字节越界、`partial` 用错、重复、空子串都报错）；用例发射在
+  `spec::gen_vector_tests`，名字 `spec_vector_<下标>`（与谱里顺序一一对应），条数进
+  `SPEC_VECTORS`。
+- **riscv64 全量迁移**：三张 Rust oracle 表（`golden_gpr_spec_bytes` /
+  `f_inst_spec_bytes`（`r_type(...)` 期望值按同一 R 型布局落成字面量）/ `s_type_spec_bytes`）
+  **62 条**进 `isa/riscv64_v12.toml`，另加 5 条负向/解码向量（共 67）。迁移前后规范化
+  （`asm|b0,b1,…` 排序）**sha256 相同**：`fffd0549ca3cfe6c5b4705fa49d949e25c042a8ca67511b4ecad9d2b4bc53a94`
+  （脚本 `target/migrate_riscv_vectors.py`：从 `git show HEAD:` 抽 + 写 TOML + 回读逐条比对）。
+- **实测**：`cargo test -p forge-codegen --lib` **903 → 970 passed**（riscv 单谱 295，其中 67 向量）。
+  手写测试行数：`riscv64_v12_tests.rs` **389 → 287 行**（−102）。三 ISA 的总账在 V3b。
+- **新 CLI `forge-isa test <谱> [--json]`**：给任意谱现搭一个**零宿主** crate
+  （`[dependencies] forge-isa-runtime` + `[build-dependencies] forge-isa-dsl`，
+  `parts = ["encode","decode","asm"]`、`spec_tests = true`），`cargo test --offline` 直接跑
+  生成物里的 `__spec_tests`。实现细节：独立 `CARGO_TARGET_DIR`（`target/isa-test-target`，
+  避免与正在跑的 cargo 抢锁）、cargo 输出落文件再回读（不接管道）、谱路径走
+  `FORGE_ISA_SPEC` 环境变量、`canonicalize` 的 `\\?\` 前缀必须**剥掉**（否则 TOML 路径依赖
+  报 `invalid path url`）。实测：riscv64 `--json` ⇒ `{"vectors":67,…,"passed":295,"failed":0,"ok":true}`；
+  x86 ⇒ 447 passed（尚无向量）。端到端用例默认跳过，`FORGE_ISA_TEST_E2E=1` 打开（本机 31 s）。
+- **顺手抓到并修掉一个真缺陷**（V2 的 demo 谱没有伪指令，所以没暴露）：
+  `parts` 只开 `asm`、不开 `tm` 时，`assemble` 引用的 `__pseudo_expand`（`[[pseudo]]` 展开）
+  只在 `tm` 部件的 `gen_assembler` 里发射 ⇒ 带 `[[pseudo]]` 的谱（riscv 的 `li`）
+  在 asm-only 宿主上**编译不过**（`E0425: cannot find function __pseudo_expand`）。
+  修法：`asm && !tm` 时在 `codegen/mod.rs` 补发 `gen_pseudo_helpers`（`tm` 在时不发，避免重复定义）。
+- **守卫**：`crates/frontend/forge-isa-dsl/tests/vectors.rs`（4 条：四形态生成形状 +
+  10 个形态反例 + 合法形态 + 无向量谱照常）；schema 三方针同步
+  （`src/schema.rs` ↔ `v12/model.rs::Vector` ↔ `docs/reference/isa-dsl.md` 键表 +
+  `isa-dsl.schema.json` 重新生成）。
+- **V3b（下一步）**：x86（`golden_gpr_spec_bytes` 等 ~200 条）与 arm64（A1–A5 表）迁移；
+  迁移脚本对三 ISA 一起跑；给出"手写测试行数 −≥50%"的总账。
 
 **V1b 早期方案（`pipeline = <路径>` 宏参数——已放弃，保留反例）**：原计划让宿主在生成期把
 管线类型路径交给生成物。落地失败：宿主给的路径会先被**固定根改写**

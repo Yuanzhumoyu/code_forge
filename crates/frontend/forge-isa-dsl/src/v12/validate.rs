@@ -52,6 +52,115 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     collect(d, idx, validate_abi(m));
     validate_emit_all(m, idx, d);
     validate_spill_all(m, idx, d);
+    collect(d, idx, validate_vectors(m));
+}
+
+// ─────────────────────────── [[vectors]] ───────────────────────────
+
+/// `[[vectors]]` 校验（v19 V3）：**形态**合法性与定宽字长。
+///
+/// 只判定"这条向量写得对不对"（结构）：
+///
+/// - 至少要给 `asm` 或 `bytes`；`asm` + `bytes` + `error` 三者同给是**歧义**
+///   （既说应当成功又说应当失败）→ 报错；
+/// - `bytes` 非空、每个元素 `0..=255`（TOML 整数，超界报出下标与原值）；
+/// - 没有 `asm` 的向量是**解码负向**，`error` 只接受 `"DECODE"`；有 `asm` 时 `error`
+///   是错误消息子串，不接受空串；
+/// - `partial` 只与 `bytes` + `error = "DECODE"` 同用且 > 0；
+/// - 定宽谱（`[encoding].kind = "fixed"` 且给了 `bits`）里 `bytes` 长度必须等于字长
+///   ——变长/混合谱不猜长度；
+/// - `(asm, bytes, error)` 完全相同的向量重复出现 → 报错（复制粘贴事故）。
+///
+/// **内容**（这条文本真能编出这些字节吗）不在这里判——那是生成用例的职责
+/// （`__spec_tests` 里跑，或 `forge-isa test` 真编译一次）。这里挡的是"写坏的向量"，
+/// 不是"写错的字节"：后者要执行才可能知道。
+fn validate_vectors(m: &V12Model) -> Result<(), String> {
+    if m.vectors.is_empty() {
+        return Ok(());
+    }
+    let fixed_len: Option<usize> = match m.encoding.kind {
+        EncodingKind::Fixed => m.encoding.bits.map(|b| (b as usize).div_ceil(8)),
+        _ => None,
+    };
+    let mut seen: BTreeSet<(String, String, String)> = BTreeSet::new();
+    for (i, v) in m.vectors.iter().enumerate() {
+        let at = format!("[[vectors]] 第 {} 条", i + 1);
+        let (has_asm, has_bytes) = (v.asm.is_some(), v.bytes.is_some());
+        if !has_asm && !has_bytes {
+            return Err(format!("{at}：至少要有 `asm` 或 `bytes`"));
+        }
+        if has_asm && has_bytes && v.error.is_some() {
+            return Err(format!(
+                "{at}：`asm` + `bytes` + `error` 三者同给有歧义——正向向量不写 `error`，负向向量不写 `bytes`（解码负向除外，它没有 `asm`）"
+            ));
+        }
+        if let Some(bs) = &v.bytes {
+            if bs.is_empty() {
+                return Err(format!("{at}：`bytes` 不能是空数组"));
+            }
+            for (k, b) in bs.iter().enumerate() {
+                if !(0..=255).contains(b) {
+                    return Err(format!(
+                        "{at}：`bytes[{k}]` = {b} 不是字节（允许 0..=255，可写十六进制如 0x48）"
+                    ));
+                }
+            }
+            // 定宽字长只对**必须成整条指令**的向量成立：解码负向常常**故意**给截断的输入
+            //（`bytes = [0x13]` 测"短输入必须被拒"），那里不查长度。
+            let expect_full = v.error.as_deref() != Some("DECODE");
+            if expect_full
+                && let Some(w) = fixed_len
+                && bs.len() != w
+            {
+                return Err(format!(
+                    "{at}：定宽谱 `[encoding].bits` = {} 位 ⇒ 一条指令 {w} 字节，但 `bytes` 给了 {} 字节",
+                    m.encoding.bits.unwrap_or(0),
+                    bs.len()
+                ));
+            }
+        }
+        match (&v.error, has_asm) {
+            (Some(e), false) => {
+                if e != "DECODE" {
+                    return Err(format!(
+                        "{at}：没有 `asm` 的向量是**解码负向**，`error` 只接受 \"DECODE\"（给的是 `{e}`）——要断言编码失败请写 `asm`"
+                    ));
+                }
+            }
+            (Some(e), true) => {
+                if e.is_empty() {
+                    return Err(format!(
+                        "{at}：`error` 不能是空串（它是错误消息里的稳定子串）"
+                    ));
+                }
+            }
+            (None, _) => {}
+        }
+        if let Some(p) = v.partial {
+            if !has_bytes || has_asm || v.error.as_deref() != Some("DECODE") {
+                return Err(format!(
+                    "{at}：`partial` 只与 `bytes` + `error = \"DECODE\"` 同用（它钉 `decode_partial` 吃掉的字节数）"
+                ));
+            }
+            if p == 0 {
+                return Err(format!("{at}：`partial` 必须 > 0（吃掉 0 字节不算解码）"));
+            }
+        }
+        let key = (
+            v.asm.clone().unwrap_or_default(),
+            v.bytes
+                .as_ref()
+                .map(|b| format!("{b:?}"))
+                .unwrap_or_default(),
+            v.error.clone().unwrap_or_default(),
+        );
+        if !seen.insert(key) {
+            return Err(format!(
+                "{at}：与前面的向量完全相同（`asm`/`bytes`/`error` 逐项一致）"
+            ));
+        }
+    }
+    Ok(())
 }
 
 // ─────────────────────────── [encoding] ───────────────────────────

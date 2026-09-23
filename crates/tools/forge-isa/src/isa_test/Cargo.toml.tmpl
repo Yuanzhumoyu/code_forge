@@ -1,0 +1,14 @@
+[package]
+name = "forge_isa_spec_test"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# 本 crate 住在 <repo>/target/isa-test/ 下，**不属于**任何 workspace。
+[workspace]
+
+[dependencies]
+forge-isa-runtime = { path = "{{RUNTIME}}" }
+
+[build-dependencies]
+forge-isa-dsl = { path = "{{DSL}}" }

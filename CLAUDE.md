@@ -353,7 +353,14 @@ let name = node.get_text("name")?;
   接入两步）。`forge_isa_dsl::expand_file` 仍返回**完整 token 流**，CLI 与各生成物守卫
   测试继续用它；守卫 = `gen_file` 的 4 条单测（展开形状、文件名只由参数决定、落盘件是
   合法 Rust 文件、宿主扫描能找到调用）。
-- **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt <谱.toml>`——
+- **谱内测试向量（`[[vectors]]`，v19 V3）**：四种形态——`{asm, bytes}` 正向（`assemble → encode`
+  逐字节相等 + `decode` 吃满再编码一致）、`{asm, error = "<子串>"}` 汇编/编码负向、
+  `{bytes, error = "DECODE"[, partial = N]}` 解码负向（`partial` 钉 `decode_partial` 的消费量，
+  截断输入合法）、`{bytes}` 解码正向。形态在解析期校验（`validate_vectors`），用例发射成
+  `__spec_tests::spec_vector_<下标>`（条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表**——
+  迁进谱里（riscv64 已迁 67 条，迁移前后字节集合 sha256 相同；x86/arm64 是 V3b）。
+  守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs`。
+- **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test <谱.toml>`——
   不接后端就能校验（全部诊断 + 行:列）、看**展开后**的指令与生效编码键、查单条指令的
   模板 provenance（哪个模板哪一行）、两份谱的规格 diff（迁移前后对照）、打印/写出 JSON
   Schema、把多文件谱 `fmt` 折叠成单文件（v18 S7d）。`--json` 机读；退出码 0/1/2。

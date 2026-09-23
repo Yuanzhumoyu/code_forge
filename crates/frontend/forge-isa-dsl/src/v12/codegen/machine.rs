@@ -805,7 +805,7 @@ pub(crate) fn gen_disasm(_infos: &[InstInfo]) -> Result<TokenStream, String> {
 ///   与 `lw x1, [x2, #4]` 都按 2 个参数切）。
 ///
 /// 没有 `[[pseudo]]` 的 ISA 返回空 token（生成的代码与引入本能力之前逐字相同）。
-fn gen_pseudo_helpers(model: &V12Model) -> TokenStream {
+pub(crate) fn gen_pseudo_helpers(model: &V12Model) -> TokenStream {
     if model.pseudo.is_empty() {
         return quote! {};
     }

@@ -74,6 +74,7 @@ pub const SECTIONS: &[Section] = &[
             "abi",
             "emit",
             "spill",
+            "vectors",
         ],
         flatten: &[],
         additional: false,
@@ -376,6 +377,15 @@ pub const SECTIONS: &[Section] = &[
         additional: false,
         doc: "溢出/回填模板（`{N}` = 寄存器序号占位符）",
     },
+    Section {
+        path: "[[vectors]]",
+        model: "Vector",
+        required: &[],
+        optional: &["asm", "bytes", "error", "partial", "comment"],
+        flatten: &[],
+        additional: false,
+        doc: "数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = \"DECODE\", partial}` 解码错误 / `{bytes}` 解码正向",
+    },
     // ── 嵌套子表（TOML 内联或子节）──
     Section {
         path: "enc / vex / evex / modrm（内联子表）",
@@ -513,6 +523,7 @@ pub fn schema_json() -> String {
         ("abi", "[abi]", false),
         ("emit", "[emit]", false),
         ("spill", "", false),
+        ("vectors", "[[vectors]]", true),
     ] {
         if path.is_empty() {
             // 自由表（types/conventions/spill）：只声明是表。

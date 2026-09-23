@@ -247,6 +247,12 @@ forge_dsl::isa_from_file!("tests/isa/toy16.toml");
 自己**不用**手抄"这条指令编出来是不是这几个字节"：字节正确性由各 ISA 的编码参考文档 + 少量黄金值
 测试守（见 `docs/reference/aarch64-encoding-ref.md` 的写法）。
 
+黄金字节现在可以**直接写在谱里**（`[[vectors]]`，v19 V3）：`{asm, bytes}` 正向、
+`{asm, error = "<子串>"}` 汇编负向、`{bytes, error = "DECODE"[, partial]}` 解码负向、
+`{bytes}` 解码正向；`cargo run -p forge-isa -- test <谱.toml>` 可以**不起宿主 crate**
+直接跑一遍（它现搭一个只依赖 `forge-isa-runtime` 的临时 crate）。样例见
+`isa/riscv64_v12.toml` 末尾的 67 条向量与 `docs/reference/isa-dsl.md`「谱内测试向量」。
+
 多文件谱（公共骨架 + 扩展）用 `include` + `[[override]]`：
 
 ```toml

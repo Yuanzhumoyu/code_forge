@@ -104,6 +104,45 @@ pub struct V12Model {
     /// 溢出模板（`[spill.GPR]`/`[spill.FPR]`：load/store 指令 + 基址寄存器）。
     #[serde(default)]
     pub spill: BTreeMap<String, SpillTemplate>,
+
+    /// 数据化测试向量（`[[vectors]]`，v19 V3）：作者直接写"这条文本该编成这几个字节"
+    /// 或"这条必须报错"，生成期翻成 `__spec_tests` 里的用例（见
+    /// `v12::codegen::spec::gen_vector_tests`），因此**不再需要手抄 Rust 黄金值表**。
+    #[serde(default)]
+    pub vectors: Vec<Vector>,
+}
+
+/// 一条测试向量（`[[vectors]]`，v19 V3）。
+///
+/// **形态由字段组合决定**（非法组合在解析期明确报错，见 `validate::validate_vectors`）：
+///
+/// | 写法 | 断言 |
+/// | --- | --- |
+/// | `asm` + `bytes` | `assemble(asm)` → `encode` **逐字节等于** `bytes`；`decode(bytes)` 吃满且再编码一致 |
+/// | `asm` + `error` | `assemble` 或 `encode` 必须失败，且消息**包含** `error` 子串 |
+/// | `bytes` + `error = "DECODE"`（可带 `partial`） | `decode(bytes)` 必须失败；`partial` 额外要求 `decode_partial` 在吃掉 `partial` 字节处 `Err(partial)` |
+/// | `bytes`（单独） | `decode(bytes)` 必须成功，且再编码逐字节等于 `bytes`（解码正向） |
+///
+/// `bytes` 的元素是 TOML 整数、范围 `0..=255`；长度由向量自己声明（定宽 ISA 会被
+/// 校验钉成字长，变长 ISA 不猜）。`comment` 只进生成用例的文档注释。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Vector {
+    /// 汇编文本（正向 / 汇编错误向量必填）。
+    #[serde(default)]
+    pub asm: Option<String>,
+    /// 期望字节（正向 / 解码向量）或待解码字节（解码负向）。
+    #[serde(default)]
+    pub bytes: Option<Vec<i64>>,
+    /// 负向向量的期望错误：`"DECODE"`（解码必须失败）或错误消息里的**稳定子串**。
+    #[serde(default)]
+    pub error: Option<String>,
+    /// 解码负向：`decode_partial` 期望吃掉的字节数（必须与 `error = "DECODE"` 同用）。
+    #[serde(default)]
+    pub partial: Option<usize>,
+    /// 备注（进生成用例的 doc 注释；不参与断言）。
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 // ─────────────────── 宽度/类派生（元数据单点，禁止代码内写死）───────────────────

@@ -273,6 +273,16 @@ pub fn generate_with_parts(
     } else {
         quote! {}
     };
+    // `asm` 部件的 `assemble` 会调 `__pseudo_expand`（`[[pseudo]]` 展开），而这个助手平时
+    // 由 `tm` 部件里的 `gen_assembler` 发射。**只开 asm、不开 tm** 时必须在这里补发，
+    // 否则生成物引用未定义函数（v19 V3a 由 `forge-isa test` 在 riscv64 上抓到：谱里的
+    // `li` 伪指令 + `parts = ["encode","decode","asm"]` → `E0425: cannot find function
+    // __pseudo_expand`）。`tm` 在时不发，避免重复定义。
+    let pseudo_helpers = if parts.asm && !parts.tm {
+        machine::gen_pseudo_helpers(model)
+    } else {
+        quote! {}
+    };
     // `Reg` 枚举/`PhysReg` impl/类常量是 `Inst` 字段类型的前提：`tm` 部件不在时
     // 必须单独发射（`tm` 在时由集成层发射，生成物因此逐字节不变）。
     let reg_enum = if parts.tm {
@@ -299,6 +309,7 @@ pub fn generate_with_parts(
         #mem_support
         #inst_enum
         #bit_helpers
+        #pseudo_helpers
         #encode_fn
         #decode_fn
         #disasm_fn

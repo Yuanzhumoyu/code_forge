@@ -13,119 +13,17 @@ fn v12_bytes(asm: &str) -> Vec<u8> {
     encode(&inst).unwrap_or_else(|e| panic!("v12 encode {inst:?}: {e}"))
 }
 
-// ─────────────────────── 规范字节：GPR ───────────────────────
+// ─────────────── 规范字节：已迁入谱内 `[[vectors]]`（v19 V3a）───────────────
+//
+// 原先的三张 oracle 表（`golden_gpr_spec_bytes` / `f_inst_spec_bytes` /
+// `s_type_spec_bytes`，共 62 条）已迁到 `isa/riscv64_v12.toml` 的 `[[vectors]]`——
+// 字节 oracle 与谱同处一地，断言由生成物里的 `__spec_tests::spec_vector_*` 执行
+// （`cargo test -p forge-codegen --lib`）。迁移前后字节集合的规范化 sha256 相同：
+// `fffd0549ca3cfe6c5b4705fa49d949e25c042a8ca67511b4ecad9d2b4bc53a94`
+// （证据与命令见 `docs/plans/forge-isa-dsl-v19-plan.md` §5 的 V3 进度）。
 
-#[test]
-fn golden_gpr_spec_bytes() {
-    let cases: &[(&str, &[u8])] = &[
-        ("add X1, X2, X3", &[0xB3, 0x00, 0x31, 0x00]),
-        ("sub X1, X2, X3", &[0xB3, 0x00, 0x31, 0x40]),
-        ("sll X1, X2, X3", &[0xB3, 0x10, 0x31, 0x00]),
-        ("slt X1, X2, X3", &[0xB3, 0x20, 0x31, 0x00]),
-        ("sltu X1, X2, X3", &[0xB3, 0x30, 0x31, 0x00]),
-        ("xor X1, X2, X3", &[0xB3, 0x40, 0x31, 0x00]),
-        ("srl X1, X2, X3", &[0xB3, 0x50, 0x31, 0x00]),
-        ("sra X1, X2, X3", &[0xB3, 0x50, 0x31, 0x40]),
-        ("or X1, X2, X3", &[0xB3, 0x60, 0x31, 0x00]),
-        ("and X1, X2, X3", &[0xB3, 0x70, 0x31, 0x00]),
-        ("mul X1, X2, X3", &[0xB3, 0x00, 0x31, 0x02]),
-        ("div X1, X2, X3", &[0xB3, 0x40, 0x31, 0x02]),
-        ("divu X1, X2, X3", &[0xB3, 0x50, 0x31, 0x02]),
-        ("rem X1, X2, X3", &[0xB3, 0x60, 0x31, 0x02]),
-        ("remu X1, X2, X3", &[0xB3, 0x70, 0x31, 0x02]),
-        ("addi X1, X2, 5", &[0x93, 0x00, 0x51, 0x00]),
-        ("addi X1, X2, -5", &[0x93, 0x00, 0xB1, 0xFF]),
-        ("slti X1, X2, 5", &[0x93, 0x20, 0x51, 0x00]),
-        ("sltiu X1, X2, 5", &[0x93, 0x30, 0x51, 0x00]),
-        ("xori X1, X2, 5", &[0x93, 0x40, 0x51, 0x00]),
-        ("ori X1, X2, 5", &[0x93, 0x60, 0x51, 0x00]),
-        ("andi X1, X2, 5", &[0x93, 0x70, 0x51, 0x00]),
-        ("slli X1, X2, 3", &[0x93, 0x10, 0x31, 0x00]),
-        ("srli X1, X2, 3", &[0x93, 0x50, 0x31, 0x00]),
-        ("srai X1, X2, 3", &[0x93, 0x50, 0x31, 0x40]),
-        ("lui X1, 4096", &[0xB7, 0x10, 0x00, 0x00]),
-        ("ld X1, 8(X2)", &[0x83, 0x30, 0x81, 0x00]),
-        // 注：sd/FSW 等 S 型——v11 的 S 型散布移位反了（[7;5;5]/[25;7] 应为
-        // [7;5;0]/[25;7;5]），字节非规范；v12 规范正确，见 `s_type_spec_bytes`。
-        ("jalr X1, 8(X2)", &[0xE7, 0x00, 0x81, 0x00]),
-        ("ecall", &[0x73, 0x00, 0x00, 0x00]),
-        ("fence", &[0x0F, 0x00, 0xF0, 0x0F]),
-        ("clz X1, X2", &[0xB3, 0x10, 0x01, 0x60]),
-        ("ctz X1, X2", &[0xB3, 0x10, 0x11, 0x60]),
-        ("cpop X1, X2", &[0xB3, 0x10, 0x21, 0x60]),
-        ("rev8 X1, X2", &[0xB3, 0x50, 0x81, 0xD0]),
-        ("rol X1, X2, X3", &[0xB3, 0x10, 0x31, 0x60]),
-        ("ror X1, X2, X3", &[0xB3, 0x50, 0x31, 0x60]),
-        ("min X1, X2, X3", &[0xB3, 0x00, 0x31, 0x0A]),
-        ("max X1, X2, X3", &[0xB3, 0x10, 0x31, 0x0A]),
-        ("minu X1, X2, X3", &[0xB3, 0x40, 0x31, 0x0A]),
-        ("maxu X1, X2, X3", &[0xB3, 0x50, 0x31, 0x0A]),
-        ("amoadd.w X1, X2, (X3)", &[0xAF, 0xA0, 0x21, 0x00]),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(got.as_slice(), *expected, "spec mismatch for `{asm}`");
-    }
-}
-
-// ─────────────────── 规范字节：F 指令（独立 oracle）───────────────────
-
-/// RISC-V R 型字：funct7|rs2|rs1|funct3|rd|opcode（规范位布局）。
-fn r_type(funct7: u32, rs2: u32, rs1: u32, funct3: u32, rd: u32, opcode: u32) -> [u8; 4] {
-    let w = (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode;
-    w.to_le_bytes()
-}
-
-#[test]
-fn f_inst_spec_bytes() {
-    // v11 的 F 编码（16+i 索引）不合规；v12 组内索引 → 与 RISC-V 规范一致。
-    let cases: &[(&str, [u8; 4])] = &[
-        ("fadd.s F1, F2, F3", r_type(0x00, 3, 2, 0, 1, 0x53)),
-        ("fsub.s F1, F2, F3", r_type(0x04, 3, 2, 0, 1, 0x53)),
-        ("fmul.s F1, F2, F3", r_type(0x08, 3, 2, 0, 1, 0x53)),
-        ("fdiv.s F1, F2, F3", r_type(0x0C, 3, 2, 0, 1, 0x53)),
-        ("fsqrt.s F1, F2", r_type(0x2C, 0, 2, 0, 1, 0x53)),
-        ("fsgnj.s F1, F2, F3", r_type(0x10, 3, 2, 0, 1, 0x53)),
-        ("fsgnjn.s F1, F2, F3", r_type(0x10, 3, 2, 1, 1, 0x53)),
-        ("fsgnjx.s F1, F2, F3", r_type(0x10, 3, 2, 2, 1, 0x53)),
-        ("fcvt.w.s X1, F2, rtz", r_type(0x60, 0, 2, 1, 1, 0x53)),
-        ("fcvt.s.w F1, X2", r_type(0x68, 0, 2, 0, 1, 0x53)),
-        ("flt.s X1, F2, F3", r_type(0x50, 3, 2, 1, 1, 0x53)),
-        ("feq.s X1, F2, F3", r_type(0x50, 3, 2, 2, 1, 0x53)),
-        ("fle.s X1, F2, F3", r_type(0x50, 3, 2, 0, 1, 0x53)),
-        ("fmin.s F1, F2, F3", r_type(0x14, 3, 2, 0, 1, 0x53)),
-        ("fmax.s F1, F2, F3", r_type(0x14, 3, 2, 1, 1, 0x53)),
-        ("fmv.w.x F1, X2", r_type(0x78, 0, 2, 0, 1, 0x53)),
-        ("fmv.x.w X1, F2", r_type(0x70, 0, 2, 0, 1, 0x53)),
-        // FLW/FSW（I/S 型）
-        ("flw F1, 8(X2)", [0x87, 0x20, 0x81, 0x00]),
-        ("fsw F1, 8(X2)", [0x27, 0x24, 0x11, 0x00]),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(got.as_slice(), expected, "spec mismatch for `{asm}`");
-    }
-}
-
-#[test]
-fn s_type_spec_bytes() {
-    // v11 的 S 型散布（[7;5;5] + [25;7]）把移位写反，字节非规范；
-    // v12 用规范布局（imm[4:0]→bit11:7，imm[11:5]→bit31:25）。
-    // sd x1, 8(x2) 规范 = 0x00113423（与 GNU as 一致）
-    let b = v12_bytes("sd X1, 8(X2)");
-    assert_eq!(
-        b.as_slice(),
-        [0x23, 0x34, 0x11, 0x00],
-        "sd X1,8(X2) 规范字节"
-    );
-    // 负位移：sd x1, -8(x2) → imm[4:0]=0x18, imm[11:5]=0x7F
-    let b = v12_bytes("sd X1, -8(X2)");
-    assert_eq!(
-        b.as_slice(),
-        [0x23, 0x3C, 0x11, 0xFE],
-        "sd X1,-8(X2) 规范字节"
-    );
-}
+// F 指令 / S 型的规范字节同样已在谱内：见 `isa/riscv64_v12.toml` 的 `[[vectors]]`
+// （其中 F 表原先由 `r_type(...)` 算出的期望值，迁移时按同一布局落成字面量）。
 
 // ─────────────────── 全量 decode 往返（含分支/负立即数）───────────────────
 
@@ -173,7 +71,7 @@ fn decode_roundtrip_all() {
         "fence",
         // 注：clz/ctz/cpop 与 rol/ror 编码重叠（clz rd,rs = rol rd,rs,x0 别名）——
         // decode 按声明序/叶优先返回 rol，roundtrip 语义歧义，故不列入；
-        // 编码正确性由 golden_gpr_spec_bytes 覆盖。
+        // 编码正确性由谱内 `[[vectors]]`（`isa/riscv64_v12.toml`）覆盖。
         "rev8 X1, X2",
         "rol X1, X2, X3",
         "ror X1, X2, X3",

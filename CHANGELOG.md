@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-23) — ISA-DSL v19 V3a（谱内测试向量 + `forge-isa test`）
+
+- **谱里可以直接写测试向量（`[[vectors]]`）**：`{asm, bytes}`（`assemble → encode` 逐字节相等 + `decode` 吃满再编码一致）、`{asm, error = "<子串>"}`（汇编/编码必须失败）、`{bytes, error = "DECODE"[, partial = N]}`（解码必须失败，`partial` 钉 `decode_partial` 的消费量）、`{bytes}`（解码正向）。生成期把它们翻成 `__spec_tests::spec_vector_<下标>` 用例，**不再需要手抄 Rust 黄金字节表**。形态在解析期校验（缺 `asm`/`bytes`、正负同给、定宽字长不符、字节越界、`partial` 用错、重复、空子串均报错）。riscv64 已迁移 67 条（原先 Rust 里的三张 oracle 表；迁移前后字节集合的规范化 sha256 相同，`cargo test -p forge-codegen --lib` 903 → 970 passed）。
+- **新 CLI 子命令 `forge-isa test <谱> [--json]`**：给任意谱现搭一个**零宿主** crate（只依赖 `forge-isa-runtime` + build-dependency `forge-isa-dsl`，`parts = ["encode","decode","asm"]`）并 `cargo test --offline`，直接跑谱里的向量与每条指令的闭环用例——不需要 forge-codegen，也不需要作者先写宿主。退出码与其它子命令一致（0/1/2）。
+
+### Changed (2026-09-23)
+
+- **`parts` 不含 `tm` 时补发伪指令展开助手**：`parts` 只开 `asm`、不开 `tm` 的生成物里，`assemble` 引用的 `__pseudo_expand` 原先只在 `tm` 部件的 `gen_assembler` 里发射，导致带 `[[pseudo]]` 的谱（如 riscv 的 `li`）在 asm-only 宿主上编译不过（`E0425`）。现在 `asm && !tm` 时在模块里补发（`tm` 在时不发，避免重复定义）。由 `forge-isa test` 在 riscv64 上实测发现。
+
 ### Added (2026-09-23) — ISA-DSL v19 V2（外部宿主实证）
 
 - **新增示例 `examples/isa-host-demo`：证明一份 ISA 谱可以独立接入**。它只有 `[dependencies] forge-isa-runtime` 与 `[build-dependencies] forge-isa-dsl`——连 proc-macro crate 都不依赖（`build.rs` 直接调 `pregenerate`、`src/lib.rs` 只写一句 `include!`），自带玩具谱 `isa/toy16.toml` 与依赖面/生成物守卫。`cargo test -p isa-host-demo` 跑出 9 条生成期自测 + 5 条宿主用例；`cargo tree -p isa-host-demo --edges normal,build` 里没有 forge-codegen。这是 v19 目标 G1（任意普通 crate 都能承载一份谱）的硬证据，也是教程"新 ISA 从这里开始"的可抄模板。

@@ -356,3 +356,50 @@ fn include_errors_are_explicit() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dir2);
 }
+
+// ─────────────────────── test（v19 V3a）───────────────────────
+
+/// `test` 的用法/环境错误：谱不存在 ⇒ 退出 2（**不进编译**，因此这个用例很快）。
+#[test]
+fn test_subcommand_usage_errors_exit_2() {
+    let out = run(&["test", "no/such/spec.toml"]);
+    assert_eq!(out.code, 2, "stdout={} stderr={}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("读不到谱"), "{}", out.stderr);
+
+    let out = run(&["test"]);
+    assert_eq!(out.code, 2, "缺参数应是用例错误");
+    assert!(
+        out.stderr.contains("test 需要恰好一个谱文件"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// `test` 的**端到端**：现搭零宿主 crate → 生成物 → `cargo test` 跑谱里的向量。
+///
+/// **默认跳过**：它会嵌套起一次 cargo（首次要编译 forge-isa-runtime/forge-isa-dsl 到独立
+/// target 目录，几十秒），不适合塞进每次 `cargo test`。打开方式（与仓库其它重用例同风格）：
+///
+/// ```text
+/// FORGE_ISA_TEST_E2E=1 cargo test -p forge-isa --test cli_tests -- --nocapture
+/// ```
+///
+/// 本机 2026-09-23 实测：`test isa/riscv64_v12.toml --json` ⇒ `{"vectors":67,…,"passed":295,
+/// "failed":0,"ok":true}`（生成的用例数随部件变化——这里只有 encode/decode/asm）。
+#[test]
+fn test_subcommand_runs_spec_vectors_e2e() {
+    if std::env::var("FORGE_ISA_TEST_E2E").as_deref() != Ok("1") {
+        eprintln!("SKIP test_subcommand_runs_spec_vectors_e2e（设 FORGE_ISA_TEST_E2E=1 才跑）");
+        return;
+    }
+    let out = run(&["test", &isa("riscv64_v12.toml"), "--json"]);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    assert!(out.stdout.contains("\"ok\":true"), "{}", out.stdout);
+    assert!(out.stdout.contains("\"vectors\":67"), "{}", out.stdout);
+    assert!(out.stdout.contains("\"failed\":0"), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("isa-test"),
+        "JSON 里应给出临时 crate 路径：{}",
+        out.stdout
+    );
+}

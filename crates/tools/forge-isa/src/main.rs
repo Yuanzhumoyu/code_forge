@@ -8,6 +8,7 @@
 //! | `insts <file>` | 列出**展开后**的指令与其生效规格（字长/opcode/form/ops/asm/编码键/ref/reloc） |
 //! | `explain <file> <inst>` | 单条指令的完整来源：来自哪个模板的哪一行 + 该行的键 + 生效编码键 |
 //! | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），`explain` 的文本即可用来核对迁移等价 |
+//! | `test <谱>` | **跑谱里的自测**（v19 V3a）：现搭一个零宿主 crate，`cargo test` 执行生成物里的 `__spec_tests`（谱内 `[[vectors]]` + 每条指令的闭环用例） |
 //!
 //! 约定：默认人类可读输出，`--json` 走机读（手写发射器，不引 `serde_json`——
 //! 与"不新增依赖"的显式假设一致，见 `docs/archive/forge-dsl-v18-plan.md` §10.4）。
@@ -17,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use forge_isa_dsl::report::{self, DiagLine, Explain, InstRow, SpecDiff};
+
+mod isa_test;
 
 const USAGE: &str = "\
 forge-isa — ISA-DSL 工具链（v18 S7b）
@@ -28,6 +31,7 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
                                              单条指令的来源（模板行 + 生效编码键）
   forge-isa diff     <a.toml> <b.toml> [--json]
                                              两份谱的规格 diff（增/删/改字段）
+  forge-isa test     <谱.toml> [--json]      跑谱里的自测（谱内向量 + 每条指令闭环用例）
   forge-isa schema   [--out <file>]         打印（或写出）ISA-DSL 的 JSON Schema
   forge-isa fmt      <谱.toml> [--out <file>] 打印（或写出）**合并后**的规范文稿
                                              （include 展开 + override 应用，供人核对）
@@ -89,6 +93,14 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 return Err("diff 需要两份谱文件".into());
             };
             Ok(cmd_diff(a, b, json))
+        }
+        "test" => {
+            let json = has_flag(&args[1..], "--json");
+            let files = paths(&args[1..], &["--json"])?;
+            let [file] = files.as_slice() else {
+                return Err("test 需要恰好一个谱文件".into());
+            };
+            Ok(isa_test::run(file, json))
         }
         "fmt" => {
             let out = flag_value(&args[1..], "--out")?;

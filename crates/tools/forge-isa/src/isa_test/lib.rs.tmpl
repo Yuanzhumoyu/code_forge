@@ -1,0 +1,7 @@
+//! `forge-isa test` 的临时宿主（ISA-DSL v19 V3a）：只有一个运行时依赖 + build script 生成物。
+//!
+//! 生成物自带 `#[cfg(test)] mod __spec_tests`（每条指令的闭环用例 + 谱内 `[[vectors]]` 的
+//! 字节/错误断言），`cargo test` 因此**直接跑谱里写的向量**——这就是 `forge-isa test`
+//! 的全部机制：没有宿主代码、没有 forge-codegen。
+
+include!(concat!(env!("OUT_DIR"), "/", env!("FORGE_ISA_GEN")));

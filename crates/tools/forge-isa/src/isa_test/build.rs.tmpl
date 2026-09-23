@@ -1,0 +1,28 @@
+//! 由 `forge-isa test` 生成的宿主 build script（ISA-DSL v19 V3a）。
+//!
+//! 谱路径从环境变量 `FORGE_ISA_SPEC` 读（**不把路径插进源码**：反斜杠/引号会变成转义坑）。
+//! 生成物落 `$OUT_DIR`，文件名由参数哈希决定，`src/lib.rs` 只写一句 `include!`。
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    let spec = std::env::var("FORGE_ISA_SPEC").expect("FORGE_ISA_SPEC 由 forge-isa test 设置");
+    // 谱（含 include 分片）改动必须让本脚本重跑，否则生成物会停在旧谱。
+    for src in forge_isa_dsl::spec_source_files(&spec).expect("读谱来源失败") {
+        println!("cargo:rerun-if-changed={}", src.display());
+    }
+    // 只要编解码 + 汇编：谱内向量不需要 TargetMachine 集成层，
+    // 因此这个 crate **不需要任何编译管线**（也就不会有 JIT/regalloc）。
+    let opts = forge_isa_dsl::ExpandOptions {
+        spec_tests: true,
+        name: None,
+        parts: forge_isa_dsl::Parts::from_names(&[
+            "encode".to_string(),
+            "decode".to_string(),
+            "asm".to_string(),
+        ])
+        .expect("部件名合法"),
+    };
+    let args = forge_isa_dsl::gen_file::MacroArgs { path: spec, opts };
+    let dir = forge_isa_dsl::gen_file::generated_dir().expect("OUT_DIR");
+    let name = forge_isa_dsl::gen_file::pregenerate(&args, &dir).expect("ISA 预生成失败");
+    println!("cargo:rustc-env=FORGE_ISA_GEN={name}");
+}

@@ -1814,3 +1814,296 @@ rows = [
   { inst = "SC_W", p = "W", funct3 = 2 },
   { inst = "SC_D", p = "D", funct3 = 3 },
 ]
+
+# ── 谱内测试向量（v19 V3））────────────────────────────────────────────
+#
+# 迁移来源：`crates/backend/forge-codegen/tests/riscv64_v12_tests.rs` 的三张 oracle 表
+# （`golden_gpr_spec_bytes` / `f_inst_spec_bytes`（`r_type(...)` 期望值已按同一布局算成字面量）/
+# `s_type_spec_bytes`），2026-09-23 迁移（v19 V3a）。迁移前后字节集合 sha256 相同。
+#
+# 每条 = `asm` + `bytes`：`assemble → encode` 必须**逐字节等于** `bytes`，`decode(bytes)`
+# 必须吃满且再编码一致。断言由生成物里的 `__spec_tests::spec_vector_*` 执行
+# （`cargo test -p forge-codegen --lib`），也可单跑 `cargo run -p forge-isa -- test isa/riscv64_v12.toml`。
+# 字节 oracle 依据：RISC-V 规范位布局（R/I/S/J 型 + F 扩展；v11 的 F 索引与 S 型散布
+# 曾是错的，v12 组内索引/规范布局才对——这些向量就是那两处修复的回归网）。
+
+[[vectors]]
+asm = "add X1, X2, X3"
+bytes = [0xB3, 0x00, 0x31, 0x00]
+
+[[vectors]]
+asm = "sub X1, X2, X3"
+bytes = [0xB3, 0x00, 0x31, 0x40]
+
+[[vectors]]
+asm = "sll X1, X2, X3"
+bytes = [0xB3, 0x10, 0x31, 0x00]
+
+[[vectors]]
+asm = "slt X1, X2, X3"
+bytes = [0xB3, 0x20, 0x31, 0x00]
+
+[[vectors]]
+asm = "sltu X1, X2, X3"
+bytes = [0xB3, 0x30, 0x31, 0x00]
+
+[[vectors]]
+asm = "xor X1, X2, X3"
+bytes = [0xB3, 0x40, 0x31, 0x00]
+
+[[vectors]]
+asm = "srl X1, X2, X3"
+bytes = [0xB3, 0x50, 0x31, 0x00]
+
+[[vectors]]
+asm = "sra X1, X2, X3"
+bytes = [0xB3, 0x50, 0x31, 0x40]
+
+[[vectors]]
+asm = "or X1, X2, X3"
+bytes = [0xB3, 0x60, 0x31, 0x00]
+
+[[vectors]]
+asm = "and X1, X2, X3"
+bytes = [0xB3, 0x70, 0x31, 0x00]
+
+[[vectors]]
+asm = "mul X1, X2, X3"
+bytes = [0xB3, 0x00, 0x31, 0x02]
+
+[[vectors]]
+asm = "div X1, X2, X3"
+bytes = [0xB3, 0x40, 0x31, 0x02]
+
+[[vectors]]
+asm = "divu X1, X2, X3"
+bytes = [0xB3, 0x50, 0x31, 0x02]
+
+[[vectors]]
+asm = "rem X1, X2, X3"
+bytes = [0xB3, 0x60, 0x31, 0x02]
+
+[[vectors]]
+asm = "remu X1, X2, X3"
+bytes = [0xB3, 0x70, 0x31, 0x02]
+
+[[vectors]]
+asm = "addi X1, X2, 5"
+bytes = [0x93, 0x00, 0x51, 0x00]
+
+[[vectors]]
+asm = "addi X1, X2, -5"
+bytes = [0x93, 0x00, 0xB1, 0xFF]
+
+[[vectors]]
+asm = "slti X1, X2, 5"
+bytes = [0x93, 0x20, 0x51, 0x00]
+
+[[vectors]]
+asm = "sltiu X1, X2, 5"
+bytes = [0x93, 0x30, 0x51, 0x00]
+
+[[vectors]]
+asm = "xori X1, X2, 5"
+bytes = [0x93, 0x40, 0x51, 0x00]
+
+[[vectors]]
+asm = "ori X1, X2, 5"
+bytes = [0x93, 0x60, 0x51, 0x00]
+
+[[vectors]]
+asm = "andi X1, X2, 5"
+bytes = [0x93, 0x70, 0x51, 0x00]
+
+[[vectors]]
+asm = "slli X1, X2, 3"
+bytes = [0x93, 0x10, 0x31, 0x00]
+
+[[vectors]]
+asm = "srli X1, X2, 3"
+bytes = [0x93, 0x50, 0x31, 0x00]
+
+[[vectors]]
+asm = "srai X1, X2, 3"
+bytes = [0x93, 0x50, 0x31, 0x40]
+
+[[vectors]]
+asm = "lui X1, 4096"
+bytes = [0xB7, 0x10, 0x00, 0x00]
+
+[[vectors]]
+asm = "ld X1, 8(X2)"
+bytes = [0x83, 0x30, 0x81, 0x00]
+
+[[vectors]]
+asm = "jalr X1, 8(X2)"
+bytes = [0xE7, 0x00, 0x81, 0x00]
+
+[[vectors]]
+asm = "ecall"
+bytes = [0x73, 0x00, 0x00, 0x00]
+
+[[vectors]]
+asm = "fence"
+bytes = [0x0F, 0x00, 0xF0, 0x0F]
+
+[[vectors]]
+asm = "clz X1, X2"
+bytes = [0xB3, 0x10, 0x01, 0x60]
+
+[[vectors]]
+asm = "ctz X1, X2"
+bytes = [0xB3, 0x10, 0x11, 0x60]
+
+[[vectors]]
+asm = "cpop X1, X2"
+bytes = [0xB3, 0x10, 0x21, 0x60]
+
+[[vectors]]
+asm = "rev8 X1, X2"
+bytes = [0xB3, 0x50, 0x81, 0xD0]
+
+[[vectors]]
+asm = "rol X1, X2, X3"
+bytes = [0xB3, 0x10, 0x31, 0x60]
+
+[[vectors]]
+asm = "ror X1, X2, X3"
+bytes = [0xB3, 0x50, 0x31, 0x60]
+
+[[vectors]]
+asm = "min X1, X2, X3"
+bytes = [0xB3, 0x00, 0x31, 0x0A]
+
+[[vectors]]
+asm = "max X1, X2, X3"
+bytes = [0xB3, 0x10, 0x31, 0x0A]
+
+[[vectors]]
+asm = "minu X1, X2, X3"
+bytes = [0xB3, 0x40, 0x31, 0x0A]
+
+[[vectors]]
+asm = "maxu X1, X2, X3"
+bytes = [0xB3, 0x50, 0x31, 0x0A]
+
+[[vectors]]
+asm = "amoadd.w X1, X2, (X3)"
+bytes = [0xAF, 0xA0, 0x21, 0x00]
+
+[[vectors]]
+asm = "fadd.s F1, F2, F3"
+bytes = [0xD3, 0x00, 0x31, 0x00]
+
+[[vectors]]
+asm = "fsub.s F1, F2, F3"
+bytes = [0xD3, 0x00, 0x31, 0x08]
+
+[[vectors]]
+asm = "fmul.s F1, F2, F3"
+bytes = [0xD3, 0x00, 0x31, 0x10]
+
+[[vectors]]
+asm = "fdiv.s F1, F2, F3"
+bytes = [0xD3, 0x00, 0x31, 0x18]
+
+[[vectors]]
+asm = "fsqrt.s F1, F2"
+bytes = [0xD3, 0x00, 0x01, 0x58]
+
+[[vectors]]
+asm = "fsgnj.s F1, F2, F3"
+bytes = [0xD3, 0x00, 0x31, 0x20]
+
+[[vectors]]
+asm = "fsgnjn.s F1, F2, F3"
+bytes = [0xD3, 0x10, 0x31, 0x20]
+
+[[vectors]]
+asm = "fsgnjx.s F1, F2, F3"
+bytes = [0xD3, 0x20, 0x31, 0x20]
+
+[[vectors]]
+asm = "fcvt.w.s X1, F2, rtz"
+bytes = [0xD3, 0x10, 0x01, 0xC0]
+
+[[vectors]]
+asm = "fcvt.s.w F1, X2"
+bytes = [0xD3, 0x00, 0x01, 0xD0]
+
+[[vectors]]
+asm = "flt.s X1, F2, F3"
+bytes = [0xD3, 0x10, 0x31, 0xA0]
+
+[[vectors]]
+asm = "feq.s X1, F2, F3"
+bytes = [0xD3, 0x20, 0x31, 0xA0]
+
+[[vectors]]
+asm = "fle.s X1, F2, F3"
+bytes = [0xD3, 0x00, 0x31, 0xA0]
+
+[[vectors]]
+asm = "fmin.s F1, F2, F3"
+bytes = [0xD3, 0x00, 0x31, 0x28]
+
+[[vectors]]
+asm = "fmax.s F1, F2, F3"
+bytes = [0xD3, 0x10, 0x31, 0x28]
+
+[[vectors]]
+asm = "fmv.w.x F1, X2"
+bytes = [0xD3, 0x00, 0x01, 0xF0]
+
+[[vectors]]
+asm = "fmv.x.w X1, F2"
+bytes = [0xD3, 0x00, 0x01, 0xE0]
+
+[[vectors]]
+asm = "flw F1, 8(X2)"
+bytes = [0x87, 0x20, 0x81, 0x00]
+
+[[vectors]]
+asm = "fsw F1, 8(X2)"
+bytes = [0x27, 0x24, 0x11, 0x00]
+
+[[vectors]]
+asm = "sd X1, 8(X2)"
+bytes = [0x23, 0x34, 0x11, 0x00]
+
+[[vectors]]
+asm = "sd X1, -8(X2)"
+bytes = [0x23, 0x3C, 0x11, 0xFE]
+
+# ── 负向与解码向量（v19 V3a：四种形态都在这份谱里被真跑过）──
+
+# 汇编负向：imm12 有符号范围 [-2048, 2047] 由**汇编匹配器**把关，越界文本直接匹配不上
+# （所以断言的是 `no matching instruction`，而不是 encode 期错误——“谁先拒绝”由谱决定，
+# 向量只钉“必须失败且消息可辨认”）。
+[[vectors]]
+asm = "addi X1, X2, 4096"
+error = "no matching instruction"
+
+# 汇编负向：未知助记符必须在 **assemble** 处报错。
+[[vectors]]
+asm = "nosuchins X1, X2"
+error = "no matching instruction"
+
+# 解码负向（截断输入）：1 字节不足以解码定宽 32 位字，且 `decode_partial` 应报"吃掉 1 字节"。
+[[vectors]]
+comment = "截断到 1 字节：decode 必须拒绝，且 decode_partial 报消费 1 字节"
+bytes = [0x13]
+error = "DECODE"
+partial = 1
+
+# 解码负向（整字）：opcode 0x00 未定义 ⇒ decode 必须失败（不猜低 7 位）。
+[[vectors]]
+bytes = [0x00, 0x00, 0x00, 0x00]
+error = "DECODE"
+
+# 解码正向：只给字节（不给 asm），要求 decode 吃满再编码逐字节一致。
+[[vectors]]
+comment = "nop 的字节（addi x0, x0, 0）：decode → encode 必须回到同一字节"
+bytes = [0x13, 0x00, 0x00, 0x00]
+
+# ── 向量区段结束

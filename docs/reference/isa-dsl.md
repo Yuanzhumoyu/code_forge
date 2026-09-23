@@ -109,7 +109,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `emit` `spill` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位） |
@@ -137,6 +137,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
 | `[emit]` | — | `prologue` `epilogue` `align_pad` `epilogue_label` | 序言/尾声块引用 |
 | `[spill.<name>]` | — | `load` `store` `base` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
+| `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
 | `[[templates.rows]]` | `inst` | — | 模板行：`inst` + 任意指令字段（含 `ref`）（允许额外键） |
@@ -1438,6 +1439,41 @@ forge_dsl::isa_from_file!("tests/isa/demo.toml", spec_tests = false); // 关掉
 riscv W 变体移位量 32..63 被静默掩码成 `n-32`、x86 EVEX 寄存器直寻址丢掉
 ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
 `docs/archive/forge-dsl-v18-plan.md` §7「S6 进度」。
+
+### 谱内测试向量（`[[vectors]]`，v19 V3）
+
+作者直接在谱里写"这条文本该编成这几个字节"或"这条必须报错"，生成期把它翻成
+`__spec_tests` 里的用例（`spec_vector_<下标>`，与谱里顺序一一对应），因此**不再需要手抄
+Rust 黄金值表**；`forge-isa test <谱>` 还能不起宿主 crate 直接跑一遍。
+
+| 写法 | 断言 |
+| --- | --- |
+| `asm` + `bytes` | `assemble(asm)` → `encode` **逐字节等于** `bytes`；`decode(bytes)` 必须吃满且再编码一致 |
+| `asm` + `error = "<子串>"` | `assemble` 或 `encode` 必须失败，且消息**包含**该子串（谁先拒绝由谱决定：立即数越界常常是汇编匹配器先拒） |
+| `bytes` + `error = "DECODE"`（可带 `partial = N`） | `decode(bytes)` 必须失败；`partial` 额外要求 `decode_partial` 在吃掉 `N` 字节处返回 `Err(N)` |
+| `bytes`（单独） | `decode(bytes)` 必须成功，且再编码逐字节等于 `bytes` |
+
+```toml
+[[vectors]]
+asm = "add X1, X2, X3"
+bytes = [0xB3, 0x00, 0x31, 0x00]
+
+[[vectors]]
+comment = "imm12 越界：汇编匹配器直接拒"
+asm = "addi X1, X2, 4096"
+error = "no matching instruction"
+
+[[vectors]]
+bytes = [0x13]
+error = "DECODE"
+partial = 1
+```
+
+形态**在解析期**就钉死（`validate_vectors`：缺 `asm`/`bytes`、正负同给、定宽字长不符、
+字节越界、`partial` 用错、重复、空子串都报错；**解码负向允许截断输入**，不查整条字长）；
+**内容**（这条文本真能编出这些字节吗）由生成用例在跑的时候判——`cargo test` 或
+`forge-isa test`。迁移实例：`isa/riscv64_v12.toml` 的 67 条（来自原先 Rust 里的三张 oracle
+表，迁移前后字节集合的规范化 sha256 相同）。
 
 ## 已有 ISA 谱
 
