@@ -25,7 +25,8 @@ const USAGE: &str = "\
 forge-isa — ISA-DSL 工具链（v18 S7b）
 
 用法：
-  forge-isa validate <谱.toml>...            解析 + 校验，打印全部诊断
+  forge-isa validate <谱.toml>... [--strict-overlap]
+                                             解析 + 校验，打印全部诊断（严格档另报 lowering 部分重叠）
   forge-isa insts    <谱.toml> [--json]      列出展开后的指令与生效规格
   forge-isa explain  <谱.toml> <指令名> [--json]
                                              单条指令的来源（模板行 + 生效编码键）
@@ -65,11 +66,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "validate" => {
-            let files = paths(&args[1..], &[])?;
+            let strict = has_flag(&args[1..], "--strict-overlap");
+            let files = paths(&args[1..], &["--strict-overlap"])?;
             if files.is_empty() {
                 return Err("validate 需要一个或多个谱文件".into());
             }
-            Ok(cmd_validate(&files))
+            Ok(cmd_validate(&files, strict))
         }
         "insts" => {
             let json = has_flag(&args[1..], "--json");
@@ -322,10 +324,10 @@ fn print_diags(path: &Path, diags: &[DiagLine]) -> bool {
     !diags.is_empty()
 }
 
-fn cmd_validate(files: &[PathBuf]) -> ExitCode {
+fn cmd_validate(files: &[PathBuf], strict_overlap: bool) -> ExitCode {
     let mut bad = false;
     for f in files {
-        let (diags, name) = report::validate_file(f);
+        let (diags, name) = report::validate_file_opts(f, strict_overlap);
         if diags.is_empty() {
             println!(
                 "{}: OK{}",

@@ -303,6 +303,23 @@ pub fn domain_of(pred: Option<&Pred>) -> RuleDomain {
     }
 }
 
+/// `a ∩ b ≠ ∅`？——两条规则**都存在**能同时命中的取值（部分重叠）。
+///
+/// 与 [`subsumes`] 的分工：`subsumes` 判"后者永远轮不到"（死规则 ⇒ 硬错误）；
+/// `overlaps` 判"两者在某些取值上竞争"（**合法但值得复核** ⇒ `validate --strict-overlap`
+/// 才报）。任一侧 `Opaque` → false（保守，不报）。
+pub fn overlaps(a: &RuleDomain, b: &RuleDomain) -> bool {
+    match (a, b) {
+        (RuleDomain::Opaque, _) | (_, RuleDomain::Opaque) => false,
+        // 无 `when` 的一方接受一切 ⇒ 必然相交。
+        (RuleDomain::Any, _) | (_, RuleDomain::Any) => true,
+        (RuleDomain::Conj(ac), RuleDomain::Conj(bc)) => ac
+            .iter()
+            .filter_map(|(k, ar)| bc.get(k).map(|br| intersect(ar, br)))
+            .all(|r| !r.is_empty()),
+    }
+}
+
 /// `a ⊇ b`？——a 接受的取值集合包含 b 的全部取值。若成立且 a 排在 b 之前，
 /// 则 b 是**死规则**（永远轮不到）。任一侧 `Opaque` → false（不报）。
 pub fn subsumes(a: &RuleDomain, b: &RuleDomain) -> bool {
@@ -324,6 +341,38 @@ pub fn subsumes(a: &RuleDomain, b: &RuleDomain) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `overlaps` 与 `subsumes` 的语义关系（v19 V6b）：包含 ⇒ 相交；互斥区间不相交；
+    /// 只约束不同属性 ⇒ 相交（缺席属性 = 全域）；`Opaque` 两侧一律不报。
+    #[test]
+    fn overlaps_relates_to_subsumes() {
+        let any = RuleDomain::Any;
+        let conj = |kv: &[(&str, i64)]| {
+            RuleDomain::Conj(
+                kv.iter()
+                    .map(|(k, v)| (k.to_string(), vec![(*v, *v)]))
+                    .collect(),
+            )
+        };
+        let w32 = conj(&[("w", 32)]);
+        let w64 = conj(&[("w", 64)]);
+        let e32 = conj(&[("e", 32)]);
+
+        assert!(subsumes(&any, &w32), "Any 包含一切");
+        assert!(
+            overlaps(&any, &w32) && overlaps(&w32, &any),
+            "Any 与任何域相交"
+        );
+        assert!(!overlaps(&w32, &w64), "同一属性的互斥区间不相交");
+        assert!(overlaps(&w32, &e32), "只约束不同属性 ⇒ 相交（缺席 = 全域）");
+        assert!(
+            !overlaps(&RuleDomain::Opaque, &any) && !overlaps(&any, &RuleDomain::Opaque),
+            "Opaque 两侧保守不报"
+        );
+        // 语义关系：完全包含 ⇒ 必然相交（反过来不成立）。
+        assert!(subsumes(&w32, &conj(&[("w", 32)])));
+        assert!(!subsumes(&w32, &e32), "不同属性互不包含");
+    }
 
     fn parse_str(s: &str) -> Result<Pred, String> {
         parse(&toml::from_str(s).unwrap())

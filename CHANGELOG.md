@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-23) — ISA-DSL v19 V6（确定性守卫 + `validate --strict-overlap`）
+
+- **`validate --strict-overlap`**（新诊断码 `DSL-OVERLAP`）：报"同一 op 的两条 lowering 规则取值域**相交但互不包含**"（裁决序里前者先命中）——用来抓"`when` 写窄导致大部分取值掉进兜底"或"靠 `priority` 硬分胜负"这两类可疑形状。**默认档不变**（实测三份发行谱共 61 条、抽查全是故意的"特化 + 兜底"，因此它只作为评审清单，CI 不开这个档；清单条数由 `crates/frontend/forge-isa-dsl/tests/strict_overlap.rs` 钉成快照，变了要人工复核）。
+- **生成物确定性守卫**（`crates/frontend/forge-isa-dsl/tests/determinism.rs`）：同一份谱同参数展开两次，token 文本必须**逐字节相同**、文件名恒定（`spec_tests` 变体不同名）——防止生成器内部换成 `HashMap` 迭代序/引入时间戳后"缓存失效 + 本机能编 CI 编不过"而 `cargo test` 仍全绿。
+
 ### Added (2026-09-23) — ISA-DSL v19 V4a（`forge-isa lint` 静态体检）
 
 - **新子命令 `forge-isa lint <谱>... [--json]`**：不执行、不编译，只报"写了却用不上"的声明——`LINT-UNUSED-SLOT`（`[[operand_slots]]` 没被任何 `ops` 引用）、`LINT-UNUSED-FORM`（`[[forms]]` 没被任何指令/模板引用）、`LINT-UNUSED-BITFIELD`（`[conventions.bitfields]` 的位域名只出现在声明处，按标识符边界计数，`imm1` 不会命中 `imm12`），结论锚到 TOML 行列；退出码与 `validate` 一致（0/1/2）。三份发行谱首次跑出 2 条真阳性（x86 的 `gpr32` 槽、arm64 的 `p6` 位域，都没人引用）→ 均已删掉（零行为变化：`cargo test -p forge-codegen --lib` 仍 1150 passed），现在三谱全部干净。守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs` 把"零误报"钉成快照。

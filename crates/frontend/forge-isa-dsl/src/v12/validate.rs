@@ -16,8 +16,19 @@ fn collect(d: &mut Diags, idx: &DeclIndex, r: Result<(), String>) {
     }
 }
 
+/// 校验档位（v19 V6b）：默认档 = 历史行为；`--strict-overlap` 才加"部分重叠"体检。
+///
+/// 为什么默认关：这类规则**合法**（后一条在"前一条管不着"的取值上照常生效），
+/// 真谱里"特化规则 + 泛化兜底"遍地都是——默认开会把几百条合法写法变成错误。
+/// 先量化噪音（计划 §5 V6b 的判据），再决定是否以及如何在 CI 上开。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ValidateOpts {
+    /// 报"同 op 两条规则取值域相交但互不包含"（`DSL-OVERLAP`）。
+    pub strict_overlap: bool,
+}
+
 /// 全部校验（收集式，一次报全）。
-pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
+pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags, opts: &ValidateOpts) {
     // 组合键（`include` / `[[override]]`）由 `forge_isa_dsl::loader` 在**合并阶段**
     // 消费；走到这里说明文本没经过 loader（裸文本入口），此时它们不生效——必须
     // 明确报错，否则"写了 include 却没被包含"会静默变成一个缺指令的谱。
@@ -53,6 +64,53 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
     validate_emit_all(m, idx, d);
     validate_spill_all(m, idx, d);
     collect(d, idx, validate_vectors(m));
+    if opts.strict_overlap {
+        validate_lowering_overlap(m, idx, d);
+    }
+}
+
+/// `--strict-overlap`：同 op 的两条规则**取值域相交、但互不包含**（部分重叠）时报出来。
+///
+/// 与"死规则"检测共用同一套判定域机器（`pred::domain_of`/`subsumes`/`overlaps`）：
+/// 死规则 = 后者被完全吃掉（**始终**硬错误）；部分重叠 = 两者都会命中某些取值，
+/// 裁决序里靠前者赢——**合法**，但下面是两类真事故的高发形状，所以给了这个可选档：
+///
+/// - 本意是"特化 + 泛化兜底"，却把特化规则的 `when` 写窄了（大部分取值掉进兜底）；
+/// - 两条规则都想要同一批取值，靠 `priority` 硬分胜负（读者很难看出实际覆盖）。
+///
+/// 保守边界与死规则一致：任一侧含 `or`/`not`（`Opaque`）⇒ 不报。
+fn validate_lowering_overlap(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
+    for (op, rules) in m.lowering_by_op() {
+        let mut domains: Vec<super::pred::RuleDomain> = Vec::with_capacity(rules.len());
+        for r in &rules {
+            // 谓词解析错误已由 `validate_lowering_all` 逐条报过，这里静默跳过。
+            let pred = match &r.when {
+                None => None,
+                Some(v) => super::pred::parse(v).ok(),
+            };
+            domains.push(super::pred::domain_of(pred.as_ref()));
+        }
+        for (j, dj) in domains.iter().enumerate() {
+            for (i, di) in domains[..j].iter().enumerate() {
+                if super::pred::subsumes(di, dj) {
+                    continue; // 死规则：已由 validate_lowering_order 报出走人
+                }
+                if super::pred::overlaps(di, dj) {
+                    // 用**独立诊断码**：`push_anchored` 会按消息前缀判成 `DSL-LOWER`，
+                    // 那样严格档的结论就和普通 lowering 诊断混在一起了。
+                    let text = format!(
+                        "[[lowering.{op}]]: 第 {} 条与第 {} 条规则的取值域相交（部分重叠）——\
+                         裁决序里前者先命中；若本意是「特化 + 兜底」，确认后者的 when 没写窄，\
+                         否则请用 priority 明确让谁赢",
+                        i + 1,
+                        j + 1
+                    );
+                    let a = idx.anchor(&text);
+                    d.push("DSL-OVERLAP", a.line, a.col, text);
+                }
+            }
+        }
+    }
 }
 
 // ─────────────────────────── [[vectors]] ───────────────────────────

@@ -19,7 +19,7 @@ pub(crate) mod model;
 mod parse;
 mod pred;
 pub(crate) mod shared;
-mod validate;
+pub(crate) mod validate;
 
 #[cfg(test)]
 mod diag_matrix_tests;
@@ -99,10 +99,18 @@ impl V12Error {
 /// 校验**收集全部错误**（按节 + 逐条），一次返回；`Parse` 仍是单条（TOML 语法错
 /// 没法继续解析）。
 pub(crate) fn parse_and_validate(source: &str) -> Result<V12Model, V12Error> {
+    parse_and_validate_opts(source, &validate::ValidateOpts::default())
+}
+
+/// 带档位的解析 + 校验（v19 V6b：`--strict-overlap`）。
+pub(crate) fn parse_and_validate_opts(
+    source: &str,
+    opts: &validate::ValidateOpts,
+) -> Result<V12Model, V12Error> {
     let model = parse(source)?;
     let idx = diag::DeclIndex::build(source);
     let mut diags = diag::Diags::new();
-    validate::validate_all(&model, &idx, &mut diags);
+    validate::validate_all(&model, &idx, &mut diags, opts);
     if diags.is_empty() {
         return Ok(model);
     }

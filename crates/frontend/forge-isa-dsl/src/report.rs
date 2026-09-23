@@ -364,6 +364,11 @@ pub fn class_name(c: RegClass) -> String {
 
 /// 读文件 + 校验（CLI 的 `validate <file>` 用）；返回 (渲染好的诊断行, ISA 名)。
 pub fn validate_file(path: &Path) -> (Vec<DiagLine>, Option<String>) {
+    validate_file_opts(path, false)
+}
+
+/// 读文件 + 带档位校验（v19 V6b：`validate --strict-overlap`）。
+pub fn validate_file_opts(path: &Path, strict_overlap: bool) -> (Vec<DiagLine>, Option<String>) {
     // 加载失败（缺 include / 成环 / 同名标量冲突 / `[[override]]` 目标不存在…）：
     // **原样**把加载器的消息交出去。不要改写成"读不到文件：<根路径>"——那会把
     // "片段缺文件"这类真正可诊断的问题伪装成"根文件读不到"（v18 S7d 修）。
@@ -379,7 +384,7 @@ pub fn validate_file(path: &Path) -> (Vec<DiagLine>, Option<String>) {
             );
         }
     };
-    let diags = validate_loaded(&spec);
+    let diags = validate_loaded_opts(&spec, strict_overlap);
     let name = crate::v12::parse_and_validate(&spec.text)
         .ok()
         .map(|m| m.meta.name);
@@ -412,9 +417,28 @@ fn map_files(spec: &crate::loader::LoadedSpec, diags: &mut [DiagLine]) {
 
 /// 校验已加载的谱（支持 `include`；诊断带来源文件）。
 pub fn validate_loaded(spec: &crate::loader::LoadedSpec) -> Vec<DiagLine> {
-    let mut d = validate(&spec.text);
+    validate_loaded_opts(spec, false)
+}
+
+/// 带档位校验已加载的谱（v19 V6b：`strict_overlap` = `validate --strict-overlap`）。
+///
+/// 对外只暴露 `bool`（`ValidateOpts` 是 crate 内部档位结构），CLI 与工具不必依赖 `v12`。
+pub fn validate_loaded_opts(
+    spec: &crate::loader::LoadedSpec,
+    strict_overlap: bool,
+) -> Vec<DiagLine> {
+    let mut d = validate_opts(&spec.text, strict_overlap);
     map_files(spec, &mut d);
     d
+}
+
+/// 带档位校验源码（供 CLI / 工具用）。
+pub fn validate_opts(source: &str, strict_overlap: bool) -> Vec<DiagLine> {
+    let opts = crate::v12::validate::ValidateOpts { strict_overlap };
+    match crate::v12::parse_and_validate_opts(source, &opts) {
+        Ok(_) => Vec::new(),
+        Err(e) => Vec::from(&e),
+    }
 }
 
 /// 展开已加载的谱（支持 `include`；诊断带来源文件）。

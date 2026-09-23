@@ -108,7 +108,7 @@
 | ✅ **V3** `[[vectors]]` 数据化测试 | 五种形态（`{asm, bytes}` / `{asm, error}` / `{bytes, error="DECODE"[,partial]}` / `{bytes}` / `{asm}` 闭环）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节 + 往返清单；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价** ✅；负向向量钉错误码 ✅；手写测试行数 **−33.1%**（V3c 后；仍未达 −≥50%，剩下的行数是别名/集成/ABI/JIT 断言） | G2；作者体验立刻变好 |
 | 🚧 **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a 已落地**（未用槽/未用 form + CLI，三谱零结论） |
 | **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants` + 值条件列 `vary` 下沉到 `[[templates]]` | RV32 从同一 riscv64 谱生成（投影：encode/decode/asm，不注册）；`explain` 显示参数生效点 | 与独立 RV32 表或 QEMU 32 位用例对拍；矩阵/覆盖守卫显式登记变体期望 | G4；臂/扩展式复用的验证 |
-| 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性守卫）已落地** |
+| 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性）+ V6b（strict-overlap，实测 61 条全合法 ⇒ CI 不开）已落地**；`--warn-unreachable` 与死规则检测重叠，已在 V6b 说明不做 |
 | **V7** 语义层表化（**可选，默认不做**） | 只借"属性视图 + 生成期可分析性"；把 S8b-2 的通用解释器当候选 | 先量：V1 之后 x86 C 段 334 KB 是否仍是编译时间主因、表化净收益是否 ≥15% token 且不增编译时间 | 结论入库（含实测数字），无论做与不做 | 与 S8b-2 一致：以度量决定 |
 
 **顺序与理由**：V0（定范围）→ V1/V2（通用性地基）→ V3/V4（作者可见收益，可独立交付）→
@@ -207,6 +207,23 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
 - **未达 −≥50% 的原因（如实）**：剩下的是别名等价断言、`disassemble_known_texts` 这类
   "文本 → 期望文本"断言（需要新形态）、以及集成/ABI/JIT 断言。要再往下压需要
   `{bytes, text = "期望文本"}` 形态（V3d，按度量决定是否值得）。
+
+**V6b 已落地（2026-09-23，`validate --strict-overlap`：先量化、后定档）**：
+
+- 新判定 `pred::overlaps(a, b)`（与 `subsumes` 同一套判定域机器）：`Any` 与任何域相交；
+  `Conj` 只在**共有属性**的区间交集为空时判"不相交"；任一侧 `Opaque`（含 `or`/`not`）⇒ 不报。
+  语义自检在 `pred::tests::overlaps_relates_to_subsumes`（包含 ⇒ 相交、互斥区间不相交、
+  只约束不同属性 ⇒ 相交）。
+- 新校验档 `ValidateOpts { strict_overlap }`（**默认 false**，历史行为逐字节不变）+
+  新诊断码 **`DSL-OVERLAP`**（独立码，不与 `DSL-LOWER` 混）+ CLI `validate --strict-overlap`；
+  报的是"同 op 两条规则取值域相交、互不包含 ⇒ 裁决序里前者先命中"。
+- **量化结论（判据原文就是"先量化噪音"）**：三份发行谱 **61 条**（x86 32 / arm64 8 / riscv64 21），
+  抽查**全部是故意的"特化 + 兜底"**（例：riscv `Iadd` 的 `{rs1_width=32}` + 无 `when` 通用规则；
+  x86 `Load` 的 32 位特化 + 通用）。⇒ **CI 不开这个档**（开了等于把 61 条合法写法变错误），
+  它作为**评审清单**保留：想加 whitelist 机制的成本 > 收益，除非将来出现"when 写窄"的真事故。
+- **清单快照**：`crates/frontend/forge-isa-dsl/tests/strict_overlap.rs` 钉死三谱的条数
+  （32/8/21）并断言**默认档零结论**——数字一变就是有人改了 lowering 的取值域形状，必须人工复核
+  后同步快照与本节结论。
 
 **V6a 已落地（2026-09-23，生成物确定性守卫）**：
 
