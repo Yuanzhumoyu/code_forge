@@ -20,9 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **实测账目**（`forge-isa insts --params xlen=32 isa/riscv64_v12.toml`）：`116 → 104` 条指令（丢 `LD`/`SD` 与 10 条 W 族）、`110 → 96` 条 lowering（连带丢 14 条）、逐节丢弃 `[emit.prologue]`/`[emit.epilogue]`/`[spill.GPR]` 各 1 项。守卫 `crates/frontend/forge-isa-dsl/tests/variants.rs`（6 条：默认档零投影、未声明/越界报错、RV32 账目快照、级联不多丢、只对传了的参数生效、替换语义）。
 - **MVP 边界**：只读投影（不注册后端、不生成变体专属运行期表）。RV32 投影的帧件是空的（本谱没写 LW/SW 版本），因此它不是一份可运行的后端谱——用途是**看见变体依赖面**与让生成物正确分文件。
 
-### Fixed (2026-09-24)
+### Changed (2026-09-24)
 
-- **`crates/frontend/forge-isa-dsl/tests/strict_overlap.rs` 编译不过**（V6b 遗留）：`report::validate_file_opts` 的第二参数早已从 `bool` 改成 `&RunOpts`，该测试目标仍传 `bool`（`E0308`）——`--strict-overlap` 的两个守卫此前实际上没跑过。已改为构造 `RunOpts`，现在两条守卫真跑（32/8/21 + 默认档零结论）。
+- **`report::validate_file_opts` / `validate_opts` 的第二参数由 `bool` 改为 `&RunOpts`**（V5 的一部分）：`strict_overlap` 变成 `RunOpts` 的一个字段，与新的 `params`（变体投影）放在同一处；调用点（CLI、`tests/strict_overlap.rs` 等）随之同步。**更正**：本轮一度把 `tests/strict_overlap.rs` 的编译错误记成"V6b 遗留的坏测试"，核对提交 `68e3a92` 后确认当时的签名是 `(path, strict_overlap: bool)`、该测试**可编译**——错误是本轮重构引入并当场修掉的，V6b 无此问题。
 
 ### Added (2026-09-23) — ISA-DSL v19 V6（确定性守卫 + `validate --strict-overlap`）
 
