@@ -88,7 +88,6 @@ rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
 opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
 imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
 imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
-p6    = { offset = 26, width = 6 }   # LDP/STP 顶层 [31:26]（X=0x2A/W=0x0A）
 idx3  = { offset = 22, width = 3 }   # LDP/STP index（100 off STP/101 off LDP）
 rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
 imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元）

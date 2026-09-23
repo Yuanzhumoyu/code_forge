@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-23) — ISA-DSL v19 V4a（`forge-isa lint` 静态体检）
 
-- **新子命令 `forge-isa lint <谱>... [--json]`**：不执行、不编译，只报"写了却用不上"的声明——`LINT-UNUSED-SLOT`（`[[operand_slots]]` 没被任何 `ops` 引用）与 `LINT-UNUSED-FORM`（`[[forms]]` 没被任何指令/模板引用），结论锚到 TOML 行列；退出码与 `validate` 一致（0/1/2）。三份发行谱首次跑出 1 条真阳性（x86 的 `gpr32` 槽没人引用）→ 已删掉该死槽（零行为变化：`cargo test -p forge-codegen --lib` 仍 1150 passed），现在三谱全部干净。守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs` 把"零误报"钉成快照。
+- **新子命令 `forge-isa lint <谱>... [--json]`**：不执行、不编译，只报"写了却用不上"的声明——`LINT-UNUSED-SLOT`（`[[operand_slots]]` 没被任何 `ops` 引用）、`LINT-UNUSED-FORM`（`[[forms]]` 没被任何指令/模板引用）、`LINT-UNUSED-BITFIELD`（`[conventions.bitfields]` 的位域名只出现在声明处，按标识符边界计数，`imm1` 不会命中 `imm12`），结论锚到 TOML 行列；退出码与 `validate` 一致（0/1/2）。三份发行谱首次跑出 2 条真阳性（x86 的 `gpr32` 槽、arm64 的 `p6` 位域，都没人引用）→ 均已删掉（零行为变化：`cargo test -p forge-codegen --lib` 仍 1150 passed），现在三谱全部干净。守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs` 把"零误报"钉成快照。
 
 ### Added (2026-09-23) — ISA-DSL v19 V3a（谱内测试向量 + `forge-isa test`）
 

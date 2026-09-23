@@ -190,6 +190,20 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   workspace"）、`Test (macOS)`、`Test (Windows)`、`Coverage` **四项红的都是
   `forge-isa-runtime` 的这条测试**（V1b 把宏搬进 runtime 时引入），V2 修掉后 run 179 四项全绿。
 
+- **V4b 已落地（2026-09-23，第三条规则：未用位域）**：`LINT-UNUSED-BITFIELD`——位域名在整份谱里
+  **只出现在声明处**即报。判据故意用**文本标识符计数**（按标识符边界，`imm1` 不会命中 `imm12`）
+  而不是"遍历模型找引用点"：引用形态太多（form 的 `operand_fields`、指令/模板 `fields`、
+  编码键 `imm = "imm12"`、asm 占位符…），枚举必然漏、漏了就成误报；代价只是"注释里提到也算
+  引用"（漏报，可接受）。
+  **实测真阳性**：arm64 的 `p6 = { offset = 26, width = 6 }`（LDP/STP 顶层常量）只出现在声明处
+  → 删掉（`cargo test -p forge-codegen --lib` 仍 **1150 passed**）。删后三谱再次全部干净。
+  已知近似：位域的行锚定走 `DeclIndex::anchor` 按名字找行，`p6` 是 `op6` 的子串，报出的行会落在
+  同一节的邻近行上（消息里始终带位域名，不影响可操作性）。
+- **V4c（下一步）**：位域**重叠/未指定位**（必须按 form+指令视图判定，否则 riscv 的
+  `shamt5`/`shamt6`、`funct5`/`funct7`、`word` 这类"同一字位的多种解释"全是误报）、
+  `ref` 未被引用、可合并为 `vary` 的族（只建议）、**能力缺口三类分开报**
+  （终结指令 / 宿主管线 / 真缺口，口径见 §10.3——需要把宿主侧的 op 清单接进来，属跨 crate 数据）。
+
 **V4a 已落地（2026-09-23，两条零误报规则 + CLI）**：
 
 - 新模块 `forge-isa-dsl::lint`（入口 `lint_source(&str) -> Result<Vec<DiagLine>, Vec<DiagLine>>`，

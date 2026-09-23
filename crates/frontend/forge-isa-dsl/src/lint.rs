@@ -4,10 +4,18 @@
 //! 笔误"（合法但可疑）。所以 lint 有自己的子命令与退出码（`forge-isa lint`），且**零误报**
 //! 是硬要求——凡是有"作者可能故意这么写"空间的规则都不进 V4a。
 //!
-//! V4a 两条规则（都只看模型）：
+//! V4a/V4b 三条规则（都只看模型 / 合并后的文本）：
 //!
 //! 1. `LINT-UNUSED-SLOT`：`[[operand_slots]]` 没有被任何 `ops = ["名:槽[:角色]", …]` 引用；
-//! 2. `LINT-UNUSED-FORM`：`[[forms]]` 没有被任何指令 / 模板 `body.form` 引用。
+//! 2. `LINT-UNUSED-FORM`：`[[forms]]` 没有被任何指令 / 模板 `body.form` 引用；
+//! 3. `LINT-UNUSED-BITFIELD`（V4b）：`[conventions.bitfields]` 的位域名在整份谱里**只出现在
+//!    声明处**。判据故意用**文本标识符计数**而不是"遍历模型找引用点"——引用形态太多
+//!    （form 的 `operand_fields`、指令/模板 `fields`、编码键 `imm = "imm12"`、asm 占位符…），
+//!    枚举必然漏、漏了就成误报；文本计数的代价只是"注释里提到也算引用"（漏报，可接受）。
+//!
+//! **一行锚定是近似的**：位域的锚定走 `DeclIndex::anchor`，它会按名字找行——名字若不是
+//! 独立标识符（如 `p6` 是 `op6` 的子串），可能落到同一节里邻近的行上。消息里始终带着
+//! 位域名，因此不影响可操作性与"零误报"判据。
 //!
 //! **不重复报解析期已经拦住的东西**：模板行里的键笔误（`typo_key = 1`）在 `TemplateRow` 的
 //! `deny_unknown_fields` 下就是硬错误，lint 再报一次只会变成噪声——这条规则写完才发现，
@@ -29,11 +37,33 @@ pub fn lint_source(source: &str) -> Result<Vec<DiagLine>, Vec<DiagLine>> {
         Err(e) => return Err(Vec::from(&e)),
     };
     let idx = DeclIndex::build(source);
-    Ok(checks(&model, &idx))
+    Ok(checks(&model, source, &idx))
+}
+
+/// 位域名在源码里出现的次数（按标识符边界算，避免 `imm1` 命中 `imm12`）。
+fn count_ident(source: &str, name: &str) -> usize {
+    let bytes = source.as_bytes();
+    let mut n = 0;
+    let mut from = 0;
+    while let Some(rel) = source[from..].find(name) {
+        let at = from + rel;
+        let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
+        let end = at + name.len();
+        let after_ok = end >= bytes.len() || !is_ident_byte(bytes[end]);
+        if before_ok && after_ok {
+            n += 1;
+        }
+        from = end;
+    }
+    n
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 /// 三条规则的实现。
-fn checks(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
+fn checks(m: &V12Model, source: &str, idx: &DeclIndex) -> Vec<DiagLine> {
     let mut out = Vec::new();
 
     // ── 1. 未被引用的操作数槽 ──
@@ -93,7 +123,24 @@ fn checks(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
         }
     }
 
-    // ── 3. 模板行键笔误：**不报**（解析期 `deny_unknown_fields` 已是硬错误，见模块头）──
+    // ── 3. 未被任何地方引用的位域 ──
+    //
+    // 判据是**文本出现次数**：位域名在整份（合并后的）谱里只出现在声明那一处 ⇒ 定义上就是
+    // 死声明。比"遍历模型找引用点"更稳——引用点有 form 的 `operand_fields`、指令/模板行的
+    // `fields`、编码键（`imm = "imm12"`、`opcode_field = "op"`）、asm 模板占位符等多种形态，
+    // 逐个枚举必然漏，漏了就变成误报。代价是**注释里提到**也算引用（漏报，可接受）。
+    for (i, name) in m.conventions.bitfields.keys().enumerate() {
+        if count_ident(source, name) <= 1 {
+            out.push(anchor(
+                idx,
+                &format!("[conventions.bitfields] #{i} ('{name}')"),
+                "LINT-UNUSED-BITFIELD",
+                format!(
+                    "位域 '{name}' 只出现在声明处——没有任何 form/指令/模板/编码键引用它，删掉它"
+                ),
+            ));
+        }
+    }
 
     out
 }
@@ -217,6 +264,26 @@ rows = [
     fn invalid_spec_returns_diagnostics_instead() {
         let bad = SPEC.replace("form = \"RR\"", "form = \"NO_SUCH_FORM\"");
         assert!(lint_source(&bad).is_err(), "校验不过时 lint 直接返回诊断");
+    }
+
+    /// V4b：只出现在声明处的位域要报；在用的一次都不报（`imm1` 不会命中 `imm12`）。
+    #[test]
+    fn reports_only_truly_unused_bitfields() {
+        let with_dead = SPEC.replace(
+            "[conventions.bitfields]",
+            "[conventions.bitfields]\ndead_bits = { offset = 3, width = 2 }",
+        );
+        let found = lint_source(&with_dead).expect("谱合法");
+        let dead: Vec<&DiagLine> = found
+            .iter()
+            .filter(|d| d.code == "LINT-UNUSED-BITFIELD")
+            .collect();
+        assert_eq!(dead.len(), 1, "只该报 dead_bits：{found:?}");
+        assert!(dead[0].msg.contains("dead_bits"), "{}", dead[0].msg);
+
+        // 与死声明相邻的 `imm1`/`imm12`：名字是前缀关系，不能互相命中。
+        assert_eq!(count_ident("imm12 = 1\nimm1 = 2\n", "imm1"), 1);
+        assert_eq!(count_ident("imm12 = 1\nimm1 = 2\n", "imm12"), 1);
     }
 
     /// 解析期已经拦住的东西**不重复报**：模板行键笔误是硬错误（`deny_unknown_fields`）。

@@ -362,6 +362,9 @@ let name = node.get_text("name")?;
   规范化 sha256 相同）。校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
   守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs`。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint <谱.toml>`——
+  其中 `lint`（v19 V4a/V4b）是**静态体检**：报"写了却用不上"的声明（未用的 `[[operand_slots]]` /
+  `[[forms]]` / `[conventions.bitfields]`），退出码同 `validate`；**三份发行谱必须零结论**
+  （守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs`——真阳性请修谱，别改快照）。
   不接后端就能校验（全部诊断 + 行:列）、看**展开后**的指令与生效编码键、查单条指令的
   模板 provenance（哪个模板哪一行）、两份谱的规格 diff（迁移前后对照）、打印/写出 JSON
   Schema、把多文件谱 `fmt` 折叠成单文件（v18 S7d）。`--json` 机读；退出码 0/1/2。
