@@ -15,8 +15,8 @@
 | `demo_mixed16_32_v12.toml` | **混合字长**（`[encoding] kind = "mixed"`，`widths = [16, 32]`）：低 2 位判别短/长编码，解码按字长升序分组 |
 | `include_root_v12.toml` + `include_base_v12.toml` | **多文件组合**（v18 S7d）：根文件 `include` 片段 + `[[override]]` 覆盖 `[meta].version`；两份谱的指令合成一个模块（用例 `tests/include_v12_tests.rs`） |
 
-宿住方式见 `tests/common/mod.rs`：`forge_dsl::isa_from_file!("…", krate = forge_codegen)`
-让生成代码落在测试 crate 里、且依赖面只有 `forge_codegen` 的公开 API。
+宿住方式见 `tests/common/mod.rs`：`forge_dsl::isa_from_file!("…")` 让生成代码落在测试
+crate 里、路径一律指运行时 crate（`forge_isa_runtime::…`，v19 V1b 起；没有 `krate` 参数）。
 `include_root_v12.toml` 在那里被展开**两次**：一次默认（全部件），一次用
 `name = "include_enc_v12"` + `parts = ["encode"]`（同一份谱只生成编码器，证明部件选择
 在真实宏路径上成立）。

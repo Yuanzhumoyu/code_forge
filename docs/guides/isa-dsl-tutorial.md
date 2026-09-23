@@ -125,6 +125,10 @@ pub use self::toy16::*;
 与普通二进制里打印结果不同——两侧都写会互相覆盖。完整实测见
 [`docs/guides/rust-analyzer-notes.md`](rust-analyzer-notes.md) §1。
 
+最小可抄的**完整宿主**（本仓库内）= [`examples/isa-host-demo`](../../examples/isa-host-demo/README.md)：
+谱 + `build.rs` + 依赖面守卫齐备，`cargo test -p isa-host-demo` 直接跑通
+（运行期只依赖 `forge-isa-runtime`，连 proc-macro 都不依赖）。
+
 ## 1. 四步骨架：元信息 → 宽度 → 寄存器 → 位域
 
 | 步骤 | 写什么 | 生成的什么 |
@@ -232,10 +236,13 @@ encode∘decode 字节稳定、汇编↔反汇编文本幂等、立即数边界�
 forge_dsl::isa_from_file!("isa/toy16.toml");
 pub use self::toy16::*;
 
-// 夹具/测试 crate：路径 + krate（生成物只落到宿主的公开面）
-// 生成物只依赖 forge-isa-runtime；宿主不再需要 krate（v19 V1b）
+// 任意普通 crate（生成物只依赖 forge-isa-runtime；v19 起没有 krate 参数）
 forge_dsl::isa_from_file!("tests/isa/toy16.toml");
 ```
+
+最小可抄的**完整宿主** = [`examples/isa-host-demo`](../../examples/isa-host-demo/README.md)
+（谱 + build script + 依赖面守卫齐备；连 proc-macro 都不依赖，验证
+`cargo test -p isa-host-demo`）。
 
 自己**不用**手抄"这条指令编出来是不是这几个字节"：字节正确性由各 ISA 的编码参考文档 + 少量黄金值
 测试守（见 `docs/reference/aarch64-encoding-ref.md` 的写法）。

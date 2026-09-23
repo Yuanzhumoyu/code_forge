@@ -252,7 +252,8 @@ x86 80 种块共 197 KB（占 notm 33%）、riscv 26 种 80 KB（31%）、arm64 
 | arm64 | 395,225 | 344,283 | 326,197 | **307,685** | **−22.1%** |
 
 守卫：`crates/frontend/forge-isa-dsl/tests/short_form_fold.rs`——生成主体里三种长形**一处不剩**、
-短名定义各只发射一次、`krate = forge_codegen` 时短名定义里的路径也跟着改写（token 形态的
+短名定义各只发射一次、`krate = forge_codegen`（v19 V1b 前的参数；现恒为
+`forge_isa_runtime`）时短名定义里的路径也跟着改写（token 形态的
 `forge_ir ::` 计数必须为 0）。
 
 ### S8b-2 立项度量（2026-09-21；结论：**不做**）

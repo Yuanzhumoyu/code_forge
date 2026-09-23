@@ -1,0 +1,16 @@
+[package]
+name = "isa-host-demo"
+version = "0.1.0"
+edition = "2024"
+description = "最小外部宿主：只用 forge-isa-runtime 承载一份 ISA 谱（ISA-DSL v19 V2 / G1 实证）"
+publish = false
+
+# 运行期依赖**只有**运行时 crate：生成物里的 `crate::…`/`forge_ir::…` 分别被改写成
+# `forge_isa_runtime::…`/`forge_isa_runtime::ir::…`（v19 V1b），因此不需要
+# forge-codegen（JIT/regalloc/发射）也不需要 forge-ir / forge-dsl 直接暴露。
+# 守卫见 tests/host_surface.rs（改这个文件必须同步改那里）。
+[dependencies]
+forge-isa-runtime = { path = "../../crates/foundation/forge-isa-runtime" }
+
+[build-dependencies]
+forge-isa-dsl = { path = "../../crates/frontend/forge-isa-dsl" }

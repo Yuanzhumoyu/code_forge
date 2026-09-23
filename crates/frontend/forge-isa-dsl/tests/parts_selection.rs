@@ -138,6 +138,30 @@ fn restricted_parts_reject_spec_tests() {
     assert!(expand_file(SPEC, &opts(Parts::all())).is_ok());
 }
 
+/// **encode/decode/asm 齐全时 `tm` 不是前提**（v19 V2）：自测不碰 TargetMachine
+/// 集成层，因此"只做编解码 + 汇编的宿主"也能开自测（`examples/isa-host-demo` 即此形态）。
+#[test]
+fn spec_tests_do_not_require_tm_parts() {
+    let mut o = opts(Parts {
+        encode: true,
+        decode: true,
+        asm: true,
+        tm: false,
+    });
+    o.spec_tests = true;
+    let t = flat(&expand_file(SPEC, &o).expect("encode/decode/asm + 自测必须可展开"));
+    // `flat` 已压掉空白 ⇒ 断言按无空格形态写（`pub fn encode (` → `pubfnencode(`）。
+    assert!(t.contains("__spec_tests"), "自测模块应在：{t}");
+    for f in ["fnencode", "fndecode", "fnassemble", "fndisassemble"] {
+        assert!(t.contains(f), "编解码 + 汇编三件套应在（缺 {f}）：{t}");
+    }
+    // `tm` 关掉 ⇒ 集成层的宏调用不发射（也就不需要任何编译管线注册）。
+    assert!(
+        !t.contains("impl_erased_target_machine"),
+        "不含 tm 时不应发射集成层宏调用"
+    );
+}
+
 #[test]
 fn unknown_part_name_is_rejected() {
     let e = Parts::from_names(&["encoder".to_string()]).unwrap_err();

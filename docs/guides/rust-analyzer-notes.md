@@ -37,7 +37,8 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 2. **不是"函数体内嵌 item"**（历史上真有过一次，S8d 已修）：生成物所有 item 都在
    `pub mod` 内（brace-depth = 1）；
 3. **不是不可见定界组**：全仓无 `Delimiter::None`；
-4. **不是 `spec_tests` / `krate`**：探针里 `spec_tests = false` 与带 `krate` 都照样复现；
+4. **不是 `spec_tests` / `krate`**：探针里 `spec_tests = false` 与带 `krate` 都照样复现
+   （`krate` 是当时的宏参数，v19 V1b 已删除；此处保留原始实验记录）；
 5. **不是体积上限**：x86 的完整展开（含 `spec_tests`，1.85 MB）**0 条**，而 arm64 的
    `encode + decode`（106 KB）8 条；
 6. **不是拼接顺序/接缝**：`parts = ["encode"]` 与 `["encode","decode"]` 两份生成物里，

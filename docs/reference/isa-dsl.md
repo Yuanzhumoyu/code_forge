@@ -154,12 +154,15 @@ forge_dsl::isa_from_file!("isa/my_isa.toml");
 pub use self::my_isa::*; // 模块名 = 文件 stem（小写、`-` → `_`）
 ```
 
-**任意其它宿主 crate / 测试**（生成物只依赖宿主的**公开面**）：
+**任意其它 crate / 测试**（生成物只依赖**运行时 crate**）：
 
 ```rust
 // crates/backend/forge-codegen/tests/common/mod.rs（测试夹具示例）
-forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
+forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", spec_tests = false);
 ```
+
+最小可抄的**完整宿主** = `examples/isa-host-demo`（运行期只依赖 `forge-isa-runtime` +
+build-dependency `forge-isa-dsl`，自带玩具谱与依赖面守卫；v19 V2 的 G1 实证）。
 
 ### 宿主接入（**必须**：v18 S10d 起生成物由 build script 预生成）
 
@@ -196,7 +199,7 @@ crate 只需要依赖 `forge-isa-runtime`（+ build script 预生成），**不�
 
 **生成物文件的三条性质**（改生成管线前先看 `forge-isa-dsl/src/gen_file.rs` 模块头）：
 
-1. 文件名 = **参数哈希**（谱路径 + `krate`/`spec_tests`/`name`/`parts`），与内容无关——
+1. 文件名 = **参数哈希**（谱路径 + `spec_tests`/`name`/`parts`），与内容无关——
    同一调用点改谱后路径不变（RA/缓存才认得），同一份谱的不同变体落到**不同**文件；
 2. 文件里带 `#[allow(warnings, clippy::all)]`：以前生成物是宏展开结果、rustc/clippy 一律
    不 lint 它；改成文件后必须显式恢复（否则实测多出 223 条风格类警告，`-D warnings`
@@ -213,16 +216,17 @@ crate 只需要依赖 `forge-isa-runtime`（+ build script 预生成），**不�
 
 `parts` 用于**生成物减薄**：例如只要编解码器、不要 TargetMachine 集成层时写
 `parts = ["encode", "decode"]`——`Inst` 枚举、`Reg` 枚举、寄存器名表与内存支撑是
-任何部件的公共前提，恒定生成；`parts` 受限时必须 `spec_tests = false`（生成期自测
-要用 encode/decode/asm 全部，否则编译期明确报错而不是悄悄生成跑不过的测试）。
+任何部件的公共前提，恒定生成；`spec_tests` 要求 **encode/decode/asm 三块齐全**
+（`tm` **不是**前提，v19 V2 起——`Parts::supports_spec_tests()` 是唯一判据；缺哪块
+就编译期明确报错，而不是悄悄生成跑不过的测试）。
 用例：`crates/frontend/forge-isa-dsl/tests/parts_selection.rs`（token 文本级断言）
 与 `crates/backend/forge-codegen/tests/include_v12_tests.rs`（同一份谱再展开一个
-只有编码器的模块，真实编译并跑通）。
+只有编码器的模块，真实编译并跑通）、`examples/isa-host-demo`（只有 encode/decode/asm
+而开着自测的真实宿主）。
 
 ```rust
 forge_dsl::isa_from_file!(
     "tests/isa/demo_v12.toml",
-    krate = forge_codegen,
     spec_tests = false,
     name = "demo_enc_only",
     parts = ["encode"]
@@ -233,8 +237,9 @@ forge_dsl::isa_from_file!(
 `Inst` 指令枚举、`encode` / `decode` / `disassemble` / `assemble` 自由函数，以及
 TargetMachine 集成层（`TargetMachine` / `Encoder` / `Decoder` / `Disassembler` /
 `Assembler` / `ABI` / `FrameLowering` / `Lowering` / `RegInfo` / `IsaInfo` /
-`ensure_registered`）。生成代码仅依赖 std + 宿主 crate 的公开面（内部生成时为
-`crate::prelude` 与 `crate::machine::*`），无 lalrpop / forge-asm 运行时。
+`ensure_registered`）。生成代码仅依赖 std + **运行时 crate** `forge-isa-runtime`
+（v19 V1b 起路径一律是 `forge_isa_runtime::…`，见「生成代码依赖的运行面」），
+无 lalrpop / forge-asm 运行时。
 
 **S1 起**：生成模块内嵌 `include_bytes!(<TOML 绝对路径>)`，rustc 把 TOML 当编译
 依赖——改 `isa/*.toml` 直接触发重编译，**不再需要手动 `touch arch/<isa>.rs`**。
@@ -382,7 +387,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 多个 ≤ 64 位的域，因此 100/128/4096 位的字都能表达。
 
 夹具（`crates/backend/forge-codegen/tests/isa/`，均由
-`tests/common/mod.rs` 用 `krate = forge_codegen` 宿住）：`demo_inst8_v12.toml`
+`tests/common/mod.rs` 用 `isa_from_file!` 宿住）：`demo_inst8_v12.toml`
 （8 位字，含字内 label 域 + `RelocPatcher`）、`demo_inst12_v12.toml`（12 位字，
 非 8 倍数 + 填充位拒绝）、`demo_inst100_v12.toml`（100 位字：超机器字 +
 位域在 bit 92..100）。用例分别在 `tests/demo_inst{8,12,100}_v12_tests.rs`。
@@ -1296,9 +1301,11 @@ memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄�
 
 ### 生成代码依赖的运行面（generated-code runtime surface）
 
-生成物（`isa_from_file!`）只允许引用宿主 crate 的**公开**项。发行后端生成在
-`forge-codegen` 内部（`crate::…`，内部可见性即可）；用 `krate = <宿主>` 生成到
-其它 crate / 测试时，宿主必须公开这些路径：
+生成物（`isa_from_file!`）只引用**运行时 crate** `forge-isa-runtime`——v19 V1b 起
+生成器一律发绝对路径（`crate::…` → `forge_isa_runtime::…`、`forge_ir::…` →
+`forge_isa_runtime::ir::…`，见 `rewrite_path_roots`），因此承载谱的 crate 只需要
+`[dependencies] forge-isa-runtime`。运行面清单（改它先动
+`crates/foundation/forge-isa-runtime/tests/runtime_surface.rs` 的依赖白名单）：
 
 - 顶层：`AllocResult`、`CodeSink`、`CompiledFunction`、`EncodeError`、`IrError`、
   `RelocKind`、`Registry`、`prelude`、`ir`（= `forge_ir` 的 re-export）、
@@ -1312,8 +1319,10 @@ memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄�
   `reloc_patcher::{register_default_reloc_patcher, RelocPatcher}`、
   `target::TargetMachine`。
 
-forge-codegen 已全部 `pub`；`tests/library_surface.rs` 与"在测试 crate 里生成
-demo 谱"这一事实本身即为守卫（少一个 `pub` 就编译不过）。
+`forge-codegen` 全部 `pub use` 转发这些项（内部路径不变）；运行时侧的守卫是
+`crates/foundation/forge-isa-runtime/tests/runtime_surface.rs`；"在**非**
+forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common/mod.rs`、
+`examples/isa-host-demo`——少一个 `pub` 就编译不过）。
 
 ### 汇编器能力（`TargetAssembler::parse_insts`）
 
@@ -1411,12 +1420,12 @@ REX.R/B/X、8 位寄存器的 REX 强制、EVEX 的 ZMM16-31）。
 | `SPEC_SKIPPED` | 未能自动构造操作数的指令（名字 + 原因）——S6 判据：**必须为空** |
 | `SPEC_TEXT_AMBIGUOUS` | 汇编文本不唯一的指令（同名同形、编码不同，如 x86 `89`/`8B` 两条 `mov r/m, r`）——只要求文本幂等与自洽 |
 
-**`isa_from_file!` 的第三个参数**：`spec_tests = <bool>`（缺省 `true`）。
+**参数**：`spec_tests = <bool>`（缺省 `true`；`parts` 需含 encode/decode/asm，
+见「宿主接入」的参数表）。
 
 ```rust
 forge_dsl::isa_from_file!("isa/my_isa.toml");                     // 生成自测（缺省）
-forge_dsl::isa_from_file!("tests/isa/demo.toml",
-    krate = forge_codegen, spec_tests = false);                    // 关掉
+forge_dsl::isa_from_file!("tests/isa/demo.toml", spec_tests = false); // 关掉
 ```
 
 关掉的理由只有一个：同一份谱被**多个测试二进制**反复展开（夹具谱住在
@@ -1425,7 +1434,7 @@ forge_dsl::isa_from_file!("tests/isa/demo.toml",
 （1 字节寄存器 / 12 位字 / 混合字长）。
 
 自测跑在 `cargo test -p forge-codegen --lib`（生成在库内）或对应测试二进制里
-（`krate = …` 生成在测试 crate 里）。S6 落地时它当场抓到两处真缺陷：
+（展开在测试 crate 里）。S6 落地时它当场抓到两处真缺陷：
 riscv W 变体移位量 32..63 被静默掩码成 `n-32`、x86 EVEX 寄存器直寻址丢掉
 ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
 `docs/archive/forge-dsl-v18-plan.md` §7「S6 进度」。
@@ -1447,7 +1456,7 @@ ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
   `docs/reference/aarch64-encoding-ref.md`）。
 
 **测试夹具**（**不在库里**，`crates/backend/forge-codegen/tests/isa/`；由
-`tests/common/mod.rs` 用 `isa_from_file!(…, krate = forge_codegen)` 宿住）：
+`tests/common/mod.rs` 用 `isa_from_file!(…)` 宿住）：
 
 - **`demo_v12.toml`**：同助记符多宽度自动分发演示基线。
 - **`demo8_v12.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，宽度

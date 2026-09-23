@@ -3,7 +3,7 @@ members = [
     ".",
     "crates/foundation/forge-ir",
     "crates/foundation/forge-mem",
-"crates/foundation/forge-isa-runtime",
+    "crates/foundation/forge-isa-runtime",
     "crates/frontend/forge-grammar",
     "crates/frontend/forge-isa-dsl",
     "crates/frontend/forge-dsl",
@@ -17,6 +17,7 @@ members = [
     "crates/tools/forge-tests",
     "crates/tools/cargo-forge",
     "crates/tools/forge-isa",
+    "examples/isa-host-demo",
     "examples/mini_c",
 ]
 resolver = "3"

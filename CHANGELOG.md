@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-23) — ISA-DSL v19 V2（外部宿主实证）
+
+- **新增示例 `examples/isa-host-demo`：证明一份 ISA 谱可以独立接入**。它只有 `[dependencies] forge-isa-runtime` 与 `[build-dependencies] forge-isa-dsl`——连 proc-macro crate 都不依赖（`build.rs` 直接调 `pregenerate`、`src/lib.rs` 只写一句 `include!`），自带玩具谱 `isa/toy16.toml` 与依赖面/生成物守卫。`cargo test -p isa-host-demo` 跑出 9 条生成期自测 + 5 条宿主用例；`cargo tree -p isa-host-demo --edges normal,build` 里没有 forge-codegen。这是 v19 目标 G1（任意普通 crate 都能承载一份谱）的硬证据，也是教程"新 ISA 从这里开始"的可抄模板。
+
+### Changed (2026-09-23)
+
+- **`spec_tests` 不再要求 `tm` 部件**：生成期自测（`__spec_tests`）只需要 encode/decode/asm，此前 `parts = ["encode","decode","asm"]`（不含 `tm`）会报"必须写 `spec_tests = false`"——但自测根本不碰 TargetMachine 集成层（ABI/lowering/帧布局），这条限制挡住了"只做编解码 + 汇编"的宿主（例如 `examples/isa-host-demo`）。判据收敛为 `Parts::supports_spec_tests()`；缺 encode/decode/asm 仍在编译期明确报错。
+
 ### Changed (2026-09-23) — ISA-DSL v19 V1（破坏性）
 
 - **生成物运行面拆成 `forge-isa-runtime`；`isa_from_file!` 删除 `krate`**。生成物不再依赖宿主 crate 的公开面，一律写绝对路径 `forge_isa_runtime::…`（`forge_ir::…` → `forge_isa_runtime::ir::…`），因此**任意普通 crate 只要依赖 `forge-isa-runtime` + build script 预生成**就能承载一份 ISA 谱；`krate` 参数与"按宿主改写路径根"的机制一并删除。

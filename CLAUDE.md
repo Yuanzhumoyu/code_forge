@@ -198,12 +198,15 @@ code-forge (root umbrella)
 
 ### Key Architecture Rules
 
-1. **`isa_from_file!`（现行 ISA-DSL v18 语法）默认生成 `crate::` 路径** — 即"生成在哪个
-   crate 里就属于哪个 crate"（`crate::prelude::*`、`crate::machine::*` 在该 crate 内解析）。
-   生成模块名 = 文件 stem（可用 `name = "…"` 覆盖）。**v19 V1b 起没有 `krate`**：生成物
+1. **`isa_from_file!`（现行 ISA-DSL v18 语法）生成的代码只依赖运行时 crate** — v19 V1b 起
+   路径恒为绝对路径，宿主是哪个 crate 不再影响生成物内容。
+   生成模块名 = 文件 stem（可用 `name = "…"` 覆盖）。**没有 `krate` 参数**：生成物
    一律写绝对路径 `forge_isa_runtime::…`（`forge_ir::…` → `forge_isa_runtime::ir::…`），
    因此**任何** crate 只要依赖 `forge-isa-runtime`（+ build script 预生成）就能承载一份谱——
-   demo 夹具正是这样住在 `tests/isa/*.toml` + `tests/common/mod.rs` 而不进库本体。
+   demo 夹具正是这样住在 `tests/isa/*.toml` + `tests/common/mod.rs` 而不进库本体，
+   最小可抄的**外部宿主** = `examples/isa-host-demo`（运行期只依赖 `forge-isa-runtime`，
+   build-dependency 只有 `forge-isa-dsl`，`parts` 只取 encode/decode/asm 而仍开着生成期自测；
+   依赖面与生成物文本级守卫在它的 `tests/host_surface.rs`，是 v19 V2 的 G1 证据）。
    `parts` 含 `tm` 时宿主须注册编译管线（`forge_isa_runtime::register_pipeline`，
    forge-codegen 的 `pipeline_hooks::ensure_registered` 已接好）。
    库本体只有真实后端：`arch/{x86,arm64,riscv64}_v12.rs`（文件名里的 v12 是历史命名）。
@@ -441,7 +444,7 @@ let name = node.get_text("name")?;
   `RegClass::GPR64`/8 字节缺省。1 字节寄存器 ISA 夹具 =
   `crates/backend/forge-codegen/tests/isa/demo8_v12.toml`；指令字宽夹具 =
   `tests/isa/demo_inst{8,12,100}_v12.toml`（由
-  `tests/common/mod.rs` 用 `isa_from_file!(…, krate = forge_codegen)` 宿住，
+  `tests/common/mod.rs` 用 `isa_from_file!(…)` 宿住，
   **不进库本体**；用例在 `tests/demo8_v12_tests.rs`）；反回潮守卫 =
   `crates/{frontend/forge-dsl,backend/forge-codegen}/tests/no_hardcoded_widths.rs`
   （白名单带理由，且条目必须被命中）+ `tests/library_surface.rs`（demo 谱不得
@@ -533,8 +536,8 @@ base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
 ## Code Conventions
 
 - Edition 2024 throughout
-- `forge-ir` types are re-exported in `forge-codegen::prelude` for DSL-generated code；
-  `forge-codegen::ir` 是 `forge_ir` 的 re-export（`krate = …` 生成物的 `forge_ir::` 目标）
-- Generated code paths use `crate::` **when generated inside forge-codegen**（发行后端）；
-  在别的 crate 里生成时用 `isa_from_file!(…, krate = <宿主>)`，生成物只落到该宿主的公开面
+- `forge-ir` 的类型经 `forge-isa-runtime::ir` 暴露给生成物（`forge_ir::` 的固定改写目标；
+  `forge-codegen::ir` 只是同源 re-export）
+- 生成物路径**恒为** `forge_isa_runtime::…`（v19 V1b 起没有 `krate`）：任意 crate 只要
+  依赖它 + build script 预生成就能承载谱（最小例子 `examples/isa-host-demo`）
 - Root `src/lib.rs` is a thin facade — all real code in `crates/`

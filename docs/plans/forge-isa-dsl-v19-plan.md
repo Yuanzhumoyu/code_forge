@@ -104,7 +104,7 @@
 | --- | --- | --- | --- | --- |
 | **V0** 基线取证 | 生成耗时/规模、编译时间分档、覆盖缺口、运行面清单、黄金测试规模 | 本文 §10 基线表；机器可读"生成物运行面表"（V1 的迁移清单）；`ops.toml` 有而谱里无 lowering 的**缺口清单** | 数字可复现（命令写进文档）；缺口清单与矩阵 skip 对得上 | 立刻可用（给 V1/V4 定范围） |
 | **V1** 拆 `forge-isa-runtime`（**破坏性**） | 新 crate：`machine/*` + `runtime/{output_types,registry}` + `AllocResult`/`CodeSink`/`LabelRef`；解三处 `machine→pipeline` 引用：数据型上移，管线走 runtime 的 `Pipeline` trait，`impl_erased_target_machine!` 移入 runtime | 生成物只依赖 runtime；`forge-codegen` 变成 runtime 下游（保留 JIT/regalloc/emission/arch） | `cargo tree -p forge-isa-runtime` 只含 forge-ir；新守卫 `runtime_has_no_pipeline_dep.rs`；三后端 930 条规格用例 + 黄金 + 矩阵 195/3/0、131/67/0、23/175/0 逐数字不变 | 通用性的**前置条件** |
-| **V2** 外部宿主实证 | 新 crate（如 `crates/tools/isa-host-demo`）：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`） | `krate` 参数删除；教程"新 ISA 从这里开始"改指本 crate | 该 crate `cargo test` 通过（含 `__spec_tests` + 向量）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts`/`params` | G1 的**硬证据** |
+| ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
 | **V3** `[[vectors]]` 数据化测试 | `{ asm, bytes }`、`{ asm, error = "<码>" }`、`{ bytes, error = "DECODE", partial = N }`；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价**（脚本 dump 前后 sha256 比对）；手写测试行数 −≥50%（前后数字入库）；负向向量钉错误码 | G2；作者体验立刻变好 |
 | **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降 |
 | **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants` + 值条件列 `vary` 下沉到 `[[templates]]` | RV32 从同一 riscv64 谱生成（投影：encode/decode/asm，不注册）；`explain` 显示参数生效点 | 与独立 RV32 表或 QEMU 32 位用例对拍；矩阵/覆盖守卫显式登记变体期望 | G4；臂/扩展式复用的验证 |
@@ -122,7 +122,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   谱里根本没有 `op = "Jmp"/"Br"/"Ret"`）⇒ V4 的 lint 必须把"终结指令/宿主管线处理/真缺口"
   分三类报，否则一上手就是上百条误报；③ runtime 迁移清单已锁定（10 个 `machine` 子模块 +
   9 个顶层项），两处硬耦合是 `pipeline::emit::LabelRef` 与 `prelude`。
-- 🚧 **V1a 已落地（2026-09-23）**：生成物运行面拆成 **`crates/foundation/forge-isa-runtime`**
+- ✅ **V1a 已落地（2026-09-23）**：生成物运行面拆成 **`crates/foundation/forge-isa-runtime`**
   （3,669 行：`machine/*` 的 trait 与数据型、`LowerCtx`/`MemRef`、`AllocResult`/`CodeSink`/
   `LabelRef`/`CompiledFunction`/`RelocKind`、`Registry`、`VCode` 数据型、CPU 能力探测、生成物
   `prelude`）。`forge-codegen` 降到 10,037 行并保留同名 re-export（内部路径不变）。新守卫
@@ -130,9 +130,8 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   `forge_codegen`/`crate::pipeline`），「反宽度写死」守卫按归属一分为二（runtime 12 条 /
   codegen 4 条，失效条目仍强制删除）。证据：`cargo tree -p forge-isa-runtime` 不含
   forge-codegen；`cargo test -p forge-codegen` **27/27 二进制全绿**；clippy `-D warnings` 干净。
-  **V1b 未做**：生成物改指绝对路径 `forge_isa_runtime::…` 并删 `krate`/`rewrite_path_roots`；
-  `impl_erased_target_machine!` 带 `pipeline = <路径>` 参数搬进 runtime（现在留在 codegen，
-  因此第三方宿主暂时不能用 `tm` 部件——G1 的实证要等 V1b/V2）。
+  （当时 **V1b 未做**：生成物改指绝对路径 `forge_isa_runtime::…` 并删
+  `krate`/`rewrite_path_roots`；同一日已落地，见下一段。）
 
 **V1b 已落地（2026-09-23，runtime 注册管线方案）**：
 
@@ -155,7 +154,40 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
 
 - 于是生成物与宿主彻底解耦：`krate`、`pipeline` 参数、占位路径替换**都不需要**。
 
-**V1b 执行清单（已勘察完毕，逐步照做即可；改动是原子的，必须一次全做）**：
+**V2 已落地（2026-09-23，外部宿主实证）**：
+
+- 新增 `examples/isa-host-demo`（放 **examples/**，不是 `crates/tools/`——它是示例，不是产品
+  crate）：自带玩具谱 `isa/toy16.toml`（教程 §0 的 16 位 ISA，4 条指令），
+  `parts = ["encode", "decode", "asm"]`、`spec_tests = true`。
+- 依赖面（`tests/host_surface.rs` 钉住，改 `Cargo.toml` 不同步就红）：`[dependencies]` 只有
+  `forge-isa-runtime`、`[build-dependencies]` 只有 `forge-isa-dsl`、无 dev-dependencies；
+  `cargo tree -p isa-host-demo --edges normal,build` 里**没有** forge-codegen/forge-opt/forge-dsl。
+- 该 crate **不用 proc-macro**：`build.rs` 直接调 `forge_isa_dsl::gen_file::{pregenerate,
+  generated_file_name}`（并断言与宏侧同名），`src/lib.rs` 写一句
+  `include!(concat!(env!("OUT_DIR"), "/", env!("ISA_HOST_DEMO_GEN")))`——证明生成物就是
+  **纯 Rust 文件 + 单一运行时依赖**，与宏只是同一份生成物的两种入口。
+- 顺带修掉一条过时约束：`__spec_tests` 只要求 encode/decode/asm
+  （新增 `Parts::supports_spec_tests()`），`tm` **不是**前提——此前"parts 受限必须
+  `spec_tests = false`"挡住了"只做编解码 + 汇编的外部宿主"，而自测本来就不碰
+  TargetMachine 集成层。
+- 顺手修掉一条**守卫假阳性**（本轮由**全量 workspace 测试**抓到）：
+  `crates/foundation/forge-isa-runtime/tests/runtime_surface.rs` 的"源码面"判据把宏体里的
+  `$crate::pipeline`（`#[macro_export]` 指定义宏的 crate 自己 = runtime 的**正确写法**，
+  V1b 把 `impl_erased_target_machine!` 搬进 runtime 时引入）当成"反向依赖宿主管线"判红。
+  判据改为"`crate::pipeline` **且前面不是 `$`**"，并加匹配器单测
+  （`pipeline_matcher_ignores_dollar_crate_only`）防止反向修成"永远不报"。
+- 证据（2026-09-23 本机）：`cargo test -p isa-host-demo` = 生成期自测 **9 passed** +
+  宿主用例 **5 passed**；生成物文本级断言（0 处 `crate::`、0 处 `forge_codegen`、带
+  lint 门闩与 `__spec_tests`）；`fmt --check`、`clippy -D warnings`、`forge-isa-dsl`
+  全套测试、`forge-codegen` 27 个测试二进制、三架构 JIT 矩阵、release check、`cargo doc`
+  与全量 workspace 测试全绿；改谱后 build script 重跑（生成物 mtime 变化、文件名与内容哈希
+  稳定）也已实测。
+
+**V1b 早期方案（`pipeline = <路径>` 宏参数——已放弃，保留反例）**：原计划让宿主在生成期把
+管线类型路径交给生成物。落地失败：宿主给的路径会先被**固定根改写**
+（`crate::…` → `forge_isa_runtime::…`）改掉，占位替换不生效、报 E0433；三次尝试均失败后
+改为**运行时注册表**方案（即上面落地的形态）——生成物里不留任何宿主路径，该参数自然不需要。
+下面这份清单是当时的记录，**不要照着做**：
 
 1. `gen_file.rs`：`RawArgs.krate` → `pipeline: Option<syn::Path>`（键名 `pipeline`，错误消息与
    `generated_file_name` 的参数哈希同步改；`krate` 从支持列表里删掉=破坏性）。

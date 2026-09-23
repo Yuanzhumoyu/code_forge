@@ -1,0 +1,75 @@
+# toy16 — 教程（docs/guides/isa-dsl-tutorial.md §0）的 16 位定宽玩具 ISA。
+#
+# 它在这里的身份不是"又一个夹具"，而是 **v19 V2 的外部宿主实证**：
+# 本 crate 的依赖面只有 forge-isa-runtime（见 tests/host_surface.rs），
+# 说明"承载一份 ISA 谱"不需要 forge-codegen 及其编译管线。
+[meta]
+name = "toy16"
+endian = "little"
+mode = 16
+
+[encoding]
+kind = "fixed"
+bits = 16
+
+[reg.gpr1]
+names = ["R0", "R1", "R2", "R3"]
+
+[conventions.bitfields]
+op  = { offset = 12, width = 4 }
+rd  = { offset = 8, width = 3 }
+rs1 = { offset = 5, width = 3 }
+imm = { offset = 0, width = 5 }
+
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr1"
+
+[[operand_slots]]
+name = "imm5"
+kind = "imm"
+width = 5
+signed = true
+
+[[forms]]
+name = "RR"
+opcode_field = "op"
+operand_fields = ["rd", "rs1"]
+
+[[forms]]
+name = "RI"
+opcode_field = "op"
+operand_fields = ["rd", "imm"]
+
+[[instructions]]
+name = "ADD"
+form = "RR"
+opcode = 1
+ops = ["dst:g:out", "src:g"]
+asm = "add {dst}, {src}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "SUB"
+form = "RR"
+opcode = 2
+ops = ["dst:g:out", "src:g"]
+asm = "sub {dst}, {src}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVI"
+form = "RI"
+opcode = 3
+ops = ["dst:g:out", "imm:imm5"]
+asm = "movi {dst}, {imm}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "BRZ"
+form = "RI"
+opcode = 4
+ops = ["src:g", "target:imm5"]
+asm = "brz {src}, {target}"
+effect = ["Branch"]

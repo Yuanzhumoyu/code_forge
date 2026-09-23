@@ -59,9 +59,18 @@ impl Parts {
         }
     }
 
-    /// 是否全开（决定能否打开生成期自测）。
+    /// 是否四块全开。
     pub fn is_full(&self) -> bool {
         *self == Self::all()
+    }
+
+    /// 生成期自测（`__spec_tests`）能否生成：**只需要 encode/decode/asm**。
+    ///
+    /// `tm` 不是前提——自测跑的是 `encode∘decode`、字节稳定、文本幂等与立即数边界，
+    /// 不碰 TargetMachine 集成层（ABI/lowering/帧布局）。因此"只承载编解码 + 汇编的
+    /// 宿主"（v19 V2 的外部宿主实证 `examples/isa-host-demo`）也能带上自测。
+    pub fn supports_spec_tests(&self) -> bool {
+        self.encode && self.decode && self.asm
     }
 
     /// 从 `parts = [...]` 的名字表构造；未知名字/空表报错（错误消息列出可用名）。
@@ -275,9 +284,9 @@ fn expand_loaded(
     spec_tests: bool,
     parts: Parts,
 ) -> Result<proc_macro2::TokenStream, String> {
-    // 生成期自测要用 encode/decode/asm 全部部件——部件受限时明确报错，
-    // 而不是悄悄生成一份编译不过的自测。
-    if spec_tests && !parts.is_full() {
+    // 生成期自测要用 encode/decode/asm——部件受限时明确报错，
+    // 而不是悄悄生成一份编译不过的自测。（`tm` 不在其中，见 `supports_spec_tests`。）
+    if spec_tests && !parts.supports_spec_tests() {
         return Err(format!(
             "parts = [{}] 时不能生成生成期自测（`__spec_tests` 需要 encode/decode/asm 全部）\
              ——请显式写 `spec_tests = false`，或去掉 parts",
@@ -536,7 +545,20 @@ mod tests {
         let p = Parts::from_names(&["asm".to_string(), "tm".to_string()]).expect("两个部件");
         assert!(p.asm && p.tm && !p.encode && !p.decode);
         assert!(!p.is_full());
+        assert!(!p.supports_spec_tests(), "缺 encode/decode ⇒ 不能开自测");
         assert_eq!(p.names(), "asm, tm");
+        // v19 V2：自测只需要 encode/decode/asm，**不含 tm** 也要能开。
+        let st = Parts::from_names(&[
+            "encode".to_string(),
+            "decode".to_string(),
+            "asm".to_string(),
+        ])
+        .expect("三个部件");
+        assert!(!st.is_full(), "不含 tm 就不是全开");
+        assert!(
+            st.supports_spec_tests(),
+            "encode/decode/asm 齐全 ⇒ 可开自测"
+        );
         let e = Parts::from_names(&["nope".to_string()]).unwrap_err();
         assert!(e.contains("未知部件"), "{e}");
         assert!(e.contains("encode / decode / asm / tm"), "{e}");
