@@ -1,9 +1,11 @@
 //! x86-64 v12 验证（迭代 3+：变长语义键）。v11 后端已删除，golden 全部为
 //! 硬编码 x86 规范 oracle 字节（v12 组内寄存器索引，无 v11 的 `16+i` 偏差）。
 //!
-//! - **规范字节**：GPR/imm32/内存/VEX/SSE 指令按 x86 规范硬编码 oracle
-//!   （v11 对比曾验证 v12 与其 GPR 字节一致；SSE 字节 v11 带多余 REX 不合规，
-//!   v12 组内索引规范正确——以规范为准）。
+//! **规范字节已迁进谱内 `[[vectors]]`**（v19 V3b）：`isa/x86_v12.toml` 末尾 102 条，
+//! 由生成物 `__spec_tests::spec_vector_*` 执行（`cargo test -p forge-codegen --lib`），
+//! 也可单跑 `cargo run -p forge-isa -- test isa/x86_v12.toml`。本文件只留集成/往返/
+//! ABI 类断言。
+//!
 //! - **字节级往返**：decode(encode(X)) 再 encode 字节一致（含编码撞车的别名
 //!   指令，声明序首匹配）。
 //! - **assemble/disassemble** 往返（opsize 操作数非文本，默认 64）。
@@ -11,61 +13,7 @@
 use forge_codegen::x86_v12::{Inst, MemRef, Reg, assemble, decode, disassemble, encode};
 use forge_ir::{PhysReg, RegClass};
 
-fn v12_bytes(asm: &str) -> Vec<u8> {
-    let inst = assemble(asm).unwrap_or_else(|e| panic!("v12 assemble `{asm}`: {e}"));
-    encode(&inst).unwrap_or_else(|e| panic!("v12 encode {inst:?}: {e}"))
-}
-
 // ─────────────────── 规范字节：GPR @modrm/@modrm_imm32/内存 ───────────────────
-
-#[test]
-fn golden_gpr_spec_bytes() {
-    let cases: &[(&str, &[u8])] = &[
-        // v13：movrr/mov32/mov64rr 已合并为 `mov`（类型签名自动分发）。
-        // mov EAX,EBX → MOV_R_RM（8B，32 位无前缀）；mov RAX,RBX → MOV_RM_R（89）。
-        ("mov EAX, EBX", &[0x8B, 0xC3]),
-        ("mov R8D, R9D", &[0x45, 0x8B, 0xC1]), // REX.R/B 扩展（32 位无 W）
-        ("mov RAX, RBX", &[0x48, 0x89, 0xD8]), // 0x89 MR 方向
-        ("mov R8, R9", &[0x4D, 0x89, 0xC8]),
-        ("movsxd RAX, RBX", &[0x48, 0x63, 0xC3]),
-        ("add RAX, RBX", &[0x48, 0x01, 0xD8]),
-        ("sub RAX, RBX", &[0x48, 0x29, 0xD8]),
-        ("imul RAX, RBX", &[0x48, 0x0F, 0xAF, 0xC3]),
-        ("xor RAX, RBX", &[0x48, 0x31, 0xD8]),
-        ("and RAX, RBX", &[0x48, 0x21, 0xD8]),
-        ("or RAX, RBX", &[0x48, 0x09, 0xD8]),
-        ("cmp RAX, RBX", &[0x48, 0x39, 0xD8]),
-        ("test RAX, RBX", &[0x48, 0x85, 0xD8]),
-        ("cmpxchg RAX, RBX", &[0x48, 0x0F, 0xB1, 0xD8]),
-        ("xadd RAX, RBX", &[0x48, 0x0F, 0xC1, 0xD8]),
-        ("bt RAX, RBX", &[0x48, 0x0F, 0xA3, 0xD8]),
-        ("bts RAX, RBX", &[0x48, 0x0F, 0xAB, 0xD8]),
-        ("btr RAX, RBX", &[0x48, 0x0F, 0xB3, 0xD8]),
-        ("btc RAX, RBX", &[0x48, 0x0F, 0xBB, 0xD8]),
-        ("mov RAX, RBX", &[0x48, 0x89, 0xD8]), // movrm 已合并进 mov（真重复）
-        // imm32 形式（81 /digit + imm32）
-        ("add RAX, 42", &[0x48, 0x81, 0xC0, 0x2A, 0x00, 0x00, 0x00]),
-        ("sub RAX, 42", &[0x48, 0x81, 0xE8, 0x2A, 0x00, 0x00, 0x00]),
-        ("and RAX, 42", &[0x48, 0x81, 0xE0, 0x2A, 0x00, 0x00, 0x00]),
-        ("or RAX, 42", &[0x48, 0x81, 0xC8, 0x2A, 0x00, 0x00, 0x00]),
-        ("xor RAX, 42", &[0x48, 0x81, 0xF0, 0x2A, 0x00, 0x00, 0x00]),
-        ("cmp RAX, 42", &[0x48, 0x81, 0xF8, 0x2A, 0x00, 0x00, 0x00]),
-        ("add R8, 42", &[0x49, 0x81, 0xC0, 0x2A, 0x00, 0x00, 0x00]), // 扩展寄存器
-        // 内存寻址（@modrm_mem）
-        ("xadd [RAX], RBX", &[0xF0, 0x48, 0x0F, 0xC1, 0x18]),
-        ("xadd [R8], R9", &[0xF0, 0x4D, 0x0F, 0xC1, 0x08]),
-        ("xchg [RAX], RBX", &[0x48, 0x87, 0x18]),
-        ("xchg [RSP], RBX", &[0x48, 0x87, 0x1C, 0x24]), // base=RSP → SIB
-        // 注：lock sub/lock and/lock or/lock xor 不在 golden——v11 带多余 0F escape
-        //（F0 48 0F 29 非规范），v12 规范修正（F0 48 29），见 mem_spec_bytes。
-        ("mov RAX, [RBX]", &[0x48, 0x8B, 0x03]),
-        ("mov [RAX], RBX", &[0x48, 0x89, 0x18]),
-    ];
-    for (c, expected) in cases {
-        let got = v12_bytes(c);
-        assert_eq!(got.as_slice(), *expected, "spec mismatch for `{c}`");
-    }
-}
 
 #[test]
 fn opsize_prefix_and_rex_w() {
@@ -94,54 +42,7 @@ fn opsize_prefix_and_rex_w() {
 
 // ─────────────────── `+r` 形式（push/pop/bswap/mov_imm64，迭代 5）───────────────────
 
-#[test]
-fn r_forms_spec_bytes() {
-    // 规范 oracle：+r 编码（REX 仅扩展寄存器；mov_imm64/bswap 恒 REX.W）
-    let cases: &[(&str, &[u8])] = &[
-        ("push RAX", &[0x50]),
-        ("push R8", &[0x41, 0x50]),
-        ("pop RBX", &[0x5B]),
-        ("pop R9", &[0x41, 0x59]),
-        ("bswap RAX", &[0x48, 0x0F, 0xC8]),
-        ("bswap R12", &[0x49, 0x0F, 0xCC]),
-        (
-            "mov RAX, 0x1234",
-            &[0x48, 0xB8, 0x34, 0x12, 0, 0, 0, 0, 0, 0],
-        ),
-        (
-            "mov R8, -1",
-            &[0x49, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
-        ),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(got.as_slice(), *expected, "+r spec mismatch for `{asm}`");
-    }
-}
-
 // ─────────────────── 控制流（JMP/CALL/RET，迭代 6）───────────────────
-
-#[test]
-fn control_flow_spec_bytes() {
-    let cases: &[(&str, &[u8])] = &[
-        // ret — C3
-        ("ret", &[0xC3]),
-        // jmp rel32 — E9 + rel（直接编码目标值）
-        ("jmp 0", &[0xE9, 0x00, 0x00, 0x00, 0x00]),
-        ("jmp 42", &[0xE9, 0x2A, 0x00, 0x00, 0x00]),
-        // call rel32 — E8 + rel
-        ("call 0", &[0xE8, 0x00, 0x00, 0x00, 0x00]),
-        ("call -1", &[0xE8, 0xFF, 0xFF, 0xFF, 0xFF]),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(
-            got.as_slice(),
-            *expected,
-            "control-flow spec mismatch for `{asm}`"
-        );
-    }
-}
 
 #[test]
 fn control_flow_roundtrip() {
@@ -165,136 +66,9 @@ fn control_flow_roundtrip() {
 
 // ─────────────────── SSE 规范字节（v11 的 16+i 索引不合规）───────────────────
 
-#[test]
-fn sse_spec_bytes() {
-    // v12 组内索引 → 规范编码（无多余 REX）
-    let cases: &[(&str, &[u8])] = &[
-        ("sqrtsd XMM0, XMM1", &[0xF2, 0x0F, 0x51, 0xC1]),
-        ("sqrtss XMM0, XMM1", &[0x0F, 0x51, 0xC1]),
-        ("cvtsi2sd XMM0, RAX", &[0xF2, 0x48, 0x0F, 0x2A, 0xC0]), // v13 合并：RAX 64 位源 → REX.W
-        ("cvtsd2si RAX, XMM0", &[0xF2, 0x48, 0x0F, 0x2D, 0xC0]), // 64 位目的 → REX.W
-        ("cvttsd2si RAX, XMM0", &[0xF2, 0x48, 0x0F, 0x2C, 0xC0]),
-        ("cvtsd2ss XMM0, XMM1", &[0xF2, 0x0F, 0x5A, 0xC1]),
-        ("cvtss2sd XMM0, XMM1", &[0xF3, 0x0F, 0x5A, 0xC1]),
-        ("andpd XMM0, XMM1", &[0x66, 0x0F, 0x54, 0xC1]),
-        ("xorpd XMM0, XMM1", &[0x66, 0x0F, 0x57, 0xC1]),
-        ("comisd XMM0, XMM1", &[0x66, 0x0F, 0x2F, 0xC1]),
-        ("comiss XMM0, XMM1", &[0x0F, 0x2F, 0xC1]),
-        ("cvtsi2ss XMM0, RAX", &[0xF3, 0x48, 0x0F, 0x2A, 0xC0]), // v13 合并：RAX 64 位源 → REX.W
-        // v13 合并自动分发：32 位操作数 → 无 REX.W
-        ("cvtsi2sd XMM0, EAX", &[0xF2, 0x0F, 0x2A, 0xC0]),
-        ("cvtsi2ss XMM0, EAX", &[0xF3, 0x0F, 0x2A, 0xC0]),
-        ("cvtsd2si EAX, XMM0", &[0xF2, 0x0F, 0x2D, 0xC0]),
-        ("cvttsd2si EAX, XMM0", &[0xF2, 0x0F, 0x2C, 0xC0]),
-        ("movd XMM0, RAX", &[0x66, 0x0F, 0x6E, 0xC0]),
-        ("movd RAX, XMM0", &[0x66, 0x0F, 0x7E, 0xC0]),
-        ("punpckldq XMM0, XMM1", &[0x66, 0x0F, 0x62, 0xC1]),
-        ("punpcklqdq XMM0, XMM1", &[0x66, 0x0F, 0x6C, 0xC1]),
-        ("punpckhdq XMM0, XMM1", &[0x66, 0x0F, 0x6A, 0xC1]),
-        ("movss XMM0, XMM1", &[0xF3, 0x0F, 0x10, 0xC1]),
-        ("movsd XMM0, XMM1", &[0xF2, 0x0F, 0x10, 0xC1]),
-        // 扩展 XMM → REX.R/B
-        ("sqrtsd XMM8, XMM9", &[0xF2, 0x45, 0x0F, 0x51, 0xC1]),
-        // GPR-字段的 SSE_RR 形式（合并后的 movzx：8 位源 AL → 48 B6、16 位源 AX → 66 48 B7）
-        ("movzx RAX, AL", &[0x48, 0x0F, 0xB6, 0xC0]),
-        ("movzx RAX, AX", &[0x66, 0x48, 0x0F, 0xB7, 0xC0]),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(got.as_slice(), *expected, "spec mismatch for `{asm}`");
-    }
-}
-
 // ─────────────────── 内存寻址规范字节（@modrm_mem，迭代 3b）───────────────────
 
-#[test]
-fn mem_spec_bytes() {
-    let cases: &[(&str, &[u8])] = &[
-        // xchg [RAX], RBX — 48 87 /r（mod=00）
-        ("xchg [RAX], RBX", &[0x48, 0x87, 0x18]),
-        // xchg [rsp], RBX — base=RSP → SIB（index=4 无 index）
-        ("xchg [RSP], RBX", &[0x48, 0x87, 0x1C, 0x24]),
-        // xadd [RAX], RBX — F0 LOCK + 48 0F C1 /r
-        ("xadd [RAX], RBX", &[0xF0, 0x48, 0x0F, 0xC1, 0x18]),
-        // lock sub [RAX], RBX — F0 48 29 /r（v11 带多余 0F escape 非规范，v12 修正）
-        ("lock sub [RAX], RBX", &[0xF0, 0x48, 0x29, 0x18]),
-        // mov RAX, [RBX] — 48 8B /r
-        ("mov RAX, [RBX]", &[0x48, 0x8B, 0x03]),
-        // mov [RAX], RBX — 48 89 /r
-        ("mov [RAX], RBX", &[0x48, 0x89, 0x18]),
-        // movsd XMM0, [RAX] — F2 48?? 不——F2 0F 10（64 位无 REX.W；base=RAX<8）
-        ("movsd XMM0, [RAX]", &[0xF2, 0x0F, 0x10, 0x00]),
-        // mov RAX, RBX — 48 89 /r（reg=src: 3, rm=dst: 0；mov64rr 已合并）
-        ("mov RAX, RBX", &[0x48, 0x89, 0xD8]),
-        // mov RAX, [rbp+8] — RBP ∈ force_disp_base → mod=01 + disp8
-        ("mov RAX, [RBP+8]", &[0x48, 0x8B, 0x45, 0x08]),
-        // mov RAX, [RBX-8] — mod=01 + disp8=-8
-        ("mov RAX, [RBX-8]", &[0x48, 0x8B, 0x43, 0xF8]),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(got.as_slice(), *expected, "mem spec mismatch for `{asm}`");
-    }
-}
-
 // ─────────────────── 家族（SSE）与 VEX 规范字节（迭代 4）───────────────────
-
-#[test]
-fn family_sse_spec_bytes() {
-    // SSE 家族展开：v11 的 FPR 16+i 使字节带多余 REX，v12 组内索引规范正确
-    let cases: &[(&str, &[u8])] = &[
-        ("addsd XMM0, XMM1", &[0xF2, 0x0F, 0x58, 0xC1]),
-        ("minsd XMM0, XMM1", &[0xF2, 0x0F, 0x5D, 0xC1]),
-        ("maxsd XMM0, XMM1", &[0xF2, 0x0F, 0x5F, 0xC1]),
-        ("addss XMM0, XMM1", &[0xF3, 0x0F, 0x58, 0xC1]),
-        ("divss XMM0, XMM1", &[0xF3, 0x0F, 0x5E, 0xC1]),
-        ("movaps XMM0, XMM1", &[0x0F, 0x28, 0xC1]),
-        ("addps XMM0, XMM1", &[0x0F, 0x58, 0xC1]),
-        ("orps XMM0, XMM1", &[0x0F, 0x56, 0xC1]),
-        ("addpd XMM0, XMM1", &[0x66, 0x0F, 0x58, 0xC1]),
-        ("paddd XMM0, XMM1", &[0x66, 0x0F, 0xFE, 0xC1]),
-        ("psubq XMM0, XMM1", &[0x66, 0x0F, 0xFB, 0xC1]),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(got.as_slice(), *expected, "family SSE mismatch for `{asm}`");
-    }
-}
-
-#[test]
-fn vex_spec_bytes() {
-    // VEX 规范字节（组内索引；v11 的 16+i 使 VEX 字节非规范）
-    let cases: &[(&str, &[u8])] = &[
-        // vaddps ymm0, ymm1, ymm2：reg=0, rm=2, vvvv=~1=0xE, L=1, pp=0
-        ("vaddps XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x74, 0x58, 0xC2]),
-        // vsubps
-        ("vsubps XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x74, 0x5C, 0xC2]),
-        // vmovaps ymm1, ymm2（无源 vvvv=0xF, L=1）
-        ("vmovaps XMM1, XMM2", &[0xC4, 0xE1, 0x7C, 0x28, 0xCA]),
-        // vaddpd（pp=1）
-        ("vaddpd XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x75, 0x58, 0xC2]),
-        // vpxor（pp=1）
-        ("vpxor XMM0, XMM1, XMM2", &[0xC4, 0xE1, 0x75, 0xEF, 0xC2]),
-        // vbroadcastss（map=2, pp=1, 无源）
-        ("vbroadcastss XMM0, XMM1", &[0xC4, 0xE2, 0x7D, 0x18, 0xC1]),
-        // 扩展寄存器 → R/B 反位（reg=8→R=0, rm=10→B=0, vvvv=~9=6）
-        ("vaddps XMM8, XMM9, XMM10", &[0xC4, 0x41, 0x34, 0x58, 0xC2]),
-        // vextractf128 XMM1, ymm2, 0：reg=src(2), rm=dest(1), imm8
-        (
-            "vextractf128 XMM1, XMM2, 0",
-            &[0xC4, 0xE3, 0x7D, 0x19, 0xD1, 0x00],
-        ),
-        // vinsertf128 ymm0, ymm1, XMM2, 1：reg=0, rm=2, vvvv=~1=0xE
-        (
-            "vinsertf128 XMM0, XMM1, XMM2, 1",
-            &[0xC4, 0xE3, 0x75, 0x18, 0xC2, 0x01],
-        ),
-    ];
-    for (asm, expected) in cases {
-        let got = v12_bytes(asm);
-        assert_eq!(got.as_slice(), *expected, "VEX mismatch for `{asm}`");
-    }
-}
 
 // ─────────────────── 字节级 decode 往返 ───────────────────
 

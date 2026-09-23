@@ -69,7 +69,8 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
 /// - `partial` 只与 `bytes` + `error = "DECODE"` 同用且 > 0；
 /// - 定宽谱（`[encoding].kind = "fixed"` 且给了 `bits`）里 `bytes` 长度必须等于字长
 ///   ——变长/混合谱不猜长度；
-/// - `(asm, bytes, error)` 完全相同的向量重复出现 → 报错（复制粘贴事故）。
+/// - **同一条 `asm` 给出两种期望字节** → 报错（复制粘贴改一半的典型事故）；完全相同的
+///   重复**允许**（`isa/x86_v12.toml` 有一条历史记录：两种编码合并后逐字节相同）。
 ///
 /// **内容**（这条文本真能编出这些字节吗）不在这里判——那是生成用例的职责
 /// （`__spec_tests` 里跑，或 `forge-isa test` 真编译一次）。这里挡的是"写坏的向量"，
@@ -82,7 +83,7 @@ fn validate_vectors(m: &V12Model) -> Result<(), String> {
         EncodingKind::Fixed => m.encoding.bits.map(|b| (b as usize).div_ceil(8)),
         _ => None,
     };
-    let mut seen: BTreeSet<(String, String, String)> = BTreeSet::new();
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
     for (i, v) in m.vectors.iter().enumerate() {
         let at = format!("[[vectors]] 第 {} 条", i + 1);
         let (has_asm, has_bytes) = (v.asm.is_some(), v.bytes.is_some());
@@ -146,18 +147,24 @@ fn validate_vectors(m: &V12Model) -> Result<(), String> {
                 return Err(format!("{at}：`partial` 必须 > 0（吃掉 0 字节不算解码）"));
             }
         }
-        let key = (
-            v.asm.clone().unwrap_or_default(),
-            v.bytes
-                .as_ref()
-                .map(|b| format!("{b:?}"))
-                .unwrap_or_default(),
-            v.error.clone().unwrap_or_default(),
-        );
-        if !seen.insert(key) {
-            return Err(format!(
-                "{at}：与前面的向量完全相同（`asm`/`bytes`/`error` 逐项一致）"
-            ));
+        // **冲突**才算错：同一条汇编文本给了两种期望字节（复制粘贴改一半的典型事故）。
+        // 完全相同的重复是**允许**的——`isa/x86_v12.toml` 里就有一条历史记录：
+        // `mov RAX, RBX` 两种编码合并后逐字节相同，原表刻意留了两条并注明"真重复"。
+        if let Some(asm) = &v.asm
+            && let Some(bs) = &v.bytes
+        {
+            let hex = bs
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            if let Some(prev) = seen.insert(asm.clone(), hex.clone())
+                && prev != hex
+            {
+                return Err(format!(
+                    "{at}：`{asm}` 这段文本已经有了期望字节 [{prev}]，这里又给 [{hex}]——同一条文本不能有两种期望"
+                ));
+            }
         }
     }
     Ok(())

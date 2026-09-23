@@ -186,8 +186,8 @@ fn malformed_vectors_are_rejected_with_actionable_messages() {
         ),
         (
             "[[vectors]]\nasm = \"add R1, R2\"\nbytes = [0x40, 0x11]\n\n\
-             [[vectors]]\nasm = \"add R1, R2\"\nbytes = [0x40, 0x11]\n",
-            "完全相同",
+             [[vectors]]\nasm = \"add R1, R2\"\nbytes = [0x41, 0x11]\n",
+            "不能有两种期望",
         ),
         (
             "[[vectors]]\nasm = \"add R1, R2\"\nerror = \"\"\n",
@@ -230,6 +230,11 @@ partial = 1
 # 解码正向
 [[vectors]]
 bytes = [0x05, 0x33]
+
+# 完全相同的重复：允许（x86 谱里有一条历史记录——两种编码合并后逐字节相同）
+[[vectors]]
+asm = "add R1, R2"
+bytes = [0x40, 0x11]
 "#,
     );
     validate_source(&ok, Path::new("vtoy.toml")).expect("四种形态都必须合法");

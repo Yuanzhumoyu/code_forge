@@ -105,7 +105,7 @@
 | **V0** 基线取证 | 生成耗时/规模、编译时间分档、覆盖缺口、运行面清单、黄金测试规模 | 本文 §10 基线表；机器可读"生成物运行面表"（V1 的迁移清单）；`ops.toml` 有而谱里无 lowering 的**缺口清单** | 数字可复现（命令写进文档）；缺口清单与矩阵 skip 对得上 | 立刻可用（给 V1/V4 定范围） |
 | **V1** 拆 `forge-isa-runtime`（**破坏性**） | 新 crate：`machine/*` + `runtime/{output_types,registry}` + `AllocResult`/`CodeSink`/`LabelRef`；解三处 `machine→pipeline` 引用：数据型上移，管线走 runtime 的 `Pipeline` trait，`impl_erased_target_machine!` 移入 runtime | 生成物只依赖 runtime；`forge-codegen` 变成 runtime 下游（保留 JIT/regalloc/emission/arch） | `cargo tree -p forge-isa-runtime` 只含 forge-ir；新守卫 `runtime_has_no_pipeline_dep.rs`；三后端 930 条规格用例 + 黄金 + 矩阵 195/3/0、131/67/0、23/175/0 逐数字不变 | 通用性的**前置条件** |
 | ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
-| 🚧 **V3** `[[vectors]]` 数据化测试 | `{ asm, bytes }`、`{ asm, error = "<码>" }`、`{ bytes, error = "DECODE", partial = N }`、`{ bytes }`（解码正向）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价**（脚本 dump 前后 sha256 比对）；手写测试行数 −≥50%（前后数字入库）；负向向量钉错误码 | G2；作者体验立刻变好。**V3a 已落地（riscv64 全量迁移 + CLI）**，V3b = x86/arm64 迁移与总账 |
+| ✅ **V3** `[[vectors]]` 数据化测试 | `{ asm, bytes }`、`{ asm, error = "<码>" }`、`{ bytes, error = "DECODE", partial = N }`、`{ bytes }`（解码正向）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价**（脚本 dump 前后 sha256 比对）✅；负向向量钉错误码 ✅；手写测试行数 −≥50% **未达**（实测 −23.4%，原因见 §5 进度：剩下的行数是别名/往返/集成断言，向量四形态表达不了） | G2；作者体验立刻变好 |
 | **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降 |
 | **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants` + 值条件列 `vary` 下沉到 `[[templates]]` | RV32 从同一 riscv64 谱生成（投影：encode/decode/asm，不注册）；`explain` 显示参数生效点 | 与独立 RV32 表或 QEMU 32 位用例对拍；矩阵/覆盖守卫显式登记变体期望 | G4；臂/扩展式复用的验证 |
 | **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关" |
@@ -223,8 +223,31 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   10 个形态反例 + 合法形态 + 无向量谱照常）；schema 三方针同步
   （`src/schema.rs` ↔ `v12/model.rs::Vector` ↔ `docs/reference/isa-dsl.md` 键表 +
   `isa-dsl.schema.json` 重新生成）。
-- **V3b（下一步）**：x86（`golden_gpr_spec_bytes` 等 ~200 条）与 arm64（A1–A5 表）迁移；
-  迁移脚本对三 ISA 一起跑；给出"手写测试行数 −≥50%"的总账。
+- **V3b 已落地（2026-09-23，x86/arm64 迁移）**：
+  - x86：7 张 oracle 表（`golden_gpr_spec_bytes` / `r_forms_spec_bytes` /
+    `control_flow_spec_bytes` / `sse_spec_bytes` / `mem_spec_bytes` /
+    `family_sse_spec_bytes` / `vex_spec_bytes`）**102 条**迁入 `isa/x86_v12.toml`
+    （含 4 条多行写法条目），7 个函数整体删除（避免"空表跑 0 次"的假测试）；
+    sha256 `f971c06fb3c673a4694c583e26a1a50810f4284b7250084dd813d4d84b737e79`（前后相同）；
+  - arm64：**78 条** `assert_eq!(enc("…"), word_le(0x…))` 迁入 `isa/arm64_v12.toml`
+    （字节按小端从 u32 还原），别名等价断言（`csel … hs` = `cs`、`b.hs` = `b.cs`）留在 Rust；
+    sha256 `c32e562ba12a9590126b051f4efcf0e801245fad9d2d368ae43fdc8072054491`（前后相同）；
+  - **校验账目**：`cargo test -p forge-codegen --lib` **903 → 1150 passed**
+    = 903 基线 + 67(riscv) + 102(x86) + 78(arm64) —— 逐条对得上；
+    三份谱 `forge-isa validate` 全 OK；`forge-isa test`：x86 `{vectors:102, passed:549}`
+    / arm64 `{vectors:78, passed:267}` / riscv64 `{vectors:67, passed:295}`，均 `failed:0`。
+  - **行数账目**（三个测试文件，`(Get-Content <file>).Count` 口径）：`x86_v12_tests.rs`
+    1159 → 933（−226）、`arm64_v12_tests.rs` 284 → 184（−100）、`riscv64_v12_tests.rs`
+    389 → 287（−102）：合计 **1832 → 1404（−428 行，−23.4%）**。
+  - ⚠️ **未达"−≥50%"**（判据原话）：迁走的是"黄金字节表"，剩下的行数是
+    **别名等价断言 + decode/往返断言 + 集成/ABI/JIT 断言**——向量四形态表达不了
+    （需要"只给 asm 的闭环向量"与"字节→文本"形态）。下一步（V3c，按度量决定）：
+    给向量加 `{asm}`（只断言闭环）与 `{bytes, asm = "期望文本"}`（解码→文本）两种形态，
+    再迁 `encoder_fuzz_tests.rs` 的 30 行种子字节（直接是 `{bytes}` 解码正向向量）与
+    `decoder_smoke.rs` 的 20 条 `assert_eq!(b, vec![…])`。
+- **顺带修掉 V3a 的一条过严规则**（由 x86 原表触发）：原先"完全相同的向量重复出现即报错"，
+  但 x86 谱里有一条**故意的**重复（`mov RAX, RBX` 两种编码合并后逐字节相同，原表注明"真重复"）。
+  判据改为**冲突才算错**：同一条 `asm` 给出两种期望字节 → 报错；完全相同的重复允许。
 
 **V1b 早期方案（`pipeline = <路径>` 宏参数——已放弃，保留反例）**：原计划让宿主在生成期把
 管线类型路径交给生成物。落地失败：宿主给的路径会先被**固定根改写**

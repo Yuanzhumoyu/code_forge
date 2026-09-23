@@ -13,8 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-09-23) — ISA-DSL v19 V3a（谱内测试向量 + `forge-isa test`）
 
-- **谱里可以直接写测试向量（`[[vectors]]`）**：`{asm, bytes}`（`assemble → encode` 逐字节相等 + `decode` 吃满再编码一致）、`{asm, error = "<子串>"}`（汇编/编码必须失败）、`{bytes, error = "DECODE"[, partial = N]}`（解码必须失败，`partial` 钉 `decode_partial` 的消费量）、`{bytes}`（解码正向）。生成期把它们翻成 `__spec_tests::spec_vector_<下标>` 用例，**不再需要手抄 Rust 黄金字节表**。形态在解析期校验（缺 `asm`/`bytes`、正负同给、定宽字长不符、字节越界、`partial` 用错、重复、空子串均报错）。riscv64 已迁移 67 条（原先 Rust 里的三张 oracle 表；迁移前后字节集合的规范化 sha256 相同，`cargo test -p forge-codegen --lib` 903 → 970 passed）。
+- **谱里可以直接写测试向量（`[[vectors]]`）**：`{asm, bytes}`（`assemble → encode` 逐字节相等 + `decode` 吃满再编码一致）、`{asm, error = "<子串>"}`（汇编/编码必须失败）、`{bytes, error = "DECODE"[, partial = N]}`（解码必须失败，`partial` 钉 `decode_partial` 的消费量）、`{bytes}`（解码正向）。生成期把它们翻成 `__spec_tests::spec_vector_<下标>` 用例，**不再需要手抄 Rust 黄金字节表**。形态在解析期校验（缺 `asm`/`bytes`、正负同给、定宽字长不符、字节越界、`partial` 用错、同一文本两种期望字节、空子串均报错）。riscv64 已迁移 67 条（原先 Rust 里的三张 oracle 表；迁移前后字节集合的规范化 sha256 相同，`cargo test -p forge-codegen --lib` 903 → 970 passed）。
 - **新 CLI 子命令 `forge-isa test <谱> [--json]`**：给任意谱现搭一个**零宿主** crate（只依赖 `forge-isa-runtime` + build-dependency `forge-isa-dsl`，`parts = ["encode","decode","asm"]`）并 `cargo test --offline`，直接跑谱里的向量与每条指令的闭环用例——不需要 forge-codegen，也不需要作者先写宿主。退出码与其它子命令一致（0/1/2）。
+
+### Added (2026-09-23) — ISA-DSL v19 V3b（三份发行谱的黄金字节全部进谱）
+
+- **x86（102 条）与 arm64（78 条）的 golden 字节表也迁进 `[[vectors]]`**：x86 的 7 张 oracle 表（GPR/R 型/控制流/SSE/内存/家族/VEX，含 4 条多行写法条目）与 arm64 的 78 条 `enc("…") == word_le(0x…)` 断言。三份发行谱现在合计 **247 条向量**（riscv64 67 + x86 102 + arm64 78），全部由生成物 `__spec_tests::spec_vector_*` 执行：`cargo test -p forge-codegen --lib` **1150 passed**（= 903 基线 + 247），`forge-isa test` 逐谱 `failed:0`。迁移前后字节集合的规范化 sha256 均相同；三个测试文件合计 **1832 → 1436 行（−396）**。
+- **向量冲突判据**：同一段 `asm` 给出两种期望字节 → 编译期报错；完全相同的重复**允许**（x86 谱里有一条历史记录：`mov RAX, RBX` 两种编码合并后逐字节相同）。
 
 ### Changed (2026-09-23)
 
