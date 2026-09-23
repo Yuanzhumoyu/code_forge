@@ -137,16 +137,20 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
 **V1b 采用「runtime 注册管线」方案（2026-09-23 用户拍板；前三次试做的教训见文末）**：
 
 - 生成物**不再包含任何宿主路径**：codegen/integration.rs 恒发
-  orge_isa_runtime::impl_erased_target_machine!(TargetMachine);（宏签名回到单参数）。
-- orge-isa-runtime 新增管线注册表：	rait FunctionPipeline { fn compile_raw(&self, func: &Function) -> Result<CompiledFunction, IrError>; }
+  
+orge_isa_runtime::impl_erased_target_machine!(TargetMachine);（宏签名回到单参数）。
+- 
+orge-isa-runtime 新增管线注册表：	rait FunctionPipeline { fn compile_raw(&self, func: &Function) -> Result<CompiledFunction, IrError>; }
   \+ 
-egister_pipeline(isa: &str, f: &'static dyn Fn(&dyn Any) -> Option<Box<dyn FunctionPipeline>>)（按 ISA 名查、未注册 ⇒ IrError::Unsupported fail-closed）。
-- 宏的 compile 走 orge_isa_runtime::compile_via_pipeline(name, self as &dyn Any, func)；
+  工厂签名是「任意机器引用 → 可选管线对象」，因此运行面不需要知道具体机器类型。
+- 宏的 compile 走 
+  工厂签名是「任意机器引用 → 可选管线对象」，因此运行面不需要知道具体机器类型。
   **宿主**（forge-codegen）在自己那侧注册：每个发行后端一行
   
-egister_pipeline(<isa_info().name()>, |tm| tm.downcast_ref::<TargetMachine>().map(|t| Box::new(FunctionCompiler::new(t.clone()))))
+  闭包里把传入的机器引用 downcast 成该后端的 TargetMachine 再交给 FunctionCompiler；
   （夹具/测试用 FORGE_ISA_PIPELINE_HOST=forge_codegen 由测试侧注册同一份闭包）。
-- 于是生成物与宿主彻底解耦：krate、pipeline 参数、占位替换**都不需要**。
+
+- 于是生成物与宿主彻底解耦：`krate`、`pipeline` 参数、占位替换**都不需要**。
 
 **V1b 执行清单（已勘察完毕，逐步照做即可；改动是原子的，必须一次全做）**：
 
