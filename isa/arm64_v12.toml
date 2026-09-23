@@ -1255,4 +1255,40 @@ bytes = [0xE0, 0x07, 0x00, 0xF9]
 asm = "ldr x1, [sp, #1]"
 bytes = [0xE1, 0x07, 0x40, 0xF9]
 
+
+# ── 闭环向量（只给 `asm`；v19 V3c：从 Rust 往返清单迁入）──
+
+[[vectors]]
+asm = "add x5, x6, #42"
+
+[[vectors]]
+asm = "add w0, w30, #4095"
+
+[[vectors]]
+asm = "adds x1, x2, #3"
+
+[[vectors]]
+asm = "sub w4, w5, w6"
+
+[[vectors]]
+asm = "subs x7, x8, #0"
+
+[[vectors]]
+asm = "add x9, x10, x11"
+
+[[vectors]]
+asm = "b 4"
+
+[[vectors]]
+asm = "bl -8"
+
+[[vectors]]
+asm = "nop"
+
+[[vectors]]
+asm = "add w1, w2, w3"
+
+[[vectors]]
+asm = "sub x0, x0, x0"
+
 # ── 向量区段结束

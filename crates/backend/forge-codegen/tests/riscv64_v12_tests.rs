@@ -28,77 +28,6 @@ fn v12_bytes(asm: &str) -> Vec<u8> {
 // ─────────────────── 全量 decode 往返（含分支/负立即数）───────────────────
 
 #[test]
-fn decode_roundtrip_all() {
-    // 规范指令（避开与更早声明的别名指令编码重叠的值：addi imm≠0、add rs2≠0 等）
-    let cases = [
-        "add X1, X2, X3",
-        "add X1, X2, X0",
-        "sub X1, X2, X3",
-        "mul X1, X2, X3",
-        "div X1, X2, X3",
-        "divu X1, X2, X3",
-        "rem X1, X2, X3",
-        "remu X1, X2, X3",
-        "and X1, X2, X3",
-        "or X1, X2, X3",
-        "xor X1, X2, X3",
-        "sll X1, X2, X3",
-        "srl X1, X2, X3",
-        "sra X1, X2, X3",
-        "slt X1, X2, X3",
-        "sltu X1, X2, X3",
-        "addi X1, X2, 5",
-        "addi X1, X2, -1",
-        "slti X1, X2, -3",
-        "sltiu X1, X2, 5",
-        "xori X1, X2, 5",
-        "ori X1, X2, 5",
-        "andi X1, X2, 5",
-        "slli X1, X2, 3",
-        "srli X1, X2, 31",
-        "srai X1, X2, 63",
-        "lui X1, 4096",
-        "ld X1, 8(X2)",
-        "sd X1, -8(X2)",
-        "jalr X1, 8(X2)",
-        "beq X1, X2, 8",
-        "bne X1, X2, -16",
-        "blt X1, X2, 24",
-        "bge X1, X2, -8",
-        "bltu X1, X2, 4",
-        "jal X1, 12",
-        "ecall",
-        "fence",
-        // 注：clz/ctz/cpop 与 rol/ror 编码重叠（clz rd,rs = rol rd,rs,x0 别名）——
-        // decode 按声明序/叶优先返回 rol，roundtrip 语义歧义，故不列入；
-        // 编码正确性由谱内 `[[vectors]]`（`isa/riscv64_v12.toml`）覆盖。
-        "rev8 X1, X2",
-        "rol X1, X2, X3",
-        "ror X1, X2, X3",
-        "min X1, X2, X3",
-        "max X1, X2, X3",
-        "minu X1, X2, X3",
-        "maxu X1, X2, X3",
-        "amoadd.w X1, X2, (X3)",
-        "fadd.s F1, F2, F3",
-        "fsub.s F1, F2, F3",
-        "fsqrt.s F1, F2",
-        "flw F1, 8(X2)",
-        "fsw F1, -4(X2)",
-        "fcvt.w.s X1, F2",
-        "fcvt.s.w F1, X2",
-        "feq.s X1, F2, F3",
-    ];
-    for c in cases {
-        let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));
-        let bytes = encode(&inst).unwrap_or_else(|e| panic!("encode `{c}`: {e}"));
-        let (dec, n) = decode(&bytes).unwrap_or_else(|| panic!("decode `{c}` ({bytes:02x?})"));
-        assert_eq!(n, bytes.len(), "decode `{c}` 消费字节数");
-        assert_eq!(dec, inst, "round-trip `{c}`: dec {dec:?} != inst {inst:?}");
-    }
-}
-
-#[test]
 fn signed_immediate_sign_extension() {
     // v11 解码负立即数不做符号扩展（-1 → 4095）；v12 按槽宽度规范扩展。
     let inst = assemble("addi X1, X2, -1").unwrap();
@@ -183,32 +112,6 @@ fn branch_scatter_layout() {
 }
 
 // ─────────────────── assemble/disassemble 往返 ───────────────────
-
-#[test]
-fn assemble_disassemble_roundtrip() {
-    let cases = [
-        "add x1, x2, x3",
-        "addi x1, x2, -5",
-        "ld x1, 8(x2)",
-        "sd x1, -8(x2)",
-        "jalr x1, 0(x2)",
-        "beq x1, x2, 12",
-        "jal x1, 4",
-        "lui x1, 4096",
-        "fadd.s f1, f2, f3",
-        "flw f1, 8(x2)",
-        "amoadd.w x1, x2, (x3)",
-        "fence",
-        "ecall",
-    ];
-    for c in cases {
-        let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));
-        let text = disassemble(&inst);
-        // 反汇编文本再汇编应还原同一指令（寄存器名大小写归一为 X/F 大写）
-        let inst2 = assemble(&text).unwrap_or_else(|e| panic!("re-assemble `{text}`: {e}"));
-        assert_eq!(inst, inst2, "disassemble `{c}` → `{text}` 往返");
-    }
-}
 
 #[test]
 fn disassemble_known_texts() {

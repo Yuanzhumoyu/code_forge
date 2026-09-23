@@ -3928,4 +3928,115 @@ bytes = [0xC4, 0xE3, 0x7D, 0x19, 0xD1, 0x00]
 asm = "vinsertf128 XMM0, XMM1, XMM2, 1"
 bytes = [0xC4, 0xE3, 0x75, 0x18, 0xC2, 0x01]
 
+
+# ── 闭环向量（只给 `asm`；v19 V3c：从 Rust 往返清单迁入）──
+
+[[vectors]]
+asm = "mov RAX, RBX"
+
+[[vectors]]
+asm = "mov R8, R9"
+
+[[vectors]]
+asm = "mov EAX, EBX"
+
+[[vectors]]
+asm = "mov AX, BX"
+
+[[vectors]]
+asm = "add RAX, RBX"
+
+[[vectors]]
+asm = "add RAX, 42"
+
+[[vectors]]
+asm = "cmp R8, -1"
+
+[[vectors]]
+asm = "movzx RAX, AL"
+
+[[vectors]]
+asm = "movzx RAX, AX"
+
+[[vectors]]
+asm = "movsxd RAX, RBX"
+
+[[vectors]]
+asm = "imul RAX, RBX"
+
+[[vectors]]
+asm = "sqrtsd XMM0, XMM1"
+
+[[vectors]]
+asm = "cvtsi2sd XMM0, RAX"
+
+[[vectors]]
+asm = "andpd XMM0, XMM1"
+
+[[vectors]]
+asm = "comiss XMM0, XMM1"
+
+[[vectors]]
+asm = "movd XMM0, RAX"
+
+[[vectors]]
+asm = "punpcklqdq XMM0, XMM1"
+
+[[vectors]]
+asm = "addsd XMM0, XMM1"
+
+[[vectors]]
+asm = "addss XMM0, XMM1"
+
+[[vectors]]
+asm = "movaps XMM0, XMM1"
+
+[[vectors]]
+asm = "addpd XMM0, XMM1"
+
+[[vectors]]
+asm = "paddd XMM0, XMM1"
+
+[[vectors]]
+asm = "vaddps XMM0, XMM1, XMM2"
+
+[[vectors]]
+asm = "vaddpd XMM0, XMM1, XMM2"
+
+[[vectors]]
+asm = "vpxor XMM0, XMM1, XMM2"
+
+[[vectors]]
+asm = "vmovaps XMM0, XMM1"
+
+[[vectors]]
+asm = "vbroadcastss XMM0, XMM1"
+
+[[vectors]]
+asm = "vextractf128 XMM1, XMM2, 0"
+
+[[vectors]]
+asm = "vinsertf128 XMM0, XMM1, XMM2, 1"
+
+[[vectors]]
+asm = "push RAX"
+
+[[vectors]]
+asm = "push R8"
+
+[[vectors]]
+asm = "pop RBX"
+
+[[vectors]]
+asm = "pop R9"
+
+[[vectors]]
+asm = "bswap RAX"
+
+[[vectors]]
+asm = "bswap R12"
+
+[[vectors]]
+asm = "mov RAX, 0x1234"
+
 # ── 向量区段结束

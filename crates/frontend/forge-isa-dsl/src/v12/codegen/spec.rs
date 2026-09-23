@@ -369,6 +369,30 @@ fn gen_vector_tests(m: &V12Model) -> Vec<TokenStream> {
                 let re = encode(&inst).unwrap_or_else(|e| panic!("{tag} 再编码失败: {e}"));
                 assert_eq!(re.as_slice(), want, "{tag} decode∘encode 字节不稳");
             },
+            // 只给 `asm`：**闭环向量**——不断言黄金字节，只断言"编解码 + 文本闭环稳定"
+            // （v19 V3c）。给"我只知道这条文本合法、字节对不对由别处守"的清单用；
+            // 文本歧义的指令（`SPEC_TEXT_AMBIGUOUS`）也安全：不比字节，只比稳定性。
+            (Some(asm), None, _, false) => quote! {
+                let tag = #tag;
+                let text = #asm;
+                let inst = assemble(text)
+                    .unwrap_or_else(|e| panic!("{tag} assemble {text:?} 失败: {e}"));
+                let bytes = encode(&inst)
+                    .unwrap_or_else(|e| panic!("{tag} encode {text:?} 失败: {e}"));
+                let (back, used) = decode(&bytes)
+                    .unwrap_or_else(|| panic!("{tag} decode {bytes:02x?} 返回 None"));
+                assert_eq!(used, bytes.len(), "{tag} decode 未吃满 {bytes:02x?}");
+                let re = encode(&back).unwrap_or_else(|e| panic!("{tag} 再编码失败: {e}"));
+                assert_eq!(re, bytes, "{tag} encode∘decode 字节不稳（{text:?}）");
+                let rendered = disassemble(&back);
+                let again = assemble(&rendered)
+                    .unwrap_or_else(|e| panic!("{tag} assemble({rendered:?}) 失败: {e}"));
+                assert_eq!(
+                    disassemble(&again),
+                    rendered,
+                    "{tag} 反汇编不幂等（{text:?} → {rendered:?}）"
+                );
+            },
             // 其余组合已被 `validate_vectors` 拦下——这里 fail-closed，不静默跳过。
             _ => {
                 let msg = syn::LitStr::new(
@@ -393,6 +417,7 @@ fn gen_vector_tests(m: &V12Model) -> Vec<TokenStream> {
 fn vector_summary(v: &crate::v12::model::Vector, i: usize) -> String {
     let what = match (&v.asm, &v.error, v.bytes.is_some()) {
         (Some(a), None, true) => format!("assemble({a:?}) → encode == bytes"),
+        (Some(a), None, false) => format!("assemble({a:?}) → 闭环（编解码 + 文本稳定）"),
         (Some(a), Some(e), _) => format!("assemble({a:?}) 必须失败且消息含 {e:?}"),
         (None, Some(_), true) => "decode(bytes) 必须失败".to_string(),
         (None, None, true) => "decode(bytes) 成功且再编码一致".to_string(),

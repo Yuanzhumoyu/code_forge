@@ -2106,4 +2106,210 @@ error = "DECODE"
 comment = "nop 的字节（addi x0, x0, 0）：decode → encode 必须回到同一字节"
 bytes = [0x13, 0x00, 0x00, 0x00]
 
+
+# ── 闭环向量（只给 `asm`；v19 V3c：从 Rust 往返清单迁入）──
+# 断言：assemble → encode → decode → encode 字节稳定 + disassemble 幂等；
+# **不比黄金字节**（字节由同谱的 `{asm, bytes}` 向量守）。
+
+[[vectors]]
+asm = "add X1, X2, X3"
+
+[[vectors]]
+asm = "add X1, X2, X0"
+
+[[vectors]]
+asm = "sub X1, X2, X3"
+
+[[vectors]]
+asm = "mul X1, X2, X3"
+
+[[vectors]]
+asm = "div X1, X2, X3"
+
+[[vectors]]
+asm = "divu X1, X2, X3"
+
+[[vectors]]
+asm = "rem X1, X2, X3"
+
+[[vectors]]
+asm = "remu X1, X2, X3"
+
+[[vectors]]
+asm = "and X1, X2, X3"
+
+[[vectors]]
+asm = "or X1, X2, X3"
+
+[[vectors]]
+asm = "xor X1, X2, X3"
+
+[[vectors]]
+asm = "sll X1, X2, X3"
+
+[[vectors]]
+asm = "srl X1, X2, X3"
+
+[[vectors]]
+asm = "sra X1, X2, X3"
+
+[[vectors]]
+asm = "slt X1, X2, X3"
+
+[[vectors]]
+asm = "sltu X1, X2, X3"
+
+[[vectors]]
+asm = "addi X1, X2, 5"
+
+[[vectors]]
+asm = "addi X1, X2, -1"
+
+[[vectors]]
+asm = "slti X1, X2, -3"
+
+[[vectors]]
+asm = "sltiu X1, X2, 5"
+
+[[vectors]]
+asm = "xori X1, X2, 5"
+
+[[vectors]]
+asm = "ori X1, X2, 5"
+
+[[vectors]]
+asm = "andi X1, X2, 5"
+
+[[vectors]]
+asm = "slli X1, X2, 3"
+
+[[vectors]]
+asm = "srli X1, X2, 31"
+
+[[vectors]]
+asm = "srai X1, X2, 63"
+
+[[vectors]]
+asm = "lui X1, 4096"
+
+[[vectors]]
+asm = "ld X1, 8(X2)"
+
+[[vectors]]
+asm = "sd X1, -8(X2)"
+
+[[vectors]]
+asm = "jalr X1, 8(X2)"
+
+[[vectors]]
+asm = "beq X1, X2, 8"
+
+[[vectors]]
+asm = "bne X1, X2, -16"
+
+[[vectors]]
+asm = "blt X1, X2, 24"
+
+[[vectors]]
+asm = "bge X1, X2, -8"
+
+[[vectors]]
+asm = "bltu X1, X2, 4"
+
+[[vectors]]
+asm = "jal X1, 12"
+
+[[vectors]]
+asm = "ecall"
+
+[[vectors]]
+asm = "fence"
+
+[[vectors]]
+asm = "rev8 X1, X2"
+
+[[vectors]]
+asm = "rol X1, X2, X3"
+
+[[vectors]]
+asm = "ror X1, X2, X3"
+
+[[vectors]]
+asm = "min X1, X2, X3"
+
+[[vectors]]
+asm = "max X1, X2, X3"
+
+[[vectors]]
+asm = "minu X1, X2, X3"
+
+[[vectors]]
+asm = "maxu X1, X2, X3"
+
+[[vectors]]
+asm = "amoadd.w X1, X2, (X3)"
+
+[[vectors]]
+asm = "fadd.s F1, F2, F3"
+
+[[vectors]]
+asm = "fsub.s F1, F2, F3"
+
+[[vectors]]
+asm = "fsqrt.s F1, F2"
+
+[[vectors]]
+asm = "flw F1, 8(X2)"
+
+[[vectors]]
+asm = "fsw F1, -4(X2)"
+
+[[vectors]]
+asm = "fcvt.w.s X1, F2"
+
+[[vectors]]
+asm = "fcvt.s.w F1, X2"
+
+[[vectors]]
+asm = "feq.s X1, F2, F3"
+
+[[vectors]]
+asm = "add x1, x2, x3"
+
+[[vectors]]
+asm = "addi x1, x2, -5"
+
+[[vectors]]
+asm = "ld x1, 8(x2)"
+
+[[vectors]]
+asm = "sd x1, -8(x2)"
+
+[[vectors]]
+asm = "jalr x1, 0(x2)"
+
+[[vectors]]
+asm = "beq x1, x2, 12"
+
+[[vectors]]
+asm = "jal x1, 4"
+
+[[vectors]]
+asm = "lui x1, 4096"
+
+[[vectors]]
+asm = "fadd.s f1, f2, f3"
+
+[[vectors]]
+asm = "flw f1, 8(x2)"
+
+[[vectors]]
+asm = "amoadd.w x1, x2, (x3)"
+
+[[vectors]]
+asm = "fence"
+
+[[vectors]]
+asm = "ecall"
+
 # ── 向量区段结束

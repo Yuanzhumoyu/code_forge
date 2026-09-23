@@ -105,7 +105,7 @@
 | **V0** 基线取证 | 生成耗时/规模、编译时间分档、覆盖缺口、运行面清单、黄金测试规模 | 本文 §10 基线表；机器可读"生成物运行面表"（V1 的迁移清单）；`ops.toml` 有而谱里无 lowering 的**缺口清单** | 数字可复现（命令写进文档）；缺口清单与矩阵 skip 对得上 | 立刻可用（给 V1/V4 定范围） |
 | **V1** 拆 `forge-isa-runtime`（**破坏性**） | 新 crate：`machine/*` + `runtime/{output_types,registry}` + `AllocResult`/`CodeSink`/`LabelRef`；解三处 `machine→pipeline` 引用：数据型上移，管线走 runtime 的 `Pipeline` trait，`impl_erased_target_machine!` 移入 runtime | 生成物只依赖 runtime；`forge-codegen` 变成 runtime 下游（保留 JIT/regalloc/emission/arch） | `cargo tree -p forge-isa-runtime` 只含 forge-ir；新守卫 `runtime_has_no_pipeline_dep.rs`；三后端 930 条规格用例 + 黄金 + 矩阵 195/3/0、131/67/0、23/175/0 逐数字不变 | 通用性的**前置条件** |
 | ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
-| ✅ **V3** `[[vectors]]` 数据化测试 | `{ asm, bytes }`、`{ asm, error = "<码>" }`、`{ bytes, error = "DECODE", partial = N }`、`{ bytes }`（解码正向）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价**（脚本 dump 前后 sha256 比对）✅；负向向量钉错误码 ✅；手写测试行数 −≥50% **未达**（实测 −23.4%，原因见 §5 进度：剩下的行数是别名/往返/集成断言，向量四形态表达不了） | G2；作者体验立刻变好 |
+| ✅ **V3** `[[vectors]]` 数据化测试 | 五种形态（`{asm, bytes}` / `{asm, error}` / `{bytes, error="DECODE"[,partial]}` / `{bytes}` / `{asm}` 闭环）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节 + 往返清单；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价** ✅；负向向量钉错误码 ✅；手写测试行数 **−33.1%**（V3c 后；仍未达 −≥50%，剩下的行数是别名/集成/ABI/JIT 断言） | G2；作者体验立刻变好 |
 | 🚧 **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a 已落地**（未用槽/未用 form + CLI，三谱零结论） |
 | **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants` + 值条件列 `vary` 下沉到 `[[templates]]` | RV32 从同一 riscv64 谱生成（投影：encode/decode/asm，不注册）；`explain` 显示参数生效点 | 与独立 RV32 表或 QEMU 32 位用例对拍；矩阵/覆盖守卫显式登记变体期望 | G4；臂/扩展式复用的验证 |
 | 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性守卫）已落地** |
@@ -190,7 +190,25 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   workspace"）、`Test (macOS)`、`Test (Windows)`、`Coverage` **四项红的都是
   `forge-isa-runtime` 的这条测试**（V1b 把宏搬进 runtime 时引入），V2 修掉后 run 179 四项全绿。
 
-- **V6a 已落地（2026-09-23，生成物确定性守卫）**：
+- **V3c 已落地（2026-09-23，第 5 种向量形态 + 往返清单迁移）**：
+
+- 新形态 **`{asm}` 闭环向量**：只断言 `assemble → encode → decode → encode` 字节稳定 +
+  `disassemble` 幂等（不比黄金字节）。发射在 `spec::gen_vector_tests` 的新分支；
+  `validate_vectors` 无需改动（"至少给 `asm` 或 `bytes`"已覆盖）。文本歧义的指令也安全。
+- 迁移（脚本 `target/migrate_roundtrip_v3c*.py`，严格匹配"纯 asm 清单"才动）：
+  riscv64 67 条（`decode_roundtrip_all` 54 + `assemble_disassemble_roundtrip` 13）、
+  x86 36 条（`assemble_disassemble_roundtrip`）、arm64 11 条（`decode_roundtrip_bytes` 9 +
+  一条单行内联清单 2）。x86 的 `decode_encode_byte_roundtrip_all` 遍历的是**程序化构造**的
+  `all_insts()`（不是数据清单）⇒ 按口径留在 Rust。
+- **账目**：三份发行谱共 **361 条向量**（x86 138 / riscv64 134 / arm64 89）；
+  `cargo test -p forge-codegen --lib` **1150 → 1264 passed**（+114 = 67+36+11，逐条对上）；
+  三个测试文件 **1832 → 1225 行（−607，−33.1%）**：x86 1159→881、riscv64 389→192、
+  arm64 284→152。三谱 `lint` 仍全部零结论。
+- **未达 −≥50% 的原因（如实）**：剩下的是别名等价断言、`disassemble_known_texts` 这类
+  "文本 → 期望文本"断言（需要新形态）、以及集成/ABI/JIT 断言。要再往下压需要
+  `{bytes, text = "期望文本"}` 形态（V3d，按度量决定是否值得）。
+
+**V6a 已落地（2026-09-23，生成物确定性守卫）**：
 
 - 新集成测试 `crates/frontend/forge-isa-dsl/tests/determinism.rs`：同参数展开**两次**断言
   **token 文本逐字节相同**，并断言文件名恒定（同参数同名、`spec_tests` 变体不同名——

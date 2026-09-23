@@ -353,14 +353,15 @@ let name = node.get_text("name")?;
   接入两步）。`forge_isa_dsl::expand_file` 仍返回**完整 token 流**，CLI 与各生成物守卫
   测试继续用它；守卫 = `gen_file` 的 4 条单测（展开形状、文件名只由参数决定、落盘件是
   合法 Rust 文件、宿主扫描能找到调用）。
-- **谱内测试向量（`[[vectors]]`，v19 V3）**：四种形态——`{asm, bytes}` 正向（`assemble → encode`
+- **谱内测试向量（`[[vectors]]`，v19 V3）**：五种形态——`{asm, bytes}` 正向（`assemble → encode`
   逐字节相等 + `decode` 吃满再编码一致）、`{asm, error = "<子串>"}` 汇编/编码负向、
   `{bytes, error = "DECODE"[, partial = N]}` 解码负向（`partial` 钉 `decode_partial` 的消费量，
-  截断输入合法）、`{bytes}` 解码正向。形态在解析期校验（`validate_vectors`），用例发射成
-  `__spec_tests::spec_vector_<下标>`（条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表**——
-  迁进谱里（三份发行谱共 **247 条**：riscv64 67 / x86 102 / arm64 78；迁移前后字节集合的
-  规范化 sha256 相同）。校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
-  守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs`。
+  截断输入合法）、`{bytes}` 解码正向、`{asm}` **闭环**（只断言编解码/文本闭环稳定，不比字节）。
+  形态在解析期校验（`validate_vectors`），用例发射成 `__spec_tests::spec_vector_<下标>`
+  （条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表/往返清单**——迁进谱里（三份发行谱共
+  **361 条**：x86 138 / riscv64 134 / arm64 89；迁移前后字节集合的规范化 sha256 相同）。
+  校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
+  守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs` 与 `tests/determinism.rs`。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint <谱.toml>`——
   其中 `lint`（v19 V4a/V4b）是**静态体检**：报"写了却用不上"的声明（未用的 `[[operand_slots]]` /
   `[[forms]]` / `[conventions.bitfields]`），退出码同 `validate`；**三份发行谱必须零结论**

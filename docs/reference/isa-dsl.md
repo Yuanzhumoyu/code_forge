@@ -1452,6 +1452,7 @@ Rust 黄金值表**；`forge-isa test <谱>` 还能不起宿主 crate 直接跑�
 | `asm` + `error = "<子串>"` | `assemble` 或 `encode` 必须失败，且消息**包含**该子串（谁先拒绝由谱决定：立即数越界常常是汇编匹配器先拒） |
 | `bytes` + `error = "DECODE"`（可带 `partial = N`） | `decode(bytes)` 必须失败；`partial` 额外要求 `decode_partial` 在吃掉 `N` 字节处返回 `Err(N)` |
 | `bytes`（单独） | `decode(bytes)` 必须成功，且再编码逐字节等于 `bytes` |
+| `asm`（单独） | **闭环向量**：`assemble → encode → decode → encode` 字节稳定 + `disassemble` 幂等；**不比黄金字节**（给"文本合法、字节由别处守"的清单用，文本歧义的指令也安全） |
 
 ```toml
 [[vectors]]
@@ -1472,9 +1473,9 @@ partial = 1
 形态**在解析期**就钉死（`validate_vectors`：缺 `asm`/`bytes`、正负同给、定宽字长不符、
 字节越界、`partial` 用错、**同一段 `asm` 两种期望字节**、空子串都报错；完全相同的重复允许；
 **解码负向允许截断输入**，不查整条字长）；**内容**（这条文本真能编出这些字节吗）由生成用例
-在跑的时候判——`cargo test` 或 `forge-isa test`。迁移实例：三份发行谱共 247 条
-（riscv64 67 + x86 102 + arm64 78，来自原先 Rust 里的 oracle 表；迁移前后字节集合的规范化
-sha256 相同）。
+在跑的时候判——`cargo test` 或 `forge-isa test`。迁移实例：三份发行谱共 **361 条**
+（x86 138 / riscv64 134 / arm64 89；含从 Rust oracle 表与往返清单迁来的 golden 与闭环向量，
+迁移前后字节集合的规范化 sha256 相同）。
 
 ## 已有 ISA 谱
 

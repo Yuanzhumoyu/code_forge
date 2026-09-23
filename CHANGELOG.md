@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **x86（102 条）与 arm64（78 条）的 golden 字节表也迁进 `[[vectors]]`**：x86 的 7 张 oracle 表（GPR/R 型/控制流/SSE/内存/家族/VEX，含 4 条多行写法条目）与 arm64 的 78 条 `enc("…") == word_le(0x…)` 断言。三份发行谱现在合计 **247 条向量**（riscv64 67 + x86 102 + arm64 78），全部由生成物 `__spec_tests::spec_vector_*` 执行：`cargo test -p forge-codegen --lib` **1150 passed**（= 903 基线 + 247），`forge-isa test` 逐谱 `failed:0`。迁移前后字节集合的规范化 sha256 均相同；三个测试文件合计 **1832 → 1436 行（−396）**。
 - **向量冲突判据**：同一段 `asm` 给出两种期望字节 → 编译期报错；完全相同的重复**允许**（x86 谱里有一条历史记录：`mov RAX, RBX` 两种编码合并后逐字节相同）。
+- **`[[vectors]]` 增第 5 种形态：`{asm}` 闭环向量**（v19 V3c）：只断言 `assemble → encode → decode → encode` 字节稳定与 `disassemble` 幂等，**不比黄金字节**（给"文本合法、字节由别处守"的清单用，文本歧义的指令也安全）。据此把三个 ISA 里剩余的**往返清单**也迁进谱（riscv64 67 条、x86 36 条、arm64 11 条）：三份发行谱现在共 **361 条向量**（x86 138 / riscv64 134 / arm64 89），`cargo test -p forge-codegen --lib` **1150 → 1264 passed**（+114，与迁移条数逐条对上），三个测试文件合计 **1832 → 1225 行（−607，−33.1%）**。
 
 ### Changed (2026-09-23)
 

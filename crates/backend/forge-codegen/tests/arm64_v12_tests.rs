@@ -108,27 +108,6 @@ fn golden_register_encoding_pattern() {
 
 // ─────────────────── decode → encode 字节往返 ───────────────────
 
-#[test]
-fn decode_roundtrip_bytes() {
-    for asm in [
-        "add x5, x6, #42",
-        "add w0, w30, #4095",
-        "adds x1, x2, #3",
-        "sub w4, w5, w6",
-        "subs x7, x8, #0",
-        "add x9, x10, x11",
-        "b 4",
-        "bl -8",
-        "nop",
-    ] {
-        let b = enc(asm);
-        let (d, n) = decode(&b).unwrap_or_else(|| panic!("decode {b:02x?} (`{asm}`)"));
-        assert_eq!(n, 4, "`{asm}`: 消费字节 != 4");
-        let b2 = encode(&d).unwrap();
-        assert_eq!(b2, b, "`{asm}`: decode→encode 字节不一致");
-    }
-}
-
 /// MOVZ/MOVK hw 变体（P3① 大立即数多序列）：clang oracle 词 → decode →
 /// encode 字节往返。词 = base | (imm16<<5) | (hw<<21) | rd（imm16 值放
 /// [20:5]、hw 值放 [22:21]——A64 movz/movk 移宽立即数族）。
@@ -154,18 +133,6 @@ fn golden_movw_hw_variants_decode_roundtrip() {
         let b2 = encode(&d).unwrap();
         assert_eq!(b2, b, "词 {w:08x}: decode→encode 字节不一致");
         assert_eq!(disassemble(&d), disassemble(&d), "{w:08x} disasm 自洽");
-    }
-}
-
-// ─────────────────── disassemble → assemble 往返 ───────────────────
-
-#[test]
-fn assemble_disassemble_roundtrip() {
-    for asm in ["add x5, x6, #42", "add w1, w2, w3", "sub x0, x0, x0", "nop"] {
-        let inst = assemble(asm).unwrap();
-        let text = disassemble(&inst);
-        let inst2 = assemble(&text).unwrap_or_else(|e| panic!("reassemble `{text}`: {e}"));
-        assert_eq!(inst2, inst, "`{asm}` → `{text}` 往返失败");
     }
 }
 

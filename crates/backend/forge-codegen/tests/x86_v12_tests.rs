@@ -815,59 +815,6 @@ fn decode_identity_canonical() {
 // ─────────────────── assemble/disassemble 往返 ───────────────────
 
 #[test]
-fn assemble_disassemble_roundtrip() {
-    let cases = [
-        "mov RAX, RBX",
-        "mov R8, R9",
-        "mov EAX, EBX",
-        "mov AX, BX",
-        "add RAX, RBX",
-        "add RAX, 42",
-        "cmp R8, -1",
-        "movzx RAX, AL",
-        "movzx RAX, AX",
-        "movsxd RAX, RBX",
-        "imul RAX, RBX",
-        "sqrtsd XMM0, XMM1",
-        "cvtsi2sd XMM0, RAX",
-        "andpd XMM0, XMM1",
-        "comiss XMM0, XMM1",
-        "movd XMM0, RAX",
-        "punpcklqdq XMM0, XMM1",
-        // 家族展开（SSE）
-        "addsd XMM0, XMM1",
-        "addss XMM0, XMM1",
-        "movaps XMM0, XMM1",
-        "addpd XMM0, XMM1",
-        "paddd XMM0, XMM1",
-        // VEX 三操作数（asm 模板重排 dest, src1, src2）
-        "vaddps XMM0, XMM1, XMM2",
-        "vaddpd XMM0, XMM1, XMM2",
-        "vpxor XMM0, XMM1, XMM2",
-        // VEX 无源
-        "vmovaps XMM0, XMM1",
-        "vbroadcastss XMM0, XMM1",
-        // VEX imm
-        "vextractf128 XMM1, XMM2, 0",
-        "vinsertf128 XMM0, XMM1, XMM2, 1",
-        // `+r` 形式
-        "push RAX",
-        "push R8",
-        "pop RBX",
-        "pop R9",
-        "bswap RAX",
-        "bswap R12",
-        "mov RAX, 0x1234",
-    ];
-    for c in cases {
-        let inst = assemble(c).unwrap_or_else(|e| panic!("assemble `{c}`: {e}"));
-        let text = disassemble(&inst);
-        let inst2 = assemble(&text).unwrap_or_else(|e| panic!("re-assemble `{text}`: {e}"));
-        assert_eq!(inst, inst2, "disassemble `{c}` → `{text}` 往返");
-    }
-}
-
-#[test]
 fn disassemble_known_texts() {
     assert_eq!(
         disassemble(&assemble("mov RAX, RBX").unwrap()),
