@@ -134,6 +134,35 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   `impl_erased_target_machine!` 带 `pipeline = <路径>` 参数搬进 runtime（现在留在 codegen，
   因此第三方宿主暂时不能用 `tm` 部件——G1 的实证要等 V1b/V2）。
 
+**V1b 执行清单（已勘察完毕，逐步照做即可；改动是原子的，必须一次全做）**：
+
+1. `gen_file.rs`：`RawArgs.krate` → `pipeline: Option<syn::Path>`（键名 `pipeline`，错误消息与
+   `generated_file_name` 的参数哈希同步改；`krate` 从支持列表里删掉=破坏性）。
+2. `lib.rs`：`ExpandOptions.krate` → `pipeline: Option<String>`；`expand_file`/`expand_source`/
+   `expand_loaded` 的 `krate` 形参换成 `pipeline: Option<&TokenStream>`；
+   **`rewrite_path_roots(ts, krate)` 换成固定根改写 `rewrite_runtime_roots(ts)`**：
+   `crate` → `forge_isa_runtime`、`forge_ir` → `forge_isa_runtime::ir`；两条单测随之改名
+   （`rewrite_*_rewrites_only_path_roots` / `rewrites_forge_ir`）。
+3. `v12/codegen/mod.rs`：`generate_with_parts(model, spec_tests, parts)` 增第三个参数
+   `pipeline: Option<&TokenStream>`，透传给 integration。
+4. `v12/codegen/integration.rs:867`：`crate::impl_erased_target_machine!(TargetMachine);` →
+   `forge_isa_runtime::impl_erased_target_machine!(TargetMachine, #pipeline);`
+   （`parts` 含 `tm` 而 `pipeline` 缺失 ⇒ **生成期报错**，消息给出 `pipeline = <宿主管线路径>` 的写法；
+   `parts` 不含 `tm` 时该参数不需要）。
+5. 宏搬到 runtime：`crates/backend/forge-codegen/src/erased_macro.rs` →
+   `crates/foundation/forge-isa-runtime/src/erased.rs`，宏签名改成
+   `($tm:ty, $pipeline:path)`，体内 `<$pipeline>::new(self.clone()).compile_raw(func)`；
+   codegen 侧如需保留旧名可 `pub use forge_isa_runtime::impl_erased_target_machine;`。
+6. 14 处调用点加参数：3 个发行后端用 `pipeline = crate::pipeline::compiler::FunctionCompiler`；
+   `tests/common/mod.rs`(8) 与 `tests/spec_tests_v12.rs`(3) 用
+   `pipeline = forge_codegen::pipeline::compiler::FunctionCompiler`（`krate` 一律删除）；
+   只生成 `encode/decode/asm` 的调用点（如 `include_v12_tests` 的编码器变体）不写该参数。
+7. 文档：`docs/reference/isa-dsl.md`（参数表 + 「宿主接入」+「生成代码依赖的运行面」改指
+   `forge_isa_runtime`）、`docs/guides/isa-dsl-tutorial.md`、`CLAUDE.md`（Architecture Rules 1/3/4
+   与 Testing Notes）、`CHANGELOG.md`（破坏性：`krate` 删除、运行面迁移）、本计划进度。
+8. 门禁：`cargo test -p forge-isa-dsl -p forge-isa -p forge-dsl`、`cargo test -p forge-codegen`
+   （27 二进制）、三架构 JIT 矩阵、`clippy -D warnings`、`fmt`、`cargo doc`、workspace 测试。
+
 ## 6. 迁移与文档落地
 
 **v18 退役（已完成于 2026-09-23，D0）**：`docs/plans/forge-dsl-v18-plan.md` →
