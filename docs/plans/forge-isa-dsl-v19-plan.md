@@ -134,7 +134,14 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   `impl_erased_target_machine!` 带 `pipeline = <路径>` 参数搬进 runtime（现在留在 codegen，
   因此第三方宿主暂时不能用 `tm` 部件——G1 的实证要等 V1b/V2）。
 
-**V1b 采用「runtime 注册管线」方案（2026-09-23 用户拍板）**：
+**V1b 已落地（2026-09-23，runtime 注册管线方案）**：
+
+- 生成物不再含宿主路径（恒发 `forge_isa_runtime::impl_erased_target_machine!(TargetMachine);`）；
+- `krate`/`rewrite_path_roots` 的宿主改写删除，生成物一律绝对路径；
+- runtime 新增 `pipeline` 注册表（`FunctionPipeline`/`register_pipeline`/`compile_via_pipeline`，未注册 fail-closed）；
+- forge-codegen 的 `pipeline_hooks::ensure_registered()` 在 JIT 入口注册三个后端。
+
+设计要点（原方案记录）：
 
 - 生成物**不再包含任何宿主路径**：生成器恒发
   `forge_isa_runtime::impl_erased_target_machine!(TargetMachine);`（宏签名回到单参数）。

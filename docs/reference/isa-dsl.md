@@ -188,10 +188,11 @@ fn main() {
 没接入时**编译期**就会明确报错（fail-closed，消息里给的是这两步），而不是悄悄让生成
 模块变空——空模块会让下游几十个文件报 "unresolved import"，更难查。
 
-`krate = <路径>` 把生成代码里的路径根改写：`crate::…` → `<路径>::…`、
-`forge_ir::…` → `<路径>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir;`）。
-缺省（不写 `krate`）保持"生成在哪个 crate 就属于哪个 crate"的历史行为。生成代码所需的
-运行面（公开 API 清单）见「生成代码依赖的运行面」一节。
+**v19 V1b 起没有 `krate`**：生成物只依赖运行时 crate——`crate::…` 一律改写为
+`forge_isa_runtime::…`、`forge_ir::…` 改写为 `forge_isa_runtime::ir::…`。因此承载谱的
+crate 只需要依赖 `forge-isa-runtime`（+ build script 预生成），**不必**是 forge-codegen；
+`parts` 含 `tm` 时宿主还要在启动时注册编译管线（见下）。运行面清单见
+「生成代码依赖的运行面」一节。
 
 **生成物文件的三条性质**（改生成管线前先看 `forge-isa-dsl/src/gen_file.rs` 模块头）：
 
@@ -206,7 +207,6 @@ fn main() {
 
 | 参数 | 缺省 | 作用 |
 | --- | --- | --- |
-| `krate = <路径>` | 不写 = `crate::`（生成在宿主内部） | 路径根改写（生成到别的 crate / `tests/`） |
 | `spec_tests = <bool>` | `true` | 是否生成 `#[cfg(test)] mod __spec_tests`（见「生成期自测」） |
 | `name = "…"` | 文件 stem | 覆盖生成模块名（同一份谱展开多次时必须给，否则模块重名） |
 | `parts = ["encode", …]` | 四块全开 | 只生成选中的部件：`encode`/`decode`/`asm`/`tm`（见下） |

@@ -200,16 +200,19 @@ code-forge (root umbrella)
 
 1. **`isa_from_file!`（现行 ISA-DSL v18 语法）默认生成 `crate::` 路径** — 即"生成在哪个
    crate 里就属于哪个 crate"（`crate::prelude::*`、`crate::machine::*` 在该 crate 内解析）。
-   生成模块名 = 文件 stem（可用 `name = "…"` 覆盖）。**在别的 crate（含 `tests/`）里生成**时给
-   第二个参数 `krate = <宿主路径>`：生成物里的 `crate::…` 改写为 `<宿主>::…`、`forge_ir::…`
-   改写为 `<宿主>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir;`），因此
-   生成代码只依赖宿主的**公开面**——demo 夹具正是这样住在
-   `tests/isa/*.toml` + `tests/common/mod.rs`（`krate = forge_codegen`）而不进库本体。
+   生成模块名 = 文件 stem（可用 `name = "…"` 覆盖）。**v19 V1b 起没有 `krate`**：生成物
+   一律写绝对路径 `forge_isa_runtime::…`（`forge_ir::…` → `forge_isa_runtime::ir::…`），
+   因此**任何** crate 只要依赖 `forge-isa-runtime`（+ build script 预生成）就能承载一份谱——
+   demo 夹具正是这样住在 `tests/isa/*.toml` + `tests/common/mod.rs` 而不进库本体。
+   `parts` 含 `tm` 时宿主须注册编译管线（`forge_isa_runtime::register_pipeline`，
+   forge-codegen 的 `pipeline_hooks::ensure_registered` 已接好）。
    库本体只有真实后端：`arch/{x86,arm64,riscv64}_v12.rs`（文件名里的 v12 是历史命名）。
 
-2. **Assembler/JIT coupling** — `Assembler` trait ↔ `JitCompiler` are circularly coupled.
-   Both live in forge-codegen. Cannot split into separate crates without first refactoring
-   to remove the cycle.
+2. **Assembler/JIT coupling 已解**（v19 V1）——`forge-isa-runtime` 持有生成物的全部 trait
+   与数据型（`machine/*`、`LowerCtx`/`MemRef`、`AllocResult`/`CodeSink`/`CompiledFunction`），
+   编译管线（JIT/regalloc/发射）留在 forge-codegen 并通过
+   `forge_isa_runtime::register_pipeline(ISA 名, 工厂)` **注册**给运行时；
+   `impl_erased_target_machine!` 只查注册表（未注册 ⇒ `IrError::Unsupported`）。
 
 3. **Proc-macro limitation** — `forge-dsl` 是 proc-macro crate；Rust 禁止它导出非宏项。
    因此**编译器本体在 `forge-isa-dsl`**（普通 lib：模型/解析/校验/诊断/代码生成 +
@@ -236,7 +239,7 @@ pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
 // 无需手写——见 arch/x86_v12.rs 的实际形态。
 
 // 测试夹具（不发行）：crates/backend/forge-codegen/tests/common/mod.rs
-forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", krate = forge_codegen);
+forge_dsl::isa_from_file!("tests/isa/demo_v12.toml");
 ```
 
 > **宿主必须接 build script（v18 S10d）**：生成物是 `$OUT_DIR` 下的**文件**

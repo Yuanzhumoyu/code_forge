@@ -13,7 +13,6 @@ const SPEC: &str = "crates/backend/forge-codegen/tests/isa/include_root_v12.toml
 
 fn opts(parts: Parts) -> ExpandOptions {
     ExpandOptions {
-        krate: Some("forge_codegen".to_string()),
         spec_tests: false, // 部件受限时必须关（见下）
         name: None,
         parts,

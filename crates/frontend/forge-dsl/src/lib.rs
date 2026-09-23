@@ -13,16 +13,16 @@
 
 use proc_macro::TokenStream;
 
-/// `isa_from_file!("path/to/arch.toml"[, krate = 宿主路径][, spec_tests = <bool>]
+/// `isa_from_file!("path/to/arch.toml"[, spec_tests = <bool>]
 /// [, name = "…"][, parts = ["encode", …]])`
 /// — v18 唯一语法 ISA：生成自包含 encode/decode/asm 模块 + TargetMachine 集成层。
 /// 生成模块名 = 文件 stem（非 meta.name；文档化约定）。
 ///
-/// `krate` 让生成代码**不依赖"被生成在 forge-codegen 内部"这一事实**：给出宿主
-/// crate 路径后，生成物里的 `crate::…` 全部改写为 `<krate>::…`、`forge_ir::…`
-/// 改写为 `<krate>::ir::…`（forge-codegen 提供 `pub use forge_ir as ir`）。
-/// 用途：把 ISA 谱放在**测试**或其它 crate 里生成（demo 夹具不再进库本体）；
-/// 缺省 `krate` 保持"生成在哪个 crate 就属于哪个 crate"（路径根仍是 `crate::`）。
+/// **v19 V1b 起没有 `krate`**：生成物只依赖运行时 crate——`crate::…` 一律改写为
+/// `forge_isa_runtime::…`、`forge_ir::…` 改写为 `forge_isa_runtime::ir::…`，因此
+/// 把 ISA 谱放在**任何** crate（含 `tests/`）里生成都只要求该 crate 依赖
+/// `forge-isa-runtime`（再加 build script 预生成，见 v18 S10d）。
+/// `parts` 含 `tm` 时，宿主要用 `forge_isa_runtime::register_pipeline` 注册编译管线。
 ///
 /// v18 S10d 起生成物**不再**是宏展开结果：它由宿主 build script 预生成成
 /// `$OUT_DIR/forge_gen_<模块名>_<参数哈希>.rs`，本宏只发一句 `include!`
@@ -50,7 +50,7 @@ pub fn isa_from_file(input: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    /// 参数解析：缺省无 `krate`/`spec_tests`；显式给出可解析；未知键报错。
+    /// 参数解析：缺省 `spec_tests = true`；显式给出可解析；未知键报错。
     ///
     /// v18 S10d 起参数语义住在 `forge_isa_dsl`（build script 预生成走同一份解析），
     /// 本用例钉的是**宏侧入口**仍然按这套语义工作。
@@ -58,16 +58,15 @@ mod tests {
     fn parse_args() {
         let a =
             forge_isa_dsl::parse_macro_args(quote::quote! { "isa/x86_v12.toml" }).expect("缺省");
-        assert!(a.opts.krate.is_none());
         assert!(a.opts.spec_tests, "缺省 = 生成自测（true）");
         assert_eq!(a.path, "isa/x86_v12.toml");
         let b = forge_isa_dsl::parse_macro_args(quote::quote! {
-            "tests/isa/demo_v12.toml", krate = forge_codegen
+            "tests/isa/demo_v12.toml"
         })
         .expect("显式");
-        assert!(b.opts.krate.is_some());
+        assert!(b.opts.spec_tests);
         let c = forge_isa_dsl::parse_macro_args(quote::quote! {
-            "tests/isa/demo_v12.toml", krate = forge_codegen, spec_tests = false
+            "tests/isa/demo_v12.toml", spec_tests = false
         })
         .expect("两个参数");
         assert!(!c.opts.spec_tests);
@@ -75,7 +74,7 @@ mod tests {
             .expect("尾随逗号");
         assert!(d.opts.spec_tests);
         let e = forge_isa_dsl::parse_macro_args(quote::quote! {
-            "tests/isa/include_root_v12.toml", krate = forge_codegen,
+            "tests/isa/include_root_v12.toml",
             spec_tests = false, name = "my_isa",
             parts = ["encode", "decode"]
         })

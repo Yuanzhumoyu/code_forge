@@ -864,7 +864,7 @@ fn gen_target_machine(model: &V12Model) -> Result<TokenStream, String> {
             fn decoder(&self) -> Option<&std::sync::Arc<dyn crate::machine::decoder::TargetDecoder<Inst = Self::Inst>>> { Some(&self.decoder) }
         }
 
-        crate::impl_erased_target_machine!(TargetMachine);
+        forge_isa_runtime::impl_erased_target_machine!(TargetMachine);
 
         /// 注册该 ISA 后端到全局 Registry。
         pub fn ensure_registered() {

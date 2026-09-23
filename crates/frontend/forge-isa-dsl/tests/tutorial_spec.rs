@@ -50,7 +50,6 @@ fn tutorial_spec_validates_and_expands() {
 
     // ② 展开成模块：四条指令 + 字段名来自 ops 的可见证据。
     let opts = ExpandOptions {
-        krate: None,
         spec_tests: false,
         name: None,
         parts: Parts::all(),

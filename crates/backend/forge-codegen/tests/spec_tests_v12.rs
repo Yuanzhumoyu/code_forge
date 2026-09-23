@@ -10,21 +10,9 @@
 //! 生成的自测直接住在生成的模块里（`<夹具>::__spec_tests`），随 `cargo test` 运行；
 //! 这里只额外核对**覆盖率常量**确实被导出（生成端与宿主端的接口守卫）。
 
-forge_dsl::isa_from_file!(
-    "tests/isa/demo8_v12.toml",
-    krate = forge_codegen,
-    spec_tests = true
-);
-forge_dsl::isa_from_file!(
-    "tests/isa/demo_inst12_v12.toml",
-    krate = forge_codegen,
-    spec_tests = true
-);
-forge_dsl::isa_from_file!(
-    "tests/isa/demo_mixed16_32_v12.toml",
-    krate = forge_codegen,
-    spec_tests = true
-);
+forge_dsl::isa_from_file!("tests/isa/demo8_v12.toml", spec_tests = true);
+forge_dsl::isa_from_file!("tests/isa/demo_inst12_v12.toml", spec_tests = true);
+forge_dsl::isa_from_file!("tests/isa/demo_mixed16_32_v12.toml", spec_tests = true);
 
 /// 生成的自测模块导出了覆盖率常量，且夹具谱是**零跳过**的。
 #[test]

@@ -113,10 +113,6 @@ impl Parts {
 /// `isa_from_file!` 的展开选项（宏参数 → 本 crate 的入口参数）。
 #[derive(Debug, Clone, Default)]
 pub struct ExpandOptions {
-    /// 宿主 crate 路径（`krate = <path>`）：生成物里的 `crate::…` 改写到它，
-    /// `forge_ir::…` 改写为 `<krate>::ir::…`。缺省（`None`）= "生成在哪个 crate 里
-    /// 就属于哪个 crate"（`crate::…` 原样）。
-    pub krate: Option<String>,
     /// 是否生成 `#[cfg(test)] mod __spec_tests`（v18 S6；缺省 true）。
     pub spec_tests: bool,
     /// 模块名覆盖（`name = "..."`）：生成 `pub mod <name>`（缺省 = 文件 stem）。
@@ -129,7 +125,6 @@ impl ExpandOptions {
     /// 宏缺省：`krate = None`、`spec_tests = true`、`name = None`、`parts` 全开。
     pub fn new() -> Self {
         Self {
-            krate: None,
             spec_tests: true,
             name: None,
             parts: Parts::all(),
@@ -145,14 +140,7 @@ pub fn expand_file(path: &str, opts: &ExpandOptions) -> Result<proc_macro2::Toke
     let (_, resolved) = read_isa_file(path)?;
     let spec = loader::LoadedSpec::load(&resolved)?;
     let mod_name = resolve_mod_name(path, opts);
-    let krate: Option<proc_macro2::TokenStream> = opts.krate.as_ref().map(|p| path_tokens(p));
-    let ts = expand_loaded(
-        &spec,
-        &mod_name,
-        krate.as_ref(),
-        opts.spec_tests,
-        opts.parts,
-    )?;
+    let ts = expand_loaded(&spec, &mod_name, opts.spec_tests, opts.parts)?;
     dump_generated(path, &ts);
     Ok(ts)
 }
@@ -205,7 +193,7 @@ pub fn expand_str(
     isa_path: &std::path::Path,
 ) -> Result<proc_macro2::TokenStream, String> {
     let ident = syn::Ident::new(mod_name, proc_macro2::Span::call_site());
-    expand_source(source, &ident, isa_path, None, true)
+    expand_source(source, &ident, isa_path, true)
 }
 
 /// 解析 + 校验（不生成代码）：成功返回 `Ok(())`，失败返回**渲染好的诊断行**
@@ -263,14 +251,6 @@ pub fn module_name(path: &str) -> syn::Ident {
     )
 }
 
-/// 把 `krate = <路径>` 的文本解析成 token（`a::b` 这类路径）。
-fn path_tokens(path: &str) -> proc_macro2::TokenStream {
-    path.parse().unwrap_or_else(|_| {
-        let ident = syn::Ident::new(path, proc_macro2::Span::call_site());
-        quote::quote!(#ident)
-    })
-}
-
 /// v12 编译入口：严格解析 + 校验 → 生成器 → `pub mod <name>`（name = 文件 stem）。
 ///
 /// 生成模块首行嵌入 `include_bytes!(<TOML 绝对路径>)`：rustc 据此把 ISA 谱登记为
@@ -282,18 +262,16 @@ fn expand_source(
     source: &str,
     mod_name: &syn::Ident,
     isa_path: &std::path::Path,
-    krate: Option<&proc_macro2::TokenStream>,
     spec_tests: bool,
 ) -> Result<proc_macro2::TokenStream, String> {
     let spec = loader::LoadedSpec::from_text(source.to_string(), isa_path);
-    expand_loaded(&spec, mod_name, krate, spec_tests, Parts::all())
+    expand_loaded(&spec, mod_name, spec_tests, Parts::all())
 }
 
 /// 展开**已加载**的谱（`include` 已合并、诊断带来源文件）。
 fn expand_loaded(
     spec: &loader::LoadedSpec,
     mod_name: &syn::Ident,
-    krate: Option<&proc_macro2::TokenStream>,
     spec_tests: bool,
     parts: Parts,
 ) -> Result<proc_macro2::TokenStream, String> {
@@ -310,18 +288,9 @@ fn expand_loaded(
     let model = v12::parse_and_validate(&spec.text).map_err(|e| render_error_for(spec, &e))?;
     let inner = v12::codegen::generate_with_parts(&model, spec_tests, parts)
         .map_err(|e| anchor_msg_for(spec, &e))?;
-    // 短名折叠（S8c，纯等价）→ 宿主 crate 路径改写（见各自文档）。
-    let inner = fold_short_forms(inner);
-    let inner = match krate {
-        Some(k) => rewrite_path_roots(inner, k),
-        None => inner,
-    };
-    // 短名定义：折叠**之后**发射（自己写全路径），同样按宿主 crate 改写。
-    let helpers = short_form_helpers();
-    let helpers = match krate {
-        Some(k) => rewrite_path_roots(helpers, k),
-        None => helpers,
-    };
+    // 短名折叠（S8c，纯等价）→ **固定根改写**（v19 V1b：一律指运行时 crate）。
+    let inner = rewrite_path_roots(fold_short_forms(inner));
+    let helpers = rewrite_path_roots(short_form_helpers());
     // `include_bytes!` 是 stable 上唯一能让 rustc 登记编译依赖的方式：
     // **每个来源文件**都要登记（多文件谱里改 include 也必须触发重编译）。
     let deps: Vec<syn::LitStr> = spec
@@ -469,23 +438,20 @@ fn short_form_helpers() -> proc_macro2::TokenStream {
     }
 }
 
-/// 把**生成物**里的路径根改写到宿主 crate：
-/// - `crate::…` → `<krate>::…`；
-/// - `forge_ir::…` → `<krate>::ir::…`（forge-codegen `pub use forge_ir as ir`）。
+/// 把**生成物**里的路径根改写到运行时 crate（v19 V1b，不再随宿主变化）：
+/// - `crate::…` → `forge_isa_runtime::…`；
+/// - `forge_ir::…` → `forge_isa_runtime::ir::…`（runtime `pub use forge_ir as ir`）。
 ///
 /// 只改写**路径位置**的标识符（后随 `::`）：`pub(crate)` 这类可见性标记、以及
 /// 字符串字面量里的同名文本都不受影响。生成器自身源码里的 `crate::v12`（生成期
 /// 代码）不经过本函数。
-fn rewrite_path_roots(
-    ts: proc_macro2::TokenStream,
-    krate: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
+fn rewrite_path_roots(ts: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let mut out = proc_macro2::TokenStream::new();
     let mut it = ts.into_iter().peekable();
     while let Some(tt) = it.next() {
         match tt {
             proc_macro2::TokenTree::Group(g) => {
-                let inner = rewrite_path_roots(g.stream(), krate);
+                let inner = rewrite_path_roots(g.stream());
                 let mut ng = proc_macro2::Group::new(g.delimiter(), inner);
                 ng.set_span(g.span());
                 out.extend([proc_macro2::TokenTree::Group(ng)]);
@@ -496,9 +462,9 @@ fn rewrite_path_roots(
                     Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ':'
                 );
                 if is_path_root && id == "crate" {
-                    out.extend(krate.clone());
+                    out.extend(quote::quote!(forge_isa_runtime));
                 } else if is_path_root && id == "forge_ir" {
-                    out.extend(krate.clone());
+                    out.extend(quote::quote!(forge_isa_runtime));
                     out.extend(quote::quote!(::ir));
                 } else {
                     out.extend([proc_macro2::TokenTree::Ident(id)]);
@@ -589,12 +555,12 @@ mod tests {
             pub(in crate) fn g() {}
             let s = "crate::not_a_path";
         };
-        let out = rewrite_path_roots(src, &quote! { forge_codegen }).to_string();
+        let out = rewrite_path_roots(src).to_string();
         assert!(
-            out.contains("forge_codegen :: machine :: abi :: TargetABI"),
+            out.contains("forge_isa_runtime :: machine :: abi :: TargetABI"),
             "{out}"
         );
-        assert!(out.contains("forge_codegen :: IrError"), "{out}");
+        assert!(out.contains("forge_isa_runtime :: IrError"), "{out}");
         assert!(
             out.contains("pub (crate) const C"),
             "可见性标记必须保留：{out}"
@@ -607,15 +573,15 @@ mod tests {
             out.contains("\"crate::not_a_path\""),
             "字符串字面量必须保留：{out}"
         );
-        assert!(!out.contains("forge_codegen :: not_a_path"), "{out}");
+        assert!(!out.contains("forge_isa_runtime :: not_a_path"), "{out}");
     }
 
-    /// `forge_ir::…` 改写为 `<krate>::ir::…`（宿主路径才改写，缺省路径不动）。
+    /// `forge_ir::…` 改写为 `forge_isa_runtime::ir::…`（固定目标）。
     #[test]
     fn rewrite_path_roots_rewrites_forge_ir() {
         let src = quote! { impl forge_ir::PhysReg for Reg {} };
-        let out = rewrite_path_roots(src, &quote! { forge_codegen }).to_string();
-        assert!(out.contains("forge_codegen :: ir :: PhysReg"), "{out}");
+        let out = rewrite_path_roots(src).to_string();
+        assert!(out.contains("forge_isa_runtime :: ir :: PhysReg"), "{out}");
     }
 
     /// 模块名 = 文件 stem（小写、`-` → `_`）。

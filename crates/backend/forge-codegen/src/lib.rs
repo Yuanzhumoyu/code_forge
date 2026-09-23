@@ -61,9 +61,8 @@ pub use forge_ir as ir;
 // ============================================================
 // lowering → VCode → emit 管线 + 寄存器分配
 // ============================================================
-mod erased_macro;
-
 pub mod pipeline;
+pub mod pipeline_hooks;
 
 // ============================================================
 // JIT / 运行时 / 注册表
@@ -75,7 +74,7 @@ pub mod runtime;
 // ============================================================
 // 只有**发行后端**：x86_64 / aarch64 / riscv64。ISA-DSL 的示例谱
 // （demo_v12 / demo8_v12）是测试夹具，在 `tests/isa/` + `tests/common/mod.rs`
-// 里用 `isa_from_file!(…, krate = forge_codegen)` 生成——不进本 rlib。
+// 里用 `isa_from_file!(…)` 生成——不进本 rlib。
 pub mod arch;
 pub use arch::arm64_v12;
 pub use arch::riscv64_v12;

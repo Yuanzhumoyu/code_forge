@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-23) — ISA-DSL v19 V1（破坏性）
+
+- **生成物运行面拆成 `forge-isa-runtime`；`isa_from_file!` 删除 `krate`**。生成物不再依赖宿主 crate 的公开面，一律写绝对路径 `forge_isa_runtime::…`（`forge_ir::…` → `forge_isa_runtime::ir::…`），因此**任意普通 crate 只要依赖 `forge-isa-runtime` + build script 预生成**就能承载一份 ISA 谱；`krate` 参数与"按宿主改写路径根"的机制一并删除。
+- **编译管线改为运行时注册**：`parts` 含 `tm` 时，宿主要用 `forge_isa_runtime::register_pipeline(ISA 名, 工厂)` 注册自己的管线（forge-codegen 已在 `pipeline_hooks::ensure_registered()`（JIT 入口自动调用）接好三个发行后端）；未注册 ⇒ 明确 `IrError::Unsupported`，不 panic。`impl_erased_target_machine!` 随之只按 ISA 名查表。
+- 新增守卫 `crates/foundation/forge-isa-runtime/tests/runtime_surface.rs`：运行面依赖面只允许 `forge-ir`/`smallvec`/`thiserror`，源码不得出现 `forge_codegen`/`crate::pipeline`。
+
 ### Fixed (2026-09-23)
 
 - **编辑器里 `isa_from_file!` 那几行的假阳性语法错全部消失（v18 S10d）**。rust-analyzer 一直在 `crates/backend/forge-codegen/src/arch/*.rs` 与 4 个测试夹具文件的 `isa_from_file!(…)` 行上报成对的 `expected expression` / `expected R_PAREN`（实测 riscv64 15 对 / arm64 4 对 / 夹具 9、6 对，x86 0），而 `cargo build/check/test/clippy` 一直全绿。

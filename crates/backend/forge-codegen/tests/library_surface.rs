@@ -3,7 +3,7 @@
 //! ISA-DSL 的示例谱（`demo_v12` / `demo8_v12`）只服务于测试：定宽 32 位、
 //! 指令集极小，便于穷尽断言汇编器/解码器/编码器/lowering。它们必须留在
 //! `tests/`（`tests/isa/*.toml` + `tests/common/mod.rs` 用
-//! `isa_from_file!(…, krate = forge_codegen)` 生成），库本体只有真实后端
+//! `isa_from_file!(…)` 生成），库本体只有真实后端
 //! （x86_64 / aarch64 / riscv64）。
 //!
 //! 回归方式：任何人把 demo 谱搬回 `src/`、或重新在 `src/arch/mod.rs` /

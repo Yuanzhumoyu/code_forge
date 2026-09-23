@@ -233,7 +233,8 @@ forge_dsl::isa_from_file!("isa/toy16.toml");
 pub use self::toy16::*;
 
 // 夹具/测试 crate：路径 + krate（生成物只落到宿主的公开面）
-forge_dsl::isa_from_file!("tests/isa/toy16.toml", krate = forge_codegen);
+// 生成物只依赖 forge-isa-runtime；宿主不再需要 krate（v19 V1b）
+forge_dsl::isa_from_file!("tests/isa/toy16.toml");
 ```
 
 自己**不用**手抄"这条指令编出来是不是这几个字节"：字节正确性由各 ISA 的编码参考文档 + 少量黄金值

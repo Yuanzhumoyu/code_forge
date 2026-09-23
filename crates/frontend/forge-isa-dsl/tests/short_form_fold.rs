@@ -6,7 +6,7 @@
 //! （x86 各 1,700 / 1,400 处），折叠后 `all` −5.5%、生成期自测那部分 −10%（x86）。
 //!
 //! 这里钉住：① 长形**一处不剩**（谁在生成器里新写一处就会被抓）；② 短名定义只发射一次；
-//! ③ `krate = …` 跨 crate 生成时，短名定义里的路径**也**跟着改写（否则宿主 crate 里
+//! ③ 短名定义里的路径也走固定根改写（v19 V1b 起一律指 `forge_isa_runtime`，否则
 //! 会指向不存在的 `forge_ir`）。
 
 use forge_isa_dsl::{ExpandOptions, Parts, expand_file};
@@ -17,9 +17,8 @@ const SPECS: [(&str, &str); 3] = [
     ("arm64_v12", "isa/arm64_v12.toml"),
 ];
 
-fn text_of(path: &str, krate: Option<&str>) -> String {
+fn text_of(path: &str, _krate: Option<&str>) -> String {
     let opts = ExpandOptions {
-        krate: krate.map(|s| s.to_string()),
         spec_tests: false,
         name: None,
         parts: Parts::all(),
@@ -70,20 +69,20 @@ fn long_forms_are_folded_away() {
 }
 
 #[test]
-fn short_forms_are_rewritten_for_foreign_krate() {
+fn short_forms_are_rewritten_to_runtime_root() {
     // 跨 crate 生成（tests/ 夹具的形态）：短名定义里的 `forge_ir::` 也必须改写成
-    // `<krate>::ir::`，否则宿主 crate 里根本没有 `forge_ir` 这个名字。
+    // `forge_isa_runtime::ir::`，否则生成物里根本没有 `forge_ir` 这个名字。
     // 注意文档注释里的 `forge_ir::RegClass` 是字符串（不带 token 空格），不算。
     let path = "crates/backend/forge-codegen/tests/isa/demo_v12.toml";
     let text = text_of(path, Some("forge_codegen"));
     assert_eq!(
         text.matches("forge_ir :: ").count(),
         0,
-        "krate = forge_codegen 的生成物里仍有 token 形态的 `forge_ir ::`（含短名定义）——\
+        "生成物里仍有 token 形态的 `forge_ir ::`（含短名定义）——\
          路径改写没覆盖到"
     );
     assert!(
-        text.contains("forge_codegen :: ir :: RegClass"),
+        text.contains("forge_isa_runtime :: ir :: RegClass"),
         "短名定义 `type __RC = …RegClass;` 没有跟着改写到宿主 crate"
     );
     assert!(text.contains("__ph ("), "夹具生成物里也没有短名调用");

@@ -277,7 +277,7 @@ pub(crate) fn gen_frame_lowering(
                 &self,
                 encoder: &std::sync::Arc<dyn crate::machine::encoder::TargetEncoder<Inst = Self::Inst>>,
                 reg_map: &crate::AllocResult,
-                epilogue_block: crate::pipeline::emit::LabelRef,
+                epilogue_block: crate::emit::LabelRef,
                 sink: &mut crate::CodeSink,
             ) -> Result<(), crate::IrError> {
                 #epilogue_jump_body

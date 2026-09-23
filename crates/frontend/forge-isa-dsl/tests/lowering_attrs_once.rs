@@ -35,7 +35,6 @@ const ATTRS: [&str; 9] = [
 
 fn tm_text(path: &str) -> String {
     let opts = ExpandOptions {
-        krate: None,
         spec_tests: false,
         name: None,
         parts: Parts {

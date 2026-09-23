@@ -30,7 +30,7 @@
 //!
 //! `include!` 的路径必须**稳定**：RA（以及任何缓存了展开结果的东西）会记住上一次的
 //! 路径。内容哈希会让"改了 TOML"变成"换了一个文件名"，旧路径永远不再生成 ⇒ 报
-//! "文件不存在"。参数哈希（TOML 路径 + `krate`/`spec_tests`/`name`/`parts`）同时保证
+//! "文件不存在"。参数哈希（TOML 路径 + `spec_tests`/`name`/`parts`）同时保证
 //! 两件事：① 同一调用点的路径跨内容变更**恒定**；② 同一份谱的不同变体（`spec_tests`
 //! 真假、部件不同、宿主不同）落到**不同**文件，互不覆盖。
 //!
@@ -53,7 +53,7 @@ pub struct MacroArgs {
 }
 
 /// 解析 `isa_from_file!` 的参数：
-/// `"path.toml"[, krate = <path>][, spec_tests = <bool>][, name = "…"][, parts = ["encode", …]]`。
+/// `"path.toml"[, spec_tests = <bool>][, name = "…"][, parts = ["encode", …]]`。
 ///
 /// 宏（`forge-dsl`）与 build script 预生成都走这里，**参数语义只有一处**。
 /// 返回 `syn::Error` 是为了让宏侧能用 `to_compile_error()` 保住出错 token 的 span。
@@ -64,7 +64,6 @@ pub fn parse_macro_args(tokens: proc_macro2::TokenStream) -> syn::Result<MacroAr
 /// 宏参数的语法形态。
 struct RawArgs {
     path: syn::LitStr,
-    krate: Option<syn::Path>,
     spec_tests: Option<bool>,
     name: Option<String>,
     parts: Option<Vec<String>>,
@@ -73,7 +72,6 @@ struct RawArgs {
 impl syn::parse::Parse for RawArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let path: syn::LitStr = input.parse()?;
-        let mut krate = None;
         let mut spec_tests = None;
         let mut name = None;
         let mut parts = None;
@@ -85,7 +83,6 @@ impl syn::parse::Parse for RawArgs {
             let key: syn::Ident = input.parse()?;
             input.parse::<syn::Token![=]>()?;
             match key.to_string().as_str() {
-                "krate" => krate = Some(input.parse::<syn::Path>()?),
                 "spec_tests" => spec_tests = Some(input.parse::<syn::LitBool>()?.value),
                 "name" => name = Some(input.parse::<syn::LitStr>()?.value()),
                 "parts" => {
@@ -111,7 +108,7 @@ impl syn::parse::Parse for RawArgs {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "未知参数 `{other}`（`isa_from_file!` 支持 `krate = <path>`、`spec_tests = <bool>`、`name = \"…\"`、`parts = [\"encode\", …]`）"
+                            "未知参数 `{other}`（`isa_from_file!` 支持 `spec_tests = <bool>`、`name = \"…\"`、`parts = [\"encode\", …]`）"
                         ),
                     ));
                 }
@@ -119,7 +116,6 @@ impl syn::parse::Parse for RawArgs {
         }
         Ok(Self {
             path,
-            krate,
             spec_tests,
             name,
             parts,
@@ -137,7 +133,6 @@ impl RawArgs {
         Ok(MacroArgs {
             path: self.path.value(),
             opts: ExpandOptions {
-                krate: self.krate.as_ref().map(|p| quote::quote!(#p).to_string()),
                 spec_tests: self.spec_tests.unwrap_or(true),
                 name: self.name,
                 parts,
@@ -168,7 +163,6 @@ pub fn generated_file_name(path: &str, opts: &ExpandOptions) -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut h);
-    opts.krate.hash(&mut h);
     opts.spec_tests.hash(&mut h);
     opts.name.hash(&mut h);
     [
@@ -396,12 +390,11 @@ mod tests {
     #[test]
     fn macro_args_parse() {
         let a = parse_macro_args(quote! {
-            "isa/x86_v12.toml", krate = forge_codegen, spec_tests = false,
+            "isa/x86_v12.toml", spec_tests = false,
             name = "demo", parts = ["encode", "asm"],
         })
         .expect("完整参数");
         assert_eq!(a.path, "isa/x86_v12.toml");
-        assert_eq!(a.opts.krate.as_deref(), Some("forge_codegen"));
         assert!(!a.opts.spec_tests);
         assert_eq!(a.opts.name.as_deref(), Some("demo"));
         assert_eq!(a.opts.parts.names(), "encode, asm");
@@ -433,7 +426,7 @@ mod tests {
     }
 
     /// S10d 关键不变量：文件名**只由参数决定**——同参数同名字（宏侧与 build script 侧
-    /// 必须算出同一个名字），选项不同（`krate`/`spec_tests`/`name`/`parts`）必须分开落盘，
+    /// 必须算出同一个名字），选项不同（`spec_tests`/`name`/`parts`）必须分开落盘，
     /// 否则同一份谱的不同变体互相覆盖。
     #[test]
     fn file_name_is_a_function_of_args_only() {
@@ -448,9 +441,6 @@ mod tests {
         let mut o = opts();
         o.spec_tests = false;
         assert_ne!(base, generated_file_name(p, &o), "spec_tests 不同必须分开");
-        let mut o = opts();
-        o.krate = Some("forge_codegen".into());
-        assert_ne!(base, generated_file_name(p, &o), "krate 不同必须分开");
         let mut o = opts();
         o.name = Some("other".into());
         assert_ne!(base, generated_file_name(p, &o), "name 不同必须分开");

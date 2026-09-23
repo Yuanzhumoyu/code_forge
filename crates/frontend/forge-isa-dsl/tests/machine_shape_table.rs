@@ -36,7 +36,6 @@ const SPECS: [(&str, &str); 3] = [
 /// 只生成 TargetMachine 集成层（含 `impl MachineInst for Inst`）。
 fn tm_text(path: &str) -> String {
     let opts = ExpandOptions {
-        krate: None,
         spec_tests: false,
         name: None,
         parts: Parts {

@@ -94,7 +94,6 @@ fn digit_leading_operand_name_is_prefixed() {
 #[test]
 fn vlen_isa_fields_use_declared_names() {
     let opts = ExpandOptions {
-        krate: None,
         spec_tests: false,
         name: None,
         parts: Parts::all(),
