@@ -15,6 +15,7 @@
 mod assembler;
 /// 生成物落盘与宿主预生成（v18 S10d）。
 pub mod gen_file;
+pub mod lint;
 pub mod loader;
 pub mod report;
 pub mod schema;

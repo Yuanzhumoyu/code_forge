@@ -32,6 +32,7 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
   forge-isa diff     <a.toml> <b.toml> [--json]
                                              两份谱的规格 diff（增/删/改字段）
   forge-isa test     <谱.toml> [--json]      跑谱里的自测（谱内向量 + 每条指令闭环用例）
+  forge-isa lint     <谱.toml>... [--json]   静态体检（未用的槽/form 等），退出码同 validate
   forge-isa schema   [--out <file>]         打印（或写出）ISA-DSL 的 JSON Schema
   forge-isa fmt      <谱.toml> [--out <file>] 打印（或写出）**合并后**的规范文稿
                                              （include 展开 + override 应用，供人核对）
@@ -94,6 +95,14 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             };
             Ok(cmd_diff(a, b, json))
         }
+        "lint" => {
+            let json = has_flag(&args[1..], "--json");
+            let files = paths(&args[1..], &["--json"])?;
+            if files.is_empty() {
+                return Err("lint 需要一个或多个谱文件".into());
+            }
+            Ok(cmd_lint(&files, json))
+        }
         "test" => {
             let json = has_flag(&args[1..], "--json");
             let files = paths(&args[1..], &["--json"])?;
@@ -132,6 +141,89 @@ fn flag_value(args: &[String], flag: &str) -> Result<Option<PathBuf>, String> {
         }
     }
     Ok(None)
+}
+
+/// `lint`：静态体检（v19 V4a）——**不执行、不编译**，只报"写了却用不上"的声明。
+///
+/// 退出码与 `validate` 一致：`0` 干净、`1` 有结论或有诊断、`2` 用法错误。
+/// 多文件谱：先按 `validate` 的口径报诊断（诊断带**来源文件**），体检查询跑在**合并后**的
+/// 文稿上（行号与 `forge-isa fmt` 的文稿一致——已在消息里写明路径前缀）。
+fn cmd_lint(files: &[PathBuf], json: bool) -> ExitCode {
+    let mut clean = true;
+    let mut json_rows: Vec<String> = Vec::new();
+    for f in files {
+        let spec = match report::load_spec(f) {
+            Ok(s) => s,
+            Err(d) => {
+                print_diags(f, &d);
+                clean = false;
+                continue;
+            }
+        };
+        // 校验不过就先报诊断（与 validate 同一套渲染），不再谈"干净不干净"。
+        let diags = report::validate_loaded(&spec);
+        if !diags.is_empty() {
+            print_diags(f, &diags);
+            clean = false;
+            continue;
+        }
+        let found = forge_isa_dsl::lint::lint_source(&spec.text).unwrap_or_default();
+        if found.is_empty() {
+            if !json {
+                println!("{}: 干净（无 lint 结论）", f.display());
+            }
+        } else {
+            clean = false;
+            for d in &found {
+                if json {
+                    json_rows.push(format!(
+                        "{{\"spec\":{},\"code\":{},\"line\":{},\"col\":{},\"msg\":{}}}",
+                        json_str(&f.display().to_string()),
+                        json_str(&d.code),
+                        d.line,
+                        d.col,
+                        json_str(&d.msg)
+                    ));
+                } else {
+                    println!(
+                        "{}:{}:{}: {}: {}",
+                        f.display(),
+                        d.line,
+                        d.col,
+                        d.code,
+                        d.msg
+                    );
+                }
+            }
+        }
+    }
+    if json {
+        println!("{{\"findings\":[{}]}}", json_rows.join(","));
+    }
+    if clean {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+/// 最小 JSON 字符串转义（不引 `serde_json`，见 `docs/archive/forge-dsl-v18-plan.md` §10.4）。
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// `fmt`：把 **include 展开 + override 应用**后的规范文稿打出来（人工核对用）。

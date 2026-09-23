@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-23) — ISA-DSL v19 V4a（`forge-isa lint` 静态体检）
+
+- **新子命令 `forge-isa lint <谱>... [--json]`**：不执行、不编译，只报"写了却用不上"的声明——`LINT-UNUSED-SLOT`（`[[operand_slots]]` 没被任何 `ops` 引用）与 `LINT-UNUSED-FORM`（`[[forms]]` 没被任何指令/模板引用），结论锚到 TOML 行列；退出码与 `validate` 一致（0/1/2）。三份发行谱首次跑出 1 条真阳性（x86 的 `gpr32` 槽没人引用）→ 已删掉该死槽（零行为变化：`cargo test -p forge-codegen --lib` 仍 1150 passed），现在三谱全部干净。守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs` 把"零误报"钉成快照。
+
 ### Added (2026-09-23) — ISA-DSL v19 V3a（谱内测试向量 + `forge-isa test`）
 
 - **谱里可以直接写测试向量（`[[vectors]]`）**：`{asm, bytes}`（`assemble → encode` 逐字节相等 + `decode` 吃满再编码一致）、`{asm, error = "<子串>"}`（汇编/编码必须失败）、`{bytes, error = "DECODE"[, partial = N]}`（解码必须失败，`partial` 钉 `decode_partial` 的消费量）、`{bytes}`（解码正向）。生成期把它们翻成 `__spec_tests::spec_vector_<下标>` 用例，**不再需要手抄 Rust 黄金字节表**。形态在解析期校验（缺 `asm`/`bytes`、正负同给、定宽字长不符、字节越界、`partial` 用错、同一文本两种期望字节、空子串均报错）。riscv64 已迁移 67 条（原先 Rust 里的三张 oracle 表；迁移前后字节集合的规范化 sha256 相同，`cargo test -p forge-codegen --lib` 903 → 970 passed）。

@@ -170,14 +170,6 @@ kind = "reg"
 class = "gpr8"
 roles = ["in", "out", "inout"]
 
-# 8 位寄存器操作数（SETCC 目标等）：索引 4-7（spl/bpl/sil/dil）无 REX 前缀
-# 会被解码为 ah/ch/dh/bh，必须强制 REX（见 codegen REX 条件）。
-[[operand_slots]]
-name = "gpr32"
-kind = "reg"
-class = "gpr4"
-roles = ["in", "out", "inout"]
-
 [[operand_slots]]
 name = "gprx"
 kind = "reg"
@@ -206,6 +198,8 @@ roles = ["in", "out"]
 [[operand_slots]]
 name = "gpr1b"
 kind = "reg"
+# 8 位寄存器操作数（SETCC 目标等）：索引 4-7（spl/bpl/sil/dil）无 REX 前缀
+# 会被解码为 ah/ch/dh/bh，必须强制 REX（见 codegen REX 条件）。
 class = "gpr1"
 byte_reg = true
 roles = ["in", "out"]

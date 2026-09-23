@@ -106,7 +106,7 @@
 | **V1** 拆 `forge-isa-runtime`（**破坏性**） | 新 crate：`machine/*` + `runtime/{output_types,registry}` + `AllocResult`/`CodeSink`/`LabelRef`；解三处 `machine→pipeline` 引用：数据型上移，管线走 runtime 的 `Pipeline` trait，`impl_erased_target_machine!` 移入 runtime | 生成物只依赖 runtime；`forge-codegen` 变成 runtime 下游（保留 JIT/regalloc/emission/arch） | `cargo tree -p forge-isa-runtime` 只含 forge-ir；新守卫 `runtime_has_no_pipeline_dep.rs`；三后端 930 条规格用例 + 黄金 + 矩阵 195/3/0、131/67/0、23/175/0 逐数字不变 | 通用性的**前置条件** |
 | ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
 | ✅ **V3** `[[vectors]]` 数据化测试 | `{ asm, bytes }`、`{ asm, error = "<码>" }`、`{ bytes, error = "DECODE", partial = N }`、`{ bytes }`（解码正向）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价**（脚本 dump 前后 sha256 比对）✅；负向向量钉错误码 ✅；手写测试行数 −≥50% **未达**（实测 −23.4%，原因见 §5 进度：剩下的行数是别名/往返/集成断言，向量四形态表达不了） | G2；作者体验立刻变好 |
-| **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降 |
+| 🚧 **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a 已落地**（未用槽/未用 form + CLI，三谱零结论） |
 | **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants` + 值条件列 `vary` 下沉到 `[[templates]]` | RV32 从同一 riscv64 谱生成（投影：encode/decode/asm，不注册）；`explain` 显示参数生效点 | 与独立 RV32 表或 QEMU 32 位用例对拍；矩阵/覆盖守卫显式登记变体期望 | G4；臂/扩展式复用的验证 |
 | **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关" |
 | **V7** 语义层表化（**可选，默认不做**） | 只借"属性视图 + 生成期可分析性"；把 S8b-2 的通用解释器当候选 | 先量：V1 之后 x86 C 段 334 KB 是否仍是编译时间主因、表化净收益是否 ≥15% token 且不增编译时间 | 结论入库（含实测数字），无论做与不做 | 与 S8b-2 一致：以度量决定 |
@@ -189,6 +189,27 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   **上面那条守卫假阳性由此得到反向印证**：run 178 里 `Test (Linux)`（"Test remaining
   workspace"）、`Test (macOS)`、`Test (Windows)`、`Coverage` **四项红的都是
   `forge-isa-runtime` 的这条测试**（V1b 把宏搬进 runtime 时引入），V2 修掉后 run 179 四项全绿。
+
+**V4a 已落地（2026-09-23，两条零误报规则 + CLI）**：
+
+- 新模块 `forge-isa-dsl::lint`（入口 `lint_source(&str) -> Result<Vec<DiagLine>, Vec<DiagLine>>`，
+  校验不过时直接返回诊断）+ CLI `forge-isa lint <谱>... [--json]`（退出码与 `validate` 一致：
+  0 干净 / 1 有结论或诊断 / 2 用法错误；多文件谱先按 `validate` 口径报诊断，体检跑在**合并文稿**上）。
+- 规则（只报"写了却用不上"，锚到 TOML 行列）：
+  `LINT-UNUSED-SLOT`（槽没被任何 `ops` 引用）、`LINT-UNUSED-FORM`（form 没被任何指令/模板
+  `body.form` 引用）。
+- **不重复解析期已经拦住的**：模板行键笔误（`typo_key = 1`）在 `TemplateRow` 的
+  `deny_unknown_fields` 下就是硬错误——原本设计的第三条规则写完即删（教训留在模块头注释里）。
+- **零误报实测（这是 V4 的硬判据）**：三份发行谱初跑 ⇒ arm64/riscv64 **干净**，
+  x86 报 1 条 `[[operand_slots]] #1 ('gpr32')`；人工核对（`grep gpr32` 只有声明与一处注释）
+  判为**真阳性** → 删掉该死槽（`cargo test -p forge-codegen --lib` 仍 **1150 passed**，
+  零行为变化；顺带把那句被错放的 8 位 REX 注释移回 `gpr1` 槽上）。删后三谱全部干净。
+  守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs`：三谱必须**零结论** +
+  "给 arm64 追加一个死槽必须报出来"（证明守卫本身有效）。
+- **V4b（下一步）**：位域未使用 / 重叠（要按 form+指令视图判定，否则 riscv 的
+  `shamt5`/`shamt6`、`funct5`/`funct7`、`word` 这类"同一字位的多种解释"全是误报）、
+  `ref` 未被引用、可合并为 `vary` 的族（只建议）、**能力缺口三类分开报**
+  （终结指令 / 宿主管线 / 真缺口，口径见 §10.3）。
 
 **V3a 已落地（2026-09-23，riscv64 试点 + CLI）**：
 
