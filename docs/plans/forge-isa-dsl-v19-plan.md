@@ -182,6 +182,13 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   全套测试、`forge-codegen` 27 个测试二进制、三架构 JIT 矩阵、release check、`cargo doc`
   与全量 workspace 测试全绿；改谱后 build script 重跑（生成物 mtime 变化、文件名与内容哈希
   稳定）也已实测。
+- **CI 实测（2026-09-23）**：`d16421d` 的 GitHub Actions run **179** = **11 项检查 10 绿**。
+  唯一红的是 `forge-rustc (e2e, Windows)`——它与上一提交 `a1113c5` 的 run 178 是**同一个
+  job、同一个失败步骤**（`Run e2e (stage A + M4 parallel)`），属本仓已记录的环境性 flaky 面
+  （`docs/plans/forge-rustc-vec_push-plan.md` §9.5 的 vec 族 CI AV），与本轮改动无关。
+  **上面那条守卫假阳性由此得到反向印证**：run 178 里 `Test (Linux)`（"Test remaining
+  workspace"）、`Test (macOS)`、`Test (Windows)`、`Coverage` **四项红的都是
+  `forge-isa-runtime` 的这条测试**（V1b 把宏搬进 runtime 时引入），V2 修掉后 run 179 四项全绿。
 
 **V1b 早期方案（`pipeline = <路径>` 宏参数——已放弃，保留反例）**：原计划让宿主在生成期把
 管线类型路径交给生成物。落地失败：宿主给的路径会先被**固定根改写**
