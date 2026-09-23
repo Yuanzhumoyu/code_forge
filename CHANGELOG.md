@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-24) — ISA-DSL v19 V4c（lint 三条新规则：位域重叠 / 能力缺口 / 未引用 ref）
+
+- **`LINT-BITFIELD-OVERLAP`（默认档）**：同一条指令的字段视图里两个位域抢同一批位（视图 = form 预设 ⊕ 指令覆盖后的编码键 + 指令 `fields`）。**必须按逐指令视图判**：按整张 `[conventions.bitfields]` 表判会把 riscv 的 `shamt5`/`shamt6`、`funct5`/`funct6`/`funct7`、arm64 的 `op6`+`imm26`、两边的 `word`（全字常量）这类"同一批位的多种解释"全判成错。**首次落地报出 4 条真阳性**：arm64 的 STP/LDP X/W 四条的 `idx3`（bit24 与 `op8` 常量重复写同一位，取值恰好一致所以黄金字节没暴露）⇒ 已修谱为 `idx2`（`op8` 常量给 bit24），`cargo test -p forge-codegen --lib` 仍 **1264 passed**（89 条 arm64 向量逐字节不变）。
+- **`LINT-OP-GAP`（`lint --ops <宿主 op 表>`）**：能力缺口按计划 §10.3 的**三类分开报**——终结指令（`Ret/Jmp/Br/Switch/Unreachable/Invoke`，谱里不该有 `[[lowering]]`）与宿主管线直查的 7 条都不算缺口，只有真缺口报结论，另打印一行覆盖率口径。宿主 op 表是**宿主自己的数据**（`crates/foundation/forge-ir/ops.toml`，DSL 侧不留第二份会漂移的清单）。实测与 §10.3 逐数字一致：x86 `覆盖 100 / 终结 6 / 宿主管线 7 / 真缺口 3`（`AddrSpaceCast`/`Resume`/`VaArg`）、riscv64 `61/6/7/42`、arm64 `8/6/7/95`——守卫 `tests/lint_shipped.rs::op_gap_matches_section_10_3` 把它钉住。
+- **`LINT-REF-UNUSED`（opt-in `lint --refs`）**：指令声明了 `ref` 却没有任何 lowering/pattern/emit/pseudo/spill 模板行首引用它。**默认关**：`ref` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱 28 条——arm64 27 条预留 / x86 1 条 `vmovups` 疑似残留），这是作者意图，只有作者能判；写新谱时打开它抓"名字拼错 ⇒ 多态分派永不命中"最有用。清单快照 `tests/lint_shipped.rs::unreferenced_ref_inventory`。
+- CLI：`forge-isa lint <谱>... [--json] [--ops <宿主 op 表.toml>] [--refs]`；退出码口径不变（默认档零结论仍为 0）。
+
 ### Added (2026-09-24) — ISA-DSL v19 V5（参数化变体：`[meta].variants` / `only_variants` / `--params`）
 
 - **一份源谱可以投影出多个变体**：`[meta].variants = { xlen = [32, 64] }` 声明"参数名 → 取值域"，指令/模板行/`[emit.prologue|epilogue]`/`[spill.*]`/`[[pseudo]]`/`[[pattern]]` 六处都能标 `only_variants = { xlen = [64] }`（"本声明只在这些取值下存在"）。**默认档逐字节不变**（不传参数 ⇒ 不过滤、不替换）。

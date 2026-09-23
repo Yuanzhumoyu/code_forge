@@ -88,7 +88,7 @@ rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
 opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
 imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
 imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
-idx3  = { offset = 22, width = 3 }   # LDP/STP index（100 off STP/101 off LDP）
+idx2  = { offset = 22, width = 2 }   # LDP/STP index 低位（bit24 由 op8 常量给：100 off STP/101 off LDP ⇒ idx2 = 0/1）
 rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
 imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元）
 
@@ -463,7 +463,7 @@ operand_fields = ["rt", "rn", "rt2", "imm7"]
 name = "STPX"
 form = "PAIR"
 opcode = 0xA9
-fields = { idx3 = 4 }
+fields = { idx2 = 0 }
 ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7u"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 
@@ -471,7 +471,7 @@ asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 name = "LDPX"
 form = "PAIR"
 opcode = 0xA9
-fields = { idx3 = 5 }
+fields = { idx2 = 1 }
 ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7u"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 
@@ -479,7 +479,7 @@ asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 name = "STPW"
 form = "PAIR"
 opcode = 0x29
-fields = { idx3 = 4 }
+fields = { idx2 = 0 }
 ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7u"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 
@@ -487,7 +487,7 @@ asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 name = "LDPW"
 form = "PAIR"
 opcode = 0x29
-fields = { idx3 = 5 }
+fields = { idx2 = 1 }
 ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7u"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 

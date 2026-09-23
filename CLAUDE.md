@@ -363,9 +363,16 @@ let name = node.get_text("name")?;
   校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
   守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs` 与 `tests/determinism.rs`。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint <谱.toml>`——
-  其中 `lint`（v19 V4a/V4b）是**静态体检**：报"写了却用不上"的声明（未用的 `[[operand_slots]]` /
-  `[[forms]]` / `[conventions.bitfields]`），退出码同 `validate`；**三份发行谱必须零结论**
-  （守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs`——真阳性请修谱，别改快照）。
+  其中 `lint`（v19 V4a–V4c）是**静态体检**：报"写了却用不上 / 自相矛盾 / 宿主覆盖不到"的声明——
+  未用的 `[[operand_slots]]` / `[[forms]]` / `[conventions.bitfields]`、**逐指令视图**里的位域重叠
+  （`LINT-BITFIELD-OVERLAP`；按整张位域表判会把 riscv `shamt5`/`shamt6`、arm64 `op6`+`imm26`、
+  全字常量 `word` 这类"同一批位的多种解释"全判成误报），退出码同 `validate`；**三份发行谱必须零结论**
+  （守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs`——真阳性请修谱，别改快照；V4c 就据此
+  修掉 arm64 `idx3`×`op8` 的 bit24 重复声明）。两个可选档：`--ops <宿主 op 表.toml>` 报**能力缺口**
+  （三类分开：终结指令/宿主管线直查不算缺口，只有真缺口报；口径 = 计划 §10.3，实测
+  x86 `100/6/7/3`、riscv64 `61/6/7/42`、arm64 `8/6/7/95`，宿主 op 表是宿主数据、DSL 不留第二份清单）、
+  `--refs` 报"声明了却没被任何模板行首引用的 `ref`"（**opt-in**：实测三谱 28 条是给未来 lowering
+  预留的多态名，属作者意图，不进默认档）。
   不接后端就能校验（全部诊断 + 行:列；`--strict-overlap` 另报 lowering 的**部分重叠**（`DSL-OVERLAP`）
   ——该档默认关：实测三 ISA 61 条全是合法的"特化 + 兜底"，它只是评审清单，清单快照在
   `crates/frontend/forge-isa-dsl/tests/strict_overlap.rs`）、看**展开后**的指令与生效编码键、查单条指令的

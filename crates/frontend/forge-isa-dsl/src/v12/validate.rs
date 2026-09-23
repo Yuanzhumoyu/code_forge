@@ -178,8 +178,9 @@ fn retain_counted<T>(v: &mut Vec<T>, keep: impl Fn(&T) -> bool) -> usize {
 /// 模板行首的引用名（`ADD {out}, …` → `ADD`；`@frame_alloc` → `frame_alloc`）。
 ///
 /// 与 `validate_inst_lines` 的取法一致（`{out} = INST …` 取 `=` 右侧、首个空白词），
-/// 但把 `@` 前缀归一成裸引用名，好与 `declared_refs` 比对。
-fn inst_head_ref(line: &str) -> Option<String> {
+/// 但把 `@` 前缀归一成裸引用名，好与 `declared_refs` 比对。lint 侧复用同一取法
+/// （`pub(crate)`，v19 V4c：判"`ref` 有没有被模板行首引用"必须与校验用同一口径）。
+pub(crate) fn inst_head_ref(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') {
         return None;

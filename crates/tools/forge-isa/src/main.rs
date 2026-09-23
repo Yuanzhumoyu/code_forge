@@ -34,7 +34,9 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
   forge-isa diff     <a.toml> <b.toml> [--json]
                                              两份谱的规格 diff（增/删/改字段）
   forge-isa test     <谱.toml> [--json]      跑谱里的自测（谱内向量 + 每条指令闭环用例）
-  forge-isa lint     <谱.toml>... [--json]   静态体检（未用的槽/form 等），退出码同 validate
+  forge-isa lint     <谱.toml>... [--json] [--ops <宿主 op 表.toml>] [--refs]
+                                             静态体检（未用的槽/form/位域、位域重叠…）；
+                                             `--ops` 另报能力缺口（终结/宿主管线/真缺口三类分开）
   forge-isa schema   [--out <file>]         打印（或写出）ISA-DSL 的 JSON Schema
   forge-isa fmt      <谱.toml> [--out <file>] 打印（或写出）**合并后**的规范文稿
                                              （include 展开 + override 应用，供人核对）
@@ -101,12 +103,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(cmd_diff(a, b, json))
         }
         "lint" => {
-            let json = has_flag(&args[1..], "--json");
-            let files = paths(&args[1..], &["--json"])?;
+            // `--ops <宿主 op 表>` 与 `--refs` 是 V4c 的两个可选输入（见 `lint` 模块头）。
+            let (rest, ops_path) = split_flag_value(&args[1..], "--ops")?;
+            let refs = has_flag(&rest, "--refs");
+            let json = has_flag(&rest, "--json");
+            let files = paths(&rest, &["--json", "--refs"])?;
             if files.is_empty() {
                 return Err("lint 需要一个或多个谱文件".into());
             }
-            Ok(cmd_lint(&files, json))
+            Ok(cmd_lint(&files, json, refs, ops_path.as_deref()))
         }
         "test" => {
             let json = has_flag(&args[1..], "--json");
@@ -148,12 +153,59 @@ fn flag_value(args: &[String], flag: &str) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
-/// `lint`：静态体检（v19 V4a）——**不执行、不编译**，只报"写了却用不上"的声明。
+/// 摘掉 `--flag <值>`（连值一起），返回 (剩余参数, 值)（v19 V4c：`lint --ops <表>`）。
+///
+/// 与 [`flag_value`] 的分工：`flag_value` 只读取、留给 `paths()` 去撞"值被当位置参数"；
+/// 多文件子命令（lint）必须把值真的摘出去，否则 op 表路径会被当成谱文件。
+fn split_flag_value(args: &[String], flag: &str) -> Result<(Vec<String>, Option<PathBuf>), String> {
+    let mut rest = Vec::new();
+    let mut value = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == flag {
+            let Some(v) = args.get(i + 1) else {
+                return Err(format!("`{flag}` 需要一个取值"));
+            };
+            value = Some(PathBuf::from(v));
+            i += 2;
+        } else {
+            rest.push(args[i].clone());
+            i += 1;
+        }
+    }
+    Ok((rest, value))
+}
+
+/// `lint`：静态体检（v19 V4a/V4c）——**不执行、不编译**，只报"写了却用不上 / 自相矛盾 /
+/// 宿主覆盖不到"的声明。
 ///
 /// 退出码与 `validate` 一致：`0` 干净、`1` 有结论或有诊断、`2` 用法错误。
 /// 多文件谱：先按 `validate` 的口径报诊断（诊断带**来源文件**），体检查询跑在**合并后**的
 /// 文稿上（行号与 `forge-isa fmt` 的文稿一致——已在消息里写明路径前缀）。
-fn cmd_lint(files: &[PathBuf], json: bool) -> ExitCode {
+///
+/// 两个可选档（V4c）：`--ops <宿主 op 表>` 走能力缺口检查（三类分开报，另打印覆盖率口径）、
+/// `--refs` 报"声明了却没被任何模板行首引用的 `ref`"（默认关——预留名字是合法写法）。
+fn cmd_lint(files: &[PathBuf], json: bool, refs: bool, ops_path: Option<&Path>) -> ExitCode {
+    let mut opts = forge_isa_dsl::lint::LintOpts {
+        check_unused_refs: refs,
+        ..Default::default()
+    };
+    if let Some(p) = ops_path {
+        let text = match std::fs::read_to_string(p) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("读宿主 op 表 {} 失败：{e}", p.display());
+                return ExitCode::from(1);
+            }
+        };
+        match forge_isa_dsl::lint::host_ops_from_toml(&text) {
+            Ok(v) => opts.host_ops = v,
+            Err(e) => {
+                eprintln!("{}: {e}", p.display());
+                return ExitCode::from(1);
+            }
+        }
+    }
     let mut clean = true;
     let mut json_rows: Vec<String> = Vec::new();
     for f in files {
@@ -172,14 +224,15 @@ fn cmd_lint(files: &[PathBuf], json: bool) -> ExitCode {
             clean = false;
             continue;
         }
-        let found = forge_isa_dsl::lint::lint_source(&spec.text).unwrap_or_default();
+        let result = forge_isa_dsl::lint::lint_source_opts(&spec.text, &opts).unwrap_or_default();
+        let found = &result.findings;
         if found.is_empty() {
             if !json {
                 println!("{}: 干净（无 lint 结论）", f.display());
             }
         } else {
             clean = false;
-            for d in &found {
+            for d in found {
                 if json {
                     json_rows.push(format!(
                         "{{\"spec\":{},\"code\":{},\"line\":{},\"col\":{},\"msg\":{}}}",
@@ -199,6 +252,30 @@ fn cmd_lint(files: &[PathBuf], json: bool) -> ExitCode {
                         d.msg
                     );
                 }
+            }
+        }
+        // 能力缺口口径（给了 `--ops` 才有）：三类分开打印，便于直接和宿主对账。
+        if let Some(cov) = &result.ops_coverage {
+            if json {
+                json_rows.push(format!(
+                    "{{\"spec\":{},\"code\":\"OPS-COVERAGE\",\"covered\":{},\"terminators\":{},\
+                     \"host_pipeline\":{},\"gaps\":{}}}",
+                    json_str(&f.display().to_string()),
+                    cov.covered,
+                    cov.terminators,
+                    cov.host_pipeline,
+                    cov.gaps.len()
+                ));
+            } else {
+                println!(
+                    "# {}: 宿主 op 覆盖 = [[lowering]]+[[pattern]] {} / 终结指令 {}（谱里不该有）\
+                     / 宿主管线 {}（宿主直查）/ 真缺口 {}",
+                    f.display(),
+                    cov.covered,
+                    cov.terminators,
+                    cov.host_pipeline,
+                    cov.gaps.len()
+                );
             }
         }
     }

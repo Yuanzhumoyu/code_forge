@@ -1358,7 +1358,7 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），逐字段列出 `字段: A → B` |
 | `schema [--out <file>]` | 打印/写出 ISA-DSL 的 **JSON Schema**（仓库根的 `isa-dsl.schema.json` 由此生成） |
 | `fmt <谱.toml> [--out <file>]` | 打印/写出**合并后的单文件谱**（多文件 `include` 折叠成一份；v18 S7d） |
-| `lint <谱.toml>` | 静态体检：报"写了却用不上"的声明（未用的槽/form/位域，v19 V4a；三份发行谱零结论） |
+| `lint <谱.toml>` | 静态体检：报"写了却用不上 / 自相矛盾 / 宿主覆盖不到"的声明（v19 V4；六个码见下节），三份发行谱零结论 |
 | `test <谱.toml>` | 零宿主临时 crate 里跑谱内测试向量（v19 V3；不起后端 crate） |
 
 约定：默认人类可读，`--json` 给机读输出（手写发射器，不引 `serde_json`——与方案 §10.4
@@ -1520,6 +1520,48 @@ partial = 1
 `insts`/`validate`/生成物命名都在范围内，"能跑"仍由 `tm` 部件与宿主负责（计划 §5 V5）。
 RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不是一份可运行的后端谱——
 投影的用途是**看见变体依赖面**与让生成物正确分文件。
+
+### 静态体检（`forge-isa lint`，v19 V4）
+
+**不执行、不编译**，只回答"这份谱里有没有写了却用不上 / 自相矛盾 / 覆盖不到的东西"；
+与 `validate` 的分工是"**对不对**"（错就编译不过）vs"**干不干净**"（合法但可疑）。
+**零误报是硬判据**：三份发行谱必须零结论，快照守卫在
+`crates/frontend/forge-isa-dsl/tests/lint_shipped.rs`（真阳性请**修谱**，别改快照）。
+
+| 码 | 判什么 | 档 |
+| --- | --- | --- |
+| `LINT-UNUSED-SLOT` | `[[operand_slots]]` 没被任何 `ops = ["名:槽[:角色]"]` 引用 | 默认 |
+| `LINT-UNUSED-FORM` | `[[forms]]` 没被任何指令/模板 `form` 引用 | 默认 |
+| `LINT-UNUSED-BITFIELD` | 位域名在整份谱里只出现在声明处（按标识符边界计数，`imm1` 不命中 `imm12`） | 默认 |
+| `LINT-BITFIELD-OVERLAP` | **同一条指令的字段视图**里两个位域抢同一批位（视图 = form 预设 ⊕ 指令覆盖后的编码键 + 指令 `fields`） | 默认 |
+| `LINT-OP-GAP` | 宿主 op 表里有、本谱既没有 `[[lowering]]` 也没有 `[[pattern]]` 覆盖的**真缺口** | `--ops <宿主 op 表>` |
+| `LINT-REF-UNUSED` | 指令声明了 `ref`，却没有**任何** lowering/pattern/emit/pseudo/spill 模板行首引用它 | `--refs`（opt-in） |
+
+两条判据上的讲究（都来自实测，别按直觉改）：
+
+- **重叠必须按"逐指令视图"判**：按整张 `[conventions.bitfields]` 表判会把 riscv 的
+  `shamt5`/`shamt6`、`funct5`/`funct6`/`funct7`、arm64 的 `op6`+`imm26`、两边用于全字常量的
+  `word` 这类"同一批位的多种解释"全判成错——它们不在同一条指令里共存，完全合法。
+  首次落地即在 arm64 抓到 4 条真阳性（STP/LDP 的 X/W：`idx3` 的 bit24 与 `op8` 常量重复写
+  同一位，取值恰好一致所以黄金字节没暴露）⇒ 修谱为 `idx2`（见计划 §5 V4c 进度）。
+- **`ref` 未引用默认不报**：`ref` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱
+  28 条：arm64 27 条预留 / x86 1 条疑似残留）。它是作者意图，只有作者能判，所以留在
+  `--refs` 档；写新谱时打开它抓"名字拼错 ⇒ 多态分派永不命中"最有用。
+
+**能力缺口三类分开报**（口径 = 计划 §10.3）：给 `--ops crates/foundation/forge-ir/ops.toml`
+后，工具只把**真缺口**报成结论，另打印一行覆盖率口径：
+
+```text
+# isa/x86_v12.toml: 宿主 op 覆盖 = [[lowering]]+[[pattern]] 100 / 终结指令 6（谱里不该有）/ 宿主管线 7（宿主直查）/ 真缺口 3
+```
+
+- **终结指令**（`Ret`/`Jmp`/`Br`/`Switch`/`Unreachable`/`Invoke`）由生成的
+  `lower_terminator` 按 `TermKind` 分派，谱里**根本不该有** `[[lowering]]`；
+- **宿主管线直查**的 7 条（`Bitcast`/`Call`/`CallIndirect`/`ExtractValue`/`InsertValue`/
+  `GetElementPtr`/`LandingPad`）也不是谱侧缺口；
+- 剩下才是真缺口：x86 **3**（`AddrSpaceCast`/`Resume`/`VaArg`，宿主与谱都没有）、
+  riscv64 **42**、arm64 **95**（后两者是各自的谱侧工作量）。
+  宿主 op 表是**宿主自己的数据**（DSL 侧不留第二份会漂移的清单），因此换宿主就换一份表。
 
 ## 已有 ISA 谱
 

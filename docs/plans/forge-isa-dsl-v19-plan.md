@@ -106,7 +106,7 @@
 | **V1** 拆 `forge-isa-runtime`（**破坏性**） | 新 crate：`machine/*` + `runtime/{output_types,registry}` + `AllocResult`/`CodeSink`/`LabelRef`；解三处 `machine→pipeline` 引用：数据型上移，管线走 runtime 的 `Pipeline` trait，`impl_erased_target_machine!` 移入 runtime | 生成物只依赖 runtime；`forge-codegen` 变成 runtime 下游（保留 JIT/regalloc/emission/arch） | `cargo tree -p forge-isa-runtime` 只含 forge-ir；新守卫 `runtime_has_no_pipeline_dep.rs`；三后端 930 条规格用例 + 黄金 + 矩阵 195/3/0、131/67/0、23/175/0 逐数字不变 | 通用性的**前置条件** |
 | ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
 | ✅ **V3** `[[vectors]]` 数据化测试 | 五种形态（`{asm, bytes}` / `{asm, error}` / `{bytes, error="DECODE"[,partial]}` / `{bytes}` / `{asm}` 闭环）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节 + 往返清单；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价** ✅；负向向量钉错误码 ✅；手写测试行数 **−33.1%**（V3c 后；仍未达 −≥50%，剩下的行数是别名/集成/ABI/JIT 断言） | G2；作者体验立刻变好 |
-| 🚧 **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a 已落地**（未用槽/未用 form + CLI，三谱零结论） |
+| 🚧 **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a/V4b/V4c 已落地**：未用槽/form/位域（默认）、位域重叠（默认，修出 arm64 4 条真阳性）、能力缺口（`--ops`，§10.3 逐数字一致）、未引用 `ref`（`--refs` opt-in，28 条预留名只钉数字）。剩：可合并为 `vary` 的族（只建议）、**未指定位**（按逐指令视图判会误伤 reserved 位 → 待度量） |
 | 🚧 **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants`（**六处声明统一**：指令/模板行/emit 块/spill/pseudo/pattern） + 值条件列 `vary` 下沉到 `[[templates]]`（**未做**，见下） | RV32 从同一 riscv64 谱投影（不注册后端）；`insts --params` 打印投影账目 | 实测账目：116 → 104 条指令 / 110 → 96 条 lowering / 逐节丢弃 4 项；守卫 `tests/variants.rs`（6 条） | G4；臂/扩展式复用的验证。**投影已落地（2026-09-24）**：`explain` 显示参数生效点**未做**；与独立 RV32 表对拍**未做**（投影不产可运行后端，见 §5 注） |
 | 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性）+ V6b（strict-overlap，实测 61 条全合法 ⇒ CI 不开）已落地**；`--warn-unreachable` 与死规则检测重叠，已在 V6b 说明不做 |
 | **V7** 语义层表化（**可选，默认不做**） | 只借"属性视图 + 生成期可分析性"；把 S8b-2 的通用解释器当候选 | 先量：V1 之后 x86 C 段 334 KB 是否仍是编译时间主因、表化净收益是否 ≥15% token 且不增编译时间 | 结论入库（含实测数字），无论做与不做 | 与 S8b-2 一致：以度量决定 |
@@ -279,10 +279,36 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   已知近似：位域的行锚定走 `DeclIndex::anchor` 按名字找行，`p6` 是 `op6` 的子串，报出的行会落在
   同一节的邻近行上（消息里始终带位域名，不影响可操作性）。
 
-- **V4c（下一步）**：位域**重叠/未指定位**（必须按 form+指令视图判定，否则 riscv 的
-  `shamt5`/`shamt6`、`funct5`/`funct7`、`word` 这类"同一字位的多种解释"全是误报）、
-  `ref` 未被引用、可合并为 `vary` 的族（只建议）、**能力缺口三类分开报**
-  （终结指令 / 宿主管线 / 真缺口，口径见 §10.3——需要把宿主侧的 op 清单接进来，属跨 crate 数据）。
+- **V4c（余下）**：可合并为 `vary` 的族（只建议）、**未指定位**（"字里没有任何位域覆盖的位"——
+  x86 的 prefix/REX/ModRM 本就不走位域表，按表判必成误报；定宽 ISA 里 reserved 位也常常故意不声明，
+  因此这条**先不做**，等有"忘了声明某个位域"的真事故再说）。
+
+**V4c 已落地（2026-09-24，三条规则：位域重叠 / 能力缺口 / 未引用 `ref`）**：
+
+- `LINT-BITFIELD-OVERLAP`（默认档）：**逐指令视图**判重叠——视图 = form 预设 ⊕ 指令级覆盖
+  （`EncKeys::over`，与生成器同一份判定）+ 指令 `fields` 的键 + `[conventions.modrm]` 的两个
+  字段（仅当该指令真的用 ModRM）。按整张表判是错的：riscv 的 `shamt5`/`shamt6`、
+  `funct5`/`funct6`/`funct7`、arm64 的 `op6`+`imm26`、两边的 `word`（全字常量）都是"同一批位的
+  多种解释"，只要不在同一条指令里共存就合法。消息给出双方区间，便于直接改 TOML。
+  **实测真阳性 4 条**：arm64 `STPX`/`LDPX`/`STPW`/`LDPW` 的 `idx3 = { offset = 22, width = 3 }`
+  与 `op8 = { offset = 24, width = 8 }` 在 bit24 上重叠——`idx3` 的 bit24 与 `op8` 常量重复写
+  同一位，两者取值恰好一致（4/5 的 bit24 都是 1，0xA9/0x29 的 bit24 也是 1）所以黄金字节没暴露。
+  修法（**行为逐字节不变**）：声明改成 `idx2 = { offset = 22, width = 2 }`，四条指令的
+  `fields` 由 4/5 改成 0/1（bit24 交给 `op8` 常量）。证据：`cargo test -p forge-codegen --lib`
+  仍 **1264 passed**（含 89 条 arm64 向量）。
+- `LINT-OP-GAP` + 覆盖率口径（`lint --ops <宿主 op 表.toml>`）：口径 = §10.3 的三类分开，
+  **实测与 §10.3 逐数字一致**（x86 `100/6/7/3`、riscv64 `61/6/7/42`、arm64 `8/6/7/95`，
+  x86 的三条真缺口 = `AddrSpaceCast`/`Resume`/`VaArg`）。宿主 op 表是**宿主自己的数据**
+  （`crates/foundation/forge-ir/ops.toml`，116 条 `[[op]]`），DSL 侧不留第二份会漂移的清单；
+  `host_ops_from_toml` 只读 `name`。`--ops` 下**只把真缺口报成结论**，另打印一行覆盖率。
+  守卫 `tests/lint_shipped.rs::op_gap_matches_section_10_3`。
+- `LINT-REF-UNUSED`（**opt-in** `lint --refs`）：`ref` 声明了却没有**任何**
+  lowering/pattern/emit/pseudo/spill 模板行首引用它（`validate::inst_head_ref` 与校验同一取法，
+  含 `@名字` 形态）。**默认关**：实测三谱 28 条（arm64 27 条 = 该谱只有 8 条 lowering，这些
+  短名是给还没写的整数 lowering 预留的多态名；x86 1 条 `vmovups` 疑似残留），"预留 vs 残留"
+  只有作者能判 ⇒ 只钉数字（`unreferenced_ref_inventory`），不进零结论门槛。
+- 守卫新增两条"守卫本身有效"的变异用例：注入"两个字段抢同一批位"的指令必须报重叠；
+  未引用槽的旧用例保留。默认档三谱仍**零结论**（新规则没有制造误报）。
 
 **V4a 已落地（2026-09-23，两条零误报规则 + CLI）**：
 
@@ -510,6 +536,11 @@ npx markdownlint-cli2 <改动文档>
    lowering（riscv 42 / arm64 95，属**谱侧工作量**而非 DSL 缺陷）。
 4. 因此 **V4 的 lint 必须把三类分开报**（终结指令 / 宿主管线 / 真缺口），否则一上手就是
    上百条误报。
+
+> **本表已机读化（2026-09-24，V4c）**：`forge-isa lint --ops crates/foundation/forge-ir/ops.toml
+> <谱>` 的覆盖率口径就是上面四列，守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs::
+> op_gap_matches_section_10_3` 把 `100/6/7/3`、`61/6/7/42`、`8/6/7/95` 钉成快照——
+> 改宿主 op 表或补谱侧 lowering 都会让这个守卫红，必须人工复核后同步本表。
 
 ### 10.4 生成物的宿主依赖面（V1 的迁移清单）
 
