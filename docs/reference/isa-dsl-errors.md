@@ -34,7 +34,7 @@
 | 错误码 | 对应节 | 典型问题 |
 | --- | --- | --- |
 | `DSL-TOML` | TOML 语法/结构 | 键名打错（`deny_unknown_fields`）、表重复、缺必填字段 |
-| `DSL-META` | `[meta]` | ISA 名非法、`comment_char` 不是单字符、宽度键指向未声明的组 |
+| `DSL-META` | `[meta]` | ISA 名非法、`comment_char` 不是单字符、宽度键指向未声明的组、**变体参数未声明或取值越界**（`--params`/`params` 传了 `[meta].variants` 里没有的名字，或取值不在声明域内，v19 V5） |
 | `DSL-ENCODING` | `[encoding]`（v18 S4） | `kind` 与键结构不匹配（`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、`mixed` 写 `max_len`）、`widths` 为空/重复/含 0、`bits = 0`、`default_opsize = 0`、逐指令 `width` 不在 `widths` 里或与 `bits` 不一致、`prefix_scan` 下写 `width` |
 | `DSL-REG` | `[reg.*]` | 缺 GPR 组、`names`/`count` 不一致、组名宽度非法、生成式声明参数不全 |
 | `DSL-STACK` | `[stack]` | `slot`/`align`/`fp_save` 为 0 或未指向已声明组 |
@@ -42,7 +42,7 @@
 | `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空/`code` 超 4 位/`ir` 名非法或重复映射、`cond` 槽却没有表、用了 `{cc}` 却没映射全 10 个 IR 条件、`prefix_scan` 条目非法 |
 | `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class`/`classes` 未声明、`byte_reg` 用错组 |
 | `DSL-FORM` | `[[forms]]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
-| `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突、`reloc` 名字未声明/绑定的槽不在操作数里 |
+| `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突、`reloc` 名字未声明/绑定的槽不在操作数里、`asm` 里的 `{参数名}`（`[meta].variants`）**本次没传值**（v19 V5） |
 | `DSL-RELOC` | `[[reloc]]`（v18 S3d） | 名字为空/重复、`slot` 未声明或不是 `imm` 槽、`semantics` 不是宿主已知语义（由 serde 在反序列化期拒绝） |
 | `DSL-DERIVE` | `[[derive]]`（v18 S3f） | 名字为空/重复/与核心谓词属性重名（解析期）、`expr` 不是合法谓词、引用了未知属性或另一个派生（提示"派生不能引用派生"） |
 | `DSL-PSEUDO` | `[[pseudo]]`（v18 S3e） | 名字为空/重复/与指令助记符重名、`params` 为空或重复、`emit` 为空或有空行、emit 行首词既不是指令助记符也不是别的伪指令、`{…}` 不是声明的参数、参数没被用到 |
@@ -174,7 +174,20 @@
 
 不同匹配树之间的覆盖关系不做推断——若两个**不同**的树其实覆盖同一批输入，需要作者自己确认。
 
-### 3.11 位置看起来不对？
+### 3.11 变体投影（`--params` / `only_variants`，v19 V5）
+
+| 消息 | 修法 |
+| --- | --- |
+| `[meta].variants: 传了参数 \`x=1\`，但谱里没有声明它（已声明：…）` | 在 `[meta].variants` 里声明该参数（`variants = { xlen = [32, 64] }`），或检查参数名拼写；谱完全没有变体机制时消息会写"没有声明任何变体参数" |
+| `[meta].variants: 参数 \`xlen = 128\` 不在声明域 [32, 64] 内` | 取值超出声明域——改参数值，或（确实需要）扩声明域 |
+| `[[instructions.X]].asm: 占位符 '{width}' 是**变体参数**（\`[meta].variants\`）但本次没有传值` | 参数化模板必须显式传参：CLI `--params width=32`、宏 `params = { width = 32 }`。**默认档不许留参数占位符**——留着会让生成的汇编打印出字面 `{width}` |
+| `[emit.prologue].insts[i]: 未知指令引用 'SD'`（投影后才出现） | 该块引用了被投影掉的指令：给这个块补 `only_variants = { xlen = [64] }`（或为变体写一份自己的块）。**不给静默通道**是故意的——RV32 的帧件确实与 RV64 不同 |
+| 投影没丢东西（账目里 `-0`） | 检查 `only_variants` 是否写在了**被模板展开的**声明上（`[[templates]].body` / `rows` 都行），以及 `params` 是否真的传了 |
+
+投影的"丢了什么"永远打印在 `forge-isa insts --params …` 的第一行（`--json` 里是
+`projection` 字段）——**看不到账目就说明没投影**。
+
+### 3.12 位置看起来不对？
 
 - 诊断指向**声明行**（`name = …` / `op = …` / 节头）是正常的；
 - 若消息里用引号点名了出错的值（`'MRR_TYPO'`、`'rd_width'`、`'{bogus}'`），定位会进一步

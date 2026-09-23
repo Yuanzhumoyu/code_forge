@@ -129,15 +129,21 @@ pub struct ExpandOptions {
     pub name: Option<String>,
     /// 部件选择（`parts = [...]`）：缺省全开。
     pub parts: Parts,
+    /// **变体参数**（v19 V5，只读投影）：`params = { xlen = 32 }`。
+    ///
+    /// 空 = 不过滤（默认行为逐字节不变）。**参与文件名哈希**——同一份谱的不同变体
+    /// 必须落到不同生成物文件（S10d 的不变量）。
+    pub params: std::collections::BTreeMap<String, i64>,
 }
 
 impl ExpandOptions {
-    /// 宏缺省：`krate = None`、`spec_tests = true`、`name = None`、`parts` 全开。
+    /// 宏缺省：`spec_tests = true`、`name = None`、`parts` 全开、`params` 为空。
     pub fn new() -> Self {
         Self {
             spec_tests: true,
             name: None,
             parts: Parts::all(),
+            params: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -150,7 +156,7 @@ pub fn expand_file(path: &str, opts: &ExpandOptions) -> Result<proc_macro2::Toke
     let (_, resolved) = read_isa_file(path)?;
     let spec = loader::LoadedSpec::load(&resolved)?;
     let mod_name = resolve_mod_name(path, opts);
-    let ts = expand_loaded(&spec, &mod_name, opts.spec_tests, opts.parts)?;
+    let ts = expand_loaded(&spec, &mod_name, opts.spec_tests, opts.parts, &opts.params)?;
     dump_generated(path, &ts);
     Ok(ts)
 }
@@ -275,7 +281,13 @@ fn expand_source(
     spec_tests: bool,
 ) -> Result<proc_macro2::TokenStream, String> {
     let spec = loader::LoadedSpec::from_text(source.to_string(), isa_path);
-    expand_loaded(&spec, mod_name, spec_tests, Parts::all())
+    expand_loaded(
+        &spec,
+        mod_name,
+        spec_tests,
+        Parts::all(),
+        &std::collections::BTreeMap::new(),
+    )
 }
 
 /// 展开**已加载**的谱（`include` 已合并、诊断带来源文件）。
@@ -284,6 +296,7 @@ fn expand_loaded(
     mod_name: &syn::Ident,
     spec_tests: bool,
     parts: Parts,
+    params: &std::collections::BTreeMap<String, i64>,
 ) -> Result<proc_macro2::TokenStream, String> {
     // 生成期自测要用 encode/decode/asm——部件受限时明确报错，
     // 而不是悄悄生成一份编译不过的自测。（`tm` 不在其中，见 `supports_spec_tests`。）
@@ -295,7 +308,12 @@ fn expand_loaded(
         ));
     }
     // 诊断一次列全（S1）：每行都带可点击的 `路径:行:列: 码:`（按来源文件映射）。
-    let model = v12::parse_and_validate(&spec.text).map_err(|e| render_error_for(spec, &e))?;
+    let vopts = v12::validate::ValidateOpts {
+        strict_overlap: false,
+        params: params.clone(),
+    };
+    let model =
+        v12::parse_and_validate_opts(&spec.text, &vopts).map_err(|e| render_error_for(spec, &e))?;
     let inner = v12::codegen::generate_with_parts(&model, spec_tests, parts)
         .map_err(|e| anchor_msg_for(spec, &e))?;
     // 短名折叠（S8c，纯等价）→ **固定根改写**（v19 V1b：一律指运行时 crate）。

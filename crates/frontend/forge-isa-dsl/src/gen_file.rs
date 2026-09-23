@@ -67,6 +67,7 @@ struct RawArgs {
     spec_tests: Option<bool>,
     name: Option<String>,
     parts: Option<Vec<String>>,
+    params: Option<std::collections::BTreeMap<String, i64>>,
 }
 
 impl syn::parse::Parse for RawArgs {
@@ -75,6 +76,7 @@ impl syn::parse::Parse for RawArgs {
         let mut spec_tests = None;
         let mut name = None;
         let mut parts = None;
+        let mut params = None;
         while !input.is_empty() {
             input.parse::<syn::Token![,]>()?;
             if input.is_empty() {
@@ -104,6 +106,23 @@ impl syn::parse::Parse for RawArgs {
                     }
                     parts = Some(v);
                 }
+                "params" => {
+                    // `params = { xlen = 32, foo = 7 }`：花括号组里 `名字 = 整数`。
+                    let content;
+                    syn::braced!(content in input);
+                    let mut map = std::collections::BTreeMap::new();
+                    while !content.is_empty() {
+                        let key: syn::Ident = content.parse()?;
+                        content.parse::<syn::Token![=]>()?;
+                        let lit: syn::LitInt = content.parse()?;
+                        map.insert(key.to_string(), lit.base10_parse::<i64>()?);
+                        if content.is_empty() {
+                            break;
+                        }
+                        content.parse::<syn::Token![,]>()?;
+                    }
+                    params = Some(map);
+                }
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
@@ -119,6 +138,7 @@ impl syn::parse::Parse for RawArgs {
             spec_tests,
             name,
             parts,
+            params,
         })
     }
 }
@@ -136,6 +156,7 @@ impl RawArgs {
                 spec_tests: self.spec_tests.unwrap_or(true),
                 name: self.name,
                 parts,
+                params: self.params.unwrap_or_default(),
             },
         })
     }
@@ -172,6 +193,11 @@ pub fn generated_file_name(path: &str, opts: &ExpandOptions) -> String {
         opts.parts.tm,
     ]
     .hash(&mut h);
+    // 变体参数也参与命名（v19 V5）：同一份谱的不同变体不能互相覆盖。
+    for (k, v) in &opts.params {
+        k.hash(&mut h);
+        v.hash(&mut h);
+    }
     format!(
         "forge_gen_{}_{:016x}.rs",
         crate::resolve_mod_name(path, opts),
@@ -392,17 +418,28 @@ mod tests {
         let a = parse_macro_args(quote! {
             "isa/x86_v12.toml", spec_tests = false,
             name = "demo", parts = ["encode", "asm"],
+            params = { xlen = 32, ext = 7 },
         })
         .expect("完整参数");
         assert_eq!(a.path, "isa/x86_v12.toml");
         assert!(!a.opts.spec_tests);
         assert_eq!(a.opts.name.as_deref(), Some("demo"));
         assert_eq!(a.opts.parts.names(), "encode, asm");
+        // 变体参数（v19 V5）：`params = { 名字 = 整数 }`，进展开选项与生成物命名哈希。
+        assert_eq!(a.opts.params.get("xlen"), Some(&32));
+        assert_eq!(a.opts.params.get("ext"), Some(&7));
 
         let e = parse_macro_args(quote! { "x.toml", nope = 1 })
             .unwrap_err()
             .to_string();
         assert!(e.contains("未知参数"), "{e}");
+        let e = parse_macro_args(quote! { "x.toml", params = { xlen = "32" } })
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("expected integer") || e.contains("integer"),
+            "{e}"
+        );
         let e = parse_macro_args(quote! { "x.toml", parts = [1] })
             .unwrap_err()
             .to_string();
@@ -447,6 +484,23 @@ mod tests {
         let mut o = opts();
         o.parts.encode = false;
         assert_ne!(base, generated_file_name(p, &o), "parts 不同必须分开");
+        // 变体参数不同 ⇒ 不同文件（同一份谱的两个变体不能互相覆盖，v19 V5）。
+        let mut o = opts();
+        o.params.insert("xlen".into(), 32);
+        let x32 = generated_file_name(p, &o);
+        assert_ne!(base, x32, "params 不同必须分开");
+        let mut o2 = opts();
+        o2.params.insert("xlen".into(), 64);
+        assert_ne!(
+            x32,
+            generated_file_name(p, &o2),
+            "同一参数不同取值也必须分开"
+        );
+        assert_eq!(
+            x32,
+            generated_file_name(p, &o),
+            "同参数必须同名（宏侧与 build script 侧一致）"
+        );
         assert_ne!(
             base,
             generated_file_name("isa/other.toml", &opts()),

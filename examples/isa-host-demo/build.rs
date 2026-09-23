@@ -32,6 +32,7 @@ fn options() -> ExpandOptions {
             "asm".to_string(),
         ])
         .expect("部件名合法"),
+        params: Default::default(),
     }
 }
 

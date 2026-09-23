@@ -22,7 +22,11 @@ fn root() -> PathBuf {
 
 fn overlaps(isa: &str, strict: bool) -> usize {
     let path = root().join("isa").join(isa);
-    let (diags, _) = report::validate_file_opts(&path, strict);
+    let opts = report::RunOpts {
+        strict_overlap: strict,
+        ..Default::default()
+    };
+    let (diags, _) = report::validate_file_opts(&path, &opts);
     diags.iter().filter(|d| d.code == "DSL-OVERLAP").count()
 }
 

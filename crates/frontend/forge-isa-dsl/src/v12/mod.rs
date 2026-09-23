@@ -107,12 +107,28 @@ pub(crate) fn parse_and_validate_opts(
     source: &str,
     opts: &validate::ValidateOpts,
 ) -> Result<V12Model, V12Error> {
-    let model = parse(source)?;
+    parse_and_validate_projected(source, opts).map(|(m, _)| m)
+}
+
+/// 带档位的解析 + 校验 + **变体投影报告**（v19 V5，CLI `insts --params` 用）。
+pub(crate) fn parse_and_validate_projected(
+    source: &str,
+    opts: &validate::ValidateOpts,
+) -> Result<(V12Model, validate::Projection), V12Error> {
+    let mut model = parse(source)?;
     let idx = diag::DeclIndex::build(source);
     let mut diags = diag::Diags::new();
+    // 变体投影（v19 V5）在**校验之前**：投影掉的东西不该再报它的错。
+    let projection = match validate::apply_variants(&mut model, &opts.params) {
+        Ok(p) => p,
+        Err(msg) => {
+            diags.push_anchored(&idx, &msg);
+            validate::Projection::default()
+        }
+    };
     validate::validate_all(&model, &idx, &mut diags, opts);
     if diags.is_empty() {
-        return Ok(model);
+        return Ok((model, projection));
     }
     let first = diags.iter().next().expect("非空");
     let (line, col) = (first.line, first.col);

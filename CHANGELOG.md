@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-24) — ISA-DSL v19 V5（参数化变体：`[meta].variants` / `only_variants` / `--params`）
+
+- **一份源谱可以投影出多个变体**：`[meta].variants = { xlen = [32, 64] }` 声明"参数名 → 取值域"，指令/模板行/`[emit.prologue|epilogue]`/`[spill.*]`/`[[pseudo]]`/`[[pattern]]` 六处都能标 `only_variants = { xlen = [64] }`（"本声明只在这些取值下存在"）。**默认档逐字节不变**（不传参数 ⇒ 不过滤、不替换）。
+- **`forge-isa validate|insts --params xlen=32`**（逗号分隔多个）：`insts` 第一行打印**投影账目**（丢了哪些指令、逐节丢了什么、投影后剩多少），`--json` 里是 `projection` 字段。参数名未声明 / 取值越界一律 `DSL-META` 报错——拼错参数名不会静默"什么都没发生"。
+- **`isa_from_file!` 新增 `params = { xlen = 32 }`**：生成期投影，参数进生成物**文件名哈希**（同一份谱的两个变体落到不同 `$OUT_DIR` 文件，互不覆盖）。
+- **连带规则**：引用了被投影掉指令/`ref` 的 `[[lowering]]` 规则自动随之丢掉（可推断依赖），账目单列条数；`asm`/`[[lowering]].insts` 里的 `{参数名}` 替换成取值（宽度是数据）。**其余引用 fail-closed**：`[spill]`/`[emit]`/`[[pseudo]]`/`[[pattern]]` 引用了被投影掉的声明却没标 `only_variants` ⇒ 校验期报"未知指令引用"（结构件必须由作者显式变体化，自动猜是错的）；模板里留着参数占位符却没传值 ⇒ 报错并点名传法（否则生成的汇编会打印出字面 `{width}`）。
+- **实测账目**（`forge-isa insts --params xlen=32 isa/riscv64_v12.toml`）：`116 → 104` 条指令（丢 `LD`/`SD` 与 10 条 W 族）、`110 → 96` 条 lowering（连带丢 14 条）、逐节丢弃 `[emit.prologue]`/`[emit.epilogue]`/`[spill.GPR]` 各 1 项。守卫 `crates/frontend/forge-isa-dsl/tests/variants.rs`（6 条：默认档零投影、未声明/越界报错、RV32 账目快照、级联不多丢、只对传了的参数生效、替换语义）。
+- **MVP 边界**：只读投影（不注册后端、不生成变体专属运行期表）。RV32 投影的帧件是空的（本谱没写 LW/SW 版本），因此它不是一份可运行的后端谱——用途是**看见变体依赖面**与让生成物正确分文件。
+
+### Fixed (2026-09-24)
+
+- **`crates/frontend/forge-isa-dsl/tests/strict_overlap.rs` 编译不过**（V6b 遗留）：`report::validate_file_opts` 的第二参数早已从 `bool` 改成 `&RunOpts`，该测试目标仍传 `bool`（`E0308`）——`--strict-overlap` 的两个守卫此前实际上没跑过。已改为构造 `RunOpts`，现在两条守卫真跑（32/8/21 + 默认档零结论）。
+
 ### Added (2026-09-23) — ISA-DSL v19 V6（确定性守卫 + `validate --strict-overlap`）
 
 - **`validate --strict-overlap`**（新诊断码 `DSL-OVERLAP`）：报"同一 op 的两条 lowering 规则取值域**相交但互不包含**"（裁决序里前者先命中）——用来抓"`when` 写窄导致大部分取值掉进兜底"或"靠 `priority` 硬分胜负"这两类可疑形状。**默认档不变**（实测三份发行谱共 61 条、抽查全是故意的"特化 + 兜底"，因此它只作为评审清单，CI 不开这个档；清单条数由 `crates/frontend/forge-isa-dsl/tests/strict_overlap.rs` 钉成快照，变了要人工复核）。

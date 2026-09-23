@@ -21,10 +21,181 @@ fn collect(d: &mut Diags, idx: &DeclIndex, r: Result<(), String>) {
 /// 为什么默认关：这类规则**合法**（后一条在"前一条管不着"的取值上照常生效），
 /// 真谱里"特化规则 + 泛化兜底"遍地都是——默认开会把几百条合法写法变成错误。
 /// 先量化噪音（计划 §5 V6b 的判据），再决定是否以及如何在 CI 上开。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ValidateOpts {
     /// 报"同 op 两条规则取值域相交但互不包含"（`DSL-OVERLAP`）。
     pub strict_overlap: bool,
+    /// **变体参数**（v19 V5，只读投影）：`{ 参数名 → 取值 }`。
+    ///
+    /// 空 = 不过滤、不替换（**默认行为逐字节不变**）。非空时：参数必须在
+    /// `[meta].variants` 里声明且取值合法，逐指令 `only_variants` 不匹配的整条丢掉，
+    /// `{参数名}` 在 `asm` 与 `[[lowering]].insts` 里替换成取值。
+    pub params: BTreeMap<String, i64>,
+}
+
+/// 变体投影报告（v19 V5）：投影到底动了什么——给 CLI / 测试当证据，不参与语义。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Projection {
+    /// 生效的参数（空 = 没投影）。
+    pub params: BTreeMap<String, i64>,
+    /// 被投影掉的**指令名**（原声明序）。
+    pub dropped_insts: Vec<String>,
+    /// 逐节丢掉的条数：`(节名, 条数)`——`[[lowering]]` / `[emit.prologue]` /
+    /// `[spill.GPR]` / `[[pseudo]]` / `[[pattern]]`。
+    pub dropped_decls: Vec<(String, usize)>,
+    /// 投影后的指令数 / lowering 规则数（默认档 = 全量）。
+    pub inst_count: usize,
+    pub lowering_count: usize,
+}
+
+/// 参数化变体投影（v19 V5，**只读投影**）：校验参数 → 过滤声明 → 连带丢 lowering → 文本替换。
+///
+/// 返回的错误消息以 TOML 路径开头（`[meta].variants: …`），由调用方 `push_anchored` 锚行。
+/// **只做投影**：不注册后端、不生成变体专属的运行期表——"能跑"仍由 `tm` 部件与宿主负责。
+///
+/// 过滤对象 = **所有承载指令引用的声明**（六处，判定统一走 [`variants_keep`]）：
+/// 指令/模板行、`[emit.prologue|epilogue]`、`[spill.*]`、`[[pseudo]]`、`[[pattern]]`；
+/// 另外**连带**丢掉引用了被投影掉指令的 `[[lowering]]` 规则（这类依赖可推断，
+/// 见 [`Projection::dropped_decls`]）。**其余引用**（例如 `[abi]` 里的寄存器名）
+/// 若指向被投影掉的声明，校验器照旧 fail-closed 报错——不给静默通道。
+pub fn apply_variants(
+    m: &mut V12Model,
+    params: &BTreeMap<String, i64>,
+) -> Result<Projection, String> {
+    if params.is_empty() {
+        return Ok(Projection {
+            inst_count: m.instructions.len(),
+            lowering_count: m.lowering.len(),
+            ..Projection::default()
+        });
+    }
+    let declared = m.meta.variants.clone().unwrap_or_default();
+    for (k, v) in params {
+        let Some(domain) = declared.get(k) else {
+            let known = if declared.is_empty() {
+                "（谱里没有声明任何变体参数）".to_string()
+            } else {
+                declared.keys().cloned().collect::<Vec<_>>().join(", ")
+            };
+            return Err(format!(
+                "[meta].variants: 传了参数 `{k} = {v}`，但谱里没有声明它——请加 `[meta].variants` 条目（已声明：{known}）"
+            ));
+        };
+        if !domain.contains(v) {
+            return Err(format!(
+                "[meta].variants: 参数 `{k} = {v}` 不在声明域 {domain:?} 内"
+            ));
+        }
+    }
+    let mut dropped_decls: Vec<(String, usize)> = Vec::new();
+    // ① 指令（含模板展开出的实例）：`only_variants` 里**给了值**的参数不匹配 ⇒ 整条丢掉；
+    //    没给的参数不构成排除（调用方只关心自己传的那些）。
+    let refs_before = declared_refs(m);
+    let names_before: Vec<String> = m.instructions.iter().map(|i| i.name.clone()).collect();
+    m.instructions
+        .retain(|i| variants_keep(i.only_variants.as_ref(), params));
+    let refs_after = declared_refs(m);
+    let dropped_insts: Vec<String> = names_before
+        .into_iter()
+        .filter(|n| !refs_after.contains(n))
+        .collect();
+    // ② 其余承载指令引用的声明节：逐节 retain + 记账（节名 = TOML 里的写法）。
+    if let Some(em) = &mut m.emit {
+        for (what, block) in [
+            ("prologue", &mut em.prologue),
+            ("epilogue", &mut em.epilogue),
+        ] {
+            if block
+                .as_ref()
+                .is_some_and(|b| !variants_keep(b.only_variants.as_ref(), params))
+            {
+                *block = None;
+                dropped_decls.push((format!("[emit.{what}]"), 1));
+            }
+        }
+    }
+    let dropped_spills: Vec<String> = m
+        .spill
+        .iter()
+        .filter(|(_, s)| !variants_keep(s.only_variants.as_ref(), params))
+        .map(|(k, _)| k.clone())
+        .collect();
+    m.spill
+        .retain(|_, s| variants_keep(s.only_variants.as_ref(), params));
+    for key in dropped_spills {
+        dropped_decls.push((format!("[spill.{key}]"), 1));
+    }
+    let n = retain_counted(&mut m.pseudo, |p| {
+        variants_keep(p.only_variants.as_ref(), params)
+    });
+    if n > 0 {
+        dropped_decls.push(("[[pseudo]]".into(), n));
+    }
+    let n = retain_counted(&mut m.pattern, |p| {
+        variants_keep(p.only_variants.as_ref(), params)
+    });
+    if n > 0 {
+        dropped_decls.push(("[[pattern]]".into(), n));
+    }
+    // ③ 连带丢 lowering：规则行首（含 `@引用名`）点了被投影掉的**引用名**。
+    //    只认"投影前存在、投影后消失"的名字 ⇒ 本来就写错的助记符仍由校验器照常报错。
+    let dangling: BTreeSet<String> = refs_before.difference(&refs_after).cloned().collect();
+    if !dangling.is_empty() {
+        let n = retain_counted(&mut m.lowering, |l| {
+            !l.insts
+                .iter()
+                .any(|line| inst_head_ref(line).is_some_and(|h| dangling.contains(&h)))
+        });
+        if n > 0 {
+            dropped_decls.push(("[[lowering]]".into(), n));
+        }
+    }
+    // ④ 文本替换：`{参数名}` → 取值（模板里既有的 `{inst.lower}` 等不受影响）。
+    for i in &mut m.instructions {
+        i.asm = substitute_params(&i.asm, params);
+    }
+    for l in &mut m.lowering {
+        for line in &mut l.insts {
+            *line = substitute_params(line, params);
+        }
+    }
+    Ok(Projection {
+        params: params.clone(),
+        dropped_insts,
+        dropped_decls,
+        inst_count: m.instructions.len(),
+        lowering_count: m.lowering.len(),
+    })
+}
+
+/// `retain` 并返回丢掉条数（各节投影共用的记账）。
+fn retain_counted<T>(v: &mut Vec<T>, keep: impl Fn(&T) -> bool) -> usize {
+    let before = v.len();
+    v.retain(keep);
+    before - v.len()
+}
+
+/// 模板行首的引用名（`ADD {out}, …` → `ADD`；`@frame_alloc` → `frame_alloc`）。
+///
+/// 与 `validate_inst_lines` 的取法一致（`{out} = INST …` 取 `=` 右侧、首个空白词），
+/// 但把 `@` 前缀归一成裸引用名，好与 `declared_refs` 比对。
+fn inst_head_ref(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let rhs = trimmed.split_once('=').map_or(trimmed, |(_, r)| r.trim());
+    let head = rhs.split_whitespace().next()?;
+    Some(head.strip_prefix('@').unwrap_or(head).to_string())
+}
+
+/// 把字符串里 `{参数名}` 换成取值（只替换**名字命中参数**的占位符）。
+fn substitute_params(s: &str, params: &BTreeMap<String, i64>) -> String {
+    let mut out = s.to_string();
+    for (k, v) in params {
+        out = out.replace(&format!("{{{k}}}"), &v.to_string());
+    }
+    out
 }
 
 /// 全部校验（收集式，一次报全）。
@@ -46,6 +217,7 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags, opts: &Validat
         );
     }
     collect(d, idx, validate_meta(m));
+    collect(d, idx, validate_variant_gates(m));
     collect(d, idx, validate_encoding(m));
     collect(d, idx, validate_regs(m));
     collect(d, idx, validate_widths(m));
@@ -375,6 +547,81 @@ fn validate_meta(m: &V12Model) -> Result<(), String> {
     }
     if m.meta.directive_prefix.is_empty() {
         return Err("[meta].directive_prefix must not be empty".into());
+    }
+    // `[meta].variants`（v19 V5）：参数名非空、取值域非空——空域等于"任何取值都非法"，
+    // 写出来只会让所有投影调用报"不在声明域内"，必须在声明处就说清。
+    if let Some(vars) = &m.meta.variants {
+        for (k, domain) in vars {
+            if k.trim().is_empty() {
+                return Err("[meta].variants: 参数名不能为空".into());
+            }
+            if domain.is_empty() {
+                return Err(format!(
+                    "[meta].variants: 参数 `{k}` 的取值域为空——至少给一个取值（如 `{k} = [32, 64]`）"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `only_variants` 的声明一致性（v19 V5）：六处声明里提到的参数名必须在
+/// `[meta].variants` 里声明过，取值必须是声明域的子集。
+///
+/// **为什么硬报**：未声明的参数永远不会出现在 `params` 里 ⇒ `variants_keep` 永远返回真
+/// ⇒ 标了 `only_variants` 却**从不生效**（最难查的一类：看起来"变体机制没起作用"）；
+/// 取值超出声明域同理（那个取值永远传不进来）。
+fn validate_variant_gates(m: &V12Model) -> Result<(), String> {
+    let declared = m.meta.variants.clone().unwrap_or_default();
+    let known = || {
+        if declared.is_empty() {
+            "（谱里没有声明任何变体参数）".to_string()
+        } else {
+            declared.keys().cloned().collect::<Vec<_>>().join(", ")
+        }
+    };
+    let check = |gate: Option<&VariantGate>| -> Result<(), String> {
+        let Some(g) = gate else { return Ok(()) };
+        for (k, domain) in g {
+            let Some(allowed) = declared.get(k) else {
+                return Err(format!(
+                    "[meta].variants: `only_variants` 用了未声明的参数 `{k}`（已声明：{}）——\
+                     未声明的参数永远不会传进来，这条标记恒不生效",
+                    known()
+                ));
+            };
+            if domain.is_empty() {
+                return Err(format!(
+                    "[meta].variants: `only_variants` 里参数 `{k}` 的取值域为空——该声明在任何变体下都不存在（要删就删掉声明本身）"
+                ));
+            }
+            if let Some(bad) = domain.iter().find(|v| !allowed.contains(v)) {
+                return Err(format!(
+                    "[meta].variants: `only_variants` 里参数 `{k}` 的取值 {bad} 不在声明域 {allowed:?} 内"
+                ));
+            }
+        }
+        Ok(())
+    };
+    for i in &m.instructions {
+        check(i.only_variants.as_ref())?;
+    }
+    if let Some(em) = &m.emit {
+        for b in [em.prologue.as_ref(), em.epilogue.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            check(b.only_variants.as_ref())?;
+        }
+    }
+    for s in m.spill.values() {
+        check(s.only_variants.as_ref())?;
+    }
+    for p in &m.pseudo {
+        check(p.only_variants.as_ref())?;
+    }
+    for p in &m.pattern {
+        check(p.only_variants.as_ref())?;
     }
     Ok(())
 }
@@ -993,7 +1240,13 @@ fn validate_relocs(m: &V12Model) -> Result<(), String> {
                 }
             ));
         };
-        let ops = super::codegen::parse_asm_decl(&inst.asm, inst.ops.as_deref(), &inst.name)?.0;
+        let ops = super::codegen::parse_asm_decl(
+            &inst.asm,
+            inst.ops.as_deref(),
+            &inst.name,
+            &m.variant_param_names(),
+        )?
+        .0;
         if !ops.iter().any(|o| o.slot == def.slot) {
             return Err(format!(
                 "[[instructions.{}]]: reloc '{name}' 绑定的槽 '{}' 不在该指令的操作数里（asm '{}'）",
@@ -1326,7 +1579,12 @@ fn check_instruction(m: &V12Model, inst: &Instruction) -> Result<(), String> {
         ));
     }
     // 操作数声明（asm 占位符内联）：解析 + 槽存在/角色合法/序号连续校验
-    let (uses, _) = super::codegen::parse_asm_decl(&asm, inst.ops.as_deref(), &inst.name)?;
+    let (uses, _) = super::codegen::parse_asm_decl(
+        &asm,
+        inst.ops.as_deref(),
+        &inst.name,
+        &m.variant_param_names(),
+    )?;
     for op in &uses {
         if !slot_exists(m, &op.slot) {
             return Err(format!(

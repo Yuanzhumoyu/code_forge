@@ -97,6 +97,7 @@ fn vlen_isa_fields_use_declared_names() {
         spec_tests: false,
         name: None,
         parts: Parts::all(),
+        params: Default::default(),
     };
     let t = flat(&expand_file("isa/x86_v12.toml", &opts).expect("展开 x86"));
     assert!(

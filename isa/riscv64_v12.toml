@@ -19,6 +19,10 @@
 [meta]
 name = "riscv64_v12"
 version = "13.0"
+# 参数化变体（v19 V5，只读投影）：`--params xlen=32` 时会丢掉标了
+# `only_variants = { xlen = [64] }` 的条目（LD/SD 与 W 变体族），得到一个 RV32 视角的
+# 指令清单。**不传 params 时完全不过滤**（默认行为与生成物逐字节不变）。
+variants = { xlen = [32, 64] }
 endian = "little"
 mode = 64
 case_insensitive_regs = true
@@ -235,7 +239,7 @@ rows = [
 # ── W 变体 R 型（opcode 0x3B；移位 W 走 SHIFT5 顶层）──
 [[templates]]
 name = "WW"
-body = { form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { only_variants = { xlen = [64] }, form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "ADDW", fields = { funct3 = 0, funct7 = 0x00 } },
   { inst = "SUBW", fields = { funct3 = 0, funct7 = 0x20 } },
@@ -475,6 +479,7 @@ asm = "lui {dst}, {imm}"
 
 [[instructions]]
 name = "LD"
+only_variants = { xlen = [64] }
 form = "I"
 opcode = 0x03
 fields = { funct3 = 3 }
@@ -483,6 +488,7 @@ asm = "ld {dst}, {imm}({src})"
 
 [[instructions]]
 name = "SD"
+only_variants = { xlen = [64] }
 form = "S"
 opcode = 0x23
 fields = { funct3 = 3 }
@@ -603,6 +609,7 @@ asm = "fence"
 
 [[instructions]]
 name = "SLLW"
+only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 1, funct7 = 0x00 }
@@ -611,6 +618,7 @@ asm = "sllw {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SRLW"
+only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 5, funct7 = 0x00 }
@@ -619,6 +627,7 @@ asm = "srlw {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SRAW"
+only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x3B
 fields = { funct3 = 5, funct7 = 0x20 }
@@ -700,6 +709,8 @@ fp_push_bytes = 16 # ra + fp 两个保存槽
 gpr = ["X9", "X18", "X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27"]
 
 [spill.GPR]
+# 64 位专用：LD/SD 只在 RV64 存在（RV32 变体必须自己给一套 LW/SW 帧件——投影会整节丢掉）。
+only_variants = { xlen = [64] }
 # base = X8（fp = 入口 sp，等价 x86 rbp）：emission 的 sp_base =
 # -(frame) - callee_saved_bytes 是**相对帧指针**的偏移。base 用 X2（sp）会
 # 双重减 frame（spill 槽落帧外更深处），递归时与 callee 帧重叠（ra 槽被
@@ -716,9 +727,12 @@ align_pad = 0
 epilogue_label = true
 
 [emit.prologue]
+# 64 位专用（含 SD 保存 ra/fp 与 8 字节槽的帧序）。
+only_variants = { xlen = [64] }
 insts = ["@frame_alloc", "SD X1, X2, {frame_size_m8}", "SD X8, X2, {frame_size_m16}", "ADDI X8, X2, {frame_size}", "@push_callee", "@move_args"]
 
 [emit.epilogue]
+only_variants = { xlen = [64] }
 insts = ["@pop_callee", "LD X1, X2, {frame_size_m8}", "LD X8, X2, {frame_size_m16}", "@frame_free", "RET"]
 
 # ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────

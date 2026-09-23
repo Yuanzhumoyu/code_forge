@@ -22,6 +22,7 @@ fn text_of(path: &str, _krate: Option<&str>) -> String {
         spec_tests: false,
         name: None,
         parts: Parts::all(),
+        params: Default::default(),
     };
     expand_file(path, &opts)
         .unwrap_or_else(|e| panic!("展开 {path} 失败：{e}"))

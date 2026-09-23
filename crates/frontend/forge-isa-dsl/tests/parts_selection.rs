@@ -16,6 +16,7 @@ fn opts(parts: Parts) -> ExpandOptions {
         spec_tests: false, // 部件受限时必须关（见下）
         name: None,
         parts,
+        params: Default::default(),
     }
 }
 

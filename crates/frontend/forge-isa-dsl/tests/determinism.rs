@@ -28,6 +28,7 @@ fn opts(spec_tests: bool) -> ExpandOptions {
         spec_tests,
         name: None,
         parts: Parts::all(),
+        params: Default::default(),
     }
 }
 
@@ -86,6 +87,7 @@ fn restricted_parts_are_stable_too() {
         spec_tests: false,
         name: Some("stab_enc_only".into()),
         parts: Parts::from_names(&["encode".to_string()]).expect("部件名"),
+        params: Default::default(),
     };
     let a = expand_file(&spec, &enc_only).expect("展开 enc-only");
     let b = expand_file(&spec, &enc_only).expect("再展开 enc-only");

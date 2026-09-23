@@ -107,7 +107,7 @@
 | ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
 | ✅ **V3** `[[vectors]]` 数据化测试 | 五种形态（`{asm, bytes}` / `{asm, error}` / `{bytes, error="DECODE"[,partial]}` / `{bytes}` / `{asm}` 闭环）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]` | 三 ISA 迁移黄金字节 + 往返清单；Rust 侧只留集成/ABI/JIT 断言 | 迁移前后**逐字节等价** ✅；负向向量钉错误码 ✅；手写测试行数 **−33.1%**（V3c 后；仍未达 −≥50%，剩下的行数是别名/集成/ABI/JIT 断言） | G2；作者体验立刻变好 |
 | 🚧 **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a 已落地**（未用槽/未用 form + CLI，三谱零结论） |
-| **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants` + 值条件列 `vary` 下沉到 `[[templates]]` | RV32 从同一 riscv64 谱生成（投影：encode/decode/asm，不注册）；`explain` 显示参数生效点 | 与独立 RV32 表或 QEMU 32 位用例对拍；矩阵/覆盖守卫显式登记变体期望 | G4；臂/扩展式复用的验证 |
+| 🚧 **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants`（**六处声明统一**：指令/模板行/emit 块/spill/pseudo/pattern） + 值条件列 `vary` 下沉到 `[[templates]]`（**未做**，见下） | RV32 从同一 riscv64 谱投影（不注册后端）；`insts --params` 打印投影账目 | 实测账目：116 → 104 条指令 / 110 → 96 条 lowering / 逐节丢弃 4 项；守卫 `tests/variants.rs`（6 条） | G4；臂/扩展式复用的验证。**投影已落地（2026-09-24）**：`explain` 显示参数生效点**未做**；与独立 RV32 表对拍**未做**（投影不产可运行后端，见 §5 注） |
 | 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性）+ V6b（strict-overlap，实测 61 条全合法 ⇒ CI 不开）已落地**；`--warn-unreachable` 与死规则检测重叠，已在 V6b 说明不做 |
 | **V7** 语义层表化（**可选，默认不做**） | 只借"属性视图 + 生成期可分析性"；把 S8b-2 的通用解释器当候选 | 先量：V1 之后 x86 C 段 334 KB 是否仍是编译时间主因、表化净收益是否 ≥15% token 且不增编译时间 | 结论入库（含实测数字），无论做与不做 | 与 S8b-2 一致：以度量决定 |
 
@@ -237,6 +237,35 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
 - **V6b（下一步）**：`validate --strict-overlap` / `--warn-unreachable`——默认档先量化噪音再定
   （含 `or`/`not` 的 Opaque 边界），借 SLEIGH/InSPECtor 的"检查默认关会真出 bug"教训，
   把新诊断清单与误报评估入库。
+
+**V5 已落地（2026-09-24，参数化变体：只读投影 MVP）**：
+
+- **唯一判定**：`v12::model::variants_keep(gate, params)`（六处声明共用——`[[instructions]]`、
+  `[[templates]].body`/`rows`、`[emit.prologue|epilogue]`、`[spill.*]`、`[[pseudo]]`、
+  `[[pattern]]` 都能标 `only_variants`；`gate` 里没提到的参数不构成排除）。
+- **投影顺序**（`validate::apply_variants`，跑在 `validate_all` **之前**）：校验参数
+  （未声明/越界 ⇒ `DSL-META`）→ 过滤六处声明 → **连带丢 lowering**（规则行首点了"投影前
+  存在、投影后消失"的指令/`ref`；这条依赖可推断，不算作者负担）→ `{参数名}` 文本替换。
+  报告结构 `Projection { params, dropped_insts, dropped_decls, inst_count, lowering_count }`
+  投影成公开的 `report::Projection`，CLI 在 `insts --params` 第一行打印、`--json` 里给 `projection`。
+- **fail-closed 的三条边界**（都不给静默通道）：① 其余节（spill/emit/pseudo/pattern）引用了被
+  投影掉的声明却**没标** `only_variants` ⇒ 报"未知指令引用"，点名补 `only_variants` 或自己写一份；
+  ② 模板里留着参数占位符却没传值 ⇒ 报错并给两种传法（默认档不许留占位符——否则生成的汇编里
+  会打印字面 `{width}`）；③ 裸文本入口带 `include`/`[[override]]` 照旧报错（V5 不改这条）。
+- **riscv64 实测账目**：`--params xlen=32` ⇒ **116 → 104** 条指令（丢 `LD`/`SD` + 10 条 W 族：
+  `ADDW`/`SUBW`/`MULW`/`DIVW`/`DIVUW`/`REMW`/`REMUW`/`SLLW`/`SRLW`/`SRAW`）、**110 → 96** 条
+  lowering（连带 14 条）、逐节 `[emit.prologue]`/`[emit.epilogue]`/`[spill.GPR]` 各 1 项；
+  默认档仍是 116/110（**投影纯 opt-in**）。守卫 `crates/frontend/forge-isa-dsl/tests/variants.rs`
+  6 条（默认档零投影 / 未声明与越界报错 / 账目快照 / 级联不多丢 / 只对传了的参数生效 / 替换语义）。
+- **生成期**：宏参数 `params = { xlen = 32 }` + 参数进 `generated_file_name` 哈希（同谱两变体
+  落不同文件，`gen_file.rs` 单测钉住）；`forge-isa` CLI `validate`/`insts` 支持 `--params`。
+- **没做的（如实，别当已做）**：`explain` 显示参数生效点；`vary` 从 lowering 下沉到
+  `[[templates]]`；**与独立 RV32 表或 QEMU 32 位用例对拍**——因此 G4 只算"投影机制 + 依赖面
+  可视化"这一半，另一半（变体后端可运行）不在 MVP 内：投影**不注册**后端，且本谱没写 LW/SW
+  版帧件，RV32 投影的 `[spill]`/`[emit]` 是空的。
+- **顺带修掉一条已提交的坏测试**：`tests/strict_overlap.rs` 传的是 `bool`（`validate_file_opts`
+  早已改收 `&RunOpts`），该测试目标此前**根本编译不过**——V6b 的"清单快照"实际上没跑过。
+  现已修复并在本轮门禁里真跑（32/8/21 + 默认档零结论）。
 
 **V4b 已落地（2026-09-23，第三条规则：未用位域）**：`LINT-UNUSED-BITFIELD`——位域名在整份谱里
   **只出现在声明处**即报。判据故意用**文本标识符计数**（按标识符边界，`imm1` 不会命中 `imm12`）

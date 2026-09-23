@@ -236,10 +236,54 @@ fn row_of(m: &V12Model, info: &crate::v12::codegen::InstInfo<'_>) -> InstRow {
 
 /// 展开后的全部指令（按 `[[instructions]]` 声明序 + 模板展开序）。
 pub fn insts(source: &str) -> Result<(IsaSummary, Vec<InstRow>), Vec<DiagLine>> {
-    let m = crate::v12::parse_and_validate(source).map_err(|e| Vec::from(&e))?;
+    insts_opts(source, &RunOpts::default())
+}
+
+/// 带档位展开（v19 V5：`--params` 变体投影 —— 投影后只剩匹配的指令）。
+pub fn insts_opts(
+    source: &str,
+    opts: &RunOpts,
+) -> Result<(IsaSummary, Vec<InstRow>), Vec<DiagLine>> {
+    insts_projected_opts(source, opts).map(|(s, r, _)| (s, r))
+}
+
+/// 变体投影报告（v19 V5，对外）：`params` 到底动了什么。
+///
+/// 与 `v12::validate::Projection`（crate 私有）字段一一对应——模型层保持私有，
+/// 工具层只看到这份公开数据结构（同 `RunOpts` ↔ `ValidateOpts` 的分工）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Projection {
+    /// 生效的参数（空 = 没投影，一切照旧）。
+    pub params: BTreeMap<String, i64>,
+    /// 被投影掉的指令名（原声明序）。
+    pub dropped_insts: Vec<String>,
+    /// 逐节丢掉的条数：`(节名, 条数)`（含连带丢的 `[[lowering]]`）。
+    pub dropped_decls: Vec<(String, usize)>,
+    /// 投影后的指令数 / lowering 规则数。
+    pub inst_count: usize,
+    pub lowering_count: usize,
+}
+
+/// 带档位展开 + **投影报告**（v19 V5；CLI `insts --params` 用）。
+pub fn insts_projected_opts(
+    source: &str,
+    opts: &RunOpts,
+) -> Result<(IsaSummary, Vec<InstRow>, Projection), Vec<DiagLine>> {
+    let (m, p) = crate::v12::parse_and_validate_projected(source, &opts.internal())
+        .map_err(|e| Vec::from(&e))?;
     let infos = collect_inst_infos(&m).map_err(|e| vec![DiagLine::plain(&e)])?;
     let rows = infos.iter().map(|i| row_of(&m, i)).collect();
-    Ok((summary(&m), rows))
+    Ok((
+        summary(&m),
+        rows,
+        Projection {
+            params: p.params,
+            dropped_insts: p.dropped_insts,
+            dropped_decls: p.dropped_decls,
+            inst_count: p.inst_count,
+            lowering_count: p.lowering_count,
+        },
+    ))
 }
 
 /// 单条指令的完整解释（含来源模板行）。
@@ -364,11 +408,11 @@ pub fn class_name(c: RegClass) -> String {
 
 /// 读文件 + 校验（CLI 的 `validate <file>` 用）；返回 (渲染好的诊断行, ISA 名)。
 pub fn validate_file(path: &Path) -> (Vec<DiagLine>, Option<String>) {
-    validate_file_opts(path, false)
+    validate_file_opts(path, &RunOpts::default())
 }
 
-/// 读文件 + 带档位校验（v19 V6b：`validate --strict-overlap`）。
-pub fn validate_file_opts(path: &Path, strict_overlap: bool) -> (Vec<DiagLine>, Option<String>) {
+/// 读文件 + 带档位校验（v19 V6b/V5：`--strict-overlap` / `--params`）。
+pub fn validate_file_opts(path: &Path, opts: &RunOpts) -> (Vec<DiagLine>, Option<String>) {
     // 加载失败（缺 include / 成环 / 同名标量冲突 / `[[override]]` 目标不存在…）：
     // **原样**把加载器的消息交出去。不要改写成"读不到文件：<根路径>"——那会把
     // "片段缺文件"这类真正可诊断的问题伪装成"根文件读不到"（v18 S7d 修）。
@@ -384,8 +428,8 @@ pub fn validate_file_opts(path: &Path, strict_overlap: bool) -> (Vec<DiagLine>, 
             );
         }
     };
-    let diags = validate_loaded_opts(&spec, strict_overlap);
-    let name = crate::v12::parse_and_validate(&spec.text)
+    let diags = validate_loaded_opts(&spec, opts);
+    let name = crate::v12::parse_and_validate_opts(&spec.text, &opts.internal())
         .ok()
         .map(|m| m.meta.name);
     (diags, name)
@@ -417,25 +461,59 @@ fn map_files(spec: &crate::loader::LoadedSpec, diags: &mut [DiagLine]) {
 
 /// 校验已加载的谱（支持 `include`；诊断带来源文件）。
 pub fn validate_loaded(spec: &crate::loader::LoadedSpec) -> Vec<DiagLine> {
-    validate_loaded_opts(spec, false)
+    validate_loaded_opts(spec, &RunOpts::default())
 }
 
 /// 带档位校验已加载的谱（v19 V6b：`strict_overlap` = `validate --strict-overlap`）。
-///
-/// 对外只暴露 `bool`（`ValidateOpts` 是 crate 内部档位结构），CLI 与工具不必依赖 `v12`。
-pub fn validate_loaded_opts(
-    spec: &crate::loader::LoadedSpec,
-    strict_overlap: bool,
-) -> Vec<DiagLine> {
-    let mut d = validate_opts(&spec.text, strict_overlap);
+pub fn validate_loaded_opts(spec: &crate::loader::LoadedSpec, opts: &RunOpts) -> Vec<DiagLine> {
+    let mut d = validate_opts(&spec.text, opts);
     map_files(spec, &mut d);
     d
 }
 
+/// 公开运行档位（CLI / 工具用）：v19 V6b 的严格档 + V5 的变体参数。
+///
+/// 与内部 `v12::validate::ValidateOpts` 分开：对外只暴露这几个字段，
+/// CLI 不必依赖 `v12` 的内部结构。
+#[derive(Debug, Clone, Default)]
+pub struct RunOpts {
+    /// `validate --strict-overlap`。
+    pub strict_overlap: bool,
+    /// `--params xlen=32` / 宏参数 `params = { xlen = 32 }`（变体投影）。
+    pub params: std::collections::BTreeMap<String, i64>,
+}
+
+impl RunOpts {
+    /// 解析 `["xlen=32", "foo=7"]` 形态的参数表（CLI 用；宏侧解析同语义）。
+    pub fn with_params(list: &[String]) -> Result<Self, String> {
+        let mut params = std::collections::BTreeMap::new();
+        for item in list {
+            let Some((k, v)) = item.split_once('=') else {
+                return Err(format!("参数 `{item}` 应写成 `名字=整数`"));
+            };
+            let v: i64 = v
+                .trim()
+                .parse()
+                .map_err(|_| format!("参数 `{k}` 的取值 `{}` 不是整数", v.trim()))?;
+            params.insert(k.trim().to_string(), v);
+        }
+        Ok(Self {
+            strict_overlap: false,
+            params,
+        })
+    }
+
+    fn internal(&self) -> crate::v12::validate::ValidateOpts {
+        crate::v12::validate::ValidateOpts {
+            strict_overlap: self.strict_overlap,
+            params: self.params.clone(),
+        }
+    }
+}
+
 /// 带档位校验源码（供 CLI / 工具用）。
-pub fn validate_opts(source: &str, strict_overlap: bool) -> Vec<DiagLine> {
-    let opts = crate::v12::validate::ValidateOpts { strict_overlap };
-    match crate::v12::parse_and_validate_opts(source, &opts) {
+pub fn validate_opts(source: &str, opts: &RunOpts) -> Vec<DiagLine> {
+    match crate::v12::parse_and_validate_opts(source, &opts.internal()) {
         Ok(_) => Vec::new(),
         Err(e) => Vec::from(&e),
     }
@@ -445,7 +523,26 @@ pub fn validate_opts(source: &str, strict_overlap: bool) -> Vec<DiagLine> {
 pub fn insts_loaded(
     spec: &crate::loader::LoadedSpec,
 ) -> Result<(IsaSummary, Vec<InstRow>), Vec<DiagLine>> {
-    insts(&spec.text).map_err(|mut d| {
+    insts_opts(&spec.text, &RunOpts::default()).map_err(|mut d| {
+        map_files(spec, &mut d);
+        d
+    })
+}
+
+/// 带档位展开已加载的谱（v19 V5：`--params` 变体投影）。
+pub fn insts_loaded_opts(
+    spec: &crate::loader::LoadedSpec,
+    opts: &RunOpts,
+) -> Result<(IsaSummary, Vec<InstRow>), Vec<DiagLine>> {
+    insts_projected_loaded(spec, opts).map(|(s, r, _)| (s, r))
+}
+
+/// 带档位展开已加载的谱 + 投影报告（v19 V5）。
+pub fn insts_projected_loaded(
+    spec: &crate::loader::LoadedSpec,
+    opts: &RunOpts,
+) -> Result<(IsaSummary, Vec<InstRow>, Projection), Vec<DiagLine>> {
+    insts_projected_opts(&spec.text, opts).map_err(|mut d| {
         map_files(spec, &mut d);
         d
     })

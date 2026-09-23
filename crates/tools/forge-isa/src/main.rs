@@ -25,9 +25,10 @@ const USAGE: &str = "\
 forge-isa — ISA-DSL 工具链（v18 S7b）
 
 用法：
-  forge-isa validate <谱.toml>... [--strict-overlap]
+  forge-isa validate <谱.toml>... [--strict-overlap] [--params k=v,...]
                                              解析 + 校验，打印全部诊断（严格档另报 lowering 部分重叠）
-  forge-isa insts    <谱.toml> [--json]      列出展开后的指令与生效规格
+  forge-isa insts    <谱.toml> [--json] [--params k=v,...]
+                                             列出展开后的指令与生效规格（`--params` = 变体投影）
   forge-isa explain  <谱.toml> <指令名> [--json]
                                              单条指令的来源（模板行 + 生效编码键）
   forge-isa diff     <a.toml> <b.toml> [--json]
@@ -66,20 +67,22 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "validate" => {
-            let strict = has_flag(&args[1..], "--strict-overlap");
-            let files = paths(&args[1..], &["--strict-overlap"])?;
+            let (rest, mut opts) = split_params(&args[1..])?;
+            opts.strict_overlap = has_flag(&rest, "--strict-overlap");
+            let files = paths(&rest, &["--strict-overlap"])?;
             if files.is_empty() {
                 return Err("validate 需要一个或多个谱文件".into());
             }
-            Ok(cmd_validate(&files, strict))
+            Ok(cmd_validate(&files, &opts))
         }
         "insts" => {
-            let json = has_flag(&args[1..], "--json");
-            let files = paths(&args[1..], &["--json"])?;
+            let (rest, opts) = split_params(&args[1..])?;
+            let json = has_flag(&rest, "--json");
+            let files = paths(&rest, &["--json"])?;
             let [file] = files.as_slice() else {
                 return Err("insts 需要恰好一个谱文件".into());
             };
-            Ok(cmd_insts(file, json))
+            Ok(cmd_insts(file, json, &opts))
         }
         "explain" => {
             let json = has_flag(&args[1..], "--json");
@@ -291,6 +294,31 @@ fn has_flag(args: &[String], flag: &str) -> bool {
     args.iter().any(|a| a == flag)
 }
 
+/// 取出 `--params a=1,b=2`（可多次），返回 (剩余参数, 档位)（v19 V5 变体投影）。
+fn split_params(args: &[String]) -> Result<(Vec<String>, report::RunOpts), String> {
+    let mut rest = Vec::new();
+    let mut list: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--params" {
+            let Some(v) = args.get(i + 1) else {
+                return Err("`--params` 需要一个取值（如 `xlen=32`，多个用逗号分隔）".into());
+            };
+            list.extend(
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+            );
+            i += 2;
+        } else {
+            rest.push(args[i].clone());
+            i += 1;
+        }
+    }
+    let opts = report::RunOpts::with_params(&list)?;
+    Ok((rest, opts))
+}
+
 /// 位置参数（过滤已知开关）；`-` 开头的未知项按用法错误处理。
 fn paths(args: &[String], flags: &[&str]) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
@@ -324,10 +352,10 @@ fn print_diags(path: &Path, diags: &[DiagLine]) -> bool {
     !diags.is_empty()
 }
 
-fn cmd_validate(files: &[PathBuf], strict_overlap: bool) -> ExitCode {
+fn cmd_validate(files: &[PathBuf], opts: &report::RunOpts) -> ExitCode {
     let mut bad = false;
     for f in files {
-        let (diags, name) = report::validate_file_opts(f, strict_overlap);
+        let (diags, name) = report::validate_file_opts(f, opts);
         if diags.is_empty() {
             println!(
                 "{}: OK{}",
@@ -346,7 +374,7 @@ fn cmd_validate(files: &[PathBuf], strict_overlap: bool) -> ExitCode {
     }
 }
 
-fn cmd_insts(file: &Path, json: bool) -> ExitCode {
+fn cmd_insts(file: &Path, json: bool, opts: &report::RunOpts) -> ExitCode {
     let spec = match report::load_spec(file) {
         Ok(s) => s,
         Err(d) => {
@@ -354,14 +382,14 @@ fn cmd_insts(file: &Path, json: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    match report::insts_loaded(&spec) {
+    match report::insts_projected_loaded(&spec, opts) {
         Err(diags) => {
             print_diags(file, &diags);
             ExitCode::from(1)
         }
-        Ok((isa, rows)) => {
+        Ok((isa, rows, proj)) => {
             if json {
-                println!("{}", insts_json(&isa, &rows));
+                println!("{}", insts_json(&isa, &rows, &proj));
             } else {
                 println!(
                     "# {} （version {}；encoding = {}；{} 条指令 / {} 条模板 / {} 条 lowering）",
@@ -374,6 +402,9 @@ fn cmd_insts(file: &Path, json: bool) -> ExitCode {
                     isa.templates,
                     isa.lowering_rules
                 );
+                if let Some(line) = projection_line(&proj) {
+                    println!("{line}");
+                }
                 for r in &rows {
                     println!("{}", inst_line(r));
                 }
@@ -381,6 +412,42 @@ fn cmd_insts(file: &Path, json: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+/// 变体投影账目（v19 V5）：`--params` 为空时返回 `None`（默认档不打这行）。
+///
+/// 只读投影的"证据"就是这一行：丢了几条指令（哪些）、逐节丢了什么（含连带丢的
+/// lowering）、投影后各剩多少——不给数字的投影等于没说清动了什么。
+fn projection_line(p: &report::Projection) -> Option<String> {
+    if p.params.is_empty() {
+        return None;
+    }
+    let args: Vec<String> = p.params.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let dropped = if p.dropped_insts.is_empty() {
+        "无".to_string()
+    } else {
+        p.dropped_insts.join(", ")
+    };
+    let decls: Vec<String> = p
+        .dropped_decls
+        .iter()
+        .map(|(what, n)| format!("{what} ×{n}"))
+        .collect();
+    let decls = if decls.is_empty() {
+        "无".to_string()
+    } else {
+        decls.join("、")
+    };
+    Some(format!(
+        "# 变体投影 {}：指令 {} → {}（-{}：{}）；连带/逐节丢弃：{}；lowering 剩 {}",
+        args.join(" "),
+        p.inst_count + p.dropped_insts.len(),
+        p.inst_count,
+        p.dropped_insts.len(),
+        dropped,
+        decls,
+        p.lowering_count
+    ))
 }
 
 fn kind_text(isa: &report::IsaSummary) -> String {
@@ -573,7 +640,7 @@ fn jpairs(items: &[(String, String)]) -> String {
     format!("{{{}}}", body.join(","))
 }
 
-fn insts_json(isa: &report::IsaSummary, rows: &[InstRow]) -> String {
+fn insts_json(isa: &report::IsaSummary, rows: &[InstRow], p: &report::Projection) -> String {
     let isa_obj = format!(
         "{{\"name\":{},\"version\":{},\"encoding\":{},\"widths_bits\":{},\"max_len\":{},\
          \"templates\":{},\"instructions\":{},\"lowering\":{},\"pseudo\":{},\"reloc\":{},\"derive\":{}}}",
@@ -600,7 +667,31 @@ fn insts_json(isa: &report::IsaSummary, rows: &[InstRow]) -> String {
         isa.derive
     );
     let rows_json: Vec<String> = rows.iter().map(row_json).collect();
-    format!("{{\"isa\":{isa_obj},\"insts\":[{}]}}", rows_json.join(","))
+    let params_json = format!(
+        "{{{}}}",
+        p.params
+            .iter()
+            .map(|(k, v)| format!("{}:{v}", jstr(k)))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let proj_json = format!(
+        "{{\"params\":{params_json},\"dropped_insts\":{},\"dropped_decls\":{},\
+         \"inst_count\":{},\"lowering_count\":{}}}",
+        jarr(&p.dropped_insts.iter().map(|s| jstr(s)).collect::<Vec<_>>()),
+        jarr(
+            &p.dropped_decls
+                .iter()
+                .map(|(what, n)| format!("[{},{}]", jstr(what), n))
+                .collect::<Vec<_>>()
+        ),
+        p.inst_count,
+        p.lowering_count
+    );
+    format!(
+        "{{\"isa\":{isa_obj},\"projection\":{proj_json},\"insts\":[{}]}}",
+        rows_json.join(",")
+    )
 }
 
 fn row_json(r: &InstRow) -> String {

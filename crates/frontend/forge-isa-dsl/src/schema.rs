@@ -86,6 +86,7 @@ pub const SECTIONS: &[Section] = &[
         required: &["name"],
         optional: &[
             "version",
+            "variants",
             "endian",
             "mode",
             "case_insensitive_regs",
@@ -231,6 +232,7 @@ pub const SECTIONS: &[Section] = &[
             "implicit_regs",
             "reloc",
             "width",
+            "only_variants",
             // TOML 键是 `ref`（模型字段名 `reference` + `#[serde(rename = "ref")]`）。
             // 守卫按 `#[serde(rename = …)]` 取键名，所以这里必须写 **用户在 TOML 里
             // 实际写的那个键**——写字段名会让编辑器对每一行 `ref = …` 报未知键
@@ -273,7 +275,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[[pseudo]]",
         model: "PseudoDef",
         required: &["name", "params", "emit"],
-        optional: &[],
+        optional: &["only_variants"],
         flatten: &[],
         additional: false,
         doc: "汇编器伪指令：文本级多指令展开（v18 S3e）",
@@ -291,7 +293,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[[pattern]]",
         model: "Pattern",
         required: &["insts"],
-        optional: &["when", "match", "priority"],
+        optional: &["when", "match", "priority", "only_variants"],
         flatten: &[],
         additional: false,
         doc: "树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`）",
@@ -372,7 +374,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[spill.<name>]",
         model: "SpillTemplate",
         required: &[],
-        optional: &["load", "store", "base"],
+        optional: &["load", "store", "base", "only_variants"],
         flatten: &[],
         additional: false,
         doc: "溢出/回填模板（`{N}` = 寄存器序号占位符）",
@@ -418,7 +420,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[emit.<block>]",
         model: "EmitBlock",
         required: &[],
-        optional: &["insts"],
+        optional: &["insts", "only_variants"],
         flatten: &[],
         additional: false,
         doc: "序言/尾声块内容",

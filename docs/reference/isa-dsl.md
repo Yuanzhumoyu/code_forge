@@ -110,7 +110,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
 | `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
-| `[meta]` | `name` | `version` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
+| `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位） |
 | `[stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（缺省全部派生） |
@@ -123,25 +123,25 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.mem]` | `template` | — | 内存操作数文本模板（缺省 x86 `[{base}+{index}*{scale}+{disp}]`） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
-| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `implicit_regs` `reloc` `width` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先） |
+| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
-| `[[pseudo]]` | `name` `params` `emit` | — | 汇编器伪指令：文本级多指令展开（v18 S3e） |
+| `[[pseudo]]` | `name` `params` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
-| `[[pattern]]` | `insts` | `when` `match` `priority` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
+| `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
 | `[abi]` | — | `frame_padding` `stack_args` `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
 | `[abi.frame]` | — | `sp` `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧布局 |
 | `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
 | `[emit]` | — | `prologue` `epilogue` `align_pad` `epilogue_label` | 序言/尾声块引用 |
-| `[spill.<name>]` | — | `load` `store` `base` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
+| `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
 | `[[templates.rows]]` | `inst` | — | 模板行：`inst` + 任意指令字段（含 `ref`）（允许额外键） |
-| `[emit.<block>]` | — | `insts` | 序言/尾声块内容 |
+| `[emit.<block>]` | — | `insts` `only_variants` | 序言/尾声块内容 |
 | `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |
 <!-- END: schema-keys -->
 
@@ -1352,12 +1352,14 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 
 | 命令 | 作用 |
 | --- | --- |
-| `validate <谱.toml>…` | 解析 + 校验，打印**全部**诊断（`路径:行:列: 码: 消息` + 附注），有错退出 1 |
-| `insts <谱.toml>` | 列出**展开后**的指令与生效规格：字长（位/字节）、form、opcode、ops、编码键、`ref`、`reloc`、来源模板与行号、asm |
+| `validate <谱.toml>…` | 解析 + 校验，打印**全部**诊断（`路径:行:列: 码: 消息` + 附注），有错退出 1；`--strict-overlap` 另报 lowering 部分重叠、`--params k=v` 走变体投影 |
+| `insts <谱.toml>` | 列出**展开后**的指令与生效规格：字长（位/字节）、form、opcode、ops、编码键、`ref`、`reloc`、来源模板与行号、asm；`--params k=v` 只列该变体的指令并打印**投影账目**（丢了哪些） |
 | `explain <谱.toml> <指令名>` | 单条指令的完整来源：来自哪个模板的哪一行、该行与模板 `body` 的键、生效规格逐字段 |
 | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），逐字段列出 `字段: A → B` |
 | `schema [--out <file>]` | 打印/写出 ISA-DSL 的 **JSON Schema**（仓库根的 `isa-dsl.schema.json` 由此生成） |
 | `fmt <谱.toml> [--out <file>]` | 打印/写出**合并后的单文件谱**（多文件 `include` 折叠成一份；v18 S7d） |
+| `lint <谱.toml>` | 静态体检：报"写了却用不上"的声明（未用的槽/form/位域，v19 V4a；三份发行谱零结论） |
+| `test <谱.toml>` | 零宿主临时 crate 里跑谱内测试向量（v19 V3；不起后端 crate） |
 
 约定：默认人类可读，`--json` 给机读输出（手写发射器，不引 `serde_json`——与方案 §10.4
 "不新增依赖"一致）；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。
@@ -1476,6 +1478,48 @@ partial = 1
 在跑的时候判——`cargo test` 或 `forge-isa test`。迁移实例：三份发行谱共 **361 条**
 （x86 138 / riscv64 134 / arm64 89；含从 Rust oracle 表与往返清单迁来的 golden 与闭环向量，
 迁移前后字节集合的规范化 sha256 相同）。
+
+### 变体参数（`[meta].variants` / `only_variants`，v19 V5）
+
+**一份源谱 → 多个位宽/扩展变体**：把"哪些声明属于哪个变体"写成数据，投影出该变体的
+指令清单，而不是为每个变体抄一份谱。
+
+| 键 | 位置 | 含义 |
+| --- | --- | --- |
+| `variants = { xlen = [32, 64] }` | `[meta]` | 声明**参数名 → 取值域**（参数的唯一事实源；没声明的参数一律报错） |
+| `only_variants = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[emit.prologue]`、`[emit.epilogue]` / `[spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`v12::model::variants_keep`） |
+| `params = { xlen = 32 }` | `isa_from_file!` 宏参数 | 生成期投影（参数进生成物文件名哈希：同一份谱的两个变体落到不同文件） |
+| `--params xlen=32` | `forge-isa validate\|insts` | 工具期投影（`--params a=1,b=2` 可多次/逗号分隔） |
+
+投影语义（**默认档逐字节不变**：`params` 为空 ⇒ 不过滤、不替换）：
+
+1. **参数校验**：名字必须在 `[meta].variants` 里声明、取值必须落在声明域内，否则
+   `DSL-META` 报错并列出已声明的名字（拼错参数名不会静默"什么都没发生"）；
+2. **过滤**：只对**调用方传了的**参数做排除——`only_variants` 里提到 `xlen` 而本次只传
+   `ext` 时，`xlen` 不构成排除；
+3. **连带丢 lowering**：规则行首点了被投影掉的指令/`ref` ⇒ 规则整条丢掉（这类依赖
+   **可推断**：点名了 `ADDW` 的规则本身就只属于 `ADDW` 存在的变体）。**只认"投影前存在、
+   投影后消失"的名字**，原本就写错的助记符照旧由校验器报错；
+4. **文本替换**：`{参数名}` 在 `asm` 与 `[[lowering]].insts` 里换成取值（宽度是数据）。
+   模板里留着参数占位符却**没传值** ⇒ 明确报错（默认档不许留占位符，否则生成的汇编里会
+   打印出字面 `{width}`）；
+5. **其余引用 fail-closed**：`[spill]`/`[emit]`/`[[pseudo]]`/`[[pattern]]` 引用了被投影掉的
+   声明却**没标** `only_variants` ⇒ 校验期报"未知指令引用"。结构件必须由作者显式变体化
+   （RV32 的帧件与 RV64 不同，自动猜是错的）。
+
+`forge-isa insts --params xlen=32 isa/riscv64_v12.toml` 的实测账目（2026-09-24）：
+
+```text
+# riscv64_v12 （version 13.0；encoding = fixed 32 位；104 条指令 / 19 条模板 / 96 条 lowering）
+# 变体投影 xlen=32：指令 116 → 104（-12：LD, SD, SLLW, SRLW, SRAW, ADDW, SUBW, MULW,
+#   DIVW, DIVUW, REMW, REMUW）；连带/逐节丢弃：[emit.prologue] ×1、[emit.epilogue] ×1、
+#   [spill.GPR] ×1、[[lowering]] ×14；lowering 剩 96
+```
+
+**MVP 边界（如实记录）**：这是**只读投影**——不注册后端、不生成变体专属运行期表，
+`insts`/`validate`/生成物命名都在范围内，"能跑"仍由 `tm` 部件与宿主负责（计划 §5 V5）。
+RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不是一份可运行的后端谱——
+投影的用途是**看见变体依赖面**与让生成物正确分文件。
 
 ## 已有 ISA 谱
 

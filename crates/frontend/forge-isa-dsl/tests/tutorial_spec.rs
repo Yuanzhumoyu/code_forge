@@ -53,6 +53,7 @@ fn tutorial_spec_validates_and_expands() {
         spec_tests: false,
         name: None,
         parts: Parts::all(),
+        params: Default::default(),
     };
     let tmp =
         std::env::temp_dir().join(format!("forge_tutorial_toy16_{}.toml", std::process::id()));

@@ -22,6 +22,7 @@
 use super::model::*;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeSet;
 
 pub(crate) mod asm;
 /// TargetFrameLowering/TargetABI/emit（integration.rs 拆分）。
@@ -378,7 +379,12 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a V12Model) -> Result<Vec<InstInfo<'a>
         let mut enc = inst.enc.over(&preset);
         // 从 asm 模板解析操作数声明（命名形态：ops 声明 + asm 引用；v17 起不再拆助记符）。
         let asm = inst.asm.clone();
-        let (uses, norm_asm) = parse_asm_decl(&asm, inst.ops.as_deref(), &inst.name)?;
+        let (uses, norm_asm) = parse_asm_decl(
+            &asm,
+            inst.ops.as_deref(),
+            &inst.name,
+            &m.variant_param_names(),
+        )?;
         // `opsize = "<操作数名>"` → 按声明序解析成位置索引（下游只见索引）
         if let Some(Opsize::Named(n)) = &enc.opsize {
             let names = inst.ops.as_deref().unwrap_or(&[]);
@@ -548,10 +554,16 @@ fn parse_ops_list(ops: &[String], inst_name: &str) -> Result<Vec<OperandUse>, St
 ///
 /// 规范化让下游（asm/machine/decode 生成）只认索引，完全不必感知命名——
 /// 命名只是**作者面**的语法。未知名字在此报错（拼错的占位符不会静默变字面量）。
+///
+/// `variant_params` = `[meta].variants` 声明的参数名（v19 V5）：模板里写了 `{参数名}`
+/// 却**本次没传值**时，这里给出可操作的错误——参数占位符由投影期替换
+/// （`validate::apply_variants` 在校验之前跑），走到这里还剩参数占位符 = 没传参。
+/// 默认档不许留参数占位符（否则生成的汇编里会打印出字面 `{width}`）。
 fn normalize_named_template(
     rest: &str,
     names: &[String],
     inst_name: &str,
+    variant_params: &BTreeSet<String>,
 ) -> Result<String, String> {
     let ctx = || format!("[[instructions.{inst_name}]] asm");
     let mut out = String::with_capacity(rest.len());
@@ -566,11 +578,20 @@ fn normalize_named_template(
         };
         let inner = rest[i + 1..i + end].trim();
         let idx = names.iter().position(|n| n == inner).ok_or_else(|| {
-            format!(
-                "{}: 占位符 '{{{inner}}}' 不是已声明的操作数名（ops: {}）",
-                ctx(),
-                names.join(", ")
-            )
+            if variant_params.contains(inner) {
+                format!(
+                    "{}: 占位符 '{{{inner}}}' 是**变体参数**（`[meta].variants`）但本次没有传值——\
+                     参数化模板必须显式传参（CLI `--params {inner}=<取值>`、\
+                     宏 `params = {{ {inner} = <取值> }}`）；默认档不许留参数占位符",
+                    ctx()
+                )
+            } else {
+                format!(
+                    "{}: 占位符 '{{{inner}}}' 不是已声明的操作数名（ops: {}）",
+                    ctx(),
+                    names.join(", ")
+                )
+            }
         })?;
         out.push_str(&format!("{{{idx}}}"));
         for _ in 0..end - 1 {
@@ -592,6 +613,7 @@ pub(crate) fn parse_asm_decl(
     asm: &str,
     ops: Option<&[String]>,
     inst_name: &str,
+    variant_params: &BTreeSet<String>,
 ) -> Result<(Vec<OperandUse>, String), String> {
     let ctx = || format!("[[instructions.{inst_name}]] asm");
     if asm.trim().is_empty() {
@@ -609,7 +631,7 @@ pub(crate) fn parse_asm_decl(
     };
     let uses = parse_ops_list(list, inst_name)?;
     let names: Vec<String> = uses.iter().map(|u| u.name.clone()).collect();
-    let norm_asm = normalize_named_template(asm, &names, inst_name)?;
+    let norm_asm = normalize_named_template(asm, &names, inst_name, variant_params)?;
     let segs = asm::parse_template(&norm_asm)?;
     for (n, name) in names.iter().enumerate() {
         let refs = segs

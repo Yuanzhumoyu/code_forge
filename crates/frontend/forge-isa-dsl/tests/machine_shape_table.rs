@@ -44,6 +44,7 @@ fn tm_text(path: &str) -> String {
             asm: false,
             tm: true,
         },
+        params: Default::default(),
     };
     expand_file(path, &opts)
         .unwrap_or_else(|e| panic!("展开 {path} 失败：{e}"))

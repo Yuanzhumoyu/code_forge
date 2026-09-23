@@ -475,6 +475,13 @@ pub struct Meta {
     pub name: String,
     #[serde(default)]
     pub version: Option<String>,
+    /// **参数化变体声明**（v19 V5）：参数名 → 允许取值集合。
+    ///
+    /// 传了 `params`（宏参数 `params = { xlen = 32 }` / CLI `--params xlen=32`）时：
+    /// 每个参数都必须在**本表**里声明、取值必须落在声明域内；逐指令 / 模板行的
+    /// `only_variants` 据此做**只读投影**（丢掉不匹配的条目）。
+    #[serde(default)]
+    pub variants: Option<BTreeMap<String, Vec<i64>>>,
     #[serde(default = "default_endian")]
     pub endian: Endian,
     /// 默认模式（x86 64 位模式 = 64）。
@@ -1467,6 +1474,13 @@ pub struct Instruction {
     /// 可省略（取 `[encoding].bits`），显式给出时必须与之一致。
     #[serde(default)]
     pub width: Option<u32>,
+    /// **只在给定参数取值下存在**（v19 V5，只读投影）：参数名 → 允许取值集合。
+    ///
+    /// `params` 为空时**不过滤**（默认行为逐字节不变）；给了 `params` 时，本表里任一参数
+    /// 的取值不在允许集合内 ⇒ 整条指令丢掉。参数名必须在 `[meta].variants` 里声明过。
+    /// 判定实现只有一处：[`variants_keep`]。
+    #[serde(default)]
+    pub only_variants: Option<VariantGate>,
     /// 展开来源（v18 S2）：由 `[[templates.NAME]]` 展开而来时记下模板名。
     ///
     /// 不参与序列化（`serde(skip)`）；诊断据此把错误锚回**模板声明行**而不是
@@ -1747,6 +1761,9 @@ pub struct PseudoDef {
     pub params: Vec<String>,
     /// 展开模板行（至少一行；`{参数}` 会被实参文本替换）。
     pub emit: Vec<String>,
+    /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
+    #[serde(default)]
+    pub only_variants: Option<VariantGate>,
 }
 
 /// `[[derive]]` — 派生谓词属性（v18 S3f）。
@@ -2265,6 +2282,18 @@ impl V12Model {
         out
     }
 
+    /// `[meta].variants` 声明的参数名（v19 V5）：模板里 `{参数名}` 的合法名字集。
+    ///
+    /// 只读投影用：`asm`/`[[lowering]].insts` 里的参数占位符由投影期替换，走到校验期
+    /// 还剩占位符 = 本次没传该参数（[`super::codegen::parse_asm_decl`] 据此报可操作的错）。
+    pub fn variant_param_names(&self) -> std::collections::BTreeSet<String> {
+        self.meta
+            .variants
+            .as_ref()
+            .map(|v| v.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// 展开 `[[derive]]`（解析期）：把 `expr` 解析成谓词 AST，存进
     /// `derived_preds`（下游只认展开后的谓词）。
     ///
@@ -2442,6 +2471,9 @@ pub struct Pattern {
     /// 发射序列模板：叶变量 `{名字}` 与 `{out}`（codegen 把 `{名字}` 改写成
     /// 树 DFS 序的 `{N}` 后交给 lowering 发射器）。
     pub insts: Vec<String>,
+    /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
+    #[serde(default)]
+    pub only_variants: Option<VariantGate>,
 }
 
 // ───────────────────────── [abi] ─────────────────────────
@@ -2659,6 +2691,11 @@ pub struct EmitSection {
 #[serde(deny_unknown_fields)]
 pub struct EmitBlock {
     pub insts: Vec<String>,
+    /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
+    ///
+    /// 整个块跟着变体走（RV32 的序/尾声与 RV64 不同，靠这一条整块替换）。
+    #[serde(default)]
+    pub only_variants: Option<VariantGate>,
 }
 
 // ───────────────────────── [spill.*] ─────────────────────────
@@ -2674,4 +2711,30 @@ pub struct SpillTemplate {
     /// 基址寄存器名（"RBP"）。
     #[serde(default)]
     pub base: Option<String>,
+    /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
+    #[serde(default)]
+    pub only_variants: Option<VariantGate>,
+}
+
+// ───────────────────────── 变体条件（v19 V5） ─────────────────────────
+
+/// **变体条件**：参数名 → 允许取值集合（`[meta].variants` 声明域的子集）。
+///
+/// 六处声明共用同一类型与同一判定（[`variants_keep`]）：`[[instructions]]` /
+/// `[[templates]].body` 与 `rows` / `[emit.prologue|epilogue]` / `[spill.*]` /
+/// `[[pseudo]]` / `[[pattern]]`——凡"承载指令引用的声明"都能标。
+pub type VariantGate = BTreeMap<String, Vec<i64>>;
+
+/// `only_variants` 的统一判定：给定投影参数，本声明是否仍然存在。
+///
+/// 语义（**唯一一处实现**，别再各节重写）：
+///
+/// - `gate = None`（没标）⇒ 任何变体下都在；
+/// - 只对**调用方传了的参数**做排除——表里提到 `xlen` 但调用方只传 `ext` 时，
+///   `xlen` 不构成排除（"只关心自己传的那些"）。
+pub fn variants_keep(gate: Option<&VariantGate>, params: &BTreeMap<String, i64>) -> bool {
+    gate.is_none_or(|ov| {
+        ov.iter()
+            .all(|(k, allowed)| params.get(k).is_none_or(|v| allowed.contains(v)))
+    })
 }

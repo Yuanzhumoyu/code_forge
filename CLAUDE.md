@@ -371,6 +371,13 @@ let name = node.get_text("name")?;
   `crates/frontend/forge-isa-dsl/tests/strict_overlap.rs`）、看**展开后**的指令与生效编码键、查单条指令的
   模板 provenance（哪个模板哪一行）、两份谱的规格 diff（迁移前后对照）、打印/写出 JSON
   Schema、把多文件谱 `fmt` 折叠成单文件（v18 S7d）。`--json` 机读；退出码 0/1/2。
+  **变体投影（v19 V5）**：`validate|insts --params xlen=32` 走只读投影——`[meta].variants`
+  声明参数域、六处声明（指令/模板行/`[emit.*]`/`[spill.*]`/`[[pseudo]]`/`[[pattern]]`）可标
+  `only_variants`，投影丢声明 + **连带丢引用不到指令的 `[[lowering]]`** + `{参数名}` 替换；
+  `insts` 第一行打印投影账目（`--json` 里 `projection`）。宏侧同参数进生成物文件名哈希。
+  **默认档逐字节不变**（不传参数不过滤）；`[spill]`/`[emit]` 等结构件引用被投影掉的指令
+  却**没标** `only_variants` ⇒ 报错（结构件要作者显式变体化，见 `docs/reference/isa-dsl.md`
+  「变体参数」；守卫 `tests/variants.rs`）。
   实现 = `forge-isa-dsl::report` + `::schema` 投影层 + CLI 薄层，复用
   `collect_inst_infos` 的"form 预设 ⊕ 指令覆盖"判定（不重复实现）。
   **三方针守卫必须改三处一起改**：schema 表（`src/schema.rs`）↔ `v12/model.rs` 结构体字段
