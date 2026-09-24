@@ -42,6 +42,7 @@
 | `performance/OPTIMIZATION.md` | 编译管线热点分析优化清单（原仓库根） |
 | `performance/bench_baseline.md` | criterion 基准基线 + 历轮优化实测（含少量记录节） |
 | `performance/codegen_stage_profile.md` | codegen stage 占比表（被 BENCHMARKS/bench_baseline 引用） |
+| `performance/generated_compile_profile.md` | 生成物编译画像（**2026-09-24**：分段体积 + 编译时间归属 + v19 V7「表化」的度量结论与重启触发条件） |
 
 ## guides/ — 工具与方法
 

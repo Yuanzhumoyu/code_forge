@@ -289,6 +289,12 @@ S8a/S8b-1/S8c 之后，lowering 里剩下的就是**每条规则各自的发射�
 S8 行原验收（生成代码 token −≥40%、`cargo check` −≥20%）**没有达到**，如实记：token 侧做到
 −22~36%，`cargo check` 侧 S8a 实测无差别（见上），剩余空间按本节度量判定为不值当。
 
+> **补充度量（2026-09-24，v19 V7）**：S8 判"不做"时只看 token；后来用"把 lowering 段函数体
+> 换成 `unimplemented!()`"的大颗粒对照，第一次量出这块的**编译时间**占比——x86 的 lowering
+> 段（315 KB / 全件 20.3%）占生成物全量重检 49.70 s 里的 **43.30 s（87.1%）**。结论不变
+> （token net 全件 11–17%，未过 15% 门槛），但"将来若冷构建成痛点"的触发条件与低风险替代
+> 已入库：见 [`generated_compile_profile.md`](generated_compile_profile.md)。
+
 ### S8d 落地度量（2026-09-21；谓词属性按需求值 + 去掉运行时名字分派）
 
 **报出来的缺陷**（用户 review）：`gen_lowering_attrs` 生成的属性源有两处浪费——

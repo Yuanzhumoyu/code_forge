@@ -24,6 +24,7 @@ docs/
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
 │   ├── bench_baseline.md      # 基线 + 历轮实测
+│   ├── generated_compile_profile.md # 生成物编译画像（v19 V7：分段体积/编译时间归属 + 表化结论）
 │   └── codegen_stage_profile.md # codegen stage 占比
 ├── guides/                # 工具与方法
 │   ├── isa-dsl-tutorial.md    # ISA-DSL 30 分钟接入教程（新 ISA 从这里开始）
