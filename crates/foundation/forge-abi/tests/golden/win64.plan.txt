@@ -1,0 +1,221 @@
+# x86_64_v12 / win64
+## void0
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## i64
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg a size=8 -> reg RCX
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## i32_i32
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg a size=4 -> reg RCX
+arg b size=4 -> reg RDX
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## i64_x6
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=48 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg a size=8 -> reg RCX
+arg b size=8 -> reg RDX
+arg c size=8 -> reg R8
+arg d size=8 -> reg R9
+arg e size=8 -> stack off=16 size=8 align=8
+arg f size=8 -> stack off=24 size=8 align=8
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## i64_x8
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=64 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg a size=8 -> reg RCX
+arg b size=8 -> reg RDX
+arg c size=8 -> reg R8
+arg d size=8 -> reg R9
+arg e size=8 -> stack off=16 size=8 align=8
+arg f size=8 -> stack off=24 size=8 align=8
+arg g size=8 -> stack off=32 size=8 align=8
+arg h size=8 -> stack off=40 size=8 align=8
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## f64
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg x size=8 -> reg XMM0
+ret reg XMM0
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## f64_x4
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg a size=8 -> reg XMM0
+arg b size=8 -> reg XMM1
+arg c size=8 -> reg XMM2
+arg d size=8 -> reg XMM3
+ret reg XMM0
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## ptr
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg p size=8 -> reg RCX
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## vec16
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg v size=16 -> reg XMM0
+ret reg XMM0
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## vec32
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=32 red_zone=None frame_pad=8
+variadic false
+arg v size=32 -> indirect ptr=RDX at=Some(0) on_stack=true
+ret indirect size=32 align=32
+hidden sret=RCX context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## agg_ii
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
+variadic false
+arg s size=16 -> indirect ptr=RDX at=Some(0) on_stack=true
+ret indirect size=16 align=8
+hidden sret=RCX context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## agg_ii_f64
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
+variadic false
+arg s size=16 -> indirect ptr=RCX at=Some(0) on_stack=true
+arg x size=8 -> reg XMM1
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## agg24
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=24 red_zone=None frame_pad=8
+variadic false
+arg s size=24 -> indirect ptr=RDX at=Some(0) on_stack=true
+ret indirect size=24 align=1
+hidden sret=RCX context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## hfa1
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg s size=4 -> reg RCX
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## hfa2
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg s size=8 -> reg RCX
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## hfa4
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
+variadic false
+arg s size=16 -> indirect ptr=RDX at=Some(0) on_stack=true
+ret indirect size=16 align=4
+hidden sret=RCX context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## agg_mixed_float
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
+variadic false
+arg s size=12 -> indirect ptr=RCX at=Some(0) on_stack=true
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## mixed_wide_ret
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg a size=8 -> reg RDX
+arg x size=8 -> reg XMM2
+ret indirect size=24 align=1
+hidden sret=RCX context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## i64_x9
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=72 byval_area=0 red_zone=None frame_pad=8
+variadic false
+arg a0 size=8 -> reg RCX
+arg a1 size=8 -> reg RDX
+arg a2 size=8 -> reg R8
+arg a3 size=8 -> reg R9
+arg a4 size=8 -> stack off=16 size=8 align=8
+arg a5 size=8 -> stack off=24 size=8 align=8
+arg a6 size=8 -> stack off=32 size=8 align=8
+arg a7 size=8 -> stack off=40 size=8 align=8
+arg a8 size=8 -> stack off=48 size=8 align=8
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+## va2p1
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=40 byval_area=0 red_zone=None frame_pad=8
+variadic true
+arg fmt size=8 -> reg RCX
+arg n size=4 -> reg RDX
+arg x size=8 -> stack off=16 size=8 align=8
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+va_area Win64Stack size=8 align=8 stack_only=true
+## va0p3
+conv win64
+stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=56 byval_area=0 red_zone=None frame_pad=8
+variadic true
+arg a size=8 -> stack off=16 size=8 align=8
+arg b size=8 -> stack off=24 size=8 align=8
+arg c size=8 -> stack off=32 size=8 align=8
+ret reg RAX
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
+clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
+va_area Win64Stack size=8 align=8 stack_only=true

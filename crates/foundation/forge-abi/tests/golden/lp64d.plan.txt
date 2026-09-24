@@ -1,0 +1,221 @@
+# riscv64_v12 / lp64d
+## void0
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## i64
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=8 -> reg X10
+ret reg X10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## i32_i32
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=4 -> reg X10
+arg b size=4 -> reg X11
+ret reg X10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## i64_x6
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=8 -> reg X10
+arg b size=8 -> reg X11
+arg c size=8 -> reg X12
+arg d size=8 -> reg X13
+arg e size=8 -> reg X14
+arg f size=8 -> reg X15
+ret reg X10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## i64_x8
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=8 -> reg X10
+arg b size=8 -> reg X11
+arg c size=8 -> reg X12
+arg d size=8 -> reg X13
+arg e size=8 -> reg X14
+arg f size=8 -> reg X15
+arg g size=8 -> reg X16
+arg h size=8 -> reg X17
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## f64
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg x size=8 -> reg F10
+ret reg F10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## f64_x4
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=8 -> reg F10
+arg b size=8 -> reg F11
+arg c size=8 -> reg F12
+arg d size=8 -> reg F13
+ret reg F10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## ptr
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg p size=8 -> reg X10
+ret reg X10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## vec16
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=16 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg v size=16 -> stack off=16 size=16 align=16
+ret indirect size=16 align=1
+hidden sret=X10 context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## vec32
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=48 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg v size=32 -> stack off=32 size=32 align=32
+ret indirect size=32 align=32
+hidden sret=X10 context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## agg_ii
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=16 -> pair X10:X11
+ret pair X10:X11
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## agg_ii_f64
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=16 -> pair X10:X11
+arg x size=8 -> reg F10
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## agg24
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=24 red_zone=None frame_pad=0
+variadic false
+arg s size=24 -> indirect ptr=X11 at=Some(0) on_stack=true
+ret indirect size=24 align=1
+hidden sret=X10 context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## hfa1
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=4 -> reg F10
+ret reg F10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## hfa2
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=8 -> pair F10:F11
+ret pair F10:F11
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## hfa4
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=16 -> pair X10:X11
+ret pair X10:X11
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## agg_mixed_float
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=12 -> pair X10:X11
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## mixed_wide_ret
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=8 -> reg X11
+arg x size=8 -> reg F10
+ret indirect size=24 align=1
+hidden sret=X10 context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## i64_x9
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=8 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a0 size=8 -> reg X10
+arg a1 size=8 -> reg X11
+arg a2 size=8 -> reg X12
+arg a3 size=8 -> reg X13
+arg a4 size=8 -> reg X14
+arg a5 size=8 -> reg X15
+arg a6 size=8 -> reg X16
+arg a7 size=8 -> reg X17
+arg a8 size=8 -> stack off=16 size=8 align=8
+ret reg X10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+## va2p1
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=8 byval_area=0 red_zone=None frame_pad=0
+variadic true
+arg fmt size=8 -> reg X10
+arg n size=4 -> reg X11
+arg x size=8 -> stack off=16 size=8 align=8
+ret reg X10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+va_area RiscvSaveArea size=24 align=8 stack_only=true
+## va0p3
+conv lp64d
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=24 byval_area=0 red_zone=None frame_pad=0
+variadic true
+arg a size=8 -> stack off=16 size=8 align=8
+arg b size=8 -> stack off=24 size=8 align=8
+arg c size=8 -> stack off=32 size=8 align=8
+ret reg X10
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
+clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
+va_area RiscvSaveArea size=24 align=8 stack_only=true

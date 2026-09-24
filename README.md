@@ -29,6 +29,7 @@
 | Crate | Layer | Description |
 | ------- | ------- | ------------- |
 | `forge-ir` | Foundation | SSA IR types, function/module, constant pool, LLVM-IR 文本 parser（logos+lalrpop）、verifier、display |
+| `forge-abi` | Foundation | 调用约定层：约定是**使用者的数据**（`AbiRules` + `AbiBinding`）、ISA 只申报能力（`AbiTarget`），引擎产出调用方/被调方共用的 `AbiPlan` |
 | `forge-mem` | Foundation | Executable memory (W^X), CPU feature detection, GDB JIT |
 | `forge-opt` | Middle | Optimization pipeline (O1=5 / O2=13 / O3=18 passes), LTO, PGO |
 | `forge-codegen` | Backend | ISA lowering, register allocation, emit, JIT, x86_64 v12 后端 |

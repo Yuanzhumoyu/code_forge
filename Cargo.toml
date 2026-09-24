@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/foundation/forge-ir",
+    "crates/foundation/forge-abi",
     "crates/foundation/forge-mem",
     "crates/foundation/forge-isa-runtime",
     "crates/frontend/forge-grammar",

@@ -1,0 +1,12 @@
+[package]
+name = "forge-abi"
+version = "0.1.0"
+edition = "2024"
+description = "Calling-convention model + generic ABI engine (conventions are user-supplied data; the ISA only supplies capabilities)"
+
+[dependencies]
+# 刻意**不依赖 forge-ir**（也不依赖任何内部 crate）：引擎吃的是"任意前端给的布局视图"
+# （`TyView`），IR 的类型句柄在 A2 由宿主适配（`forge-ir` 只声明"用哪份约定"）。
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.5"
+thiserror = "2.0.20"

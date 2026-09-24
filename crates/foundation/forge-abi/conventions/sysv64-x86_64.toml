@@ -1,0 +1,37 @@
+# (ISA, 约定) 寄存器绑定：System V AMD64 → x86_64_v12
+#
+# 与 `win64-x86_64.toml` 共用同一份 ISA 能力（x86 谱），差别**只在这份数据**：
+# 参数寄存器序不同、浮点槽多四个、callee-saved 集合不同、sret 指针落在 RDI、
+# 变参多一个 `%al` 元信息寄存器（用了几个向量寄存器）。
+
+isa = "x86_64_v12"
+conv = "sysv64"
+
+[pools]
+
+# 按**类**计数：整数与浮点序列各自推进。
+int = ["RDI", "RSI", "RDX", "RCX", "R8", "R9"]
+
+float = [
+  "XMM0",
+  "XMM1",
+  "XMM2",
+  "XMM3",
+  "XMM4",
+  "XMM5",
+  "XMM6",
+  "XMM7",
+]
+
+# SysV 的 callee-saved 比 Win64 少 RDI/RSI（那两个在 SysV 里是 caller-saved）。
+# 同 Win64：RBP 由帧件保存（`includes_fp = true`），不入此表。
+cs_gpr = ["RBX", "R12", "R13", "R14", "R15"]
+
+# `%al`：变参函数调用点写入"实际用了几个向量寄存器"。单槽池 → 引擎按
+# `hidden.va_meta_pool` 取 `pool[0]`（不是取游标位，见 `engine::plan_fn` ③）。
+va_meta = ["RAX"]
+
+# 返回寄存器（SysV：标量在 RAX/XMM0；≤16B 聚合按 `RAX:RDX` / `XMM0:XMM1` 两槽）。
+# 与参数池**不共用**：SysV 的第一个参数在 RDI，不在 RAX。
+ret_int = ["RAX", "RDX"]
+ret_float = ["XMM0", "XMM1"]

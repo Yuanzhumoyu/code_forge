@@ -528,6 +528,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "forge-abi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "forge-codegen"
 version = "0.1.0"
 dependencies = [
@@ -599,6 +608,7 @@ dependencies = [
 name = "forge-isa"
 version = "0.1.0"
 dependencies = [
+ "forge-abi",
  "forge-isa-dsl",
 ]
 

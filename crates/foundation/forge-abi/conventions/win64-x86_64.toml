@@ -1,0 +1,26 @@
+# (ISA, 约定) 寄存器绑定：Windows x64 → x86_64_v12
+#
+# 规则（`builtin::WIN64`）里只有抽象池名；本文件把池名绑到**这台机器**的寄存器上。
+# 换一个"寄存器编号不同/名字不同"的 x86 谱只需换这一份数据，规则一个字都不用改。
+
+isa = "x86_64_v12"
+conv = "win64"
+
+[pools]
+
+# 整数/指针参数槽（按**位置**计数，与浮点槽共享位置游标）。
+# sret 指针也走这个池的第 0 槽（`hidden = { sret_pool = "int", sret_slot = 0 }`）→ RCX。
+int = ["RCX", "RDX", "R8", "R9"]
+
+# 浮点/≤16B 向量槽（同一个位置游标；Win64 没有 YMM 参数寄存器，>16B 走引用）。
+float = ["XMM0", "XMM1", "XMM2", "XMM3"]
+
+# 需要**被调方额外保存**的通用寄存器（Win64：RBX/RBP/RDI/RSI/R12-R15）。
+# RBP 不列在这里——它由帧件保存（规则侧的 `callee_saved.includes_fp = true` 表达同一事实），
+# 与 `isa/x86_64_v12.toml` 的 `[abi.callee_saved]` 一致，避免"同一寄存器被算两遍"。
+cs_gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
+
+# 返回寄存器：**与参数池分开**（x64 标量返回在 RAX，参数却从 RCX 起；把两者合成一个池
+# 会让"第 5 个参数"和"返回值"抢同一个寄存器）。
+ret_int = ["RAX"]
+ret_float = ["XMM0"]

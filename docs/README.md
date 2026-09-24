@@ -14,6 +14,7 @@
 | `reference/isa-dsl-errors.md` | ISA-DSL 错误码目录（诊断格式、节级错误码、常见修法；含多文件组合与 `parts` 的加载期/编译期错误） | active |
 | `reference/aarch64-encoding-ref.md` | A64 整数核心指令编码参考（isa 表/golden 测试依据，尾节含 arm64_v12 实现状态） | active |
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
+| `reference/calling-conventions.md` | **调用约定层（`forge-abi`，v20 A1）**：三层数据（规则/绑定/计划）+ 通用引擎、内置四份约定与参考绑定、`AbiTarget` 能力视图、`AbiHooks`、`forge-isa abi list\|check\|plan`、已知缺口与"加自己的约定" | active |
 | `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode **v2**：段体压缩 + 段表 `raw_len`）规范：容器/段/原语/各段细节/压缩/确定性/版本策略/验证基线/消费者/已知限制 | active |
 
 ## forge-ir/ — forge-ir 工作流（活跃）
@@ -33,6 +34,7 @@
 | `plans/forge-ir-s8-design.md` | forge-ir S8 可选项设计（二进制序列化 / MemorySSA-lite / crate 拆分：逐个给设计与成本、验证方案、触发条件；2026-09-19 拍板：**只做二进制序列化**，另两项不做） | progress |
 | `plans/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化**执行方案**（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照、基线数字） | progress |
 | `plans/forge-isa-dsl-v19-plan.md` | forge-isa-dsl 改进方案（ISA-DSL v19：**可独立接入**——生成物只依赖 `forge-isa-runtime`、删 `krate`；**数据化验证**——谱内 `[[vectors]]` + `forge-isa test`；**规范体检**——`forge-isa lint`；**参数化变体**——一份源谱出 RV32/RV64；V0–V7 切片（MVP = V0–V4 + V6 确定性部分），外部参考 TableGen/ISLE/decodetree/SLEIGH/GCC .md/Sail 的对比与取舍见 §3） | progress |
+| `plans/calling-convention-redesign-plan.md` | 调用约定重设计（v20 A1–A7：约定是**使用者的数据**、ISA 只申报能力；A1 已落地 `forge-abi` + `forge-isa abi`；A2 IR `CallConvId` / A3–A4 管线按 `AbiPlan` 发射 / A5 删谱里 `[abi]` 换 `[machine]` / A6 变参与 HFA 细节 / A7 异域钩子示例） | progress |
 
 ## performance/ — 基准与优化
 

@@ -375,6 +375,149 @@ fn test_subcommand_usage_errors_exit_2() {
     );
 }
 
+/// `abi` 子命令（v20 A1）：约定/绑定数据 + 谱的能力视图，全部**不需要后端**。
+///
+/// 三份发行谱的实测结论（2026-09-24 本机）：x86 的 `win64`/`sysv64` 各 15 条代表签名
+/// 全部可规划、riscv64 的 `lp64d` 同样全绿；arm64 的 `aapcs64` 有 **6 条缺口**
+/// （谱里没有 FPR 寄存器组 → `float`/`ret_float` 池缺 → 浮点/HFA 无寄存器可落）。
+/// 这些缺口是**如实上报**的 fail-closed 边界，不是失败——所以默认退出码是 0，
+/// `--strict` 才让它们决定退出码。
+#[test]
+fn abi_check_reports_gaps_without_failing() {
+    let out = run(&[
+        "abi",
+        "check",
+        &isa("x86_v12.toml"),
+        &isa("riscv64_v12.toml"),
+        &isa("arm64_v12.toml"),
+    ]);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    assert!(out.stdout.contains("== x86_64_v12"), "{}", out.stdout);
+    assert!(out.stdout.contains("✓ win64"), "{}", out.stdout);
+    assert!(out.stdout.contains("✓ sysv64"), "{}", out.stdout);
+    assert!(out.stdout.contains("✓ lp64d"), "{}", out.stdout);
+    assert!(out.stdout.contains("⚠ aapcs64"), "{}", out.stdout);
+    assert!(out.stdout.contains("硬错 0"), "{}", out.stdout);
+    // 缺口必须点名"没有 FPR 组"这条根因，而不是含糊地说"失败"。
+    assert!(
+        out.stdout.contains("没有 FPR 寄存器组"),
+        "应给出 arm64 的根因提示：{}",
+        out.stdout
+    );
+    // 固定用途/链接寄存器也读得对（谱里的事实）。
+    assert!(out.stdout.contains("链接寄存器 X30"), "{}", out.stdout);
+}
+
+#[test]
+fn abi_check_strict_fails_on_gaps() {
+    let out = run(&["abi", "check", &isa("arm64_v12.toml"), "--strict"]);
+    assert_eq!(out.code, 1, "stdout={} stderr={}", out.stdout, out.stderr);
+    let out = run(&["abi", "check", &isa("x86_v12.toml"), "--strict"]);
+    assert_eq!(out.code, 0, "stdout={}", out.stdout);
+}
+
+#[test]
+fn abi_list_shows_builtin_data() {
+    let out = run(&["abi", "list"]);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    for want in [
+        "win64",
+        "sysv64",
+        "aapcs64",
+        "lp64d",
+        "x86_64_v12",
+        "riscv64_v12",
+    ] {
+        assert!(out.stdout.contains(want), "缺 {want}：{}", out.stdout);
+    }
+    // win64 的关键事实：32 字节 shadow、按位置计数、变参走栈。
+    assert!(out.stdout.contains("shadow=32"), "{}", out.stdout);
+    assert!(out.stdout.contains("位置=ByPosition"), "{}", out.stdout);
+
+    let json = run(&["abi", "list", "--json"]);
+    assert_eq!(json.code, 0);
+    assert!(
+        json.stdout.contains("\"position\": \"ByPosition\""),
+        "{}",
+        json.stdout
+    );
+    assert!(
+        json.stdout.contains("\"conv\": \"win64\""),
+        "{}",
+        json.stdout
+    );
+}
+
+#[test]
+fn abi_plan_prints_a_deterministic_plan() {
+    let out = run(&[
+        "abi",
+        "plan",
+        &isa("x86_v12.toml"),
+        "--conv",
+        "win64",
+        "--sig",
+        "i64, f64 -> i64",
+    ]);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    assert!(out.stdout.contains("conv win64"), "{}", out.stdout);
+    // win64 是**按位置**计数：第 2 个参数（浮点）应落在 XMM1。
+    assert!(
+        out.stdout.contains("arg a0 size=8 -> reg RCX"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("arg a1 size=8 -> reg XMM1"),
+        "{}",
+        out.stdout
+    );
+    // 标量返回在 RAX（返回池），不是参数池的 RCX。
+    assert!(out.stdout.contains("ret reg RAX"), "{}", out.stdout);
+    // 同一输入两次必须逐字节一致。
+    let again = run(&[
+        "abi",
+        "plan",
+        &isa("x86_v12.toml"),
+        "--conv",
+        "win64",
+        "--sig",
+        "i64, f64 -> i64",
+    ]);
+    assert_eq!(out.stdout, again.stdout);
+}
+
+#[test]
+fn abi_plan_fails_closed_on_gaps() {
+    // arm64 没有浮点寄存器：规划 f64 参数必须明确报缺，而不是静默换寄存器。
+    let out = run(&[
+        "abi",
+        "plan",
+        &isa("arm64_v12.toml"),
+        "--conv",
+        "aapcs64",
+        "--sig",
+        "f64 -> f64",
+    ]);
+    assert_eq!(out.code, 1, "stdout={}", out.stdout);
+    assert!(out.stdout.contains("float"), "{}", out.stdout);
+
+    // 用法错误：缺 --conv / 看不懂的类型。
+    let out = run(&["abi", "plan", &isa("x86_v12.toml"), "--sig", "i64"]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    let out = run(&[
+        "abi",
+        "plan",
+        &isa("x86_v12.toml"),
+        "--conv",
+        "win64",
+        "--sig",
+        "banana",
+    ]);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(out.stderr.contains("看不懂的类型"), "{}", out.stderr);
+}
+
 /// `test` 的**端到端**：现搭零宿主 crate → 生成物 → `cargo test` 跑谱里的向量。
 ///
 /// **默认跳过**：它会嵌套起一次 cargo（首次要编译 forge-isa-runtime/forge-isa-dsl 到独立

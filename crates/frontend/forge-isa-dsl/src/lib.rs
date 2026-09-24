@@ -12,6 +12,9 @@
 //! v11 语法层（`encoding` 字符串 + `@原语`、紧凑 `fields` 串、`when` 谓词串）已整体
 //! 移除——无兼容层、无转换工具、无逃生门。模型/校验/生成见 [`v12`] 模块。
 
+/// 机器能力视图（谱 → 寄存器表/角色/固定用途寄存器）：`forge-isa abi` 与宿主
+/// ABI 适配器的数据来源，见模块文档。
+pub mod abi_view;
 mod assembler;
 /// 生成物落盘与宿主预生成（v18 S10d）。
 pub mod gen_file;

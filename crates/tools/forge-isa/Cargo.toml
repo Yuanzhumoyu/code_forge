@@ -2,7 +2,7 @@
 name = "forge-isa"
 version = "0.1.0"
 edition = "2024"
-description = "ISA-DSL toolchain CLI: validate / insts / explain / diff"
+description = "ISA-DSL toolchain CLI: validate / insts / explain / diff / lint / abi"
 
 [[bin]]
 name = "forge-isa"
@@ -10,3 +10,5 @@ path = "src/main.rs"
 
 [dependencies]
 forge-isa-dsl = { path = "../../frontend/forge-isa-dsl" }
+# `abi` 子命令（v20 A1）：约定/绑定的引擎 + 谱的能力视图 → AbiPlan。
+forge-abi = { path = "../../foundation/forge-abi" }

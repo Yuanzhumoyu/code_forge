@@ -12,6 +12,7 @@ docs/
 ├── reference/             # 现行规范/设计参考 [active]
 │   ├── isa-dsl.md             # ISA-DSL v18 唯一语法规范（改 isa/*.toml 先看它）
 │   ├── isa-dsl-errors.md      # ISA-DSL 错误码目录（报错看不懂先看它）
+│   ├── calling-conventions.md # 调用约定层 forge-abi（v20 A1：规则/绑定/计划 + forge-isa abi）
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64_v12 后端/golden 依据）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── forge-ir/              # forge-ir 工作流 [active]
@@ -19,7 +20,8 @@ docs/
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
 ├── plans/                 # 有未完成工作的专项方案 [progress]
 │   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
-│   └── forge-isa-dsl-v19-plan.md    # ISA-DSL v19 现行方案（独立运行时 crate / 向量 / lint / 变体）
+│   ├── forge-isa-dsl-v19-plan.md    # ISA-DSL v19 现行方案（独立运行时 crate / 向量 / lint / 变体）
+│   └── calling-convention-redesign-plan.md # 调用约定重设计 v20 A1–A7（A1 已落地）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -184,6 +186,7 @@ complete ISA module (instructions, encoder, disassembler, assembler, lowering).
 code-forge (root umbrella)
 ├── forge-ir          (no internal deps)
 ├── forge-mem         (no internal deps)
+├── forge-abi         (no internal deps：调用约定数据 + 通用引擎，约定由使用者提供)
 ├── forge-opt         → forge-ir
 ├── forge-codegen     → forge-ir, forge-opt, forge-mem, forge-dsl
 ├── forge-dsl         (proc-macro 薄层：解析 isa_from_file! 参数 → forge-isa-dsl)
@@ -232,6 +235,18 @@ code-forge (root umbrella)
 5. **v12 自包含 asm** — v12 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
    lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait
    （`crate::machine::assembler`）仅要求 `parse_insts`。
+
+6. **调用约定是使用者的数据，ISA 只申报能力**（v20 A1）——`forge-abi` 把这件事拆成
+   三层：`AbiRules`（约定，平台无关的 TOML）→ `AbiBinding`（(ISA, 约定) 的寄存器绑定）→
+   `AbiPlan`（引擎产物，调用方与被调方共用）。引擎只认**注册表里注册过**的约定名
+   （未注册 ⇒ 明确报错，**不**退回缺省——历史上 IR 的 `CallConv::Default` 就是这样变成死值的）；
+   谱侧只提供 `AbiTarget`（有哪些寄存器/宽度/能力），没有宿主后端时由
+   `forge_isa_dsl::abi_view` 从谱本身建出这份视图。两条连带纪律：① **不要再往谱的 `[abi]`
+   里加约定内容**（A5 会把它整节搬成 `[machine]` 的机器事实 + 绑定/规则）；② 返回寄存器
+   与参数寄存器是**两套池**（x86 返回在 RAX、参数从 RCX 起），HFA 的槽数按类型取
+   （`slots = "hfa"`），宽返回的 sret 落点**每份约定不同**（x86=RCX/RDI、AAPCS64=x8、
+   riscv=a0）——这三处正是旧实现写错值的地方。参考
+   `docs/reference/calling-conventions.md`，分期 `docs/plans/calling-convention-redesign-plan.md`。
 
 ### ISA Backend Pattern
 
@@ -363,7 +378,16 @@ let name = node.get_text("name")?;
   **361 条**：x86 138 / riscv64 134 / arm64 89；迁移前后字节集合的规范化 sha256 相同）。
   校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
   守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs` 与 `tests/determinism.rs`。
-- **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint <谱.toml>`——
+- **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint|abi <谱.toml>`——
+  **`abi`（v20 A1）** 是**调用约定的静态体检**，与 `lint` 分工不同：`lint` 查"谱自己写了却不
+  用/自相矛盾"，`abi` 查"谱的能力 × 使用者的约定数据"——`forge-isa abi list` 列内置约定/绑定、
+  `abi check <谱>` 用 `forge_isa_dsl::abi_view` 的能力视图跑代表签名（**硬错**：名字/约定写错，
+  退出 1；**缺口**：这台机器做不了，fail-closed，默认只报 `⚠ GAP`、`--strict` 才影响退出码）、
+  `abi plan <谱> --conv <名> --sig "i64, f64 -> i64"` 打印一份 `AbiPlan`。
+  实测（2026-09-24）：x86 `win64`/`sysv64` 与 riscv64 `lp64d` 各 15 条代表签名**全绿**；
+  arm64 `aapcs64` **6 条缺口**（谱里没有 FPR 寄存器组 ⇒ `float`/`ret_float` 池缺，
+  与矩阵 175 条 skip 同源）。参考文档 `docs/reference/calling-conventions.md`，
+  方案与分期 `docs/plans/calling-convention-redesign-plan.md`。
   其中 `lint`（v19 V4a–V4c）是**静态体检**：报"写了却用不上 / 自相矛盾 / 宿主覆盖不到"的声明——
   未用的 `[[operand_slots]]` / `[[forms]]` / `[conventions.bitfields]`、**逐指令视图**里的位域重叠
   （`LINT-BITFIELD-OVERLAP`；按整张位域表判会把 riscv `shamt5`/`shamt6`、arm64 `op6`+`imm26`、

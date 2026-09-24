@@ -19,6 +19,7 @@ use std::process::ExitCode;
 
 use forge_isa_dsl::report::{self, DiagLine, Explain, InstRow, SpecDiff};
 
+mod abi;
 mod isa_test;
 
 const USAGE: &str = "\
@@ -41,6 +42,12 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
   forge-isa schema   [--out <file>]         打印（或写出）ISA-DSL 的 JSON Schema
   forge-isa fmt      <谱.toml> [--out <file>] 打印（或写出）**合并后**的规范文稿
                                              （include 展开 + override 应用，供人核对）
+  forge-isa abi list                        列出内置调用约定与寄存器绑定
+  forge-isa abi check <谱.toml>... [--conv <名>] [--strict] [--json]
+                                             调用约定的静态体检：谱的能力视图 × 内置绑定
+                                             跑代表签名（硬错 / 缺口分开报）
+  forge-isa abi plan <谱.toml> --conv <名> --sig \"i64, f64 -> i64\" [--variadic <命名数>]
+                                             打印一个签名的 AbiPlan（确定性文本）
   forge-isa --help | --version
 
 退出码：0 = 成功；1 = 诊断或失败；2 = 用法错误。";
@@ -131,6 +138,16 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 return Err("test 需要恰好一个谱文件".into());
             };
             Ok(isa_test::run(file, json))
+        }
+        "abi" => {
+            // v20 A1：调用约定的静态体检（谱 → 能力视图 → 内置约定/绑定）。
+            let json = has_flag(&args[1..], "--json");
+            let rest: Vec<String> = args[1..]
+                .iter()
+                .filter(|a| a.as_str() != "--json")
+                .cloned()
+                .collect();
+            abi::run(&rest, json)
         }
         "fmt" => {
             let out = flag_value(&args[1..], "--out")?;

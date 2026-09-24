@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-24) — 调用约定层 `forge-abi`（v20 A1：约定是使用者的数据，ISA 只申报能力）
+
+- **新 crate `crates/foundation/forge-abi`**（无内部依赖）：把调用约定拆成三层数据 + 一个通用引擎——`AbiRules`（约定，平台无关的 TOML，可继承）→ `AbiBinding`（`(ISA, 约定)` 的寄存器绑定）→ `AbiPlan`（引擎产物，**调用方与被调方共用**：每个实参/形参的落点、返回值、栈布局、callee-saved、hidden 槽、clobber）。内置约定 5 份（`c` 抽象基类 + `win64`/`sysv64`/`aapcs64`/`lp64d`）与参考绑定 4 份（`crates/foundation/forge-abi/conventions/*.toml`，含"为什么这么绑"的注释）。引擎只认注册表里注册过的约定名，未注册 ⇒ 明确报错（**不**退回缺省——旧设计里 IR 的 `CallConv::Default` 就是这样变成死值的）。
+- **修掉四处会写错值的模型缺口**（都是"内置数据跑起来"才暴露的，`cargo check` 看不见）：① 同质浮点聚合（HFA）判定不分整数/浮点 ⇒ `struct{i64,i64}` 会进浮点寄存器（RISC-V 应走 a0:a1）；② HFA 槽数写死 ⇒ `struct{f32}` 白吃 4 个寄存器、把后面的参数挤到栈上，改为 `slots = "hfa"`（按类型取成员数）；③ 参数位与返回位共用分类规则 ⇒ AAPCS64 的 >16B 聚合"当参数是 byval、当返回是 **x8** sret"被混成一条，新增 `ret_classify`（非空即独占）；④ 返回寄存器与参数寄存器共用池（x86 返回在 RAX、参数从 RCX 起）⇒ 拆成 `ret_int`/`ret_float` 两套池 + 两个独立游标（按位置计数时一个 2 槽返回不再把第一个参数挤走）。
+- **另修三处**：byval 副本改在**独立的调用方临时区**（`StackLayout::byval_area_bytes`；混进传出参数区会与栈参数抢内存）、`ClassRule` 的 TOML 键 `do` 缺 `#[serde(rename)]`（会让 5 份内置约定整片解析失败，`cargo check` 发现不了）、新增 `Placement::RegGroup`（AAPCS64 的 4×f32 HFA 需要 4 个连续槽；返回位本片明确 `Unsupported`）。
+- **ISA 侧能力视图 `forge_isa_dsl::abi_view`（新公开模块）**：从谱读"这台机器有什么"——寄存器表（GPR 区 + FP 区编号与 `TargetRegInfo::num_gp_regs`/`num_fp_regs` 对齐，别名解析到同一物理号）、固定用途寄存器（`[abi].reserved` + sp/fp）、链接寄存器（`[abi].call_ret_reg`）、角色→能力。**不读调用约定**（那是使用者的数据），也不暴露整个模型。
+- **CLI `forge-isa abi list|check|plan`**：新增 `abi` 子命令与 `forge-abi` 依赖。`abi check <谱>` 用能力视图 × 内置绑定跑 15 条代表签名，**硬错**（`UnresolvedReg`/`BadRules` = 名字或约定写错）退出 1、**缺口**（`MissingPool`/`Unsupported`/`CapabilityGap` = 这台机器做不了，fail-closed）默认只报 `⚠ GAP`、`--strict` 才影响退出码；`abi plan` 打印一份 `AbiPlan`（确定性文本）。**实测**：x86 `win64`/`sysv64` 与 riscv64 `lp64d` 各 15 条**全绿**；arm64 `aapcs64` **6 条缺口**（谱里没有 FPR 寄存器组 ⇒ `float`/`ret_float` 池缺 ⇒ 浮点/HFA 无寄存器可落，与矩阵 175 条 skip 同源，A5 关闭）。
+- 测试：黄金快照 4 份（四约定 × 21 条语料，`FORGE_ABI_BLESS=1` 重新生成）+ 不变量 18 条（位置计数/按类计数、整数聚合不是 HFA、单成员 HFA 只占一槽、4 成员 HFA 用 `RegGroup`、寄存器不重复记账、栈参数不重叠、sret 逐约定各就各位、变参未命名实参、钩子覆盖分类）+ fail-closed 目录 14 条（未注册约定/缺绑定/名字写错/空池/非 2 的幂/未知族名/无 `va_list`/能力缺口/池耗尽/≥3 槽返回）+ CLI 端到端 5 条。文档：`docs/reference/calling-conventions.md`（现行参考）+ `docs/plans/calling-convention-redesign-plan.md`（A1–A7 分期）。
+- **本片只新增**（没有任何消费者）：谱里的 `[abi]` 节、管线、IR 都还没切换，因此**现有编译行为逐字节不变**；A2–A5 分步切换（IR `CallConvId` → 管线按 plan 发射 → 删谱里 `[abi]` 换 `[machine]`）。
+
 ### Added (2026-09-24) — ISA-DSL v19 V4d（lint 收尾：未指定位 / 可合并为 `vary` 的族）
 
 - **`LINT-UNASSIGNED-BITS`（opt-in `lint --bits`）**：指令字里**没有任何位域覆盖**的位段（按缺省 0 发射）。只对 `kind = "fixed"` 的 ISA 判——变长 ISA 的前缀/REX/ModRM/VEX 由编码器发射、不在位域表里建模，按表判必成误报；全字常量自动无缺口。**实测 + 人工核对**：x86 0 / riscv64 3（`NOP`/`ECALL`/`EBREAK` 的固定位型，故意只声明 `opcode`）/ arm64 67（全是保留位：`BR`/`RET`/`B.cond` 的 `[4,5)`、`[0,5)`+`[10,16)`、`LDUR` 族的 `[10,12)`+`[21,24)` 抽查都对得上参考编码）⇒ 保持评审清单，不进默认档。
