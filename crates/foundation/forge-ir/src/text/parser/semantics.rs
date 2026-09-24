@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use smallvec::SmallVec;
 
-use crate::CallConv;
+use crate::CallConvId;
 use crate::DataLayout;
 use crate::Endianness;
 use crate::entity::map::SecondaryMap;
@@ -888,7 +888,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
                 f.name.trim_start_matches('@'),
                 ctx.clone(),
                 sig_ref,
-                CallConv::default(),
+                CallConvId::default(),
             );
             if f.dso_local {
                 placeholder.symbol.dso_local = true;
@@ -923,7 +923,7 @@ fn build_module(ast: &mut ParsedModule) -> Result<Module, IrError> {
             name.trim_start_matches('@'),
             ctx.clone(),
             void_sig,
-            CallConv::default(),
+            CallConvId::default(),
         );
         let fr = module.add_function(ph);
         func_refs.insert(name, fr);
@@ -2107,24 +2107,12 @@ fn build_function<'a>(
 
     // 调用约定 + 函数属性（LLVM 头：`define fastcc i32 @f(...) nounwind`）
     if let Some(cc) = f.call_conv.as_deref() {
-        let cv = match cc {
-            "fastcc" => crate::CallConv::Fast,
-            "win64cc" => crate::CallConv::WindowsX64,
-            other => {
-                // `cc N` 数值约定（LLVM 标准）
-                if let Some(n) = other.strip_prefix("cc ") {
-                    let n: u32 = n.parse().map_err(|_| {
-                        IrError::Semantic(format!("invalid calling convention {other}"))
-                    })?;
-                    crate::CallConv::Custom(n)
-                } else {
-                    // 命名约定宽松化（第十一轮）：amdgpu_cs_chain/x86_intrcc 等
-                    // 平台专用约定——开放集合，未知者以 Custom 占位（display 还原）
-                    crate::CallConv::Custom(other.len() as u32 ^ 0x8000_0000)
-                }
-            }
-        };
-        fb.func.calling_convention = cv;
+        // 文本表只有一份（`CallConvId::from_text`）：`c`/`cdecl` → 默认约定、`cc N` → 数值、
+        // `win64cc`/`fastcc` 等 LLVM 关键字 → 内置名/命名、其余标识符 → **使用者命名**
+        // （开放集合，不再像旧实现那样把名字折成 `Custom(len ^ 0x8000_0000)` 这种
+        //  "既还原不出来、也没人读"的占位值）。
+        fb.func.calling_convention = crate::CallConvId::from_text(cc)
+            .map_err(|e| IrError::Semantic(format!("invalid calling convention `{cc}`: {e}")))?;
     }
     for attr in &f.attrs {
         let flag = match attr.as_str() {

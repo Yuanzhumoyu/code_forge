@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-24) — v20 A2：IR 里的调用约定从"死枚举"变成"使用者命名的标识 + 宿主注册表"（破坏性）
+
+- **删掉 16 变体的 `CallConv`，换成 `CallConvId`**（`forge-ir`）：`Builtin(ConvName)`（`c`/`sysv64`/`win64`/`aapcs64`/`lp64d`）、`Named(ImmStr)`（**使用者自己注册的名字**，开放集合）、`Index(u32)`（LLVM `cc N`）。默认 = `Builtin(C)`，文本层对 `c` 不写关键字（与 LLVM 一致）。旧枚举里 `SystemV`/`Fast`/`Cold`/`PreserveAll` 那些变体既不是公共约定、也没有任何代码读——那是"用枚举假装支持一切"。
+- **未知约定不再被折成不可还原的占位值**：文本层原先把 `amdgpu_cs_chain` 这类名字编码成 `Custom(len ^ 0x8000_0000)`（既打印不回原样、也没人读），现在 `Named(ImmStr)` 原样保留；`to_text`/`from_text` **共用一张表**（`win64cc`/`fastcc`/`cc 42` 等 LLVM 拼写 = 同一份数据），往返不会漂移。
+- **新增真实读路径**（旧实现 `ctx.call_conv` 只写不读，等于文档）：`forge-codegen::pipeline::conv_registry` 是宿主注册表（内置五份 + `register_rules_toml`/`register_binding_toml` 加自己的），编译入口 `CompileState::new` 把 `CallConvId` 解析成注册表键（`Index(n)` → `"cc{n}"`）落在 `LowerCtx::call_conv_name`；**未注册一律 fail-closed**（报 `Unsupported` 并列出已注册的名字，**不**退回缺省约定——`CallConv::Default` 就是这么变成死值的）。A3 起同一个名字用来查 `AbiRules`/`AbiBinding` 发射调用点。
+- **二进制格式升到 `IR_FORMAT_VERSION = 3`**：签名体里那 1 字节判别值改成 tag（`0..=4` 内置 / `5` 命名（字符串表下标）/ `6` 数值（varint））；`c` 仍是 1 字节，因此字节偏移类的手工解码测试不受影响。**无兼容读取**（设计前提就是破坏性更新）：v2 字节流在头部即报版本不符；文档 `docs/reference/binary-format.md` 同步（标题 v3 + 版本历史表）。
+- 测试：`crates/backend/forge-codegen/tests/conv_registry_read_path.rs`（内置五份可解析；未注册的 `Named`/`Index` 都 fail-closed 且消息能指路；**端到端**"未注册时编译失败 → 注册后同一份 IR 编译通过"）。`forge-ir` 的文本/二进制/往返测试全部因共用表而继续绿（`fastcc`/`win64cc`/`cc 10` 的原样往返）。
+- 说明：`forge-rustc` 从不引用这个类型（前端也从没填过它）——这正是"死值"的另一半原因；A2b 会让前端把 `PassMode` 落到 IR 属性上。
+
 ### Added (2026-09-24) — 调用约定层 `forge-abi`（v20 A1：约定是使用者的数据，ISA 只申报能力）
 
 - **新 crate `crates/foundation/forge-abi`**（无内部依赖）：把调用约定拆成三层数据 + 一个通用引擎——`AbiRules`（约定，平台无关的 TOML，可继承）→ `AbiBinding`（`(ISA, 约定)` 的寄存器绑定）→ `AbiPlan`（引擎产物，**调用方与被调方共用**：每个实参/形参的落点、返回值、栈布局、callee-saved、hidden 槽、clobber）。内置约定 5 份（`c` 抽象基类 + `win64`/`sysv64`/`aapcs64`/`lp64d`）与参考绑定 4 份（`crates/foundation/forge-abi/conventions/*.toml`，含"为什么这么绑"的注释）。引擎只认注册表里注册过的约定名，未注册 ⇒ 明确报错（**不**退回缺省——旧设计里 IR 的 `CallConv::Default` 就是这样变成死值的）。

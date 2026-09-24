@@ -18,14 +18,14 @@ use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::dfg::ValueDef;
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{
-    CallConv, Function, ImmStr, Immediate, Inst, InstFlags, IselStrategy, Opcode, TypeId,
+    CallConvId, Function, ImmStr, Immediate, Inst, InstFlags, IselStrategy, Opcode, TypeId,
 };
 
 /// 造一个 `ret(load(store(...)))` 形态的函数：一条有结果的指令 + 一条 Store。
 fn fixture() -> (Function, Inst, Inst) {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[TypeId::I32]));
-    let mut func = Function::new("f", ctx, sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx, sig_ref, CallConvId::default());
     let (b0, _) = func.dfg.make_block_with_params(&[]);
     func.entry_block = Some(b0);
     let c = func.dfg.make_inst(

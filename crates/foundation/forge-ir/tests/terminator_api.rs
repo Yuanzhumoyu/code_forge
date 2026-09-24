@@ -9,7 +9,7 @@
 //! 3. `TermKind` 判别与 `successors`/`args_to` 语义一致。
 
 use forge_ir::{
-    Block, CallConv, FuncRef, Function, FunctionSignature, Opcode, TermKind, TypeContext, TypeId,
+    Block, CallConvId, FuncRef, Function, FunctionSignature, Opcode, TermKind, TypeContext, TypeId,
     Value,
 };
 
@@ -17,7 +17,7 @@ use forge_ir::{
 fn fixture() -> (Function, Block, Block, Block, Value) {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[ctx.i32_ty()]));
-    let mut func = Function::new("t", ctx, sig_ref, CallConv::Default);
+    let mut func = Function::new("t", ctx, sig_ref, CallConvId::default());
     let b0 = func.dfg.make_block();
     func.entry_block = Some(b0);
     let (b1, p1) = func.dfg.make_block_with_params(&[TypeId::I32]);

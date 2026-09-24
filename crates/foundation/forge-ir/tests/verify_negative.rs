@@ -17,7 +17,7 @@ use forge_ir::ir::opcode::{FloatCC, IntCC, Opcode};
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::text::parser::parse_module;
 use forge_ir::verify::{Verifier, VerifyError};
-use forge_ir::{CallConv, InstFlags, TypeId};
+use forge_ir::{CallConvId, InstFlags, TypeId};
 
 fn verify_builder(
     sig_returns: &[forge_ir::TypeId],
@@ -74,7 +74,7 @@ fn verify_missing_entry() {
 fn verify_missing_terminator() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
-    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConvId::default());
     let b = func.dfg.make_block();
     func.entry_block = Some(b);
     // 不设置终结符
@@ -97,7 +97,7 @@ fn verify_missing_terminator() {
 fn unterminated_block_is_explicit_state() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
-    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConvId::default());
     let b = func.dfg.make_block();
     func.entry_block = Some(b);
 
@@ -244,7 +244,7 @@ fn verify_call_invalid_target() {
 fn verify_path_without_return() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[ctx.i32_ty()]));
-    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConvId::default());
     let b = func.dfg.make_block();
     func.entry_block = Some(b);
     // 不设置终结符（builder finish 会拦截，手构 dfg 可绕过）：
@@ -831,7 +831,7 @@ fn parse_rejects_alloca_addrspace_before_align() {
 fn verify_operand_count_mismatch() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
-    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConvId::default());
     let (b0, params) = func.dfg.make_block_with_params(&[TypeId::I32, TypeId::I32]);
     func.entry_block = Some(b0);
     // Iadd 期望 2 个操作数，这里只给 1 个
@@ -861,7 +861,7 @@ fn verify_operand_count_mismatch() {
 fn verify_multiple_entry_blocks() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
-    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConvId::default());
     // 判据："无前驱且**带参数**"的块超过 1 个 —— 入口块自己也带参数即满足
     let (entry, _) = func.dfg.make_block_with_params(&[TypeId::I32]);
     // 第二个"入口"：无人跳入，同样带块参数
@@ -885,7 +885,7 @@ fn verify_multiple_entry_blocks() {
 fn verify_dominance_violation() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[ctx.i32_ty()]));
-    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx.clone(), sig_ref, CallConvId::default());
     let (entry, _) = func.dfg.make_block_with_params(&[]);
     let (a, _) = func.dfg.make_block_with_params(&[]);
     let (b, _) = func.dfg.make_block_with_params(&[]);

@@ -1,6 +1,6 @@
-# forge-ir 二进制格式（IR bitcode v2）
+# forge-ir 二进制格式（IR bitcode v3）
 
-> 状态：[active]（2026-09-19 起；`IR_FORMAT_VERSION = 2`——v2 增段体压缩）。
+> 状态：[active]（2026-09-24 起；`IR_FORMAT_VERSION = 3`——v3 换 `CallConvId`；v2 是段体压缩）。
 > 实现：`crates/foundation/forge-ir/src/binary/`；执行方案与逐切片证据见
 > `docs/plans/forge-ir-binary-serialization-plan.md`。**本文件是格式的规范文本**，
 > 与代码不一致时以代码为准（`IR_FORMAT_VERSION` 常量即版本号）。
@@ -43,7 +43,7 @@ pub enum IrError { /* … */ BinaryDecode { offset: usize, msg: String } }
 
 ```text
 offset 0   magic "FORGEIR\0"（8 字节）
-           format_version：varint（当前 2；不等于当前版本即 Err，无兼容升级）
+           format_version：varint（当前 3；不等于当前版本即 Err，无兼容升级）
            producer：varint 长度 + UTF-8（头部自包含，仅诊断用）
            section_count：varint
            段表：section_count × { id: u8 | offset: varint | len: varint | raw_len: varint }
@@ -223,6 +223,7 @@ header 为奇：回引段，长度 = header / 2 + 4，随后跟 varint(距离 - 
   | --- | --- |
   | 1 | 首版容器：8 段 + 段表 `{id, offset, len}` |
   | 2 | 段表加第 4 字段 `raw_len` + 段体压缩（§8）；**无兼容读取**，v1 字节流在 v2 读侧直接报版本不符 |
+  | 3 | 调用约定换成 `CallConvId`：签名体的判别值改 tag（`0..=4` 内置 / `5` 命名 / `6` 数值）；**无兼容读取**，见 `calling-conventions.md` |
 
 ## 10. 验证基线
 

@@ -14,7 +14,7 @@
 | `reference/isa-dsl-errors.md` | ISA-DSL 错误码目录（诊断格式、节级错误码、常见修法；含多文件组合与 `parts` 的加载期/编译期错误） | active |
 | `reference/aarch64-encoding-ref.md` | A64 整数核心指令编码参考（isa 表/golden 测试依据，尾节含 arm64_v12 实现状态） | active |
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
-| `reference/calling-conventions.md` | **调用约定层（`forge-abi`，v20 A1）**：三层数据（规则/绑定/计划）+ 通用引擎、内置四份约定与参考绑定、`AbiTarget` 能力视图、`AbiHooks`、`forge-isa abi list\|check\|plan`、已知缺口与"加自己的约定" | active |
+| `reference/calling-conventions.md` | **调用约定层（`forge-abi`，v20 A1/A2）**：三层数据（规则/绑定/计划）+ 通用引擎、IR 侧 `CallConvId`（`Builtin`/`Named`/`Index`，未注册即 fail-closed）、内置四份约定与参考绑定、`AbiTarget` 能力视图、`AbiHooks`、`forge-isa abi list\|check\|plan`、已知缺口与"加自己的约定" | active |
 | `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode **v2**：段体压缩 + 段表 `raw_len`）规范：容器/段/原语/各段细节/压缩/确定性/版本策略/验证基线/消费者/已知限制 | active |
 
 ## forge-ir/ — forge-ir 工作流（活跃）

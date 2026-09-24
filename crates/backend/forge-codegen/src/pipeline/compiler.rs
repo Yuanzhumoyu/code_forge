@@ -1929,7 +1929,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);
 
-        let mut state = CompileState::new(&self.machine, func_ref);
+        let mut state = CompileState::new(&self.machine, func_ref)?;
         let _t = std::time::Instant::now();
 
         // Stage 1: Block mapping
@@ -2038,7 +2038,7 @@ pub(crate) struct CompileState<I: MachineInst> {
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
-    fn new<M: TargetMachine>(machine: &M, func: &Function) -> Self {
+    fn new<M: TargetMachine>(machine: &M, func: &Function) -> Result<Self, IrError> {
         // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
         // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取**一次快照**——守卫借的是
         // 这个局部，不与 func 的 &mut 借用冲突；快照交给 LowerCtx（lowering 期间类型表
@@ -2046,7 +2046,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let types_ctx = func.types.clone();
         let store = types_ctx.borrow();
         let mut ctx = LowerCtx::new();
-        ctx.call_conv = func.calling_convention;
+        // **在这里读调用约定**（v20 A2）：解析成宿主注册表里的名字，未注册即 fail-closed。
+        // 旧实现只把这行赋一次值、全仓无人读——IR 里那份约定等于文档；
+        // 现在它是真实的读路径（A3 起用这个名字查 `AbiRules`/`AbiBinding` 发射调用点）。
+        ctx.call_conv = func.calling_convention.clone();
+        ctx.call_conv_name = crate::pipeline::conv_registry::resolve(&func.calling_convention)?;
         ctx.type_store = Some(store.clone());
         // 值/地址寄存器类与栈槽单位：全部由 TargetRegInfo 元数据提供
         //（DSL 从 [meta].value_gpr_width/addr_width/slot_bytes 生成）——
@@ -2084,7 +2088,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         });
         ctx.constant_pool = Some(func.constants.clone());
 
-        Self {
+        Ok(Self {
             vcode: VCode::new(),
             xreg_map: Vec::new(),
             inst_clobbers: Vec::new(),
@@ -2093,7 +2097,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ctx,
             param_xregs: Vec::new(),
             alloca_offsets: SecondaryMap::new(),
-        }
+        })
     }
 
     // ── Stage 6: Register Allocation ──

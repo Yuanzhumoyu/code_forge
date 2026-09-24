@@ -19,7 +19,11 @@ pub const MAGIC: [u8; 8] = *b"FORGEIR\0";
 /// - **2**（2026-09-19）：段表条目增 `raw_len`（`0` = 段体未压缩，`>0` = 该段体经
 ///   [`crate::binary::pack`] 压缩、解压后为该字节数）。压缩**只在真的更小时启用**，
 ///   因此不作开关、无旋钮，也不影响段的解码顺序与语义。
-pub const IR_FORMAT_VERSION: u16 = 2;
+/// - **3**（2026-09-24，v20 A2）：调用约定从 16 变体的 `CallConv` 换成
+///   `CallConvId::{Builtin(ConvName), Named(ImmStr), Index(u32)}`——`TYPES` 段签名体里
+///   那 1 字节判别值改成 `tag`（0 内置 / 1 命名 / 2 数值）+ 载荷（内置 = 稳定小整数、
+///   命名 = 字符串表下标、数值 = varint）。破坏性更新：旧流在头部就报版本不符。
+pub const IR_FORMAT_VERSION: u16 = 3;
 
 /// producer 串（写入头部，**仅用于诊断**；跨版本不保证字节流逐字节相同）。
 ///

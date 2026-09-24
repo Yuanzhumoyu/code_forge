@@ -8,6 +8,8 @@ description = "Forge Codegen: backend framework with lowering, register allocati
 forge-ir = { path = "../../foundation/forge-ir" }
 forge-isa-runtime = { path = "../../foundation/forge-isa-runtime" }
 forge-opt = { path = "../../middle/forge-opt" }
+# v20 A2：宿主约定注册表要用 forge-abi（规则/绑定/引擎）
+forge-abi = { path = "../../foundation/forge-abi" }
 forge-mem = { path = "../../foundation/forge-mem" }
 forge-dsl = { path = "../../frontend/forge-dsl" }
 smallvec = "1.16.0"

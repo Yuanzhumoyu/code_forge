@@ -5,7 +5,7 @@
 //! （直接写字段会编译失败），所以本文件同时是"外部 crate 只能这么用"的样例。
 
 use forge_ir::{
-    Block, CallConv, Function, FunctionSignature, Inst, InstFlags, IselStrategy, Opcode,
+    Block, CallConvId, Function, FunctionSignature, Inst, InstFlags, IselStrategy, Opcode,
     TypeContext, TypeId, Value,
 };
 
@@ -13,7 +13,7 @@ use forge_ir::{
 fn fixture(name: &str) -> (Function, Block, Inst, Value) {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[ctx.i32_ty()]));
-    let mut func = Function::new(name, ctx, sig_ref, CallConv::Default);
+    let mut func = Function::new(name, ctx, sig_ref, CallConvId::default());
     let (b0, params) = func.dfg.make_block_with_params(&[TypeId::I32, TypeId::I32]);
     func.entry_block = Some(b0);
     let iadd = func.dfg.make_inst(

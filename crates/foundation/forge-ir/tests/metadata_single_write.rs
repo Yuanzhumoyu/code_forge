@@ -23,7 +23,7 @@ use forge_ir::ir::dfg::{TermMetadataAttach, ValueDef};
 use forge_ir::ir::metadata::{AttachedMetadata, MetadataId, MetadataKind};
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::text::parser::parse_module;
-use forge_ir::{CallConv, Function, Inst, InstFlags, Opcode, TypeId, Value};
+use forge_ir::{CallConvId, Function, Inst, InstFlags, Opcode, TypeId, Value};
 
 fn am(kind: MetadataKind, node: u32) -> AttachedMetadata {
     AttachedMetadata {
@@ -36,7 +36,7 @@ fn am(kind: MetadataKind, node: u32) -> AttachedMetadata {
 fn fixture() -> (Function, forge_ir::Block, Inst, Value) {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[ctx.i32_ty()]));
-    let mut func = Function::new("f", ctx, sig_ref, CallConv::Default);
+    let mut func = Function::new("f", ctx, sig_ref, CallConvId::default());
     let (b0, params) = func.dfg.make_block_with_params(&[TypeId::I32, TypeId::I32]);
     func.entry_block = Some(b0);
     let iadd = func.dfg.make_inst(
@@ -71,7 +71,7 @@ fn instruction_metadata_appends_in_order() {
 fn terminator_metadata_uses_single_entry() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[]));
-    let mut func = Function::new("g", ctx, sig_ref, CallConv::Default);
+    let mut func = Function::new("g", ctx, sig_ref, CallConvId::default());
     let (b0, _) = func.dfg.make_block_with_params(&[]);
     func.entry_block = Some(b0);
 

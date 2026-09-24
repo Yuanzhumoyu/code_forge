@@ -46,7 +46,7 @@
 
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
-use forge_ir::{CallConv, Function, ImmStr, Immediate, Inst, InstFlags, Opcode, TypeId, Value};
+use forge_ir::{CallConvId, Function, ImmStr, Immediate, Inst, InstFlags, Opcode, TypeId, Value};
 
 /// 造一个含两个 i64 常量 + 一条 Iadd 的函数（值句柄齐全，便于越界对照）。
 fn fixture() -> (Function, Value, Value) {
@@ -220,7 +220,7 @@ fn inst_mut_is_the_only_edit_entry() {
 fn inst_mut_operand_edit_needs_refresh() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[TypeId::I32]));
-    let mut func = Function::new("h", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("h", ctx.clone(), sig_ref, CallConvId::default());
     let (b0, _) = func.dfg.make_block_with_params(&[]);
     func.entry_block = Some(b0);
     let a = func.dfg.make_inst(
@@ -283,7 +283,7 @@ fn first_inst(func: &Function, opcode: Opcode) -> Inst {
 fn refined_value_type_stays_verifiable() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[TypeId::I32]));
-    let mut func = Function::new("g", ctx.clone(), sig_ref, CallConv::Default);
+    let mut func = Function::new("g", ctx.clone(), sig_ref, CallConvId::default());
     let (b0, _) = func.dfg.make_block_with_params(&[]);
     func.entry_block = Some(b0);
     let inst: Inst = func.dfg.make_inst(

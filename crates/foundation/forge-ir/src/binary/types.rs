@@ -10,7 +10,7 @@
 use crate::entity::{Endianness, TypeId};
 use crate::error::IrError;
 use crate::ir::data_layout::{DataLayout, Mangling};
-use crate::ir::types::{CallConv, FunctionSignature, TypeEntry, TypeField, TypeStore};
+use crate::ir::types::{CallConvId, ConvName, FunctionSignature, TypeEntry, TypeField, TypeStore};
 use crate::util::imm_str::ImmStr;
 use crate::util::string_pool::InternedStr;
 
@@ -141,35 +141,54 @@ fn encode_signature(out: &mut Vec<u8>, sig: &FunctionSignature, w: &mut Writer) 
     for r in &sig.returns {
         writer::put_varint(out, u64::from(r.0));
     }
-    encode_call_conv(out, sig.calling_convention);
+    encode_call_conv(out, &sig.calling_convention, w);
     writer::put_u8(out, u8::from(sig.variadic));
 }
 
-pub(crate) fn encode_call_conv(out: &mut Vec<u8>, cc: CallConv) {
-    // 判别值固定；新增变体时这里的 match 会编译期失败（不会静默错位）。
-    let tag: u8 = match cc {
-        CallConv::Default => 0,
-        CallConv::SystemV => 1,
-        CallConv::WindowsX64 => 2,
-        CallConv::Fast => 3,
-        CallConv::CDecl => 4,
-        CallConv::Internal => 5,
-        CallConv::Custom(_) => 6,
-        CallConv::Aapcs => 7,
-        CallConv::AapcsVfp => 8,
-        CallConv::RiscvIlp32 => 9,
-        CallConv::RiscvLp64 => 10,
-        CallConv::WasmBasic => 11,
-        CallConv::StdCall => 12,
-        CallConv::VectorCall => 13,
-        CallConv::PreserveMost => 14,
-        CallConv::PreserveAll => 15,
-        CallConv::Cold => 16,
-    };
-    writer::put_u8(out, tag);
-    if let CallConv::Custom(n) = cc {
-        writer::put_varint(out, u64::from(n));
+pub(crate) fn encode_call_conv(out: &mut Vec<u8>, cc: &CallConvId, w: &mut Writer) {
+    // v3 起：首字节 = tag。`0..=4` 直接是**内置约定的稳定编码**（`c`=0 因而仍是 1 字节，
+    // 与旧格式的 `CallConv::Default` 同宽），`5` = 命名（字符串表下标），`6` = 数值。
+    // 老格式（tag 0..16 的 16 个枚举变体）随 `CallConv` 一起删除——版本号已升到 3，
+    // 老字节流在头部就报"版本不符"，不会走到这里。
+    match cc {
+        CallConvId::Builtin(n) => writer::put_u8(out, builtin_code(*n)),
+        CallConvId::Named(s) => {
+            writer::put_u8(out, 5);
+            let idx = w.intern(s);
+            writer::put_varint(out, u64::from(idx));
+        }
+        CallConvId::Index(n) => {
+            writer::put_u8(out, 6);
+            writer::put_varint(out, u64::from(*n));
+        }
     }
+}
+
+/// 内置约定的**稳定编码**（写在这里就固定了；增删要跟着升格式版本）。
+fn builtin_code(n: ConvName) -> u8 {
+    match n {
+        ConvName::C => 0,
+        ConvName::SysV64 => 1,
+        ConvName::Win64 => 2,
+        ConvName::Aapcs64 => 3,
+        ConvName::Lp64d => 4,
+    }
+}
+
+fn builtin_from_code(code: u8, at: usize) -> Result<ConvName, IrError> {
+    Ok(match code {
+        0 => ConvName::C,
+        1 => ConvName::SysV64,
+        2 => ConvName::Win64,
+        3 => ConvName::Aapcs64,
+        4 => ConvName::Lp64d,
+        other => {
+            return err(
+                at,
+                format!("未知的内置调用约定编码 {other}（本版本认识 0..=4）"),
+            );
+        }
+    })
 }
 
 fn encode_data_layout(out: &mut Vec<u8>, dl: &DataLayout) {
@@ -570,7 +589,7 @@ fn decode_signature(
         }
         returns.push(TypeId(raw as u32));
     }
-    let cc = decode_call_conv(c)?;
+    let cc = decode_call_conv(c, strings)?;
     let variadic = read_bool(c, c.offset())?;
     Ok(FunctionSignature {
         params,
@@ -580,32 +599,33 @@ fn decode_signature(
     })
 }
 
-pub(crate) fn decode_call_conv(c: &mut Cursor<'_>) -> Result<CallConv, IrError> {
+pub(crate) fn decode_call_conv(
+    c: &mut Cursor<'_>,
+    strings: &[ImmStr],
+) -> Result<CallConvId, IrError> {
     let at = c.offset();
-    Ok(match c.read_u8()? {
-        0 => CallConv::Default,
-        1 => CallConv::SystemV,
-        2 => CallConv::WindowsX64,
-        3 => CallConv::Fast,
-        4 => CallConv::CDecl,
-        5 => CallConv::Internal,
-        6 => CallConv::Custom(u32::try_from(c.read_varint()?).map_err(|_| {
-            IrError::BinaryDecode {
-                offset: at,
-                msg: "Custom 调用约定编号超出 u32".to_string(),
-            }
-        })?),
-        7 => CallConv::Aapcs,
-        8 => CallConv::AapcsVfp,
-        9 => CallConv::RiscvIlp32,
-        10 => CallConv::RiscvLp64,
-        11 => CallConv::WasmBasic,
-        12 => CallConv::StdCall,
-        13 => CallConv::VectorCall,
-        14 => CallConv::PreserveMost,
-        15 => CallConv::PreserveAll,
-        16 => CallConv::Cold,
-        other => return err(at, format!("未知调用约定 tag {other}")),
+    let tag = c.read_u8()?;
+    Ok(match tag {
+        0..=4 => CallConvId::Builtin(builtin_from_code(tag, at)?),
+        5 => {
+            let i_at = c.offset();
+            let idx = c.read_varint()?;
+            CallConvId::Named(string_at(strings, idx, i_at)?.clone())
+        }
+        6 => {
+            let n_at = c.offset();
+            let raw = c.read_varint()?;
+            CallConvId::Index(u32::try_from(raw).map_err(|_| IrError::BinaryDecode {
+                offset: n_at,
+                msg: format!("数值调用约定 `cc {raw}` 超出 u32"),
+            })?)
+        }
+        other => {
+            return err(
+                at,
+                format!("未知调用约定 tag {other}（本版本：0..=4 内置 5 命名 6 数值）"),
+            );
+        }
     })
 }
 

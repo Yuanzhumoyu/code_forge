@@ -65,8 +65,16 @@ pub struct LowerCtx {
     pub xregs: forge_ir::XRegAllocator,
     /// XReg → IR 类型映射（用于 `.if` 条件汇编中的类型查询）。
     pub xreg_types: HashMap<XReg, TypeId>,
-    /// 当前函数的调用约定。
-    pub call_conv: CallConv,
+    /// 当前函数的调用约定（IR 声明的那份标识）。
+    pub call_conv: CallConvId,
+    /// **解析后的约定名**（宿主注册表里的键；空串 = 还没解析）。
+    ///
+    /// 与 [`call_conv`](Self::call_conv) 的分工：`call_conv` 是 IR 侧的**标识**
+    /// （`Builtin`/`Named`/`Index`），这个名字是**查表用的键**——A3 起用它查
+    /// `AbiRules`/`AbiBinding` 发射调用点/入口/序尾声。管线入口
+    /// （`CompileState::new`）会解析并 fail-closed，因此 lowering 里读到的名字
+    /// 一定是注册过的。
+    pub call_conv_name: String,
     /// 当前函数的常量池（用于解析 Iconst/Fconst 的索引）。
     pub constant_pool: Option<forge_ir::ConstantPool>,
     /// VReg → 寄存器类别映射（用于寄存器分配）。
@@ -161,7 +169,8 @@ impl LowerCtx {
             next_vreg: 0,
             xregs: forge_ir::XRegAllocator::new(),
             xreg_types: HashMap::new(),
-            call_conv: CallConv::Default,
+            call_conv: CallConvId::default(),
+            call_conv_name: String::new(),
             constant_pool: None,
             is_float_return: false,
             is_sret_return: false,

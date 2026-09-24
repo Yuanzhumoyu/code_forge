@@ -2,6 +2,8 @@ pub mod agg_const;
 pub mod agg_expand;
 pub mod alloc_config;
 pub mod compiler;
+/// 宿主调用约定注册表（IR 的 `CallConvId` → 注册名；未注册即 fail-closed）。
+pub mod conv_registry;
 pub mod emission;
 pub mod frame_layout;
 pub mod liverange;

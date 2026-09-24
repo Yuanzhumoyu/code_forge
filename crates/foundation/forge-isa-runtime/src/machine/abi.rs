@@ -3,7 +3,7 @@
 //! 描述参数传递、返回值、栈对齐等 ABI 规则。
 //! 与 TargetFrameLowering 分离：ABI 描述"什么"，FrameLowering 实现"怎么做"。
 
-use forge_ir::{CallConv, PhysReg};
+use forge_ir::{CallConvId, PhysReg};
 
 /// 帧布局模式（[abi.frame].layout）：callee-saved 保存槽相对帧的位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +39,8 @@ pub trait TargetABI: Send + Sync + 'static {
     type Reg: PhysReg;
 
     /// 当前调用约定。
-    fn call_conv(&self) -> CallConv {
-        CallConv::Default
+    fn call_conv(&self) -> CallConvId {
+        CallConvId::default()
     }
 
     /// 参数传递寄存器（按顺序）。

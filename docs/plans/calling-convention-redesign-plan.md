@@ -58,7 +58,7 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 
 ## 5. 分期与进度
 
-### A1 ✅ 数据 + 引擎 + 参考数据 + CLI（本片）
+### A1 ✅ 数据 + 引擎 + 参考数据 + CLI
 
 #### 产物
 
@@ -115,15 +115,39 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 2. `forge-rustc (e2e, Windows)` 仍是**历史性红**（与本片无关，见
    [`forge-rustc-vec_push-plan.md`](forge-rustc-vec_push-plan.md)）。
 
-### A2 IR：`CallConvId` + 每条参数/返回值属性
+### A2 ✅ IR：`CallConvId` + 宿主注册表读路径（本片）
 
-- 删 `CallConv` 枚举，改 `CallConvId::{Builtin(Named), Named(ImmStr), Index(u32)}` + 宿主注册表；
-  未注册 ⇒ fail-closed。
-- `FunctionSignature` 的每个参数带属性（`byval`/`sret`/`inreg`/`zeroext`/`signext`/对齐）；
-  **调用点**可覆盖（`invoke inreg(1)` 这种写法在 LLVM 里就是这么表达的）。
-- 文本/二进制格式 + 校验器 + 迁移 `forge-hir` / `forge-rustc` / `mini_c`。
-- 判定：IR 里的约定**至少被一处读**（读它的地方就是 A3 的入口），并有一条"改了约定名 ⇒
-  规划结果变"的端到端回归。
+#### 产物
+
+- `forge-ir` 删掉 16 变体的 `CallConv`，换成
+  `CallConvId::{Builtin(ConvName), Named(ImmStr), Index(u32)}` + `ConvName`
+  （`c`/`sysv64`/`win64`/`aapcs64`/`lp64d`）。默认 = `Builtin(C)`，文本层对 `c` 不写关键字
+  （与 LLVM 一致）。
+- **文本表只有一份**（`to_text`/`from_text` 互为逆）：`win64cc`/`fastcc`/`cc N` 等 LLVM 拼写
+  与规范名共用一张表；未知标识符 → `Named`（原样保留）。旧实现把未知名字折成
+  `Custom(len ^ 0x8000_0000)`——既还原不出来，也没有任何代码读。
+- **二进制格式升到 v3**（`IR_FORMAT_VERSION = 3`）：签名体里那 1 字节判别值改成 tag
+  （`0..=4` 内置 / `5` 命名（字符串表下标）/ `6` 数值（varint））。`c` 仍是 1 字节
+  ⇒ 字节偏移类的手工测试不受影响。无兼容读取（设计前提就是破坏性更新）。
+- **读路径**（本片的关键）：`forge-codegen::pipeline::conv_registry` —— 宿主注册表
+  （内置五份 + `register_rules_toml`/`register_binding_toml` 加自己的），
+  `resolve()` 把标识解析成注册表键（`Index(n)` → `"cc{n}"`）并落在
+  `LowerCtx::call_conv_name`。**未注册 ⇒ `CompileState::new` 直接报错并列出已注册的名字**。
+  旧实现 `ctx.call_conv = …` 只写不读，全仓无人读——现在这条链路是活的。
+- 测试：`crates/backend/forge-codegen/tests/conv_registry_read_path.rs`（3 条）——
+  内置五份可解析；未注册的 `Named`/`Index` 都 fail-closed 且消息列已知名字；
+  **端到端**："同名 IR 未注册时编译失败 → 注册后编译通过"（⇒ 改约定名确实改变规划走的数据）。
+
+#### 还没做（下一步）
+
+- **签名级参数属性**：`ParamAttributes`（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`…）
+  目前挂在 `Function` 上（按参数索引），**调用点**要用的 `FunctionSignature` 还没有；
+  A2b 把它变成签名的一部分（单一事实源），并让文本/二进制、verifier 一起走。
+- **属性 → `AbiPlan` 的投影**：`TypeId + TypeStore + DataLayout + ParamAttributes → TyView`
+  与按属性覆盖分类（`byval(N)` → `Indirect{CallerStackCopy}`、`sret` → `Indirect{HiddenSret}`…）。
+  这一块与 A3 的 `AbiTarget` 适配器（`TargetRegInfo` → 引擎）同批做，避免两套投影。
+- `forge-rustc` 的 `PassMode` → IR 属性的落库（现在前端从不写 IR 的约定/属性，
+  这也是旧设计"死值"的另一半原因）。
 
 ### A3 调用点/入口/返回值按 plan 发射（x86 优先）
 

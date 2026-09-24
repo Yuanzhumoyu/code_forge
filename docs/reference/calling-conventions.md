@@ -1,7 +1,8 @@
 # 调用约定层（forge-abi）
 
-> **状态：active**（v20 A1，2026-09-24）。代码为准：`crates/foundation/forge-abi`。
-> 本文只讲**已经落地**的东西；A2–A7（IR/管线/谱切换）的设计与进度见
+> **状态：active**（v20 A1/A2，2026-09-24）。代码为准：`crates/foundation/forge-abi`、
+> `forge-ir` 的 `CallConvId`、`forge-codegen` 的 `pipeline::conv_registry`。
+> 本文只讲**已经落地**的东西；A3–A7（管线按 plan 发射、删谱里 `[abi]`）的设计与进度见
 > [`docs/plans/calling-convention-redesign-plan.md`](../plans/calling-convention-redesign-plan.md)。
 
 调用约定在这套编译器里是**三层数据 + 一个通用引擎**，不是散在各处的 if-else：
@@ -24,6 +25,19 @@
       AbiPlan（纯数据：每个实参/形参的落点、返回值、栈布局、callee-saved、hidden 槽）
 ```
 
+IR 侧只做一件事——**声明用哪份约定**（`CallConvId`），并把名字交给宿主注册表解析：
+
+```text
+FunctionSignature.calling_convention : CallConvId
+   = Builtin(ConvName)  |  Named(ImmStr)  |  Index(u32)
+        │  forge_codegen::pipeline::conv_registry::resolve()   ← 宿主数据，**未注册即报错**
+        ▼
+   ctx.call_conv_name（注册表键："win64"/"my_conv"/"cc42"）
+        │  forge_abi::AbiRegistry::rules(name) / binding(isa, name)
+        ▼
+   AbiRules + AbiBinding → plan_fn → AbiPlan（A3 按它发射调用点/入口/序尾声）
+```
+
 **一条铁律**：引擎只认识注册表里注册过的约定名。没注册 ⇒ 明确报错，绝不退回
 `Default`——旧设计里 IR 的 `CallConv::Default` 就是被这条"静默兜底"变成死值的。
 
@@ -33,10 +47,11 @@
 
 | 现象 | 证据（随迭代漂移，以符号名为准） |
 | --- | --- |
-| IR 里的调用约定是**死值** | `CallConv` 有 16 个变体 + `Custom(u32)`，全仓只有一处**写**它（`pipeline/compiler.rs` 里设 `ctx.call_conv`），**没有任何地方读** |
+| IR 里的调用约定是**死值** | `CallConv` 曾有 16 个变体 + `Custom(u32)`，全仓只有一处**写**它（`pipeline/compiler.rs` 里设 `ctx.call_conv`），**没有任何地方读**；连前端都没人填它（`forge-rustc` 从不引用这个类型） |
 | 同一份约定在每个 ISA 里各写一遍、且各写各的 | x86 谱有 `push`/`pop`/`stack_arg_load`/`stack_arg_store`/`frame_addr`/`wide_vec_*` 角色，arm64 谱一个都没有 |
 | 换 ISA 就错 | 间接结果指针（sret）被硬编码成"**首 int 参数槽**"= Windows x64 的 RCX；AAPCS64 其实是 **x8**，RISC-V 是 **a0** |
 | 变参无处可写 | IR 有 `va_arg`、有 `variadic` 标志，但没有"未命名实参放哪、`va_list` 什么形状、`%al`/`LEN` 谁填"的模型 |
+| 未知约定被折成不可还原的占位值 | 文本层曾把 `amdgpu_cs_chain` 这类未知名字编码成 `Custom(len ^ 0x8000_0000)`——既打印不回原样，也没有任何代码读它 |
 
 本层把"约定"从 ISA 里拿出来、把"能力"从约定里拿出来，于是：
 
@@ -130,6 +145,33 @@ ret_float = ["XMM0"]
   （没有宿主，按 `abi_view` 的"GPR 区 + FP 区"编号）检查时，**优先用名字**。
 - 帧指针不进 `cs_gpr`：x86 的 RBP、riscv 的 X8、arm64 的 X29 由帧件保存，
   规则侧用 `callee_saved.includes_fp` / `includes_link` 表达"它也被保存"（否则算两遍）。
+
+## IR 侧：`CallConvId`（声明用哪份约定）
+
+`forge-ir` 只声明**用哪份**约定，不定义任何一份：
+
+```rust
+pub enum CallConvId {
+    Builtin(ConvName),   // c / sysv64 / win64 / aapcs64 / lp64d
+    Named(ImmStr),       // 使用者注册的名字（开放集合，如 "my_conv"）
+    Index(u32),          // 数值约定（LLVM `cc N`；注册键是 "cc<N>"）
+}
+```
+
+- **默认 = `Builtin(C)`**；文本层对 `c` **不写关键字**（与 LLVM 一致），其余按 LLVM 拼写
+  （`win64cc`/`fastcc`/`cc 42`）或规范名（`sysv64`/`aapcs64`/`lp64d`）。
+- **文本表只有一份**（`CallConvId::to_text` / `from_text` 互为逆）：不会出现"解析成一个、
+  打印成另一个"的往返漂移；未知标识符 → `Named`（**原样保留**，不再折成
+  `Custom(len ^ 0x8000_0000)` 这类无法还原的占位值）。
+- **未注册即 fail-closed**：`forge_codegen::pipeline::conv_registry::resolve()` 在编译入口
+  （`CompileState::new`）把标识解析成注册表键，查不到就报 `Unsupported` 并列出已注册的名字。
+  宿主用 `register_rules_toml` / `register_binding_toml` 加自己的约定。
+- 解析结果落在 `LowerCtx::call_conv_name`——**A3 就用这个名字查 `AbiRules`/`AbiBinding`**
+  发射调用点/入口/序尾声。旧实现"只写不读"的那个字段，现在是一条活路径。
+- 二进制格式跟着升到 **`IR_FORMAT_VERSION = 3`**：签名体里那 1 字节判别值改成 tag
+  （`0..=4` = 内置、`5` = 命名（字符串表下标）、`6` = 数值（varint））。`c` 仍是 **1 字节**
+  ——与旧格式同宽，字节偏移类的手工测试不受影响。破坏性更新、**无兼容读取**：
+  旧流在头部就报版本不符。
 
 ## ③ AbiPlan —— 引擎产物
 

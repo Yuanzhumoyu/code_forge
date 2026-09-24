@@ -122,7 +122,8 @@ fn unterminated_target_block_reports_instead_of_panicking() {
 fn truncated_switch_case_table_reports_instead_of_panicking() {
     let ctx = TypeContext::new();
     let sig_ref = ctx.register_signature(FunctionSignature::new(&[], &[ctx.i32_ty()]));
-    let mut func = forge_ir::Function::new("s", ctx.clone(), sig_ref, forge_ir::CallConv::Default);
+    let mut func =
+        forge_ir::Function::new("s", ctx.clone(), sig_ref, forge_ir::CallConvId::default());
     let (b0, _) = func.dfg.make_block_with_params(&[]);
     let (b1, _) = func.dfg.make_block_with_params(&[]);
     let (b2, _) = func.dfg.make_block_with_params(&[]);

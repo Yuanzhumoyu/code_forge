@@ -422,12 +422,11 @@ impl<'a> fmt::Display for FunctionDisplay<'a> {
         if func.symbol.dso_local {
             write!(f, " dso_local")?;
         }
-        // 调用约定：`fastcc`/`win64cc`（LLVM 位置在返回类型前）
-        match func.calling_convention {
-            crate::CallConv::Fast => write!(f, " fastcc")?,
-            crate::CallConv::WindowsX64 => write!(f, " win64cc")?,
-            crate::CallConv::Custom(n) => write!(f, " cc {n}")?,
-            _ => {}
+        // 调用约定：只有一个**文本表**（`CallConvId::to_text`）——`c` 约定不写关键字
+        // （与 LLVM 一致），其余按 LLVM 拼写（`win64cc`/`fastcc`/`cc N`）或规范名。
+        let conv_text = func.calling_convention.to_text();
+        if !conv_text.is_empty() {
+            write!(f, " {conv_text}")?;
         }
         write!(f, " ")?;
         // 返回属性（LLVM：`define signext i8 @g`）

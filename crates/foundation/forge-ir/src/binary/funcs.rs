@@ -166,7 +166,7 @@ fn encode_function(out: &mut Vec<u8>, f: &Function, w: &mut Writer) {
     let store = f.types.borrow();
     put_str(out, w, &f.name);
     put_handle(out, f.signature.0);
-    encode_call_conv(out, f.calling_convention);
+    encode_call_conv(out, &f.calling_convention, w);
     writer::put_varint(out, u64::from(f.attributes.bits()));
     writer::put_varint(out, f.extra_attrs.len() as u64);
     for a in &f.extra_attrs {
@@ -434,7 +434,7 @@ fn decode_function(
             format!("函数 {name:?} 引用越界签名 SigRef({})", signature.0),
         );
     }
-    let cc = decode_call_conv(c)?;
+    let cc = decode_call_conv(c, strings)?;
     let mut f = Function::new(name, module.types.clone(), signature, cc);
 
     f.attributes = FunctionAttributes::from_bits(read_u32(c, "函数属性")?);

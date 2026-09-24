@@ -236,17 +236,21 @@ code-forge (root umbrella)
    lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait
    （`crate::machine::assembler`）仅要求 `parse_insts`。
 
-6. **调用约定是使用者的数据，ISA 只申报能力**（v20 A1）——`forge-abi` 把这件事拆成
+6. **调用约定是使用者的数据，ISA 只申报能力**（v20 A1/A2）——`forge-abi` 把这件事拆成
    三层：`AbiRules`（约定，平台无关的 TOML）→ `AbiBinding`（(ISA, 约定) 的寄存器绑定）→
-   `AbiPlan`（引擎产物，调用方与被调方共用）。引擎只认**注册表里注册过**的约定名
-   （未注册 ⇒ 明确报错，**不**退回缺省——历史上 IR 的 `CallConv::Default` 就是这样变成死值的）；
+   `AbiPlan`（引擎产物，调用方与被调方共用）。**IR 只声明"用哪份"**：
+   `CallConvId::{Builtin(ConvName), Named(ImmStr), Index(u32)}`（旧的 16 变体 `CallConv`
+   已删——它既不是公共约定、也没人读）；宿主注册表
+   `forge_codegen::pipeline::conv_registry` 在编译入口解析成注册表键（未注册 ⇒ **fail-closed**，
+   结果落在 `LowerCtx::call_conv_name`，A3 起用它查规则/绑定）。
    谱侧只提供 `AbiTarget`（有哪些寄存器/宽度/能力），没有宿主后端时由
-   `forge_isa_dsl::abi_view` 从谱本身建出这份视图。两条连带纪律：① **不要再往谱的 `[abi]`
+   `forge_isa_dsl::abi_view` 从谱本身建出这份视图。三条连带纪律：① **不要再往谱的 `[abi]`
    里加约定内容**（A5 会把它整节搬成 `[machine]` 的机器事实 + 绑定/规则）；② 返回寄存器
    与参数寄存器是**两套池**（x86 返回在 RAX、参数从 RCX 起），HFA 的槽数按类型取
    （`slots = "hfa"`），宽返回的 sret 落点**每份约定不同**（x86=RCX/RDI、AAPCS64=x8、
-   riscv=a0）——这三处正是旧实现写错值的地方。参考
-   `docs/reference/calling-conventions.md`，分期 `docs/plans/calling-convention-redesign-plan.md`。
+   riscv=a0）——这三处正是旧实现写错值的地方；③ 改 `CallConvId` 的编码要**同时**升
+   `IR_FORMAT_VERSION`（当前 3）并改 `docs/reference/binary-format.md` 的版本历史表。
+   参考 `docs/reference/calling-conventions.md`，分期 `docs/plans/calling-convention-redesign-plan.md`。
 
 ### ISA Backend Pattern
 

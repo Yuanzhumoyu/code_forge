@@ -849,43 +849,174 @@ impl Default for TypeStore {
 // 函数签名 (存储在 TypeStore 中)
 // ============================================================
 
-/// 调用约定。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum CallConv {
+/// **叫得出名字**的调用约定（本 crate 只认识这几个名字）。
+///
+/// 这里只有**名字**：约定本身（参数寄存器、callee-saved、栈布局、sret 落在哪个寄存器…）
+/// 是**使用者的数据**（`forge-abi` 的 `AbiRules` + `AbiBinding`）。IR 只声明"用哪份"。
+///
+/// 旧设计有 16 个变体（`SystemV`/`Fast`/`Cold`/`PreserveAll`…），它们既不是公共约定、
+/// 也没有任何一处代码读——那是"用枚举假装支持一切"的典型：越写越像 LLVM，越写越没人用。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub enum ConvName {
+    /// C 家族默认约定（文本层**不写关键字**，与 LLVM 一致）。
     #[default]
-    Default,
-    /// System V AMD64 ABI (Linux, macOS, BSD)
-    SystemV,
-    /// Microsoft x64 calling convention
-    WindowsX64,
-    /// Fast call (pass args in registers when possible)
-    Fast,
-    /// C declaration (caller cleans stack)
-    CDecl,
-    /// Internal convention (compiler-private)
-    Internal,
-    /// 任意数值约定（LLVM `cc N`；仅文本层 round-trip 保真）。
-    Custom(u32),
-    /// ARM Architecture Procedure Call Standard
-    Aapcs,
-    /// AAPCS with VFP (hard-float for ARM)
-    AapcsVfp,
-    /// RISC-V ILP32 (32-bit ints/pointers)
-    RiscvIlp32,
-    /// RISC-V LP64 (64-bit)
-    RiscvLp64,
-    /// WebAssembly basic C ABI
-    WasmBasic,
-    /// stdcall (Win32, callee cleans stack)
-    StdCall,
-    /// vectorcall (pass vector args in registers)
-    VectorCall,
-    /// Preserve most registers (callee-saved heavy, for hot calls)
-    PreserveMost,
-    /// Preserve all registers (callee saves everything)
-    PreserveAll,
-    /// Cold function (optimize for size, not speed)
-    Cold,
+    C,
+    /// System V AMD64。
+    SysV64,
+    /// Microsoft x64。
+    Win64,
+    /// AArch64 AAPCS64。
+    Aapcs64,
+    /// RISC-V LP64D。
+    Lp64d,
+}
+
+impl ConvName {
+    /// 全部内置名（枚举序 = 稳定序；文本/报告按它排序）。
+    pub const ALL: [ConvName; 5] = [
+        ConvName::C,
+        ConvName::SysV64,
+        ConvName::Win64,
+        ConvName::Aapcs64,
+        ConvName::Lp64d,
+    ];
+
+    /// 规范名——与 `forge-abi` 的 `AbiRules::name` 一致（注册表就是按这个名字查的）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConvName::C => "c",
+            ConvName::SysV64 => "sysv64",
+            ConvName::Win64 => "win64",
+            ConvName::Aapcs64 => "aapcs64",
+            ConvName::Lp64d => "lp64d",
+        }
+    }
+
+    /// 按规范名查（不含 LLVM 关键字拼写——那是文本层的事）。
+    pub fn from_str_exact(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|n| n.as_str() == s)
+    }
+}
+
+impl fmt::Display for ConvName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// IR 里的调用约定标识：**声明用哪份约定**，不定义约定。
+///
+/// 三种形态合起来覆盖"使用者能设计的全部约定"：
+///
+/// - [`CallConvId::Builtin`]：叫得出名字的常用约定（`c`/`sysv64`/`win64`/`aapcs64`/`lp64d`）；
+/// - [`CallConvId::Named`]：使用者自己注册的名字（开放集合，对应 `AbiRules::name`）；
+/// - [`CallConvId::Index`]：数值约定（LLVM `cc N`），给"按编号分派"的前端（如 GPU 后端）。
+///
+/// **未注册的名字一律 fail-closed**：IR 层能解析、能往返，但"这个宿主认不认"由宿主手里
+/// 那份注册表决定（`forge-abi::AbiRegistry`；管线入口会查，查不到就报错）。
+/// **不**退回某个缺省约定——旧设计里 `CallConv::Default` 就是这么变成死值的。
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CallConvId {
+    /// 内置名（默认 = `c`：LLVM 里"不写关键字"的那份约定）。
+    Builtin(ConvName),
+    /// 使用者命名的约定（`ImmStr`：IR 的开放集合字符串）。
+    Named(ImmStr),
+    /// 数值约定（LLVM `cc N`）。
+    Index(u32),
+}
+
+impl Default for CallConvId {
+    fn default() -> Self {
+        Self::Builtin(ConvName::C)
+    }
+}
+
+impl CallConvId {
+    pub fn builtin(name: ConvName) -> Self {
+        Self::Builtin(name)
+    }
+
+    pub fn named(name: &str) -> Self {
+        Self::Named(ImmStr::from(name))
+    }
+
+    pub fn index(n: u32) -> Self {
+        Self::Index(n)
+    }
+
+    /// 是不是"约定本身"（`C`）——文本层据此决定要不要写关键字。
+    pub fn is_c(&self) -> bool {
+        matches!(self, Self::Builtin(ConvName::C))
+    }
+
+    /// 约定名（`Index` → `None`：数值约定没有名字，只有编号）。
+    ///
+    /// 注册表查询走这个：`Builtin(n)`/`Named(s)` → 名字；`Index` → 由宿主按编号自己
+    /// 分派（本 crate 不预设编号含义）。
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Builtin(n) => Some(n.as_str()),
+            Self::Named(s) => Some(s.as_str()),
+            Self::Index(_) => None,
+        }
+    }
+
+    /// 数值约定的编号。
+    pub fn index_id(&self) -> Option<u32> {
+        match self {
+            Self::Index(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// 文本形态（LLVM 兼容拼写；`c` 约定 = **空串**，与 LLVM 的"不写关键字"一致）。
+    ///
+    /// 表只有**一份**：本函数与 [`CallConvId::from_text`] 互为逆（`fastcc` ⇄ `Named("fast")`
+    /// 这类 LLVM 关键字也在表里），因此文本往返稳定、不会出现"解析成一个、打印成另一个"。
+    pub fn to_text(&self) -> String {
+        match self {
+            Self::Builtin(ConvName::C) => String::new(),
+            Self::Builtin(ConvName::SysV64) => "sysv64".to_string(),
+            Self::Builtin(ConvName::Win64) => "win64cc".to_string(),
+            Self::Builtin(ConvName::Aapcs64) => "aapcs64".to_string(),
+            Self::Builtin(ConvName::Lp64d) => "lp64d".to_string(),
+            Self::Named(s) if s.as_str() == "fast" => "fastcc".to_string(),
+            Self::Named(s) if s.as_str() == "cold" => "coldcc".to_string(),
+            Self::Named(s) => s.as_str().to_string(),
+            Self::Index(n) => format!("cc {n}"),
+        }
+    }
+
+    /// 从文本关键字解析（空串 = 默认的 `c` 约定；未知标识符 → `Named`）。
+    pub fn from_text(s: &str) -> Result<Self, String> {
+        let t = s.trim();
+        if t.is_empty() || t == "c" || t == "cdecl" {
+            return Ok(Self::Builtin(ConvName::C));
+        }
+        if let Some(rest) = t.strip_prefix("cc ") {
+            let n: u32 = rest
+                .trim()
+                .parse()
+                .map_err(|_| format!("`cc <N>` 的 N 要是无符号整数，得到 `{rest}`"))?;
+            return Ok(Self::Index(n));
+        }
+        match t {
+            "win64cc" | "win64" => Ok(Self::Builtin(ConvName::Win64)),
+            "fastcc" => Ok(Self::Named(ImmStr::from("fast"))),
+            "coldcc" => Ok(Self::Named(ImmStr::from("cold"))),
+            other => Ok(match ConvName::from_str_exact(other) {
+                Some(n) => Self::Builtin(n),
+                // 开放集合：使用者自己的约定名（`amdgpu_cs_chain`、`my_conv`…）。
+                None => Self::Named(ImmStr::from(other)),
+            }),
+        }
+    }
+}
+
+impl fmt::Display for CallConvId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_text())
+    }
 }
 
 /// 函数签名 (存储为 TypeEntry::Function 的辅助查询结构)。
@@ -896,7 +1027,8 @@ pub enum CallConv {
 pub struct FunctionSignature {
     pub params: Vec<(TypeId, ImmStr)>,
     pub returns: Vec<TypeId>,
-    pub calling_convention: CallConv,
+    /// **用哪份约定**（不是"哪份约定长什么样"——那是使用者的数据，见 [`CallConvId`]）。
+    pub calling_convention: CallConvId,
     /// 可变参数（LLVM：`declare i32 @printf(ptr, ...)` 的 `...`）。
     pub variadic: bool,
 }
@@ -907,7 +1039,7 @@ impl FunctionSignature {
         Self {
             params: params.iter().map(|(t, n)| (*t, ImmStr::from(*n))).collect(),
             returns: returns.to_vec(),
-            calling_convention: CallConv::default(),
+            calling_convention: CallConvId::default(),
             variadic: false,
         }
     }
@@ -916,7 +1048,7 @@ impl FunctionSignature {
         Self {
             params: Vec::new(),
             returns: Vec::new(),
-            calling_convention: CallConv::default(),
+            calling_convention: CallConvId::default(),
             variadic: false,
         }
     }
@@ -927,7 +1059,7 @@ impl FunctionSignature {
         self
     }
 
-    pub fn with_calling_convention(mut self, cc: CallConv) -> Self {
+    pub fn with_calling_convention(mut self, cc: CallConvId) -> Self {
         self.calling_convention = cc;
         self
     }

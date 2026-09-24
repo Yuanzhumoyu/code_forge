@@ -130,7 +130,7 @@ pub struct FunctionBuilder {
 
 impl FunctionBuilder {
     pub fn new(name: impl Into<ImmStr>, ctx: TypeContext, signature: FunctionSignature) -> Self {
-        let cc = signature.calling_convention;
+        let cc = signature.calling_convention.clone();
         let sig_ref = ctx.register_signature(signature);
         let func = Function::new(name, ctx.clone(), sig_ref, cc);
         Self {

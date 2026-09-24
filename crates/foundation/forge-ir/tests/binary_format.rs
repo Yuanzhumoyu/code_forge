@@ -310,7 +310,7 @@ fn check_binary_compat_reports_header() {
 /// （含字段名）/bfloat/token/metadata/opaque + 命名类型映射 + 签名表 +
 /// 非默认 DataLayout。
 fn rich_module() -> Module {
-    use forge_ir::ir::types::{CallConv, FunctionSignature, TypeField};
+    use forge_ir::ir::types::{CallConvId, FunctionSignature, TypeField};
 
     let mut m = Module::new();
     m.set_data_layout(forge_ir::ir::data_layout::DataLayout::x86_32_linux());
@@ -338,7 +338,7 @@ fn rich_module() -> Module {
         let sig = FunctionSignature {
             params: vec![(i24, ImmStr::from("x")), (f16, ImmStr::from("y"))],
             returns: vec![i24, f16],
-            calling_convention: CallConv::Custom(42),
+            calling_convention: CallConvId::Index(42),
             variadic: true,
         };
         let sr = store.register_signature(sig);
@@ -380,7 +380,7 @@ fn rich_type_store_roundtrips() {
     assert_eq!(sig.returns.len(), 2);
     assert_eq!(
         sig.calling_convention,
-        forge_ir::ir::types::CallConv::Custom(42)
+        forge_ir::ir::types::CallConvId::Index(42)
     );
     assert!(sig.variadic);
     // DataLayout（逐字段比，避免 HashMap Debug 顺序造成的假失败）

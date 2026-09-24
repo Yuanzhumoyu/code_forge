@@ -21,7 +21,7 @@ use crate::ir::metadata::{AttachedMetadata, MetadataStore};
 use crate::ir::opcode::Opcode;
 use crate::ir::symbol::{Comdat, ComdatId, ComdatKind, SymbolInfo};
 use crate::ir::terminator::TermKind;
-use crate::ir::types::{CallConv, FunctionSignature, TypeContext};
+use crate::ir::types::{CallConvId, FunctionSignature, TypeContext};
 use crate::util::string_pool::InternedStr;
 use smallvec::SmallVec;
 use std::collections::HashMap;
@@ -185,7 +185,7 @@ pub struct Function {
     pub signature: SigRef,
 
     /// 缓存的调用约定。
-    pub calling_convention: CallConv,
+    pub calling_convention: CallConvId,
 
     // === 核心数据 ===
     /// 数据流图: Value/Inst/Block 的存储。
@@ -254,7 +254,7 @@ impl Clone for Function {
         Self {
             name: self.name.clone(),
             signature: self.signature,
-            calling_convention: self.calling_convention,
+            calling_convention: self.calling_convention.clone(),
             dfg: self.dfg.clone(),
             layout: self.layout.clone(),
             use_lists: self.use_lists.clone(),
@@ -289,7 +289,7 @@ impl Function {
         name: impl Into<ImmStr>,
         types: TypeContext,
         signature: SigRef,
-        calling_convention: CallConv,
+        calling_convention: CallConvId,
     ) -> Self {
         Self {
             name: name.into(),
@@ -1441,7 +1441,7 @@ mod tests {
             ImmStr::from(name),
             TypeContext::from_store(store),
             sig_ref,
-            CallConv::default(),
+            CallConvId::default(),
         )
     }
 
