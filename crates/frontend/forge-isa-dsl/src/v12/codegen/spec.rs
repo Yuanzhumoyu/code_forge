@@ -92,6 +92,8 @@ pub(crate) fn gen_spec_tests(infos: &[InstInfo], m: &V12Model) -> Result<TokenSt
     // `validate::validate_vectors` 钉过，这里直接发射用例（不再判内容）。
     let vector_tests = gen_vector_tests(m);
     let n_vectors = m.vectors.len();
+    // 谱内派生枚举器（v19 V3d）：宿主侧"全指令往返"用它替代手抄清单。
+    let all_insts_item = gen_all_insts(infos, m)?;
 
     let mut used_names: Vec<String> = Vec::new();
     let mut bodies: Vec<TokenStream> = Vec::new();
@@ -179,6 +181,8 @@ pub(crate) fn gen_spec_tests(infos: &[InstInfo], m: &V12Model) -> Result<TokenSt
             pub(crate) const SPEC_TEXT_AMBIGUOUS: &[&str] = &[#(#amb_ts),*];
             /// 谱内 `[[vectors]]` 的条数（v19 V3）：由作者声明，不参与覆盖率判据。
             pub(crate) const SPEC_VECTORS: usize = #n_vectors;
+
+            #all_insts_item
 
             /// 覆盖率自检：全指令覆盖（有跳过就报出名字与原因）。
             #[test]
@@ -679,50 +683,35 @@ fn group_ambiguous_by_key(
 }
 
 /// 一条指令的测试函数（一个宽度视图一条）。
-fn gen_one(
+/// 一个视图下每个操作数的**样本取值表达式**（生成期自测与派生枚举器共用一份）。
+///
+/// 抽出来是为了让"派生枚举器"（[`gen_all_insts`]）与生成期自测用**同一套**取值规则：
+/// 两处各写一遍必然漂移（枚举器里的样本一旦不可编码，往返测试才红——发现得太晚）。
+struct SampleOperands {
+    /// 与 `info.operands` 同序的取值表达式。
+    exprs: Vec<TokenStream>,
+    /// 解码字段"原样"断言。
+    checks: Vec<TokenStream>,
+    /// (操作数下标, 字段名, lo, hi, 是否做越界检查)。
+    imm_slots: Vec<(usize, String, i64, i64, bool)>,
+    has_cond: bool,
+    /// (操作数下标, 类表达式)：内存槽的寄存器类，供枚举器派生 disp/index 风味。
+    mem_cls: Vec<(usize, TokenStream)>,
+}
+
+/// 生成一个视图下的样本操作数（见 [`SampleOperands`]）。
+fn sample_operands(
     info: &InstInfo,
     m: &V12Model,
     view: &ViewSel,
-    fn_name: &str,
-    peers: Option<&[String]>,
-) -> Result<TokenStream, String> {
-    let vn = &info.vn;
-    let name = info.inst.name.clone();
-    let label = match &view.label {
-        Some(l) => format!("{name}[{l}]"),
-        None => name.clone(),
-    };
-    let name_lit = syn::LitStr::new(&label, proc_macro2::Span::call_site());
-    let fn_ident = format_ident!("{fn_name}");
-
-    // 该指令的字长（字节）：fixed/mixed 有确定值；prefix_scan 由前缀链决定。
-    let want_len: Option<u32> = if m.encoding.kind == EncodingKind::PrefixScan {
-        None
-    } else {
-        Some(m.inst_width_bytes(&info.inst)?)
-    };
-    let want_len_ts = match want_len {
-        Some(w) => {
-            let lit = Literal::u32_unsuffixed(w);
-            quote! { Some(#lit as usize) }
-        }
-        None => quote! { None },
-    };
-
-    // 条件码表的全部编码（`cond` 槽逐编码测一遍）。
-    let cond_codes: Vec<u8> = match &m.conventions.cond {
-        Some(t) => {
-            let mut v: Vec<u8> = t.values().map(|e| e.code as u8).collect();
-            v.sort_unstable();
-            v.dedup();
-            v
-        }
-        None => Vec::new(),
-    };
-
+    label: &str,
+    name: &str,
+    cond_codes: &[u8],
+) -> Result<SampleOperands, String> {
     let mut exprs: Vec<TokenStream> = Vec::new();
     let mut checks: Vec<TokenStream> = Vec::new();
     let mut imm_slots: Vec<(usize, String, i64, i64, bool)> = Vec::new();
+    let mut mem_cls: Vec<(usize, TokenStream)> = Vec::new();
     let mut has_cond = false;
 
     for (i, (fname, fid, slot, _)) in info.operands.iter().enumerate() {
@@ -797,12 +786,7 @@ fn gen_one(
                 };
                 let lit = Literal::u8_suffixed(*first);
                 exprs.push(quote! { #lit });
-                let msg = syn::LitStr::new(
-                    &format!("{name}: 条件码 {fname} 未原样解码"),
-                    proc_macro2::Span::call_site(),
-                );
-                // 条件码断言在 cond 循环里逐值做（见下），基线这里跳过。
-                let _ = msg;
+                // 条件码断言在 cond 循环里逐值做（见 `gen_one`），基线这里跳过。
             }
             OperandKind::Mem => {
                 let cls = match (&slot.class, &slot.classes) {
@@ -810,14 +794,8 @@ fn gen_one(
                     (None, Some(cs)) if !cs.is_empty() => class_ts(&cs[cs.len() - 1]),
                     _ => quote! { __DEFAULT_GPR_CLASS },
                 };
-                exprs.push(quote! {
-                    MemRef {
-                        base: <Reg as forge_ir::PhysReg>::from_index(0u32, #cls),
-                        disp: 0i64,
-                        index: None,
-                        scale: 1u8,
-                    }
-                });
+                exprs.push(mem_ref_expr(&cls, 0, None, 1));
+                mem_cls.push((i, cls));
                 let msg_b = syn::LitStr::new(
                     &format!("{name}: 内存操作数 {fname} 的 base 未原样解码"),
                     proc_macro2::Span::call_site(),
@@ -833,6 +811,191 @@ fn gen_one(
             }
         }
     }
+
+    Ok(SampleOperands {
+        exprs,
+        checks,
+        imm_slots,
+        has_cond,
+        mem_cls,
+    })
+}
+
+/// `MemRef { base, disp, index, scale }` 表达式（`index` = 寄存器索引或 `None`）。
+fn mem_ref_expr(cls: &TokenStream, disp: i64, index: Option<u32>, scale: u8) -> TokenStream {
+    let idx = match index {
+        Some(i) => {
+            let i = Literal::u32_unsuffixed(i);
+            quote! { Some(<Reg as forge_ir::PhysReg>::from_index(#i, #cls)) }
+        }
+        None => quote! { None },
+    };
+    let disp = Literal::i64_suffixed(disp);
+    quote! {
+        MemRef {
+            base: <Reg as forge_ir::PhysReg>::from_index(0u32, #cls),
+            disp: #disp,
+            index: #idx,
+            scale: #scale,
+        }
+    }
+}
+
+/// **谱内派生「代表实例」枚举器**（v19 V3d）：每条指令 × 每个宽度视图一个 `Inst`，
+/// 操作数取值与生成期自测**同源**（[`sample_operands`]），另加两类风味以补足覆盖面：
+///
+/// - **立即数边界**：每个 imm 槽的 `lo`/`hi`（手抄清单里那些"负数/最大值"用例的替代）；
+/// - **内存风味**：每个 mem 槽额外派生 `disp=8` / `disp=-8` / `index+scale=4` 三种，
+///   因为自测基线只用 `disp=0`（手抄清单里 `[RAX+8]`/`[RAX+RBX*4]` 那类的替代）。
+///
+/// 用途：**宿主侧的"全指令编解码往返"不必再手抄一份 `all_insts()`**（x86 曾有 650 行，
+/// 且谱加指令时那份清单不会自动跟上）。只在 `#[cfg(test)]` 下发射，宿主成品零成本。
+/// 守卫 `crate::isa_roundtrip_guard` 用它跑三份发行谱的往返 + 覆盖清点。
+pub(crate) fn gen_all_insts(infos: &[InstInfo], m: &V12Model) -> Result<TokenStream, String> {
+    let cond_codes: Vec<u8> = match &m.conventions.cond {
+        Some(t) => {
+            let mut v: Vec<u8> = t.values().map(|e| e.code as u8).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        }
+        None => Vec::new(),
+    };
+    let mut entries: Vec<(String, TokenStream)> = Vec::new();
+    for info in infos {
+        let vn = &info.vn;
+        let name = info.inst.name.clone();
+        for view in views_of(info) {
+            let label = match &view.label {
+                Some(l) => format!("{name}[{l}]"),
+                None => name.clone(),
+            };
+            let Ok(sample) = sample_operands(info, m, &view, &label, &name, &cond_codes) else {
+                continue; // 构造不出来的（与自测同判据）由 `SPEC_SKIPPED` 报出，这里跳过。
+            };
+            let ctor = |over: &[(usize, TokenStream)]| -> TokenStream {
+                if info.operands.is_empty() {
+                    return quote! { Inst::#vn };
+                }
+                let fields: Vec<TokenStream> = info
+                    .operands
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, fid, _, _))| {
+                        let e = over
+                            .iter()
+                            .find(|(k, _)| *k == i)
+                            .map(|(_, e)| e.clone())
+                            .unwrap_or_else(|| sample.exprs[i].clone());
+                        quote! { #fid: #e }
+                    })
+                    .collect();
+                quote! { Inst::#vn { #(#fields),* } }
+            };
+            entries.push((label.clone(), ctor(&[])));
+
+            // 立即数边界（lo/hi 去重）。
+            for (slot_i, fname, lo, hi, _) in &sample.imm_slots {
+                let mut vals = vec![*lo, *hi];
+                vals.dedup();
+                for v in vals {
+                    let lit = Literal::i64_suffixed(v);
+                    entries.push((
+                        format!("{label}[{fname}={v}]"),
+                        ctor(&[(*slot_i, quote! { #lit })]),
+                    ));
+                }
+            }
+            // 内存风味：disp≠0 与 index+scale。
+            for (slot_i, cls) in &sample.mem_cls {
+                for (tag, e) in [
+                    ("disp=8", mem_ref_expr(cls, 8, None, 1)),
+                    ("disp=-8", mem_ref_expr(cls, -8, None, 1)),
+                    ("idx*4", mem_ref_expr(cls, 0, Some(1), 4)),
+                ] {
+                    entries.push((format!("{label}[{tag}]"), ctor(&[(*slot_i, e)])));
+                }
+            }
+        }
+    }
+    let pairs: Vec<TokenStream> = entries
+        .iter()
+        .map(|(label, ctor)| {
+            let s = syn::LitStr::new(label, proc_macro2::Span::call_site());
+            quote! { (#s, #ctor) }
+        })
+        .collect();
+    let names: Vec<TokenStream> = infos
+        .iter()
+        .map(|i| {
+            let s = syn::LitStr::new(&i.inst.name, proc_macro2::Span::call_site());
+            quote! { #s }
+        })
+        .collect();
+    Ok(quote! {
+        /// 全部指令名（`[[templates]]` 展开后）——枚举器覆盖清点用。
+        pub(crate) const SPEC_INSTS: &[&str] = &[#(#names),*];
+
+        /// **谱内派生的代表实例**（v19 V3d）：`(名字, Inst)`。
+        ///
+        /// 每条指令 × 每个宽度视图一条，外加立即数边界与内存风味（见 `gen_all_insts`）。
+        /// 宿主侧"全指令编解码往返"直接遍历它即可——**不要手抄 `all_insts()`**：
+        /// 手抄清单在谱加指令时不会自动跟上（x86 曾有 650 行）。只在 `#[cfg(test)]` 下发射。
+        pub(crate) fn all_insts() -> Vec<(&'static str, Inst)> {
+            vec![#(#pairs),*]
+        }
+    })
+}
+
+fn gen_one(
+    info: &InstInfo,
+    m: &V12Model,
+    view: &ViewSel,
+    fn_name: &str,
+    peers: Option<&[String]>,
+) -> Result<TokenStream, String> {
+    let vn = &info.vn;
+    let name = info.inst.name.clone();
+    let label = match &view.label {
+        Some(l) => format!("{name}[{l}]"),
+        None => name.clone(),
+    };
+    let name_lit = syn::LitStr::new(&label, proc_macro2::Span::call_site());
+    let fn_ident = format_ident!("{fn_name}");
+
+    // 该指令的字长（字节）：fixed/mixed 有确定值；prefix_scan 由前缀链决定。
+    let want_len: Option<u32> = if m.encoding.kind == EncodingKind::PrefixScan {
+        None
+    } else {
+        Some(m.inst_width_bytes(&info.inst)?)
+    };
+    let want_len_ts = match want_len {
+        Some(w) => {
+            let lit = Literal::u32_unsuffixed(w);
+            quote! { Some(#lit as usize) }
+        }
+        None => quote! { None },
+    };
+
+    // 条件码表的全部编码（`cond` 槽逐编码测一遍）。
+    let cond_codes: Vec<u8> = match &m.conventions.cond {
+        Some(t) => {
+            let mut v: Vec<u8> = t.values().map(|e| e.code as u8).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        }
+        None => Vec::new(),
+    };
+
+    // 样本操作数与"解码字段原样"断言：与派生枚举器同源（`sample_operands`）。
+    let SampleOperands {
+        exprs,
+        checks,
+        imm_slots,
+        has_cond,
+        ..
+    } = sample_operands(info, m, view, &label, &name, &cond_codes)?;
 
     let inst_of = |over: Option<(usize, i64)>| -> TokenStream {
         if info.operands.is_empty() {

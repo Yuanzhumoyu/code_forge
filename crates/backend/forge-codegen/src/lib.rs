@@ -203,3 +203,10 @@ mod type_map_tests {
 /// 在前面插 `#[cfg(test)]` 项会让它漏扫后面的生产代码。
 #[cfg(test)]
 mod spec_coverage_guard;
+
+/// v19 V3d：谱内派生枚举器的全指令编解码往返（替代历史上手抄的 `all_insts()`）。
+///
+/// 与 `spec_coverage_guard` 一样**必须放在文件末尾**：本仓的"宿主写死寄存器类"守卫
+/// （`tests/no_hardcoded_widths.rs`）按**第一个** `#[cfg(test)]` 截断扫描。
+#[cfg(test)]
+mod isa_roundtrip_guard;

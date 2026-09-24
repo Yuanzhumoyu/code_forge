@@ -417,6 +417,13 @@ let name = node.get_text("name")?;
   `docs/reference/aarch64-encoding-ref.md` 一类参考文档 + 各 ISA 黄金值测试守。
   同一份谱要被多个测试二进制包含时（`tests/common/mod.rs`）用
   `spec_tests = false` 关掉，另开一个用例二进制打开（见 `tests/spec_tests_v12.rs`）。
+  **谱内派生枚举器（v19 V3d）**：同一模块还导出 `all_insts() -> Vec<(名字, Inst)>` 与
+  `SPEC_INSTS`（每条指令 × 宽度视图 + 每个 imm 槽的 `lo`/`hi` + 每个 mem 槽的
+  `disp=8`/`disp=-8`/`index+scale=4`；取值与生成期自测同源 `sample_operands`）——
+  宿主侧"全指令编解码往返"**不要再手抄 `all_insts()`**（x86 曾手抄 650 行且谱加指令时不
+  自动跟上）；由 `crates/backend/forge-codegen/src/isa_roundtrip_guard.rs` 遍历三谱的
+  602/327/332 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
+  按声明序首匹配，本就不成立），仍由各 ISA 测试的"规范指令"小清单守。
   覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
   x86 197 / riscv64 116 / arm64 104、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
   必须放在 `lib.rs` 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）。

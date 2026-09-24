@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-24) — ISA-DSL v19 V3d（谱内派生枚举器：宿主不再手抄 `all_insts()`）
+
+- **生成物新增 `__spec_tests::all_insts()`**（`#[cfg(test)]`，宿主成品零成本）：按谱派生"代表实例"——每条指令 × 每个宽度视图一条，另有每个 imm 槽的 `lo`/`hi` 边界与每个 mem 槽的 `disp=8`/`disp=-8`/`index+scale=4` 风味。取值规则与生成期自测**同源**（新抽出的 `sample_operands`，两处不再各写一遍）。
+- **宿主侧全指令往返改由它驱动**：新增 `crates/backend/forge-codegen/src/isa_roundtrip_guard.rs`——三份发行谱的**全部**派生实例（实测 x86 **602** / riscv64 **327** / arm64 **332** 条，远多于指令总数 197/116/104）跑 `encode → decode → encode` 字节闭环 + 解码吃满整条 + `SPEC_INSTS` 覆盖清点（谱里哪条指令没进枚举器就报哪条）。
+- **x86 手抄的 650 行 `all_insts()` 删除**（连同 `decode_encode_byte_roundtrip_all`）：手抄清单在谱加指令时不会自动跟上（漏测且无人发现），这一版据实记录。三个 ISA 测试文件合计 **1225 → 557 行**（相对 V3 迁移前的 1832 行 = **−69.6%**，原目标 −≥50% 达成）；`cargo test -p forge-codegen --lib` **1264 → 1265 passed**。
+- 保留两处**显式小清单**（语义上不能派生）：各 ISA 的"规范指令 `decode(encode(x)) == x`"（别名撞车时本就不成立）与类表/ABI 类断言。
+
 ### Added (2026-09-24) — ISA-DSL v19 V4c（lint 三条新规则：位域重叠 / 能力缺口 / 未引用 ref）
 
 - **`LINT-BITFIELD-OVERLAP`（默认档）**：同一条指令的字段视图里两个位域抢同一批位（视图 = form 预设 ⊕ 指令覆盖后的编码键 + 指令 `fields`）。**必须按逐指令视图判**：按整张 `[conventions.bitfields]` 表判会把 riscv 的 `shamt5`/`shamt6`、`funct5`/`funct6`/`funct7`、arm64 的 `op6`+`imm26`、两边的 `word`（全字常量）这类"同一批位的多种解释"全判成错。**首次落地报出 4 条真阳性**：arm64 的 STP/LDP X/W 四条的 `idx3`（bit24 与 `op8` 常量重复写同一位，取值恰好一致所以黄金字节没暴露）⇒ 已修谱为 `idx2`（`op8` 常量给 bit24），`cargo test -p forge-codegen --lib` 仍 **1264 passed**（89 条 arm64 向量逐字节不变）。
