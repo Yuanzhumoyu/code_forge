@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-24) — ISA-DSL v19 V4d（lint 收尾：未指定位 / 可合并为 `vary` 的族）
+
+- **`LINT-UNASSIGNED-BITS`（opt-in `lint --bits`）**：指令字里**没有任何位域覆盖**的位段（按缺省 0 发射）。只对 `kind = "fixed"` 的 ISA 判——变长 ISA 的前缀/REX/ModRM/VEX 由编码器发射、不在位域表里建模，按表判必成误报；全字常量自动无缺口。**实测 + 人工核对**：x86 0 / riscv64 3（`NOP`/`ECALL`/`EBREAK` 的固定位型，故意只声明 `opcode`）/ arm64 67（全是保留位：`BR`/`RET`/`B.cond` 的 `[4,5)`、`[0,5)`+`[10,16)`、`LDUR` 族的 `[10,12)`+`[21,24)` 抽查都对得上参考编码）⇒ 保持评审清单，不进默认档。
+- **顺带修谱（真阳性，逐字节不变）**：riscv64 的 AMO/LR/SC 四条模板体原本把 RV64A 的 `aq`/`rl` 两位留在"未指定位"里（谱注释里提过、谱里没声明）⇒ 显式声明 `aq`/`rl` 位域并在四条模板体写 0：`--bits` 的 riscv 条目 11 → 3，`cargo test -p forge-codegen --lib` 仍 **1265 passed**，将来支持 acquire/release 只改 lowering 取值、不动编码定义。
+- **`LINT-VARY-CANDIDATE`（opt-in `lint --suggest`，只建议）**：同一 op 的多条 `[[lowering]]` 规则**发射形状相同**（逐行归一：助记符→`_`，数字/寄存器/占位符→通配）⇒ 可用一条 `vary = { attr = [...], name = [...] }` 合并。实测同形状组：x86 55 / riscv64 22 / arm64 7。**默认关**：合并与否是风格取舍（有的谱故意写开、便于各自演进），建议不进门槛。
+- 两条规则的清单都由 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs` 钉住（`unassigned_bits_inventory` / `vary_candidate_inventory`，并断言**默认档仍零结论**）；CLI 增 `--bits` / `--suggest`。
+
 ### Added (2026-09-24) — ISA-DSL v19 V3d（谱内派生枚举器：宿主不再手抄 `all_insts()`）
 
 - **生成物新增 `__spec_tests::all_insts()`**（`#[cfg(test)]`，宿主成品零成本）：按谱派生"代表实例"——每条指令 × 每个宽度视图一条，另有每个 imm 槽的 `lo`/`hi` 边界与每个 mem 槽的 `disp=8`/`disp=-8`/`index+scale=4` 风味。取值规则与生成期自测**同源**（新抽出的 `sample_operands`，两处不再各写一遍）。

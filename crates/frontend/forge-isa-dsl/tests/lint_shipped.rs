@@ -152,6 +152,81 @@ fn overlap_guard_can_fail() {
     );
 }
 
+/// V4d 的"未指定位"清单（**opt-in** `--bits`）：只对定宽 ISA 判。
+///
+/// 实测（2026-09-24）与人工核对结论：
+///
+/// - **x86 0 条**：`prefix_scan` 变长 ISA，前缀/REX/ModRM/VEX 由编码器发射、不在位域表里
+///   建模——按表判必成误报，所以这条规则整个跳过它；
+/// - **riscv64 3 条**：`NOP`/`ECALL`/`EBREAK`——系统指令的"固定位型"（高位恒 0），
+///   故意只声明 `opcode` 而不逐位声明 0（语义上它们是固定字，不是带保留位的指令字）；
+///   AMO/LR/SC 的 `aq`/`rl` 原本也在这张清单里（8 条），**已修谱**：显式声明两个位域
+///   （RV64A 的 acquire/release）并在四条模板体里写 0——逐字节不变（`cargo test -p
+///   forge-codegen --lib` 1265 passed）；
+/// - **arm64 67 条**：全是保留位（A64 里 `BR`/`RET`/`B.cond`/`LDUR` 一类的固定 0 段），
+///   抽查 `[4,5)`（B.cond 的固定 0 位）、`[0,5)`+`[10,16)`（BR/BLR/RET）、`[10,12)`+`[21,24)`
+///   （LDUR 族）都对得上参考编码——**不是谱的缺陷**，因此保持 opt-in 的评审清单。
+#[test]
+fn unassigned_bits_inventory() {
+    for (isa, want) in [
+        ("x86_v12.toml", 0usize),
+        ("riscv64_v12.toml", 3),
+        ("arm64_v12.toml", 67),
+    ] {
+        let path = root().join("isa").join(isa);
+        let spec = report::load_spec(&path).expect("加载谱");
+        let opts = LintOpts {
+            check_unassigned_bits: true,
+            ..Default::default()
+        };
+        let report = lint_source_opts(&spec.text, &opts).expect("谱合法");
+        let n = report
+            .findings
+            .iter()
+            .filter(|d| d.code == "LINT-UNASSIGNED-BITS")
+            .count();
+        assert_eq!(n, want, "{isa} 的未指定位条数变了：{:?}", report.findings);
+        // 默认档必须仍然零结论。
+        let plain = lint_source(&spec.text).expect("谱合法");
+        assert!(
+            plain.iter().all(|d| d.code != "LINT-UNASSIGNED-BITS"),
+            "{isa} 默认档不该报未指定位"
+        );
+    }
+}
+
+/// V4d 的"可合并为 `vary` 的族"清单（**opt-in** `--suggest`，只建议、不当门槛）。
+///
+/// 数字变了 ⇒ 有人合并/拆分了 lowering 族（好事就同步本快照），或新增了同形状的规则。
+#[test]
+fn vary_candidate_inventory() {
+    for (isa, want) in [
+        ("x86_v12.toml", 55usize),
+        ("riscv64_v12.toml", 22),
+        ("arm64_v12.toml", 7),
+    ] {
+        let path = root().join("isa").join(isa);
+        let spec = report::load_spec(&path).expect("加载谱");
+        let opts = LintOpts {
+            suggest_vary: true,
+            ..Default::default()
+        };
+        let report = lint_source_opts(&spec.text, &opts).expect("谱合法");
+        let n = report
+            .findings
+            .iter()
+            .filter(|d| d.code == "LINT-VARY-CANDIDATE")
+            .count();
+        assert_eq!(n, want, "{isa} 的 vary 建议条数变了：{:?}", report.findings);
+        // 默认档必须仍然零结论（建议不进门槛）。
+        let plain = lint_source(&spec.text).expect("谱合法");
+        assert!(
+            plain.iter().all(|d| d.code != "LINT-VARY-CANDIDATE"),
+            "{isa} 默认档不该给 vary 建议"
+        );
+    }
+}
+
 fn host_ops() -> Vec<String> {
     let text = std::fs::read_to_string(root().join("crates/foundation/forge-ir/ops.toml"))
         .expect("读宿主 op 表");

@@ -1358,7 +1358,7 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），逐字段列出 `字段: A → B` |
 | `schema [--out <file>]` | 打印/写出 ISA-DSL 的 **JSON Schema**（仓库根的 `isa-dsl.schema.json` 由此生成） |
 | `fmt <谱.toml> [--out <file>]` | 打印/写出**合并后的单文件谱**（多文件 `include` 折叠成一份；v18 S7d） |
-| `lint <谱.toml>` | 静态体检：报"写了却用不上 / 自相矛盾 / 宿主覆盖不到"的声明（v19 V4；六个码见下节），三份发行谱零结论 |
+| `lint <谱.toml>` | 静态体检：报"写了却用不上 / 自相矛盾 / 宿主覆盖不到"的声明（v19 V4；八个码见下节），三份发行谱零结论 |
 | `test <谱.toml>` | 零宿主临时 crate 里跑谱内测试向量（v19 V3；不起后端 crate） |
 
 约定：默认人类可读，`--json` 给机读输出（手写发射器，不引 `serde_json`——与方案 §10.4
@@ -1554,6 +1554,19 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 | `LINT-BITFIELD-OVERLAP` | **同一条指令的字段视图**里两个位域抢同一批位（视图 = form 预设 ⊕ 指令覆盖后的编码键 + 指令 `fields`） | 默认 |
 | `LINT-OP-GAP` | 宿主 op 表里有、本谱既没有 `[[lowering]]` 也没有 `[[pattern]]` 覆盖的**真缺口** | `--ops <宿主 op 表>` |
 | `LINT-REF-UNUSED` | 指令声明了 `ref`，却没有**任何** lowering/pattern/emit/pseudo/spill 模板行首引用它 | `--refs`（opt-in） |
+| `LINT-UNASSIGNED-BITS` | 指令字里**没有任何位域覆盖**的位段（按缺省 0 发射）；只对 `kind = "fixed"` 的 ISA 判 | `--bits`（opt-in） |
+| `LINT-VARY-CANDIDATE` | 同一 op 的多条 lowering 规则**发射形状相同**（只差助记符/立即数/寄存器）⇒ 可用 `vary` 合并 | `--suggest`（opt-in，**只建议**） |
+
+后三档为什么默认关（都属"作者意图"，只有作者能判）：
+
+- `--refs`：`ref` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱 28 条）；
+- `--bits`：变长 ISA 的前缀/REX/ModRM 由编码器发射、不在位域表里建模（按表判必成误报，
+  所以该规则跳过 `prefix_scan`）；即便定宽谱，**保留位故意不声明**也是常见写法。
+  实测：x86 0 / riscv64 3（`NOP`/`ECALL`/`EBREAK` 的固定位型）/ arm64 67（全是保留位，
+  抽查 `BR`/`B.cond`/`LDUR` 的固定 0 段都对得上参考编码）。riscv 的 AMO/LR/SC 的
+  `aq`/`rl` 原本也在这张清单里 ⇒ **已修谱**（显式声明 RV64A 的两位并写 0，逐字节不变）；
+- `--suggest`：合并与否是风格取舍（有的谱故意写开、便于各自演进）。实测 x86 55 /
+  riscv64 22 / arm64 7 组同形状规则。
 
 两条判据上的讲究（都来自实测，别按直觉改）：
 

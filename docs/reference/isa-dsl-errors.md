@@ -53,7 +53,7 @@
 | `DSL-ABI` | `[abi]` | 寄存器名未在 `[reg.*]` 声明（scratch/reserved/ret_regs/call_clobbers/call_ret_reg/callee_saved/arg_class） |
 | `DSL-EMIT` | `[emit]` | 指令引用未声明、`@` 伪指令未知、占位符未知、块为空 |
 | `DSL-SPILL` | `[spill.*]` | 指令引用未声明、占位符不是 `{N}`、`base` 未在 `[reg.*]` 声明 |
-| `LINT-*` | `forge-isa lint`（**静态体检，不是校验错误**） | `LINT-UNUSED-SLOT`/`LINT-UNUSED-FORM`/`LINT-UNUSED-BITFIELD`（默认档）、`LINT-BITFIELD-OVERLAP`（默认档）、`LINT-OP-GAP`（`--ops`）、`LINT-REF-UNUSED`（`--refs`，opt-in）——判据与档位见 `docs/reference/isa-dsl.md`「静态体检」 |
+| `LINT-*` | `forge-isa lint`（**静态体检，不是校验错误**） | `LINT-UNUSED-SLOT`/`LINT-UNUSED-FORM`/`LINT-UNUSED-BITFIELD`（默认档）、`LINT-BITFIELD-OVERLAP`（默认档）、`LINT-OP-GAP`（`--ops`）、`LINT-REF-UNUSED`（`--refs`）、`LINT-UNASSIGNED-BITS`（`--bits`）、`LINT-VARY-CANDIDATE`（`--suggest`，只建议）——判据与档位见 `docs/reference/isa-dsl.md`「静态体检」 |
 | `DSL-INCLUDE` | `include`（v18 S7） | 文件缺失、循环 include、同名标量冲突 |
 | `DSL-OTHER` | 无节可归 | 模型级错误（如缺 `[reg.*]` 顶层派生失败）——**出现即说明该消息缺节前缀，应报 bug** |
 

@@ -62,6 +62,11 @@ rs2    = { offset = 20, width = 5 }
 funct3 = { offset = 12, width = 3 }
 funct7 = { offset = 25, width = 7 }
 funct5 = { offset = 27, width = 5 }   # AMO 的 funct5（bits 31:27；aq=26、rl=25）
+# AMO/LR/SC 的 aq/rl（RV64A 的 acquire/release 位）。**本后端只发 relaxed（两者恒 0）**，
+# 但显式声明出来：一是把"这两位固定为 0"从注释变成谱里的数据（`--bits` 体检可核对），
+# 二是将来要支持 acquire/release 时只改 lowering 的取值、不动编码定义。
+aq     = { offset = 26, width = 1 }
+rl     = { offset = 25, width = 1 }
 funct6 = { offset = 26, width = 6 }   # 移位立即数高位（SLLI/SRLI/SRAI）
 shamt6 = { offset = 20, width = 6 }
 shamt5 = { offset = 20, width = 5 }   # W 变体移位（RV64：shamt 5 位，bit25 归 funct7）
@@ -1802,28 +1807,28 @@ rows = [
 ]
 [[templates]]
 name = "AMOADD"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoadd.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 0, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoadd.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "AMOADD_W", p = "W", funct3 = 2 },
   { inst = "AMOADD_D", p = "D", funct3 = 3 },
 ]
 [[templates]]
 name = "AMOSWAP"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 1, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoswap.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 1, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoswap.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "AMOSWAP_W", p = "W", funct3 = 2 },
   { inst = "AMOSWAP_D", p = "D", funct3 = 3 },
 ]
 [[templates]]
 name = "LR"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 2, funct3 = "{funct3}", rs2 = 0 }, ops = ["dst:gpr:out", "src:gpr"], asm = "lr.{p.lower} {dst}, ({src})" }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 2, aq = 0, rl = 0, funct3 = "{funct3}", rs2 = 0 }, ops = ["dst:gpr:out", "src:gpr"], asm = "lr.{p.lower} {dst}, ({src})" }
 rows = [
   { inst = "LR_W", p = "W", funct3 = 2 },
   { inst = "LR_D", p = "D", funct3 = 3 },
 ]
 [[templates]]
 name = "SC"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 3, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "sc.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, fields = { funct5 = 3, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "sc.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "SC_W", p = "W", funct3 = 2 },
   { inst = "SC_D", p = "D", funct3 = 3 },

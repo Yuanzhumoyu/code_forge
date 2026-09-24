@@ -34,9 +34,10 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
   forge-isa diff     <a.toml> <b.toml> [--json]
                                              两份谱的规格 diff（增/删/改字段）
   forge-isa test     <谱.toml> [--json]      跑谱里的自测（谱内向量 + 每条指令闭环用例）
-  forge-isa lint     <谱.toml>... [--json] [--ops <宿主 op 表.toml>] [--refs]
+  forge-isa lint     <谱.toml>... [--json] [--ops <宿主 op 表.toml>] [--refs] [--bits] [--suggest]
                                              静态体检（未用的槽/form/位域、位域重叠…）；
-                                             `--ops` 另报能力缺口（终结/宿主管线/真缺口三类分开）
+                                             `--ops` 报能力缺口（终结/宿主管线/真缺口三类分开）、
+                                             `--refs` 未引用的 ref、`--bits` 未指定位、`--suggest` 可合并的 vary 族
   forge-isa schema   [--out <file>]         打印（或写出）ISA-DSL 的 JSON Schema
   forge-isa fmt      <谱.toml> [--out <file>] 打印（或写出）**合并后**的规范文稿
                                              （include 展开 + override 应用，供人核对）
@@ -103,15 +104,25 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(cmd_diff(a, b, json))
         }
         "lint" => {
-            // `--ops <宿主 op 表>` 与 `--refs` 是 V4c 的两个可选输入（见 `lint` 模块头）。
+            // `--ops <宿主 op 表>` / `--refs` / `--bits` / `--suggest` 是 V4c/V4d 的可选输入
+            // （判据见 `forge_isa_dsl::lint` 模块头）。
             let (rest, ops_path) = split_flag_value(&args[1..], "--ops")?;
             let refs = has_flag(&rest, "--refs");
+            let bits = has_flag(&rest, "--bits");
+            let suggest = has_flag(&rest, "--suggest");
             let json = has_flag(&rest, "--json");
-            let files = paths(&rest, &["--json", "--refs"])?;
+            let files = paths(&rest, &["--json", "--refs", "--bits", "--suggest"])?;
             if files.is_empty() {
                 return Err("lint 需要一个或多个谱文件".into());
             }
-            Ok(cmd_lint(&files, json, refs, ops_path.as_deref()))
+            Ok(cmd_lint(
+                &files,
+                json,
+                refs,
+                ops_path.as_deref(),
+                bits,
+                suggest,
+            ))
         }
         "test" => {
             let json = has_flag(&args[1..], "--json");
@@ -183,11 +194,21 @@ fn split_flag_value(args: &[String], flag: &str) -> Result<(Vec<String>, Option<
 /// 多文件谱：先按 `validate` 的口径报诊断（诊断带**来源文件**），体检查询跑在**合并后**的
 /// 文稿上（行号与 `forge-isa fmt` 的文稿一致——已在消息里写明路径前缀）。
 ///
-/// 两个可选档（V4c）：`--ops <宿主 op 表>` 走能力缺口检查（三类分开报，另打印覆盖率口径）、
-/// `--refs` 报"声明了却没被任何模板行首引用的 `ref`"（默认关——预留名字是合法写法）。
-fn cmd_lint(files: &[PathBuf], json: bool, refs: bool, ops_path: Option<&Path>) -> ExitCode {
+/// 四个可选档（V4c/V4d）：`--ops <宿主 op 表>` 走能力缺口检查（三类分开报，另打印覆盖率口径）、
+/// `--refs` 报"声明了却没被任何模板行首引用的 `ref`"、`--bits` 报"指令字里没有位域覆盖的位段"、
+/// `--suggest` 报"可合并为 `vary` 的族"（后三者默认关——预留名字/保留位/写法取舍都属作者意图）。
+fn cmd_lint(
+    files: &[PathBuf],
+    json: bool,
+    refs: bool,
+    ops_path: Option<&Path>,
+    bits: bool,
+    suggest: bool,
+) -> ExitCode {
     let mut opts = forge_isa_dsl::lint::LintOpts {
         check_unused_refs: refs,
+        check_unassigned_bits: bits,
+        suggest_vary: suggest,
         ..Default::default()
     };
     if let Some(p) = ops_path {

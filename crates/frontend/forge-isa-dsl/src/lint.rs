@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::report::DiagLine;
 use crate::v12::diag::DeclIndex;
-use crate::v12::model::{Bitfield, V12Model};
+use crate::v12::model::{Bitfield, EncodingKind, Instruction, V12Model};
 
 /// 宿主 op 表里**由生成的 `lower_terminator` 处理**的 op（按 `TermKind` 分派）。
 ///
@@ -72,6 +72,18 @@ pub struct LintOpts {
     /// `vmovups` 疑似残留）。这类"预留 vs 残留"只有作者能判，所以不进默认档
     /// （同"零误报是硬要求"的纪律）；写新谱时打开它抓拼错名字最有用。
     pub check_unused_refs: bool,
+    /// 报"指令字里没有任何位域覆盖的位段"（`LINT-UNASSIGNED-BITS`，v19 V4d）。
+    ///
+    /// **默认关**：只对 `kind = "fixed"` 的 ISA 有意义（变长 ISA 的前缀/REX/ModRM 由
+    /// 编码器发射、不在位域表里建模）；即便定宽谱，保留位（必须为 0）**故意不声明**
+    /// 也是常见写法——因此它是"评审清单"，不是错误判据。
+    pub check_unassigned_bits: bool,
+    /// 报"同一 op 的多条 lowering 规则发射形状相同、可合并为一条 `vary` 规则"
+    /// （`LINT-VARY-CANDIDATE`，v19 V4d，**只建议**）。
+    ///
+    /// **默认关**：合并与否是风格与可读性取舍（有的谱故意把两行写开、便于各自演进），
+    /// 只有作者能判；打开它用来找"该用 `vary` 却手抄了两遍"的族。
+    pub suggest_vary: bool,
 }
 
 /// 能力缺口口径（[方案 §10.3] 的四类计数）。只在给了 `--ops` 时出现。
@@ -280,6 +292,16 @@ fn checks(m: &V12Model, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintR
     // ── 6. 能力缺口（V4c，需 `--ops`）──
     let ops_coverage = op_gap(m, opts, idx, &mut out);
 
+    // ── 7. 未指定位（V4d，`--bits` 才开）──
+    if opts.check_unassigned_bits {
+        out.extend(unassigned_bits(m, idx));
+    }
+
+    // ── 8. 可合并为 `vary` 的族（V4d，`--suggest` 才开，只建议）──
+    if opts.suggest_vary {
+        out.extend(vary_candidates(m, idx));
+    }
+
     LintReport {
         findings: out,
         ops_coverage,
@@ -299,48 +321,55 @@ fn bit_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
     }
 }
 
+/// 一条指令**生效的**字段视图：`form` 预设 ⊕ 指令级覆盖后的编码键 + 指令 `fields` 的键
+/// （+ 真用 ModRM 时的两个约定字段）→ 位域名 → 字位区间。
+///
+/// 规则 4（重叠）与规则 7（未指定位）**共用这一份判定**：两处各算一遍必然漂移，
+/// 而"视图"正是这两条规则唯一容易写错的地方（按整张表判会误伤合法的多重解释）。
+fn used_bit_ranges(m: &V12Model, inst: &Instruction) -> BTreeMap<String, Vec<(u32, u32)>> {
+    let preset = inst
+        .form
+        .as_ref()
+        .and_then(|name| m.forms.iter().find(|f| &f.name == name));
+    let enc = inst
+        .enc
+        .over(&preset.map(|f| f.keys.clone()).unwrap_or_default());
+    let empty = std::collections::BTreeMap::new();
+    let fields: &std::collections::BTreeMap<String, u64> = inst.fields.as_ref().unwrap_or(&empty);
+    let mut names: Vec<String> = fields.keys().cloned().collect();
+    if let Some(f) = &enc.opcode_field {
+        names.push(f.clone());
+    }
+    names.extend(enc.operand_fields.iter().flatten().cloned());
+    if (enc.modrm.is_some() || enc.modrm_fixed.is_some())
+        && let Some(md) = &m.conventions.modrm
+    {
+        names.extend(
+            [md.reg_field.clone(), md.rm_field.clone()]
+                .into_iter()
+                .flatten(),
+        );
+    }
+    names.sort();
+    names.dedup();
+    let mut ranges: BTreeMap<String, Vec<(u32, u32)>> = BTreeMap::new();
+    for n in names {
+        if let Some(bf) = m.conventions.bitfields.get(&n) {
+            ranges.insert(n, bit_ranges(bf));
+        }
+    }
+    ranges
+}
+
 /// 逐指令判"两个字段抢同一批位"。消息里给出双方区间，便于直接改 TOML。
 fn bitfield_overlaps(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
     let mut out = Vec::new();
     for inst in &m.instructions {
-        let preset = inst
-            .form
-            .as_ref()
-            .and_then(|name| m.forms.iter().find(|f| &f.name == name));
-        let enc = inst
-            .enc
-            .over(&preset.map(|f| f.keys.clone()).unwrap_or_default());
-        // `fields` 在模型里是 `Option<BTreeMap<String, u64>>`——名字集合就是键集合。
-        let empty = std::collections::BTreeMap::new();
-        let fields: &std::collections::BTreeMap<String, u64> =
-            inst.fields.as_ref().unwrap_or(&empty);
-        let mut names: Vec<String> = fields.keys().cloned().collect();
-        if let Some(f) = &enc.opcode_field {
-            names.push(f.clone());
-        }
-        names.extend(enc.operand_fields.iter().flatten().cloned());
-        if (enc.modrm.is_some() || enc.modrm_fixed.is_some())
-            && let Some(md) = &m.conventions.modrm
-        {
-            names.extend(
-                [md.reg_field.clone(), md.rm_field.clone()]
-                    .into_iter()
-                    .flatten(),
-            );
-        }
-        names.sort();
-        names.dedup();
-
-        let mut ranges: BTreeMap<&str, Vec<(u32, u32)>> = BTreeMap::new();
-        for n in &names {
-            if let Some(bf) = m.conventions.bitfields.get(n) {
-                ranges.insert(n.as_str(), bit_ranges(bf));
-            }
-        }
-        let names: Vec<&str> = ranges.keys().copied().collect();
+        let ranges = used_bit_ranges(m, inst);
+        let names: Vec<&str> = ranges.keys().map(String::as_str).collect();
         for (i, a) in names.iter().enumerate() {
             for b in names.iter().skip(i + 1) {
-                let Some((ra, rb)) = overlapping(&ranges[a], &ranges[b]) else {
+                let Some((ra, rb)) = overlapping(&ranges[*a], &ranges[*b]) else {
                     continue;
                 };
                 out.push(anchor(
@@ -355,6 +384,158 @@ fn bitfield_overlaps(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
                     ),
                 ));
             }
+        }
+    }
+    out
+}
+
+// ─────────────────────── 规则 7：未指定位（`--bits`） ───────────────────────
+
+/// 指令字里**没有任何位域覆盖**的位段（v19 V4d，opt-in）。
+///
+/// 只对 `kind = "fixed"` 的 ISA 判：变长 ISA（`prefix_scan`）的前缀/REX/ModRM 由编码器
+/// 直接发射、本就不在位域表里建模，按表判必成误报（这正是它不进默认档的原因）。
+/// 全字常量（`opcode_field = "word"` 之类覆盖整字）自动无缺口。
+fn unassigned_bits(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
+    if m.encoding.kind != EncodingKind::Fixed {
+        return Vec::new();
+    }
+    let Some(bits) = m.encoding.bits else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for inst in &m.instructions {
+        // 指令级 `width` 可覆盖 `[encoding].bits`。
+        let bits = inst.width.unwrap_or(bits);
+        let ranges = used_bit_ranges(m, inst);
+        let covered = union_ranges(ranges.values().flatten().copied().collect());
+        let gaps = complement_ranges(&covered, bits);
+        if gaps.is_empty() {
+            continue;
+        }
+        let shown: Vec<String> = gaps.iter().map(|(a, b)| format!("[{a}, {b})")).collect();
+        out.push(anchor(
+            idx,
+            &format!("[[instructions.{}]]", inst.name),
+            "LINT-UNASSIGNED-BITS",
+            format!(
+                "指令字里有 {} 位没有任何位域覆盖：{}——按缺省 0 发射。若是保留位（必须为 0）\
+                 建议显式声明位域并写 0；若是某段真的漏了声明的字段，这里就是那个漏点",
+                gaps.iter().map(|(a, b)| b - a).sum::<u32>(),
+                shown.join(" ")
+            ),
+        ));
+    }
+    out
+}
+
+/// 区间的并集（输入不必有序）。
+fn union_ranges(mut rs: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
+    rs.sort_unstable();
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for (a, b) in rs {
+        match out.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out
+}
+
+/// `[0, bits)` 里没被覆盖的区间。
+fn complement_ranges(covered: &[(u32, u32)], bits: u32) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    let mut cur = 0u32;
+    for (a, b) in covered {
+        if *a > cur {
+            out.push((cur, *a));
+        }
+        cur = cur.max(*b);
+    }
+    if cur < bits {
+        out.push((cur, bits));
+    }
+    out.retain(|(a, b)| b > a);
+    out
+}
+
+// ─────────────────────── 规则 8：可合并为 `vary` 的族（`--suggest`） ───────────────────────
+
+/// 同一 op 的多条 lowering 规则里，**发射形状相同**的成组报出（v19 V4d，opt-in 建议档）。
+///
+/// 形状 = 逐行的 `助记符 → _`、数字/寄存器/占位符 → 通配后的文本。形状相同的规则只差
+/// "哪个值填进去"，正是 `vary = { attr = [...], name = [...] }` 的适用面。
+/// **只建议、不当门槛**：`when` 有可能本就要求分开写，合并与否由作者判断。
+fn vary_candidates(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
+    let regs = register_names(m);
+    let mut out = Vec::new();
+    // 按声明序分 op（`lowering_by_op` 是裁决序，这里要的是声明序下的分组）。
+    let mut by_op: BTreeMap<String, Vec<(usize, Vec<String>)>> = BTreeMap::new();
+    for (i, rule) in m.lowering.iter().enumerate() {
+        by_op
+            .entry(rule.op.name().to_string())
+            .or_default()
+            .push((i, rule.insts.iter().map(|l| shape_of(l, &regs)).collect()));
+    }
+    for (op, rules) in &by_op {
+        let mut groups: BTreeMap<Vec<String>, Vec<usize>> = BTreeMap::new();
+        for (i, shape) in rules {
+            groups.entry(shape.clone()).or_default().push(*i);
+        }
+        for (_, idxs) in groups {
+            if idxs.len() < 2 {
+                continue;
+            }
+            let list: Vec<String> = idxs.iter().map(|i| format!("#{i}")).collect();
+            out.push(anchor(
+                idx,
+                &format!("[[lowering.{op}]]"),
+                "LINT-VARY-CANDIDATE",
+                format!(
+                    "第 {} 条规则的发射形状相同（只差助记符/立即数/寄存器）——可用一条 \
+                     `vary = {{ attr = [...], name = [...] }}` 规则合并（建议，不是必须）",
+                    list.join(" / ")
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// 谱里出现过的寄存器名（形状归一用）。
+fn register_names(m: &V12Model) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for g in m.reg.values() {
+        if let Some(names) = &g.names {
+            out.extend(names.iter().cloned());
+        }
+    }
+    out
+}
+
+/// 一行的形状：助记符 → `_`，数字/寄存器/`{占位符}` → 通配，其余原样。
+fn shape_of(line: &str, regs: &BTreeSet<String>) -> String {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return trimmed.to_string();
+    }
+    let mut out = String::new();
+    for (i, tok) in trimmed.split_whitespace().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        if i == 0 {
+            out.push('_');
+        } else if tok.starts_with('{')
+            || tok.chars().next().is_some_and(|c| c.is_ascii_digit())
+            || tok.starts_with("-0x")
+            || tok.starts_with("0x")
+            || regs.contains(tok)
+            || regs.contains(tok.trim_end_matches(','))
+        {
+            out.push('*');
+        } else {
+            out.push_str(tok);
         }
     }
     out
@@ -819,5 +1000,121 @@ name = "Resume"
         assert!(e.contains("不是合法 TOML"), "{e}");
         let e = host_ops_from_toml("[meta]\nname = \"x\"\n").unwrap_err();
         assert!(e.contains("没读到"), "{e}");
+    }
+
+    /// V4d-1：未指定位只在 `--bits` 下报，且只对**定宽** ISA 判（变长 ISA 的前缀/REX/ModRM
+    /// 不在位域表里建模，按表判必成误报）。
+    #[test]
+    fn unassigned_bits_only_fixed_isa_and_opt_in() {
+        // 只声明 `op`（[12,16)）与 `rd`（[8,11)）⇒ 缺 [0,8) [11,12) [16,16)…（16 位字）。
+        let partial = SPEC.replace(
+            "funct3 = { offset = 0, width = 3 }",
+            "funct3 = { offset = 0, width = 3 }\n# 让 `rd` 之外的位置留空：见下",
+        );
+        let on = LintOpts {
+            check_unassigned_bits: true,
+            ..Default::default()
+        };
+        // 默认档：没有该码。
+        let plain = lint_source(&partial).expect("谱合法");
+        assert!(plain.iter().all(|d| d.code != "LINT-UNASSIGNED-BITS"));
+        // 开档：`T1`/`ADD` 的指令字（16 位）里 op/rd/funct3 之外还有空位。
+        let report = lint_source_opts(&partial, &on).expect("谱合法");
+        let hits: Vec<&DiagLine> = report
+            .findings
+            .iter()
+            .filter(|d| d.code == "LINT-UNASSIGNED-BITS")
+            .collect();
+        assert!(
+            !hits.is_empty(),
+            "定宽谱该报未指定位：{:?}",
+            report.findings
+        );
+        assert!(
+            hits.iter().any(|d| d.msg.contains("[[instructions.ADD]]")),
+            "消息要点名指令：{hits:?}"
+        );
+        // 全覆盖的指令不报：把 `RR` form 的 opcode 字段换成整字常量 `word`（覆盖 [0,16)，
+        // 与 `rd` 重叠——那条由规则 4 管，这里只断言"未指定位"不出现）。
+        let whole = SPEC.replace(
+            "name = \"RR\"\nopcode_field = \"op\"",
+            "name = \"RR\"\nopcode_field = \"word\"",
+        );
+        let whole = whole.replace(
+            "[conventions.bitfields]",
+            "[conventions.bitfields]\nword = { offset = 0, width = 16 }",
+        );
+        let report = lint_source_opts(&whole, &on).expect("谱合法");
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|d| d.code != "LINT-UNASSIGNED-BITS"),
+            "全字常量不该报未指定位：{:?}",
+            report.findings
+        );
+        // 变长 ISA（prefix_scan）整个不判。
+        let vlen = SPEC.replace(
+            "kind = \"fixed\"\nbits = 16",
+            "kind = \"prefix_scan\"\nmax_len = 8",
+        );
+        let report = lint_source_opts(&vlen, &on).expect("变长谱合法");
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|d| d.code != "LINT-UNASSIGNED-BITS"),
+            "变长 ISA 不判未指定位：{:?}",
+            report.findings
+        );
+    }
+
+    /// V4d-2：`vary` 合并建议只在 `--suggest` 下报，形状相同的规则成组一条。
+    #[test]
+    fn vary_candidates_only_when_opted_in() {
+        // 同一 op 两条规则，形状相同（只差助记符：`ADD` vs 模板实例 `T1`）⇒ 一条建议。
+        let two = SPEC.replace(
+            "[[templates]]",
+            "[[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
+             [[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 16] }\ninsts = [\"T1 {out}\"]\n\n\
+             [[templates]]",
+        );
+        let on = LintOpts {
+            suggest_vary: true,
+            ..Default::default()
+        };
+        let plain = lint_source(&two).expect("谱合法");
+        assert!(
+            plain.iter().all(|d| d.code != "LINT-VARY-CANDIDATE"),
+            "默认档不该给建议：{plain:?}"
+        );
+        let report = lint_source_opts(&two, &on).expect("谱合法");
+        let hits: Vec<&DiagLine> = report
+            .findings
+            .iter()
+            .filter(|d| d.code == "LINT-VARY-CANDIDATE")
+            .collect();
+        assert_eq!(hits.len(), 1, "同 op 同形状只报一条：{:?}", report.findings);
+        assert!(
+            hits[0].msg.contains("[[lowering.Iadd]]") && hits[0].msg.contains("vary"),
+            "{}",
+            hits[0].msg
+        );
+        // 形状不同（行数不同）不报。
+        let differ = SPEC.replace(
+            "[[templates]]",
+            "[[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
+             [[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 16] }\n\
+             insts = [\"ADD {out}\", \"T1 {out}\"]\n\n[[templates]]",
+        );
+        let report = lint_source_opts(&differ, &on).expect("谱合法");
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|d| d.code != "LINT-VARY-CANDIDATE"),
+            "形状不同不该给建议：{:?}",
+            report.findings
+        );
     }
 }

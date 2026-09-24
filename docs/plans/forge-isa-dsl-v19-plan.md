@@ -106,7 +106,7 @@
 | **V1** 拆 `forge-isa-runtime`（**破坏性**） | 新 crate：`machine/*` + `runtime/{output_types,registry}` + `AllocResult`/`CodeSink`/`LabelRef`；解三处 `machine→pipeline` 引用：数据型上移，管线走 runtime 的 `Pipeline` trait，`impl_erased_target_machine!` 移入 runtime | 生成物只依赖 runtime；`forge-codegen` 变成 runtime 下游（保留 JIT/regalloc/emission/arch） | `cargo tree -p forge-isa-runtime` 只含 forge-ir；新守卫 `runtime_has_no_pipeline_dep.rs`；三后端 930 条规格用例 + 黄金 + 矩阵 195/3/0、131/67/0、23/175/0 逐数字不变 | 通用性的**前置条件** |
 | ✅ **V2** 外部宿主实证 | 新 crate `examples/isa-host-demo`：仅 `forge-isa-runtime` + build-dep `forge-isa-dsl` + 自带玩具谱（`parts = ["encode","decode","asm"]`，且**不用 proc-macro**） | `krate` 参数删除；教程"新 ISA 从这里开始"已改指本 crate；`spec_tests` 放宽到不要求 `tm` | 该 crate `cargo test` 通过（9 条 `__spec_tests` + 5 条宿主守卫）；`cargo tree` 无 forge-codegen；参数表只剩 `spec_tests`/`name`/`parts` | G1 的**硬证据**（2026-09-23 落地） |
 | ✅ **V3** `[[vectors]]` 数据化测试 | 五种形态（`{asm, bytes}` / `{asm, error}` / `{bytes, error="DECODE"[,partial]}` / `{bytes}` / `{asm}` 闭环）；生成进 `__spec_tests`；新增 `forge-isa test <谱> [--json]`；V3d 追加**谱内派生枚举器** `all_insts()` | 三 ISA 迁移黄金字节 + 往返清单；Rust 侧只留集成/ABI/JIT 断言；宿主侧"全指令往返"从派生枚举器驱动 | 迁移前后**逐字节等价** ✅；负向向量钉错误码 ✅；手写测试行数 **1832 → 557（−69.6%）**（V3d 后，超过 −≥50% 目标）✅；`.text`/编解码闭环由 `isa_roundtrip_guard` 守 602/327/332 条 ✅ | G2；作者体验立刻变好 |
-| 🚧 **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a/V4b/V4c 已落地**：未用槽/form/位域（默认）、位域重叠（默认，修出 arm64 4 条真阳性）、能力缺口（`--ops`，§10.3 逐数字一致）、未引用 `ref`（`--refs` opt-in，28 条预留名只钉数字）。剩：可合并为 `vary` 的族（只建议）、**未指定位**（按逐指令视图判会误伤 reserved 位 → 待度量） |
+| ✅ **V4** `forge-isa lint` | 未用 `[[operand_slots]]`/`[[forms]]`/位域/`ref`；模板行键未被 `body` 或 `{…}` 引用；可合并为 `vary` 的族（只建议）；位域重叠/未指定位；能力缺口；死规则 | `lint` 子命令 + 错误码 + 三 ISA 清单快照 | 零误报（人工核对后钉快照）；`--json`；退出码与 `validate` 一致（0/1/2） | G3；写谱门槛下降。**V4a–V4d 已落地（八个码）**：默认档 4 条（未用槽/form/位域、位域重叠——真阳性已修谱）、`--ops` 能力缺口（§10.3 逐数字一致）、`--refs`/`--bits`/`--suggest` 三条 opt-in 评审清单（清单快照 + 默认零结论）。剩：模板行键"未被引用"一项**不做**（行键即指令字段，解析期已由 `deny_unknown_fields` 兜住） |
 | 🚧 **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants`（**六处声明统一**：指令/模板行/emit 块/spill/pseudo/pattern） + 值条件列 `vary` 下沉到 `[[templates]]`（**未做**，见下） | RV32 从同一 riscv64 谱投影（不注册后端）；`insts --params` 打印投影账目 | 实测账目：116 → 104 条指令 / 110 → 96 条 lowering / 逐节丢弃 4 项；守卫 `tests/variants.rs`（6 条） | G4；臂/扩展式复用的验证。**投影已落地（2026-09-24）**：`explain` 显示参数生效点**未做**；与独立 RV32 表对拍**未做**（投影不产可运行后端，见 §5 注） |
 | 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性）+ V6b（strict-overlap，实测 61 条全合法 ⇒ CI 不开）已落地**；`--warn-unreachable` 与死规则检测重叠，已在 V6b 说明不做 |
 | **V7** 语义层表化（**可选，默认不做**） | 只借"属性视图 + 生成期可分析性"；把 S8b-2 的通用解释器当候选 | 先量：V1 之后 x86 C 段 334 KB 是否仍是编译时间主因、表化净收益是否 ≥15% token 且不增编译时间 | 结论入库（含实测数字），无论做与不做 | 与 S8b-2 一致：以度量决定 |
@@ -307,6 +307,30 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
 - **V4c（余下）**：可合并为 `vary` 的族（只建议）、**未指定位**（"字里没有任何位域覆盖的位"——
   x86 的 prefix/REX/ModRM 本就不走位域表，按表判必成误报；定宽 ISA 里 reserved 位也常常故意不声明，
   因此这条**先不做**，等有"忘了声明某个位域"的真事故再说）。
+
+**V4d 已落地（2026-09-24，lint 收尾两条 opt-in 评审清单）**：
+
+- **`LINT-UNASSIGNED-BITS`（`lint --bits`）**：逐指令算"生效字段视图"覆盖不到的位段
+  （`used_bit_ranges` 与重叠规则共用同一份视图判定）。**只对 `kind = "fixed"` 判**——
+  变长 ISA 的前缀/REX/ModRM/VEX 由编码器发射、不在位域表里建模，按表判必成误报；
+  全字常量（`opcode_field = "word"`）自动无缺口。
+  **实测 + 逐条核对**：x86 **0**（整条规则跳过）、riscv64 **3**、arm64 **67**。
+  arm64 的 67 条全是保留位（抽查 `B.cond` 的固定 0 位 `[4,5)`、`BR`/`RET` 的
+  `[0,5)`+`[10,16)`、`LDUR` 族的 `[10,12)`+`[21,24)`，都对得上参考编码）；riscv 的 3 条是
+  `NOP`/`ECALL`/`EBREAK` 的固定位型（故意只声明 `opcode`，语义上是固定字而非带保留位的指令字）。
+  ⇒ **不是谱缺陷** ⇒ 保持 opt-in 评审清单（清单快照 `unassigned_bits_inventory`）。
+- **真阳性（已修谱，逐字节不变）**：riscv64 的 AMO/LR/SC 四条模板体把 RV64A 的 `aq`/`rl`
+  两位留在"未指定位"里（谱注释提过、谱里没声明）⇒ 显式声明 `aq`/`rl` 两个位域并在四条模板体
+  写 0：`--bits` 的 riscv 条目 **11 → 3**，`cargo test -p forge-codegen --lib` 仍 **1265 passed**。
+  价值：把"这两位固定为 0"从注释变成谱里的数据，将来支持 acquire/release 只改 lowering 取值。
+- **`LINT-VARY-CANDIDATE`（`lint --suggest`，只建议）**：同一 op 的多条规则**发射形状相同**
+  （逐行归一：助记符 → `_`，数字/寄存器/`{占位符}` → 通配；形状 = 换行拼起来的文本）⇒ 可用一条
+  `vary = { attr = [...], name = [...] }` 合并。实测同形状组：x86 **55** / riscv64 **22** /
+  arm64 **7**。**默认关**：合并是风格取舍（有的谱故意写开、便于各自演进），建议不进门槛
+  （清单快照 `vary_candidate_inventory`）。
+- **V4 至此收口**（八码）：默认档 4 条 + `--ops` 1 条 + opt-in 3 条；`--warn-unreachable` 与
+  死规则重叠、不做；模板行键"未被引用"不做（行键就是指令字段，笔误已被 `deny_unknown_fields`
+  在解析期拦住）。
 
 **V4c 已落地（2026-09-24，三条规则：位域重叠 / 能力缺口 / 未引用 `ref`）**：
 
