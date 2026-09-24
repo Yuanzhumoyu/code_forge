@@ -574,12 +574,18 @@ fn golden_root() -> PathBuf {
 }
 
 /// 与签入的黄金文本比对；`FORGE_ABI_BLESS=1` 时改写（**只在人看过 diff 之后用**）。
+///
+/// **必须先归一化换行**：Windows 上 git 可能按 CRLF 检出签入的 LF 文件（CI 的
+/// `Test (Windows)` 就这么红过一次）。`str::lines()` 会**吃掉** `\r`，所以只比
+/// `lines()` 看不出这个差异，而直接比字符串又会在换行符上红——两者叠加出来的
+/// 现象是"差异点报在文件末尾 + 期望 <缺行>"，极难排查。这里统一折成 `\n` 再比。
 pub fn check_golden(rel: &str, actual: &str) {
     let path = golden_root().join(rel);
     if std::env::var_os("FORGE_ABI_BLESS").is_some() {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).expect("建目录");
         }
+        // 写出的是 LF（`actual` 本身），因此签入件恒为 LF。
         std::fs::write(&path, actual).expect("写黄金文件");
         eprintln!("[blessed] {}", path.display());
         return;
@@ -591,15 +597,25 @@ pub fn check_golden(rel: &str, actual: &str) {
             e
         )
     });
-    if expected != actual {
-        let line = first_diff(&expected, actual);
+    let (expected_n, actual_n) = (normalize_newlines(&expected), normalize_newlines(actual));
+    if expected_n != actual_n {
+        let line = first_diff(&expected_n, &actual_n);
         panic!(
             "黄金文本不一致：{}（第 {line} 行起）\n期望: {}\n实际: {}\n\
              确认无误后用 FORGE_ABI_BLESS=1 重新生成",
             path.display(),
-            expected.lines().nth(line - 1).unwrap_or("<缺行>"),
-            actual.lines().nth(line - 1).unwrap_or("<缺行>"),
+            expected_n.lines().nth(line - 1).unwrap_or("<缺行>"),
+            actual_n.lines().nth(line - 1).unwrap_or("<缺行>"),
         );
+    }
+}
+
+/// CRLF → LF（只做这一件事；不碰其它空白）。
+fn normalize_newlines(s: &str) -> String {
+    if s.contains('\r') {
+        s.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        s.to_string()
     }
 }
 

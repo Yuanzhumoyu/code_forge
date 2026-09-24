@@ -327,6 +327,12 @@ let name = node.get_text("name")?;
 ## Testing Notes
 
 - Integration tests in `tests/` import ISA types from `code_forge::backend::<isa_module>::*`
+- **黄金/快照文件必须先归一化换行再比**（v20 A1 实测）：Windows 上 git 按 CRLF 检出签入的
+  LF 文件（CI 的 `Test (Windows)` 就这么红过一次，本地因"测试自己写过一遍"而全绿）。
+  `str::lines()` 会**吃掉** `\r`，所以"只比 `lines()`"看不见差异、而"直接比字符串"又会红
+  ——两者叠加的现象是**差异点报在文件末尾 + 期望 `<缺行>`**，极难排查。
+  正确做法：比之前把两边都折成 `\n`（见 `forge-abi/tests/common/mod.rs::check_golden`，
+  它现在按这个口径比，并有 CRLF 变异实测）。
 - `forge-rustc` tests require nightly Rust with `rustc-dev` component
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +

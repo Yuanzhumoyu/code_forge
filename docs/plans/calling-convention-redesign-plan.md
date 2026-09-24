@@ -106,6 +106,15 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 本片**只新增**（没有消费者），因此现有编译行为**逐字节不变**：`[abi]` 节仍在谱里、
 管线仍按老路走，直到 A3–A5 切换。
 
+#### CI 上抓到的两件事
+
+1. `Test (Windows)` 红了一次：黄金快照比对没归一化换行——Windows 上 git 按 CRLF 检出
+   签入的 LF 文件，`str::lines()` 又会吃掉 `\r`，于是"直接比字符串会红、只比 `lines()`
+   看不见"，现象是**差异点报在文件末尾 + 期望 `<缺行>`**。已修（比之前两边都折成 `\n`）
+   并做了 CRLF 变异实测。
+2. `forge-rustc (e2e, Windows)` 仍是**历史性红**（与本片无关，见
+   [`forge-rustc-vec_push-plan.md`](forge-rustc-vec_push-plan.md)）。
+
 ### A2 IR：`CallConvId` + 每条参数/返回值属性
 
 - 删 `CallConv` 枚举，改 `CallConvId::{Builtin(Named), Named(ImmStr), Index(u32)}` + 宿主注册表；
