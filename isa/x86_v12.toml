@@ -1937,7 +1937,7 @@ base = "RBP"
 align_pad = 0x90   # `.align` 伪指令填充字节 = NOP
 
 [emit.prologue]
-insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@move_args", "@frame_alloc"]
+insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@frame_alloc"]
 
 [emit.epilogue]
 insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, {callee_saved_bytes}", "@pop_callee", "POP RBP", "RET"]

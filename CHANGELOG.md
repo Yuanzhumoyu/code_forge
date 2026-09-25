@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-25) — v20 A3b-2b-2b：`@move_args` 退役（收参由生成器发射，谱不再定义调用约定）
+
+- **伪指令白名单里删掉 `move_args`**：谱里再写 `@move_args` 会被**明确拒绝**并给出迁移提示（单列一条诊断，不是含糊的"未知伪指令"）——它是**调用约定**的内容，谱不该写它。
+- **生成器自动插入收参**：位置 = 最后一个 `@push_callee` **之后**（模板里没有 `@push_callee` 则放最后），两者都在所有 callee-saved 保存之后。**顺序不是风格问题**：保存若晚于收参，存下来的是实参值而不是调用者的寄存器值，尾声恢复会毁掉调用者的寄存器。
+- `[emit.prologue]` 因此**可以缺席**（`gen_emit_block` 不再因模板缺失而整体早退）：缺席 = 空模板 + 收参；demo 夹具的整段 `@move_args` 模板随之删除。
+- 三份发行谱（x86/riscv64/arm64）与两份夹具的模板里删掉 `@move_args`；其余四个伪指令（`@push_callee`/`@pop_callee`/`@frame_alloc`/`@frame_free`）仍在，A4 才轮到它们。
+- **验收 = 生成物逐字节不变**：`FGE_DEBUG_GEN=1` 对 10 份生成模块（三份发行谱 + 七份夹具/多文件谱）取样，改动前后 **SHA256 全部相同**；workspace 全套（serially）绿。
+- 守卫 `forge-isa-dsl/tests/call_layout_emission.rs` 新增三条：写 `@move_args` 必报错且提示指路、缺席序言模板的谱仍发射收参、收参位置在保存之后且帧分配之前。
+
 ### Added (2026-09-25) — v20 A3b-2b-2a：缺省约定 `c` 的绑定 + 收参改读调用布局
 
 - **前提缺口**：IR 的缺省约定是抽象名 `c`，而内置绑定只有 `win64`/`sysv64`/`aapcs64`/`lp64d` ⇒ `c` 在真机上没有绑定 ⇒ `call_layout` 恒为 `None`、生成物的布局路径永远不生效。补法是把它变成**数据**：`AbiRules` 新增 `aliases = ["c"]`（"这台机器的 C 就是本约定"），内置 `win64`/`aapcs64`/`lp64d` 声明、`sysv64` 刻意不声明。**关键在"整套代答"**：解析出的必须是同一份约定的**规则 + 绑定**（`AbiRegistry::resolve_conv`）。实测教训——只让**绑定**代答（拿 `c` 自己的通用规则配 Win64 的寄存器）会得到 by_class 的槽位与 RCX 返回：混合 int/float 参数读错、`sret` + by-ref 槽位错位，三个 JIT 用例当场红。纪律：同一机器上两份约定都声称代答 ⇒ 报错（不按注册序猜）；显式 `(ISA, "c")` 绑定/规则优先于别名（宿主覆写入口）。

@@ -1223,15 +1223,23 @@ epilogue_label = true       # 是否生成独立尾声标签 + return block 的 
                             # （缺省 true；定宽 ISA 无 JMP 可设 false 走 fall-through）
 
 [emit.prologue]
-insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@move_args", "@frame_alloc"]
+insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@frame_alloc"]
 
 [emit.epilogue]
 insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, {callee_saved_bytes}", "@pop_callee", "POP RBP", "RET"]
 ```
 
-`@push_callee` / `@frame_alloc` / `@frame_dealloc` / `@pop_callee` 为伪指令，由
+`@push_callee` / `@frame_alloc` / `@frame_free` / `@pop_callee` 为伪指令，由
 FrameLowering 展开为具体序列（`@frame_alloc`/`@frame_free` 的指令由 `roles` 的
 `frame_alloc`/`frame_free` 提供）。
+
+**序言不只有模板**：收参（`move_args`）**已从谱面撤出**（v20 A3b-2b-2b）——它是
+**调用约定**的事，生成器按 forge-abi 的调用布局（`AllocResult::call_layout`）自己发射，
+位置固定在 callee-saved 保存（`@push_callee`）**之后**（保存必须发生在收参之前，否则
+保存的是实参值而不是调用者的寄存器值）。因此 `[emit.prologue]` **可以缺席**（缺席 =
+空模板 + 收参，demo 夹具就是这么用的）；在模板里写 `@move_args` 会被**明确拒绝**并给出
+迁移提示（收参的寄存器/落点由约定数据决定，谱里写不出来，见
+[`calling-conventions.md`](calling-conventions.md) 的「④ 发射侧」）。
 
 占位符：
 

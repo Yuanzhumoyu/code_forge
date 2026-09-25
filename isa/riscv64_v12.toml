@@ -255,7 +255,7 @@ rows = [
   { inst = "REMUW", fields = { funct3 = 7, funct7 = 0x01 } },
 ]
 # ─────────────────────────── 指令（顺序 = v11 声明序）───────────────────────────
-# ADDI 复制（@move_args 用）；与 ADDI 同编码（imm=0），解码首匹配
+# ADDI 复制（收参用）；与 ADDI 同编码（imm=0），解码首匹配
 [[instructions]]
 name = "MOV_RM8_R64"
 roles = ["gpr_mov"]
@@ -734,7 +734,7 @@ epilogue_label = true
 [emit.prologue]
 # 64 位专用（含 SD 保存 ra/fp 与 8 字节槽的帧序）。
 only_variants = { xlen = [64] }
-insts = ["@frame_alloc", "SD X1, X2, {frame_size_m8}", "SD X8, X2, {frame_size_m16}", "ADDI X8, X2, {frame_size}", "@push_callee", "@move_args"]
+insts = ["@frame_alloc", "SD X1, X2, {frame_size_m8}", "SD X8, X2, {frame_size_m16}", "ADDI X8, X2, {frame_size}", "@push_callee"]
 
 [emit.epilogue]
 only_variants = { xlen = [64] }

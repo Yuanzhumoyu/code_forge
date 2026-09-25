@@ -236,24 +236,27 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
                                                                         │
                             AllocResult::call_layout ◄── LowerCtx::call_layout（管线在编译入口填）
                                                                         │
-                                          生成物的 @move_args / 序尾声（读 __rm.call_layout）
+                                          生成物的序言（收参）/ 序尾声（读 __rm.call_layout）
 ```
 
 寄存器在 `CallLayout` 里是 **(类, 类内号)**（`RegClass` 是 forge-ir 的中性类型），
 生成物用 `Reg::from_index(i, class)` 还原——运行时因此**不需要依赖 forge-abi**。
 
-当前落地程度（A3b-2b-2a，2026-09-25）：
+当前落地程度（A3b-2b-2a / 2b-2b，2026-09-25）：
 
-- **收参（`@move_args`）已按布局走**：每条形参的来源寄存器取自 `call_layout`
-  （`__layout_ok` 入场判定；`Reg` / 带指针的 `Indirect` 两类落点），生成器不再数
-  "第几个 int 槽"、不再做 `sret` 偏移——这两件事全是绑定/规则算出来的。
+- **收参已完全由生成器发射**（`@move_args` 这个伪指令**已从谱面撤出**）：谱里不再能写
+  它，模板里的位置也不再由谱决定——生成器把收参插在 callee-saved 保存（`@push_callee`）
+  **之后**（保存必须先于收参，否则保存的是实参值而不是调用者的寄存器值），
+  `[emit.prologue]` 因此可以缺席。写了 `@move_args` 的谱会被**明确拒绝**并给出迁移提示。
+- **收参的来源取自布局**：`__layout_ok` 入场判定 → `ArgPlace::Reg`（类 + 类内号）/
+  带指针的 `Indirect`，生成器不再数"第几个 int 槽"、不再做 `sret` 偏移。
 - **一个参数落在本片未覆盖的落点**（`Pair`/`Group`/`Stack`/无指针的 `Indirect`）⇒
   **整函数**退回既有 `[abi]` 路径（两条路径不混用：混用会让旧路径的 `__gi`/`__fi`
-  游标与实际参数错位）。栈参数/序尾声的搬运仍是这一批的后续工作（A3b-2b-2b、A4）。
+  游标与实际参数错位）。栈参数的 load/store 与序尾声仍是后续工作（A3b-2b-2b / A4）。
 - `call_layout = None`（没有对应绑定、或规划失败）同样退回旧路径——**不是静默错值**：
   `FORGE_TRACE_ABI=1` 会打印计划或失败原因。
-- 结构守卫在 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`（三份发行谱
-  都发射了布局路径，且排在旧路径之前）。
+- 结构守卫在 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`（三份发行谱都
+  发射了布局路径、排在旧路径之前；缺席模板的夹具同样发射收参）。
 
 ## 内置约定（四份 + 一个抽象基类）
 

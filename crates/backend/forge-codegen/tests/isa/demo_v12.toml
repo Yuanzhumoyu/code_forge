@@ -234,7 +234,7 @@ align = 8
 fp_save = 8
 
 [abi]
-# @move_args 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
+# 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
 # 生成器按角色解析 src/dest，不依赖操作数序）
 
 # 参数寄存器：X0-X3（64 位视图，物理 0-3）
@@ -255,9 +255,6 @@ align_pad = 0
 # 独立尾声标签关闭：demo 无 JMP 指令，return block 直接 fall-through
 # 到函数末尾的尾声（RET）——仅单 return block 函数安全（B3 测试满足）。
 epilogue_label = false
-
-[emit.prologue]
-insts = ["@move_args"]
 
 [emit.epilogue]
 insts = ["RET"]

@@ -558,7 +558,6 @@ insts = [
     "STURX X29, SP, {frame_size_m16}",
     "ADDIMMX X29, SP, {frame_size}",
     "@push_callee",
-    "@move_args",
 ]
 
 [emit.epilogue]

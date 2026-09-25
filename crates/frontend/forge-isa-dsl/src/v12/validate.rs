@@ -2005,15 +2005,13 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
 /// `[emit]` 模板合法的 `@` 伪指令（DSL 侧 `codegen/frame.rs::gen_emit_pseudo` 的实现集）。
 ///
 /// v15 文档只列了 `@push_callee`/`@frame_alloc`/`@frame_dealloc`/`@pop_callee`——
-/// `@frame_dealloc` 这个名字**在代码里不存在**（实际是 `@frame_free`），
-/// 且 `@move_args` 没被文档提到。S1 把它变成唯一事实源（文档与验证器同表）。
-const EMIT_PSEUDOS: &[&str] = &[
-    "push_callee",
-    "pop_callee",
-    "frame_alloc",
-    "frame_free",
-    "move_args",
-];
+/// `@frame_dealloc` 这个名字**在代码里不存在**（实际是 `@frame_free`）。S1 把它变成
+/// 唯一事实源（文档与验证器同表）。
+///
+/// **`@move_args` 已删除**（v20 A3b-2b-2b）：收参是**调用约定**的事，谱不该定义它——
+/// 生成器按 forge-abi 的调用布局（`AllocResult::call_layout`）在自己的位置发射收参
+/// （callee-saved 保存之后）。谱里写了它会被明确拒绝并给出迁移提示。
+const EMIT_PSEUDOS: &[&str] = &["push_callee", "pop_callee", "frame_alloc", "frame_free"];
 
 /// `[emit]` 模板合法的占位符（`frame.rs` 的实现集）。
 const EMIT_PLACEHOLDERS: &[&str] = &["frame_size", "frame_size_neg", "callee_saved_bytes"];
@@ -2050,7 +2048,17 @@ fn validate_emit_line(
 ) {
     let t = line.trim();
     if let Some(pseudo) = t.strip_prefix('@') {
-        if !EMIT_PSEUDOS.contains(&pseudo.trim()) {
+        let pseudo = pseudo.trim();
+        if pseudo == "move_args" {
+            d.push_anchored(
+                idx,
+                &format!(
+                    "{at}: `@move_args` 已删除（v20 A3b-2b-2b）——收参属于**调用约定**，\
+                     生成器按 forge-abi 的调用布局统一发射（位置：callee-saved 保存之后）；\
+                     把它从模板里删掉即可，不要改用别的写法"
+                ),
+            );
+        } else if !EMIT_PSEUDOS.contains(&pseudo) {
             d.push_anchored(
                 idx,
                 &format!(

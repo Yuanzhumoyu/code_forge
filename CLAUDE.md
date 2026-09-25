@@ -254,10 +254,11 @@ code-forge (root umbrella)
    `CallConvId::Builtin(C)` 不带平台信息，"这台机器上的 C 是哪一份"写在**规则**里
    （`AbiRules::aliases`：内置 `win64`/`aapcs64`/`lp64d` 声明 `aliases = ["c"]`，
    `sysv64` 不声明；**整套代答** = 规则 + 该机绑定同源，只让绑定代答会得到 by_class
-   的槽位与 RCX 返回，实测三个 JIT 用例红；同一机两份声称 ⇒ 报错）。生成物的收参
-   （`@move_args`）**已改读 `AllocResult::call_layout`**（入场判定 `__layout_ok`；
-   `Pair`/`Group`/`Stack`/无指针 `Indirect` ⇒ 整函数退回 `[abi]` 路径，两条路径不混用），
-   栈参数/`byval`/序尾声仍走旧路径（A3b-2b-2b / A4）。
+   的槽位与 RCX 返回，实测三个 JIT 用例红；同一机两份声称 ⇒ 报错）。**收参由生成器发射**：
+   `@move_args` 已从谱面撤出（写了会被明确拒绝），生成器按 `AllocResult::call_layout` 在
+   callee-saved 保存之后插入收参（`__layout_ok` 入场判定；`Pair`/`Group`/`Stack`/无指针
+   `Indirect` ⇒ 整函数退回 `[abi]` 路径，两条路径不混用），栈参数/`byval`/序尾声仍走旧路径
+   （A3b-2b-2c / A4）。
    参考 `docs/reference/calling-conventions.md`，分期 `docs/plans/calling-convention-redesign-plan.md`。
 
 ### ISA Backend Pattern

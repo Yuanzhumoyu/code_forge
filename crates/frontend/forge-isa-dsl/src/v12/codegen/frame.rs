@@ -357,24 +357,34 @@ pub(crate) fn gen_frame_lowering(
 /// 模板行：`INST op0, op1, ...`（物理寄存器/数字立即数）或 `@伪指令`
 /// （@push_callee/@pop_callee/@frame_alloc/@frame_free）。emit 模式：
 /// 无 XReg 映射——物理寄存器写死物理索引，imm 写死值，直接编码进 sink。
+///
+/// **序言不只有模板**（v20 A3b-2b-2b）：收参（`@move_args`）已从谱面撤出——它是**调用
+/// 约定**的事，由生成器按 forge-abi 的调用布局统一发射（位置 = callee-saved 保存之后）。
+/// 因此模板**可以缺席**（缺席 = 空模板 + 收参），而"没有 `[emit.prologue]`"不再等于
+/// "函数不收参"。
 fn gen_emit_block(
     infos: &[InstInfo],
     model: &V12Model,
     is_prologue: bool,
 ) -> Result<TokenStream, String> {
-    let Some(emit) = &model.emit else {
-        return Ok(quote! {});
-    };
-    let block = if is_prologue {
-        emit.prologue.as_ref()
-    } else {
-        emit.epilogue.as_ref()
-    };
-    let Some(block) = block else {
-        return Ok(quote! {});
-    };
+    let insts: Vec<String> = model
+        .emit
+        .as_ref()
+        .and_then(|e| {
+            if is_prologue {
+                e.prologue.as_ref()
+            } else {
+                e.epilogue.as_ref()
+            }
+        })
+        .map(|b| b.insts.clone())
+        .unwrap_or_default();
     let mut out: Vec<TokenStream> = Vec::new();
-    for t in &block.insts {
+    // **收参的插入点**：位置由**被调方保存机制**决定——callee-saved 保存
+    // （`@push_callee`）**之后**。收参必须在保存之后：否则保存下来的是实参值而不是
+    // 调用者的寄存器值，尾声恢复时会把调用者的寄存器毁掉。
+    let mut recv_slot: Option<usize> = None;
+    for t in &insts {
         let trimmed = t.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
@@ -382,10 +392,22 @@ fn gen_emit_block(
         // @ 伪指令
         if let Some(name) = trimmed.strip_prefix('@') {
             out.push(gen_emit_pseudo(infos, model, name)?);
+            if is_prologue && name.trim() == "push_callee" {
+                recv_slot = Some(out.len());
+            }
             continue;
         }
         let stmts = gen_emit_inst(infos, model, trimmed)?;
         out.extend(stmts);
+    }
+    if is_prologue {
+        let recv = gen_emit_pseudo(infos, model, "move_args")?;
+        match recv_slot {
+            Some(i) => out.insert(i, recv),
+            // 谱里没有 `@push_callee`（例如手工保存的夹具）：收参放最后——
+            // 仍然在所有保存之后。
+            None => out.push(recv),
+        }
     }
     Ok(quote! { #(#out)* })
 }

@@ -245,9 +245,28 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
   **x86 矩阵 195 passed / 3 skipped / 0 failed**、**riscv64 矩阵 131 passed / 67 skipped /
   0 failed**、`forge-codegen` 全套绿 ⇒ 收参换来源后行为不变。
 - **仍未切**：栈参数的 load/store、`byval` 副本、序尾声（`@push_callee`/`@frame_alloc`/
-  `{callee_saved_bytes}`）仍读 `[abi]`——A3b-2b-2b 与 A4。
+  `{callee_saved_bytes}`）仍读 `[abi]`——A3b-2b-2c 与 A4。
 
-### A3b-2b-2b 帧件与栈参数改读 call_layout（未开始）
+### A3b-2b-2b ✅ 收参从谱面撤出（`@move_args` 退役，生成器插入）
+
+**为什么**：`@move_args` 是**调用约定**的内容，谱不该写它——"什么时候收参"由生成器决定
+（callee-saved 保存**之后**），"收到哪"由 forge-abi 的布局决定（上一片已切）。
+
+- 伪指令白名单里**删掉 `move_args`**；谱里再写它会被**明确拒绝**并给出迁移提示
+  （`validate.rs` 单列一条诊断，不是含糊的"未知伪指令"）。
+- 生成器在序言里**自动插入**收参：位置 = 最后一个 `@push_callee` 之后；模板里没有
+  `@push_callee`（手工保存的夹具）则放最后——两者都在所有保存之后。**顺序不是风格问题**：
+  保存若晚于收参，存下来的是实参值而不是调用者的寄存器值，尾声恢复会毁掉调用者的寄存器。
+- `[emit.prologue]` 因此**可以缺席**（`gen_emit_block` 不再因模板缺失而整体早退）：
+  缺席 = 空模板 + 收参。demo 夹具的整段 `@move_args` 模板随之删除。
+- 三份发行谱 + 两份夹具的模板里删掉 `@move_args`（其余四个伪指令仍在，A4 才轮到它们）。
+- 验收：**生成物逐字节不变**——`FGE_DEBUG_GEN=1` 对 10 份生成模块（三份发行谱 + 七份
+  夹具/多文件谱）取样，改动前后 **SHA256 全部相同**（`target/gen-baseline` 对照）；
+  workspace 全套 serially 绿。
+- 守卫：`call_layout_emission.rs` 新增三条（写 `@move_args` 必报错且提示指路；缺席模板
+  的谱仍发射收参；收参位置在保存之后、帧分配之前）。
+
+### A3b-2b-2c 帧件与栈参数改读 call_layout（未开始）
 
 **剩余面**：`ArgPlace::Stack`（栈参数 load/store + spill 槽坐标）、`byval` 副本
 （`Indirect { reg: None, on_stack: true }` + `byval_area_bytes`）、`Pair`/`Group`，

@@ -79,10 +79,14 @@
 ### 3.4 `[emit.prologue].insts[i]: 未知指令引用 'X'` / `未知伪指令 '@x'` / `未知占位符 '{x}'`
 
 `[emit]` 与 `[spill.*]` 模板只能引用**已声明指令名或引用名（指令的 `ref`）**，`@` 伪指令只认
-`@push_callee` / `@pop_callee` / `@frame_alloc` / `@frame_free` / `@move_args`，
+`@push_callee` / `@pop_callee` / `@frame_alloc` / `@frame_free`，
 `[emit]` 占位符只认 `{frame_size}` / `{frame_size_neg}` / `{frame_size_mN}` / `{callee_saved_bytes}`，
 `[spill]` 只认编号 `{N}`。**为什么硬报**：S0 基线实测这些位置**完全不校验**——把
 `MOV64_RR` 写成 `MOV64_R` 要等到生成代码编译甚至运行时才暴露（见方案 §12.4）。
+
+其中一个名字有**专门的迁移提示**：`@move_args` 已删除（v20 A3b-2b-2b）——收参属于
+**调用约定**，由生成器按 forge-abi 的调用布局统一发射，谱里不再写它（把它从模板里
+删掉即可；`[emit.prologue]` 因此可以为空/缺席，收参照样发射）。
 
 ### 3.5 `[[templates.X]]: …`（v18 S2c）
 
