@@ -127,3 +127,104 @@ fn plan_agrees_with_the_existing_lowering_result() {
         "栈参数区字节数"
     );
 }
+
+/// `fn f(i64, i64, i64) -> i64`，用 `lp64d` 约定（riscv64 后端）。
+///
+/// **只用整数**：riscv64 的浮点参数在现有发射路径上就 fail-closed（见下一条测试），
+/// 这里要比的是"同一条链路上两者一致"，所以先取两边都能走的签名。
+fn lp64d_probe() -> Function {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(
+        &[(TypeId::I64, "a"), (TypeId::I64, "b"), (TypeId::I64, "c")],
+        &[TypeId::I64],
+    )
+    .with_calling_convention(CallConvId::builtin(ConvName::Lp64d));
+    let mut b = FunctionBuilder::new("lp64d_probe", ctx, sig);
+    let (entry, params) =
+        b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b"), (TypeId::I64, "c")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0]]);
+    b.finish().expect("build")
+}
+
+/// **第二台机器上的同一条核对**：riscv64/lp64d 上 plan 与现有发射路径的 `AllocResult`
+/// 也必须一致（有没有 sret、逐参数 by-ref、栈参数区字节数）。
+///
+/// 两台机器都过，才说明"按 plan 发射"有一个可信的起点；任何一条不一致都是 A3b-2
+/// 必须先解掉的差异——本测试就是提前把它暴露出来。
+#[test]
+fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
+    use forge_codegen::FunctionCompiler;
+    use forge_codegen::arch::riscv64_v12::TargetMachine as RvTm;
+
+    let compiler = FunctionCompiler::new(RvTm::new());
+    let func = lp64d_probe();
+    let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
+
+    let reg = builtin::registry().expect("内置注册表");
+    let plan = plan_for_function(&RvTm::new(), &reg, "lp64d", &func)
+        .unwrap_or_else(|e| panic!("plan: {e}"));
+
+    assert_eq!(
+        matches!(plan.ret, forge_abi::RetLoc::Indirect { .. }),
+        alloc.sret,
+        "lp64d：sret 判定"
+    );
+    let by_ref: Vec<bool> = plan
+        .args
+        .iter()
+        .map(|a| matches!(a.place, forge_abi::Placement::Indirect { .. }))
+        .collect();
+    assert_eq!(by_ref, alloc.param_by_ref, "lp64d：逐参数 by-ref 判定");
+    assert_eq!(
+        plan.stack
+            .arg_area_bytes
+            .saturating_sub(plan.stack.shadow_bytes),
+        alloc.stack_arg_bytes,
+        "lp64d：栈参数区字节数"
+    );
+}
+
+/// **把已知差异钉住**（A3b-2 的任务清单，2026-09-25 实测）：
+///
+/// riscv64 上"引擎能算出浮点参数的落点"（谱里有 F 寄存器组、绑定给了 `float` 池），
+/// 但**现有发射路径**对浮点参数是 fail-closed（`Emit("v12 float args (MOVSD/MOVSS missing)")`
+/// ——riscv64 谱里没有 `fpr_mov` 角色）。也就是说：切换发射之前，必须先补上 riscv64 的
+/// 浮点搬运角色/指令，否则"按 plan 发射"会在这一步与现状同样卡住（甚至更早）。
+///
+/// 另一头也一并钉住：arm64 连 FPR 寄存器组都没有 ⇒ 引擎侧直接报缺池（A1 静态体检的 6 条缺口）。
+#[test]
+fn riscv64_float_gap_is_engine_ok_but_emission_closed() {
+    use forge_codegen::FunctionCompiler;
+    use forge_codegen::arch::riscv64_v12::TargetMachine as RvTm;
+
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I64, "n"), (TypeId::F64, "x")], &[TypeId::I64])
+        .with_calling_convention(CallConvId::builtin(ConvName::Lp64d));
+    let mut b = FunctionBuilder::new("rv_f64_probe", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "n"), (TypeId::F64, "x")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0]]);
+    let func = b.finish().expect("build");
+
+    // 引擎侧：能算（int 槽 X10 + 浮点槽 F10）。
+    let reg = builtin::registry().expect("内置注册表");
+    let plan = plan_for_function(&RvTm::new(), &reg, "lp64d", &func).expect("引擎应能规划浮点参数");
+    assert_eq!(place_name(&plan, 0), "X10");
+    assert_eq!(place_name(&plan, 1), "F10");
+
+    // 发射侧：现状 fail-closed（消息点名缺 MOVSD/MOVSS）。
+    let err = FunctionCompiler::new(RvTm::new())
+        .compile(&func)
+        .expect_err("现状：riscv64 的浮点参数必须 fail-closed");
+    let msg = err.to_string();
+    assert!(msg.contains("MOVSD") || msg.contains("float args"), "{msg}");
+}
+
+fn place_name(plan: &forge_abi::AbiPlan, i: usize) -> String {
+    match &plan.args[i].place {
+        forge_abi::Placement::Reg { reg, .. } => reg.name.clone(),
+        forge_abi::Placement::RegPair { lo, hi } => format!("{}:{}", lo.name, hi.name),
+        other => panic!("{other:?}"),
+    }
+}

@@ -189,6 +189,17 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 
 ### A3b-2 按 plan 发射调用点/入口/返回值（x86 优先）
 
+**切换前必须先关掉的能力缺口**（2026-09-25 用 A3b-1 的核对测出来的真实现状，已钉成测试
+`abi_target_real.rs::riscv64_float_gap_is_engine_ok_but_emission_closed`）：
+
+| 机器 | 引擎（plan） | 现状发射 | 结论 |
+| --- | --- | --- | --- |
+| x86_64 / `win64` | 能算（RCX/XMM1/RAX…） | 能编，且与 plan 三项一致 | 可直接切 |
+| riscv64 / `lp64d` | 能算（int 槽 X10 + 浮点槽 F10） | **fail-closed**：`v12 float args (MOVSD/MOVSS missing)`（谱里没有 `fpr_mov` 角色） | 先补浮点搬运角色/指令 |
+| arm64 / `aapcs64` | 浮点/HFA 直接报缺池（没有 FPR 寄存器组） | 同样做不到 | A5 补 `[reg.fpr8]` + 角色 |
+
+也就是：**x86 可以先切**，riscv64/arm64 要等各自的能力补齐（与 A1 静态体检的缺口清单同一批）。
+
 - 管线按 `AbiPlan` 走：实参搬运、返回值搬运、栈参数 store/load、sret 指针。
 - 验收：**x86 的生成物逐字节不变**（`forge-codegen` 全套测试 + 三 ISA 矩阵）；
   再开 riscv64/arm64。
