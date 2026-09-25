@@ -187,7 +187,21 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
   `AllocResult` 一致（sret 有无、逐参数 by-ref、栈参数区字节数）——这是把发射切到 plan
   之前唯一能先做的正确性检查，也是 A3b-2 的入场券。
 
-### A3b-2 按 plan 发射调用点/入口/返回值（x86 优先）
+### A3b-2a ✅ 中性调用布局（发射切换的地基）
+
+- `forge-isa-runtime` 新增 `machine::call_layout`：**中性数据**（`CallLayout`/`CallArg`/
+  `ArgPlace`/`RetPlace`/`Ext`）——一次调用的实参落点、返回、隐藏 sret、栈区尺寸、
+  callee-saved、被叫方弹栈。寄存器存 **(类, 类内号)**（`RegClass` 是 forge-ir 的中性类型），
+  生成物用 `Reg::from_index(i, class)` 还原；**运行时因此不依赖 forge-abi**。
+- `forge-codegen::pipeline::abi_target::call_layout(plan, machine)`：`AbiPlan` → `CallLayout`
+  （ABI 空间号折回类内号、`sret` 标记打到落点上）。
+- 管线把它塞进 `LowerCtx::call_layout`（`None` = 没接上/算不出 ⇒ 走既有 `[abi]` 路径）。
+- 测试 `abi_target_real.rs`：真机 `win64` 上逐项核对（RCX=(GPR(8),1)、XMM1=(FPR(16),1)、
+  返回 RAX=(GPR(8),0)、callee-saved 含 RBX=(GPR(8),3)、`caller_offset` 算法、shadow=32）。
+- **发射仍未切换**（生成物读的还是 `TargetABI`）⇒ 生成物逐字节不变；下一步才是把生成物的
+  `move_args`/收参/序尾声改读 `ctx.call_layout`，并用"全 JIT 矩阵逐字节不变"验收。
+
+### A3b-2b 生成物改读 call_layout（x86 优先，逐字节不变为验收）
 
 **切换前必须先关掉的能力缺口**（2026-09-25 用 A3b-1 的核对测出来的真实现状，已钉成测试
 `abi_target_real.rs::riscv64_float_gap_is_engine_ok_but_emission_closed`）：

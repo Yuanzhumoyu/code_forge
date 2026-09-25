@@ -21,6 +21,8 @@
 
 pub mod abi;
 pub mod assembler;
+/// 调用布局（中性数据；v20 A3b-2 起生成物与管线读它）。
+pub mod call_layout;
 pub mod cfi;
 pub mod decoder;
 pub mod disasm;

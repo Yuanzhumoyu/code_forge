@@ -2131,6 +2131,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 Err(e) => (None, Some(e.to_string())),
             }
         };
+        // 把中性调用布局也塞进 lowering 上下文（v20 A3b-2）：生成物的收参/传参/序尾声
+        // 以后读它。**发射尚未切换**（生成物仍走既有 `[abi]` 路径）⇒ 行为不变。
+        if let Some(p) = &abi_plan {
+            ctx.call_layout = Some(crate::pipeline::abi_target::call_layout(p, machine));
+        }
         Ok(Self {
             vcode: VCode::new(),
             xreg_map: Vec::new(),

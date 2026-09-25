@@ -18,6 +18,7 @@
 use forge_abi::{AbiError, AbiPlan, AbiRegistry, AbiTarget, Capability, Signature};
 use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
+use forge_isa_runtime::machine::call_layout::{ArgPlace, CallArg, CallLayout, Ext, RetPlace};
 use forge_isa_runtime::machine::target::TargetMachine;
 
 /// `TargetMachine` 上的 `AbiTarget` 视图。
@@ -165,4 +166,124 @@ pub fn plan_for_signature<M: TargetMachine>(
 ) -> Result<AbiPlan, AbiError> {
     let target = MachineAbiTarget::new(machine);
     registry.plan(&target, conv, sig)
+}
+
+/// `AbiPlan` → **运行时侧的中性调用布局**（v20 A3b-2 的桥）。
+///
+/// 寄存器从"ABI 空间号"折回 **(类, 类内号)**：`0..n_gp` 是 GPR 类、`n_gp..` 是 FPR 类，
+/// 生成物用 `Reg::from_index(i, class)` 就能还原成自己的物理寄存器——运行时因此
+/// **不需要依赖 forge-abi**，只认这份数据。
+pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout {
+    let t = MachineAbiTarget::new(machine);
+    let reg = |r: &forge_abi::plan::RegRef| -> (RegClass, u32) {
+        // 名字是权威（`RegRef.index` 是 ABI 空间号）。名字解析不到时退回按空间号折算，
+        // 但**不猜类**：GPR 区用地址类、FP 区用主 FPR 类。
+        if let Some(i) = t.reg_index(&r.name) {
+            (
+                if t.is_fp(i) { t.fpr_class } else { t.gpr_class },
+                if t.is_fp(i) { i - t.n_gp } else { i },
+            )
+        } else if r.index < t.n_gp {
+            (t.gpr_class, r.index)
+        } else {
+            (t.fpr_class, r.index - t.n_gp)
+        }
+    };
+    let ext = |e: forge_abi::Extension| match e {
+        forge_abi::Extension::None => Ext::None,
+        forge_abi::Extension::ZeroExt => Ext::Zero,
+        forge_abi::Extension::SignExt => Ext::Sign,
+    };
+    let place = |p: &forge_abi::Placement| -> ArgPlace {
+        match p {
+            forge_abi::Placement::Reg { reg: r, ext: e, .. } => ArgPlace::Reg {
+                class: reg(r).0,
+                index: reg(r).1,
+                ext: ext(*e),
+                sret: false,
+            },
+            forge_abi::Placement::RegPair { lo, hi } => ArgPlace::Pair {
+                lo: reg(lo),
+                hi: reg(hi),
+            },
+            forge_abi::Placement::RegGroup { regs } => ArgPlace::Group {
+                regs: regs.iter().map(reg).collect(),
+            },
+            forge_abi::Placement::Stack {
+                offset,
+                size,
+                align,
+            } => ArgPlace::Stack {
+                offset: *offset,
+                size: *size,
+                align: *align,
+            },
+            forge_abi::Placement::Indirect { ptr, at, on_stack } => ArgPlace::Indirect {
+                reg: ptr.as_ref().map(reg),
+                at: *at,
+                on_stack: *on_stack,
+            },
+            forge_abi::Placement::Ignore => ArgPlace::Ignore,
+        }
+    };
+    let hidden_sret = plan.hidden.sret.as_ref().map(reg);
+    let args: Vec<CallArg> = plan
+        .args
+        .iter()
+        .map(|a| {
+            let mut place = place(&a.place);
+            // `sret` 语义标在落点上（收参侧据此知道"这个寄存器里是返回缓冲指针"）。
+            if let (
+                Some(h),
+                ArgPlace::Reg {
+                    class, index, sret, ..
+                },
+            ) = (hidden_sret, &mut place)
+                && (*class, *index) == h
+            {
+                *sret = true;
+            }
+            CallArg {
+                index: a.index.map(|i| i as u32),
+                size: a.size,
+                place,
+            }
+        })
+        .collect();
+    let ret = match &plan.ret {
+        forge_abi::RetLoc::Void => Some(RetPlace::Void),
+        forge_abi::RetLoc::Reg { reg: r } => {
+            let (class, index) = reg(r);
+            Some(RetPlace::Reg {
+                class,
+                index,
+                ext: Ext::None,
+            })
+        }
+        forge_abi::RetLoc::RegPair { lo, hi } => Some(RetPlace::Pair {
+            lo: reg(lo),
+            hi: reg(hi),
+        }),
+        forge_abi::RetLoc::Indirect { size, align } => Some(RetPlace::Indirect {
+            size: *size,
+            align: *align,
+        }),
+    };
+    CallLayout {
+        conv: plan.conv.clone(),
+        variadic: plan.variadic,
+        args,
+        ret,
+        hidden_sret,
+        stack_align: plan.stack.align,
+        slot_bytes: plan.stack.slot_bytes,
+        shadow_bytes: plan.stack.shadow_bytes,
+        first_arg_offset: plan.stack.first_arg_offset,
+        arg_area_bytes: plan.stack.arg_area_bytes,
+        byval_area_bytes: plan.stack.byval_area_bytes,
+        red_zone: plan.stack.red_zone,
+        callee_saved: plan.callee_saved.regs.iter().map(reg).collect(),
+        callee_pop_bytes: plan.callee_pop_bytes,
+        widen_to_bits: plan.widen_to_bits,
+    }
 }

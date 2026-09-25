@@ -67,6 +67,11 @@ pub struct LowerCtx {
     pub xreg_types: HashMap<XReg, TypeId>,
     /// 当前函数的调用约定（IR 声明的那份标识）。
     pub call_conv: CallConvId,
+    /// **一次调用的中性布局**（v20 A3b-2）：由管线从 `forge-abi::AbiPlan` 转好塞进来，
+    /// 生成物的收参/传参/序尾声读它——运行时因此不依赖 forge-abi，只认这份数据。
+    ///
+    /// `None` = 管线还没接上（或该 ISA/约定算不出计划）⇒ 生成物走既有 `[abi]` 路径。
+    pub call_layout: Option<crate::machine::call_layout::CallLayout>,
     /// **解析后的约定名**（宿主注册表里的键；空串 = 还没解析）。
     ///
     /// 与 [`call_conv`](Self::call_conv) 的分工：`call_conv` 是 IR 侧的**标识**
@@ -171,6 +176,7 @@ impl LowerCtx {
             xreg_types: HashMap::new(),
             call_conv: CallConvId::default(),
             call_conv_name: String::new(),
+            call_layout: None,
             constant_pool: None,
             is_float_return: false,
             is_sret_return: false,

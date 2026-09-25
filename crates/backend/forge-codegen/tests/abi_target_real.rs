@@ -228,3 +228,65 @@ fn place_name(plan: &forge_abi::AbiPlan, i: usize) -> String {
         other => panic!("{other:?}"),
     }
 }
+
+/// **plan → 运行时调用布局**（v20 A3b-2 的地基）：生成物与管线以后读
+/// `machine::call_layout::CallLayout`（运行时**不依赖 forge-abi**），因此这条转换必须
+/// 无损：寄存器折回 **(类, 类内号)**、隐藏 sret 指针、栈区尺寸、callee-saved 全都要对。
+#[test]
+fn plan_converts_into_the_runtime_call_layout() {
+    use forge_codegen::pipeline::abi_target::call_layout;
+    use forge_isa_runtime::machine::call_layout::{ArgPlace, RetPlace};
+
+    let tm = TargetMachine::new();
+    let reg = builtin::registry().expect("内置注册表");
+    let func = win64_probe();
+    let plan = plan_for_function(&tm, &reg, "win64", &func).expect("plan");
+    let layout = call_layout(&plan, &tm);
+
+    assert_eq!(layout.conv, "win64");
+    assert_eq!(layout.shadow_bytes, 32);
+    assert_eq!(layout.stack_align, 16);
+    assert_eq!(layout.slot_bytes, 8);
+
+    // 实参：RCX（GPR 类 1 号）、XMM1（FPR 类 1 号）。
+    let rcx = layout.arg(0).expect("arg0");
+    match &rcx.place {
+        ArgPlace::Reg {
+            class,
+            index,
+            ext,
+            sret,
+        } => {
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 1));
+            assert_eq!(*ext, forge_isa_runtime::machine::call_layout::Ext::None);
+            assert!(!*sret, "普通参数不是 sret");
+        }
+        other => panic!("{other:?}"),
+    }
+    let xmm1 = layout.arg(1).expect("arg1");
+    match &xmm1.place {
+        ArgPlace::Reg { class, index, .. } => {
+            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(16), 1));
+        }
+        other => panic!("{other:?}"),
+    }
+    // 返回：RAX（GPR 类 0 号）。
+    match layout.ret.as_ref().expect("ret") {
+        RetPlace::Reg { class, index, .. } => {
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 0))
+        }
+        other => panic!("{other:?}"),
+    }
+    // callee-saved 折成 (类, 号)：RBX = GPR 3 号（x86 的物理编号）。
+    assert!(
+        layout
+            .callee_saved
+            .iter()
+            .any(|(c, i)| *c == forge_ir::RegClass::GPR(8) && *i == 3),
+        "{:?}",
+        layout.callee_saved
+    );
+    // 调用方视角的栈槽偏移 = shadow + k*slot。
+    assert_eq!(layout.caller_offset(0), 32);
+    assert_eq!(layout.caller_offset(2), 48);
+}

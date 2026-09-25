@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-25) — v20 A3b-2a：中性调用布局 `machine::call_layout`（发射切换的地基）
+
+- `forge-isa-runtime` 新增 `machine::call_layout`：把"一次调用长什么样"变成**中性数据**（`CallLayout`：逐参落点 / 返回 / 隐藏 sret / 栈区尺寸 / callee-saved / 被叫方弹栈 / 红区 / 扩展位数）。寄存器用 **(类, 类内号)** 表示（`RegClass` 是 forge-ir 的中性类型），生成物 `Reg::from_index(i, class)` 即可还原——**运行时因此不需要依赖 forge-abi**。
+- `forge_codegen::pipeline::abi_target::call_layout(plan, machine)`：`AbiPlan` → `CallLayout`（ABI 空间号折回类内号、`sret` 标记打到落点上）；管线把它塞进 `LowerCtx::call_layout`。
+- 测试（`tests/abi_target_real.rs`，真机 x86）：RCX=(GPR(8),1)、XMM1=(FPR(16),1)、返回 RAX=(GPR(8),0)、callee-saved 含 RBX=(GPR(8),3)、`caller_offset(k)=shadow+k*slot` 全部核对。
+- **发射尚未切换**（生成物读的仍是 `TargetABI`）⇒ 生成物逐字节不变；这一步是"生成物改读 plan"的地基。
+
 ### Added (2026-09-25) — v20 A3b-1：调用计划接进编译入口（只算不用，行为不变）
 
 - `CompileState` 在编译入口用 A3a 的宿主适配器把该函数的 `AbiPlan` 算出来挂上（`abi_plan`/`abi_plan_note`）；算不出来**不阻断编译**（发射还没用它），原因留档。`FORGE_TRACE_ABI=1` 打印计划的确定性文本或失败原因——发射尚未切换期间这是"计划长什么样"的唯一证据面。
