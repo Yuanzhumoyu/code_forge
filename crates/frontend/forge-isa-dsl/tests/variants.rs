@@ -115,13 +115,12 @@ fn riscv_rv32_projection_snapshot() {
     assert_eq!(rows.len(), 104);
     assert_eq!(p.lowering_count, 96, "RV32 投影的 lowering 剩 96 条");
     let dropped: usize = p.dropped_decls.iter().map(|(_, n)| n).sum();
-    assert_eq!(dropped, 17, "逐节丢弃合计 17 项：{:#?}", p.dropped_decls);
-    for what in [
-        "[emit.prologue]",
-        "[emit.epilogue]",
-        "[spill.GPR]",
-        "[[lowering]]",
-    ] {
+    assert_eq!(
+        dropped, 15,
+        "逐节丢弃合计 15 项（v20 A4 起序/尾声不再由谱写）：{:#?}",
+        p.dropped_decls
+    );
+    for what in ["[spill.GPR]", "[[lowering]]"] {
         assert!(
             p.dropped_decls.iter().any(|(w, _)| w == what),
             "必须报到 {what}：{:#?}",

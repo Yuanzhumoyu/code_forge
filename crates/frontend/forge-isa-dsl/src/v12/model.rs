@@ -1591,10 +1591,22 @@ pub enum Role {
     Push,
     /// 硬件 pop。
     Pop,
-    /// 帧分配（`@frame_alloc`）。
+    /// 帧分配（`sp ← sp - frame_size`；符号由 `[abi.frame].alloc_neg` 定，
+    /// 因为 riscv 用 `addi sp, sp, -N`、x86 用 `sub rsp, N`）。
     FrameAlloc,
-    /// 帧释放（`@frame_free`）。
+    /// 帧释放（`sp ← sp + frame_size`）。
     FrameFree,
+    /// 建立/恢复帧指针（v20 A4）：`in` 槽 = 源、`out` 槽 = 目标，可带 imm。
+    ///
+    /// 序言里把 **fp ← sp**（x86 `mov rbp, rsp`）/ **fp ← sp + frame_size**
+    /// （riscv `addi x8, x2, frame`、arm64 `addimmx x29, sp, frame`）；
+    /// 尾声里把 **sp ← fp**（push 机制；同一条指令、方向反过来绑）。
+    FrameSet,
+    /// 把寄存器保存到帧里（v20 A4，store_to_frame 机制）：Reg 槽[0] = 值、
+    /// Reg 槽[1] = 基址、Imm 槽[0] = 偏移（riscv `sd`、arm64 `sturx`）。
+    CalleeSave,
+    /// 从帧里恢复寄存器（v20 A4）：形状同 [`Role::CalleeSave`]，load 方向。
+    CalleeLoad,
     /// 尾声跳转（缺省用 `jump`；需要不同指令时单独声明）。
     EpilogueJump,
     /// 宽向量 by-ref：调用方栈拷贝 store。**宽度写进角色声明的 `bits`**
@@ -1635,6 +1647,9 @@ fn serde_json_name(r: &Role) -> &'static str {
         Role::Pop => "pop",
         Role::FrameAlloc => "frame_alloc",
         Role::FrameFree => "frame_free",
+        Role::FrameSet => "frame_set",
+        Role::CalleeSave => "callee_save",
+        Role::CalleeLoad => "callee_load",
         Role::EpilogueJump => "epilogue_jump",
         Role::WideVecStore => "wide_vec_store",
         Role::WideVecLoad => "wide_vec_load",
@@ -2668,14 +2683,15 @@ pub enum ArgStrategy {
 
 // ───────────────────────── [emit] ─────────────────────────
 
-/// 序言/尾声指令块。
+/// `[emit]` ——**剩下的只有机器事实**（v20 A4：序/尾声不再由谱写）。
+///
+/// 序言/尾声（保存谁、帧多大、怎么建立帧指针）是**调用约定**的事，由生成器按
+/// `[abi.frame]` / `[abi].call_ret_reg` / `[abi.callee_saved]` + 角色
+/// （`push`/`pop`/`frame_alloc`/`frame_free`/`frame_set`/`callee_save`/`callee_load`/`ret`）
+/// 生成；谱里只剩"`.align` 怎么填"与"要不要独立尾声标签"这类事实。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmitSection {
-    #[serde(default)]
-    pub prologue: Option<EmitBlock>,
-    #[serde(default)]
-    pub epilogue: Option<EmitBlock>,
     /// `.align N` 伪指令的填充字节（缺省 0x00）。
     #[serde(default)]
     pub align_pad: Option<u8>,
@@ -2685,17 +2701,6 @@ pub struct EmitSection {
     /// （仅单 return block 函数安全）。
     #[serde(default)]
     pub epilogue_label: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EmitBlock {
-    pub insts: Vec<String>,
-    /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
-    ///
-    /// 整个块跟着变体走（RV32 的序/尾声与 RV64 不同，靠这一条整块替换）。
-    #[serde(default)]
-    pub only_variants: Option<VariantGate>,
 }
 
 // ───────────────────────── [spill.*] ─────────────────────────

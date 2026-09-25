@@ -244,10 +244,15 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
 
 当前落地程度（A3b-2b-2a / 2b-2b，2026-09-25）：
 
-- **收参已完全由生成器发射**（`@move_args` 这个伪指令**已从谱面撤出**）：谱里不再能写
-  它，模板里的位置也不再由谱决定——生成器把收参插在 callee-saved 保存（`@push_callee`）
-  **之后**（保存必须先于收参，否则保存的是实参值而不是调用者的寄存器值），
-  `[emit.prologue]` 因此可以缺席。写了 `@move_args` 的谱会被**明确拒绝**并给出迁移提示。
+- **收参与序/尾声都由生成器发射**：`@move_args`（v20 A3b-2b-2b）与
+  `[emit.prologue]`/`[emit.epilogue]` + 四个伪指令（A4）**都已从谱面撤出**，写了会被
+  **明确拒绝**。收参的来源寄存器取自布局（`__layout_ok` 入场判定 → `ArgPlace::Reg` /
+  带指针的 `Indirect`），位置由生成器按机制钉死（callee-saved 保存**之后**）。
+- **序/尾声（A4）** 由生成器按机器事实 + **能力角色**生成：`frame_alloc`/`frame_free`
+  （sp 调整）、`frame_set`（建立/恢复帧指针）、`push`/`pop` 或 `callee_save`/`callee_load`
+  （保存/恢复）、`ret`（返回）。顺序：push 机制 = push fp → 建 fp → push callee-saved →
+  收参 → 帧分配；帧内机制 = 帧分配 → 存 ra/fp → 建 fp → 存 callee-saved → 收参。
+  三份发行谱的序/尾声**逐字节不变**（`FGE_DEBUG_GEN` 对照）。
 - **收参的来源取自布局**：`__layout_ok` 入场判定 → `ArgPlace::Reg`（类 + 类内号）/
   带指针的 `Indirect`，生成器不再数"第几个 int 槽"、不再做 `sret` 偏移。
 - **一个参数落在本片未覆盖的落点**（`Pair`/`Group`/`Stack`/无指针的 `Indirect`）⇒

@@ -440,7 +440,7 @@ asm = "fsw {src}, {imm}({src2})"
 
 [[instructions]]
 name = "ADDI"
-roles = ["frame_alloc", "frame_free"]
+roles = ["frame_alloc", "frame_free", "frame_set"]
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
@@ -490,6 +490,7 @@ opcode = 0x03
 fields = { funct3 = 3 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "ld {dst}, {imm}({src})"
+roles = ["callee_load"]
 
 [[instructions]]
 name = "SD"
@@ -499,6 +500,7 @@ opcode = 0x23
 fields = { funct3 = 3 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sd {src}, {imm}({src2})"
+roles = ["callee_save"]
 
 # ── 控制流 ──
 
@@ -687,7 +689,7 @@ call_ret_reg = "X1"
 
 # Call 点被调用方破坏的寄存器（regalloc clobber 集）：ra(X1) + 参数 a0-a7
 # (X10-X17) + 临时 t0-t2(X5-X7)/t3-t6(X28-X31) + 固定用途 X3/X4。
-# s 系（X9/X18-X27）由 @push_callee 保存 → 不在 clobber 集（跨调用存活
+# s 系（X9/X18-X27）由帧件保存（roles = ["callee_save"]）→ 不在 clobber 集（跨调用存活
 # 值留在 s 系安全）。X5/X6 是 spill scratch（regalloc 不可分配）。
 call_clobbers = ["X1", "X3", "X4", "X7", "X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17", "X28", "X29", "X30", "X31"]
 
@@ -707,7 +709,7 @@ layout = "fp-inside"
 fp_push_bytes = 16 # ra + fp 两个保存槽
 
 [abi.callee_saved]
-# s 系（X9, X18-X27）：@push_callee/@pop_callee 用 [spill.GPR] store/load
+# s 系（X9, X18-X27）：帧件用 roles = ["callee_save"/"callee_load"] 的 SD/LD 存取
 # 模板（SD/LD）保存到帧槽 [sp + frame - 16 - (k+1)*8]（fp-inside 推导的最小
 # 帧 = fp_push 16 + 11×8 = 104 覆盖，SD 偏移非负）。regalloc 把跨调用存活
 # vreg 分配到这里，递归/跨函数调用安全。
@@ -730,15 +732,6 @@ align_pad = 0
 # return block 经 emit_epilogue_jump（jal x0, epilogue_label）跳到统一尾声：
 # 多 return block 函数（fib 双 return）安全；label 槽块号 → 定宽 fixup。
 epilogue_label = true
-
-[emit.prologue]
-# 64 位专用（含 SD 保存 ra/fp 与 8 字节槽的帧序）。
-only_variants = { xlen = [64] }
-insts = ["@frame_alloc", "SD X1, X2, {frame_size_m8}", "SD X8, X2, {frame_size_m16}", "ADDI X8, X2, {frame_size}", "@push_callee"]
-
-[emit.epilogue]
-only_variants = { xlen = [64] }
-insts = ["@pop_callee", "LD X1, X2, {frame_size_m8}", "LD X8, X2, {frame_size_m16}", "@frame_free", "RET"]
 
 # ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
 

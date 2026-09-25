@@ -51,7 +51,7 @@
   - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
   - [`[abi]` — 调用约定](#abi--调用约定)
   - [`[abi.frame]` — 帧布局](#abiframe--帧布局)
-  - [`[emit]` — 序言/尾声](#emit--序言尾声)
+- [`[emit]` — 代码对齐与尾声标签](#emit--代码对齐与尾声标签)
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
   - [asm 模板](#asm-模板)
   - [代码生成输出](#代码生成输出)
@@ -135,13 +135,12 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
-| `[emit]` | — | `prologue` `epilogue` `align_pad` `epilogue_label` | 序言/尾声块引用 |
+| `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
 | `[[templates.rows]]` | `inst` | — | 模板行：`inst` + 任意指令字段（含 `ref`）（允许额外键） |
-| `[emit.<block>]` | — | `insts` `only_variants` | 序言/尾声块内容 |
 | `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |
 <!-- END: schema-keys -->
 
@@ -725,8 +724,10 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | `call` / `call_indirect` | 直接 / 间接调用 |
 | `ret` / `jump` / `branch` | 返回 / 无条件跳转 / 条件分支 |
 | `test` | 条件测试（Branch 的 test-cond 序列） |
-| `push` / `pop` | 硬件 push / pop（callee-saved 保存；缺则回退 `[spill.*]`） |
-| `frame_alloc` / `frame_free` | 帧分配 / 释放（`@frame_alloc`/`@frame_free`） |
+| `push` / `pop` | 硬件 push / pop（push 机制的 callee-saved 保存/恢复；缺则整机走帧内机制） |
+| `frame_alloc` / `frame_free` | 帧分配 / 释放（`sp ∓ frame_size`；由生成器发射） |
+| `frame_set` | 建立/恢复帧指针（`in`=源、`out`=目标，可带 imm） |
+| `callee_save` / `callee_load` | 帧内保存/恢复寄存器（Reg[0]=值、Reg[1]=基址、Imm[0]=偏移） |
 | `epilogue_jump` | 尾声跳转（缺省用 `jump`） |
 | `wide_vec_store` | 宽向量 by-ref 调用方栈拷贝 store（宽度写在声明里：`bits = 256`/`512`） |
 | `wide_vec_load` | 宽向量 by-ref/sret 收参与回读 load（同上） |
@@ -1185,7 +1186,7 @@ limit = 128
   不再写死 x86 的 2/1/32/`RBP`/`RSP`。
 - `call_clobbers`：Call 点被调用方破坏的寄存器。缺省 = 整数参数寄存器 + 返回寄存
   器。**定宽 ISA 无 callee-saved 保存序列时须列全 caller-saved**，否则跨调用存活
-  值留在寄存器被覆盖（实测递归 fib 死循环）。s 系（@push_callee 保存）不在列表。
+  值留在寄存器被覆盖（实测递归 fib 死循环）。s 系（由帧件按 `callee_save` 保存）不在列表。
 - `reserved`：regalloc 不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被
   prologue/call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 `subw x0`）。
 
@@ -1197,7 +1198,7 @@ sp = "X2"                  # 栈指针寄存器名
 fp = "X8"                  # 帧指针寄存器名（None = 无帧指针）
 layout = "fp-inside"       # 帧布局模式：fp-outside（缺省，x86/demo）/ fp-inside（riscv）
 fp_push_bytes = 16         # prologue 在帧指针上方 push 的字节数（x86 = 8）
-alloc_neg = true           # @frame_alloc 立即数取负（riscv addi sp,sp,-N；x86 SUB 语义不需要）
+alloc_neg = true           # 帧分配立即数取负（riscv addi sp,sp,-N；x86 SUB 语义不需要）
 ```
 
 **`layout` 模式**（S5）：决定 callee-saved 保存槽相对帧的位置，其余帧数值全部由
@@ -1205,50 +1206,52 @@ alloc_neg = true           # @frame_alloc 立即数取负（riscv addi sp,sp,-N�
 
 - `fp-outside`（缺省，x86/demo）：callee-saved 用硬件 push 在帧指针**上方**（帧外）。
   spill 槽 sp_base = -(frame) - callee_saved_bytes、栈槽基准 fp - callee_saved_bytes。
-- `fp-inside`（riscv）：ra/fp/callee-saved 保存槽在帧**内顶部**（@push_callee 的 SD
+- `fp-inside`（riscv）：ra/fp/callee-saved 保存槽在帧**内顶部**（帧件的 `callee_save` SD
   到 `[sp+frame-fp_push-(k+1)*8]`，帧分配覆盖到固定最小帧）。spill 槽
   sp_base = -(frame)（帧内底部）、栈槽平移 = fp_push。
 
 > **S5 删除** `min_frame_bytes`/`callee_saved_bytes_override`/`stack_slot_shift`
 > 三个纯 riscv 旋钮——它们全部可从"`layout` + `fp_push_bytes` + callee_saved 表"
 > 推导（已核对现值：fp-inside → 104 = 16 + 11×8、override 0、shift 16）。`alloc_neg`
-> 保留为布尔（帧分配/释放**指令**已随 S4 移到 `roles` 的 `frame_alloc`/`frame_free`）。
+> 保留为布尔（帧分配/释放**指令**已随 S4 移到 `roles` 的 `frame_alloc`/`frame_free`；`frame_set`/`callee_save`/`callee_load` 是 v20 A4 补的角色）。
 
-## `[emit]` — 序言/尾声
+## `[emit]` — 代码对齐与尾声标签
+
+v20 A4 起**序言/尾声不再由谱写**：`[emit.prologue]`/`[emit.epilogue]` 与四个伪指令
+（`@push_callee`/`@pop_callee`/`@frame_alloc`/`@frame_free`）**已全部删除**。
+函数调用平衡（保存谁、帧多大、怎么建立帧指针）是**调用约定**的事，由生成器按机器事实
+能力角色生成；谱里只剩下面两个事实：
 
 ```toml
 [emit]
 align_pad = 0x90            # `.align` 伪指令填充字节（缺省 0x00）
 epilogue_label = true       # 是否生成独立尾声标签 + return block 的 epilogue 跳转
                             # （缺省 true；定宽 ISA 无 JMP 可设 false 走 fall-through）
-
-[emit.prologue]
-insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@frame_alloc"]
-
-[emit.epilogue]
-insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, {callee_saved_bytes}", "@pop_callee", "POP RBP", "RET"]
 ```
 
-`@push_callee` / `@frame_alloc` / `@frame_free` / `@pop_callee` 为伪指令，由
-FrameLowering 展开为具体序列（`@frame_alloc`/`@frame_free` 的指令由 `roles` 的
-`frame_alloc`/`frame_free` 提供）。
+**生成器怎么拼序/尾声**（同一份生成物、按能力角色选指令；缺角色 ⇒ 该步不发射）：
 
-**序言不只有模板**：收参（`move_args`）**已从谱面撤出**（v20 A3b-2b-2b）——它是
-**调用约定**的事，生成器按 forge-abi 的调用布局（`AllocResult::call_layout`）自己发射，
-位置固定在 callee-saved 保存（`@push_callee`）**之后**（保存必须发生在收参之前，否则
-保存的是实参值而不是调用者的寄存器值）。因此 `[emit.prologue]` **可以缺席**（缺席 =
-空模板 + 收参，demo 夹具就是这么用的）；在模板里写 `@move_args` 会被**明确拒绝**并给出
-迁移提示（收参的寄存器/落点由约定数据决定，谱里写不出来，见
-[`calling-conventions.md`](calling-conventions.md) 的「④ 发射侧」）。
+| 步 | 角色 | 说明 |
+| --- | --- | --- |
+| 帧分配 / 释放 | `frame_alloc` / `frame_free` | `sp ∓ frame_size`（符号由 `[abi.frame].alloc_neg` 定）；`frame_size == 0` 不发 |
+| 建立 / 恢复帧指针 | `frame_set` | 序言 `fp ← sp`（定宽 ISA 带 `+ frame_size`）、尾声 `sp ← fp`（push 机制） |
+| 保存 / 恢复 callee-saved（push 机制） | `push` / `pop` | 硬件压栈（x86）；保存的是 `[abi.callee_saved].gpr` 的静态表 |
+| 保存 / 恢复 callee-saved（帧内机制） | `callee_save` / `callee_load` | `Reg[0]=值、Reg[1]=基址、Imm[0]=偏移`；保存的是 regalloc 实际用到的那些（`callee_saved_to_save`），ra/fp 在帧顶 `fp_push_bytes` 区 |
+| 返回 | `ret` | 尾声最后一条 |
 
-占位符：
+顺序由**机制**决定（谱里声明了 `push`+`pop` ⇒ push 机制；否则帧内机制）：
+push 机制 = `push fp` → `frame_set` → 逐 `push` → **收参** → `frame_alloc`；
+帧内机制 = `frame_alloc` → 存 ra/fp → `frame_set` → 逐 `callee_save` → **收参**，
+尾声镜像。三条不变量：**保存早于收参**、帧内保存槽只在 `frame_alloc` 之后写、
+尾声与序言同源（同一份列表与偏移公式、逆序恢复）。
 
-| 占位符 | 语义 |
-| --- | --- |
-| `{frame_size}` | 运行时 `frame_size`（emit 模式） |
-| `{frame_size_neg}` | `-frame_size` |
-| `{frame_size_mN}` | `frame_size - N`（如 riscv 的 `SD X1, X2, {frame_size_m8}` 保存 ra 到帧顶） |
-| `{callee_saved_bytes}` | **S5 新增**：callee-saved 区字节数（`fp_overhead + Σcallee_saved×宽`）——替掉 x86 尾声里的魔法数 `56`（7×8） |
+收参本身也是生成器的事（`AllocResult::call_layout`，见
+[`calling-conventions.md`](calling-conventions.md) 的「④ 发射侧」）——谱里写
+`@move_args` 会被明确拒绝并给出迁移提示。
+
+**代价**：谱再也无法给函数插入"任意序言步骤"（vzeroupper、栈探测、GOT 建立等）。
+真需要时**加角色**（上层能看见的能力），不回到自由模板——这是"指令保持裸的、
+调用平衡交给约定层"的取舍。
 
 ## `[spill.*]` — 溢出模板
 
@@ -1513,7 +1516,7 @@ partial = 1
 | 键 | 位置 | 含义 |
 | --- | --- | --- |
 | `variants = { xlen = [32, 64] }` | `[meta]` | 声明**参数名 → 取值域**（参数的唯一事实源；没声明的参数一律报错） |
-| `only_variants = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[emit.prologue]`、`[emit.epilogue]` / `[spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`v12::model::variants_keep`） |
+| `only_variants = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`v12::model::variants_keep`） |
 | `params = { xlen = 32 }` | `isa_from_file!` 宏参数 | 生成期投影（参数进生成物文件名哈希：同一份谱的两个变体落到不同文件） |
 | `--params xlen=32` | `forge-isa validate\|insts` | 工具期投影（`--params a=1,b=2` 可多次/逗号分隔） |
 
@@ -1529,7 +1532,7 @@ partial = 1
 4. **文本替换**：`{参数名}` 在 `asm` 与 `[[lowering]].insts` 里换成取值（宽度是数据）。
    模板里留着参数占位符却**没传值** ⇒ 明确报错（默认档不许留占位符，否则生成的汇编里会
    打印出字面 `{width}`）；
-5. **其余引用 fail-closed**：`[spill]`/`[emit]`/`[[pseudo]]`/`[[pattern]]` 引用了被投影掉的
+5. **其余引用 fail-closed**：`[spill]`/`[[pseudo]]`/`[[pattern]]` 引用了被投影掉的
    声明却**没标** `only_variants` ⇒ 校验期报"未知指令引用"。结构件必须由作者显式变体化
    （RV32 的帧件与 RV64 不同，自动猜是错的）。
 
@@ -1538,7 +1541,7 @@ partial = 1
 ```text
 # riscv64_v12 （version 13.0；encoding = fixed 32 位；104 条指令 / 19 条模板 / 96 条 lowering）
 # 变体投影 xlen=32：指令 116 → 104（-12：LD, SD, SLLW, SRLW, SRAW, ADDW, SUBW, MULW,
-#   DIVW, DIVUW, REMW, REMUW）；连带/逐节丢弃：[emit.prologue] ×1、[emit.epilogue] ×1、
+#   DIVW, DIVUW, REMW, REMUW）；连带/逐节丢弃：
 #   [spill.GPR] ×1、[[lowering]] ×14；lowering 剩 96
 ```
 

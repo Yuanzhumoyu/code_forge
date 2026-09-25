@@ -906,6 +906,8 @@ asm = "movsd [{src2}], {src}"
 [[instructions]]
 name = "MOV64_RR"
 ref = "mov"
+# 建立/恢复帧指针（v20 A4）：`mov rbp, rsp`（序言）/ `mov rsp, rbp`（尾声）。
+roles = ["frame_set"]
 form = "MRR_FIX64"
 opcode = 0x89
 # 与 MOV_RM_R（mov {1}, {0}）同模板同槽类型 → 生成期去重跳过（64 位经 MOV_RM_R 分发）。
@@ -1936,11 +1938,6 @@ base = "RBP"
 [emit]
 align_pad = 0x90   # `.align` 伪指令填充字节 = NOP
 
-[emit.prologue]
-insts = ["PUSH RBP", "MOV64_RR RSP, RBP", "@push_callee", "@frame_alloc"]
-
-[emit.epilogue]
-insts = ["MOV64_RR RBP, RSP", "SUB64_R_IMM32 RSP, {callee_saved_bytes}", "@pop_callee", "POP RBP", "RET"]
 
 # ── 重定位表（v18 S3d）：指令写 `reloc = "<名>"`，语义与绑定槽在此 ──
 # x86 的全局地址用 10 字节移动绝对立即数：fixup = 指令末尾 imm64 的 8 字节，

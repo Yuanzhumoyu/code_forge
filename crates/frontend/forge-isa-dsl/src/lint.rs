@@ -571,14 +571,6 @@ fn referenced_heads(m: &V12Model) -> BTreeSet<String> {
     for p in &m.pattern {
         add(&p.insts);
     }
-    if let Some(em) = &m.emit {
-        for b in [em.prologue.as_ref(), em.epilogue.as_ref()]
-            .into_iter()
-            .flatten()
-        {
-            add(&b.insts);
-        }
-    }
     for s in m.spill.values() {
         add(&[s.load.clone(), s.store.clone()]);
     }

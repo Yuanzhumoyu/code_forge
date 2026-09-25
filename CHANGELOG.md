@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-25) — v20 A4：序/尾声由生成器生成，伪指令全部删除（谱只剩裸指令）
+
+- **设计裁定（用户）**：谱只描述**裸指令**（形状 + 编码 + 能力角色），函数调用平衡（保存谁、帧多大、怎么建立帧指针）交给**调用约定**层；角色是"这条指令能充当什么"的**能力声明**，不是给指令加的副作用。
+- **删除**：`[emit.prologue]`/`[emit.epilogue]` 与四个伪指令（`@push_callee`/`@pop_callee`/`@frame_alloc`/`@frame_free`；`@move_args` 更早已删）。`[emit]` 只剩 `align_pad`/`epilogue_label` 两个机器事实。写回去会被明确拒绝（`DSL-TOML`：新键不存在），并有反回潮守卫 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`（三谱 + 夹具里不许再出现这些键/伪指令）。
+- **新增三个能力角色**：`frame_set`（`in`=源、`out`=目标，可带 imm：x86 `mov rbp, rsp` / `mov rsp, rbp`、riscv `addi x8, x2, frame`、arm64 `addimmx x29, sp, frame`）、`callee_save` / `callee_load`（`Reg[0]`=值、`Reg[1]`=基址、`Imm[0]`=偏移：riscv `SD`/`LD`、arm64 `STURX`/`LDURX`）。复用 `push`/`pop`/`frame_alloc`/`frame_free`/`ret`。
+- **生成器的规范序列**（顺序由**机制**决定）：push 机制（x86）= `push fp` → `frame_set(fp←sp)` → 逐个 `push` callee-saved → **收参** → `frame_alloc`；尾声 = `frame_set(sp←fp)` → `sp -= callee-saved 区` → 逆序 `pop` → `pop fp` → `ret`。帧内机制（riscv/arm64）= `frame_alloc` → 存 link（`[sp+frame-8]`）→ 存 fp（`[sp+frame-fp_push]`）→ `frame_set(fp←sp+frame)` → 逐个 `callee_save`（`[sp+frame-fp_push-(k+1)*slot]`）→ **收参**；尾声镜像 + `frame_free` + `ret`。三条不变量：保存早于收参、帧内保存槽只在分配之后写、尾声与序言同源（逆序恢复）。
+- **缺角色的步不发射**（角色 = 能力申报）；`ret` 例外：尾声**必须**有 `roles = ["ret"]`，否则明确报错。
+- **验收 = 三份发行谱的生成物逐字节不变**：`FGE_DEBUG_GEN=1` 对照改动前后，x86/riscv64/arm64 生成模块 **SHA256 全同**（序/尾声的每一条指令、字段顺序、立即数形态都对得上）；workspace 全套 serially 绿（含两条 JIT 矩阵）。
+- **两处有意为之的行为变化**：① demo 夹具声明了 `frame_alloc`/`frame_free` 却从没分配过帧 —— 现在按声明发射（`frame_size == 0` 时守卫不发，故测试行为不变）；② x86 尾声的 `sp -= callee-saved 区` 仍是静态表长（与 push 侧同源），"少保存时错位"的隐患留在 A3b-2b-2c/后续统一。
+- **代价**：谱再也无法给函数插入任意序言步骤（vzeroupper/栈探测/GOT 建立）——需要时**加角色**（上层可见的能力），不回到自由模板。
+
 ### Changed (2026-09-25) — v20 A3b-2b-2b：`@move_args` 退役（收参由生成器发射，谱不再定义调用约定）
 
 - **伪指令白名单里删掉 `move_args`**：谱里再写 `@move_args` 会被**明确拒绝**并给出迁移提示（单列一条诊断，不是含糊的"未知伪指令"）——它是**调用约定**的内容，谱不该写它。

@@ -304,8 +304,17 @@ pub fn role_capability(role: Role) -> Option<&'static str> {
         Role::CallIndirect => "call_indirect",
         Role::Ret => "ret",
         // 控制流/保存指令不是"约定要求的能力"：push/pop 由机制推导，
-        // jump/branch/test/epilogue_jump 与参数传递无关。
-        Role::Push | Role::Pop | Role::Jump | Role::Branch | Role::Test | Role::EpilogueJump => {
+        // jump/branch/test/epilogue_jump 与参数传递无关；帧指针建立与
+        // callee-saved 保存同样由生成器按机制挑指令（A4），不是 ABI 能力。
+        Role::Push
+        | Role::Pop
+        | Role::Jump
+        | Role::Branch
+        | Role::Test
+        | Role::EpilogueJump
+        | Role::FrameSet
+        | Role::CalleeSave
+        | Role::CalleeLoad => {
             return None;
         }
     })
@@ -354,6 +363,9 @@ pub fn role_from_name(name: &str) -> Option<Role> {
         "pop" => Role::Pop,
         "frame_alloc" => Role::FrameAlloc,
         "frame_free" => Role::FrameFree,
+        "frame_set" => Role::FrameSet,
+        "callee_save" => Role::CalleeSave,
+        "callee_load" => Role::CalleeLoad,
         "epilogue_jump" => Role::EpilogueJump,
         "wide_vec_store" => Role::WideVecStore,
         "wide_vec_load" => Role::WideVecLoad,

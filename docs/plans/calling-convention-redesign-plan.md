@@ -290,7 +290,7 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
   再开 riscv64/arm64。
 - 这一步会删掉"首 int 参数槽"那类硬编码（A3b-2b-2a 已删掉收参侧的那几处）。
 
-### A4 序/尾声由生成器生成（伪指令**全部**删除）
+### A4 ✅ 序/尾声由生成器生成（伪指令**全部**删除）
 
 **目标（用户 2026-09-25 的设计裁定）**：谱里只留**裸指令**（形状 + 编码 + 能力角色），
 序/尾声（函数调用平衡：保存谁、帧多大、怎么建立帧指针）**完全由生成器**按"机器事实 +
@@ -329,6 +329,12 @@ A5 后由 `CallLayout::save_mechanism` 给）：
 **验收**：三 ISA 的序/尾声**机器码逐字节不变**——先把当前 `emit_prologue`/`emit_epilogue`
 （固定 `frame_size` + 固定 callee-saved 集合）的字节固化成 golden，再切生成器，golden 必须
 不动；随后全套测试 + 两条矩阵。
+
+**落地实测（2026-09-25）**：`FGE_DEBUG_GEN=1` 取样 10 份生成模块，**x86 / riscv64 / arm64
+与夹具 demo_inst`*` 全部 SHA256 相同**（序/尾声的每条指令、字段顺序、立即数形态逐字一致：
+x86 是 push 机制、riscv/arm64 是帧内机制 + 动态 `callee_saved_to_save`）；workspace 全套
+serially 绿（含两条 JIT 矩阵）。写伪指令/模板的谱被 `validate` 拒绝，反回潮守卫
+`tests/call_layout_emission.rs` 扫三谱 + 夹具的 TOML。
 
 **顺带要修的既有隐患**：x86 尾声的 `sub rsp, {callee_saved_bytes}` 用的是**静态**列表长度，
 而 `@push_callee` 按 `callee_saved_to_save` **动态**保存——少保存时 rsp 落点会错位。

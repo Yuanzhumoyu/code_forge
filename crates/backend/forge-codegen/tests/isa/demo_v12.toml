@@ -256,8 +256,6 @@ align_pad = 0
 # 到函数末尾的尾声（RET）——仅单 return block 函数安全（B3 测试满足）。
 epilogue_label = false
 
-[emit.epilogue]
-insts = ["RET"]
 
 # Iadd：同一条模板字符串 "add {out}, {0}, {1}"，宽度由 when 谓词分发——
 # i16 → ADD16、i32 → ADD32、i64 → ADD64（后端按操作数实际宽度选变体，

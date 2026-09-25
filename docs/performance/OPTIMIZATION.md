@@ -247,7 +247,7 @@ worklist 或小整数快路径，标为后续工作。
 | 项 | 评估 | 决定 |
 | --- | --- | --- |
 | const_fold | 1279 行核心 pass，已有优化历史（469→44→28.9 µs）；进一步优化需 dashu 快路径 | 暂不实施（高风险低收益），记录 |
-| 小函数 prologue 按需 push | 需 DSL 静态模板条件化（`@push_callee`/`@pop_callee` 是静态 insts 列表、epilogue 硬编码 `sub RSP, 56`）+ 栈布局/对齐/spill 偏移联动 | 需专项任务（DSL 模板机制扩展），不贸然实施 |
+| 小函数 prologue 按需 push | ~~需 DSL 静态模板条件化~~：**v20 A4 已删掉模板机制**，序/尾声改由生成器按角色 + `[abi.callee_saved]` 生成——"只 push 用到的"现在是一个生成器策略问题（保存槽与 sp 调整联动，仍不宜贸然改） | 待生成器侧专项（A4 之后） |
 | codegen_mem/big_loop | 热点需 profile（Windows 无 perf，需阶段细分埋点） | 需专项分析 |
 | ir_parse O(n³) | forge-grammar 组合器回溯为根因，属语法前端重构；value_names O(n²) 优化依赖此前置 | 需专项任务（P0） |
 

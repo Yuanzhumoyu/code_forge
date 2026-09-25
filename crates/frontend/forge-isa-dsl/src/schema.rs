@@ -365,10 +365,10 @@ pub const SECTIONS: &[Section] = &[
         path: "[emit]",
         model: "EmitSection",
         required: &[],
-        optional: &["prologue", "epilogue", "align_pad", "epilogue_label"],
+        optional: &["align_pad", "epilogue_label"],
         flatten: &[],
         additional: false,
-        doc: "序言/尾声块引用",
+        doc: "代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写）",
     },
     Section {
         path: "[spill.<name>]",
@@ -415,15 +415,6 @@ pub const SECTIONS: &[Section] = &[
         flatten: &[],
         additional: true,
         doc: "模板行：`inst` + 任意指令字段（含 `ref`）",
-    },
-    Section {
-        path: "[emit.<block>]",
-        model: "EmitBlock",
-        required: &[],
-        optional: &["insts", "only_variants"],
-        flatten: &[],
-        additional: false,
-        doc: "序言/尾声块内容",
     },
     Section {
         path: "[[override]]",

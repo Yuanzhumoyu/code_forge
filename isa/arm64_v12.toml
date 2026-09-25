@@ -425,6 +425,7 @@ opcode = 0xF8
 fields = { opc2 = 1 }
 ops = ["dst:r64:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
+roles = ["callee_load"]
 
 [[instructions]]
 name = "LDURW"
@@ -441,6 +442,7 @@ opcode = 0xF8
 fields = { opc2 = 0 }
 ops = ["src:r64", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
+roles = ["callee_save"]
 
 [[instructions]]
 name = "STURW"
@@ -511,7 +513,7 @@ ret_regs = ["X0"]
 call_ret_reg = "X30"
 
 # Call 点被调用方破坏的寄存器（regalloc clobber 集）：AAPCS64 caller-saved
-# = X0-X18 + lr(X30)。X19-X28 由 @push_callee 保存 → 不在 clobber 集。
+# = X0-X18 + lr(X30)。X19-X28 由帧件保存（roles = ["callee_save"]）→ 不在 clobber 集。
 call_clobbers = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17", "X18", "X30"]
 
 [[abi.arg_class]]
@@ -521,7 +523,7 @@ regs = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
 [abi.frame]
 sp = "SP"
 fp = "X29"
-# @frame_alloc = SUB SP, SP, #frame（SUB 自带减号语义 → 无需 alloc_neg）
+# 帧分配 = SUB SP, SP, #frame（SUB 自带减号语义 → 无需 alloc_neg）；由生成器发射。
 alloc_neg = false
 # fp-inside：lr/fp 保存槽在帧内顶部（fp_push_bytes=16 = X30+X29 两槽）；
 # min_frame = 16 + Σcallee_saved×8 = 96 由运行期推导（frame_layout_info）。
@@ -529,7 +531,7 @@ layout = "fp-inside"
 fp_push_bytes = 16
 
 [abi.callee_saved]
-# X19-X28（fp/lr 由 fp_push 区显式存取，不入表）：@push_callee/@pop_callee
+# X19-X28（fp/lr 由 fp_push 区显式存取，不入表）：帧件按 roles = ["callee_save"/"callee_load"] 存取
 # 用 [spill.GPR] store/load 模板（STURX/LDURX）保存到 [sp+frame-16-(k+1)*8]。
 gpr = ["X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28"]
 
@@ -551,23 +553,6 @@ align_pad = 0
 # fall-through 尾声（epilogue 紧跟 return block 时 emission 不空发跳转）。
 epilogue_label = true
 
-[emit.prologue]
-insts = [
-    "@frame_alloc",
-    "STURX X30, SP, {frame_size_m8}",
-    "STURX X29, SP, {frame_size_m16}",
-    "ADDIMMX X29, SP, {frame_size}",
-    "@push_callee",
-]
-
-[emit.epilogue]
-insts = [
-    "@pop_callee",
-    "LDURX X30, SP, {frame_size_m8}",
-    "LDURX X29, SP, {frame_size_m16}",
-    "@frame_free",
-    "RET",
-]
 
 # ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
 # 覆盖 op 集 = P1 tm 测试所需最小集（SUPPORTED_OPS 由此唯一集派生）。
@@ -686,7 +671,7 @@ insts = ["EORREGX {out}, {0}, {1}"]
 name = "ADDIMM"
 body = { ref = "add", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "add {dst}, {src}, #{imm}" }
 rows = [
-  { inst = "ADDIMMX", slot = "r64", opcode = 0x91, roles = ["frame_free"] },
+  { inst = "ADDIMMX", slot = "r64", opcode = 0x91, roles = ["frame_free", "frame_set"] },
   { inst = "ADDIMMW", slot = "r32", opcode = 0x11 },
 ]
 [[templates]]

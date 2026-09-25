@@ -244,8 +244,6 @@ align_pad = 0
 # 无 JMP 指令：return block 直接 fall-through 到函数末尾的尾声（单 return 安全）
 epilogue_label = false
 
-[emit.epilogue]
-insts = ["RET"]
 
 # 溢出模板（基址 = A6 帧指针；LD8/ST8 = Reg + Reg + imm8）
 [spill.GPR]

@@ -86,22 +86,22 @@ fn the_layout_path_stays_machine_neutral() {
     }
 }
 
-/// **`@move_args` 已从谱面撤出**：写了它必须**明确报错**（静默忽略 = "谱里写了却没人读"，
-/// 正是这次重设计要消灭的东西），且提示要能指路。
+/// **序/尾声模板与伪指令已从谱面撤出**：写回去必须**明确报错**（静默忽略 = "谱里写了
+/// 却没人读"，正是这次重设计要消灭的东西）。
 #[test]
-fn writing_move_args_in_the_prologue_is_rejected() {
+fn writing_a_prologue_template_again_is_rejected() {
     let src = read_isa_file("isa/x86_v12.toml").expect("读 x86 谱").0;
-    let mutated = src.replace(
-        "\"@push_callee\", \"@frame_alloc\"",
-        "\"@push_callee\", \"@move_args\", \"@frame_alloc\"",
+    // 恢复"手写序言"的写法：加回 `[emit.prologue]`（含当初的伪指令）。
+    let mutated = format!(
+        "{src}\n[emit.prologue]\ninsts = [\"PUSH RBP\", \"@push_callee\", \"@frame_alloc\"]\n"
     );
-    assert!(mutated.contains("@move_args"), "变异没生效");
-    let errs = validate_source(&mutated, Path::new("x86_move_args.toml"))
-        .expect_err("谱里写 @move_args 必须被拒绝");
+    let errs = validate_source(&mutated, Path::new("x86_prologue_again.toml"))
+        .expect_err("序言模板已删除，写回去必须被拒绝");
     let joined = errs.join("\n");
-    for needle in ["@move_args", "已删除", "调用约定"] {
-        assert!(joined.contains(needle), "错误应提到 `{needle}`：{joined}");
-    }
+    assert!(
+        joined.contains("prologue"),
+        "错误应点名 `prologue`（哪一段写错了）：{joined}"
+    );
 }
 
 /// **序言模板缺席也要发射收参**（收参不由模板决定）：夹具的 `[emit.prologue]` 已删除。
@@ -146,4 +146,96 @@ fn the_receive_lands_after_the_saves_and_before_the_frame_alloc() {
         recv < frame_alloc,
         "收参应排在帧分配之前（收参 @ {recv} > 帧分配 @ {frame_alloc}）"
     );
+}
+
+/// **A4 反回潮**：四份发行谱 + 夹具的 TOML 里**不许再有**序/尾声模板与伪指令——
+/// 它们是调用约定的事，写回谱里必须被抓住（哪怕生成器碰巧还能跑）。
+#[test]
+fn no_spec_writes_prologue_templates_or_pseudo_instructions_any_more() {
+    // 注意路径基准：`std::fs` 相对**本 crate 目录**，而 `expand_file`/`read_isa_file`
+    // 走仓库根解析（两者差一层 `../../`）。
+    let mut specs: Vec<String> = [
+        "../../../isa/x86_v12.toml",
+        "../../../isa/riscv64_v12.toml",
+        "../../../isa/arm64_v12.toml",
+    ]
+    .iter()
+    .map(|p| (*p).to_string())
+    .collect();
+    specs.extend(
+        std::fs::read_dir("../../backend/forge-codegen/tests/isa")
+            .expect("夹具目录")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path().to_string_lossy().replace('\\', "/"))
+            .filter(|p| p.ends_with(".toml")),
+    );
+    for path in specs {
+        let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读 {path} 失败：{e}"));
+        for needle in [
+            "[emit.prologue]",
+            "[emit.epilogue]",
+            "@push_callee",
+            "@pop_callee",
+            "@frame_alloc",
+            "@frame_free",
+            "@move_args",
+        ] {
+            assert!(
+                !src.contains(needle),
+                "{path}: 仍写着 `{needle}`——序/尾声与收参是调用约定的事（v20 A4 起\
+                 由生成器按角色 + [abi.frame] 生成），谱里只留裸指令"
+            );
+        }
+    }
+}
+
+/// **帧内机制（riscv/arm64）的顺序**：`frame_alloc` → 存 ra/fp → 建帧指针 →
+/// 存 callee-saved → 收参；尾声 = 恢复 → 恢复 ra/fp → `frame_free` → `ret`。
+#[test]
+fn the_store_to_frame_sequence_keeps_its_order() {
+    for (name, path, alloc, save, load, free, ret) in [
+        (
+            "riscv64_v12",
+            "isa/riscv64_v12.toml",
+            "Inst :: Addi { dst : Reg :: X2",
+            "Inst :: Sd {",
+            "Inst :: Ld {",
+            "Inst :: Addi { dst : Reg :: X2 , src : Reg :: X2 , imm : __frame_size as i64",
+            "Inst :: Ret",
+        ),
+        (
+            "arm64_v12",
+            "isa/arm64_v12.toml",
+            "Inst :: Subimmx {",
+            "Inst :: Sturx {",
+            "Inst :: Ldurx {",
+            "Inst :: Addimmx { dst : Reg :: SP",
+            "Inst :: Ret",
+        ),
+    ] {
+        let text = text_of(path);
+        let start = text.rfind("fn emit_prologue").expect("emit_prologue");
+        let end = text[start..]
+            .find("fn emit_spill_load")
+            .map(|i| start + i)
+            .expect("emit_spill_load");
+        let body = &text[start..end];
+        let p_end = body.find("fn emit_epilogue").expect("emit_epilogue");
+        let (pro, epi) = (&body[..p_end], &body[p_end..]);
+        let seq = |hay: &str, needle: &str, what: &str| {
+            hay.find(needle)
+                .unwrap_or_else(|| panic!("{name}: {what} 里没有 `{needle}`"))
+        };
+        let a = seq(pro, alloc, "序言");
+        let s = seq(pro, save, "序言");
+        let r = seq(pro, "__layout_ok", "序言");
+        assert!(a < s && s < r, "{name}: 序言必须是 分配 → 保存 → 收参");
+        let l = seq(epi, load, "尾声");
+        let f = seq(epi, free, "尾声");
+        let rt = seq(epi, ret, "尾声");
+        assert!(
+            l < f && f < rt,
+            "{name}: 尾声必须是 恢复 → 释放帧 → 返回（实际 {l} / {f} / {rt}）"
+        );
+    }
 }

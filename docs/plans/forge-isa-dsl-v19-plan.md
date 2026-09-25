@@ -282,7 +282,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
 **V5 已落地（2026-09-24，参数化变体：只读投影 MVP）**：
 
 - **唯一判定**：`v12::model::variants_keep(gate, params)`（六处声明共用——`[[instructions]]`、
-  `[[templates]].body`/`rows`、`[emit.prologue|epilogue]`、`[spill.*]`、`[[pseudo]]`、
+  `[[templates]].body`/`rows`、`[spill.*]`、`[[pseudo]]`、
   `[[pattern]]` 都能标 `only_variants`；`gate` 里没提到的参数不构成排除）。
 - **投影顺序**（`validate::apply_variants`，跑在 `validate_all` **之前**）：校验参数
   （未声明/越界 ⇒ `DSL-META`）→ 过滤六处声明 → **连带丢 lowering**（规则行首点了"投影前
@@ -295,7 +295,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   会打印字面 `{width}`）；③ 裸文本入口带 `include`/`[[override]]` 照旧报错（V5 不改这条）。
 - **riscv64 实测账目**：`--params xlen=32` ⇒ **116 → 104** 条指令（丢 `LD`/`SD` + 10 条 W 族：
   `ADDW`/`SUBW`/`MULW`/`DIVW`/`DIVUW`/`REMW`/`REMUW`/`SLLW`/`SRLW`/`SRAW`）、**110 → 96** 条
-  lowering（连带 14 条）、逐节 `[emit.prologue]`/`[emit.epilogue]`/`[spill.GPR]` 各 1 项；
+  lowering（连带 14 条）、逐节 `[spill.GPR]` 1 项（v20 A4 起序/尾声不再由谱写，投影账目少 2 项）；
   默认档仍是 116/110（**投影纯 opt-in**）。守卫 `crates/frontend/forge-isa-dsl/tests/variants.rs`
   6 条（默认档零投影 / 未声明与越界报错 / 账目快照 / 级联不多丢 / 只对传了的参数生效 / 替换语义）。
 - **生成期**：宏参数 `params = { xlen = 32 }` + 参数进 `generated_file_name` 哈希（同谱两变体

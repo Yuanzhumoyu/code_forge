@@ -3141,6 +3141,8 @@ roles = ["in", "out"]
 name = "NOP"
 form = "W"
 opcode = 0
+# 序言/尾声由生成器生成（v20 A4）：作为可编译目标，谱必须申报返回能力。
+roles = ["ret"]
 asm = "nop"
 [[instructions]]
 name = "MOV"

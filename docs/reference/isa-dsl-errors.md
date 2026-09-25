@@ -51,7 +51,7 @@
 | `DSL-OVERLAP` | `[[lowering]]`（v19 V6b，**仅 `validate --strict-overlap`**） | 同 op 两条规则的取值域**相交但互不包含**（部分重叠）：裁决序里前者先命中。**默认档不报**——真谱里"特化 + 兜底"遍地都是（实测三 ISA 共 61 条，全是合法写法）；该档是**评审清单**，不是错误判据 |
 | `DSL-PATTERN` | `[[pattern]]` | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知 |
 | `DSL-ABI` | `[abi]` | 寄存器名未在 `[reg.*]` 声明（scratch/reserved/ret_regs/call_clobbers/call_ret_reg/callee_saved/arg_class） |
-| `DSL-EMIT` | `[emit]` | 指令引用未声明、`@` 伪指令未知、占位符未知、块为空 |
+| ~~`DSL-EMIT`~~ | ~~`[emit]`~~ | **已随 v20 A4 删除**（序/尾声键不存在；`[emit]` 只剩机器事实） |
 | `DSL-SPILL` | `[spill.*]` | 指令引用未声明、占位符不是 `{N}`、`base` 未在 `[reg.*]` 声明 |
 | `LINT-*` | `forge-isa lint`（**静态体检，不是校验错误**） | `LINT-UNUSED-SLOT`/`LINT-UNUSED-FORM`/`LINT-UNUSED-BITFIELD`（默认档）、`LINT-BITFIELD-OVERLAP`（默认档）、`LINT-OP-GAP`（`--ops`）、`LINT-REF-UNUSED`（`--refs`）、`LINT-UNASSIGNED-BITS`（`--bits`）、`LINT-VARY-CANDIDATE`（`--suggest`，只建议）——判据与档位见 `docs/reference/isa-dsl.md`「静态体检」 |
 | `DSL-INCLUDE` | `include`（v18 S7） | 文件缺失、循环 include、同名标量冲突 |
@@ -76,17 +76,17 @@
 按裁决序（`priority` 降 / 谓词叶子数降 / 声明序升）前面的规则已完全覆盖它 ⇒ 它永不生效。
 修法：删掉，或给它更高的 `priority`；若本意是"更具体的先匹配"，把它写成更窄的谓词。
 
-### 3.4 `[emit.prologue].insts[i]: 未知指令引用 'X'` / `未知伪指令 '@x'` / `未知占位符 '{x}'`
+### 3.4 `[emit].prologue: unknown field` / `[emit].epilogue: unknown field`（v20 A4）
 
-`[emit]` 与 `[spill.*]` 模板只能引用**已声明指令名或引用名（指令的 `ref`）**，`@` 伪指令只认
-`@push_callee` / `@pop_callee` / `@frame_alloc` / `@frame_free`，
-`[emit]` 占位符只认 `{frame_size}` / `{frame_size_neg}` / `{frame_size_mN}` / `{callee_saved_bytes}`，
-`[spill]` 只认编号 `{N}`。**为什么硬报**：S0 基线实测这些位置**完全不校验**——把
-`MOV64_RR` 写成 `MOV64_R` 要等到生成代码编译甚至运行时才暴露（见方案 §12.4）。
+序言/尾声**不再由谱写**：`[emit.prologue]`/`[emit.epilogue]` 与四个伪指令
+（`@push_callee` / `@pop_callee` / `@frame_alloc` / `@frame_free`）已全部删除，
+`@move_args` 更早已删除。写了它们 ⇒ `DSL-TOML`（新键不存在），修法是**删掉整段**——
+收参与调用平衡由生成器按约定 + 角色（`push`/`pop`/`frame_alloc`/`frame_free`/`frame_set`/
+`callee_save`/`callee_load`/`ret`）生成，`[emit]` 只剩 `align_pad`/`epilogue_label`。
 
-其中一个名字有**专门的迁移提示**：`@move_args` 已删除（v20 A3b-2b-2b）——收参属于
-**调用约定**，由生成器按 forge-abi 的调用布局统一发射，谱里不再写它（把它从模板里
-删掉即可；`[emit.prologue]` 因此可以为空/缺席，收参照样发射）。
+`[spill.*]` 的模板仍在校验（引用名 + `{N}` 占位符 + `base` 寄存器名）：**为什么硬报**
+——S0 基线实测这些位置**完全不校验**，把 `MOV64_RR` 写成 `MOV64_R` 要等到生成代码编译
+甚至运行时才暴露（见方案 §12.4）。
 
 ### 3.5 `[[templates.X]]: …`（v18 S2c）
 
@@ -186,7 +186,7 @@
 | `[meta].variants: 传了参数 \`x=1\`，但谱里没有声明它（已声明：…）` | 在 `[meta].variants` 里声明该参数（`variants = { xlen = [32, 64] }`），或检查参数名拼写；谱完全没有变体机制时消息会写"没有声明任何变体参数" |
 | `[meta].variants: 参数 \`xlen = 128\` 不在声明域 [32, 64] 内` | 取值超出声明域——改参数值，或（确实需要）扩声明域 |
 | `[[instructions.X]].asm: 占位符 '{width}' 是**变体参数**（\`[meta].variants\`）但本次没有传值` | 参数化模板必须显式传参：CLI `--params width=32`、宏 `params = { width = 32 }`。**默认档不许留参数占位符**——留着会让生成的汇编打印出字面 `{width}` |
-| `[emit.prologue].insts[i]: 未知指令引用 'SD'`（投影后才出现） | 该块引用了被投影掉的指令：给这个块补 `only_variants = { xlen = [64] }`（或为变体写一份自己的块）。**不给静默通道**是故意的——RV32 的帧件确实与 RV64 不同 |
+| 投影后 `[spill.GPR]` 等结构件引用了被投影掉的指令 | 给这个结构件补 `only_variants = { xlen = [64] }`（或为变体写一份自己的）。**不给静默通道**是故意的——RV32 的帧件确实与 RV64 不同 |
 | 投影没丢东西（账目里 `-0`） | 检查 `only_variants` 是否写在了**被模板展开的**声明上（`[[templates]].body` / `rows` 都行），以及 `params` 是否真的传了 |
 
 投影的"丢了什么"永远打印在 `forge-isa insts --params …` 的第一行（`--json` 里是

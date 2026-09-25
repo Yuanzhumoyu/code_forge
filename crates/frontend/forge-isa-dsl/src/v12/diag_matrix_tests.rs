@@ -64,9 +64,6 @@ insts = ["add {out}, {0}, {1}"]
 scratch = ["X9"]
 ret_regs = ["X10"]
 
-[emit.prologue]
-insts = ["ADD X1, X2, X3"]
-
 [spill.GPR]
 load = "ADD {0}, {1}, X0"
 store = "ADD {0}, {1}, X0"
@@ -295,28 +292,32 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "NOPE",
         ),
         (
-            "emit 未知指令引用",
-            plus("[emit.epilogue]\ninsts = [\"NO_SUCH RSP, RBP\"]"),
-            "DSL-EMIT",
-            "NO_SUCH",
+            "序/尾声键已删除（v20 A4：由生成器按约定生成）",
+            plus("[emit.prologue]\ninsts = [\"ADD X1, X2, X3\"]"),
+            "DSL-TOML",
+            "prologue",
         ),
         (
-            "emit 未知伪指令",
-            plus("[emit.epilogue]\ninsts = [\"@nope\"]"),
-            "DSL-EMIT",
-            "@nope",
+            "旧伪指令键（@push_callee 时代）也不认",
+            plus("[emit]\nepilogue = { insts = [\"@push_callee\"] }"),
+            "DSL-TOML",
+            "epilogue",
         ),
         (
-            "emit 未知占位符",
-            plus("[emit.epilogue]\ninsts = [\"ADD {0}, {1}, {bogus}\"]"),
-            "DSL-EMIT",
-            "{bogus}",
+            "角色名拼错（v20 A4 的 frame_set 写成 frame_sett）",
+            plus(
+                "[[instructions]]\nname = \"SETF\"\nform = \"R\"\nopcode = 0x7F\n\
+                 fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"setf {dst}\"\n\
+                 roles = [\"frame_sett\"]",
+            ),
+            "DSL-TOML",
+            "frame_sett",
         ),
         (
-            "emit 空模板",
-            plus("[emit.epilogue]\ninsts = []"),
-            "DSL-EMIT",
-            "must not be empty",
+            "`[emit]` 里只剩机器事实：类型写错照样报",
+            plus("[emit]\nepilogue_label = 3"),
+            "DSL-TOML",
+            "epilogue_label",
         ),
         (
             "spill 未知指令引用",
@@ -414,30 +415,13 @@ fn headline_positions_are_exact() {
         "重名诊断应附注另一处声明位置：{d:#?}"
     );
 
-    // emit：未知指令引用 / 未知伪指令 / 未知占位符 都要落在那一行。
-    for (doc, msg_needle, src_needle) in [
-        (
-            plus("[emit.epilogue]\ninsts = [\"NO_SUCH RSP, RBP\"]"),
-            "NO_SUCH",
-            "NO_SUCH RSP, RBP",
-        ),
-        (
-            plus("[emit.epilogue]\ninsts = [\"@nope\"]"),
-            "@nope",
-            "@nope",
-        ),
-        (
-            plus("[emit.epilogue]\ninsts = [\"ADD {0}, {1}, {bogus}\"]"),
-            "{bogus}",
-            "{bogus}",
-        ),
-    ] {
-        let d = errs(&doc)
-            .into_iter()
-            .find(|d| d.msg.contains(msg_needle))
-            .unwrap_or_else(|| panic!("应有关于 `{msg_needle}` 的诊断"));
-        assert_eq!(d.line, line_of(&doc, src_needle), "消息：{}", d.msg);
-    }
+    // emit：序/尾声的键已删除（v20 A4）——写了就报，且指向那一行。
+    let doc = plus("[emit.prologue]\ninsts = [\"ADD X1, X2, X3\"]");
+    let d = errs(&doc)
+        .into_iter()
+        .find(|d| d.msg.contains("prologue"))
+        .unwrap_or_else(|| panic!("应有关于 `prologue` 的诊断"));
+    assert_eq!(d.line, line_of(&doc, "[emit.prologue]"), "消息：{}", d.msg);
 
     // lowering：未知属性落在该 `[[lowering]]` 节（`op = "..."` 行）。
     let lw = plus(

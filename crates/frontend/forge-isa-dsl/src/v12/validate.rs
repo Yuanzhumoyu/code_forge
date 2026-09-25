@@ -100,20 +100,6 @@ pub fn apply_variants(
         .filter(|n| !refs_after.contains(n))
         .collect();
     // ② 其余承载指令引用的声明节：逐节 retain + 记账（节名 = TOML 里的写法）。
-    if let Some(em) = &mut m.emit {
-        for (what, block) in [
-            ("prologue", &mut em.prologue),
-            ("epilogue", &mut em.epilogue),
-        ] {
-            if block
-                .as_ref()
-                .is_some_and(|b| !variants_keep(b.only_variants.as_ref(), params))
-            {
-                *block = None;
-                dropped_decls.push((format!("[emit.{what}]"), 1));
-            }
-        }
-    }
     let dropped_spills: Vec<String> = m
         .spill
         .iter()
@@ -234,7 +220,6 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags, opts: &Validat
     validate_lowering_all(m, idx, d);
     collect(d, idx, validate_patterns(m));
     collect(d, idx, validate_abi(m));
-    validate_emit_all(m, idx, d);
     validate_spill_all(m, idx, d);
     collect(d, idx, validate_vectors(m));
     if opts.strict_overlap {
@@ -606,14 +591,6 @@ fn validate_variant_gates(m: &V12Model) -> Result<(), String> {
     };
     for i in &m.instructions {
         check(i.only_variants.as_ref())?;
-    }
-    if let Some(em) = &m.emit {
-        for b in [em.prologue.as_ref(), em.epilogue.as_ref()]
-            .into_iter()
-            .flatten()
-        {
-            check(b.only_variants.as_ref())?;
-        }
     }
     for s in m.spill.values() {
         check(s.only_variants.as_ref())?;
@@ -1998,108 +1975,6 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
         return Err("[abi.frame].sp must not be empty".into());
     }
     Ok(())
-}
-
-// ───────────────────────── [emit] ─────────────────────────
-
-/// `[emit]` 模板合法的 `@` 伪指令（DSL 侧 `codegen/frame.rs::gen_emit_pseudo` 的实现集）。
-///
-/// v15 文档只列了 `@push_callee`/`@frame_alloc`/`@frame_dealloc`/`@pop_callee`——
-/// `@frame_dealloc` 这个名字**在代码里不存在**（实际是 `@frame_free`）。S1 把它变成
-/// 唯一事实源（文档与验证器同表）。
-///
-/// **`@move_args` 已删除**（v20 A3b-2b-2b）：收参是**调用约定**的事，谱不该定义它——
-/// 生成器按 forge-abi 的调用布局（`AllocResult::call_layout`）在自己的位置发射收参
-/// （callee-saved 保存之后）。谱里写了它会被明确拒绝并给出迁移提示。
-const EMIT_PSEUDOS: &[&str] = &["push_callee", "pop_callee", "frame_alloc", "frame_free"];
-
-/// `[emit]` 模板合法的占位符（`frame.rs` 的实现集）。
-const EMIT_PLACEHOLDERS: &[&str] = &["frame_size", "frame_size_neg", "callee_saved_bytes"];
-
-/// `[emit]` 校验（S1：从"只查非空"升级为引用名 + 伪指令 + 占位符全覆盖）。
-///
-/// 为什么重要：`[emit.prologue].insts` 里写错一个指令名或占位符，旧实现要等到
-/// codegen（甚至生成代码编译）才炸，且没有任何位置信息。
-fn validate_emit_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
-    let Some(em) = &m.emit else {
-        return;
-    };
-    let refs = declared_refs(m);
-    for (which, block) in [("prologue", &em.prologue), ("epilogue", &em.epilogue)] {
-        let Some(b) = block else { continue };
-        let path = format!("[emit.{which}]");
-        if b.insts.is_empty() {
-            d.push_anchored(idx, &format!("{path}.insts must not be empty"));
-            continue;
-        }
-        for (i, line) in b.insts.iter().enumerate() {
-            validate_emit_line(&refs, &format!("{path}.insts[{i}]"), line, idx, d);
-        }
-    }
-}
-
-/// 一行 emit 模板：`@伪指令` 或 `指令引用 op0, op1, …`。
-fn validate_emit_line(
-    refs: &BTreeSet<String>,
-    at: &str,
-    line: &str,
-    idx: &DeclIndex,
-    d: &mut Diags,
-) {
-    let t = line.trim();
-    if let Some(pseudo) = t.strip_prefix('@') {
-        let pseudo = pseudo.trim();
-        if pseudo == "move_args" {
-            d.push_anchored(
-                idx,
-                &format!(
-                    "{at}: `@move_args` 已删除（v20 A3b-2b-2b）——收参属于**调用约定**，\
-                     生成器按 forge-abi 的调用布局统一发射（位置：callee-saved 保存之后）；\
-                     把它从模板里删掉即可，不要改用别的写法"
-                ),
-            );
-        } else if !EMIT_PSEUDOS.contains(&pseudo) {
-            d.push_anchored(
-                idx,
-                &format!(
-                    "{at}: 未知伪指令 '@{pseudo}'（可用：{}）",
-                    EMIT_PSEUDOS
-                        .iter()
-                        .map(|p| format!("@{p}"))
-                        .collect::<Vec<_>>()
-                        .join(" / ")
-                ),
-            );
-        }
-        return;
-    }
-    let first = t.split_whitespace().next().unwrap_or("");
-    if first.is_empty() {
-        d.push_anchored(idx, &format!("{at}: 空模板行"));
-        return;
-    }
-    if !refs.contains(first) {
-        d.push_anchored(
-            idx,
-            &format!("{at}: 未知指令引用 '{first}'（须是已声明指令名或某条指令的 ref）"),
-        );
-    }
-    for ph in placeholder_tokens(line) {
-        let inner = ph.trim_matches(|c| c == '{' || c == '}');
-        let ok = EMIT_PLACEHOLDERS.contains(&inner)
-            || inner
-                .strip_prefix("frame_size_m")
-                .is_some_and(|n| n.parse::<i64>().is_ok());
-        if !ok {
-            d.push_anchored(
-                idx,
-                &format!(
-                    "{at}: 未知占位符 '{ph}'（可用：{{frame_size}} / {{frame_size_neg}} / \
-                     {{frame_size_mN}} / {{callee_saved_bytes}}）"
-                ),
-            );
-        }
-    }
 }
 
 // ───────────────────────── [spill.*] ─────────────────────────
