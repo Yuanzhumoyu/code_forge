@@ -97,3 +97,78 @@ parent = "c"
 
     compiler.compile(&func).expect("注册后应能编译");
 }
+
+/// **IR 属性 → 引擎视图**（v20 A2b）：`Function::param_attrs`/`ret_attrs` 与签名一起投影成
+/// `forge_abi::Signature`——这些属性以前只有文本层认识、没有任何代码读。
+///
+/// 断言两件事：① 声明属性逐条映射（`byval` 的字节数由那个类型算）；② 类型摊开用
+/// **TypeStore 的权威大小**（带填充的结构体不能按成员求和）。
+#[test]
+fn ir_attributes_project_into_the_engine_view() {
+    use forge_codegen::pipeline::sig_view::{decl_attrs, signature_view, ty_view};
+    use forge_ir::ir::function::ParamAttributes;
+    use forge_ir::ir::types::TypeField;
+
+    let ctx = TypeContext::new();
+    // struct { i32; i64 }（带填充：权威大小 16，成员裸和 12）。
+    let (i32t, i64t) = (TypeId::I32, TypeId::I64);
+    let st = ctx.borrow_mut().struct_named(
+        "AttrProbe",
+        vec![TypeField::new(i32t), TypeField::new(i64t)],
+        false,
+    );
+    {
+        let store = ctx.borrow();
+        assert_eq!(store.size_bytes(st), 16, "带填充结构体的权威大小");
+        let v = ty_view(&store, st);
+        assert_eq!((v.size, v.align), (16, 8));
+        assert!(v.is_aggregate());
+
+        // 声明属性映射：byval 取类型大小；align = 0 视为未声明。
+        let a = ParamAttributes {
+            byval: Some(st),
+            inreg: true,
+            zeroext: true,
+            align: 32,
+            ..ParamAttributes::default()
+        };
+        let d = decl_attrs(&a, &store);
+        assert_eq!(d.byval, Some(16), "byval(结构体) → 字节数");
+        assert!(d.inreg && d.zeroext);
+        assert_eq!(d.declared_align(), Some(32));
+        assert!(!d.sret && !d.signext);
+    }
+
+    // 端到端：Function 的签名 + param_attrs → 引擎视图。
+    let sig = FunctionSignature::new(&[(i32t, "n"), (i64t, "s")], &[i32t]);
+    let mut b = FunctionBuilder::new("attr_probe", ctx.clone(), sig);
+    let (entry, params) = b.create_block_with_params(&[(i32t, "n"), (i64t, "s")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0]]);
+    let mut func = b.finish().expect("build");
+    func.param_attrs = vec![
+        ParamAttributes {
+            zeroext: true,
+            ..ParamAttributes::default()
+        },
+        ParamAttributes {
+            byval: Some(st),
+            align: 16,
+            ..ParamAttributes::default()
+        },
+    ];
+    func.ret_attrs = vec![ParamAttributes {
+        signext: true,
+        ..ParamAttributes::default()
+    }];
+
+    let view = signature_view(&func).expect("投影");
+    assert_eq!(view.params.len(), 2);
+    assert_eq!(view.params[0].0, "n");
+    assert!(view.attr(0).zeroext && view.attr(0).byval.is_none());
+    assert_eq!(view.attr(1).byval, Some(16), "第二个形参的 byval 字节数");
+    assert_eq!(view.attr(1).declared_align(), Some(16));
+    assert!(view.ret_attrs.signext, "返回值属性也要投影");
+    assert_eq!(view.ret.as_ref().map(|t| t.size), Some(4));
+    assert!(view.attr(9).is_empty(), "没有属性的参数取默认值");
+}

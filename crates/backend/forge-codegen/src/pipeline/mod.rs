@@ -9,6 +9,8 @@ pub mod frame_layout;
 pub mod liverange;
 pub mod lowering;
 pub mod regalloc_bt;
+/// IR 视图 → 引擎视图（签名 + 参数属性；v20 A2b）。
+pub mod sig_view;
 
 use std::sync::OnceLock;
 

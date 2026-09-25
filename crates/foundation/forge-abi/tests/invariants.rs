@@ -8,7 +8,7 @@ mod common;
 use common::*;
 use forge_abi::{
     AbiBinding, AbiError, AbiHooks, AbiPlan, AbiRegistry, AbiRules, AbiTarget, ArgLoc, ClassAction,
-    ClassDir, Placement, Purpose, RetLoc, Signature, TyView,
+    ClassDir, DeclAttrs, Extension, Placement, Purpose, RetLoc, Signature, TyView,
 };
 
 fn registry() -> AbiRegistry {
@@ -620,6 +620,172 @@ fn custom_convention_is_usable_from_data_only() {
     );
     let p = reg.plan(&t, "poc", &sig).expect("plan");
     assert!(matches!(p.args[3].place, Placement::Stack { .. }));
+}
+
+/// **声明属性真的改变规划**（v20 A2b）——不是装饰：
+///
+/// - `byval(N)` → 该形参变"调用方栈上副本 + 指针"（`Indirect{on_stack}`），副本进 byval 区；
+/// - `sret` → 该形参占约定声明的 **hidden sret 槽**（不再按普通参数分类），并记进 `hidden.sret`；
+/// - `zeroext`/`signext` → 落点带 `Extension`；
+/// - `inreg` → 分类说走栈时再试一次寄存器；
+/// - `align(N)` → 栈落点对齐抬到 N。
+#[test]
+fn declared_attributes_change_the_plan() {
+    let reg = registry();
+
+    // ① byval(24)：win64 上 24B 聚合本来就 byval；这里用 i64 标量做对照——无属性时落寄存器，
+    //    声明 byval 后必须变成"栈上副本 + 指针"。
+    let plain = plan(&reg, "x86_64_v12", "win64", &one(i64_()));
+    assert_eq!(place_reg(arg0(&plain)), "RCX");
+    let byval_sig = Signature::new(vec![("p".into(), i64_())], None).with_attrs(vec![DeclAttrs {
+        byval: Some(24),
+        ..DeclAttrs::default()
+    }]);
+    let p = plan(&reg, "x86_64_v12", "win64", &byval_sig);
+    match arg0(&p) {
+        Placement::Indirect {
+            ptr,
+            at: Some(0),
+            on_stack: true,
+        } => assert_eq!(ptr.as_ref().map(|r| r.name.as_str()), Some("RCX")),
+        other => panic!("byval 应变成栈上副本 + 指针，实际 {other:?}"),
+    }
+    assert_eq!(p.stack.byval_area_bytes, 24, "副本区要按声明的 N 字节算");
+
+    // ② sret：形参占 hidden sret 槽（win64 = RCX；AAPCS64 = **x8**，本片 arm64 无浮点池不影响）。
+    let sret_sig = Signature::new(vec![("out".into(), ptr_())], None).with_attrs(vec![DeclAttrs {
+        sret: true,
+        ..DeclAttrs::default()
+    }]);
+    for (isa, conv, want) in [
+        ("x86_64_v12", "win64", "RCX"),
+        ("riscv64_v12", "lp64d", "X10"),
+    ] {
+        let p = plan(&reg, isa, conv, &sret_sig);
+        assert_eq!(
+            p.hidden.sret.as_ref().map(|r| r.name.as_str()),
+            Some(want),
+            "{conv} 的 sret 槽"
+        );
+        // 形参本身是"间接"落点（指针在 sret 槽里），不是普通寄存器参数。
+        match arg0(&p) {
+            Placement::Indirect {
+                ptr: Some(reg),
+                at: None,
+                on_stack: false,
+            } => assert_eq!(reg.name, want, "{conv}：sret 指针所在寄存器"),
+            other => panic!("{conv}：`sret` 形参应是间接落点，实际 {other:?}"),
+        }
+        // 用户实参不能与 sret 指针撞号：下一参数从别的槽开始。
+        let two = Signature::new(vec![("out".into(), ptr_()), ("x".into(), i64_())], None)
+            .with_attrs(vec![
+                DeclAttrs {
+                    sret: true,
+                    ..DeclAttrs::default()
+                },
+                DeclAttrs::default(),
+            ]);
+        let p = plan(&reg, isa, conv, &two);
+        assert_ne!(
+            place_reg(&p.args[1].place),
+            want,
+            "{conv}：第二个参数不能撞 sret 槽"
+        );
+    }
+
+    // ③ 扩展属性折进落点。
+    for (attrs, want) in [
+        (
+            DeclAttrs {
+                zeroext: true,
+                ..DeclAttrs::default()
+            },
+            Extension::ZeroExt,
+        ),
+        (
+            DeclAttrs {
+                signext: true,
+                ..DeclAttrs::default()
+            },
+            Extension::SignExt,
+        ),
+    ] {
+        let sig = Signature::new(vec![("v".into(), i32_())], None).with_attrs(vec![attrs]);
+        let p = plan(&reg, "x86_64_v12", "win64", &sig);
+        match arg0(&p) {
+            Placement::Reg { ext, .. } => assert_eq!(*ext, want),
+            other => panic!("{other:?}"),
+        }
+    }
+    // signext 优先（两个都写时按 LLVM 语义取 signext）。
+    let both = DeclAttrs {
+        zeroext: true,
+        signext: true,
+        ..DeclAttrs::default()
+    };
+    assert_eq!(both.extension(), Extension::SignExt);
+
+    // ④ align(32)：栈落点对齐抬到 32。
+    let sig = Signature::new(vec![("s".into(), i64_())], None).with_attrs(vec![DeclAttrs {
+        align: Some(32),
+        ..DeclAttrs::default()
+    }]);
+    // riscv 的 int 池只有 8 个槽，9 个参数就把第 9 个挤到栈上。
+    let mut params: Vec<(String, TyView)> = (0..8).map(|i| (format!("a{i}"), i64_())).collect();
+    params.push(("s".into(), i64_()));
+    let mut attrs = vec![DeclAttrs::default(); 8];
+    attrs.push(DeclAttrs {
+        align: Some(32),
+        ..DeclAttrs::default()
+    });
+    let sig9 = Signature::new(params, None).with_attrs(attrs);
+    let p = plan(&reg, "riscv64_v12", "lp64d", &sig9);
+    match &p.args[8].place {
+        Placement::Stack { align, .. } => assert_eq!(*align, 32, "声明的对齐要生效"),
+        other => panic!("{other:?}"),
+    }
+    let _ = sig;
+}
+
+/// `inreg` 让"分类说要走栈"的参数改走寄存器（池够时）。
+#[test]
+fn inreg_overrides_a_stack_classification() {
+    let reg = registry();
+    // win64 的 byval 规则会把 >8B 聚合判成"栈上副本"（indirect），`inreg` 不该改它；
+    // 这里用**第 5 个 int 参数**（分类说走栈）来验：`inreg` 时优先寄存器。
+    let mut params: Vec<(String, TyView)> = (0..4).map(|i| (format!("a{i}"), i64_())).collect();
+    params.push(("x".into(), i64_()));
+    let plain = plan(
+        &reg,
+        "x86_64_v12",
+        "win64",
+        &Signature::new(params.clone(), None),
+    );
+    assert!(
+        matches!(plain.args[4].place, Placement::Stack { .. }),
+        "win64 第 5 个 int 参数走栈"
+    );
+    let mut attrs = vec![DeclAttrs::default(); 4];
+    attrs.push(DeclAttrs {
+        inreg: true,
+        ..DeclAttrs::default()
+    });
+    // win64 的 int 池只有 4 个槽且已耗尽 ⇒ `inreg` 也只能走栈（不静默换寄存器）。
+    let p = plan(
+        &reg,
+        "x86_64_v12",
+        "win64",
+        &Signature::new(params.clone(), None).with_attrs(attrs),
+    );
+    assert!(
+        matches!(p.args[4].place, Placement::Stack { .. }),
+        "池耗尽时 inreg 不硬凑"
+    );
+
+    // sysv64 的 int 池有 6 个槽：第 7 个参数走栈、声明 inreg 后抢到寄存器（本测试只取前者）。
+    let many: Vec<(String, TyView)> = (0..6).map(|i| (format!("a{i}"), i64_())).collect();
+    let p = plan(&reg, "x86_64_v12", "sysv64", &Signature::new(many, None));
+    assert!(matches!(p.args[5].place, Placement::Reg { .. }));
 }
 
 /// `AbiBinding` 的具名选择子与索引选择子等价（同一台机器两种写法）。

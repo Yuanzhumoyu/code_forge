@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-24) — v20 A2b：声明属性（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`）真的改变规划
+
+- **引擎吃声明属性**：`forge_abi::Signature` 新增 `attrs`/`ret_attrs`（`DeclAttrs`），`plan_fn` 按属性改分类与落点——`byval(N)` → 该形参变"调用方栈上 N 字节副本 + 指针"（副本进 `StackLayout::byval_area_bytes`）、`sret` → 该形参占约定声明的 **hidden sret 槽**（x86 RCX/RDI、AAPCS64 **x8**、riscv a0；不再按普通参数分类）、`inreg` → 分类说要走栈时再试寄存器（池空仍走栈，不硬凑）、`zeroext`/`signext` → 落点带 `Extension`（都写时 `signext` 胜，与 LLVM 一致）、`align(N)` → 栈落点对齐抬到 N。
+- **IR 侧接上**：新增 `forge_codegen::pipeline::sig_view`——`Function::param_attrs`/`ret_attrs` + `FunctionSignature` + `TypeStore` → `forge_abi::Signature`。`ParamAttributes`（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`…）此前**只有文本层认识、没有任何代码读**（与刚删掉的旧 `CallConv` 一样是装饰），现在它是规划的输入。类型投影只摊开不猜测：大小/对齐取 `TypeStore` 的权威值（**带填充的结构体不能按成员求和**），摊不开的类型（可扩展向量）落 `TyKind::Other` 交给规则兜底。
+- 测试：`forge-abi/tests/invariants.rs` +2（`declared_attributes_change_the_plan` 逐条断言产物：`byval` 变间接落点且副本区按 N 算、`sret` 在两个约定上各就各位且不与后续参数撞号、两个 ext、`align` 抬对齐；`inreg_overrides_a_stack_classification` 覆盖"池够"与"池耗尽"两种行为）；`forge-codegen/tests/conv_registry_read_path.rs` 的投影用例（含"带填充结构体大小"这条反例）。`AbiPlan::to_text()` 只打印**产物**（`ext=` / `on_stack=` / `align=`），所以"属性生效没有"在快照里一眼可见。
+- 下一步（A3）：宿主 `AbiTarget` 适配器（`TargetRegInfo` → 引擎）把签名真正跑成 `AbiPlan`，并按 plan 发射调用点/入口/序尾声（x86 优先、生成物逐字节不变为验收）。
+
 ### Changed (2026-09-24) — v20 A2：IR 里的调用约定从"死枚举"变成"使用者命名的标识 + 宿主注册表"（破坏性）
 
 - **删掉 16 变体的 `CallConv`，换成 `CallConvId`**（`forge-ir`）：`Builtin(ConvName)`（`c`/`sysv64`/`win64`/`aapcs64`/`lp64d`）、`Named(ImmStr)`（**使用者自己注册的名字**，开放集合）、`Index(u32)`（LLVM `cc N`）。默认 = `Builtin(C)`，文本层对 `c` 不写关键字（与 LLVM 一致）。旧枚举里 `SystemV`/`Fast`/`Cold`/`PreserveAll` 那些变体既不是公共约定、也没有任何代码读——那是"用枚举假装支持一切"。

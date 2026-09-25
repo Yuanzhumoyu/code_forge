@@ -58,8 +58,8 @@ pub use binding::{AbiBinding, RegSelector};
 pub use engine::{AbiTarget, Capability, ClassDir, Signature, plan_fn};
 pub use error::AbiError;
 pub use plan::{
-    AbiPlan, ArgLoc, CalleeSaveMechanism, CalleeSavedPlan, Extension, HiddenSlots, Placement,
-    Purpose, RetLoc, StackLayout, VaArea,
+    AbiPlan, ArgLoc, CalleeSaveMechanism, CalleeSavedPlan, DeclAttrs, Extension, HiddenSlots,
+    Placement, Purpose, RetLoc, StackLayout, VaArea,
 };
 pub use registry::{AbiHooks, AbiRegistry};
 pub use rules::{

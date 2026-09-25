@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use crate::binding::AbiBinding;
 use crate::error::AbiError;
 use crate::plan::{
-    AbiPlan, ArgLoc, CalleeSavedPlan, Extension, HiddenSlots, Placement, Purpose, RegRef, RetLoc,
-    StackLayout, VaArea,
+    AbiPlan, ArgLoc, CalleeSavedPlan, DeclAttrs, Extension, HiddenSlots, Placement, Purpose,
+    RegRef, RetLoc, StackLayout, VaArea,
 };
 use crate::registry::AbiHooks;
 use crate::rules::{AbiRules, ClassAction, IndirectVia, PositionRule};
@@ -95,7 +95,14 @@ pub trait AbiTarget {
 pub struct Signature {
     /// `(名字, 类型)`；名字只用于诊断与快照。
     pub params: Vec<(String, TyView)>,
+    /// 每条形参的**声明属性**（LLVM `byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`）。
+    ///
+    /// 可以比 `params` 短（缺的按默认处理，见 [`Signature::attr`]）——前端只有"部分参数
+    /// 带属性"时不必补齐一长串默认值。
+    pub attrs: Vec<DeclAttrs>,
     pub ret: Option<TyView>,
+    /// 返回值的声明属性（`byval`/`sret` 在返回位没有意义，引擎忽略它们）。
+    pub ret_attrs: DeclAttrs,
     pub variadic: bool,
     /// **命名参数个数**（变参函数里 `i >= fixed_count` 的是"未命名实参"；
     /// 多数约定把它们强制走栈，SysV 则继续用寄存器）。
@@ -107,10 +114,29 @@ impl Signature {
         let n = params.len();
         Self {
             params,
+            attrs: Vec::new(),
             ret,
+            ret_attrs: DeclAttrs::default(),
             variadic: false,
             fixed_count: n,
         }
+    }
+
+    /// 带**声明属性**的签名（可与 `params` 等长，也可更短）。
+    pub fn with_attrs(mut self, attrs: Vec<DeclAttrs>) -> Self {
+        self.attrs = attrs;
+        self
+    }
+
+    /// 返回值属性。
+    pub fn with_ret_attrs(mut self, attrs: DeclAttrs) -> Self {
+        self.ret_attrs = attrs;
+        self
+    }
+
+    /// 第 `i` 个形参的声明属性（缺省 = 无属性）。
+    pub fn attr(&self, i: usize) -> DeclAttrs {
+        self.attrs.get(i).copied().unwrap_or_default()
     }
 
     /// 变参：`fixed` 是命名参数个数，其余为未命名实参。
@@ -459,12 +485,39 @@ pub fn plan_fn(
         // 变参的**未命名实参**（`i >= fixed_count`）：`variadic_stack_only` 的约定
         // （Win64/AAPCS64/RISC-V）强制走栈；SysV 继续按普通规则落寄存器。
         let unnamed = sig.variadic && i >= sig.fixed_count;
-        let place = if unnamed && rules.variadic_stack_only {
+        let attrs = sig.attr(i);
+        let place = if attrs.sret {
+            // 声明了 `sret`：这就是**间接结果指针**，占约定声明的 hidden 槽
+            //（x86 RCX/RDI、AAPCS64 **x8**、riscv a0）——不再走普通参数分类。
+            let slot = sret_slot(&mut pools, &mut hidden, rules, &mut skip_used)?;
+            Placement::Indirect {
+                ptr: Some(slot),
+                at: None,
+                on_stack: false,
+            }
+        } else if let Some(size) = attrs.byval {
+            // 声明了 `byval(N)`：调用方在自己栈上做 N 字节副本、传指针（指针按 int 池传）。
+            byval_place(&mut pools, &mut byval, rules, ty, size, &skip_used)?
+        } else if unnamed && rules.variadic_stack_only {
             stack_place(&mut stack, rules, ty, &action)
         } else {
-            place_arg(
+            let mut p = place_arg(
                 &mut pools, &mut stack, &mut byval, rules, ty, &action, &skip_used,
-            )?
+            )?;
+            // `inreg`：分类说走栈时再试一次寄存器（LLVM 的语义是"优先寄存器"，不是硬要求；
+            // 池真空了就仍走栈——这一点写在 plan 里是可见的，不会静默换寄存器）。
+            if attrs.inreg
+                && matches!(p, Placement::Stack { .. })
+                && let Some(reg) = pools.take(&rules.int_pool, &skip_used)?
+            {
+                p = Placement::Reg {
+                    reg,
+                    ext: attrs.extension(),
+                    purpose: Purpose::Normal,
+                };
+            }
+            // 声明属性折进落点：符号扩展 + 声明的对齐。
+            apply_decl_attrs(p, ty, &attrs, rules)
         };
         args.push(ArgLoc {
             what: name.clone(),
@@ -729,5 +782,88 @@ fn stack_place(
         offset: off as i32,
         size: ty.size.max(1) as u16,
         align: align as u16,
+    }
+}
+
+/// 声明了 `sret` 的形参：在约定声明的 hidden sret 槽里取指针（x86 RCX/RDI、AAPCS64 x8、
+/// riscv a0），并记进 [`HiddenSlots::sret`]。
+fn sret_slot(
+    pools: &mut Pools<'_>,
+    hidden: &mut HiddenSlots,
+    rules: &AbiRules,
+    skip_used: &mut Vec<u32>,
+) -> Result<RegRef, AbiError> {
+    let pool = rules
+        .hidden
+        .sret_pool
+        .clone()
+        .ok_or_else(|| AbiError::Unsupported {
+            conv: rules.name.clone(),
+            what: "形参声明了 `sret`，但约定没有声明 hidden.sret_pool".into(),
+        })?;
+    pools.reserve_slot(&pool, rules.hidden.sret_slot);
+    let regs = pools.get(&pool)?.clone();
+    let slot = rules.hidden.sret_slot as usize;
+    let rr = regs
+        .get(slot)
+        .cloned()
+        .ok_or_else(|| AbiError::Unsupported {
+            conv: rules.name.clone(),
+            what: format!("hidden.sret_pool `{pool}` 没有第 {slot} 个槽"),
+        })?;
+    if !skip_used.contains(&rr.index) {
+        skip_used.push(rr.index);
+    }
+    hidden.sret = Some(rr.clone());
+    Ok(rr)
+}
+
+/// 声明了 `byval(N)` 的形参：调用方栈上 N 字节副本 + 指针（指针按 int 池传）。
+fn byval_place(
+    pools: &mut Pools<'_>,
+    byval: &mut StackAlloc,
+    rules: &AbiRules,
+    ty: &TyView,
+    size: u32,
+    skip_used: &[u32],
+) -> Result<Placement, AbiError> {
+    let n = size.max(1);
+    let off = byval.alloc(n, ty.align.max(1), rules.stack.slot_bytes);
+    let pool = rules.int_pool.clone();
+    Ok(match pools.take(&pool, skip_used)? {
+        Some(ptr) => Placement::Indirect {
+            ptr: Some(ptr),
+            at: Some(off as i32),
+            on_stack: true,
+        },
+        None => Placement::Indirect {
+            ptr: None,
+            at: Some(off as i32),
+            on_stack: true,
+        },
+    })
+}
+
+/// 把**声明属性**折进落点：符号扩展写进 `ext`、声明的对齐写进栈落点。
+///
+/// 只对"能承载它"的落点生效：`Reg`/`RegPair` 带 `ext`，`Stack` 带 `align`。
+/// 其余落点（`Indirect`/`Ignore`）忽略这两个属性——不假装它们生效。
+fn apply_decl_attrs(p: Placement, _ty: &TyView, attrs: &DeclAttrs, _rules: &AbiRules) -> Placement {
+    let ext = attrs.extension();
+    let align = attrs.declared_align();
+    match p {
+        Placement::Reg { reg, purpose, .. } => Placement::Reg { reg, ext, purpose },
+        Placement::RegPair { lo, hi } => Placement::RegPair { lo, hi },
+        Placement::RegGroup { regs } => Placement::RegGroup { regs },
+        Placement::Stack {
+            offset,
+            size,
+            align: a,
+        } => Placement::Stack {
+            offset,
+            size,
+            align: align.map_or(a, |d| d.max(a as u32) as u16),
+        },
+        other => other,
     }
 }

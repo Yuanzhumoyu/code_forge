@@ -140,14 +140,26 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 
 #### 还没做（下一步）
 
-- **签名级参数属性**：`ParamAttributes`（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`…）
-  目前挂在 `Function` 上（按参数索引），**调用点**要用的 `FunctionSignature` 还没有；
-  A2b 把它变成签名的一部分（单一事实源），并让文本/二进制、verifier 一起走。
-- **属性 → `AbiPlan` 的投影**：`TypeId + TypeStore + DataLayout + ParamAttributes → TyView`
-  与按属性覆盖分类（`byval(N)` → `Indirect{CallerStackCopy}`、`sret` → `Indirect{HiddenSret}`…）。
-  这一块与 A3 的 `AbiTarget` 适配器（`TargetRegInfo` → 引擎）同批做，避免两套投影。
-- `forge-rustc` 的 `PassMode` → IR 属性的落库（现在前端从不写 IR 的约定/属性，
+- **宿主 `AbiTarget` 适配器**（`TargetRegInfo` → 引擎）：把 IR 签名真正跑成 `AbiPlan` 并
+  在编译入口校验（本片只做"解析约定名 + 投影签名"；跑 plan 与按 plan 发射是 A3）。
+- `forge-rustc` 的 `PassMode` → IR 属性落库（现在前端从不写 IR 的约定/属性，
   这也是旧设计"死值"的另一半原因）。
+
+### A2b ✅ 声明属性真正改变规划（本片）
+
+- **引擎吃声明属性**（`forge_abi::DeclAttrs`）：`Signature` 新增 `attrs`/`ret_attrs`，
+  `plan_fn` 按属性改分类与落点——`byval(N)` → 栈上副本 + 指针（副本进 `byval_area_bytes`）、
+  `sret` → 占约定声明的 hidden 槽（**逐约定不同**：x86 RCX/RDI、AAPCS64 x8、riscv a0）、
+  `inreg` → 分类说要走栈时再试寄存器（池空仍走栈，不硬凑）、`zeroext`/`signext` → 落点的
+  `Extension`（两个都写时 `signext` 胜）、`align(N)` → 栈落点对齐。
+- **IR 侧接上**（`forge_codegen::pipeline::sig_view`）：`Function::param_attrs`/`ret_attrs`
+  与 `FunctionSignature`、`TypeStore` → `forge_abi::Signature`。这些字段**以前只有文本层
+  认识、没有任何代码读**（与旧 `CallConv` 一样是装饰）；类型投影只摊开不猜测（聚合体用
+  TypeStore 的权威大小，可扩展向量落 `Other`）。
+- 测试：`forge-abi/tests/invariants.rs` 新增两条（`declared_attributes_change_the_plan`：
+  byval/sret/两个 ext/align 逐条断言产物；`inreg_overrides_a_stack_classification`：池够与
+  池耗尽两种行为），以及 `forge-codegen/tests/conv_registry_read_path.rs` 的投影用例
+  （含"带填充结构体不能被按成员求和"这条反例）。
 
 ### A3 调用点/入口/返回值按 plan 发射（x86 优先）
 

@@ -212,6 +212,35 @@ pub enum CallConvId {
 `c` 是给别的约定继承的抽象基类（`parent = "c"` 给出"通用 C 家族"的分类兜底），
 **它自己没有绑定**——直接拿 `c` 规划会明确报"缺绑定"，这是刻意设计的 fail-closed。
 
+## 声明属性（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`）
+
+前端在形参/返回值上写下的"按什么传"，经两条路进引擎，**真的改变规划**（不是装饰）：
+
+```text
+IR：Function.param_attrs[i] / ret_attrs（ParamAttributes）
+        │  forge_codegen::pipeline::sig_view::decl_attrs()   ← A2b：这些字段以前没人读
+        ▼
+引擎：forge_abi::DeclAttrs（输入）
+        │  plan_fn 把声明折进分类与落点
+        ▼
+plan：AbiPlan（产物；`ext`/`align`/`Indirect{..}` 都是可断言的结果）
+```
+
+| 声明 | 对 plan 的影响 |
+| --- | --- |
+| `byval(N)` | 该形参变 `Indirect{ ptr, on_stack: true }`（调用方栈上 N 字节副本），副本进 `byval_area_bytes`；指针按 int 池传 |
+| `sret` | 该形参占约定声明的 **hidden sret 槽**（x86 RCX/RDI、AAPCS64 **x8**、riscv a0），并记进 `hidden.sret`；它**不再**按普通参数分类 |
+| `inreg` | 分类说要走栈时再试一次寄存器池；**池空就仍走栈**（不硬凑） |
+| `zeroext` / `signext` | 落点带 `Extension`（两个都写时 `signext` 胜，与 LLVM 一致） |
+| `align(N)` | 栈落点对齐抬到 `N`（与类型自然对齐取大）；`0` = 未声明 |
+
+类型投影（`sig_view::ty_view`）只摊开、不猜测：大小/对齐一律取自 `TypeStore`
+（**带填充的结构体必须用权威大小**，按成员裸和会少算），摊不开的类型（可扩展向量）落到
+`TyKind::Other` 交给规则兜底。
+
+`AbiPlan::to_text()` 不打印"输入属性"——它只打印**产物**（`ext=ZeroExt`、`indirect
+ptr=RDX at=Some(0) on_stack=true`、`align=32` 这些），因此"属性生效了没有"在快照里一眼可见。
+
 ## ISA 侧：能力视图（AbiTarget）
 
 引擎只问"能不能"（`AbiTarget`），不问"约定了什么"：

@@ -154,6 +154,56 @@ impl StackLayout {
     }
 }
 
+/// **声明属性**：前端在形参/返回值上写下的"按什么传"（LLVM 的 `byval`/`sret`/`inreg`/
+/// `zeroext`/`signext`/`align`）。
+///
+/// 与 [`Extension`] 的分工：`DeclAttrs` 是**输入**（前端声明），`Extension` 是**产物**
+/// （plan 里那条落点带的符号扩展要求）。引擎把前者折进分类与落点，后者出现在 `AbiPlan` 里。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclAttrs {
+    /// `byval(N)`：按值传递——调用方在**自己的栈上**做 N 字节副本、传指针（LLVM `byval`）。
+    pub byval: Option<u32>,
+    /// `sret`：这个指针是**返回缓冲**（间接结果指针），走约定声明的 hidden sret 槽。
+    pub sret: bool,
+    /// `inreg`：尽量走寄存器（分类说要走栈时也先试一次池）。
+    pub inreg: bool,
+    /// 高位清零（无符号/指针）。
+    pub zeroext: bool,
+    /// 高位按符号填充。
+    pub signext: bool,
+    /// 声明的对齐（`None` = 用类型自然对齐）。
+    pub align: Option<u32>,
+}
+
+impl DeclAttrs {
+    /// 没有任何声明属性（引擎走纯分类路径）。
+    pub fn is_empty(&self) -> bool {
+        self.byval.is_none()
+            && !self.sret
+            && !self.inreg
+            && !self.zeroext
+            && !self.signext
+            && self.align.is_none()
+    }
+
+    /// 折成 plan 里的符号扩展要求（`signext` 优先于 `zeroext`，与 LLVM 一致）。
+    pub fn extension(&self) -> Extension {
+        if self.signext {
+            Extension::SignExt
+        } else if self.zeroext {
+            Extension::ZeroExt
+        } else {
+            Extension::None
+        }
+    }
+
+    /// 声明的对齐（`None`/`Some(0)` → `None`）。
+    pub fn declared_align(&self) -> Option<u32> {
+        self.align.filter(|a| *a > 0)
+    }
+}
+
 /// callee-saved 的保存机制（"怎么做"由 ISA 能力决定，plan 只表达"用哪种"）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
