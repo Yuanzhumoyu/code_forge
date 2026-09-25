@@ -120,8 +120,46 @@ impl AbiRegistry {
         self.rules.get(name)
     }
 
+    /// 取一份绑定（**精确 `(isa, conv)`**；别名解析见 [`AbiRegistry::resolve_conv`]）。
     pub fn binding(&self, isa: &str, conv: &str) -> Option<&AbiBinding> {
         self.bindings.get(&(isa.to_string(), conv.to_string()))
+    }
+
+    /// 把请求的约定名解析成**这台机器上实际生效的那一份**（规则 + 绑定同源）。
+    ///
+    /// ```text
+    /// 显式 (isa, conv) 绑定存在        ⇒ 就用它（宿主的覆写入口）
+    /// 否则找"声称代答 conv 且在这台机器上有绑定"的约定
+    ///   恰好一份                     ⇒ 用它（内置：x86 的 c→win64、riscv 的 c→lp64d…）
+    ///   多于一份                     ⇒ 报错（不按注册序猜）
+    ///   一份都没有                   ⇒ 原样返回 conv（后续报"缺注册/缺绑定"，消息照旧）
+    /// ```
+    ///
+    /// **为什么必须整套换**：`c` 自己那份规则是"通用 C 家族兜底"（by_class、无 shadow、
+    /// 返回走 `int` 池）——拿它去配 Windows 的寄存器池会得到 by_class 的槽位与 RCX 返回，
+    /// 与真实 C ABI 不符（实测：混合 int/float 参数读错、sret+by-ref 槽位错位）。
+    pub fn resolve_conv(&self, isa: &str, conv: &str) -> Result<String, AbiError> {
+        if self.binding(isa, conv).is_some() {
+            return Ok(conv.to_string());
+        }
+        let candidates: Vec<&str> = self
+            .rules
+            .values()
+            .filter(|r| r.aliases.iter().any(|a| a == conv) && self.binding(isa, &r.name).is_some())
+            .map(|r| r.name.as_str())
+            .collect();
+        match candidates.len() {
+            0 => Ok(conv.to_string()),
+            1 => Ok(candidates[0].to_string()),
+            _ => Err(AbiError::BadRules {
+                name: format!("{isa}/{conv}"),
+                why: format!(
+                    "约定 `{conv}` 在这台机器上有多份候选（都声称代答且有绑定）：{}——\
+                     别名必须唯一；要覆写就注册自己的 `{conv}` 规则 + `(isa, \"{conv}\")` 绑定",
+                    candidates.join(", ")
+                ),
+            }),
+        }
     }
 
     /// 已注册的约定名（排序）。
@@ -144,6 +182,10 @@ impl AbiRegistry {
         conv: &str,
         sig: &Signature,
     ) -> Result<AbiPlan, AbiError> {
+        let isa = target.isa_name();
+        let requested = conv;
+        // 别名解析：`c` 这类抽象名落到这台机器上**整套**生效的约定（规则 + 绑定同源）。
+        let conv: &str = &self.resolve_conv(isa, requested)?;
         let rules = self.rules.get(conv).ok_or_else(|| AbiError::BadRules {
             name: conv.to_string(),
             why: format!(
@@ -155,7 +197,6 @@ impl AbiRegistry {
                 }
             ),
         })?;
-        let isa = target.isa_name();
         let binding = self.binding(isa, conv).ok_or_else(|| AbiError::BadRules {
             name: format!("{isa}/{conv}"),
             why: format!(
@@ -164,14 +205,15 @@ impl AbiRegistry {
                 self.binding_names()
             ),
         })?;
-        let mut plan = plan_fn(
-            target,
-            rules,
-            binding,
-            sig,
-            self.hooks.get(conv).map(|b| &**b),
-        )?;
-        if let Some(h) = self.hooks.get(conv) {
+        // 钩子按**生效名**挂；别名解析前的名字也算（`insert_hooks("c", …)` 在解析成
+        // `win64` 之后仍要生效，否则"挂上却永远不触发"）。
+        let hooks = self
+            .hooks
+            .get(conv)
+            .or_else(|| self.hooks.get(requested))
+            .map(|b| &**b);
+        let mut plan = plan_fn(target, rules, binding, sig, hooks)?;
+        if let Some(h) = self.hooks.get(conv).or_else(|| self.hooks.get(requested)) {
             h.adjust_plan(&mut plan);
         }
         Ok(plan)

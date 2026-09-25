@@ -8,12 +8,12 @@ CLI（`forge-isa abi …`）与集成测试都用同一份，避免"文档一套
 
 | 文件 | ISA 名 | 约定名 | 参数寄存器（int / float） | 间接结果指针 | callee-saved |
 | --- | --- | --- | --- | --- | --- |
-| `win64-x86_64.toml` | `x86_v12` | `win64` | RCX-R9 / XMM0-3（按位置共用游标） | RCX（`int` 池 0 槽） | RBX,RDI,RSI,R12-R15 |
-| `sysv64-x86_64.toml` | `x86_v12` | `sysv64` | RDI,R9 序 / XMM0-7（按类各计数） | RDI（`int` 池 0 槽） | RBX,R12-R15 |
+| `win64-x86_64.toml` | `x86_64_v12` | `win64` | RCX-R9 / XMM0-3（按位置共用游标） | RCX（`int` 池 0 槽） | RBX,RDI,RSI,R12-R15 |
+| `sysv64-x86_64.toml` | `x86_64_v12` | `sysv64` | RDI,R9 序 / XMM0-7（按类各计数） | RDI（`int` 池 0 槽） | RBX,R12-R15 |
 | `aapcs64-arm64.toml` | `arm64_v12` | `aapcs64` | X0-X7 / **无浮点池（缺口）** | **X8（独立池）** | X19-X28 |
 | `lp64d-riscv64.toml` | `riscv64_v12` | `lp64d` | X10-X17 / F10-F17（按类各计数） | X10（`int` 池 0 槽） | X9,X18-X27 |
 
-三条与"从谱里抄 `[abi]`"不同的约定值得写下来：
+四条与"从谱里抄 `[abi]`"不同的约定值得写下来：
 
 1. **帧指针不列进 `cs_gpr`**：x86 的 RBP、riscv 的 X8、arm64 的 X29 都由帧件保存，
    规则侧用 `callee_saved.includes_fp` / `includes_link` 表达"它也被保存"。
@@ -23,6 +23,11 @@ CLI（`forge-isa abi …`）与集成测试都用同一份，避免"文档一套
    这一条正是旧实现"永远取首 int 槽"能碰对 x86、碰上 arm64 必错的原因。
 3. **池是懒解析的**：没被任何签名用到的池可以不写，也不会有错；一旦规则要求它，
    引擎立刻报 `MissingPool`。arm64 缺浮点池就是这种"显式缺口"。
+4. **`c` 是抽象名，靠 `AbiRules::aliases` 落地**：IR 的缺省 `CallConvId::Builtin(C)`
+   不带平台信息；"这台机器上的 C 是哪一份"写在**规则**里
+   （`builtin.rs` 的 `win64`/`aapcs64`/`lp64d` 各带 `aliases = ["c"]`，`sysv64` 不声明），
+   解析时**整套**代答（规则 + 本文件的绑定同源）——只让绑定代答会得到 by_class 的槽位
+   与 RCX 返回（实测三个 JIT 用例红）。绑定文件因此**只有事实、没有策略**。
 
 ## 已知缺口（A5/A6 关闭）
 

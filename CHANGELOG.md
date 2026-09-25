@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-25) — v20 A3b-2b-2a：缺省约定 `c` 的绑定 + 收参改读调用布局
+
+- **前提缺口**：IR 的缺省约定是抽象名 `c`，而内置绑定只有 `win64`/`sysv64`/`aapcs64`/`lp64d` ⇒ `c` 在真机上没有绑定 ⇒ `call_layout` 恒为 `None`、生成物的布局路径永远不生效。补法是把它变成**数据**：`AbiRules` 新增 `aliases = ["c"]`（"这台机器的 C 就是本约定"），内置 `win64`/`aapcs64`/`lp64d` 声明、`sysv64` 刻意不声明。**关键在"整套代答"**：解析出的必须是同一份约定的**规则 + 绑定**（`AbiRegistry::resolve_conv`）。实测教训——只让**绑定**代答（拿 `c` 自己的通用规则配 Win64 的寄存器）会得到 by_class 的槽位与 RCX 返回：混合 int/float 参数读错、`sret` + by-ref 槽位错位，三个 JIT 用例当场红。纪律：同一机器上两份约定都声称代答 ⇒ 报错（不按注册序猜）；显式 `(ISA, "c")` 绑定/规则优先于别名（宿主覆写入口）。
+- `@move_args`（被调方收参）改读 `AllocResult::call_layout`：来源寄存器取自布局（`ArgPlace::Reg` 的 **(类, 类内号)**——int 类走 `gpr_mov`、浮点/向量类按类宽分派 `vec_mov`/`fpr_mov`），宽向量 by-ref 走 `ArgPlace::Indirect`。生成器不再自己数"第几个 int 槽"、不再自己算 `sret` 偏移（这两件事现在全由绑定/规则决定）。
+- **入场判定 `__layout_ok`**：只有**每个**形参都落在本片覆盖的落点时才启用；有一个不支持（`Pair`/`Group`/`Stack`/无指针的 `Indirect`）就**整函数**退回既有 `[abi]` 路径（两条路径不混用——混用会让旧路径的 `__gi`/`__fi` 游标错位）。`call_layout = None`（无绑定/规划失败）同样退回。
+- 守卫与实测：新增 `forge-isa-dsl/tests/call_layout_emission.rs`（三份发行谱都发射布局路径、且排在旧路径之前、只按寄存器**类**分派）；`abi_target_real.rs` 新增"缺省 `c` 也能规划并到达帧件"；**x86 矩阵 195 passed / 3 skipped / 0 failed**、**riscv64 矩阵 131 passed / 67 skipped / 0 failed**、`forge-codegen` 全套绿 ⇒ 收参换来源后行为不变。
+- 仍未切：栈参数 load/store、`byval` 副本、序尾声（`@push_callee`/`@frame_alloc`/`{callee_saved_bytes}`）仍读 `[abi]`（A3b-2b-2b / A4）。
+
 ### Added (2026-09-25) — v20 A3b-2b-1：序/尾声侧拿到调用布局（`AllocResult.call_layout`）
 
 - **结构事实**：`TargetFrameLowering::emit_prologue/epilogue` 只拿到 `frame_size` + `AllocResult`、拿不到 `LowerCtx`，而 `@move_args`（收参）是生成 lowering 的一部分、有 `LowerCtx`。所以"生成物改读 plan"分两条通路，序/尾声这条必须先把布局放进 `AllocResult`。

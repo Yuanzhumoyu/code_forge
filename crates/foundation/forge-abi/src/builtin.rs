@@ -55,6 +55,7 @@ position = "by_position"
 shadow_bytes = 32
 frame_padding = 8
 stack = { slot_bytes = 8, first_offset_slots = 2 }
+aliases = ["c"]  # 这台机器（x86_64_v12）上的 C 约定就是 Win64——整套代答（规则 + 绑定）
 classify = [
   { when = { kind = "float", size_le = 8 },   do = { direct = { pool = "float" } } },
   { when = { kind = "vector", size_le = 16 }, do = { direct = { pool = "float" } } },
@@ -116,6 +117,7 @@ pub const AAPCS64: &str = r#"
 name = "aapcs64"
 parent = "c"
 stack = { slot_bytes = 8, first_offset_slots = 2 }
+aliases = ["c"]  # arm64_v12 上的 C 约定
 classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "float" } } },
   { when = { kind = "vector", size_le = 16 },    do = { direct = { pool = "float" } } },
@@ -184,6 +186,7 @@ pub const LP64D: &str = r#"
 name = "lp64d"
 parent = "c"
 stack = { slot_bytes = 8, first_offset_slots = 2 }
+aliases = ["c"]  # riscv64_v12 上的 C 约定
 classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "float" } } },
   { when = { kind = "aggregate", hfa_max = 2 },  do = { direct = { pool = "float", slots = "hfa" } } },

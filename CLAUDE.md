@@ -250,6 +250,14 @@ code-forge (root umbrella)
    （`slots = "hfa"`），宽返回的 sret 落点**每份约定不同**（x86=RCX/RDI、AAPCS64=x8、
    riscv=a0）——这三处正是旧实现写错值的地方；③ 改 `CallConvId` 的编码要**同时**升
    `IR_FORMAT_VERSION`（当前 3）并改 `docs/reference/binary-format.md` 的版本历史表。
+   ④ **`c` 是抽象名，靠约定的 `aliases` 落地**（A3b-2b-2a）——IR 的缺省
+   `CallConvId::Builtin(C)` 不带平台信息，"这台机器上的 C 是哪一份"写在**规则**里
+   （`AbiRules::aliases`：内置 `win64`/`aapcs64`/`lp64d` 声明 `aliases = ["c"]`，
+   `sysv64` 不声明；**整套代答** = 规则 + 该机绑定同源，只让绑定代答会得到 by_class
+   的槽位与 RCX 返回，实测三个 JIT 用例红；同一机两份声称 ⇒ 报错）。生成物的收参
+   （`@move_args`）**已改读 `AllocResult::call_layout`**（入场判定 `__layout_ok`；
+   `Pair`/`Group`/`Stack`/无指针 `Indirect` ⇒ 整函数退回 `[abi]` 路径，两条路径不混用），
+   栈参数/`byval`/序尾声仍走旧路径（A3b-2b-2b / A4）。
    参考 `docs/reference/calling-conventions.md`，分期 `docs/plans/calling-convention-redesign-plan.md`。
 
 ### ISA Backend Pattern

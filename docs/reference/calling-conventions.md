@@ -69,6 +69,7 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
 | 键 | 含义 |
 | --- | --- |
 | `name` / `parent` / `note` | 名字、父约定、人类可读备注（出处/已知偏差） |
+| `aliases` | 本约定**额外响应**的约定名（**不随 `parent` 继承**；见下方「抽象名 `c` 怎么落地」） |
 | `position` | `by_class`（int/float 各自计数）或 `by_position`（共享位置游标；Windows x64） |
 | `int_pool` / `float_pool` / `vector_pool` | 参数池的**抽象名**（默认 `int` / `float` / `float`） |
 | `stack_align` / `frame_padding` / `red_zone` / `shadow_bytes` | 调用点对齐、帧填充、红区、shadow space |
@@ -117,6 +118,30 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
    byval 指针、**当返回**是 x8 的 sret；Win64 同理（参数 byref、返回 RCX sret）。
    只写一份 `classify` 会把"返回值就是这个指针"当成事实。
 
+### 抽象名 `c` 怎么落地（`aliases`）
+
+IR 的缺省约定是 `CallConvId::Builtin(C)`——一个**抽象名**：Windows x64 / SysV / AAPCS64 /
+LP64D 才是真身。规则里的 `aliases = ["c"]` 就是这条平台事实的数据形态："本约定在这台机器上
+代答 `c`"。内置三份声明它（`win64` / `aapcs64` / `lp64d`），`sysv64` 刻意不声明。
+
+```text
+resolve_conv(isa, "c")
+  ① 有显式 (isa, "c") 绑定        ⇒ 就用它（宿主覆写入口：连规则一起自己提供）
+  ② 否则找"声称代答 c 且有本机绑定"的约定
+       恰好一份                    ⇒ 用它（x86→win64、riscv→lp64d、arm64→aapcs64）
+       多于一份                    ⇒ 报错（不按注册序猜）
+       一份都没有                  ⇒ 原样返回，后续报"缺注册/缺绑定"
+```
+
+两条实测教训写在这里，别再走回去：
+
+1. **必须"整套"代答（规则 + 绑定同源）**。只让**绑定**代答（拿 `c` 自己那份通用规则去配
+   Win64 的寄存器）会得到 by_class 的槽位与 RCX 返回：混合 int/float 参数读错、
+   `sret` + by-ref 的槽位错位——三个 JIT 用例当场红。
+2. **别名唯一**。同一台机器上两份约定都声称代答 ⇒ 明确报错；要覆写就注册自己的 `c`
+   规则（同名覆盖内置那份）+ `(isa, "c")` 绑定。挂 `AbiHooks` 时生效名与请求名都认
+   （`insert_hooks("c", …)` 在解析成 `win64` 之后仍然触发）。
+
 ### 返回位为什么还要**独立池**
 
 返回寄存器与参数寄存器不是同一批：Win64 的标量返回在 `RAX`，参数却从 `RCX` 起；
@@ -145,6 +170,8 @@ ret_float = ["XMM0"]
   （没有宿主，按 `abi_view` 的"GPR 区 + FP 区"编号）检查时，**优先用名字**。
 - 帧指针不进 `cs_gpr`：x86 的 RBP、riscv 的 X8、arm64 的 X29 由帧件保存，
   规则侧用 `callee_saved.includes_fp` / `includes_link` 表达"它也被保存"（否则算两遍）。
+- 绑定**不定义约定**，只回答"这个约定的这些池在这台机器上是哪些寄存器"——
+  它没有别名、没有策略；`(ISA, 约定)` 对不上就是 `BadRules`。
 
 ## IR 侧：`CallConvId`（声明用哪份约定）
 
@@ -199,6 +226,35 @@ pub enum CallConvId {
   从 0 起）。副本是调用方**帧内**的临时量，跟"第几个栈参数"无关；混进传出参数区会让
   后面的栈参数与副本抢同一段内存。
 
+## ④ 发射侧：plan 怎么进生成物
+
+`AbiPlan` 是 forge-abi 的类型，而生成物只依赖 `forge-isa-runtime`（分层纪律），
+所以中间有一层**中性镜像**：
+
+```text
+AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machine::call_layout::CallLayout
+                                                                        │
+                            AllocResult::call_layout ◄── LowerCtx::call_layout（管线在编译入口填）
+                                                                        │
+                                          生成物的 @move_args / 序尾声（读 __rm.call_layout）
+```
+
+寄存器在 `CallLayout` 里是 **(类, 类内号)**（`RegClass` 是 forge-ir 的中性类型），
+生成物用 `Reg::from_index(i, class)` 还原——运行时因此**不需要依赖 forge-abi**。
+
+当前落地程度（A3b-2b-2a，2026-09-25）：
+
+- **收参（`@move_args`）已按布局走**：每条形参的来源寄存器取自 `call_layout`
+  （`__layout_ok` 入场判定；`Reg` / 带指针的 `Indirect` 两类落点），生成器不再数
+  "第几个 int 槽"、不再做 `sret` 偏移——这两件事全是绑定/规则算出来的。
+- **一个参数落在本片未覆盖的落点**（`Pair`/`Group`/`Stack`/无指针的 `Indirect`）⇒
+  **整函数**退回既有 `[abi]` 路径（两条路径不混用：混用会让旧路径的 `__gi`/`__fi`
+  游标与实际参数错位）。栈参数/序尾声的搬运仍是这一批的后续工作（A3b-2b-2b、A4）。
+- `call_layout = None`（没有对应绑定、或规划失败）同样退回旧路径——**不是静默错值**：
+  `FORGE_TRACE_ABI=1` 会打印计划或失败原因。
+- 结构守卫在 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`（三份发行谱
+  都发射了布局路径，且排在旧路径之前）。
+
 ## 内置约定（四份 + 一个抽象基类）
 
 | 约定 | 位置计数 | 参数寄存器（内置绑定） | 返回寄存器 | 栈/shadow/红区 | 宽返回（sret） | callee-saved 机制 | 变参 |
@@ -210,7 +266,9 @@ pub enum CallConvId {
 | `lp64d` | by_class | X10-X17 / F10-F17 | X10:X11 / F10:F11 | 16 / 0 / 无 | X10（`int` 池 0 槽） | `store_to_frame` | 未命名实参走栈 |
 
 `c` 是给别的约定继承的抽象基类（`parent = "c"` 给出"通用 C 家族"的分类兜底），
-**它自己没有绑定**——直接拿 `c` 规划会明确报"缺绑定"，这是刻意设计的 fail-closed。
+**它自己没有绑定**——拿 `c` 直接规划时要靠别的约定**整套代答**（三份内置声明
+`aliases = ["c"]`，见上）；一台机器上无人代答、又没有 `(isa, "c")` 绑定时报
+"缺绑定"，这是刻意设计的 fail-closed，而不是让它退回某个"差不多能用"的约定。
 
 ## 声明属性（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`）
 

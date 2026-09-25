@@ -319,6 +319,19 @@ pub struct AbiRules {
     /// 继承：本规则只在父规则之上覆写列出的字段（用 `merge_parent` 展开）。
     #[serde(default)]
     pub parent: Option<String>,
+    /// 本约定**额外响应**的约定名（缺省空；**不随 `parent` 继承**）。
+    ///
+    /// 用途：IR 的缺省 `CallConvId::Builtin(C)` 只是一个**抽象名**——"这台机器上的 C
+    /// 就是 Win64 / AAPCS64 / LP64D"是平台事实。声明 `aliases = ["c"]` 即"本约定在这台
+    /// 机器上代答 `c`"，于是 `c` 解析成**整套**约定（规则 + 该机器的绑定），而不是
+    /// 拿 `c` 的抽象规则去配别家的寄存器（那样 by_class/by_position、返回池、sret 槽
+    /// 全会错——这是实测踩过的坑）。
+    ///
+    /// 纪律：同一 ISA 上最多一份**有绑定的**约定能代答同一别名，多于一份 ⇒
+    /// 明确报错（不按注册序猜）；宿主想覆写某台机器的 C，就注册自己的 `c` 规则
+    /// （覆盖内置那份）+ `(ISA, "c")` 绑定——**显式绑定优先于别名**。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 
     // ── 位置与池 ──
     /// 位置计数规则。
@@ -414,6 +427,19 @@ impl AbiRules {
         };
         if self.name.trim().is_empty() {
             return Err(bad("name 不能为空".into()));
+        }
+        for (i, a) in self.aliases.iter().enumerate() {
+            if a.trim().is_empty() {
+                return Err(bad(format!("aliases[{i}] 为空——要么删掉它，要么写约定名")));
+            }
+            if *a == self.name {
+                return Err(bad(format!(
+                    "aliases[{i}] = `{a}` 与自身 name 同名——别名是给**别的**约定名用的"
+                )));
+            }
+            if self.aliases[..i].contains(a) {
+                return Err(bad(format!("aliases 里 `{a}` 重复")));
+            }
         }
         if self.stack.slot_bytes == 0 {
             return Err(bad("stack.slot_bytes 不能为 0".into()));

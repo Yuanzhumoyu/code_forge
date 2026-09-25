@@ -11,7 +11,7 @@
 mod common;
 
 use common::*;
-use forge_abi::{AbiBinding, AbiError, AbiRegistry, AbiRules, Signature, plan_fn};
+use forge_abi::{AbiBinding, AbiError, AbiRegistry, AbiRules, Placement, Signature, plan_fn};
 
 #[test]
 fn unregistered_convention_is_an_error_not_a_default() {
@@ -413,4 +413,135 @@ fn builtin_catalog_is_self_consistent() {
                 .unwrap_or_else(|e| panic!("{isa}/{conv} 的池 `{pool}` 解析失败：{e}"));
         }
     }
+    // **C 别名**：内置里恰好三份**约定**声称"我是这台机器的 C"，且归属明确。
+    // 别名是"整套代答"（规则 + 绑定同源），所以断言落在约定名上。
+    let aliased: Vec<&str> = reg
+        .conv_names()
+        .into_iter()
+        .filter(|n| {
+            reg.rules(n)
+                .is_some_and(|r| r.aliases.iter().any(|a| a == "c"))
+        })
+        .collect();
+    assert_eq!(aliased, ["aapcs64", "lp64d", "win64"], "声称 C 别名的约定");
+    for (isa, want) in [
+        ("x86_64_v12", "win64"),
+        ("arm64_v12", "aapcs64"),
+        ("riscv64_v12", "lp64d"),
+    ] {
+        assert_eq!(
+            reg.resolve_conv(isa, "c").unwrap(),
+            want,
+            "{isa} 上 `c` 应解析成整套 {want}"
+        );
+    }
+}
+
+// ───────────────── C 别名：抽象约定名 → 这台机器上整套生效的约定 ─────────────────
+
+/// 单寄存器落点的寄存器名。
+fn reg_name(p: &Placement) -> String {
+    match p {
+        Placement::Reg { reg, .. } => reg.name.clone(),
+        Placement::RegPair { lo, hi } => format!("{}:{}", lo.name, hi.name),
+        other => panic!("期望寄存器落点，实际 {other:?}"),
+    }
+}
+
+/// **C 别名**：IR 的缺省 `CallConvId::Builtin(C)` 只是抽象名；"这台机器上的 C 是哪一份"
+/// 由**约定的数据**回答（`aliases = ["c"]`）——而且是**整套**代答（规则 + 绑定同源）。
+///
+/// 这条断言是实测换来的：只让**绑定**代答（拿 `c` 自己的规则配 Win64 的寄存器）会得到
+/// by_class 的槽位与 RCX 返回——混合 int/float 参数读错、sret+by-ref 槽位错位。
+#[test]
+fn the_c_convention_resolves_to_the_whole_platform_convention() {
+    let reg = forge_abi::builtin::registry().unwrap();
+    let sig = Signature::new(
+        vec![("a".into(), i64_()), ("x".into(), f64_())],
+        Some(i64_()),
+    );
+
+    let p = reg.plan(&x86_64_v12(), "c", &sig).unwrap();
+    assert_eq!(p.conv, "win64", "x86_64_v12 的 C 就是整套 Win64");
+    assert_eq!(reg_name(&p.args[0].place), "RCX");
+    assert_eq!(
+        reg_name(&p.args[1].place),
+        "XMM1",
+        "by_position（Win64 规则）而不是 by_class 的 XMM0"
+    );
+    // 精确名不受别名影响：同一台机器上 `sysv64` 仍按类计数。
+    let p = reg.plan(&x86_64_v12(), "sysv64", &sig).unwrap();
+    assert_eq!(reg_name(&p.args[1].place), "XMM0");
+
+    // 另外两台机器：整数签名足以区分（arm64 谱里没有 FPR 组，浮点本就规划不出来）。
+    let int_sig = Signature::new(vec![("a".into(), i64_())], Some(i64_()));
+    let p = reg.plan(&riscv64_v12(), "c", &int_sig).unwrap();
+    assert_eq!(
+        (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
+        ("lp64d", "X10")
+    );
+    let p = reg.plan(&arm64_v12(), "c", &int_sig).unwrap();
+    assert_eq!(
+        (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
+        ("aapcs64", "X0")
+    );
+}
+
+/// **同一台机器上两份约定都声称代答同一别名 ⇒ 明确报错**（不按注册序猜）。
+#[test]
+fn two_conventions_claiming_one_alias_on_a_machine_are_rejected() {
+    let mut reg = forge_abi::builtin::registry().unwrap();
+    reg.insert_rules_toml("name = \"my_c\"\nparent = \"c\"\naliases = [\"c\"]\n")
+        .unwrap();
+    reg.insert_binding_toml("isa = \"x86_64_v12\"\nconv = \"my_c\"\n[pools]\nint = [\"RCX\"]\n")
+        .unwrap();
+    let err = reg
+        .plan(&x86_64_v12(), "c", &Signature::new(vec![], None))
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("win64") && msg.contains("my_c"), "{msg}");
+}
+
+/// **显式绑定优先于别名**：宿主想让某台机器的 `c` 归自己，就注册自己的 `c` 规则
+/// （覆盖内置那份）+ `(ISA, "c")` 绑定——整套都由他说了算。
+#[test]
+fn an_explicit_registration_wins_over_the_alias() {
+    let mut reg = forge_abi::builtin::registry().unwrap();
+    // 覆写内置 `c` 的规则（同名插入即替换），只留一条"标量走 int 池"。
+    reg.insert_rules_toml(
+        "name = \"c\"\nclassify = [ { when = { kind = \"scalar\" }, do = { direct = { pool = \"int\" } } } ]\n",
+    )
+    .unwrap();
+    reg.insert_binding_toml("isa = \"x86_64_v12\"\nconv = \"c\"\n[pools]\nint = [\"RDX\"]\n")
+        .unwrap();
+    let sig = Signature::new(vec![("a".into(), i64_())], Some(i64_()));
+    let p = reg.plan(&x86_64_v12(), "c", &sig).unwrap();
+    assert_eq!(
+        (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
+        ("c", "RDX")
+    );
+    // 别名来源那份（win64）本身没被动过。
+    let p = reg.plan(&x86_64_v12(), "win64", &sig).unwrap();
+    assert_eq!(reg_name(&p.args[0].place), "RCX");
+}
+
+/// 别名的写法错误在**解析/校验期**就报出来（不拖到规划期才说不清）。
+#[test]
+fn alias_mistakes_are_rejected_early() {
+    let bad = |why: &str, toml: &str| {
+        let e = AbiRules::from_toml(toml)
+            .and_then(|r| r.validate())
+            .expect_err(why);
+        e.to_string()
+    };
+    let self_named = bad(
+        "别名与自身 name 同名应被拒",
+        "name = \"win64\"\naliases = [\"win64\"]\n",
+    );
+    assert!(self_named.contains("同名"), "{self_named}");
+    let dup = bad(
+        "同一份规则里重复别名应被拒",
+        "name = \"win64\"\naliases = [\"c\", \"c\"]\n",
+    );
+    assert!(dup.contains("重复"), "{dup}");
 }

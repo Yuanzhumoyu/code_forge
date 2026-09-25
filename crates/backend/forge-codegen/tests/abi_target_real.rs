@@ -291,6 +291,48 @@ fn plan_converts_into_the_runtime_call_layout() {
     assert_eq!(layout.caller_offset(2), 48);
 }
 
+/// **缺省约定也要能规划**（v20 A3b-2b-2 的入场券）：IR 的缺省约定是抽象的 `c`，
+/// 它在真机上解析成**整套**平台约定（`win64` 的规则 + `win64` 的绑定，靠规则的
+/// `aliases = ["c"]`）。这是"发射真的会切到布局"的前提——缺省约定规划不出来，
+/// `call_layout` 就永远是 `None`，生成物只走旧路径（典型症状：改了生成器却没有一处生效）。
+#[test]
+fn the_default_convention_plans_and_reaches_the_frame_lowering() {
+    use forge_codegen::FunctionCompiler;
+    use forge_isa_runtime::machine::call_layout::ArgPlace;
+
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I64, "n"), (TypeId::F64, "x")], &[TypeId::I64])
+        .with_calling_convention(CallConvId::builtin(ConvName::C));
+    let mut b = FunctionBuilder::new("c_probe", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "n"), (TypeId::F64, "x")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0]]);
+    let func = b.finish().expect("build");
+
+    let (_cf, alloc) = FunctionCompiler::new(TargetMachine::new())
+        .compile_with_alloc(&func)
+        .expect("compile");
+    let layout = alloc
+        .call_layout
+        .as_ref()
+        .expect("缺省约定 `c` 必须能规划出布局（靠规则的 aliases）");
+    // 解析成**整套** Win64：by_position 的槽位（第 2 个参数进 XMM1），而不是 `c` 自己的
+    // by_class 规则（那会给出 XMM0，实测参数读错）。
+    assert_eq!(layout.conv, "win64");
+    match &layout.args[0].place {
+        ArgPlace::Reg { class, index, .. } => {
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 1))
+        }
+        other => panic!("{other:?}"),
+    }
+    match &layout.args[1].place {
+        ArgPlace::Reg { class, index, .. } => {
+            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(16), 1), "XMM1")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
 /// **序言/尾声侧的通路**（v20 A3b-2b）：`TargetFrameLowering::emit_prologue/epilogue` 只拿到
 /// `AllocResult`（拿不到 `LowerCtx`），所以调用布局必须挂在 `AllocResult` 上——本测试钉住
 /// "管线确实把它带到了那里"，否则"生成物改读 plan"在序/尾声这一半无从下手。

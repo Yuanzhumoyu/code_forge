@@ -1194,11 +1194,86 @@ fn gen_emit_pseudo(
             } else {
                 quote! {}
             };
+            // ── 布局驱动的收参（v20 A3b-2b-2a）──
+            // 有 `call_layout`（A3b-2b-1 由管线塞进 `AllocResult`）且**每个参数**都落在
+            // 本片支持的落点（单寄存器 / 间接指针）时，收参**按布局来**：`sret` 占不占
+            // 首槽、按位置还是按类计数，都是绑定/规则算出来的，生成器不再自己数
+            // "第几个 int 槽"。有一个参数落在本片未覆盖的落点（`Pair`/`Group`/`Stack`/
+            // 无指针的 `Indirect`）→ **整函数**退回既有 `[abi]` 路径：两条路径不混用
+            //（混用会让旧路径的 `__gi`/`__fi` 游标与实际参数错位），这也让"逐字节不变"
+            // 这条验收可判。
+            let vec_mov_body: TokenStream = if has_vec_mov {
+                quote! {
+                    let __bytes = encode(&Inst::#vec_mov_vn {
+                        #v_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                        #v_src: Reg::from_index(*index, *class),
+                    })
+                    .map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
+                }
+            } else {
+                quote! {}
+            };
+            let fpr_by_size_body: TokenStream = if has_fpr_mov {
+                quote! {
+                    let __src = Reg::from_index(*index, *class);
+                    let __bytes = encode(&if __a.size == 4 {
+                        Inst::#fpr_mov32_vn {
+                            #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                            #f_src: __src,
+                        }
+                    } else {
+                        Inst::#fpr_mov64_vn {
+                            #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                            #f_src: __src,
+                        }
+                    })
+                    .map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__bytes);
+                }
+            } else {
+                quote! {}
+            };
+            // 浮点/向量类落点：按**类宽**分派（与既有路径同一判据——宽类（≤16B 向量、
+            // scalars 落在同一 FPR 池）走全宽 `vec_mov`，否则按参数字节宽走 `fpr_mov`）。
+            let fp_from_class: TokenStream = if has_vec_mov && has_fpr_mov {
+                quote! {
+                    if class.width() <= #vec_by_val_max {
+                        #vec_mov_body
+                    } else {
+                        #fpr_by_size_body
+                    }
+                }
+            } else if has_vec_mov {
+                vec_mov_body
+            } else if has_fpr_mov {
+                fpr_by_size_body
+            } else {
+                quote! {
+                    return Err(crate::IrError::Emit(
+                        "v12 float args (MOVSD/MOVSS missing)".into(),
+                    ));
+                }
+            };
             Ok(quote! {
                 #head
                 // 栈参数收参的 scratch（[abi].scratch 首项）与 callee-saved
                 // 字节数（sp_base 计算）——仅 shadow 声明时使用
                 #stack_arg_prologue
+                // 布局路径的入场判定：**全部**参数都落在受支持的落点才启用
+                let __layout_ok = match __rm.call_layout.as_ref() {
+                    Some(__cl) => __rm.param_vregs.iter().enumerate().all(|(__li, _)| {
+                        matches!(
+                            __cl.arg(__li as u32).map(|__a| &__a.place),
+                            Some(crate::machine::call_layout::ArgPlace::Reg { .. })
+                                | Some(crate::machine::call_layout::ArgPlace::Indirect {
+                                    reg: Some(_),
+                                    ..
+                                })
+                        )
+                    }),
+                    None => false,
+                };
                 for (__i, &__pv) in __rm.param_vregs.iter().enumerate() {
                     // 位置（sret 时首槽被隐藏指针占用）
                     let __pos = __i + if __rm.sret { 1usize } else { 0usize };
@@ -1217,6 +1292,46 @@ fn gen_emit_pseudo(
                             continue;
                         }
                     };
+                    // ── 布局路径：来源寄存器由布局给出（类 + 类内号）──
+                    if __layout_ok
+                        && let Some(__cl) = __rm.call_layout.as_ref()
+                        && let Some(__a) = __cl.arg(__i as u32)
+                    {
+                        match &__a.place {
+                            crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
+                                if class.is_int() {
+                                    let __src = Reg::from_index(*index, *class);
+                                    let __bytes = encode(&Inst::#mov_vn {
+                                        #m_src: __src,
+                                        #m_dest: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
+                                    })
+                                    .map_err(|e| crate::IrError::Emit(e))?;
+                                    __sink.put_bytes(&__bytes);
+                                } else if class.is_fp() {
+                                    #fp_from_class
+                                } else {
+                                    // 既不是整数类也不是浮点/向量类（如掩码寄存器类）——
+                                    // 本片没有对应的搬运角色，**明确拒绝**而不是当浮点搬。
+                                    return Err(crate::IrError::Unsupported(
+                                        "v12 move_args: 布局给的寄存器类没有收参搬运指令".into(),
+                                    ));
+                                }
+                            }
+                            crate::machine::call_layout::ArgPlace::Indirect {
+                                reg: Some((class, index)),
+                                ..
+                            } => {
+                                let __src = Reg::from_index(*index, *class);
+                                #byref_stmt
+                            }
+                            _ => {
+                                return Err(crate::IrError::Internal(
+                                    "v12 move_args: 布局落点未过 __layout_ok 判定".into(),
+                                ));
+                            }
+                        }
+                        continue;
+                    }
                     if __rm.param_by_ref.get(__i) == Some(&true) {
                         // by-ref：宽向量参数按引用传——GPR 槽位是数据指针，
                         // 从 [ptr] load 到向量寄存器（roles = wide_vec_load_32/64）。

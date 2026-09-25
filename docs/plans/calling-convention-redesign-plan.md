@@ -213,7 +213,46 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
   RCX=(GPR(8),1)/callee-saved 非空）。
 - 发射仍未切换 ⇒ 生成物逐字节不变。
 
-### A3b-2b-2 帧件与 `@move_args` 改读 call_layout（x86 优先，逐字节不变为验收）
+### A3b-2b-2a ✅ 缺省约定 `c` 的绑定 + 收参（`@move_args`）改读布局
+
+**先补的前提**：IR 的缺省约定是抽象名 `c`，而内置绑定只有 `win64`/`sysv64`/`aapcs64`/
+`lp64d`——`c` 在真机上**没有绑定** ⇒ `call_layout` 永远是 `None`，生成物的布局路径
+永远不生效（"接了但没生效"）。补法是把它变成**数据**：`AbiRules` 新增
+`aliases = ["c"]`（"这台机器上的 C 约定就是本约定"），内置 `win64`/`aapcs64`/`lp64d`
+声明它、`sysv64` 刻意不声明。
+
+**必须是"整套代答"**（`AbiRegistry::resolve_conv`）：解析出的必须是同一份约定的
+**规则 + 绑定**。踩过的坑（2026-09-25 实测）：先写成"只让**绑定**代答"——`c` 的通用规则
+配上 Win64 的寄存器池，于是 by_position 变成 by_class、返回池从 RAX 变成 RCX——
+`test_jit_mixed_int_float_args` / `test_jit_v128_byval_mixed_int_pos` /
+`test_jit_sret_with_byref_arg` 三个用例当场红。纪律两条：同一机器上两份约定都声称
+代答同一别名 ⇒ **报错**（不按注册序猜）；显式 `(ISA, "c")` 绑定**优先**于别名
+（宿主覆写入口：连规则一起自己提供）。
+
+**收参切换**（x86 优先，riscv/arm64 同时受益于同一份生成物）：
+
+- `@move_args` 的入参来源改读 `AllocResult::call_layout`：`ArgPlace::Reg`（类 + 类内号，
+  int 类走 `gpr_mov`、浮点/向量类按类宽分派 `vec_mov`/`fpr_mov`）与带指针的
+  `ArgPlace::Indirect`（宽向量 by-ref，走 `wide_vec_load_32/64`）。
+- **入场判定 `__layout_ok`**：只有**每个**形参都落在本片覆盖的落点时才启用；有一个
+  不支持（`Pair`/`Group`/`Stack`/无指针的 `Indirect`）就**整函数**退回既有 `[abi]`
+  路径——两条路径不混用（混用会让旧路径的 `__gi`/`__fi` 游标错位），也让"逐字节不变"
+  这条验收可判。`call_layout = None`（没绑定/规划失败）同样退回。
+- 结构守卫 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`：三份发行谱都
+  发射了布局路径，且它排在旧路径之前（"接了却没生效"这类退步只有文字级守卫抓得到）。
+- 实测（2026-09-25，本机）：x86 `c` 已能规划（首参 RCX=(GPR(8),1)，
+  `abi_target_real.rs::the_default_convention_plans_and_reaches_the_frame_lowering`）；
+  **x86 矩阵 195 passed / 3 skipped / 0 failed**、**riscv64 矩阵 131 passed / 67 skipped /
+  0 failed**、`forge-codegen` 全套绿 ⇒ 收参换来源后行为不变。
+- **仍未切**：栈参数的 load/store、`byval` 副本、序尾声（`@push_callee`/`@frame_alloc`/
+  `{callee_saved_bytes}`）仍读 `[abi]`——A3b-2b-2b 与 A4。
+
+### A3b-2b-2b 帧件与栈参数改读 call_layout（未开始）
+
+**剩余面**：`ArgPlace::Stack`（栈参数 load/store + spill 槽坐标）、`byval` 副本
+（`Indirect { reg: None, on_stack: true }` + `byval_area_bytes`）、`Pair`/`Group`，
+以及序尾声的 `@push_callee`/`@pop_callee`/`@frame_alloc`/`{callee_saved_bytes}`
+（后者的 `callee_saved` 与 `stack_align`/`frame_padding` 已在 `CallLayout` 里）。
 
 **切换前必须先关掉的能力缺口**（2026-09-25 用 A3b-1 的核对测出来的真实现状，已钉成测试
 `abi_target_real.rs::riscv64_float_gap_is_engine_ok_but_emission_closed`）：
@@ -224,12 +263,13 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 | riscv64 / `lp64d` | 能算（int 槽 X10 + 浮点槽 F10） | **fail-closed**：`v12 float args (MOVSD/MOVSS missing)`（谱里没有 `fpr_mov` 角色） | 先补浮点搬运角色/指令 |
 | arm64 / `aapcs64` | 浮点/HFA 直接报缺池（没有 FPR 寄存器组） | 同样做不到 | A5 补 `[reg.fpr8]` + 角色 |
 
-也就是：**x86 可以先切**，riscv64/arm64 要等各自的能力补齐（与 A1 静态体检的缺口清单同一批）。
+也就是：**寄存器参数的收参可以切**（A3b-2b-2a 已切），栈参数/`byval`/序尾声要等各自的能力
+补齐（与 A1 静态体检的缺口清单同一批）。
 
-- 管线按 `AbiPlan` 走：实参搬运、返回值搬运、栈参数 store/load、sret 指针。
+- 管线按 `AbiPlan` 走：实参搬运（寄存器面已切）、返回值搬运、栈参数 store/load、sret 指针。
 - 验收：**x86 的生成物逐字节不变**（`forge-codegen` 全套测试 + 三 ISA 矩阵）；
   再开 riscv64/arm64。
-- 这一步会删掉"首 int 参数槽"那类硬编码。
+- 这一步会删掉"首 int 参数槽"那类硬编码（A3b-2b-2a 已删掉收参侧的那几处）。
 
 ### A4 序/尾声/帧按 plan 生成
 
