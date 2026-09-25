@@ -1,3 +1,5 @@
+/// 宿主 AbiTarget 适配器（真实后端 → forge-abi 引擎；v20 A3）。
+pub mod abi_target;
 pub mod agg_const;
 pub mod agg_expand;
 pub mod alloc_config;

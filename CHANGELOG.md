@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-25) — v20 A3a：宿主适配器（真实后端 → 引擎），ISA 正式申报能力
+
+- **`TargetMachine::role_bits(role) -> Option<u16>`**（`forge-isa-runtime` trait，默认 `None`）：ISA 向宿主**申报能力**的出口。DSL 从谱里的 `[[instructions]].roles` 生成 `match role { "gpr_mov" => Some(64), … , _ => None }`（按能力名折算，与 `forge-isa abi check` 的静态视图**同源**——都走 `abi_view::role_capability`，因此"谱里写了什么"与"宿主申报了什么"不会漂移；生成物里不留名字表 + 线性查找）。
+- **`forge_codegen::pipeline::abi_target`**：`MachineAbiTarget` 把真实 `TargetRegInfo` 喂给 `forge-abi` 引擎（索引空间 GPR 区 + FP 区、名字用生成枚举的变体名、`pinned` = 不在可分配表、能力走 `role_bits`），并提供 `plan_for_function`/`plan_for_signature`（IR 签名 + 约定数据 → 真机 `AbiPlan`）。
+- **交叉核对**（`tests/abi_target_real.rs`，3 条）：真机 x86 上 `win64` 的同一签名给出与 A1 合成目标**相同的落点**（第 1 个整数 RCX、第 2 个浮点 XMM1、标量返回 RAX、shadow 32、callee-saved/clobber 来自真表），未注册约定在真机上同样 fail-closed——即"适配器 + 内置绑定 + 引擎"三方对得上。
+- 说明：本片**只算不算用**（`AbiPlan` 供校验与诊断），发射仍走老路 ⇒ 现有编译行为不变；按 plan 发射调用点/入口/序尾声是 A3b（验收：x86 生成物逐字节不变）。
+
 ### Added (2026-09-24) — v20 A2b：声明属性（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`）真的改变规划
 
 - **引擎吃声明属性**：`forge_abi::Signature` 新增 `attrs`/`ret_attrs`（`DeclAttrs`），`plan_fn` 按属性改分类与落点——`byval(N)` → 该形参变"调用方栈上 N 字节副本 + 指针"（副本进 `StackLayout::byval_area_bytes`）、`sret` → 该形参占约定声明的 **hidden sret 槽**（x86 RCX/RDI、AAPCS64 **x8**、riscv a0；不再按普通参数分类）、`inreg` → 分类说要走栈时再试寄存器（池空仍走栈，不硬凑）、`zeroext`/`signext` → 落点带 `Extension`（都写时 `signext` 胜，与 LLVM 一致）、`align(N)` → 栈落点对齐抬到 N。

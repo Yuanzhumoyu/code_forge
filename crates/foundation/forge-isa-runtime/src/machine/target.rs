@@ -67,6 +67,18 @@ pub trait TargetMachine: Send + Sync + 'static {
         None
     }
 
+    /// **ISA 申报的能力**：能力名（`gpr_mov`/`fpr_mov`/`vec_mov`/`sp_adjust`/
+    /// `stack_arg_load`/`stack_arg_store`/`frame_addr`/`wide_vec_move`/`call`/
+    /// `call_indirect`/`ret`）→ 可编码的**最宽位宽**；`None` = 本 ISA 没有这个能力
+    /// （或非 DSL 后端 / 测试替身：不申报，约定侧的能力核对会如实报缺口）。
+    ///
+    /// DSL 生成的实现从 `[[instructions]].roles` 折算（与 `forge-isa abi check`
+    /// 的静态视图**同源**：都走 `forge_isa_dsl::abi_view::role_capability`），
+    /// 因此"谱里声明了什么"和"宿主申报了什么"不会漂移。
+    fn role_bits(&self, _role: &str) -> Option<u16> {
+        None
+    }
+
     /// 重定位编码器（可选）。默认按 ISA 名查后端注册表；后端也可覆盖。
     /// 用于把 PC 相对/绝对 relocation 按 ISA 编码写入代码（x86 rel32、
     /// AArch64 BL imm26、RISC-V B/J 位重组）。

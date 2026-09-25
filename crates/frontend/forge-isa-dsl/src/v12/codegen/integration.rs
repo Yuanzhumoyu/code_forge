@@ -815,6 +815,30 @@ fn resolve_reg_list(
 
 fn gen_target_machine(model: &V12Model) -> Result<TokenStream, String> {
     let isa_name_str = &model.meta.name;
+    // 能力表（v20 A3）：把 `[[instructions]].roles` 按**能力名**折算成 (名字, 位宽)，
+    // 与 `forge-isa abi check` 的静态视图同源（都走 `abi_view::role_capability`）。
+    // 无宽度语义的角色按地址宽折算（与静态视图同一口径）。
+    let default_bits: u16 = model.addr_class().map(|c| c.width()).unwrap_or(8) * 8;
+    let mut caps: Vec<(&'static str, u16)> = Vec::new();
+    for inst in &model.instructions {
+        for decl in &inst.roles {
+            let Some(cap) = crate::abi_view::role_capability(decl.role()) else {
+                continue;
+            };
+            let bits = decl.bits().unwrap_or(default_bits);
+            match caps.iter_mut().find(|(n, _)| *n == cap) {
+                Some(e) => e.1 = e.1.max(bits),
+                None => caps.push((cap, bits)),
+            }
+        }
+    }
+    caps.sort_unstable_by_key(|(n, _)| *n);
+    // 生成 `match role { "gpr_mov" => Some(64), …, _ => None }`——**直接给出分支**，
+    // 不在生成物里留名字表 + 线性查找（查表只发生在编译期，运行期一次比较搞定）。
+    let cap_arms: Vec<TokenStream> = caps
+        .iter()
+        .map(|(name, bits)| quote! { #name => Some(#bits), })
+        .collect();
     Ok(quote! {
         #[derive(Clone)]
         pub struct TargetMachine {
@@ -862,6 +886,14 @@ fn gen_target_machine(model: &V12Model) -> Result<TokenStream, String> {
             fn disassembler(&self) -> Option<&std::sync::Arc<dyn crate::machine::disasm::TargetDisassembler<Inst = Self::Inst>>> { Some(&self.disassembler) }
             fn assembler(&self) -> Option<&std::sync::Arc<dyn crate::machine::assembler::TargetAssembler<Inst = Self::Inst>>> { Some(&self.assembler) }
             fn decoder(&self) -> Option<&std::sync::Arc<dyn crate::machine::decoder::TargetDecoder<Inst = Self::Inst>>> { Some(&self.decoder) }
+
+            /// ISA 申报的能力（谱里 `roles` 声明折算；与 `forge-isa abi check` 同源）。
+            fn role_bits(&self, role: &str) -> Option<u16> {
+                match role {
+                    #(#cap_arms)*
+                    _ => None,
+                }
+            }
         }
 
         forge_isa_runtime::impl_erased_target_machine!(TargetMachine);

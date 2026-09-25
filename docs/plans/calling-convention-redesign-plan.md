@@ -161,7 +161,23 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
   池耗尽两种行为），以及 `forge-codegen/tests/conv_registry_read_path.rs` 的投影用例
   （含"带填充结构体不能被按成员求和"这条反例）。
 
-### A3 调用点/入口/返回值按 plan 发射（x86 优先）
+### A3a ✅ 宿主适配器（真实后端 → 引擎）
+
+- `TargetMachine::role_bits(role) -> Option<u16>`（`forge-isa-runtime` 的 trait 默认 `None`）：
+  **ISA 申报能力**的正式出口；DSL 从 `[[instructions]].roles` 生成
+  `match role { "gpr_mov" => Some(64), … , _ => None }`（能力名折算与 `forge-isa abi check`
+  的静态视图**同源**，都走 `abi_view::role_capability`，所以两边不会漂移）。
+- `forge_codegen::pipeline::abi_target`：`MachineAbiTarget`（`TargetRegInfo` → `AbiTarget`：
+  索引空间 = GPR 区 + FP 区、名字用生成枚举的变体名、pinned = 不在可分配表、能力走
+  `role_bits`）+ `plan_for_function`/`plan_for_signature`（IR 签名 → `AbiPlan`）。
+- 交叉核对测试 `tests/abi_target_real.rs`：真机 `win64` 上同一个签名给出与 A1 合成目标
+  **相同的落点**（RCX / XMM1 / 返回 RAX、shadow 32、callee-saved 来自真表），未注册约定
+  在真机上同样 fail-closed。
+- **还没做（A3b）**：按 plan 发射调用点/入口/序尾声（x86 优先，验收 = 生成物逐字节不变）；
+  适配器的 `link_reg()` 目前返回 `None`（`TargetRegInfo`/`TargetABI` 都没暴露 ra/lr，
+  A5 随 `[machine]` 补）。
+
+### A3b 调用点/入口/返回值按 plan 发射（x86 优先）
 
 - 管线按 `AbiPlan` 走：实参搬运、返回值搬运、栈参数 store/load、sret 指针。
 - 验收：**x86 的生成物逐字节不变**（`forge-codegen` 全套测试 + 三 ISA 矩阵）；
