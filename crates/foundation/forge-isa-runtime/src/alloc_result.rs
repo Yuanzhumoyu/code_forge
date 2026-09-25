@@ -14,6 +14,12 @@ use std::collections::HashMap;
 pub struct AllocResult {
     /// XReg → PReg 分配映射
     pub assignments: HashMap<XReg, PReg>,
+    /// **本次调用的中性布局**（v20 A3b-2b）：由管线从 `AbiPlan` 转好塞进来。
+    ///
+    /// 序言/尾声（`TargetFrameLowering::emit_prologue/epilogue`）只拿到本结构体、
+    /// 拿不到 `LowerCtx`，所以"保存谁 / 栈区多大 / 参数落在哪"必须挂在这里才能读到。
+    /// `None` = 管线没接上（或该 ISA/约定算不出计划）⇒ 走既有 `[abi]` 路径。
+    pub call_layout: Option<crate::machine::call_layout::CallLayout>,
     /// XReg → 溢出槽（含偏移和宽度）
     pub spill_slots: HashMap<XReg, SpillSlot>,
     /// 函数参数 XReg 列表（用于 prologue 中从 ABI 寄存器复制参数）
@@ -67,6 +73,7 @@ pub struct FrameInfo {
 impl Default for AllocResult {
     fn default() -> Self {
         Self {
+            call_layout: None,
             assignments: HashMap::new(),
             spill_slots: HashMap::new(),
             param_vregs: Vec::new(),
@@ -118,6 +125,7 @@ impl AllocResult {
             );
         }
         AllocResult {
+            call_layout: None,
             assignments,
             spill_slots: HashMap::new(),
             param_vregs: Vec::new(),

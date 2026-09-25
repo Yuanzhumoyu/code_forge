@@ -201,7 +201,19 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 - **发射仍未切换**（生成物读的还是 `TargetABI`）⇒ 生成物逐字节不变；下一步才是把生成物的
   `move_args`/收参/序尾声改读 `ctx.call_layout`，并用"全 JIT 矩阵逐字节不变"验收。
 
-### A3b-2b 生成物改读 call_layout（x86 优先，逐字节不变为验收）
+### A3b-2b-1 ✅ 序/尾声侧的通路（AllocResult 带上布局）
+
+结构事实先钉住：`TargetFrameLowering::emit_prologue/epilogue` 只拿到 `frame_size` +
+`AllocResult`，**没有** `LowerCtx`；而 `@move_args`（收参）是生成 lowering 的一部分、有
+`LowerCtx`。所以"生成物改读 plan"有两条通路，序/尾声这条必须先把布局**放进 `AllocResult`**：
+
+- `AllocResult` 新增 `call_layout: Option<CallLayout>`（默认 `None`），管线在收尾处从
+  `LowerCtx::call_layout` 填入；`None` = 没接上/算不出 ⇒ 帧件走既有 `[abi]` 路径。
+- 测试 `abi_target_real.rs`：钉住"管线确实把它带到了帧件那里"（conv/shadow/首个实参
+  RCX=(GPR(8),1)/callee-saved 非空）。
+- 发射仍未切换 ⇒ 生成物逐字节不变。
+
+### A3b-2b-2 帧件与 `@move_args` 改读 call_layout（x86 优先，逐字节不变为验收）
 
 **切换前必须先关掉的能力缺口**（2026-09-25 用 A3b-1 的核对测出来的真实现状，已钉成测试
 `abi_target_real.rs::riscv64_float_gap_is_engine_ok_but_emission_closed`）：

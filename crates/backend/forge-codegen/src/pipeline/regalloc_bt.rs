@@ -875,6 +875,7 @@ impl<'a> BtState<'a> {
             .unwrap_or_default();
 
         Ok(AllocResult {
+            call_layout: None,
             assignments: self.assignments,
             spill_slots: self.spill_slots,
             param_vregs: self.config.param_xregs.clone(),

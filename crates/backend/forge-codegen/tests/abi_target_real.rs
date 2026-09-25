@@ -290,3 +290,31 @@ fn plan_converts_into_the_runtime_call_layout() {
     assert_eq!(layout.caller_offset(0), 32);
     assert_eq!(layout.caller_offset(2), 48);
 }
+
+/// **序言/尾声侧的通路**（v20 A3b-2b）：`TargetFrameLowering::emit_prologue/epilogue` 只拿到
+/// `AllocResult`（拿不到 `LowerCtx`），所以调用布局必须挂在 `AllocResult` 上——本测试钉住
+/// "管线确实把它带到了那里"，否则"生成物改读 plan"在序/尾声这一半无从下手。
+#[test]
+fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
+    use forge_codegen::FunctionCompiler;
+
+    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let func = win64_probe();
+    let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
+
+    let layout = alloc
+        .call_layout
+        .as_ref()
+        .expect("管线必须把调用布局交给帧件");
+    assert_eq!(layout.conv, "win64");
+    assert_eq!(layout.shadow_bytes, 32);
+    // 首个实参落在 RCX = (GPR(8), 1)——与 plan/既有路径一致。
+    match &layout.args[0].place {
+        forge_isa_runtime::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 1))
+        }
+        other => panic!("{other:?}"),
+    }
+    // callee-saved 也在里面（序言据此保存、尾声据此恢复）。
+    assert!(!layout.callee_saved.is_empty());
+}

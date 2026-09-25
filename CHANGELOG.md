@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-25) — v20 A3b-2b-1：序/尾声侧拿到调用布局（`AllocResult.call_layout`）
+
+- **结构事实**：`TargetFrameLowering::emit_prologue/epilogue` 只拿到 `frame_size` + `AllocResult`、拿不到 `LowerCtx`，而 `@move_args`（收参）是生成 lowering 的一部分、有 `LowerCtx`。所以"生成物改读 plan"分两条通路，序/尾声这条必须先把布局放进 `AllocResult`。
+- `AllocResult` 新增 `call_layout: Option<CallLayout>`（默认 `None`），管线在收尾处从 `LowerCtx::call_layout` 填入；`None` = 没接上/算不出 ⇒ 帧件走既有 `[abi]` 路径。
+- 测试（`tests/abi_target_real.rs`）：钉住管线确实把布局带到帧件（conv/shadow/首个实参 `RCX=(GPR(8),1)`/callee-saved 非空）。
+- 发射仍未切换 ⇒ 生成物逐字节不变。
+
 ### Added (2026-09-25) — v20 A3b-2a：中性调用布局 `machine::call_layout`（发射切换的地基）
 
 - `forge-isa-runtime` 新增 `machine::call_layout`：把"一次调用长什么样"变成**中性数据**（`CallLayout`：逐参落点 / 返回 / 隐藏 sret / 栈区尺寸 / callee-saved / 被叫方弹栈 / 红区 / 扩展位数）。寄存器用 **(类, 类内号)** 表示（`RegClass` 是 forge-ir 的中性类型），生成物 `Reg::from_index(i, class)` 即可还原——**运行时因此不需要依赖 forge-abi**。
