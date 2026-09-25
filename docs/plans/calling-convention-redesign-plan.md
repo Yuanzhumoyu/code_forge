@@ -290,11 +290,53 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
   再开 riscv64/arm64。
 - 这一步会删掉"首 int 参数槽"那类硬编码（A3b-2b-2a 已删掉收参侧的那几处）。
 
-### A4 序/尾声/帧按 plan 生成
+### A4 序/尾声由生成器生成（伪指令**全部**删除）
 
-- 删 `[abi.frame]` 的帧填充与 `[emit.prologue|epilogue]`；由 `callee_saved` 机制 +
-  能力（`sp_adjust`/`push`/`frame_addr`）生成。
-- 验收：三 ISA 的帧布局与保存序列逐字节不变（`fp-outside`/`fp-inside` 两种模式各有快照）。
+**目标（用户 2026-09-25 的设计裁定）**：谱里只留**裸指令**（形状 + 编码 + 能力角色），
+序/尾声（函数调用平衡：保存谁、帧多大、怎么建立帧指针）**完全由生成器**按"机器事实 +
+角色"生成。`[emit.prologue]`/`[emit.epilogue]` 连同 `@push_callee`/`@pop_callee`/
+`@frame_alloc`/`@frame_free` 一起删除；`[emit]` 只剩 `align_pad`/`epilogue_label` 这类
+**机器事实**。角色是**能力声明**（这条指令能充当某件事），不是给指令加副作用。
+
+**机器事实（谱里已有；A5 会整节搬进 `[machine]`/绑定）**：
+`[abi.frame]` 的 `sp`/`fp`/`fp_push_bytes`/`alloc_neg`、`[abi].call_ret_reg`（**链接寄存器
+已存在**，就是它）、`[abi.callee_saved].gpr`（静态列表；A5 改由绑定的 `cs_gpr` 给出）、
+`[stack].slot`。
+
+**新增三个角色**（同一指令可挂多个角色；缺角色 ⇒ 明确 `Unsupported`，不猜名字）：
+
+| 角色 | 形状约定 | 用途 |
+| --- | --- | --- |
+| `frame_set` | `in` 槽 = 源、`out` 槽 = 目标，可带 imm | 建立/恢复帧指针（x86 `mov rbp, rsp` / `mov rsp, rbp`；riscv `addi x8, x2, frame`；arm64 `addimmx x29, sp, frame`） |
+| `callee_save` | Reg 槽[0]=值、Reg 槽[1]=基址、Imm 槽[0]=偏移 | 保存寄存器到帧（riscv `SD`、arm64 `STURX`） |
+| `callee_load` | 同上（load 方向） | 从帧恢复（`LD`/`LDURX`） |
+
+复用已有角色：`push`/`pop`（push 机制的保存/恢复）、`frame_alloc`/`frame_free`（sp 调整，
+符号由 `alloc_neg` 定）、`ret`。
+
+**生成器的序列**（顺序 = 引擎决定；机制今天按"谱里有没有 `push`+`pop` 角色"判定，
+A5 后由 `CallLayout::save_mechanism` 给）：
+
+- **push 机制**（x86）序言：`push fp` → `frame_set(fp←sp)` → 逐个 `push` 静态 callee-saved
+  → **收参** → `frame_alloc`（`frame_size != 0` 守卫）。
+  尾声：`frame_set(sp←fp)` → `frame_alloc(imm = cs 字节)` → 逆序 `pop` → `pop fp` → `ret`。
+- **store_to_frame**（riscv/arm64）序言：`frame_alloc` → `callee_save(link,[sp+frame-8])`
+  → `callee_save(fp,[sp+frame-16])` → `frame_set(fp←sp+frame)` → 动态 `callee_save`
+  （`[sp+frame-fp_push-(k+1)*slot]`）→ **收参**。
+  尾声：逆序动态 `callee_load` → `callee_load(fp,-16)` → `callee_load(link,-8)`
+  → `frame_free` → `ret`。
+
+**验收**：三 ISA 的序/尾声**机器码逐字节不变**——先把当前 `emit_prologue`/`emit_epilogue`
+（固定 `frame_size` + 固定 callee-saved 集合）的字节固化成 golden，再切生成器，golden 必须
+不动；随后全套测试 + 两条矩阵。
+
+**顺带要修的既有隐患**：x86 尾声的 `sub rsp, {callee_saved_bytes}` 用的是**静态**列表长度，
+而 `@push_callee` 按 `callee_saved_to_save` **动态**保存——少保存时 rsp 落点会错位。
+A4 让尾声与序言**同源**（都用动态计数），差异进测试。
+
+**明确放弃的表达力**：谱再也无法给函数插入"任意序言步骤"（例如 vzeroupper、栈探测、
+GOT 建立）。需要时**加角色**（上层能看见的能力），不回到自由模板——这正是"指令保持裸的、
+调用平衡交给约定层"的代价与收益。
 
 ### A5 删谱里的 `[abi]` 约定节，加 `[machine]`
 
