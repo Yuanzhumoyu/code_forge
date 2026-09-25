@@ -177,7 +177,17 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
   适配器的 `link_reg()` 目前返回 `None`（`TargetRegInfo`/`TargetABI` 都没暴露 ra/lr，
   A5 随 `[machine]` 补）。
 
-### A3b 调用点/入口/返回值按 plan 发射（x86 优先）
+### A3b-1 ✅ plan 接进编译入口（只算不用）
+
+- `CompileState` 新增 `abi_plan`/`abi_plan_note`：编译入口用 A3a 的适配器把该函数的
+  `AbiPlan` 算出来挂上；算不出来**不阻断编译**（发射还没用它），原因留档。
+- `FORGE_TRACE_ABI=1` 打印计划（`AbiPlan::to_text()`）或失败原因——发射尚未切换期间，
+  这是"计划长什么样"的唯一证据面。
+- **前置核对**（`tests/abi_target_real.rs` 新增）：引擎的计划必须与**当前**发射路径的
+  `AllocResult` 一致（sret 有无、逐参数 by-ref、栈参数区字节数）——这是把发射切到 plan
+  之前唯一能先做的正确性检查，也是 A3b-2 的入场券。
+
+### A3b-2 按 plan 发射调用点/入口/返回值（x86 优先）
 
 - 管线按 `AbiPlan` 走：实参搬运、返回值搬运、栈参数 store/load、sret 指针。
 - 验收：**x86 的生成物逐字节不变**（`forge-codegen` 全套测试 + 三 ISA 矩阵）；

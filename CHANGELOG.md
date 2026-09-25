@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-25) — v20 A3b-1：调用计划接进编译入口（只算不用，行为不变）
+
+- `CompileState` 在编译入口用 A3a 的宿主适配器把该函数的 `AbiPlan` 算出来挂上（`abi_plan`/`abi_plan_note`）；算不出来**不阻断编译**（发射还没用它），原因留档。`FORGE_TRACE_ABI=1` 打印计划的确定性文本或失败原因——发射尚未切换期间这是"计划长什么样"的唯一证据面。
+- **前置核对**（`tests/abi_target_real.rs` +1）：引擎的计划必须与**当前**发射路径的 `AllocResult` 一致——sret 有无、**逐参数** by-ref 判定、栈参数区字节数（`arg_area − shadow`）。这条一致性检查是把发射切到 plan 上的入场券：不一致就说明"适配器/数据/现有路径"有一边错了。
+- 本片**不改发射** ⇒ 生成物逐字节不变（`cargo test --workspace` 全绿、clippy `-D warnings` 干净）。
+
 ### Added (2026-09-25) — v20 A3a：宿主适配器（真实后端 → 引擎），ISA 正式申报能力
 
 - **`TargetMachine::role_bits(role) -> Option<u16>`**（`forge-isa-runtime` trait，默认 `None`）：ISA 向宿主**申报能力**的出口。DSL 从谱里的 `[[instructions]].roles` 生成 `match role { "gpr_mov" => Some(64), … , _ => None }`（按能力名折算，与 `forge-isa abi check` 的静态视图**同源**——都走 `abi_view::role_capability`，因此"谱里写了什么"与"宿主申报了什么"不会漂移；生成物里不留名字表 + 线性查找）。

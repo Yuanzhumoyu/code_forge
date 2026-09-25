@@ -90,3 +90,40 @@ fn unregistered_convention_is_rejected_on_a_real_machine() {
     let err = plan_for_function(&tm, &reg, "nope_conv", &win64_probe()).unwrap_err();
     assert!(err.to_string().contains("未注册"), "{err}");
 }
+
+/// **前置核对**（A3b 的准备工作）：引擎算出的计划与**当前**发射路径的 `AllocResult`
+/// 必须一致——这是"把发射切到 plan 上"之前唯一能先做的正确性检查。
+///
+/// 比的是两边都有的可观测量：有没有 sret、逐参数是否按引用、栈参数区字节数。
+#[test]
+fn plan_agrees_with_the_existing_lowering_result() {
+    use forge_codegen::FunctionCompiler;
+
+    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let func = win64_probe();
+    let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
+
+    let tm = TargetMachine::new();
+    let reg = builtin::registry().expect("内置注册表");
+    let plan = plan_for_function(&tm, &reg, "win64", &func).unwrap_or_else(|e| panic!("plan: {e}"));
+
+    assert_eq!(
+        matches!(plan.ret, forge_abi::RetLoc::Indirect { .. }),
+        alloc.sret,
+        "sret：plan 与现有发射路径必须一致"
+    );
+    let by_ref: Vec<bool> = plan
+        .args
+        .iter()
+        .map(|a| matches!(a.place, forge_abi::Placement::Indirect { .. }))
+        .collect();
+    assert_eq!(by_ref, alloc.param_by_ref, "逐参数 by-ref 判定");
+    // 栈参数区：plan 的 arg_area 扣掉 shadow 后应与现有路径的栈参数字节数一致。
+    assert_eq!(
+        plan.stack
+            .arg_area_bytes
+            .saturating_sub(plan.stack.shadow_bytes),
+        alloc.stack_arg_bytes,
+        "栈参数区字节数"
+    );
+}

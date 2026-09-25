@@ -33,6 +33,7 @@ pub(crate) fn trace_enabled(key: &'static str) -> bool {
         "FORGE_TRACE_ALLOC",
         "FORGE_TRACE_EXPIRE",
         "FORGE_TRACE_SPILL",
+        "FORGE_TRACE_ABI",
     ];
     static CACHE: OnceLock<std::collections::HashMap<&'static str, bool>> = OnceLock::new();
     CACHE

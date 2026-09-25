@@ -1951,6 +1951,23 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         let _t3 = _t.elapsed();
         let _t = std::time::Instant::now();
 
+        // v20 A3b 预备：`FORGE_TRACE_ABI=1` 打印该函数的调用计划（引擎产物）——发射尚未切换，
+        // 但"计划长什么样"现在可诊断（与既有 ABI 路径对照时这是唯一证据面）。
+        if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
+            eprintln!("[abi] === fn: {}", func_ref.name);
+            match &state.abi_plan {
+                Some(p) => {
+                    for line in p.to_text().lines() {
+                        eprintln!("[abi] {line}");
+                    }
+                }
+                None => eprintln!(
+                    "[abi] 无计划（发射仍走既有路径）：{}",
+                    state.abi_plan_note.as_deref().unwrap_or("-")
+                ),
+            }
+        }
+
         if crate::pipeline::trace_enabled("FORGE_TRACE_VCODE") {
             eprintln!("[vcode] === fn: {}", func_ref.name);
             for (bi, block) in state.vcode.blocks().enumerate() {
@@ -2035,6 +2052,14 @@ pub(crate) struct CompileState<I: MachineInst> {
     /// Alloca 指令 → 帧槽偏移（预扫描分配；lowering 时经 ctx.current_alloca_offset
     /// 供 `lea_off rd, alloca_offset` 规则取用）。`Inst` 是密集句柄 ⇒ `SecondaryMap`。
     pub(crate) alloca_offsets: SecondaryMap<Inst, i64>,
+    /// **该函数的 `AbiPlan`**（v20 A3b 预备）：编译入口按 IR 签名 + 约定数据算出来，
+    /// 供 `FORGE_TRACE_ABI=1` 诊断与后续"按 plan 发射"使用。
+    ///
+    /// 目前**只算不用**（发射仍走既有路径 ⇒ 行为逐字节不变）；算不出来时留下
+    /// [`Self::abi_plan_note`] 里的原因（例如 arm64 还没有浮点寄存器池），**不**阻断编译。
+    pub(crate) abi_plan: Option<forge_abi::AbiPlan>,
+    /// `AbiPlan` 算不出来时的原因（诊断用；`None` = 算出来了）。
+    pub(crate) abi_plan_note: Option<String>,
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
@@ -2088,6 +2113,24 @@ impl<I: MachineInst + 'static> CompileState<I> {
         });
         ctx.constant_pool = Some(func.constants.clone());
 
+        // v20 A3b 预备：把该函数的 `AbiPlan` 算出来挂上（**只算不用**：发射仍走既有路径）。
+        // 约定名已在上面解析过（A2 的读路径）；这里再跑一次引擎，把"IR 签名 + 宿主寄存器文件
+        // + 约定数据"的结果留作诊断（`FORGE_TRACE_ABI=1`）与后续发射切换的依据。
+        let (abi_plan, abi_plan_note) = {
+            let reg = crate::pipeline::conv_registry::registry()
+                .read()
+                .expect("约定注册表被投毒");
+            match crate::pipeline::abi_target::plan_for_function(
+                machine,
+                &reg,
+                &ctx.call_conv_name,
+                func,
+            ) {
+                Ok(p) => (Some(p), None),
+                // 算不出来不阻断编译（发射还没用它）——原因留档，方便 developer 核对缺口。
+                Err(e) => (None, Some(e.to_string())),
+            }
+        };
         Ok(Self {
             vcode: VCode::new(),
             xreg_map: Vec::new(),
@@ -2097,6 +2140,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ctx,
             param_xregs: Vec::new(),
             alloca_offsets: SecondaryMap::new(),
+            abi_plan,
+            abi_plan_note,
         })
     }
 
