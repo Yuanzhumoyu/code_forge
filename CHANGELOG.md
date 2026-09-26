@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-25) — v20 A3b-2b-2c-1：`Placement::Stack.offset` 漏算 shadow（被调方读栈参数会读错）
+
+- **模型 bug**：被调方视角的栈参数偏移只算了 `first_offset_slots × slot` + 参数区位置，**漏了 `shadow_bytes`**。调用方把第 k 个栈参数写在 `[sp + shadow + k×slot]`，被调方读同一实参时要加上"返回地址 + 保存的帧指针"**以及** shadow——win64 第 5 个参数因此被算成 `off=16`，而现有发射算式是 `48`（差的就是那 32 字节 shadow）。
+- **发现方式**：`forge-codegen/tests/abi_target_real.rs::stack_arg_offsets_agree_with_the_legacy_formula`（新增）——把布局的 `Stack { offset }` 与**现有发射路径**的 `[abi.stack_args]` 算式逐参数对照。这条测试现在是"把栈参数收参切到布局"的入场券：偏移差一不是崩而是**静默错值**，矩阵未必抓得到。
+- **修法**：`engine::stack_place` 的落点偏移加上 `rules.shadow_bytes`，并把 `Stack.offset` 的语义（被调方视角、已含 shadow）与两个视角的固定关系 `Stack.offset(k) − caller_offset(k) = first_arg_offset` 写进参考文档与代码注释。
+- **影响面**：只有 `shadow_bytes != 0` 的约定受影响——`win64` 黄金快照的栈偏移整体 +32（`sysv64`/`aapcs64`/`lp64d` 的 shadow 为 0，**逐字节不变**）；`invariants.rs` 的"参数区装得下最后一个字节"随之按新口径断言；workspace 全套 serially 绿。
+- 发射侧**尚未消费** `Stack` 落点（栈参数收参仍走 `[abi.stack_args]` 算式）⇒ 运行时行为不变，`Stack` 接进布局路径是 A3b-2b-2c-2。
+
 ### Changed (2026-09-25) — v20 A4：序/尾声由生成器生成，伪指令全部删除（谱只剩裸指令）
 
 - **设计裁定（用户）**：谱只描述**裸指令**（形状 + 编码 + 能力角色），函数调用平衡（保存谁、帧多大、怎么建立帧指针）交给**调用约定**层；角色是"这条指令能充当什么"的**能力声明**，不是给指令加的副作用。

@@ -128,6 +128,65 @@ fn plan_agrees_with_the_existing_lowering_result() {
     );
 }
 
+/// `fn f(i64 × 6) -> i64`：win64 只有 4 个整数槽，第 5/6 个参数走栈。
+fn win64_stack_args_probe() -> Function {
+    let ctx = TypeContext::new();
+    let params: Vec<(TypeId, &str)> = (0..6).map(|_| (TypeId::I64, "a")).collect();
+    let sig = FunctionSignature::new(&params, &[TypeId::I64])
+        .with_calling_convention(CallConvId::builtin(ConvName::Win64));
+    let mut b = FunctionBuilder::new("win64_stack_args", ctx, sig);
+    let (entry, p) = b.create_block_with_params(&params);
+    b.switch_to_block(entry);
+    b.ret(&[p[0]]);
+    b.finish().expect("build")
+}
+
+/// **栈参数的偏移核对**（v20 A3b-2b-2c 的入场券）：布局给的 `Stack { offset }` 必须与
+/// **现有发射路径**（`@move_args` 的 `[abi.stack_args]` 算式）**同值**：
+/// `first_offset_slots × slot + shadow + (pos − n_int) × stride × slot`。
+///
+/// 这是"把栈参数收参也切到布局"之前唯一能先做的正确性检查：**偏移差一**就是读错值
+/// （不是崩，而是静默错值），矩阵未必抓得到，必须先钉住。
+#[test]
+fn stack_arg_offsets_agree_with_the_legacy_formula() {
+    use forge_isa_runtime::machine::call_layout::ArgPlace;
+
+    let tm = TargetMachine::new();
+    let reg = builtin::registry().expect("内置注册表");
+    let func = win64_stack_args_probe();
+    let plan = plan_for_function(&tm, &reg, "win64", &func).expect("plan");
+    let layout = forge_codegen::pipeline::abi_target::call_layout(&plan, &tm);
+
+    // 现有路径的口径（x86 谱）：first_offset_slots = 2、shadow = 32、stride = 1、slot = 8。
+    let slot = layout.slot_bytes as i64;
+    let first = 2 * slot; // first_offset_slots × slot
+    let shadow = layout.shadow_bytes as i64;
+    let n_int = 4; // win64 整数参数槽
+
+    // 前 4 个进寄存器，第 5/6 个（索引 4/5）在栈上。
+    for (i, arg) in layout.args.iter().enumerate() {
+        let expect = match i {
+            4 | 5 => first + shadow + (i as i64 - n_int) * slot,
+            _ => -1,
+        };
+        match &arg.place {
+            ArgPlace::Reg { .. } if expect < 0 => {}
+            ArgPlace::Stack { offset, .. } if expect >= 0 => {
+                assert_eq!(
+                    *offset as i64, expect,
+                    "第 {i} 个参数的栈偏移：布局 {offset} ≠ 现有算式 {expect}"
+                );
+            }
+            other => panic!(
+                "第 {i} 个参数落点不符（期望 {}）：{other:?}",
+                if expect < 0 { "寄存器" } else { "栈" }
+            ),
+        }
+    }
+    // 首个栈参数的**调用方**视角偏移 = shadow（`caller_offset(0)`）。
+    assert_eq!(layout.caller_offset(0), layout.shadow_bytes as i32);
+}
+
 /// `fn f(i64, i64, i64) -> i64`，用 `lp64d` 约定（riscv64 后端）。
 ///
 /// **只用整数**：riscv64 的浮点参数在现有发射路径上就 fail-closed（见下一条测试），

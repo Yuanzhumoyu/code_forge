@@ -778,8 +778,16 @@ fn stack_place(
         _ => ty.align.max(1),
     };
     let off = stack.alloc(ty.size.max(1), align, rules.stack.slot_bytes);
+    // **被调方视角**的栈偏移 = `first_offset_slots × slot`（返回地址 + 被调方保存的帧指针）
+    // **+ shadow**（调用方在返回地址之上预留的 scratch 区）`+` 该参数在参数区里的位置。
+    //
+    // 为什么要加 shadow：调用方把第 k 个栈参数写在 `[sp + shadow + k×slot]`（见
+    // `Placement::Stack` 与 `CallLayout::caller_offset`），而**被调方**的 `sp` 比调用点的
+    // `sp` 低一个返回地址、再低一个保存的帧指针——所以被调方读同一个实参时的偏移
+    // 正好是"调用方偏移 + first_offset_slots×slot"。不加 shadow 会读到 shadow 区里的垃圾
+    // （实测 win64 第 5 个参数：布局给 16，现有发射算式给 48 —— 差的就是这 32 字节）。
     Placement::Stack {
-        offset: off as i32,
+        offset: (off + rules.shadow_bytes) as i32,
         size: ty.size.max(1) as u16,
         align: align as u16,
     }

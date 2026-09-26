@@ -266,12 +266,21 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 - 守卫：`call_layout_emission.rs` 新增三条（写 `@move_args` 必报错且提示指路；缺席模板
   的谱仍发射收参；收参位置在保存之后、帧分配之前）。
 
-### A3b-2b-2c 帧件与栈参数改读 call_layout（未开始）
+### A3b-2b-2c 栈参数收参改读 call_layout
 
-**剩余面**：`ArgPlace::Stack`（栈参数 load/store + spill 槽坐标）、`byval` 副本
-（`Indirect { reg: None, on_stack: true }` + `byval_area_bytes`）、`Pair`/`Group`，
-以及序尾声的 `@push_callee`/`@pop_callee`/`@frame_alloc`/`{callee_saved_bytes}`
-（后者的 `callee_saved` 与 `stack_align`/`frame_padding` 已在 `CallLayout` 里）。
+**先做的核对（2c-1 ✅，2026-09-25）**：`forge-codegen/tests/abi_target_real.rs` 新增
+`stack_arg_offsets_agree_with_the_legacy_formula`——把布局的 `Stack { offset }` 与现有发射
+路径的 `[abi.stack_args]` 算式逐参数对照。**当场抓到模型 bug**：`Stack.offset` 漏算
+`shadow_bytes`（win64 第 5 个参数算成 16，现有算式是 48）。修法 = `engine::stack_place`
+加上 shadow，并把"被调方视角、已含 shadow"与 `Stack.offset(k) − caller_offset(k) =
+first_arg_offset` 写进注释与参考文档；`win64` 黄金快照整体 +32（其余三份 shadow = 0，
+逐字节不变），`invariants.rs` 按新口径断言。
+
+**剩下（2c-2，未开始）**：把 `ArgPlace::Stack` 接进 `@move_args` 的布局路径
+（含"这个栈参数被 regalloc 强制 spill"的分支），此后 §"首次 int 槽/位置算式"在
+有布局的谱上全部消失；`Pair`/`Group`/无指针 `Indirect` 仍整函数回退（边界写成测试）。
+
+**剩余面**：`Pair`/`Group`、无指针的 `Indirect`（byval 指针本身在栈上）。
 
 **切换前必须先关掉的能力缺口**（2026-09-25 用 A3b-1 的核对测出来的真实现状，已钉成测试
 `abi_target_real.rs::riscv64_float_gap_is_engine_ok_but_emission_closed`）：

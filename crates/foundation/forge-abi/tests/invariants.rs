@@ -328,9 +328,10 @@ fn plan_invariants_hold_for_every_case() {
                 );
             }
 
-            // 栈参数区要能装下最后一个字节。
+            // 栈参数区要能装下最后一个字节。落点偏移是**被调方视角**（已含 shadow），
+            // 而 `arg_area_bytes = 参数区 + shadow` —— 所以两边的差就是 `first_arg_offset`。
             if let Some(max_end) = ends.iter().max() {
-                let need = max_end - p.stack.first_arg_offset as u32 + p.stack.shadow_bytes;
+                let need = max_end - p.stack.first_arg_offset as u32;
                 assert!(
                     p.stack.arg_area_bytes >= need,
                     "{isa}/{conv}/{}: arg_area {} < 需要 {need}",

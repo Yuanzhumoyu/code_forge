@@ -220,8 +220,14 @@ pub enum CallConvId {
 
 两个坐标系的区别（踩过）：
 
-- `Placement::Stack.offset` = **被调方**视角（相对 `frame_base`，已含
-  `first_offset_slots × slot_bytes`）；
+- `Placement::Stack.offset` = **被调方**视角，相对帧基址（`push rbp; mov rbp, rsp` 之后的
+  `rbp`）：`first_offset_slots × slot_bytes`（返回地址 + 被调方保存的帧指针）
+  **+ `shadow_bytes`** + 该参数在参数区里的位置。
+  **shadow 必须算进来**：调用方把第 k 个栈参数写在 `[sp + shadow + k×slot]`，被调方的
+  `sp` 比调用点低"返回地址 + 保存的帧指针"——漏掉 shadow 就会去读 shadow 区里的垃圾。
+  （2026-09-25 实测修掉：win64 第 5 个参数曾被算成 `off=16`，现有发射算式是 `48`。）
+- **两个视角的固定关系**：`Stack.offset(k) − caller_offset(k) = first_arg_offset`
+  （win64：`48 − 32 = 16`）——`caller_offset(k) = shadow + k×slot`；
 - `Placement::Indirect.at` = **调用方 byval 临时区**里的偏移（`byval_area_bytes` 那么大，
   从 0 起）。副本是调用方**帧内**的临时量，跟"第几个栈参数"无关；混进传出参数区会让
   后面的栈参数与副本抢同一段内存。

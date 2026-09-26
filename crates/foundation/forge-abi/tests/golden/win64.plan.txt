@@ -34,8 +34,8 @@ arg a size=8 -> reg RCX
 arg b size=8 -> reg RDX
 arg c size=8 -> reg R8
 arg d size=8 -> reg R9
-arg e size=8 -> stack off=16 size=8 align=8
-arg f size=8 -> stack off=24 size=8 align=8
+arg e size=8 -> stack off=48 size=8 align=8
+arg f size=8 -> stack off=56 size=8 align=8
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
@@ -48,10 +48,10 @@ arg a size=8 -> reg RCX
 arg b size=8 -> reg RDX
 arg c size=8 -> reg R8
 arg d size=8 -> reg R9
-arg e size=8 -> stack off=16 size=8 align=8
-arg f size=8 -> stack off=24 size=8 align=8
-arg g size=8 -> stack off=32 size=8 align=8
-arg h size=8 -> stack off=40 size=8 align=8
+arg e size=8 -> stack off=48 size=8 align=8
+arg f size=8 -> stack off=56 size=8 align=8
+arg g size=8 -> stack off=64 size=8 align=8
+arg h size=8 -> stack off=72 size=8 align=8
 ret void
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
@@ -186,11 +186,11 @@ arg a0 size=8 -> reg RCX
 arg a1 size=8 -> reg RDX
 arg a2 size=8 -> reg R8
 arg a3 size=8 -> reg R9
-arg a4 size=8 -> stack off=16 size=8 align=8
-arg a5 size=8 -> stack off=24 size=8 align=8
-arg a6 size=8 -> stack off=32 size=8 align=8
-arg a7 size=8 -> stack off=40 size=8 align=8
-arg a8 size=8 -> stack off=48 size=8 align=8
+arg a4 size=8 -> stack off=48 size=8 align=8
+arg a5 size=8 -> stack off=56 size=8 align=8
+arg a6 size=8 -> stack off=64 size=8 align=8
+arg a7 size=8 -> stack off=72 size=8 align=8
+arg a8 size=8 -> stack off=80 size=8 align=8
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
@@ -201,7 +201,7 @@ stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=40 byval_area=0 red_zo
 variadic true
 arg fmt size=8 -> reg RCX
 arg n size=4 -> reg RDX
-arg x size=8 -> stack off=16 size=8 align=8
+arg x size=8 -> stack off=48 size=8 align=8
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
@@ -211,9 +211,9 @@ va_area Win64Stack size=8 align=8 stack_only=true
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=56 byval_area=0 red_zone=None frame_pad=8
 variadic true
-arg a size=8 -> stack off=16 size=8 align=8
-arg b size=8 -> stack off=24 size=8 align=8
-arg c size=8 -> stack off=32 size=8 align=8
+arg a size=8 -> stack off=48 size=8 align=8
+arg b size=8 -> stack off=56 size=8 align=8
+arg c size=8 -> stack off=64 size=8 align=8
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
