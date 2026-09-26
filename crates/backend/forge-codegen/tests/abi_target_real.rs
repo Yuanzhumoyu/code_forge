@@ -580,18 +580,19 @@ convention_facts_probe!(
     true
 );
 
-/// **把已知缺口钉住**（v20 A5-3 ④ 实测，2026-09-26）：x86 的 plan 破坏集在 FP 侧
-/// **比谱里声明的宽**（plan = 全部 16 个 XMM；谱 = `[abi].call_clobbers` 缺省兜底给的
-/// 4 个参数 XMM + XMM0）。物理上 plan 那份才是对的（Win64 的 XMM0-15 全 volatile），
-/// 但本实现"跨调用存活的向量值"路径在更宽的破坏集下**读回错值**：
-/// `test_jit_v128_byval_return_lane3`（lane3 的 7.5 读成整数）与
-/// `test_jit_v128_byval_mixed_int_pos` 实测变红。
+/// **plan 的破坏集覆盖整个 FP 文件**（v20 A5-3 ④ 实测，2026-09-26）：x86 的 plan 破坏集
+/// 在 FP 侧列**全部 16 个 XMM**，比谱里声明的（`[abi].call_clobbers` 缺省兜底给的
+/// 4 个参数 XMM + XMM0）宽——物理上 plan 那份才对（Win64 的 XMM0-15 全 volatile）。
 ///
-/// 因此发射侧**只消费 GPR 类的 plan 破坏集**（`lowering.rs` 的过滤），FP 侧维持谱里
-/// 声明的名单；缺口归 A6。本测试钉住两件事，防止它被悄悄"修好"或被遗忘：
-/// ① plan 的 FP 破坏集确实比谱宽；② GPR 侧随约定变（win64 5 个 vs sysv64 7 个）。
+/// 这份更宽的破坏集曾经**打错值**：`test_jit_v128_byval_return_lane3`（lane3 的 7.5
+/// 读成 0）与 `test_jit_v128_byval_mixed_int_pos` 变红——根因是单结果 IR 值一律按
+/// **池宽**成类（V128 也拿 FPR(8)），而 spill/reload 的宽度取自类宽 ⇒ 只搬 8 字节。
+/// 已修在 `pipeline/lowering.rs`（向量按真实字节数成类 VEC(16/32/64)），所以现在
+/// 发射侧消费 **plan 的全类破坏集**（不再按类过滤）。本测试钉住两条事实：
+/// ① plan 的 FP 破坏集比谱里声明的宽（若某天变窄，说明引擎的"可用池"口径改了，
+/// 要同步 A6 记录与 `lowering.rs` 的注释）；② GPR 侧随约定变（win64 5 个 vs sysv64 7 个）。
 #[test]
-fn x86_plan_fp_clobbers_are_wider_than_the_spec() {
+fn x86_plan_clobbers_cover_the_whole_fp_file() {
     use forge_codegen::pipeline::abi_target::call_layout;
 
     let cases: [(&str, fn() -> Function); 2] = [
@@ -608,8 +609,7 @@ fn x86_plan_fp_clobbers_are_wider_than_the_spec() {
         let plan_fp = layout.clobbers.iter().filter(|(c, _)| *c != gpr).count();
         assert!(
             plan_fp > 4,
-            "{conv}：plan 的 FP 破坏集应比谱里声明的 4 个参数 XMM 宽（实测 {plan_fp}）——\
-             若已变窄说明本缺口被处理了，请同步 A6 记录与 lowering.rs 的过滤注释"
+            "{conv}：plan 的 FP 破坏集应覆盖全部 XMM（比谱里声明的 4 个宽），实测 {plan_fp}"
         );
         let plan_gpr: Vec<u32> = layout
             .clobbers

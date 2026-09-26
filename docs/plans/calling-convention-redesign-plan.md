@@ -415,14 +415,14 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 
 ### A6 变参 / HFA 部分在寄存器 / ≥3 槽返回 / 罕见的弹栈约定
 
-**A5-3 ④ 带出来的两条前置缺口**（2026-09-26 实测，都已在代码里注明并留了守卫）：
+**A5-3 ④ 带出来的前置缺口**（2026-09-26 实测，都已在代码里注明并留了守卫）：
 
-- **向量值跨调用存活会读回错值**：把 plan 的**完整**破坏集（x86：全部 16 个 XMM，
-  物理上正确）交给发射后，`test_jit_v128_byval_return_lane3`（lane3 的 7.5 读成整数）
-  与 `test_jit_v128_byval_mixed_int_pos` 变红。现发射侧只消费 **GPR 类**的 plan 破坏集，
-  FP 侧仍用谱里声明的名单；守卫 `x86_plan_fp_clobbers_are_wider_than_the_spec`
-  钉住"plan 的 FP 破坏集确实更宽"这个事实。**修掉它才能把 FP 破坏集也切成 plan**
-  （否则 = 用更宽的破坏集去踩一条既有缺陷）。
+- ~~**向量值跨调用存活会读回错值**~~ **已修**（2026-09-26）：把 plan 的完整破坏集
+  （x86：全部 16 个 XMM）交给发射后暴露的不是破坏集的问题，而是**单结果 IR 值按池宽
+  成类**——V128 也拿 `FPR(8)`，而 `XReg::width()` 就是类宽，spill/reload 只搬 8 字节
+  （`test_jit_v128_byval_return_lane3` 返回 0）。修在 `pipeline/lowering.rs`：向量按真实
+  字节数成类（`VEC(16/32/64)`）。此后**全类破坏集可直接用**（`lowering.rs` 不再按类过滤），
+  守卫 `x86_plan_clobbers_cover_the_whole_fp_file` 钉住"plan 的 FP 破坏集覆盖全部 XMM"。
 - **callee-saved 的类分派保存**：AAPCS64 的 `cs_fpr`（V8-V15）已在 plan 里，但 `callee_save`
   角色只指向 `STURX`（GPR 视图）⇒ regalloc 的 callee-saved 与帧字节数都**只取 GPR 类**。
 - **帧上方 callee-saved 字节数仍是静态的**：x86 的 push 机制按谱面列表逐个 `push`

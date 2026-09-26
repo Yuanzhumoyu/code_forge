@@ -15,9 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **`CallLayout` 补两个约定事实**：`clobbers`（可用池 − callee-saved）与 `frame_padding`，由 `abi_target::call_layout` 从 `AbiPlan.clobbers` / `AbiPlan.stack.frame_padding` 填。三处消费者改**优先读 plan**，谱里那份降级为无 plan（未注册约定/合成夹具）时的兜底：
   - **regalloc 的 callee-saved 集**（`compiler.rs`）：改用 plan 的 GPR 类项——同一台机器换约定，保存集必须跟着换。**只取 GPR 类**：AAPCS64 的 `cs_fpr`（V8-V15）已在 plan 里，但发射侧还没有按类分派的保存序列（`callee_save` 角色目前只指向 STURX），把 FPR 喂给 regalloc 会让它把跨调用值放进不被保存的寄存器——**类分派保存归 A6**，这条边界写在代码注释与计划里。
-  - **调用点的破坏集**（`v12/codegen/lowering.rs` 的 Call/CallIndirect）：`ctx.current_clobbers` 优先取 plan 的 `clobbers`（**只取 GPR 类**，理由见下），无 plan 才用谱里声明的名单。
+  - **调用点的破坏集**（`v12/codegen/lowering.rs` 的 Call/CallIndirect）：`ctx.current_clobbers` 优先取 plan 的**全类** `clobbers`（GPR + FP），无 plan 才用谱里声明的名单。
   - **帧填充**（`frame_layout.rs`）：`frame_padding` 优先取 plan（它是规则的字段、随约定而变）。
-- **实测暴露的一条既有缺陷（本次不修，已钉住并记入 A6）**：把 plan 的**完整**破坏集交给发射后，x86 的 FP 侧从谱里声明的 4 个 XMM 变成全部 16 个（物理上正确——Win64 的 XMM0-15 全 volatile），`test_jit_v128_byval_return_lane3` 与 `test_jit_v128_byval_mixed_int_pos` 随即变红（lane3 的 7.5 读成整数）：**本实现"跨调用存活的向量值"路径在更宽的破坏集下会读回错值**。因此发射侧只消费 GPR 类的 plan 破坏集，FP 侧维持谱里声明的名单；守卫 `x86_plan_fp_clobbers_are_wider_than_the_spec` 钉住"plan 的 FP 破坏集确实更宽"，缺口写进计划文档的 A6。修掉那条向量路径之前，不能把 FP 破坏集也切成 plan。
+- **修掉一条向量宽度缺陷（第四条消费者切换时暴露，根因在另一处）**：把 plan 的**完整**破坏集交给发射后，x86 的 FP 侧从谱里声明的 4 个 XMM 变成全部 16 个（物理上正确——Win64 的 XMM0-15 全 volatile），`test_jit_v128_byval_return_lane3`（lane3 的 7.5 读成 **0**）与 `test_jit_v128_byval_mixed_int_pos` 随即变红。
+  - 根因**不是**破坏集本身，而是**单结果 IR 值一律按"池宽"成类**（`pipeline/lowering.rs`）：V128 也拿 `FPR(8)`，而 `XReg::width()` 就是类宽、spill/reload 与 ABI 回读的搬运宽度都取自它 ⇒ 这个值一旦被 spill 就只搬 8 字节，lane2/3 静默丢。此前靠"幸运合并"（fixup 的 dst 与 src 同为 XMM0，MOVAPS 退化成空操作）掩盖。
+  - **修法**：向量值按**真实字节数**成类（同一份 `reg_class_for` 的档位表 → `VEC(16/32/64)`），标量仍走池宽。修完后 plan 的**全类**破坏集可以直接消费（不再按类过滤），守卫 `x86_plan_clobbers_cover_the_whole_fp_file` 钉住"plan 的 FP 破坏集覆盖全部 XMM"这一事实。
 - **顺带修掉的真错（两处，均由新增的交叉核对测试暴露）**：
   1. **`sysv64` 规则缺 `frame_padding`**（缺省 0）。SysV 的入口 `rsp ≡ 8 (mod 16)`，而本实现的序言是 `push fp` + 5 个 callee-saved = **偶数次 push** ⇒ `sub rsp` 前 `rsp ≡ 8`，必须补 8 字节才能在 call 点回到 16 对齐（与 Win64 同值、同理由）。规则补 `frame_padding = 8`，黄金快照 `sysv64.plan.txt` 的 `frame_pad 0 → 8`。
   2. **x86 显式选 `sysv64` 时破坏集漏 RDI/RSI**：谱里的 `[abi]` 是 **win64 口径**（RDI/RSI 是 callee-saved），拿它编 sysv64 的函数时跨调用存活值留在 RDI/RSI 上会被 callee 静默覆盖。改读 plan 后破坏集随约定切换（sysv64 = 7 个含 RDI/RSI，win64 = 5 个）。

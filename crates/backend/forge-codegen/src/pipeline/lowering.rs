@@ -397,7 +397,21 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         // 窄分配会破坏，e2e slice/vec 迭代回归实证）。宽度只在
                         // set_reg_field 回填多类槽（gprx）时从 xreg_types 查
                         // IR 类型推导（见 compiler.rs 回填处——WA-35 DSL 修复）。
-                        let class = if self.ctx.reg_class_for(&result_ty).is_fp() {
+                        //
+                        // **向量例外（2026-09-26 实测）**：>8 字节的向量值不能保持
+                        // 池宽——`XReg::width()` 就是它的类宽，而 spill/reload 的
+                        // load/store 宽度、ABI 回读宽度都取自它：V128 拿 FPR(8) 会
+                        // 只搬 8 字节，lane2/3 在"值被 spill"时静默丢（实测
+                        // `test_jit_v128_byval_return_lane3` 在 XMM0-15 全 volatile
+                        // 时返回 0）。向量按**真实字节数**成类（VEC(16/32/64)，同一份
+                        // `reg_class_for` 的档位表），标量仍走池宽。
+                        let rc = self.ctx.reg_class_for(&result_ty);
+                        let is_vec = self.ctx.type_store.as_ref().is_some_and(|s| {
+                            s.is_vector(result_ty) || s.is_scalable_vector(result_ty)
+                        });
+                        let class = if is_vec {
+                            rc
+                        } else if rc.is_fp() {
                             self.ctx.value_fpr_class
                         } else {
                             self.ctx.value_gpr_class
