@@ -478,14 +478,15 @@ fn the_c_convention_resolves_to_the_whole_platform_convention() {
     let p = reg.plan(&x86_64_v12(), "sysv64", &sig).unwrap();
     assert_eq!(reg_name(&p.args[1].place), "XMM0");
 
-    // 另外两台机器：整数签名足以区分（arm64 谱里没有 FPR 组，浮点本就规划不出来）。
+    // 另外两台机器：整数签名足以区分（v20 A5 起 arm64 也有 FPR 组与 `cs_fpr` 池，
+    // 所以这里用带上 FPR 的合成目标——与 `target_for` 同一口径）。
     let int_sig = Signature::new(vec![("a".into(), i64_())], Some(i64_()));
     let p = reg.plan(&riscv64_v12(), "c", &int_sig).unwrap();
     assert_eq!(
         (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
         ("lp64d", "X10")
     );
-    let p = reg.plan(&arm64_v12(), "c", &int_sig).unwrap();
+    let p = reg.plan(&arm64_v12_with_fpr(), "c", &int_sig).unwrap();
     assert_eq!(
         (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
         ("aapcs64", "X0")

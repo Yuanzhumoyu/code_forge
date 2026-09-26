@@ -136,7 +136,7 @@ ret_classify = [
   { when = { kind = "scalar" },                  do = { direct = { pool = "ret_int" } } },
 ]
 hidden = { sret_pool = "sret", sret_slot = 0, va_list = "aapcs64_struct", va_list_size = 32, va_list_align = 8 }
-callee_saved = { mechanism = "store_to_frame", pools = ["cs_gpr"], includes_link = true }
+callee_saved = { mechanism = "store_to_frame", pools = ["cs_gpr", "cs_fpr"], includes_link = true }
 extensions = { widen_to_bits = 32 }
 variadic_stack_only = true
 tail_calls = { allowed = true, must_match_stack = true }

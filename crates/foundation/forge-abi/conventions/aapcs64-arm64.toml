@@ -19,6 +19,13 @@ sret = ["X8"]
 # x19-x28（x29 fp / x30 lr 由帧件保存，规则侧 `includes_link = true` 表达 lr）。
 cs_gpr = ["X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28"]
 
+# AAPCS64 还要保 v8-v15 的**低 64 位**。**注意现状**：这一步目前只落在
+# `AbiPlan.callee_saved`（引擎侧的事实，`clobbers` 因此不再把它们算作被破坏）；
+# **发射侧还没按类分派保存指令**（`callee_save` 角色目前唯一指向 STURX，是 GPR 视图）
+# ⇒ regalloc 仍按谱里的 clobber 集把它们当"跨调用不安全"（保守、安全方向）。
+# 让帧件按寄存器类选 STURD/STURX 是 A6 的活（role 需要能带类限定）。
+cs_fpr = ["V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15"]
+
 # 浮点/HFA 参数池：v0-v7（AAPCS64 的浮点参数序列，按类计数）。
 float = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7"]
 

@@ -364,6 +364,8 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 `abi plan` 给出 `f64 → V0` / `ret → V0`。守卫同步：指令总数 110、派生条目 360、歧义名单 +6
 （V 命名统一 ⇒ S/D 汇编文本相同，已知且刻意）、aapcs64 黄金快照重 bless。
 
+**已完成（A5-2）**：AAPCS64 的 `cs_fpr`（V8-V15）进规则/绑定 ⇒ `callee_saved` 与 `clobbers` 在**计划侧**已正确；发射侧按类分派保存指令（FPR → STURD/LDURD）需要 role 带类限定，归 A6。
+
 **仍待做**：`[abi]` 整节搬成 `[machine]`（`fixed_regs`/`spill_scratch`/`link_reg`）+
 绑定/规则；参数的寄存器池、callee-saved、sret 槽、栈参数布局都要从绑定/规则来（现在仍是
 谱里 `[abi]` 的第二份事实）；`cs_fpr`（v8-v15）也一并补。
