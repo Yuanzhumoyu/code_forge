@@ -569,19 +569,19 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     .into_iter()
     .map(|i| quote! { #i })
     .collect();
-    // allocatable：全量 0..count（排除 SP/FP + spill scratch + [abi].reserved）。
+    // allocatable：全量 0..count（排除 SP/FP + spill scratch + [machine].fixed_regs）。
     // reserved：不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被 prologue/
     // call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 subw x0 结果丢失）。
-    // spill scratch（[abi].scratch = R10/R11）必须排除——emission 的 spill
+    // spill scratch（[machine].spill_scratch = R10/R11）必须排除——emission 的 spill
     // load/store 用 scratch 寄存器，若 regalloc 把活跃 XReg 分配到 scratch，
     // spill 重写会覆盖其值（t+= 循环崩溃：i 地址在 R11 被 spill load 覆盖）。
     // 6i 曾尝试排除但触发循环 spill 暴露 v12 spill bug；6k/6m/6n 修复后
     // 重新排除（scatch 全时保留给 spill 机制）。
-    let abi_ref = model.abi.as_ref();
-    let scratch_names: &[String] = abi_ref.map(|a| a.scratch.as_slice()).unwrap_or(&[]);
-    let reserved_names: &[String] = abi_ref.map(|a| a.reserved.as_slice()).unwrap_or(&[]);
-    let scratch_list = resolve_reg_list(&name_to_idx, scratch_names, "[abi].scratch")?;
-    let reserved_list = resolve_reg_list(&name_to_idx, reserved_names, "[abi].reserved")?;
+    // v20 A5-3：机器事实读 `[machine]`（回退 `[abi]` 同名旧键，迁移期两写法都认）。
+    let scratch_names: &[String] = model.machine_scratch();
+    let reserved_names: &[String] = model.machine_reserved();
+    let scratch_list = resolve_reg_list(&name_to_idx, scratch_names, "[machine].spill_scratch")?;
+    let reserved_list = resolve_reg_list(&name_to_idx, reserved_names, "[machine].fixed_regs")?;
     let scratch_idx: std::collections::HashSet<u32> = scratch_list.iter().copied().collect();
     let reserved_idx: std::collections::HashSet<u32> = reserved_list.iter().copied().collect();
     let gp_alloc: Vec<TokenStream> = (0..gpr_count)
@@ -591,7 +591,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
         .map(|i| quote! { #i })
         .collect();
     let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
-    // scratch：从 [abi].scratch 解析物理索引（spill load/store 用）。
+    // scratch：从 [machine].spill_scratch 解析物理索引（spill load/store 用）。
     let scratch: Vec<TokenStream> = scratch_list.into_iter().map(|i| quote! { #i }).collect();
     // ── 类表（ISA 数据，2026-09-13）──────────────────────────────────────
     // 分配器的类表 = **本函数生成的表**（编译期不再编造"未声明的类"）。

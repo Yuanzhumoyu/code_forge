@@ -1451,7 +1451,7 @@ fn gen_call_lowering(
     // Call 字段构造（结构迭代，不按指令名判断形态）：
     // - Label 槽（x86 rel32 / riscv off_j）= -(FuncRef+1)（encoder 转 "@N"
     //   符号 reloc——变长 CALL 或定宽 JAL 统一）；
-    // - Out/InOut Reg 槽 = [abi].call_ret_reg（返回地址寄存器；x86 无此槽）；
+    // - Out/InOut Reg 槽 = [machine].link_reg（返回地址寄存器；x86 无此槽）；
     // - 其余槽（in Reg / imm）置 0。
     let call_body: TokenStream = if op_name == "Call" {
         match call_f.first() {
@@ -1460,19 +1460,19 @@ fn gen_call_lowering(
                     .iter()
                     .find(|i| i.inst.name == call_inst)
                     .ok_or_else(|| format!("call_inst '{call_inst}' 不存在"))?;
-                // 返回地址寄存器：[abi].call_ret_reg。**只在 call 指令确有
-                // Out/InOut Reg 槽时才需要**（x86 的 CALL 无此槽）；缺声明 =
-                // 生成期明确报错，不回退到某个 ISA 的寄存器名。
+                // 返回地址寄存器：`[machine].link_reg`（迁移期回退 `[abi].call_ret_reg`）。
+                // **只在 call 指令确有 Out/InOut Reg 槽时才需要**（x86 的 CALL 无此槽）；
+                // 缺声明 = 生成期明确报错，不回退到某个 ISA 的寄存器名。
                 let needs_ret_reg = info.operands.iter().any(|(_, _, slot, role)| {
                     slot.kind == OperandKind::Reg
                         && matches!(role, OperandRole::Out | OperandRole::InOut)
                 });
-                let ret_ident = match (abi.call_ret_reg.as_deref(), needs_ret_reg) {
+                let ret_ident = match (model.machine_link_reg(), needs_ret_reg) {
                     (Some(r), _) => format_ident!("{r}"),
                     (None, false) => format_ident!("__unused_ret_reg"),
                     (None, true) => {
                         return Err(format!(
-                            "[abi].call_ret_reg 未声明，但 call 指令 '{call_inst}' 有\
+                            "[machine].link_reg 未声明，但 call 指令 '{call_inst}' 有\
                              返回地址寄存器槽（Out/InOut Reg）——不按某个 ISA 的寄存器名兜底"
                         ));
                     }
@@ -1513,7 +1513,7 @@ fn gen_call_lowering(
         // CallIndirect：指令名取角色 roles = ["call_indirect"]（缺省 "CALL_RM"=x86
         // FF /2；定宽可声明 "JALR"）。结构迭代：In Reg 槽 = 目标地址
         //（args[0]，map_reg_field 绑 vreg）；Out/InOut Reg 槽 =
-        // call_ret_reg；imm/label 槽置 0。
+        // [machine].link_reg；imm/label 槽置 0。
         let ci_inst = role_name(infos, Role::CallIndirect).unwrap_or_default();
         let ci_f = fids(&ci_inst);
         match ci_f.first() {
@@ -1523,17 +1523,17 @@ fn gen_call_lowering(
                     .find(|i| i.inst.name == ci_inst)
                     .ok_or_else(|| format!("call_indirect_inst '{ci_inst}' 不存在"))?;
                 // 同上：只有 call_indirect 指令确有 Out/InOut Reg 槽时才需要
-                // `[abi].call_ret_reg`（x86 的 CALL_RM 无此槽）。
+                // `[machine].link_reg`（x86 的 CALL_RM 无此槽）。
                 let needs_ret_reg = info.operands.iter().any(|(_, _, slot, role)| {
                     slot.kind == OperandKind::Reg
                         && matches!(role, OperandRole::Out | OperandRole::InOut)
                 });
-                let ret_ident = match (abi.call_ret_reg.as_deref(), needs_ret_reg) {
+                let ret_ident = match (model.machine_link_reg(), needs_ret_reg) {
                     (Some(r), _) => format_ident!("{r}"),
                     (None, false) => format_ident!("__unused_ret_reg"),
                     (None, true) => {
                         return Err(format!(
-                            "[abi].call_ret_reg 未声明，但 call_indirect 指令 '{ci_inst}' 有\
+                            "[machine].link_reg 未声明，但 call_indirect 指令 '{ci_inst}' 有\
                              返回地址寄存器槽（Out/InOut Reg）——不按某个 ISA 的寄存器名兜底"
                         ));
                     }

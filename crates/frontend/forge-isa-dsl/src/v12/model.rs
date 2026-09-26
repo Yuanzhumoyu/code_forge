@@ -18,6 +18,65 @@ use std::{
     str::FromStr,
 };
 
+/// **机器事实**（v20 A5）：`[machine]` —— 只描述"这台机器是什么样"。
+///
+/// 三条纪律：① 这里**不放任何约定内容**（参数池 / 返回池 / callee-saved / sret 槽 /
+/// 栈参数布局都在 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）里）；
+/// ② 迁移期（A5-3）三个键都能**回退**到旧的 `[abi]` 同名键，因此可以逐谱迁移；
+/// ③ 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
+/// `link_reg` ← `call_ret_reg`），避免"两处都写、谁生效"的含糊。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MachineSection {
+    /// 不可分配的**固定用途**寄存器（zero / ra / gp / tp / SP 之外的平台寄存器…）。
+    #[serde(default)]
+    pub fixed_regs: Vec<String>,
+    /// 溢出与栈参数收参用的 **scratch** 寄存器（emission 的 spill load/store 也用它）。
+    #[serde(default)]
+    pub spill_scratch: Vec<String>,
+    /// **链接寄存器**（call 写入的返回地址；riscv `X1` / arm64 `X30`）。
+    #[serde(default)]
+    pub link_reg: Option<String>,
+}
+
+impl V12Model {
+    /// 溢出 scratch：`[machine].spill_scratch` 优先，回退 `[abi].scratch`（迁移期）。
+    pub fn machine_scratch(&self) -> &[String] {
+        if let Some(m) = &self.machine
+            && !m.spill_scratch.is_empty()
+        {
+            return &m.spill_scratch;
+        }
+        self.abi
+            .as_ref()
+            .map(|a| a.scratch.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// 固定用途寄存器：`[machine].fixed_regs` 优先，回退 `[abi].reserved`。
+    pub fn machine_reserved(&self) -> &[String] {
+        if let Some(m) = &self.machine
+            && !m.fixed_regs.is_empty()
+        {
+            return &m.fixed_regs;
+        }
+        self.abi
+            .as_ref()
+            .map(|a| a.reserved.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// 链接寄存器：`[machine].link_reg` 优先，回退 `[abi].call_ret_reg`。
+    pub fn machine_link_reg(&self) -> Option<&str> {
+        if let Some(m) = &self.machine
+            && let Some(l) = &m.link_reg
+        {
+            return Some(l.as_str());
+        }
+        self.abi.as_ref().and_then(|a| a.call_ret_reg.as_deref())
+    }
+}
+
 /// v12 顶层模型。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -98,6 +157,9 @@ pub struct V12Model {
     /// 调用约定（`[abi]`，为 YMM by-ref 铺路）。
     #[serde(default)]
     pub abi: Option<Abi>,
+    /// **机器事实**（v20 A5）：`[machine]`——固定用途寄存器 / 溢出 scratch / 链接寄存器。
+    #[serde(default)]
+    pub machine: Option<MachineSection>,
     /// 序言/尾声（`[emit]`）。
     #[serde(default)]
     pub emit: Option<EmitSection>,

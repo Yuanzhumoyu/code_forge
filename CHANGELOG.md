@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-26) — v20 A5-3（①+②）：`[machine]` 机器事实层，三份发行谱迁完
+
+- **新增 `[machine]` 段**（只描述"这台机器是什么样"）：`fixed_regs`（regalloc 不可分配，原 `[abi].reserved`）、`spill_scratch`（溢出与栈参数收参的临时寄存器，原 `[abi].scratch`）、`link_reg`（call 写返回地址的寄存器，原 `[abi].call_ret_reg`）。键名**故意与旧键不同名**——两处都写时"谁生效"必须无歧义；`[machine]` 优先、回退 `[abi]` 旧键，所以迁移期两种写法都认，可以逐谱迁移。
+- **读取侧单点化**：所有读者改走 `V12Model::machine_scratch()/machine_reserved()/machine_link_reg()`——`abi_view` 的静态能力视图、`integration.rs` 的 `RegInfo` scratch/reserved、`frame.rs` 的栈参数收参 scratch + 帧件保存 link、`lowering.rs` 的 `call`/`call_indirect` 返回地址槽。`validate` 对 `[machine]` 与 `[abi]` 两处都校验寄存器名（必须落在某个 `[reg.*]` 组内）。
+- **三条 fail-closed 错误消息改点名新键**（`[machine].spill_scratch` 未声明却要走栈参数收参、`[machine].link_reg` 未声明却有 Out/InOut Reg 槽），两条负向用例（`codegen_requires_scratch_for_stack_args` / `codegen_requires_call_ret_reg_when_call_has_ret_slot`）同步改成新键——它们仍钉着"不按某个 ISA 的寄存器名兜底"。
+- **三份发行谱迁移完毕**（`isa/{x86,riscv64,arm64}_v12.toml`）：`[abi].scratch`/`reserved`/`call_ret_reg` 删除，值**原样**进 `[machine]`（x86 `R10/R11`、riscv `X5/X6` + `X0/X1/X3/X4` + `X1`、arm64 `X16/X17` + `X18/X30` + `X30`）。
+- **三方一致守卫同步**：`schema.rs`（根键 + `[machine]` 节）、`docs/reference/isa-dsl.md` 键速查表与新增 `[machine]` 一节、重新生成的 `isa-dsl.schema.json`（`schema_guard` 6 项全绿）。
+- 验证：workspace 全套 serially 绿（clippy `--all-targets --all-features -D warnings` 0）；两条 JIT 矩阵与迁移前**逐条同值**——x86 **195 passed / 3 skipped**、riscv64 **131 passed / 67 skipped**，0 failed（scratch/reserved/link 三条路径都被矩阵跨调用用例实际走到）。
+- 仍待做（A5-3 ③/④）：约定事实（`arg_class`/`ret_regs`/`arg_slot`/`stack_args`/`callee_saved`/`call_clobbers`/`frame_padding`）移入 `AbiRules`/`AbiBinding`、demo 夹具补测试本地绑定、发射/管线改读 `AbiPlan`，然后删除 `[abi]` 的约定键与本次保留的回退路径。
+
 ### Added (2026-09-25) — v20 A5（续）：AAPCS64 的 v8-v15 进 callee-saved（引擎侧）
 
 - **规则/绑定**：`aapcs64` 的 `callee_saved.pools` 加 `cs_fpr`，绑定补 `cs_fpr = ["V8".."V15"]`。

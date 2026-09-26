@@ -676,16 +676,8 @@ align = 16
 fp_save = 8
 
 [abi]
-scratch = ["X5", "X6"]
-# regalloc 不可分配：X0=zero（写入无效）、X1=ra（prologue 保存 + call 返回
-# 地址）、X3/X4=gp/tp（固定用途）——不排除会分配出垃圾（实测 subw x0）。
-reserved = ["X0", "X1", "X3", "X4"]
-
 # 返回寄存器（a0）；Return/Call lowering 的返回值移动目标
 ret_regs = ["X10"]
-
-# Call 调用指令（jal ra, @N；label 槽 = -(FuncRef+1)，RiscvRelocPatcher 编码 UJ 位段）
-call_ret_reg = "X1"
 
 # Call 点被调用方破坏的寄存器（regalloc clobber 集）：ra(X1) + 参数 a0-a7
 # (X10-X17) + 临时 t0-t2(X5-X7)/t3-t6(X28-X31) + 固定用途 X3/X4。
@@ -2325,3 +2317,12 @@ asm = "fence"
 asm = "ecall"
 
 # ── 向量区段结束
+
+[machine]
+# 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
+spill_scratch = ["X5", "X6"]
+# regalloc 不可分配：X0=zero（写入无效）、X1=ra（prologue 保存 + call 返回
+# 地址）、X3/X4=gp/tp（固定用途）——不排除会分配出垃圾（实测 subw x0）。
+fixed_regs = ["X0", "X1", "X3", "X4"]
+# 链接寄存器：Call 调用指令写返回地址（jal ra, @N）。x86 的 CALL 写栈，故 x86 不声明。
+link_reg = "X1"

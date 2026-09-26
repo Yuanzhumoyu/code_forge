@@ -710,7 +710,7 @@ fn gen_store_mechanism(
     let slot = model.slot_bytes()? as i64;
     let fp_push = frame.fp_push_bytes.unwrap_or(0) as i64;
     let sp = format_ident!("{}", frame.sp);
-    let link = model.abi.as_ref().and_then(|a| a.call_ret_reg.clone());
+    let link = model.machine_link_reg().map(str::to_string);
     // 帧顶 fp 保存区：`fp_push_bytes` 个字节里装 link（低偏移）+ fp（高偏移）。
     let fp_off = {
         let lit = proc_macro2::Literal::i64_suffixed(fp_push);
@@ -979,14 +979,14 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             ));
         },
     };
-    // 栈参数收参的 scratch 寄存器（`[abi].scratch` 首项）与 callee-saved 区
-    // 字节数（sp_base 计算常量）。**只在真的要走栈参数收参时**要求声明
-    //（无栈参数的 ISA 不需要 scratch）；缺声明 = 生成期明确报错——
-    // 不回退到某个 ISA 的寄存器名（那等于把别家的命名约定写进通用生成器）。
-    let scratch0 = match abi.scratch.first() {
+    // 栈参数收参的 scratch 寄存器（`[machine].spill_scratch` 首项，迁移期回退
+    // `[abi].scratch`）与 callee-saved 区字节数（sp_base 计算常量）。**只在真的要走
+    // 栈参数收参时**要求声明（无栈参数的 ISA 不需要 scratch）；缺声明 = 生成期明确
+    // 报错——不回退到某个 ISA 的寄存器名（那等于把别家的命名约定写进通用生成器）。
+    let scratch0 = match model.machine_scratch().first() {
         Some(s) => format_ident!("{s}"),
         None if has_shadow => {
-            return Err("move_args: 本 ISA 声明了 [abi.stack_args].shadow_bytes，但 [abi].scratch 未声明——栈参数收参需要一个临时寄存器（不按某个 ISA 的寄存器名兜底）"
+            return Err("move_args: 本 ISA 声明了 [abi.stack_args].shadow_bytes，但 [machine].spill_scratch 未声明——栈参数收参需要一个临时寄存器（不按某个 ISA 的寄存器名兜底）"
                         .into());
         }
         None => format_ident!("__unused_scratch"),
@@ -1445,7 +1445,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     };
     Ok(quote! {
         #head
-        // 栈参数收参的 scratch（[abi].scratch 首项）与 callee-saved
+        // 栈参数收参的 scratch（[machine].spill_scratch 首项）与 callee-saved
         // 字节数（sp_base 计算）——仅 shadow 声明时使用
         #stack_arg_prologue
         // 布局路径的入场判定：**全部**参数都落在受支持的落点才启用

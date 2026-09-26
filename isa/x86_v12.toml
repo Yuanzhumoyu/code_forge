@@ -1866,8 +1866,6 @@ fp_save = 8
 frame_padding = 8
 # Windows x64：int/float 参数共享位置计数（参数 i → GPR{i}/XMM{i}）
 arg_slot = "by-position"
-# 溢出 scratch（spill load/store 用；R10/R11）
-scratch = ["R10", "R11"]
 
 # Windows x64 栈参数布局：shadow space 32 字节（调用方在 call 前预留）；
 # 被调方第 5+ 参数在 [rbp + 2*8 + (k-4)*8]、调用方写 [rsp + 32 + (k-4)*8]。
@@ -4037,3 +4035,7 @@ asm = "bswap R12"
 asm = "mov RAX, 0x1234"
 
 # ── 向量区段结束
+
+[machine]
+# 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
+spill_scratch = ["R10", "R11"]

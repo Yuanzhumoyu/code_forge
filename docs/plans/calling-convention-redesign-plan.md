@@ -378,9 +378,23 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 | `[abi.frame].sp`/`fp`/`fp_push_bytes`/`alloc_neg`/`layout` | 建议同批搬 `[machine]`（`frame.rs` 的角色序列全靠它们；`forge-codegen/src/pipeline/frame_layout.rs` 另读一份） |
 | `[abi].arg_class.regs`、`ret_regs`、`arg_slot`、`stack_args`、`callee_saved`、`call_clobbers`、`frame_padding` | **约定事实**：改由 `AbiRules`/`AbiBinding` 给（`int/float/vector` 池、`ret_int/ret_float`、`position`、`stack.*`、`cs_gpr/cs_fpr`、`frame_padding`）；谱里删掉后，管线侧 `pipeline/compiler.rs`（`int_arg_slot_count`/`max_stack_arg_bytes`/`sret`/clobbers）与发射侧 `frame.rs` 的 `[abi]` 回退路径要改读 plan（`AllocResult::call_layout`），demo 夹具（无绑定）得在测试里注册自己的规则/绑定 |
 
+**已落地（A5-3 ①+②，2026-09-26）**：`[machine]` 三个键（`fixed_regs` / `spill_scratch` /
+`link_reg`）进场，**三份发行谱全部迁完**（x86/riscv64/arm64 的 `[abi].scratch`/`reserved`/
+`call_ret_reg` 已删，值原样进 `[machine]`）。读取侧一律经
+`V12Model::machine_scratch()/machine_reserved()/machine_link_reg()`——`[machine]` 优先、
+回退 `[abi]` 同名旧键，所以**迁移可以逐谱进行、不必一次切完**；`validate` 两处都校验
+（登记名须在 `[reg.*]` 里），`abi_view` 的静态视图与生成期同源。三条 fail-closed 错误消息
+改点名新键（`[machine].spill_scratch` / `[machine].link_reg`），两条负向用例同步。
+三方守卫（model ↔ JSON Schema ↔ 文档键表）同批更新并重新生成 `isa-dsl.schema.json`。
+验收：workspace 全套 serially 绿（clippy `-D warnings` 0）、两条 JIT 矩阵与迁移前**逐条同值**
+（x86 195 passed / 3 skipped、riscv64 131 passed / 67 skipped，0 failed）。
+仍待做：③ 约定事实（`arg_class`/`ret_regs`/`arg_slot`/`stack_args`/`callee_saved`/
+`call_clobbers`/`frame_padding`）移入 `AbiRules`/`AbiBinding` + demo 夹具补测试本地绑定，
+④ 发射/管线改读 plan，然后删掉 `[abi]` 的约定键与机器事实回退路径。
+
 步骤建议（每步都可独立跑门禁）：
-① 加 `[machine]`（model + schema + `docs/reference/isa-dsl.md` 键表三处同改，`schema_guard` 钉住）；
-② 上表"机器事实"逐个改读 `[machine]`（含错误消息与负向用例）；x86 先迁，跑门禁；
+① 加 `[machine]`（model + schema + `docs/reference/isa-dsl.md` 键表三处同改，`schema_guard` 钉住）；✅
+② 上表"机器事实"逐个改读 `[machine]`（含错误消息与负向用例）；x86 先迁，跑门禁；✅（三谱同批迁完）
 ③ riscv/arm64 迁移 + demo 夹具补测试本地绑定 ⇒ 删除 `[abi]` 的约定键；
 ④ 发射/管线改读 plan（这一步才动 `move_args` 的 `[abi]` 回退路径，可用"生成物逐字节不变"
    与三条 ISA 矩阵验收）。

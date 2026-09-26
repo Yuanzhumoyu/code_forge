@@ -917,39 +917,39 @@ opcode = 0x13
 
 // ───────────────── S3a：三处"别家常量兜底"改 fail-closed ─────────────────
 
-/// `[abi].scratch` 缺失 + 声明了栈参数 ⇒ **生成期**报错（原先回退 x86 的 R10）。
+/// `[machine].spill_scratch` 缺失 + 声明了栈参数 ⇒ **生成期**报错（原先回退 x86 的 R10）。
 ///
 /// 用真实 x86 谱删掉 scratch 声明来构造：栈参数收参真的需要这个临时寄存器，
 /// 没有它就该报错，而不是引用一个别的 ISA 恰好有的寄存器名。
 #[test]
 fn codegen_requires_scratch_for_stack_args() {
     let src = include_str!("../../../../../isa/x86_v12.toml");
-    let doc = src.replace("scratch = [\"R10\", \"R11\"]", "");
-    assert_ne!(doc, src, "x86 谱里找不到 scratch 声明行——本测试需更新");
+    let doc = src.replace("spill_scratch = [\"R10\", \"R11\"]", "");
+    assert_ne!(
+        doc, src,
+        "x86 谱里找不到 spill_scratch 声明行——本测试需更新"
+    );
     let model = parse_and_validate(&doc).unwrap();
     let err = super::codegen::generate(&model).unwrap_err();
     assert!(
-        err.contains("[abi].scratch"),
-        "错误消息应点名 [abi].scratch：{err}"
+        err.contains("[machine].spill_scratch"),
+        "错误消息应点名 [machine].spill_scratch：{err}"
     );
 }
 
-/// `[abi].call_ret_reg` 缺失 + call 指令确有返回地址寄存器槽 ⇒ 生成期报错
+/// `[machine].link_reg` 缺失 + call 指令确有返回地址寄存器槽 ⇒ 生成期报错
 ///（原先回退 riscv 的 X1）。反向对照：x86 的 CALL 没有该槽，故无需声明（见
 /// `codegen_generates_core_surface` 与三份发行谱的正常生成）。
 #[test]
 fn codegen_requires_call_ret_reg_when_call_has_ret_slot() {
     let src = include_str!("../../../../../isa/riscv64_v12.toml");
-    let doc = src.replace("call_ret_reg = \"X1\"", "");
-    assert_ne!(
-        doc, src,
-        "riscv 谱里找不到 call_ret_reg 声明行——本测试需更新"
-    );
+    let doc = src.replace("link_reg = \"X1\"", "");
+    assert_ne!(doc, src, "riscv 谱里找不到 link_reg 声明行——本测试需更新");
     let model = parse_and_validate(&doc).unwrap();
     let err = super::codegen::generate(&model).unwrap_err();
     assert!(
-        err.contains("call_ret_reg"),
-        "错误消息应点名 call_ret_reg：{err}"
+        err.contains("[machine].link_reg"),
+        "错误消息应点名 [machine].link_reg：{err}"
     );
 }
 

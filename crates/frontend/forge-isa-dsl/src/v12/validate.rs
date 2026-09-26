@@ -858,6 +858,14 @@ fn validate_reg_names(m: &V12Model) -> Result<(), String> {
         }
         Ok(())
     };
+    // v20 A5-3：`[machine]` 是机器事实的正式位置（`[abi]` 旧键仍被校验，迁移期两者都认）。
+    if let Some(ms) = &m.machine {
+        check(&ms.fixed_regs, "[machine].fixed_regs")?;
+        check(&ms.spill_scratch, "[machine].spill_scratch")?;
+        if let Some(r) = &ms.link_reg {
+            check(std::slice::from_ref(r), "[machine].link_reg")?;
+        }
+    }
     if let Some(abi) = &m.abi {
         check(&abi.scratch, "[abi].scratch")?;
         check(&abi.reserved, "[abi].reserved")?;

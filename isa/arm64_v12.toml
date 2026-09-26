@@ -503,16 +503,8 @@ align = 16
 fp_save = 8
 
 [abi]
-scratch = ["X16", "X17"]
-# regalloc 不可分配：X18 = 平台寄存器；X30 = lr（BL 返回地址/prologue
-# 保存）——不排除会被分配出垃圾值（覆盖返回地址 → ret 跳错）。
-reserved = ["X18", "X30"]
-
 # 返回寄存器（x0）；Return lowering 的返回值移动目标
 ret_regs = ["X0"]
-
-# Call 返回地址寄存器（BL 写 X30；P1 尚未有 Call lowering 规则）
-call_ret_reg = "X30"
 
 # Call 点被调用方破坏的寄存器（regalloc clobber 集）：AAPCS64 caller-saved
 # = X0-X18 + lr(X30)。X19-X28 由帧件保存（roles = ["callee_save"]）→ 不在 clobber 集。
@@ -1356,3 +1348,12 @@ asm = "stur {src}, [{base}, #{off}]"
 [spill.FPR]
 load = "LDURD {0}, X29, {1}"
 store = "STURD {0}, X29, {1}"
+
+[machine]
+# 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
+spill_scratch = ["X16", "X17"]
+# regalloc 不可分配：X18 = 平台寄存器；X30 = lr（BL 返回地址/prologue
+# 保存）——不排除会被分配出垃圾值（覆盖返回地址 → ret 跳错）。
+fixed_regs = ["X18", "X30"]
+# 链接寄存器（BL 写 X30；P1 尚未有 Call lowering 规则）。
+link_reg = "X30"

@@ -70,11 +70,11 @@ pub struct MachineView {
     pub regs: Vec<RegEntry>,
     /// 名字（含别名）→ 物理号。
     pub names: BTreeMap<String, u32>,
-    /// 固定用途（`[abi].reserved` + sp/fp），已排序去重。
+    /// 固定用途（`[machine].fixed_regs` + sp/fp；迁移期回退 `[abi].reserved`），已排序去重。
     pub pinned: Vec<u32>,
-    /// 溢出 scratch（`[abi].scratch`）。
+    /// 溢出 scratch（`[machine].spill_scratch`；迁移期回退 `[abi].scratch`）。
     pub scratch: Vec<u32>,
-    /// 链接寄存器（`[abi].call_ret_reg`）。
+    /// 链接寄存器（`[machine].link_reg`；迁移期回退 `[abi].call_ret_reg`）。
     pub link: Option<u32>,
     /// GPR / FP 区大小。
     pub n_gpr: u32,
@@ -202,38 +202,32 @@ pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String>
     // ── 固定用途：reserved + sp/fp ──
     let mut pinned: Vec<u32> = Vec::new();
     let mut scratch: Vec<u32> = Vec::new();
-    let mut link: Option<u32> = None;
-    if let Some(abi) = &model.abi {
-        if let Some(frame) = &abi.frame {
-            for n in std::iter::once(&frame.sp).chain(frame.fp.iter()) {
-                match names.get(n) {
-                    Some(i) => pinned.push(*i),
-                    None => notes.push(format!("[abi.frame] 的 `{n}` 不在寄存器表里")),
-                }
-            }
-        }
-        for n in &abi.reserved {
+    if let Some(frame) = model.abi.as_ref().and_then(|a| a.frame.as_ref()) {
+        for n in std::iter::once(&frame.sp).chain(frame.fp.iter()) {
             match names.get(n) {
                 Some(i) => pinned.push(*i),
-                None => notes.push(format!("[abi].reserved 的 `{n}` 不在寄存器表里")),
+                None => notes.push(format!("[abi.frame] 的 `{n}` 不在寄存器表里")),
             }
         }
-        for n in &abi.scratch {
-            match names.get(n) {
-                Some(i) => scratch.push(*i),
-                None => notes.push(format!("[abi].scratch 的 `{n}` 不在寄存器表里")),
-            }
+    }
+    // **机器事实**（v20 A5）：`[machine]` 优先、回退 `[abi]` 旧键——与生成期同源。
+    for n in model.machine_reserved() {
+        match names.get(n) {
+            Some(i) => pinned.push(*i),
+            None => notes.push(format!("[machine].fixed_regs 的 `{n}` 不在寄存器表里")),
         }
-        link = abi
-            .call_ret_reg
-            .as_ref()
-            .and_then(|n| names.get(n))
-            .copied();
-        if let Some(n) = &abi.call_ret_reg
-            && link.is_none()
-        {
-            notes.push(format!("[abi].call_ret_reg 的 `{n}` 不在寄存器表里"));
+    }
+    for n in model.machine_scratch() {
+        match names.get(n) {
+            Some(i) => scratch.push(*i),
+            None => notes.push(format!("[machine].spill_scratch 的 `{n}` 不在寄存器表里")),
         }
+    }
+    let link: Option<u32> = model.machine_link_reg().and_then(|n| names.get(n)).copied();
+    if let Some(n) = model.machine_link_reg()
+        && link.is_none()
+    {
+        notes.push(format!("[machine].link_reg 的 `{n}` 不在寄存器表里"));
     }
     pinned.sort_unstable();
     pinned.dedup();

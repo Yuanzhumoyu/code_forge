@@ -109,7 +109,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `abi` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位） |
@@ -135,6 +135,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
+| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器） |
 | `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
@@ -1137,17 +1138,35 @@ insts = ["movsd {out}, {a}", "mulsd {out}, {b}", "addsd {out}, {c}"]
 上例把 `Fadd(Fmul(a,b),c)` 融合成 3 条（movss/mulss/addss），比逐条 lowering
 （Fmul 2 条 + Fadd 2 条 = 4 条，且各带一条 mov 拷贝）省 1 条 mov。
 
+## `[machine]` — 机器事实
+
+**只描述"这台机器是什么样"**，不放任何约定内容（v20 A5-3 起是这些键的正式位置）：
+
+```toml
+[machine]
+fixed_regs = ["X0", "X1", "X3", "X4"]   # regalloc 不可分配（zero/ra/gp/tp 之类）
+spill_scratch = ["X5", "X6"]            # 溢出与栈参数收参的临时寄存器
+link_reg = "X1"                         # call 写返回地址的寄存器（x86 写栈 ⇒ 不声明）
+```
+
+三条纪律：① 参数池 / 返回池 / callee-saved / sret 槽 / 栈参数布局**不在这里**——它们是
+**约定事实**，属于 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）；
+② 键名与 `[abi]` 的旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
+`link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊；③ 迁移期（A5-3）这三个键仍能
+回退到 `[abi]` 同名旧键，因此可以逐谱迁移——[`[abi]`](#abi--调用约定) 的旧键在 A5-3 收尾时删除。
+
 ## `[abi]` — 调用约定
+
+> **迁移中（v20 A5-3）**：机器事实（`scratch`/`reserved`/`call_ret_reg`）已搬进
+> [`[machine]`](#machine--机器事实)，三份发行谱都已迁完；本节的这三个键保留为**回退路径**，
+> 将在 A5-3 收尾（约定数据移入绑定/规则）时删除。新写的谱请用 `[machine]`。
 
 ```toml
 [abi]
 frame_padding = 8              # 帧额外栈填充（x86 = 8；见下）
 arg_slot = "by-position"       # 参数槽位计数策略：by-class（缺省，riscv）/ by-position（x86）
-scratch = ["R10", "R11"]       # spill load/store 专用（须排除 allocatable）
 ret_regs = ["X10"]             # 返回寄存器（缺省空 = index 0，x86 RAX 语义）
-call_ret_reg = "X1"            # Call 的返回地址寄存器（缺省 "X1"=riscv ra）
 call_clobbers = ["X1", "X7", ...]  # Call 点被调用方破坏的寄存器
-reserved = ["X0", "X1", "X3", "X4"]  # regalloc 不可分配寄存器
 
 [abi.stack_args]               # 寄存器耗尽后的参数内存布局（可选；全缺省 = x86 形态）
 callee_base = "fp"             # 被调方基址寄存器：fp（缺省）/ sp
@@ -1170,9 +1189,7 @@ limit = 128
 > `call_indirect_inst`/`ret_inst`/`jump_inst`/`branch_inst`/`test_inst`/
 > `push_inst`/`pop_inst`/`fpr_mov_inst`/`fpr_mov_inst32`/`vec_mov_inst` 全部移除，
 > 改为指令上的 [`roles`](#instructions--指令)。生成器查角色表取代按名字查找，缺角色
-> → 明确 `Unsupported("<角色> 未声明")`。寄存器名类键（`ret_regs`/`call_ret_reg`/
-> `scratch`/`reserved`/`call_clobbers`/`callee_saved`）留在 `[abi]`——它们是寄存器
-> 不是指令。
+> → 明确 `Unsupported("<角色> 未声明")`。
 
 - `arg_slot`（枚举）：`by-class`（缺省，riscv SysV——int/float 各自独立推进）/
   `by-position`（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）。
@@ -1189,6 +1206,7 @@ limit = 128
   值留在寄存器被覆盖（实测递归 fib 死循环）。s 系（由帧件按 `callee_save` 保存）不在列表。
 - `reserved`：regalloc 不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被
   prologue/call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 `subw x0`）。
+  **A5-3 起请写进 `[machine].fixed_regs`**（本节保留的是回退路径）。
 
 ## `[abi.frame]` — 帧布局
 
