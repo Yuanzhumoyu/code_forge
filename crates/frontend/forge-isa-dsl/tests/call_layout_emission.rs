@@ -50,6 +50,11 @@ fn move_args_emits_the_layout_driven_receive_path() {
                 "{name}: 生成物里没有 `{needle}`——布局驱动的收参没发射"
             );
         }
+        // 栈落点也在布局路径里（A3b-2b-2c-2）：偏移由 forge-abi 给，不再自己数位置。
+        assert!(
+            text.contains("ArgPlace :: Stack"),
+            "{name}: 布局路径没有接受 `ArgPlace::Stack`——带栈参数的函数会整函数退回位置算式"
+        );
         let layout_at = text.find("__layout_ok").expect("布局判定");
         let old_at = text.find("param_by_ref").unwrap_or_else(|| {
             panic!("{name}: 旧路径（[abi] 收参）不见了——它仍是未覆盖落点的回退")

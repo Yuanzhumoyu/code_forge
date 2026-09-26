@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-25) — v20 A3b-2b-2c-2：栈落点接进布局驱动的收参
+
+- `@move_args` 的布局路径新增 `ArgPlace::Stack { offset }` 分支：栈参数从
+  `[frame_base + offset]` 收进分配的寄存器（指令仍按角色 `stack_arg_load` 取），
+  **偏移完全来自 forge-abi**（`first_offset_slots + shadow + k×slot`，上一片刚修正）。
+  `__layout_ok` 的入场判定也随之接受 `Stack` ⇒ 带栈参数的函数（第 5+ 个参数）不再因为
+  "有一个栈落点"而整函数退回 `[abi]` 位置算式——它们的寄存器参数也走布局。
+- 被 regalloc 强制 spill 的栈参数仍由既有的 spill 收参块处理（同一套数值；其"布局偏移 ==
+  旧算式"由 `abi_target_real::stack_arg_offsets_agree_with_the_legacy_formula` 钉住）。
+- **浮点参数走栈**的收参**明确拒绝**（`Unsupported`）而不是当整数搬进 GPR：旧路径同样只走
+  GPR 搬运，这是这条路上的旧缺口，接它属于后续（需要按宽度分派的 FPR load）。
+- 仍未接：`Pair`/`Group`/无指针的 `Indirect`（整函数回退，边界在守卫测试里）。
+- 验证：workspace 全套 serially 绿（含两条 JIT 矩阵；`Args` 用例覆盖 5+ 参数）。
+
 ### Fixed (2026-09-25) — v20 A3b-2b-2c-1：`Placement::Stack.offset` 漏算 shadow（被调方读栈参数会读错）
 
 - **模型 bug**：被调方视角的栈参数偏移只算了 `first_offset_slots × slot` + 参数区位置，**漏了 `shadow_bytes`**。调用方把第 k 个栈参数写在 `[sp + shadow + k×slot]`，被调方读同一实参时要加上"返回地址 + 保存的帧指针"**以及** shadow——win64 第 5 个参数因此被算成 `off=16`，而现有发射算式是 `48`（差的就是那 32 字节 shadow）。

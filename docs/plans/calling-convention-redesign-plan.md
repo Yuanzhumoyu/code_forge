@@ -276,9 +276,11 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 first_arg_offset` 写进注释与参考文档；`win64` 黄金快照整体 +32（其余三份 shadow = 0，
 逐字节不变），`invariants.rs` 按新口径断言。
 
-**剩下（2c-2，未开始）**：把 `ArgPlace::Stack` 接进 `@move_args` 的布局路径
-（含"这个栈参数被 regalloc 强制 spill"的分支），此后 §"首次 int 槽/位置算式"在
-有布局的谱上全部消失；`Pair`/`Group`/无指针 `Indirect` 仍整函数回退（边界写成测试）。
+**剩下（2c-2 ✅，2026-09-25）**：`ArgPlace::Stack` 已接进 `@move_args` 的布局路径
+（`__layout_ok` 接受 `Stack`；从 `[frame_base + offset]` 收进分配寄存器，偏移全部来自
+forge-abi），带栈参数的函数不再整函数回退；被 regalloc 强制 spill 的栈参数仍走既有 spill
+块（数值同一套，已由对照测试钉住）。**浮点走栈**与 `Pair`/`Group`/无指针 `Indirect`
+仍 fail-closed / 整函数回退（`Pair`/`Group` 的边界写在守卫测试里）。
 
 **剩余面**：`Pair`/`Group`、无指针的 `Indirect`（byval 指针本身在栈上）。
 

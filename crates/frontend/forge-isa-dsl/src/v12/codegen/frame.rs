@@ -1421,12 +1421,36 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             ));
         }
     };
+    // **布局给的栈落点**收参（A3b-2b-2c-2）：`[frame_base + offset]` → 分配的寄存器。
+    // 指令按角色 `stack_arg_load` 取（与旧路径同一条），偏移来自布局（常量）。
+    let layout_stack_stmt: TokenStream = match load_triple.as_ref() {
+        Some((l_vn, l_mem, l_reg)) => quote! {
+            let __bytes = encode(&Inst::#l_vn {
+                #l_mem: MemRef {
+                    base: #callee_base,
+                    disp: *offset as i64,
+                    index: None,
+                    scale: 1,
+                },
+                #l_reg: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
+            })
+            .map_err(|e| crate::IrError::Emit(e))?;
+            __sink.put_bytes(&__bytes);
+        },
+        None => quote! {
+            return Err(crate::IrError::Unsupported(
+                "v12 move_args: 栈参数收参需要 roles = [\"stack_arg_load\"] 的指令".into(),
+            ));
+        },
+    };
     Ok(quote! {
         #head
         // 栈参数收参的 scratch（[abi].scratch 首项）与 callee-saved
         // 字节数（sp_base 计算）——仅 shadow 声明时使用
         #stack_arg_prologue
         // 布局路径的入场判定：**全部**参数都落在受支持的落点才启用
+        //（`Reg` / 带指针的 `Indirect` / `Stack`——栈参数的位置由 forge-abi 按
+        // `first_offset_slots + shadow + k×slot` 算好，生成器不再自己数位置）。
         let __layout_ok = match __rm.call_layout.as_ref() {
             Some(__cl) => __rm.param_vregs.iter().enumerate().all(|(__li, _)| {
                 matches!(
@@ -1436,6 +1460,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                             reg: Some(_),
                             ..
                         })
+                        | Some(crate::machine::call_layout::ArgPlace::Stack { .. })
                 )
             }),
             None => false,
@@ -1489,6 +1514,24 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                     } => {
                         let __src = Reg::from_index(*index, *class);
                         #byref_stmt
+                    }
+                    crate::machine::call_layout::ArgPlace::Stack { offset, .. } => {
+                        // 栈参数：**偏移由 forge-abi 给**（被调方视角，已含 shadow 与
+                        // `first_offset_slots`），生成器不再自己数位置。
+                        //
+                        // 被 regalloc 强制 spill 的栈参数在进入这里之前就被
+                        // `#stack_arg_receive` 收进 spill 槽了（那条路用同一套数值，
+                        // 现已由 `abi_target_real::stack_arg_offsets_agree_with_the_legacy_formula`
+                        // 钉住"布局偏移 == 旧算式"）。
+                        //
+                        // 浮点参数走栈的收参还没接（旧路径同样只走 GPR 搬运）——
+                        // 明确拒绝，而不是把浮点值当整数搬进 GPR。
+                        if __rm.param_is_float.get(__i).copied().unwrap_or(false) {
+                            return Err(crate::IrError::Unsupported(
+                                "v12 move_args: 栈上的浮点参数收参尚未接进发射".into(),
+                            ));
+                        }
+                        #layout_stack_stmt
                     }
                     _ => {
                         return Err(crate::IrError::Internal(
