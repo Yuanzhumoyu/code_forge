@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   谱里的 `[abi.callee_saved]`（不含 FPR），所以**行为不变、且偏保守**（regalloc 仍把 v8-v15
   当跨调用不安全）。把帧件的保存/恢复按类分派（FPR 走 STURD/LDURD）需要 role 能带类限定，
   归 A6；缺口已写进绑定注释与计划文档，不留含糊。
+
 ### Added (2026-09-25) — v20 A5（子集）：arm64 浮点能力——FPR 组 + 浮点搬运角色 + 绑定补池
 
 - **谱**（`isa/arm64_v12.toml`）：新增 `[reg.fpr8]`（`V0..V31`）、`fpr` 操作数槽、`FMOVR` 形式，以及 6 条指令——`FMOV_S`/`FMOV_D`（`fpr_mov` 32/64）、`LDURD`/`STURD`/`LDURS`/`STURS`（SIMD&FP 的 unscaled 访存，编码与 `LDURX`/`STURX` 同形：`0xFD…`/`0xBD…` + `opc2`），外加 `[spill.FPR]`（D 寄存器溢出）。
