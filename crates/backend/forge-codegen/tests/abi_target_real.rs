@@ -7,6 +7,7 @@
 use forge_abi::AbiTarget;
 use forge_abi::builtin;
 use forge_codegen::arch::x86_v12::TargetMachine;
+use forge_codegen::machine::target::TargetMachine as _;
 use forge_codegen::pipeline::abi_target::{MachineAbiTarget, plan_for_function};
 use forge_ir::CallConvId;
 use forge_ir::ConvName;
@@ -418,4 +419,229 @@ fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
     }
     // callee-saved 也在里面（序言据此保存、尾声据此恢复）。
     assert!(!layout.callee_saved.is_empty());
+}
+
+/// **约定事实读 plan 的交叉核对**（v20 A5-3 ④ 的入场券）：把 regalloc / 帧布局 /
+/// 发射三处从"读谱里声明的 `[abi]` 表"切到"读 plan"之前，必须先说清**两边的差异**。
+///
+/// `$equal_cs = true` = 该约定就是谱 `[abi]` 描述的那一份 ⇒ plan 与谱必须**逐项相等**；
+/// `false` = 同一台机器上的**另一份**约定（x86 的 sysv64）⇒ 差异必须是**预期的那几项**。
+///
+/// 逐机器核对三件事：
+///
+/// 1. `callee_saved`：plan（绑定 `cs_gpr`）对谱 `[abi.callee_saved].gpr`。相等的那三份
+///    逐项同值；x86 的 sysv64 少 `RDI/RSI`②（win64 里它们是 callee-saved，sysv64 里是
+///    **参数寄存器**）。plan 侧可能多出 FPR（AAPCS64 的 `cs_fpr`），但发射侧还没按类分派
+///    保存（A6）⇒ 消费者只取 GPR 类，这里也按 GPR 类比。
+/// 2. `frame_padding`：plan（规则字段）与谱 `[abi].frame_padding` 必须相等（它不随
+///    约定而变，是同一台机器的栈对齐事实）。
+/// 3. `clobbers`：plan = 可用池 − callee-saved。它与谱声明的 `[abi].call_clobbers`
+///    允许差在**固定用途寄存器**上（riscv 的 X1/X3/X4、arm64 的 X18/X30）——那些寄存器
+///    regalloc 根本分不到，差它们不影响正确性。两条硬不变量必须成立：① `clobbers` 与
+///    `callee_saved` 不交；② 参数寄存器与返回寄存器都在 `clobbers` 里（跨调用存活值不能
+///    留在参数寄存器上——x86 显式选 `sysv64` 时谱里那份**漏了 RDI/RSI**，读 plan 正好修掉）。
+macro_rules! convention_facts_probe {
+    ($name:ident, $tm:ty, $conv:literal, $probe:expr, $equal_cs:expr) => {
+        #[test]
+        fn $name() {
+            use forge_codegen::pipeline::abi_target::call_layout;
+            use forge_isa_runtime::machine::call_layout::ArgPlace;
+
+            let tm = <$tm>::new();
+            let reg = builtin::registry().expect("内置注册表");
+            let func = $probe();
+            let plan = plan_for_function(&tm, &reg, $conv, &func).expect("plan");
+            let layout = call_layout(&plan, &tm);
+            let ri = tm.reg_info();
+            let gpr = ri.default_gpr_class();
+            let idx = |v: &[(forge_ir::RegClass, u32)]| -> Vec<u32> {
+                v.iter()
+                    .filter(|(c, _)| *c == gpr)
+                    .map(|&(_, i)| i)
+                    .collect()
+            };
+
+            // ① callee-saved：plan 的 GPR 类项 vs 谱里声明的表。
+            let plan_cs = idx(&layout.callee_saved);
+            let spec_cs = ri.callee_saved();
+            if $equal_cs {
+                assert_eq!(
+                    plan_cs, spec_cs,
+                    "{}：plan（绑定 cs_gpr）与谱 [abi.callee_saved].gpr 必须同值",
+                    $conv
+                );
+            } else {
+                // 另一份约定：plan 必须是谱那份的**子集**——spec 是 ISA 主约定的口径，
+                // 多出来的是"在这份约定里由 caller 保存"的寄存器（sysv64 的 RDI/RSI）。
+                for r in &plan_cs {
+                    assert!(
+                        spec_cs.contains(r),
+                        "{}：plan 的 callee-saved {r} 不该是谱表之外的新寄存器",
+                        $conv
+                    );
+                }
+                assert!(
+                    plan_cs.len() < spec_cs.len(),
+                    "{}：这份约定的 callee-saved 必须少于 ISA 主约定的那份（否则说明绑定没生效）",
+                    $conv
+                );
+            }
+
+            // ② 帧填充：plan（规则） == 谱。
+            assert_eq!(
+                layout.frame_padding,
+                tm.abi().frame_padding(),
+                "{}：plan 的 frame_padding 与谱 [abi].frame_padding 必须同值",
+                $conv
+            );
+
+            // ③ clobbers 的两条硬不变量。
+            let clobber_idx = idx(&layout.clobbers);
+            assert!(!clobber_idx.is_empty(), "{}：破坏集不该为空", $conv);
+            for cs in &plan_cs {
+                assert!(
+                    !clobber_idx.contains(cs),
+                    "{}：callee-saved 的 {cs} 不能同时出现在破坏集里",
+                    $conv
+                );
+            }
+            // 首个整数参数落点必须在破坏集里（跨调用存活值不能留在它上面）。
+            let first = layout
+                .args
+                .iter()
+                .find_map(|a| match &a.place {
+                    ArgPlace::Reg { class, index, .. } => Some((*class, *index)),
+                    _ => None,
+                })
+                .expect("至少有首参落在寄存器");
+            assert_eq!(first.0, gpr, "首参应是整数类");
+            assert!(
+                clobber_idx.contains(&first.1),
+                "{}：首个整数参数寄存器 {} 必须在破坏集里",
+                $conv,
+                first.1
+            );
+            // 返回寄存器也在破坏集里（按名核对，不假设它的号）。
+            let ret_name = match &plan.ret {
+                forge_abi::RetLoc::Reg { reg } => reg.name.clone(),
+                other => panic!("{other:?}"),
+            };
+            assert!(
+                layout
+                    .clobbers
+                    .iter()
+                    .zip(plan.clobbers.iter())
+                    .any(|((c, i), r)| *c == gpr && r.name == ret_name && *i == r.index),
+                "{}：返回寄存器 {ret_name} 必须在破坏集里",
+                $conv
+            );
+        }
+    };
+}
+
+// x86 Win64：整数参数 4 个（RCX/RDX/R8/R9），callee-saved 7 个（含 RDI/RSI）。
+convention_facts_probe!(
+    x86_win64_facts_match_the_spec,
+    forge_codegen::arch::x86_v12::TargetMachine,
+    "win64",
+    win64_stack_args_probe,
+    true
+);
+
+// x86 **SysV64**：同一台机器换约定——callee-saved 少 RDI/RSI，破坏集必须多出它们。
+//
+// 这条正是"读 plan"的价值：谱里那份 `[abi]`（callee-saved 表与 clobbers）是 **win64
+// 口径**，拿它去编 sysv64 的函数会漏掉 RDI/RSI 的破坏，跨调用存活值留在上面会被
+// callee 静默覆盖。本测试钉住"plan 给的是 sysv64 的口径"。
+convention_facts_probe!(
+    x86_sysv64_facts_match_the_spec,
+    forge_codegen::arch::x86_v12::TargetMachine,
+    "sysv64",
+    sysv64_probe,
+    false
+);
+
+// riscv64 LP64D：callee-saved = X9 + X18..X27（11 个）。
+convention_facts_probe!(
+    riscv64_lp64d_facts_match_the_spec,
+    forge_codegen::arch::riscv64_v12::TargetMachine,
+    "lp64d",
+    lp64d_probe,
+    true
+);
+
+// arm64 AAPCS64：callee-saved = X19..X28（10 个 GPR；FPR 的 V8-V15 只进 plan，
+// 发射侧按类分派保存是 A6 的事，所以消费者按 GPR 类比）。
+convention_facts_probe!(
+    arm64_aapcs64_facts_match_the_spec,
+    forge_codegen::arch::arm64_v12::TargetMachine,
+    "aapcs64",
+    aapcs64_probe,
+    true
+);
+
+/// **把已知缺口钉住**（v20 A5-3 ④ 实测，2026-09-26）：x86 的 plan 破坏集在 FP 侧
+/// **比谱里声明的宽**（plan = 全部 16 个 XMM；谱 = `[abi].call_clobbers` 缺省兜底给的
+/// 4 个参数 XMM + XMM0）。物理上 plan 那份才是对的（Win64 的 XMM0-15 全 volatile），
+/// 但本实现"跨调用存活的向量值"路径在更宽的破坏集下**读回错值**：
+/// `test_jit_v128_byval_return_lane3`（lane3 的 7.5 读成整数）与
+/// `test_jit_v128_byval_mixed_int_pos` 实测变红。
+///
+/// 因此发射侧**只消费 GPR 类的 plan 破坏集**（`lowering.rs` 的过滤），FP 侧维持谱里
+/// 声明的名单；缺口归 A6。本测试钉住两件事，防止它被悄悄"修好"或被遗忘：
+/// ① plan 的 FP 破坏集确实比谱宽；② GPR 侧随约定变（win64 5 个 vs sysv64 7 个）。
+#[test]
+fn x86_plan_fp_clobbers_are_wider_than_the_spec() {
+    use forge_codegen::pipeline::abi_target::call_layout;
+
+    let cases: [(&str, fn() -> Function); 2] = [
+        ("win64", win64_stack_args_probe as fn() -> Function),
+        ("sysv64", sysv64_probe as fn() -> Function),
+    ];
+    for (conv, probe) in cases {
+        let tm = TargetMachine::new();
+        let reg = builtin::registry().expect("内置注册表");
+        let plan = plan_for_function(&tm, &reg, conv, &probe()).expect("plan");
+        let layout = call_layout(&plan, &tm);
+        let gpr = tm.reg_info().addr_class();
+
+        let plan_fp = layout.clobbers.iter().filter(|(c, _)| *c != gpr).count();
+        assert!(
+            plan_fp > 4,
+            "{conv}：plan 的 FP 破坏集应比谱里声明的 4 个参数 XMM 宽（实测 {plan_fp}）——\
+             若已变窄说明本缺口被处理了，请同步 A6 记录与 lowering.rs 的过滤注释"
+        );
+        let plan_gpr: Vec<u32> = layout
+            .clobbers
+            .iter()
+            .filter(|(c, _)| *c == gpr)
+            .map(|&(_, i)| i)
+            .collect();
+        let expected = if conv == "win64" { 5 } else { 7 };
+        assert_eq!(plan_gpr.len(), expected, "{conv}：GPR 破坏集个数");
+    }
+}
+
+/// `fn f(i64) -> i64`，用 `sysv64` 约定（x86 上的另一份平台约定）。
+fn sysv64_probe() -> Function {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I64, "a")], &[TypeId::I64])
+        .with_calling_convention(CallConvId::builtin(ConvName::SysV64));
+    let mut b = FunctionBuilder::new("sysv64_probe", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0]]);
+    b.finish().expect("build")
+}
+
+/// `fn f(i64, i64) -> i64`，用 `aapcs64` 约定（arm64 后端）。
+fn aapcs64_probe() -> Function {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64])
+        .with_calling_convention(CallConvId::builtin(ConvName::Aapcs64));
+    let mut b = FunctionBuilder::new("aapcs64_probe", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0]]);
+    b.finish().expect("build")
 }

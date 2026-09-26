@@ -36,6 +36,14 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(machine: &M) -> Frame
     // 帧指针上方推入区 = fp 保存槽（frame_pointer_overhead）+ callee-saved ×
     // 主 GPR 类宽度（主类宽度取 default_gpr_class()，元数据驱动不再假设
     // GPR64）。
+    //
+    // **这里仍按谱里声明的表数**（v20 A5-3 ④ 的刻意保留）：x86 的 push 机制是
+    // **静态**发射（谱面列表逐个 `push`，见 `gen_push_mechanism`），帧上方实际占用的
+    // 字节数由那份列表决定。若改按 plan 计数，遇到"plan 比谱表短"的约定（x86 显式选
+    // sysv64：5 vs 7）就会少算 16 字节 ⇒ 局部/spill 槽与 push 槽重叠（覆盖调用者保存
+    // 值）。要一起换，必须先把 push 机制改成**运行时按 `alloc_result.callee_saved_to_save`
+    // 循环**（帧字节数也得变运行时值）——归 A6。plan 的 callee-saved 现在已经喂给
+    // **regalloc**（保存集与破坏集同源），只是帧字节数还按谱面列表。
     let cs_bytes =
         (ri.callee_saved().len() as i32) * (ri.reg_class_width(ri.default_gpr_class()) as i32);
     let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
@@ -94,8 +102,15 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 使 call 前 rsp%16==0（SysV/Windows x64 ABI）。spill 区 size 是 16 的
         // 倍数（%16==0），故 frame 需额外 +8 才能满足。无 call 的函数多 8 字节
         // 栈帧无害；有 call 的否则外部函数（Rust C ABI 的 movaps 保存）会 SEGV。
-        // 架构事实由 [abi].frame_padding 声明（x86=8，其他 ABI 缺省 0）。
-        let padding: i32 = machine.abi().frame_padding();
+        // 架构事实由约定数据声明（win64 = 8，其他 ABI 缺省 0）。v20 A5-3 ④：
+        // **有 plan 时用 plan 的**（帧填充是规则的 `frame_padding`，随约定而变）；
+        // 谱里那份只是无 plan 时的兜底。
+        let padding: i32 = self
+            .ctx
+            .call_layout
+            .as_ref()
+            .map(|cl| cl.frame_padding)
+            .unwrap_or_else(|| machine.abi().frame_padding());
         size.div_ceil(align) * align + padding as u32
     }
 }

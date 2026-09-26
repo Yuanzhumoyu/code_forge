@@ -283,6 +283,8 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         byval_area_bytes: plan.stack.byval_area_bytes,
         red_zone: plan.stack.red_zone,
         callee_saved: plan.callee_saved.regs.iter().map(reg).collect(),
+        clobbers: plan.clobbers.iter().map(reg).collect(),
+        frame_padding: plan.stack.frame_padding,
         callee_pop_bytes: plan.callee_pop_bytes,
         widen_to_bits: plan.widen_to_bits,
     }

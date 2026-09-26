@@ -415,6 +415,21 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 
 ### A6 变参 / HFA 部分在寄存器 / ≥3 槽返回 / 罕见的弹栈约定
 
+**A5-3 ④ 带出来的两条前置缺口**（2026-09-26 实测，都已在代码里注明并留了守卫）：
+
+- **向量值跨调用存活会读回错值**：把 plan 的**完整**破坏集（x86：全部 16 个 XMM，
+  物理上正确）交给发射后，`test_jit_v128_byval_return_lane3`（lane3 的 7.5 读成整数）
+  与 `test_jit_v128_byval_mixed_int_pos` 变红。现发射侧只消费 **GPR 类**的 plan 破坏集，
+  FP 侧仍用谱里声明的名单；守卫 `x86_plan_fp_clobbers_are_wider_than_the_spec`
+  钉住"plan 的 FP 破坏集确实更宽"这个事实。**修掉它才能把 FP 破坏集也切成 plan**
+  （否则 = 用更宽的破坏集去踩一条既有缺陷）。
+- **callee-saved 的类分派保存**：AAPCS64 的 `cs_fpr`（V8-V15）已在 plan 里，但 `callee_save`
+  角色只指向 `STURX`（GPR 视图）⇒ regalloc 的 callee-saved 与帧字节数都**只取 GPR 类**。
+- **帧上方 callee-saved 字节数仍是静态的**：x86 的 push 机制按谱面列表逐个 `push`
+  （静态发射），所以 `frame_layout_info` 仍按谱面表数；改按 plan 计数会在"plan 比谱表短"
+  （sysv64：5 vs 7）时少算 16 字节、让局部/spill 槽与 push 槽重叠。要一起换，须先把
+  push 机制改成运行时按 `alloc_result.callee_saved_to_save` 循环（帧字节数也随之变运行时值）。
+
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
   变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
 - HFA/HVA 的"寄存器不够时部分在寄存器"（需要按成员赋值的规则语言）。

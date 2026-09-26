@@ -137,6 +137,14 @@ pub struct CallLayout {
     pub red_zone: Option<u32>,
     /// 需要被调方保存的寄存器（按约定顺序）。
     pub callee_saved: Vec<(RegClass, u32)>,
+    /// 调用点被破坏的寄存器（**约定事实**：可用池 − callee-saved；调用方需假设被破坏）。
+    ///
+    /// v20 A5-3 ④：发射侧据此设置 `LowerCtx::current_clobbers`。它与
+    /// [`Self::callee_saved`] 互补——同一台机器换约定（x86 的 win64/sysv64），
+    /// 破坏集**必须跟着换**（win64 的 RDI/RSI 是 callee-saved，sysv64 是 caller-saved）。
+    pub clobbers: Vec<(RegClass, u32)>,
+    /// 帧填充字节（x86 = 8 = align/2；其余约定 0）——帧布局的输入之一。
+    pub frame_padding: i32,
     /// 被叫方在 `ret` 前自行弹掉的栈字节数（stdcall/thiscall）。
     pub callee_pop_bytes: u32,
     /// 形参/实参至少扩展到多少位（AArch64 = 32）。

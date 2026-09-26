@@ -2090,14 +2090,37 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ctx.vector_tiers = ri.vector_tiers().to_vec();
             ctx.type_map = ri.type_map().to_vec();
         }
+        // v20 A3b 预备/ A5-3 ④：把该函数的 `AbiPlan` 算出来挂上。约定名已在上面解析过
+        // （A2 的读路径）；这里跑一次引擎，把"IR 签名 + 宿主寄存器文件 + 约定数据"的结果
+        // 交给生成物与管线（`call_layout`）。
+        let (abi_plan, abi_plan_note) = {
+            let reg = crate::pipeline::conv_registry::registry()
+                .read()
+                .expect("约定注册表被投毒");
+            match crate::pipeline::abi_target::plan_for_function(
+                machine,
+                &reg,
+                &ctx.call_conv_name,
+                func,
+            ) {
+                Ok(p) => (Some(p), None),
+                // 算不出来不阻断编译（退回谱里声明的约定数据）——原因留档，方便核对缺口。
+                Err(e) => (None, Some(e.to_string())),
+            }
+        };
+        if let Some(p) = &abi_plan {
+            ctx.call_layout = Some(crate::pipeline::abi_target::call_layout(p, machine));
+        }
         // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
         //（覆盖调用者寄存器保存值 → mini_c JIT SEGV/逻辑错误）。
         // 帧布局三数值统一推导：min_frame / callee_saved_bytes / 栈槽平移
-        // 都由 frame_layout_info() 从 [machine.frame].layout + reg_info 算出
+        // 都由 frame_layout_info() 从 [machine.frame].layout + callee-saved 表算出
         //（fp-inside：csb=0、栈槽平移=fp_push；fp-outside：csb=pushed、平移
-        // 回退 csb）。compiler.rs 的 LowerCtx 与 emission.rs 共用同一来源。
+        // 回退 csb）。compiler.rs 的 LowerCtx 与 emission.rs 共用同一来源；
+        // **有 plan 时用 plan 的 callee-saved 表**（v20 A5-3 ④：同一台机器换约定，
+        // 保存集与破坏集必须一起换）。
         let fl = crate::pipeline::frame_layout::frame_layout_info(machine);
         ctx.callee_saved_bytes = fl.callee_saved_bytes;
         ctx.stack_slot_shift = fl.stack_slot_shift;
@@ -2113,29 +2136,6 @@ impl<I: MachineInst + 'static> CompileState<I> {
         });
         ctx.constant_pool = Some(func.constants.clone());
 
-        // v20 A3b 预备：把该函数的 `AbiPlan` 算出来挂上（**只算不用**：发射仍走既有路径）。
-        // 约定名已在上面解析过（A2 的读路径）；这里再跑一次引擎，把"IR 签名 + 宿主寄存器文件
-        // + 约定数据"的结果留作诊断（`FORGE_TRACE_ABI=1`）与后续发射切换的依据。
-        let (abi_plan, abi_plan_note) = {
-            let reg = crate::pipeline::conv_registry::registry()
-                .read()
-                .expect("约定注册表被投毒");
-            match crate::pipeline::abi_target::plan_for_function(
-                machine,
-                &reg,
-                &ctx.call_conv_name,
-                func,
-            ) {
-                Ok(p) => (Some(p), None),
-                // 算不出来不阻断编译（发射还没用它）——原因留档，方便 developer 核对缺口。
-                Err(e) => (None, Some(e.to_string())),
-            }
-        };
-        // 把中性调用布局也塞进 lowering 上下文（v20 A3b-2）：生成物的收参/传参/序尾声
-        // 以后读它。**发射尚未切换**（生成物仍走既有 `[abi]` 路径）⇒ 行为不变。
-        if let Some(p) = &abi_plan {
-            ctx.call_layout = Some(crate::pipeline::abi_target::call_layout(p, machine));
-        }
         Ok(Self {
             vcode: VCode::new(),
             xreg_map: Vec::new(),
@@ -2202,13 +2202,32 @@ impl<I: MachineInst + 'static> CompileState<I> {
 
         let precolored: HashMap<XReg, PReg> = ri.precolored_xregs().into_iter().collect();
 
+        // v20 A5-3 ④：callee-saved 是**约定事实**——有 plan 就用 plan 的（同一台机器
+        // 换约定必须跟着换：sysv64 的 RDI/RSI 不是 callee-saved，win64 是）。谱里那份
+        // 是无 plan（未注册约定 / 合成夹具）时的兜底。
+        //
+        // **只取 GPR 类**：AAPCS64 的 `cs_fpr`（V8-V15）已在 plan 里，但发射侧还没有
+        // 按类分派的保存序列（`callee_save` 角色目前只指向 STURX）——把 FPR 喂给 regalloc
+        // 会让它把跨调用值放进 V8-V15 而帧件不保存。类分派保存是 A6 的事，在那之前
+        // 这里必须过滤（与 `frame_layout_info` 的口径一致）。
+        let callee_saved: Vec<u32> = match self.ctx.call_layout.as_ref() {
+            Some(cl) => cl
+                .callee_saved
+                .iter()
+                .filter(|(c, _)| *c == ri.default_gpr_class())
+                // GPR 区的 (类, 类内号) 里"号"就是 ABI 空间号（与 MachineAbiTarget 同口径）。
+                .map(|&(_, i)| i)
+                .collect(),
+            None => ri.callee_saved(),
+        };
+
         let reg_info = NewRegAllocConfig {
             classes,
             main_gpr_class: main_gpr,
             main_fpr_class: main_fpr,
             sp_reg: ri.sp_reg().register_index().unwrap_or(0),
             fp_reg: ri.fp_reg().map(|r| r.to_index()),
-            callee_saved: ri.callee_saved(),
+            callee_saved,
             precolored,
             scratch_regs: ri
                 .scratch_regs()

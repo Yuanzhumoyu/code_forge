@@ -87,6 +87,11 @@ pub const SYSV64: &str = r#"
 name = "sysv64"
 parent = "c"
 red_zone = 128
+# 帧填充 8（= align/2）：SysV 的入口 rsp ≡ 8 (mod 16)（call 压入返回地址），
+# 本实现的序言是 `push fp` + `push` 全部 callee-saved（5 个）= **偶数次 push**，
+# 故 sub rsp 前 rsp ≡ 8 ⇒ 需要 8 字节填充才能在 call 点回到 16 对齐
+# （与 Win64 同值，理由同：两边推入次数都是偶数）。
+frame_padding = 8
 stack = { slot_bytes = 8, first_offset_slots = 1 }
 classify = [
   { when = { kind = "float", size_le = 8 },   do = { direct = { pool = "float" } } },

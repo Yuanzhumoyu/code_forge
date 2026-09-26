@@ -1754,10 +1754,30 @@ fn gen_call_lowering(
         quote! {
             crate::prelude::Opcode::#op_ident { .. } => {
                 let mut __pack = crate::prelude::InstPacket::new();
-                ctx.current_clobbers = vec![
-                    #(#gpr_clobbers),*,
-                    #(#fpr_clobbers),*,
-                ];
+                // 破坏集是**约定事实**（v20 A5-3 ④）：有 plan 就用 plan 的——同一台
+                // 机器换约定，破坏集必须跟着换（x86 的 RDI/RSI 在 win64 是
+                // callee-saved、在 sysv64 是 caller-saved，谱里只写一份必然错一边）。
+                // 无 plan（未注册约定 / 无绑定的夹具）才用谱里声明的这份兜底。
+                //
+                // **只取 GPR 类（与 callee-saved 同一个边界）**：plan 的破坏集按 ABI
+                // 的"可用池"推导，x86 的 FP 侧会列出**全部 16 个 XMM**（比谱里声明的
+                // 4 个宽），而本实现的"跨调用存活向量值"路径在有更宽破坏集时读回错值
+                // （实测 `test_jit_v128_byval_return_lane3` / `..._mixed_int_pos` 变红：
+                // lane3 的 7.5 读成整数）。那是**独立于本片**的既有缺陷，不能靠"把
+                // 破坏集列窄"掩盖——但也必须先让它不背这口锅：这里按类过滤，FP 侧维持
+                // 谱里声明的名单，缺口记进 A6（见 `docs/plans/calling-convention-redesign-plan.md`）。
+                ctx.current_clobbers = match ctx.call_layout.as_ref() {
+                    Some(__cl) => __cl
+                        .clobbers
+                        .iter()
+                        .filter(|(__c, _)| *__c == __ADDR_CLASS)
+                        .map(|(__c, __i)| (Reg::from_index(*__i, *__c).to_index(), *__c))
+                        .collect(),
+                    None => vec![
+                        #(#gpr_clobbers),*,
+                        #(#fpr_clobbers),*,
+                    ],
+                };
                 // S2：宽向量返回值（>16 字节）sret——隐藏 sret 指针参数占
                 // 首 int 槽（RCX），其余实参顺延（arg_loop 的 __gi 从 1 起）。
                 // sret 槽 = 帧内 [RBP-8-shift]（与 by-ref 实参槽共用空间，
