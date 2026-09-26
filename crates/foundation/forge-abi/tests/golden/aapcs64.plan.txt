@@ -6,7 +6,7 @@ variadic false
 ret void
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## i64
 conv aapcs64
@@ -16,7 +16,7 @@ arg a size=8 -> reg X0
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## i32_i32
 conv aapcs64
@@ -27,7 +27,7 @@ arg b size=4 -> reg X1
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## i64_x6
 conv aapcs64
@@ -42,7 +42,7 @@ arg f size=8 -> reg X5
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## i64_x8
 conv aapcs64
@@ -59,12 +59,31 @@ arg h size=8 -> reg X7
 ret void
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## f64
-ERR MissingPool
+conv aapcs64
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg x size=8 -> reg V0
+ret reg V0
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
+widen_to_bits 32
 ## f64_x4
-ERR MissingPool
+conv aapcs64
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=8 -> reg V0
+arg b size=8 -> reg V1
+arg c size=8 -> reg V2
+arg d size=8 -> reg V3
+ret reg V0
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
+widen_to_bits 32
 ## ptr
 conv aapcs64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
@@ -73,10 +92,18 @@ arg p size=8 -> reg X0
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## vec16
-ERR MissingPool
+conv aapcs64
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg v size=16 -> reg V0
+ret reg V0
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
+widen_to_bits 32
 ## vec32
 conv aapcs64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=48 byval_area=0 red_zone=None frame_pad=0
@@ -85,7 +112,7 @@ arg v size=32 -> stack off=32 size=32 align=32
 ret indirect size=32 align=32
 hidden sret=X8 context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## agg_ii
 conv aapcs64
@@ -95,10 +122,19 @@ arg s size=16 -> pair X0:X1
 ret pair X0:X1
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## agg_ii_f64
-ERR MissingPool
+conv aapcs64
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=16 -> pair X0:X1
+arg x size=8 -> reg V0
+ret void
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
+widen_to_bits 32
 ## agg24
 conv aapcs64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=24 red_zone=None frame_pad=0
@@ -107,12 +143,28 @@ arg s size=24 -> indirect ptr=X0 at=Some(0) on_stack=true
 ret indirect size=24 align=1
 hidden sret=X8 context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## hfa1
-ERR MissingPool
+conv aapcs64
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=4 -> reg V0
+ret reg V0
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
+widen_to_bits 32
 ## hfa2
-ERR MissingPool
+conv aapcs64
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg s size=8 -> pair V0:V1
+ret pair V0:V1
+hidden sret=- context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
+widen_to_bits 32
 ## hfa4
 ERR Unsupported
 ## agg_mixed_float
@@ -123,10 +175,19 @@ arg s size=12 -> pair X0:X1
 ret void
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## mixed_wide_ret
-ERR MissingPool
+conv aapcs64
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+variadic false
+arg a size=8 -> reg X0
+arg x size=8 -> reg V0
+ret indirect size=24 align=1
+hidden sret=X8 context=- va_meta=- va_len=-
+callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
+widen_to_bits 32
 ## i64_x9
 conv aapcs64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=8 byval_area=0 red_zone=None frame_pad=0
@@ -143,7 +204,7 @@ arg a8 size=8 -> stack off=16 size=8 align=8
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 widen_to_bits 32
 ## va2p1
 conv aapcs64
@@ -155,7 +216,7 @@ arg x size=8 -> stack off=16 size=8 align=8
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 va_area Aapcs64Struct size=32 align=8 stack_only=true
 widen_to_bits 32
 ## va0p3
@@ -168,6 +229,6 @@ arg c size=8 -> stack off=32 size=8 align=8
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28] fp=false link=true
-clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17]
+clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12 V13 V14 V15 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
 va_area Aapcs64Struct size=32 align=8 stack_only=true
 widen_to_bits 32

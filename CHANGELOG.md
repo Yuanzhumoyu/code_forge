@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-25) — v20 A5（子集）：arm64 浮点能力——FPR 组 + 浮点搬运角色 + 绑定补池
+
+- **谱**（`isa/arm64_v12.toml`）：新增 `[reg.fpr8]`（`V0..V31`）、`fpr` 操作数槽、`FMOVR` 形式，以及 6 条指令——`FMOV_S`/`FMOV_D`（`fpr_mov` 32/64）、`LDURD`/`STURD`/`LDURS`/`STURS`（SIMD&FP 的 unscaled 访存，编码与 `LDURX`/`STURX` 同形：`0xFD…`/`0xBD…` + `opc2`），外加 `[spill.FPR]`（D 寄存器溢出）。
+- **绑定**（`conventions/aapcs64-arm64.toml`）：补 `float = ["V0".."V7"]`、`ret_float = ["V0".."V3"]`（HFA ≤4 返回落连续 v0-v3），并删掉"arm64 没有 FPR 组"的缺口说明。
+- **效果**：`forge-isa abi check --strict isa/arm64_v12.toml` 的缺口 **6 → 1**（只剩 HFA4 *返回*搬运那条"≥3 槽见 A6"的引擎侧限制）；`abi plan` 现在给出 `f64 → V0`、`i64 → X0`、`ret → V0`（此前是 `MissingPool`）。arm64 的浮点/HFA **参数**与 ≤2 槽返回自此有寄存器可落，发射侧也拿得到 `fpr_mov` 角色（收参走 `FMOV_S`/`FMOV_D`）。
+- **刻意保留的取舍/缺口**（如实登记）：① FP 寄存器统一命名 `V0..V31`（不像 x86 那样名字自带宽度），因此 `fmov v0, v1` / `ldur v0, [x29,#8]` 的 S/D 两种编码**汇编文本相同** ⇒ 反汇编按声明序取 S；这条已知歧义写进了 `spec_coverage_guard.rs` 的钉死名单；② 暂无 `cs_fpr` 池 ⇒ `clobbers` 保守地把 v0-v31 全列为被破坏（安全方向）；③ arm64 的浮点**算术**尚未接线（矩阵里的 F64 用例仍按 ops 未覆盖 skip）。
+- **守卫同步**：`spec_coverage_guard`（arm64 指令总数 104 → **110**、歧义名单 +6）、`isa_roundtrip_guard`（arm64 派生条目 332 → **360**）、`forge-abi` 黄金快照 `aapcs64.plan.txt`（clobbers 含 V0-V31）；合成目标 `common::arm64_v12()` 随之带上 FPR 组，`missing_pool_is_explicit_not_silent` 改为**自备缺池绑定**（测"缺池的报法"，不依赖 arm64 有没有池）。
+
 ### Added (2026-09-25) — v20 A3b-2b-2c-2：栈落点接进布局驱动的收参
 
 - `@move_args` 的布局路径新增 `ArgPlace::Stack { offset }` 分支：栈参数从

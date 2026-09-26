@@ -236,7 +236,9 @@ pub fn target_for(isa: &str) -> Option<TestTarget> {
     match isa {
         "x86_64_v12" => Some(x86_64_v12()),
         "riscv64_v12" => Some(riscv64_v12()),
-        "arm64_v12" => Some(arm64_v12()),
+        // v20 A5：真实 arm64 谱已有 `[reg.fpr8]`（V0..V31），合成目标跟着带上——
+        // 绑定里的 `float`/`ret_float` 池要能在它上面解析。
+        "arm64_v12" => Some(arm64_v12_with_fpr()),
         _ => None,
     }
 }

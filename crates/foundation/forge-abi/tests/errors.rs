@@ -82,12 +82,17 @@ int = []
 
 #[test]
 fn missing_pool_is_explicit_not_silent() {
-    let reg = forge_abi::builtin::registry().unwrap();
-    // arm64 谱没有 FPR/VEC 组 → 没有 `float` 池：浮点参数必须**明确报缺**，
-    // 绝不静默把它当整数塞进 X0。
+    // 用一份**故意不给 `float` 池**的绑定（覆盖内置那份）：浮点参数必须**明确报缺池**，
+    // 绝不静默把它当整数塞进 X0。（v20 A5 起内置 arm64 绑定已有 `float` 池，所以这里
+    // 自己提供一份缺池的——测的是"缺池的报法"，不是"arm64 有没有池"。）
+    let mut reg = forge_abi::builtin::registry().unwrap();
+    reg.insert_binding_toml(
+        "isa = \"arm64_v12\"\nconv = \"aapcs64\"\n[pools]\nint = [\"X0\", \"X1\"]\nret_int = [\"X0\"]\n",
+    )
+    .unwrap();
     let err = reg
         .plan(
-            &arm64_v12(),
+            &arm64_v12_with_fpr(),
             "aapcs64",
             &Signature::new(vec![("x".into(), f64_())], None),
         )

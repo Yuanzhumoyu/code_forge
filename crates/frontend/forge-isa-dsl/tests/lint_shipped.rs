@@ -163,7 +163,7 @@ fn overlap_guard_can_fail() {
 ///   AMO/LR/SC 的 `aq`/`rl` 原本也在这张清单里（8 条），**已修谱**：显式声明两个位域
 ///   （RV64A 的 acquire/release）并在四条模板体里写 0——逐字节不变（`cargo test -p
 ///   forge-codegen --lib` 1265 passed）；
-/// - **arm64 67 条**：全是保留位（A64 里 `BR`/`RET`/`B.cond`/`LDUR` 一类的固定 0 段），
+/// - **arm64 71 条**（v20 A5 补 FP 搬运后 67 → 71：`FMOV` 的保留位段 + `LDUR/STUR` FP 族的固定 0 段）：全是保留位（A64 里 `BR`/`RET`/`B.cond`/`LDUR` 一类的固定 0 段），
 ///   抽查 `[4,5)`（B.cond 的固定 0 位）、`[0,5)`+`[10,16)`（BR/BLR/RET）、`[10,12)`+`[21,24)`
 ///   （LDUR 族）都对得上参考编码——**不是谱的缺陷**，因此保持 opt-in 的评审清单。
 #[test]
@@ -171,7 +171,7 @@ fn unassigned_bits_inventory() {
     for (isa, want) in [
         ("x86_v12.toml", 0usize),
         ("riscv64_v12.toml", 3),
-        ("arm64_v12.toml", 67),
+        ("arm64_v12.toml", 71),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");

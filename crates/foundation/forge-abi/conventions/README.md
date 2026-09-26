@@ -10,7 +10,7 @@ CLI（`forge-isa abi …`）与集成测试都用同一份，避免"文档一套
 | --- | --- | --- | --- | --- | --- |
 | `win64-x86_64.toml` | `x86_64_v12` | `win64` | RCX-R9 / XMM0-3（按位置共用游标） | RCX（`int` 池 0 槽） | RBX,RDI,RSI,R12-R15 |
 | `sysv64-x86_64.toml` | `x86_64_v12` | `sysv64` | RDI,R9 序 / XMM0-7（按类各计数） | RDI（`int` 池 0 槽） | RBX,R12-R15 |
-| `aapcs64-arm64.toml` | `arm64_v12` | `aapcs64` | X0-X7 / **无浮点池（缺口）** | **X8（独立池）** | X19-X28 |
+| `aapcs64-arm64.toml` | `arm64_v12` | `aapcs64` | X0-X7 / **V0-V7** | **X8（独立池）** | X19-X28 |
 | `lp64d-riscv64.toml` | `riscv64_v12` | `lp64d` | X10-X17 / F10-F17（按类各计数） | X10（`int` 池 0 槽） | X9,X18-X27 |
 
 四条与"从谱里抄 `[abi]`"不同的约定值得写下来：

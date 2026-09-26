@@ -53,7 +53,7 @@ macro_rules! roundtrip_of {
 /// 三份发行谱：谱里每条指令（含宽度视图/立即数边界/内存风味）编解码闭环。
 ///
 /// 下界钉住的是**枚举器不许退化**：指令总数见 `spec_coverage_guard`（x86 197 /
-/// riscv64 116 / arm64 104），枚举器条目只会更多（视图与风味），少于总数就是派生漏了。
+/// riscv64 116 / arm64 110），枚举器条目只会更多（视图与风味），少于总数就是派生漏了。
 #[test]
 fn derived_insts_roundtrip_byte_stable() {
     let x86 = roundtrip_of!("x86_v12", crate::arch::x86_v12::x86_v12);
@@ -61,13 +61,13 @@ fn derived_insts_roundtrip_byte_stable() {
     let arm64 = roundtrip_of!("arm64_v12", crate::arch::arm64_v12::arm64_v12);
     assert!(x86 >= 197, "x86 枚举器条目 {x86} < 指令总数 197");
     assert!(riscv >= 116, "riscv64 枚举器条目 {riscv} < 指令总数 116");
-    assert!(arm64 >= 104, "arm64 枚举器条目 {arm64} < 指令总数 104");
+    assert!(arm64 >= 110, "arm64 枚举器条目 {arm64} < 指令总数 110");
     // 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **332**——
     // 远多于指令总数（197/116/104），因为每条指令还带宽度视图、立即数边界与内存风味。
     // 数字变了 ⇒ 谱的指令/操作数风味变了（或派生逻辑改了），人工复核后同步本行。
     assert_eq!(
         (x86, riscv, arm64),
-        (602, 327, 332),
+        (602, 327, 360),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

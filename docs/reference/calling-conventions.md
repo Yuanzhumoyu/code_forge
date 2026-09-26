@@ -276,7 +276,7 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
 | `c` | by_class | ——（抽象基类，无绑定） | —— | 16 / 0 / 无 | 需自己声明 | 无 | 不支持（未声明 `va_list`） |
 | `win64` | **by_position** | RCX-R9 / XMM0-3 | RAX / XMM0 | 16 / **32** / 无 | RCX（`int` 池 0 槽） | `push` | 未命名实参走栈；`va_list` = 栈指针 |
 | `sysv64` | by_class | RDI,RSI,RDX,RCX,R8,R9 / XMM0-7 | RAX:RDX / XMM0:XMM1 | 16 / 0 / **128** | RDI | `push` | 未命名实参继续用寄存器；`%al` 报向量寄存器数 |
-| `aapcs64` | by_class | X0-X7 / **缺**（谱里没有 FPR 组） | X0:X1 | 16 / 0 / 无 | **X8（独立池）** | `store_to_frame` | 未命名实参走栈；形参 ≥32 位 |
+| `aapcs64` | by_class | X0-X7 / **V0-V7** | X0:X1 / V0 | 16 / 0 / 无 | **X8（独立池）** | `store_to_frame` | 未命名实参走栈；形参 ≥32 位 |
 | `lp64d` | by_class | X10-X17 / F10-F17 | X10:X11 / F10:F11 | 16 / 0 / 无 | X10（`int` 池 0 槽） | `store_to_frame` | 未命名实参走栈 |
 
 `c` 是给别的约定继承的抽象基类（`parent = "c"` 给出"通用 C 家族"的分类兜底），
@@ -400,7 +400,7 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 
 | 缺口 | 现状 | 关闭时机 |
 | --- | --- | --- |
-| arm64 无 FPR/VEC 寄存器组 | 浮点/HFA 参数报 `MissingPool`（fail-closed） | A5（谱 + 绑定） |
+| arm64 的 HFA4 **返回**搬运（≥3 槽） | 规划成功（`RegGroup`），发射侧明确 `Unsupported` | A6 |
 | SysV 的 eightbyte（INT/SSE 混合）分类 | ≤16B 聚合统一按两个整数槽；真实 SysV 会按成员拆到 XMM | A6 |
 | HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言） | A6 |
 | ≥3 槽的**返回**搬运 | 模型能表达（`Placement::RegGroup`），返回路径明确 `Unsupported` | A6 |

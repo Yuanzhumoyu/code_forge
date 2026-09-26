@@ -1,10 +1,7 @@
 # (ISA, 约定) 寄存器绑定：AAPCS64 → arm64_v12
 #
-# **已知缺口（A5/A6 补）**：arm64 谱目前**没有 FPR/VEC 寄存器组**，也没有
-# `fpr_mov`/`vec_mov`/`wide_vec_*` 角色，因此本文件**不给 `float` 池**——
-# 一旦真的规划出浮点/HFA 落点，引擎会明确报 `MissingPool`（fail-closed），
-# 而不是悄悄把浮点值当整数塞进 X 寄存器。补齐路径：谱里加 `[reg.fpr8]`
-# （`V0..V31`）+ 浮点搬运指令的角色声明。
+# v20 A5 起 arm64 谱已有 `[reg.fpr8]`（V0..V31）与 `fpr_mov` 角色，
+# 因此浮点/HFA 参数与返回都有寄存器可落。
 
 isa = "arm64_v12"
 conv = "aapcs64"
@@ -22,6 +19,10 @@ sret = ["X8"]
 # x19-x28（x29 fp / x30 lr 由帧件保存，规则侧 `includes_link = true` 表达 lr）。
 cs_gpr = ["X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28"]
 
-# 返回寄存器：X0/X1（整数与 ≤16B 聚合的 x0:x1）。**浮点返回池同样缺**——
-# `float` 池都没有，`ret_float` 自然也无从谈起（同一个缺口）。
+# 浮点/HFA 参数池：v0-v7（AAPCS64 的浮点参数序列，按类计数）。
+float = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7"]
+
+# 返回寄存器：X0/X1（整数与 ≤16B 聚合的 x0:x1）+ V0（浮点/HFA 返回）。
 ret_int = ["X0", "X1"]
+# HFA（≤4 成员）的返回落在连续的 v0-v3（`Placement::RegGroup`；发射侧 ≥3 槽的搬运还在 A6）。
+ret_float = ["V0", "V1", "V2", "V3"]

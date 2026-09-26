@@ -90,6 +90,8 @@ imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 �
 imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
 idx2  = { offset = 22, width = 2 }   # LDP/STP index 低位（bit24 由 op8 常量给：100 off STP/101 off LDP ⇒ idx2 = 0/1）
 rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
+op8b  = { offset = 16, width = 8 }   # FMOV 的中间常量（S=0x20 / D=0x60）
+zero6 = { offset = 10, width = 6 }   # FMOV 保留位（[15:10] = 0）
 imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元）
 
 # A64 条件码（v18 S3c）：键 = 汇编/反汇编可见的条件名，code = 4 位编码。
@@ -1276,3 +1278,81 @@ asm = "add w1, w2, w3"
 asm = "sub x0, x0, x0"
 
 # ── 向量区段结束
+
+# 追加到 isa/arm64_v12.toml 末尾：浮点/向量搬运能力（A5 子集）
+
+# ── 浮点/向量寄存器组（AAPCS64：v0-v7 传参、v0 返回；宽度由指令决定）──
+[reg.fpr8]
+names = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7",
+         "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15",
+         "V16", "V17", "V18", "V19", "V20", "V21", "V22", "V23",
+         "V24", "V25", "V26", "V27", "V28", "V29", "V30", "V31"]
+
+[[operand_slots]]
+name = "fpr"
+kind = "reg"
+class = "fpr8"
+
+[[forms]]
+name = "FMOVR"    # FMOV（标量寄存器）：rd/rn（[31:24] = op8 常量、[23:16]/[15:10] 保留位）
+opcode_field = "op8"
+operand_fields = ["rd", "rn"]
+
+# FMOV (register) S/D = 0x1E204000 / 0x1E604000：
+#   [31:24]=0x1E、[23:16]=0x20(S)/0x60(D)、[15:10]=0、[9:5]=Rn、[4:0]=Rd
+[[instructions]]
+name = "FMOV_S"
+roles = [{ role = "fpr_mov", bits = 32 }]
+form = "FMOVR"
+opcode = 0x1E
+fields = { op8b = 0x20, zero6 = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fmov {dst}, {src}"
+
+[[instructions]]
+name = "FMOV_D"
+roles = [{ role = "fpr_mov", bits = 64 }]
+form = "FMOVR"
+opcode = 0x1E
+fields = { op8b = 0x60, zero6 = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fmov {dst}, {src}"
+
+# LDUR/STUR (SIMD&FP, unscaled imm9)：与 LDURX/STURX 同形，只是寄存器文件不同——
+#   D：0xFD… (size=11)、S：0xBD… (size=10)；opc2 = 01 载 / 00 存。
+[[instructions]]
+name = "LDURD"
+form = "LSUN"
+opcode = 0xFD
+fields = { opc2 = 1 }
+ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STURD"
+form = "LSUN"
+opcode = 0xFD
+fields = { opc2 = 0 }
+ops = ["src:fpr", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+[[instructions]]
+name = "LDURS"
+form = "LSUN"
+opcode = 0xBD
+fields = { opc2 = 1 }
+ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STURS"
+form = "LSUN"
+opcode = 0xBD
+fields = { opc2 = 0 }
+ops = ["src:fpr", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+# FP 溢出（与 [spill.GPR] 同口径：base = X29、真字节 imm9 偏移）。
+[spill.FPR]
+load = "LDURD {0}, X29, {1}"
+store = "STURD {0}, X29, {1}"

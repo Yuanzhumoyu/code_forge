@@ -398,9 +398,10 @@ fn abi_check_reports_gaps_without_failing() {
     assert!(out.stdout.contains("✓ lp64d"), "{}", out.stdout);
     assert!(out.stdout.contains("⚠ aapcs64"), "{}", out.stdout);
     assert!(out.stdout.contains("硬错 0"), "{}", out.stdout);
-    // 缺口必须点名"没有 FPR 组"这条根因，而不是含糊地说"失败"。
+    // 缺口必须点名根因（v20 A5 起 arm64 只剩 HFA4 返回那条"≥3 槽见 A6"的限制），
+    // 而不是含糊地说"失败"。
     assert!(
-        out.stdout.contains("没有 FPR 寄存器组"),
+        out.stdout.contains("hfa4") && out.stdout.contains("连续寄存器槽"),
         "应给出 arm64 的根因提示：{}",
         out.stdout
     );
@@ -489,7 +490,8 @@ fn abi_plan_prints_a_deterministic_plan() {
 
 #[test]
 fn abi_plan_fails_closed_on_gaps() {
-    // arm64 没有浮点寄存器：规划 f64 参数必须明确报缺，而不是静默换寄存器。
+    // arm64 的 HFA4 **返回**（≥3 槽）仍是缺口：规划必须明确报缺，而不是静默换寄存器。
+    //（v20 A5 起 arm64 的 f64 参数已有 v0-v7，不再是缺口——这正是本测试改用 HFA4 返回的原因。）
     let out = run(&[
         "abi",
         "plan",
@@ -497,10 +499,14 @@ fn abi_plan_fails_closed_on_gaps() {
         "--conv",
         "aapcs64",
         "--sig",
-        "f64 -> f64",
+        "hfa4 -> hfa4",
     ]);
     assert_eq!(out.code, 1, "stdout={}", out.stdout);
-    assert!(out.stdout.contains("float"), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("寄存器槽") || out.stdout.contains("hfa4"),
+        "{}",
+        out.stdout
+    );
 
     // 用法错误：缺 --conv / 看不懂的类型。
     let out = run(&["abi", "plan", &isa("x86_v12.toml"), "--sig", "i64"]);

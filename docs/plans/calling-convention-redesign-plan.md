@@ -355,7 +355,18 @@ A4 让尾声与序言**同源**（都用动态计数），差异进测试。
 GOT 建立）。需要时**加角色**（上层能看见的能力），不回到自由模板——这正是"指令保持裸的、
 调用平衡交给约定层"的代价与收益。
 
-### A5 删谱里的 `[abi]` 约定节，加 `[machine]`
+### A5 删谱里的 `[abi]` 约定节，加 `[machine]`（进行中：arm64 浮点子集 ✅）
+
+**已完成（A5-1，2026-09-25）**：arm64 浮点能力——`[reg.fpr8]`（V0..V31）+ `fpr` 操作数槽 +
+`FMOVR` 形式 + `FMOV_S`/`FMOV_D`（`fpr_mov` 32/64）+ `LDURD`/`STURD`/`LDURS`/`STURS`（与
+`LDURX`/`STURX` 同形的 SIMD&FP 访存）+ `[spill.FPR]`；绑定补 `float = V0-V7`、
+`ret_float = V0-V3` ⇒ `abi check --strict` 缺口 **6 → 1**（只剩 HFA4 返回那条 A6 限制），
+`abi plan` 给出 `f64 → V0` / `ret → V0`。守卫同步：指令总数 110、派生条目 360、歧义名单 +6
+（V 命名统一 ⇒ S/D 汇编文本相同，已知且刻意）、aapcs64 黄金快照重 bless。
+
+**仍待做**：`[abi]` 整节搬成 `[machine]`（`fixed_regs`/`spill_scratch`/`link_reg`）+
+绑定/规则；参数的寄存器池、callee-saved、sret 槽、栈参数布局都要从绑定/规则来（现在仍是
+谱里 `[abi]` 的第二份事实）；`cs_fpr`（v8-v15）也一并补。
 
 - 新增 `[machine] { fixed_regs, spill_scratch, link_reg }`（只留**机器事实**）；
   参数池/sret/callee-saved/栈参数布局全部移到绑定与规则里。

@@ -68,13 +68,13 @@ fn generated_spec_tests_cover_every_instruction() {
     }
 }
 
-/// 指令总数钉死（2026-09-20 实测；arm64 自 S3c 加 `b.cond` 16 行模板后 = 104）。
+/// 指令总数钉死（2026-09-20 实测；arm64 自 S3c 加 `b.cond` 16 行模板后 = 104，v20 A5 补浮点搬运 = 110）。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86_v12", 197), ("riscv64_v12", 116), ("arm64_v12", 104)],
+        vec![("x86_v12", 197), ("riscv64_v12", 116), ("arm64_v12", 110)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
@@ -119,7 +119,14 @@ fn spec_text_ambiguity_lists_are_pinned() {
     let pinned: &[(&str, &[&str])] = &[
         ("x86_v12", &x86),
         ("riscv64_v12", &riscv),
-        ("arm64_v12", &[]),
+        // v20 A5：arm64 的 FP 寄存器组用统一的 `V0..V31` 命名（不像 x86 那样 S/D 名字本身带宽度），
+        // 因此 `fmov v0, v1` / `ldur v0, [x29, #8]` 的 S/D 两种编码**汇编文本相同**——
+        // 反汇编按声明序取第一条（S），文本往返对这两族只能取其一。这是**已知且刻意**的
+        // 取舍（宽度在指令里、不在名字里）；要消掉就得给 S/D/Q 各开一组别名寄存器。
+        (
+            "arm64_v12",
+            &["FMOV_D", "FMOV_S", "LDURD", "LDURS", "STURD", "STURS"],
+        ),
     ];
     for r in reports() {
         let want = pinned
