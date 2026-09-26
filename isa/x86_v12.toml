@@ -1889,12 +1889,6 @@ class = "vector"
 strategy = "by-ref"
 limit = 128
 
-[abi.frame]
-sp = "RSP"
-fp = "RBP"
-fp_push_bytes = 8
-
-
 [abi.callee_saved]
 gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
 xmm = []
@@ -4039,3 +4033,10 @@ asm = "mov RAX, 0x1234"
 [machine]
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
 spill_scratch = ["R10", "R11"]
+
+# 帧形状：栈/帧指针寄存器名 + 帧指针保存槽字节数（x86 用硬件 push 保存 fp，故
+# 布局模式是缺省 fp-outside、alloc 立即数由 SUB 自带减号语义）。
+[machine.frame]
+sp = "RSP"
+fp = "RBP"
+fp_push_bytes = 8

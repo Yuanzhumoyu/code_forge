@@ -3186,7 +3186,7 @@ fn any_stage_msg(doc: &str) -> String {
     }
 }
 
-/// R3：`[abi.frame].sp` 声明了却不在**主 GPR 组**内 → 生成期报错，
+/// R3：`[machine.frame].sp` 声明了却不在**主 GPR 组**内 → 生成期报错，
 /// **不得**被惯例名（RSP/SP）顶替。
 #[test]
 fn frame_sp_declared_outside_main_group_is_error() {
@@ -3196,12 +3196,12 @@ fn frame_sp_declared_outside_main_group_is_error() {
 [[abi.arg_class]]
 class = "int"
 regs = ["R0", "R1"]
-[abi.frame]
+[machine.frame]
 sp = "E0"
 fp = "E1"
 "#,
     ));
-    assert!(msg.contains("sp"), "必须点名 [abi.frame].sp：{msg}");
+    assert!(msg.contains("sp"), "必须点名 [machine.frame].sp：{msg}");
     assert!(msg.contains("E0"), "必须点名冲突的名字：{msg}");
     assert!(
         !msg.contains("已解析为") && msg.contains("生成期 fail-closed"),
@@ -3218,7 +3218,7 @@ fn frame_sp_inside_main_group_resolves() {
 [[abi.arg_class]]
 class = "int"
 regs = ["R0", "R1"]
-[abi.frame]
+[machine.frame]
 sp = "R3"
 fp = "R2"
 "#,

@@ -865,6 +865,12 @@ fn validate_reg_names(m: &V12Model) -> Result<(), String> {
         if let Some(r) = &ms.link_reg {
             check(std::slice::from_ref(r), "[machine].link_reg")?;
         }
+        if let Some(f) = &ms.frame {
+            check(std::slice::from_ref(&f.sp), "[machine.frame].sp")?;
+            if let Some(fp) = &f.fp {
+                check(std::slice::from_ref(fp), "[machine.frame].fp")?;
+            }
+        }
     }
     if let Some(abi) = &m.abi {
         check(&abi.scratch, "[abi].scratch")?;
@@ -1976,11 +1982,11 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
             ));
         }
     }
-    // [abi.frame]：sp 必填且非空；alloc/free 指令名非空。
-    if let Some(f) = &abi.frame
+    // [machine.frame]（迁移期回退 [abi.frame]）：sp 必填且非空。
+    if let Some(f) = m.machine_frame()
         && f.sp.trim().is_empty()
     {
-        return Err("[abi.frame].sp must not be empty".into());
+        return Err("[machine.frame].sp must not be empty".into());
     }
     Ok(())
 }

@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-26) — v20 A5-3（②b）：`[machine.frame]` 帧形状，三份发行谱迁完
+
+- **`[machine]` 增 `frame` 子表**（`sp`/`fp`/`layout`/`fp_push_bytes`/`alloc_neg`，键与旧 `[abi.frame]` 同名同义）：这五项是"这台机器怎么建帧"的**机器事实**，不是约定内容（保存谁、栈参数怎么排才是约定）。读侧统一走 `V12Model::machine_frame()`——`[machine.frame]` 优先、回退 `[abi.frame]`，**所有**读者（含只取 `fp` 或只取 `fp_push_bytes` 的）都经它，避免迁移期"一半读新表、一半读旧表"的分裂。
+- **读者改写**（全部改为 `machine_frame()`）：`abi_view` 的 pinned 视图、`integration.rs` 的 sp/fp 解析 + 帧是否声明、`frame.rs` 的 layout/fp_push_bytes/spill 缺省 base/栈参数收参基址、`lowering.rs` 的 `frame_base_toks`/`sp_base_toks`（sret/by-ref/栈参数 store 的基址）、`validate.rs` 的 sp 非空与寄存器名检查。错误消息与文档字符串同步改点名 `[machine.frame]`。
+- **谱**：`isa/{x86,riscv64,arm64}_v12.toml` 的 `[abi.frame]` 段移入 `[machine.frame]`（值原样）；两份夹具 `crates/backend/forge-codegen/tests/isa/{demo_v12,demo8_v12}.toml` 与 DSL 内联夹具（`frame_sp_*` 两条反向用例）一并迁到新键——它们现在**真的走新路径**，回退路径只服务外部旧谱。
+- **三方守卫**：`schema.rs` 增 `[machine.frame]` 节（`sp` 必填）与 `[machine].frame` 键、`docs/reference/isa-dsl.md` 键表与 `## [machine.frame]` 一节的迁移说明、重新生成的 `isa-dsl.schema.json`；`docs/reference/calling-conventions.md` 的能力视图来源改述。（`[abi.frame]` 仍在 schema/校验里，作为迁移期回退路径。）
+- 验证：workspace 全套 serially 绿（130 个测试二进制 0 失败）、clippy `--all-targets --all-features -D warnings` 0；本地与 CI run 213（`983b8ee`）一致——CI 11 项里 10 项绿，唯一红的是既有慢性项 `forge-rustc (e2e, Windows)`。
+
 ### Added (2026-09-26) — v20 A5-3（①+②）：`[machine]` 机器事实层，三份发行谱迁完
 
 - **新增 `[machine]` 段**（只描述"这台机器是什么样"）：`fixed_regs`（regalloc 不可分配，原 `[abi].reserved`）、`spill_scratch`（溢出与栈参数收参的临时寄存器，原 `[abi].scratch`）、`link_reg`（call 写返回地址的寄存器，原 `[abi].call_ret_reg`）。键名**故意与旧键不同名**——两处都写时"谁生效"必须无歧义；`[machine]` 优先、回退 `[abi]` 旧键，所以迁移期两种写法都认，可以逐谱迁移。

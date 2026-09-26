@@ -375,7 +375,7 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 | `[abi].scratch`（→ `[machine].spill_scratch`） | `abi_view.rs:221`（静态视图 + notes）、`codegen/integration.rs:581-594`（`RegInfo::scratch_regs`）、`codegen/frame.rs:986`（栈参数收参 scratch，含错误消息）、`validate.rs:862`、`v12/tests.rs:920-933`（负向用例） |
 | `[abi].reserved`（→ `[machine].fixed_regs`） | `abi_view.rs:215`、`integration.rs:582-584`、`validate.rs:863` |
 | `[abi].call_ret_reg`（→ `[machine].link_reg`） | `abi_view.rs:228-235`、`codegen/lowering.rs:1470`（call 返回值槽）、`lowering.rs:1531`（call_indirect）、`frame.rs:713`（帧件保存 link）、`validate.rs:869`、`v12/tests.rs:937-952` |
-| `[abi.frame].sp`/`fp`/`fp_push_bytes`/`alloc_neg`/`layout` | 建议同批搬 `[machine]`（`frame.rs` 的角色序列全靠它们；`forge-codegen/src/pipeline/frame_layout.rs` 另读一份） |
+| `[abi.frame].sp`/`fp`/`fp_push_bytes`/`alloc_neg`/`layout` | **已搬 `[machine.frame]`**（②b）：`abi_view.rs`、`integration.rs`（sp/fp 解析）、`frame.rs`（layout / fp_push_bytes / spill 缺省 base / 栈参数基址）、`lowering.rs`（`frame_base_toks`/`sp_base_toks`）、`validate.rs` 全部改走 `machine_frame()` |
 | `[abi].arg_class.regs`、`ret_regs`、`arg_slot`、`stack_args`、`callee_saved`、`call_clobbers`、`frame_padding` | **约定事实**：改由 `AbiRules`/`AbiBinding` 给（`int/float/vector` 池、`ret_int/ret_float`、`position`、`stack.*`、`cs_gpr/cs_fpr`、`frame_padding`）；谱里删掉后，管线侧 `pipeline/compiler.rs`（`int_arg_slot_count`/`max_stack_arg_bytes`/`sret`/clobbers）与发射侧 `frame.rs` 的 `[abi]` 回退路径要改读 plan（`AllocResult::call_layout`），demo 夹具（无绑定）得在测试里注册自己的规则/绑定 |
 
 **已落地（A5-3 ①+②，2026-09-26）**：`[machine]` 三个键（`fixed_regs` / `spill_scratch` /
@@ -388,13 +388,20 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 三方守卫（model ↔ JSON Schema ↔ 文档键表）同批更新并重新生成 `isa-dsl.schema.json`。
 验收：workspace 全套 serially 绿（clippy `-D warnings` 0）、两条 JIT 矩阵与迁移前**逐条同值**
 （x86 195 passed / 3 skipped、riscv64 131 passed / 67 skipped，0 failed）。
+**已落地（A5-3 ②b，2026-09-26）**：`[machine.frame]` 帧形状（`sp`/`fp`/`layout`/
+`fp_push_bytes`/`alloc_neg`）进场，读侧统一 `V12Model::machine_frame()`（新表优先、回退
+`[abi.frame]`）；`isa/{x86,riscv64,arm64}_v12.toml` 与两份 demo 夹具、两条 DSL 内联反向用例
+全部迁到新键（夹具因此真的走新路径）。`schema`/文档键表/`isa-dsl.schema.json` 三方同改。
+验收：workspace 130 个测试二进制 serially 全绿、clippy 0、CI run 213 十项绿（唯一红 =
+慢性 `forge-rustc (e2e, Windows)`）。
+
 仍待做：③ 约定事实（`arg_class`/`ret_regs`/`arg_slot`/`stack_args`/`callee_saved`/
 `call_clobbers`/`frame_padding`）移入 `AbiRules`/`AbiBinding` + demo 夹具补测试本地绑定，
 ④ 发射/管线改读 plan，然后删掉 `[abi]` 的约定键与机器事实回退路径。
 
 步骤建议（每步都可独立跑门禁）：
 ① 加 `[machine]`（model + schema + `docs/reference/isa-dsl.md` 键表三处同改，`schema_guard` 钉住）；✅
-② 上表"机器事实"逐个改读 `[machine]`（含错误消息与负向用例）；x86 先迁，跑门禁；✅（三谱同批迁完）
+② 上表"机器事实"逐个改读 `[machine]`（含错误消息与负向用例）；x86 先迁，跑门禁；✅（三谱同批迁完；`[machine.frame]` 见 ②b）
 ③ riscv/arm64 迁移 + demo 夹具补测试本地绑定 ⇒ 删除 `[abi]` 的约定键；
 ④ 发射/管线改读 plan（这一步才动 `move_args` 的 `[abi]` 回退路径，可用"生成物逐字节不变"
    与三条 ISA 矩阵验收）。

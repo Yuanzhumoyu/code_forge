@@ -8,9 +8,9 @@ use crate::machine::abi::FrameLayoutKind;
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileState;
 
-/// 帧布局三数值——从声明式 `[abi.frame]`（layout + fp_push_bytes）+ reg_info
+/// 帧布局三数值——从声明式 `[machine.frame]`（layout + fp_push_bytes）+ reg_info
 /// 推导，是 min_frame / callee_saved_bytes / stack_slot_shift 的唯一来源。
-/// 取代 v14 的 `[abi.frame].min_frame_bytes / callee_saved_bytes_override /
+/// 取代 v14 的 `[machine.frame].min_frame_bytes / callee_saved_bytes_override /
 /// stack_slot_shift` 三个魔法数键（riscv 的 104/0/16 全可由 fp_push_bytes +
 /// callee_saved 表推出）。
 ///

@@ -254,7 +254,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         // place（字段/解引用）暂跳过（C2 首版标量/局部）。
         // fbreg 基准：LowerCtxt 槽偏移是"相对 rbp 的逻辑偏移"，主库发射时
         // 平移 callee_saved 区（stack_slot_shift = fp_push 8 + 7 callee-saved
-        // ×8 = 64，x86 v12 [abi.callee_saved]/[abi.frame] 固定）——实际槽 =
+        // ×8 = 64，x86 v12 [abi.callee_saved]/[machine.frame] 固定）——实际槽 =
         // rbp + (slot.offset - 64)，故 fbreg = slot.offset - 64。
         {
             use rustc_middle::mir::VarDebugInfoContents;

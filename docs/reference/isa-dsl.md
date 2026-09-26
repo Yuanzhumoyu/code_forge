@@ -49,8 +49,9 @@
     - [`[[derive]]` — 给谓词起名字（v18 S3f）](#derive--给谓词起名字v18-s3f)
   - [`[[lowering]]` — 指令选择](#lowering--指令选择)
   - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
+  - [`[machine]` — 机器事实](#machine--机器事实)
   - [`[abi]` — 调用约定](#abi--调用约定)
-  - [`[abi.frame]` — 帧布局](#abiframe--帧布局)
+  - [`[machine.frame]` — 帧布局](#machineframe--帧布局)
 - [`[emit]` — 代码对齐与尾声标签](#emit--代码对齐与尾声标签)
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
   - [asm 模板](#asm-模板)
@@ -135,7 +136,8 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
-| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器） |
+| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状） |
+| `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（`[abi.frame]` 为迁移期回退） |
 | `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
@@ -361,7 +363,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 | `[stack].fp_save` | 字节 | `addr_width` | `RegInfo::frame_pointer_overhead()` |
 | `[meta].vector_tiers` | 字节（升序） | `[16, 32, 64]` | 向量类档位（`reg_class_for` 取最小 ≥ 请求值） |
 | `[encoding].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
-| `[abi.frame].fp_push_bytes` | 字节 | 地址类宽度 | prologue 在帧指针上方 push 的字节数 |
+| `[machine.frame].fp_push_bytes` | 字节 | 地址类宽度 | prologue 在帧指针上方 push 的字节数 |
 | `[abi.arg_class].limit` | 位 | — | 向量 by-value 阈值（超过则 by-ref 传参），同时是收参侧 by-value 判定 |
 
 显式宽度键必须指向**已声明组**（如 `addr_width = 2` 要求存在 `[reg.gpr2]`），
@@ -405,15 +407,15 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 
 ### fail-closed 契约
 
-1. **名字解析**：`[abi].scratch/reserved/ret_regs/call_ret_reg/call_clobbers`、
-   `[abi.callee_saved].gpr`、`[abi.arg_class].regs`、`[abi.frame].sp/fp`、
+1. **名字解析**：`[machine].fixed_regs/spill_scratch/link_reg`、`[abi].ret_regs/call_clobbers`、
+   `[abi.callee_saved].gpr`、`[abi.arg_class].regs`、`[machine.frame].sp/fp`、
    `[spill.*].base`、`[[instructions]].implicit_regs` 里的物理名必须能在某个
    已声明 `[reg.*]` 组内解析——否则生成期报错（历史实现 `filter_map` 静默丢弃：
    scratch/callee_saved 缺失 ⇒ regalloc 会分配被占用寄存器）。
-2. **帧寄存器**：声明了 `[abi.frame]` 却没有可解析的 `sp`（或 `fp`）→ 报错；
-   完全未声明 `[abi.frame]` 的纯寄存器夹具保留"索引 0 占位"（类 = 主 GPR 类，
+2. **帧寄存器**：声明了 `[machine.frame]` 却没有可解析的 `sp`（或 `fp`）→ 报错；
+   完全未声明的纯寄存器夹具保留"索引 0 占位"（类 = 主 GPR 类，
    不再是 x86 的 `GPR64`）。
-3. **spill 基址**：`[spill.*]` 模板未写 `base` 且无 `[abi.frame].fp` → 报错
+3. **spill 基址**：`[spill.*]` 模板未写 `base` 且无 `[machine.frame].fp` → 报错
    （历史实现回退字面量 `"RBP"`）。
 4. **值池门**：函数里出现的每个值类型都必须被 `class_for_type` 承载，否则
    **编译期** `Unsupported`（点名类型与值池宽度）。判据 = **值池宽度 + 寄存器
@@ -463,7 +465,7 @@ O1 开启后（含墓碑值）仍可编译、`i64` 的编译期拒绝。
 >
 > **残余（有意保留）**：`[abi.stack_args]`（栈参数）与 `wide_vec_*`/
 > `frame_rbp_addr`（宽向量 by-ref/sret）这几条路径的**指令角色**目前只有 x86
-> 声明；它们的内存基址已改为从 `[abi.frame].fp` 派生（不再写死 `Reg::RBP`），
+> 声明；它们的内存基址已改为从 `[machine.frame].fp` 派生（不再写死 `Reg::RBP`），
 > 但 lowering 侧同角色路径仍假定 x86 的 fp/sp 形态——非 x86 ISA 声明这些角色
 > 会得到生成期/生成模块编译错误（fail-loud），而非静默错码。
 
@@ -1208,16 +1210,22 @@ limit = 128
   prologue/call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 `subw x0`）。
   **A5-3 起请写进 `[machine].fixed_regs`**（本节保留的是回退路径）。
 
-## `[abi.frame]` — 帧布局
+## `[machine.frame]` — 帧布局
+
+v20 A5-3 起在 `[machine]` 下；`[abi.frame]` 是**迁移期回退**（两处只能写一处生效，
+读侧走 `machine_frame()`，`[machine.frame]` 优先）：
 
 ```toml
-[abi.frame]
+[machine.frame]
 sp = "X2"                  # 栈指针寄存器名
 fp = "X8"                  # 帧指针寄存器名（None = 无帧指针）
 layout = "fp-inside"       # 帧布局模式：fp-outside（缺省，x86/demo）/ fp-inside（riscv）
 fp_push_bytes = 16         # prologue 在帧指针上方 push 的字节数（x86 = 8）
 alloc_neg = true           # 帧分配立即数取负（riscv addi sp,sp,-N；x86 SUB 语义不需要）
 ```
+
+这五个键是**机器事实**（这台机器怎么建帧），不是约定内容；"保存谁、栈参数怎么排"
+属于 [`[abi]`](#abi--调用约定) 之上的绑定/规则层。
 
 **`layout` 模式**（S5）：决定 callee-saved 保存槽相对帧的位置，其余帧数值全部由
 运行期推导（`pipeline/frame_layout.rs::frame_layout_info`），不再手写魔法数：
@@ -1251,7 +1259,7 @@ epilogue_label = true       # 是否生成独立尾声标签 + return block 的 
 
 | 步 | 角色 | 说明 |
 | --- | --- | --- |
-| 帧分配 / 释放 | `frame_alloc` / `frame_free` | `sp ∓ frame_size`（符号由 `[abi.frame].alloc_neg` 定）；`frame_size == 0` 不发 |
+| 帧分配 / 释放 | `frame_alloc` / `frame_free` | `sp ∓ frame_size`（符号由 `[machine.frame].alloc_neg` 定）；`frame_size == 0` 不发 |
 | 建立 / 恢复帧指针 | `frame_set` | 序言 `fp ← sp`（定宽 ISA 带 `+ frame_size`）、尾声 `sp ← fp`（push 机制） |
 | 保存 / 恢复 callee-saved（push 机制） | `push` / `pop` | 硬件压栈（x86）；保存的是 `[abi.callee_saved].gpr` 的静态表 |
 | 保存 / 恢复 callee-saved（帧内机制） | `callee_save` / `callee_load` | `Reg[0]=值、Reg[1]=基址、Imm[0]=偏移`；保存的是 regalloc 实际用到的那些（`callee_saved_to_save`），ra/fp 在帧顶 `fp_push_bytes` 区 |
@@ -1634,7 +1642,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
   接 TargetMachine；jit 矩阵 195 passed / 3 skipped / 0 failed。
 - **`isa/riscv64_v12.toml`**：48 条 `[[instructions]]` + 19 条 `[[templates]]`（68 行 →
   共 116 条指令），定宽试点（QEMU 真执行验证）；jit 矩阵 131 passed / 67 skipped /
-  0 failed。`[abi.frame] layout = "fp-inside"` 全推导。
+  0 failed。`[machine.frame] layout = "fp-inside"` 全推导。
 - **`isa/arm64_v12.toml`**：24 条 `[[instructions]]` + 33 条 `[[templates]]`（80 行 →
   共 104 条指令，含 S3c 的 `b.cond` 16 行），A64 定宽后端（golden 依据见
   `docs/reference/aarch64-encoding-ref.md`）。

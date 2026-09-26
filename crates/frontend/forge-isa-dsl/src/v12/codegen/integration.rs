@@ -522,28 +522,20 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     // 主 GPR 组寄存器名 → 物理索引（用于 sp/fp/scratch/callee_saved/clobber 引用
     // 解析）；缺组即 Err（不再 `unwrap_or_default()` 静默空表）。
     let name_to_idx = model.main_gpr_name_to_idx()?;
-    // SP/FP：优先 [abi.frame].sp/.fp 声明的名字（demo "X7"/"X6" 等自定义寄存器名），
+    // SP/FP：优先 [machine.frame].sp/.fp 声明的名字（demo "X7"/"X6" 等自定义寄存器名），
     // 否则按惯例名（"RSP"/"SP"、"RBP"/"FP"）解析。**两者都解析不到 → 生成期
     // 报错**（fail-closed）：历史实现静默回退 `from_index(idx = 0, GPR64)`，
     // 对非 x86 ISA 会构造该 ISA 根本不存在的寄存器类；1 字节寄存器 ISA 连主
     // GPR 名字表都是空的（锚点 GPR(8)/GPR(4) 都不存在）。
-    let frame_sp_name = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
-        .map(|f| f.sp.clone());
-    let frame_fp_name = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
-        .and_then(|f| f.fp.clone());
-    let frame_declared = model.abi.as_ref().and_then(|a| a.frame.as_ref()).is_some();
+    let frame_sp_name = model.machine_frame().map(|f| f.sp.clone());
+    let frame_fp_name = model.machine_frame().and_then(|f| f.fp.clone());
+    let frame_declared = model.machine_frame().is_some();
     let (sp_expr, sp_idx) = resolve_frame_reg(
         gpr_main,
         &name_to_idx,
         frame_sp_name.as_ref(),
         ["rsp", "sp"],
-        "[abi.frame].sp",
+        "[machine.frame].sp",
         frame_declared,
     )?;
     let (fp_expr, fp_idx) = resolve_frame_reg(
@@ -551,7 +543,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
         &name_to_idx,
         frame_fp_name.as_ref(),
         ["rbp", "fp"],
-        "[abi.frame].fp",
+        "[machine.frame].fp",
         frame_declared,
     )?;
     // callee_saved：从 [abi].callee_saved.gpr 解析物理索引（顺序 = prologue push 序）。
@@ -741,14 +733,14 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     })
 }
 
-/// 解析 `[abi.frame].sp/.fp`：显式名字 > 惯例名（大小写不敏感）。
+/// 解析 `[machine.frame].sp/.fp`：显式名字 > 惯例名（大小写不敏感）。
 ///
 /// 规则（fail-closed 与兼容并重）：
 /// - 显式声明了名字 → 必须能在主 GPR 组内解析，否则 `Err`（拼写错误不再静默
 ///   落回索引 0）；
 /// - 未声明 → 惯例名（`RSP`/`SP`、`RBP`/`FP`）；
-/// - 仍未命中且 `[abi.frame]` **已声明** → `Err`（配了帧却没有可用的 sp/fp）；
-/// - 未声明 `[abi.frame]`（纯寄存器夹具 / 无帧 ISA）→ 索引 0 占位，类用元数据
+/// - 仍未命中且 `[machine.frame]` **已声明** → `Err`（配了帧却没有可用的 sp/fp）；
+/// - 未声明 `[machine.frame]`（纯寄存器夹具 / 无帧 ISA）→ 索引 0 占位，类用元数据
 ///   派生的 `__DEFAULT_GPR_CLASS`（历史实现写死 `GPR64` ⇒ 非 x86 ISA 会构造
 ///   一个该 ISA 根本不存在的类）。
 fn resolve_frame_reg(
@@ -780,10 +772,10 @@ fn resolve_frame_reg(
     }
     if frame_declared {
         return Err(format!(
-            "{key}: 未声明，且惯例名 {conventional:?} 不在 [reg.{main_group}] 组内——请在 [abi.frame] 显式声明该寄存器在 TOML 中的名字（生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
+            "{key}: 未声明，且惯例名 {conventional:?} 不在 [reg.{main_group}] 组内——请在 [machine.frame] 显式声明该寄存器在 TOML 中的名字（生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
         ));
     }
-    // 未声明 [abi.frame]：索引 0 占位（类由元数据派生，指向真实存在的主 GPR 寄存器）。
+    // 未声明 [machine.frame]：索引 0 占位（类由元数据派生，指向真实存在的主 GPR 寄存器）。
     Ok((
         quote! { <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS) },
         0,

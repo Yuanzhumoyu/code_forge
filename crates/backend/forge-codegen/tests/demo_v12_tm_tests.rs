@@ -5,7 +5,7 @@
 //! 且宽度分发在 lowering 层生效（i16/i32/i64 的 Iadd 分别命中
 //! ADD16/ADD32/ADD64——同一条 lowering 模板 "add {out}, {0}, {1}"）。
 //!
-//! 注意：demo 的 [abi.frame].sp = X7、fp = X6 为演示占位（无 callee-saved、
+//! 注意：demo 的 [machine.frame].sp = X7、fp = X6 为演示占位（无 callee-saved、
 //! frame_size=0 时不发射帧指令）；[emit].epilogue_label = false（无 JMP
 //! 指令，return block 直接 fall-through 到尾声 RET）。
 

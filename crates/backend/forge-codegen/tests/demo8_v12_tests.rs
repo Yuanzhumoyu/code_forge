@@ -61,7 +61,11 @@ fn one_byte_register_metadata_is_derived() {
     assert_eq!(ri.num_gp_regs(), 8, "唯一组的 8 个寄存器");
     // 名字解析：sp/fp/scratch 全部命中（历史：锚点 GPR(8)/GPR(4) 都不存在 →
     // 空名字表 → 这些全部静默丢弃/落回索引 0）。
-    assert_eq!(ri.sp_reg().register_index(), Some(7), "[abi.frame].sp = A7");
+    assert_eq!(
+        ri.sp_reg().register_index(),
+        Some(7),
+        "[machine.frame].sp = A7"
+    );
     assert_eq!(ri.fp_reg().map(|r| r.to_index()), Some(6), "fp = A6");
     assert_eq!(ri.scratch_regs(), vec![4, 5], "[abi].scratch = A4/A5");
     assert_eq!(

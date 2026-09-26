@@ -5,7 +5,7 @@
 
 use forge_ir::{CallConvId, PhysReg};
 
-/// 帧布局模式（[abi.frame].layout）：callee-saved 保存槽相对帧的位置。
+/// 帧布局模式（[machine.frame].layout）：callee-saved 保存槽相对帧的位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameLayoutKind {
     /// fp-outside（x86/demo）：callee-saved 用硬件 push 在帧指针上方（帧外）。
@@ -14,7 +14,7 @@ pub enum FrameLayoutKind {
     Inside,
 }
 
-/// 声明式帧布局（[abi.frame] 的两个正交事实）。其余帧数值
+/// 声明式帧布局（[machine.frame] 的两个正交事实）。其余帧数值
 /// （min_frame / callee_saved_bytes / stack_slot_shift）由
 /// `pipeline::frame_layout::frame_layout_info` 从本结构 + reg_info 推导。
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +76,7 @@ pub trait TargetABI: Send + Sync + 'static {
         0
     }
 
-    /// 声明式帧布局：`[abi.frame].layout`（fp-inside/fp-outside）+
+    /// 声明式帧布局：`[machine.frame].layout`（fp-inside/fp-outside）+
     /// `fp_push_bytes`。min_frame / callee_saved_bytes / stack_slot_shift
     /// 三数值由 `pipeline::frame_layout::frame_layout_info` 从本结构
     /// + reg_info 推导，不再有 `min_frame_bytes` 等魔法数方法。

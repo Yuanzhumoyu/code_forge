@@ -242,7 +242,7 @@ fp_save = 8
 class = "int"
 regs = ["X0", "X1", "X2", "X3"]
 
-[abi.frame]
+[machine.frame]
 sp = "X7"          # demo 无专用 SP；X7 作栈指针（frame_size=0 时不发射）
 fp = "X6"          # 帧指针占位（B3 最小集不 push）
 fp_push_bytes = 0

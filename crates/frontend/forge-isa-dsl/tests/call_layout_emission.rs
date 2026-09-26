@@ -188,7 +188,7 @@ fn no_spec_writes_prologue_templates_or_pseudo_instructions_any_more() {
             assert!(
                 !src.contains(needle),
                 "{path}: 仍写着 `{needle}`——序/尾声与收参是调用约定的事（v20 A4 起\
-                 由生成器按角色 + [abi.frame] 生成），谱里只留裸指令"
+                 由生成器按角色 + [machine.frame] 生成），谱里只留裸指令"
             );
         }
     }

@@ -51,7 +51,7 @@ fn push(regs: &mut Vec<Reg>, names: &[&'static str], class: &'static str, width:
 
 /// x86_64_v12：GPR(8) RAX..R15 → 0..15，FPR(16) XMM0-15 → 16..31，VEC(64) ZMM0-31 → 32..63。
 ///
-/// 固定性：RSP(4)/RBP(5)（谱里 `[abi.frame] sp=RSP fp=RBP`）；`[abi] scratch = [R10,R11]`。
+/// 固定性：RSP(4)/RBP(5)（谱里 `[machine.frame] sp=RSP fp=RBP`）；`[abi] scratch = [R10,R11]`。
 pub fn x86_64_v12() -> TestTarget {
     let mut regs: Vec<Reg> = Vec::new();
     push(

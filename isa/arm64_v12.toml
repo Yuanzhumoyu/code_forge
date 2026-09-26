@@ -514,16 +514,6 @@ call_clobbers = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X1
 class = "int"
 regs = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
 
-[abi.frame]
-sp = "SP"
-fp = "X29"
-# 帧分配 = SUB SP, SP, #frame（SUB 自带减号语义 → 无需 alloc_neg）；由生成器发射。
-alloc_neg = false
-# fp-inside：lr/fp 保存槽在帧内顶部（fp_push_bytes=16 = X30+X29 两槽）；
-# min_frame = 16 + Σcallee_saved×8 = 96 由运行期推导（frame_layout_info）。
-layout = "fp-inside"
-fp_push_bytes = 16
-
 [abi.callee_saved]
 # X19-X28（fp/lr 由 fp_push 区显式存取，不入表）：帧件按 roles = ["callee_save"/"callee_load"] 存取
 # 用 [spill.GPR] store/load 模板（STURX/LDURX）保存到 [sp+frame-16-(k+1)*8]。
@@ -1357,3 +1347,12 @@ spill_scratch = ["X16", "X17"]
 fixed_regs = ["X18", "X30"]
 # 链接寄存器（BL 写 X30；P1 尚未有 Call lowering 规则）。
 link_reg = "X30"
+# 帧形状：lr/fp 保存槽在帧内顶部（fp_push_bytes = 16 = X30+X29 两槽）；
+# 帧分配 = SUB SP, SP, #frame（SUB 自带减号语义 → 无需 alloc_neg）；
+# min_frame = 16 + Σcallee_saved×8 = 96 由运行期推导（frame_layout_info）。
+[machine.frame]
+sp = "SP"
+fp = "X29"
+alloc_neg = false
+layout = "fp-inside"
+fp_push_bytes = 16

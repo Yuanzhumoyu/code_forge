@@ -60,16 +60,11 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
         Some(b) => quote! { Some(#b as u32) },
         None => quote! { None },
     };
-    // 声明式帧布局：[abi.frame].layout（fp-inside/fp-outside）+ fp_push_bytes。
+    // 声明式帧布局：[machine.frame].layout（fp-inside/fp-outside）+ fp_push_bytes。
     // min_frame_bytes / callee_saved_bytes / stack_slot_shift 不再在 TOML 声明
     // ——由运行期 frame_layout_info() 从这两项 + reg_info 推导（见 pipeline/
     // frame_layout.rs）。这里只把两个正交事实落进生成的 ABI。
-    let layout = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
-        .map(|f| f.layout)
-        .unwrap_or_default();
+    let layout = model.machine_frame().map(|f| f.layout).unwrap_or_default();
     let layout_kind_toks: TokenStream = match layout {
         crate::v12::model::LayoutMode::FpInside => {
             quote! { crate::machine::abi::FrameLayoutKind::Inside }
@@ -82,9 +77,7 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
     // demo = 0 均由各自 TOML 显式声明——历史 `unwrap_or(8)` 对 1 字节寄存器 ISA
     // 是错的 8）。
     let fp_push = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
+        .machine_frame()
         .and_then(|f| f.fp_push_bytes)
         .unwrap_or(model.addr_class()?.width() as u32);
     // 返回寄存器：[abi].ret_regs（物理名）→ Reg::NAME；缺省空 = index 0
@@ -236,21 +229,16 @@ pub(crate) fn gen_frame_lowering(
     };
 
     // spill load/store：`{0}` = 寄存器、`{1}` = 帧偏移、基址来自模板 base。
-    // 模板未声明 base 时取 [abi.frame].fp（x86 RBP / riscv X8 / arm64 X29）——
+    // 模板未声明 base 时取 [machine.frame].fp（x86 RBP / riscv X8 / arm64 X29）——
     // 正是帧指针语义。**fp 也未声明 → 生成期 Err**（历史实现回退字面量
     // `"RBP"`：非 x86 ISA 会生成一个不存在的寄存器名）。仅在"存在未声明 base
     // 的溢出模板"时才要求该键——完全没有 spill 的 ISA（如纯算术夹具）不受影响。
     let needs_default_base = model.spill.values().any(|t| t.base.is_none());
-    let default_base = match model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
-        .and_then(|fr| fr.fp.clone())
-    {
+    let default_base = match model.machine_frame().and_then(|fr| fr.fp.clone()) {
         Some(fp) => fp,
         None if needs_default_base => {
             return Err(
-                "[spill.*]: 存在未声明 base 的溢出模板，但 [abi.frame].fp 缺失——spill 基址缺省取帧指针，不能回退 x86 的 \"RBP\"（生成期 fail-closed：请声明 [abi.frame].fp 或在每个 [spill.*] 显式写 base）"
+                "[spill.*]: 存在未声明 base 的溢出模板，但 [machine.frame].fp 缺失——spill 基址缺省取帧指针，不能回退 x86 的 \"RBP\"（生成期 fail-closed：请声明 [machine.frame].fp 或在每个 [spill.*] 显式写 base）"
                     .to_string(),
             );
         }
@@ -387,7 +375,7 @@ fn gen_frame_sequence(
 ) -> Result<TokenStream, String> {
     let mut pre: Vec<TokenStream> = Vec::new();
     let mut post: Vec<TokenStream> = Vec::new();
-    if let Some(frame) = model.abi.as_ref().and_then(|a| a.frame.as_ref()) {
+    if let Some(frame) = model.machine_frame() {
         let push_inst = role_name(infos, Role::Push).unwrap_or_default();
         let pop_inst = role_name(infos, Role::Pop).unwrap_or_default();
         if inst_exists(infos, &push_inst) && inst_exists(infos, &pop_inst) {
@@ -405,7 +393,7 @@ fn gen_frame_sequence(
             gen_store_mechanism(infos, model, frame, is_prologue, &mut pre, &mut post)?;
         }
     }
-    // 收参：序言里**无条件**发射（与 `[abi.frame]` 无关——只声明参数类的谱也收得到参）。
+    // 收参：序言里**无条件**发射（与 `[machine.frame]` 无关——只声明参数类的谱也收得到参）。
     let recv = if is_prologue {
         gen_arg_receive(infos, model)?
     } else {
@@ -414,7 +402,7 @@ fn gen_frame_sequence(
     Ok(quote! { #(#pre)* #recv #(#post)* })
 }
 
-/// 帧分配/释放的立即数：`[abi.frame].alloc_neg` 决定符号（riscv `addi sp, sp, -N`
+/// 帧分配/释放的立即数：`[machine.frame].alloc_neg` 决定符号（riscv `addi sp, sp, -N`
 /// 是加法指令 + 负立即数；x86/arm64 的 `sub` 自带减号语义）。
 fn frame_size_imm(frame: &AbiFrame) -> TokenStream {
     if frame.alloc_neg {
@@ -803,9 +791,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     let slot_bytes_lit = model.slot_bytes()? as i64;
     let callee_saved_bytes_lit: i64 = {
         let fp_push = model
-            .abi
-            .as_ref()
-            .and_then(|a| a.frame.as_ref())
+            .machine_frame()
             .and_then(|f| f.fp_push_bytes)
             .unwrap_or(model.addr_class()?.width() as u32) as i64;
         let cs = model
@@ -871,7 +857,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         .and_then(|s| s.shadow_bytes)
         .is_some();
     // 栈参数内存基址 = `[abi.stack_args].callee_base`（缺省 fp → 用
-    // `[abi.frame].fp` 的名字；x86 = RBP）。历史实现写死字面量 `Reg::RBP`
+    // `[machine.frame].fp` 的名字；x86 = RBP）。历史实现写死字面量 `Reg::RBP`
     // ——非 x86 ISA 一旦声明 shadow 会生成引用不存在寄存器的代码；这里改为
     // 元数据派生 + 生成期 fail-closed（fp 未声明 → 报错）。
     let callee_base_kind = model
@@ -881,9 +867,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         .and_then(|s| s.callee_base.clone())
         .unwrap_or_else(|| "fp".to_string());
     let callee_base: TokenStream = match model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
+        .machine_frame()
         .map(|f| {
             if callee_base_kind == "sp" {
                 f.sp.clone()
@@ -899,7 +883,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         }
         None if has_shadow => {
             return Err(format!(
-                "move_args: [abi.stack_args].shadow_bytes 已声明，但 [abi.frame].{callee_base_kind} 缺失——栈参数内存基址需要{}（不再回退字面量 \"RBP\"）",
+                "move_args: [abi.stack_args].shadow_bytes 已声明，但 [machine.frame].{callee_base_kind} 缺失——栈参数内存基址需要{}（不再回退字面量 \"RBP\"）",
                 if callee_base_kind == "sp" {
                     "栈指针"
                 } else {

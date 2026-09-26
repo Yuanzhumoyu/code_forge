@@ -230,7 +230,7 @@ ret_regs = ["A0"]
 class = "int"
 regs = ["A0", "A1", "A2", "A3"]
 
-[abi.frame]
+[machine.frame]
 sp = "A7"
 fp = "A6"
 # fp 保存槽 = 1 字节（不是 x86 的 8）

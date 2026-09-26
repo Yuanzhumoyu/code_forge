@@ -202,11 +202,11 @@ pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String>
     // ── 固定用途：reserved + sp/fp ──
     let mut pinned: Vec<u32> = Vec::new();
     let mut scratch: Vec<u32> = Vec::new();
-    if let Some(frame) = model.abi.as_ref().and_then(|a| a.frame.as_ref()) {
+    if let Some(frame) = model.machine_frame() {
         for n in std::iter::once(&frame.sp).chain(frame.fp.iter()) {
             match names.get(n) {
                 Some(i) => pinned.push(*i),
-                None => notes.push(format!("[abi.frame] 的 `{n}` 不在寄存器表里")),
+                None => notes.push(format!("[machine.frame] 的 `{n}` 不在寄存器表里")),
             }
         }
     }

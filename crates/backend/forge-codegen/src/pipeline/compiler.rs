@@ -2095,7 +2095,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
         //（覆盖调用者寄存器保存值 → mini_c JIT SEGV/逻辑错误）。
         // 帧布局三数值统一推导：min_frame / callee_saved_bytes / 栈槽平移
-        // 都由 frame_layout_info() 从 [abi.frame].layout + reg_info 算出
+        // 都由 frame_layout_info() 从 [machine.frame].layout + reg_info 算出
         //（fp-inside：csb=0、栈槽平移=fp_push；fp-outside：csb=pushed、平移
         // 回退 csb）。compiler.rs 的 LowerCtx 与 emission.rs 共用同一来源。
         let fl = crate::pipeline::frame_layout::frame_layout_info(machine);

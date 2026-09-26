@@ -23,7 +23,7 @@
 //! 仅识别 forge x86_64 v12 的常量 prologue 前缀（15 字节）：
 //! `55 48 89 e5`（push rbp; mov rbp, rsp）+ 7 次 callee-saved push：
 //! RBX RDI RSI R12 R13 R14 R15（`53 57 56 41 54 41 55 41 56 41 57`，
-//! TOML [abi.callee_saved]/[abi.frame] 固定推满）。**前缀/数量不符 → None**
+//! TOML [abi.callee_saved]/[machine.frame] 固定推满）。**前缀/数量不符 → None**
 //!（安全退化：不产 CFI——非 x86 后端/非常规函数零影响）。
 //!
 //! CFA 与行语义：
@@ -184,7 +184,7 @@ fn register_default_cfi_scanner(isa: &str) {
     {
         return;
     }
-    // x86_64 v12 固定 prologue 前缀（TOML [abi.callee_saved]/[abi.frame]）。
+    // x86_64 v12 固定 prologue 前缀（TOML [abi.callee_saved]/[machine.frame]）。
     // riscv64/demo/其他 ISA 无默认扫描器 → 不注册（查询返回 None = 无 CFI，
     // 安全退化；v1 仅 x86_64）。
     if matches!(isa, "x86_64" | "x86_64_v12" | "x86_v12") {

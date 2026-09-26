@@ -22,7 +22,7 @@ use std::{
 ///
 /// 三条纪律：① 这里**不放任何约定内容**（参数池 / 返回池 / callee-saved / sret 槽 /
 /// 栈参数布局都在 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）里）；
-/// ② 迁移期（A5-3）三个键都能**回退**到旧的 `[abi]` 同名键，因此可以逐谱迁移；
+/// ② 迁移期（A5-3）这些键都能**回退**到旧的 `[abi]` 同名键，因此可以逐谱迁移；
 /// ③ 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
 /// `link_reg` ← `call_ret_reg`），避免"两处都写、谁生效"的含糊。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -37,6 +37,11 @@ pub struct MachineSection {
     /// **链接寄存器**（call 写入的返回地址；riscv `X1` / arm64 `X30`）。
     #[serde(default)]
     pub link_reg: Option<String>,
+    /// **帧形状**（`[machine.frame]`，键与旧的 `[abi.frame]` 同名同义）：
+    /// 栈指针/帧指针寄存器名、帧布局模式、帧指针保存槽字节数、帧分配立即数是否取负。
+    /// 这些是"这台机器怎么建帧"，不是约定内容（保存谁、栈参数怎么排才是约定）。
+    #[serde(default)]
+    pub frame: Option<AbiFrame>,
 }
 
 impl V12Model {
@@ -74,6 +79,18 @@ impl V12Model {
             return Some(l.as_str());
         }
         self.abi.as_ref().and_then(|a| a.call_ret_reg.as_deref())
+    }
+
+    /// 帧形状：`[machine].frame` 优先，回退 `[abi].frame`（迁移期）。
+    ///
+    /// **所有**读 `[abi.frame]` 的地方都必须走这里——包括只读其中一两个键的
+    /// （`sp`/`fp`/`layout`/`fp_push_bytes`/`alloc_neg`），否则迁移期会出现
+    /// "一半读新表、一半读旧表"的分裂。
+    pub fn machine_frame(&self) -> Option<&AbiFrame> {
+        if let Some(f) = self.machine.as_ref().and_then(|m| m.frame.as_ref()) {
+            return Some(f);
+        }
+        self.abi.as_ref().and_then(|a| a.frame.as_ref())
     }
 }
 
@@ -1653,7 +1670,7 @@ pub enum Role {
     Push,
     /// 硬件 pop。
     Pop,
-    /// 帧分配（`sp ← sp - frame_size`；符号由 `[abi.frame].alloc_neg` 定，
+    /// 帧分配（`sp ← sp - frame_size`；符号由 `[machine.frame].alloc_neg` 定，
     /// 因为 riscv 用 `addi sp, sp, -N`、x86 用 `sub rsp, N`）。
     FrameAlloc,
     /// 帧释放（`sp ← sp + frame_size`）。
@@ -2562,7 +2579,7 @@ pub struct Pattern {
 #[serde(deny_unknown_fields)]
 pub struct AbiStackArgs {
     /// **被调方**收参的基址寄存器：`"fp"`（帧指针，x86）或 `"sp"`。
-    /// 缺省 `"fp"`；取自 `[abi.frame]` 声明的寄存器名。
+    /// 缺省 `"fp"`；取自 `[machine.frame]` 声明的寄存器名。
     #[serde(default)]
     pub callee_base: Option<String>,
     /// **调用方**写栈参数的基址：`"sp"`（x86：`[sp + shadow + k*stride]`）或 `"fp"`。
@@ -2640,7 +2657,7 @@ pub enum ArgSlot {
     ByPosition,
 }
 
-/// 帧布局模式（[abi.frame].layout）：决定 callee-saved 保存槽相对帧的位置。
+/// 帧布局模式（[machine.frame].layout）：决定 callee-saved 保存槽相对帧的位置。
 /// 其余帧数值（min_frame_bytes / callee_saved_bytes / stack_slot_shift）全部
 /// 由运行期从本模式 + fp_push_bytes + callee_saved 表**推导**（pipeline/
 /// frame_layout.rs::frame_layout_info），不再在 TOML 里手工写魔法数。
@@ -2659,7 +2676,7 @@ pub enum LayoutMode {
     FpInside,
 }
 
-/// 帧布局配置（[abi.frame]）。
+/// 帧布局配置（[machine.frame]）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbiFrame {
@@ -2748,7 +2765,7 @@ pub enum ArgStrategy {
 /// `[emit]` ——**剩下的只有机器事实**（v20 A4：序/尾声不再由谱写）。
 ///
 /// 序言/尾声（保存谁、帧多大、怎么建立帧指针）是**调用约定**的事，由生成器按
-/// `[abi.frame]` / `[abi].call_ret_reg` / `[abi.callee_saved]` + 角色
+/// `[machine.frame]` / `[machine]` / `[abi.callee_saved]` + 角色
 /// （`push`/`pop`/`frame_alloc`/`frame_free`/`frame_set`/`callee_save`/`callee_load`/`ret`）
 /// 生成；谱里只剩"`.align` 怎么填"与"要不要独立尾声标签"这类事实。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

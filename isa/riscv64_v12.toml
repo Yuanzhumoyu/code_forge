@@ -689,17 +689,6 @@ call_clobbers = ["X1", "X3", "X4", "X7", "X10", "X11", "X12", "X13", "X14", "X15
 class = "int"
 regs = ["X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17"]
 
-[abi.frame]
-sp = "X2"          # sp
-fp = "X8"          # s0/fp
-alloc_neg = true   # addi sp, sp, -frame_size
-# fp-inside：ra/fp/callee_saved 保存槽在帧内顶部 → min_frame_bytes(104 =
-# fp_push 16 + 11×8)、callee_saved_bytes_override(0)、stack_slot_shift(16)
-# 三个值全部由运行期推导（pipeline/frame_layout.rs::frame_layout_info），
-# 不再手写魔法数。
-layout = "fp-inside"
-fp_push_bytes = 16 # ra + fp 两个保存槽
-
 [abi.callee_saved]
 # s 系（X9, X18-X27）：帧件用 roles = ["callee_save"/"callee_load"] 的 SD/LD 存取
 # 模板（SD/LD）保存到帧槽 [sp + frame - 16 - (k+1)*8]（fp-inside 推导的最小
@@ -2326,3 +2315,13 @@ spill_scratch = ["X5", "X6"]
 fixed_regs = ["X0", "X1", "X3", "X4"]
 # 链接寄存器：Call 调用指令写返回地址（jal ra, @N）。x86 的 CALL 写栈，故 x86 不声明。
 link_reg = "X1"
+# 帧形状：ra/fp/callee_saved 保存槽在帧**内顶部**，帧分配立即数取负
+#（`addi sp, sp, -N`）。min_frame_bytes(104 = fp_push 16 + 11×8)、
+# callee_saved_bytes_override(0)、stack_slot_shift(16) 三个值全部由运行期推导
+#（pipeline/frame_layout.rs::frame_layout_info），不手写魔法数。
+[machine.frame]
+sp = "X2"          # sp
+fp = "X8"          # s0/fp
+alloc_neg = true   # addi sp, sp, -frame_size
+layout = "fp-inside"
+fp_push_bytes = 16 # ra + fp 两个保存槽

@@ -782,17 +782,12 @@ struct PatternEmit {
     rewritten: Vec<String>,
 }
 
-/// 帧相对内存的基址寄存器（`[abi.frame].fp` 的 `Reg::NAME`；x86 = `Reg::RBP`）。
+/// 帧相对内存的基址寄存器（`[machine.frame].fp` 的 `Reg::NAME`；x86 = `Reg::RBP`）。
 /// sret / 宽向量 by-ref 路径此前写死字面量 `Reg::RBP`——ISA 换名（或换帧寄存器）
 /// 会生成引用不存在寄存器的代码。未声明 fp 时回退"主 GPR 组 0 号占位"（这些路径
 /// 只在声明了对应角色的 ISA 上生成；角色门已 fail-closed）。
 fn frame_base_toks(model: &V12Model) -> TokenStream {
-    match model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
-        .and_then(|f| f.fp.as_ref())
-    {
+    match model.machine_frame().and_then(|f| f.fp.as_ref()) {
         Some(n) => {
             let id = format_ident!("{n}");
             quote! { Reg::#id }
@@ -802,7 +797,7 @@ fn frame_base_toks(model: &V12Model) -> TokenStream {
 }
 
 /// 栈相对内存的基址寄存器（`[abi.stack_args].caller_base` = `"sp"`/`"fp"`，
-/// 缺省 `"sp"` → 用 `[abi.frame].sp` 的名字；x86 = `Reg::RSP`）。
+/// 缺省 `"sp"` → 用 `[machine.frame].sp` 的名字；x86 = `Reg::RSP`）。
 /// 栈参数 store 路径此前写死 `Reg::RSP`。
 fn sp_base_toks(model: &V12Model) -> TokenStream {
     let kind = model
@@ -812,9 +807,7 @@ fn sp_base_toks(model: &V12Model) -> TokenStream {
         .and_then(|s| s.caller_base.clone())
         .unwrap_or_else(|| "sp".to_string());
     match model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame.as_ref())
+        .machine_frame()
         .map(|f| {
             if kind == "fp" {
                 f.fp.clone().unwrap_or_default()
@@ -1158,7 +1151,7 @@ fn gen_call_lowering(
     infos: &[InstInfo],
     model: &V12Model,
 ) -> Result<TokenStream, String> {
-    // R8：帧/栈基址从 `[abi.frame]` 派生（不再写死 `Reg::RBP` / `Reg::RSP`）。
+    // R8：帧/栈基址从 `[machine.frame]` 派生（不再写死 `Reg::RBP` / `Reg::RSP`）。
     let __frame_base = frame_base_toks(model);
     let __sp_base = sp_base_toks(model);
     // R9：by-ref/sret 的向量槽步长 = 最大向量档位（x86 = 64），帧需求 = 槽步长 + 1 个槽单位。
@@ -1855,7 +1848,7 @@ fn arg_move_loop(
     let stack_store_stmt: TokenStream = match (stack_shadow.is_some(), stack_store) {
         (true, Some((s_vn, s_mem, s_reg, s_reg_idx))) => quote! {
             // 栈参数（声明 [abi.stack_args] 的 ISA）：第 N+ 个 int 参数
-            // store 到 [sp+shadow+(k-n)*槽单位]（基址 = [abi.frame].sp 派生）
+            // store 到 [sp+shadow+(k-n)*槽单位]（基址 = [machine.frame].sp 派生）
             let __off = __shadow as i64 + (__pi - #n) as i64 #stride_factor * __SLOT_BYTES as i64;
             __pi += 1;
             let __idx = __pack.push_inst(Inst::#s_vn {
