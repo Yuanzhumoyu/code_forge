@@ -707,14 +707,23 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 角色，生成器按角色查指令，取代 `[abi]` 的 13 个 `*_inst` 名指针与 v14 的 `tags`
 字符串标签。
 
-条目有两种写法，**同一个机制**：
+条目有三种写法，**同一个机制**：
 
-- `"gpr_mov"` —— 无宽度语义的角色，全 ISA 唯一（validate 强制）；
+- `"gpr_mov"` —— 裸声明：无宽度、无类语义，全 ISA 唯一（validate 强制），
+  并且**两类寄存器都能用**（按类解析时的兜底）；
 - `{ role = "fpr_mov", bits = 32 }` —— **有宽度语义**的角色：同角色可以有多条声明，
   靠 `bits`（**位宽**，与 `opsize`/`[encoding].bits` 同单位）区分，(角色, 位宽) 唯一。
   x86 的 `MOVSS`/`MOVSD` 就是这种：两者共用 `fpr` 槽，槽本身分不出 32/64，
   因此宽度必须写在角色声明上（v18 S9 之前是把它编进角色名 `fpr_mov_f32`/`_f64`，
   其它位宽的 ISA 无法接入）。
+- `{ role = "callee_save", class = "fpr" }` —— **有寄存器类语义**的角色
+  （v20 A6）：同一个能力在 GPR 与 FPR 上要用**不同指令**时分开申报，
+  靠 `class`（`"gpr"`/`"fpr"`）区分，(角色, 位宽, 类) 唯一。arm64 的帧内保存就是
+  这种：`STURX` 裸声明管 GPR、`STURD` 声明 `class = "fpr"` 管 FPR（AAPCS64 的
+  v8-v15 低 64 位必须由被调方保存）。**裸声明与该类的声明可以共存**——裸的那条是
+  另一类的兜底，只有"同一个类声明了两条"才是冲突。
+
+键可以同时给（`{ role, bits, class }`），两个轴正交。
 
 完整角色枚举：
 
@@ -730,7 +739,7 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | `push` / `pop` | 硬件 push / pop（push 机制的 callee-saved 保存/恢复；缺则整机走帧内机制） |
 | `frame_alloc` / `frame_free` | 帧分配 / 释放（`sp ∓ frame_size`；由生成器发射） |
 | `frame_set` | 建立/恢复帧指针（`in`=源、`out`=目标，可带 imm） |
-| `callee_save` / `callee_load` | 帧内保存/恢复寄存器（Reg[0]=值、Reg[1]=基址、Imm[0]=偏移） |
+| `callee_save` / `callee_load` | 帧内保存/恢复寄存器（Reg[0]=值、Reg[1]=基址、Imm[0]=偏移）；可按寄存器类限定（`{ role = "callee_save", class = "fpr" }`：GPR/FPR 用不同指令时各申报一条，循环按寄存器类选） |
 | `epilogue_jump` | 尾声跳转（缺省用 `jump`） |
 | `wide_vec_store` | 宽向量 by-ref 调用方栈拷贝 store（宽度写在声明里：`bits = 256`/`512`） |
 | `wide_vec_load` | 宽向量 by-ref/sret 收参与回读 load（同上） |

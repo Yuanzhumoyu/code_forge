@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-26) — v20 A6（前置）：角色声明带**寄存器类**限定，帧内保存按类分派
+
+- **角色声明新增类轴**：`roles = [{ role = "callee_save", class = "fpr" }]`（`class = "gpr" | "fpr"`）。同一个"存到帧"能力在 GPR 与 FPR 上要用**不同指令**时分开申报；两个轴（`bits`/`class`）正交，裸声明与该类的声明**可以共存**——裸的那条是另一类的兜底（只有"同一个类声明两条"才是冲突，编译期报错）。唯一性键由 (角色, 位宽) 扩成 (角色, 位宽, 类)。
+- **生成器按类解析**：新增 `role_name_for_class(role, class)`——类限定命中的声明优先，否则回退裸声明；`role_name(role)` 只看裸声明（写了限定的能力必须按轴解析，否则明确报错而不是静默取第一条）。
+- **帧内保存/恢复循环按运行时寄存器类分派**：`callee_saved_loop` 在生成期解析出 GPR/FPR 两条指令，生成物在循环里按 `__preg.class.is_fp()` 选一条。两类解析到同一条指令（或只有一类申报）时**照旧发单条语句**——x86/riscv 与全部夹具的生成物**逐字节不变**（已用 `FGE_DEBUG_GEN` 与改动前的基线逐文件比对：只有 arm64 变了，+456 字节 = 多出的 STURD/LDURD 两支）。
+- **arm64 谱**：`STURD`/`LDURD` 声明 `{ role = "callee_save"/"callee_load", class = "fpr" }`（`STURX`/`LDURX` 保持裸声明管 GPR）。AAPCS64 要求 v8-v15 低 64 位由被调方保存，而 `STURX` 只认 GPR——这一步把"能力"补上。
+- **本片是前置能力，尚未激活**：regalloc 的 callee-saved 仍只喂 GPR（`callee_saved_to_save` 只扫主 GPR 类），所以 FPR 那支今天不会被执行；激活需要"喂 FPR + 帧最小字节数按实际保存数算"（下一步，见计划文档 A6）。
+- 守卫：`crates/frontend/forge-isa-dsl/tests/role_widths.rs` 新增两条——"裸声明 + 类限定声明合法（用 arm64 真谱）"与"同一个类声明两条必须报错"。
+- 验证：workspace serially 绿（clippy `-D warnings` 0）、三条 JIT 矩阵不变。
+
 ### Fixed (2026-09-26) — v20 A5-3（④-1）：约定事实改读 plan，顺带修掉两处约定口径错
 
 - **`CallLayout` 补两个约定事实**：`clobbers`（可用池 − callee-saved）与 `frame_padding`，由 `abi_target::call_layout` 从 `AbiPlan.clobbers` / `AbiPlan.stack.frame_padding` 填。三处消费者改**优先读 plan**，谱里那份降级为无 plan（未注册约定/合成夹具）时的兜底：

@@ -1478,36 +1478,40 @@ fn form_exists(m: &V12Model, name: &str) -> bool {
 
 // ──────────────────── [[instructions]] ────────────────────
 
+/// 一条角色声明在"唯一性"检查里的身份：**(位宽, 寄存器类限定, 指令名)**。
+type RoleOwner<'a> = (Option<u16>, Option<crate::v12::model::RoleClass>, &'a str);
+
 /// 逐条收集：角色唯一性 + 重名（整表层）各报一次，然后**每条指令**各报一条。
 ///
 /// 重名诊断由 `DeclIndex` 自动附注"同名声明也出现在 行:列"（S1 新增能力）。
 fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
-    // 角色唯一性（v18 S9）：键是 **(角色, 位宽)**——有宽度语义的角色
-    // （`roles = [{ role = "fpr_mov", bits = 32 }]`）可以有多条，靠 `bits` 区分；
-    // 无宽度语义的角色（`"gpr_mov"`）仍旧全 ISA 唯一。同一角色一处写 bits、一处不写
-    // = 歧义，也拒绝。
-    let mut role_owner: std::collections::BTreeMap<Role, Vec<(Option<u16>, &str)>> =
-        Default::default();
+    // 角色唯一性（v18 S9；v20 A6 加类轴）：键是 **(角色, 位宽, 类限定)**——
+    // 有宽度语义的角色（`roles = [{ role = "fpr_mov", bits = 32 }]`）靠 `bits` 区分，
+    // 有类语义的角色（`roles = [{ role = "callee_save", class = "fpr" }]`）靠 `class`
+    // 区分（arm64 的帧内保存：GPR 走 STURX、FPR 走 STURD）；两个轴都空 = 裸声明，
+    // 仍旧全 ISA 唯一。同一角色一处写限定、一处不写 = 歧义，也拒绝。
+    let mut role_owner: std::collections::BTreeMap<Role, Vec<RoleOwner<'_>>> = Default::default();
     for inst in &m.instructions {
         for r in &inst.roles {
             role_owner
                 .entry(r.role())
                 .or_default()
-                .push((r.bits(), inst.name.as_str()));
+                .push((r.bits(), r.class(), inst.name.as_str()));
         }
     }
     for (role, owners) in &role_owner {
-        for (i, (bits, name)) in owners.iter().enumerate() {
-            for (obits, oname) in &owners[i + 1..] {
-                if bits == obits {
+        for (i, (bits, class, name)) in owners.iter().enumerate() {
+            for (obits, oclass, oname) in &owners[i + 1..] {
+                if bits == obits && class == oclass {
                     d.push_anchored(
                         idx,
                         &format!(
                             "[[instructions.{name}]]: 角色 \"{role}\" 与 {oname} 冲突——\
-                             同角色同宽度只能有一条声明（不同宽度请写 `bits`）"
+                             同角色同位宽同类限定只能有一条声明（不同位宽请写 `bits`，\
+                             不同寄存器类请写 `class`）"
                         ),
                     );
-                } else if bits.is_none() != obits.is_none() {
+                } else if bits.is_none() != obits.is_none() && class == oclass {
                     d.push_anchored(
                         idx,
                         &format!(
@@ -1516,6 +1520,10 @@ fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
                         ),
                     );
                 }
+                // **类轴不构成歧义**：裸声明 = "两类都能用"（`role_name_for_class`
+                // 只在类限定命中时优先），所以"裸声明 + 类限定声明"是**合法**组合——
+                // arm64 的 `STURX`（裸）+ `STURD`（`class = "fpr"`）正是这个形状。
+                // 同一类的两条（上面那条）才是冲突。
             }
         }
     }

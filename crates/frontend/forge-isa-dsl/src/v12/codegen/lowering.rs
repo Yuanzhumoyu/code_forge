@@ -2150,17 +2150,44 @@ pub(crate) fn inst_by_role_for<'a>(
     })
 }
 
-/// 角色对应的指令名；缺角色 → 带角色名的错误；**同名多宽度 → 明确要求按宽度解析**。
+/// 角色对应的指令名；缺角色 → 带角色名的错误；**同名多宽度/多类 → 明确要求按需解析**。
+///
+/// 只看**裸声明**（没写 `bits`/`class` 的那些）：写了限定就说明"这个能力按宽度或
+/// 按寄存器类分派"，调用方必须走 [`role_name_for`] / [`role_name_for_class`]。
 pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String> {
     let hits: Vec<&InstInfo> = infos
         .iter()
-        .filter(|i| i.inst.roles.iter().any(|d| d.is(role)))
+        .filter(|i| {
+            i.inst
+                .roles
+                .iter()
+                .any(|d| d.is(role) && d.bits().is_none() && d.class().is_none())
+        })
         .collect();
     match hits.as_slice() {
-        [] => Err(format!("本 ISA 未声明 roles = [\"{role}\"] 的指令")),
+        [] => {
+            // 没有裸声明：要么完全没申报，要么只按宽度/类申报了——把已声明的
+            // 形状列出来，免得作者以为"写了角色却不生效"。
+            let mut qualified: Vec<String> = infos
+                .iter()
+                .flat_map(|i| i.inst.roles.iter())
+                .filter(|d| d.is(role))
+                .map(|d| d.to_string())
+                .collect();
+            qualified.sort();
+            qualified.dedup();
+            if qualified.is_empty() {
+                Err(format!("本 ISA 未声明 roles = [\"{role}\"] 的指令"))
+            } else {
+                Err(format!(
+                    "角色 \"{role}\" 只有带限定的声明（{}）——必须按宽度（role_name_for）或按寄存器类（role_name_for_class）解析",
+                    qualified.join(" / ")
+                ))
+            }
+        }
         [one] => Ok(one.inst.name.clone()),
         many => Err(format!(
-            "角色 \"{role}\" 有 {} 条声明（{}）——有宽度语义的角色必须按宽度解析（bits）",
+            "角色 \"{role}\" 有 {} 条裸声明（{}）——同一能力要么唯一，要么写明 bits/class",
             many.len(),
             many.iter()
                 .map(|i| i.inst.name.as_str())
@@ -2168,6 +2195,35 @@ pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String
                 .join(" / ")
         )),
     }
+}
+
+/// 按 **(角色, 寄存器类)** 取指令名（v20 A6）：先找类限定匹配的声明，
+/// 没有则回退到**裸声明**（不限类 = 两类都能用）。
+///
+/// 用于"同一个能力在 GPR 与 FPR 上要用不同指令"的场合（arm64 的帧内保存：
+/// GPR 走 `STURX`、FPR 走 `STURD`）。选不到 → `None`，由调用方决定
+/// `Unsupported` 还是一整类都能用的裸声明回退。
+pub(crate) fn role_name_for_class(
+    infos: &[InstInfo],
+    role: Role,
+    class: crate::v12::model::RoleClass,
+) -> Option<String> {
+    let matches = |want: Option<crate::v12::model::RoleClass>| -> Option<String> {
+        let hits: Vec<&InstInfo> = infos
+            .iter()
+            .filter(|i| {
+                i.inst
+                    .roles
+                    .iter()
+                    .any(|d| d.is(role) && d.class() == want && d.bits().is_none())
+            })
+            .collect();
+        match hits.as_slice() {
+            [one] => Some(one.inst.name.clone()),
+            _ => None,
+        }
+    };
+    matches(Some(class)).or_else(|| matches(None))
 }
 
 /// 按 **(角色, 位宽)** 取指令名（v18 S9）；选不到 → 明确 `Unsupported` 消息

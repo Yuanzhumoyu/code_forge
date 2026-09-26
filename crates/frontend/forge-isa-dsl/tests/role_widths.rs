@@ -15,6 +15,12 @@ use std::path::Path;
 
 use forge_isa_dsl::{read_isa_file, validate_source};
 
+fn arm64() -> String {
+    read_isa_file("isa/arm64_v12.toml")
+        .expect("读 arm64 谱失败")
+        .0
+}
+
 fn x86() -> String {
     read_isa_file("isa/x86_v12.toml").expect("读 x86 谱失败").0
 }
@@ -46,4 +52,40 @@ fn duplicate_role_width_is_rejected() {
             "错误应点出 `{needle}`（角色名 / 冲突指令名）：{joined}"
         );
     }
+}
+
+/// **类限定与裸声明可以共存**（v20 A6）：arm64 的 `STURX`（裸 `callee_save`）与
+/// `STURD`（`{ role = "callee_save", class = "fpr" }`）正是这个形状——裸的那条是
+/// 另一类的兜底。发行谱必须照旧通过校验（本测试同时钉住"arm64 真的这么写了"）。
+#[test]
+fn class_qualified_role_coexists_with_the_plain_one() {
+    let src = arm64();
+    assert!(
+        src.contains(r#"roles = [{ role = "callee_save", class = "fpr" }]"#),
+        "arm64 谱里应有 STURD 的类限定声明"
+    );
+    validate_source(&src, Path::new("arm64_role_class.toml"))
+        .unwrap_or_else(|e| panic!("裸声明 + 类限定声明必须合法，却报了：{e:#?}"));
+}
+
+/// **同一个类声明两条** ⇒ 编译期报错（生成器只会静默取第一条）。
+#[test]
+fn duplicate_role_class_is_rejected() {
+    // 把 LDURX 也标成 fpr 类 ⇒ (callee_load, fpr) 撞成两条。
+    let src = arm64().replacen(
+        r#"roles = ["callee_load"]"#,
+        r#"roles = [{ role = "callee_load", class = "fpr" }]"#,
+        1,
+    );
+    assert!(
+        src.contains(r#"{ role = "callee_load", class = "fpr" }"#),
+        "变异没生效"
+    );
+    let errs = validate_source(&src, Path::new("arm64_role_dup_class.toml"))
+        .expect_err("同角色同类限定重复必须报错");
+    let joined = errs.join("\n");
+    assert!(
+        joined.contains("callee_load") && (joined.contains("LDURD") || joined.contains("LDURX")),
+        "错误要点出角色名与冲突的指令：{joined}"
+    );
 }

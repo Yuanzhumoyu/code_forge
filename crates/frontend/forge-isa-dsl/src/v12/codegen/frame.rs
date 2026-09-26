@@ -6,7 +6,9 @@
 
 use super::super::model::*;
 use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
-use super::lowering::{inst_by_role_for, reg_mem_fids, role_name, role_name_for};
+use super::lowering::{
+    inst_by_role_for, reg_mem_fids, role_name, role_name_for, role_name_for_class,
+};
 use super::{InstInfo, field_ctor_expr, pascal_ident};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -501,19 +503,19 @@ fn frame_set_stmt(
 
 /// `callee_save` / `callee_load`：Reg 槽[0] = 值、Reg 槽[1] = 基址、Imm 槽 = 偏移。
 ///
+/// `inst` 是**已解析好的指令名**（调用方按寄存器类解析，见
+/// [`role_name_for_class`]——同一个"存到帧"能力在 GPR/FPR 上可能是不同指令）。
+///
 /// `trail` 同 [`sp_adjust_stmt`]：只为了让生成物与手写模板时代逐字一致
 /// （模板行不带尾逗号、伪指令循环带），与机器码无关。
 fn callee_mem_stmt(
     infos: &[InstInfo],
-    role: Role,
+    inst: &str,
     value: &TokenStream,
     base: &TokenStream,
     off: &TokenStream,
     trail: bool,
 ) -> Result<Option<TokenStream>, String> {
-    let Ok(inst) = role_name(infos, role) else {
-        return Ok(None);
-    };
     let Some(info) = infos.iter().find(|i| i.inst.name == inst) else {
         return Err(format!("[{inst}] 不在指令表里"));
     };
@@ -532,7 +534,9 @@ fn callee_mem_stmt(
         }
     }
     if reg_i < 2 {
-        return Err(format!("[{inst}] 作为 {role} 需要「值 + 基址」两个 Reg 槽"));
+        return Err(format!(
+            "[{inst}] 作为 callee_save/callee_load 需要「值 + 基址」两个 Reg 槽"
+        ));
     }
     let ctor = if trail {
         quote! { Inst::#vn { #(#binds,)* } }
@@ -548,6 +552,11 @@ fn callee_mem_stmt(
 /// 动态 callee-saved 的保存/恢复循环：保存哪些寄存器由 regalloc 决定
 /// （`__rm.callee_saved_to_save`），偏移 = `frame_size - fp_push - (k+1)*slot`；
 /// 恢复是同一公式的**逆序**（`__n - 1 - k`），寄存器与槽位同源。
+///
+/// **按寄存器类分派指令**（v20 A6）：同一个能力在 GPR 与 FPR 上要用不同指令时
+/// （arm64：`STURX`/`STURD`），生成物在循环里按 `__preg.class.is_fp()` 选一条。
+/// 只申报了一类（或两类解析到同一条指令）时**照旧发单条语句**——生成物与
+/// 迁移前逐字一致，不引入无用分支。
 fn callee_saved_loop(
     infos: &[InstInfo],
     role: Role,
@@ -555,12 +564,39 @@ fn callee_saved_loop(
     sp: &syn::Ident,
     fp_push: i64,
 ) -> Result<Option<TokenStream>, String> {
+    use crate::v12::model::RoleClass;
+    let gpr_inst = role_name_for_class(infos, role, RoleClass::Gpr);
+    let fpr_inst = role_name_for_class(infos, role, RoleClass::Fpr);
+    // 两条类解析到同一条指令（或只有一类申报）⇒ 不分派。
+    let split = match (&gpr_inst, &fpr_inst) {
+        (Some(g), Some(f)) if g != f => Some((g.clone(), f.clone())),
+        _ => None,
+    };
+    let single = match &split {
+        Some(_) => None,
+        None => gpr_inst.clone().or_else(|| fpr_inst.clone()),
+    };
     let value = quote! { __reg };
     let base = quote! { Reg::#sp };
     let off = quote! { __off };
-    let Some(stmt) = callee_mem_stmt(infos, role, &value, &base, &off, true)? else {
-        return Ok(None);
+    let (stmt_single, stmt_gpr, stmt_fpr) = match split {
+        Some((g, f)) => (
+            None,
+            callee_mem_stmt(infos, &g, &value, &base, &off, true)?,
+            callee_mem_stmt(infos, &f, &value, &base, &off, true)?,
+        ),
+        None => (
+            match single {
+                Some(i) => callee_mem_stmt(infos, &i, &value, &base, &off, true)?,
+                None => None,
+            },
+            None,
+            None,
+        ),
     };
+    if stmt_single.is_none() && stmt_gpr.is_none() && stmt_fpr.is_none() {
+        return Ok(None);
+    }
     let fp_push_lit = proc_macro2::Literal::i64_suffixed(fp_push);
     let (iter, k_expr) = if is_store {
         (
@@ -573,6 +609,19 @@ fn callee_saved_loop(
             quote! { (__n as i64 - 1 - __k as i64 + 1) * __SLOT_BYTES as i64 },
         )
     };
+    // 分派形态：GPR 走一条、FPR 走另一条（缺哪类就不发那支——声明是能力申报）。
+    let dispatch = match (stmt_gpr, stmt_fpr) {
+        (Some(g), Some(f)) => quote! {
+            if __preg.class.is_fp() {
+                #f
+            } else {
+                #g
+            }
+        },
+        (Some(g), None) => g,
+        (None, Some(f)) => f,
+        (None, None) => stmt_single.expect("上面已排除全空"),
+    };
     Ok(Some(quote! {
         let __saved = __rm.callee_saved_to_save.clone();
         let __n = __saved.len();
@@ -580,7 +629,7 @@ fn callee_saved_loop(
             let __reg = Reg::from_index(__preg.num, __preg.class);
             let __off_val: i64 = #k_expr;
             let __off = __frame_size as i64 - #fp_push_lit - __off_val;
-            #stmt
+            #dispatch
         }
     }))
 }
@@ -709,6 +758,12 @@ fn gen_store_mechanism(
         quote! { (__frame_size as i64) - #lit }
     };
     let base = quote! { Reg::#sp };
+    // link/fp 的保存槽永远是 GPR（链接寄存器与帧指针都是 GPR）——按 **GPR 类**解析
+    // 那一条（没申报类限定时就是唯一的裸声明）。
+    let gpr_save_inst =
+        role_name_for_class(infos, Role::CalleeSave, crate::v12::model::RoleClass::Gpr);
+    let gpr_load_inst =
+        role_name_for_class(infos, Role::CalleeLoad, crate::v12::model::RoleClass::Gpr);
     if is_prologue {
         let imm = frame_size_imm(frame);
         if let Some(s) = sp_adjust_stmt(infos, frame, Role::FrameAlloc, &imm, true, true)? {
@@ -716,23 +771,21 @@ fn gen_store_mechanism(
         }
         if fp_push >= 2 * slot
             && let Some(l) = link.clone()
+            && let Some(inst) = gpr_save_inst.as_deref()
         {
             let l = format_ident!("{l}");
             let value = quote! { Reg::#l };
-            if let Some(s) =
-                callee_mem_stmt(infos, Role::CalleeSave, &value, &base, &link_off, false)?
-            {
+            if let Some(s) = callee_mem_stmt(infos, inst, &value, &base, &link_off, false)? {
                 pre.push(s);
             }
         }
         if fp_push >= slot
             && let Some(f) = frame.fp.clone()
+            && let Some(inst) = gpr_save_inst.as_deref()
         {
             let f = format_ident!("{f}");
             let value = quote! { Reg::#f };
-            if let Some(s) =
-                callee_mem_stmt(infos, Role::CalleeSave, &value, &base, &fp_off, false)?
-            {
+            if let Some(s) = callee_mem_stmt(infos, inst, &value, &base, &fp_off, false)? {
                 pre.push(s);
             }
         }
@@ -749,23 +802,21 @@ fn gen_store_mechanism(
         // 恢复 ra / fp：**与保存同序**（低偏移在前），偏移与保存逐字相同。
         if fp_push >= 2 * slot
             && let Some(l) = link
+            && let Some(inst) = gpr_load_inst.as_deref()
         {
             let l = format_ident!("{l}");
             let value = quote! { Reg::#l };
-            if let Some(s) =
-                callee_mem_stmt(infos, Role::CalleeLoad, &value, &base, &link_off, false)?
-            {
+            if let Some(s) = callee_mem_stmt(infos, inst, &value, &base, &link_off, false)? {
                 pre.push(s);
             }
         }
         if fp_push >= slot
             && let Some(f) = frame.fp.clone()
+            && let Some(inst) = gpr_load_inst.as_deref()
         {
             let f = format_ident!("{f}");
             let value = quote! { Reg::#f };
-            if let Some(s) =
-                callee_mem_stmt(infos, Role::CalleeLoad, &value, &base, &fp_off, false)?
-            {
+            if let Some(s) = callee_mem_stmt(infos, inst, &value, &base, &fp_off, false)? {
                 pre.push(s);
             }
         }

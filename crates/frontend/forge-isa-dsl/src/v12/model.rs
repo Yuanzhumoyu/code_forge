@@ -1738,25 +1738,58 @@ fn serde_json_name(r: &Role) -> &'static str {
     }
 }
 
-/// 角色**声明**（`[[instructions]].roles` 的条目，v18 S9）。
+/// 角色**声明**（`[[instructions]].roles` 的条目，v18 S9；v20 A6 加类限定）。
 ///
-/// 两种写法，同一个机制：
+/// 三种写法，同一个机制：
 ///
-/// - `"gpr_mov"` —— 无宽度语义的角色（唯一即可）；
-/// - `{ role = "fpr_mov", bits = 32 }` —— 有宽度语义的角色：**位宽写出来**
-///   （x86 的 MOVSS/MOVSD 共用 `fpr` 槽，槽本身分不出 32/64；宽度是数据，不是名字的一部分）。
+/// - `"gpr_mov"` —— 无宽度、无类语义的角色（唯一即可）；
+/// - `{ role = "fpr_mov", bits = 32 }` —— **有宽度**语义的角色：位宽写出来
+///   （x86 的 MOVSS/MOVSD 共用 `fpr` 槽，槽本身分不出 32/64；宽度是数据，
+///   不是名字的一部分）；
+/// - `{ role = "callee_save", class = "fpr" }` —— **有寄存器类**语义的角色：
+///   同一个能力在 GPR 与 FPR 上要用**不同指令**时分开申报（arm64 的
+///   `STURX`/`STURD` 都是"保存到帧"，但只能存各自类别的寄存器）。
+///
+/// 键可以同时给（`{ role, bits, class }` = 该类里还分宽度）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RoleDecl {
-    /// 无宽度语义：`roles = ["gpr_mov"]`。
+    /// 无宽度、无类语义：`roles = ["gpr_mov"]`。
     Plain(Role),
-    /// 有宽度语义：`roles = [{ role = "fpr_mov", bits = 32 }]`。
-    Sized {
+    /// 表写法：`{ role = "fpr_mov", bits = 32 }` / `{ role = "callee_save", class = "fpr" }`。
+    Table {
         role: Role,
         /// 位宽（与 `opsize`/`[encoding].bits` 同单位；`fpr_mov` 32/64、
         /// `wide_vec_load`/`wide_vec_store` 256/512）。
-        bits: u16,
+        #[serde(default)]
+        bits: Option<u16>,
+        /// 寄存器类限定（缺省 = 不限类，按"裸能力"参与解析）。
+        #[serde(default)]
+        class: Option<RoleClass>,
     },
+}
+
+/// 角色申报里的**寄存器类限定**（v20 A6）。
+///
+/// 只区分发射侧真正要分派的三族：同一个能力（如"存到帧"）在 GPR 与 FPR 上
+/// 要用不同指令。宽度轴仍是 `bits`（见 [`RoleDecl::Table`]），两者正交。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RoleClass {
+    /// 通用寄存器（整数/指针）。
+    Gpr,
+    /// 浮点/向量寄存器文件里的标量或向量寄存器。
+    Fpr,
+}
+
+impl RoleClass {
+    /// TOML/诊断里用的名字。
+    pub fn name(self) -> &'static str {
+        match self {
+            RoleClass::Gpr => "gpr",
+            RoleClass::Fpr => "fpr",
+        }
+    }
 }
 
 impl RoleDecl {
@@ -1764,17 +1797,25 @@ impl RoleDecl {
     pub fn role(&self) -> Role {
         match self {
             RoleDecl::Plain(r) => *r,
-            RoleDecl::Sized { role, .. } => *role,
+            RoleDecl::Table { role, .. } => *role,
         }
     }
     /// 声明的位宽（无宽度语义 → None）。
     pub fn bits(&self) -> Option<u16> {
         match self {
             RoleDecl::Plain(_) => None,
-            RoleDecl::Sized { bits, .. } => Some(*bits),
+            RoleDecl::Table { bits, .. } => *bits,
         }
     }
-    /// 是否就是这个角色（不比较宽度；按宽度选请用 `role_name_for`）。
+    /// 声明的类限定（无类语义 → None = 不限类）。
+    pub fn class(&self) -> Option<RoleClass> {
+        match self {
+            RoleDecl::Plain(_) => None,
+            RoleDecl::Table { class, .. } => *class,
+        }
+    }
+    /// 是否就是这个角色（不比较宽度/类；按宽度选请用 `role_name_for`，
+    /// 按类选请用 `role_name_for_class`）。
     pub fn is(&self, r: Role) -> bool {
         self.role() == r
     }
@@ -1784,7 +1825,16 @@ impl fmt::Display for RoleDecl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RoleDecl::Plain(r) => f.write_str(serde_json_name(r)),
-            RoleDecl::Sized { role, bits } => write!(f, "{}={}bit", serde_json_name(role), bits),
+            RoleDecl::Table { role, bits, class } => {
+                f.write_str(serde_json_name(role))?;
+                if let Some(b) = bits {
+                    write!(f, "={b}bit")?;
+                }
+                if let Some(c) = class {
+                    write!(f, "={}", c.name())?;
+                }
+                Ok(())
+            }
         }
     }
 }

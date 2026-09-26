@@ -1309,6 +1309,9 @@ opcode = 0xFD
 fields = { opc2 = 1 }
 ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
+# 帧内保存/恢复的 **FPR 类**那条：AAPCS64 要求 v8-v15 的低 64 位由被调方保存，
+# 而 `LDURX`/`STURX` 只认 GPR。同一个"存到帧"能力按寄存器类分派（v20 A6）。
+roles = [{ role = "callee_load", class = "fpr" }]
 
 [[instructions]]
 name = "STURD"
@@ -1317,6 +1320,7 @@ opcode = 0xFD
 fields = { opc2 = 0 }
 ops = ["src:fpr", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
+roles = [{ role = "callee_save", class = "fpr" }]
 
 [[instructions]]
 name = "LDURS"
