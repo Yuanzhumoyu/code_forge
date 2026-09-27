@@ -464,6 +464,18 @@ macro_rules! convention_facts_probe {
             // ① callee-saved：plan 的 GPR 类项 vs 谱里声明的表。
             let plan_cs = idx(&layout.callee_saved);
             let spec_cs = ri.callee_saved();
+            // **机器事实必须覆盖约定**（v20 A6 收口的护栏）：plan 的每个 GPR callee-saved
+            // 都要在 `[machine].callee_saved_gpr`（= 生成物 `callee_saved()`，帧件实际会保存的
+            // 那组）里——否则"某份约定要求保住 R15、机器帧却不存它"就是静默破坏。
+            // 只核 GPR：FPR（AAPCS64 的 V8-V15）由 `class = "fpr"` 的 callee_save 角色承担，
+            // 其数量由 plan 决定的 min_frame 保证装得下。
+            for r in &plan_cs {
+                assert!(
+                    spec_cs.contains(r),
+                    "{}：约定要求保住寄存器 {r}，但机器帧（[machine].callee_saved_gpr）不保存它",
+                    $conv
+                );
+            }
             if $equal_cs {
                 assert_eq!(
                     plan_cs, spec_cs,
