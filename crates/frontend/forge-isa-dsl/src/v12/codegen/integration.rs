@@ -546,20 +546,15 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
         "[machine.frame].fp",
         frame_declared,
     )?;
-    // callee_saved：从 [abi].callee_saved.gpr 解析物理索引（顺序 = prologue push 序）。
-    // 名字不在主 GPR 组内 → 生成期 Err（不再静默丢弃该寄存器）。
-    // 帧按几个 callee-saved 推入槽算（**机器事实**，v20 A6）：生成物里的
-    // `TargetRegInfo::callee_save_slots` 直接读它；缺省回退谱面表长。
+    // callee_saved：**机器事实**（v20 A6 收口）——`[machine].callee_saved_gpr`（帧件会保存
+    // 的那组 GPR）优先，缺省回退 `[abi].callee_saved.gpr`（两者同义）。
+    // 解析成物理索引，顺序 = prologue push 序；名字不在主 GPR 组内 → 生成期 Err。
+    // 帧按几个 callee-saved 推入槽算（同批引入的机器事实）。
     let callee_slots = model.machine_callee_save_slots();
     let callee_saved: Vec<TokenStream> = resolve_reg_list(
         &name_to_idx,
-        model
-            .abi
-            .as_ref()
-            .and_then(|a| a.callee_saved.as_ref())
-            .map(|cs| cs.gpr.as_slice())
-            .unwrap_or(&[]),
-        "[abi.callee_saved].gpr",
+        model.machine_callee_saved(),
+        "[machine].callee_saved_gpr",
     )?
     .into_iter()
     .map(|i| quote! { #i })

@@ -371,6 +371,7 @@ pub const SECTIONS: &[Section] = &[
             "spill_scratch",
             "link_reg",
             "frame",
+            "callee_saved_gpr",
             "callee_save_slots",
         ],
         flatten: &[],

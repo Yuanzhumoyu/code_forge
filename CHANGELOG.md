@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A6/A5-3：[abi].callee_saved 迁移到 [machine]（键已删）
+
+- **机器事实两组**：`[machine].callee_saved_gpr = [...]`（帧件会保存的那组 GPR；x86 = RBX/RDI/RSI/R12-R15、riscv64 = 11 个 s 系、arm64 = X19-X28）与 `[machine].callee_save_slots`（推入槽数，可由名单派生）。语义是"**这台机器的帧件会保存这组寄存器**"，与"某份约定**要求**保住哪些"（绑定/plan）分开。
+- **读取侧单点化**：`V12Model::machine_callee_saved()`（优先 `[machine].callee_saved_gpr`、回退 `[abi].callee_saved.gpr`）与 `machine_callee_save_slots()`；生成物 `TargetRegInfo::callee_saved()` / `callee_save_slots()` 都读机器事实，运行时 trait 的 `callee_save_slots()` 带缺省实现（手工后端无需改）。
+- **删键**：三份发行谱的 `[abi].callee_saved` 段删除。**这一条曾两次实测崩溃**（`test_jit_call_indirect_wide_vector_byref`，`0xC0000005`）：因为 `compiler.rs` 的 plan 计算允许失败（"算不出来不阻断编译"），宽向量 by-ref / call_indirect 这类暂时规划不了的签名会走 `call_layout == None` 的回退——那条路的 regalloc callee-saved 集合原先来自谱面键。补上 `[machine].callee_saved_gpr` 后回退有**名字**可读，删键才成立。
+- 验证：clippy `--all-targets --all-features -D warnings` 0、workspace 串行全套绿、三条 JIT 矩阵与迁移前同值（x86 195/3、riscv64 131/67、arm64 23/175）。
+
 ### Changed (2026-09-27) — v20 A6：x86 序言/尾声改按运行时 callee-saved 列表发射
 
 - **push 机制运行时化**：序言按 `alloc_result.callee_saved_to_save` 逐个 `push`，尾声 `sp -= n*槽` 取同一列表的运行时长度并逆序 `pop`。列表来自**约定数据**（有 plan 用 plan：显式选 `sysv64` 就只有 5 个，不是谱里那份 win64 的 7 个），无 plan 的夹具退回谱面表。

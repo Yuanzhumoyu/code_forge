@@ -51,6 +51,12 @@ pub struct MachineSection {
     /// 缺省（`None`）⇒ 回退 `[abi.callee_saved].gpr.len()`（迁移期；两者同义）。
     #[serde(default)]
     pub callee_save_slots: Option<u32>,
+    /// **帧件会保存的那组 GPR**（机器事实，v20 A6 收口）：无 plan 的回退路径（引擎暂时
+    /// 规划不了的签名）需要**寄存器名**，名字不能凭空发明，所以与"帧预留几个槽"一起放在这里。
+    /// 语义是"这台机器的帧件会保存这组寄存器"，与"某份约定**要求**保住哪些"（绑定）分开；
+    /// 缺省（`None`）⇒ 回退 `[abi].callee_saved.gpr`（迁移期同义）。
+    #[serde(default)]
+    pub callee_saved_gpr: Option<Vec<String>>,
 }
 
 impl V12Model {
@@ -100,6 +106,24 @@ impl V12Model {
             return Some(f);
         }
         self.abi.as_ref().and_then(|a| a.frame.as_ref())
+    }
+
+    /// 帧件会保存的那组 GPR（名字）：`[machine].callee_saved_gpr` 优先，回退
+    /// `[abi].callee_saved].gpr`（迁移期同义）。regalloc 的**无 plan 回退**与生成物的
+    /// `TargetRegInfo::callee_saved()` 都读它。
+    pub fn machine_callee_saved(&self) -> &[String] {
+        if let Some(g) = self
+            .machine
+            .as_ref()
+            .and_then(|m| m.callee_saved_gpr.as_deref())
+        {
+            return g;
+        }
+        self.abi
+            .as_ref()
+            .and_then(|a| a.callee_saved.as_ref())
+            .map(|c| c.gpr.as_slice())
+            .unwrap_or(&[])
     }
 
     /// 帧为 callee-saved 预留的**推入槽数**（机器事实）：`[machine].callee_save_slots`
