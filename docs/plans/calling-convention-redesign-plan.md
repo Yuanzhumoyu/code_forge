@@ -474,7 +474,8 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   call_indirect 这类引擎暂时规划不了的签名**会走 `call_layout == None` 的回退路径——那条路的
   regalloc callee-saved 集合就是 `ri.callee_saved()`。删掉谱面键 ⇒ 该集合为空 ⇒ 被调方
   什么都不保存、而调用方以为 RBX/RDI/… 被保住 ⇒ 破坏调用者状态（错值，极端即访问违例）。
-  **结论**：`[abi].callee_saved` 不能只靠"发射侧不再读它"来删——必须先让**每条发射路径都有 plan**（= 补 A6 里那些规划缺口：Pair/Group/无指针 Indirect/宽向量 by-ref 等），或让无 plan 的回退
+  **结论**：`[abi].callee_saved` 不能只靠"发射侧不再读它"来删——必须先让**每条发射路径都有 plan**（= 补 A6 里那些规划缺口：Pair/Group/无指针 Indirect/宽向量 by-r
+  ef 等），或让无 plan 的回退
   不再需要**寄存器名**（例如保守地"除 scratch 外全部可用 GPR 都算 callee-saved"）。这条与 A6 的
   **⚠ 2026-09-27 更正（重要）**：上面的"真正原因"**未被证实**。补齐 trace 后实测：① 在
   `forge-codegen --lib` 全量跑里（键仍在）**没有任何一次规划失败**（`FORGE_TRACE_ABI=1` 一条 `[abi-plan]`
