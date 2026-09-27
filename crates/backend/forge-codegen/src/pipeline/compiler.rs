@@ -2105,7 +2105,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ) {
                 Ok(p) => (Some(p), None),
                 // 算不出来不阻断编译（退回谱里声明的约定数据）——原因留档，方便核对缺口。
-                Err(e) => (None, Some(e.to_string())),
+                Err(e) => {
+                    // 归因留档（`FORGE_TRACE_ABI=1` 打 stderr）：这也是把"无 plan"改成
+                    // fail-closed 时报错正文的来源——先把缺口清点出来，再决定怎么补。
+                    if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
+                        eprintln!("[abi-plan] {e}");
+                    }
+                    (None, Some(e.to_string()))
+                }
             }
         };
         if let Some(p) = &abi_plan {

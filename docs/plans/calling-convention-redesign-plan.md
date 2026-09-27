@@ -474,7 +474,17 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   call_indirect 这类引擎暂时规划不了的签名**会走 `call_layout == None` 的回退路径——那条路的
   regalloc callee-saved 集合就是 `ri.callee_saved()`。删掉谱面键 ⇒ 该集合为空 ⇒ 被调方
   什么都不保存、而调用方以为 RBX/RDI/… 被保住 ⇒ 破坏调用者状态（错值，极端即访问违例）。
-  **结论**：`[abi].callee_saved` 不能只靠"发射侧不再读它"来删——必须先让**每条发射路径都有 plan**
+  **结论**：`[abi].callee_saved` 不能只靠"发射侧不再读它"来删——必须先让**每条发射路径都有 plan**（= 补 A6 里那些规划缺口：Pair/Group/无指针 Indirect/宽向量 by-ref 等），或让无 plan 的回退
+  不再需要**寄存器名**（例如保守地"除 scratch 外全部可用 GPR 都算 callee-saved"）。这条与 A6 的
+  **⚠ 2026-09-27 更正（重要）**：上面的"真正原因"**未被证实**。补齐 trace 后实测：① 在
+  `forge-codegen --lib` 全量跑里（键仍在）**没有任何一次规划失败**（`FORGE_TRACE_ABI=1` 一条 `[abi-plan]`
+  都没打）——即"无 plan 的回退"在那套测试里根本没被走到；② 把键删掉后，单独跑那个"崩掉的"用例
+  `test_jit_call_indirect_wide_vector_byref` **是通过的**（1343 filtered / 1 passed）。所以那次 `0xC0000005` 是
+  **整套串行跑时的顺序/状态相关崩溃**，触发点尚未定位；`[machine].callee_saved_gpr` 那次修复确实让整套转绿，但
+  它与崩溃之间的**因果链没有被证明**。
+  **对裁定的影响**：用户选的 fail-closed 路线（见下）建立在"缺口导致回退、回退需要名字"这个解释上；在
+  把因果查清之前，**不要**据此大改引擎（补 Pair/Group/… 规划缺口）。正确的下一步是：先用删键 +
+  整套跑（保留 `FORGE_TRACE_ABI`/`FORGE_JIT_EVENTS`）把那次崩溃**复现并定位到具体机制**，再决定 fail-closed 还是别的路线。
   （= 补 A6 里那些规划缺口：Pair/Group/无指针 Indirect/宽向量 by-ref 等），或让无 plan 的回退
   不再需要**寄存器名**（例如保守地"除 scratch 外全部可用 GPR 都算 callee-saved"）。这条与 A6 的
   规划缺口是同一件事，别分开做。
