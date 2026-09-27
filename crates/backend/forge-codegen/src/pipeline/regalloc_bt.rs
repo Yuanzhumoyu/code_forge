@@ -860,7 +860,7 @@ impl<'a> BtState<'a> {
         // 小函数帧也 ≥104B（阶段 G 按需保存；未用的 s 系无需 push/pop）。
         // **class 通配**：i32 值以 GPR(4) 类分配（num 仍 27=s11），过滤只看
         // num——否则 GPR(4) 的 s11 漏保存 → 递归覆盖（fib 实测 got -15）。
-        let callee_saved_pregs: Vec<PReg> = self
+        let mut callee_saved_pregs: Vec<PReg> = self
             .config
             .classes
             .get(&self.config.main_gpr_class)
@@ -873,6 +873,23 @@ impl<'a> BtState<'a> {
                     .collect()
             })
             .unwrap_or_default();
+        // **FPR 类**（v20 A6）：AAPCS64 的 v8-v15 由被调方保存，而它们只能经
+        // `class = "fpr"` 的 `callee_save` 角色（arm64 的 STURD）落盘。编号空间与
+        // GPR 分开（`callee_saved_fpr` 是主 FPR 类内的号）——同一个 num 在两类里
+        // 是不同物理寄存器（X8 vs V8），合并成一个集合会互相误判。
+        if let Some(cfg) = self.config.classes.get(&self.config.main_fpr_class) {
+            callee_saved_pregs.extend(
+                cfg.allocatable
+                    .iter()
+                    .filter(|r| self.config.callee_saved_fpr.contains(r))
+                    .filter(|r| {
+                        self.assignments
+                            .values()
+                            .any(|p| p.num == **r && p.class.is_fp())
+                    })
+                    .map(|&r| PReg::new(r, self.config.main_fpr_class)),
+            );
+        }
 
         Ok(AllocResult {
             call_layout: None,

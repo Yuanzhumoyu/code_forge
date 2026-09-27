@@ -423,17 +423,17 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   （`test_jit_v128_byval_return_lane3` 返回 0）。修在 `pipeline/lowering.rs`：向量按真实
   字节数成类（`VEC(16/32/64)`）。此后**全类破坏集可直接用**（`lowering.rs` 不再按类过滤），
   守卫 `x86_plan_clobbers_cover_the_whole_fp_file` 钉住"plan 的 FP 破坏集覆盖全部 XMM"。
-- **callee-saved 的类分派保存**（2026-09-26：**能力已落地，尚待激活**）：角色声明现在能带
-  寄存器类限定（`{ role = "callee_save", class = "fpr" }`），arm64 的 `STURD`/`LDURD` 已按此
-  申报，`callee_saved_loop` 也在生成物里按 `__preg.class.is_fp()` 分派。**但 regalloc 的
-  callee-saved 仍只喂 GPR 类**（`callee_saved_to_save` 只扫主 GPR 类表）⇒ FPR 那支今天不会
-  执行。激活要做三件一起改的事：① `callee_saved_to_save` 也扫主 FPR 类表（注意 GPR 区/FP 区
-  的编号空间换算）；② regalloc 的 `callee_saved` 集纳入 plan 的 FPR 项（AAPCS64 的
-  `cs_fpr = V8-V15`）；③ `calculate_frame_size` 的 `min_frame` 按**实际保存数**算（今天的静态
-  式只数 GPR ⇒ 多存 8 个 FPR 会写到帧外）。fp-inside 的 `callee_saved_bytes` = 0，所以 ③ 不
-  影响 spill 寻址，改动面可控。
-- **帧上方 callee-saved 字节数仍是静态的**：x86 的 push 机制按谱面列表逐个 `push`
-  （静态发射），所以 `frame_layout_info` 仍按谱面表数；改按 plan 计数会在"plan 比谱表短"
+- **callee-saved 的类分派保存**（2026-09-26：**已落地并接上**）：角色声明能带寄存器类限定
+  （`{ role = "callee_save", class = "fpr" }`），arm64 的 `STURD`/`LDURD` 按此申报，
+  `callee_saved_loop` 在生成物里按 `__preg.class.is_fp()` 分派；regalloc 侧
+  `RegAllocConfig::callee_saved_fpr` 单独承载 FPR 集（`X8`/`V8` 同号，不能与 GPR 集合并），
+  `callee_saved_to_save` 也扫主 FPR 类表，fp-inside 的 `min_frame` 按 **plan** 的整张表算
+  （AAPCS64 = 10 GPR + 8 FPR = 18 条 ⇒ 16 + 18×8 = 160）。守卫
+  `arm64_fp_inside_frame_counts_the_plan_callee_saved_table` 钉住这三件事。
+  **仍未覆盖**：如果某个 ISA 的 FPR 保存槽宽度不是"一个槽单位"（如 16 字节的 Q 寄存器），
+  偏移公式 `(k+1)*__SLOT_BYTES` 需要按类给宽度——今天的 arm64 存 D（8 字节）正好等于槽宽。
+- **帧上方 callee-saved 字节数仍是静态的（fp-outside 一路）**：x86 的 push 机制按谱面列表
+  逐个 `push`（静态发射），所以那条路仍按谱面表数；改按 plan 计数会在"plan 比谱表短"
   （sysv64：5 vs 7）时少算 16 字节、让局部/spill 槽与 push 槽重叠。要一起换，须先把
   push 机制改成运行时按 `alloc_result.callee_saved_to_save` 循环（帧字节数也随之变运行时值）。
 

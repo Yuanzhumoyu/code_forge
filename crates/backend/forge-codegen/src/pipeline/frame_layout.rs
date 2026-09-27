@@ -7,6 +7,7 @@ use crate::AllocResult;
 use crate::machine::abi::FrameLayoutKind;
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileState;
+use forge_isa_runtime::machine::call_layout::CallLayout;
 
 /// 帧布局三数值——从声明式 `[machine.frame]`（layout + fp_push_bytes）+ reg_info
 /// 推导，是 min_frame / callee_saved_bytes / stack_slot_shift 的唯一来源。
@@ -30,22 +31,37 @@ pub(crate) struct FrameLayoutInfo {
     pub stack_slot_shift: i32,
 }
 
-pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(machine: &M) -> FrameLayoutInfo {
+pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
+    machine: &M,
+    layout: Option<&CallLayout>,
+) -> FrameLayoutInfo {
     let fl = machine.abi().frame_layout();
     let ri = machine.reg_info();
     // 帧指针上方推入区 = fp 保存槽（frame_pointer_overhead）+ callee-saved ×
     // 主 GPR 类宽度（主类宽度取 default_gpr_class()，元数据驱动不再假设
     // GPR64）。
     //
-    // **这里仍按谱里声明的表数**（v20 A5-3 ④ 的刻意保留）：x86 的 push 机制是
+    // **fp-outside 仍按谱里声明的表数**（v20 A5-3 ④ 的刻意保留）：x86 的 push 机制是
     // **静态**发射（谱面列表逐个 `push`，见 `gen_push_mechanism`），帧上方实际占用的
     // 字节数由那份列表决定。若改按 plan 计数，遇到"plan 比谱表短"的约定（x86 显式选
     // sysv64：5 vs 7）就会少算 16 字节 ⇒ 局部/spill 槽与 push 槽重叠（覆盖调用者保存
     // 值）。要一起换，必须先把 push 机制改成**运行时按 `alloc_result.callee_saved_to_save`
-    // 循环**（帧字节数也得变运行时值）——归 A6。plan 的 callee-saved 现在已经喂给
-    // **regalloc**（保存集与破坏集同源），只是帧字节数还按谱面列表。
-    let cs_bytes =
-        (ri.callee_saved().len() as i32) * (ri.reg_class_width(ri.default_gpr_class()) as i32);
+    // 循环**（帧字节数也得变运行时值）——归 A6。
+    //
+    // **fp-inside 按 plan 计数**（v20 A6）：这条路的保存/恢复本来就是运行时按
+    // `alloc_result.callee_saved_to_save` 循环（`callee_saved_loop`），保存集随约定而变
+    // （arm64 的 AAPCS64 = X19-X28 **+ V8-V15**）。帧顶槽位公式 `frame - fp_push - (k+1)*slot`
+    // 要求帧至少装得下**整张表**；plan 的表 ⊇ 实际保存集（regalloc 只保存用到的那些），
+    // 所以按 plan 算必然够用。没有 plan（无绑定的夹具）时退回谱面表数。
+    let cs_count = if fl.kind == FrameLayoutKind::Inside {
+        match layout {
+            Some(cl) if !cl.callee_saved.is_empty() => cl.callee_saved.len() as i32,
+            _ => ri.callee_saved().len() as i32,
+        }
+    } else {
+        ri.callee_saved().len() as i32
+    };
+    let cs_bytes = cs_count * (ri.reg_class_width(ri.default_gpr_class()) as i32);
     let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
     match fl.kind {
         FrameLayoutKind::Outside => FrameLayoutInfo {
@@ -63,8 +79,11 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(machine: &M) -> Frame
 
 /// callee-saved 区字节数（帧指针上方的 push 区；fp-inside 布局 = 0）。
 /// compiler.rs 的 LowerCtx 与 emission.rs 共用。
-pub(crate) fn callee_saved_bytes<M: TargetMachine + ?Sized>(machine: &M) -> i32 {
-    frame_layout_info(machine).callee_saved_bytes
+pub(crate) fn callee_saved_bytes<M: TargetMachine + ?Sized>(
+    machine: &M,
+    layout: Option<&CallLayout>,
+) -> i32 {
+    frame_layout_info(machine, layout).callee_saved_bytes
 }
 
 impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
@@ -95,7 +114,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 最小帧（fp-inside 推导 = fp_push + callee_saved 区）：riscv 的
         // ra/fp 保存槽需帧 ≥ 固定值，否则 emit 模板的 {frame_size_mN} 偏移
         // 为负（写坏 sp 下方）。
-        let min_frame = frame_layout_info(machine).min_frame;
+        let min_frame = frame_layout_info(machine, self.ctx.call_layout.as_ref()).min_frame;
         let size = size.max(min_frame);
         // 栈填充（x86 = 8 = align/2）：prologue push rbp + callee-saved 后
         // rsp%16==8（入口 rsp%16==8 由 call 压入的返回地址造成），sub rsp 必须
@@ -112,5 +131,46 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             .map(|cl| cl.frame_padding)
             .unwrap_or_else(|| machine.abi().frame_padding());
         size.div_ceil(align) * align + padding as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::arch::arm64_v12::TargetMachine as ArmTm;
+
+    /// **FPR callee-saved 进得了帧**（v20 A6 激活的守卫）：AAPCS64 的表是
+    /// X19-X28（10）+ V8-V15（8）= 18 条，而谱里声明的 `[abi.callee_saved].gpr`
+    /// 只有 10 条——帧顶槽位公式要求帧装得下**整张表**，所以 fp-inside 的
+    /// `min_frame` 必须按 **plan** 数（16 的 fp/lr 保存区 + 18×8 = 160），
+    /// 否则多保存的 8 个 FPR 会写到帧外。
+    #[test]
+    fn arm64_fp_inside_frame_counts_the_plan_callee_saved_table() {
+        let tm = ArmTm::new();
+        let reg = forge_abi::builtin::registry().expect("内置注册表");
+        let sig = forge_abi::Signature::new(vec![], Some(forge_abi::TyView::float(8)));
+        let plan = crate::pipeline::abi_target::plan_for_signature(&tm, &reg, "aapcs64", &sig)
+            .expect("aapcs64 plan");
+        let cl = crate::pipeline::abi_target::call_layout(&plan, &tm);
+
+        let gpr = cl.callee_saved.iter().filter(|(c, _)| !c.is_fp()).count();
+        let fpr = cl.callee_saved.iter().filter(|(c, _)| c.is_fp()).count();
+        assert_eq!(gpr, 10, "AAPCS64 的 GPR callee-saved = X19-X28");
+        assert_eq!(fpr, 8, "AAPCS64 的 FPR callee-saved = V8-V15");
+
+        let with_plan = frame_layout_info(&tm, Some(&cl));
+        let spec_only = frame_layout_info(&tm, None);
+        assert_eq!(
+            with_plan.min_frame,
+            16 + 18 * 8,
+            "fp-inside 的最小帧 = fp/lr 保存区 + plan 整张表"
+        );
+        assert!(
+            spec_only.min_frame < with_plan.min_frame,
+            "只按谱面 GPR 表算会少算 64 字节（这正是 FPR 保存要的槽）"
+        );
+        // fp-inside 下 spill 寻址不依赖 cs 字节数 ⇒ 这条切换不影响 sp_base。
+        assert_eq!(with_plan.callee_saved_bytes, 0);
+        assert_eq!(with_plan.stack_slot_shift, spec_only.stack_slot_shift);
     }
 }

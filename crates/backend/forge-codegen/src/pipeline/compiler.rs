@@ -2121,7 +2121,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 回退 csb）。compiler.rs 的 LowerCtx 与 emission.rs 共用同一来源；
         // **有 plan 时用 plan 的 callee-saved 表**（v20 A5-3 ④：同一台机器换约定，
         // 保存集与破坏集必须一起换）。
-        let fl = crate::pipeline::frame_layout::frame_layout_info(machine);
+        let fl =
+            crate::pipeline::frame_layout::frame_layout_info(machine, ctx.call_layout.as_ref());
         ctx.callee_saved_bytes = fl.callee_saved_bytes;
         ctx.stack_slot_shift = fl.stack_slot_shift;
         ctx.is_float_return = func
@@ -2206,20 +2207,26 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 换约定必须跟着换：sysv64 的 RDI/RSI 不是 callee-saved，win64 是）。谱里那份
         // 是无 plan（未注册约定 / 合成夹具）时的兜底。
         //
-        // **只取 GPR 类**：AAPCS64 的 `cs_fpr`（V8-V15）已在 plan 里，但发射侧还没有
-        // 按类分派的保存序列（`callee_save` 角色目前只指向 STURX）——把 FPR 喂给 regalloc
-        // 会让它把跨调用值放进 V8-V15 而帧件不保存。类分派保存是 A6 的事，在那之前
-        // 这里必须过滤（与 `frame_layout_info` 的口径一致）。
-        let callee_saved: Vec<u32> = match self.ctx.call_layout.as_ref() {
-            Some(cl) => cl
-                .callee_saved
-                .iter()
-                .filter(|(c, _)| *c == ri.default_gpr_class())
-                // GPR 区的 (类, 类内号) 里"号"就是 ABI 空间号（与 MachineAbiTarget 同口径）。
-                .map(|&(_, i)| i)
-                .collect(),
-            None => ri.callee_saved(),
-        };
+        // v20 A6 起**两类都喂**：GPR 与 FPR 各占一项（编号空间分开，免得 X8 与 V8 同号
+        // 相撞）。FPR 那半只有在"发射侧能按类保存"之后才敢开——`callee_save` 角色已带类
+        // 限定（arm64 的 STURD），`callee_saved_to_save` 也扫主 FPR 类表，`frame_layout_info`
+        // 的帧字节数按 plan 的表算（见那里的注释）。缺任何一环，FPR 值就会跨调用被静默破坏。
+        let (callee_saved, callee_saved_fpr): (Vec<u32>, Vec<u32>) =
+            match self.ctx.call_layout.as_ref() {
+                Some(cl) => {
+                    let mut gpr = Vec::new();
+                    let mut fpr = Vec::new();
+                    for &(c, i) in &cl.callee_saved {
+                        if c == ri.default_fpr_class() {
+                            fpr.push(i);
+                        } else {
+                            gpr.push(i);
+                        }
+                    }
+                    (gpr, fpr)
+                }
+                None => (ri.callee_saved(), Vec::new()),
+            };
 
         let reg_info = NewRegAllocConfig {
             classes,
@@ -2228,6 +2235,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             sp_reg: ri.sp_reg().register_index().unwrap_or(0),
             fp_reg: ri.fp_reg().map(|r| r.to_index()),
             callee_saved,
+            callee_saved_fpr,
             precolored,
             scratch_regs: ri
                 .scratch_regs()

@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-26) — v20 A6：FPR callee-saved 打通（AAPCS64 的 v8-v15 真的会被保存）
+
+承接上一片的"能力"，这一片把它**接上**：
+
+- **regalloc 两类都喂**：`RegAllocConfig` 拆出 `callee_saved_fpr`（主 FPR 类的编号空间），与 `callee_saved`（GPR 空间）分开——`X8` 与 `V8` 同号，合成一个集合会互相误判。有 plan 时两条都取自 plan（GPR = X19-X28、FPR = V8-V15），无 plan 的夹具退回谱面 GPR 表 + 空 FPR 表。
+- **`callee_saved_to_save` 也扫主 FPR 类表**：只把**实际分配到**的 FPR 加进保存列表（与 GPR 侧同一口径），并按 `p.class.is_fp()` 区分同号寄存器。
+- **fp-inside 的帧字节数按 plan 算**：帧顶槽位公式 `frame - fp_push - (k+1)*slot` 要求帧装得下**整张表**，而这张表随约定而变（AAPCS64 = 10 GPR + 8 FPR = 18 条）。plan 的表 ⊇ 实际保存集，所以按 plan 算必然够用；只按谱面的 GPR 表算会少 64 字节，多存的 8 个 FPR 会写到帧外。**fp-outside（x86）不动**（push 机制仍静态发谱面列表，理由见 `frame_layout.rs` 的注释）；fp-inside 的 `callee_saved_bytes = 0`，所以 spill 寻址不受影响。
+- 守卫：`pipeline/frame_layout.rs` 新增单测——aapcs64 的 plan 必须是 10 GPR + 8 FPR，且 `min_frame = 16 + 18×8 = 160`（只按谱面表算会明显更小）；同时钉住 fp-inside 的 `callee_saved_bytes == 0`、`stack_slot_shift` 不随这条切换而变。
+- 验证：workspace serially 绿（forge-codegen lib **1344** 用例）、clippy `-D warnings` 0、三条 JIT 矩阵不变（x86 195/3、riscv64 131/67、arm64 23/175，0 failed）。
+
 ### Added (2026-09-26) — v20 A6（前置）：角色声明带**寄存器类**限定，帧内保存按类分派
 
 - **角色声明新增类轴**：`roles = [{ role = "callee_save", class = "fpr" }]`（`class = "gpr" | "fpr"`）。同一个"存到帧"能力在 GPR 与 FPR 上要用**不同指令**时分开申报；两个轴（`bits`/`class`）正交，裸声明与该类的声明**可以共存**——裸的那条是另一类的兜底（只有"同一个类声明两条"才是冲突，编译期报错）。唯一性键由 (角色, 位宽) 扩成 (角色, 位宽, 类)。

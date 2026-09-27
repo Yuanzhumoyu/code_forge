@@ -18,8 +18,11 @@ pub struct RegAllocConfig {
     /// 帧指针物理寄存器索引（可选）
     pub fp_reg: Option<u32>,
 
-    /// callee-saved 物理寄存器索引列表
+    /// callee-saved 物理寄存器索引列表（**主 GPR 类的编号空间**）
     pub callee_saved: Vec<u32>,
+    /// callee-saved 里的 **FPR 类**（v20 A6；主 FPR 类的编号空间，独立一项，
+    /// 免得 X8 与 V8 同号相撞）。空 = 该 ISA 的约定不用保存 FPR。
+    pub callee_saved_fpr: Vec<u32>,
 
     /// 预着色 XReg → PReg（ABI 强制映射：返回值、参数寄存器等）
     pub precolored: HashMap<XReg, PReg>,
@@ -73,6 +76,7 @@ impl RegAllocConfig {
             sp_reg,
             fp_reg,
             callee_saved: Vec::new(),
+            callee_saved_fpr: Vec::new(),
             precolored: HashMap::new(),
             scratch_regs: Vec::new(),
             param_xregs: Vec::new(),
