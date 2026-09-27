@@ -67,11 +67,15 @@ fn one_byte_register_metadata_is_derived() {
         "[machine.frame].sp = A7"
     );
     assert_eq!(ri.fp_reg().map(|r| r.to_index()), Some(6), "fp = A6");
-    assert_eq!(ri.scratch_regs(), vec![4, 5], "[abi].scratch = A4/A5");
+    assert_eq!(
+        ri.scratch_regs(),
+        vec![4, 5],
+        "[machine].spill_scratch = A4/A5"
+    );
     assert_eq!(
         ri.callee_saved(),
         Vec::<u32>::new(),
-        "[abi.callee_saved] 空"
+        "[machine].callee_saved_gpr 空"
     );
     // allocatable = 0..8 排除 sp(7)/fp(6)/scratch(4,5)/reserved(6,7) → A0..A3
     assert_eq!(ri.allocatable_gp_order(), vec![0, 1, 2, 3]);

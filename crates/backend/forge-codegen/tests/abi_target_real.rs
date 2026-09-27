@@ -430,7 +430,7 @@ fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
 ///
 /// 逐机器核对三件事：
 ///
-/// 1. `callee_saved`：plan（绑定 `cs_gpr`）对谱 `[abi.callee_saved].gpr`。相等的那三份
+/// 1. `callee_saved`：plan（绑定 `cs_gpr`）对**机器事实** `[machine].callee_saved_gpr`。相等的那三份
 ///    逐项同值；x86 的 sysv64 少 `RDI/RSI`②（win64 里它们是 callee-saved，sysv64 里是
 ///    **参数寄存器**）。plan 侧可能多出 FPR（AAPCS64 的 `cs_fpr`），但发射侧还没按类分派
 ///    保存（A6）⇒ 消费者只取 GPR 类，这里也按 GPR 类比。
@@ -480,7 +480,7 @@ macro_rules! convention_facts_probe {
             if $equal_cs {
                 assert_eq!(
                     plan_cs, spec_cs,
-                    "{}：plan（绑定 cs_gpr）与谱 [abi.callee_saved].gpr 必须同值",
+                    "{}：plan（绑定 cs_gpr）与机器事实 [machine].callee_saved_gpr 必须同值",
                     $conv
                 );
             } else {

@@ -51,7 +51,7 @@ fn push(regs: &mut Vec<Reg>, names: &[&'static str], class: &'static str, width:
 
 /// x86_64_v12：GPR(8) RAX..R15 → 0..15，FPR(16) XMM0-15 → 16..31，VEC(64) ZMM0-31 → 32..63。
 ///
-/// 固定性：RSP(4)/RBP(5)（谱里 `[machine.frame] sp=RSP fp=RBP`）；`[abi] scratch = [R10,R11]`。
+/// 固定性：RSP(4)/RBP(5)（谱里 `[machine.frame] sp=RSP fp=RBP`）；`[machine] spill_scratch = [R10,R11]`。
 pub fn x86_64_v12() -> TestTarget {
     let mut regs: Vec<Reg> = Vec::new();
     push(
@@ -145,7 +145,7 @@ fn x86_aliases() -> Vec<(&'static str, u32)> {
 
 /// riscv64_v12：GPR(8) X0..X31 → 0..31，FPR(8) F0..F31 → 32..63。
 ///
-/// 固定性对着谱：`[abi] reserved = [X0,X1,X3,X4]`、`sp = X2`、`fp = X8`
+/// 固定性对着谱：`[machine] fixed_regs = [X0,X1,X3,X4]`、`sp = X2`、`fp = X8`
 /// （X1 同时是链接寄存器）。
 pub fn riscv64_v12() -> TestTarget {
     let mut regs: Vec<Reg> = Vec::new();
@@ -190,7 +190,7 @@ pub fn riscv64_v12() -> TestTarget {
 
 /// arm64_v12：GPR(8) X0..X30 + SP → 0..31（W 别名指向同号）。
 ///
-/// 固定性对着谱：`[abi] reserved = [X18,X30]`、`sp = SP`、`fp = X29`（fp-inside 布局）。
+/// 固定性对着谱：`[machine] fixed_regs = [X18,X30]`、`sp = SP`、`fp = X29`（fp-inside 布局）。
 /// **没有 FPR/VEC 组**——这就是 arm64 的浮点缺口，绑定文件也据此不给 `float` 池。
 pub fn arm64_v12() -> TestTarget {
     let mut regs: Vec<Reg> = Vec::new();

@@ -131,12 +131,10 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[pseudo]]` | `name` `params` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[abi]` | — | `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
-| `[abi.frame]` | — | `sp` `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧布局 |
+| `[abi]` | — | `arg_class` `ret_regs` `call_clobbers` `arg_slot` | 调用约定 |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
-| `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
 | `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充） |
-| `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（`[abi.frame]` 为迁移期回退） |
+| `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
@@ -1167,19 +1165,21 @@ frame_padding = 8                       # 帧填充字节（x86 = 8；riscv/arm6
 riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 `AbiRules::frame_padding`（进 plan，管线优先读）。
 
-三条纪律：① 参数池 / 返回池 / callee-saved / sret 槽 / 栈参数布局**不在这里**——它们是
+两条纪律：① 参数池 / 返回池 / callee-saved / sret 槽 / 栈参数布局**不在这里**——它们是
 **约定事实**，属于 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）；
-② 键名与 `[abi]` 的旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
-`link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊；③ 迁移期（A5-3）这三个键仍能
-回退到 `[abi]` 同名旧键，因此可以逐谱迁移——[`[abi]`](#abi--调用约定) 的旧键在 A5-3 收尾时删除。
-`frame_padding` 例外（A5-3 已迁完）：它与 `[abi]` 的那份**同名同义**但**不并存**——键直接
-搬走，写 `[abi].frame_padding` 会报未知键（旧的 `Abi` 字段已删）。
+② 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
+`link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊。
+**迁移期已收尾（2026-09-27）**：`[abi]` 的同义旧键（`scratch`/`reserved`/`call_ret_reg`/
+`frame`/`callee_saved`）**全部删除**——写旧键报未知键，本节就是这些事实的唯一来源
+（`frame_padding` 与 `[abi.stack_args]` 也在同一批搬走/删除）。
 
 ## `[abi]` — 调用约定
 
-> **迁移中（v20 A5-3）**：机器事实（`scratch`/`reserved`/`call_ret_reg`）已搬进
-> [`[machine]`](#machine--机器事实)，三份发行谱都已迁完；本节的这三个键保留为**回退路径**，
-> 将在 A5-3 收尾（约定数据移入绑定/规则）时删除。新写的谱请用 `[machine]`。
+> **迁移中（v20 A5-3）**：机器事实（`scratch`/`reserved`/`call_ret_reg`/`frame`/
+> `callee_saved`）已**删除**并归 [`[machine]`](#machine--机器事实)（唯一来源）。本节剩下的
+> 是真正的**约定键**：`arg_class`/`ret_regs`/`call_clobbers`/`arg_slot`——它们由
+> `AbiRules`/`AbiBinding` 给（`[abi]` 这份是**无 plan 时的回退**），删键是 A5-3 的下一步
+> （见 `docs/plans/calling-convention-redesign-plan.md` 的逐键迁移进度表）。
 
 ```toml
 [abi]
@@ -1224,14 +1224,13 @@ limit = 128
 - `call_clobbers`：Call 点被调用方破坏的寄存器。缺省 = 整数参数寄存器 + 返回寄存
   器。**定宽 ISA 无 callee-saved 保存序列时须列全 caller-saved**，否则跨调用存活
   值留在寄存器被覆盖（实测递归 fib 死循环）。s 系（由帧件按 `callee_save` 保存）不在列表。
-- `reserved`：regalloc 不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被
-  prologue/call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 `subw x0`）。
-  **A5-3 起请写进 `[machine].fixed_regs`**（本节保留的是回退路径）。
+- `[abi]` 里**不再有**机器事实键：`scratch`/`reserved`/`call_ret_reg`/`frame`/
+  `callee_saved` 全部删除，请写 [`[machine]`](#machine--机器事实) 的
+  `spill_scratch`/`fixed_regs`/`link_reg`/`frame`/`callee_saved_gpr`（+`callee_save_slots`）。
 
 ## `[machine.frame]` — 帧布局
 
-v20 A5-3 起在 `[machine]` 下；`[abi.frame]` 是**迁移期回退**（两处只能写一处生效，
-读侧走 `machine_frame()`，`[machine.frame]` 优先）：
+v20 A5-3 起在 `[machine]` 下（`[abi.frame]` 已删除；读侧统一走 `machine_frame()`）：
 
 ```toml
 [machine.frame]

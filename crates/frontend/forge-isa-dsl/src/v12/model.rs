@@ -20,11 +20,12 @@ use std::{
 
 /// **机器事实**（v20 A5）：`[machine]` —— 只描述"这台机器是什么样"。
 ///
-/// 三条纪律：① 这里**不放任何约定内容**（参数池 / 返回池 / callee-saved / sret 槽 /
+/// 两条纪律：① 这里**不放任何约定内容**（参数池 / 返回池 / callee-saved / sret 槽 /
 /// 栈参数布局都在 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）里）；
-/// ② 迁移期（A5-3）这些键都能**回退**到旧的 `[abi]` 同名键，因此可以逐谱迁移；
-/// ③ 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
+/// ② 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
 /// `link_reg` ← `call_ret_reg`），避免"两处都写、谁生效"的含糊。
+/// **迁移期已收尾（2026-09-27）**：`[abi]` 的同义旧键已删除——写旧键现在报未知键，
+/// 所以本节就是这些事实的**唯一来源**。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct MachineSection {
@@ -37,8 +38,8 @@ pub struct MachineSection {
     /// **链接寄存器**（call 写入的返回地址；riscv `X1` / arm64 `X30`）。
     #[serde(default)]
     pub link_reg: Option<String>,
-    /// **帧形状**（`[machine.frame]`，键与旧的 `[abi.frame]` 同名同义）：
-    /// 栈指针/帧指针寄存器名、帧布局模式、帧指针保存槽字节数、帧分配立即数是否取负。
+    /// **帧形状**（`[machine.frame]`）：栈指针/帧指针寄存器名、帧布局模式、
+    /// 帧指针保存槽字节数、帧分配立即数是否取负。
     /// 这些是"这台机器怎么建帧"，不是约定内容（保存谁、栈参数怎么排才是约定）。
     #[serde(default)]
     pub frame: Option<AbiFrame>,
@@ -48,13 +49,13 @@ pub struct MachineSection {
     /// "这台机器的帧布局按几个推入槽算"——生成物里的编译期常量
     /// `__cs_bytes = fp_push + 槽数×槽`（收溢出到栈的栈参数时的地址基点）与
     /// fp-outside 的 `cs_skipped` 补偿都要用它。
-    /// 缺省（`None`）⇒ 回退 `[abi.callee_saved].gpr.len()`（迁移期；两者同义）。
+    /// 缺省（`None`）⇒ 0（`[abi.callee_saved]` 已删除，不再由名单长度兜底）。
     #[serde(default)]
     pub callee_save_slots: Option<u32>,
     /// **帧件会保存的那组 GPR**（机器事实，v20 A6 收口）：无 plan 的回退路径（引擎暂时
     /// 规划不了的签名）需要**寄存器名**，名字不能凭空发明，所以与"帧预留几个槽"一起放在这里。
     /// 语义是"这台机器的帧件会保存这组寄存器"，与"某份约定**要求**保住哪些"（绑定）分开；
-    /// 缺省（`None`）⇒ 回退 `[abi].callee_saved.gpr`（迁移期同义）。
+    /// 缺省（`None`）⇒ 空表（`[abi.callee_saved]` 已删除）。
     #[serde(default)]
     pub callee_saved_gpr: Option<Vec<String>>,
     /// **帧填充**（字节，机器事实，v20 A5-3）：`sub rsp` 之外还要多减的字节数，
@@ -71,85 +72,56 @@ pub struct MachineSection {
 }
 
 impl V12Model {
-    /// 溢出 scratch：`[machine].spill_scratch` 优先，回退 `[abi].scratch`（迁移期）。
+    /// 溢出 scratch：`[machine].spill_scratch`（**唯一来源**，v20 A5-3 起
+    /// `[abi].scratch` 已删除）。
     pub fn machine_scratch(&self) -> &[String] {
-        if let Some(m) = &self.machine
-            && !m.spill_scratch.is_empty()
-        {
-            return &m.spill_scratch;
-        }
-        self.abi
+        self.machine
             .as_ref()
-            .map(|a| a.scratch.as_slice())
+            .map(|m| m.spill_scratch.as_slice())
             .unwrap_or(&[])
     }
 
-    /// 固定用途寄存器：`[machine].fixed_regs` 优先，回退 `[abi].reserved`。
+    /// 固定用途寄存器：`[machine].fixed_regs`（唯一来源；`[abi].reserved` 已删除）。
     pub fn machine_reserved(&self) -> &[String] {
-        if let Some(m) = &self.machine
-            && !m.fixed_regs.is_empty()
-        {
-            return &m.fixed_regs;
-        }
-        self.abi
+        self.machine
             .as_ref()
-            .map(|a| a.reserved.as_slice())
+            .map(|m| m.fixed_regs.as_slice())
             .unwrap_or(&[])
     }
 
-    /// 链接寄存器：`[machine].link_reg` 优先，回退 `[abi].call_ret_reg`。
+    /// 链接寄存器：`[machine].link_reg`（唯一来源；`[abi].call_ret_reg` 已删除）。
     pub fn machine_link_reg(&self) -> Option<&str> {
-        if let Some(m) = &self.machine
-            && let Some(l) = &m.link_reg
-        {
-            return Some(l.as_str());
-        }
-        self.abi.as_ref().and_then(|a| a.call_ret_reg.as_deref())
+        self.machine.as_ref().and_then(|m| m.link_reg.as_deref())
     }
 
-    /// 帧形状：`[machine].frame` 优先，回退 `[abi].frame`（迁移期）。
+    /// 帧形状：`[machine].frame`（唯一来源；`[abi.frame]` 已删除）。
     ///
-    /// **所有**读 `[abi.frame]` 的地方都必须走这里——包括只读其中一两个键的
-    /// （`sp`/`fp`/`layout`/`fp_push_bytes`/`alloc_neg`），否则迁移期会出现
+    /// **所有**读帧形状的地方都必须走这里——包括只读其中一两个键的
+    /// （`sp`/`fp`/`layout`/`fp_push_bytes`/`alloc_neg`），免得出现
     /// "一半读新表、一半读旧表"的分裂。
     pub fn machine_frame(&self) -> Option<&AbiFrame> {
-        if let Some(f) = self.machine.as_ref().and_then(|m| m.frame.as_ref()) {
-            return Some(f);
-        }
-        self.abi.as_ref().and_then(|a| a.frame.as_ref())
+        self.machine.as_ref().and_then(|m| m.frame.as_ref())
     }
 
-    /// 帧件会保存的那组 GPR（名字）：`[machine].callee_saved_gpr` 优先，回退
-    /// `[abi].callee_saved].gpr`（迁移期同义）。regalloc 的**无 plan 回退**与生成物的
+    /// 帧件会保存的那组 GPR（名字）：`[machine].callee_saved_gpr`（唯一来源；
+    /// `[abi.callee_saved]` 已删除）。regalloc 的**无 plan 回退**与生成物的
     /// `TargetRegInfo::callee_saved()` 都读它。
     pub fn machine_callee_saved(&self) -> &[String] {
-        if let Some(g) = self
-            .machine
+        self.machine
             .as_ref()
             .and_then(|m| m.callee_saved_gpr.as_deref())
-        {
-            return g;
-        }
-        self.abi
-            .as_ref()
-            .and_then(|a| a.callee_saved.as_ref())
-            .map(|c| c.gpr.as_slice())
             .unwrap_or(&[])
     }
 
-    /// 帧为 callee-saved 预留的**推入槽数**（机器事实）：`[machine].callee_save_slots`
-    /// 优先，回退 `[abi.callee_saved].gpr` 的长度（迁移期；两者同义）。
+    /// 帧为 callee-saved 预留的**推入槽数**（机器事实）：`[machine].callee_save_slots`，
+    /// 缺省 0（`[abi.callee_saved]` 已删除，不再由名单长度兜底）。
     ///
     /// **不是**"必须保住的寄存器集"（那是约定，来自 plan/绑定）——它只决定帧布局里
     /// 推入区按几个槽算（生成期 `__cs_bytes`、fp-outside 的 `cs_skipped` 补偿）。
     pub fn machine_callee_save_slots(&self) -> u32 {
-        if let Some(n) = self.machine.as_ref().and_then(|m| m.callee_save_slots) {
-            return n;
-        }
-        self.abi
+        self.machine
             .as_ref()
-            .and_then(|a| a.callee_saved.as_ref())
-            .map(|c| c.gpr.len() as u32)
+            .and_then(|m| m.callee_save_slots)
             .unwrap_or(0)
     }
 
@@ -2699,22 +2671,10 @@ pub struct Pattern {
 pub struct Abi {
     #[serde(default)]
     pub arg_class: Vec<ArgClass>,
-    /// 帧布局（sp/fp 寄存器名、帧分配/释放指令名）。
-    #[serde(default)]
-    pub frame: Option<AbiFrame>,
-    /// 被调用者保存寄存器（prologue push / epilogue pop 顺序）。
-    #[serde(default)]
-    pub callee_saved: Option<CalleeSaved>,
-    /// 溢出 scratch 寄存器（spill load/store 用；x86 R10/R11）。
-    #[serde(default)]
-    pub scratch: Vec<String>,
     /// 返回寄存器（物理名；如 riscv "X10"=a0）。缺省空 = index 0（x86 RAX
     /// 语义）。Return/Call lowering 的返回值移动目标用此列表首项。
     #[serde(default)]
     pub ret_regs: Vec<String>,
-    /// Call 的返回地址寄存器（缺省 "X1"=riscv ra）。
-    #[serde(default)]
-    pub call_ret_reg: Option<String>,
     /// Call 点被调用方可能破坏的寄存器（物理名）——regalloc 的 call clobber
     /// 集。缺省 = 整数参数寄存器 + 返回寄存器（x86 语义）。定宽 ISA 无
     /// callee-saved 保存序列（如 riscv 当前 callee_saved=[]）时，callee 会
@@ -2722,10 +2682,6 @@ pub struct Abi {
     /// 跨调用存活值留在寄存器被覆盖（实测递归 fib 死循环）。
     #[serde(default)]
     pub call_clobbers: Option<Vec<String>>,
-    /// regalloc 不可分配的寄存器（物理名；如 riscv 的 X0=zero 不可写、
-    /// X1=ra 返回地址被 prologue/call 占用、X3/X4=gp/tp）。缺省空。
-    #[serde(default)]
-    pub reserved: Vec<String>,
     /// 参数槽位分配规则（语义显式声明，见 [`ArgSlot`]）。
     #[serde(default)]
     pub arg_slot: Option<ArgSlot>,
@@ -2782,16 +2738,6 @@ pub struct AbiFrame {
     /// 帧分配需负偏移；x86 用 SUB 语义不需要）。缺省 false。
     #[serde(default)]
     pub alloc_neg: bool,
-}
-
-/// 被调用者保存寄存器（[abi.callee_saved]）。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CalleeSaved {
-    #[serde(default)]
-    pub gpr: Vec<String>,
-    #[serde(default)]
-    pub xmm: Vec<String>,
 }
 
 /// 传参类别：arg_class 的类型语义（决定传参寄存器族与策略）。
@@ -2852,7 +2798,7 @@ pub enum ArgStrategy {
 /// `[emit]` ——**剩下的只有机器事实**（v20 A4：序/尾声不再由谱写）。
 ///
 /// 序言/尾声（保存谁、帧多大、怎么建立帧指针）是**调用约定**的事，由生成器按
-/// `[machine.frame]` / `[machine]` / `[abi.callee_saved]` + 角色
+/// `[machine.frame]` / `[machine]` + 角色
 /// （`push`/`pop`/`frame_alloc`/`frame_free`/`frame_set`/`callee_save`/`callee_load`/`ret`）
 /// 生成；谱里只剩"`.align` 怎么填"与"要不要独立尾声标签"这类事实。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

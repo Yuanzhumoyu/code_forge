@@ -838,7 +838,7 @@ fn validate_reg_names(m: &V12Model) -> Result<(), String> {
         }
         Ok(())
     };
-    // v20 A5-3：`[machine]` 是机器事实的正式位置（`[abi]` 旧键仍被校验，迁移期两者都认）。
+    // v20 A5-3：`[machine]` 是机器事实的**唯一**位置（`[abi]` 的同义旧键已删除）。
     if let Some(ms) = &m.machine {
         check(&ms.fixed_regs, "[machine].fixed_regs")?;
         check(&ms.spill_scratch, "[machine].spill_scratch")?;
@@ -853,27 +853,13 @@ fn validate_reg_names(m: &V12Model) -> Result<(), String> {
         }
     }
     if let Some(abi) = &m.abi {
-        check(&abi.scratch, "[abi].scratch")?;
-        check(&abi.reserved, "[abi].reserved")?;
         check(&abi.ret_regs, "[abi].ret_regs")?;
         check(
             &abi.call_clobbers.clone().unwrap_or_default(),
             "[abi].call_clobbers",
         )?;
-        if let Some(r) = &abi.call_ret_reg {
-            check(std::slice::from_ref(r), "[abi].call_ret_reg")?;
-        }
-        if let Some(cs) = &abi.callee_saved {
-            check(&cs.gpr, "[abi.callee_saved].gpr")?;
-        }
         for ac in &abi.arg_class {
             check(&ac.regs, "[abi.arg_class].regs")?;
-        }
-        if let Some(f) = &abi.frame {
-            check(std::slice::from_ref(&f.sp), "[abi.frame].sp")?;
-            if let Some(fp) = &f.fp {
-                check(std::slice::from_ref(fp), "[abi.frame].fp")?;
-            }
         }
     }
     for (name, t) in &m.spill {
@@ -1957,7 +1943,7 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
             ));
         }
     }
-    // [machine.frame]（迁移期回退 [abi.frame]）：sp 必填且非空。
+    // [machine.frame]：sp 必填且非空。
     if let Some(f) = m.machine_frame()
         && f.sp.trim().is_empty()
     {

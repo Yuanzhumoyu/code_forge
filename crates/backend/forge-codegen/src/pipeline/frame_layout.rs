@@ -140,7 +140,7 @@ mod tests {
     use crate::arch::arm64_v12::TargetMachine as ArmTm;
 
     /// **FPR callee-saved 进得了帧**（v20 A6 激活的守卫）：AAPCS64 的表是
-    /// X19-X28（10）+ V8-V15（8）= 18 条，而谱里声明的 `[abi.callee_saved].gpr`
+    /// X19-X28（10）+ V8-V15（8）= 18 条，而谱里声明的 `[machine].callee_saved_gpr`
     /// 只有 10 条——帧顶槽位公式要求帧装得下**整张表**，所以 fp-inside 的
     /// `min_frame` 必须按 **plan** 数（16 的 fp/lr 保存区 + 18×8 = 160），
     /// 否则多保存的 8 个 FPR 会写到帧外。

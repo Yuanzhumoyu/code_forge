@@ -1421,7 +1421,7 @@ fn gen_call_lowering(
                     .iter()
                     .find(|i| i.inst.name == call_inst)
                     .ok_or_else(|| format!("call_inst '{call_inst}' 不存在"))?;
-                // 返回地址寄存器：`[machine].link_reg`（迁移期回退 `[abi].call_ret_reg`）。
+                // 返回地址寄存器：`[machine].link_reg`（唯一来源）。
                 // **只在 call 指令确有 Out/InOut Reg 槽时才需要**（x86 的 CALL 无此槽）；
                 // 缺声明 = 生成期明确报错，不回退到某个 ISA 的寄存器名。
                 let needs_ret_reg = info.operands.iter().any(|(_, _, slot, role)| {

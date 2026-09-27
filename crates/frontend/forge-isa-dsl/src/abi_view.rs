@@ -210,7 +210,7 @@ pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String>
             }
         }
     }
-    // **机器事实**（v20 A5）：`[machine]` 优先、回退 `[abi]` 旧键——与生成期同源。
+    // **机器事实**（v20 A5）：读 `[machine]`（唯一来源）——与生成期同源。
     for n in model.machine_reserved() {
         match names.get(n) {
             Some(i) => pinned.push(*i),

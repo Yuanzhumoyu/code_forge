@@ -567,7 +567,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     // spill 重写会覆盖其值（t+= 循环崩溃：i 地址在 R11 被 spill load 覆盖）。
     // 6i 曾尝试排除但触发循环 spill 暴露 v12 spill bug；6k/6m/6n 修复后
     // 重新排除（scatch 全时保留给 spill 机制）。
-    // v20 A5-3：机器事实读 `[machine]`（回退 `[abi]` 同名旧键，迁移期两写法都认）。
+    // v20 A5-3：机器事实读 `[machine]`（唯一来源；`[abi]` 同名旧键已删除）。
     let scratch_names: &[String] = model.machine_scratch();
     let reserved_names: &[String] = model.machine_reserved();
     let scratch_list = resolve_reg_list(&name_to_idx, scratch_names, "[machine].spill_scratch")?;

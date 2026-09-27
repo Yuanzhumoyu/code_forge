@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3：机器事实回退键下线（`[abi].{scratch,reserved,call_ret_reg,frame,callee_saved}` 删除）
+
+- **谱面**：`[abi]` 只剩真正的**约定键**（`arg_class`/`ret_regs`/`call_clobbers`/`arg_slot`）；机器事实一律只在 `[machine]`（`spill_scratch`/`fixed_regs`/`link_reg`/`frame`/`callee_saved_gpr` + `callee_save_slots`）。旧同义键**删除**（`Abi` 字段、`CalleeSaved` 结构体、schema 的 `[abi.frame]`/`[abi.callee_saved]` 两节与键表一并去掉）：写旧键现在报未知键，"两处都写、谁生效"的含糊彻底消失。
+- **读侧单点化**：`machine_scratch`/`machine_reserved`/`machine_link_reg`/`machine_frame`/`machine_callee_saved`/`machine_callee_save_slots` 全部改成**只读 `[machine]`**（`callee_save_slots` 缺省 0，不再由名单长度兜底）。名字解析校验随之只挂在 `[machine]` 键上（原先 `[abi]`/`[machine]` 双份）。
+- **夹具迁移**：`tests/isa/demo8_v12.toml`（`scratch`/`reserved`/`[abi.callee_saved]` → `[machine] spill_scratch`/`fixed_regs`/`callee_saved_gpr`）、`tests/isa/demo_v12.toml`（`[abi.callee_saved]` → `[machine] callee_saved_gpr = []`）、`diag_matrix_tests.rs` 的内联谱（`scratch` → `[machine] spill_scratch`；"未知寄存器名"用例改用仍在 `[abi]` 的 `ret_regs`，保住 `DSL-ABI` 码）。
+- 验证：workspace 串行全套绿、clippy `-D warnings` 0、三条 JIT 矩阵与迁移前同值。
+
 ### Changed (2026-09-27) — v20 A5-3：`[abi.stack_args]` 删除（栈参数布局全面由 plan 驱动）
 
 - **谱面删键**：`[abi.stack_args]`（`callee_base`/`caller_base`/`first_offset_slots`/`stride_slots`/`shadow_bytes`）整节删除，`Abi` 结构体 / schema / `isa-dsl.schema.json` / 文档键表同步。这五个键是**约定事实**，`AbiRules` 里本来就有对应（`shadow_bytes` + `stack.slot_bytes`/`stack.first_offset_slots`），谱里那份只是生成期烘死的常量。

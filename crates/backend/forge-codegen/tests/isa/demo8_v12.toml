@@ -219,10 +219,6 @@ align = 1
 fp_save = 1
 
 [abi]
-# spill 搬运临时寄存器（regalloc 不可分配）
-scratch = ["A4", "A5"]
-# A6/A7 是 fp/sp（已在 RegInfo 排除；显式列出以验证名字解析）
-reserved = ["A6", "A7"]
 # 返回寄存器 A0；Return/调用方返回值移动目标
 ret_regs = ["A0"]
 
@@ -230,14 +226,19 @@ ret_regs = ["A0"]
 class = "int"
 regs = ["A0", "A1", "A2", "A3"]
 
+[machine]
+# 机器事实（v20 A5-3 起是正式位置，旧 `[abi]` 同名键已删除）：
+# spill 搬运临时寄存器（regalloc 不可分配）+ A6/A7 是 fp/sp（已在 RegInfo 排除；
+# 显式列出以验证名字解析）+ 帧件会保存的那组 GPR（本夹具不保存任何寄存器）。
+spill_scratch = ["A4", "A5"]
+fixed_regs = ["A6", "A7"]
+callee_saved_gpr = []
+
 [machine.frame]
 sp = "A7"
 fp = "A6"
 # fp 保存槽 = 1 字节（不是 x86 的 8）
 fp_push_bytes = 1
-
-[abi.callee_saved]
-gpr = []
 
 [emit]
 align_pad = 0
