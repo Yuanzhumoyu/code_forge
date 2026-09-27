@@ -432,34 +432,22 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   `arm64_fp_inside_frame_counts_the_plan_callee_saved_table` 钉住这三件事。
   **仍未覆盖**：如果某个 ISA 的 FPR 保存槽宽度不是"一个槽单位"（如 16 字节的 Q 寄存器），
   偏移公式 `(k+1)*__SLOT_BYTES` 需要按类给宽度——今天的 arm64 存 D（8 字节）正好等于槽宽。
-- **帧上方 callee-saved 字节数仍是静态的（fp-outside 一路）**：x86 的 push 机制按谱面列表
-  逐个 `push`（静态发射），所以那条路仍按谱面表数；改按 plan 计数会在"plan 比谱表短"
-  （sysv64：5 vs 7）时少算 16 字节、让局部/spill 槽与 push 槽重叠。
-  **2026-09-27 试过一版"运行时循环"并回滚**（记下来免得下次重踩）：把 push 机制改成
-  `for __preg in __rm.callee_saved_to_save.iter() { push }`、尾声的 `sp -= n*槽` 取运行时
-  `len()`，同时把 fp-outside 的帧字节数也改按 plan 算——**结果**：`test_jit_cross_call_writeback`
-  等跨调用用例读到垃圾值、`forge-codegen --lib --all-features` 直接 `0xC0000005` 崩溃。
-  已定位到的**第一层耦合**：规则的 `frame_padding` 是对**谱面表长**校准的（win64 = 8 配
-  7 次 push + `push rbp` = 偶数次 ⇒ `rsp%16==8`）；实际推入数一变，call 点的对齐就漂了。
-  推出来的平移式是 `padding = (rule + (谱面表长 − 实际推入数) × 槽) mod align`（只对
-  fp-outside 成立，fp-inside 的保存是帧内槽、不动 rsp）——加上它**仍然红**，所以至少还有
-  第二层耦合（嫌疑：生成物里那个**编译期常量** `__cs_bytes`（x86 = 64）被当作 spill 基点，
-  它与运行时实际推入区不再一致；以及序言/尾声之外的路径仍按静态表假设偏移）。
-  **下一步的正确做法**：不要一次性切换，先加"静态 vs 运行时"的双路对照（比如先只在
-  `callee_saved_to_save.len() == 谱面表长` 时走运行时路径，其余走静态），逐台机器、逐个
-  用例把耦合暴露出来再拆。
-  **2026-09-27 复核后的结论（第二层耦合是什么）**：callee-saved 字节数在这条路上
-  **不只是一个"尺寸"，还是 spill/栈参数寻址的基点**——生成物里有编译期常量
-  `__cs_bytes`（x86 = 64）参与 `sp_base = -(frame) - callee_saved + stack_args`，
-  管线侧 `emission.rs` 的 `emit_inst_with_spills` 同样用 `callee_saved_bytes` 算
-  `sp_base`。推入数一变，这个基点就必须跟着变，否则 spill 槽落到与实际推入区**不重合**
-  的地址上（本地实测现象：跨调用用例读到垃圾值 + 访问违例）。
-  因此"把 push 机制运行时化"的真正改造面是**让 callee-saved 字节数端到端变成运行时值**：
-  ① 生成物侧 `__cs_bytes` 改成按 `callee_saved_to_save.len()` 算；② `emission.rs` 的
-  `sp_base` 从编译期 i32 变成运行时表达式（或"按运行时值选两套偏移"）——这条会牵动
-  `emit_spill_load/store` 的签名。**这是一个值得单独设计的小专项**，不是顺手能带的改动；
-  在那之前 x86 保留静态 push 表 + 新加的超集护栏
-  （`x86_static_push_table_covers_the_plan_gpr_callee_saved`）。
+- **帧上方 callee-saved 字节数**（fp-outside 一路）：**已解决（2026-09-27，`531b9e2`）**。
+  x86 的序言/尾声现在按 `alloc_result.callee_saved_to_save` **运行时**发射（逐个 `push`；
+  尾声 `sp -= n*槽` 取同一列表的运行时长度并逆序 `pop`），列表来源是约定数据（有 plan 用
+  plan：显式选 sysv64 就只有 5 个；无 plan 才退谱面表）。
+  **绕开第二层耦合的办法（这是关键设计，别忘）**：帧内所有偏移（`sp_base`、栈槽平移、
+  栈参数区）都是**编译期常量**、按谱面表长算的，少推 Δ 个槽会让 rsp 抬高 Δ×槽而整体错位。
+  不要去把这些常量改成运行时值（那会牵动 `emit_spill_load/store` 的签名），而是让**管线把
+  Δ×槽补进序言实际分配的字节数**（`pipeline/emission.rs` 的 `cs_skipped`，仅 fp-outside）
+  ⇒ rsp 落点与"静态表全长"时代**逐字节相同**，所有编译期常量与栈对齐（`frame_padding`）
+  继续成立。fp-inside 的保存是帧内槽、不动 rsp ⇒ `cs_skipped = 0`。
+  **中途踩过的两个坑（留档）**：① 只改发射、不动帧字节数 ⇒ 跨调用用例读垃圾值 +
+  `0xC0000005`；② 只补 `frame_padding`（`padding = (rule + Δ×槽) mod align`）救不了——
+  因为 `__cs_bytes`/`sp_base` 是**寻址基点**而非仅尺寸，必须靠"帧补齐"让 rsp 原地不动。
+  遗留：护栏 `x86_static_push_table_covers_the_plan_gpr_callee_saved` 的立论（"静态 push
+  表"）已过时，应换成钉住 `cs_skipped` 的守卫；`[abi].callee_saved` 现在只剩"无 plan 时的
+  兜底"作用，可以连同 A5-3 ③ 一起删。
 
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
   变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
