@@ -56,7 +56,7 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
     let cs_count = if fl.kind == FrameLayoutKind::Inside {
         match layout {
             Some(cl) if !cl.callee_saved.is_empty() => cl.callee_saved.len() as i32,
-            _ => ri.callee_saved().len() as i32,
+            _ => ri.callee_save_slots() as i32,
         }
     } else {
         ri.callee_saved().len() as i32

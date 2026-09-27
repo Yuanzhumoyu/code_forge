@@ -50,7 +50,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 就与"静态表全长"时代**逐字节相同**，所有常量继续成立，栈对齐也不用动。
         let cs_skipped: u32 =
             if machine.abi().frame_layout().kind == crate::machine::abi::FrameLayoutKind::Outside {
-                let spec_n = machine.reg_info().callee_saved().len() as u32;
+                let spec_n = machine.reg_info().callee_save_slots();
                 let actual_n = alloc_result.callee_saved_to_save.len() as u32;
                 spec_n.saturating_sub(actual_n) * machine.reg_info().slot_bytes() as u32
             } else {

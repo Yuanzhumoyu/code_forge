@@ -113,6 +113,13 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// 被调用者保存的寄存器索引列表。
     fn callee_saved(&self) -> Vec<u32>;
 
+    /// 帧为 callee-saved 预留的**推入槽数**（**机器事实**，v20 A6）：与「哪些寄存器必须
+    /// 保住」（约定，来自 plan/绑定）分开——生成期 `__cs_bytes` 与 fp-outside 的推补偿用它。
+    /// 缺省 = `callee_saved()` 的长度（手工后端/测试替身无需实现）。
+    fn callee_save_slots(&self) -> u32 {
+        self.callee_saved().len() as u32
+    }
+
     /// Prologue 在帧指针上方 push 的字节数（帧指针保存槽，如 x86 `push rbp`
     /// = 8；aarch64/riscv64 `stp/sd fp,lr` = 16；wasm 无帧 = 0）。
     /// codegen 用它计算局部变量区基址（`fp - overhead - callee_saved_bytes`）。

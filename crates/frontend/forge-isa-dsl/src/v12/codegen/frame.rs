@@ -853,12 +853,9 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             .machine_frame()
             .and_then(|f| f.fp_push_bytes)
             .unwrap_or(model.addr_class()?.width() as u32) as i64;
-        let cs = model
-            .abi
-            .as_ref()
-            .and_then(|a| a.callee_saved.as_ref())
-            .map(|c| c.gpr.len() as i64 * slot_bytes_lit)
-            .unwrap_or(0);
+        // **机器事实**（v20 A6）：帧按几个推入槽算——与「哪些寄存器必须保住」（约定）
+        // 分开；`[machine].callee_save_slots` 缺省回退谱面 `[abi].callee_saved` 的表长。
+        let cs = model.machine_callee_save_slots() as i64 * slot_bytes_lit;
         fp_push + cs
     };
     // 收参：把 [abi.arg_class].int 类的寄存器值 mov 到参数 XReg 的

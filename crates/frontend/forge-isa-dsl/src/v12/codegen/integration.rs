@@ -548,6 +548,9 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
     )?;
     // callee_saved：从 [abi].callee_saved.gpr 解析物理索引（顺序 = prologue push 序）。
     // 名字不在主 GPR 组内 → 生成期 Err（不再静默丢弃该寄存器）。
+    // 帧按几个 callee-saved 推入槽算（**机器事实**，v20 A6）：生成物里的
+    // `TargetRegInfo::callee_save_slots` 直接读它；缺省回退谱面表长。
+    let callee_slots = model.machine_callee_save_slots();
     let callee_saved: Vec<TokenStream> = resolve_reg_list(
         &name_to_idx,
         model
@@ -725,6 +728,7 @@ fn gen_reg_info(model: &V12Model) -> Result<TokenStream, String> {
             fn scratch_regs(&self) -> Vec<u32> {
                 vec![#(#scratch),*]
             }
+            fn callee_save_slots(&self) -> u32 { #callee_slots }
             fn callee_saved(&self) -> Vec<u32> {
                 vec![#(#callee_saved),*]
             }
