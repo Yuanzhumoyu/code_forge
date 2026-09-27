@@ -2909,38 +2909,47 @@ asm = "add {dst}"
 
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────
 
-/// `[abi.stack_args].shadow_bytes` 一旦声明，就必须有 `roles = ["stack_arg_load"]` /
-/// `["stack_arg_store"]` 的指令——缺失时**生成期**给出点名角色的明确错误，
-/// 绝不用 x86 指令名（Mov64Rm/Mov64Mr + mem/dest/src）兜底
-/// （见 docs/reference/isa-dsl.md 角色章）。
+/// 栈参数的**能力申报**是角色（v20 A5-3 起谱面没有 `[abi.stack_args]` 键可写了）：
+///
+/// ① 有 `stack_arg_load` 而缺 `stack_arg_store` ⇒ **生成期**点名角色的明确错误
+///    （把栈参数写进 spill 槽需要它），绝不用 x86 指令名兜底；
+/// ② 连 `stack_arg_load` 都没有 ⇒ 这个 ISA 只是**不支持栈参数**，生成照旧成功
+///    （收参路径在运行期给 Unsupported，而不是生成期报错）。
 ///
 /// 夹具：直接拿真实 `isa/x86_v12.toml` 做字符串手术删掉那两条 `roles = [...]`，
 /// 其余保持原样——测的是**发货 ISA** 的真实生成路径，而不是人造小模型。
 #[test]
-fn stack_args_requires_role_tags() {
+fn stack_args_capability_is_declared_by_roles() {
     let src = include_str!("../../../../../isa/x86_v12.toml");
-    // 正例：原样 → 全量生成成功（x86 声明了 shadow + 两个角色）。
+    // 正例：原样 → 全量生成成功（x86 声明了两个角色）。
     let m = parse_and_validate(src).expect("x86 doc parses");
     crate::v12::codegen::generate(&m).expect("x86 有 stack_arg_* 角色 → 生成必须成功");
 
-    for (role, needle) in [
-        ("stack_arg_load", "roles = [\"stack_arg_load\"]"),
-        ("stack_arg_store", "roles = [\"stack_arg_store\"]"),
-    ] {
-        let mutated = src.replace(needle, "");
-        assert_ne!(mutated, src, "夹具失效：x86 TOML 应含 {needle}");
-        // 缺口可能在 validate 或 codegen 暴露，两处都算合格——但必须**点名角色**。
-        let err = match parse_and_validate(&mutated) {
-            Ok(m2) => crate::v12::codegen::generate(&m2)
-                .expect_err("声明 [abi.stack_args].shadow_bytes 却缺角色 → 必须生成期报错"),
-            Err(e) => e.to_string(),
-        };
-        eprintln!("[W1] 缺 {role} → {err}");
-        assert!(
-            err.contains(role),
-            "错误信息必须点名缺失的角色 {role}（而不是回退到某个 ISA 的指令名）：{err}"
-        );
-    }
+    // ① 有 load、缺 store → 生成期报错并点名角色。
+    let no_store = src.replace("roles = [\"stack_arg_store\"]", "");
+    assert_ne!(
+        no_store, src,
+        "夹具失效：x86 TOML 应含 stack_arg_store 角色"
+    );
+    // 缺口可能在 validate 或 codegen 暴露，两处都算合格——但必须**点名角色**。
+    let err = match parse_and_validate(&no_store) {
+        Ok(m2) => crate::v12::codegen::generate(&m2)
+            .expect_err("有 stack_arg_load 却缺 stack_arg_store → 必须生成期报错")
+            .to_string(),
+        Err(e) => e.to_string(),
+    };
+    eprintln!("[W1] 缺 stack_arg_store → {err}");
+    assert!(
+        err.contains("stack_arg_store"),
+        "错误信息必须点名缺失的角色 stack_arg_store（而不是回退到某个 ISA 的指令名）：{err}"
+    );
+
+    // ② 连 load 都没有 → 能力降级（不支持栈参数），生成照旧成功。
+    let no_load = src.replace("roles = [\"stack_arg_load\"]", "");
+    assert_ne!(no_load, src, "夹具失效：x86 TOML 应含 stack_arg_load 角色");
+    let m3 = parse_and_validate(&no_load).expect("删掉 load 角色后仍应可解析");
+    crate::v12::codegen::generate(&m3)
+        .expect("没有 stack_arg_load 角色 = 本 ISA 不支持栈参数，生成不该失败");
 }
 
 // ─────────── P0：宽度/类元数据派生（去「宽度写死」，2026-09-12） ───────────

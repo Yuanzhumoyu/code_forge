@@ -261,9 +261,11 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
   三份发行谱的序/尾声**逐字节不变**（`FGE_DEBUG_GEN` 对照）。
 - **收参的来源取自布局**：`__layout_ok` 入场判定 → `ArgPlace::Reg`（类 + 类内号）/
   带指针的 `Indirect`，生成器不再数"第几个 int 槽"、不再做 `sret` 偏移。
-- **一个参数落在本片未覆盖的落点**（`Pair`/`Group`/`Stack`/无指针的 `Indirect`）⇒
+- **一个参数落在本片未覆盖的落点**（`Pair`/`Group`/无指针的 `Indirect`）⇒
   **整函数**退回既有 `[abi]` 路径（两条路径不混用：混用会让旧路径的 `__gi`/`__fi`
-  游标与实际参数错位）。栈参数的 load/store 与序尾声仍是后续工作（A3b-2b-2b / A4）。
+  游标与实际参数错位）。序/尾声已按约定发射（A4）；**栈参数**自 v20 A5-3 起同样只在
+  布局路径上（`ArgPlace::Stack { offset }`；谱面不再有 `[abi.stack_args]`，见
+  `docs/reference/isa-dsl.md`），没有布局时明确 `Unsupported` 而不是按旧常量收参。
 - `call_layout = None`（没有对应绑定、或规划失败）同样退回旧路径——**不是静默错值**：
   `FORGE_TRACE_ABI=1` 会打印计划或失败原因。
 - 结构守卫在 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`（三份发行谱都

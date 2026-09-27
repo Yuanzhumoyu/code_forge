@@ -691,28 +691,8 @@ fn validate_widths(m: &V12Model) -> Result<(), String> {
     if m.stack.as_ref().and_then(|s| s.align).is_some() && m.stack_align()? == 0 {
         return Err("[stack].align must be > 0".into());
     }
-    // `[abi.stack_args]`：基址只能是 fp|sp；槽数与步长必须 > 0。
-    if let Some(sa) = m.abi.as_ref().and_then(|a| a.stack_args.as_ref()) {
-        for (key, base) in [
-            ("callee_base", sa.callee_base.as_ref()),
-            ("caller_base", sa.caller_base.as_ref()),
-        ] {
-            if let Some(base) = base
-                && base != "fp"
-                && base != "sp"
-            {
-                return Err(format!(
-                    "[abi.stack_args].{key} = \"{base}\" 非法（只能是 \"fp\" 或 \"sp\"）"
-                ));
-            }
-        }
-        if sa.first_offset_slots == Some(0) {
-            return Err("[abi.stack_args].first_offset_slots must be > 0".into());
-        }
-        if sa.stride_slots == Some(0) {
-            return Err("[abi.stack_args].stride_slots must be > 0".into());
-        }
-    }
+    // `[abi.stack_args]` 已删除（v20 A5-3）：栈参数布局由 plan 的 `CallLayout` 给
+    //（rules 的 `stack.*` + `shadow_bytes`），谱面不再有这几个键。
     for (key, w) in [
         ("default_gpr_width", m.meta.default_gpr_width),
         ("default_fpr_width", m.meta.default_fpr_width),
@@ -1958,22 +1938,9 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
     };
     // arg_slot / arg_class.strategy 的值域由枚举在反序列化期强制
 
-    // [abi.stack_args].shadow_bytes：>0 且 **栈槽单位** 的倍数（元数据派生：x86 = 8 字节槽；
-    // 1 字节寄存器 ISA 的槽是 1 字节——历史实现写死"8 的倍数"）。
-    if let Some(shadow) = abi.stack_args.as_ref().and_then(|s| s.shadow_bytes) {
-        if shadow == 0 {
-            return Err(format!(
-                "[abi.stack_args].shadow_bytes must be > 0, got {shadow}"
-            ));
-        }
-        let unit = m.slot_bytes()? as u32;
-        if unit > 1 && shadow % unit != 0 {
-            return Err(format!(
-                "[abi.stack_args].shadow_bytes must be a positive multiple of the stack slot unit \
-                 ({unit} bytes), got {shadow}"
-            ));
-        }
-    }
+    // `[abi.stack_args]` 已删除（v20 A5-3）：shadow/首个栈参偏移现在由规则的
+    // `stack.*` + `shadow_bytes` 给出（`AbiRules::validate` 负责其合法性，
+    // 例如 `shadow_bytes` 必须是槽单位的倍数）——谱面侧没有可校验的键了。
     let mut seen = std::collections::HashSet::new();
     for ac in &abi.arg_class {
         if !seen.insert(ac.class) {

@@ -131,9 +131,8 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[pseudo]]` | `name` `params` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[abi]` | — | `stack_args` `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
+| `[abi]` | — | `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
 | `[abi.frame]` | — | `sp` `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧布局 |
-| `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
 | `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充） |
@@ -1188,13 +1187,6 @@ arg_slot = "by-position"       # 参数槽位计数策略：by-class（缺省，
 ret_regs = ["X10"]             # 返回寄存器（缺省空 = index 0，x86 RAX 语义）
 call_clobbers = ["X1", "X7", ...]  # Call 点被调用方破坏的寄存器
 
-[abi.stack_args]               # 寄存器耗尽后的参数内存布局（可选；全缺省 = x86 形态）
-callee_base = "fp"             # 被调方基址寄存器：fp（缺省）/ sp
-caller_base = "sp"             # 调用方基址寄存器：sp（缺省）/ fp
-first_offset_slots = 2         # 被调方首个栈参相对基址的槽数（x86 = 2：返回地址 + 保存的 fp）
-stride_slots = 1               # 相邻栈参的槽步长（x86 = 1）
-shadow_bytes = 32              # 调用方预留的 shadow space 字节（Some 启用栈参数；None 不支持）
-
 [[abi.arg_class]]
 class = "int"                  # int / float / vector / other
 regs = ["RCX", "RDX", "R8", "R9"]
@@ -1215,6 +1207,14 @@ limit = 128
   `by-position`（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）。
 - `frame_padding`（A5-3 起在 [`[machine]`](#machine--机器事实)）：见上节「机器事实」。
   旧写法 `[abi].frame_padding` 现在**明确报错**（键已删除），请写进 `[machine]`。
+- **`[abi.stack_args]` 已删除**（A5-3）：寄存器耗尽后的参数内存布局（`callee_base`/
+  `caller_base`/`first_offset_slots`/`stride_slots`/`shadow_bytes`）是**约定事实**，
+  现在归 `AbiRules`（`shadow_bytes` + `stack.slot_bytes`/`stack.first_offset_slots`），
+  由引擎算成 plan 的 `CallLayout`：被调方按 `ArgPlace::Stack { offset }` 收参、调用方按
+  `CallLayout::caller_offset(k)`（= shadow + k×槽）写参。谱侧只申报**能力**：
+  `roles = ["stack_arg_load"]`（收参）+ `["stack_arg_store"]`（写回 spill 槽），两者都
+  全 ISA 唯一；写旧键会报未知键。**已知边界**：调用方按"每个栈参数一个槽"计数
+  （>8 字节的栈参数今天也不支持——float/vector 超出寄存器数时明确 `Unsupported`）。
 - `[abi.stack_args]`：第 5+ 参数（寄存器耗尽后）由调用方 store 到
   `[caller_base + shadow_bytes + k*stride_slots*slot]`、被调方从
   `[callee_base + first_offset_slots*slot + k*stride_slots*slot]` load

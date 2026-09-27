@@ -2693,39 +2693,10 @@ pub struct Pattern {
 
 // ───────────────────────── [abi] ─────────────────────────
 
-/// `[abi.stack_args]` — 寄存器耗尽后的参数内存布局（2026-09-13 去 x86 写死）。
-/// x86（Windows x64）栈参数在**被调方**是 `[fp + first_offset_slots*slot + k*stride_slots*slot]`、
-/// 在**调用方**是 `[sp + shadow_bytes + k*stride_slots*slot]`。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct AbiStackArgs {
-    /// **被调方**收参的基址寄存器：`"fp"`（帧指针，x86）或 `"sp"`。
-    /// 缺省 `"fp"`；取自 `[machine.frame]` 声明的寄存器名。
-    #[serde(default)]
-    pub callee_base: Option<String>,
-    /// **调用方**写栈参数的基址：`"sp"`（x86：`[sp + shadow + k*stride]`）或 `"fp"`。
-    /// 缺省 `"sp"`。
-    #[serde(default)]
-    pub caller_base: Option<String>,
-    /// 被调方第一个栈参数相对 `callee_base` 的槽数（x86 = 2：返回地址 + 保存的 fp）。
-    #[serde(default)]
-    pub first_offset_slots: Option<u32>,
-    /// 相邻栈参数的槽步长（x86 = 1）。
-    #[serde(default)]
-    pub stride_slots: Option<u32>,
-    /// 调用方在 call 前预留的 shadow space 字节数（Windows x64 = 32）。
-    #[serde(default)]
-    pub shadow_bytes: Option<u32>,
-}
-
 /// 调用约定。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Abi {
-    /// 栈参数布局（`[abi.stack_args]`）：寄存器耗尽后的第 N+ 个参数怎么放。
-    /// `None` = 不支持栈参数（超寄存器参数 → Unsupported）。
-    #[serde(default)]
-    pub stack_args: Option<AbiStackArgs>,
     #[serde(default)]
     pub arg_class: Vec<ArgClass>,
     /// 帧布局（sp/fp 寄存器名、帧分配/释放指令名）。

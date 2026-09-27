@@ -406,7 +406,7 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 | `[abi].callee_saved` | 删；机器事实 `[machine].callee_saved_gpr` + `callee_save_slots` 接管（计数与**名字**必须同源，否则半迁移的树会崩——见 CHANGELOG 更正） | ✅ 键已删，三谱绿 |
 | `[abi].call_clobbers` | 删（riscv64/arm64；x86 本就没写）；破坏集全面由 plan 的 `clobbers` 给 | ✅ 键已删，三谱绿 |
 | `[abi].frame_padding` | 改读 `[machine].frame_padding`（机器事实）；约定侧 `AbiRules::frame_padding` 进 plan，管线优先 | ✅ 键已迁走 |
-| `[abi.stack_args]` | 待做：调用点（`lowering.rs` 的 `caller_base`/`stride_slots`）与被调方（`frame.rs` 的 `move_args`）仍读它；plan 侧 `StackLayout` 已有 `first_arg_offset`/`shadow_bytes`/`stride` | ⏳ |
+| `[abi.stack_args]` | 删；调用点改读 plan（`CallLayout::caller_offset(k)` + `shadow_bytes`/`slot_bytes`，基址恒 `[machine.frame].sp`），被调方 spill 收参改读 `ArgPlace::Stack { offset }`；能力申报改由 `roles = ["stack_arg_load"/"stack_arg_store"]` 说话（有 load 缺 store 仍生成期报错；两者皆无 = 不支持栈参数）；规则侧补 `shadow_bytes` 必须是槽单位倍数的校验 | ✅ 键已删 |
 | `[abi].ret_regs` / `arg_slot` / `[abi.arg_class]` | 待做：lowering 的生成期输入（返回落点 / 位置计数 / 参数池），要改成按角色 + plan 发射 | ⏳ |
 | demo 夹具（`tests/isa/*.toml`） | 待做：删键前先在测试内注册本地绑定/规则 | ⏳ |
 

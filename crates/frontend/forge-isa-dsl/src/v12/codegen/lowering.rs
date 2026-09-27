@@ -796,25 +796,14 @@ fn frame_base_toks(model: &V12Model) -> TokenStream {
     }
 }
 
-/// 栈相对内存的基址寄存器（`[abi.stack_args].caller_base` = `"sp"`/`"fp"`，
-/// 缺省 `"sp"` → 用 `[machine.frame].sp` 的名字；x86 = `Reg::RSP`）。
-/// 栈参数 store 路径此前写死 `Reg::RSP`。
+/// 栈相对内存的基址寄存器：**调用方的传出参数区恒在 `[machine.frame].sp` 之上**
+/// （ABI 通行做法；v20 A5-3 起谱面不再声明 `[abi.stack_args].caller_base`）。
+/// 栈参数 store 路径此前写死 `Reg::RSP`。未声明 sp 时回退"主 GPR 组 0 号占位"
+/// （这些路径只在声明了对应角色的 ISA 上生成；角色门已 fail-closed）。
 fn sp_base_toks(model: &V12Model) -> TokenStream {
-    let kind = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.caller_base.clone())
-        .unwrap_or_else(|| "sp".to_string());
     match model
         .machine_frame()
-        .map(|f| {
-            if kind == "fp" {
-                f.fp.clone().unwrap_or_default()
-            } else {
-                f.sp.clone()
-            }
-        })
+        .map(|f| f.sp.clone())
         .filter(|n| !n.is_empty())
     {
         Some(n) => {
@@ -1157,13 +1146,6 @@ fn gen_call_lowering(
     // R9：by-ref/sret 的向量槽步长 = 最大向量档位（x86 = 64），帧需求 = 槽步长 + 1 个槽单位。
     let __vec_stride: u32 = model.vector_tiers().last().copied().unwrap_or(32) as u32;
     let __sret_frame: u32 = __vec_stride + model.slot_bytes()? as u32;
-    // 栈参数槽步长（`[abi.stack_args].stride_slots`；x86 = 1）。
-    let __stride: u32 = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.stride_slots)
-        .unwrap_or(1);
     let vn = |n: &str| crate::v12::codegen::pascal_ident(n);
     let fids = |n: &str| inst_fids(infos, n);
     // ABI 参数/返回寄存器类（缺失 → Call 降级 Unsupported，如定宽试点 ISA）
@@ -1188,15 +1170,10 @@ fn gen_call_lowering(
         inst_move_role(infos, &mov_inst).ok_or_else(|| {
             format!("Call lowering: [{mov_inst}] must have In(src)/Out|InOut(dest) reg operands")
         })?;
-    // 栈参数 store 指令：**按语义角色** `stack_arg_store` 取
-    //（TOML 显式声明，不做按指令名探测——第三轮重构原则）。
-    // 生成期门控：`[abi.stack_args]` 已声明但角色缺失 → 明确错误
-    //（防引用不存在的变体）；未声明 → `None`，调用点给出生成期错误，
-    // **不再用 x86 指令名（Mov64Mr + mem/src）兜底**。
-    let stack_shadow_opt: Option<u32> = abi.stack_args.as_ref().and_then(|s| s.shadow_bytes);
-    let stack_store: Option<(syn::Ident, syn::Ident, syn::Ident, u8)> = if stack_shadow_opt
-        .is_some()
-    {
+    // 栈参数 store 指令：**按语义角色** `stack_arg_store` 取（TOML 显式声明，
+    // 不做按指令名探测）。**不受谱面键门控**（v20 A5-3 起没有 `[abi.stack_args]`）：
+    // 角色缺失 ⇒ 调用点的栈参数分支在运行期给明确 Unsupported，不再按 x86 指令名兜底。
+    let stack_store: Option<(syn::Ident, syn::Ident, syn::Ident, u8)> =
         match inst_by_role(infos, Role::StackArgStore) {
             Some(info) => {
                 let vn = vn(&info.inst.name);
@@ -1210,17 +1187,8 @@ fn gen_call_lowering(
                     }
                 }
             }
-            None => {
-                return Err(
-                    "Call lowering: [abi.stack_args].shadow_bytes 已声明，但本 ISA 缺 \
-                         roles = [\"stack_arg_store\"] 的指令（不按指令名兜底）"
-                        .into(),
-                );
-            }
-        }
-    } else {
-        None
-    };
+            None => None,
+        };
     // 浮点移动指令：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键（缺省
     // "MOVSD"/"MOVSS"）——缺失 → 浮点路径 Unsupported（防生成代码引用
     // 不存在的 Inst 变体；demo 等无浮点 ISA 的 Call 整体降级）。
@@ -1730,13 +1698,11 @@ fn gen_call_lowering(
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,
-        // 栈参数（shadow space）——[abi.stack_args].shadow_bytes
-        &stack_shadow_opt,
-        // 栈参数 store 指令（角色 stack_arg_store；缺角色 → None，由 helper
-        // 生成明确的生成期错误，不按指令名兜底）
+        // 栈参数 store 指令（角色 stack_arg_store；缺角色 → None，由 helper 生成
+        // 运行期 Unsupported，不按指令名兜底）
         &stack_store,
+        // 栈相对内存的基址寄存器（[machine.frame].sp 派生）
         &__sp_base,
-        __stride,
     );
     let op_ident = format_ident!("{op_name}");
     // call_body 为 Unsupported（return Err）时，其后不再生成 arg_loop/ret_move
@@ -1836,38 +1802,24 @@ fn arg_move_loop(
     mov_vn: &syn::Ident,
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
-    // Windows x64 栈参数：Option<u32>（shadow space 字节）→ 生成代码里的
-    // 引用（`&Some(0x20)` 之类）。None = 不支持栈参数。
-    stack_shadow: &Option<u32>,
     // 栈参数 store 指令（角色 stack_arg_store）的 (变体名, Mem 字段, Reg 字段,
-    // Reg 序号)；None = 本 ISA 不支持栈参数（生成期给明确错误，不猜指令名）。
+    // Reg 序号)；None = 本 ISA 没申报这个角色 ⇒ 运行期 Unsupported（不猜指令名）。
     stack_store: &Option<(syn::Ident, syn::Ident, syn::Ident, u8)>,
-    // 栈相对内存的基址寄存器表达式（`[abi.stack_args].caller_base` 派生）。
+    // 栈相对内存的基址寄存器表达式（`[machine.frame].sp` 派生）。
     sp_base: &TokenStream,
-    // 相邻栈参数的槽步长（`[abi.stack_args].stride_slots`；x86 = 1）。
-    stride: u32,
 ) -> TokenStream {
     let n = *n;
     let fn_ = *fn_;
-    // 步长因子：stride == 1（x86/riscv/arm64 的紧凑布局）时不发射 `* 1`，
-    // 生成代码与"键归类"重构前逐字节一致（dump 对照可证明行为不变）。
-    let stride_factor: TokenStream = if stride == 1 {
-        quote! {}
-    } else {
-        let lit = proc_macro2::Literal::u32_unsuffixed(stride);
-        quote! { * #lit }
-    };
-    let stack_shadow_ref: TokenStream = match stack_shadow {
-        Some(v) => quote! { Some(#v) },
-        None => quote! { None },
-    };
-    // 栈参数 store 语句（by-position int 臂用）：有角色 → 按角色指令 store 到
-    // [rsp+shadow+…]；无角色 → 生成期就给明确错误（不引用任何指令名）。
-    let stack_store_stmt: TokenStream = match (stack_shadow.is_some(), stack_store) {
-        (true, Some((s_vn, s_mem, s_reg, s_reg_idx))) => quote! {
-            // 栈参数（声明 [abi.stack_args] 的 ISA）：第 N+ 个 int 参数
-            // store 到 [sp+shadow+(k-n)*槽单位]（基址 = [machine.frame].sp 派生）
-            let __off = __shadow as i64 + (__pi - #n) as i64 #stride_factor * __SLOT_BYTES as i64;
+    // 栈参数 store 语句（by-position int 臂用）：偏移**由 plan 给**（调用方视角
+    // `CallLayout::caller_offset` = shadow + k×槽；v20 A5-3 起谱面不再声明
+    // `[abi.stack_args]`，`shadow`/`stride` 两处常量都删了）。角色缺失 ⇒ 运行期
+    // 明确 Unsupported（不引用任何指令名）。
+    let stack_store_stmt: TokenStream = match stack_store {
+        Some((s_vn, s_mem, s_reg, s_reg_idx)) => quote! {
+            // 第 (__pi - n) 个栈槽：偏移与帧需求都按**布局**算（__cl = 调用布局）
+            let __k = (__pi - #n) as u32;
+            let __off = __cl.caller_offset(__k) as i64;
+            let __slot = __cl.slot_bytes;
             __pi += 1;
             let __idx = __pack.push_inst(Inst::#s_vn {
                 #s_mem: MemRef {
@@ -1882,12 +1834,11 @@ fn arg_move_loop(
             // 帧需求：栈参数区 = shadow + 已用栈槽
             ctx.max_stack_arg_bytes = ctx
                 .max_stack_arg_bytes
-                .max(__shadow + (__pi - #n) as u32 #stride_factor * __SLOT_BYTES as u32);
+                .max(__cl.shadow_bytes + (__pi - #n) as u32 * __slot);
         },
         _ => quote! {
             return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: 本 ISA 不支持栈参数（未声明 [abi.stack_args] / \
-                 roles = [\"stack_arg_store\"] 的指令）".into(),
+                "v12 call: 本 ISA 缺 roles = [\"stack_arg_store\"] 的指令（栈参数写不出去）".into(),
             ));
         },
     };
@@ -2018,11 +1969,11 @@ fn arg_move_loop(
             let __dst = [#(Reg::#int_regs),*][__pi];
             __pi += 1;
             #int_stmt
-        } else if let Some(__shadow) = #stack_shadow_ref {
+        } else if let Some(__cl) = ctx.call_layout.as_ref() {
             #stack_store_stmt
         } else {
             return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: integer arg register exhausted (stack args not yet supported)".into(),
+                "v12 call: 整数实参寄存器耗尽，且本函数没有调用布局（plan）——栈参数的偏移只有布局一个来源".into(),
             ));
         }
     };

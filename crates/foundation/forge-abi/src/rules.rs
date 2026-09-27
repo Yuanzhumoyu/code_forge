@@ -444,6 +444,18 @@ impl AbiRules {
         if self.stack.slot_bytes == 0 {
             return Err(bad("stack.slot_bytes 不能为 0".into()));
         }
+        // shadow space（调用方在 call 前预留）必须是槽单位的整数倍——这条校验原先在
+        // 谱面（`[abi.stack_args].shadow_bytes`，v20 A5-3 已删），现在归规则：
+        // 它是**约定事实**，谱里没有可校验的键了。
+        if self.shadow_bytes != 0 {
+            let unit = self.stack.slot_bytes;
+            if unit > 1 && !self.shadow_bytes.is_multiple_of(unit) {
+                return Err(bad(format!(
+                    "shadow_bytes = {} 必须是槽单位（{} 字节）的正整数倍",
+                    self.shadow_bytes, unit
+                )));
+            }
+        }
         if self.stack_align == 0 || !self.stack_align.is_power_of_two() {
             return Err(bad(format!(
                 "stack_align = {} 必须是 2 的幂",

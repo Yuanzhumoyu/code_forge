@@ -142,14 +142,15 @@ fn win64_stack_args_probe() -> Function {
     b.finish().expect("build")
 }
 
-/// **栈参数的偏移核对**（v20 A3b-2b-2c 的入场券）：布局给的 `Stack { offset }` 必须与
-/// **现有发射路径**（`@move_args` 的 `[abi.stack_args]` 算式）**同值**：
-/// `first_offset_slots × slot + shadow + (pos − n_int) × stride × slot`。
+/// **栈参数的偏移核对**（v20 A3b-2b-2c 的入场券，A5-3 起是唯一事实源）：布局给的
+/// `Stack { offset }` 必须等于 **x86 约定的算式**
+/// `first_offset_slots × slot + shadow + (pos − n_int) × slot`
+/// （数值来自 `AbiRules`：win64 = 2 / 32 / 8；谱面已不再声明 `[abi.stack_args]`）。
 ///
-/// 这是"把栈参数收参也切到布局"之前唯一能先做的正确性检查：**偏移差一**就是读错值
+/// 这是"把栈参数收参也切到布局"的正确性检查：**偏移差一**就是读错值
 /// （不是崩，而是静默错值），矩阵未必抓得到，必须先钉住。
 #[test]
-fn stack_arg_offsets_agree_with_the_legacy_formula() {
+fn stack_arg_offsets_match_the_x86_convention_numbers() {
     use forge_isa_runtime::machine::call_layout::ArgPlace;
 
     let tm = TargetMachine::new();
@@ -158,7 +159,7 @@ fn stack_arg_offsets_agree_with_the_legacy_formula() {
     let plan = plan_for_function(&tm, &reg, "win64", &func).expect("plan");
     let layout = forge_codegen::pipeline::abi_target::call_layout(&plan, &tm);
 
-    // 现有路径的口径（x86 谱）：first_offset_slots = 2、shadow = 32、stride = 1、slot = 8。
+    // x86 约定的口径（AbiRules）：first_offset_slots = 2、shadow = 32、slot = 8。
     let slot = layout.slot_bytes as i64;
     let first = 2 * slot; // first_offset_slots × slot
     let shadow = layout.shadow_bytes as i64;
@@ -175,7 +176,7 @@ fn stack_arg_offsets_agree_with_the_legacy_formula() {
             ArgPlace::Stack { offset, .. } if expect >= 0 => {
                 assert_eq!(
                     *offset as i64, expect,
-                    "第 {i} 个参数的栈偏移：布局 {offset} ≠ 现有算式 {expect}"
+                    "第 {i} 个参数的栈偏移：布局 {offset} ≠ 约定算式 {expect}"
                 );
             }
             other => panic!(

@@ -895,82 +895,33 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     // 兜底**（那样等于把某个 ISA 的命名约定写进通用生成器；见
     // docs/reference/isa-dsl.md「角色缺失 → 明确 Unsupported，不再静默去查一个
     // 别的 ISA 的指令名」）。
-    // 生成期门控：shadow 已声明但角色缺失 → 直接报错（不产错码）。
-    let stack_shadow_ref: TokenStream = match model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.shadow_bytes)
-    {
-        Some(v) => quote! { Some(#v) },
-        None => quote! { None },
-    };
-    let has_shadow = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.shadow_bytes)
-        .is_some();
-    // 栈参数内存基址 = `[abi.stack_args].callee_base`（缺省 fp → 用
-    // `[machine.frame].fp` 的名字；x86 = RBP）。历史实现写死字面量 `Reg::RBP`
-    // ——非 x86 ISA 一旦声明 shadow 会生成引用不存在寄存器的代码；这里改为
-    // 元数据派生 + 生成期 fail-closed（fp 未声明 → 报错）。
-    let callee_base_kind = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.callee_base.clone())
-        .unwrap_or_else(|| "fp".to_string());
+    // **栈参数能力 = 角色声明**（v20 A5-3 收口）：谱面不再有 `[abi.stack_args]`，
+    // 布局事实（shadow / 首个栈参偏移 / 每个栈参的落点）全部来自 plan 的
+    // `CallLayout`（`ArgPlace::Stack { offset }`）；"本 ISA 支不支持栈参数"就只能由
+    // `roles = ["stack_arg_load"]` 说话（validate 保证角色全 ISA 唯一）。
+    let has_stack_arg =
+        crate::v12::codegen::lowering::inst_by_role(infos, Role::StackArgLoad).is_some();
+    // 栈参数内存基址 = `[machine.frame].fp`（x86 = RBP）：被调方的传入参数区相对
+    // **帧指针**（fp-outside 机制）。历史实现写死字面量 `Reg::RBP`——非 x86 ISA
+    // 一旦支持栈参数会生成引用不存在寄存器的代码；这里元数据派生 + 生成期
+    // fail-closed（fp 未声明 → 报错，不按别家寄存器名兜底）。
     let callee_base: TokenStream = match model
         .machine_frame()
-        .map(|f| {
-            if callee_base_kind == "sp" {
-                f.sp.clone()
-            } else {
-                f.fp.clone().unwrap_or_default()
-            }
-        })
+        .and_then(|f| f.fp.clone())
         .filter(|n| !n.is_empty())
     {
         Some(n) => {
             let id = format_ident!("{n}");
             quote! { Reg::#id }
         }
-        None if has_shadow => {
-            return Err(format!(
-                "move_args: [abi.stack_args].shadow_bytes 已声明，但 [machine.frame].{callee_base_kind} 缺失——栈参数内存基址需要{}（不再回退字面量 \"RBP\"）",
-                if callee_base_kind == "sp" {
-                    "栈指针"
-                } else {
-                    "帧指针"
-                }
-            ));
+        None if has_stack_arg => {
+            return Err(
+                "move_args: 本 ISA 声明了 roles = [\"stack_arg_load\"]（支持栈参数），但 \
+                 [machine.frame].fp 缺失——栈参数内存基址需要帧指针（不回退字面量 \"RBP\"）"
+                    .into(),
+            );
         }
         None => quote! { Reg::from_index(0, __DEFAULT_GPR_CLASS) },
-    };
-    // 被调方第一个栈参数的槽偏移与步长（`[abi.stack_args]`；x86 = 2/1）。
-    let first_off: u32 = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.first_offset_slots)
-        .unwrap_or(2);
-    let stride: u32 = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.stride_slots)
-        .unwrap_or(1);
-    // 发射用字面量：无后缀（`2` 而非 `2u32`）；stride == 1（紧凑布局，
-    // x86/riscv/arm64 均如此）时不发射 `* 1`——这样"键归类"这类纯重构
-    // 的生成代码与重构前**逐字节一致**（可用 dump 对照证明行为不变），
-    // 只有声明了 stride ≠ 1 的 ISA 才多出步长因子。
-    let first_off_lit = proc_macro2::Literal::u32_unsuffixed(first_off);
-    let stride_factor: TokenStream = if stride == 1 {
-        quote! {}
-    } else {
-        let lit = proc_macro2::Literal::u32_unsuffixed(stride);
-        quote! { * #lit }
     };
     // (变体名, Mem 字段, Reg 字段)——load 的 Reg 槽是 dest、store 是 src，
     // 字段名由 `reg_mem_fids` 从操作数结构派生。
@@ -978,9 +929,9 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                   what: &str|
      -> Result<Option<(syn::Ident, syn::Ident, syn::Ident)>, String> {
         let Some(info) = crate::v12::codegen::lowering::inst_by_role(infos, role) else {
-            if has_shadow {
+            if has_stack_arg {
                 return Err(format!(
-                    "move_args: [abi.stack_args].shadow_bytes 已声明，但本 ISA 缺 roles = [\"{role}\"] 的指令（不按指令名兜底）"
+                    "move_args: 本 ISA 声明了 roles = [\"stack_arg_load\"]（支持栈参数），但缺 roles = [\"{role}\"] 的指令（不按指令名兜底）"
                 ));
             }
             return Ok(None);
@@ -995,37 +946,14 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     };
     let load_triple = tagged(Role::StackArgLoad, "收参指令")?;
     let store_triple = tagged(Role::StackArgStore, "写回指令")?;
-    // 栈参数收参语句（by-position 的 int 臂用）：有角色 → 用角色命中的指令
-    // 从 [rbp+off] load 到 __dest；无角色 → **生成期**就给明确错误
-    //（不引用任何指令名，也不再让 by-position 臂去插值假名字）。
-    let stack_int_recv: TokenStream = match (&load_triple, has_shadow) {
-        (Some((vn, mem, reg)), true) => quote! {
-            let __off = (#first_off_lit * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 #stride_factor * __SLOT_BYTES as i64;
-            let __bytes = encode(&Inst::#vn {
-                #mem: MemRef {
-                    base: #callee_base,
-                    disp: __off,
-                    index: None,
-                    scale: 1,
-                },
-                #reg: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
-            }).map_err(|e| crate::IrError::Emit(e))?;
-            __sink.put_bytes(&__bytes);
-        },
-        _ => quote! {
-            return Err(crate::IrError::Emit(
-                "v12 move_args: 本 ISA 不支持栈参数（未声明 [abi.stack_args] / roles = [\"stack_arg_load\"] 的指令）".into(),
-            ));
-        },
-    };
-    // 栈参数收参的 scratch 寄存器（`[machine].spill_scratch` 首项，迁移期回退
+    // 栈参数收参的 scratch 寄存器（`[machine].spill_scratch` 首项；迁移期回退
     // `[abi].scratch`）与 callee-saved 区字节数（sp_base 计算常量）。**只在真的要走
-    // 栈参数收参时**要求声明（无栈参数的 ISA 不需要 scratch）；缺声明 = 生成期明确
-    // 报错——不回退到某个 ISA 的寄存器名（那等于把别家的命名约定写进通用生成器）。
+    // 栈参数收参时**要求声明（声明了 `stack_arg_load` 角色的 ISA）；缺声明 = 生成期
+    // 明确报错——不回退到某个 ISA 的寄存器名（那等于把别家的命名约定写进通用生成器）。
     let scratch0 = match model.machine_scratch().first() {
         Some(s) => format_ident!("{s}"),
-        None if has_shadow => {
-            return Err("move_args: 本 ISA 声明了 [abi.stack_args].shadow_bytes，但 [machine].spill_scratch 未声明——栈参数收参需要一个临时寄存器（不按某个 ISA 的寄存器名兜底）"
+        None if has_stack_arg => {
+            return Err("move_args: 本 ISA 声明了 roles = [\"stack_arg_load\"]（支持栈参数），但 [machine].spill_scratch 未声明——栈参数收参需要一个临时寄存器（不按某个 ISA 的寄存器名兜底）"
                         .into());
         }
         None => format_ident!("__unused_scratch"),
@@ -1227,9 +1155,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                     ));
                 }
             },
-            // 整数收参：int_regs[__pos]；位置 ≥ 寄存器数 → 栈参数
-            //（[rbp + 16 + shadow + (pos-n)*8]：入口 rsp 指向返回地址，
-            // 返回地址 8 + shadow 之后是第 n 个栈参数）
+            // 整数收参：int_regs[__pos]；位置 ≥ 寄存器数 ⇒ 该参数由布局判为栈落点，
+            // 走下面的**布局路径**（`ArgPlace::Stack`）。走到这个 else 说明本函数
+            // 没有可用布局（无注册约定 / 规划失败）——明确拒绝：v20 A5-3 起栈参数的
+            // 偏移只有 plan 一个来源，谱面不再声明 `[abi.stack_args]`。
             quote! {
                 let __pos = __i + if __rm.sret { 1usize } else { 0usize };
                 if __pos < #n {
@@ -1240,11 +1169,9 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
 
                     }).map_err(|e| crate::IrError::Emit(e))?;
                     __sink.put_bytes(&__bytes);
-                } else if let Some(__shadow) = #stack_shadow_ref {
-                    #stack_int_recv
                 } else {
-                    return Err(crate::IrError::Emit(
-                        "v12 move_args: int arg position out of range".into(),
+                    return Err(crate::IrError::Unsupported(
+                        "v12 move_args: 栈参数收参需要调用布局（plan 的 ArgPlace::Stack）——本函数没有布局".into(),
                     ));
                 }
             },
@@ -1298,32 +1225,22 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         )
     };
     let _ = byref_stmt_use;
-    // shadow 未声明（riscv/demo 无栈参数）→ 栈参数收参分支整体不生成
-    //（否则分支体引用 RBP/R10/MOV64_RM 等不存在的 Reg/Inst 变体）。
-    let has_stack_arg = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.stack_args.as_ref())
-        .and_then(|s| s.shadow_bytes)
-        .is_some();
-    let stack_arg_receive: TokenStream = match (
-        has_stack_arg,
-        load_triple.as_ref(),
-        store_triple.as_ref(),
-    ) {
-        (true, Some((l_vn, l_mem, l_reg)), Some((s_vn, s_mem, s_reg))) => quote! {
-            // 栈参数（位置 ≥ 寄存器数且 shadow 声明）**无条件**收参到
-            // spill 槽（regalloc 强制 spill 保证有槽；即使分配了 preg
-            // 也不走寄存器分支——否则与低位置参数共享寄存器时，批量
-            // 收参顺序覆盖（a→r15 后 e→r15，a 值丢）→ five_args 14）。
-            if let Some(__shadow) = #stack_shadow_ref
-                && __pos >= #n
+    // 栈参数收参（`ArgPlace::Stack` 且被 regalloc 强制 spill 的那个参数）**无条件**
+    // 先收进 spill 槽（regalloc 强制 spill 保证有槽；即使分配了 preg 也不走寄存器
+    // 分支——否则与低位置参数共享寄存器时，批量收参顺序覆盖（a→r15 后 e→r15，
+    // a 值丢）→ five_args 14）。偏移**来自布局**（v20 A5-3：谱面不再声明
+    // `[abi.stack_args]`，`first_offset_slots`/`shadow`/`stride` 三处常量都删了）。
+    let stack_arg_receive: TokenStream = match (load_triple.as_ref(), store_triple.as_ref()) {
+        (Some((l_vn, l_mem, l_reg)), Some((s_vn, s_mem, s_reg))) => quote! {
+            if let Some(__cl) = __rm.call_layout.as_ref()
+                && let Some(crate::machine::call_layout::ArgPlace::Stack { offset: __soff, .. }) =
+                    __cl.arg(__i as u32).map(|__a| &__a.place)
                 && __rm.spill_slots.contains_key(&__pv)
             {
-                let __off = (#first_off_lit * __SLOT_BYTES as i64 + __shadow as i64) + (__pos - #n) as i64 #stride_factor * __SLOT_BYTES as i64;
+                let __off = *__soff as i64;
                 let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
                 let __slot_off = __rm.spill_slot(__pv).offset as i64;
-                // load ABI 槽 → scratch（角色 stack_arg_load 命中的指令）
+                // load 布局给的栈槽 → scratch（角色 stack_arg_load 命中的指令）
                 let __lbytes = encode(&Inst::#l_vn {
                     #l_mem: MemRef {
                         base: #callee_base,
@@ -1348,7 +1265,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                 continue;
             }
         },
-        // shadow 未声明（riscv/demo 无栈参数）→ 分支整体不生成
+        // 本 ISA 不支持栈参数（未声明角色）→ 分支整体不生成
         //（否则分支体引用不存在的 Reg/Inst 变体）。
         _ => quote! {},
     };
@@ -1560,7 +1477,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                         //
                         // 被 regalloc 强制 spill 的栈参数在进入这里之前就被
                         // `#stack_arg_receive` 收进 spill 槽了（那条路用同一套数值，
-                        // 现已由 `abi_target_real::stack_arg_offsets_agree_with_the_legacy_formula`
+                        // 现已由 `abi_target_real::stack_arg_offsets_match_the_x86_convention_numbers`
                         // 钉住"布局偏移 == 旧算式"）。
                         //
                         // 浮点参数走栈的收参还没接（旧路径同样只走 GPR 搬运）——

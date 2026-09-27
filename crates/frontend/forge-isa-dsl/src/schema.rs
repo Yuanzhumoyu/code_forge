@@ -304,7 +304,6 @@ pub const SECTIONS: &[Section] = &[
         model: "Abi",
         required: &[],
         optional: &[
-            "stack_args",
             "arg_class",
             "frame",
             "callee_saved",
@@ -327,21 +326,6 @@ pub const SECTIONS: &[Section] = &[
         flatten: &[],
         additional: false,
         doc: "帧布局",
-    },
-    Section {
-        path: "[abi.stack_args]",
-        model: "AbiStackArgs",
-        required: &[],
-        optional: &[
-            "callee_base",
-            "caller_base",
-            "first_offset_slots",
-            "stride_slots",
-            "shadow_bytes",
-        ],
-        flatten: &[],
-        additional: false,
-        doc: "栈参数布局（全部由 ISA 数据给出）",
     },
     Section {
         path: "[abi.arg_class]",

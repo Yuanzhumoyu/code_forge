@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3：`[abi.stack_args]` 删除（栈参数布局全面由 plan 驱动）
+
+- **谱面删键**：`[abi.stack_args]`（`callee_base`/`caller_base`/`first_offset_slots`/`stride_slots`/`shadow_bytes`）整节删除，`Abi` 结构体 / schema / `isa-dsl.schema.json` / 文档键表同步。这五个键是**约定事实**，`AbiRules` 里本来就有对应（`shadow_bytes` + `stack.slot_bytes`/`stack.first_offset_slots`），谱里那份只是生成期烘死的常量。
+- **调用方**（`arg_move_loop`）：栈参数 store 改成读 plan——偏移 `CallLayout::caller_offset(k)`（= `shadow + k×槽`）、帧需求用 `shadow_bytes`/`slot_bytes`；门控从"谱里声明过 shadow"换成"**本函数有调用布局**（`ctx.call_layout`）"，没有布局就明确 `Unsupported`（不再按谱面常量猜偏移）。基址恒为 `[machine.frame].sp`（`caller_base` 键随之下线）。
+- **被调方**（`move_args`）：spill 槽收参那条路从谱面算式（`first_offset_slots×slot + shadow + (pos−n)×stride×slot`）改成读 **`ArgPlace::Stack { offset }`**；非 spill 的栈参数本来就走布局路径。
+- **能力申报改由角色说话**：`has_stack_arg` 从"谱里声明了 `shadow_bytes`"改成"声明了 `roles = ["stack_arg_load"]`"。于是"有 load 缺 store"仍是**生成期**点名角色的错误，而"两个角色都没有"只是**不支持栈参数**（生成照旧成功，收参路径运行期 `Unsupported`）；`[machine].spill_scratch` 的要求随之挂在角色上。
+- **规则侧补一条校验**（原先在谱面侧）：`shadow_bytes` 必须是槽单位的整数倍——键搬走时这条不变量不能丢。
+- 守卫：`abi_target_real.rs` 的栈参偏移核对改名为 `stack_arg_offsets_match_the_x86_convention_numbers`（对照 `AbiRules` 的 2/32/8，不再是"对照谱面算式"）；`v12/tests.rs` 的角色用例改成 `stack_args_capability_is_declared_by_roles`（含"删掉 load 角色仍能生成"的反向对照）。
+- **已知边界**（写进 `docs/reference/isa-dsl.md`）：调用方按"每个栈参数一个槽"计数，>8 字节的栈参数今天也不支持（float/vector 超出寄存器数时明确 `Unsupported`）。
+
 ### Changed (2026-09-27) — v20 A5-3：`[abi].call_clobbers` 与 `[abi].frame_padding` 两个约定键迁走
 
 - **`[abi].call_clobbers` 删除**（riscv64/arm64 两谱；x86 本就没写）：调用点的破坏集已全面由 plan 驱动（`AbiPlan.clobbers` = 可用池 − callee-saved，经 `CallLayout.clobbers` 到 regalloc）。谱里那份降级为缺省空、已无人读。
