@@ -466,6 +466,19 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   ③ 然后才能删三份谱的 `[abi].callee_saved`（regalloc 的集合仍来自 plan；无 plan 的夹具
   本来就只有空表）。
 
+  **2026-09-27 二次实测（这次定位到具体测试）**：机器事实链路接上后再删 x86 的
+  `[abi].callee_saved`，`forge-codegen --lib --all-features` 仍 `0xC0000005`，崩在
+  `runtime::jit::tests::test_jit_call_indirect_wide_vector_byref`（逐个用例串行跑，前一条
+  `test_jit_boundary_constants` 还是 ok）。**关键**：`compiler.rs` 的 plan 计算是**允许失败**的
+  （"算不出来不阻断编译，退回谱里声明的约定数据"，结果留在 `abi_plan_note`），于是**宽向量 by-ref /
+  call_indirect 这类引擎暂时规划不了的签名**会走 `call_layout == None` 的回退路径——那条路的
+  regalloc callee-saved 集合就是 `ri.callee_saved()`。删掉谱面键 ⇒ 该集合为空 ⇒ 被调方
+  什么都不保存、而调用方以为 RBX/RDI/… 被保住 ⇒ 破坏调用者状态（错值，极端即访问违例）。
+  **结论**：`[abi].callee_saved` 不能只靠"发射侧不再读它"来删——必须先让**每条发射路径都有 plan**
+  （= 补 A6 里那些规划缺口：Pair/Group/无指针 Indirect/宽向量 by-ref 等），或让无 plan 的回退
+  不再需要**寄存器名**（例如保守地"除 scratch 外全部可用 GPR 都算 callee-saved"）。这条与 A6 的
+  规划缺口是同一件事，别分开做。
+
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
   变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
 - HFA/HVA 的"寄存器不够时部分在寄存器"（需要按成员赋值的规则语言）。
