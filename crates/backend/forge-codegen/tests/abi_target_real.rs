@@ -645,3 +645,50 @@ fn aapcs64_probe() -> Function {
     b.ret(&[params[0]]);
     b.finish().expect("build")
 }
+
+/// **静态 push 表必须是 plan 的超集**（v20 A6 的护栏，2026-09-27 加）：
+/// x86（fp-outside / push 机制）的序言**仍是静态**发射——按谱面 `[abi.callee_saved].gpr`
+/// 逐个 `push`，而 regalloc 认为"跨调用会被保住"的集合来自 **plan**（约定数据）。
+/// 两条路必须满足 `谱面表 ⊇ plan 的 GPR 项`，否则会出现**静默错值**：
+/// regalloc 把跨调用存活值放进一个它以为会被保存、而序言根本没 push 的寄存器。
+///
+/// （反过来的方向是安全的浪费：谱面表更大 ⇒ 多保存几个，只是多几条 push。）
+///
+/// 当天试过把 push 机制改成运行时按 `callee_saved_to_save` 循环（那样这条护栏就不再
+/// 需要），但撞上"帧填充/`__cs_bytes` 是按静态表长校准的"两层耦合、用例崩溃，已回滚；
+/// 详见 `docs/plans/calling-convention-redesign-plan.md` 的 A6 一节。在那之前，这条
+/// 护栏钉住"静态表不小于 plan"。
+#[test]
+fn x86_static_push_table_covers_the_plan_gpr_callee_saved() {
+    use forge_codegen::pipeline::abi_target::call_layout;
+
+    let cases: [(&str, fn() -> Function); 2] = [
+        ("win64", win64_stack_args_probe as fn() -> Function),
+        ("sysv64", sysv64_probe as fn() -> Function),
+    ];
+    for (conv, probe) in cases {
+        let tm = TargetMachine::new();
+        let reg = builtin::registry().expect("内置注册表");
+        let plan = plan_for_function(&tm, &reg, conv, &probe()).expect("plan");
+        let layout = call_layout(&plan, &tm);
+        let ri = tm.reg_info();
+
+        // x86 谱用 push 机制：不声明 callee_save 角色（那是帧内机制的事）。
+        assert!(
+            tm.role_bits("callee_save").is_none(),
+            "{conv}：x86 走 push 机制，不该声明 callee_save 角色——若改了机制，本护栏要重写"
+        );
+
+        let static_n = ri.callee_saved().len();
+        let plan_gpr = layout
+            .callee_saved
+            .iter()
+            .filter(|(c, _)| !c.is_fp())
+            .count();
+        assert!(
+            static_n >= plan_gpr,
+            "{conv}：谱面静态 push 表（{static_n}）必须 ⊇ plan 的 GPR callee-saved（{plan_gpr}）\
+             ——否则 regalloc 会把跨调用值放进序言不保存的寄存器"
+        );
+    }
+}
