@@ -131,12 +131,12 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[pseudo]]` | `name` `params` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[abi]` | — | `frame_padding` `stack_args` `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
+| `[abi]` | — | `stack_args` `arg_class` `frame` `callee_saved` `scratch` `ret_regs` `call_ret_reg` `call_clobbers` `reserved` `arg_slot` | 调用约定 |
 | `[abi.frame]` | — | `sp` `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧布局 |
 | `[abi.stack_args]` | — | `callee_base` `caller_base` `first_offset_slots` `stride_slots` `shadow_bytes` | 栈参数布局（全部由 ISA 数据给出） |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[abi.callee_saved]` | — | `gpr` `xmm` | 被调用者保存寄存器名单 |
-| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数） |
+| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（`[abi.frame]` 为迁移期回退） |
 | `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
@@ -1158,13 +1158,23 @@ insts = ["movsd {out}, {a}", "mulsd {out}, {b}", "addsd {out}, {c}"]
 fixed_regs = ["X0", "X1", "X3", "X4"]   # regalloc 不可分配（zero/ra/gp/tp 之类）
 spill_scratch = ["X5", "X6"]            # 溢出与栈参数收参的临时寄存器
 link_reg = "X1"                         # call 写返回地址的寄存器（x86 写栈 ⇒ 不声明）
+frame_padding = 8                       # 帧填充字节（x86 = 8；riscv/arm64 = 0）
 ```
+
+`frame_padding`（A5-3 起在此）：`sub rsp` 之外还要多减的字节数，使 call 点的 `rsp` 回到
+`[stack].align` 对齐。它是**机器事实**——由这台机器的帧机制（fp-outside 的 `push fp` +
+推入 callee-saved 的次数）与入口 `rsp` 的模数共同决定：x86 = `push rbp` + 7 次 `push`
+（8 次、偶数）而入口 `rsp ≡ 8 (mod 16)` ⇒ 补 8（缺省 0 会让系统 DLL 在未对齐栈上崩）；
+riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
+`AbiRules::frame_padding`（进 plan，管线优先读）。
 
 三条纪律：① 参数池 / 返回池 / callee-saved / sret 槽 / 栈参数布局**不在这里**——它们是
 **约定事实**，属于 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）；
 ② 键名与 `[abi]` 的旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
 `link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊；③ 迁移期（A5-3）这三个键仍能
 回退到 `[abi]` 同名旧键，因此可以逐谱迁移——[`[abi]`](#abi--调用约定) 的旧键在 A5-3 收尾时删除。
+`frame_padding` 例外（A5-3 已迁完）：它与 `[abi]` 的那份**同名同义**但**不并存**——键直接
+搬走，写 `[abi].frame_padding` 会报未知键（旧的 `Abi` 字段已删）。
 
 ## `[abi]` — 调用约定
 
@@ -1174,7 +1184,6 @@ link_reg = "X1"                         # call 写返回地址的寄存器（x86
 
 ```toml
 [abi]
-frame_padding = 8              # 帧额外栈填充（x86 = 8；见下）
 arg_slot = "by-position"       # 参数槽位计数策略：by-class（缺省，riscv）/ by-position（x86）
 ret_regs = ["X10"]             # 返回寄存器（缺省空 = index 0，x86 RAX 语义）
 call_clobbers = ["X1", "X7", ...]  # Call 点被调用方破坏的寄存器
@@ -1204,8 +1213,8 @@ limit = 128
 
 - `arg_slot`（枚举）：`by-class`（缺省，riscv SysV——int/float 各自独立推进）/
   `by-position`（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）。
-- `frame_padding`：prologue push rbp + callee-saved 后 rsp%16==8，sub rsp 需使
-  call 前 rsp%16==0（Windows x64 ABI，缺省 0 会让系统 DLL 在未对齐栈上 SEGV）。
+- `frame_padding`（A5-3 起在 [`[machine]`](#machine--机器事实)）：见上节「机器事实」。
+  旧写法 `[abi].frame_padding` 现在**明确报错**（键已删除），请写进 `[machine]`。
 - `[abi.stack_args]`：第 5+ 参数（寄存器耗尽后）由调用方 store 到
   `[caller_base + shadow_bytes + k*stride_slots*slot]`、被调方从
   `[callee_base + first_offset_slots*slot + k*stride_slots*slot]` load

@@ -71,7 +71,9 @@ pub trait TargetABI: Send + Sync + 'static {
     }
 
     /// 帧布局的额外栈填充（字节）：x86 = 8（align/2，SysV/Windows x64
-    /// red-zone 约束）；其他 ABI 缺省 0。架构事实由 TOML 的 `[abi].frame_padding` 声明。
+    /// red-zone 约束）；其他 ABI 缺省 0。**机器事实**由 TOML 的
+    /// `[machine].frame_padding` 声明（v20 A5-3 起；此前在 `[abi]`）；
+    /// 有 plan 时管线优先用 plan 的 `frame_padding`（那是约定侧的值）。
     fn frame_padding(&self) -> i32 {
         0
     }

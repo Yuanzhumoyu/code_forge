@@ -239,7 +239,7 @@ promoted/static 路径。
 | 根因 | 修复 | 提交 |
 | --- | --- | --- |
 | **COFF reloc 隐式 addend**：编码器占位 -(f+1)/-(g+1) 作为隐式 addend 残留 → call 目标偏 -1（0x10d0 vs wrapping_add 0x10d1）、GlobalAddr 符号地址偏 -1（movabs 0x2fff vs .rodata 0x3000） | object_writer.rs：REL32/ADDR64/ADDR32 在 add_relocation 前清零被重定位字段；REL32 保持 addend-4 补偿（coff_adjust_addend +4 净 0 不覆盖） | 16bec80 |
-| **Windows x64 栈 16 字节对齐**：prologue push rbp+7 callee-saved 后 rsp%16==8，sub rsp 需 ≡8(mod16)；缺省 padding 0 → 系统 DLL 内 movdqa 未对齐 SEGV（ffi_exit_process 0xC0000005） | `[abi].frame_padding = 8`（模型+生成器+TOML 声明） | 16bec80 |
+| **Windows x64 栈 16 字节对齐**：prologue push rbp+7 callee-saved 后 rsp%16==8，sub rsp 需 ≡8(mod16)；缺省 padding 0 → 系统 DLL 内 movdqa 未对齐 SEGV（ffi_exit_process 0xC0000005） | `[abi].frame_padding = 8`（模型+生成器+TOML 声明；v20 A5-3 起该键搬到 `[machine].frame_padding`，语义同值） | 16bec80 |
 | **ScalarPair 双返回**：Return/Call 只处理 results.first()（RAX），RDX 从未 mov → overflowing_add 的 (i32,bool) bool 读垃圾 → checked_destructure 返回 0 | lowering.rs：Return values[1]→RDX、Call results[1]←RDX（GPR64 index 1） | 16bec80 |
 
 **e2e 现状 56/58**：栈参数实现（5dba34b）后 five_args_stack/eight_args_stack/

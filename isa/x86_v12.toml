@@ -1860,10 +1860,6 @@ align = 16
 fp_save = 8
 
 [abi]
-# 帧填充 8（align/2）：prologue push rbp + 7 callee-saved 后 rsp%16==8，
-# sub rsp 必须使 call 前 rsp%16==0（Windows x64 ABI）——缺省 0 会让系统
-# DLL（如 kernel32!ExitProcess 内部 movdqa）在未对齐栈上 SEGV（0xC0000005）。
-frame_padding = 8
 # Windows x64：int/float 参数共享位置计数（参数 i → GPR{i}/XMM{i}）
 arg_slot = "by-position"
 
@@ -4034,6 +4030,13 @@ spill_scratch = ["R10", "R11"]
 # 在 `[abi.callee_saved]` 里）分开——生成期 `__cs_bytes` 与 fp-outside 的推补偿用它。
 callee_saved_gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
 callee_save_slots = 7
+# 帧填充（字节，机器事实，v20 A5-3，原 `[abi].frame_padding`）：8 = align(16)/2。
+# 归机器事实的理由：它由**这台机器的帧机制**决定——入口 rsp ≡ 8 (mod 16)（call 压了
+# 返回地址），x86 的帧件是 `push rbp` + 7 次 callee-saved `push` = 8 次推入（偶数）⇒
+# `sub rsp` 之前仍是 8 ⇒ 必须多减 8 才能在 call 点回到 16 对齐。缺省 0 会让系统 DLL
+# （如 kernel32!ExitProcess 内部的 movdqa）在未对齐栈上崩（0xC0000005）。
+# 约定侧的同名字段在 AbiRules（win64/sysv64 都写 8），进 plan 后由管线优先读。
+frame_padding = 8
 
 # 帧形状：栈/帧指针寄存器名 + 帧指针保存槽字节数（x86 用硬件 push 保存 fp，故
 # 布局模式是缺省 fp-outside、alloc 立即数由 SUB 自带减号语义）。

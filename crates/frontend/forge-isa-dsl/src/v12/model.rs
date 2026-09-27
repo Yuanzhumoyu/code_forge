@@ -57,6 +57,17 @@ pub struct MachineSection {
     /// 缺省（`None`）⇒ 回退 `[abi].callee_saved.gpr`（迁移期同义）。
     #[serde(default)]
     pub callee_saved_gpr: Option<Vec<String>>,
+    /// **帧填充**（字节，机器事实，v20 A5-3）：`sub rsp` 之外还要多减的字节数，
+    /// 使 call 点的 `rsp` 回到 `[stack].align` 对齐。
+    ///
+    /// 为什么是**机器事实**：它由这台机器的帧机制（fp-outside 的
+    /// `push fp` + 推入 callee-saved 的次数）与入口 `rsp` 的模数共同决定；
+    /// x86（`push rbp` + 7 次 `push` = 8 次偶数推入 ⇒ 入口 `rsp ≡ 8`）需要 8，
+    /// riscv/arm64（fp-inside、显式 `sub sp`）不需要 ⇒ 0。
+    /// **约定侧**的同名字段仍在 `AbiRules::frame_padding`（规则随约定而变，进 plan）；
+    /// 管线优先读 plan，无 plan 时才回退到这里（与 `callee_save_slots` 同一套路）。
+    #[serde(default)]
+    pub frame_padding: Option<i32>,
 }
 
 impl V12Model {
@@ -139,6 +150,17 @@ impl V12Model {
             .as_ref()
             .and_then(|a| a.callee_saved.as_ref())
             .map(|c| c.gpr.len() as u32)
+            .unwrap_or(0)
+    }
+
+    /// 帧填充字节数（机器事实）：`[machine].frame_padding`，缺省 0。
+    ///
+    /// 生成物的 `TargetABI::frame_padding()` 读它（无 plan 的回退值）；有 plan 时
+    /// 管线用 plan 的 `frame_padding`（来源 = 约定侧 `AbiRules::frame_padding`）。
+    pub fn machine_frame_padding(&self) -> i32 {
+        self.machine
+            .as_ref()
+            .and_then(|m| m.frame_padding)
             .unwrap_or(0)
     }
 }
@@ -2700,11 +2722,6 @@ pub struct AbiStackArgs {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Abi {
-    /// 帧布局的额外栈填充（字节）：x86 = 8（align/2，SysV/Windows x64
-    /// ABI：prologue push rbp + callee-saved 后 rsp%16==8，sub rsp 需使
-    /// call 前 rsp%16==0）。缺省 0。
-    #[serde(default)]
-    pub frame_padding: Option<i32>,
     /// 栈参数布局（`[abi.stack_args]`）：寄存器耗尽后的第 N+ 个参数怎么放。
     /// `None` = 不支持栈参数（超寄存器参数 → Unsupported）。
     #[serde(default)]

@@ -22,11 +22,10 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
     // 栈对齐：`[stack].align` > `[stack].slot`（x86 = 16/8 不变；1 字节寄存器
     // ISA 缺省即 1，不再回退 x86 的 16）。
     let stack_align = model.stack_align()?;
-    let frame_padding = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.frame_padding)
-        .unwrap_or(0);
+    // 帧填充 = **机器事实**（v20 A5-3）：`[machine].frame_padding`（x86 = 8、
+    // riscv/arm64 = 0）。约定侧的 `AbiRules::frame_padding` 进 plan，由管线优先读；
+    // 这里生成的 `TargetABI::frame_padding()` 是无 plan 时的回退值。
+    let frame_padding = model.machine_frame_padding();
     // 寄存器参数位置上限：int arg_class 的寄存器个数（Windows x64 = 4；
     // 位置 ≥ 此值走栈）。by-class（riscv）无栈参数 → 全部 arg_regs 数。
     let int_arg_slot_count = model

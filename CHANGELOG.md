@@ -11,11 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3：`[abi].call_clobbers` 与 `[abi].frame_padding` 两个约定键迁走
+
+- **`[abi].call_clobbers` 删除**（riscv64/arm64 两谱；x86 本就没写）：调用点的破坏集已全面由 plan 驱动（`AbiPlan.clobbers` = 可用池 − callee-saved，经 `CallLayout.clobbers` 到 regalloc）。谱里那份降级为缺省空、已无人读。
+- **`[abi].frame_padding` → `[machine].frame_padding`（机器事实）**：它由**这台机器的帧机制**决定——x86 是 `push fp` + 7 次 callee-saved 推入 = 8 次推入（偶数）而入口 `rsp ≡ 8 (mod 16)`，故须补 8；riscv/arm64 的 fp-inside 是显式 `sub sp`，故 0。它与 `[stack].align` 同源，归属机器事实。**约定侧**的同名字段仍在 `AbiRules::frame_padding`（win64/sysv64 都 = 8，进 plan）：管线优先读 plan，无 plan 才回退机器事实（与 `callee_save_slots` 同一套路）。
+- 读取侧：`V12Model::machine_frame_padding()`；生成物 `TargetABI::frame_padding()` 改读 `[machine]`；`Abi` 的 `frame_padding` 字段与 schema 的 `[abi]` 键一并删除 ⇒ 写旧键现在**明确报错**（不再有"两处都写、谁生效"）。
+- 守卫：`abi_target_real.rs` 的交叉核对改成「plan 的 `frame_padding` == 机器事实 `[machine].frame_padding`」（4 份约定逐项核）。
+- 验证：clippy `-D warnings` 0、workspace 串行全套绿、三条 JIT 矩阵不变。
+
 ### Changed (2026-09-27) — v20 A6/A5-3：[abi].callee_saved 迁移到 [machine]（键已删）
 
 - **机器事实两组**：`[machine].callee_saved_gpr = [...]`（帧件会保存的那组 GPR；x86 = RBX/RDI/RSI/R12-R15、riscv64 = 11 个 s 系、arm64 = X19-X28）与 `[machine].callee_save_slots`（推入槽数，可由名单派生）。语义是"**这台机器的帧件会保存这组寄存器**"，与"某份约定**要求**保住哪些"（绑定/plan）分开。
 - **读取侧单点化**：`V12Model::machine_callee_saved()`（优先 `[machine].callee_saved_gpr`、回退 `[abi].callee_saved.gpr`）与 `machine_callee_save_slots()`；生成物 `TargetRegInfo::callee_saved()` / `callee_save_slots()` 都读机器事实，运行时 trait 的 `callee_save_slots()` 带缺省实现（手工后端无需改）。
-- **删键**：三份发行谱的 `[abi].callee_saved` 段删除。**这一条曾两次实测崩溃**（`test_jit_call_indirect_wide_vector_byref`，`0xC0000005`）：因为 `compiler.rs` 的 plan 计算允许失败（"算不出来不阻断编译"），宽向量 by-ref / call_indirect 这类暂时规划不了的签名会走 `call_layout == None` 的回退——那条路的 regalloc callee-saved 集合原先来自谱面键。补上 `[machine].callee_saved_gpr` 后回退有**名字**可读，删键才成立。
+- **删键**：三份发行谱的 `[abi].callee_saved` 段删除。**这一条曾两次实测崩溃**（`test_jit_call_indirect_wide_vector_byref`，`0xC0000005`）——**不是**"无 plan 回退缺名字"（那个说法已作废）：崩溃都发生在**半迁移的树**上，计数（`callee_save_slots` / 生成期 `__cs_bytes` = 7/64）已切到机器事实、名字（`TargetRegInfo::callee_saved()`）却还是空表 ⇒ 帧按 7 个槽布局、regalloc 却以为一个都没被保住，"计数 / 名字 / 消费者"三者不同源。名字与计数**同源**（都读 `[machine]`）之后删键即成立；全套跑完 `FORGE_TRACE_ABI=1` 打印 **0 条** `[abi-plan]`，即测试里没有一次 plan 失败、回退路径根本没被走到。
 - 验证：clippy `--all-targets --all-features -D warnings` 0、workspace 串行全套绿、三条 JIT 矩阵与迁移前同值（x86 195/3、riscv64 131/67、arm64 23/175）。
 
 ### Changed (2026-09-27) — v20 A6：x86 序言/尾声改按运行时 callee-saved 列表发射

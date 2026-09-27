@@ -304,7 +304,6 @@ pub const SECTIONS: &[Section] = &[
         model: "Abi",
         required: &[],
         optional: &[
-            "frame_padding",
             "stack_args",
             "arg_class",
             "frame",
@@ -373,10 +372,11 @@ pub const SECTIONS: &[Section] = &[
             "frame",
             "callee_saved_gpr",
             "callee_save_slots",
+            "frame_padding",
         ],
         flatten: &[],
         additional: false,
-        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数）",
+        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充）",
     },
     Section {
         path: "[machine.frame]",

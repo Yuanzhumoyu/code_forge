@@ -433,8 +433,8 @@ fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
 ///    逐项同值；x86 的 sysv64 少 `RDI/RSI`②（win64 里它们是 callee-saved，sysv64 里是
 ///    **参数寄存器**）。plan 侧可能多出 FPR（AAPCS64 的 `cs_fpr`），但发射侧还没按类分派
 ///    保存（A6）⇒ 消费者只取 GPR 类，这里也按 GPR 类比。
-/// 2. `frame_padding`：plan（规则字段）与谱 `[abi].frame_padding` 必须相等（它不随
-///    约定而变，是同一台机器的栈对齐事实）。
+/// 2. `frame_padding`：plan（规则字段）与机器事实 `[machine].frame_padding` 必须相等
+///    （同一台机器的帧机制给出同一个值；规则侧那份随约定而变，是 plan 的来源）。
 /// 3. `clobbers`：plan = 可用池 − callee-saved。它与谱声明的 `[abi].call_clobbers`
 ///    允许差在**固定用途寄存器**上（riscv 的 X1/X3/X4、arm64 的 X18/X30）——那些寄存器
 ///    regalloc 根本分不到，差它们不影响正确性。两条硬不变量必须成立：① `clobbers` 与
@@ -503,7 +503,7 @@ macro_rules! convention_facts_probe {
             assert_eq!(
                 layout.frame_padding,
                 tm.abi().frame_padding(),
-                "{}：plan 的 frame_padding 与谱 [abi].frame_padding 必须同值",
+                "{}：plan 的 frame_padding 与机器事实 [machine].frame_padding 必须同值",
                 $conv
             );
 

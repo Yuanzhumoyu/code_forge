@@ -399,6 +399,17 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 `call_clobbers`/`frame_padding`）移入 `AbiRules`/`AbiBinding` + demo 夹具补测试本地绑定，
 ④ 发射/管线改读 plan，然后删掉 `[abi]` 的约定键与机器事实回退路径。
 
+**逐键迁移进度（2026-09-27 实测记录，每键独立提交 + 门禁）**：
+
+| 键 | 处置 | 结果 |
+| --- | --- | --- |
+| `[abi].callee_saved` | 删；机器事实 `[machine].callee_saved_gpr` + `callee_save_slots` 接管（计数与**名字**必须同源，否则半迁移的树会崩——见 CHANGELOG 更正） | ✅ 键已删，三谱绿 |
+| `[abi].call_clobbers` | 删（riscv64/arm64；x86 本就没写）；破坏集全面由 plan 的 `clobbers` 给 | ✅ 键已删，三谱绿 |
+| `[abi].frame_padding` | 改读 `[machine].frame_padding`（机器事实）；约定侧 `AbiRules::frame_padding` 进 plan，管线优先 | ✅ 键已迁走 |
+| `[abi.stack_args]` | 待做：调用点（`lowering.rs` 的 `caller_base`/`stride_slots`）与被调方（`frame.rs` 的 `move_args`）仍读它；plan 侧 `StackLayout` 已有 `first_arg_offset`/`shadow_bytes`/`stride` | ⏳ |
+| `[abi].ret_regs` / `arg_slot` / `[abi.arg_class]` | 待做：lowering 的生成期输入（返回落点 / 位置计数 / 参数池），要改成按角色 + plan 发射 | ⏳ |
+| demo 夹具（`tests/isa/*.toml`） | 待做：删键前先在测试内注册本地绑定/规则 | ⏳ |
+
 步骤建议（每步都可独立跑门禁）：
 ① 加 `[machine]`（model + schema + `docs/reference/isa-dsl.md` 键表三处同改，`schema_guard` 钉住）；✅
 ② 上表"机器事实"逐个改读 `[machine]`（含错误消息与负向用例）；x86 先迁，跑门禁；✅（三谱同批迁完；`[machine.frame]` 见 ②b）
