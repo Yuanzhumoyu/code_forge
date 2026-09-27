@@ -447,7 +447,24 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   因为 `__cs_bytes`/`sp_base` 是**寻址基点**而非仅尺寸，必须靠"帧补齐"让 rsp 原地不动。
   遗留：护栏 `x86_static_push_table_covers_the_plan_gpr_callee_saved` 的立论（"静态 push
   表"）已过时，应换成钉住 `cs_skipped` 的守卫；`[abi].callee_saved` 现在只剩"无 plan 时的
-  兜底"作用，可以连同 A5-3 ③ 一起删。
+  兜底"作用，可以连同 A5-3 ③ 一起删——**但删之前必须先做下面这件事**。
+
+- **删 `[abi].callee_saved` 的前置条件（2026-09-27 实测得出，别照直觉直接删）**：该键还有
+  **一个生成期消费者**——`v12/codegen/frame.rs` 的 `gen_arg_receive` 用它算生成物里的
+  编译期常量 `__cs_bytes = fp_push + 谱面 gpr 数 × 槽`（x86 = 8 + 7×8 = **64**；
+  riscv = 16 + 11×8 = **104**，正是 `min_frame` 那个数），它参与
+  `sp_base = -(frame) - __cs_bytes + stack_arg_bytes`（收**溢出到栈的栈参数**时的地址基点）。
+  **实测**：只删 x86 的 `[abi.callee_saved]` ⇒ `__cs_bytes` 变 8（少 56）⇒
+  `forge-codegen --lib --all-features` 直接 `0xC0000005`（栈参数 spill 基点偏了）；已回滚。
+  **正确拆法**：它是**机器事实**而非约定事实——"这台机器的帧为 callee-saved 预留几个推入
+  槽"与"哪些寄存器必须由被调方保住"（约定，在 plan/绑定里）是两件事：
+  ① `[machine]` 增 `callee_save_slots`（x86 = 7、riscv = 11、arm64 = 10；与
+  `[abi.callee_saved]` 同义但换名，避免"两处都写谁生效"）；
+  ② 生成期 `__cs_bytes`、`frame_layout_info` 的无 plan 回退、`emission.rs` 的 `cs_skipped`
+  **三处都改读它**（`cs_skipped` 要用机器槽数而不是 plan 数，才不会把"约定比机器少几个"
+  也算成"没推"）；
+  ③ 然后才能删三份谱的 `[abi].callee_saved`（regalloc 的集合仍来自 plan；无 plan 的夹具
+  本来就只有空表）。
 
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
   变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
