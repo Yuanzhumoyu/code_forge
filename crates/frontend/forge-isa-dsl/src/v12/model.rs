@@ -42,6 +42,15 @@ pub struct MachineSection {
     /// 这些是"这台机器怎么建帧"，不是约定内容（保存谁、栈参数怎么排才是约定）。
     #[serde(default)]
     pub frame: Option<AbiFrame>,
+    /// **帧为 callee-saved 预留的推入槽数**（机器事实，v20 A6 收口）。
+    ///
+    /// 与"哪些寄存器必须由被调方保住"（**约定**，在 plan/绑定里）是两件事：这个是
+    /// "这台机器的帧布局按几个推入槽算"——生成物里的编译期常量
+    /// `__cs_bytes = fp_push + 槽数×槽`（收溢出到栈的栈参数时的地址基点）与
+    /// fp-outside 的 `cs_skipped` 补偿都要用它。
+    /// 缺省（`None`）⇒ 回退 `[abi.callee_saved].gpr.len()`（迁移期；两者同义）。
+    #[serde(default)]
+    pub callee_save_slots: Option<u32>,
 }
 
 impl V12Model {
@@ -91,6 +100,22 @@ impl V12Model {
             return Some(f);
         }
         self.abi.as_ref().and_then(|a| a.frame.as_ref())
+    }
+
+    /// 帧为 callee-saved 预留的**推入槽数**（机器事实）：`[machine].callee_save_slots`
+    /// 优先，回退 `[abi.callee_saved].gpr` 的长度（迁移期；两者同义）。
+    ///
+    /// **不是**"必须保住的寄存器集"（那是约定，来自 plan/绑定）——它只决定帧布局里
+    /// 推入区按几个槽算（生成期 `__cs_bytes`、fp-outside 的 `cs_skipped` 补偿）。
+    pub fn machine_callee_save_slots(&self) -> u32 {
+        if let Some(n) = self.machine.as_ref().and_then(|m| m.callee_save_slots) {
+            return n;
+        }
+        self.abi
+            .as_ref()
+            .and_then(|a| a.callee_saved.as_ref())
+            .map(|c| c.gpr.len() as u32)
+            .unwrap_or(0)
     }
 }
 

@@ -366,10 +366,16 @@ pub const SECTIONS: &[Section] = &[
         path: "[machine]",
         model: "MachineSection",
         required: &[],
-        optional: &["fixed_regs", "spill_scratch", "link_reg", "frame"],
+        optional: &[
+            "fixed_regs",
+            "spill_scratch",
+            "link_reg",
+            "frame",
+            "callee_save_slots",
+        ],
         flatten: &[],
         additional: false,
-        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状）",
+        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数）",
     },
     Section {
         path: "[machine.frame]",
