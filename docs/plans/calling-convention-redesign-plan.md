@@ -434,8 +434,20 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   偏移公式 `(k+1)*__SLOT_BYTES` 需要按类给宽度——今天的 arm64 存 D（8 字节）正好等于槽宽。
 - **帧上方 callee-saved 字节数仍是静态的（fp-outside 一路）**：x86 的 push 机制按谱面列表
   逐个 `push`（静态发射），所以那条路仍按谱面表数；改按 plan 计数会在"plan 比谱表短"
-  （sysv64：5 vs 7）时少算 16 字节、让局部/spill 槽与 push 槽重叠。要一起换，须先把
-  push 机制改成运行时按 `alloc_result.callee_saved_to_save` 循环（帧字节数也随之变运行时值）。
+  （sysv64：5 vs 7）时少算 16 字节、让局部/spill 槽与 push 槽重叠。
+  **2026-09-27 试过一版"运行时循环"并回滚**（记下来免得下次重踩）：把 push 机制改成
+  `for __preg in __rm.callee_saved_to_save.iter() { push }`、尾声的 `sp -= n*槽` 取运行时
+  `len()`，同时把 fp-outside 的帧字节数也改按 plan 算——**结果**：`test_jit_cross_call_writeback`
+  等跨调用用例读到垃圾值、`forge-codegen --lib --all-features` 直接 `0xC0000005` 崩溃。
+  已定位到的**第一层耦合**：规则的 `frame_padding` 是对**谱面表长**校准的（win64 = 8 配
+  7 次 push + `push rbp` = 偶数次 ⇒ `rsp%16==8`）；实际推入数一变，call 点的对齐就漂了。
+  推出来的平移式是 `padding = (rule + (谱面表长 − 实际推入数) × 槽) mod align`（只对
+  fp-outside 成立，fp-inside 的保存是帧内槽、不动 rsp）——加上它**仍然红**，所以至少还有
+  第二层耦合（嫌疑：生成物里那个**编译期常量** `__cs_bytes`（x86 = 64）被当作 spill 基点，
+  它与运行时实际推入区不再一致；以及序言/尾声之外的路径仍按静态表假设偏移）。
+  **下一步的正确做法**：不要一次性切换，先加"静态 vs 运行时"的双路对照（比如先只在
+  `callee_saved_to_save.len() == 谱面表长` 时走运行时路径，其余走静态），逐台机器、逐个
+  用例把耦合暴露出来再拆。
 
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
   变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
