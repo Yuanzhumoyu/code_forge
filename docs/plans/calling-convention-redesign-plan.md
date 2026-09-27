@@ -448,6 +448,18 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   **下一步的正确做法**：不要一次性切换，先加"静态 vs 运行时"的双路对照（比如先只在
   `callee_saved_to_save.len() == 谱面表长` 时走运行时路径，其余走静态），逐台机器、逐个
   用例把耦合暴露出来再拆。
+  **2026-09-27 复核后的结论（第二层耦合是什么）**：callee-saved 字节数在这条路上
+  **不只是一个"尺寸"，还是 spill/栈参数寻址的基点**——生成物里有编译期常量
+  `__cs_bytes`（x86 = 64）参与 `sp_base = -(frame) - callee_saved + stack_args`，
+  管线侧 `emission.rs` 的 `emit_inst_with_spills` 同样用 `callee_saved_bytes` 算
+  `sp_base`。推入数一变，这个基点就必须跟着变，否则 spill 槽落到与实际推入区**不重合**
+  的地址上（本地实测现象：跨调用用例读到垃圾值 + 访问违例）。
+  因此"把 push 机制运行时化"的真正改造面是**让 callee-saved 字节数端到端变成运行时值**：
+  ① 生成物侧 `__cs_bytes` 改成按 `callee_saved_to_save.len()` 算；② `emission.rs` 的
+  `sp_base` 从编译期 i32 变成运行时表达式（或"按运行时值选两套偏移"）——这条会牵动
+  `emit_spill_load/store` 的签名。**这是一个值得单独设计的小专项**，不是顺手能带的改动；
+  在那之前 x86 保留静态 push 表 + 新加的超集护栏
+  （`x86_static_push_table_covers_the_plan_gpr_callee_saved`）。
 
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
   变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
