@@ -182,24 +182,20 @@ fn frame_prologue_bytes() {
     let rm = forge_codegen::AllocResult::new();
     let mut sink = forge_codegen::CodeSink::default();
     fl.emit_prologue(0, &rm, &mut sink).expect("prologue");
-    // push rbp(55) + mov64rr rbp, rsp(48 89 e5) + push rbx(53) + push rdi(57)
-    // + push rsi(56) + push r12(41 54) + push r13(41 55) + push r14(41 56)
-    // + push r15(41 57) —— frame_size=0 时无 @frame_alloc
+    // push rbp(55) + mov64rr rbp, rsp(48 89 e5)。**v20 A6 起不再静态发谱面表**：
+    // 逐个 `push` 的列表来自 `AllocResult::callee_saved_to_save`（约定数据），
+    // 这里用的是**空** AllocResult（`AllocResult::new()`）⇒ 没有要保存的寄存器，
+    // 于是只有建帧的两条。真正的管线还会把这几个"没推的槽"补进 `frame_alloc`
+    // 的字节数（见 `pipeline/emission.rs` 的 `cs_skipped`），所以直接调
+    // `emit_prologue(frame_size, …)` 时看到的 `sub rsp` 仍是 `frame_size`。
     let bytes = sink.bytes();
     assert_eq!(
         bytes,
         &[
             0x55, // push rbp
             0x48, 0x89, 0xE5, // mov64rr rbp, rsp
-            0x53, // push rbx
-            0x57, // push rdi
-            0x56, // push rsi
-            0x41, 0x54, // push r12
-            0x41, 0x55, // push r13
-            0x41, 0x56, // push r14
-            0x41, 0x57, // push r15
         ],
-        "prologue bytes (frame_size=0): {bytes:02x?}"
+        "prologue bytes (frame_size=0, 空 callee_saved_to_save): {bytes:02x?}"
     );
 }
 
@@ -230,13 +226,14 @@ fn frame_epilogue_bytes() {
     fl.emit_epilogue(0, &rm, &mut sink).expect("epilogue");
     let bytes = sink.bytes();
     // mov64rr rsp, rbp(48 89 ec: reg=src: rbp=5、rm=dst: rsp=4 → 0xEC) +
-    // sub rsp, 56(48 81 ec 38 00 00 00：rsp=rbp-56 到 callee-saved 区) +
-    // pop r15..rbx + pop rbp(5d) + ret(c3)
+    // **sub rsp, 实际保存数×槽**（v20 A6：长度取 `callee_saved_to_save.len()` 的
+    // 运行时值；空 AllocResult ⇒ 0）+
+    // （有要恢复的寄存器时）逆序 pop + pop rbp(5d) + ret(c3)
     assert_eq!(&bytes[0..3], &[0x48, 0x89, 0xEC], "mov64rr rsp, rbp");
     assert_eq!(
         &bytes[3..10],
-        &[0x48, 0x81, 0xEC, 0x38, 0x00, 0x00, 0x00],
-        "sub rsp, 56"
+        &[0x48, 0x81, 0xEC, 0x00, 0x00, 0x00, 0x00],
+        "sub rsp, 0（空 callee_saved_to_save）"
     );
     assert_eq!(bytes[bytes.len() - 2], 0x5D, "pop rbp");
     assert_eq!(bytes[bytes.len() - 1], 0xC3, "ret");

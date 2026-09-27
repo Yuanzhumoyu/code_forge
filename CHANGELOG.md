@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A6：x86 序言/尾声改按运行时 callee-saved 列表发射
+
+- **push 机制运行时化**：序言按 `alloc_result.callee_saved_to_save` 逐个 `push`，尾声 `sp -= n*槽` 取同一列表的运行时长度并逆序 `pop`。列表来自**约定数据**（有 plan 用 plan：显式选 `sysv64` 就只有 5 个，不是谱里那份 win64 的 7 个），无 plan 的夹具退回谱面表。
+- **让位设计（这次能成的原因）**：帧内偏移都是编译期常量、按谱面表长算的，少推 Δ 个槽会让 rsp 抬高 Δ×槽而整体错位（上一轮实测：跨调用读垃圾值 + 访问违例，"只修 `frame_padding`"救不了）。这次由**管线把 Δ×槽补进序言实际分配的字节数**（`pipeline/emission.rs` 的 `cs_skipped`，仅 fp-outside）⇒ rsp 落点与静态表全长时代**逐字节相同**，所有常量与栈对齐继续成立。fp-inside 的保存是帧内槽、不动 rsp（`cs_skipped = 0`）。
+- **两处字节级黄金同步**（`tests/v12_integration_tests.rs`）：空 `AllocResult` 下新语义是"只有 `push rbp` + `mov rbp,rsp`"与尾声 `sub rsp, 0`；注释写清"管线会补 `cs_skipped`，直接调帧件时不会"。
+- 验证：workspace 串行全套绿、clippy `-D warnings` 0、三条 JIT 矩阵不变。
+
 ### Added (2026-09-26) — v20 A6：FPR callee-saved 打通（AAPCS64 的 v8-v15 真的会被保存）
 
 承接上一片的"能力"，这一片把它**接上**：

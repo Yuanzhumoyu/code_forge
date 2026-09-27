@@ -651,11 +651,12 @@ fn ret_stmt(infos: &[InstInfo]) -> Result<TokenStream, String> {
     })
 }
 
-/// push 机制（x86）：`push`/`pop` 由硬件调整 sp，callee-saved 用**静态**表。
+/// push 机制（x86）：`push`/`pop` 由硬件调整 sp；保存哪些 callee-saved 由
+/// `alloc_result.callee_saved_to_save`（约定数据，v20 A6）在**运行时**决定。
 #[allow(clippy::too_many_arguments)]
 fn gen_push_mechanism(
     infos: &[InstInfo],
-    model: &V12Model,
+    _model: &V12Model,
     frame: &AbiFrame,
     push_inst: &str,
     pop_inst: &str,
@@ -663,13 +664,6 @@ fn gen_push_mechanism(
     pre: &mut Vec<TokenStream>,
     post: &mut Vec<TokenStream>,
 ) -> Result<(), String> {
-    let slot = model.slot_bytes()? as i64;
-    let callee: Vec<String> = model
-        .abi
-        .as_ref()
-        .and_then(|a| a.callee_saved.as_ref())
-        .map(|c| c.gpr.clone())
-        .unwrap_or_default();
     let fp_name = frame.fp.clone().unwrap_or_default();
     let push_vn = pascal_ident(push_inst);
     let push_fid = inst_fids(infos, push_inst)
@@ -704,9 +698,19 @@ fn gen_push_mechanism(
         if let Some(s) = frame_set_stmt(infos, frame, true)? {
             pre.push(s);
         }
-        for r in &callee {
-            pre.push(push_one(r));
-        }
+        // callee-saved：**运行时按 `alloc_result.callee_saved_to_save` 循环**（v20 A6）。
+        // 这份列表来自"约定"——有 plan 时是 plan 的 callee-saved（x86 显式选 sysv64 就只有
+        // 5 个，不是谱里那份 win64 的 7 个），无 plan 的夹具由 compiler.rs 退回谱面表。
+        // 静态发谱面列表会让"约定"与"实际推入数"脱钩，从而挡住帧字节数跟着约定走。
+        // **帧已为此让位**：序言实际分配的字节数由管线补上"少推的那几个槽"
+        // （见 `emission.rs` 的 `cs_skipped`），rsp 落点与静态表时代逐字节相同。
+        pre.push(quote! {
+            for __preg in __rm.callee_saved_to_save.iter() {
+                let __reg = Reg::from_index(__preg.num, __preg.class);
+                let __bytes = encode(&Inst::#push_vn { #push_fid: __reg }).map_err(|e| crate::IrError::Emit(e))?;
+                __sink.put_bytes(&__bytes);
+            }
+        });
         let imm = frame_size_imm(frame);
         if let Some(s) = sp_adjust_stmt(infos, frame, Role::FrameAlloc, &imm, true, true)? {
             post.push(s);
@@ -715,16 +719,20 @@ fn gen_push_mechanism(
         if let Some(s) = frame_set_stmt(infos, frame, false)? {
             pre.push(s);
         }
-        // `sp -= callee-saved 区`：把 sp 从 fp 退到最后一个 push 槽（静态表长，
-        // 与 push 侧的列表同源）。`trail = false` = 模板时代的字面量形态。
-        let cs = proc_macro2::Literal::i64_suffixed(callee.len() as i64 * slot);
-        let cs_imm = quote! { #cs };
+        // `sp -= callee-saved 区`：把 sp 从 fp 退到最后一个 push 槽。**长度取运行时值**
+        // （与上面的 push 循环同源），否则"少保存时 sp 落点错位"。
+        // `trail = false` = 模板时代的字面量形态。
+        let cs_imm = quote! { (__rm.callee_saved_to_save.len() as i64) * (__SLOT_BYTES as i64) };
         if let Some(s) = sp_adjust_stmt(infos, frame, Role::FrameAlloc, &cs_imm, false, false)? {
             pre.push(s);
         }
-        for r in callee.iter().rev() {
-            pre.push(pop_one(r));
-        }
+        pre.push(quote! {
+            for __preg in __rm.callee_saved_to_save.iter().rev() {
+                let __reg = Reg::from_index(__preg.num, __preg.class);
+                let __bytes = encode(&Inst::#pop_vn { #pop_fid: __reg }).map_err(|e| crate::IrError::Emit(e))?;
+                __sink.put_bytes(&__bytes);
+            }
+        });
         if !fp_name.is_empty() {
             pre.push(pop_one(&fp_name));
         }
