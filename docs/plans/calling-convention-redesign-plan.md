@@ -488,6 +488,16 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   静默破坏必须编译期报错）；④ `callee_save_slots` 若与名单并存，取名单长度（计数可由名单派生，
   避免"两个都写、谁生效"）。
   另一条可选路线是把"无 plan + 需要 callee-saved"直接 **fail-closed**（明确报错而不是猜），
+
+  **★ 裁定（用户，2026-09-27）：走 fail-closed 这条路线**——先把 A6 的规划缺口补齐（让**每条发射
+  路径都能规划**），再把"无 plan + 需要约定数据"改成**明确报错**，然后才删六份 `[abi]` 约定键
+  （`arg_class`/`ret_regs`/`arg_slot`/`stack_args`/`call_clobbers`/`frame_padding`）并给 demo 夹具补测试本地绑定。
+  **执行顺序（一批做完）**：① `AbiRules`/引擎补规划缺口——Pair（`RegPair`）/ `RegGroup` / 无指针的 `Indirect`
+  （`Placement::Indirect{ptr:None}`）/ 宽向量 by-ref（`Indirect{on_stack}`）在代表性签名上都能出 plan（`forge-abi` 黄金 +
+  `abi_target_real.rs` 的交叉核对同步）；② `compiler.rs` 的 `None` 分支改 fail-closed（报错点名缺口 + 提示看
+  `abi_plan_note`），随之修掉靠回退跑通的用例（`test_jit_call_indirect_wide_vector_byref` 等）；
+  ③ 六份键逐个迁移（约定数据进 `AbiRules`/`AbiBinding`，管线/发射改读 plan）、谱里删键；④ demo 夹具在测试内注册本地
+  绑定；⑤ 全量门禁 + 三条矩阵 + 中文提交 + 推送 + 抓 CI。
   但那会让今天靠回退跑通的 wide-vector-byref 用例变红，须先补 A6 的规划缺口——优先级低于上面①–④。
 
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
