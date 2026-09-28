@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3：`[abi].call_clobbers` 删除（破坏集改由宿主的约定级数据给）
+
+- **谱面删键**：`[abi].call_clobbers`（`Abi` 字段 / schema / 文档键表一并去掉）。它一直是"无 plan 时按参数寄存器 + 返回寄存器猜"的兜底——**猜漏 callee 破坏的临时寄存器就是静默错值**（riscv 递归 fib 死循环的根因）。
+- **正确数据其实与签名无关**：`AbiPlan::clobbers` = 可用池 − callee-saved − pinned，只取决于 `(ISA, 约定)`。于是管线在**本函数规划失败**时用**空签名**问一次引擎（`plan_for_signature` + `Signature::new(vec![], None)`），把结果塞进新的 `LowerCtx::conv_clobbers`（`(类内号, 类)`）。
+- **生成物**：`lowering.rs` 的调用点破坏集改成「有 plan 用 plan 的 `clobbers`；否则用 `ctx.conv_clobbers`；两者都没有 ⇒ **fail-closed**」（不再按谱面猜）。
+- **守卫 ③b**：`abi_target_real.rs` 的四约定交叉核对新增「空签名的 plan 与真实函数 plan 的 `clobbers` 逐项相同」——这条不变式正是回退路径的正确性前提。
+- 验证：workspace 串行全套绿（forge-codegen lib 1344、abi_target_real 15）、clippy `--all-targets --all-features -D warnings` 0、`cargo fmt --check` 0、markdownlint 三份文档 0 issue；三条 JIT 矩阵不变（本改动只在"无 plan"路径上生效，三份发行谱都有 plan）。
+
 ### Changed (2026-09-27) — v20 A5-3：`[abi].arg_slot` 迁到 `[machine]`，`AbiPlan` 带上 `position`
 
 - **`[abi].arg_slot` → `[machine].arg_slot`（机器事实）**：位置计数规则（`by-class` = int/float 各自独立推进；`by-position` = 共享位置游标，Windows x64）是**这台机器的谱面缺省约定怎么数位置**，写给**无 plan 的回退形态**；约定侧的正式位置是 `AbiRules::position`，现在随 plan 一起给出（新增 `AbiPlan::position`，`to_text()` 的 `variadic` 行带上 `position <值>`，四份黄金快照同步）。

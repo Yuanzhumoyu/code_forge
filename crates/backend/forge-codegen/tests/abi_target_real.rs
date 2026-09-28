@@ -436,7 +436,7 @@ fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
 ///    保存（A6）⇒ 消费者只取 GPR 类，这里也按 GPR 类比。
 /// 2. `frame_padding`：plan（规则字段）与机器事实 `[machine].frame_padding` 必须相等
 ///    （同一台机器的帧机制给出同一个值；规则侧那份随约定而变，是 plan 的来源）。
-/// 3. `clobbers`：plan = 可用池 − callee-saved。它与谱声明的 `[abi].call_clobbers`
+/// 3. `clobbers`：plan = 可用池 − callee-saved。它与谱曾经声明的 `[abi].call_clobbers`
 ///    允许差在**固定用途寄存器**上（riscv 的 X1/X3/X4、arm64 的 X18/X30）——那些寄存器
 ///    regalloc 根本分不到，差它们不影响正确性。两条硬不变量必须成立：① `clobbers` 与
 ///    `callee_saved` 不交；② 参数寄存器与返回寄存器都在 `clobbers` 里（跨调用存活值不能
@@ -569,6 +569,20 @@ macro_rules! convention_facts_probe {
                 "{}：返回寄存器 {ret_name} 必须在破坏集里",
                 $conv
             );
+
+            // ③b **破坏集与签名无关**（v20 A5-3）：宿主在函数规划失败时用**空签名**
+            //     问一次引擎就能拿到正确的 clobbers（谱里的 `[abi].call_clobbers`
+            //     已删除，`LowerCtx::conv_clobbers` 走的就是这条路）。
+            let empty_sig = forge_abi::Signature::new(Vec::new(), None);
+            let empty_plan = forge_codegen::pipeline::abi_target::plan_for_signature(
+                &tm, &reg, $conv, &empty_sig,
+            )
+            .expect("空签名的 plan 必须算得出来（约定级事实）");
+            assert_eq!(
+                plan.clobbers, empty_plan.clobbers,
+                "{}：clobbers 必须与签名无关（无 plan 回退路径的前提）",
+                $conv
+            );
         }
     };
 }
@@ -615,8 +629,9 @@ convention_facts_probe!(
 );
 
 /// **plan 的破坏集覆盖整个 FP 文件**（v20 A5-3 ④ 实测，2026-09-26）：x86 的 plan 破坏集
-/// 在 FP 侧列**全部 16 个 XMM**，比谱里声明的（`[abi].call_clobbers` 缺省兜底给的
-/// 4 个参数 XMM + XMM0）宽——物理上 plan 那份才对（Win64 的 XMM0-15 全 volatile）。
+/// 在 FP 侧列**全部 16 个 XMM**，比谱里曾经声明的（`[abi].call_clobbers` 缺省兜底给的
+/// 4 个参数 XMM + XMM0）宽——物理上 plan 那份才对（Win64 的 XMM0-15 全 volatile）。该键
+/// 已在 2026-09-27 删除（发射只认 plan / 宿主的约定级破坏集）。
 ///
 /// 这份更宽的破坏集曾经**打错值**：`test_jit_v128_byval_return_lane3`（lane3 的 7.5
 /// 读成 0）与 `test_jit_v128_byval_mixed_int_pos` 变红——根因是单结果 IR 值一律按

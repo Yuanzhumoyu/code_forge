@@ -817,9 +817,9 @@ fn validate_spill_coverage(m: &V12Model) -> Result<(), String> {
     Ok(())
 }
 
-/// 结构化寄存器名引用校验：`[abi]` 的 sp/fp/scratch/reserved/callee_saved/
-/// ret_regs/call_ret_reg/call_clobbers/implicit_regs/arg_class.regs 与
-/// `[spill.*].base` 必须在某个已声明寄存器组内。
+/// 结构化寄存器名引用校验：`[abi]` 的 ret_regs/arg_class.regs、`[machine]` 的
+/// fixed_regs/spill_scratch/link_reg/[machine.frame] 与 `[spill.*].base` 必须在某个
+/// 已声明寄存器组内。
 fn validate_reg_names(m: &V12Model) -> Result<(), String> {
     let mut declared: BTreeSet<String> = BTreeSet::new();
     for (rc, g) in &m.reg {
@@ -854,10 +854,6 @@ fn validate_reg_names(m: &V12Model) -> Result<(), String> {
     }
     if let Some(abi) = &m.abi {
         check(&abi.ret_regs, "[abi].ret_regs")?;
-        check(
-            &abi.call_clobbers.clone().unwrap_or_default(),
-            "[abi].call_clobbers",
-        )?;
         for ac in &abi.arg_class {
             check(&ac.regs, "[abi.arg_class].regs")?;
         }

@@ -1250,40 +1250,6 @@ fn gen_call_lowering(
         .unwrap_or_default();
     let n = int_regs.len();
     let fn_ = float_regs.len();
-    // clobbers：缺省 = 整数参数寄存器 + 返回寄存器（ret_regs 首项或
-    // index 0）。[abi].call_clobbers 可显式覆盖（riscv：无 callee-saved
-    // 保存序列 → 全部 caller-saved 临时寄存器都列上，防跨调用存活值留在
-    // 寄存器被 callee 破坏——实测递归 fib 死循环）。
-    let clobber_gprs: Vec<syn::Ident> = match &abi.call_clobbers {
-        Some(names) => names.iter().map(|r| format_ident!("{r}")).collect(),
-        None => int_regs.clone(),
-    };
-    let ret_gpr_clobber: TokenStream = abi
-        .ret_regs
-        .first()
-        .map(|r| {
-            let ident = format_ident!("{r}");
-            quote! { (Reg::#ident.to_index(), __DEFAULT_GPR_CLASS) }
-        })
-        .unwrap_or_else(|| {
-            quote! {
-                (<Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS).to_index(),
-                 __DEFAULT_GPR_CLASS)
-            }
-        });
-    let gpr_clobbers: Vec<TokenStream> = clobber_gprs
-        .iter()
-        .map(|r| quote! { (Reg::#r.to_index(), __DEFAULT_GPR_CLASS) })
-        .chain(std::iter::once(ret_gpr_clobber))
-        .collect();
-    let fpr_clobbers: Vec<TokenStream> = float_regs
-        .iter()
-        .map(|r| quote! { (Reg::#r.to_index(), __DEFAULT_FPR_CLASS) })
-        .chain(std::iter::once(quote! {
-            (<Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS).to_index(),
-             __DEFAULT_FPR_CLASS)
-        }))
-        .collect();
     let fpr_ret_stmt: TokenStream = if has_fpr_mov {
         quote! {
             let __idx = __pack.push_inst(if ctx.type_bits_of(&__r).unwrap_or(64) == 32 && #has_ss {
@@ -1737,10 +1703,21 @@ fn gen_call_lowering(
                         .iter()
                         .map(|(__c, __i)| (Reg::from_index(*__i, *__c).to_index(), *__c))
                         .collect(),
-                    None => vec![
-                        #(#gpr_clobbers),*,
-                        #(#fpr_clobbers),*,
-                    ],
+                    // 无 plan（未注册约定 / 本函数规划失败）：破坏集是**约定级事实**，
+                    // 由宿主按 `(ISA, 约定)` 一次算好（v20 A5-3；谱里的
+                    // `[abi].call_clobbers` 已删除）。宿主没给 ⇒ **fail-closed**，
+                    // 不再按"参数寄存器 + 返回寄存器"猜——那会漏掉 callee 破坏的临时寄存器
+                    // （实测递归 fib 死循环）。
+                    None => {
+                        if ctx.conv_clobbers.is_empty() {
+                            return Err(crate::prelude::IrError::Unsupported(
+                                "v12 call: 调用点的破坏集需要宿主的约定数据（该函数没有 plan，\
+                                 且约定级破坏集为空）——请在宿主注册该约定\
+                                 （forge_codegen::pipeline::conv_registry）".into(),
+                            ));
+                        }
+                        ctx.conv_clobbers.clone()
+                    }
                 };
                 // S2：宽向量返回值（>16 字节）sret——隐藏 sret 指针参数占
                 // 首 int 槽（RCX），其余实参顺延（arg_loop 的 __gi 从 1 起）。

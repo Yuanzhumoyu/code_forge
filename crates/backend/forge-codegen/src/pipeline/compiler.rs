@@ -2104,12 +2104,30 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 func,
             ) {
                 Ok(p) => (Some(p), None),
-                // 算不出来不阻断编译（退回谱里声明的约定数据）——原因留档，方便核对缺口。
+                // 算不出来不阻断编译（退回约定级数据）——原因留档，方便核对缺口。
                 Err(e) => {
                     // 归因留档（`FORGE_TRACE_ABI=1` 打 stderr）：这也是把"无 plan"改成
                     // fail-closed 时报错正文的来源——先把缺口清点出来，再决定怎么补。
                     if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
                         eprintln!("[abi-plan] {e}");
+                    }
+                    // **无 plan 的回退**：破坏集是**约定级事实**（`AbiPlan::clobbers`
+                    // = 可用池 − callee-saved − pinned，**与签名无关**），所以用空签名
+                    // 问一次引擎就能拿到正确值——生成物因此不必再按谱面里声明的
+                    // `[abi].call_clobbers` 猜（v20 A5-3：那个键已删除）。拿不到
+                    // （约定未注册 / 池缺）⇒ 保持空，生成物在调用点 fail-closed。
+                    if let Ok(p) = crate::pipeline::abi_target::plan_for_signature(
+                        machine,
+                        &reg,
+                        &ctx.call_conv_name,
+                        &forge_abi::Signature::new(Vec::new(), None),
+                    ) {
+                        // `CallLayout::clobbers` 是 (类, 类内号)，`LowerCtx` 用 (号, 类)。
+                        ctx.conv_clobbers = crate::pipeline::abi_target::call_layout(&p, machine)
+                            .clobbers
+                            .into_iter()
+                            .map(|(c, i)| (i, c))
+                            .collect();
                     }
                     (None, Some(e.to_string()))
                 }

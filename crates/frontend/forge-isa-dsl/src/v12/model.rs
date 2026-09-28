@@ -2697,13 +2697,6 @@ pub struct Abi {
     /// 语义）。Return/Call lowering 的返回值移动目标用此列表首项。
     #[serde(default)]
     pub ret_regs: Vec<String>,
-    /// Call 点被调用方可能破坏的寄存器（物理名）——regalloc 的 call clobber
-    /// 集。缺省 = 整数参数寄存器 + 返回寄存器（x86 语义）。定宽 ISA 无
-    /// callee-saved 保存序列（如 riscv 当前 callee_saved=[]）时，callee 会
-    /// 破坏全部 caller-saved（临时）寄存器 → 必须把 t0-t6 等也列入，否则
-    /// 跨调用存活值留在寄存器被覆盖（实测递归 fib 死循环）。
-    #[serde(default)]
-    pub call_clobbers: Option<Vec<String>>,
 }
 
 /// 参数槽位分配规则。

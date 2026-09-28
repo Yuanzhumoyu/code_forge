@@ -131,7 +131,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[pseudo]]` | `name` `params` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[abi]` | — | `arg_class` `ret_regs` `call_clobbers` | 调用约定 |
+| `[abi]` | — | `arg_class` `ret_regs` | 调用约定 |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
@@ -404,8 +404,8 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 
 ### fail-closed 契约
 
-1. **名字解析**：`[machine].fixed_regs/spill_scratch/link_reg`、`[abi].ret_regs/call_clobbers`、
-   `[abi.callee_saved].gpr`、`[abi.arg_class].regs`、`[machine.frame].sp/fp`、
+1. **名字解析**：`[machine].fixed_regs/spill_scratch/link_reg`、`[abi].ret_regs`、
+   `[abi.arg_class].regs`、`[machine.frame].sp/fp`、
    `[spill.*].base`、`[[instructions]].implicit_regs` 里的物理名必须能在某个
    已声明 `[reg.*]` 组内解析——否则生成期报错（历史实现 `filter_map` 静默丢弃：
    scratch/callee_saved 缺失 ⇒ regalloc 会分配被占用寄存器）。
@@ -1178,20 +1178,21 @@ riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 `link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊。
 **迁移期已收尾（2026-09-27）**：`[abi]` 的同义旧键（`scratch`/`reserved`/`call_ret_reg`/
 `frame`/`callee_saved`/`arg_slot`）**全部删除**——写旧键报未知键，本节就是这些事实的
-唯一来源（`frame_padding` 与 `[abi.stack_args]` 也在同一批搬走/删除）。
+唯一来源（`frame_padding`、`[abi.stack_args]` 与约定级的 `call_clobbers` 也在同一批
+搬走/删除；后者改由宿主的 `LowerCtx::conv_clobbers` 提供）。
 
 ## `[abi]` — 调用约定
 
 > **迁移中（v20 A5-3）**：机器事实（`scratch`/`reserved`/`call_ret_reg`/`frame`/
-> `callee_saved`/`arg_slot`）已**删除**并归 [`[machine]`](#machine--机器事实)（唯一来源）。
-> 本节剩下的是真正的**约定键**：`arg_class`/`ret_regs`/`call_clobbers`——它们由
-> `AbiRules`/`AbiBinding` 给（`[abi]` 这份是**无 plan 时的回退**），删键是 A5-3 的下一步
-> （见 `docs/plans/calling-convention-redesign-plan.md` 的逐键迁移进度表）。
+> `callee_saved`/`arg_slot`）与**约定级的破坏集**（`call_clobbers`）都已**删除**：前者归
+> [`[machine]`](#machine--机器事实)（唯一来源），后者由宿主按 `(ISA, 约定)` 算好塞进
+> `LowerCtx::conv_clobbers`（见下）。本节剩下 `arg_class`/`ret_regs` 两个键——它们是
+> **签名级**约定数据，删键要等"调用点 plan"（见
+> `docs/plans/calling-convention-redesign-plan.md` 的逐键迁移进度表）。
 
 ```toml
 [abi]
 ret_regs = ["X10"]             # 返回寄存器（缺省空 = index 0，x86 RAX 语义）
-call_clobbers = ["X1", "X7", ...]  # Call 点被调用方破坏的寄存器
 
 [[abi.arg_class]]
 class = "int"                  # int / float / vector / other
@@ -1227,12 +1228,13 @@ limit = 128
   （x86 的缺省值 = `sp`/`fp`/2/1，与历史硬编码逐字节同值）。`shadow_bytes = None` =
   不支持栈参数（超寄存器参数 → Unsupported）。这五个键是 ISA 数据，宿主/生成代码
   不再写死 x86 的 2/1/32/`RBP`/`RSP`。
-- `call_clobbers`：Call 点被调用方破坏的寄存器。缺省 = 整数参数寄存器 + 返回寄存
-  器。**定宽 ISA 无 callee-saved 保存序列时须列全 caller-saved**，否则跨调用存活
-  值留在寄存器被覆盖（实测递归 fib 死循环）。s 系（由帧件按 `callee_save` 保存）不在列表。
+- `call_clobbers` **已删除**（A5-3）：调用点的破坏集是**约定级事实**（`AbiPlan::clobbers`
+  = 可用池 − callee-saved − pinned），**与签名无关**——宿主在函数规划失败时用空签名问一次
+  引擎，把结果放进 `LowerCtx::conv_clobbers` 供生成物回退使用；拿不到就 **fail-closed**
+  （不再按"参数寄存器 + 返回寄存器"猜：那会漏掉 callee 破坏的临时寄存器，实测递归 fib 死循环）。
 - `[abi]` 里**不再有**机器事实键：`scratch`/`reserved`/`call_ret_reg`/`frame`/
-  `callee_saved` 全部删除，请写 [`[machine]`](#machine--机器事实) 的
-  `spill_scratch`/`fixed_regs`/`link_reg`/`frame`/`callee_saved_gpr`（+`callee_save_slots`）。
+  `callee_saved`/`arg_slot` 全部删除，请写 [`[machine]`](#machine--机器事实) 的
+  `spill_scratch`/`fixed_regs`/`link_reg`/`frame`/`callee_saved_gpr`（+`callee_save_slots`/`frame_padding`/`arg_slot`）。
 
 ## `[machine.frame]` — 帧布局
 

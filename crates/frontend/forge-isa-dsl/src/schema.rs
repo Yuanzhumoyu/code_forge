@@ -303,7 +303,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[abi]",
         model: "Abi",
         required: &[],
-        optional: &["arg_class", "ret_regs", "call_clobbers"],
+        optional: &["arg_class", "ret_regs"],
         flatten: &[],
         additional: false,
         doc: "调用约定",

@@ -72,6 +72,15 @@ pub struct LowerCtx {
     ///
     /// `None` = 管线还没接上（或该 ISA/约定算不出计划）⇒ 生成物走既有 `[abi]` 路径。
     pub call_layout: Option<crate::machine::call_layout::CallLayout>,
+    /// **约定级破坏集**（v20 A5-3）：调用点被破坏的寄存器 `(类内号, 类)`，由宿主按
+    /// `(ISA, 约定)` 算好塞进来。
+    ///
+    /// 与 [`call_layout`](Self::call_layout) 的分工：`call_layout` 是**本函数**的完整布局
+    /// （含落点），这份只是"这份约定在调用点破坏哪些寄存器"——它是**签名无关**的事实
+    /// （`AbiPlan::clobbers` = 可用池 − callee-saved − pinned），因此**没有 plan 的回退
+    /// 路径**也能拿到正确值。空 = 宿主没给约定数据 ⇒ 生成物在调用点 **fail-closed**
+    /// （不再按谱面里那几个寄存器猜）。
+    pub conv_clobbers: Vec<(u32, forge_ir::RegClass)>,
     /// **解析后的约定名**（宿主注册表里的键；空串 = 还没解析）。
     ///
     /// 与 [`call_conv`](Self::call_conv) 的分工：`call_conv` 是 IR 侧的**标识**
@@ -177,6 +186,7 @@ impl LowerCtx {
             call_conv: CallConvId::default(),
             call_conv_name: String::new(),
             call_layout: None,
+            conv_clobbers: Vec::new(),
             constant_pool: None,
             is_float_return: false,
             is_sret_return: false,
