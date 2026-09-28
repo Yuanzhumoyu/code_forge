@@ -1287,13 +1287,32 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         store_triple.as_ref(),
     ) {
         (true, Some((s_vn, s_mem, s_reg))) => quote! {
-            // 位置 < n 的 spilled 寄存器参数：load ABI 寄存器 → scratch
-            // → spill 槽（mod.rs 210 写槽依赖 entry vreg 值正确）
-            if __pos < #n
-                && !__rm.param_is_float.get(__i).copied().unwrap_or(false)
+            // spilled 的**寄存器**参数：load 被调方 ABI 寄存器 → scratch
+            // → spill 槽（mod.rs 210 写槽依赖 entry vreg 值正确）。
+            //
+            // 来源寄存器由**被调方布局**给（v20 A5-3）：不再按谱面 `[abi.arg_class]` 的
+            // "第 __pos 个寄存器"取——按位置/按类计数、sret 占不占首槽都是引擎算好的；
+            // 拿不到布局 ⇒ **fail-closed**（不按谱面顺序猜）。
+            if !__rm.param_is_float.get(__i).copied().unwrap_or(false)
                 && __rm.spill_slots.contains_key(&__pv)
             {
-                let __src = [#(Reg::#regs),*][__pos];
+                let __src = match __rm.call_layout.as_ref().and_then(|__cl| __cl.arg(__i as u32)) {
+                    Some(__ca) => match &__ca.place {
+                        crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
+                            Reg::from_index(*index, *class)
+                        }
+                        _ => {
+                            return Err(crate::IrError::Unsupported(
+                                "v12 move_args: spilled 寄存器参数需要布局给的寄存器落点".into(),
+                            ));
+                        }
+                    },
+                    None => {
+                        return Err(crate::IrError::Unsupported(
+                            "v12 move_args: spilled 寄存器参数需要调用布局（plan）".into(),
+                        ));
+                    }
+                };
                 let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
                 let __slot_off = __rm.spill_slot(__pv).offset as i64;
                 // ABI 寄存器 → scratch（用参数移动指令 mov_vn）

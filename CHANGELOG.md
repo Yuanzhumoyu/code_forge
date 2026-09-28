@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3：被调方 spill 收参改按 layout（不再读谱面 `[abi.arg_class]` 的顺序）
+
+- **`move_args` 的 spilled 寄存器参数**（`crates/frontend/forge-isa-dsl/src/v12/codegen/frame.rs`）：来源寄存器不再按"谱面 `int_regs[__pos]`"取，而是读**被调方布局** `ArgPlace::Reg { class, index }`——按位置/按类计数、`sret` 占不占首槽都由引擎算好；拿不到布局或落点不是寄存器 ⇒ **fail-closed**（不按谱面顺序猜）。
+- 这是 `[abi].arg_class` 的消费者之一被摘掉；剩下的消费者是**调用方**的参数搬运（`gen_call_lowering`/`arg_move_loop`）与 `gen_abi` 的 `arg_regs()`/`int_arg_slot_count`（宿主 `param_reg_count`）——它们是下一步（见计划文档）。
+- 验证：workspace 串行全套绿、`forge-tests --lib` 43 绿（含 x86/riscv/arm64 三条 JIT 矩阵）、clippy `-D warnings` 0、`cargo fmt --check` 0。
+
 ### Changed (2026-09-27) — v20 A5-3：`[abi].ret_regs` 删除（返回槽由 plan / 约定级数据给）
 
 - **谱面删键**：`[abi].ret_regs`（`Abi` 字段 / schema / 文档键表 / riscv64 与 arm64 谱里的声明、`demo8_v12` 夹具的声明一并去掉）。它一直是"返回槽放哪"的**生成期近似**——`x86` 靠 index 0 兜底、`riscv` 声明 `X10`，而 `arm64` 的 `X0` 恰好也是 0，这种"每台机器各写一遍"的近似正是 A5-3 要收掉的东西。
