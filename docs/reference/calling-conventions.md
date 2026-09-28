@@ -2,7 +2,7 @@
 
 > **状态：active**（v20 A1/A2，2026-09-24）。代码为准：`crates/foundation/forge-abi`、
 > `forge-ir` 的 `CallConvId`、`forge-codegen` 的 `pipeline::conv_registry`。
-> 本文只讲**已经落地**的东西；A3–A7（管线按 plan 发射、删谱里 `[abi]`）的设计与进度见
+> 本文只讲**已经落地**的东西；A3–A7（管线按 plan 发射、删谱里 `[abi]`——**已完成**）的设计与进度见
 > [`docs/plans/calling-convention-redesign-plan.md`](../plans/calling-convention-redesign-plan.md)。
 
 调用约定在这套编译器里是**三层数据 + 一个通用引擎**，不是散在各处的 if-else：
@@ -262,7 +262,7 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
 - **收参的来源取自布局**：`__layout_ok` 入场判定 → `ArgPlace::Reg`（类 + 类内号）/
   带指针的 `Indirect`，生成器不再数"第几个 int 槽"、不再做 `sret` 偏移。
 - **一个参数落在本片未覆盖的落点**（`Pair`/`Group`/无指针的 `Indirect`）⇒
-  **整函数**退回既有 `[abi]` 路径（两条路径不混用：混用会让旧路径的 `__gi`/`__fi`
+  **整函数**退回既有（v20 A5-3 前的）`[abi]` 路径（两条路径不混用：混用会让旧路径的 `__gi`/`__fi`
   游标与实际参数错位）。序/尾声已按约定发射（A4）；**栈参数**自 v20 A5-3 起同样只在
   布局路径上（`ArgPlace::Stack { offset }`；谱面不再有 `[abi.stack_args]`，见
   `docs/reference/isa-dsl.md`），没有布局时明确 `Unsupported` 而不是按旧常量收参。
@@ -275,7 +275,7 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
 
 调用点在 lowering 时只看得见**实参的形状**（大小/对齐/族/成员），看不见被调方的
 `Function`；而"第 i 个实参进哪个寄存器/栈槽"只有引擎算得出来（规则 + 绑定 = 使用者的
-数据）。谱里那套 `[abi].arg_class`/`ret_regs` 只是这份数据的**生成期近似**——按类还是按
+数据）。谱里那套 `[abi].arg_class`/`ret_regs`（**已删除**）只是这份数据的**生成期近似**——按类还是按
 位置计数、by-ref 阈值、sret 槽，引擎知道得比生成器多。
 
 ```text

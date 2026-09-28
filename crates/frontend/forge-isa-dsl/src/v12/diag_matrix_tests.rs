@@ -60,10 +60,6 @@ asm = "add {dst}, {src}, {src2}"
 op = "Iadd"
 insts = ["add {out}, {0}, {1}"]
 
-[abi]
-[[abi.arg_class]]
-class = "int"
-regs = ["X0", "X1"]
 
 [machine]
 spill_scratch = ["X9"]
@@ -291,8 +287,8 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "abi 未知寄存器名",
-            BASE.replace("regs = [\"X0\", \"X1\"]", "regs = [\"NOPE\"]"),
-            "DSL-ABI",
+            BASE.replace("spill_scratch = [\"X9\"]", "spill_scratch = [\"NOPE\"]"),
+            "DSL-OTHER",
             "NOPE",
         ),
         (

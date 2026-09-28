@@ -3,12 +3,14 @@
 //! 生成物只依赖 `forge_isa_runtime`，因此"谁来做 IR → 机器码"必须由**宿主**登记：
 //! 本模块为三个发行后端各注册一个工厂闭包（downcast 到具体类型后造 `FunctionCompiler`）。
 //! 入口是 [`ensure_registered`]，在 JIT 编译入口处调用（幂等）。
+//!
+//! v20 A5-3 起这里还登记**调用点布局钩子**（`pipeline::abi_target::register_isa_call_planner`）：
+//! 生成的 lowering 在调用点只有实参形状，靠它拿到**被调方**的落点。
 
 use std::any::Any;
 use std::sync::OnceLock;
 
 use forge_ir::IrError;
-use forge_isa_runtime::machine::call_layout::ArgShape;
 use forge_isa_runtime::{CompiledFunction, FunctionPipeline};
 
 use crate::pipeline::compiler::FunctionCompiler;
@@ -54,31 +56,13 @@ register_backend!(
     "arm64_v12"
 );
 
-/// 给一台具体机器装调用点布局钩子（`Box::leak` 到进程生命周期，量级 = 一台机器）。
-fn register_planner<M>(isa: &str, machine: M)
-where
-    M: forge_isa_runtime::machine::target::TargetMachine + 'static,
-{
-    let tm: &'static M = Box::leak(Box::new(machine));
-    forge_isa_runtime::machine::call_plan::register_call_planner(
-        isa,
-        std::sync::Arc::new(
-            move |conv: &str, args: &[ArgShape], ret: Option<ArgShape>| {
-                let reg = crate::pipeline::conv_registry::registry().read().ok()?;
-                let plan =
-                    crate::pipeline::abi_target::plan_for_shapes(tm, &reg, conv, args, ret).ok()?;
-                Some(crate::pipeline::abi_target::call_layout(&plan, tm))
-            },
-        ),
-    );
-}
-
 /// 进程内注册一次（幂等）：把三个发行后端的管线工厂登记到 runtime 注册表。
 ///
-/// 注册用 `Box::leak` 得到 `&'static`（进程生命周期，量级 = 3 个闭包）。
+/// 注册用 `Box::leak` 得到 `&'static`（进程生命周期，量级 = 3 个闭包 + 3 台机器）。
 ///
 /// 同时登记**调用点布局钩子**（v20 A5-3）：生成的 lowering 在调用点只有实参形状，
-/// 靠这个钩子拿"被调方"的落点（`plan_call`）。
+/// 靠这个钩子拿"被调方"的落点（`machine::call_plan::plan_call`）。未注册 ⇒ 调用点
+/// **fail-closed**（不按谱面顺序猜落点）。
 pub fn ensure_registered() {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
@@ -93,11 +77,17 @@ pub fn ensure_registered() {
         forge_isa_runtime::register_pipeline("arm64_v12", arm64);
 
         // 调用点布局钩子：`(约定名, 实参形状, 返回形状) → 被调方 CallLayout`。
-        register_planner("x86_64_v12", crate::arch::x86_v12::TargetMachine::new());
-        register_planner(
+        crate::pipeline::abi_target::register_isa_call_planner(
+            "x86_64_v12",
+            crate::arch::x86_v12::TargetMachine::new(),
+        );
+        crate::pipeline::abi_target::register_isa_call_planner(
             "riscv64_v12",
             crate::arch::riscv64_v12::TargetMachine::new(),
         );
-        register_planner("arm64_v12", crate::arch::arm64_v12::TargetMachine::new());
+        crate::pipeline::abi_target::register_isa_call_planner(
+            "arm64_v12",
+            crate::arch::arm64_v12::TargetMachine::new(),
+        );
     });
 }

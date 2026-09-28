@@ -237,19 +237,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     } else {
         (format_ident!("cond"), format_ident!("target"))
     };
-    // S2：宽向量 sret 需要的指令（按语义标签收集）与 sret_ptr 所在
-    // int 参数槽序列。
+    // S2：宽向量 sret 需要的指令（按语义标签收集）。
     let (_byref_insts, has_byref_insts) = collect_byref_insts(infos);
-    let int_regs: Vec<syn::Ident> = model
-        .abi
-        .as_ref()
-        .and_then(|a| {
-            a.arg_class
-                .iter()
-                .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
-                .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
-        })
-        .unwrap_or_default();
 
     // Return：整数值 → RAX（MOV_RM8_R64）、浮点值 → XMM0（MOVSD/MOVSS）。
     // 与 v11 一致：**不生成 RET**——return block 经 emit_epilogue_jump 跳到
@@ -366,11 +355,16 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 .expect("tag store64")
                 .clone();
             quote! {
-                // sret_ptr 来自首 int 参数槽（x86 arg_class int 首项 = RCX）
-                let __sret = Reg::from_index(
-                    [#(Reg::#int_regs),*][0].to_index(),
-                    __DEFAULT_GPR_CLASS,
-                );
+                // sret 指针来自**布局**的隐藏槽（v20 A5-3：不再假设"首 int 参数槽"——
+                // 那正是按位置/按类计数与 sret 槽差异会出错的写法）。
+                let __sret = match ctx.call_layout.as_ref().and_then(|__cl| __cl.hidden_sret) {
+                    Some((__hc, __hi)) => Reg::from_index(__hi, __hc),
+                    None => {
+                        return Err(crate::prelude::IrError::Unsupported(
+                            "v12 wide vector return (sret): 需要布局给的 hidden_sret 槽".into(),
+                        ));
+                    }
+                };
                 let __vbytes = ctx
                     .xreg_types
                     .get(&val)
@@ -1164,18 +1158,19 @@ fn gen_call_lowering(
     let __sret_frame: u32 = __vec_stride + model.slot_bytes()? as u32;
     let vn = |n: &str| crate::v12::codegen::pascal_ident(n);
     let fids = |n: &str| inst_fids(infos, n);
-    // ABI 参数/返回寄存器类（缺失 → Call 降级 Unsupported，如定宽试点 ISA）
-    let abi = match model.abi.as_ref() {
-        Some(a) => a,
-        None => {
-            let op_ident = format_ident!("{op_name}");
-            return Ok(quote! {
-                crate::prelude::Opcode::#op_ident { .. } => {
-                    Err(crate::prelude::IrError::Unsupported("v12 call lowering ([abi] missing)".into()))
-                }
-            });
-        }
-    };
+    // v20 A5-3：谱面不再有 `[abi]`，**能力由角色说话**——没有 `gpr_mov`（参数搬运）
+    // 的 ISA（如只做编码试点的夹具）整条 Call/CallIndirect 降级 Unsupported，
+    // 而不是在生成期报"mov 指令形状不符"。
+    if role_name(infos, Role::GprMov).is_err() {
+        let op_ident = format_ident!("{op_name}");
+        return Ok(quote! {
+            crate::prelude::Opcode::#op_ident { .. } => {
+                Err(crate::prelude::IrError::Unsupported(
+                    "v12 call lowering（本 ISA 未申报 roles = [\"gpr_mov\"]）".into(),
+                ))
+            }
+        });
+    }
     // 整数移动指令：角色 `ret_mov`（缺省回退 `gpr_mov`），字段按角色解析
     //（x86 op0=In=src/op1=InOut=dest；demo op0=Out=dest/op1=In=src）。
     let mov_inst = role_name(infos, Role::RetMov)
@@ -1237,10 +1232,6 @@ fn gen_call_lowering(
     // 从指令结构派生 vn/字段名（semantic_operand_name），不硬编码。
     let (byref_insts, has_byref_insts) = collect_byref_insts(infos);
     let byref = |tag: &str| byref_insts.get(tag).cloned();
-    // ABI 槽位规则（v20 A5-3：读机器事实 `[machine].arg_slot`，原 `[abi].arg_slot`）：
-    // by-position（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）
-    // / by-class（缺省 riscv SysV——int/float 独立推进）。
-    let by_position = model.machine_arg_slot() == ArgSlot::ByPosition;
     // 返回槽（Call 读**被调方**的返回值，v20 A5-3）：用宿主的**约定级返回槽**
     // `ctx.conv_ret_gpr`——调用点看不到被调方的签名，而"标量整数返回放哪个寄存器"
     // 是约定级事实（x86 RAX / riscv a0=X10 / arm64 x0）。谱里的 `[abi].ret_regs`
@@ -1255,20 +1246,115 @@ fn gen_call_lowering(
             }
         }
     };
-    let int_regs: Vec<syn::Ident> = abi
-        .arg_class
-        .iter()
-        .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
-        .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
-        .unwrap_or_default();
-    let float_regs: Vec<syn::Ident> = abi
-        .arg_class
-        .iter()
-        .find(|ac| ac.class == crate::v12::model::ArgClassKind::Float)
-        .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
-        .unwrap_or_default();
-    let n = int_regs.len();
-    let fn_ = float_regs.len();
+    // ISA 名（生成期字面量）：`call_plan::plan_call` 的查表键。
+    let isa_lit = syn::LitStr::new(model.meta.name.as_str(), proc_macro2::Span::call_site());
+    // **调用点 plan**（v20 A5-3）：调用方按**被调方**的落点搬实参。实参形状从 IR 类型
+    // 摊开（size/align/族）——运行时不依赖 forge-abi，形状交给宿主注册的 planner，
+    // 拿回被调方的 `CallLayout`。拿不到 ⇒ **fail-closed**（谱里的 `[abi].arg_class`
+    // 正在下线，不再按谱面顺序猜落点）。
+    //
+    // `CallIndirect` 的 `args[0]` 是被调方指针、**不占 ABI 位置**（与实参循环同口径）。
+    let shape_args: TokenStream = if op_name == "CallIndirect" {
+        quote! { &args[1..] }
+    } else {
+        quote! { args }
+    };
+    let plan_setup: TokenStream = quote! {
+        let __shape_args: &[crate::prelude::XReg] = #shape_args;
+        let __shapes: Vec<crate::machine::call_layout::ArgShape> = __shape_args
+            .iter()
+            .map(|&__a| {
+                let __t = ctx.xreg_types.get(&__a).copied();
+                let __size = __t
+                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(t)))
+                    .unwrap_or(__SLOT_BYTES as u32)
+                    .max(1);
+                let __align = __t
+                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.alignment(t)))
+                    .unwrap_or(__size)
+                    .max(1);
+                let __kind = match __t {
+                    Some(t) => {
+                        if t.is_float() {
+                            crate::machine::call_layout::ShapeKind::Float
+                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(t)) {
+                            crate::machine::call_layout::ShapeKind::Vector {
+                                elem_is_float: false,
+                                lanes: 0,
+                                elem_bytes: 0,
+                            }
+                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_aggregate(t)) {
+                            // 成员留空：HFA/HVA 的成员信息缺失时引擎会因缺池/落点不匹配
+                            // 报错（fail-closed），**不会**静默按整数槽传。
+                            crate::machine::call_layout::ShapeKind::Aggregate {
+                                members: Vec::new(),
+                            }
+                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_ptr(t)) {
+                            crate::machine::call_layout::ShapeKind::Ptr
+                        } else {
+                            crate::machine::call_layout::ShapeKind::Int
+                        }
+                    }
+                    None => crate::machine::call_layout::ShapeKind::Int,
+                };
+                crate::machine::call_layout::ArgShape {
+                    size: __size,
+                    align: __align,
+                    kind: __kind,
+                }
+            })
+            .collect();
+        let __ret_shape: Option<crate::machine::call_layout::ArgShape> =
+            results.first().copied().map(|__r| {
+                let __t = ctx.xreg_types.get(&__r).copied();
+                let __size = __t
+                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(t)))
+                    .unwrap_or(__SLOT_BYTES as u32)
+                    .max(1);
+                let __align = __t
+                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.alignment(t)))
+                    .unwrap_or(__size)
+                    .max(1);
+                let __kind = match __t {
+                    Some(t) => {
+                        if t.is_float() {
+                            crate::machine::call_layout::ShapeKind::Float
+                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(t)) {
+                            crate::machine::call_layout::ShapeKind::Vector {
+                                elem_is_float: false,
+                                lanes: 0,
+                                elem_bytes: 0,
+                            }
+                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_ptr(t)) {
+                            crate::machine::call_layout::ShapeKind::Ptr
+                        } else {
+                            crate::machine::call_layout::ShapeKind::Int
+                        }
+                    }
+                    None => crate::machine::call_layout::ShapeKind::Int,
+                };
+                crate::machine::call_layout::ArgShape {
+                    size: __size,
+                    align: __align,
+                    kind: __kind,
+                }
+            });
+        let __cl = match crate::machine::call_plan::plan_call(
+            #isa_lit,
+            &ctx.call_conv_name,
+            &__shapes,
+            __ret_shape,
+        ) {
+            Some(__cl) => __cl,
+            None => {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: 调用点布局不可得（宿主未注册该 ISA 的约定 planner，或这份签名\
+                     规划不出来）——v20 A5-3 起调用方按被调方落点搬实参，不再按谱面顺序猜"
+                        .into(),
+                ));
+            }
+        };
+    };
     let fpr_ret_stmt: TokenStream = if has_fpr_mov {
         quote! {
             let __idx = __pack.push_inst(if ctx.type_bits_of(&__r).unwrap_or(64) == 32 && #has_ss {
@@ -1542,9 +1628,19 @@ fn gen_call_lowering(
                     },
                 });
                 __pack.map_reg_field(__sp, __lidx, #i_lea, true);
+                // sret 指针的落点由**布局**给（v20 A5-3：不再假设"首 int 参数槽"，
+                // 那正是按位置/按类计数与 sret 槽差异会出错的写法）。
+                let (__sret_class, __sret_index) = match __cl.hidden_sret {
+                    Some(__h) => __h,
+                    None => {
+                        return Err(crate::prelude::IrError::Unsupported(
+                            "v12 call: sret 需要布局给的 hidden_sret 槽".into(),
+                        ));
+                    }
+                };
                 let __midx = __pack.push_inst(Inst::#mov_vn {
                     #m_src: Reg::from_index(0, __ADDR_CLASS),
-                    #m_dest: [#(Reg::#int_regs),*][0],
+                    #m_dest: Reg::from_index(__sret_index, __sret_class),
                 });
                 __pack.map_reg_field(__sp, __midx, #m_src_idx, false);
                 // 帧需求（sret 槽 64B 对齐间距）
@@ -1561,13 +1657,8 @@ fn gen_call_lowering(
     // 同一组槽（call 间 temp 槽天然死，顺序执行无重叠 live 区间）。
     // **生成期门控**：标签缺失（riscv 等无向量 ISA）→ 直接 Unsupported，
     // 不引用不存在的变体。
-    // 槽位变量：by-position（x86）用 __pi（int/float 共享位置计数）、
-    // by-class（riscv）用 __gi（int 序列独立推进）。
-    let slot_var: TokenStream = if by_position {
-        quote! { __pi }
-    } else {
-        quote! { __gi }
-    };
+    // 槽位变量不再需要：by-ref 的**指针落点**由布局的 `Indirect { reg }` 给
+    //（v20 A5-3：按位置/按类计数的差异不再由生成器各自数）。
     let byref_stmt: TokenStream = if has_byref_insts {
         let (vn_s32, f_s32, m_s32, i_s32) = byref("wide_vec_store_32").expect("tag store32");
         let (vn_s64, f_s64, m_s64, i_s64) = byref("wide_vec_store_64").expect("tag store64");
@@ -1630,23 +1721,9 @@ fn gen_call_lowering(
                 },
             });
             __pack.map_reg_field(__ptr, __lidx, #i_lea, true);
-            // 3) 地址 → GPR 参数槽（by-ref 参数占 1 个 int 槽；槽位变量
-            //    按 ABI 规则：by-position → __pi、by-class → __gi）
-            if #slot_var < #n {
-                let __dst = [#(Reg::#int_regs),*][#slot_var];
-                #slot_var += 1;
-                let __midx = __pack.push_inst(Inst::#mov_vn {
-                    #m_src: Reg::from_index(0, __ADDR_CLASS),
-                    #m_dest: __dst,
-                });
-                __pack.map_reg_field(__ptr, __midx, #m_src_idx, false);
-            } else {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: integer arg register exhausted (by-ref wide vector)".into(),
-                ));
-            }
-            // 4) 帧需求：槽深并入 max_stack_bytes（frame_layout 的 sub rsp 大小；
-            //    与 StackAddr 的 depth = -v + 8 同构——不含 shift，帧内统一平移）
+            // 3) 帧需求：槽深并入 max_stack_bytes（frame_layout 的 sub rsp 大小；
+            //    与 StackAddr 的 depth = -v + 8 同构——不含 shift，帧内统一平移）。
+            //    指针→参数寄存器那一步由逐实参循环按布局发射（`Indirect { reg }`）。
             ctx.max_stack_bytes = ctx
                 .max_stack_bytes
                 .max((__SLOT_BYTES as usize + #__vec_stride as usize * __bi) as u32);
@@ -1659,11 +1736,6 @@ fn gen_call_lowering(
         }
     };
     let arg_loop = arg_move_loop(
-        op_name,
-        &n,
-        &fn_,
-        &int_regs,
-        &float_regs,
         &m_src,
         m_src_idx,
         &m_dest,
@@ -1676,10 +1748,8 @@ fn gen_call_lowering(
         &v_dest,
         &v_src,
         has_vec_mov,
-        // S1：宽向量 by-ref 栈拷贝（生成期拼好的语句；标签缺失 → Unsupported）
+        // S1：宽向量 by-ref 的**栈上副本**（生成期拼好的语句；标签缺失 → Unsupported）
         &byref_stmt,
-        // ABI 槽位规则：by-position（Windows x64，int/float 共享位置计数）
-        model.machine_arg_slot() == ArgSlot::ByPosition,
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,
@@ -1688,6 +1758,7 @@ fn gen_call_lowering(
         &stack_store,
         // 栈相对内存的基址寄存器（[machine.frame].sp 派生）
         &__sp_base,
+        has_byref_insts,
     );
     let op_ident = format_ident!("{op_name}");
     // call_body 为 Unsupported（return Err）时，其后不再生成 arg_loop/ret_move
@@ -1754,6 +1825,7 @@ fn gen_call_lowering(
                 } else {
                     0
                 };
+                #plan_setup
                 #sret_setup
                 #arg_loop
                 #call_body
@@ -1765,21 +1837,19 @@ fn gen_call_lowering(
     Ok(body)
 }
 
-/// 参数 → ABI 寄存器移动语句（浮点参数按类型分派 XMM；整数按序 GPR）。
-/// 整数 mov 指令名按指令角色（roles = ["gpr_mov"]）泛化；浮点指令缺失时该分支
-/// Unsupported（防引用不存在的 Inst 变体）。
-/// `byref_stmt`：宽向量 by-ref 栈拷贝语句（gen_call_lowering 按语义标签
-/// 生成期拼好；标签缺失 → Unsupported）。
-/// `by_position`：ABI 槽位规则——true = int/float 共享位置计数
-/// （Windows x64，参数 i 用 GPR{i}/XMM{i}）；false = by-class 独立推进
-/// （riscv SysV）。
+/// 参数 → ABI 落点搬运（v20 A5-3：**按被调方布局**发射，不再按谱面 `[abi].arg_class` 数寄存器）。
+///
+/// 逐实参读 `__cl.arg(__i)` 的 `ArgPlace`：
+///
+/// - `Reg { class, index }`：整数 → `gpr_mov`；浮点 → 按字节宽 `fpr_mov32/64`；向量（≤16B 按值）
+///   → `vec_mov`；目标寄存器由布局给（"第几个参数进哪个寄存器"由引擎按约定算好）。
+/// - `Indirect { reg: Some(..) }`：先按 `byref_stmt` 在帧内做副本并取地址，再把指针 mov 进布局给的寄存器。
+/// - `Stack { .. }`：store 到 `[sp + __cl.caller_offset(k)]`（k = 第几个栈参数）。
+/// - `Ignore`：跳过。
+/// - 其余（`Pair`/`Group`/无指针 `Indirect`）= 本片未覆盖的落点 ⇒ **fail-closed**（A6 缺口；
+///   旧实现会把它们静默塞进整数寄存器——那才是真错值）。
 #[allow(clippy::too_many_arguments)]
 fn arg_move_loop(
-    op_name: &str,
-    n: &usize,
-    fn_: &usize,
-    int_regs: &[syn::Ident],
-    float_regs: &[syn::Ident],
     m_src: &syn::Ident,
     m_src_idx: u8,
     m_dest: &syn::Ident,
@@ -1787,36 +1857,70 @@ fn arg_move_loop(
     f_src: &syn::Ident,
     has_ss: bool,
     has_fpr_mov: bool,
-    // ≤16B 向量（V64/V128）实参的全宽 XMM 移动指令（缺省 MOVAPS——
-    // 与标量 fpr 参数区分；指令缺失的 ISA → 该分支 Unsupported）。
     vec_mov_vn: &syn::Ident,
     v_dest: &syn::Ident,
     v_src: &syn::Ident,
     has_vec_mov: bool,
     byref_stmt: &TokenStream,
-    by_position: bool,
     mov_vn: &syn::Ident,
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
-    // 栈参数 store 指令（角色 stack_arg_store）的 (变体名, Mem 字段, Reg 字段,
-    // Reg 序号)；None = 本 ISA 没申报这个角色 ⇒ 运行期 Unsupported（不猜指令名）。
     stack_store: &Option<(syn::Ident, syn::Ident, syn::Ident, u8)>,
-    // 栈相对内存的基址寄存器表达式（`[machine.frame].sp` 派生）。
     sp_base: &TokenStream,
+    has_byref_insts: bool,
 ) -> TokenStream {
-    let n = *n;
-    let fn_ = *fn_;
-    // 栈参数 store 语句（by-position int 臂用）：偏移**由 plan 给**（调用方视角
-    // `CallLayout::caller_offset` = shadow + k×槽；v20 A5-3 起谱面不再声明
-    // `[abi.stack_args]`，`shadow`/`stride` 两处常量都删了）。角色缺失 ⇒ 运行期
-    // 明确 Unsupported（不引用任何指令名）。
-    let stack_store_stmt: TokenStream = match stack_store {
+    // 整数搬运：目标寄存器由布局给（`__dst`），源是实参 vreg（map_reg_field 绑）。
+    let int_mov: TokenStream = quote! {
+        let __idx = __pack.push_inst(Inst::#mov_vn {
+            #m_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+            #m_dest: __dst,
+        });
+        __pack.map_reg_field(__a, __idx, #m_src_idx, false);
+    };
+    // 浮点/向量：按实参的 IR 类型分派（与旧路径同判据：≤16B 向量走全宽 vec_mov）。
+    let fp_mov: TokenStream = if has_fpr_mov && has_vec_mov {
+        quote! {
+            if ctx.xreg_types.get(&__a).is_some_and(|t| {
+                ctx.type_store.as_ref().is_some_and(|s| {
+                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
+                })
+            }) {
+                let __idx = __pack.push_inst(Inst::#vec_mov_vn {
+                    #v_dest: __dst,
+                    #v_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                });
+                __pack.map_reg_field(__a, __idx, 1u8, false);
+            } else {
+                let __idx = __pack.push_inst(
+                    if ctx.type_bits_of(&__a).unwrap_or(64) == 32 && #has_ss {
+                        Inst::#fpr_mov32_vn {
+                            #f_dest: __dst,
+                            #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        }
+                    } else {
+                        Inst::#fpr_mov64_vn {
+                            #f_dest: __dst,
+                            #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        }
+                    },
+                );
+                __pack.map_reg_field(__a, __idx, 1u8, false);
+            }
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: 浮点/向量实参搬运缺 MOVSS/MOVSD/MOVAPS 角色".into(),
+            ));
+        }
+    };
+    // 栈参数：偏移由布局给（调用方视角 `caller_offset(k)`），k = 已发过的栈参数个数。
+    let stack_stmt: TokenStream = match stack_store {
         Some((s_vn, s_mem, s_reg, s_reg_idx)) => quote! {
-            // 第 (__pi - n) 个栈槽：偏移与帧需求都按**布局**算（__cl = 调用布局）
-            let __k = (__pi - #n) as u32;
+            let __k = __stack_seen;
+            __stack_seen += 1;
             let __off = __cl.caller_offset(__k) as i64;
             let __slot = __cl.slot_bytes;
-            __pi += 1;
             let __idx = __pack.push_inst(Inst::#s_vn {
                 #s_mem: MemRef {
                     base: #sp_base,
@@ -1830,252 +1934,80 @@ fn arg_move_loop(
             // 帧需求：栈参数区 = shadow + 已用栈槽
             ctx.max_stack_arg_bytes = ctx
                 .max_stack_arg_bytes
-                .max(__cl.shadow_bytes + (__pi - #n) as u32 * __slot);
+                .max(__cl.shadow_bytes + __stack_seen * __slot);
         },
-        _ => quote! {
+        None => quote! {
             return Err(crate::prelude::IrError::Unsupported(
                 "v12 call: 本 ISA 缺 roles = [\"stack_arg_store\"] 的指令（栈参数写不出去）".into(),
             ));
         },
     };
-    let int_stmt = quote! {
-        let __idx = __pack.push_inst(Inst::#mov_vn {
-            #m_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-            #m_dest: __dst,
-        });
-        // 参数 vreg 绑 **src 序号**（x86 MOV_RM8_R64 src=op0=0；riscv mv
-        // src=op1=1）——按角色泛化，防定宽方向反（`mv vreg, x0` 清零参数）。
-        __pack.map_reg_field(__a, __idx, #m_src_idx, false);
+    // by-ref 实参（宽向量/按引用传）：副本 + 取地址由 `byref_stmt` 做，指针落点由布局给。
+    // 本 ISA 没有 by-ref 栈拷贝标签（riscv 等）⇒ 生成期就选 fail-closed 分支
+    //（不引用不存在的 `__ptr`）。
+    let indirect_arm: TokenStream = if has_byref_insts {
+        quote! {
+            let __dst = Reg::from_index(index, class);
+            #byref_stmt
+            let __midx = __pack.push_inst(Inst::#mov_vn {
+                #m_src: Reg::from_index(0, __ADDR_CLASS),
+                #m_dest: __dst,
+            });
+            __pack.map_reg_field(__ptr, __midx, #m_src_idx, false);
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: by-ref 实参需要 wide_vec_store/frame_rbp_addr 标签（本 ISA 未申报）"
+                    .into(),
+            ));
+        }
     };
-    let fpr_stmt: TokenStream = if !float_regs.is_empty() {
-        let fpr_regs = float_regs;
-        if has_fpr_mov {
-            quote! {
-                if __fi < #fn_ {
-                    let __dst = [#(Reg::#fpr_regs),*][__fi];
-                    __fi += 1;
-                    let __idx = __pack.push_inst(if ctx.type_bits_of(&__a).unwrap_or(64) == 32 && #has_ss {
-                        Inst::#fpr_mov32_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
-                    } else {
-                        Inst::#fpr_mov64_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
-                    });
-                    __pack.map_reg_field(__a, __idx, 1u8, false);
-                } else {
-                    // P0-17：浮点实参寄存器耗尽（x86 float 类 XMM0-3 仅 4 个）——
-                    // 显式拒绝，防静默丢弃。
+    quote! {
+        // 逐实参：落点全部来自 `__cl`（调用点 plan）。
+        let mut __stack_seen: u32 = 0;
+        let mut __bi: usize = if __sret { 1usize } else { 0usize };
+        for (__i, &__a) in __shape_args.iter().enumerate() {
+            let __place = match __cl.arg(__i as u32) {
+                Some(__ca) => __ca.place.clone(),
+                None => {
                     return Err(crate::prelude::IrError::Unsupported(
-                        "v12 call: float arg register exhausted (stack args not yet supported)".into(),
+                        "v12 call: 调用点布局缺这个实参的落点".into(),
                     ));
                 }
-            }
-        } else {
-            quote! {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: float arg move (MOVSD/MOVSS missing)".into(),
-                ));
-            }
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: float arg move (no float regs)".into(),
-            ));
-        }
-    };
-    // by-position 版（Windows x64）：int/float 共享位置计数 __pi——
-    // 参数 i 用 GPR{i}（int）/ XMM{i}（float）；by-ref 也占位置。
-    let fpr_stmt_pos: TokenStream = if has_fpr_mov && !float_regs.is_empty() {
-        let fpr_regs = float_regs;
-        quote! {
-            if __pi < #fn_ {
-                let __dst = [#(Reg::#fpr_regs),*][__pi];
-                __pi += 1;
-                let __idx = __pack.push_inst(if ctx.type_bits_of(&__a).unwrap_or(64) == 32 && #has_ss {
-                    Inst::#fpr_mov32_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
-                } else {
-                    Inst::#fpr_mov64_vn { #f_dest: __dst, #f_src: Reg::from_index(0, __DEFAULT_FPR_CLASS) }
-                });
-                __pack.map_reg_field(__a, __idx, 1u8, false);
-            } else {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: float arg register exhausted (stack args not yet supported)".into(),
-                ));
-            }
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: float arg move (MOVSD/MOVSS missing)".into(),
-            ));
-        }
-    };
-    // ≤16B 向量（V64/V128）实参 → XMM{槽} 全宽 128 位移动（by-class：
-    // __fi 独立推进）。MOVSD/MOVSS 只移 8/4 字节 → 高半截断（WA-37 D3）。
-    let vec_stmt: TokenStream = if has_vec_mov && !float_regs.is_empty() {
-        let fpr_regs = float_regs;
-        quote! {
-            if __fi < #fn_ {
-                let __dst = [#(Reg::#fpr_regs),*][__fi];
-                __fi += 1;
-                let __idx = __pack.push_inst(Inst::#vec_mov_vn {
-                    #v_dest: __dst,
-                    #v_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                });
-                __pack.map_reg_field(__a, __idx, 1u8, false);
-            } else {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: vector arg register exhausted (stack args not yet supported)".into(),
-                ));
-            }
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: vector arg move (vec_mov_inst missing)".into(),
-            ));
-        }
-    };
-    // by-position 版（Windows x64）：向量实参占一个位置槽 __pi（XMM{__pi}）。
-    let vec_stmt_pos: TokenStream = if has_vec_mov && !float_regs.is_empty() {
-        let fpr_regs = float_regs;
-        quote! {
-            if __pi < #fn_ {
-                let __dst = [#(Reg::#fpr_regs),*][__pi];
-                __pi += 1;
-                let __idx = __pack.push_inst(Inst::#vec_mov_vn {
-                    #v_dest: __dst,
-                    #v_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                });
-                __pack.map_reg_field(__a, __idx, 1u8, false);
-            } else {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: vector arg register exhausted (stack args not yet supported)".into(),
-                ));
-            }
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: vector arg move (vec_mov_inst missing)".into(),
-            ));
-        }
-    };
-    let int_stmt_pos = quote! {
-        if __pi < #n {
-            let __dst = [#(Reg::#int_regs),*][__pi];
-            __pi += 1;
-            #int_stmt
-        } else if let Some(__cl) = ctx.call_layout.as_ref() {
-            #stack_store_stmt
-        } else {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: 整数实参寄存器耗尽，且本函数没有调用布局（plan）——栈参数的偏移只有布局一个来源".into(),
-            ));
-        }
-    };
-    let stmt = if by_position {
-        quote! {
-            if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| {
-                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
-                })
-            }) {
-                #byref_stmt
-                // by-ref 参数占一个位置（by-position：GPR{pos} 由 byref_stmt
-                // 内的 #slot_var（=__pi）推进，此处 __pi 同步
-                __pi += 1;
-            } else if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| {
-                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
-                })
-            }) {
-                // ≤16B 向量（V64/V128）按值实参：XMM{pos} 全宽移动
-                #vec_stmt_pos
-            } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
-                #fpr_stmt_pos
-            } else {
-                #int_stmt_pos
-            }
-        }
-    } else {
-        quote! {
-            if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| {
-                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
-                })
-            }) {
-                #byref_stmt
-            } else if ctx.xreg_types.get(&__a).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| {
-                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
-                })
-            }) {
-                #vec_stmt
-            } else if ctx.xreg_types.get(&__a).is_some_and(|t| t.is_float()) {
-                #fpr_stmt
-            } else if __gi < #n {
-                let __dst = [#(Reg::#int_regs),*][__gi];
-                __gi += 1;
-                #int_stmt
-            } else {
-                // P0-17 修复：整数实参寄存器耗尽（x86 int 类仅 4 个）——
-                // 原实现静默丢弃第 5+ 实参（f(1,2,3,4,5) 丢 5 → 静默错结果）。
-                // 显式拒绝（栈上溢参/按引用传参为后续迭代）。
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: integer arg register exhausted (stack args not yet supported)".into(),
-                ));
-            }
-        }
-    };
-    if op_name == "CallIndirect" {
-        let head = if by_position {
-            quote! {
-                // by-position：int/float 共享位置计数（sret 占位置 0）
-                let mut __pi = if __sret { 1usize } else { 0usize };
-                let mut __bi = if __sret { 1usize } else { 0usize };
-            }
-        } else {
-            quote! {
-                // S2：sret 隐藏参数占首 int 槽（RCX）与 sret 槽（槽 0）——
-                // 实参从下一个 int 槽 / 下一个槽位起。
-                let mut __gi = if __sret { 1usize } else { 0usize };
-                let mut __fi = 0usize;
-                let mut __bi = if __sret { 1usize } else { 0usize };
-            }
-        };
-        quote! {
-            #head
-            for (__i, &__a) in args.iter().enumerate() {
-                if __i == 0 { continue; }
-                #stmt
-            }
-        }
-    } else {
-        let head = if by_position {
-            quote! {
-                let mut __pi = if __sret { 1usize } else { 0usize };
-                let mut __bi = if __sret { 1usize } else { 0usize };
-            }
-        } else {
-            quote! {
-                let mut __gi = if __sret { 1usize } else { 0usize };
-                let mut __fi = 0usize;
-                let mut __bi = if __sret { 1usize } else { 0usize };
-            }
-        };
-        quote! {
-            #head
-            for &__a in args.iter() {
-                #stmt
+            };
+            match __place {
+                crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
+                    let __dst = Reg::from_index(index, class);
+                    if class.is_int() {
+                        #int_mov
+                    } else if class.is_fp() {
+                        #fp_mov
+                    } else {
+                        return Err(crate::prelude::IrError::Unsupported(
+                            "v12 call: 调用点布局给了未知寄存器类".into(),
+                        ));
+                    }
+                }
+                crate::machine::call_layout::ArgPlace::Indirect {
+                    reg: Some((class, index)),
+                    ..
+                } => {
+                    #indirect_arm
+                }
+                crate::machine::call_layout::ArgPlace::Stack { .. } => {
+                    #stack_stmt
+                }
+                crate::machine::call_layout::ArgPlace::Ignore => {}
+                other => {
+                    return Err(crate::prelude::IrError::Unsupported(format!(
+                        "v12 call: 调用点布局落点尚未接进发射（Pair/Group/无指针 Indirect 等，A6）：{other:?}"
+                    )));
+                }
             }
         }
     }
 }
-
-/// 按语义角色查指令（角色全 ISA 唯一，validate 已保证）。无声明 → None。
-///
-/// 取代 v14 的「`[abi].*_inst` 名指针 + 生成器里 x86 指令名硬编码兜底」：
-/// 缺角色时调用方给出带角色名的 `Unsupported`，不会静默去查别的 ISA 的名字。
 pub(crate) fn inst_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Option<&'a InstInfo<'a>> {
     infos
         .iter()

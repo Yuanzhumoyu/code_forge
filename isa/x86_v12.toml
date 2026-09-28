@@ -1851,7 +1851,7 @@ ops = ["dst:gprx:inout"]
 asm = "ror {dst}"
 
 # ============================================================
-# 调用约定（迭代 5 声明层：arg_class 类别分类，为 YMM by-ref 铺路）
+# 调用约定：v20 A5-3 起谱侧不再声明参数池/返回槽（`[abi]` 整节已下线）；
 # ============================================================
 
 [stack]
@@ -1859,7 +1859,6 @@ slot = 8
 align = 16
 fp_save = 8
 
-[abi]
 # 位置计数规则（by-position：int/float 共享位置游标）自 v20 A5-3 起是**机器事实**，
 # 写在 [machine].arg_slot（约定侧的正式位置是 AbiRules::position，进 plan 后优先）。
 
@@ -1868,18 +1867,8 @@ fp_save = 8
 # 引擎算成 plan 的 `CallLayout`；被调方按 `ArgPlace::Stack { offset }` 收参、调用方按
 # `caller_offset(k)` 写参。谱侧只剩能力申报：`roles = ["stack_arg_load"/"stack_arg_store"]`。
 
-[[abi.arg_class]]
-class = "int"
-regs = ["RCX", "RDX", "R8", "R9"]
 
-[[abi.arg_class]]
-class = "float"
-regs = ["XMM0", "XMM1", "XMM2", "XMM3"]
 
-[[abi.arg_class]]
-class = "vector"
-strategy = "by-ref"
-limit = 128
 
 
 # 溢出模板（基址 = RBP 帧指针）——**按值宽分档**（WA-46）：
@@ -4037,6 +4026,9 @@ frame_padding = 8
 # **共享位置游标**——参数 i 用 GPR{i}/XMM{i}（第 2 个参数即使第 1 个是整数也进 XMM1）。
 # 约定侧的正式位置是 AbiRules::position（win64 规则写 by_position，进 plan 后优先）。
 arg_slot = "by-position"
+# 向量 by-ref 阈值（字节，机器事实，v20 A5-3，原 [[abi.arg_class]] strategy/by-ref limit=128 位）：
+# 超过 16 字节的向量参数/返回按引用传（调用方栈上副本 + 传指针）。
+vector_by_ref_bytes = 16
 
 # 帧形状：栈/帧指针寄存器名 + 帧指针保存槽字节数（x86 用硬件 push 保存 fp，故
 # 布局模式是缺省 fp-outside、alloc 立即数由 SUB 自带减号语义）。

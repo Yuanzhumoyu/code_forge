@@ -852,11 +852,6 @@ fn validate_reg_names(m: &V12Model) -> Result<(), String> {
             }
         }
     }
-    if let Some(abi) = &m.abi {
-        for ac in &abi.arg_class {
-            check(&ac.regs, "[abi.arg_class].regs")?;
-        }
-    }
     for (name, t) in &m.spill {
         if let Some(b) = &t.base {
             check(std::slice::from_ref(b), &format!("[spill.{name}].base"))?;
@@ -1911,34 +1906,11 @@ fn placeholder_tokens(line: &str) -> Vec<String> {
     out
 }
 
-// ───────────────────────── [abi] ─────────────────────────
+// ───────────────────────── [machine] ─────────────────────────
 
 fn validate_abi(m: &V12Model) -> Result<(), String> {
-    let Some(abi) = &m.abi else {
-        return Ok(());
-    };
-    // arg_class.strategy 的值域由枚举在反序列化期强制
-    // （`arg_slot` 的值域同理，但 v20 A5-3 起它在 `[machine]` 下）
-
-    // `[abi.stack_args]` 已删除（v20 A5-3）：shadow/首个栈参偏移现在由规则的
-    // `stack.*` + `shadow_bytes` 给出（`AbiRules::validate` 负责其合法性，
-    // 例如 `shadow_bytes` 必须是槽单位的倍数）——谱面侧没有可校验的键了。
-    let mut seen = std::collections::HashSet::new();
-    for ac in &abi.arg_class {
-        if !seen.insert(ac.class) {
-            return Err(format!(
-                "[abi.arg_class]: duplicate class '{}'",
-                ac.class.name()
-            ));
-        }
-        // regs 为空仅当有传参策略（by-ref 等按引用策略不占用寄存器）。
-        if ac.regs.is_empty() && ac.strategy.is_none() {
-            return Err(format!(
-                "[abi.arg_class.{}]: regs must not be empty (or declare a strategy)",
-                ac.class.name()
-            ));
-        }
-    }
+    // v20 A5-3：`[abi]` 整节已删除（参数池/返回槽/callee-saved/栈布局归规则 + 绑定/plan，
+    // 机器事实归 `[machine]`）——这里只剩与约定无关的机器侧检查。
     // [machine.frame]：sp 必填且非空。
     if let Some(f) = m.machine_frame()
         && f.sp.trim().is_empty()

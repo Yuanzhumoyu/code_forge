@@ -3201,10 +3201,6 @@ fn any_stage_msg(doc: &str) -> String {
 fn frame_sp_declared_outside_main_group_is_error() {
     let msg = codegen_msg(&two_view_doc(
         r#"
-[abi]
-[[abi.arg_class]]
-class = "int"
-regs = ["R0", "R1"]
 [machine.frame]
 sp = "E0"
 fp = "E1"
@@ -3223,10 +3219,6 @@ fp = "E1"
 fn frame_sp_inside_main_group_resolves() {
     let m = parse_and_validate(&two_view_doc(
         r#"
-[abi]
-[[abi.arg_class]]
-class = "int"
-regs = ["R0", "R1"]
 [machine.frame]
 sp = "R3"
 fp = "R2"
@@ -3270,58 +3262,6 @@ asm = "cqo"
     ))
     .expect("合法");
     crate::v12::codegen::generate(&m).expect("生成成功");
-}
-
-/// R4：`strategy = "by-ref"` 与 `limit` 必须成对；阈值必须唯一（位→字节）。
-#[test]
-fn by_ref_limit_must_be_paired_and_unique() {
-    // 只写 strategy
-    let msg = validation_msg(&two_view_doc(
-        r#"
-[abi]
-[[abi.arg_class]]
-class = "vector"
-strategy = "by-ref"
-"#,
-    ));
-    assert!(msg.contains("limit"), "msg: {msg}");
-    // 只写 limit
-    let msg = validation_msg(&two_view_doc(
-        r#"
-[abi]
-[[abi.arg_class]]
-class = "vector"
-limit = 128
-"#,
-    ));
-    assert!(msg.contains("by-ref"), "msg: {msg}");
-    // 阈值冲突
-    let msg = validation_msg(&two_view_doc(
-        r#"
-[abi]
-[[abi.arg_class]]
-class = "vector"
-strategy = "by-ref"
-limit = 128
-[[abi.arg_class]]
-class = "float"
-strategy = "by-ref"
-limit = 256
-"#,
-    ));
-    assert!(msg.contains("冲突"), "msg: {msg}");
-    // 合法：单个 + 8 的倍数
-    let m = parse_and_validate(&two_view_doc(
-        r#"
-[abi]
-[[abi.arg_class]]
-class = "vector"
-strategy = "by-ref"
-limit = 128
-"#,
-    ))
-    .expect("合法");
-    assert_eq!(m.vector_by_ref_limit_bytes().unwrap(), Some(16));
 }
 
 /// R5：比浮点值池更宽的浮点/向量类必须有 `[spill.FPR<bytes>]` 档位——

@@ -1688,6 +1688,10 @@ pub struct FunctionCompiler<M: TargetMachine> {
 impl<M: TargetMachine> FunctionCompiler<M> {
     /// Create a new compiler with the default register allocator (backtracking).
     pub fn new(machine: M) -> Self {
+        // 宿主级**一次**注册（幂等）：管线工厂 + **调用点布局钩子**（v20 A5-3）。
+        // 生成物的 lowering 在调用点按 `(ISA, 约定, 实参形状)` 查后者拿被调方落点；
+        // 没注册就 fail-closed——所以放在每个编译入口（OnceLock，热路径只是一次原子读）。
+        crate::pipeline_hooks::ensure_registered();
         Self {
             machine,
             reg_alloc: BacktrackingAllocator,
@@ -2290,9 +2294,30 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .map(|&n| PReg::new(n, ri.value_gpr_class()))
                 .collect(),
             param_xregs: self.param_xregs.clone(),
-            // 寄存器参数数 = ABI int 参数槽上限（Windows x64 = 4；其余
-            // 参数走栈——regalloc 强制 spill，move_args 从 ABI 栈槽收参）。
-            param_reg_count: machine.abi().int_arg_slot_count(),
+            // 寄存器参数数 = **布局里在寄存器里落一个值的形参个数**（v20 A5-3：谱面的
+            // `[abi.arg_class]` 已删除，不再用"int 参数槽上限"这个生成期近似——
+            // `Indirect { reg: Some(..) }` 也要算：by-ref 的指针在寄存器里、被调方还要把 `[ptr]` 的值
+            // load 进自己的形参寄存器——不预分配就会走"spilled ⇒ 不收参"（实测宽向量 by-ref 全 0）。
+            param_reg_count: self
+                .ctx
+                .call_layout
+                .as_ref()
+                .map(|cl| {
+                    cl.args
+                        .iter()
+                        .filter(|a| {
+                            matches!(
+                                a.place,
+                                forge_isa_runtime::machine::call_layout::ArgPlace::Reg { .. }
+                                    | forge_isa_runtime::machine::call_layout::ArgPlace::Indirect {
+                                        reg: Some(_),
+                                        ..
+                                    }
+                            )
+                        })
+                        .count()
+                })
+                .unwrap_or(0),
         };
 
         let ctx = crate::pipeline::alloc_config::AllocContext {};

@@ -79,6 +79,11 @@ pub struct MachineSection {
     /// 键从 `[abi].arg_slot` 迁来（同名同义，旧键已删除）。
     #[serde(default)]
     pub arg_slot: Option<ArgSlot>,
+    /// **向量 by-ref 阈值**（字节，机器事实，v20 A5-3，原 `[[abi.arg_class]] strategy =
+    /// "by-ref" limit = <位>`）：**超过**此字节的向量参数/返回按引用传（调用方栈上副本 +
+    /// 传指针）。`None`（缺省）= 不启用（宽向量参数/返回会被拒绝）。
+    #[serde(default)]
+    pub vector_by_ref_bytes: Option<u16>,
 }
 
 impl V12Model {
@@ -156,6 +161,11 @@ impl V12Model {
             .as_ref()
             .and_then(|m| m.arg_slot)
             .unwrap_or_default()
+    }
+
+    /// 向量 by-ref 阈值（字节，机器事实）：`[machine].vector_by_ref_bytes`。
+    pub fn machine_vector_by_ref_bytes(&self) -> Option<u16> {
+        self.machine.as_ref().and_then(|m| m.vector_by_ref_bytes)
     }
 }
 
@@ -236,9 +246,6 @@ pub struct V12Model {
     /// 子树后，整块子树合并成一段发射序列。空 = 无此能力（零开销）。
     #[serde(default)]
     pub pattern: Vec<Pattern>,
-    /// 调用约定（`[abi]`，为 YMM by-ref 铺路）。
-    #[serde(default)]
-    pub abi: Option<Abi>,
     /// **机器事实**（v20 A5）：`[machine]`——固定用途寄存器 / 溢出 scratch / 链接寄存器。
     #[serde(default)]
     pub machine: Option<MachineSection>,
@@ -532,50 +539,12 @@ impl V12Model {
         Ok(out)
     }
 
-    /// 向量 by-value 阈值（**字节**）：`[abi.arg_class]` 中
-    /// `strategy = "by-ref"` 的 `limit`（位）/ 8。`None` = 本 ISA 未声明
-    /// by-ref 策略（调用方自定缺省，如按值上限 = 浮点值池宽）。
+    /// 向量 by-value 阈值（**字节**，机器事实，v20 A5-3）：`[machine].vector_by_ref_bytes`。
+    /// **超过**此字节的向量参数/返回按引用传（调用方栈上副本 + 传指针）。`None` = 本 ISA
+    /// 不启用 by-ref（宽向量参数/返回将被拒绝）。原 `[[abi.arg_class]] strategy = "by-ref"
+    /// limit = <位>` 的派生已下线（`[abi]` 整节删除）。
     pub(crate) fn vector_by_ref_limit_bytes(&self) -> Result<Option<u16>, String> {
-        let Some(abi) = &self.abi else {
-            return Ok(None);
-        };
-        let mut found: Option<(String, u16)> = None;
-        for ac in &abi.arg_class {
-            let name = ac.class.name();
-            match (ac.strategy, ac.limit) {
-                // by-ref 与 limit 必须**成对**：只写一个都是配置错误（历史实现
-                // 静默忽略 limit ⇒ 宽向量按值传参会静默截断/错 ABI）。
-                (Some(ArgStrategy::ByRef), None) => {
-                    return Err(format!(
-                        "[abi.arg_class.{name}]: strategy = \"by-ref\" 必须同时声明 `limit`（位）"
-                    ));
-                }
-                (Some(ArgStrategy::ByRef), Some(bits)) => {
-                    if bits == 0 || bits % 8 != 0 {
-                        return Err(format!(
-                            "[abi.arg_class.{name}]: by-ref limit {bits} 必须是 8 的倍数（单位：位）"
-                        ));
-                    }
-                    let bytes = (bits / 8) as u16;
-                    if let Some((prev, prev_bytes)) = &found
-                        && *prev_bytes != bytes
-                    {
-                        return Err(format!(
-                            "[abi.arg_class]: 多个 by-ref 类的阈值冲突（{prev} = {prev_bytes} 字节 vs {name} = {bytes} 字节）——阈值必须唯一，否则 ABI 依声明序而变"
-                        ));
-                    }
-                    found.get_or_insert((name.to_string(), bytes));
-                }
-                // 无 by-ref 策略却写了 limit：按值类没有阈值语义。
-                (None, Some(bits)) => {
-                    return Err(format!(
-                        "[abi.arg_class.{name}]: 声明了 `limit = {bits}` 但 strategy 不是 \"by-ref\"——按值传参的类没有阈值语义（写 strategy = \"by-ref\" 或删掉 limit）"
-                    ));
-                }
-                (None, None) => {}
-            }
-        }
-        Ok(found.map(|(_, b)| b))
+        Ok(self.machine_vector_by_ref_bytes())
     }
 
     /// 指定组的寄存器名列表（缺组 → Err）。
@@ -2685,16 +2654,7 @@ pub struct Pattern {
     pub only_variants: Option<VariantGate>,
 }
 
-// ───────────────────────── [abi] ─────────────────────────
-
 /// 调用约定。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Abi {
-    #[serde(default)]
-    pub arg_class: Vec<ArgClass>,
-}
-
 /// 参数槽位分配规则。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -2746,59 +2706,6 @@ pub struct AbiFrame {
     /// 帧分配需负偏移；x86 用 SUB 语义不需要）。缺省 false。
     #[serde(default)]
     pub alloc_neg: bool,
-}
-
-/// 传参类别：arg_class 的类型语义（决定传参寄存器族与策略）。
-/// serde 用小写字符串（"int"/"float"/"vector"/...），未知类别 → 解析失败
-///（deny_unknown 语义提前到反序列化层，validate 不再做字符串自由检查）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ArgClassKind {
-    /// 整数/指针参数（GPR 族）。
-    Int,
-    /// 浮点标量参数（FPR 族）。
-    Float,
-    /// 向量参数（VEC 族；可配 by-ref 策略）。
-    Vector,
-    /// 其他自定义类别（KReg/掩码等）——生成器按通用寄存器槽处理。
-    #[serde(rename = "other")]
-    Other,
-}
-
-impl ArgClassKind {
-    /// 人类可读名（错误消息用）。
-    pub fn name(self) -> &'static str {
-        match self {
-            ArgClassKind::Int => "int",
-            ArgClassKind::Float => "float",
-            ArgClassKind::Vector => "vector",
-            ArgClassKind::Other => "other",
-        }
-    }
-}
-
-/// 类型类别 → 传参寄存器/策略。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArgClass {
-    /// 传参类别（int/float/vector/other——枚举，语义显式）。
-    pub class: ArgClassKind,
-    #[serde(default)]
-    pub regs: Vec<String>,
-    /// 传参策略（见 [`ArgStrategy`]）。
-    #[serde(default)]
-    pub strategy: Option<ArgStrategy>,
-    /// 策略适用的大小上限（位）。
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
-
-/// 传参策略。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ArgStrategy {
-    /// 超过 `limit` 位的值按引用传（调用方栈拷贝 + 传指针；YMM/ZMM ABI）。
-    ByRef,
 }
 
 // ───────────────────────── [emit] ─────────────────────────

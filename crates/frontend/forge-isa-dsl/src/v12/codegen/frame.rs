@@ -37,33 +37,10 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
             quote! { crate::machine::abi::ArgPlacement::ByClass }
         }
     };
-    // 寄存器参数位置上限：int arg_class 的寄存器个数（Windows x64 = 4；
-    // 位置 ≥ 此值走栈）。by-class（riscv）无栈参数 → 全部 arg_regs 数。
-    let int_arg_slot_count = model
-        .abi
-        .as_ref()
-        .and_then(|a| {
-            a.arg_class
-                .iter()
-                .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
-                .map(|ac| ac.regs.len())
-        })
-        .unwrap_or_else(|| {
-            model
-                .abi
-                .as_ref()
-                .map(|a| a.arg_class.iter().map(|ac| ac.regs.len()).sum())
-                .unwrap_or(0)
-        });
-    let mut arg_regs: Vec<TokenStream> = Vec::new();
-    if let Some(abi) = &model.abi {
-        for ac in &abi.arg_class {
-            for r in &ac.regs {
-                let i = format_ident!("{r}");
-                arg_regs.push(quote! { Reg::#i });
-            }
-        }
-    }
+    // 参数/返回寄存器：v20 A5-3 起谱面不再声明（`[abi].arg_class`/`[abi].ret_regs`
+    // 已删除）——落点由 plan 给，这两个 trait 方法走缺省实现（空表）。
+    let arg_regs: Vec<TokenStream> = Vec::new();
+    let int_arg_slot_count: usize = 0;
     // by-ref 策略：`strategy = "by-ref"` + `limit`（位）→ 超过该位宽的向量按引用
     // 传参（阈值字节 = limit/8；x86 声明 128 位 → 16 字节）。解析与校验统一在
     // `V12Model::vector_by_ref_limit_bytes`（生成期 Err：非 8 的倍数）。
@@ -865,34 +842,18 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         let cs = model.machine_callee_save_slots() as i64 * slot_bytes_lit;
         fp_push + cs
     };
-    // 收参：把 [abi.arg_class].int 类的寄存器值 mov 到参数 XReg 的
-    // 分配物理寄存器。整数参数按序取 int 类 regs[gi]（v11 语义）。
-    let Some(abi) = &model.abi else {
-        return Ok(quote! {});
-    };
-    let int_regs: Vec<&String> = abi
-        .arg_class
-        .iter()
-        .find(|ac| ac.class == crate::v12::model::ArgClassKind::Int)
-        .map(|ac| ac.regs.iter().collect())
-        .unwrap_or_default();
-    if int_regs.is_empty() {
-        return Ok(quote! {});
-    }
-    let regs: Vec<syn::Ident> = int_regs.iter().map(|r| format_ident!("{r}")).collect();
-    let n = regs.len();
-    // 浮点参数类（XMM0-3）——Windows x64 浮点参数寄存器
-    let float_regs: Vec<syn::Ident> = abi
-        .arg_class
-        .iter()
-        .find(|ac| ac.class == crate::v12::model::ArgClassKind::Float)
-        .map(|ac| ac.regs.iter().map(|r| format_ident!("{r}")).collect())
-        .unwrap_or_default();
-    let fn_ = float_regs.len();
+    // 收参：v20 A5-3 起**只走布局路径**（`ArgPlace::Reg`/`Indirect`/`Stack`）。
+    // 谱面的 `[abi].arg_class` 已删除——拿不到布局或落点不受支持时，下面的
+    // `*_stmt_use` 一律 **fail-closed**（旧实现按谱面顺序塞寄存器，那是静默错值）。
     // MOV_RM8_R64 src=arg_reg、dest=param 分配寄存器（0x89: reg=src、rm=dest）
     // 指令名可配置（[abi].move_inst，缺省 "MOV_RM8_R64"）——demo 等
     // 定宽 ISA 声明自己的 mov（如 "MOV64"）；字段按角色解析（In=src、
     // Out/InOut=dest），两种操作数序（x86 src/dest 与 demo dest/src）皆可。
+    // v20 A5-3：谱面不再有 `[abi]`——**能力由角色说话**：没有 `gpr_mov`（参数搬运）
+    // 的 ISA（如只做编码试点的夹具）没有收参可生成 ⇒ 空实现（Call/Return 那边同样降级）。
+    if role_name(infos, Role::GprMov).is_err() {
+        return Ok(quote! {});
+    }
     let move_inst = role_name(infos, Role::GprMov).unwrap_or_default();
     let mov_vn = crate::v12::codegen::pascal_ident(&move_inst);
     let (m_src, _m_src_idx, m_dest, _m_dest_idx) = inst_move_role(infos, &move_inst)
@@ -997,33 +958,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         (format_ident!("dest"), format_ident!("src"))
     };
     let vec_mov_vn = crate::v12::codegen::pascal_ident(&vec_mov);
-    // 全宽向量收参语句（VEC(16) 参数分支）：movaps XMM_{dest}, XMM{slot}
-    let vec16_stmt: TokenStream = if has_vec_mov {
-        quote! {
-            let __bytes = encode(&Inst::#vec_mov_vn {
-                #v_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                #v_src: __src,
-            }).map_err(|e| crate::IrError::Emit(e))?;
-            __sink.put_bytes(&__bytes);
-        }
-    } else {
-        quote! {
-            return Err(crate::IrError::Emit(
-                "v12 vector arg receive: 未声明 roles = [\"vec_mov\"] 的指令".into(),
-            ));
-        }
-    };
     // by-value 向量阈值 = `[abi.arg_class].limit`（by-ref 策略，字节；
     // x86 = 16B）——元数据驱动，取代写死的 `class == VEC(16)` 判定
     // （1 字节/非常规宽度 ISA 的向量类不是 VEC(16)）。
     let fpr_pool_w = model.value_fpr_class()?.map_or(16, |c| c.width());
     let vec_by_val_max = model.vector_by_ref_limit_bytes()?.unwrap_or(fpr_pool_w);
-    let vec16_cond = quote! {
-        __rm.param_vregs
-            .get(__i)
-            .map(|x| x.width() <= #vec_by_val_max)
-            .unwrap_or(false)
-    };
     // by-ref 向量 load：宽向量参数（>16 字节）按引用传参——ABI 传 GPR
     // 指针（int 槽位），收参时从 [ptr] load 到目标向量寄存器。
     // **按语义角色取指令**（`roles = ["wide_vec_load_32"]` /
@@ -1090,149 +1029,32 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             ));
         },
     };
-    let fpr_stmt: TokenStream = if has_fpr_mov {
-        quote! {
-            if __fi < #fn_ {
-                let __src = [#(Reg::#float_regs),*][__fi];
-                __fi += 1;
-                if #vec16_cond {
-                    // ≤16B 向量（V64/V128，VEC(16) 类）按值参数：
-                    // 全宽 128 位 XMM 移动（MOVAPS）——MOVSD/MOVSS
-                    // 只移 8/4 字节，高半静默截断（WA-37 D3）。
-                    #vec16_stmt
-                } else {
-                    let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
-                        Inst::#fpr_mov32_vn {
-                            #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                            #f_src: __src,
-                        }
-                    } else {
-                        Inst::#fpr_mov64_vn {
-                            #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                            #f_src: __src,
-                        }
-                    }).map_err(|e| crate::IrError::Emit(e))?;
-                    __sink.put_bytes(&__bytes);
-                }
-            }
-        }
-    } else {
-        quote! {
-            let _ = __fi;
-            return Err(crate::IrError::Emit("v12 float args (MOVSD/MOVSS missing)".into()));
-        }
-    };
-    // ABI 槽位规则：by-position（Windows x64——int/float 共享位置
-    // 计数，参数 i 用 GPR{i}/XMM{i}）/ by-class（缺省，独立推进）。
-    // v20 A5-3：读**机器事实** `[machine].arg_slot`（原 `[abi].arg_slot`）。
-    let by_position = model.machine_arg_slot() == ArgSlot::ByPosition;
+    // **收参只走布局路径**（v20 A5-3）：谱面的 `[abi].arg_class` 已删除。没有布局
+    // （`__layout_ok == false`：Pair/Group/无指针 Indirect，或宿主没给约定数据）
+    // 一律 **fail-closed**——旧实现按谱面顺序把值塞进"第几个寄存器"，那是静默错值。
     let (head, fpr_stmt_use, int_stmt_use, byref_stmt_use): (
         TokenStream,
         TokenStream,
         TokenStream,
         TokenStream,
-    ) = if by_position {
-        // by-position：位置 = 参数序号 + sret 偏移；int 用 GPR{pos}、
-        // float 用 XMM{pos}、by-ref 指针用 GPR{pos}。
-        (
-            quote! {},
-            // 浮点收参：float_regs[__pos]（位置索引）
-            quote! {
-                let __pos = __i + if __rm.sret { 1usize } else { 0usize };
-                if __pos < #fn_ {
-                    let __src = [#(Reg::#float_regs),*][__pos];
-                    if #vec16_cond {
-                        // ≤16B 向量按值参数：全宽 XMM 移动
-                        #vec16_stmt
-                    } else {
-                        let __bytes = encode(&if __rm.param_is_32.get(__i) == Some(&true) {
-                            Inst::#fpr_mov32_vn {
-                                #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                                #f_src: __src,
-                            }
-                        } else {
-                            Inst::#fpr_mov64_vn {
-                                #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                                #f_src: __src,
-                            }
-                        }).map_err(|e| crate::IrError::Emit(e))?;
-                        __sink.put_bytes(&__bytes);
-                    }
-                } else {
-                    return Err(crate::IrError::Emit(
-                        "v12 move_args: float arg position out of range".into(),
-                    ));
-                }
-            },
-            // 整数收参：int_regs[__pos]；位置 ≥ 寄存器数 ⇒ 该参数由布局判为栈落点，
-            // 走下面的**布局路径**（`ArgPlace::Stack`）。走到这个 else 说明本函数
-            // 没有可用布局（无注册约定 / 规划失败）——明确拒绝：v20 A5-3 起栈参数的
-            // 偏移只有 plan 一个来源，谱面不再声明 `[abi.stack_args]`。
-            quote! {
-                let __pos = __i + if __rm.sret { 1usize } else { 0usize };
-                if __pos < #n {
-                    let __src = [#(Reg::#regs),*][__pos];
-                    let __bytes = encode(&Inst::#mov_vn {
-                        #m_src: __src,
-                        #m_dest: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
-
-                    }).map_err(|e| crate::IrError::Emit(e))?;
-                    __sink.put_bytes(&__bytes);
-                } else {
-                    return Err(crate::IrError::Unsupported(
-                        "v12 move_args: 栈参数收参需要调用布局（plan 的 ArgPlace::Stack）——本函数没有布局".into(),
-                    ));
-                }
-            },
-            // by-ref 指针收参：int_regs[__pos]（指针从 GPR 槽取）
-            quote! {
-                let __pos = __i + if __rm.sret { 1usize } else { 0usize };
-                if __pos < #n {
-                    let __src = [#(Reg::#regs),*][__pos];
-                    #byref_stmt
-                } else {
-                    return Err(crate::IrError::Emit(
-                        "v12 move_args: by-ref arg position out of range".into(),
-                    ));
-                }
-            },
-        )
-    } else {
-        (
-            // by-class：__gi（int）/ __fi（float）独立推进
-            quote! {
-                let mut __gi = if __rm.sret { 1usize } else { 0usize };
-                let mut __fi = 0usize;
-            },
-            quote! { #fpr_stmt },
-            quote! {
-                if __gi < #n {
-                    let __src = [#(Reg::#regs),*][__gi];
-                    __gi += 1;
-                    let __bytes = encode(&Inst::#mov_vn {
-                        #m_src: __src,
-                        #m_dest: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
-
-                    }).map_err(|e| crate::IrError::Emit(e))?;
-                    __sink.put_bytes(&__bytes);
-                }
-            },
-            quote! {
-                if __gi < #n {
-                    let __src = [#(Reg::#regs),*][__gi];
-                    __gi += 1;
-                    #byref_stmt
-                } else {
-                    // WA-37 D4：by-class ABI（riscv 等）下 by-ref 宽向量参数
-                    // 超出 int 槽位上限时**显式拒绝**——旧实现无 else，会静默
-                    // 不收参（值垃圾）。与 by-position 分支同款 fail-closed。
-                    return Err(crate::IrError::Unsupported(
-                        "v12 move_args: by-ref 宽向量参数超出 int 槽位上限（by-class ABI）".into(),
-                    ));
-                }
-            },
-        )
-    };
+    ) = (
+        quote! {},
+        quote! {
+            return Err(crate::IrError::Unsupported(
+                "v12 move_args: 浮点/向量参数收参需要调用布局（plan）".into(),
+            ));
+        },
+        quote! {
+            return Err(crate::IrError::Unsupported(
+                "v12 move_args: 整数参数收参需要调用布局（plan）".into(),
+            ));
+        },
+        quote! {
+            return Err(crate::IrError::Unsupported(
+                "v12 move_args: by-ref 参数收参需要调用布局（plan）".into(),
+            ));
+        },
+    );
     let _ = byref_stmt_use;
     // 栈参数收参（`ArgPlace::Stack` 且被 regalloc 强制 spill 的那个参数）**无条件**
     // 先收进 spill 槽（regalloc 强制 spill 保证有槽；即使分配了 preg 也不走寄存器

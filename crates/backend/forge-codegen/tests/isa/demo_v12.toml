@@ -233,14 +233,10 @@ slot = 8
 align = 8
 fp_save = 8
 
-[abi]
 # 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
 # 生成器按角色解析 src/dest，不依赖操作数序）
 
 # 参数寄存器：X0-X3（64 位视图，物理 0-3）
-[[abi.arg_class]]
-class = "int"
-regs = ["X0", "X1", "X2", "X3"]
 
 [machine]
 # 帧件会保存的那组 GPR：本夹具不保存任何寄存器（v20 A5-3 起机器事实写在这里，

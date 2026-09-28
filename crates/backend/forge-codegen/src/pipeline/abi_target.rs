@@ -178,18 +178,24 @@ pub fn shape_to_ty(s: &ArgShape) -> forge_abi::TyView {
         ShapeKind::Int => TyView::int(s.size, s.align),
         ShapeKind::Ptr => TyView::new(s.size, s.align, TyKind::Ptr),
         ShapeKind::Float => TyView::float(s.size),
+        // **用形状里的真实 size/align**：`TyView::vector` 会把 size 算成 `lanes × elem_bytes`，
+        // 而调用点未必知道元素宽度/lane 数（生成物只从 IR 类型摊出 size/align/族）——
+        // 退化成 size=0 会让引擎把 v256 判成"≤16B 按值向量"，从而漏掉 sret/by-ref。
         ShapeKind::Vector {
             elem_is_float,
             lanes,
-            elem_bytes,
-        } => TyView::vector(
-            if *elem_is_float {
-                Elem::Float
-            } else {
-                Elem::Int
+            elem_bytes: _,
+        } => TyView::new(
+            s.size,
+            s.align,
+            TyKind::Vector {
+                elem: if *elem_is_float {
+                    Elem::Float
+                } else {
+                    Elem::Int
+                },
+                lanes: *lanes,
             },
-            *lanes,
-            *elem_bytes,
         ),
         // 用**真实** size/align（`TyView::agg` 会把 size 算成成员之和——packed/尾部填充
         // 的对不上）。
@@ -220,6 +226,25 @@ pub fn plan_for_shapes<M: TargetMachine>(
         .collect();
     let sig = Signature::new(params, ret.as_ref().map(shape_to_ty));
     plan_for_signature(machine, registry, conv, &sig)
+}
+
+/// **给一台具体机器装调用点布局钩子**（`Box::leak` 到进程生命周期；每个 ISA 一次）。
+///
+/// 生成物的 `ensure_registered()` 调它（v20 A5-3）：调用方在 lowering 时按
+/// `(ISA, 约定, 实参形状)` 查这份钩子拿**被调方**的落点（`call_plan::plan_call`）。
+/// 未注册 ⇒ `plan_call` 返回 `None`，调用点 **fail-closed**（不按谱面顺序猜）。
+pub fn register_isa_call_planner<M: TargetMachine + 'static>(isa: &str, machine: M) {
+    let tm: &'static M = Box::leak(Box::new(machine));
+    forge_isa_runtime::machine::call_plan::register_call_planner(
+        isa,
+        std::sync::Arc::new(
+            move |conv: &str, args: &[ArgShape], ret: Option<ArgShape>| {
+                let reg = crate::pipeline::conv_registry::registry().read().ok()?;
+                let plan = plan_for_shapes(tm, &reg, conv, args, ret.clone()).ok()?;
+                Some(call_layout(&plan, tm))
+            },
+        ),
+    );
 }
 
 /// `AbiPlan` → **运行时侧的中性调用布局**（v20 A3b-2 的桥）。

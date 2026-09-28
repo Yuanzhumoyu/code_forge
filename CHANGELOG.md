@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3 收口：`[abi].arg_class` 删除，**`[abi]` 一节整体下线**
+
+- **调用方按被调方落点搬实参**（`gen_call_lowering`/`arg_move_loop` 重写）：调用点把实参 IR 类型摊成 `ArgShape`（size/align/族）→ `machine::call_plan::plan_call(ISA, 约定, 形状, 返回形状)` → 逐实参按 `ArgPlace` 发射——`Reg { class, index }`（int → `gpr_mov`；fp → 按字节宽 `fpr_mov32/64`；向量 → `vec_mov`）、`Indirect { reg }`（`byref` 副本 + 指针 mov）、`Stack`（`caller_offset(k)`）、`Ignore` 跳过；`Pair`/`Group`/无指针 `Indirect` ⇒ **fail-closed**（A6 缺口，旧实现会把它们静默塞进整数寄存器）。`sret` 隐藏槽也改用 `CallLayout.hidden_sret`（不再假设"首 int 参数槽"）。
+- **被调方收参只走布局路径**：谱面的 `[abi].arg_class` 删掉后，`move_args` 的"无布局回退"整段改为 **fail-closed**（旧实现按谱面顺序塞寄存器 = 静默错值）。
+- **宿主注册调用点 planner**：`pipeline_hooks::ensure_registered()` 为三个发行后端注册 `register_isa_call_planner`（`Box::leak` 持有机器），并由 `FunctionCompiler::new` 幂等触发——生成的 `ensure_registered()` 不能直接调宿主（生成物里的 `crate::pipeline` 会被改写成运行时路径）。
+- **能力缺口改由角色说话**：没有 `roles = ["gpr_mov"]` 的谱（只做编码试点的夹具）在 Call/收参处整条降级 `Unsupported`，而不是生成期报"mov 形状不符"。
+- **`[abi]` 删除**：`Abi`/`ArgClass`/`ArgClassKind`/`ArgStrategy` 类型、`V12Model::abi` 字段、schema 的 `[abi]`/`[abi.arg_class]` 两节、文档键表与 `isa-dsl.md` 的 `[abi]` 章（改写为"已删除 + 去处对照表"）全部下线；三份发行谱与两份夹具的 `[abi]` 段删除。
+- **两处生成期近似一并归位**：向量 by-ref 阈值 → 机器事实 `[machine].vector_by_ref_bytes`（x86 = 16）；`RegAllocConfig.param_reg_count` → 由 plan 数"落在寄存器的形参个数"（不再用 `TargetABI::int_arg_slot_count`）。
+- 验证：`forge-tests --lib` **43 绿**（含 x86/riscv/arm64 三条 JIT 矩阵与 QEMU 跨函数调用）、`forge-codegen --lib` 1278 绿。
+
 ### Changed (2026-09-27) — v20 A5-3：被调方 spill 收参改按 layout（不再读谱面 `[abi.arg_class]` 的顺序）
 
 - **`move_args` 的 spilled 寄存器参数**（`crates/frontend/forge-isa-dsl/src/v12/codegen/frame.rs`）：来源寄存器不再按"谱面 `int_regs[__pos]`"取，而是读**被调方布局** `ArgPlace::Reg { class, index }`——按位置/按类计数、`sret` 占不占首槽都由引擎算好；拿不到布局或落点不是寄存器 ⇒ **fail-closed**（不按谱面顺序猜）。

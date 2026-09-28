@@ -218,12 +218,8 @@ slot = 1
 align = 1
 fp_save = 1
 
-[abi]
 # 返回寄存器 A0；Return/调用方返回值移动目标
 
-[[abi.arg_class]]
-class = "int"
-regs = ["A0", "A1", "A2", "A3"]
 
 [machine]
 # 机器事实（v20 A5-3 起是正式位置，旧 `[abi]` 同名键已删除）：
