@@ -44,7 +44,7 @@ forge_dsl::isa_from_file!(
 /// 由 `AbiRules` + `AbiBinding` 给（谱里那套 `[abi]` 键是生成期近似，正在逐键下线）。
 /// 注册后 `CallConvId::Builtin(C)` 经 `aliases = ["c"]` 落到本约定，夹具函数就有 plan 了。
 ///
-/// 数据照着夹具谱的口径写：`[[abi.arg_class]] int = X0-X3`、`ret_regs` 缺省 = X0、
+/// 数据照着夹具谱的口径写：`[[abi.arg_class]] int = X0-X3`、返回槽 X0、
 /// `[stack] slot = 8 / align = 8`、`[machine] callee_saved_gpr = []`（无 callee-saved）。
 const DEMO_RULES: &str = r#"
 name = "demo"

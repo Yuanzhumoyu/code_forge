@@ -853,7 +853,6 @@ fn validate_reg_names(m: &V12Model) -> Result<(), String> {
         }
     }
     if let Some(abi) = &m.abi {
-        check(&abi.ret_regs, "[abi].ret_regs")?;
         for ac in &abi.arg_class {
             check(&ac.regs, "[abi.arg_class].regs")?;
         }

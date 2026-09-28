@@ -2693,10 +2693,6 @@ pub struct Pattern {
 pub struct Abi {
     #[serde(default)]
     pub arg_class: Vec<ArgClass>,
-    /// 返回寄存器（物理名；如 riscv "X10"=a0）。缺省空 = index 0（x86 RAX
-    /// 语义）。Return/Call lowering 的返回值移动目标用此列表首项。
-    #[serde(default)]
-    pub ret_regs: Vec<String>,
 }
 
 /// 参数槽位分配规则。

@@ -2097,6 +2097,27 @@ impl<I: MachineInst + 'static> CompileState<I> {
             let reg = crate::pipeline::conv_registry::registry()
                 .read()
                 .expect("约定注册表被投毒");
+            // 约定级**整数返回槽**（v20 A5-3）：谱里不再声明 `[abi].ret_regs`，而
+            // "标量整数返回放哪个寄存器"是**约定级**事实（x86 RAX / riscv a0=X10 /
+            // arm64 x0）——用"空参 + 整数返回"的合成签名问一次引擎即可（与具体签名无关）。
+            let w = ctx.value_gpr_class.width() as u32;
+            if let Ok(p) = crate::pipeline::abi_target::plan_for_shapes(
+                machine,
+                &reg,
+                &ctx.call_conv_name,
+                &[],
+                Some(forge_isa_runtime::machine::call_layout::ArgShape::int(
+                    w.max(1),
+                    w.max(1),
+                )),
+            ) && let Some(forge_isa_runtime::machine::call_layout::RetPlace::Reg {
+                class,
+                index,
+                ..
+            }) = crate::pipeline::abi_target::call_layout(&p, machine).ret
+            {
+                ctx.conv_ret_gpr = Some((index, class));
+            }
             match crate::pipeline::abi_target::plan_for_function(
                 machine,
                 &reg,

@@ -504,7 +504,6 @@ fp_save = 8
 
 [abi]
 # 返回寄存器（x0）；Return lowering 的返回值移动目标
-ret_regs = ["X0"]
 
 # Call 点被调用方破坏的寄存器（regalloc clobber 集）：AAPCS64 caller-saved
 # = X0-X18 + lr(X30)。X19-X28 由帧件保存（roles = ["callee_save"]）→ 不在 clobber 集。

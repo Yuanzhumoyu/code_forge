@@ -327,16 +327,32 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     };
     let return_body: TokenStream = if has_mov_rax {
         let mov_src_idx_lit = mov_src_idx as usize;
-        // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
-        let ret_dest: TokenStream = model
-            .abi
-            .as_ref()
-            .and_then(|a| a.ret_regs.first())
-            .map(|r| {
-                let ident = format_ident!("{r}");
-                quote! { Reg::#ident }
-            })
-            .unwrap_or_else(|| quote! { Reg::from_index(0, __DEFAULT_GPR_CLASS) });
+        // 返回槽（v20 A5-3）：优先**本函数的 plan**（`CallLayout::ret` 的寄存器形态），
+        // 否则用宿主的**约定级整数返回槽**（`ctx.conv_ret_gpr`）——谱里的
+        // `[abi].ret_regs` 已删除。两者都拿不到 ⇒ **fail-closed**（不按某个 ISA 的
+        // 寄存器名猜）。
+        let ret_dest: TokenStream = quote! {
+            match ctx
+                .call_layout
+                .as_ref()
+                .and_then(|__cl| match __cl.ret.as_ref() {
+                    Some(crate::machine::call_layout::RetPlace::Reg { class, index, .. }) => {
+                        Some((*index, *class))
+                    }
+                    _ => None,
+                })
+                .or(ctx.conv_ret_gpr)
+            {
+                Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
+                None => {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 return lowering: 返回寄存器需要调用布局（plan 的 ret 或宿主的 \
+                         约定级返回槽）——[abi].ret_regs 已删除"
+                            .into(),
+                    ));
+                }
+            }
+        };
         // S2：宽向量返回值（>16 字节）sret——结果 store 到 [sret_ptr]，
         // sret_ptr = 首个 GPR 参数槽（Windows x64：隐藏 sret 参数占 RCX）。
         // 生成期门控：语义标签缺失（riscv）→ Unsupported。
@@ -1225,17 +1241,20 @@ fn gen_call_lowering(
     // by-position（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）
     // / by-class（缺省 riscv SysV——int/float 独立推进）。
     let by_position = model.machine_arg_slot() == ArgSlot::ByPosition;
-    // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
-    let ret_src_expr: TokenStream = abi
-        .ret_regs
-        .first()
-        .map(|r| {
-            let ident = format_ident!("{r}");
-            quote! { Reg::#ident }
-        })
-        .unwrap_or_else(|| {
-            quote! { <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS) }
-        });
+    // 返回槽（Call 读**被调方**的返回值，v20 A5-3）：用宿主的**约定级返回槽**
+    // `ctx.conv_ret_gpr`——调用点看不到被调方的签名，而"标量整数返回放哪个寄存器"
+    // 是约定级事实（x86 RAX / riscv a0=X10 / arm64 x0）。谱里的 `[abi].ret_regs`
+    // 已删除；拿不到 ⇒ fail-closed。
+    let ret_src_expr: TokenStream = quote! {
+        match ctx.conv_ret_gpr {
+            Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
+            None => {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: 返回值落点需要宿主的约定级返回槽（[abi].ret_regs 已删除）".into(),
+                ));
+            }
+        }
+    };
     let int_regs: Vec<syn::Ident> = abi
         .arg_class
         .iter()

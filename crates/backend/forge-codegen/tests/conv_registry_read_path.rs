@@ -82,6 +82,10 @@ fn compile_reads_the_convention_and_registration_unblocks_it() {
 
     // 注册一份最小可用约定（规则 + 绑定）后，同一条 IR 就能过——证明"改约定名 ⇒
     // 规划走另一份数据"这条链路是活的（A3 起同一路径产出 AbiPlan）。
+    //
+    // v20 A5-3 起**必须连绑定一起注册**：谱里的 `[abi].ret_regs` 已删除，返回槽只能来自
+    // plan（`CallLayout.ret`）或宿主的约定级返回槽——只有规则、没有 `(ISA, 约定)` 绑定时
+    // 池解析不出来，Return 会 **fail-closed**（这正是想要的行为，见本文件末的负向用例）。
     conv_registry::register_rules_toml(
         r#"
 name = "probe_conv"
@@ -89,6 +93,16 @@ parent = "c"
 "#,
     )
     .expect("注册规则");
+    conv_registry::register_binding_toml(
+        r#"
+isa = "demo8_v12"
+conv = "probe_conv"
+[pools]
+int = ["A0", "A1", "A2", "A3"]
+ret_int = ["A0"]
+"#,
+    )
+    .expect("注册绑定");
     assert!(
         conv_registry::registered_names()
             .iter()
@@ -96,6 +110,32 @@ parent = "c"
     );
 
     compiler.compile(&func).expect("注册后应能编译");
+}
+
+/// **只有规则、没有绑定 ⇒ 规划不出来 ⇒ 返回槽 fail-closed**（v20 A5-3）：
+/// 谱里的 `[abi].ret_regs` 已删除，返回槽不再有任何"谱面兜底"——拿不到 plan 就必须报错，
+/// 而不是按 `index 0` 猜（riscv 的返回槽是 `X10`）。
+#[test]
+fn rules_without_binding_fail_closed_on_the_return_slot() {
+    let tm = TargetMachine::new();
+    let compiler = FunctionCompiler::new(tm);
+    let cc = CallConvId::named("rules_only_conv");
+    let func = build(cc);
+    conv_registry::register_rules_toml(
+        r#"
+name = "rules_only_conv"
+parent = "c"
+"#,
+    )
+    .expect("注册规则");
+    let err = compiler
+        .compile(&func)
+        .expect_err("没有绑定 ⇒ 池解析不出来 ⇒ 返回槽必须 fail-closed");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("返回寄存器需要调用布局") || msg.contains("MissingPool"),
+        "必须点名返回槽/缺池：{msg}"
+    );
 }
 
 /// **IR 属性 → 引擎视图**（v20 A2b）：`Function::param_attrs`/`ret_attrs` 与签名一起投影成

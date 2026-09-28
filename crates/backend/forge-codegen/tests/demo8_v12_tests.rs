@@ -247,7 +247,7 @@ fn compile_i8_function_on_one_byte_pool() {
     let joined = asm.join("\n");
     assert!(joined.contains("add "), "应含 add：{joined}");
     assert!(joined.contains("ret"), "应含 ret：{joined}");
-    // 收参/返回值必须经寄存器搬运（@move_args + ret_regs = A0）——只断言
+    // 收参/返回值必须经寄存器搬运（@move_args + 约定级返回槽 A0）——只断言
     // "含 add/ret" 会让"参数未搬运/返回值未回写"这类回归溜过去。
     assert!(
         asm.iter().filter(|s| s.starts_with("mov ")).count() >= 2,
@@ -255,7 +255,7 @@ fn compile_i8_function_on_one_byte_pool() {
     );
     assert!(
         asm.iter().any(|s| s.starts_with("mov A0")),
-        "返回值必须回写到 ret_regs[0] = A0：{joined}"
+        "返回值必须回写到约定级返回槽 A0：{joined}"
     );
     // 全部寄存器操作数必须是 A0..A7（唯一 1 字节组）——出现别的寄存器名说明
     // 某处仍按写死的类/别名构造寄存器（如 x86 的 RBP/RAX）。

@@ -220,7 +220,6 @@ fp_save = 1
 
 [abi]
 # 返回寄存器 A0；Return/调用方返回值移动目标
-ret_regs = ["A0"]
 
 [[abi.arg_class]]
 class = "int"

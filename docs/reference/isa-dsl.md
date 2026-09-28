@@ -131,7 +131,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[pseudo]]` | `name` `params` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[abi]` | — | `arg_class` `ret_regs` | 调用约定 |
+| `[abi]` | — | `arg_class` | 调用约定 |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
 | `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
@@ -1184,16 +1184,15 @@ riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 ## `[abi]` — 调用约定
 
 > **迁移中（v20 A5-3）**：机器事实（`scratch`/`reserved`/`call_ret_reg`/`frame`/
-> `callee_saved`/`arg_slot`）与**约定级的破坏集**（`call_clobbers`）都已**删除**：前者归
-> [`[machine]`](#machine--机器事实)（唯一来源），后者由宿主按 `(ISA, 约定)` 算好塞进
-> `LowerCtx::conv_clobbers`（见下）。本节剩下 `arg_class`/`ret_regs` 两个键——它们是
-> **签名级**约定数据，删键要等"调用点 plan"（见
+> `callee_saved`/`arg_slot`）、**约定级的破坏集**（`call_clobbers`）与**返回槽**
+> （`ret_regs`）都已**删除**：机器事实归 [`[machine]`](#machine--机器事实)（唯一来源），
+> 破坏集与返回槽由宿主按 `(ISA, 约定)` 算好塞进 `LowerCtx::conv_clobbers` /
+> `LowerCtx::conv_ret_gpr`（见下）。本节只剩 `arg_class` 一个键——它是**签名级**约定数据，
+> 删键要等调用方按 plan 搬实参（见
 > `docs/plans/calling-convention-redesign-plan.md` 的逐键迁移进度表）。
 
 ```toml
 [abi]
-ret_regs = ["X10"]             # 返回寄存器（缺省空 = index 0，x86 RAX 语义）
-
 [[abi.arg_class]]
 class = "int"                  # int / float / vector / other
 regs = ["RCX", "RDX", "R8", "R9"]
@@ -1222,12 +1221,11 @@ limit = 128
   `roles = ["stack_arg_load"]`（收参）+ `["stack_arg_store"]`（写回 spill 槽），两者都
   全 ISA 唯一；写旧键会报未知键。**已知边界**：调用方按"每个栈参数一个槽"计数
   （>8 字节的栈参数今天也不支持——float/vector 超出寄存器数时明确 `Unsupported`）。
-- `[abi.stack_args]`：第 5+ 参数（寄存器耗尽后）由调用方 store 到
-  `[caller_base + shadow_bytes + k*stride_slots*slot]`、被调方从
-  `[callee_base + first_offset_slots*slot + k*stride_slots*slot]` load
-  （x86 的缺省值 = `sp`/`fp`/2/1，与历史硬编码逐字节同值）。`shadow_bytes = None` =
-  不支持栈参数（超寄存器参数 → Unsupported）。这五个键是 ISA 数据，宿主/生成代码
-  不再写死 x86 的 2/1/32/`RBP`/`RSP`。
+- `ret_regs` **已删除**（A5-3）：返回槽由 plan 给——`Return` 读本函数的
+  `CallLayout::ret`（`RetPlace::Reg`），`Call` 读**被调方**的**约定级**返回槽
+  `LowerCtx::conv_ret_gpr`（宿主用"空参 + 整数返回"的合成签名问一次引擎，见
+  `docs/reference/calling-conventions.md`）。两者都拿不到 ⇒ **fail-closed**（不再按
+  `index 0` 猜：riscv 的返回槽是 `X10` 而不是 0）。
 - `call_clobbers` **已删除**（A5-3）：调用点的破坏集是**约定级事实**（`AbiPlan::clobbers`
   = 可用池 − callee-saved − pinned），**与签名无关**——宿主在函数规划失败时用空签名问一次
   引擎，把结果放进 `LowerCtx::conv_clobbers` 供生成物回退使用；拿不到就 **fail-closed**

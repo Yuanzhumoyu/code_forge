@@ -81,6 +81,15 @@ pub struct LowerCtx {
     /// 路径**也能拿到正确值。空 = 宿主没给约定数据 ⇒ 生成物在调用点 **fail-closed**
     /// （不再按谱面里那几个寄存器猜）。
     pub conv_clobbers: Vec<(u32, forge_ir::RegClass)>,
+    /// **约定级整数返回槽**（v20 A5-3）：`(类内号, 类)`——"这份约定把标量整数返回放在哪个
+    /// 寄存器"（x86 RAX = 0、riscv a0 = X10、arm64 x0 = 0）。由宿主用**空参 + 整数返回**
+    /// 的合成签名问一次引擎（`plan_for_shapes`）填好。
+    ///
+    /// 与 [`call_layout`](Self::call_layout) 的 `.ret` 的分工：那是**本函数**的返回位
+    /// （含 sret/浮点/聚合的各种形态），这份是**约定级**的标量返回槽——`Return` 优先用前者，
+    /// `Call` 读**被调方**返回值时用这份（调用点看不到被调方的签名）。空 = 宿主没给 ⇒
+    /// 生成物 **fail-closed**（不再按谱里的 `[abi].ret_regs` 猜，那个键已删除）。
+    pub conv_ret_gpr: Option<(u32, forge_ir::RegClass)>,
     /// **解析后的约定名**（宿主注册表里的键；空串 = 还没解析）。
     ///
     /// 与 [`call_conv`](Self::call_conv) 的分工：`call_conv` 是 IR 侧的**标识**
@@ -187,6 +196,7 @@ impl LowerCtx {
             call_conv_name: String::new(),
             call_layout: None,
             conv_clobbers: Vec::new(),
+            conv_ret_gpr: None,
             constant_pool: None,
             is_float_return: false,
             is_sret_return: false,

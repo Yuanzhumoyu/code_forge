@@ -847,6 +847,46 @@ fn call_planner_registry_serves_the_shape_plan() {
     assert!(plan_call("nope_isa", "win64", &args, ret).is_none());
 }
 
+/// **约定级整数返回槽**（v20 A5-3）：`plan_for_shapes(空参, 整数返回)` 给出的返回寄存器就是
+/// `LowerCtx::conv_ret_gpr` 的来源，也正是 `[abi].ret_regs` 删除前谱里声明的那些值
+/// （x86 `RAX`、riscv `X10` = a0、arm64 `X0`）——`Call` 读**被调方**返回值靠它。
+#[test]
+fn convention_level_int_return_slot() {
+    use forge_codegen::pipeline::abi_target::plan_for_shapes;
+    use forge_isa_runtime::machine::call_layout::ArgShape;
+
+    let reg = builtin::registry().expect("内置注册表");
+    let ret_shape = Some(ArgShape::int(8, 8));
+
+    // x86 win64：RAX。
+    {
+        let tm = TargetMachine::new();
+        let p = plan_for_shapes(&tm, &reg, "win64", &[], ret_shape.clone()).expect("win64 plan");
+        match p.ret {
+            forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "RAX"),
+            other => panic!("{other:?}"),
+        }
+    }
+    // riscv lp64d：a0 = X10（**不是 index 0**——这正是谱里那份 `ret_regs` 存在的理由）。
+    {
+        let tm = forge_codegen::arch::riscv64_v12::TargetMachine::new();
+        let p = plan_for_shapes(&tm, &reg, "lp64d", &[], ret_shape.clone()).expect("lp64d plan");
+        match p.ret {
+            forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X10"),
+            other => panic!("{other:?}"),
+        }
+    }
+    // arm64 aapcs64：x0。
+    {
+        let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+        let p = plan_for_shapes(&tm, &reg, "aapcs64", &[], ret_shape).expect("aapcs64 plan");
+        match p.ret {
+            forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X0"),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
 /// `fn f(i64, i64) -> i64`，用 `aapcs64` 约定（arm64 后端）。
 fn aapcs64_probe() -> Function {
     let ctx = TypeContext::new();

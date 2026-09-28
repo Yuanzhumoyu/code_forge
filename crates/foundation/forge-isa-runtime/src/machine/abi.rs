@@ -67,7 +67,13 @@ pub trait TargetABI: Send + Sync + 'static {
     }
 
     /// 返回值寄存器（按顺序）。
-    fn ret_regs(&self) -> Vec<Self::Reg>;
+    ///
+    /// **v20 A5-3 起谱面不再声明 `[abi].ret_regs`**：返回槽由 plan 给
+    /// （`Return` 读 `CallLayout::ret`、`Call` 读宿主的约定级 `LowerCtx::conv_ret_gpr`），
+    /// 因此这个方法**没有消费者**——保留 trait 方法只为不破坏手工后端，缺省空表。
+    fn ret_regs(&self) -> Vec<Self::Reg> {
+        Vec::new()
+    }
 
     /// 栈对齐（字节）。
     fn stack_align(&self) -> u32 {

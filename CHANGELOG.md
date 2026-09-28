@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3：`[abi].ret_regs` 删除（返回槽由 plan / 约定级数据给）
+
+- **谱面删键**：`[abi].ret_regs`（`Abi` 字段 / schema / 文档键表 / riscv64 与 arm64 谱里的声明、`demo8_v12` 夹具的声明一并去掉）。它一直是"返回槽放哪"的**生成期近似**——`x86` 靠 index 0 兜底、`riscv` 声明 `X10`，而 `arm64` 的 `X0` 恰好也是 0，这种"每台机器各写一遍"的近似正是 A5-3 要收掉的东西。
+- **`Return`**：优先读**本函数的 plan**（`CallLayout.ret` 的 `RetPlace::Reg`），否则读宿主的**约定级整数返回槽** `LowerCtx::conv_ret_gpr`；两者都没有 ⇒ **fail-closed**（不再按 `index 0` 猜——riscv 的返回槽是 `X10`）。
+- **`Call`**（读被调方返回值）：读 `LowerCtx::conv_ret_gpr`（调用点看不到被调方的签名，而"标量整数返回放哪个寄存器"是约定级事实）。
+- **宿主的约定级数据**（`pipeline/compiler.rs`）：用"**空参 + 整数返回**"的合成签名问一次引擎（`plan_for_shapes`）填 `conv_ret_gpr`——与签名无关，与 `conv_clobbers` 同一套路。
+- **trait 收敛**：`TargetABI::ret_regs()` 现在**没有消费者**（生成物改读 plan / LowerCtx），DSL 不再从谱里发射它，运行时 trait 给它一个空表缺省实现（手工后端不破）。
+- 守卫：`abi_target_real::convention_level_int_return_slot` —— `plan_for_shapes(空参, i64 返回)` 必须给出**谱里原来那些值**（win64 `RAX`、lp64d `X10`、aapcs64 `X0`）。
+- 直连 lowering 的测试（`v12_integration_tests::terminator_return_packet`）改为自己填 `ctx.conv_ret_gpr`——真实编译路径上由管线填好。
+- 验证：workspace 串行全套绿、clippy `-D warnings` 0、`cargo fmt --check` 0、三条 JIT 矩阵同值。
+
 ### Added (2026-09-27) — v20 A5-3：demo 夹具补**测试本地约定**（夹具从此真的有 plan）
 
 **背景**：夹具谱（`tests/isa/demo_v12.toml`、`demo8_v12.toml`）没有约定数据，`Builtin(C)` 解析到内置 `c` 又没有 `(demo, c)` 绑定 ⇒ `AbiPlan` 算不出来，夹具函数一直走"**无 plan 回退**"。而 A5-3 要删的 `[abi].arg_class`/`ret_regs` 正是那条回退路径的输入——夹具不先有 plan，删键就会连带炸掉它们。

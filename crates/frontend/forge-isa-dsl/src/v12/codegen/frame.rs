@@ -92,15 +92,9 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
         .machine_frame()
         .and_then(|f| f.fp_push_bytes)
         .unwrap_or(model.addr_class()?.width() as u32);
-    // 返回寄存器：[abi].ret_regs（物理名）→ Reg::NAME；缺省空 = index 0
-    //（x86 RAX 语义，由 Return/Call lowering 的 from_index(0) 兜底）。
-    let mut ret_regs: Vec<TokenStream> = Vec::new();
-    if let Some(abi) = &model.abi {
-        for r in &abi.ret_regs {
-            let i = format_ident!("{r}");
-            ret_regs.push(quote! { Reg::#i });
-        }
-    }
+    // 返回寄存器：v20 A5-3 起谱面不再声明（`[abi].ret_regs` 已删除）——生成物沿用
+    // trait 的缺省空表（返回槽由 plan / `LowerCtx::conv_ret_gpr` 给）。
+    let ret_regs: Vec<TokenStream> = Vec::new();
     // 若没有 arg_class（或 regs 空）→ 空 arg_regs（集成层仍可组装）。
     Ok(quote! {
         pub struct ABI;
