@@ -407,7 +407,7 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 | `[abi].call_clobbers` | 删（riscv64/arm64；x86 本就没写）；破坏集全面由 plan 的 `clobbers` 给 | ✅ 键已删，三谱绿 |
 | `[abi].frame_padding` | 改读 `[machine].frame_padding`（机器事实）；约定侧 `AbiRules::frame_padding` 进 plan，管线优先 | ✅ 键已迁走 |
 | `[abi.stack_args]` | 删；调用点改读 plan（`CallLayout::caller_offset(k)` + `shadow_bytes`/`slot_bytes`，基址恒 `[machine.frame].sp`），被调方 spill 收参改读 `ArgPlace::Stack { offset }`；能力申报改由 `roles = ["stack_arg_load"/"stack_arg_store"]` 说话（有 load 缺 store 仍生成期报错；两者皆无 = 不支持栈参数）；规则侧补 `shadow_bytes` 必须是槽单位倍数的校验 | ✅ 键已删 |
-| `[abi].ret_regs` / `[abi.arg_class]` | 待做：调用方要按**被调方**的落点搬实参（`ctx.call_layout` 描述的是当前函数）⇒ 前置 = "调用点 plan"（`AbiPlan` 的落点 + 参数池），先加交叉核对守卫再切发射 | ⏳ |
+| `[abi].ret_regs` / `[abi.arg_class]` | 前置「调用点 plan」**已落地**（`ArgShape` + `plan_for_shapes` + `call_plan` 注册表 + 两条守卫：形状 plan == 函数 plan、注册表路径 == 直接算）；剩下：调用方按 `ArgPlace` 搬实参、被调方 spill 收参改按 plan、夹具补测试本地约定，然后删键 | ⏳（前置 ✅） |
 | `[abi].call_clobbers` | 删；破坏集是**签名无关**的约定级事实 ⇒ 管线在无 plan 时用空签名问一次引擎，塞进 `LowerCtx::conv_clobbers`，生成物"两者皆无 ⇒ fail-closed"；守卫 ③b 钉住"空签名 plan == 真实函数 plan 的 clobbers" | ✅ 键已删 |
 | `[abi].arg_slot` | 删；改读机器事实 `[machine].arg_slot`（`V12Model::machine_arg_slot()` / 生成物 `TargetABI::arg_placement()`）；约定侧新增 `AbiPlan::position`（进黄金快照），守卫 ②b 钉住"机器事实 == 主约定的 plan.position" | ✅ 键已迁走 |
 | `[abi].scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved`（**迁移期回退键**） | 删；机器事实只留 `[machine]`（夹具与内联谱全部迁完，`CalleeSaved` 结构体与 schema 两节一并删） | ✅ 键已删 |

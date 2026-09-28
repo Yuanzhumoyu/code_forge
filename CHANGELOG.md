@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-27) — v20 A5-3：「调用点 plan」基础设施（形状 → 被调方布局）
+
+**为什么要有**：调用点在 lowering 时只有实参的**形状**（大小/对齐/族/成员），没有被调方的 `Function`；而"第 i 个实参进哪个寄存器/栈槽"只有引擎算得出来（规则 + 绑定 = 使用者的数据）。谱里那份 `[abi.arg_class]`/`ret_regs` 只是这份数据的**生成期近似**——这才是它们删不掉的真正原因。
+
+- **中性形状**（`forge-isa-runtime::machine::call_layout::ArgShape`/`ShapeKind`）：`Int`/`Ptr`/`Float`/`Vector{elem_is_float, lanes, elem_bytes}`/`Aggregate{members}`/`Other`。运行时 crate 仍**不依赖 forge-abi**。
+- **桥**（`forge-codegen::pipeline::abi_target::plan_for_shapes`）：形状 → `forge_abi::TyView`（聚合成员递归，HFA 判定靠它）→ `Signature` → `AbiRegistry::plan` → `AbiPlan`。
+- **查询注册表**（`forge-isa-runtime::machine::call_plan`）：`CallPlanner` trait（闭包 blanket impl）+ `register_call_planner(isa, …)` / `plan_call(isa, conv, args, ret)`；未注册 ⇒ `None`（生成物 fail-closed，不猜落点）。宿主在 `forge_codegen::pipeline_hooks::ensure_registered()` 里为三个发行后端各注册一个闭包（`Box::leak` 持有自己的 machine）。
+- **两条守卫**（`crates/backend/forge-codegen/tests/abi_target_real.rs`）：① `shape_plan_matches_the_function_plan`——**形状算出来的 plan 必须与函数算出来的逐项相同**（win64 六整数含栈参数 / win64 混合按位置计数 / lp64d 混合按类计数 / aapcs64 整型；比落点/栈/callee-saved/hidden/clobbers，不比参数名）；② `call_planner_registry_serves_the_shape_plan`——注册表路径与直接算逐项相同，未注册 ISA 返回 `None`。
+- 本片**只建能力不改发射**（调用方仍按谱面搬实参），因此三份发行谱零行为变化；下一片切发射后即可删 `[abi].arg_class`/`ret_regs`。
+- 验证：`abi_target_real` 17 绿、workspace 串行全套绿、clippy `-D warnings` 0、`cargo fmt --check` 0。
+
 ### Changed (2026-09-27) — v20 A5-3：`[abi].call_clobbers` 删除（破坏集改由宿主的约定级数据给）
 
 - **谱面删键**：`[abi].call_clobbers`（`Abi` 字段 / schema / 文档键表一并去掉）。它一直是"无 plan 时按参数寄存器 + 返回寄存器猜"的兜底——**猜漏 callee 破坏的临时寄存器就是静默错值**（riscv 递归 fib 死循环的根因）。

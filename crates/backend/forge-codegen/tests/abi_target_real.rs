@@ -683,6 +683,170 @@ fn sysv64_probe() -> Function {
     b.finish().expect("build")
 }
 
+/// `fn f(i64, f64, i64, f64) -> f64`，用给定约定。
+///
+/// 这条签名是「调用点 plan」最有信息量的样本：**位置计数**（win64）与**类计数**（lp64d）
+/// 在它上面必然分叉（win64：a→RCX、b→XMM1、c→RDX、d→XMM3；lp64d：a→X10、b→F10、c→X11、d→F11）。
+fn mixed_probe(cc: CallConvId) -> Function {
+    let ctx = TypeContext::new();
+    let params = [
+        (TypeId::I64, "a"),
+        (TypeId::F64, "b"),
+        (TypeId::I64, "c"),
+        (TypeId::F64, "d"),
+    ];
+    let sig = FunctionSignature::new(&params, &[TypeId::F64]).with_calling_convention(cc);
+    let mut b = FunctionBuilder::new("mixed_probe", ctx, sig);
+    let (entry, p) = b.create_block_with_params(&params);
+    b.switch_to_block(entry);
+    b.ret(&[p[3]]);
+    b.finish().expect("build")
+}
+
+/// **形状 → plan 必须等于 函数 → plan**（v20 A5-3「调用点 plan」的入场券）。
+///
+/// 调用点在 lowering 时只有实参的**形状**（大小/对齐/族/成员，见
+/// `machine::call_layout::ArgShape`），没有被调方的 `Function`；而"往哪个寄存器/栈槽搬"
+/// 只有引擎算得出来。两条入口必须在**每一份约定**上给出逐项相同的落点——差一项就是调用方
+/// 往错的地方搬值（不崩，静默错值），矩阵未必抓得到。
+///
+/// 比的是**落点/栈/clobber/callee-saved/hidden**，不比参数名（形状侧叫 `a0`、函数侧叫
+/// `a`/`b`，名字只用于诊断）。
+#[test]
+fn shape_plan_matches_the_function_plan() {
+    use forge_codegen::pipeline::abi_target::plan_for_shapes;
+    use forge_isa_runtime::machine::call_layout::ArgShape;
+
+    /// 取出"必须逐项相同"的那几块（名字无关）。
+    #[derive(Debug, PartialEq)]
+    struct Cmp {
+        args: Vec<forge_abi::Placement>,
+        ret: forge_abi::RetLoc,
+        stack: forge_abi::StackLayout,
+        callee_saved: forge_abi::CalleeSavedPlan,
+        hidden: forge_abi::HiddenSlots,
+        clobbers: Vec<forge_abi::plan::RegRef>,
+    }
+    fn cmp(p: &forge_abi::AbiPlan) -> Cmp {
+        Cmp {
+            args: p.args.iter().map(|a| a.place.clone()).collect(),
+            ret: p.ret.clone(),
+            stack: p.stack.clone(),
+            callee_saved: p.callee_saved.clone(),
+            hidden: p.hidden.clone(),
+            clobbers: p.clobbers.clone(),
+        }
+    }
+
+    let reg = builtin::registry().expect("内置注册表");
+
+    // ① x86 win64：6 个 i64（前 4 进寄存器、后 2 走栈）与混合签名。
+    {
+        let tm = forge_codegen::arch::x86_v12::TargetMachine::new();
+        let cases: Vec<(&str, Function, Vec<ArgShape>, Option<ArgShape>)> = vec![
+            (
+                "win64 六整数（含栈参数）",
+                win64_stack_args_probe(),
+                vec![ArgShape::int(8, 8); 6],
+                Some(ArgShape::int(8, 8)),
+            ),
+            (
+                "win64 混合（位置计数）",
+                mixed_probe(CallConvId::builtin(ConvName::Win64)),
+                vec![
+                    ArgShape::int(8, 8),
+                    ArgShape::float(8),
+                    ArgShape::int(8, 8),
+                    ArgShape::float(8),
+                ],
+                Some(ArgShape::float(8)),
+            ),
+        ];
+        for (what, func, args, ret) in cases {
+            let by_func = plan_for_function(&tm, &reg, "win64", &func).expect("函数 plan");
+            let by_shape = plan_for_shapes(&tm, &reg, "win64", &args, ret).expect("形状 plan");
+            assert_eq!(
+                cmp(&by_shape),
+                cmp(&by_func),
+                "{what}：形状 plan ≠ 函数 plan"
+            );
+        }
+    }
+
+    // ② riscv lp64d：按类计数——混合签名在这里与 win64 分叉（同一条签名、两种约定）。
+    {
+        let tm = forge_codegen::arch::riscv64_v12::TargetMachine::new();
+        let func = mixed_probe(CallConvId::builtin(ConvName::Lp64d));
+        let args = vec![
+            ArgShape::int(8, 8),
+            ArgShape::float(8),
+            ArgShape::int(8, 8),
+            ArgShape::float(8),
+        ];
+        let by_func = plan_for_function(&tm, &reg, "lp64d", &func).expect("函数 plan");
+        let by_shape = plan_for_shapes(&tm, &reg, "lp64d", &args, Some(ArgShape::float(8)))
+            .expect("形状 plan");
+        assert_eq!(
+            cmp(&by_shape),
+            cmp(&by_func),
+            "lp64d：形状 plan ≠ 函数 plan"
+        );
+    }
+
+    // ③ arm64 aapcs64：整型签名（浮点在 arm64 上缺 FPR 寄存器组——那条缺口另有用例钉住）。
+    {
+        let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+        let func = aapcs64_probe();
+        let args = vec![ArgShape::int(8, 8), ArgShape::int(8, 8)];
+        let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
+        let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &args, Some(ArgShape::int(8, 8)))
+            .expect("形状 plan");
+        assert_eq!(
+            cmp(&by_shape),
+            cmp(&by_func),
+            "aapcs64：形状 plan ≠ 函数 plan"
+        );
+    }
+}
+
+/// **注册表路径可用**（v20 A5-3）：宿主注册后，生成物在调用点按 `(ISA, 约定, 形状)`
+/// 就能拿到与"直接算"逐项相同的布局；未注册的 ISA ⇒ `None`（fail-closed，不猜落点）。
+///
+/// 这条是"调用方改按被调方落点搬实参"的唯一查表入口的守卫。
+#[test]
+fn call_planner_registry_serves_the_shape_plan() {
+    use forge_codegen::pipeline::abi_target::{call_layout, plan_for_shapes};
+    use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::call_plan::{has_call_planner, plan_call};
+
+    forge_codegen::pipeline_hooks::ensure_registered();
+    assert!(
+        has_call_planner("x86_64_v12"),
+        "宿主注册后应能查到调用点布局钩子"
+    );
+
+    let reg = builtin::registry().expect("内置注册表");
+    let tm = TargetMachine::new();
+    let args = vec![
+        ArgShape::int(8, 8),
+        ArgShape::float(8),
+        ArgShape::int(8, 8),
+        ArgShape::float(8),
+    ];
+    let ret = Some(ArgShape::float(8));
+
+    let by_hook = plan_call("x86_64_v12", "win64", &args, ret.clone()).expect("钩子应给出布局");
+    let plan = plan_for_shapes(&tm, &reg, "win64", &args, ret.clone()).expect("直接算");
+    assert_eq!(
+        by_hook,
+        call_layout(&plan, &tm),
+        "钩子给出的布局必须与「形状 → plan → CallLayout」逐项相同"
+    );
+
+    // 未注册的 ISA：`None`（生成物据此 fail-closed）。
+    assert!(plan_call("nope_isa", "win64", &args, ret).is_none());
+}
+
 /// `fn f(i64, i64) -> i64`，用 `aapcs64` 约定（arm64 后端）。
 fn aapcs64_probe() -> Function {
     let ctx = TypeContext::new();

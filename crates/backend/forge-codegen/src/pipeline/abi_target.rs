@@ -18,7 +18,9 @@
 use forge_abi::{AbiError, AbiPlan, AbiRegistry, AbiTarget, Capability, Signature};
 use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
-use forge_isa_runtime::machine::call_layout::{ArgPlace, CallArg, CallLayout, Ext, RetPlace};
+use forge_isa_runtime::machine::call_layout::{
+    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind,
+};
 use forge_isa_runtime::machine::target::TargetMachine;
 
 /// `TargetMachine` 上的 `AbiTarget` 视图。
@@ -166,6 +168,58 @@ pub fn plan_for_signature<M: TargetMachine>(
 ) -> Result<AbiPlan, AbiError> {
     let target = MachineAbiTarget::new(machine);
     registry.plan(&target, conv, sig)
+}
+
+/// **形状 → `TyView`**（v20 A5-3「调用点 plan」的桥）：运行时侧的中性形状摊成引擎认识的
+/// 类型视图。聚合的成员逐个递归——HFA/HVA 判定需要成员（`homogeneous_float_agg`）。
+pub fn shape_to_ty(s: &ArgShape) -> forge_abi::TyView {
+    use forge_abi::{Elem, TyKind, TyView};
+    match &s.kind {
+        ShapeKind::Int => TyView::int(s.size, s.align),
+        ShapeKind::Ptr => TyView::new(s.size, s.align, TyKind::Ptr),
+        ShapeKind::Float => TyView::float(s.size),
+        ShapeKind::Vector {
+            elem_is_float,
+            lanes,
+            elem_bytes,
+        } => TyView::vector(
+            if *elem_is_float {
+                Elem::Float
+            } else {
+                Elem::Int
+            },
+            *lanes,
+            *elem_bytes,
+        ),
+        // 用**真实** size/align（`TyView::agg` 会把 size 算成成员之和——packed/尾部填充
+        // 的对不上）。
+        ShapeKind::Aggregate { members } => TyView::new(
+            s.size,
+            s.align,
+            TyKind::Aggregate {
+                members: members.iter().map(shape_to_ty).collect(),
+            },
+        ),
+        ShapeKind::Other => TyView::new(s.size, s.align, TyKind::Other),
+    }
+}
+
+/// **按实参/返回值形状算被调方的 plan**（v20 A5-3）：调用点只有形状，没有被调方的
+/// `Function`，而落点必须由引擎给——这条入口就是那一步。名字只用于诊断（`a0`/`a1`…）。
+pub fn plan_for_shapes<M: TargetMachine>(
+    machine: &M,
+    registry: &AbiRegistry,
+    conv: &str,
+    args: &[ArgShape],
+    ret: Option<ArgShape>,
+) -> Result<AbiPlan, AbiError> {
+    let params: Vec<(String, forge_abi::TyView)> = args
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (format!("a{i}"), shape_to_ty(s)))
+        .collect();
+    let sig = Signature::new(params, ret.as_ref().map(shape_to_ty));
+    plan_for_signature(machine, registry, conv, &sig)
 }
 
 /// `AbiPlan` → **运行时侧的中性调用布局**（v20 A3b-2 的桥）。

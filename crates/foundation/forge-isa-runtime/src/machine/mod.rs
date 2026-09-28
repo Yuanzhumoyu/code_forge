@@ -23,6 +23,8 @@ pub mod abi;
 pub mod assembler;
 /// 调用布局（中性数据；v20 A3b-2 起生成物与管线读它）。
 pub mod call_layout;
+/// 调用点布局查询（v20 A5-3）：宿主按 `(ISA, 约定, 实参形状)` 算**被调方**的布局。
+pub mod call_plan;
 pub mod cfi;
 pub mod decoder;
 pub mod disasm;

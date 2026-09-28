@@ -162,3 +162,72 @@ impl CallLayout {
         self.args.iter().find(|a| a.index == Some(index))
     }
 }
+
+/// **实参/返回值的形状**（v20 A5-3「调用点 plan」的输入）。
+///
+/// 为什么需要它：调用点在 lowering 时只看得见**实参的形状**（大小/对齐/族/成员），看不见
+/// 被调方的 `Function`；而被调方按什么收参只有引擎算得出来。于是调用点把形状喂给宿主的
+/// planner（`forge-abi` 的 `Signature` + `AbiRegistry::plan`），拿回**被调方**的
+/// [`CallLayout`]，再按 `ArgPlace` 逐参数搬值——谱里因此不必再写 `[abi.arg_class]`。
+///
+/// 运行时 crate 不依赖 `forge-abi`，所以这份形状是**中性 POD**；把形状摊成
+/// `forge_abi::TyView` 的工作由宿主（`forge-codegen`）做。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArgShape {
+    /// 字节大小。
+    pub size: u32,
+    /// 字节对齐。
+    pub align: u32,
+    pub kind: ShapeKind,
+}
+
+/// 形状的族（与 `forge_abi::TyKind` 同义，但**不带 forge-abi 依赖**）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShapeKind {
+    /// 整数/布尔/字符等标量。
+    Int,
+    /// 指针/引用。
+    Ptr,
+    /// 浮点标量。
+    Float,
+    /// 向量（`elem_is_float` 区分 `<4 x f32>` 与 `<4 x i32>`）。
+    Vector {
+        elem_is_float: bool,
+        lanes: u32,
+        elem_bytes: u32,
+    },
+    /// 聚合：**成员逐个列出**（HFA/HVA 判定与"按成员拆寄存器"都要靠它——成员为浮点标量
+    /// 且同宽同族时才是 HFA）。
+    Aggregate { members: Vec<ArgShape> },
+    /// 未建模的标量（按字节大小当整数处理）。
+    Other,
+}
+
+impl ArgShape {
+    /// 整数标量形状（调用点从 IR 类型投影时的常用构造）。
+    pub fn int(size: u32, align: u32) -> Self {
+        Self {
+            size,
+            align,
+            kind: ShapeKind::Int,
+        }
+    }
+
+    /// 浮点标量形状。
+    pub fn float(size: u32) -> Self {
+        Self {
+            size,
+            align: size,
+            kind: ShapeKind::Float,
+        }
+    }
+
+    /// 指针形状。
+    pub fn ptr(size: u32) -> Self {
+        Self {
+            size,
+            align: size,
+            kind: ShapeKind::Ptr,
+        }
+    }
+}

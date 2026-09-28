@@ -271,6 +271,33 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
 - 结构守卫在 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`（三份发行谱都
   发射了布局路径、排在旧路径之前；缺席模板的夹具同样发射收参）。
 
+### 调用点 plan（v20 A5-3）——调用方按**被调方**的落点搬实参
+
+调用点在 lowering 时只看得见**实参的形状**（大小/对齐/族/成员），看不见被调方的
+`Function`；而"第 i 个实参进哪个寄存器/栈槽"只有引擎算得出来（规则 + 绑定 = 使用者的
+数据）。谱里那套 `[abi].arg_class`/`ret_regs` 只是这份数据的**生成期近似**——按类还是按
+位置计数、by-ref 阈值、sret 槽，引擎知道得比生成器多。
+
+```text
+生成物 lowering（调用点）
+  │  ArgShape = (size, align, kind, members)          ← machine::call_layout::ArgShape
+  ▼
+plan_call(isa, conv, args, ret)                       ← machine::call_plan（注册表）
+  │  宿主注册的 CallPlanner：闭包捕获自己的 TargetMachine
+  ▼
+plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
+```
+
+- **中性形状**：`ArgShape`/`ShapeKind`（`Int`/`Ptr`/`Float`/`Vector{…}`/`Aggregate{members}`/
+  `Other`）——运行时 crate **不依赖 forge-abi**，把形状摊成 `forge_abi::TyView` 是宿主的活。
+- **注册**：宿主在 `forge_codegen::pipeline_hooks::ensure_registered()` 里为每个 ISA 注册
+  一个钩子（`Box::leak` 持有机器，与管线工厂同一取舍）；未注册 ⇒ `plan_call` 返回 `None`，
+  生成物 **fail-closed**（不猜落点）。
+- **守卫**（`crates/backend/forge-codegen/tests/abi_target_real.rs`）：
+  `shape_plan_matches_the_function_plan`（形状算出的 plan 必须与函数算出的**逐项相同**：
+  win64 六整数含栈参数、win64 混合按位置计数、lp64d 混合按类计数、aapcs64 整型）与
+  `call_planner_registry_serves_the_shape_plan`（注册表路径 == 直接算；未注册 ISA ⇒ `None`）。
+
 ## 内置约定（四份 + 一个抽象基类）
 
 | 约定 | 位置计数 | 参数寄存器（内置绑定） | 返回寄存器 | 栈/shadow/红区 | 宽返回（sret） | callee-saved 机制 | 变参 |
