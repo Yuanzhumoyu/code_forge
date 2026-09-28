@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-27) — v20 A5-3：`[abi].arg_slot` 迁到 `[machine]`，`AbiPlan` 带上 `position`
+
+- **`[abi].arg_slot` → `[machine].arg_slot`（机器事实）**：位置计数规则（`by-class` = int/float 各自独立推进；`by-position` = 共享位置游标，Windows x64）是**这台机器的谱面缺省约定怎么数位置**，写给**无 plan 的回退形态**；约定侧的正式位置是 `AbiRules::position`，现在随 plan 一起给出（新增 `AbiPlan::position`，`to_text()` 的 `variadic` 行带上 `position <值>`，四份黄金快照同步）。
+- 读取侧单点化：`V12Model::machine_arg_slot()`；生成物新增 `TargetABI::arg_placement()`（运行时侧的 `ArgPlacement::{ByClass, ByPosition}`，缺省 `ByClass`，手工后端无需改）；`codegen/{frame,lowering}.rs` 的 `by_position` 标志改读机器事实。
+- **新增守卫（②b）**：`abi_target_real.rs` 的四约定交叉核对新增一条——「plan 的 `position` == 机器事实 `[machine].arg_slot`（生成物的 `arg_placement()`）」；只对 **ISA 主约定**成立（x86 的 sysv64 规则本就是 `by_class`，属 `$equal_cs = false` 的第二种情形）。
+- 三方同改：`schema.rs` 键位移 + 重生成的 `isa-dsl.schema.json` + `docs/reference/isa-dsl.md` 键速查表（`[abi]` 只剩 `arg_class`/`ret_regs`/`call_clobbers`）。
+- 为什么这条能安全先迁：`position` 是**约定级而非签名级**事实，机器事实与规则值必须同值（②b 守卫钉住）；真正需要"调用点 plan"的是 `arg_class`/`ret_regs`（调用方要按**被调方**的落点搬实参）。
+- 验证：workspace 串行全套绿、clippy `-D warnings` 0、四份 `forge-abi` 黄金快照按 `FORGE_ABI_BLESS=1` 重生成后逐行核对（win64 = `by_position`，sysv64/lp64d/aapcs64 = `by_class`）。
+
 ### Changed (2026-09-27) — v20 A5-3：机器事实回退键下线（`[abi].{scratch,reserved,call_ret_reg,frame,callee_saved}` 删除）
 
 - **谱面**：`[abi]` 只剩真正的**约定键**（`arg_class`/`ret_regs`/`call_clobbers`/`arg_slot`）；机器事实一律只在 `[machine]`（`spill_scratch`/`fixed_regs`/`link_reg`/`frame`/`callee_saved_gpr` + `callee_save_slots`）。旧同义键**删除**（`Abi` 字段、`CalleeSaved` 结构体、schema 的 `[abi.frame]`/`[abi.callee_saved]` 两节与键表一并去掉）：写旧键现在报未知键，"两处都写、谁生效"的含糊彻底消失。

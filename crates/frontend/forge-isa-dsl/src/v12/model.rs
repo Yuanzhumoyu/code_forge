@@ -69,6 +69,16 @@ pub struct MachineSection {
     /// 管线优先读 plan，无 plan 时才回退到这里（与 `callee_save_slots` 同一套路）。
     #[serde(default)]
     pub frame_padding: Option<i32>,
+    /// **寄存器位置的计数规则**（机器事实，v20 A5-3）：`by-class`（缺省；riscv SysV /
+    /// AAPCS64 —— int/float 各自独立推进）/ `by-position`（Windows x64 —— int/float
+    /// 共用位置游标，参数 i 用 GPR{i}/XMM{i}）。
+    ///
+    /// 为什么是**机器事实**：它描述"这台机器的谱面缺省约定怎么数位置"，供**没有 plan 的
+    /// 回退路径**（夹具/未注册约定的宿主）使用；**约定侧**的正式位置是
+    /// `AbiRules::position`（进 plan 的 `AbiPlan::position`，管线与生成器优先读）。
+    /// 键从 `[abi].arg_slot` 迁来（同名同义，旧键已删除）。
+    #[serde(default)]
+    pub arg_slot: Option<ArgSlot>,
 }
 
 impl V12Model {
@@ -134,6 +144,18 @@ impl V12Model {
             .as_ref()
             .and_then(|m| m.frame_padding)
             .unwrap_or(0)
+    }
+
+    /// 寄存器位置的计数规则（机器事实）：`[machine].arg_slot`，缺省 `ByClass`。
+    ///
+    /// 生成物的 `TargetABI::arg_placement()` 读它；生成器据此选"按类各自计数"还是
+    /// "按位置共享计数"的发射形态（无 plan 的回退路径；有 plan 时以 `AbiPlan::position`
+    /// 为准——守卫 `abi_target_real::machine_arg_slot_agrees_with_the_plan` 钉住两者同值）。
+    pub fn machine_arg_slot(&self) -> ArgSlot {
+        self.machine
+            .as_ref()
+            .and_then(|m| m.arg_slot)
+            .unwrap_or_default()
     }
 }
 
@@ -2682,9 +2704,6 @@ pub struct Abi {
     /// 跨调用存活值留在寄存器被覆盖（实测递归 fib 死循环）。
     #[serde(default)]
     pub call_clobbers: Option<Vec<String>>,
-    /// 参数槽位分配规则（语义显式声明，见 [`ArgSlot`]）。
-    #[serde(default)]
-    pub arg_slot: Option<ArgSlot>,
 }
 
 /// 参数槽位分配规则。

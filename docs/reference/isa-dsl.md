@@ -131,9 +131,9 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[pseudo]]` | `name` `params` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e） |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[abi]` | — | `arg_class` `ret_regs` `call_clobbers` `arg_slot` | 调用约定 |
+| `[abi]` | — | `arg_class` `ret_regs` `call_clobbers` | 调用约定 |
 | `[abi.arg_class]` | — | `class` `regs` `strategy` `limit` | 参数寄存器类/顺序/策略/by-value 阈值 |
-| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充） |
+| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
@@ -1156,6 +1156,7 @@ fixed_regs = ["X0", "X1", "X3", "X4"]   # regalloc 不可分配（zero/ra/gp/tp 
 spill_scratch = ["X5", "X6"]            # 溢出与栈参数收参的临时寄存器
 link_reg = "X1"                         # call 写返回地址的寄存器（x86 写栈 ⇒ 不声明）
 frame_padding = 8                       # 帧填充字节（x86 = 8；riscv/arm64 = 0）
+arg_slot = "by-position"                # 位置计数：by-class（缺省）/ by-position（x86）
 ```
 
 `frame_padding`（A5-3 起在此）：`sub rsp` 之外还要多减的字节数，使 call 点的 `rsp` 回到
@@ -1165,25 +1166,30 @@ frame_padding = 8                       # 帧填充字节（x86 = 8；riscv/arm6
 riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 `AbiRules::frame_padding`（进 plan，管线优先读）。
 
+`arg_slot`（A5-3 起在此，原 `[abi].arg_slot`）：`by-class` = int/float 各自独立推进
+（riscv SysV / AAPCS64），`by-position` = 共享位置游标（Windows x64）。它是**这台机器的
+谱面缺省约定怎么数位置**，供无 plan 的回退形态使用；约定侧的正式位置是
+`AbiRules::position`（进 plan 的 `AbiPlan::position`，生成器优先读），守卫
+`abi_target_real::convention_facts_probe!` 的 ②b 钉住"两者对 ISA 主约定同值"。
+
 两条纪律：① 参数池 / 返回池 / callee-saved / sret 槽 / 栈参数布局**不在这里**——它们是
 **约定事实**，属于 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）；
 ② 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
 `link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊。
 **迁移期已收尾（2026-09-27）**：`[abi]` 的同义旧键（`scratch`/`reserved`/`call_ret_reg`/
-`frame`/`callee_saved`）**全部删除**——写旧键报未知键，本节就是这些事实的唯一来源
-（`frame_padding` 与 `[abi.stack_args]` 也在同一批搬走/删除）。
+`frame`/`callee_saved`/`arg_slot`）**全部删除**——写旧键报未知键，本节就是这些事实的
+唯一来源（`frame_padding` 与 `[abi.stack_args]` 也在同一批搬走/删除）。
 
 ## `[abi]` — 调用约定
 
 > **迁移中（v20 A5-3）**：机器事实（`scratch`/`reserved`/`call_ret_reg`/`frame`/
-> `callee_saved`）已**删除**并归 [`[machine]`](#machine--机器事实)（唯一来源）。本节剩下的
-> 是真正的**约定键**：`arg_class`/`ret_regs`/`call_clobbers`/`arg_slot`——它们由
+> `callee_saved`/`arg_slot`）已**删除**并归 [`[machine]`](#machine--机器事实)（唯一来源）。
+> 本节剩下的是真正的**约定键**：`arg_class`/`ret_regs`/`call_clobbers`——它们由
 > `AbiRules`/`AbiBinding` 给（`[abi]` 这份是**无 plan 时的回退**），删键是 A5-3 的下一步
 > （见 `docs/plans/calling-convention-redesign-plan.md` 的逐键迁移进度表）。
 
 ```toml
 [abi]
-arg_slot = "by-position"       # 参数槽位计数策略：by-class（缺省，riscv）/ by-position（x86）
 ret_regs = ["X10"]             # 返回寄存器（缺省空 = index 0，x86 RAX 语义）
 call_clobbers = ["X1", "X7", ...]  # Call 点被调用方破坏的寄存器
 
@@ -1203,8 +1209,8 @@ limit = 128
 > 改为指令上的 [`roles`](#instructions--指令)。生成器查角色表取代按名字查找，缺角色
 > → 明确 `Unsupported("<角色> 未声明")`。
 
-- `arg_slot`（枚举）：`by-class`（缺省，riscv SysV——int/float 各自独立推进）/
-  `by-position`（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）。
+- `arg_slot`（A5-3 起在 [`[machine]`](#machine--机器事实)，原是 `[abi].arg_slot`）：
+  `by-class` / `by-position` 见上节「机器事实」；旧写法 `[abi].arg_slot` 现在**明确报错**。
 - `frame_padding`（A5-3 起在 [`[machine]`](#machine--机器事实)）：见上节「机器事实」。
   旧写法 `[abi].frame_padding` 现在**明确报错**（键已删除），请写进 `[machine]`。
 - **`[abi.stack_args]` 已删除**（A5-3）：寄存器耗尽后的参数内存布局（`callee_base`/

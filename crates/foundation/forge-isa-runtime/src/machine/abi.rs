@@ -34,6 +34,19 @@ impl Default for FrameLayout {
     }
 }
 
+/// 寄存器位置的计数规则（运行时侧的中性镜像；与 `forge_abi::PositionRule` 同义）。
+///
+/// 由 `[machine].arg_slot` 生成（v20 A5-3，此前是 `[abi].arg_slot`）；约定侧的正式
+/// 位置是 `AbiRules::position`（进 plan 的 `AbiPlan::position`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ArgPlacement {
+    /// 按类各自计数（riscv SysV / AAPCS64：整数与浮点序列独立推进）。
+    #[default]
+    ByClass,
+    /// 按**位置**计数：第 i 个参数用第 i 个槽（Windows x64：int/float 共用位置游标）。
+    ByPosition,
+}
+
 /// 调用约定描述。
 pub trait TargetABI: Send + Sync + 'static {
     type Reg: PhysReg;
@@ -76,6 +89,16 @@ pub trait TargetABI: Send + Sync + 'static {
     /// 有 plan 时管线优先用 plan 的 `frame_padding`（那是约定侧的值）。
     fn frame_padding(&self) -> i32 {
         0
+    }
+
+    /// **寄存器位置的计数规则**（缺省 `by_class`）：`by_position` = int/float 共用位置
+    /// 游标（Windows x64）；`by_class` = 两类各自独立推进（riscv SysV / AAPCS64）。
+    ///
+    /// **机器事实**由 TOML 的 `[machine].arg_slot` 声明（v20 A5-3 起；此前在
+    /// `[abi].arg_slot`）——它是**这台机器的谱面缺省约定**用哪种计数，供"没有 plan 的
+    /// 回退路径"使用；约定侧的正式位置是 `AbiRules::position`（进 plan，优先）。
+    fn arg_placement(&self) -> ArgPlacement {
+        ArgPlacement::ByClass
     }
 
     /// 声明式帧布局：`[machine.frame].layout`（fp-inside/fp-outside）+

@@ -2,7 +2,7 @@
 ## void0
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 ret void
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
@@ -10,7 +10,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## i64
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg a size=8 -> reg X10
 ret reg X10
 hidden sret=- context=- va_meta=- va_len=-
@@ -19,7 +19,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## i32_i32
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg a size=4 -> reg X10
 arg b size=4 -> reg X11
 ret reg X10
@@ -29,7 +29,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## i64_x6
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg a size=8 -> reg X10
 arg b size=8 -> reg X11
 arg c size=8 -> reg X12
@@ -43,7 +43,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## i64_x8
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg a size=8 -> reg X10
 arg b size=8 -> reg X11
 arg c size=8 -> reg X12
@@ -59,7 +59,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## f64
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg x size=8 -> reg F10
 ret reg F10
 hidden sret=- context=- va_meta=- va_len=-
@@ -68,7 +68,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## f64_x4
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg a size=8 -> reg F10
 arg b size=8 -> reg F11
 arg c size=8 -> reg F12
@@ -80,7 +80,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## ptr
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg p size=8 -> reg X10
 ret reg X10
 hidden sret=- context=- va_meta=- va_len=-
@@ -89,7 +89,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## vec16
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=16 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg v size=16 -> stack off=16 size=16 align=16
 ret indirect size=16 align=1
 hidden sret=X10 context=- va_meta=- va_len=-
@@ -98,7 +98,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## vec32
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=48 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg v size=32 -> stack off=32 size=32 align=32
 ret indirect size=32 align=32
 hidden sret=X10 context=- va_meta=- va_len=-
@@ -107,7 +107,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## agg_ii
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg s size=16 -> pair X10:X11
 ret pair X10:X11
 hidden sret=- context=- va_meta=- va_len=-
@@ -116,7 +116,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## agg_ii_f64
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg s size=16 -> pair X10:X11
 arg x size=8 -> reg F10
 ret void
@@ -126,7 +126,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## agg24
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=24 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg s size=24 -> indirect ptr=X11 at=Some(0) on_stack=true
 ret indirect size=24 align=1
 hidden sret=X10 context=- va_meta=- va_len=-
@@ -135,7 +135,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## hfa1
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg s size=4 -> reg F10
 ret reg F10
 hidden sret=- context=- va_meta=- va_len=-
@@ -144,7 +144,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## hfa2
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg s size=8 -> pair F10:F11
 ret pair F10:F11
 hidden sret=- context=- va_meta=- va_len=-
@@ -153,7 +153,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## hfa4
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg s size=16 -> pair X10:X11
 ret pair X10:X11
 hidden sret=- context=- va_meta=- va_len=-
@@ -162,7 +162,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## agg_mixed_float
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg s size=12 -> pair X10:X11
 ret void
 hidden sret=- context=- va_meta=- va_len=-
@@ -171,7 +171,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## mixed_wide_ret
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg a size=8 -> reg X11
 arg x size=8 -> reg F10
 ret indirect size=24 align=1
@@ -181,7 +181,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## i64_x9
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=8 byval_area=0 red_zone=None frame_pad=0
-variadic false
+variadic false position by_class
 arg a0 size=8 -> reg X10
 arg a1 size=8 -> reg X11
 arg a2 size=8 -> reg X12
@@ -198,7 +198,7 @@ clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F
 ## va2p1
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=8 byval_area=0 red_zone=None frame_pad=0
-variadic true
+variadic true position by_class
 arg fmt size=8 -> reg X10
 arg n size=4 -> reg X11
 arg x size=8 -> stack off=16 size=8 align=8
@@ -210,7 +210,7 @@ va_area RiscvSaveArea size=24 align=8 stack_only=true
 ## va0p3
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=24 byval_area=0 red_zone=None frame_pad=0
-variadic true
+variadic true position by_class
 arg a size=8 -> stack off=16 size=8 align=8
 arg b size=8 -> stack off=24 size=8 align=8
 arg c size=8 -> stack off=32 size=8 align=8

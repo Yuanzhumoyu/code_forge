@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules::{CalleePop, VaListKind};
+use crate::rules::{CalleePop, PositionRule, VaListKind};
 use crate::ty::TyView;
 
 /// 物理寄存器引用（带类与名字，便于诊断与快照可读）。
@@ -255,6 +255,12 @@ pub struct AbiPlan {
     pub conv: String,
     /// 签名是否变参。
     pub variadic: bool,
+    /// **寄存器位置的计数规则**（约定级事实，v20 A5-3）：`by_class` = int/float 各自独立
+    /// 推进（riscv SysV），`by_position` = int/float 共用位置游标（Windows x64）。
+    ///
+    /// 放在 plan 里是因为调用方要按**被调方**的落点搬实参：这条规则决定"第 i 个实参落在
+    /// 哪"，而它随约定而变。生成器把它镜像进 `CallLayout`，从此不必在谱里写 `arg_slot`。
+    pub position: PositionRule,
     /// 用户可见实参（含被拆成两槽的聚合，仍是一条 `ArgLoc`）。
     pub args: Vec<ArgLoc>,
     pub ret: RetLoc,
@@ -288,7 +294,14 @@ impl AbiPlan {
             self.stack.red_zone,
             self.stack.frame_padding
         ));
-        out.push_str(&format!("variadic {}\n", self.variadic));
+        out.push_str(&format!(
+            "variadic {} position {}\n",
+            self.variadic,
+            match self.position {
+                PositionRule::ByClass => "by_class",
+                PositionRule::ByPosition => "by_position",
+            }
+        ));
         for a in &self.args {
             out.push_str(&format!(
                 "arg {} size={} -> {}\n",

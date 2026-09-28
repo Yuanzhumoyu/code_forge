@@ -26,6 +26,17 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
     // riscv/arm64 = 0）。约定侧的 `AbiRules::frame_padding` 进 plan，由管线优先读；
     // 这里生成的 `TargetABI::frame_padding()` 是无 plan 时的回退值。
     let frame_padding = model.machine_frame_padding();
+    // 位置计数规则 = **机器事实**（v20 A5-3，原 `[abi].arg_slot`）：
+    // `[machine].arg_slot`（x86 = by-position、其余 = by-class）。约定侧的正式位置是
+    // `AbiRules::position`（进 plan 的 `AbiPlan::position`）。
+    let arg_placement_toks: TokenStream = match model.machine_arg_slot() {
+        crate::v12::model::ArgSlot::ByPosition => {
+            quote! { crate::machine::abi::ArgPlacement::ByPosition }
+        }
+        crate::v12::model::ArgSlot::ByClass => {
+            quote! { crate::machine::abi::ArgPlacement::ByClass }
+        }
+    };
     // 寄存器参数位置上限：int arg_class 的寄存器个数（Windows x64 = 4；
     // 位置 ≥ 此值走栈）。by-class（riscv）无栈参数 → 全部 arg_regs 数。
     let int_arg_slot_count = model
@@ -113,6 +124,9 @@ pub(crate) fn gen_abi(model: &V12Model) -> Result<TokenStream, String> {
                 }
             }
             fn int_arg_slot_count(&self) -> usize { #int_arg_slot_count }
+            fn arg_placement(&self) -> crate::machine::abi::ArgPlacement {
+                #arg_placement_toks
+            }
         }
     })
 }
@@ -1116,7 +1130,8 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     };
     // ABI 槽位规则：by-position（Windows x64——int/float 共享位置
     // 计数，参数 i 用 GPR{i}/XMM{i}）/ by-class（缺省，独立推进）。
-    let by_position = model.abi.as_ref().and_then(|a| a.arg_slot) == Some(ArgSlot::ByPosition);
+    // v20 A5-3：读**机器事实** `[machine].arg_slot`（原 `[abi].arg_slot`）。
+    let by_position = model.machine_arg_slot() == ArgSlot::ByPosition;
     let (head, fpr_stmt_use, int_stmt_use, byref_stmt_use): (
         TokenStream,
         TokenStream,

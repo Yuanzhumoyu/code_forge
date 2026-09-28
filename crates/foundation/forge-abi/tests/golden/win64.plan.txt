@@ -2,7 +2,7 @@
 ## void0
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 ret void
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
@@ -10,7 +10,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## i64
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg a size=8 -> reg RCX
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
@@ -19,7 +19,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## i32_i32
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg a size=4 -> reg RCX
 arg b size=4 -> reg RDX
 ret reg RAX
@@ -29,7 +29,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## i64_x6
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=48 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg a size=8 -> reg RCX
 arg b size=8 -> reg RDX
 arg c size=8 -> reg R8
@@ -43,7 +43,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## i64_x8
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=64 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg a size=8 -> reg RCX
 arg b size=8 -> reg RDX
 arg c size=8 -> reg R8
@@ -59,7 +59,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## f64
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg x size=8 -> reg XMM0
 ret reg XMM0
 hidden sret=- context=- va_meta=- va_len=-
@@ -68,7 +68,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## f64_x4
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg a size=8 -> reg XMM0
 arg b size=8 -> reg XMM1
 arg c size=8 -> reg XMM2
@@ -80,7 +80,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## ptr
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg p size=8 -> reg RCX
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
@@ -89,7 +89,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## vec16
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg v size=16 -> reg XMM0
 ret reg XMM0
 hidden sret=- context=- va_meta=- va_len=-
@@ -98,7 +98,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## vec32
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=32 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg v size=32 -> indirect ptr=RDX at=Some(0) on_stack=true
 ret indirect size=32 align=32
 hidden sret=RCX context=- va_meta=- va_len=-
@@ -107,7 +107,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## agg_ii
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg s size=16 -> indirect ptr=RDX at=Some(0) on_stack=true
 ret indirect size=16 align=8
 hidden sret=RCX context=- va_meta=- va_len=-
@@ -116,7 +116,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## agg_ii_f64
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg s size=16 -> indirect ptr=RCX at=Some(0) on_stack=true
 arg x size=8 -> reg XMM1
 ret void
@@ -126,7 +126,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## agg24
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=24 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg s size=24 -> indirect ptr=RDX at=Some(0) on_stack=true
 ret indirect size=24 align=1
 hidden sret=RCX context=- va_meta=- va_len=-
@@ -135,7 +135,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## hfa1
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg s size=4 -> reg RCX
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
@@ -144,7 +144,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## hfa2
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg s size=8 -> reg RCX
 ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
@@ -153,7 +153,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## hfa4
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg s size=16 -> indirect ptr=RDX at=Some(0) on_stack=true
 ret indirect size=16 align=4
 hidden sret=RCX context=- va_meta=- va_len=-
@@ -162,7 +162,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## agg_mixed_float
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=16 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg s size=12 -> indirect ptr=RCX at=Some(0) on_stack=true
 ret void
 hidden sret=- context=- va_meta=- va_len=-
@@ -171,7 +171,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## mixed_wide_ret
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg a size=8 -> reg RDX
 arg x size=8 -> reg XMM2
 ret indirect size=24 align=1
@@ -181,7 +181,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## i64_x9
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=72 byval_area=0 red_zone=None frame_pad=8
-variadic false
+variadic false position by_position
 arg a0 size=8 -> reg RCX
 arg a1 size=8 -> reg RDX
 arg a2 size=8 -> reg R8
@@ -198,7 +198,7 @@ clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8
 ## va2p1
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=40 byval_area=0 red_zone=None frame_pad=8
-variadic true
+variadic true position by_position
 arg fmt size=8 -> reg RCX
 arg n size=4 -> reg RDX
 arg x size=8 -> stack off=48 size=8 align=8
@@ -210,7 +210,7 @@ va_area Win64Stack size=8 align=8 stack_only=true
 ## va0p3
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=56 byval_area=0 red_zone=None frame_pad=8
-variadic true
+variadic true position by_position
 arg a size=8 -> stack off=48 size=8 align=8
 arg b size=8 -> stack off=56 size=8 align=8
 arg c size=8 -> stack off=64 size=8 align=8

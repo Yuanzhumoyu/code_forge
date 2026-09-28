@@ -1860,8 +1860,8 @@ align = 16
 fp_save = 8
 
 [abi]
-# Windows x64：int/float 参数共享位置计数（参数 i → GPR{i}/XMM{i}）
-arg_slot = "by-position"
+# 位置计数规则（by-position：int/float 共享位置游标）自 v20 A5-3 起是**机器事实**，
+# 写在 [machine].arg_slot（约定侧的正式位置是 AbiRules::position，进 plan 后优先）。
 
 # Windows x64 栈参数布局（shadow = 32、被调方首个栈参偏移 = 2 槽）**已不在谱里声明**
 # （v20 A5-3）：它随约定而变，归 `AbiRules`（`shadow_bytes` + `stack.first_offset_slots`），
@@ -4033,6 +4033,10 @@ callee_save_slots = 7
 # （如 kernel32!ExitProcess 内部的 movdqa）在未对齐栈上崩（0xC0000005）。
 # 约定侧的同名字段在 AbiRules（win64/sysv64 都写 8），进 plan 后由管线优先读。
 frame_padding = 8
+# 位置计数规则（机器事实，v20 A5-3，原 `[abi].arg_slot`）：Windows x64 的 int/float
+# **共享位置游标**——参数 i 用 GPR{i}/XMM{i}（第 2 个参数即使第 1 个是整数也进 XMM1）。
+# 约定侧的正式位置是 AbiRules::position（win64 规则写 by_position，进 plan 后优先）。
+arg_slot = "by-position"
 
 # 帧形状：栈/帧指针寄存器名 + 帧指针保存槽字节数（x86 用硬件 push 保存 fp，故
 # 布局模式是缺省 fp-outside、alloc 立即数由 SUB 自带减号语义）。

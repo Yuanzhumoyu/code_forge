@@ -508,6 +508,27 @@ macro_rules! convention_facts_probe {
                 $conv
             );
 
+            // ②b 位置计数规则：plan（约定规则 `position`） == 机器事实
+            //     `[machine].arg_slot`（生成物 `TargetABI::arg_placement`）。
+            //     只对"ISA 的主约定"成立——同一台机器的另一份约定（x86 的 sysv64）
+            //     可以是 by_class，那正是 `$equal_cs = false` 的第二种情形。
+            //     这条守卫保证"无 plan 的回退形态"与"约定数据"不会分叉。
+            if $equal_cs {
+                let want = match tm.abi().arg_placement() {
+                    forge_isa_runtime::machine::abi::ArgPlacement::ByClass => {
+                        forge_abi::PositionRule::ByClass
+                    }
+                    forge_isa_runtime::machine::abi::ArgPlacement::ByPosition => {
+                        forge_abi::PositionRule::ByPosition
+                    }
+                };
+                assert_eq!(
+                    plan.position, want,
+                    "{}：plan 的 position 与机器事实 [machine].arg_slot 必须同值",
+                    $conv
+                );
+            }
+
             // ③ clobbers 的两条硬不变量。
             let clobber_idx = idx(&layout.clobbers);
             assert!(!clobber_idx.is_empty(), "{}：破坏集不该为空", $conv);

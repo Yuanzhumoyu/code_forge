@@ -615,6 +615,7 @@ pub fn plan_fn(
     Ok(AbiPlan {
         conv: rules.name.clone(),
         variadic: sig.variadic,
+        position: rules.position,
         args,
         ret,
         stack: layout,

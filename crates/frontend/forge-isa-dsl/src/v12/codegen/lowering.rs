@@ -1221,10 +1221,10 @@ fn gen_call_lowering(
     // 从指令结构派生 vn/字段名（semantic_operand_name），不硬编码。
     let (byref_insts, has_byref_insts) = collect_byref_insts(infos);
     let byref = |tag: &str| byref_insts.get(tag).cloned();
-    // ABI 槽位规则（[abi].arg_slot）：by-position（Windows x64——
-    // int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）/ by-class
-    //（缺省 riscv SysV——int/float 独立推进）。
-    let by_position = model.abi.as_ref().and_then(|a| a.arg_slot) == Some(ArgSlot::ByPosition);
+    // ABI 槽位规则（v20 A5-3：读机器事实 `[machine].arg_slot`，原 `[abi].arg_slot`）：
+    // by-position（Windows x64——int/float 共享位置计数，参数 i 用 GPR{i}/XMM{i}）
+    // / by-class（缺省 riscv SysV——int/float 独立推进）。
+    let by_position = model.machine_arg_slot() == ArgSlot::ByPosition;
     // 返回寄存器：ret_regs 首项（riscv X10=a0）或 index 0（x86 RAX）。
     let ret_src_expr: TokenStream = abi
         .ret_regs
@@ -1694,7 +1694,7 @@ fn gen_call_lowering(
         // S1：宽向量 by-ref 栈拷贝（生成期拼好的语句；标签缺失 → Unsupported）
         &byref_stmt,
         // ABI 槽位规则：by-position（Windows x64，int/float 共享位置计数）
-        model.abi.as_ref().and_then(|a| a.arg_slot) == Some(ArgSlot::ByPosition),
+        model.machine_arg_slot() == ArgSlot::ByPosition,
         &mov_vn,
         &fpr_mov32_vn,
         &fpr_mov64_vn,

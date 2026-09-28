@@ -1922,7 +1922,8 @@ fn validate_abi(m: &V12Model) -> Result<(), String> {
     let Some(abi) = &m.abi else {
         return Ok(());
     };
-    // arg_slot / arg_class.strategy 的值域由枚举在反序列化期强制
+    // arg_class.strategy 的值域由枚举在反序列化期强制
+    // （`arg_slot` 的值域同理，但 v20 A5-3 起它在 `[machine]` 下）
 
     // `[abi.stack_args]` 已删除（v20 A5-3）：shadow/首个栈参偏移现在由规则的
     // `stack.*` + `shadow_bytes` 给出（`AbiRules::validate` 负责其合法性，
