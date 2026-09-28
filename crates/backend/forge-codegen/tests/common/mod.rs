@@ -37,3 +37,82 @@ forge_dsl::isa_from_file!(
     name = "include_enc_v12",
     parts = ["encode"]
 );
+
+// ───────────────── 测试本地约定（v20 A5-3） ─────────────────
+
+/// `demo_v12` 的**测试本地约定**：这份夹具谱没有绑定，而 v20 起"实参放哪/返回怎么回"
+/// 由 `AbiRules` + `AbiBinding` 给（谱里那套 `[abi]` 键是生成期近似，正在逐键下线）。
+/// 注册后 `CallConvId::Builtin(C)` 经 `aliases = ["c"]` 落到本约定，夹具函数就有 plan 了。
+///
+/// 数据照着夹具谱的口径写：`[[abi.arg_class]] int = X0-X3`、`ret_regs` 缺省 = X0、
+/// `[stack] slot = 8 / align = 8`、`[machine] callee_saved_gpr = []`（无 callee-saved）。
+const DEMO_RULES: &str = r#"
+name = "demo"
+position = "by_class"
+int_pool = "int"
+stack_align = 8
+stack = { slot_bytes = 8, first_offset_slots = 0 }
+aliases = ["c"]  # 这台机器（demo_v12）上的 C 约定
+classify = [
+  { when = { kind = "scalar" }, do = { direct = { pool = "int" } } },
+  { when = { kind = "aggregate", size_le = 8 }, do = { direct = { pool = "int" } } },
+]
+ret_classify = [
+  { when = { kind = "scalar" }, do = { direct = { pool = "ret_int" } } },
+]
+fallback = { stack = {} }
+note = "测试夹具约定（demo_v12）：只覆盖夹具用到的标量参数/返回"
+"#;
+
+/// `demo_v12` 的绑定（池名 → 夹具的寄存器名）。
+const DEMO_BINDING: &str = r#"
+isa = "demo_v12"
+conv = "demo"
+[pools]
+int = ["X0", "X1", "X2", "X3"]
+ret_int = ["X0"]
+"#;
+
+/// `demo8_v12`（1 字节寄存器）的测试本地约定：`int = A0-A3`、`ret_int = A0`、
+/// `[stack] slot = 1 / align = 1`、无 callee-saved。
+const DEMO8_RULES: &str = r#"
+name = "demo8"
+position = "by_class"
+int_pool = "int"
+stack_align = 1
+stack = { slot_bytes = 1, first_offset_slots = 0 }
+aliases = ["c"]
+classify = [
+  { when = { kind = "scalar" }, do = { direct = { pool = "int" } } },
+]
+ret_classify = [
+  { when = { kind = "scalar" }, do = { direct = { pool = "ret_int" } } },
+]
+fallback = { stack = {} }
+note = "测试夹具约定（demo8_v12）：1 字节寄存器的标量参数/返回"
+"#;
+
+/// `demo8_v12` 的绑定。
+const DEMO8_BINDING: &str = r#"
+isa = "demo8_v12"
+conv = "demo8"
+[pools]
+int = ["A0", "A1", "A2", "A3"]
+ret_int = ["A0"]
+"#;
+
+/// 幂等注册两份 demo 夹具的测试本地约定（编译夹具函数的测试先调它）。
+///
+/// 为什么必须显式调：注册表是进程级的、且**夹具谱里没有约定数据**——不注册的话
+/// `Builtin(C)` 解析到内置 `c`（无 `(demo, c)` 绑定）⇒ `AbiPlan` 算不出来，夹具就
+/// 只能走"无 plan 回退"（那正是 A5-3 要删掉的东西）。
+pub fn ensure_demo_conventions() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        use forge_codegen::pipeline::conv_registry::{register_binding_toml, register_rules_toml};
+        register_rules_toml(DEMO_RULES).expect("demo 夹具的规则应能注册");
+        register_binding_toml(DEMO_BINDING).expect("demo 夹具的绑定应能注册");
+        register_rules_toml(DEMO8_RULES).expect("demo8 夹具的规则应能注册");
+        register_binding_toml(DEMO8_BINDING).expect("demo8 夹具的绑定应能注册");
+    });
+}

@@ -411,7 +411,7 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 | `[abi].call_clobbers` | 删；破坏集是**签名无关**的约定级事实 ⇒ 管线在无 plan 时用空签名问一次引擎，塞进 `LowerCtx::conv_clobbers`，生成物"两者皆无 ⇒ fail-closed"；守卫 ③b 钉住"空签名 plan == 真实函数 plan 的 clobbers" | ✅ 键已删 |
 | `[abi].arg_slot` | 删；改读机器事实 `[machine].arg_slot`（`V12Model::machine_arg_slot()` / 生成物 `TargetABI::arg_placement()`）；约定侧新增 `AbiPlan::position`（进黄金快照），守卫 ②b 钉住"机器事实 == 主约定的 plan.position" | ✅ 键已迁走 |
 | `[abi].scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved`（**迁移期回退键**） | 删；机器事实只留 `[machine]`（夹具与内联谱全部迁完，`CalleeSaved` 结构体与 schema 两节一并删） | ✅ 键已删 |
-| demo 夹具（`tests/isa/*.toml`） | 待做：删键前先在测试内注册本地绑定/规则 | ⏳ |
+| demo 夹具（`tests/isa/*.toml`） | ✅ **已补测试本地约定**：`tests/common/mod.rs::ensure_demo_conventions()`（两份规则 + 绑定，`aliases = ["c"]`）⇒ 夹具函数真的有 plan（两条守卫钉住 `call_layout` 存在与落点） | ✅ |
 
 步骤建议（每步都可独立跑门禁）：
 ① 加 `[machine]`（model + schema + `docs/reference/isa-dsl.md` 键表三处同改，`schema_guard` 钉住）；✅

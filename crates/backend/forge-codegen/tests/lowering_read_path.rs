@@ -43,6 +43,8 @@ fn build(ctx: &TypeContext, extra: usize) -> Function {
 fn compile_counts(extra: usize) -> (usize, usize) {
     let ctx = TypeContext::new();
     let func = build(&ctx, extra);
+    // v20 A5-3：夹具谱没有约定数据，先注册**测试本地约定**（否则走无 plan 回退）。
+    common::ensure_demo_conventions();
     let compiler = FunctionCompiler::new(TargetMachine::new());
     ctx.debug_reset_read_count();
     ctx.debug_reset_cow_clone_count();

@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-27) — v20 A5-3：demo 夹具补**测试本地约定**（夹具从此真的有 plan）
+
+**背景**：夹具谱（`tests/isa/demo_v12.toml`、`demo8_v12.toml`）没有约定数据，`Builtin(C)` 解析到内置 `c` 又没有 `(demo, c)` 绑定 ⇒ `AbiPlan` 算不出来，夹具函数一直走"**无 plan 回退**"。而 A5-3 要删的 `[abi].arg_class`/`ret_regs` 正是那条回退路径的输入——夹具不先有 plan，删键就会连带炸掉它们。
+
+- **测试本地约定**（`crates/backend/forge-codegen/tests/common/mod.rs`）：`ensure_demo_conventions()` 幂等注册两份规则 + 绑定（`register_rules_toml`/`register_binding_toml`，v20 A2 就有的公开 API）。数据照夹具谱口径写：`demo` = int 池 `X0-X3` / `ret_int = X0` / `stack 8,8` / `aliases = ["c"]`；`demo8` = int 池 `A0-A3` / `ret_int = A0` / `stack 1,1` / `aliases = ["c"]`；两者都无 callee-saved（与 `[machine].callee_saved_gpr = []` 一致）。
+- **四个夹具测试接线**（`demo8_v12_tests.rs`、`demo_v12_tm_tests.rs`、`lowering_read_path.rs`；`conv_registry_read_path.rs` 用自己的 `probe_conv`，不受影响）。
+- **两条新守卫**：`demo8_fixture_now_plans_via_the_local_convention` / `demo_fixture_now_plans_via_the_local_convention`——编译产物必须带 `call_layout`（`conv` = `demo8`/`demo`、参数落 A0/A1），**证明夹具真的走在 plan 路径上**而不是继续静默回退。
+- 验证：三个夹具测试二进制（9 + 5 + 3 用例）与全量 workspace 串行套件全绿、clippy `-D warnings` 0、`cargo fmt --check` 0。
+
 ### Added (2026-09-27) — v20 A5-3：「调用点 plan」基础设施（形状 → 被调方布局）
 
 **为什么要有**：调用点在 lowering 时只有实参的**形状**（大小/对齐/族/成员），没有被调方的 `Function`；而"第 i 个实参进哪个寄存器/栈槽"只有引擎算得出来（规则 + 绑定 = 使用者的数据）。谱里那份 `[abi.arg_class]`/`ret_regs` 只是这份数据的**生成期近似**——这才是它们删不掉的真正原因。

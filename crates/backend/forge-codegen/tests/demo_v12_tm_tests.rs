@@ -28,6 +28,8 @@ fn compile_binop(
     let v = build(&mut b, &params);
     b.ret(&[v]);
     let func = b.finish().expect("build");
+    // v20 A5-3：夹具谱没有约定数据，先注册**测试本地约定**（否则走无 plan 回退）。
+    common::ensure_demo_conventions();
     let compiler = FunctionCompiler::new(common::demo_v12::TargetMachine::new());
     compiler.compile_raw(&func).expect("compile")
 }
@@ -130,4 +132,25 @@ fn explicit_type_map_overrides_generic_pool_rule() {
     );
     // 未列出的类型仍按通用规则（本 ISA 有 gpr2/4/8）。
     assert_eq!(ri.class_for_type(TypeId::I8), Some(RegClass::GPR(1)));
+}
+
+/// **demo 夹具同样真的有 plan**（v20 A5-3 的前置）：`demo_v12` 的测试本地约定注册后，
+/// 编译产物必须带 `call_layout`（否则仍是"无 plan 回退"，详见 demo8 的同类守卫）。
+#[test]
+fn demo_fixture_now_plans_via_the_local_convention() {
+    common::ensure_demo_conventions();
+
+    let sig = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
+    let mut b = FunctionBuilder::new("plan64_fn", TypeContext::new(), sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+    b.switch_to_block(entry);
+    let v = b.iadd(params[0], params[1]);
+    b.ret(&[v]);
+    let func = b.finish().expect("build");
+
+    let compiler = FunctionCompiler::new(common::demo_v12::TargetMachine::new());
+    let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
+    let cl = alloc.call_layout.expect("注册了测试本地约定 ⇒ 必须有 plan");
+    assert_eq!(cl.conv, "demo");
+    assert_eq!(cl.args.len(), 2);
 }
