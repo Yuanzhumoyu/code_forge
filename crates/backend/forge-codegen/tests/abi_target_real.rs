@@ -1150,3 +1150,66 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
         "成员留空的投影必须与真实 plan 分叉（这正是它错的地方）"
     );
 }
+
+/// **调用点的形状路径表达不了"变参"**（2026-09-30 盘点，写进 `docs/plans/varargs-plan.md` 的 D6）。
+///
+/// 事实链：`plan_call(isa, conv, args, rets)` 只吃**形状**，没有"被调方是变参、命名几个"
+/// 这条信息；而 win64 的 `variadic_stack_only = true` 会把**未命名实参**从寄存器改判到栈。
+/// 于是同一个签名，两条路径给出**不同落点**——这正是 V1（调用方发未命名实参）的真正阻塞点：
+/// 缺的不是发射代码，而是"调用点从哪里知道被调方是变参"。
+///
+/// 这条守卫把差异钉成**可执行的证据**（不是散文）：哪天给调用点补上变参信息，这里会红，
+/// 提醒把 D6 的裁定与 V1 的验收一起更新。
+#[test]
+fn call_site_shapes_cannot_express_variadic_placement() {
+    use forge_codegen::pipeline::abi_target::{plan_for_shapes, plan_for_signature};
+    use forge_isa_runtime::machine::call_layout::{ArgPlace, ArgShape};
+
+    let reg = builtin::registry().expect("内置注册表");
+    let tm = TargetMachine::new();
+    let shapes = [
+        ArgShape::int(8, 8),
+        ArgShape::int(8, 8),
+        ArgShape::int(8, 8),
+    ];
+
+    // ① 形状路径（调用点实际走的）：按**非变参**分类 ⇒ 第 2、3 个实参进 RDX/R8。
+    let by_shape = plan_for_shapes(&tm, &reg, "win64", &shapes, &[]).expect("形状 plan");
+    assert!(
+        by_shape.args[1..]
+            .iter()
+            .all(|a| matches!(a.place, forge_abi::Placement::Reg { .. })),
+        "非变参语义下第 2/3 个实参在寄存器：{:?}",
+        by_shape.args
+    );
+    let layout = forge_codegen::pipeline::abi_target::call_layout(&by_shape, &tm);
+    assert!(matches!(
+        layout.arg(1).map(|a| &a.place),
+        Some(ArgPlace::Reg { .. })
+    ));
+
+    // ② 签名路径（被调方视角）：`variadic(1)` ⇒ 未命名实参**全到栈上**。
+    let sig = forge_abi::Signature::new(
+        vec![
+            ("a".into(), forge_abi::TyView::int(8, 8)),
+            ("b".into(), forge_abi::TyView::int(8, 8)),
+            ("c".into(), forge_abi::TyView::int(8, 8)),
+        ],
+        None,
+    )
+    .variadic(1);
+    let by_sig = plan_for_signature(&tm, &reg, "win64", &sig).expect("变参 plan");
+    assert!(
+        by_sig.args[1..]
+            .iter()
+            .all(|a| matches!(a.place, forge_abi::Placement::Stack { .. })),
+        "win64 的未命名实参必须走栈：{:?}",
+        by_sig.args
+    );
+
+    // ③ 两条路径给出**不同落点** —— 调用点拿不到变参信息时就会静默按 ① 发。
+    assert_ne!(
+        by_shape.args[1].place, by_sig.args[1].place,
+        "若两条路径一致，说明引擎语义变了：请复查 varargs-plan.md 的 D6 与 V1"
+    );
+}

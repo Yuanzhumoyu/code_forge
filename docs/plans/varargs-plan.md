@@ -49,7 +49,8 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
 
 1. **调用方**：调用一个**外部**变参函数（如 `printf`）时，要按约定设 `va_meta`（SysV 的 `%al`
    = 用到的向量寄存器个数）并把未命名实参按 plan 传出去。引擎已给出 `va_meta` 与落点，
-   缺的只是发射。
+   **但调用点根本拿不到"被调方是变参"这条信息**（见 D6）——这是 V1 的前置阻塞点，
+   排在发射代码之前。
 2. **被调方**：函数自己是变参时，要在序言把"寄存器参数区"物化成 `va_area`
    （SysV 保存区 / riscv 保存区 / AAPCS64 结构；Win64 例外——`va_list` 就是栈指针）。
 3. **`va_arg`**：从 `va_list` 取下一个实参，且要做**默认实参提升**（`f32`→`f64`、窄整型→
@@ -64,12 +65,33 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
 | D3 | **以哪份 psABI 定本为准** | SysV / Win64 / AAPCS64 / RISC-V 各自官方定本 | §2 的 size/align 现在是"数据里写的"，需逐条核对（尤其 `sysv64` 的 24 字节保存区与 `%al` 语义） |
 | D4 | **先做哪台机器** | 建议 **win64**（`va_list` = 栈指针，不需要寄存器保存区、不需要 `%al`） | 最小的可用切片；riscv/sysv 的保存区留到第二期 |
 | D5 | **提升规则放哪** | 规则数据（`when = { kind = "float", size_le = 4 } → f64`）还是引擎内置 | 影响"足够通用"：数据化更好，但要设计键 |
+| D6 | **调用点怎么知道"被调方是变参、命名了几个"** | ① IR 层：`Call` 带签名句柄 ② 宿主层：管线把**模块级签名表**（`FuncRef` → `variadic/fixed_count`）塞进 `LowerCtx`，生成物查表后传给 `plan_call` ③ 不做（承认变参调用不可用） | 这是 **V1 的真正阻塞点**（见下），比发射代码更靠前 |
+
+### D6 的证据（2026-09-30 实测，已钉成守卫）
+
+`plan_call(isa, conv, args, rets)` 只吃**形状**，没有变参信息；而 win64 的
+`variadic_stack_only = true` 会把未命名实参从寄存器改判到栈。同一个三 i64 签名：
+
+```text
+形状路径（调用点实际走的）   args[1..] → Reg(RDX)、Reg(R8)   ← 按非变参分类
+签名路径（被调方视角 .variadic(1)）args[1..] → Stack、Stack
+```
+
+守卫 `crates/backend/forge-codegen/tests/abi_target_real.rs::call_site_shapes_cannot_express_variadic_placement`
+把这两条路径的差异钉成**可执行证据**（并且断言二者不同——哪天一致了就会红，提醒复查本节）。
+也就是说：**V1 缺的不是发射代码，而是"调用点从哪里知道被调方是变参"**；在没有这条通路之前，
+一个变参被调方会被调用方按非变参语义发实参 ⇒ 静默错值（今天不可达，因为没有前端产出变参签名）。
 
 ## 5. 建议的分期（每期独立可验证）
 
-- **V1（调用方，win64 优先）**：调用点按 plan 发未命名实参；`va_meta` 非空时按约定设寄存器
-  （SysV 的 `%al`）；守卫 = 生成物形状 + 一个 JIT 用例（自造 win64 变参 callee，读栈上的
-  未命名实参拼出结果）。**不依赖前端**：用例直接用 `FunctionSignature::variadic(n)` 构造。
+- **V0（前置，必须先定）**：D6 的裁定（调用点怎么拿到"被调方是变参 + 命名几个"）。建议选项②：
+  管线在编译一个**模块**时已知道每个 `FuncRef` 的签名，把一张 `FuncRef → (variadic, fixed_count)`
+  的表放进 `LowerCtx`，生成物在调用点查表后传给 `plan_call`（`CallPlanner` 的入参随之扩展一位）。
+  它在 `compile_module` 里是自然可得的，不需要动 IR。
+- **V1（调用方，win64 优先）**：调用点按 plan 发未命名实参（V0 之后才有意义）；
+  `va_meta` 非空时按约定设寄存器（SysV 的 `%al`）；守卫 = 生成物形状 + 一个 JIT 用例
+  （自造 win64 变参 callee，读栈上的未命名实参拼出结果）。用例可直接用
+  `FunctionSignature`/`Signature::variadic(n)` 构造，**不依赖前端**。
 - **V2（被调方，win64）**：序言物化 `va_area`（win64 下就是取栈参数的地址）。
 - **V3（寄存器保存区，sysv64/lp64d）**：按 `va_area.size/align` 在帧内开槽并把参数寄存器存进去；
   校验 `hidden.va_meta` 的写入。

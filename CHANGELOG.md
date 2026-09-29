@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-09-30) — 变参方案补 D6：**V1 的真正阻塞点是"调用点不知道被调方是变参"**
+
+- **新决策点 D6**（调用点怎么知道"被调方是变参、命名了几个"）：`plan_call(isa, conv, args, rets)` 只吃**形状**，没有变参信息；而 win64 的 `variadic_stack_only = true` 会把未命名实参从寄存器改判到栈。同一个三 i64 签名，**形状路径给 `Reg(RDX)/Reg(R8)`、签名路径给 `Stack/Stack`** —— 所以 V1 缺的不是发射代码，而是这条信息通路（建议：管线编译模块时已有每个 `FuncRef` 的签名，把 `FuncRef → (variadic, fixed_count)` 表放进 `LowerCtx`，生成物在调用点查表后传给 `plan_call`；不动 IR）。
+- **新守卫** `abi_target_real::call_site_shapes_cannot_express_variadic_placement`：把上面两条路径的落点差异钉成**可执行证据**，并断言二者不同——哪天一致了就会红，提醒复查 D6 与 V1 验收。
+- 方案文档同步：§1 补"调用点拿不到变参信息"、§3 把 V1 的前置阻塞点写在发射代码之前、§4 新增 D6（含证据小节）、§5 新增 **V0（前置裁定）** 并把 V1 移到 V0 之后。
+- 验证：`cargo test -p forge-codegen --test abi_target_real variadic` 绿；改动文档 markdownlint 0。
+
 ### Docs (2026-09-30) — 变参方案（`docs/plans/varargs-plan.md`）+ 形状表由引擎输出钉住
 
 - **新方案文档**：变参（varargs）**规划已完成、发射与前端为空**的现状索引——分层列清"模型/引擎/黄金快照/CLI 有，发射与前端零消费"（并把证据落到符号名），四份内置约定的 `va_list` 形态表，五个决策点（先服务哪种场景 / `va_arg` 怎么表达 / 以哪份 psABI 定本 / 先做哪台机器 / 提升规则放哪），五期切片（V1 调用方 → V2 被调方 → V3 寄存器保存区 → V4 `va_arg` → V5 体检），以及**为什么现在不做 + 触发条件**（§6）。
