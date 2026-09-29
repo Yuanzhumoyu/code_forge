@@ -585,10 +585,23 @@ JIT 矩阵），`[abi-plan]` **一条都没有**——即既有语料里没有�
   保留这段是为了记住：**先量再切**——"缺口导致回退"这个解释当时是错的，
   而正确的做法是先把"是否真的走到回退"用 trace 量出来。
 
-### A7 可选的异域钩子示例
+### A7 ✅ 可选的异域钩子示例
 
-- 给 Swift（`self`/`error`）、Go（context/GC 安全点）各写一个 `AbiHooks` 示例，
-  证明"数据表达不了的部分"有正规出口（而不是改引擎）。
+**已落地（2026-09-29）**：`crates/foundation/forge-abi/tests/exotic_hooks.rs` 写了 Swift 与 Go
+两份 `AbiHooks` 示例（连同各自的规则/绑定 TOML 与三条断言，跑 `cargo test -p forge-abi --test
+exotic_hooks`）。它要证明的是"**数据表达不了的部分有正规出口**"——三个事实各演示一个：
+
+1. **隐式上下文寄存器**（Swift `self` = X20、Go `g` = R14）：既不在 `Signature::params` 里，
+   也没有任何池能表达"这是隐式参数"，只有 `AbiPlan::hidden.context` 承载，而它**只有钩子能填**
+   （数据侧没有写入者）。
+2. **语言专属类型**（Swift 的 errortype）：LLVM 靠 `swifterror` 属性标识，类型本身与普通指针
+   无异 ⇒ 只能由 `classify` 按语言规则改判到 `swift_error` 池（X21）。
+3. **"保留"与"保存"不同**（X21 是 error **出参**）：绑定的 `cs_gpr` 池只能说"保存这组"，
+   说不了"这一份不保" ⇒ 钩子把它从 `callee_saved.regs` 摘掉、加进 `clobbers`（与 LLVM 的
+   `CSR_AArch64_AAPCS_SwiftError = CSR_AArch64_AAPCS − X21` 同义）。
+
+数值有出处（LLVM `AArch64CallingConvention.td`；Go 内部 ABI 的 `g` 在 amd64 的 R14），
+文档入口见 `docs/reference/calling-conventions.md` 的「数据表达不了的：AbiHooks」。
 
 ## 6. 风险与对策
 

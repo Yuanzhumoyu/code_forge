@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-29) — v20 A7：Swift / Go 的 `AbiHooks` 示例（异域约定的正规出口）
+
+- **新示例**：`crates/foundation/forge-abi/tests/exotic_hooks.rs`（`cargo test -p forge-abi --test exotic_hooks`，3 个用例）——Swift 的 aapcs64 方言与 Go 的 amd64 内部 ABI 各一份钩子 + 规则/绑定 TOML + 断言。证明"数据表达不了的部分"有正规出口，而不是去改引擎或往谱里塞特例。
+- 三个事实各演示一个：① **隐式上下文寄存器**（Swift `self` = X20、Go `g` = R14）只能由钩子填进 `AbiPlan::hidden.context`（数据侧没有写入者，参数列表也表达不了"隐式参数"）；② **语言专属类型**（Swift 的 errortype，LLVM 靠 `swifterror` 属性标识）由 `classify` 改判到 `swift_error` 池；③ **"保留"与"保存"不同**——X21 是 error **出参**，绑定的 `cs_gpr` 池只能说"保存这组"，钩子把它从 `callee_saved.regs` 摘掉并加进 `clobbers`（与 LLVM 的 `CSR_AArch64_AAPCS_SwiftError = CSR_AArch64_AAPCS − X21` 同义）。
+- 数值有出处：LLVM `AArch64CallingConvention.td` 的 `CCIfSwiftSelf → X20` / `CCIfSwiftError → X21`；Go 内部 ABI 的 `g` 在 amd64 的 R14。文档入口：`docs/reference/calling-conventions.md` 的「数据表达不了的：AbiHooks」新增对照表。
+
 ### Changed (2026-09-29) — v20 A6：**无 plan 不再继续编译**（编译入口 fail-closed）+ A6 缺口清点
 
 - **fail-closed 切换**（`pipeline/compiler.rs`）：`plan_for_function` 失败不再"留个 note、退回约定级数据继续编译"，而是直接在**编译入口**报 `IrError::Unsupported`——消息点名约定名、引擎给的原因、以及 fail-closed 口径。`CompileState::abi_plan` 由 `Option` 收敛为定值，`abi_plan_note` 字段删除（`FORGE_TRACE_ABI=1` 也随之只打印计划）。理由是旧行为把错误推给发射侧的各个 fail-closed 点（调用点/收参/栈参数/帧布局），消息离现场远，而且真实的引擎缺口会被误当成"这条签名能编"。

@@ -408,7 +408,21 @@ pub trait AbiHooks: Send + Sync {
 }
 ```
 
-`AbiRegistry::insert_hooks("swift", Box::new(...))` 按约定名挂。
+`AbiRegistry::insert_hooks("swift", Box::new(...))` 按约定名挂（别名解析前后两个名字都认，
+见上文「抽象名 `c` 怎么落地」）。
+
+**可抄的完整示例**（v20 A7）：`crates/foundation/forge-abi/tests/exotic_hooks.rs`——Swift 与
+Go 各一份，连同各自的规则/绑定 TOML 与断言，跑在 `cargo test -p forge-abi --test exotic_hooks`。
+三条"数据里没有"的事实各演示一个：
+
+| 事实 | 为什么数据表达不了 | 钩子怎么写 |
+| --- | --- | --- |
+| **隐式上下文寄存器**（Swift `self` = X20、Go `g` = R14） | 它不在 `Signature::params` 里，任何池也表达不了"这是隐式参数"；`HiddenSlots::context` 只有钩子能填 | `adjust_plan` 填 `plan.hidden.context` |
+| **语言专属类型**（Swift 的 errortype） | LLVM 用 `swifterror` 属性标识，类型本身与普通指针无异 | `classify(dir == Ret && Other/8)` → 语池 `swift_error`（X21） |
+| **"保留"与"保存"不同**（X21 是 error **出参**，被调方可以改写它） | 绑定里的 `cs_gpr` 池只能说"保存这组"，说不了"这一份不保" | `adjust_plan` 把 X21 从 `callee_saved.regs` 摘掉、加进 `clobbers`（与 LLVM 的 `CSR_AArch64_AAPCS_SwiftError = AAPCS − X21` 同义） |
+
+示例的值有出处（LLVM `AArch64CallingConvention.td` 的 `CCIfSwiftSelf → X20`、
+`CCIfSwiftError → X21`，Go 内部 ABI 的 `g` 在 amd64 的 R14），不是编出来的数。
 
 ## CLI：`forge-isa abi`
 
