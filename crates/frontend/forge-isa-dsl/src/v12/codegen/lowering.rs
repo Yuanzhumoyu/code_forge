@@ -1303,10 +1303,13 @@ fn gen_call_lowering(
     };
     // ISA 名（生成期字面量）：`call_plan::plan_call` 的查表键。
     let isa_lit = syn::LitStr::new(model.meta.name.as_str(), proc_macro2::Span::call_site());
-    // **调用点 plan**（v20 A5-3）：调用方按**被调方**的落点搬实参。实参形状从 IR 类型
-    // 摊开（size/align/族）——运行时不依赖 forge-abi，形状交给宿主注册的 planner，
-    // 拿回被调方的 `CallLayout`。拿不到 ⇒ **fail-closed**（谱里的 `[abi].arg_class`
-    // 正在下线，不再按谱面顺序猜落点）。
+    // **调用点 plan**（v20 A5-3 / A6）：调用方按**被调方**的落点搬实参。实参形状从 IR 类型
+    // **递归摊开**（`ArgShape::from_ir_type`：size/align/族 + **成员**/lane）——运行时不依赖
+    // forge-abi，形状交给宿主注册的 planner，拿回被调方的 `CallLayout`。拿不到 ⇒
+    // **fail-closed**（不按谱面顺序猜落点）。
+    //
+    // 成员必须真的摊开：判定 HFA/HVA 靠成员（AAPCS64 的 `{f32,f32,f32,f32}` 走浮点池），
+    // 只报 size/align 会让**调用点**（说 X0:X1）与**被调方**（函数级 plan 说 V0:V1）分叉。
     //
     // `CallIndirect` 的 `args[0]` 是被调方指针、**不占 ABI 位置**（与实参循环同口径）。
     let shape_args: TokenStream = if op_name == "CallIndirect" {
@@ -1316,86 +1319,23 @@ fn gen_call_lowering(
     };
     let plan_setup: TokenStream = quote! {
         let __shape_args: &[crate::prelude::XReg] = #shape_args;
-        let __shapes: Vec<crate::machine::call_layout::ArgShape> = __shape_args
-            .iter()
-            .map(|&__a| {
-                let __t = ctx.xreg_types.get(&__a).copied();
-                let __size = __t
-                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(t)))
-                    .unwrap_or(__SLOT_BYTES as u32)
-                    .max(1);
-                let __align = __t
-                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.alignment(t)))
-                    .unwrap_or(__size)
-                    .max(1);
-                let __kind = match __t {
-                    Some(t) => {
-                        if t.is_float() {
-                            crate::machine::call_layout::ShapeKind::Float
-                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(t)) {
-                            crate::machine::call_layout::ShapeKind::Vector {
-                                elem_is_float: false,
-                                lanes: 0,
-                                elem_bytes: 0,
-                            }
-                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_aggregate(t)) {
-                            // 成员留空：HFA/HVA 的成员信息缺失时引擎会因缺池/落点不匹配
-                            // 报错（fail-closed），**不会**静默按整数槽传。
-                            crate::machine::call_layout::ShapeKind::Aggregate {
-                                members: Vec::new(),
-                            }
-                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_ptr(t)) {
-                            crate::machine::call_layout::ShapeKind::Ptr
-                        } else {
-                            crate::machine::call_layout::ShapeKind::Int
-                        }
-                    }
-                    None => crate::machine::call_layout::ShapeKind::Int,
-                };
-                crate::machine::call_layout::ArgShape {
-                    size: __size,
-                    align: __align,
-                    kind: __kind,
+        let __fallback_shape = crate::machine::call_layout::ArgShape::int(
+            __SLOT_BYTES as u32,
+            __SLOT_BYTES as u32,
+        );
+        let __shape_of = |__v: crate::prelude::XReg| -> crate::machine::call_layout::ArgShape {
+            let __t = ctx.xreg_types.get(&__v).copied();
+            match (__t, ctx.type_store.as_ref()) {
+                (Some(__t), Some(__store)) => {
+                    crate::machine::call_layout::ArgShape::from_ir_type(__store, __t)
                 }
-            })
-            .collect();
-        let __ret_shapes: Vec<crate::machine::call_layout::ArgShape> = results
-            .iter()
-            .map(|__r| {
-                let __t = ctx.xreg_types.get(__r).copied();
-                let __size = __t
-                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(t)))
-                    .unwrap_or(__SLOT_BYTES as u32)
-                    .max(1);
-                let __align = __t
-                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.alignment(t)))
-                    .unwrap_or(__size)
-                    .max(1);
-                let __kind = match __t {
-                    Some(t) => {
-                        if t.is_float() {
-                            crate::machine::call_layout::ShapeKind::Float
-                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(t)) {
-                            crate::machine::call_layout::ShapeKind::Vector {
-                                elem_is_float: false,
-                                lanes: 0,
-                                elem_bytes: 0,
-                            }
-                        } else if ctx.type_store.as_ref().is_some_and(|s| s.is_ptr(t)) {
-                            crate::machine::call_layout::ShapeKind::Ptr
-                        } else {
-                            crate::machine::call_layout::ShapeKind::Int
-                        }
-                    }
-                    None => crate::machine::call_layout::ShapeKind::Int,
-                };
-                crate::machine::call_layout::ArgShape {
-                    size: __size,
-                    align: __align,
-                    kind: __kind,
-                }
-            })
-            .collect();
+                _ => __fallback_shape.clone(),
+            }
+        };
+        let __shapes: Vec<crate::machine::call_layout::ArgShape> =
+            __shape_args.iter().map(|&__a| __shape_of(__a)).collect();
+        let __ret_shapes: Vec<crate::machine::call_layout::ArgShape> =
+            results.iter().map(|&__r| __shape_of(__r)).collect();
         let __cl = match crate::machine::call_plan::plan_call(
             #isa_lit,
             &ctx.call_conv_name,

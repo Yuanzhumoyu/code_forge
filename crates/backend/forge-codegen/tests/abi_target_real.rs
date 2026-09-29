@@ -1072,3 +1072,81 @@ fn two_value_return_is_plan_driven() {
         "两个 i64 返回值 → RAX:RDX（由绑定的 ret_int 池给，不写死类内号）"
     );
 }
+
+/// `fn f({f64, f64}) -> ()`：**HFA2 聚合实参**（AAPCS64 走 V0:V1，不是 X0:X1）。
+///
+/// 用来证明**调用点的形状投影必须摊开成员**：只报 size/align 时调用点会算成整数槽
+/// （X0:X1），与被调方的函数级 plan（V0:V1）分叉——实参直接搬错寄存器。
+fn hfa2_arg_probe() -> Function {
+    let ctx = TypeContext::new();
+    let st = ctx
+        .borrow_mut()
+        .struct_anon(vec![TypeId::F64, TypeId::F64], false);
+    let sig = FunctionSignature::new(&[(st, "a")], &[])
+        .with_calling_convention(CallConvId::builtin(ConvName::Aapcs64));
+    let mut b = FunctionBuilder::new("hfa2_arg_probe", ctx, sig);
+    let (entry, _params) = b.create_block_with_params(&[(st, "a")]);
+    b.switch_to_block(entry);
+    b.ret(&[]);
+    b.finish().expect("build")
+}
+
+/// **HFA 聚合实参：调用点形状 == 被调方 plan**（v20 A6）。
+///
+/// 这条守的是"形状里必须有成员"：`ArgShape::from_ir_type` 递归摊开成员后，
+/// `{f64,f64}` 才被判成 HFA 并落到**浮点池**；只报 size/align 的旧投影会落整数槽。
+#[test]
+fn hfa_aggregate_shape_matches_the_callee_plan() {
+    use forge_abi::Placement;
+    use forge_codegen::pipeline::abi_target::plan_for_shapes;
+    use forge_isa_runtime::machine::call_layout::ArgShape;
+
+    let reg = builtin::registry().expect("内置注册表");
+    let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+    let func = hfa2_arg_probe();
+    let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
+
+    // 调用点视角：只有 IR 类型 ⇒ 用生成物走的同一条投影。
+    let store = func.types.borrow();
+    let sig = store.signature_opt(func.signature).expect("签名在类型表里");
+    let st = sig.params[0].0;
+    let shape = ArgShape::from_ir_type(&store, st);
+    let (size, align) = (shape.size, shape.align);
+    assert!(
+        matches!(
+            shape.kind,
+            forge_isa_runtime::machine::call_layout::ShapeKind::Aggregate { ref members }
+                if members.len() == 2
+        ),
+        "聚合形状必须带 2 个成员（HFA 判定靠它）：{shape:?}"
+    );
+    let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &[shape], &[]).expect("形状 plan");
+    assert_eq!(
+        by_shape.args[0].place, by_func.args[0].place,
+        "HFA 聚合实参：调用点 plan 必须与被调方 plan 逐项相同"
+    );
+    match &by_shape.args[0].place {
+        Placement::RegPair { lo, hi } => assert_eq!(
+            (lo.name.as_str(), hi.name.as_str()),
+            ("V0", "V1"),
+            "HFA 走浮点池"
+        ),
+        other => panic!("{other:?}"),
+    }
+
+    // **反证（这条守卫得有用）**：成员留空的形状——修复前的调用点投影——会落到整数槽，
+    // 与被调方分叉。一旦有人把"摊成员"改回去，上面的断言会红，而这一条说明红的是真问题
+    // （实参搬错寄存器），不是快照漂移。
+    let blind = forge_isa_runtime::machine::call_layout::ArgShape {
+        size,
+        align,
+        kind: forge_isa_runtime::machine::call_layout::ShapeKind::Aggregate {
+            members: Vec::new(),
+        },
+    };
+    let by_blind = plan_for_shapes(&tm, &reg, "aapcs64", &[blind], &[]).expect("形状 plan");
+    assert_ne!(
+        by_blind.args[0].place, by_func.args[0].place,
+        "成员留空的投影必须与真实 plan 分叉（这正是它错的地方）"
+    );
+}

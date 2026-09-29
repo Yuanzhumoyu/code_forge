@@ -290,6 +290,13 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
 
 - **中性形状**：`ArgShape`/`ShapeKind`（`Int`/`Ptr`/`Float`/`Vector{…}`/`Aggregate{members}`/
   `Other`）——运行时 crate **不依赖 forge-abi**，把形状摊成 `forge_abi::TyView` 是宿主的活。
+- **形状必须摊开成员/lane**（v20 A6）：生成物调
+  `ArgShape::from_ir_type(store, ty)`（递归到成员与元素，深度 4 / 成员 16 封顶，超限退化成
+  "没有成员"由规则兜底）。为什么较真：**HFA/HVA 判定靠成员**——`{f64,f64}` 在 AAPCS64 上
+  走浮点池（`V0:V1`），只报 size/align 会算成整数槽（`X0:X1`），于是**调用点**与
+  **被调方**（函数级 plan，成员齐全）分叉，实参静默搬错寄存器。守卫
+  `abi_target_real::hfa_aggregate_shape_matches_the_callee_plan` 连带反证"成员留空的投影
+  必然分叉"。
 - **注册**：宿主在 `forge_codegen::pipeline_hooks::ensure_registered()` 里为每个 ISA 注册
   一个钩子（`Box::leak` 持有机器，与管线工厂同一取舍）；未注册 ⇒ `plan_call` 返回 `None`，
   生成物 **fail-closed**（不猜落点）。

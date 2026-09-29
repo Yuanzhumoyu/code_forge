@@ -246,4 +246,70 @@ impl ArgShape {
             kind: ShapeKind::Ptr,
         }
     }
+
+    /// **IR 类型 → 中性形状**（调用点投影，v20 A6）。
+    ///
+    /// 为什么要**递归摊开成员/lane**，而不是只报 size/align：判定"这个聚合是不是 HFA/HVA"
+    /// 靠的是**成员**（AAPCS64 的 `<2 x f64>` 或 `{f32,f32,f32,f32}` 走浮点池），只报
+    /// size/align 会让**调用点**算出的落点与**被调方**（函数级 plan，成员信息齐全）分叉
+    /// ——一个说 `X0:X1`、一个说 `V0:V1`，实参直接搬错寄存器。
+    ///
+    /// 深度上限（4 层）与成员展开上限（16 个）是**防御性**的：递归类型与超大数组不需要
+    /// 逐成员信息（那种大小必然走栈/间接），摊不开就退化成"没有成员"，由规则兜底。
+    pub fn from_ir_type(store: &crate::ir::ir::types::TypeStore, ty: crate::ir::TypeId) -> Self {
+        Self::from_ir_type_at(store, ty, 0)
+    }
+
+    fn from_ir_type_at(
+        store: &crate::ir::ir::types::TypeStore,
+        ty: crate::ir::TypeId,
+        depth: u32,
+    ) -> Self {
+        use crate::ir::ir::types::TypeEntry;
+        const MAX_DEPTH: u32 = 4;
+        const MAX_MEMBERS: u64 = 16;
+
+        let size = store.size_bytes(ty).max(1);
+        let align = store.alignment(ty).max(1);
+        let member = |t: crate::ir::TypeId| Self::from_ir_type_at(store, t, depth + 1);
+        let agg = |members: Vec<ArgShape>| ArgShape {
+            size,
+            align,
+            kind: ShapeKind::Aggregate { members },
+        };
+        match store.get(ty) {
+            TypeEntry::Float { .. } | TypeEntry::BFloat { .. } => ArgShape::float(size),
+            TypeEntry::Pointer { .. } | TypeEntry::Function { .. } => ArgShape::ptr(size),
+            TypeEntry::Int { .. } => ArgShape::int(size, align),
+            TypeEntry::Vector { elem, len } => ArgShape {
+                size,
+                align,
+                kind: ShapeKind::Vector {
+                    elem_is_float: store.is_float(*elem),
+                    lanes: *len,
+                    elem_bytes: store.size_bytes(*elem).max(1),
+                },
+            },
+            TypeEntry::Array { elem, len } => {
+                if *len <= MAX_MEMBERS && depth < MAX_DEPTH {
+                    agg((0..*len).map(|_| member(*elem)).collect())
+                } else {
+                    agg(Vec::new())
+                }
+            }
+            TypeEntry::Struct { fields, .. } => {
+                if depth < MAX_DEPTH {
+                    agg(fields.iter().map(|f| member(f.ty)).collect())
+                } else {
+                    agg(Vec::new())
+                }
+            }
+            // 可扩展向量（SVE/RVV）与其它：精确形状运行时才知道 ⇒ 交给规则兜底（`Other`）。
+            _ => ArgShape {
+                size,
+                align,
+                kind: ShapeKind::Other,
+            },
+        }
+    }
 }

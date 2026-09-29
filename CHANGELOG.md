@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-29) — v20 A6：调用点形状必须**摊开成员**（HFA 聚合实参曾静默搬错寄存器）
+
+- **问题**：调用点的实参/返回形状是**就地**拼的，聚合只报 `Aggregate { members: [] }`、向量恒报 `elem_is_float: false, lanes: 0`。而 **HFA/HVA 判定靠成员**：AAPCS64 上的 `{f64,f64}` 该走浮点池（`V0:V1`），成员留空则退化成"≤16B 聚合按两个整数槽"（`X0:X1`）——于是**调用点**与**被调方**（函数级 plan，成员齐全）分叉，实参静默落到错寄存器。
+- **修法**：`forge-isa-runtime` 新增 `ArgShape::from_ir_type(store, ty)`——从 IR 类型递归摊开成员与元素（`Struct`/`Array`/`Vector`；深度 4、成员 16 封顶，超限退化成"没有成员"交给规则兜底）；生成物的调用点改用它投影实参与**全部**返回值形状。
+- 连带效果：单寄存器 HFA（如 `{f32}`）在调用点从"算成 2 个整数槽 ⇒ fail-closed"变成**真的能发**（`Reg(V0)`）；多寄存器 HFA 仍是 fail-closed（按成员拆属"按成员赋值"那条 A6 活），但报错点从"落点不对"变成"落点对、发射未接"。
+- 守卫 `abi_target_real::hfa_aggregate_shape_matches_the_callee_plan`：`{f64,f64}` 参数在 aapcs64 上，**调用点 plan == 被调方 plan**（`V0:V1`），并**反证**"成员留空的形状必然与真实 plan 分叉"。
+- 验证：workspace 131 个测试二进制全绿、clippy `-D warnings` 0、`cargo fmt --check` 0。
+
 ### Changed (2026-09-29) — v20 A6：**多值返回**（≥3 槽返回的搬运）——落点全部来自绑定
 
 - **`Signature.ret` → `rets: Vec<TyView>`**：IR 的 `FunctionSignature.returns` 本来就允许多个返回值（ScalarPair 拆出来的两个标量、`(i64,i64,i64)` 这类），而 `sig_view` 以前只取 `first()`——"第二个返回值在哪个寄存器"于是只能由发射侧猜。
