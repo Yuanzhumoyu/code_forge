@@ -137,6 +137,19 @@ parent = "c"
         msg.contains("没有为约定 `rules_only_conv` 注册寄存器绑定") && msg.contains("fail-closed"),
         "必须点名缺绑定 + fail-closed：{msg}"
     );
+    // **报错必须带得动修法**（用户体验收口，v20 A6）：新人第一脚就是这条错，
+    // 消息里要有"注册 API + 自查命令 + 文档路径"，否则只能靠翻源码。
+    for want in [
+        "register_rules_toml",
+        "forge-isa abi check",
+        "docs/reference/calling-conventions.md",
+        "FORGE_TRACE_ABI=1",
+    ] {
+        assert!(
+            msg.contains(want),
+            "编译入口的 fail-closed 报错必须给出可执行的下一条（缺 `{want}`）：{msg}"
+        );
+    }
 }
 
 /// **IR 属性 → 引擎视图**（v20 A2b）：`Function::param_attrs`/`ret_attrs` 与签名一起投影成

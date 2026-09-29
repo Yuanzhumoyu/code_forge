@@ -265,7 +265,63 @@ value = "0.2"
 
 `cargo run -p forge-isa -- fmt toy16.toml` 能把多文件折叠成一份单文件，便于分发与 diff。
 
-## 6. 收工前自查
+## 6. 要编译（`parts` 含 `tm`）就必须接调用约定
+
+谱只申报**能力**（有哪些寄存器、谁能搬运、谁是栈指针）；"参数进哪个寄存器、返回放哪、
+谁负责保存"是**使用者的数据**（`forge-abi` 的规则 + 绑定）。所以只要你的宿主会用到编译管线
+（`parts` 含 `tm`），就必须把约定注册进去——**没注册 = fail-closed**（编译入口直接报错，
+不会猜某台机器的寄存器名）。
+
+三步，都能照抄（真实例子 = `crates/backend/forge-codegen/tests/common/mod.rs` 的
+`ensure_demo_conventions()`；异域语言钩子的完整写法 = `crates/foundation/forge-abi/tests/exotic_hooks.rs`）：
+
+```rust
+use forge_codegen::pipeline::conv_registry;
+
+// ① 规则：平台无关的"怎么分类、怎么数位置、谁被破坏"（可从内置 `c` 继承）。
+conv_registry::register_rules_toml(r#"
+name = "toy_conv"
+parent = "c"
+position = "by_class"
+stack = { slot_bytes = 2, first_offset_slots = 0 }
+classify = [
+  { when = { kind = "scalar", size_le = 2 }, do = { direct = { pool = "int" } } },
+]
+ret_classify = [
+  { when = { kind = "scalar", size_le = 2 }, do = { direct = { pool = "ret_int" } } },
+]
+callee_saved = { mechanism = "push", pools = ["cs_gpr"] }
+"#)?;
+
+// ② 绑定：(ISA, 约定) → 这台机器的具体寄存器名（池名与规则里的一致）。
+//    `isa` 写谱的 `[meta].name`。
+conv_registry::register_binding_toml(r#"
+isa = "toy16"
+conv = "toy_conv"
+[pools]
+int = ["R0", "R1", "R2", "R3"]
+ret_int = ["R0"]
+cs_gpr = ["R4", "R5"]
+"#)?;
+```
+
+③ IR 里用哪份：`FunctionSignature::with_calling_convention(CallConvId::builtin(ConvName::C))`
+或 `CallConvId::named("toy_conv")`。**`c` 是抽象名**，靠规则的 `aliases = ["c"]` 落到这台机器上
+实际生效的那一份（内置 `win64`/`aapcs64`/`lp64d` 都这么声明；`c` 自己不带寄存器）。
+
+自查（不起宿主 crate 就能跑）：
+
+```bash
+cargo run -p forge-isa -- abi list                          # 内置约定与绑定
+cargo run -p forge-isa -- abi check isa/toy16.toml          # 能力 × 约定的静态体检（缺口报 ⚠）
+cargo run -p forge-isa -- abi plan isa/toy16.toml --conv toy_conv --sig "i16 -> i16"
+```
+
+约定/绑定的键、三层数据（规则 → 绑定 → 计划）与**已知缺口清单**见
+[`docs/reference/calling-conventions.md`](../reference/calling-conventions.md)。编译期报
+"规划不出调用布局"时按报错里的三步走；`FORGE_TRACE_ABI=1` 会打印该函数算出来的 plan。
+
+## 7. 收工前自查
 
 ```bash
 cargo run -p forge-isa -- validate toy16.toml           # 全部诊断，退出码 0/1
@@ -278,9 +334,10 @@ cargo test -p forge-codegen --test toy16_v12_tests      # 你的黄金值/往返
 - 想减薄生成物：`parts = ["encode", "decode"]` 只生成编解码器（`Inst`/`Reg` 是公共前提恒定生成；
   受限时必须 `spec_tests = false`）。
 
-## 7. 接下来读什么
+## 8. 接下来读什么
 
 - 键的完整清单（机器校验、随 schema 同步）：[`docs/reference/isa-dsl.md`](../reference/isa-dsl.md) 的「键总览」。
+- 调用约定层（规则/绑定/计划、发射怎么按 plan 走）：[`docs/reference/calling-conventions.md`](../reference/calling-conventions.md)。
 - 真实规模怎么写：`isa/riscv64_v12.toml`（定宽 + 模板 + 条件码）、`isa/arm64_v12.toml`（模板 + `b.cond`）、
   `isa/x86_v12.toml`（变长前缀链 + VEX/EVEX）。
 - 极端形状夹具（1 字节寄存器、12 位字、100 位字、混合字长、多文件）：

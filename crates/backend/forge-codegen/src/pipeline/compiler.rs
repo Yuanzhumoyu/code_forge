@@ -2133,7 +2133,15 @@ impl<I: MachineInst + 'static> CompileState<I> {
                     }
                     return Err(IrError::Unsupported(format!(
                         "v12 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\
-                         无 plan 不再继续编译（fail-closed，见调用约定重设计方案 A6）",
+                         无 plan 不再继续编译（fail-closed）。\n\
+                         \x20 怎么修：① 约定数据缺/写错 ⇒ 用 \
+                         forge_codegen::pipeline::conv_registry::register_rules_toml / \
+                         register_binding_toml 注册（或改用已注册的约定）；\
+                         ② 静态自查缺口 ⇒ `forge-isa abi check <谱>`（`--strict` 让缺口影响\
+                         退出码）、`forge-isa abi plan <谱> --conv <名> --sig \"…\"`；\
+                         ③ 口径与缺口清单 ⇒ docs/reference/calling-conventions.md、\
+                         docs/plans/calling-convention-redesign-plan.md 的 A6。\n\
+                         \x20 提示：设 FORGE_TRACE_ABI=1 可看到该函数的 plan 或失败原因。",
                         ctx.call_conv_name
                     )));
                 }

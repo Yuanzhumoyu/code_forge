@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-29) — v20 A6：接入体验收口（fail-closed 报错带修法）+「按成员赋值」评估结论
+
+- **报错带得动修法**：编译入口"规划不出调用布局"的消息改为**并列两种原因 + 三步修法 + 自查命令 + 文档路径**（`register_rules_toml`/`register_binding_toml`、`forge-isa abi check`/`abi plan`、`docs/reference/calling-conventions.md`、`FORGE_TRACE_ABI=1`）；生成物里调用点的"布局不可得"同样点名两种原因（宿主没注册 planner / 该签名规划不出来）。守卫 `conv_registry_read_path` 现在逐项断言这些关键词都在——报错不允许退化成死胡同。
+- **教程补一节**：`docs/guides/isa-dsl-tutorial.md` 新增「6. 要编译（`parts` 含 `tm`）就必须接调用约定」——为什么（约定是使用者的数据、没注册就 fail-closed）、可抄的三步（规则 TOML → 绑定 TOML → IR 里 `CallConvId`）、以及三条自查命令；原 §6/§7 顺延为 §7/§8，并补指向调用约定参考文档。
+- **「按成员赋值」评估结论：暂不做（有依据）**。做它（单个聚合要 ≥3 寄存器 / HFA 部分在寄存器）的前提是"聚合按值放在寄存器里"，而**今天的 IR 没有这种形态的产出者**：`forge-rustc` 的 `AbiKind::{Scalar, Pair, Indirect}` 把 ScalarPair 拆成两个标量、内存聚合走 sret/间接；`examples/mini_c` 没有结构体类型；全仓非测试代码构造 `Struct`/`Array` 类型 **0 处**；后端的 `ExtractValue`/`InsertValue` 本就是"在聚合的 64 位域里做字段操作"（≤8 字节聚合 = 位打包标量，本来就只占 1 个寄存器）。落点侧已就绪（`RetLoc::RegGroup`/`ArgPlace::Group`），触发条件写进方案 A6 ⑤。
+- 验证：workspace 131 个测试二进制全绿、clippy `-D warnings` 0、`cargo fmt --check` 0、改动文档 markdownlint 0。
+
 ### Fixed (2026-09-29) — v20 A6：调用点形状必须**摊开成员**（HFA 聚合实参曾静默搬错寄存器）
 
 - **问题**：调用点的实参/返回形状是**就地**拼的，聚合只报 `Aggregate { members: [] }`、向量恒报 `elem_is_float: false, lanes: 0`。而 **HFA/HVA 判定靠成员**：AAPCS64 上的 `{f64,f64}` 该走浮点池（`V0:V1`），成员留空则退化成"≤16B 聚合按两个整数槽"（`X0:X1`）——于是**调用点**与**被调方**（函数级 plan，成员齐全）分叉，实参静默落到错寄存器。

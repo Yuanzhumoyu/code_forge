@@ -1345,8 +1345,12 @@ fn gen_call_lowering(
             Some(__cl) => __cl,
             None => {
                 return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: 调用点布局不可得（宿主未注册该 ISA 的约定 planner，或这份签名\
-                     规划不出来）——v20 A5-3 起调用方按被调方落点搬实参，不再按谱面顺序猜"
+                    "v12 call: 调用点布局不可得——v20 A5-3 起调用方按**被调方**落点搬实参\
+                     （不再按谱面顺序猜）。两种原因：① 宿主没给这个 ISA 注册约定 planner\
+                     （用 forge_codegen::pipeline_hooks::ensure_registered，或自己调\
+                     abi_target::register_isa_call_planner）；② 这份签名在这份约定下规划不出来\
+                     （缺口用 `forge-isa abi check <谱>` 自查，口径见 \
+                     docs/reference/calling-conventions.md）"
                         .into(),
                 ));
             }
