@@ -492,6 +492,7 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 | HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言）；与上面那条同因，**暂不做** | 待有按值聚合的产出者 |
 | 多值返回的池不够 | **明确 `PoolExhausted`**（如 win64 只有 `RAX:RDX`，三个独立标量没有第三个返回寄存器）⇒ 编译入口 fail-closed | 由约定数据决定（不变） |
 | 变参 `LEN` 类元信息寄存器 | 模型有 `hidden.va_len_pool`，**没有内置约定启用**（psABI 现状以官方定本为准） | A6（核对后决定） |
+| **变参整体**（`va_list` 物化、`va_arg`、调用方的 `%al` 发射） | 规划侧完整（`AbiPlan::va_area`/`hidden.va_meta`，四份内置约定的形状有黄金快照），**发射侧与前端零消费**——没有任何前端产出 `variadic` 签名 | 方案与决策点见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)（触发条件：出现需要变参的宿主或前端） |
 | riscv/arm64 的向量 by-value | 谱里没有向量寄存器组 ⇒ 走内存/byval（保守，不是错值） | A5/A6 |
 | `callee_pop`（stdcall/thiscall 的 `ret N`） | 计划里算得出来（`AbiPlan::callee_pop_bytes`），**发射侧不消费**：本实现的传出参数区在**调用方帧内**（不是"push 上去"），被调方 `ret N` 会把调用方的 sp 抬高 N ⇒ 必须同时定"调用点契约"（调用方要知道 rsp 被抬高）才谈得上正确 | 待真有此 ABI 的宿主（且需要调用点侧契约） |
 | Win64 的 XMM6-XMM15 | 谱里 `[machine].callee_saved_gpr` 不含它们（xmm 组同样不列） ⇒ `clobbers` 保守地把它们列为被破坏（安全方向） | A5（若要省寄存器再议） |

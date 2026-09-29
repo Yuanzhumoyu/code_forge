@@ -920,3 +920,80 @@ fn multi_value_returns_fail_closed_on_gaps() {
     let e = reg.plan(&t, "win64", &with_agg).unwrap_err();
     assert!(matches!(e, AbiError::Unsupported { .. }), "{e:?}");
 }
+
+/// **变参形状的文档 ↔ 引擎一致性**（v20 A8）：`docs/plans/varargs-plan.md` §2 那张表
+/// （四份内置约定的 `va_list` 形态）必须与引擎实际算出来的 `AbiPlan` 逐格相同。
+///
+/// 这张表的价值在于它是"变参现在做到哪一步"的索引——写歪了就会把后来的人引错，
+/// 所以用引擎输出钉住它（同 `schema_guard` 对键表的做法）。
+#[test]
+fn va_shapes_match_the_documented_table() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../docs/plans/varargs-plan.md");
+    let doc =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
+
+    let kind_name = |k: forge_abi::rules::VaListKind| match k {
+        forge_abi::rules::VaListKind::None => "None",
+        forge_abi::rules::VaListKind::SysvRegSave => "SysvRegSave",
+        forge_abi::rules::VaListKind::Win64Stack => "Win64Stack",
+        forge_abi::rules::VaListKind::Aapcs64Struct => "Aapcs64Struct",
+        forge_abi::rules::VaListKind::RiscvSaveArea => "RiscvSaveArea",
+    };
+
+    // 命名 1 个 + 未命名 1 个：足以触发出 va_area 与 va_meta。
+    let sig = Signature::new(vec![("a".into(), i64_()), ("b".into(), i64_())], None).variadic(1);
+
+    let reg = registry();
+    let cases = [
+        ("win64", "x86_64_v12"),
+        ("sysv64", "x86_64_v12"),
+        ("aapcs64", "arm64_v12"),
+        ("lp64d", "riscv64_v12"),
+    ];
+
+    let mut checked = 0usize;
+    for (conv, isa) in cases {
+        let p = plan(&reg, isa, conv, &sig);
+        let va = p
+            .va_area
+            .as_ref()
+            .unwrap_or_else(|| panic!("{conv}: 变参应有 va_area"));
+        // 表行：| `conv` | `Kind` | size | align | 只走栈/继续用寄存器 | `REG`/— |
+        let row = doc
+            .lines()
+            .find(|l| l.starts_with(&format!("| `{conv}` |")))
+            .unwrap_or_else(|| panic!("varargs-plan.md §2 缺 `{conv}` 一行"));
+        let cells: Vec<&str> = row.split('|').map(|c| c.trim()).collect();
+        let want = [
+            format!("`{}`", kind_name(va.kind)),
+            va.size.to_string(),
+            va.align.to_string(),
+            if va.stack_only {
+                "只走栈"
+            } else {
+                "继续用寄存器"
+            }
+            .to_string(),
+        ];
+        for (i, w) in want.iter().enumerate() {
+            assert_eq!(
+                cells[2 + i],
+                *w,
+                "{conv} 第 {} 列：文档与引擎不一致（整行：{row}）",
+                i + 1
+            );
+        }
+        // va_meta 列：有寄存器就写名字（含反引号），否则 `—`。
+        let want_meta = match p.hidden.va_meta.as_ref() {
+            Some(r) => format!("`{}`", r.name),
+            None => "—".to_string(),
+        };
+        assert_eq!(
+            cells[6], want_meta,
+            "{conv} 的 va_meta 列：文档与引擎不一致（整行：{row}）"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 4, "四份内置约定都要核对到");
+}

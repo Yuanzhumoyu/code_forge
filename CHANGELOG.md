@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-09-30) — 变参方案（`docs/plans/varargs-plan.md`）+ 形状表由引擎输出钉住
+
+- **新方案文档**：变参（varargs）**规划已完成、发射与前端为空**的现状索引——分层列清"模型/引擎/黄金快照/CLI 有，发射与前端零消费"（并把证据落到符号名），四份内置约定的 `va_list` 形态表，五个决策点（先服务哪种场景 / `va_arg` 怎么表达 / 以哪份 psABI 定本 / 先做哪台机器 / 提升规则放哪），五期切片（V1 调用方 → V2 被调方 → V3 寄存器保存区 → V4 `va_arg` → V5 体检），以及**为什么现在不做 + 触发条件**（§6）。
+- **新守卫** `invariants.rs::va_shapes_match_the_documented_table`：方案 §2 那张表（`VaListKind`/size/align/未命名实参去向/`va_meta` 寄存器）必须与引擎对四份内置约定实际算出的 `AbiPlan` **逐格相同**——这张表是"变参做到哪一步"的索引，写歪了会把后来的人引错。
+- 索引与交叉引用：`docs/README.md` 的 plans 表加一行、并把调用约定方案一行更新到 A1–A8；`docs/reference/calling-conventions.md` 的缺口表新增"变参整体"一行指向该方案；v20 方案的 A6 剩余面改为指向新方案。
+- 验证：`cargo test -p forge-abi --test invariants va_shapes` 绿；改动文档 markdownlint 0。
+
 ### Added (2026-09-29) — v20 A8：自定义约定的**端到端**证据（JIT 真跑）+ 缺口报错给下一步
 
 - **新守卫 `test_jit_custom_convention_drives_argument_registers`**（`forge-codegen/src/runtime/jit.rs`）：运行期注册一份**自定义约定**（`int = ["R8","R9"]`、`ret_int = ["RAX"]`），编译 `callee(a,b) -> a-b` 与 `main() -> callee(20,7)` 并 **JIT 真执行**（得 13）；同时断言实参落点是 `(GPR(8), 8)`/`(GPR(8), 9)`——**故意不是** C 的 `RCX`/`RDX`。
