@@ -1959,16 +1959,8 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // 但"计划长什么样"现在可诊断（与既有 ABI 路径对照时这是唯一证据面）。
         if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
             eprintln!("[abi] === fn: {}", func_ref.name);
-            match &state.abi_plan {
-                Some(p) => {
-                    for line in p.to_text().lines() {
-                        eprintln!("[abi] {line}");
-                    }
-                }
-                None => eprintln!(
-                    "[abi] 无计划（发射仍走既有路径）：{}",
-                    state.abi_plan_note.as_deref().unwrap_or("-")
-                ),
+            for line in state.abi_plan.to_text().lines() {
+                eprintln!("[abi] {line}");
             }
         }
 
@@ -2056,14 +2048,13 @@ pub(crate) struct CompileState<I: MachineInst> {
     /// Alloca 指令 → 帧槽偏移（预扫描分配；lowering 时经 ctx.current_alloca_offset
     /// 供 `lea_off rd, alloca_offset` 规则取用）。`Inst` 是密集句柄 ⇒ `SecondaryMap`。
     pub(crate) alloca_offsets: SecondaryMap<Inst, i64>,
-    /// **该函数的 `AbiPlan`**（v20 A3b 预备）：编译入口按 IR 签名 + 约定数据算出来，
-    /// 供 `FORGE_TRACE_ABI=1` 诊断与后续"按 plan 发射"使用。
+    /// **该函数的 `AbiPlan`**（v20 A3b 预备 / A6 fail-closed）：编译入口按 IR 签名 +
+    /// 约定数据算出来，供发射侧（`CallLayout`）与 `FORGE_TRACE_ABI=1` 诊断使用。
     ///
-    /// 目前**只算不用**（发射仍走既有路径 ⇒ 行为逐字节不变）；算不出来时留下
-    /// [`Self::abi_plan_note`] 里的原因（例如 arm64 还没有浮点寄存器池），**不**阻断编译。
-    pub(crate) abi_plan: Option<forge_abi::AbiPlan>,
-    /// `AbiPlan` 算不出来时的原因（诊断用；`None` = 算出来了）。
-    pub(crate) abi_plan_note: Option<String>,
+    /// v20 A6 起**算不出来 = 编译错误**（不再留个 note 继续走旧路径）：每条发射路径都必须
+    /// 有 plan，否则调用点/收参处会各自 fail-closed，错误消息离现场远，且"算不出来"容易被
+    /// 误当成"这条签名能编"。缺口清单见 `docs/plans/calling-convention-redesign-plan.md` 的 A6。
+    pub(crate) abi_plan: forge_abi::AbiPlan,
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
@@ -2097,7 +2088,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // v20 A3b 预备/ A5-3 ④：把该函数的 `AbiPlan` 算出来挂上。约定名已在上面解析过
         // （A2 的读路径）；这里跑一次引擎，把"IR 签名 + 宿主寄存器文件 + 约定数据"的结果
         // 交给生成物与管线（`call_layout`）。
-        let (abi_plan, abi_plan_note) = {
+        let abi_plan = {
             let reg = crate::pipeline::conv_registry::registry()
                 .read()
                 .expect("约定注册表被投毒");
@@ -2122,45 +2113,50 @@ impl<I: MachineInst + 'static> CompileState<I> {
             {
                 ctx.conv_ret_gpr = Some((index, class));
             }
-            match crate::pipeline::abi_target::plan_for_function(
+            let abi_plan = match crate::pipeline::abi_target::plan_for_function(
                 machine,
                 &reg,
                 &ctx.call_conv_name,
                 func,
             ) {
-                Ok(p) => (Some(p), None),
-                // 算不出来不阻断编译（退回约定级数据）——原因留档，方便核对缺口。
+                Ok(p) => p,
+                // **fail-closed**（v20 A6，用户 2026-09-27 裁定）：无 plan 不再继续编译。
+                //
+                // 旧行为是"算不出来就留个 note、退回约定级数据继续编"，结果是错误被推给
+                // 发射侧的各个 fail-closed 点（调用点、收参、栈参数、帧布局），消息离现场
+                // 远、且真实的引擎缺口会被误当成"这条签名能编"。现在缺口在**编译入口**
+                // 一次报清楚。缺口清单见
+                // `docs/plans/calling-convention-redesign-plan.md` 的 A6。
                 Err(e) => {
-                    // 归因留档（`FORGE_TRACE_ABI=1` 打 stderr）：这也是把"无 plan"改成
-                    // fail-closed 时报错正文的来源——先把缺口清点出来，再决定怎么补。
                     if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
                         eprintln!("[abi-plan] {e}");
                     }
-                    // **无 plan 的回退**：破坏集是**约定级事实**（`AbiPlan::clobbers`
-                    // = 可用池 − callee-saved − pinned，**与签名无关**），所以用空签名
-                    // 问一次引擎就能拿到正确值——生成物因此不必再按谱面里声明的
-                    // `[abi].call_clobbers` 猜（v20 A5-3：那个键已删除）。拿不到
-                    // （约定未注册 / 池缺）⇒ 保持空，生成物在调用点 fail-closed。
-                    if let Ok(p) = crate::pipeline::abi_target::plan_for_signature(
-                        machine,
-                        &reg,
-                        &ctx.call_conv_name,
-                        &forge_abi::Signature::new(Vec::new(), None),
-                    ) {
-                        // `CallLayout::clobbers` 是 (类, 类内号)，`LowerCtx` 用 (号, 类)。
-                        ctx.conv_clobbers = crate::pipeline::abi_target::call_layout(&p, machine)
-                            .clobbers
-                            .into_iter()
-                            .map(|(c, i)| (i, c))
-                            .collect();
-                    }
-                    (None, Some(e.to_string()))
+                    return Err(IrError::Unsupported(format!(
+                        "v12 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\
+                         无 plan 不再继续编译（fail-closed，见调用约定重设计方案 A6）",
+                        ctx.call_conv_name
+                    )));
                 }
+            };
+            // **约定级事实**：破坏集（`AbiPlan::clobbers` = 可用池 − callee-saved − pinned）
+            // 与签名无关，用空签名问一次引擎即可。生成物在调用点拿不到本函数 plan 时用它
+            // 兜底（正常路径已有 plan）；两条都没有 ⇒ 调用点 fail-closed。
+            if let Ok(p) = crate::pipeline::abi_target::plan_for_signature(
+                machine,
+                &reg,
+                &ctx.call_conv_name,
+                &forge_abi::Signature::new(Vec::new(), None),
+            ) {
+                // `CallLayout::clobbers` 是 (类, 类内号)，`LowerCtx` 用 (号, 类)。
+                ctx.conv_clobbers = crate::pipeline::abi_target::call_layout(&p, machine)
+                    .clobbers
+                    .into_iter()
+                    .map(|(c, i)| (i, c))
+                    .collect();
             }
+            abi_plan
         };
-        if let Some(p) = &abi_plan {
-            ctx.call_layout = Some(crate::pipeline::abi_target::call_layout(p, machine));
-        }
+        ctx.call_layout = Some(crate::pipeline::abi_target::call_layout(&abi_plan, machine));
         // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
@@ -2197,7 +2193,6 @@ impl<I: MachineInst + 'static> CompileState<I> {
             param_xregs: Vec::new(),
             alloca_offsets: SecondaryMap::new(),
             abi_plan,
-            abi_plan_note,
         })
     }
 

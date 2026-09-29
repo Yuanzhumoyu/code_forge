@@ -1166,9 +1166,12 @@ riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 
 `arg_slot`（A5-3 起在此，原 `[abi].arg_slot`）：`by-class` = int/float 各自独立推进
 （riscv SysV / AAPCS64），`by-position` = 共享位置游标（Windows x64）。它是**这台机器的
-谱面缺省约定怎么数位置**，供无 plan 的回退形态使用；约定侧的正式位置是
+谱面缺省约定怎么数位置**，由生成物 `TargetABI::arg_placement()` 暴露给没有约定数据的宿主
+（手写后端）；约定侧的正式位置是
 `AbiRules::position`（进 plan 的 `AbiPlan::position`，生成器优先读），守卫
 `abi_target_real::convention_facts_probe!` 的 ②b 钉住"两者对 ISA 主约定同值"。
+**注意 v20 A6 起管线侧没有"无 plan 继续编译"**：规划不出调用布局 = 编译错误，
+所以这条缺省只服务于谱/手写后端自身的一致性，不再是一条并行的发射路径。
 
 两条纪律：① 参数池 / 返回池 / callee-saved / sret 槽 / 栈参数布局**不在这里**——它们是
 **约定事实**，属于 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）；

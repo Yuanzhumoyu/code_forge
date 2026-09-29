@@ -112,11 +112,12 @@ ret_int = ["A0"]
     compiler.compile(&func).expect("注册后应能编译");
 }
 
-/// **只有规则、没有绑定 ⇒ 规划不出来 ⇒ 返回槽 fail-closed**（v20 A5-3）：
-/// 谱里的 `[abi].ret_regs` 已删除，返回槽不再有任何"谱面兜底"——拿不到 plan 就必须报错，
-/// 而不是按 `index 0` 猜（riscv 的返回槽是 `X10`）。
+/// **只有规则、没有绑定 ⇒ 规划不出来 ⇒ 编译入口 fail-closed**（v20 A5-3 / A6）：
+/// 谱里的 `[abi].ret_regs` 已删除，返回槽不再有任何"谱面兜底"；而 A6 起"规划不出
+/// 调用布局"本身就是**编译错误**（不再留个 note 交给发射侧各自兜底），所以在编译入口
+/// 就点名"这台 ISA 没有为这份约定注册绑定"——错误离现场最近的那一层。
 #[test]
-fn rules_without_binding_fail_closed_on_the_return_slot() {
+fn rules_without_binding_fail_closed_at_the_compile_entry() {
     let tm = TargetMachine::new();
     let compiler = FunctionCompiler::new(tm);
     let cc = CallConvId::named("rules_only_conv");
@@ -130,11 +131,11 @@ parent = "c"
     .expect("注册规则");
     let err = compiler
         .compile(&func)
-        .expect_err("没有绑定 ⇒ 池解析不出来 ⇒ 返回槽必须 fail-closed");
+        .expect_err("没有绑定 ⇒ 池解析不出来 ⇒ 编译入口必须 fail-closed");
     let msg = err.to_string();
     assert!(
-        msg.contains("返回寄存器需要调用布局") || msg.contains("MissingPool"),
-        "必须点名返回槽/缺池：{msg}"
+        msg.contains("没有为约定 `rules_only_conv` 注册寄存器绑定") && msg.contains("fail-closed"),
+        "必须点名缺绑定 + fail-closed：{msg}"
     );
 }
 

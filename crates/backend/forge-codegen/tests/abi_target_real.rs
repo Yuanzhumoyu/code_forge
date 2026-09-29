@@ -898,3 +898,130 @@ fn aapcs64_probe() -> Function {
     b.ret(&[params[0]]);
     b.finish().expect("build")
 }
+
+/// **A6 ① 缺口清点**（2026-09-29 实测）：三台真机 × 各自的主约定，用一组**代表性形状**
+/// 跑一遍引擎——**只剩一条算不出 plan**：AAPCS64 的 4×f32 HFA 返回（≥3 槽返回的搬运，
+/// 引擎按 `RetLoc` 只有单寄存器/双寄存器两种形态，A6 未实现）。
+///
+/// 其余曾经被列为"规划缺口"的形状（`Pair`（2 槽聚合）、**无指针的 `Indirect`**（by-ref
+/// 指针本身溢出到栈）、按引用向量、参数溢出到栈、浮点溢出到栈、混合两套寄存器文件）
+/// **都已有 plan**——所以 A6 ① 的"补齐每条发射路径"实际只剩 HFA 返回这一条。
+///
+/// 形状覆盖：标量混合、按值/按引用向量、HFA（2/4 成员）、2 槽聚合（RegPair）、≥3 槽返回、
+/// 24 字节聚合（必然间接）、参数溢出到栈、by-ref 指针本身也在栈上（`Indirect { ptr: None }`）、
+/// 浮点溢出到栈。断言是**精确**的：缺口集必须恰好等于下面这条，多一条少一条都要来改这里
+/// （少了 = 缺口已关，顺带更新方案文档的 A6）。
+#[test]
+fn a6_gap_inventory() {
+    use forge_codegen::arch::arm64_v12::TargetMachine as Arm64;
+    use forge_codegen::arch::riscv64_v12::TargetMachine as Riscv64;
+    use forge_codegen::pipeline::abi_target::plan_for_shapes;
+    use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
+
+    fn agg(size: u32, align: u32, members: Vec<ArgShape>) -> ArgShape {
+        ArgShape {
+            size,
+            align,
+            kind: ShapeKind::Aggregate { members },
+        }
+    }
+    fn vec(size: u32, align: u32, lanes: u32, elem_is_float: bool) -> ArgShape {
+        ArgShape {
+            size,
+            align,
+            kind: ShapeKind::Vector {
+                elem_is_float,
+                lanes,
+                // 元素宽度在这里不参与判定（`shape_to_ty` 用真实 size/align + 元素族），
+                // 探针一律按 4 字节元素给。
+                elem_bytes: 4,
+            },
+        }
+    }
+
+    let i64s = ArgShape::int(8, 8);
+    let f64s = ArgShape::float(8);
+    let f32s = ArgShape::float(4);
+    let v128 = vec(16, 16, 4, true);
+    let v256 = vec(32, 32, 8, true);
+    let hfa2 = agg(16, 8, vec![f64s.clone(), f64s.clone()]);
+    let hfa4 = agg(16, 4, vec![f32s.clone(); 4]);
+    let pair = agg(16, 8, vec![i64s.clone(), i64s.clone()]);
+    let agg24 = agg(24, 8, vec![i64s.clone(); 3]);
+
+    let cases: Vec<(&str, Vec<ArgShape>, Option<ArgShape>)> = vec![
+        (
+            "scalars_mix",
+            vec![i64s.clone(), f64s.clone(), f32s.clone()],
+            Some(i64s.clone()),
+        ),
+        ("byval_vec16", vec![v128.clone()], Some(i64s.clone())),
+        ("byref_vec32", vec![v256.clone()], Some(i64s.clone())),
+        ("ret_vec16", vec![], Some(v128.clone())),
+        ("ret_vec32", vec![], Some(v256.clone())),
+        ("hfa2_arg", vec![hfa2.clone()], Some(f64s.clone())),
+        ("hfa4_arg", vec![hfa4.clone()], Some(f32s.clone())),
+        ("hfa4_ret", vec![], Some(hfa4.clone())),
+        ("pair_arg", vec![pair.clone()], Some(i64s.clone())),
+        ("pair_ret", vec![], Some(pair.clone())),
+        ("agg24_arg", vec![agg24.clone()], Some(i64s.clone())),
+        ("agg24_ret", vec![], Some(agg24.clone())),
+        ("many_int_args", vec![i64s.clone(); 8], Some(i64s.clone())),
+        (
+            "byref_ptr_on_stack",
+            vec![
+                i64s.clone(),
+                i64s.clone(),
+                i64s.clone(),
+                i64s.clone(),
+                v256.clone(),
+            ],
+            Some(i64s.clone()),
+        ),
+        ("many_floats", vec![f64s.clone(); 9], Some(f64s.clone())),
+        (
+            "mixed_over_both_files",
+            vec![
+                i64s.clone(),
+                f64s.clone(),
+                i64s.clone(),
+                f64s.clone(),
+                i64s.clone(),
+                f64s.clone(),
+                i64s.clone(),
+                f64s.clone(),
+            ],
+            Some(i64s.clone()),
+        ),
+    ];
+
+    let reg = builtin::registry().expect("内置注册表");
+    let mut gaps: Vec<String> = Vec::new();
+    macro_rules! probe {
+        ($isa:expr, $conv:expr, $tm:expr) => {
+            for (name, args, ret) in &cases {
+                match plan_for_shapes($tm, &reg, $conv, args, ret.clone()) {
+                    Ok(_) => {}
+                    Err(e) => gaps.push(format!("{} / {} / {}: {}", $isa, $conv, name, e)),
+                }
+            }
+        };
+    }
+    let x86 = TargetMachine::new();
+    probe!("x86_64_v12", "win64", &x86);
+    probe!("x86_64_v12", "sysv64", &x86);
+    let rv = Riscv64::new();
+    probe!("riscv64_v12", "lp64d", &rv);
+    let a64 = Arm64::new();
+    probe!("arm64_v12", "aapcs64", &a64);
+
+    // 精确断言：缺口恰好是"arm64 的 4×f32 HFA 返回"这一条。
+    let hfa4_only = gaps.len() == 1 && gaps[0].starts_with("arm64_v12 / aapcs64 / hfa4_ret:");
+    assert!(
+        hfa4_only,
+        "A6 ① 的缺口面变了（{} 条）：\n{}\n——少了 = 缺口已关（顺带更新方案文档 A6），\
+         多了 = 有新的规划缺口，先补引擎再谈 fail-closed",
+        gaps.len(),
+        gaps.join("\n")
+    );
+}

@@ -298,6 +298,18 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
   win64 六整数含栈参数、win64 混合按位置计数、lp64d 混合按类计数、aapcs64 整型）与
   `call_planner_registry_serves_the_shape_plan`（注册表路径 == 直接算；未注册 ISA ⇒ `None`）。
 
+### 无 plan = 编译错误（v20 A6）
+
+编译入口（`CompileState::new`）对**函数本身**也算一份 plan；**算不出来就是编译错误**，
+不再"留个 note 退回约定级数据继续编译"。理由：每条发射路径都按 plan 走，没有 plan 就只剩
+各处的 fail-closed 分支——错误消息离现场远，而且真实的引擎缺口会被误当成"这条签名能编"。
+
+已知的**规划缺口**由守卫 `abi_target_real::a6_gap_inventory` 精确钉住（16 组代表性形状 ×
+三台真机 × 四份约定）：当前**只剩一条**——AAPCS64 的 4×f32 HFA **返回**（要 4 个连续浮点
+寄存器槽，`RetLoc` 只有单/双寄存器形态，≥3 槽返回的搬运见方案 A6）。`Pair`（2 槽聚合）、
+**无指针的 `Indirect`**（by-ref 指针本身溢出到栈）、按引用向量、参数/浮点溢出到栈这些形状
+**都有 plan**。
+
 ## 内置约定（四份 + 一个抽象基类）
 
 | 约定 | 位置计数 | 参数寄存器（内置绑定） | 返回寄存器 | 栈/shadow/红区 | 宽返回（sret） | callee-saved 机制 | 变参 |

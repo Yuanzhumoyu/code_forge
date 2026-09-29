@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-29) — v20 A6：**无 plan 不再继续编译**（编译入口 fail-closed）+ A6 缺口清点
+
+- **fail-closed 切换**（`pipeline/compiler.rs`）：`plan_for_function` 失败不再"留个 note、退回约定级数据继续编译"，而是直接在**编译入口**报 `IrError::Unsupported`——消息点名约定名、引擎给的原因、以及 fail-closed 口径。`CompileState::abi_plan` 由 `Option` 收敛为定值，`abi_plan_note` 字段删除（`FORGE_TRACE_ABI=1` 也随之只打印计划）。理由是旧行为把错误推给发射侧的各个 fail-closed 点（调用点/收参/栈参数/帧布局），消息离现场远，而且真实的引擎缺口会被误当成"这条签名能编"。
+- **先量后切**：切换前用 `FORGE_TRACE_ABI=1 --nocapture` 跑遍 `forge-codegen --lib --all-features`（1344 例）与 `forge-tests --lib`（43 例，含三台机器的 JIT 矩阵）——`[abi-plan]` **零命中**，即既有语料里没有一条路径靠"无 plan 回退"跑通。切换后 workspace 130 个测试二进制全绿。
+- **A6 缺口清点**（守卫 `abi_target_real::a6_gap_inventory`）：16 组代表性形状 × 三台真机 × 四份约定，**精确断言**缺口集恰好一条——`arm64_v12 / aapcs64` 的 **4×f32 HFA 返回**（要 4 个连续寄存器槽，`RetLoc` 今天只有单/双寄存器形态）。此前列为缺口的 `Pair`（2 槽聚合）、**无指针的 `Indirect`**（by-ref 指针本身溢出到栈）、按引用向量、参数溢出到栈、浮点溢出到栈、混合两套寄存器文件的形状**都已有 plan**。
+- **唯一需要改的既有用例**：`conv_registry_read_path::rules_without_binding_fail_closed_at_the_compile_entry`（原 `…_on_the_return_slot`）——只有规则没有绑定时，错误现在发生在编译入口并点名"这台 ISA 没有为约定 X 注册寄存器绑定"，比原先"发射侧返回槽报错"更早、更具体。
+- 验证：`cargo fmt --check` 0、`clippy --workspace --exclude forge-rustc --all-targets --all-features -D warnings` 0、workspace 串行全套 130 个测试二进制绿。
+
 ### Changed (2026-09-27) — v20 A5-3 收口：`[abi].arg_class` 删除，**`[abi]` 一节整体下线**
 
 - **调用方按被调方落点搬实参**（`gen_call_lowering`/`arg_move_loop` 重写）：调用点把实参 IR 类型摊成 `ArgShape`（size/align/族）→ `machine::call_plan::plan_call(ISA, 约定, 形状, 返回形状)` → 逐实参按 `ArgPlace` 发射——`Reg { class, index }`（int → `gpr_mov`；fp → 按字节宽 `fpr_mov32/64`；向量 → `vec_mov`）、`Indirect { reg }`（`byref` 副本 + 指针 mov）、`Stack`（`caller_offset(k)`）、`Ignore` 跳过；`Pair`/`Group`/无指针 `Indirect` ⇒ **fail-closed**（A6 缺口，旧实现会把它们静默塞进整数寄存器）。`sret` 隐藏槽也改用 `CallLayout.hidden_sret`（不再假设"首 int 参数槽"）。

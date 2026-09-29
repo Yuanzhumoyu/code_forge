@@ -179,10 +179,10 @@ L4 使用者           提供约定与绑定（rustc 前端 / HIR / mini_c / 你
 
 ### A3b-1 ✅ plan 接进编译入口（只算不用）
 
-- `CompileState` 新增 `abi_plan`/`abi_plan_note`：编译入口用 A3a 的适配器把该函数的
-  `AbiPlan` 算出来挂上；算不出来**不阻断编译**（发射还没用它），原因留档。
-- `FORGE_TRACE_ABI=1` 打印计划（`AbiPlan::to_text()`）或失败原因——发射尚未切换期间，
-  这是"计划长什么样"的唯一证据面。
+- `CompileState` 新增 `abi_plan`：编译入口用 A3a 的适配器把该函数的
+  `AbiPlan` 算出来挂上。**2026-09-29 起 A6 把它改成 fail-closed**：算不出来 = 编译错误
+  （当时是"不阻断编译、留 note"，那是本阶段的临时状态，见 A6）。
+- `FORGE_TRACE_ABI=1` 打印计划（`AbiPlan::to_text()`）。
 - **前置核对**（`tests/abi_target_real.rs` 新增）：引擎的计划必须与**当前**发射路径的
   `AllocResult` 一致（sret 有无、逐参数 by-ref、栈参数区字节数）——这是把发射切到 plan
   之前唯一能先做的正确性检查，也是 A3b-2 的入场券。
@@ -355,7 +355,7 @@ A4 让尾声与序言**同源**（都用动态计数），差异进测试。
 GOT 建立）。需要时**加角色**（上层能看见的能力），不回到自由模板——这正是"指令保持裸的、
 调用平衡交给约定层"的代价与收益。
 
-### A5 删谱里的 `[abi]` 约定节，加 `[machine]`（进行中：arm64 浮点子集 ✅）
+### A5 ✅ 删谱里的 `[abi]` 约定节，加 `[machine]`
 
 **已完成（A5-1，2026-09-25）**：arm64 浮点能力——`[reg.fpr8]`（V0..V31）+ `fpr` 操作数槽 +
 `FMOVR` 形式 + `FMOV_S`/`FMOV_D`（`fpr_mov` 32/64）+ `LDURD`/`STURD`/`LDURS`/`STURS`（与
@@ -395,9 +395,9 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 验收：workspace 130 个测试二进制 serially 全绿、clippy 0、CI run 213 十项绿（唯一红 =
 慢性 `forge-rustc (e2e, Windows)`）。
 
-仍待做：③ 约定事实（`arg_class`/`ret_regs`/`arg_slot`/`stack_args`/`callee_saved`/
-`call_clobbers`/`frame_padding`）移入 `AbiRules`/`AbiBinding` + demo 夹具补测试本地绑定，
-④ 发射/管线改读 plan，然后删掉 `[abi]` 的约定键与机器事实回退路径。
+仍待做：③④ **均已落地**（见下面的逐键表与 A5 收官记录）——约定事实全部移进
+`AbiRules`/`AbiBinding`、发射/管线全部改读 plan、demo 夹具在测试内注册本地绑定、
+`[abi]` 整节（含迁移期回退键）下线。
 
 **逐键迁移进度（2026-09-27 实测记录，每键独立提交 + 门禁）**：
 
@@ -417,9 +417,9 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 步骤建议（每步都可独立跑门禁）：
 ① 加 `[machine]`（model + schema + `docs/reference/isa-dsl.md` 键表三处同改，`schema_guard` 钉住）；✅
 ② 上表"机器事实"逐个改读 `[machine]`（含错误消息与负向用例）；x86 先迁，跑门禁；✅（三谱同批迁完；`[machine.frame]` 见 ②b）
-③ riscv/arm64 迁移 + demo 夹具补测试本地绑定 ⇒ 删除 `[abi]` 的约定键；
+③ riscv/arm64 迁移 + demo 夹具补测试本地绑定 ⇒ 删除 `[abi]` 的约定键；✅
 ④ 发射/管线改读 plan（这一步才动 `move_args` 的 `[abi]` 回退路径，可用"生成物逐字节不变"
-   与三条 ISA 矩阵验收）。
+   与三条 ISA 矩阵验收）；✅（`[abi]` 整节下线，提交 `07aeae2`）
 
 - 新增 `[machine] { fixed_regs, spill_scratch, link_reg }`（只留**机器事实**）；
   参数池/sret/callee-saved/栈参数布局全部移到绑定与规则里。
@@ -428,7 +428,49 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
 - 验收：`forge-isa validate` 三谱零诊断、`abi check --strict` 三谱零缺口、
   矩阵 skip 数下降。
 
+**✅ A5 收官（2026-09-29，提交 `07aeae2`）**：`[abi]` 一节**整节下线**——`Abi`/
+`ArgClass`/`ArgClassKind`/`ArgStrategy` 类型与 `V12Model::abi` 删除，schema 与文档键表
+（三方守卫同批）、`isa/*.toml`、两份 demo 夹具全部迁完；谱侧只剩**能力申报**（`roles`）
+与**机器事实**（`[machine]`，新增 `vector_by_ref_bytes`）。发射侧按 `plan_call` 的
+`ArgPlace` 逐实参分派、被调方收参与序尾声按 `AllocResult::call_layout` 与机器事实生成，
+`plan` 缺失一律 fail-closed。验收：`fmt`/`clippy -D warnings`/workspace 全套（130 个测试
+二进制）全绿，`forge-codegen --lib --all-features` 1344 passed。
+
 ### A6 变参 / HFA 部分在寄存器 / ≥3 槽返回 / 罕见的弹栈约定
+
+**① 规划缺口：已清点完，只剩一条（2026-09-29 实测）**。守卫
+`forge-codegen/tests/abi_target_real.rs::a6_gap_inventory` 用 16 组代表性形状 × 三台真机
+（x86 的 `win64`/`sysv64`、riscv 的 `lp64d`、arm64 的 `aapcs64`）跑引擎，**精确断言**缺口集
+恰好等于下面这一条：
+
+- `arm64_v12 / aapcs64 / hfa4_ret`：4×f32 的 HFA **返回**要 4 个连续浮点寄存器槽，
+  `RetLoc` 今天只有"单寄存器/双寄存器"两种形态 ⇒ 引擎明确拒绝（不降级、不静默只回第一个）。
+
+曾经列为缺口的形状（`Pair`（2 槽聚合）、**无指针的 `Indirect`**（by-ref 指针本身溢出到栈）、
+按引用向量、参数溢出到栈、浮点溢出到栈、混合两套寄存器文件）**都已有 plan**——所以"补齐每条
+发射路径"的实际剩余面就是"≥3 槽返回的搬运"（要 `RetLoc`/`RetPlace` 各加一个 `Group` 形态，
+并让 Return 与调用点按成员序搬运）。
+
+**② 无 plan 改 fail-closed：已落地（2026-09-29）**。`CompileState::new` 里
+`plan_for_function` 失败不再"留 note 继续编译"，而是直接 `IrError::Unsupported`，消息点名
+约定名、引擎原因与 fail-closed 口径；`abi_plan` 由 `Option` 收敛为定值（`abi_plan_note`
+字段删除）。**先量后切**：切换前用 `FORGE_TRACE_ABI=1 --nocapture` 跑遍
+`forge-codegen --lib --all-features`（1344 例）与 `forge-tests --lib`（43 例，含三台机器的
+JIT 矩阵），`[abi-plan]` **一条都没有**——即既有语料里没有靠回退跑通的路径，切换是零行为
+变化的。切换后全套 130 个测试二进制绿（唯一需要改的用例是把"返回槽 fail-closed"的断言
+换成"编译入口点名缺绑定 + fail-closed"，错误反而更早、更具体）。
+
+**仍待做（A6 剩余）**：
+
+- ≥3 槽返回的搬运（引擎 `RetLoc::RegGroup` → 运行时 `RetPlace::Group` → Return/调用点按
+  成员序搬运）；它一落地，上面的缺口集就变空、`a6_gap_inventory` 会红，提醒来改本节。
+- va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
+  变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
+- HFA/HVA 的"寄存器不够时部分在寄存器"（需要按成员赋值的规则语言）。
+- `stdcall`/`thiscall` 的 `callee_pop`（模型已有，待管线消费）；红区（SysV 128 字节）
+  与尾调用约束（`tail_calls.must_match_stack`）。
+
+**历史（保留：为什么当初先走"容忍无 plan"）**：
 
 **A5-3 ④ 带出来的前置缺口**（2026-09-26 实测，都已在代码里注明并留了守卫）：
 
@@ -536,11 +578,12 @@ GOT 建立）。需要时**加角色**（上层能看见的能力），不回到
   绑定；⑤ 全量门禁 + 三条矩阵 + 中文提交 + 推送 + 抓 CI。
   但那会让今天靠回退跑通的 wide-vector-byref 用例变红，须先补 A6 的规划缺口——优先级低于上面①–④。
 
-- va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
-  变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
-- HFA/HVA 的"寄存器不够时部分在寄存器"（需要按成员赋值的规则语言）。
-- ≥3 槽返回的搬运；`stdcall`/`thiscall` 的 `callee_pop`（模型已有，待管线消费）。
-- 红区（SysV 128 字节）与尾调用约束（`tail_calls.must_match_stack`）。
+  **事后核对（2026-09-29）**：这条裁定的**顺序**与实际执行不符，但**结论**成立——
+  ① 六份约定键最终是靠**逐键迁移 + 每步"计数/名字/消费者同源"**删掉的（没有走 fail-closed 那条
+  弯路，见上面的逐键表）；② fail-closed 反而是**最后**做的，而且做完发现
+  "靠回退跑通的用例"根本不存在（切换前 `[abi-plan]` 零命中，切换后全套绿）。
+  保留这段是为了记住：**先量再切**——"缺口导致回退"这个解释当时是错的，
+  而正确的做法是先把"是否真的走到回退"用 trace 量出来。
 
 ### A7 可选的异域钩子示例
 
