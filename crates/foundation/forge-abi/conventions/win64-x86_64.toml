@@ -22,5 +22,9 @@ cs_gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
 
 # 返回寄存器：**与参数池分开**（x64 标量返回在 RAX，参数却从 RCX 起；把两者合成一个池
 # 会让"第 5 个参数"和"返回值"抢同一个寄存器）。
-ret_int = ["RAX"]
-ret_float = ["XMM0"]
+#
+# **多值返回**（v20 A6）：IR 里两个独立的标量返回值（forge-rustc 的 ScalarPair 就是这种形态）
+# 走第二个返回寄存器 —— Win64 用 RDX（`RAX:RDX`）。单值返回只取池的第 0 槽，所以这
+# 一行加上去不改变任何单值签名。
+ret_int = ["RAX", "RDX"]
+ret_float = ["XMM0", "XMM1"]

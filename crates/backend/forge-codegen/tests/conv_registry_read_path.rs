@@ -210,6 +210,7 @@ fn ir_attributes_project_into_the_engine_view() {
     assert_eq!(view.attr(1).byval, Some(16), "第二个形参的 byval 字节数");
     assert_eq!(view.attr(1).declared_align(), Some(16));
     assert!(view.ret_attrs.signext, "返回值属性也要投影");
-    assert_eq!(view.ret.as_ref().map(|t| t.size), Some(4));
+    assert_eq!(view.ret().map(|t| t.size), Some(4));
+    assert_eq!(view.rets.len(), 1, "单值返回：rets 恰好一条");
     assert!(view.attr(9).is_empty(), "没有属性的参数取默认值");
 }

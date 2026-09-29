@@ -100,7 +100,15 @@ pub struct Signature {
     /// 可以比 `params` 短（缺的按默认处理，见 [`Signature::attr`]）——前端只有"部分参数
     /// 带属性"时不必补齐一长串默认值。
     pub attrs: Vec<DeclAttrs>,
-    pub ret: Option<TyView>,
+    /// **返回位**：`rets[0]` 就是单值返回的那个类型（[`Signature::ret`]）；
+    /// `rets.len() > 1` = **多值返回**（IR 的 `returns: Vec<TypeId>`，例如 ScalarPair
+    /// 拆出来的两个标量、或 `(i64, i64, i64)` 三个独立标量）。
+    ///
+    /// 为什么不是单个 `Option<TyView>`：多值返回的每个值**各自**分类、各自占一个返回寄存器
+    /// （v20 A6：`RetLoc::RegPair`/`RegGroup`），把多个值折叠成一个"聚合类型"会让引擎
+    /// 按 HFA/聚合规则重排（`(f32,f32,f32,f32)` 的四个独立返回与一个 16 字节 HFA **不是**
+    /// 同一件事）。
+    pub rets: Vec<TyView>,
     /// 返回值的声明属性（`byval`/`sret` 在返回位没有意义，引擎忽略它们）。
     pub ret_attrs: DeclAttrs,
     pub variadic: bool,
@@ -110,16 +118,35 @@ pub struct Signature {
 }
 
 impl Signature {
+    /// 单值返回的签名（`ret = None` ⇒ 无返回）。
     pub fn new(params: Vec<(String, TyView)>, ret: Option<TyView>) -> Self {
         let n = params.len();
         Self {
             params,
             attrs: Vec::new(),
-            ret,
+            rets: ret.into_iter().collect(),
             ret_attrs: DeclAttrs::default(),
             variadic: false,
             fixed_count: n,
         }
+    }
+
+    /// **多值返回**的签名（每个值各自占一个返回寄存器；空 = 无返回）。
+    pub fn with_rets(params: Vec<(String, TyView)>, rets: Vec<TyView>) -> Self {
+        let n = params.len();
+        Self {
+            params,
+            attrs: Vec::new(),
+            rets,
+            ret_attrs: DeclAttrs::default(),
+            variadic: false,
+            fixed_count: n,
+        }
+    }
+
+    /// 主返回类型（`rets.first()`）。
+    pub fn ret(&self) -> Option<&TyView> {
+        self.rets.first()
     }
 
     /// 带**声明属性**的签名（可与 `params` 等长，也可更短）。
@@ -298,12 +325,77 @@ pub fn plan_fn(
     // ① 返回值先分类：`Indirect{HiddenSret}` 要预占 hidden 槽（x86 RCX / AAPCS64 x8 /
     //    riscv a0），并且**用户实参要从它之后开始**（这正是旧实现"首 int 槽"的
     //    硬编码想表达、但换个 ISA 就错的那件事）。
-    let ret_view = sig.ret.clone();
+    //
+    // **多值返回**（v20 A6，`rets.len() > 1`）：每个值**各自分类、各自占一个返回寄存器**，
+    // 于是 `(i64, i64, i64)` 拿到三个连续返回槽、ScalarPair 的第一个值不再需要"第二个返回
+    // 寄存器 = 类内号 1"这种 ISA 特定的硬编码。约束（明确拒绝、不猜）：每个值必须分类成
+    // `Direct { slots = 1 }`（多槽类型属于"单值聚合"路径），且**全部**能取到寄存器。
+    let mut ret = RetLoc::Void;
+    if sig.rets.len() > 1 {
+        let mut regs: Vec<RegRef> = Vec::with_capacity(sig.rets.len());
+        for (i, ty) in sig.rets.iter().enumerate() {
+            let action = classify(rules, target, ty, sig.variadic, hooks, ClassDir::Ret)?;
+            let (pool, slots) = match &action {
+                ClassAction::Direct { pool, slots } => (pool, slots),
+                other => {
+                    return Err(AbiError::Unsupported {
+                        conv: rules.name.clone(),
+                        what: format!(
+                            "多值返回：第 {i} 个值 `{}` 的分类是 {other:?}——多值返回要求每个值都是\
+                             单寄存器（`direct {{ slots = 1 }}`；聚合/HFA/按引用请用**单个**值表达）",
+                            crate::plan::ty_text(ty)
+                        ),
+                    });
+                }
+            };
+            let n = slots.resolve(ty).ok_or_else(|| AbiError::Unsupported {
+                conv: rules.name.clone(),
+                what: format!(
+                    "多值返回：第 {i} 个值 `{}` 不适用槽数规则 `{slots:?}`",
+                    crate::plan::ty_text(ty)
+                ),
+            })?;
+            if n != 1 {
+                return Err(AbiError::Unsupported {
+                    conv: rules.name.clone(),
+                    what: format!(
+                        "多值返回：第 {i} 个值 `{}` 要 {n} 个槽——多值返回只支持单槽值",
+                        crate::plan::ty_text(ty)
+                    ),
+                });
+            }
+            match ret_pools.take(pool, &skip_used)? {
+                Some(r) => regs.push(r),
+                None => {
+                    return Err(AbiError::PoolExhausted {
+                        conv: rules.name.clone(),
+                        arg: 0,
+                        pool: pool.clone(),
+                    });
+                }
+            }
+        }
+        ret = match regs.len() {
+            0 => RetLoc::Void,
+            1 => RetLoc::Reg {
+                reg: regs.remove(0),
+            },
+            2 => RetLoc::RegPair {
+                lo: regs[0].clone(),
+                hi: regs[1].clone(),
+            },
+            _ => RetLoc::RegGroup { regs },
+        };
+    }
+    let ret_view = if sig.rets.len() > 1 {
+        None // 多值返回已在上面处理；下面这段是单值/隐式间接返回的老路径
+    } else {
+        sig.ret().cloned()
+    };
     let ret_action = match &ret_view {
         Some(ty) => classify(rules, target, ty, sig.variadic, hooks, ClassDir::Ret)?,
         None => ClassAction::Ignore,
     };
-    let mut ret = RetLoc::Void;
     {
         let pools = &mut ret_pools;
         match (&ret_view, &ret_action) {

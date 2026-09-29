@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-29) — v20 A6：**多值返回**（≥3 槽返回的搬运）——落点全部来自绑定
+
+- **`Signature.ret` → `rets: Vec<TyView>`**：IR 的 `FunctionSignature.returns` 本来就允许多个返回值（ScalarPair 拆出来的两个标量、`(i64,i64,i64)` 这类），而 `sig_view` 以前只取 `first()`——"第二个返回值在哪个寄存器"于是只能由发射侧猜。
+- **引擎**：`rets.len() > 1` 时**逐个分类、逐个占一个返回寄存器**，产出 `RetLoc::RegPair`（2 个）/ `RetLoc::RegGroup`（≥3 个，新增变体）；每个分量必须是 `direct { slots = 1 }`，否则明确 `Unsupported`（聚合走单值路径）；池不够 ⇒ `PoolExhausted`。
+- **修掉一处 ISA 特定硬编码**：发射侧原本写死"第二个返回值进类内号 1"（x86 恰好是 RDX）——riscv 的类内号 1 是 X1（= ra），返回槽其实在 X10/X11。现在 win64 的 `ret_int` 补为 `["RAX","RDX"]`（`ret_float` 补 `["XMM0","XMM1"]`），落点一律来自绑定池；`Return` 与调用点按 `RetPlace::Pair`/`Group` **逐值按类分派**（整数 → `gpr_mov`、浮点 → `fpr_mov32/64`）。
+- **调用点看全结果**：`call_plan::plan_call(isa, conv, args, rets)` 与 `abi_target::plan_for_shapes` 收**全部**结果形状（此前只传第一个）；`RetPlace::Group` 带 `regs()` 助手。
+- 守卫：`forge-abi/tests/invariants.rs` 两条（win64 `RAX:RDX`、lp64d `X10:X11`、aapcs64 四个 f32 → `V0..V3`、混合类 `RAX:XMM1`；以及池不够/分量是聚合两条 fail-closed）、`abi_target_real::two_value_return_is_plan_driven`、**JIT 端到端** `test_jit_multi_value_return_is_read_back`（`callee(5) -> (6,7)`，调用方算 `6*10+7 = 67`）。
+- 仍 fail-closed（诚实清单）：单个聚合要 ≥3 个寄存器的返回（AAPCS64 的 4×f32 HFA，需按成员拆，属"按成员赋值"规则语言）；`a6_gap_inventory` 的那条缺口集不变。
+- 验证：workspace 131 个测试二进制全绿。
+
 ### Added (2026-09-29) — v20 A7：Swift / Go 的 `AbiHooks` 示例（异域约定的正规出口）
 
 - **新示例**：`crates/foundation/forge-abi/tests/exotic_hooks.rs`（`cargo test -p forge-abi --test exotic_hooks`，3 个用例）——Swift 的 aapcs64 方言与 Go 的 amd64 内部 ABI 各一份钩子 + 规则/绑定 TOML + 断言。证明"数据表达不了的部分"有正规出口，而不是去改引擎或往谱里塞特例。

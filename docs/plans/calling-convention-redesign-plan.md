@@ -460,13 +460,32 @@ JIT 矩阵），`[abi-plan]` **一条都没有**——即既有语料里没有�
 变化的。切换后全套 130 个测试二进制绿（唯一需要改的用例是把"返回槽 fail-closed"的断言
 换成"编译入口点名缺绑定 + fail-closed"，错误反而更早、更具体）。
 
+**③ 多值返回：已落地（2026-09-29）**。"≥3 槽返回的搬运"的可表达部分做完了：
+
+- `forge_abi::Signature` 的返回位由"单个 `Option<TyView>`"改为 **`rets: Vec<TyView>`**（IR 的
+  `FunctionSignature.returns` 本来就允许多个；`sig_view` 以前只取 `first()`）；引擎对
+  `rets.len() > 1` **逐个分类、逐个占一个返回寄存器**，产出 `RetLoc::RegPair`（2 个）/
+  `RetLoc::RegGroup`（≥3 个）。
+- **这顺手修掉一处 ISA 特定的硬编码**：旧发射侧写死"第二个返回值进类内号 1"（x86 = RDX），
+  换台机器就错（riscv 的类内号 1 是 X1 = ra，返回槽其实在 X10/X11）。现在落点全部来自绑定的
+  `ret_int`/`ret_float` 池（win64 补 `["RAX","RDX"]`、`ret_float` 补 `["XMM0","XMM1"]`），
+  Return 与调用点按 `RetPlace::Pair`/`Group` **逐值按类分派**（int → `gpr_mov`、
+  fp → `fpr_mov32/64`）。
+- 调用点也一次看全：`plan_call(isa, conv, args, rets)` 收**全部**结果形状（以前只传第一个）。
+- 守卫：引擎两条（`invariants.rs::multi_value_returns_take_one_register_each` /
+  `…fail_closed_on_gaps`）、codegen 一条（`abi_target_real::two_value_return_is_plan_driven`）、
+  **JIT 端到端一条**（`test_jit_multi_value_return_is_read_back`：`callee(5) -> (6,7)`，
+  调用方算 `6*10+7 = 67`）。
+- 仍 fail-closed 的：池不够（win64 只有两个返回寄存器 ⇒ 三个独立标量明确 `PoolExhausted`）、
+  分量是**聚合**（多槽类型走单值路径）。
+
 **仍待做（A6 剩余）**：
 
-- ≥3 槽返回的搬运（引擎 `RetLoc::RegGroup` → 运行时 `RetPlace::Group` → Return/调用点按
-  成员序搬运）；它一落地，上面的缺口集就变空、`a6_gap_inventory` 会红，提醒来改本节。
+- **单个聚合要 ≥3 个寄存器**的返回（AAPCS64 的 4×f32 HFA）：要**按成员拆**到 V0..V3，
+  前提是那门"按成员赋值"的规则语言（与"HFA 寄存器不够时部分在寄存器"同一件事）；
+  今天是规划期明确 `Unsupported`（守卫 `a6_gap_inventory` 钉着这一条，做完了它会红）。
 - va_list 取用（SysV 寄存器保存区 / Win64 栈指针 / AAPCS64 结构 / riscv 保存区）；
   变参元信息寄存器（`%al`；`LEN` 以官方 psABI 定本为准）。
-- HFA/HVA 的"寄存器不够时部分在寄存器"（需要按成员赋值的规则语言）。
 - `stdcall`/`thiscall` 的 `callee_pop`（模型已有，待管线消费）；红区（SysV 128 字节）
   与尾调用约束（`tail_calls.must_match_stack`）。
 

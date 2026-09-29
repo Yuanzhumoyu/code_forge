@@ -2101,10 +2101,10 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 &reg,
                 &ctx.call_conv_name,
                 &[],
-                Some(forge_isa_runtime::machine::call_layout::ArgShape::int(
+                &[forge_isa_runtime::machine::call_layout::ArgShape::int(
                     w.max(1),
                     w.max(1),
-                )),
+                )],
             ) && let Some(forge_isa_runtime::machine::call_layout::RetPlace::Reg {
                 class,
                 index,

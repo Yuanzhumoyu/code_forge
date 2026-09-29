@@ -310,6 +310,30 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
 **无指针的 `Indirect`**（by-ref 指针本身溢出到栈）、按引用向量、参数/浮点溢出到栈这些形状
 **都有 plan**。
 
+### 多值返回（v20 A6）
+
+IR 的 `FunctionSignature.returns` 可以是**多个类型**（forge-rustc 的 ScalarPair、`(i64,i64,i64)`
+这类），引擎按 `Signature::rets` **逐个分类、逐个占一个返回寄存器**：
+
+```text
+rets = [i64, i64]        → RetLoc::RegPair { RAX, RDX }     （绑定的 ret_int 池）
+rets = [f32 × 4]         → RetLoc::RegGroup { V0..V3 }      （aapcs64 的 ret_float 池有 4 槽）
+rets = [i64, i64, i64]   → 池不够 ⇒ PoolExhausted（编译入口 fail-closed）
+rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合返回走**单值**路径）
+```
+
+两条纪律：
+
+- **落点全部来自绑定**：旧实现把"第二个返回寄存器"写死成类内号 1（x86 恰好是 RDX），
+  换台机器就错（riscv 的类内号 1 是 X1 = ra，而返回槽是 X10/X11）。现在 win64 的 `ret_int`
+  显式列出 `["RAX","RDX"]`、lp64d 是 `["X10","X11"]`。
+- **发射侧按类分派**：第 k 个返回值按自己的寄存器类走 `gpr_mov`（整数）或 `fpr_mov32/64`
+  （浮点）；调用方按 `CallLayout.ret` 的 `Pair`/`Group` 对称读回。守卫：
+  `forge-abi/tests/invariants.rs::multi_value_returns_take_one_register_each`、
+  `forge-codegen/tests/abi_target_real.rs::two_value_return_is_plan_driven`、
+  JIT 端到端 `forge-codegen::runtime::jit::tests::test_jit_multi_value_return_is_read_back`
+  （`callee(5) -> (6,7)`，调用方算 `6*10+7`）。
+
 ## 内置约定（四份 + 一个抽象基类）
 
 | 约定 | 位置计数 | 参数寄存器（内置绑定） | 返回寄存器 | 栈/shadow/红区 | 宽返回（sret） | callee-saved 机制 | 变参 |
@@ -456,10 +480,10 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 
 | 缺口 | 现状 | 关闭时机 |
 | --- | --- | --- |
-| arm64 的 HFA4 **返回**搬运（≥3 槽） | 规划成功（`RegGroup`），发射侧明确 `Unsupported` | A6 |
+| arm64 的 HFA4 **返回**搬运（单个 4×f32 聚合要 4 个浮点槽） | **规划期明确拒绝**（`Unsupported`：≥3 槽的**聚合**返回要按成员拆，属"按成员赋值"那条 A6 活） | A6（按成员赋值规则语言） |
 | SysV 的 eightbyte（INT/SSE 混合）分类 | ≤16B 聚合统一按两个整数槽；真实 SysV 会按成员拆到 XMM | A6 |
 | HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言） | A6 |
-| ≥3 槽的**返回**搬运 | 模型能表达（`Placement::RegGroup`），返回路径明确 `Unsupported` | A6 |
+| 多值返回的池不够 | **明确 `PoolExhausted`**（如 win64 只有 `RAX:RDX`，三个独立标量没有第三个返回寄存器）⇒ 编译入口 fail-closed | 由约定数据决定（不变） |
 | 变参 `LEN` 类元信息寄存器 | 模型有 `hidden.va_len_pool`，**没有内置约定启用**（psABI 现状以官方定本为准） | A6（核对后决定） |
 | riscv/arm64 的向量 by-value | 谱里没有向量寄存器组 ⇒ 走内存/byval（保守，不是错值） | A5/A6 |
 | Win64 的 XMM6-XMM15 | 谱里 `[abi.callee_saved].xmm = []` ⇒ `clobbers` 保守地把它们列为被破坏（安全方向） | A5（若要省寄存器再议） |

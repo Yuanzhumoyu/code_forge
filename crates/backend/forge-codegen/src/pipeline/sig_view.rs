@@ -127,7 +127,15 @@ pub fn signature_view(func: &Function) -> Result<Signature, IrError> {
     Ok(Signature {
         params,
         attrs,
-        ret: sig.returns.first().copied().map(|t| ty_view(&store, t)),
+        // **全部**返回类型（v20 A6 的多值返回）：IR 的 `returns: Vec<TypeId>` 就是
+        // 多值返回的来源（ScalarPair 拆出来的两个标量、`(i64,i64,i64)` 这类），
+        // 只取 `first()` 会把"第二个值在哪个寄存器"留给发射侧硬编码（旧实现就是
+        // 写死 x86 的类内号 1 = RDX，换台机器就错）。
+        rets: sig
+            .returns
+            .iter()
+            .map(|t| ty_view(&store, *t))
+            .collect::<Vec<_>>(),
         ret_attrs,
         variadic: sig.variadic,
         fixed_count: sig.params.len(),

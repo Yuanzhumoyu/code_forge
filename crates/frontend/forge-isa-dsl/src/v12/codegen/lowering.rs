@@ -407,7 +407,75 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                 ));
             }
         };
+        // **多值返回**（v20 A6）：plan 的 ret 是 `RegPair`/`RegGroup` ⇒ 第 k 个返回值移到
+        // `regs[k]`，按每个值自己的寄存器类分派（int → gpr_mov、fp → fpr_mov32/64）。
+        //
+        // 旧实现是"第一个值进默认返回槽 + **写死**第二个值进类内号 1"（x86 = RDX）——
+        // 那是 ISA 特定的猜测（riscv 的类内号 1 是 X1 = ra）。现在落点由引擎给：
+        // `lp64d` 会说 X10/X11，`win64` 由绑定的 `ret_int` 说 RAX/RDX。
+        let multi_ret_body: TokenStream = {
+            let fp_multi = if has_fpr_mov {
+                quote! {
+                    let __fidx = __pack.push_inst(if ctx.type_bits_of(&__vk).unwrap_or(64) == 32 {
+                        Inst::#fpr_mov32_vn {
+                            #fpr_mov_dest: __dst,
+                            #fpr_mov_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        }
+                    } else {
+                        Inst::#fpr_mov64_vn {
+                            #fpr_mov_dest: __dst,
+                            #fpr_mov_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        }
+                    });
+                    __pack.map_reg_field(__vk, __fidx, 1u8, false);
+                }
+            } else {
+                quote! {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 多值返回的浮点分量需要 roles = [\"fpr_mov\"]（32/64）".into(),
+                    ));
+                }
+            };
+            quote! {
+                let __ret_regs: Vec<(forge_ir::RegClass, u32)> =
+                    match ctx.call_layout.as_ref().and_then(|__cl| __cl.ret.as_ref()) {
+                        Some(crate::machine::call_layout::RetPlace::Pair { lo, hi }) => vec![*lo, *hi],
+                        Some(crate::machine::call_layout::RetPlace::Group { regs }) => regs.clone(),
+                        _ => Vec::new(),
+                    };
+                if __ret_regs.len() >= 2 {
+                    for (__k, (__class, __index)) in __ret_regs.iter().enumerate() {
+                        let __vk = match values.get(__k).copied().and_then(|x| value_to_xreg.get(x)).copied() {
+                            Some(v) => v,
+                            None => {
+                                return Err(crate::prelude::IrError::Unsupported(format!(
+                                    "v12 多值返回：布局要求 {} 个返回寄存器，但 Return 只有 {} 个值",
+                                    __ret_regs.len(),
+                                    values.len()
+                                )));
+                            }
+                        };
+                        let __dst = Reg::from_index(*__index, *__class);
+                        if __class.is_int() {
+                            let __idx = __pack.push_inst(Inst::#ret_vn {
+                                #mov_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                                #mov_dest: __dst,
+                            });
+                            __pack.map_reg_field(__vk, __idx, #mov_src_idx_lit as u8, false);
+                        } else if __class.is_fp() {
+                            #fp_multi
+                        } else {
+                            return Err(crate::prelude::IrError::Unsupported(
+                                "v12 多值返回：返回寄存器类既不是整数也不是浮点".into(),
+                            ));
+                        }
+                    }
+                    return Ok(__pack);
+                }
+            }
+        };
         quote! {
+            #multi_ret_body
             let val = values.first().copied()
                 .and_then(|x| value_to_xreg.get(x)).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
@@ -433,19 +501,6 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
 
                 });
                 __pack.map_reg_field(val, __idx, #mov_src_idx_lit as u8, false);
-                // ScalarPair 双返回（如 overflowing_add 的 (i32, bool)）：
-                // values[1] → 第二个返回寄存器（GPR64 index 1 = x86 RDX）。
-                // 被调方 Return 与调用方 ret_move 必须对称（否则 RDX 垃圾 →
-                // bool 部分读错 → checked_destructure 返回 0）。
-                if let Some(&__r2) = values.get(1)
-                    && let Some(&__v2) = value_to_xreg.get(__r2)
-                {
-                    let __idx2 = __pack.push_inst(Inst::#ret_vn {
-                        #mov_src: Reg::from_index(1, __DEFAULT_GPR_CLASS),
-                        #mov_dest: Reg::from_index(1, __DEFAULT_GPR_CLASS),
-                    });
-                    __pack.map_reg_field(__v2, __idx2, #mov_src_idx_lit as u8, false);
-                }
             }
             Ok(__pack)
         }
@@ -1304,9 +1359,10 @@ fn gen_call_lowering(
                 }
             })
             .collect();
-        let __ret_shape: Option<crate::machine::call_layout::ArgShape> =
-            results.first().copied().map(|__r| {
-                let __t = ctx.xreg_types.get(&__r).copied();
+        let __ret_shapes: Vec<crate::machine::call_layout::ArgShape> = results
+            .iter()
+            .map(|__r| {
+                let __t = ctx.xreg_types.get(__r).copied();
                 let __size = __t
                     .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(t)))
                     .unwrap_or(__SLOT_BYTES as u32)
@@ -1338,12 +1394,13 @@ fn gen_call_lowering(
                     align: __align,
                     kind: __kind,
                 }
-            });
+            })
+            .collect();
         let __cl = match crate::machine::call_plan::plan_call(
             #isa_lit,
             &ctx.call_conv_name,
             &__shapes,
-            __ret_shape,
+            &__ret_shapes,
         ) {
             Some(__cl) => __cl,
             None => {
@@ -1436,8 +1493,65 @@ fn gen_call_lowering(
             ));
         }
     };
+    // 多值返回的**浮点分量回读**（v20 A6）：无 `fpr_mov` 角色的 ISA 在生成期就选
+    // fail-closed 分支——**不能**把不存在的变体名写进 token 流（`pascal_ident("")`
+    // 会变成 `Inst::Inst`，整份生成物编译不过）。
+    let fp_ret_multi: TokenStream = if has_fpr_mov {
+        quote! {
+            let __fidx = __pack.push_inst(if ctx.type_bits_of(&__rk).unwrap_or(64) == 32 && #has_ss {
+                Inst::#fpr_mov32_vn {
+                    #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #f_src: __src,
+                }
+            } else {
+                Inst::#fpr_mov64_vn {
+                    #f_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #f_src: __src,
+                }
+            });
+            __pack.map_reg_field(__rk, __fidx, 0u8, true);
+        }
+    } else {
+        quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: 多值返回的浮点分量需要 roles = [\"fpr_mov\"]（32/64）".into(),
+            ));
+        }
+    };
     let ret_move: TokenStream = quote! {
-        if let Some(&__r) = results.first() {
+        // **多值返回**（v20 A6）：布局的 ret 是 `RegPair`/`RegGroup` ⇒ 第 k 个结果从
+        // `regs[k]` 读回，按每个结果自己的寄存器类分派。旧实现只处理"第一个 + 写死类内号 1"。
+        let __ret_regs: Vec<(forge_ir::RegClass, u32)> =
+            match __cl.ret.as_ref() {
+                Some(crate::machine::call_layout::RetPlace::Pair { lo, hi }) => vec![*lo, *hi],
+                Some(crate::machine::call_layout::RetPlace::Group { regs }) => regs.clone(),
+                _ => Vec::new(),
+            };
+        if __ret_regs.len() >= 2 {
+            for (__k, (__class, __index)) in __ret_regs.iter().enumerate() {
+                let Some(&__rk) = results.get(__k) else {
+                    return Err(crate::prelude::IrError::Unsupported(format!(
+                        "v12 call: 被调方布局给了 {} 个返回寄存器，但本次调用只有 {} 个结果",
+                        __ret_regs.len(),
+                        results.len()
+                    )));
+                };
+                let __src = Reg::from_index(*__index, *__class);
+                if __class.is_int() {
+                    let __idx = __pack.push_inst(Inst::#mov_vn {
+                        #m_src: __src,
+                        #m_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                    });
+                    __pack.map_reg_field(__rk, __idx, #m_dest_idx, true);
+                } else if __class.is_fp() {
+                    #fp_ret_multi
+                } else {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 call: 多值返回的寄存器类既不是整数也不是浮点".into(),
+                    ));
+                }
+            }
+        } else if let Some(&__r) = results.first() {
             if ctx.xreg_types.get(&__r).is_some_and(|t| t.is_float()) {
                 #fpr_ret_stmt
             } else if ctx.xreg_types.get(&__r).is_some_and(|t| {
@@ -1459,18 +1573,6 @@ fn gen_call_lowering(
                 // riscv mv dest=op0=0）——按角色泛化，防定宽方向反。
                 __pack.map_reg_field(__r, __idx, #m_dest_idx, true);
             }
-        }
-        // ScalarPair 双返回（如 overflowing_add 的 (i32, bool)）：结果
-        // results[1] 从第二个返回寄存器（GPR64 index 1 = x86 RDX）读取。
-        // 与 Return lowering 的对称 mov 配对（否则 RDX 垃圾 → bool 读错）。
-        if let Some(&__r2) = results.get(1)
-            && !ctx.xreg_types.get(&__r2).is_some_and(|t| t.is_float())
-        {
-            let __idx2 = __pack.push_inst(Inst::#mov_vn {
-                #m_src: Reg::from_index(1, __DEFAULT_GPR_CLASS),
-                #m_dest: Reg::from_index(1, __DEFAULT_GPR_CLASS),
-            });
-            __pack.map_reg_field(__r2, __idx2, #m_dest_idx, true);
         }
     };
     // Call：CALL_RIP_REL target = -(FuncRef+1)；指令缺失 → Unsupported。

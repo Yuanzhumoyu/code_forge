@@ -11,7 +11,7 @@
 //! 生成物 lowering（调用点）
 //!   │  形状 = (size, align, kind, members)
 //!   ▼
-//! plan_call(isa, conv, args, ret)          ← 本模块（注册表）
+//! plan_call(isa, conv, args, rets)         ← 本模块（注册表）
 //!   │  宿主注册的 CallPlanner（闭包捕获自己的 TargetMachine）
 //!   ▼
 //! forge-abi 引擎：Signature → AbiPlan → CallLayout
@@ -32,24 +32,19 @@ use crate::machine::call_layout::{ArgShape, CallLayout};
 ///
 /// 实现者通常是宿主里捕获了自己 `TargetMachine` 的闭包（本模块为闭包提供 blanket impl）。
 pub trait CallPlanner: Send + Sync {
-    /// `conv` = 宿主注册表里的约定名（`AbiRules::name`）；`ret` = 返回值形状（`None` = void）。
+    /// `conv` = 宿主注册表里的约定名（`AbiRules::name`）；`rets` = 返回值的形状（空 = void，
+    /// 多个 = **多值返回**，每个值各自占一个返回寄存器，见 v20 A6）。
     ///
     /// 算不出来（约定未注册 / 池缺 / 能力缺口）⇒ `None`（fail-closed，调用方不猜）。
-    fn plan_call(&self, conv: &str, args: &[ArgShape], ret: Option<ArgShape>)
-    -> Option<CallLayout>;
+    fn plan_call(&self, conv: &str, args: &[ArgShape], rets: &[ArgShape]) -> Option<CallLayout>;
 }
 
 impl<F> CallPlanner for F
 where
-    F: Fn(&str, &[ArgShape], Option<ArgShape>) -> Option<CallLayout> + Send + Sync,
+    F: Fn(&str, &[ArgShape], &[ArgShape]) -> Option<CallLayout> + Send + Sync,
 {
-    fn plan_call(
-        &self,
-        conv: &str,
-        args: &[ArgShape],
-        ret: Option<ArgShape>,
-    ) -> Option<CallLayout> {
-        self(conv, args, ret)
+    fn plan_call(&self, conv: &str, args: &[ArgShape], rets: &[ArgShape]) -> Option<CallLayout> {
+        self(conv, args, rets)
     }
 }
 
@@ -79,8 +74,8 @@ pub fn plan_call(
     isa: &str,
     conv: &str,
     args: &[ArgShape],
-    ret: Option<ArgShape>,
+    rets: &[ArgShape],
 ) -> Option<CallLayout> {
     let planner = planners().read().ok().and_then(|m| m.get(isa).cloned())?;
-    planner.plan_call(conv, args, ret)
+    planner.plan_call(conv, args, rets)
 }

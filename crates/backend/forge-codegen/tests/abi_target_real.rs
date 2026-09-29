@@ -764,7 +764,8 @@ fn shape_plan_matches_the_function_plan() {
         ];
         for (what, func, args, ret) in cases {
             let by_func = plan_for_function(&tm, &reg, "win64", &func).expect("函数 plan");
-            let by_shape = plan_for_shapes(&tm, &reg, "win64", &args, ret).expect("形状 plan");
+            let by_shape =
+                plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret)).expect("形状 plan");
             assert_eq!(
                 cmp(&by_shape),
                 cmp(&by_func),
@@ -784,8 +785,8 @@ fn shape_plan_matches_the_function_plan() {
             ArgShape::float(8),
         ];
         let by_func = plan_for_function(&tm, &reg, "lp64d", &func).expect("函数 plan");
-        let by_shape = plan_for_shapes(&tm, &reg, "lp64d", &args, Some(ArgShape::float(8)))
-            .expect("形状 plan");
+        let by_shape =
+            plan_for_shapes(&tm, &reg, "lp64d", &args, &[ArgShape::float(8)]).expect("形状 plan");
         assert_eq!(
             cmp(&by_shape),
             cmp(&by_func),
@@ -799,7 +800,7 @@ fn shape_plan_matches_the_function_plan() {
         let func = aapcs64_probe();
         let args = vec![ArgShape::int(8, 8), ArgShape::int(8, 8)];
         let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
-        let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &args, Some(ArgShape::int(8, 8)))
+        let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &args, &[ArgShape::int(8, 8)])
             .expect("形状 plan");
         assert_eq!(
             cmp(&by_shape),
@@ -835,8 +836,8 @@ fn call_planner_registry_serves_the_shape_plan() {
     ];
     let ret = Some(ArgShape::float(8));
 
-    let by_hook = plan_call("x86_64_v12", "win64", &args, ret.clone()).expect("钩子应给出布局");
-    let plan = plan_for_shapes(&tm, &reg, "win64", &args, ret.clone()).expect("直接算");
+    let by_hook = plan_call("x86_64_v12", "win64", &args, &ret_list(&ret)).expect("钩子应给出布局");
+    let plan = plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret)).expect("直接算");
     assert_eq!(
         by_hook,
         call_layout(&plan, &tm),
@@ -844,7 +845,7 @@ fn call_planner_registry_serves_the_shape_plan() {
     );
 
     // 未注册的 ISA：`None`（生成物据此 fail-closed）。
-    assert!(plan_call("nope_isa", "win64", &args, ret).is_none());
+    assert!(plan_call("nope_isa", "win64", &args, &ret_list(&ret)).is_none());
 }
 
 /// **约定级整数返回槽**（v20 A5-3）：`plan_for_shapes(空参, 整数返回)` 给出的返回寄存器就是
@@ -856,12 +857,12 @@ fn convention_level_int_return_slot() {
     use forge_isa_runtime::machine::call_layout::ArgShape;
 
     let reg = builtin::registry().expect("内置注册表");
-    let ret_shape = Some(ArgShape::int(8, 8));
+    let ret_shape = [ArgShape::int(8, 8)];
 
     // x86 win64：RAX。
     {
         let tm = TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "win64", &[], ret_shape.clone()).expect("win64 plan");
+        let p = plan_for_shapes(&tm, &reg, "win64", &[], &ret_shape).expect("win64 plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "RAX"),
             other => panic!("{other:?}"),
@@ -870,7 +871,7 @@ fn convention_level_int_return_slot() {
     // riscv lp64d：a0 = X10（**不是 index 0**——这正是谱里那份 `ret_regs` 存在的理由）。
     {
         let tm = forge_codegen::arch::riscv64_v12::TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "lp64d", &[], ret_shape.clone()).expect("lp64d plan");
+        let p = plan_for_shapes(&tm, &reg, "lp64d", &[], &ret_shape).expect("lp64d plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X10"),
             other => panic!("{other:?}"),
@@ -879,7 +880,7 @@ fn convention_level_int_return_slot() {
     // arm64 aapcs64：x0。
     {
         let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "aapcs64", &[], ret_shape).expect("aapcs64 plan");
+        let p = plan_for_shapes(&tm, &reg, "aapcs64", &[], &ret_shape).expect("aapcs64 plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X0"),
             other => panic!("{other:?}"),
@@ -1000,7 +1001,7 @@ fn a6_gap_inventory() {
     macro_rules! probe {
         ($isa:expr, $conv:expr, $tm:expr) => {
             for (name, args, ret) in &cases {
-                match plan_for_shapes($tm, &reg, $conv, args, ret.clone()) {
+                match plan_for_shapes($tm, &reg, $conv, args, &ret_list(ret)) {
                     Ok(_) => {}
                     Err(e) => gaps.push(format!("{} / {} / {}: {}", $isa, $conv, name, e)),
                 }
@@ -1023,5 +1024,51 @@ fn a6_gap_inventory() {
          多了 = 有新的规划缺口，先补引擎再谈 fail-closed",
         gaps.len(),
         gaps.join("\n")
+    );
+}
+
+/// `Option<ArgShape>` → 返回形状切片（兼容旧写法的测试辅助）。
+fn ret_list(
+    ret: &Option<forge_isa_runtime::machine::call_layout::ArgShape>,
+) -> Vec<forge_isa_runtime::machine::call_layout::ArgShape> {
+    ret.iter().cloned().collect()
+}
+/// `fn f(i64) -> (i64, i64)`：**多值返回**（v20 A6）的 IR 形态，用 `win64` 约定。
+///
+/// 这条函数形态就是 forge-rustc 给 ScalarPair 生成的 IR（两个独立返回值）。
+fn pair_return_probe() -> Function {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64, TypeId::I64])
+        .with_calling_convention(CallConvId::builtin(ConvName::Win64));
+    let mut b = FunctionBuilder::new("pair_return_probe", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "n")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0], params[0]]);
+    b.finish().expect("build")
+}
+
+/// **多值返回落点由 plan 给**（v20 A6）：两个返回值 → `RAX:RDX`（`RegPair`），
+/// 而不是旧实现的"第一个进默认返回槽 + 写死类内号 1"。
+///
+/// 写死类内号 1 在 x86 上碰巧对（RDX），在 riscv 上会落到 X1（= ra）——所以这条守卫的
+/// 价值不在 x86 本身，而在于它把"第二个返回值在哪"从**发射侧常量**变成**引擎产物**。
+#[test]
+fn two_value_return_is_plan_driven() {
+    use forge_codegen::FunctionCompiler;
+    use forge_isa_runtime::machine::call_layout::RetPlace;
+
+    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let func = pair_return_probe();
+    let (_cf, alloc) = compiler
+        .compile_with_alloc(&func)
+        .expect("两个返回值的函数必须能编");
+    let layout = alloc.call_layout.as_ref().expect("编译入口必须给布局");
+    assert_eq!(
+        layout.ret,
+        Some(RetPlace::Pair {
+            lo: (forge_ir::RegClass::GPR(8), 0),
+            hi: (forge_ir::RegClass::GPR(8), 2),
+        }),
+        "两个 i64 返回值 → RAX:RDX（由绑定的 ret_int 池给，不写死类内号）"
     );
 }

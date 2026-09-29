@@ -368,6 +368,7 @@ fn collect_ret_regs(r: &RetLoc, out: &mut Vec<u32>) {
             out.push(lo.index);
             out.push(hi.index);
         }
+        RetLoc::RegGroup { regs } => out.extend(regs.iter().map(|r| r.index)),
         RetLoc::Indirect { .. } | RetLoc::Void => {}
     }
 }
@@ -843,4 +844,79 @@ fn arg_indices_are_the_parameter_positions() {
     let idx: Vec<Option<usize>> = p.args.iter().map(|a: &ArgLoc| a.index).collect();
     assert_eq!(idx, vec![Some(0), Some(1), Some(2)]);
     assert_eq!(p.args[0].size, 8);
+}
+
+// ─────────────── 多值返回（v20 A6：`rets.len() > 1`）───────────────
+
+/// **每个返回值各自分类、各自占一个返回寄存器**——这是"多值返回"的全部语义。
+///
+/// 为什么值得单独钉：旧实现把"第二个返回寄存器"写死成**类内号 1**（x86 的 RDX），
+/// 换个 ISA 就错（riscv 的类内号 1 是 X1 = ra，返回槽是 X10/X11）。现在落点由绑定的
+/// `ret_int`/`ret_float` 池给。
+#[test]
+fn multi_value_returns_take_one_register_each() {
+    let reg = registry();
+
+    // win64：两个独立标量 → RAX:RDX（与 forge-rustc 的 ScalarPair IR 形态一致）。
+    {
+        let sig = Signature::with_rets(vec![], vec![i64_(), i64_()]);
+        match plan(&reg, "x86_64_v12", "win64", &sig).ret {
+            RetLoc::RegPair { lo, hi } => {
+                assert_eq!((lo.name.as_str(), hi.name.as_str()), ("RAX", "RDX"))
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // lp64d：同一个签名在 riscv 上落到 X10:X11（**不是 X0:X1**）。
+    {
+        let sig = Signature::with_rets(vec![], vec![i64_(), i64_()]);
+        match plan(&reg, "riscv64_v12", "lp64d", &sig).ret {
+            RetLoc::RegPair { lo, hi } => {
+                assert_eq!((lo.name.as_str(), hi.name.as_str()), ("X10", "X11"))
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // aapcs64：**四个** f32 返回 → V0..V3（`RegGroup`；AAPCS64 的浮点返回池有 4 个槽）。
+    {
+        let sig = Signature::with_rets(vec![], vec![f32_(), f32_(), f32_(), f32_()]);
+        match plan(&reg, "arm64_v12", "aapcs64", &sig).ret {
+            RetLoc::RegGroup { regs } => assert_eq!(
+                regs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+                ["V0", "V1", "V2", "V3"]
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+    // 混合类：int + float 各取自己那一池（Win64 按位置共享游标 ⇒ XMM1）。
+    {
+        let sig = Signature::with_rets(vec![], vec![i64_(), f64_()]);
+        match plan(&reg, "x86_64_v12", "win64", &sig).ret {
+            RetLoc::RegPair { lo, hi } => {
+                assert_eq!(
+                    (lo.name.as_str(), hi.name.as_str()),
+                    ("RAX", "XMM1"),
+                    "浮点返回走自己的池，且位置游标与整数共享"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// 多值返回的**边界**同样是 fail-closed（明确拒绝，不猜落点）：
+/// ① 池不够（Win64 的返回池只有 RAX:RDX，三个独立标量没有第三个返回寄存器）；
+/// ② 分量是聚合（多槽类型属于"单值聚合"路径，不在多值返回里拆）。
+#[test]
+fn multi_value_returns_fail_closed_on_gaps() {
+    let reg = registry();
+    let t = target_for("x86_64_v12").expect("合成目标");
+
+    let three = Signature::with_rets(vec![], vec![i64_(), i64_(), i64_()]);
+    let e = reg.plan(&t, "win64", &three).unwrap_err();
+    assert!(matches!(e, AbiError::PoolExhausted { .. }), "{e:?}");
+
+    let with_agg = Signature::with_rets(vec![], vec![i64_(), agg24()]);
+    let e = reg.plan(&t, "win64", &with_agg).unwrap_err();
+    assert!(matches!(e, AbiError::Unsupported { .. }), "{e:?}");
 }

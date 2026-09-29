@@ -113,6 +113,11 @@ pub enum RetLoc {
         lo: RegRef,
         hi: RegRef,
     },
+    /// **≥3 个返回寄存器**（v20 A6 的多值返回：`(i64, i64, i64)` 这类）。
+    /// 顺序即返回值的顺序（第 k 个值在 `regs[k]`）。
+    RegGroup {
+        regs: Vec<RegRef>,
+    },
     /// 通过隐藏指针写回（`sret`）；指针本身在 [`HiddenSlots::sret`]。
     Indirect {
         size: u32,
@@ -400,6 +405,13 @@ fn ret_text(r: &RetLoc) -> String {
     match r {
         RetLoc::Reg { reg } => format!("reg {}", reg.name),
         RetLoc::RegPair { lo, hi } => format!("pair {}:{}", lo.name, hi.name),
+        RetLoc::RegGroup { regs } => format!(
+            "group {}",
+            regs.iter()
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>()
+                .join(":")
+        ),
         RetLoc::Indirect { size, align } => format!("indirect size={size} align={align}"),
         RetLoc::Void => "void".into(),
     }

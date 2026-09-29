@@ -95,11 +95,27 @@ pub enum RetPlace {
         lo: (RegClass, u32),
         hi: (RegClass, u32),
     },
+    /// **≥3 个返回寄存器**（v20 A6 的多值返回）：第 k 个返回值在 `regs[k]`。
+    Group {
+        regs: Vec<(RegClass, u32)>,
+    },
     /// 通过隐藏指针写回（指针见 [`CallLayout::hidden_sret`]）。
     Indirect {
         size: u32,
         align: u16,
     },
+}
+
+impl RetPlace {
+    /// 该落点占用的寄存器（按返回值顺序；诊断/核对用）。
+    pub fn regs(&self) -> Vec<(RegClass, u32)> {
+        match self {
+            RetPlace::Reg { class, index, .. } => vec![(*class, *index)],
+            RetPlace::Pair { lo, hi } => vec![*lo, *hi],
+            RetPlace::Group { regs } => regs.clone(),
+            RetPlace::Void | RetPlace::Indirect { .. } => Vec::new(),
+        }
+    }
 }
 
 /// 一个实参/形参的完整描述。

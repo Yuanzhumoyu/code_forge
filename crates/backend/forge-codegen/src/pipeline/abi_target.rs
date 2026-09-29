@@ -212,19 +212,21 @@ pub fn shape_to_ty(s: &ArgShape) -> forge_abi::TyView {
 
 /// **按实参/返回值形状算被调方的 plan**（v20 A5-3）：调用点只有形状，没有被调方的
 /// `Function`，而落点必须由引擎给——这条入口就是那一步。名字只用于诊断（`a0`/`a1`…）。
+///
+/// `rets` 是**全部**返回值的形状（空 = void；多个 = 多值返回，v20 A6）。
 pub fn plan_for_shapes<M: TargetMachine>(
     machine: &M,
     registry: &AbiRegistry,
     conv: &str,
     args: &[ArgShape],
-    ret: Option<ArgShape>,
+    rets: &[ArgShape],
 ) -> Result<AbiPlan, AbiError> {
     let params: Vec<(String, forge_abi::TyView)> = args
         .iter()
         .enumerate()
         .map(|(i, s)| (format!("a{i}"), shape_to_ty(s)))
         .collect();
-    let sig = Signature::new(params, ret.as_ref().map(shape_to_ty));
+    let sig = Signature::with_rets(params, rets.iter().map(shape_to_ty).collect());
     plan_for_signature(machine, registry, conv, &sig)
 }
 
@@ -237,13 +239,11 @@ pub fn register_isa_call_planner<M: TargetMachine + 'static>(isa: &str, machine:
     let tm: &'static M = Box::leak(Box::new(machine));
     forge_isa_runtime::machine::call_plan::register_call_planner(
         isa,
-        std::sync::Arc::new(
-            move |conv: &str, args: &[ArgShape], ret: Option<ArgShape>| {
-                let reg = crate::pipeline::conv_registry::registry().read().ok()?;
-                let plan = plan_for_shapes(tm, &reg, conv, args, ret.clone()).ok()?;
-                Some(call_layout(&plan, tm))
-            },
-        ),
+        std::sync::Arc::new(move |conv: &str, args: &[ArgShape], rets: &[ArgShape]| {
+            let reg = crate::pipeline::conv_registry::registry().read().ok()?;
+            let plan = plan_for_shapes(tm, &reg, conv, args, rets).ok()?;
+            Some(call_layout(&plan, tm))
+        }),
     );
 }
 
@@ -342,6 +342,9 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         forge_abi::RetLoc::RegPair { lo, hi } => Some(RetPlace::Pair {
             lo: reg(lo),
             hi: reg(hi),
+        }),
+        forge_abi::RetLoc::RegGroup { regs } => Some(RetPlace::Group {
+            regs: regs.iter().map(reg).collect(),
         }),
         forge_abi::RetLoc::Indirect { size, align } => Some(RetPlace::Indirect {
             size: *size,

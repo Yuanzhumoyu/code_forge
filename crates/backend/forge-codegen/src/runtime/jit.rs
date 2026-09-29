@@ -2749,6 +2749,53 @@ mod tests {
         );
     }
 
+    /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
+    ///
+    /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的
+    /// `ret_int` 池），而不是发射侧写死的类内号 1——旧写法换到 riscv 会落到 X1（= ra）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_multi_value_return_is_read_back() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee(n: i64) -> (i64, i64)：ret(n+1, n+2)
+        let sig_c = FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64, TypeId::I64]);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c.clone());
+        let (ce, cp) = callee.create_block_with_params(&[(TypeId::I64, "n")]);
+        callee.switch_to_block(ce);
+        let one = callee.iconst(1, TypeId::I64);
+        let two = callee.iconst(2, TypeId::I64);
+        let lo = callee.iadd(cp[0], one);
+        let hi = callee.iadd(cp[0], two);
+        callee.ret(&[lo, hi]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        // main() -> i64：r = callee(5); ret(r0 * 10 + r1) → 6*10 + 7 = 67
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m.clone());
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let five = main_fn.iconst(5, TypeId::I64);
+        let r = main_fn.call(cref, &[five], &[TypeId::I64, TypeId::I64]);
+        let ten = main_fn.iconst(10, TypeId::I64);
+        let a10 = main_fn.imul(r[0], ten);
+        let sum = main_fn.iadd(a10, r[1]);
+        main_fn.ret(&[sum]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            67,
+            "两个返回值必须分别落在 RAX/RDX 并被调用方读回（v20 A6 多值返回）"
+        );
+    }
+
     /// 两层调用链写回复现（next 包装 → spec_next 形态）：callee2 写 [ptr]，
     /// callee1 调 callee2，main 两次调 callee1 同一 ptr。
     #[cfg(target_arch = "x86_64")]
