@@ -261,13 +261,13 @@ AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machin
   三份发行谱的序/尾声**逐字节不变**（`FGE_DEBUG_GEN` 对照）。
 - **收参的来源取自布局**：`__layout_ok` 入场判定 → `ArgPlace::Reg`（类 + 类内号）/
   带指针的 `Indirect`，生成器不再数"第几个 int 槽"、不再做 `sret` 偏移。
-- **一个参数落在本片未覆盖的落点**（`Pair`/`Group`/无指针的 `Indirect`）⇒
-  **整函数**退回既有（v20 A5-3 前的）`[abi]` 路径（两条路径不混用：混用会让旧路径的 `__gi`/`__fi`
-  游标与实际参数错位）。序/尾声已按约定发射（A4）；**栈参数**自 v20 A5-3 起同样只在
-  布局路径上（`ArgPlace::Stack { offset }`；谱面不再有 `[abi.stack_args]`，见
-  `docs/reference/isa-dsl.md`），没有布局时明确 `Unsupported` 而不是按旧常量收参。
-- `call_layout = None`（没有对应绑定、或规划失败）同样退回旧路径——**不是静默错值**：
-  `FORGE_TRACE_ABI=1` 会打印计划或失败原因。
+- **一个参数落在发射侧还没接的落点**（`Pair`/`Group`/无指针的 `Indirect`）⇒ **明确
+  `Unsupported`**（v20 A5-3 起 `[abi]` 已整节删除，**没有旧路径可退**；错误消息在调用点
+  或收参处直接点名那个落点）。序/尾声按约定发射（A4）；**栈参数**同样只在布局路径上
+  （`ArgPlace::Stack { offset }`；谱面不再有 `[abi.stack_args]`，见
+  `docs/reference/isa-dsl.md`）。
+- **没有 plan 不再继续编译**（v20 A6）：编译入口一次报清楚（原因 + 三步修法 + 自查命令），
+  而不是留个 note 继续编；`FORGE_TRACE_ABI=1` 打印该函数的 plan。
 - 结构守卫在 `crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs`（三份发行谱都
   发射了布局路径、排在旧路径之前；缺席模板的夹具同样发射收参）。
 
@@ -406,8 +406,8 @@ pub trait AbiTarget {
 ```
 
 没有宿主后端时（CLI、测试），能力视图由**谱本身**给出：
-`forge_isa_dsl::abi_view::inspect(谱)` 读 `[reg.*]` / `[abi]` / `[[instructions]].roles`
-建出一份 `MachineView`：
+`forge_isa_dsl::abi_view::inspect(谱)` 读 `[reg.*]` / `[machine]`（`fixed_regs`/`spill_scratch`/
+`link_reg`/`frame`）/ `[[instructions]].roles` 建出一份 `MachineView`：
 
 ```text
 GPR 区 = 地址类组的成员，号 0..n_gpr-1          （x86: RAX..R15 = 0..15）
@@ -489,11 +489,12 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 | --- | --- | --- |
 | arm64 的 HFA4 **返回**搬运（单个 4×f32 聚合要 4 个浮点槽） | **规划期明确拒绝**（`Unsupported`）。做它要"按成员拆/合"，而**今天的 IR 没有"按值放在寄存器里的聚合"这种产出者**（forge-rustc 把 ScalarPair 拆成标量、内存聚合走间接；mini_c 没有结构体；全仓非测试代码构造 `Struct` 类型 0 处）——所以**暂不做**，等出现产出者再补发射 | 待有产出者（`RetLoc::RegGroup`/`ArgPlace::Group` 已能表达落点） |
 | SysV 的 eightbyte（INT/SSE 混合）分类 | ≤16B 聚合统一按两个整数槽；真实 SysV 会按成员拆到 XMM | A6 |
-| HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言） | A6 |
+| HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言）；与上面那条同因，**暂不做** | 待有按值聚合的产出者 |
 | 多值返回的池不够 | **明确 `PoolExhausted`**（如 win64 只有 `RAX:RDX`，三个独立标量没有第三个返回寄存器）⇒ 编译入口 fail-closed | 由约定数据决定（不变） |
 | 变参 `LEN` 类元信息寄存器 | 模型有 `hidden.va_len_pool`，**没有内置约定启用**（psABI 现状以官方定本为准） | A6（核对后决定） |
 | riscv/arm64 的向量 by-value | 谱里没有向量寄存器组 ⇒ 走内存/byval（保守，不是错值） | A5/A6 |
-| Win64 的 XMM6-XMM15 | 谱里 `[abi.callee_saved].xmm = []` ⇒ `clobbers` 保守地把它们列为被破坏（安全方向） | A5（若要省寄存器再议） |
+| `callee_pop`（stdcall/thiscall 的 `ret N`） | 计划里算得出来（`AbiPlan::callee_pop_bytes`），**发射侧不消费**：本实现的传出参数区在**调用方帧内**（不是"push 上去"），被调方 `ret N` 会把调用方的 sp 抬高 N ⇒ 必须同时定"调用点契约"（调用方要知道 rsp 被抬高）才谈得上正确 | 待真有此 ABI 的宿主（且需要调用点侧契约） |
+| Win64 的 XMM6-XMM15 | 谱里 `[machine].callee_saved_gpr` 不含它们（xmm 组同样不列） ⇒ `clobbers` 保守地把它们列为被破坏（安全方向） | A5（若要省寄存器再议） |
 
 ## 加自己的约定
 

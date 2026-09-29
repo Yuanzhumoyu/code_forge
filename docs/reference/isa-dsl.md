@@ -1192,7 +1192,7 @@ v20 A5-3 把"约定数据"整节移出谱面：`[abi]` 的键**全部删除**，
 | `ret_regs` | `Return` 读 `CallLayout.ret`；`Call` 读宿主的 `LowerCtx::conv_ret_gpr` |
 | `call_clobbers` | 宿主的 `LowerCtx::conv_clobbers`（约定级、与签名无关） |
 | `arg_slot` / `frame_padding` | [`[machine]`](#machine--机器事实) 的同名键 |
-| `scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved` | [`[machine]`](#machine--机器事实) 的 `spill_scratch` / `fixed_regs` / `link_reg` / `frame` / `callee_saved_gpr` |
+| `scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved` | [`[machine]`](#machine--机器事实) 的 `[machine].spill_scratch` / `[machine].fixed_regs` / `[machine].link_reg` / `[machine].frame` / `[machine].callee_saved_gpr` |
 
 **谱侧只剩两件事**：**能力申报**（`roles`）与**机器事实**（`[machine]`）；"参数放哪、
 返回怎么回、保存谁、栈怎么排"全部由**使用者的约定数据**（`AbiRules` + `AbiBinding` →
@@ -1255,7 +1255,7 @@ epilogue_label = true       # 是否生成独立尾声标签 + return block 的 
 | --- | --- | --- |
 | 帧分配 / 释放 | `frame_alloc` / `frame_free` | `sp ∓ frame_size`（符号由 `[machine.frame].alloc_neg` 定）；`frame_size == 0` 不发 |
 | 建立 / 恢复帧指针 | `frame_set` | 序言 `fp ← sp`（定宽 ISA 带 `+ frame_size`）、尾声 `sp ← fp`（push 机制） |
-| 保存 / 恢复 callee-saved（push 机制） | `push` / `pop` | 硬件压栈（x86）；保存的是 `[abi.callee_saved].gpr` 的静态表 |
+| 保存 / 恢复 callee-saved（push 机制） | `push` / `pop` | 硬件压栈（x86）；保存哪些由**约定数据**（`AbiPlan.callee_saved`，无 plan 时退机器事实 `[machine].callee_saved_gpr`）在运行期决定 |
 | 保存 / 恢复 callee-saved（帧内机制） | `callee_save` / `callee_load` | `Reg[0]=值、Reg[1]=基址、Imm[0]=偏移`；保存的是 regalloc 实际用到的那些（`callee_saved_to_save`），ra/fp 在帧顶 `fp_push_bytes` 区 |
 | 返回 | `ret` | 尾声最后一条 |
 

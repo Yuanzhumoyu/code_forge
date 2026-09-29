@@ -266,6 +266,115 @@ fn print_schema_key_table() {
     eprintln!("SCHEMA-TABLE-END");
 }
 
+/// **已删除的键不许回来，且"去处"必须存在**（v20 A5-3 / A6）。
+///
+/// `docs/reference/isa-dsl.md` 的「`[abi]` — 已删除」章有一张「原键 → 去处」对照表。这条守卫
+/// 双向钉它：
+///
+/// ① **原键不许回到 schema**：schema 键表里不得再出现 `[abi]` 这一节（写它会报未知键）；
+/// ② **去处必须真的存在**：对照表第二列里出现的 `[machine].<key>` / `[machine.frame].<key>`
+///    都必须在 schema 键表对应的行里列着——否则文档会把读者引到一个不存在的键上
+///    （这正是"删键迁移"最容易留下的坑）。
+#[test]
+fn deleted_abi_keys_stay_deleted_and_their_destinations_exist() {
+    let docs = read_lf(&repo_root().join("docs/reference/isa-dsl.md")).expect("读 isa-dsl.md");
+
+    // ① schema 键表里不许有 `[abi]` 节（只看**节**那一列——说明列里出现
+    //    "`[abi.frame]` 已删除"这类话是正常的）。
+    let table = docs_table_region();
+    for line in table.lines().filter(|l| l.starts_with('|')) {
+        let cells: Vec<&str> = line.split('|').collect();
+        if cells.len() < 3 {
+            continue;
+        }
+        let section = cells[1].trim().trim_matches('`');
+        assert!(
+            section != "[abi]" && !section.starts_with("[abi."),
+            "schema 键表里又出现了 `{section}` 节——v20 A5-3 已把 `[abi]` 整节删除"
+        );
+    }
+
+    // ② 取「已删除」章的对照表。
+    let Some(head) = docs.find("## `[abi]` — **已删除**") else {
+        panic!("docs/reference/isa-dsl.md 缺少「`[abi]` — 已删除」章");
+    };
+    let after = &docs[head..];
+    let end = after[3..]
+        .find("\n## ")
+        .map(|i| i + 3)
+        .unwrap_or(after.len());
+    let chapter = &after[..end];
+
+    // schema 键表 → 每节的可选键集合。
+    let mut section_keys: Vec<(String, Vec<String>)> = Vec::new();
+    for line in table.lines().filter(|l| l.starts_with('|')) {
+        let cells: Vec<&str> = line.split('|').collect();
+        if cells.len() < 4 {
+            continue;
+        }
+        let section = cells[1].trim().trim_matches('`').to_string();
+        let keys: Vec<String> = cells[3]
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && !s.starts_with('†'))
+            .collect();
+        section_keys.push((section, keys));
+    }
+    let has_key = |section: &str, key: &str| -> bool {
+        section_keys
+            .iter()
+            .any(|(s, ks)| s == section && ks.iter().any(|k| k == key))
+    };
+
+    // 逐行扫对照表第二列，抓**显式**的 `[machine].x` / `[machine.frame].x` 令牌。
+    // （文档里要求这么写：去处的键要写成完整路径，否则"同名键"这种措辞无法机器核对。）
+    let mut checked = 0usize;
+    for line in chapter.lines().filter(|l| l.starts_with('|')) {
+        let cells: Vec<&str> = line.split('|').collect();
+        if cells.len() < 4 {
+            continue;
+        }
+        let dest = cells[2];
+        for key in dest_keys(dest) {
+            let (section, name) = key
+                .split_once('.')
+                .map(|(s, k)| (format!("[{s}]"), k.to_string()))
+                .expect("dest_keys 只产出 `[节].键` 形态");
+            assert!(
+                has_key(&section, &name),
+                "对照表把 `{section}.{name}` 当去处，但 schema 键表里没有这个键（改文档或改 schema）"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "对照表里一个可核对的去处都没解析到（解析到 {checked} 条）——守卫失效了；\
+         检查 docs/reference/isa-dsl.md 的去处列是否写成 `[machine].<键>` 形态"
+    );
+}
+
+/// 从「去处」列里取**显式**的 `` `[machine].key` `` / `` `[machine.frame].key` `` 令牌，
+/// 返回 `"machine.key"` / `"machine.frame.key"` 形态。
+fn dest_keys(dest: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in dest.split('`').skip(1).step_by(2) {
+        let t = part.trim();
+        let Some(rest) = t.strip_prefix('[') else {
+            continue;
+        };
+        let Some((section, key)) = rest.split_once("].") else {
+            continue;
+        };
+        if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            out.push(format!("{section}.{key}"));
+        }
+    }
+    out
+}
+
 /// 仓库根那份 `isa-dsl.schema.json` 必须与发射器**逐字相同**（编辑器补全的事实源）。
 ///
 /// 修法：`cargo run -p forge-isa -- schema --out isa-dsl.schema.json`。

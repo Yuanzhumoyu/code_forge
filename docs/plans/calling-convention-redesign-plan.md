@@ -650,6 +650,20 @@ exotic_hooks`）。它要证明的是"**数据表达不了的部分有正规出�
 数值有出处（LLVM `AArch64CallingConvention.td`；Go 内部 ABI 的 `g` 在 amd64 的 R14），
 文档入口见 `docs/reference/calling-conventions.md` 的「数据表达不了的：AbiHooks」。
 
+### A8 ✅ 文档一致性收口（2026-09-29）
+
+删键（A5-3 整节删 `[abi]`）之后最容易留下的是**文档里的死引用**：说"退回 `[abi]` 路径"、
+"谱里 `[abi.callee_saved].xmm`"这类话在键已经不存在时会把读者引到不存在的键上。这一片：
+
+- 核对三处口径（发射侧落点、`abi_view` 的能力视图来源、`[machine]` 与手写后端的缺省），
+  把仍把 `[abi]` 当**活键**的句子改掉；补齐 `callee_pop` 这一条"模型有、发射不消费"的
+  原因（本实现的传出参数区在**调用方帧内**，被调方 `ret N` 会把调用方 sp 抬高 N ⇒ 必须
+  同时定调用点契约）。
+- **新守卫** `schema_guard::deleted_abi_keys_stay_deleted_and_their_destinations_exist`：
+  ① schema 键表里不得再出现 `[abi]` 节；②「原键 → 去处」对照表的去处列必须写成显式
+  `` `[machine].<键>` ``，且这些键**真的存在于 schema 键表**——文档不许把读者引到不存在的键。
+  （为此把对照表那一行改写成显式路径；`rest_keys` 这类"猜列内容"的解析器被显式形态取代。）
+
 ## 6. 风险与对策
 
 | 风险 | 对策 |

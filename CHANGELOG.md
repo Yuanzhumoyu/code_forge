@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-09-29) — v20 A8：文档一致性收口（删键后的死引用 + 去处必须存在）
+
+- **改掉仍把 `[abi]` 当活键的句子**：`docs/reference/calling-conventions.md`（"整函数退回 `[abi]` 路径"→ 现在**没有旧路径可退**，落点没接就是明确 `Unsupported`；"`abi_view` 读 `[reg.*]`/`[abi]`"→ 改读 `[reg.*]`/`[machine]`；Win64 的 XMM 条改为 `[machine].callee_saved_gpr`）、`docs/reference/isa-dsl.md`（push 机制保存的是**约定数据**，无 plan 才退机器事实）。
+- **补齐 `callee_pop` 的"为什么没消费"**（诚实清单新增一行）：计划里算得出来（`AbiPlan::callee_pop_bytes`），但本实现的传出参数区在**调用方帧内**（不是"push 上去"），被调方 `ret N` 会把调用方 sp 抬高 N ⇒ 只改尾声必然错位，必须同时定**调用点契约**才谈得上正确；今天没有这样的 ABI 宿主。
+- **新守卫** `schema_guard::deleted_abi_keys_stay_deleted_and_their_destinations_exist`：① schema 键表里不得再出现 `[abi]` 节；②「原键 → 去处」对照表的去处列必须写成显式 `` `[machine].<键>` ``，且这些键**真的存在于 schema 键表**——文档不许把读者引到不存在的键上（为此把对照表那一行改写为显式路径）。
+- 验证：`cargo test -p forge-isa-dsl --test schema_guard` 7 绿；改动文档 markdownlint 0。
+
 ### Changed (2026-09-29) — v20 A6：接入体验收口（fail-closed 报错带修法）+「按成员赋值」评估结论
 
 - **报错带得动修法**：编译入口"规划不出调用布局"的消息改为**并列两种原因 + 三步修法 + 自查命令 + 文档路径**（`register_rules_toml`/`register_binding_toml`、`forge-isa abi check`/`abi plan`、`docs/reference/calling-conventions.md`、`FORGE_TRACE_ABI=1`）；生成物里调用点的"布局不可得"同样点名两种原因（宿主没注册 planner / 该签名规划不出来）。守卫 `conv_registry_read_path` 现在逐项断言这些关键词都在——报错不允许退化成死胡同。
