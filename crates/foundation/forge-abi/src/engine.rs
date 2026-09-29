@@ -438,13 +438,17 @@ pub fn plan_fn(
                         }
                     }
                 } else {
-                    // ≥3 槽的返回（如 AAPCS64 的 4×f32 HFA 返回）：模型能表达
-                    // （`Placement::RegGroup` 同形），但返回路径的搬运留到 A6——
-                    // **明确拒绝**，不降级、不静默只回第一个寄存器。
+                    // **单个聚合**要 ≥3 个寄存器（如 AAPCS64 的 4×f32 HFA 返回）：落点模型能
+                    // 表达（`RetLoc::RegGroup`，多值返回就是用它），但**单个聚合值**要拆成员
+                    // 才谈得上搬运——而今天的 IR 没有"按值放在寄存器里的聚合"的产出者
+                    // （见方案 A6 ⑤：前端要么拆成标量、要么走内存）。**明确拒绝**，不降级、
+                    // 不静默只回第一个寄存器。
                     return Err(AbiError::Unsupported {
                         conv: rules.name.clone(),
                         what: format!(
-                            "返回值 `{}` 需要 {n} 个连续寄存器槽（≥3 的返回搬运见 A6）",
+                            "返回值 `{}` 需要 {n} 个连续寄存器槽——单个聚合要 ≥3 槽要按成员拆\
+                             （暂无按值聚合的产出者；多个**独立**返回值请用多值签名，见 \
+                             docs/reference/calling-conventions.md）",
                             crate::plan::ty_text(ty)
                         ),
                     });

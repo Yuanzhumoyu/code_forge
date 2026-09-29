@@ -2749,6 +2749,101 @@ mod tests {
         );
     }
 
+    /// **约定是使用者的数据**（v20 的立论，端到端验一次）：临时注册一份**自定义约定**
+    /// （参数走 `R8`/`R9`，返回仍 `RAX` 好让宿主按 C 约定调用 `main`），整条链路
+    /// （引擎规划 → 收参/实参搬运 → 调用 → 返回）都必须照它走。
+    ///
+    /// 为什么这条最有价值：内置四份约定恰好都是 x86/riscv/arm64 的 C 家族，所以"某个
+    /// 寄存器被写死"这类问题在它们身上看不出来（旧实现真写过"第二个返回值 = 类内号 1"）。
+    /// 这里参数寄存器**故意**不是 C 的 `RCX`/`RDX`——写死就一定错值。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_custom_convention_drives_argument_registers() {
+        use crate::pipeline::conv_registry;
+        use forge_ir::{CallConvId, FunctionSignature, TypeId};
+
+        const CONV: &str = "custom_args_v20";
+        ensure_registered();
+        conv_registry::register_rules_toml(
+            r#"
+name = "custom_args_v20"
+parent = "c"
+position = "by_class"
+stack = { slot_bytes = 8, first_offset_slots = 0 }
+classify = [
+  { when = { kind = "scalar", size_le = 8 }, do = { direct = { pool = "int" } } },
+]
+ret_classify = [
+  { when = { kind = "scalar", size_le = 8 }, do = { direct = { pool = "ret_int" } } },
+]
+"#,
+        )
+        .expect("注册自定义规则");
+        conv_registry::register_binding_toml(
+            r#"
+isa = "x86_64_v12"
+conv = "custom_args_v20"
+[pools]
+int = ["R8", "R9"]
+ret_int = ["RAX"]
+"#,
+        )
+        .expect("注册自定义绑定");
+
+        // callee(a, b) -> a - b（前两个实参必须落 R8/R9，不是 C 的 RCX/RDX）。
+        let cc = CallConvId::named(CONV);
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64])
+                .with_calling_convention(cc.clone());
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, cp) = callee.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+        callee.switch_to_block(ce);
+        let diff = callee.isub(cp[0], cp[1]);
+        callee.ret(&[diff]);
+        let callee_fn = callee.finish().expect("callee");
+
+        // 先单独编一次，核对**落点**确实是自定义约定给的寄存器。
+        {
+            let compiler = crate::FunctionCompiler::new(x86_v12::TargetMachine::new());
+            let (_cf, alloc) = compiler
+                .compile_with_alloc(&callee_fn)
+                .expect("自定义约定下必须能编");
+            let layout = alloc.call_layout.as_ref().expect("必须有布局");
+            let regs: Vec<_> = layout.args.iter().map(|a| a.place.regs()).collect();
+            assert_eq!(
+                regs,
+                vec![
+                    vec![(forge_ir::RegClass::GPR(8), 8)],
+                    vec![(forge_ir::RegClass::GPR(8), 9)]
+                ],
+                "实参落点必须来自自定义绑定（R8/R9），不是 C 的 RCX/RDX"
+            );
+        }
+
+        let mut module = Module::new();
+        let cref = module.add_function(callee_fn);
+
+        // main() -> i64：ret callee(20, 7)（main 无参、按 RAX 返回 ⇒ 宿主可按 C 约定调用）。
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]).with_calling_convention(cc);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let a = main_fn.iconst(20, TypeId::I64);
+        let b = main_fn.iconst(7, TypeId::I64);
+        let r = main_fn.call(cref, &[a, b], &[TypeId::I64])[0];
+        main_fn.ret(&[r]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            13,
+            "自定义约定的参数寄存器必须真的被用上（写死 RCX/RDX 就会错值）"
+        );
+    }
+
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的

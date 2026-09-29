@@ -389,7 +389,12 @@ ret_int = ["RAX", "RCX", "RDX", "RBX"]
         .plan(&x86_64_v12(), "wide", &Signature::new(vec![], Some(hfa4())))
         .unwrap_err();
     assert!(matches!(err, AbiError::Unsupported { .. }), "{err:?}");
-    assert!(err.to_string().contains("A6"), "{err}");
+    // 报错要给出**下一步**：单个聚合要 ≥3 槽得按成员拆（暂无按值聚合的产出者），
+    // 而"多个独立返回值"有现成路子（多值签名）。
+    assert!(
+        err.to_string().contains("按成员拆") && err.to_string().contains("多值"),
+        "{err}"
+    );
 }
 
 /// 内置数据自身的守卫：四份内置约定都注册得上、每份都有绑定、池名都能在合成目标上解析。

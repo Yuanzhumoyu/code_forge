@@ -539,3 +539,12 @@ let plan = reg.plan(&target, "myconv", &sig)?;
 
 参考数据与"为什么这么绑"的说明在
 [`crates/foundation/forge-abi/conventions/README.md`](../../crates/foundation/forge-abi/conventions/README.md)。
+
+**端到端证据（v20 A8 起）**：`crates/backend/forge-codegen/src/runtime/jit.rs` 的
+`test_jit_custom_convention_drives_argument_registers` 在**运行期**注册一份自定义约定
+（参数走 `R8`/`R9`，返回 `RAX`），编译两个函数并 JIT 执行：`callee(20, 7)` 返回 13。
+它同时断言实参落点是 `(GPR(8), 8)`/`(GPR(8), 9)`——**故意不是** C 的 `RCX`/`RDX`。
+
+为什么这条最重要：内置四份约定恰好都是 C 家族，所以"某个寄存器被写死"在这四份身上看不出来
+（旧实现真写过"第二个返回值 = 类内号 1 = RDX"）；换成一份自定义约定，写死就一定错值。
+这就是"约定是使用者的数据、引擎不服务于个别指令集"的**可执行**证明。

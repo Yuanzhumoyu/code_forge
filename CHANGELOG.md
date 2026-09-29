@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-29) — v20 A8：自定义约定的**端到端**证据（JIT 真跑）+ 缺口报错给下一步
+
+- **新守卫 `test_jit_custom_convention_drives_argument_registers`**（`forge-codegen/src/runtime/jit.rs`）：运行期注册一份**自定义约定**（`int = ["R8","R9"]`、`ret_int = ["RAX"]`），编译 `callee(a,b) -> a-b` 与 `main() -> callee(20,7)` 并 **JIT 真执行**（得 13）；同时断言实参落点是 `(GPR(8), 8)`/`(GPR(8), 9)`——**故意不是** C 的 `RCX`/`RDX`。
+  为什么这条最有价值：内置四份约定恰好都是 C 家族，"某个寄存器被写死"在它们身上看不出来（旧实现真写过"第二个返回值 = 类内号 1 = RDX"）；换自定义约定后写死就一定错值。这是"约定是使用者的数据、引擎不服务于个别指令集"的可执行证明。
+- **缺口报错给下一步**：`AbiError::Unsupported`（单个聚合要 ≥3 个寄存器槽）的正文从"≥3 的返回搬运见 A6"改为**说清两条路**——"按成员拆（暂无按值聚合的产出者）"与"多个**独立**返回值请用多值签名"；守卫 `errors.rs::three_slot_return_is_explicitly_unsupported` 同步断言这两个关键词。
+- 文档：`docs/reference/calling-conventions.md` 的「加自己的约定」补端到端证据一段（含为什么内置四份证明不了这件事）。
+- 验证：`forge-abi` + `forge-isa-dsl` 24 个测试二进制全绿、`forge-isa --test cli_tests abi` 5 绿。
+
 ### Docs (2026-09-29) — v20 A8：文档一致性收口（删键后的死引用 + 去处必须存在）
 
 - **改掉仍把 `[abi]` 当活键的句子**：`docs/reference/calling-conventions.md`（"整函数退回 `[abi]` 路径"→ 现在**没有旧路径可退**，落点没接就是明确 `Unsupported`；"`abi_view` 读 `[reg.*]`/`[abi]`"→ 改读 `[reg.*]`/`[machine]`；Win64 的 XMM 条改为 `[machine].callee_saved_gpr`）、`docs/reference/isa-dsl.md`（push 机制保存的是**约定数据**，无 plan 才退机器事实）。
