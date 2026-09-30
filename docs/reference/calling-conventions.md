@@ -324,6 +324,43 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
   win64 六整数含栈参数、win64 混合按位置计数、lp64d 混合按类计数、aapcs64 整型）与
   `call_planner_registry_serves_the_shape_plan`（注册表路径 == 直接算；未注册 ISA ⇒ `NoPlanner`）。
 
+### 变参：调用点怎么知道被调方是变参（v20 V1）、被调方怎么取未命名实参（v20 V2）
+
+**调用点**只看得见实参形状，判不出"未命名实参在只走栈的约定里要改判到栈"——这件事只在
+**被调方的签名**里（LLVM：`declare i32 @printf(ptr, ...)` 的 `...`），而调用指令只带一个
+`FuncRef`。所以：
+
+- **模块自述一张表**：[`Module::signature_table()`](../../crates/foundation/forge-ir/src/ir/function.rs)
+  → `Vec<(bool, u32)>`，下标 = `FuncRef::index()`，值 = `(是否变参, 命名形参个数)`。
+  它读的是**每个函数自己的**类型上下文（`Function::types`）——`Module::add_function` 只做入表，
+  不把签名并进模块 store，拿 `module.types` 去查 builder 建出来的函数会全部落空。
+- **宿主侧默认写法**：`FunctionCompiler::for_module(machine, &module)`（编译"住在某个模块里的
+  函数"）——`JitCompiler::compile_module`、`forge-tests` 的矩阵/QEMU 逐函数编译路径都用它。
+  自己循环编译且模块极大时，可以取一次表用 `with_module_sigs` 共享（并行路径就这么做）。
+- **读口子**：生成物在调用点只写 `ctx.conv.variadic_of(f)`（查表 + 越界兜底收在
+  `CallConvCtx::variadic_of`），再交给 `CallRequest::variadic`。
+- **单函数编译没有这张表**（`forge-rustc` 逐函数后端 / `forge-object`）：调用点按**非变参**
+  处理——这是**已知缺口**，见 §已知缺口。
+
+**被调方**取未命名实参：`va_start`（IR op，0 操作数 → 指针）由生成器**按能力角色**发射
+（`roles = ["frame_addr"]`，x86 = `LEA_RBP_OFF`；与 `frame_set`/`frame_alloc` 同族——谱只申报
+能力，序列由生成器发，谱里**没有** `VaStart` 的 `[[lowering]]` 规则）。地址算式：
+
+```text
+未命名区起点（被调方视角、相对帧基址）
+  = max(命名栈实参的 offset + size)                      # 有命名栈参数时（offset 已含 shadow）
+  = first_arg_offset + shadow_bytes                       # 没有命名栈参数时（win64 = 16 + 32 = 48）
+```
+
+`first_arg_offset`（= `[abi.stack_args].first_offset_slots × slot`）是"**帧基址 → 调用方 sp**"
+的距离，`shadow_bytes` 是调用方在 `sp` 之上预留的 scratch 区——**两个都要加**。引擎侧的不变量
+是 `Stack.offset(k) = first_arg_offset + shadow_bytes + k×slot`：少加 shadow 会读到 shadow 区里的
+垃圾（2026-10-01 实测：`va` 落在 shadow 内，算出 1.4e15 量级的地址）。
+
+`VaKind::supports_frame_addr_va_start()` 为假（`sysv64`/`lp64d`/`aapcs64` 的寄存器保存区）
+或该约定不支持变参时，`va_start` **明确 fail-closed**（消息分别点名"变参 V3 未实现"与
+"该约定不支持变参"）——不猜、也不退化。
+
 ### 无 plan = 编译错误（v20 A6）
 
 编译入口（`CompileState::new`）对**函数本身**也算一份 plan；**算不出来就是编译错误**，
@@ -383,7 +420,9 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参：调用方发未命名实参（win64） | ✅ | `call_site_variadic_hint_decides_unnamed_argument_placement`、`test_jit_variadic_unnamed_args_go_to_stack` |
 | 变参状态上报（`abi check` 的 `ℹ 变参 …` 行 + 三种自相矛盾的硬错） | ✅ | `abi_check_reports_the_variadic_state` |
 | 变参 V2 数据面：IR `VaStart` + `CallLayout.va` 镜像 | ✅ | `call_layout_mirrors_the_variadic_shape` |
-| 变参：`%al`/`va_start`/`va_arg`（被调方，V2/V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参 V2 发射（win64）：`va_start` → `load`/`gep` 读回未命名实参 | ✅ | `test_jit_va_start_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
+| 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
+| 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |
 | 单个聚合要 ≥3 寄存器的返回 / 按成员拆 | ⬜（无产出者） | `a6_gap_inventory` |
 | `callee_pop`（stdcall） | ⬜（缺调用点契约） | 见「已知缺口」表 |
@@ -540,7 +579,8 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 | HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言）；与上面那条同因，**暂不做** | 待有按值聚合的产出者 |
 | 多值返回的池不够 | **明确 `PoolExhausted`**（如 win64 只有 `RAX:RDX`，三个独立标量没有第三个返回寄存器）⇒ 编译入口 fail-closed | 由约定数据决定（不变） |
 | 变参 `LEN` 类元信息寄存器 | 模型有 `hidden.va_len_pool`，**没有内置约定启用**（psABI 现状以官方定本为准） | A6（核对后决定） |
-| **变参整体**（`va_list` 物化、`va_arg`、调用方的 `%al` 发射） | 规划侧完整（`AbiPlan::va_area`/`hidden.va_meta`，四份内置约定的形状有黄金快照），**发射侧与前端零消费**——没有任何前端产出 `variadic` 签名 | 方案与决策点见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)（触发条件：出现需要变参的宿主或前端） |
+| **变参**：win64 栈式的**调用方 + 被调方**已通（V1/V2，2026-10-01）；**寄存器保存区**（`sysv64`/`lp64d`/`aapcs64` 的 `va_start` 物化）、`%al`/`va_meta` 写入、`va_arg` 提升未做 | 规划侧完整（`AbiPlan::va_area`/`hidden.va_meta`，四份内置约定的形状有黄金快照）；调用方按模块签名表发未命名实参，被调方 `va_start` 取帧内地址（win64 真跑）；保存区形态**明确 fail-closed**；前端仍无 `variadic` 产出 | 方案与决策点见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)（触发条件：出现需要变参的宿主或前端） |
+| 单函数编译的**变参调用点**（`forge-rustc` 逐函数后端 / `forge-object`） | 拿不到模块级签名表 ⇒ 调用点按**非变参**处理（未命名实参进寄存器）。整模块编译的入口（`JitCompiler::compile_module`、`FunctionCompiler::for_module`）没这个问题 | 需要时把模块签名表透到逐函数后端（rustc 的 `-C codegen-units` 下要额外通道） |
 | riscv/arm64 的向量 by-value | 谱里没有向量寄存器组 ⇒ 走内存/byval（保守，不是错值） | A5/A6 |
 | `callee_pop`（stdcall/thiscall 的 `ret N`） | 计划里算得出来（`AbiPlan::callee_pop_bytes`），**发射侧不消费**：本实现的传出参数区在**调用方帧内**（不是"push 上去"），被调方 `ret N` 会把调用方的 sp 抬高 N ⇒ 必须同时定"调用点契约"（调用方要知道 rsp 被抬高）才谈得上正确 | 待真有此 ABI 的宿主（且需要调用点侧契约） |
 | Win64 的 XMM6-XMM15 | 谱里 `[machine].callee_saved_gpr` 不含它们（xmm 组同样不列） ⇒ `clobbers` 保守地把它们列为被破坏（安全方向） | A5（若要省寄存器再议） |

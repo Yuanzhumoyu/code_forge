@@ -45,11 +45,19 @@ use crate::v12::model::{Bitfield, EncodingKind, Instruction, V12Model};
 /// 这些 op 在谱里**不该**有 `[[lowering]]`（V0 实测：三份发行谱一个都没有），因此
 /// "宿主有而谱里没有"不算缺口。名单与 `forge-codegen` 的 `GenLowerTerminator` 实现集
 /// 一一对应；漏一个就会变成误报，多一个会漏报——守卫
-/// `tests/lint_shipped.rs::op_gap_matches_section_10_3` 把三谱的缺口数钉成 3/42/95。
+/// `tests/lint_shipped.rs::op_gap_matches_section_10_3` 把三谱的缺口数钉成 3/42/95
+/// （`VaStart` 于 2026-09-30 进 `ops.toml`、2026-10-01 归入 [`HOST_PIPELINE_OPS`]，
+/// 因此"宿主管线"一列由 7 变 8，三谱的缺口数与覆盖数不变）。
 pub const TERMINATOR_OPS: [&str; 6] = ["Ret", "Jmp", "Br", "Switch", "Unreachable", "Invoke"];
 
 /// 宿主**直查**（不走 `[[lowering]]`）的 op：宿主里有 `Opcode::X` 的专门路径。
-pub const HOST_PIPELINE_OPS: [&str; 7] = [
+///
+/// 前 7 条是**宿主管线**（forge-codegen 自己处理，谱里也不该有规则）；`VaStart` 是
+/// **生成物直查**——生成器按能力角色发（`roles = ["frame_addr"]` → `lea`，见
+/// `v12/codegen/lowering.rs::gen_va_start_lowering`），所以谱里同样**没有**它的
+/// `[[lowering]]`（写法与 `frame_set`/`frame_alloc` 一族相同：谱只申报能力）。
+/// 两类都"不是缺口"，但成因不同，改这一列前先看清是哪种。
+pub const HOST_PIPELINE_OPS: [&str; 8] = [
     "Bitcast",
     "Call",
     "CallIndirect",
@@ -57,6 +65,7 @@ pub const HOST_PIPELINE_OPS: [&str; 7] = [
     "InsertValue",
     "GetElementPtr",
     "LandingPad",
+    "VaStart",
 ];
 
 /// lint 档位（v19 V4c）：两项可选输入。

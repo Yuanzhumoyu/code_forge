@@ -66,10 +66,12 @@ fn the_guard_can_fail() {
 fn op_gap_matches_section_10_3() {
     let host_ops = host_ops();
     // (ISA, 覆盖, 终结, 宿主管线, 真缺口数)
+    // 宿主管线 7 → 8（2026-10-01）：`VaStart` 由生成器按能力角色发（谱里没有 `[[lowering]]`），
+    // 归入 `HOST_PIPELINE_OPS`；覆盖数与三谱的真缺口数因此不变。
     for (isa, want) in [
-        ("x86_v12.toml", (100usize, 6usize, 7usize, 3usize)),
-        ("riscv64_v12.toml", (61, 6, 7, 42)),
-        ("arm64_v12.toml", (8, 6, 7, 95)),
+        ("x86_v12.toml", (100usize, 6usize, 8usize, 3usize)),
+        ("riscv64_v12.toml", (61, 6, 8, 42)),
+        ("arm64_v12.toml", (8, 6, 8, 95)),
     ] {
         let cov = coverage(isa, &host_ops);
         assert_eq!(

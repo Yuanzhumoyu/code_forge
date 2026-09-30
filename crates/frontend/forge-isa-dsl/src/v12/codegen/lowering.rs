@@ -60,6 +60,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // 返回值移动）——动态参数数/类型分派无法用静态模板表达；无 TOML 规则。
     arms.push(gen_call_lowering("Call", infos, model)?);
     arms.push(gen_call_lowering("CallIndirect", infos, model)?);
+    // VaStart（变参 V2）：取"未命名实参区"的地址——**落点是约定数据**（`CallLayout.va`），
+    // 静态模板表达不了，同样走专用 lowering。
+    arms.push(gen_va_start_lowering(infos, model)?);
     // 按 op 分组，组内按裁决序（priority 降 / 谓词叶子数降 / 声明序升）——
     // 见 `V12Model::lowering_by_op`，与 validate 的死规则判定同读一份顺序。
     let by_op = model.lowering_by_op();
@@ -845,6 +848,105 @@ struct PatternEmit {
     guard_leaves: u8,
     name_lit: syn::LitStr,
     rewritten: Vec<String>,
+}
+
+/// **`VaStart` 的专用 lowering**（v20 变参 V2）：取"未命名实参区"的地址。
+///
+/// 这是**约定相关**的取值，静态模板表达不了，所以在生成期按角色取"帧地址"指令
+/// （`roles = ["frame_addr"]`，x86 = `LEA_R64_SIB`），运行时按 `CallLayout.va` 判路：
+///
+/// | `va.kind` | 发射 |
+/// | --- | --- |
+/// | `Win64Stack`（`supports_frame_addr_va_start()`） | `lea dst, [frame_base + 未命名区起点]` |
+/// | 其余形态（寄存器保存区） | 明确 `Unsupported`（点名"变参 V3 未实现"） |
+/// | `None`（该约定不支持变参） | 明确 `Unsupported` |
+///
+/// **未命名区起点**（被调方视角、相对帧基址）：
+///
+/// - 有命名栈参数 ⇒ 命名实参里最后一个栈槽之后（`ArgPlace::Stack{offset,size}` 的最大结束处；
+///   该 `offset` **已含 shadow**，见 `forge_abi::engine::stack_place`）；
+/// - 没有命名栈参数 ⇒ `first_arg_offset + shadow_bytes`——**两个都要加**。引擎侧的不变量是
+///   `Stack.offset(k) = first_arg_offset + shadow_bytes + k×slot`：`first_arg_offset`
+///   （= `[abi.stack_args].first_offset_slots × slot`）是"帧基址 → 调用方 sp"的距离
+///   （win64 = 16，即返回地址 + 被调方保存的帧指针），而调用方把第 0 个栈槽写在
+///   `sp + shadow_bytes` 处（win64 = 32）⇒ 被调方要读 `rbp + 48`。
+///   少加 shadow 会读到 shadow 区里的垃圾（本函数落地时实测到的正是这个）。
+fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, String> {
+    const OP: &str = "VaStart";
+    let op_ident = format_ident!("{OP}");
+    let Some(info) = inst_by_role(infos, Role::FrameAddr) else {
+        // 本 ISA 没有"帧地址"能力：整条 arm 明确 Unsupported（不引用不存在的指令）。
+        return Ok(quote! {
+            crate::prelude::Opcode::#op_ident { .. } => {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 va_start: 本 ISA 未申报 roles = [\"frame_addr\"]（取帧内地址的指令）".into(),
+                ));
+            }
+        });
+    };
+    let vn = crate::v12::codegen::pascal_ident(&info.inst.name);
+    let (reg, mem, reg_idx) = reg_mem_fids(info);
+    let (Some(reg_fid), Some(mem_fid)) = (reg, mem) else {
+        return Err(format!(
+            "[{}] 作为 roles = [\"frame_addr\"] 必须是 Reg+Mem 形状",
+            info.inst.name
+        ));
+    };
+    let __frame_base = frame_base_toks(model);
+    Ok(quote! {
+        crate::prelude::Opcode::#op_ident { .. } => {
+            let mut __pack = crate::prelude::InstPacket::new();
+            let __cl = match ctx.conv.layout() {
+                Some(__cl) => __cl,
+                None => {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 va_start: 取未命名实参区需要本函数的调用布局（plan）".into(),
+                    ));
+                }
+            };
+            let __va = match __cl.va.as_ref() {
+                Some(__va) => __va,
+                None => {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 va_start: 该约定不支持变参（`va_list` 未声明）".into(),
+                    ));
+                }
+            };
+            if !__va.kind.supports_frame_addr_va_start() {
+                return Err(crate::prelude::IrError::Unsupported(format!(
+                    "v12 va_start: 约定 `{}` 的 va_list 需要寄存器保存区（变参 V3 未实现）",
+                    __va.kind.name()
+                )));
+            }
+            // 未命名实参区起点：命名实参里最后一个栈槽之后（该 offset 已含 shadow）；
+            // 没有命名栈参数 ⇒ first_arg_offset + shadow_bytes（两者都要，见函数文档）。
+            let __off: i64 = __cl
+                .args
+                .iter()
+                .filter_map(|__a| match __a.place {
+                    crate::machine::call_layout::ArgPlace::Stack { offset, size, .. } => {
+                        Some(offset as i64 + size as i64)
+                    }
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(__cl.first_arg_offset as i64 + __cl.shadow_bytes as i64);
+            let __r = match results.first().copied() {
+                Some(__r) => __r,
+                None => {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 va_start: 缺结果值（未命名实参区地址）".into(),
+                    ));
+                }
+            };
+            let __idx = __pack.push_inst(Inst::#vn {
+                #reg_fid: Reg::from_index(0, __ADDR_CLASS),
+                #mem_fid: MemRef { base: #__frame_base, disp: __off, index: None, scale: 1 },
+            });
+            __pack.map_reg_field(__r, __idx, #reg_idx, true);
+            Ok(__pack)
+        }
+    })
 }
 
 /// 帧相对内存的基址寄存器（`[machine.frame].fp` 的 `Reg::NAME`；x86 = `Reg::RBP`）。

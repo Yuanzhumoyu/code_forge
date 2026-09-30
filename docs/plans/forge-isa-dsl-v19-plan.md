@@ -362,11 +362,15 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）。
   `fields` 由 4/5 改成 0/1（bit24 交给 `op8` 常量）。证据：`cargo test -p forge-codegen --lib`
   仍 **1264 passed**（含 89 条 arm64 向量）。
 - `LINT-OP-GAP` + 覆盖率口径（`lint --ops <宿主 op 表.toml>`）：口径 = §10.3 的三类分开，
-  **实测与 §10.3 逐数字一致**（x86 `100/6/7/3`、riscv64 `61/6/7/42`、arm64 `8/6/7/95`，
+  **实测与 §10.3 逐数字一致**（x86 `100/6/8/3`、riscv64 `61/6/8/42`、arm64 `8/6/8/95`，
   x86 的三条真缺口 = `AddrSpaceCast`/`Resume`/`VaArg`）。宿主 op 表是**宿主自己的数据**
   （`crates/foundation/forge-ir/ops.toml`，116 条 `[[op]]`），DSL 侧不留第二份会漂移的清单；
   `host_ops_from_toml` 只读 `name`。`--ops` 下**只把真缺口报成结论**，另打印一行覆盖率。
   守卫 `tests/lint_shipped.rs::op_gap_matches_section_10_3`。
+  **2026-10-01 更新**：宿主管线一列由 7 变 8——`VaStart`（变参 V2 的被调方取值 op，2026-09-30
+  进 `ops.toml`）与 `Bitcast`/`Call`/… 同属"谱里没有 `[[lowering]]` 但不是缺口"，只是成因不同：
+  它由**生成器按能力角色**发（`roles = ["frame_addr"]`），不是宿主管线直查。三谱的覆盖数与
+  真缺口数**不变**（`VaStart` 原先落在"真缺口"里，现在换个桶）。
 - `LINT-REF-UNUSED`（**opt-in** `lint --refs`）：`ref` 声明了却没有**任何**
   lowering/pattern/emit/pseudo/spill 模板行首引用它（`validate::inst_head_ref` 与校验同一取法，
   含 `@名字` 形态）。**默认关**：实测三谱 28 条（arm64 27 条 = 该谱只有 8 条 lowering，这些
@@ -585,9 +589,9 @@ npx markdownlint-cli2 <改动文档>
 
 | ISA | 谱 `[[lowering]]`/`[[pattern]]` 覆盖 | 终结指令（生成的 `lower_terminator` 按 `TermKind` 分派） | 宿主管线处理 | 真缺口 |
 | --- | ---: | ---: | ---: | ---: |
-| x86 | 100 | 6 | 7 | **3**（`AddrSpaceCast` `Resume` `VaArg`） |
-| riscv64 | 61 | 6 | 7 | **42**（浮点/向量/指针转换一整套） |
-| arm64 | 8 | 6 | 7 | **95**（几乎全部整数/浮点/内存 op） |
+| x86 | 100 | 6 | 8 | **3**（`AddrSpaceCast` `Resume` `VaArg`） |
+| riscv64 | 61 | 6 | 8 | **42**（浮点/向量/指针转换一整套） |
+| arm64 | 8 | 6 | 8 | **95**（几乎全部整数/浮点/内存 op） |
 
 **V0 的关键发现（纠正了"全体都缺 16 个 op"的粗口径）**：
 
@@ -604,8 +608,9 @@ npx markdownlint-cli2 <改动文档>
 
 > **本表已机读化（2026-09-24，V4c）**：`forge-isa lint --ops crates/foundation/forge-ir/ops.toml
 > <谱>` 的覆盖率口径就是上面四列，守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs::
-> op_gap_matches_section_10_3` 把 `100/6/7/3`、`61/6/7/42`、`8/6/7/95` 钉成快照——
+> op_gap_matches_section_10_3` 把 `100/6/8/3`、`61/6/8/42`、`8/6/8/95` 钉成快照——
 > 改宿主 op 表或补谱侧 lowering 都会让这个守卫红，必须人工复核后同步本表。
+> （宿主管线 7 → 8 的经过见上面 `LINT-OP-GAP` 那条的 2026-10-01 更新。）
 
 ### 10.4 生成物的宿主依赖面（V1 的迁移清单）
 

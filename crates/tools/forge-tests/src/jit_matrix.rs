@@ -484,7 +484,7 @@ fn run_module<M: TargetMachine + Clone>(
             .map(|i| {
                 let fr = FuncRef::new(i as u32);
                 let func = module.get_function(fr);
-                let compiled = FunctionCompiler::new((r.machine)())
+                let compiled = FunctionCompiler::for_module((r.machine)(), &module)
                     .compile_raw(func)
                     .map_err(|e| format!("{name}: compile fn{}: {e:?}", i))?;
                 Ok((func.name.as_str().to_string(), compiled))

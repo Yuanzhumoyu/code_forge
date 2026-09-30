@@ -1313,6 +1313,29 @@ impl Module {
         self.functions.iter_mut()
     }
 
+    /// **模块自述的调用形参表**：`FuncRef::index()` → `(是否变参, 命名形参个数)`。
+    ///
+    /// 调用点的落点规划必须知道"被调方是不是变参"——这一事实只存在于被调方的
+    /// **签名**里（LLVM：`declare i32 @printf(ptr, ...)` 的 `...`），而调用指令只带一个
+    /// `FuncRef`。所以**编译整个模块的宿主**（JIT / 单测）从模块本身取这张表交给编译器
+    /// （`FunctionCompiler::with_module_sigs`），而不是让调用点去猜或让发射侧写死。
+    ///
+    /// 表**按 `FuncRef::index()` 对齐**（第 i 项 = `funcs[i]` 的签名事实）；签名句柄
+    /// 越界（坏 IR）时退化为 `(false, 0)`（= 按非变参处理，与不装表同行为）。
+    ///
+    /// 注意**读的是每个函数自己的类型上下文**（[`Function::types`]）：`signature` 是
+    /// `SigRef`，它的下标属于持有它的那份 `TypeStore`——`Module::add_function` 只做入表，
+    /// 不把签名并进模块 store，所以拿 `self.types` 去查 builder 建出来的函数会全部落空。
+    pub fn signature_table(&self) -> Vec<(bool, u32)> {
+        self.functions
+            .iter()
+            .map(|f| match f.types.borrow().signature_opt(f.signature) {
+                Some(s) => (s.variadic, s.params.len() as u32),
+                None => (false, 0),
+            })
+            .collect()
+    }
+
     // ============================================================
     // 全局变量
     // ============================================================
@@ -1460,6 +1483,53 @@ mod tests {
         let fr = module.add_function(func);
         assert_eq!(fr, FuncRef(0));
         assert_eq!(module.function_count(), 1);
+    }
+
+    /// **模块自述的调用形参表**：下标 = `FuncRef::index()`，值 = `(是否变参, 命名形参个数)`。
+    /// 调用点靠它知道"被调方是不是变参"（变参 D6）；表必须与函数表同长同序。
+    #[test]
+    fn test_signature_table_mirrors_function_order() {
+        use crate::ir::builder::FunctionBuilder;
+        use crate::ir::types::FunctionSignature;
+
+        let mut module = Module::new();
+        // ① 普通函数：一个命名形参。
+        let mut fb = FunctionBuilder::new(
+            "plain",
+            module.types.clone(),
+            FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]),
+        );
+        let (e, _p) = fb.create_block_with_params(&[(TypeId::I64, "x")]);
+        fb.switch_to_block(e);
+        let z = fb.iconst(0, TypeId::I64);
+        fb.ret(&[z]);
+        module.add_function(fb.finish().expect("plain"));
+
+        // ② 变参函数：一个命名形参 + `...`。
+        let mut fb = FunctionBuilder::new(
+            "printf_like",
+            module.types.clone(),
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true),
+        );
+        let (e, _p) = fb.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        fb.switch_to_block(e);
+        let z = fb.iconst(0, TypeId::I64);
+        fb.ret(&[z]);
+        module.add_function(fb.finish().expect("variadic"));
+
+        // ③ void：零形参。
+        let mut fb =
+            FunctionBuilder::new("nothing", module.types.clone(), FunctionSignature::void());
+        let (e, _p) = fb.create_block_with_params(&[]);
+        fb.switch_to_block(e);
+        fb.ret(&[]);
+        module.add_function(fb.finish().expect("void"));
+
+        assert_eq!(
+            module.signature_table(),
+            vec![(false, 1), (true, 1), (false, 0)],
+            "表按 FuncRef 序对齐：(是否变参, 命名形参个数)"
+        );
     }
 
     #[test]

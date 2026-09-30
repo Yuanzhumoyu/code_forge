@@ -11,6 +11,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参 V2 发射：被调方用 `va_start` 读回未命名实参（win64 端到端）
+
+上一片只铺了数据面（IR 有 `VaStart`、`CallLayout.va` 有形态，但**没有任何发射路径**）。这一片把
+被调方这条腿接通，并顺手补上它暴露出来的一个真缺口：
+
+- **发射：`VaStart` 由生成器按能力角色发**（`lowering.rs::gen_va_start_lowering`）——`roles = ["frame_addr"]`
+  （x86 = `LEA_RBP_OFF`）发一条 `lea dst, [fp + 未命名区起点]`，其余（`load`/`gep`/算术）全走
+  既有规则。与 `frame_set`/`frame_alloc`/`callee_save` 同族：**谱只申报能力，序列由生成器发**
+  （`isa/x86_v12.toml` 里**没有也不该有** `VaStart` 的 `[[lowering]]` 规则）。寄存器保存区形态
+  （`sysv64`/`lp64d`/`aapcs64`）与该约定不支持变参时**明确 fail-closed**，消息分别点名 V3 与
+  "`va_list` 未声明"。
+- **新 op 的落点是"未命名区起点"**：`max(命名栈实参 offset + size)`；没有命名栈参数时是
+  **`first_arg_offset + shadow_bytes`**（win64 = 16 + 32 = 48）——**两个都要加**。引擎侧不变量是
+  `Stack.offset(k) = first_arg_offset + shadow_bytes + k×slot`：`first_arg_offset` 是"帧基址 → 调用方
+  sp"的距离，而调用方把第 0 个栈槽写在 `sp + shadow_bytes` 处。只取 `first_arg_offset` 会读到
+  shadow 区里的垃圾（实测算出 1.4e15 量级的地址值）。
+- **修掉一个真缺口：`JitCompiler::compile_module` 从未装模块签名表**。`with_module_sigs` 的唯一
+  调用者是 V1 的测试本身，**整模块编译的宿主全都没接** ⇒ 变参调用点按非变参发（三个实参全进
+  RCX/RDX/R8）、被调方 `va_start` 读到 shadow 区。修法是**让模块自述这张表**，而不是在每个宿主里
+  再抄一份：`forge_ir::Module::signature_table()`（下标 = `FuncRef::index()`；读**每个函数自己的**
+  类型上下文——`Module::add_function` 只做入表，不把签名并进模块 store，读 `module.types` 会全部
+  落空）+ `FunctionCompiler::for_module(machine, &module)`（宿主侧默认写法）。
+  `JitCompiler::compile_module`（串行 + 并行两条路径共用一份表）与 `forge-tests` 的矩阵/QEMU
+  逐函数编译路径都改用它。
+- **验收（真跑，不是断言落点）**：`jit.rs::test_jit_va_start_reads_unnamed_stack_args`——
+  变参 `callee(fmt)` 用 `va_start` → `load` → `gep` → `load` 读两个未命名实参算 `a*10+b`，
+  调用方 `main` 传 `(0, 4, 7)`，**返回值 = 47**。
+- 连带：`forge-ir` 新增单测 `signature_table_mirrors_function_order`（普通/变参/void 三个函数
+  的对齐与取值）。
+- **仍缺（诚实状态）**：寄存器保存区（V3）、`%al`/`va_meta` 写入、`va_arg` 与提升规则（V4）、
+  以及**任何前端产出 `variadic` 签名**；单函数编译的宿主（forge-rustc 逐函数后端）拿不到签名表，
+  变参调用点按非变参处理——两条都记进 `docs/reference/calling-conventions.md` 的已知缺口表。
+- 验证：`forge-ir --lib`（281）、`forge-codegen --lib --all-features`（1352）、`forge-tests --lib`（43）
+  全绿；`clippy -D warnings` 0、`cargo fmt --check` 0；markdownlint 0。
+
+### Fixed (2026-10-01) — 上一片留下的红门禁：`VaStart` 没进 lint 的能力缺口口径
+
+`cargo test -p forge-isa-dsl --test lint_shipped` 在 HEAD 上就是红的——`f57979e` 把 `VaStart`
+加进宿主 op 表（`forge-ir/ops.toml`）时没同步"能力缺口口径"快照，
+`op_gap_matches_section_10_3` 于是把三谱的**真缺口**各多算一条（x86 3 → 4，列出的第 4 条正是
+`VaStart`）。上一片的 CHANGELOG 验证清单里没列 `forge-isa-dsl`，所以漏掉了。
+
+- **修法不是改快照数字，而是归对桶**：`VaStart` 与 `Bitcast`/`Call`/`CallIndirect`/`GetElementPtr`
+  等一样属于"谱里**没有** `[[lowering]]`、但**不是缺口**"——只是成因不同：它由**生成器按能力
+  角色**发（`roles = ["frame_addr"]` → `lea`，与 `frame_set`/`frame_alloc` 一族同写法）。
+  因此 `lint::HOST_PIPELINE_OPS` 由 7 条变 8 条（并写明两类成因的差别），三谱的**覆盖数与真
+  缺口数不变**（`100/6/8/3`、`61/6/8/42`、`8/6/8/95`）。
+- 同步位置：`crates/frontend/forge-isa-dsl/tests/lint_shipped.rs` 的快照、
+  `docs/plans/forge-isa-dsl-v19-plan.md`（§10.3 表 + §10.4 上方的机读化说明）、`CLAUDE.md` 的
+  口径行。历史 CHANGELOG 条目（记 7 条的那段）**不改**——它记录的是当时的实测。
+- 教训（写给下一片）：**新增宿主 op 必须跑一次 `forge-isa lint <谱> --ops …`**，
+  `lint_shipped` 那条守卫就是为这件事存在的。
+
 ### Added (2026-09-30) — 变参 V2 数据面：IR 新 op `VaStart` + `CallLayout.va` 镜像
 
 变参被调方要能"读到未命名实参"，先得有两样东西：**IR 里表达"取未命名实参区的地址"**，以及

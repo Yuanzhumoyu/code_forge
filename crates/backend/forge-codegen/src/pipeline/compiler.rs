@@ -1708,9 +1708,22 @@ impl<M: TargetMachine> FunctionCompiler<M> {
     /// 装上**模块级签名表**（变参 D6）：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
     ///
     /// 只有编译**整个模块**的入口（JIT）有这份表；单函数入口不装 ⇒ 调用点按非变参处理。
+    /// 表由 IR 模块自己给出（[`forge_ir::Module::signature_table`]）——`JitCompiler::compile_module`
+    /// 就取它，别在宿主侧另抄一份。
     pub fn with_module_sigs(mut self, sigs: Vec<(bool, u32)>) -> Self {
         self.module_sigs = Some(sigs);
         self
+    }
+
+    /// **编译"住在某个模块里的函数"**——从模块自己取签名表装上（变参 D6）。
+    ///
+    /// 这是宿主侧的**默认写法**：只要函数住在某个模块里，就把模块一起传进来，
+    /// 别让调用点去猜被调方是不是变参。逐函数编译整个模块的宿主按本函数构造即可
+    /// （[`JitCompiler::compile_module`](crate::jit::JitCompiler::compile_module) 就是这么做的）；
+    /// 表按次重建（O(函数数)），模块极大又自己循环编译时可改用
+    /// [`Self::with_module_sigs`] 传一份共享表。
+    pub fn for_module(machine: M, module: &forge_ir::Module) -> Self {
+        Self::new(machine).with_module_sigs(module.signature_table())
     }
 
     /// 启用 IR 级优化（compile/compile_with_alloc 前跑对应 O 级别管线）。

@@ -651,10 +651,12 @@ mod tests {
             .map(|i| {
                 let fr = FuncRef::new(i as u32);
                 let func = module.get_function(fr);
-                let cf =
-                    FunctionCompiler::new(code_forge::backend::riscv64_v12::TargetMachine::new())
-                        .compile_raw(func)
-                        .expect("compile fn");
+                let cf = FunctionCompiler::for_module(
+                    code_forge::backend::riscv64_v12::TargetMachine::new(),
+                    &module,
+                )
+                .compile_raw(func)
+                .expect("compile fn");
                 (func.name.as_str().to_string(), cf)
             })
             .collect();

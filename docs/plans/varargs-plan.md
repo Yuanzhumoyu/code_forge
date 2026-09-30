@@ -1,12 +1,13 @@
 # 变参（varargs）方案 [progress]
 
-> 状态：**部分落地**（2026-09-30）。已落地：**D6 + V1 的调用方一侧**——调用点通过宿主的
-> **模块级签名表**知道被调方是变参、命名几个，从而把**未命名实参**按约定发到栈上
->（`CallPlanner::plan_call` 多一位 `variadic`；守卫见 §5 的 V1）。仍缺：`%al`/`va_meta` 的
-> 写入、被调方 `va_area` 物化、`va_arg`，以及**任何前端产出变参签名**。
+> 状态：**win64 栈式变参已端到端跑通**（2026-10-01）。已落地：**D6 + V0/V1 + V2（win64）**——
+> 调用方按被调方语义把未命名实参发到栈上，被调方用 `va_start` 取到那段地址、用普通
+> `load`/`gep` 读回（JIT 实跑 `4*10+7 = 47`）。仍缺：`%al`/`va_meta` 的写入、
+> **寄存器保存区**（sysv64/lp64d/aapcs64 的 V3，这类约定点 `va_start` 会明确 fail-closed）、
+> `va_arg`（V4），以及**任何前端产出变参签名**。
 > 相关背景：`docs/reference/calling-conventions.md`、`docs/plans/calling-convention-redesign-plan.md` A6。
 
-## 1. 现状：**规划（plan）已经能做，发射与前端是空的**
+## 1. 现状：**规划（plan）与调用方/被调方发射都通了，寄存器保存区与前端还是空的**
 
 | 层 | 现状 | 证据（按符号名，行号随迭代漂移） |
 | --- | --- | --- |
@@ -14,12 +15,13 @@
 | 引擎 | 变参签名能规划：**未命名实参**按 `variadic_stack_only` 决定"只走栈"还是"继续用寄存器"；产出 `AbiPlan::va_area`（kind/size/align/stack_only）与 `hidden.va_meta`/`va_len` | `forge-abi/src/engine.rs`（`unnamed` 分支、`va_area` 构造） |
 | 黄金快照 | 四份内置约定 × 变参语料已钉住（见 §2 表） | `forge-abi/tests/golden/*.plan.txt` 的 `## va_*` 段 |
 | CLI | `forge-isa abi plan <谱> --conv <名> --sig "…" --variadic <命名数>` 能打印变参计划 | `forge-isa/src/abi.rs` |
-| **发射（调用方）** | **已落地一部分**（V1）：未命名实参按被调方的变参语义发（win64 走栈），由 `LowerCtx::module_sigs` 提供的"被调方是变参/命名几个"驱动 | `jit.rs::test_jit_variadic_unnamed_args_go_to_stack`、`abi_target_real::call_site_variadic_hint_decides_unnamed_argument_placement` |
-| **发射（`va_meta`/`va_area`）** | **零消费**：`hidden.va_meta` / `hidden.va_len` / `va_area` 在 `crates/…/src` 里没有任何读者 | 全仓 grep：命中只在引擎、测试与黄金文件 |
+| **发射（调用方）** | **已落地**（V1）：未命名实参按被调方的变参语义发（win64 走栈），由 `LowerCtx::module_sigs` 提供的"被调方是变参/命名几个"驱动；**整模块编译的宿主由 `FunctionCompiler::for_module` 自动装表**（接线缺口见 §5 V1） | `jit.rs::test_jit_variadic_unnamed_args_go_to_stack`、`abi_target_real::call_site_variadic_hint_decides_unnamed_argument_placement` |
+| **发射（被调方）** | **win64 已落地**（V2）：`va_start` 取未命名实参区地址（`LeaRbpOff rbp+48`），后续 `load`/`gep` 走既有路径；**寄存器保存区形态明确 fail-closed**（消息点名 V3） | `jit.rs::test_jit_va_start_reads_unnamed_stack_args`、`lowering.rs::gen_va_start_lowering` |
+| **发射（`va_meta`/`va_len`）** | **零消费**：`hidden.va_meta` / `hidden.va_len` 在 `crates/…/src` 里没有任何读者 | 全仓 grep：命中只在引擎、测试与黄金文件 |
 | **前端** | **零产出**：`FunctionSignature::variadic` 在生产代码里没有设置者（测试与二进制格式往返测试除外） | `forge-rustc` / `mini_c` 里没有 `variadic` |
 | IR | 签名能表达 `variadic`（二进制格式也往返） | `forge-ir/src/ir/types.rs`、`forge-ir/src/binary/types.rs` |
 
-一句话：**"计划"这一半是完整的，"发射 + 前端"这一半完全没有。**
+一句话：**调用方与 win64 被调方两条发射路径都通了；"寄存器保存区 + 提升 + `va_arg`"与前端产出还没做。**
 
 ## 2. 四份内置约定的 `va_list` 形态（本仓库内置数据）
 
@@ -90,25 +92,42 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
 
 ## 5. 建议的分期（每期独立可验证）
 
-- **V0 ✅（D6 + D7）**：调用点通过 `LowerCtx::module_sigs`（JIT 在 `compile_module` 里按
-  `FuncRef` 填 `(variadic, 命名个数)`）知道被调方是变参，`CallPlanner::plan_call` /
-  `abi_target::plan_for_shapes` 多一位 `variadic: Option<(bool, u32)>`，引擎据此按
-  `variadic_stack_only` 改判未命名实参。IR **未改动**（LLVM 形态本来就够用）。
-- **V1 ✅（部分，win64）**：调用方把未命名实参按被调方语义发出（win64 走栈；传出区随
-  `__cl` 自动增长——`max_stack_arg_bytes` 是按**调用点布局**算的）。**验收口径**：因为被调方
-  还读不出多余实参，验收是**落点与帧尺寸**（守卫 + JIT 各一条，见上），而不是"算出来的值"。
-  仍缺：`va_meta`（SysV 的 `%al`）的写入。
-- **V2 🚧（被调方，win64：数据面已落地，发射待做）**：2026-09-30 落地了两半——
+- **V0 ✅（D6 + D7）**：调用点通过 `LowerCtx::module_sigs`（`FuncRef` → `(variadic, 命名个数)`）
+  知道被调方是变参，`CallPlanner::plan_call` / `abi_target::plan_for_shapes` 多一位
+  `variadic: Option<(bool, u32)>`，引擎据此按 `variadic_stack_only` 改判未命名实参。
+  IR **未改动**（LLVM 形态本来就够用）。
+- **V1 ✅（win64）**：调用方把未命名实参按被调方语义发出（win64 走栈；传出区随
+  `__cl` 自动增长——`max_stack_arg_bytes` 是按**调用点布局**算的）。**验收口径**：V1 那一版
+  只能验**落点与帧尺寸**（守卫 + JIT 各一条），因为当时被调方还读不出多余实参；V2 起改成
+  **算出来的值**（见下）。仍缺：`va_meta`（SysV 的 `%al`）的写入。
+- **V2 ✅（被调方，win64 栈式）**：2026-09-30 落了数据面、2026-10-01 把发射接通——
   ① **IR**：新 op `VaStart`（0 操作数 → 指针；`ops.toml` 一行 + builder `va_start()`），语义
   "取未命名实参区的地址"；
   ② **计划镜像**：`CallLayout.va: Option<VaInfo>`（`VaKind`/`size`/`align`/`stack_only`），由
   `AbiPlan::va_area` 逐条 match 折过来（`VaKind::supports_frame_addr_va_start()` 是"能不能
-  直接用帧内栈地址实现"的判据：只有 `win64_stack` 为真）。
-  守卫 `abi_target_real::call_layout_mirrors_the_variadic_shape`（win64 栈式 8/8 / sysv64 保存区
-  24/8 / 非变参不带 va）与 `forge-ir` 的 opcode 表守卫。
-  **仍缺**：生成器侧的 `VaStart` 发射（`isa/x86_v12.toml` 现在**没有** `VaStart` 的 lowering
-  规则，所以任何函数用它都会因"没有规则"而 fail-closed——**这是当前的诚实状态**）；以及
-  `forge-tests` 矩阵的夹具（已登记为缺口 `("VaStart", "…方案 V2")`）。
+  直接用帧内栈地址实现"的判据：只有 `win64_stack` 为真）；
+  ③ **发射**：`lowering.rs::gen_va_start_lowering` 按角色 `frame_addr`（x86 = `LEA_RBP_OFF`）
+  发一条 `lea dst, [fp + 未命名区起点]`——与 `frame_set`/`frame_alloc`/`callee_save` 同族：
+  **谱只申报能力，序列由生成器发**（`isa/x86_v12.toml` 里没有 `VaStart` 的 `[[lowering]]` 规则，
+  这是刻意的）；其余（`load`/`gep`/算术）全走既有规则——**不需要**新的 IR 形状或多值路径。
+  寄存器保存区形态与"该约定不支持变参"都**明确 fail-closed**
+  （消息分别点名 V3 与"va_list 未声明"）。
+  **验收**：`jit.rs::test_jit_va_start_reads_unnamed_stack_args` 真跑 `4*10+7 = 47`
+  （`va_start` → `load` → `gep` → `load`，两个未命名实参各读一槽）。
+  **落地时抓到的两个真缺口**（都是"看起来对、跑起来错"的那类，记在这里以免回潮）：
+  1. **未命名区起点要 `first_arg_offset + shadow_bytes`**（win64 = 16 + 32 = 48）。引擎侧不变量是
+     `Stack.offset(k) = first_arg_offset + shadow_bytes + k×slot`：`first_arg_offset`
+     （= `first_offset_slots × slot`）是"帧基址 → 调用方 sp"的距离，而调用方把第 0 个栈槽写在
+     `sp + shadow_bytes` 处。只取 `first_arg_offset` 会读到 shadow 区里的垃圾
+     （实测 `va` 落在 shadow 内，算出 1.4e15 量级的地址值）。
+  2. **`JitCompiler::compile_module` 从未装模块签名表**：`with_module_sigs` 的**唯一**调用者是
+     V1 的测试本身，整模块编译的宿主全都没接 ⇒ 调用点按非变参发（三个实参全进 RCX/RDX/R8），
+     被调方读 shadow 区。修法是**让模块自述这张表**：`forge_ir::Module::signature_table()`
+     （下标 = `FuncRef::index()`，读**每个函数自己的**类型上下文——`add_function` 不把签名并进
+     模块 store）+ `FunctionCompiler::for_module(machine, &module)`（宿主侧默认写法），
+     `JitCompiler::compile_module`、`forge-tests` 的矩阵/QEMU 逐函数编译路径都改用它。
+  **仍缺**：`forge-tests` 矩阵的夹具（已登记为缺口 `("VaStart", "…方案 V2")`）；矩阵的
+  `CaseKind::Module` 目前没有变参用例（JIT 用例在 `forge-codegen` 里）。
 - **V3（寄存器保存区，sysv64/lp64d）**：按 `va_area.size/align` 在帧内开槽并把参数寄存器存进去；
   校验 `hidden.va_meta` 的写入。
 - **V4（`va_arg`）**：按 D2 的裁定实现取参 + D5 的提升规则；这是唯一必须动 IR/前端的一期。

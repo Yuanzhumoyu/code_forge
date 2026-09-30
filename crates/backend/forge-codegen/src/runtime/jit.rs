@@ -204,6 +204,12 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
         }
 
         let func_count = module.function_count();
+        // **模块级签名表**（变参 D6）：调用点的落点规划要知道"被调方是不是变参"，
+        // 而这件事只在被调方的签名里。整模块编译是这个表唯一的来源，所以**每条**
+        // 编译路径都要装上——不装的话变参调用点会按非变参发（实参全进寄存器、
+        // 被调方的 `va_start` 读到 shadow 区垃圾；实测 V2 用例就是这么红的）。
+        // 并行路径共用一份表（`for_module` 会按函数重建，见其文档）。
+        let sig_table = module.signature_table();
         if func_count >= 8 {
             // ── 并行路径：编译阶段无共享可变状态，仅借用 module（scoped）──
             let compiled: Vec<(ImmStr, CompiledFunction)> = std::thread::scope(|s| {
@@ -212,8 +218,9 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
                         let fr = FuncRef::new(i as u32);
                         let func = module.get_function(fr);
                         let machine = self.machine().clone();
+                        let sigs = sig_table.clone();
                         s.spawn(move || {
-                            let compiler = FunctionCompiler::new(machine);
+                            let compiler = FunctionCompiler::new(machine).with_module_sigs(sigs);
                             compiler.compile_raw(func).map(|cf| (func.name.clone(), cf))
                         })
                     })
@@ -242,7 +249,8 @@ impl<M: TargetMachine + Clone> JitCompiler<M> {
                 let func_ref = FuncRef::new(i as u32);
                 let func = module.get_function(func_ref);
                 let mut compiled = {
-                    let compiler = FunctionCompiler::new(self.machine().clone());
+                    // `for_module` = 模块内编译的默认写法（装上签名表，变参 D6）。
+                    let compiler = FunctionCompiler::for_module(self.machine().clone(), module);
                     compiler.compile_raw(func)?
                 };
 
@@ -2913,6 +2921,60 @@ ret_int = ["RAX"]
         jit.compile_module(&module).expect("compile module");
         let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
         assert_eq!(f(), 3, "被调方只读命名参数（多余实参要 V2/V4 才能读）");
+    }
+    /// **变参 V2：被调方真的读到未命名实参**（win64）——`va_start` 取未命名实参区的地址，
+    /// 再用普通的 `load`/`gep` 逐槽读。
+    ///
+    /// 验收要点：调用方（非变参 `main`）多传两个实参、按**被调方**的变参语义把它们放到栈上
+    /// （靠模块级签名表，见 V1），被调方用 `va_start` 拿到那段地址并把两个值读回来算
+    /// `a*10 + b`。**这条用例第一次让变参的"被调方读参"真正跑起来**。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_start_reads_unnamed_stack_args() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee(fmt: i64) -> i64 ── **变参**：签名只列命名参数（照 LLVM 的 `...`）。
+        // 体内：va = va_start(); a = load(va); b = load(va + 8); ret a*10 + b
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let va = callee.va_start();
+        let a = callee.load(va, TypeId::I64);
+        // 未命名实参区是"一列 i64 槽"：第 2 槽 = gep i64, va, 1（按元素计数，非字节）。
+        let one = callee.iconst(1, TypeId::I64);
+        let va2 = callee.gep(va, &[one], TypeId::I64);
+        let b = callee.load(va2, TypeId::I64);
+        let ten = callee.iconst(10, TypeId::I64);
+        let a10 = callee.imul(a, ten);
+        let r = callee.iadd(a10, b);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        // main() -> i64：ret callee(0, 4, 7) = 4*10 + 7 = 47（后两个是**未命名实参**）
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let x = main_fn.iconst(4, TypeId::I64);
+        let y = main_fn.iconst(7, TypeId::I64);
+        let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            47,
+            "被调方必须能从 va_start 给出的地址读到两个未命名实参（win64 栈式）"
+        );
     }
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
