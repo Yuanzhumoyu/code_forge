@@ -219,6 +219,13 @@ pub enum ShapeKind {
     Other,
 }
 
+impl From<&ArgShape> for ArgShape {
+    /// 借用 → 拥有（`CallRequest::args/rets` 因此既能收 `Vec`/数组，也能收 `&Vec`/`iter()`）。
+    fn from(s: &ArgShape) -> Self {
+        s.clone()
+    }
+}
+
 impl ArgShape {
     /// 整数标量形状（调用点从 IR 类型投影时的常用构造）。
     pub fn int(size: u32, align: u32) -> Self {

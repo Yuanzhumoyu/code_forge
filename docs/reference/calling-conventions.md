@@ -290,6 +290,18 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
 
 - **中性形状**：`ArgShape`/`ShapeKind`（`Int`/`Ptr`/`Float`/`Vector{…}`/`Aggregate{members}`/
   `Other`）——运行时 crate **不依赖 forge-abi**，把形状摊成 `forge_abi::TyView` 是宿主的活。
+- **一次调用用一个结构体描述（人体工学）**：调用点交给 `plan_call` 的是
+  [`CallRequest`](../../crates/foundation/forge-isa-runtime/src/machine/call_plan.rs)（`conv` /
+  `args` / `rets` / `variadic`，带 builder：`CallRequest::new(conv).args(a).rets(r).variadic(2)`）。
+  为什么不散成 4 个位置参数：`args`/`rets` 顺序与 `variadic` 的含义都容易搞错，而且以后加字段
+  （比如"按调用的 `CallConvId`"）不必再改所有调用方。`args`/`rets` 收
+  `IntoIterator<Item: Into<ArgShape>>` ⇒ 数组、`Vec`、`&Vec`、`iter()` 都能直接传。
+- **失败必须带诊断（人体工学）**：`plan_call` 返回 `Result<CallLayout, CallPlanError>`，两类原因
+  分得很清楚——`NoPlanner { isa }`（宿主没接 planner，消息里给 `register_call_planner` /
+  `ensure_registered` 两条出路）与 `Failed { conv, why }`（`why` 是**引擎原文**：池不够 / 缺绑定 /
+  能力缺口，消息里带 `forge-isa abi check` 与本文路径）。早期版本返回 `Option`，把这些原因
+  全丢了，用户只看到一句"布局不可得"。守卫
+  `abi_target_real::call_plan_errors_carry_the_reason`。
 - **形状必须摊开成员/lane**（v20 A6）：生成物调
   `ArgShape::from_ir_type(store, ty)`（递归到成员与元素，深度 4 / 成员 16 封顶，超限退化成
   "没有成员"由规则兜底）。为什么较真：**HFA/HVA 判定靠成员**——`{f64,f64}` 在 AAPCS64 上
@@ -298,12 +310,12 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
   `abi_target_real::hfa_aggregate_shape_matches_the_callee_plan` 连带反证"成员留空的投影
   必然分叉"。
 - **注册**：宿主在 `forge_codegen::pipeline_hooks::ensure_registered()` 里为每个 ISA 注册
-  一个钩子（`Box::leak` 持有机器，与管线工厂同一取舍）；未注册 ⇒ `plan_call` 返回 `None`，
-  生成物 **fail-closed**（不猜落点）。
+  一个钩子（`Box::leak` 持有机器，与管线工厂同一取舍）；未注册 ⇒ `plan_call` 返回
+  `Err(NoPlanner)`，生成物 **fail-closed**（不猜落点）。
 - **守卫**（`crates/backend/forge-codegen/tests/abi_target_real.rs`）：
   `shape_plan_matches_the_function_plan`（形状算出的 plan 必须与函数算出的**逐项相同**：
   win64 六整数含栈参数、win64 混合按位置计数、lp64d 混合按类计数、aapcs64 整型）与
-  `call_planner_registry_serves_the_shape_plan`（注册表路径 == 直接算；未注册 ISA ⇒ `None`）。
+  `call_planner_registry_serves_the_shape_plan`（注册表路径 == 直接算；未注册 ISA ⇒ `NoPlanner`）。
 
 ### 无 plan = 编译错误（v20 A6）
 
@@ -353,6 +365,7 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | IR 的 `CallConvId` 读路径（未注册 ⇒ fail-closed） | ✅ | `rules_without_binding_fail_closed_at_the_compile_entry` |
 | 真实后端 → 引擎（适配器 ↔ 合成黄金交叉核对） | ✅ | `real_machine_plan_matches_the_synthetic_goldens`、`adapter_exposes_the_real_register_file` |
 | 调用点按**形状**算被调方落点 | ✅ | `shape_plan_matches_the_function_plan`、`call_planner_registry_serves_the_shape_plan` |
+| 调用点 API 的人体工学（`CallRequest` 结构体 + `CallPlanError` 带诊断） | ✅ | `call_plan_errors_carry_the_reason` |
 | 约定级返回槽（`[abi].ret_regs` 删除后的替代） | ✅ | `convention_level_int_return_slot` |
 | 无 plan = 编译错误（fail-closed） | ✅ | `rules_without_binding_fail_closed_at_the_compile_entry` |
 | 多值返回（`rets` / `RegPair` / `RegGroup`） | ✅ | `multi_value_returns_take_one_register_each`、`multi_value_returns_fail_closed_on_gaps`、`two_value_return_is_plan_driven`、`test_jit_multi_value_return_is_read_back` |

@@ -716,6 +716,7 @@ fn mixed_probe(cc: CallConvId) -> Function {
 fn shape_plan_matches_the_function_plan() {
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
     use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::call_plan::CallRequest;
 
     /// 取出"必须逐项相同"的那几块（名字无关）。
     #[derive(Debug, PartialEq)]
@@ -764,8 +765,12 @@ fn shape_plan_matches_the_function_plan() {
         ];
         for (what, func, args, ret) in cases {
             let by_func = plan_for_function(&tm, &reg, "win64", &func).expect("函数 plan");
-            let by_shape = plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret), None)
-                .expect("形状 plan");
+            let by_shape = plan_for_shapes(
+                &tm,
+                &reg,
+                &CallRequest::new("win64").args(args).rets(ret_list(&ret)),
+            )
+            .expect("形状 plan");
             assert_eq!(
                 cmp(&by_shape),
                 cmp(&by_func),
@@ -785,8 +790,14 @@ fn shape_plan_matches_the_function_plan() {
             ArgShape::float(8),
         ];
         let by_func = plan_for_function(&tm, &reg, "lp64d", &func).expect("函数 plan");
-        let by_shape = plan_for_shapes(&tm, &reg, "lp64d", &args, &[ArgShape::float(8)], None)
-            .expect("形状 plan");
+        let by_shape = plan_for_shapes(
+            &tm,
+            &reg,
+            &CallRequest::new("lp64d")
+                .args(args)
+                .rets([ArgShape::float(8)]),
+        )
+        .expect("形状 plan");
         assert_eq!(
             cmp(&by_shape),
             cmp(&by_func),
@@ -800,8 +811,14 @@ fn shape_plan_matches_the_function_plan() {
         let func = aapcs64_probe();
         let args = vec![ArgShape::int(8, 8), ArgShape::int(8, 8)];
         let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
-        let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &args, &[ArgShape::int(8, 8)], None)
-            .expect("形状 plan");
+        let by_shape = plan_for_shapes(
+            &tm,
+            &reg,
+            &CallRequest::new("aapcs64")
+                .args(args)
+                .rets([ArgShape::int(8, 8)]),
+        )
+        .expect("形状 plan");
         assert_eq!(
             cmp(&by_shape),
             cmp(&by_func),
@@ -818,6 +835,7 @@ fn shape_plan_matches_the_function_plan() {
 fn call_planner_registry_serves_the_shape_plan() {
     use forge_codegen::pipeline::abi_target::{call_layout, plan_for_shapes};
     use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::call_plan::CallRequest;
     use forge_isa_runtime::machine::call_plan::{has_call_planner, plan_call};
 
     forge_codegen::pipeline_hooks::ensure_registered();
@@ -836,17 +854,40 @@ fn call_planner_registry_serves_the_shape_plan() {
     ];
     let ret = Some(ArgShape::float(8));
 
-    let by_hook =
-        plan_call("x86_64_v12", "win64", &args, &ret_list(&ret), None).expect("钩子应给出布局");
-    let plan = plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret), None).expect("直接算");
+    let by_hook = plan_call(
+        "x86_64_v12",
+        &CallRequest::new("win64")
+            .args(args.iter())
+            .rets(ret_list(&ret)),
+    )
+    .expect("钩子应给出布局");
+    let plan = plan_for_shapes(
+        &tm,
+        &reg,
+        &CallRequest::new("win64")
+            .args(args.iter())
+            .rets(ret_list(&ret)),
+    )
+    .expect("直接算");
     assert_eq!(
         by_hook,
         call_layout(&plan, &tm),
         "钩子给出的布局必须与「形状 → plan → CallLayout」逐项相同"
     );
 
-    // 未注册的 ISA：`None`（生成物据此 fail-closed）。
-    assert!(plan_call("nope_isa", "win64", &args, &ret_list(&ret), None).is_none());
+    // 未注册的 ISA ⇒ **点名原因**（`NoPlanner`），不再是笼统的 `None`：调用点据此能直接
+    // 知道"宿主没接 planner"，而不是"某个签名算不出来"。
+    assert_eq!(
+        plan_call(
+            "nope_isa",
+            &CallRequest::new("win64").args(args).rets(ret_list(&ret))
+        ),
+        Err(
+            forge_isa_runtime::machine::call_plan::CallPlanError::NoPlanner {
+                isa: "nope_isa".into()
+            }
+        )
+    );
 }
 
 /// **约定级整数返回槽**（v20 A5-3）：`plan_for_shapes(空参, 整数返回)` 给出的返回寄存器就是
@@ -856,6 +897,7 @@ fn call_planner_registry_serves_the_shape_plan() {
 fn convention_level_int_return_slot() {
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
     use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::call_plan::CallRequest;
 
     let reg = builtin::registry().expect("内置注册表");
     let ret_shape = [ArgShape::int(8, 8)];
@@ -863,7 +905,8 @@ fn convention_level_int_return_slot() {
     // x86 win64：RAX。
     {
         let tm = TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "win64", &[], &ret_shape, None).expect("win64 plan");
+        let p = plan_for_shapes(&tm, &reg, &CallRequest::new("win64").rets(ret_shape.iter()))
+            .expect("win64 plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "RAX"),
             other => panic!("{other:?}"),
@@ -872,7 +915,8 @@ fn convention_level_int_return_slot() {
     // riscv lp64d：a0 = X10（**不是 index 0**——这正是谱里那份 `ret_regs` 存在的理由）。
     {
         let tm = forge_codegen::arch::riscv64_v12::TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "lp64d", &[], &ret_shape, None).expect("lp64d plan");
+        let p = plan_for_shapes(&tm, &reg, &CallRequest::new("lp64d").rets(ret_shape.iter()))
+            .expect("lp64d plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X10"),
             other => panic!("{other:?}"),
@@ -881,7 +925,12 @@ fn convention_level_int_return_slot() {
     // arm64 aapcs64：x0。
     {
         let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "aapcs64", &[], &ret_shape, None).expect("aapcs64 plan");
+        let p = plan_for_shapes(
+            &tm,
+            &reg,
+            &CallRequest::new("aapcs64").rets(ret_shape.iter()),
+        )
+        .expect("aapcs64 plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X0"),
             other => panic!("{other:?}"),
@@ -919,6 +968,7 @@ fn a6_gap_inventory() {
     use forge_codegen::arch::riscv64_v12::TargetMachine as Riscv64;
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
     use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
+    use forge_isa_runtime::machine::call_plan::CallRequest;
 
     fn agg(size: u32, align: u32, members: Vec<ArgShape>) -> ArgShape {
         ArgShape {
@@ -1002,7 +1052,11 @@ fn a6_gap_inventory() {
     macro_rules! probe {
         ($isa:expr, $conv:expr, $tm:expr) => {
             for (name, args, ret) in &cases {
-                match plan_for_shapes($tm, &reg, $conv, args, &ret_list(ret), None) {
+                match plan_for_shapes(
+                    $tm,
+                    &reg,
+                    &CallRequest::new($conv).args(args).rets(ret_list(ret)),
+                ) {
                     Ok(_) => {}
                     Err(e) => gaps.push(format!("{} / {} / {}: {}", $isa, $conv, name, e)),
                 }
@@ -1101,6 +1155,7 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
     use forge_abi::Placement;
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
     use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::call_plan::CallRequest;
 
     let reg = builtin::registry().expect("内置注册表");
     let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
@@ -1121,7 +1176,8 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
         ),
         "聚合形状必须带 2 个成员（HFA 判定靠它）：{shape:?}"
     );
-    let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &[shape], &[], None).expect("形状 plan");
+    let by_shape =
+        plan_for_shapes(&tm, &reg, &CallRequest::new("aapcs64").args([shape])).expect("形状 plan");
     assert_eq!(
         by_shape.args[0].place, by_func.args[0].place,
         "HFA 聚合实参：调用点 plan 必须与被调方 plan 逐项相同"
@@ -1145,7 +1201,8 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
             members: Vec::new(),
         },
     };
-    let by_blind = plan_for_shapes(&tm, &reg, "aapcs64", &[blind], &[], None).expect("形状 plan");
+    let by_blind =
+        plan_for_shapes(&tm, &reg, &CallRequest::new("aapcs64").args([blind])).expect("形状 plan");
     assert_ne!(
         by_blind.args[0].place, by_func.args[0].place,
         "成员留空的投影必须与真实 plan 分叉（这正是它错的地方）"
@@ -1165,6 +1222,7 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
 fn call_site_variadic_hint_decides_unnamed_argument_placement() {
     use forge_codegen::pipeline::abi_target::{plan_for_shapes, plan_for_signature};
     use forge_isa_runtime::machine::call_layout::{ArgPlace, ArgShape};
+    use forge_isa_runtime::machine::call_plan::CallRequest;
 
     let reg = builtin::registry().expect("内置注册表");
     let tm = TargetMachine::new();
@@ -1175,7 +1233,8 @@ fn call_site_variadic_hint_decides_unnamed_argument_placement() {
     ];
 
     // ① 没有变参提示（单函数编译 / 被调方不是变参）：三个实参都进寄存器。
-    let by_shape = plan_for_shapes(&tm, &reg, "win64", &shapes, &[], None).expect("形状 plan");
+    let by_shape = plan_for_shapes(&tm, &reg, &CallRequest::new("win64").args(shapes.iter()))
+        .expect("形状 plan");
     assert!(
         by_shape.args[1..]
             .iter()
@@ -1190,8 +1249,12 @@ fn call_site_variadic_hint_decides_unnamed_argument_placement() {
     ));
 
     // ② 给了变参提示（被调方是变参、命名 1 个）：第 2/3 个实参改判到**栈**。
-    let hinted =
-        plan_for_shapes(&tm, &reg, "win64", &shapes, &[], Some((true, 1))).expect("变参形状 plan");
+    let hinted = plan_for_shapes(
+        &tm,
+        &reg,
+        &CallRequest::new("win64").args(shapes.iter()).variadic(1),
+    )
+    .expect("变参形状 plan");
     assert!(
         hinted.args[1..]
             .iter()
@@ -1221,4 +1284,56 @@ fn call_site_variadic_hint_decides_unnamed_argument_placement() {
         hinted.args[1].place, by_sig.args[1].place,
         "调用点（给了变参提示）与被调方必须给出同一落点"
     );
+}
+
+/// **失败必须带诊断**（人体工学）：`plan_call` 不再返回 `Option` 把原因丢掉，而是
+/// [`CallPlanError`]——未注册的 ISA 是 `NoPlanner`（点名宿主该做什么），算了但失败是
+/// `Failed`（正文来自宿主/引擎，能一直追到"池不够 / 缺绑定 / 能力缺口"）。
+///
+/// 这条守卫就是在钉"错误正文不许退化成一句话"：`Failed` 的 `why` 必须带引擎的原文特征。
+#[test]
+fn call_plan_errors_carry_the_reason() {
+    use forge_codegen::pipeline::abi_target::register_isa_call_planner;
+    use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest, plan_call};
+
+    // ① 没注册 planner 的 ISA：点名"宿主没接"，不是"签名算不出来"。
+    let e = plan_call("no_such_isa", &CallRequest::new("win64")).unwrap_err();
+    assert_eq!(
+        e,
+        CallPlanError::NoPlanner {
+            isa: "no_such_isa".into()
+        }
+    );
+    let msg = e.to_string();
+    assert!(
+        msg.contains("register_call_planner") && msg.contains("ensure_registered"),
+        "NoPlanner 要给两条出路：{msg}"
+    );
+
+    // ② 注册了 planner、但约定未注册 ⇒ `Failed`，正文带引擎的解释与自查命令。
+    register_isa_call_planner("doc_probe_isa", TargetMachine::new());
+    let e = plan_call("doc_probe_isa", &CallRequest::new("nope_conv")).unwrap_err();
+    match &e {
+        CallPlanError::Failed { conv, why } => {
+            assert_eq!(conv, "nope_conv");
+            assert!(
+                why.contains("nope_conv") && why.contains("未注册"),
+                "Failed 的正文必须来自引擎（点名约定 + 原因）：{why}"
+            );
+        }
+        other => panic!("应为 Failed：{other:?}"),
+    }
+    let msg = e.to_string();
+    assert!(
+        msg.contains("forge-isa abi check") && msg.contains("calling-conventions.md"),
+        "Failed 要给自查命令与文档路径：{msg}"
+    );
+
+    // ③ 同一份请求走通了：确认上面的失败来自"约定未注册"，不是 ISA 本身不可用。
+    let ok = plan_call(
+        "doc_probe_isa",
+        &CallRequest::new("win64").rets([ArgShape::int(8, 8)]),
+    );
+    assert!(ok.is_ok(), "win64 在 x86 机器上应能规划：{ok:?}");
 }

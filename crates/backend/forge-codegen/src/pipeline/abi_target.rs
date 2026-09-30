@@ -21,6 +21,7 @@ use forge_ir::{PhysReg, RegClass};
 use forge_isa_runtime::machine::call_layout::{
     ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind,
 };
+use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest};
 use forge_isa_runtime::machine::target::TargetMachine;
 
 /// `TargetMachine` 上的 `AbiTarget` 视图。
@@ -210,52 +211,56 @@ pub fn shape_to_ty(s: &ArgShape) -> forge_abi::TyView {
     }
 }
 
-/// **按实参/返回值形状算被调方的 plan**（v20 A5-3）：调用点只有形状，没有被调方的
+/// **按 [`CallRequest`]（形状面）算被调方的 plan**（v20 A5-3）：调用点只有形状，没有被调方的
 /// `Function`，而落点必须由引擎给——这条入口就是那一步。名字只用于诊断（`a0`/`a1`…）。
 ///
-/// `rets` 是**全部**返回值的形状（空 = void；多个 = 多值返回，v20 A6）。
-///
-/// `variadic` 是**被调方的变参信息**（`Some((true, 命名个数))`，变参 D6）：调用点自己判不出
-/// "未命名实参在只走栈的约定里要改判到栈"，必须由宿主把模块签名表查给它
-///（`LowerCtx::module_sigs`）；`None` = 非变参 / 不知道。
+/// 请求里带三件东西：`args`（实参形状）、`rets`（**全部**返回形状，多个 = 多值返回）、
+/// `variadic`（被调方是不是变参、命名几个——调用点自己判不出"未命名实参在只走栈的约定里
+/// 要改判到栈"，由宿主查模块签名表给出）。
 pub fn plan_for_shapes<M: TargetMachine>(
     machine: &M,
     registry: &AbiRegistry,
-    conv: &str,
-    args: &[ArgShape],
-    rets: &[ArgShape],
-    variadic: Option<(bool, u32)>,
+    req: &CallRequest,
 ) -> Result<AbiPlan, AbiError> {
-    let params: Vec<(String, forge_abi::TyView)> = args
+    let params: Vec<(String, forge_abi::TyView)> = req
+        .args
         .iter()
         .enumerate()
         .map(|(i, s)| (format!("a{i}"), shape_to_ty(s)))
         .collect();
-    let mut sig = Signature::with_rets(params, rets.iter().map(shape_to_ty).collect());
+    let mut sig = Signature::with_rets(params, req.rets.iter().map(shape_to_ty).collect());
     // 被调方是变参 ⇒ 告诉引擎"前 `fixed` 个是命名的"，其余走 `variadic_stack_only` 的规则。
-    if let Some((true, fixed)) = variadic {
+    if let Some((true, fixed)) = req.variadic {
         sig = sig.variadic(fixed as usize);
     }
-    plan_for_signature(machine, registry, conv, &sig)
+    plan_for_signature(machine, registry, &req.conv, &sig)
 }
 
 /// **给一台具体机器装调用点布局钩子**（`Box::leak` 到进程生命周期；每个 ISA 一次）。
 ///
-/// 生成物的 `ensure_registered()` 调它（v20 A5-3）：调用方在 lowering 时按
-/// `(ISA, 约定, 实参形状)` 查这份钩子拿**被调方**的落点（`call_plan::plan_call`）。
-/// 未注册 ⇒ `plan_call` 返回 `None`，调用点 **fail-closed**（不按谱面顺序猜）。
+/// 生成物在 lowering 时按 `(ISA, CallRequest)` 查它拿**被调方**的落点；未注册 ⇒
+/// `plan_call` 返回 [`CallPlanError::NoPlanner`]，调用点 **fail-closed**（不按谱面顺序猜）。
+/// 失败时把引擎的原文**原样带出去**（[`CallPlanError::Failed`]）——用户据此能定位到
+/// "池不够 / 缺绑定 / 能力缺口"，而不是只看到一句"不可得"。
 pub fn register_isa_call_planner<M: TargetMachine + 'static>(isa: &str, machine: M) {
     let tm: &'static M = Box::leak(Box::new(machine));
     forge_isa_runtime::machine::call_plan::register_call_planner(
         isa,
         std::sync::Arc::new(
-            move |conv: &str,
-                  args: &[ArgShape],
-                  rets: &[ArgShape],
-                  variadic: Option<(bool, u32)>| {
-                let reg = crate::pipeline::conv_registry::registry().read().ok()?;
-                let plan = plan_for_shapes(tm, &reg, conv, args, rets, variadic).ok()?;
-                Some(call_layout(&plan, tm))
+            move |req: &CallRequest| -> Result<CallLayout, CallPlanError> {
+                let reg = crate::pipeline::conv_registry::registry()
+                    .read()
+                    .map_err(|_| CallPlanError::Failed {
+                        conv: req.conv.clone(),
+                        why: "约定注册表被投毒（持锁线程 panic）".into(),
+                    })?;
+                match plan_for_shapes(tm, &reg, req) {
+                    Ok(plan) => Ok(call_layout(&plan, tm)),
+                    Err(e) => Err(CallPlanError::Failed {
+                        conv: req.conv.clone(),
+                        why: e.to_string(),
+                    }),
+                }
             },
         ),
     );

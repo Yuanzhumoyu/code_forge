@@ -11,6 +11,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-30) — 调用点 API 的人体工学：`CallRequest` 结构体 + `CallPlanError` 带诊断（破坏性）
+
+两个问题都是"用错编译器不会拦、出错看不出来"，按人体工学一次改掉（不留兼容层）：
+
+- **一次调用 = 一个结构体**：`plan_call(isa, &CallRequest)` / `CallPlanner::plan_call(&req)` 取代
+  `plan_call(isa, conv, args, rets, variadic)` 这种 4 个位置参数（`args`/`rets` 顺序与 `variadic`
+  的含义都容易搞错）。builder 让调用点自解释：`CallRequest::new(conv).args(a).rets(r).variadic(2)`；
+  `args`/`rets` 收 `IntoIterator<Item: Into<ArgShape>>`，数组、`Vec`、`&Vec`、`iter()` 都能直接传
+  （为此加了 `impl From<&ArgShape> for ArgShape`）。宿主侧的 `plan_for_shapes(machine, reg, &req)`
+  同步收敛成 3 个参数。
+- **失败带诊断**：`plan_call` 由 `Option<CallLayout>` 改为 `Result<CallLayout, CallPlanError>`——
+  `NoPlanner { isa }`（宿主没接 planner，消息给 `register_call_planner` / `ensure_registered` 两条
+  出路）与 `Failed { conv, why }`（`why` 是**引擎原文**：池不够 / 缺绑定 / 能力缺口，消息带
+  `forge-isa abi check` 与参考文档路径）。旧版把原因丢掉，调用点只能报"布局不可得"。
+- **生成物**：调用点把 `CallPlanError` 的原文原样带进 `Unsupported`，不再自己编一句泛化文案。
+- 守卫 `abi_target_real::call_plan_errors_carry_the_reason`（未注册 ISA ⇒ `NoPlanner`；注册了但约定未注册 ⇒ `Failed` 且正文点名约定与原因）；`call_planner_registry_serves_the_shape_plan` 的"未注册 ⇒ None"断言同步改为 `NoPlanner`。文档：参考文档「调用点 plan」补两条人体工学纪律，守卫索引加一行。
+- 验证：`forge-isa-runtime` 4、`forge-abi` 7、`forge-isa-dsl` 18、`forge-codegen` 29、`forge-tests` 2、`forge-opt`/`forge-mem`/`forge-grammar`/`forge-hir`/`forge-object`/`forge-plugin`/`forge-isa` 全部绿；`clippy -D warnings` 0、`cargo fmt --check` 0。
+  （**环境提示**：本机磁盘 97% / 常驻 node 进程 6 GB，`cargo test --workspace` 一次性跑会在编译
+  `forge-ir` 的**测试二进制**时 OOM；逐包跑可过。`forge-ir` 本片未改动。）
+
 ### Docs (2026-09-30) — 调用约定层收口：`现状总览与守卫索引` + 文档守卫（索引不许指向不存在的测试）
 
 - **`docs/reference/calling-conventions.md` 新增「现状总览与守卫索引」**：一张表看完"这一层做到哪一步、由哪条守卫钉住"——约定数据→计划、IR 读路径、适配器交叉核对、调用点按形状算落点、约定级返回槽、无 plan = 编译错误、多值返回、调用点形状摊成员、自定义约定、异域钩子、变参（规划 ✅ / 调用方 ✅ / 被调方 ⬜）、`[abi]` 删键的文档一致性、以及三条"评估后不做"（按成员拆、`callee_pop`、红区/尾调用）。

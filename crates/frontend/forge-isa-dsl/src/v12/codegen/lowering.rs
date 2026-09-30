@@ -1345,24 +1345,20 @@ fn gen_call_lowering(
                 .as_ref()
                 .and_then(|__sigs| __sigs.get(__f.index() as usize).copied())
         });
-        let __cl = match crate::machine::call_plan::plan_call(
-            #isa_lit,
-            &ctx.call_conv_name,
-            &__shapes,
-            &__ret_shapes,
-            __variadic,
-        ) {
-            Some(__cl) => __cl,
-            None => {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: 调用点布局不可得——v20 A5-3 起调用方按**被调方**落点搬实参\
-                     （不再按谱面顺序猜）。两种原因：① 宿主没给这个 ISA 注册约定 planner\
-                     （用 forge_codegen::pipeline_hooks::ensure_registered，或自己调\
-                     abi_target::register_isa_call_planner）；② 这份签名在这份约定下规划不出来\
-                     （缺口用 `forge-isa abi check <谱>` 自查，口径见 \
-                     docs/reference/calling-conventions.md）"
-                        .into(),
-                ));
+        let __req = crate::machine::call_plan::CallRequest {
+            conv: ctx.call_conv_name.clone(),
+            args: __shapes,
+            rets: __ret_shapes,
+            variadic: __variadic,
+        };
+        let __cl = match crate::machine::call_plan::plan_call(#isa_lit, &__req) {
+            Ok(__cl) => __cl,
+            // 失败原因**原样带出去**（未装 planner / 引擎的池不够或缺绑定）——不再退化成
+            // 一句"布局不可得"。
+            Err(__e) => {
+                return Err(crate::prelude::IrError::Unsupported(format!(
+                    "v12 call: {__e}"
+                )));
             }
         };
     };
