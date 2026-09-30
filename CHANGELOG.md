@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-30) — 变参 V5：`forge-isa abi check` 上报变参状态（三种自相矛盾算硬错）
+
+- **新增一行 `ℹ 变参 …`**（每份约定一条）：把"这台机器 × 这份约定的变参处于什么状态"说清楚——
+  `win64` 栈式（`va_list` = 栈指针，调用方一侧可用）；`sysv64`/`lp64d`/`aapcs64` 需要**寄存器
+  保存区** ⇒ 如实报"发射侧尚未物化（方案 V2/V3）"。这是**已知状态而非缺口**，只进 `ℹ`、
+  不影响退出码（缺口语义保持"这台机器做不了"，否则 `--strict` 会把"发射尚未实现"混进机器能力账）。
+- **三种自相矛盾升级为硬错**（影响退出码）：① `va_list = "win64_stack"` 却
+  `variadic_stack_only = false`（未命名实参可能进寄存器，而 va_list 只指向栈）；
+  ② 声明了形态却没给合法的 `va_list_size`/`va_list_align`（要 > 0 且 size 是 align 的整数倍）；
+  ③ `va_meta_pool`/`va_len_pool` 点到的池在这台机器上解析不动。
+- 守卫：`cli_tests::abi_check_reports_the_variadic_state`（三份发行谱的 `ℹ` 行 + "不加缺口"）与
+  `abi.rs` 的 5 条 `variadic_report_*` 单测（矛盾 / 尺寸 / 池名 / 保存区 / 不支持变参）。
+  方案文档的 V5 标 ✅，参考文档的守卫索引加一行。
+- 验证：`cargo test -p forge-isa` 全绿（含 6 条 `abi` CLI 用例 + 5 条单测）。
+
 ### Changed (2026-09-30) — `LowerCtx` 的调用约定字段收进 `CallConvCtx`（破坏性重构）
 
 - **6 个散落字段 → 一个结构体**：`LowerCtx::{call_conv, call_conv_name, call_layout,

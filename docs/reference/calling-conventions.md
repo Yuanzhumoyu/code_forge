@@ -381,7 +381,8 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 异域钩子（Swift `self`/`error`、Go `g`） | ✅ | `swift_hooks_place_self_and_error`、`swift_error_return_uses_the_language_pool`、`go_hooks_keep_the_g_register_alive` |
 | 变参：规划（`va_area`/`va_meta`/未命名实参落点） | ✅ | `variadic_unnamed_arguments_follow_the_convention`、`va_shapes_match_the_documented_table` |
 | 变参：调用方发未命名实参（win64） | ✅ | `call_site_variadic_hint_decides_unnamed_argument_placement`、`test_jit_variadic_unnamed_args_go_to_stack` |
-| 变参：`%al`/`va_start`/`va_arg`（被调方） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参状态上报（`abi check` 的 `ℹ 变参 …` 行 + 三种自相矛盾的硬错） | ✅ | `abi_check_reports_the_variadic_state` |
+| 变参：`%al`/`va_start`/`va_arg`（被调方，V2/V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |
 | 单个聚合要 ≥3 寄存器的返回 / 按成员拆 | ⬜（无产出者） | `a6_gap_inventory` |
 | `callee_pop`（stdcall） | ⬜（缺调用点契约） | 见「已知缺口」表 |

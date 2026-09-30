@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use forge_abi::{AbiError, AbiTarget, Capability, Elem, Signature, TyView, builtin};
+use forge_abi::{AbiError, AbiRegistry, AbiTarget, Capability, Elem, Signature, TyView, builtin};
 use forge_isa_dsl::abi_view::{self, MachineView};
 
 /// 主入口。`args` = 子命令之后的全部参数。
@@ -235,6 +235,14 @@ fn cmd_check(args: &[String], json: bool) -> Result<ExitCode, String> {
                     println!("   ✗ 硬错 {conv} 的池 `{pool}`：{e}");
                 }
             }
+            // **变参自洽体检**（V5）：自相矛盾/缺数是硬错；"发射侧未物化"是已知状态（ℹ）。
+            let (va_hard, va_info) = variadic_report(&reg, &target, &isa, &conv);
+            for e in &va_hard {
+                fatal_here = true;
+                hard += 1;
+                println!("   ✗ 硬错 {e}");
+            }
+            println!("   ℹ 变参 {va_info}");
             if fatal_here {
                 out_json.push(format!(
                     "{{\"isa\": {}, \"conv\": {}, \"verdict\": \"error\"}}",
@@ -290,6 +298,81 @@ fn level_of(e: &AbiError) -> Level {
         | AbiError::CapabilityGap { .. }
         | AbiError::Unsupported { .. } => Level::Gap,
     }
+}
+
+/// **变参自洽体检**（V5）：把"这份约定的变参在这台机器上处于什么状态"报成一句话 + 硬错。
+///
+/// 三条判据（口径见 `docs/plans/varargs-plan.md`）：
+///
+/// 1. **自相矛盾 = 硬错**：`va_list = "win64_stack"`（va_list 就是**栈指针**）却
+///    `variadic_stack_only = false` —— 未命名实参可能进寄存器，而 va_list 指不到它们。
+/// 2. **形状缺数 = 硬错**：声明了 `va_list` 形态就必须给 `va_list_size`/`va_list_align`
+///    （正数、且 size 是 align 的整数倍）——否则调用方不知道该开多大。
+/// 3. **池名解析不动 = 硬错**：`va_meta_pool`/`va_len_pool` 点到的池必须在这台机器上存在
+///    （与绑定里其它池同一条口径）。
+///
+/// 需要**寄存器保存区**的形态（sysv/lp64d/aapcs64）在发射侧尚未物化（方案 V2/V3），
+/// 这是**已知状态而非错误** ⇒ 只进 `info` 一行，不影响退出码（缺口语义留给"这台机器做不了"）。
+fn variadic_report(
+    reg: &AbiRegistry,
+    target: &dyn AbiTarget,
+    isa: &str,
+    conv: &str,
+) -> (Vec<String>, String) {
+    use forge_abi::rules::VaListKind;
+    let mut hard: Vec<String> = Vec::new();
+    let Some(rules) = reg.rules(conv) else {
+        return (hard, format!("{conv}：约定未注册"));
+    };
+    let h = &rules.hidden;
+    // ③ 池名解析（写错名字/这台机器没有 ⇒ 硬错）
+    let binding = reg.binding(isa, conv);
+    for (label, pool) in [("va_meta", &h.va_meta_pool), ("va_len", &h.va_len_pool)] {
+        let (Some(p), Some(b)) = (pool.as_deref(), binding) else {
+            continue;
+        };
+        if let Err(e) = b.resolve_pool(p, target) {
+            hard.push(format!(
+                "{conv}：`hidden.va_{label}_pool = \"{p}\"` 在这台机器上解析不动（{e}）"
+            ));
+        }
+    }
+    let info = match h.va_list {
+        VaListKind::None => {
+            format!("{conv}：`va_list = \"none\"` ⇒ 不支持变参（变参签名会 fail-closed）")
+        }
+        VaListKind::Win64Stack => {
+            if !rules.variadic_stack_only {
+                hard.push(format!(
+                    "{conv}：`va_list = \"win64_stack\"`（va_list 就是栈指针）但 \
+                     `variadic_stack_only = false` —— 未命名实参可能进寄存器，va_list 指不到"
+                ));
+            }
+            format!("{conv}：栈式（va_list = 栈指针）——调用方一侧可用（V1）")
+        }
+        k => {
+            let name = match k {
+                VaListKind::SysvRegSave => "sysv_reg_save",
+                VaListKind::RiscvSaveArea => "riscv_save_area",
+                VaListKind::Aapcs64Struct => "aapcs64_struct",
+                _ => "?",
+            };
+            format!(
+                "{conv}：`va_list = \"{name}\"` 需要**寄存器保存区**——发射侧尚未物化，\
+                 变参目前只能规划、不能真跑（方案 V2/V3）"
+            )
+        }
+    };
+    // ② 形状必须报数（只在真的声明了形态时要求）
+    if !matches!(h.va_list, VaListKind::None)
+        && (h.va_list_size == 0 || h.va_list_align == 0 || h.va_list_size % h.va_list_align != 0)
+    {
+        hard.push(format!(
+            "{conv}：`va_list_size = {}` / `va_list_align = {}` 不合法（都要 > 0，且 size 是 align 的整数倍）",
+            h.va_list_size, h.va_list_align
+        ));
+    }
+    (hard, info)
 }
 
 /// `check` 的代表签名：每个分类分支一条（与 `forge-abi` 的快照语料同源思路，
@@ -648,4 +731,152 @@ fn q(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge_abi::registry::AbiRegistry;
+
+    /// 只为 `variadic_report` 服务的**最小**目标：池解析只在声明了 `va_meta`/`va_len`
+    /// 池时才走到，其余方法不会被调用（返回空/None 即可）。
+    struct StubTarget;
+
+    impl AbiTarget for StubTarget {
+        fn isa_name(&self) -> &str {
+            "stub_isa"
+        }
+        fn reg_count(&self) -> u32 {
+            0
+        }
+        fn reg_name(&self, _i: u32) -> Option<String> {
+            None
+        }
+        fn reg_class_name(&self, _i: u32) -> String {
+            "GPR(8)".into()
+        }
+        fn reg_index(&self, _n: &str) -> Option<u32> {
+            None
+        }
+        fn reg_width(&self, _i: u32) -> u8 {
+            8
+        }
+        fn pinned(&self, _i: u32) -> bool {
+            false
+        }
+        fn allocatable(&self) -> Vec<u32> {
+            Vec::new()
+        }
+        fn cap(&self, _c: Capability) -> Option<u16> {
+            None
+        }
+    }
+
+    fn reg_with(rules: &str, binding: Option<&str>) -> AbiRegistry {
+        // 从内置起步：自定义约定用 `parent = "c"`，父规则必须已注册。
+        let mut reg = forge_abi::builtin::registry().expect("内置注册表");
+        reg.insert_rules_toml(rules).expect("注册规则");
+        if let Some(b) = binding {
+            reg.insert_binding_toml(b).expect("注册绑定");
+        }
+        reg
+    }
+
+    /// `va_list = "win64_stack"`（va_list 就是栈指针）却允许未命名实参进寄存器 ⇒ **硬错**。
+    #[test]
+    fn variadic_report_flags_stack_pointer_contradiction() {
+        let reg = reg_with(
+            r#"
+name = "bad_contradiction"
+parent = "c"
+variadic_stack_only = false
+hidden = { va_list = "win64_stack", va_list_size = 8, va_list_align = 8 }
+"#,
+            None,
+        );
+        let (hard, info) = variadic_report(&reg, &StubTarget, "stub_isa", "bad_contradiction");
+        assert_eq!(hard.len(), 1, "{hard:?}");
+        assert!(
+            hard[0].contains("variadic_stack_only") && hard[0].contains("栈指针"),
+            "{}",
+            hard[0]
+        );
+        assert!(info.contains("栈式"), "{info}");
+    }
+
+    /// `va_list_size` 不是 `va_list_align` 的整数倍 ⇒ **硬错**（调用方不知道该开多大）。
+    #[test]
+    fn variadic_report_flags_bad_sizes() {
+        let reg = reg_with(
+            r#"
+name = "bad_sizes"
+parent = "c"
+variadic_stack_only = true
+hidden = { va_list = "win64_stack", va_list_size = 7, va_list_align = 8 }
+"#,
+            None,
+        );
+        let (hard, _) = variadic_report(&reg, &StubTarget, "stub_isa", "bad_sizes");
+        assert_eq!(hard.len(), 1, "{hard:?}");
+        assert!(hard[0].contains("va_list_size"), "{}", hard[0]);
+    }
+
+    /// `va_meta_pool` 点到的池在这台机器上没有 ⇒ **硬错**（与绑定里其它池同一条口径）。
+    #[test]
+    fn variadic_report_flags_unresolvable_meta_pool() {
+        let reg = reg_with(
+            r#"
+name = "bad_meta"
+parent = "c"
+variadic_stack_only = true
+hidden = { va_list = "win64_stack", va_list_size = 8, va_list_align = 8, va_meta_pool = "nope_pool" }
+"#,
+            Some(
+                r#"
+isa = "stub_isa"
+conv = "bad_meta"
+[pools]
+int = ["RAX"]
+"#,
+            ),
+        );
+        let (hard, _) = variadic_report(&reg, &StubTarget, "stub_isa", "bad_meta");
+        assert_eq!(hard.len(), 1, "{hard:?}");
+        assert!(hard[0].contains("va_meta_pool"), "{}", hard[0]);
+    }
+
+    /// 需要**寄存器保存区**的形态：只进 info（已知状态，不是错），不影响退出码。
+    #[test]
+    fn variadic_report_marks_save_area_as_info_only() {
+        let reg = reg_with(
+            r#"
+name = "save_area"
+parent = "c"
+variadic_stack_only = false
+hidden = { va_list = "sysv_reg_save", va_list_size = 24, va_list_align = 8 }
+"#,
+            None,
+        );
+        let (hard, info) = variadic_report(&reg, &StubTarget, "stub_isa", "save_area");
+        assert!(hard.is_empty(), "{hard:?}");
+        assert!(
+            info.contains("寄存器保存区") && info.contains("V2/V3"),
+            "{info}"
+        );
+    }
+
+    /// 不支持变参的约定：如实说"会 fail-closed"，照样不算硬错。
+    #[test]
+    fn variadic_report_marks_none_kind() {
+        let reg = reg_with(
+            r#"
+name = "no_va"
+parent = "c"
+"#,
+            None,
+        );
+        let (hard, info) = variadic_report(&reg, &StubTarget, "stub_isa", "no_va");
+        assert!(hard.is_empty(), "{hard:?}");
+        assert!(info.contains("不支持变参"), "{info}");
+    }
 }

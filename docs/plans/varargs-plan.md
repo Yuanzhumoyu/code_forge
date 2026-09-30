@@ -105,6 +105,17 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
 - **V5（体检）**：`forge-isa abi check` 增一条"变参形状自洽"的检查（`va_list_size` 与
   保存区槽数一致等）。
 
+- **V5 ✅（2026-09-30）**：`forge-isa abi check <谱>` 为每份约定多打一行 `ℹ 变参 …`，把"这台机器
+  × 这份约定的变参处于什么状态"说清楚：`win64` 栈式（va_list = 栈指针，调用方一侧可用）；
+  `sysv64`/`lp64d`/`aapcs64` 需要**寄存器保存区** ⇒ 如实报"发射侧尚未物化（V2/V3）"。
+  **三种自相矛盾是硬错**（影响退出码）：① `va_list = "win64_stack"` 却
+  `variadic_stack_only = false`（未命名实参可能进寄存器，而 va_list 只指向栈）；
+  ② 声明了形态却没给合法的 `va_list_size`/`va_list_align`（要 > 0 且 size 是 align 的整数倍）；
+  ③ `va_meta_pool`/`va_len_pool` 点到的池在这台机器上解析不动。
+  "需要保存区"这类**已知状态只进 `ℹ`**、不算缺口——缺口语义保持"这台机器做不了"，否则
+  `--strict` 会把"发射尚未实现"混进机器能力账。守卫：`cli_tests::abi_check_reports_the_variadic_state`
+  与 `abi.rs` 的 5 条 `variadic_report_*` 单测（矛盾 / 尺寸 / 池名 / 保存区 / 不支持）。
+
 验收口径沿用本仓库惯例：每期跑 `fmt` + `clippy -D warnings` + workspace 全量（含三条 JIT
 矩阵），生成物形状/落点用守卫钉住，行为用 JIT 真跑。
 

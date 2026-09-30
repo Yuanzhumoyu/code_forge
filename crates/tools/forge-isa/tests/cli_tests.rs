@@ -409,6 +409,44 @@ fn abi_check_reports_gaps_without_failing() {
     assert!(out.stdout.contains("链接寄存器 X30"), "{}", out.stdout);
 }
 
+/// **变参状态如实上报**（v20 V5）：`abi check` 除了代表签名，还要把"这份约定的变参在这台
+/// 机器上处于什么状态"写成一行 `ℹ 变参 …`——`win64` 是栈式（调用方一侧可用，V1），
+/// `sysv64`/`lp64d`/`aapcs64` 需要**寄存器保存区**（发射侧尚未物化，方案 V2/V3）。
+///
+/// 关键：这一行是 `ℹ`（已知状态）而**不是** `⚠ GAP`——它不该改变退出码（缺口语义 =
+/// "这台机器做不了"）。守卫同时钉住"不加缺口"。
+#[test]
+fn abi_check_reports_the_variadic_state() {
+    let out = run(&["abi", "check", &isa("x86_v12.toml")]);
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    assert!(
+        out.stdout.contains("ℹ 变参 win64：栈式"),
+        "win64 的变参是栈式：{}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("ℹ 变参 sysv64：")
+            && out.stdout.contains("sysv_reg_save")
+            && out.stdout.contains("寄存器保存区"),
+        "sysv64 的变参需要保存区（V2/V3）：{}",
+        out.stdout
+    );
+    // 只是 ℹ：两份约定仍然各自"全部可规划 / 硬错 0 / 缺口 0"。
+    assert!(out.stdout.contains("硬错 0"), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("合计：硬错 0，缺口 0"),
+        "变参状态不该被算成缺口：{}",
+        out.stdout
+    );
+
+    let out = run(&["abi", "check", &isa("riscv64_v12.toml")]);
+    assert!(
+        out.stdout.contains("riscv_save_area") && out.stdout.contains("寄存器保存区"),
+        "lp64d 的变参同样需要保存区：{}",
+        out.stdout
+    );
+}
+
 #[test]
 fn abi_check_strict_fails_on_gaps() {
     let out = run(&["abi", "check", &isa("arm64_v12.toml"), "--strict"]);
