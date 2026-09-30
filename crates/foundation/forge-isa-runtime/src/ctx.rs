@@ -57,6 +57,63 @@ impl Default for MemRef {
     }
 }
 
+/// **调用约定在 lowering 期的全部状态**（v20）。
+///
+/// 为什么分组：这一层原本有 6 个散落在 `LowerCtx` 顶层的字段（`call_conv` / `call_conv_name` /
+/// `call_layout` / `conv_clobbers` / `conv_ret_gpr` / `module_sigs`），读起来分不清哪些是
+/// "IR 声明的"、哪些是"宿主算好的"、哪些是"本函数的"。收进一个结构体后，生成物与管线里
+/// 的读口子自解释：`ctx.conv.layout`、`ctx.conv.ret_gpr`、`ctx.conv.variadic_of(f)`。
+#[derive(Debug, Clone, Default)]
+pub struct CallConvCtx {
+    /// 当前函数的调用约定（**IR 声明的那份标识**：`Builtin`/`Named`/`Index`）。
+    pub id: CallConvId,
+    /// **解析后的约定名**（宿主注册表里的键 `AbiRules::name`；空串 = 还没解析）。
+    ///
+    /// 与 [`id`](Self::id) 的分工：`id` 是 IR 侧标识，这个名字是**查表用的键**——管线入口
+    /// （`CompileState::new`）解析并 fail-closed，因此 lowering 里读到的名字一定注册过。
+    pub name: String,
+    /// **本函数的调用布局**（由管线从 `forge_abi::AbiPlan` 转好塞进来）：生成物的收参/
+    /// 传参/序尾声读它——运行时因此不依赖 forge-abi，只认这份数据。
+    ///
+    /// `None` = 管线还没接上（v20 A6 起"算不出 plan"是**编译错误**，所以正常路径恒为 `Some`）。
+    pub layout: Option<crate::machine::call_layout::CallLayout>,
+    /// **约定级破坏集**：调用点被破坏的寄存器 `(类内号, 类)`，由宿主按 `(ISA, 约定)` 算好。
+    ///
+    /// 与 [`layout`](Self::layout) 的分工：后者是**本函数**的完整布局（含落点），这份是
+    /// **签名无关**的约定级事实（`AbiPlan::clobbers` = 可用池 − callee-saved − pinned）。
+    /// 空 = 宿主没给约定数据 ⇒ 生成物在调用点 **fail-closed**（不按谱面里那几个寄存器猜）。
+    pub clobbers: Vec<(u32, forge_ir::RegClass)>,
+    /// **约定级整数返回槽** `(类内号, 类)`：这份约定把标量整数返回放哪个寄存器
+    /// （x86 RAX = 0、riscv a0 = X10、arm64 x0 = 0）。
+    ///
+    /// 与 [`layout`](Self::layout) 的 `.ret` 的分工：那是**本函数**的返回位（含 sret/浮点/
+    /// 聚合各种形态），这份是**约定级**标量返回槽——`Return` 优先用前者，`Call` 读**被调方**
+    /// 返回值时用这份（调用点看不到被调方签名）。空 = 宿主没给 ⇒ 生成物 fail-closed。
+    pub ret_gpr: Option<(u32, forge_ir::RegClass)>,
+    /// **模块级签名表**：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
+    ///
+    /// 调用点只看得见实参形状，判不出"未命名实参在只走栈的约定里要改判到栈"——宿主编译
+    /// 模块时手上有每个函数的签名，填在这里。`None` = 没有这份表（单函数编译）。
+    pub module_sigs: Option<Vec<(bool, u32)>>,
+}
+
+impl CallConvCtx {
+    /// 本函数的布局（`None` = 管线没接上；v20 A6 起"算不出"是编译错误）。
+    pub fn layout(&self) -> Option<&crate::machine::call_layout::CallLayout> {
+        self.layout.as_ref()
+    }
+
+    /// **按 `FuncRef` 查被调方的变参信息**（`None` = 非变参 / 没有表 / 查不到）。
+    ///
+    /// 生成物在调用点只写 `ctx.conv.variadic_of(__f)`，把"查表 + 越界兜底"的逻辑收在这里
+    /// （可被宿主侧测试直接覆盖，生成物里不必再摊开）。
+    pub fn variadic_of(&self, f: forge_ir::FuncRef) -> Option<(bool, u32)> {
+        self.module_sigs
+            .as_ref()
+            .and_then(|sigs| sigs.get(f.index() as usize).copied())
+    }
+}
+
 /// 指令选择上下文 — 在 lowering 阶段提供给 [`machine::lowering::TargetLowering`]。
 pub struct LowerCtx {
     /// 下一个可用的虚拟寄存器号。
@@ -65,39 +122,9 @@ pub struct LowerCtx {
     pub xregs: forge_ir::XRegAllocator,
     /// XReg → IR 类型映射（用于 `.if` 条件汇编中的类型查询）。
     pub xreg_types: HashMap<XReg, TypeId>,
-    /// 当前函数的调用约定（IR 声明的那份标识）。
-    pub call_conv: CallConvId,
-    /// **一次调用的中性布局**（v20 A3b-2）：由管线从 `forge-abi::AbiPlan` 转好塞进来，
-    /// 生成物的收参/传参/序尾声读它——运行时因此不依赖 forge-abi，只认这份数据。
-    ///
-    /// `None` = 管线还没接上（或该 ISA/约定算不出计划）⇒ 生成物走既有 `[abi]` 路径。
-    pub call_layout: Option<crate::machine::call_layout::CallLayout>,
-    /// **约定级破坏集**（v20 A5-3）：调用点被破坏的寄存器 `(类内号, 类)`，由宿主按
-    /// `(ISA, 约定)` 算好塞进来。
-    ///
-    /// 与 [`call_layout`](Self::call_layout) 的分工：`call_layout` 是**本函数**的完整布局
-    /// （含落点），这份只是"这份约定在调用点破坏哪些寄存器"——它是**签名无关**的事实
-    /// （`AbiPlan::clobbers` = 可用池 − callee-saved − pinned），因此**没有 plan 的回退
-    /// 路径**也能拿到正确值。空 = 宿主没给约定数据 ⇒ 生成物在调用点 **fail-closed**
-    /// （不再按谱面里那几个寄存器猜）。
-    pub conv_clobbers: Vec<(u32, forge_ir::RegClass)>,
-    /// **约定级整数返回槽**（v20 A5-3）：`(类内号, 类)`——"这份约定把标量整数返回放在哪个
-    /// 寄存器"（x86 RAX = 0、riscv a0 = X10、arm64 x0 = 0）。由宿主用**空参 + 整数返回**
-    /// 的合成签名问一次引擎（`plan_for_shapes`）填好。
-    ///
-    /// 与 [`call_layout`](Self::call_layout) 的 `.ret` 的分工：那是**本函数**的返回位
-    /// （含 sret/浮点/聚合的各种形态），这份是**约定级**的标量返回槽——`Return` 优先用前者，
-    /// `Call` 读**被调方**返回值时用这份（调用点看不到被调方的签名）。空 = 宿主没给 ⇒
-    /// 生成物 **fail-closed**（不再按谱里的 `[abi].ret_regs` 猜，那个键已删除）。
-    pub conv_ret_gpr: Option<(u32, forge_ir::RegClass)>,
-    /// **解析后的约定名**（宿主注册表里的键；空串 = 还没解析）。
-    ///
-    /// 与 [`call_conv`](Self::call_conv) 的分工：`call_conv` 是 IR 侧的**标识**
-    /// （`Builtin`/`Named`/`Index`），这个名字是**查表用的键**——A3 起用它查
-    /// `AbiRules`/`AbiBinding` 发射调用点/入口/序尾声。管线入口
-    /// （`CompileState::new`）会解析并 fail-closed，因此 lowering 里读到的名字
-    /// 一定是注册过的。
-    pub call_conv_name: String,
+    /// **调用约定相关的一切**（IR 标识 / 解析后的名字 / 本函数布局 / 约定级破坏集与
+    /// 返回槽 / 模块级签名表）——见 [`CallConvCtx`]。
+    pub conv: CallConvCtx,
     /// 当前函数的常量池（用于解析 Iconst/Fconst 的索引）。
     pub constant_pool: Option<forge_ir::ConstantPool>,
     /// VReg → 寄存器类别映射（用于寄存器分配）。
@@ -127,12 +154,6 @@ pub struct LowerCtx {
     /// 当前指令引用的函数 (Call 的 Immediate::Func；供 lowering 生成
     /// cross-function relocation 的符号名 "@N")。
     pub current_func_ref: Option<FuncRef>,
-    /// **模块级签名表**（变参 D6）：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
-    ///
-    /// 调用点只看得见实参形状，判不出"未命名实参在只走栈的约定里要改判到栈"
-    /// （win64/aapcs64/lp64d 的 `variadic_stack_only`）——宿主编译模块时手上有每个函数的
-    /// 签名，填在这里即可（不必给 `Call` 加签名句柄）。`None` = 没有这份表。
-    pub module_sigs: Option<Vec<(bool, u32)>>,
     /// 当前 AtomicRmw 的操作数 (Immediate::Uint(op as u64) 解析)。
     pub current_atomic_op: Option<forge_ir::ir::opcode::AtomicRmwOp>,
     /// 当前指令引用的全局变量 (GlobalAddr 的 Immediate::Global)。
@@ -198,18 +219,13 @@ impl LowerCtx {
             next_vreg: 0,
             xregs: forge_ir::XRegAllocator::new(),
             xreg_types: HashMap::new(),
-            call_conv: CallConvId::default(),
-            call_conv_name: String::new(),
-            call_layout: None,
-            conv_clobbers: Vec::new(),
-            conv_ret_gpr: None,
+            conv: CallConvCtx::default(),
             constant_pool: None,
             is_float_return: false,
             is_sret_return: false,
             current_const_index: 0,
             current_immediates: SmallVec::new(),
             current_func_ref: None,
-            module_sigs: None,
             current_atomic_op: None,
             current_global: None,
             current_offset: 0,

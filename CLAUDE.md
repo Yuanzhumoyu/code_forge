@@ -242,10 +242,12 @@ code-forge (root umbrella)
    `CallConvId::{Builtin(ConvName), Named(ImmStr), Index(u32)}`（旧的 16 变体 `CallConv`
    已删——它既不是公共约定、也没人读）；宿主注册表
    `forge_codegen::pipeline::conv_registry` 在编译入口解析成注册表键（未注册 ⇒ **fail-closed**，
-   结果落在 `LowerCtx::call_conv_name`，A3 起用它查规则/绑定）。
+   结果落在 `LowerCtx::conv.name`——调用约定相关的一切都在 `LowerCtx::conv: CallConvCtx`
+   里（`id`/`name`/`layout`/`clobbers`/`ret_gpr`/`module_sigs`），A3 起用它查规则/绑定）。
    谱侧只提供 `AbiTarget`（有哪些寄存器/宽度/能力），没有宿主后端时由
-   `forge_isa_dsl::abi_view` 从谱本身建出这份视图。三条连带纪律：① **不要再往谱的 `[abi]`
-   里加约定内容**（A5 会把它整节搬成 `[machine]` 的机器事实 + 绑定/规则）；② 返回寄存器
+   `forge_isa_dsl::abi_view` 从谱本身建出这份视图。三条连带纪律：① **谱侧只有两件事**：
+   能力申报（`roles`）与机器事实（`[machine]`）——`[abi]` 已**整节删除**（A5-3），写它会报未知键；
+   ② 返回寄存器
    与参数寄存器是**两套池**（x86 返回在 RAX、参数从 RCX 起），HFA 的槽数按类型取
    （`slots = "hfa"`），宽返回的 sret 落点**每份约定不同**（x86=RCX/RDI、AAPCS64=x8、
    riscv=a0）——这三处正是旧实现写错值的地方；③ 改 `CallConvId` 的编码要**同时**升
@@ -258,8 +260,10 @@ code-forge (root umbrella)
    生成器发射**：`@move_args`（A3b-2b-2b）与 `[emit.prologue|epilogue]` + 四个伪指令（A4）
    **都已从谱面撤出**（写了会被明确拒绝），生成器按 `AllocResult::call_layout` 收参、
    按机器事实 + 角色生成序/尾声（`frame_alloc`/`frame_free`/`frame_set`/`push`/`pop`/
-   `callee_save`/`callee_load`/`ret`）；`Pair`/`Group`/`Stack`/无指针 `Indirect` ⇒ 整函数
-   退回 `[abi]` 路径，两条路径不混用。栈参数收参的 load/store 仍走旧路径（A3b-2b-2c）。
+   `callee_save`/`callee_load`/`ret`）；落在发射侧还没接的落点（`Pair`/`Group`/无指针
+   `Indirect`）⇒ **明确 `Unsupported`**（A5-3 起没有旧路径可退）；**没有 plan 是编译错误**
+   （A6 的 fail-closed）。调用点 API 的形状面是 `CallRequest`（`conv`/`args`/`rets`/
+   `variadic` 一行 builder），失败返回带引擎原文的 `CallPlanError`。
    参考 `docs/reference/calling-conventions.md`，分期 `docs/plans/calling-convention-redesign-plan.md`。
 
 ### ISA Backend Pattern

@@ -32,7 +32,7 @@ FunctionSignature.calling_convention : CallConvId
    = Builtin(ConvName)  |  Named(ImmStr)  |  Index(u32)
         │  forge_codegen::pipeline::conv_registry::resolve()   ← 宿主数据，**未注册即报错**
         ▼
-   ctx.call_conv_name（注册表键："win64"/"my_conv"/"cc42"）
+   ctx.conv.name（注册表键："win64"/"my_conv"/"cc42"）
         │  forge_abi::AbiRegistry::rules(name) / binding(isa, name)
         ▼
    AbiRules + AbiBinding → plan_fn → AbiPlan（A3 按它发射调用点/入口/序尾声）
@@ -193,7 +193,7 @@ pub enum CallConvId {
 - **未注册即 fail-closed**：`forge_codegen::pipeline::conv_registry::resolve()` 在编译入口
   （`CompileState::new`）把标识解析成注册表键，查不到就报 `Unsupported` 并列出已注册的名字。
   宿主用 `register_rules_toml` / `register_binding_toml` 加自己的约定。
-- 解析结果落在 `LowerCtx::call_conv_name`——**A3 就用这个名字查 `AbiRules`/`AbiBinding`**
+- 解析结果落在 `LowerCtx::conv.name`——**A3 就用这个名字查 `AbiRules`/`AbiBinding`**
   发射调用点/入口/序尾声。旧实现"只写不读"的那个字段，现在是一条活路径。
 - 二进制格式跟着升到 **`IR_FORMAT_VERSION = 3`**：签名体里那 1 字节判别值改成 tag
   （`0..=4` = 内置、`5` = 命名（字符串表下标）、`6` = 数值（varint））。`c` 仍是 **1 字节**
@@ -240,13 +240,20 @@ pub enum CallConvId {
 ```text
 AbiPlan ──forge_codegen::pipeline::abi_target::call_layout()──► machine::call_layout::CallLayout
                                                                         │
-                            AllocResult::call_layout ◄── LowerCtx::call_layout（管线在编译入口填）
+                            AllocResult::call_layout ◄── LowerCtx::conv.layout（管线在编译入口填）
                                                                         │
                                           生成物的序言（收参）/ 序尾声（读 __rm.call_layout）
 ```
 
 寄存器在 `CallLayout` 里是 **(类, 类内号)**（`RegClass` 是 forge-ir 的中性类型），
 生成物用 `Reg::from_index(i, class)` 还原——运行时因此**不需要依赖 forge-abi**。
+
+**这些读口子都收在 `LowerCtx::conv: CallConvCtx` 里**（人体工学，2026-09-30）：`id`（IR 声明的
+标识）/ `name`（解析后的注册表键）/ `layout`（本函数布局，`conv.layout()` 取）/ `clobbers`
+（约定级破坏集）/ `ret_gpr`（约定级整数返回槽）/ `module_sigs`（模块级签名表，
+`conv.variadic_of(f)` 按 `FuncRef` 查被调方是否变参）。生成物与管线里因此写得出
+`ctx.conv.layout()`、`ctx.conv.variadic_of(f)` 这种自解释的调用——而不再是一堆散落在
+`LowerCtx` 顶层的 `conv_*` 字段（哪些是 IR 声明的、哪些是宿主算好的，看不出来）。
 
 当前落地程度（A3b-2b-2a / 2b-2b，2026-09-25）：
 

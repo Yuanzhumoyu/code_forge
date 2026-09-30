@@ -317,20 +317,20 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     let return_body: TokenStream = if has_mov_rax {
         let mov_src_idx_lit = mov_src_idx as usize;
         // 返回槽（v20 A5-3）：优先**本函数的 plan**（`CallLayout::ret` 的寄存器形态），
-        // 否则用宿主的**约定级整数返回槽**（`ctx.conv_ret_gpr`）——谱里的
+        // 否则用宿主的**约定级整数返回槽**（`ctx.conv.ret_gpr`）——谱里的
         // `[abi].ret_regs` 已删除。两者都拿不到 ⇒ **fail-closed**（不按某个 ISA 的
         // 寄存器名猜）。
         let ret_dest: TokenStream = quote! {
             match ctx
-                .call_layout
-                .as_ref()
+                .conv
+                .layout()
                 .and_then(|__cl| match __cl.ret.as_ref() {
                     Some(crate::machine::call_layout::RetPlace::Reg { class, index, .. }) => {
                         Some((*index, *class))
                     }
                     _ => None,
                 })
-                .or(ctx.conv_ret_gpr)
+                .or(ctx.conv.ret_gpr)
             {
                 Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
                 None => {
@@ -357,7 +357,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             quote! {
                 // sret 指针来自**布局**的隐藏槽（v20 A5-3：不再假设"首 int 参数槽"——
                 // 那正是按位置/按类计数与 sret 槽差异会出错的写法）。
-                let __sret = match ctx.call_layout.as_ref().and_then(|__cl| __cl.hidden_sret) {
+                let __sret = match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret) {
                     Some((__hc, __hi)) => Reg::from_index(__hi, __hc),
                     None => {
                         return Err(crate::prelude::IrError::Unsupported(
@@ -438,7 +438,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             };
             quote! {
                 let __ret_regs: Vec<(forge_ir::RegClass, u32)> =
-                    match ctx.call_layout.as_ref().and_then(|__cl| __cl.ret.as_ref()) {
+                    match ctx.conv.layout().and_then(|__cl| __cl.ret.as_ref()) {
                         Some(crate::machine::call_layout::RetPlace::Pair { lo, hi }) => vec![*lo, *hi],
                         Some(crate::machine::call_layout::RetPlace::Group { regs }) => regs.clone(),
                         _ => Vec::new(),
@@ -1288,11 +1288,11 @@ fn gen_call_lowering(
     let (byref_insts, has_byref_insts) = collect_byref_insts(infos);
     let byref = |tag: &str| byref_insts.get(tag).cloned();
     // 返回槽（Call 读**被调方**的返回值，v20 A5-3）：用宿主的**约定级返回槽**
-    // `ctx.conv_ret_gpr`——调用点看不到被调方的签名，而"标量整数返回放哪个寄存器"
+    // `ctx.conv.ret_gpr`——调用点看不到被调方的签名，而"标量整数返回放哪个寄存器"
     // 是约定级事实（x86 RAX / riscv a0=X10 / arm64 x0）。谱里的 `[abi].ret_regs`
     // 已删除；拿不到 ⇒ fail-closed。
     let ret_src_expr: TokenStream = quote! {
-        match ctx.conv_ret_gpr {
+        match ctx.conv.ret_gpr {
             Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
             None => {
                 return Err(crate::prelude::IrError::Unsupported(
@@ -1337,16 +1337,13 @@ fn gen_call_lowering(
         let __ret_shapes: Vec<crate::machine::call_layout::ArgShape> =
             results.iter().map(|&__r| __shape_of(__r)).collect();
         // **被调方的变参信息**（变参 D6）：调用点只看得见实参形状，判不出"未命名实参在
-        // 只走栈的约定里要改判到栈"——宿主把**模块级签名表**放在 `ctx.module_sigs`
-        // （`FuncRef::index()` → `(是否变参, 命名个数)`），这里按当前 `Call` 的 FuncRef 查。
-        // 表缺席（单函数编译）或查不到 ⇒ `None`，按非变参处理。
-        let __variadic: Option<(bool, u32)> = ctx.current_func_ref.and_then(|__f| {
-            ctx.module_sigs
-                .as_ref()
-                .and_then(|__sigs| __sigs.get(__f.index() as usize).copied())
-        });
+        // 只走栈的约定里要改判到栈"——宿主把**模块级签名表**放在 `ctx.conv.module_sigs`，
+        // 这里按当前 `Call` 的 FuncRef 查（查表与越界兜底收在 `CallConvCtx::variadic_of`，
+        // 生成物只写一行）。表缺席（单函数编译）或查不到 ⇒ `None`，按非变参处理。
+        let __variadic: Option<(bool, u32)> =
+            ctx.current_func_ref.and_then(|__f| ctx.conv.variadic_of(__f));
         let __req = crate::machine::call_plan::CallRequest {
-            conv: ctx.call_conv_name.clone(),
+            conv: ctx.conv.name.clone(),
             args: __shapes,
             rets: __ret_shapes,
             variadic: __variadic,
@@ -1839,7 +1836,7 @@ fn gen_call_lowering(
                 // 单结果 IR 值一律用**池宽** FPR(8) 成类，而 >8 字节向量的 spill/reload
                 // 宽度取自类宽 ⇒ 只搬 8 字节。修在 `pipeline/lowering.rs`（向量按真实
                 // 字节数成类 VEC(16/32/64)），此后全类破坏集才可用。
-                ctx.current_clobbers = match ctx.call_layout.as_ref() {
+                ctx.current_clobbers = match ctx.conv.layout() {
                     Some(__cl) => __cl
                         .clobbers
                         .iter()
@@ -1851,14 +1848,14 @@ fn gen_call_lowering(
                     // 不再按"参数寄存器 + 返回寄存器"猜——那会漏掉 callee 破坏的临时寄存器
                     // （实测递归 fib 死循环）。
                     None => {
-                        if ctx.conv_clobbers.is_empty() {
+                        if ctx.conv.clobbers.is_empty() {
                             return Err(crate::prelude::IrError::Unsupported(
                                 "v12 call: 调用点的破坏集需要宿主的约定数据（该函数没有 plan，\
                                  且约定级破坏集为空）——请在宿主注册该约定\
                                  （forge_codegen::pipeline::conv_registry）".into(),
                             ));
                         }
-                        ctx.conv_clobbers.clone()
+                        ctx.conv.clobbers.clone()
                     }
                 };
                 // S2：宽向量返回值（>16 字节）sret——隐藏 sret 指针参数占

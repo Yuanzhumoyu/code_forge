@@ -1180,7 +1180,7 @@ riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 **迁移期已收尾（2026-09-27）**：`[abi]` 的同义旧键（`scratch`/`reserved`/`call_ret_reg`/
 `frame`/`callee_saved`/`arg_slot`）**全部删除**——写旧键报未知键，本节就是这些事实的
 唯一来源（`frame_padding`、`[abi.stack_args]` 与约定级的 `call_clobbers` 也在同一批
-搬走/删除；后者改由宿主的 `LowerCtx::conv_clobbers` 提供）。
+搬走/删除；后者改由宿主的 `LowerCtx::conv.clobbers` 提供）。
 
 ## `[abi]` — **已删除**（v20 A5-3 收口）
 
@@ -1189,8 +1189,8 @@ v20 A5-3 把"约定数据"整节移出谱面：`[abi]` 的键**全部删除**，
 | 原键 | 去处 |
 | --- | --- |
 | `arg_class`（参数池 / by-ref 策略 / limit） | **plan**：调用方按 `ArgPlan` 逐实参搬值（`call_plan::plan_call`，形状从实参 IR 类型摊开）；by-ref 阈值改机器事实 `[machine].vector_by_ref_bytes` |
-| `ret_regs` | `Return` 读 `CallLayout.ret`；`Call` 读宿主的 `LowerCtx::conv_ret_gpr` |
-| `call_clobbers` | 宿主的 `LowerCtx::conv_clobbers`（约定级、与签名无关） |
+| `ret_regs` | `Return` 读 `CallLayout.ret`；`Call` 读宿主的 `LowerCtx::conv.ret_gpr` |
+| `call_clobbers` | 宿主的 `LowerCtx::conv.clobbers`（约定级、与签名无关） |
 | `arg_slot` / `frame_padding` | [`[machine]`](#machine--机器事实) 的同名键 |
 | `scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved` | [`[machine]`](#machine--机器事实) 的 `[machine].spill_scratch` / `[machine].fixed_regs` / `[machine].link_reg` / `[machine].frame` / `[machine].callee_saved_gpr` |
 

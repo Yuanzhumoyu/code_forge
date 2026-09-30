@@ -114,7 +114,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 最小帧（fp-inside 推导 = fp_push + callee_saved 区）：riscv 的
         // ra/fp 保存槽需帧 ≥ 固定值，否则 emit 模板的 {frame_size_mN} 偏移
         // 为负（写坏 sp 下方）。
-        let min_frame = frame_layout_info(machine, self.ctx.call_layout.as_ref()).min_frame;
+        let min_frame = frame_layout_info(machine, self.ctx.conv.layout()).min_frame;
         let size = size.max(min_frame);
         // 栈填充（x86 = 8 = align/2）：prologue push rbp + callee-saved 后
         // rsp%16==8（入口 rsp%16==8 由 call 压入的返回地址造成），sub rsp 必须
@@ -126,8 +126,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 谱里那份只是无 plan 时的兜底。
         let padding: i32 = self
             .ctx
-            .call_layout
-            .as_ref()
+            .conv
+            .layout()
             .map(|cl| cl.frame_padding)
             .unwrap_or_else(|| machine.abi().frame_padding());
         size.div_ceil(align) * align + padding as u32

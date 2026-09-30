@@ -268,7 +268,7 @@ fn terminator_return_packet() {
     // 直连 lowering（不经过编译管线）时，**约定级数据要自己填**：v20 A5-3 起
     // 返回槽不再来自谱里的 `[abi].ret_regs`（已删除），而是 plan 或这份约定级返回槽。
     // 管线（`compiler.rs`）在真实编译路径上会填好；这里按 x86 win64 的口径填 RAX（类内 0 号）。
-    ctx.conv_ret_gpr = Some((
+    ctx.conv.ret_gpr = Some((
         <forge_codegen::x86_v12::Reg as forge_ir::PhysReg>::from_index(
             0,
             tm.reg_info().value_gpr_class(),

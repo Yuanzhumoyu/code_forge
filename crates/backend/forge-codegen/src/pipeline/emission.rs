@@ -34,10 +34,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // spill area starts at rbp - callee_saved_bytes - frame_size.
         // (Old code counted only callee-saved bytes, shifting locals/spills
         // 8 bytes into the pushed registers.)
-        let callee_saved_bytes = crate::pipeline::frame_layout::callee_saved_bytes(
-            machine,
-            self.ctx.call_layout.as_ref(),
-        );
+        let callee_saved_bytes =
+            crate::pipeline::frame_layout::callee_saved_bytes(machine, self.ctx.conv.layout());
         // 栈参数区（shadow space + 第 5+ 参数槽）：调用方 store 到帧底之上，
         // spill 槽起始需上移该字节数（见 emit_inst_with_spills）。
         let stack_args = self.ctx.max_stack_arg_bytes as i32;

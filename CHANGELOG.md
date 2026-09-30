@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-30) — `LowerCtx` 的调用约定字段收进 `CallConvCtx`（破坏性重构）
+
+- **6 个散落字段 → 一个结构体**：`LowerCtx::{call_conv, call_conv_name, call_layout,
+  conv_clobbers, conv_ret_gpr, module_sigs}` 合并为 `LowerCtx::conv: CallConvCtx`，字段名
+  自解释：`id`（IR 声明的 `CallConvId`）/ `name`（解析后的注册表键）/ `layout`（本函数布局）/
+  `clobbers`（约定级破坏集）/ `ret_gpr`（约定级整数返回槽）/ `module_sigs`（模块级签名表）。
+  理由：原来看不出哪些是"IR 声明的"、哪些是"宿主算好的"、哪些是"本函数的"。
+- **两个把逻辑收进来的助手**：`conv.layout()`（替代到处写的 `.as_ref()`）与
+  `conv.variadic_of(func_ref)`（把"按 `FuncRef` 查变参信息 + 越界兜底"从生成物搬回运行时，
+  生成物里 4 行塌成 1 行，且宿主侧测试可直接覆盖）。参考文档与 `CLAUDE.md` 同步改名。
+- 验证：`forge-isa-runtime` 4、`forge-abi` 7、`forge-isa-dsl` 18、`forge-codegen`（29 个测试
+  二进制，exit 0）、`forge-tests` 2、`forge-opt`/`forge-mem`/`forge-grammar`/`forge-hir`/
+  `forge-object`/`forge-plugin`/`forge-isa` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0。
+
 ### Changed (2026-09-30) — 调用点 API 的人体工学：`CallRequest` 结构体 + `CallPlanError` 带诊断（破坏性）
 
 两个问题都是"用错编译器不会拦、出错看不出来"，按人体工学一次改掉（不留兼容层）：

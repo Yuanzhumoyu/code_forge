@@ -2087,11 +2087,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // **在这里读调用约定**（v20 A2）：解析成宿主注册表里的名字，未注册即 fail-closed。
         // 旧实现只把这行赋一次值、全仓无人读——IR 里那份约定等于文档；
         // 现在它是真实的读路径（A3 起用这个名字查 `AbiRules`/`AbiBinding` 发射调用点）。
-        ctx.call_conv = func.calling_convention.clone();
-        ctx.call_conv_name = crate::pipeline::conv_registry::resolve(&func.calling_convention)?;
+        ctx.conv.id = func.calling_convention.clone();
+        ctx.conv.name = crate::pipeline::conv_registry::resolve(&func.calling_convention)?;
         // 模块级签名表（变参 D6）：调用点在 lowering 时按 `FuncRef` 查它，才知道**被调方**
         // 是不是变参（调用点自己只有实参形状）。单函数编译时为 None。
-        ctx.module_sigs = module_sigs.map(|s| s.to_vec());
+        ctx.conv.module_sigs = module_sigs.map(|s| s.to_vec());
         ctx.type_store = Some(store.clone());
         // 值/地址寄存器类与栈槽单位：全部由 TargetRegInfo 元数据提供
         //（DSL 从 [meta].value_gpr_width/addr_width/slot_bytes 生成）——
@@ -2118,7 +2118,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             // arm64 x0）——用"空参 + 整数返回"的合成签名问一次引擎即可（与具体签名无关）。
             let w = ctx.value_gpr_class.width() as u32;
             let ret_probe =
-                forge_isa_runtime::machine::call_plan::CallRequest::new(ctx.call_conv_name.clone())
+                forge_isa_runtime::machine::call_plan::CallRequest::new(ctx.conv.name.clone())
                     .rets([forge_isa_runtime::machine::call_layout::ArgShape::int(
                         w.max(1),
                         w.max(1),
@@ -2130,12 +2130,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
                     ..
                 }) = crate::pipeline::abi_target::call_layout(&p, machine).ret
             {
-                ctx.conv_ret_gpr = Some((index, class));
+                ctx.conv.ret_gpr = Some((index, class));
             }
             let abi_plan = match crate::pipeline::abi_target::plan_for_function(
                 machine,
                 &reg,
-                &ctx.call_conv_name,
+                &ctx.conv.name,
                 func,
             ) {
                 Ok(p) => p,
@@ -2161,7 +2161,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                          ③ 口径与缺口清单 ⇒ docs/reference/calling-conventions.md、\
                          docs/plans/calling-convention-redesign-plan.md 的 A6。\n\
                          \x20 提示：设 FORGE_TRACE_ABI=1 可看到该函数的 plan 或失败原因。",
-                        ctx.call_conv_name
+                        ctx.conv.name
                     )));
                 }
             };
@@ -2171,11 +2171,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
             if let Ok(p) = crate::pipeline::abi_target::plan_for_signature(
                 machine,
                 &reg,
-                &ctx.call_conv_name,
+                &ctx.conv.name,
                 &forge_abi::Signature::new(Vec::new(), None),
             ) {
                 // `CallLayout::clobbers` 是 (类, 类内号)，`LowerCtx` 用 (号, 类)。
-                ctx.conv_clobbers = crate::pipeline::abi_target::call_layout(&p, machine)
+                ctx.conv.clobbers = crate::pipeline::abi_target::call_layout(&p, machine)
                     .clobbers
                     .into_iter()
                     .map(|(c, i)| (i, c))
@@ -2183,7 +2183,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             }
             abi_plan
         };
-        ctx.call_layout = Some(crate::pipeline::abi_target::call_layout(&abi_plan, machine));
+        ctx.conv.layout = Some(crate::pipeline::abi_target::call_layout(&abi_plan, machine));
         // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
@@ -2194,8 +2194,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 回退 csb）。compiler.rs 的 LowerCtx 与 emission.rs 共用同一来源；
         // **有 plan 时用 plan 的 callee-saved 表**（v20 A5-3 ④：同一台机器换约定，
         // 保存集与破坏集必须一起换）。
-        let fl =
-            crate::pipeline::frame_layout::frame_layout_info(machine, ctx.call_layout.as_ref());
+        let fl = crate::pipeline::frame_layout::frame_layout_info(machine, ctx.conv.layout());
         ctx.callee_saved_bytes = fl.callee_saved_bytes;
         ctx.stack_slot_shift = fl.stack_slot_shift;
         ctx.is_float_return = func
@@ -2283,22 +2282,21 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 相撞）。FPR 那半只有在"发射侧能按类保存"之后才敢开——`callee_save` 角色已带类
         // 限定（arm64 的 STURD），`callee_saved_to_save` 也扫主 FPR 类表，`frame_layout_info`
         // 的帧字节数按 plan 的表算（见那里的注释）。缺任何一环，FPR 值就会跨调用被静默破坏。
-        let (callee_saved, callee_saved_fpr): (Vec<u32>, Vec<u32>) =
-            match self.ctx.call_layout.as_ref() {
-                Some(cl) => {
-                    let mut gpr = Vec::new();
-                    let mut fpr = Vec::new();
-                    for &(c, i) in &cl.callee_saved {
-                        if c == ri.default_fpr_class() {
-                            fpr.push(i);
-                        } else {
-                            gpr.push(i);
-                        }
+        let (callee_saved, callee_saved_fpr): (Vec<u32>, Vec<u32>) = match self.ctx.conv.layout() {
+            Some(cl) => {
+                let mut gpr = Vec::new();
+                let mut fpr = Vec::new();
+                for &(c, i) in &cl.callee_saved {
+                    if c == ri.default_fpr_class() {
+                        fpr.push(i);
+                    } else {
+                        gpr.push(i);
                     }
-                    (gpr, fpr)
                 }
-                None => (ri.callee_saved(), Vec::new()),
-            };
+                (gpr, fpr)
+            }
+            None => (ri.callee_saved(), Vec::new()),
+        };
 
         let reg_info = NewRegAllocConfig {
             classes,
@@ -2322,8 +2320,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
             // load 进自己的形参寄存器——不预分配就会走"spilled ⇒ 不收参"（实测宽向量 by-ref 全 0）。
             param_reg_count: self
                 .ctx
-                .call_layout
-                .as_ref()
+                .conv
+                .layout()
                 .map(|cl| {
                     cl.args
                         .iter()
@@ -2357,7 +2355,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let mut alloc_result = alloc_result;
         alloc_result.sret = self.ctx.is_sret_return;
         // v20 A3b-2b：把中性调用布局一并交给帧件（序言/尾声只拿到 AllocResult）。
-        alloc_result.call_layout = self.ctx.call_layout.clone();
+        alloc_result.call_layout = self.ctx.conv.layout.clone();
         // 栈参数区字节数（move_args 收栈参数时计算 spill 槽地址）
         alloc_result.stack_arg_bytes = self.ctx.max_stack_arg_bytes;
         // 参数字节宽（IR 类型 size_bytes）——@move_args 的 by-ref 宽向量收参按
