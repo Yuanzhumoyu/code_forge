@@ -1683,6 +1683,11 @@ pub struct FunctionCompiler<M: TargetMachine> {
     /// 克隆体跑对应 PassManager 管线再 lower。P0-1：把 forge-opt 优化
     /// 管线接入生产编译（此前 PassManager 是死代码，全部 pass 缺陷潜伏）。
     opt_level: Option<forge_opt::OptimizationLevel>,
+    /// **模块级签名表**（变参 D6）：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
+    ///
+    /// 编译**整个模块**的入口（JIT）填它（[`Self::with_module_sigs`]）；单函数编译为
+    /// `None` ⇒ 调用点按非变参处理（旧行为）。
+    module_sigs: Option<Vec<(bool, u32)>>,
 }
 
 impl<M: TargetMachine> FunctionCompiler<M> {
@@ -1696,7 +1701,16 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             machine,
             reg_alloc: BacktrackingAllocator,
             opt_level: None,
+            module_sigs: None,
         }
+    }
+
+    /// 装上**模块级签名表**（变参 D6）：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
+    ///
+    /// 只有编译**整个模块**的入口（JIT）有这份表；单函数入口不装 ⇒ 调用点按非变参处理。
+    pub fn with_module_sigs(mut self, sigs: Vec<(bool, u32)>) -> Self {
+        self.module_sigs = Some(sigs);
+        self
     }
 
     /// 启用 IR 级优化（compile/compile_with_alloc 前跑对应 O 级别管线）。
@@ -1933,7 +1947,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);
 
-        let mut state = CompileState::new(&self.machine, func_ref)?;
+        let mut state = CompileState::new(&self.machine, func_ref, self.module_sigs.as_deref())?;
         let _t = std::time::Instant::now();
 
         // Stage 1: Block mapping
@@ -2058,7 +2072,11 @@ pub(crate) struct CompileState<I: MachineInst> {
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
-    fn new<M: TargetMachine>(machine: &M, func: &Function) -> Result<Self, IrError> {
+    fn new<M: TargetMachine>(
+        machine: &M,
+        func: &Function,
+        module_sigs: Option<&[(bool, u32)]>,
+    ) -> Result<Self, IrError> {
         // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
         // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取**一次快照**——守卫借的是
         // 这个局部，不与 func 的 &mut 借用冲突；快照交给 LowerCtx（lowering 期间类型表
@@ -2071,6 +2089,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 现在它是真实的读路径（A3 起用这个名字查 `AbiRules`/`AbiBinding` 发射调用点）。
         ctx.call_conv = func.calling_convention.clone();
         ctx.call_conv_name = crate::pipeline::conv_registry::resolve(&func.calling_convention)?;
+        // 模块级签名表（变参 D6）：调用点在 lowering 时按 `FuncRef` 查它，才知道**被调方**
+        // 是不是变参（调用点自己只有实参形状）。单函数编译时为 None。
+        ctx.module_sigs = module_sigs.map(|s| s.to_vec());
         ctx.type_store = Some(store.clone());
         // 值/地址寄存器类与栈槽单位：全部由 TargetRegInfo 元数据提供
         //（DSL 从 [meta].value_gpr_width/addr_width/slot_bytes 生成）——
@@ -2105,6 +2126,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                     w.max(1),
                     w.max(1),
                 )],
+                None,
             ) && let Some(forge_isa_runtime::machine::call_layout::RetPlace::Reg {
                 class,
                 index,

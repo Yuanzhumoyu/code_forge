@@ -214,19 +214,28 @@ pub fn shape_to_ty(s: &ArgShape) -> forge_abi::TyView {
 /// `Function`，而落点必须由引擎给——这条入口就是那一步。名字只用于诊断（`a0`/`a1`…）。
 ///
 /// `rets` 是**全部**返回值的形状（空 = void；多个 = 多值返回，v20 A6）。
+///
+/// `variadic` 是**被调方的变参信息**（`Some((true, 命名个数))`，变参 D6）：调用点自己判不出
+/// "未命名实参在只走栈的约定里要改判到栈"，必须由宿主把模块签名表查给它
+///（`LowerCtx::module_sigs`）；`None` = 非变参 / 不知道。
 pub fn plan_for_shapes<M: TargetMachine>(
     machine: &M,
     registry: &AbiRegistry,
     conv: &str,
     args: &[ArgShape],
     rets: &[ArgShape],
+    variadic: Option<(bool, u32)>,
 ) -> Result<AbiPlan, AbiError> {
     let params: Vec<(String, forge_abi::TyView)> = args
         .iter()
         .enumerate()
         .map(|(i, s)| (format!("a{i}"), shape_to_ty(s)))
         .collect();
-    let sig = Signature::with_rets(params, rets.iter().map(shape_to_ty).collect());
+    let mut sig = Signature::with_rets(params, rets.iter().map(shape_to_ty).collect());
+    // 被调方是变参 ⇒ 告诉引擎"前 `fixed` 个是命名的"，其余走 `variadic_stack_only` 的规则。
+    if let Some((true, fixed)) = variadic {
+        sig = sig.variadic(fixed as usize);
+    }
     plan_for_signature(machine, registry, conv, &sig)
 }
 
@@ -239,11 +248,16 @@ pub fn register_isa_call_planner<M: TargetMachine + 'static>(isa: &str, machine:
     let tm: &'static M = Box::leak(Box::new(machine));
     forge_isa_runtime::machine::call_plan::register_call_planner(
         isa,
-        std::sync::Arc::new(move |conv: &str, args: &[ArgShape], rets: &[ArgShape]| {
-            let reg = crate::pipeline::conv_registry::registry().read().ok()?;
-            let plan = plan_for_shapes(tm, &reg, conv, args, rets).ok()?;
-            Some(call_layout(&plan, tm))
-        }),
+        std::sync::Arc::new(
+            move |conv: &str,
+                  args: &[ArgShape],
+                  rets: &[ArgShape],
+                  variadic: Option<(bool, u32)>| {
+                let reg = crate::pipeline::conv_registry::registry().read().ok()?;
+                let plan = plan_for_shapes(tm, &reg, conv, args, rets, variadic).ok()?;
+                Some(call_layout(&plan, tm))
+            },
+        ),
     );
 }
 

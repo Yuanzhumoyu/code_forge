@@ -127,6 +127,12 @@ pub struct LowerCtx {
     /// 当前指令引用的函数 (Call 的 Immediate::Func；供 lowering 生成
     /// cross-function relocation 的符号名 "@N")。
     pub current_func_ref: Option<FuncRef>,
+    /// **模块级签名表**（变参 D6）：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
+    ///
+    /// 调用点只看得见实参形状，判不出"未命名实参在只走栈的约定里要改判到栈"
+    /// （win64/aapcs64/lp64d 的 `variadic_stack_only`）——宿主编译模块时手上有每个函数的
+    /// 签名，填在这里即可（不必给 `Call` 加签名句柄）。`None` = 没有这份表。
+    pub module_sigs: Option<Vec<(bool, u32)>>,
     /// 当前 AtomicRmw 的操作数 (Immediate::Uint(op as u64) 解析)。
     pub current_atomic_op: Option<forge_ir::ir::opcode::AtomicRmwOp>,
     /// 当前指令引用的全局变量 (GlobalAddr 的 Immediate::Global)。
@@ -203,6 +209,7 @@ impl LowerCtx {
             current_const_index: 0,
             current_immediates: SmallVec::new(),
             current_func_ref: None,
+            module_sigs: None,
             current_atomic_op: None,
             current_global: None,
             current_offset: 0,

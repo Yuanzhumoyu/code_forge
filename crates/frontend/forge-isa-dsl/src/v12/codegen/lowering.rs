@@ -1336,11 +1336,21 @@ fn gen_call_lowering(
             __shape_args.iter().map(|&__a| __shape_of(__a)).collect();
         let __ret_shapes: Vec<crate::machine::call_layout::ArgShape> =
             results.iter().map(|&__r| __shape_of(__r)).collect();
+        // **被调方的变参信息**（变参 D6）：调用点只看得见实参形状，判不出"未命名实参在
+        // 只走栈的约定里要改判到栈"——宿主把**模块级签名表**放在 `ctx.module_sigs`
+        // （`FuncRef::index()` → `(是否变参, 命名个数)`），这里按当前 `Call` 的 FuncRef 查。
+        // 表缺席（单函数编译）或查不到 ⇒ `None`，按非变参处理。
+        let __variadic: Option<(bool, u32)> = ctx.current_func_ref.and_then(|__f| {
+            ctx.module_sigs
+                .as_ref()
+                .and_then(|__sigs| __sigs.get(__f.index() as usize).copied())
+        });
         let __cl = match crate::machine::call_plan::plan_call(
             #isa_lit,
             &ctx.call_conv_name,
             &__shapes,
             &__ret_shapes,
+            __variadic,
         ) {
             Some(__cl) => __cl,
             None => {

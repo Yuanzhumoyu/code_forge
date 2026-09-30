@@ -35,16 +35,32 @@ pub trait CallPlanner: Send + Sync {
     /// `conv` = 宿主注册表里的约定名（`AbiRules::name`）；`rets` = 返回值的形状（空 = void，
     /// 多个 = **多值返回**，每个值各自占一个返回寄存器，见 v20 A6）。
     ///
+    /// `variadic` = **被调方是不是变参、命名了几个**（`None` = 非变参/未知，变参 D6）：
+    /// 调用点只看得见实参形状，而"未命名实参在**只走栈**的约定里要改判到栈"只有知道被调方
+    /// 签名才判得出来（宿主把模块签名表查给它，IR 不必带签名句柄）。
+    ///
     /// 算不出来（约定未注册 / 池缺 / 能力缺口）⇒ `None`（fail-closed，调用方不猜）。
-    fn plan_call(&self, conv: &str, args: &[ArgShape], rets: &[ArgShape]) -> Option<CallLayout>;
+    fn plan_call(
+        &self,
+        conv: &str,
+        args: &[ArgShape],
+        rets: &[ArgShape],
+        variadic: Option<(bool, u32)>,
+    ) -> Option<CallLayout>;
 }
 
 impl<F> CallPlanner for F
 where
-    F: Fn(&str, &[ArgShape], &[ArgShape]) -> Option<CallLayout> + Send + Sync,
+    F: Fn(&str, &[ArgShape], &[ArgShape], Option<(bool, u32)>) -> Option<CallLayout> + Send + Sync,
 {
-    fn plan_call(&self, conv: &str, args: &[ArgShape], rets: &[ArgShape]) -> Option<CallLayout> {
-        self(conv, args, rets)
+    fn plan_call(
+        &self,
+        conv: &str,
+        args: &[ArgShape],
+        rets: &[ArgShape],
+        variadic: Option<(bool, u32)>,
+    ) -> Option<CallLayout> {
+        self(conv, args, rets, variadic)
     }
 }
 
@@ -70,12 +86,15 @@ pub fn has_call_planner(isa: &str) -> bool {
 }
 
 /// 查一份调用点布局（生成物 lowering 的入口）。
+///
+/// `variadic` 见 [`CallPlanner::plan_call`]（`None` = 非变参/调用点不知道）。
 pub fn plan_call(
     isa: &str,
     conv: &str,
     args: &[ArgShape],
     rets: &[ArgShape],
+    variadic: Option<(bool, u32)>,
 ) -> Option<CallLayout> {
     let planner = planners().read().ok().and_then(|m| m.get(isa).cloned())?;
-    planner.plan_call(conv, args, rets)
+    planner.plan_call(conv, args, rets, variadic)
 }

@@ -764,8 +764,8 @@ fn shape_plan_matches_the_function_plan() {
         ];
         for (what, func, args, ret) in cases {
             let by_func = plan_for_function(&tm, &reg, "win64", &func).expect("函数 plan");
-            let by_shape =
-                plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret)).expect("形状 plan");
+            let by_shape = plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret), None)
+                .expect("形状 plan");
             assert_eq!(
                 cmp(&by_shape),
                 cmp(&by_func),
@@ -785,8 +785,8 @@ fn shape_plan_matches_the_function_plan() {
             ArgShape::float(8),
         ];
         let by_func = plan_for_function(&tm, &reg, "lp64d", &func).expect("函数 plan");
-        let by_shape =
-            plan_for_shapes(&tm, &reg, "lp64d", &args, &[ArgShape::float(8)]).expect("形状 plan");
+        let by_shape = plan_for_shapes(&tm, &reg, "lp64d", &args, &[ArgShape::float(8)], None)
+            .expect("形状 plan");
         assert_eq!(
             cmp(&by_shape),
             cmp(&by_func),
@@ -800,7 +800,7 @@ fn shape_plan_matches_the_function_plan() {
         let func = aapcs64_probe();
         let args = vec![ArgShape::int(8, 8), ArgShape::int(8, 8)];
         let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
-        let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &args, &[ArgShape::int(8, 8)])
+        let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &args, &[ArgShape::int(8, 8)], None)
             .expect("形状 plan");
         assert_eq!(
             cmp(&by_shape),
@@ -836,8 +836,9 @@ fn call_planner_registry_serves_the_shape_plan() {
     ];
     let ret = Some(ArgShape::float(8));
 
-    let by_hook = plan_call("x86_64_v12", "win64", &args, &ret_list(&ret)).expect("钩子应给出布局");
-    let plan = plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret)).expect("直接算");
+    let by_hook =
+        plan_call("x86_64_v12", "win64", &args, &ret_list(&ret), None).expect("钩子应给出布局");
+    let plan = plan_for_shapes(&tm, &reg, "win64", &args, &ret_list(&ret), None).expect("直接算");
     assert_eq!(
         by_hook,
         call_layout(&plan, &tm),
@@ -845,7 +846,7 @@ fn call_planner_registry_serves_the_shape_plan() {
     );
 
     // 未注册的 ISA：`None`（生成物据此 fail-closed）。
-    assert!(plan_call("nope_isa", "win64", &args, &ret_list(&ret)).is_none());
+    assert!(plan_call("nope_isa", "win64", &args, &ret_list(&ret), None).is_none());
 }
 
 /// **约定级整数返回槽**（v20 A5-3）：`plan_for_shapes(空参, 整数返回)` 给出的返回寄存器就是
@@ -862,7 +863,7 @@ fn convention_level_int_return_slot() {
     // x86 win64：RAX。
     {
         let tm = TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "win64", &[], &ret_shape).expect("win64 plan");
+        let p = plan_for_shapes(&tm, &reg, "win64", &[], &ret_shape, None).expect("win64 plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "RAX"),
             other => panic!("{other:?}"),
@@ -871,7 +872,7 @@ fn convention_level_int_return_slot() {
     // riscv lp64d：a0 = X10（**不是 index 0**——这正是谱里那份 `ret_regs` 存在的理由）。
     {
         let tm = forge_codegen::arch::riscv64_v12::TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "lp64d", &[], &ret_shape).expect("lp64d plan");
+        let p = plan_for_shapes(&tm, &reg, "lp64d", &[], &ret_shape, None).expect("lp64d plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X10"),
             other => panic!("{other:?}"),
@@ -880,7 +881,7 @@ fn convention_level_int_return_slot() {
     // arm64 aapcs64：x0。
     {
         let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
-        let p = plan_for_shapes(&tm, &reg, "aapcs64", &[], &ret_shape).expect("aapcs64 plan");
+        let p = plan_for_shapes(&tm, &reg, "aapcs64", &[], &ret_shape, None).expect("aapcs64 plan");
         match p.ret {
             forge_abi::RetLoc::Reg { reg } => assert_eq!(reg.name, "X0"),
             other => panic!("{other:?}"),
@@ -1001,7 +1002,7 @@ fn a6_gap_inventory() {
     macro_rules! probe {
         ($isa:expr, $conv:expr, $tm:expr) => {
             for (name, args, ret) in &cases {
-                match plan_for_shapes($tm, &reg, $conv, args, &ret_list(ret)) {
+                match plan_for_shapes($tm, &reg, $conv, args, &ret_list(ret), None) {
                     Ok(_) => {}
                     Err(e) => gaps.push(format!("{} / {} / {}: {}", $isa, $conv, name, e)),
                 }
@@ -1120,7 +1121,7 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
         ),
         "聚合形状必须带 2 个成员（HFA 判定靠它）：{shape:?}"
     );
-    let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &[shape], &[]).expect("形状 plan");
+    let by_shape = plan_for_shapes(&tm, &reg, "aapcs64", &[shape], &[], None).expect("形状 plan");
     assert_eq!(
         by_shape.args[0].place, by_func.args[0].place,
         "HFA 聚合实参：调用点 plan 必须与被调方 plan 逐项相同"
@@ -1144,24 +1145,24 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
             members: Vec::new(),
         },
     };
-    let by_blind = plan_for_shapes(&tm, &reg, "aapcs64", &[blind], &[]).expect("形状 plan");
+    let by_blind = plan_for_shapes(&tm, &reg, "aapcs64", &[blind], &[], None).expect("形状 plan");
     assert_ne!(
         by_blind.args[0].place, by_func.args[0].place,
         "成员留空的投影必须与真实 plan 分叉（这正是它错的地方）"
     );
 }
 
-/// **调用点的形状路径表达不了"变参"**（2026-09-30 盘点，写进 `docs/plans/varargs-plan.md` 的 D6）。
+/// **调用点的变参提示决定未命名实参的落点**（变参 D6，2026-09-30 落地）。
 ///
-/// 事实链：`plan_call(isa, conv, args, rets)` 只吃**形状**，没有"被调方是变参、命名几个"
-/// 这条信息；而 win64 的 `variadic_stack_only = true` 会把**未命名实参**从寄存器改判到栈。
-/// 于是同一个签名，两条路径给出**不同落点**——这正是 V1（调用方发未命名实参）的真正阻塞点：
-/// 缺的不是发射代码，而是"调用点从哪里知道被调方是变参"。
+/// 背景：调用点只看得见实参**形状**，而 win64 的 `variadic_stack_only = true` 会把**未命名
+/// 实参**从寄存器改判到栈——"哪几个实参是未命名的"只有知道被调方签名才判得出来。于是
+/// `plan_call`/`plan_for_shapes` 多了一位 `variadic: Option<(bool, 命名个数)>`，由宿主查
+/// **模块级签名表**（`LowerCtx::module_sigs`，JIT 在 `compile_module` 里填）得到。
 ///
-/// 这条守卫把差异钉成**可执行的证据**（不是散文）：哪天给调用点补上变参信息，这里会红，
-/// 提醒把 D6 的裁定与 V1 的验收一起更新。
+/// 这条守卫钉三件事：① 不给提示 ⇒ 按非变参发（第 2/3 个进 RDX/R8）；② 给提示 ⇒ 未命名
+/// 实参**走栈**；③ 被调方视角（IR 的 LLVM 形态：签名只列命名参数）确实算出 `va_area`。
 #[test]
-fn call_site_shapes_cannot_express_variadic_placement() {
+fn call_site_variadic_hint_decides_unnamed_argument_placement() {
     use forge_codegen::pipeline::abi_target::{plan_for_shapes, plan_for_signature};
     use forge_isa_runtime::machine::call_layout::{ArgPlace, ArgShape};
 
@@ -1173,8 +1174,8 @@ fn call_site_shapes_cannot_express_variadic_placement() {
         ArgShape::int(8, 8),
     ];
 
-    // ① 形状路径（调用点实际走的）：按**非变参**分类 ⇒ 第 2、3 个实参进 RDX/R8。
-    let by_shape = plan_for_shapes(&tm, &reg, "win64", &shapes, &[]).expect("形状 plan");
+    // ① 没有变参提示（单函数编译 / 被调方不是变参）：三个实参都进寄存器。
+    let by_shape = plan_for_shapes(&tm, &reg, "win64", &shapes, &[], None).expect("形状 plan");
     assert!(
         by_shape.args[1..]
             .iter()
@@ -1188,7 +1189,24 @@ fn call_site_shapes_cannot_express_variadic_placement() {
         Some(ArgPlace::Reg { .. })
     ));
 
-    // ② 签名路径（被调方视角）：`variadic(1)` ⇒ 未命名实参**全到栈上**。
+    // ② 给了变参提示（被调方是变参、命名 1 个）：第 2/3 个实参改判到**栈**。
+    let hinted =
+        plan_for_shapes(&tm, &reg, "win64", &shapes, &[], Some((true, 1))).expect("变参形状 plan");
+    assert!(
+        hinted.args[1..]
+            .iter()
+            .all(|a| matches!(a.place, forge_abi::Placement::Stack { .. })),
+        "win64 的未命名实参必须走栈：{:?}",
+        hinted.args
+    );
+    let hinted_layout = forge_codegen::pipeline::abi_target::call_layout(&hinted, &tm);
+    assert!(matches!(
+        hinted_layout.arg(1).map(|a| &a.place),
+        Some(ArgPlace::Stack { .. })
+    ));
+
+    // ③ 被调方视角：同一个三实参调用，签名路径（`.variadic(1)`）与 ② 一致 —— 说明**提示
+    //    把调用点摆到了与被调方相同的语义上**（在此之前两条路径会分叉）。
     let sig = forge_abi::Signature::new(
         vec![
             ("a".into(), forge_abi::TyView::int(8, 8)),
@@ -1199,52 +1217,8 @@ fn call_site_shapes_cannot_express_variadic_placement() {
     )
     .variadic(1);
     let by_sig = plan_for_signature(&tm, &reg, "win64", &sig).expect("变参 plan");
-    assert!(
-        by_sig.args[1..]
-            .iter()
-            .all(|a| matches!(a.place, forge_abi::Placement::Stack { .. })),
-        "win64 的未命名实参必须走栈：{:?}",
-        by_sig.args
+    assert_eq!(
+        hinted.args[1].place, by_sig.args[1].place,
+        "调用点（给了变参提示）与被调方必须给出同一落点"
     );
-
-    // ③ 两条路径给出**不同落点** —— 调用点拿不到变参信息时就会静默按 ① 发。
-    assert_ne!(
-        by_shape.args[1].place, by_sig.args[1].place,
-        "若两条路径一致，说明引擎语义变了：请复查 varargs-plan.md 的 D6 与 V1"
-    );
-
-    // ④ **第二处事实**（2026-09-30 补测）：管线投影出来的 `fixed_count` **恒等于**
-    //    IR 形参个数（`sig_view` 只有 `variadic: bool` 可用），而 `Call` 每个形参一个实参
-    //    ⇒ 在**今天**的管线里 `unnamed = i >= fixed_count` 永远为假：即使把"被调方是变参"
-    //    递给调用点，也仍然判不出"哪几个实参是未命名的"。
-    //
-    //    这正是"变参要先动 IR/管线，而不是先写发射"的证据：要表达未命名实参，得让
-    //    **调用**能带比被调方形参更多的实参（LLVM 的 `declare @printf(ptr, ...)` 就是这个
-    //    形态：签名只列命名参数，调用可以多传）。
-    {
-        use forge_codegen::pipeline::sig_view::signature_view;
-        use forge_ir::{FunctionSignature, TypeId};
-
-        let sig_ir =
-            FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64]).with_variadic(true);
-        let mut b = FunctionBuilder::new("printf_like", TypeContext::new(), sig_ir);
-        let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "n")]);
-        b.switch_to_block(entry);
-        b.ret(&[params[0]]);
-        let func = b.finish().expect("build");
-
-        let view = signature_view(&func).expect("投影");
-        assert!(view.variadic, "IR 的 variadic 标志要投影过去");
-        assert_eq!(
-            view.fixed_count,
-            view.params.len(),
-            "管线的命名个数恒等于形参个数 —— 未命名实参在今天的 IR 里无法表达"
-        );
-        // 被调方视角（正确建模的变参函数：签名只列命名参数）确实能算出 va_area。
-        let by_callee = plan_for_signature(&tm, &reg, "win64", &view).expect("被调方 plan");
-        assert!(
-            by_callee.va_area.is_some(),
-            "变参函数的 plan 要有 va_area（这一半是完整的）"
-        );
-    }
 }

@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-30) — 变参 V0+V1：调用点按**被调方的变参语义**发未命名实参（win64 端到端）
+
+- **`CallPlanner::plan_call` / `call_plan::plan_call` / `abi_target::plan_for_shapes` 多一位 `variadic: Option<(bool, u32)>`** = "被调方是不是变参、命名了几个"：调用点只看得见实参形状，而"未命名实参在**只走栈**的约定（win64/aapcs64/lp64d）里要改判到栈"只有知道被调方签名才判得出来。
+- **模块级签名表**：`JitCompiler::compile_module` 按 `FuncRef` 建 `(variadic, 命名个数)` 表 → `FunctionCompiler::with_module_sigs` → `LowerCtx::module_sigs` → 生成物在 `Call` 处查表后传给 `plan_call`。IR **未改动**（沿用 LLVM 形态：变参签名只列**命名**参数，`Call` 可以多传实参；`Call` 本来就不校验个数）。单函数编译没有这张表 ⇒ 按非变参处理，与旧行为一致。
+- **验收（可观察的发射决策，不是"算出来的值"）**：`abi_target_real::call_site_variadic_hint_decides_unnamed_argument_placement`（不给提示 → `Reg(RDX)/Reg(R8)`；给提示 → `Stack/Stack`；并与被调方视角落点一致）+ `jit.rs::test_jit_variadic_unnamed_args_go_to_stack`（装表 ⇒ `stack_arg_bytes == shadow(32) + 2×8 = 48`，不装 ⇒ 0；并 JIT 真跑一遍不崩、返回命名参数值）。
+- **更正一处我自己的误判**：上一轮把"IR 表达不了未命名实参"记成必须先动 IR（D7）。实测证明**不需要改 IR**——那次是**测试把被调方建模错了**（3 个形参全列进签名又标 `variadic` ⇒ `fixed_count == 实参个数` ⇒ 变参提示无操作、用例假绿）。方案文档的 D6/D7 与实测经过已按事实改写（含"错/对两种建模"的对照表）。
+- **仍缺**：`va_meta`（SysV 的 `%al`）写入、被调方 `va_area` 物化（V2/V3）、`va_arg`（V4）——都需要 `va_start` 的 IR 形态，且今天没有前端产出变参签名。
+- 验证：`cargo test --workspace --exclude forge-rustc` 全绿、`clippy -D warnings` 0、`cargo fmt --check` 0、改动文档 markdownlint 0。
+
 ### Docs (2026-09-30) — 变参：实测"只接调用点信息"是**假绿**，补 D7（IR 表达未命名实参）
 
 - **先试后写**：按 D6 选项②把整条"模块签名表 → `LowerCtx` → 生成物查表 → `plan_call`"接通，

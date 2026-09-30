@@ -1,9 +1,10 @@
 # 变参（varargs）方案 [progress]
 
-> 状态：**方案 + 决策点清单**（2026-09-30 起草）。**代码未动**——本仓库今天没有任何前端会产出
-> 变参签名，发射侧对 `va_list` 零消费，所以先写清"有什么、缺什么、先做哪一段"，避免给一条
-> 没人走的路写发射代码。相关背景：`docs/reference/calling-conventions.md`、
-> `docs/plans/calling-convention-redesign-plan.md` 的 A6。
+> 状态：**部分落地**（2026-09-30）。已落地：**D6 + V1 的调用方一侧**——调用点通过宿主的
+> **模块级签名表**知道被调方是变参、命名几个，从而把**未命名实参**按约定发到栈上
+>（`CallPlanner::plan_call` 多一位 `variadic`；守卫见 §5 的 V1）。仍缺：`%al`/`va_meta` 的
+> 写入、被调方 `va_area` 物化、`va_arg`，以及**任何前端产出变参签名**。
+> 相关背景：`docs/reference/calling-conventions.md`、`docs/plans/calling-convention-redesign-plan.md` A6。
 
 ## 1. 现状：**规划（plan）已经能做，发射与前端是空的**
 
@@ -13,7 +14,8 @@
 | 引擎 | 变参签名能规划：**未命名实参**按 `variadic_stack_only` 决定"只走栈"还是"继续用寄存器"；产出 `AbiPlan::va_area`（kind/size/align/stack_only）与 `hidden.va_meta`/`va_len` | `forge-abi/src/engine.rs`（`unnamed` 分支、`va_area` 构造） |
 | 黄金快照 | 四份内置约定 × 变参语料已钉住（见 §2 表） | `forge-abi/tests/golden/*.plan.txt` 的 `## va_*` 段 |
 | CLI | `forge-isa abi plan <谱> --conv <名> --sig "…" --variadic <命名数>` 能打印变参计划 | `forge-isa/src/abi.rs` |
-| **发射** | **零消费**：`va_area` / `hidden.va_meta` / `hidden.va_len` 在 `crates/…/src` 里没有任何读者 | 全仓 grep：命中只在引擎、测试与黄金文件 |
+| **发射（调用方）** | **已落地一部分**（V1）：未命名实参按被调方的变参语义发（win64 走栈），由 `LowerCtx::module_sigs` 提供的"被调方是变参/命名几个"驱动 | `jit.rs::test_jit_variadic_unnamed_args_go_to_stack`、`abi_target_real::call_site_variadic_hint_decides_unnamed_argument_placement` |
+| **发射（`va_meta`/`va_area`）** | **零消费**：`hidden.va_meta` / `hidden.va_len` / `va_area` 在 `crates/…/src` 里没有任何读者 | 全仓 grep：命中只在引擎、测试与黄金文件 |
 | **前端** | **零产出**：`FunctionSignature::variadic` 在生产代码里没有设置者（测试与二进制格式往返测试除外） | `forge-rustc` / `mini_c` 里没有 `variadic` |
 | IR | 签名能表达 `variadic`（二进制格式也往返） | `forge-ir/src/ir/types.rs`、`forge-ir/src/binary/types.rs` |
 
@@ -41,7 +43,7 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
    │
 引擎（✔ 已能算：va_area / va_meta / 未命名实参落点）
    │
-发射：调用方（设 %al、按 plan 传未命名实参）        ← 缺
+发射：调用方（✔ 未命名实参按 plan 发；缺 %al 写入）  ← 部分
 发射：被调方（物化寄存器保存区 / 建 va_list）        ← 缺
 ```
 
@@ -65,47 +67,37 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
 | D3 | **以哪份 psABI 定本为准** | SysV / Win64 / AAPCS64 / RISC-V 各自官方定本 | §2 的 size/align 现在是"数据里写的"，需逐条核对（尤其 `sysv64` 的 24 字节保存区与 `%al` 语义） |
 | D4 | **先做哪台机器** | 建议 **win64**（`va_list` = 栈指针，不需要寄存器保存区、不需要 `%al`） | 最小的可用切片；riscv/sysv 的保存区留到第二期 |
 | D5 | **提升规则放哪** | 规则数据（`when = { kind = "float", size_le = 4 } → f64`）还是引擎内置 | 影响"足够通用"：数据化更好，但要设计键 |
-| D6 | **调用点怎么知道"被调方是变参、命名了几个"** | ① IR 层：`Call` 带签名句柄 ② 宿主层：管线把**模块级签名表**（`FuncRef` → `variadic/fixed_count`）塞进 `LowerCtx`，生成物查表后传给 `plan_call` ③ 不做（承认变参调用不可用） | 这是 **V1 的真正阻塞点**（见下），比发射代码更靠前 |
-| D7 | **IR/管线怎么表达"未命名实参"** | ① 沿用 LLVM 形态：**签名只列命名参数**，`Call` 可以带比形参更多的实参（`declare @printf(ptr, ...)`）② 给 `FunctionSignature` 加显式的"命名个数"字段 | **D6 的前置**：不解决它，即使把变参信息递给调用点也判不出哪几个是未命名的（见下） |
+| D6 ✅ | **调用点怎么知道"被调方是变参、命名了几个"** | **已落地**：宿主把**模块级签名表**（`FuncRef` → `(variadic, 命名个数)`）塞进 `LowerCtx::module_sigs`，生成物在调用点查表后传给 `plan_call`（`CallPlanner` 入参多一位 `variadic`） | 不动 IR；单函数编译（表缺席）按非变参处理，与旧行为一致 |
+| D7 ✅（更正） | **IR/管线怎么表达"未命名实参"** | **不需要改 IR**：沿用 LLVM 形态即可——变参**签名只列命名参数**，`Call` 可以带比形参更多的实参（`declare @printf(ptr, ...)`；`Call` 本来就不校验个数） | 我一开始把它判成"必须先动 IR"，原因是**测试里把被调方建模错了**（3 个形参全列进签名又标 variadic ⇒ `fixed_count == args.len()` ⇒ 未命名实参不出现、用例假绿） |
 
-### D6/D7 的证据（2026-09-30 实测，已钉成守卫）
+### D6/D7 的实测经过与证据（2026-09-30）
 
-**第一处**：`plan_call(isa, conv, args, rets)` 只吃**形状**，没有变参信息；而 win64 的
-`variadic_stack_only = true` 会把未命名实参从寄存器改判到栈。同一个三 i64 签名：
+**先把结论说清**：`plan_call` 原来只吃形状，没有"被调方是变参"这条信息，而 win64 的
+`variadic_stack_only = true` 会把未命名实参从寄存器改判到栈——**这是真的缺口（D6）**；
+但我随后把它写成"还要动 IR（D7）"，那是**误判**：IR 的 LLVM 形态本来就能表达，问题出在
+我那次测试**把被调方建模错了**。
 
-```text
-形状路径（调用点实际走的）   args[1..] → Reg(RDX)、Reg(R8)   ← 按非变参分类
-签名路径（被调方视角 .variadic(1)）args[1..] → Stack、Stack
-```
+| 建模 | `fixed_count` | 第 2/3 个实参 | 结果 |
+| --- | --- | --- | --- |
+| 错：3 个形参全列进签名 + `variadic = true` | 3 = 实参个数 | 寄存器 | 用例**假绿**（变参提示无操作） |
+| 对：签名只列命名参数（1 个）+ `variadic = true` | 1 | **栈** | 用例真绿：传出区 = shadow(32) + 2×8 = 48 |
 
-**第二处（更靠前）**：管线投影出来的 `fixed_count` **恒等于** IR 形参个数
-（`sig_view` 手上只有 `variadic: bool`），而 `Call` 每个形参一个实参 ⇒ 今天的管线里
-`unnamed = i >= fixed_count` **永远为假**。也就是说：**就算按 D6 选项②把模块签名表接上，
-调用点依然判不出"哪几个实参是未命名的"**——IR/管线先得能表达这件事（D7），
-形态建议照 LLVM：**签名只列命名参数，调用可以多传**（`declare @printf(ptr, ...)`）。
-
-守卫 `crates/backend/forge-codegen/tests/abi_target_real.rs::call_site_shapes_cannot_express_variadic_placement`
-把两处事实都钉成**可执行证据**（③ 断言两条路径的落点不同、④ 断言 `fixed_count == params.len()`
-且变参函数的 plan 有 `va_area`）。哪天这两条变了就会红，提醒复查本节。
-
-**结论**：V1 缺的不是发射代码，而是 ① 调用点拿到被调方签名（D6）+ ② IR/管线能表达未命名
-实参（D7）。**在被调方侧（V2/V4）就绪之前，V1 没有可观察的验收**（未命名实参今天无法被任何
-函数体读出来）——所以这两条必须先定，且建议**一起**做。
+守卫 `crates/backend/forge-codegen/tests/abi_target_real.rs::call_site_variadic_hint_decides_unnamed_argument_placement`
+钉三件事：① 不给提示 ⇒ 按非变参发（`Reg(RDX)/Reg(R8)`）；② 给提示 ⇒ 未命名实参走栈
+（`Stack/Stack`）；③ 调用点（给提示）与被调方（`.variadic(1)`）**落点一致**。
+`jit.rs::test_jit_variadic_unnamed_args_go_to_stack` 再加两条可观察的发射决策：
+装表 ⇒ `stack_arg_bytes == 48`，不装 ⇒ `0`，并 JIT 真跑一遍（不崩、返回命名参数值）。
 
 ## 5. 建议的分期（每期独立可验证）
 
-- **V0（前置，必须先定，建议两件一起做）**：
-  ① **D7**：让 IR/管线能表达"未命名实参"——照 LLVM 形态：变参签名只列**命名**参数，
-    `Call` 允许带比形参更多的实参（`sig_view` 的 `fixed_count` 因而才可能小于实参个数）；
-  ② **D6**：让调用点拿到被调方签名——管线在编译**模块**时已有每个 `FuncRef` 的签名，把
-    `FuncRef → (variadic, 命名个数)` 表放进 `LowerCtx`，生成物在调用点查表后传给 `plan_call`
-    （`CallPlanner` 入参随之扩展一位）。不动 IR 的**结构**（只是允许调用多传实参）。
-  2026-09-30 实测过"只做 ②"（写通了整条管线 + 一个 JIT 用例）：**用例是假绿的**——
-  因为 `fixed_count == params.len()`（D7 未解），变参提示传下去也是无操作，未命名实参永远
-  不会出现。已回滚，结论记在 D6/D7 的证据小节。
-- **V1（调用方，win64 优先）**：调用点按 plan 发未命名实参（V0 之后才有意义，且**验收要等
-  V2/V4**——今天没有任何函数体能读出未命名实参，值对不对观察不到）；`va_meta` 非空时按约定
-  设寄存器（SysV 的 `%al`）。
+- **V0 ✅（D6 + D7）**：调用点通过 `LowerCtx::module_sigs`（JIT 在 `compile_module` 里按
+  `FuncRef` 填 `(variadic, 命名个数)`）知道被调方是变参，`CallPlanner::plan_call` /
+  `abi_target::plan_for_shapes` 多一位 `variadic: Option<(bool, u32)>`，引擎据此按
+  `variadic_stack_only` 改判未命名实参。IR **未改动**（LLVM 形态本来就够用）。
+- **V1 ✅（部分，win64）**：调用方把未命名实参按被调方语义发出（win64 走栈；传出区随
+  `__cl` 自动增长——`max_stack_arg_bytes` 是按**调用点布局**算的）。**验收口径**：因为被调方
+  还读不出多余实参，验收是**落点与帧尺寸**（守卫 + JIT 各一条，见上），而不是"算出来的值"。
+  仍缺：`va_meta`（SysV 的 `%al`）的写入。
 - **V2（被调方，win64）**：序言物化 `va_area`（win64 下就是取栈参数的地址）。
 - **V3（寄存器保存区，sysv64/lp64d）**：按 `va_area.size/align` 在帧内开槽并把参数寄存器存进去；
   校验 `hidden.va_meta` 的写入。
@@ -121,7 +113,8 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
 与 A6 的两条"评估后不做"同源：**没有消费者**。
 
 - 没有任何前端会产出变参签名 ⇒ V2–V4 写完也没有真实输入；
-- 发射侧零消费 ⇒ 现在写只是"为将来的路预埋"，而本仓库的纪律是"先有证据再动手"
+- 发射侧**基本零消费**（V1 已把调用方那一半接上，但那半也只有"没有前端签名"时才静默不生效）
+  ⇒ 继续往下写只是"为将来的路预埋"，而本仓库的纪律是"先有证据再动手"
   （参见 A6 ⑤ 的按成员赋值、`callee_pop` 两条）。
 
 **触发条件**（出现任一即可开工）：① 有宿主需要在 JIT 里调用外部变参函数（例如 `printf`

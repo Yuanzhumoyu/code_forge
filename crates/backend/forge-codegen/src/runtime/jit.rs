@@ -2844,6 +2844,76 @@ ret_int = ["RAX"]
         );
     }
 
+    /// **变参 V1（调用方）+ D6（调用点知道被调方是变参）**：win64 的
+    /// `variadic_stack_only = true` ⇒ 未命名实参必须走**栈**，而调用点只看得见实参形状、
+    /// 判不出这件事——它靠 `LowerCtx::module_sigs`（模块级签名表）查到被调方是变参。
+    ///
+    /// **IR 形态照 LLVM**：变参被调方的签名**只列命名参数**（`@printf(ptr, ...)`），
+    /// 调用方可以多传实参（`Call` 不校验个数）。被调方今天还读不出那些多余实参
+    /// （要 `va_start`/`va_arg`，见 varargs-plan 的 V2/V4）——所以这条用例的验收是
+    /// **落点/帧尺寸**（可观察的发射决策）而不是"算出来的值"：
+    ///
+    /// ① 装了签名表 ⇒ 未命名实参走栈 ⇒ 调用方的传出栈区 = shadow(32) + 2×8 = 48；
+    /// ② 不装（单函数编译）⇒ 三个实参都在寄存器 ⇒ 传出栈区 = 0；
+    /// ③ JIT 真跑一遍，确认"按变参布局往传出区写实参"这条路径不崩、返回值正确。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_variadic_unnamed_args_go_to_stack() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let machine = x86_v12::TargetMachine::new();
+
+        // callee(n) —— **变参**：签名只列命名参数（照 LLVM 的 `...`）。
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64]).with_variadic(true);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, cp) = callee.create_block_with_params(&[(TypeId::I64, "n")]);
+        callee.switch_to_block(ce);
+        callee.ret(&[cp[0]]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        // main() -> i64：ret callee(3, 4, 5)（后两个是**未命名实参**）
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let n = main_fn.iconst(3, TypeId::I64);
+        let a = main_fn.iconst(4, TypeId::I64);
+        let b = main_fn.iconst(5, TypeId::I64);
+        let r = main_fn.call(cref, &[n, a, b], &[TypeId::I64])[0];
+        main_fn.ret(&[r]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        // ① / ② 落点差异（两者都编同一个 `main`，只差"装不装模块签名表"）。
+        let main_ref = FuncRef::new(1);
+        let mfunc = module.get_function(main_ref);
+        let with_sigs = crate::FunctionCompiler::new(x86_v12::TargetMachine::new())
+            .with_module_sigs(vec![(true, 1), (false, 0)])
+            .compile_with_alloc(mfunc)
+            .expect("装表编译")
+            .1;
+        let without_sigs = crate::FunctionCompiler::new(x86_v12::TargetMachine::new())
+            .compile_with_alloc(mfunc)
+            .expect("不装表编译")
+            .1;
+        assert_eq!(
+            with_sigs.stack_arg_bytes,
+            32 + 2 * 8,
+            "变参：未命名实参走栈 ⇒ 传出区 = shadow(32) + 2 槽"
+        );
+        assert_eq!(
+            without_sigs.stack_arg_bytes, 0,
+            "非变参：三个实参都在寄存器 ⇒ 传出栈区为 0"
+        );
+
+        // ③ JIT 真跑：按变参布局写传出区这条路径不崩、值对。
+        let mut jit = JitCompiler::new(machine);
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(f(), 3, "被调方只读命名参数（多余实参要 V2/V4 才能读）");
+    }
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的
