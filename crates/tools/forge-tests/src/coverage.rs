@@ -445,6 +445,9 @@ mod no_coverage_list {
         ("Poison", "值语义：由 undef/poison 用例覆盖"),
         ("Undef", "值语义：由 undef/poison 用例覆盖"),
         ("VaArg", "可变参数：需要 va_arg ABI 夹具（长期项）"),
+        // v20 变参 V2：`va_start` 取未命名实参区的地址（落点由约定给）。矩阵要覆盖它
+        // 得先有"被调方变参 + 从栈读未命名实参"的夹具——那正是 V2 那一期的验收件。
+        ("VaStart", "可变参数：需要 va_start ABI 夹具（方案 V2）"),
         ("Cmpxchg", "原子：由原子用例覆盖（多结果 + 配对语义）"),
         ("ExtractValue", "聚合取值：由聚合用例覆盖"),
         ("InsertValue", "聚合插入：由聚合用例覆盖"),

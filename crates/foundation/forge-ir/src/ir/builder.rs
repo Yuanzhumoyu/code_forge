@@ -1223,6 +1223,20 @@ impl FunctionBuilder {
         )
     }
 
+    /// **取未命名实参区的地址**（v20 变参 V2）：结果类型 = 指针。
+    ///
+    /// 落点由**调用约定**给（win64：`va_list` 就是指向栈上实参的指针 ⇒ 这条就是
+    /// "帧内那段栈地址"；sysv64/riscv/arm64 需要寄存器保存区，发射侧尚未物化 ⇒
+    /// 生成器 fail-closed）。前端拿到指针后用普通 `load`/`gep` 逐槽读。
+    pub fn va_start(&mut self) -> Value {
+        self.emit1(
+            Opcode::VaStart,
+            vec![],
+            vec![],
+            TypeId::PTR,
+            InstFlags::NONE,
+        )
+    }
     pub fn nop(&mut self) {
         self.emit(Opcode::Nop, vec![], vec![], &[], InstFlags::NONE);
     }

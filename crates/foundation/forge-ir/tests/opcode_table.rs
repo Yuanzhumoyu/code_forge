@@ -134,6 +134,7 @@ fn variant_name_exhaustive(op: &Opcode) -> &'static str {
         Opcode::Unreachable => "Unreachable",
         Opcode::Invoke => "Invoke",
         Opcode::Resume => "Resume",
+        Opcode::VaStart => "VaStart",
     }
 }
 
@@ -270,7 +271,8 @@ fn type_rule_classification_is_complete() {
         ("store", 2),
         ("call", 1),
         ("call_indirect", 1),
-        ("none", 55),
+        // v20 变参 V2：`VaStart`（0 操作数 → 指针）的类型检查在发射侧（落点由约定给）。
+        ("none", 56),
     ];
     let total: usize = expected.iter().map(|(_, n)| n).sum();
     assert_eq!(total, Opcode::ALL.len(), "计数基线总和必须等于变体数");

@@ -346,6 +346,10 @@ pub fn fold_opcode(
         | Opcode::Invoke
         | Opcode::Resume => Ok(None),
 
+        // 变参取参（v20 变参 V2）：结果是指向未命名实参区的**地址**（由约定给），
+        // 不是常量 ⇒ 不折叠。
+        Opcode::VaStart => Ok(None),
+
         // === 选择 ===
         Opcode::Select => {
             if operands.len() < 3 {

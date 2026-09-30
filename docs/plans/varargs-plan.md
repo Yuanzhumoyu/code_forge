@@ -98,13 +98,20 @@ IR（签名能表达；缺"取下一个实参"的 op 形态）        ← 缺
   `__cl` 自动增长——`max_stack_arg_bytes` 是按**调用点布局**算的）。**验收口径**：因为被调方
   还读不出多余实参，验收是**落点与帧尺寸**（守卫 + JIT 各一条，见上），而不是"算出来的值"。
   仍缺：`va_meta`（SysV 的 `%al`）的写入。
-- **V2（被调方，win64）**：序言物化 `va_area`（win64 下就是取栈参数的地址）。
+- **V2 🚧（被调方，win64：数据面已落地，发射待做）**：2026-09-30 落地了两半——
+  ① **IR**：新 op `VaStart`（0 操作数 → 指针；`ops.toml` 一行 + builder `va_start()`），语义
+  "取未命名实参区的地址"；
+  ② **计划镜像**：`CallLayout.va: Option<VaInfo>`（`VaKind`/`size`/`align`/`stack_only`），由
+  `AbiPlan::va_area` 逐条 match 折过来（`VaKind::supports_frame_addr_va_start()` 是"能不能
+  直接用帧内栈地址实现"的判据：只有 `win64_stack` 为真）。
+  守卫 `abi_target_real::call_layout_mirrors_the_variadic_shape`（win64 栈式 8/8 / sysv64 保存区
+  24/8 / 非变参不带 va）与 `forge-ir` 的 opcode 表守卫。
+  **仍缺**：生成器侧的 `VaStart` 发射（`isa/x86_v12.toml` 现在**没有** `VaStart` 的 lowering
+  规则，所以任何函数用它都会因"没有规则"而 fail-closed——**这是当前的诚实状态**）；以及
+  `forge-tests` 矩阵的夹具（已登记为缺口 `("VaStart", "…方案 V2")`）。
 - **V3（寄存器保存区，sysv64/lp64d）**：按 `va_area.size/align` 在帧内开槽并把参数寄存器存进去；
   校验 `hidden.va_meta` 的写入。
 - **V4（`va_arg`）**：按 D2 的裁定实现取参 + D5 的提升规则；这是唯一必须动 IR/前端的一期。
-- **V5（体检）**：`forge-isa abi check` 增一条"变参形状自洽"的检查（`va_list_size` 与
-  保存区槽数一致等）。
-
 - **V5 ✅（2026-09-30）**：`forge-isa abi check <谱>` 为每份约定多打一行 `ℹ 变参 …`，把"这台机器
   × 这份约定的变参处于什么状态"说清楚：`win64` 栈式（va_list = 栈指针，调用方一侧可用）；
   `sysv64`/`lp64d`/`aapcs64` 需要**寄存器保存区** ⇒ 如实报"发射侧尚未物化（V2/V3）"。

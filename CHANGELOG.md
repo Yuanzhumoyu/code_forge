@@ -11,6 +11,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-09-30) — 变参 V2 数据面：IR 新 op `VaStart` + `CallLayout.va` 镜像
+
+变参被调方要能"读到未命名实参"，先得有两样东西：**IR 里表达"取未命名实参区的地址"**，以及
+**运行时读得到的 va 形态**。这一片把这两半落地（发射侧另起一片）：
+
+- **IR：新 op `VaStart`**（`ops.toml` 一行：0 操作数 → 指针；`builder::va_start()`），语义是
+  "取未命名实参区的地址"——它是**约定相关**的取值（win64 就是帧内那段栈地址；sysv64/riscv/arm64
+  需要寄存器保存区）。`ops.toml` 追加在末尾 ⇒ 既有 opcode 编号不变（**不升格式版本**）。
+  连带更新：`opcode_table` 的穷举 match + `type_rule = "none"` 计数基线（55 → 56）、
+  `forge-opt` 的常量折叠（地址不是常量 ⇒ 不折叠）、`forge-tests` 覆盖矩阵的缺口清单
+  （`("VaStart", "可变参数：需要 va_start ABI 夹具（方案 V2）")`）。
+- **计划镜像：`CallLayout.va: Option<VaInfo>`**（运行时中立：`VaKind`/`size`/`align`/`stack_only`），
+  由宿主的 `AbiPlan::va_area` **逐条 match** 折过来（加变体即编译失败）。
+  `VaKind::supports_frame_addr_va_start()` 是"能不能直接用帧内栈地址实现 `va_start`"的判据——
+  只有 `win64_stack` 为真；其余形态（寄存器保存区）留给方案 V3。
+- **诚实状态**：`isa/x86_v12.toml` 里**还没有** `VaStart` 的 lowering 规则，所以今天任何函数用
+  `va_start` 都会因"没有规则"而 fail-closed——这一片只铺数据面，**不改任何现有行为**
+  （新增的守卫是集成测试 `abi_target_real`，lib 计数仍是 1351）。
+- 守卫：`abi_target_real::call_layout_mirrors_the_variadic_shape`（win64 栈式 8/8、
+  sysv64 保存区 24/8、非变参不带 `va`）+ `forge-ir` 的 opcode 表守卫。
+  文档：方案 V2 标 🚧（数据面 ✅ / 发射待做）、参考文档的 `CallLayout` 表与守卫索引各加一行。
+- 验证：`forge-ir`（280+ 全绿）、`forge-opt`、`forge-abi`、`forge-codegen`（1352）、
+  `forge-tests`（43）、`forge-hir` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0；
+  markdownlint 0。
+
 ### Changed (2026-09-30) — 抽出 `pipeline/abi_setup.rs`：调用约定装配从 `CompileState::new` 里独立出来
 
 - **三条约定层规则集中到一处**（`forge-codegen/src/pipeline/abi_setup.rs::setup_conv`）：① 约定名解析（未注册 fail-closed）；② **约定级整数返回槽**探针（空参 + 整数返回问一次引擎）；③ **函数级 plan 的 fail-closed**（错误消息含三步修法与自查命令）+ 约定级破坏集兜底 + 模块签名表落位。返回该函数的 `AbiPlan`（调用方存进 `CompileState` 供 `FORGE_TRACE_ABI=1` 打印）。

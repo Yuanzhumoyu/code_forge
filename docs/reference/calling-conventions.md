@@ -212,7 +212,7 @@ pub enum CallConvId {
 | `hidden` | `sret` / `context` / `va_meta`（SysV `%al`）/ `va_len` |
 | `callee_saved` | 机制 + 有序寄存器表 + `includes_fp` / `includes_link` |
 | `clobbers` | 可分配寄存器 − callee-saved − 固定用途（调用方要假设被破坏的部分） |
-| `va_area` | 变参形态、尺寸、对齐、是否只走栈 |
+| `va` | 变参信息（`None` = 非变参）：`VaKind` + `size`/`align`/`stack_only`；被调方的 `va_start` 靠它（v20 V2，`VaKind::supports_frame_addr_va_start()` 判"能否直接用帧内栈地址"） |
 | `widen_to_bits` | 形参/实参至少扩到多少位 |
 
 `AbiPlan::to_text()` 是**确定性**渲染（`forge-abi` 的黄金快照与 `forge-isa abi plan`
@@ -382,6 +382,7 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参：规划（`va_area`/`va_meta`/未命名实参落点） | ✅ | `variadic_unnamed_arguments_follow_the_convention`、`va_shapes_match_the_documented_table` |
 | 变参：调用方发未命名实参（win64） | ✅ | `call_site_variadic_hint_decides_unnamed_argument_placement`、`test_jit_variadic_unnamed_args_go_to_stack` |
 | 变参状态上报（`abi check` 的 `ℹ 变参 …` 行 + 三种自相矛盾的硬错） | ✅ | `abi_check_reports_the_variadic_state` |
+| 变参 V2 数据面：IR `VaStart` + `CallLayout.va` 镜像 | ✅ | `call_layout_mirrors_the_variadic_shape` |
 | 变参：`%al`/`va_start`/`va_arg`（被调方，V2/V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |
 | 单个聚合要 ≥3 寄存器的返回 / 按成员拆 | ⬜（无产出者） | `a6_gap_inventory` |

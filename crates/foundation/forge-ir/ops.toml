@@ -1192,3 +1192,19 @@ category = "terminator"
 doc = "重新抛出（文本层 P1.1；codegen 报 Unsupported）"
 operands = 1
 results = 0
+
+# ── 变参取参（v20 变参 V2）──────────────────────────────────────────────
+#
+# `va_start`：**被调方**取"未命名实参区"的地址（结果类型 = 指针）。它是**约定相关**的
+# 取值：落点由 `AbiPlan::va_area`/`CallLayout` 给（win64 = 栈指针 ⇒ 就是帧内那段栈地址；
+# sysv64/riscv/arm64 需要寄存器保存区，发射侧尚未物化 ⇒ 生成器 fail-closed）。
+# 前端拿到这个指针后，用普通的 load/gep 逐槽读（槽宽 = 约定的栈槽单位）。
+[[op]]
+name = "VaStart"
+mnemonic = "va_start"
+type_rule = "none"
+llvm = "va_start"
+category = "other"
+doc = "取未命名实参区的地址（变参被调方；落点由调用约定的 va_list 形态给）"
+operands = 0
+results = 1

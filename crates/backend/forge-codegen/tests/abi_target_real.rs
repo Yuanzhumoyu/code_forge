@@ -1337,3 +1337,53 @@ fn call_plan_errors_carry_the_reason() {
     );
     assert!(ok.is_ok(), "win64 在 x86 机器上应能规划：{ok:?}");
 }
+
+/// **变参信息进运行时镜像**（v20 变参 V2）：引擎的 `VaArea` 必须原样折到
+/// `CallLayout.va`——被调方的 `va_start` 靠它决定"能不能直接用帧内那段栈地址"。
+///
+/// 三件事：① win64 是**栈式**（`va_list` = 栈指针 ⇒ `supports_frame_addr_va_start`）；
+/// ② sysv64 是**寄存器保存区**（发射侧尚未物化 ⇒ 那条路 fail-closed）；③ 非变参签名
+/// 不带 `va`（不猜）。
+#[test]
+fn call_layout_mirrors_the_variadic_shape() {
+    use forge_codegen::pipeline::abi_target::{call_layout, plan_for_signature};
+    use forge_isa_runtime::machine::call_layout::VaKind;
+
+    let reg = builtin::registry().expect("内置注册表");
+    let tm = TargetMachine::new();
+    let sig = forge_abi::Signature::new(
+        vec![
+            ("fmt".into(), forge_abi::TyView::ptr(8)),
+            ("x".into(), forge_abi::TyView::float(8)),
+        ],
+        None,
+    )
+    .variadic(1);
+
+    // ① win64：栈式，尺寸 8/8。
+    let plan = plan_for_signature(&tm, &reg, "win64", &sig).expect("win64 变参 plan");
+    let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
+    assert_eq!(va.kind, VaKind::Win64Stack);
+    assert_eq!((va.size, va.align), (8, 8));
+    assert!(va.stack_only, "win64 的未命名实参只走栈");
+    assert!(
+        va.kind.supports_frame_addr_va_start(),
+        "win64 的 va_start 可以直接用帧内栈地址（V2 的实现路径）"
+    );
+
+    // ② sysv64：寄存器保存区（发射侧未物化 ⇒ va_start 那条路必须 fail-closed）。
+    let plan = plan_for_signature(&tm, &reg, "sysv64", &sig).expect("sysv64 变参 plan");
+    let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
+    assert_eq!(va.kind, VaKind::SysvRegSave);
+    assert_eq!((va.size, va.align), (24, 8));
+    assert!(!va.stack_only, "SysV 的未命名实参继续用寄存器");
+    assert!(
+        !va.kind.supports_frame_addr_va_start(),
+        "寄存器保存区形态还不能用帧内栈地址实现 va_start（方案 V3）"
+    );
+
+    // ③ 非变参签名：没有 va 信息。
+    let plain = forge_abi::Signature::new(vec![("a".into(), forge_abi::TyView::int(8, 8))], None);
+    let plan = plan_for_signature(&tm, &reg, "win64", &plain).expect("非变参 plan");
+    assert!(call_layout(&plan, &tm).va.is_none(), "非变参不该带 va 信息");
+}

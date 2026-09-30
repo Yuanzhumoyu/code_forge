@@ -127,6 +127,62 @@ pub struct CallArg {
     pub place: ArgPlace,
 }
 
+/// `va_list` 的**内存形态**（中立镜像；与 `forge_abi::rules::VaListKind` 同义）。
+///
+/// 运行时 crate 不依赖 forge-abi，所以这里再写一份——**枚举顺序与语义必须与那边一致**
+/// （宿主转换时逐条 match，写错一个分支就会被守卫抓到）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaKind {
+    /// 该约定不支持变参。
+    None,
+    /// Win64：`va_list` 就是指向栈上实参的指针（变参只走栈）。
+    Win64Stack,
+    /// SysV AMD64：寄存器保存区（6×8B GP + 8×16B XMM）+ 溢出区指针。
+    SysvRegSave,
+    /// AAPCS64：结构 `{ __stack, __gr_top, __vr_top, __gr_offs, __vr_offs }`。
+    Aapcs64Struct,
+    /// RISC-V：`va_list` 指向保存区（含 named/unnamed 分界）。
+    RiscvSaveArea,
+}
+
+impl VaKind {
+    /// 诊断/快照用的规范名。
+    pub fn name(self) -> &'static str {
+        match self {
+            VaKind::None => "none",
+            VaKind::Win64Stack => "win64_stack",
+            VaKind::SysvRegSave => "sysv_reg_save",
+            VaKind::Aapcs64Struct => "aapcs64_struct",
+            VaKind::RiscvSaveArea => "riscv_save_area",
+        }
+    }
+
+    /// 未命名实参是否**只走栈**（Win64 的 `va_list` = 栈指针 ⇒ 必须只走栈）。
+    pub fn is_stack_only_required(self) -> bool {
+        matches!(self, VaKind::Win64Stack)
+    }
+
+    /// **`va_start` 能不能直接用"帧内那段栈地址"实现**（v20 变参 V2）。
+    ///
+    /// 只有 `Win64Stack` 可以：`va_list` 就是指针。其余形态需要**寄存器保存区**
+    /// （在序言里把参数寄存器存到帧内）——发射侧尚未物化（方案 V3）⇒ 生成器 fail-closed。
+    pub fn supports_frame_addr_va_start(self) -> bool {
+        matches!(self, VaKind::Win64Stack)
+    }
+}
+
+/// **变参信息**（v20 变参 V2）：被调方怎么找到未命名实参。
+///
+/// 与 [`CallLayout::ret`]/[`ArgPlace`] 同源：由宿主的 `AbiPlan::va_area` 折过来。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaInfo {
+    pub kind: VaKind,
+    /// `va_list` 对象本身的字节数（`va_list_size`）。
+    pub size: u32,
+    pub align: u32,
+    /// 未命名实参是否只走栈（约定数据）。
+    pub stack_only: bool,
+}
 /// **一次调用的布局**（调用方与被调方共用）。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CallLayout {
@@ -165,6 +221,8 @@ pub struct CallLayout {
     pub callee_pop_bytes: u32,
     /// 形参/实参至少扩展到多少位（AArch64 = 32）。
     pub widen_to_bits: Option<u16>,
+    /// **变参信息**（`None` = 非变参，或该约定不支持变参）：被调方据此找未命名实参。
+    pub va: Option<VaInfo>,
 }
 
 impl CallLayout {

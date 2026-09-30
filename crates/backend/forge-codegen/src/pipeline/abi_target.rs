@@ -19,7 +19,7 @@ use forge_abi::{AbiError, AbiPlan, AbiRegistry, AbiTarget, Capability, Signature
 use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
 use forge_isa_runtime::machine::call_layout::{
-    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind,
+    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaInfo, VaKind,
 };
 use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest};
 use forge_isa_runtime::machine::target::TargetMachine;
@@ -388,5 +388,25 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         frame_padding: plan.stack.frame_padding,
         callee_pop_bytes: plan.callee_pop_bytes,
         widen_to_bits: plan.widen_to_bits,
+        // **变参信息**（v20 变参 V2）：把引擎的 `VaArea` 折成运行时中立镜像。逐条 match
+        // （不 `as` 转换）——枚举顺序与语义必须与 forge-abi 那边一致，加变体会编译失败。
+        va: plan.va_area.as_ref().map(|a| VaInfo {
+            kind: va_kind(a.kind),
+            size: a.size,
+            align: a.align,
+            stack_only: a.stack_only,
+        }),
+    }
+}
+
+/// `forge_abi::rules::VaListKind` → 运行时中立镜像（**逐条 match**，加变体即编译失败）。
+fn va_kind(k: forge_abi::rules::VaListKind) -> VaKind {
+    use forge_abi::rules::VaListKind;
+    match k {
+        VaListKind::None => VaKind::None,
+        VaListKind::Win64Stack => VaKind::Win64Stack,
+        VaListKind::SysvRegSave => VaKind::SysvRegSave,
+        VaListKind::Aapcs64Struct => VaKind::Aapcs64Struct,
+        VaListKind::RiscvSaveArea => VaKind::RiscvSaveArea,
     }
 }
