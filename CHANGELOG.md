@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-09-30) — 调用约定层收口：`现状总览与守卫索引` + 文档守卫（索引不许指向不存在的测试）
+
+- **`docs/reference/calling-conventions.md` 新增「现状总览与守卫索引」**：一张表看完"这一层做到哪一步、由哪条守卫钉住"——约定数据→计划、IR 读路径、适配器交叉核对、调用点按形状算落点、约定级返回槽、无 plan = 编译错误、多值返回、调用点形状摊成员、自定义约定、异域钩子、变参（规划 ✅ / 调用方 ✅ / 被调方 ⬜）、`[abi]` 删键的文档一致性、以及三条"评估后不做"（按成员拆、`callee_pop`、红区/尾调用）。
+- **新守卫** `forge-abi/tests/doc_guard.rs::guard_index_names_exist`：表里"守卫"列的每个名字都必须在 `crates/**/*.rs` 里找到 `fn <名字>`——文档不许引用不存在的守卫（测试改名/删掉时会红）。同 `schema_guard` 对键表、`varargs-plan` 对 `va_list` 形状表的做法。
+- 验证：`cargo test -p forge-abi --test doc_guard` 绿；改动的文档 markdownlint 0。
+
 ### Added (2026-09-30) — 变参 V0+V1：调用点按**被调方的变参语义**发未命名实参（win64 端到端）
 
 - **`CallPlanner::plan_call` / `call_plan::plan_call` / `abi_target::plan_for_shapes` 多一位 `variadic: Option<(bool, u32)>`** = "被调方是不是变参、命名了几个"：调用点只看得见实参形状，而"未命名实参在**只走栈**的约定（win64/aapcs64/lp64d）里要改判到栈"只有知道被调方签名才判得出来。

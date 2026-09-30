@@ -341,6 +341,32 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
   JIT 端到端 `forge-codegen::runtime::jit::tests::test_jit_multi_value_return_is_read_back`
   （`callee(5) -> (6,7)`，调用方算 `6*10+7`）。
 
+## 现状总览与守卫索引
+
+一张表看完"这一层做到哪一步、由哪条守卫钉住"。**每个测试名都由守卫
+`forge-abi/tests/doc_guard.rs::guard_index_names_exist` 检查"真的存在于仓库里"**——
+文档不许引用不存在的守卫（同 `schema_guard` 对键表、`varargs-plan` 对 `va_list` 形状表的做法）。
+
+| 能力 | 状态 | 守卫（测试名） |
+| --- | --- | --- |
+| 约定数据 → 计划（规则/绑定/引擎） | ✅ | `builtin_plans_match_goldens`、`plan_text_is_deterministic` |
+| IR 的 `CallConvId` 读路径（未注册 ⇒ fail-closed） | ✅ | `rules_without_binding_fail_closed_at_the_compile_entry` |
+| 真实后端 → 引擎（适配器 ↔ 合成黄金交叉核对） | ✅ | `real_machine_plan_matches_the_synthetic_goldens`、`adapter_exposes_the_real_register_file` |
+| 调用点按**形状**算被调方落点 | ✅ | `shape_plan_matches_the_function_plan`、`call_planner_registry_serves_the_shape_plan` |
+| 约定级返回槽（`[abi].ret_regs` 删除后的替代） | ✅ | `convention_level_int_return_slot` |
+| 无 plan = 编译错误（fail-closed） | ✅ | `rules_without_binding_fail_closed_at_the_compile_entry` |
+| 多值返回（`rets` / `RegPair` / `RegGroup`） | ✅ | `multi_value_returns_take_one_register_each`、`multi_value_returns_fail_closed_on_gaps`、`two_value_return_is_plan_driven`、`test_jit_multi_value_return_is_read_back` |
+| 调用点形状摊开成员（HFA 判定） | ✅ | `hfa_aggregate_shape_matches_the_callee_plan` |
+| 自定义约定（"约定是使用者的数据"） | ✅ | `test_jit_custom_convention_drives_argument_registers` |
+| 异域钩子（Swift `self`/`error`、Go `g`） | ✅ | `swift_hooks_place_self_and_error`、`swift_error_return_uses_the_language_pool`、`go_hooks_keep_the_g_register_alive` |
+| 变参：规划（`va_area`/`va_meta`/未命名实参落点） | ✅ | `variadic_unnamed_arguments_follow_the_convention`、`va_shapes_match_the_documented_table` |
+| 变参：调用方发未命名实参（win64） | ✅ | `call_site_variadic_hint_decides_unnamed_argument_placement`、`test_jit_variadic_unnamed_args_go_to_stack` |
+| 变参：`%al`/`va_start`/`va_arg`（被调方） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |
+| 单个聚合要 ≥3 寄存器的返回 / 按成员拆 | ⬜（无产出者） | `a6_gap_inventory` |
+| `callee_pop`（stdcall） | ⬜（缺调用点契约） | 见「已知缺口」表 |
+| 红区 / 尾调用约束 | ⬜（无消费者） | — |
+
 ## 内置约定（四份 + 一个抽象基类）
 
 | 约定 | 位置计数 | 参数寄存器（内置绑定） | 返回寄存器 | 栈/shadow/红区 | 宽返回（sret） | callee-saved 机制 | 变参 |
