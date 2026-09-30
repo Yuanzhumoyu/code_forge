@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-09-30) — 抽出 `pipeline/abi_setup.rs`：调用约定装配从 `CompileState::new` 里独立出来
+
+- **三条约定层规则集中到一处**（`forge-codegen/src/pipeline/abi_setup.rs::setup_conv`）：① 约定名解析（未注册 fail-closed）；② **约定级整数返回槽**探针（空参 + 整数返回问一次引擎）；③ **函数级 plan 的 fail-closed**（错误消息含三步修法与自查命令）+ 约定级破坏集兜底 + 模块签名表落位。返回该函数的 `AbiPlan`（调用方存进 `CompileState` 供 `FORGE_TRACE_ABI=1` 打印）。
+- 为什么：这三件事原先埋在 `CompileState::new`（约 300 行的构造过程）中间，**既读不出来也单独测不了**——只能"编译一个函数再看结果"。抽出来后调用点只剩一行，规则与错误消息在一个文件里，`#[cfg(test)] mod tests` 的 4 条单测直接断言"返回槽 = RAX / 布局 = win64 / 破坏集非空 / 未注册约定点名修法 / 模块签名表进出 `variadic_of`"。
+- 顺便清掉 `compiler.rs` 里那 70 余行的内联块与三处重复的 `crate::pipeline::abi_target::…` 长路径。
+- 验证：`cargo test -p forge-codegen --lib --all-features` **1351 passed**（含 4 条新单测）、`-p forge-codegen`（全 target，exit 0）、`-p forge-tests`、`-p forge-abi` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0。
+
 ### Added (2026-09-30) — 变参 V5：`forge-isa abi check` 上报变参状态（三种自相矛盾算硬错）
 
 - **新增一行 `ℹ 变参 …`**（每份约定一条）：把"这台机器 × 这份约定的变参处于什么状态"说清楚——

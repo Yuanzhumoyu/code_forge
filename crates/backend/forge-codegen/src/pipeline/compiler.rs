@@ -2084,14 +2084,6 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let types_ctx = func.types.clone();
         let store = types_ctx.borrow();
         let mut ctx = LowerCtx::new();
-        // **在这里读调用约定**（v20 A2）：解析成宿主注册表里的名字，未注册即 fail-closed。
-        // 旧实现只把这行赋一次值、全仓无人读——IR 里那份约定等于文档；
-        // 现在它是真实的读路径（A3 起用这个名字查 `AbiRules`/`AbiBinding` 发射调用点）。
-        ctx.conv.id = func.calling_convention.clone();
-        ctx.conv.name = crate::pipeline::conv_registry::resolve(&func.calling_convention)?;
-        // 模块级签名表（变参 D6）：调用点在 lowering 时按 `FuncRef` 查它，才知道**被调方**
-        // 是不是变参（调用点自己只有实参形状）。单函数编译时为 None。
-        ctx.conv.module_sigs = module_sigs.map(|s| s.to_vec());
         ctx.type_store = Some(store.clone());
         // 值/地址寄存器类与栈槽单位：全部由 TargetRegInfo 元数据提供
         //（DSL 从 [meta].value_gpr_width/addr_width/slot_bytes 生成）——
@@ -2106,84 +2098,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ctx.vector_tiers = ri.vector_tiers().to_vec();
             ctx.type_map = ri.type_map().to_vec();
         }
-        // v20 A3b 预备/ A5-3 ④：把该函数的 `AbiPlan` 算出来挂上。约定名已在上面解析过
-        // （A2 的读路径）；这里跑一次引擎，把"IR 签名 + 宿主寄存器文件 + 约定数据"的结果
-        // 交给生成物与管线（`call_layout`）。
-        let abi_plan = {
-            let reg = crate::pipeline::conv_registry::registry()
-                .read()
-                .expect("约定注册表被投毒");
-            // 约定级**整数返回槽**（v20 A5-3）：谱里不再声明 `[abi].ret_regs`，而
-            // "标量整数返回放哪个寄存器"是**约定级**事实（x86 RAX / riscv a0=X10 /
-            // arm64 x0）——用"空参 + 整数返回"的合成签名问一次引擎即可（与具体签名无关）。
-            let w = ctx.value_gpr_class.width() as u32;
-            let ret_probe =
-                forge_isa_runtime::machine::call_plan::CallRequest::new(ctx.conv.name.clone())
-                    .rets([forge_isa_runtime::machine::call_layout::ArgShape::int(
-                        w.max(1),
-                        w.max(1),
-                    )]);
-            if let Ok(p) = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &ret_probe)
-                && let Some(forge_isa_runtime::machine::call_layout::RetPlace::Reg {
-                    class,
-                    index,
-                    ..
-                }) = crate::pipeline::abi_target::call_layout(&p, machine).ret
-            {
-                ctx.conv.ret_gpr = Some((index, class));
-            }
-            let abi_plan = match crate::pipeline::abi_target::plan_for_function(
-                machine,
-                &reg,
-                &ctx.conv.name,
-                func,
-            ) {
-                Ok(p) => p,
-                // **fail-closed**（v20 A6，用户 2026-09-27 裁定）：无 plan 不再继续编译。
-                //
-                // 旧行为是"算不出来就留个 note、退回约定级数据继续编"，结果是错误被推给
-                // 发射侧的各个 fail-closed 点（调用点、收参、栈参数、帧布局），消息离现场
-                // 远、且真实的引擎缺口会被误当成"这条签名能编"。现在缺口在**编译入口**
-                // 一次报清楚。缺口清单见
-                // `docs/plans/calling-convention-redesign-plan.md` 的 A6。
-                Err(e) => {
-                    if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
-                        eprintln!("[abi-plan] {e}");
-                    }
-                    return Err(IrError::Unsupported(format!(
-                        "v12 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\
-                         无 plan 不再继续编译（fail-closed）。\n\
-                         \x20 怎么修：① 约定数据缺/写错 ⇒ 用 \
-                         forge_codegen::pipeline::conv_registry::register_rules_toml / \
-                         register_binding_toml 注册（或改用已注册的约定）；\
-                         ② 静态自查缺口 ⇒ `forge-isa abi check <谱>`（`--strict` 让缺口影响\
-                         退出码）、`forge-isa abi plan <谱> --conv <名> --sig \"…\"`；\
-                         ③ 口径与缺口清单 ⇒ docs/reference/calling-conventions.md、\
-                         docs/plans/calling-convention-redesign-plan.md 的 A6。\n\
-                         \x20 提示：设 FORGE_TRACE_ABI=1 可看到该函数的 plan 或失败原因。",
-                        ctx.conv.name
-                    )));
-                }
-            };
-            // **约定级事实**：破坏集（`AbiPlan::clobbers` = 可用池 − callee-saved − pinned）
-            // 与签名无关，用空签名问一次引擎即可。生成物在调用点拿不到本函数 plan 时用它
-            // 兜底（正常路径已有 plan）；两条都没有 ⇒ 调用点 fail-closed。
-            if let Ok(p) = crate::pipeline::abi_target::plan_for_signature(
-                machine,
-                &reg,
-                &ctx.conv.name,
-                &forge_abi::Signature::new(Vec::new(), None),
-            ) {
-                // `CallLayout::clobbers` 是 (类, 类内号)，`LowerCtx` 用 (号, 类)。
-                ctx.conv.clobbers = crate::pipeline::abi_target::call_layout(&p, machine)
-                    .clobbers
-                    .into_iter()
-                    .map(|(c, i)| (i, c))
-                    .collect();
-            }
-            abi_plan
-        };
-        ctx.conv.layout = Some(crate::pipeline::abi_target::call_layout(&abi_plan, machine));
+        // **调用约定装配**（v20）：名字解析（未注册 fail-closed）、约定级返回槽、函数级
+        // plan（算不出 = 编译错误）、约定级破坏集、模块签名表——规则与消息都在
+        // `pipeline/abi_setup.rs`，这里一个调用点。
+        let abi_plan =
+            crate::pipeline::abi_setup::setup_conv(&mut ctx, machine, func, module_sigs)?;
+
         // StackAddr 的 lea 基准需要跳过 callee-saved 区（局部变量不能写在 push
         // 槽上）：fp 保存槽（frame_pointer_overhead）+ callee-saved 寄存器区。
         // 之前只算了 callee-saved 区，漏掉 fp 的 8 字节，局部变量落进 push 槽
