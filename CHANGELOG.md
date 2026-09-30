@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-09-30) — 变参：实测"只接调用点信息"是**假绿**，补 D7（IR 表达未命名实参）
+
+- **先试后写**：按 D6 选项②把整条"模块签名表 → `LowerCtx` → 生成物查表 → `plan_call`"接通，
+  并加了一个 win64 的 JIT 端到端用例——**用例通过，但它是假绿的**：管线投影出来的
+  `fixed_count` **恒等于** IR 形参个数（`sig_view` 只有 `variadic: bool` 可用），而 `Call`
+  每个形参一个实参 ⇒ `unnamed = i >= fixed_count` 永远为假，变参提示传下去也是无操作，
+  未命名实参根本不会出现。**已整片回滚**（不留无效果的机器），结论写进方案。
+- **新决策点 D7**（IR/管线怎么表达"未命名实参"）：建议照 LLVM 形态——变参**签名只列命名参数**，
+  `Call` 允许带比形参更多的实参（`declare @printf(ptr, ...)`）；它是 D6 的前置，两者建议一起做。
+- **守卫加强**：`abi_target_real::call_site_shapes_cannot_express_variadic_placement` 补第 ④ 段——
+  断言 `signature_view(变参函数).fixed_count == params.len()`（未命名实参在今天的 IR 里无法表达）
+  且变参函数的 plan 有 `va_area`（被调方那一半是完整的）。
+- 方案文档同步：§4 新增 D7、D6/D7 证据小节改写、§5 的 **V0 改为"两件一起做"**并记录这次
+  "假绿 + 回滚"的过程与原因、V1 注明"验收要等 V2/V4"。
+- 验证：`cargo test -p forge-codegen --test abi_target_real call_site_shapes` 绿；改动文档 markdownlint 0。
+
 ### Docs (2026-09-30) — 变参方案补 D6：**V1 的真正阻塞点是"调用点不知道被调方是变参"**
 
 - **新决策点 D6**（调用点怎么知道"被调方是变参、命名了几个"）：`plan_call(isa, conv, args, rets)` 只吃**形状**，没有变参信息；而 win64 的 `variadic_stack_only = true` 会把未命名实参从寄存器改判到栈。同一个三 i64 签名，**形状路径给 `Reg(RDX)/Reg(R8)`、签名路径给 `Stack/Stack`** —— 所以 V1 缺的不是发射代码，而是这条信息通路（建议：管线编译模块时已有每个 `FuncRef` 的签名，把 `FuncRef → (variadic, fixed_count)` 表放进 `LowerCtx`，生成物在调用点查表后传给 `plan_call`；不动 IR）。

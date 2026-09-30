@@ -1212,4 +1212,39 @@ fn call_site_shapes_cannot_express_variadic_placement() {
         by_shape.args[1].place, by_sig.args[1].place,
         "若两条路径一致，说明引擎语义变了：请复查 varargs-plan.md 的 D6 与 V1"
     );
+
+    // ④ **第二处事实**（2026-09-30 补测）：管线投影出来的 `fixed_count` **恒等于**
+    //    IR 形参个数（`sig_view` 只有 `variadic: bool` 可用），而 `Call` 每个形参一个实参
+    //    ⇒ 在**今天**的管线里 `unnamed = i >= fixed_count` 永远为假：即使把"被调方是变参"
+    //    递给调用点，也仍然判不出"哪几个实参是未命名的"。
+    //
+    //    这正是"变参要先动 IR/管线，而不是先写发射"的证据：要表达未命名实参，得让
+    //    **调用**能带比被调方形参更多的实参（LLVM 的 `declare @printf(ptr, ...)` 就是这个
+    //    形态：签名只列命名参数，调用可以多传）。
+    {
+        use forge_codegen::pipeline::sig_view::signature_view;
+        use forge_ir::{FunctionSignature, TypeId};
+
+        let sig_ir =
+            FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64]).with_variadic(true);
+        let mut b = FunctionBuilder::new("printf_like", TypeContext::new(), sig_ir);
+        let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "n")]);
+        b.switch_to_block(entry);
+        b.ret(&[params[0]]);
+        let func = b.finish().expect("build");
+
+        let view = signature_view(&func).expect("投影");
+        assert!(view.variadic, "IR 的 variadic 标志要投影过去");
+        assert_eq!(
+            view.fixed_count,
+            view.params.len(),
+            "管线的命名个数恒等于形参个数 —— 未命名实参在今天的 IR 里无法表达"
+        );
+        // 被调方视角（正确建模的变参函数：签名只列命名参数）确实能算出 va_area。
+        let by_callee = plan_for_signature(&tm, &reg, "win64", &view).expect("被调方 plan");
+        assert!(
+            by_callee.va_area.is_some(),
+            "变参函数的 plan 要有 va_area（这一半是完整的）"
+        );
+    }
 }
