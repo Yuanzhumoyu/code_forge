@@ -9,6 +9,7 @@ pub mod compiler;
 pub mod conv_registry;
 pub mod emission;
 pub mod frame_layout;
+pub mod frame_slots;
 pub mod liverange;
 pub mod lowering;
 pub mod regalloc_bt;

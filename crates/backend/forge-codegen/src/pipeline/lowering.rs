@@ -202,98 +202,23 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // `TargetRegInfo::slot_bytes`，x86/riscv64/arm64/demo = 8），避免与前段
         // 固定的 StackAddr 偏移（Immediate::Int，-4/-8...）重叠。
         let slot_unit = self.ctx.slot_bytes.max(1) as i64;
-        let mut stackaddr_depth: i64 = 0;
-        let mut allocas: Vec<(Inst, u32)> = Vec::new(); // (指令, 槽字节数)
-        // 预扫描第二遍：识别 `Iadd(stack_addr(0), iconst(-N))` 模式——mini_c 的
-        // alloc_slot 生成 `stack_addr(0) + iadd(iconst(offset))`,StackAddr 本身
-        // immediate=0 不贡献深度,真正的槽偏移在 iconst 里。若不把这些负偏移
-        // 计入 stackaddr_depth,locals 区不参与 frame 计算,spill 槽会从更浅的
-        // 位置分配并覆盖局部变量(嵌套循环 s 累加丢失/死循环的根因)。
-        let dfg = &func.dfg;
-        let mut iadd_stack_offsets: Vec<i64> = Vec::new();
-        for (_, bd) in dfg.blocks() {
-            for &ii in &bd.inst_order {
-                let inst = &dfg.inst_data(ii);
-                if inst.opcode != Opcode::Iadd {
-                    continue;
-                }
-                // Iadd 的操作数之一必须是 StackAddr 的值,另一个是负 Iconst。
-                let mut has_stack = false;
-                let mut const_val: i64 = 0;
-                let mut has_const = false;
-                for &op in &inst.operands {
-                    let Some(val) = dfg.value_data_opt(op) else {
-                        continue;
-                    };
-                    let forge_ir::ir::dfg::ValueDef::Inst(def_ii, _) = val.def else {
-                        continue;
-                    };
-                    let def = &dfg.inst_data(def_ii);
-                    match def.opcode {
-                        Opcode::StackAddr => has_stack = true,
-                        Opcode::Iconst => {
-                            if let Some(Immediate::Const(cid)) = def.immediates.first()
-                                && let Some((v, _)) = self
-                                    .ctx
-                                    .constant_pool
-                                    .as_ref()
-                                    .and_then(|cp| cp.get_int(*cid))
-                            {
-                                const_val = v as i64;
-                                has_const = true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if has_stack && has_const && const_val < 0 {
-                    iadd_stack_offsets.push(const_val);
-                }
-            }
-        }
-        for v in iadd_stack_offsets {
-            let depth = -v + slot_unit;
-            stackaddr_depth = stackaddr_depth.max(depth);
-            // 与主循环 StackAddr immediate 的处理一致：负偏移槽深计入 locals
-            // 帧需求（否则 spill 槽从过浅位置分配覆盖局部变量）。
-            self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(depth as u32);
-        }
-        for (_, bd) in func.dfg.blocks() {
-            for &ii in &bd.inst_order {
-                let inst = &func.dfg.inst_data(ii);
-                match inst.opcode {
-                    Opcode::StackAddr => {
-                        if let Some(Immediate::Int(v)) = inst.immediates.first() {
-                            let depth = if *v >= 0 { 0 } else { -*v + slot_unit };
-                            stackaddr_depth = stackaddr_depth.max(depth);
-                        }
-                    }
-                    Opcode::Alloca => {
-                        let mut ty = None;
-                        let mut count = 1u64;
-                        for imm in &inst.immediates {
-                            match imm {
-                                Immediate::Type(t) => ty = Some(*t),
-                                Immediate::Uint(c) => count = (*c).max(1),
-                                _ => {}
-                            }
-                        }
-                        if let Some(t) = ty {
-                            let size = self
-                                .ctx
-                                .type_store
-                                .as_ref()
-                                .map(|s| s.size_bytes(t))
-                                .unwrap_or(self.ctx.slot_bytes as u32)
-                                .max(1) as u64;
-                            let bytes = (size * count) as u32;
-                            allocas.push((ii, bytes));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // **前端局部槽的预扫描**（唯一实现，见 `pipeline/frame_slots.rs`）：`StackAddr` 区深度
+        // 与 `Alloca` 槽。变参的 ABI 槽（保存区/对象）也用同一份结果排版，两边不会漂移。
+        let types = self.ctx.type_store.clone();
+        let slots = crate::pipeline::frame_slots::scan_frontend_slots(
+            func,
+            self.ctx.slot_bytes as u32,
+            |t| {
+                types
+                    .as_ref()
+                    .map(|s| s.size_bytes(t))
+                    .unwrap_or(self.ctx.slot_bytes as u32)
+            },
+        );
+        let stackaddr_depth = slots.stackaddr_depth;
+        // Iadd 模式那部分虽不在逐指令循环里，也要计入 locals 帧需求。
+        self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(stackaddr_depth.max(0) as u32);
+        let allocas = slots.allocas.clone();
         // 槽偏移从 -(stackaddr 区底 + 槽单位) 起递减；总帧需求并入 max_stack_bytes。
         let has_allocas = !allocas.is_empty();
         let mut slot = -(stackaddr_depth + slot_unit);

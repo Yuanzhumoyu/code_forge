@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — 前端局部槽深度扫描抽成唯一实现（`pipeline/frame_slots.rs`）
+
+变参的 ABI 槽（寄存器保存区 + `va_list` 对象）必须排在前端局部槽**之下**，而"前端局部槽占多深"
+在两个地方需要同一个答案：`pipeline/lowering.rs`（给 `Alloca` 分槽、算帧尺寸）与
+`pipeline/va_expand.rs`（展开前算 ABI 槽起点）。上一片在展开侧照着 lowering 的算式**镜像了一份**
+——两份实现要对齐就等于迟早漂移，且漂移的后果是静默错值（保存区被局部变量覆盖）。这一片抽掉镜像：
+
+- **唯一实现** `pipeline/frame_slots.rs::scan_frontend_slots(func, slot_bytes, size_of)`：一次扫完
+  三处统计（`StackAddr` 的立即数偏移、`stack_addr(0)+iadd(iconst(-N))` 模式、`Alloca` 区），
+  返回 `FrontendSlots { stackaddr_depth, allocas }`；`depth_bytes(slot_bytes)` 给出"这些槽覆盖到的最深
+  字节"。`lowering` 与 `va_expand` 都调它，`size_of`（类型尺寸来源）由调用方给——lowering 用类型快照、
+  展开用函数自己的 `types`。
+- **行为不变（逐处核对）**：立即数那部分 lowering 仍在逐指令通路里并进 `max_stack_bytes`（与预扫描
+  结果取 max，幂等）；`Iadd` 模式那部分只有预扫描能看到，继续在这里并进去；`Alloca` 区仍按"StackAddr
+  区底 + 一槽"往下排，槽偏移的分配留在 lowering（展开只需要深度，不需要具体槽位）。
+- **顺手删掉死代码**：`FrontendSlots::alloca_base` 抽出后无人调用（lowering 自己算 `slot` 起点）⇒ 删。
+- 验证：`forge-codegen`（1362，含 8 条变参用例 + `va_expand::tests::abi_slots_sit_below_frontend_locals`）、
+  `forge-tests`（矩阵 196/3/0，lib 43）、`forge-abi`、`forge-ir`（281）、`forge-isa-dsl` 全绿；
+  `clippy --workspace --exclude forge-rustc --all-targets --all-features -j 1 -- -D warnings` 0、
+  `cargo fmt --all -- --check` 0。
+
 ### Changed (2026-10-01) — 变参：`va_start` 物化也搬进 IR 展开，拆掉两处 x86 专属（打包 + `gpr_imm`）
 
 评审指出上一片"为某一个开洞"：保存区物化留在生成器里，于是有两处只为 x86 成立的东西——
@@ -25,8 +46,9 @@ store），② 为写常量而新增的角色 `gpr_imm`。这一片把物化也�
 - **修掉一个真缺陷（同一片里发现的）**：ABI 槽（保存区 + 对象）原先在**编译入口**按"当时的
   `max_stack_bytes`"（= 0）预留，而前端 `stack_addr(-N)` 要到 lowering 才统计 ⇒ **两者会重叠**
   （sysv64 那条用例恰好没有局部槽，所以没暴露）。现在 `plan_abi_slots` 在**展开前**扫一遍 IR 算
-  前端局部槽深度（**严格镜像** lowering 的三处统计：`StackAddr` 立即数、`stack_addr(0)+iadd(iconst(-N))`
-  模式、`Alloca` 区），ABI 槽从它之后排，并把结果喂给 `CompileState`（帧尺寸/序言偏移）。
+  前端局部槽深度（三处统计：`StackAddr` 立即数、`stack_addr(0)+iadd(iconst(-N))` 模式、`Alloca` 区；
+  这一片先按 lowering 的算式镜像了一份，随即抽成**唯一实现** `pipeline/frame_slots.rs`——见下一条），
+  ABI 槽从它之后排，并把结果喂给 `CompileState`（帧尺寸/序言偏移）。
 - **守卫（确定性、已验证会咬）**：`va_expand::tests::abi_slots_sit_below_frontend_locals`——直接断言
   "保存区/对象排在前端局部槽之下"；把深度扫描短路后它报
   `保存区必须在前端局部槽之下（front=32, save_depth=176）` ✗，复原后通过 ✓。

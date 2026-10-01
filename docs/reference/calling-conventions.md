@@ -212,7 +212,7 @@ pub enum CallConvId {
 | `hidden` | `sret` / `context` / `va_meta`（SysV `%al`）/ `va_len` |
 | `callee_saved` | 机制 + 有序寄存器表 + `includes_fp` / `includes_link` |
 | `clobbers` | 可分配寄存器 − callee-saved − 固定用途（调用方要假设被破坏的部分） |
-| `va` | 变参信息（`None` = 非变参）：`VaKind` + `size`/`align`/`stack_only` + **`fields`（`va_list` 对象字段布局）** + **`save`（寄存器保存区：大小/对齐/槽表）**；被调方的 `va_start`/`va_arg` 靠它（v20 V2/V3，`VaKind::supports_frame_addr_va_start()` 判"能否直接用帧内栈地址"） |
+| `va` | 变参信息（`None` = 非变参）：`VaKind` + `size`/`align`/`stack_only` + **`fields`（`va_list` 对象字段布局）** + **`save`（寄存器保存区：大小/对齐/槽表）** + **`init`（逐字段初值/游标上限/步长）**；被调方的 `va_start`/`va_arg` 靠它（v20 V2/V3；`VaKind::supports_frame_addr_va_start()` 判"能否直接用帧内栈地址"= 生成器那条 win64 路） |
 | `widen_to_bits` | 形参/实参至少扩到多少位 |
 
 `AbiPlan::to_text()` 是**确定性**渲染（`forge-abi` 的黄金快照与 `forge-isa abi plan`
@@ -324,7 +324,7 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
   win64 六整数含栈参数、win64 混合按位置计数、lp64d 混合按类计数、aapcs64 整型）与
   `call_planner_registry_serves_the_shape_plan`（注册表路径 == 直接算；未注册 ISA ⇒ `NoPlanner`）。
 
-### 变参：调用点怎么知道被调方是变参（v20 V1）、被调方怎么取未命名实参（v20 V2）
+### 变参：调用点怎么知道被调方是变参（v20 V1）、被调方怎么取未命名实参（v20 V2–V5）
 
 **调用点**只看得见实参形状，判不出"未命名实参在只走栈的约定里要改判到栈"——这件事只在
 **被调方的签名**里（LLVM：`declare i32 @printf(ptr, ...)` 的 `...`），而调用指令只带一个
@@ -342,14 +342,20 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
 - **单函数编译没有这张表**（`forge-rustc` 逐函数后端 / `forge-object`）：调用点按**非变参**
   处理——这是**已知缺口**，见 §已知缺口。
 
-**被调方**取未命名实参：`va_start`（IR op，0 操作数 → 指针）由生成器**按能力角色**发射
-（`roles = ["frame_addr"]` + `roles = ["stack_arg_store"]`，x86 = `LEA_RBP_OFF` / `MOV64_MR`；
-与 `frame_set`/`frame_alloc` 同族——谱只申报能力，序列由生成器发，谱里**没有** `VaStart` 的
-`[[lowering]]` 规则）。**契约（v20 V3）**：`va_start` **物化本约定的 `va_list` 对象**并返回
-**该对象的地址**——对象放帧槽，**偏移由管线分配**（`Opcode::VaStart` 与 `StackAddr` 同一条
-通路：管线按 `va_area.size/align` 选偏移并抬 `max_stack_bytes`，生成器只读
-`ctx.current_offset`，不猜）。win64 的对象 = 1 个指针字段（偏移 0）= 未命名实参区地址。
-地址算式（被调方视角、相对帧基址）：
+**被调方**取未命名实参：`va_start`（IR op，0 操作数 → 指针）。**契约（v20 V3）**：它**物化本约定的
+`va_list` 对象**并返回**该对象的地址**——对象放帧槽，**偏移由管线分配**（`Opcode::VaStart` 与
+`StackAddr` 同一条通路：管线按 `va_area.size/align` 选偏移并抬 `max_stack_bytes`）。实现按
+**有没有保存区**分两条路（判据是 plan 的 `CallLayout.va.save`）：
+
+- **没有保存区**（`win64` 栈式）：生成器**按能力角色**发射（`roles = ["frame_addr"]`，
+  x86 = `LEA_RBP_OFF`；与 `frame_set`/`frame_alloc` 同族——谱只申报能力、序列由生成器发，谱里
+  **没有** `VaStart` 的 `[[lowering]]` 规则）。对象 = 1 个指针字段（偏移 0）= 未命名实参区地址。
+- **有保存区**（`sysv64` 一族）：管线在 lowering **之前**把它展开成显式 IR
+  （`pipeline/va_expand.rs`）——按 `va.fields` 的偏移/宽度逐字段 `Store`，初值取自 `va.init`
+  （三种来源：常量 / 帧内地址 / 保存区基址；常量按**字段自己的宽度**写）。**不写死任何 ISA 的
+  数字、也不为该形态新增 ISA 能力**——换一台机器/换一份约定只要还是这一族就不用改代码。
+
+win64 那条路的地址算式（被调方视角、相对帧基址）：
 
 ```text
 未命名区起点
@@ -362,13 +368,21 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
 是 `Stack.offset(k) = first_arg_offset + shadow_bytes + k×slot`：少加 shadow 会读到 shadow 区里的
 垃圾（2026-10-01 实测：`va` 落在 shadow 内，算出 1.4e15 量级的地址）。
 
-`VaKind::supports_frame_addr_va_start()` 为假（`sysv64`/`lp64d`/`aapcs64` 的寄存器保存区）
-或该约定不支持变参时，`va_start` **明确 fail-closed**（消息分别点名"变参 V3 未实现"与
-"该约定不支持变参"）——不猜、也不退化。
+**非本族的形态**（`aapcs64` 的 gr/vr 计数、`riscv` 的单指针区）与"该约定不支持变参"都**明确
+fail-closed**（前者报"该形态不在本族"——本族的形态 = "主游标 + 次游标 + 溢出指针 + 保存区指针"，
+判据是有没有 `save` 与 `init`；后者报"该约定不支持变参"）——不猜、也不退化。
 
 **取值**用 `va_arg(ap, ty)`（IR op，1 操作数 → 1 结果，带 `SIDE_EFFECT`）：它读 `ap` 指向的
-对象 → 取一个 `ty` → **原地推进**游标 → 返回该值。发射同样按**能力角色**取三条指令
-（`ptr_load`/`ptr_store`/`add_imm`；x86 = `MOV_R_MEM`/`STORE_MEM_R`/`ADD_R_IMM32`）：
+对象 → 取一个 `ty` → **原地推进**游标 → 返回该值。同样按形态分两条路：
+
+- **没有保存区**（`win64` 栈式、生成器按能力角色）：`ptr_load`/`ptr_store`/`add_imm`
+  （x86 = `MOV_R_MEM`/`STORE_MEM_R`/`ADD_R_IMM32`）；
+- **保存区一族**（管线展开）：游标未超上限 ⇒ 取保存区、否则取溢出区，两条支**各自推进**游标
+  （`gp_out`/`ov_out` 两条 `Select`）；只用既有 IR op（`Icmp`/`Select`/`Iadd`/`Uextend`/`Ireduce`/
+  `Load`/`Store`/`Fload`/`Fptrunc`），**不新增 ISA 能力**（生成器要发同样的事得新增
+  `cmp`/`cmov`/`add_rr`/`and` 四个角色）。上限/步长/槽宽取自 plan 的 `va.init`/`va.save`。
+
+`win64` 那条路的发射形状：
 
 ```text
 cur = [ap]        ; ① 游标（ptr_load）
@@ -377,9 +391,9 @@ cur += slot_bytes ; ③ 推进（add_imm）
 [ap] = cur        ; ④ 写回（ptr_store）
 ```
 
-缺任一条角色 ⇒ 整条臂明确 `Unsupported`（点名缺哪个角色）。**按结果类分派取值**：标量浮点走
-`{ role = "ptr_load", class = "fpr" }`（x86 = `MOVSD_R_MEM`，mem → XMM），整数/指针走无类限定的
-那条（x86 = `MOV_R_MEM`，宽度随 IR 类型自动）。
+缺任一条角色 ⇒ `win64` 那条臂明确 `Unsupported`（点名缺哪个角色）。**按结果类分派取值**：标量
+浮点走 `{ role = "ptr_load", class = "fpr" }`（x86 = `MOVSD_R_MEM`，mem → XMM），整数/指针走无
+类限定的那条（x86 = `MOV_R_MEM`，宽度随 IR 类型自动）。
 
 **调用方那一半同样按类分派**（否则浮点栈实参会被静默写坏）：栈实参 store 用
 `stack_arg_store`（整数/指针，x86 = `MOV64_MR`）与
@@ -469,9 +483,10 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参 V3 取值（sysv64）：`va_arg` 的 **IR 展开**（保存区支 / 溢出支各一条真跑） | ✅ | `test_jit_va_arg_sysv64_reads_the_register_save_area`、`test_jit_va_arg_sysv64_overflows_to_the_stack_arg_area` |
 | sysv64 的栈实参落点（`first_offset_slots` = 2：本实现总是 push 帧指针） | ✅ | `test_jit_sysv64_seventh_integer_arg_comes_from_the_stack` |
 | 变参：`va_start` 物化走 IR 展开 + ABI 槽排在前端局部槽之下（拆掉 gp/fp 打包与 `gpr_imm`） | ✅ | `abi_slots_sit_below_frontend_locals`、`test_jit_va_arg_sysv64_coexists_with_frontend_locals` |
-| 变参：aapcs64/riscv 的保存区（`va_init` 未算 ⇒ 继续 fail-closed） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 前端局部槽深度扫描（lowering 与变参展开**共用同一份实现**：`pipeline/frame_slots.rs`） | ✅ | `abi_slots_sit_below_frontend_locals`（短路深度扫描即红） |
+| 变参：aapcs64/riscv 的 `va_list` 形态（各自一族；`va_start` 继续 fail-closed） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
-| 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参：`%al`/`va_meta` 写入（SysV）与前端产出 `variadic` 签名 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |
 | 单个聚合要 ≥3 寄存器的返回 / 按成员拆 | ⬜（无产出者） | `a6_gap_inventory` |
 | `callee_pop`（stdcall） | ⬜（缺调用点契约） | 见「已知缺口」表 |
@@ -628,7 +643,7 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 | HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言）；与上面那条同因，**暂不做** | 待有按值聚合的产出者 |
 | 多值返回的池不够 | **明确 `PoolExhausted`**（如 win64 只有 `RAX:RDX`，三个独立标量没有第三个返回寄存器）⇒ 编译入口 fail-closed | 由约定数据决定（不变） |
 | 变参 `LEN` 类元信息寄存器 | 模型有 `hidden.va_len_pool`，**没有内置约定启用**（psABI 现状以官方定本为准） | A6（核对后决定） |
-| **变参**：win64 栈式的**调用方 + 被调方**已通（V1/V2，2026-10-01）；**寄存器保存区**（`sysv64`/`lp64d`/`aapcs64` 的 `va_start` 物化）、`%al`/`va_meta` 写入、`va_arg` 提升未做 | 规划侧完整（`AbiPlan::va_area`/`hidden.va_meta`，四份内置约定的形状有黄金快照）；调用方按模块签名表发未命名实参，被调方 `va_start` 取帧内地址（win64 真跑）；保存区形态**明确 fail-closed**；前端仍无 `variadic` 产出 | 方案与决策点见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)（触发条件：出现需要变参的宿主或前端） |
+| **变参**：调用方（V1）与 win64 栈式被调方（V2）、**system V 保存区一族**（V3/V4 五片，`sysv64` 物化 + `va_arg` 两条支真跑）都已通；仍缺 `%al`/`va_meta` 写入、`aapcs64`/`riscv` 各自的 `va_list` 形态，以及前端的 `variadic` 产出 | 规划侧完整（`AbiPlan::va_area` 含字段布局/保存区槽表/逐字段初值，四份内置约定的形状有黄金快照）；非本族的形态**明确 fail-closed**（点名"该形态不在本族"）；前端仍无 `variadic` 产出 | 方案与决策点见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)（触发条件：出现需要变参的宿主或前端） |
 | 单函数编译的**变参调用点**（`forge-rustc` 逐函数后端 / `forge-object`） | 拿不到模块级签名表 ⇒ 调用点按**非变参**处理（未命名实参进寄存器）。整模块编译的入口（`JitCompiler::compile_module`、`FunctionCompiler::for_module`）没这个问题 | 需要时把模块签名表透到逐函数后端（rustc 的 `-C codegen-units` 下要额外通道） |
 | riscv/arm64 的向量 by-value | 谱里没有向量寄存器组 ⇒ 走内存/byval（保守，不是错值） | A5/A6 |
 | `callee_pop`（stdcall/thiscall 的 `ret N`） | 计划里算得出来（`AbiPlan::callee_pop_bytes`），**发射侧不消费**：本实现的传出参数区在**调用方帧内**（不是"push 上去"），被调方 `ret N` 会把调用方的 sp 抬高 N ⇒ 必须同时定"调用点契约"（调用方要知道 rsp 被抬高）才谈得上正确 | 待真有此 ABI 的宿主（且需要调用点侧契约） |

@@ -59,81 +59,14 @@ pub(crate) struct AbiSlots {
     pub max_depth: u32,
 }
 
-/// 扫一遍 IR 算前端局部槽的最大深度（与 `pipeline/lowering.rs` 的 `StackAddr` 处理同算式）。
+/// 前端局部槽的深度——**直接用唯一实现**（`pipeline/frame_slots.rs`），不再自己镜像一份：
+/// ABI 槽必须排在这些槽之下，否则保存区/`va_list` 对象会被局部变量覆盖（`va_arg` 读出垃圾）。
 fn frontend_locals_depth(func: &Function, slot_bytes: u32) -> u32 {
-    let unit = i64::from(slot_bytes.max(1));
-    let mut stackaddr_depth: i64 = 0;
-    // ② `Iadd(StackAddr, Iconst<0)`：mini_c 的 `alloc_slot` 把真偏移放在 iconst 里。
-    for (_, bd) in func.dfg.blocks() {
-        for &ii in &bd.inst_order {
-            let inst = func.dfg.inst_data(ii);
-            if inst.opcode != Opcode::Iadd {
-                continue;
-            }
-            let (mut has_stack, mut has_const, mut cval) = (false, false, 0i64);
-            for &op in &inst.operands {
-                let Some(val) = func.dfg.value_data_opt(op) else {
-                    continue;
-                };
-                let ValueDef::Inst(def_ii, _) = val.def else {
-                    continue;
-                };
-                let def = func.dfg.inst_data(def_ii);
-                match def.opcode {
-                    Opcode::StackAddr => has_stack = true,
-                    Opcode::Iconst => {
-                        if let Some(Immediate::Const(cid)) = def.immediates.first()
-                            && let Some((v, _)) = func.constants.get_int(*cid)
-                        {
-                            cval = v as i64;
-                            has_const = true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if has_stack && has_const && cval < 0 {
-                stackaddr_depth = stackaddr_depth.max(-cval + unit);
-            }
-        }
-    }
-    // ① `StackAddr` 立即数 + ③ `Alloca`（从"StackAddr 区底 + 一槽"起连续向下）
-    let mut allocas: Vec<u32> = Vec::new();
-    for (_, bd) in func.dfg.blocks() {
-        for &ii in &bd.inst_order {
-            let inst = func.dfg.inst_data(ii);
-            match inst.opcode {
-                Opcode::StackAddr => {
-                    if let Some(Immediate::Int(v)) = inst.immediates.first()
-                        && *v < 0
-                    {
-                        stackaddr_depth = stackaddr_depth.max(-*v + unit);
-                    }
-                }
-                Opcode::Alloca => {
-                    let mut ty = None;
-                    let mut count = 1u64;
-                    for imm in &inst.immediates {
-                        match imm {
-                            Immediate::Type(t) => ty = Some(*t),
-                            Immediate::Uint(c) => count = (*c).max(1),
-                            _ => {}
-                        }
-                    }
-                    if let Some(t) = ty {
-                        let size = func.types.borrow().size_bytes(t).max(1) as u64;
-                        allocas.push((size * count).min(u32::MAX as u64) as u32);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut slot = -(stackaddr_depth + unit);
-    for bytes in allocas {
-        slot -= ((i64::from(bytes) + unit - 1) / unit) * unit;
-    }
-    (-slot).max(stackaddr_depth).max(0) as u32
+    let types = func.types.clone();
+    let slots = crate::pipeline::frame_slots::scan_frontend_slots(func, slot_bytes, |t| {
+        types.borrow().size_bytes(t).max(1)
+    });
+    slots.depth_bytes(slot_bytes)
 }
 
 /// 算 ABI 槽（保存区 → 对象，依次排在前端局部槽之下）。
