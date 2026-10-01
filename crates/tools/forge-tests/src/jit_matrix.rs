@@ -3345,6 +3345,54 @@ pub const CASES: &[Case] = &[
             42,
         ),
     },
+    // ══════════════ 变参（v20 V2/V3/V4）：win64 栈式 ══════════════
+    //
+    // `VaStart`/`VaArg` 是**生成器专用臂**（没有 `[[lowering]]` 规则），所以能力门控靠
+    // runner 的 `CAPS_EXTRA`——只有申报了这两个 op 的机器会真跑，其余 **Skip("capability")**。
+    // 被调方：`va_start` 物化 `va_list` 对象 → 两次 `va_arg(i64)` + 一次 `va_arg(f64)`。
+    // 调用方（非变参 `main`）多传三个实参 ⇒ 未命名实参按被调方语义进传出栈区
+    // （靠**模块级签名表**：这正是 `JitCompiler::compile_module` 必须装表的那条路径）。
+    Case {
+        name: "variadic_va_arg_int_and_float",
+        ops: &[
+            "VaStart", "VaArg", "Call", "Imul", "Iadd", "Fadd", "Fptosi", "Fconst",
+        ],
+        kind: CaseKind::Module(
+            |m| {
+                // callee(fmt: i64, ...) -> i64：
+                //   a = va_arg(i64); b = va_arg(i64); d = va_arg(f64)
+                //   ret a*10 + b + (i64)d
+                let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
+                    .with_variadic(true);
+                let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+                let (blk, _p) = bc.create_block_with_params(&[(TypeId::I64, "fmt")]);
+                bc.switch_to_block(blk);
+                let ap = bc.va_start();
+                let a = bc.va_arg(ap, TypeId::I64);
+                let b = bc.va_arg(ap, TypeId::I64);
+                let d = bc.va_arg(ap, TypeId::F64);
+                let ten = bc.iconst_i64(10);
+                let a10 = bc.imul(a, ten);
+                let s = bc.iadd(a10, b);
+                let di = bc.fptosi(d, TypeId::I64);
+                let r = bc.iadd(s, di);
+                bc.ret(&[r]);
+                let callee_ref = m.add_function(bc.finish().expect("callee"));
+                // main: () -> i64 { callee(0, 4, 7, 2.5) } = 4*10 + 7 + 2 = 49
+                let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+                let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+                bm.create_block_here();
+                let fmt = bm.iconst_i64(0);
+                let x = bm.iconst_i64(4);
+                let y = bm.iconst_i64(7);
+                let z = bm.fconst(2.5f64.to_bits(), TypeId::F64);
+                let got = bm.call(callee_ref, &[fmt, x, y, z], &[TypeId::I64])[0];
+                bm.ret(&[got]);
+                m.add_function(bm.finish().expect("main"))
+            },
+            49,
+        ),
+    },
 ];
 
 /// 运行全部用例，返回 (名字, 结果)。

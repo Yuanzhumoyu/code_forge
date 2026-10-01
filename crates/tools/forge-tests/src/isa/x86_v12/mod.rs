@@ -8,7 +8,10 @@
 /// 构成完整能力集）：
 /// - Call/CallIndirect：ABI 专用生成路径（gen_call_lowering，非 [[lowering]]）；
 /// - GetElementPtr：地址计算在 lowering 内联（gep 展开为 add），无独立规则。
-pub const CAPS_EXTRA: &[&str] = &["Call", "CallIndirect", "GetElementPtr"];
+/// - VaStart/VaArg（v20 变参 V2–V4）：同样是**生成器专用臂**（`va_list` 的形态/落点是约定
+///   数据，静态模板表达不了），谱里没有也不该有 `[[lowering]]`。声明了它们，变参用例才会
+///   真跑而不是被能力门控 Skip。
+pub const CAPS_EXTRA: &[&str] = &["Call", "CallIndirect", "GetElementPtr", "VaStart", "VaArg"];
 
 /// 运行全部矩阵用例；断言无 Fail（Skip 仅报告）。
 /// P1-15 + 2026-09 修正：x86 矩阵依赖本机 ExecutableMemory 执行 x86 机器码，

@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参进架构无关的 JIT 矩阵（`variadic_va_arg_int_and_float`）
+
+变参此前只有 `forge-codegen` 里的 JIT 用例（单机、单 ISA），**架构无关的 `jit_matrix` 里
+一个变参用例都没有**——等于跨 ISA 证据为零，而这正是矩阵存在的理由。这一片把它补上：
+
+- **新用例 `variadic_va_arg_int_and_float`**（`CaseKind::Module`）：被调方变参 `callee(fmt, ...)`
+  用 `va_start` 物化对象、读两次 `va_arg(i64)` 与一次 `va_arg(f64)`，算
+  `a*10 + b + (i64)d`；调用方（非变参 `main`）多传三个实参 ⇒ 未命名实参按被调方语义进传出
+  栈区。**`4*10 + 7 + 2 = 49`**（x86 矩阵实测：**196 passed / 3 skipped / 0 failed**，195 → 196）。
+- **能力门控**：`VaStart`/`VaArg` 是**生成器专用臂**（谱里没有也不该有 `[[lowering]]`），所以
+  把它们加进 x86 runner 的 `CAPS_EXTRA`（"非 lowering 路径"清单，与 `Call`/`GetElementPtr`
+  同类）；其它 ISA 没申报 ⇒ 该用例按 `Skip("capability")` 诚实跳过。P1-16 的
+  "`CAPS_EXTRA` 与 TOML 生成的 `SUPPORTED_OPS` 不相交"守卫继续成立。
+- **顺带成为模块签名表接线的跨 ISA 守卫**：这条用例的调用方只有靠
+  `JitCompiler::compile_module` 装表才会把未命名实参发到栈上（V1 那个缺口的现场）——
+  矩阵里从此有一条真跑用例盯着它。
+- `check_isa` 的 `UNCOVERED_OPS` 里 `VaStart`/`VaArg` 两条**理由改写**：它们说的是"逐 op 最小
+  构造器造不出（要变参上下文）"，而不是"矩阵没覆盖"——矩阵现在覆盖了。
+- 验证：`forge-tests --lib` 43（含矩阵 196/3/0）、`forge-codegen --lib --all-features`（1356）、
+  `forge-ir`、`forge-isa-dsl`、`forge-abi` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0、
+  markdownlint 0。
+
 ### Added (2026-10-01) — 第 5+ 个浮点形参的收参路径：补两条真跑用例 + 更正一处误导性注释
 
 查"栈上的浮点形参收参"时，先按上一片的对称性假设它是缺口（调用方已按类分派、被调方还在用整数

@@ -444,16 +444,17 @@ mod no_coverage_list {
         // 值语义 / 异常 / 复合 / 原子：需要专门构造（多结果、landingpad 等）。
         ("Poison", "值语义：由 undef/poison 用例覆盖"),
         ("Undef", "值语义：由 undef/poison 用例覆盖"),
-        // 变参 V2/V3/V4：`va_start` 物化 va_list 对象、`va_arg` 取值并推进游标。
-        // 行为证据在 `forge-codegen` 的 JIT 用例（`test_jit_va_arg_reads_unnamed_stack_args`）；
-        // **矩阵**要覆盖它们得先有"被调方变参 + 从栈读未命名实参"的架构无关夹具（长期项）。
+        // 变参 V2–V4：`va_start` 物化 va_list 对象、`va_arg` 取值并推进游标。
+        // **架构无关的 `jit_matrix` 已覆盖**（用例 `variadic_va_arg_int_and_float`，x86 真跑）；
+        // 这里列着的是 `check_isa` 的**逐 op 最小构造器**覆盖不了它们——那两个 op 需要
+        // "变参签名 + 调用点模块签名表"的上下文，不是单条 op 能造出来的。
         (
             "VaArg",
-            "可变参数：需要架构无关的 va_arg 夹具（行为证据见 forge-codegen 的 JIT 用例）",
+            "check_isa 的逐 op 最小构造器造不出（要变参上下文）；jit_matrix 已覆盖",
         ),
         (
             "VaStart",
-            "可变参数：需要架构无关的 va_start 夹具（行为证据见 forge-codegen 的 JIT 用例）",
+            "check_isa 的逐 op 最小构造器造不出（要变参上下文）；jit_matrix 已覆盖",
         ),
         ("Cmpxchg", "原子：由原子用例覆盖（多结果 + 配对语义）"),
         ("ExtractValue", "聚合取值：由聚合用例覆盖"),

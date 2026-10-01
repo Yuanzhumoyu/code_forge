@@ -463,6 +463,7 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参 V3 对象物化：`va_start` 建 `va_list` 对象（管线给帧槽）+ win64 穿过对象读回 | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
 | 变参 V4：`va_arg` 取值 + 原地推进（整数类 + `f64` + `f32` 提升，win64） | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（两次 `va_arg` → 4 / 7）、`test_jit_va_arg_reads_unnamed_float_args`（`4.5 + 7.0 → 11`）、`test_jit_va_arg_narrows_promoted_f32`（`2.5 + 3.25 → 5`） |
 | 栈上的**浮点形参**（第 5+ 个，win64；经 spill 中转按位保留） | ✅ | `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`、`test_jit_stack_float_param_is_received_into_a_register` |
+| 变参：**架构无关矩阵**里的端到端用例（用例 `variadic_va_arg_int_and_float`；x86 真跑 `4*10 + 7 + (i64)2.5 = 49`，其余机器按能力门控 Skip） | ✅ | `jit_matrix_x86_v12` |
 | 变参：寄存器保存区（`sysv64`/`lp64d`/`aapcs64`）、更窄浮点与向量的取值能力 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
 | 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
