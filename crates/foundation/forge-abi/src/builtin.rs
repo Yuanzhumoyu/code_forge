@@ -73,7 +73,7 @@ ret_classify = [
   { when = { kind = "aggregate" },               do = { direct = { pool = "ret_int" } } },
   { when = { kind = "scalar" },                  do = { direct = { pool = "ret_int" } } },
 ]
-hidden = { sret_pool = "int", sret_slot = 0, va_list = "win64_stack", va_list_size = 8, va_list_align = 8 }
+hidden = { sret_pool = "int", sret_slot = 0, va_list = "win64_stack" }
 callee_saved = { mechanism = "push", pools = ["cs_gpr"], includes_fp = true }
 variadic_stack_only = true
 extensions = { callee_ignores_upper_bits = true }
@@ -114,7 +114,7 @@ ret_classify = [
   { when = { kind = "aggregate", size_le = 16 }, do = { direct = { pool = "ret_int", slots = 2 } } },
   { when = { kind = "scalar", size_le = 8 },     do = { direct = { pool = "ret_int" } } },
 ]
-hidden = { sret_pool = "int", sret_slot = 0, va_meta_pool = "va_meta", va_list = "sysv_reg_save", va_list_size = 24, va_list_align = 8 }
+hidden = { sret_pool = "int", sret_slot = 0, va_meta_pool = "va_meta", va_list = "sysv_reg_save" }
 callee_saved = { mechanism = "push", pools = ["cs_gpr"], includes_fp = true }
 extensions = { callee_ignores_upper_bits = true }
 tail_calls = { allowed = true, must_match_stack = true }
@@ -145,7 +145,7 @@ ret_classify = [
   { when = { kind = "vector", size_gt = 16 },    do = { indirect = { via = "hidden_sret" } } },
   { when = { kind = "scalar" },                  do = { direct = { pool = "ret_int" } } },
 ]
-hidden = { sret_pool = "sret", sret_slot = 0, va_list = "aapcs64_struct", va_list_size = 32, va_list_align = 8 }
+hidden = { sret_pool = "sret", sret_slot = 0, va_list = "aapcs64_struct" }
 callee_saved = { mechanism = "store_to_frame", pools = ["cs_gpr", "cs_fpr"], includes_link = true }
 extensions = { widen_to_bits = 32 }
 variadic_stack_only = true
@@ -212,7 +212,7 @@ ret_classify = [
   { when = { kind = "vector", size_gt = 16 },    do = { indirect = { via = "hidden_sret" } } },
   { when = { kind = "scalar" },                  do = { direct = { pool = "ret_int" } } },
 ]
-hidden = { sret_pool = "int", sret_slot = 0, va_list = "riscv_save_area", va_list_size = 24, va_list_align = 8 }
+hidden = { sret_pool = "int", sret_slot = 0, va_list = "riscv_save_area" }
 callee_saved = { mechanism = "store_to_frame", pools = ["cs_gpr"], includes_link = true }
 variadic_stack_only = true
 tail_calls = { allowed = true, must_match_stack = true }

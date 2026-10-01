@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules::{CalleePop, PositionRule, VaListKind};
+use crate::rules::{CalleePop, PositionRule};
 use crate::ty::TyView;
 
 /// 物理寄存器引用（带类与名字，便于诊断与快照可读）。
@@ -246,19 +246,74 @@ pub struct HiddenSlots {
 /// 变参区域（`va_list` 的内存形态）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaArea {
-    pub kind: VaListKind,
+    /// **形状名**（引用预置形状时；显式形状表 = `None`）——**只用于诊断与快照**，
+    /// 语义全在下面几项数据里（引擎与管线都不按名字分支）。
+    pub shape: Option<String>,
     pub size: u32,
     pub align: u32,
     /// 未命名实参是否**只能走栈**（Win64/AAPCS64/RISC-V 为真）。
     pub stack_only: bool,
-    /// **`va_list` 对象的字段布局**（v20 变参 V3）：由形态定的 psABI 事实——
-    /// 生成器物化对象（`va_start`）与取值（`va_arg`）时按这些偏移算。
+    /// **`va_list` 对象的字段布局**（v20 变参 V3）：由形状定的 psABI 事实——
+    /// 物化对象（`va_start`）与取值（`va_arg`）时按这些偏移算。
     ///
     /// 例（sysv64）：`gp_offset@0:u32` / `fp_offset@4:u32` /
     /// `overflow_arg_area@8:ptr` / `reg_save_area@16:ptr`。
     pub fields: Vec<VaField>,
-    /// **寄存器保存区**（v20 变参 V3）：`needs_register_save_area()` 为真的形态才有。
+    /// **寄存器保存区**（v20 变参 V3）：形状声明了才有；槽表由绑定的寄存器池给（ISA 数据）。
     pub save: Option<VaSaveArea>,
+    /// **取参规则**（v20 V6）：`va_arg` 怎么从对象里取一个实参——按**实参类**（整数/浮点）各一条。
+    /// 引擎从形状数据解析出来（字段名→下标、上限/步长由保存区槽表推），管线只按它跑同一套算法。
+    pub arg_rules: VaArgRules,
+}
+
+/// 一类实参（整数/浮点）的**取参规则**：从对象里取一个实参的全部信息。
+///
+/// 算法（管线里的唯一实现，见 `forge-codegen/src/pipeline/va_expand.rs`）：
+///
+/// ```text
+/// cur    = load <字段宽> [ap + cursor.offset]          ; 游标
+/// addr   = base ? load [ap + base.offset] + cur : cur  ; base 缺省 ⇒ 游标本身就是地址
+/// in_reg = icmp <cc> cur, limit                        ; 未超上限 ⇒ 实参在保存区里
+/// p      = select in_reg, addr, overflow               ; 否则取溢出区指针
+/// val    = load/fload <ty> [p]
+/// custom : cur += in_reg ? step : 0 ; overflow += in_reg ? 0 : overflow_step
+/// ```
+///
+/// 四份内置约定都落在这套数据上：`sysv64` = 无符号偏移游标（`gp_offset`/`fp_offset`，上限 =
+/// 本类保存区字节数，基址 = `reg_save_area`，溢出 = `overflow_arg_area`）；`win64` = 没有基址
+/// 也没有溢出（游标就是"下一个实参槽的地址"）；`aapcs64` = **有符号**偏移游标
+/// （`__gr_offs`/`__vr_offs` 从负值数到 0，基址 = `__gr_top`/`__vr_top`，溢出 = `__stack`）；
+/// `lp64d` = 单指针栈游标 + 保存区。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaArgRule {
+    /// 游标字段在 `VaArea::fields` 里的下标。
+    pub cursor: usize,
+    /// 偏移式游标的基准字段（地址 = `base` + 游标）；`None` = 游标本身就是要取的地址。
+    pub base: Option<usize>,
+    /// 溢出/栈区字段；`None` = 没有溢出支（游标就是地址）。
+    pub overflow: Option<usize>,
+    /// 上限：游标（未超上限 ⇒ 实参在保存区里）与之比较。
+    pub limit: u64,
+    /// 上限比较是否**按有符号**看（aapcs64 的 `__gr_offs`/`__vr_offs` 是负数计数）。
+    pub signed_limit: bool,
+    /// 游标步长（字节）：实参在保存区里时推进多少。
+    pub step: u32,
+    /// 溢出指针步长（字节）：实参溢出到栈上时推进多少。
+    pub overflow_step: u32,
+    /// 无符号式游标的**区域起点**（字节）：初值 = 这里 + 步长 × 已用槽数
+    /// （SysV 的浮点游标从 GP 区之后起算 ⇒ 48；整数类 = 0）。
+    pub cursor_origin: u32,
+    /// 游标是否"**从区域顶端往下数**"（AAPCS64 式）：初值 = −(步长 × 已用槽数)，
+    /// 基准字段的值 = 本类保存区的**顶端**；否则（SysV/Win64 式）基准字段 = 保存区**起点**、
+    /// 初值从 `cursor_origin` 正着数。
+    pub cursor_counts_down: bool,
+}
+
+/// 取参规则：整数类与浮点类各一条（按实参类型选）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaArgRules {
+    pub int: VaArgRule,
+    pub float: VaArgRule,
 }
 
 /// `va_list` 对象里的一个字段。
@@ -386,8 +441,11 @@ impl AbiPlan {
         }
         if let Some(va) = &self.va_area {
             out.push_str(&format!(
-                "va_area {:?} size={} align={} stack_only={}\n",
-                va.kind, va.size, va.align, va.stack_only
+                "va_area {} size={} align={} stack_only={}\n",
+                va.shape.as_deref().unwrap_or("<explicit>"),
+                va.size,
+                va.align,
+                va.stack_only
             ));
             // 字段布局（v20 V3）：对象怎么物化由它定——逐字段列出（顺序即声明序）。
             for f in &va.fields {
@@ -403,6 +461,27 @@ impl AbiPlan {
                     out.push_str(&format!(
                         "va_save_slot {} @{} +{}\n",
                         s.reg.name, s.offset, s.size
+                    ));
+                }
+            }
+            // 取参规则（v20 V6）：`va_arg` 的唯一算法按它跑（类 → 游标/基址/溢出/上限/步长），
+            // 因此它也进黄金快照（改了约定数据就必须显式改快照，不会悄悄漂）。
+            {
+                let r = &va.arg_rules;
+                let idx = |i: Option<usize>| i.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
+                for (cls, rule) in [("int", &r.int), ("float", &r.float)] {
+                    out.push_str(&format!(
+                        "va_rule {cls} cursor={} base={} overflow={} limit={} signed={} \
+                         step={} ov_step={} origin={} counts_down={}\n",
+                        rule.cursor,
+                        idx(rule.base),
+                        idx(rule.overflow),
+                        rule.limit,
+                        rule.signed_limit,
+                        rule.step,
+                        rule.overflow_step,
+                        rule.cursor_origin,
+                        rule.cursor_counts_down,
                     ));
                 }
             }

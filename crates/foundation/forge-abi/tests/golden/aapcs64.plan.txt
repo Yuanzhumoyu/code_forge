@@ -217,7 +217,7 @@ ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28 V8 V9 V10 V11 V12 V13 V14 V15] fp=false link=true
 clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
-va_area Aapcs64Struct size=32 align=8 stack_only=true
+va_area aapcs64_struct size=32 align=8 stack_only=true
 va_field __stack @0 +8
 va_field __gr_top @8 +8
 va_field __vr_top @16 +8
@@ -240,6 +240,8 @@ va_save_slot V4 @128 +16
 va_save_slot V5 @144 +16
 va_save_slot V6 @160 +16
 va_save_slot V7 @176 +16
+va_rule int cursor=3 base=1 overflow=0 limit=0 signed=true step=8 ov_step=8 origin=0 counts_down=true
+va_rule float cursor=4 base=2 overflow=0 limit=0 signed=true step=16 ov_step=8 origin=0 counts_down=true
 widen_to_bits 32
 ## va0p3
 conv aapcs64
@@ -252,7 +254,7 @@ ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28 V8 V9 V10 V11 V12 V13 V14 V15] fp=false link=true
 clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
-va_area Aapcs64Struct size=32 align=8 stack_only=true
+va_area aapcs64_struct size=32 align=8 stack_only=true
 va_field __stack @0 +8
 va_field __gr_top @8 +8
 va_field __vr_top @16 +8
@@ -275,4 +277,6 @@ va_save_slot V4 @128 +16
 va_save_slot V5 @144 +16
 va_save_slot V6 @160 +16
 va_save_slot V7 @176 +16
+va_rule int cursor=3 base=1 overflow=0 limit=0 signed=true step=8 ov_step=8 origin=0 counts_down=true
+va_rule float cursor=4 base=2 overflow=0 limit=0 signed=true step=16 ov_step=8 origin=0 counts_down=true
 widen_to_bits 32

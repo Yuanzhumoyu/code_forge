@@ -738,11 +738,12 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | `epilogue_jump` | 尾声跳转（缺省用 `jump`） |
 | `wide_vec_store` | 宽向量 by-ref 调用方栈拷贝 store（宽度写在声明里：`bits = 256`/`512`） |
 | `wide_vec_load` | 宽向量 by-ref/sret 收参与回读 load（同上） |
-| `frame_addr` | 帧内 `[FP+disp]` 地址计算（sret/by-ref 临时槽、`va_start` 的帧槽地址） |
+| `frame_addr` | 帧内 `[FP+disp]` 地址计算（sret/by-ref 临时槽） |
 | `stack_arg_load` / `stack_arg_store` | 栈参数收参 load / 传参 store；**可按寄存器类限定**（`{ role = "stack_arg_store", class = "fpr" }`：整数 store 与浮点 store 是两条指令） |
-| `ptr_load` / `ptr_store` | **按寄存器里的地址**读写内存（`dst ← [src]` / `[dst] ← src`）——变参 `va_arg` 取游标与取值/写回用；与上面两条的区别是**基址是值**（Reg 槽），不是帧基址（v20 V4）。取值侧可按类限定（`{ role = "ptr_load", class = "fpr" }` = mem → XMM） |
-| `add_imm` | `dst += imm`（地址算术：变参游标推进等） |
-| `fpr_narrow` | 把**默认提升**后的浮点值窄回目标宽度（`bits` = 目标位宽：`{ role = "fpr_narrow", bits = 32 }` = `f64 → f32`）——变参 `va_arg(ap, f32)` 用（C/LLVM 把 `float` 按默认提升传成 `double`） |
+
+> **变参不再要角色**（v20 V6）：`va_start`/`va_arg` 由管线按约定数据展开成显式 IR
+> （`forge-codegen/src/pipeline/va_expand.rs`），生成器没有变参专用臂、谱也不申报任何
+> 变参能力（V4 时代的 `ptr_load`/`ptr_store`/`add_imm`/`fpr_narrow` 已删除）。
 
 角色缺失 → 明确的 `Unsupported("<角色> 未声明")`，不再静默去查一个别的 ISA 的
 指令名（v14 靠 `unwrap_or_else(|| "MOV_RM8_R64")` 兜底，共 16 处 x86 硬编码）。

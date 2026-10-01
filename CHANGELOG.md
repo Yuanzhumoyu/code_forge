@@ -11,6 +11,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — 变参 V6：`va_list` 形状与取参规则做成**约定数据**，管线只剩一套算法（破坏性）
+
+前一片之后管线里还剩两处"为某个 ABI 开洞"：`va_expand` 按 `(有没有保存区, 字段数)` 判"族"
+（4 字段 = SysV 一族、1 字段 = win64 一族），宿主 `abi_target` 按**字段名**（`fields[0].name ==
+"cursor"`）认形态。这一片把形状整体数据化，两处判定一起消失：
+
+- **`VaListKind` 枚举删除**（破坏性）：`hidden.va_list` 现在是**形状数据**——预置名
+  （`"win64_stack"`/`"sysv_reg_save"`/`"aapcs64_struct"`/`"riscv_save_area"`）**或**一张显式形状表
+  `{ size, align, fields, save, int_arg, float_arg }`。加约定/加机器 = 加数据，不改代码；
+  `va_list_size`/`va_list_align` 键并入形状（写了会报未知键）。引擎侧 `va_area_from_shape` 只做
+  解析：字段**名**→下标、上限/步长/零点由保存区槽表推（显式键优先），形状写错就明确报错。
+- **取参规则 = 形状的一部分**（`int_arg`/`float_arg`）：`cursor`（游标字段）/`base`（偏移基准，
+  缺省 = 游标即地址）/`overflow`（溢出区，缺省 = 没有溢出支）/`signed_limit`/`limit`/`step`/
+  `overflow_step`。解析结果进 `AbiPlan::va_area.arg_rules`，黄金快照新增 `va_rule` 行钉住
+  （四份内置约定：SysV = 无符号偏移游标 + 溢出区、Win64 = 地址式单游标、AAPCS64 = 有符号计数
+  （基准 = 区域顶端）+ 溢出区、LP64D = 地址式游标 + 保存区）。
+- **管线只剩一套算法**（`pipeline/va_expand.rs`）：读游标 →（有基址就加基址）→（有溢出区就按
+  上限 select、两条游标各自推进；没有就是直线）→ 取值（`f32` 先取 `f64` 再 `Fptrunc`）→ 写回。
+  "族"的判定与按字段名认形态的代码都删了。
+- **生成器的变参臂删除**：`gen_va_start_lowering`/`gen_va_arg_lowering` 不再进生成物；
+  谱里也不再申报 `ptr_load`/`ptr_store`/`add_imm`/`fpr_narrow` 四个角色（`Role` 变体一并删）。
+  变参对 ISA 的**要求降到零**（只用既有 IR op 的降级）——win64 因此也走 IR 展开，三条原本跑
+  生成器臂的用例（含 `f32` 默认提升）在无生成器臂的情况下继续真跑绿。
+- **`abi check` 的变参一行改成按形状数据说**（形状名 + 是"栈式游标"还是"保存区 + 溢出区" +
+  字段表），"自相矛盾"硬错的判据也数据化（游标即地址 ⇒ 必须 `variadic_stack_only`）。
+- **验证**：`forge-codegen` 1362（8 条变参 JIT 全绿）、`abi_target_real` 24、`forge-tests`
+  矩阵 **196/3/0** 与 lib 43、`forge-abi`、`forge-ir` 281、`forge-isa-dsl` 222、`forge-isa`
+  （含 `abi check` 端到端）全绿；`clippy --workspace --exclude forge-rustc --all-targets
+  --all-features -j 1 -- -D warnings` 0、`cargo fmt --all -- --check` 0、markdownlint 0。
+  黄金快照按 `FORGE_ABI_BLESS=1` 重刷（`va_area` 行记形状名 + 新增 `va_rule` 行）。
+
 ### Changed (2026-10-01) — 前端局部槽深度扫描抽成唯一实现（`pipeline/frame_slots.rs`）
 
 变参的 ABI 槽（寄存器保存区 + `va_list` 对象）必须排在前端局部槽**之下**，而"前端局部槽占多深"

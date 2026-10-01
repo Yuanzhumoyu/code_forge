@@ -127,104 +127,83 @@ pub struct CallArg {
     pub place: ArgPlace,
 }
 
-/// `va_list` 的**内存形态**（中立镜像；与 `forge_abi::rules::VaListKind` 同义）。
-///
-/// 运行时 crate 不依赖 forge-abi，所以这里再写一份——**枚举顺序与语义必须与那边一致**
-/// （宿主转换时逐条 match，写错一个分支就会被守卫抓到）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VaKind {
-    /// 该约定不支持变参。
-    None,
-    /// Win64：`va_list` 是**一个指针**（指向栈上实参那一列槽），变参只走栈 ⇒ 对象就是
-    /// 这一个字段（v20 V3 起由生成器物化到帧槽，字段偏移 0）。
-    Win64Stack,
-    /// SysV AMD64：寄存器保存区（6×8B GP + 8×16B XMM）+ 溢出区指针。
-    SysvRegSave,
-    /// AAPCS64：结构 `{ __stack, __gr_top, __vr_top, __gr_offs, __vr_offs }`。
-    Aapcs64Struct,
-    /// RISC-V：`va_list` 指向保存区（含 named/unnamed 分界）。
-    RiscvSaveArea,
-}
-
-impl VaKind {
-    /// 诊断/快照用的规范名。
-    pub fn name(self) -> &'static str {
-        match self {
-            VaKind::None => "none",
-            VaKind::Win64Stack => "win64_stack",
-            VaKind::SysvRegSave => "sysv_reg_save",
-            VaKind::Aapcs64Struct => "aapcs64_struct",
-            VaKind::RiscvSaveArea => "riscv_save_area",
-        }
-    }
-
-    /// 未命名实参是否**只走栈**（Win64 的 `va_list` = 栈指针 ⇒ 必须只走栈）。
-    pub fn is_stack_only_required(self) -> bool {
-        matches!(self, VaKind::Win64Stack)
-    }
-
-    /// **`va_start` 能不能用"帧内那段栈地址"初始化**（v20 变参 V2/V3）。
-    ///
-    /// 只有 `Win64Stack` 可以：对象的唯一字段就是那段地址（生成器 lea 一次、存进帧槽）。
-    /// 其余形态需要**寄存器保存区**（在序言里把参数寄存器存到帧内）——发射侧尚未物化
-    /// ⇒ 生成器 fail-closed（方案 V3 的剩余部分）。
-    pub fn supports_frame_addr_va_start(self) -> bool {
-        matches!(self, VaKind::Win64Stack)
-    }
-}
-
 /// **变参信息**（v20 变参 V2/V3）：被调方怎么找到未命名实参。
 ///
 /// 与 [`CallLayout::ret`]/[`ArgPlace`] 同源：由宿主的 `AbiPlan::va_area` 折过来。
+/// **形状是数据**（v20 V6）：这里没有"每份约定一个枚举变体"，只有形状名（诊断用）+ 字段布局 +
+/// 保存区 + 取参规则——生成器/管线按数据算，不认识约定名。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaInfo {
-    pub kind: VaKind,
-    /// `va_list` 对象本身的字节数（`va_list_size`）。
+    /// 形状名（引用预置形状时；显式形状表 = `None`）——**只用于诊断**。
+    pub shape: Option<String>,
+    /// `va_list` 对象本身的字节数。
     pub size: u32,
     pub align: u32,
     /// 未命名实参是否只走栈（约定数据）。
     pub stack_only: bool,
-    /// **`va_list` 对象的字段布局**（v20 V3）：`va_start` 物化对象、`va_arg` 取值时按它算偏移。
+    /// **`va_list` 对象的字段布局**（v20 V3）：物化对象、取值时按它算偏移。
     pub fields: Vec<VaField>,
-    /// **寄存器保存区**（v20 V3）：`None` = Win64 栈式（未命名实参只在栈上，不需要保存区）。
+    /// **寄存器保存区**（v20 V3）：`None` = 没有（未命名实参只在栈上）。
     pub save: Option<VaSave>,
-    /// **`va_list` 对象的初值**（v20 V3）：`va_start` 要写进去的东西，由**宿主**按本函数的
-    /// plan 预先算好（生成物是各约定通用的，算不出"已用掉几个参数寄存器"）。
-    ///
-    /// 目前只有"gp/fp 偏移 + 溢出区"这一族（`sysv64`）——aapcs64 的 gr/vr 计数与 riscv 的
-    /// 分界在各自落地时再补字段（缺 ⇒ `va_start` 明确 fail-closed，不猜）。
+    /// **`va_list` 对象的初值**（v20 V3）：物化对象要写进去的东西，由**宿主**按本函数的 plan
+    /// 预先算好（生成物是各约定通用的，算不出"已用掉几个参数寄存器"）。
     pub init: Option<VaInit>,
+    /// **取参规则**（v20 V6）：`va_arg` 怎么取下一个实参（按实参类分两条）。
+    pub arg_rules: VaArgRules,
+}
+
+/// 一类实参（整数/浮点）的**取参规则**（运行时中立镜像；语义见 `forge_abi::plan::VaArgRule`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaArgRule {
+    /// 游标字段在 [`VaInfo::fields`] 里的下标。
+    pub cursor: usize,
+    /// 偏移式游标的基准字段（地址 = 基准 + 游标）；`None` = 游标本身就是要取的地址。
+    pub base: Option<usize>,
+    /// 溢出/栈区字段；`None` = 没有溢出支（游标就是地址）。
+    pub overflow: Option<usize>,
+    /// 上限：游标未超上限 ⇒ 实参在保存区里。
+    pub limit: u64,
+    /// 上限比较是否**按有符号**看。
+    pub signed_limit: bool,
+    /// 游标步长（字节）。
+    pub step: u32,
+    /// 溢出指针步长（字节）。
+    pub overflow_step: u32,
+    /// 无符号式游标的区域起点（初值 = 这里 + 步长 × 已用槽数）。
+    pub cursor_origin: u32,
+    /// 游标是否"从区域顶端往下数"（初值 = −(步长 × 已用槽数)，基准字段 = 区域顶端）。
+    pub cursor_counts_down: bool,
+}
+
+/// 取参规则：整数类与浮点类各一条。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaArgRules {
+    pub int: VaArgRule,
+    pub float: VaArgRule,
 }
 
 /// `va_list` 对象某个字段的**初值**（v20 V3，与 [`VaInfo::fields`] 同序）。
 ///
 /// 三种来源覆盖了各 psABI 的 `va_start`：常量（偏移/计数）、**帧内地址**（溢出区、保存区、
-/// 游标指针）、以及"保存区基址"（管线分配的那段，偏移只有编译入口知道）。
+/// 游标指针）、以及"保存区基址 + 静态偏移"（管线分配的那段，偏移只有编译入口知道）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaInitVal {
     /// 常量（按字段宽度截断后写）。
     Imm(u64),
-    /// **帧基址 + 偏移**（`StackAddr`）：指向溢出区/保存区/栈上实参区。
+    /// **帧基址 + 偏移**（`StackAddr`）：指向溢出区/栈上实参区。
     FrameOff(i64),
-    /// **寄存器保存区基址**（管线在帧里分配的那段，偏移在编译入口定）。
-    SaveOff,
+    /// **寄存器保存区基址 + 静态偏移**（管线在帧里分配的那段）：AAPCS64 的 `__gr_top`/`__vr_top`
+    /// 就是"保存区顶端"⇒ 偏移 = 本类区域字节数。
+    SaveOff(u32),
 }
 
-/// `va_list` 对象的初值（v20 V3）：`va_start` 要写进去的东西，由**宿主**按本函数的 plan
-/// 逐字段算好（生成物是各约定通用的，算不出"已用掉几个参数寄存器"）。
+/// `va_list` 对象的初值（v20 V3）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaInit {
-    /// 每个字段的初值，**与 `VaInfo::fields` 同序**（缺 ⇒ `va_start` 明确 fail-closed）。
+    /// 每个字段的初值，**与 `VaInfo::fields` 同序**（缺 ⇒ fail-closed）。宿主按本函数的 plan
+    /// 与取参规则（`VaInfo::arg_rules`）算：计数式游标 = 零点 ± 步长 × 已用槽数、地址式游标 =
+    /// 未命名区起点、基准 = 保存区（+ 区域内偏移）。
     pub fields: Vec<VaInitVal>,
-    /// 寄存器区的**上限**：游标到它就说明寄存器用完了 ⇒ 该取溢出区
-    /// （sysv64 的 `gp_offset` = GP 块字节数 = 48）。
-    pub gp_limit: u32,
-    /// 浮点寄存器区的上限（sysv64 = 保存区总字节 = 176）。
-    pub fp_limit: u32,
-    /// 主游标的步长（= 一个 GP 槽的字节数，sysv64 = 8）。
-    pub gp_step: u32,
-    /// 次游标的步长（= 一个 FP 槽的字节数，sysv64 = 16）。
-    pub fp_step: u32,
 }
 
 /// `va_list` 对象里的一个字段（运行时中立：只有偏移与大小；名字是计划面的事）。

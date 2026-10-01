@@ -300,32 +300,28 @@ fn level_of(e: &AbiError) -> Level {
     }
 }
 
-/// **变参自洽体检**（V5）：把"这份约定的变参在这台机器上处于什么状态"报成一句话 + 硬错。
+/// **变参自洽体检**（V5/V6）：把"这份约定的变参在这台机器上处于什么状态"报成一句话 + 硬错。
 ///
-/// 三条判据（口径见 `docs/plans/varargs-plan.md`）：
+/// 四条判据（口径见 `docs/plans/varargs-plan.md`）——全部按**形状数据**判，不按约定名分支：
 ///
-/// 1. **自相矛盾 = 硬错**：`va_list = "win64_stack"`（va_list 就是**栈指针**）却
-///    `variadic_stack_only = false` —— 未命名实参可能进寄存器，而 va_list 指不到它们。
-/// 2. **形状缺数 = 硬错**：声明了 `va_list` 形态就必须给 `va_list_size`/`va_list_align`
-///    （正数、且 size 是 align 的整数倍）——否则调用方不知道该开多大。
-/// 3. **池名解析不动 = 硬错**：`va_meta_pool`/`va_len_pool` 点到的池必须在这台机器上存在
-///    （与绑定里其它池同一条口径）。
-///
-/// 需要**寄存器保存区**的形态（sysv/lp64d/aapcs64）在发射侧尚未物化（方案 V2/V3），
-/// 这是**已知状态而非错误** ⇒ 只进 `info` 一行，不影响退出码（缺口语义留给"这台机器做不了"）。
+/// 1. **形状名解析不动 = 硬错**：`hidden.va_list` 写了预置名就必须在内置表里（或直接写显式表）。
+/// 2. **形状缺数 = 硬错**：`size`/`align` 要 > 0、且 size 是 align 的整数倍
+///    （否则调用方不知道该开多大）。
+/// 3. **自相矛盾 = 硬错**：取参规则说"游标就是地址"（没有基址、也没有溢出区 ⇒ 未命名实参只在
+///    栈上）却允许未命名实参进寄存器（`variadic_stack_only = false`）——那样游标指不到它们。
+/// 4. **池名解析不动 = 硬错**：`va_meta_pool`/`va_len_pool` 点到的池必须在这台机器上存在。
 fn variadic_report(
     reg: &AbiRegistry,
     target: &dyn AbiTarget,
     isa: &str,
     conv: &str,
 ) -> (Vec<String>, String) {
-    use forge_abi::rules::VaListKind;
     let mut hard: Vec<String> = Vec::new();
     let Some(rules) = reg.rules(conv) else {
         return (hard, format!("{conv}：约定未注册"));
     };
     let h = &rules.hidden;
-    // ③ 池名解析（写错名字/这台机器没有 ⇒ 硬错）
+    // ④ 池名解析（写错名字/这台机器没有 ⇒ 硬错）
     let binding = reg.binding(isa, conv);
     for (label, pool) in [("va_meta", &h.va_meta_pool), ("va_len", &h.va_len_pool)] {
         let (Some(p), Some(b)) = (pool.as_deref(), binding) else {
@@ -337,41 +333,58 @@ fn variadic_report(
             ));
         }
     }
-    let info = match h.va_list {
-        VaListKind::None => {
-            format!("{conv}：`va_list = \"none\"` ⇒ 不支持变参（变参签名会 fail-closed）")
-        }
-        VaListKind::Win64Stack => {
-            if !rules.variadic_stack_only {
-                hard.push(format!(
-                    "{conv}：`va_list = \"win64_stack\"`（va_list 就是栈指针）但 \
-                     `variadic_stack_only = false` —— 未命名实参可能进寄存器，va_list 指不到"
-                ));
-            }
-            format!("{conv}：栈式（va_list = 栈指针）——调用方一侧可用（V1）")
-        }
-        k => {
-            let name = match k {
-                VaListKind::SysvRegSave => "sysv_reg_save",
-                VaListKind::RiscvSaveArea => "riscv_save_area",
-                VaListKind::Aapcs64Struct => "aapcs64_struct",
-                _ => "?",
-            };
+    // 变参的形状（数据）：没声明 ⇒ 该约定不支持变参。
+    let Some(decl) = h.va_list.as_ref() else {
+        return (
+            hard,
             format!(
-                "{conv}：`va_list = \"{name}\"` 需要**寄存器保存区**——发射侧尚未物化，\
-                 变参目前只能规划、不能真跑（方案 V2/V3）"
-            )
-        }
+                "{conv}：没声明 `hidden.va_list`（形状）⇒ 不支持变参（变参签名会 fail-closed）"
+            ),
+        );
     };
-    // ② 形状必须报数（只在真的声明了形态时要求）
-    if !matches!(h.va_list, VaListKind::None)
-        && (h.va_list_size == 0 || h.va_list_align == 0 || h.va_list_size % h.va_list_align != 0)
-    {
+    let Some(shape) = decl.resolve() else {
         hard.push(format!(
-            "{conv}：`va_list_size = {}` / `va_list_align = {}` 不合法（都要 > 0，且 size 是 align 的整数倍）",
-            h.va_list_size, h.va_list_align
+            "{conv}：`hidden.va_list` 引用了未知的预置形状 `{}`（写内置名，或直接写显式形状表）",
+            decl.preset_name().unwrap_or("<explicit>")
+        ));
+        return (hard, format!("{conv}：变参形状无法解析"));
+    };
+    // ② 形状必须报数
+    if shape.size == 0 || shape.align == 0 || shape.size % shape.align != 0 {
+        hard.push(format!(
+            "{conv}：`va_list` 形状的 size = {} / align = {} 不合法（都要 > 0，且 size 是 align 的整数倍）",
+            shape.size, shape.align
         ));
     }
+    // ③ "游标就是地址"（没有基址、也没有溢出区）⇒ 未命名实参必须只走栈
+    let addr_only = shape.int_arg.base.is_none()
+        && shape.int_arg.overflow.is_none()
+        && shape.float_arg.base.is_none();
+    if addr_only && !rules.variadic_stack_only {
+        hard.push(format!(
+            "{conv}：`va_list` 形状的游标就是栈地址（没有保存区/溢出区）但 \
+             `variadic_stack_only = false` —— 未命名实参可能进寄存器，游标指不到"
+        ));
+    }
+    let name = decl.preset_name().unwrap_or("<explicit>");
+    let kind = if addr_only {
+        "栈式游标（va_list = 栈上实参游标）"
+    } else if shape.save.is_some() {
+        "寄存器保存区 + 溢出区"
+    } else {
+        "带溢出区（无保存区）"
+    };
+    let fields = shape
+        .fields
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect::<Vec<_>>()
+        .join("/");
+    let info = format!(
+        "{conv}：形状 `{name}`（{kind}）——对象 {} 字节/对齐 {}、字段 {fields}；\
+         取参规则按数据展开（v20 V6）",
+        shape.size, shape.align
+    );
     (hard, info)
 }
 
@@ -782,7 +795,7 @@ mod tests {
         reg
     }
 
-    /// `va_list = "win64_stack"`（va_list 就是栈指针）却允许未命名实参进寄存器 ⇒ **硬错**。
+    /// 形状的游标就是栈地址（没有基址/溢出区）却允许未命名实参进寄存器 ⇒ **硬错**。
     #[test]
     fn variadic_report_flags_stack_pointer_contradiction() {
         let reg = reg_with(
@@ -790,21 +803,21 @@ mod tests {
 name = "bad_contradiction"
 parent = "c"
 variadic_stack_only = false
-hidden = { va_list = "win64_stack", va_list_size = 8, va_list_align = 8 }
+hidden = { va_list = "win64_stack" }
 "#,
             None,
         );
         let (hard, info) = variadic_report(&reg, &StubTarget, "stub_isa", "bad_contradiction");
         assert_eq!(hard.len(), 1, "{hard:?}");
         assert!(
-            hard[0].contains("variadic_stack_only") && hard[0].contains("栈指针"),
+            hard[0].contains("variadic_stack_only") && hard[0].contains("指不到"),
             "{}",
             hard[0]
         );
-        assert!(info.contains("栈式"), "{info}");
+        assert!(info.contains("栈式游标"), "{info}");
     }
 
-    /// `va_list_size` 不是 `va_list_align` 的整数倍 ⇒ **硬错**（调用方不知道该开多大）。
+    /// 形状的 `size` 不是 `align` 的整数倍 ⇒ **硬错**（调用方不知道该开多大）。
     #[test]
     fn variadic_report_flags_bad_sizes() {
         let reg = reg_with(
@@ -812,13 +825,30 @@ hidden = { va_list = "win64_stack", va_list_size = 8, va_list_align = 8 }
 name = "bad_sizes"
 parent = "c"
 variadic_stack_only = true
-hidden = { va_list = "win64_stack", va_list_size = 7, va_list_align = 8 }
+hidden = { va_list = { size = 7, align = 8, fields = [{ name = "cursor", offset = 0, size = 8 }], int_arg = { cursor = "cursor" }, float_arg = { cursor = "cursor" } } }
 "#,
             None,
         );
         let (hard, _) = variadic_report(&reg, &StubTarget, "stub_isa", "bad_sizes");
         assert_eq!(hard.len(), 1, "{hard:?}");
-        assert!(hard[0].contains("va_list_size"), "{}", hard[0]);
+        assert!(hard[0].contains("size"), "{}", hard[0]);
+    }
+
+    /// 预置形状名写错 ⇒ **硬错**（不猜、不静默当"不支持变参"）。
+    #[test]
+    fn variadic_report_flags_unknown_preset() {
+        let reg = reg_with(
+            r#"
+name = "bad_preset"
+parent = "c"
+variadic_stack_only = true
+hidden = { va_list = "not_a_shape" }
+"#,
+            None,
+        );
+        let (hard, _) = variadic_report(&reg, &StubTarget, "stub_isa", "bad_preset");
+        assert_eq!(hard.len(), 1, "{hard:?}");
+        assert!(hard[0].contains("not_a_shape"), "{}", hard[0]);
     }
 
     /// `va_meta_pool` 点到的池在这台机器上没有 ⇒ **硬错**（与绑定里其它池同一条口径）。
@@ -829,7 +859,7 @@ hidden = { va_list = "win64_stack", va_list_size = 7, va_list_align = 8 }
 name = "bad_meta"
 parent = "c"
 variadic_stack_only = true
-hidden = { va_list = "win64_stack", va_list_size = 8, va_list_align = 8, va_meta_pool = "nope_pool" }
+hidden = { va_list = "win64_stack", va_meta_pool = "nope_pool" }
 "#,
             Some(
                 r#"
@@ -853,14 +883,14 @@ int = ["RAX"]
 name = "save_area"
 parent = "c"
 variadic_stack_only = false
-hidden = { va_list = "sysv_reg_save", va_list_size = 24, va_list_align = 8 }
+hidden = { va_list = "sysv_reg_save" }
 "#,
             None,
         );
         let (hard, info) = variadic_report(&reg, &StubTarget, "stub_isa", "save_area");
         assert!(hard.is_empty(), "{hard:?}");
         assert!(
-            info.contains("寄存器保存区") && info.contains("V2/V3"),
+            info.contains("寄存器保存区") && info.contains("取参规则"),
             "{info}"
         );
     }

@@ -1338,16 +1338,14 @@ fn call_plan_errors_carry_the_reason() {
     assert!(ok.is_ok(), "win64 在 x86 机器上应能规划：{ok:?}");
 }
 
-/// **变参信息进运行时镜像**（v20 变参 V2）：引擎的 `VaArea` 必须原样折到
-/// `CallLayout.va`——被调方的 `va_start` 靠它决定"能不能直接用帧内那段栈地址"。
+/// **变参信息进运行时镜像**（v20 变参 V2/V6）：引擎的 `VaArea`（形状数据）必须原样折到
+/// `CallLayout.va`——被调方物化 `va_list` 与取值都按它跑**同一套算法**。
 ///
-/// 三件事：① win64 是**栈式**（`va_list` = 栈指针 ⇒ `supports_frame_addr_va_start`）；
-/// ② sysv64 是**寄存器保存区**（发射侧尚未物化 ⇒ 那条路 fail-closed）；③ 非变参签名
-/// 不带 `va`（不猜）。
+/// 三件事：① win64 是**地址式单游标**（没有基址、没有溢出区 ⇒ 代码里没有"栈式分支"，
+/// 只有数据）；② sysv64 是**计数式游标 + 溢出区 + 保存区**；③ 非变参签名不带 `va`（不猜）。
 #[test]
 fn call_layout_mirrors_the_variadic_shape() {
     use forge_codegen::pipeline::abi_target::{call_layout, plan_for_signature};
-    use forge_isa_runtime::machine::call_layout::VaKind;
 
     let reg = builtin::registry().expect("内置注册表");
     let tm = TargetMachine::new();
@@ -1358,18 +1356,18 @@ fn call_layout_mirrors_the_variadic_shape() {
         ],
         None,
     )
-    .variadic(1);
-
-    // ① win64：栈式，尺寸 8/8。
+    .variadic(2); // 两个形参都是**命名**的（未命名实参由调用方多传 ⇒ 不在签名里）
     let plan = plan_for_signature(&tm, &reg, "win64", &sig).expect("win64 变参 plan");
     let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
-    assert_eq!(va.kind, VaKind::Win64Stack);
+    assert_eq!(va.shape.as_deref(), Some("win64_stack"));
     assert_eq!((va.size, va.align), (8, 8));
     assert!(va.stack_only, "win64 的未命名实参只走栈");
-    assert!(
-        va.kind.supports_frame_addr_va_start(),
-        "win64 的 va_start 可以直接用帧内栈地址（V2 的实现路径）"
+    assert_eq!(
+        (va.arg_rules.int.base, va.arg_rules.int.overflow),
+        (None, None),
+        "win64 的游标就是栈上实参的地址（没有基址、没有溢出区）"
     );
+    assert_eq!(va.arg_rules.int.step, 8, "推进一个槽");
     // 字段布局与保存区也跟着镜像（v20 V3）：win64 对象只有 1 个游标字段、不需要保存区。
     assert_eq!(
         va.fields
@@ -1380,16 +1378,40 @@ fn call_layout_mirrors_the_variadic_shape() {
         "win64 的 va_list 对象 = 1 个指针字段"
     );
     assert!(va.save.is_none(), "win64 栈式不需要寄存器保存区");
+    assert_eq!(
+        va.init.as_ref().map(|i| i.fields.clone()),
+        Some(vec![
+            forge_isa_runtime::machine::call_layout::VaInitVal::FrameOff(48)
+        ]),
+        "win64 的对象字段 0 = 未命名实参区地址（first_arg_offset 16 + shadow 32）"
+    );
 
-    // ② sysv64：寄存器保存区（发射侧未物化 ⇒ va_start 那条路必须 fail-closed）。
+    // ② sysv64：计数式游标（上界 = 本类保存区字节数）+ 溢出区 + 保存区。
     let plan = plan_for_signature(&tm, &reg, "sysv64", &sig).expect("sysv64 变参 plan");
     let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
-    assert_eq!(va.kind, VaKind::SysvRegSave);
+    assert_eq!(va.shape.as_deref(), Some("sysv_reg_save"));
     assert_eq!((va.size, va.align), (24, 8));
     assert!(!va.stack_only, "SysV 的未命名实参继续用寄存器");
-    assert!(
-        !va.kind.supports_frame_addr_va_start(),
-        "寄存器保存区形态还不能用帧内栈地址实现 va_start（方案 V3）"
+    assert_eq!(
+        (
+            va.arg_rules.int.cursor,
+            va.arg_rules.int.base,
+            va.arg_rules.int.overflow,
+            va.arg_rules.int.limit,
+        ),
+        (0, Some(3), Some(2), 48),
+        "整数游标 = gp_offset（上限 48 = 6 个 GP 槽），基址 = reg_save_area，溢出 = overflow_arg_area"
+    );
+    assert_eq!(
+        (
+            va.arg_rules.float.cursor,
+            va.arg_rules.float.base,
+            va.arg_rules.float.limit,
+            va.arg_rules.float.step,
+            va.arg_rules.float.cursor_origin,
+        ),
+        (1, Some(3), 176, 16, 48),
+        "浮点游标 = fp_offset（从 GP 区之后 48 起、到保存区末尾 176），步长 = 16 字节槽"
     );
     // 字段布局（4 字段）与保存区槽表（6 GP ×8 + 8 XMM ×16 = 176、对齐 16）都要镜像过来：
     // `va_arg` 的游标与序言 spill 都按这些数字走，漏镜像 = 运行时算错偏移。

@@ -556,7 +556,6 @@ effect = ["Move"]
 name = "ADD_R_IMM32"
 ref = "add"
 # 地址算术能力（v20 变参 V4）：`dst += imm`——变参游标推进等生成器序列用它。
-roles = ["add_imm"]
 form = "MRR_EXT"
 modrm = { reg = 0, rm = "dst" }
 opcode = 0x81
@@ -645,7 +644,6 @@ opcode = 0x5A
 fields = { prefix = 0xF2, w = 0 }
 # 变参取值时的"窄回"能力（v20 V4 + D5）：C/LLVM 的默认实参提升把 float 传成 double，
 # `va_arg(ap, f32)` 得取 double 再窄回来——这条就是那一步（bits = 目的位宽）。
-roles = [{ role = "fpr_narrow", bits = 32 }]
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "cvtsd2ss {dst}, {src}"
 
@@ -859,7 +857,6 @@ asm = "lock xor [{src2}], {src}"
 name = "MOV_R_MEM"
 form = "MRR_MEM"
 # 按 vreg 基址读内存的能力（v20 变参 V4）：`dst ← [src]`，宽度随目标类自动。
-roles = ["ptr_load"]
 modrm = { rm = "[src]" }
 opcode = 0x8B
 # v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I16→66、I32→无
@@ -880,8 +877,6 @@ asm = "mov {dst}, [{src}]"
 [[instructions]]
 name = "STORE_MEM_R"
 form = "MRR_MEM"
-# 把寄存器写进 vreg 基址的能力（v20 变参 V4，`ptr_load` 的写向）。
-roles = ["ptr_store"]
 modrm = { rm = "[src2]" }
 opcode = 0x89
 ops = ["src:gprx", "src2:gprx"]
@@ -901,8 +896,6 @@ modrm = { rm = "[src]" }
 opcode = 0x10
 fields = { prefix = 0xF2 }
 # 按 vreg 基址读**浮点**的能力（v20 变参 V4）：`va_arg(ap, f64)` 取值用它
-# （`{ role = "ptr_load", class = "fpr" }`——与 MOV_R_MEM 的整数版分工）。
-roles = [{ role = "ptr_load", class = "fpr" }]
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movsd {dst}, [{src}]"
 

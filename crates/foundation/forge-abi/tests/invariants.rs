@@ -458,7 +458,7 @@ classify = [
 ret_classify = [
   { when = { kind = "scalar", size_le = 8 }, do = { direct = { pool = "ret_int" } } },
 ]
-hidden = { sret_pool = "sret", sret_slot = 0, context_pool = "ctx", context_slot = 0, va_len_pool = "va_len", va_list = "sysv_reg_save", va_list_size = 24, va_list_align = 8 }
+hidden = { sret_pool = "sret", sret_slot = 0, context_pool = "ctx", context_slot = 0, va_len_pool = "va_len", va_list = "sysv_reg_save" }
 callee_saved = { mechanism = "push", pools = ["cs_gpr"], includes_fp = true }
 callee_pop = "sum_stack_args"
 variadic_stack_only = true
@@ -933,13 +933,9 @@ fn va_shapes_match_the_documented_table() {
     let doc =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
 
-    let kind_name = |k: forge_abi::rules::VaListKind| match k {
-        forge_abi::rules::VaListKind::None => "None",
-        forge_abi::rules::VaListKind::SysvRegSave => "SysvRegSave",
-        forge_abi::rules::VaListKind::Win64Stack => "Win64Stack",
-        forge_abi::rules::VaListKind::Aapcs64Struct => "Aapcs64Struct",
-        forge_abi::rules::VaListKind::RiscvSaveArea => "RiscvSaveArea",
-    };
+    // 表行：| `conv` | `形状预置名` | size | align | 只走栈/继续用寄存器 | `REG`/— |
+    // 形状是**数据**（`hidden.va_list` 的预置名或显式表名），不再是枚举变体。
+    let shape_name = |va: &forge_abi::plan::VaArea| va.shape.clone().unwrap_or_else(|| "—".into());
 
     // 命名 1 个 + 未命名 1 个：足以触发出 va_area 与 va_meta。
     let sig = Signature::new(vec![("a".into(), i64_()), ("b".into(), i64_())], None).variadic(1);
@@ -959,14 +955,14 @@ fn va_shapes_match_the_documented_table() {
             .va_area
             .as_ref()
             .unwrap_or_else(|| panic!("{conv}: 变参应有 va_area"));
-        // 表行：| `conv` | `Kind` | size | align | 只走栈/继续用寄存器 | `REG`/— |
+        // 表行：`| \`conv\` | \`shape\` | size | align | 只走栈/继续用寄存器 | \`REG\`/— |`
         let row = doc
             .lines()
             .find(|l| l.starts_with(&format!("| `{conv}` |")))
             .unwrap_or_else(|| panic!("varargs-plan.md §2 缺 `{conv}` 一行"));
         let cells: Vec<&str> = row.split('|').map(|c| c.trim()).collect();
         let want = [
-            format!("`{}`", kind_name(va.kind)),
+            format!("`{}`", shape_name(va)),
             va.size.to_string(),
             va.align.to_string(),
             if va.stack_only {

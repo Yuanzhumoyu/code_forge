@@ -9,7 +9,7 @@ use crate::binding::AbiBinding;
 use crate::error::AbiError;
 use crate::plan::{
     AbiPlan, ArgLoc, CalleeSavedPlan, DeclAttrs, Extension, HiddenSlots, Placement, Purpose,
-    RegRef, RetLoc, StackLayout, VaArea, VaField, VaSaveArea, VaSaveSlot,
+    RegRef, RetLoc, StackLayout, VaArea, VaArgRule, VaArgRules, VaField, VaSaveArea, VaSaveSlot,
 };
 use crate::registry::AbiHooks;
 use crate::rules::{AbiRules, ClassAction, IndirectVia, PositionRule};
@@ -663,27 +663,30 @@ pub fn plan_fn(
         })
         .collect();
 
-    // ⑦ 变参区域。
+    // ⑦ 变参区域：**形状是数据**（`hidden.va_list` = 预置名或显式表），引擎只按数据算。
     let va_area = if sig.variadic {
-        match rules.hidden.va_list {
-            crate::rules::VaListKind::None => {
-                return Err(AbiError::Unsupported {
-                    conv: rules.name.clone(),
-                    what: "签名是变参，但约定没有声明 hidden.va_list（变参形态）".into(),
-                });
-            }
-            kind => {
-                let (fields, save) = va_object_layout(kind, rules, &mut pools)?;
-                Some(VaArea {
-                    kind,
-                    size: rules.hidden.va_list_size,
-                    align: rules.hidden.va_list_align,
-                    stack_only: rules.variadic_stack_only,
-                    fields,
-                    save,
-                })
-            }
-        }
+        let Some(decl) = rules.hidden.va_list.as_ref() else {
+            return Err(AbiError::Unsupported {
+                conv: rules.name.clone(),
+                what: "签名是变参，但约定没有声明 hidden.va_list（`va_list` 的形状）".into(),
+            });
+        };
+        let Some(shape) = decl.resolve() else {
+            return Err(AbiError::Unsupported {
+                conv: rules.name.clone(),
+                what: format!(
+                    "hidden.va_list 引用了未知的预置形状 `{}`（写内置名，或直接写显式形状表）",
+                    decl.preset_name().unwrap_or("<explicit>")
+                ),
+            });
+        };
+        Some(va_area_from_shape(
+            &rules.name,
+            shape,
+            decl.preset_name(),
+            rules,
+            &mut pools,
+        )?)
     } else {
         None
     };
@@ -730,89 +733,146 @@ pub fn plan_fn(
     })
 }
 
-/// **`va_list` 对象的形状**（v20 变参 V3）：字段布局 + （需要时）寄存器保存区。
+/// **`va_list` 的形状 → 计划里的 `va_area`**（v20 V6）：形状是**数据**，这里只做解析与推导。
 ///
-/// 两样都是**由形态定的 psABI 事实**，不是使用者的自由选择——使用者选的是
-/// `hidden.va_list = "…"`，选了 `sysv_reg_save` 就等于选了"4 个字段 + 6×8B GP/8×16B XMM 保存区"。
-/// 所以这里按形态给数据（而不是再加一串 TOML 键）：
+/// 引擎对"约定叫什么名字"一无所知——名字只在诊断里出现。三件事：
 ///
-/// | 形态 | 字段 | 保存区 |
-/// | --- | --- | --- |
-/// | `win64_stack` | `cursor@0:8` | 无（未命名实参只在栈上） |
-/// | `sysv_reg_save` | `gp_offset@0:4` `fp_offset@4:4` `overflow_arg_area@8:8` `reg_save_area@16:8` | GP 池（各 `slot_bytes`）+ FP 池（各寄存器类宽） |
-/// | `aapcs64_struct` | `__stack@0` `__gr_top@8` `__vr_top@16` `__gr_offs@24:4` `__vr_offs@28:4` | 同上 |
-/// | `riscv_save_area` | `area@0:8` | 同上 |
+/// 1. **字段名 → 下标**：形状里的取参规则按**字段名**引用游标/基址/溢出（可读、可校验），
+///    到计划里变成下标（管线按下标算偏移）；
+/// 2. **保存区槽表**：槽数与顺序由**绑定的寄存器池**给（ISA 数据：`int_pool` 在前、
+///    `float_pool` 紧随其后），槽宽由形状给（psABI 事实）；
+/// 3. **上限/步长/初值零点**：一律由槽表推（显式键优先）——
+///    - 上限：有符号游标 = 0（数到 0 就完了），否则 = 本类区域**末尾**字节数；
+///    - 步长：默认为本类槽宽；溢出指针步长默认为整数槽宽；
+///    - 零点：无符号偏移式游标从**本类区域起点**数（SysV 的浮点游标因此从 GP 区之后起算）；
+///      有符号式（AAPCS64）从区域**顶端**往下数、基准字段 = 区域顶端。
 ///
-/// 保存区槽序 = `int_pool` 按序（偏移从 0 起、步长 `slot_bytes`），再 `float_pool` 按序
-/// （紧接 GP 块，步长 = **该形态的 psABI 浮点槽宽**，见下）。区对齐 = 最大槽宽。
-///
-/// **浮点槽宽为什么不能取"寄存器类宽"**（2026-10-01 实测）：psABI 规定的是**保存区的槽宽**，
-/// 与绑定把寄存器建模成多宽无关——x86 XMM 槽 16 字节、AArch64 V 槽 **16 字节**（即使标量
-/// double 只写低 8 字节）、RISC-V 槽 = XLEN（8）。按"寄存器类宽"算会得到 arm64 128（应 192）、
-/// riscv 96（应 128），两者都是**错的**：`va_arg` 的游标按 psABI 的槽宽推进。
-fn va_object_layout(
-    kind: crate::rules::VaListKind,
+/// 形状写错（字段名不存在、size/align 非法）⇒ 明确报错（fail-closed），不猜、也不套别的形状。
+fn va_area_from_shape(
+    conv: &str,
+    shape: &crate::rules::VaListShape,
+    preset: Option<&str>,
     rules: &AbiRules,
     pools: &mut Pools<'_>,
-) -> Result<(Vec<VaField>, Option<VaSaveArea>), AbiError> {
-    use crate::rules::VaListKind;
-    let f = |name: &str, offset: u32, size: u32| VaField {
-        name: name.to_string(),
-        offset,
-        size,
+) -> Result<VaArea, AbiError> {
+    let bad = |what: String| AbiError::Unsupported {
+        conv: conv.to_string(),
+        what,
     };
-    let fields = match kind {
-        VaListKind::None => Vec::new(),
-        VaListKind::Win64Stack => vec![f("cursor", 0, 8)],
-        VaListKind::SysvRegSave => vec![
-            f("gp_offset", 0, 4),
-            f("fp_offset", 4, 4),
-            f("overflow_arg_area", 8, 8),
-            f("reg_save_area", 16, 8),
-        ],
-        VaListKind::Aapcs64Struct => vec![
-            f("__stack", 0, 8),
-            f("__gr_top", 8, 8),
-            f("__vr_top", 16, 8),
-            f("__gr_offs", 24, 4),
-            f("__vr_offs", 28, 4),
-        ],
-        VaListKind::RiscvSaveArea => vec![f("area", 0, 8)],
-    };
-    if !kind.needs_register_save_area() {
-        return Ok((fields, None));
+    if shape.size == 0 || shape.align == 0 || !shape.size.is_multiple_of(shape.align) {
+        return Err(bad(format!(
+            "`va_list` 形状不合法：size = {} / align = {}（都要 > 0，且 size 是 align 的整数倍）",
+            shape.size, shape.align
+        )));
     }
-    let gp_slot = rules.stack.slot_bytes.max(1);
-    // psABI 的**浮点槽宽**（按形态定，不是"寄存器类宽"）。
-    let fp_slot = match kind {
-        VaListKind::SysvRegSave | VaListKind::Aapcs64Struct => 16,
-        VaListKind::RiscvSaveArea => gp_slot,
-        VaListKind::Win64Stack | VaListKind::None => gp_slot,
+    let fields: Vec<VaField> = shape
+        .fields
+        .iter()
+        .map(|f| VaField {
+            name: f.name.clone(),
+            offset: f.offset,
+            size: f.size,
+        })
+        .collect();
+    let idx = |name: &str, which: &str| -> Result<usize, AbiError> {
+        fields.iter().position(|f| f.name == name).ok_or_else(|| {
+            bad(format!(
+                "`va_list` 形状的 {which} 引用了不存在的字段 `{name}`（形状里的字段：{}）",
+                fields
+                    .iter()
+                    .map(|f| f.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            ))
+        })
     };
-    let mut slots: Vec<VaSaveSlot> = Vec::new();
-    let mut off: u32 = 0;
-    for (pool, slot) in [(&rules.int_pool, gp_slot), (&rules.float_pool, fp_slot)] {
-        let Ok(regs) = pools.get(pool) else {
-            continue;
-        };
-        for r in regs {
-            slots.push(VaSaveSlot {
-                reg: r.clone(),
-                offset: off,
-                size: slot,
-            });
-            off = off.saturating_add(slot);
+    // 槽宽：形状声明了保存区就按它的 psABI 槽宽；没有保存区时用机器槽宽（栈槽）。
+    let stack_slot = rules.stack.slot_bytes.max(1);
+    let (int_slot, float_slot) = shape
+        .save
+        .map(|d| (d.int_slot.max(1), d.float_slot.max(1)))
+        .unwrap_or((stack_slot, stack_slot));
+    // 保存区槽表：整数池按序在前、浮点池紧随其后（槽序 = "序言要存谁、存到哪"的权威）。
+    let (mut n_gp, mut n_fp) = (0u32, 0u32);
+    let mut save: Option<VaSaveArea> = None;
+    if shape.save.is_some() {
+        let mut slots: Vec<VaSaveSlot> = Vec::new();
+        let mut off: u32 = 0;
+        let mut counts = [0u32; 2];
+        for (k, (pool, slot)) in [(&rules.int_pool, int_slot), (&rules.float_pool, float_slot)]
+            .into_iter()
+            .enumerate()
+        {
+            let Ok(regs) = pools.get(pool) else {
+                continue;
+            };
+            counts[k] = regs.len() as u32;
+            for r in regs {
+                slots.push(VaSaveSlot {
+                    reg: r.clone(),
+                    offset: off,
+                    size: slot,
+                });
+                off = off.saturating_add(slot);
+            }
         }
-    }
-    let align = gp_slot.max(fp_slot);
-    Ok((
-        fields,
-        Some(VaSaveArea {
+        (n_gp, n_fp) = (counts[0], counts[1]);
+        save = Some(VaSaveArea {
             size: off,
-            align,
+            align: int_slot.max(float_slot),
             slots,
-        }),
-    ))
+        });
+    }
+    let gp_bytes = n_gp * int_slot;
+    let fp_end = gp_bytes + n_fp * float_slot;
+    let rule = |d: &crate::rules::VaArgDecl, is_fp: bool| -> Result<VaArgRule, AbiError> {
+        let which = if is_fp { "float_arg" } else { "int_arg" };
+        let cursor = idx(&d.cursor, &format!("{which}.cursor"))?;
+        let base = d
+            .base
+            .as_deref()
+            .map(|n| idx(n, &format!("{which}.base")))
+            .transpose()?;
+        let overflow = d
+            .overflow
+            .as_deref()
+            .map(|n| idx(n, &format!("{which}.overflow")))
+            .transpose()?;
+        let region_start = if is_fp { gp_bytes } else { 0 };
+        let region_end = if is_fp { fp_end } else { gp_bytes };
+        Ok(VaArgRule {
+            cursor,
+            base,
+            overflow,
+            limit: d.limit.unwrap_or(if d.signed_limit {
+                0
+            } else {
+                u64::from(region_end)
+            }),
+            signed_limit: d.signed_limit,
+            step: d
+                .step
+                .unwrap_or(if is_fp { float_slot } else { int_slot })
+                .max(1),
+            overflow_step: d.overflow_step.unwrap_or(int_slot).max(1),
+            cursor_origin: if d.signed_limit { 0 } else { region_start },
+            cursor_counts_down: d.signed_limit,
+        })
+    };
+    let int_rule = rule(&shape.int_arg, false)?;
+    let float_rule = rule(&shape.float_arg, true)?;
+    Ok(VaArea {
+        shape: preset.map(str::to_string),
+        size: shape.size,
+        align: shape.align,
+        stack_only: rules.variadic_stack_only,
+        fields,
+        save,
+        arg_rules: VaArgRules {
+            int: int_rule,
+            float: float_rule,
+        },
+    })
 }
 
 /// 分类的**方向**：参数位 / 返回位（两者的规则可以不同，见 `AbiRules::ret_classify`）。

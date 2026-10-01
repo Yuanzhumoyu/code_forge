@@ -1922,25 +1922,22 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         let needs_agg_expand = crate::pipeline::agg_expand::has_any_agg(func);
         let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());
 
-        // **变参 IR 展开**（v20 变参 V3）：保存区一族的 `VaStart`/`VaArg` 在这里展开成显式 IR
-        // （条件取值、逐字段物化——理由见 `pipeline/va_expand.rs`）。
+        // **变参 IR 展开**（v20 变参 V3/V6）：`VaStart`/`VaArg` 在这里展开成显式 IR——按 plan 的
+        // 形状数据（字段布局 + 保存区 + 取参规则）跑同一套算法，理由见 `pipeline/va_expand.rs`。
         //
         // 时机：与聚合展开同一处（**必须**在 `CompileState::new` 之前——它克隆常量池；展开会
         // 往池里插常量），也在 lowering 之前。
         //
         // **ABI 槽（保存区 + `va_list` 对象）由这里排布**：必须排在前端局部槽（`stack_addr(-N)`）
         // **之下**，而前端的槽要 lowering 才统计——所以 `plan_abi_slots` 先扫一遍 IR 算深度，
-        // 再把结果喂给 `CompileState`（帧尺寸与序言 spill 偏移都读它）。win64 栈式 `save` 为
-        // `None` ⇒ **不展开**，仍走生成器那条已有用例的专用臂。
+        // 再把结果喂给 `CompileState`（帧尺寸与序言 spill 偏移都读它）。
         let mut abi_slots: Option<crate::pipeline::va_expand::AbiSlots> = None;
         if crate::pipeline::va_expand::has_va_op(func) {
-            match crate::pipeline::va_expand::save_area_va_info(
+            match crate::pipeline::va_expand::va_info_for_expansion(
                 &self.machine,
                 func,
                 self.module_sigs.as_deref(),
             )? {
-                // win64 栈式（`save` 为 None）：交给生成器专用臂，不在这里展开。
-                Some((va, _)) if va.save.is_none() => {}
                 Some((va, layout)) => {
                     let fl = crate::pipeline::frame_layout::frame_layout_info(
                         &self.machine,
@@ -1959,15 +1956,17 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                     if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
                         eprintln!(
                             "[forge] 变参展开：物化 {ns} 份对象、取值 {na} 条\
-                             （保存区深度 {}、对象深度 {}）",
-                            slots.save_depth, slots.obj_depth
+                             （形状 {}、保存区深度 {}、对象深度 {}）",
+                            va.shape.as_deref().unwrap_or("<explicit>"),
+                            slots.save_depth,
+                            slots.obj_depth
                         );
                     }
                 }
                 None => {
                     return Err(IrError::Unsupported(format!(
-                        "变参：函数 `{}` 用了 VaStart/VaArg，但它的 `va_list` 形态不在可展开的一族\
-                         （保存区形态）里，生成器也只覆盖 win64 栈式——检查约定数据的 `hidden.va_list`",
+                        "变参：函数 `{}` 用了 VaStart/VaArg，但它的约定没声明 `hidden.va_list`\
+                         （`va_list` 的形状）——变参需要形状数据，生成器不再有专用臂",
                         func.name
                     )));
                 }

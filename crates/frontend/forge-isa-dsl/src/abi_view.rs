@@ -300,10 +300,6 @@ pub fn role_capability(role: Role) -> Option<&'static str> {
         // 控制流/保存指令不是"约定要求的能力"：push/pop 由机制推导，
         // jump/branch/test/epilogue_jump 与参数传递无关；帧指针建立与
         // callee-saved 保存同样由生成器按机制挑指令（A4），不是 ABI 能力。
-        //
-        // `PtrLoad`/`PtrStore`/`AddImm`（变参 V4 的 `va_arg` 用）也不是**约定**要求的
-        // 能力，而是"生成器要发一段序列"要的能力——ABI 视图（`forge-isa abi check`）
-        // 不看它们，缺了由生成器 fail-closed 点名。
         Role::Push
         | Role::Pop
         | Role::Jump
@@ -312,11 +308,7 @@ pub fn role_capability(role: Role) -> Option<&'static str> {
         | Role::EpilogueJump
         | Role::FrameSet
         | Role::CalleeSave
-        | Role::CalleeLoad
-        | Role::PtrLoad
-        | Role::PtrStore
-        | Role::AddImm
-        | Role::FprNarrow => {
+        | Role::CalleeLoad => {
             return None;
         }
     })

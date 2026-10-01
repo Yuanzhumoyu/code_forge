@@ -206,7 +206,7 @@ ret reg RAX
 hidden sret=- context=- va_meta=RAX va_len=-
 callee_saved Push [RBX R12 R13 R14 R15] fp=true link=false
 clobbers [RAX RCX RDX RSI RDI R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
-va_area SysvRegSave size=24 align=8 stack_only=false
+va_area sysv_reg_save size=24 align=8 stack_only=false
 va_field gp_offset @0 +4
 va_field fp_offset @4 +4
 va_field overflow_arg_area @8 +8
@@ -226,6 +226,8 @@ va_save_slot XMM4 @112 +16
 va_save_slot XMM5 @128 +16
 va_save_slot XMM6 @144 +16
 va_save_slot XMM7 @160 +16
+va_rule int cursor=0 base=3 overflow=2 limit=48 signed=false step=8 ov_step=8 origin=0 counts_down=false
+va_rule float cursor=1 base=3 overflow=2 limit=176 signed=false step=16 ov_step=8 origin=48 counts_down=false
 ## va0p3
 conv sysv64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=Some(128) frame_pad=8
@@ -237,7 +239,7 @@ ret reg RAX
 hidden sret=- context=- va_meta=RAX va_len=-
 callee_saved Push [RBX R12 R13 R14 R15] fp=true link=false
 clobbers [RAX RCX RDX RSI RDI R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
-va_area SysvRegSave size=24 align=8 stack_only=false
+va_area sysv_reg_save size=24 align=8 stack_only=false
 va_field gp_offset @0 +4
 va_field fp_offset @4 +4
 va_field overflow_arg_area @8 +8
@@ -257,3 +259,5 @@ va_save_slot XMM4 @112 +16
 va_save_slot XMM5 @128 +16
 va_save_slot XMM6 @144 +16
 va_save_slot XMM7 @160 +16
+va_rule int cursor=0 base=3 overflow=2 limit=48 signed=false step=8 ov_step=8 origin=0 counts_down=false
+va_rule float cursor=1 base=3 overflow=2 limit=176 signed=false step=16 ov_step=8 origin=48 counts_down=false

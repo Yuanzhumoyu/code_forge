@@ -224,43 +224,217 @@ pub struct HiddenRules {
     /// **内置约定都没启用**——psABI 现状以官方定本为准，A6 核对后再定）。
     #[serde(default)]
     pub va_len_pool: Option<String>,
-    /// va_list 的内存形态（`none` = 该约定不支持变参）。
+    /// **`va_list` 的形状**（`None` = 该约定不支持变参）：预置名或显式表，见 [`VaListDecl`]。
+    /// 形状本身（字段布局/保存区/取参规则）是**约定数据**，引擎只按数据算。
     #[serde(default)]
-    pub va_list: VaListKind,
-    #[serde(default)]
-    pub va_list_size: u32,
-    #[serde(default)]
-    pub va_list_align: u32,
+    pub va_list: Option<VaListDecl>,
 }
 
-/// va_list 的形态（只描述"是什么"，具体取用由前端/运行时负责）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum VaListKind {
-    #[default]
-    None,
-    /// SysV AMD64：寄存器保存区（6×8B GP + 8×16B XMM）+ 溢出区指针。
-    SysvRegSave,
-    /// Win64：va_list 就是指向栈上实参的指针（变参只走栈）。
-    Win64Stack,
-    /// AAPCS64：结构 `{ __stack, __gr_top, __vr_top, __gr_offs, __vr_offs }`。
-    Aapcs64Struct,
-    /// RISC-V：`va_list` 指向保存区（含 named/unnamed 分界）。
-    RiscvSaveArea,
+/// `va_list` 的形状声明：**预置名**（`va_list = "win64_stack"`）或**显式表**
+/// （`va_list = { size = …, align = …, fields = […], int_arg = { … }, … }`）。
+///
+/// 这里刻意**没有"每份约定一个枚举变体"**这种东西——形状全是数据：
+///
+/// - 引擎按字段**名字**把取参规则解析成下标，上限/步长由保存区槽表推（显式键优先）；
+/// - 加一份约定/一台机器，写个预置名或直接写显式表即可，**不改任何代码**；
+/// - 形状对不上（例如自定义约定的某个字段名写错）⇒ 读取侧 fail-closed，而不是套别的形状。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum VaListDecl {
+    /// 预置形状名（见 [`preset_va_shape`]）。
+    Preset(String),
+    /// 显式形状表（boxed：形状表比名字大得多，避免枚举本身被撑大）。
+    Shape(Box<VaListShape>),
 }
 
-impl VaListKind {
-    /// 该形态的 `va_list` 是否需要**寄存器保存区**（v20 变参 V3）。
-    ///
-    /// 需要：`va_arg` 得接着取"命名实参没用完的那几个参数寄存器"里的值 ⇒ 被调方要在序言里把
-    /// 参数寄存器存进帧内（sysv64 的 6 GP + 8 XMM、aapcs64 的 gr/vr 区、riscv 的保存区）。
-    /// 不需要：Win64 栈式（未命名实参只在栈上，`va_list` 就是一个游标指针）。
-    pub fn needs_register_save_area(self) -> bool {
-        matches!(
-            self,
-            VaListKind::SysvRegSave | VaListKind::Aapcs64Struct | VaListKind::RiscvSaveArea
-        )
+impl VaListDecl {
+    /// 解析成形状。返回的引用借自 `self`（预置名查表命中时是 `'static`）。
+    pub fn resolve(&self) -> Option<&VaListShape> {
+        match self {
+            VaListDecl::Preset(name) => preset_va_shape(name),
+            VaListDecl::Shape(s) => Some(s),
+        }
     }
+
+    /// 诊断用的名字（预置名；显式表返回 `None`）。
+    pub fn preset_name(&self) -> Option<&str> {
+        match self {
+            VaListDecl::Preset(name) => Some(name),
+            VaListDecl::Shape(_) => None,
+        }
+    }
+}
+
+/// **`va_list` 的形状**（约定数据）：字段布局 + 保存区 + 取参规则。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VaListShape {
+    /// 对象字节数（`va_list_size`）。
+    pub size: u32,
+    /// 对象对齐（`size` 必须是它的整数倍）。
+    pub align: u32,
+    /// 对象字段（**名字是权威**：取参规则按名字引用字段）。
+    pub fields: Vec<VaFieldDecl>,
+    /// 寄存器保存区（`None` = 没有：未命名实参只在栈上，游标就是栈地址）。
+    #[serde(default)]
+    pub save: Option<VaSaveDecl>,
+    /// 整数类实参的取参规则。
+    pub int_arg: VaArgDecl,
+    /// 浮点类实参的取参规则。
+    pub float_arg: VaArgDecl,
+}
+
+/// `va_list` 对象里的一个字段声明。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VaFieldDecl {
+    pub name: String,
+    pub offset: u32,
+    pub size: u32,
+}
+
+/// 寄存器保存区声明：两类的**槽宽**（槽数与顺序由绑定的寄存器池给——那是 ISA 数据）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct VaSaveDecl {
+    /// 整数池每槽字节数。
+    pub int_slot: u32,
+    /// 浮点池每槽字节数（psABI 事实：SysV/AAPCS64 = 16，RISC-V = XLEN）。
+    pub float_slot: u32,
+}
+
+/// 一类实参的取参规则声明（字段用**名字**引用，引擎解析成下标）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VaArgDecl {
+    /// 游标字段名。
+    pub cursor: String,
+    /// 偏移式游标的基准字段（地址 = 基准 + 游标）；缺省 = 游标本身就是要取的地址。
+    #[serde(default)]
+    pub base: Option<String>,
+    /// 溢出/栈区字段；缺省 = 没有溢出支。
+    #[serde(default)]
+    pub overflow: Option<String>,
+    /// 上限（缺省按保存区槽表推：有符号游标 = 0，否则 = 本类区域字节数）。
+    #[serde(default)]
+    pub limit: Option<u64>,
+    /// 上限比较是否**按有符号**看（AAPCS64 的 `__gr_offs`/`__vr_offs` 是负数计数）。
+    #[serde(default)]
+    pub signed_limit: bool,
+    /// 游标步长（缺省 = 本类槽宽）。
+    #[serde(default)]
+    pub step: Option<u32>,
+    /// 溢出指针步长（缺省 = 整数槽宽）。
+    #[serde(default)]
+    pub overflow_step: Option<u32>,
+}
+
+/// **预置形状表**（`hidden.va_list = "…"` 引用的名字）。
+///
+/// 这是**数据**（psABI 事实的固化写法），不是引擎里的分支：引擎拿到的是解析后的
+/// [`VaListShape`]，对形状名一无所知。要新的 psABI，加一条预置或直接写显式表。
+pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
+    use std::sync::OnceLock;
+    static PRESETS: OnceLock<Vec<(String, VaListShape)>> = OnceLock::new();
+    let table = PRESETS.get_or_init(|| {
+        let f = |n: &str, o: u32, s: u32| VaFieldDecl {
+            name: n.to_string(),
+            offset: o,
+            size: s,
+        };
+        let a =
+            |cursor: &str, base: Option<&str>, overflow: Option<&str>, signed: bool| VaArgDecl {
+                cursor: cursor.to_string(),
+                base: base.map(str::to_string),
+                overflow: overflow.map(str::to_string),
+                limit: None,
+                signed_limit: signed,
+                step: None,
+                overflow_step: None,
+            };
+        vec![
+            // Win64：`va_list` = 一个指向栈上实参槽的游标（没有保存区、没有溢出支）。
+            (
+                "win64_stack".to_string(),
+                VaListShape {
+                    size: 8,
+                    align: 8,
+                    fields: vec![f("cursor", 0, 8)],
+                    save: None,
+                    int_arg: a("cursor", None, None, false),
+                    float_arg: a("cursor", None, None, false),
+                },
+            ),
+            // SysV AMD64：gp/fp 偏移游标 + 溢出指针 + 保存区（6×8B GP + 8×16B XMM）。
+            (
+                "sysv_reg_save".to_string(),
+                VaListShape {
+                    size: 24,
+                    align: 8,
+                    fields: vec![
+                        f("gp_offset", 0, 4),
+                        f("fp_offset", 4, 4),
+                        f("overflow_arg_area", 8, 8),
+                        f("reg_save_area", 16, 8),
+                    ],
+                    save: Some(VaSaveDecl {
+                        int_slot: 8,
+                        float_slot: 16,
+                    }),
+                    int_arg: a(
+                        "gp_offset",
+                        Some("reg_save_area"),
+                        Some("overflow_arg_area"),
+                        false,
+                    ),
+                    float_arg: a(
+                        "fp_offset",
+                        Some("reg_save_area"),
+                        Some("overflow_arg_area"),
+                        false,
+                    ),
+                },
+            ),
+            // AAPCS64：`{ __stack, __gr_top, __vr_top, __gr_offs, __vr_offs }`，两个游标都是
+            // **有符号**计数（从负值数到 0；0 ⇒ 寄存器用完，改取 `__stack`）。
+            (
+                "aapcs64_struct".to_string(),
+                VaListShape {
+                    size: 32,
+                    align: 8,
+                    fields: vec![
+                        f("__stack", 0, 8),
+                        f("__gr_top", 8, 8),
+                        f("__vr_top", 16, 8),
+                        f("__gr_offs", 24, 4),
+                        f("__vr_offs", 28, 4),
+                    ],
+                    save: Some(VaSaveDecl {
+                        int_slot: 8,
+                        float_slot: 16,
+                    }),
+                    int_arg: a("__gr_offs", Some("__gr_top"), Some("__stack"), true),
+                    float_arg: a("__vr_offs", Some("__vr_top"), Some("__stack"), true),
+                },
+            ),
+            // RISC-V LP64D：`area` 单指针（未命名实参只在栈上）+ 保存区（8×8B GP + 8×8B FP）。
+            (
+                "riscv_save_area".to_string(),
+                VaListShape {
+                    size: 24,
+                    align: 8,
+                    fields: vec![f("area", 0, 8)],
+                    save: Some(VaSaveDecl {
+                        int_slot: 8,
+                        float_slot: 8,
+                    }),
+                    int_arg: a("area", None, None, false),
+                    float_arg: a("area", None, None, false),
+                },
+            ),
+        ]
+    });
+    table.iter().find(|(n, _)| n == name).map(|(_, s)| s)
 }
 
 /// 扩展/符号性规则。

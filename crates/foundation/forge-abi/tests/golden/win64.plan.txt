@@ -206,8 +206,10 @@ ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
 clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
-va_area Win64Stack size=8 align=8 stack_only=true
+va_area win64_stack size=8 align=8 stack_only=true
 va_field cursor @0 +8
+va_rule int cursor=0 base=- overflow=- limit=0 signed=false step=8 ov_step=8 origin=0 counts_down=false
+va_rule float cursor=0 base=- overflow=- limit=0 signed=false step=8 ov_step=8 origin=0 counts_down=false
 ## va0p3
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=56 byval_area=0 red_zone=None frame_pad=8
@@ -219,5 +221,7 @@ ret reg RAX
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved Push [RBX RDI RSI R12 R13 R14 R15] fp=true link=false
 clobbers [RAX RCX RDX R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 XMM9 XMM10 XMM11 XMM12 XMM13 XMM14 XMM15]
-va_area Win64Stack size=8 align=8 stack_only=true
+va_area win64_stack size=8 align=8 stack_only=true
 va_field cursor @0 +8
+va_rule int cursor=0 base=- overflow=- limit=0 signed=false step=8 ov_step=8 origin=0 counts_down=false
+va_rule float cursor=0 base=- overflow=- limit=0 signed=false step=8 ov_step=8 origin=0 counts_down=false

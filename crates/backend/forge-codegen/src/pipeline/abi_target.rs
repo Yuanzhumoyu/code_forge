@@ -19,8 +19,8 @@ use forge_abi::{AbiError, AbiPlan, AbiRegistry, AbiTarget, Capability, Signature
 use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
 use forge_isa_runtime::machine::call_layout::{
-    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaField, VaInfo, VaInit,
-    VaInitVal, VaKind, VaSave, VaSaveSlot,
+    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaArgRule, VaArgRules,
+    VaField, VaInfo, VaInit, VaInitVal, VaSave, VaSaveSlot,
 };
 use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest};
 use forge_isa_runtime::machine::target::TargetMachine;
@@ -293,92 +293,113 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         forge_abi::Extension::ZeroExt => Ext::Zero,
         forge_abi::Extension::SignExt => Ext::Sign,
     };
-    // **`va_list` 对象初值**（v20 变参 V3）：宿主按本函数的 plan 预先算好——生成物是各约定
-    // 通用的，"已用掉几个参数寄存器 / 溢出区从哪开始"只有这里算得出来。
+    // **`va_list` 对象初值**（v20 变参 V3/V6）：宿主按本函数的 plan + **取参规则**（`arg_rules`）
+    // 逐字段算好——生成物是各约定通用的，算不出"已用掉几个参数寄存器 / 溢出区从哪开始"。
     //
-    // 目前只算 sysv64 那一族（gp/fp 偏移 + 溢出区）；其它保存区形态给 `None` ⇒ `va_start`
-    // 明确 fail-closed（不猜）。`gp_offset` = 8 × 走寄存器的整数参数个数、
-    // `fp_offset` = 48 + 16 × 走寄存器的浮点参数个数（48 = 6 个 GP 槽 × 8）。
-    let va_init = |kind: forge_abi::rules::VaListKind,
-                   save: Option<&forge_abi::plan::VaSaveArea>|
-     -> Option<VaInit> {
-        use forge_abi::rules::VaListKind;
-        if kind != VaListKind::SysvRegSave {
-            return None;
-        }
-        let mut n_gp = 0u64;
-        let mut n_fp = 0u64;
-        let mut first_stack: Option<i32> = None;
+    // **不给任何约定开分支**：每个字段的值由它在规则里的**角色**决定——
+    //
+    // - **游标**（`int.cursor`/`float.cursor`）：规则有基址（计数式）⇒ 初值 = 零点 ± 步长 ×
+    //   已用槽数（"从区域顶端往下数"的形态用负值）；没有基址（地址式）⇒ 初值 = 未命名实参区地址；
+    // - **基址**（`base`）：保存区基址 + （往下数式 ⇒ 本类区域字节数；否则 0）；
+    // - **溢出区**（`overflow`）：未命名实参区地址；
+    // - 其余字段（该约定没用到）：写 0。
+    //
+    // 未命名实参区起点（被调方视角、相对帧基址）：**有命名栈实参 ⇒ 最后一个栈槽之后**
+    // （该 `offset` 已含 shadow，见 `forge_abi::engine::stack_place`）；**没有 ⇒
+    // `first_arg_offset + shadow_bytes`——两个都要加**（少加 shadow 会读到 shadow 区里的垃圾）。
+    let va_init = |area: &forge_abi::plan::VaArea| -> Option<VaInit> {
+        let unnamed_off = plan
+            .args
+            .iter()
+            .filter_map(|a| match &a.place {
+                forge_abi::Placement::Stack { offset, size, .. } => {
+                    Some(i64::from(*offset) + i64::from(*size))
+                }
+                _ => None,
+            })
+            .max()
+            .unwrap_or_else(|| {
+                i64::from(plan.stack.first_arg_offset) + i64::from(plan.stack.shadow_bytes)
+            });
+        // 命名实参里**走寄存器**的个数（按类分）——计数式游标的初值要用。
+        let (mut used_int, mut used_fp) = (0u64, 0u64);
         for a in &plan.args {
-            match &a.place {
-                forge_abi::Placement::Reg { reg: r, .. } => {
-                    let is_fp = t
-                        .reg_index(&r.name)
-                        .map(|i| t.is_fp(i))
-                        .unwrap_or(r.index >= t.n_gp);
-                    if is_fp {
-                        n_fp += 1;
-                    } else {
-                        n_gp += 1;
-                    }
-                }
-                forge_abi::Placement::Stack { offset, .. } => {
-                    first_stack = Some(match first_stack {
-                        Some(cur) => cur.min(*offset),
-                        None => *offset,
-                    });
-                }
-                _ => {}
-            }
-        }
-        let gp_off = n_gp * 8;
-        let fp_off = 48 + n_fp * 16;
-        // 溢出区起点：第一个栈实参；没有栈实参时 = 第一个栈实参"本该在"的位置。
-        let overflow_off = match first_stack {
-            Some(off) => i64::from(off),
-            None => i64::from(plan.stack.first_arg_offset) + i64::from(plan.stack.shadow_bytes),
-        };
-        // **上限与步长**（`va_arg` 的 IR 展开要用）：从**保存区槽表**算，不写死 psABI 数字——
-        //   `gp_limit` = 第一个 FP 槽的偏移（= GP 块字节数）；`fp_limit` = 区总字节；
-        //   步长 = 各类第一个槽的宽度。
-        let (mut gp_limit, mut gp_step, mut fp_step, mut seen_fp) = (0u32, 8u32, 16u32, false);
-        if let Some(s) = save {
-            for sl in &s.slots {
+            if let forge_abi::Placement::Reg { reg: r, .. } = &a.place {
                 let is_fp = t
-                    .reg_index(&sl.reg.name)
+                    .reg_index(&r.name)
                     .map(|i| t.is_fp(i))
-                    .unwrap_or(false);
+                    .unwrap_or(r.index >= t.n_gp);
                 if is_fp {
-                    if !seen_fp {
-                        seen_fp = true;
-                        gp_limit = sl.offset;
-                        fp_step = sl.size;
-                    }
-                } else if !seen_fp {
-                    gp_step = sl.size;
+                    used_fp += 1;
+                } else {
+                    used_int += 1;
                 }
             }
-            if !seen_fp {
-                gp_limit = s.size;
-            }
         }
-        let fp_limit = save.map(|s| s.size).unwrap_or(0);
-        // **逐字段初值**（与 `va.fields` 同序）：这一族的字段序是
-        // `[主游标, 次游标, 溢出指针, 保存区指针]`（sysv64 的 gp/fp/overflow/reg_save）——
-        // 常量给偏移、地址给帧内地址 / 保存区基址。**不做任何打包**：发射侧按每个字段
-        // 自己的宽度写（IR 展开，见 `pipeline::va_expand`）。
-        Some(VaInit {
-            fields: vec![
-                VaInitVal::Imm(gp_off),
-                VaInitVal::Imm(fp_off),
-                VaInitVal::FrameOff(overflow_off),
-                VaInitVal::SaveOff,
-            ],
-            gp_limit,
-            fp_limit,
-            gp_step,
-            fp_step,
-        })
+        // 保存区里**整数类的字节数**（= 浮点区起点）：槽表由引擎按"整数池在前"排，
+        // 所以前导同类槽的长度就是它（不写死槽数/槽宽）。
+        let int_region_end: u32 = area
+            .save
+            .as_ref()
+            .map(|s| {
+                s.slots
+                    .iter()
+                    .take_while(|sl| {
+                        !t.reg_index(&sl.reg.name)
+                            .map(|i| t.is_fp(i))
+                            .unwrap_or(false)
+                    })
+                    .map(|sl| sl.size)
+                    .sum()
+            })
+            .unwrap_or(0);
+        let save_end = area.save.as_ref().map(|s| s.size).unwrap_or(0);
+        let r = &area.arg_rules;
+        // 计数式游标的初值：`零点 ± 步长 × 已用槽数`（往下数式 = 负值，补码写进字段宽度）。
+        let cursor_init = |rule: &forge_abi::plan::VaArgRule, used: u64| -> i64 {
+            let span = i64::from(rule.step) * used as i64;
+            if rule.cursor_counts_down {
+                -span
+            } else {
+                i64::from(rule.cursor_origin) + span
+            }
+        };
+        let mut fields = Vec::with_capacity(area.fields.len());
+        for i in 0..area.fields.len() {
+            let is_int_cursor = i == r.int.cursor;
+            let is_fp_cursor = i == r.float.cursor;
+            let val = if is_int_cursor {
+                if r.int.base.is_some() {
+                    VaInitVal::Imm(cursor_init(&r.int, used_int) as u64)
+                } else {
+                    VaInitVal::FrameOff(unnamed_off)
+                }
+            } else if is_fp_cursor {
+                if r.float.base.is_some() {
+                    VaInitVal::Imm(cursor_init(&r.float, used_fp) as u64)
+                } else {
+                    VaInitVal::FrameOff(unnamed_off)
+                }
+            } else if Some(i) == r.int.base {
+                VaInitVal::SaveOff(if r.int.cursor_counts_down {
+                    int_region_end
+                } else {
+                    0
+                })
+            } else if Some(i) == r.float.base {
+                VaInitVal::SaveOff(if r.float.cursor_counts_down {
+                    save_end
+                } else {
+                    0
+                })
+            } else if Some(i) == r.int.overflow || Some(i) == r.float.overflow {
+                VaInitVal::FrameOff(unnamed_off)
+            } else {
+                VaInitVal::Imm(0)
+            };
+            fields.push(val);
+        }
+        Some(VaInit { fields })
     };
     let place = |p: &forge_abi::Placement| -> ArgPlace {
         match p {
@@ -476,10 +497,10 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         frame_padding: plan.stack.frame_padding,
         callee_pop_bytes: plan.callee_pop_bytes,
         widen_to_bits: plan.widen_to_bits,
-        // **变参信息**（v20 变参 V2）：把引擎的 `VaArea` 折成运行时中立镜像。逐条 match
-        // （不 `as` 转换）——枚举顺序与语义必须与 forge-abi 那边一致，加变体会编译失败。
+        // **变参信息**（v20 变参 V2/V6）：把引擎的 `VaArea` 折成运行时中立镜像。形状是**数据**
+        // （字段布局 + 保存区 + 取参规则），这里只做逐字段搬家，没有任何"按约定名分支"。
         va: plan.va_area.as_ref().map(|a| VaInfo {
-            kind: va_kind(a.kind),
+            shape: a.shape.clone(),
             size: a.size,
             align: a.align,
             stack_only: a.stack_only,
@@ -509,19 +530,30 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
                     })
                     .collect(),
             }),
-            init: va_init(a.kind, a.save.as_ref()),
+            init: va_init(a),
+            arg_rules: va_arg_rules(&a.arg_rules),
         }),
     }
 }
 
-/// `forge_abi::rules::VaListKind` → 运行时中立镜像（**逐条 match**，加变体即编译失败）。
-fn va_kind(k: forge_abi::rules::VaListKind) -> VaKind {
-    use forge_abi::rules::VaListKind;
-    match k {
-        VaListKind::None => VaKind::None,
-        VaListKind::Win64Stack => VaKind::Win64Stack,
-        VaListKind::SysvRegSave => VaKind::SysvRegSave,
-        VaListKind::Aapcs64Struct => VaKind::Aapcs64Struct,
-        VaListKind::RiscvSaveArea => VaKind::RiscvSaveArea,
+/// **取参规则**（v20 V6）：计划面 → 运行时中立镜像（逐字段搬家；两边结构一一对应）。
+fn va_arg_rules(r: &forge_abi::plan::VaArgRules) -> VaArgRules {
+    VaArgRules {
+        int: va_arg_rule_one(&r.int),
+        float: va_arg_rule_one(&r.float),
+    }
+}
+
+fn va_arg_rule_one(r: &forge_abi::plan::VaArgRule) -> VaArgRule {
+    VaArgRule {
+        cursor: r.cursor,
+        base: r.base,
+        overflow: r.overflow,
+        limit: r.limit,
+        signed_limit: r.signed_limit,
+        step: r.step,
+        overflow_step: r.overflow_step,
+        cursor_origin: r.cursor_origin,
+        cursor_counts_down: r.cursor_counts_down,
     }
 }

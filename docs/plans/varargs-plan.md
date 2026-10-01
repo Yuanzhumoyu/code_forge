@@ -7,23 +7,24 @@
 > fail-closed）、更窄浮点与向量的取值能力，以及**任何前端产出变参签名**。
 > 相关背景：`docs/reference/calling-conventions.md`、`docs/plans/calling-convention-redesign-plan.md` A6。
 
-## 1. 现状：**规划与两端发射都通了（win64 栈式 + sysv64 保存区一族）；前端仍零产出**
+## 1. 现状：**规划与两端发射都通了（管线里唯一一套数据驱动展开，四份约定都有形状数据）；前端仍零产出**
 
 | 层 | 现状 | 证据（按符号名，行号随迭代漂移） |
 | --- | --- | --- |
-| 规则数据 | `hidden = { va_meta_pool, va_len_pool, va_list, va_list_size, va_list_align }`、`variadic_stack_only` 都在 | `forge-abi/src/rules.rs` 的 `Hidden` / `VaListKind` |
-| 引擎 | 变参签名能规划：**未命名实参**按 `variadic_stack_only` 决定"只走栈"还是"继续用寄存器"；产出 `AbiPlan::va_area`（kind/size/align/stack_only）与 `hidden.va_meta`/`va_len` | `forge-abi/src/engine.rs`（`unnamed` 分支、`va_area` 构造） |
+| 规则数据 | `hidden = { va_meta_pool, va_len_pool, va_list }`、`variadic_stack_only` 都在——**`va_list` 是形状数据**（预置名或显式表：字段/保存区/取参规则），没有"每份约定一个枚举变体" | `forge-abi/src/rules.rs` 的 `Hidden` / `VaListDecl` / `VaListShape` / `preset_va_shape` |
+| 引擎 | 变参签名能规划：**未命名实参**按 `variadic_stack_only` 决定"只走栈"还是"继续用寄存器"；把**形状数据**解析成 `AbiPlan::va_area`（形状名/size/align/字段布局/保存区槽表/**取参规则**：字段名→下标、上限/步长由槽表推）与 `hidden.va_meta`/`va_len` | `forge-abi/src/engine.rs`（`unnamed` 分支、`va_area_from_shape`） |
 | 黄金快照 | 四份内置约定 × 变参语料已钉住（见 §2 表） | `forge-abi/tests/golden/*.plan.txt` 的 `## va_*` 段 |
 | CLI | `forge-isa abi plan <谱> --conv <名> --sig "…" --variadic <命名数>` 能打印变参计划 | `forge-isa/src/abi.rs` |
 | **发射（调用方）** | **已落地**（V1）：未命名实参按被调方的变参语义发（win64 走栈），由 `LowerCtx::module_sigs` 提供的"被调方是变参/命名几个"驱动；**整模块编译的宿主由 `FunctionCompiler::for_module` 自动装表**（接线缺口见 §5 V1） | `jit.rs::test_jit_variadic_unnamed_args_go_to_stack`、`abi_target_real::call_site_variadic_hint_decides_unnamed_argument_placement` |
-| **发射（被调方）** | **两条路都通**：① **win64 栈式**（V2，生成器专用臂：`lea dst, [fp + 未命名区起点]`）；② **保存区一族**（V3 五片，`sysv64` 真跑）——物化与 `va_arg` 取值都在**管线里的 IR 展开**（`pipeline/va_expand.rs`），字段偏移/宽度/槽宽/上限/步长一律取自 plan 的 `va.fields`/`va.save`/`va.init`，不写死某个 ISA 的数字；**非本族的形态**（`aapcs64`/`riscv`）明确 fail-closed | `jit.rs::test_jit_va_arg_sysv64_reads_the_register_save_area` / `…_overflows_to_the_stack_arg_area` / `…_coexists_with_frontend_locals`、`va_expand::tests::abi_slots_sit_below_frontend_locals` |
+| **发射（被调方）** | **只有一条路**（V6）：物化与 `va_arg` 取值都在**管线里的 IR 展开**（`pipeline/va_expand.rs`），按 plan 的 `va.fields`/`va.save`/`va.init`/`va.arg_rules` 跑**同一套算法**——生成器没有变参专用臂、谱不申报变参能力；`win64`/`sysv64` 真跑，`aapcs64`/`lp64d` 的数据与规则已就位（真跑通道待接） | `jit.rs::test_jit_va_arg_sysv64_reads_the_register_save_area` / `…_overflows_to_the_stack_arg_area` / `…_coexists_with_frontend_locals`、`va_expand::tests::abi_slots_sit_below_frontend_locals` |
 | **发射（`va_meta`/`va_len`）** | **零消费**：`hidden.va_meta` / `hidden.va_len` 在 `crates/…/src` 里没有任何读者 | 全仓 grep：命中只在引擎、测试与黄金文件 |
 | **前端** | **零产出**：`FunctionSignature::variadic` 在生产代码里没有设置者（测试与二进制格式往返测试除外） | `forge-rustc` / `mini_c` 里没有 `variadic` |
 | IR | 签名能表达 `variadic`（二进制格式也往返） | `forge-ir/src/ir/types.rs`、`forge-ir/src/binary/types.rs` |
 
-一句话：**调用方、win64 栈式被调方、sysv64 保存区一族（物化 + 取值，含溢出支）都通了**；
-**还缺**：`va_meta`（SysV `%al`）的写入、`aapcs64`/`riscv` 各自的 `va_list` 形态，以及前端的
-`variadic` 产出（没有前端就没有真实输入，见 §6）。
+一句话：**调用方 + 被调方的物化/取值（含溢出支）都通了**，且**只有一套实现**（管线按形状数据展开，
+四份内置约定都只是数据）；`win64`/`sysv64` 真跑。
+**还缺**：`va_meta`（SysV `%al`）的写入、`aapcs64`/`lp64d` 的真跑通道，以及前端的 `variadic` 产出
+（没有前端就没有真实输入，见 §6）。
 
 ## 2. 四份内置约定的 `va_list` 形态（本仓库内置数据）
 
@@ -31,12 +32,16 @@
 与官方定本逐条核对列为 §4 的待办 D3。守卫 `invariants.rs::va_shapes_match_the_documented_table`
 拿引擎实际算出的计划与这张表逐格对照。
 
-| 约定 | `VaListKind` | size | align | 未命名实参 | `va_meta` 寄存器 |
+| 约定 | 形状（`hidden.va_list` 预置名） | size | align | 未命名实参 | `va_meta` 寄存器 |
 | --- | --- | --- | --- | --- | --- |
-| `win64` | `Win64Stack` | 8 | 8 | 只走栈 | — |
-| `sysv64` | `SysvRegSave` | 24 | 8 | 继续用寄存器 | `RAX` |
-| `aapcs64` | `Aapcs64Struct` | 32 | 8 | 只走栈 | — |
-| `lp64d` | `RiscvSaveArea` | 24 | 8 | 只走栈 | — |
+| `win64` | `win64_stack` | 8 | 8 | 只走栈 | — |
+| `sysv64` | `sysv_reg_save` | 24 | 8 | 继续用寄存器 | `RAX` |
+| `aapcs64` | `aapcs64_struct` | 32 | 8 | 只走栈 | — |
+| `lp64d` | `riscv_save_area` | 24 | 8 | 只走栈 | — |
+
+> **形状是数据**（v20 V6）：`hidden.va_list` 写**预置形状名**，或直接写一张**显式形状表**
+> （`{ size, align, fields, save, int_arg, float_arg }`）——字段/保存区/取参规则全在里面，
+> 引擎按数据算（字段名→下标、上限/步长由槽表推），代码里**没有"每份约定一个分支"**。
 
 ## 3. 缺口（按链路，越靠前越阻塞）
 
@@ -289,27 +294,40 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
   `test_jit_va_arg_sysv64_coexists_with_frontend_locals` 是端到端补充，但**替代不了那条单测**——实测
   短路深度后它仍然绿（局部槽落在保存区的 XMM 段，而用例读的是 GPR 参数）。
 
-**本族的洞到此闭合**：`sysv64` 的物化与 `va_arg`（保存区支 + 溢出支）全部真跑。**下一步**是
-`aapcs64`/`riscv` 各自的形态——它们的 `va_list` 字段布局与保存区槽表（plan 数据）已经有了，缺的是
-"那一族的初值/上限/步长"（`va_init`）与对应的展开形态：`expand_arg` 现在只认"主游标 + 次游标 + 溢出
-指针 + 保存区指针"这一族，非此族**明确报错**"该形态不在本族"，而不是照 sysv64 的偏移瞎算。
+**V6（2026-10-01）：取参规则做成约定数据——"族"这个概念被拆掉，只剩一套算法。**
 
-**展开形态**（本族的整数类；偏移/宽度按 plan 的 `va.fields` 代入）：
+第五片之后管线里还剩两处"为某个 ABI 开洞"：① `va_expand` 里按 `(有没有保存区, 字段数)` 判
+"族"（4 字段 = SysV 一族、1 字段 = win64 一族）；② 宿主 `abi_target` 里按**字段名**
+（`fields[0].name == "cursor"`）认形态。评审指出这正是"专门给某个 ABI 开洞"，于是把**形状**整体
+数据化：
 
-```text
-gp      = load <游标宽> [ap + 主游标偏移]
-in_reg  = icmp ult gp, 上限
-p_reg   = reg_save + uextend(gp)
-p_src   = select in_reg, p_reg, overflow
-v       = load <ty> [p_src]
-gp_out  = select in_reg, gp + 步长, gp
-ov_out  = select in_reg, overflow, overflow + 槽宽
-store <游标宽> [ap + 主游标偏移] = ireduce(gp_out)
-store <指针宽> [ap + 溢出偏移]   = ov_out
-```
+- **`hidden.va_list` = 形状数据**（不再是 `VaListKind` 这种"每份约定一个枚举变体"）：
+  预置名（`"win64_stack"`/`"sysv_reg_save"`/`"aapcs64_struct"`/`"riscv_save_area"`）**或**一张
+  **显式形状表**（`{ size, align, fields, save, int_arg, float_arg }`）。加一份约定/一台机器 =
+  加数据（`forge-abi/src/rules.rs::preset_va_shape` 或直接写在用户自己的规则里），**不改代码**。
+- **取参规则是形状的一部分**（`int_arg`/`float_arg`）：`cursor`（游标字段名）/`base`（偏移基准
+  字段，缺省 = 游标即地址）/`overflow`（溢出区字段，缺省 = 没有溢出支）/`signed_limit`（有符号
+  计数）/`limit`·`step`·`overflow_step`（缺省由保存区槽表推）。引擎把它解析成
+  `AbiPlan::va_area.arg_rules`（名字 → 下标 + 上限/步长/零点）。
+- **管线只剩一套算法**（`pipeline/va_expand.rs::expand_arg`）：读游标 → （有基址就加基址）→
+  （有溢出区就按上限 select，两条游标各自推进；没有就是直线）→ 取值（`f32` 先取 `f64` 再
+  `Fptrunc`）→ 写回。四份内置约定全部落在这套数据上：SysV = 无符号偏移游标 + 溢出区、
+  Win64 = 地址式单游标、AAPCS64 = **有符号**计数（基准 = 区域顶端）+ 溢出区、LP64D = 地址式
+  游标 + 保存区。
+- **生成器的变参臂与 4 个变参角色一起删除**：`gen_va_start_lowering`/`gen_va_arg_lowering` 不在
+  生成物里了（谱里也不再申报 `ptr_load`/`ptr_store`/`add_imm`/`fpr_narrow`）——变参对 ISA 的
+  要求降到**零**（只用既有 IR op 的降级）。win64 因此也走 IR 展开：三条真跑用例
+  （`…_reads_unnamed_stack_args`/`…_float_args`/`…_narrows_promoted_f32`）在**没有生成器臂**
+  的情况下继续绿。
+- **镜像与宿主**：`CallLayout.va` 多了 `shape`（诊断）+ `arg_rules`（规则），`VaInit` 只剩
+  "逐字段初值"（宿主按规则算：计数式游标 = 零点 ± 步长 × 已用槽数、地址式 = 未命名区起点、
+  基址 = 保存区 + 静态偏移）。
+- **守卫**：`call_layout_mirrors_the_variadic_shape`（形状/规则逐格钉住）、
+  `va_object_layout_matches_the_psabi_numbers`（四份约定的字段布局与保存区槽表）、
+  `va_shapes_match_the_documented_table`（§2 表 ↔ 引擎输出）、黄金快照新增 `va_rule` 行。
 
-浮点类用**次游标**字段（`fp_offset`/`fp_limit`/`fp_step`），取值走 `Fload`；`f32` 先取 `f64`
-再 `Fptrunc`。字段数不足本族（aapcs64/riscv）⇒ 明确报错"该形态不在本族"。
+**下一步**：`aapcs64`/`lp64d` 的**真跑**（数据与规则已就位：arm64 需要执行通道，riscv 走 QEMU
+矩阵的能力门控）、`va_meta`（SysV `%al`）写入、前端产出 `variadic`。
 
 在此之前 aapcs64/riscv 的 `init` 未算 ⇒ 它们的 `va_start` 也继续 fail-closed。
 

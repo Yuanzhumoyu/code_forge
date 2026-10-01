@@ -1733,18 +1733,6 @@ pub enum Role {
     StackArgLoad,
     /// 栈参数传参 store（调用方把第 5+ 个参数写到 `[SP+shadow+…]`）。
     StackArgStore,
-    /// 按**寄存器里的地址**读内存：`dst ← [src]`（宽度随目标类自动，见 `gprx` 槽）。
-    /// 变参 `va_arg` 从游标取值用它——与 [`Role::StackArgLoad`] 的区别是**基址是值**
-    /// （不是帧基址/固定物理解析），所以槽是 Reg 而不是 Mem。
-    PtrLoad,
-    /// 把寄存器写进**寄存器里的地址**：`[dst] ← src`（[`Role::PtrLoad`] 的写向）。
-    PtrStore,
-    /// `dst += imm`（地址算术：变参游标推进等）。
-    AddImm,
-    /// 把**默认提升**后的浮点值窄回目标宽度（`bits` = 目标位宽，如 `32` = `f64 → f32`）。
-    /// 变参 `va_arg(ap, f32)` 用它——C/LLVM 的默认实参提升把 `float` 传成 `double`，
-    /// 读取方取 `double` 再窄回来。
-    FprNarrow,
 }
 
 impl fmt::Display for Role {
@@ -1779,10 +1767,6 @@ fn serde_json_name(r: &Role) -> &'static str {
         Role::WideVecStore => "wide_vec_store",
         Role::WideVecLoad => "wide_vec_load",
         Role::FrameAddr => "frame_addr",
-        Role::PtrLoad => "ptr_load",
-        Role::PtrStore => "ptr_store",
-        Role::AddImm => "add_imm",
-        Role::FprNarrow => "fpr_narrow",
         Role::StackArgLoad => "stack_arg_load",
         Role::StackArgStore => "stack_arg_store",
     }
