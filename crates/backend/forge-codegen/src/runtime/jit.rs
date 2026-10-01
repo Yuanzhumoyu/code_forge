@@ -3414,6 +3414,73 @@ ret_int = ["RAX"]
         );
     }
 
+    /// **变参 × 前端局部槽**（真跑）：被调方既要用 `va_start`/`va_arg`，又要在**自己的局部槽**
+    /// 里存东西——ABI 槽（保存区 + `va_list` 对象）必须排在前端局部槽**之下**，否则两者重叠：
+    /// 保存区被局部变量覆盖（或反过来），`va_arg` 读出来的就是垃圾。
+    ///
+    /// 这条守着 `va_expand::plan_abi_slots` 的深度算法（它必须**镜像** lowering 的三处统计：
+    /// `StackAddr` 立即数、`stack_addr(0)+iadd(iconst(-N))` 模式、`Alloca` 区）。
+    ///
+    /// 形态：局部槽存 `x=4`，再 `va_arg` 两次取 `(4, 7)`，返回 `x*10 + b`——局部槽若被保存区
+    /// 覆盖，`x` 就不是 4；保存区若被局部槽覆盖，`a` 就不是 4。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_arg_sysv64_coexists_with_frontend_locals() {
+        use forge_ir::ir::types::ConvName;
+        use forge_ir::{CallConvId, FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let cc = CallConvId::builtin(ConvName::SysV64);
+
+        let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
+            .with_variadic(true)
+            .with_calling_convention(cc.clone());
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        // 前端局部槽：slot = stack_addr(-16)，存 4 再读回
+        let slot = callee.stack_addr(-16);
+        let four = callee.iconst(4, TypeId::I64);
+        callee.store(four, slot);
+        let x = callee.load(slot, TypeId::I64);
+        // va_start + 两个未命名实参
+        let ap = callee.va_start();
+        let a = callee.va_arg(ap, TypeId::I64);
+        let b = callee.va_arg(ap, TypeId::I64);
+        // ret x*10 + a*100 + b ⇒ 若局部槽与 ABI 槽互相覆盖，任一项都会错。
+        let ten = callee.iconst(10, TypeId::I64);
+        let hundred = callee.iconst(100, TypeId::I64);
+        let x10 = callee.imul(x, ten);
+        let a100 = callee.imul(a, hundred);
+        let s1 = callee.iadd(x10, a100);
+        let r = callee.iadd(s1, b);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]).with_calling_convention(cc);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let xa = main_fn.iconst(4, TypeId::I64);
+        let xb = main_fn.iconst(7, TypeId::I64);
+        let got = main_fn.call(cref, &[fmt, xa, xb], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            4 * 10 + 4 * 100 + 7,
+            "局部槽（x=4）与 ABI 槽（保存区 + va_list 对象）不得重叠"
+        );
+    }
+
+    ///
+    /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的

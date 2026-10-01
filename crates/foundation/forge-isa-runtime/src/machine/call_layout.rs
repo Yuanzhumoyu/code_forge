@@ -196,23 +196,34 @@ pub struct VaInfo {
     pub init: Option<VaInit>,
 }
 
-/// `va_list` 对象的初值（v20 V3，目前只有 sysv64 一族）。
+/// `va_list` 对象某个字段的**初值**（v20 V3，与 [`VaInfo::fields`] 同序）。
+///
+/// 三种来源覆盖了各 psABI 的 `va_start`：常量（偏移/计数）、**帧内地址**（溢出区、保存区、
+/// 游标指针）、以及"保存区基址"（管线分配的那段，偏移只有编译入口知道）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaInitVal {
+    /// 常量（按字段宽度截断后写）。
+    Imm(u64),
+    /// **帧基址 + 偏移**（`StackAddr`）：指向溢出区/保存区/栈上实参区。
+    FrameOff(i64),
+    /// **寄存器保存区基址**（管线在帧里分配的那段，偏移在编译入口定）。
+    SaveOff,
+}
+
+/// `va_list` 对象的初值（v20 V3）：`va_start` 要写进去的东西，由**宿主**按本函数的 plan
+/// 逐字段算好（生成物是各约定通用的，算不出"已用掉几个参数寄存器"）。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaInit {
-    /// `gp_offset` 与 `fp_offset` **打包**成一个 u64（低 32 = gp、高 32 = fp）：
-    /// 对象里这两个 u32 字段相邻，而发射侧只有 8 字节的帧相对 store——分开写会互相踩。
-    pub offsets: u64,
-    /// 溢出区（第一个栈实参）相对**帧基址**的偏移；该函数没有栈实参时 =
-    /// `first_arg_offset + shadow_bytes`（第一个栈实参本该在的位置）。
-    pub overflow_off: i64,
-    /// 寄存器区的**上限**：`gp_offset` 到它就说明 GP 寄存器用完了 ⇒ 该取溢出区
-    /// （sysv64 = GP 块字节数 = 48）。
+    /// 每个字段的初值，**与 `VaInfo::fields` 同序**（缺 ⇒ `va_start` 明确 fail-closed）。
+    pub fields: Vec<VaInitVal>,
+    /// 寄存器区的**上限**：游标到它就说明寄存器用完了 ⇒ 该取溢出区
+    /// （sysv64 的 `gp_offset` = GP 块字节数 = 48）。
     pub gp_limit: u32,
     /// 浮点寄存器区的上限（sysv64 = 保存区总字节 = 176）。
     pub fp_limit: u32,
-    /// `gp_offset` 的步长（= 一个 GP 槽的字节数，sysv64 = 8）。
+    /// 主游标的步长（= 一个 GP 槽的字节数，sysv64 = 8）。
     pub gp_step: u32,
-    /// `fp_offset` 的步长（= 一个 FP 槽的字节数，sysv64 = 16）。
+    /// 次游标的步长（= 一个 FP 槽的字节数，sysv64 = 16）。
     pub fp_step: u32,
 }
 

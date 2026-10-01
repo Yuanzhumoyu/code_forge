@@ -11,6 +11,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — 变参：`va_start` 物化也搬进 IR 展开，拆掉两处 x86 专属（打包 + `gpr_imm`）
+
+评审指出上一片"为某一个开洞"：保存区物化留在生成器里，于是有两处只为 x86 成立的东西——
+① `VaInit.offsets` 把 `gp_offset|fp_offset` **打包**成一个 u64（因为生成器只有 8 字节的帧相对
+store），② 为写常量而新增的角色 `gpr_imm`。这一片把物化也搬进 IR 展开，两者都消失：
+
+- **对象初值改成"逐字段的数据"**：`VaInit.fields: Vec<VaInitVal>`（与 `va.fields` 同序），值有三种
+  来源——`Imm`（常量，按**字段自己的宽度**截断后写）/ `FrameOff`（帧内地址）/ `SaveOff`（保存区
+  基址）。IR 展开按 `va.fields` 的偏移与宽度逐字段 `Store` ⇒ **不再需要打包、也不需要立即数
+  能力**（常量用 `Iconst`、地址用现成的 `StackAddr`）；`gpr_imm` 角色与 `MOV_REG_IMM64` 上的声明
+  一并删除。
+- **修掉一个真缺陷（同一片里发现的）**：ABI 槽（保存区 + 对象）原先在**编译入口**按"当时的
+  `max_stack_bytes`"（= 0）预留，而前端 `stack_addr(-N)` 要到 lowering 才统计 ⇒ **两者会重叠**
+  （sysv64 那条用例恰好没有局部槽，所以没暴露）。现在 `plan_abi_slots` 在**展开前**扫一遍 IR 算
+  前端局部槽深度（**严格镜像** lowering 的三处统计：`StackAddr` 立即数、`stack_addr(0)+iadd(iconst(-N))`
+  模式、`Alloca` 区），ABI 槽从它之后排，并把结果喂给 `CompileState`（帧尺寸/序言偏移）。
+- **守卫（确定性、已验证会咬）**：`va_expand::tests::abi_slots_sit_below_frontend_locals`——直接断言
+  "保存区/对象排在前端局部槽之下"；把深度扫描短路后它报
+  `保存区必须在前端局部槽之下（front=32, save_depth=176）` ✗，复原后通过 ✓。
+  另加一条 JIT 用例 `test_jit_va_arg_sysv64_coexists_with_frontend_locals`（变参 + 前端局部槽一起用）。
+  **诚实说明**：这条 JIT 用例**不能**替代上面的单测——实测把深度短路后它仍然绿（局部槽落在保存区
+  的 XMM 段，而用例读的是 GPR 参数），所以放置正确性由那条单测钉住。
+- 验证：`forge-codegen`（1362，含 8 条变参用例）、`forge-abi`、`forge-tests`（矩阵 196/3/0）、
+  `forge-ir`、`forge-isa-dsl`、`forge-isa` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0。
+
 ### Added (2026-10-01) — 变参 V3 第四片：保存区形态的 `va_arg` 走 IR 展开（sysv64 两条支真跑）
 
 保存区形态的取值是**有条件**的（游标未超上限取保存区、否则取溢出区，各自推进），这一片把它做成

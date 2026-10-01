@@ -185,6 +185,11 @@ pub struct LowerCtx {
     /// 分配**（与 `Opcode::VaStart` 的对象槽同一条通路：算好偏移、抬 `max_stack_bytes`），
     /// 序言与 `va_start` 只读它。`None` = 本函数没有保存区（非变参 / win64 栈式）。
     pub va_save_off: Option<i64>,
+    /// **`va_list` 对象**在帧内的偏移（相对帧基址，v20 变参 V3）；`None` = 本函数不变参。
+    ///
+    /// 由管线在**编译入口**预留（与保存区同一条分配通路），IR 展开（`pipeline::va_expand`）
+    /// 用 `StackAddr(本偏移)` 取对象地址——不再依赖 lowering 中途的 `current_offset`。
+    pub va_obj_off: Option<i64>,
     /// 临时 VReg 集合（替代 VReg(96-100) 硬编码）。
     pub temp_vregs: HashSet<VReg>,
     /// 零值 VReg（复用，避免重复分配）。
@@ -242,6 +247,7 @@ impl LowerCtx {
             max_stack_bytes: 0,
             max_stack_arg_bytes: 0,
             va_save_off: None,
+            va_obj_off: None,
             vreg_classes: SecondaryMap::new(),
             vreg_types: SecondaryMap::new(),
             vreg_widths: SecondaryMap::new(),

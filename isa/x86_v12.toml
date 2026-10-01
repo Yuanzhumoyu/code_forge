@@ -1607,7 +1607,6 @@ asm = "pop {dst}"
 [[instructions]]
 name = "MOV_REG_IMM64"
 # 立即数 → 寄存器能力（v20 变参 V3）：变参 `va_start` 物化对象时要写宿主算好的初值。
-roles = ["gpr_imm"]
 opcode_reg = 0xB8
 rex_w = "always"
 imm = 0x40

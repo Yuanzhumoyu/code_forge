@@ -37,11 +37,140 @@
 use forge_ir::*;
 use forge_isa_runtime::machine::call_layout::VaInfo;
 
-/// 函数里有没有 `VaArg`（决定要不要准备可变副本 / 跑展开）。
-pub(crate) fn has_va_arg(func: &Function) -> bool {
+/// **ABI 槽的帧内分配**（v20 变参 V3）：保存区与 `va_list` 对象各一段。
+///
+/// 关键点（2026-10-01 实测踩到）：**必须排在前端局部槽之下**。前端的 `stack_addr(-N)` 是在
+/// lowering 里才被 `max_stack_bytes` 统计的，而本展开跑在 lowering **之前**——若在编译入口按
+/// "当时的 max"（= 0）预留，保存区就会与前端的 `stack_addr(-16)` 之类**重叠**（sysv64 那条
+/// 用例恰好没有局部槽所以没暴露）。所以这里先**扫一遍 IR** 算前端局部槽的最大深度
+/// （与 lowering 同一算式 `-v + slot_bytes`），ABI 槽再从它之后往上排。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AbiSlots {
+    /// 保存区深度（正值；`StackAddr` 立即数用 `-depth`）。
+    pub save_depth: u32,
+    /// `va_list` 对象深度（正值）。
+    pub obj_depth: u32,
+    /// 保存区相对**帧基址**的偏移（序言 spill 用；`-depth - stack_slot_shift`）。
+    pub save_off: i64,
+    /// 帧基址 → 局部槽区起点的平移：`StackAddr(v)` 的地址 = `fp + v - shift`，
+    /// 所以"帧基址相对偏移 X"要发 `StackAddr(X + shift)`。
+    pub shift: i64,
+    /// ABI 槽占用的总深度（喂给 `CompileState`，让帧尺寸覆盖到）。
+    pub max_depth: u32,
+}
+
+/// 扫一遍 IR 算前端局部槽的最大深度（与 `pipeline/lowering.rs` 的 `StackAddr` 处理同算式）。
+fn frontend_locals_depth(func: &Function, slot_bytes: u32) -> u32 {
+    let unit = i64::from(slot_bytes.max(1));
+    let mut stackaddr_depth: i64 = 0;
+    // ② `Iadd(StackAddr, Iconst<0)`：mini_c 的 `alloc_slot` 把真偏移放在 iconst 里。
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            if func.dfg.inst_data(ii).opcode == Opcode::VaArg {
+            let inst = func.dfg.inst_data(ii);
+            if inst.opcode != Opcode::Iadd {
+                continue;
+            }
+            let (mut has_stack, mut has_const, mut cval) = (false, false, 0i64);
+            for &op in &inst.operands {
+                let Some(val) = func.dfg.value_data_opt(op) else {
+                    continue;
+                };
+                let ValueDef::Inst(def_ii, _) = val.def else {
+                    continue;
+                };
+                let def = func.dfg.inst_data(def_ii);
+                match def.opcode {
+                    Opcode::StackAddr => has_stack = true,
+                    Opcode::Iconst => {
+                        if let Some(Immediate::Const(cid)) = def.immediates.first()
+                            && let Some((v, _)) = func.constants.get_int(*cid)
+                        {
+                            cval = v as i64;
+                            has_const = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if has_stack && has_const && cval < 0 {
+                stackaddr_depth = stackaddr_depth.max(-cval + unit);
+            }
+        }
+    }
+    // ① `StackAddr` 立即数 + ③ `Alloca`（从"StackAddr 区底 + 一槽"起连续向下）
+    let mut allocas: Vec<u32> = Vec::new();
+    for (_, bd) in func.dfg.blocks() {
+        for &ii in &bd.inst_order {
+            let inst = func.dfg.inst_data(ii);
+            match inst.opcode {
+                Opcode::StackAddr => {
+                    if let Some(Immediate::Int(v)) = inst.immediates.first()
+                        && *v < 0
+                    {
+                        stackaddr_depth = stackaddr_depth.max(-*v + unit);
+                    }
+                }
+                Opcode::Alloca => {
+                    let mut ty = None;
+                    let mut count = 1u64;
+                    for imm in &inst.immediates {
+                        match imm {
+                            Immediate::Type(t) => ty = Some(*t),
+                            Immediate::Uint(c) => count = (*c).max(1),
+                            _ => {}
+                        }
+                    }
+                    if let Some(t) = ty {
+                        let size = func.types.borrow().size_bytes(t).max(1) as u64;
+                        allocas.push((size * count).min(u32::MAX as u64) as u32);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut slot = -(stackaddr_depth + unit);
+    for bytes in allocas {
+        slot -= ((i64::from(bytes) + unit - 1) / unit) * unit;
+    }
+    (-slot).max(stackaddr_depth).max(0) as u32
+}
+
+/// 算 ABI 槽（保存区 → 对象，依次排在前端局部槽之下）。
+pub(crate) fn plan_abi_slots(
+    func: &Function,
+    va: &VaInfo,
+    slot_bytes: u32,
+    shift: i64,
+) -> AbiSlots {
+    let align_up = |v: u32, a: u32| {
+        let a = a.max(1);
+        v.div_ceil(a) * a
+    };
+    let mut depth = frontend_locals_depth(func, slot_bytes);
+    let mut save_depth = depth;
+    if let Some(save) = va.save.as_ref() {
+        depth = align_up(depth, save.align) + save.size;
+        save_depth = depth;
+    }
+    depth = align_up(depth, va.align) + va.size;
+    AbiSlots {
+        save_depth,
+        obj_depth: depth,
+        save_off: -(save_depth as i64) - shift,
+        shift,
+        max_depth: depth,
+    }
+}
+
+/// 函数里有没有 `VaArg` / `VaStart`（决定要不要准备可变副本 / 跑展开）。
+pub(crate) fn has_va_op(func: &Function) -> bool {
+    for (_, bd) in func.dfg.blocks() {
+        for &ii in &bd.inst_order {
+            if matches!(
+                func.dfg.inst_data(ii).opcode,
+                Opcode::VaArg | Opcode::VaStart
+            ) {
                 return true;
             }
         }
@@ -58,17 +187,19 @@ pub(crate) fn save_area_va_info<M: crate::machine::target::TargetMachine>(
     machine: &M,
     func: &Function,
     module_sigs: Option<&[(bool, u32)]>,
-) -> Result<Option<VaInfo>, IrError> {
+) -> Result<Option<(VaInfo, forge_isa_runtime::machine::call_layout::CallLayout)>, IrError> {
     use crate::machine::target::TargetMachine;
     crate::pipeline_hooks::ensure_registered();
     let mut ctx = forge_isa_runtime::ctx::LowerCtx::new();
     ctx.value_gpr_class = TargetMachine::reg_info(machine).value_gpr_class();
     crate::pipeline::abi_setup::setup_conv(&mut ctx, machine, func, module_sigs)?;
+    // 只要求"有 va 信息 + 有 plan"，**不**在这里过滤形态：保存区一族由调用方去展开
+    // （`init` 缺 = 该形态的初值还没算 ⇒ `expand_va` 给出明确错误）；win64 栈式则交给
+    // 生成器那条专用臂（`save` 为 `None`，调用方据此跳过）。
     Ok(ctx
         .conv
         .layout()
-        .and_then(|cl| cl.va.clone())
-        .filter(|v| v.save.is_some() && v.init.is_some()))
+        .and_then(|cl| cl.va.clone().map(|va| (va, cl.clone()))))
 }
 
 /// 保存区一族（"主游标 + 次游标 + 溢出指针 + 保存区指针"）在 `va.fields` 里的**字段序**。
@@ -91,31 +222,42 @@ fn int_ty(bytes: u32) -> TypeId {
     }
 }
 
-/// 把函数里所有 `VaArg` 展开成显式 IR（`va` 必须是**保存区形态**且带 `init`）。
+/// 把函数里所有 `VaStart`/`VaArg` 展开成显式 IR（`va` 必须是**保存区形态**且带 `init`）。
 ///
-/// 返回展开的指令条数（0 = 没有可展开的）。
-pub(crate) fn expand_va_arg(func: &mut Function, va: &VaInfo) -> Result<usize, IrError> {
-    let Some(init) = va.init else {
+/// `obj_off` = `va_list` 对象槽、`save_off` = 寄存器保存区，两者都由管线在编译入口预留
+/// （帧基址相对偏移）。返回 `(物化了几份对象, 展开了几条取值)`。
+pub(crate) fn expand_va(
+    func: &mut Function,
+    va: &VaInfo,
+    slots: &AbiSlots,
+) -> Result<(usize, usize), IrError> {
+    let Some(init) = va.init.clone() else {
         return Err(IrError::Unsupported(
-            "va_arg（保存区形态）：宿主没给 `CallLayout.va.init`（上限/步长/初值），无法展开"
+            "变参（保存区形态）：宿主没给 `CallLayout.va.init`（逐字段初值/上限/步长），无法展开"
                 .into(),
         ));
     };
     // ① 收集（不能边遍历边改）
-    let mut jobs: Vec<(Block, Inst)> = Vec::new();
+    let mut starts: Vec<(Block, Inst)> = Vec::new();
+    let mut args: Vec<(Block, Inst)> = Vec::new();
     for (bid, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            if func.dfg.inst_data(ii).opcode == Opcode::VaArg {
-                jobs.push((bid, ii));
+            match func.dfg.inst_data(ii).opcode {
+                Opcode::VaStart => starts.push((bid, ii)),
+                Opcode::VaArg => args.push((bid, ii)),
+                _ => {}
             }
         }
     }
-    let n = jobs.len();
-    // ② 逐条展开：每条都"现查自己当前下标再插"，所以顺序无关（逆序只为块内观感）。
-    for (b, ii) in jobs.into_iter().rev() {
-        expand_one(func, b, ii, &init, va)?;
+    let (n_start, n_arg) = (starts.len(), args.len());
+    // ② 逐条展开：每条都"现查自己当前下标再插"，顺序无关。
+    for (b, ii) in starts.into_iter().rev() {
+        expand_start(func, b, ii, &init, va, slots)?;
     }
-    Ok(n)
+    for (b, ii) in args.into_iter().rev() {
+        expand_arg(func, b, ii, &init, va)?;
+    }
+    Ok((n_start, n_arg))
 }
 
 // ── 生成小工具（**自由函数**、显式传输出向量：闭包会同时可变借用输出）────────────
@@ -240,7 +382,149 @@ fn mk_unop(
     r
 }
 
-fn expand_one(
+/// **物化 `va_list` 对象**（`VaStart`）：`ap = StackAddr(obj_off)`，随后按 `va.fields` 的
+/// 顺序、用**每个字段自己的宽度**把宿主给的初值写进去。
+///
+/// 值有三种来源（[`VaInitVal`]）：常量 / 帧内地址（`StackAddr`）/ 保存区基址（`StackAddr`）。
+/// 最后把原 `VaStart` 改成 `Copy ap`——结果值即对象地址。
+fn expand_start(
+    func: &mut Function,
+    b: Block,
+    ii: Inst,
+    init: &forge_isa_runtime::machine::call_layout::VaInit,
+    va: &VaInfo,
+    slots: &AbiSlots,
+) -> Result<(), IrError> {
+    {
+        let inst = func.dfg.inst_data(ii);
+        if inst.results.is_empty() {
+            return Err(IrError::Internal("va_start：缺结果值（对象地址）".into()));
+        }
+    }
+    if init.fields.len() != va.fields.len() {
+        return Err(IrError::Unsupported(format!(
+            "va_start（保存区形态）：`va.init` 给了 {} 个字段初值，但布局有 {} 个字段",
+            init.fields.len(),
+            va.fields.len()
+        )));
+    }
+    let pos = func
+        .dfg
+        .block(b)
+        .inst_order
+        .iter()
+        .position(|&x| x == ii)
+        .ok_or_else(|| IrError::Internal("va_start：指令不在块序里".into()))?;
+    let mut out: Vec<Inst> = Vec::new();
+    // ap = StackAddr(-obj_depth)：对象槽（深度由 `plan_abi_slots` 排在前端局部槽之下）
+    let ap = {
+        let i = func.make_inst(
+            Opcode::StackAddr,
+            b,
+            smallvec::smallvec![],
+            smallvec::smallvec![Immediate::Int(-(slots.obj_depth as i64))],
+            &[TypeId::PTR],
+            InstFlags::NONE,
+        );
+        let v = func.dfg.inst_data(i).results[0];
+        out.push(i);
+        v
+    };
+    // 逐字段写（宽度 = 字段自己的宽度；地址类字段写指针）
+    for (f, val) in va.fields.iter().zip(init.fields.iter()) {
+        let field_ty = int_ty(f.size.max(1));
+        let value = match val {
+            forge_isa_runtime::machine::call_layout::VaInitVal::Imm(v) => {
+                let c = mk_iconst(func, b, &mut out, *v as i64);
+                // 常量按字段宽度截断（宽度不足时）
+                if f.size.max(1) >= 8 {
+                    c
+                } else {
+                    mk_unop(func, b, &mut out, Opcode::Ireduce, c, field_ty)
+                }
+            }
+            forge_isa_runtime::machine::call_layout::VaInitVal::FrameOff(off) => {
+                // 帧基址相对偏移 X ⇒ `StackAddr(X + shift)`（`StackAddr(v)` 的地址 =
+                // `fp + v - shift`）；正偏移（调用方的栈实参区）也走这一条。
+                let i = func.make_inst(
+                    Opcode::StackAddr,
+                    b,
+                    smallvec::smallvec![],
+                    smallvec::smallvec![Immediate::Int(*off + slots.shift)],
+                    &[TypeId::PTR],
+                    InstFlags::NONE,
+                );
+                let v = func.dfg.inst_data(i).results[0];
+                out.push(i);
+                v
+            }
+            forge_isa_runtime::machine::call_layout::VaInitVal::SaveOff => {
+                let i = func.make_inst(
+                    Opcode::StackAddr,
+                    b,
+                    smallvec::smallvec![],
+                    smallvec::smallvec![Immediate::Int(-(slots.save_depth as i64))],
+                    &[TypeId::PTR],
+                    InstFlags::NONE,
+                );
+                let v = func.dfg.inst_data(i).results[0];
+                out.push(i);
+                v
+            }
+        };
+        // 地址 = ap + 字段偏移（0 偏移直接用 ap，省一条 add）
+        let addr = if f.offset == 0 {
+            ap
+        } else {
+            let off_v = mk_iconst(func, b, &mut out, i64::from(f.offset));
+            mk_binop(func, b, &mut out, Opcode::Iadd, ap, off_v, TypeId::PTR)
+        };
+        mk_store(func, b, &mut out, value, addr);
+    }
+    {
+        let inst = func.dfg.inst_mut(ii);
+        inst.opcode = Opcode::Copy;
+        inst.operands = smallvec::smallvec![ap];
+        inst.immediates = smallvec::smallvec![];
+    }
+    func.refresh_inst_uses(ii);
+    move_new_before(func, b, pos, &out)?;
+    Ok(())
+}
+
+/// 把新指令按 `new_insts` 的顺序插到块序的 `pos` 之前。
+///
+/// **不依赖任何位置假设**：不猜"`make_inst` 落在块尾"、也不用"弹 N 次 / 摘 N 条"的写法
+/// （本轮实测这两种都被顺序细节坑过）。直接**重建块序**：遍历原序，在 `pos` 处插入
+/// `new_insts`，并跳过原序里属于 `new_insts` 的项（它们已被 `make_inst` 放进去了，只保留一次）。
+fn move_new_before(
+    func: &mut Function,
+    b: Block,
+    pos: usize,
+    new_insts: &[Inst],
+) -> Result<(), IrError> {
+    if new_insts.is_empty() {
+        return Ok(());
+    }
+    let order = &mut func.dfg.block_mut(b).inst_order;
+    let old: Vec<Inst> = order.clone();
+    let mut rebuilt: Vec<Inst> = Vec::with_capacity(old.len() + new_insts.len());
+    for (k, &x) in old.iter().enumerate() {
+        if k == pos {
+            rebuilt.extend_from_slice(new_insts);
+        }
+        if !new_insts.contains(&x) {
+            rebuilt.push(x);
+        }
+    }
+    if pos >= old.len() {
+        rebuilt.extend_from_slice(new_insts);
+    }
+    *order = rebuilt;
+    Ok(())
+}
+
+fn expand_arg(
     func: &mut Function,
     b: Block,
     ii: Inst,
@@ -394,9 +678,74 @@ fn expand_one(
                 .ok_or_else(|| IrError::Internal("va_arg 展开：块尾取不到新指令".into()))?,
         );
     }
-    moved.reverse();
-    for (k, &ni) in moved.iter().enumerate() {
-        func.dfg.block_mut(b).inst_order.insert(pos + k, ni);
-    }
+    move_new_before(func, b, pos, &out)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge_ir::ir::builder::FunctionBuilder;
+    use forge_ir::ir::types::{FunctionSignature, TypeContext};
+    use forge_isa_runtime::machine::call_layout::{VaInfo, VaKind, VaSave};
+
+    fn probe_with_local() -> Function {
+        let ctx = TypeContext::new();
+        let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("probe", ctx, sig);
+        let (e, _) = b.create_block_with_params(&[]);
+        b.switch_to_block(e);
+        let slot = b.stack_addr(-16);
+        let v = b.iconst(7, TypeId::I64);
+        b.store(v, slot);
+        let got = b.load(slot, TypeId::I64);
+        b.ret(&[got]);
+        b.finish().expect("probe")
+    }
+
+    fn va(save: bool) -> VaInfo {
+        VaInfo {
+            kind: VaKind::SysvRegSave,
+            size: 24,
+            align: 8,
+            stack_only: false,
+            fields: vec![],
+            save: save.then(|| VaSave {
+                size: 176,
+                align: 16,
+                slots: vec![],
+            }),
+            init: None,
+        }
+    }
+
+    /// **ABI 槽必须排在前端局部槽之下**（2026-10-01 实测的坑）：前端 `stack_addr(-16)` 在
+    /// lowering 里才被统计，若 ABI 槽从 0 起排就会与它重叠。这条断言是**确定性**的
+    /// （直接看分配结果），不依赖某个用例"恰好读错值"。
+    #[test]
+    fn abi_slots_sit_below_frontend_locals() {
+        let f = probe_with_local();
+        let front = frontend_locals_depth(&f, 8);
+        assert!(
+            front > 0,
+            "带 stack_addr 的函数必须扫出正的局部槽深度（实测 {front}）"
+        );
+        // 有保存区：保存区接在前端局部槽**之下**、对象再在保存区之后
+        let s = plan_abi_slots(&f, &va(true), 8, 64);
+        assert!(
+            s.save_depth >= front + 176,
+            "保存区必须在前端局部槽之下（front={front}, save_depth={}）",
+            s.save_depth
+        );
+        assert!(s.obj_depth > s.save_depth, "对象在保存区之下");
+        assert_eq!(s.max_depth, s.obj_depth);
+        assert_eq!(
+            s.save_off,
+            -(s.save_depth as i64) - 64,
+            "序言用的偏移 = -depth - shift"
+        );
+        // 没有保存区（win64 栈式）：对象直接排在前端局部槽之下
+        let s2 = plan_abi_slots(&f, &va(false), 8, 64);
+        assert!(s2.obj_depth >= front + 24, "对象槽在局部槽之下");
+    }
 }

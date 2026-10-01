@@ -1922,23 +1922,55 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         let needs_agg_expand = crate::pipeline::agg_expand::has_any_agg(func);
         let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());
 
-        // **保存区形态的 `VaArg` 展开**（v20 变参 V3）：与聚合展开同一时机（必须在
-        // `CompileState::new` 之前——它克隆常量池），且必须在 lowering 之前。
+        // **变参 IR 展开**（v20 变参 V3）：保存区一族的 `VaStart`/`VaArg` 在这里展开成显式 IR
+        // （条件取值、逐字段物化——理由见 `pipeline/va_expand.rs`）。
         //
-        // 需要 plan 里的 `va.save`/`va.init`（字段偏移/上限/步长/初值），这里单独算一份
-        // （与 `abi_setup::setup_conv` 同源）。win64 那种栈式形态 `save` 为 `None` ⇒ **不展开**，
-        // 仍走生成器里那条专用臂（已在用、有真跑用例）。
-        if crate::pipeline::va_expand::has_va_arg(func)
-            && let Some(va) = crate::pipeline::va_expand::save_area_va_info(
+        // 时机：与聚合展开同一处（**必须**在 `CompileState::new` 之前——它克隆常量池；展开会
+        // 往池里插常量），也在 lowering 之前。
+        //
+        // **ABI 槽（保存区 + `va_list` 对象）由这里排布**：必须排在前端局部槽（`stack_addr(-N)`）
+        // **之下**，而前端的槽要 lowering 才统计——所以 `plan_abi_slots` 先扫一遍 IR 算深度，
+        // 再把结果喂给 `CompileState`（帧尺寸与序言 spill 偏移都读它）。win64 栈式 `save` 为
+        // `None` ⇒ **不展开**，仍走生成器那条已有用例的专用臂。
+        let mut abi_slots: Option<crate::pipeline::va_expand::AbiSlots> = None;
+        if crate::pipeline::va_expand::has_va_op(func) {
+            match crate::pipeline::va_expand::save_area_va_info(
                 &self.machine,
                 func,
                 self.module_sigs.as_deref(),
-            )?
-        {
-            let f = func_owned.get_or_insert_with(|| func.clone());
-            let n = crate::pipeline::va_expand::expand_va_arg(f, &va)?;
-            if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
-                eprintln!("[forge] va_arg 展开：{n} 条（保存区形态）");
+            )? {
+                // win64 栈式（`save` 为 None）：交给生成器专用臂，不在这里展开。
+                Some((va, _)) if va.save.is_none() => {}
+                Some((va, layout)) => {
+                    let fl = crate::pipeline::frame_layout::frame_layout_info(
+                        &self.machine,
+                        Some(&layout),
+                    );
+                    let slots = crate::pipeline::va_expand::plan_abi_slots(
+                        func,
+                        &va,
+                        crate::machine::target::TargetMachine::reg_info(&self.machine).slot_bytes()
+                            as u32,
+                        i64::from(fl.stack_slot_shift),
+                    );
+                    let f = func_owned.get_or_insert_with(|| func.clone());
+                    let (ns, na) = crate::pipeline::va_expand::expand_va(f, &va, &slots)?;
+                    abi_slots = Some(slots);
+                    if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
+                        eprintln!(
+                            "[forge] 变参展开：物化 {ns} 份对象、取值 {na} 条\
+                             （保存区深度 {}、对象深度 {}）",
+                            slots.save_depth, slots.obj_depth
+                        );
+                    }
+                }
+                None => {
+                    return Err(IrError::Unsupported(format!(
+                        "变参：函数 `{}` 用了 VaStart/VaArg，但它的 `va_list` 形态不在可展开的一族\
+                         （保存区形态）里，生成器也只覆盖 win64 栈式——检查约定数据的 `hidden.va_list`",
+                        func.name
+                    )));
+                }
             }
         }
 
@@ -1980,7 +2012,12 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);
 
-        let mut state = CompileState::new(&self.machine, func_ref, self.module_sigs.as_deref())?;
+        let mut state = CompileState::new(
+            &self.machine,
+            func_ref,
+            self.module_sigs.as_deref(),
+            abi_slots,
+        )?;
         let _t = std::time::Instant::now();
 
         // Stage 1: Block mapping
@@ -2109,6 +2146,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         machine: &M,
         func: &Function,
         module_sigs: Option<&[(bool, u32)]>,
+        abi_slots: Option<crate::pipeline::va_expand::AbiSlots>,
     ) -> Result<Self, IrError> {
         // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
         // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取**一次快照**——守卫借的是
@@ -2162,33 +2200,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
         });
         ctx.constant_pool = Some(func.constants.clone());
 
-        // **寄存器保存区**（v20 变参 V3）：需要它的约定（sysv64/aapcs64/riscv）在序言里把参数
-        // 寄存器存进帧内，`va_list` 的保存区字段指向它。区大小/对齐/槽表来自 plan
-        // （`CallLayout.va.save`）——这里**预留帧字节**并算出帧基址相对偏移：序言按槽表 spill、
-        // `va_start` 用它写 `reg_save_area` 字段，两处都只读 `ctx.va_save_off`。
-        //
-        // 分配规则与 `Opcode::VaStart` 的对象槽同构（同一个 `max_stack_bytes` 增长方向 ⇒
-        // 两者不重叠）：对齐后接在现有 locals 之后，深度 = 对齐起点 + 区大小。
-        if let Some(save) = ctx
-            .conv
-            .layout()
-            .and_then(|cl| cl.va.as_ref())
-            .and_then(|va| va.save.as_ref())
-        {
-            let align = i64::from(save.align.max(1));
-            let size = i64::from(save.size.max(1));
-            let base = (i64::from(ctx.max_stack_bytes) + align - 1) / align * align;
-            let depth = base + size;
-            ctx.va_save_off = Some(-depth - i64::from(ctx.stack_slot_shift));
-            ctx.max_stack_bytes = ctx.max_stack_bytes.max(depth as u32);
-            if crate::pipeline::trace_enabled("FORGE_TRACE_STACK") {
-                eprintln!(
-                    "[forge] 变参保存区：size={size} align={align} depth={depth} -> 帧基址{:?}",
-                    ctx.va_save_off
-                );
-            }
+        // **变参 ABI 槽**（v20 变参 V3）：保存区与 `va_list` 对象两段的深度由
+        // `plan_abi_slots` 在编译入口算好（排在前端局部槽之下）并经 `abi_slots` 传进来——
+        // 这里只**播种**：抬 `max_stack_bytes`（帧尺寸要覆盖它们）并记下序言 spill 用的
+        // 保存区偏移。展开出来的 `StackAddr` 会让 lowering 自己再统计一次（同一组深度）。
+        if let Some(sl) = abi_slots {
+            ctx.va_save_off = (sl.save_depth > 0).then_some(sl.save_off);
+            ctx.max_stack_bytes = ctx.max_stack_bytes.max(sl.max_depth);
         }
-
         Ok(Self {
             vcode: VCode::new(),
             xreg_map: Vec::new(),
@@ -2338,7 +2357,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         alloc_result.call_layout = self.ctx.conv.layout.clone();
         // 栈参数区字节数（move_args 收栈参数时计算 spill 槽地址）
         alloc_result.stack_arg_bytes = self.ctx.max_stack_arg_bytes;
-        // 寄存器保存区偏移（v20 变参 V3）：序言按槽表 spill 时要用。
+        // 寄存器保存区 / 对象槽偏移（v20 变参 V3）：序言 spill 用前者。
         alloc_result.va_save_off = self.ctx.va_save_off;
         // 参数字节宽（IR 类型 size_bytes）——@move_args 的 by-ref 宽向量收参按
         // 真实字节宽分派 32B/64B load 变体。寄存器类宽对 >128 位向量恒为

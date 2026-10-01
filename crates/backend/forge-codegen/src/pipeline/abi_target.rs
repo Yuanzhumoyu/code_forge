@@ -20,7 +20,7 @@ use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
 use forge_isa_runtime::machine::call_layout::{
     ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaField, VaInfo, VaInit,
-    VaKind, VaSave, VaSaveSlot,
+    VaInitVal, VaKind, VaSave, VaSaveSlot,
 };
 use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest};
 use forge_isa_runtime::machine::target::TargetMachine;
@@ -363,9 +363,17 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
             }
         }
         let fp_limit = save.map(|s| s.size).unwrap_or(0);
+        // **逐字段初值**（与 `va.fields` 同序）：这一族的字段序是
+        // `[主游标, 次游标, 溢出指针, 保存区指针]`（sysv64 的 gp/fp/overflow/reg_save）——
+        // 常量给偏移、地址给帧内地址 / 保存区基址。**不做任何打包**：发射侧按每个字段
+        // 自己的宽度写（IR 展开，见 `pipeline::va_expand`）。
         Some(VaInit {
-            offsets: gp_off | (fp_off << 32),
-            overflow_off,
+            fields: vec![
+                VaInitVal::Imm(gp_off),
+                VaInitVal::Imm(fp_off),
+                VaInitVal::FrameOff(overflow_off),
+                VaInitVal::SaveOff,
+            ],
             gp_limit,
             fp_limit,
             gp_step,

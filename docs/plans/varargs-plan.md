@@ -237,7 +237,7 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 - **序言 spill**：`move_args` 在收参**之前**按槽表把参数寄存器存进去，**按槽的寄存器类分派**
   （GP 用 `stack_arg_store`、FP 用 `{ …, class = "fpr" }`——两个角色都已存在）。
 - **`va_start` 物化对象**（sysv64 一族）：`lea` 对象地址、`lea` 溢出区、`lea` 保存区，再用新角色
-  `gpr_imm` 把宿主算好的 `gp_offset|fp_offset` 打包值装进寄存器，最后三条帧相对 store 写字段。
+  **（这一版已被下一段取代：物化也搬进了 IR 展开。）**
   "已用掉几个参数寄存器 / 溢出区从哪开始"由**宿主**按 plan 预先算好（`VaListInit`），
   因为生成物是各约定通用的、算不出来。
 - **验收（真跑）**：`test_jit_va_start_materializes_the_sysv64_register_save_area`——调用方（也用
