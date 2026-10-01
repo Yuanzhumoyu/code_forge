@@ -11,6 +11,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参 V3 计划面：`va_list` 字段布局 + 寄存器保存区槽表
+
+寄存器保存区（`sysv64`/`lp64d`/`aapcs64`）是变参最后一块功能缺口。先把**风险最大的东西**做对：
+槽表与字段布局的数字——`va_arg` 的游标与序言 spill 都按它们走，算错就是**静默错值**。
+
+- **计划面新增两样数据**（`AbiPlan::va_area`）：`fields`（`va_list` 对象字段：名/偏移/宽）与
+  `save`（寄存器保存区：大小/对齐/槽表 `{寄存器, 区内偏移, 字节数}`）；`CallLayout.va` 有对应的
+  **运行时中立镜像**（只带偏移/大小/类+号，不带名字）。
+- **四份内置约定的数字**（由形态定的 psABI 事实，不是使用者选项）：
+  win64 `cursor@0+8`（无保存区）；sysv64 4 字段 + 保存区 `176/16` = 6 GP（8 字节槽）+ 8 XMM
+  （16 字节槽）；aapcs64 5 字段 + 保存区 `192/16` = 8 X + 8 V；lp64d `area@0+8` + 保存区 `128/8`
+  = 8 X + 8 F。
+- **踩到并修掉一个真问题**：浮点槽宽**不能取"寄存器类宽"**。psABI 规定的是**保存区槽宽**——
+  按绑定宽度算会得到 arm64 `128`（应 `192`：V 槽恒 16 字节）、riscv `96`（应 `128`：FP 槽 =
+  XLEN）。现在槽宽按**形态**给（与字段布局同一类事实）：`sysv_reg_save`/`aapcs64_struct` → 16、
+  `riscv_save_area` → `slot_bytes`。
+- **守卫**：`forge-abi` 的 `va_object_layout_matches_the_psabi_numbers`（四份约定的字段/槽表逐条
+  对 psABI）+ `abi_target_real::call_layout_mirrors_the_variadic_shape` 扩展到断言镜像后的字段与
+  槽表；黄金快照 `tests/golden/*.plan.txt` 重新生成（diff 只有新增的 `va_field`/`va_save*` 行）。
+- **诚实边界**：发射侧（序言按槽表 spill、给保存区与对象开帧槽、`va_start` 写字段、`va_arg`
+  分支取值）仍未做 ⇒ `va_start` 对保存区形态继续 **fail-closed**；**已知偏差**：arm64 的绑定把 V
+  建模成 64 位 ⇒ 序言只会写低 64 位（向量/HFA 变参要 128 位存取，arm64 落地时处理）。
+- 验证：`forge-abi`（含新守卫）、`forge-codegen`（1356 + `abi_target_real` 24）、`forge-tests`
+  （矩阵 196/3/0）、`forge-ir`、`forge-isa-dsl` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0、
+  markdownlint 0。
+
 ### Added (2026-10-01) — 变参进架构无关的 JIT 矩阵（`variadic_va_arg_int_and_float`）
 
 变参此前只有 `forge-codegen` 里的 JIT 用例（单机、单 ISA），**架构无关的 `jit_matrix` 里

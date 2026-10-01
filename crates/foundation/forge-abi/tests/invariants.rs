@@ -997,3 +997,96 @@ fn va_shapes_match_the_documented_table() {
     }
     assert_eq!(checked, 4, "四份内置约定都要核对到");
 }
+
+/// **`va_list` 对象的形状**（v20 变参 V3）：字段布局 + 寄存器保存区必须与 **psABI 的数字**
+/// 逐条一致——`va_arg` 的游标按这些槽宽/偏移推进，算错就是**静默错值**（不是编译错误）。
+///
+/// 这里特意**不拿"寄存器类宽"当槽宽**：psABI 规定的是保存区的槽宽。实测教训：
+/// 按绑定宽度算会得到 arm64 `128`（应 `192`：V 槽恒 16 字节）、riscv `96`（应 `128`）。
+#[test]
+fn va_object_layout_matches_the_psabi_numbers() {
+    let reg = registry();
+    let sig = Signature::new(vec![("a".into(), i64_())], None).variadic(1);
+    // (约定, ISA, 字段 "名@偏移+宽", 保存区 (size, align, GP 数, FP 数, GP 槽宽, FP 槽宽))
+    #[allow(clippy::type_complexity)]
+    let cases: [(
+        &str,
+        &str,
+        Vec<&str>,
+        Option<(u32, u32, usize, usize, u32, u32)>,
+    ); 4] = [
+        ("win64", "x86_64_v12", vec!["cursor@0+8"], None),
+        (
+            "sysv64",
+            "x86_64_v12",
+            vec![
+                "gp_offset@0+4",
+                "fp_offset@4+4",
+                "overflow_arg_area@8+8",
+                "reg_save_area@16+8",
+            ],
+            Some((176, 16, 6, 8, 8, 16)),
+        ),
+        (
+            "aapcs64",
+            "arm64_v12",
+            vec![
+                "__stack@0+8",
+                "__gr_top@8+8",
+                "__vr_top@16+8",
+                "__gr_offs@24+4",
+                "__vr_offs@28+4",
+            ],
+            Some((192, 16, 8, 8, 8, 16)),
+        ),
+        (
+            "lp64d",
+            "riscv64_v12",
+            vec!["area@0+8"],
+            Some((128, 8, 8, 8, 8, 8)),
+        ),
+    ];
+    for (conv, isa, fields, save) in cases {
+        let p = plan(&reg, isa, conv, &sig);
+        let va = p
+            .va_area
+            .as_ref()
+            .unwrap_or_else(|| panic!("{conv}: 变参应有 va_area"));
+        let got: Vec<String> = va
+            .fields
+            .iter()
+            .map(|f| format!("{}@{}+{}", f.name, f.offset, f.size))
+            .collect();
+        assert_eq!(got, fields, "{conv}: `va_list` 字段布局与 psABI 不一致");
+        match save {
+            None => assert!(
+                va.save.is_none(),
+                "{conv}: 该形态不需要寄存器保存区（未命名实参只在栈上）"
+            ),
+            Some((size, align, n_gp, n_fp, gp_slot, fp_slot)) => {
+                let s = va
+                    .save
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{conv}: 该形态需要寄存器保存区"));
+                assert_eq!(
+                    (s.size, s.align, s.slots.len()),
+                    (size, align, n_gp + n_fp),
+                    "{conv}: 保存区大小/对齐/槽数"
+                );
+                for (i, slot) in s.slots.iter().enumerate() {
+                    let (want_off, want_size) = if i < n_gp {
+                        (i as u32 * gp_slot, gp_slot)
+                    } else {
+                        (n_gp as u32 * gp_slot + (i - n_gp) as u32 * fp_slot, fp_slot)
+                    };
+                    assert_eq!(
+                        (slot.offset, slot.size),
+                        (want_off, want_size),
+                        "{conv}: 第 {i} 个保存区槽（{}）的偏移/宽度",
+                        slot.reg.name
+                    );
+                }
+            }
+        }
+    }
+}

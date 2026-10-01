@@ -249,6 +249,20 @@ pub enum VaListKind {
     RiscvSaveArea,
 }
 
+impl VaListKind {
+    /// 该形态的 `va_list` 是否需要**寄存器保存区**（v20 变参 V3）。
+    ///
+    /// 需要：`va_arg` 得接着取"命名实参没用完的那几个参数寄存器"里的值 ⇒ 被调方要在序言里把
+    /// 参数寄存器存进帧内（sysv64 的 6 GP + 8 XMM、aapcs64 的 gr/vr 区、riscv 的保存区）。
+    /// 不需要：Win64 栈式（未命名实参只在栈上，`va_list` 就是一个游标指针）。
+    pub fn needs_register_save_area(self) -> bool {
+        matches!(
+            self,
+            VaListKind::SysvRegSave | VaListKind::Aapcs64Struct | VaListKind::RiscvSaveArea
+        )
+    }
+}
+
 /// 扩展/符号性规则。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]

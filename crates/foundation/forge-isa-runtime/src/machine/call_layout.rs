@@ -173,7 +173,7 @@ impl VaKind {
     }
 }
 
-/// **变参信息**（v20 变参 V2）：被调方怎么找到未命名实参。
+/// **变参信息**（v20 变参 V2/V3）：被调方怎么找到未命名实参。
 ///
 /// 与 [`CallLayout::ret`]/[`ArgPlace`] 同源：由宿主的 `AbiPlan::va_area` 折过来。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +184,35 @@ pub struct VaInfo {
     pub align: u32,
     /// 未命名实参是否只走栈（约定数据）。
     pub stack_only: bool,
+    /// **`va_list` 对象的字段布局**（v20 V3）：`va_start` 物化对象、`va_arg` 取值时按它算偏移。
+    pub fields: Vec<VaField>,
+    /// **寄存器保存区**（v20 V3）：`None` = Win64 栈式（未命名实参只在栈上，不需要保存区）。
+    pub save: Option<VaSave>,
+}
+
+/// `va_list` 对象里的一个字段（运行时中立：只有偏移与大小；名字是计划面的事）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaField {
+    pub offset: u32,
+    pub size: u32,
+}
+
+/// 寄存器保存区（v20 V3）：被调方在序言里把参数寄存器存进帧内这一区。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaSave {
+    pub size: u32,
+    pub align: u32,
+    /// 槽表：寄存器（类 + 类内号）+ 区内偏移 + 字节数。
+    pub slots: Vec<VaSaveSlot>,
+}
+
+/// 保存区里的一个槽。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaSaveSlot {
+    pub class: forge_ir::RegClass,
+    pub index: u32,
+    pub offset: u32,
+    pub size: u32,
 }
 /// **一次调用的布局**（调用方与被调方共用）。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

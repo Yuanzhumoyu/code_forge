@@ -19,7 +19,8 @@ use forge_abi::{AbiError, AbiPlan, AbiRegistry, AbiTarget, Capability, Signature
 use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
 use forge_isa_runtime::machine::call_layout::{
-    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaInfo, VaKind,
+    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaField, VaInfo, VaKind,
+    VaSave, VaSaveSlot,
 };
 use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest};
 use forge_isa_runtime::machine::target::TargetMachine;
@@ -395,6 +396,32 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
             size: a.size,
             align: a.align,
             stack_only: a.stack_only,
+            // 字段布局与保存区槽表（v20 V3）：折成运行时中立镜像（只有偏移/大小/类+号）。
+            fields: a
+                .fields
+                .iter()
+                .map(|f| VaField {
+                    offset: f.offset,
+                    size: f.size,
+                })
+                .collect(),
+            save: a.save.as_ref().map(|s| VaSave {
+                size: s.size,
+                align: s.align,
+                slots: s
+                    .slots
+                    .iter()
+                    .map(|sl| {
+                        let (class, index) = reg(&sl.reg);
+                        VaSaveSlot {
+                            class,
+                            index,
+                            offset: sl.offset,
+                            size: sl.size,
+                        }
+                    })
+                    .collect(),
+            }),
         }),
     }
 }

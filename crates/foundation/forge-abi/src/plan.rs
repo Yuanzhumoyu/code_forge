@@ -251,6 +251,44 @@ pub struct VaArea {
     pub align: u32,
     /// 未命名实参是否**只能走栈**（Win64/AAPCS64/RISC-V 为真）。
     pub stack_only: bool,
+    /// **`va_list` 对象的字段布局**（v20 变参 V3）：由形态定的 psABI 事实——
+    /// 生成器物化对象（`va_start`）与取值（`va_arg`）时按这些偏移算。
+    ///
+    /// 例（sysv64）：`gp_offset@0:u32` / `fp_offset@4:u32` /
+    /// `overflow_arg_area@8:ptr` / `reg_save_area@16:ptr`。
+    pub fields: Vec<VaField>,
+    /// **寄存器保存区**（v20 变参 V3）：`needs_register_save_area()` 为真的形态才有。
+    pub save: Option<VaSaveArea>,
+}
+
+/// `va_list` 对象里的一个字段。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaField {
+    /// 字段名（psABI 里的叫法，只用于诊断与快照）。
+    pub name: String,
+    /// 相对对象起点的字节偏移。
+    pub offset: u32,
+    /// 字段字节数。
+    pub size: u32,
+}
+
+/// 寄存器保存区（v20 变参 V3）：被调方在序言里把**参数寄存器**存进帧内的一段区，
+/// `va_list` 的保存区指针字段指向它。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaSaveArea {
+    /// 区字节数（GP 块 + FP 块）。
+    pub size: u32,
+    pub align: u32,
+    /// 槽：寄存器 + 区内偏移 + 字节数（GP 块在前、FP 块在后，各自按池序）。
+    pub slots: Vec<VaSaveSlot>,
+}
+
+/// 保存区里的一个槽。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaSaveSlot {
+    pub reg: RegRef,
+    pub offset: u32,
+    pub size: u32,
 }
 
 /// **一份调用计划的完整描述**。
@@ -351,6 +389,23 @@ impl AbiPlan {
                 "va_area {:?} size={} align={} stack_only={}\n",
                 va.kind, va.size, va.align, va.stack_only
             ));
+            // 字段布局（v20 V3）：对象怎么物化由它定——逐字段列出（顺序即声明序）。
+            for f in &va.fields {
+                out.push_str(&format!("va_field {} @{} +{}\n", f.name, f.offset, f.size));
+            }
+            // 寄存器保存区：槽表是"序言要存谁、存到哪"的权威。
+            if let Some(save) = &va.save {
+                out.push_str(&format!(
+                    "va_save size={} align={}\n",
+                    save.size, save.align
+                ));
+                for s in &save.slots {
+                    out.push_str(&format!(
+                        "va_save_slot {} @{} +{}\n",
+                        s.reg.name, s.offset, s.size
+                    ));
+                }
+            }
         }
         if let Some(bits) = self.widen_to_bits {
             out.push_str(&format!("widen_to_bits {bits}\n"));

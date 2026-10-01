@@ -1370,6 +1370,16 @@ fn call_layout_mirrors_the_variadic_shape() {
         va.kind.supports_frame_addr_va_start(),
         "win64 的 va_start 可以直接用帧内栈地址（V2 的实现路径）"
     );
+    // 字段布局与保存区也跟着镜像（v20 V3）：win64 对象只有 1 个游标字段、不需要保存区。
+    assert_eq!(
+        va.fields
+            .iter()
+            .map(|f| (f.offset, f.size))
+            .collect::<Vec<_>>(),
+        vec![(0, 8)],
+        "win64 的 va_list 对象 = 1 个指针字段"
+    );
+    assert!(va.save.is_none(), "win64 栈式不需要寄存器保存区");
 
     // ② sysv64：寄存器保存区（发射侧未物化 ⇒ va_start 那条路必须 fail-closed）。
     let plan = plan_for_signature(&tm, &reg, "sysv64", &sig).expect("sysv64 变参 plan");
@@ -1380,6 +1390,43 @@ fn call_layout_mirrors_the_variadic_shape() {
     assert!(
         !va.kind.supports_frame_addr_va_start(),
         "寄存器保存区形态还不能用帧内栈地址实现 va_start（方案 V3）"
+    );
+    // 字段布局（4 字段）与保存区槽表（6 GP ×8 + 8 XMM ×16 = 176、对齐 16）都要镜像过来：
+    // `va_arg` 的游标与序言 spill 都按这些数字走，漏镜像 = 运行时算错偏移。
+    assert_eq!(
+        va.fields
+            .iter()
+            .map(|f| (f.offset, f.size))
+            .collect::<Vec<_>>(),
+        vec![(0, 4), (4, 4), (8, 8), (16, 8)],
+        "sysv64 的 va_list = gp/fp offset + overflow_arg_area + reg_save_area"
+    );
+    let save = va.save.as_ref().expect("sysv64 需要寄存器保存区");
+    assert_eq!((save.size, save.align), (176, 16));
+    assert_eq!(save.slots.len(), 14, "6 GP + 8 XMM");
+    // GP 块：0,8,…,40 各 8 字节；接着 FP 块：48,64,…,160 各 16 字节（psABI 的槽宽，
+    // **不是**寄存器类宽）。索引只在类内做区分，这里断言"偏移/宽度"这条真正驱动
+    // 序言 spill 与 `va_arg` 游标的数字。
+    let got: Vec<(u32, u32)> = save.slots.iter().map(|s| (s.offset, s.size)).collect();
+    assert_eq!(
+        got,
+        vec![
+            (0, 8),
+            (8, 8),
+            (16, 8),
+            (24, 8),
+            (32, 8),
+            (40, 8),
+            (48, 16),
+            (64, 16),
+            (80, 16),
+            (96, 16),
+            (112, 16),
+            (128, 16),
+            (144, 16),
+            (160, 16),
+        ],
+        "sysv64 保存区：6 GP（8 字节槽）+ 8 XMM（16 字节槽）"
     );
 
     // ③ 非变参签名：没有 va 信息。

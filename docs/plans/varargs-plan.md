@@ -208,6 +208,28 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 （`2.5 + 3.25 → 5`）。**仍缺**：更窄的浮点（f16 之类）与**向量**结果的取值能力——运行期按结果
 类型 fail-closed。
 
+**V3 的第二片已落地（2026-10-01）：`va_list` 字段布局 + 寄存器保存区的**计划面数据**。
+`AbiPlan::va_area` 现在带 `fields`（对象字段：名/偏移/宽）与 `save`（保存区：大小/对齐/槽表
+`{寄存器, 区内偏移, 字节数}`），`CallLayout.va` 有对应的运行时中立镜像，黄金快照与两条守卫
+（`va_object_layout_matches_the_psabi_numbers`、
+`abi_target_real::call_layout_mirrors_the_variadic_shape`）把数字钉住：
+
+- win64：`cursor@0+8`，**没有**保存区（未命名实参只在栈上）；
+- sysv64：`gp_offset@0+4 / fp_offset@4+4 / overflow_arg_area@8+8 / reg_save_area@16+8`，
+  保存区 176/16 = 6 GP（8 字节槽）+ 8 XMM（**16 字节槽**）；
+- aapcs64：5 字段（`__stack`/`__gr_top`/`__vr_top`/`__gr_offs`/`__vr_offs`），保存区 192/16 = 8 X + 8 V；
+- lp64d：`area@0+8`，保存区 128/8 = 8 X + 8 F。
+
+**踩到的真问题（已修）**：浮点槽宽**不能取"寄存器类宽"**——psABI 规定的是保存区槽宽。按绑定
+宽度算会得到 arm64 `128`（应 `192`：V 槽恒 16 字节）、riscv `96`（应 `128`：FP 槽 = XLEN）。
+现在槽宽按**形态**给（与字段布局同一类 psABI 事实）：`sysv_reg_save`/`aapcs64_struct` → 16、
+`riscv_save_area` → `slot_bytes`。**已知偏差**：arm64 的绑定把 V 建模成 64 位 ⇒ 序言只会写低
+64 位，向量/HFA 变参要 128 位存取（arm64 变参落地时处理）。
+
+**仍缺（发射侧）**：序言按槽表把参数寄存器存进帧内保存区、"管线要帧字节"给保存区与对象开槽、
+`va_start` 写这几个字段、`va_arg` 的分支式取值（游标超界 ⇒ 改取溢出区）。这几件事一起做才谈得上
+"sysv64 变参能用"，所以合成下一片；在此之前 `va_start` 对保存区形态继续 **fail-closed**。
+
 ## 6. 为什么现在**不做**（触发条件）
 
 与 A6 的两条"评估后不做"同源：**没有消费者**。

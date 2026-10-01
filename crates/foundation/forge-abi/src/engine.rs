@@ -9,7 +9,7 @@ use crate::binding::AbiBinding;
 use crate::error::AbiError;
 use crate::plan::{
     AbiPlan, ArgLoc, CalleeSavedPlan, DeclAttrs, Extension, HiddenSlots, Placement, Purpose,
-    RegRef, RetLoc, StackLayout, VaArea,
+    RegRef, RetLoc, StackLayout, VaArea, VaField, VaSaveArea, VaSaveSlot,
 };
 use crate::registry::AbiHooks;
 use crate::rules::{AbiRules, ClassAction, IndirectVia, PositionRule};
@@ -672,12 +672,17 @@ pub fn plan_fn(
                     what: "签名是变参，但约定没有声明 hidden.va_list（变参形态）".into(),
                 });
             }
-            kind => Some(VaArea {
-                kind,
-                size: rules.hidden.va_list_size,
-                align: rules.hidden.va_list_align,
-                stack_only: rules.variadic_stack_only,
-            }),
+            kind => {
+                let (fields, save) = va_object_layout(kind, rules, &mut pools)?;
+                Some(VaArea {
+                    kind,
+                    size: rules.hidden.va_list_size,
+                    align: rules.hidden.va_list_align,
+                    stack_only: rules.variadic_stack_only,
+                    fields,
+                    save,
+                })
+            }
         }
     } else {
         None
@@ -723,6 +728,91 @@ pub fn plan_fn(
         widen_to_bits: rules.extensions.widen_to_bits,
         note: rules.note.clone(),
     })
+}
+
+/// **`va_list` 对象的形状**（v20 变参 V3）：字段布局 + （需要时）寄存器保存区。
+///
+/// 两样都是**由形态定的 psABI 事实**，不是使用者的自由选择——使用者选的是
+/// `hidden.va_list = "…"`，选了 `sysv_reg_save` 就等于选了"4 个字段 + 6×8B GP/8×16B XMM 保存区"。
+/// 所以这里按形态给数据（而不是再加一串 TOML 键）：
+///
+/// | 形态 | 字段 | 保存区 |
+/// | --- | --- | --- |
+/// | `win64_stack` | `cursor@0:8` | 无（未命名实参只在栈上） |
+/// | `sysv_reg_save` | `gp_offset@0:4` `fp_offset@4:4` `overflow_arg_area@8:8` `reg_save_area@16:8` | GP 池（各 `slot_bytes`）+ FP 池（各寄存器类宽） |
+/// | `aapcs64_struct` | `__stack@0` `__gr_top@8` `__vr_top@16` `__gr_offs@24:4` `__vr_offs@28:4` | 同上 |
+/// | `riscv_save_area` | `area@0:8` | 同上 |
+///
+/// 保存区槽序 = `int_pool` 按序（偏移从 0 起、步长 `slot_bytes`），再 `float_pool` 按序
+/// （紧接 GP 块，步长 = **该形态的 psABI 浮点槽宽**，见下）。区对齐 = 最大槽宽。
+///
+/// **浮点槽宽为什么不能取"寄存器类宽"**（2026-10-01 实测）：psABI 规定的是**保存区的槽宽**，
+/// 与绑定把寄存器建模成多宽无关——x86 XMM 槽 16 字节、AArch64 V 槽 **16 字节**（即使标量
+/// double 只写低 8 字节）、RISC-V 槽 = XLEN（8）。按"寄存器类宽"算会得到 arm64 128（应 192）、
+/// riscv 96（应 128），两者都是**错的**：`va_arg` 的游标按 psABI 的槽宽推进。
+fn va_object_layout(
+    kind: crate::rules::VaListKind,
+    rules: &AbiRules,
+    pools: &mut Pools<'_>,
+) -> Result<(Vec<VaField>, Option<VaSaveArea>), AbiError> {
+    use crate::rules::VaListKind;
+    let f = |name: &str, offset: u32, size: u32| VaField {
+        name: name.to_string(),
+        offset,
+        size,
+    };
+    let fields = match kind {
+        VaListKind::None => Vec::new(),
+        VaListKind::Win64Stack => vec![f("cursor", 0, 8)],
+        VaListKind::SysvRegSave => vec![
+            f("gp_offset", 0, 4),
+            f("fp_offset", 4, 4),
+            f("overflow_arg_area", 8, 8),
+            f("reg_save_area", 16, 8),
+        ],
+        VaListKind::Aapcs64Struct => vec![
+            f("__stack", 0, 8),
+            f("__gr_top", 8, 8),
+            f("__vr_top", 16, 8),
+            f("__gr_offs", 24, 4),
+            f("__vr_offs", 28, 4),
+        ],
+        VaListKind::RiscvSaveArea => vec![f("area", 0, 8)],
+    };
+    if !kind.needs_register_save_area() {
+        return Ok((fields, None));
+    }
+    let gp_slot = rules.stack.slot_bytes.max(1);
+    // psABI 的**浮点槽宽**（按形态定，不是"寄存器类宽"）。
+    let fp_slot = match kind {
+        VaListKind::SysvRegSave | VaListKind::Aapcs64Struct => 16,
+        VaListKind::RiscvSaveArea => gp_slot,
+        VaListKind::Win64Stack | VaListKind::None => gp_slot,
+    };
+    let mut slots: Vec<VaSaveSlot> = Vec::new();
+    let mut off: u32 = 0;
+    for (pool, slot) in [(&rules.int_pool, gp_slot), (&rules.float_pool, fp_slot)] {
+        let Ok(regs) = pools.get(pool) else {
+            continue;
+        };
+        for r in regs {
+            slots.push(VaSaveSlot {
+                reg: r.clone(),
+                offset: off,
+                size: slot,
+            });
+            off = off.saturating_add(slot);
+        }
+    }
+    let align = gp_slot.max(fp_slot);
+    Ok((
+        fields,
+        Some(VaSaveArea {
+            size: off,
+            align,
+            slots,
+        }),
+    ))
 }
 
 /// 分类的**方向**：参数位 / 返回位（两者的规则可以不同，见 `AbiRules::ret_classify`）。
