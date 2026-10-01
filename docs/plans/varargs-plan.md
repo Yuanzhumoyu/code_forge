@@ -244,8 +244,37 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
   sysv64）传 `(0, 4, 7)`，被调方用 IR 算术读出 `gp_offset`（=8）与 `reg_save_area`，从
   `[reg_save+8]` / `[+16]` 取回 4 / 7 算出 47。**这条路验证了三件事**：序言 spill 的槽序/偏移、
   `gp_offset` 的初值、`reg_save_area` 指向保存区。
-- **`va_arg` 仍未接**（保存区形态）⇒ 对 sysv64 的 `va_arg` 继续 fail-closed；分支式取值的形态
-  见上一段（倾向管线里的 IR 展开，复用 `Icmp`/`Select`/`Iadd`/`Load`/`Store`）。
+- **`va_arg` 仍未接**（保存区形态）⇒ 对 sysv64 的 `va_arg` 继续 fail-closed。下一片的形态已核实
+  （见本节末尾「下一片」）。
+
+**下一片（唯一剩下的一块）：保存区形态的 `va_arg`，走"管线里的 IR 展开"**。核实结论：
+
+- **为什么不做成生成器序列**：需要"比较 + 条件选择 + 寄存器间加 + 掩码"四种能力，而 x86 谱里对应
+  指令都没有角色（`cmp`/`cmov`/`add_rr`/`and`）——为一条 op 加四个能力，且不如 IR 展开通用。
+- **为什么 IR 展开够用**：展开所需的 op **全都有现成降级**——`Icmp`、`Select`、`Iadd`、`Band`、
+  `Load`/`Store`（宽度按 IR 类型）、`Fload`/`Fptrunc`（`f32` 的默认提升就是取 `f64` 再窄回）。
+- **工具已核**：`Dfg::make_inst` / `make_value` 存在，`compiler.rs` 里已有几十处先例
+  （`Iconst → Iadd → Load`、`Store` 带 `SIDE_EFFECT`、以及"把原指令改 `Copy` 指向新值"的结果
+  重定向写法）。**要留神两点**：① `make_inst` 只建指令、**不插块序**，必须显式插到 `VaArg` 之前
+  （否则"原指令改 Copy"会读到尚未计算的值——照抄聚合展开的插入方式）；② 逐指令改写要"先收集
+  再改"两遍（借用 `func` 冲突）。
+- **展开形态**（sysv64，整数类）：
+  ```text
+  gp      = load u32 [ap]              ; gp_offset
+  in_reg  = icmp ult gp, 48
+  p_reg   = reg_save + zext(gp)
+  p_src   = select in_reg, p_reg, overflow
+  v       = load i64 [p_src]
+  gp_out  = select in_reg, gp + 8, gp
+  ov_out  = select in_reg, overflow, overflow + 8
+  store u32 [ap]   = gp_out
+  store i64 [ap+8] = ov_out
+  ```
+  浮点类（`fp_offset` 上限 176、步长 16）同理；结果按类型走 `Fload`/窄回。
+- **计划面还差的字段**：`VaInit` 现在只有 `offsets`/`overflow_off`，展开还要**上限**——由宿主从
+  保存区槽表算（`gp_limit` = GP 槽总字节、`fp_limit` = GP 块 + FP 块总字节），不写死 psABI 数字。
+
+在此之前 aapcs64/riscv 的 `init` 未算 ⇒ 它们的 `va_start` 也继续 fail-closed。
 
 **顺带修掉一个真 bug（sysv64 的栈实参落点）**：`sysv64` 内置规则的 `first_offset_slots` 写的是
 **1**，而本实现的被调方**总是 push 帧指针** ⇒ 从 `rbp` 看第一个栈实参在 `[rbp + 16]`（返回地址 +
