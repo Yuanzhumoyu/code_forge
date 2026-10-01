@@ -3024,6 +3024,57 @@ ret_int = ["RAX"]
             "调用方要把 f64 未命名实参按浮点写进传出区（XMM → 内存），被调方按 fpr 取值"
         );
     }
+
+    /// **变参 V4 + D5：`va_arg(ap, f32)` 走默认提升**（win64）——调用方按 C 的默认实参
+    /// 提升把 `float` 传成 `double`，被调方 `va_arg(ap, f32)` **取 f64 再窄回 f32**
+    /// （`{ role = "fpr_narrow", bits = 32 }`），随后按 f32 语义相加。
+    ///
+    /// 这条钉的是"提升规则"这一层：只按 f32 读 4 字节会读到 promoted double 的**低半**
+    /// （垃圾位型），值会静默错。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_arg_narrows_promoted_f32() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee(fmt: i64) -> i64 ── 变参：ret (i64)(va_arg(f32) + va_arg(f32))
+        // 调用方传的是 2.5 / 3.25（f64）；窄回 f32 后相加 = 5.75 ⇒ fptosi = 5。
+        // 若读取方只读 4 字节（不做提升），拿到的是 double 的低半残位，结果不会是 5。
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let va = callee.va_start();
+        let f1 = callee.va_arg(va, TypeId::F32);
+        let f2 = callee.va_arg(va, TypeId::F32);
+        let sum = callee.fadd(f1, f2);
+        let r = callee.fptosi(sum, TypeId::I64);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let x = main_fn.fconst_f64(2.5);
+        let y = main_fn.fconst_f64(3.25);
+        let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            5,
+            "f32 未命名实参按默认提升传（f64），`va_arg(ap, f32)` 必须取 f64 再窄回"
+        );
+    }
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的

@@ -643,6 +643,9 @@ name = "CVTSD2SS"
 form = "SSE_RR"
 opcode = 0x5A
 fields = { prefix = 0xF2, w = 0 }
+# 变参取值时的"窄回"能力（v20 V4 + D5）：C/LLVM 的默认实参提升把 float 传成 double，
+# `va_arg(ap, f32)` 得取 double 再窄回来——这条就是那一步（bits = 目的位宽）。
+roles = [{ role = "fpr_narrow", bits = 32 }]
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "cvtsd2ss {dst}, {src}"
 

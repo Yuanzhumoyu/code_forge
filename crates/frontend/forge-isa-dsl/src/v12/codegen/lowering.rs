@@ -1111,6 +1111,49 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
             }
         }
     };
+    // **默认提升的窄回**（D5）：`va_arg(ap, f32)` 读的是调用方按默认提升传的 `f64`
+    // （C/LLVM 语义），所以取完还要窄回 32 位。能力角色 `{ role = "fpr_narrow", bits = 32 }`。
+    let narrow = role_name_for(infos, Role::FprNarrow, 32)
+        .ok()
+        .map(|name| {
+            let vn = crate::v12::codegen::pascal_ident(&name);
+            let regs = inst_reg_imm_fids(infos, &name)
+                .map(|(r, _)| r)
+                .unwrap_or_default();
+            (vn, regs)
+        })
+        .filter(|(_, regs)| regs.len() >= 2);
+    let narrow_vn = narrow
+        .as_ref()
+        .map(|(vn, _)| vn.clone())
+        .unwrap_or_else(|| l_vn.clone());
+    let (n_dst, n_src) = narrow
+        .as_ref()
+        .map(|(_, regs)| (regs[0].clone(), regs[1].clone()))
+        .unwrap_or_else(|| (l_regs[0].clone(), l_regs[1].clone()));
+    let narrow_stmt: TokenStream = if narrow.is_some() {
+        quote! {
+            if __narrow {
+                let __idx = __pack.push_inst(Inst::#narrow_vn {
+                    #n_dst: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #n_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                });
+                __pack.map_reg_field(__tmp, __idx, #l_src_i, false);
+                __pack.map_reg_field(__r, __idx, #l_dst_i, true);
+            }
+        }
+    } else {
+        // 没有窄回能力 ⇒ 32 位浮点在运行期明确 Unsupported（f64 不受影响）。
+        quote! {
+            if __is_fp && __bits == 32 {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 va_arg: 本 ISA 未申报 { role = \"fpr_narrow\", bits = 32 } 的窄回\
+                     指令（默认提升后的 f64 窄不回 f32——C 的默认实参提升要求这一步）"
+                        .into(),
+                ));
+            }
+        }
+    };
     Ok(quote! {
         crate::prelude::Opcode::#op_ident { .. } => {
             let mut __pack = crate::prelude::InstPacket::new();
@@ -1151,8 +1194,8 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
             };
             // 结果类型判据（**按结果类型 fail-closed**，不把 FPR 塞进 GPR 指令）：
             //   * 向量 ⇒ 拒绝（要向量取值能力，今天没有）；
-            //   * 标量浮点 ⇒ 只支持 **f64**（f32/更窄要"提升规则"（D5）：调用方按 C 的
-            //     默认提升传 f64，读取方得读 f64 再 fptrunc——那是另一片）；
+            //   * 标量浮点 ⇒ `f64` 直接取；`f32` 读 `f64` 再窄回（C/LLVM 的默认实参提升，
+            //     见下方 `#narrow_stmt`）；更窄 ⇒ 拒绝；
             //   * 整数/指针 ⇒ 走无类限定的 `ptr_load`（宽度随 IR 类型自动）。
             let __bits = ctx.type_bits_of(&__r).unwrap_or(__SLOT_BYTES as u32 * 8);
             let __is_fp = ctx.xreg_types.get(&__r).copied().is_some_and(|__t| {
@@ -1168,16 +1211,19 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
                     "v12 va_arg: 向量结果需要「mem → 向量寄存器」的取值能力（尚未申报）".into(),
                 ));
             }
-            if __is_fp && __bits != 64 {
+            if __is_fp && __bits != 64 && __bits != 32 {
                 return Err(crate::prelude::IrError::Unsupported(
-                    "v12 va_arg: 只有 f64 的浮点取值能力；f32/更窄要「提升规则」（D5）——\
-                     调用方按默认提升传 f64，读取方读 f64 再截断"
+                    "v12 va_arg: 只支持 f64 与 f32（f32 走默认提升的窄回）；更窄的浮点\
+                     还没有能力声明"
                         .into(),
                 ));
             }
             #fpr_missing_guard
+            // 默认提升的窄回：f32 的结果**先取 f64 到临时寄存器**，再窄回。
+            let __narrow = __is_fp && __bits == 32;
             // ① 游标 = [ap]
             let __cur = ctx.alloc_xreg(__ADDR_CLASS);
+            let __tmp = ctx.alloc_xreg(__DEFAULT_FPR_CLASS);
             let __i1 = __pack.push_inst(Inst::#l_vn {
                 #l_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
                 #l_src: Reg::from_index(0, __ADDR_CLASS),
@@ -1186,12 +1232,15 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
             __pack.map_reg_field(__cur, __i1, #l_dst_i, true);
             // ② 值 = [cur]：标量浮点走 `class = "fpr"` 的取值指令（mem → XMM），
             //    整数/指针走无类限定的那条（宽度随结果类自动：gprx 槽按 IR 值宽度选 REX/前缀）。
+            //    f32（提升）时结果先落在临时寄存器上，由 `#narrow_stmt` 窄回结果 XReg。
             let __i2 = if __is_fp {
+                let __dst = if __narrow { __tmp } else { __r };
                 let __idx = __pack.push_inst(Inst::#fpr_load_vn {
                     #f_l_dst: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                     #f_l_src: Reg::from_index(0, __ADDR_CLASS),
                 });
                 __pack.map_reg_field(__cur, __idx, #l_src_i, false);
+                __pack.map_reg_field(__dst, __idx, #l_dst_i, true);
                 __idx
             } else {
                 let __idx = __pack.push_inst(Inst::#l_vn {
@@ -1201,7 +1250,10 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
                 __pack.map_reg_field(__cur, __idx, #l_src_i, false);
                 __idx
             };
-            __pack.map_reg_field(__r, __i2, #l_dst_i, true);
+            if !__is_fp {
+                __pack.map_reg_field(__r, __i2, #l_dst_i, true);
+            }
+            #narrow_stmt
             // ③ cur += slot_bytes（两地址：同一条 XReg 既 use 又 def）
             let __i3 = __pack.push_inst(Inst::#a_vn {
                 #a_dst: Reg::from_index(0, __ADDR_CLASS),

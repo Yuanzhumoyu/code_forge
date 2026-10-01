@@ -11,6 +11,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参 V4 第三片：`f32` 的默认实参提升（`va_arg` 取 f64 再窄回）
+
+`f32` 走进来：按 **C/LLVM 的默认实参提升**，`float` 在变参调用里被传成 `double`，所以
+`va_arg(ap, f32)` 必须**取 `f64` 再窄回**——只按 f32 读 4 字节会读到 promoted double 的**低半**
+（垃圾位型，静默错值）。
+
+- **新能力角色** `{ role = "fpr_narrow", bits = 32 }`（x86 = `CVTSD2SS`）：把默认提升后的浮点值
+  窄回目标宽度（`bits` 用 S9 的宽度语义）。缺它 ⇒ `va_arg(ap, f32)` **明确 Unsupported**
+  （`f64` 不受影响）。
+- **D5 裁定同日更正**：提升规则**不放约定数据**，而是放在 `va_arg` 的语义里——C 的默认实参
+  提升是**语言层**规则、不是 ABI 事实，LLVM 就是这么分工的（`va_arg` 指令语义规定"小于
+  `double` 的浮点按 `double` 读再截断"，clang 在调用点做提升）。原先写的"进 `AbiRules` 的
+  `va_promote`"是**过度数据化**：四份内置约定都是 double，加一个没人会改的键不合本仓库
+  "没有消费者不加键"的纪律。**触发条件**：若某份约定的变参浮点提升在 psABI 层面不是 double，
+  再加数据键。
+- 发射序列（win64）：`cur = [ap]` → `tmp = [cur]`（fpr 取值，f64）→ `val = cvtsd2ss(tmp)` →
+  `cur += slot_bytes` → `[ap] = cur`。
+- **验收（真跑）**：`test_jit_va_arg_narrows_promoted_f32`——调用方传 `2.5` / `3.25`（f64），
+  被调方两次 `va_arg(ap, f32)` 窄回后相加 = `5.75`，`fptosi` 得 **5**。
+- 仍是 ⬜：寄存器保存区（`sysv64`/`lp64d`/`aapcs64` 的序言物化）、更窄浮点与向量的取值能力。
+- 验证：`forge-codegen --lib --all-features`（1354）、`forge-tests`（x86 矩阵 195/3/0）、
+  `forge-ir`、`forge-isa-dsl`、`forge-abi` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0、
+  markdownlint 0。
+
 ### Added (2026-10-01) — 变参 V4 第二片：浮点（f64）未命名实参两端打通
 
 整数类之后补上浮点：**调用方**把 f64 栈实参按类写进传出区、**被调方**用 `va_arg(ap, f64)` 读回。

@@ -315,7 +315,8 @@ pub fn role_capability(role: Role) -> Option<&'static str> {
         | Role::CalleeLoad
         | Role::PtrLoad
         | Role::PtrStore
-        | Role::AddImm => {
+        | Role::AddImm
+        | Role::FprNarrow => {
             return None;
         }
     })
