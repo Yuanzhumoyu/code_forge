@@ -366,6 +366,22 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
 或该约定不支持变参时，`va_start` **明确 fail-closed**（消息分别点名"变参 V3 未实现"与
 "该约定不支持变参"）——不猜、也不退化。
 
+**取值**用 `va_arg(ap, ty)`（IR op，1 操作数 → 1 结果，带 `SIDE_EFFECT`）：它读 `ap` 指向的
+对象 → 取一个 `ty` → **原地推进**游标 → 返回该值。发射同样按**能力角色**取三条指令
+（`ptr_load`/`ptr_store`/`add_imm`；x86 = `MOV_R_MEM`/`STORE_MEM_R`/`ADD_R_IMM32`）：
+
+```text
+cur = [ap]        ; ① 游标（ptr_load）
+val = [cur]       ; ② 取值（ptr_load；宽度随结果类自动）
+cur += slot_bytes ; ③ 推进（add_imm）
+[ap] = cur        ; ④ 写回（ptr_store）
+```
+
+缺任一条角色 ⇒ 整条臂明确 `Unsupported`（点名缺哪个角色）。**本片只覆盖整数类结果**：
+浮点/向量结果要「mem → FPR」的取值能力（x86 谱今天没有这条角色），因此**按结果类型
+fail-closed**，不把 FPR 塞进 GPR 指令里静默编错；提升规则（D5）随之留给"有浮点取值能力"
+的那一片——整数类今天靠"调用方按槽写、读取方按结果宽度截断"已经自洽。
+
 ### 无 plan = 编译错误（v20 A6）
 
 编译入口（`CompileState::new`）对**函数本身**也算一份 plan；**算不出来就是编译错误**，
@@ -425,8 +441,9 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参：调用方发未命名实参（win64） | ✅ | `call_site_variadic_hint_decides_unnamed_argument_placement`、`test_jit_variadic_unnamed_args_go_to_stack` |
 | 变参状态上报（`abi check` 的 `ℹ 变参 …` 行 + 三种自相矛盾的硬错） | ✅ | `abi_check_reports_the_variadic_state` |
 | 变参 V2 数据面：IR `VaStart` + `CallLayout.va` 镜像 | ✅ | `call_layout_mirrors_the_variadic_shape` |
-| 变参 V3 对象物化：`va_start` 建 `va_list` 对象（管线给帧槽）+ win64 穿过对象读回 | ✅ | `test_jit_va_start_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
-| 变参 V4：`VaArg` op（游标推进 + 提升）、寄存器保存区 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参 V3 对象物化：`va_start` 建 `va_list` 对象（管线给帧槽）+ win64 穿过对象读回 | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
+| 变参 V4：`va_arg` 取值 + 原地推进（整数类，win64） | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（两次 `va_arg` → 4 / 7） |
+| 变参：寄存器保存区（`sysv64`/`lp64d`/`aapcs64`）、浮点取值能力、提升规则 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
 | 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |

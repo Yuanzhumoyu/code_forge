@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参 V4 第一片：`va_arg` 取值 + 原地推进（整数类，win64 端到端）
+
+`va_list` 对象之上补上"取值"这一半：**`va_arg(ap, ty)`**（IR op 本来就有——`ops.toml`、文本层
+`va_arg <ptrty> <ptr>, <ty>`、二进制格式往返；这一片补上 `FunctionBuilder::va_arg` 与发射）。
+
+- **发射按三个能力角色取**（`ptr_load`/`ptr_store`/`add_imm`），序列 =
+  `cur = [ap]` → `val = [cur]` → `cur += slot_bytes` → `[ap] = cur`；x86 谱把这三个角色打在
+  `MOV_R_MEM`/`STORE_MEM_R`/`ADD_R_IMM32` 上（指令本来就有，只是没有角色——值是**宽度自动**
+  的 `gprx` 槽，所以 i32/i64 都走同一条发射路径）。缺角色 ⇒ 整条臂明确 `Unsupported`。
+  这三个角色**不是 ABI 能力**（`abi_view::role_capability` 返回 `None`）：`forge-isa abi check`
+  不看它们，缺了由生成器点名。
+- **只覆盖整数类结果**：浮点/向量要「mem → FPR」的取值能力（x86 谱今天没有，`fpr_mov` 是
+  寄存器间搬运），所以**按结果类型 fail-closed**——不把 FPR 塞进 GPR 指令里静默编错值。
+  提升规则（D5）随之留给"有浮点取值能力"的那一片：整数类今天靠"调用方按槽写、读取方按结果
+  宽度截断"已经自洽。
+- **验收（真跑）**：`test_jit_va_arg_reads_unnamed_stack_args`（V3 那条改用 `va_arg`）——
+  变参 `callee(fmt)` 两次 `va_arg` 取回 `4` / `7`，算 `4*10+7 = 47`。
+- 仍是 ⬜：寄存器保存区（`sysv64`/`lp64d`/`aapcs64` 的序言物化）、浮点取值能力、提升规则数据。
+- 验证：`forge-codegen --lib --all-features`（1352）、`forge-isa-dsl`、`forge-ir`、`forge-abi`、
+  `forge-tests`（x86 矩阵 195 passed / 3 skipped / 0 failed）全绿；`clippy -D warnings` 0、
+  `cargo fmt --check` 0、markdownlint 0。
+
 ### Changed (2026-10-01) — 变参 V3 第一片：`va_start` 物化 `va_list` 对象（契约收紧，破坏性）
 
 V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win64 栈式**成立，往寄存器保存区

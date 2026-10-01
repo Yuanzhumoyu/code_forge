@@ -171,23 +171,30 @@ V2 落地时把 `VaStart` 定义成"**取未命名实参区的地址**"——那
 和 V3 一起设计，**不要**在 `va_start` 里塞特例。
 
 修订后的分期：**V3** = 上面 1 + 2 + 帧槽机制 + 序言物化（win64 的"1 字段对象"当第一块试金石：
-既有 `test_jit_va_start_reads_unnamed_stack_args` 改成用 `va_arg` 读回 47）；**V4** = `VaArg` op
+验收件 `test_jit_va_arg_reads_unnamed_stack_args` 读回 47）；**V4** = `VaArg` op
 加上提升规则（可选再做 `va_copy`）。
 
 **V3 的第一片已落地（2026-10-01）**：**对象物化**——管线按 `va_area.size/align` 给 `VaStart`
 分配帧槽（与 `StackAddr` 同一条通路：设 `ctx.current_offset`、抬 `max_stack_bytes`），生成器
 `lea` 出对象地址、把未命名区地址写进字段 0（win64 的形状）、返回对象地址。契约从
 "返回未命名区地址"改成"**返回对象地址**"（破坏性，按上表裁定执行）；
-`test_jit_va_start_reads_unnamed_stack_args` 改成**穿过对象**读回两个实参（实跑 47）。
+`test_jit_va_arg_reads_unnamed_stack_args`（当时还叫 `…_va_start_…`）改成**穿过对象**读回两个实参（实跑 47）。
 **仍是 ⬜**：寄存器保存区（`sysv64`/`lp64d`/`aapcs64` 的序言物化）、`VaArg` op 与提升规则
 （V4）、以及"按 vreg 基址读写"的三个能力角色（`ptr_load`/`ptr_store`/`add_imm`——`VaArg`
 的游标推进要用，见下一段）。
 
-**V4 需要的新能力（尚未申报）**：win64 的 `va_arg` 序列 = 从对象取游标 → 从游标取值 →
+**V4 需要的新能力（已申报）**：win64 的 `va_arg` 序列 = 从对象取游标 → 从游标取值 →
 游标 += 槽宽 → 写回对象。x86 谱里"值基址"的内存访问靠 **Reg 槽**（`MOV_R_MEM` 宽度自动、
-`STORE_MEM_R` 宽度自动），而"寄存器 += 常量"= `ADD_R_IMM32`——三条**都没有角色**，所以
-生成器今天取不到它们（本仓库的纪律是**按角色取能力**，不做按指令名探测）。因此 V4 的第一步
-是给这三条申报 `ptr_load`/`ptr_store`/`add_imm`，再写 `VaArg` 的发射臂。
+`STORE_MEM_R` 宽度自动），"寄存器 += 常量"= `ADD_R_IMM32`——三条**都不是 ABI 能力**
+（`abi_view::role_capability` 对它们返回 `None`），只是"生成器要发一段序列"要的能力。
+
+**V4 的第一片已落地（2026-10-01）**：`va_arg(ap, ty)`（IR op 早已在 `ops.toml`/文本层/
+二进制格式里，这一片补上 builder 与发射）——生成器按上面三个角色发
+"取游标 → 取值 → 游标 += 槽宽 → 写回"，x86 谱把 `ptr_load`/`ptr_store`/`add_imm` 打到
+`MOV_R_MEM`/`STORE_MEM_R`/`ADD_R_IMM32` 上（这三条本来就有、只是没有角色）。
+`test_jit_va_arg_reads_unnamed_stack_args` 两次 `va_arg` 取回 `4`/`7` 算 `47`。
+**本片只覆盖整数类结果**：浮点/向量要「mem → FPR」的取值能力（x86 谱今天没有），
+**按结果类型 fail-closed**；提升规则（D5）随之留给"有浮点取值能力"的那一片。
 
 ## 6. 为什么现在**不做**（触发条件）
 

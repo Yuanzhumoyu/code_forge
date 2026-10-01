@@ -555,6 +555,8 @@ effect = ["Move"]
 [[instructions]]
 name = "ADD_R_IMM32"
 ref = "add"
+# 地址算术能力（v20 变参 V4）：`dst += imm`——变参游标推进等生成器序列用它。
+roles = ["add_imm"]
 form = "MRR_EXT"
 modrm = { reg = 0, rm = "dst" }
 opcode = 0x81
@@ -853,6 +855,8 @@ asm = "lock xor [{src2}], {src}"
 [[instructions]]
 name = "MOV_R_MEM"
 form = "MRR_MEM"
+# 按 vreg 基址读内存的能力（v20 变参 V4）：`dst ← [src]`，宽度随目标类自动。
+roles = ["ptr_load"]
 modrm = { rm = "[src]" }
 opcode = 0x8B
 # v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I16→66、I32→无
@@ -873,6 +877,8 @@ asm = "mov {dst}, [{src}]"
 [[instructions]]
 name = "STORE_MEM_R"
 form = "MRR_MEM"
+# 把寄存器写进 vreg 基址的能力（v20 变参 V4，`ptr_load` 的写向）。
+roles = ["ptr_store"]
 modrm = { rm = "[src2]" }
 opcode = 0x89
 ops = ["src:gprx", "src2:gprx"]

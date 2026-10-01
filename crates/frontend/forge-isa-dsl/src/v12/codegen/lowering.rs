@@ -24,7 +24,7 @@ use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
 use super::integration::{
     collect_phys_clobbers, compile_pred_guard, gen_lowering_attrs, inst_exists, inst_fids,
-    inst_move_role, lowering_token_kind, parse_i64_lit, parse_mem_template,
+    inst_move_role, inst_reg_imm_fids, lowering_token_kind, parse_i64_lit, parse_mem_template,
     strip_placeholder_decls,
 };
 use super::{InstInfo, field_ctor_expr};
@@ -60,9 +60,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
     // 返回值移动）——动态参数数/类型分派无法用静态模板表达；无 TOML 规则。
     arms.push(gen_call_lowering("Call", infos, model)?);
     arms.push(gen_call_lowering("CallIndirect", infos, model)?);
-    // VaStart（变参 V2）：取"未命名实参区"的地址——**落点是约定数据**（`CallLayout.va`），
+    // VaStart（变参 V2/V3）：物化 `va_list` 对象——**落点是约定数据**（`CallLayout.va`），
     // 静态模板表达不了，同样走专用 lowering。
     arms.push(gen_va_start_lowering(infos, model)?);
+    // VaArg（变参 V4）：读游标 → 取值 → 推进游标 → 写回——序列随约定的 `va_list` 形状变，
+    // 静态模板同样表达不了。
+    arms.push(gen_va_arg_lowering(infos, model)?);
     // 按 op 分组，组内按裁决序（priority 降 / 谓词叶子数降 / 声明序升）——
     // 见 `V12Model::lowering_by_op`，与 validate 的死规则判定同读一份顺序。
     let by_op = model.lowering_by_op();
@@ -997,6 +1000,161 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
                 #s_reg_fid: Reg::from_index(0, __ADDR_CLASS),
             });
             __pack.map_reg_field(__cur, __sidx, #s_reg_idx, false);
+            Ok(__pack)
+        }
+    })
+}
+
+/// **`VaArg` 的专用 lowering**（v20 变参 V4）：从 `va_list` 对象取一个实参、**原地推进**
+/// 游标、返回结果值。
+///
+/// 序列（与 psABI 的做法同形：对象在内存里、`va_arg` 读写它）：
+///
+/// ```text
+/// cur  = [ap]                 ; ① 游标（ptr_load）
+/// val  = [cur]                ; ② 取值（ptr_load；宽度随结果类自动，见 gprx 槽）
+/// cur += slot_bytes           ; ③ 推进（add_imm）
+/// [ap] = cur                  ; ④ 写回（ptr_store）
+/// ```
+///
+/// 三条指令**按能力角色**取（`ptr_load`/`ptr_store`/`add_imm`），不做按指令名探测——
+/// 缺任一条就整条 arm 明确 `Unsupported`（点名缺哪个角色）。
+///
+/// **本片只覆盖整数类结果**：浮点/向量结果需要"mem → FPR"的取值能力（今天 x86 谱里
+/// 没有这条角色，`fpr_mov` 是寄存器间搬运），所以**运行时按结果类型 fail-closed**
+/// （而不是把 FPR 塞进 GPR 指令里静默编错）。提升规则（D5）随之留给"有浮点取值能力"的那一片：
+/// 整数类今天靠"调用方按槽写、读取方按结果宽度截断"已经自洽。
+fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStream, String> {
+    const OP: &str = "VaArg";
+    let op_ident = format_ident!("{OP}");
+    let missing = |what: &str| -> TokenStream {
+        let msg = format!(
+            "v12 va_arg: 本 ISA 缺能力角色 {what}（变参读取要「按地址取值 + 推进游标 + 写回」\
+             三条能力齐全）"
+        );
+        quote! {
+            crate::prelude::Opcode::#op_ident { .. } => {
+                return Err(crate::prelude::IrError::Unsupported(#msg.into()));
+            }
+        }
+    };
+    let (Some(load_name), Some(store_name), Some(add_name)) = (
+        role_name(infos, Role::PtrLoad).ok(),
+        role_name(infos, Role::PtrStore).ok(),
+        role_name(infos, Role::AddImm).ok(),
+    ) else {
+        return Ok(missing(
+            "roles = [\"ptr_load\"] / [\"ptr_store\"] / [\"add_imm\"]",
+        ));
+    };
+    let l_vn = crate::v12::codegen::pascal_ident(&load_name);
+    let s_vn = crate::v12::codegen::pascal_ident(&store_name);
+    let a_vn = crate::v12::codegen::pascal_ident(&add_name);
+    let Some((l_regs, _)) = inst_reg_imm_fids(infos, &load_name) else {
+        return Err(format!("[{load_name}] 作为 ptr_load 需要 Reg 槽"));
+    };
+    let Some((s_regs, _)) = inst_reg_imm_fids(infos, &store_name) else {
+        return Err(format!("[{store_name}] 作为 ptr_store 需要 Reg 槽"));
+    };
+    let Some((a_regs, a_imms)) = inst_reg_imm_fids(infos, &add_name) else {
+        return Err(format!("[{add_name}] 作为 add_imm 需要 Reg 槽"));
+    };
+    if l_regs.len() < 2 || s_regs.len() < 2 || a_regs.is_empty() || a_imms.is_empty() {
+        return Err(format!(
+            "变参 V4 的角色形状不符：{load_name}={} 个 Reg / {store_name}={} 个 Reg / \
+             {add_name}={} 个 Reg + {} 个 Imm（要 load=2、store=2、add=1+1）",
+            l_regs.len(),
+            s_regs.len(),
+            a_regs.len(),
+            a_imms.len()
+        ));
+    }
+    // 字段序号 = Reg 槽在指令里的声明序（`machine.rs` 的 `reg_fields` 只数 Reg 槽）。
+    let (l_dst, l_src) = (&l_regs[0], &l_regs[1]);
+    let (l_dst_i, l_src_i) = (0u8, 1u8);
+    let (s_val, s_base) = (&s_regs[0], &s_regs[1]);
+    let (s_val_i, s_base_i) = (0u8, 1u8);
+    let (a_dst, a_dst_i) = (&a_regs[0], 0u8);
+    let a_imm = &a_imms[0];
+    Ok(quote! {
+        crate::prelude::Opcode::#op_ident { .. } => {
+            let mut __pack = crate::prelude::InstPacket::new();
+            let __cl = match ctx.conv.layout() {
+                Some(__cl) => __cl,
+                None => {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 va_arg: 读 va_list 需要本函数的调用布局（plan）".into(),
+                    ));
+                }
+            };
+            if let Some(__va) = __cl.va.as_ref()
+                && !__va.kind.supports_frame_addr_va_start()
+            {
+                return Err(crate::prelude::IrError::Unsupported(format!(
+                    "v12 va_arg: 约定 `{}` 的 va_list 需要寄存器保存区（变参 V3 未实现）",
+                    __va.kind.name()
+                )));
+            }
+            // 游标步长先取出来：`__cl` 是对 `ctx` 的不可变借用，而后面要 `alloc_xreg`
+            // （可变借用）——借用不能跨过它（生成物会 E0502）。
+            let __stride = __cl.slot_bytes as i64;
+            let __ap = match args.first().copied() {
+                Some(__ap) => __ap,
+                None => {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 va_arg: 缺 va_list 指针操作数".into(),
+                    ));
+                }
+            };
+            let __r = match results.first().copied() {
+                Some(__r) => __r,
+                None => {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 va_arg: 缺结果值".into(),
+                    ));
+                }
+            };
+            // 整数类以外的结果：本片没有"mem → FPR"的取值能力 ⇒ **明确拒绝**
+            // （把 FPR 塞进 GPR 指令会静默编错值）。
+            let __non_int = ctx.xreg_types.get(&__r).copied().is_some_and(|__t| {
+                ctx.type_store
+                    .as_ref()
+                    .is_some_and(|__s| __s.is_float(__t) || __s.is_vector(__t))
+            });
+            if __non_int {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 va_arg: 浮点/向量结果需要「mem → FPR」的取值能力（本片只做整数类）".into(),
+                ));
+            }
+            // ① 游标 = [ap]
+            let __cur = ctx.alloc_xreg(__ADDR_CLASS);
+            let __i1 = __pack.push_inst(Inst::#l_vn {
+                #l_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                #l_src: Reg::from_index(0, __ADDR_CLASS),
+            });
+            __pack.map_reg_field(__ap, __i1, #l_src_i, false);
+            __pack.map_reg_field(__cur, __i1, #l_dst_i, true);
+            // ② 值 = [cur]（宽度随结果类自动：gprx 槽按 IR 值宽度选 REX/前缀）
+            let __i2 = __pack.push_inst(Inst::#l_vn {
+                #l_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                #l_src: Reg::from_index(0, __ADDR_CLASS),
+            });
+            __pack.map_reg_field(__cur, __i2, #l_src_i, false);
+            __pack.map_reg_field(__r, __i2, #l_dst_i, true);
+            // ③ cur += slot_bytes（两地址：同一条 XReg 既 use 又 def）
+            let __i3 = __pack.push_inst(Inst::#a_vn {
+                #a_dst: Reg::from_index(0, __ADDR_CLASS),
+                #a_imm: __stride,
+            });
+            __pack.map_reg_field(__cur, __i3, #a_dst_i, false);
+            __pack.map_reg_field(__cur, __i3, #a_dst_i, true);
+            // ④ [ap] = cur
+            let __i4 = __pack.push_inst(Inst::#s_vn {
+                #s_val: Reg::from_index(0, __ADDR_CLASS),
+                #s_base: Reg::from_index(0, __ADDR_CLASS),
+            });
+            __pack.map_reg_field(__cur, __i4, #s_val_i, false);
+            __pack.map_reg_field(__ap, __i4, #s_base_i, false);
             Ok(__pack)
         }
     })

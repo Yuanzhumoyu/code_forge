@@ -1223,11 +1223,11 @@ impl FunctionBuilder {
         )
     }
 
-    /// **取未命名实参区的地址**（v20 变参 V2）：结果类型 = 指针。
+    /// **物化 `va_list` 对象并返回其地址**（v20 变参 V2/V3）：结果类型 = 指针。
     ///
-    /// 落点由**调用约定**给（win64：`va_list` 就是指向栈上实参的指针 ⇒ 这条就是
-    /// "帧内那段栈地址"；sysv64/riscv/arm64 需要寄存器保存区，发射侧尚未物化 ⇒
-    /// 生成器 fail-closed）。前端拿到指针后用普通 `load`/`gep` 逐槽读。
+    /// 对象形状与放置都由**调用约定**给（win64：对象 = 1 个指针字段，指向栈上未命名实参；
+    /// sysv64/riscv/arm64 需要寄存器保存区，发射侧尚未物化 ⇒ 生成器 fail-closed）。
+    /// 前端拿到对象地址后：用 [`Self::va_arg`] 逐个取值（推荐），或按约定自己 `load`/`gep`。
     pub fn va_start(&mut self) -> Value {
         self.emit1(
             Opcode::VaStart,
@@ -1236,6 +1236,16 @@ impl FunctionBuilder {
             TypeId::PTR,
             InstFlags::NONE,
         )
+    }
+
+    /// **`va_arg`**（v20 变参 V4）：从 `ap` 指向的 `va_list` 对象里取一个 `ty` 的实参，
+    /// **原地推进**游标（对象被改写），返回取到的值。
+    ///
+    /// `ap` = [`Self::va_start`] 的结果（对象地址）。语义与文本层的
+    /// `va_arg <ptrty> <ptr>, <ty>` 与 LLVM 的 `va_arg` 一致：**带副作用**
+    /// （`InstFlags::SIDE_EFFECT`——重排或消去它会改变后续读取的值）。
+    pub fn va_arg(&mut self, ap: Value, ty: TypeId) -> Value {
+        self.emit1(Opcode::VaArg, vec![ap], vec![], ty, InstFlags::SIDE_EFFECT)
     }
     pub fn nop(&mut self) {
         self.emit(Opcode::Nop, vec![], vec![], &[], InstFlags::NONE);
