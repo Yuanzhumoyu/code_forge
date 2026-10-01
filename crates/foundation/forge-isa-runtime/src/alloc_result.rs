@@ -36,6 +36,9 @@ pub struct AllocResult {
     /// max_stack_arg_bytes）：move_args 收栈参数时计算 spill 槽地址
     ///（sp_base = -(frame) - callee_saved + stack_arg_bytes）需用它。
     pub stack_arg_bytes: u32,
+    /// **寄存器保存区**在帧内的偏移（相对帧基址；`None` = 本函数没有，v20 变参 V3）。
+    /// 序言按 `call_layout.va.save` 的槽表把参数寄存器存到 `[帧基址 + 本偏移 + 槽偏移]`。
+    pub va_save_off: Option<i64>,
     /// 参数是否为 32 位整数（i32/u32——收参需符号扩展 movsxd）。
     pub param_is_32: Vec<bool>,
     /// 每个参数的 **IR 类型字节数**（与 param_vregs 对齐）——由 `CompileState`
@@ -81,6 +84,7 @@ impl Default for AllocResult {
             param_by_ref: Vec::new(),
             sret: false,
             stack_arg_bytes: 0,
+            va_save_off: None,
             param_is_32: Vec::new(),
             param_bytes: Vec::new(),
             callee_saved_to_save: Vec::new(),
@@ -133,6 +137,7 @@ impl AllocResult {
             param_by_ref: Vec::new(),
             sret: false,
             stack_arg_bytes: 0,
+            va_save_off: None,
             param_is_32: Vec::new(),
             param_bytes: Vec::new(),
             callee_saved_to_save: Vec::new(),

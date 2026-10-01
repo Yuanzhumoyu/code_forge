@@ -919,6 +919,35 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
         ));
     };
     let __frame_base = frame_base_toks(model);
+    // sysv64 一族要把宿主算好的 gp/fp 打包偏移**装进寄存器**（立即数 → 寄存器）：按角色
+    // `gpr_imm` 取；缺它 ⇒ 该族在运行期明确 Unsupported（不引用不存在的变体）。
+    let imm_setup: TokenStream = match role_name(infos, Role::GprImm)
+        .ok()
+        .and_then(|name| inst_reg_imm_fids(infos, &name).map(|(regs, imms)| (name, regs, imms)))
+        .filter(|(_, regs, imms)| !regs.is_empty() && !imms.is_empty())
+    {
+        Some((name, regs, imms)) => {
+            let imm_vn = crate::v12::codegen::pascal_ident(&name);
+            let imm_dst = regs[0];
+            let imm_slot = imms[0];
+            quote! {
+                let __offs = ctx.alloc_xreg(__ADDR_CLASS);
+                let __offs_idx = __pack.push_inst(Inst::#imm_vn {
+                    #imm_dst: Reg::from_index(0, __ADDR_CLASS),
+                    #imm_slot: __init.offsets as i64,
+                });
+                __pack.map_reg_field(__offs, __offs_idx, 0u8, true);
+            }
+        }
+        None => quote! {
+            let __offs = __r;
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 va_start: 本 ISA 未申报 roles = [\"gpr_imm\"] 的指令\
+                 （写 va_list 的 gp/fp 偏移初值要用它）"
+                    .into(),
+            ));
+        },
+    };
     Ok(quote! {
         crate::prelude::Opcode::#op_ident { .. } => {
             let mut __pack = crate::prelude::InstPacket::new();
@@ -938,9 +967,12 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
                     ));
                 }
             };
-            if !__va.kind.supports_frame_addr_va_start() {
+            if !__va.kind.supports_frame_addr_va_start()
+                && __va.kind != crate::machine::call_layout::VaKind::SysvRegSave
+            {
                 return Err(crate::prelude::IrError::Unsupported(format!(
-                    "v12 va_start: 约定 `{}` 的 va_list 需要寄存器保存区（变参 V3 未实现）",
+                    "v12 va_start: 约定 `{}` 的 va_list 形态还不支持物化\
+                     （变参 V3 目前做了 win64 栈式与 sysv64 保存区两族）",
                     __va.kind.name()
                 )));
             }
@@ -965,7 +997,7 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
                     ));
                 }
             };
-            // ① 对象地址：管线为本 op 分配的帧槽（`ctx.current_offset`）。
+            // ① 对象地址：管线为本 op 分配的帧槽（`ctx.current_offset`）。两族都要它。
             let __idx = __pack.push_inst(Inst::#vn {
                 #reg_fid: Reg::from_index(0, __ADDR_CLASS),
                 #mem_fid: MemRef {
@@ -976,6 +1008,74 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
                 },
             });
             __pack.map_reg_field(__r, __idx, #reg_idx, true);
+            if __va.kind == crate::machine::call_layout::VaKind::SysvRegSave {
+                // **sysv64 一族**（v20 V3）：对象 = 4 个字段，值由宿主算好（`va.init`）：
+                //   gp_offset@0:u32 / fp_offset@4:u32（两个相邻 u32 ⇒ 一次 8 字节 store 写下去）
+                //   overflow_arg_area@8:8 / reg_save_area@16:8
+                // 三个值里两个是帧基址相对地址（`lea`），一个是宿主算好的常量（`gpr_imm`）。
+                let __init = match __va.init {
+                    Some(__init) => __init,
+                    None => {
+                        return Err(crate::prelude::IrError::Unsupported(format!(
+                            "v12 va_start: 约定 `{}` 的 `va_list` 初值还没算（宿主侧 \
+                             `CallLayout.va.init` 为空——aapcs64/riscv 的保存区形态待落地）",
+                            __va.kind.name()
+                        )));
+                    }
+                };
+                let __save_off = match ctx.va_save_off {
+                    Some(__o) => __o,
+                    None => {
+                        return Err(crate::prelude::IrError::Unsupported(
+                            "v12 va_start: 寄存器保存区还没在帧里开出来（管线未分配 va_save_off）"
+                                .into(),
+                        ));
+                    }
+                };
+                // ② overflow_arg_area 与 reg_save_area：两条 lea。
+                let __ov = ctx.alloc_xreg(__ADDR_CLASS);
+                let __ov_idx = __pack.push_inst(Inst::#vn {
+                    #reg_fid: Reg::from_index(0, __ADDR_CLASS),
+                    #mem_fid: MemRef {
+                        base: #__frame_base,
+                        disp: __init.overflow_off,
+                        index: None,
+                        scale: 1,
+                    },
+                });
+                __pack.map_reg_field(__ov, __ov_idx, #reg_idx, true);
+                let __rs = ctx.alloc_xreg(__ADDR_CLASS);
+                let __rs_idx = __pack.push_inst(Inst::#vn {
+                    #reg_fid: Reg::from_index(0, __ADDR_CLASS),
+                    #mem_fid: MemRef {
+                        base: #__frame_base,
+                        disp: __save_off,
+                        index: None,
+                        scale: 1,
+                    },
+                });
+                __pack.map_reg_field(__rs, __rs_idx, #reg_idx, true);
+                // ③ gp/fp 偏移打包值：立即数 → 寄存器（缺这条能力 ⇒ 明确 Unsupported）。
+                #imm_setup
+                // ④ 三个字段写回对象（帧相对 store）。
+                for (__foff, __vreg) in [
+                    (0i64, __offs),
+                    (8i64, __ov),
+                    (16i64, __rs),
+                ] {
+                    let __sidx = __pack.push_inst(Inst::#s_vn {
+                        #s_mem_fid: MemRef {
+                            base: #__frame_base,
+                            disp: ctx.current_offset + __foff,
+                            index: None,
+                            scale: 1,
+                        },
+                        #s_reg_fid: Reg::from_index(0, __ADDR_CLASS),
+                    });
+                    __pack.map_reg_field(__vreg, __sidx, #s_reg_idx, false);
+                }
+                return Ok(__pack);
+            }
             // ② 游标值：win64 的对象只有这一个字段（偏移 0）= 未命名实参区地址。
             let __cur = ctx.alloc_xreg(__ADDR_CLASS);
             let __cidx = __pack.push_inst(Inst::#vn {

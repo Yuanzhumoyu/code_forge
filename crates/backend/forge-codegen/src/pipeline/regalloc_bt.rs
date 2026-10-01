@@ -911,6 +911,7 @@ impl<'a> BtState<'a> {
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）
             sret: false,
             stack_arg_bytes: 0,
+            va_save_off: None,
             param_is_32: self
                 .config
                 .param_xregs

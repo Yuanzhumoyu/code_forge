@@ -917,6 +917,29 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     };
     let load_triple = tagged(Role::StackArgLoad, "收参指令")?;
     let store_triple = tagged(Role::StackArgStore, "写回指令")?;
+    // 浮点版的写回指令（`{ role = "stack_arg_store", class = "fpr" }`，v20 变参 V3）：
+    // 寄存器保存区里既有 GP 也有 FP 槽，spill 按槽的类分派。
+    let store_fpr_triple = match crate::v12::codegen::lowering::role_name_for_class(
+        infos,
+        Role::StackArgStore,
+        crate::v12::model::RoleClass::Fpr,
+    )
+    .and_then(|name| infos.iter().find(|i| i.inst.name == name))
+    {
+        Some(info) => {
+            let (reg, mem, _) = crate::v12::codegen::lowering::reg_mem_fids(info);
+            match (reg, mem) {
+                (Some(r), Some(m)) => Some((info.vn.clone(), m, r)),
+                _ => {
+                    return Err(
+                        "move_args: { role = \"stack_arg_store\", class = \"fpr\" } 必须是 Reg+Mem 形状"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        None => None,
+    };
     // 栈参数收参的 scratch 寄存器（`[machine].spill_scratch` 首项；迁移期回退
     // `[abi].scratch`）与 callee-saved 区字节数（sp_base 计算常量）。**只在真的要走
     // 栈参数收参时**要求声明（声明了 `stack_arg_load` 角色的 ISA）；缺声明 = 生成期
@@ -1251,11 +1274,73 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             ));
         },
     };
+    // 寄存器保存区 spill（v20 变参 V3）：需要保存区的约定（sysv64/aapcs64/riscv）在序言里
+    // 把**参数寄存器**存进帧内，`va_list` 的 `reg_save_area` 字段指向它。槽表来自 plan
+    // （`CallLayout.va.save`），偏移由管线分配（`__rm.va_save_off`）——这里只按槽表发 store，
+    // **按槽的寄存器类分派**（GP 槽用通用 store，FP 槽用 `class = "fpr"` 那条）。
+    //
+    // 放在收参**之前**：收参会用 scratch，先存一份原始参数寄存器最稳。
+    let va_save_spill: TokenStream = match store_triple.as_ref() {
+        Some((s_vn, s_mem, s_reg)) => {
+            let fpr_store: TokenStream = match store_fpr_triple.as_ref() {
+                Some((f_vn, f_mem, f_reg)) => quote! {
+                    let __bytes = encode(&Inst::#f_vn {
+                        #f_mem: MemRef {
+                            base: #callee_base,
+                            disp: __disp,
+                            index: None,
+                            scale: 1,
+                        },
+                        #f_reg: Reg::from_index(__slot.index, __slot.class),
+                    })
+                    .map_err(|e| crate::IrError::Emit(e))?;
+                },
+                None => quote! {
+                    return Err(crate::IrError::Unsupported(
+                        "v12 move_args: 寄存器保存区里的浮点槽需要 \
+                         { role = \"stack_arg_store\", class = \"fpr\" } 的指令"
+                            .into(),
+                    ));
+                },
+            };
+            quote! {
+                if let Some(__off) = __rm.va_save_off
+                    && let Some(__cl) = __rm.call_layout.as_ref()
+                    && let Some(__save) = __cl.va.as_ref().and_then(|__v| __v.save.as_ref())
+                {
+                    for __slot in __save.slots.iter() {
+                        let __disp = __off + __slot.offset as i64;
+                        let __bytes = if __slot.class.is_fp() {
+                            #fpr_store
+                            __bytes
+                        } else {
+                            let __bytes = encode(&Inst::#s_vn {
+                                #s_mem: MemRef {
+                                    base: #callee_base,
+                                    disp: __disp,
+                                    index: None,
+                                    scale: 1,
+                                },
+                                #s_reg: Reg::from_index(__slot.index, __slot.class),
+                            })
+                            .map_err(|e| crate::IrError::Emit(e))?;
+                            __bytes
+                        };
+                        __sink.put_bytes(&__bytes);
+                    }
+                }
+            }
+        }
+        // 没有通用 store 角色 ⇒ 本 ISA 不支持栈参数/保存区：整条留空（`va_start` 那条路
+        // 已经会因缺角色 fail-closed，不在这里重复报）。
+        None => quote! {},
+    };
     Ok(quote! {
         #head
         // 栈参数收参的 scratch（[machine].spill_scratch 首项）与 callee-saved
         // 字节数（sp_base 计算）——仅 shadow 声明时使用
         #stack_arg_prologue
+        #va_save_spill
         // 布局路径的入场判定：**全部**参数都落在受支持的落点才启用
         //（`Reg` / 带指针的 `Indirect` / `Stack`——栈参数的位置由 forge-abi 按
         // `first_offset_slots + shadow + k×slot` 算好，生成器不再自己数位置）。

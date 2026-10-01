@@ -3179,6 +3179,141 @@ ret_int = ["RAX"]
         assert_eq!(f(), 9, "第 5 个浮点形参（栈上）必须按浮点直接收进寄存器");
     }
 
+    /// **变参 V3：sysv64 的寄存器保存区 + `va_list` 对象物化**（真跑）。
+    ///
+    /// sysv64 的未命名实参**继续用寄存器**（`variadic_stack_only = false`）⇒ 被调方必须在序言里
+    /// 把参数寄存器存进帧内的**保存区**，`va_list` 的 `reg_save_area` 字段指向它、`gp_offset`
+    /// 指出"命名实参用掉几个槽"。这条用例用 **IR 算术**把这两半读出来（`va_arg` 的分支式取值
+    /// 还没做，见方案）：
+    ///
+    /// ```text
+    /// ap      = va_start()                 ; 对象（4 字段）
+    /// packed  = load i64 [ap]              ; 低 32 = gp_offset、高 32 = fp_offset
+    /// gp      = packed & 0xFFFF_FFFF       ; 命名实参用掉的字节数 = 8（fmt 在 RDI）
+    /// rs      = load i64 [ap + 16]         ; reg_save_area（帧内保存区地址）
+    /// a       = load i64 [rs + gp]         ; 第一个未命名实参 = RSI 槽
+    /// b       = load i64 [rs + gp + 8]     ; 第二个 = RDX 槽
+    /// ret a*10 + b                         ; 4*10 + 7 = 47
+    /// ```
+    ///
+    /// 调用方 `main` 也用 sysv64（调用点按**自己的**约定规划，两侧必须同源）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_start_materializes_the_sysv64_register_save_area() {
+        use forge_ir::ir::types::ConvName;
+        use forge_ir::{CallConvId, FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let cc = CallConvId::builtin(ConvName::SysV64);
+
+        let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
+            .with_variadic(true)
+            .with_calling_convention(cc.clone());
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let ap = callee.va_start();
+        let packed = callee.load(ap, TypeId::I64);
+        let mask = callee.iconst(0xFFFF_FFFF, TypeId::I64);
+        let gp = callee.band(packed, mask);
+        let two = callee.iconst(2, TypeId::I64);
+        let rs_p = callee.gep(ap, &[two], TypeId::I64);
+        let rs = callee.load(rs_p, TypeId::I64);
+        let p_a = {
+            let __i = callee.iadd(rs, gp);
+            callee.inttoptr(__i, TypeId::PTR)
+        };
+        let a = callee.load(p_a, TypeId::I64);
+        let eight = callee.iconst(8, TypeId::I64);
+        let gp8 = callee.iadd(gp, eight);
+        let p_b = {
+            let __i = callee.iadd(rs, gp8);
+            callee.inttoptr(__i, TypeId::PTR)
+        };
+        let b = callee.load(p_b, TypeId::I64);
+        let ten = callee.iconst(10, TypeId::I64);
+        let a10 = callee.imul(a, ten);
+        let r = callee.iadd(a10, b);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]).with_calling_convention(cc);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let x = main_fn.iconst(4, TypeId::I64);
+        let y = main_fn.iconst(7, TypeId::I64);
+        let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            47,
+            "sysv64：序言把 RSI/RDX 存进保存区、va_start 物化对象（gp_offset=8 + reg_save_area）"
+        );
+    }
+
+    /// **sysv64 的栈实参落点**：前 6 个整数进 RDI/RSI/RDX/RCX/R8/R9，第 7 个走栈。
+    ///
+    /// 本实现的被调方**总是 push 帧指针**⇒ 从 `rbp` 看，返回地址 + 保存的 fp 共占两个槽，
+    /// 第一个栈实参在 `[rbp + 16]`。`sysv64` 内置规则原先写 `first_offset_slots = 1`
+    /// （= 只算返回地址），比 win64/aapcs64/lp64d 少一槽 ⇒ 收到的是**返回地址**。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_sysv64_seventh_integer_arg_comes_from_the_stack() {
+        use forge_ir::ir::types::ConvName;
+        use forge_ir::{CallConvId, FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let cc = CallConvId::builtin(ConvName::SysV64);
+
+        let params: Vec<(TypeId, &str)> = vec![
+            (TypeId::I64, "a"),
+            (TypeId::I64, "b"),
+            (TypeId::I64, "c"),
+            (TypeId::I64, "d"),
+            (TypeId::I64, "e"),
+            (TypeId::I64, "f"),
+            (TypeId::I64, "g"),
+        ];
+        let sig_c = FunctionSignature::new(&params, &[TypeId::I64]).with_calling_convention(cc);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, cp) = callee.create_block_with_params(&params);
+        callee.switch_to_block(ce);
+        // ret g（第 7 个形参只能从栈上来）
+        callee.ret(&[cp[6]]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64])
+            .with_calling_convention(CallConvId::builtin(ConvName::SysV64));
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let args: Vec<_> = [1i64, 2, 3, 4, 5, 6, 7]
+            .into_iter()
+            .map(|v| main_fn.iconst(v, TypeId::I64))
+            .collect();
+        let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            7,
+            "sysv64 第 7 个整数形参在 [rbp+16]（返回地址 + 保存的帧指针各占一槽）"
+        );
+    }
+
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的

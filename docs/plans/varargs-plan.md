@@ -226,9 +226,34 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 `riscv_save_area` → `slot_bytes`。**已知偏差**：arm64 的绑定把 V 建模成 64 位 ⇒ 序言只会写低
 64 位，向量/HFA 变参要 128 位存取（arm64 变参落地时处理）。
 
-**仍缺（发射侧）**：序言按槽表把参数寄存器存进帧内保存区、"管线要帧字节"给保存区与对象开槽、
-`va_start` 写这几个字段、`va_arg` 的分支式取值（游标超界 ⇒ 改取溢出区）。这几件事一起做才谈得上
-"sysv64 变参能用"，所以合成下一片；在此之前 `va_start` 对保存区形态继续 **fail-closed**。
+**仍缺（发射侧）**：`va_arg` 的分支式取值（游标超界 ⇒ 改取溢出区）。这一片的其余三件已经落地
+（见下），所以 sysv64 的"**对象物化 + 保存区 spill**"现在真跑得通了。
+
+**V3 的第三片已落地（2026-10-01）：sysv64 的发射侧**（保存区 spill + `va_start` 物化对象）：
+
+- **管线预留保存区**：`CallLayout.va.save` 有区就按 `align`/`size` 在 locals 区之后开一段帧字节，
+  偏移落在 `LowerCtx::va_save_off` / `AllocResult.va_save_off`（与 `VaStart` 的对象槽同一条通路
+  ⇒ 不重叠）。实测（sysv64）：`size=176 align=16 depth=176 → 帧基址-240`。
+- **序言 spill**：`move_args` 在收参**之前**按槽表把参数寄存器存进去，**按槽的寄存器类分派**
+  （GP 用 `stack_arg_store`、FP 用 `{ …, class = "fpr" }`——两个角色都已存在）。
+- **`va_start` 物化对象**（sysv64 一族）：`lea` 对象地址、`lea` 溢出区、`lea` 保存区，再用新角色
+  `gpr_imm` 把宿主算好的 `gp_offset|fp_offset` 打包值装进寄存器，最后三条帧相对 store 写字段。
+  "已用掉几个参数寄存器 / 溢出区从哪开始"由**宿主**按 plan 预先算好（`VaListInit`），
+  因为生成物是各约定通用的、算不出来。
+- **验收（真跑）**：`test_jit_va_start_materializes_the_sysv64_register_save_area`——调用方（也用
+  sysv64）传 `(0, 4, 7)`，被调方用 IR 算术读出 `gp_offset`（=8）与 `reg_save_area`，从
+  `[reg_save+8]` / `[+16]` 取回 4 / 7 算出 47。**这条路验证了三件事**：序言 spill 的槽序/偏移、
+  `gp_offset` 的初值、`reg_save_area` 指向保存区。
+- **`va_arg` 仍未接**（保存区形态）⇒ 对 sysv64 的 `va_arg` 继续 fail-closed；分支式取值的形态
+  见上一段（倾向管线里的 IR 展开，复用 `Icmp`/`Select`/`Iadd`/`Load`/`Store`）。
+
+**顺带修掉一个真 bug（sysv64 的栈实参落点）**：`sysv64` 内置规则的 `first_offset_slots` 写的是
+**1**，而本实现的被调方**总是 push 帧指针** ⇒ 从 `rbp` 看第一个栈实参在 `[rbp + 16]`（返回地址 +
+保存的 fp 各一槽），win64/aapcs64/lp64d 本来就都是 2，只有这一份漏了。实测证据：
+`test_jit_sysv64_seventh_integer_arg_comes_from_the_stack` 在修前读到的是**返回地址**
+（`2001632886933`），修后是 `7`；`sysv64.plan.txt` 黄金快照的 `first_arg_off` 8 → 16、
+栈实参偏移整体 +8（逐个核对过）。**影响面**：任何走栈的 sysv64 形参（第 7 个整数起、超 FP 池的
+浮点）此前都读错——与变参无关，是这条路径此前**没有用例**。
 
 ## 6. 为什么现在**不做**（触发条件）
 

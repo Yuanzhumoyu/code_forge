@@ -2142,6 +2142,33 @@ impl<I: MachineInst + 'static> CompileState<I> {
         });
         ctx.constant_pool = Some(func.constants.clone());
 
+        // **寄存器保存区**（v20 变参 V3）：需要它的约定（sysv64/aapcs64/riscv）在序言里把参数
+        // 寄存器存进帧内，`va_list` 的保存区字段指向它。区大小/对齐/槽表来自 plan
+        // （`CallLayout.va.save`）——这里**预留帧字节**并算出帧基址相对偏移：序言按槽表 spill、
+        // `va_start` 用它写 `reg_save_area` 字段，两处都只读 `ctx.va_save_off`。
+        //
+        // 分配规则与 `Opcode::VaStart` 的对象槽同构（同一个 `max_stack_bytes` 增长方向 ⇒
+        // 两者不重叠）：对齐后接在现有 locals 之后，深度 = 对齐起点 + 区大小。
+        if let Some(save) = ctx
+            .conv
+            .layout()
+            .and_then(|cl| cl.va.as_ref())
+            .and_then(|va| va.save.as_ref())
+        {
+            let align = i64::from(save.align.max(1));
+            let size = i64::from(save.size.max(1));
+            let base = (i64::from(ctx.max_stack_bytes) + align - 1) / align * align;
+            let depth = base + size;
+            ctx.va_save_off = Some(-depth - i64::from(ctx.stack_slot_shift));
+            ctx.max_stack_bytes = ctx.max_stack_bytes.max(depth as u32);
+            if crate::pipeline::trace_enabled("FORGE_TRACE_STACK") {
+                eprintln!(
+                    "[forge] 变参保存区：size={size} align={align} depth={depth} -> 帧基址{:?}",
+                    ctx.va_save_off
+                );
+            }
+        }
+
         Ok(Self {
             vcode: VCode::new(),
             xreg_map: Vec::new(),
@@ -2291,6 +2318,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
         alloc_result.call_layout = self.ctx.conv.layout.clone();
         // 栈参数区字节数（move_args 收栈参数时计算 spill 槽地址）
         alloc_result.stack_arg_bytes = self.ctx.max_stack_arg_bytes;
+        // 寄存器保存区偏移（v20 变参 V3）：序言按槽表 spill 时要用。
+        alloc_result.va_save_off = self.ctx.va_save_off;
         // 参数字节宽（IR 类型 size_bytes）——@move_args 的 by-ref 宽向量收参按
         // 真实字节宽分派 32B/64B load 变体。寄存器类宽对 >128 位向量恒为
         // VEC(32)（reg_class_for），无法区分 V256/V512：旧实现用 __pv.width()

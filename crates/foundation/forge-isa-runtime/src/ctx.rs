@@ -178,6 +178,13 @@ pub struct LowerCtx {
     /// 把超寄存器参数 store 到 [rsp+shadow+off]，帧底之上必须预留该区域
     ///（frame_size 并入；否则写穿 rsp 之下 → SEGV）。缺省 0（无栈参数）。
     pub max_stack_arg_bytes: u32,
+    /// **寄存器保存区**在帧内的偏移（相对帧基址，v20 变参 V3）。
+    ///
+    /// 需要它的约定（sysv64/aapcs64/riscv）在序言里把参数寄存器存进这一区、`va_list` 的
+    /// 保存区字段指向它。区大小/对齐/槽表来自 plan（`CallLayout.va.save`），**偏移由管线
+    /// 分配**（与 `Opcode::VaStart` 的对象槽同一条通路：算好偏移、抬 `max_stack_bytes`），
+    /// 序言与 `va_start` 只读它。`None` = 本函数没有保存区（非变参 / win64 栈式）。
+    pub va_save_off: Option<i64>,
     /// 临时 VReg 集合（替代 VReg(96-100) 硬编码）。
     pub temp_vregs: HashSet<VReg>,
     /// 零值 VReg（复用，避免重复分配）。
@@ -234,6 +241,7 @@ impl LowerCtx {
             stack_slot_shift: 0,
             max_stack_bytes: 0,
             max_stack_arg_bytes: 0,
+            va_save_off: None,
             vreg_classes: SecondaryMap::new(),
             vreg_types: SecondaryMap::new(),
             vreg_widths: SecondaryMap::new(),

@@ -92,7 +92,12 @@ red_zone = 128
 # 故 sub rsp 前 rsp ≡ 8 ⇒ 需要 8 字节填充才能在 call 点回到 16 对齐
 # （与 Win64 同值，理由同：两边推入次数都是偶数）。
 frame_padding = 8
-stack = { slot_bytes = 8, first_offset_slots = 1 }
+# `first_offset_slots = 2`：**不是** psABI 的 1，而是"本实现的被调方帧"里的槽数——序言
+# 总是 `push fp`，所以从 `rbp` 看第一个栈实参在 `[rbp + 16]`（返回地址 + 保存的 fp 各一槽）。
+# 2026-10-01 实测：写 1（只算返回地址）时，sysv64 的第 7 个整数形参读到的是**返回地址**
+# （`test_jit_sysv64_seventh_integer_arg_comes_from_the_stack`）；win64/aapcs64/lp64d 本来
+# 就是 2，只有这一份漏了。
+stack = { slot_bytes = 8, first_offset_slots = 2 }
 classify = [
   { when = { kind = "float", size_le = 8 },   do = { direct = { pool = "float" } } },
   { when = { kind = "vector", size_le = 16 }, do = { direct = { pool = "float" } } },

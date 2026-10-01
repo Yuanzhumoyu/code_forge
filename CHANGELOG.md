@@ -11,6 +11,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-01) — sysv64 的栈实参落点少了一槽（收到的是返回地址）
+
+`sysv64` 内置规则的 `first_offset_slots` 写的是 **1**（只算返回地址），而本实现的被调方**总是
+`push` 帧指针** ⇒ 从 `rbp` 看第一个栈实参在 `[rbp + 16]`（返回地址 + 保存的 fp 各占一槽）。
+win64/aapcs64/lp64d 本来就都写 2，只有 sysv64 这一份漏了。
+
+- **实测证据**：新用例 `test_jit_sysv64_seventh_integer_arg_comes_from_the_stack`（7 个整数形参，
+  第 7 个走栈）在修前返回 `2001632886933`（**返回地址**），修后返回 `7`。
+- **影响面**：任何走栈的 sysv64 形参（第 7 个整数起、超 FP 池的浮点）此前都读错。与变参无关——
+  这条路径此前**没有用例**，是做变参保存区时顺手撞见的。
+- 黄金快照 `sysv64.plan.txt` 随之更新：`first_arg_off` 8 → 16、栈实参偏移整体 +8（逐行核对过；
+  其余三份约定不变，因为它们本来就是 2）。
+
+### Added (2026-10-01) — 变参 V3 发射（sysv64）：序言 spill 参数寄存器 + `va_start` 物化 `va_list` 对象
+
+上一片把保存区的**计划面数据**做对了（槽表 + 字段布局），这一片把它接上发射：
+
+- **管线预留保存区**：`CallLayout.va.save` 有区就按 `align`/`size` 在 locals 区之后开一段帧字节，
+  偏移落在 `LowerCtx::va_save_off` / `AllocResult.va_save_off`（与 `Opcode::VaStart` 的对象槽
+  同一条通路 ⇒ 两者不重叠）。实测（sysv64）：`size=176 align=16 depth=176 → 帧基址 -240`。
+- **序言 spill**：`move_args` 在收参**之前**按槽表把参数寄存器写进保存区，**按槽的寄存器类分派**
+  （GP 用 `stack_arg_store`、FP 用 `{ role = "stack_arg_store", class = "fpr" }`——两个角色本来就有）。
+- **`va_start` 物化对象**（sysv64 一族）：`lea` 对象地址 + `lea` 溢出区 + `lea` 保存区，用**新角色
+  `gpr_imm`**（x86 = `MOV_REG_IMM64`）把宿主算好的 `gp_offset|fp_offset` 打包值装进寄存器，
+  再三条帧相对 store 写字段。"已用掉几个参数寄存器 / 溢出区从哪开始"由**宿主**按 plan 预先算好
+  （`CallLayout.va.init: VaInit`）——生成物是各约定通用的，算不出来。
+- **验收（真跑）**：`test_jit_va_start_materializes_the_sysv64_register_save_area`——两侧都用 sysv64，
+  被调方用 **IR 算术**读出 `gp_offset`（= 8）与 `reg_save_area`，从 `[reg_save+8]`/`[+16]` 取回
+  `4`/`7` 算出 **47**。这条路一次性验证了：序言 spill 的槽序与偏移、`gp_offset` 初值、
+  `reg_save_area` 指向保存区。
+- **仍是 ⬜**：保存区形态的 `va_arg`（分支式取值——游标超界要改取溢出区）⇒ sysv64 的 `va_arg`
+  继续 fail-closed；aapcs64/riscv 的 `init` 未算 ⇒ 它们的 `va_start` 也继续 fail-closed（消息点名）。
+- 验证：`forge-codegen`（1358，含两条新 JIT 用例）、`forge-abi`、`forge-tests`（矩阵 196/3/0）、
+  `forge-ir`、`forge-isa-dsl`、`forge-isa` 等全绿；`clippy -D warnings` 0、`cargo fmt --check` 0、
+  markdownlint 0。
+
 ### Added (2026-10-01) — 变参 V3 计划面：`va_list` 字段布局 + 寄存器保存区槽表
 
 寄存器保存区（`sysv64`/`lp64d`/`aapcs64`）是变参最后一块功能缺口。先把**风险最大的东西**做对：

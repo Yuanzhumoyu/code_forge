@@ -188,6 +188,23 @@ pub struct VaInfo {
     pub fields: Vec<VaField>,
     /// **寄存器保存区**（v20 V3）：`None` = Win64 栈式（未命名实参只在栈上，不需要保存区）。
     pub save: Option<VaSave>,
+    /// **`va_list` 对象的初值**（v20 V3）：`va_start` 要写进去的东西，由**宿主**按本函数的
+    /// plan 预先算好（生成物是各约定通用的，算不出"已用掉几个参数寄存器"）。
+    ///
+    /// 目前只有"gp/fp 偏移 + 溢出区"这一族（`sysv64`）——aapcs64 的 gr/vr 计数与 riscv 的
+    /// 分界在各自落地时再补字段（缺 ⇒ `va_start` 明确 fail-closed，不猜）。
+    pub init: Option<VaInit>,
+}
+
+/// `va_list` 对象的初值（v20 V3，目前只有 sysv64 一族）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaInit {
+    /// `gp_offset` 与 `fp_offset` **打包**成一个 u64（低 32 = gp、高 32 = fp）：
+    /// 对象里这两个 u32 字段相邻，而发射侧只有 8 字节的帧相对 store——分开写会互相踩。
+    pub offsets: u64,
+    /// 溢出区（第一个栈实参）相对**帧基址**的偏移；该函数没有栈实参时 =
+    /// `first_arg_offset + shadow_bytes`（第一个栈实参本该在的位置）。
+    pub overflow_off: i64,
 }
 
 /// `va_list` 对象里的一个字段（运行时中立：只有偏移与大小；名字是计划面的事）。

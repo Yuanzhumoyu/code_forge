@@ -19,8 +19,8 @@ use forge_abi::{AbiError, AbiPlan, AbiRegistry, AbiTarget, Capability, Signature
 use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
 use forge_isa_runtime::machine::call_layout::{
-    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaField, VaInfo, VaKind,
-    VaSave, VaSaveSlot,
+    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaField, VaInfo, VaInit,
+    VaKind, VaSave, VaSaveSlot,
 };
 use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest};
 use forge_isa_runtime::machine::target::TargetMachine;
@@ -293,6 +293,54 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         forge_abi::Extension::ZeroExt => Ext::Zero,
         forge_abi::Extension::SignExt => Ext::Sign,
     };
+    // **`va_list` 对象初值**（v20 变参 V3）：宿主按本函数的 plan 预先算好——生成物是各约定
+    // 通用的，"已用掉几个参数寄存器 / 溢出区从哪开始"只有这里算得出来。
+    //
+    // 目前只算 sysv64 那一族（gp/fp 偏移 + 溢出区）；其它保存区形态给 `None` ⇒ `va_start`
+    // 明确 fail-closed（不猜）。`gp_offset` = 8 × 走寄存器的整数参数个数、
+    // `fp_offset` = 48 + 16 × 走寄存器的浮点参数个数（48 = 6 个 GP 槽 × 8）。
+    let va_init = |kind: forge_abi::rules::VaListKind| -> Option<VaInit> {
+        use forge_abi::rules::VaListKind;
+        if kind != VaListKind::SysvRegSave {
+            return None;
+        }
+        let mut n_gp = 0u64;
+        let mut n_fp = 0u64;
+        let mut first_stack: Option<i32> = None;
+        for a in &plan.args {
+            match &a.place {
+                forge_abi::Placement::Reg { reg: r, .. } => {
+                    let is_fp = t
+                        .reg_index(&r.name)
+                        .map(|i| t.is_fp(i))
+                        .unwrap_or(r.index >= t.n_gp);
+                    if is_fp {
+                        n_fp += 1;
+                    } else {
+                        n_gp += 1;
+                    }
+                }
+                forge_abi::Placement::Stack { offset, .. } => {
+                    first_stack = Some(match first_stack {
+                        Some(cur) => cur.min(*offset),
+                        None => *offset,
+                    });
+                }
+                _ => {}
+            }
+        }
+        let gp_off = n_gp * 8;
+        let fp_off = 48 + n_fp * 16;
+        // 溢出区起点：第一个栈实参；没有栈实参时 = 第一个栈实参"本该在"的位置。
+        let overflow_off = match first_stack {
+            Some(off) => i64::from(off),
+            None => i64::from(plan.stack.first_arg_offset) + i64::from(plan.stack.shadow_bytes),
+        };
+        Some(VaInit {
+            offsets: gp_off | (fp_off << 32),
+            overflow_off,
+        })
+    };
     let place = |p: &forge_abi::Placement| -> ArgPlace {
         match p {
             forge_abi::Placement::Reg { reg: r, ext: e, .. } => ArgPlace::Reg {
@@ -422,6 +470,7 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
                     })
                     .collect(),
             }),
+            init: va_init(a.kind),
         }),
     }
 }

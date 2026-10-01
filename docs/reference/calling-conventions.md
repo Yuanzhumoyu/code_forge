@@ -465,7 +465,9 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 栈上的**浮点形参**（第 5+ 个，win64；经 spill 中转按位保留） | ✅ | `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`、`test_jit_stack_float_param_is_received_into_a_register` |
 | 变参：**架构无关矩阵**里的端到端用例（用例 `variadic_va_arg_int_and_float`；x86 真跑 `4*10 + 7 + (i64)2.5 = 49`，其余机器按能力门控 Skip） | ✅ | `jit_matrix_x86_v12` |
 | 变参 V3 计划面：`va_list` 字段布局 + 寄存器保存区槽表（四份内置约定的 psABI 数字） | ✅ | `va_object_layout_matches_the_psabi_numbers`、`call_layout_mirrors_the_variadic_shape` |
-| 变参：寄存器保存区的**发射**（序言 spill + `va_start` 写字段 + `va_arg` 分支取值） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参 V3 发射（sysv64）：序言 spill 参数寄存器 + `va_start` 物化对象（真跑读回未命名实参） | ✅ | `test_jit_va_start_materializes_the_sysv64_register_save_area` |
+| sysv64 的栈实参落点（`first_offset_slots` = 2：本实现总是 push 帧指针） | ✅ | `test_jit_sysv64_seventh_integer_arg_comes_from_the_stack` |
+| 变参：保存区形态的 `va_arg`（分支式取值：游标超界 ⇒ 溢出区） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
 | 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |

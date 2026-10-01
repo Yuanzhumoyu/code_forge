@@ -1745,6 +1745,9 @@ pub enum Role {
     /// 变参 `va_arg(ap, f32)` 用它——C/LLVM 的默认实参提升把 `float` 传成 `double`，
     /// 读取方取 `double` 再窄回来。
     FprNarrow,
+    /// 立即数 → 寄存器（变参 `va_start` 写 `va_list` 对象初值用：初值由宿主算好，
+    /// 生成物是各约定通用的，算不出来）。
+    GprImm,
 }
 
 impl fmt::Display for Role {
@@ -1783,6 +1786,7 @@ fn serde_json_name(r: &Role) -> &'static str {
         Role::PtrStore => "ptr_store",
         Role::AddImm => "add_imm",
         Role::FprNarrow => "fpr_narrow",
+        Role::GprImm => "gpr_imm",
         Role::StackArgLoad => "stack_arg_load",
         Role::StackArgStore => "stack_arg_store",
     }
