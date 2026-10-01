@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 第 5+ 个浮点形参的收参路径：补两条真跑用例 + 更正一处误导性注释
+
+查"栈上的浮点形参收参"时，先按上一片的对称性假设它是缺口（调用方已按类分派、被调方还在用整数
+load）——**实测证伪**，结论与文档/注释都按实测更正：
+
+- **实际机制**：ABI 落在栈上的形参没有入场寄存器 ⇒ 不在 `assignments` 里 ⇒ 由 `move_args` 的
+  "先收进 spill 槽"中转处理：`load 布局槽 → scratch(GPR) → store spill 槽`，**按位搬运**——
+  所以**浮点参数本来就正确**（位型不变），FPR 溢出槽的 load 再按类还原。
+- **`ArgPlace::Stack` 那一支里的"浮点直接收进寄存器"路径当前到不了**（未分配的形参在
+  `#stack_arg_receive` 之后就 `continue` 了）。它是**防御性**分支：万一将来"栈落点 + 已分配
+  寄存器"同时成立，把 FPR 当整数搬会静默错值，所以保持 fail-closed，并在注释里写清它需要
+  `{ role = "stack_arg_load", class = "fpr" }` 才能接。原先那句"栈上的浮点参数收参尚未接进
+  发射"是**误导**（听起来像功能缺失），已改写。
+- **新增两条真跑用例（这条路径此前零覆盖）**：
+  `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`（6 个 f64 形参，只有前 4 个
+  进 XMM0-3，取第 5/6 个算 `e + f = 7`）与
+  `test_jit_stack_float_param_is_received_into_a_register`（只用第 5 个：`9.0 → 9`）——
+  钉的是**端到端的值**（收参装错寄存器类会静默给错值，只看"编译通过"抓不到）。
+- 文档：`docs/reference/calling-conventions.md` 的浮点栈实参两段按实测改写，守卫索引加一行。
+- 验证：`forge-codegen --lib --all-features`（1356）、`forge-tests`（x86 矩阵 195/3/0）、
+  `forge-ir`、`forge-isa-dsl`、`forge-abi` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0、
+  markdownlint 0。
+
 ### Added (2026-10-01) — 变参 V4 第三片：`f32` 的默认实参提升（`va_arg` 取 f64 再窄回）
 
 `f32` 走进来：按 **C/LLVM 的默认实参提升**，`float` 在变参调用里被传成 `double`，所以

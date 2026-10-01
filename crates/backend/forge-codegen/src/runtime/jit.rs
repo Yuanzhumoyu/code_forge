@@ -3075,6 +3075,110 @@ ret_int = ["RAX"]
             "f32 未命名实参按默认提升传（f64），`va_arg(ap, f32)` 必须取 f64 再窄回"
         );
     }
+
+    /// **栈上的浮点形参**（win64：XMM0-3 之外的浮点参数）：6 个 f64 形参，只有前 4 个进
+    /// XMM0-3，第 5/6 个在栈上（`[rbp+48]` / `[rbp+56]`，由 `ArgPlace::Stack` 给）。
+    ///
+    /// **这条路径此前零覆盖**。实际收参走的是"先收进 spill 槽"的中转
+    /// （`load 布局槽 → scratch(GPR) → store spill 槽`，**按位搬运** ⇒ 浮点也对），
+    /// 不是"直接收进寄存器"那一支（那支是 fail-closed 的防御分支，见
+    /// `v12/codegen/frame.rs` 的 `ArgPlace::Stack` 注释）。
+    /// 返回值 `e + f`：3.0 + 4.0 = 7.0 ⇒ `fptosi` = 7。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_float_params_beyond_xmm_registers_come_from_the_stack() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        let params = [
+            (TypeId::F64, "a"),
+            (TypeId::F64, "b"),
+            (TypeId::F64, "c"),
+            (TypeId::F64, "d"),
+            (TypeId::F64, "e"),
+            (TypeId::F64, "f"),
+        ];
+        let sig_c = FunctionSignature::new(&params, &[TypeId::I64]);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, cp) = callee.create_block_with_params(&params);
+        callee.switch_to_block(ce);
+        // ret (i64)(e + f)：第 5/6 个形参（e/f）只能从栈上来。
+        let sum = callee.fadd(cp[4], cp[5]);
+        let r = callee.fptosi(sum, TypeId::I64);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        // main() -> i64：callee(1.0, 2.0, 1.0, 2.0, 3.0, 4.0) ⇒ e+f = 7.0 ⇒ 7
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let args: Vec<_> = [1.0f64, 2.0, 1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(|v| main_fn.fconst_f64(v))
+            .collect();
+        let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            7,
+            "第 5+ 个浮点形参从栈上收参（XMM0-3 之外的浮点参数）"
+        );
+    }
+
+    /// **栈上的浮点形参，且只用一个**：`ret (i64)e`（第 5 个形参在栈上）——与上一条互补：
+    /// 这里形参被用一次、不被复算，收参仍然经 spill 中转（同一条按位搬运路径）。
+    ///
+    /// 用例要点：**收参失败会静默给错值**（若把浮点位型当整数搬到错误的寄存器类），
+    /// 所以用"9.0 → 9"钉住端到端的值，而不是只看编译通过。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_stack_float_param_is_received_into_a_register() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        let params = [
+            (TypeId::F64, "a"),
+            (TypeId::F64, "b"),
+            (TypeId::F64, "c"),
+            (TypeId::F64, "d"),
+            (TypeId::F64, "e"),
+        ];
+        let sig_c = FunctionSignature::new(&params, &[TypeId::I64]);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, cp) = callee.create_block_with_params(&params);
+        callee.switch_to_block(ce);
+        let r = callee.fptosi(cp[4], TypeId::I64);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let args: Vec<_> = [1.0f64, 2.0, 1.0, 2.0, 9.0]
+            .into_iter()
+            .map(|v| main_fn.fconst_f64(v))
+            .collect();
+        let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(f(), 9, "第 5 个浮点形参（栈上）必须按浮点直接收进寄存器");
+    }
+
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的

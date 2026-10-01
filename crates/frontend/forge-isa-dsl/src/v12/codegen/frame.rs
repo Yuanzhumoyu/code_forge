@@ -1327,16 +1327,23 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                         // 栈参数：**偏移由 forge-abi 给**（被调方视角，已含 shadow 与
                         // `first_offset_slots`），生成器不再自己数位置。
                         //
-                        // 被 regalloc 强制 spill 的栈参数在进入这里之前就被
-                        // `#stack_arg_receive` 收进 spill 槽了（那条路用同一套数值，
-                        // 现已由 `abi_target_real::stack_arg_offsets_match_the_x86_convention_numbers`
-                        // 钉住"布局偏移 == 旧算式"）。
+                        // **实际到不了这一支**（2026-10-01 核实）：ABI 落在栈上的形参没有
+                        // 入场寄存器 ⇒ 不在 `assignments` 里 ⇒ 上面的 `#stack_arg_receive`
+                        // 已经把它收进 spill 槽并 `continue` 了。那条路是
+                        // `load 布局槽 → scratch(GPR) → store spill 槽` 的**按位搬运**，
+                        // 因此**浮点参数也正确**（位型不变），FPR 溢出槽的 load 再按类还原。
+                        // 两条真跑用例：`test_jit_float_params_beyond_xmm_registers_come_from_the_stack`
+                        // （6 个 f64 形参取后两个）与
+                        // `test_jit_stack_float_param_is_received_into_a_register`（只用第 5 个）。
                         //
-                        // 浮点参数走栈的收参还没接（旧路径同样只走 GPR 搬运）——
-                        // 明确拒绝，而不是把浮点值当整数搬进 GPR。
+                        // 留下的这一支是**防御性**的：万一将来某条路径让"栈落点 + 已分配寄存器"
+                        // 同时成立，浮点必须走类限定收参（`{ role = "stack_arg_load",
+                        // class = "fpr" }`）而不是把 FPR 当整数搬——所以这里**明确拒绝**。
                         if __rm.param_is_float.get(__i).copied().unwrap_or(false) {
                             return Err(crate::IrError::Unsupported(
-                                "v12 move_args: 栈上的浮点参数收参尚未接进发射".into(),
+                                "v12 move_args: 栈上的浮点参数还有'直接收进寄存器'的路径\
+                                 （本片未接：需要 { role = \"stack_arg_load\", class = \"fpr\" }）"
+                                    .into(),
                             ));
                         }
                         #layout_stack_stmt

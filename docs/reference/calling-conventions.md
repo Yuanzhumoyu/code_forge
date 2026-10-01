@@ -386,12 +386,20 @@ cur += slot_bytes ; ③ 推进（add_imm）
 `{ role = "stack_arg_store", class = "fpr" }`（标量浮点，x86 = `MOVSD_MR`）两条，按实参的 IR
 类型选。缺 fpr 版 ⇒ 浮点栈实参**明确 Unsupported**（不再拿整数 store 搬 XMM）。
 
+**被调方收栈上的浮点**走的是"先收进 spill 槽"的中转
+（`load 布局槽 → scratch(GPR) → store spill 槽`，**按位搬运**⇒ 浮点也对，FPR 溢出槽的 load
+再按类还原），所以第 5+ 个**命名**浮点形参本来就正确（2026-10-01 用两条真跑用例钉住：
+`test_jit_float_params_beyond_xmm_registers_come_from_the_stack`、
+`test_jit_stack_float_param_is_received_into_a_register`）。`ArgPlace::Stack` 那一支里
+"浮点直接收进寄存器"的路径仍是 **fail-closed 的防御分支**（当前到不了），要接它得声明
+`{ role = "stack_arg_load", class = "fpr" }`。
+
 **覆盖范围（诚实清单）**：整数类 + **f64** + **f32** 已通。`f32` 走的是 **C/LLVM 的默认实参
 提升**：调用方（前端）把 `float` 按默认提升传成 `double`，`va_arg(ap, f32)` 取 `f64` 后**窄回**
 （能力角色 `{ role = "fpr_narrow", bits = 32 }`，x86 = `CVTSD2SS`）——只按 f32 读 4 字节会读到
 promoted double 的**低半**（垃圾位型）。更窄的浮点与**向量**结果要额外的取值能力，都在
 **运行期按结果类型 fail-closed**，不把 FPR/向量塞进 GPR 指令里静默编错。
-（第 5+ 个**命名**浮点实参走的是同一条 caller/callee 栈路径：现在也按类分派了。）
+（第 5+ 个**命名**浮点形参的收参见上一段：经 spill 中转按位保留，两条真跑用例钉住。）
 
 ### 无 plan = 编译错误（v20 A6）
 
@@ -454,6 +462,7 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参 V2 数据面：IR `VaStart` + `CallLayout.va` 镜像 | ✅ | `call_layout_mirrors_the_variadic_shape` |
 | 变参 V3 对象物化：`va_start` 建 `va_list` 对象（管线给帧槽）+ win64 穿过对象读回 | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
 | 变参 V4：`va_arg` 取值 + 原地推进（整数类 + `f64` + `f32` 提升，win64） | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（两次 `va_arg` → 4 / 7）、`test_jit_va_arg_reads_unnamed_float_args`（`4.5 + 7.0 → 11`）、`test_jit_va_arg_narrows_promoted_f32`（`2.5 + 3.25 → 5`） |
+| 栈上的**浮点形参**（第 5+ 个，win64；经 spill 中转按位保留） | ✅ | `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`、`test_jit_stack_float_param_is_received_into_a_register` |
 | 变参：寄存器保存区（`sysv64`/`lp64d`/`aapcs64`）、更窄浮点与向量的取值能力 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
 | 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
