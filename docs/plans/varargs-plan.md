@@ -259,6 +259,7 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
   （否则"原指令改 Copy"会读到尚未计算的值——照抄聚合展开的插入方式）；② 逐指令改写要"先收集
   再改"两遍（借用 `func` 冲突）。
 - **展开形态**（sysv64，整数类）：
+
   ```text
   gp      = load u32 [ap]              ; gp_offset
   in_reg  = icmp ult gp, 48
@@ -270,6 +271,7 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
   store u32 [ap]   = gp_out
   store i64 [ap+8] = ov_out
   ```
+
   浮点类（`fp_offset` 上限 176、步长 16）同理；结果按类型走 `Fload`/窄回。
 - **计划面还差的字段**：`VaInit` 现在只有 `offsets`/`overflow_off`，展开还要**上限**——由宿主从
   保存区槽表算（`gp_limit` = GP 槽总字节、`fp_limit` = GP 块 + FP 块总字节），不写死 psABI 数字。
