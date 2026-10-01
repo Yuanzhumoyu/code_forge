@@ -14,6 +14,7 @@ pub mod lowering;
 pub mod regalloc_bt;
 /// IR 视图 → 引擎视图（签名 + 参数属性；v20 A2b）。
 pub mod sig_view;
+pub mod va_expand;
 
 use std::sync::OnceLock;
 

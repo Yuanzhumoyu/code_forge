@@ -247,34 +247,45 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 - **`va_arg` 仍未接**（保存区形态）⇒ 对 sysv64 的 `va_arg` 继续 fail-closed。下一片的形态已核实
   （见本节末尾「下一片」）。
 
-**下一片（唯一剩下的一块）：保存区形态的 `va_arg`，走"管线里的 IR 展开"**。核实结论：
+**V3 的第四片已落地（2026-10-01）：保存区形态的 `va_arg` 走 IR 展开**（sysv64 真跑两条）：
 
-- **为什么不做成生成器序列**：需要"比较 + 条件选择 + 寄存器间加 + 掩码"四种能力，而 x86 谱里对应
-  指令都没有角色（`cmp`/`cmov`/`add_rr`/`and`）——为一条 op 加四个能力，且不如 IR 展开通用。
-- **为什么 IR 展开够用**：展开所需的 op **全都有现成降级**——`Icmp`、`Select`、`Iadd`、`Band`、
-  `Load`/`Store`（宽度按 IR 类型）、`Fload`/`Fptrunc`（`f32` 的默认提升就是取 `f64` 再窄回）。
-- **工具已核**：`Dfg::make_inst` / `make_value` 存在，`compiler.rs` 里已有几十处先例
-  （`Iconst → Iadd → Load`、`Store` 带 `SIDE_EFFECT`、以及"把原指令改 `Copy` 指向新值"的结果
-  重定向写法）。**要留神两点**：① `make_inst` 只建指令、**不插块序**，必须显式插到 `VaArg` 之前
-  （否则"原指令改 Copy"会读到尚未计算的值——照抄聚合展开的插入方式）；② 逐指令改写要"先收集
-  再改"两遍（借用 `func` 冲突）。
-- **展开形态**（sysv64，整数类）：
+- **在管线里展开、不在生成器里发序列**：条件取值（游标未超上限 ⇒ 取保存区，否则取溢出区，各自
+  推进）在 IR 层只需 `Icmp`/`Select`/`Iadd`/`Uextend`/`Ireduce`/`Load`/`Store`/`Fload`/`Fptrunc`
+  ——**全都有现成降级**；生成器要发同样的事得新增 `cmp`/`cmov`/`add_rr`/`and` 四个能力角色。
+- **布局与宽度一律来自数据**（这一条是评审时被点出来的，已改）：字段偏移与宽度取自 plan 的
+  `va.fields`（不是 sysv64 的常量），游标按**它自己的宽度**读写（`u32` 就 4 字节、`u64` 就 8 字节），
+  槽宽取自 `va.save.slots[0].size`、上限/步长取自 `va.init`。换一台机器/换一份约定只要还是
+  "主游标 + 次游标 + 溢出指针 + 保存区指针"这一族，**不改代码**；不是这一族的形态（aapcs64 的
+  gr/vr 计数、riscv 的分界）明确报错说"该形态不在本族"，而不是按 sysv64 的偏移瞎算。
+- **验收（真跑，两条支都覆盖）**：
+  `test_jit_va_arg_sysv64_reads_the_register_save_area`（两个未命名实参都在寄存器 ⇒ 47）与
+  `test_jit_va_arg_sysv64_overflows_to_the_stack_arg_area`（第 6 个超出 GP 池 ⇒ 必须改取溢出区
+  并推进溢出游标 ⇒ 42）。
 
-  ```text
-  gp      = load u32 [ap]              ; gp_offset
-  in_reg  = icmp ult gp, 48
-  p_reg   = reg_save + zext(gp)
-  p_src   = select in_reg, p_reg, overflow
-  v       = load i64 [p_src]
-  gp_out  = select in_reg, gp + 8, gp
-  ov_out  = select in_reg, overflow, overflow + 8
-  store u32 [ap]   = gp_out
-  store i64 [ap+8] = ov_out
-  ```
+**仍然存在的"为某一个开的洞"（下一步要拆掉）**：`va_start` 物化对象仍在**生成器**里，于是留下两处
+x86 专属：① `VaInit.offsets` 把 `gp_offset|fp_offset` **打包**成一个 u64（因为生成器只有 8 字节的
+帧相对 store），② 为此新增的能力角色 `gpr_imm`。**通用做法**：把 `va_start` 也搬进同一个 IR 展开
+——IR 里每个字段按**自己的宽度** store（`Store` 的类型就是字段类型），常量用 `Iconst`、帧内地址用
+现成的 `StackAddr`（偏移由展开自己分配，与 `Opcode::VaStart` 现在那条管线通路合一）。那样
+`gpr_imm` 与打包都会消失，保存区物化对**任意宽度**的 ISA 都成立。触发条件：arm64/riscv 的保存区
+落地时（它们的 `init` 也要一并数据化）。
 
-  浮点类（`fp_offset` 上限 176、步长 16）同理；结果按类型走 `Fload`/窄回。
-- **计划面还差的字段**：`VaInit` 现在只有 `offsets`/`overflow_off`，展开还要**上限**——由宿主从
-  保存区槽表算（`gp_limit` = GP 槽总字节、`fp_limit` = GP 块 + FP 块总字节），不写死 psABI 数字。
+**展开形态**（本族的整数类；偏移/宽度按 plan 的 `va.fields` 代入）：
+
+```text
+gp      = load <游标宽> [ap + 主游标偏移]
+in_reg  = icmp ult gp, 上限
+p_reg   = reg_save + uextend(gp)
+p_src   = select in_reg, p_reg, overflow
+v       = load <ty> [p_src]
+gp_out  = select in_reg, gp + 步长, gp
+ov_out  = select in_reg, overflow, overflow + 槽宽
+store <游标宽> [ap + 主游标偏移] = ireduce(gp_out)
+store <指针宽> [ap + 溢出偏移]   = ov_out
+```
+
+浮点类用**次游标**字段（`fp_offset`/`fp_limit`/`fp_step`），取值走 `Fload`；`f32` 先取 `f64`
+再 `Fptrunc`。字段数不足本族（aapcs64/riscv）⇒ 明确报错"该形态不在本族"。
 
 在此之前 aapcs64/riscv 的 `init` 未算 ⇒ 它们的 `va_start` 也继续 fail-closed。
 

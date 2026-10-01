@@ -299,7 +299,9 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
     // 目前只算 sysv64 那一族（gp/fp 偏移 + 溢出区）；其它保存区形态给 `None` ⇒ `va_start`
     // 明确 fail-closed（不猜）。`gp_offset` = 8 × 走寄存器的整数参数个数、
     // `fp_offset` = 48 + 16 × 走寄存器的浮点参数个数（48 = 6 个 GP 槽 × 8）。
-    let va_init = |kind: forge_abi::rules::VaListKind| -> Option<VaInit> {
+    let va_init = |kind: forge_abi::rules::VaListKind,
+                   save: Option<&forge_abi::plan::VaSaveArea>|
+     -> Option<VaInit> {
         use forge_abi::rules::VaListKind;
         if kind != VaListKind::SysvRegSave {
             return None;
@@ -336,9 +338,38 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
             Some(off) => i64::from(off),
             None => i64::from(plan.stack.first_arg_offset) + i64::from(plan.stack.shadow_bytes),
         };
+        // **上限与步长**（`va_arg` 的 IR 展开要用）：从**保存区槽表**算，不写死 psABI 数字——
+        //   `gp_limit` = 第一个 FP 槽的偏移（= GP 块字节数）；`fp_limit` = 区总字节；
+        //   步长 = 各类第一个槽的宽度。
+        let (mut gp_limit, mut gp_step, mut fp_step, mut seen_fp) = (0u32, 8u32, 16u32, false);
+        if let Some(s) = save {
+            for sl in &s.slots {
+                let is_fp = t
+                    .reg_index(&sl.reg.name)
+                    .map(|i| t.is_fp(i))
+                    .unwrap_or(false);
+                if is_fp {
+                    if !seen_fp {
+                        seen_fp = true;
+                        gp_limit = sl.offset;
+                        fp_step = sl.size;
+                    }
+                } else if !seen_fp {
+                    gp_step = sl.size;
+                }
+            }
+            if !seen_fp {
+                gp_limit = s.size;
+            }
+        }
+        let fp_limit = save.map(|s| s.size).unwrap_or(0);
         Some(VaInit {
             offsets: gp_off | (fp_off << 32),
             overflow_off,
+            gp_limit,
+            fp_limit,
+            gp_step,
+            fp_step,
         })
     };
     let place = |p: &forge_abi::Placement| -> ArgPlace {
@@ -470,7 +501,7 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
                     })
                     .collect(),
             }),
-            init: va_init(a.kind),
+            init: va_init(a.kind, a.save.as_ref()),
         }),
     }
 }

@@ -3314,6 +3314,106 @@ ret_int = ["RAX"]
         );
     }
 
+    /// **变参 V3：sysv64 的 `va_arg`**（真跑）——保存区形态的取值走**管线里的 IR 展开**：
+    /// 游标没超过寄存器区上限就从保存区取、否则从溢出区取，并各自推进游标。
+    ///
+    /// 这条走**寄存器支**：`fmt` 占 RDI ⇒ `gp_offset` 从 8 起，两个未命名实参落在
+    /// RSI/RDX 的保存区槽里（8 / 16）。`4*10 + 7 = 47`。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_arg_sysv64_reads_the_register_save_area() {
+        use forge_ir::ir::types::ConvName;
+        use forge_ir::{CallConvId, FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let cc = CallConvId::builtin(ConvName::SysV64);
+
+        let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
+            .with_variadic(true)
+            .with_calling_convention(cc.clone());
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let ap = callee.va_start();
+        let a = callee.va_arg(ap, TypeId::I64);
+        let b = callee.va_arg(ap, TypeId::I64);
+        let ten = callee.iconst(10, TypeId::I64);
+        let a10 = callee.imul(a, ten);
+        let r = callee.iadd(a10, b);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]).with_calling_convention(cc);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let x = main_fn.iconst(4, TypeId::I64);
+        let y = main_fn.iconst(7, TypeId::I64);
+        let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            47,
+            "sysv64：va_arg 从保存区取（gp_offset 8 → RSI 槽、16 → RDX 槽）"
+        );
+    }
+
+    /// **变参 V3：sysv64 的 `va_arg` 溢出到栈**（真跑）——读 **6 个**未命名实参：前 5 个占满
+    /// RSI/RDX/RCX/R8/R9（`gp_offset` 8→48），第 6 个只能从**溢出区**（调用方栈实参）取
+    /// ⇒ 走条件取值的另一条支，并验证溢出游标也被推进（第 6 个 = 42）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_arg_sysv64_overflows_to_the_stack_arg_area() {
+        use forge_ir::ir::types::ConvName;
+        use forge_ir::{CallConvId, FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let cc = CallConvId::builtin(ConvName::SysV64);
+
+        let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
+            .with_variadic(true)
+            .with_calling_convention(cc.clone());
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let ap = callee.va_start();
+        let mut last = None;
+        for _ in 0..6 {
+            last = Some(callee.va_arg(ap, TypeId::I64));
+        }
+        callee.ret(&[last.expect("第 6 个")]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]).with_calling_convention(cc);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let args: Vec<_> = [0i64, 1, 2, 3, 4, 5, 42]
+            .into_iter()
+            .map(|v| main_fn.iconst(v, TypeId::I64))
+            .collect();
+        let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            42,
+            "sysv64：第 6 个未命名实参超出 GP 池 ⇒ va_arg 改取溢出区并推进溢出游标"
+        );
+    }
+
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的

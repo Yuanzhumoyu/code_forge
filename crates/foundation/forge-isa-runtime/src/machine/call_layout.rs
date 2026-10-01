@@ -205,6 +205,15 @@ pub struct VaInit {
     /// 溢出区（第一个栈实参）相对**帧基址**的偏移；该函数没有栈实参时 =
     /// `first_arg_offset + shadow_bytes`（第一个栈实参本该在的位置）。
     pub overflow_off: i64,
+    /// 寄存器区的**上限**：`gp_offset` 到它就说明 GP 寄存器用完了 ⇒ 该取溢出区
+    /// （sysv64 = GP 块字节数 = 48）。
+    pub gp_limit: u32,
+    /// 浮点寄存器区的上限（sysv64 = 保存区总字节 = 176）。
+    pub fp_limit: u32,
+    /// `gp_offset` 的步长（= 一个 GP 槽的字节数，sysv64 = 8）。
+    pub gp_step: u32,
+    /// `fp_offset` 的步长（= 一个 FP 槽的字节数，sysv64 = 16）。
+    pub fp_step: u32,
 }
 
 /// `va_list` 对象里的一个字段（运行时中立：只有偏移与大小；名字是计划面的事）。

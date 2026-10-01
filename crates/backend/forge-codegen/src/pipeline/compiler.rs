@@ -1922,6 +1922,26 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         let needs_agg_expand = crate::pipeline::agg_expand::has_any_agg(func);
         let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());
 
+        // **保存区形态的 `VaArg` 展开**（v20 变参 V3）：与聚合展开同一时机（必须在
+        // `CompileState::new` 之前——它克隆常量池），且必须在 lowering 之前。
+        //
+        // 需要 plan 里的 `va.save`/`va.init`（字段偏移/上限/步长/初值），这里单独算一份
+        // （与 `abi_setup::setup_conv` 同源）。win64 那种栈式形态 `save` 为 `None` ⇒ **不展开**，
+        // 仍走生成器里那条专用臂（已在用、有真跑用例）。
+        if crate::pipeline::va_expand::has_va_arg(func)
+            && let Some(va) = crate::pipeline::va_expand::save_area_va_info(
+                &self.machine,
+                func,
+                self.module_sigs.as_deref(),
+            )?
+        {
+            let f = func_owned.get_or_insert_with(|| func.clone());
+            let n = crate::pipeline::va_expand::expand_va_arg(f, &va)?;
+            if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
+                eprintln!("[forge] va_arg 展开：{n} 条（保存区形态）");
+            }
+        }
+
         // Stage 0.5: 聚合 store 展开（聚合字面量 → 打包 i64 常量 store；
         // >8 字节聚合显式 Unsupported）。必须在 CompileState 创建**之前**
         // 执行：CompileState 克隆 func 的常量池，若先建 state 再展开，新常量

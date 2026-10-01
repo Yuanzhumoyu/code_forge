@@ -11,6 +11,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参 V3 第四片：保存区形态的 `va_arg` 走 IR 展开（sysv64 两条支真跑）
+
+保存区形态的取值是**有条件**的（游标未超上限取保存区、否则取溢出区，各自推进），这一片把它做成
+**管线里的 IR 展开**（`pipeline/va_expand.rs`），而不是生成器序列：
+
+- **为什么在 IR 层**：条件取值在 IR 只需 `Icmp`/`Select`/`Iadd`/`Uextend`/`Ireduce`/`Load`/`Store`/
+  `Fload`/`Fptrunc`——**全都有现成降级**；生成器要发同样的事得新增 `cmp`/`cmov`/`add_rr`/`and`
+  四个能力角色，且别的 ISA 还得各来一遍。
+- **布局与宽度一律来自数据（评审点，已按此实现）**：字段偏移与宽度取自 plan 的 `va.fields`
+  （**不再写死 sysv64 的 0/4/8/16**），游标按**它自己的宽度**读写（`u32` 就 4 字节、`u64` 就 8 字节），
+  槽宽取 `va.save.slots[0].size`、上限/步长取 `va.init`（宿主从保存区槽表算，不写死 psABI 数字）。
+  换机器/换约定只要还是"主游标 + 次游标 + 溢出指针 + 保存区指针"这一族就不改代码；不是这一族
+  （aapcs64 的 gr/vr 计数、riscv 的分界）**明确报错**"该形态不在本族"，不按 sysv64 的偏移瞎算。
+- **验收（真跑，两条支都覆盖）**：`test_jit_va_arg_sysv64_reads_the_register_save_area`（两个未命名
+  实参都在寄存器 ⇒ `4*10+7 = 47`）与 `test_jit_va_arg_sysv64_overflows_to_the_stack_arg_area`
+  （第 6 个超出 GP 池 ⇒ 必须改取溢出区并推进溢出游标 ⇒ `42`）。
+- **仍然存在的 x86 专属（= 下一步要拆的洞，已记进方案）**：`va_start` 物化仍在生成器里，于是
+  ① `VaInit.offsets` 把 `gp|fp` 打包成一个 u64（生成器只有 8 字节帧相对 store），② 为此新增的
+  能力角色 `gpr_imm`。通用做法 = 把 `va_start` 也搬进同一个 IR 展开（字段按自己的宽度 store、
+  帧内地址用现成 `StackAddr`），两者都会消失。
+- 验证：`forge-codegen`（1360，含两条新 JIT 用例）、`forge-abi`、`forge-tests`（矩阵 196/3/0）、
+  `forge-ir`、`forge-isa-dsl`、`forge-isa` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0、
+  markdownlint 0。
+
 ### Fixed (2026-10-01) — sysv64 的栈实参落点少了一槽（收到的是返回地址）
 
 `sysv64` 内置规则的 `first_offset_slots` 写的是 **1**（只算返回地址），而本实现的被调方**总是
