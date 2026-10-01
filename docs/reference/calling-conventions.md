@@ -377,10 +377,19 @@ cur += slot_bytes ; ③ 推进（add_imm）
 [ap] = cur        ; ④ 写回（ptr_store）
 ```
 
-缺任一条角色 ⇒ 整条臂明确 `Unsupported`（点名缺哪个角色）。**本片只覆盖整数类结果**：
-浮点/向量结果要「mem → FPR」的取值能力（x86 谱今天没有这条角色），因此**按结果类型
-fail-closed**，不把 FPR 塞进 GPR 指令里静默编错；提升规则（D5）随之留给"有浮点取值能力"
-的那一片——整数类今天靠"调用方按槽写、读取方按结果宽度截断"已经自洽。
+缺任一条角色 ⇒ 整条臂明确 `Unsupported`（点名缺哪个角色）。**按结果类分派取值**：标量浮点走
+`{ role = "ptr_load", class = "fpr" }`（x86 = `MOVSD_R_MEM`，mem → XMM），整数/指针走无类限定的
+那条（x86 = `MOV_R_MEM`，宽度随 IR 类型自动）。
+
+**调用方那一半同样按类分派**（否则浮点栈实参会被静默写坏）：栈实参 store 用
+`stack_arg_store`（整数/指针，x86 = `MOV64_MR`）与
+`{ role = "stack_arg_store", class = "fpr" }`（标量浮点，x86 = `MOVSD_MR`）两条，按实参的 IR
+类型选。缺 fpr 版 ⇒ 浮点栈实参**明确 Unsupported**（不再拿整数 store 搬 XMM）。
+
+**覆盖范围（诚实清单）**：整数类与 **f64** 已通。`f32`/更窄要**提升规则**（D5：调用方按 C 的
+默认提升传 f64，读取方读 f64 再截断）；向量要"mem → 向量寄存器"的取值能力——两者都在
+**运行期按结果类型 fail-closed**，不把 FPR/向量塞进 GPR 指令里静默编错。
+（第 5+ 个**命名**浮点实参走的是同一条 caller/callee 栈路径：现在也按类分派了。）
 
 ### 无 plan = 编译错误（v20 A6）
 
@@ -442,8 +451,8 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参状态上报（`abi check` 的 `ℹ 变参 …` 行 + 三种自相矛盾的硬错） | ✅ | `abi_check_reports_the_variadic_state` |
 | 变参 V2 数据面：IR `VaStart` + `CallLayout.va` 镜像 | ✅ | `call_layout_mirrors_the_variadic_shape` |
 | 变参 V3 对象物化：`va_start` 建 `va_list` 对象（管线给帧槽）+ win64 穿过对象读回 | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
-| 变参 V4：`va_arg` 取值 + 原地推进（整数类，win64） | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（两次 `va_arg` → 4 / 7） |
-| 变参：寄存器保存区（`sysv64`/`lp64d`/`aapcs64`）、浮点取值能力、提升规则 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参 V4：`va_arg` 取值 + 原地推进（整数类 + f64，win64） | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（两次 `va_arg` → 4 / 7）、`test_jit_va_arg_reads_unnamed_float_args`（`4.5 + 7.0 → 11`） |
+| 变参：寄存器保存区（`sysv64`/`lp64d`/`aapcs64`）、`f32` 提升规则、向量取值能力 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
 | 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |

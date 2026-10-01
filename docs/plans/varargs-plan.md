@@ -193,8 +193,15 @@ V2 落地时把 `VaStart` 定义成"**取未命名实参区的地址**"——那
 "取游标 → 取值 → 游标 += 槽宽 → 写回"，x86 谱把 `ptr_load`/`ptr_store`/`add_imm` 打到
 `MOV_R_MEM`/`STORE_MEM_R`/`ADD_R_IMM32` 上（这三条本来就有、只是没有角色）。
 `test_jit_va_arg_reads_unnamed_stack_args` 两次 `va_arg` 取回 `4`/`7` 算 `47`。
-**本片只覆盖整数类结果**：浮点/向量要「mem → FPR」的取值能力（x86 谱今天没有），
-**按结果类型 fail-closed**；提升规则（D5）随之留给"有浮点取值能力"的那一片。
+
+**V4 的第二片已落地（2026-10-01）**：**浮点（f64）未命名实参两端打通**——被调方取值按结果类
+分派到 `{ role = "ptr_load", class = "fpr" }`（x86 = `MOVSD_R_MEM`，mem → XMM），**调用方**
+写栈也按类分派到 `{ role = "stack_arg_store", class = "fpr" }`（x86 = `MOVSD_MR`）：只做被调方
+那一半是不够的——调用方拿整数 store 搬 XMM 会把值写坏。缺 fpr 版 store ⇒ 浮点栈实参**明确
+Unsupported**（不再静默错值）；第 5+ 个**命名**浮点实参走的同一条路径也因此归位。
+验收 `test_jit_va_arg_reads_unnamed_float_args`（`4.5 + 7.0 → 11`）。
+**仍缺**：`f32`/更窄要提升规则（D5：读 f64 再截断）、向量要"mem → 向量寄存器"的取值能力
+——两者都在**运行期按结果类型 fail-closed**。
 
 ## 6. 为什么现在**不做**（触发条件）
 

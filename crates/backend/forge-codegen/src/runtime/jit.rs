@@ -2973,6 +2973,57 @@ ret_int = ["RAX"]
             "被调方必须能从 va_start 给出的地址读到两个未命名实参（win64 栈式）"
         );
     }
+
+    /// **变参 V4：浮点未命名实参**（win64）——调用方把 **f64** 栈实参写进传出区（
+    /// `{ role = "stack_arg_store", class = "fpr" }`）、被调方用 `va_arg(ap, f64)` 读回
+    /// （`{ role = "ptr_load", class = "fpr" }`）。
+    ///
+    /// 这条同时钉住两半：**只做被调方一半是不够的**——调用方若拿整数 store 搬 XMM，
+    /// 值会被静默写坏（这正是本片修掉的缺口）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_arg_reads_unnamed_float_args() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+
+        // callee(fmt: i64) -> i64 ── 变参：ret (i64)(va_arg(f64) + va_arg(f64))
+        // 4.5 + 7.0 = 11.5 ⇒ fptosi = 11（截断，无浮点精度争议）。
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let va = callee.va_start();
+        let d1 = callee.va_arg(va, TypeId::F64);
+        let d2 = callee.va_arg(va, TypeId::F64);
+        let sum = callee.fadd(d1, d2);
+        let r = callee.fptosi(sum, TypeId::I64);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        // main() -> i64：ret callee(0, 4.5, 7.0)（后两个是**未命名浮点实参**）
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let x = main_fn.fconst_f64(4.5);
+        let y = main_fn.fconst_f64(7.0);
+        let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            11,
+            "调用方要把 f64 未命名实参按浮点写进传出区（XMM → 内存），被调方按 fpr 取值"
+        );
+    }
     /// **多值返回**（v20 A6）：callee 一次返回两个标量（x86 = RAX:RDX），调用方两个都读回。
     ///
     /// 这条守的是"第二个返回值在哪"由**引擎的 plan** 给（`RetLoc::RegPair` ← 绑定的

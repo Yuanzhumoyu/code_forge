@@ -897,6 +897,9 @@ form = "MRR_MEM_0F_FIX32"
 modrm = { rm = "[src]" }
 opcode = 0x10
 fields = { prefix = 0xF2 }
+# 按 vreg 基址读**浮点**的能力（v20 变参 V4）：`va_arg(ap, f64)` 取值用它
+# （`{ role = "ptr_load", class = "fpr" }`——与 MOV_R_MEM 的整数版分工）。
+roles = [{ role = "ptr_load", class = "fpr" }]
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movsd {dst}, [{src}]"
 
@@ -960,6 +963,9 @@ escape = [0x0F]
 prefix = "field"
 opcode = 0x11
 fields = { prefix = 0xF2 }
+# 浮点写内存的能力（v20 变参 V4）：调用方把**浮点栈实参**写进传出区用它
+# （`{ role = "stack_arg_store", class = "fpr" }`——与 MOV64_MR 的整数版分工）。
+roles = [{ role = "stack_arg_store", class = "fpr" }]
 ops = ["src:fpr", "mem:mem"]
 asm = "movsd {mem}, {src}"
 

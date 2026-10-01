@@ -897,7 +897,9 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     let tagged = |role: Role,
                   what: &str|
      -> Result<Option<(syn::Ident, syn::Ident, syn::Ident)>, String> {
-        let Some(info) = crate::v12::codegen::lowering::inst_by_role(infos, role) else {
+        // **无限定**声明（发射要的是那条通用指令；类/宽度分派另有出口）——
+        // 见 `inst_by_plain_role` 的说明：宽松查找会静默选中类限定版。
+        let Some(info) = crate::v12::codegen::lowering::inst_by_plain_role(infos, role) else {
             if has_stack_arg {
                 return Err(format!(
                     "move_args: 本 ISA 声明了 roles = [\"stack_arg_load\"]（支持栈参数），但缺 roles = [\"{role}\"] 的指令（不按指令名兜底）"

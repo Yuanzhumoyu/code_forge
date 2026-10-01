@@ -892,7 +892,7 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
     };
     // 对象里的游标字段要**写回内存**：store 指令按角色取（与调用方写栈参数同一条能力——
     // 它本来就是"把寄存器写进 `[基址+偏移]`"，这里基址是帧基址、偏移是对象槽）。
-    let Some(store_info) = inst_by_role(infos, Role::StackArgStore) else {
+    let Some(store_info) = inst_by_plain_role(infos, Role::StackArgStore) else {
         return Ok(quote! {
             crate::prelude::Opcode::#op_ident { .. } => {
                 return Err(crate::prelude::IrError::Unsupported(
@@ -1020,10 +1020,11 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
 /// 三条指令**按能力角色**取（`ptr_load`/`ptr_store`/`add_imm`），不做按指令名探测——
 /// 缺任一条就整条 arm 明确 `Unsupported`（点名缺哪个角色）。
 ///
-/// **本片只覆盖整数类结果**：浮点/向量结果需要"mem → FPR"的取值能力（今天 x86 谱里
-/// 没有这条角色，`fpr_mov` 是寄存器间搬运），所以**运行时按结果类型 fail-closed**
-/// （而不是把 FPR 塞进 GPR 指令里静默编错）。提升规则（D5）随之留给"有浮点取值能力"的那一片：
-/// 整数类今天靠"调用方按槽写、读取方按结果宽度截断"已经自洽。
+/// **按结果类分派取值**（`ptr_load` 的类限定版）：标量浮点走
+/// `{ role = "ptr_load", class = "fpr" }`（x86 = `MOVSD_R_MEM`，mem → XMM），整数/指针走
+/// 无类限定的那条（宽度随 IR 类型自动）。**本片只覆盖 `f64` 的浮点**：`f32`/更窄要
+/// "提升规则"（D5：调用方按 C 默认提升传 f64，读取方读 f64 再截断），向量要向量取值能力——
+/// 两者都在**运行期按结果类型 fail-closed**（不把 FPR/向量塞进 GPR 指令里静默编错）。
 fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStream, String> {
     const OP: &str = "VaArg";
     let op_ident = format_ident!("{OP}");
@@ -1076,6 +1077,40 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
     let (s_val_i, s_base_i) = (0u8, 1u8);
     let (a_dst, a_dst_i) = (&a_regs[0], 0u8);
     let a_imm = &a_imms[0];
+    // 浮点取值（`{ role = "ptr_load", class = "fpr" }`，x86 = `MOVSD_R_MEM`）：只在结果
+    // 是 **f64** 时用；缺它或结果不是 f64 ⇒ 明确 Unsupported（见下方判据）。
+    let fpr_load = role_name_for_class(infos, Role::PtrLoad, RoleClass::Fpr)
+        .map(|name| {
+            let vn = crate::v12::codegen::pascal_ident(&name);
+            let regs = inst_reg_imm_fids(infos, &name)
+                .map(|(r, _)| r)
+                .unwrap_or_default();
+            (vn, regs)
+        })
+        .filter(|(_, regs)| regs.len() >= 2);
+    let fpr_load_vn = fpr_load
+        .as_ref()
+        .map(|(vn, _)| vn.clone())
+        .unwrap_or_else(|| l_vn.clone());
+    let (f_l_dst, f_l_src) = fpr_load
+        .as_ref()
+        .map(|(_, regs)| (regs[0].clone(), regs[1].clone()))
+        .unwrap_or_else(|| (l_regs[0].clone(), l_regs[1].clone()));
+    // 生成期就知道本 ISA 有没有浮点取值能力：没有 ⇒ 浮点结果在运行期明确 Unsupported
+    //（而不是引用一个不存在的 `Inst` 变体）。
+    let fpr_missing_guard: TokenStream = if fpr_load.is_some() {
+        quote! {}
+    } else {
+        quote! {
+            if __is_fp {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 va_arg: 本 ISA 未申报 { role = \"ptr_load\", class = \"fpr\" } 的\
+                     取值指令（浮点实参读不出来）"
+                        .into(),
+                ));
+            }
+        }
+    };
     Ok(quote! {
         crate::prelude::Opcode::#op_ident { .. } => {
             let mut __pack = crate::prelude::InstPacket::new();
@@ -1114,18 +1149,33 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
                     ));
                 }
             };
-            // 整数类以外的结果：本片没有"mem → FPR"的取值能力 ⇒ **明确拒绝**
-            // （把 FPR 塞进 GPR 指令会静默编错值）。
-            let __non_int = ctx.xreg_types.get(&__r).copied().is_some_and(|__t| {
-                ctx.type_store
-                    .as_ref()
-                    .is_some_and(|__s| __s.is_float(__t) || __s.is_vector(__t))
+            // 结果类型判据（**按结果类型 fail-closed**，不把 FPR 塞进 GPR 指令）：
+            //   * 向量 ⇒ 拒绝（要向量取值能力，今天没有）；
+            //   * 标量浮点 ⇒ 只支持 **f64**（f32/更窄要"提升规则"（D5）：调用方按 C 的
+            //     默认提升传 f64，读取方得读 f64 再 fptrunc——那是另一片）；
+            //   * 整数/指针 ⇒ 走无类限定的 `ptr_load`（宽度随 IR 类型自动）。
+            let __bits = ctx.type_bits_of(&__r).unwrap_or(__SLOT_BYTES as u32 * 8);
+            let __is_fp = ctx.xreg_types.get(&__r).copied().is_some_and(|__t| {
+                ctx.type_store.as_ref().is_some_and(|__s| __s.is_float(__t))
             });
-            if __non_int {
+            let __is_vec = ctx.xreg_types.get(&__r).copied().is_some_and(|__t| {
+                ctx.type_store.as_ref().is_some_and(|__s| {
+                    __s.is_vector(__t) || __s.is_scalable_vector(__t)
+                })
+            });
+            if __is_vec {
                 return Err(crate::prelude::IrError::Unsupported(
-                    "v12 va_arg: 浮点/向量结果需要「mem → FPR」的取值能力（本片只做整数类）".into(),
+                    "v12 va_arg: 向量结果需要「mem → 向量寄存器」的取值能力（尚未申报）".into(),
                 ));
             }
+            if __is_fp && __bits != 64 {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 va_arg: 只有 f64 的浮点取值能力；f32/更窄要「提升规则」（D5）——\
+                     调用方按默认提升传 f64，读取方读 f64 再截断"
+                        .into(),
+                ));
+            }
+            #fpr_missing_guard
             // ① 游标 = [ap]
             let __cur = ctx.alloc_xreg(__ADDR_CLASS);
             let __i1 = __pack.push_inst(Inst::#l_vn {
@@ -1134,12 +1184,23 @@ fn gen_va_arg_lowering(infos: &[InstInfo], _model: &V12Model) -> Result<TokenStr
             });
             __pack.map_reg_field(__ap, __i1, #l_src_i, false);
             __pack.map_reg_field(__cur, __i1, #l_dst_i, true);
-            // ② 值 = [cur]（宽度随结果类自动：gprx 槽按 IR 值宽度选 REX/前缀）
-            let __i2 = __pack.push_inst(Inst::#l_vn {
-                #l_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #l_src: Reg::from_index(0, __ADDR_CLASS),
-            });
-            __pack.map_reg_field(__cur, __i2, #l_src_i, false);
+            // ② 值 = [cur]：标量浮点走 `class = "fpr"` 的取值指令（mem → XMM），
+            //    整数/指针走无类限定的那条（宽度随结果类自动：gprx 槽按 IR 值宽度选 REX/前缀）。
+            let __i2 = if __is_fp {
+                let __idx = __pack.push_inst(Inst::#fpr_load_vn {
+                    #f_l_dst: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    #f_l_src: Reg::from_index(0, __ADDR_CLASS),
+                });
+                __pack.map_reg_field(__cur, __idx, #l_src_i, false);
+                __idx
+            } else {
+                let __idx = __pack.push_inst(Inst::#l_vn {
+                    #l_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                    #l_src: Reg::from_index(0, __ADDR_CLASS),
+                });
+                __pack.map_reg_field(__cur, __idx, #l_src_i, false);
+                __idx
+            };
             __pack.map_reg_field(__r, __i2, #l_dst_i, true);
             // ③ cur += slot_bytes（两地址：同一条 XReg 既 use 又 def）
             let __i3 = __pack.push_inst(Inst::#a_vn {
@@ -1552,20 +1613,31 @@ fn gen_call_lowering(
     // 栈参数 store 指令：**按语义角色** `stack_arg_store` 取（TOML 显式声明，
     // 不做按指令名探测）。**不受谱面键门控**（v20 A5-3 起没有 `[abi.stack_args]`）：
     // 角色缺失 ⇒ 调用点的栈参数分支在运行期给明确 Unsupported，不再按 x86 指令名兜底。
-    let stack_store: Option<(syn::Ident, syn::Ident, syn::Ident, u8)> =
-        match inst_by_role(infos, Role::StackArgStore) {
-            Some(info) => {
-                let vn = vn(&info.inst.name);
-                let (reg, mem, reg_idx) = reg_mem_fids(info);
-                match (reg, mem) {
-                    (Some(r), Some(m)) => Some((vn, m, r, reg_idx)),
-                    _ => {
-                        return Err("Call lowering: roles = [\"stack_arg_store\"] 的指令必须是 \
-                                 Reg+Mem 形状"
-                            .into());
-                    }
-                }
+    //
+    // **按寄存器类分派**（v20 变参 V4）：整数/指针用无类限定的那条（`MOV64_MR`），
+    // 标量浮点用 `{ role = "stack_arg_store", class = "fpr" }` 那条（`MOVSD_MR`）——
+    // 缺后者时浮点栈实参**明确 Unsupported**，不再拿整数 store 搬 XMM（那会静默错值）。
+    let store_shape =
+        |info: &InstInfo| -> Result<Option<(syn::Ident, syn::Ident, syn::Ident, u8)>, String> {
+            let vn = vn(&info.inst.name);
+            let (reg, mem, reg_idx) = reg_mem_fids(info);
+            match (reg, mem) {
+                (Some(r), Some(m)) => Ok(Some((vn, m, r, reg_idx))),
+                _ => Err(
+                    "Call lowering: roles = [\"stack_arg_store\"] 的指令必须是 Reg+Mem 形状".into(),
+                ),
             }
+        };
+    let stack_store: Option<(syn::Ident, syn::Ident, syn::Ident, u8)> =
+        match inst_by_plain_role(infos, Role::StackArgStore) {
+            Some(info) => store_shape(info)?,
+            None => None,
+        };
+    let stack_store_fpr: Option<(syn::Ident, syn::Ident, syn::Ident, u8)> =
+        match role_name_for_class(infos, Role::StackArgStore, RoleClass::Fpr)
+            .and_then(|name| infos.iter().find(|i| i.inst.name == name))
+        {
+            Some(info) => store_shape(info)?,
             None => None,
         };
     // 浮点移动指令：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键（缺省
@@ -2118,6 +2190,9 @@ fn gen_call_lowering(
         // 栈参数 store 指令（角色 stack_arg_store；缺角色 → None，由 helper 生成
         // 运行期 Unsupported，不按指令名兜底）
         &stack_store,
+        // 浮点栈参数 store（`{ role = "stack_arg_store", class = "fpr" }`；缺 → None，
+        // 由 helper 对浮点栈实参给明确 Unsupported）
+        &stack_store_fpr,
         // 栈相对内存的基址寄存器（[machine.frame].sp 派生）
         &__sp_base,
         has_byref_insts,
@@ -2228,6 +2303,7 @@ fn arg_move_loop(
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
     stack_store: &Option<(syn::Ident, syn::Ident, syn::Ident, u8)>,
+    stack_store_fpr: &Option<(syn::Ident, syn::Ident, syn::Ident, u8)>,
     sp_base: &TokenStream,
     has_byref_insts: bool,
 ) -> TokenStream {
@@ -2277,27 +2353,63 @@ fn arg_move_loop(
         }
     };
     // 栈参数：偏移由布局给（调用方视角 `caller_offset(k)`），k = 已发过的栈参数个数。
+    // **按实参的类分派写指令**（v20 变参 V4）：标量浮点用 `class = "fpr"` 的那条
+    // （XMM → 内存），整数/指针用无类限定的那条。浮点实参 + 本 ISA 没申报 fpr 版 ⇒ 明确
+    // Unsupported（拿整数 store 搬 XMM 是静默错值，v20 起不允许）。
     let stack_stmt: TokenStream = match stack_store {
-        Some((s_vn, s_mem, s_reg, s_reg_idx)) => quote! {
-            let __k = __stack_seen;
-            __stack_seen += 1;
-            let __off = __cl.caller_offset(__k) as i64;
-            let __slot = __cl.slot_bytes;
-            let __idx = __pack.push_inst(Inst::#s_vn {
-                #s_mem: MemRef {
-                    base: #sp_base,
-                    disp: __off,
-                    index: None,
-                    scale: 1,
+        Some((s_vn, s_mem, s_reg, s_reg_idx)) => {
+            let fpr_store: TokenStream = match stack_store_fpr {
+                Some((f_vn, f_mem, f_reg, f_reg_idx)) => quote! {
+                    let __idx = __pack.push_inst(Inst::#f_vn {
+                        #f_mem: MemRef {
+                            base: #sp_base,
+                            disp: __off,
+                            index: None,
+                            scale: 1,
+                        },
+                        #f_reg: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                    });
+                    __pack.map_reg_field(__a, __idx, #f_reg_idx, false);
                 },
-                #s_reg: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-            });
-            __pack.map_reg_field(__a, __idx, #s_reg_idx, false);
-            // 帧需求：栈参数区 = shadow + 已用栈槽
-            ctx.max_stack_arg_bytes = ctx
-                .max_stack_arg_bytes
-                .max(__cl.shadow_bytes + __stack_seen * __slot);
-        },
+                None => quote! {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "v12 call: 浮点栈实参需要 roles = \
+                         [{ role = \"stack_arg_store\", class = \"fpr\" }] 的指令\
+                         （拿整数 store 搬 XMM 会静默错值）"
+                            .into(),
+                    ));
+                },
+            };
+            quote! {
+                let __k = __stack_seen;
+                __stack_seen += 1;
+                let __off = __cl.caller_offset(__k) as i64;
+                let __slot = __cl.slot_bytes;
+                let __is_fp = ctx.xreg_types.get(&__a).is_some_and(|__t| {
+                    ctx.type_store
+                        .as_ref()
+                        .is_some_and(|__s| __s.is_float(*__t))
+                });
+                if __is_fp {
+                    #fpr_store
+                } else {
+                    let __idx = __pack.push_inst(Inst::#s_vn {
+                        #s_mem: MemRef {
+                            base: #sp_base,
+                            disp: __off,
+                            index: None,
+                            scale: 1,
+                        },
+                        #s_reg: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                    });
+                    __pack.map_reg_field(__a, __idx, #s_reg_idx, false);
+                }
+                // 帧需求：栈参数区 = shadow + 已用栈槽
+                ctx.max_stack_arg_bytes = ctx
+                    .max_stack_arg_bytes
+                    .max(__cl.shadow_bytes + __stack_seen * __slot);
+            }
+        }
         None => quote! {
             return Err(crate::prelude::IrError::Unsupported(
                 "v12 call: 本 ISA 缺 roles = [\"stack_arg_store\"] 的指令（栈参数写不出去）".into(),
@@ -2374,6 +2486,28 @@ pub(crate) fn inst_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Option<
     infos
         .iter()
         .find(|i| i.inst.roles.iter().any(|d| d.is(role)))
+}
+
+/// 按角色取**无限定**的声明（`roles = ["x"]`——既没有 `bits` 也没有 `class`）。
+///
+/// 与 [`inst_by_role`] 的分工：那个回答"**这台机器有没有这个能力**"（类/宽度限定版也算，
+/// 例如 arm64 只按寄存器类申报 `callee_save`，帧内保存照样成立）；本函数回答
+/// "**要那条通用指令**"——类/宽度的分派是 [`role_name_for_class`] / [`role_name_for`] 的事。
+///
+/// 为什么要分开（2026-10-01，变参 V4 实测）：同一角色一旦既有通用声明又有类限定声明
+/// （`stack_arg_store` 的整数版 + `{ …, class = "fpr" }` 的浮点版），宽松查找会在通用那条
+/// 缺失时**静默选中浮点那条**——于是"缺通用 store"的编译期诊断消失，整套 ABI 的栈参数都
+/// 改用浮点指令（守卫 `stack_args_capability_is_declared_by_roles` 抓到的正是这个）。
+pub(crate) fn inst_by_plain_role<'a>(
+    infos: &'a [InstInfo<'a>],
+    role: Role,
+) -> Option<&'a InstInfo<'a>> {
+    infos.iter().find(|i| {
+        i.inst
+            .roles
+            .iter()
+            .any(|d| d.is(role) && d.bits().is_none() && d.class().is_none())
+    })
 }
 
 /// 按 **(角色, 位宽)** 查指令（v18 S9）：有宽度语义的角色（`fpr_mov`、`wide_vec_load/

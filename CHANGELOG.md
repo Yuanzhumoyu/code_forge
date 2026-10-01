@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参 V4 第二片：浮点（f64）未命名实参两端打通
+
+整数类之后补上浮点：**调用方**把 f64 栈实参按类写进传出区、**被调方**用 `va_arg(ap, f64)` 读回。
+
+- **两条按寄存器类限定的能力角色**（v18 S9 的 `class` 限定，与 `callee_save` 同类用法）：
+  - `{ role = "stack_arg_store", class = "fpr" }`（x86 = `MOVSD_MR`）——调用方写浮点栈实参；
+  - `{ role = "ptr_load", class = "fpr" }`（x86 = `MOVSD_R_MEM`）——被调方按 fpr 取值。
+- **只做被调方那一半是不够的**：调用方若拿整数 store（`MOV64_MR`）搬 XMM，值会被静默写坏。
+  所以 `arg_move_loop` 的栈参数分支改成**按实参的 IR 类型选 store**：浮点走 fpr 版；本 ISA
+  没申报 fpr 版 ⇒ **明确 Unsupported**（不再静默错值）。同一路径也让**第 5+ 个命名浮点实参**
+  归位（此前无用例覆盖）。
+- 被调方 `va_arg` 的值取值同样按结果类分派：整数/指针走无类限定的 `ptr_load`（x86 = `MOV_R_MEM`，
+  宽度随 IR 类型自动），标量浮点走 fpr 版。
+- **覆盖范围（诚实清单）**：整数类 + **f64** 已通；`f32`/更窄要**提升规则**（D5：调用方按 C 的
+  默认提升传 f64，读取方读 f64 再截断），向量要"mem → 向量寄存器"的取值能力——两者都在
+  **运行期按结果类型 fail-closed**。
+- **验收（真跑）**：`test_jit_va_arg_reads_unnamed_float_args`——变参 `callee(fmt)` 两次
+  `va_arg(ap, f64)` 取回 `4.5` / `7.0`，相加后 `fptosi` 得 `11`。
+- 验证：`forge-codegen --lib --all-features`（1353）、`forge-tests`（x86 矩阵 195/3/0）、
+  `forge-ir`、`forge-isa-dsl`、`forge-abi` 全绿；`clippy -D warnings` 0、`cargo fmt --check` 0、
+  markdownlint 0。
+
 ### Added (2026-10-01) — 变参 V4 第一片：`va_arg` 取值 + 原地推进（整数类，win64 端到端）
 
 `va_list` 对象之上补上"取值"这一半：**`va_arg(ap, ty)`**（IR op 本来就有——`ops.toml`、文本层
