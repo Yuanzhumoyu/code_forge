@@ -2922,11 +2922,11 @@ ret_int = ["RAX"]
         let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
         assert_eq!(f(), 3, "被调方只读命名参数（多余实参要 V2/V4 才能读）");
     }
-    /// **变参 V2：被调方真的读到未命名实参**（win64）——`va_start` 取未命名实参区的地址，
-    /// 再用普通的 `load`/`gep` 逐槽读。
+    /// **变参 V2/V3：被调方真的读到未命名实参**（win64）——`va_start` **物化 `va_list`
+    /// 对象**（帧槽，1 个指针字段 = 未命名实参区地址），再从对象里取出游标、逐槽读。
     ///
     /// 验收要点：调用方（非变参 `main`）多传两个实参、按**被调方**的变参语义把它们放到栈上
-    /// （靠模块级签名表，见 V1），被调方用 `va_start` 拿到那段地址并把两个值读回来算
+    /// （靠模块级签名表，见 V1），被调方用 `va_start` 拿到对象地址并把两个值读回来算
     /// `a*10 + b`。**这条用例第一次让变参的"被调方读参"真正跑起来**。
     #[cfg(target_arch = "x86_64")]
     #[test]
@@ -2937,17 +2937,21 @@ ret_int = ["RAX"]
         let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
 
         // callee(fmt: i64) -> i64 ── **变参**：签名只列命名参数（照 LLVM 的 `...`）。
-        // 体内：va = va_start(); a = load(va); b = load(va + 8); ret a*10 + b
+        // 体内：ap = va_start(); cur = inttoptr(load(ap)); a = load(cur); b = load(cur+8)
         let sig_c =
             FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
         let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
         callee.switch_to_block(ce);
         let va = callee.va_start();
-        let a = callee.load(va, TypeId::I64);
-        // 未命名实参区是"一列 i64 槽"：第 2 槽 = gep i64, va, 1（按元素计数，非字节）。
+        // 对象 = 本约定的 `va_list`（win64：唯一字段在偏移 0 = 未命名实参区地址）。
+        // 取字段要**先读对象**（V3 起 `va_start` 返回的是对象地址，不再是那段地址本身）。
+        let cur_i = callee.load(va, TypeId::I64);
+        let cur = callee.inttoptr(cur_i, TypeId::PTR);
+        let a = callee.load(cur, TypeId::I64);
+        // 未命名实参区是"一列 i64 槽"：第 2 槽 = gep i64, cur, 1（按元素计数，非字节）。
         let one = callee.iconst(1, TypeId::I64);
-        let va2 = callee.gep(va, &[one], TypeId::I64);
+        let va2 = callee.gep(cur, &[one], TypeId::I64);
         let b = callee.load(va2, TypeId::I64);
         let ten = callee.iconst(10, TypeId::I64);
         let a10 = callee.imul(a, ten);

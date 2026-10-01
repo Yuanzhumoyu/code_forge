@@ -611,6 +611,31 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 };
                 self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(depth);
             }
+            // **`va_start` 的对象槽由后端分配**（v20 V3）：生成器不猜偏移——它只读
+            // `ctx.current_offset`（与 `StackAddr` 同一条通路），大小/对齐来自 plan 的
+            // `va_area`（`CallLayout.va`）。分配在 locals 区自顶向下的**最低端**：
+            // 槽占 `[-depth, -depth+size)`，`depth` 对 `align` 向上取整后接在现有
+            // locals 之后 ⇒ 与前端 `stack_addr(-N)` 的槽不重叠（后者从 -16/-24 起）。
+            //
+            // 为什么不让前端 `alloca`：`va_list` 的大小/对齐是**约定的数据**（win64 = 8、
+            // sysv64 = 24），前端不该知道；而 `max_stack_bytes` 本来就是管线在算的。
+            if inst.opcode == Opcode::VaStart
+                && let Some(va) = self.ctx.conv.layout().and_then(|cl| cl.va.as_ref())
+            {
+                let align = i64::from(va.align.max(1));
+                let size = i64::from(va.size.max(1));
+                let base = (i64::from(self.ctx.max_stack_bytes) + align - 1) / align * align;
+                let depth = base.saturating_add(size);
+                self.ctx.current_offset = -depth - self.ctx.stack_slot_shift as i64;
+                self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(depth as u32);
+                if crate::pipeline::trace_enabled("FORGE_TRACE_STACK") {
+                    eprintln!(
+                        "[forge] VaStart 对象槽：size={size} align={align} depth={depth} \
+                         -> lea rbp{:+}",
+                        self.ctx.current_offset
+                    );
+                }
+            }
             // AtomicRmw: immediates[0] = op (Uint(op as u64)), [1] = ordering
             if matches!(inst.opcode, Opcode::AtomicRmw)
                 && let Some(Immediate::Uint(v)) = inst.immediates.first()

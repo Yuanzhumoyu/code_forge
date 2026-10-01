@@ -850,14 +850,17 @@ struct PatternEmit {
     rewritten: Vec<String>,
 }
 
-/// **`VaStart` 的专用 lowering**（v20 变参 V2）：取"未命名实参区"的地址。
+/// **`VaStart` 的专用 lowering**（v20 变参 V2/V3）：**物化本约定的 `va_list` 对象**，
+/// 返回**该对象的地址**。
 ///
-/// 这是**约定相关**的取值，静态模板表达不了，所以在生成期按角色取"帧地址"指令
-/// （`roles = ["frame_addr"]`，x86 = `LEA_R64_SIB`），运行时按 `CallLayout.va` 判路：
+/// 契约与 win64 的对象形状：`CallLayout.va`（`kind`/`size`/`align`/`stack_only`）由计划给，
+/// 对象**放帧槽**——偏移由**管线**分配（`Opcode::VaStart` 与 `StackAddr` 走同一条通路：
+/// 管线设 `ctx.current_offset` 并按 `va_area` 抬 `max_stack_bytes`，见
+/// `forge-codegen/src/pipeline/lowering.rs`），生成器只读它、不猜。
 ///
 /// | `va.kind` | 发射 |
 /// | --- | --- |
-/// | `Win64Stack`（`supports_frame_addr_va_start()`） | `lea dst, [frame_base + 未命名区起点]` |
+/// | `Win64Stack`（`supports_frame_addr_va_start()`） | 对象 = 1 个指针字段（偏移 0）= 未命名实参区地址：`lea ap, [fp+slot]` + `lea cur, [fp+未命名区起点]` + `store [ap] = cur`，返回 `ap` |
 /// | 其余形态（寄存器保存区） | 明确 `Unsupported`（点名"变参 V3 未实现"） |
 /// | `None`（该约定不支持变参） | 明确 `Unsupported` |
 ///
@@ -884,12 +887,32 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
             }
         });
     };
+    // 对象里的游标字段要**写回内存**：store 指令按角色取（与调用方写栈参数同一条能力——
+    // 它本来就是"把寄存器写进 `[基址+偏移]`"，这里基址是帧基址、偏移是对象槽）。
+    let Some(store_info) = inst_by_role(infos, Role::StackArgStore) else {
+        return Ok(quote! {
+            crate::prelude::Opcode::#op_ident { .. } => {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 va_start: 本 ISA 未申报 roles = [\"stack_arg_store\"]\
+                     （往 va_list 对象里写游标）".into(),
+                ));
+            }
+        });
+    };
     let vn = crate::v12::codegen::pascal_ident(&info.inst.name);
     let (reg, mem, reg_idx) = reg_mem_fids(info);
     let (Some(reg_fid), Some(mem_fid)) = (reg, mem) else {
         return Err(format!(
             "[{}] 作为 roles = [\"frame_addr\"] 必须是 Reg+Mem 形状",
             info.inst.name
+        ));
+    };
+    let s_vn = crate::v12::codegen::pascal_ident(&store_info.inst.name);
+    let (s_reg, s_mem, s_reg_idx) = reg_mem_fids(store_info);
+    let (Some(s_reg_fid), Some(s_mem_fid)) = (s_reg, s_mem) else {
+        return Err(format!(
+            "[{}] 作为 roles = [\"stack_arg_store\"] 必须是 Reg+Mem 形状",
+            store_info.inst.name
         ));
     };
     let __frame_base = frame_base_toks(model);
@@ -900,7 +923,7 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
                 Some(__cl) => __cl,
                 None => {
                     return Err(crate::prelude::IrError::Unsupported(
-                        "v12 va_start: 取未命名实参区需要本函数的调用布局（plan）".into(),
+                        "v12 va_start: 物化 va_list 需要本函数的调用布局（plan）".into(),
                     ));
                 }
             };
@@ -935,15 +958,45 @@ fn gen_va_start_lowering(infos: &[InstInfo], model: &V12Model) -> Result<TokenSt
                 Some(__r) => __r,
                 None => {
                     return Err(crate::prelude::IrError::Unsupported(
-                        "v12 va_start: 缺结果值（未命名实参区地址）".into(),
+                        "v12 va_start: 缺结果值（`va_list` 对象的地址）".into(),
                     ));
                 }
             };
+            // ① 对象地址：管线为本 op 分配的帧槽（`ctx.current_offset`）。
             let __idx = __pack.push_inst(Inst::#vn {
                 #reg_fid: Reg::from_index(0, __ADDR_CLASS),
-                #mem_fid: MemRef { base: #__frame_base, disp: __off, index: None, scale: 1 },
+                #mem_fid: MemRef {
+                    base: #__frame_base,
+                    disp: ctx.current_offset,
+                    index: None,
+                    scale: 1,
+                },
             });
             __pack.map_reg_field(__r, __idx, #reg_idx, true);
+            // ② 游标值：win64 的对象只有这一个字段（偏移 0）= 未命名实参区地址。
+            let __cur = ctx.alloc_xreg(__ADDR_CLASS);
+            let __cidx = __pack.push_inst(Inst::#vn {
+                #reg_fid: Reg::from_index(0, __ADDR_CLASS),
+                #mem_fid: MemRef {
+                    base: #__frame_base,
+                    disp: __off,
+                    index: None,
+                    scale: 1,
+                },
+            });
+            __pack.map_reg_field(__cur, __cidx, #reg_idx, true);
+            // ③ 写进对象：`[对象槽 + 0] = cur`（字段偏移 0 —— Win64Stack 的形状，见 `VaKind`）。
+            //    对象在帧槽里，所以这是一条**帧相对** store（与 ① 同一个 `current_offset`）。
+            let __sidx = __pack.push_inst(Inst::#s_vn {
+                #s_mem_fid: MemRef {
+                    base: #__frame_base,
+                    disp: ctx.current_offset,
+                    index: None,
+                    scale: 1,
+                },
+                #s_reg_fid: Reg::from_index(0, __ADDR_CLASS),
+            });
+            __pack.map_reg_field(__cur, __sidx, #s_reg_idx, false);
             Ok(__pack)
         }
     })

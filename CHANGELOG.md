@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — 变参 V3 第一片：`va_start` 物化 `va_list` 对象（契约收紧，破坏性）
+
+V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win64 栈式**成立，往寄存器保存区
+（`sysv64`/`lp64d`/`aapcs64`）走时不通用（那些约定的 `va_list` 是多字段对象）。按
+`docs/plans/varargs-plan.md` 的裁定先把契约收紧，这一片落地其中的**对象物化**：
+
+- **`va_start` 现在物化 `va_list` 对象并返回对象地址**（破坏性：win64 多一个帧槽 + 一次 store，
+  读未命名实参要先从对象里取出游标）。win64 的对象 = 1 个指针字段（偏移 0）= 未命名实参区地址。
+- **对象槽由管线分配**（不新增"ABI 临时区"机制）：`Opcode::VaStart` 与 `StackAddr` 走同一条
+  通路——管线按 `va_area.size/align` 选偏移、设 `ctx.current_offset`、抬 `max_stack_bytes`，
+  生成器只读 `ctx.current_offset`，不猜偏移。为什么不让前端 `alloca`：`va_list` 的大小/对齐是
+  **约定的数据**（win64 = 8、sysv64 = 24），前端不该知道；而 `max_stack_bytes` 本来就是管线在算。
+- **发射**：`gen_va_start_lowering` = `lea` 对象地址 + `lea` 未命名区地址 + 帧相对 store 写字段 0，
+  结果 = 对象地址。全部按角色取（`frame_addr` + `stack_arg_store`，谱里**没有** `VaStart` 的
+  `[[lowering]]` 规则——与 `frame_set`/`frame_alloc` 同族：谱只申报能力，序列由生成器发）。
+- **验收（真跑）**：`test_jit_va_start_reads_unnamed_stack_args` 改成**穿过对象**读回两个未命名
+  实参（`load(ap)` → `inttoptr` → `load` / `gep` / `load`），仍是 `4*10+7 = 47`。
+- **仍是 ⬜（诚实清单）**：寄存器保存区（`sysv64`/`lp64d`/`aapcs64` 的序言物化）、`VaArg` op 与
+  提升规则；V4 还需要给"按 vreg 基址读写"与"寄存器 += 常量"申报三个能力角色
+  （`ptr_load`/`ptr_store`/`add_imm`）——今天 x86 谱里那三条指令没有角色，生成器按纪律不按指令名探测。
+- 验证：`forge-codegen --lib --all-features`（1352）、`forge-tests`（x86 矩阵 195/3/0）全绿；
+  `clippy -D warnings` 0、`cargo fmt --check` 0、markdownlint 0。
+
 ### Added (2026-10-01) — 变参 V2 发射：被调方用 `va_start` 读回未命名实参（win64 端到端）
 
 上一片只铺了数据面（IR 有 `VaStart`、`CallLayout.va` 有形态，但**没有任何发射路径**）。这一片把

@@ -135,7 +135,8 @@ pub struct CallArg {
 pub enum VaKind {
     /// 该约定不支持变参。
     None,
-    /// Win64：`va_list` 就是指向栈上实参的指针（变参只走栈）。
+    /// Win64：`va_list` 是**一个指针**（指向栈上实参那一列槽），变参只走栈 ⇒ 对象就是
+    /// 这一个字段（v20 V3 起由生成器物化到帧槽，字段偏移 0）。
     Win64Stack,
     /// SysV AMD64：寄存器保存区（6×8B GP + 8×16B XMM）+ 溢出区指针。
     SysvRegSave,
@@ -162,10 +163,11 @@ impl VaKind {
         matches!(self, VaKind::Win64Stack)
     }
 
-    /// **`va_start` 能不能直接用"帧内那段栈地址"实现**（v20 变参 V2）。
+    /// **`va_start` 能不能用"帧内那段栈地址"初始化**（v20 变参 V2/V3）。
     ///
-    /// 只有 `Win64Stack` 可以：`va_list` 就是指针。其余形态需要**寄存器保存区**
-    /// （在序言里把参数寄存器存到帧内）——发射侧尚未物化（方案 V3）⇒ 生成器 fail-closed。
+    /// 只有 `Win64Stack` 可以：对象的唯一字段就是那段地址（生成器 lea 一次、存进帧槽）。
+    /// 其余形态需要**寄存器保存区**（在序言里把参数寄存器存到帧内）——发射侧尚未物化
+    /// ⇒ 生成器 fail-closed（方案 V3 的剩余部分）。
     pub fn supports_frame_addr_va_start(self) -> bool {
         matches!(self, VaKind::Win64Stack)
     }

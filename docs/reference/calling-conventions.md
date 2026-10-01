@@ -343,11 +343,16 @@ plan_for_shapes → Signature → AbiRegistry::plan → AbiPlan → CallLayout
   处理——这是**已知缺口**，见 §已知缺口。
 
 **被调方**取未命名实参：`va_start`（IR op，0 操作数 → 指针）由生成器**按能力角色**发射
-（`roles = ["frame_addr"]`，x86 = `LEA_RBP_OFF`；与 `frame_set`/`frame_alloc` 同族——谱只申报
-能力，序列由生成器发，谱里**没有** `VaStart` 的 `[[lowering]]` 规则）。地址算式：
+（`roles = ["frame_addr"]` + `roles = ["stack_arg_store"]`，x86 = `LEA_RBP_OFF` / `MOV64_MR`；
+与 `frame_set`/`frame_alloc` 同族——谱只申报能力，序列由生成器发，谱里**没有** `VaStart` 的
+`[[lowering]]` 规则）。**契约（v20 V3）**：`va_start` **物化本约定的 `va_list` 对象**并返回
+**该对象的地址**——对象放帧槽，**偏移由管线分配**（`Opcode::VaStart` 与 `StackAddr` 同一条
+通路：管线按 `va_area.size/align` 选偏移并抬 `max_stack_bytes`，生成器只读
+`ctx.current_offset`，不猜）。win64 的对象 = 1 个指针字段（偏移 0）= 未命名实参区地址。
+地址算式（被调方视角、相对帧基址）：
 
 ```text
-未命名区起点（被调方视角、相对帧基址）
+未命名区起点
   = max(命名栈实参的 offset + size)                      # 有命名栈参数时（offset 已含 shadow）
   = first_arg_offset + shadow_bytes                       # 没有命名栈参数时（win64 = 16 + 32 = 48）
 ```
@@ -420,7 +425,8 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参：调用方发未命名实参（win64） | ✅ | `call_site_variadic_hint_decides_unnamed_argument_placement`、`test_jit_variadic_unnamed_args_go_to_stack` |
 | 变参状态上报（`abi check` 的 `ℹ 变参 …` 行 + 三种自相矛盾的硬错） | ✅ | `abi_check_reports_the_variadic_state` |
 | 变参 V2 数据面：IR `VaStart` + `CallLayout.va` 镜像 | ✅ | `call_layout_mirrors_the_variadic_shape` |
-| 变参 V2 发射（win64）：`va_start` → `load`/`gep` 读回未命名实参 | ✅ | `test_jit_va_start_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
+| 变参 V3 对象物化：`va_start` 建 `va_list` 对象（管线给帧槽）+ win64 穿过对象读回 | ✅ | `test_jit_va_start_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
+| 变参 V4：`VaArg` op（游标推进 + 提升）、寄存器保存区 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
 | 变参：寄存器保存区（V3，`sysv64`/`lp64d`/`aapcs64`）、`%al`/`va_meta`、`va_arg`（V4） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |
