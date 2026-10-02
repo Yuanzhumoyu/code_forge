@@ -1478,7 +1478,11 @@ fn aapcs64_variadic_shape_is_pure_data() {
 
     assert_eq!(va.shape.as_deref(), Some("aapcs64_struct"));
     assert_eq!((va.size, va.align), (32, 8));
-    assert!(va.stack_only, "AAPCS64 的未命名实参只走栈");
+    assert!(
+        !va.stack_only,
+        "AAPCS64 的未命名实参**走寄存器**（`va_list` 是计数式结构：保存区 + `__gr_offs`/`__vr_offs`）\
+         ——2026-10-01 照该模型修正，此前误写成只走栈"
+    );
     assert_eq!(
         va.fields
             .iter()

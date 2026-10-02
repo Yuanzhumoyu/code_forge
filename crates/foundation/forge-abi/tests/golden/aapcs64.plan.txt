@@ -208,16 +208,16 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## va2p1
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=8 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic true position by_class
 arg fmt size=8 -> reg X0
 arg n size=4 -> reg X1
-arg x size=8 -> stack off=16 size=8 align=8
+arg x size=8 -> reg V0
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28 V8 V9 V10 V11 V12 V13 V14 V15] fp=false link=true
 clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
-va_area aapcs64_struct size=32 align=8 stack_only=true
+va_area aapcs64_struct size=32 align=8 stack_only=false
 va_field __stack @0 +8
 va_field __gr_top @8 +8
 va_field __vr_top @16 +8
@@ -245,16 +245,16 @@ va_rule float cursor=4 base=2 overflow=0 limit=0 signed=true step=16 ov_step=8 o
 widen_to_bits 32
 ## va0p3
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=24 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic true position by_class
-arg a size=8 -> stack off=16 size=8 align=8
-arg b size=8 -> stack off=24 size=8 align=8
-arg c size=8 -> stack off=32 size=8 align=8
+arg a size=8 -> reg X0
+arg b size=8 -> reg V0
+arg c size=8 -> reg X1
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28 V8 V9 V10 V11 V12 V13 V14 V15] fp=false link=true
 clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2 V3 V4 V5 V6 V7 V16 V17 V18 V19 V20 V21 V22 V23 V24 V25 V26 V27 V28 V29 V30 V31]
-va_area aapcs64_struct size=32 align=8 stack_only=true
+va_area aapcs64_struct size=32 align=8 stack_only=false
 va_field __stack @0 +8
 va_field __gr_top @8 +8
 va_field __vr_top @16 +8

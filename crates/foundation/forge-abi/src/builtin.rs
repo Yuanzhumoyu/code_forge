@@ -148,7 +148,14 @@ ret_classify = [
 hidden = { sret_pool = "sret", sret_slot = 0, va_list = "aapcs64_struct" }
 callee_saved = { mechanism = "store_to_frame", pools = ["cs_gpr", "cs_fpr"], includes_link = true }
 extensions = { widen_to_bits = 32 }
-variadic_stack_only = true
+# 未命名实参**走寄存器**（x0-x7 / v0-v7，溢出才上栈）——AAPCS64 的 `va_list` 是
+# `{__stack, __gr_top, __vr_top, __gr_offs, __vr_offs}` 的**计数式**结构：被调方把自己用过的
+# **通用/向量寄存器**存进保存区、`va_arg` 按 `__gr_offs`/`__vr_offs`（从负值数到 0）从保存区取、
+# 数到 0 再落到 `__stack`。这套结构只在"未命名实参确实进寄存器"时才讲得通。
+# 2026-10-01 修正：此前写的是 `true`（只走栈）——那与保存区语义矛盾（同一个模式先例：lp64d
+# 也是这么写的，照 psABI 定本核对后确认不符，见 `docs/plans/varargs-plan.md` §5）。
+# `forge-isa abi check` 的"可疑组合"告警就是抓这个矛盾的（声明了保存区却只走栈）。
+variadic_stack_only = false
 tail_calls = { allowed = true, must_match_stack = true }
 note = "HFA 用连续浮点槽表达；寄存器不足时整块走栈（规范允许部分在寄存器，A6 扩展）；未建模 LEN 类元信息寄存器（本片不猜 psABI，A6 核对后启用）"
 "#;

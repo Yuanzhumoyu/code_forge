@@ -36,7 +36,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `win64` | `win64_stack` | 8 | 8 | 只走栈 | — |
 | `sysv64` | `sysv_reg_save` | 24 | 8 | 继续用寄存器 | `RAX` |
-| `aapcs64` | `aapcs64_struct` | 32 | 8 | 只走栈 | — |
+| `aapcs64` | `aapcs64_struct` | 32 | 8 | 继续用寄存器 | — |
 | `lp64d` | `riscv_save_area` | 24 | 8 | 只走栈 | — |
 
 > **形状是数据**（v20 V6）：`hidden.va_list` 写**预置形状名**，或直接写一张**显式形状表**
@@ -386,7 +386,15 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      `variadic_va_arg_int_and_float` = 49 两条都真跑，无 variadic Skip），x86 **197/3/0**；
      `lp64d.plan.txt` 黄金快照 `first_arg_off` 16 → 0；
      `lint_shipped` 的两张快照同步（riscv op 覆盖 61 → 63、真缺口 42 → 40、vary 建议 22 → 24）。
-2. **aapcs64：数据面已通；编译面被 arm64 后端的**覆盖度**挡住（不是变参的问题）**。
+2. **aapcs64：数据面已按 `va_list` 模型修正一处、编译面被 arm64 后端的**覆盖度**挡住（不是变参的问题）**。
+   **修正（2026-10-01）**：`variadic_stack_only` 由 `true` → **`false`**。理由不需要定本原文也能定：
+   AAPCS64 的 `va_list` 是 `{__stack, __gr_top, __vr_top, __gr_offs, __vr_offs}` 的**计数式**结构
+   （被调方把自己用过的通用/向量寄存器存进保存区，`va_arg` 按 `__gr_offs`/`__vr_offs` 从负值数到 0、
+   数到 0 再落到 `__stack`）——这套结构只在"未命名实参**确实进寄存器**"时才讲得通；写成"只走栈"是
+   与保存区语义自相矛盾的（`forge-isa abi check` 的"可疑组合"告警正是抓这个，先例 lp64d 已被定本
+   证实不符）。**验证口径如实说明**：本机没有 arm64 执行通道，这次只在**计划面**验证（黄金快照
+   重刷 + `abi_target_real::aapcs64_variadic_shape_is_pure_data` 与 `invariants` 的文档表守卫
+   全绿），**不是**执行验证。
    实测：把变参函数编到 arm64 报 `Unsupported("v12 lowering")`——**arm64 谱目前只有 8 个 op 的
    lowering**（`Band`/`Bor`/`Bxor`/`Copy`/`Iadd`/`Iconst`/`Imul`/`Isub`，全是算术），而变参展开要用的
    IR 词汇（`StackAddr`/`Store`/`Load`/`Icmp`/`Select`/`Sextend`/`Ireduce`）**一个都没有**（x86/riscv

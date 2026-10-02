@@ -11,6 +11,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-01) — aapcs64 的变参数据修正：未命名实参**走寄存器**（`variadic_stack_only` → false）
+
+上一片的"可疑组合"告警立刻见效：它把 **aapcs64** 也点了出来——`aapcs64` 与 lp64d 是**同一个模式**
+（声明了寄存器保存区，却把未命名实参设成只走栈）。这一片修正它：
+
+- **判据（不需要定本原文）**：AAPCS64 的 `va_list` 是 `{__stack, __gr_top, __vr_top, __gr_offs,
+  __vr_offs}` 的**计数式**结构——被调方把自己用过的通用/向量寄存器存进保存区，`va_arg` 按
+  `__gr_offs`/`__vr_offs`（从负值数到 0）从保存区取，数到 0 再落到 `__stack`。这套结构只在
+  "未命名实参**确实进寄存器**"时才讲得通；"只走栈"与保存区语义自相矛盾。
+- 改动 = **纯数据**（`builtin.rs` 一行 + 注释），黄金快照按 `FORGE_ABI_BLESS=1` 重刷；文档表
+  `varargs-plan.md` §2 的 aapcs64 行从"只走栈"改为"继续用寄存器"（守卫
+  `va_shapes_match_the_documented_table` 正是先报出这处不一致）。
+- **验证口径如实说明**：本机**没有 arm64 执行通道**，这次只在**计划面**验证——
+  `forge-abi` 25 条 invariants（含文档表守卫）、`abi_target_real` 25（含
+  `aapcs64_variadic_shape_is_pure_data`，其断言同步改成"未命名实参走寄存器"）、`forge-isa` 24、
+  `forge-isa-dsl` 全绿；x86 矩阵 197/3/0、riscv 矩阵 133/67/0（未受影响）；`clippy -D warnings` 0、
+  `fmt --check` 0。**这不是执行验证**，写进方案 §5。
+- 收益：`abi check` 的"可疑组合"告警此后只剩 lp64d 一处（它的修正需要先把生成器的三操作数 fp
+  搬移泛化，见下一条），aapcs64 的数据先与 psABI 模型对齐。
+
 ### Added (2026-10-01) — `abi check` 报出"可疑组合"：声明了保存区却让未命名实参只走栈（数据驱动的一致性检查）
 
 lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档与守卫里，用户在 `forge-isa abi check`
