@@ -887,6 +887,9 @@ fn va_area_from_shape(
         stack_only: rules.variadic_stack_only,
         fields,
         save,
+        // "保存区必须与栈实参连续"是**形状数据**（见 `VaSaveDecl::contiguous`）：没有保存区
+        // 时无从谈起（那本身就不需要保存区）。
+        save_contiguous: shape.save.is_some_and(|d| d.contiguous),
         arg_rules: VaArgRules {
             int: int_rule,
             float: float_rule,

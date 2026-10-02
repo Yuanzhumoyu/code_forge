@@ -356,14 +356,19 @@ fn variadic_report(
             shape.size, shape.align
         ));
     }
-    // ③ "游标就是地址"（没有基址、也没有溢出区）⇒ 未命名实参必须只走栈
+    // ③ "游标就是地址"（没有基址、也没有溢出区）⇒ 未命名实参必须只走栈——**除非**形状声明了
+    //    "保存区与栈实参连续"（v20 V7）：那时保存区就贴在入口 `sp` 上，一个线性游标从保存区
+    //    起点出发，先走完寄存器里的变参、再接着走栈上的变参（RISC-V 的 `va_list` 正是这个形态），
+    //    所以"游标就是地址"与"未命名实参进寄存器"并不矛盾。
     let addr_only = shape.int_arg.base.is_none()
         && shape.int_arg.overflow.is_none()
         && shape.float_arg.base.is_none();
-    if addr_only && !rules.variadic_stack_only {
+    let contiguous_save = shape.save.is_some_and(|s| s.contiguous);
+    if addr_only && !rules.variadic_stack_only && !contiguous_save {
         hard.push(format!(
             "{conv}：`va_list` 形状的游标就是栈地址（没有保存区/溢出区）但 \
-             `variadic_stack_only = false` —— 未命名实参可能进寄存器，游标指不到"
+             `variadic_stack_only = false` —— 未命名实参可能进寄存器，游标指不到\
+             （保存区要求与栈实参连续时没这个问题：见 `VaSaveDecl::contiguous`）"
         ));
     }
     // ③b **可疑组合**（2026-10-01 加，写进 `ℹ` 行、不改退出码）：声明了**寄存器保存区**却让未命名
@@ -374,7 +379,10 @@ fn variadic_report(
     // （见 `docs/plans/varargs-plan.md` §5；aapcs64 目前也是这个组合，待核）。
     let suspect = shape.save.is_some() && rules.variadic_stack_only;
     let name = decl.preset_name().unwrap_or("<explicit>");
-    let kind = if addr_only {
+    let kind = if addr_only && contiguous_save {
+        // 线性游标 + 紧贴入口 sp 的保存区：psABI 的"单一线性游标"形态（RISC-V）。
+        "保存区（与栈实参连续）+ 线性游标"
+    } else if addr_only {
         "栈式游标（va_list = 栈上实参游标）"
     } else if shape.save.is_some() {
         "寄存器保存区 + 溢出区"

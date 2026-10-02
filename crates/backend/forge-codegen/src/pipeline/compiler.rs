@@ -2203,8 +2203,17 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // `plan_abi_slots` 在编译入口算好（排在前端局部槽之下）并经 `abi_slots` 传进来——
         // 这里只**播种**：抬 `max_stack_bytes`（帧尺寸要覆盖它们）并记下序言 spill 用的
         // 保存区偏移。展开出来的 `StackAddr` 会让 lowering 自己再统计一次（同一组深度）。
+        //
+        // **保存区要求与栈实参连续**时（v20 V7，形状数据）保存区改放**帧顶**
+        // （`[入口 sp - save_size, 入口 sp)`）：`va_top` 把 ra/fp、callee-saved 的保存槽与
+        // 局部槽一起下移一个 save_size（前两者由生成物读 `AllocResult.va_top`，后者由
+        // `stack_slot_shift` 加同一份），帧尺寸也要跟着长。
         if let Some(sl) = abi_slots {
             ctx.va_save_off = (sl.save_depth > 0).then_some(sl.save_off);
+            ctx.va_top = sl.va_top;
+            // 帧顶给保存区让出的字节：局部槽（`StackAddr`）与 ra/fp、callee-saved 的保存槽
+            // 一起下移同一份（后者由生成物读 `AllocResult.va_top`），帧尺寸也因此长一截。
+            ctx.stack_slot_shift += sl.va_top as i32;
             ctx.max_stack_bytes = ctx.max_stack_bytes.max(sl.max_depth);
         }
         Ok(Self {
@@ -2358,6 +2367,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
         alloc_result.stack_arg_bytes = self.ctx.max_stack_arg_bytes;
         // 寄存器保存区 / 对象槽偏移（v20 变参 V3）：序言 spill 用前者。
         alloc_result.va_save_off = self.ctx.va_save_off;
+        // 帧顶保存区字节数（v20 V7）：fp-inside 的存取机制要按它把自己的偏移减掉一份。
+        alloc_result.va_top = self.ctx.va_top;
         // 参数字节宽（IR 类型 size_bytes）——@move_args 的 by-ref 宽向量收参按
         // 真实字节宽分派 32B/64B load 变体。寄存器类宽对 >128 位向量恒为
         // VEC(32)（reg_class_for），无法区分 V256/V512：旧实现用 __pv.width()

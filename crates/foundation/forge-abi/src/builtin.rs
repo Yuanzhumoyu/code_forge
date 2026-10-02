@@ -195,35 +195,17 @@ pub fn registry() -> Result<AbiRegistry, AbiError> {
 }
 
 /// RISC-V LP64D：a0-a7/fa0-fa7、**按类**计数、HFA ≤2、>2×XLEN 聚合按引用、
-/// 变参未命名实参走栈。
+/// 变参未命名实参**走整数寄存器**（定本口径，2026-10-01 落地）。
 ///
 /// **未启用** `va_len_pool`：历史上 RISC-V 生态有过"LEN 实参"的写法，本片不猜
 /// psABI 细节（A6 按官方定本核对后再启用；引擎支持这条路径，见 `tests/invariants.rs`）。
 ///
-/// **已知偏差（2026-10-01 核对 psABI 定本时发现，故意钉住现状）**：定本 `riscv-cc.adoc` 的
-/// 「`va_list`, `va_start`, and `va_arg`」一节（issue #412 之后的版本，本仓库 2026-10-01 核对原文）：
-///
-/// - `va_list` **与 `void*` 同表示**（⇒ `sizeof(va_list)` = 8；本预置形状的 `size` 已照此改成 8）；
-/// - 若还有整数参数寄存器没被命名形参用掉，被调方要在**紧贴入口 `sp` 之下**造一块 varargs save area，
-///   把**未被命名形参用掉的那些整数参数寄存器按序**存进去；`va_list` 指向该区**起点**，于是它
-///   先走完寄存器里的变参、再接着走栈上的变参，`va_arg` 按类型大小线性递增；
-/// - 浮点调用约定那一节写着 *"The remainder of this section applies only to **named** arguments.
-///   **Variadic arguments are passed according to the integer calling convention.**"* ⇒ LP64D 上
-///   **变参的浮点也走整数寄存器**（`double` 的位模式进 a0-a7）——这也正是"单一线性游标"能成立的原因。
-///
-/// 本文件这里写的 `variadic_stack_only = true` + `area` 指向调用方栈实参区**与定本不符**：自洽
-/// （自己的调用方/被调方按同一份约定对齐，QEMU 矩阵真跑绿），但与外部编译器编译的变参函数互调会错。
-///
-/// **修复是四件一起**（半改会静默读错值）：① `variadic_stack_only = false`；② save area 放**帧顶**
-/// （`[entry_sp - save_size, entry_sp)`，与调用方栈实参连续——`plan_abi_slots` 现在把它排在前端
-/// 局部槽之下，要按"形状要求连续"这条数据把局部槽整体下移）；③ `area` 初值 = 保存区起点 +
-/// **已用整数寄存器数 × 槽宽**；④ 变参实参按**整数约定**分类（浮点进整数池）——④ 在发射侧还要一块
-/// **通用**能力：**类间位搬移**（FPR 的位模式搬进 GPR：riscv `fmv.x.d`、x86 `MOVQ`、arm64 `FMOV`），
-/// 现在角色系统只有同类内的 `gpr_mov`/`fpr_mov`。守卫
-/// `invariants.rs::lp64d_variadic_stack_only_is_a_documented_deviation` 钉住现状（谁改这个值都会红，
-/// 它同时正向钉住"size = 8 = `void*`"）。**注意**：把形状改成 SysV 那种
-/// `gp_offset`/`fp_offset`/`reg_save_area`/`stack_arg_area` 四字段是**错的**——RISC-V 的 `va_list`
-/// 就是一个 `void*`。
+/// **变参四条按定本**（2026-10-01 核对 `riscv-cc.adoc` 原文后一起改完，缺一条就会静默读错值）：
+/// ① `variadic_stack_only = false`（未命名实参走 a0-a7，溢出上栈）；② `variadic_classify`
+/// 按**整数约定**分类（变参的浮点也进整数池）；③ 保存区只装整数参数寄存器（`float_slot = 0`）；
+/// ④ 保存区**紧贴入口 `sp`**（`contiguous = true`），`va_list` 初值 = 保存区起点 + 已用整数
+/// 寄存器数 × 槽宽，于是它先走完寄存器里的变参、再接着走栈上的变参。守卫
+/// `invariants.rs::lp64d_variadic_arguments_follow_the_psabi` 逐条钉住这四件。
 pub const LP64D: &str = r#"
 name = "lp64d"
 parent = "c"
@@ -253,7 +235,20 @@ ret_classify = [
 ]
 hidden = { sret_pool = "int", sret_slot = 0, va_list = "riscv_save_area" }
 callee_saved = { mechanism = "store_to_frame", pools = ["cs_gpr"], includes_link = true }
-variadic_stack_only = true
+# 未命名实参**走寄存器**（a0-a7，溢出才上栈）——定本：「被调方把未被命名形参用掉的**整数**
+# 参数寄存器按序存进**紧贴入口 sp** 的 save area，`va_list` 指向该区起点，于是先走完寄存器里的
+# 变参、再接着走栈上的变参」（2026-10-01 核对 `riscv-cc.adoc` 原文；形状侧
+# `riscv_save_area` 的 `contiguous = true` / `float_slot = 0` / `float_arg.step = 8` 与此配套）。
+variadic_stack_only = false
+# **变参按整数约定分类**：定本浮点调用约定一节写着 *"The remainder of this section applies only to
+# named arguments. **Variadic arguments are passed according to the integer calling convention.**"*
+# ⇒ LP64D 上变参的浮点也走整数寄存器（`double` 的位模式进 a0-a7）。这正是"单一线性游标"能成立的
+# 前提（变参只有一个寄存器组）。**命名**形参仍按 `classify`（浮点进 F 寄存器组）。
+variadic_classify = [
+  { when = { kind = "aggregate", size_le = 16 }, do = { direct = { pool = "int", slots = 2 } } },
+  { when = { kind = "aggregate", size_gt = 16 }, do = { indirect = { via = "caller_stack_copy" } } },
+  { when = { kind = "scalar" },                  do = { direct = { pool = "int" } } },
+]
 tail_calls = { allowed = true, must_match_stack = true }
 note = "HFA 用连续浮点槽表达；寄存器不足时整块走栈（A6 扩展）"
 "#;

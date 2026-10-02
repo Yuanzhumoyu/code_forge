@@ -442,15 +442,16 @@ fn abi_check_reports_the_variadic_state() {
     let out = run(&["abi", "check", &isa("riscv64_v12.toml")]);
     assert!(
         out.stdout.contains("ℹ 变参 lp64d：形状 `riscv_save_area`")
-            && out.stdout.contains("栈式游标"),
-        "lp64d 的变参 = 保存区 + 栈式游标（数据驱动）：{}",
+            && out.stdout.contains("保存区（与栈实参连续）+ 线性游标"),
+        "lp64d 的变参 = 紧贴入口 sp 的保存区 + 线性游标（定本形态）：{}",
         out.stdout
     );
-    // **可疑组合的告警**（2026-10-01）：声明了保存区却让未命名实参只走栈 —— 自洽但可能不符合
-    // psABI 定本（lp64d 实测确不符，见 docs/plans/varargs-plan.md §5；aapcs64 同组合待核）。
+    // **可疑组合的告警不该再出现**（2026-10-01 照定本改完之后）：那条告警抓的是"声明了保存区
+    // 却让未命名实参只走栈"，lp64d 现在 `variadic_stack_only = false` 且保存区要求连续 ⇒ 自洽
+    // 且符合定本。告警本身保留（aapcs64 那条组合另算）。
     assert!(
-        out.stdout.contains("可能不符合 psABI 定本"),
-        "含保存区却只走栈时要给出可疑组合告警：{}",
+        !out.stdout.contains("可能不符合 psABI 定本"),
+        "lp64d 已按定本改完，不该再有可疑组合告警：{}",
         out.stdout
     );
 }

@@ -261,6 +261,13 @@ pub struct VaArea {
     pub fields: Vec<VaField>,
     /// **寄存器保存区**（v20 变参 V3）：形状声明了才有；槽表由绑定的寄存器池给（ISA 数据）。
     pub save: Option<VaSaveArea>,
+    /// **保存区是否必须紧贴入口 `sp`、与栈上实参连续**（v20 V7；形状数据）。
+    ///
+    /// true ⇒ 帧布局把保存区放**帧顶**（`[entry_sp - save_size, entry_sp)`），其余（ra/fp、
+    /// callee-saved、局部槽）整体下移一个 `save_size`——只有这样"单一线性游标"才能从寄存器
+    /// 那一串继续走进栈上的实参（RISC-V 的 `va_list` 就是一个 `void*`，线性递增）。
+    /// false ⇒ 布局与历史行为逐字节一致。
+    pub save_contiguous: bool,
     /// **取参规则**（v20 V6）：`va_arg` 怎么从对象里取一个实参——按**实参类**（整数/浮点）各一条。
     /// 引擎从形状数据解析出来（字段名→下标、上限/步长由保存区槽表推），管线只按它跑同一套算法。
     pub arg_rules: VaArgRules,
@@ -447,6 +454,11 @@ impl AbiPlan {
                 va.align,
                 va.stack_only
             ));
+            // 保存区"必须与栈实参连续"（v20 V7）是**形状数据**，而且它改变帧布局 ⇒ 进快照，
+            // 但**只在为真时**打一行（其余三份约定的黄金逐字节不变）。
+            if va.save_contiguous {
+                out.push_str("va_save_contiguous true\n");
+            }
             // 字段布局（v20 V3）：对象怎么物化由它定——逐字段列出（顺序即声明序）。
             for f in &va.fields {
                 out.push_str(&format!("va_field {} @{} +{}\n", f.name, f.offset, f.size));

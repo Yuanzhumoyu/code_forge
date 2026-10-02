@@ -145,6 +145,12 @@ pub struct VaInfo {
     pub fields: Vec<VaField>,
     /// **寄存器保存区**（v20 V3）：`None` = 没有（未命名实参只在栈上）。
     pub save: Option<VaSave>,
+    /// **保存区是否必须紧贴入口 `sp`、与栈上实参连续**（v20 V7；形状数据）。
+    ///
+    /// true ⇒ 帧布局把保存区放帧顶（`[entry_sp - save_size, entry_sp)`），其余整体下移一个
+    /// `save_size`——"单一线性游标"才能从寄存器那一串继续走进栈上的实参。生成物按它取
+    /// `AllocResult::va_top`（0 = 历史布局）。
+    pub save_contiguous: bool,
     /// **`va_list` 对象的初值**（v20 V3）：物化对象要写进去的东西，由**宿主**按本函数的 plan
     /// 预先算好（生成物是各约定通用的，算不出"已用掉几个参数寄存器"）。
     pub init: Option<VaInit>,

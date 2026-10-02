@@ -46,12 +46,20 @@ use forge_isa_runtime::machine::call_layout::VaInfo;
 /// （与 lowering 同一算式 `-v + slot_bytes`），ABI 槽再从它之后往上排。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AbiSlots {
-    /// 保存区深度（正值；`StackAddr` 立即数用 `-depth`）。
+    /// 保存区深度（正值；`StackAddr` 立即数用 `-depth`）。**要求连续时**它是"相对帧顶的
+    /// 深度"（= 保存区字节数），不再是"排在前端局部槽之下"的那个深度。
     pub save_depth: u32,
     /// `va_list` 对象深度（正值）。
     pub obj_depth: u32,
     /// 保存区相对**帧基址**的偏移（序言 spill 用；`-depth - stack_slot_shift`）。
     pub save_off: i64,
+    /// 保存区基址的 `StackAddr` 立即数（`va_start` 的 `SaveOff` 初值按它算）：
+    /// 地址 = `fp + 本值 - stack_slot_shift`。不连续 = `-save_depth`（历史口径）；
+    /// 连续 = `shift - save.size`（地址 = `fp - save.size`，**与 shift 无关**）。
+    pub save_base_v: i64,
+    /// 帧顶给保存区留出的字节数（v20 V7）：> 0 时 ra/fp、callee-saved 的保存槽与局部槽
+    /// 整体下移这么多（生成物读 `AllocResult.va_top`，局部槽读 `stack_slot_shift`）。
+    pub va_top: u32,
     /// 帧基址 → 局部槽区起点的平移：`StackAddr(v)` 的地址 = `fp + v - shift`，
     /// 所以"帧基址相对偏移 X"要发 `StackAddr(X + shift)`。
     pub shift: i64,
@@ -70,6 +78,12 @@ fn frontend_locals_depth(func: &Function, slot_bytes: u32) -> u32 {
 }
 
 /// 算 ABI 槽（保存区 → 对象，依次排在前端局部槽之下）。
+///
+/// **例外（v20 V7）**：形状要求"保存区与栈实参连续"时（`va.save_contiguous`）保存区放
+/// **帧顶** `[入口 sp - save.size, 入口 sp)`——于是它**不**占局部槽之下的深度，`va_list`
+/// 对象仍排在局部槽之下；`va_top` 告诉调用方把其余东西（ra/fp、callee-saved、局部槽）
+/// 整体下移一个 `save.size`。这样"单一线性游标"走到保存区末尾时，下一个地址正好是调用方
+/// 写在 `[入口 sp + …)` 的栈实参。
 pub(crate) fn plan_abi_slots(
     func: &Function,
     va: &VaInfo,
@@ -81,6 +95,24 @@ pub(crate) fn plan_abi_slots(
         v.div_ceil(a) * a
     };
     let mut depth = frontend_locals_depth(func, slot_bytes);
+    if let Some(save) = va.save.as_ref().filter(|_| va.save_contiguous) {
+        // 帧顶：只记 va_top 与"相对帧基址"的偏移，不占深度。
+        depth = align_up(depth, va.align) + va.size;
+        return AbiSlots {
+            save_depth: save.size,
+            obj_depth: depth,
+            save_off: -(i64::from(save.size)),
+            // `save_base_v` 是 `StackAddr` 的立即数，而 `StackAddr(v)` 的地址 = `fp + v - shift`；
+            // 调用方会把 `stack_slot_shift` **加上** `va_top`（局部槽下移），所以这里的立即数要用
+            // **加上之前**的 shift：`fp + shift - (shift + save.size) = fp - save.size` ✓。
+            // （第一版写成 `shift - save.size` ⇒ 地址少了 2×save.size，QEMU 用例当场读出错值。）
+            save_base_v: shift,
+            va_top: save.size,
+            shift,
+            // 帧要装得下：帧顶保存区 + 下面那一整串（局部槽/对象槽的深度已含后者）。
+            max_depth: depth + save.size,
+        };
+    }
     let mut save_depth = depth;
     if let Some(save) = va.save.as_ref() {
         depth = align_up(depth, save.align) + save.size;
@@ -91,6 +123,8 @@ pub(crate) fn plan_abi_slots(
         save_depth,
         obj_depth: depth,
         save_off: -(save_depth as i64) - shift,
+        save_base_v: -(save_depth as i64),
+        va_top: 0,
         shift,
         max_depth: depth,
     }
@@ -383,15 +417,15 @@ fn expand_start(
                 v
             }
             forge_isa_runtime::machine::call_layout::VaInitVal::SaveOff(off) => {
-                // 保存区基址（管线分配的那段，深度 = `slots.save_depth`）+ 形状给的静态偏移：
-                // AAPCS64 的 `__gr_top`/`__vr_top` 就是"本类区域的顶端"。
+                // 保存区基址（管线分配的那段；"要求连续"时在**帧顶**，否则在前端局部槽之下）
+                // + 形状给的静态偏移：AAPCS64 的 `__gr_top`/`__vr_top` 就是"本类区域的顶端"。
+                // 基址的 `StackAddr` 立即数由 `plan_abi_slots` 统一给出（`save_base_v`）——
+                // 它把"与 shift 有关/无关"这件事收在一处，这里不重算。
                 let i = func.make_inst(
                     Opcode::StackAddr,
                     b,
                     smallvec::smallvec![],
-                    smallvec::smallvec![Immediate::Int(
-                        -(slots.save_depth as i64) + i64::from(*off)
-                    )],
+                    smallvec::smallvec![Immediate::Int(slots.save_base_v + i64::from(*off))],
                     &[TypeId::PTR],
                     InstFlags::NONE,
                 );
@@ -713,6 +747,8 @@ mod tests {
             size: 24,
             align: 8,
             stack_only: false,
+            // 合成夹具：不要求"与栈实参连续"（那是 RISC-V 的形状数据）——保持历史布局口径。
+            save_contiguous: false,
             fields: vec![],
             save: save.then(|| VaSave {
                 size: 176,

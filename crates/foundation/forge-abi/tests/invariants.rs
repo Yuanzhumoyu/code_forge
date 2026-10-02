@@ -1177,7 +1177,9 @@ fn va_object_layout_matches_the_psabi_numbers() {
             "lp64d",
             "riscv64_v12",
             vec!["area@0+8"],
-            Some((128, 8, 8, 8, 8, 8)),
+            // 保存区**只装整数参数寄存器**（v20 V7，定本：*"integer argument registers"*）：
+            // 8 个 GP 槽 × 8 = 64 字节，浮点槽数 0（LP64D 的变参浮点也按整数约定传）。
+            Some((64, 8, 8, 0, 8, 8)),
         ),
     ];
     for (conv, isa, fields, save) in cases {
@@ -1225,15 +1227,11 @@ fn va_object_layout_matches_the_psabi_numbers() {
     }
 }
 
-/// **lp64d 的已知偏差（故意钉住现状）**——2026-10-01 核对 RISC-V psABI 定本时发现，
-/// 同日按定本原文重核一遍（原文见下），并**修正了此前"照 sysv64 那样加
-/// `gp_offset`/`fp_offset`/`reg_save_area`/`stack_arg_area` 四字段"的错误设想**：
-/// RISC-V 的 `va_list` **不是**那种结构。
+/// **lp64d 的变参按 psABI 定本**（2026-10-01 核对 `riscv-cc.adoc` 原文后落地）。
 ///
 /// 定本 `riscv-cc.adoc` 的「`va_list`, `va_start`, and `va_arg`」一节（issue #412 之后的版本）：
 ///
-/// > The `va_list` type has the same representation as `void*` and points to a sequence of zero or
-/// > more arguments with preceding padding for alignment, formatted and aligned as variadic
+/// > The `va_list` type has the same representation as `void*` … formatted and aligned as variadic
 /// > arguments passed on the stack according to the integer calling convention.
 /// >
 /// > … The function is then expected to construct a _varargs save area_ **immediately below the
@@ -1242,42 +1240,26 @@ fn va_object_layout_matches_the_psabi_numbers() {
 /// > of the varargs save area, and it will iterate through any variadic arguments passed via
 /// > registers before continuing to variadic arguments passed on the stack, if any.
 ///
-/// 以及「Hardware Floating-Point Calling Convention」一节的关键限制：
+/// 以及「Hardware Floating-Point Calling Convention」一节：
 ///
 /// > The remainder of this section applies only to **named** arguments.
 /// > **Variadic arguments are passed according to the integer calling convention.**
 ///
-/// 三条结论（都可判定，见下面的断言）：
+/// 三件事互相咬合，缺一条就会**静默读错值**（这正是本守卫存在的理由）：
 ///
-/// 1. **`va_list` ≡ `void*`**：`sizeof(va_list)` = 指针宽度（LP64D = 8）——形状里的 `size` 必须是 8；
-/// 2. **只有一个线性游标**：保存区是**整数寄存器**（a0–a7）按序保存、且**紧贴入口 `sp`**、
-///    与调用方的栈实参**连续**，`va_arg` 按类型大小线性递增——所以
-///    "两个游标 + 保存区指针 + 栈实参指针"那套（SysV 的形状）在 riscv 上**是错的**；
-/// 3. **变参的浮点走整数寄存器**：变参实参一律按**整数约定**传（浮点也不例外），
-///    这正是"单一线性游标"能成立的原因——**调用方按普通分类传**（把 `f64` 放进 `fa0`）会与
-///    外部编译器编译的变参函数在寄存器层面就错位。
-///
-/// 因此完整修复是**四件一起**（半改会静默读错值）：
-///
-/// ① `variadic_stack_only = false`；
-/// ② 保存区放**帧顶**（`[entry_sp - save_size, entry_sp)`，与调用方栈实参连续）——
-///    当前 `pipeline/va_expand.rs::plan_abi_slots` 把 ABI 槽排在**前端局部槽之下**，
-///    要按"形状要求连续"这条**数据**把局部槽整体下移（`AbiSlots::shift` 机制已在，缺的是
-///    "保存区在顶"这个形状属性 + 规划顺序）；
-/// ③ `area` 初值 = 保存区起点 **+ 已用整数寄存器数 × 槽宽**（等价于"只保存未用的那些"，
-///    但均匀地"全存 8 个再偏移"实现更简单，也与"连续"天然一致）；
-/// ④ 变参实参按**整数约定**分类（浮点进整数池）——这一条在发射侧还差一块能力：
-///    **类间位搬移**（`f64` 的值在 FPR 里，要按位搬进 GPR；riscv `fmv.x.d`、x86 `MOVQ`、
-///    arm64 `FMOV`），目前角色系统只有同类内的 `gpr_mov`/`fpr_mov`。
+/// 1. **`va_list` ≡ `void*`**：`sizeof(va_list)` = 指针宽度（LP64D = 8）、单字段；
+/// 2. **未命名实参走整数寄存器**（a0-a7，溢出上栈）⇒ `variadic_stack_only = false`；被调方把
+///    未被命名形参用掉的**整数**参数寄存器按序存进**紧贴入口 `sp`** 的保存区 ⇒
+///    `float_slot = 0` 与 `contiguous = true`；
+/// 3. **变参的浮点也按整数约定传**（否则"单一线性游标"无从谈起：变参只有一个寄存器组）⇒
+///    `variadic_classify` 给出一套不含浮点池的分类、浮点游标与整数游标同一条（`step = 8`）。
 ///
 /// 出处：<https://github.com/riscv-non-isa/riscv-elf-psabi-doc/issues/412>
-/// （2024-02 的 "Expand va_list description" 提交，本次核对即该版本）。
-///
-/// 这条守卫**故意钉住现状**：谁改 `variadic_stack_only`、或改 `riscv_save_area` 的形状/初值，
-/// 都会在这里红，逼他把上面**整套**改完，而不是只把 `stack_only` 翻过来（半改会静默读错值）。
-/// 修复清单见 `docs/plans/varargs-plan.md` §5 与 `forge-abi/src/builtin.rs` 的注释。
+/// （2024-02 的 "Expand va_list description" 提交；本仓库 2026-10-01 直接核对该版本原文）。
+/// **注意**：把形状改成 SysV 那种 `gp_offset`/`fp_offset`/`reg_save_area`/`stack_arg_area`
+/// 四字段是**错的**——RISC-V 的 `va_list` 就是一个 `void*`。
 #[test]
-fn lp64d_variadic_stack_only_is_a_documented_deviation() {
+fn lp64d_variadic_arguments_follow_the_psabi() {
     let reg = registry();
     let rules = reg.rules("lp64d").expect("lp64d 已注册");
     let decl = rules
@@ -1286,8 +1268,9 @@ fn lp64d_variadic_stack_only_is_a_documented_deviation() {
         .as_ref()
         .expect("lp64d 声明了 `va_list` 形状");
     assert_eq!(decl.preset_name(), Some("riscv_save_area"));
-    // ① 与 `void*` 同表示 ⇒ 对象就是一个指针（这条**不是**偏差，是照定本改过的）。
     let shape = decl.resolve().expect("预置名可解析");
+
+    // ① `va_list` ≡ `void*`。
     assert_eq!(
         (shape.size, shape.align),
         (8, 8),
@@ -1298,12 +1281,54 @@ fn lp64d_variadic_stack_only_is_a_documented_deviation() {
         1,
         "定本：`va_list` 就是一个指针（单字段），不是 SysV 那种四字段结构"
     );
-    // ② 仍未落地的部分：未命名实参应走寄存器（a0–a7，且浮点也按整数约定），
-    //    被调方把未用的寄存器按序存进紧贴入口 sp 的保存区。
+
+    // ② 未命名实参走寄存器 + 保存区只收整数类 + 紧贴入口 sp。
     assert!(
-        rules.variadic_stack_only,
-        "lp64d 的 `variadic_stack_only` 变了——若不是照 psABI 定本改的（未命名实参走寄存器 +\n\
-         save area 紧贴入口 sp 与栈实参连续 + `area` 指向保存区起点 + 变参按整数约定分类，四件一起），\n\
-         就是把这条已知偏差改成了半成品。见 docs/plans/varargs-plan.md §5"
+        !rules.variadic_stack_only,
+        "定本：未命名实参走 a0-a7（溢出才上栈）⇒ `variadic_stack_only` 必须为 false"
     );
+    let save = shape.save.expect("lp64d 有寄存器保存区");
+    assert_eq!(
+        save.float_slot, 0,
+        "定本：保存区装的是 integer argument registers（浮点不占槽）"
+    );
+    assert!(save.contiguous, "定本：保存区紧贴入口 sp、与栈实参连续");
+    assert_eq!(save.int_slot, 8, "LP64D 的整数槽宽 = XLEN = 8");
+
+    // ③ 变参按整数约定分类 + 浮点游标与整数游标同一条。
+    assert!(
+        !rules.variadic_classify.is_empty(),
+        "定本：变参实参按**整数**约定传 ⇒ `variadic_classify` 必须给出一套分类"
+    );
+    assert!(
+        !rules.variadic_classify.iter().any(
+            |r| matches!(&r.do_, ClassAction::Direct { pool, .. } if pool == &rules.float_pool)
+        ),
+        "变参分类里不该出现浮点池：{:?}",
+        rules.variadic_classify
+    );
+    assert_eq!(
+        shape.float_arg.step,
+        Some(8),
+        "浮点游标与整数游标同一条（8 字节槽）"
+    );
+
+    // 落到 plan 上再看一遍（数据自洽 + 引擎解析无误）：保存区 8 个整数槽、没有浮点槽。
+    let sig = Signature::new(
+        vec![("a".into(), i64_()), ("b".into(), i64_())],
+        Some(i64_()),
+    )
+    .variadic(1);
+    let p = plan(&reg, "riscv64_v12", "lp64d", &sig);
+    let va = p.va_area.as_ref().expect("变参应有 va_area");
+    assert!(va.save_contiguous, "plan 里也要带上这条形状数据");
+    let s = va.save.as_ref().expect("plan 里有保存区");
+    assert_eq!(s.size, 64, "8 个整数参数寄存器 × 8");
+    assert_eq!(s.slots.len(), 8, "只有整数池的 8 个寄存器");
+    assert!(
+        s.slots.iter().all(|sl| !sl.reg.name.starts_with('F')),
+        "保存区里不该有 FPR 槽：{:?}",
+        s.slots
+    );
+    assert_eq!(va.arg_rules.float.step, 8, "浮点取参步长 = 8");
 }

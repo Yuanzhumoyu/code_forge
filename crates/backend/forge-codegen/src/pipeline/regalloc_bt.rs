@@ -912,6 +912,7 @@ impl<'a> BtState<'a> {
             sret: false,
             stack_arg_bytes: 0,
             va_save_off: None,
+            va_top: 0,
             param_is_32: self
                 .config
                 .param_xregs

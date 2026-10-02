@@ -639,7 +639,7 @@ fn callee_saved_loop(
         for (__k, __preg) in #iter {
             let __reg = Reg::from_index(__preg.num, __preg.class);
             let __off_val: i64 = #k_expr;
-            let __off = __frame_size as i64 - #fp_push_lit - __off_val;
+            let __off = __frame_size as i64 - #fp_push_lit - __rm.va_top as i64 - __off_val;
             #dispatch
         }
     }))
@@ -767,14 +767,18 @@ fn gen_store_mechanism(
     let fp_push = frame.fp_push_bytes.unwrap_or(0) as i64;
     let sp = format_ident!("{}", frame.sp);
     let link = model.machine_link_reg().map(str::to_string);
+    // 帧顶保存区（v20 V7）：形状要求"保存区与栈实参连续"时（`AllocResult.va_top` > 0），
+    // 保存区占 `[入口 sp - va_top, 入口 sp)`，于是 **fp/lr 保存槽与 callee-saved 整体下移
+    // 一个 `va_top`**（`va_top = 0` 时与历史逐字节一致）。这里把它写进下面三个偏移表达式。
+    let va_top = quote! { __rm.va_top as i64 };
     // 帧顶 fp 保存区：`fp_push_bytes` 个字节里装 link（低偏移）+ fp（高偏移）。
     let fp_off = {
         let lit = proc_macro2::Literal::i64_suffixed(fp_push);
-        quote! { (__frame_size as i64) - #lit }
+        quote! { (__frame_size as i64) - #lit - #va_top }
     };
     let link_off = {
         let lit = proc_macro2::Literal::i64_suffixed(slot);
-        quote! { (__frame_size as i64) - #lit }
+        quote! { (__frame_size as i64) - #lit - #va_top }
     };
     let base = quote! { Reg::#sp };
     // link/fp 的保存槽永远是 GPR（链接寄存器与帧指针都是 GPR）——按 **GPR 类**解析

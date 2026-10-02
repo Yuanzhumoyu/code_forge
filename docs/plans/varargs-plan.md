@@ -37,12 +37,13 @@
 | `win64` | `win64_stack` | 8 | 8 | 只走栈 | — |
 | `sysv64` | `sysv_reg_save` | 24 | 8 | 继续用寄存器 | `RAX` |
 | `aapcs64` | `aapcs64_struct` | 32 | 8 | 继续用寄存器 | — |
-| `lp64d` | `riscv_save_area` | 8 | 8 | 只走栈 | — |
+| `lp64d` | `riscv_save_area` | 8 | 8 | 继续用寄存器 | — |
 
-> `lp64d` 两处说明：① size 2026-10-01 由 **24 改成 8**——定本说 `va_list` 与 `void*`**同表示**
-> （见 §5 的原文引用），24 是从 sysv64 抄来的余量、没有字段也没有读者；② "只走栈"那一格是
-> **已知偏差**（定本要求未命名实参走整数寄存器），修复清单见 §5。表格这一列的取值是守卫
-> `va_shapes_match_the_documented_table` 逐格比对的字面量，所以偏差说明写在这里、不写进单元格。
+> `lp64d` 说明：① size 2026-10-01 由 **24 改成 8**——定本说 `va_list` 与 `void*`**同表示**
+> （见 §5 的原文引用），24 是从 sysv64 抄来的余量、没有字段也没有读者；② "继续用寄存器"那一格
+> 也是**同日照定本改的**（此前是"只走栈"，属已知偏差）：未命名实参走 a0-a7、变参的浮点也按
+> 整数约定传、保存区只装整数参数寄存器且紧贴入口 `sp`。表格这一列的取值是守卫
+> `va_shapes_match_the_documented_table` 逐格比对的字面量，所以细节说明写在这里、不写进单元格。
 >
 > **形状是数据**（v20 V6）：`hidden.va_list` 写**预置形状名**，或直接写一张**显式形状表**
 > （`{ size, align, fields, save, int_arg, float_arg }`）——字段/保存区/取参规则全在里面，
@@ -372,15 +373,18 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      要按位搬进 GPR；riscv `fmv.x.d`、x86 `MOVQ`、arm64 `FMOV`）——**2026-10-01 已落地**
      （新角色 `fpr_to_gpr_mov`/`gpr_to_fpr_mov`，调用点与被调方两侧四路分派，缺该角色
      fail-closed；见 `CHANGELOG.md` 的同日条目与 `forge-codegen/tests/bank_mov.rs`）。
-     **同日还落地了数据面的两件**：① 规则键 `AbiRules::variadic_classify`（未命名实参专属分类，
-     空 = 与命名同一套；守卫 `invariants::variadic_classify_switches_only_the_unnamed_arguments`）；
-     ② 保存区槽宽 `0 = 该类不进保存区`（`save = { int_slot = 8, float_slot = 0 }` ⇒ 保存区只装
-     a0-a7，正好是定本要的"integer argument registers"；守卫
-     `invariants::zero_slot_width_keeps_a_class_out_of_the_save_area`）。
-     **剩下两件**：保存区放**帧顶**（`[entry_sp - save_size, entry_sp)`，与调用方栈实参连续——
-     这是"单一线性游标"能继续走进栈实参的前提；需要在形状上新增一条"要求连续"的数据属性，
-     并让帧布局把 ra/fp/callee-saved 保存槽、局部槽、spill 基准整体下移一个 save_size），
-     以及把 `area` 初值改成"保存区起点 + 已用整数寄存器数 × 槽宽"。
+     **已全部落地（2026-10-01）**：上面四件一起改完，并用 QEMU 真执行两条变参用例验收——
+     riscv 矩阵 **136/64/0**（`variadic_va_arg_int_only` = 47、`variadic_va_arg_int_and_float` = 49
+     都真跑）。落地细节：规则键 `variadic_classify`（未命名实参专属分类）、保存区槽宽
+     `0 = 该类不进保存区`、形状属性 `VaSaveDecl::contiguous`（"保存区紧贴入口 sp、与栈实参
+     连续"）⇒ 帧布局把保存区放**帧顶** `[入口 sp - save_size, 入口 sp)`，ra/fp、callee-saved 的
+     保存槽（生成物读 `AllocResult.va_top`）与局部槽（`stack_slot_shift`）整体下移一个 `save_size`；
+     `area` 初值 = 保存区起点 + 已用整数寄存器数 × 槽宽；调用点的类间位搬移与 fp 位宽表是上一片
+     就位的两块能力。守卫：`invariants::lp64d_variadic_arguments_follow_the_psabi`（四件逐条 + 落到
+     plan 上再看一遍）、`forge-isa abi check` 的"游标就是栈地址"硬错**加了例外**
+     （`contiguous` 时不再是矛盾）、两条矩阵用例。**踩到并修掉的一个真 bug**：`save_base_v`
+     第一版写成 `shift - save_size`，而 `StackAddr` 的 shift 已被加上 `va_top` ⇒ 地址少了
+     `2×save_size`，QEMU 用例当场读出错值（4 而非 47）——两个用例在切片中途就把它抓住了。
      **补强证据（2026-10-01 再测）**：`fpr_mov` 不只是变参要——把 riscv 缺的三条浮点算术
      lowering（`Fadd`/`Fsub`/`Fmul`，谱里 `FADD_S/D` 等指令早就存在）补上后，矩阵里被"缺 Fadd"
      掩盖的三条浮点用例立刻转成**失败**且原因全指向它：

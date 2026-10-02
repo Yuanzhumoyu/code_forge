@@ -39,6 +39,10 @@ pub struct AllocResult {
     /// **寄存器保存区**在帧内的偏移（相对帧基址；`None` = 本函数没有，v20 变参 V3）。
     /// 序言按 `call_layout.va.save` 的槽表把参数寄存器存到 `[帧基址 + 本偏移 + 槽偏移]`。
     pub va_save_off: Option<i64>,
+    /// **保存区占用的帧顶字节数**（v20 V7）：形状要求"保存区与栈实参连续"时 = 保存区字节数，
+    /// 保存区放在 `[入口 sp - va_top, 入口 sp)`，帧里其余东西（ra/fp、callee-saved）整体下移
+    /// 这一个量——生成物按它给自己的存取偏移减掉；0 = 历史布局（逐字节不变）。
+    pub va_top: u32,
     /// 参数是否为 32 位整数（i32/u32——收参需符号扩展 movsxd）。
     pub param_is_32: Vec<bool>,
     /// 每个参数的 **IR 类型字节数**（与 param_vregs 对齐）——由 `CompileState`
@@ -85,6 +89,7 @@ impl Default for AllocResult {
             sret: false,
             stack_arg_bytes: 0,
             va_save_off: None,
+            va_top: 0,
             param_is_32: Vec::new(),
             param_bytes: Vec::new(),
             callee_saved_to_save: Vec::new(),
@@ -138,6 +143,7 @@ impl AllocResult {
             sret: false,
             stack_arg_bytes: 0,
             va_save_off: None,
+            va_top: 0,
             param_is_32: Vec::new(),
             param_bytes: Vec::new(),
             callee_saved_to_save: Vec::new(),

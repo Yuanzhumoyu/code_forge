@@ -511,19 +511,19 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | `win64` | **by_position** | RCX-R9 / XMM0-3 | RAX / XMM0 | 16 / **32** / 无 | RCX（`int` 池 0 槽） | `push` | 未命名实参走栈；`va_list` = 栈指针 |
 | `sysv64` | by_class | RDI,RSI,RDX,RCX,R8,R9 / XMM0-7 | RAX:RDX / XMM0:XMM1 | 16 / 0 / **128** | RDI | `push` | 未命名实参继续用寄存器；`%al` 报向量寄存器数 |
 | `aapcs64` | by_class | X0-X7 / **V0-V7** | X0:X1 / V0 | 16 / 0 / 无 | **X8（独立池）** | `store_to_frame` | 未命名实参走栈；形参 ≥32 位 |
-| `lp64d` | by_class | X10-X17 / F10-F17 | X10:X11 / F10:F11 | 16 / 0 / 无 | X10（`int` 池 0 槽） | `store_to_frame` | 未命名实参走栈 |
+| `lp64d` | by_class | X10-X17 / F10-F17 | X10:X11 / F10:F11 | 16 / 0 / 无 | X10（`int` 池 0 槽） | `store_to_frame` | 未命名实参走**整数**寄存器（a0-a7；变参的浮点也按整数约定传），保存区紧贴入口 `sp` |
 
 `c` 是给别的约定继承的抽象基类（`parent = "c"` 给出"通用 C 家族"的分类兜底），
 **它自己没有绑定**——拿 `c` 直接规划时要靠别的约定**整套代答**（三份内置声明
 `aliases = ["c"]`，见上）；一台机器上无人代答、又没有 `(isa, "c")` 绑定时报
 "缺绑定"，这是刻意设计的 fail-closed，而不是让它退回某个"差不多能用"的约定。
 
-> `lp64d` 的"未命名实参走栈"是**已知偏差**（RISC-V psABI 要求走整数寄存器，见
-> `docs/plans/varargs-plan.md` §5）：自洽（我们自己的调用方/被调方按同一份约定对齐），
-> 但与外部编译器编译的变参函数互调会错。修它需要四件一起：① `variadic_stack_only = false`；
-> ② `variadic_classify` 按整数约定分类；③ 保存区紧贴入口 `sp`、与栈上实参连续；④ `area`
-> 指向保存区起点 + 已用整数寄存器数 × 槽宽。其中**数据面**的两件（② 与"保存区只收整数类"）
-> 2026-10-01 已就位，剩下的是帧顶布局（③）。
+> `lp64d` 的变参 2026-10-01 已按 RISC-V psABI 定本落地（此前是"未命名实参只走栈"的已知偏差）：
+> 四件一起改——① `variadic_stack_only = false`；② `variadic_classify` 按**整数约定**分类
+> （变参的浮点也走整数寄存器）；③ 保存区只装整数参数寄存器；④ 保存区**紧贴入口 `sp`**、
+> 与栈上实参连续（形状上的 `contiguous` 数据），于是单指线性游标先走完寄存器里的变参、
+> 再接着走栈上的变参。逐条守卫见 `forge-abi/tests/invariants.rs::lp64d_variadic_arguments_follow_the_psabi`，
+> 真执行（QEMU）见矩阵用例 `variadic_va_arg_int_only` / `variadic_va_arg_int_and_float`。
 
 ## 声明属性（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`）
 

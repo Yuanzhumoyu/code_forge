@@ -185,6 +185,13 @@ pub struct LowerCtx {
     /// 分配**（与 `Opcode::VaStart` 的对象槽同一条通路：算好偏移、抬 `max_stack_bytes`），
     /// 序言与 `va_start` 只读它。`None` = 本函数没有保存区（非变参 / win64 栈式）。
     pub va_save_off: Option<i64>,
+    /// **保存区占用的帧顶字节数**（v20 V7）：> 0 表示"形状要求保存区与栈实参连续"，
+    /// 于是保存区被放在帧顶 `[入口 sp - va_top, 入口 sp)`，帧里其余东西（ra/fp、
+    /// callee-saved、局部槽）整体下移这一个量。0 = 历史布局（逐字节不变）。
+    ///
+    /// 生成物读 `AllocResult.va_top`（fp-inside 的存取机制要给自己的偏移减掉它）；
+    /// 管线同时把它加进 `stack_slot_shift`（局部槽）与帧尺寸。
+    pub va_top: u32,
     /// **`va_list` 对象**在帧内的偏移（相对帧基址，v20 变参 V3）；`None` = 本函数不变参。
     ///
     /// 由管线在**编译入口**预留（与保存区同一条分配通路），IR 展开（`pipeline::va_expand`）
@@ -247,6 +254,7 @@ impl LowerCtx {
             max_stack_bytes: 0,
             max_stack_arg_bytes: 0,
             va_save_off: None,
+            va_top: 0,
             va_obj_off: None,
             vreg_classes: SecondaryMap::new(),
             vreg_types: SecondaryMap::new(),

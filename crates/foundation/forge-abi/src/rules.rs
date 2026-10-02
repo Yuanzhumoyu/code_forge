@@ -293,14 +293,24 @@ pub struct VaFieldDecl {
     pub size: u32,
 }
 
-/// 寄存器保存区声明：两类的**槽宽**（槽数与顺序由绑定的寄存器池给——那是 ISA 数据）。
+/// 寄存器保存区声明：两类的**槽宽**（槽数与顺序由绑定的寄存器池给——那是 ISA 数据），
+/// 以及**是否要求与入口 `sp` 连续**（v20 V7；见 [`VaSaveDecl::contiguous`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct VaSaveDecl {
-    /// 整数池每槽字节数。
+    /// 整数池每槽字节数（**0 = 该类不进保存区**：RISC-V LP64D 的保存区只有整数寄存器）。
     pub int_slot: u32,
     /// 浮点池每槽字节数（psABI 事实：SysV/AAPCS64 = 16，RISC-V = XLEN）。
     pub float_slot: u32,
+    /// 保存区是否**必须紧贴入口 `sp`、与栈上实参连续**（缺省 false）。
+    ///
+    /// RISC-V 的 psABI 要求这个：它的 `va_list` 就是一个 `void*`、**线性递增**，要"先走完
+    /// 寄存器里的变参、再接着走栈上的变参"——只有保存区落在 `[entry_sp - save_size, entry_sp)`
+    /// 才可能（帧里其余东西——ra/fp、callee-saved、局部槽——都得排到它**下面**）。
+    /// SysV/AAPCS64 **不要求**：它们的 `va_list` 自带区域指针（基址 + 溢出指针），保存区爱放哪放哪，
+    /// 保持 false ⇒ 帧布局**逐字节不变**。
+    #[serde(default)]
+    pub contiguous: bool,
 }
 
 /// 一类实参的取参规则声明（字段用**名字**引用，引擎解析成下标）。
@@ -380,6 +390,7 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     save: Some(VaSaveDecl {
                         int_slot: 8,
                         float_slot: 16,
+                        contiguous: false,
                     }),
                     int_arg: a(
                         "gp_offset",
@@ -412,20 +423,26 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     save: Some(VaSaveDecl {
                         int_slot: 8,
                         float_slot: 16,
+                        contiguous: false,
                     }),
                     int_arg: a("__gr_offs", Some("__gr_top"), Some("__stack"), true),
                     float_arg: a("__vr_offs", Some("__vr_top"), Some("__stack"), true),
                 },
             ),
-            // RISC-V LP64D：`area` 单指针（未命名实参只在栈上）+ 保存区（8×8B GP + 8×8B FP）。
+            // RISC-V LP64D：`area` 单指针 + 保存区（8×8B GP，**不含浮点槽**）。
             //
             // **`size = 8`（= 一个指针）不是随手写的**：定本 `riscv-cc.adoc` 的
             // 「`va_list`, `va_start`, and `va_arg`」一节第一句就是 *"The `va_list` type has the
             // same representation as `void*`"* ⇒ `sizeof(va_list)` = 指针宽度（LP64D = 8）。
-            // 早先这里写 24 是从 sysv64 抄来的余量（那 16 字节既没字段也没人读），但它让
-            // `va_copy`/把 `va_list` 交给 `vprintf` 一类**跨编译器**用法在对象布局上就对不上；
-            // 守卫 `invariants.rs::va_object_layout_matches_the_psabi_numbers` 钉字段布局，
-            // `va_shapes_match_the_documented_table` 钉这里的 size 与文档表逐字一致。
+            //
+            // 保存区三件事都按定本（2026-10-01 核对原文后改）：
+            // - `float_slot = 0`：定本要求它装的是 *"all **integer argument registers** not used
+            //   for named arguments"*——LP64D 的变参实参**一律按整数约定传**（浮点也不例外），
+            //   所以浮点池不占槽；
+            // - `contiguous = true`：`va_list` 是**单个线性游标**（`void*`），要"先走完寄存器里的
+            //   变参、再接着走栈上的变参"⇒ 保存区必须紧贴入口 `sp`（放帧顶）；
+            // - `float_arg.step = 8`：浮点游标与整数游标**同一条**（都是 8 字节槽），显式写出来
+            //   以免"浮点槽宽 0"把它带偏。
             (
                 "riscv_save_area".to_string(),
                 VaListShape {
@@ -434,10 +451,19 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     fields: vec![f("area", 0, 8)],
                     save: Some(VaSaveDecl {
                         int_slot: 8,
-                        float_slot: 8,
+                        float_slot: 0,
+                        contiguous: true,
                     }),
                     int_arg: a("area", None, None, false),
-                    float_arg: a("area", None, None, false),
+                    float_arg: VaArgDecl {
+                        cursor: "area".to_string(),
+                        base: None,
+                        overflow: None,
+                        limit: None,
+                        signed_limit: false,
+                        step: Some(8),
+                        overflow_step: None,
+                    },
                 },
             ),
         ]

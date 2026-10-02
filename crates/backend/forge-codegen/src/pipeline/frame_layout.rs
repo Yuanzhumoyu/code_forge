@@ -63,14 +63,22 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
     };
     let cs_bytes = cs_count * (ri.reg_class_width(ri.default_gpr_class()) as i32);
     let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
+    // **帧顶保存区**（v20 V7）：形状要求"保存区与栈实参连续"时，保存区占 `[入口 sp - save, 入口 sp)`，
+    // 帧顶那一串（fp/lr 保存槽 + callee-saved）整体下移 ⇒ 帧至少要装得下 保存区 + 那串。
+    let va_top = layout
+        .and_then(|cl| cl.va.as_ref())
+        .filter(|v| v.save_contiguous)
+        .and_then(|v| v.save.as_ref())
+        .map(|s| s.size)
+        .unwrap_or(0);
     match fl.kind {
         FrameLayoutKind::Outside => FrameLayoutInfo {
-            min_frame: 0,
+            min_frame: va_top,
             callee_saved_bytes: pushed,
             stack_slot_shift: pushed,
         },
         FrameLayoutKind::Inside => FrameLayoutInfo {
-            min_frame: fl.fp_push_bytes + cs_bytes as u32,
+            min_frame: va_top + fl.fp_push_bytes + cs_bytes as u32,
             callee_saved_bytes: 0,
             stack_slot_shift: fl.fp_push_bytes as i32,
         },

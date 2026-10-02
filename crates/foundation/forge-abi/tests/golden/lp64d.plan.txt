@@ -197,18 +197,19 @@ callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false 
 clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
 ## va2p1
 conv lp64d
-stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=8 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic true position by_class
 arg fmt size=8 -> reg X10
 arg n size=4 -> reg X11
-arg x size=8 -> stack off=0 size=8 align=8
+arg x size=8 -> reg X12
 ret reg X10
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
 clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
-va_area riscv_save_area size=8 align=8 stack_only=true
+va_area riscv_save_area size=8 align=8 stack_only=false
+va_save_contiguous true
 va_field area @0 +8
-va_save size=128 align=8
+va_save size=64 align=8
 va_save_slot X10 @0 +8
 va_save_slot X11 @8 +8
 va_save_slot X12 @16 +8
@@ -217,30 +218,23 @@ va_save_slot X14 @32 +8
 va_save_slot X15 @40 +8
 va_save_slot X16 @48 +8
 va_save_slot X17 @56 +8
-va_save_slot F10 @64 +8
-va_save_slot F11 @72 +8
-va_save_slot F12 @80 +8
-va_save_slot F13 @88 +8
-va_save_slot F14 @96 +8
-va_save_slot F15 @104 +8
-va_save_slot F16 @112 +8
-va_save_slot F17 @120 +8
 va_rule int cursor=0 base=- overflow=- limit=64 signed=false step=8 ov_step=8 origin=0 counts_down=false
-va_rule float cursor=0 base=- overflow=- limit=128 signed=false step=8 ov_step=8 origin=64 counts_down=false
+va_rule float cursor=0 base=- overflow=- limit=64 signed=false step=8 ov_step=8 origin=64 counts_down=false
 ## va0p3
 conv lp64d
-stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=24 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic true position by_class
-arg a size=8 -> stack off=0 size=8 align=8
-arg b size=8 -> stack off=8 size=8 align=8
-arg c size=8 -> stack off=16 size=8 align=8
+arg a size=8 -> reg X10
+arg b size=8 -> reg X11
+arg c size=8 -> reg X12
 ret reg X10
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X9 X18 X19 X20 X21 X22 X23 X24 X25 X26 X27] fp=false link=true
 clobbers [X5 X6 X7 X10 X11 X12 X13 X14 X15 X16 X17 X28 X29 X30 X31 F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12 F13 F14 F15 F16 F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31]
-va_area riscv_save_area size=8 align=8 stack_only=true
+va_area riscv_save_area size=8 align=8 stack_only=false
+va_save_contiguous true
 va_field area @0 +8
-va_save size=128 align=8
+va_save size=64 align=8
 va_save_slot X10 @0 +8
 va_save_slot X11 @8 +8
 va_save_slot X12 @16 +8
@@ -249,13 +243,5 @@ va_save_slot X14 @32 +8
 va_save_slot X15 @40 +8
 va_save_slot X16 @48 +8
 va_save_slot X17 @56 +8
-va_save_slot F10 @64 +8
-va_save_slot F11 @72 +8
-va_save_slot F12 @80 +8
-va_save_slot F13 @88 +8
-va_save_slot F14 @96 +8
-va_save_slot F15 @104 +8
-va_save_slot F16 @112 +8
-va_save_slot F17 @120 +8
 va_rule int cursor=0 base=- overflow=- limit=64 signed=false step=8 ov_step=8 origin=0 counts_down=false
-va_rule float cursor=0 base=- overflow=- limit=128 signed=false step=8 ov_step=8 origin=64 counts_down=false
+va_rule float cursor=0 base=- overflow=- limit=64 signed=false step=8 ov_step=8 origin=64 counts_down=false

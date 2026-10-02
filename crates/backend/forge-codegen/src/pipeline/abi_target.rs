@@ -371,12 +371,22 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
             let val = if is_int_cursor {
                 if r.int.base.is_some() {
                     VaInitVal::Imm(cursor_init(&r.int, used_int) as u64)
+                } else if area.save_contiguous {
+                    // **地址式游标 + 要求连续**（v20 V7，RISC-V）：`va_list` 指向"第一个还没被
+                    // 命名形参用掉的整数参数寄存器"在保存区里的位置——保存区是"全 8 个寄存器"
+                    // 的连续一份（`[入口 sp - save_size, 入口 sp)`），于是游标从保存区起点偏移
+                    // `已用整数寄存器数 × 槽宽`，走到末尾正好接上调用方写在栈上的实参。
+                    VaInitVal::SaveOff(used_int.saturating_mul(u64::from(r.int.step)) as u32)
                 } else {
                     VaInitVal::FrameOff(unnamed_off)
                 }
             } else if is_fp_cursor {
                 if r.float.base.is_some() {
                     VaInitVal::Imm(cursor_init(&r.float, used_fp) as u64)
+                } else if area.save_contiguous {
+                    // 连续的形态里浮点游标与整数游标是**同一条**（变参按整数约定传）：偏移按
+                    // 整数侧算（`step` 与整数侧相同，这里仍用 `used_int`）。
+                    VaInitVal::SaveOff(used_int.saturating_mul(u64::from(r.int.step)) as u32)
                 } else {
                     VaInitVal::FrameOff(unnamed_off)
                 }
@@ -504,6 +514,8 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
             size: a.size,
             align: a.align,
             stack_only: a.stack_only,
+            // "保存区必须与栈实参连续"（v20 V7）：形状数据，帧布局按它决定要不要把保存区放帧顶。
+            save_contiguous: a.save_contiguous,
             // 字段布局与保存区槽表（v20 V3）：折成运行时中立镜像（只有偏移/大小/类+号）。
             fields: a
                 .fields

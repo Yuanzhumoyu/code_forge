@@ -11,6 +11,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — lp64d 的变参改成 psABI 定本口径：未命名实参走整数寄存器，保存区紧贴入口 `sp`
+
+RISC-V 上"变参实参只走栈"这条**已知偏差**（与 GCC/Clang 编译的变参函数互调会错）按定本
+原文四件一起改完，QEMU 真执行验收：
+
+- **① `variadic_stack_only = false`**：未命名实参走 a0-a7（溢出才上栈）。
+- **② `variadic_classify` 按整数约定分类**：定本 `riscv-cc.adoc` 的浮点调用约定一节写着
+  *"The remainder of this section applies only to **named** arguments. **Variadic arguments are
+  passed according to the integer calling convention.**"* ⇒ 变参的浮点也走整数寄存器
+  （`double` 的位模式进 a0-a7）。调用点为此需要**类间位搬移**（上一片已落地的
+  `fpr_to_gpr_mov`/`gpr_to_fpr_mov` 角色）——这正是那条通用能力的第一位真实用户。
+- **③ 保存区只装整数参数寄存器**：`save = { int_slot = 8, float_slot = 0 }`（定本："integer
+  argument registers"；浮点槽会让线性游标在"整数寄存器之后、栈实参之前"读到不该有的槽）。
+- **④ 保存区紧贴入口 `sp`、与栈实参连续**：新增形状属性 `VaSaveDecl::contiguous` ⇒ 帧布局把
+  保存区放**帧顶** `[入口 sp - save_size, 入口 sp)`，ra/fp、callee-saved 的保存槽（生成物读
+  `AllocResult.va_top`）与局部槽（`stack_slot_shift`）整体下移一个 `save_size`；`area` 初值 =
+  保存区起点 + **已用整数寄存器数 × 槽宽**，于是单指线性游标先走完寄存器里的变参、再接着走
+  栈上的变参。`contiguous = false` 时布局与历史**逐字节一致**（其余三份约定的黄金快照未变）。
+- **连带**：`forge-isa abi check` 的"游标就是栈地址却允许未命名实参进寄存器"硬错**加了例外**
+  （`contiguous` 时不再矛盾），变参状态行也如实描述为"保存区（与栈实参连续）+ 线性游标"；
+  `lp64d.plan.txt` 黄金重刷（`arg` 落点从栈变寄存器、`va_save` 128→64、新增
+  `va_save_contiguous true`）。
+- **实测**：riscv 矩阵 **136/64/0**（`variadic_va_arg_int_only` = 47、`variadic_va_arg_int_and_float`
+  = 49 真跑，走的是新的寄存器路径）、x86 矩阵 **197/3/0**、`forge-abi` 28 invariants 全绿、
+  `forge-codegen --lib` 1285、`forge-isa-dsl` 全绿、`forge-isa` 全绿、`forge-tests --lib` 44；
+  `clippy -D warnings` 0、`fmt --check` 0、markdownlint 0。
+- **踩到并修掉的一个真 bug**：保存区基址的 `StackAddr` 立即数第一版写成 `shift - save_size`，而
+  调用方已经把 `stack_slot_shift` **加上**了 `va_top` ⇒ 地址少了 `2×save_size`；QEMU 用例当场
+  读到 4 而不是 47（失败信息直接指出了症状）。修成 `shift`（`fp + shift - (shift + save_size)`）
+  后两条用例全绿——这也是"每片都用真执行验收"的价值。
+
 ### Added (2026-10-01) — 变参数据面两件：`variadic_classify`（未命名实参专属分类）与"保存区只收一个类"
 
 为 lp64d 的变参修正铺数据面（发射侧的两块能力已就位：fp 位宽表、类间位搬移）。两件都**只加
