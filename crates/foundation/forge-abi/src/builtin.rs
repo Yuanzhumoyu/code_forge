@@ -192,6 +192,21 @@ pub fn registry() -> Result<AbiRegistry, AbiError> {
 ///
 /// **未启用** `va_len_pool`：历史上 RISC-V 生态有过"LEN 实参"的写法，本片不猜
 /// psABI 细节（A6 按官方定本核对后再启用；引擎支持这条路径，见 `tests/invariants.rs`）。
+///
+/// **已知偏差（2026-10-01 核对 psABI 定本时发现，故意钉住现状）**：定本 `riscv-cc.adoc` 的
+/// 「`va_list`, `va_start` and `va_arg`」一节说——被调方把**用来传变参的寄存器**拷进 vararg
+/// save area，该区必须与**栈上传的实参连续**；`va_start` 让 `va_list` 指向该区**起点**，
+/// `va_arg` 按类型大小递增（原文经
+/// <https://github.com/riscv-non-isa/riscv-elf-psabi-doc/issues/412> 引用）。即**未命名实参走
+/// 寄存器**（溢出才上栈），不是只走栈。本文件这里写的 `variadic_stack_only = true` +
+/// `riscv_save_area`（`area` 指向调用方栈实参区）**与定本不符**：自洽（自己的调用方/被调方按
+/// 同一份约定对齐，QEMU 矩阵真跑绿），但与外部编译器编译的变参函数互调会错。
+///
+/// **修复要四件一起**（半改会静默读错值）：① `variadic_stack_only = false`；② save area 放
+/// **帧顶**（与调用方栈实参连续，即 `[X8 - save_size, X8)`，前端局部槽整体下移一个 save_size
+/// 的 shift）；③ `area` 初值 = 保存区起点（不是栈实参区起点）；④ 调用方按正常分类传未命名实参
+/// （V1 路径已由 plan 驱动，不需要新代码）。守卫
+/// `invariants.rs::lp64d_variadic_stack_only_is_a_documented_deviation` 钉住现状（谁改这个值都会红）。
 pub const LP64D: &str = r#"
 name = "lp64d"
 parent = "c"

@@ -1086,3 +1086,43 @@ fn va_object_layout_matches_the_psabi_numbers() {
         }
     }
 }
+
+/// **lp64d 的已知偏差（故意钉住现状）**——2026-10-01 核对 RISC-V psABI 定本时发现。
+///
+/// 定本 `riscv-cc.adoc` 的「`va_list`, `va_start` and `va_arg`」一节（原文经 issue #412 引用）：
+///
+/// > A callee with variadic arguments is responsible for copying the contents of **registers used to
+/// > pass variadic arguments** to the vararg save area, which must be **contiguous with arguments
+/// > passed on the stack**. The `va_start` macro initializes its `va_list` argument to point to the
+/// > **start of the vararg save area**. The `va_arg` macro will increment its `va_list` argument
+/// > according to the size of the given type…
+///
+/// 也就是说 **未命名实参是走寄存器的**（a0–a7 / fa0–fa7，溢出才上栈），被调方把那些寄存器拷进一块
+/// **与栈实参连续**的 save area，`va_list` 指向该区**起点**、`va_arg` 按类型大小线性递增。
+///
+/// 我们内置的 lp64d 数据写的是 `variadic_stack_only = true`（未命名实参**只走栈**）、`area` 指向
+/// **调用方的栈实参区**——**与定本不符**（当前能跑，是因为我们自己的调用方与被调方按同一份错误
+/// 约定对齐；与外部编译器编译的变参函数互调会错）。出处：
+/// <https://github.com/riscv-non-isa/riscv-elf-psabi-doc/issues/412>（引 `riscv-cc.adoc` 原文）。
+///
+/// 这条守卫**故意钉住现状**：谁改 `variadic_stack_only`、或改 `riscv_save_area` 的形状/初值，
+/// 都会在这里红，逼他把"save area 与栈实参**连续**（帧顶）+ `area` 指向保存区起点 + 调用方按
+/// 正常分类传未命名实参"**整套**改完，而不是只把 `stack_only` 翻过来（半改会静默读错值）。
+/// 修复清单见 `docs/plans/varargs-plan.md` §5 与 `forge-abi/src/builtin.rs` 的注释。
+#[test]
+fn lp64d_variadic_stack_only_is_a_documented_deviation() {
+    let reg = registry();
+    let rules = reg.rules("lp64d").expect("lp64d 已注册");
+    let decl = rules
+        .hidden
+        .va_list
+        .as_ref()
+        .expect("lp64d 声明了 `va_list` 形状");
+    assert_eq!(decl.preset_name(), Some("riscv_save_area"));
+    assert!(
+        rules.variadic_stack_only,
+        "lp64d 的 `variadic_stack_only` 变了——若不是照 psABI 定本改的（未命名实参走寄存器 +\n\
+         save area 与栈实参连续 + `area` 指向保存区起点 + 调用方按分类传参，四件一起），\n\
+         就是把这条已知偏差改成了半成品。见 docs/plans/varargs-plan.md §5"
+    );
+}
