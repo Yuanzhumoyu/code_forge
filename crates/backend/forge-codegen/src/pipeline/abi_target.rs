@@ -444,6 +444,9 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         }
     };
     let hidden_sret = plan.hidden.sret.as_ref().map(reg);
+    // **变参元信息寄存器**（v20 V7）：SysV 的 `%al`——调用变参函数时要报"用了几个向量寄存器"，
+    // glibc 的 `printf` 一族靠它决定保存/读取几个 XMM。约定没声明池 ⇒ `None`（不需要）。
+    let va_meta = plan.hidden.va_meta.as_ref().map(reg);
     let args: Vec<CallArg> = plan
         .args
         .iter()
@@ -495,6 +498,7 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
         args,
         ret,
         hidden_sret,
+        va_meta,
         stack_align: plan.stack.align,
         slot_bytes: plan.stack.slot_bytes,
         shadow_bytes: plan.stack.shadow_bytes,

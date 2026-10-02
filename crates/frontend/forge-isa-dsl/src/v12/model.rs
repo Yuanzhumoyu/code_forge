@@ -1680,6 +1680,10 @@ impl Default for Encoding {
 pub enum Role {
     /// 整数寄存器移动（收参 / Copy / 溢出前搬运）。
     GprMov,
+    /// **立即数 → 整数寄存器**（v20 V7）：`mov r64, imm64` 一类。用于"要往寄存器里放一个
+    /// **运行期才知道的常量**"的场合——SysV 的变参元信息寄存器 `%al`（调用方报"用了几个
+    /// 向量寄存器"）就是它：数字由调用点的布局在运行期算出来，但写进去是一条立即数搬运。
+    GprMovImm,
     /// 返回值 → 返回寄存器的移动。
     RetMov,
     /// 标量浮点寄存器移动。**宽度写在角色声明里**
@@ -1759,6 +1763,7 @@ impl fmt::Display for Role {
 fn serde_json_name(r: &Role) -> &'static str {
     match r {
         Role::GprMov => "gpr_mov",
+        Role::GprMovImm => "gpr_mov_imm",
         Role::RetMov => "ret_mov",
         Role::FprMov => "fpr_mov",
         Role::FprToGprMov => "fpr_to_gpr_mov",

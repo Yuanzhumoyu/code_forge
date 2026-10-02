@@ -246,6 +246,10 @@ pub struct CallLayout {
     pub ret: Option<RetPlace>,
     /// 隐藏的间接结果指针寄存器（`sret`）。
     pub hidden_sret: Option<(RegClass, u32)>,
+    /// **变参元信息寄存器**（v20 V7）：调用**变参**函数时，调用方要在这里报"用了几个向量
+    /// 寄存器"（SysV 的 `%al`；glibc 的 `printf` 一族靠它决定从寄存器保存区里读几个 XMM）。
+    /// `None` = 该约定不需要（win64/aapcs64/lp64d）。
+    pub va_meta: Option<(RegClass, u32)>,
     /// 调用点栈对齐。
     pub stack_align: u32,
     /// 槽单位。

@@ -287,6 +287,9 @@ fn group_names_of(model: &V12Model, rc: RegClass) -> Result<Vec<String>, String>
 pub fn role_capability(role: Role) -> Option<&'static str> {
     Some(match role {
         Role::GprMov | Role::RetMov => "gpr_mov",
+        // 立即数 → 整数寄存器（v20 V7）：SysV 的变参元信息寄存器 `%al` 要按调用点布局写一个
+        // 运行期算出来的数（"用了几个向量寄存器"）。
+        Role::GprMovImm => "gpr_mov_imm",
         Role::FprMov => "fpr_mov",
         // 类间位搬移（v20 V7）：capability 视图里报同一族名字，两个方向分开报——
         // `abi check` 的"这台机器做不了"清单因此能指出**缺的是哪个方向**。

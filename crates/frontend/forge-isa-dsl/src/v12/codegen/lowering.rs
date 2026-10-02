@@ -1460,6 +1460,57 @@ fn gen_call_lowering(
         }
     };
     // 按值向量（≤16 字节）返回回读：XMM0（128 位全宽）→ 结果 XReg。
+    // ── 变参元信息寄存器（v20 V7，SysV 的 `%al`）──
+    //
+    // 调用**变参**函数时，调用方要把"用了几个向量寄存器"写进约定的元信息寄存器：glibc 的
+    // `printf` 一族靠它决定从寄存器保存区里读/存几个 XMM（`%al = 0` 表示一个都没用）。
+    // 数字来自**调用点的布局**（运行期才知道），所以要用"立即数 → 寄存器"那条能力写进去。
+    //
+    // 缺这条能力时**fail-closed**（不静默跳过：那是 ABI 要求的写入）——只在约定真的声明了
+    // 元信息池（`__cl.va_meta.is_some()`）且被调方是变参时才算数。
+    let va_meta_stmt: TokenStream = match role_name(infos, Role::GprMovImm) {
+        Ok(inst) => {
+            let (regs, imms) = inst_reg_imm_fids(infos, &inst)
+                .ok_or_else(|| format!("[{inst}] 作为 `gpr_mov_imm` 需要 Reg + Imm 两个操作数"))?;
+            let (dest, imm) = (
+                regs.first()
+                    .ok_or_else(|| format!("[{inst}] 缺 Reg 操作数"))?,
+                imms.first()
+                    .ok_or_else(|| format!("[{inst}] 缺 Imm 操作数"))?,
+            );
+            let vn = vn(&inst);
+            quote! {
+                if __variadic.is_some()
+                    && let Some((__mc, __mi)) = __cl.va_meta
+                {
+                    // `%al` 的语义：**用到的向量寄存器个数**（取类内号最大值 + 1；一个都没用 = 0）。
+                    let __n: u32 = __cl.args.iter().fold(0u32, |__acc, __arg| {
+                        match &__arg.place {
+                            crate::machine::call_layout::ArgPlace::Reg { class, index, .. }
+                                if class.is_fp() =>
+                            {
+                                __acc.max(*index + 1)
+                            }
+                            _ => __acc,
+                        }
+                    });
+                    let _ = __pack.push_inst(Inst::#vn {
+                        #dest: Reg::from_index(__mi, __mc),
+                        #imm: __n as i64,
+                    });
+                }
+            }
+        }
+        Err(_) => quote! {
+            if __variadic.is_some() && __cl.va_meta.is_some() {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: 该约定的变参要求写元信息寄存器（SysV 的 `%al`），但本 ISA \
+                     没有申报 roles = [\"gpr_mov_imm\"]（立即数 → 整数寄存器）的指令"
+                        .into(),
+                ));
+            }
+        },
+    };
     let vec_ret_stmt: TokenStream = if has_vec_mov {
         quote! {
             let __idx = __pack.push_inst(Inst::#vec_mov_vn {
@@ -1969,6 +2020,8 @@ fn gen_call_lowering(
                 #plan_setup
                 #sret_setup
                 #arg_loop
+                // 元信息寄存器（`%al`）要在**实参搬完之后、call 之前**写：布局已经拿在手上。
+                #va_meta_stmt
                 #call_body
                 #ret_move
                 Ok(__pack)
