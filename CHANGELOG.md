@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-01) — riscv 栈参数打通：访存指令按**形状**取 + 修掉 `lp64d` 的 `first_offset_slots`（变参在 QEMU 上真跑）
+
+上一片把 lp64d 的缺口钉在"调用方写不出传出区"。这一片补齐，顺带挖出一个与变参无关的真 bug：
+
+- **栈参数访存指令按形状取，不按 ISA 取**（新 `StackMemShape`，生成器 + `move_args` 共用一份
+  `stack_mem_shape` 判据）：`Reg+Mem`（x86 `MOV64_MR`/`MOV64_RM`，Mem 槽填
+  `MemRef{base, disp}`）或 **`值Reg+基址Reg+位移Imm`**（RISC-V S 形式 `SD {src}, {imm}({src2})`——
+  没有 Mem 槽的定宽 ISA 用这种，基址填机器的帧/栈基址、位移填偏移）。riscv 的 `SD` 因此可以申报
+  `roles = ["stack_arg_store"]`；`move_args` 的保存区 spill / 收参路径一并按形状发。
+- **真 bug（被这条新路径暴露）**：`lp64d` 的 `first_offset_slots` 写的是 **2**（照搬 x86 的"序言
+  总是 push fp"），而 RISC-V 的帧基址 `X8` = **入口 sp**（不 push 返回地址）⇒ 被调方的 `va_list`
+  比调用方写的槽**高 16 字节**。实测：QEMU 通道的 `variadic_va_arg_int_only` 读到 **0**（应 47）；
+  改成 **0** 后对齐（`lp64d.plan.txt` 黄金快照 `first_arg_off` 16 → 0，`FORGE_ABI_BLESS=1` 重刷）。
+  **影响面**：riscv 上任何栈实参（第 9+ 个命名实参、变参未命名实参）此前都按错位置取——没有用例
+  走到过。
+- **矩阵**：`variadic_va_arg_int_only` 现在是**两台机器真跑**（不再需要伪能力门控 `va_stack_args`，
+  该门控与其注释一并删除）：x86 **197/3/0**、riscv **132/68/0**（浮点那条因 riscv 谱缺 `Fadd`
+  仍按能力门控 Skip）。
+- **验证**：`forge-isa-dsl` 全绿（222 + 各守卫）、`forge-codegen` lib 1362 + `abi_target_real` 25 +
+  `arm64_v12_tm_tests` 7 + `riscv64_v12_tm_tests` 5、`forge-tests` lib 43、`forge-abi`、
+  `forge-ir` 281、`forge-isa` 全绿；`clippy -D warnings` 0、`fmt --check` 0。
+
 ### Added (2026-10-01) — 变参：aapcs64/lp64d 的两条**确定性守卫** + 缺口精确到"差什么、怎么接"
 
 V6 之后四份约定的形状/规则都是数据，但 **aapcs64/lp64d 还没有真跑**。这一片把"差什么"实测清楚并

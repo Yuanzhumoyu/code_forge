@@ -328,16 +328,18 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 
 **下一步（含实测到的缺口，按"离可用还差什么"排序）**：
 
-1. **riscv（lp64d）：只差调用方一侧**。实测（本片）：
-   - **被调方编得出**：`va_start` + 两次 `va_arg(i64)` 在真 riscv 后端上走完
-     lowering → regalloc → frame → encode（守卫 `riscv64_v12_tm_tests::tm_compiles_riscv_varargs_callee_side`）；
-   - **调用方接不上**：把（命名或未命名）实参写进传出区要 `stack_arg_store` 角色，而生成器要求该
-     角色是 **Reg+Mem 形状**；riscv 谱的 `SD` 是 `base+disp` 模板形状（`insts = ["SD {0}, {1}, 0"]`）、
-     谱里 `stack_arg_load`/`stack_arg_store` 一个都没有 ⇒ 矩阵用例报
-     `v12 call: 本 ISA 缺 roles = ["stack_arg_store"] 的指令（栈参数写不出去）`，并如实 Skip
-     （伪能力门控 `va_stack_args`）。**这与变参无关**：riscv 上第 9+ 个**命名**栈实参同样走不到。
-     接法两条：① 给 riscv 谱加 Reg+Mem 形状的 load/store（要动编码/向量/条数守卫）；
-     ② 让生成器的栈实参路径接受 base+disp 模板形状（`[spill.*]` 已有同类机制）——②更通用。
+1. **riscv（lp64d）：已通（真跑）**。两处都补齐（2026-10-01）：
+   - **调用方**：栈参数写指令按**形状**取——`Reg+Mem`（x86）或 `值Reg+基址Reg+位移Imm`
+     （RISC-V S 形式 `SD {src}, {imm}({src2})`）；生成器与 `move_args` 共用
+     `stack_mem_shape`（判据只有一份），riscv 的 `SD` 申报 `roles = ["stack_arg_store"]`。
+   - **一个真 bug（与变参无关，被这条路径暴露）**：`lp64d` 的 `first_offset_slots` 写的是 **2**
+     （照搬 x86"序言总是 push fp"），而 RISC-V 的帧基址 `X8` = **入口 sp**（不 push 返回地址）
+     ⇒ 被调方的 `va_list` 比调用方写的槽**高 16 字节**。实测：QEMU 通道的
+     `variadic_va_arg_int_only` 读到 **0**（应 47）；改成 **0** 后对齐。影响面：riscv 上任何
+     栈实参（第 9+ 个命名实参、变参未命名实参）都按错位置取——此前**没有用例**走到。
+   - **验收**：QEMU 矩阵 riscv **132/68/0**（`variadic_va_arg_int_only` 真跑 47；浮点那条因
+     riscv 谱缺 `Fadd` 仍按能力门控 Skip），x86 **197/3/0**；`lp64d.plan.txt` 黄金快照
+     `first_arg_off` 16 → 0。
 2. **aapcs64：数据面已通、编译面被 arm64 缺的 lowering 挡住**。实测：把变参函数编到 arm64 报
    `Unsupported("v12 lowering")` —— 变参展开用的 IR 词汇（`Icmp`/`Select`/`StackAddr`/`Sextend`/
    `Ireduce`）在 arm64 谱里**一条 lowering 都没有**（x86/riscv 有）。缺口被

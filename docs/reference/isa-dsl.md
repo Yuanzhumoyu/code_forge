@@ -739,7 +739,7 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | `wide_vec_store` | 宽向量 by-ref 调用方栈拷贝 store（宽度写在声明里：`bits = 256`/`512`） |
 | `wide_vec_load` | 宽向量 by-ref/sret 收参与回读 load（同上） |
 | `frame_addr` | 帧内 `[FP+disp]` 地址计算（sret/by-ref 临时槽） |
-| `stack_arg_load` / `stack_arg_store` | 栈参数收参 load / 传参 store；**可按寄存器类限定**（`{ role = "stack_arg_store", class = "fpr" }`：整数 store 与浮点 store 是两条指令） |
+| `stack_arg_load` / `stack_arg_store` | 栈参数收参 load / 传参 store；**可按寄存器类限定**（`{ role = "stack_arg_store", class = "fpr" }`：整数 store 与浮点 store 是两条指令）。**两种形状都行**（v20 V6+）：`Reg+Mem`（x86 `MOV64_MR`/`MOV64_RM`，Mem 槽填 `MemRef{base, disp}`）或 `值Reg+基址Reg+位移Imm`（RISC-V S 形式 `SD {src}, {imm}({src2})`——没有 Mem 槽的定宽 ISA 用这种；基址填机器的帧/栈基址、位移填偏移） |
 
 > **变参不再要角色**（v20 V6）：`va_start`/`va_arg` 由管线按约定数据展开成显式 IR
 > （`forge-codegen/src/pipeline/va_expand.rs`），生成器没有变参专用臂、谱也不申报任何

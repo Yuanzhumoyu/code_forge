@@ -3362,13 +3362,11 @@ pub const CASES: &[Case] = &[
     //    调用方（非变参 `main`）多传两个实参 ⇒ 未命名实参按被调方语义进传出区
     //    （靠**模块级签名表**：这正是 `JitCompiler::compile_module` 必须装表的那条路径）。
     //
-    //    `va_stack_args` 是**能力门控用的伪 op**：把未命名实参写进传出区要 `stack_arg_store`
-    //    角色，而生成器要求该角色是 **Reg+Mem 形状**——今天只有 x86 谱有这个形状；riscv 谱的
-    //    `SD` 是 `base+disp` 模板形状（`insts = ["SD {0}, {1}, 0"]`），所以"调用方一侧"还接不上
-    //    （**已知缺口**，见 `docs/plans/varargs-plan.md`；被调方一侧不依赖它）。
+    //    （调用方写传出区要 `stack_arg_store`：x86 是 Reg+Mem 形状、riscv 是 S 形式——生成器
+    //     两种形状都支持，见 `pipeline`/`move_args` 的 `StackMemShape`。）
     Case {
         name: "variadic_va_arg_int_only",
-        ops: &["VaStart", "VaArg", "Call", "Imul", "Iadd", "va_stack_args"],
+        ops: &["VaStart", "VaArg", "Call", "Imul", "Iadd"],
         kind: CaseKind::Module(
             |m| {
                 // callee(fmt: i64, ...) -> i64：a = va_arg(i64); b = va_arg(i64); ret a*10 + b

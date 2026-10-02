@@ -326,6 +326,33 @@ pub(crate) fn gen_frame_lowering(
     })
 }
 
+/// 按**形状**拼一条栈参数访存指令（load/store 共用）：`Reg+Mem` 填 MemRef；
+/// `值Reg+基址Reg+位移Imm` 把基址填成给定的基址寄存器、位移填给定的偏移表达式。
+fn mem_inst_toks(
+    shape: &super::lowering::StackMemShape,
+    base: &TokenStream,
+    disp: &TokenStream,
+    reg: &TokenStream,
+) -> TokenStream {
+    let vn = &shape.vn;
+    let r = &shape.reg;
+    match &shape.flavor {
+        super::lowering::StackMemFlavor::Mem(m) => quote! {
+            Inst::#vn {
+                #m: MemRef { base: #base, disp: #disp, index: None, scale: 1 },
+                #r: #reg,
+            }
+        },
+        super::lowering::StackMemFlavor::BaseDisp { base: b, imm } => quote! {
+            Inst::#vn {
+                #r: #reg,
+                #b: #base,
+                #imm: #disp,
+            }
+        },
+    }
+}
+
 /// 按指令名查找 InstInfo（emit/spill 模板用）。
 fn inst_info_by_name<'a>(infos: &'a [InstInfo<'a>], name: &str) -> Option<&'a InstInfo<'a>> {
     infos.iter().find(|i| i.inst.name == name)
@@ -892,11 +919,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         }
         None => quote! { Reg::from_index(0, __DEFAULT_GPR_CLASS) },
     };
-    // (变体名, Mem 字段, Reg 字段)——load 的 Reg 槽是 dest、store 是 src，
-    // 字段名由 `reg_mem_fids` 从操作数结构派生。
+    // (变体名, 值寄存器槽, 形状)——load 的 Reg 槽是 dest、store 是 src，形状由
+    // `stack_mem_shape` 从操作数结构派生（`Reg+Mem` 或 `值Reg+基址Reg+位移Imm` 两种）。
     let tagged = |role: Role,
                   what: &str|
-     -> Result<Option<(syn::Ident, syn::Ident, syn::Ident)>, String> {
+     -> Result<Option<crate::v12::codegen::lowering::StackMemShape>, String> {
         // **无限定**声明（发射要的是那条通用指令；类/宽度分派另有出口）——
         // 见 `inst_by_plain_role` 的说明：宽松查找会静默选中类限定版。
         let Some(info) = crate::v12::codegen::lowering::inst_by_plain_role(infos, role) else {
@@ -907,19 +934,14 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             }
             return Ok(None);
         };
-        let (reg, mem, _idx) = crate::v12::codegen::lowering::reg_mem_fids(info);
-        match (reg, mem) {
-            (Some(r), Some(m)) => Ok(Some((info.vn.clone(), m, r))),
-            _ => Err(format!(
-                "move_args: roles = [\"{role}\"] 的{what}必须是 Reg+Mem 形状"
-            )),
-        }
+        crate::v12::codegen::lowering::stack_mem_shape(infos, info, role)
+            .map_err(|e| format!("move_args: {what}：{e}"))
     };
-    let load_triple = tagged(Role::StackArgLoad, "收参指令")?;
-    let store_triple = tagged(Role::StackArgStore, "写回指令")?;
+    let load_shape = tagged(Role::StackArgLoad, "收参指令")?;
+    let store_shape = tagged(Role::StackArgStore, "写回指令")?;
     // 浮点版的写回指令（`{ role = "stack_arg_store", class = "fpr" }`，v20 变参 V3）：
     // 寄存器保存区里既有 GP 也有 FP 槽，spill 按槽的类分派。
-    let store_fpr_triple = match crate::v12::codegen::lowering::role_name_for_class(
+    let store_fpr_shape = match crate::v12::codegen::lowering::role_name_for_class(
         infos,
         Role::StackArgStore,
         crate::v12::model::RoleClass::Fpr,
@@ -927,16 +949,8 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     .and_then(|name| infos.iter().find(|i| i.inst.name == name))
     {
         Some(info) => {
-            let (reg, mem, _) = crate::v12::codegen::lowering::reg_mem_fids(info);
-            match (reg, mem) {
-                (Some(r), Some(m)) => Some((info.vn.clone(), m, r)),
-                _ => {
-                    return Err(
-                        "move_args: { role = \"stack_arg_store\", class = \"fpr\" } 必须是 Reg+Mem 形状"
-                            .to_string(),
-                    );
-                }
-            }
+            crate::v12::codegen::lowering::stack_mem_shape(infos, info, Role::StackArgStore)
+                .map_err(|e| format!("move_args: 浮点写回指令：{e}"))?
         }
         None => None,
     };
@@ -1086,41 +1100,35 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     // 分支——否则与低位置参数共享寄存器时，批量收参顺序覆盖（a→r15 后 e→r15，
     // a 值丢）→ five_args 14）。偏移**来自布局**（v20 A5-3：谱面不再声明
     // `[abi.stack_args]`，`first_offset_slots`/`shadow`/`stride` 三处常量都删了）。
-    let stack_arg_receive: TokenStream = match (load_triple.as_ref(), store_triple.as_ref()) {
-        (Some((l_vn, l_mem, l_reg)), Some((s_vn, s_mem, s_reg))) => quote! {
-            if let Some(__cl) = __rm.call_layout.as_ref()
-                && let Some(crate::machine::call_layout::ArgPlace::Stack { offset: __soff, .. }) =
-                    __cl.arg(__i as u32).map(|__a| &__a.place)
-                && __rm.spill_slots.contains_key(&__pv)
-            {
-                let __off = *__soff as i64;
-                let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
-                let __slot_off = __rm.spill_slot(__pv).offset as i64;
-                // load 布局给的栈槽 → scratch（角色 stack_arg_load 命中的指令）
-                let __lbytes = encode(&Inst::#l_vn {
-                    #l_mem: MemRef {
-                        base: #callee_base,
-                        disp: __off,
-                        index: None,
-                        scale: 1,
-                    },
-                    #l_reg: __scratch0,
-                }).map_err(|e| crate::IrError::Emit(e))?;
-                __sink.put_bytes(&__lbytes);
-                // store scratch → spill 槽（角色 stack_arg_store 命中的指令）
-                let __sbytes = encode(&Inst::#s_vn {
-                    #s_mem: MemRef {
-                        base: #callee_base,
-                        disp: __sp_base + __slot_off,
-                        index: None,
-                        scale: 1,
-                    },
-                    #s_reg: __scratch0,
-                }).map_err(|e| crate::IrError::Emit(e))?;
-                __sink.put_bytes(&__sbytes);
-                continue;
+    let stack_arg_receive: TokenStream = match (load_shape.as_ref(), store_shape.as_ref()) {
+        (Some(l), Some(s)) => {
+            let l_inst = mem_inst_toks(l, &callee_base, &quote! { __off }, &quote! { __scratch0 });
+            let s_inst = mem_inst_toks(
+                s,
+                &callee_base,
+                &quote! { __sp_base + __slot_off },
+                &quote! { __scratch0 },
+            );
+            quote! {
+                if let Some(__cl) = __rm.call_layout.as_ref()
+                    && let Some(crate::machine::call_layout::ArgPlace::Stack { offset: __soff, .. }) =
+                        __cl.arg(__i as u32).map(|__a| &__a.place)
+                    && __rm.spill_slots.contains_key(&__pv)
+                {
+                    let __off = *__soff as i64;
+                    let __sp_base =
+                        -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
+                    let __slot_off = __rm.spill_slot(__pv).offset as i64;
+                    // load 布局给的栈槽 → scratch（角色 stack_arg_load 命中的指令）
+                    let __lbytes = encode(&#l_inst).map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__lbytes);
+                    // store scratch → spill 槽（角色 stack_arg_store 命中的指令）
+                    let __sbytes = encode(&#s_inst).map_err(|e| crate::IrError::Emit(e))?;
+                    __sink.put_bytes(&__sbytes);
+                    continue;
+                }
             }
-        },
+        }
         // 本 ISA 不支持栈参数（未声明角色）→ 分支整体不生成
         //（否则分支体引用不存在的 Reg/Inst 变体）。
         _ => quote! {},
@@ -1131,9 +1139,16 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     let has_mov_inst = !move_inst.is_empty();
     let spilled_int_receive: TokenStream = match (
         has_stack_arg && has_mov_inst,
-        store_triple.as_ref(),
+        store_shape.as_ref(),
     ) {
-        (true, Some((s_vn, s_mem, s_reg))) => quote! {
+        (true, Some(s)) => {
+            let s_inst = mem_inst_toks(
+                s,
+                &callee_base,
+                &quote! { __sp_base + __slot_off },
+                &quote! { __scratch0 },
+            );
+            quote! {
             // spilled 的**寄存器**参数：load 被调方 ABI 寄存器 → scratch
             // → spill 槽（mod.rs 210 写槽依赖 entry vreg 值正确）。
             //
@@ -1169,18 +1184,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                 }).map_err(|e| crate::IrError::Emit(e))?;
                 __sink.put_bytes(&__lbytes);
                 // scratch → spill 槽（角色 stack_arg_store 命中的指令）
-                let __sbytes = encode(&Inst::#s_vn {
-                    #s_mem: MemRef {
-                        base: #callee_base,
-                        disp: __sp_base + __slot_off,
-                        index: None,
-                        scale: 1,
-                    },
-                    #s_reg: __scratch0,
-                }).map_err(|e| crate::IrError::Emit(e))?;
+                let __sbytes = encode(&#s_inst).map_err(|e| crate::IrError::Emit(e))?;
                 __sink.put_bytes(&__sbytes);
             }
-        },
+            }
+        }
         _ => quote! {},
     };
     let stack_arg_prologue: TokenStream = if has_stack_arg {
@@ -1254,20 +1262,19 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     };
     // **布局给的栈落点**收参（A3b-2b-2c-2）：`[frame_base + offset]` → 分配的寄存器。
     // 指令按角色 `stack_arg_load` 取（与旧路径同一条），偏移来自布局（常量）。
-    let layout_stack_stmt: TokenStream = match load_triple.as_ref() {
-        Some((l_vn, l_mem, l_reg)) => quote! {
-            let __bytes = encode(&Inst::#l_vn {
-                #l_mem: MemRef {
-                    base: #callee_base,
-                    disp: *offset as i64,
-                    index: None,
-                    scale: 1,
-                },
-                #l_reg: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
-            })
-            .map_err(|e| crate::IrError::Emit(e))?;
-            __sink.put_bytes(&__bytes);
-        },
+    let layout_stack_stmt: TokenStream = match load_shape.as_ref() {
+        Some(l) => {
+            let l_inst = mem_inst_toks(
+                l,
+                &callee_base,
+                &quote! { *offset as i64 },
+                &quote! { Reg::from_index(__dest, __DEFAULT_GPR_CLASS) },
+            );
+            quote! {
+                let __bytes = encode(&#l_inst).map_err(|e| crate::IrError::Emit(e))?;
+                __sink.put_bytes(&__bytes);
+            }
+        }
         None => quote! {
             return Err(crate::IrError::Unsupported(
                 "v12 move_args: 栈参数收参需要 roles = [\"stack_arg_load\"] 的指令".into(),
@@ -1280,21 +1287,26 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     // **按槽的寄存器类分派**（GP 槽用通用 store，FP 槽用 `class = "fpr"` 那条）。
     //
     // 放在收参**之前**：收参会用 scratch，先存一份原始参数寄存器最稳。
-    let va_save_spill: TokenStream = match store_triple.as_ref() {
-        Some((s_vn, s_mem, s_reg)) => {
-            let fpr_store: TokenStream = match store_fpr_triple.as_ref() {
-                Some((f_vn, f_mem, f_reg)) => quote! {
-                    let __bytes = encode(&Inst::#f_vn {
-                        #f_mem: MemRef {
-                            base: #callee_base,
-                            disp: __disp,
-                            index: None,
-                            scale: 1,
-                        },
-                        #f_reg: Reg::from_index(__slot.index, __slot.class),
-                    })
-                    .map_err(|e| crate::IrError::Emit(e))?;
-                },
+    let va_save_spill: TokenStream = match store_shape.as_ref() {
+        Some(s) => {
+            let s_inst = mem_inst_toks(
+                s,
+                &callee_base,
+                &quote! { __disp },
+                &quote! { Reg::from_index(__slot.index, __slot.class) },
+            );
+            let fpr_store: TokenStream = match store_fpr_shape.as_ref() {
+                Some(f) => {
+                    let f_inst = mem_inst_toks(
+                        f,
+                        &callee_base,
+                        &quote! { __disp },
+                        &quote! { Reg::from_index(__slot.index, __slot.class) },
+                    );
+                    quote! {
+                        let __bytes = encode(&#f_inst).map_err(|e| crate::IrError::Emit(e))?;
+                    }
+                }
                 None => quote! {
                     return Err(crate::IrError::Unsupported(
                         "v12 move_args: 寄存器保存区里的浮点槽需要 \
@@ -1314,16 +1326,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
                             #fpr_store
                             __bytes
                         } else {
-                            let __bytes = encode(&Inst::#s_vn {
-                                #s_mem: MemRef {
-                                    base: #callee_base,
-                                    disp: __disp,
-                                    index: None,
-                                    scale: 1,
-                                },
-                                #s_reg: Reg::from_index(__slot.index, __slot.class),
-                            })
-                            .map_err(|e| crate::IrError::Emit(e))?;
+                            let __bytes = encode(&#s_inst).map_err(|e| crate::IrError::Emit(e))?;
                             __bytes
                         };
                         __sink.put_bytes(&__bytes);

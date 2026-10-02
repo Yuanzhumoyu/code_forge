@@ -412,15 +412,15 @@ FPR/向量塞进 GPR 路径里静默编错。
 提升**：调用方（前端）把 `float` 按默认提升传成 `double`，`va_arg(ap, f32)` 取 `f64` 后 `Fptrunc`
 窄回——只按 f32 读 4 字节会读到 promoted double 的**低半**（垃圾位型）。
 （第 5+ 个**命名**浮点形参的收参见上一段：经 spill 中转按位保留，两条真跑用例钉住。）
-**覆盖到哪一步（诚实清单）**：`win64`/`sysv64` **真跑**（x86 本机 JIT + 架构无关矩阵 197/3/0）。
-`lp64d` 的**被调方一侧**在真 riscv 后端上编得出
-（`riscv64_v12_tm_tests::tm_compiles_riscv_varargs_callee_side`），但**调用方一侧**接不上——写传出区要
-`stack_arg_store`，而生成器要求它是 Reg+Mem 形状、riscv 谱的 `SD` 是 base+disp 模板形状 ⇒ 矩阵的
-变参调用点用例按伪能力 `va_stack_args` 门控 Skip。`aapcs64` 的**数据面**逐格钉住
-（`abi_target_real::aapcs64_variadic_shape_is_pure_data`），**编译面**被 arm64 谱缺的
-`Icmp`/`Select`/`StackAddr`/`Sextend`/`Ireduce` lowering 挡住（缺口由
-`arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住）。两处缺口与接法
-见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)。
+**覆盖到哪一步（诚实清单）**：`win64`/`sysv64`（x86）与 **`lp64d`（riscv，QEMU 通道）真跑**——
+矩阵 x86 197/3/0、riscv 132/68/0。`lp64d` 的调用方/被调方都通：栈参数写指令按**形状**取
+（`Reg+Mem` 的 x86 与 `值Reg+基址Reg+位移Imm` 的 RISC-V S 形式，生成器与 `move_args` 共用一份
+`stack_mem_shape` 判据），riscv 的 `SD` 申报 `stack_arg_store`；同时修掉 `lp64d` 的
+`first_offset_slots`（2 → 0：RISC-V 帧基址 = 入口 sp，不 push 返回地址）。
+`aapcs64` 的**数据面**逐格钉住（`abi_target_real::aapcs64_variadic_shape_is_pure_data`），
+**编译面**被 arm64 谱缺的 `Icmp`/`Select`/`StackAddr`/`Sextend`/`Ireduce` lowering 挡住（缺口由
+`arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住）。缺口与接法见
+[`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)。
 
 ### 无 plan = 编译错误（v20 A6）
 

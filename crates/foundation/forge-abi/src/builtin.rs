@@ -195,7 +195,14 @@ pub fn registry() -> Result<AbiRegistry, AbiError> {
 pub const LP64D: &str = r#"
 name = "lp64d"
 parent = "c"
-stack = { slot_bytes = 8, first_offset_slots = 2 }
+# `first_offset_slots = 0`：本实现的 RISC-V 被调方**帧基址 = 入口 sp**（`X8 = 入口 sp`，
+# 帧只在它**之下**展开：`addi sp, sp, -N` + ra/fp 保存槽都在 X8 以下），所以调用方写在
+# `[sp + caller_offset]` 的传出实参，在被调方看来就是 `[X8 + caller_offset]`——**没有**"返回
+# 地址 + 保存的 fp"这两个槽（RISC-V 不 push 返回地址）。
+# 2026-10-01 实测：写 2（照搬 x86 的"序言总是 push fp"）时，QEMU 通道的变参用例
+# `variadic_va_arg_int_only` 读到 0（应 47）——被调方的 `va_list` 比调用方写的槽**高 16 字节**；
+# 改成 0 后两条支对齐。
+stack = { slot_bytes = 8, first_offset_slots = 0 }
 aliases = ["c"]  # riscv64_v12 上的 C 约定
 classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "float" } } },

@@ -500,7 +500,11 @@ opcode = 0x23
 fields = { funct3 = 3 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sd {src}, {imm}({src2})"
-roles = ["callee_save"]
+# `callee_save`：序言保存被调方保存寄存器。
+# `stack_arg_store`：调用方把传出实参（第 9+ 个命名实参、以及变参的未命名实参）写进传出区——
+# S 形式是"值寄存器 + 基址寄存器 + 位移立即数"，生成器按**形状**（没有 Mem 槽）把基址填成 sp、
+# 位移填调用方偏移（v20 V1/V6+）。
+roles = ["callee_save", "stack_arg_store"]
 
 # ── 控制流 ──
 

@@ -24,7 +24,7 @@ use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
 use super::integration::{
     collect_phys_clobbers, compile_pred_guard, gen_lowering_attrs, inst_exists, inst_fids,
-    inst_move_role, lowering_token_kind, parse_i64_lit, parse_mem_template,
+    inst_move_role, inst_reg_imm_fids, lowering_token_kind, parse_i64_lit, parse_mem_template,
     strip_placeholder_decls,
 };
 use super::{InstInfo, field_ctor_expr};
@@ -1204,6 +1204,72 @@ fn gen_patterns(
 /// 参数 → ABI 寄存器（整数 RCX/RDX/R8/R9、浮点 XMM0-3）→ CALL → 返回值
 /// RAX/XMM0 → 结果 XReg。Call 的 FuncRef 编码为 `-(f+1)`（负 rel 触发
 /// gen_encoder 的函数符号 reloc "@N"）。clobbers 声明 ABI 易失寄存器。
+/// **栈参数访存指令的形状**（v20 V6+）：`roles = ["stack_arg_store"]`（以及 `stack_arg_load`）的
+/// 指令按**形状**取，不按 ISA 取。两种常见形状都支持，判据是**指令有没有 Mem 槽**：
+///
+/// - [`StackMemFlavor::Mem`]（x86 `MOV64_MR`/`MOV64_RM`）：Mem 槽填
+///   `MemRef{base: <帧/栈基址>, disp: 偏移}`；
+/// - [`StackMemFlavor::BaseDisp`]（RISC-V S 形式 `SD {src}, {imm}({src2})`）：显式的基址寄存器
+///   填基址、位移立即数填偏移。
+///
+/// 为什么两种都要：内存操作数怎么建模是 ISA 自己的事——定宽 ISA 常见"基址寄存器 + 位移立即数"
+/// 两个操作数，而不是统一的一个 MemRef。生成器按形状发，就不会为某份 ISA 开分支。
+pub(crate) struct StackMemShape {
+    pub vn: syn::Ident,
+    /// 值寄存器槽（store 的源 / load 的目的）。
+    pub reg: syn::Ident,
+    /// 值寄存器槽在指令 Reg 槽里的序号（调用点 `map_reg_field` 要用）。
+    pub reg_idx: u8,
+    pub flavor: StackMemFlavor,
+}
+
+pub(crate) enum StackMemFlavor {
+    Mem(syn::Ident),
+    BaseDisp { base: syn::Ident, imm: syn::Ident },
+}
+
+/// 从一个"栈参数访存"角色指令上取形状（供调用点与 `move_args` 共用，判据只有一份）。
+pub(crate) fn stack_mem_shape(
+    infos: &[InstInfo],
+    info: &InstInfo,
+    role: Role,
+) -> Result<Option<StackMemShape>, String> {
+    let vn = crate::v12::codegen::pascal_ident(&info.inst.name);
+    let (reg, mem, reg_idx) = reg_mem_fids(info);
+    if let (Some(r), Some(m)) = (reg, mem) {
+        return Ok(Some(StackMemShape {
+            vn,
+            reg: r,
+            reg_idx,
+            flavor: StackMemFlavor::Mem(m),
+        }));
+    }
+    // 没有 Mem 槽 ⇒ 看"值 Reg + 基址 Reg + 位移 Imm"（riscv 的 S 形式）。
+    let Some((regs, imms)) = inst_reg_imm_fids(infos, &info.inst.name) else {
+        return Err(format!(
+            "roles = [\"{role}\"] 的指令 [{}] 既没有 Mem 槽、也不是 值Reg+基址Reg+位移Imm 形状",
+            info.inst.name
+        ));
+    };
+    match (regs.len(), imms.first()) {
+        (n, Some(imm)) if n >= 2 => Ok(Some(StackMemShape {
+            vn,
+            reg: regs[0].clone(),
+            reg_idx: 0,
+            flavor: StackMemFlavor::BaseDisp {
+                base: regs[1].clone(),
+                imm: (*imm).clone(),
+            },
+        })),
+        _ => Err(format!(
+            "roles = [\"{role}\"] 的指令 [{}] 形状不符——要 值Reg+基址Reg+位移Imm（实测 {} 个 Reg / {} 个 Imm）",
+            info.inst.name,
+            regs.len(),
+            imms.len()
+        )),
+    }
+}
+
 fn gen_call_lowering(
     op_name: &str,
     infos: &[InstInfo],
@@ -1247,23 +1313,14 @@ fn gen_call_lowering(
     // **按寄存器类分派**（v20 变参 V4）：整数/指针用无类限定的那条（`MOV64_MR`），
     // 标量浮点用 `{ role = "stack_arg_store", class = "fpr" }` 那条（`MOVSD_MR`）——
     // 缺后者时浮点栈实参**明确 Unsupported**，不再拿整数 store 搬 XMM（那会静默错值）。
-    let store_shape =
-        |info: &InstInfo| -> Result<Option<(syn::Ident, syn::Ident, syn::Ident, u8)>, String> {
-            let vn = vn(&info.inst.name);
-            let (reg, mem, reg_idx) = reg_mem_fids(info);
-            match (reg, mem) {
-                (Some(r), Some(m)) => Ok(Some((vn, m, r, reg_idx))),
-                _ => Err(
-                    "Call lowering: roles = [\"stack_arg_store\"] 的指令必须是 Reg+Mem 形状".into(),
-                ),
-            }
-        };
-    let stack_store: Option<(syn::Ident, syn::Ident, syn::Ident, u8)> =
-        match inst_by_plain_role(infos, Role::StackArgStore) {
-            Some(info) => store_shape(info)?,
-            None => None,
-        };
-    let stack_store_fpr: Option<(syn::Ident, syn::Ident, syn::Ident, u8)> =
+    let store_shape = |info: &InstInfo| -> Result<Option<StackMemShape>, String> {
+        stack_mem_shape(infos, info, Role::StackArgStore)
+    };
+    let stack_store: Option<StackMemShape> = match inst_by_plain_role(infos, Role::StackArgStore) {
+        Some(info) => store_shape(info)?,
+        None => None,
+    };
+    let stack_store_fpr: Option<StackMemShape> =
         match role_name_for_class(infos, Role::StackArgStore, RoleClass::Fpr)
             .and_then(|name| infos.iter().find(|i| i.inst.name == name))
         {
@@ -1932,8 +1989,8 @@ fn arg_move_loop(
     mov_vn: &syn::Ident,
     fpr_mov32_vn: &syn::Ident,
     fpr_mov64_vn: &syn::Ident,
-    stack_store: &Option<(syn::Ident, syn::Ident, syn::Ident, u8)>,
-    stack_store_fpr: &Option<(syn::Ident, syn::Ident, syn::Ident, u8)>,
+    stack_store: &Option<StackMemShape>,
+    stack_store_fpr: &Option<StackMemShape>,
     sp_base: &TokenStream,
     has_byref_insts: bool,
 ) -> TokenStream {
@@ -1986,26 +2043,58 @@ fn arg_move_loop(
     // **按实参的类分派写指令**（v20 变参 V4）：标量浮点用 `class = "fpr"` 的那条
     // （XMM → 内存），整数/指针用无类限定的那条。浮点实参 + 本 ISA 没申报 fpr 版 ⇒ 明确
     // Unsupported（拿整数 store 搬 XMM 是静默错值，v20 起不允许）。
+    // 栈参数：偏移由布局给（调用方视角 `caller_offset(k)`），k = 已发过的栈参数个数。
+    // **按实参的类分派写指令**（v20 变参 V4）：标量浮点用 `class = "fpr"` 的那条
+    // （XMM/V → 内存），整数/指针用无类限定的那条。浮点实参 + 本 ISA 没申报 fpr 版 ⇒ 明确
+    // Unsupported（拿整数 store 搬浮点寄存器是静默错值，v20 起不允许）。
+    //
+    // **写指令的形状按 shape 分派**（v20 V6+）：`Reg+Mem` 填 MemRef；`值Reg+基址Reg+位移Imm`
+    // 把基址填成机器的 `sp`、位移填调用方偏移——内存操作数怎么建模是 ISA 自己的事。
+    let store_inst = |shape: &StackMemShape, is_fpr: bool| -> TokenStream {
+        let cls = if is_fpr {
+            quote! { __DEFAULT_FPR_CLASS }
+        } else {
+            quote! { __DEFAULT_GPR_CLASS }
+        };
+        let StackMemShape {
+            vn,
+            reg,
+            reg_idx,
+            flavor,
+        } = shape;
+        match flavor {
+            StackMemFlavor::Mem(mem) => quote! {
+                let __idx = __pack.push_inst(Inst::#vn {
+                    #mem: MemRef {
+                        base: #sp_base,
+                        disp: __off,
+                        index: None,
+                        scale: 1,
+                    },
+                    #reg: Reg::from_index(0, #cls),
+                });
+                __pack.map_reg_field(__a, __idx, #reg_idx, false);
+            },
+            StackMemFlavor::BaseDisp { base, imm } => quote! {
+                let __idx = __pack.push_inst(Inst::#vn {
+                    #reg: Reg::from_index(0, #cls),
+                    #base: #sp_base,
+                    #imm: __off,
+                });
+                __pack.map_reg_field(__a, __idx, #reg_idx, false);
+            },
+        }
+    };
     let stack_stmt: TokenStream = match stack_store {
-        Some((s_vn, s_mem, s_reg, s_reg_idx)) => {
+        Some(s) => {
+            let int_store = store_inst(s, false);
             let fpr_store: TokenStream = match stack_store_fpr {
-                Some((f_vn, f_mem, f_reg, f_reg_idx)) => quote! {
-                    let __idx = __pack.push_inst(Inst::#f_vn {
-                        #f_mem: MemRef {
-                            base: #sp_base,
-                            disp: __off,
-                            index: None,
-                            scale: 1,
-                        },
-                        #f_reg: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    });
-                    __pack.map_reg_field(__a, __idx, #f_reg_idx, false);
-                },
+                Some(f) => store_inst(f, true),
                 None => quote! {
                     return Err(crate::prelude::IrError::Unsupported(
                         "v12 call: 浮点栈实参需要 roles = \
                          [{ role = \"stack_arg_store\", class = \"fpr\" }] 的指令\
-                         （拿整数 store 搬 XMM 会静默错值）"
+                         （拿整数 store 搬浮点寄存器会静默错值）"
                             .into(),
                     ));
                 },
@@ -2023,16 +2112,7 @@ fn arg_move_loop(
                 if __is_fp {
                     #fpr_store
                 } else {
-                    let __idx = __pack.push_inst(Inst::#s_vn {
-                        #s_mem: MemRef {
-                            base: #sp_base,
-                            disp: __off,
-                            index: None,
-                            scale: 1,
-                        },
-                        #s_reg: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                    });
-                    __pack.map_reg_field(__a, __idx, #s_reg_idx, false);
+                    #int_store
                 }
                 // 帧需求：栈参数区 = shadow + 已用栈槽
                 ctx.max_stack_arg_bytes = ctx
