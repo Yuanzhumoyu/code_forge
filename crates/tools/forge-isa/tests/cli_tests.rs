@@ -446,6 +446,13 @@ fn abi_check_reports_the_variadic_state() {
         "lp64d 的变参 = 保存区 + 栈式游标（数据驱动）：{}",
         out.stdout
     );
+    // **可疑组合的告警**（2026-10-01）：声明了保存区却让未命名实参只走栈 —— 自洽但可能不符合
+    // psABI 定本（lp64d 实测确不符，见 docs/plans/varargs-plan.md §5；aapcs64 同组合待核）。
+    assert!(
+        out.stdout.contains("可能不符合 psABI 定本"),
+        "含保存区却只走栈时要给出可疑组合告警：{}",
+        out.stdout
+    );
 }
 
 #[test]

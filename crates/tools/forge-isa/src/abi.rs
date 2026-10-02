@@ -366,6 +366,13 @@ fn variadic_report(
              `variadic_stack_only = false` —— 未命名实参可能进寄存器，游标指不到"
         ));
     }
+    // ③b **可疑组合**（2026-10-01 加，写进 `ℹ` 行、不改退出码）：声明了**寄存器保存区**却让未命名
+    // 实参**只走栈**——保存区的存在本身就意味着"未命名实参可以进寄存器、由被调方存下来"
+    // （AAPCS64 的 `__gr_offs`/`__vr_offs`、RISC-V 的 vararg save area 都是这个模型）。
+    // 这种组合是**自洽但可能不符合 psABI 定本**的写法：我们自己的调用方/被调方按同一份约定
+    // 对齐时能跑，与外部编译器互调会错。实测先例：lp64d 曾如此，照定本核对后确认不符
+    // （见 `docs/plans/varargs-plan.md` §5；aapcs64 目前也是这个组合，待核）。
+    let suspect = shape.save.is_some() && rules.variadic_stack_only;
     let name = decl.preset_name().unwrap_or("<explicit>");
     let kind = if addr_only {
         "栈式游标（va_list = 栈上实参游标）"
@@ -382,8 +389,15 @@ fn variadic_report(
         .join("/");
     let info = format!(
         "{conv}：形状 `{name}`（{kind}）——对象 {} 字节/对齐 {}、字段 {fields}；\
-         取参规则按数据展开（v20 V6）",
-        shape.size, shape.align
+         取参规则按数据展开（v20 V6）{}",
+        shape.size,
+        shape.align,
+        if suspect {
+            "；⚠ 声明了保存区却让未命名实参**只走栈**——自洽但**可能不符合 psABI 定本**，\
+             与外部编译器互调会错（先例与接法见 docs/plans/varargs-plan.md §5）"
+        } else {
+            ""
+        }
     );
     (hard, info)
 }

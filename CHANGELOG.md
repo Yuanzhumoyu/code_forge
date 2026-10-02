@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — `abi check` 报出"可疑组合"：声明了保存区却让未命名实参只走栈（数据驱动的一致性检查）
+
+lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档与守卫里，用户在 `forge-isa abi check`
+里看不到。这一片把它变成**工具可见的一致性检查**——而且**不点名任何约定**，按形状数据判：
+
+- 判据：`va_list` 形状**声明了寄存器保存区**（`save.is_some()`）却把 `variadic_stack_only` 设成
+  **true**。保存区的存在本身就意味着"未命名实参可以进寄存器、由被调方存下来"（AAPCS64 的
+  `__gr_offs`/`__vr_offs`、RISC-V 的 vararg save area 都是这个模型）⇒ 这个组合**自洽但可能不符合
+  psABI 定本**：自己的调用方/被调方按同一份约定对齐能跑，与外部编译器互调会错。
+- 落点：`ℹ 变参 …` 那一行追加 `⚠ …` 提示（**不改退出码**——它是"待核"而不是"这台机器做不了"；
+  `--strict` 目前不覆盖它，如实写在消息里）。
+- 收益：`abi check riscv64_v12.toml` 现在会提示 lp64d 的组合可疑；**aapcs64 同组合也一并被点名**
+  （此前没人注意它和 lp64d 是同一个模式）。
+- 守卫：`cli_tests::abi_check_reports_the_variadic_state` 增加断言（riscv 输出必须含
+  "可能不符合 psABI 定本"）。
+- 验证：`forge-isa` 9 + 24 全绿；`clippy -D warnings` 0、`fmt --check` 0。
 ### Changed (2026-10-01) — 补强证据：riscv 缺的 `fpr_mov` 是"浮点全面落地"的同一把钥匙（实验后回退）
 
 接着上一片的 lp64d psABI 议题往下验证：把 riscv 谱里**早就有指令、却一直没有 lowering** 的三条
