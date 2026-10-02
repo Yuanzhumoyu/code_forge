@@ -275,6 +275,21 @@ opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x10 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnj.s {dst}, {src}, {src2}"
+# `fpr_mov`（32 位）：`fsgnj.s rd, rs, rs` 就是寄存器搬移（汇编伪指令 `fmv.s`）。
+# 生成器按**位宽表**取这条角色（`FpMovWidths`），三操作数时自动把第三槽也填成源。
+roles = [{ role = "fpr_mov", bits = 32 }]
+
+# 双精度版的 `fpr_mov`：`fsgnj.d rd, rs, rs`（伪指令 `fmv.d`）。2026-10-01 补：
+# 此前谱里只有单精度 `FSGNJ_S`，f64 的寄存器搬移无处申报 ⇒ riscv 的浮点参数/返回/变参的
+# 浮点支**全部编不出来**（矩阵里三条浮点用例因此 Skip）。
+[[instructions]]
+name = "FSGNJ_D"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x11 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "fsgnj.d {dst}, {src}, {src2}"
+roles = [{ role = "fpr_mov", bits = 64 }]
 
 [[instructions]]
 name = "FSGNJN_S"
@@ -1279,6 +1294,47 @@ insts = ["FEQ_D {g}, {0}, {0}", "FEQ_D {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "X
 op = "Fcmp"
 when = { and = [ { eq = ["cond", 2] }, { eq = ["rs1_width", 32] } ] }
 insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "XORI {out}, {g}, 1"]
+
+# ── 浮点算术（v20 V6+ 补，2026-10-01）──
+# 此前 riscv 谱只有浮点的比较/转换/搬移，没有算术 ⇒ 矩阵里所有浮点算术用例都因
+# "缺 Fadd 能力"整条跳过（`MATRIX-SKIP … (capability)`）。补上 `fpr_mov`（收参/返回/
+# 实参都能发指令）之后，这几条让浮点路径**真的跑起来**（QEMU 通道真执行）。
+# 单/双精度按源位宽分派——与 `Fcmp`/`Fptosi` 同一套口径（`rs1_width`）。
+[[lowering]]
+op = "Fadd"
+when = { eq = ["rs1_width", 32] }
+insts = ["FADD_S {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fadd"
+insts = ["FADD_D {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fsub"
+when = { eq = ["rs1_width", 32] }
+insts = ["FSUB_S {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fsub"
+insts = ["FSUB_D {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fmul"
+when = { eq = ["rs1_width", 32] }
+insts = ["FMUL_S {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fmul"
+insts = ["FMUL_D {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fdiv"
+when = { eq = ["rs1_width", 32] }
+insts = ["FDIV_S {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Fdiv"
+insts = ["FDIV_D {out}, {0}, {1}"]
 
 # Fptosi/Fptoui：向零截断（rtz）
 [[lowering]]

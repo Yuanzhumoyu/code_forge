@@ -11,6 +11,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — 浮点搬移改成**按位宽查表**：不再写死 32/64，riscv 的浮点参数/返回真跑起来
+
+上一片留下的"钥匙"（`fpr_mov` 的三操作数形态）这一片装上了，而且**没有按 ISA 打补丁**：
+
+- **生成器：位宽表取代硬编码两档**。`roles = [{ role = "fpr_mov", bits = N }]`（**任意 N ≥ 1**）
+  由 ISA 申报，生成器把所有声明收成一张表（`FpMovWidths`），发射点只说"这次要搬多少位"，
+  由表生成 N 路分派；表里没有该位宽 ⇒ 生成物里明确 `Unsupported` 并**列出已声明档**（不猜、不回退）。
+  三操作数搬移（riscv `fsgnj.d rd, rs, rs`）由表里的第三槽自动填源。删掉了
+  `role_name_for(role, bits)`——它的调用点必须**写死一个宽度常量**，正是这个问题的来源。
+  守卫：`crates/frontend/forge-isa-dsl/tests/fpr_mov_widths.rs`（把 x86 的两档改成 16/128 后，
+  生成物里只该出现这两档、写死的 32/64 一个不留）。
+- **两处"绑定无关能力"的真开洞**（都是通用性缺陷，不是某个 ISA 的洞）：
+  ① 调用点浮点实参搬运要求 `fpr_mov && vec_mov` ⇒ 没有向量寄存器的 ISA 连 `f64` 实参都发不出去；
+  现在两条能力**互不依赖**，只有"按值向量"那条路会在运行期按 IR 类型 fail-closed。
+  ② riscv 谱里没有 `FSGNJ_D`（只有单精度 `fsgnj.s`）⇒ f64 的搬移无处申报；已补为同一 `fpr_mov`
+  的 64 位档。
+- **riscv 谱补浮点算术**：`Fadd`/`Fsub`/`Fmul`/`Fdiv`（单/双精度各一条，谱里 `FADD_S/D` 等指令早就有）。
+  此前这些 op 全是**真缺口**，矩阵里所有浮点算术用例被整条 Skip 掩盖。
+- **测试通道补浮点参数执行**：`jit_matrix` 此前对 `CaseKind::F64Args` + 注入执行器直接报
+  "not supported"；现在 `Executor::exec_f64_args` + riscv crt0 的 `li a0; fmv.d.x fa{i}, a0`
+  （f32 用 `fmv.w.x`）让 f64/f32 参数真进 `fa0..fa3`，并新增独立冒烟用例
+  `qemu_exec_f64_arg`（42.0 → 42、7.0f32 → 7）钉住这条通道。
+- **实测**：riscv 矩阵 **136 passed / 64 skipped / 0 failed**（原 133/67/0；
+  `float_args_two`、`float_args_four_xmm3`、`call_float_roundtrip` 从 Skip 转**真跑**），
+  x86 **197/3/0**；`forge-codegen --lib` 1285、`abi_target_real` 25（
+  `riscv64_float_gap_is_engine_ok_but_emission_closed` 改名
+  `riscv64_float_arg_is_open_on_both_engine_and_emission`：从"钉差异"改成"钉已闭合"）、
+  `forge-isa-dsl` 全绿、`forge-isa` 24、`forge-abi` 全绿；`clippy -D warnings` 0、`fmt --check` 0。
+- 快照同步（riscv 谱的预期变更）：指令数 116 → 117、枚举器条目 327 → 329、RV32 投影指令
+  104 → 105、lowering（RV32 视角）100 → 108 与默认视角 114 → 122、能力覆盖 63 → 67
+  （真缺口 40 → 36）、vary 建议 24 → 28、部分重叠 23 → 27。
+- 仍未做：`lp64d` 的 `va_list` 形状切换（`stack_only = false` + 四字段 + 两条游标规则）、
+  `va_meta`（SysV `%al`）、前端产出 `variadic`。
+
 ### Fixed (2026-10-01) — aapcs64 的变参数据修正：未命名实参**走寄存器**（`variadic_stack_only` → false）
 
 上一片的"可疑组合"告警立刻见效：它把 **aapcs64** 也点了出来——`aapcs64` 与 lp64d 是**同一个模式**

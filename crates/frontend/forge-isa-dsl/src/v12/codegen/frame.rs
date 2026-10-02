@@ -7,7 +7,7 @@
 use super::super::model::*;
 use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
 use super::lowering::{
-    inst_by_role_for, reg_mem_fids, role_name, role_name_for, role_name_for_class,
+    FpMovWidths, inst_by_role_for, reg_mem_fids, role_name, role_name_for_class,
 };
 use super::{InstInfo, field_ctor_expr, pascal_ident};
 use proc_macro2::TokenStream;
@@ -967,21 +967,14 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
         None => format_ident!("__unused_scratch"),
     };
     let cs_bytes = callee_saved_bytes_lit;
-    // 浮点参数移动：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键
-    //（缺省 "MOVSD"/"MOVSS"；fpr out, fpr in）。
-    let fpr_mov64 = role_name_for(infos, Role::FprMov, 64).unwrap_or_default();
-    let fpr_mov32 = role_name_for(infos, Role::FprMov, 32).unwrap_or_default();
-    let fpr_fids = inst_fids(infos, &fpr_mov64);
-    let has_fpr_mov = fpr_fids.len() >= 2 && inst_fids(infos, &fpr_mov32).len() >= 2;
-    let (f_dest, f_src) = if fpr_fids.len() >= 2 {
-        (fpr_fids[0].clone(), fpr_fids[1].clone())
-    } else {
-        (format_ident!("dest"), format_ident!("src"))
-    };
-    // 变体名按键派生（fpr_mov_inst/fpr_mov_inst32），不硬编码
-    // Inst::Movsd/Inst::Movss。
-    let fpr_mov64_vn = crate::v12::codegen::pascal_ident(&fpr_mov64);
-    let fpr_mov32_vn = crate::v12::codegen::pascal_ident(&fpr_mov32);
+    // 浮点参数移动：**按位宽查表**（v20 V6+）。ISA 用 `roles = [{ role = "fpr_mov", bits = N }]`
+    // 声明自己能搬哪些位宽（任意 N ≥ 1，无白名单），收参按参数**字节宽 × 8** 选指令——
+    // **不写死 32/64 两档**（定宽 ISA 可能只有 16 或 128 位的搬移指令）。
+    let fp_movs = FpMovWidths::collect(infos);
+    let has_fpr_mov = !fp_movs.is_empty();
+    // 档与档之间的第三槽一致性（谱自相矛盾 ⇒ 生成期报错，不猜）；本处只做校验，
+    // 第三槽在下面的结构体字面量里已经填好。
+    fp_movs.third_slot()?;
     // 按值向量（≤16 字节，VEC(16)——V64/V128）收参用**全宽 XMM
     // 寄存器移动**（128 位；缺省 "MOVAPS"——MOVSD/MOVSS 只移动
     // 8/4 字节，高半被静默截断/依赖寄存器遗留值）。与标量浮点
@@ -1219,21 +1212,27 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     } else {
         quote! {}
     };
+    // 浮点标量落点收参：按参数**位宽**查 ISA 声明的搬移表（`fpr_mov` 的位宽档）。
+    // 未声明的位宽 ⇒ 生成物运行期明确 `Unsupported`（列出已声明档），不猜、不回退。
     let fpr_by_size_body: TokenStream = if has_fpr_mov {
+        let bits = quote! { __a.size.wrapping_mul(8) };
+        let pick = fp_movs.dispatch(&bits, |(_, vn, dest, src, src2)| {
+            let third = match src2 {
+                Some(id) => quote! { #id: __src, },
+                None => quote! {},
+            };
+            quote! {
+                Inst::#vn {
+                    #dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
+                    #src: __src,
+                    #third
+                }
+            }
+        });
         quote! {
             let __src = Reg::from_index(*index, *class);
-            let __bytes = encode(&if __a.size == 4 {
-                Inst::#fpr_mov32_vn {
-                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                    #f_src: __src,
-                }
-            } else {
-                Inst::#fpr_mov64_vn {
-                    #f_dest: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
-                    #f_src: __src,
-                }
-            })
-            .map_err(|e| crate::IrError::Emit(e))?;
+            let __inst = #pick;
+            let __bytes = encode(&__inst).map_err(|e| crate::IrError::Emit(e))?;
             __sink.put_bytes(&__bytes);
         }
     } else {

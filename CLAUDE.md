@@ -354,12 +354,13 @@ let name = node.get_text("name")?;
 - `forge-rustc` tests require nightly Rust with `rustc-dev` component
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +
-  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 195 passed /
-  3 skipped**（本机 2026-09-13 实测 `cargo test -p forge-tests --lib
-  jit_matrix_x86_v12`；旧记录的 193 已过时）、**riscv64_v12 131 passed /
-  67 skipped，0 failed**（QEMU 通道；2026-09-13 本机实测
+  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 197 passed /
+  3 skipped**（本机 2026-10-01 实测 `cargo test -p forge-tests --lib
+  jit_matrix_x86_v12 -- --nocapture`）、**riscv64_v12 136 passed /
+  64 skipped，0 failed**（QEMU 通道；2026-10-01 本机实测
   `cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --test-threads=1
-  --nocapture`，**需 `--nocapture` 才看得到计数**）：整数/浮点/调用/
+  --nocapture`，**需 `--nocapture` 才看得到计数**；浮点参数真执行靠
+  `Executor::exec_f64_args` + crt0 的 `fmv.d.x/fmv.w.x` 装载）：整数/浮点/调用/
   向量/饱和/指针转换/undef/poison/GlobalAddr/原子（AtomicRmw/Cmpxchg）/GEP/Nop/
   混宽整数算术与比较；V256 用例在无 AVX 机器
   自动 Skip（**哪些用例 Skip 及原因**经 `FORGE_JIT_EVENTS` 的
@@ -419,16 +420,16 @@ let name = node.get_text("name")?;
   （守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs`——真阳性请修谱，别改快照；V4c 就据此
   修掉 arm64 `idx3`×`op8` 的 bit24 重复声明）。两个可选档：`--ops <宿主 op 表.toml>` 报**能力缺口**
   （三类分开：终结指令/宿主管线直查不算缺口，只有真缺口报；口径 = 计划 §10.3，实测
-  x86 `100/6/8/3`、riscv64 `61/6/8/42`、arm64 `8/6/8/95`——"宿主管线"8 条里含 `VaStart`
+  x86 `100/6/8/3`、riscv64 `67/6/8/36`、arm64 `8/6/8/95`——"宿主管线"8 条里含 `VaStart`
   （变参 V2，**生成器按能力角色发**，谱里同样没有 `[[lowering]]`），宿主 op 表是宿主数据、
   DSL 不留第二份清单）、
   `--refs` 报"声明了却没被任何模板行首引用的 `ref`"（**opt-in**：实测三谱 28 条是给未来 lowering
   预留的多态名，属作者意图，不进默认档）、`--bits` 报"指令字里没有位域覆盖的位段"（**opt-in**，
   只对定宽 ISA；实测 x86 0 / riscv64 3 / arm64 67，逐条核对为保留位或固定位型 ⇒ 评审清单；
   依据它修掉 riscv AMO/LR/SC 的 `aq`/`rl` 两个字面 0 位）、`--suggest` 报"同一 op 发射形状相同、
-  可合并为 `vary` 的族"（**opt-in 只建议**：x86 55 / riscv64 22 / arm64 7）。
+  可合并为 `vary` 的族"（**opt-in 只建议**：x86 55 / riscv64 28 / arm64 7）。
   不接后端就能校验（全部诊断 + 行:列；`--strict-overlap` 另报 lowering 的**部分重叠**（`DSL-OVERLAP`）
-  ——该档默认关：实测三 ISA 61 条全是合法的"特化 + 兜底"，它只是评审清单，清单快照在
+  ——该档默认关：实测三 ISA 67 条全是合法的"特化 + 兜底"，它只是评审清单，清单快照在
   `crates/frontend/forge-isa-dsl/tests/strict_overlap.rs`）、看**展开后**的指令与生效编码键、查单条指令的
   模板 provenance（哪个模板哪一行）、两份谱的规格 diff（迁移前后对照）、打印/写出 JSON
   Schema、把多文件谱 `fmt` 折叠成单文件（v18 S7d）。`--json` 机读；退出码 0/1/2。
@@ -476,10 +477,10 @@ let name = node.get_text("name")?;
   `disp=8`/`disp=-8`/`index+scale=4`；取值与生成期自测同源 `sample_operands`）——
   宿主侧"全指令编解码往返"**不要再手抄 `all_insts()`**（x86 曾手抄 650 行且谱加指令时不
   自动跟上）；由 `crates/backend/forge-codegen/src/isa_roundtrip_guard.rs` 遍历三谱的
-  602/327/332 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
+  602/329/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
   按声明序首匹配，本就不成立），仍由各 ISA 测试的"规范指令"小清单守。
   覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
-  x86 197 / riscv64 116 / arm64 104、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
+  x86 197 / riscv64 117 / arm64 110、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
   必须放在 `lib.rs` 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）。
 - **生成物形状表（v18 S8a）**：`impl MachineInst for Inst` 的 8 个查询方法
   （`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/`reg_field`/`set_reg_field`/
@@ -491,13 +492,17 @@ let name = node.get_text("name")?;
   `docs/performance/bench_baseline.md` 的「S8a 落地度量」（`tm` −12~26%，整模块 −7.5~12.9%）。
 - **角色声明带宽度（v18 S9）**：`[[instructions]].roles` 的条目有两种写法——`"gpr_mov"`
   （无宽度语义，全 ISA 唯一）与 `{ role = "fpr_mov", bits = 32 }`（**有宽度语义**：同角色
-  可多条，按 (角色, 位宽) 唯一，单位是**位**）。生成器按宽度查：`role_name_for(role, bits)`
-  / `inst_by_role_for(…)`，选不到就明确 `Unsupported`（消息带请求位宽 + 已声明的位宽集合）；
-  同角色同宽度重复、或同一角色一处写 `bits` 一处不写 ⇒ `validate` 编译期报错。
+  可多条，按 (角色, 位宽) 唯一，单位是**位**，**任意 N ≥ 1、无白名单**）。
+  生成器把**所有**声明收成一张**位宽表**（`lowering.rs::FpMovWidths`：`(位宽, 变体, dest 槽,
+  src 槽, 第三槽?)`，v20 V6+）——发射点只说"这次要搬多少位"，由表生成 N 路分派；
+  选不到就明确 `Unsupported`（消息带请求位宽 + 已声明的位宽集合），三操作数搬移自动填第三槽。
+  **旧 API `role_name_for(role, bits)` 已删除**（它的调用点必须写死一个宽度常量，正是
+  "32/64 硬编码"的来源）。同角色同宽度重复、或同一角色一处写 `bits` 一处不写 ⇒ `validate` 报错。
   **不要把位宽编进角色名**（S9 之前是 `fpr_mov_f32`/`wide_vec_load_64` 这类，别的位宽的
   ISA 无法接入；`MOVSS`/`MOVSD` 共用 `fpr` 槽，槽也分不出 32/64——宽度必须在声明里）。
   守卫 `crates/frontend/forge-isa-dsl/tests/role_widths.rs`（真实谱变异：16/24 位合法、
-  同 (角色,位宽) 冲突必报）；角色表见 `docs/reference/isa-dsl.md`。
+  同 (角色,位宽) 冲突必报）与 `tests/fpr_mov_widths.rs`（把 x86 的两档换成 16/128 ⇒ 生成物里
+  只该出现这两档，写死的 32/64 一个不留）；角色表见 `docs/reference/isa-dsl.md`。
 - **谓词属性：按需 + 无名字分派（v18 S8b-1 / S8d）**：`gen_lowering_attrs` 生成的属性源
   在生成物里**只发射一次**（放在 `lower_inst` 的 `match op` 之前；跟着 op 臂走 = 每个
   op 重复一份 2.5 KB，x86 曾 100 份 = 243 KB），并且是

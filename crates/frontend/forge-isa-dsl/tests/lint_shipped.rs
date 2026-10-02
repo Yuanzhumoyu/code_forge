@@ -70,9 +70,12 @@ fn op_gap_matches_section_10_3() {
     // 归入 `HOST_PIPELINE_OPS`；覆盖数与三谱的真缺口数因此不变。
     // riscv 覆盖 61 → 63（2026-10-01）：补了 `Fload`/`Fstore` 的 lowering——变参的**浮点支**要在
     // riscv 上真跑，`va_arg(f64)` 展开出的 `Fload` 必须能降级（真缺口 42 → 40）。
+    // riscv 覆盖 63 → 67 / 真缺口 40 → 36（2026-10-01）：补了浮点算术
+    // `Fadd`/`Fsub`/`Fmul`/`Fdiv`（单/双精度各一条；此前这些 op 全是真缺口，
+    // 矩阵里所有浮点算术用例因此整条 Skip）。
     for (isa, want) in [
         ("x86_v12.toml", (100usize, 6usize, 8usize, 3usize)),
-        ("riscv64_v12.toml", (63, 6, 8, 40)),
+        ("riscv64_v12.toml", (67, 6, 8, 36)),
         ("arm64_v12.toml", (8, 6, 8, 95)),
     ] {
         let cov = coverage(isa, &host_ops);
@@ -204,11 +207,13 @@ fn unassigned_bits_inventory() {
 /// 数字变了 ⇒ 有人合并/拆分了 lowering 族（好事就同步本快照），或新增了同形状的规则。
 /// riscv 22 → 24（2026-10-01）：补 `Fload`/`Fstore` 的 lowering（单/双精度两条同形状，
 /// 与既有 `Load`/`Store` 一样是"建议合并"的候选，不强行 `vary`——宽窄两条写法更直观）。
+/// riscv 24 → 28（2026-10-01）：同上，浮点算术 `Fadd`/`Fsub`/`Fmul`/`Fdiv` 各多一条同形状
+/// 建议（S 版有 `when`、D 版是兜底，合并成 `vary` 会丢掉"哪条是兜底"的直观性）。
 #[test]
 fn vary_candidate_inventory() {
     for (isa, want) in [
         ("x86_v12.toml", 55usize),
-        ("riscv64_v12.toml", 24),
+        ("riscv64_v12.toml", 28),
         ("arm64_v12.toml", 7),
     ] {
         let path = root().join("isa").join(isa);

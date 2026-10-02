@@ -111,9 +111,15 @@ fn riscv_rv32_projection_snapshot() {
             "投影后清单里不该有 {name}"
         );
     }
-    assert_eq!(p.inst_count, 104, "RV32 投影剩 104 条");
-    assert_eq!(rows.len(), 104);
-    assert_eq!(p.lowering_count, 96, "RV32 投影的 lowering 剩 96 条");
+    // 104 → 105（2026-10-01）：riscv 补了 `FSGNJ_D`（`fpr_mov` 的 64 位档）。它**不标**
+    // `xlen`——RV32D 同样定义 `fsgnj.d`（D 扩展在 RV32 上存在），所以 RV32 视角该留下它。
+    assert_eq!(p.inst_count, 105, "RV32 投影剩 105 条");
+    assert_eq!(rows.len(), 105);
+    // 96 → 100（2026-10-01）：riscv 补了 `Fload`/`Fstore` 各两条（单/双精度）lowering，
+    // 它们的 `when` 只按宽度分派、引用的 `FLW`/`FSW` 与 `FLD`/`FSD` 在 RV32 视角下都还在。
+    // 100 → 108（同日）：再补浮点算术 `Fadd`/`Fsub`/`Fmul`/`Fdiv` 各两条（单/双精度），
+    // 引用的是 `FADD_S`/`FADD_D` 等 F 扩展指令，同样不随 `xlen` 投影消失。
+    assert_eq!(p.lowering_count, 108, "RV32 投影的 lowering 剩 108 条");
     let dropped: usize = p.dropped_decls.iter().map(|(_, n)| n).sum();
     assert_eq!(
         dropped, 15,
@@ -127,10 +133,10 @@ fn riscv_rv32_projection_snapshot() {
             p.dropped_decls
         );
     }
-    // 默认档对照：同一份谱不传参数 = 116/110（投影是纯 opt-in）。
+    // 默认档对照：同一份谱不传参数 = 117/122（投影是纯 opt-in）。
     let (_, def_rows, def_p) = insts("riscv64_v12.toml", &[]);
-    assert_eq!(def_rows.len(), 116);
-    assert_eq!(def_p.lowering_count, 110);
+    assert_eq!(def_rows.len(), 117);
+    assert_eq!(def_p.lowering_count, 122);
 }
 
 /// ④ 级联的**边界**：未被投影的指令其 lowering 规则必须留下（不许多丢）。
@@ -138,9 +144,9 @@ fn riscv_rv32_projection_snapshot() {
 fn cascade_keeps_unrelated_lowering() {
     let (_, _, p) = insts("riscv64_v12.toml", &["xlen=32"]);
     // RV64 的 64 位 Iadd/Isub/Imul/Load/Store 与帧件的通用规则都不该因投影消失过头：
-    // 110 - 96 = 14 条全是"点了被投影掉的引用名"的规则。
+    // 122 - 108 = 14 条全是"点了被投影掉的引用名"的规则。
     assert_eq!(
-        110 - p.lowering_count,
+        122 - p.lowering_count,
         14,
         "只该丢那 14 条：{:#?}",
         p.dropped_decls
@@ -151,9 +157,9 @@ fn cascade_keeps_unrelated_lowering() {
 #[test]
 fn only_supplied_params_gate() {
     let (_, rows, p) = insts("riscv64_v12.toml", &["xlen=64"]);
-    assert_eq!(rows.len(), 116, "xlen=64 是原生视角，一条都不该丢");
+    assert_eq!(rows.len(), 117, "xlen=64 是原生视角，一条都不该丢");
     assert!(p.dropped_insts.is_empty());
-    assert_eq!(p.lowering_count, 110);
+    assert_eq!(p.lowering_count, 122);
 }
 
 /// ⑥ `{参数名}` 替换：`asm` 与 `[[lowering]].insts` 里的 `{参数名}` 换成本次取值。

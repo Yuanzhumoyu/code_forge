@@ -176,6 +176,53 @@ mod smoke {
         }
     }
 
+    /// **浮点参数真执行**（LP64D：`fa0..fa3`）：编译 `fn(f64) -> i64 { fptosi(x) }`
+    /// 并在 QEMU 上跑起来。这条守两件事——
+    /// ① crt0 的浮点参数装载（`li a0` + `fmv.d.x fa{i}, a0`；funct7 口径写错会
+    ///    变成非法指令 → QEMU 静默挂起，本条即红）；
+    /// ② 生成器的浮点收参/转换路径（`fsgnj.d` 搬移 + `fcvt.l.d`）。
+    /// 无 QEMU 时仅编译验证（与 `qemu_exec_const42` 同口径）。
+    #[test]
+    fn qemu_exec_f64_arg() {
+        use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
+        if crate::exec::qemu::qemu_riscv64_path().is_none() {
+            eprintln!("[riscv64] QEMU 未找到——跳过浮点参数执行（仅编译验证）");
+            return;
+        }
+        let sig = FunctionSignature::new(&[(TypeId::F64, "x")], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("f64_arg", TypeContext::new(), sig);
+        let (entry, params) = b.create_block_with_params(&[(TypeId::F64, "x")]);
+        b.switch_to_block(entry);
+        let v = b.fptosi(params[0], TypeId::I64);
+        b.ret(&[v]);
+        let func = b.finish().expect("build");
+        let cf = code_forge::backend::FunctionCompiler::new(
+            code_forge::backend::riscv64_v12::TargetMachine::new(),
+        )
+        .compile_raw(&func)
+        .expect("compile f64 arg");
+        let got = crate::exec::qemu::exec_riscv64_f64(&cf, &[42.0f64.to_bits()])
+            .unwrap_or_else(|e| panic!("qemu exec f64 arg: {e}"));
+        assert_eq!(got, 42, "f64 参数 42.0 应经 fa0 送达并转成 i64 42");
+
+        // 单精度对照（f32 → i32）：同一套 crt0 装载，走 `fmv.w.x`。
+        let sig32 = FunctionSignature::new(&[(TypeId::F32, "x")], &[TypeId::I32]);
+        let mut b32 = FunctionBuilder::new("f32_arg", TypeContext::new(), sig32);
+        let (e32, p32) = b32.create_block_with_params(&[(TypeId::F32, "x")]);
+        b32.switch_to_block(e32);
+        let v32 = b32.fptosi(p32[0], TypeId::I32);
+        b32.ret(&[v32]);
+        let f32f = b32.finish().expect("build32");
+        let cf32 = code_forge::backend::FunctionCompiler::new(
+            code_forge::backend::riscv64_v12::TargetMachine::new(),
+        )
+        .compile_raw(&f32f)
+        .expect("compile f32 arg");
+        let got32 = crate::exec::qemu::exec_riscv64_f32(&cf32, &[7.0f32.to_bits()])
+            .unwrap_or_else(|e| panic!("qemu exec f32 arg: {e}"));
+        assert_eq!(got32, 7, "f32 参数 7.0 应经 fa0 送达并转成 i32 7");
+    }
+
     /// 参数化用例的编译验证（QEMU 执行受 11.0.92 sifive_test 怪癖限制）：
     /// 断言编译产物含 ADD（opcode 0x33）与 RET（0x8067）。
     #[test]

@@ -49,6 +49,19 @@ pub trait Executor {
             self.arch().name()
         )
     }
+
+    /// 执行**带浮点参数**的编译产物：`args` 是 f64 的**位模式**，按该架构的
+    /// 调用约定进浮点参数寄存器（riscv LP64D = fa0..、x86 SysV = xmm0..）。
+    ///
+    /// 默认不支持（返回 `Err`）：注入执行器的架构若没实现这条，矩阵里
+    /// `CaseKind::F64Args` 的用例会**失败**而不是静默 Skip——所以「不支持」
+    /// 必须由 runner 的能力集侧先挡掉（见各 `isa/*/mod.rs` 的跳过口径）。
+    fn exec_f64_args(&self, _compiled: &CompiledFunction, _args: &[u64]) -> Result<u64, String> {
+        Err(format!(
+            "{} 执行器未实现浮点参数执行（`Executor::exec_f64_args`）",
+            self.arch().name()
+        ))
+    }
 }
 
 /// 本机执行器（x86_64：ExecutableMemory + extern "C" 调用）。
@@ -157,6 +170,12 @@ impl Executor for QemuRiscv64Executor {
         let raw = super::qemu::exec_riscv64_module(funcs, globals, main, args)
             .unwrap_or_else(|e| panic!("QemuRiscv64Executor::exec_module: {e}"));
         sign_extend_exit_platform(raw)
+    }
+
+    /// LP64D：f64 参数进 **fa0..fa3**（crt0 里用 `li` + `fmv.d.x` 装）。
+    fn exec_f64_args(&self, compiled: &CompiledFunction, args: &[u64]) -> Result<u64, String> {
+        let raw = super::qemu::exec_riscv64_f64(compiled, args)?;
+        Ok(sign_extend_exit_platform(raw))
     }
 }
 

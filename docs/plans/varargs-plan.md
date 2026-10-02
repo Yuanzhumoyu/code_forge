@@ -364,8 +364,10 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      `float_args_two` / `float_args_four_xmm3`（`v12 float args (MOVSD/MOVSS missing)`）、
      `call_float_roundtrip`（`v12 float return: 未声明 roles = ["fpr_mov_f64"]/["fpr_mov_f32"]`）。
      也就是说 **`fpr_mov`（含三操作数形态）是 riscv 浮点全面落地的那把钥匙**：补它一次，
-     同时解掉"浮点变参"、"浮点参数/返回"与"lp64d 与 psABI 一致"三件事。该实验已回退
-     （保持矩阵 133/67/0），留作下一片第一件事。
+     同时解掉"浮点变参"、"浮点参数/返回"与"lp64d 与 psABI 一致"三件事。
+     **已落地（2026-10-01，见本文末尾「实施配方」的落地结论）**：位宽表 + `FSGNJ_D` + 浮点算术
+     四件套 + 调用点 `fpr_mov`/`vec_mov` 解耦 + QEMU 通道的浮点参数执行 ⇒ 三条用例**真跑绿**，
+     riscv 矩阵 **136/64/0**。
      **试过的捷径（不成立，2026-10-01）**：想在**谱面**解决——加一个 `R_MOVE` 形式把
      `operand_fields` 写成 `["rd", "rs1", "rs1"]`，用"一个操作数写进两个位域"表达
      `fsgnj.d rd, rs, rs`，这样生成器不用改。实测**不成立且被守卫抓到**：`lint --unassigned-bits`
@@ -434,11 +436,53 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 
 在此之前，本方案的 §1–§2 就是**当前事实的索引**，`invariants.rs` 的变参守卫保证它不漂移。
 
-### 实施配方：`fpr_mov` 按形状泛化（下一步的机械清单，2026-10-01 盘查后写下）
+### 实施配方：`fpr_mov` 按形状泛化（**已落地 2026-10-01**，原文保留作记录）
 
 目标：让生成器能发**三操作数**的浮点搬移（RISC-V `fsgnj.d rd, rs, rs`），从而解掉 riscv 的浮点
 参数/返回、浮点变参，以及 lp64d 与 psABI 一致这三件事。**顺序不能反**：先把 12 处发射点改完，
 **最后**才在谱里申报 `fpr_mov` 角色（先申报会让生成物编不过）。
+
+> **落地结论（2026-10-01）**：上面的"12 处逐点补第三槽"没有按原样做——逐点判断"这条指令是不是
+> 三操作数"本身还是**按 ISA 打补丁**。改成一张**位宽表** `FpMovWidths`
+> （`crates/frontend/forge-isa-dsl/src/v12/codegen/lowering.rs`）：把 ISA 声明的**所有**
+> `{ role = "fpr_mov", bits = N }` 收成 `(位宽, 变体, dest 槽, src 槽, 第三槽?)`，发射点只说
+> "要搬多少位"，由表生成 `if (位宽) == N { … } else { Unsupported(已声明档) }` 的 N 路分派。
+> 收益：① 三操作数/两操作数、第三槽叫什么名，都由谱的数据决定（生成器不再有 32/64 或"几个操作数"的
+> 假设）；② 未声明的位宽在生成物里 fail-closed 并列出已声明档；③ 新增位宽（16/24/128…）不需要改
+> 生成器——守卫 `crates/frontend/forge-isa-dsl/tests/fpr_mov_widths.rs` 把 x86 的两档改成 16/128，
+> 断言生成物里只出现这两档、且写死的 32/64 一个不留。**删除** `role_name_for(role, bits)`
+> （它的调用点必须写死一个宽度常量，正是这个问题的来源）。
+>
+> 顺带补掉两处**真的开洞**（都是"绑定无关能力"造成的）：
+>
+> - `arg_move_loop`（调用点浮点实参搬运）要求 `has_fpr_mov && has_vec_mov`——于是没有向量寄存器的
+>   ISA（riscv）连 `f64` 实参都发不出去（`Unsupported("…缺 MOVSS/MOVSD/MOVAPS 角色")`）。现在两条
+>   能力**互不依赖**：只有 `fpr_mov` 时照样搬标量浮点，只有向量实参时才在**运行期**按 IR 类型
+>   fail-closed（"按值向量"那条路）。
+> - riscv 谱里 `FSGNJ_D` 缺失（只有单精度 `fsgnj.s`）⇒ f64 的寄存器搬移无处申报；已补
+>   （`funct7 = 0x11`，同一 `fpr_mov` 的 64 位档）。
+>
+> **同批补上的能力**（配方之外的意外收获，见上一节"补强证据"）：riscv 的浮点算术
+> `Fadd`/`Fsub`/`Fmul`/`Fdiv`（单/双精度各一条）。此前这些 op 全是**真缺口**，矩阵里所有浮点算术
+> 用例被整条 Skip 掩盖；补 `fpr_mov` 之后它们才可能真跑。
+>
+> **测试通道也补了一处**：riscv 的 QEMU 通道此前**没法执行带浮点参数的函数**
+> （`jit_matrix` 对 `CaseKind::F64Args` 直接报 "not supported by injected executor"）。现在
+> `Executor::exec_f64_args` + crt0 的 `li a0; fmv.d.x fa{i}, a0` 装载（f32 用 `fmv.w.x`）让
+> f64/f32 参数真进 `fa0..fa3`；riscv 矩阵另有独立冒烟用例
+> `isa::riscv64_v12::smoke::qemu_exec_f64_arg`（42.0 → 42、7.0f32 → 7）钉住 crt0 装载与浮点收参。
+> 踩坑记录：`FMV.W.X = 0x78` / `FMV.D.X = 0x79`（funct7），写成 `0x38`/`0x39` 是**非法指令**——
+> QEMU 静默挂起、不报错，只能靠 dump 生成物逐字解码定位。
+>
+> **验收（2026-10-01 实测）**：QEMU 矩阵 riscv **136 passed / 64 skipped / 0 failed**（原 133/67/0，
+> `float_args_two`、`float_args_four_xmm3`、`call_float_roundtrip` 三条从 Skip 转**真跑**），
+> x86 **197/3/0**；`forge-codegen --lib` 1285、`abi_target_real` 25、`forge-isa-dsl` 全绿
+> （新增 `fpr_mov_widths` 4 条），`clippy -D warnings` 与 `fmt --check` 0。
+> `abi_target_real::riscv64_float_gap_is_engine_ok_but_emission_closed` 随之改名为
+> `riscv64_float_arg_is_open_on_both_engine_and_emission`（从"钉差异"改成"钉已闭合"）。
+>
+> **仍未做**：`lp64d` 的 `va_list` 形状切换（`stack_only = false` + 四字段 + 两条游标规则）、
+> `va_meta`（SysV `%al`）、前端产出 `variadic`。这三件是后续工作，**与本片解耦**。
 
 **判据（每处都一样）**：该 `fpr_mov` 指令的 Reg 槽数 ≥ 3 时，指令字面量要补第三槽（= 源）。
 
@@ -452,7 +496,7 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 2. `crates/frontend/forge-isa-dsl/src/v12/codegen/frame.rs`：`~1228/1233`（字段名 `#f_src`），
    同一个函数里算字段名的地方取第三槽。
 
-**每处怎么补**（两种情形）：
+**每处怎么补**（两种情形，已被位宽表统一吸收）：
 
 - **源由 `map_reg_field(vreg, idx, 1u8, ...)` 绑定**（8 处，如 `map_reg_field(__a, __idx, 1u8, false)`）：
   字段补 `#src2: Reg::from_index(0, __DEFAULT_FPR_CLASS),`，**并且**在紧邻的 map 调用后补
@@ -464,12 +508,11 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 `ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]`），然后给 `FSGNJ_S` 申报
 `roles = [{ role = "fpr_mov", bits = 32 }]`、给 `FSGNJ_D` 申报 `bits = 64`。
 
-**收尾**：改 lp64d 形状（`variadic_stack_only = false` + `gp_offset`/`fp_offset`/`reg_save_area`/
-`stack_arg_area` 四字段 + 两条"游标 + 基址 + 溢出"规则，见上面同节实测），把
+**收尾（下一片）**：改 lp64d 形状（`variadic_stack_only = false` + `gp_offset`/`fp_offset`/
+`reg_save_area`/`stack_arg_area` 四字段 + 两条"游标 + 基址 + 溢出"规则，见上面同节实测），把
 `invariants::lp64d_variadic_stack_only_is_a_documented_deviation` 换成**正向守卫**，并把
-`abi check` 的"可疑组合"告警核对一遍（改对后 lp64d 不再命中）。验收：riscv 矩阵里
-`float_args_two`/`float_args_four_xmm3`/`call_float_roundtrip` 三条从 Skip 转真跑，且
-`variadic_va_arg_int_and_float` 继续绿。
+`abi check` 的"可疑组合"告警核对一遍（改对后 lp64d 不再命中）。验收：`variadic_va_arg_int_and_float`
+继续绿，且 lp64d 的 `va_list` 逐字段与 psABI 定本一致。
 
 **别做的事**：别用"形式表把同一操作数写进两个位域"的捷径——实测被 `lint --unassigned-bits` 判为
 `rs2` 未覆盖（编码退化成 `fsgnj rd, rs, f0` = 取绝对值），而 encode/decode 往返看不出来。

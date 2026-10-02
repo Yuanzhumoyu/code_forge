@@ -91,6 +91,22 @@ fn inst_or(rd: u32, rs1: u32, rs2: u32) -> [u8; 4] {
     let w = 0x33u32 | (rd & 0x1F) << 7 | (rs1 & 0x1F) << 15 | (rs2 & 0x1F) << 20 | (6u32 << 12);
     w.to_le_bytes()
 }
+/// `fmv.d.x`（opcode 0x53, funct3=0, **funct7=0x79**）：把 rs1（GPR）的 64 位**位模式**
+/// 原样搬进 rd（FPR）。crt0 用它在不写浮点汇编的情况下装 `fa0..fa3`（见
+/// [`gen_crt0_with`] 的 `Crt0Args::F64`）。要求 `mstatus.FS != Off`（crt0 已先置 Dirty）。
+///
+/// funct7 口径（曾写错成 0x39 → 非法指令 → QEMU 静默挂起，靠 PROBE dump 定位）：
+/// `FMV.W.X = 0x78`、`FMV.D.X = 0x79`（与 `FMV.X.W = 0x70`、`FMV.X.D = 0x71` 成对）。
+fn inst_fmv_d_x(rd: u32, rs1: u32) -> [u8; 4] {
+    let w = 0x53u32 | (rd & 0x1F) << 7 | (rs1 & 0x1F) << 15 | (0x79u32 << 25);
+    w.to_le_bytes()
+}
+
+/// `fmv.w.x`（opcode 0x53, funct3=0, funct7=0x78）：取 rs1 的**低 32 位**位模式进 rd（FPR）。
+fn inst_fmv_w_x(rd: u32, rs1: u32) -> [u8; 4] {
+    let w = 0x53u32 | (rd & 0x1F) << 7 | (rs1 & 0x1F) << 15 | (0x78u32 << 25);
+    w.to_le_bytes()
+}
 /// jal rd, imm20（opcode 0x6F）
 fn inst_jal(rd: u32, imm: i64) -> [u8; 4] {
     let v = imm as u32 & 0x1F_FFFF;
@@ -168,10 +184,25 @@ const ENTRY: u64 = 0x8000_0000;
 const STACK_TOP: u64 = 0x8001_0000; // RAM 128MB 内固定栈顶
 const STACK_BYTES: usize = 0x4000; // 16KB 栈区（image 尾部）
 
+/// crt0 的参数装载方式。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Crt0Args {
+    /// 整数：`li a0..a3`（LP64D 的整型参数寄存器）。
+    Int,
+    /// f64：`li a0; fmv.d.x fa{i}, a0` 逐个装（位模式原样进浮点参数寄存器）。
+    F64,
+    /// f32：`li a0; fmv.w.x fa{i}, a0`（只取低位 32 位）。
+    F32,
+}
+
 /// crt0：li sp + 参数 li a0..a3 + jal x1, main + exit_seq（sifive_test）。
 /// `main_off` = main 相对镜像起点的字节偏移（jal 目标；单函数 = crt0 末尾，
 /// 模块版 = 函数布局偏移）。返回 crt0 字节。
 fn gen_crt0(args: &[u64], main_off: usize) -> Vec<u8> {
+    gen_crt0_with(args, main_off, Crt0Args::Int)
+}
+
+fn gen_crt0_with(args: &[u64], main_off: usize, arg_kind: Crt0Args) -> Vec<u8> {
     let mut crt0: Vec<u8> = Vec::new();
     // li sp, STACK_TOP（0x80010000 = 0x80010 << 12）：lui 符号扩展后
     // slli 32 把低 32 位移到高 32 位，srli 32 清零高 32 位 → sp = 0x80010000
@@ -186,9 +217,22 @@ fn gen_crt0(args: &[u64], main_off: usize) -> Vec<u8> {
     //   清位，FS 设不上 → 浮点仍非法 → QEMU 挂起——曾用该错值排查数小时）
     crt0.extend(inst_lui(5, 6));
     crt0.extend(0x3002_A073u32.to_le_bytes()); // csrrs x0, mstatus, t0(x5)
-    // 参数 li a0..a3（最多 4 个；inst_li64 精确装载任意 64 位值）
+    // 参数装载（最多 4 个）：
+    // - 整数 → `li a0..a3`（inst_li64 精确装载任意 64 位值）；
+    // - f64 → 先 `li a0, <位模式>`，再 `fmv.d.x fa{i}, a0`（位模式原样进 FP 寄存器；
+    //   a0 只是中转，每个参数处理完立刻搬走，故复用同一个中转寄存器安全）。
     for (i, &arg) in args.iter().take(4).enumerate() {
-        crt0.extend(inst_li64(10 + i as u32, arg as i64));
+        match arg_kind {
+            Crt0Args::Int => crt0.extend(inst_li64(10 + i as u32, arg as i64)),
+            Crt0Args::F64 => {
+                crt0.extend(inst_li64(10, arg as i64));
+                crt0.extend(inst_fmv_d_x(10 + i as u32, 10));
+            }
+            Crt0Args::F32 => {
+                crt0.extend(inst_li64(10, arg as i64));
+                crt0.extend(inst_fmv_w_x(10 + i as u32, 10));
+            }
+        }
     }
     // sifive_test 退出序列（在 jal 之后；函数体返回后经此退出）。
     // QEMU 11.0.92 的 TCG 在 **jal/ret 返回路径后的 MMIO 写可能丢失**
@@ -216,11 +260,15 @@ fn gen_crt0(args: &[u64], main_off: usize) -> Vec<u8> {
 /// 打包最小 ELF64（header + 1 个 PT_LOAD），镜像 = crt0 + code + 栈。
 /// 单函数：main = crt0 末尾（code 起始）。
 fn build_riscv_elf(code: &[u8], args: &[u64]) -> Vec<u8> {
+    build_riscv_elf_with(code, args, Crt0Args::Int)
+}
+
+fn build_riscv_elf_with(code: &[u8], args: &[u64], arg_kind: Crt0Args) -> Vec<u8> {
     // main_off = crt0 最终长度（exit_seq 后）。两遍：先用占位 main_off=0
     // 生成，取其长度作为真实 main_off（args 一致 → 长度一致），再重新生成。
-    let placeholder = gen_crt0(args, 0);
+    let placeholder = gen_crt0_with(args, 0, arg_kind);
     let main_off = placeholder.len();
-    let crt0 = gen_crt0(args, main_off);
+    let crt0 = gen_crt0_with(args, main_off, arg_kind);
     let mut image = crt0;
     image.extend_from_slice(code);
     image.extend(vec![0u8; STACK_BYTES]);
@@ -338,6 +386,20 @@ fn run_qemu(elf: &[u8], label: &str) -> Result<u64, String> {
 pub fn exec_riscv64(compiled: &CompiledFunction, args: &[u64]) -> Result<u64, String> {
     let elf = build_riscv_elf(&compiled.code, args);
     run_qemu(&elf, "single")
+}
+
+/// 运行编译产物（QEMU riscv64），`args` 是 **f64 的位模式**：crt0 把它们装进
+/// `fa0..fa3`（LP64D 的浮点参数寄存器），用来真执行浮点参数路径。
+pub fn exec_riscv64_f64(compiled: &CompiledFunction, args: &[u64]) -> Result<u64, String> {
+    let elf = build_riscv_elf_with(&compiled.code, args, Crt0Args::F64);
+    run_qemu(&elf, "single-f64")
+}
+
+/// 运行编译产物（QEMU riscv64），`args` 取**低 32 位**当 f32 的位模式（装进 fa0..fa3）。
+pub fn exec_riscv64_f32(compiled: &CompiledFunction, args: &[u32]) -> Result<u64, String> {
+    let wide: Vec<u64> = args.iter().map(|&x| x as u64).collect();
+    let elf = build_riscv_elf_with(&compiled.code, &wide, Crt0Args::F32);
+    run_qemu(&elf, "single-f32")
 }
 
 // ─────────────────────────────────────────────────────────────

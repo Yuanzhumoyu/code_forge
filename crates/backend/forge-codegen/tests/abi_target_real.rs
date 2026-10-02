@@ -246,16 +246,16 @@ fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
     );
 }
 
-/// **把已知差异钉住**（A3b-2 的任务清单，2026-09-25 实测）：
+/// **曾经钉住的缺口，现已关闭**（2026-10-01）：riscv64 上"引擎能算出浮点参数的落点"
+/// （谱里有 F 寄存器组、绑定给了 `float` 池）但**发射路径 fail-closed**
+/// （`Emit("v12 float args (MOVSD/MOVSS missing)")`——当时 riscv64 谱里没有 `fpr_mov` 角色）。
+/// 补齐 `FSGNJ_S`/`FSGNJ_D` 的 `fpr_mov`（32/64）之后两侧应当**同时成立**：引擎给的落点
+/// 不变（F10 = fa0），发射也不再挡。这条从"钉差异"改成"钉已闭合"——若哪天又退回
+/// fail-closed，这里会直接红。
 ///
-/// riscv64 上"引擎能算出浮点参数的落点"（谱里有 F 寄存器组、绑定给了 `float` 池），
-/// 但**现有发射路径**对浮点参数是 fail-closed（`Emit("v12 float args (MOVSD/MOVSS missing)")`
-/// ——riscv64 谱里没有 `fpr_mov` 角色）。也就是说：切换发射之前，必须先补上 riscv64 的
-/// 浮点搬运角色/指令，否则"按 plan 发射"会在这一步与现状同样卡住（甚至更早）。
-///
-/// 另一头也一并钉住：arm64 连 FPR 寄存器组都没有 ⇒ 引擎侧直接报缺池（A1 静态体检的 6 条缺口）。
+/// 另一头仍钉住：arm64 连 FPR 寄存器组都没有 ⇒ 引擎侧直接报缺池（A1 静态体检的 6 条缺口）。
 #[test]
-fn riscv64_float_gap_is_engine_ok_but_emission_closed() {
+fn riscv64_float_arg_is_open_on_both_engine_and_emission() {
     use forge_codegen::FunctionCompiler;
     use forge_codegen::arch::riscv64_v12::TargetMachine as RvTm;
 
@@ -274,12 +274,10 @@ fn riscv64_float_gap_is_engine_ok_but_emission_closed() {
     assert_eq!(place_name(&plan, 0), "X10");
     assert_eq!(place_name(&plan, 1), "F10");
 
-    // 发射侧：现状 fail-closed（消息点名缺 MOVSD/MOVSS）。
-    let err = FunctionCompiler::new(RvTm::new())
+    // 发射侧：`roles = [{ role = "fpr_mov", bits = 64 }]` 已申报 ⇒ 收参不再 fail-closed。
+    FunctionCompiler::new(RvTm::new())
         .compile(&func)
-        .expect_err("现状：riscv64 的浮点参数必须 fail-closed");
-    let msg = err.to_string();
-    assert!(msg.contains("MOVSD") || msg.contains("float args"), "{msg}");
+        .expect("riscv64 已申报 64 位 fpr_mov，浮点参数收参不该再被挡");
 }
 
 fn place_name(plan: &forge_abi::AbiPlan, i: usize) -> String {

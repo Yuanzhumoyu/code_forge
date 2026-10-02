@@ -710,7 +710,12 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
   靠 `bits`（**位宽**，与 `opsize`/`[encoding].bits` 同单位）区分，(角色, 位宽) 唯一。
   x86 的 `MOVSS`/`MOVSD` 就是这种：两者共用 `fpr` 槽，槽本身分不出 32/64，
   因此宽度必须写在角色声明上（v18 S9 之前是把它编进角色名 `fpr_mov_f32`/`_f64`，
-  其它位宽的 ISA 无法接入）。
+  其它位宽的 ISA 无法接入）。**位宽不受限**（任意 N ≥ 1：16、24、128…… 都合法）——
+  生成器把**所有**声明收成一张位宽表（`FpMovWidths`），按"这次要搬多少位"逐档分派；
+  表里没有该位宽 ⇒ 生成物里明确 `Unsupported` 并**列出已声明档**，不猜、不回退
+  （守卫 `crates/frontend/forge-isa-dsl/tests/fpr_mov_widths.rs`：把 x86 的两档改成
+  16/128 后，生成物里只该出现这两档）。搬移是**三操作数**形态
+  （riscv `fsgnj.d rd, rs, rs`）时，生成器自动把第三槽填成源。
 - `{ role = "callee_save", class = "fpr" }` —— **有寄存器类语义**的角色
   （v20 A6）：同一个能力在 GPR 与 FPR 上要用**不同指令**时分开申报，
   靠 `class`（`"gpr"`/`"fpr"`）区分，(角色, 位宽, 类) 唯一。arm64 的帧内保存就是
@@ -726,7 +731,7 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | --- | --- |
 | `gpr_mov` | 整数寄存器移动（收参 / Copy / 溢出前搬运） |
 | `ret_mov` | 返回值 → 返回寄存器移动 |
-| `fpr_mov` | 标量浮点寄存器移动（**宽度写在声明里**：`bits = 32`/`64`） |
+| `fpr_mov` | 标量浮点寄存器移动（**宽度写在声明里**：`bits = N`，任意 N ≥ 1；生成器按位宽表逐档分派，三操作数形态自动填第三槽） |
 | `vec_mov` | ≤16B 向量按值全宽移动（x86 MOVAPS） |
 | `call` / `call_indirect` | 直接 / 间接调用 |
 | `ret` / `jump` / `branch` | 返回 / 无条件跳转 / 条件分支 |

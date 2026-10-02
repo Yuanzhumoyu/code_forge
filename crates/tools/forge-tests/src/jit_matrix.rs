@@ -433,10 +433,14 @@ fn run_args_f64<M: TargetMachine>(
     b.ret(&[v]);
     let func = b.finish().expect("build");
     let compiled = compile_raw(r, name, &func)?;
-    if r.exec.is_some() {
-        return Err(format!(
-            "{name}: f64 args exec not supported by injected executor"
-        ));
+    if let Some(ex) = &r.exec {
+        // 注入执行器（QEMU）：浮点参数按 ABI 进浮点参数寄存器，由执行器负责装载
+        // （riscv LP64D = fa0..fa3，见 `Executor::exec_f64_args`）。执行器没实现
+        // 这条 ⇒ 明确报"未实现"，不静默 Skip（Skip 会掩盖真实缺口）。
+        return ex
+            .exec_f64_args(&compiled, args)
+            .map(|v| v as i64)
+            .map_err(|e| format!("{name}: {e}"));
     }
     let mem = ExecutableMemory::new(&compiled.code).map_err(|e| format!("{name}: alloc: {e}"))?;
     let a: Vec<f64> = args.iter().map(|&x| f64::from_bits(x)).collect();

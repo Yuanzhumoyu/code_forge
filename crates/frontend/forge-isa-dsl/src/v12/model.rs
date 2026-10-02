@@ -1848,7 +1848,7 @@ impl RoleDecl {
             RoleDecl::Table { class, .. } => *class,
         }
     }
-    /// 是否就是这个角色（不比较宽度/类；按宽度选请用 `role_name_for`，
+    /// 是否就是这个角色（不比较宽度/类；按宽度选请用 `FpMovWidths` 那张位宽表，
     /// 按类选请用 `role_name_for_class`）。
     pub fn is(&self, r: Role) -> bool {
         self.role() == r
