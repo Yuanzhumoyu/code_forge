@@ -110,41 +110,43 @@
 | 🚧 **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants`（**六处声明统一**：指令/模板行/emit 块/spill/pseudo/pattern） + 值条件列 `vary` 下沉到 `[[templates]]`（**未做**，见下） | RV32 从同一 riscv64 谱投影（不注册后端）；`insts --params` 打印投影账目 | 实测账目：116 → 104 条指令 / 110 → 96 条 lowering / 逐节丢弃 4 项；守卫 `tests/variants.rs`（6 条） | G4；臂/扩展式复用的验证。**投影已落地（2026-09-24）**：`explain` 显示参数生效点**未做**；与独立 RV32 表对拍**未做**（投影不产可运行后端，见 §5 注） |
 | 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性）+ V6b（strict-overlap，实测 61 条全合法 ⇒ CI 不开）已落地**；`--warn-unreachable` 与死规则检测重叠，已在 V6b 说明不做 |
 | ❌ **V7** 语义层表化（**度量后决定不做**） | 只借"属性视图 + 生成期可分析性"；把 S8b-2 的通用解释器当候选 | 先量：C 段是否仍是编译时间主因、表化净收益是否 ≥15% token 且不增编译时间 | **实测（2026-09-24，`docs/performance/generated_compile_profile.md`）**：C 段（x86 315 KB / 20.3%）确实占生成物全量重检的 **87%**（43.3 s / 49.7 s）；但表化 net 收益在**全件口径只有 11–17%**（中位 ~14%，未过 15%），只在"不含 spec_tests"口径过线；日常增量路径（改谱 9.05 s）不受影响 ⇒ **不做**，触发条件与低风险替代写在文档 §6 | 与 S8b-2 一致：以度量决定（已定论） |
-| 🚧 **V8** 搬运族角色**自动派生**（**破坏性**；2026-10-01 用户口径：「指令的字段类型已经标了立即数/寄存器类型、也标了进出，DSL 应该能自动处理，而不是手动标注」） | 新增指令键 **`width = <位>`**（指令自己的**数据宽度**，与编码无关）；生成器按 `(目标槽类, 源槽类/立即数, width)` **派生**搬运表；`roles = [...]` 在搬运族里退化为**歧义消解**（唯一候选就不用写）；三谱删掉能派生的标注 | 三谱搬迁注解 **20 → ~6 条 pin**；未派生出候选 ⇒ 生成期明确报错（列候选）；`abi check` 能力视图改按派生表报 | 三谱 `validate`/`lint` 零结论；黄金字节逐字节不变（`roles` 只影响"选哪条"，不影响已选中的编码）；矩阵 x86 197/3/0、riscv 136/64/0 不变；守卫 `role_widths`/`fpr_mov_widths`/`bank_mov_roles` 改为"派生 + 歧义"口径 | 通用性的**作者面**：新 ISA 的搬运不再需要理解角色名，只需把指令的宽度写对 |
+| ✅ **V8** 搬运族**全派生**（**破坏性**；2026-10-01 用户口径：「指令的字段类型已经标了立即数/寄存器类型、也标了进出，DSL 应该能自动处理，而不是手动标注」） | 新增指令键 **`data_width = <位>`**（指令的**数据宽度**，与 `width` = 指令字长无关）；**九个搬运角色整条删除**（含 `RoleDecl.bits` 与 `FpMovWidths`/`BankMovWidths`/`inst_by_role_for`）；生成器按 **(目的形状 × 来源形状 × 位宽)** 派生选指令（`v12/codegen/moves.rs::MoveTable` 唯一实现） | 三谱搬运标注 **28 条 → 1 个键**（`data_width`）；同形状同宽度多条候选 ⇒ 生成期**报错并列出候选**（**不设 pin**——那就是第二套机制）；无候选 ⇒ 生成物 fail-closed；`abi check` 能力视图与生成物 `role_bits` 改按派生表报 | ✅ 三谱 `validate`/`lint` 零结论；`forge-codegen --lib` 1285、矩阵 x86 **197/3/0**、riscv **136/64/0**（QEMU）**逐数字不变**；新守卫 `tests/move_derive.rs`（6 条）；旧三守卫（`role_widths`/`fpr_mov_widths`/`bank_mov_roles`）删除——它们的口径已被新守卫覆盖 | 通用性的**作者面**：新 ISA 的搬运只需把指令的宽度写对 |
 
 **顺序与理由**：V0（定范围）→ V1/V2（通用性地基）→ V3/V4（作者可见收益，可独立交付）→
 V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **V8（搬运族去手写）**。
 
-**V8 设计（2026-10-01 盘查后写下，实施中）**：把"搬运族"的角色标注换成**从指令自身派生**。
-搬运族 = `gpr_mov` / `gpr_mov_imm` / `fpr_mov` / `vec_mov` / `fpr_to_gpr_mov` / `gpr_to_fpr_mov`
-（`call`/`ret`/`branch`/`frame_*`/`callee_save`/`stack_arg_*` 这些**不是**形状能表达的，标注保留）。
+**V8 落地记录（2026-10-03）**：原设计（2026-10-01）打算"`width` 键 + `roles` 退化为歧义消解 pin"，
+实施时按「**不要设计冗余**」再推了一步——**pin 也是第二套机制**，于是改成：
 
-- **已经在自动的那一半**：`BankMovWidths::collect` 已经按**槽的寄存器类**判断"哪一侧是 FPR、
-  哪一侧是 GPR"（不按操作数位置猜）；`inst_move_role` / `inst_reg_imm_fids` 已经按**操作数角色**
-  （`In`/`Out`/`InOut`）与**槽 kind**（`Reg`/`Imm`/`Mem`）取字段。所以
-  `{ role = "fpr_to_gpr_mov", bits = 64 }` 里的 `fpr_to_gpr` 半截是**冗余**的：方向与两类寄存器
-  在指令声明里本来就有。
-- **唯一不在操作数结构里的：数据宽度**（三个实证）——x86 `MOVSS`/`MOVSD` 的槽类同为 `fpr16`
-  （宽度差在 F3/F2 前缀）；`MOVD_IREG_FREG`/`MOVQ_R64_XMM` 的槽类同为 `fpr16`+`gpr8`
-  （差在 66 前缀 + REX.W）；riscv `FMV_X_W`/`FMV_X_D` 的槽类同为 `fpr4`+`gpr8`（差在 funct7）。
-  所以宽度仍要声明，但**不必写在角色里**：新增指令键 **`width = 32|64|128`（位）** 表达"这条
-  指令搬多少位"（与编码无关；x86 用它区分 movss/movsd，riscv 用它区分 fmv.x.w/fmv.x.d）。
-  角色的 `bits` 只保留"显式覆盖"的地位。
-- **歧义（同一套 (目标类, 源类, width) 有多条候选）的消解**：x86 的 gpr←gpr 64 位有
-  `MOV64_RR`/`MOV_RM8_R64`/`MOVABS…` 多条。策略 = **唯一候选直接用（不用标）；多条候选 ⇒
-  生成期报错并列出候选，要求作者用 `roles = ["gpr_mov"]` 显式钉一条**。`roles` 因此在搬运族里
-  退化成"歧义消解/覆盖"，不再是人人都要写的样板。`vec_mov` 与 `fpr_mov` 同形（MOVAPS vs MOVSD
-  都是 `[fpr,fpr]`）⇒ 用**宽度分档**（最宽的那条 = 按值向量）或保留 pin。
-- **迁移账（三谱 20 条标注 → 预计 ~6 条 pin）**：riscv 删 `fpr_mov` 32/64（280/292）、
-  `gpr_to_fpr_mov` 32/64（353/426）、`fpr_to_gpr_mov` 32/64（1858/1859），`gpr_mov`（261）留 pin；
-  x86 删 `gpr_mov_imm`（1610）、`fpr_mov` 32/64（760/1101）、`gpr_to_fpr_mov`/`fpr_to_gpr_mov`
-  32/64（722/732/1783/1794），`gpr_mov`（540）与 `vec_mov`（1124）留 pin；arm64 删 `fpr_mov`
-  32/64（1277/1286），`gpr_mov`（746）留 pin。（行号随迭代漂移，以指令名为准。）
-- **连带**：`docs/reference/isa-dsl.md` 的角色表与键总览、`isa-dsl.schema.json`（三方针：schema ↔
-  `model.rs` ↔ 文档一起改）、`abi check` 的能力视图（按派生表报）、`role_widths`/`fpr_mov_widths`/
-  `bank_mov_roles` 三个守卫改成"派生 + 歧义"口径、CHANGELOG。
-- **切片**：V8a 加 `width` 键（schema/model/文档/schema.json）→ V8b 派生 + 歧义报错 →
-  V8c 三谱迁移与快照 → V8d 文档收口。**黄金字节必须逐字节不变**（`roles` 只影响"选哪条"）。
+- **搬运族九个角色全删**（`gpr_mov`/`gpr_mov_imm`/`ret_mov`/`fpr_mov`/`vec_mov`/
+  `fpr_to_gpr_mov`/`gpr_to_fpr_mov`/`wide_vec_load`/`wide_vec_store`），连同 `RoleDecl.bits`、
+  `FpMovWidths`、`BankMovWidths`、`inst_by_role_for` 与三个旧守卫。留在 `roles` 里的只剩
+  **操作数结构说不出来**的语义（`call`/`ret`/`jump`/`branch`/`test`/`push`/`pop`/`frame_*`/
+  `callee_save|load`/`stack_arg_*`/`epilogue_jump`/`frame_addr`）。
+  **判据**：`stack_arg_store` 与 `callee_save` 的形状**一模一样**（都是"寄存器写内存"），
+  只有用途不同 ⇒ 必须人写；一条 `mov` 就是一条 `mov` ⇒ 不必人写。
+- **键名是 `data_width` 不是 `width`**：`width` 早已是**指令字长**（`[encoding].bits` 的逐指令覆盖，
+  v18 S4），两者是不同的事实，不能共用一个名字。`data_width` 是**搬运族唯一的人写数据**，
+  它同时是"这条指令是搬运"的入场券（没写就不参与派生——否则 `ADDPS`/`CMOVcc` 这些同形状的
+  指令会被卷进来）。
+- **选指令 = (目的形状 × 来源形状 × 位宽)**（`moves::MoveTable`）：形状 = `Reg(族)`/`Imm`/`Mem`，
+  族取自槽的 `class`/`classes`（`RegClass` 自带 `GPR`/`FPR`/`VEC`/`KReg`）。
+  **寄存器/立即数来源取最窄覆盖者**（整寄存器搬移对更窄的值同样正确：x86 的 `mov rax, rcx`
+  搬 i32 实参不丢低位；riscv 只有 `fsgnj.d` 时也能服务更窄的请求）；
+  **涉及内存取精确宽度**（512 位的 load 会越过 256 位的槽界）。
+- **歧义与坏形状都在生成期报错**：同形状同宽度多条候选 ⇒ 报错并**列全候选**；`data_width`
+  写在非纯搬运形状上（多个目的槽 / 寄存器+立即数混用 / 标签槽 / 无目的槽）⇒ 报错。
+  该形状一条都没有 ⇒ 生成物里 `Unsupported`（fail-closed，不退化）。
+- **顺带清掉两处硬编码宽度**：① by-ref/sret 的宽向量栈拷贝原来按 `wide_vec_load_32/64`
+  固定取 256/512 位，现在按**运行期字节宽**在派生表上分派（`has_byref_insts` 也改成
+  "两侧内存搬运 + `frame_addr` 角色齐了"这个与宽度无关的判据）；② `f32/f64` 的 32/64
+  不再出现在生成器里（`unwrap_or(#addr_bits)` 之类按元数据折算）。
+- **迁移账**：三谱共 28 条角色声明 → 三谱 13 个 `data_width` 键（x86 13 条指令、
+  riscv 7、arm64 3；夹具 3）。`MOVD`/`MOVQ` 与 `MOVSS`/`MOVSD` 各按自己的宽度申报，
+  不再需要方向/类别词。
+- **验收**：`forge-codegen --lib` 1285、矩阵 x86 **197/3/0**、riscv **136/64/0**（QEMU 真执行）、
+  `forge-abi` 51、`forge-tests --lib`、`forge-isa-dsl` 全绿（含新守卫 `tests/move_derive.rs` 6 条）
+  ——**逐数字不变**说明"选哪条"没变，而选择机制从九个手写角色换成了一张派生表。
 
 **V7 已定论（2026-09-24，度量后决定不做）**：完整数字、口径、可复现命令与"将来重启的触发条件"
 见 **`docs/performance/generated_compile_profile.md`**。要点：

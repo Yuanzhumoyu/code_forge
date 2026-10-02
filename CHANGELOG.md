@@ -11,6 +11,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-03) — 搬运族派生：删掉九个手写角色，ISA 只写 `data_width`
+
+搬运指令的四个事实里，**方向 / 寄存器族 / 立即数还是寄存器**本来就在操作数结构里
+（槽角色 `out|inout|in`、槽的 `class`/`classes`、槽的 `kind`），只有**数据宽度**不在。
+于是：
+
+- **删除** `gpr_mov` / `gpr_mov_imm` / `ret_mov` / `fpr_mov` / `vec_mov` /
+  `fpr_to_gpr_mov` / `gpr_to_fpr_mov` / `wide_vec_load` / `wide_vec_store` 九个角色与
+  `RoleDecl.bits`（"角色带宽度"整条机制随之消失）；相应删掉 `FpMovWidths` /
+  `BankMovWidths` / `inst_by_role_for` 与三个守卫（`role_widths.rs`、
+  `fpr_mov_widths.rs`、`bank_mov_roles.rs`）。
+- **新增指令键 `data_width = <位>`**（**数据宽度**，与 `width` = 指令字长是两件事）：
+  写了它就是"一条搬这么多位的搬运"。选指令 = 按 **(目的形状 × 来源形状 × 位宽)** 查
+  派生表（`v12/codegen/moves.rs::MoveTable`，唯一实现，生成器四处发射点与
+  `abi_view`/生成物 `role_bits` 同源）：寄存器/立即数来源取**最窄覆盖者**，涉及内存取
+  **精确**宽度；同形状同宽度多条候选 ⇒ **生成期报错并列出候选**；一条都没有 ⇒
+  生成物里 fail-closed。三操作数形态（riscv `fsgnj.d rd, rs, rs`）的第三槽自动填成源，
+  store（`mem:mem:out`）同样成立。
+- **顺带清掉两处硬编码宽度**：by-ref/sret 的宽向量栈拷贝不再按 `wide_vec_load_32/64`
+  的固定 256/512 位取指令（改按运行期字节宽查表）；`f32/f64` 的 32/64 不再出现在
+  生成器里。
+- **实测（逐字节/行为不变）**：x86 矩阵 **197/3/0**、riscv64 矩阵 **136/64/0**（QEMU）、
+  `forge-codegen --lib` 1285、`forge-isa-dsl` 全绿（新增守卫 `tests/move_derive.rs` 6 条）、
+  `forge-abi` 28 invariants、`forge-isa` 全绿、`forge-tests --lib` 44；clippy `-D warnings`
+  0、fmt 0、markdownlint 0。
+
 ### Changed (2026-10-01) — lp64d 的变参改成 psABI 定本口径：未命名实参走整数寄存器，保存区紧贴入口 `sp`
 
 RISC-V 上"变参实参只走栈"这条**已知偏差**（与 GCC/Clang 编译的变参函数互调会错）按定本

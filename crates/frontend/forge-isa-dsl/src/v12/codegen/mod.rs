@@ -35,6 +35,8 @@ pub(crate) mod lowering;
 pub(crate) mod machine;
 /// 内存操作数文本模板（v16/S9）：`__render_mem`/`__mem` 从同一份模板派生。
 pub(crate) mod mem;
+/// 搬运族派生（v20 V8）：`data_width` + 操作数结构 → 方向/寄存器族/宽度。
+pub(crate) mod moves;
 /// 占位符注册表——lowering 模板 `{...}` token 的唯一事实源（第三轮重构）。
 pub(crate) mod placeholder;
 /// v18 S6：生成期自测（`#[cfg(test)] mod __spec_tests`）。

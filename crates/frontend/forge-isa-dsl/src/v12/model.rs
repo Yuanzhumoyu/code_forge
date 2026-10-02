@@ -1573,6 +1573,24 @@ pub struct Instruction {
     /// 无宽度语义的角色全 ISA 唯一；有宽度语义的角色按 **(角色, 位宽)** 唯一。
     #[serde(default)]
     pub roles: Vec<RoleDecl>,
+    /// **数据宽度**（位，v20 V8）：这条指令搬多少位的值——**搬运族派生的唯一人写数据**。
+    ///
+    /// 写了它 = "本指令是一条 W 位的值搬运"。方向（谁进谁出）、寄存器族、立即数/内存
+    /// **全部由操作数结构派生**（槽 `kind`/`class` + 槽角色 `in`/`out`/`inout`）——
+    /// 因此 `gpr_mov`/`fpr_mov`/`vec_mov`/`gpr_mov_imm`/`fpr_to_gpr_mov`/
+    /// `gpr_to_fpr_mov`/`wide_vec_load`/`wide_vec_store` 这些手写角色**已删除**
+    /// （见 `v12/codegen/moves.rs`）。
+    ///
+    /// 为什么宽度不能一起派生：**它不在操作数结构里**。x86 的 `MOVSS`/`MOVSD`
+    /// 共用 `fpr16`(xmm) 槽、riscv 的 `FSGNJ_S`/`FSGNJ_D` 共用 `fpr4` 槽、
+    /// aarch64 的 `FMOV_S`/`FMOV_D` 共用 `f8` 槽——槽只说明"哪个寄存器族"，
+    /// 分不出 32/64。宽度是数据，不是名字的一部分（v18 S9 的教训）。
+    ///
+    /// 与 [`Instruction::width`]（**指令字长**，编码宽度）是两件事，别混。
+    ///
+    /// 约束：只能写在**纯搬运**指令上（一个目的槽 + 一个来源槽；形状不干净 ⇒ 生成期报错）。
+    #[serde(default, rename = "data_width")]
+    pub data_width: Option<u16>,
     /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
     /// 在本指令点避开（MachineInst::clobbers）。与 lowering 模板的显式物理
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
@@ -1678,32 +1696,6 @@ impl Default for Encoding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
-    /// 整数寄存器移动（收参 / Copy / 溢出前搬运）。
-    GprMov,
-    /// **立即数 → 整数寄存器**（v20 V7）：`mov r64, imm64` 一类。用于"要往寄存器里放一个
-    /// **运行期才知道的常量**"的场合——SysV 的变参元信息寄存器 `%al`（调用方报"用了几个
-    /// 向量寄存器"）就是它：数字由调用点的布局在运行期算出来，但写进去是一条立即数搬运。
-    GprMovImm,
-    /// 返回值 → 返回寄存器的移动。
-    RetMov,
-    /// 标量浮点寄存器移动。**宽度写在角色声明里**
-    /// （`roles = [{ role = "fpr_mov", bits = 32 }]`；x86 的 MOVSS/MOVSD 共用 `fpr` 槽，
-    /// 槽本身分不出 32/64）。
-    FprMov,
-    /// **类间位搬移**：FPR 的**位模式** → GPR（不做任何数值转换）。宽度写在声明里。
-    ///
-    /// 用于"值的寄存器类与 ABI 落点的寄存器类**不同**"的场合——psABI 的**整数约定收浮点**：
-    /// RISC-V 变参（`riscv-cc.adoc`：变参实参一律按整数约定传，浮点也不例外）、
-    /// Zfinx/软浮点约定。riscv `fmv.x.d`/`fmv.x.w`、x86 `MOVQ r64, xmm`/`MOVD r32, xmm`。
-    ///
-    /// **缺这条 ⇒ 该落点必须 fail-closed**：拿同类搬移顶上会把 FPR 的号当 GPR 号用
-    /// （把值搬去 `x<fpr号>`）——那是**静默错值**，不是缺个优化。
-    FprToGprMov,
-    /// **类间位搬移**：GPR 的位模式 → FPR（语义同上、方向相反）：
-    /// riscv `fmv.d.x`/`fmv.w.x`、x86 `MOVQ xmm, r64`/`MOVD xmm, r32`。
-    GprToFprMov,
-    /// ≤16B 向量按值的**全宽**寄存器移动（x86 MOVAPS；缺则向量 by-value 不支持）。
-    VecMov,
     /// 直接调用（函数符号 reloc）。
     Call,
     /// 间接调用（寄存器/内存目标）。
@@ -1738,11 +1730,6 @@ pub enum Role {
     CalleeLoad,
     /// 尾声跳转（缺省用 `jump`；需要不同指令时单独声明）。
     EpilogueJump,
-    /// 宽向量 by-ref：调用方栈拷贝 store。**宽度写进角色声明的 `bits`**
-    /// （如 `{ role = "wide_vec_store", bits = 256 }` = 32 字节）。
-    WideVecStore,
-    /// 宽向量 by-ref/sret：收参与回读 load。**宽度同上**。
-    WideVecLoad,
     /// 帧内 `[FP+disp]` 地址计算（sret / by-ref 临时槽）。
     FrameAddr,
     /// 栈参数收参 load（第 5+ 个参数从 `[FP+shadow+…]` 取）。
@@ -1762,13 +1749,6 @@ impl fmt::Display for Role {
 /// 角色的 TOML 写法（snake_case）。
 fn serde_json_name(r: &Role) -> &'static str {
     match r {
-        Role::GprMov => "gpr_mov",
-        Role::GprMovImm => "gpr_mov_imm",
-        Role::RetMov => "ret_mov",
-        Role::FprMov => "fpr_mov",
-        Role::FprToGprMov => "fpr_to_gpr_mov",
-        Role::GprToFprMov => "gpr_to_fpr_mov",
-        Role::VecMov => "vec_mov",
         Role::Call => "call",
         Role::CallIndirect => "call_indirect",
         Role::Ret => "ret",
@@ -1783,8 +1763,6 @@ fn serde_json_name(r: &Role) -> &'static str {
         Role::CalleeSave => "callee_save",
         Role::CalleeLoad => "callee_load",
         Role::EpilogueJump => "epilogue_jump",
-        Role::WideVecStore => "wide_vec_store",
-        Role::WideVecLoad => "wide_vec_load",
         Role::FrameAddr => "frame_addr",
         Role::StackArgLoad => "stack_arg_load",
         Role::StackArgStore => "stack_arg_store",
@@ -1793,29 +1771,25 @@ fn serde_json_name(r: &Role) -> &'static str {
 
 /// 角色**声明**（`[[instructions]].roles` 的条目，v18 S9；v20 A6 加类限定）。
 ///
-/// 三种写法，同一个机制：
+/// 两种写法，同一个机制：
 ///
-/// - `"gpr_mov"` —— 无宽度、无类语义的角色（唯一即可）；
-/// - `{ role = "fpr_mov", bits = 32 }` —— **有宽度**语义的角色：位宽写出来
-///   （x86 的 MOVSS/MOVSD 共用 `fpr` 槽，槽本身分不出 32/64；宽度是数据，
-///   不是名字的一部分）；
+/// - `"callee_save"` —— 无类语义的角色（唯一即可）；
 /// - `{ role = "callee_save", class = "fpr" }` —— **有寄存器类**语义的角色：
 ///   同一个能力在 GPR 与 FPR 上要用**不同指令**时分开申报（arm64 的
 ///   `STURX`/`STURD` 都是"保存到帧"，但只能存各自类别的寄存器）。
 ///
-/// 键可以同时给（`{ role, bits, class }` = 该类里还分宽度）。
+/// **宽度不在这里**（v20 V8 起）：搬运族的宽度写在指令的 `data_width` 上，
+/// 由 `v12/codegen/moves.rs` 连同方向/寄存器族一起派生——`roles` 只留
+/// **操作数结构说不出来**的语义（"这条指令是干什么用的"：调用/返回/跳转/
+/// 帧/栈参数/保存恢复）。同一个能力在两类寄存器上要用不同指令时才写 `class`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RoleDecl {
-    /// 无宽度、无类语义：`roles = ["gpr_mov"]`。
+    /// 无类语义：`roles = ["ret"]`。
     Plain(Role),
-    /// 表写法：`{ role = "fpr_mov", bits = 32 }` / `{ role = "callee_save", class = "fpr" }`。
+    /// 表写法：`{ role = "callee_save", class = "fpr" }`。
     Table {
         role: Role,
-        /// 位宽（与 `opsize`/`[encoding].bits` 同单位；`fpr_mov` 32/64、
-        /// `wide_vec_load`/`wide_vec_store` 256/512）。
-        #[serde(default)]
-        bits: Option<u16>,
         /// 寄存器类限定（缺省 = 不限类，按"裸能力"参与解析）。
         #[serde(default)]
         class: Option<RoleClass>,
@@ -1824,8 +1798,8 @@ pub enum RoleDecl {
 
 /// 角色申报里的**寄存器类限定**（v20 A6）。
 ///
-/// 只区分发射侧真正要分派的三族：同一个能力（如"存到帧"）在 GPR 与 FPR 上
-/// 要用不同指令。宽度轴仍是 `bits`（见 [`RoleDecl::Table`]），两者正交。
+/// 只区分发射侧真正要分派的两族：同一个能力（如"存到帧"）在 GPR 与 FPR 上
+/// 要用不同指令。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RoleClass {
@@ -1853,13 +1827,6 @@ impl RoleDecl {
             RoleDecl::Table { role, .. } => *role,
         }
     }
-    /// 声明的位宽（无宽度语义 → None）。
-    pub fn bits(&self) -> Option<u16> {
-        match self {
-            RoleDecl::Plain(_) => None,
-            RoleDecl::Table { bits, .. } => *bits,
-        }
-    }
     /// 声明的类限定（无类语义 → None = 不限类）。
     pub fn class(&self) -> Option<RoleClass> {
         match self {
@@ -1867,8 +1834,7 @@ impl RoleDecl {
             RoleDecl::Table { class, .. } => *class,
         }
     }
-    /// 是否就是这个角色（不比较宽度/类；按宽度选请用 `FpMovWidths` 那张位宽表，
-    /// 按类选请用 `role_name_for_class`）。
+    /// 是否就是这个角色（不比较类；按类选请用 `role_name_for_class`）。
     pub fn is(&self, r: Role) -> bool {
         self.role() == r
     }
@@ -1878,11 +1844,8 @@ impl fmt::Display for RoleDecl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RoleDecl::Plain(r) => f.write_str(serde_json_name(r)),
-            RoleDecl::Table { role, bits, class } => {
+            RoleDecl::Table { role, class } => {
                 f.write_str(serde_json_name(role))?;
-                if let Some(b) = bits {
-                    write!(f, "={b}bit")?;
-                }
                 if let Some(c) = class {
                     write!(f, "={}", c.name())?;
                 }

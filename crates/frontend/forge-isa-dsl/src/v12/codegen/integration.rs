@@ -806,22 +806,30 @@ fn resolve_reg_list(
 
 fn gen_target_machine(model: &V12Model) -> Result<TokenStream, String> {
     let isa_name_str = &model.meta.name;
-    // 能力表（v20 A3）：把 `[[instructions]].roles` 按**能力名**折算成 (名字, 位宽)，
-    // 与 `forge-isa abi check` 的静态视图同源（都走 `abi_view::role_capability`）。
-    // 无宽度语义的角色按地址宽折算（与静态视图同一口径）。
+    // 能力表（v20 A3/V8）：**两个来源**——① `[[instructions]].roles` 里那些
+    // 操作数结构说不出来的语义（调用/返回/跳转/帧/栈参数/保存恢复）；
+    // ② **搬运族派生**（`data_width` + 操作数结构 → 方向/寄存器族/宽度，
+    // 与 `forge-isa abi check` 的静态视图同源，都走 `moves::MoveTable`）。
+    // 无宽度语义的能力按地址宽折算。
     let default_bits: u16 = model.addr_class().map(|c| c.width()).unwrap_or(8) * 8;
     let mut caps: Vec<(&'static str, u16)> = Vec::new();
+    let mut push_cap =
+        |name: &'static str, bits: u16| match caps.iter_mut().find(|(n, _)| *n == name) {
+            Some(e) => {
+                e.1 = e.1.max(bits);
+            }
+            None => caps.push((name, bits)),
+        };
     for inst in &model.instructions {
         for decl in &inst.roles {
-            let Some(cap) = crate::abi_view::role_capability(decl.role()) else {
-                continue;
-            };
-            let bits = decl.bits().unwrap_or(default_bits);
-            match caps.iter_mut().find(|(n, _)| *n == cap) {
-                Some(e) => e.1 = e.1.max(bits),
-                None => caps.push((cap, bits)),
+            if let Some(cap) = crate::abi_view::role_capability(decl.role()) {
+                push_cap(cap, default_bits);
             }
         }
+    }
+    let infos = super::collect_inst_infos(model)?;
+    for (cap, bits, _insts) in super::moves::MoveTable::collect(&infos)?.capabilities() {
+        push_cap(cap, bits);
     }
     caps.sort_unstable_by_key(|(n, _)| *n);
     // 生成 `match role { "gpr_mov" => Some(64), …, _ => None }`——**直接给出分支**，

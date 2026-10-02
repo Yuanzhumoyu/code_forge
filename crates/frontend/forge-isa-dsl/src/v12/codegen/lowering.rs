@@ -14,19 +14,19 @@
 //! 角色"抽象为 ABI 键 + 运行时查表，收益 < 风险，故保留并在此集中标注
 //! （新增浮点 Call 的 ISA 需按此路径扩展）。
 //!
-//! **宽向量 by-ref/sret 栈拷贝（S1/S2）不走名字探测**——按 TOML `tags`
-//! 语义标签收集（`wide_vec_store_32/64`、`wide_vec_load_32/64`、
-//! `frame_rbp_addr`），从指令结构派生 vn/字段名（`insts_by_tag`/
-//! `reg_mem_fids`/`collect_byref_insts`），不引用具体指令名。
+//! **宽向量 by-ref/sret 栈拷贝（S1/S2）不走名字探测**——内存 ↔ 向量寄存器的搬运指令
+//! 由 `moves::MoveTable` 按**运行期字节宽**派生（v20 V8；ISA 只写 `data_width`），
+//! 帧内寻址那一格仍是角色 `frame_addr`；vn/字段名全部从指令结构取，不引用具体指令名。
 
 use super::super::match_tree::{self, MatchNode};
 use super::super::model::*;
 use super::super::pred::{self, CmpOp, Pred};
 use super::integration::{
     collect_phys_clobbers, compile_pred_guard, gen_lowering_attrs, inst_exists, inst_fids,
-    inst_move_role, inst_reg_imm_fids, lowering_token_kind, parse_i64_lit, parse_mem_template,
+    inst_reg_imm_fids, lowering_token_kind, parse_i64_lit, parse_mem_template,
     strip_placeholder_decls,
 };
+use super::moves::{Bank, MoveTable, Shape, Want};
 use super::{InstInfo, field_ctor_expr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -48,6 +48,15 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         }
     }
     let name_to_vn = ref_to_infos;
+
+    // **搬运表**（v20 V8）：一次派生、所有搬运点共用（返回/参数/变参元信息/类间位搬移/
+    // 宽向量拷贝）。方向与寄存器族由操作数结构定，宽度由指令的 `data_width` 定——
+    // 生成器里不再出现 `gpr_mov`/`fpr_mov`/… 这些手写角色名。
+    let moves = MoveTable::collect(infos)?;
+    // 值寄存器的位宽基准（地址类/主 GPR 类）：无宽度语义的值（指针、void）按它折算。
+    let addr_bits: u16 = model.addr_class()?.width() * 8;
+    // 生成物里 	ype_bits_of 是 u32：字面量按 u32 插值（u16 会让 unwrap_or 类型不符）。
+    let addr_bits32 = addr_bits as u32;
 
     let mut arms: Vec<TokenStream> = Vec::new();
     // 谓词属性源（v18 S8b-1 / S8d）：`__AC` 缓存 + 每属性一个助手，**与 op 无关**，
@@ -210,20 +219,29 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             format_ident!("target"),
         )
     };
-    // 返回移动指令名可配置（[abi].ret_mov_inst，缺省 "MOV_RM8_R64"）。
-    let ret_mov_inst = role_name(infos, Role::RetMov)
-        .or_else(|_| role_name(infos, Role::GprMov))
-        .unwrap_or_default();
-    let has_mov_rax = inst_exists(infos, &ret_mov_inst);
-    let ret_vn = crate::v12::codegen::pascal_ident(&ret_mov_inst);
-    let ret_move = inst_move_role(infos, &ret_mov_inst);
+    // 返回移动指令 = **派生的 GPR→GPR 搬运**（v20 V8：`ret_mov`/`gpr_mov` 角色已删除）。
+    // 宽度按地址类折算：整数返回值都 ≤ 寄存器宽，整寄存器搬移对更窄的值同样正确
+    //（x86 的 `mov rax, rcx` 搬 i32 返回不丢低位）。缺这条搬运 ⇒ 整个 return
+    // 降级为 Unsupported（下面的 `has_mov_rax`），不在生成物里引用不存在的变体。
+    let ret_want = Want {
+        dst: Shape::Reg(Bank::Gpr),
+        src: Shape::Reg(Bank::Gpr),
+    };
+    let ret_arm = moves.pick(&ret_want, addr_bits);
+    let has_mov_rax = ret_arm.is_ok();
+    // 失败时给一个**故意不存在**的名字：那段 token 只在成功分支里被引用
+    //（下面 `if has_mov_rax { … }`），真被发射出去就是编译错误而不是误用别的指令。
+    let ret_vn = ret_arm
+        .as_ref()
+        .map(|a| a.vn.clone())
+        .unwrap_or_else(|_| format_ident!("NoGprMoveDeclared"));
+    let (mov_src, mov_src_idx, mov_dest, _mov_dest_idx) = match &ret_arm {
+        Ok(a) => (a.src.clone(), a.src_idx, a.dst.clone(), a.dst_idx),
+        Err(_) => (format_ident!("src"), 0u8, format_ident!("dest"), 0u8),
+    };
     // 类型化字段名（按指令名查，缺省 op0/op1/op2 兜底——集成层构造用）
     let fids =
         |name: &str| -> Vec<syn::Ident> { inst_fids(infos, name).into_iter().cloned().collect() };
-    let (mov_src, mov_src_idx, mov_dest, _mov_dest_idx) = match &ret_move {
-        Some((s, si, d, _di)) => (s.clone(), *si, d.clone(), 0u8),
-        None => (format_ident!("src"), 0u8, format_ident!("dest"), 0u8),
-    };
     let jmp_f = fids(&jump_inst);
     let jmp_rel = jmp_f
         .first()
@@ -242,80 +260,72 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
         (format_ident!("cond"), format_ident!("target"))
     };
     // S2：宽向量 sret 需要的指令（按语义标签收集）。
-    let (_byref_insts, has_byref_insts) = collect_byref_insts(infos);
+    let has_byref_insts = has_byref_insts(&moves, infos);
 
-    // Return：整数值 → RAX（MOV_RM8_R64）、浮点值 → XMM0（MOVSD/MOVSS）。
-    // 与 v11 一致：**不生成 RET**——return block 经 emit_epilogue_jump 跳到
-    // epilogue 统一恢复 callee-saved 后 ret（否则栈不平衡崩溃）。
-    // **浮点搬移按位宽查表**（v20 V6+）：ISA 用 `roles = [{ role = "fpr_mov", bits = N }]` 声明
-    // 自己能搬哪些位宽，生成器按结果位宽选——**不写死 32/64**（定宽 ISA 可能只有 16 或 128）。
-    let fp_movs = FpMovWidths::collect(infos);
-    let has_fpr_mov = !fp_movs.is_empty();
-    // 第三槽（三操作数搬移 = 源）是否每档都有且同名（不一致 ⇒ 生成期报错，不猜）。
-    let fp_mov_third = fp_movs.third_slot()?;
-    // 按值向量（≤16 字节，VEC(16) 类）返回/参数用全宽 XMM 移动指令
-    //（缺省 "MOVAPS"；指令缺失的 ISA → 对应路径 Unsupported，不引用
-    // 不存在的变体——与 fpr_mov_inst 缺省门控同款）。
-    let vec_mov_inst = role_name(infos, Role::VecMov).unwrap_or_default();
-    let vec_mov_fids = inst_fids(infos, &vec_mov_inst);
-    let has_vec_mov = vec_mov_fids.len() >= 2;
-    let vec_mov_vn = crate::v12::codegen::pascal_ident(&vec_mov_inst);
-    let vec_mov_src: syn::Ident = match vec_mov_fids.get(1) {
-        Some(f) => (*f).clone(),
-        None => format_ident!("src"),
+    // Return：整数值 → RAX、浮点值 → XMM0。与 v11 一致：**不生成 RET**——return block
+    // 经 emit_epilogue_jump 跳到 epilogue 统一恢复 callee-saved 后 ret（否则栈不平衡崩溃）。
+    //
+    // **搬运一条道**（v20 V8）：标量浮点、按值向量、类间落点全走同一张派生表——
+    // 只是"请求的形状与宽度"不同。宽度是运行期值（`type_bits_of`），表按**最窄覆盖**
+    // 发射 if-链（缺这一档 ⇒ 生成物里 fail-closed，不引用不存在的变体）。
+    let fpr_want = Want {
+        dst: Shape::Reg(Bank::Fpr),
+        src: Shape::Reg(Bank::Fpr),
     };
-    let vec_mov_dest: syn::Ident = match vec_mov_fids.first() {
-        Some(f) => (*f).clone(),
-        None => format_ident!("dest"),
+    // 宽向量 sret/按值向量 >16B 的栈拷贝：`(Mem ← Reg(Fpr))`（宽度精确）。
+    let store_want = Want {
+        dst: Shape::Mem,
+        src: Shape::Reg(Bank::Fpr),
     };
-    let fpr_return_body: TokenStream = if has_fpr_mov {
-        let bits = quote! { ctx.type_bits_of(&val).unwrap_or(64) };
-        let pick = fp_movs.dispatch(&bits, |(_, vn, dest, src, src2)| {
-            let third = match src2 {
-                Some(id) => quote! { #id: Reg::from_index(0, __DEFAULT_FPR_CLASS), },
-                None => quote! {},
-            };
+    let has_fpr_mov = moves.has(&fpr_want);
+    // 一条"结果值 → 返回寄存器"的 FPR 搬移体（宽度由调用点给：标量按类型位宽、
+    // 按值向量按**整寄存器槽** 128 位）。
+    let fpr_move_body = |bits: &TokenStream| -> Result<TokenStream, String> {
+        moves.dispatch(&fpr_want, bits, |arm| {
+            let vn = &arm.vn;
+            let (dest, src) = (&arm.dst, &arm.src);
+            let third: Vec<TokenStream> = arm
+                .extra
+                .iter()
+                .map(|(f, _)| quote! { #f: Reg::from_index(0, __DEFAULT_FPR_CLASS), })
+                .collect();
+            let maps: Vec<TokenStream> = arm
+                .extra
+                .iter()
+                .map(|(_, i)| quote! { __pack.map_reg_field(val, __fidx, #i, false); })
+                .collect();
+            let src_idx = arm.src_idx;
             quote! {
-                Inst::#vn {
-                    #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #third
+                {
+                    let __fidx = __pack.push_inst(Inst::#vn {
+                        #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #(#third)*
+                    });
+                    __pack.map_reg_field(val, __fidx, #src_idx, false);
+                    #(#maps)*
                 }
             }
-        });
-        let third_map: TokenStream = match &fp_mov_third {
-            Some(_) => quote! { __pack.map_reg_field(val, __fidx, 2u8, false); },
-            None => quote! {},
-        };
-        quote! {
-            // 浮点返回值 → 约定的返回寄存器（位宽由结果类型定，指令按 ISA 的声明表选）
-            let __fidx = __pack.push_inst(#pick);
-            __pack.map_reg_field(val, __fidx, 1u8, false);
-            #third_map
-        }
-    } else {
-        quote! {
-            let _ = __pack;
-            return Err(crate::prelude::IrError::Unsupported("v12 float return: 未声明 roles = [\"fpr_mov_f64\"]/[\"fpr_mov_f32\"]".into()));
-        }
+        })
     };
-    // 按值向量（≤16 字节，V64/V128）返回体：结果 → XMM0 全宽 128 位移动
-    //（MOVAPS——MOVSD/MOVSS 只移 8/4 字节，高半截断，WA-37 D3）。
-    let vec_return_body: TokenStream = if has_vec_mov {
-        quote! {
-            let __vidx = __pack.push_inst(Inst::#vec_mov_vn {
-                #vec_mov_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                #vec_mov_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-            });
-            __pack.map_reg_field(val, __vidx, 1u8, false);
-        }
+    let no_fpr_move = quote! {
+        let _ = __pack;
+        return Err(crate::prelude::IrError::Unsupported(
+            "v12 float return: 本 ISA 没有「浮点寄存器 ← 浮点寄存器」的搬运指令\
+             （在指令上写 `data_width = 32`/`64`）".into(),
+        ));
+    };
+    let fpr_return_body: TokenStream = if has_fpr_mov {
+        // 浮点结果：按结果位宽（`f32` → 32、`f64` → 64）。
+        fpr_move_body(&quote! { ctx.type_bits_of(&val).unwrap_or(#addr_bits32) })?
     } else {
-        quote! {
-            let _ = __pack;
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 vector return (vec_mov_inst missing)".into(),
-            ));
-        }
+        no_fpr_move.clone()
+    };
+    // ≤16B 按值向量返回：整寄存器槽（128 位）——与上面同一张表，只是请求宽度不同。
+    let vec_return_body: TokenStream = if has_fpr_mov {
+        fpr_move_body(&quote! { 128u32 })?
+    } else {
+        no_fpr_move.clone()
     };
     let return_body: TokenStream = if has_mov_rax {
         let mov_src_idx_lit = mov_src_idx as usize;
@@ -346,17 +356,29 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
             }
         };
         // S2：宽向量返回值（>16 字节）sret——结果 store 到 [sret_ptr]，
-        // sret_ptr = 首个 GPR 参数槽（Windows x64：隐藏 sret 参数占 RCX）。
-        // 生成期门控：语义标签缺失（riscv）→ Unsupported。
+        // sret_ptr 由**布局**的隐藏槽给（Windows x64：隐藏 sret 参数占 RCX）。
+        // 搬运指令派生自 `(Mem ← Reg(Fpr))`（**宽度精确**）；本 ISA 没有 ⇒ fail-closed。
         let sret_return_body: TokenStream = if has_byref_insts {
-            let (vn_s32, f_s32, m_s32, i_s32) = _byref_insts
-                .get("wide_vec_store_32")
-                .expect("tag store32")
-                .clone();
-            let (vn_s64, f_s64, m_s64, i_s64) = _byref_insts
-                .get("wide_vec_store_64")
-                .expect("tag store64")
-                .clone();
+            let store_body =
+                moves.dispatch(&store_want, &quote! { (__vbytes as u32) * 8 }, |arm| {
+                    let vn = &arm.vn;
+                    let (mem, src) = (&arm.dst, &arm.src);
+                    let src_idx = arm.src_idx;
+                    quote! {
+                        {
+                            let __sidx = __pack.push_inst(Inst::#vn {
+                                #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                                #mem: MemRef {
+                                    base: __sret,
+                                    disp: 0,
+                                    index: None,
+                                    scale: 1,
+                                },
+                            });
+                            __pack.map_reg_field(val, __sidx, #src_idx, false);
+                        }
+                    }
+                })?;
             quote! {
                 // sret 指针来自**布局**的隐藏槽（v20 A5-3：不再假设"首 int 参数槽"——
                 // 那正是按位置/按类计数与 sret 槽差异会出错的写法）。
@@ -374,77 +396,55 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                     .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
                     .unwrap_or(__SLOT_BYTES as u32)
                     .max(__SLOT_BYTES as u32);
-                let __sidx = __pack.push_inst(if __vbytes == 64 {
-                    Inst::#vn_s64 {
-                        #f_s64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                        #m_s64: MemRef {
-                            base: __sret,
-                            disp: 0,
-                            index: None,
-                            scale: 1,
-                        },
-                    }
-                } else {
-                    Inst::#vn_s32 {
-                        #f_s32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                        #m_s32: MemRef {
-                            base: __sret,
-                            disp: 0,
-                            index: None,
-                            scale: 1,
-                        },
-                    }
-                });
-                __pack.map_reg_field(
-                    val,
-                    __sidx,
-                    if __vbytes == 64 { #i_s64 } else { #i_s32 },
-                    false,
-                );
+                #store_body
             }
         } else {
             quote! {
                 let _ = __pack;
                 return Err(crate::prelude::IrError::Unsupported(
-                    "v12 wide vector return needs wide_vec_store tags (sret)".into(),
+                    "v12 wide vector return (sret): 本 ISA 没有「内存 ← 向量寄存器」的搬运指令".into(),
                 ));
             }
         };
         // **多值返回**（v20 A6）：plan 的 ret 是 `RegPair`/`RegGroup` ⇒ 第 k 个返回值移到
-        // `regs[k]`，按每个值自己的寄存器类分派（int → gpr_mov、fp → fpr_mov32/64）。
+        // `regs[k]`，按每个值自己的寄存器类分派（整数 → GPR 搬运、浮点 → FPR 搬运）。
         //
         // 旧实现是"第一个值进默认返回槽 + **写死**第二个值进类内号 1"（x86 = RDX）——
         // 那是 ISA 特定的猜测（riscv 的类内号 1 是 X1 = ra）。现在落点由引擎给：
         // `lp64d` 会说 X10/X11，`win64` 由绑定的 `ret_int` 说 RAX/RDX。
         let multi_ret_body: TokenStream = {
             let fp_multi = if has_fpr_mov {
-                let bits = quote! { ctx.type_bits_of(&__vk).unwrap_or(64) };
-                let pick = fp_movs.dispatch(&bits, |(_, vn, dest, src, src2)| {
-                    let third = match src2 {
-                        Some(id) => quote! { #id: Reg::from_index(0, __DEFAULT_FPR_CLASS), },
-                        None => quote! {},
-                    };
+                let bits = quote! { ctx.type_bits_of(&__vk).unwrap_or(#addr_bits32) };
+                moves.dispatch(&fpr_want, &bits, |arm| {
+                    let vn = &arm.vn;
+                    let (dest, src) = (&arm.dst, &arm.src);
+                    let src_idx = arm.src_idx;
+                    let third: Vec<TokenStream> = arm
+                        .extra
+                        .iter()
+                        .map(|(f, _)| quote! { #f: Reg::from_index(0, __DEFAULT_FPR_CLASS), })
+                        .collect();
+                    let maps: Vec<TokenStream> = arm
+                        .extra
+                        .iter()
+                        .map(|(_, i)| quote! { __pack.map_reg_field(__vk, __fidx, #i, false); })
+                        .collect();
                     quote! {
-                        Inst::#vn {
-                            #dest: __dst,
-                            #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                            #third
+                        {
+                            let __fidx = __pack.push_inst(Inst::#vn {
+                                #dest: __dst,
+                                #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                                #(#third)*
+                            });
+                            __pack.map_reg_field(__vk, __fidx, #src_idx, false);
+                            #(#maps)*
                         }
                     }
-                });
-                let third_map: TokenStream = match &fp_mov_third {
-                    Some(_) => quote! { __pack.map_reg_field(__vk, __fidx, 2u8, false); },
-                    None => quote! {},
-                };
-                quote! {
-                    let __fidx = __pack.push_inst(#pick);
-                    __pack.map_reg_field(__vk, __fidx, 1u8, false);
-                    #third_map
-                }
+                })?
             } else {
                 quote! {
                     return Err(crate::prelude::IrError::Unsupported(
-                        "v12 多值返回的浮点分量需要 roles = [\"fpr_mov\"]（32/64）".into(),
+                        "v12 多值返回的浮点分量：本 ISA 没有 FPR ← FPR 的搬运指令".into(),
                     ));
                 }
             };
@@ -498,7 +498,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &V12Model) -> Result<Token
                     (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
                 })
             }) {
-                // ≤16B 向量（V64/V128）按值返回：XMM0 全宽
+                // ≤16B 向量（V64/V128）按值返回：**整寄存器槽搬移**（16 字节 = ABI 的
+                // 按值向量槽宽）——请求 128 位于是取到全宽搬移（`MOVSD` 只移 8 字节会
+                // 截断高半，WA-37 D3）；ISA 没有 128 位档 ⇒ 生成物里 fail-closed。
                 #vec_return_body
             } else if ctx.xreg_types.get(&val).is_some_and(|t| {
                 ctx.type_store.as_ref().is_some_and(|s| {
@@ -1289,31 +1291,50 @@ fn gen_call_lowering(
     // R9：by-ref/sret 的向量槽步长 = 最大向量档位（x86 = 64），帧需求 = 槽步长 + 1 个槽单位。
     let __vec_stride: u32 = model.vector_tiers().last().copied().unwrap_or(32) as u32;
     let __sret_frame: u32 = __vec_stride + model.slot_bytes()? as u32;
-    let vn = |n: &str| crate::v12::codegen::pascal_ident(n);
     let fids = |n: &str| inst_fids(infos, n);
-    // v20 A5-3：谱面不再有 `[abi]`，**能力由角色说话**——没有 `gpr_mov`（参数搬运）
-    // 的 ISA（如只做编码试点的夹具）整条 Call/CallIndirect 降级 Unsupported，
-    // 而不是在生成期报"mov 指令形状不符"。
-    if role_name(infos, Role::GprMov).is_err() {
+    // **搬运表**（v20 V8）：调用点的实参搬运/返回值搬运/变参元信息全走这张派生表。
+    let moves = MoveTable::collect(infos)?;
+    let addr_bits: u16 = model.addr_class()?.width() * 8;
+    // 生成物里 	ype_bits_of 是 u32：字面量按 u32 插值（u16 会让 unwrap_or 类型不符）。
+    let addr_bits32 = addr_bits as u32;
+    // 整数搬运请求（GPR ← GPR）与浮点搬运请求（FPR ← FPR）——谱里没有对应形状的搬运
+    // 指令 ⇒ 整条 Call/CallIndirect 降级 Unsupported（不在生成期报"形状不符"，
+    // 也不引用不存在的变体：编码试点夹具正是这种谱）。
+    let gpr_want = Want {
+        dst: Shape::Reg(Bank::Gpr),
+        src: Shape::Reg(Bank::Gpr),
+    };
+    let fpr_want = Want {
+        dst: Shape::Reg(Bank::Fpr),
+        src: Shape::Reg(Bank::Fpr),
+    };
+    let to_gpr_want = Want {
+        dst: Shape::Reg(Bank::Gpr),
+        src: Shape::Reg(Bank::Fpr),
+    };
+    let to_fpr_want = Want {
+        dst: Shape::Reg(Bank::Fpr),
+        src: Shape::Reg(Bank::Gpr),
+    };
+    if !moves.has(&gpr_want) {
         let op_ident = format_ident!("{op_name}");
         return Ok(quote! {
             crate::prelude::Opcode::#op_ident { .. } => {
                 Err(crate::prelude::IrError::Unsupported(
-                    "v12 call lowering（本 ISA 未申报 roles = [\"gpr_mov\"]）".into(),
+                    "v12 call lowering（本 ISA 没有 GPR ← GPR 的搬运指令：在指令上写 `data_width`）".into(),
                 ))
             }
         });
     }
-    // 整数移动指令：角色 `ret_mov`（缺省回退 `gpr_mov`），字段按角色解析
-    //（x86 op0=In=src/op1=InOut=dest；demo op0=Out=dest/op1=In=src）。
-    let mov_inst = role_name(infos, Role::RetMov)
-        .or_else(|_| role_name(infos, Role::GprMov))
-        .unwrap_or_default();
-    let mov_vn = vn(&mov_inst);
-    let (m_src, m_src_idx, m_dest, m_dest_idx) =
-        inst_move_role(infos, &mov_inst).ok_or_else(|| {
-            format!("Call lowering: [{mov_inst}] must have In(src)/Out|InOut(dest) reg operands")
-        })?;
+    // 整数搬运指令（宽度按地址类折算——整寄存器搬移对更窄的值同样正确）。
+    let mov_arm = moves.pick(&gpr_want, addr_bits)?;
+    let mov_vn = mov_arm.vn.clone();
+    let (m_src, m_src_idx, m_dest, m_dest_idx) = (
+        mov_arm.src.clone(),
+        mov_arm.src_idx,
+        mov_arm.dst.clone(),
+        mov_arm.dst_idx,
+    );
     // 栈参数 store 指令：**按语义角色** `stack_arg_store` 取（TOML 显式声明，
     // 不做按指令名探测）。**不受谱面键门控**（v20 A5-3 起没有 `[abi.stack_args]`）：
     // 角色缺失 ⇒ 调用点的栈参数分支在运行期给明确 Unsupported，不再按 x86 指令名兜底。
@@ -1335,34 +1356,19 @@ fn gen_call_lowering(
             Some(info) => store_shape(info)?,
             None => None,
         };
-    // 浮点移动指令：`[abi].fpr_mov_inst`/`fpr_mov_inst32` 键（缺省
-    // "MOVSD"/"MOVSS"）——缺失 → 浮点路径 Unsupported（防生成代码引用
-    // 不存在的 Inst 变体；demo 等无浮点 ISA 的 Call 整体降级）。
-    // **浮点搬移按位宽查表**（v20 V6+）：ISA 声明哪些位宽就发哪些，**不写死 32/64**。
-    let fp_movs = FpMovWidths::collect(infos);
-    let has_fpr_mov = !fp_movs.is_empty();
-    // 按值向量（≤16 字节，VEC(16) 类）参数/返回的全宽 XMM 移动指令
-    //（缺省 "MOVAPS"；指令缺失的 ISA → 对应路径 Unsupported）。
-    let vec_mov_inst = role_name(infos, Role::VecMov).unwrap_or_default();
-    let vec_mov_fids = fids(&vec_mov_inst);
-    let has_vec_mov = vec_mov_fids.len() >= 2;
-    let (v_dest, v_src) = if vec_mov_fids.len() >= 2 {
-        (vec_mov_fids[0].clone(), vec_mov_fids[1].clone())
-    } else {
-        (format_ident!("dest"), format_ident!("src"))
-    };
-    let vec_mov_vn = vn(&vec_mov_inst);
-    // **类间位搬移**（v20 V7）：值在 FPR 而落点在 GPR（反之亦然）时用的两张位宽表——
-    // "ABI 落点的类 ≠ 值的类"（psABI 的整数约定收浮点：RISC-V 变参、Zfinx/软浮点约定）。
-    // 缺表 ⇒ 那条路在生成物里 fail-closed（拿同类搬移顶上是**静默错值**）。
-    let fpr_to_gpr = BankMovWidths::collect(infos, Role::FprToGprMov)?;
-    let gpr_to_fpr = BankMovWidths::collect(infos, Role::GprToFprMov)?;
-    // S1/S2：宽向量 by-ref/sret 栈拷贝指令——**按语义标签收集**（TOML
-    // `tags` 显式声明；不做按指令名/前缀的存在性探测）。缺失任意标签 →
-    // 对应 ABI 能力 Unsupported（riscv 等无向量 ISA 天然缺标签）。
-    // 从指令结构派生 vn/字段名（semantic_operand_name），不硬编码。
-    let (byref_insts, has_byref_insts) = collect_byref_insts(infos);
-    let byref = |tag: &str| byref_insts.get(tag).cloned();
+    // 浮点搬运（v20 V8）：**一条道**——标量浮点与按值向量都按运行期位宽在这张派生表上
+    // 取"最窄覆盖者"（按值向量按整寄存器槽请求 128 位）。没有 FPR ← FPR 搬运 ⇒
+    // 浮点实参/返回在生成物里 fail-closed。
+    let has_fpr_mov = moves.has(&fpr_want);
+    // 类间位搬移（v20 V7 派生化）：值在 FPR 而落点在 GPR（反之亦然）——"ABI 落点的类 ≠
+    // 值的类"（psABI 的整数约定收浮点：RISC-V 变参、Zfinx/软浮点约定）。缺表 ⇒ 那条路在
+    // 生成物里 fail-closed（拿同类搬移顶上是**静默错值**）。
+    let has_to_gpr = moves.has(&to_gpr_want);
+    let has_to_fpr = moves.has(&to_fpr_want);
+    // S1/S2：宽向量 by-ref/sret 栈拷贝指令——**按形状+宽度派生**（v20 V8 起不再是
+    // `wide_vec_load/store` 角色）。缺失任意一条 → 对应 ABI 能力 Unsupported。
+    let has_byref_insts = has_byref_insts(&moves, infos);
+    let byref_lea = byref_frame_addr(infos);
     // 返回槽（Call 读**被调方**的返回值，v20 A5-3）：用宿主的**约定级返回槽**
     // `ctx.conv.ret_gpr`——调用点看不到被调方的签名，而"标量整数返回放哪个寄存器"
     // 是约定级事实（x86 RAX / riscv a0=X10 / arm64 x0）。谱里的 `[abi].ret_regs`
@@ -1435,50 +1441,59 @@ fn gen_call_lowering(
             }
         };
     };
-    let fpr_ret_stmt: TokenStream = if has_fpr_mov {
-        let bits = quote! { ctx.type_bits_of(&__r).unwrap_or(64) };
-        let pick = fp_movs.dispatch(&bits, |(_, vn, dest, src, src2)| {
-            let third = match src2 {
-                Some(id) => {
-                    quote! { #id: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS), }
-                }
-                None => quote! {},
-            };
+    // 「返回寄存器 → 结果 vreg」与「结果 vreg → 返回寄存器」的 FPR 搬运（v20 V8 派生）：
+    // 宽度运行期才知道（结果类型的位宽），表按最窄覆盖发 if-链。
+    let fpr_load_body = |bits: &TokenStream, what: &str| -> Result<TokenStream, String> {
+        if !has_fpr_mov {
+            let msg =
+                format!("v12 call: {what}（本 ISA 没有「浮点寄存器 ← 浮点寄存器」的搬运指令）");
+            return Ok(quote! {
+                return Err(crate::prelude::IrError::Unsupported(#msg.into()));
+            });
+        }
+        moves.dispatch(&fpr_want, bits, |arm| {
+            let vn = &arm.vn;
+            let (dest, src) = (&arm.dst, &arm.src);
+            let dst_idx = arm.dst_idx;
+            let third: Vec<TokenStream> = arm
+                .extra
+                .iter()
+                .map(|(f, _)| {
+                    quote! { #f: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS), }
+                })
+                .collect();
             quote! {
-                Inst::#vn { #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS), #src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS), #third }
+                {
+                    let __idx = __pack.push_inst(Inst::#vn {
+                        #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS),
+                        #(#third)*
+                    });
+                    __pack.map_reg_field(__r, __idx, #dst_idx, true);
+                }
             }
-        });
-        quote! {
-            let __idx = __pack.push_inst(#pick);
-            __pack.map_reg_field(__r, __idx, 0u8, true);
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: float return move (fpr_mov_inst missing)".into(),
-            ));
-        }
+        })
     };
-    // 按值向量（≤16 字节）返回回读：XMM0（128 位全宽）→ 结果 XReg。
+    let fpr_ret_stmt: TokenStream = fpr_load_body(
+        &quote! { ctx.type_bits_of(&__r).unwrap_or(#addr_bits32) },
+        "浮点返回",
+    )?;
+    // 按值向量（≤16 字节）返回回读：整寄存器槽（128 位）——`MOVSD` 只回读 8 字节会丢高半。
+    let vec_ret_stmt: TokenStream = fpr_load_body(&quote! { 128u32 }, "按值向量返回回读")?;
     // ── 变参元信息寄存器（v20 V7，SysV 的 `%al`）──
     //
     // 调用**变参**函数时，调用方要把"用了几个向量寄存器"写进约定的元信息寄存器：glibc 的
     // `printf` 一族靠它决定从寄存器保存区里读/存几个 XMM（`%al = 0` 表示一个都没用）。
-    // 数字来自**调用点的布局**（运行期才知道），所以要用"立即数 → 寄存器"那条能力写进去。
-    //
-    // 缺这条能力时**fail-closed**（不静默跳过：那是 ABI 要求的写入）——只在约定真的声明了
-    // 元信息池（`__cl.va_meta.is_some()`）且被调方是变参时才算数。
-    let va_meta_stmt: TokenStream = match role_name(infos, Role::GprMovImm) {
-        Ok(inst) => {
-            let (regs, imms) = inst_reg_imm_fids(infos, &inst)
-                .ok_or_else(|| format!("[{inst}] 作为 `gpr_mov_imm` 需要 Reg + Imm 两个操作数"))?;
-            let (dest, imm) = (
-                regs.first()
-                    .ok_or_else(|| format!("[{inst}] 缺 Reg 操作数"))?,
-                imms.first()
-                    .ok_or_else(|| format!("[{inst}] 缺 Imm 操作数"))?,
-            );
-            let vn = vn(&inst);
+    // 数字来自**调用点的布局**（运行期才知道），所以要用「立即数 → 整数寄存器」那条搬运写进去——
+    // v20 V8 起它不再是一条角色，而是派生表里的 `(Reg(Gpr) ← Imm)` 形状。
+    let imm_want = Want {
+        dst: Shape::Reg(Bank::Gpr),
+        src: Shape::Imm,
+    };
+    let va_meta_stmt: TokenStream = match moves.pick(&imm_want, 8) {
+        Ok(arm) => {
+            let vn = &arm.vn;
+            let (dest, imm) = (&arm.dst, &arm.src);
             quote! {
                 if __variadic.is_some()
                     && let Some((__mc, __mi)) = __cl.va_meta
@@ -1505,33 +1520,41 @@ fn gen_call_lowering(
             if __variadic.is_some() && __cl.va_meta.is_some() {
                 return Err(crate::prelude::IrError::Unsupported(
                     "v12 call: 该约定的变参要求写元信息寄存器（SysV 的 `%al`），但本 ISA \
-                     没有申报 roles = [\"gpr_mov_imm\"]（立即数 → 整数寄存器）的指令"
+                     没有「整数寄存器 ← 立即数」的搬运指令（在指令上写 `data_width`）"
                         .into(),
                 ));
             }
         },
     };
-    let vec_ret_stmt: TokenStream = if has_vec_mov {
-        quote! {
-            let __idx = __pack.push_inst(Inst::#vec_mov_vn {
-                #v_dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                #v_src: <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_FPR_CLASS),
-            });
-            __pack.map_reg_field(__r, __idx, 0u8, true);
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: vector return move (vec_mov_inst missing)".into(),
-            ));
-        }
-    };
     // S2：宽向量返回值（>16 字节）sret 结果回读——call 后从 [sret_off] load
-    // 到结果 XReg（tag `wide_vec_load_32/64` 指令）。生成期门控：标签缺失
-    // （riscv）→ 编译入口守卫（compiler.rs）已拒绝，此处防御性 Unsupported。
+    // 到结果 XReg（派生自 `(Reg(Fpr) ← Mem)` 的搬运，**宽度必须精确**）。
+    // 生成期门控：本 ISA 没有这条搬运（riscv）→ 编译入口守卫（compiler.rs）已拒绝，
+    // 此处防御性 Unsupported。
+    let sret_load_want = Want {
+        dst: Shape::Reg(Bank::Fpr),
+        src: Shape::Mem,
+    };
     let sret_load_stmt: TokenStream = if has_byref_insts {
-        let (vn_l32, f_l32, m_l32, i_l32) = byref("wide_vec_load_32").expect("tag load32");
-        let (vn_l64, f_l64, m_l64, i_l64) = byref("wide_vec_load_64").expect("tag load64");
+        let bits = quote! { (__vbytes as u32) * 8 };
+        let body = moves.dispatch(&sret_load_want, &bits, |arm| {
+            let vn = &arm.vn;
+            let (dest, mem) = (&arm.dst, &arm.src);
+            let dst_idx = arm.dst_idx;
+            quote! {
+                {
+                    let __ridx = __pack.push_inst(Inst::#vn {
+                        #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #mem: MemRef {
+                            base: #__frame_base,
+                            disp: __sret_off,
+                            index: None,
+                            scale: 1,
+                        },
+                    });
+                    __pack.map_reg_field(__r, __ridx, #dst_idx, true);
+                }
+            }
+        })?;
         quote! {
             let __vbytes = ctx
                 .xreg_types
@@ -1539,68 +1562,44 @@ fn gen_call_lowering(
                 .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
                 .unwrap_or(__SLOT_BYTES as u32)
                 .max(__SLOT_BYTES as u32);
-            let __ridx = __pack.push_inst(if __vbytes == 64 {
-                Inst::#vn_l64 {
-                    #f_l64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #m_l64: MemRef {
-                        base: #__frame_base,
-                        disp: __sret_off,
-                        index: None,
-                        scale: 1,
-                    },
-                }
-            } else {
-                Inst::#vn_l32 {
-                    #f_l32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #m_l32: MemRef {
-                        base: #__frame_base,
-                        disp: __sret_off,
-                        index: None,
-                        scale: 1,
-                    },
-                }
-            });
-            // 结果 vreg 是 load 指令的 Reg 字段（序号按宽度分派）
-            __pack.map_reg_field(
-                __r,
-                __ridx,
-                if __vbytes == 64 { #i_l64 } else { #i_l32 },
-                true,
-            );
+            #body
         }
     } else {
         quote! {
             return Err(crate::prelude::IrError::Unsupported(
-                "v12 wide vector return load needs wide_vec_load tags".into(),
+                "v12 wide vector return load: 本 ISA 没有「向量寄存器 ← 内存」的搬运指令".into(),
             ));
         }
     };
-    // 多值返回的**浮点分量回读**（v20 A6）：无 `fpr_mov` 角色的 ISA 在生成期就选
-    // fail-closed 分支——**不能**把不存在的变体名写进 token 流（`pascal_ident("")`
-    // 会变成 `Inst::Inst`，整份生成物编译不过）。
+    // 多值返回的**浮点分量回读**（v20 A6）：源是落点给的寄存器（`__src`），推一条搬运指令，
+    // 把结果绑到字段 0（目的）。缺 FPR ← FPR 搬运 ⇒ fail-closed（不能把不存在的变体名
+    // 写进 token 流——`pascal_ident("")` 会变成 `Inst::Inst`，整份生成物编译不过）。
     let fp_ret_multi: TokenStream = if has_fpr_mov {
-        let bits = quote! { ctx.type_bits_of(&__rk).unwrap_or(64) };
-        let pick = fp_movs.dispatch(&bits, |(_, vn, dest, src, src2)| {
-            let third = match src2 {
-                Some(id) => quote! { #id: __src, },
-                None => quote! {},
-            };
+        let bits = quote! { ctx.type_bits_of(&__rk).unwrap_or(#addr_bits32) };
+        moves.dispatch(&fpr_want, &bits, |arm| {
+            let vn = &arm.vn;
+            let (dest, src) = (&arm.dst, &arm.src);
+            let dst_idx = arm.dst_idx;
+            let third: Vec<TokenStream> = arm
+                .extra
+                .iter()
+                .map(|(f, _)| quote! { #f: __src, })
+                .collect();
             quote! {
-                Inst::#vn {
-                    #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #src: __src,
-                    #third
+                {
+                    let __fidx = __pack.push_inst(Inst::#vn {
+                        #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #src: __src,
+                        #(#third)*
+                    });
+                    __pack.map_reg_field(__rk, __fidx, #dst_idx, true);
                 }
             }
-        });
-        quote! {
-            let __fidx = __pack.push_inst(#pick);
-            __pack.map_reg_field(__rk, __fidx, 0u8, true);
-        }
+        })?
     } else {
         quote! {
             return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: 多值返回的浮点分量需要 roles = [\"fpr_mov\"]（32/64）".into(),
+                "v12 call: 多值返回的浮点分量：本 ISA 没有 FPR ← FPR 的搬运指令".into(),
             ));
         }
     };
@@ -1800,7 +1799,7 @@ fn gen_call_lowering(
     // S2：sret 槽地址 → 首 int 参数槽（RCX）。生成期门控（frame_rbp_addr
     // 标签存在）。
     let sret_setup: TokenStream = if has_byref_insts {
-        let (vn_lea, f_lea, m_lea, i_lea) = byref("frame_rbp_addr").expect("tag lea");
+        let (vn_lea, f_lea, m_lea, i_lea) = byref_lea.clone().expect("frame_addr 角色");
         quote! {
             if __sret {
                 // 地址类（`__ADDR_CLASS`：x86 = GPR(8)，1 字节 ISA = GPR(1)）——
@@ -1839,18 +1838,43 @@ fn gen_call_lowering(
         quote! {}
     };
     // S1：宽向量实参（>16 字节）by-ref——栈上副本 + 传 GPR 指针。
-    // 调用方侧 temp 槽（帧内 [RBP-off]，32 字节对齐间距 64），向量值
-    // store 到槽（tag `wide_vec_store_32/64` 指令），LEA 槽地址到地址
-    // XReg（tag `frame_rbp_addr`），再 mov 到 int 参数槽。所有 call 复用
-    // 同一组槽（call 间 temp 槽天然死，顺序执行无重叠 live 区间）。
-    // **生成期门控**：标签缺失（riscv 等无向量 ISA）→ 直接 Unsupported，
+    // 调用方侧 temp 槽（帧内 [RBP-off]，32 字节对齐间距 64），向量值 store 到槽
+    // （派生自 `(Mem ← Reg(Fpr))` 的搬运，**宽度精确**），LEA 槽地址到地址 XReg
+    // （角色 `frame_addr`），再 mov 到 int 参数槽。所有 call 复用同一组槽
+    //（call 间 temp 槽天然死，顺序执行无重叠 live 区间）。
+    // **生成期门控**：本 ISA 没有这些指令（riscv 等无向量 ISA）→ 直接 Unsupported，
     // 不引用不存在的变体。
     // 槽位变量不再需要：by-ref 的**指针落点**由布局的 `Indirect { reg }` 给
     //（v20 A5-3：按位置/按类计数的差异不再由生成器各自数）。
+    let byref_store_want = Want {
+        dst: Shape::Mem,
+        src: Shape::Reg(Bank::Fpr),
+    };
     let byref_stmt: TokenStream = if has_byref_insts {
-        let (vn_s32, f_s32, m_s32, i_s32) = byref("wide_vec_store_32").expect("tag store32");
-        let (vn_s64, f_s64, m_s64, i_s64) = byref("wide_vec_store_64").expect("tag store64");
-        let (vn_lea, f_lea, m_lea, i_lea) = byref("frame_rbp_addr").expect("tag lea");
+        let (vn_lea, f_lea, m_lea, i_lea) = byref_lea.clone().expect("frame_addr 角色");
+        let store_body = moves.dispatch(
+            &byref_store_want,
+            &quote! { (__vbytes as u32) * 8 },
+            |arm| {
+                let vn = &arm.vn;
+                let (mem, src) = (&arm.dst, &arm.src);
+                let src_idx = arm.src_idx;
+                quote! {
+                    {
+                        let __vidx = __pack.push_inst(Inst::#vn {
+                            #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                            #mem: MemRef {
+                                base: #__frame_base,
+                                disp: __addr,
+                                index: None,
+                                scale: 1,
+                            },
+                        });
+                        __pack.map_reg_field(__a, __vidx, #src_idx, false);
+                    }
+                }
+            },
+        )?;
         quote! {
             let __vbytes = ctx
                 .xreg_types
@@ -1866,37 +1890,9 @@ fn gen_call_lowering(
             // 区 64B；与 StackAddr 的 current_offset = v - shift 同构——否则
             // 覆盖 callee-saved push 槽）。
             let __addr = __off - ctx.stack_slot_shift as i64;
-            // 1) 向量 → 栈槽（宽度分派：32B → store_32 指令、64B →
-            //    store_64 指令；缺省 32B 兜底）
-            let __vidx = __pack.push_inst(if __vbytes == 64 {
-                Inst::#vn_s64 {
-                    #f_s64: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #m_s64: MemRef {
-                        base: #__frame_base,
-                        disp: __addr,
-                        index: None,
-                        scale: 1,
-                    },
-                }
-            } else {
-                Inst::#vn_s32 {
-                    #f_s32: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #m_s32: MemRef {
-                        base: #__frame_base,
-                        disp: __addr,
-                        index: None,
-                        scale: 1,
-                    },
-                }
-            });
-            // 参数 vreg 是 store 指令的 Reg 字段（序号按宽度分派）
-            __pack.map_reg_field(
-                __a,
-                __vidx,
-                if __vbytes == 64 { #i_s64 } else { #i_s32 },
-                false,
-            );
-            // 2) 槽地址 → 地址 XReg（frame_rbp_addr 指令的 Reg 字段 = 结果）
+            // 1) 向量 → 栈槽（宽度分派：32B / 64B 各有自己的搬运指令，派生表按精确宽度选）
+            #store_body
+            // 2) 槽地址 → 地址 XReg（frame_addr 指令的 Reg 字段 = 结果）
             //    地址类 = `__ADDR_CLASS`（不是整数值池类）。
             let __ptr = ctx.alloc_xreg(__ADDR_CLASS);
             let __lidx = __pack.push_inst(Inst::#vn_lea {
@@ -1919,7 +1915,8 @@ fn gen_call_lowering(
     } else {
         quote! {
             return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: wide vector arg (>16B) by-ref needs wide_vec_store/frame_rbp_addr tags".into(),
+                "v12 call: wide vector arg (>16B) by-ref 需要「内存 ← 向量寄存器」的搬运指令与 \
+                 frame_addr 角色".into(),
             ));
         }
     };
@@ -1927,19 +1924,15 @@ fn gen_call_lowering(
         &m_src,
         m_src_idx,
         &m_dest,
-        // 浮点搬移按**位宽表**发（v20 V6+）：不再传 32/64 两个变体名。
-        &fp_movs,
+        &moves,
+        &fpr_want,
+        &to_gpr_want,
+        &to_fpr_want,
+        addr_bits,
         has_fpr_mov,
-        // **类间位搬移**（v20 V7）：值的类与 ABI 落点的类不一致时（整数约定收浮点）用的
-        // 两张位宽表；缺表 ⇒ 那条路 fail-closed（拿同类搬移顶上是静默错值）。
-        &fpr_to_gpr,
-        &gpr_to_fpr,
-        // ≤16B 向量实参全宽移动（MOVAPS；缺失 → Unsupported 分支）
-        &vec_mov_vn,
-        &v_dest,
-        &v_src,
-        has_vec_mov,
-        // S1：宽向量 by-ref 的**栈上副本**（生成期拼好的语句；标签缺失 → Unsupported）
+        has_to_gpr,
+        has_to_fpr,
+        // S1：宽向量 by-ref 的**栈上副本**（生成期拼好的语句；缺搬运/角色 → Unsupported）
         &byref_stmt,
         &mov_vn,
         // 栈参数 store 指令（角色 stack_arg_store；缺角色 → None，由 helper 生成
@@ -1951,7 +1944,7 @@ fn gen_call_lowering(
         // 栈相对内存的基址寄存器（[machine.frame].sp 派生）
         &__sp_base,
         has_byref_insts,
-    );
+    )?;
     let op_ident = format_ident!("{op_name}");
     // call_body 为 Unsupported（return Err）时，其后不再生成 arg_loop/ret_move
     //（否则 `return Err(...)` 后出现不可达代码 → unreachable_code 警告）。
@@ -2035,8 +2028,8 @@ fn gen_call_lowering(
 ///
 /// 逐实参读 `__cl.arg(__i)` 的 `ArgPlace`：
 ///
-/// - `Reg { class, index }`：整数 → `gpr_mov`；浮点 → 按字节宽 `fpr_mov32/64`；向量（≤16B 按值）
-///   → `vec_mov`；目标寄存器由布局给（"第几个参数进哪个寄存器"由引擎按约定算好）。
+/// - `Reg { class, index }`：目标寄存器由布局给（"第几个参数进哪个寄存器"由引擎按约定算好），
+///   搬运指令由 [`MoveTable`] 按 **(落点的类 × 值所在的池 × 位宽)** 派生（v20 V8）。
 /// - `Indirect { reg: Some(..) }`：先按 `byref_stmt` 在帧内做副本并取地址，再把指针 mov 进布局给的寄存器。
 /// - `Stack { .. }`：store 到 `[sp + __cl.caller_offset(k)]`（k = 第几个栈参数）。
 /// - `Ignore`：跳过。
@@ -2047,23 +2040,25 @@ fn arg_move_loop(
     m_src: &syn::Ident,
     m_src_idx: u8,
     m_dest: &syn::Ident,
-    // 浮点搬移的**位宽表**（v20 V6+）：按实参位宽查表发指令，不写死 32/64。
-    fp_movs: &FpMovWidths,
+    // **搬运表**（v20 V8）：派生自 `data_width` + 操作数结构——整数/浮点/向量/类间，
+    // 一条道（不再有 `fpr_mov`/`vec_mov`/`fpr_to_gpr_mov` 这几张各写一遍的表）。
+    moves: &MoveTable,
+    fpr_want: &Want,
+    to_gpr_want: &Want,
+    to_fpr_want: &Want,
+    addr_bits: u16,
     has_fpr_mov: bool,
-    // **类间位搬移**的两张位宽表（v20 V7）：值在 FPR、落点在 GPR（`fpr_to_gpr`）以及反向。
-    fpr_to_gpr: &BankMovWidths,
-    gpr_to_fpr: &BankMovWidths,
-    vec_mov_vn: &syn::Ident,
-    v_dest: &syn::Ident,
-    v_src: &syn::Ident,
-    has_vec_mov: bool,
+    has_to_gpr: bool,
+    has_to_fpr: bool,
     byref_stmt: &TokenStream,
     mov_vn: &syn::Ident,
     stack_store: &Option<StackMemShape>,
     stack_store_fpr: &Option<StackMemShape>,
     sp_base: &TokenStream,
     has_byref_insts: bool,
-) -> TokenStream {
+) -> Result<TokenStream, String> {
+    // 生成物里 `type_bits_of` 是 u32：字面量按 u32 插值。
+    let addr_bits32 = addr_bits as u32;
     // 整数搬运：目标寄存器由布局给（`__dst`），源是实参 vreg（map_reg_field 绑）。
     let int_mov: TokenStream = quote! {
         let __idx = __pack.push_inst(Inst::#mov_vn {
@@ -2072,58 +2067,54 @@ fn arg_move_loop(
         });
         __pack.map_reg_field(__a, __idx, #m_src_idx, false);
     };
-    // 浮点/向量：按实参的 IR 类型分派。**两条能力互不依赖**（v20 V6+）：只有标量搬移
-    // （`fpr_mov`）的 ISA 照样能把浮点实参搬进 FPR 槽，缺的只是"按值向量"那条路——
-    // 那种情形在**运行期**明确 fail-closed（IR 类型说了算），而不是整个调用点编不出来。
-    // 旧实现把两条能力绑在一起（`has_fpr_mov && has_vec_mov`），于是"没有向量寄存器"的
-    // ISA（riscv）连 `f64` 实参都发不出去——那正是"为某一类 ISA 开洞"。
-    let scalar_fp = if has_fpr_mov {
-        let bits = quote! { ctx.type_bits_of(&__a).unwrap_or(64) };
-        let pick = fp_movs.dispatch(&bits, |(_, vn, dest, src, src2)| {
-            let third = match src2 {
-                Some(id) => quote! { #id: Reg::from_index(0, __DEFAULT_FPR_CLASS), },
-                None => quote! {},
-            };
+    // 浮点/向量实参：**一条道**（v20 V8）——按实参位宽在这张派生表上取"最窄覆盖者"。
+    // 标量浮点按 IR 类型位宽（f32 → 32、f64 → 64）；按值向量（≤16B）按**整寄存器槽**
+    // 请求 128 位（`MOVSD` 只移 8 字节会截断高半，WA-37 D3）。
+    //
+    // 两条路互不依赖：ISA 只有标量档时，向量请求的链会在末尾 fail-closed（生成物里，
+    // 而不是整个调用点编不出来）——"没有向量寄存器"的 ISA（riscv）照样发得出 `f64` 实参。
+    let fp_body = |bits: &TokenStream, what: &str| -> Result<TokenStream, String> {
+        if !has_fpr_mov {
+            let msg = format!(
+                "v12 call: {what}实参搬运缺「浮点寄存器 ← 浮点寄存器」的搬运指令\
+                 （在指令上写 `data_width`）"
+            );
+            return Ok(quote! {
+                return Err(crate::prelude::IrError::Unsupported(#msg.into()));
+            });
+        }
+        moves.dispatch(fpr_want, bits, |arm| {
+            let vn = &arm.vn;
+            let (dest, src) = (&arm.dst, &arm.src);
+            let src_idx = arm.src_idx;
+            let third: Vec<TokenStream> = arm
+                .extra
+                .iter()
+                .map(|(f, _)| quote! { #f: Reg::from_index(0, __DEFAULT_FPR_CLASS), })
+                .collect();
+            let maps: Vec<TokenStream> = arm
+                .extra
+                .iter()
+                .map(|(_, i)| quote! { __pack.map_reg_field(__a, __idx, #i, false); })
+                .collect();
             quote! {
-                Inst::#vn {
-                    #dest: __dst,
-                    #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-                    #third
+                {
+                    let __idx = __pack.push_inst(Inst::#vn {
+                        #dest: __dst,
+                        #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
+                        #(#third)*
+                    });
+                    __pack.map_reg_field(__a, __idx, #src_idx, false);
+                    #(#maps)*
                 }
             }
-        });
-        let third_map: TokenStream = match fp_movs.third_slot() {
-            Ok(Some(_)) => quote! { __pack.map_reg_field(__a, __idx, 2u8, false); },
-            _ => quote! {},
-        };
-        quote! {
-            let __idx = __pack.push_inst(#pick);
-            __pack.map_reg_field(__a, __idx, 1u8, false);
-            #third_map
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: 浮点实参搬运缺 roles = [\"fpr_mov\"] 的指令".into(),
-            ));
-        }
+        })
     };
-    let vector_fp = if has_vec_mov {
-        quote! {
-            let __idx = __pack.push_inst(Inst::#vec_mov_vn {
-                #v_dest: __dst,
-                #v_src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
-            });
-            __pack.map_reg_field(__a, __idx, 1u8, false);
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: 按值向量实参搬运缺 roles = [\"vec_mov\"] 的指令".into(),
-            ));
-        }
-    };
-    // 按值向量（≤16 字节）走全宽 `vec_mov`，其余浮点标量走 `fpr_mov` 位宽表。
+    let scalar_fp = fp_body(
+        &quote! { ctx.type_bits_of(&__a).unwrap_or(#addr_bits32) },
+        "浮点标量",
+    )?;
+    let vector_fp = fp_body(&quote! { 128u32 }, "按值向量")?;
     let __is_vec = quote! {
         ctx.xreg_types.get(&__a).is_some_and(|t| {
             ctx.type_store.as_ref().is_some_and(|s| {
@@ -2131,34 +2122,10 @@ fn arg_move_loop(
             })
         })
     };
-    let fp_mov: TokenStream = if has_fpr_mov && has_vec_mov {
-        quote! {
-            if #__is_vec { #vector_fp } else { #scalar_fp }
-        }
-    } else if has_vec_mov {
-        quote! {
-            if #__is_vec { #vector_fp } else {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: 浮点标量实参搬运缺 roles = [\"fpr_mov\"] 的指令".into(),
-                ));
-            }
-        }
-    } else if has_fpr_mov {
-        quote! {
-            if #__is_vec {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: 按值向量实参搬运缺 roles = [\"vec_mov\"] 的指令".into(),
-                ));
-            } else { #scalar_fp }
-        }
-    } else {
-        quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "v12 call: 浮点实参搬运既缺 fpr_mov 也缺 vec_mov 角色".into(),
-            ));
-        }
+    let fp_mov: TokenStream = quote! {
+        if #__is_vec { #vector_fp } else { #scalar_fp }
     };
-    // ── 类间位搬移（v20 V7）──
+    // ── 类间位搬移（v20 V7 派生化）──
     //
     // 值的寄存器类由它自己的 IR 类型定（浮点标量恒在 FPR 池），而**落点的类由约定定**。
     // 两者不一致时（psABI 的"整数约定收浮点"：RISC-V 变参、Zfinx/软浮点约定）必须发
@@ -2172,49 +2139,41 @@ fn arg_move_loop(
             .is_some_and(|__t| ctx.type_store.as_ref().is_some_and(|__s| __s.is_float(*__t)))
     };
     let __val_in_fpr = quote! { #__is_vec || (#__val_is_float) };
-    let __val_bits = quote! { ctx.type_bits_of(&__a).unwrap_or(64) };
+    let __val_bits = quote! { ctx.type_bits_of(&__a).unwrap_or(#addr_bits32) };
     // 类间搬移体：一侧是布局给的落点（`__dst` 自带落点的类），另一侧填 0 号占位并把**值**
-    // 映射进那个槽。哪一侧是 FPR 由**角色方向**定（`to_fpr`），槽下标按**槽的类**取
-    // （不按操作数位置猜——谱里 `[dst:gpr, src:fpr]` 与 `[dst:fpr, src:gpr]` 都合法）。
-    let bank_mov = |t: &BankMovWidths, role: Role, to_fpr: bool| -> TokenStream {
-        if t.is_empty() {
-            return quote! {
+    // 映射进那个槽。方向即请求的 (目的族, 来源族)；**槽下标来自派生臂**（不按操作数位置猜——
+    // 谱里 `[dst:gpr, src:fpr]` 与 `[dst:fpr, src:gpr]` 都合法）。
+    let bank_mov = |want: &Want, have: bool| -> Result<TokenStream, String> {
+        if !have {
+            return Ok(quote! {
                 return Err(crate::prelude::IrError::Unsupported(
-                    "v12 call: ABI 落点的寄存器类与值的类不同（整数约定收浮点），需要 \
-                     roles = [\"fpr_to_gpr_mov\"]/[\"gpr_to_fpr_mov\"] 的类间位搬移指令\
-                     ——本 ISA 未申报（拿同类搬移顶上是静默错值）"
+                    "v12 call: ABI 落点的寄存器类与值的类不同（整数约定收浮点），需要跨类的\
+                     位搬移指令（在指令上写 `data_width`，方向由操作数结构定）\
+                     ——本 ISA 没有（拿同类搬移顶上是静默错值）"
                         .into(),
                 ));
-            };
+            });
         }
-        t.dispatch(role, &__val_bits, |a| {
-            let (dest_fid, src_fid, src_cls, src_idx) = if to_fpr {
-                (
-                    &a.fpr_fid,
-                    &a.gpr_fid,
-                    quote! { __DEFAULT_GPR_CLASS },
-                    a.gpr_idx,
-                )
-            } else {
-                (
-                    &a.gpr_fid,
-                    &a.fpr_fid,
-                    quote! { __DEFAULT_FPR_CLASS },
-                    a.fpr_idx,
-                )
-            };
-            let vn = &a.vn;
+        let src_cls = if matches!(want.src, Shape::Reg(Bank::Fpr)) {
+            quote! { __DEFAULT_FPR_CLASS }
+        } else {
+            quote! { __DEFAULT_GPR_CLASS }
+        };
+        moves.dispatch(want, &__val_bits, |arm| {
+            let vn = &arm.vn;
+            let (dest, src) = (&arm.dst, &arm.src);
+            let src_idx = arm.src_idx;
             quote! {
                 let __idx = __pack.push_inst(Inst::#vn {
-                    #dest_fid: __dst,
-                    #src_fid: Reg::from_index(0, #src_cls),
+                    #dest: __dst,
+                    #src: Reg::from_index(0, #src_cls),
                 });
                 __pack.map_reg_field(__a, __idx, #src_idx, false);
             }
         })
     };
-    let fpr_to_gpr_body = bank_mov(fpr_to_gpr, Role::FprToGprMov, false);
-    let gpr_to_fpr_body = bank_mov(gpr_to_fpr, Role::GprToFprMov, true);
+    let fpr_to_gpr_body = bank_mov(to_gpr_want, has_to_gpr)?;
+    let gpr_to_fpr_body = bank_mov(to_fpr_want, has_to_fpr)?;
     // 寄存器落点的四路分派（**生成物里**的 if/else）：落点的类在运行期才知道（来自 plan），
     // 值所在的池由 IR 类型定。`__dst` 自带落点的类，所以两条同类路与两条类间路都正好。
     let reg_dispatch: TokenStream = quote! {
@@ -2336,7 +2295,7 @@ fn arg_move_loop(
             ));
         }
     };
-    quote! {
+    Ok(quote! {
         // 逐实参：落点全部来自 `__cl`（调用点 plan）。
         let mut __stack_seen: u32 = 0;
         let mut __bi: usize = if __sret { 1usize } else { 0usize };
@@ -2373,7 +2332,7 @@ fn arg_move_loop(
                 }
             }
         }
-    }
+    })
 }
 pub(crate) fn inst_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Option<&'a InstInfo<'a>> {
     infos
@@ -2381,11 +2340,11 @@ pub(crate) fn inst_by_role<'a>(infos: &'a [InstInfo<'a>], role: Role) -> Option<
         .find(|i| i.inst.roles.iter().any(|d| d.is(role)))
 }
 
-/// 按角色取**无限定**的声明（`roles = ["x"]`——既没有 `bits` 也没有 `class`）。
+/// 按角色取**无限定**的声明（`roles = ["x"]`——没有 `class`）。
 ///
-/// 与 [`inst_by_role`] 的分工：那个回答"**这台机器有没有这个能力**"（类/宽度限定版也算，
+/// 与 [`inst_by_role`] 的分工：那个回答"**这台机器有没有这个能力**"（类限定版也算，
 /// 例如 arm64 只按寄存器类申报 `callee_save`，帧内保存照样成立）；本函数回答
-/// "**要那条通用指令**"——类/宽度的分派是 [`role_name_for_class`] / [`FpMovWidths`] 的事。
+/// "**要那条通用指令**"——按寄存器类分派是 [`role_name_for_class`] 的事。
 ///
 /// 为什么要分开（2026-10-01，变参 V4 实测）：同一角色一旦既有通用声明又有类限定声明
 /// （`stack_arg_store` 的整数版 + `{ …, class = "fpr" }` 的浮点版），宽松查找会在通用那条
@@ -2399,29 +2358,14 @@ pub(crate) fn inst_by_plain_role<'a>(
         i.inst
             .roles
             .iter()
-            .any(|d| d.is(role) && d.bits().is_none() && d.class().is_none())
+            .any(|d| d.is(role) && d.class().is_none())
     })
 }
 
-/// 按 **(角色, 位宽)** 查指令（v18 S9）：有宽度语义的角色（`fpr_mov`、`wide_vec_load/
-/// store`）可以声明多条，靠声明里的 `bits` 区分。
-pub(crate) fn inst_by_role_for<'a>(
-    infos: &'a [InstInfo<'a>],
-    role: Role,
-    bits: u16,
-) -> Option<&'a InstInfo<'a>> {
-    infos.iter().find(|i| {
-        i.inst
-            .roles
-            .iter()
-            .any(|d| d.is(role) && d.bits() == Some(bits))
-    })
-}
-
-/// 角色对应的指令名；缺角色 → 带角色名的错误；**同名多宽度/多类 → 明确要求按需解析**。
+/// 角色对应的指令名；缺角色 → 带角色名的错误；**同类多条 → 明确要求按需解析**。
 ///
-/// 只看**裸声明**（没写 `bits`/`class` 的那些）：写了限定就说明"这个能力按宽度或
-/// 按寄存器类分派"，调用方必须走 [`FpMovWidths`]（位宽）/ [`role_name_for_class`]（寄存器类）。
+/// 只看**裸声明**（没写 `class` 的那些）：写了限定就说明"这个能力按寄存器类分派"，
+/// 调用方必须走 [`role_name_for_class`]。
 pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String> {
     let hits: Vec<&InstInfo> = infos
         .iter()
@@ -2429,12 +2373,12 @@ pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String
             i.inst
                 .roles
                 .iter()
-                .any(|d| d.is(role) && d.bits().is_none() && d.class().is_none())
+                .any(|d| d.is(role) && d.class().is_none())
         })
         .collect();
     match hits.as_slice() {
         [] => {
-            // 没有裸声明：要么完全没申报，要么只按宽度/类申报了——把已声明的
+            // 没有裸声明：要么完全没申报，要么只按寄存器类申报了——把已声明的
             // 形状列出来，免得作者以为"写了角色却不生效"。
             let mut qualified: Vec<String> = infos
                 .iter()
@@ -2448,14 +2392,14 @@ pub(crate) fn role_name(infos: &[InstInfo], role: Role) -> Result<String, String
                 Err(format!("本 ISA 未声明 roles = [\"{role}\"] 的指令"))
             } else {
                 Err(format!(
-                    "角色 \"{role}\" 只有带限定的声明（{}）——必须按宽度（FpMovWidths/位宽表）或按寄存器类（role_name_for_class）解析",
+                    "角色 \"{role}\" 只有带类限定的声明（{}）——必须按寄存器类（role_name_for_class）解析",
                     qualified.join(" / ")
                 ))
             }
         }
         [one] => Ok(one.inst.name.clone()),
         many => Err(format!(
-            "角色 \"{role}\" 有 {} 条裸声明（{}）——同一能力要么唯一，要么写明 bits/class",
+            "角色 \"{role}\" 有 {} 条裸声明（{}）——同一能力要么唯一，要么写明 class",
             many.len(),
             many.iter()
                 .map(|i| i.inst.name.as_str())
@@ -2479,12 +2423,7 @@ pub(crate) fn role_name_for_class(
     let matches = |want: Option<crate::v12::model::RoleClass>| -> Option<String> {
         let hits: Vec<&InstInfo> = infos
             .iter()
-            .filter(|i| {
-                i.inst
-                    .roles
-                    .iter()
-                    .any(|d| d.is(role) && d.class() == want && d.bits().is_none())
-            })
+            .filter(|i| i.inst.roles.iter().any(|d| d.is(role) && d.class() == want))
             .collect();
         match hits.as_slice() {
             [one] => Some(one.inst.name.clone()),
@@ -2492,264 +2431,6 @@ pub(crate) fn role_name_for_class(
         }
     };
     matches(Some(class)).or_else(|| matches(None))
-}
-
-/// **按位宽的浮点搬移表**（v20 V6+）：ISA 用 `roles = [{ role = "fpr_mov", bits = N }]` 声明自己
-/// 能搬哪些位宽（任意 N ≥ 1，没有白名单/上限）。这里把**所有**声明收集成一张表，生成器
-/// **按结果位宽查表**发指令——**不再写死 32/64 两档**。
-///
-/// 为什么必须查表：`f32`/`f64` 只是常见取值；定宽 ISA 完全可能只有 128 位（整寄存器搬移）或只有
-/// 16 位的搬移指令。写死两档就是"为某一类 ISA 开洞"，而且多出来的位宽无处申报。
-pub(crate) struct FpMovWidths {
-    /// `(位宽, 变体名, dest 字段, src 字段, 第三槽字段)`，按位宽升序、每个位宽一条。
-    pub(crate) arms: Vec<(u16, syn::Ident, syn::Ident, syn::Ident, Option<syn::Ident>)>,
-}
-
-impl FpMovWidths {
-    pub(crate) fn collect(infos: &[InstInfo]) -> Self {
-        let mut arms = Vec::new();
-        for info in infos {
-            let bits: Vec<u16> = info
-                .inst
-                .roles
-                .iter()
-                .filter(|d| d.is(Role::FprMov))
-                .filter_map(|d| d.bits())
-                .collect();
-            if bits.is_empty() {
-                continue;
-            }
-            let f = inst_fids(infos, &info.inst.name);
-            if f.len() < 2 {
-                continue;
-            }
-            let vn = crate::v12::codegen::pascal_ident(&info.inst.name);
-            for b in bits {
-                arms.push((
-                    b,
-                    vn.clone(),
-                    (*f[0]).clone(),
-                    (*f[1]).clone(),
-                    f.get(2).map(|x| (*x).clone()),
-                ));
-            }
-        }
-        arms.sort_by_key(|a| a.0);
-        arms.dedup_by_key(|a| a.0);
-        Self { arms }
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.arms.is_empty()
-    }
-
-    /// 已声明的位宽（诊断/错误消息用）。
-    pub(crate) fn declared(&self) -> String {
-        if self.arms.is_empty() {
-            return "无".to_string();
-        }
-        self.arms
-            .iter()
-            .map(|a| a.0.to_string())
-            .collect::<Vec<_>>()
-            .join(" / ")
-    }
-
-    /// 第三槽（三操作数搬移 `fsgnj.d rd, rs, rs`，值 = 源）**是否每档都有且同名**。
-    /// `Ok(None)` = 都是两操作数；`Err` = 档与档之间不一致（谱自相矛盾，生成期就报，不猜）。
-    ///
-    /// 注意必须**逐档比对整张表**（不是"碰见 None 且此前有 Some 才报"）：两操作数那一档
-    /// 排在前面时，后出现的 Some 会让"有的没有"这条漏网（本函数初版就漏，由
-    /// `tests/fpr_mov_widths.rs` 的混用用例抓到）。
-    pub(crate) fn third_slot(&self) -> Result<Option<&syn::Ident>, String> {
-        let mut found: Option<&syn::Ident> = None;
-        let mut any_plain = false;
-        for a in &self.arms {
-            match &a.4 {
-                Some(id) => {
-                    if let Some(prev) = found
-                        && prev != id
-                    {
-                        return Err(format!(
-                            "roles = [\"fpr_mov\"] 的第三槽字段名不一致（`{prev}` vs `{id}`，位宽 {}）",
-                            a.0
-                        ));
-                    }
-                    found = Some(id);
-                }
-                None => any_plain = true,
-            }
-        }
-        if any_plain && found.is_some() {
-            return Err(
-                "roles = [\"fpr_mov\"] 的声明不一致：有的指令是两操作数、有的带第三槽".to_string(),
-            );
-        }
-        Ok(if any_plain { None } else { found })
-    }
-
-    /// 生成"按位宽分派"的构造表达式：`if <bits> == 32 { <build(arm)> } else if … `；
-    /// 未声明的位宽 ⇒ 运行期明确 `Unsupported`（列出已声明位宽，不猜、不回退）。
-    pub(crate) fn dispatch(
-        &self,
-        bits_expr: &TokenStream,
-        build: impl Fn(&(u16, syn::Ident, syn::Ident, syn::Ident, Option<syn::Ident>)) -> TokenStream,
-    ) -> TokenStream {
-        dispatch_chain(
-            bits_expr,
-            &format!(
-                "v12: 该浮点值的位宽本 ISA 的 roles = [\"fpr_mov\"] 没有声明（已声明位宽：{}）",
-                self.declared()
-            ),
-            self.arms
-                .iter()
-                .map(|a| (a.0, build(a)))
-                .collect::<Vec<_>>(),
-        )
-    }
-}
-
-/// **位宽分派链**（`FpMovWidths` / [`BankMovWidths`] 共用）：`if (<位宽>) == b { body } else { … }`，
-/// 末档是明确的 `Unsupported`（消息里列出**已声明档**，不猜、不回退）。
-///
-/// 两侧都折成 `u32` 再比：调用方传进来的位宽表达式类型不统一（`type_bits_of` 在部分路径上是
-/// `u32`、别处会拿到 `u16`），写死某一侧会编译不过；生成物带 `#[allow(warnings)]`，多余的加宽
-/// 转换不影响门禁。
-fn dispatch_chain(
-    bits_expr: &TokenStream,
-    miss_msg: &str,
-    arms: Vec<(u16, TokenStream)>,
-) -> TokenStream {
-    let mut out = quote! {
-        return Err(crate::prelude::IrError::Unsupported(format!(
-            "{}（需要的位宽 {}）", #miss_msg, #bits_expr
-        )));
-    };
-    for (b, body) in arms.into_iter().rev() {
-        out = quote! {
-            if (#bits_expr) as u32 == #b as u32 { #body } else { #out }
-        };
-    }
-    out
-}
-
-/// **类间位搬移的位宽表**（v20 V7）：把一个值的**位模式**从一类寄存器搬到另一类
-/// （`fpr_to_gpr_mov` / `gpr_to_fpr_mov`——"ABI 落点的类 ≠ 值的类"，见 [`Role::FprToGprMov`]）。
-///
-/// 与 [`FpMovWidths`] 同一套"位宽是数据"的做法（任意 N ≥ 1，生成器按**位宽**查表），差别只有
-/// 一点：两侧**不同类**，所以字段名与 Reg 槽下标都按**槽的寄存器类**取，**不按操作数位置猜**
-/// （谱可以把操作数写成任意顺序——`FMV_X_D` 是 `[dst:gpr, src:fpr]`，x86 的 `MOVQ` 家族同理）。
-pub(crate) struct BankMovWidths {
-    arms: Vec<BankArm>,
-}
-
-/// 类间位搬移的一档：FPR 侧与 GPR 侧各自的字段名 + **Reg 槽下标**（`map_reg_field` 用）。
-pub(crate) struct BankArm {
-    pub(crate) bits: u16,
-    pub(crate) vn: syn::Ident,
-    pub(crate) fpr_fid: syn::Ident,
-    pub(crate) fpr_idx: u8,
-    pub(crate) gpr_fid: syn::Ident,
-    pub(crate) gpr_idx: u8,
-}
-
-impl BankMovWidths {
-    /// 收集某张类间角色表（`role` ∈ {`FprToGprMov`, `GprToFprMov`}）。
-    pub(crate) fn collect(infos: &[InstInfo], role: Role) -> Result<Self, String> {
-        let mut arms = Vec::new();
-        for info in infos {
-            let bits: Vec<u16> = info
-                .inst
-                .roles
-                .iter()
-                .filter(|d| d.is(role))
-                .filter_map(|d| d.bits())
-                .collect();
-            if bits.is_empty() {
-                continue;
-            }
-            // 按**槽的寄存器类**分两侧（不按位置）：FPR 槽一侧、其余（GPR/多类）一侧。
-            let mut fpr: Option<(syn::Ident, u8)> = None;
-            let mut gpr: Option<(syn::Ident, u8)> = None;
-            let mut reg_i = 0u8;
-            for (_, fid, slot, _) in &info.operands {
-                if slot.kind != OperandKind::Reg {
-                    continue;
-                }
-                let idx = reg_i;
-                reg_i += 1;
-                let is_fpr = matches!(slot.class, Some(crate::v12::model::RegClass::FPR(_)));
-                if is_fpr {
-                    fpr.get_or_insert_with(|| ((*fid).clone(), idx));
-                } else {
-                    gpr.get_or_insert_with(|| ((*fid).clone(), idx));
-                }
-            }
-            let (fpr_fid, fpr_idx) = fpr.ok_or_else(|| {
-                format!(
-                    "roles = [\"{role}\"] 的指令 `{}` 缺 FPR 操作数（类间位搬移要一侧 FPR、一侧 GPR；\
-                     槽的类靠 `[[operand_slots]].class` 声明）",
-                    info.inst.name
-                )
-            })?;
-            let (gpr_fid, gpr_idx) = gpr.ok_or_else(|| {
-                format!(
-                    "roles = [\"{role}\"] 的指令 `{}` 缺 GPR 操作数（类间位搬移要一侧 FPR、一侧 GPR）",
-                    info.inst.name
-                )
-            })?;
-            let vn = crate::v12::codegen::pascal_ident(&info.inst.name);
-            for b in bits {
-                arms.push(BankArm {
-                    bits: b,
-                    vn: vn.clone(),
-                    fpr_fid: fpr_fid.clone(),
-                    fpr_idx,
-                    gpr_fid: gpr_fid.clone(),
-                    gpr_idx,
-                });
-            }
-        }
-        arms.sort_by_key(|a| a.bits);
-        arms.dedup_by_key(|a| a.bits);
-        Ok(Self { arms })
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.arms.is_empty()
-    }
-
-    /// 已声明的位宽（诊断/错误消息用）。
-    pub(crate) fn declared(&self) -> String {
-        if self.arms.is_empty() {
-            return "无".to_string();
-        }
-        self.arms
-            .iter()
-            .map(|a| a.bits.to_string())
-            .collect::<Vec<_>>()
-            .join(" / ")
-    }
-
-    /// 按位宽生成分派表达式；`build` 拿到这一档的 FPR/GPR 侧字段名与槽下标。
-    pub(crate) fn dispatch(
-        &self,
-        role: Role,
-        bits_expr: &TokenStream,
-        build: impl Fn(&BankArm) -> TokenStream,
-    ) -> TokenStream {
-        dispatch_chain(
-            bits_expr,
-            &format!(
-                "v12: 该值的位宽本 ISA 的 roles = [\"{role}\"] 没有声明（已声明位宽：{}）",
-                self.declared()
-            ),
-            self.arms
-                .iter()
-                .map(|a| (a.bits, build(a)))
-                .collect::<Vec<_>>(),
-        )
-    }
 }
 
 /// 从指令操作数结构提取语义化字段名 + Reg 操作数序号：
@@ -2778,40 +2459,31 @@ pub(crate) fn reg_mem_fids(info: &InstInfo) -> (Option<syn::Ident>, Option<syn::
     (reg, mem, reg_idx)
 }
 
-/// 收集宽向量 by-ref/sret 栈拷贝指令——按语义角色（TOML `roles` 显式声明，
-/// 不做按指令名探测）。返回 (角色 → (vn, Reg 字段名, Mem 字段名, Reg 序号),
-/// 是否五个角色齐全)。缺失 → 对应 ABI 能力 Unsupported。
-#[allow(clippy::type_complexity)]
-pub(crate) fn collect_byref_insts(
+/// 宽向量 by-ref/sret 栈拷贝的**帧内寻址**指令（角色 `frame_addr`）——
+/// "算帧内地址"这个语义操作数结构说不出来，所以它仍是角色。
+///
+/// 拷贝本身（内存 ↔ 向量寄存器）由 [`MoveTable`] **按运行期宽度**分派（v20 V8）：
+/// 谁也不写死 32/64 字节档——ISA 声明了哪些位宽的 `data_width`，就发哪些。
+pub(crate) fn byref_frame_addr(
     infos: &[InstInfo],
-) -> (
-    std::collections::HashMap<&'static str, (syn::Ident, syn::Ident, syn::Ident, u8)>,
-    bool,
-) {
-    // 键保持宿主侧既有字符串（`wide_vec_load_32` = 32 **字节** = bits 256）；`bits = 0`
-    // = 该角色无宽度语义（如 `frame_addr`），按唯一角色查。
-    const ROLES: [(&str, Role, u16); 5] = [
-        ("wide_vec_store_32", Role::WideVecStore, 256),
-        ("wide_vec_store_64", Role::WideVecStore, 512),
-        ("wide_vec_load_32", Role::WideVecLoad, 256),
-        ("wide_vec_load_64", Role::WideVecLoad, 512),
-        ("frame_rbp_addr", Role::FrameAddr, 0),
-    ];
-    let mut m = std::collections::HashMap::new();
-    for (key, role, bits) in ROLES {
-        let hit = if bits == 0 {
-            inst_by_role(infos, role)
-        } else {
-            inst_by_role_for(infos, role, bits)
-        };
-        if let Some(info) = hit
-            && let (Some(reg), Some(mem), idx) = reg_mem_fids(info)
-        {
-            m.insert(key, (info.vn.clone(), reg, mem, idx));
-        }
-    }
-    let ok = m.len() == ROLES.len();
-    (m, ok)
+) -> Option<(syn::Ident, syn::Ident, syn::Ident, u8)> {
+    let info = inst_by_role(infos, Role::FrameAddr)?;
+    let (reg, mem, idx) = reg_mem_fids(info);
+    Some((info.vn.clone(), reg?, mem?, idx))
+}
+
+/// by-ref/sret 栈拷贝可用性：**两侧的内存搬运 + 帧地址**齐了才算（缺一个 ⇒
+/// 对应 ABI 能力在生成物里明确 `Unsupported`）。
+pub(crate) fn has_byref_insts(moves: &MoveTable, infos: &[InstInfo]) -> bool {
+    let store = Want {
+        dst: Shape::Mem,
+        src: Shape::Reg(Bank::Fpr),
+    };
+    let load = Want {
+        dst: Shape::Reg(Bank::Fpr),
+        src: Shape::Mem,
+    };
+    moves.has(&store) && moves.has(&load) && byref_frame_addr(infos).is_some()
 }
 
 /// 展开一条 lowering 模板（符号化操作数）为指令构造语句序列。

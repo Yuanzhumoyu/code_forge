@@ -167,7 +167,7 @@ asm = "mov {dst}, {src}"
 [[instructions]]
 name = "MOV64"
 ref = "mov"
-roles = ["gpr_mov"]
+data_width = 64
 form = "RR"
 opcode = 0x22
 ops = ["dst:r64:out", "src:r64"]

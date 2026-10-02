@@ -258,7 +258,7 @@ rows = [
 # ADDI 复制（收参用）；与 ADDI 同编码（imm=0），解码首匹配
 [[instructions]]
 name = "MOV_RM8_R64"
-roles = ["gpr_mov"]
+data_width = 64
 form = "I"
 opcode = 0x13
 fields = { funct3 = 0 }
@@ -275,11 +275,11 @@ opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x10 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnj.s {dst}, {src}, {src2}"
-# `fpr_mov`（32 位）：`fsgnj.s rd, rs, rs` 就是寄存器搬移（汇编伪指令 `fmv.s`）。
+# 寄存器搬移（32 位）：`fsgnj.s rd, rs, rs`（汇编伪指令 `fmv.s`）——`data_width = 32`
 # 生成器按**位宽表**取这条角色（`FpMovWidths`），三操作数时自动把第三槽也填成源。
-roles = [{ role = "fpr_mov", bits = 32 }]
+data_width = 32
 
-# 双精度版的 `fpr_mov`：`fsgnj.d rd, rs, rs`（伪指令 `fmv.d`）。2026-10-01 补：
+# 双精度档：`fsgnj.d rd, rs, rs`（伪指令 `fmv.d`）——`data_width = 64`。2026-10-01 补：
 # 此前谱里只有单精度 `FSGNJ_S`，f64 的寄存器搬移无处申报 ⇒ riscv 的浮点参数/返回/变参的
 # 浮点支**全部编不出来**（矩阵里三条浮点用例因此 Skip）。
 [[instructions]]
@@ -289,7 +289,7 @@ opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x11 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnj.d {dst}, {src}, {src2}"
-roles = [{ role = "fpr_mov", bits = 64 }]
+data_width = 64
 
 [[instructions]]
 name = "FSGNJN_S"
@@ -350,7 +350,7 @@ asm = "fmv.w.x {dst}, {src}"
 # 场合——psABI 的**整数约定收浮点**：RISC-V 的变参一律按整数约定传（浮点也不例外，见
 # `docs/plans/varargs-plan.md` §5）、Zfinx/软浮点约定。缺这条角色 ⇒ 那条落点在生成物里
 # fail-closed（拿同类搬移顶上会把 FPR 的号当 GPR 号用 = **静默错值**）。
-roles = [{ role = "gpr_to_fpr_mov", bits = 32 }]
+data_width = 32
 
 [[instructions]]
 name = "FCVT_W_D_RTZ"
@@ -423,7 +423,7 @@ opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x79 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.d.x {dst}, {src}"
-roles = [{ role = "gpr_to_fpr_mov", bits = 64 }]
+data_width = 64
 
 [[instructions]]
 name = "FLD"
@@ -1303,7 +1303,7 @@ insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "X
 
 # ── 浮点算术（v20 V6+ 补，2026-10-01）──
 # 此前 riscv 谱只有浮点的比较/转换/搬移，没有算术 ⇒ 矩阵里所有浮点算术用例都因
-# "缺 Fadd 能力"整条跳过（`MATRIX-SKIP … (capability)`）。补上 `fpr_mov`（收参/返回/
+# "缺 Fadd 能力"整条跳过（`MATRIX-SKIP … (capability)`）。补上浮点寄存器搬移的 `data_width`（收参/返回/
 # 实参都能发指令）之后，这几条让浮点路径**真的跑起来**（QEMU 通道真执行）。
 # 单/双精度按源位宽分派——与 `Fcmp`/`Fptosi` 同一套口径（`rs1_width`）。
 [[lowering]]
@@ -1854,9 +1854,9 @@ rows = [
 name = "FMV_X"
 body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr"], asm = "fmv.x.{p.lower} {dst}, {src}" }
 rows = [
-  # `fpr_to_gpr_mov`：FPR 的位模式 → GPR（类间位搬移，见 `FMV_W_X` 上的注释）。
-  { inst = "FMV_X_W", p = "W", funct7 = 0x70, roles = [{ role = "fpr_to_gpr_mov", bits = 32 }] },
-  { inst = "FMV_X_D", p = "D", funct7 = 0x71, roles = [{ role = "fpr_to_gpr_mov", bits = 64 }] },
+  # FPR 的位模式 → GPR（类间位搬移，见 `FMV_W_X` 上的注释）——`data_width` 说宽度。
+  { inst = "FMV_X_W", p = "W", funct7 = 0x70, data_width = 32 },
+  { inst = "FMV_X_D", p = "D", funct7 = 0x71, data_width = 64 },
 ]
 [[templates]]
 name = "AMOADD"

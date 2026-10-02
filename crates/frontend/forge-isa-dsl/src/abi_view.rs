@@ -45,14 +45,14 @@ pub struct RegEntry {
     pub pinned: bool,
 }
 
-/// 一个角色族的声明情况。
+/// 一个能力族的声明情况（键 = 引擎侧能力名，见 [`role_capability`]）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoleInfo {
-    /// 是否有"无宽度语义"的声明（`roles = ["gpr_mov"]`）。
+    /// 是否有"无宽度语义"的声明（`roles = ["call"]`；搬运族按 `data_width` 报 `bits`）。
     pub widthless: bool,
     /// 有宽度语义的声明集合（位；如 `fpr_mov` 的 32/64）。
     pub bits: BTreeSet<u16>,
-    /// 声明该角色的指令名（排序，诊断用；最多留 [`MAX_ROLE_INSTS`] 条）。
+    /// 提供该能力的指令名（排序，诊断用；最多留 [`MAX_ROLE_INSTS`] 条）。
     pub insts: Vec<String>,
 }
 
@@ -79,8 +79,8 @@ pub struct MachineView {
     /// GPR / FP 区大小。
     pub n_gpr: u32,
     pub n_fp: u32,
-    /// 角色 → 声明情况。
-    pub roles: BTreeMap<String, RoleInfo>,
+    /// 能力 → 声明情况（键 = 引擎侧能力名；含角色声明与搬运族派生两部分）。
+    pub roles: BTreeMap<&'static str, RoleInfo>,
     /// 视图自身的说明（例如被丢掉的越界别名）。
     pub notes: Vec<String>,
 }
@@ -239,20 +239,39 @@ pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String>
         }
     }
 
-    // ── 角色 ──
-    let mut roles: BTreeMap<String, RoleInfo> = BTreeMap::new();
+    // ── 能力 ──
+    //
+    // 条目键 = **引擎侧的能力名**（`forge_abi::Capability::name()`），两个来源：
+    //
+    // 1. 角色声明（`roles = ["call"]` → "call"）：操作数结构**说不出来**的语义
+    //    （调用/返回/跳转/帧/栈参数/保存恢复）；
+    // 2. **搬运族派生**（v20 V8）：`data_width` + 操作数结构 → 方向/寄存器族/宽度，
+    //    与生成器**同一张表**（`v12/codegen/moves.rs`）——ISA 不再手写
+    //    `gpr_mov`/`fpr_mov`/`vec_mov`/`gpr_mov_imm`/`fpr_to_gpr_mov`/
+    //    `gpr_to_fpr_mov`/`wide_vec_move`。
+    let mut roles: BTreeMap<&'static str, RoleInfo> = BTreeMap::new();
     for inst in &model.instructions {
         for decl in &inst.roles {
-            let key = decl.role().to_string();
-            let e = roles.entry(key).or_default();
-            match decl.bits() {
-                Some(b) => {
-                    e.bits.insert(b);
-                }
-                None => e.widthless = true,
-            }
+            let Some(cap) = role_capability(decl.role()) else {
+                continue;
+            };
+            let e = roles.entry(cap).or_default();
+            e.widthless = true;
             if e.insts.len() < MAX_ROLE_INSTS && !e.insts.contains(&inst.name) {
                 e.insts.push(inst.name.clone());
+            }
+        }
+    }
+    if let Ok(infos) = crate::v12::codegen::collect_inst_infos(model)
+        && let Ok(moves) = crate::v12::codegen::moves::MoveTable::collect(&infos)
+    {
+        for (cap, bits, insts) in moves.capabilities() {
+            let e = roles.entry(cap).or_default();
+            e.bits.insert(bits);
+            for name in insts {
+                if e.insts.len() < MAX_ROLE_INSTS && !e.insts.contains(&name) {
+                    e.insts.push(name);
+                }
             }
         }
     }
@@ -284,23 +303,16 @@ fn group_names_of(model: &V12Model, rc: RegClass) -> Result<Vec<String>, String>
 }
 
 /// 角色 → 引擎需要的能力名（`None` = 该角色不参与 ABI 的寄存器搬运）。
+///
+/// **搬运族不在这个表里**（v20 V8）：它们的宽度/方向/寄存器族由指令的
+/// `data_width` + 操作数结构派生（`v12/codegen/moves.rs`），
+/// `MachineView::roles` 直接按派生出的能力名登记。
 pub fn role_capability(role: Role) -> Option<&'static str> {
     Some(match role {
-        Role::GprMov | Role::RetMov => "gpr_mov",
-        // 立即数 → 整数寄存器（v20 V7）：SysV 的变参元信息寄存器 `%al` 要按调用点布局写一个
-        // 运行期算出来的数（"用了几个向量寄存器"）。
-        Role::GprMovImm => "gpr_mov_imm",
-        Role::FprMov => "fpr_mov",
-        // 类间位搬移（v20 V7）：capability 视图里报同一族名字，两个方向分开报——
-        // `abi check` 的"这台机器做不了"清单因此能指出**缺的是哪个方向**。
-        Role::FprToGprMov => "fpr_to_gpr_mov",
-        Role::GprToFprMov => "gpr_to_fpr_mov",
-        Role::VecMov => "vec_mov",
         Role::FrameAlloc | Role::FrameFree => "sp_adjust",
         Role::StackArgLoad => "stack_arg_load",
         Role::StackArgStore => "stack_arg_store",
         Role::FrameAddr => "frame_addr",
-        Role::WideVecLoad | Role::WideVecStore => "wide_vec_move",
         Role::Call => "call",
         Role::CallIndirect => "call_indirect",
         Role::Ret => "ret",
@@ -323,25 +335,20 @@ pub fn role_capability(role: Role) -> Option<&'static str> {
 
 /// 这类视图里"声明了哪些能力"（能力名 → 位宽），给 CLI 与宿主适配器用。
 ///
-/// **无宽度语义**的角色（`roles = ["gpr_mov"]`）在引擎侧是"声明了，宽度按目标"，
-/// 这里按**地址宽**折算成位（x86 = 64）——引擎的能力查询需要的是"能不能做 + 做多宽"。
+/// 表键已经是**能力名**（角色声明按 [`role_capability`] 折算，搬运族由派生登记）。
+/// 无宽度语义的条目（如 `call`）在引擎侧是"声明了，宽度按目标"，这里按**地址宽**
+/// 折算成位（x86 = 64）——引擎的能力查询要的是"能不能做 + 做多宽"。
 pub fn declared_capabilities(view: &MachineView) -> BTreeMap<&'static str, u16> {
     let default_bits = (view.regs.first().map(|r| r.width).unwrap_or(8) as u16) * 8;
     let mut out: BTreeMap<&'static str, u16> = BTreeMap::new();
-    for (role_name, info) in &view.roles {
-        let Some(role) = role_from_name(role_name) else {
-            continue;
-        };
-        let Some(cap) = role_capability(role) else {
-            continue;
-        };
+    for (cap, info) in &view.roles {
         let bits = info
             .bits
             .iter()
             .next_back()
             .copied()
             .unwrap_or(default_bits);
-        let e = out.entry(cap).or_insert(bits);
+        let e = out.entry(*cap).or_insert(bits);
         *e = (*e).max(bits);
     }
     out
@@ -350,10 +357,6 @@ pub fn declared_capabilities(view: &MachineView) -> BTreeMap<&'static str, u16> 
 /// 角色名（`Display` 的 snake_case）→ `Role`。
 pub fn role_from_name(name: &str) -> Option<Role> {
     Some(match name {
-        "gpr_mov" => Role::GprMov,
-        "ret_mov" => Role::RetMov,
-        "fpr_mov" => Role::FprMov,
-        "vec_mov" => Role::VecMov,
         "call" => Role::Call,
         "call_indirect" => Role::CallIndirect,
         "ret" => Role::Ret,
@@ -368,8 +371,6 @@ pub fn role_from_name(name: &str) -> Option<Role> {
         "callee_save" => Role::CalleeSave,
         "callee_load" => Role::CalleeLoad,
         "epilogue_jump" => Role::EpilogueJump,
-        "wide_vec_store" => Role::WideVecStore,
-        "wide_vec_load" => Role::WideVecLoad,
         "frame_addr" => Role::FrameAddr,
         "stack_arg_load" => Role::StackArgLoad,
         "stack_arg_store" => Role::StackArgStore,

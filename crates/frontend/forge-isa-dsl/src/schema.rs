@@ -229,6 +229,7 @@ pub const SECTIONS: &[Section] = &[
             "when",
             "effect",
             "roles",
+            "data_width",
             "implicit_regs",
             "reloc",
             "width",
@@ -242,7 +243,7 @@ pub const SECTIONS: &[Section] = &[
         // 编码键是 `#[serde(flatten)]` 的 EncKeys：直接在指令上写（不写 `enc = {...}`）。
         flatten: ENC_KEYS,
         additional: false,
-        doc: "指令：编码键可与 form 预设混用（指令优先）",
+        doc: "指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据）",
     },
     Section {
         path: "[[templates]]",

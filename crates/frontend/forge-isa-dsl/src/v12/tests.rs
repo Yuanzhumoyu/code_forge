@@ -3155,7 +3155,7 @@ roles = ["ret"]
 asm = "nop"
 [[instructions]]
 name = "MOV"
-roles = ["gpr_mov"]
+data_width = 64
 form = "RR"
 opcode = 16
 ops = ["dst:g:out", "src:g"]

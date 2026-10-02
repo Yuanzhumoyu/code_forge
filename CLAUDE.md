@@ -490,26 +490,25 @@ let name = node.get_text("name")?;
   守卫 = `crates/frontend/forge-isa-dsl/tests/machine_shape_table.rs`（钉"8 个方法体零
   `Inst::` 臂" + "形状表与两个访问器覆盖同一批变体、行数 = 变体数"）；实测数字见
   `docs/performance/bench_baseline.md` 的「S8a 落地度量」（`tm` −12~26%，整模块 −7.5~12.9%）。
-- **角色声明带宽度（v18 S9）**：`[[instructions]].roles` 的条目有两种写法——`"gpr_mov"`
-  （无宽度语义，全 ISA 唯一）与 `{ role = "fpr_mov", bits = 32 }`（**有宽度语义**：同角色
-  可多条，按 (角色, 位宽) 唯一，单位是**位**，**任意 N ≥ 1、无白名单**）。
-  生成器把**所有**声明收成一张**位宽表**（`lowering.rs::FpMovWidths`：`(位宽, 变体, dest 槽,
-  src 槽, 第三槽?)`，v20 V6+）——发射点只说"这次要搬多少位"，由表生成 N 路分派；
-  选不到就明确 `Unsupported`（消息带请求位宽 + 已声明的位宽集合），三操作数搬移自动填第三槽。
-  **旧 API `role_name_for(role, bits)` 已删除**（它的调用点必须写死一个宽度常量，正是
-  "32/64 硬编码"的来源）。同角色同宽度重复、或同一角色一处写 `bits` 一处不写 ⇒ `validate` 报错。
-  **不要把位宽编进角色名**（S9 之前是 `fpr_mov_f32`/`wide_vec_load_64` 这类，别的位宽的
-  ISA 无法接入；`MOVSS`/`MOVSD` 共用 `fpr` 槽，槽也分不出 32/64——宽度必须在声明里）。
-  守卫 `crates/frontend/forge-isa-dsl/tests/role_widths.rs`（真实谱变异：16/24 位合法、
-  同 (角色,位宽) 冲突必报）与 `tests/fpr_mov_widths.rs`（把 x86 的两档换成 16/128 ⇒ 生成物里
-  只该出现这两档，写死的 32/64 一个不留）；角色表见 `docs/reference/isa-dsl.md`。
-- **类间位搬移（v20 V7）**：`fpr_to_gpr_mov` / `gpr_to_fpr_mov`——把一个值的**位模式**从一类
-  寄存器搬到另一类（不做数值转换），用于"ABI 落点的类与**值本身的类**不同"（psABI 的整数约定
-  收浮点：RISC-V 变参、Zfinx/软浮点约定）。发射侧按 **落点的类 × 值所在的池** 四路分派
-  （调用点在 `lowering.rs::arg_move_loop`、被调方在 `frame.rs` 的收参；两侧方向相反）；
-  **缺该角色 ⇒ 生成物里 fail-closed**——旧行为是把 FPR 的号当 GPR 号用（静默错值）。
-  守卫 `crates/frontend/forge-isa-dsl/tests/bank_mov_roles.rs` 与
-  `crates/backend/forge-codegen/tests/bank_mov.rs`（合成约定"浮点判给 int 池"走真实管线）。
+- **搬运族派生（v20 V8，取代 v18 S9 的"角色带宽度"与 v20 V7 的类间搬移角色）**：
+  **搬运指令不再写角色**——`gpr_mov`/`gpr_mov_imm`/`ret_mov`/`fpr_mov`/`vec_mov`/
+  `fpr_to_gpr_mov`/`gpr_to_fpr_mov`/`wide_vec_load`/`wide_vec_store` 九个角色与
+  `RoleDecl.bits` **已整条删除**。ISA 只在指令上写 `data_width = <位>`（**数据宽度**，
+  与 `width` = 指令字长是两件事），其余全部由操作数结构派生：
+  ① 方向 = 槽角色（`out`/`inout` = 目的、`in` = 来源）；② 寄存器族 = 槽的
+  `class`/`classes`（`RegClass` 自带 `GPR`/`FPR`/`VEC`/`KReg`）；③ 立即数/寄存器/内存 =
+  槽的 `kind`。选指令 = 按 **(目的形状 × 来源形状 × 位宽)** 查表（`v12/codegen/moves.rs`
+  的 `MoveTable`，**唯一实现**，生成器四处发射点与 `abi_view`/生成物 `role_bits` 同源）：
+  寄存器/立即数来源取**最窄覆盖者**（整寄存器搬移对更窄的值同样正确），涉及内存取**精确**
+  宽度；同形状同宽度多条候选 ⇒ **生成期报错并列出候选**（不设"钉选"注解）；一条都没有 ⇒
+  生成物里 fail-closed。三操作数形态（riscv `fsgnj.d rd, rs, rs`）的**第三槽自动填成源**，
+  store（目的在内存，`mem:mem:out`）同样成立。**为什么宽度仍要人写**：`MOVSS`/`MOVSD`
+  共用 `fpr16` 槽、`FSGNJ_S`/`FSGNJ_D` 共用 `fpr4` 槽——槽分不出 32/64，宽度不在结构里。
+  **为什么 `stack_arg_*`/`callee_save|load` 仍是角色**：它们与彼此形状一模一样，只有用途
+  不同（用途不在操作数结构里）。守卫 `crates/frontend/forge-isa-dsl/tests/move_derive.rs`
+  （位宽是数据 / 第三槽 / 缺搬运 fail-closed / 歧义报错 / 坏形状报错 / 发行谱零搬运角色）与
+  `crates/backend/forge-codegen/tests/bank_mov.rs`（合成约定"浮点判给 int 池"走真实管线）；
+  规范见 `docs/reference/isa-dsl.md` 的「`roles` 语义角色」。
 - **谓词属性：按需 + 无名字分派（v18 S8b-1 / S8d）**：`gen_lowering_attrs` 生成的属性源
   在生成物里**只发射一次**（放在 `lower_inst` 的 `match op` 之前；跟着 op 臂走 = 每个
   op 重复一份 2.5 KB，x86 曾 100 份 = 243 KB），并且是

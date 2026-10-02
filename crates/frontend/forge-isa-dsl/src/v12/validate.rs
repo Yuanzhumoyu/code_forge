@@ -216,6 +216,7 @@ pub fn validate_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags, opts: &Validat
     collect(d, idx, validate_operand_slots(m));
     collect(d, idx, validate_forms(m));
     validate_instructions_all(m, idx, d);
+    validate_move_widths(m, idx, d);
     collect(d, idx, validate_references(m));
     validate_lowering_all(m, idx, d);
     collect(d, idx, validate_patterns(m));
@@ -1434,45 +1435,49 @@ fn form_exists(m: &V12Model, name: &str) -> bool {
 
 // ──────────────────── [[instructions]] ────────────────────
 
-/// 一条角色声明在"唯一性"检查里的身份：**(位宽, 寄存器类限定, 指令名)**。
-type RoleOwner<'a> = (Option<u16>, Option<crate::v12::model::RoleClass>, &'a str);
+/// 一条角色声明在"唯一性"检查里的身份：**(寄存器类限定, 指令名)**。
+type RoleOwner<'a> = (Option<crate::v12::model::RoleClass>, &'a str);
 
 /// 逐条收集：角色唯一性 + 重名（整表层）各报一次，然后**每条指令**各报一条。
 ///
 /// 重名诊断由 `DeclIndex` 自动附注"同名声明也出现在 行:列"（S1 新增能力）。
+/// **搬运族的宽度体检**（v20 V8）：`data_width` 只能写在**纯搬运**指令上
+/// （一个目的槽 + 一个来源槽）。判定只有一处实现——`moves::MoveTable::collect`，
+/// 这里只是把它的错误搬成诊断（免得"写了 `data_width` 却不生效"要等到生成期才炸）。
+fn validate_move_widths(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
+    let Ok(infos) = crate::v12::codegen::collect_inst_infos(m) else {
+        return; // 更基础的错误（槽引用/编码键）已在别处报过
+    };
+    if let Err(msg) = crate::v12::codegen::moves::MoveTable::collect(&infos) {
+        d.push_anchored(idx, &msg);
+    }
+}
+
 fn validate_instructions_all(m: &V12Model, idx: &DeclIndex, d: &mut Diags) {
-    // 角色唯一性（v18 S9；v20 A6 加类轴）：键是 **(角色, 位宽, 类限定)**——
-    // 有宽度语义的角色（`roles = [{ role = "fpr_mov", bits = 32 }]`）靠 `bits` 区分，
+    // 角色唯一性（v18 S9；v20 A6 加类轴；v20 V8 去掉宽度轴）：键是 **(角色, 类限定)**——
     // 有类语义的角色（`roles = [{ role = "callee_save", class = "fpr" }]`）靠 `class`
-    // 区分（arm64 的帧内保存：GPR 走 STURX、FPR 走 STURD）；两个轴都空 = 裸声明，
-    // 仍旧全 ISA 唯一。同一角色一处写限定、一处不写 = 歧义，也拒绝。
+    // 区分（arm64 的帧内保存：GPR 走 STURX、FPR 走 STURD）；类限定为空 = 裸声明，
+    // 仍旧全 ISA 唯一。**宽度不再是角色的一部分**（搬运族改由指令的 `data_width`
+    // 派生，见 `v12/codegen/moves.rs`）。
     let mut role_owner: std::collections::BTreeMap<Role, Vec<RoleOwner<'_>>> = Default::default();
     for inst in &m.instructions {
         for r in &inst.roles {
             role_owner
                 .entry(r.role())
                 .or_default()
-                .push((r.bits(), r.class(), inst.name.as_str()));
+                .push((r.class(), inst.name.as_str()));
         }
     }
     for (role, owners) in &role_owner {
-        for (i, (bits, class, name)) in owners.iter().enumerate() {
-            for (obits, oclass, oname) in &owners[i + 1..] {
-                if bits == obits && class == oclass {
+        for (i, (class, name)) in owners.iter().enumerate() {
+            for (oclass, oname) in &owners[i + 1..] {
+                if class == oclass {
                     d.push_anchored(
                         idx,
                         &format!(
                             "[[instructions.{name}]]: 角色 \"{role}\" 与 {oname} 冲突——\
-                             同角色同位宽同类限定只能有一条声明（不同位宽请写 `bits`，\
-                             不同寄存器类请写 `class`）"
-                        ),
-                    );
-                } else if bits.is_none() != obits.is_none() && class == oclass {
-                    d.push_anchored(
-                        idx,
-                        &format!(
-                            "[[instructions.{name}]]: 角色 \"{role}\" 与 {oname} 冲突——\
-                             同一角色不能一处写 `bits`、一处不写"
+                             同角色同类限定只能有一条声明（不同寄存器类请写 `class`；\
+                             搬运族的宽度不写在角色上，见指令的 `data_width`）"
                         ),
                     );
                 }

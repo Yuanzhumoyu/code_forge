@@ -124,7 +124,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.mem]` | `template` | — | 内存操作数文本模板（缺省 x86 `[{base}+{index}*{scale}+{disp}]`） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
-| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先） |
+| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
@@ -698,42 +698,52 @@ serde 报错）。`MachineInst::is_branch/is_call/is_ret/is_move` 与 `effects()
 **全部从 effect 标签派生**——生成器**不以指令名作判断依据**。`Move` = 纯 reg→reg
 copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `Pure`。
 
-**`roles` 语义角色**（S4，v18 S9 起支持带宽度声明）：指令声明自己担任的 ABI/帧/参数
-角色，生成器按角色查指令，取代 `[abi]` 的 13 个 `*_inst` 名指针与 v14 的 `tags`
-字符串标签。
+**`roles` 语义角色**（S4）：指令声明自己担任的 ABI/帧/参数角色，生成器按角色查指令，
+取代 `[abi]` 的 13 个 `*_inst` 名指针与 v14 的 `tags` 字符串标签。
 
-条目有三种写法，**同一个机制**：
+**搬运族不再是角色**（v20 V8）：`gpr_mov`/`gpr_mov_imm`/`ret_mov`/`fpr_mov`/`vec_mov`/
+`fpr_to_gpr_mov`/`gpr_to_fpr_mov`/`wide_vec_load`/`wide_vec_store` 九个手写角色**已删除**。
+一条搬运指令的四个事实里，三个本来就在操作数结构里：
 
-- `"gpr_mov"` —— 裸声明：无宽度、无类语义，全 ISA 唯一（validate 强制），
-  并且**两类寄存器都能用**（按类解析时的兜底）；
-- `{ role = "fpr_mov", bits = 32 }` —— **有宽度语义**的角色：同角色可以有多条声明，
-  靠 `bits`（**位宽**，与 `opsize`/`[encoding].bits` 同单位）区分，(角色, 位宽) 唯一。
-  x86 的 `MOVSS`/`MOVSD` 就是这种：两者共用 `fpr` 槽，槽本身分不出 32/64，
-  因此宽度必须写在角色声明上（v18 S9 之前是把它编进角色名 `fpr_mov_f32`/`_f64`，
-  其它位宽的 ISA 无法接入）。**位宽不受限**（任意 N ≥ 1：16、24、128…… 都合法）——
-  生成器把**所有**声明收成一张位宽表（`FpMovWidths`），按"这次要搬多少位"逐档分派；
-  表里没有该位宽 ⇒ 生成物里明确 `Unsupported` 并**列出已声明档**，不猜、不回退
-  （守卫 `crates/frontend/forge-isa-dsl/tests/fpr_mov_widths.rs`：把 x86 的两档改成
-  16/128 后，生成物里只该出现这两档）。搬移是**三操作数**形态
-  （riscv `fsgnj.d rd, rs, rs`）时，生成器自动把第三槽填成源。
+| 事实 | 来源 |
+| --- | --- |
+| 谁进谁出（方向） | 槽角色：`out`/`inout` = 目的，`in` = 来源 |
+| 哪个寄存器族 | 槽的 `class`/`classes`（`RegClass` 自身带 `GPR`/`FPR`/`VEC`/`KReg`） |
+| 立即数 / 寄存器 / 内存 | 槽的 `kind` |
+| **数据宽度** | **不在结构里 ⇒ 写 [`data_width`](#instructions--指令)** |
+
+所以只要在指令上写 `data_width = <位>`，生成器就把它当成"一条搬这么多位的搬运"，
+按调用点的 **(目的形状 × 来源形状 × 位宽)** 选指令：
+
+- 请求 = `Reg(GPR)` / `Reg(FPR)` / `Imm` / `Mem` 的组合，加上"这次要搬多少位"
+  （值的 IR 类型给出）；
+- 来源是**寄存器或立即数**时取**最窄的覆盖者**（整寄存器搬移对更窄的值同样正确——
+  x86 的 `mov rax, rcx` 搬 `i32` 实参不丢低位）；**涉及内存**时要求**精确**宽度
+  （用 512 位的 load 取 256 位的槽会越过槽界）；
+- 同一形状 + 同一位宽有**多条候选** ⇒ 生成期报错并**列出候选**（歧义由作者消歧，
+  不设"钉选"注解——那就是第二套机制）；
+- 该形状一条都没有 ⇒ 生成物里 fail-closed `Unsupported`（不退化、不猜）。
+
+x86 的 `MOVSS`/`MOVSD`（共用 `fpr16` 槽）、riscv 的 `FSGNJ_S`/`FSGNJ_D`（共用 `fpr4` 槽）
+正是"宽度只能写出来"的例子——槽分不出 32/64。三操作数形态（riscv `fsgnj.d rd, rs, rs`）
+的**第三槽自动填成源**（额外的 `in` 寄存器槽都拿同一个源）；内存操作数当目的（store）也
+自然成立（`mem:mem:out`）。守卫 `crates/frontend/forge-isa-dsl/tests/move_derive.rs`
+（位宽是谱的数据 / 第三槽 / 缺搬运 fail-closed / 歧义报错 / 坏形状报错 / 发行谱零搬运角色）。
+
+非搬运的角色条目有两种写法：
+
+- `"call"` —— 裸声明：无限定，全 ISA 唯一（validate 强制）；
 - `{ role = "callee_save", class = "fpr" }` —— **有寄存器类语义**的角色
   （v20 A6）：同一个能力在 GPR 与 FPR 上要用**不同指令**时分开申报，
-  靠 `class`（`"gpr"`/`"fpr"`）区分，(角色, 位宽, 类) 唯一。arm64 的帧内保存就是
+  靠 `class`（`"gpr"`/`"fpr"`）区分，同类唯一。arm64 的帧内保存就是
   这种：`STURX` 裸声明管 GPR、`STURD` 声明 `class = "fpr"` 管 FPR（AAPCS64 的
   v8-v15 低 64 位必须由被调方保存）。**裸声明与该类的声明可以共存**——裸的那条是
   另一类的兜底，只有"同一个类声明了两条"才是冲突。
 
-键可以同时给（`{ role, bits, class }`），两个轴正交。
-
-完整角色枚举：
+完整角色枚举（**语义角色**——操作数结构说不出来、必须人写的那部分）：
 
 | 角色 | 语义 |
 | --- | --- |
-| `gpr_mov` | 整数寄存器移动（收参 / Copy / 溢出前搬运） |
-| `ret_mov` | 返回值 → 返回寄存器移动 |
-| `fpr_mov` | 标量浮点寄存器移动（**宽度写在声明里**：`bits = N`，任意 N ≥ 1；生成器按位宽表逐档分派，三操作数形态自动填第三槽） |
-| `fpr_to_gpr_mov` / `gpr_to_fpr_mov` | **类间位搬移**（v20 V7）：把一个值的**位模式**从一类寄存器搬到另一类（**不做数值转换**；方向写在角色名里，宽度同样写在声明里）。用于"ABI 落点的寄存器类与**值本身的类**不同"——psABI 的**整数约定收浮点**：RISC-V 变参（定本：变参实参一律按整数约定传）、Zfinx/软浮点约定。riscv `fmv.x.d`/`fmv.d.x`、x86 `MOVQ`/`MOVD`。**缺这条 ⇒ 该落点 fail-closed**（拿同类搬移顶上会把 FPR 的号当 GPR 号用 = 静默错值），守卫 `tests/bank_mov_roles.rs` + `forge-codegen/tests/bank_mov.rs` |
-| `vec_mov` | ≤16B 向量按值全宽移动（x86 MOVAPS） |
 | `call` / `call_indirect` | 直接 / 间接调用 |
 | `ret` / `jump` / `branch` | 返回 / 无条件跳转 / 条件分支 |
 | `test` | 条件测试（Branch 的 test-cond 序列） |
@@ -742,11 +752,13 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | `frame_set` | 建立/恢复帧指针（`in`=源、`out`=目标，可带 imm） |
 | `callee_save` / `callee_load` | 帧内保存/恢复寄存器（Reg[0]=值、Reg[1]=基址、Imm[0]=偏移）；可按寄存器类限定（`{ role = "callee_save", class = "fpr" }`：GPR/FPR 用不同指令时各申报一条，循环按寄存器类选） |
 | `epilogue_jump` | 尾声跳转（缺省用 `jump`） |
-| `wide_vec_store` | 宽向量 by-ref 调用方栈拷贝 store（宽度写在声明里：`bits = 256`/`512`） |
-| `wide_vec_load` | 宽向量 by-ref/sret 收参与回读 load（同上） |
 | `frame_addr` | 帧内 `[FP+disp]` 地址计算（sret/by-ref 临时槽） |
 | `stack_arg_load` / `stack_arg_store` | 栈参数收参 load / 传参 store；**可按寄存器类限定**（`{ role = "stack_arg_store", class = "fpr" }`：整数 store 与浮点 store 是两条指令）。**两种形状都行**（v20 V6+）：`Reg+Mem`（x86 `MOV64_MR`/`MOV64_RM`，Mem 槽填 `MemRef{base, disp}`）或 `值Reg+基址Reg+位移Imm`（RISC-V S 形式 `SD {src}, {imm}({src2})`——没有 Mem 槽的定宽 ISA 用这种；基址填机器的帧/栈基址、位移填偏移） |
 
+> **为什么"存到栈"仍要角色、而"搬一个值"不要**：`stack_arg_store` 与 `callee_save`
+> 的形状**一模一样**（都是"把寄存器写进内存"），只有**用途**不同——用途不在操作数结构里，
+> 所以必须人写。搬运族没有这个问题：一条 `mov` 就是一条 `mov`。
+>
 > **变参不再要角色**（v20 V6）：`va_start`/`va_arg` 由管线按约定数据展开成显式 IR
 > （`forge-codegen/src/pipeline/va_expand.rs`），生成器没有变参专用臂、谱也不申报任何
 > 变参能力（V4 时代的 `ptr_load`/`ptr_store`/`add_imm`/`fpr_narrow` 已删除）。
@@ -754,10 +766,10 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 角色缺失 → 明确的 `Unsupported("<角色> 未声明")`，不再静默去查一个别的 ISA 的
 指令名（v14 靠 `unwrap_or_else(|| "MOV_RM8_R64")` 兜底，共 16 处 x86 硬编码）。
 
-宽向量 by-ref/sret 的 load/store 由 **ISA 自行选定变体**：把角色打在你想要的那条
-指令上即可（x86 打在非对齐 `VMOVUPS_RM` / `VMOVUPS_ZMM_MEM` / `VMOVUPS_MR` /
-`VMOVUPS_ZMM_MR` 上）——生成器只认角色，**不按指令名探测、也不做"非对齐优先/对齐
-兜底"的隐式回退**（那样等于把某个 ISA 的指令名约定写进通用生成器）。
+宽向量 by-ref/sret 的栈拷贝**不挑变体**：生成器按参数 IR 类型的字节宽向派生表要一条
+（内存形状 ⇒ 精确宽度），ISA 把 `data_width` 打在自己选定的那条指令上即可（x86 打在非对齐
+`VMOVUPS_RM`/`VMOVUPS_MR`/`VMOVUPS_ZMM_MEM`/`VMOVUPS_ZMM_MR` 上）——**不按指令名探测、
+也不做"非对齐优先/对齐兜底"的隐式回退**（那样等于把某个 ISA 的指令名约定写进通用生成器）。
 
 **`reloc`**（引用名，v18 S3d）：指令声明它用哪个 `[[reloc]]` 表项；语义与绑定槽都在表里
 （见下节）。生成器据此发 encoder 重定位臂，不按指令名特判。

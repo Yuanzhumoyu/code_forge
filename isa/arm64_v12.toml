@@ -743,7 +743,7 @@ rows = [
 name = "MOV"
 body = { ref = "mov", form = "MOVR", opcode = "{opcode}", ops = ["dst:{slot}:out", "src2:{slot}"], asm = "mov {dst}, {src2}", fields = { rn = 31 } }
 rows = [
-  { inst = "MOVX", slot = "r64", opcode = 0xAA, roles = ["gpr_mov"] },
+  { inst = "MOVX", slot = "r64", opcode = 0xAA, data_width = 64 },
   { inst = "MOVW", slot = "r32", opcode = 0x2A },
 ]
 [[templates]]
@@ -1274,7 +1274,7 @@ operand_fields = ["rd", "rn"]
 #   [31:24]=0x1E、[23:16]=0x20(S)/0x60(D)、[15:10]=0、[9:5]=Rn、[4:0]=Rd
 [[instructions]]
 name = "FMOV_S"
-roles = [{ role = "fpr_mov", bits = 32 }]
+data_width = 32
 form = "FMOVR"
 opcode = 0x1E
 fields = { op8b = 0x20, zero6 = 0 }
@@ -1283,7 +1283,7 @@ asm = "fmov {dst}, {src}"
 
 [[instructions]]
 name = "FMOV_D"
-roles = [{ role = "fpr_mov", bits = 64 }]
+data_width = 64
 form = "FMOVR"
 opcode = 0x1E
 fields = { op8b = 0x60, zero6 = 0 }

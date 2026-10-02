@@ -537,7 +537,7 @@ asm = "btc {src2}, {src}"
 [[instructions]]
 name = "MOV_RM8_R64"
 ref = "mov"
-roles = ["gpr_mov"]
+data_width = 64
 form = "MRR"
 opcode = 0x89
 ops = ["src:gpr", "dst:gpr:inout"]
@@ -719,7 +719,7 @@ asm = "movd {dst}, {src}"
 # **类间位搬移**（v20 V7）：GPR 的位模式 → FPR。x86 的 SysV64 正常情况下浮点走 XMM，
 # 这条只在"约定的落点是整数寄存器"时需要（`classify` 把浮点判给 int 池：软浮点/Zfinx 式
 # 约定、或调用约定自定义）。缺这条角色 ⇒ 那条落点 fail-closed（不拿同类搬移顶上）。
-roles = [{ role = "gpr_to_fpr_mov", bits = 32 }]
+data_width = 32
 
 [[instructions]]
 name = "MOVD_IREG_FREG"
@@ -729,7 +729,7 @@ opcode = 0x7E
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "movd {dst}, {src}"
-roles = [{ role = "fpr_to_gpr_mov", bits = 32 }]
+data_width = 32
 
 [[instructions]]
 name = "PUNPCKLDQ"
@@ -757,7 +757,7 @@ asm = "punpckhdq {dst}, {src}"
 
 [[instructions]]
 name = "MOVSS"
-roles = [{ role = "fpr_mov", bits = 32 }]
+data_width = 32
 form = "SSE_RR"
 opcode = 0x10
 fields = { prefix = 0xF3, w = 0 }
@@ -1098,7 +1098,7 @@ effect = ["Pure"]
 name = "SD_BIN"
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, fields = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
-  { inst = "MOVSD", roles = [{ role = "fpr_mov", bits = 64 }], opcode = 0x10 },
+  { inst = "MOVSD", data_width = 64, opcode = 0x10 },
   { inst = "MINSD", opcode = 0x5D },
   { inst = "MAXSD", opcode = 0x5F },
   { inst = "ADDSD", opcode = 0x58 },
@@ -1121,7 +1121,7 @@ rows = [
 name = "PS_BIN"
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
-  { inst = "MOVAPS", roles = ["vec_mov"], opcode = 0x28 },
+  { inst = "MOVAPS", data_width = 128, opcode = 0x28 },
   { inst = "ADDPS", opcode = 0x58 },
   { inst = "SUBPS", opcode = 0x5C },
   { inst = "MULPS", opcode = 0x59 },
@@ -1226,7 +1226,7 @@ asm = "vmovaps {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_ZMM_MEM"
 ref = "vmovups"
-roles = [{ role = "wide_vec_load", bits = 512 }]
+data_width = 512
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x10
@@ -1238,7 +1238,7 @@ asm = "vmovups {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_ZMM_MR"
 ref = "vmovups"
-roles = [{ role = "wide_vec_store", bits = 512 }]
+data_width = 512
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x11
@@ -1313,7 +1313,7 @@ asm = "vmovaps {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_RM"
 ref = "vmovups"
-roles = [{ role = "wide_vec_load", bits = 256 }]
+data_width = 256
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x10
@@ -1325,7 +1325,7 @@ asm = "vmovups {dst}, {mem}"
 [[instructions]]
 name = "VMOVUPS_MR"
 ref = "vmovups"
-roles = [{ role = "wide_vec_store", bits = 256 }]
+data_width = 256
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x11
@@ -1607,7 +1607,7 @@ name = "MOV_REG_IMM64"
 # 立即数 → 寄存器能力（v20 变参 V3）：变参 `va_start` 物化对象时要写宿主算好的初值；
 # v20 V7 起也用于**变参元信息寄存器**（SysV 的 `%al`）：调用点按布局算出"用了几个向量
 # 寄存器"再写进去——数字是运行期的，所以必须是"立即数 → 寄存器"这条能力。
-roles = ["gpr_mov_imm"]
+data_width = 64
 opcode_reg = 0xB8
 rex_w = "always"
 imm = 0x40
@@ -1780,7 +1780,7 @@ fields = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
-roles = [{ role = "gpr_to_fpr_mov", bits = 64 }]
+data_width = 64
 
 [[instructions]]
 name = "MOVQ_R64_XMM"
@@ -1791,7 +1791,7 @@ fields = { prefix = 0x66, w = 1 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
-roles = [{ role = "fpr_to_gpr_mov", bits = 64 }]
+data_width = 64
 
 [[instructions]]
 name = "MOVQ_XMM_FREG"

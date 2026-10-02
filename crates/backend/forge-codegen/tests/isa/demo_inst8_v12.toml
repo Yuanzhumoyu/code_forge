@@ -108,7 +108,7 @@ asm = "add {dst}, {src}, {src2}"
 [[instructions]]
 name = "MOV8"
 ref = "mov"
-roles = ["gpr_mov"]
+data_width = 8
 form = "R2"
 opcode = 2
 ops = ["dst:r2:out", "src:r2"]
