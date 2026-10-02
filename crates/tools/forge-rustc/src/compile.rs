@@ -16,7 +16,7 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
     body: &'tcx Body<'tcx>,
     func_refs: &'f mut FuncRefTable,
 ) -> Result<CompiledFunction, ForgeError> {
-    // 按目标三元组选择 ISA 后端（仅 x86_64 支持——v12 唯一后端；
+    // 按目标三元组选择 ISA 后端（仅 x86_64 支持——唯一的发行后端；
     // aarch64/riscv64 v11 后端已随 v11 语法层删除）
     crate::trace::set_panic_context(Some(format!(
         "lowering {} [{}]",
@@ -50,7 +50,7 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
             }
         }
     }
-    code_forge::backend::x86_v12::ensure_registered();
+    code_forge::backend::x86::ensure_registered();
     let r = compile_with_isa(&func, isa_name);
     crate::trace::set_panic_context(None);
     r
@@ -59,29 +59,29 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
 // ISA 后端选择
 // ============================================================
 
-/// 根据目标三元组自动注册对应的 ISA 后端（x86_64/amd64 → x86_v12；
-/// aarch64/arm64 → arm64_v12）。
+/// 根据目标三元组自动注册对应的 ISA 后端（x86_64/amd64 → x86；
+/// aarch64/arm64 → arm64）。
 ///
-/// ⚠️ arm64_v12 能力边界（2026-09 P3）：指令面 = 整数核心 P1 + 部分
+/// ⚠️ arm64 能力边界（2026-09 P3）：指令面 = 整数核心 P1 + 部分
 /// lowering；SIMD/浮点/系统寄存器/跨函数 Call 等缺口会以显式错误报出
 /// （不静默错码）。
 pub fn auto_register_isa_for_target(target_triple: &str) {
     if target_triple.contains("x86_64") || target_triple.contains("amd64") {
-        code_forge::backend::x86_v12::ensure_registered();
+        code_forge::backend::x86::ensure_registered();
     } else if target_triple.contains("aarch64") || target_triple.contains("arm64") {
-        code_forge::backend::arm64_v12::ensure_registered();
+        code_forge::backend::arm64::ensure_registered();
     }
 }
 
-/// 从目标三元组确定 ISA 名称（Registry 注册名 = v12 meta.name）。
+/// 从目标三元组确定 ISA 名称（Registry 注册名 = `[meta].name`）。
 pub fn isa_name_for_target(target_triple: &str) -> &'static str {
     if target_triple.contains("x86_64") || target_triple.contains("amd64") {
-        "x86_64_v12"
+        "x86_64"
     } else if target_triple.contains("aarch64") || target_triple.contains("arm64") {
-        "arm64_v12"
+        "arm64"
     } else {
-        // 非 x86/aarch64 目标无 v12 后端：回落宿主路径（与旧 x86_64 回落一致）
-        "x86_64_v12"
+        // 非 x86/aarch64 目标无 DSL 后端：回落宿主路径（与旧 x86_64 回落一致）
+        "x86_64"
     }
 }
 

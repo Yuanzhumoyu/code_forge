@@ -51,7 +51,7 @@ fn assert_stable(path: &str) {
 
 #[test]
 fn shipped_specs_generate_byte_identical_output() {
-    for isa in ["x86_v12.toml", "arm64_v12.toml", "riscv64_v12.toml"] {
+    for isa in ["x86.toml", "arm64.toml", "riscv64.toml"] {
         assert_stable(&root().join("isa").join(isa).to_string_lossy());
     }
 }
@@ -60,13 +60,13 @@ fn shipped_specs_generate_byte_identical_output() {
 fn fixture_specs_generate_byte_identical_output() {
     // 只列**可独立展开**的根谱；`include_*_base/frag` 那类分片单独展开本来就不合法。
     let fixtures = [
-        "demo_v12.toml",
-        "demo8_v12.toml",
-        "demo_mixed16_32_v12.toml",
-        "demo_inst8_v12.toml",
-        "demo_inst12_v12.toml",
-        "demo_inst100_v12.toml",
-        "include_root_v12.toml",
+        "demo.toml",
+        "demo8.toml",
+        "demo_mixed16_32.toml",
+        "demo_inst8.toml",
+        "demo_inst12.toml",
+        "demo_inst100.toml",
+        "include_root.toml",
     ];
     let dir = root().join("crates/backend/forge-codegen/tests/isa");
     for f in fixtures {
@@ -80,7 +80,7 @@ fn fixture_specs_generate_byte_identical_output() {
 #[test]
 fn restricted_parts_are_stable_too() {
     let spec = root()
-        .join("crates/backend/forge-codegen/tests/isa/include_root_v12.toml")
+        .join("crates/backend/forge-codegen/tests/isa/include_root.toml")
         .to_string_lossy()
         .to_string();
     let enc_only = ExpandOptions {

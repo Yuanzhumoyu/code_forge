@@ -96,7 +96,7 @@ fn strip_row_data_width(src: &str, inst: &str) -> String {
 /// 拷贝——所以断言是"生成物里出现的分派档位**恰好**等于谱里声明的那些"。
 #[test]
 fn x86_move_widths_follow_the_spec() {
-    let (src, _) = read_isa_file("isa/x86_v12.toml").expect("读 x86 谱");
+    let (src, _) = read_isa_file("isa/x86.toml").expect("读 x86 谱");
     // 从大到小替换（否则 64→128 之后又被 128→256 二次替换）。
     let mut mutated = src.clone();
     for (from, to) in [
@@ -127,7 +127,7 @@ fn x86_move_widths_follow_the_spec() {
         declared.contains(&128) && declared.contains(&1024) && !declared.contains(&32),
         "变异没生效：{declared:?}"
     );
-    let t = flat_mut(&mutated, "x86_v12", "isa/x86_v12.toml").expect("改了位宽也该照样展开");
+    let t = flat_mut(&mutated, "x86", "isa/x86.toml").expect("改了位宽也该照样展开");
 
     // 生成物里每一处**搬运分派臂**的档位都必须是谱里声明过的宽度（多一个 = 写死了）。
     // 只看紧跟着搬运指令构造的那些比较（别的生成代码里也有 `<= N u32`，与此无关）。
@@ -186,7 +186,7 @@ fn x86_move_widths_follow_the_spec() {
 /// 全编不出来（v20 V6 修的那个洞）。
 #[test]
 fn riscv_three_operand_move_fills_the_third_slot() {
-    let (_src, t) = flat_file("isa/riscv64_v12.toml", "riscv64_v12");
+    let (_src, t) = flat_file("isa/riscv64.toml", "riscv64");
     // 发射侧把第三槽填成**同一个源**（编码器/反汇编里是 `*src2`，不是这个形状）。
     assert!(
         t.contains("Inst::FsgnjD{dst:__dst,src:__ph(0,__DEFAULT_FPR_CLASS),src2:__ph(0,__DEFAULT_FPR_CLASS),}"),
@@ -207,7 +207,7 @@ fn riscv_three_operand_move_fills_the_third_slot() {
 /// 搬移顶上会把 FPR 的号当 GPR 号用（`Reg::from_index(10, GPR)` = `x10`）——静默错值。
 #[test]
 fn stripping_the_data_width_makes_the_cross_bank_path_fail_closed() {
-    let (src, _) = read_isa_file("isa/riscv64_v12.toml").expect("读 riscv 谱");
+    let (src, _) = read_isa_file("isa/riscv64.toml").expect("读 riscv 谱");
     // 只删**类间搬移**那两条的 `data_width`（FSGNJ 的寄存器搬移留着，
     // 否则连"浮点进浮点"也没了，测不到跨类那一支）。
     let mut mutated = src.clone();
@@ -225,7 +225,7 @@ fn stripping_the_data_width_makes_the_cross_bank_path_fail_closed() {
         mutated.contains("FSGNJ_S") && mutated.contains("data_width = 32"),
         "FSGNJ（同类搬移）应保留，否则测不到跨类那一支"
     );
-    let t = flat_mut(&mutated, "riscv64_v12", "isa/riscv64_v12.toml")
+    let t = flat_mut(&mutated, "riscv64", "isa/riscv64.toml")
         .expect("删掉 data_width 后仍应能展开（只是 fail-closed）");
     // 生成物里的中文字面量按原文渲染（未转义），但**行继续符会原样留在文本里**
     //（`跨类的\` + 换行 + `位搬移指令`）——所以断言取**同一行内**的片段。
@@ -248,7 +248,7 @@ fn stripping_the_data_width_makes_the_cross_bank_path_fail_closed() {
 /// 写成 64 位就撞车。这里要求报错点名两条指令——歧义是作者该消歧的事，不引入"钉选"注解。
 #[test]
 fn two_candidates_of_the_same_width_are_rejected_with_the_list() {
-    let (src, _) = read_isa_file("isa/x86_v12.toml").expect("读 x86 谱");
+    let (src, _) = read_isa_file("isa/x86.toml").expect("读 x86 谱");
     // 只改 MOVD_FREG_IREG 那一处（按指令名定位，避免误伤别的 32 位档）：
     // 把它的 `data_width = 32` 换成 64，与 MOVQ_XMM_R64 撞车。
     let mutated = strip_data_width_after(&src, "name = \"MOVD_FREG_IREG\"");
@@ -261,8 +261,7 @@ fn two_candidates_of_the_same_width_are_rejected_with_the_list() {
         mutated.contains("MOVD_FREG_IREG\"\ndata_width = 64"),
         "变异没生效"
     );
-    let err = flat_mut(&mutated, "x86_v12", "isa/x86_v12.toml")
-        .expect_err("同形状同宽度两条候选必须报错");
+    let err = flat_mut(&mutated, "x86", "isa/x86.toml").expect_err("同形状同宽度两条候选必须报错");
     assert!(err.contains("候选"), "错误应说明候选：{err}");
     assert!(
         err.contains("MOVD_FREG_IREG") && err.contains("MOVQ_XMM_R64"),
@@ -275,7 +274,7 @@ fn two_candidates_of_the_same_width_are_rejected_with_the_list() {
 /// x86 `CMPXCHG_MEM_R` 有两个 Reg 输入槽、**没有目的槽**——它不是搬运。
 #[test]
 fn data_width_on_a_non_mover_shape_is_rejected() {
-    let (src, _) = read_isa_file("isa/x86_v12.toml").expect("读 x86 谱");
+    let (src, _) = read_isa_file("isa/x86.toml").expect("读 x86 谱");
     let mutated = src.replacen(
         "name = \"CMPXCHG_MEM_R\"",
         "name = \"CMPXCHG_MEM_R\"\ndata_width = 64",
@@ -285,8 +284,8 @@ fn data_width_on_a_non_mover_shape_is_rejected() {
         mutated.contains("CMPXCHG_MEM_R\"\ndata_width = 64"),
         "变异没生效"
     );
-    let err = flat_mut(&mutated, "x86_v12", "isa/x86_v12.toml")
-        .expect_err("非搬运形状上的 data_width 必须报错");
+    let err =
+        flat_mut(&mutated, "x86", "isa/x86.toml").expect_err("非搬运形状上的 data_width 必须报错");
     assert!(
         err.contains("纯搬运") || err.contains("目的槽"),
         "错误应说明形状要求：{err}"
@@ -308,11 +307,7 @@ fn shipped_specs_declare_no_move_roles() {
         "wide_vec_load",
         "wide_vec_store",
     ];
-    for path in [
-        "isa/x86_v12.toml",
-        "isa/riscv64_v12.toml",
-        "isa/arm64_v12.toml",
-    ] {
+    for path in ["isa/x86.toml", "isa/riscv64.toml", "isa/arm64.toml"] {
         let (src, _) = read_isa_file(path).unwrap_or_else(|e| panic!("读 {path} 失败：{e}"));
         for name in GONE {
             assert!(

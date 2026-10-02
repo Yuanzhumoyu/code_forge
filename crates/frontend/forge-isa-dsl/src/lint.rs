@@ -36,9 +36,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::dsl::diag::DeclIndex;
+use crate::dsl::model::{Bitfield, EncodingKind, Instruction, IsaModel};
 use crate::report::DiagLine;
-use crate::v12::diag::DeclIndex;
-use crate::v12::model::{Bitfield, EncodingKind, Instruction, V12Model};
 
 /// 宿主 op 表里**由生成的 `lower_terminator` 处理**的 op（按 `TermKind` 分派）。
 ///
@@ -54,7 +54,7 @@ pub const TERMINATOR_OPS: [&str; 6] = ["Ret", "Jmp", "Br", "Switch", "Unreachabl
 ///
 /// 前 7 条是**宿主管线**（forge-codegen 自己处理，谱里也不该有规则）；`VaStart` 是
 /// **生成物直查**——生成器按能力角色发（`roles = ["frame_addr"]` → `lea`，见
-/// `v12/codegen/lowering.rs::gen_va_start_lowering`），所以谱里同样**没有**它的
+/// `dsl/codegen/lowering.rs::gen_va_start_lowering`），所以谱里同样**没有**它的
 /// `[[lowering]]`（写法与 `frame_set`/`frame_alloc` 一族相同：谱只申报能力）。
 /// 两类都"不是缺口"，但成因不同，改这一列前先看清是哪种。
 pub const HOST_PIPELINE_OPS: [&str; 8] = [
@@ -124,7 +124,7 @@ pub fn lint_source(source: &str) -> Result<Vec<DiagLine>, Vec<DiagLine>> {
 
 /// 带档位的体检（v19 V4c：`--ops` 走能力缺口检查）。
 pub fn lint_source_opts(source: &str, opts: &LintOpts) -> Result<LintReport, Vec<DiagLine>> {
-    let model = match crate::v12::parse_and_validate(source) {
+    let model = match crate::dsl::parse_and_validate(source) {
         Ok(m) => m,
         Err(e) => return Err(Vec::from(&e)),
     };
@@ -137,7 +137,7 @@ pub fn lint_source_opts(source: &str, opts: &LintOpts) -> Result<LintReport, Vec
 /// 只认 `[[ops]]` 风格的条目里的 `name = "…"`（其余字段是宿主自己的元数据，DSL 不解释）。
 /// 这样"宿主能力"始终是**宿主的数据**，DSL 侧不留第二份会漂移的名单。
 pub fn host_ops_from_toml(text: &str) -> Result<Vec<String>, String> {
-    // 走 serde 的**文档**解析器（与 `v12::parse` 同一入口）；`Value` 自己的 `FromStr`
+    // 走 serde 的**文档**解析器（与 `dsl::parse` 同一入口）；`Value` 自己的 `FromStr`
     // 在本仓的 `toml` 版本里是"解析单个值"，喂整份文档会报 `unexpected content`。
     let value: toml::Value =
         toml::from_str(text).map_err(|e| format!("宿主 op 表不是合法 TOML：{e}"))?;
@@ -211,7 +211,7 @@ fn is_ident_byte(b: u8) -> bool {
 }
 
 /// 全部规则的实现。
-fn checks(m: &V12Model, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintReport {
+fn checks(m: &IsaModel, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintReport {
     let mut out = Vec::new();
 
     // ── 1. 未被引用的操作数槽 ──
@@ -335,7 +335,7 @@ fn bit_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
 ///
 /// 规则 4（重叠）与规则 7（未指定位）**共用这一份判定**：两处各算一遍必然漂移，
 /// 而"视图"正是这两条规则唯一容易写错的地方（按整张表判会误伤合法的多重解释）。
-fn used_bit_ranges(m: &V12Model, inst: &Instruction) -> BTreeMap<String, Vec<(u32, u32)>> {
+fn used_bit_ranges(m: &IsaModel, inst: &Instruction) -> BTreeMap<String, Vec<(u32, u32)>> {
     let preset = inst
         .form
         .as_ref()
@@ -371,7 +371,7 @@ fn used_bit_ranges(m: &V12Model, inst: &Instruction) -> BTreeMap<String, Vec<(u3
 }
 
 /// 逐指令判"两个字段抢同一批位"。消息里给出双方区间，便于直接改 TOML。
-fn bitfield_overlaps(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
+fn bitfield_overlaps(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
     let mut out = Vec::new();
     for inst in &m.instructions {
         let ranges = used_bit_ranges(m, inst);
@@ -405,7 +405,7 @@ fn bitfield_overlaps(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
 /// 只对 `kind = "fixed"` 的 ISA 判：变长 ISA（`prefix_scan`）的前缀/REX/ModRM 由编码器
 /// 直接发射、本就不在位域表里建模，按表判必成误报（这正是它不进默认档的原因）。
 /// 全字常量（`opcode_field = "word"` 之类覆盖整字）自动无缺口。
-fn unassigned_bits(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
+fn unassigned_bits(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
     if m.encoding.kind != EncodingKind::Fixed {
         return Vec::new();
     }
@@ -475,7 +475,7 @@ fn complement_ranges(covered: &[(u32, u32)], bits: u32) -> Vec<(u32, u32)> {
 /// 形状 = 逐行的 `助记符 → _`、数字/寄存器/占位符 → 通配后的文本。形状相同的规则只差
 /// "哪个值填进去"，正是 `vary = { attr = [...], name = [...] }` 的适用面。
 /// **只建议、不当门槛**：`when` 有可能本就要求分开写，合并与否由作者判断。
-fn vary_candidates(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
+fn vary_candidates(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
     let regs = register_names(m);
     let mut out = Vec::new();
     // 按声明序分 op（`lowering_by_op` 是裁决序，这里要的是声明序下的分组）。
@@ -512,7 +512,7 @@ fn vary_candidates(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
 }
 
 /// 谱里出现过的寄存器名（形状归一用）。
-fn register_names(m: &V12Model) -> BTreeSet<String> {
+fn register_names(m: &IsaModel) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for g in m.reg.values() {
         if let Some(names) = &g.names {
@@ -565,11 +565,11 @@ fn overlapping(a: &[(u32, u32)], b: &[(u32, u32)]) -> Option<((u32, u32), (u32, 
 // ─────────────────────── 规则 5：未引用的 ref ───────────────────────
 
 /// 模板行首引用到的名字全集（lowering / pattern / emit / pseudo / spill）。
-fn referenced_heads(m: &V12Model) -> BTreeSet<String> {
+fn referenced_heads(m: &IsaModel) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut add = |lines: &[String]| {
         for l in lines {
-            if let Some(h) = crate::v12::validate::inst_head_ref(l) {
+            if let Some(h) = crate::dsl::validate::inst_head_ref(l) {
                 out.insert(h);
             }
         }
@@ -592,7 +592,7 @@ fn referenced_heads(m: &V12Model) -> BTreeSet<String> {
 /// 声明了 `ref` 却没有**任何**模板行首引用它：多态分派用不上（拼错名字时尤其隐蔽）。
 ///
 /// 同一个 `ref` 被多条指令共用时只报一次（按名字去重），锚到第一条声明它的指令。
-fn unused_refs(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
+fn unused_refs(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
     let used = referenced_heads(m);
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut out = Vec::new();
@@ -618,7 +618,7 @@ fn unused_refs(m: &V12Model, idx: &DeclIndex) -> Vec<DiagLine> {
 
 /// 宿主 op 三类分开报（V4c）：终结指令 / 宿主管线直查 / 真缺口。
 fn op_gap(
-    m: &V12Model,
+    m: &IsaModel,
     opts: &LintOpts,
     idx: &DeclIndex,
     out: &mut Vec<DiagLine>,
@@ -630,9 +630,9 @@ fn op_gap(
     let mut covered: BTreeSet<String> =
         m.lowering.iter().map(|l| l.op.name().to_string()).collect();
     for p in &m.pattern {
-        if let Ok(tree) = crate::v12::match_tree::parse(&p.r#match) {
+        if let Ok(tree) = crate::dsl::match_tree::parse(&p.r#match) {
             let mut ops = Vec::new();
-            crate::v12::match_tree::op_names(&tree, &mut ops);
+            crate::dsl::match_tree::op_names(&tree, &mut ops);
             covered.extend(ops);
         }
     }
@@ -675,7 +675,7 @@ fn op_gap(
 }
 
 /// 模板 `body.ops` 里的槽名（指令通常已展开进 `m.instructions`，这里兜底）。
-fn body_ops(m: &V12Model) -> Vec<String> {
+fn body_ops(m: &IsaModel) -> Vec<String> {
     let mut out = Vec::new();
     for t in &m.templates {
         if let Some(arr) = t

@@ -235,9 +235,9 @@ npx --yes markdownlint-cli2 <本次改动的 .md 文件>
 外加一次性矩阵（三架构 JIT）：
 
 ```bash
-cargo test -p forge-tests --lib isa::x86_v12::jit_matrix_x86_v12 -- --test-threads=1 --nocapture
-cargo test -p forge-tests --lib isa::riscv64_v12::jit_matrix_riscv64_v12 -- --test-threads=1 --nocapture
-cargo test -p forge-tests --lib isa::arm64_v12::jit_matrix_arm64_v12 -- --test-threads=1 --nocapture
+cargo test -p forge-tests --lib isa::x86::jit_matrix_x86 -- --test-threads=1 --nocapture
+cargo test -p forge-tests --lib isa::riscv64::jit_matrix_riscv64 -- --test-threads=1 --nocapture
+cargo test -p forge-tests --lib isa::arm64::jit_matrix_arm64 -- --test-threads=1 --nocapture
 ```
 
 **基线（2026-09-19 实测，作对照）**：工作区 1515 passed / 0 failed / 19 ignored；

@@ -28,9 +28,9 @@ const TABLE_DRIVEN: [&str; 8] = [
 ];
 
 const SPECS: [(&str, &str); 3] = [
-    ("x86_v12", "isa/x86_v12.toml"),
-    ("riscv64_v12", "isa/riscv64_v12.toml"),
-    ("arm64_v12", "isa/arm64_v12.toml"),
+    ("x86", "isa/x86.toml"),
+    ("riscv64", "isa/riscv64.toml"),
+    ("arm64", "isa/arm64.toml"),
 ];
 
 /// 只生成 TargetMachine 集成层（含 `impl MachineInst for Inst`）。

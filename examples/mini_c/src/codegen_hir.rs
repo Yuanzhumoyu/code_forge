@@ -1114,7 +1114,7 @@ mod tests {
         use crate::codegen::SymTable;
         use crate::grammar::build_grammar;
         use crate::schema::build_schema;
-        use code_forge::backend::arch::x86_v12::{self, ensure_registered};
+        use code_forge::backend::arch::x86::{self, ensure_registered};
         use code_forge::backend::jit::JitCompiler;
         use code_forge::forge_grammar::Parser;
 
@@ -1140,7 +1140,7 @@ mod tests {
         }
 
         ensure_registered();
-        let tm = x86_v12::TargetMachine::new();
+        let tm = x86::TargetMachine::new();
         let mut jit = JitCompiler::new(tm);
         jit.compile_module(&module).unwrap();
         let main_fn: extern "C" fn() -> i32 = jit.get_fn("main").unwrap();
@@ -1173,7 +1173,7 @@ mod tests {
     /// Verify HIR lowering → JIT execution works end-to-end.
     #[test]
     fn test_hir_jit_iconst_ret() {
-        use code_forge::backend::arch::x86_v12::{self, ensure_registered};
+        use code_forge::backend::arch::x86::{self, ensure_registered};
         use code_forge::backend::jit::JitCompiler;
         use forge_hir::{BrickRegistry, IrGraph, lower_into_module};
 
@@ -1191,7 +1191,7 @@ mod tests {
         let _ = lower_into_module(&graph, &registry, &mut module, "test_hir_jit", sig).unwrap();
 
         ensure_registered();
-        let tm = x86_v12::TargetMachine::new();
+        let tm = x86::TargetMachine::new();
         let mut jit = JitCompiler::new(tm);
         jit.compile_module(&module).unwrap();
 
@@ -1202,7 +1202,7 @@ mod tests {
     /// Control: JIT execution of direct FunctionBuilder (no HIR).
     #[test]
     fn test_direct_jit_iconst_ret() {
-        use code_forge::backend::arch::x86_v12::{self, ensure_registered};
+        use code_forge::backend::arch::x86::{self, ensure_registered};
         use code_forge::backend::jit::JitCompiler;
         use code_forge::ir::FunctionBuilder;
 
@@ -1219,7 +1219,7 @@ mod tests {
         module.add_function(func);
 
         ensure_registered();
-        let tm = x86_v12::TargetMachine::new();
+        let tm = x86::TargetMachine::new();
         let mut jit = JitCompiler::new(tm);
         jit.compile_module(&module).unwrap();
 

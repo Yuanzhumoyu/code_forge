@@ -19,13 +19,13 @@ use std::path::Path;
 use forge_isa_dsl::{ExpandOptions, Parts, expand_file, read_isa_file, validate_source};
 
 const SPECS: [(&str, &str); 3] = [
-    ("x86_v12", "isa/x86_v12.toml"),
-    ("riscv64_v12", "isa/riscv64_v12.toml"),
-    ("arm64_v12", "isa/arm64_v12.toml"),
+    ("x86", "isa/x86.toml"),
+    ("riscv64", "isa/riscv64.toml"),
+    ("arm64", "isa/arm64.toml"),
 ];
 
 /// 夹具：`[emit.prologue]` 已删除（收参不靠模板）。
-const FIXTURE_NO_PROLOGUE: &str = "crates/backend/forge-codegen/tests/isa/demo_v12.toml";
+const FIXTURE_NO_PROLOGUE: &str = "crates/backend/forge-codegen/tests/isa/demo.toml";
 
 fn text_of(path: &str) -> String {
     let opts = ExpandOptions {
@@ -72,7 +72,7 @@ fn move_args_emits_the_layout_driven_receive_path() {
 /// 反向指标同样重要——"接了但按 ISA 名分支"等于把别家的约定写回生成器。
 #[test]
 fn the_layout_path_stays_machine_neutral() {
-    let text = text_of("isa/x86_v12.toml");
+    let text = text_of("isa/x86.toml");
     let start = text.find("__layout_ok").expect("布局判定");
     // 扫描**整段布局路径**（到旧路径的 `param_by_ref` 为止），不按固定长度截——生成物
     // 会随能力增长（v20 V7 的类间位搬移就在这段里），定长窗口会把断言的边界变成"代码有多长"。
@@ -101,7 +101,7 @@ fn the_layout_path_stays_machine_neutral() {
 /// 却没人读"，正是这次重设计要消灭的东西）。
 #[test]
 fn writing_a_prologue_template_again_is_rejected() {
-    let src = read_isa_file("isa/x86_v12.toml").expect("读 x86 谱").0;
+    let src = read_isa_file("isa/x86.toml").expect("读 x86 谱").0;
     // 恢复"手写序言"的写法：加回 `[emit.prologue]`（含当初的伪指令）。
     let mutated = format!(
         "{src}\n[emit.prologue]\ninsts = [\"PUSH RBP\", \"@push_callee\", \"@frame_alloc\"]\n"
@@ -133,7 +133,7 @@ fn a_spec_without_a_prologue_template_still_receives_its_arguments() {
 /// 寄存器值，尾声恢复时会毁掉调用者的寄存器。
 #[test]
 fn the_receive_lands_after_the_saves_and_before_the_frame_alloc() {
-    let text = text_of("isa/x86_v12.toml");
+    let text = text_of("isa/x86.toml");
     let start = text
         .rfind("fn emit_prologue")
         .expect("生成物里没有 emit_prologue");
@@ -166,9 +166,9 @@ fn no_spec_writes_prologue_templates_or_pseudo_instructions_any_more() {
     // 注意路径基准：`std::fs` 相对**本 crate 目录**，而 `expand_file`/`read_isa_file`
     // 走仓库根解析（两者差一层 `../../`）。
     let mut specs: Vec<String> = [
-        "../../../isa/x86_v12.toml",
-        "../../../isa/riscv64_v12.toml",
-        "../../../isa/arm64_v12.toml",
+        "../../../isa/x86.toml",
+        "../../../isa/riscv64.toml",
+        "../../../isa/arm64.toml",
     ]
     .iter()
     .map(|p| (*p).to_string())
@@ -206,8 +206,8 @@ fn no_spec_writes_prologue_templates_or_pseudo_instructions_any_more() {
 fn the_store_to_frame_sequence_keeps_its_order() {
     for (name, path, alloc, save, load, free, ret) in [
         (
-            "riscv64_v12",
-            "isa/riscv64_v12.toml",
+            "riscv64",
+            "isa/riscv64.toml",
             "Inst :: Addi { dst : Reg :: X2",
             "Inst :: Sd {",
             "Inst :: Ld {",
@@ -215,8 +215,8 @@ fn the_store_to_frame_sequence_keeps_its_order() {
             "Inst :: Ret",
         ),
         (
-            "arm64_v12",
-            "isa/arm64_v12.toml",
+            "arm64",
+            "isa/arm64.toml",
             "Inst :: Subimmx {",
             "Inst :: Sturx {",
             "Inst :: Ldurx {",

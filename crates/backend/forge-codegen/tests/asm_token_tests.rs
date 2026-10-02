@@ -1,4 +1,4 @@
-//! 生成汇编器 token 化行为测试（x86_v12）：
+//! 生成汇编器 token 化行为测试（x86）：
 //! 空白容错、立即数进制、范围校验、多类型槽约束过滤（gprx 拒绝 8 位）。
 //!
 //! 这些是 v13 汇编器重写的**新行为**，与旧字面段扫描对比：
@@ -8,7 +8,7 @@
 //! - 旧：`gprx` 接受任意 GPR 名（含 8 位 → 8B 误编码）；新：显式 classes
 //!   {2,4,8} → 8 位拒绝。
 
-use forge_codegen::x86_v12::assemble;
+use forge_codegen::x86::assemble;
 
 #[test]
 fn whitespace_insensitive() {
@@ -68,7 +68,7 @@ fn mov_width_dispatch() {
 
 #[test]
 fn byte_mov_width_dispatch() {
-    use forge_codegen::x86_v12::{Inst, encode};
+    use forge_codegen::x86::{Inst, encode};
     // 8 位 mov（opcode 8A）→ MOV_R8_RM8；mov 全宽度（8/16/32/64）齐备
     let inst = assemble("mov AL, BL").unwrap();
     assert!(matches!(inst, Inst::MovR8Rm8 { .. }));
@@ -97,7 +97,7 @@ fn arithmetic_width_dispatch() {
     // v14：add/sub/xor/... 数据槽 gprx 多类——同变体按操作数实际宽度自动
     // 分发（add EAX,EBX → 01 D8 无 REX.W；add RAX,RBX → 48 01 D8）。固定
     // _32 变体（AddRmR32 等）已删（WA-35 DSL 回填修复）。
-    use forge_codegen::x86_v12::{Inst, encode};
+    use forge_codegen::x86::{Inst, encode};
     // add eax, ebx（32 位）→ ADD_RM_R：01 D8（Intel 语义 dst=eax，无 REX.W）
     let inst = assemble("add EAX, EBX").unwrap();
     assert!(matches!(inst, Inst::AddRmR { .. }));
@@ -133,7 +133,7 @@ fn opsize_dest_slot_and_max_width_dispatch() {
     // v14 修正：两地址 RM_R 族 opsize = s1（inout 目的槽 = IR 结果宽度）、
     // CMP/TEST（无目的槽）opsize = "max"（取宽者）。两者都不改文本汇编语义
     // ——汇编路径仍要求全 GPR 操作数同宽，且同宽时编码与 s0 逐字节一致。
-    use forge_codegen::x86_v12::{Inst, encode};
+    use forge_codegen::x86::{Inst, encode};
     // s1：sub/and/or 同 add，32 位无 REX.W、64 位 REX.W
     assert_eq!(
         encode(&assemble("sub EAX, EBX").unwrap()).unwrap(),

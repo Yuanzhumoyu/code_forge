@@ -1,8 +1,8 @@
 //! ISA lowering coverage matrix — 迁移自根 `tests/isa_lowering_coverage.rs`。
 //!
 //! 对每个代表性 IR opcode × 每个后端，构建最小函数并 `compile_raw`，
-//! 记录 lowering 是否成功。v11 后端已删除，本文件只覆盖 v12 唯一后端
-//! （x86_v12）；零缺口断言以 v12 TOML 实际声明的 lowering op 集为准。
+//! 记录 lowering 是否成功。v11 后端已删除，本文件只覆盖 唯一的发行后端
+//! （x86）；零缺口断言以 ISA-DSL TOML 实际声明的 lowering op 集为准。
 //! 运行：cargo test -p forge-tests -- --nocapture
 
 use code_forge::backend::FunctionCompiler;
@@ -321,9 +321,9 @@ pub fn check_isa<M: TargetMachine>(machine: impl Fn() -> M) -> Vec<(String, Stri
 // 矩阵打印测试（--nocapture 可见）
 // ═══════════════════════════════════════════════
 
-/// x86_v12 在 TOML 中实际声明的 lowering op 集（零缺口断言的基准；
+/// x86 在 TOML 中实际声明的 lowering op 集（零缺口断言的基准；
 /// 均存在于 COVERAGE_OPS 矩阵中）。
-pub const V12_LOWERING_OPS: [&str; 20] = [
+pub const LOWERING_OPS: [&str; 20] = [
     "Iadd",
     "Isub",
     "Imul",
@@ -346,15 +346,15 @@ pub const V12_LOWERING_OPS: [&str; 20] = [
     "Iconst",
 ];
 
-/// 打印 x86_v12 的 lowering 覆盖矩阵（--nocapture 查看 75 ops 全表）。
+/// 打印 x86 的 lowering 覆盖矩阵（--nocapture 查看 75 ops 全表）。
 #[cfg(test)]
 mod coverage_matrix_tests {
     use super::*;
 
     #[test]
     fn lowering_coverage_matrix() {
-        eprintln!("=== ISA lowering coverage matrix (forge-tests / x86_v12) ===");
-        let results = check_isa(code_forge::backend::x86_v12::TargetMachine::new);
+        eprintln!("=== ISA lowering coverage matrix (forge-tests / x86) ===");
+        let results = check_isa(code_forge::backend::x86::TargetMachine::new);
         for (op, outcome) in results {
             eprintln!("{op}: {outcome}");
         }
@@ -365,7 +365,7 @@ mod coverage_matrix_tests {
 // 回归守卫测试（迁移自根 capability_regression_guard）
 // ═══════════════════════════════════════════════
 
-/// 关键能力回归守卫：x86_v12 的指定 opcode 必须编译通过。
+/// 关键能力回归守卫：x86 的指定 opcode 必须编译通过。
 #[cfg(test)]
 mod capability_tests {
     use super::*;
@@ -376,13 +376,13 @@ mod capability_tests {
 
     #[test]
     fn capability_regression_guard() {
-        let results = run_isa(code_forge::backend::x86_v12::TargetMachine::new);
+        let results = run_isa(code_forge::backend::x86::TargetMachine::new);
         let mut failures: Vec<String> = Vec::new();
-        for op_name in V12_LOWERING_OPS {
+        for op_name in LOWERING_OPS {
             if let Some((_, outcome)) = results.iter().find(|(n, _)| n == op_name)
                 && outcome != "ok"
             {
-                failures.push(format!("x86_v12 {op_name}: {outcome}"));
+                failures.push(format!("x86 {op_name}: {outcome}"));
             }
         }
         assert!(
@@ -395,7 +395,7 @@ mod capability_tests {
 }
 
 // ═══════════════════════════════════════════════
-// 零缺口断言（以 v12 TOML 声明集为基准）
+// 零缺口断言（以 ISA-DSL TOML 声明集为基准）
 // ═══════════════════════════════════════════════
 
 /// **矩阵未覆盖**的 opcode（带原因）——`Opcode::ALL \ COVERAGE_OPS`。
@@ -415,17 +415,17 @@ mod no_coverage_list {
         ("Store", "由后端 lowering 用例覆盖（矩阵只取代表性行）"),
         ("Fload", "浮点 load：由 f64/f32 用例覆盖"),
         ("Fstore", "浮点 store：由 f64/f32 用例覆盖"),
-        // 浮点单目/转换/指针转换：不在 v12 声明集（见 V12_LOWERING_OPS 注释）。
-        ("Frem", "v12 未声明 lowering（浮点取余）"),
-        ("Fptrunc", "v12 未声明 lowering"),
-        ("Fpext", "v12 未声明 lowering"),
-        ("Fptosi", "v12 未声明 lowering"),
-        ("Sitofp", "v12 未声明 lowering"),
-        ("Fptoui", "v12 未声明 lowering"),
-        ("Uitofp", "v12 未声明 lowering"),
-        ("Ptrtoint", "v12 未声明 lowering"),
-        ("Inttoptr", "v12 未声明 lowering"),
-        ("AddrSpaceCast", "地址空间转换：v12 未声明 lowering"),
+        // 浮点单目/转换/指针转换：不在 ISA-DSL 声明集（见 LOWERING_OPS 注释）。
+        ("Frem", "ISA-DSL 未声明 lowering（浮点取余）"),
+        ("Fptrunc", "ISA-DSL 未声明 lowering"),
+        ("Fpext", "ISA-DSL 未声明 lowering"),
+        ("Fptosi", "ISA-DSL 未声明 lowering"),
+        ("Sitofp", "ISA-DSL 未声明 lowering"),
+        ("Fptoui", "ISA-DSL 未声明 lowering"),
+        ("Uitofp", "ISA-DSL 未声明 lowering"),
+        ("Ptrtoint", "ISA-DSL 未声明 lowering"),
+        ("Inttoptr", "ISA-DSL 未声明 lowering"),
+        ("AddrSpaceCast", "地址空间转换：ISA-DSL 未声明 lowering"),
         // 向量族：由 SIMD 用例（jit 矩阵 V64/V128/V256/V512 + codegen 测试）覆盖。
         ("Vconst", "向量常量：由 SIMD 用例覆盖"),
         ("Vadd", "向量算术：由 SIMD 用例覆盖"),
@@ -461,11 +461,11 @@ mod no_coverage_list {
         ("InsertValue", "聚合插入：由聚合用例覆盖"),
         (
             "LandingPad",
-            "异常：v12 codegen 对含 landingpad 函数 Unsupported",
+            "异常：ISA-DSL codegen 对含 landingpad 函数 Unsupported",
         ),
         // 终结符指令（S4 主体：终结符就是指令）：不走进逐指令 lowering 矩阵——
         // 它们由 `TargetLowering::lower_terminator` 按块处理，覆盖来自 codegen
-        // 用例（terminator_return_packet/terminator_jump_packet、v12_integration_tests）
+        // 用例（terminator_return_packet/terminator_jump_packet、integration_tests）
         // 与 JIT 矩阵的控制流用例（Branch/Jump/Return）。
         (
             "Ret",
@@ -487,26 +487,32 @@ mod no_coverage_list {
             "Unreachable",
             "终结符：由 lower_terminator 路径 + JIT trap 用例覆盖",
         ),
-        ("Invoke", "终结符：v12 codegen 对含 invoke 函数 Unsupported"),
-        ("Resume", "终结符：v12 codegen 对含 resume 函数 Unsupported"),
+        (
+            "Invoke",
+            "终结符：ISA-DSL codegen 对含 invoke 函数 Unsupported",
+        ),
+        (
+            "Resume",
+            "终结符：ISA-DSL codegen 对含 resume 函数 Unsupported",
+        ),
     ];
 }
 
-/// v12 声明的 lowering op 全部必须 lowering ok（其余 op 为向量/浮点/转换等
-/// v12 未声明，或由其它用例覆盖——缺口逐条登记在 `no_coverage_list`）。
+/// ISA-DSL 声明的 lowering op 全部必须 lowering ok（其余 op 为向量/浮点/转换等
+/// ISA-DSL 未声明，或由其它用例覆盖——缺口逐条登记在 `no_coverage_list`）。
 #[cfg(test)]
 mod zero_gaps_tests {
     use super::*;
 
     #[test]
-    fn v12_declared_ops_zero_gaps() {
-        let results = check_isa(code_forge::backend::x86_v12::TargetMachine::new);
+    fn declared_ops_zero_gaps() {
+        let results = check_isa(code_forge::backend::x86::TargetMachine::new);
         let mut failures: Vec<String> = Vec::new();
-        for op_name in V12_LOWERING_OPS {
+        for op_name in LOWERING_OPS {
             if let Some((_, outcome)) = results.iter().find(|(n, _)| n == op_name)
                 && outcome != "ok"
             {
-                failures.push(format!("x86_v12 {op_name}: {outcome}"));
+                failures.push(format!("x86 {op_name}: {outcome}"));
             }
         }
         assert!(

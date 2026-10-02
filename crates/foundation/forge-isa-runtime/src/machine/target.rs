@@ -88,7 +88,7 @@ pub trait TargetMachine: Send + Sync + 'static {
 
     /// 函数级 CFI（`.debug_frame` 行，M2）：对发射完成的函数机器码扫描该
     /// ISA 的 prologue，产 DWARF CFA 行集（`CompiledFunction.cfi`）。
-    /// 默认实现按 ISA 名查后端注册表（`machine::cfi`——当前 x86_64 v12
+    /// 默认实现按 ISA 名查后端注册表（`machine::cfi`——当前 x86_64
     /// 命中；其余 ISA 无扫描器 → `None` = 无 CFI，安全退化）；后端可覆盖
     /// 或经 `register_cfi_scanner` 挂专属扫描器。
     fn function_cfi(&self, code: &[u8]) -> Option<crate::machine::cfi::FunctionCfi> {

@@ -122,7 +122,7 @@ IR（✔ 签名能表达 variadic；✔ `VaStart`/`VaArg` 两个 op 已落地）
   直接用帧内栈地址实现"的判据：只有 `win64_stack` 为真）；
   ③ **发射**：`lowering.rs::gen_va_start_lowering` 按角色 `frame_addr`（x86 = `LEA_RBP_OFF`）
   发一条 `lea dst, [fp + 未命名区起点]`——与 `frame_set`/`frame_alloc`/`callee_save` 同族：
-  **谱只申报能力，序列由生成器发**（`isa/x86_v12.toml` 里没有 `VaStart` 的 `[[lowering]]` 规则，
+  **谱只申报能力，序列由生成器发**（`isa/x86.toml` 里没有 `VaStart` 的 `[[lowering]]` 规则，
   这是刻意的）；其余（`load`/`gep`/算术）全走既有规则——**不需要**新的 IR 形状或多值路径。
   寄存器保存区形态与"该约定不支持变参"都**明确 fail-closed**
   （消息分别点名 V3 与"va_list 未声明"）。
@@ -424,13 +424,13 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
    证实不符）。**验证口径如实说明**：本机没有 arm64 执行通道，这次只在**计划面**验证（黄金快照
    重刷 + `abi_target_real::aapcs64_variadic_shape_is_pure_data` 与 `invariants` 的文档表守卫
    全绿），**不是**执行验证。
-   实测：把变参函数编到 arm64 报 `Unsupported("v12 lowering")`——**arm64 谱目前只有 8 个 op 的
+   实测：把变参函数编到 arm64 报 `Unsupported("DSL lowering")`——**arm64 谱目前只有 8 个 op 的
    lowering**（`Band`/`Bor`/`Bxor`/`Copy`/`Iadd`/`Iconst`/`Imul`/`Isub`，全是算术），而变参展开要用的
    IR 词汇（`StackAddr`/`Store`/`Load`/`Icmp`/`Select`/`Sextend`/`Ireduce`）**一个都没有**（x86/riscv
    有，所以 win64/sysv64/lp64d 真跑）。⇒ **要 aapcs64 变参落地，先得把 arm64 后端补成能用的后端**
    （访存/比较/选择/扩展/栈地址/分支/调用）——那是一份独立的、比变参大得多的工作；而且本机**没有
    arm64 执行通道**（补完也只是"编得出"）。覆盖度事实与"现在是明确 Unsupported"由
-   `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住（arm64 补上
+   `arm64_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住（arm64 补上
    任一条这些 lowering 时它会红，提醒把 aapcs64 从"数据面"升级成"编得出 + 真跑"）。
    **数据面**（形状/规则/逐字段初值）已由 `abi_target_real::aapcs64_variadic_shape_is_pure_data`
    逐格钉住：`__gr_offs`/`__vr_offs` 从负值数到 0、两个 top = 保存区基址 + 本类区域字节数
@@ -471,7 +471,7 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 
 > **落地结论（2026-10-01）**：上面的"12 处逐点补第三槽"没有按原样做——逐点判断"这条指令是不是
 > 三操作数"本身还是**按 ISA 打补丁**。改成一张**位宽表** `FpMovWidths`
-> （`crates/frontend/forge-isa-dsl/src/v12/codegen/lowering.rs`）：把 ISA 声明的**所有**
+> （`crates/frontend/forge-isa-dsl/src/dsl/codegen/lowering.rs`）：把 ISA 声明的**所有**
 > `{ role = "fpr_mov", bits = N }` 收成 `(位宽, 变体, dest 槽, src 槽, 第三槽?)`，发射点只说
 > "要搬多少位"，由表生成 `if (位宽) == N { … } else { Unsupported(已声明档) }` 的 N 路分派。
 > 收益：① 三操作数/两操作数、第三槽叫什么名，都由谱的数据决定（生成器不再有 32/64 或"几个操作数"的
@@ -497,7 +497,7 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 > （`jit_matrix` 对 `CaseKind::F64Args` 直接报 "not supported by injected executor"）。现在
 > `Executor::exec_f64_args` + crt0 的 `li a0; fmv.d.x fa{i}, a0` 装载（f32 用 `fmv.w.x`）让
 > f64/f32 参数真进 `fa0..fa3`；riscv 矩阵另有独立冒烟用例
-> `isa::riscv64_v12::smoke::qemu_exec_f64_arg`（42.0 → 42、7.0f32 → 7）钉住 crt0 装载与浮点收参。
+> `isa::riscv64::smoke::qemu_exec_f64_arg`（42.0 → 42、7.0f32 → 7）钉住 crt0 装载与浮点收参。
 > 踩坑记录：`FMV.W.X = 0x78` / `FMV.D.X = 0x79`（funct7），写成 `0x38`/`0x39` 是**非法指令**——
 > QEMU 静默挂起、不报错，只能靠 dump 生成物逐字解码定位。
 >
@@ -513,14 +513,14 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 
 **判据（每处都一样）**：该 `fpr_mov` 指令的 Reg 槽数 ≥ 3 时，指令字面量要补第三槽（= 源）。
 
-1. `crates/frontend/forge-isa-dsl/src/v12/codegen/lowering.rs`
+1. `crates/frontend/forge-isa-dsl/src/dsl/codegen/lowering.rs`
    - `gen_lowering`：两处（浮点单值返回 ~285/290、多值浮点返回 ~424/429），字段名是
      `#fpr_mov_dest`/`#fpr_mov_src`。
    - `gen_call_lowering`：两处（`fpr_ret_stmt` ~1437/1439、`fp_ret_multi` ~1521/1526，
      字段名 `#f_dest`/`#f_src`）；它算出 `f_dest`/`f_src` 的地方（~1338）顺手取第三个 Reg 槽名。
    - `arg_move_loop`（被 `gen_call_lowering` 调用）：两处（~2021/2026，字段名 `#f_dest`/`#f_src`）
      ——需要把"第三槽名/补字段 token"作为**新参数**传进来。
-2. `crates/frontend/forge-isa-dsl/src/v12/codegen/frame.rs`：`~1228/1233`（字段名 `#f_src`），
+2. `crates/frontend/forge-isa-dsl/src/dsl/codegen/frame.rs`：`~1228/1233`（字段名 `#f_src`），
    同一个函数里算字段名的地方取第三槽。
 
 **每处怎么补**（两种情形，已被位宽表统一吸收）：

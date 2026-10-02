@@ -1,6 +1,6 @@
 //! 库表面守卫：**demo/示例 ISA 不进发行库**。
 //!
-//! ISA-DSL 的示例谱（`demo_v12` / `demo8_v12`）只服务于测试：定宽 32 位、
+//! ISA-DSL 的示例谱（`demo` / `demo8`）只服务于测试：定宽 32 位、
 //! 指令集极小，便于穷尽断言汇编器/解码器/编码器/lowering。它们必须留在
 //! `tests/`（`tests/isa/*.toml` + `tests/common/mod.rs` 用
 //! `isa_from_file!(…)` 生成），库本体只有真实后端
@@ -54,7 +54,7 @@ fn library_sources_do_not_reference_demo_isas() {
             if t.starts_with("//") {
                 continue; // 注释里可以说明"夹具在 tests/"（不是引用）
             }
-            if t.contains("demo_v12") || t.contains("demo8_v12") || t.contains("arch::demo") {
+            if t.contains("demo") || t.contains("demo8") || t.contains("arch::demo") {
                 violations.push(format!("{rel}:{}: {t}", i + 1));
             }
         }
@@ -78,16 +78,12 @@ fn arch_module_lists_only_real_backends() {
         .collect();
     assert_eq!(
         mods,
-        vec![
-            "pub mod arm64_v12;",
-            "pub mod riscv64_v12;",
-            "pub mod x86_v12;",
-        ],
+        vec!["pub mod arm64;", "pub mod riscv64;", "pub mod x86;",],
         "arch 模块清单必须是真实后端（demo 谱在 tests/）"
     );
 
     let lib = std::fs::read_to_string(manifest_dir().join("src/lib.rs")).expect("src/lib.rs");
-    for forbidden in ["pub use arch::demo_v12", "pub use arch::demo8_v12"] {
+    for forbidden in ["pub use arch::demo", "pub use arch::demo8"] {
         assert!(
             !lib.contains(forbidden),
             "src/lib.rs 不得 re-export demo 谱：{forbidden}"
@@ -111,20 +107,20 @@ fn repo_isa_dir_has_no_demo_specs() {
     assert_eq!(
         names,
         vec![
-            "arm64_v12.toml".to_string(),
-            "riscv64_v12.toml".to_string(),
-            "x86_v12.toml".to_string(),
+            "arm64.toml".to_string(),
+            "riscv64.toml".to_string(),
+            "x86.toml".to_string(),
         ],
         "仓库根 isa/ 应只有真实后端谱"
     );
 
     // 测试夹具谱必须存在（否则测试共享模块编译不过，但守卫先点名缺哪个）
     for f in [
-        "demo_v12.toml",
-        "demo8_v12.toml",
-        "demo_inst8_v12.toml",
-        "demo_inst12_v12.toml",
-        "demo_inst100_v12.toml",
+        "demo.toml",
+        "demo8.toml",
+        "demo_inst8.toml",
+        "demo_inst12.toml",
+        "demo_inst100.toml",
     ] {
         let p = manifest_dir().join("tests/isa").join(f);
         assert!(p.is_file(), "测试夹具谱缺失：{p:?}");

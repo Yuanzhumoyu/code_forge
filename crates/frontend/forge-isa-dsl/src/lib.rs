@@ -10,25 +10,25 @@
 //!   把 TokenStream 交回编译器。
 //!
 //! v11 语法层（`encoding` 字符串 + `@原语`、紧凑 `fields` 串、`when` 谓词串）已整体
-//! 移除——无兼容层、无转换工具、无逃生门。模型/校验/生成见 [`v12`] 模块。
+//! 移除——无兼容层、无转换工具、无逃生门。模型/校验/生成见 [`dsl`] 模块。
 
 /// 机器能力视图（谱 → 寄存器表/角色/固定用途寄存器）：`forge-isa abi` 与宿主
 /// ABI 适配器的数据来源，见模块文档。
 pub mod abi_view;
 mod assembler;
+mod dsl;
 /// 生成物落盘与宿主预生成（v18 S10d）。
 pub mod gen_file;
 pub mod lint;
 pub mod loader;
 pub mod report;
 pub mod schema;
-mod v12;
 
+pub use dsl::DslError;
 pub use gen_file::{
     MacroArgs, expand_file_emitted, generated_dir, generated_file_name, parse_macro_args,
     pregenerate_host,
 };
-pub use v12::V12Error;
 
 /// 生成**部件**选择（`parts = [...]`，v18 S7d；方案 §5.8）。
 ///
@@ -176,7 +176,7 @@ pub(crate) fn resolve_mod_name(path: &str, opts: &ExpandOptions) -> syn::Ident {
 
 /// 渲染错误：每条诊断的合并行 → (来源文件, 文件内行)，输出可点击的
 /// `路径:行:列: 码: 消息`（多文件谱因此指向**真正写那一行的文件**）。
-pub fn render_error_for(spec: &loader::LoadedSpec, err: &V12Error) -> String {
+pub fn render_error_for(spec: &loader::LoadedSpec, err: &DslError) -> String {
     let mut out = String::new();
     for d in err.diags() {
         let (file, line) = spec.map_line(d.line);
@@ -197,7 +197,7 @@ pub fn render_error_for(spec: &loader::LoadedSpec, err: &V12Error) -> String {
 
 /// 生成期裸消息 → 带 `路径:行:列` 前缀（同样按来源文件映射）。
 fn anchor_msg_for(spec: &loader::LoadedSpec, msg: &str) -> String {
-    let idx = v12::diag::DeclIndex::build(&spec.text);
+    let idx = dsl::diag::DeclIndex::build(&spec.text);
     let a = idx.anchor(msg);
     let (file, line) = spec.map_line(a.line);
     format!("{}:{}:{}: {}: {msg}", file.display(), line, a.col, a.code)
@@ -218,7 +218,7 @@ pub fn expand_str(
 /// 解析 + 校验（不生成代码）：成功返回 `Ok(())`，失败返回**渲染好的诊断行**
 /// （每行 `路径:行:列: 错误码: 消息`），供 CLI/工具直接打印。
 pub fn validate_source(source: &str, isa_path: &std::path::Path) -> Result<(), Vec<String>> {
-    match v12::parse_and_validate(source) {
+    match dsl::parse_and_validate(source) {
         Ok(_) => Ok(()),
         Err(e) => Err(e
             .render(Some(isa_path))
@@ -248,7 +248,7 @@ pub fn validate_file(path: &str) -> Result<(), Vec<String>> {
         Ok(s) => s,
         Err(e) => return Err(vec![e]),
     };
-    match v12::parse_and_validate(&spec.text) {
+    match dsl::parse_and_validate(&spec.text) {
         Ok(_) => Ok(()),
         Err(e) => Err(render_error_for(&spec, &e)
             .lines()
@@ -270,7 +270,7 @@ pub fn module_name(path: &str) -> syn::Ident {
     )
 }
 
-/// v12 编译入口：严格解析 + 校验 → 生成器 → `pub mod <name>`（name = 文件 stem）。
+/// DSL 编译入口：严格解析 + 校验 → 生成器 → `pub mod <name>`（name = 文件 stem）。
 ///
 /// 生成模块首行嵌入 `include_bytes!(<TOML 绝对路径>)`：rustc 据此把 ISA 谱登记为
 /// 本 crate 的编译依赖，改 TOML 自动触发重编译。**这是"改谱后必须手动 touch
@@ -311,13 +311,13 @@ fn expand_loaded(
         ));
     }
     // 诊断一次列全（S1）：每行都带可点击的 `路径:行:列: 码:`（按来源文件映射）。
-    let vopts = v12::validate::ValidateOpts {
+    let vopts = dsl::validate::ValidateOpts {
         strict_overlap: false,
         params: params.clone(),
     };
     let model =
-        v12::parse_and_validate_opts(&spec.text, &vopts).map_err(|e| render_error_for(spec, &e))?;
-    let inner = v12::codegen::generate_with_parts(&model, spec_tests, parts)
+        dsl::parse_and_validate_opts(&spec.text, &vopts).map_err(|e| render_error_for(spec, &e))?;
+    let inner = dsl::codegen::generate_with_parts(&model, spec_tests, parts)
         .map_err(|e| anchor_msg_for(spec, &e))?;
     // 短名折叠（S8c，纯等价）→ **固定根改写**（v19 V1b：一律指运行时 crate）。
     let inner = rewrite_path_roots(fold_short_forms(inner));
@@ -474,7 +474,7 @@ fn short_form_helpers() -> proc_macro2::TokenStream {
 /// - `forge_ir::…` → `forge_isa_runtime::ir::…`（runtime `pub use forge_ir as ir`）。
 ///
 /// 只改写**路径位置**的标识符（后随 `::`）：`pub(crate)` 这类可见性标记、以及
-/// 字符串字面量里的同名文本都不受影响。生成器自身源码里的 `crate::v12`（生成期
+/// 字符串字面量里的同名文本都不受影响。生成器自身源码里的 `crate::dsl`（生成期
 /// 代码）不经过本函数。
 fn rewrite_path_roots(ts: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let mut out = proc_macro2::TokenStream::new();
@@ -631,7 +631,7 @@ mod tests {
     /// 模块名 = 文件 stem（小写、`-` → `_`）。
     #[test]
     fn module_name_is_file_stem() {
-        assert_eq!(module_name("isa/x86_v12.toml").to_string(), "x86_v12");
+        assert_eq!(module_name("isa/x86.toml").to_string(), "x86");
         assert_eq!(module_name("a/My-ISA.toml").to_string(), "my_isa");
     }
 }

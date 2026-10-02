@@ -1,0 +1,977 @@
+//! ISA-DSL codegen — TargetMachine 集成层（迭代 5）。
+//!
+//! 自包含模块（encode/decode/disassemble/assemble）之上生成 forge-codegen
+//! 组件：MachineInst impl、TargetEncoder/Decoder/Disassembler/Assembler、
+//! TargetABI、TargetFrameLowering、TargetLowering、TargetMachine 组装。
+//!
+//! 关键语义（与 v11 一致）：
+//! - Inst 寄存器字段为类型化 `Reg` 枚举（类型化重构：不再裸 u32）：
+//!   lowering 构造时占位 `Reg::from_index(0, class)`，regalloc 经 `xreg_map`
+//!   分配后 `set_reg_field` 回填物理索引（`Reg::from_index` 重建枚举），
+//!   encode 读 `to_index()`。
+//! - `uses()/defs()` 返回寄存器字段的物理索引（回填后即分配结果）；regalloc
+//!   的活区间由 pipeline 聚合的 `xreg_map` 驱动（见 pipeline/liverange.rs），
+//!   MachineInst::uses/defs 仅作辅助查询。
+//! - effect 标签（指令 `effect` 键）驱动 is_branch/is_call/is_ret/effects。
+//!
+//! ## x86 缺省语义（其他 ISA 应显式覆盖）
+//! 下列 ABI/集成键的缺省值 = x86 指令名/语义。x86 是参考实现，缺省合理；
+//! riscv/demo 等已在 TOML `[abi]` 显式声明自己的指令（如 `move_inst =
+//! "MV"`、`call_inst = "JAL"`、`ret_mov_inst = "MV"`）。缺省清单：
+//! - `[abi].move_inst` 缺省 `"MOV_RM8_R64"`（整数收参/返参移动）
+//! - `[abi].ret_mov_inst` 缺省 `"MOV_RM8_R64"`
+//! - `[abi].call_inst` 缺省 `"CALL_RIP_REL"`（rel32 函数符号调用）
+//! - 浮点参数/返回移动硬编码 `MOVSD`/`MOVSS`（f64/f32；缺失 → 浮点路径
+//!   降级 Unsupported）
+//! - 尾声跳转：变长 ISA 缺省 `JMP_REL32`（0xE9 rel32）；定宽缺省 JAL
+//!   （[emit].epilogue_label 覆盖）
+//! - 条件码表/前缀扫描缺省 = x86 集（`cond_default`/`x86_scan_default`，
+//!   见 codegen/asm.rs 与 codegen/vlen.rs）
+//!
+//! 新增 ISA 时若这些指令不存在，调用/参数/尾声路径会按缺省名查找失败并
+//! 报错（或降级 Unsupported）——优先在 TOML 显式声明。
+
+use crate::dsl::pred::CmpOp;
+
+use super::super::model::*;
+use super::super::pred::Pred;
+use super::InstInfo;
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+
+/// 解析 lowering 模板立即数字面量：支持十进制、`0x`/`0X` 十六进制、
+/// 负号（含 `-0x…`），超过 i64 正范围的 64 位 hex 按 u64 解析后转
+/// 两补码（如 `0x8000000000000000` → i64::MIN）。
+pub(crate) fn parse_i64_lit(text: &str) -> Result<i64, ()> {
+    let t = text.trim();
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t),
+    };
+    let v = if let Some(hex) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+        i64::from_str_radix(hex, 16).map_err(|_| ()).or_else(|_| {
+            // 超出 i64 正范围 → 按 u64 取两补码
+            u64::from_str_radix(hex, 16)
+                .map(|u| u as i64)
+                .map_err(|_| ())
+        })?
+    } else {
+        body.parse::<i64>().map_err(|_| ())?
+    };
+    Ok(if neg { v.wrapping_neg() } else { v })
+}
+
+/// 结构化谓词 → Rust 布尔表达式（属性**按需**取，见 [`attr_expr`]）。
+///
+/// v18 S8d：谓词引用的属性名在**生成期**就已知，所以直接展开成具体的属性助手调用，
+/// 不再经过运行时 `match name { "rd" => … }` 字符串分派。
+pub(crate) fn compile_pred_guard(pred: &Pred, model: &IsaModel) -> TokenStream {
+    match pred {
+        Pred::And(ps) => {
+            let gs: Vec<_> = ps.iter().map(|p| compile_pred_guard(p, model)).collect();
+            quote! { (#(#gs)&&*) }
+        }
+        Pred::Or(ps) => {
+            let gs: Vec<_> = ps.iter().map(|p| compile_pred_guard(p, model)).collect();
+            quote! { (#(#gs)||*) }
+        }
+        Pred::Not(p) => {
+            let g = compile_pred_guard(p, model);
+            quote! { !(#g) }
+        }
+        Pred::Cmp(op, name, want) => {
+            let src = attr_expr(name, model);
+            let f = match op {
+                CmpOp::Eq => quote! { == },
+                CmpOp::Ne => quote! { != },
+                CmpOp::Lt => quote! { < },
+                CmpOp::Le => quote! { <= },
+                CmpOp::Gt => quote! { > },
+                CmpOp::Ge => quote! { >= },
+            };
+            quote! { #src.map_or(false, |__g| __g #f #want) }
+        }
+        Pred::In(name, vals) => {
+            let src = attr_expr(name, model);
+            quote! { #src.map_or(false, |__g| [#(#vals),*].contains(&__g)) }
+        }
+    }
+}
+
+/// 单个属性在**使用点**的取值表达式（v18 S8d）。
+///
+/// - 核心属性（[`crate::dsl::pred::PRED_ATTRS`]）→
+///   `__ac_get(&mut __ac, 槽, || __a_<名>(op, args, results, &*ctx))`：
+///   只有该谓词真的被求值时才算，且同一次 `lower_inst` 调用里复用（`__AC::done` 位图）；
+/// - `[[derive]]` 派生属性 → **生成期展开**成它自己的谓词表达式（解析期已保证
+///   `expr` 只引用核心属性），得到 `Some(1/0)`——同样没有运行时名字查找；
+/// - 未知属性 → `None`（恒假，与 `pred::eval` 一致；名字写错由校验器报错）。
+fn attr_expr(name: &str, model: &IsaModel) -> TokenStream {
+    if let Some(slot) = crate::dsl::pred::PRED_ATTRS.iter().position(|a| *a == name) {
+        let f = format_ident!("{name}");
+        let _ = slot;
+        return quote! { __ac . #f(&*ctx) };
+    }
+    match model.derived_preds.get(name) {
+        Some(pred) => {
+            let inner = compile_pred_guard(pred, model);
+            quote! { Some(if #inner { 1i64 } else { 0i64 }) }
+        }
+        None => quote! { None },
+    }
+}
+
+/// 谓词属性的运行时源（v18 S8d）：**每调用一份缓存 + 每个核心属性一个按需方法**。
+///
+/// 与旧实现的区别（旧实现把 9 个 `let __a_* = …` 与 `let __attr = |name| match name {…}`
+/// 一起发射在 `lower_inst` 里，且每次调用都先把 9 个算一遍）：
+///
+/// 1. **按需**：属性只在真的被谓词求值时才算——`when` 里用不到 `elem`/`iconst` 的 op
+///    一次都不算；
+/// 2. **无字符串分派**：谓词名在生成期已解析成具体方法调用（见 [`compile_pred_guard`]）；
+/// 3. **仍只算一次**：`done` 位图保证同一次调用内重复引用不重算；
+/// 4. `op`/`args`/`results` 借进 `__AC`（都是共享引用，**不借 `ctx`**，所以后面的
+///    `&mut ctx`（临时寄存器分配）不受影响），调用点因此能写得很短。
+pub(crate) fn gen_lowering_attrs() -> Result<TokenStream, String> {
+    let attrs = crate::dsl::pred::PRED_ATTRS;
+    let n = attrs.len();
+    let mut methods = Vec::with_capacity(n);
+    for (i, name) in attrs.iter().enumerate() {
+        let m = format_ident!("{name}");
+        let slot = i as u8;
+        let body = core_attr_body(name)?;
+        methods.push(quote! {
+            /// 谓词属性（v18 S8d）：按需算，本次调用内算过就复用。
+            #[inline]
+            fn #m(&mut self, ctx: &crate::prelude::LowerCtx) -> Option<i64> {
+                let bit = 1u16 << #slot;
+                if self.done & bit == 0 {
+                    self.v[#slot as usize] = { #body };
+                    self.done |= bit;
+                }
+                self.v[#slot as usize]
+            }
+        });
+    }
+    Ok(quote! {
+        /// 谓词属性源（v18 S8d）：`done` 位图 + 取值表 + 三个上下文借用。
+        struct __AC<'__x> {
+            done: u16,
+            v: [Option<i64>; #n],
+            op: &'__x crate::prelude::Opcode,
+            args: &'__x [crate::prelude::XReg],
+            results: &'__x [crate::prelude::XReg],
+        }
+
+        impl<'__x> __AC<'__x> {
+            #[inline]
+            fn new(
+                op: &'__x crate::prelude::Opcode,
+                args: &'__x [crate::prelude::XReg],
+                results: &'__x [crate::prelude::XReg],
+            ) -> Self {
+                Self { done: 0, v: [None; #n], op, args, results }
+            }
+
+            #(#methods)*
+        }
+    })
+}
+
+/// 核心属性的求值表达式（生成期按名字展开；`self.args`/`self.results`/`self.op`/`ctx`）。
+///
+/// **新增 [`crate::dsl::pred::PRED_ATTRS`] 项必须同步这里**——不同步会在生成期报错
+/// （不是静默生成一个恒假的属性）。
+fn core_attr_body(name: &str) -> Result<TokenStream, String> {
+    Ok(match name {
+        "rd" => quote! {
+            self.results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+                } else {
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                }
+            })
+        },
+        "rs1_width" => quote! {
+            self.args.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+                } else {
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                }
+            })
+        },
+        "rs2_width" => quote! {
+            self.args.get(1).and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+                } else {
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                }
+            })
+        },
+        "elem" => quote! {
+            self.results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+                    ctx.type_store
+                        .as_ref()
+                        .and_then(|s| s.element_type(*t))
+                        .map(elem_id_of)
+                        .unwrap_or(0)
+                } else {
+                    elem_id_of(*t)
+                }
+            })
+        },
+        // 向量大小标记（字节）：结果/实参是向量类型 → Some(size_bytes)，否则
+        // None。Store 无结果（elem 恒 None）时据此区分向量 store 与标量
+        //（WA-37 D3：≤16B Direct 向量值的 Load/Store 需全宽向量内存移动）。
+        "rd_vec" => quote! {
+            self.results.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+                ctx.type_store.as_ref().and_then(|s| {
+                    if s.is_vector(*t) {
+                        Some(s.size_bytes(*t) as i64)
+                    } else {
+                        None
+                    }
+                })
+            })
+        },
+        "rs1_vec" => quote! {
+            self.args.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+                ctx.type_store.as_ref().and_then(|s| {
+                    if s.is_vector(*t) {
+                        Some(s.size_bytes(*t) as i64)
+                    } else {
+                        None
+                    }
+                })
+            })
+        },
+        // 比较条件走 immediate 通道（v3 S1）：宿主 lowering 把
+        // `Immediate::IntCC`/`FloatCC` 折成 `IntCC::code()`/`FloatCC::code()`
+        // （规范条件码 1..=10 / 1..=16，与 TOML 的 `cond` 谓词同一份映射），
+        // 因此这里直接读 `current_immediates[0]` ——不再需要每 ISA 生成
+        // `icmp_id`/`fcmp_id` 两张重复的数字映射表。
+        "cond" => quote! {
+            match self.op {
+                crate::prelude::Opcode::Icmp | crate::prelude::Opcode::Fcmp => {
+                    ctx.current_immediates.first().copied().map(|v| v as i64)
+                }
+                _ => None,
+            }
+        },
+        "imm0" => quote! {
+            ctx.current_immediates.first().copied().map(|v| v as i64)
+        },
+        // `iconst` = 当前指令常量池解析出的**真值**（signed i64）。
+        // 与 `imm0` 的区别：Iconst 的 immediate 是 `Immediate::Const(cid)`
+        // （builder 统一 `insert_int` 入池），imm0 只是池索引（正数）——
+        // 判断符号/大小必须用池解析值。Constant 引用恒以 cid 指向池条目。
+        "iconst" => quote! {
+            ctx.constant_pool.as_ref().and_then(|p| {
+                p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index))
+            })
+        },
+        other => {
+            return Err(format!(
+                "v18 S8d：核心谓词属性 `{other}` 没有对应的求值表达式——`pred::PRED_ATTRS` 新增项时必须同步 codegen/integration.rs::core_attr_body"
+            ));
+        }
+    })
+}
+
+/// 指令存在性（按 name 精确匹配，**与操作数无关**——RET/NOP 等无操作数
+/// 指令存在性必须可判定；`inst_fids` 返回空 vec 仅表示无字段，不表示
+/// 指令不存在）。
+pub(crate) fn inst_exists(infos: &[InstInfo], name: &str) -> bool {
+    infos.iter().any(|i| i.inst.name == name)
+}
+
+/// 按指令名取操作数序字段 ident（集成层硬编码构造 Inst 用；字段名随
+/// 类型化重构变化，避免各处硬编码 op{i}）。
+pub(crate) fn inst_fids<'a>(infos: &'a [InstInfo], name: &str) -> Vec<&'a syn::Ident> {
+    infos
+        .iter()
+        .find(|i| i.inst.name == name)
+        .map(|i| i.operands.iter().map(|(_, fid, _, _)| fid).collect())
+        .unwrap_or_default()
+}
+
+/// 按角色解析移动指令字段：返回 (src 字段名, src 操作数序号, dest 字段名,
+/// dest 操作数序号)。src = 第一个 In 角色 Reg 槽；dest = 第一个 Out/InOut
+/// 角色 Reg 槽。该角色语义对两种操作数序都成立：x86 的 `MOV_RM8_R64`
+///（op0=In=src、op1=InOut=dest）与 riscv 的 `mv`（op0=Out=dest、op1=In=src）。
+/// 调用方用 src/dest **序号**做 map_reg_field（vreg 绑定字段），不可硬编码
+/// 0/1——那按 x86 方向写死在定宽 ISA（dest=op0）上会把参数移动反成
+/// `mv vreg, x0`、返回值接收反成 `mv x0, src`。
+pub(crate) fn inst_move_role(
+    infos: &[InstInfo],
+    name: &str,
+) -> Option<(syn::Ident, u8, syn::Ident, u8)> {
+    let info = infos.iter().find(|i| i.inst.name == name)?;
+    let src = info
+        .operands
+        .iter()
+        .enumerate()
+        .find(|(_, (_, _, s, r))| *r == OperandRole::In && s.kind == OperandKind::Reg)?;
+    let dest = info.operands.iter().enumerate().find(|(_, (_, _, s, r))| {
+        matches!(r, OperandRole::Out | OperandRole::InOut) && s.kind == OperandKind::Reg
+    })?;
+    Some((src.1.1.clone(), src.0 as u8, dest.1.1.clone(), dest.0 as u8))
+}
+
+/// 按指令名取 (所有 Reg 槽字段, 所有 Imm/Label 槽字段)——@frame_alloc 等
+/// 需要把"全部 reg 槽填 sp、全部 imm 槽填 frame_size"的指令（x86 的
+/// `SUB64_R_IMM32` 是 2 操作数、demo 的 `ADDI16` 是 rd/rs1/imm 3 操作数）。
+/// `pub(crate)`：lowering 模块（lowering.rs）复用。
+pub(crate) fn inst_reg_imm_fids<'a>(
+    infos: &'a [InstInfo],
+    name: &str,
+) -> Option<(Vec<&'a syn::Ident>, Vec<&'a syn::Ident>)> {
+    let info = infos.iter().find(|i| i.inst.name == name)?;
+    let regs: Vec<&syn::Ident> = info
+        .operands
+        .iter()
+        .filter(|(_, _, s, _)| s.kind == OperandKind::Reg)
+        .map(|(_, f, _, _)| f)
+        .collect();
+    let imms: Vec<&syn::Ident> = info
+        .operands
+        .iter()
+        .filter(|(_, _, s, _)| matches!(s.kind, OperandKind::Imm | OperandKind::Label))
+        .map(|(_, f, _, _)| f)
+        .collect();
+    Some((regs, imms))
+}
+/// **只**生成 `Reg` 枚举 + `PhysReg` impl + 三个类常量（v18 S7d）。
+///
+/// 这些不是"TargetMachine 集成层"的私产：`Inst` 的 Reg 字段类型就是 `Reg`，
+/// 因此 `parts` 不含 `tm` 时（只要生成 encode/decode/asm）也必须发射。
+/// `tm` 在时由 [`gen_integration`] 负责（保持生成物逐字节不变）。
+pub fn gen_reg_enum_only(model: &IsaModel) -> Result<TokenStream, String> {
+    let reg_enum = super::machine::gen_reg_enum(model)?;
+    Ok(quote! {
+        use forge_ir::PhysReg;
+        #reg_enum
+    })
+}
+
+/// 生成集成层组件（Reg 枚举 + MachineInst + Encoder + Decoder + Disasm +
+/// Assembler + ABI + FrameLowering + Lowering + TargetMachine）。
+pub fn gen_integration(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, String> {
+    let reg_enum = super::machine::gen_reg_enum(model)?;
+    let machine_inst = super::machine::gen_machine_inst(infos, model)?;
+    let encoder = super::machine::gen_encoder(infos, model)?;
+    let decoder = super::machine::gen_decoder();
+    let disasm = super::machine::gen_disasm(infos)?;
+    let assembler = super::machine::gen_assembler(model);
+    let abi = super::frame::gen_abi(model)?;
+    let frame_lowering = super::frame::gen_frame_lowering(infos, model)?;
+    let lowering = super::lowering::gen_lowering(infos, model)?;
+    let isa_info = gen_isa_info(model, infos)?;
+    let reg_info = gen_reg_info(model)?;
+    let target_machine = gen_target_machine(model)?;
+    let supported_ops = gen_supported_ops(model);
+    Ok(quote! {
+        // ── TargetMachine 集成层（迭代 5/6）──
+        use forge_ir::PhysReg;
+        #reg_enum
+        #machine_inst
+        #encoder
+        #decoder
+        #disasm
+        #assembler
+        #abi
+        #frame_lowering
+        #lowering
+        #isa_info
+        #reg_info
+        #target_machine
+        #supported_ops
+    })
+}
+
+// ─────────────────────── 能力集（P1-16）───────────────────────
+
+/// P1-16：能力集单一事实源——`[[lowering]].op` 唯一集（排序去重）。
+///
+/// forge-tests 的 `Capabilities` 由此派生（不再手写同步）；TOML 新增
+/// lowering op 后矩阵用例自动转绿。Call/CallIndirect（ABI 专用生成路径）
+/// 与 GEP 等无 `[[lowering]]` 条目的 op 由消费方补充声明。
+fn gen_supported_ops(model: &IsaModel) -> TokenStream {
+    let mut ops: Vec<&str> = model.lowering.iter().map(|l| l.op.name()).collect();
+    ops.sort_unstable();
+    ops.dedup();
+    let items: Vec<TokenStream> = ops.iter().map(|op| quote! { #op }).collect();
+    quote! {
+        /// 本 ISA TOML 声明的 lowering op 集（`[[lowering]].op` 唯一集；
+        /// 排序去重）。能力集单一事实源——矩阵 `Capabilities` 由此派生。
+        pub const SUPPORTED_OPS: &[&str] = &[#(#items),*];
+    }
+}
+
+// ─────────────────────── IsaInfo / RegInfo ───────────────────────
+
+/// 剥离 asm 模板中的占位符声明 `{n:[slot:role]}` → `{n}`（字面段检查用；
+/// 声明里的 `[`/`]` 不是内存形状，字面段的括号保留）。
+pub(crate) fn strip_placeholder_decls(asm: &str) -> String {
+    let mut out = String::with_capacity(asm.len());
+    let mut chars = asm.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let mut inner = String::new();
+            while let Some(&d) = chars.peek() {
+                if d == '}' {
+                    break;
+                }
+                inner.push(d);
+                chars.next();
+            }
+            chars.next(); // '}'
+            // 仅保留序号部分
+            let idx = inner.split(':').next().unwrap_or("").trim();
+            out.push('{');
+            out.push_str(idx);
+            out.push('}');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// lowering 模板操作数 token → 槽类型签名（形状消歧用）。
+/// 委托占位符注册表（placeholder.rs）——分类、临时、xreg、ctor 单一事实源。
+pub(crate) fn lowering_token_kind(op: &str) -> &'static str {
+    super::placeholder::token_kind(op)
+}
+
+fn gen_isa_info(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStream, String> {
+    let name_str = &model.meta.name;
+    let version_str = model.meta.version.as_deref().unwrap_or("");
+    let mode = model.meta.mode;
+    let vl = model.is_variable_length();
+    let n_insts = infos.len();
+    // 能力集按 `[encoding].kind` 三态派生（v18 S4）：
+    // - fixed：单字长 → fixed_inst_size = 字长、min = max = 字长；
+    // - mixed：字长集 → variable_length = true、min/max = 最窄/最宽字长；
+    // - prefix_scan：逐指令变长 → min = 1、max = max_len（缺省 15）。
+    let (fixed_inst_size, min_inst_len, max_inst_len): (u32, u8, u8) = match model.encoding.kind {
+        EncodingKind::Fixed => {
+            let b = model.inst_bytes()?;
+            (b, b as u8, b as u8)
+        }
+        EncodingKind::Mixed => {
+            let mut ws = model.encoding_width_bytes();
+            if ws.is_empty() {
+                ws.push(1);
+            }
+            (0, ws[0] as u8, ws[ws.len() - 1] as u8)
+        }
+        EncodingKind::PrefixScan => (0, 1, model.encoding.max_len.unwrap_or(15)),
+    };
+    let endian = if model.meta.endian == Endian::Big {
+        quote! { forge_ir::Endianness::Big }
+    } else {
+        quote! { forge_ir::Endianness::Little }
+    };
+    Ok(quote! {
+        pub struct IsaInfo;
+
+        impl crate::machine::isa_info::IsaInfo for IsaInfo {
+            fn name(&self) -> &'static str { #name_str }
+            fn version(&self) -> &'static str { #version_str }
+            fn address_size(&self) -> u8 { #mode }
+            fn endianness(&self) -> forge_ir::Endianness { #endian }
+            fn capabilities(&self) -> crate::machine::isa_info::IsaCapabilities {
+                crate::machine::isa_info::IsaCapabilities {
+                    variable_length: #vl,
+                    fixed_inst_size: #fixed_inst_size,
+                    prefix_layers: 1,
+                    addressing_modes: &[],
+                    simd_widths: &[],
+                    mask_registers: false,
+                    broadcast: false,
+                    rounding_mode: false,
+                    endianness: #endian,
+                    min_inst_len: #min_inst_len,
+                    max_inst_len: #max_inst_len,
+                }
+            }
+            fn num_instructions(&self) -> usize { #n_insts }
+        }
+    })
+}
+
+fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
+    // 主 GPR 类 = **元数据派生**（`[meta].default_gpr_width` > 最宽已声明 GPR 组；
+    // 缺 GPR 组即 Err）。历史实现锚定 `GPR(8).or(GPR(4)).unwrap_or(16)`——1 字节
+    // 寄存器 ISA 两者都不存在 ⇒ 名字表为空 ⇒ sp/fp/scratch/callee_saved/clobber
+    // 全部静默丢弃（最危险的写死点）。
+    let gpr_main = model.main_gpr_class()?;
+    let gpr_count = model.names_of(gpr_main)?.len() as u32;
+    // 主浮点/向量组数量：与默认 FPR 类一致（优先 16 字节 XMM 组——ABI/SSE
+    // 占位以 XMM 为基准；ZMM 等 EVEX 组不改变 num_fp_regs，否则 regalloc 会
+    // 用 XMM 类分配 16-31 号越界）。riscv F32/F64 同为 32 号组；无 FPR 组 → 0。
+    let fpr_count = match model.main_fpr_class()? {
+        Some(rc) => model.names_of(rc)?.len() as u32,
+        None => 0,
+    };
+    // 主 GPR 组寄存器名 → 物理索引（用于 sp/fp/scratch/callee_saved/clobber 引用
+    // 解析）；缺组即 Err（不再 `unwrap_or_default()` 静默空表）。
+    let name_to_idx = model.main_gpr_name_to_idx()?;
+    // SP/FP：优先 [machine.frame].sp/.fp 声明的名字（demo "X7"/"X6" 等自定义寄存器名），
+    // 否则按惯例名（"RSP"/"SP"、"RBP"/"FP"）解析。**两者都解析不到 → 生成期
+    // 报错**（fail-closed）：历史实现静默回退 `from_index(idx = 0, GPR64)`，
+    // 对非 x86 ISA 会构造该 ISA 根本不存在的寄存器类；1 字节寄存器 ISA 连主
+    // GPR 名字表都是空的（锚点 GPR(8)/GPR(4) 都不存在）。
+    let frame_sp_name = model.machine_frame().map(|f| f.sp.clone());
+    let frame_fp_name = model.machine_frame().and_then(|f| f.fp.clone());
+    let frame_declared = model.machine_frame().is_some();
+    let (sp_expr, sp_idx) = resolve_frame_reg(
+        gpr_main,
+        &name_to_idx,
+        frame_sp_name.as_ref(),
+        ["rsp", "sp"],
+        "[machine.frame].sp",
+        frame_declared,
+    )?;
+    let (fp_expr, fp_idx) = resolve_frame_reg(
+        gpr_main,
+        &name_to_idx,
+        frame_fp_name.as_ref(),
+        ["rbp", "fp"],
+        "[machine.frame].fp",
+        frame_declared,
+    )?;
+    // callee_saved：**机器事实**（v20 A6 收口）——`[machine].callee_saved_gpr`（帧件会保存
+    // 的那组 GPR）优先，缺省回退 `[abi].callee_saved.gpr`（两者同义）。
+    // 解析成物理索引，顺序 = prologue push 序；名字不在主 GPR 组内 → 生成期 Err。
+    // 帧按几个 callee-saved 推入槽算（同批引入的机器事实）。
+    let callee_slots = model.machine_callee_save_slots();
+    let callee_saved: Vec<TokenStream> = resolve_reg_list(
+        &name_to_idx,
+        model.machine_callee_saved(),
+        "[machine].callee_saved_gpr",
+    )?
+    .into_iter()
+    .map(|i| quote! { #i })
+    .collect();
+    // allocatable：全量 0..count（排除 SP/FP + spill scratch + [machine].fixed_regs）。
+    // reserved：不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被 prologue/
+    // call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 subw x0 结果丢失）。
+    // spill scratch（[machine].spill_scratch = R10/R11）必须排除——emission 的 spill
+    // load/store 用 scratch 寄存器，若 regalloc 把活跃 XReg 分配到 scratch，
+    // spill 重写会覆盖其值（t+= 循环崩溃：i 地址在 R11 被 spill load 覆盖）。
+    // 6i 曾尝试排除但触发循环 spill 暴露 spill bug；6k/6m/6n 修复后
+    // 重新排除（scatch 全时保留给 spill 机制）。
+    // v20 A5-3：机器事实读 `[machine]`（唯一来源；`[abi]` 同名旧键已删除）。
+    let scratch_names: &[String] = model.machine_scratch();
+    let reserved_names: &[String] = model.machine_reserved();
+    let scratch_list = resolve_reg_list(&name_to_idx, scratch_names, "[machine].spill_scratch")?;
+    let reserved_list = resolve_reg_list(&name_to_idx, reserved_names, "[machine].fixed_regs")?;
+    let scratch_idx: std::collections::HashSet<u32> = scratch_list.iter().copied().collect();
+    let reserved_idx: std::collections::HashSet<u32> = reserved_list.iter().copied().collect();
+    let gp_alloc: Vec<TokenStream> = (0..gpr_count)
+        .filter(|&i| {
+            i != sp_idx && i != fp_idx && !scratch_idx.contains(&i) && !reserved_idx.contains(&i)
+        })
+        .map(|i| quote! { #i })
+        .collect();
+    let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
+    // scratch：从 [machine].spill_scratch 解析物理索引（spill load/store 用）。
+    let scratch: Vec<TokenStream> = scratch_list.into_iter().map(|i| quote! { #i }).collect();
+    // ── 类表（ISA 数据，2026-09-13）──────────────────────────────────────
+    // 分配器的类表 = **本函数生成的表**（编译期不再编造"未声明的类"）。
+    // 规则：把"宿主可能请求的类"逐个映射到同族物理寄存器文件——
+    //   GPR：类型系统整数宽度 {1,2,4,8}（≤ 主 GPR 宽）∪ 已声明 GPR 组宽 ∪ 地址/值池
+    //   FPR：浮点值池宽 ∪ 已声明且 ≤ 该宽的 FPR 组
+    //   VEC：`[meta].vector_tiers` 档位（池 = 浮点文件；无浮点文件时用已声明 VEC 组）
+    // 未声明的族不产生任何类（1 字节寄存器 ISA 只有 GPR(1)；i16/i32/i64 由值池门
+    // 在编译期拒绝）。x86/riscv64/arm64/demo 的**被请求类**集合与本表完全一致
+    // （已用 FGE_DEBUG_GEN dump + jit 矩阵验证行为不变）。
+    let mut class_entries: Vec<TokenStream> = Vec::new();
+    {
+        let mut gpr_widths: Vec<u16> = model
+            .reg
+            .keys()
+            .filter_map(|rc| match rc {
+                RegClass::GPR(w) => Some(*w),
+                _ => None,
+            })
+            .collect();
+        for w in [1u16, 2, 4, 8] {
+            if w <= gpr_main.width() {
+                gpr_widths.push(w);
+            }
+        }
+        gpr_widths.push(model.addr_class()?.width());
+        gpr_widths.push(model.value_gpr_class()?.width());
+        gpr_widths.sort_unstable();
+        gpr_widths.dedup();
+        for w in gpr_widths {
+            let cls = RegClass::GPR(w);
+            let gname = cls.to_string();
+            class_entries.push(quote! {
+                crate::machine::isa_info::RegisterClassInfo {
+                    name: #gname,
+                    count: #gpr_count as u16,
+                    width: #w,
+                    prefix: "",
+                    reg_class: forge_ir::RegClass::GPR(#w),
+                    allocatable: vec![#(#gp_alloc),*],
+                }
+            });
+        }
+        if let Some(fpr_main) = model.main_fpr_class()? {
+            // **有效的**宿主浮点值池类（与 `machine.rs` 的 `__VALUE_FPR_CLASS`
+            // 同规则：`value_fpr_class()` 缺省 FPR(8)）。riscv 这类"只有 fpr4 组、
+            // 但浮点值类为 FPR(8)"的 ISA 必须把 FPR(8) 也登记进类表，否则浮点值
+            // vreg 的类不在分配器配置里 —— riscv 矩阵 fcmp 系列实测错值。
+            let value_fpr_eff = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));
+            let mut fpr_widths: Vec<u16> = vec![value_fpr_eff.width(), fpr_main.width()];
+            for rc in model.reg.keys() {
+                if let RegClass::FPR(w) = rc {
+                    fpr_widths.push(*w);
+                }
+            }
+            fpr_widths.sort_unstable();
+            fpr_widths.dedup();
+            for w in fpr_widths {
+                let gname = RegClass::FPR(w).to_string();
+                // 池 = 浮点寄存器文件的分配序（`0..num_fp_regs`）：同一物理文件
+                // 的不同宽度视图共用池（x86 FPR(8)/FPR(16)/FPR(32) 共享 XMM/ZMM
+                // 编号空间；riscv FPR(4)/FPR(8) 共享 fa 编号空间）。
+                class_entries.push(quote! {
+                    crate::machine::isa_info::RegisterClassInfo {
+                        name: #gname,
+                        count: #fpr_count as u16,
+                        width: #w,
+                        prefix: "",
+                        reg_class: forge_ir::RegClass::FPR(#w),
+                        allocatable: vec![#(#fp_alloc),*],
+                    }
+                });
+            }
+            for t in model.vector_tiers() {
+                let cls = RegClass::VEC(t);
+                let gname = cls.to_string();
+                class_entries.push(quote! {
+                    crate::machine::isa_info::RegisterClassInfo {
+                        name: #gname,
+                        count: #fpr_count as u16,
+                        width: #t,
+                        prefix: "",
+                        reg_class: forge_ir::RegClass::VEC(#t),
+                        allocatable: vec![#(#fp_alloc),*],
+                    }
+                });
+            }
+        }
+    }
+    Ok(quote! {
+        pub struct RegInfo;
+
+        impl crate::machine::reg_info::TargetRegInfo for RegInfo {
+            type Reg = Reg;
+
+            fn num_gp_regs(&self) -> u32 { #gpr_count }
+            fn num_fp_regs(&self) -> u32 { #fpr_count }
+            fn register_classes(
+                &self,
+            ) -> Vec<crate::machine::isa_info::RegisterClassInfo> {
+                vec![#(#class_entries),*]
+            }
+            fn default_gpr_class(&self) -> forge_ir::RegClass { __DEFAULT_GPR_CLASS }
+            fn default_fpr_class(&self) -> forge_ir::RegClass { __DEFAULT_FPR_CLASS }
+            fn addr_class(&self) -> forge_ir::RegClass { __ADDR_CLASS }
+            fn value_gpr_class(&self) -> forge_ir::RegClass { __VALUE_GPR_CLASS }
+            fn value_fpr_class(&self) -> forge_ir::RegClass { __VALUE_FPR_CLASS }
+            fn slot_bytes(&self) -> u16 { __SLOT_BYTES }
+            fn vector_tiers(&self) -> &[u16] { &__VECTOR_TIERS }
+            fn class_for_type(&self, ty: forge_ir::TypeId) -> Option<forge_ir::RegClass> {
+                // ① `[types]` 显式映射（ISA 数据，优先）；② 通用值池规则。
+                for (t, rc) in __TYPE_MAP {
+                    if t == ty {
+                        return Some(rc);
+                    }
+                }
+                crate::machine::reg_info::class_for_type_in_pool(
+                    ty,
+                    __VALUE_GPR_CLASS,
+                    __VALUE_FPR_POOL,
+                    &__VECTOR_TIERS,
+                )
+            }
+            fn type_map(&self) -> &'static [(forge_ir::TypeId, forge_ir::RegClass)] {
+                &__TYPE_MAP
+            }
+            fn sp_reg(&self) -> forge_ir::FrameAccess<Self::Reg> {
+                forge_ir::FrameAccess::Register(#sp_expr)
+            }
+            fn fp_reg(&self) -> Option<Self::Reg> {
+                Some(#fp_expr)
+            }
+            fn allocatable_gp_order(&self) -> Vec<u32> {
+                vec![#(#gp_alloc),*]
+            }
+            fn allocatable_fp_order(&self) -> Vec<u32> {
+                vec![#(#fp_alloc),*]
+            }
+            fn scratch_regs(&self) -> Vec<u32> {
+                vec![#(#scratch),*]
+            }
+            fn callee_save_slots(&self) -> u32 { #callee_slots }
+            fn callee_saved(&self) -> Vec<u32> {
+                vec![#(#callee_saved),*]
+            }
+            fn frame_pointer_overhead(&self) -> u32 { __FP_OVERHEAD_BYTES as u32 }
+        }
+    })
+}
+
+/// 解析 `[machine.frame].sp/.fp`：显式名字 > 惯例名（大小写不敏感）。
+///
+/// 规则（fail-closed 与兼容并重）：
+/// - 显式声明了名字 → 必须能在主 GPR 组内解析，否则 `Err`（拼写错误不再静默
+///   落回索引 0）；
+/// - 未声明 → 惯例名（`RSP`/`SP`、`RBP`/`FP`）；
+/// - 仍未命中且 `[machine.frame]` **已声明** → `Err`（配了帧却没有可用的 sp/fp）；
+/// - 未声明 `[machine.frame]`（纯寄存器夹具 / 无帧 ISA）→ 索引 0 占位，类用元数据
+///   派生的 `__DEFAULT_GPR_CLASS`（历史实现写死 `GPR64` ⇒ 非 x86 ISA 会构造
+///   一个该 ISA 根本不存在的类）。
+fn resolve_frame_reg(
+    main_group: RegClass,
+    name_to_idx: &std::collections::HashMap<String, u32>,
+    declared: Option<&String>,
+    conventional: [&str; 2],
+    key: &str,
+    frame_declared: bool,
+) -> Result<(TokenStream, u32), String> {
+    // 显式声明优先**且唯一**：声明了却解析不到 → 直接报错，不用惯例名顶替
+    // （否则 `sp = "EAX"`（在别的组）会被静默换成 RSP——与本文档字符串相反）。
+    if let Some((n, i)) = declared.and_then(|n| name_to_idx.get(n.as_str()).map(|&i| (n, i))) {
+        let ident = format_ident!("{n}");
+        return Ok((quote! { Reg::#ident }, i));
+    }
+    if let Some(n) = declared {
+        return Err(format!(
+            "{key}: 声明为 \"{n}\" 但不在 [reg.{main_group}] 组内——请改成该组内的寄存器名（生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
+        ));
+    }
+    // 未声明 → 惯例名（RSP/SP、RBP/FP）。
+    if let Some((n, &i)) = name_to_idx
+        .iter()
+        .find(|(n, _)| conventional.iter().any(|c| n.eq_ignore_ascii_case(c)))
+    {
+        let ident = format_ident!("{n}");
+        return Ok((quote! { Reg::#ident }, i));
+    }
+    if frame_declared {
+        return Err(format!(
+            "{key}: 未声明，且惯例名 {conventional:?} 不在 [reg.{main_group}] 组内——请在 [machine.frame] 显式声明该寄存器在 TOML 中的名字（生成期 fail-closed：不再回退到索引 0 的 x86 缺省类）"
+        ));
+    }
+    // 未声明 [machine.frame]：索引 0 占位（类由元数据派生，指向真实存在的主 GPR 寄存器）。
+    Ok((
+        quote! { <Reg as forge_ir::PhysReg>::from_index(0, __DEFAULT_GPR_CLASS) },
+        0,
+    ))
+}
+
+/// 解析物理寄存器名列表 → 索引列表；任一名字不在主 GPR 组内 → `Err`
+/// （历史实现 `filter_map` 静默丢弃未知名字 ⇒ regalloc 会分配被占用寄存器）。
+fn resolve_reg_list(
+    name_to_idx: &std::collections::HashMap<String, u32>,
+    names: &[String],
+    key: &str,
+) -> Result<Vec<u32>, String> {
+    let mut out = Vec::with_capacity(names.len());
+    for n in names {
+        match name_to_idx.get(n.as_str()) {
+            Some(&i) => out.push(i),
+            None => {
+                return Err(format!(
+                    "{key}: 物理寄存器名 \"{n}\" 不在主 GPR 组内（生成期 fail-closed）"
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+// ─────────────────────── TargetMachine ───────────────────────
+
+fn gen_target_machine(model: &IsaModel) -> Result<TokenStream, String> {
+    let isa_name_str = &model.meta.name;
+    // 能力表（v20 A3/V8）：**两个来源**——① `[[instructions]].roles` 里那些
+    // 操作数结构说不出来的语义（调用/返回/跳转/帧/栈参数/保存恢复）；
+    // ② **搬运族派生**（`data_width` + 操作数结构 → 方向/寄存器族/宽度，
+    // 与 `forge-isa abi check` 的静态视图同源，都走 `moves::MoveTable`）。
+    // 无宽度语义的能力按地址宽折算。
+    let default_bits: u16 = model.addr_class().map(|c| c.width()).unwrap_or(8) * 8;
+    let mut caps: Vec<(&'static str, u16)> = Vec::new();
+    let mut push_cap =
+        |name: &'static str, bits: u16| match caps.iter_mut().find(|(n, _)| *n == name) {
+            Some(e) => {
+                e.1 = e.1.max(bits);
+            }
+            None => caps.push((name, bits)),
+        };
+    for inst in &model.instructions {
+        for decl in &inst.roles {
+            if let Some(cap) = crate::abi_view::role_capability(decl.role()) {
+                push_cap(cap, default_bits);
+            }
+        }
+    }
+    let infos = super::collect_inst_infos(model)?;
+    for (cap, bits, _insts) in super::moves::MoveTable::collect(&infos)?.capabilities() {
+        push_cap(cap, bits);
+    }
+    caps.sort_unstable_by_key(|(n, _)| *n);
+    // 生成 `match role { "gpr_mov" => Some(64), …, _ => None }`——**直接给出分支**，
+    // 不在生成物里留名字表 + 线性查找（查表只发生在编译期，运行期一次比较搞定）。
+    let cap_arms: Vec<TokenStream> = caps
+        .iter()
+        .map(|(name, bits)| quote! { #name => Some(#bits), })
+        .collect();
+    Ok(quote! {
+        #[derive(Clone)]
+        pub struct TargetMachine {
+            isa_info: std::sync::Arc<dyn crate::machine::isa_info::IsaInfo>,
+            reg_info: std::sync::Arc<dyn crate::machine::reg_info::TargetRegInfo<Reg = Reg>>,
+            abi: std::sync::Arc<dyn crate::machine::abi::TargetABI<Reg = Reg>>,
+            lowering: std::sync::Arc<dyn crate::machine::lowering::TargetLowering<Inst = Inst>>,
+            encoder: std::sync::Arc<dyn crate::machine::encoder::TargetEncoder<Inst = Inst>>,
+            frame_lowering: std::sync::Arc<dyn crate::machine::frame::TargetFrameLowering<Inst = Inst>>,
+            disassembler: std::sync::Arc<dyn crate::machine::disasm::TargetDisassembler<Inst = Inst>>,
+            assembler: std::sync::Arc<dyn crate::machine::assembler::TargetAssembler<Inst = Inst>>,
+            decoder: std::sync::Arc<dyn crate::machine::decoder::TargetDecoder<Inst = Inst>>,
+        }
+
+        impl TargetMachine {
+            pub fn new() -> Self {
+                Self {
+                    isa_info: std::sync::Arc::new(IsaInfo),
+                    reg_info: std::sync::Arc::new(RegInfo),
+                    abi: std::sync::Arc::new(ABI),
+                    lowering: std::sync::Arc::new(Lowering),
+                    encoder: std::sync::Arc::new(Encoder),
+                    frame_lowering: std::sync::Arc::new(FrameLowering),
+                    disassembler: std::sync::Arc::new(Disassembler),
+                    assembler: std::sync::Arc::new(Assembler),
+                    decoder: std::sync::Arc::new(Decoder),
+                }
+            }
+
+            pub fn new_arc() -> std::sync::Arc<Self> {
+                std::sync::Arc::new(Self::new())
+            }
+        }
+
+        impl crate::machine::target::TargetMachine for TargetMachine {
+            type Inst = Inst;
+            type Reg = Reg;
+
+            fn isa_info(&self) -> &std::sync::Arc<dyn crate::machine::isa_info::IsaInfo> { &self.isa_info }
+            fn reg_info(&self) -> &std::sync::Arc<dyn crate::machine::reg_info::TargetRegInfo<Reg = Self::Reg>> { &self.reg_info }
+            fn abi(&self) -> &std::sync::Arc<dyn crate::machine::abi::TargetABI<Reg = Self::Reg>> { &self.abi }
+            fn lowering(&self) -> &std::sync::Arc<dyn crate::machine::lowering::TargetLowering<Inst = Self::Inst>> { &self.lowering }
+            fn encoder(&self) -> &std::sync::Arc<dyn crate::machine::encoder::TargetEncoder<Inst = Self::Inst>> { &self.encoder }
+            fn frame_lowering(&self) -> &std::sync::Arc<dyn crate::machine::frame::TargetFrameLowering<Inst = Self::Inst>> { &self.frame_lowering }
+            fn disassembler(&self) -> Option<&std::sync::Arc<dyn crate::machine::disasm::TargetDisassembler<Inst = Self::Inst>>> { Some(&self.disassembler) }
+            fn assembler(&self) -> Option<&std::sync::Arc<dyn crate::machine::assembler::TargetAssembler<Inst = Self::Inst>>> { Some(&self.assembler) }
+            fn decoder(&self) -> Option<&std::sync::Arc<dyn crate::machine::decoder::TargetDecoder<Inst = Self::Inst>>> { Some(&self.decoder) }
+
+            /// ISA 申报的能力（谱里 `roles` 声明折算；与 `forge-isa abi check` 同源）。
+            fn role_bits(&self, role: &str) -> Option<u16> {
+                match role {
+                    #(#cap_arms)*
+                    _ => None,
+                }
+            }
+        }
+
+        forge_isa_runtime::impl_erased_target_machine!(TargetMachine);
+
+        /// 注册该 ISA 后端到全局 Registry。
+        pub fn ensure_registered() {
+            static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+            INIT.get_or_init(|| {
+                crate::machine::reloc_patcher::register_default_reloc_patcher(#isa_name_str);
+                if !crate::Registry::global().contains(#isa_name_str) {
+                    crate::Registry::global().register_backend(TargetMachine::new_arc());
+                }
+            });
+        }
+    })
+}
+
+/// 解析 lowering/emit 模板中的内存操作数文本 → MemRef 构造表达式。
+/// 支持 `{base}+{off}`（base = 物理寄存器名或 `{off}` 偏移符号）。
+pub(crate) fn parse_mem_template(text: &str, ctx: &str) -> Result<TokenStream, String> {
+    let t = text.trim().trim_start_matches('[').trim_end_matches(']');
+    let (base_part, disp_part) = match t.split_once('+') {
+        Some((b, d)) => (b.trim().to_string(), Some(d.trim().to_string())),
+        None => match t.split_once('-') {
+            Some((b, d)) => (b.trim().to_string(), Some(format!("-{d}"))),
+            None => (t.trim().to_string(), None),
+        },
+    };
+    let base: TokenStream = if base_part == "{off}" {
+        quote! { ctx.current_offset }
+    } else {
+        let reg = format_ident!("{base_part}");
+        quote! { Reg::#reg }
+    };
+    let disp: TokenStream = match disp_part {
+        Some(d) if d == "{off}" => quote! { ctx.current_offset },
+        Some(d) if d == "{alloca}" => quote! { ctx.current_alloca_offset as i64 },
+        Some(d) => {
+            let v: i64 = d
+                .parse()
+                .map_err(|_| format!("{ctx}: mem disp '{d}' 无法解析"))?;
+            quote! { #v }
+        }
+        None => quote! { 0i64 },
+    };
+    Ok(quote! { MemRef { base: #base, disp: #disp, index: None, scale: 1 } })
+}
+
+/// 从 lowering 模板收集写死的物理寄存器（RAX/RDX 等，非 {占位符}）→
+/// clobber 列表（物理索引, RegClass）。regalloc 在本指令点避开。
+pub(crate) fn collect_phys_clobbers(
+    insts: &[String],
+    infos: &[InstInfo],
+    model: &IsaModel,
+) -> Result<Vec<TokenStream>, String> {
+    // 主 GPR 组名 → 物理索引（元数据派生，缺组即 Err）。
+    let main = model.main_gpr_class()?;
+    let main_toks = quote! { #main };
+    let name_to_idx = model.name_to_idx(main)?;
+    let mut out: Vec<TokenStream> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for t in insts {
+        for part in t.split(|c: char| c.is_whitespace() || c == ',' || c == '(' || c == ')') {
+            let part = part.trim();
+            if part.is_empty() || part.starts_with('{') || part.starts_with('@') {
+                continue;
+            }
+            // 只收集**解析得到**的物理寄存器名；其余 token 是助记符/语法
+            //（如 `[sp + N]` 的 `sp`、`lock`、`byte`）——自由模板无法逐 token
+            // 判类，故名称正确性由 `validate_widths` 在**结构化字段**上把关
+            //（[abi] 的 sp/fp/scratch/reserved/callee_saved/ret_regs/…），
+            // 不在这里猜。类 = 主 GPR 类（元数据派生）。
+            if let Some(&idx) = name_to_idx.get(part)
+                && seen.insert(part.to_uppercase())
+            {
+                out.push(quote! { (#idx, #main_toks) });
+            }
+        }
+    }
+    let _ = infos;
+    Ok(out)
+}

@@ -935,9 +935,9 @@ Test Linux·macOS·Windows / forge-rustc check / e2e / forge-tests / Docs / Benc
 独立证据（见该测试头部注释）。
 
 **旁证（同 run 发现，与本修复无关 → 已顺手根治）**：`Test (Windows)` job 的
-`test_jit_v512_byref_param` 曾失败 `Unsupported("v12 lowering: Vconst no matching rule")`
+`test_jit_v512_byref_param` 曾失败 `Unsupported("DSL lowering: Vconst no matching rule")`
 ——该测试在**无 AVX-512F** 的机器上提前 return（本机即如此），只有 AVX-512F 的 runner
-才真正跑到 `vconst(16×f32)`；而 `isa/x86_v12.toml` 的 `Vconst` 规则只覆盖
+才真正跑到 `vconst(16×f32)`；而 `isa/x86.toml` 的 `Vconst` 规则只覆盖
 `rd = 64/128/256`，**缺 `rd = 512`**（历史上 2026-09-11 已有 3 次同类红）。
 ⇒ 预存缺口被机型差异暴露，非 WA-42 提交引入。
 **2026-09-12 已实现（WA-43）**：新增 EVEX `VINSERTF32X4` + 4 个常量占位符
@@ -976,7 +976,7 @@ shadow 缺角色」的 ISA 会生成引用不存在变体的代码（模糊的�
 
 **验证**：新增 DSL 守卫 `stack_args_requires_role_tags`（2026-09-13 键归类时由
 `stack_arg_shadow_requires_role_tags` 改名；夹具 = 真实
-`isa/x86_v12.toml` 字符串手术删 `roles` 行）：删 `stack_arg_load`/`stack_arg_store` 时由
+`isa/x86.toml` 字符串手术删 `roles` 行）：删 `stack_arg_load`/`stack_arg_store` 时由
 frame.rs 报 `…[abi.stack_args].shadow_bytes 已声明，但本 ISA 缺 roles = ["…"] 的指令（不按指令名兜底）`；
 原样则全量 `generate()` 成功。回归：`forge-codegen` 0 failed、clippy/fmt 干净、
 e2e 8/8 + `passed=103/103 known=[]`（含 `five_args_stack`）。
@@ -1156,13 +1156,13 @@ env 带进真执行。Windows runner 是消费级 Intel（无 AVX-512F）⇒ EVE
 **矩阵跳过/失败可见化**（§10.4 同一问题的另一个面）：libtest 吞掉通过测试输出，于是
 "跳过了哪些用例、为什么"在 CI 上不可见。`jit_matrix::emit_events` 现把结果写成
 `FORGE_JIT_EVENTS` 事件 `MATRIX-SKIP` / `MATRIX-FAIL` / `MATRIX-SUMMARY`（x86 与 riscv 两个
-runner 都接）。本机实测（2026-09-12，`cargo test -p forge-tests --lib jit_matrix_x86_v12`）：
+runner 都接）。本机实测（2026-09-12，`cargo test -p forge-tests --lib jit_matrix_x86`）：
 
 ```text
-MATRIX-SKIP x86_v12 sdiv_var_module (capability)
-MATRIX-SKIP x86_v12 call_recursive_fib (capability)
-MATRIX-SKIP x86_v12 call_recursive_fib_slot (capability)
-MATRIX-SUMMARY x86_v12 pass=195 skip=3 fail=0
+MATRIX-SKIP x86 sdiv_var_module (capability)
+MATRIX-SKIP x86 call_recursive_fib (capability)
+MATRIX-SKIP x86 call_recursive_fib_slot (capability)
+MATRIX-SUMMARY x86 pass=195 skip=3 fail=0
 ```
 
 ⇒ 3 条 Skip 全是"所需 op 不在能力集"的能力性跳过（不是硬件/环境）；顺带纠正 `CLAUDE.md` 里

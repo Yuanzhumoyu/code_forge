@@ -28,10 +28,10 @@ fn err_label(e: &AbiError) -> String {
 
 /// (约定名, ISA 名)：内置绑定里存在的组合。
 const COMBOS: &[(&str, &str)] = &[
-    ("win64", "x86_64_v12"),
-    ("sysv64", "x86_64_v12"),
-    ("aapcs64", "arm64_v12"),
-    ("lp64d", "riscv64_v12"),
+    ("win64", "x86_64"),
+    ("sysv64", "x86_64"),
+    ("aapcs64", "arm64"),
+    ("lp64d", "riscv64"),
 ];
 
 fn render(reg: &AbiRegistry, isa: &str, conv: &str) -> String {

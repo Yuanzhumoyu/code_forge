@@ -38,7 +38,7 @@
 
 **仍开放（S6 相关的类型模型欠账，归 S4/S5）**：`expand_geps` 会生成类型自洽性不足的
 IR（`%p = add i64 %prev, %t` 却声明 PTR 结果，源码原注释即"verify 不跑"）——根因是
-v12 尚无 `Ptrtoint`/`Inttoptr` 降级；codegen 侧的 use-list 断言因此**刻意不跑完整
+ISA-DSL 尚无 `Ptrtoint`/`Inttoptr` 降级；codegen 侧的 use-list 断言因此**刻意不跑完整
 `Verifier`**（范围已在 `compiler.rs` 注释写明，不是静默容忍）。
 
 ## 2026-09-12 复核记录

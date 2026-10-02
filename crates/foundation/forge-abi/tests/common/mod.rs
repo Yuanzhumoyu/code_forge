@@ -49,10 +49,10 @@ fn push(regs: &mut Vec<Reg>, names: &[&'static str], class: &'static str, width:
     }
 }
 
-/// x86_64_v12：GPR(8) RAX..R15 → 0..15，FPR(16) XMM0-15 → 16..31，VEC(64) ZMM0-31 → 32..63。
+/// x86_64：GPR(8) RAX..R15 → 0..15，FPR(16) XMM0-15 → 16..31，VEC(64) ZMM0-31 → 32..63。
 ///
 /// 固定性：RSP(4)/RBP(5)（谱里 `[machine.frame] sp=RSP fp=RBP`）；`[machine] spill_scratch = [R10,R11]`。
-pub fn x86_64_v12() -> TestTarget {
+pub fn x86_64() -> TestTarget {
     let mut regs: Vec<Reg> = Vec::new();
     push(
         &mut regs,
@@ -84,7 +84,7 @@ pub fn x86_64_v12() -> TestTarget {
     regs[4].pinned = true; // RSP
     regs[5].pinned = true; // RBP
     TestTarget {
-        isa: "x86_64_v12",
+        isa: "x86_64",
         allocatable: (0..16)
             .filter(|i| *i != 4 && *i != 5)
             .chain(16..32)
@@ -143,11 +143,11 @@ fn x86_aliases() -> Vec<(&'static str, u32)> {
         .collect()
 }
 
-/// riscv64_v12：GPR(8) X0..X31 → 0..31，FPR(8) F0..F31 → 32..63。
+/// riscv64：GPR(8) X0..X31 → 0..31，FPR(8) F0..F31 → 32..63。
 ///
 /// 固定性对着谱：`[machine] fixed_regs = [X0,X1,X3,X4]`、`sp = X2`、`fp = X8`
 /// （X1 同时是链接寄存器）。
-pub fn riscv64_v12() -> TestTarget {
+pub fn riscv64() -> TestTarget {
     let mut regs: Vec<Reg> = Vec::new();
     for i in 0..32 {
         regs.push(Reg {
@@ -169,7 +169,7 @@ pub fn riscv64_v12() -> TestTarget {
         regs[i as usize].pinned = true;
     }
     TestTarget {
-        isa: "riscv64_v12",
+        isa: "riscv64",
         allocatable: (0..32)
             .filter(|i| ![0, 1, 2, 3, 4, 8].contains(i))
             .chain(32..64)
@@ -188,11 +188,11 @@ pub fn riscv64_v12() -> TestTarget {
     }
 }
 
-/// arm64_v12：GPR(8) X0..X30 + SP → 0..31（W 别名指向同号）。
+/// arm64：GPR(8) X0..X30 + SP → 0..31（W 别名指向同号）。
 ///
 /// 固定性对着谱：`[machine] fixed_regs = [X18,X30]`、`sp = SP`、`fp = X29`（fp-inside 布局）。
 /// **没有 FPR/VEC 组**——这就是 arm64 的浮点缺口，绑定文件也据此不给 `float` 池。
-pub fn arm64_v12() -> TestTarget {
+pub fn arm64() -> TestTarget {
     let mut regs: Vec<Reg> = Vec::new();
     for i in 0..31 {
         regs.push(Reg {
@@ -216,7 +216,7 @@ pub fn arm64_v12() -> TestTarget {
         .chain(std::iter::once(("WSP", 31)))
         .collect();
     TestTarget {
-        isa: "arm64_v12",
+        isa: "arm64",
         allocatable: (0..31).filter(|i| ![18, 29, 30].contains(i)).collect(),
         scratch: vec![16, 17],
         link: Some(30),
@@ -234,11 +234,11 @@ pub fn arm64_v12() -> TestTarget {
 /// 按 ISA 名取目标（`forge-isa abi` 的语料用同一批名字）。
 pub fn target_for(isa: &str) -> Option<TestTarget> {
     match isa {
-        "x86_64_v12" => Some(x86_64_v12()),
-        "riscv64_v12" => Some(riscv64_v12()),
+        "x86_64" => Some(x86_64()),
+        "riscv64" => Some(riscv64()),
         // v20 A5：真实 arm64 谱已有 `[reg.fpr8]`（V0..V31），合成目标跟着带上——
         // 绑定里的 `float`/`ret_float` 池要能在它上面解析。
-        "arm64_v12" => Some(arm64_v12_with_fpr()),
+        "arm64" => Some(arm64_with_fpr()),
         _ => None,
     }
 }
@@ -246,10 +246,10 @@ pub fn target_for(isa: &str) -> Option<TestTarget> {
 /// **合成** arm64 + FPR 组（V0-V31 → 32..63）：用来验证"浮点池补齐之后"的
 /// AAPCS64 路径（HFA 1/2/4 成员的槽数、4 成员的 `RegGroup`、浮点返回）。
 ///
-/// 真实的 `isa/arm64_v12.toml` **还没有** FPR 组（A5 才加），所以这份目标只属于测试：
+/// 真实的 `isa/arm64.toml` **还没有** FPR 组（A5 才加），所以这份目标只属于测试：
 /// 它证明"缺的只是谱里的寄存器组与指令角色，模型与引擎早已能表达"。
-pub fn arm64_v12_with_fpr() -> TestTarget {
-    let mut t = arm64_v12();
+pub fn arm64_with_fpr() -> TestTarget {
+    let mut t = arm64();
     for i in 0..32 {
         t.regs.push(Reg {
             name: v_name(i),
@@ -273,10 +273,10 @@ fn v_name(i: u32) -> &'static str {
     N[i as usize]
 }
 
-/// **合成** AAPCS64 绑定（给 `arm64_v12_with_fpr()` 用）：`isa` 名与真实绑定相同，
+/// **合成** AAPCS64 绑定（给 `arm64_with_fpr()` 用）：`isa` 名与真实绑定相同，
 /// 由测试注册到自己的注册表里（内置表里没有 `float`/`ret_float`）。
 pub const AAPCS64_FULL_BINDING: &str = r#"
-isa = "arm64_v12"
+isa = "arm64"
 conv = "aapcs64"
 [pools]
 int = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]

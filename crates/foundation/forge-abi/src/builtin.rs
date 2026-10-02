@@ -55,7 +55,7 @@ position = "by_position"
 shadow_bytes = 32
 frame_padding = 8
 stack = { slot_bytes = 8, first_offset_slots = 2 }
-aliases = ["c"]  # 这台机器（x86_64_v12）上的 C 约定就是 Win64——整套代答（规则 + 绑定）
+aliases = ["c"]  # 这台机器（x86_64）上的 C 约定就是 Win64——整套代答（规则 + 绑定）
 classify = [
   { when = { kind = "float", size_le = 8 },   do = { direct = { pool = "float" } } },
   { when = { kind = "vector", size_le = 16 }, do = { direct = { pool = "float" } } },
@@ -127,7 +127,7 @@ pub const AAPCS64: &str = r#"
 name = "aapcs64"
 parent = "c"
 stack = { slot_bytes = 8, first_offset_slots = 2 }
-aliases = ["c"]  # arm64_v12 上的 C 约定
+aliases = ["c"]  # arm64 上的 C 约定
 classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "float" } } },
   { when = { kind = "vector", size_le = 16 },    do = { direct = { pool = "float" } } },
@@ -217,7 +217,7 @@ parent = "c"
 # `variadic_va_arg_int_only` 读到 0（应 47）——被调方的 `va_list` 比调用方写的槽**高 16 字节**；
 # 改成 0 后两条支对齐。
 stack = { slot_bytes = 8, first_offset_slots = 0 }
-aliases = ["c"]  # riscv64_v12 上的 C 约定
+aliases = ["c"]  # riscv64 上的 C 约定
 classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "float" } } },
   { when = { kind = "aggregate", hfa_max = 2 },  do = { direct = { pool = "float", slots = "hfa" } } },

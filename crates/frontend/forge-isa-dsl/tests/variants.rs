@@ -3,14 +3,14 @@
 //! 判据（计划 §5 V5，G4「一份源谱 → 多个位宽变体」）：
 //!
 //! 1. **默认档不受影响**：不传 `params` 时不过滤、不替换——同一份谱的指令清单
-//!    与"没有变体机制"时逐项相同（这里用 `riscv64_v12.toml` 的 116/110 钉住）；
+//!    与"没有变体机制"时逐项相同（这里用 `riscv64.toml` 的 116/110 钉住）；
 //! 2. **参数必须在 `[meta].variants` 里声明且落在声明域内**（拼错参数名 = 报错，
 //!    不静默无事发生——否则用户会以为"投影生效了"）；
 //! 3. `only_variants` 命中 ⇒ 声明消失，且**引用了被投影掉指令的 `[[lowering]]`
 //!    规则连带消失**；未命中的参数不构成排除；
 //! 4. `{参数名}` 在 `asm` 与 lowering 里替换成取值（宽度是数据，不是硬编码）。
 //!
-//! 数字快照（`riscv64_v12` 的 RV32 投影）变了 ⇒ 有人改了 W 族/帧件的变体标注，
+//! 数字快照（`riscv64` 的 RV32 投影）变了 ⇒ 有人改了 W 族/帧件的变体标注，
 //! 必须人工复核"这是有意的 xlen 依赖吗"，复核后同步更新本文件与计划 §5 的结论。
 
 use std::path::{Path, PathBuf};
@@ -45,7 +45,7 @@ fn diags(isa: &str, params: &[&str]) -> Vec<report::DiagLine> {
 /// ① 默认档：三份发行谱不传 `params` 时**零投影**（不丢、不替换）。
 #[test]
 fn default_has_no_projection() {
-    for isa in ["x86_v12.toml", "arm64_v12.toml", "riscv64_v12.toml"] {
+    for isa in ["x86.toml", "arm64.toml", "riscv64.toml"] {
         let (isa_sum, rows, p) = insts(isa, &[]);
         assert!(
             p.params.is_empty(),
@@ -66,14 +66,14 @@ fn default_has_no_projection() {
 /// ② 参数声明域：未声明 / 越界都必须在**校验期**报错（不静默）。
 #[test]
 fn undeclared_or_out_of_domain_param_is_an_error() {
-    let undeclared = diags("riscv64_v12.toml", &["nope=1"]);
+    let undeclared = diags("riscv64.toml", &["nope=1"]);
     assert!(
         undeclared
             .iter()
             .any(|d| d.code == "DSL-META" && d.msg.contains("nope") && d.msg.contains("没有声明")),
         "未声明参数必须报 DSL-META 并点名参数：{undeclared:?}"
     );
-    let out_of_domain = diags("riscv64_v12.toml", &["xlen=128"]);
+    let out_of_domain = diags("riscv64.toml", &["xlen=128"]);
     assert!(
         out_of_domain
             .iter()
@@ -81,7 +81,7 @@ fn undeclared_or_out_of_domain_param_is_an_error() {
         "越界取值必须报错并给声明域：{out_of_domain:?}"
     );
     // 没有变体机制的谱（x86/arm64）传参同样 fail-closed。
-    let none_declared = diags("x86_v12.toml", &["xlen=32"]);
+    let none_declared = diags("x86.toml", &["xlen=32"]);
     assert!(
         none_declared
             .iter()
@@ -93,7 +93,7 @@ fn undeclared_or_out_of_domain_param_is_an_error() {
 /// ③ 发行谱投影账目快照：RV32 视角 = 116 → 104 条指令，且连带丢 14 条 lowering。
 #[test]
 fn riscv_rv32_projection_snapshot() {
-    let (_, rows, p) = insts("riscv64_v12.toml", &["xlen=32"]);
+    let (_, rows, p) = insts("riscv64.toml", &["xlen=32"]);
     assert_eq!(p.dropped_insts.len(), 12, "丢掉 12 条 RV64 专属指令");
     for name in [
         "LD",
@@ -134,7 +134,7 @@ fn riscv_rv32_projection_snapshot() {
         );
     }
     // 默认档对照：同一份谱不传参数 = 117/122（投影是纯 opt-in）。
-    let (_, def_rows, def_p) = insts("riscv64_v12.toml", &[]);
+    let (_, def_rows, def_p) = insts("riscv64.toml", &[]);
     assert_eq!(def_rows.len(), 117);
     assert_eq!(def_p.lowering_count, 122);
 }
@@ -142,7 +142,7 @@ fn riscv_rv32_projection_snapshot() {
 /// ④ 级联的**边界**：未被投影的指令其 lowering 规则必须留下（不许多丢）。
 #[test]
 fn cascade_keeps_unrelated_lowering() {
-    let (_, _, p) = insts("riscv64_v12.toml", &["xlen=32"]);
+    let (_, _, p) = insts("riscv64.toml", &["xlen=32"]);
     // RV64 的 64 位 Iadd/Isub/Imul/Load/Store 与帧件的通用规则都不该因投影消失过头：
     // 122 - 108 = 14 条全是"点了被投影掉的引用名"的规则。
     assert_eq!(
@@ -156,7 +156,7 @@ fn cascade_keeps_unrelated_lowering() {
 /// ⑤ 只对**调用方传了的参数**做排除：传 `xlen=64` 时 W 族指令照常在。
 #[test]
 fn only_supplied_params_gate() {
-    let (_, rows, p) = insts("riscv64_v12.toml", &["xlen=64"]);
+    let (_, rows, p) = insts("riscv64.toml", &["xlen=64"]);
     assert_eq!(rows.len(), 117, "xlen=64 是原生视角，一条都不该丢");
     assert!(p.dropped_insts.is_empty());
     assert_eq!(p.lowering_count, 122);

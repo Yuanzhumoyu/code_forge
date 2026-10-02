@@ -40,21 +40,13 @@ macro_rules! register_backend {
     };
 }
 
-register_backend!(
-    x86_factory,
-    crate::arch::x86_v12::TargetMachine,
-    "x86_64_v12"
-);
+register_backend!(x86_factory, crate::arch::x86::TargetMachine, "x86_64");
 register_backend!(
     riscv_factory,
-    crate::arch::riscv64_v12::TargetMachine,
-    "riscv64_v12"
+    crate::arch::riscv64::TargetMachine,
+    "riscv64"
 );
-register_backend!(
-    arm64_factory,
-    crate::arch::arm64_v12::TargetMachine,
-    "arm64_v12"
-);
+register_backend!(arm64_factory, crate::arch::arm64::TargetMachine, "arm64");
 
 /// 进程内注册一次（幂等）：把三个发行后端的管线工厂登记到 runtime 注册表。
 ///
@@ -72,22 +64,22 @@ pub fn ensure_registered() {
             Box::leak(Box::new(|tm: &dyn Any| riscv_factory(tm)));
         let arm64: &'static forge_isa_runtime::PipelineFactory =
             Box::leak(Box::new(|tm: &dyn Any| arm64_factory(tm)));
-        forge_isa_runtime::register_pipeline("x86_64_v12", x86);
-        forge_isa_runtime::register_pipeline("riscv64_v12", riscv);
-        forge_isa_runtime::register_pipeline("arm64_v12", arm64);
+        forge_isa_runtime::register_pipeline("x86_64", x86);
+        forge_isa_runtime::register_pipeline("riscv64", riscv);
+        forge_isa_runtime::register_pipeline("arm64", arm64);
 
         // 调用点布局钩子：`(约定名, 实参形状, 返回形状) → 被调方 CallLayout`。
         crate::pipeline::abi_target::register_isa_call_planner(
-            "x86_64_v12",
-            crate::arch::x86_v12::TargetMachine::new(),
+            "x86_64",
+            crate::arch::x86::TargetMachine::new(),
         );
         crate::pipeline::abi_target::register_isa_call_planner(
-            "riscv64_v12",
-            crate::arch::riscv64_v12::TargetMachine::new(),
+            "riscv64",
+            crate::arch::riscv64::TargetMachine::new(),
         );
         crate::pipeline::abi_target::register_isa_call_planner(
-            "arm64_v12",
-            crate::arch::arm64_v12::TargetMachine::new(),
+            "arm64",
+            crate::arch::arm64::TargetMachine::new(),
         );
     });
 }

@@ -1,9 +1,9 @@
-# (ISA, 约定) 寄存器绑定：RISC-V LP64D → riscv64_v12
+# (ISA, 约定) 寄存器绑定：RISC-V LP64D → riscv64
 #
 # 按**类**计数：整数序列 a0-a7 与浮点序列 fa0-fa7 各自推进（与 Win64 的
 # "按位置共享游标"相反）。浮点参数走 F 寄存器组（D 扩展；f32 也占一个槽）。
 
-isa = "riscv64_v12"
+isa = "riscv64"
 conv = "lp64d"
 
 [pools]

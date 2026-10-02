@@ -4,7 +4,7 @@
 //! "寄存器编号与 Windows x64 一致"的 ISA 复用，靠的就是这一层：
 //!
 //! ```toml
-//! isa = "x86_v12"; conv = "win64"
+//! isa = "x86"; conv = "win64"
 //! [pools]
 //! int    = ["RCX", "RDX", "R8", "R9"]
 //! float  = ["XMM0", "XMM1", "XMM2", "XMM3"]

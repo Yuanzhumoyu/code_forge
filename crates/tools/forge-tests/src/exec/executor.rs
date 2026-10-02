@@ -242,7 +242,7 @@ mod tests {
         let s = b.iadd(params[0], params[1]);
         b.ret(&[s]);
         let func = b.finish().expect("build");
-        FunctionCompiler::new(code_forge::backend::x86_v12::TargetMachine::new())
+        FunctionCompiler::new(code_forge::backend::x86::TargetMachine::new())
             .compile_raw(&func)
             .expect("compile add")
     }

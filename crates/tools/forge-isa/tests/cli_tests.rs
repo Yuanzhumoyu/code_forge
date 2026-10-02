@@ -52,13 +52,13 @@ fn temp_spec(name: &str, body: &str) -> PathBuf {
 fn validate_shipped_isas_ok() {
     let out = run(&[
         "validate",
-        &isa("x86_v12.toml"),
-        &isa("riscv64_v12.toml"),
-        &isa("arm64_v12.toml"),
+        &isa("x86.toml"),
+        &isa("riscv64.toml"),
+        &isa("arm64.toml"),
     ]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(out.stdout.contains("OK"), "{}", out.stdout);
-    assert!(out.stdout.contains("ISA = x86_64_v12"), "{}", out.stdout);
+    assert!(out.stdout.contains("ISA = x86_64"), "{}", out.stdout);
 }
 
 #[test]
@@ -103,7 +103,7 @@ asm = "i"
 
 #[test]
 fn insts_lists_expanded_instructions() {
-    let out = run(&["insts", &isa("riscv64_v12.toml")]);
+    let out = run(&["insts", &isa("riscv64.toml")]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(out.stdout.contains("117 条指令"), "{}", out.stdout);
     // 模板展开出的实例也在列表里（SLLW 来自 [[templates]] 行）。
@@ -113,7 +113,7 @@ fn insts_lists_expanded_instructions() {
 
 #[test]
 fn insts_json_is_machine_readable() {
-    let out = run(&["insts", &fixture("demo_mixed16_32_v12.toml"), "--json"]);
+    let out = run(&["insts", &fixture("demo_mixed16_32.toml"), "--json"]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     let t = out.stdout.trim();
     assert!(t.starts_with('{') && t.ends_with('}'), "{t}");
@@ -124,7 +124,7 @@ fn insts_json_is_machine_readable() {
 
 #[test]
 fn explain_shows_template_provenance() {
-    let out = run(&["explain", &isa("arm64_v12.toml"), "ADDREGW"]);
+    let out = run(&["explain", &isa("arm64.toml"), "ADDREGW"]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(
         out.stdout.contains("[[templates.ADDREG]] 第 2 行"),
@@ -137,21 +137,21 @@ fn explain_shows_template_provenance() {
 
 #[test]
 fn explain_unknown_instruction_fails() {
-    let out = run(&["explain", &isa("arm64_v12.toml"), "NO_SUCH_INST"]);
+    let out = run(&["explain", &isa("arm64.toml"), "NO_SUCH_INST"]);
     assert_eq!(out.code, 1);
     assert!(out.stdout.contains("没有名为"), "{}", out.stdout);
 }
 
 #[test]
 fn diff_same_file_is_identical() {
-    let out = run(&["diff", &isa("arm64_v12.toml"), &isa("arm64_v12.toml")]);
+    let out = run(&["diff", &isa("arm64.toml"), &isa("arm64.toml")]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(out.stdout.contains("规格完全相同"), "{}", out.stdout);
 }
 
 #[test]
 fn diff_detects_added_instructions() {
-    let out = run(&["diff", &isa("x86_v12.toml"), &fixture("demo_v12.toml")]);
+    let out = run(&["diff", &isa("x86.toml"), &fixture("demo.toml")]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(out.stdout.contains("  + "), "{}", out.stdout);
     assert!(out.stdout.contains("共 "), "{}", out.stdout);
@@ -165,7 +165,7 @@ fn usage_errors_exit_2() {
     let unknown = run(&["nope"]);
     assert_eq!(unknown.code, 2);
     assert!(unknown.stderr.contains("未知子命令"), "{}", unknown.stderr);
-    let too_few = run(&["diff", &isa("x86_v12.toml")]);
+    let too_few = run(&["diff", &isa("x86.toml")]);
     assert_eq!(too_few.code, 2);
 }
 
@@ -228,10 +228,10 @@ fn temp_multi_file(name: &str, frag: &str, root: &str) -> (PathBuf, PathBuf) {
 /// 多文件谱（夹具：片段 + 根 + `[[override]]`）能通过校验，且两条指令都在。
 #[test]
 fn validate_and_insts_accept_multi_file_spec() {
-    let root = fixture("include_root_v12.toml");
+    let root = fixture("include_root.toml");
     let v = run(&["validate", &root]);
     assert_eq!(v.code, 0, "stdout={}", v.stdout);
-    assert!(v.stdout.contains("ISA = demo_include_v12"), "{}", v.stdout);
+    assert!(v.stdout.contains("ISA = demo_include"), "{}", v.stdout);
 
     let i = run(&["insts", &root]);
     assert_eq!(i.code, 0, "stderr={}", i.stderr);
@@ -257,7 +257,7 @@ fn validate_and_insts_accept_multi_file_spec() {
 /// 仍能独立校验，且与 stdout 一致；再 fmt 一次结果不变（幂等）。
 #[test]
 fn fmt_folds_multi_file_into_single_spec() {
-    let root = fixture("include_root_v12.toml");
+    let root = fixture("include_root.toml");
     let out_file =
         std::env::temp_dir().join(format!("forge_isa_cli_fmt_{}.toml", std::process::id()));
     let w = run(&["fmt", &root, "--out", out_file.to_str().unwrap()]);
@@ -387,12 +387,12 @@ fn abi_check_reports_gaps_without_failing() {
     let out = run(&[
         "abi",
         "check",
-        &isa("x86_v12.toml"),
-        &isa("riscv64_v12.toml"),
-        &isa("arm64_v12.toml"),
+        &isa("x86.toml"),
+        &isa("riscv64.toml"),
+        &isa("arm64.toml"),
     ]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
-    assert!(out.stdout.contains("== x86_64_v12"), "{}", out.stdout);
+    assert!(out.stdout.contains("== x86_64"), "{}", out.stdout);
     assert!(out.stdout.contains("✓ win64"), "{}", out.stdout);
     assert!(out.stdout.contains("✓ sysv64"), "{}", out.stdout);
     assert!(out.stdout.contains("✓ lp64d"), "{}", out.stdout);
@@ -417,7 +417,7 @@ fn abi_check_reports_gaps_without_failing() {
 /// "这台机器做不了"）。守卫同时钉住"不加缺口"。
 #[test]
 fn abi_check_reports_the_variadic_state() {
-    let out = run(&["abi", "check", &isa("x86_v12.toml")]);
+    let out = run(&["abi", "check", &isa("x86.toml")]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(
         out.stdout.contains("ℹ 变参 win64：形状 `win64_stack`") && out.stdout.contains("栈式游标"),
@@ -439,7 +439,7 @@ fn abi_check_reports_the_variadic_state() {
         out.stdout
     );
 
-    let out = run(&["abi", "check", &isa("riscv64_v12.toml")]);
+    let out = run(&["abi", "check", &isa("riscv64.toml")]);
     assert!(
         out.stdout.contains("ℹ 变参 lp64d：形状 `riscv_save_area`")
             && out.stdout.contains("保存区（与栈实参连续）+ 线性游标"),
@@ -458,9 +458,9 @@ fn abi_check_reports_the_variadic_state() {
 
 #[test]
 fn abi_check_strict_fails_on_gaps() {
-    let out = run(&["abi", "check", &isa("arm64_v12.toml"), "--strict"]);
+    let out = run(&["abi", "check", &isa("arm64.toml"), "--strict"]);
     assert_eq!(out.code, 1, "stdout={} stderr={}", out.stdout, out.stderr);
-    let out = run(&["abi", "check", &isa("x86_v12.toml"), "--strict"]);
+    let out = run(&["abi", "check", &isa("x86.toml"), "--strict"]);
     assert_eq!(out.code, 0, "stdout={}", out.stdout);
 }
 
@@ -468,14 +468,7 @@ fn abi_check_strict_fails_on_gaps() {
 fn abi_list_shows_builtin_data() {
     let out = run(&["abi", "list"]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
-    for want in [
-        "win64",
-        "sysv64",
-        "aapcs64",
-        "lp64d",
-        "x86_64_v12",
-        "riscv64_v12",
-    ] {
+    for want in ["win64", "sysv64", "aapcs64", "lp64d", "x86_64", "riscv64"] {
         assert!(out.stdout.contains(want), "缺 {want}：{}", out.stdout);
     }
     // win64 的关键事实：32 字节 shadow、按位置计数、变参走栈。
@@ -501,7 +494,7 @@ fn abi_plan_prints_a_deterministic_plan() {
     let out = run(&[
         "abi",
         "plan",
-        &isa("x86_v12.toml"),
+        &isa("x86.toml"),
         "--conv",
         "win64",
         "--sig",
@@ -526,7 +519,7 @@ fn abi_plan_prints_a_deterministic_plan() {
     let again = run(&[
         "abi",
         "plan",
-        &isa("x86_v12.toml"),
+        &isa("x86.toml"),
         "--conv",
         "win64",
         "--sig",
@@ -542,7 +535,7 @@ fn abi_plan_fails_closed_on_gaps() {
     let out = run(&[
         "abi",
         "plan",
-        &isa("arm64_v12.toml"),
+        &isa("arm64.toml"),
         "--conv",
         "aapcs64",
         "--sig",
@@ -556,12 +549,12 @@ fn abi_plan_fails_closed_on_gaps() {
     );
 
     // 用法错误：缺 --conv / 看不懂的类型。
-    let out = run(&["abi", "plan", &isa("x86_v12.toml"), "--sig", "i64"]);
+    let out = run(&["abi", "plan", &isa("x86.toml"), "--sig", "i64"]);
     assert_eq!(out.code, 2, "{}", out.stderr);
     let out = run(&[
         "abi",
         "plan",
-        &isa("x86_v12.toml"),
+        &isa("x86.toml"),
         "--conv",
         "win64",
         "--sig",
@@ -580,7 +573,7 @@ fn abi_plan_fails_closed_on_gaps() {
 /// FORGE_ISA_TEST_E2E=1 cargo test -p forge-isa --test cli_tests -- --nocapture
 /// ```
 ///
-/// 本机 2026-09-23 实测：`test isa/riscv64_v12.toml --json` ⇒ `{"vectors":67,…,"passed":295,
+/// 本机 2026-09-23 实测：`test isa/riscv64.toml --json` ⇒ `{"vectors":67,…,"passed":295,
 /// "failed":0,"ok":true}`（生成的用例数随部件变化——这里只有 encode/decode/asm）。
 #[test]
 fn test_subcommand_runs_spec_vectors_e2e() {
@@ -588,7 +581,7 @@ fn test_subcommand_runs_spec_vectors_e2e() {
         eprintln!("SKIP test_subcommand_runs_spec_vectors_e2e（设 FORGE_ISA_TEST_E2E=1 才跑）");
         return;
     }
-    let out = run(&["test", &isa("riscv64_v12.toml"), "--json"]);
+    let out = run(&["test", &isa("riscv64.toml"), "--json"]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(out.stdout.contains("\"ok\":true"), "{}", out.stdout);
     assert!(out.stdout.contains("\"vectors\":67"), "{}", out.stdout);

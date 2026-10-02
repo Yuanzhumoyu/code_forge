@@ -81,7 +81,7 @@ fn assert_truncation_robust<D: TargetDecoder>(dec: &D, samples: &[&[u8]]) {
 
 // ─────────────────────────── 语料（已知编码）───────────────────────────
 
-/// x86_v12 已知编码语料（REX/前缀/imm/ModRM 各形态；错误猜测无害——
+/// x86 已知编码语料（REX/前缀/imm/ModRM 各形态；错误猜测无害——
 /// decode Err 直接跳过，只对能解码的样本做往返）。
 const X86_SAMPLES: &[&[u8]] = &[
     &[0x90],                                           // nop
@@ -106,7 +106,7 @@ const X86_SAMPLES: &[&[u8]] = &[
     &[0x48, 0x29, 0xC8],                               // sub rax, rcx
 ];
 
-/// riscv64_v12（定宽 32 位）已知编码语料。
+/// riscv64（定宽 32 位）已知编码语料。
 const RISCV_SAMPLES: &[&[u8]] = &[
     &[0x13, 0x00, 0x00, 0x00], // addi x0, x0, 0 (nop)
     &[0x93, 0x80, 0xA0, 0x02], // addi x1, x0, 42
@@ -120,7 +120,7 @@ const RISCV_SAMPLES: &[&[u8]] = &[
     &[0x37, 0x00, 0x00, 0x00], // lui x0, 0
 ];
 
-/// demo_v12（定宽 32 位）已知编码语料。
+/// demo（定宽 32 位）已知编码语料。
 const DEMO_SAMPLES: &[&[u8]] = &[&[0x10, 0, 0, 0]]; // ADD16
 
 // ─────────────────────────── 测试 ───────────────────────────
@@ -129,9 +129,9 @@ const DEMO_SAMPLES: &[&[u8]] = &[&[0x10, 0, 0, 0]]; // ADD16
 #[test]
 fn fuzz_decode_random_bytes_no_panic() {
     let mut rng = Rng::new(0xF00D_2026);
-    let x86 = forge_codegen::x86_v12::Decoder;
-    let riscv = forge_codegen::riscv64_v12::Decoder;
-    let demo = common::demo_v12::Decoder;
+    let x86 = forge_codegen::x86::Decoder;
+    let riscv = forge_codegen::riscv64::Decoder;
+    let demo = common::demo::Decoder;
     for _ in 0..100_000 {
         let bytes = rng.random_bytes(23);
         assert_decode_robust(&x86, &bytes);
@@ -151,9 +151,9 @@ fn fuzz_decode_random_bytes_no_panic() {
 /// 性质 2：真实编码的任意前缀截断 decode 不 panic、无越界消费。
 #[test]
 fn fuzz_decode_truncated_prefixes_no_panic() {
-    let x86 = forge_codegen::x86_v12::Decoder;
-    let riscv = forge_codegen::riscv64_v12::Decoder;
-    let demo = common::demo_v12::Decoder;
+    let x86 = forge_codegen::x86::Decoder;
+    let riscv = forge_codegen::riscv64::Decoder;
+    let demo = common::demo::Decoder;
     assert_truncation_robust(&x86, X86_SAMPLES);
     assert_truncation_robust(&riscv, RISCV_SAMPLES);
     assert_truncation_robust(&demo, DEMO_SAMPLES);
@@ -163,10 +163,10 @@ fn fuzz_decode_truncated_prefixes_no_panic() {
 /// riscv 定宽进一步断言 encode(decode(x)) == x 字节精确。
 #[test]
 fn fuzz_roundtrip_decode_encode_decode() {
-    let x86 = forge_codegen::x86_v12::Decoder;
-    let x86_enc = forge_codegen::x86_v12::Encoder;
-    let riscv = forge_codegen::riscv64_v12::Decoder;
-    let riscv_enc = forge_codegen::riscv64_v12::Encoder;
+    let x86 = forge_codegen::x86::Decoder;
+    let x86_enc = forge_codegen::x86::Encoder;
+    let riscv = forge_codegen::riscv64::Decoder;
+    let riscv_enc = forge_codegen::riscv64::Encoder;
     let rm = forge_codegen::AllocResult::new();
 
     use forge_codegen::machine::encoder::TargetEncoder;

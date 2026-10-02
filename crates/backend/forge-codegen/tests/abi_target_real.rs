@@ -6,7 +6,7 @@
 
 use forge_abi::AbiTarget;
 use forge_abi::builtin;
-use forge_codegen::arch::x86_v12::TargetMachine;
+use forge_codegen::arch::x86::TargetMachine;
 use forge_codegen::machine::target::TargetMachine as _;
 use forge_codegen::pipeline::abi_target::{MachineAbiTarget, plan_for_function};
 use forge_ir::CallConvId;
@@ -32,7 +32,7 @@ fn win64_probe() -> Function {
 fn adapter_exposes_the_real_register_file() {
     let tm = TargetMachine::new();
     let t = MachineAbiTarget::new(&tm);
-    assert_eq!(t.isa_name(), "x86_64_v12");
+    assert_eq!(t.isa_name(), "x86_64");
     assert_eq!(t.reg_count(), 32, "16 GPR + 16 XMM");
     // 名字解析与 A1 的绑定文件口径一致（RCX=1、XMM0=16）。
     assert_eq!(t.reg_index("RCX"), Some(1));
@@ -216,7 +216,7 @@ fn lp64d_probe() -> Function {
 #[test]
 fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
     use forge_codegen::FunctionCompiler;
-    use forge_codegen::arch::riscv64_v12::TargetMachine as RvTm;
+    use forge_codegen::arch::riscv64::TargetMachine as RvTm;
 
     let compiler = FunctionCompiler::new(RvTm::new());
     let func = lp64d_probe();
@@ -248,7 +248,7 @@ fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
 
 /// **曾经钉住的缺口，现已关闭**（2026-10-01）：riscv64 上"引擎能算出浮点参数的落点"
 /// （谱里有 F 寄存器组、绑定给了 `float` 池）但**发射路径 fail-closed**
-/// （`Emit("v12 float args (MOVSD/MOVSS missing)")`——当时 riscv64 谱里没有 `fpr_mov` 角色）。
+/// （`Emit("ISA-DSL float args (MOVSD/MOVSS missing)")`——当时 riscv64 谱里没有 `fpr_mov` 角色）。
 /// 补齐 `FSGNJ_S`/`FSGNJ_D` 的 `fpr_mov`（32/64）之后两侧应当**同时成立**：引擎给的落点
 /// 不变（F10 = fa0），发射也不再挡。这条从"钉差异"改成"钉已闭合"——若哪天又退回
 /// fail-closed，这里会直接红。
@@ -257,7 +257,7 @@ fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
 #[test]
 fn riscv64_float_arg_is_open_on_both_engine_and_emission() {
     use forge_codegen::FunctionCompiler;
-    use forge_codegen::arch::riscv64_v12::TargetMachine as RvTm;
+    use forge_codegen::arch::riscv64::TargetMachine as RvTm;
 
     let ctx = TypeContext::new();
     let sig = FunctionSignature::new(&[(TypeId::I64, "n"), (TypeId::F64, "x")], &[TypeId::I64])
@@ -588,7 +588,7 @@ macro_rules! convention_facts_probe {
 // x86 Win64：整数参数 4 个（RCX/RDX/R8/R9），callee-saved 7 个（含 RDI/RSI）。
 convention_facts_probe!(
     x86_win64_facts_match_the_spec,
-    forge_codegen::arch::x86_v12::TargetMachine,
+    forge_codegen::arch::x86::TargetMachine,
     "win64",
     win64_stack_args_probe,
     true
@@ -601,7 +601,7 @@ convention_facts_probe!(
 // callee 静默覆盖。本测试钉住"plan 给的是 sysv64 的口径"。
 convention_facts_probe!(
     x86_sysv64_facts_match_the_spec,
-    forge_codegen::arch::x86_v12::TargetMachine,
+    forge_codegen::arch::x86::TargetMachine,
     "sysv64",
     sysv64_probe,
     false
@@ -610,7 +610,7 @@ convention_facts_probe!(
 // riscv64 LP64D：callee-saved = X9 + X18..X27（11 个）。
 convention_facts_probe!(
     riscv64_lp64d_facts_match_the_spec,
-    forge_codegen::arch::riscv64_v12::TargetMachine,
+    forge_codegen::arch::riscv64::TargetMachine,
     "lp64d",
     lp64d_probe,
     true
@@ -620,7 +620,7 @@ convention_facts_probe!(
 // 发射侧按类分派保存是 A6 的事，所以消费者按 GPR 类比）。
 convention_facts_probe!(
     arm64_aapcs64_facts_match_the_spec,
-    forge_codegen::arch::arm64_v12::TargetMachine,
+    forge_codegen::arch::arm64::TargetMachine,
     "aapcs64",
     aapcs64_probe,
     true
@@ -741,7 +741,7 @@ fn shape_plan_matches_the_function_plan() {
 
     // ① x86 win64：6 个 i64（前 4 进寄存器、后 2 走栈）与混合签名。
     {
-        let tm = forge_codegen::arch::x86_v12::TargetMachine::new();
+        let tm = forge_codegen::arch::x86::TargetMachine::new();
         let cases: Vec<(&str, Function, Vec<ArgShape>, Option<ArgShape>)> = vec![
             (
                 "win64 六整数（含栈参数）",
@@ -779,7 +779,7 @@ fn shape_plan_matches_the_function_plan() {
 
     // ② riscv lp64d：按类计数——混合签名在这里与 win64 分叉（同一条签名、两种约定）。
     {
-        let tm = forge_codegen::arch::riscv64_v12::TargetMachine::new();
+        let tm = forge_codegen::arch::riscv64::TargetMachine::new();
         let func = mixed_probe(CallConvId::builtin(ConvName::Lp64d));
         let args = vec![
             ArgShape::int(8, 8),
@@ -805,7 +805,7 @@ fn shape_plan_matches_the_function_plan() {
 
     // ③ arm64 aapcs64：整型签名（浮点在 arm64 上缺 FPR 寄存器组——那条缺口另有用例钉住）。
     {
-        let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+        let tm = forge_codegen::arch::arm64::TargetMachine::new();
         let func = aapcs64_probe();
         let args = vec![ArgShape::int(8, 8), ArgShape::int(8, 8)];
         let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
@@ -838,7 +838,7 @@ fn call_planner_registry_serves_the_shape_plan() {
 
     forge_codegen::pipeline_hooks::ensure_registered();
     assert!(
-        has_call_planner("x86_64_v12"),
+        has_call_planner("x86_64"),
         "宿主注册后应能查到调用点布局钩子"
     );
 
@@ -853,7 +853,7 @@ fn call_planner_registry_serves_the_shape_plan() {
     let ret = Some(ArgShape::float(8));
 
     let by_hook = plan_call(
-        "x86_64_v12",
+        "x86_64",
         &CallRequest::new("win64")
             .args(args.iter())
             .rets(ret_list(&ret)),
@@ -912,7 +912,7 @@ fn convention_level_int_return_slot() {
     }
     // riscv lp64d：a0 = X10（**不是 index 0**——这正是谱里那份 `ret_regs` 存在的理由）。
     {
-        let tm = forge_codegen::arch::riscv64_v12::TargetMachine::new();
+        let tm = forge_codegen::arch::riscv64::TargetMachine::new();
         let p = plan_for_shapes(&tm, &reg, &CallRequest::new("lp64d").rets(ret_shape.iter()))
             .expect("lp64d plan");
         match p.ret {
@@ -922,7 +922,7 @@ fn convention_level_int_return_slot() {
     }
     // arm64 aapcs64：x0。
     {
-        let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+        let tm = forge_codegen::arch::arm64::TargetMachine::new();
         let p = plan_for_shapes(
             &tm,
             &reg,
@@ -962,8 +962,8 @@ fn aapcs64_probe() -> Function {
 /// （少了 = 缺口已关，顺带更新方案文档的 A6）。
 #[test]
 fn a6_gap_inventory() {
-    use forge_codegen::arch::arm64_v12::TargetMachine as Arm64;
-    use forge_codegen::arch::riscv64_v12::TargetMachine as Riscv64;
+    use forge_codegen::arch::arm64::TargetMachine as Arm64;
+    use forge_codegen::arch::riscv64::TargetMachine as Riscv64;
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
     use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
     use forge_isa_runtime::machine::call_plan::CallRequest;
@@ -1062,15 +1062,15 @@ fn a6_gap_inventory() {
         };
     }
     let x86 = TargetMachine::new();
-    probe!("x86_64_v12", "win64", &x86);
-    probe!("x86_64_v12", "sysv64", &x86);
+    probe!("x86_64", "win64", &x86);
+    probe!("x86_64", "sysv64", &x86);
     let rv = Riscv64::new();
-    probe!("riscv64_v12", "lp64d", &rv);
+    probe!("riscv64", "lp64d", &rv);
     let a64 = Arm64::new();
-    probe!("arm64_v12", "aapcs64", &a64);
+    probe!("arm64", "aapcs64", &a64);
 
     // 精确断言：缺口恰好是"arm64 的 4×f32 HFA 返回"这一条。
-    let hfa4_only = gaps.len() == 1 && gaps[0].starts_with("arm64_v12 / aapcs64 / hfa4_ret:");
+    let hfa4_only = gaps.len() == 1 && gaps[0].starts_with("arm64 / aapcs64 / hfa4_ret:");
     assert!(
         hfa4_only,
         "A6 ① 的缺口面变了（{} 条）：\n{}\n——少了 = 缺口已关（顺带更新方案文档 A6），\
@@ -1156,7 +1156,7 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
     use forge_isa_runtime::machine::call_plan::CallRequest;
 
     let reg = builtin::registry().expect("内置注册表");
-    let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+    let tm = forge_codegen::arch::arm64::TargetMachine::new();
     let func = hfa2_arg_probe();
     let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
 
@@ -1467,7 +1467,7 @@ fn aapcs64_variadic_shape_is_pure_data() {
     use forge_isa_runtime::machine::call_layout::VaInitVal;
 
     let reg = builtin::registry().expect("内置注册表");
-    let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+    let tm = forge_codegen::arch::arm64::TargetMachine::new();
     // 一个命名参数走寄存器（x0），后面是未命名实参。
     let sig = forge_abi::Signature::new(vec![("fmt".into(), forge_abi::TyView::int(8, 8))], None)
         .variadic(1);

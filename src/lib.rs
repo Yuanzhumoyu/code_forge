@@ -28,8 +28,8 @@
 //! use code_forge::backend::jit::JitCompiler;
 //! use code_forge::ir::*;
 //!
-//! code_forge::backend::x86_v12::ensure_registered();
-//! let mut jit = JitCompiler::new(code_forge::backend::x86_v12::TargetMachine::new());
+//! code_forge::backend::x86::ensure_registered();
+//! let mut jit = JitCompiler::new(code_forge::backend::x86::TargetMachine::new());
 //! jit.add_function("add", &FunctionSignature::new(
 //!     &[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::I32]
 //! ), |b| {
@@ -56,8 +56,8 @@ pub use forge_mem as mem;
 pub use forge_opt as optimize;
 pub use smallvec;
 
-// Module re-exports for DSL-generated code (v12 唯一语法；encode/asm 由
-// v12 生成模块内联实现，无需 forge-asm 运行时)
+// Module re-exports for DSL-generated code (ISA-DSL 唯一语法；encode/asm 由
+// ISA-DSL 生成模块内联实现，无需 forge-asm 运行时)
 pub use forge_codegen::EncodeError;
 #[cfg(feature = "jit")]
 pub use forge_codegen::jit;

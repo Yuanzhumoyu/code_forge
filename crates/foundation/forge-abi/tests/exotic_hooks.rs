@@ -22,7 +22,7 @@
 
 mod common;
 
-use common::{arm64_v12_with_fpr, x86_64_v12};
+use common::{arm64_with_fpr, x86_64};
 use forge_abi::builtin;
 use forge_abi::plan::RegRef;
 use forge_abi::{
@@ -56,7 +56,7 @@ note = "Swift 的 aapcs64 方言：语言专属部分（self/error）由 AbiHook
 /// **注意 `cs_gpr` 里仍然列着 X21**——数据侧只能说"这台机器的帧会保存这组"；
 /// "X21 在本方言下是出参、因此不保"是**语言规则**，由钩子摘掉（见下）。
 const SWIFTCC_BINDING: &str = r#"
-isa = "arm64_v12"
+isa = "arm64"
 conv = "swiftcc"
 
 [pools]
@@ -131,7 +131,7 @@ fn swift_registry(t: &impl AbiTarget) -> AbiRegistry {
 /// `self` 落到上下文槽 + 保留集；`error` 落到破坏集。
 #[test]
 fn swift_hooks_place_self_and_error() {
-    let target = arm64_v12_with_fpr();
+    let target = arm64_with_fpr();
     let reg = swift_registry(&target);
     let sig = Signature::new(
         vec![("a".into(), TyView::int(8, 8))],
@@ -160,7 +160,7 @@ fn swift_hooks_place_self_and_error() {
 /// 语言专属返回类型（errortype）按钩子改判到 `swift_error` 池（X21）。
 #[test]
 fn swift_error_return_uses_the_language_pool() {
-    let target = arm64_v12_with_fpr();
+    let target = arm64_with_fpr();
     let reg = swift_registry(&target);
     // 无标签时是普通指针 ⇒ 走 aapcs64 的 ret_int（X0）。
     let plain = Signature::new(vec![], Some(TyView::new(8, 8, TyKind::Ptr)));
@@ -188,7 +188,7 @@ note = "Go 内部 ABI（示例）：寄存器参数按位置共享游标；GC �
 "#;
 
 const GOCONV_BINDING: &str = r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "goconv"
 
 [pools]
@@ -225,7 +225,7 @@ impl AbiHooks for GoHooks {
 /// Go 的 `g` 进上下文槽、不在破坏集、且在保留集里。
 #[test]
 fn go_hooks_keep_the_g_register_alive() {
-    let target = x86_64_v12();
+    let target = x86_64();
     let mut reg = builtin::registry().expect("内置注册表");
     reg.insert_rules_toml(GOCONV_RULES)
         .expect("注册 goconv 规则");

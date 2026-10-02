@@ -251,7 +251,7 @@ forge_dsl::isa_from_file!("tests/isa/toy16.toml");
 `{asm, error = "<子串>"}` 汇编负向、`{bytes, error = "DECODE"[, partial]}` 解码负向、
 `{bytes}` 解码正向；`cargo run -p forge-isa -- test <谱.toml>` 可以**不起宿主 crate**
 直接跑一遍（它现搭一个只依赖 `forge-isa-runtime` 的临时 crate）。样例见
-`isa/riscv64_v12.toml` 末尾的 67 条向量与 `docs/reference/isa-dsl.md`「谱内测试向量」。
+`isa/riscv64.toml` 末尾的 67 条向量与 `docs/reference/isa-dsl.md`「谱内测试向量」。
 
 多文件谱（公共骨架 + 扩展）用 `include` + `[[override]]`：
 
@@ -326,7 +326,7 @@ cargo run -p forge-isa -- abi plan isa/toy16.toml --conv toy_conv --sig "i16 -> 
 ```bash
 cargo run -p forge-isa -- validate toy16.toml           # 全部诊断，退出码 0/1
 cargo run -p forge-isa -- insts toy16.toml              # 展开后的指令 + 生效编码键
-cargo test -p forge-codegen --test toy16_v12_tests      # 你的黄金值/往返测试（若写了）
+cargo test -p forge-codegen --test toy16_tests      # 你的黄金值/往返测试（若写了）
 ```
 
 - 诊断格式是 `路径:行:列: 错误码: 消息`，一行一条、可点击；一次列全（≤32 条）。
@@ -338,7 +338,7 @@ cargo test -p forge-codegen --test toy16_v12_tests      # 你的黄金值/往返
 
 - 键的完整清单（机器校验、随 schema 同步）：[`docs/reference/isa-dsl.md`](../reference/isa-dsl.md) 的「键总览」。
 - 调用约定层（规则/绑定/计划、发射怎么按 plan 走）：[`docs/reference/calling-conventions.md`](../reference/calling-conventions.md)。
-- 真实规模怎么写：`isa/riscv64_v12.toml`（定宽 + 模板 + 条件码）、`isa/arm64_v12.toml`（模板 + `b.cond`）、
-  `isa/x86_v12.toml`（变长前缀链 + VEX/EVEX）。
+- 真实规模怎么写：`isa/riscv64.toml`（定宽 + 模板 + 条件码）、`isa/arm64.toml`（模板 + `b.cond`）、
+  `isa/x86.toml`（变长前缀链 + VEX/EVEX）。
 - 极端形状夹具（1 字节寄存器、12 位字、100 位字、混合字长、多文件）：
   [`crates/backend/forge-codegen/tests/isa/README.md`](../../crates/backend/forge-codegen/tests/isa/README.md)。

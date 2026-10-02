@@ -23,16 +23,16 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 
 | 文件 | 对数（每类） |
 | --- | ---: |
-| `src/arch/riscv64_v12.rs` | 15 |
-| `src/arch/arm64_v12.rs` | 4 |
+| `src/arch/riscv64.rs` | 15 |
+| `src/arch/arm64.rs` | 4 |
 | `tests/common/mod.rs`（6 个夹具） | 9 |
-| `tests/spec_tests_v12.rs`（3 个夹具） | 6 |
-| **`src/arch/x86_v12.rs`** | **0** |
+| `tests/spec_tests.rs`（3 个夹具） | 6 |
+| **`src/arch/x86.rs`** | **0** |
 
 **修前已排除的原因**（都有实测证据，别再重复排查）：
 
 1. **不是生成物的语法错**：用 RA 自己的解析器解析整份 arm64 生成物
-   （`rust-analyzer parse < %TEMP%\forge_gen_arm64_v12.rs`，先 `FGE_DEBUG_GEN=1` 构建）
+   （`rust-analyzer parse < %TEMP%\forge_gen_arm64.rs`，先 `FGE_DEBUG_GEN=1` 构建）
    得到 30 MB 语法树、**零 `ERROR` 节点**；
 2. **不是"函数体内嵌 item"**（历史上真有过一次，S8d 已修）：生成物所有 item 都在
    `pub mod` 内（brace-depth = 1）；
@@ -59,7 +59,7 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 （arm64、riscv64、demo 夹具）上出现，**变长 `prefix_scan`（x86）从不出现**。据此判断为
 **RA 侧 proc-macro 展开管线的问题**（我们的 token 流本身合法），不是语法缺陷。
 
-**补充线索**：诊断的 span 是**调用行上宏路径那一段**——`src/arch/riscv64_v12.rs`
+**补充线索**：诊断的 span 是**调用行上宏路径那一段**——`src/arch/riscv64.rs`
 第 6 行（RA 的 `LineCol` 0 基第 5 行）`col 0..25` 正好是 `forge_dsl::isa_from_file!`
 这 25 个字符。也就是说 RA 把"展开结果没解析成功"的位置**回填到宏路径本身**，
 而不是任何具体 token 或生成物内部位置。
@@ -71,10 +71,10 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 
 | 文件 | 修前对数 | 修后对数 |
 | --- | ---: | ---: |
-| `src/arch/riscv64_v12.rs` | 15 | **0** |
-| `src/arch/arm64_v12.rs` | 4 | **0** |
+| `src/arch/riscv64.rs` | 15 | **0** |
+| `src/arch/arm64.rs` | 4 | **0** |
 | `tests/common/mod.rs` | 9 | **0** |
-| `tests/spec_tests_v12.rs` | 6 | **0** |
+| `tests/spec_tests.rs` | 6 | **0** |
 
 同一批 `include!` 的生成物也没有引入新的 unresolved import（20+ 个使用生成模块的
 文件恢复 0 错误——这一点必须一起看，否则"语法错没了、项全解析不出来"是**更糟**的结果）。
@@ -99,7 +99,7 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
   整体调 `set_spans(ts, Span::mixed_site())`（未入库）。结果：
   `cargo build -p forge-isa-dsl` 无警告、`cargo test -p forge-codegen`（27 个二进制）
   全绿——**没有卫生性破坏**，但 RA 诊断条数**逐文件一模一样**
-  （arm64 4 对、riscv64 15 对、`tests/common/mod.rs` 9 对、`tests/spec_tests_v12.rs` 6 对，
+  （arm64 4 对、riscv64 15 对、`tests/common/mod.rs` 9 对、`tests/spec_tests.rs` 6 对，
   与上表修前完全一致）⇒ 与 span / 卫生性、与 token 的 `SyntaxContext` **无关**，此路不通。
 
 同一次 RA 运行里还能看到 `forge_rustc` 的 `unresolved-extern-crate` / `E0282`
@@ -112,7 +112,7 @@ Error SyntaxError ... Syntax Error in Expansion: expected R_PAREN
 # 1. 先让写者就位（build script 预生成 = RA 也会走的路径）
 cargo build -p forge-codegen
 # 2. 跑 RA（10–20 分钟，务必用后台任务：前台工具调用有 10 分钟上限）
-rust-analyzer diagnostics crates/backend/forge-codegen/src/arch/arm64_v12.rs > target/ra.log 2>&1
+rust-analyzer diagnostics crates/backend/forge-codegen/src/arch/arm64.rs > target/ra.log 2>&1
 # 3. 统计两类：SyntaxError 必须为 0；同时看有没有新的
 #    RustcHardError（unresolved import / no such value）——后者代表 include! 没被加载。
 #    注意 RA 的 LineCol 是 **0 基**，路径含盘符冒号；参考脚本 target/s10d_ra_compare.py。

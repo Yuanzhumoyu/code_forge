@@ -68,7 +68,7 @@
 | 场景 | 耗时 |
 | --- | ---: |
 | `cargo check -p forge-codegen`（首次，含依赖检查） | 106.87 s |
-| 紧随其后、改 `isa/x86_v12.toml` 的 mtime（build script 重跑、生成物**内容不变**） | **9.05 s** |
+| 紧随其后、改 `isa/x86.toml` 的 mtime（build script 重跑、生成物**内容不变**） | **9.05 s** |
 
 ⇒ 日常改谱走**增量**：rustc 按文件内容指纹跳过重检，只有 build script 重跑 + 元数据校验
 （9 s）。**87% 那个数字只在"生成物内容真的变了"或冷构建（CI、新机、`cargo clean`）时才兑现**。

@@ -124,7 +124,7 @@ fn cmd_list(json: bool) -> Result<ExitCode, String> {
             .collect();
         println!("  {isa:<13} {conv:<8} {}", pools.join(" "));
     }
-    println!("\n看某台机器做不做得到：forge-isa abi check isa/x86_v12.toml");
+    println!("\n看某台机器做不做得到：forge-isa abi check isa/x86.toml");
     Ok(ExitCode::SUCCESS)
 }
 

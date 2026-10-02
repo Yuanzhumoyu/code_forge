@@ -38,12 +38,9 @@ macro_rules! report_of {
 
 fn reports() -> Vec<Report> {
     vec![
-        report_of!("x86_v12", crate::arch::x86_v12::x86_v12::__spec_tests),
-        report_of!(
-            "riscv64_v12",
-            crate::arch::riscv64_v12::riscv64_v12::__spec_tests
-        ),
-        report_of!("arm64_v12", crate::arch::arm64_v12::arm64_v12::__spec_tests),
+        report_of!("x86", crate::arch::x86::x86::__spec_tests),
+        report_of!("riscv64", crate::arch::riscv64::riscv64::__spec_tests),
+        report_of!("arm64", crate::arch::arm64::arm64::__spec_tests),
     ]
 }
 
@@ -75,7 +72,7 @@ fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86_v12", 197), ("riscv64_v12", 117), ("arm64_v12", 110)],
+        vec![("x86", 197), ("riscv64", 117), ("arm64", 110)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
@@ -118,14 +115,14 @@ fn spec_text_ambiguity_lists_are_pinned() {
     ];
     let riscv = ["ADDI", "ADDI_GLOBAL", "AUIPC", "AUIPC_GLOBAL"];
     let pinned: &[(&str, &[&str])] = &[
-        ("x86_v12", &x86),
-        ("riscv64_v12", &riscv),
+        ("x86", &x86),
+        ("riscv64", &riscv),
         // v20 A5：arm64 的 FP 寄存器组用统一的 `V0..V31` 命名（不像 x86 那样 S/D 名字本身带宽度），
         // 因此 `fmov v0, v1` / `ldur v0, [x29, #8]` 的 S/D 两种编码**汇编文本相同**——
         // 反汇编按声明序取第一条（S），文本往返对这两族只能取其一。这是**已知且刻意**的
         // 取舍（宽度在指令里、不在名字里）；要消掉就得给 S/D/Q 各开一组别名寄存器。
         (
-            "arm64_v12",
+            "arm64",
             &["FMOV_D", "FMOV_S", "LDURD", "LDURS", "STURD", "STURS"],
         ),
     ];

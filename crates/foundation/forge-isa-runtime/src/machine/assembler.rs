@@ -1,6 +1,6 @@
 //! TargetAssembler — 汇编文本 → 指令接口。
 //!
-//! v12 生成代码的每 ISA `Assembler` 直接实现 `parse_insts`（表驱动 asm
+//! ISA-DSL 生成代码的每 ISA `Assembler` 直接实现 `parse_insts`（表驱动 asm
 //! 模板，无 v11 的 lalrpop parser / AsmLine 中间表示层）。
 
 /// 汇编错误。

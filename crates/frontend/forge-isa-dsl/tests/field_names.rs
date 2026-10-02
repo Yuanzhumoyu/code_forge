@@ -99,7 +99,7 @@ fn vlen_isa_fields_use_declared_names() {
         parts: Parts::all(),
         params: Default::default(),
     };
-    let t = flat(&expand_file("isa/x86_v12.toml", &opts).expect("展开 x86"));
+    let t = flat(&expand_file("isa/x86.toml", &opts).expect("展开 x86"));
     assert!(
         t.contains("MovRmR{src:Reg,dst:Reg}"),
         "x86 字段应按 ops 声明命名"

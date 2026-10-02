@@ -12,7 +12,7 @@
 >
 > 实现自 v18 S7a 起拆成两个 crate：`forge-isa-dsl`（普通 lib = 编译器本体：模型/解析/
 > 校验/诊断/代码生成/加载器）+ `forge-dsl`（薄 proc-macro：只解析 `isa_from_file!` 参数并调前者）。
-> **命名说明**：生成器的 Rust 模块路径仍是 `v12/`（`crates/frontend/forge-isa-dsl/src/v12/`，
+> **命名说明**：生成器的 Rust 模块路径仍是 `dsl/`（`crates/frontend/forge-isa-dsl/src/dsl/`，
 > 历史遗留命名，稳定不动）；`[meta].version` 是 ISA 自己的自由版本串，与 DSL 语法版本无关，
 > 也不参与任何校验。
 > **v11 语法层**（`encoding` 字符串 + `@原语`、紧凑 `fields` 串、`when` 谓词串、
@@ -100,7 +100,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 
 - 表的每一行 ↔ schema（`[encoding].kind` 这类键的枚举值在 `forge-isa schema` 的
   输出里；本表列出**键**，不列取值域）；
-- schema 的每一节 ↔ `v12/model.rs` 的结构体 `pub` 字段（`#[serde(skip)]` 的内部字段
+- schema 的每一节 ↔ `dsl/model.rs` 的结构体 `pub` 字段（`#[serde(skip)]` 的内部字段
   除外，见守卫里的 `INTERNAL_FIELDS`）；
 - 因此「模型改了忘了写 schema」「schema 写了模型不认的键」「文档没跟上」三类漂移都会
   让 `cargo test -p forge-isa-dsl --test schema_guard` 变红。
@@ -156,7 +156,7 @@ pub use self::my_isa::*; // 模块名 = 文件 stem（小写、`-` → `_`）
 
 ```rust
 // crates/backend/forge-codegen/tests/common/mod.rs（测试夹具示例）
-forge_dsl::isa_from_file!("tests/isa/demo_v12.toml", spec_tests = false);
+forge_dsl::isa_from_file!("tests/isa/demo.toml", spec_tests = false);
 ```
 
 最小可抄的**完整宿主** = `examples/isa-host-demo`（运行期只依赖 `forge-isa-runtime` +
@@ -218,13 +218,13 @@ crate 只需要依赖 `forge-isa-runtime`（+ build script 预生成），**不�
 （`tm` **不是**前提，v19 V2 起——`Parts::supports_spec_tests()` 是唯一判据；缺哪块
 就编译期明确报错，而不是悄悄生成跑不过的测试）。
 用例：`crates/frontend/forge-isa-dsl/tests/parts_selection.rs`（token 文本级断言）
-与 `crates/backend/forge-codegen/tests/include_v12_tests.rs`（同一份谱再展开一个
+与 `crates/backend/forge-codegen/tests/include_tests.rs`（同一份谱再展开一个
 只有编码器的模块，真实编译并跑通）、`examples/isa-host-demo`（只有 encode/decode/asm
 而开着自测的真实宿主）。
 
 ```rust
 forge_dsl::isa_from_file!(
-    "tests/isa/demo_v12.toml",
+    "tests/isa/demo.toml",
     spec_tests = false,
     name = "demo_enc_only",
     parts = ["encode"]
@@ -249,7 +249,7 @@ TargetMachine 集成层（`TargetMachine` / `Encoder` / `Decoder` / `Disassemble
 
 ```toml
 [meta]
-name = "x86_64_v12"          # Registry 注册名（ensure_registered 用它）
+name = "x86_64"          # Registry 注册名（ensure_registered 用它）
 version = "13.0"             # 自由字符串（与 DSL 语法版本 v18 无关）
 endian = "little"            # 缺省 little
 mode = 64                    # 缺省 64
@@ -282,7 +282,7 @@ base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
 
 指令字宽**不再**写在 `[meta]`——它是独立的 `[encoding]` 段（见下节）。
 
-寄存器物理编号 = **组内索引**（`Reg::to_index()`），这是 v12 与 v11
+寄存器物理编号 = **组内索引**（`Reg::to_index()`），这是 现行与 v11
 （`16+i` 浮点索引，产生非规范字节）的根本区别。`[reg.*]` 的组名编码宽度
 （`gpr8`/`fpr4`/`vec8`/`kreg8`），`RegClass` 四族 GPR/FPR/VEC/KReg 各带字节宽。
 
@@ -320,7 +320,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
   `mixed` 写 `max_len` 都在校验期报错——"声明了却不生效"不会溜到生成期。
 - **`mixed` 的分组判别位**由 ISA 自己保证：短编码与长编码必须在低位互斥
   （如 `[1:0] = 00` vs `11`，RVC/Thumb 同构），否则"首个匹配即停"会把长指令
-  误判成短指令。夹具 `demo_mixed16_32_v12.toml` 用低 2 位判别。
+  误判成短指令。夹具 `demo_mixed16_32.toml` 用低 2 位判别。
 - **`decode_partial`**（部分匹配偏移，供 `DecodeError::InvalidBytes(n)`）：
   `fixed` = 短于字长 → `Err(len)`；`mixed` = 短于**最短**字长 → `Err(len)`，
   否则 `0`（完整长度但无匹配 = 非法字节流，不是截断）。
@@ -330,7 +330,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
   解析与校验通过，生成期在 `inst_bytes()` 处报"bits 缺失"——省略整段
   **不会**被静默当成定宽 32。此时逐指令 `width` 也不能替代 `bits`（报错）。
 
-用例：`crates/backend/forge-codegen/tests/demo_mixed16_32_v12_tests.rs`
+用例：`crates/backend/forge-codegen/tests/demo_mixed16_32_tests.rs`
 （`kind = "mixed"` 的黄金字节、按宽度分组的解码、编解码往返、截断阈值、能力集）。
 
 ## 宽度元数据（去「宽度写死」）
@@ -385,10 +385,10 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 多个 ≤ 64 位的域，因此 100/128/4096 位的字都能表达。
 
 夹具（`crates/backend/forge-codegen/tests/isa/`，均由
-`tests/common/mod.rs` 用 `isa_from_file!` 宿住）：`demo_inst8_v12.toml`
-（8 位字，含字内 label 域 + `RelocPatcher`）、`demo_inst12_v12.toml`（12 位字，
-非 8 倍数 + 填充位拒绝）、`demo_inst100_v12.toml`（100 位字：超机器字 +
-位域在 bit 92..100）。用例分别在 `tests/demo_inst{8,12,100}_v12_tests.rs`。
+`tests/common/mod.rs` 用 `isa_from_file!` 宿住）：`demo_inst8.toml`
+（8 位字，含字内 label 域 + `RelocPatcher`）、`demo_inst12.toml`（12 位字，
+非 8 倍数 + 填充位拒绝）、`demo_inst100.toml`（100 位字：超机器字 +
+位域在 bit 92..100）。用例分别在 `tests/demo_inst{8,12,100}_tests.rs`。
 
 ### 生成的访问器
 
@@ -442,14 +442,14 @@ i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更�
 - 校验：类型名必须是 `bool/i8/i16/i32/i64/i128/f16/f32/f64/f128/ptr/v64/v128/
   v256/void`；目标必须已声明；类宽 ≥ 类型字节宽（`ptr` 按 `addr_width`，
   否则报"会静默截断"）；`void` 只能写 `"unsupported"`。
-- 用例：`crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（`ptr = "gpr1"`）、
-  `demo_v12.toml`（`f32/f64 = "gpr8"` 软浮点演示）。
+- 用例：`crates/backend/forge-codegen/tests/isa/demo8.toml`（`ptr = "gpr1"`）、
+  `demo.toml`（`f32/f64 = "gpr8"` 软浮点演示）。
 
 ### 最小示例
 
-`crates/backend/forge-codegen/tests/isa/demo8_v12.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/
+`crates/backend/forge-codegen/tests/isa/demo8.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/
 `value_gpr_width` = 1、`[stack] slot/align/fp_save` = 1、`[encoding] default_opsize = 8`）是这条路径的
-回归夹具：`tests/demo8_v12_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
+回归夹具：`tests/demo8_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
 sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 可承载；
 `i16/i32/i64/ptr` 与 `f32/f64/v64/v128/v256` 全部 `None`）、编码布局、
 汇编→编码→解码→反汇编往返，以及宿主编译 i8 函数（机器码反汇编为
@@ -813,7 +813,7 @@ value = "18.0-fd"
 
 `forge-isa fmt <谱.toml>`（`--out <文件>`）打印/写出**合并后的单文件谱**——把
 "多文件"折叠成一份可读、可继续编辑、可单文件分发的 TOML（夹具
-`crates/backend/forge-codegen/tests/isa/include_root_v12.toml` 就是活例子）。
+`crates/backend/forge-codegen/tests/isa/include_root.toml` 就是活例子）。
 
 ## `[[reloc]]` — 重定位表（v18 S3d）
 
@@ -954,7 +954,7 @@ x86 只降 1% 的原因：x86 剩余的同 asm/同 ops 组差在**编码键**（
 
 纯 TOML 数据的小型谓词语言（无字符串）：`and` / `or` / `not` / `eq` / `ne` /
 `lt` / `le` / `gt` / `ge` / `in`，操作数属性引用，求值实现见
-`crates/frontend/forge-isa-dsl/src/v12/pred.rs`（lowering 经 `gen_lowering_attrs`
+`crates/frontend/forge-isa-dsl/src/dsl/pred.rs`（lowering 经 `gen_lowering_attrs`
 求值，谓词 false → 该规则不匹配，落入下一条或 Unsupported）。`in`（S2）=
 集合成员：`in = [attr, [v1, v2, ...]]`。
 
@@ -1079,7 +1079,7 @@ insts = ["cvttsd2si {out}, {0}"]
 ```
 
 **特异性排序**（S2，去掉声明序依赖）：候选按 `(priority 降, 谓词叶子数降, 声明序
-升)` 裁决（见 `V12Model::lowering_by_op`）。`priority`（可选，缺省 0）只在"故意让
+升)` 裁决（见 `IsaModel::lowering_by_op`）。`priority`（可选，缺省 0）只在"故意让
 更宽的规则赢"时用（x86 `Vextract` 的 lane 0 快路径）。编译期报两类错：**重复**
 （同 op 且规范化后谓词相同）；**死规则**（谓词被更靠前且更宽的规则完全包含，判定
 域 = 每属性闭区间集合，含 `or`/`not` 记为 Opaque 跳过）。
@@ -1103,7 +1103,7 @@ insts = ["cvttsd2si {out}, {0}"]
 | `{global}` | `ctx.current_global` 的 GlobalId（**负编码 -(id+1)**，配 `MOVABS_GLOBAL` → ABS8 重定位） |
 
 > **占位符单一注册表**：所有占位符的 token 分类、临时声明、xreg 绑定、ctor 表达式
-> 统一收敛于 `v12/codegen/placeholder.rs`——**新增占位符只改注册表一处**。临时命名
+> 统一收敛于 `dsl/codegen/placeholder.rs`——**新增占位符只改注册表一处**。临时命名
 > `g`/`f` 与 `PhTemp::{Gpr,Fpr}` 一一对应，且与既有 token 无前缀冲突（`{g}`≠
 > `{global}`、`{f}`≠`{fconst}`，精确匹配）。旧样式 `{t}`/`{tN}`/`{t_f}`/`{t_fN}`
 > 已废弃（TOML 全量迁移，解析即报错）。
@@ -1126,7 +1126,7 @@ insts = ["cvttsd2si {out}, {0}"]
 **裁决序与 `[[lowering]]` 统一**（v18 S5c）：(`priority` 降, 匹配树 Op 节点数降, `when`
 谓词叶子数降, 声明序升)——祖先匹配树、更具体的 `when` 先试；`priority` 用于"故意让更宽的
 模式赢"（与 lowering 同语义，缺省 0）。判定序在 codegen（生成 `__PATTERNS` 表与分派臂）与
-校验器之间**共读同一份**（`V12Model::pattern_order()`），不会两边各排一次。
+校验器之间**共读同一份**（`IsaModel::pattern_order()`），不会两边各排一次。
 
 **死模式检测**（同片新增）：**匹配树结构相同**的两个模式，若裁决序里靠前的那个 `when`
 覆盖靠后的那个，后者永远轮不到 → 编译期报错（"死模式"，消息给出两个 `[[pattern]]` 下标）。
@@ -1149,7 +1149,7 @@ when  = { eq = ["elem", 2] }
 insts = ["movsd {out}, {a}", "mulsd {out}, {b}", "addsd {out}, {c}"]
 ```
 
-- **`match`**：递归下降小解析器（`v12/match_tree.rs`）解析 `Op(a, Op(b, c))`，
+- **`match`**：递归下降小解析器（`dsl/match_tree.rs`）解析 `Op(a, Op(b, c))`，
   根必须是 Op 调用，叶子是裸标识符（变量）。`when` 与 `[[lowering]].when` 同语法，
   两个结构相同、只差守卫（如 f32 vs f64）的模式靠它区分。
 - **叶变量 DFS 序**：`insts` 里 `{a}`/`{b}`/`{c}` 按树 DFS 序编号为 `{0}`/`{1}`/
@@ -1418,12 +1418,12 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 "不新增依赖"一致）；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。
 
 ```bash
-cargo run -p forge-isa -- validate isa/x86_v12.toml
-cargo run -p forge-isa -- insts isa/riscv64_v12.toml
-cargo run -p forge-isa -- explain isa/arm64_v12.toml ADDREGW
+cargo run -p forge-isa -- validate isa/x86.toml
+cargo run -p forge-isa -- insts isa/riscv64.toml
+cargo run -p forge-isa -- explain isa/arm64.toml ADDREGW
 cargo run -p forge-isa -- diff old.toml new.toml          # 迁移前后"展开后有效规格"对照
 cargo run -p forge-isa -- schema --out isa-dsl.schema.json  # 重新生成编辑器补全用 schema
-cargo run -p forge-isa -- fmt tests/isa/include_root_v12.toml   # 多文件 → 单文件（stdout）
+cargo run -p forge-isa -- fmt tests/isa/include_root.toml   # 多文件 → 单文件（stdout）
 ```
 
 **编辑器补全（`#:schema`，v18 S7c）**：每份谱（3 个发行 ISA + 6 个夹具）顶部有一行
@@ -1433,7 +1433,7 @@ cargo run -p forge-isa -- fmt tests/isa/include_root_v12.toml   # 多文件 → 
 
 | 方向 | 守卫 | 抓什么 |
 | --- | --- | --- |
-| 模型 ↔ schema | `crates/frontend/forge-isa-dsl/tests/schema_guard.rs::schema_matches_model_structs` | schema 表与 `v12/model.rs` 各结构体的 `pub` 字段**逐键相等**（`#[serde(skip)]` 的内部字段在 `INTERNAL_FIELDS` 里显式登记） |
+| 模型 ↔ schema | `crates/frontend/forge-isa-dsl/tests/schema_guard.rs::schema_matches_model_structs` | schema 表与 `dsl/model.rs` 各结构体的 `pub` 字段**逐键相等**（`#[serde(skip)]` 的内部字段在 `INTERNAL_FIELDS` 里显式登记） |
 | schema ↔ 文档 | 同文件 `docs_key_table_matches_schema` | 本文档上面的「键总览（速查表）」与该 schema **逐字相同**（改 schema 必须同步那段） |
 | schema ↔ 仓库产物 | 同文件 `checked_in_schema_file_is_up_to_date` | `isa-dsl.schema.json` 与 `schema_json()` 逐字相同（防止签入的产物过期） |
 
@@ -1504,7 +1504,7 @@ forge_dsl::isa_from_file!("tests/isa/demo.toml", spec_tests = false); // 关掉
 
 关掉的理由只有一个：同一份谱被**多个测试二进制**反复展开（夹具谱住在
 `tests/common/mod.rs`），生成的自测会在每个二进制里重复跑——那里关掉，由
-`crates/backend/forge-codegen/tests/spec_tests_v12.rs` 打开三个极端形状的夹具
+`crates/backend/forge-codegen/tests/spec_tests.rs` 打开三个极端形状的夹具
 （1 字节寄存器 / 12 位字 / 混合字长）。
 
 自测跑在 `cargo test -p forge-codegen --lib`（生成在库内）或对应测试二进制里
@@ -1558,7 +1558,7 @@ partial = 1
 | 键 | 位置 | 含义 |
 | --- | --- | --- |
 | `variants = { xlen = [32, 64] }` | `[meta]` | 声明**参数名 → 取值域**（参数的唯一事实源；没声明的参数一律报错） |
-| `only_variants = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`v12::model::variants_keep`） |
+| `only_variants = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`dsl::model::variants_keep`） |
 | `params = { xlen = 32 }` | `isa_from_file!` 宏参数 | 生成期投影（参数进生成物文件名哈希：同一份谱的两个变体落到不同文件） |
 | `--params xlen=32` | `forge-isa validate\|insts` | 工具期投影（`--params a=1,b=2` 可多次/逗号分隔） |
 
@@ -1578,10 +1578,10 @@ partial = 1
    声明却**没标** `only_variants` ⇒ 校验期报"未知指令引用"。结构件必须由作者显式变体化
    （RV32 的帧件与 RV64 不同，自动猜是错的）。
 
-`forge-isa insts --params xlen=32 isa/riscv64_v12.toml` 的实测账目（2026-09-24）：
+`forge-isa insts --params xlen=32 isa/riscv64.toml` 的实测账目（2026-09-24）：
 
 ```text
-# riscv64_v12 （version 13.0；encoding = fixed 32 位；104 条指令 / 19 条模板 / 96 条 lowering）
+# riscv64 （version 13.0；encoding = fixed 32 位；104 条指令 / 19 条模板 / 96 条 lowering）
 # 变体投影 xlen=32：指令 116 → 104（-12：LD, SD, SLLW, SRLW, SRAW, ADDW, SUBW, MULW,
 #   DIVW, DIVUW, REMW, REMUW）；连带/逐节丢弃：
 #   [spill.GPR] ×1、[[lowering]] ×14；lowering 剩 96
@@ -1636,7 +1636,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 后，工具只把**真缺口**报成结论，另打印一行覆盖率口径：
 
 ```text
-# isa/x86_v12.toml: 宿主 op 覆盖 = [[lowering]]+[[pattern]] 100 / 终结指令 6（谱里不该有）/ 宿主管线 7（宿主直查）/ 真缺口 3
+# isa/x86.toml: 宿主 op 覆盖 = [[lowering]]+[[pattern]] 100 / 终结指令 6（谱里不该有）/ 宿主管线 7（宿主直查）/ 真缺口 3
 ```
 
 - **终结指令**（`Ret`/`Jmp`/`Br`/`Switch`/`Unreachable`/`Invoke`）由生成的
@@ -1651,32 +1651,32 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 
 **发行后端**（库本体，`crates/backend/forge-codegen/src/arch/`）：
 
-- **`isa/x86_v12.toml`**：142 条 `[[instructions]]` + 11 条 `[[templates]]`（55 行 →
+- **`isa/x86.toml`**：142 条 `[[instructions]]` + 11 条 `[[templates]]`（55 行 →
   共 197 条指令）+ 2 条 `[[pattern]]`，19 个 form 预设，`[[lowering]]` **197 条声明**（v18 S5
   迁移后；迁移前 220 条，见「`[[lowering]]`」节的 `op` 名单）——`forge-isa insts` 报的是
   `vary`/`op` 展开后的**执行规则数**（x86 286 / riscv 110 / arm64 19）。变长语义键，
   接 TargetMachine；jit 矩阵 195 passed / 3 skipped / 0 failed。
-- **`isa/riscv64_v12.toml`**：48 条 `[[instructions]]` + 19 条 `[[templates]]`（68 行 →
+- **`isa/riscv64.toml`**：48 条 `[[instructions]]` + 19 条 `[[templates]]`（68 行 →
   共 116 条指令），定宽试点（QEMU 真执行验证）；jit 矩阵 131 passed / 67 skipped /
   0 failed。`[machine.frame] layout = "fp-inside"` 全推导。
-- **`isa/arm64_v12.toml`**：24 条 `[[instructions]]` + 33 条 `[[templates]]`（80 行 →
+- **`isa/arm64.toml`**：24 条 `[[instructions]]` + 33 条 `[[templates]]`（80 行 →
   共 104 条指令，含 S3c 的 `b.cond` 16 行），A64 定宽后端（golden 依据见
   `docs/reference/aarch64-encoding-ref.md`）。
 
 **测试夹具**（**不在库里**，`crates/backend/forge-codegen/tests/isa/`；由
 `tests/common/mod.rs` 用 `isa_from_file!(…)` 宿住）：
 
-- **`demo_v12.toml`**：同助记符多宽度自动分发演示基线。
-- **`demo8_v12.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，宽度
-  元数据全 = 1）；用例见 `tests/demo8_v12_tests.rs`。
-- **`demo_mixed16_32_v12.toml`**：**混合字长**夹具（`kind = "mixed"`、
+- **`demo.toml`**：同助记符多宽度自动分发演示基线。
+- **`demo8.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，宽度
+  元数据全 = 1）；用例见 `tests/demo8_tests.rs`。
+- **`demo_mixed16_32.toml`**：**混合字长**夹具（`kind = "mixed"`、
   `widths = [16, 32]`，低 2 位判别短/长编码）；用例见
-  `tests/demo_mixed16_32_v12_tests.rs`。
-- **`demo_inst8/12/100_v12.toml`**：指令字宽夹具（8 / 12 / 100 位；100 位 = 13 字节，
+  `tests/demo_mixed16_32_tests.rs`。
+- **`demo_inst8/12/100.toml`**：指令字宽夹具（8 / 12 / 100 位；100 位 = 13 字节，
   位域落在机器字之外）。
-- **`include_root_v12.toml` + `include_base_v12.toml`**（v18 S7d）：**多文件组合**夹具
+- **`include_root.toml` + `include_base.toml`**（v18 S7d）：**多文件组合**夹具
   （`include` 片段 + `[[override]]`）；同一份谱在 `tests/common/mod.rs` 里再用
   `name`/`parts = ["encode"]` 展开一个"只有编码器"的模块；用例见
-  `tests/include_v12_tests.rs`。
+  `tests/include_tests.rs`。
 - 夹具清单与用途另见 `crates/backend/forge-codegen/tests/isa/README.md`；
   库表面守卫 `tests/library_surface.rs` 保证夹具谱不会回到 `src/` 或仓库根 `isa/`。

@@ -2,7 +2,7 @@
 name = "forge-tests"
 version = "0.1.0"
 edition = "2024"
-description = "Forge Tests: generic integration test framework for ISA backends (coverage / exec), v12-only (x86_v12)"
+description = "Forge Tests: generic integration test framework for ISA backends (coverage / exec / asm suites), 三架构发行后端"
 
 [dependencies]
 # 执行测试依赖 JitCompiler——显式启用 jit feature（默认构建即含）

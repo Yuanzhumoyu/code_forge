@@ -56,9 +56,9 @@ macro_rules! roundtrip_of {
 /// riscv64 116 / arm64 110），枚举器条目只会更多（视图与风味），少于总数就是派生漏了。
 #[test]
 fn derived_insts_roundtrip_byte_stable() {
-    let x86 = roundtrip_of!("x86_v12", crate::arch::x86_v12::x86_v12);
-    let riscv = roundtrip_of!("riscv64_v12", crate::arch::riscv64_v12::riscv64_v12);
-    let arm64 = roundtrip_of!("arm64_v12", crate::arch::arm64_v12::arm64_v12);
+    let x86 = roundtrip_of!("x86", crate::arch::x86::x86);
+    let riscv = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
+    let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
     assert!(x86 >= 197, "x86 枚举器条目 {x86} < 指令总数 197");
     assert!(riscv >= 117, "riscv64 枚举器条目 {riscv} < 指令总数 117");
     assert!(arm64 >= 110, "arm64 枚举器条目 {arm64} < 指令总数 110");

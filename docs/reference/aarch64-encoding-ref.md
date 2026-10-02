@@ -176,7 +176,7 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
 
 抓取失败的通道（均已尝试）：support.arm.com SPA 正文、documentation-service.arm.com（PDF）、csci.viu.ca ARM ARM C4 章 PDF、r.jina.ai 渲染代理、web.archive.org、go.googlesource.com。
 
-## 实现状态（2026-09，isa/arm64_v12.toml）
+## 实现状态（2026-09，isa/arm64.toml）
 
 - 已实现：整数 ALU(imm/reg ± 与逻辑)、MOV 别名、CMP/CMN、MOVZ/MOVN(hw0)/
   MOVK(hw0) + **hw 变体（MOVZX1/2/3、MOVZW1、MOVKX1/2，clang oracle

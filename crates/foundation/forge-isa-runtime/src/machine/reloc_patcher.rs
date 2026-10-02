@@ -75,10 +75,10 @@ pub fn register_default_reloc_patcher(isa: &str) {
         return;
     }
     let patcher: Arc<dyn RelocPatcher> = match isa {
-        "x86_64" | "x86_64_v12" | "x86_v12" => Arc::new(X86RelocPatcher),
-        // riscv64_v12 是定宽 32 位模块（v12 TOML 的 name 键）。
-        "riscv64_v12" => Arc::new(RiscvRelocPatcher),
-        "arm64_v12" => Arc::new(Arm64RelocPatcher),
+        "x86_64" | "x86" => Arc::new(X86RelocPatcher),
+        // riscv64 是定宽 32 位模块（ISA-DSL TOML 的 name 键）。
+        "riscv64" => Arc::new(RiscvRelocPatcher),
+        "arm64" => Arc::new(Arm64RelocPatcher),
         _ => return,
     };
     register_reloc_patcher(isa, patcher);

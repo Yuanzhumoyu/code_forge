@@ -15,12 +15,12 @@
 use forge_isa_dsl::{ExpandOptions, Parts, expand_file};
 
 const SPECS: [(&str, &str); 3] = [
-    ("x86_v12", "isa/x86_v12.toml"),
-    ("riscv64_v12", "isa/riscv64_v12.toml"),
-    ("arm64_v12", "isa/arm64_v12.toml"),
+    ("x86", "isa/x86.toml"),
+    ("riscv64", "isa/riscv64.toml"),
+    ("arm64", "isa/arm64.toml"),
 ];
 
-/// 与 `v12/pred.rs::PRED_ATTRS` 一一对应的核心属性（槽序即此序）。
+/// 与 `dsl/pred.rs::PRED_ATTRS` 一一对应的核心属性（槽序即此序）。
 const ATTRS: [&str; 9] = [
     "rd",
     "rs1_width",

@@ -5,10 +5,10 @@
 //! # Example
 //! ```ignore
 //! use code_forge::backend::jit::JitCompiler;
-//! use code_forge::backend::arch::x86_v12;
+//! use code_forge::backend::arch::x86;
 //! use code_forge::ir::*;
 //!
-//! let tm = x86_v12::TargetMachine::new();
+//! let tm = x86::TargetMachine::new();
 //! let mut jit = JitCompiler::new(tm);
 //!
 //! // 编译函数
@@ -96,7 +96,7 @@ pub type SymbolResolver<'a> = dyn Fn(&str) -> Option<u64> + 'a;
 
 /// JIT 编译器 — 管理函数的编译、缓存和执行。
 ///
-/// 类型参数 `M` 是目标 ISA 的 TargetMachine 类型（例如 `x86_v12::TargetMachine`）。
+/// 类型参数 `M` 是目标 ISA 的 TargetMachine 类型（例如 `x86::TargetMachine`）。
 pub struct JitCompiler<M: TargetMachine> {
     /// 目标机器（用于构造 FunctionCompiler）。
     machine: M,
@@ -441,7 +441,7 @@ impl<M: TargetMachine + Clone + Default> Default for JitCompiler<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::x86_v12::{self, ensure_registered};
+    use crate::arch::x86::{self, ensure_registered};
     use forge_ir::TypeId;
 
     /// `FORGE_ASSUME_AVX512` 作用域守卫（Drop 时清除，**panic 安全**）——
@@ -464,21 +464,21 @@ mod tests {
 
     #[test]
     fn test_jit_compiler_new() {
-        let jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let jit = JitCompiler::new(x86::TargetMachine::new());
         assert!(jit.is_empty());
         assert_eq!(jit.len(), 0);
     }
 
     #[test]
     fn test_jit_register_external() {
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         jit.register_external("malloc", 0xDEAD_BEEF).unwrap();
         assert_eq!(jit.lookup_symbol("malloc"), Some(0xDEAD_BEEF));
     }
 
     #[test]
     fn test_jit_function_names() {
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // 注册符号（不实际编译）
         jit.register_external("foo", 0x1000).unwrap();
         jit.register_external("bar", 0x2000).unwrap();
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_jit_symbol_resolver_chain() {
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // 1. 注册表优先
         jit.register_external("registered", 0x1111).unwrap();
         assert_eq!(jit.lookup_symbol("registered"), Some(0x1111));
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn test_jit_compile_and_call_constant() {
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         jit.add_function("answer", &sig, |b| {
@@ -535,7 +535,7 @@ mod tests {
 
     /// E2E: 编译 8+ 函数 Module（触发 compile_module 的并行路径——每个函数
     /// 独立线程编译），验证并行编译后符号注册与执行结果一致。
-    /// 注：直接 `Opcode::Call` 的 v12 lowering 尚未落地（mini_c 用 AST 内联
+    /// 注：直接 `Opcode::Call` 的 DSL lowering 尚未落地（mini_c 用 AST 内联
     /// 实现函数调用），本测试不再构造跨函数 call。
     #[cfg(target_arch = "x86_64")]
     #[test]
@@ -553,7 +553,7 @@ mod tests {
             b.ret(&[v]);
             m.add_function(b.finish().expect("build"));
         }
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         jit.compile_module(&m).expect("parallel module compile");
         let f0: extern "C" fn() -> i32 = jit.get_fn("f0").expect("f0");
         assert_eq!(f0(), 10, "f0");
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn test_jit_compile_and_call_add() {
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         let sig = FunctionSignature::new(&[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::I32]);
         jit.add_function("add", &sig, |b| {
@@ -592,7 +592,7 @@ mod tests {
         use TypeId;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // 编译 answer
         let sig0 = FunctionSignature::new(&[], &[TypeId::I32]);
@@ -636,7 +636,7 @@ mod tests {
         use TypeId;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // fn is_positive(x: i32) -> i32 { if x > 0 { 1 } else { 0 } }
         // Uses direct returns from each branch to avoid phi nodes.
@@ -680,7 +680,7 @@ mod tests {
         use TypeId;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // fn choose(flag: i32, a: i32, b: i32) -> i32 { if flag != 0 { a } else { b } }
         let sig = FunctionSignature::new(
@@ -740,7 +740,7 @@ mod tests {
         use TypeId;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // fn compute(a: i64, b: i64, c: i64) -> i64
         // Computes: a*a + b*b + c*c
@@ -784,7 +784,7 @@ mod tests {
         use TypeId;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // fn max_i32() -> i32 { i32::MAX }
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
@@ -837,7 +837,7 @@ mod tests {
         use TypeId;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // fn countdown(n: i32) -> i32:
         //   loop:
@@ -894,7 +894,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         let vt = {
             let store = TypeContext::new();
@@ -917,7 +917,7 @@ mod tests {
             builder.finish().expect("build")
         };
         // 直接走 FunctionCompiler 分离编译期错误
-        let compiler = FunctionCompiler::new(x86_v12::TargetMachine::new());
+        let compiler = FunctionCompiler::new(x86::TargetMachine::new());
         compiler.compile_raw(&func).expect("compile v256_first");
         jit.add_function("v256_first", &sig, build)
             .expect("compile v256_first");
@@ -937,7 +937,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -976,7 +976,7 @@ mod tests {
         use forge_ir::{FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -1008,7 +1008,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -1048,7 +1048,7 @@ mod tests {
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt128 = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 4)
@@ -1073,7 +1073,7 @@ mod tests {
         assert_eq!(f(), 7, "V128 store/load 栈槽全宽 lane3=7.5 → 7");
 
         // V64 槽往返（8B movsd 全宽低 64）
-        let mut jit2 = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit2 = JitCompiler::new(x86::TargetMachine::new());
         let vt64 = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 2)
@@ -1112,7 +1112,7 @@ mod tests {
             eprintln!("[jit] 无 AVX——跳过 V256 槽往返测试");
             return;
         }
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt256 = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -1144,7 +1144,7 @@ mod tests {
     /// **已知限制记录（WA-46 附带发现）**：向量**高压力 spill** 场景在本后端
     /// 跑不起来——分配器报 `instruction needs 3 scratch regs for spilled
     /// operands, but only 2 available`（`[abi].scratch` = R10/R11，见
-    /// `isa/x86_v12.toml`）。构造：N=17 个 V256 值逐个消费
+    /// `isa/x86.toml`）。构造：N=17 个 V256 值逐个消费
     /// （`vneg → vextract → fptosi → iadd`，单条指令 ≤2 个向量寄存器），
     /// 只要有一个 `vconst` 的 `{out}` 与内部临时同时被 spill 就需要 3 个 scratch。
     /// 本用例**断言该错误仍存在**（不得静默通过）：一旦放宽 scratch 约束，
@@ -1179,7 +1179,7 @@ mod tests {
         }
         b.ret(&[acc]);
         let func = b.finish().expect("build v256 spill");
-        let err = match FunctionCompiler::new(x86_v12::TargetMachine::new()).compile_raw(&func) {
+        let err = match FunctionCompiler::new(x86::TargetMachine::new()).compile_raw(&func) {
             Ok(_) => panic!(
                 "N={N} 个 32B 值 > 16 个架构寄存器：当前应报 3-scratch 限制；\
                  若已放宽 scratch 约束 → 本用例应改为断言 VEX.256 spill 搬运与 lane7 语义"
@@ -1202,7 +1202,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 4)
@@ -1246,7 +1246,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 4)
@@ -1283,7 +1283,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 2)
@@ -1319,7 +1319,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 2)
@@ -1357,7 +1357,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 4)
@@ -1398,7 +1398,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -1440,7 +1440,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -1498,7 +1498,7 @@ mod tests {
         }
         crate::jit_event("AVX512-RUN", "test_jit_v512_byref_param");
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // callee: (v512) -> i32（提取 lane15 = 16.0）
         let tc = TypeContext::new();
         let vt = tc.vector_ty(TypeId::F32, 16);
@@ -1547,7 +1547,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let tc = TypeContext::new();
         let vt = tc.vector_ty(TypeId::F32, 8);
         let sig_c = FunctionSignature::new(&[(vt, "v")], &[TypeId::I32]);
@@ -1596,7 +1596,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -1685,7 +1685,7 @@ mod tests {
                 .any(|w| w[0] == 0xC4 && w[2] == 0x7C && w[3] == op)
         };
         // 被调方：收参 load 必须 EVEX 64B，不得只 load 32B。
-        let cf_callee = FunctionCompiler::new(x86_v12::TargetMachine::new())
+        let cf_callee = FunctionCompiler::new(x86::TargetMachine::new())
             .compile_raw(&callee_func)
             .expect("compile callee（FORGE_ASSUME_AVX512 下应过守卫）");
         // **V512 lane15 提取路径**（2026-09-13 定位的真实缺陷）：必须用 EVEX
@@ -1736,7 +1736,7 @@ mod tests {
             "被调方 V512 收参不得退回 32B（C4 .. 7C 10，lane8..15 丢失）"
         );
         // 调用方：宽向量实参 by-ref 栈拷贝的 store 必须 EVEX 64B。
-        let cf_main = FunctionCompiler::new(x86_v12::TargetMachine::new())
+        let cf_main = FunctionCompiler::new(x86::TargetMachine::new())
             .compile_raw(&main_func)
             .expect("compile main（宽向量实参 by-ref）");
         assert!(
@@ -1758,7 +1758,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let vt = {
             let store = TypeContext::new();
             store.vector_ty(TypeId::F32, 8)
@@ -1808,7 +1808,7 @@ mod tests {
         use forge_ir::{FunctionSignature, IntCC, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // f(x: i64) -> i64 = select(x != 0, 100, 7)（cond = icmp → BOOL）
         let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
         jit.add_function("sel_bool", &sig, |b| {
@@ -1852,7 +1852,7 @@ mod tests {
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         jit.add_function("unreach_fn", &sig, |b| {
             let e = b.create_block();
@@ -1872,7 +1872,7 @@ mod tests {
         use forge_ir::{FuncRef, FunctionBuilder, FunctionSignature, IntCC, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // fib(n) = n<2 ? n : fib(n-1)+fib(n-2)
         let sig = FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64]);
         let mut b = FunctionBuilder::new("fib", TypeContext::new(), sig.clone());
@@ -1920,7 +1920,7 @@ mod tests {
         use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // f(a: f64, b: f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }
         let sig = FunctionSignature::new(&[(TypeId::F64, "a"), (TypeId::F64, "b")], &[TypeId::I32]);
         jit.add_function("float_gt", &sig, |b| {
@@ -1949,7 +1949,7 @@ mod tests {
         use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // f(a: i32, b: f64, c: i32) -> i32 = a + c + (b > 0.5 ? 10 : 0)
         // by-position：a→RCX(位置0)、b→XMM1(位置1)、c→R8(位置2)
         let sig = FunctionSignature::new(
@@ -1986,7 +1986,7 @@ mod tests {
         use forge_ir::{FloatCC, FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // callee: (f64) -> i32 = b > 3.0 ? 1 : 0
         let sig_c = FunctionSignature::new(&[(TypeId::F64, "b")], &[TypeId::I32]);
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
@@ -2021,7 +2021,7 @@ mod tests {
         use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // f(a: f64, b: f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }（branch 版）
         let sig = FunctionSignature::new(&[(TypeId::F64, "a"), (TypeId::F64, "b")], &[TypeId::I32]);
         jit.add_function("f_branch", &sig, |b| {
@@ -2055,7 +2055,7 @@ mod tests {
         use forge_ir::{FloatCC, FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // callee: (f64, f64) -> i32 = if a + b > 3.0 { 1 } else { 0 }（branch 版）
         let sig_c =
             FunctionSignature::new(&[(TypeId::F64, "a"), (TypeId::F64, "b")], &[TypeId::I32]);
@@ -2103,7 +2103,7 @@ mod tests {
         use forge_ir::{FloatCC, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // f(a: f64) -> i32 = if a > 3.0 { 1 } else { 0 }
         // 参数存槽 (-16) → Fload → fcmp（模拟 rustc 的 local 槽形态）
         let sig = FunctionSignature::new(&[(TypeId::F64, "a")], &[TypeId::I32]);
@@ -2141,7 +2141,7 @@ mod tests {
         use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // callee: (i64, i64) -> i64 = a + b
         let sig_c =
             FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
@@ -2174,7 +2174,7 @@ mod tests {
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         // callee(a: i64, b: i64) -> i64：参数存槽 (-16/-24) → Load → iadd
         let sig = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
         jit.add_function("i64_slot", &sig, |b| {
@@ -2201,7 +2201,7 @@ mod tests {
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let sig = FunctionSignature::new(&[(TypeId::I64, "a")], &[TypeId::I64]);
         jit.add_function("uext16", &sig, |b| {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a")]);
@@ -2225,7 +2225,7 @@ mod tests {
         use forge_ir::{AtomicRmwOp, Ordering};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // f(ptr: *mut i32) -> i32：atomic_rmw(Add, ptr, 3) 返回旧值
         let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
@@ -2254,7 +2254,7 @@ mod tests {
     #[test]
     fn test_jit_mem_width_i16_i32_i64_neighbor() {
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // 对每个宽度 W 注册 f_w: fn(dst: *mut u8, val: i64)（写 W 字节）与
         // g_w: fn(src: *mut u8) -> i64（读 W 字节回）。
@@ -2323,7 +2323,7 @@ mod tests {
         use forge_ir::{IntCC, Ordering};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // f(ptr: *mut u8) -> u8：cmpxchg 循环 fetch_and(ptr, 0b1010)
         let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I8]);
@@ -2364,7 +2364,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_width_auto_roundtrip_bytes() {
-        use crate::arch::x86_v12::{assemble, decode, encode};
+        use crate::arch::x86::{assemble, decode, encode};
         // 32 位（无前缀）与 64 位（REX.W）rr mov / mem load 反解
         // （mem 基址与数据同宽视图——assemble 一致性；编码按编号寻址）
         for src in [
@@ -2392,7 +2392,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_wide_vec_reg_base_mem_roundtrip_bytes() {
-        use crate::arch::x86_v12::{assemble, decode, encode};
+        use crate::arch::x86::{assemble, decode, encode};
         // 期望字节（objdump `-D -b binary -m i386:x86-64 -M intel` 实证）：
         //   c4 e1 7c 10 00 → vmovups ymm0, YMMWORD PTR [rax]
         //   c4 e1 7c 11 00 → vmovups YMMWORD PTR [rax], ymm0
@@ -2432,7 +2432,7 @@ mod tests {
         use forge_ir::{IntCC, Ordering};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // f(ptr: *mut i64) -> i64：cmpxchg 循环 fetch_and(ptr, 0b1010)
         let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
@@ -2473,7 +2473,7 @@ mod tests {
         use forge_ir::{IntCC, Ordering};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // f(ptr: *mut i32) -> i32：cmpxchg 循环 fetch_and(ptr, 0b1010)
         let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
@@ -2516,7 +2516,7 @@ mod tests {
         use forge_ir::Ordering;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // f(ptr: *mut i32, val: i32)：old=12（load），cmpxchg(12 → val & old)
         let sig = FunctionSignature::new(
@@ -2556,7 +2556,7 @@ mod tests {
         use forge_ir::Ordering;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // f(ptr: *mut i32) -> i32：old=12, new=8 单发 cmpxchg
         let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
@@ -2587,7 +2587,7 @@ mod tests {
         use forge_ir::Ordering;
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
         jit.add_function("cmpxchg_single32l", &sig, |b| {
@@ -2622,7 +2622,7 @@ mod tests {
         use forge_ir::{AtomicRmwOp, Ordering};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         let sig = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I32]);
         jit.add_function("atomic_spill", &sig, |b| {
@@ -2666,7 +2666,7 @@ mod tests {
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // f(ptr: *mut i64) -> i64：
         //   val = load(ptr)          // spec_next 的 start
@@ -2715,7 +2715,7 @@ mod tests {
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee(ptr: *mut i64) -> i64：val = load(ptr); store(val+1, ptr); ret(val)
         let sig_c = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
@@ -2789,7 +2789,7 @@ ret_classify = [
         .expect("注册自定义规则");
         conv_registry::register_binding_toml(
             r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "custom_args_v20"
 [pools]
 int = ["R8", "R9"]
@@ -2812,7 +2812,7 @@ ret_int = ["RAX"]
 
         // 先单独编一次，核对**落点**确实是自定义约定给的寄存器。
         {
-            let compiler = crate::FunctionCompiler::new(x86_v12::TargetMachine::new());
+            let compiler = crate::FunctionCompiler::new(x86::TargetMachine::new());
             let (_cf, alloc) = compiler
                 .compile_with_alloc(&callee_fn)
                 .expect("自定义约定下必须能编");
@@ -2842,7 +2842,7 @@ ret_int = ["RAX"]
         main_fn.ret(&[r]);
         module.add_function(main_fn.finish().expect("main"));
 
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         jit.compile_module(&module).expect("compile module");
         let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
         assert_eq!(
@@ -2870,7 +2870,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let machine = x86_v12::TargetMachine::new();
+        let machine = x86::TargetMachine::new();
 
         // callee(n) —— **变参**：签名只列命名参数（照 LLVM 的 `...`）。
         let sig_c =
@@ -2897,12 +2897,12 @@ ret_int = ["RAX"]
         // ① / ② 落点差异（两者都编同一个 `main`，只差"装不装模块签名表"）。
         let main_ref = FuncRef::new(1);
         let mfunc = module.get_function(main_ref);
-        let with_sigs = crate::FunctionCompiler::new(x86_v12::TargetMachine::new())
+        let with_sigs = crate::FunctionCompiler::new(x86::TargetMachine::new())
             .with_module_sigs(vec![(true, 1), (false, 0)])
             .compile_with_alloc(mfunc)
             .expect("装表编译")
             .1;
-        let without_sigs = crate::FunctionCompiler::new(x86_v12::TargetMachine::new())
+        let without_sigs = crate::FunctionCompiler::new(x86::TargetMachine::new())
             .compile_with_alloc(mfunc)
             .expect("不装表编译")
             .1;
@@ -2934,7 +2934,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee(fmt: i64) -> i64 ── **变参**：签名只列命名参数（照 LLVM 的 `...`）。
         // 体内：ap = va_start(); a = va_arg(ap, i64); b = va_arg(ap, i64); ret a*10 + b
@@ -2986,7 +2986,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee(fmt: i64) -> i64 ── 变参：ret (i64)(va_arg(f64) + va_arg(f64))
         // 4.5 + 7.0 = 11.5 ⇒ fptosi = 11（截断，无浮点精度争议）。
@@ -3037,7 +3037,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee(fmt: i64) -> i64 ── 变参：ret (i64)(va_arg(f32) + va_arg(f32))
         // 调用方传的是 2.5 / 3.25（f64）；窄回 f32 后相加 = 5.75 ⇒ fptosi = 5。
@@ -3082,7 +3082,7 @@ ret_int = ["RAX"]
     /// **这条路径此前零覆盖**。实际收参走的是"先收进 spill 槽"的中转
     /// （`load 布局槽 → scratch(GPR) → store spill 槽`，**按位搬运** ⇒ 浮点也对），
     /// 不是"直接收进寄存器"那一支（那支是 fail-closed 的防御分支，见
-    /// `v12/codegen/frame.rs` 的 `ArgPlace::Stack` 注释）。
+    /// `dsl/codegen/frame.rs` 的 `ArgPlace::Stack` 注释）。
     /// 返回值 `e + f`：3.0 + 4.0 = 7.0 ⇒ `fptosi` = 7。
     #[cfg(target_arch = "x86_64")]
     #[test]
@@ -3090,7 +3090,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         let params = [
             (TypeId::F64, "a"),
@@ -3144,7 +3144,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         let params = [
             (TypeId::F64, "a"),
@@ -3204,7 +3204,7 @@ ret_int = ["RAX"]
         use forge_ir::{CallConvId, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let cc = CallConvId::builtin(ConvName::SysV64);
 
         let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
@@ -3271,7 +3271,7 @@ ret_int = ["RAX"]
         use forge_ir::{CallConvId, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let cc = CallConvId::builtin(ConvName::SysV64);
 
         let params: Vec<(TypeId, &str)> = vec![
@@ -3326,7 +3326,7 @@ ret_int = ["RAX"]
         use forge_ir::{CallConvId, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let cc = CallConvId::builtin(ConvName::SysV64);
 
         let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
@@ -3375,7 +3375,7 @@ ret_int = ["RAX"]
         use forge_ir::{CallConvId, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let cc = CallConvId::builtin(ConvName::SysV64);
 
         let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
@@ -3430,7 +3430,7 @@ ret_int = ["RAX"]
         use forge_ir::{CallConvId, FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
         let cc = CallConvId::builtin(ConvName::SysV64);
 
         let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
@@ -3491,7 +3491,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee(n: i64) -> (i64, i64)：ret(n+1, n+2)
         let sig_c = FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64, TypeId::I64]);
@@ -3536,7 +3536,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee2(ptr: *mut i64) -> i64：val = load(ptr); store(val+1, ptr); ret(val)
         let sig2 = FunctionSignature::new(&[(TypeId::I64, "ptr")], &[TypeId::I64]);
@@ -3592,7 +3592,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee3(x: i64) -> i64：x + 1000（clobber 用）
         let sig3 = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
@@ -3652,7 +3652,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee3(x: i64) -> i64：x + 1000（clobber 用）
         let sig3 = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
@@ -3717,7 +3717,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee3(x: i64) -> i64：x + 1000（clobber 用）
         let sig3 = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
@@ -3794,7 +3794,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // callee3(x: i64) -> i64：x + 1000（clobber 用，两次调用）
         let sig3 = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
@@ -3867,7 +3867,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // main() -> i64：
         //   guard 槽（-32，放 0xDEADBEEF 哨兵）——紧邻聚合槽下方，验证
@@ -3942,7 +3942,7 @@ ret_int = ["RAX"]
         use forge_ir::{FunctionSignature, IntCC, TypeId};
 
         ensure_registered();
-        let mut jit = JitCompiler::new(x86_v12::TargetMachine::new());
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
 
         // 1. f(x, y, c: i64) -> i64 = (c != 0) ? x : y——变量臂 + 运行时 cond
         let sig = FunctionSignature::new(

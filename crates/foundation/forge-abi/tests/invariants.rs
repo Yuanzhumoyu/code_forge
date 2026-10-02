@@ -40,7 +40,7 @@ fn win64_counts_positions_not_classes() {
         vec![("n".into(), i64_()), ("x".into(), f64_())],
         Some(i64_()),
     );
-    let p = plan(&reg, "x86_64_v12", "win64", &sig);
+    let p = plan(&reg, "x86_64", "win64", &sig);
     assert_eq!(place_reg(&p.args[0].place), "RCX");
     assert_eq!(place_reg(&p.args[1].place), "XMM1");
 }
@@ -53,11 +53,11 @@ fn by_class_advances_two_independent_cursors() {
         vec![("n".into(), i64_()), ("x".into(), f64_())],
         Some(i64_()),
     );
-    let p = plan(&reg, "x86_64_v12", "sysv64", &sig);
+    let p = plan(&reg, "x86_64", "sysv64", &sig);
     assert_eq!(place_reg(&p.args[0].place), "RDI");
     assert_eq!(place_reg(&p.args[1].place), "XMM0");
 
-    let p = plan(&reg, "riscv64_v12", "lp64d", &sig);
+    let p = plan(&reg, "riscv64", "lp64d", &sig);
     assert_eq!(place_reg(&p.args[0].place), "X10");
     assert_eq!(place_reg(&p.args[1].place), "F10");
 }
@@ -91,10 +91,10 @@ fn place_reg(p: &Placement) -> String {
 #[test]
 fn integer_aggregate_is_not_hfa() {
     let reg = registry();
-    let p = plan(&reg, "riscv64_v12", "lp64d", &one(agg_ii()));
+    let p = plan(&reg, "riscv64", "lp64d", &one(agg_ii()));
     assert_eq!(place_reg(arg0(&p)), "X10:X11");
 
-    let p = plan(&reg, "riscv64_v12", "lp64d", &one(hfa2()));
+    let p = plan(&reg, "riscv64", "lp64d", &one(hfa2()));
     assert_eq!(place_reg(arg0(&p)), "F10:F11");
 }
 
@@ -102,12 +102,12 @@ fn integer_aggregate_is_not_hfa() {
 #[test]
 fn single_member_hfa_takes_one_slot() {
     let reg = registry();
-    let p = plan(&reg, "riscv64_v12", "lp64d", &one(hfa1()));
+    let p = plan(&reg, "riscv64", "lp64d", &one(hfa1()));
     assert_eq!(place_reg(arg0(&p)), "F10");
 
     // 1 成员 HFA 之后再放一个 f64：应落在 F11（而不是被 1 成员 HFA 吃掉两个槽）。
     let sig = Signature::new(vec![("s".into(), hfa1()), ("x".into(), f64_())], None);
-    let p = plan(&reg, "riscv64_v12", "lp64d", &sig);
+    let p = plan(&reg, "riscv64", "lp64d", &sig);
     assert_eq!(place_reg(&p.args[1].place), "F11");
 }
 
@@ -118,7 +118,7 @@ fn four_member_hfa_uses_register_group() {
     // 真实 arm64 绑定缺浮点池；这里换成"补齐后"的合成绑定。
     reg.insert_binding_toml(AAPCS64_FULL_BINDING)
         .expect("合成绑定");
-    let t = arm64_v12_with_fpr();
+    let t = arm64_with_fpr();
     let param_only = |ty: TyView| Signature::new(vec![("s".into(), ty)], None);
     let p = reg
         .plan(&t, "aapcs64", &param_only(hfa4()))
@@ -144,7 +144,7 @@ fn insufficient_hfa_registers_fall_back_to_stack_as_a_whole() {
     let mut reg = registry();
     reg.insert_binding_toml(AAPCS64_FULL_BINDING)
         .expect("合成绑定");
-    let t = arm64_v12_with_fpr();
+    let t = arm64_with_fpr();
     // 先用掉 V0-V4（5 个 f64），float 池只剩 V5-V7 = 3 个，装不下 4 成员 HFA。
     let mut params: Vec<(String, TyView)> = (0..5).map(|i| (format!("x{i}"), f64_())).collect();
     params.push(("s".into(), hfa4()));
@@ -168,10 +168,10 @@ fn insufficient_hfa_registers_fall_back_to_stack_as_a_whole() {
 fn wide_return_uses_each_conventions_own_sret_slot() {
     let reg = registry();
     let cases = [
-        ("x86_64_v12", "win64", "RCX"),
-        ("x86_64_v12", "sysv64", "RDI"),
-        ("arm64_v12", "aapcs64", "X8"),
-        ("riscv64_v12", "lp64d", "X10"),
+        ("x86_64", "win64", "RCX"),
+        ("x86_64", "sysv64", "RDI"),
+        ("arm64", "aapcs64", "X8"),
+        ("riscv64", "lp64d", "X10"),
     ];
     for (isa, conv, want) in cases {
         let p = plan(&reg, isa, conv, &one(agg24()));
@@ -192,14 +192,14 @@ fn wide_return_uses_each_conventions_own_sret_slot() {
 #[test]
 fn scalar_return_uses_return_pool() {
     let reg = registry();
-    let p = plan(&reg, "x86_64_v12", "win64", &one(i64_()));
+    let p = plan(&reg, "x86_64", "win64", &one(i64_()));
     assert_eq!(ret_reg(&p.ret), "RAX");
-    let p = plan(&reg, "x86_64_v12", "sysv64", &one(i64_()));
+    let p = plan(&reg, "x86_64", "sysv64", &one(i64_()));
     assert_eq!(ret_reg(&p.ret), "RAX");
     // 浮点返回：XMM0 / F10（aapcs64 缺浮点池 → 见 errors.rs 的 GAP 断言）。
-    let p = plan(&reg, "x86_64_v12", "win64", &one(f64_()));
+    let p = plan(&reg, "x86_64", "win64", &one(f64_()));
     assert_eq!(ret_reg(&p.ret), "XMM0");
-    let p = plan(&reg, "riscv64_v12", "lp64d", &one(f64_()));
+    let p = plan(&reg, "riscv64", "lp64d", &one(f64_()));
     assert_eq!(ret_reg(&p.ret), "F10");
 }
 
@@ -215,9 +215,9 @@ fn ret_reg(r: &RetLoc) -> String {
 #[test]
 fn two_slot_return_uses_return_pool_pair() {
     let reg = registry();
-    let p = plan(&reg, "x86_64_v12", "sysv64", &one(agg_ii()));
+    let p = plan(&reg, "x86_64", "sysv64", &one(agg_ii()));
     assert_eq!(ret_reg(&p.ret), "RAX:RDX");
-    let p = plan(&reg, "riscv64_v12", "lp64d", &one(agg_ii()));
+    let p = plan(&reg, "riscv64", "lp64d", &one(agg_ii()));
     assert_eq!(ret_reg(&p.ret), "X10:X11");
 }
 
@@ -229,10 +229,10 @@ fn plan_invariants_hold_for_every_case() {
     let reg = registry();
     let cases: Vec<Case> = corpus().into_iter().chain(variadic_cases()).collect();
     let combos = [
-        ("x86_64_v12", "win64"),
-        ("x86_64_v12", "sysv64"),
-        ("arm64_v12", "aapcs64"),
-        ("riscv64_v12", "lp64d"),
+        ("x86_64", "win64"),
+        ("x86_64", "sysv64"),
+        ("arm64", "aapcs64"),
+        ("riscv64", "lp64d"),
     ];
     let mut checked = 0usize;
     for (isa, conv) in combos {
@@ -389,7 +389,7 @@ fn variadic_unnamed_arguments_follow_the_convention() {
     )
     .variadic(1);
 
-    let p = plan(&reg, "x86_64_v12", "win64", &sig);
+    let p = plan(&reg, "x86_64", "win64", &sig);
     assert!(
         matches!(p.args[0].place, Placement::Reg { .. }),
         "命名参数应在寄存器"
@@ -402,7 +402,7 @@ fn variadic_unnamed_arguments_follow_the_convention() {
     }
     assert!(p.va_area.is_some(), "变参应有 va_area");
 
-    let p = plan(&reg, "x86_64_v12", "sysv64", &sig);
+    let p = plan(&reg, "x86_64", "sysv64", &sig);
     assert!(
         matches!(p.args[1].place, Placement::Reg { .. }),
         "SysV 的未命名实参继续用寄存器"
@@ -441,7 +441,7 @@ hidden = { va_list = "win64_stack" }
         .collect::<Vec<_>>()
         .join("\n");
     let binding = r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "vswitch"
 [pools]
 int = ["RDI", "RSI", "RDX"]
@@ -458,7 +458,7 @@ ret_int = ["RAX"]
     let mut reg = AbiRegistry::new();
     reg.insert_rules_toml(rules_with).expect("注册规则");
     reg.insert_binding_toml(binding).expect("注册绑定");
-    let t = target_for("x86_64_v12").expect("合成目标");
+    let t = target_for("x86_64").expect("合成目标");
     let p = reg.plan(&t, "vswitch", &sig).expect("plan");
     assert_eq!(
         place_reg(&p.args[0].place),
@@ -502,7 +502,7 @@ hidden = {{ va_list = {{ size = 8, align = 8,
         )
     };
     let binding = r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "intsave"
 [pools]
 int = ["RDI", "RSI"]
@@ -514,7 +514,7 @@ ret_int = ["RAX"]
         Some(i64_()),
     )
     .variadic(1);
-    let t = target_for("x86_64_v12").expect("合成目标");
+    let t = target_for("x86_64").expect("合成目标");
 
     let mut reg = AbiRegistry::new();
     reg.insert_rules_toml(&rules(0)).expect("注册规则");
@@ -556,7 +556,7 @@ ret_int = ["RAX"]
 #[test]
 fn callee_save_mechanism_comes_from_the_convention() {
     let reg = registry();
-    let p = plan(&reg, "x86_64_v12", "win64", &one(i64_()));
+    let p = plan(&reg, "x86_64", "win64", &one(i64_()));
     assert_eq!(
         format!("{:?}", p.callee_saved.mechanism),
         "Push",
@@ -572,7 +572,7 @@ fn callee_save_mechanism_comes_from_the_convention() {
     assert!(names.contains(&"RBX") && names.contains(&"RDI"));
     assert!(!names.contains(&"RBP"), "RBP 由帧件负责，不进池");
 
-    let p = plan(&reg, "riscv64_v12", "lp64d", &one(i64_()));
+    let p = plan(&reg, "riscv64", "lp64d", &one(i64_()));
     assert_eq!(format!("{:?}", p.callee_saved.mechanism), "StoreToFrame");
     assert!(p.callee_saved.includes_link, "riscv 的 ra 也要保存");
 }
@@ -717,7 +717,7 @@ fn hooks_can_override_classification_and_adjust_the_plan() {
 #[test]
 fn unregistered_convention_and_binding_fail_closed() {
     let reg = AbiRegistry::with_builtin_rules().expect("内置规则");
-    let t = target_for("arm64_v12").unwrap();
+    let t = target_for("arm64").unwrap();
     let err = reg.plan(&t, "aapcs64", &one(i64_())).unwrap_err();
     assert!(matches!(err, AbiError::BadRules { .. }), "{err:?}");
     assert!(err.to_string().contains("绑定"), "消息要指出缺绑定：{err}");
@@ -775,13 +775,13 @@ fn declared_attributes_change_the_plan() {
 
     // ① byval(24)：win64 上 24B 聚合本来就 byval；这里用 i64 标量做对照——无属性时落寄存器，
     //    声明 byval 后必须变成"栈上副本 + 指针"。
-    let plain = plan(&reg, "x86_64_v12", "win64", &one(i64_()));
+    let plain = plan(&reg, "x86_64", "win64", &one(i64_()));
     assert_eq!(place_reg(arg0(&plain)), "RCX");
     let byval_sig = Signature::new(vec![("p".into(), i64_())], None).with_attrs(vec![DeclAttrs {
         byval: Some(24),
         ..DeclAttrs::default()
     }]);
-    let p = plan(&reg, "x86_64_v12", "win64", &byval_sig);
+    let p = plan(&reg, "x86_64", "win64", &byval_sig);
     match arg0(&p) {
         Placement::Indirect {
             ptr,
@@ -797,10 +797,7 @@ fn declared_attributes_change_the_plan() {
         sret: true,
         ..DeclAttrs::default()
     }]);
-    for (isa, conv, want) in [
-        ("x86_64_v12", "win64", "RCX"),
-        ("riscv64_v12", "lp64d", "X10"),
-    ] {
+    for (isa, conv, want) in [("x86_64", "win64", "RCX"), ("riscv64", "lp64d", "X10")] {
         let p = plan(&reg, isa, conv, &sret_sig);
         assert_eq!(
             p.hidden.sret.as_ref().map(|r| r.name.as_str()),
@@ -851,7 +848,7 @@ fn declared_attributes_change_the_plan() {
         ),
     ] {
         let sig = Signature::new(vec![("v".into(), i32_())], None).with_attrs(vec![attrs]);
-        let p = plan(&reg, "x86_64_v12", "win64", &sig);
+        let p = plan(&reg, "x86_64", "win64", &sig);
         match arg0(&p) {
             Placement::Reg { ext, .. } => assert_eq!(*ext, want),
             other => panic!("{other:?}"),
@@ -879,7 +876,7 @@ fn declared_attributes_change_the_plan() {
         ..DeclAttrs::default()
     });
     let sig9 = Signature::new(params, None).with_attrs(attrs);
-    let p = plan(&reg, "riscv64_v12", "lp64d", &sig9);
+    let p = plan(&reg, "riscv64", "lp64d", &sig9);
     match &p.args[8].place {
         Placement::Stack { align, .. } => assert_eq!(*align, 32, "声明的对齐要生效"),
         other => panic!("{other:?}"),
@@ -897,7 +894,7 @@ fn inreg_overrides_a_stack_classification() {
     params.push(("x".into(), i64_()));
     let plain = plan(
         &reg,
-        "x86_64_v12",
+        "x86_64",
         "win64",
         &Signature::new(params.clone(), None),
     );
@@ -913,7 +910,7 @@ fn inreg_overrides_a_stack_classification() {
     // win64 的 int 池只有 4 个槽且已耗尽 ⇒ `inreg` 也只能走栈（不静默换寄存器）。
     let p = plan(
         &reg,
-        "x86_64_v12",
+        "x86_64",
         "win64",
         &Signature::new(params.clone(), None).with_attrs(attrs),
     );
@@ -924,21 +921,20 @@ fn inreg_overrides_a_stack_classification() {
 
     // sysv64 的 int 池有 6 个槽：第 7 个参数走栈、声明 inreg 后抢到寄存器（本测试只取前者）。
     let many: Vec<(String, TyView)> = (0..6).map(|i| (format!("a{i}"), i64_())).collect();
-    let p = plan(&reg, "x86_64_v12", "sysv64", &Signature::new(many, None));
+    let p = plan(&reg, "x86_64", "sysv64", &Signature::new(many, None));
     assert!(matches!(p.args[5].place, Placement::Reg { .. }));
 }
 
 /// `AbiBinding` 的具名选择子与索引选择子等价（同一台机器两种写法）。
 #[test]
 fn binding_selectors_accept_names_and_indices() {
-    let t = x86_64_v12();
+    let t = x86_64();
     let by_name = AbiBinding::from_toml(
-        "isa = \"x86_64_v12\"\nconv = \"c\"\n[pools]\nint = [\"RCX\", \"RDX\"]\n",
+        "isa = \"x86_64\"\nconv = \"c\"\n[pools]\nint = [\"RCX\", \"RDX\"]\n",
     )
     .unwrap();
     let by_index =
-        AbiBinding::from_toml("isa = \"x86_64_v12\"\nconv = \"c\"\n[pools]\nint = [1, 2]\n")
-            .unwrap();
+        AbiBinding::from_toml("isa = \"x86_64\"\nconv = \"c\"\n[pools]\nint = [1, 2]\n").unwrap();
     let a: Vec<u32> = by_name
         .resolve_pool("int", &t)
         .unwrap()
@@ -959,7 +955,7 @@ fn binding_selectors_accept_names_and_indices() {
 #[test]
 fn normal_purpose_is_the_default_and_not_printed() {
     let reg = registry();
-    let p = plan(&reg, "x86_64_v12", "win64", &one(i64_()));
+    let p = plan(&reg, "x86_64", "win64", &one(i64_()));
     match arg0(&p) {
         Placement::Reg { purpose, .. } => assert_eq!(*purpose, Purpose::Normal),
         other => panic!("{other:?}"),
@@ -978,7 +974,7 @@ fn arg_indices_are_the_parameter_positions() {
         ],
         None,
     );
-    let p = plan(&reg, "riscv64_v12", "lp64d", &sig);
+    let p = plan(&reg, "riscv64", "lp64d", &sig);
     let idx: Vec<Option<usize>> = p.args.iter().map(|a: &ArgLoc| a.index).collect();
     assert_eq!(idx, vec![Some(0), Some(1), Some(2)]);
     assert_eq!(p.args[0].size, 8);
@@ -998,7 +994,7 @@ fn multi_value_returns_take_one_register_each() {
     // win64：两个独立标量 → RAX:RDX（与 forge-rustc 的 ScalarPair IR 形态一致）。
     {
         let sig = Signature::with_rets(vec![], vec![i64_(), i64_()]);
-        match plan(&reg, "x86_64_v12", "win64", &sig).ret {
+        match plan(&reg, "x86_64", "win64", &sig).ret {
             RetLoc::RegPair { lo, hi } => {
                 assert_eq!((lo.name.as_str(), hi.name.as_str()), ("RAX", "RDX"))
             }
@@ -1008,7 +1004,7 @@ fn multi_value_returns_take_one_register_each() {
     // lp64d：同一个签名在 riscv 上落到 X10:X11（**不是 X0:X1**）。
     {
         let sig = Signature::with_rets(vec![], vec![i64_(), i64_()]);
-        match plan(&reg, "riscv64_v12", "lp64d", &sig).ret {
+        match plan(&reg, "riscv64", "lp64d", &sig).ret {
             RetLoc::RegPair { lo, hi } => {
                 assert_eq!((lo.name.as_str(), hi.name.as_str()), ("X10", "X11"))
             }
@@ -1018,7 +1014,7 @@ fn multi_value_returns_take_one_register_each() {
     // aapcs64：**四个** f32 返回 → V0..V3（`RegGroup`；AAPCS64 的浮点返回池有 4 个槽）。
     {
         let sig = Signature::with_rets(vec![], vec![f32_(), f32_(), f32_(), f32_()]);
-        match plan(&reg, "arm64_v12", "aapcs64", &sig).ret {
+        match plan(&reg, "arm64", "aapcs64", &sig).ret {
             RetLoc::RegGroup { regs } => assert_eq!(
                 regs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
                 ["V0", "V1", "V2", "V3"]
@@ -1029,7 +1025,7 @@ fn multi_value_returns_take_one_register_each() {
     // 混合类：int + float 各取自己那一池（Win64 按位置共享游标 ⇒ XMM1）。
     {
         let sig = Signature::with_rets(vec![], vec![i64_(), f64_()]);
-        match plan(&reg, "x86_64_v12", "win64", &sig).ret {
+        match plan(&reg, "x86_64", "win64", &sig).ret {
             RetLoc::RegPair { lo, hi } => {
                 assert_eq!(
                     (lo.name.as_str(), hi.name.as_str()),
@@ -1048,7 +1044,7 @@ fn multi_value_returns_take_one_register_each() {
 #[test]
 fn multi_value_returns_fail_closed_on_gaps() {
     let reg = registry();
-    let t = target_for("x86_64_v12").expect("合成目标");
+    let t = target_for("x86_64").expect("合成目标");
 
     let three = Signature::with_rets(vec![], vec![i64_(), i64_(), i64_()]);
     let e = reg.plan(&t, "win64", &three).unwrap_err();
@@ -1080,10 +1076,10 @@ fn va_shapes_match_the_documented_table() {
 
     let reg = registry();
     let cases = [
-        ("win64", "x86_64_v12"),
-        ("sysv64", "x86_64_v12"),
-        ("aapcs64", "arm64_v12"),
-        ("lp64d", "riscv64_v12"),
+        ("win64", "x86_64"),
+        ("sysv64", "x86_64"),
+        ("aapcs64", "arm64"),
+        ("lp64d", "riscv64"),
     ];
 
     let mut checked = 0usize;
@@ -1149,10 +1145,10 @@ fn va_object_layout_matches_the_psabi_numbers() {
         Vec<&str>,
         Option<(u32, u32, usize, usize, u32, u32)>,
     ); 4] = [
-        ("win64", "x86_64_v12", vec!["cursor@0+8"], None),
+        ("win64", "x86_64", vec!["cursor@0+8"], None),
         (
             "sysv64",
-            "x86_64_v12",
+            "x86_64",
             vec![
                 "gp_offset@0+4",
                 "fp_offset@4+4",
@@ -1163,7 +1159,7 @@ fn va_object_layout_matches_the_psabi_numbers() {
         ),
         (
             "aapcs64",
-            "arm64_v12",
+            "arm64",
             vec![
                 "__stack@0+8",
                 "__gr_top@8+8",
@@ -1175,7 +1171,7 @@ fn va_object_layout_matches_the_psabi_numbers() {
         ),
         (
             "lp64d",
-            "riscv64_v12",
+            "riscv64",
             vec!["area@0+8"],
             // 保存区**只装整数参数寄存器**（v20 V7，定本：*"integer argument registers"*）：
             // 8 个 GP 槽 × 8 = 64 字节，浮点槽数 0（LP64D 的变参浮点也按整数约定传）。
@@ -1319,7 +1315,7 @@ fn lp64d_variadic_arguments_follow_the_psabi() {
         Some(i64_()),
     )
     .variadic(1);
-    let p = plan(&reg, "riscv64_v12", "lp64d", &sig);
+    let p = plan(&reg, "riscv64", "lp64d", &sig);
     let va = p.va_area.as_ref().expect("变参应有 va_area");
     assert!(va.save_contiguous, "plan 里也要带上这条形状数据");
     let s = va.save.as_ref().expect("plan 里有保存区");

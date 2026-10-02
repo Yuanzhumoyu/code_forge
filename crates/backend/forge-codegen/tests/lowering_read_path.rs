@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::demo8_v12::TargetMachine;
+use common::demo8::TargetMachine;
 use forge_codegen::FunctionCompiler;
 use forge_ir::TypeId;
 use forge_ir::ir::builder::FunctionBuilder;
@@ -93,8 +93,8 @@ fn lowering_templates_stay_on_the_snapshot() {
         .join("..")
         .join("..");
     for rel in [
-        "crates/frontend/forge-isa-dsl/src/v12/codegen/lowering.rs",
-        "crates/frontend/forge-isa-dsl/src/v12/codegen/integration.rs",
+        "crates/frontend/forge-isa-dsl/src/dsl/codegen/lowering.rs",
+        "crates/frontend/forge-isa-dsl/src/dsl/codegen/integration.rs",
     ] {
         let path = root.join(rel);
         let text = std::fs::read_to_string(&path)

@@ -1,10 +1,10 @@
-# (ISA, 约定) 寄存器绑定：System V AMD64 → x86_64_v12
+# (ISA, 约定) 寄存器绑定：System V AMD64 → x86_64
 #
 # 与 `win64-x86_64.toml` 共用同一份 ISA 能力（x86 谱），差别**只在这份数据**：
 # 参数寄存器序不同、浮点槽多四个、callee-saved 集合不同、sret 指针落在 RDI、
 # 变参多一个 `%al` 元信息寄存器（用了几个向量寄存器）。
 
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "sysv64"
 
 [pools]

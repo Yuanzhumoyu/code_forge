@@ -247,7 +247,7 @@ fn both_dowhile_two_locals() {
 // ── continue / 嵌套循环 / 成员复合赋值（循环 lowering 合并前的守门网）──
 //
 // 背景：本文件此前**没有任何 `continue` 用例**（全仓唯一 continue 测试
-// `v12_backend_tests::v12_break_continue` 跑的是 V12 后端而非 Hir），而
+// `backend_tests::direct_break_continue` 跑的是 Direct 后端而非 Hir），而
 // break/continue 的 `ctx.loops` 栈语义正是「循环 lowering 三合一」最容易破的
 // 地方。下列用例先落地为安全网，再谈收缩（见 docs/archive/hir-shrink-plan.md）。
 

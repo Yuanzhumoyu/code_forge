@@ -30,7 +30,7 @@ fn root() -> PathBuf {
 
 #[test]
 fn shipped_specs_are_lint_clean() {
-    for isa in ["x86_v12.toml", "arm64_v12.toml", "riscv64_v12.toml"] {
+    for isa in ["x86.toml", "arm64.toml", "riscv64.toml"] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).unwrap_or_else(|d| panic!("加载 {isa} 失败：{d:?}"));
         let found = lint_source(&spec.text).unwrap_or_else(|d| panic!("{isa} 校验不过：{d:?}"));
@@ -44,7 +44,7 @@ fn shipped_specs_are_lint_clean() {
 /// 守卫本身有效：追加一个没人引用的槽 ⇒ 必须报 `LINT-UNUSED-SLOT`。
 #[test]
 fn the_guard_can_fail() {
-    let path = root().join("isa/arm64_v12.toml");
+    let path = root().join("isa/arm64.toml");
     let spec = report::load_spec(&path).expect("加载 arm64");
     let mutated = format!(
         "{}\n[[operand_slots]]\nname = \"dead_slot\"\nkind = \"imm\"\nwidth = 4\n",
@@ -74,9 +74,9 @@ fn op_gap_matches_section_10_3() {
     // `Fadd`/`Fsub`/`Fmul`/`Fdiv`（单/双精度各一条；此前这些 op 全是真缺口，
     // 矩阵里所有浮点算术用例因此整条 Skip）。
     for (isa, want) in [
-        ("x86_v12.toml", (100usize, 6usize, 8usize, 3usize)),
-        ("riscv64_v12.toml", (67, 6, 8, 36)),
-        ("arm64_v12.toml", (8, 6, 8, 95)),
+        ("x86.toml", (100usize, 6usize, 8usize, 3usize)),
+        ("riscv64.toml", (67, 6, 8, 36)),
+        ("arm64.toml", (8, 6, 8, 95)),
     ] {
         let cov = coverage(isa, &host_ops);
         assert_eq!(
@@ -91,7 +91,7 @@ fn op_gap_matches_section_10_3() {
         );
     }
     // x86 的三条真缺口点名（宿主与谱都没有）——其余两类不算缺口。
-    let x86 = coverage("x86_v12.toml", &host_ops);
+    let x86 = coverage("x86.toml", &host_ops);
     assert_eq!(
         x86.gaps,
         vec!["AddrSpaceCast", "Resume", "VaArg"],
@@ -106,9 +106,9 @@ fn op_gap_matches_section_10_3() {
 #[test]
 fn unreferenced_ref_inventory() {
     for (isa, want) in [
-        ("x86_v12.toml", 1usize),
-        ("riscv64_v12.toml", 0),
-        ("arm64_v12.toml", 27),
+        ("x86.toml", 1usize),
+        ("riscv64.toml", 0),
+        ("arm64.toml", 27),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");
@@ -139,7 +139,7 @@ fn unreferenced_ref_inventory() {
 /// 守卫本身有效（重叠规则）：给 arm64 加一条"两个字段抢同一批位"的指令 ⇒ 必须报。
 #[test]
 fn overlap_guard_can_fail() {
-    let path = root().join("isa/arm64_v12.toml");
+    let path = root().join("isa/arm64.toml");
     let spec = report::load_spec(&path).expect("加载 arm64");
     let injected = "[[instructions]]\nname = \"OVERLAPTOY\"\nform = \"PAIR\"\nopcode = 0xA9\n\
                     fields = { idx2 = 0, opc2 = 0 }\n\
@@ -176,9 +176,9 @@ fn overlap_guard_can_fail() {
 #[test]
 fn unassigned_bits_inventory() {
     for (isa, want) in [
-        ("x86_v12.toml", 0usize),
-        ("riscv64_v12.toml", 3),
-        ("arm64_v12.toml", 71),
+        ("x86.toml", 0usize),
+        ("riscv64.toml", 3),
+        ("arm64.toml", 71),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");
@@ -212,9 +212,9 @@ fn unassigned_bits_inventory() {
 #[test]
 fn vary_candidate_inventory() {
     for (isa, want) in [
-        ("x86_v12.toml", 55usize),
-        ("riscv64_v12.toml", 28),
-        ("arm64_v12.toml", 7),
+        ("x86.toml", 55usize),
+        ("riscv64.toml", 28),
+        ("arm64.toml", 7),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");

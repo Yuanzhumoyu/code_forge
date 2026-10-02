@@ -1,16 +1,16 @@
-//! v12 生成解码器冒烟测试（变长语义键 + TargetMachine 组件装配）。
+//! ISA-DSL 生成解码器冒烟测试（变长语义键 + TargetMachine 组件装配）。
 //!
 //! 原理：TargetAssembler 把文本解析为物理化 Inst → Encoder 编码为字节 →
 //! Decoder 反解 → 再编码，断言字节一致（避免 Reg::from_index 视图选择差异
-//! 干扰断言）。v11 后端已删除，本测试只覆盖 x86_v12。
+//! 干扰断言）。v11 后端已删除，本测试只覆盖 x86。
 
 use forge_codegen::machine::assembler::TargetAssembler;
 use forge_codegen::machine::target::TargetMachine;
-use forge_codegen::x86_v12::TargetMachine as X86V12;
+use forge_codegen::x86::TargetMachine as X86;
 
 fn roundtrip_asm(name: &str, src: &str) {
-    let tm = X86V12::new();
-    let asm = forge_codegen::x86_v12::Assembler;
+    let tm = X86::new();
+    let asm = forge_codegen::x86::Assembler;
     let insts = asm
         .parse_insts(src)
         .unwrap_or_else(|e| panic!("{name}: parse `{src}`: {e:?}"));
@@ -41,7 +41,7 @@ fn roundtrip_asm(name: &str, src: &str) {
     );
 }
 
-// ── x86_v12（变长语义键：ModRM/REX/opsize/SSE/VEX）──
+// ── x86（变长语义键：ModRM/REX/opsize/SSE/VEX）──
 
 #[test]
 fn x86_modrm_roundtrip() {
@@ -107,7 +107,7 @@ fn x86_byte_mov_roundtrip() {
 
 #[test]
 fn x86_byte_mov_spec_bytes() {
-    use forge_codegen::x86_v12::{assemble, encode};
+    use forge_codegen::x86::{assemble, encode};
     // mov al, bl → 8A C3（reg=src=bl、rm=dest=al；无 REX）
     let b = encode(&assemble("mov AL, BL").unwrap()).unwrap();
     assert_eq!(b, vec![0x8A, 0xC3]);
@@ -132,7 +132,7 @@ fn x86_evex_roundtrip() {
 
 #[test]
 fn x86_evex_spec_bytes() {
-    use forge_codegen::x86_v12::{assemble, encode};
+    use forge_codegen::x86::{assemble, encode};
     // vaddps zmm0, zmm1, zmm2 → 62 F1 74 48 58 C2（mm=01、vvvv=~1、L'L=10、V'=1）
     let b = encode(&assemble("vaddps ZMM0, ZMM1, ZMM2").unwrap()).unwrap();
     assert_eq!(b, vec![0x62, 0xF1, 0x74, 0x48, 0x58, 0xC2]);
@@ -166,7 +166,7 @@ fn x86_evex_mem_roundtrip() {
 
 #[test]
 fn x86_evex_mem_spec_bytes() {
-    use forge_codegen::x86_v12::{assemble, encode};
+    use forge_codegen::x86::{assemble, encode};
     // vmovaps zmm0, [rax] → 62 F1 7C 48 28 00（mod=0）
     let b = encode(&assemble("vmovaps ZMM0, [RAX]").unwrap()).unwrap();
     assert_eq!(b, vec![0x62, 0xF1, 0x7C, 0x48, 0x28, 0x00]);
@@ -198,7 +198,7 @@ fn x86_evex_512_roundtrip() {
 
 #[test]
 fn x86_evex_512_spec_bytes() {
-    use forge_codegen::x86_v12::{assemble, encode};
+    use forge_codegen::x86::{assemble, encode};
     // vmovaps zmm0, zmm1（无源 EVEX_RR）：62 F1 7C 48 28 C1
     // P0=R'X'B'R=1111、mm=01；P1=W0 vvvv=1111 1 pp=00 → 7C；P2=z0 L'L=10 b0 V'=1 → 48
     let b = encode(&assemble("vmovaps ZMM0, ZMM1").unwrap()).unwrap();
@@ -219,7 +219,7 @@ fn x86_evex_512_spec_bytes() {
 
 #[test]
 fn x86_evex_opmask() {
-    use forge_codegen::x86_v12::{assemble, encode};
+    use forge_codegen::x86::{assemble, encode};
     // opmask 写合并（z=0）：vaddps zmm0, zmm1, zmm2, k1 → P2 aaa=001（48→49）
     let b = encode(&assemble("vaddps ZMM0, ZMM1, ZMM2, K1").unwrap()).unwrap();
     assert_eq!(b, vec![0x62, 0xF1, 0x74, 0x49, 0x58, 0xC2]);
@@ -250,7 +250,7 @@ fn x86_vex_mem_roundtrip() {
 
 #[test]
 fn x86_vex_mem_spec_bytes() {
-    use forge_codegen::x86_v12::{assemble, encode};
+    use forge_codegen::x86::{assemble, encode};
     // vmovaps xmm0, [rax] → C4 E1 7C 28 00（vex_l=1；mod=00, base=rax）
     let b = encode(&assemble("vmovaps XMM0, [RAX]").unwrap()).unwrap();
     assert_eq!(b, vec![0xC4, 0xE1, 0x7C, 0x28, 0x00]);
@@ -273,7 +273,7 @@ fn x86_sib_index_scale() {
     roundtrip_asm("sib_idx_r13", "mov RAX, [RBX+R13]"); // REX.X index
     roundtrip_asm("sib_idx_base_r12", "mov RAX, [R12+RCX*2+64]"); // REX.B base
     // 字节断言：[rbx+rcx*4+8] → 48 8B 44 8B 08
-    use forge_codegen::x86_v12::{assemble, encode};
+    use forge_codegen::x86::{assemble, encode};
     let b = encode(&assemble("mov RAX, [RBX+RCX*4+8]").unwrap()).unwrap();
     assert_eq!(b, vec![0x48, 0x8B, 0x44, 0x8B, 0x08]);
     // [rbx+r12*4] → REX.X=1（R12 索引 = SIB index 4 | X<<3）+ scale 4：4A 8B 04 A3

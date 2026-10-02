@@ -4,7 +4,7 @@
 //! 模型漂移**，因此配一条三方守卫
 //! （`crates/frontend/forge-isa-dsl/tests/schema_guard.rs`）：
 //!
-//! 1. **模型 ↔ schema**：本文件的键清单逐节与 `v12/model.rs` 的结构体 `pub` 字段
+//! 1. **模型 ↔ schema**：本文件的键清单逐节与 `dsl/model.rs` 的结构体 `pub` 字段
 //!    对照（`#[serde(skip)]` 的内部字段不入 schema，且必须在守卫里显式列出）；
 //! 2. **schema ↔ 文档**：schema 里用户可见的键必须在
 //!    `docs/reference/isa-dsl.md` 里出现过（未逐键列出的进 `DOCS_PENDING` 白名单，
@@ -17,7 +17,7 @@
 pub struct Section {
     /// TOML 路径（人读/文档用；`<name>` 表示键名可变）。
     pub path: &'static str,
-    /// 与 `v12/model.rs` 里哪个结构体对照（空 = 自由形态，不走模型对照）。
+    /// 与 `dsl/model.rs` 里哪个结构体对照（空 = 自由形态，不走模型对照）。
     pub model: &'static str,
     /// 必填键。
     pub required: &'static [&'static str],
@@ -52,7 +52,7 @@ const ENC_KEYS: &[&str] = &[
 pub const SECTIONS: &[Section] = &[
     Section {
         path: "<root>",
-        model: "V12Model",
+        model: "IsaModel",
         required: &["meta"],
         optional: &[
             "include",
@@ -237,7 +237,7 @@ pub const SECTIONS: &[Section] = &[
             // TOML 键是 `ref`（模型字段名 `reference` + `#[serde(rename = "ref")]`）。
             // 守卫按 `#[serde(rename = …)]` 取键名，所以这里必须写 **用户在 TOML 里
             // 实际写的那个键**——写字段名会让编辑器对每一行 `ref = …` 报未知键
-            // （2026-09-21 实测：`isa/x86_v12.toml` 的 35 处 `ref` 全部被 Taplo 标红）。
+            // （2026-09-21 实测：`isa/x86.toml` 的 35 处 `ref` 全部被 Taplo 标红）。
             "ref",
         ],
         // 编码键是 `#[serde(flatten)]` 的 EncKeys：直接在指令上写（不写 `enc = {...}`）。

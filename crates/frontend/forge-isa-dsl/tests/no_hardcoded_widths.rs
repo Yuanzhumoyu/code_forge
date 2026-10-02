@@ -3,7 +3,7 @@
 //! 背景（2026-09-12 去「寄存器宽度写死」）：DSL 语法层支持任意寄存器宽度，但
 //! 生成期曾把主 GPR 组锚定 `GPR(8).or(GPR(4))`、地址类/值池/槽宽/帧开销内置
 //! 8 字节缺省——只声明 1 字节寄存器组的 ISA 会静默退化（空名字表、构造不存在
-//! 的类）。修完后用本守卫防止回潮：`src/v12/**`（除单测 `tests.rs`）里出现
+//! 的类）。修完后用本守卫防止回潮：`src/dsl/**`（除单测 `tests.rs`）里出现
 //! 写死类字面量即失败。
 //!
 //! 白名单机制：允许的行必须**逐条列出**（文件后缀 + 该行 trim 后内容），且每条
@@ -11,7 +11,7 @@
 //! 文件内 `#[cfg(test)]` 之后的内容不扫描（单测里的 `GPR(8)` 是测试数据）。
 
 /// 禁止在生成期代码里出现的写死类（这些宽度必须来自 `[meta]`/`[reg.*]` 元数据
-/// 或 `V12Model` 的派生方法）。
+/// 或 `IsaModel` 的派生方法）。
 ///
 /// **已知覆盖边界**：本守卫只匹配**类字面量**；裸数字宽度（如栈槽步长 `8`、
 /// 帧开销 `16`）不在匹配范围内——那些由 `[meta].slot_bytes` /
@@ -125,7 +125,7 @@ fn scan_dir(dir: &std::path::Path, out: &mut Vec<(String, usize, String)>) {
 
 #[test]
 fn no_hardcoded_register_classes_in_codegen() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/v12");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dsl");
     let mut hits = Vec::new();
     scan_dir(&root, &mut hits);
 
@@ -142,7 +142,7 @@ fn no_hardcoded_register_classes_in_codegen() {
     }
     assert!(
         violations.is_empty(),
-        "生成期代码出现写死的寄存器类（请改为元数据派生：V12Model::main_gpr_class/\
+        "生成期代码出现写死的寄存器类（请改为元数据派生：IsaModel::main_gpr_class/\
          addr_class/value_*_class/slot_bytes/fp_overhead_bytes，或用生成的 \
          __DEFAULT_GPR_CLASS / __ADDR_CLASS / __SLOT_BYTES 常量）：\n{}",
         violations.join("\n")

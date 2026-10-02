@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-03) — 清除 `v12` 历史命名（破坏性，无兼容层）
+
+文件名与标识符里的 `v12` 是 v12–v17 语法时代的残留，读起来像"当前版本是 v12"（实际现行语法
+是 v18），且与 `V128`/`MOV12`/AArch64 的 `V12` 寄存器等无关名字容易混。一次清干净：
+
+- **ISA 谱与生成模块**：`isa/{x86,riscv64,arm64}_v12.toml` → `isa/{x86,riscv64,arm64}.toml`
+  （生成模块名 = 文件 stem ⇒ `forge_codegen::{x86,riscv64,arm64}`）；`[meta].name` →
+  `x86_64`/`riscv64`/`arm64`，**同步** `forge-abi/conventions/*.toml` 的 `isa =` 键与宿主
+  注册表/`plan_call` 的 ISA 名键。
+- **后端包装**：`src/arch/{x86,riscv64,arm64}_v12.rs` → `arch/*.rs`（`pub use arch::*` 随之）。
+- **测试与夹具**：14 个 `tests/*_v12_tests.rs` → 去后缀；7 个 `tests/isa/*_v12.toml` → 去后缀；
+  `spec_tests_v12.rs`/`v12_integration_tests.rs`/`include_v12_tests.rs` 等同步；
+  `jit_matrix_*_v12` → `jit_matrix_*`（CI 命令同步）。
+- **DSL 内部**：`forge-isa-dsl/src/v12/` → `src/dsl/`（`crate::v12::` → `crate::dsl::`）；
+  `V12Model` → `IsaModel`、`V12Error` → `DslError`、`V12_LOWERING_OPS` → `LOWERING_OPS`。
+- **文档**：现行文档里的路径/命令全量更新；`docs/archive/**` **保持原样**（归档内容以记录
+  时点为准，`isa-dsl-v12-*` 文件名就是那段历史的标识）。
+- **验证（改名不改行为，逐数字不变）**：`forge-codegen --lib` 1285、`spec_coverage_guard`
+  197/117/110、矩阵 x86 **197/3/0**、riscv **136/64/0**、`forge-isa-dsl` 222 + 集成档全绿、
+  `forge-abi` 51、`forge-isa` 33、`forge-tests --lib` 44、三谱 `validate`/`lint` 零结论、
+  clippy `-D warnings` 0、fmt 0、markdownlint 0。
+
 ### Changed (2026-10-03) — 搬运族派生：删掉九个手写角色，ISA 只写 `data_width`
 
 搬运指令的四个事实里，**方向 / 寄存器族 / 立即数还是寄存器**本来就在操作数结构里
@@ -211,7 +233,7 @@ lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档�
   psABI 定本**：自己的调用方/被调方按同一份约定对齐能跑，与外部编译器互调会错。
 - 落点：`ℹ 变参 …` 那一行追加 `⚠ …` 提示（**不改退出码**——它是"待核"而不是"这台机器做不了"；
   `--strict` 目前不覆盖它，如实写在消息里）。
-- 收益：`abi check riscv64_v12.toml` 现在会提示 lp64d 的组合可疑；**aapcs64 同组合也一并被点名**
+- 收益：`abi check riscv64.toml` 现在会提示 lp64d 的组合可疑；**aapcs64 同组合也一并被点名**
   （此前没人注意它和 lp64d 是同一个模式）。
 - 守卫：`cli_tests::abi_check_reports_the_variadic_state` 增加断言（riscv 输出必须含
   "可能不符合 psABI 定本"）。
@@ -274,7 +296,7 @@ lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档�
   `lint_shipped::vary_candidate_inventory` riscv 22 → 24（新增的两条同形状规则是"可合并"建议，
   不强行 `vary`）。
 - **验证**：`forge-isa-dsl` 全绿（222 + 各守卫）、`forge-tests` lib 43、矩阵两套、`forge-codegen`
-  lib 1362 + `riscv64_v12_tests` 7 + `riscv64_v12_tm_tests` 5 + `v12_integration_tests` 12、
+  lib 1362 + `riscv64_tests` 7 + `riscv64_tm_tests` 5 + `integration_tests` 12、
   `forge-abi`、`forge-ir` 281、`forge-isa` 24；`clippy -D warnings` 0、`fmt --check` 0。
 
 ### Changed (2026-10-01) — aapcs64 的缺口量到位：arm64 后端**只有 8 个 op 的 lowering**（守卫钉住覆盖度）
@@ -285,12 +307,12 @@ lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档�
 - 实测：arm64 谱的 `[[lowering]]` 只覆盖 **8 个 op**（`Band`/`Bor`/`Bxor`/`Copy`/`Iadd`/`Iconst`/
   `Imul`/`Isub`，全是算术）；变参展开要用的 `StackAddr`/`Store`/`Load`/`Icmp`/`Select`/`Sextend`/
   `Ireduce` **一个都没有**（x86/riscv 有 ⇒ win64/sysv64/lp64d 真跑）。
-- 守卫 `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 现在**两件事一起钉**：
-  ① 变参函数编到 arm64 必须是**明确 Unsupported**（不许静默编错）；② `arm64_v12::SUPPORTED_OPS`
+- 守卫 `arm64_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 现在**两件事一起钉**：
+  ① 变参函数编到 arm64 必须是**明确 Unsupported**（不许静默编错）；② `arm64::SUPPORTED_OPS`
   里**没有**这些 op——arm64 补上任一条时守卫会红，提醒把 aapcs64 从"数据面"升级成"编得出 + 真跑"。
 - 方案文档（`docs/plans/varargs-plan.md` §5）据此把 aapcs64 一条改成"先补 arm64 后端（独立且大得多的
   工作）+ 本机无 arm64 执行通道"，不再把它算作变参侧的缺口。
-- 验证：`arm64_v12_tm_tests` 7、`forge-codegen` lib 1362；`clippy -D warnings` 0、`fmt --check` 0。
+- 验证：`arm64_tm_tests` 7、`forge-codegen` lib 1362；`clippy -D warnings` 0、`fmt --check` 0。
 
 ### Fixed (2026-10-01) — riscv 栈参数打通：访存指令按**形状**取 + 修掉 `lp64d` 的 `first_offset_slots`（变参在 QEMU 上真跑）
 
@@ -311,7 +333,7 @@ lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档�
   该门控与其注释一并删除）：x86 **197/3/0**、riscv **132/68/0**（浮点那条因 riscv 谱缺 `Fadd`
   仍按能力门控 Skip）。
 - **验证**：`forge-isa-dsl` 全绿（222 + 各守卫）、`forge-codegen` lib 1362 + `abi_target_real` 25 +
-  `arm64_v12_tm_tests` 7 + `riscv64_v12_tm_tests` 5、`forge-tests` lib 43、`forge-abi`、
+  `arm64_tm_tests` 7 + `riscv64_tm_tests` 5、`forge-tests` lib 43、`forge-abi`、
   `forge-ir` 281、`forge-isa` 全绿；`clippy -D warnings` 0、`fmt --check` 0。
 
 ### Added (2026-10-01) — 变参：aapcs64/lp64d 的两条**确定性守卫** + 缺口精确到"差什么、怎么接"
@@ -319,7 +341,7 @@ lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档�
 V6 之后四份约定的形状/规则都是数据，但 **aapcs64/lp64d 还没有真跑**。这一片把"差什么"实测清楚并
 用守卫钉住，避免后来的人以为它们已经能用：
 
-- **lp64d 的被调方编得出**（新守卫 `riscv64_v12_tm_tests::tm_compiles_riscv_varargs_callee_side`）：
+- **lp64d 的被调方编得出**（新守卫 `riscv64_tm_tests::tm_compiles_riscv_varargs_callee_side`）：
   `va_start` + 两次 `va_arg(i64)` 在真 riscv 后端上走完 lowering → regalloc → frame → encode，
   且帧 ≥ 保存区 128 字节。⇒ **riscv 只差调用方一侧**。
 - **lp64d 的调用方接不上（缺口修好前不许静默）**：写传出区要 `stack_arg_store` 角色，而生成器要求
@@ -331,12 +353,12 @@ V6 之后四份约定的形状/规则都是数据，但 **aapcs64/lp64d 还没�
   基准 = 区域顶端、溢出 = `__stack`、步长 8/16）、逐字段初值（`FrameOff(16)` / `SaveOff(64)` /
   `SaveOff(192)` / `Imm(−8)` / `Imm(0)`）全部逐格断言。
 - **aapcs64 的编译面被 arm64 缺的 lowering 挡住**（新守卫
-  `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering`）：实测报
+  `arm64_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering`）：实测报
   `Unsupported("v12 lowering")`——变参展开用的 IR 词汇（`Icmp`/`Select`/`StackAddr`/`Sextend`/
   `Ireduce`）在 arm64 谱里一条 lowering 都没有（x86/riscv 有）。守卫钉"必须是明确 Unsupported"，
   补齐时会红，提醒改成"编得出 + 真跑"。
-- **验证**：`forge-codegen` lib 1362、`abi_target_real` 25、`arm64_v12_tm_tests` 7、
-  `riscv64_v12_tm_tests` 5、矩阵 x86 197/3/0 与 riscv 131/69/0、`forge-tests` lib 43；
+- **验证**：`forge-codegen` lib 1362、`abi_target_real` 25、`arm64_tm_tests` 7、
+  `riscv64_tm_tests` 5、矩阵 x86 197/3/0 与 riscv 131/69/0、`forge-tests` lib 43；
   `clippy -D warnings` 0、`fmt --check` 0、markdownlint 0。
 
 ### Changed (2026-10-01) — 变参 V6：`va_list` 形状与取参规则做成**约定数据**，管线只剩一套算法（破坏性）
@@ -655,7 +677,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 - **发射：`VaStart` 由生成器按能力角色发**（`lowering.rs::gen_va_start_lowering`）——`roles = ["frame_addr"]`
   （x86 = `LEA_RBP_OFF`）发一条 `lea dst, [fp + 未命名区起点]`，其余（`load`/`gep`/算术）全走
   既有规则。与 `frame_set`/`frame_alloc`/`callee_save` 同族：**谱只申报能力，序列由生成器发**
-  （`isa/x86_v12.toml` 里**没有也不该有** `VaStart` 的 `[[lowering]]` 规则）。寄存器保存区形态
+  （`isa/x86.toml` 里**没有也不该有** `VaStart` 的 `[[lowering]]` 规则）。寄存器保存区形态
   （`sysv64`/`lp64d`/`aapcs64`）与该约定不支持变参时**明确 fail-closed**，消息分别点名 V3 与
   "`va_list` 未声明"。
 - **新 op 的落点是"未命名区起点"**：`max(命名栈实参 offset + size)`；没有命名栈参数时是
@@ -715,7 +737,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   由宿主的 `AbiPlan::va_area` **逐条 match** 折过来（加变体即编译失败）。
   `VaKind::supports_frame_addr_va_start()` 是"能不能直接用帧内栈地址实现 `va_start`"的判据——
   只有 `win64_stack` 为真；其余形态（寄存器保存区）留给方案 V3。
-- **诚实状态**：`isa/x86_v12.toml` 里**还没有** `VaStart` 的 lowering 规则，所以今天任何函数用
+- **诚实状态**：`isa/x86.toml` 里**还没有** `VaStart` 的 lowering 规则，所以今天任何函数用
   `va_start` 都会因"没有规则"而 fail-closed——这一片只铺数据面，**不改任何现有行为**
   （新增的守卫是集成测试 `abi_target_real`，lib 计数仍是 1351）。
 - 守卫：`abi_target_real::call_layout_mirrors_the_variadic_shape`（win64 栈式 8/8、
@@ -876,7 +898,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 - **fail-closed 切换**（`pipeline/compiler.rs`）：`plan_for_function` 失败不再"留个 note、退回约定级数据继续编译"，而是直接在**编译入口**报 `IrError::Unsupported`——消息点名约定名、引擎给的原因、以及 fail-closed 口径。`CompileState::abi_plan` 由 `Option` 收敛为定值，`abi_plan_note` 字段删除（`FORGE_TRACE_ABI=1` 也随之只打印计划）。理由是旧行为把错误推给发射侧的各个 fail-closed 点（调用点/收参/栈参数/帧布局），消息离现场远，而且真实的引擎缺口会被误当成"这条签名能编"。
 - **先量后切**：切换前用 `FORGE_TRACE_ABI=1 --nocapture` 跑遍 `forge-codegen --lib --all-features`（1344 例）与 `forge-tests --lib`（43 例，含三台机器的 JIT 矩阵）——`[abi-plan]` **零命中**，即既有语料里没有一条路径靠"无 plan 回退"跑通。切换后 workspace 130 个测试二进制全绿。
-- **A6 缺口清点**（守卫 `abi_target_real::a6_gap_inventory`）：16 组代表性形状 × 三台真机 × 四份约定，**精确断言**缺口集恰好一条——`arm64_v12 / aapcs64` 的 **4×f32 HFA 返回**（要 4 个连续寄存器槽，`RetLoc` 今天只有单/双寄存器形态）。此前列为缺口的 `Pair`（2 槽聚合）、**无指针的 `Indirect`**（by-ref 指针本身溢出到栈）、按引用向量、参数溢出到栈、浮点溢出到栈、混合两套寄存器文件的形状**都已有 plan**。
+- **A6 缺口清点**（守卫 `abi_target_real::a6_gap_inventory`）：16 组代表性形状 × 三台真机 × 四份约定，**精确断言**缺口集恰好一条——`arm64 / aapcs64` 的 **4×f32 HFA 返回**（要 4 个连续寄存器槽，`RetLoc` 今天只有单/双寄存器形态）。此前列为缺口的 `Pair`（2 槽聚合）、**无指针的 `Indirect`**（by-ref 指针本身溢出到栈）、按引用向量、参数溢出到栈、浮点溢出到栈、混合两套寄存器文件的形状**都已有 plan**。
 - **唯一需要改的既有用例**：`conv_registry_read_path::rules_without_binding_fail_closed_at_the_compile_entry`（原 `…_on_the_return_slot`）——只有规则没有绑定时，错误现在发生在编译入口并点名"这台 ISA 没有为约定 X 注册寄存器绑定"，比原先"发射侧返回槽报错"更早、更具体。
 - 验证：`cargo fmt --check` 0、`clippy --workspace --exclude forge-rustc --all-targets --all-features -D warnings` 0、workspace 串行全套 130 个测试二进制绿。
 
@@ -886,7 +908,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 - **被调方收参只走布局路径**：谱面的 `[abi].arg_class` 删掉后，`move_args` 的"无布局回退"整段改为 **fail-closed**（旧实现按谱面顺序塞寄存器 = 静默错值）。
 - **宿主注册调用点 planner**：`pipeline_hooks::ensure_registered()` 为三个发行后端注册 `register_isa_call_planner`（`Box::leak` 持有机器），并由 `FunctionCompiler::new` 幂等触发——生成的 `ensure_registered()` 不能直接调宿主（生成物里的 `crate::pipeline` 会被改写成运行时路径）。
 - **能力缺口改由角色说话**：没有 `roles = ["gpr_mov"]` 的谱（只做编码试点的夹具）在 Call/收参处整条降级 `Unsupported`，而不是生成期报"mov 形状不符"。
-- **`[abi]` 删除**：`Abi`/`ArgClass`/`ArgClassKind`/`ArgStrategy` 类型、`V12Model::abi` 字段、schema 的 `[abi]`/`[abi.arg_class]` 两节、文档键表与 `isa-dsl.md` 的 `[abi]` 章（改写为"已删除 + 去处对照表"）全部下线；三份发行谱与两份夹具的 `[abi]` 段删除。
+- **`[abi]` 删除**：`Abi`/`ArgClass`/`ArgClassKind`/`ArgStrategy` 类型、`IsaModel::abi` 字段、schema 的 `[abi]`/`[abi.arg_class]` 两节、文档键表与 `isa-dsl.md` 的 `[abi]` 章（改写为"已删除 + 去处对照表"）全部下线；三份发行谱与两份夹具的 `[abi]` 段删除。
 - **两处生成期近似一并归位**：向量 by-ref 阈值 → 机器事实 `[machine].vector_by_ref_bytes`（x86 = 16）；`RegAllocConfig.param_reg_count` → 由 plan 数"落在寄存器的形参个数"（不再用 `TargetABI::int_arg_slot_count`）。
 - 验证：`forge-tests --lib` **43 绿**（含 x86/riscv/arm64 三条 JIT 矩阵与 QEMU 跨函数调用）、`forge-codegen --lib` 1278 绿。
 
@@ -898,21 +920,21 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 ### Changed (2026-09-27) — v20 A5-3：`[abi].ret_regs` 删除（返回槽由 plan / 约定级数据给）
 
-- **谱面删键**：`[abi].ret_regs`（`Abi` 字段 / schema / 文档键表 / riscv64 与 arm64 谱里的声明、`demo8_v12` 夹具的声明一并去掉）。它一直是"返回槽放哪"的**生成期近似**——`x86` 靠 index 0 兜底、`riscv` 声明 `X10`，而 `arm64` 的 `X0` 恰好也是 0，这种"每台机器各写一遍"的近似正是 A5-3 要收掉的东西。
+- **谱面删键**：`[abi].ret_regs`（`Abi` 字段 / schema / 文档键表 / riscv64 与 arm64 谱里的声明、`demo8` 夹具的声明一并去掉）。它一直是"返回槽放哪"的**生成期近似**——`x86` 靠 index 0 兜底、`riscv` 声明 `X10`，而 `arm64` 的 `X0` 恰好也是 0，这种"每台机器各写一遍"的近似正是 A5-3 要收掉的东西。
 - **`Return`**：优先读**本函数的 plan**（`CallLayout.ret` 的 `RetPlace::Reg`），否则读宿主的**约定级整数返回槽** `LowerCtx::conv_ret_gpr`；两者都没有 ⇒ **fail-closed**（不再按 `index 0` 猜——riscv 的返回槽是 `X10`）。
 - **`Call`**（读被调方返回值）：读 `LowerCtx::conv_ret_gpr`（调用点看不到被调方的签名，而"标量整数返回放哪个寄存器"是约定级事实）。
 - **宿主的约定级数据**（`pipeline/compiler.rs`）：用"**空参 + 整数返回**"的合成签名问一次引擎（`plan_for_shapes`）填 `conv_ret_gpr`——与签名无关，与 `conv_clobbers` 同一套路。
 - **trait 收敛**：`TargetABI::ret_regs()` 现在**没有消费者**（生成物改读 plan / LowerCtx），DSL 不再从谱里发射它，运行时 trait 给它一个空表缺省实现（手工后端不破）。
 - 守卫：`abi_target_real::convention_level_int_return_slot` —— `plan_for_shapes(空参, i64 返回)` 必须给出**谱里原来那些值**（win64 `RAX`、lp64d `X10`、aapcs64 `X0`）。
-- 直连 lowering 的测试（`v12_integration_tests::terminator_return_packet`）改为自己填 `ctx.conv_ret_gpr`——真实编译路径上由管线填好。
+- 直连 lowering 的测试（`integration_tests::terminator_return_packet`）改为自己填 `ctx.conv_ret_gpr`——真实编译路径上由管线填好。
 - 验证：workspace 串行全套绿、clippy `-D warnings` 0、`cargo fmt --check` 0、三条 JIT 矩阵同值。
 
 ### Added (2026-09-27) — v20 A5-3：demo 夹具补**测试本地约定**（夹具从此真的有 plan）
 
-**背景**：夹具谱（`tests/isa/demo_v12.toml`、`demo8_v12.toml`）没有约定数据，`Builtin(C)` 解析到内置 `c` 又没有 `(demo, c)` 绑定 ⇒ `AbiPlan` 算不出来，夹具函数一直走"**无 plan 回退**"。而 A5-3 要删的 `[abi].arg_class`/`ret_regs` 正是那条回退路径的输入——夹具不先有 plan，删键就会连带炸掉它们。
+**背景**：夹具谱（`tests/isa/demo.toml`、`demo8.toml`）没有约定数据，`Builtin(C)` 解析到内置 `c` 又没有 `(demo, c)` 绑定 ⇒ `AbiPlan` 算不出来，夹具函数一直走"**无 plan 回退**"。而 A5-3 要删的 `[abi].arg_class`/`ret_regs` 正是那条回退路径的输入——夹具不先有 plan，删键就会连带炸掉它们。
 
 - **测试本地约定**（`crates/backend/forge-codegen/tests/common/mod.rs`）：`ensure_demo_conventions()` 幂等注册两份规则 + 绑定（`register_rules_toml`/`register_binding_toml`，v20 A2 就有的公开 API）。数据照夹具谱口径写：`demo` = int 池 `X0-X3` / `ret_int = X0` / `stack 8,8` / `aliases = ["c"]`；`demo8` = int 池 `A0-A3` / `ret_int = A0` / `stack 1,1` / `aliases = ["c"]`；两者都无 callee-saved（与 `[machine].callee_saved_gpr = []` 一致）。
-- **四个夹具测试接线**（`demo8_v12_tests.rs`、`demo_v12_tm_tests.rs`、`lowering_read_path.rs`；`conv_registry_read_path.rs` 用自己的 `probe_conv`，不受影响）。
+- **四个夹具测试接线**（`demo8_tests.rs`、`demo_tm_tests.rs`、`lowering_read_path.rs`；`conv_registry_read_path.rs` 用自己的 `probe_conv`，不受影响）。
 - **两条新守卫**：`demo8_fixture_now_plans_via_the_local_convention` / `demo_fixture_now_plans_via_the_local_convention`——编译产物必须带 `call_layout`（`conv` = `demo8`/`demo`、参数落 A0/A1），**证明夹具真的走在 plan 路径上**而不是继续静默回退。
 - 验证：三个夹具测试二进制（9 + 5 + 3 用例）与全量 workspace 串行套件全绿、clippy `-D warnings` 0、`cargo fmt --check` 0。
 
@@ -938,7 +960,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 ### Changed (2026-09-27) — v20 A5-3：`[abi].arg_slot` 迁到 `[machine]`，`AbiPlan` 带上 `position`
 
 - **`[abi].arg_slot` → `[machine].arg_slot`（机器事实）**：位置计数规则（`by-class` = int/float 各自独立推进；`by-position` = 共享位置游标，Windows x64）是**这台机器的谱面缺省约定怎么数位置**，写给**无 plan 的回退形态**；约定侧的正式位置是 `AbiRules::position`，现在随 plan 一起给出（新增 `AbiPlan::position`，`to_text()` 的 `variadic` 行带上 `position <值>`，四份黄金快照同步）。
-- 读取侧单点化：`V12Model::machine_arg_slot()`；生成物新增 `TargetABI::arg_placement()`（运行时侧的 `ArgPlacement::{ByClass, ByPosition}`，缺省 `ByClass`，手工后端无需改）；`codegen/{frame,lowering}.rs` 的 `by_position` 标志改读机器事实。
+- 读取侧单点化：`IsaModel::machine_arg_slot()`；生成物新增 `TargetABI::arg_placement()`（运行时侧的 `ArgPlacement::{ByClass, ByPosition}`，缺省 `ByClass`，手工后端无需改）；`codegen/{frame,lowering}.rs` 的 `by_position` 标志改读机器事实。
 - **新增守卫（②b）**：`abi_target_real.rs` 的四约定交叉核对新增一条——「plan 的 `position` == 机器事实 `[machine].arg_slot`（生成物的 `arg_placement()`）」；只对 **ISA 主约定**成立（x86 的 sysv64 规则本就是 `by_class`，属 `$equal_cs = false` 的第二种情形）。
 - 三方同改：`schema.rs` 键位移 + 重生成的 `isa-dsl.schema.json` + `docs/reference/isa-dsl.md` 键速查表（`[abi]` 只剩 `arg_class`/`ret_regs`/`call_clobbers`）。
 - 为什么这条能安全先迁：`position` 是**约定级而非签名级**事实，机器事实与规则值必须同值（②b 守卫钉住）；真正需要"调用点 plan"的是 `arg_class`/`ret_regs`（调用方要按**被调方**的落点搬实参）。
@@ -948,7 +970,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 - **谱面**：`[abi]` 只剩真正的**约定键**（`arg_class`/`ret_regs`/`call_clobbers`/`arg_slot`）；机器事实一律只在 `[machine]`（`spill_scratch`/`fixed_regs`/`link_reg`/`frame`/`callee_saved_gpr` + `callee_save_slots`）。旧同义键**删除**（`Abi` 字段、`CalleeSaved` 结构体、schema 的 `[abi.frame]`/`[abi.callee_saved]` 两节与键表一并去掉）：写旧键现在报未知键，"两处都写、谁生效"的含糊彻底消失。
 - **读侧单点化**：`machine_scratch`/`machine_reserved`/`machine_link_reg`/`machine_frame`/`machine_callee_saved`/`machine_callee_save_slots` 全部改成**只读 `[machine]`**（`callee_save_slots` 缺省 0，不再由名单长度兜底）。名字解析校验随之只挂在 `[machine]` 键上（原先 `[abi]`/`[machine]` 双份）。
-- **夹具迁移**：`tests/isa/demo8_v12.toml`（`scratch`/`reserved`/`[abi.callee_saved]` → `[machine] spill_scratch`/`fixed_regs`/`callee_saved_gpr`）、`tests/isa/demo_v12.toml`（`[abi.callee_saved]` → `[machine] callee_saved_gpr = []`）、`diag_matrix_tests.rs` 的内联谱（`scratch` → `[machine] spill_scratch`；"未知寄存器名"用例改用仍在 `[abi]` 的 `ret_regs`，保住 `DSL-ABI` 码）。
+- **夹具迁移**：`tests/isa/demo8.toml`（`scratch`/`reserved`/`[abi.callee_saved]` → `[machine] spill_scratch`/`fixed_regs`/`callee_saved_gpr`）、`tests/isa/demo.toml`（`[abi.callee_saved]` → `[machine] callee_saved_gpr = []`）、`diag_matrix_tests.rs` 的内联谱（`scratch` → `[machine] spill_scratch`；"未知寄存器名"用例改用仍在 `[abi]` 的 `ret_regs`，保住 `DSL-ABI` 码）。
 - 验证：workspace 串行全套绿、clippy `-D warnings` 0、三条 JIT 矩阵与迁移前同值。
 
 ### Changed (2026-09-27) — v20 A5-3：`[abi.stack_args]` 删除（栈参数布局全面由 plan 驱动）
@@ -965,14 +987,14 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 - **`[abi].call_clobbers` 删除**（riscv64/arm64 两谱；x86 本就没写）：调用点的破坏集已全面由 plan 驱动（`AbiPlan.clobbers` = 可用池 − callee-saved，经 `CallLayout.clobbers` 到 regalloc）。谱里那份降级为缺省空、已无人读。
 - **`[abi].frame_padding` → `[machine].frame_padding`（机器事实）**：它由**这台机器的帧机制**决定——x86 是 `push fp` + 7 次 callee-saved 推入 = 8 次推入（偶数）而入口 `rsp ≡ 8 (mod 16)`，故须补 8；riscv/arm64 的 fp-inside 是显式 `sub sp`，故 0。它与 `[stack].align` 同源，归属机器事实。**约定侧**的同名字段仍在 `AbiRules::frame_padding`（win64/sysv64 都 = 8，进 plan）：管线优先读 plan，无 plan 才回退机器事实（与 `callee_save_slots` 同一套路）。
-- 读取侧：`V12Model::machine_frame_padding()`；生成物 `TargetABI::frame_padding()` 改读 `[machine]`；`Abi` 的 `frame_padding` 字段与 schema 的 `[abi]` 键一并删除 ⇒ 写旧键现在**明确报错**（不再有"两处都写、谁生效"）。
+- 读取侧：`IsaModel::machine_frame_padding()`；生成物 `TargetABI::frame_padding()` 改读 `[machine]`；`Abi` 的 `frame_padding` 字段与 schema 的 `[abi]` 键一并删除 ⇒ 写旧键现在**明确报错**（不再有"两处都写、谁生效"）。
 - 守卫：`abi_target_real.rs` 的交叉核对改成「plan 的 `frame_padding` == 机器事实 `[machine].frame_padding`」（4 份约定逐项核）。
 - 验证：clippy `-D warnings` 0、workspace 串行全套绿、三条 JIT 矩阵不变。
 
 ### Changed (2026-09-27) — v20 A6/A5-3：[abi].callee_saved 迁移到 [machine]（键已删）
 
 - **机器事实两组**：`[machine].callee_saved_gpr = [...]`（帧件会保存的那组 GPR；x86 = RBX/RDI/RSI/R12-R15、riscv64 = 11 个 s 系、arm64 = X19-X28）与 `[machine].callee_save_slots`（推入槽数，可由名单派生）。语义是"**这台机器的帧件会保存这组寄存器**"，与"某份约定**要求**保住哪些"（绑定/plan）分开。
-- **读取侧单点化**：`V12Model::machine_callee_saved()`（优先 `[machine].callee_saved_gpr`、回退 `[abi].callee_saved.gpr`）与 `machine_callee_save_slots()`；生成物 `TargetRegInfo::callee_saved()` / `callee_save_slots()` 都读机器事实，运行时 trait 的 `callee_save_slots()` 带缺省实现（手工后端无需改）。
+- **读取侧单点化**：`IsaModel::machine_callee_saved()`（优先 `[machine].callee_saved_gpr`、回退 `[abi].callee_saved.gpr`）与 `machine_callee_save_slots()`；生成物 `TargetRegInfo::callee_saved()` / `callee_save_slots()` 都读机器事实，运行时 trait 的 `callee_save_slots()` 带缺省实现（手工后端无需改）。
 - **删键**：三份发行谱的 `[abi].callee_saved` 段删除。**这一条曾两次实测崩溃**（`test_jit_call_indirect_wide_vector_byref`，`0xC0000005`）——**不是**"无 plan 回退缺名字"（那个说法已作废）：崩溃都发生在**半迁移的树**上，计数（`callee_save_slots` / 生成期 `__cs_bytes` = 7/64）已切到机器事实、名字（`TargetRegInfo::callee_saved()`）却还是空表 ⇒ 帧按 7 个槽布局、regalloc 却以为一个都没被保住，"计数 / 名字 / 消费者"三者不同源。名字与计数**同源**（都读 `[machine]`）之后删键即成立；全套跑完 `FORGE_TRACE_ABI=1` 打印 **0 条** `[abi-plan]`，即测试里没有一次 plan 失败、回退路径根本没被走到。
 - 验证：clippy `--all-targets --all-features -D warnings` 0、workspace 串行全套绿、三条 JIT 矩阵与迁移前同值（x86 195/3、riscv64 131/67、arm64 23/175）。
 
@@ -980,7 +1002,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 - **push 机制运行时化**：序言按 `alloc_result.callee_saved_to_save` 逐个 `push`，尾声 `sp -= n*槽` 取同一列表的运行时长度并逆序 `pop`。列表来自**约定数据**（有 plan 用 plan：显式选 `sysv64` 就只有 5 个，不是谱里那份 win64 的 7 个），无 plan 的夹具退回谱面表。
 - **让位设计（这次能成的原因）**：帧内偏移都是编译期常量、按谱面表长算的，少推 Δ 个槽会让 rsp 抬高 Δ×槽而整体错位（上一轮实测：跨调用读垃圾值 + 访问违例，"只修 `frame_padding`"救不了）。这次由**管线把 Δ×槽补进序言实际分配的字节数**（`pipeline/emission.rs` 的 `cs_skipped`，仅 fp-outside）⇒ rsp 落点与静态表全长时代**逐字节相同**，所有常量与栈对齐继续成立。fp-inside 的保存是帧内槽、不动 rsp（`cs_skipped = 0`）。
-- **两处字节级黄金同步**（`tests/v12_integration_tests.rs`）：空 `AllocResult` 下新语义是"只有 `push rbp` + `mov rbp,rsp`"与尾声 `sub rsp, 0`；注释写清"管线会补 `cs_skipped`，直接调帧件时不会"。
+- **两处字节级黄金同步**（`tests/integration_tests.rs`）：空 `AllocResult` 下新语义是"只有 `push rbp` + `mov rbp,rsp`"与尾声 `sub rsp, 0`；注释写清"管线会补 `cs_skipped`，直接调帧件时不会"。
 - 验证：workspace 串行全套绿、clippy `-D warnings` 0、三条 JIT 矩阵不变。
 
 ### Added (2026-09-26) — v20 A6：FPR callee-saved 打通（AAPCS64 的 v8-v15 真的会被保存）
@@ -1021,16 +1043,16 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 ### Added (2026-09-26) — v20 A5-3（②b）：`[machine.frame]` 帧形状，三份发行谱迁完
 
-- **`[machine]` 增 `frame` 子表**（`sp`/`fp`/`layout`/`fp_push_bytes`/`alloc_neg`，键与旧 `[abi.frame]` 同名同义）：这五项是"这台机器怎么建帧"的**机器事实**，不是约定内容（保存谁、栈参数怎么排才是约定）。读侧统一走 `V12Model::machine_frame()`——`[machine.frame]` 优先、回退 `[abi.frame]`，**所有**读者（含只取 `fp` 或只取 `fp_push_bytes` 的）都经它，避免迁移期"一半读新表、一半读旧表"的分裂。
+- **`[machine]` 增 `frame` 子表**（`sp`/`fp`/`layout`/`fp_push_bytes`/`alloc_neg`，键与旧 `[abi.frame]` 同名同义）：这五项是"这台机器怎么建帧"的**机器事实**，不是约定内容（保存谁、栈参数怎么排才是约定）。读侧统一走 `IsaModel::machine_frame()`——`[machine.frame]` 优先、回退 `[abi.frame]`，**所有**读者（含只取 `fp` 或只取 `fp_push_bytes` 的）都经它，避免迁移期"一半读新表、一半读旧表"的分裂。
 - **读者改写**（全部改为 `machine_frame()`）：`abi_view` 的 pinned 视图、`integration.rs` 的 sp/fp 解析 + 帧是否声明、`frame.rs` 的 layout/fp_push_bytes/spill 缺省 base/栈参数收参基址、`lowering.rs` 的 `frame_base_toks`/`sp_base_toks`（sret/by-ref/栈参数 store 的基址）、`validate.rs` 的 sp 非空与寄存器名检查。错误消息与文档字符串同步改点名 `[machine.frame]`。
-- **谱**：`isa/{x86,riscv64,arm64}_v12.toml` 的 `[abi.frame]` 段移入 `[machine.frame]`（值原样）；两份夹具 `crates/backend/forge-codegen/tests/isa/{demo_v12,demo8_v12}.toml` 与 DSL 内联夹具（`frame_sp_*` 两条反向用例）一并迁到新键——它们现在**真的走新路径**，回退路径只服务外部旧谱。
+- **谱**：`isa/{x86,riscv64,arm64}_v12.toml` 的 `[abi.frame]` 段移入 `[machine.frame]`（值原样）；两份夹具 `crates/backend/forge-codegen/tests/isa/{demo,demo8}.toml` 与 DSL 内联夹具（`frame_sp_*` 两条反向用例）一并迁到新键——它们现在**真的走新路径**，回退路径只服务外部旧谱。
 - **三方守卫**：`schema.rs` 增 `[machine.frame]` 节（`sp` 必填）与 `[machine].frame` 键、`docs/reference/isa-dsl.md` 键表与 `## [machine.frame]` 一节的迁移说明、重新生成的 `isa-dsl.schema.json`；`docs/reference/calling-conventions.md` 的能力视图来源改述。（`[abi.frame]` 仍在 schema/校验里，作为迁移期回退路径。）
 - 验证：workspace 全套 serially 绿（130 个测试二进制 0 失败）、clippy `--all-targets --all-features -D warnings` 0；本地与 CI run 213（`983b8ee`）一致——CI 11 项里 10 项绿，唯一红的是既有慢性项 `forge-rustc (e2e, Windows)`。
 
 ### Added (2026-09-26) — v20 A5-3（①+②）：`[machine]` 机器事实层，三份发行谱迁完
 
 - **新增 `[machine]` 段**（只描述"这台机器是什么样"）：`fixed_regs`（regalloc 不可分配，原 `[abi].reserved`）、`spill_scratch`（溢出与栈参数收参的临时寄存器，原 `[abi].scratch`）、`link_reg`（call 写返回地址的寄存器，原 `[abi].call_ret_reg`）。键名**故意与旧键不同名**——两处都写时"谁生效"必须无歧义；`[machine]` 优先、回退 `[abi]` 旧键，所以迁移期两种写法都认，可以逐谱迁移。
-- **读取侧单点化**：所有读者改走 `V12Model::machine_scratch()/machine_reserved()/machine_link_reg()`——`abi_view` 的静态能力视图、`integration.rs` 的 `RegInfo` scratch/reserved、`frame.rs` 的栈参数收参 scratch + 帧件保存 link、`lowering.rs` 的 `call`/`call_indirect` 返回地址槽。`validate` 对 `[machine]` 与 `[abi]` 两处都校验寄存器名（必须落在某个 `[reg.*]` 组内）。
+- **读取侧单点化**：所有读者改走 `IsaModel::machine_scratch()/machine_reserved()/machine_link_reg()`——`abi_view` 的静态能力视图、`integration.rs` 的 `RegInfo` scratch/reserved、`frame.rs` 的栈参数收参 scratch + 帧件保存 link、`lowering.rs` 的 `call`/`call_indirect` 返回地址槽。`validate` 对 `[machine]` 与 `[abi]` 两处都校验寄存器名（必须落在某个 `[reg.*]` 组内）。
 - **三条 fail-closed 错误消息改点名新键**（`[machine].spill_scratch` 未声明却要走栈参数收参、`[machine].link_reg` 未声明却有 Out/InOut Reg 槽），两条负向用例（`codegen_requires_scratch_for_stack_args` / `codegen_requires_call_ret_reg_when_call_has_ret_slot`）同步改成新键——它们仍钉着"不按某个 ISA 的寄存器名兜底"。
 - **三份发行谱迁移完毕**（`isa/{x86,riscv64,arm64}_v12.toml`）：`[abi].scratch`/`reserved`/`call_ret_reg` 删除，值**原样**进 `[machine]`（x86 `R10/R11`、riscv `X5/X6` + `X0/X1/X3/X4` + `X1`、arm64 `X16/X17` + `X18/X30` + `X30`）。
 - **三方一致守卫同步**：`schema.rs`（根键 + `[machine]` 节）、`docs/reference/isa-dsl.md` 键速查表与新增 `[machine]` 一节、重新生成的 `isa-dsl.schema.json`（`schema_guard` 6 项全绿）。
@@ -1050,11 +1072,11 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 ### Added (2026-09-25) — v20 A5（子集）：arm64 浮点能力——FPR 组 + 浮点搬运角色 + 绑定补池
 
-- **谱**（`isa/arm64_v12.toml`）：新增 `[reg.fpr8]`（`V0..V31`）、`fpr` 操作数槽、`FMOVR` 形式，以及 6 条指令——`FMOV_S`/`FMOV_D`（`fpr_mov` 32/64）、`LDURD`/`STURD`/`LDURS`/`STURS`（SIMD&FP 的 unscaled 访存，编码与 `LDURX`/`STURX` 同形：`0xFD…`/`0xBD…` + `opc2`），外加 `[spill.FPR]`（D 寄存器溢出）。
+- **谱**（`isa/arm64.toml`）：新增 `[reg.fpr8]`（`V0..V31`）、`fpr` 操作数槽、`FMOVR` 形式，以及 6 条指令——`FMOV_S`/`FMOV_D`（`fpr_mov` 32/64）、`LDURD`/`STURD`/`LDURS`/`STURS`（SIMD&FP 的 unscaled 访存，编码与 `LDURX`/`STURX` 同形：`0xFD…`/`0xBD…` + `opc2`），外加 `[spill.FPR]`（D 寄存器溢出）。
 - **绑定**（`conventions/aapcs64-arm64.toml`）：补 `float = ["V0".."V7"]`、`ret_float = ["V0".."V3"]`（HFA ≤4 返回落连续 v0-v3），并删掉"arm64 没有 FPR 组"的缺口说明。
-- **效果**：`forge-isa abi check --strict isa/arm64_v12.toml` 的缺口 **6 → 1**（只剩 HFA4 *返回*搬运那条"≥3 槽见 A6"的引擎侧限制）；`abi plan` 现在给出 `f64 → V0`、`i64 → X0`、`ret → V0`（此前是 `MissingPool`）。arm64 的浮点/HFA **参数**与 ≤2 槽返回自此有寄存器可落，发射侧也拿得到 `fpr_mov` 角色（收参走 `FMOV_S`/`FMOV_D`）。
+- **效果**：`forge-isa abi check --strict isa/arm64.toml` 的缺口 **6 → 1**（只剩 HFA4 *返回*搬运那条"≥3 槽见 A6"的引擎侧限制）；`abi plan` 现在给出 `f64 → V0`、`i64 → X0`、`ret → V0`（此前是 `MissingPool`）。arm64 的浮点/HFA **参数**与 ≤2 槽返回自此有寄存器可落，发射侧也拿得到 `fpr_mov` 角色（收参走 `FMOV_S`/`FMOV_D`）。
 - **刻意保留的取舍/缺口**（如实登记）：① FP 寄存器统一命名 `V0..V31`（不像 x86 那样名字自带宽度），因此 `fmov v0, v1` / `ldur v0, [x29,#8]` 的 S/D 两种编码**汇编文本相同** ⇒ 反汇编按声明序取 S；这条已知歧义写进了 `spec_coverage_guard.rs` 的钉死名单；② 暂无 `cs_fpr` 池 ⇒ `clobbers` 保守地把 v0-v31 全列为被破坏（安全方向）；③ arm64 的浮点**算术**尚未接线（矩阵里的 F64 用例仍按 ops 未覆盖 skip）。
-- **守卫同步**：`spec_coverage_guard`（arm64 指令总数 104 → **110**、歧义名单 +6）、`isa_roundtrip_guard`（arm64 派生条目 332 → **360**）、`forge-abi` 黄金快照 `aapcs64.plan.txt`（clobbers 含 V0-V31）；合成目标 `common::arm64_v12()` 随之带上 FPR 组，`missing_pool_is_explicit_not_silent` 改为**自备缺池绑定**（测"缺池的报法"，不依赖 arm64 有没有池）。
+- **守卫同步**：`spec_coverage_guard`（arm64 指令总数 104 → **110**、歧义名单 +6）、`isa_roundtrip_guard`（arm64 派生条目 332 → **360**）、`forge-abi` 黄金快照 `aapcs64.plan.txt`（clobbers 含 V0-V31）；合成目标 `common::arm64()` 随之带上 FPR 组，`missing_pool_is_explicit_not_silent` 改为**自备缺池绑定**（测"缺池的报法"，不依赖 arm64 有没有池）。
 
 ### Added (2026-09-25) — v20 A3b-2b-2c-2：栈落点接进布局驱动的收参
 
@@ -1187,7 +1209,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 - **`forge-isa validate|insts --params xlen=32`**（逗号分隔多个）：`insts` 第一行打印**投影账目**（丢了哪些指令、逐节丢了什么、投影后剩多少），`--json` 里是 `projection` 字段。参数名未声明 / 取值越界一律 `DSL-META` 报错——拼错参数名不会静默"什么都没发生"。
 - **`isa_from_file!` 新增 `params = { xlen = 32 }`**：生成期投影，参数进生成物**文件名哈希**（同一份谱的两个变体落到不同 `$OUT_DIR` 文件，互不覆盖）。
 - **连带规则**：引用了被投影掉指令/`ref` 的 `[[lowering]]` 规则自动随之丢掉（可推断依赖），账目单列条数；`asm`/`[[lowering]].insts` 里的 `{参数名}` 替换成取值（宽度是数据）。**其余引用 fail-closed**：`[spill]`/`[emit]`/`[[pseudo]]`/`[[pattern]]` 引用了被投影掉的声明却没标 `only_variants` ⇒ 校验期报"未知指令引用"（结构件必须由作者显式变体化，自动猜是错的）；模板里留着参数占位符却没传值 ⇒ 报错并点名传法（否则生成的汇编会打印出字面 `{width}`）。
-- **实测账目**（`forge-isa insts --params xlen=32 isa/riscv64_v12.toml`）：`116 → 104` 条指令（丢 `LD`/`SD` 与 10 条 W 族）、`110 → 96` 条 lowering（连带丢 14 条）、逐节丢弃 `[emit.prologue]`/`[emit.epilogue]`/`[spill.GPR]` 各 1 项。守卫 `crates/frontend/forge-isa-dsl/tests/variants.rs`（6 条：默认档零投影、未声明/越界报错、RV32 账目快照、级联不多丢、只对传了的参数生效、替换语义）。
+- **实测账目**（`forge-isa insts --params xlen=32 isa/riscv64.toml`）：`116 → 104` 条指令（丢 `LD`/`SD` 与 10 条 W 族）、`110 → 96` 条 lowering（连带丢 14 条）、逐节丢弃 `[emit.prologue]`/`[emit.epilogue]`/`[spill.GPR]` 各 1 项。守卫 `crates/frontend/forge-isa-dsl/tests/variants.rs`（6 条：默认档零投影、未声明/越界报错、RV32 账目快照、级联不多丢、只对传了的参数生效、替换语义）。
 - **MVP 边界**：只读投影（不注册后端、不生成变体专属运行期表）。RV32 投影的帧件是空的（本谱没写 LW/SW 版本），因此它不是一份可运行的后端谱——用途是**看见变体依赖面**与让生成物正确分文件。
 
 ### Changed (2026-09-24)
@@ -1248,12 +1270,12 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 ### Changed (2026-09-22)
 
 - **角色去宽度化：`Role` 不再把位宽编进名字（v18 S9，破坏性 / 只需改 TOML 6 行）**。原先 `roles` 里是 `fpr_mov_f32` / `fpr_mov_f64` / `wide_vec_store_32` / `_64` / `wide_vec_load_32` / `_64`——位宽被写死进角色名，别的位宽的 ISA 接不进来（等于把 x86 的 32/64 当成 ISA 通用事实）。现在角色名去掉宽度后缀（`fpr_mov` / `wide_vec_store` / `wide_vec_load`），宽度**写在角色声明里**：`roles = [{ role = "fpr_mov", bits = 32 }]`（单位是**位**，与 `opsize`/`[encoding].bits` 一致；无宽度语义的角色照旧写 `"gpr_mov"`）。
-  生成器按 **(角色, 位宽)** 解析（`role_name_for`），选不到时错误消息给出**请求位宽 + 已声明位宽集合**；校验同样按 (角色, 位宽) 唯一——同角色同宽度声明两次、或同一角色一处写 `bits` 一处不写，都在**编译期**报错并点出两条指令名。`isa/x86_v12.toml` 改了 6 行（`MOVSS`/`MOVSD`/`VMOVUPS_256_*`/`VMOVUPS_512_*`），**生成的机器码逐字节不变**（黄金字节 + 三架构 JIT 矩阵与基线逐数字相同；另有两例守卫：任意位宽 16/24 合法、同 (角色,位宽) 冲突必报）。设计动机、证据与"为什么宽度不能从槽派生"（`MOVSS`/`MOVSD` 共用 `fpr` 槽）见 `docs/archive/forge-dsl-v18-plan.md` §7.1。
+  生成器按 **(角色, 位宽)** 解析（`role_name_for`），选不到时错误消息给出**请求位宽 + 已声明位宽集合**；校验同样按 (角色, 位宽) 唯一——同角色同宽度声明两次、或同一角色一处写 `bits` 一处不写，都在**编译期**报错并点出两条指令名。`isa/x86.toml` 改了 6 行（`MOVSS`/`MOVSD`/`VMOVUPS_256_*`/`VMOVUPS_512_*`），**生成的机器码逐字节不变**（黄金字节 + 三架构 JIT 矩阵与基线逐数字相同；另有两例守卫：任意位宽 16/24 合法、同 (角色,位宽) 冲突必报）。设计动机、证据与"为什么宽度不能从槽派生"（`MOVSS`/`MOVSD` 共用 `fpr` 槽）见 `docs/archive/forge-dsl-v18-plan.md` §7.1。
 
 ### Changed (2026-09-21)
 
 - **`[[pattern]]` 与 `[[lowering]]` 统一裁决序 + 死模式检测（v18 S5c）**。`[[pattern]]` 新增 `priority`（与 `[[lowering]].priority` 同语义：大者先试），裁决序统一为 (`priority` 降, 匹配树 Op 节点数降, `when` 谓词叶子数降, 声明序升)；
-  此前 pattern 的排序只写在 codegen 里（没有 `priority`），现在抽成 `V12Model::pattern_order()`，**codegen 与校验器共读一份**。新增**死模式检测**：匹配树结构相同、且裁决序在前者的 `when` 完全覆盖后者 → 编译期报错并点出两个 `[[pattern]]` 下标（不同树之间不做覆盖推断——保守，宁可漏报不误报；与 lowering 的死规则检测同口径）。x86 现有两条 pattern 都没有 `priority`、新旧排序键等价 ⇒ **生成物不变**（黄金值与 JIT 矩阵照旧）。`isa-dsl.md` 的 `[[pattern]]` 节、`isa-dsl-errors.md` §3.10 同步；键速查表与 `isa-dsl.schema.json` 因新增 `priority` 键重新生成。
+  此前 pattern 的排序只写在 codegen 里（没有 `priority`），现在抽成 `IsaModel::pattern_order()`，**codegen 与校验器共读一份**。新增**死模式检测**：匹配树结构相同、且裁决序在前者的 `when` 完全覆盖后者 → 编译期报错并点出两个 `[[pattern]]` 下标（不同树之间不做覆盖推断——保守，宁可漏报不误报；与 lowering 的死规则检测同口径）。x86 现有两条 pattern 都没有 `priority`、新旧排序键等价 ⇒ **生成物不变**（黄金值与 JIT 矩阵照旧）。`isa-dsl.md` 的 `[[pattern]]` 节、`isa-dsl-errors.md` §3.10 同步；键速查表与 `isa-dsl.schema.json` 因新增 `priority` 键重新生成。
 
 - **`[[lowering]].op` 支持名单：一条规则服务多个同类 op（v18 S5）**。`op = ["Copy", "Uextend", "Freeze", "Ptrtoint", "Inttoptr"]` 等价于把这五条逐条写开，但**只维护一份发射序列**（改一处不会漏另外四处）。名单在解析期展开成逐 op 的规则，名单序 = 展开序，因此每个 op 内部的裁决序与逐条写开**完全一致**；空名/重名报错。
   随迁移落地（数字为**声明数**；`forge-isa insts` 报的是 `vary`/`op` 展开后的执行规则数）：x86 同 op 冗余 `when` 折叠 13 组 + 跨 op 归并 6 组（**220 → 197 条声明（−10.5%）**，展开后执行规则 299 → 286；TOML 3,693 → 3,518 行）；riscv 3 组（**110 → 106 条声明（−3.6%）**，展开后仍 110）；arm64 不变。
@@ -1263,7 +1285,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 ### Fixed (2026-09-21)
 
-- **`#:schema` 编辑器补全：指令的 `ref` 键被 schema 写成了 `reference`（v18 S7e 修）**。模型的字段名是 `reference` + `#[serde(rename = "ref")]`，而 JSON Schema 发射器按字段名发射，于是**所有用 `ref` 的谱都被编辑器标红**（`isa/x86_v12.toml` 35 处，Taplo + `#:schema`）。
+- **`#:schema` 编辑器补全：指令的 `ref` 键被 schema 写成了 `reference`（v18 S7e 修）**。模型的字段名是 `reference` + `#[serde(rename = "ref")]`，而 JSON Schema 发射器按字段名发射，于是**所有用 `ref` 的谱都被编辑器标红**（`isa/x86.toml` 35 处，Taplo + `#:schema`）。
   现在 schema 发的是 TOML 里实际写的键 `ref`；三方守卫按 `#[serde(rename = "…")]` 取键名，并新增 `schema_guard.rs::shipped_specs_only_use_schema_keys`——**直接拿 `isa/*.toml` 与全部夹具当输入**，任何"schema 与真实谱不符"都会红（自由表 `fields = {…}`/`[[templates]].body`/`when = {…}` 在 schema 里本无子约束，守卫也不下钻）。`docs/reference/isa-dsl.md` 的键速查表与签入的 `isa-dsl.schema.json` 同步重新生成。
 - 顺带修 `forge-isa insts` 表头把 `[meta].version` 标成 `schema`：它是 ISA 自己的版本串，与 DSL 语法版本无关，
   现在标 `version`（`[meta].version` 缺省时显示 `-`）。
@@ -1278,21 +1300,21 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
 
 - **ISA-DSL 多文件组合 `include` / `[[override]]` + 部件选择 `parts` + CLI `fmt`（v18 S7d）**。新增 `forge-isa-dsl::loader`（递归 `include`，深度上限 8、重复/成环报错、**按块合并**：数组节按 include 序追加、重复 `[表头]` 视为同节续写、同名标量冲突报错并提示改用 `[[override]]`），`[[override]] key = "点分路径" value = …` 显式覆盖被包含文件里的键（目标不存在即报错，拼错不静默）；诊断带**来源文件映射**——`路径:行:列` 指向真正写那一行的那份文件；生成物对**每个来源文件**都登记 `include_bytes!`（改任一片段都触发重编译）。
   `isa_from_file!` 参数扩到四个：`krate` / `spec_tests` / **`name = "…"`**（模块名覆盖，同一份谱展开多次必需）/ **`parts = ["encode", "decode", "asm", "tm"]`**（部件选择：`Inst`/`Reg` 枚举与寄存器表是任何部件的公共前提，恒定生成；受限时必须 `spec_tests = false`，否则编译期明确报错）。CLI 新增 `fmt [--out <file>]`：把多文件谱折叠成一份单文件 TOML（可继续编辑、可单文件分发、可独立校验、幂等）。
-  `include`/`[[override]]` 同时进 `V12Model` + JSON Schema + 文档键表（三方针守卫覆盖）；绕过加载器把**裸文本**交给解析器时，带这两个组合键会明确报错而不是静默忽略。修掉 `report::validate_file` 把加载器消息改写成「读不到文件：<根路径>」的问题（缺 include / 覆盖键不存在时现在是点名文件与键的可诊断错误）。
-  文档：`docs/reference/isa-dsl.md` 新增「多文件组合（`include` / `[[override]]`，v18 S7d）」节 + `isa_from_file!` 四参数表 + `fmt` 命令；方案 §5.8 改写为落地形态；夹具 README 增列 `include_root_v12` / `include_base_v12`。
+  `include`/`[[override]]` 同时进 `IsaModel` + JSON Schema + 文档键表（三方针守卫覆盖）；绕过加载器把**裸文本**交给解析器时，带这两个组合键会明确报错而不是静默忽略。修掉 `report::validate_file` 把加载器消息改写成「读不到文件：<根路径>」的问题（缺 include / 覆盖键不存在时现在是点名文件与键的可诊断错误）。
+  文档：`docs/reference/isa-dsl.md` 新增「多文件组合（`include` / `[[override]]`，v18 S7d）」节 + `isa_from_file!` 四参数表 + `fmt` 命令；方案 §5.8 改写为落地形态；夹具 README 增列 `include_root` / `include_base`。
   用例：`forge-isa-dsl/tests/parts_selection.rs`（7）、`forge-codegen/tests/include_v12_tests.rs`（7，含多文件黄金字节 + 只开 `encode` 的模块真编译）、`forge-isa/tests/cli_tests.rs` 增至 16（多文件 validate/insts、`fmt` 折叠与幂等、诊断指向片段文件、缺 include / 覆盖键不存在必须点名）。
 
 ### Changed (2026-09-21)
 
 - **生成 `Inst` 变体的字段名 = `ops` 里声明的操作数名（v18 S7d 修正）**。此前字段名另取一套：定宽 ISA 取位域名（`[forms].operand_fields` 的 `rd`/`rs1`），变长 ISA 取语义角色名（`dest`/`cond`/`mem`/`imm`/`target`）——`ops` 里作者写的名字**只用于 asm 模板**，于是 `ops = ["dst:r:out", "src:r"]` 生成出 `Inst::Iadd { rd, rs1 }`：作者声明的名字在用户面没有任何意义，位域名还泄漏成了 API。
   现在**字段名就是声明名**（`Inst::Iadd { dst, src }`、x86 `MovRmR { src, dst }`、条件码 `JccRel32 { cc, target }`），位域名/语义角色名退回纯内部**编码键**（只用于查 `[conventions.bitfields]`、modrm 角色与立即数编码表）。名字不能直接作标识符时按最小规则归一：Rust 关键字 → 原始标识符（`type` → `r#type`）、数字开头 → 前缀 `_`（`8bit` → `_8bit`），**不做语义改名**。
-  **编码行为零变化**：`demo_inst12_v12` 生成物 token 级对照（v18 S7a 基线 vs 现在）只有 `rd→dst`(32)/`rs1→src`(32)/`rs2→src2`(16) 共 80 处标识符改名，未触碰任何编码 token（证据 `target/s7d_field_rename_evidence.txt`）；三个 ISA 的黄金字节测试、417 条指令的生成期自测、三条 JIT 矩阵全绿。
+  **编码行为零变化**：`demo_inst12` 生成物 token 级对照（v18 S7a 基线 vs 现在）只有 `rd→dst`(32)/`rs1→src`(32)/`rs2→src2`(16) 共 80 处标识符改名，未触碰任何编码 token（证据 `target/s7d_field_rename_evidence.txt`）；三个 ISA 的黄金字节测试、417 条指令的生成期自测、三条 JIT 矩阵全绿。
   守卫与迁移：新增 `forge-isa-dsl/tests/field_names.rs`（定宽用声明名而非位域名、关键字原始化、数字开头加前缀、变长 ISA 按声明名）；`OperandUse` 的死字段 `field` 删除，改为携带**声明名** `name`；`crates/backend/forge-codegen/tests/*` 的引用同步改名（`dest`→`dst`、`rd`/`rs1`/`rs2`→`dst`/`src`/`src2`、`imm*`→`imm`、label 域→`target`、`cond`→`cc`）。文档：`docs/reference/isa-dsl.md` 的「命名操作数」「`[[forms]]`」「代码生成输出」三节改写为"声明名 = 字段名，位域名 = 编码位置"。
 
 ### Added (2026-09-20)
 
 - **ISA-DSL 的 JSON Schema + `#:schema` 编辑器补全（v18 S7c），三方一致由守卫钉住**。`forge-isa-dsl::schema`（手写发射器，不引 `schemars`）把谱的 TOML 结构发射成 JSON Schema（draft 2020-12，32 个节定义 + 18 个根键，含必填/可选/编码键与节级说明）；`forge-isa schema [--out <file>]` 打印或写出，仓库根的 `isa-dsl.schema.json` 由它生成并签入；3 个发行 ISA + 6 个夹具的 TOML 顶部加 `#:schema <相对路径>` 注释，Taplo 等语言服务据此补全。
-  **三方守卫**（`crates/frontend/forge-isa-dsl/tests/schema_guard.rs`，5 条）：① schema 每节的键集与 `v12/model.rs` 对应结构体的 `pub` 字段**逐键相等**（`#[serde(skip)]` 内部字段须在 `INTERNAL_FIELDS` 登记；`#[serde(flatten)]` 字段须在 `FLATTEN_FIELDS` 登记）；② 内部字段表不得过时；③ `docs/reference/isa-dsl.md` 新增的「键总览（速查表）」区段与 `schema::markdown_table()` **逐字相同**——文档里的键表不再手抄；④ 签入的 `isa-dsl.schema.json` 与发射器逐字相同；⑤ `--nocapture` 打印可粘贴的表格。守卫在落地时就抓到三处漂移（`enc` 被误当键、`Pattern` 的 `r#match`/TOML `match` 漏写、`[[pattern]].when` 未登记）。
+  **三方守卫**（`crates/frontend/forge-isa-dsl/tests/schema_guard.rs`，5 条）：① schema 每节的键集与 `dsl/model.rs` 对应结构体的 `pub` 字段**逐键相等**（`#[serde(skip)]` 内部字段须在 `INTERNAL_FIELDS` 登记；`#[serde(flatten)]` 字段须在 `FLATTEN_FIELDS` 登记）；② 内部字段表不得过时；③ `docs/reference/isa-dsl.md` 新增的「键总览（速查表）」区段与 `schema::markdown_table()` **逐字相同**——文档里的键表不再手抄；④ 签入的 `isa-dsl.schema.json` 与发射器逐字相同；⑤ `--nocapture` 打印可粘贴的表格。守卫在落地时就抓到三处漂移（`enc` 被误当键、`Pattern` 的 `r#match`/TOML `match` 漏写、`[[pattern]].when` 未登记）。
   文档：`docs/reference/isa-dsl.md` 新增「键总览（速查表，v18 S7c）」节（机器校验的键表）+ 工具链节的 `schema` 与 `#:schema` 说明 + TOC；方案 §7「S7 进度」补 S7c。
 
 ### Added (2026-09-20)
@@ -1306,9 +1328,9 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   | `explain <谱.toml> <指令名>` | 单条指令的完整来源：哪个模板的哪一行 + 该行与 `body` 的键 + 生效规格逐字段 |
   | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段，`字段: A → B`）——迁移前后"展开后有效规格"对照 |
 
-  `--json` 给机读输出；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。示例：`cargo run -p forge-isa -- explain isa/arm64_v12.toml ADDREGW` → `来源：[[templates.ADDREG]] 第 2 行` + 生效编码键。
+  `--json` 给机读输出；退出码 `0` 成功 / `1` 诊断或失败 / `2` 用法错误。示例：`cargo run -p forge-isa -- explain isa/arm64.toml ADDREGW` → `来源：[[templates.ADDREG]] 第 2 行` + 生效编码键。
   实现：新增 `forge-isa-dsl::report` 投影层（`IsaSummary`/`InstRow`/`Explain`/`SpecDiff`），**复用**编译器的 `collect_inst_infos`（form 预设 ⊕ 指令级覆盖的同一份判定），编码键清单由 `EncKeys` 的 serde 折出——不维护第二份键名表，新增编码键自动出现在三个子命令里。
-  证据：`forge-isa` 10 条集成测试（跑真实二进制）+ `report` 6 条单测；`forge-isa-dsl` 182 单测；三份发行 ISA `validate` 全 OK；`insts isa/riscv64_v12.toml` = `116 条指令 / 19 条模板 / 110 条 lowering`；混合字长夹具 JSON 给出 `CADD16/CMOV16 = 16 位（2 字节）`、`LNOP32/LADD32 = 32 位（4 字节）`。
+  证据：`forge-isa` 10 条集成测试（跑真实二进制）+ `report` 6 条单测；`forge-isa-dsl` 182 单测；三份发行 ISA `validate` 全 OK；`insts isa/riscv64.toml` = `116 条指令 / 19 条模板 / 110 条 lowering`；混合字长夹具 JSON 给出 `CADD16/CMOV16 = 16 位（2 字节）`、`LNOP32/LADD32 = 32 位（4 字节）`。
   文档：`docs/reference/isa-dsl.md` 新增「工具链：`forge-isa` CLI」节 + TOC；方案 §7「S7 进度」补 S7b 已落地。
 
 ### Changed (2026-09-20)
@@ -1332,7 +1354,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   | 立即数 `min`/`max` 原样、`min−1`/`max+1` 在 `encode` 处**报错** | 静默截断/掩码（判据与编码器共享 `imm_encode_checked`） |
 
   覆盖维度 = **宽度视图**（多类槽逐宽度：x86 `gprx` 的 16/32/64 位分别走 66 前缀 / 无 REX.W / REX.W）× **高编号寄存器视图**（每组最高几个索引：REX.R/B/X、8 位寄存器的 REX 强制、EVEX 的 ZMM16-31）。断言的是**闭环不变式**，"字节对不对"仍由各 ISA 的编码参考文档与既有黄金值测试守着。
-  生成模块导出 `SPEC_TOTAL`/`SPEC_COVERED`/`SPEC_CASES`/`SPEC_SKIPPED`（名字+原因，S6 判据：空）/`SPEC_TEXT_AMBIGUOUS`（同名同形、编码不同 ⇒ 文本分不清）；外部守卫 `src/spec_coverage_guard.rs` 钉死指令总数（x86 197 / riscv64 116 / arm64 104）、零跳过与歧义名单（31/4/0）。`isa_from_file!` 新增第三参数 `spec_tests = <bool>`（缺省 true）；夹具谱（`tests/common/mod.rs`，同一份谱被多个测试二进制包含）显式关掉，由 `tests/spec_tests_v12.rs` 打开三个极端形状夹具（1 字节寄存器 / 12 位字 / 混合字长）。
+  生成模块导出 `SPEC_TOTAL`/`SPEC_COVERED`/`SPEC_CASES`/`SPEC_SKIPPED`（名字+原因，S6 判据：空）/`SPEC_TEXT_AMBIGUOUS`（同名同形、编码不同 ⇒ 文本分不清）；外部守卫 `src/spec_coverage_guard.rs` 钉死指令总数（x86 197 / riscv64 116 / arm64 104）、零跳过与歧义名单（31/4/0）。`isa_from_file!` 新增第三参数 `spec_tests = <bool>`（缺省 true）；夹具谱（`tests/common/mod.rs`，同一份谱被多个测试二进制包含）显式关掉，由 `tests/spec_tests.rs` 打开三个极端形状夹具（1 字节寄存器 / 12 位字 / 混合字长）。
   覆盖结果：**417 条指令全部覆盖、零跳过**（用例数 x86 427 / riscv64 179 / arm64 258）；`cargo test -p forge-codegen` 26 个 target、workspace 97 个 target、三架构 JIT 矩阵 195/3/0、131/67/0、23/175/0 全部不变。
 
 - **S6 当场抓到的两处真缺陷（已修）**：① riscv `SLLW/SRLW/SRAW` 的移位量共用了 6 位 `shamt` 槽而字段只有 5 位 ⇒ `sllw rd, rs1, 32..63` 被**静默编成 `n−32`**（不报错）；修法是 ISA 数据里加 `shamt_w`（5 位）槽并让三条 W 指令用它，越界现在在 `encode` 处报错。② x86 EVEX 寄存器直寻址的 `ModRM.rm` 是 `EVEX.X':B':rm[2:0]`（内存形式下 X' 才是 SIB index bit3），编码/解码两侧都只用了 4 位 ⇒ **ZMM16-31 当 rm 时静默编成 ZMM0-15**（`vaddps zmm16, zmm17, zmm18` 旧输出 `62 E1 74 40 58 C2` 实际是 `rm=zmm2`）；修法是非内存形态用 rm bit4 生成/还原 X'，黄金值更正为 `62 A1 74 40 58 C2`，并新增独立公开参照例 `vaddps zmm15, zmm24, zmm3` → `62 71 3C 40 58 FB`。
@@ -1358,7 +1380,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   ```
 
   - `fixed`：全 ISA 一个字长（= 旧 `default_inst_width` 语义），编码/解码路径与生成物**逐字节不变**；三发行 ISA 与 5 个夹具全部迁移到本段。
-  - `mixed`（**新能力**）：编码按该指令字长发字节；解码**按 `widths` 升序分组**、每组一棵位级 trie、"首个完整匹配即停"（短编码优先，RVC/Thumb 同构）。新夹具 `crates/backend/forge-codegen/tests/isa/demo_mixed16_32_v12.toml`（低 2 位判别短/长编码：`sel = 0` vs `3`）+ `tests/demo_mixed16_32_v12_tests.rs` 5 条用例（黄金字节、按宽度分组解码与消费字节数、编解码往返、`decode_partial` 截断阈值 = 最短字长、能力集）。
+  - `mixed`（**新能力**）：编码按该指令字长发字节；解码**按 `widths` 升序分组**、每组一棵位级 trie、"首个完整匹配即停"（短编码优先，RVC/Thumb 同构）。新夹具 `crates/backend/forge-codegen/tests/isa/demo_mixed16_32.toml`（低 2 位判别短/长编码：`sel = 0` vs `3`）+ `tests/demo_mixed16_32_tests.rs` 5 条用例（黄金字节、按宽度分组解码与消费字节数、编解码往返、`decode_partial` 截断阈值 = 最短字长、能力集）。
   - `prefix_scan`：x86 走原有 `vlen.rs` 变长路径，只把"最长长度"换成 `max_len`；分派从"变长/定宽二分"改为按 `is_prefix_scan()` 三态分派（`fixed`/`mixed` 共用定宽位域编解码）。
   - **校验期结构性互斥**（错误码 `DSL-ENCODING`）：`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、`mixed` 写 `max_len`、逐指令 `width` 不在 `widths` 里或与 `bits` 不一致 → 编译期报错；**省略整个 `[encoding]`** 仍是合法骨架文档（= `fixed` 且无 `bits`），生成期 `inst_bytes()` 报"bits 缺失"——省略整段不会被静默当成定宽 32，逐指令 `width` 也不能替代 `bits`。
   - 能力集（`IsaCapabilities`）由三态派生：`fixed` → `fixed_inst_size` = `min` = `max` = `bits/8`（定宽 ISA 以前报 `0` = 未知，现在是真实字长）；`mixed` → `fixed_inst_size = 0`、min/max = 最窄/最宽、`variable_length = true`；`prefix_scan` → min = 1、max = `max_len`。
@@ -1418,7 +1440,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   证据：生成代码只在重定位臂上从 `ABS8`（定义即 `Absolute(8)`）变成 `Absolute(8)`、addend 字面量 `0` → `0i64` —— **语义等价**（x86 6 行、riscv 4 行差异，其余模块逐字节相同）；三架构 JIT 矩阵不变（x86 195/3/0、riscv 131/67/0、arm64 23/175/0；x86/riscv 矩阵含 `GlobalAddr` 用例，端到端跑过重定位）；新增 7 条 reloc 用例（解析 + 生成 `Relative(4,0)`/`Absolute(ceil(槽宽/8))`、未声明名、坏槽、重名、槽不在操作数里、语义名非法）。
   文档：`docs/reference/isa-dsl.md` 新增 `[[reloc]]` 节（含两语义的 fixup 表）并更新 `reloc` 字段、`isa-dsl-errors.md` 增 `DSL-RELOC`、方案 §5.4/§7。
 
-- **ISA-DSL arm64 条件码符号化 + `b.cond` 全条件（v18 S3c）**：`isa/arm64_v12.toml` 新增 `[conventions.cond]`（A64 的 16 个条件名 `eq/ne/cs/cc/mi/pl/vs/vc/hi/ls/ge/lt/gt/le/al/nv` + `hs`/`lo` 同码别名；**不写 `ir`**——arm64 的 lowering 目前不用 `{cc}`，将来加 Icmp lowering 时 validate 会强制补全 10 个），CSEL 族的 `cond4` 槽从 `kind = "imm"`（写成 `#0`）改为 `kind = "cond"`：汇编/反汇编现在用**符号名**（`csel x0, x1, x2, eq`，反汇编渲染同码首选名 `hs`→`cs`）。
+- **ISA-DSL arm64 条件码符号化 + `b.cond` 全条件（v18 S3c）**：`isa/arm64.toml` 新增 `[conventions.cond]`（A64 的 16 个条件名 `eq/ne/cs/cc/mi/pl/vs/vc/hi/ls/ge/lt/gt/le/al/nv` + `hs`/`lo` 同码别名；**不写 `ir`**——arm64 的 lowering 目前不用 `{cc}`，将来加 Icmp lowering 时 validate 会强制补全 10 个），CSEL 族的 `cond4` 槽从 `kind = "imm"`（写成 `#0`）改为 `kind = "cond"`：汇编/反汇编现在用**符号名**（`csel x0, x1, x2, eq`，反汇编渲染同码首选名 `hs`→`cs`）。
   新增 `B.cond`：一条 `[[templates]]` 16 行——`asm = "b.{cname} {target}"`（助记符用行键插值，这是"条件在助记符里"的通用写法）+ 条件码做成固定位域 `bcond = [3:0]`（opcode `0x54` 进 `[31:24]`、imm19 在 `[23:5]`、bit4 恒 0）。**14 个 A64 合法条件**（`[3:0]=111x` 保留）逐个对照 `docs/reference/aarch64-encoding-ref.md` §4 的条件码表验证字节：`b.eq 0`=0x54000000、`b.ne 0`=0x54000001、`b.hs 0`=0x54000002、`b.gt 0`=0x5400000C、`b.le 0`=0x5400000D、`b.eq 2`=0x54000040（偏移进 imm19），外加汇编↔反汇编往返与 `b.hs`≡`b.cs`、`b.lo`≡`b.cc` 同码断言。
   顺带**删除**原先那条错的 `BCOND` 存根（`form = "CBZF"` + `fields = { cond = 0 }`：目标被放进 `rt=[4:0]`、条件恒 0 且落在 `[15:12]`、imm19 恒 0——从来不是合法 B.cond，也无人使用；`b.eq` 之前被它抢先匹配）。
   生成器侧补一个缺口：**定宽解码器**原先对非 Reg 槽一律产出 `i64`，cond 槽在 `Inst` 里是 `u8` ⇒ 补上 `OperandKind::Cond => raw as u8`（arm64 是定宽 ISA 的第一个 cond 槽用例）。
@@ -1439,9 +1461,9 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   等价证据分三层：①**模型级**（迁移脚本 `target/unify.py` 自带自检）旧展开 vs 新展开逐指令比较 form/opcode/fields/ops/asm/roles/when/编码键 + **引用名 → 成员有序列表**，三 ISA 全等；②**生成代码级** arm64 与 5 个夹具**逐字节相同**，riscv/x86 每个函数的 token 多重集完全相同（差异只是 `Inst` 枚举/编码臂/解码 trie 的顺序——旧顺序是"手写指令 → 模板 → 族"，新顺序是"手写指令 → 按文件序的模板"，见方案 §12.8）；③**行为级** 黄金测试（arm64 12+6、riscv 12+4、x86 61 例）与三架构 JIT 矩阵（23/175/0、131/67/0、195/3/0）全不变、语料三支通过。顺带补回一条被族校验覆盖过的通用校验：**指令必须有编码来源**（`opcode`/`fields`/`opcode_reg`/`modrm`/`vex`/`evex`/`imm` 至少一个），现在对所有指令生效。
   证据与文档：`src/v12/model.rs`（`Template{name, body, rows}` + `TemplateRow{inst, fields}` + `deep_merge`/`subst`/`referenced_keys`）、`src/v12/template_tests.rs`（24 例）、`src/v12/diag_matrix_tests.rs`（30 例矩阵改成模板/`ref` 用例）、`docs/reference/isa-dsl.md` 的 `[[templates]]` 节重写为**唯一机制**（含旧→新对照表与实测收益）、`docs/reference/isa-dsl-errors.md`（`DSL-FAMILY`/`DSL-ALIAS` 删除，新增 `DSL-TEMPLATE` 与模板错误表）、方案 §5.2/§6/§7/§12.7/§12.8。
 
-- **ISA-DSL 参数化模板 `[[templates]]`（v18 S2a，**首版机制形态**：`params` 平行数组**，已被同日 S2c 改为 `body` + `rows`；本条目保留首版迁移的实测数字）**：一处声明 → N 条指令，自动派生别名。动机是实测出来的重复：`isa/arm64_v12.toml` 有 **38 对**指令只差 sf 位/寄存器槽/opcode（76/89 = 85%）、`isa/riscv64_v12.toml` 有 **16 对** S/D（41%），而旧 `[[families]]` 的变体**无法覆盖 `ops`/`form`/enc 键**，只能整条复制；与之配套的 `[[aliases]]` 还是手写清单（x86 25 条 / arm64 29 条，且已见漂移：`vaddps` 漏了 `VADDPS_ZMM_MASKZ`）。
+- **ISA-DSL 参数化模板 `[[templates]]`（v18 S2a，**首版机制形态**：`params` 平行数组**，已被同日 S2c 改为 `body` + `rows`；本条目保留首版迁移的实测数字）**：一处声明 → N 条指令，自动派生别名。动机是实测出来的重复：`isa/arm64.toml` 有 **38 对**指令只差 sf 位/寄存器槽/opcode（76/89 = 85%）、`isa/riscv64.toml` 有 **16 对** S/D（41%），而旧 `[[families]]` 的变体**无法覆盖 `ops`/`form`/enc 键**，只能整条复制；与之配套的 `[[aliases]]` 还是手写清单（x86 25 条 / arm64 29 条，且已见漂移：`vaddps` 漏了 `VADDPS_ZMM_MASKZ`）。
   新机制：`params` 等长列表按下标 zip（与 `[[lowering]].vary` 同语义）；字符串字段里 `{参数}` 做文本替换、**整串就是 `{参数}`** 时保留参数类型（`opcode = "{opcode}"` 仍是整数）；`name`/`names` 给实例名；`ref` 自动派生别名（单值 = 多态共用，含 `{参数}` = 逐实例）；`[[templates.overrides]]` 逐行打补丁（表递归合并）。展开在**解析期**完成 ⇒ 下游（校验/代码生成）只看到普通指令与别名，`codegen` 一行未改；展开出的实例若非法，诊断前缀改回 `[[templates.X]]`，位置落在模板声明行。
-  **arm64 首例迁移**：`isa/arm64_v12.toml` **1,125 → 731 行（−35%）**，32 条模板取代 64 个手写指令块、**29 条手写 `[[aliases]]` 全删**；黄金测试（`arm64_v12_tests` 12 例 + `arm64_v12_tm_tests` 6 例）通过、arm64 JIT 矩阵 **23 passed / 175 skipped / 0 failed** 不变、生成代码里的 `Inst::` 名字集合 **90 个前后 diff 为空**、arm64 生成代码 644,018 → 636,986 B。
+  **arm64 首例迁移**：`isa/arm64.toml` **1,125 → 731 行（−35%）**，32 条模板取代 64 个手写指令块、**29 条手写 `[[aliases]]` 全删**；黄金测试（`arm64_tests` 12 例 + `arm64_tm_tests` 6 例）通过、arm64 JIT 矩阵 **23 passed / 175 skipped / 0 failed** 不变、生成代码里的 `Inst::` 名字集合 **90 个前后 diff 为空**、arm64 生成代码 644,018 → 636,986 B。
   证据与文档：`src/v12/template_tests.rs`（10 例：展开/类型保留/逐实例 ref/补丁合并/五类失败路径/lowering 引用实例名）、`v12/model.rs::Template` 文档、`docs/reference/isa-dsl.md` 新增 `[[templates]]` 节、`docs/reference/isa-dsl-errors.md` 增模板错误表、方案 §7/§12.7 记录实测、通用性守卫扩展为也识别模板实例名（arm64 迁移后 `ADDIMMX` 不再是 `[[instructions]]` 字面量）。
 
 - **ISA-DSL S2 续：riscv 与 x86 定向迁移（三 ISA 全覆盖；**数字为 S2a 形态**）**。riscv `1,754 → 1,606 行（−8.4%）`：15 条模板取代 30 个 `_S`/`_W` ↔ `_D` 指令块（`funct7`/`funct3` 逐行给、助记符后缀 `.{pl}` 插值）——顺带证明 **`[[families]]` 表达不了这类对**（族模板 `{name}` 只能派生"变体名小写"，得不到 `fadd.s` 这种带点助记符，这正是它此前只能手写两份的原因）。x86 `3,356 → 3,324 行（−1%）`：`movzx`/`movsx` 的 R8/R16 四条合成 1 条模板（`ref = "{mn}"` 顺带取代 2 条手写 `[[aliases]]`），四条指令的**生成编码臂文本 SHA-256 逐字节相同**。
@@ -1869,7 +1891,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   现在 `[meta].default_inst_width` 可写**任意 ≥ 1 位**，生成代码把指令字表示为**字节数组**（`[u8; ceil(位/8)]`，LE 位序）+ `__place`/`__bits` 助手：位域可跨字节、非字节对齐、落在机器字之外（100 位字夹具的 op 在 bit 92..100）。
   同步去限制的还有：位域的**字侧偏移无上限**（只保留"单个位域 ≤ 64 位"这一**值表示**上限——位域值承载在 u64 常量键与 i64 操作数上，越界明确报错）、定宽 label/global fixup 宽度由字长派生、`RelocKind::{Absolute,Relative}` 宽度 `u8 → u32` 且通用写入路径按宽度**符号/零扩展**补位（不再只认 1/4/8，也不再对其它宽度静默不补或 panic）。
   过程中修掉一个被新夹具暴露的生成器缺陷：**只有寄存器操作数的 ISA**（无 imm/label）生成出引用未定义 helper（`__expr`/`__set_label_operand`）的模块——两者现在无条件生成（未用入口加 `#[allow(dead_code)]`）。
-  新夹具：`tests/isa/demo_inst8_v12.toml`（8 位字 + 字内 label 域，注册 2 位域 `RelocPatcher`）、`demo_inst12_v12.toml`（12 位字，非 8 倍数 + 填充位必须为 0）、`demo_inst100_v12.toml`（100 位字 = 13 字节，位域在 bit 92..100）；用例在 `tests/demo_inst{8,12,100}_v12_tests.rs`。
+  新夹具：`tests/isa/demo_inst8.toml`（8 位字 + 字内 label 域，注册 2 位域 `RelocPatcher`）、`demo_inst12.toml`（12 位字，非 8 倍数 + 填充位必须为 0）、`demo_inst100.toml`（100 位字 = 13 字节，位域在 bit 92..100）；用例在 `tests/demo_inst{8,12,100}_v12_tests.rs`。
   验证（2026-09-13 本机）：workspace **1355 passed / 0 failed**（63 suites）、x86 jit 矩阵 **195/3/0**、riscv64（QEMU 真执行）**131/67/0**、fmt/clippy `-D warnings` 干净。
   32 位定宽 ISA（riscv64/arm64/demo）的生成物**代码形态**因此改变（不再用 `u32::from_le_bytes`/`u64 __w`），行为由上述测试与 riscv QEMU 真执行守住；x86（变长路径）生成物逐字节不变。
 
@@ -1888,7 +1910,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   显式拒绝（`i64 = "unsupported"`）都成为 TOML 数据（新增 `TargetRegInfo::type_map()` / 生成的 `__TYPE_MAP` /
   `LowerCtx.type_map`，`class_for_type` 与 `reg_class_for` 读同一份数据）。
   校验：类型名白名单、目标必须已声明、类宽 ≥ 类型字节宽（`ptr` 按 `[meta].addr_width`，否则报"会静默截断"）、`void` 只能 unsupported。
-  夹具演示：`tests/isa/demo8_v12.toml`（`ptr = "gpr1"`）、`tests/isa/demo_v12.toml`（`f32/f64 = "gpr8"` 软浮点）；
+  夹具演示：`tests/isa/demo8.toml`（`ptr = "gpr1"`）、`tests/isa/demo.toml`（`f32/f64 = "gpr8"` 软浮点）；
   新增 4 个 DSL 单测 + 3 个宿主/夹具断言。实测：workspace 1340 passed / 0 failed，x86 矩阵 195/3/0，riscv64 矩阵 131/67/0。
 
 - **分配器类表改为 ISA 声明（接口通用化 B1，关闭审计遗留 R1）**：
@@ -1902,10 +1924,10 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   **过程中 riscv64 QEMU 矩阵抓到真实回归**（首版未登记"有效浮点值池类"→ riscv 的 7 个 fcmp 错值），已修；
   修后 x86 195/3/0、riscv64 131/67/0。
 
-- **demo/示例 ISA 迁出库本体，`isa_from_file!` 支持宿主 crate 路径**：ISA-DSL 的示例谱（`demo_v12`、`demo8_v12`）此前是 `forge-codegen` 的 `src/arch/` 模块 + 仓库根 `isa/` 谱，与 x86_64/arm64/riscv64 这些**真实后端**并列，容易误读为"发行 ISA"。现在：
+- **demo/示例 ISA 迁出库本体，`isa_from_file!` 支持宿主 crate 路径**：ISA-DSL 的示例谱（`demo`、`demo8`）此前是 `forge-codegen` 的 `src/arch/` 模块 + 仓库根 `isa/` 谱，与 x86_64/arm64/riscv64 这些**真实后端**并列，容易误读为"发行 ISA"。现在：
   - `isa_from_file!` 新增可选第二参数 `krate = <路径>`：生成物里的 `crate::…` 改写为 `<路径>::…`、`forge_ir::…` 改写为 `<路径>::ir::…`（新增 `forge_codegen::ir` re-export），因此生成代码只依赖宿主的公开面；**缺省参数生成物逐字节不变**（已用 5 个 ISA 的 `FGE_DEBUG_GEN` dump 逐字节比对）。
   - `isa_from_file!` 参数解析与路径改写有单测（`crate` 改写只作用于路径位置，`pub(crate)` 可见性标记与字符串字面量不受影响）。
-  - 夹具谱移到 `crates/backend/forge-codegen/tests/isa/{demo_v12,demo8_v12}.toml`（附 `README.md`），由 `tests/common/mod.rs` 用 `krate = forge_codegen` 宿住；删除 `src/arch/demo_v12.rs`、`src/arch/demo8_v12.rs` 与 `src/lib.rs` 的 re-export；6 个测试文件改经 `common::demo*`。
+  - 夹具谱移到 `crates/backend/forge-codegen/tests/isa/{demo,demo8}.toml`（附 `README.md`），由 `tests/common/mod.rs` 用 `krate = forge_codegen` 宿住；删除 `src/arch/demo.rs`、`src/arch/demo8.rs` 与 `src/lib.rs` 的 re-export；6 个测试文件改经 `common::demo*`。
   - 新增库表面守卫 `tests/library_surface.rs`：`src/**` 不得引用 demo 谱、`src/arch/mod.rs` 只登记真实后端、仓库根 `isa/` 只剩 3 个发行谱、夹具谱必须在 `tests/isa/`。
   - 生成代码运行面所需的公开项补登：`pub use forge_ir::IrError`（此前是私有 `use`，是"生成物只能活在库内部"的最后一处硬依赖）、`pub use forge_ir as ir`；`impl_erased_target_machine!` 宏体改 `$crate::ir::…`（不再要求调用方有裸 `forge_ir` 在作用域）。
   - 文档：`CLAUDE.md`（Key Architecture Rules 第 1 条、ISA Backend Pattern、Code Conventions、Testing Notes）与 `docs/reference/isa-dsl.md`（快速开始、新增「生成代码依赖的运行面」、`已有 ISA 谱` 拆成发行后端/测试夹具）同步。
@@ -1918,7 +1940,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
   - 生成期去写死：主 GPR/FPR 组派生、`name_to_idx` 空表兜底删除、sp/fp 不再回退 `from_index(0, GPR64)`、`frame_pointer_overhead()` 由常量 8 改元数据、组别名兜底 `"RAX"` 删除、MemRef base/index 用地址类、spill 基址不再回退字面量 `"RBP"`、FPR spill 宽度档改为**已声明模板键**派生、by-value 向量阈值用 `[abi.arg_class].limit`、栈槽对齐/槽深/by-ref 向量槽用 `__SLOT_BYTES`。
   - 宿主去写死：`LowerCtx` 新增 `value_gpr_class`/`value_fpr_class`/`addr_class`/`slot_bytes`/`vector_tiers`（`CompileState::new` 注入）、值 XReg/零值/临时 vreg/phi-copy 类、spill scratch 类、类表 fallback 清单、`reg_class_for` 向量档位全部元数据化。
   - **fail-closed**：`sp`/`fp`/`scratch`/`reserved`/`callee_saved`/`ret_regs`/`call_ret_reg`/`call_clobbers`/`arg_class.regs`/`implicit_regs`/`[spill.*].base` 名字必须解析到已声明组（生成期报错）；`[abi].stack_align`/`stack_arg_shadow` 的"8 的倍数"校验改为按栈槽单位（这两个键 2026-09-13 归入 `[stack].align` 与 `[abi.stack_args].shadow_bytes`）；函数内值类型必须被 `class_for_type` 承载，否则**编译期** `Unsupported`（点名类型与值池宽度）。
-  - 新夹具 **`isa/demo8_v12.toml`**（1 字节寄存器 ISA：唯一 `[reg.gpr1]` 组，`addr_width`/`slot_bytes`/`value_gpr_width`/`fp_overhead_bytes` = 1，`default_opsize = 8`）+ `crates/backend/forge-codegen/tests/demo8_v12_tests.rs`：断言元数据派生（`GPR(1)`、1 字节槽、sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、汇编→编码→解码→反汇编往返、宿主编译 i8 函数（20 字节机器码反汇编回 `mov A3, A0`/`add A1, A3, A2`/`ret`）与 i64 的编译期拒绝。
+  - 新夹具 **`isa/demo8.toml`**（1 字节寄存器 ISA：唯一 `[reg.gpr1]` 组，`addr_width`/`slot_bytes`/`value_gpr_width`/`fp_overhead_bytes` = 1，`default_opsize = 8`）+ `crates/backend/forge-codegen/tests/demo8_tests.rs`：断言元数据派生（`GPR(1)`、1 字节槽、sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、汇编→编码→解码→反汇编往返、宿主编译 i8 函数（20 字节机器码反汇编回 `mov A3, A0`/`add A1, A3, A2`/`ret`）与 i64 的编译期拒绝。
   - 反回潮守卫：`crates/frontend/forge-dsl/tests/no_hardcoded_widths.rs` 与 `crates/backend/forge-codegen/tests/no_hardcoded_widths.rs`（白名单带理由且条目必须被命中）。
   - 行为不变证据：`cargo test -p forge-dsl --lib` 112 passed；`cargo test -p forge-codegen --all-features` 266 passed / 0 failed；x86 jit matrix `pass=195 skip=3 fail=0`（`FORGE_JIT_EVENTS` 事件核对）。规范见 `docs/reference/isa-dsl.md` 的「宽度元数据」节。
   - **独立审计后的加固（同日）**：
@@ -1931,7 +1953,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
     ⑥demo8 测试补 `F32/F64/V64/V128/V256 → None` 断言、机器码反汇编的寄存器名/收参/返回回写断言，错误信息断言收紧到本门文案；
     ⑦两个反回潮守卫的 `FORBIDDEN` 扩到全部类字面量变体，并在文档里写明"裸数字宽度不在守卫范围"这一已知边界。
 
-- **V256/V512 向量 IR 层 Load/Store（ISA 规则 + 编译入口能力门）**：`isa/x86_v12.toml` 的 `Load`/`Store` 规则原先只覆盖
+- **V256/V512 向量 IR 层 Load/Store（ISA 规则 + 编译入口能力门）**：`isa/x86.toml` 的 `Load`/`Store` 规则原先只覆盖
   `rd_vec`/`rs1_vec` = 8/16（V64/V128），>16B 由编译入口 **fail-closed 拒绝**（"ISA 类模型缺 YMM 槽类"）。现有：
   - 规则补齐 32/64 两档 → `VMOVUPS_256_R_MEM`/`VMOVUPS_256_MEM_R`（VEX.256，`vex_l=1`）、`VMOVUPS_512_R_MEM`/`VMOVUPS_512_MEM_R`（EVEX.512，`evex_l=2`）；
   - 编译入口的字节门改为：32B（V256）放行（与既有 V256 算术路径一致）、**>32B（V512/EVEX）需 AVX-512F**（与宽向量 ABI 守卫同一判据）、
@@ -1973,7 +1995,7 @@ V2 把 `va_start` 定义成"取未命名实参区的地址"——那只对 **win
     `PSHUFD …, 15`（objdump 实证 `vextractf32x4 xmm14, zmm15, 0x3` + `pshufd xmm14, xmm14, 0xff`）；
     workspace tests 0 failed；e2e 8/8 + `stage_a passed=105/105 known=[]`；clippy `-D warnings`/fmt 干净。
 
-- **向量溢出（spill）宽度静默截断（WA-46）**：`isa/x86_v12.toml` 的
+- **向量溢出（spill）宽度静默截断（WA-46）**：`isa/x86.toml` 的
   `[spill.FPR]` 只有一份 **8 字节 `MOVSD`** 模板，而生成的 `emit_spill_load/store` **忽略 `width` 参数**；
   同时 `reg_class_for` 把 **64 字节向量也归入 `VEC(32)`**（该类的 `reg_width = 32`）⇒ 任何 FPR 类溢出只搬低
   8 字节、V512 的 spill 槽只有 32 字节，**未被搬运的高半区是栈残留**。

@@ -630,7 +630,7 @@ mod tests {
     #[test]
     fn module_cross_function_call() {
         // 两函数模块：callee(a,b)=a+b；main()=callee(20,22)=42
-        // 用 riscv64_v12::TargetMachine 编译（FunctionCompiler::compile_raw）。
+        // 用 riscv64::TargetMachine 编译（FunctionCompiler::compile_raw）。
         // 注意：当前 riscv 的 Call lowering 尚未接线（阶段 3）——此测试验证
         // exec_riscv64_module 的**打包 + reloc patch** 机制：手工构造两个
         // 无跨函数 reloc 的函数（顺序执行），main 返回常量 42。
@@ -644,7 +644,7 @@ mod tests {
             let c = b.iconst_i64(v);
             b.ret(&[c]);
             let func = b.finish().expect("build");
-            let cf = FunctionCompiler::new(code_forge::backend::riscv64_v12::TargetMachine::new())
+            let cf = FunctionCompiler::new(code_forge::backend::riscv64::TargetMachine::new())
                 .compile_raw(&func)
                 .expect("compile");
             (name.to_string(), cf)
@@ -672,7 +672,7 @@ mod tests {
         let c = b.iconst_i64(1);
         b.ret(&[c]);
         let func = b.finish().expect("build");
-        let cf = FunctionCompiler::new(code_forge::backend::riscv64_v12::TargetMachine::new())
+        let cf = FunctionCompiler::new(code_forge::backend::riscv64::TargetMachine::new())
             .compile_raw(&func)
             .expect("compile");
         let funcs = vec![("only".to_string(), cf)];
@@ -714,7 +714,7 @@ mod tests {
                 let fr = FuncRef::new(i as u32);
                 let func = module.get_function(fr);
                 let cf = FunctionCompiler::for_module(
-                    code_forge::backend::riscv64_v12::TargetMachine::new(),
+                    code_forge::backend::riscv64::TargetMachine::new(),
                     &module,
                 )
                 .compile_raw(func)

@@ -2,7 +2,7 @@
 
 > 状态：[active]（2026-09-19 起；2026-09-20 补 `DSL-ENCODING` 与 §3.7 `[encoding]` 三态；
 > 2026-09-21 补 §3.8 多文件组合与 `parts`）。对应实现：
-> `crates/frontend/forge-isa-dsl/src/v12/diag.rs`（诊断收集与定位）、`validate.rs`（各节校验）、
+> `crates/frontend/forge-isa-dsl/src/dsl/diag.rs`（诊断收集与定位）、`validate.rs`（各节校验）、
 > `model.rs`（模型级派生与 gate）、`src/loader.rs`（多文件组合的加载期错误）。
 > 语法规范见 [`docs/reference/isa-dsl.md`](isa-dsl.md)，教程见
 > [`docs/guides/isa-dsl-tutorial.md`](../guides/isa-dsl-tutorial.md)；
@@ -13,8 +13,8 @@
 一条诊断 = `路径:行:列: 错误码: 消息`，**一行一条**，可直接点击跳到 ISA TOML 的出错处：
 
 ```text
-<repo>/isa/x86_v12.toml:1832:1: DSL-INST: [[instructions.SUB_RM_R]]: form 'MRR_TYPO' is not declared in [[forms]]
-<repo>/isa/x86_v12.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性 'rd_width'（可用：rd/rs1_width/…）——未知属性恒为假，规则永不命中
+<repo>/isa/x86.toml:1832:1: DSL-INST: [[instructions.SUB_RM_R]]: form 'MRR_TYPO' is not declared in [[forms]]
+<repo>/isa/x86.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性 'rd_width'（可用：rd/rs1_width/…）——未知属性恒为假，规则永不命中
 ```
 
 （上例是**示意**（把某条指令的 form 名写错、把谓词属性名写错后实测的输出形状）：路径与行号随

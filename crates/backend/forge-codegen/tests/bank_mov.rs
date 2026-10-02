@@ -13,7 +13,7 @@
 //! ② 与"正常分类"（浮点进 FPR 池）走的仍是同类搬移（`fsgnj.d`）——两路互不串味。
 
 use forge_codegen::FunctionCompiler;
-use forge_codegen::arch::riscv64_v12::TargetMachine;
+use forge_codegen::arch::riscv64::TargetMachine;
 use forge_codegen::pipeline::conv_registry;
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
@@ -37,7 +37,7 @@ classify = [
 
 /// 绑定：与内置 lp64d 同一组池，只是挂在约定名 `zfinx_like` 上。
 const ZFINX_BINDING: &str = r#"
-isa = "riscv64_v12"
+isa = "riscv64"
 conv = "zfinx_like"
 [pools]
 int = ["X10", "X11", "X12", "X13", "X14", "X15", "X16", "X17"]

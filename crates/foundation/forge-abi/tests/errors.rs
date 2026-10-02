@@ -4,7 +4,7 @@
 //! 未注册的约定不静默退回缺省、写错的键不静默忽略、缺寄存器不猜名字、
 //! ISA 没有的能力不降级成"差不多能用"。
 //!
-//! 合成规矩：约定/绑定的 `isa` 一律写 `x86_64_v12`，目标用 `common::x86_64_v12()`
+//! 合成规矩：约定/绑定的 `isa` 一律写 `x86_64`，目标用 `common::x86_64()`
 //! （寄存器名 `RAX/RCX/RDX/RBX` 都能解析），这样测的就是**被测的那条错误路径**，
 //! 不会被"ISA 名不符"抢先拦掉。
 
@@ -16,7 +16,7 @@ use forge_abi::{AbiBinding, AbiError, AbiRegistry, AbiRules, Placement, Signatur
 #[test]
 fn unregistered_convention_is_an_error_not_a_default() {
     let reg = AbiRegistry::with_builtin_rules().unwrap();
-    let t = x86_64_v12();
+    let t = x86_64();
     let err = reg
         .plan(&t, "stdcall", &Signature::new(vec![], None))
         .unwrap_err();
@@ -31,12 +31,12 @@ fn unregistered_convention_is_an_error_not_a_default() {
 #[test]
 fn missing_binding_names_the_isa_and_convention() {
     let reg = AbiRegistry::with_builtin_rules().unwrap();
-    let t = arm64_v12();
+    let t = arm64();
     let err = reg
         .plan(&t, "win64", &Signature::new(vec![], None))
         .unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("arm64_v12") && msg.contains("win64"), "{msg}");
+    assert!(msg.contains("arm64") && msg.contains("win64"), "{msg}");
     assert!(msg.contains("绑定"), "{msg}");
 }
 
@@ -45,7 +45,7 @@ fn unknown_register_name_fails_with_pool_and_position() {
     let mut reg = AbiRegistry::with_builtin_rules().unwrap();
     reg.insert_binding_toml(
         r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "win64"
 [pools]
 int = ["RCX", "NOT_A_REG"]
@@ -57,7 +57,7 @@ cs_gpr = ["RBX"]
     .unwrap();
     // 第一个参数用 RCX 成功，第二个撞上坏名字 → 报错要带池名与那个选择子。
     let sig = Signature::new(vec![("a".into(), i64_()), ("b".into(), i64_())], None);
-    let err = reg.plan(&x86_64_v12(), "win64", &sig).unwrap_err();
+    let err = reg.plan(&x86_64(), "win64", &sig).unwrap_err();
     assert!(matches!(err, AbiError::UnresolvedReg { .. }), "{err:?}");
     let msg = err.to_string();
     assert!(msg.contains("NOT_A_REG"), "{msg}");
@@ -70,7 +70,7 @@ fn empty_pool_is_rejected_at_registration() {
     let e = reg
         .insert_binding_toml(
             r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "win64"
 [pools]
 int = []
@@ -87,12 +87,12 @@ fn missing_pool_is_explicit_not_silent() {
     // 自己提供一份缺池的——测的是"缺池的报法"，不是"arm64 有没有池"。）
     let mut reg = forge_abi::builtin::registry().unwrap();
     reg.insert_binding_toml(
-        "isa = \"arm64_v12\"\nconv = \"aapcs64\"\n[pools]\nint = [\"X0\", \"X1\"]\nret_int = [\"X0\"]\n",
+        "isa = \"arm64\"\nconv = \"aapcs64\"\n[pools]\nint = [\"X0\", \"X1\"]\nret_int = [\"X0\"]\n",
     )
     .unwrap();
     let err = reg
         .plan(
-            &arm64_v12_with_fpr(),
+            &arm64_with_fpr(),
             "aapcs64",
             &Signature::new(vec![("x".into(), f64_())], None),
         )
@@ -100,7 +100,7 @@ fn missing_pool_is_explicit_not_silent() {
     assert!(matches!(err, AbiError::MissingPool { .. }), "{err:?}");
     let msg = err.to_string();
     assert!(msg.contains("float"), "{msg}");
-    assert!(msg.contains("arm64_v12"), "{msg}");
+    assert!(msg.contains("arm64"), "{msg}");
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn binding_convention_must_match_the_rules() {
     let rules = reg.rules("win64").unwrap().clone();
     let binding = AbiBinding::from_toml(
         r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "sysv64"
 [pools]
 int = ["RDI"]
@@ -196,7 +196,7 @@ int = ["RDI"]
     )
     .unwrap();
     let err = plan_fn(
-        &x86_64_v12(),
+        &x86_64(),
         &rules,
         &binding,
         &Signature::new(vec![], None),
@@ -220,7 +220,7 @@ ret_classify = [ { when = { kind = "aggregate" }, do = { indirect = { via = "hid
     .unwrap();
     reg.insert_binding_toml(
         r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "nosret"
 [pools]
 int = ["RAX"]
@@ -228,11 +228,7 @@ int = ["RAX"]
     )
     .unwrap();
     let err = reg
-        .plan(
-            &x86_64_v12(),
-            "nosret",
-            &Signature::new(vec![], Some(agg_ii())),
-        )
+        .plan(&x86_64(), "nosret", &Signature::new(vec![], Some(agg_ii())))
         .unwrap_err();
     assert!(matches!(err, AbiError::Unsupported { .. }), "{err:?}");
     let msg = err.to_string();
@@ -252,7 +248,7 @@ classify = [ { when = { kind = "scalar" }, do = { direct = { pool = "int" } } } 
     .unwrap();
     reg.insert_binding_toml(
         r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "nova"
 [pools]
 int = ["RAX", "RCX"]
@@ -260,7 +256,7 @@ int = ["RAX", "RCX"]
     )
     .unwrap();
     let sig = Signature::new(vec![("a".into(), i64_())], None).variadic(1);
-    let err = reg.plan(&x86_64_v12(), "nova", &sig).unwrap_err();
+    let err = reg.plan(&x86_64(), "nova", &sig).unwrap_err();
     assert!(matches!(err, AbiError::Unsupported { .. }), "{err:?}");
     assert!(err.to_string().contains("va_list"), "{err}");
 }
@@ -344,7 +340,7 @@ ret_classify = [ { when = { kind = "aggregate", size_le = 16 }, do = { direct = 
     .unwrap();
     reg.insert_binding_toml(
         r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "thin"
 [pools]
 int = ["RAX", "RCX"]
@@ -353,11 +349,7 @@ ret_int = ["RAX"]
     )
     .unwrap();
     let err = reg
-        .plan(
-            &x86_64_v12(),
-            "thin",
-            &Signature::new(vec![], Some(agg_ii())),
-        )
+        .plan(&x86_64(), "thin", &Signature::new(vec![], Some(agg_ii())))
         .unwrap_err();
     assert!(matches!(err, AbiError::Unsupported { .. }), "{err:?}");
     assert!(err.to_string().contains("2 个寄存器槽"), "{err}");
@@ -377,7 +369,7 @@ ret_classify = [ { when = { kind = "aggregate" }, do = { direct = { pool = "ret_
     .unwrap();
     reg.insert_binding_toml(
         r#"
-isa = "x86_64_v12"
+isa = "x86_64"
 conv = "wide"
 [pools]
 int = ["RAX"]
@@ -386,7 +378,7 @@ ret_int = ["RAX", "RCX", "RDX", "RBX"]
     )
     .unwrap();
     let err = reg
-        .plan(&x86_64_v12(), "wide", &Signature::new(vec![], Some(hfa4())))
+        .plan(&x86_64(), "wide", &Signature::new(vec![], Some(hfa4())))
         .unwrap_err();
     assert!(matches!(err, AbiError::Unsupported { .. }), "{err:?}");
     // 报错要给出**下一步**：单个聚合要 ≥3 槽得按成员拆（暂无按值聚合的产出者），
@@ -407,10 +399,10 @@ fn builtin_catalog_is_self_consistent() {
     }
     let pairs = reg.binding_names();
     for want in [
-        ("x86_64_v12".to_string(), "win64".to_string()),
-        ("x86_64_v12".to_string(), "sysv64".to_string()),
-        ("arm64_v12".to_string(), "aapcs64".to_string()),
-        ("riscv64_v12".to_string(), "lp64d".to_string()),
+        ("x86_64".to_string(), "win64".to_string()),
+        ("x86_64".to_string(), "sysv64".to_string()),
+        ("arm64".to_string(), "aapcs64".to_string()),
+        ("riscv64".to_string(), "lp64d".to_string()),
     ] {
         assert!(pairs.contains(&want), "缺内置绑定 {want:?}：{pairs:?}");
     }
@@ -435,9 +427,9 @@ fn builtin_catalog_is_self_consistent() {
         .collect();
     assert_eq!(aliased, ["aapcs64", "lp64d", "win64"], "声称 C 别名的约定");
     for (isa, want) in [
-        ("x86_64_v12", "win64"),
-        ("arm64_v12", "aapcs64"),
-        ("riscv64_v12", "lp64d"),
+        ("x86_64", "win64"),
+        ("arm64", "aapcs64"),
+        ("riscv64", "lp64d"),
     ] {
         assert_eq!(
             reg.resolve_conv(isa, "c").unwrap(),
@@ -471,8 +463,8 @@ fn the_c_convention_resolves_to_the_whole_platform_convention() {
         Some(i64_()),
     );
 
-    let p = reg.plan(&x86_64_v12(), "c", &sig).unwrap();
-    assert_eq!(p.conv, "win64", "x86_64_v12 的 C 就是整套 Win64");
+    let p = reg.plan(&x86_64(), "c", &sig).unwrap();
+    assert_eq!(p.conv, "win64", "x86_64 的 C 就是整套 Win64");
     assert_eq!(reg_name(&p.args[0].place), "RCX");
     assert_eq!(
         reg_name(&p.args[1].place),
@@ -480,18 +472,18 @@ fn the_c_convention_resolves_to_the_whole_platform_convention() {
         "by_position（Win64 规则）而不是 by_class 的 XMM0"
     );
     // 精确名不受别名影响：同一台机器上 `sysv64` 仍按类计数。
-    let p = reg.plan(&x86_64_v12(), "sysv64", &sig).unwrap();
+    let p = reg.plan(&x86_64(), "sysv64", &sig).unwrap();
     assert_eq!(reg_name(&p.args[1].place), "XMM0");
 
     // 另外两台机器：整数签名足以区分（v20 A5 起 arm64 也有 FPR 组与 `cs_fpr` 池，
     // 所以这里用带上 FPR 的合成目标——与 `target_for` 同一口径）。
     let int_sig = Signature::new(vec![("a".into(), i64_())], Some(i64_()));
-    let p = reg.plan(&riscv64_v12(), "c", &int_sig).unwrap();
+    let p = reg.plan(&riscv64(), "c", &int_sig).unwrap();
     assert_eq!(
         (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
         ("lp64d", "X10")
     );
-    let p = reg.plan(&arm64_v12_with_fpr(), "c", &int_sig).unwrap();
+    let p = reg.plan(&arm64_with_fpr(), "c", &int_sig).unwrap();
     assert_eq!(
         (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
         ("aapcs64", "X0")
@@ -504,10 +496,10 @@ fn two_conventions_claiming_one_alias_on_a_machine_are_rejected() {
     let mut reg = forge_abi::builtin::registry().unwrap();
     reg.insert_rules_toml("name = \"my_c\"\nparent = \"c\"\naliases = [\"c\"]\n")
         .unwrap();
-    reg.insert_binding_toml("isa = \"x86_64_v12\"\nconv = \"my_c\"\n[pools]\nint = [\"RCX\"]\n")
+    reg.insert_binding_toml("isa = \"x86_64\"\nconv = \"my_c\"\n[pools]\nint = [\"RCX\"]\n")
         .unwrap();
     let err = reg
-        .plan(&x86_64_v12(), "c", &Signature::new(vec![], None))
+        .plan(&x86_64(), "c", &Signature::new(vec![], None))
         .unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("win64") && msg.contains("my_c"), "{msg}");
@@ -523,16 +515,16 @@ fn an_explicit_registration_wins_over_the_alias() {
         "name = \"c\"\nclassify = [ { when = { kind = \"scalar\" }, do = { direct = { pool = \"int\" } } } ]\n",
     )
     .unwrap();
-    reg.insert_binding_toml("isa = \"x86_64_v12\"\nconv = \"c\"\n[pools]\nint = [\"RDX\"]\n")
+    reg.insert_binding_toml("isa = \"x86_64\"\nconv = \"c\"\n[pools]\nint = [\"RDX\"]\n")
         .unwrap();
     let sig = Signature::new(vec![("a".into(), i64_())], Some(i64_()));
-    let p = reg.plan(&x86_64_v12(), "c", &sig).unwrap();
+    let p = reg.plan(&x86_64(), "c", &sig).unwrap();
     assert_eq!(
         (p.conv.as_str(), reg_name(&p.args[0].place).as_str()),
         ("c", "RDX")
     );
     // 别名来源那份（win64）本身没被动过。
-    let p = reg.plan(&x86_64_v12(), "win64", &sig).unwrap();
+    let p = reg.plan(&x86_64(), "win64", &sig).unwrap();
     assert_eq!(reg_name(&p.args[0].place), "RCX");
 }
 

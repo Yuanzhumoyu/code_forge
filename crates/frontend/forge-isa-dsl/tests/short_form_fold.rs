@@ -12,9 +12,9 @@
 use forge_isa_dsl::{ExpandOptions, Parts, expand_file};
 
 const SPECS: [(&str, &str); 3] = [
-    ("x86_v12", "isa/x86_v12.toml"),
-    ("riscv64_v12", "isa/riscv64_v12.toml"),
-    ("arm64_v12", "isa/arm64_v12.toml"),
+    ("x86", "isa/x86.toml"),
+    ("riscv64", "isa/riscv64.toml"),
+    ("arm64", "isa/arm64.toml"),
 ];
 
 fn text_of(path: &str, _krate: Option<&str>) -> String {
@@ -74,7 +74,7 @@ fn short_forms_are_rewritten_to_runtime_root() {
     // 跨 crate 生成（tests/ 夹具的形态）：短名定义里的 `forge_ir::` 也必须改写成
     // `forge_isa_runtime::ir::`，否则生成物里根本没有 `forge_ir` 这个名字。
     // 注意文档注释里的 `forge_ir::RegClass` 是字符串（不带 token 空格），不算。
-    let path = "crates/backend/forge-codegen/tests/isa/demo_v12.toml";
+    let path = "crates/backend/forge-codegen/tests/isa/demo.toml";
     let text = text_of(path, Some("forge_codegen"));
     assert_eq!(
         text.matches("forge_ir :: ").count(),

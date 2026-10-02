@@ -4,7 +4,7 @@
 //! 会漂移。这条守卫把三方钉在一起：
 //!
 //! 1. **模型 ↔ schema**：`schema::SECTIONS` 每节的键（required + optional + flatten）
-//!    必须与 `src/v12/model.rs` 里对应结构体的 `pub` 字段**逐键相等**；
+//!    必须与 `src/dsl/model.rs` 里对应结构体的 `pub` 字段**逐键相等**；
 //!    - `#[serde(skip)]` 的内部字段不入 schema，但必须在 `INTERNAL_FIELDS` 里显式登记；
 //!    - `#[serde(flatten)]` 的字段本身不是键（它展开成目标结构体的键空间），
 //!      必须在 `FLATTEN_FIELDS` 里显式登记。
@@ -46,7 +46,7 @@ const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
         "展开来源（v18 S2），解析期填、不参与序列化",
     ),
     (
-        "V12Model",
+        "IsaModel",
         "derived_preds",
         "派生谓词表（v18 S3f），解析期派生、不参与序列化",
     ),
@@ -70,7 +70,7 @@ const TABLE_END: &str = "<!-- END: schema-keys -->";
 /// 误判为一致——编辑器却会对每一行 `ref = …` 报未知键（2026-09-21 实测 S7e）。
 fn model_structs() -> Vec<(String, Vec<(String, bool)>)> {
     let src =
-        std::fs::read_to_string(repo_root().join("crates/frontend/forge-isa-dsl/src/v12/model.rs"))
+        std::fs::read_to_string(repo_root().join("crates/frontend/forge-isa-dsl/src/dsl/model.rs"))
             .expect("读 model.rs");
     let lines: Vec<&str> = src.lines().collect();
     let mut out = Vec::new();
@@ -402,7 +402,7 @@ fn checked_in_schema_file_is_up_to_date() {
 ///
 /// 为什么单独要这条：模型 ↔ schema 的对照只看"结构体字段 ↔ 节键集"，看不见
 /// "用户实际写的键"——`#[serde(rename = "ref")]` 的字段名是 `reference`，schema 一度写成
-/// `reference`，于是编辑器对 `isa/x86_v12.toml` 里 35 处 `ref = …` 全部标红（2026-09-21
+/// `reference`，于是编辑器对 `isa/x86.toml` 里 35 处 `ref = …` 全部标红（2026-09-21
 /// 实测）。这条守卫直接拿**真实谱**当输入，把这一类"schema 与谱不符"钉死。
 #[test]
 fn shipped_specs_only_use_schema_keys() {

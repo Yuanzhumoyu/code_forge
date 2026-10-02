@@ -1,4 +1,4 @@
-# arm64_v12 / aapcs64
+# arm64 / aapcs64
 ## void0
 conv aapcs64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0

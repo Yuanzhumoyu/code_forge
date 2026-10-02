@@ -416,12 +416,12 @@ mod tests {
     #[test]
     fn macro_args_parse() {
         let a = parse_macro_args(quote! {
-            "isa/x86_v12.toml", spec_tests = false,
+            "isa/x86.toml", spec_tests = false,
             name = "demo", parts = ["encode", "asm"],
             params = { xlen = 32, ext = 7 },
         })
         .expect("完整参数");
-        assert_eq!(a.path, "isa/x86_v12.toml");
+        assert_eq!(a.path, "isa/x86.toml");
         assert!(!a.opts.spec_tests);
         assert_eq!(a.opts.name.as_deref(), Some("demo"));
         assert_eq!(a.opts.parts.names(), "encode, asm");
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn missing_generated_file_is_fail_closed_with_hint() {
         let args = MacroArgs {
-            path: "isa/x86_v12.toml".into(),
+            path: "isa/x86.toml".into(),
             opts: opts(),
         };
         let e = match expand_file_emitted(&args) {

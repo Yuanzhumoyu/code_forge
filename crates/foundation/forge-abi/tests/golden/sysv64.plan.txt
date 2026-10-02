@@ -1,4 +1,4 @@
-# x86_64_v12 / sysv64
+# x86_64 / sysv64
 ## void0
 conv sysv64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=Some(128) frame_pad=8

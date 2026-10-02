@@ -1,4 +1,4 @@
-# x86_64_v12 / win64
+# x86_64 / win64
 ## void0
 conv win64
 stack align=16 slot=8 shadow=32 first_arg_off=16 arg_area=32 byval_area=0 red_zone=None frame_pad=8

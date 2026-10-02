@@ -7,7 +7,7 @@
 //! 写进去；本 ISA 没申报这条能力而约定又要写 ⇒ **fail-closed**。
 
 use forge_codegen::FunctionCompiler;
-use forge_codegen::arch::x86_v12::TargetMachine;
+use forge_codegen::arch::x86::TargetMachine;
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::function::Module;
 use forge_ir::ir::types::{FunctionSignature, TypeContext};

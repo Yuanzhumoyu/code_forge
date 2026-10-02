@@ -89,7 +89,7 @@ pub fn map_type<'tcx>(
                 (TypeId::F32, 8) => Ok(TypeId::V256),
                 _ => Err(IrError::Unsupported(format!(
                     "SIMD type <{n} x {elem}> (elem_ty={elem_ty:?}): only f32×2/4/8 \
-                     (V64/V128/V256) are supported by the x86_v12 backend"
+                     (V64/V128/V256) are supported by the x86 backend"
                 ))),
             }
         }

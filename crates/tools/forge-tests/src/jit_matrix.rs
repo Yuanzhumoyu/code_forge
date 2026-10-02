@@ -7,7 +7,7 @@
 //! 零 ISA 引用（grep 保证）。
 //!
 //! 用例移植自旧 `forge-tests/src/isa/x86_64/jit.rs`（v11 时代随语法层删除；
-//! 断言语义保持，作为 v12 回归网）。
+//! 断言语义保持，作为回归网）。
 
 use code_forge::backend::TargetMachine;
 use code_forge::backend::{CompiledFunction, FunctionCompiler};

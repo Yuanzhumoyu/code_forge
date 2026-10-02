@@ -18,9 +18,9 @@
 //! 的扫描器（或手工构造）都能产出，forge-rustc 的 dwarf 编码器按它发
 //! DW_CFA 指令流。
 //!
-//! # 已注册扫描器：x86_64 v12（v1 识别范围，安全退化）
+//! # 已注册扫描器：x86_64（v1 识别范围，安全退化）
 //!
-//! 仅识别 forge x86_64 v12 的常量 prologue 前缀（15 字节）：
+//! 仅识别 forge x86_64 的常量 prologue 前缀（15 字节）：
 //! `55 48 89 e5`（push rbp; mov rbp, rsp）+ 7 次 callee-saved push：
 //! RBX RDI RSI R12 R13 R14 R15（`53 57 56 41 54 41 55 41 56 41 57`，
 //! TOML [machine].callee_saved_gpr/[machine.frame] 固定推满）。**前缀/数量不符 → None**
@@ -68,7 +68,7 @@ pub struct FunctionCfi {
     pub rows: Vec<(u32, Vec<CfiOp>)>,
 }
 
-/// 扫描函数机器码开头是否 forge x86_64 v12 的固定 prologue，产出 CFI 行。
+/// 扫描函数机器码开头是否 forge x86_64 的固定 prologue，产出 CFI 行。
 ///
 /// 字节匹配（15 字节常量前缀，测试 `frame_prologue_bytes` 同源）：
 /// `55`（push rbp）+ `48 89 e5`（mov rbp, rsp）+ `53 57 56`（push
@@ -184,10 +184,10 @@ fn register_default_cfi_scanner(isa: &str) {
     {
         return;
     }
-    // x86_64 v12 固定 prologue 前缀（TOML [machine].callee_saved_gpr/[machine.frame]）。
+    // x86_64 固定 prologue 前缀（TOML [machine].callee_saved_gpr/[machine.frame]）。
     // riscv64/demo/其他 ISA 无默认扫描器 → 不注册（查询返回 None = 无 CFI，
     // 安全退化；v1 仅 x86_64）。
-    if matches!(isa, "x86_64" | "x86_64_v12" | "x86_v12") {
+    if matches!(isa, "x86_64" | "x86") {
         register_cfi_scanner(isa, scan_x86_prologue);
     }
 }
@@ -219,7 +219,7 @@ pub fn function_cfi_for(isa: &str, code: &[u8]) -> Option<FunctionCfi> {
 mod tests {
     use super::*;
 
-    /// forge x86_64 v12 常量 prologue（与 tests/v12_integration_tests.rs
+    /// forge x86_64 常量 prologue（与 tests/integration_tests.rs
     /// frame_prologue_bytes 同源）：55 48 89 e5 + 53 57 56 41 54 41 55 41 56 41 57。
     const PROLOGUE: [u8; 15] = [
         0x55, 0x48, 0x89, 0xE5, 0x53, 0x57, 0x56, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57,
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn dispatcher_isa_names() {
         // x86 全名命中：派发入口（含懒默认注册）产出与直接 scan 相同的行集
-        for isa in ["x86_64", "x86_64_v12", "x86_v12"] {
+        for isa in ["x86_64", "x86_64", "x86"] {
             let want = scan_x86_prologue(&PROLOGUE).unwrap();
             assert_eq!(function_cfi_for(isa, &PROLOGUE), Some(want), "{isa}");
             // 即使 ISA 名命中，非 x86 前缀字节仍拒绝
@@ -354,7 +354,7 @@ mod tests {
             );
         }
         // 未注册 ISA → None（无 CFI，安全退化零回归）
-        assert_eq!(function_cfi_for("riscv64_v12", &PROLOGUE), None);
+        assert_eq!(function_cfi_for("riscv64", &PROLOGUE), None);
         assert_eq!(function_cfi_for("unregistered_backend", &PROLOGUE), None);
         assert_eq!(function_cfi_for("unknown_isa", &PROLOGUE), None);
     }

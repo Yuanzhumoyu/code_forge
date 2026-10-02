@@ -1,4 +1,4 @@
-# riscv64_v12 / lp64d
+# riscv64 / lp64d
 ## void0
 conv lp64d
 stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0

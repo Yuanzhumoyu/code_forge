@@ -173,7 +173,7 @@ markdownlint 到 0 error）→ push 后看 CI run 全绿。
    包装，13 处墓碑/Copy 块与 3 处操作数改写点改为 `refresh_inst_uses`，聚合展开后
    加 **debug-only** 断言 `use_lists.verify(&dfg)`。此处**刻意只查 use-lists、不跑完整
    `Verifier`**：`expand_geps` 会生成类型自洽性不足的 IR（`%p = add i64 %prev, %t`
-   却声明 PTR 结果，源码原注释即"verify 不跑"），根因是 v12 尚无
+   却声明 PTR 结果，源码原注释即"verify 不跑"），根因是 ISA-DSL 尚无
    `Ptrtoint`/`Inttoptr` 降级 ⇒ **类型化指针算术归 S4/S5**，此处不静默容忍而是写明范围。
 4. **默认策略切换**：`PassVerify::Error` 成为 `#[default]`（debug 构建；`Off`/`Warn`
    仍可经 `PassManager::set_verify_after_pass` 显式选择，release 不跑校验）。
@@ -973,7 +973,7 @@ S5 把三个 arena 收口之后，句柄本身仍是 `pub struct Value(pub u32)`
 的诊断按 **byte span** 打成补丁（构造点 → `::new`，索引读 → `.index()`），逐轮
 "编译 → 补丁 → 再编译"，4 轮收敛。
 
-- **DSL 生成器**（`forge-dsl/src/v12/codegen/{lowering,placeholder,machine,integration}.rs`）：
+- **DSL 生成器**（`forge-dsl/src/dsl/codegen/{lowering,placeholder,machine,integration}.rs`）：
   生成物里也有 `Block(...)`/`ConstId(...)` 与 `.0`——这些是 `quote!` 模板文本，
   必须改**生成器源**（改调用点无效，错误都指向 `isa_from_file!` 那一行）。
 - **`forge-rustc`**（本机缺 rustc-dev 不能编译）：改走文本审计——`FuncRef`(8)/

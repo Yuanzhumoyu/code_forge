@@ -28,7 +28,7 @@
 | G1 | **任意普通 crate 都能承载一份 ISA 谱**：生成物只依赖一个"运行时"crate，不需要 forge-codegen | 新增最小宿主 crate 只依赖 `forge-isa-runtime`（+ build-dep `forge-isa-dsl`）即编译并跑通 encode/decode/asm + `__spec_tests`；`cargo tree` 里无 forge-codegen；`isa_from_file!` 的 `krate` 参数被删除 |
 | G2 | **测试向量数据化**：黄金字节/负向用例写进谱，随谱走 | 发行 ISA 的黄金向量迁进 `[[vectors]]`；手写 Rust 黄金测试行数下降 ≥50%（给出前后数字）；`forge-isa test <谱>` 能独立跑 |
 | G3 | **规范体检工具**：写谱的人能自己发现问题 | `forge-isa lint` 在三个发行 ISA 上零误报（清单快照钉住），输出含"能力缺口/未用声明/可合并族/未指定位"，支持 `--json` |
-| G4 | **一份源谱 → 多个位宽变体** | 从 `isa/riscv64_v12.toml` 生成 RV32 变体（只读投影 MVP）；`forge-isa explain` 显示参数生效点；变体纳入生成物命名与覆盖登记 |
+| G4 | **一份源谱 → 多个位宽变体** | 从 `isa/riscv64.toml` 生成 RV32 变体（只读投影 MVP）；`forge-isa explain` 显示参数生效点；变体纳入生成物命名与覆盖登记 |
 | G5 | **单一事实源**：旧计划退役、文档不漂移 | `docs/plans/` 不再有 v18 计划；`git grep -n forge-dsl-v18-plan` 全量指向 `docs/archive/`；本方案是唯一现行入口 |
 
 ## 2. 现状证据（本仓实测）
@@ -38,13 +38,13 @@
 | 生成物运行面 = **约 20 个宿主路径** | `docs/reference/isa-dsl.md`「生成代码依赖的运行面」；`machine/*` 共 2,387 行 | 生成物引用 `crate::machine::{abi,assembler,decoder,disasm,encoder,frame,inst,isa_info,lowering,pattern,reg_info,reloc_patcher,target}` + 顶层 `AllocResult/CodeSink/CompiledFunction/EncodeError/IrError/RelocKind/Registry/impl_erased_target_machine!` |
 | **运行面 ↔ 管线互相引用** | `machine/encoder.rs:3,37` 用 `crate::AllocResult`；`machine/frame.rs:43` 用 `crate::pipeline::emit::LabelRef`；`machine/target.rs:139` 宏里 new `$crate::pipeline::compiler::FunctionCompiler` | CLAUDE.md「Assembler↔JIT 环」的真实形态；拆 runtime 必须先解这三处 |
 | 各部分代码量 | `pipeline` 6,849 / `runtime` 3,429 / `machine` 2,387 行 | 生成物只需要 machine + 少数数据型 + 注册表 ≈ 3.5k 行（整机 12.7k 的 28%） |
-| **谱里 0 个测试向量** | `isa/*.toml` 里 `bytes`/`expect`/`vectors` 键出现 **0** 次 | 黄金字节全在手写 Rust：`arm64_v12_tests.rs` 284 行/109 断言、`x86_v12_tests.rs` 1,159 行、`riscv64_v12_tests.rs` 389 行 |
+| **谱里 0 个测试向量** | `isa/*.toml` 里 `bytes`/`expect`/`vectors` 键出现 **0** 次 | 黄金字节全在手写 Rust：`arm64_tests.rs` 284 行/109 断言、`x86_tests.rs` 1,159 行、`riscv64_tests.rs` 389 行 |
 | 生成物大头仍是**每条规则的发射体** | x86 lowering impl 611,642 B 中 C 段 334,020 B（54.6%，944 臂）；riscv 202,324 B；arm64 12,165 B | S8b-2 判定"要通用解释器，未做"（`docs/performance/bench_baseline.md`） |
 | 规则/指令规模 | x86 197 lowering / 142 指令 / 3,518 行；riscv64 106/48/1,816；arm64 19/24/936 | arm64 lowering 只有 19 条 → 矩阵大量 skip |
 | JIT 覆盖 | x86 195 pass/3 skip；riscv64 131/67；**arm64 23/175** | 本机 2026-09-23 实测（`MATRIX-SUMMARY` 事件）；skip 原因 = capability（op 未覆盖）/ value-range |
 | 生成器已无 ISA 字面量 | `crates/frontend/forge-isa-dsl/tests/generality_guard.rs` 的 `ALLOWED = &[]` | 剩下的"不通用"是**宿主耦合**，不是硬编码 |
 | CLI 现状 | `validate`/`insts`/`explain`/`diff`/`schema`/`fmt` 6 个子命令 | 无 `test`、无 `lint`、无严格档 |
-| 新键的三方针守卫 | `tests/schema_guard.rs`：schema 表 ↔ `v12/model.rs` ↔ 文档键速查表 ↔ 签入的 `isa-dsl.schema.json` | 任何新键（`[[vectors]]`/`params`/`only_variants`）四处同改 |
+| 新键的三方针守卫 | `tests/schema_guard.rs`：schema 表 ↔ `dsl/model.rs` ↔ 文档键速查表 ↔ 签入的 `isa-dsl.schema.json` | 任何新键（`[[vectors]]`/`params`/`only_variants`）四处同改 |
 | 工作区成员是显式列表 | 根 `Cargo.toml` `members` | 新增 crate 要显式登记 |
 
 ## 3. 外部设计参考（借什么、不借什么）
@@ -90,10 +90,10 @@
 
 | 删除/变更 | 影响面 | 替代 |
 | --- | --- | --- |
-| `isa_from_file!(…, krate = <宿主>)` 与 `krate` 语义 | `ExpandOptions.krate`、`rewrite_path_roots`、14 处调用点（3 发行后端 + `tests/common/mod.rs` 8 + `tests/spec_tests_v12.rs` 3）、`parts_selection.rs`/`tutorial_spec.rs` 等测试 | 生成物一律写绝对路径 `forge_isa_runtime::…`（宿主只需依赖 runtime） |
+| `isa_from_file!(…, krate = <宿主>)` 与 `krate` 语义 | `ExpandOptions.krate`、`rewrite_path_roots`、14 处调用点（3 发行后端 + `tests/common/mod.rs` 8 + `tests/spec_tests.rs` 3）、`parts_selection.rs`/`tutorial_spec.rs` 等测试 | 生成物一律写绝对路径 `forge_isa_runtime::…`（宿主只需依赖 runtime） |
 | `forge-codegen` 作为"生成物运行面"的提供者 | `docs/reference/isa-dsl.md` 运行面一节、`tests/library_surface.rs` | 新 crate `forge-isa-runtime` |
 | `machine/*` 位于 `forge-codegen` 下 | `crate::machine::…` → `forge_isa_runtime::…`；`spec_coverage_guard`/`no_hardcoded_widths` 的路径假设 | `forge-codegen` 保留内部转发（不承诺给第三方） |
-| 手写 Rust 黄金字节测试（发行 ISA 部分） | `*_v12_tests.rs` 的黄金表 | 谱内 `[[vectors]]` + `forge-isa test` |
+| 手写 Rust 黄金字节测试（发行 ISA 部分） | `*_tests.rs` 的黄金表 | 谱内 `[[vectors]]` + `forge-isa test` |
 | `[[lowering]]` 的隐式裁决（同优先级重叠靠声明序） | 400+ 条规则 | 默认保留，CI 开严格档 |
 
 ## 5. 切片计划
@@ -110,7 +110,7 @@
 | 🚧 **V5** 参数化变体（**破坏性**，MVP 只做只读投影） | `[meta].variants = { xlen = [32,64] }` + `params = { xlen = 32 }` + 逐指令/模板 `only_variants`（**六处声明统一**：指令/模板行/emit 块/spill/pseudo/pattern） + 值条件列 `vary` 下沉到 `[[templates]]`（**未做**，见下） | RV32 从同一 riscv64 谱投影（不注册后端）；`insts --params` 打印投影账目 | 实测账目：116 → 104 条指令 / 110 → 96 条 lowering / 逐节丢弃 4 项；守卫 `tests/variants.rs`（6 条） | G4；臂/扩展式复用的验证。**投影已落地（2026-09-24）**：`explain` 显示参数生效点**未做**；与独立 RV32 表对拍**未做**（投影不产可运行后端，见 §5 注） |
 | 🚧 **V6** 诊断严格度 + 确定性 | `validate --strict-overlap` / `--warn-unreachable`；生成物确定性守卫 | 默认档 = 现状（先量化噪音），CI 开严格档；同谱重复生成逐字节相同 | 严格档在三 ISA 上的新诊断清单 + 误报评估（含 `or`/`not` 的 Opaque 边界），数字入库 | 借 ISLE 抓"被完全遮蔽的规则"；借 SLEIGH 教训避免"默认关"。**V6a（确定性）+ V6b（strict-overlap，实测 61 条全合法 ⇒ CI 不开）已落地**；`--warn-unreachable` 与死规则检测重叠，已在 V6b 说明不做 |
 | ❌ **V7** 语义层表化（**度量后决定不做**） | 只借"属性视图 + 生成期可分析性"；把 S8b-2 的通用解释器当候选 | 先量：C 段是否仍是编译时间主因、表化净收益是否 ≥15% token 且不增编译时间 | **实测（2026-09-24，`docs/performance/generated_compile_profile.md`）**：C 段（x86 315 KB / 20.3%）确实占生成物全量重检的 **87%**（43.3 s / 49.7 s）；但表化 net 收益在**全件口径只有 11–17%**（中位 ~14%，未过 15%），只在"不含 spec_tests"口径过线；日常增量路径（改谱 9.05 s）不受影响 ⇒ **不做**，触发条件与低风险替代写在文档 §6 | 与 S8b-2 一致：以度量决定（已定论） |
-| ✅ **V8** 搬运族**全派生**（**破坏性**；2026-10-01 用户口径：「指令的字段类型已经标了立即数/寄存器类型、也标了进出，DSL 应该能自动处理，而不是手动标注」） | 新增指令键 **`data_width = <位>`**（指令的**数据宽度**，与 `width` = 指令字长无关）；**九个搬运角色整条删除**（含 `RoleDecl.bits` 与 `FpMovWidths`/`BankMovWidths`/`inst_by_role_for`）；生成器按 **(目的形状 × 来源形状 × 位宽)** 派生选指令（`v12/codegen/moves.rs::MoveTable` 唯一实现） | 三谱搬运标注 **28 条 → 1 个键**（`data_width`）；同形状同宽度多条候选 ⇒ 生成期**报错并列出候选**（**不设 pin**——那就是第二套机制）；无候选 ⇒ 生成物 fail-closed；`abi check` 能力视图与生成物 `role_bits` 改按派生表报 | ✅ 三谱 `validate`/`lint` 零结论；`forge-codegen --lib` 1285、矩阵 x86 **197/3/0**、riscv **136/64/0**（QEMU）**逐数字不变**；新守卫 `tests/move_derive.rs`（6 条）；旧三守卫（`role_widths`/`fpr_mov_widths`/`bank_mov_roles`）删除——它们的口径已被新守卫覆盖 | 通用性的**作者面**：新 ISA 的搬运只需把指令的宽度写对 |
+| ✅ **V8** 搬运族**全派生**（**破坏性**；2026-10-01 用户口径：「指令的字段类型已经标了立即数/寄存器类型、也标了进出，DSL 应该能自动处理，而不是手动标注」） | 新增指令键 **`data_width = <位>`**（指令的**数据宽度**，与 `width` = 指令字长无关）；**九个搬运角色整条删除**（含 `RoleDecl.bits` 与 `FpMovWidths`/`BankMovWidths`/`inst_by_role_for`）；生成器按 **(目的形状 × 来源形状 × 位宽)** 派生选指令（`dsl/codegen/moves.rs::MoveTable` 唯一实现） | 三谱搬运标注 **28 条 → 1 个键**（`data_width`）；同形状同宽度多条候选 ⇒ 生成期**报错并列出候选**（**不设 pin**——那就是第二套机制）；无候选 ⇒ 生成物 fail-closed；`abi check` 能力视图与生成物 `role_bits` 改按派生表报 | ✅ 三谱 `validate`/`lint` 零结论；`forge-codegen --lib` 1285、矩阵 x86 **197/3/0**、riscv **136/64/0**（QEMU）**逐数字不变**；新守卫 `tests/move_derive.rs`（6 条）；旧三守卫（`role_widths`/`fpr_mov_widths`/`bank_mov_roles`）删除——它们的口径已被新守卫覆盖 | 通用性的**作者面**：新 ISA 的搬运只需把指令的宽度写对 |
 
 **顺序与理由**：V0（定范围）→ V1/V2（通用性地基）→ V3/V4（作者可见收益，可独立交付）→
 V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **V8（搬运族去手写）**。
@@ -260,7 +260,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
 
 **V3d 已落地（2026-09-24，谱内派生枚举器：`−33.1% → −69.6%`）**：
 
-- **度量先行**（这是选它的理由）：三个 ISA 测试文件剩下的 1225 行里，x86 `x86_v12_tests.rs`
+- **度量先行**（这是选它的理由）：三个 ISA 测试文件剩下的 1225 行里，x86 `x86_tests.rs`
   的 **650 行是手抄的 `all_insts()`**（全指令 `Inst` 构造清单，供 `decode → encode` 往返），
   另 70 行是"规范指令"小清单；而"文本 → 期望文本"类断言全加起来只有 ~50 行。⇒ **`{bytes,
   text}` 形态的收益上限 ≈ 50 行**，派生枚举器的收益是它的 10 倍以上，因此先做后者；文本形态
@@ -275,7 +275,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
   197/116/104）；新守卫 `src/isa_roundtrip_guard.rs` 让**全部**条目跑
   `encode → decode → encode` 字节闭环 + 解码吃满 + 覆盖清点（`SPEC_INSTS` 每条都要出现）。
   `cargo test -p forge-codegen --lib` **1264 → 1265 passed**。
-- **删掉的**：`tests/x86_v12_tests.rs` 的 `all_insts()` + `decode_encode_byte_roundtrip_all`
+- **删掉的**：`tests/x86_tests.rs` 的 `all_insts()` + `decode_encode_byte_roundtrip_all`
   （650 行 → 6 行指针注释）；**保留**各 ISA 的"规范指令 `decode(encode(x)) == x`"小清单
   （别名撞车按声明序首匹配，该断言在派生列表上本就不成立）与类表/ABI 断言。
 - **行数账目**：x86 880 → 216、riscv64 190 → 190、arm64 151 → 151（后两者本轮不变）；
@@ -315,7 +315,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
 
 **V5 已落地（2026-09-24，参数化变体：只读投影 MVP）**：
 
-- **唯一判定**：`v12::model::variants_keep(gate, params)`（六处声明共用——`[[instructions]]`、
+- **唯一判定**：`dsl::model::variants_keep(gate, params)`（六处声明共用——`[[instructions]]`、
   `[[templates]].body`/`rows`、`[spill.*]`、`[[pseudo]]`、
   `[[pattern]]` 都能标 `only_variants`；`gate` 里没提到的参数不构成排除）。
 - **投影顺序**（`validate::apply_variants`，跑在 `validate_all` **之前**）：校验参数
@@ -445,11 +445,11 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
   `SPEC_VECTORS`。
 - **riscv64 全量迁移**：三张 Rust oracle 表（`golden_gpr_spec_bytes` /
   `f_inst_spec_bytes`（`r_type(...)` 期望值按同一 R 型布局落成字面量）/ `s_type_spec_bytes`）
-  **62 条**进 `isa/riscv64_v12.toml`，另加 5 条负向/解码向量（共 67）。迁移前后规范化
+  **62 条**进 `isa/riscv64.toml`，另加 5 条负向/解码向量（共 67）。迁移前后规范化
   （`asm|b0,b1,…` 排序）**sha256 相同**：`fffd0549ca3cfe6c5b4705fa49d949e25c042a8ca67511b4ecad9d2b4bc53a94`
   （脚本 `target/migrate_riscv_vectors.py`：从 `git show HEAD:` 抽 + 写 TOML + 回读逐条比对）。
 - **实测**：`cargo test -p forge-codegen --lib` **903 → 970 passed**（riscv 单谱 295，其中 67 向量）。
-  手写测试行数：`riscv64_v12_tests.rs` **389 → 287 行**（−102）。三 ISA 的总账在 V3b。
+  手写测试行数：`riscv64_tests.rs` **389 → 287 行**（−102）。三 ISA 的总账在 V3b。
 - **新 CLI `forge-isa test <谱> [--json]`**：给任意谱现搭一个**零宿主** crate
   （`[dependencies] forge-isa-runtime` + `[build-dependencies] forge-isa-dsl`，
   `parts = ["encode","decode","asm"]`、`spec_tests = true`），`cargo test --offline` 直接跑
@@ -465,23 +465,23 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
   修法：`asm && !tm` 时在 `codegen/mod.rs` 补发 `gen_pseudo_helpers`（`tm` 在时不发，避免重复定义）。
 - **守卫**：`crates/frontend/forge-isa-dsl/tests/vectors.rs`（4 条：四形态生成形状 +
   10 个形态反例 + 合法形态 + 无向量谱照常）；schema 三方针同步
-  （`src/schema.rs` ↔ `v12/model.rs::Vector` ↔ `docs/reference/isa-dsl.md` 键表 +
+  （`src/schema.rs` ↔ `dsl/model.rs::Vector` ↔ `docs/reference/isa-dsl.md` 键表 +
   `isa-dsl.schema.json` 重新生成）。
 - **V3b 已落地（2026-09-23，x86/arm64 迁移）**：
   - x86：7 张 oracle 表（`golden_gpr_spec_bytes` / `r_forms_spec_bytes` /
     `control_flow_spec_bytes` / `sse_spec_bytes` / `mem_spec_bytes` /
-    `family_sse_spec_bytes` / `vex_spec_bytes`）**102 条**迁入 `isa/x86_v12.toml`
+    `family_sse_spec_bytes` / `vex_spec_bytes`）**102 条**迁入 `isa/x86.toml`
     （含 4 条多行写法条目），7 个函数整体删除（避免"空表跑 0 次"的假测试）；
     sha256 `f971c06fb3c673a4694c583e26a1a50810f4284b7250084dd813d4d84b737e79`（前后相同）；
-  - arm64：**78 条** `assert_eq!(enc("…"), word_le(0x…))` 迁入 `isa/arm64_v12.toml`
+  - arm64：**78 条** `assert_eq!(enc("…"), word_le(0x…))` 迁入 `isa/arm64.toml`
     （字节按小端从 u32 还原），别名等价断言（`csel … hs` = `cs`、`b.hs` = `b.cs`）留在 Rust；
     sha256 `c32e562ba12a9590126b051f4efcf0e801245fad9d2d368ae43fdc8072054491`（前后相同）；
   - **校验账目**：`cargo test -p forge-codegen --lib` **903 → 1150 passed**
     = 903 基线 + 67(riscv) + 102(x86) + 78(arm64) —— 逐条对得上；
     三份谱 `forge-isa validate` 全 OK；`forge-isa test`：x86 `{vectors:102, passed:549}`
     / arm64 `{vectors:78, passed:267}` / riscv64 `{vectors:67, passed:295}`，均 `failed:0`。
-  - **行数账目**（三个测试文件，`(Get-Content <file>).Count` 口径）：`x86_v12_tests.rs`
-    1159 → 933（−226）、`arm64_v12_tests.rs` 284 → 184（−100）、`riscv64_v12_tests.rs`
+  - **行数账目**（三个测试文件，`(Get-Content <file>).Count` 口径）：`x86_tests.rs`
+    1159 → 933（−226）、`arm64_tests.rs` 284 → 184（−100）、`riscv64_tests.rs`
     389 → 287（−102）：合计 **1832 → 1404（−428 行，−23.4%）**。
   - ⚠️ **未达"−≥50%"**（判据原话）：迁走的是"黄金字节表"，剩下的行数是
     **别名等价断言 + decode/往返断言 + 集成/ABI/JIT 断言**——向量四形态表达不了
@@ -506,9 +506,9 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
    **`rewrite_path_roots(ts, krate)` 换成固定根改写 `rewrite_runtime_roots(ts)`**：
    `crate` → `forge_isa_runtime`、`forge_ir` → `forge_isa_runtime::ir`；两条单测随之改名
    （`rewrite_*_rewrites_only_path_roots` / `rewrites_forge_ir`）。
-3. `v12/codegen/mod.rs`：`generate_with_parts(model, spec_tests, parts)` 增第三个参数
+3. `dsl/codegen/mod.rs`：`generate_with_parts(model, spec_tests, parts)` 增第三个参数
    `pipeline: Option<&TokenStream>`，透传给 integration。
-4. `v12/codegen/integration.rs:867`：`crate::impl_erased_target_machine!(TargetMachine);` →
+4. `dsl/codegen/integration.rs:867`：`crate::impl_erased_target_machine!(TargetMachine);` →
    `forge_isa_runtime::impl_erased_target_machine!(TargetMachine, #pipeline);`
    （`parts` 含 `tm` 而 `pipeline` 缺失 ⇒ **生成期报错**，消息给出 `pipeline = <宿主管线路径>` 的写法；
    `parts` 不含 `tm` 时该参数不需要）。
@@ -517,9 +517,9 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
    `($tm:ty, $pipeline:path)`，体内 `<$pipeline>::new(self.clone()).compile_raw(func)`；
    codegen 侧如需保留旧名可 `pub use forge_isa_runtime::impl_erased_target_machine;`。
 6. 14 处调用点加参数：3 个发行后端用 `pipeline = crate::pipeline::compiler::FunctionCompiler`；
-   `tests/common/mod.rs`(8) 与 `tests/spec_tests_v12.rs`(3) 用
+   `tests/common/mod.rs`(8) 与 `tests/spec_tests.rs`(3) 用
    `pipeline = forge_codegen::pipeline::compiler::FunctionCompiler`（`krate` 一律删除）；
-   只生成 `encode/decode/asm` 的调用点（如 `include_v12_tests` 的编码器变体）不写该参数。
+   只生成 `encode/decode/asm` 的调用点（如 `include_tests` 的编码器变体）不写该参数。
 7. 文档：`docs/reference/isa-dsl.md`（参数表 + 「宿主接入」+「生成代码依赖的运行面」改指
    `forge_isa_runtime`）、`docs/guides/isa-dsl-tutorial.md`、`CLAUDE.md`（Architecture Rules 1/3/4
    与 Testing Notes）、`CHANGELOG.md`（破坏性：`krate` 删除、运行面迁移）、本计划进度。
@@ -534,7 +534,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
 
 **每片必做的文档动作**：
 
-1. **三方针守卫**（新增/改动键时）：`src/schema.rs` ↔ `v12/model.rs` ↔ `docs/reference/isa-dsl.md`
+1. **三方针守卫**（新增/改动键时）：`src/schema.rs` ↔ `dsl/model.rs` ↔ `docs/reference/isa-dsl.md`
    键速查表（`TABLE_BEGIN/END` 区段）↔ 签入的 `isa-dsl.schema.json`
    （`cargo run -p forge-isa -- schema --out isa-dsl.schema.json`）。
 2. `docs/reference/isa-dsl.md`：新键小节 + 与 v18 的差异；`docs/reference/isa-dsl-errors.md`：新错误码。
@@ -577,9 +577,9 @@ cargo fmt --all -- --check
 cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings
 cargo test -p forge-isa-dsl -p forge-isa -p forge-dsl
 cargo test -p forge-codegen -j 1 -- --test-threads=1
-cargo test -p forge-tests --lib jit_matrix_x86_v12
-cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --test-threads=1 --nocapture
-cargo test -p forge-tests --lib jit_matrix_arm64_v12 -- --test-threads=1 --nocapture
+cargo test -p forge-tests --lib jit_matrix_x86
+cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocapture
+cargo test -p forge-tests --lib jit_matrix_arm64 -- --test-threads=1 --nocapture
 cargo check --workspace --exclude forge-rustc --release --all-targets
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 cargo test --workspace --exclude forge-rustc -j 1 -- --test-threads=1
@@ -648,7 +648,7 @@ npx markdownlint-cli2 <改动文档>
 
 ### 10.4 生成物的宿主依赖面（V1 的迁移清单）
 
-从最大生成物（`forge_gen_x86_v12_28fd384c3571d4ee.rs`，1,336,872 B）机械抽取：**183 条**不同的
+从最大生成物（`forge_gen_x86_28fd384c3571d4ee.rs`，1,336,872 B）机械抽取：**183 条**不同的
 `crate::…` 路径，归约为
 
 - **`machine` 子模块 10 个**（29 条具体路径）：`abi`（`FrameLayout`/`FrameLayoutKind`/`TargetABI`）、
@@ -667,7 +667,7 @@ npx markdownlint-cli2 <改动文档>
 ### 10.5 手写测试规模（V3 迁移对象）
 
 `crates/backend/forge-codegen/tests/*.rs` 合计 **5,683 行 / 626 条断言**；承载黄金字节的主要是
-`x86_v12_tests.rs`（1,160 行/22 断言，黄金表是数据）、`arm64_v12_tests.rs`（285/109）、
-`riscv64_v12_tests.rs`（390/27）、`v12_integration_tests.rs`（353/49），以及 6 个夹具文件
-（`demo*`/`include_v12_tests.rs`，合计 ≈1,120 行）。V3 的目标是"发行 ISA 的黄金字节进谱"，
+`x86_tests.rs`（1,160 行/22 断言，黄金表是数据）、`arm64_tests.rs`（285/109）、
+`riscv64_tests.rs`（390/27）、`integration_tests.rs`（353/49），以及 6 个夹具文件
+（`demo*`/`include_tests.rs`，合计 ≈1,120 行）。V3 的目标是"发行 ISA 的黄金字节进谱"，
 夹具与集成/ABI/JIT 断言留在 Rust。

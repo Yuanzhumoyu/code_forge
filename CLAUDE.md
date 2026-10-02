@@ -13,7 +13,7 @@ docs/
 │   ├── isa-dsl.md             # ISA-DSL v18 唯一语法规范（改 isa/*.toml 先看它）
 │   ├── isa-dsl-errors.md      # ISA-DSL 错误码目录（报错看不懂先看它）
 │   ├── calling-conventions.md # 调用约定层 forge-abi（v20 A1：规则/绑定/计划 + forge-isa abi）
-│   ├── aarch64-encoding-ref.md# A64 编码参考（arm64_v12 后端/golden 依据）
+│   ├── aarch64-encoding-ref.md# A64 编码参考（arm64 后端/golden 依据）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
@@ -54,10 +54,11 @@ docs/
   archive/forge-ir/，继续 forge-ir 迭代请按 `docs/forge-ir/README.md` 约定新开记录；
 - **archive 内"已实现/待办"不代表代码现状**——改代码/加测试前以源码与 test 为准；
 - ISA-DSL 现行语法是 **v18**（`reference/isa-dsl.md`）；v12–v17 的语法与删除总表在
-  `archive/isa-dsl-v12-v17.md`，v12 路线图在 `archive/isa-dsl-v12-roadmap.md`。
-  注意区分三种"版本号"：DSL 语法版本（v18，靠文档/CHANGELOG 追踪，**不写进 TOML**）、
-  `[meta].version`（ISA 自己的自由字符串）、以及 `isa/*_v12.toml`/`src/v12/` 这类**历史命名**
-  （生成器与谱的文件名，稳定不动）。
+  `archive/isa-dsl-v12-v17.md`（**归档文件名保留原名**，内容以记录时点为准）。
+  注意区分两种"版本号"：DSL 语法版本（v18，靠文档/CHANGELOG 追踪，**不写进 TOML**）
+  与 `[meta].version`（ISA 自己的自由字符串）。**文件名不带语法版本**——旧的 `*_v12`
+  命名（`isa/*_v12.toml`、`src/v12/`、`arch/*_v12.rs`、`tests/*_v12_tests.rs`）已于
+  2026-10 清除，别再加回来。
 
 ## Markdown 文档规范（格式基准：markdownlint v0.41.1）
 
@@ -213,7 +214,7 @@ code-forge (root umbrella)
    依赖面与生成物文本级守卫在它的 `tests/host_surface.rs`，是 v19 V2 的 G1 证据）。
    `parts` 含 `tm` 时宿主须注册编译管线（`forge_isa_runtime::register_pipeline`，
    forge-codegen 的 `pipeline_hooks::ensure_registered` 已接好）。
-   库本体只有真实后端：`arch/{x86,arm64,riscv64}_v12.rs`（文件名里的 v12 是历史命名）。
+   库本体只有真实后端：`arch/{x86,arm64,riscv64}.rs`。
 
 2. **Assembler/JIT coupling 已解**（v19 V1）——`forge-isa-runtime` 持有生成物的全部 trait
    与数据型（`machine/*`、`LowerCtx`/`MemRef`、`AllocResult`/`CodeSink`/`CompiledFunction`），
@@ -232,7 +233,7 @@ code-forge (root umbrella)
    两条硬约束（RA 只能加载分析开始前存在的文件；`TokenStream::to_string()` 上下文相关）
    见 `docs/guides/rust-analyzer-notes.md` §1 与本文件 Testing Notes。
 
-5. **v12 自包含 asm** — v12 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
+5. **自包含 asm** — 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
    lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait
    （`crate::machine::assembler`）仅要求 `parse_insts`。
 
@@ -273,10 +274,10 @@ code-forge (root umbrella)
 forge_dsl::isa_from_file!("isa/my_isa.toml");
 pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
 // 注册由 DSL 生成的 ensure_registered() 完成（OnceLock 注册 Registry + reloc patcher），
-// 无需手写——见 arch/x86_v12.rs 的实际形态。
+// 无需手写——见 arch/x86.rs 的实际形态。
 
 // 测试夹具（不发行）：crates/backend/forge-codegen/tests/common/mod.rs
-forge_dsl::isa_from_file!("tests/isa/demo_v12.toml");
+forge_dsl::isa_from_file!("tests/isa/demo.toml");
 ```
 
 > **宿主必须接 build script（v18 S10d）**：生成物是 `$OUT_DIR` 下的**文件**
@@ -290,9 +291,9 @@ forge_dsl::isa_from_file!("tests/isa/demo_v12.toml");
 > 注：生成模块导出的是 `TargetMachine`（组合 IsaInfo/RegInfo/ABI/Lowering/Encoder/
 > FrameLowering/Disassembler/Assembler/**Decoder**），**没有 `Isa` 类型**；
 > 无 `register_backend!` 宏。v11 后端（x86_64/aarch64/riscv64/wasm32/minimal_sd）
-> 已随 v11 语法层删除——现为 `arch/x86_v12.rs`、`arch/arm64_v12.rs`、
-> `arch/riscv64_v12.rs`（三者均已接 TargetMachine；riscv 定宽试点有 QEMU 真执行
-> 矩阵）。示例/夹具谱（`demo_v12`、`demo8_v12`、`demo_inst{8,12,100}_v12`）**不在库里**，见
+> 已随 v11 语法层删除——现为 `arch/x86.rs`、`arch/arm64.rs`、
+> `arch/riscv64.rs`（三者均已接 TargetMachine；riscv 定宽试点有 QEMU 真执行
+> 矩阵）。示例/夹具谱（`demo`、`demo8`、`demo_inst{8,12,100}`）**不在库里**，见
 > `crates/backend/forge-codegen/tests/isa/README.md`。
 
 ### Frontend Pipeline (forge-grammar v21)
@@ -354,11 +355,11 @@ let name = node.get_text("name")?;
 - `forge-rustc` tests require nightly Rust with `rustc-dev` component
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +
-  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86_v12 197 passed /
+  能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86 197 passed /
   3 skipped**（本机 2026-10-01 实测 `cargo test -p forge-tests --lib
-  jit_matrix_x86_v12 -- --nocapture`）、**riscv64_v12 136 passed /
+  jit_matrix_x86 -- --nocapture`）、**riscv64 136 passed /
   64 skipped，0 failed**（QEMU 通道；2026-10-01 本机实测
-  `cargo test -p forge-tests --lib jit_matrix_riscv64_v12 -- --test-threads=1
+  `cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1
   --nocapture`，**需 `--nocapture` 才看得到计数**；浮点参数真执行靠
   `Executor::exec_f64_args` + crt0 的 `fmv.d.x/fmv.w.x` 装载）：整数/浮点/调用/
   向量/饱和/指针转换/undef/poison/GlobalAddr/原子（AtomicRmw/Cmpxchg）/GEP/Nop/
@@ -369,7 +370,7 @@ let name = node.get_text("name")?;
   F64Args/Module/CompileOnly}`；`ops` 未覆盖 → Skip（不失败，实现后自动转绿）。
   **两条矩阵是两套能力集，改类表/值池/ABI 必须都跑**（2026-09-13 实测：x86 全绿
   而 riscv 的 7 个 fcmp 错值，正是 riscv 通道抓到的）。
-  测试入口：`cargo test -p forge-tests jit_matrix_x86_v12`。
+  测试入口：`cargo test -p forge-tests jit_matrix_x86`。
 - **rust-analyzer 假阳性（v18 S10d 已修）**：`isa_from_file!` 调用行上曾报成对的
   `expected expression` / `expected R_PAREN`（riscv64 15 对 / arm64 4 对 / 夹具 9、6 对，
   **x86 0**）——那是"整份生成物作为宏展开结果"撑出来的 RA 展开管线问题（生成物用 RA 自己的
@@ -442,12 +443,12 @@ let name = node.get_text("name")?;
   「变体参数」；守卫 `tests/variants.rs`）。
   实现 = `forge-isa-dsl::report` + `::schema` 投影层 + CLI 薄层，复用
   `collect_inst_infos` 的"form 预设 ⊕ 指令覆盖"判定（不重复实现）。
-  **三方针守卫必须改三处一起改**：schema 表（`src/schema.rs`）↔ `v12/model.rs` 结构体字段
+  **三方针守卫必须改三处一起改**：schema 表（`src/schema.rs`）↔ `dsl/model.rs` 结构体字段
   ↔ `docs/reference/isa-dsl.md` 的「键总览（速查表）」区段 + 签入的 `isa-dsl.schema.json`
   （`cargo test -p forge-isa-dsl --test schema_guard` 全钉住；重新生成 schema 用
   `cargo run -p forge-isa -- schema --out isa-dsl.schema.json`）。
   三条要点：① schema 里的键必须是**用户在 TOML 里实际写的键**——字段名与 TOML 键不同时以
-  `#[serde(rename = "…")]` 为准（`reference`/`ref` 曾因此让编辑器把 `isa/x86_v12.toml` 的
+  `#[serde(rename = "…")]` 为准（`reference`/`ref` 曾因此让编辑器把 `isa/x86.toml` 的
   35 处 `ref` 全部标红）；② `schema_guard.rs::shipped_specs_only_use_schema_keys` 直接拿
   `isa/*.toml` + 夹具当输入，任何"schema 与真实谱不符"都会红；③ 自由表（`fields = {…}`、
   `[[templates]].body`、`when = {…}`）在 schema 里没有子约束，守卫也**不**下钻它们。
@@ -471,7 +472,7 @@ let name = node.get_text("name")?;
   寄存器视图）。用例随 TOML 自动更新，**不要手抄这类样板测试**；"字节对不对"仍由
   `docs/reference/aarch64-encoding-ref.md` 一类参考文档 + 各 ISA 黄金值测试守。
   同一份谱要被多个测试二进制包含时（`tests/common/mod.rs`）用
-  `spec_tests = false` 关掉，另开一个用例二进制打开（见 `tests/spec_tests_v12.rs`）。
+  `spec_tests = false` 关掉，另开一个用例二进制打开（见 `tests/spec_tests.rs`）。
   **谱内派生枚举器（v19 V3d）**：同一模块还导出 `all_insts() -> Vec<(名字, Inst)>` 与
   `SPEC_INSTS`（每条指令 × 宽度视图 + 每个 imm 槽的 `lo`/`hi` + 每个 mem 槽的
   `disp=8`/`disp=-8`/`index+scale=4`；取值与生成期自测同源 `sample_operands`）——
@@ -486,7 +487,7 @@ let name = node.get_text("name")?;
   （`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/`reg_field`/`set_reg_field`/
   `is_reg_field_settable`）在生成物里**不许再逐指令展开**——它们读每变体一行的
   `__SHAPES`（+ `__SLOT_CLASSES`/`__EFFECT_SETS` 两张去重表）与 3 个访问器
-  （`__shape`/`__reg_slot`/`__set_reg_slot`，见 `v12/codegen/machine.rs`）。
+  （`__shape`/`__reg_slot`/`__set_reg_slot`，见 `dsl/codegen/machine.rs`）。
   守卫 = `crates/frontend/forge-isa-dsl/tests/machine_shape_table.rs`（钉"8 个方法体零
   `Inst::` 臂" + "形状表与两个访问器覆盖同一批变体、行数 = 变体数"）；实测数字见
   `docs/performance/bench_baseline.md` 的「S8a 落地度量」（`tm` −12~26%，整模块 −7.5~12.9%）。
@@ -497,7 +498,7 @@ let name = node.get_text("name")?;
   与 `width` = 指令字长是两件事），其余全部由操作数结构派生：
   ① 方向 = 槽角色（`out`/`inout` = 目的、`in` = 来源）；② 寄存器族 = 槽的
   `class`/`classes`（`RegClass` 自带 `GPR`/`FPR`/`VEC`/`KReg`）；③ 立即数/寄存器/内存 =
-  槽的 `kind`。选指令 = 按 **(目的形状 × 来源形状 × 位宽)** 查表（`v12/codegen/moves.rs`
+  槽的 `kind`。选指令 = 按 **(目的形状 × 来源形状 × 位宽)** 查表（`dsl/codegen/moves.rs`
   的 `MoveTable`，**唯一实现**，生成器四处发射点与 `abi_view`/生成物 `role_bits` 同源）：
   寄存器/立即数来源取**最窄覆盖者**（整寄存器搬移对更窄的值同样正确），涉及内存取**精确**
   宽度；同形状同宽度多条候选 ⇒ **生成期报错并列出候选**（不设"钉选"注解）；一条都没有 ⇒
@@ -542,10 +543,10 @@ let name = node.get_text("name")?;
   `TargetRegInfo::{addr_class, value_gpr_class,
   value_fpr_class, slot_bytes, vector_tiers, class_for_type}`——**不要**再写
   `RegClass::GPR64`/8 字节缺省。1 字节寄存器 ISA 夹具 =
-  `crates/backend/forge-codegen/tests/isa/demo8_v12.toml`；指令字宽夹具 =
-  `tests/isa/demo_inst{8,12,100}_v12.toml`（由
+  `crates/backend/forge-codegen/tests/isa/demo8.toml`；指令字宽夹具 =
+  `tests/isa/demo_inst{8,12,100}.toml`（由
   `tests/common/mod.rs` 用 `isa_from_file!(…)` 宿住，
-  **不进库本体**；用例在 `tests/demo8_v12_tests.rs`）；反回潮守卫 =
+  **不进库本体**；用例在 `tests/demo8_tests.rs`）；反回潮守卫 =
   `crates/{frontend/forge-dsl,backend/forge-codegen}/tests/no_hardcoded_widths.rs`
   （白名单带理由，且条目必须被命中）+ `tests/library_surface.rs`（demo 谱不得
   回到 `src/` 或仓库根 `isa/`）。规范细节见 `docs/reference/isa-dsl.md`
@@ -568,7 +569,7 @@ let name = node.get_text("name")?;
   `docs/plans/forge-rustc-vec_push-plan.md` §9.1/§9.2（失败轮产物须与本机产物做
   行为/字节对照：一致 ⇒ 宿主环境性；错码 ⇒ 转 regalloc 关联法）。
 
-## SIMD 支持矩阵（x86_64，isa/x86_v12.toml）
+## SIMD 支持矩阵（x86_64，isa/x86.toml）
 
 | 维度 | 支持 | 说明 |
 | --- | --- | --- |
@@ -576,10 +577,10 @@ let name = node.get_text("name")?;
 | 元素 | f32/f64/i32/i64 | vadd/vsub/vneg 全元素（f32→addps、f64→addpd、i32→paddd、i64→paddq/psubq；V256 整数走 AVX2 vpaddd/vpsubd/vpaddq/vpsubq）；vmul 浮点 + i32（PMULLD/VPMULLD）；i64 vmul/vdiv 与整数 vdiv 无 SIMD 指令 → 编译期 Unsupported；vabs 用按位掩码（andps 0x7FFFFFFF×4）对 f64/i64 亦正确 |
 | 运算 | vconst/vconst_array/vadd/vsub/vmul/vdiv/vneg/vabs/vbitcast/vextract（全 lane）/vinsert/vbroadcast/vsplit/vconcat/shuffle_vector | `vconst<T: Vector>(Vec<T>)` 泛型值语义（动态数组，ty 由 T+长度推导）；`vconst_array([T; N])` 静态数组；`vconst_bytes(Vec<u8>, ty)` 底层字节 API（元素 LE 字节序，用户自定义 `Vector::lane_bytes` 即可接入）；shuffle_vector：V128 单 shufps、V256 拆半双 shufps（mask 组内语义）；vbroadcast 64 位元素用 vbroadcastsd。**vextract 的 V256 规则按 `rs1_width`（向量操作数）判定**——结果类型是标量，用 `rd` 会永不命中（2026-09-10 修复：V256 lane≥4 曾取到低半区值，`test_jit_v256_byref_high_lane` 守护） |
 | 常量 | 扁平字节池（`Vec<u8>` + offset 表 + 每段端序 `vec_endian`） | `vconst<T: Vector>(Vec<T>)` 泛型值语义（ty 由 T+len 推导，默认 Little）、`vconst_array([T; N])` 静态数组、`vconst_bytes` 底层字节；**端序**：`Vector::lane_bytes(endian)`（Little→to_le、Big→to_be，u8..u128/f32/f64 全位宽，u128 16 字节不截断）、`vconst_with_endian`/`vconst_bytes_with_endian` 显式端序（大端框架数据）、`ConstantPool::get_vector_endian` 查询；DSL 按常量端序还原（LE→from_le、BE→from_be，32 位元素逐元素 BE 读）；**V512（64 字节）常量**按 4×128 位段各自装好后用 4 条 EVEX `VINSERTF32X4`（imm=0..3，覆盖全部 128 位 lane）拼成——占位符 `{vconst_lo_h2}`/`{vconst_hi_h2}`/`{vconst_lo_h3}`/`{vconst_hi_h3}`，生成级测试 `test_v512_vconst_generates_four_evex_inserts`（无需 AVX-512 硬件）守护，见 WORKAROUNDS WA-43；rodata 数据段加载为长期优化 |
-| ABI | **≤16B（V64/V128）按值 XMM 全宽 + >16B（V256）by-ref/sret 全线支持**（2026-09 D3 补齐 VEC(16) 全宽） | Windows x64 无 YMM 参数寄存器——>8B 非标量按引用传指针（占 GPR 槽）、返回 >64 位走首参 RCX 隐藏 sret；≤16B 向量（VEC(16) 类）按值进 XMM{pos}（by-position 槽）：收参/实参/返回用**全宽 128 位 MOVAPS**（指令角色 `roles = ["vec_mov"]`（缺省 MOVAPS）——MOVSD/MOVSS 只移 8/4B 会静默截断高半，WA-37 D3 修复）。Load/Store 谓词加 `rd_vec`/`rs1_vec`（向量类型字节数）→ V128 走 MOVUPS_128（0F 10/11 无前缀 16 字节）、V64 走 movsd 8B。jit 12+ 测试绿（v128/v64 byval param/return、mixed、wide byref/sret、v512）；forge-rustc B3 门控已撤、simd_v128/v64/v256 e2e 全绿。**残余**：宽向量第 5+ GPR 槽显式 Unsupported（调用方 + 被调方 by-position/by-class 三处均 fail-closed；设计取舍，建议不做）。CallIndirect 宽参/返回**已测**（`test_jit_call_indirect_wide_vector_byref` / `test_jit_call_indirect_wide_vector_sret_return`，2026-09-12 逐条核查 WA-37 残留清单时确认）。IR 层 >16B 向量 Load/Store 已于 2026-09-12 支持（32B 恒可、>32B 需 AVX-512F，`rd_vec`/`rs1_vec` = 32/64 → `VMOVUPS_256_*`/`VMOVUPS_512_*` 的 **reg 基址**形式；ABI by-ref 仍走 MemRef 形式）。V512 被调方收参已按**参数 IR 字节数**分派 64B load（EVEX；生成级测试 `test_v512_byref_callee_load_is_64b` 守护，运行级 lane15 断言需 AVX-512F 硬件）。见 forge-rustc WORKAROUNDS.md WA-37 |
-| 编码 | SSE（0F/0F38 前缀族）+ AVX（VEX C4 语义键）+ AVX2（VEX 族） | v12 生成器内联实现 ModRM/REX/VEX 发射（`v12/codegen/mod.rs` 的 VlenCtx）；VEX 三操作数 r/m=src2、vvvv=~src1；无源指令 vvvv 编码 1111；vextractf128 的 dest 在 r/m、src 在 reg；vzeroupper 无需（Windows x64 ABI 允许破坏 YMM 高半） |
+| ABI | **≤16B（V64/V128）按值 XMM 全宽 + >16B（V256）by-ref/sret 全线支持**（2026-09 D3 补齐 VEC(16) 全宽） | Windows x64 无 YMM 参数寄存器——>8B 非标量按引用传指针（占 GPR 槽）、返回 >64 位走首参 RCX 隐藏 sret；≤16B 向量（VEC(16) 类）按值进 XMM{pos}（by-position 槽）：收参/实参/返回用**全宽 128 位 MOVAPS**（按值向量按**整寄存器槽**请求 128 位 → 取到全宽搬移那条（x86 = MOVAPS）；MOVSD/MOVSS 只移 8/4B 会静默截断高半，WA-37 D3 修复）。Load/Store 谓词加 `rd_vec`/`rs1_vec`（向量类型字节数）→ V128 走 MOVUPS_128（0F 10/11 无前缀 16 字节）、V64 走 movsd 8B。jit 12+ 测试绿（v128/v64 byval param/return、mixed、wide byref/sret、v512）；forge-rustc B3 门控已撤、simd_v128/v64/v256 e2e 全绿。**残余**：宽向量第 5+ GPR 槽显式 Unsupported（调用方 + 被调方 by-position/by-class 三处均 fail-closed；设计取舍，建议不做）。CallIndirect 宽参/返回**已测**（`test_jit_call_indirect_wide_vector_byref` / `test_jit_call_indirect_wide_vector_sret_return`，2026-09-12 逐条核查 WA-37 残留清单时确认）。IR 层 >16B 向量 Load/Store 已于 2026-09-12 支持（32B 恒可、>32B 需 AVX-512F，`rd_vec`/`rs1_vec` = 32/64 → `VMOVUPS_256_*`/`VMOVUPS_512_*` 的 **reg 基址**形式；ABI by-ref 仍走 MemRef 形式）。V512 被调方收参已按**参数 IR 字节数**分派 64B load（EVEX；生成级测试 `test_v512_byref_callee_load_is_64b` 守护，运行级 lane15 断言需 AVX-512F 硬件）。见 forge-rustc WORKAROUNDS.md WA-37 |
+| 编码 | SSE（0F/0F38 前缀族）+ AVX（VEX C4 语义键）+ AVX2（VEX 族） | 生成器内联实现 ModRM/REX/VEX 发射（`dsl/codegen/mod.rs` 的 VlenCtx）；VEX 三操作数 r/m=src2、vvvv=~src1；无源指令 vvvv 编码 1111；vextractf128 的 dest 在 r/m、src 在 reg；vzeroupper 无需（Windows x64 ABI 允许破坏 YMM 高半） |
 
-v12 结构化谓词：属性表 = `v12/pred.rs` 的 `PRED_ATTRS`（`rd`/`rs1_width`/
+结构化谓词：属性表 = `dsl/pred.rs` 的 `PRED_ATTRS`（`rd`/`rs1_width`/
 `rs2_width`/`rd_vec`/`rs1_vec`/`elem`/`cond`/`imm0`，与生成器 `__attr` 分派表
 单点同步；写错属性名编译期报错——未知属性恒为假会让规则永不命中）+
 `and/or/not/in/eq/ne/lt/le/gt/ge` 组合（纯 TOML 数据，无字符串）。
@@ -598,7 +599,7 @@ x86 用它把 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、Sitofp/Uitofp、Fptosi/Fpt
   键在 `PRED_ATTRS` 里 → 该行自动追加 `eq = [键, 值]` 到 `when`；否则是模板里
   `{键}` 的纯替换变量。x86 `Fcmp` 32 条 → 8 条、`Vadd`/`Vsub` 各 8 → 3。
 - 规则**不依赖声明序**：裁决序 = (`priority` 降, 谓词叶子数降, 声明序升)，
-  见 `V12Model::lowering_by_op`。被前序规则完全覆盖的规则 → 编译期报"死规则"
+  见 `IsaModel::lowering_by_op`。被前序规则完全覆盖的规则 → 编译期报"死规则"
   （判定域 = 每属性闭区间集合；含 `or`/`not` 记为 Opaque 跳过）。`priority`
   只在"故意让更宽的规则赢"时用（x86 `Vextract` 的 lane 0 快路径）。
 

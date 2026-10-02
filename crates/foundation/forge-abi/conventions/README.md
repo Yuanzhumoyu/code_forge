@@ -8,10 +8,10 @@ CLI（`forge-isa abi …`）与集成测试都用同一份，避免"文档一套
 
 | 文件 | ISA 名 | 约定名 | 参数寄存器（int / float） | 间接结果指针 | callee-saved |
 | --- | --- | --- | --- | --- | --- |
-| `win64-x86_64.toml` | `x86_64_v12` | `win64` | RCX-R9 / XMM0-3（按位置共用游标） | RCX（`int` 池 0 槽） | RBX,RDI,RSI,R12-R15 |
-| `sysv64-x86_64.toml` | `x86_64_v12` | `sysv64` | RDI,R9 序 / XMM0-7（按类各计数） | RDI（`int` 池 0 槽） | RBX,R12-R15 |
-| `aapcs64-arm64.toml` | `arm64_v12` | `aapcs64` | X0-X7 / **V0-V7** | **X8（独立池）** | X19-X28 |
-| `lp64d-riscv64.toml` | `riscv64_v12` | `lp64d` | X10-X17 / F10-F17（按类各计数） | X10（`int` 池 0 槽） | X9,X18-X27 |
+| `win64-x86_64.toml` | `x86_64` | `win64` | RCX-R9 / XMM0-3（按位置共用游标） | RCX（`int` 池 0 槽） | RBX,RDI,RSI,R12-R15 |
+| `sysv64-x86_64.toml` | `x86_64` | `sysv64` | RDI,R9 序 / XMM0-7（按类各计数） | RDI（`int` 池 0 槽） | RBX,R12-R15 |
+| `aapcs64-arm64.toml` | `arm64` | `aapcs64` | X0-X7 / **V0-V7** | **X8（独立池）** | X19-X28 |
+| `lp64d-riscv64.toml` | `riscv64` | `lp64d` | X10-X17 / F10-F17（按类各计数） | X10（`int` 池 0 槽） | X9,X18-X27 |
 
 四条与"从谱里抄 `[abi]`"不同的约定值得写下来：
 
@@ -32,7 +32,7 @@ CLI（`forge-isa abi …`）与集成测试都用同一份，避免"文档一套
 ## 已知缺口（A5/A6 关闭）
 
 - **arm64 没有 FPR/VEC 寄存器组**：`float` 池欠奉 → 浮点/HFA 参数规划时报 `MissingPool`
-  （`forge-isa abi check isa/arm64_v12.toml` 会如实列出这批 GAP）。
+  （`forge-isa abi check isa/arm64.toml` 会如实列出这批 GAP）。
   补齐 = 谱里加 `[reg.fpr8]`（`V0..V31`）+ `fpr_mov`/`vec_mov` 角色的指令声明。
 - **SysV 的 eightbyte 分类未建模**：≤16B 聚合统一按两个 `int` 槽（真实 SysV 会按成员
   拆到 SSE），见 `builtin::SYSV64` 的 `note`。

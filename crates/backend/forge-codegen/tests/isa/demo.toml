@@ -1,0 +1,274 @@
+#:schema ../../../isa-dsl.schema.json
+# ============================================================
+# demo — 类型约束自动分发演示 ISA（定宽 32 位）
+# ============================================================
+#
+# 本文件证明 DSL 的核心新能力：**同一助记符的不同寄存器宽度版本由后端按
+# 操作数实际类型自动分发到不同编码**，用户无需手写 `mov16`/`mov32`/
+# `mov64` 等拆分名（[[operand_slots]] 多类型 + 类型签名特异性排序）。
+#
+# 演示要点：
+# - 三个宽度视图组 gpr2(16 位 W0-W7)/gpr4(32 位 R0-R7)/gpr8(64 位 X0-X7)
+#   共用物理编号 0-7（base_index=0）。
+# - `add`：三个 form（opcode 0x10/0x11/0x12），asm 助记符均为 "add"——
+#   `add w1, w2, w3` → ADD16、`add r1, r2, r3` → ADD32、`add x1, x2, x3` → ADD64。
+# - `mov`：同上（opcode 0x20/0x21/0x22）。
+# - `brz`：标签槽（label），支持数字偏移与符号引用（两遍布局）。
+# - NOP 用全字位域（word）避免与 ADD16 的 0x10 撞车。
+#
+# 验证：crates/backend/forge-codegen/tests/demo_tests.rs
+
+[meta]
+name = "demo"
+version = "13.0"
+endian = "little"
+mode = 64
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# ─────────────────────────── 寄存器组 ───────────────────────────
+[encoding]
+kind = "fixed"
+bits = 32
+
+[reg.gpr2]
+base_index = 0
+names = ["W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7"]
+
+[reg.gpr4]
+base_index = 0
+names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7"]
+
+[reg.gpr8]
+base_index = 0
+names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
+
+# ─────────────────── 类型 → 类（ISA 数据，可选）───────────────────
+# 软浮点演示：本 ISA 没有 FPR 组，但显式声明 f32/f64 走 64 位 GPR
+#（值池里就是 8 字节寄存器）——"非常规映射"是 ISA 数据，不是宿主代码。
+[types]
+f32 = "gpr8"
+f64 = "gpr8"
+
+# ─────────────────────── 命名位域 ───────────────────────
+[conventions.bitfields]
+opcode = { offset = 0, width = 8 }
+rd     = { offset = 8,  width = 3 }
+rs1    = { offset = 11, width = 3 }
+rs2    = { offset = 14, width = 3 }
+imm16  = { offset = 16, width = 16 }
+word   = { offset = 0,  width = 32 }
+
+# ─────────────────────────── 操作数槽 ───────────────────────────
+
+[[operand_slots]]
+name = "r16"
+kind = "reg"
+class = "gpr2"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "r32"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "r64"
+kind = "reg"
+class = "gpr8"
+roles = ["in", "out"]
+
+[[operand_slots]]
+name = "lab"
+kind = "label"
+signed = true
+width = 16
+
+[[operand_slots]]
+name = "imm16"
+kind = "imm"
+signed = true
+width = 16
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "R"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "rs2"]
+
+[[forms]]
+name = "RR"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1"]
+
+[[forms]]
+name = "RI"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "imm16"]
+
+[[forms]]
+name = "B"
+opcode_field = "opcode"
+operand_fields = ["rs1", "imm16"]
+
+[[forms]]
+name = "W"
+opcode_field = "word"
+operand_fields = []
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+# add：同一助记符，三宽度版本 → 按操作数实际类自动分发
+[[instructions]]
+name = "ADD16"
+ref = "add"
+form = "R"
+opcode = 0x10
+ops = ["dst:r16:out", "src:r16", "src2:r16"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ADD32"
+ref = "add"
+form = "R"
+opcode = 0x11
+ops = ["dst:r32:out", "src:r32", "src2:r32"]
+asm = "add {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "ADD64"
+ref = "add"
+form = "R"
+opcode = 0x12
+ops = ["dst:r64:out", "src:r64", "src2:r64"]
+asm = "add {dst}, {src}, {src2}"
+
+# mov：同上，二操作数
+[[instructions]]
+name = "MOV16"
+ref = "mov"
+form = "RR"
+opcode = 0x20
+ops = ["dst:r16:out", "src:r16"]
+asm = "mov {dst}, {src}"
+
+[[instructions]]
+name = "MOV32"
+ref = "mov"
+form = "RR"
+opcode = 0x21
+ops = ["dst:r32:out", "src:r32"]
+asm = "mov {dst}, {src}"
+
+[[instructions]]
+name = "MOV64"
+ref = "mov"
+data_width = 64
+form = "RR"
+opcode = 0x22
+ops = ["dst:r64:out", "src:r64"]
+asm = "mov {dst}, {src}"
+
+# mov 立即数（16 位常量；RI form rd = imm）
+[[instructions]]
+name = "MOV16_R_IMM16"
+ref = "mov"
+form = "RI"
+opcode = 0x23
+ops = ["dst:r16:out", "imm:imm16"]
+asm = "mov {dst}, {imm}"
+
+# 帧分配/释放（rd = rs1 ± imm8；B3 接入 TargetMachine 用）
+[[instructions]]
+name = "SUBI16"
+roles = ["frame_alloc"]
+form = "RI"
+opcode = 0x40
+ops = ["dst:r16:out", "src:r16", "imm:imm16"]
+asm = "subi {dst}, {src}, {imm}"
+
+[[instructions]]
+name = "ADDI16"
+roles = ["frame_free"]
+form = "RI"
+opcode = 0x41
+ops = ["dst:r16:out", "src:r16", "imm:imm16"]
+asm = "addi {dst}, {src}, {imm}"
+
+# 返回（全字位域；word = 0x01，与 NOP 的 0 区分）
+[[instructions]]
+name = "RET"
+roles = ["ret"]
+form = "W"
+opcode = 1
+effect = ["Ret"]
+asm = "ret"
+
+# 分支（标签槽）
+[[instructions]]
+name = "BRZ"
+form = "B"
+opcode = 0x30
+effect = ["Branch"]
+ops = ["src:r32", "target:lab"]
+asm = "brz {src}, {target}"
+
+# 无操作数（全字位域，避免与 opcode 0x10 撞车）
+[[instructions]]
+name = "NOP"
+form = "W"
+opcode = 0
+asm = "nop"
+
+# ════════════════════════════════════════════════════════════
+# B3：接入 TargetMachine（调用约定 + 帧 + 序言/尾声 + lowering）
+# ════════════════════════════════════════════════════════════
+
+[stack]
+slot = 8
+align = 8
+fp_save = 8
+
+# 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
+# 生成器按角色解析 src/dest，不依赖操作数序）
+
+# 参数寄存器：X0-X3（64 位视图，物理 0-3）
+
+[machine]
+# 帧件会保存的那组 GPR：本夹具不保存任何寄存器（v20 A5-3 起机器事实写在这里，
+# 旧 `[abi.callee_saved]` 已删除）。
+callee_saved_gpr = []
+
+[machine.frame]
+sp = "X7"          # demo 无专用 SP；X7 作栈指针（frame_size=0 时不发射）
+fp = "X6"          # 帧指针占位（B3 最小集不 push）
+fp_push_bytes = 0
+
+[emit]
+align_pad = 0
+# 独立尾声标签关闭：demo 无 JMP 指令，return block 直接 fall-through
+# 到函数末尾的尾声（RET）——仅单 return block 函数安全（B3 测试满足）。
+epilogue_label = false
+
+
+# Iadd：同一条模板字符串 "add {out}, {0}, {1}"，宽度由 when 谓词分发——
+# i16 → ADD16、i32 → ADD32、i64 → ADD64（后端按操作数实际宽度选变体，
+# 无需手写 add16/add32/add64 三条 lowering）。
+
+# ── 显式别名（S10e）：多态引用名 → 指令名列表 ──
+[[lowering]]
+op = "Iadd"
+vary = { rs1_width = [16, 32, 64] }
+insts = ["add {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Iconst"
+insts = ["mov {out}, {iconst}"]
+
+[[lowering]]
+op = "Copy"
+insts = ["mov {out}, {0}"]

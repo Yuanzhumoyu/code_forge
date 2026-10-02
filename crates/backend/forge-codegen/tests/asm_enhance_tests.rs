@@ -1,8 +1,8 @@
 //! 汇编器增强验证（D）：.equ 符号常量、立即数表达式、数据伪指令
 //! （.word/.hword/.dword/.ascii/.asciz/.zero）、.macro/.endm、行号错误。
 //!
-//! 载体：表达式/.equ → riscv64_v12（`addi x1, x0, expr`，imm12 有符号）；
-//! 数据伪指令/宏/行号 → demo_v12（定宽 32 位）。
+//! 载体：表达式/.equ → riscv64（`addi x1, x0, expr`，imm12 有符号）；
+//! 数据伪指令/宏/行号 → demo（定宽 32 位）。
 
 mod common;
 
@@ -11,15 +11,15 @@ use forge_codegen::machine::assembler::TargetAssembler;
 // ── riscv：表达式 / .equ ──
 
 fn rv_enc(asm: &str) -> u32 {
-    let inst = forge_codegen::riscv64_v12::assemble(asm)
-        .unwrap_or_else(|e| panic!("assemble `{asm}`: {e}"));
+    let inst =
+        forge_codegen::riscv64::assemble(asm).unwrap_or_else(|e| panic!("assemble `{asm}`: {e}"));
     let bytes =
-        forge_codegen::riscv64_v12::encode(&inst).unwrap_or_else(|e| panic!("encode `{asm}`: {e}"));
+        forge_codegen::riscv64::encode(&inst).unwrap_or_else(|e| panic!("encode `{asm}`: {e}"));
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
-fn rv_parse(src: &str) -> Vec<forge_codegen::riscv64_v12::Inst> {
-    let asm = forge_codegen::riscv64_v12::Assembler;
+fn rv_parse(src: &str) -> Vec<forge_codegen::riscv64::Inst> {
+    let asm = forge_codegen::riscv64::Assembler;
     asm.parse_insts(src)
         .unwrap_or_else(|e| panic!("parse_insts: {e}"))
 }
@@ -42,7 +42,7 @@ fn equ_symbol_in_immediate() {
     assert_eq!(insts.len(), 1);
     // A+B*2 = 5+6 = 11
     let w = {
-        let bytes = forge_codegen::riscv64_v12::encode(&insts[0]).unwrap();
+        let bytes = forge_codegen::riscv64::encode(&insts[0]).unwrap();
         u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     };
     assert_eq!(addi_imm(w), 11, "imm 应为 A+B*2 = 11");
@@ -51,7 +51,7 @@ fn equ_symbol_in_immediate() {
 #[test]
 fn equ_forward_reference() {
     // .equ 顺序求值：前向引用应失败（顺序语义）
-    let asm = forge_codegen::riscv64_v12::Assembler;
+    let asm = forge_codegen::riscv64::Assembler;
     let err = asm.parse_insts(concat!(".equ X, Y\n", ".equ Y, 5\n", "addi x1, x0, X\n"));
     assert!(err.is_err(), "前向 .equ 引用应失败: {err:?}");
 }
@@ -78,9 +78,9 @@ fn immediate_expr_arithmetic() {
 #[test]
 fn immediate_expr_in_branch() {
     // 标签槽表达式：beq x1, x2, 40+2 → off_b = 42
-    let inst = forge_codegen::riscv64_v12::assemble("beq x1, x2, 40+2")
+    let inst = forge_codegen::riscv64::assemble("beq x1, x2, 40+2")
         .unwrap_or_else(|e| panic!("assemble beq: {e}"));
-    let bytes = forge_codegen::riscv64_v12::encode(&inst).unwrap();
+    let bytes = forge_codegen::riscv64::encode(&inst).unwrap();
     // B 型 imm13：bit[12|10:5|4:1|11]（相对指令地址；asm 数字标签 = 偏移）
     let w = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     // 提取 B 型偏移（与 encode 的 imm_b pieces 一致）：
@@ -92,17 +92,17 @@ fn immediate_expr_in_branch() {
     assert_eq!(v, 42, "beq 标签表达式 40+2 = 42");
 }
 
-// ─────────────────── 数据伪指令（demo_v12）───────────────────
+// ─────────────────── 数据伪指令（demo）───────────────────
 
-fn dm_parse(src: &str) -> Vec<common::demo_v12::Inst> {
-    let asm = common::demo_v12::Assembler;
+fn dm_parse(src: &str) -> Vec<common::demo::Inst> {
+    let asm = common::demo::Assembler;
     asm.parse_insts(src)
         .unwrap_or_else(|e| panic!("parse_insts: {e}"))
 }
 
 #[test]
 fn data_word_hword_dword() {
-    use common::demo_v12::Inst;
+    use common::demo::Inst;
     let insts = dm_parse(concat!(
         ".word 0x11223344\n",
         ".hword 0x5566\n",
@@ -118,7 +118,7 @@ fn data_word_hword_dword() {
 
 #[test]
 fn data_ascii_asciz_zero() {
-    use common::demo_v12::Inst;
+    use common::demo::Inst;
     let insts = dm_parse(concat!(".ascii \"hi\"\n", ".asciz \"!\"\n", ".zero 3\n"));
     assert_eq!(insts.len(), 3);
     assert!(matches!(&insts[0], Inst::Raw(b) if b == b"hi"));
@@ -128,7 +128,7 @@ fn data_ascii_asciz_zero() {
 
 #[test]
 fn data_escape_sequences() {
-    use common::demo_v12::Inst;
+    use common::demo::Inst;
     // 源文本含 \n \t \" 转义（rust 字符串里用 \\n 等表达源反斜杠）
     let src = ".ascii \"a\\nb\\t\\\"\"\n";
     let insts = dm_parse(src);
@@ -140,11 +140,11 @@ fn data_escape_sequences() {
     );
 }
 
-// ─────────────────── .macro/.endm（demo_v12）───────────────────
+// ─────────────────── .macro/.endm（demo）───────────────────
 
 #[test]
 fn macro_expansion() {
-    use common::demo_v12::Inst;
+    use common::demo::Inst;
     let insts = dm_parse(concat!(
         ".macro LD2 reg, imm\n",
         "mov %reg, w0\n",
@@ -159,7 +159,7 @@ fn macro_expansion() {
 
 #[test]
 fn macro_nested_expansion() {
-    use common::demo_v12::Inst;
+    use common::demo::Inst;
     let insts = dm_parse(concat!(
         ".macro SETZ r\n",
         "mov %r, w0\n",
@@ -177,13 +177,13 @@ fn macro_nested_expansion() {
 
 #[test]
 fn macro_error_missing_endm() {
-    let asm = common::demo_v12::Assembler;
+    let asm = common::demo::Assembler;
     assert!(asm.parse_insts(concat!(".macro FOO\n", "nop\n")).is_err());
 }
 
 #[test]
 fn macro_error_arg_count() {
-    let asm = common::demo_v12::Assembler;
+    let asm = common::demo::Assembler;
     assert!(
         asm.parse_insts(concat!(".macro ONE a\n", "nop\n", ".endm\n", "ONE 1, 2\n"))
             .is_err()
@@ -195,14 +195,14 @@ fn macro_error_arg_count() {
 #[test]
 fn error_carries_line_number() {
     // demo：第 3 行语法错误
-    let asm = common::demo_v12::Assembler;
+    let asm = common::demo::Assembler;
     let err = asm
         .parse_insts(concat!("nop\n", "nop\n", "frob r1, r2\n"))
         .unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("line 3"), "语法错误应带行号: {msg}");
     // riscv：第 5 行未定义标签
-    let asm = forge_codegen::riscv64_v12::Assembler;
+    let asm = forge_codegen::riscv64::Assembler;
     let err = asm
         .parse_insts(concat!(
             "nop\n",
@@ -218,7 +218,7 @@ fn error_carries_line_number() {
 
 #[test]
 fn error_equ_bad_expr() {
-    let asm = forge_codegen::riscv64_v12::Assembler;
+    let asm = forge_codegen::riscv64::Assembler;
     let err = asm.parse_insts(".equ X, 1+\n").unwrap_err();
     assert!(format!("{err}").contains("line 1"), "err: {err:?}");
 }
@@ -229,7 +229,7 @@ fn rv_words(src: &str) -> Vec<u32> {
     rv_parse(src)
         .iter()
         .map(|i| {
-            let b = forge_codegen::riscv64_v12::encode(i).unwrap();
+            let b = forge_codegen::riscv64::encode(i).unwrap();
             u32::from_le_bytes([b[0], b[1], b[2], b[3]])
         })
         .collect()
@@ -259,12 +259,12 @@ fn pseudo_li_expands_to_lui_addi() {
 /// 参数个数不符 / 单条 API 装不下多条展开 ⇒ 明确报错。
 #[test]
 fn pseudo_errors_are_explicit() {
-    let asm = forge_codegen::riscv64_v12::Assembler;
+    let asm = forge_codegen::riscv64::Assembler;
     let err = asm.parse_insts("li a0\n").unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("需要 2 个参数"), "msg: {msg}");
 
-    let err = forge_codegen::riscv64_v12::assemble("li x10, 0x1234").unwrap_err();
+    let err = forge_codegen::riscv64::assemble("li x10, 0x1234").unwrap_err();
     assert!(
         err.contains("parse_insts"),
         "单条 API 应指引改用 parse_insts：{err}"

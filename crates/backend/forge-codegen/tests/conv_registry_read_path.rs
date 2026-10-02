@@ -18,7 +18,7 @@
 
 mod common;
 
-use common::demo8_v12::TargetMachine;
+use common::demo8::TargetMachine;
 use forge_codegen::FunctionCompiler;
 use forge_codegen::pipeline::conv_registry;
 use forge_ir::CallConvId;
@@ -95,7 +95,7 @@ parent = "c"
     .expect("注册规则");
     conv_registry::register_binding_toml(
         r#"
-isa = "demo8_v12"
+isa = "demo8"
 conv = "probe_conv"
 [pools]
 int = ["A0", "A1", "A2", "A3"]

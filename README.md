@@ -40,17 +40,17 @@
 | `forge-object` | Tools | ELF/PE/Mach-O object file writer |
 | `forge-plugin` | Tools | Dynamic ISA backend loader (.dll/.so/.dylib) |
 | `forge-rustc` | Tools | rustc codegen backend（Windows x64 no_std；需 nightly + rustc-dev） |
-| `forge-tests` | Tools | Integration test macros、ISA 编码 golden、JIT 执行/模糊测试（x86_v12） |
+| `forge-tests` | Tools | Integration test macros、ISA 编码 golden、JIT 执行/模糊测试（x86） |
 
 ## Quick Start
 
 ```rust
-use code_forge::backend::arch::x86_v12::{self, ensure_registered};
+use code_forge::backend::arch::x86::{self, ensure_registered};
 use code_forge::backend::jit::JitCompiler;
 use code_forge::ir::*;
 
 ensure_registered();
-let tm = x86_v12::TargetMachine::new();
+let tm = x86::TargetMachine::new();
 let mut jit = JitCompiler::new(tm);
 
 let sig = FunctionSignature::new(&[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::I32]);
@@ -71,8 +71,8 @@ assert_eq!(unsafe { add(3, 4) }, 7);
 
 | ISA | Status | File |
 | ------- | -------- | ------ |
-| x86_64 (v12) | ✅ 完整后端（204 条指令、编码+解码+汇编+寄存器分配+JIT 执行闭环；mini_c 全特性 25/25） | `isa/x86_v12.toml` |
-| RISC-V64 (v12) | ✅ 自包含 encode/decode/asm 试点（未接 TargetMachine） | `isa/riscv64_v12.toml` |
+| x86_64 (v12) | ✅ 完整后端（204 条指令、编码+解码+汇编+寄存器分配+JIT 执行闭环；mini_c 全特性 25/25） | `isa/x86.toml` |
+| RISC-V64 (v12) | ✅ 自包含 encode/decode/asm 试点（未接 TargetMachine） | `isa/riscv64.toml` |
 
 > v11 语法层（`encoding` 字符串 + `@原语`）与 v11 后端（x86_v10/aarch64/riscv64/
 > wasm32/minimal_sd）已物理删除——v12 是唯一 DSL 语法，无兼容层。

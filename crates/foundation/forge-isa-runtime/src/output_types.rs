@@ -15,7 +15,7 @@ pub struct CompiledFunction {
     pub line_entries: Vec<(u32, u32)>,
     /// DWARF `.debug_frame` CFI 行（M2）：emission 完成后经
     /// `TargetMachine::function_cfi` 按 ISA 名派发扫描（machine::cfi——
-    /// x86_64 v12 命中；非 x86 后端/形态不符 → None，安全退化不产 CFI）。
+    /// x86_64 命中；非 x86 后端/形态不符 → None，安全退化不产 CFI）。
     /// forge-rustc 在 debuginfo 开启时据此生成每函数一条 FDE（gdb 无 SEH
     /// 时靠 .debug_frame 解栈——bt/info args 的根因修复）。
     pub cfi: Option<FunctionCfi>,

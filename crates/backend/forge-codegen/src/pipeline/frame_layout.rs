@@ -145,7 +145,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::arm64_v12::TargetMachine as ArmTm;
+    use crate::arch::arm64::TargetMachine as ArmTm;
 
     /// **FPR callee-saved 进得了帧**（v20 A6 激活的守卫）：AAPCS64 的表是
     /// X19-X28（10）+ V8-V15（8）= 18 条，而谱里声明的 `[machine].callee_saved_gpr`

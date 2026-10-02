@@ -1,13 +1,13 @@
-# forge-tests — 通用 ISA 测试框架（v12 唯一后端）
+# forge-tests — 通用 ISA 测试框架（唯一的发行后端）
 
-`forge-tests` 为 code-forge 的 ISA 后端（v12 唯一后端 `x86_v12`）提供统一的
+`forge-tests` 为 code-forge 的 ISA 后端（唯一的发行后端 `x86`）提供统一的
 测试框架：覆盖矩阵（compile-only）、执行测试（本机 JIT）、性质测试
 （确定性 / 恒等式 / 边界值）与 forge-rustc 后端集成（`nightly` feature）。
 
 v11 时代的多 ISA 套件（x86_64/aarch64/riscv64）、encode-golden/disasm 断言与
 unicorn 跨架构模拟（`exec-unicorn`）已随 v11 语法层删除——aarch64/riscv64
-无 v12 对应后端；编码/解码/汇编断言由 forge-codegen 的 `x86_v12_tests.rs` /
-`riscv64_v12_tests.rs` / `decoder_smoke.rs` 覆盖。
+无对应后端；编码/解码/汇编断言由 forge-codegen 的 `x86_tests.rs` /
+`riscv64_tests.rs` / `decoder_smoke.rs` 覆盖。
 
 根 `tests/` 下的集成测试已全部迁入本 crate（无重复维护）。
 
@@ -15,13 +15,13 @@ unicorn 跨架构模拟（`exec-unicorn`）已随 v11 语法层删除——aarch
 
 | feature | 作用 |
 | --- | --- |
-| （无默认 features） | 覆盖矩阵 / 执行 / 模糊测试（x86_v12）默认运行 |
+| （无默认 features） | 覆盖矩阵 / 执行 / 模糊测试（x86）默认运行 |
 | `nightly` | forge-rustc 后端集成测试（需 nightly 工具链 + `rustc-dev` 组件） |
 
 运行示例：
 
 ```bash
-# 覆盖矩阵 + 执行 + 模糊测试（x86_v12）
+# 覆盖矩阵 + 执行 + 模糊测试（x86）
 cargo test -p forge-tests
 
 # forge-rustc 后端集成（需 nightly + rustc-dev）
@@ -33,7 +33,7 @@ cargo test -p forge-tests --features nightly
 ```text
 src/
 ├── lib.rs            # backend_tests! 等宏 + nightly 模块 + run_x86_64_pipeline_tests
-├── coverage.rs       # 75 ops 覆盖矩阵（compile-only）+ capability 守卫 + v12 声明集零缺口断言
+├── coverage.rs       # 75 ops 覆盖矩阵（compile-only）+ capability 守卫 + ISA-DSL 声明集零缺口断言
 ├── isa/mod.rs        # 已随 v11 套件清空（模块保留占位）
 └── exec/
     ├── harness.rs    # 统一 harness：build → compile → exec（run_i32/i64/f64/args_i64、compile_ok）
@@ -45,7 +45,7 @@ src/
 
 ### 1. 定义 ISA
 
-在 `isa/` 下新建 TOML（如 `isa/my_isa.toml`），按 v12 DSL 语法定义指令编码、
+在 `isa/` 下新建 TOML（如 `isa/my_isa.toml`），按 ISA-DSL 语法定义指令编码、
 寄存器、lowering 规则（见 `docs/reference/isa-dsl.md`）。在 forge-codegen 中注册 backend：
 
 ```rust
@@ -66,7 +66,7 @@ pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
 
 ```rust
 // compile-only 覆盖矩阵（75 ops，返回 (op, outcome) 列表）
-let results = forge_tests::coverage::check_isa(| | code_forge::backend::x86_v12::TargetMachine::new());
+let results = forge_tests::coverage::check_isa(| | code_forge::backend::x86::TargetMachine::new());
 
 // 本机执行（返回 i32）
 forge_tests::exec::harness::run_i32("my_isa_add", |b| {

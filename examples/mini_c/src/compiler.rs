@@ -6,7 +6,7 @@
 //! and returns its exit code.
 
 use code_forge::backend::jit::JitCompiler;
-use code_forge::backend::x86_v12::ensure_registered;
+use code_forge::backend::x86::ensure_registered;
 use code_forge::forge_grammar::{AstVisitor, Parser};
 use code_forge::ir::Module;
 
@@ -154,7 +154,7 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
     // 6. JIT compile the entire module (handles cross-function relocations)
     ensure_registered();
     let mut jit: Box<dyn JitRunner> = Box::new(JitRunnerImpl(JitCompiler::new(
-        code_forge::backend::x86_v12::TargetMachine::new(),
+        code_forge::backend::x86::TargetMachine::new(),
     )));
     jit.compile_module(&module)
         .map_err(|e| format!("JIT compile error: {}", e))?;
@@ -167,8 +167,8 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
     Ok(main_fn())
 }
 
-/// JIT 运行器 — v12 唯一后端（x86_v12 TargetMachine）。
-struct JitRunnerImpl(JitCompiler<code_forge::backend::x86_v12::TargetMachine>);
+/// JIT 运行器 — 唯一的发行后端（x86 TargetMachine）。
+struct JitRunnerImpl(JitCompiler<code_forge::backend::x86::TargetMachine>);
 
 trait JitRunner {
     fn compile_module(&mut self, module: &Module) -> Result<(), String>;

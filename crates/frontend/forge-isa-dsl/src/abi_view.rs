@@ -1,7 +1,7 @@
 //! **机器能力视图**：从一份 ISA 谱里读出"这台机器有什么"——寄存器表、角色声明、
 //! 固定用途寄存器、链接寄存器。**不读调用约定**（那是使用者的数据，见 `forge-abi`）。
 //!
-//! 为什么单独开一层而不是把 `V12Model` 暴露出去：
+//! 为什么单独开一层而不是把 `IsaModel` 暴露出去：
 //!
 //! - CLI（`forge-isa abi …`）与将来的宿主适配器只需要**这一小块**（`AbiTarget` 的
 //!   输入面），不需要整个模型；
@@ -28,9 +28,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::dsl::model::{IsaModel, RegClass, Role};
+use crate::dsl::shared::group_names;
 use crate::loader::LoadedSpec;
-use crate::v12::model::{RegClass, Role, V12Model};
-use crate::v12::shared::group_names;
 
 /// 一个物理寄存器（`index` = 本文档顶部的编号）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,13 +114,13 @@ impl MachineView {
 pub fn inspect(path: &Path) -> Result<MachineView, String> {
     let spec = LoadedSpec::load(path)?;
     let (model, _projection) =
-        crate::v12::parse_and_validate_projected(&spec.text, &Default::default())
+        crate::dsl::parse_and_validate_projected(&spec.text, &Default::default())
             .map_err(|e| crate::render_error_for(&spec, &e))?;
     build(&model, &spec)
 }
 
 /// 从已解析的模型建视图（`inspect` 的可测内核）。
-pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String> {
+pub fn build(model: &IsaModel, spec: &LoadedSpec) -> Result<MachineView, String> {
     let mut notes: Vec<String> = Vec::new();
     let addr = model.addr_class()?;
     let fpr_main = model.main_fpr_class()?;
@@ -246,7 +246,7 @@ pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String>
     // 1. 角色声明（`roles = ["call"]` → "call"）：操作数结构**说不出来**的语义
     //    （调用/返回/跳转/帧/栈参数/保存恢复）；
     // 2. **搬运族派生**（v20 V8）：`data_width` + 操作数结构 → 方向/寄存器族/宽度，
-    //    与生成器**同一张表**（`v12/codegen/moves.rs`）——ISA 不再手写
+    //    与生成器**同一张表**（`dsl/codegen/moves.rs`）——ISA 不再手写
     //    `gpr_mov`/`fpr_mov`/`vec_mov`/`gpr_mov_imm`/`fpr_to_gpr_mov`/
     //    `gpr_to_fpr_mov`/`wide_vec_move`。
     let mut roles: BTreeMap<&'static str, RoleInfo> = BTreeMap::new();
@@ -262,8 +262,8 @@ pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String>
             }
         }
     }
-    if let Ok(infos) = crate::v12::codegen::collect_inst_infos(model)
-        && let Ok(moves) = crate::v12::codegen::moves::MoveTable::collect(&infos)
+    if let Ok(infos) = crate::dsl::codegen::collect_inst_infos(model)
+        && let Ok(moves) = crate::dsl::codegen::moves::MoveTable::collect(&infos)
     {
         for (cap, bits, insts) in moves.capabilities() {
             let e = roles.entry(cap).or_default();
@@ -291,7 +291,7 @@ pub fn build(model: &V12Model, spec: &LoadedSpec) -> Result<MachineView, String>
     })
 }
 
-fn group_names_of(model: &V12Model, rc: RegClass) -> Result<Vec<String>, String> {
+fn group_names_of(model: &IsaModel, rc: RegClass) -> Result<Vec<String>, String> {
     let g = model.reg.get(&rc).ok_or_else(|| {
         format!(
             "谱里没有 [reg.gpr{}]/[reg.fpr{}] 组（{rc:?}）",
@@ -305,7 +305,7 @@ fn group_names_of(model: &V12Model, rc: RegClass) -> Result<Vec<String>, String>
 /// 角色 → 引擎需要的能力名（`None` = 该角色不参与 ABI 的寄存器搬运）。
 ///
 /// **搬运族不在这个表里**（v20 V8）：它们的宽度/方向/寄存器族由指令的
-/// `data_width` + 操作数结构派生（`v12/codegen/moves.rs`），
+/// `data_width` + 操作数结构派生（`dsl/codegen/moves.rs`），
 /// `MachineView::roles` 直接按派生出的能力名登记。
 pub fn role_capability(role: Role) -> Option<&'static str> {
     Some(match role {

@@ -1,9 +1,9 @@
-# (ISA, 约定) 寄存器绑定：AAPCS64 → arm64_v12
+# (ISA, 约定) 寄存器绑定：AAPCS64 → arm64
 #
 # v20 A5 起 arm64 谱已有 `[reg.fpr8]`（V0..V31）与 `fpr_mov` 角色，
 # 因此浮点/HFA 参数与返回都有寄存器可落。
 
-isa = "arm64_v12"
+isa = "arm64"
 conv = "aapcs64"
 
 [pools]

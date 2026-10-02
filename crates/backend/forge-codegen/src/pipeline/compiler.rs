@@ -1865,7 +1865,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         //    （与上方 ABI 守卫同一判据），避免发射本机无法执行的 EVEX。
         //  - 其它 >16B 宽度（非 32/64）：无 lowering 规则 → 显式拒绝。
         // 旧行为：>16B 向量 Load/Store 一律拒绝（ISA 缺宽槽类 → 曾落到默认
-        // 8 字节 MOV 静默截断）；现由 isa/x86_v12.toml 的 rd_vec/rs1_vec
+        // 8 字节 MOV 静默截断）；现由 isa/x86.toml 的 rd_vec/rs1_vec
         // = 32/64 规则 + 本条硬件门共同把住。
         for (_, inst) in func.dfg.insts() {
             let tys: Vec<TypeId> = inst
@@ -1995,7 +1995,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             // 这里只跑 use-lists 契约而不是完整 `Verifier`：本阶段会**有意**造出
             // 类型不完全自洽的 IR —— `expand_geps` 的指针算术把 PTR 基址与 i64 偏移
             // 放进同一条 `Iadd`（结果标 PTR；源码注释也写着"verify 不跑"），
-            // 而 v12 后端没有 `Ptrtoint`/`Inttoptr` 的 lowering，无法用显式转换
+            // 而 DSL 后端没有 `Ptrtoint`/`Inttoptr` 的 lowering，无法用显式转换
             // 表达同一语义。该类型模型欠账记在 `docs/plans/forge-ir-v3-plan.md`
             // （S4/S5：指针算术的 typed 表示），不在本阶段用"放宽校验"掩盖。
             #[cfg(debug_assertions)]
@@ -2418,7 +2418,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
 #[cfg(test)]
 mod alloc_integration_tests {
     use super::*;
-    use crate::arch::x86_v12;
+    use crate::arch::x86;
 
     /// 生成期 AVX-512 可行性开关的作用域守卫（Drop 时清除，**panic 安全**）。
     /// 必须与 `crate::AVX512_ENV_LOCK` 配对使用——env 只放开"能否发射 EVEX"
@@ -2447,7 +2447,7 @@ mod alloc_integration_tests {
     /// Phase 4.2：builder 构造 IR 走完整管线，断言 AllocResult.assignments 非空且合法。
     #[test]
     fn test_alloc_result_assignments() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         let mut b = FunctionBuilder::new(
             "alloc_test",
             TypeContext::new(),
@@ -2459,7 +2459,7 @@ mod alloc_integration_tests {
         let s = b.imul(a, c);
         b.ret(&[s]);
         let func = b.finish().expect("build");
-        let machine = x86_v12::TargetMachine::new();
+        let machine = x86::TargetMachine::new();
         let (cf, alloc) = FunctionCompiler::new(machine)
             .compile_with_alloc(&func)
             .expect("compile_with_alloc");
@@ -2480,7 +2480,7 @@ mod alloc_integration_tests {
     /// Phase 4.3：参数 ABI 分配——f(i64×4) 的前 4 参数 XReg 分配到 RCX/RDX/R8/R9。
     #[test]
     fn test_param_abi_allocation() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(
             &[
@@ -2499,7 +2499,7 @@ mod alloc_integration_tests {
         let s2 = b.iadd(s1, params[3]);
         b.ret(&[s2]);
         let func = b.finish().expect("build");
-        let machine = x86_v12::TargetMachine::new();
+        let machine = x86::TargetMachine::new();
         let (_cf, alloc) = FunctionCompiler::new(machine)
             .compile_with_alloc(&func)
             .expect("compile_with_alloc");
@@ -2538,7 +2538,7 @@ mod alloc_integration_tests {
     /// 分配层完整性：每个分配/溢出的 XReg 都有合法去向。
     #[test]
     fn test_div_clobber_alloc_integrity() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         let ctx = TypeContext::new();
         let sig = FunctionSignature::new(&[], &[ctx.i64_ty()]);
         let mut b = FunctionBuilder::new("div_clobber_alloc", ctx, sig);
@@ -2552,7 +2552,7 @@ mod alloc_integration_tests {
         }
         b.ret(&[acc]);
         let func = b.finish().expect("build");
-        let machine = x86_v12::TargetMachine::new();
+        let machine = x86::TargetMachine::new();
         let (cf, alloc) = FunctionCompiler::new(machine)
             .compile_with_alloc(&func)
             .expect("div + clobber 压力下编译必须成功（无 RegAlloc 错误）");
@@ -2574,7 +2574,7 @@ mod alloc_integration_tests {
     /// 在生产路径是死代码）。
     #[test]
     fn p0_compile_with_opt_level() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         let mut b = FunctionBuilder::new(
             "opt_const_fold",
             TypeContext::new(),
@@ -2587,7 +2587,7 @@ mod alloc_integration_tests {
         b.ret(&[s]);
         let func = b.finish().expect("build");
 
-        let machine = x86_v12::TargetMachine::new();
+        let machine = x86::TargetMachine::new();
         // 无优化编译（对照）
         let (cf0, _) = FunctionCompiler::new(machine.clone())
             .compile_with_alloc(&func)
@@ -2615,7 +2615,7 @@ mod alloc_integration_tests {
     /// 编码分派——本测试只编译不执行（EVEX 真执行需硬件）。
     #[test]
     fn test_v512_byref_callee_load_is_64b() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         // 安全：仅本测试设置该 env（进程内其他测试只读；只影响能力判断）
         let _env_guard = crate::AVX512_ENV_LOCK
             .lock()
@@ -2637,7 +2637,7 @@ mod alloc_integration_tests {
         let int = b.fptosi(wide, TypeId::I32);
         b.ret(&[int]);
         let func = b.finish().expect("build v512 callee");
-        let cf = FunctionCompiler::new(x86_v12::TargetMachine::new())
+        let cf = FunctionCompiler::new(x86::TargetMachine::new())
             .compile(&func)
             .expect("compile v512 callee（FORGE_ASSUME_AVX512 下应通过守卫）");
         // EVEX 前缀（62）+ EVEX 编码的 0F 10 家族；32B 变体是 3 字节 VEX
@@ -2663,14 +2663,14 @@ mod alloc_integration_tests {
 
     /// V512（64 字节）`Vconst` 的**生成级**守卫（不需要 AVX-512 硬件：只编译不执行）。
     ///
-    /// 背景：`isa/x86_v12.toml` 的 `Vconst` 规则原只覆盖 `rd = 64/128/256`，V512
+    /// 背景：`isa/x86.toml` 的 `Vconst` 规则原只覆盖 `rd = 64/128/256`，V512
     /// 常量落到「no matching rule」→ `Unsupported`。该缺口只在**有 AVX-512F 的机器**
     /// 上暴露（`runtime::jit` 的 `test_jit_v512_byref_param` 无 AVX-512F 时提前
     /// return，本机即如此），历史上因此在 CI 上偶发红（Test (Windows) 命中
     /// AVX-512 runner 的 run）。本测试用「**无宽向量参数/返回** + 函数内局部 V512
     /// 常量」构造——不触发宽向量 ABI 的 AVX-512 入口守卫，任何机器都能编译验证。
     ///
-    /// 断言：①编译成功（修复前 `Unsupported("v12 lowering: Vconst no matching rule")`）；
+    /// 断言：①编译成功（修复前 `Unsupported("DSL lowering: Vconst no matching rule")`）；
     /// ②机器码含 **4 条 EVEX `VINSERTF32X4`**（`62 P0 P1 P2 18 /r ib`）且 imm 恰为
     /// 0/1/2/3 各一次 ⇒ 512 位的 4 个 128 位 lane 都被显式写入（这也是 Vconst 规则
     /// 「`{out}` 自身当累加器、初始值不影响结果」这一构造前提的可执行证据）。
@@ -2680,7 +2680,7 @@ mod alloc_integration_tests {
     /// （本例只编译不执行，EVEX 真执行由有硬件的 runner 守护）。
     #[test]
     fn test_v512_vconst_generates_four_evex_inserts() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         // 安全：仅本测试设置该 env（AVX512_ENV_LOCK 串行化，见 lib.rs 说明）。
         let _env_guard = crate::AVX512_ENV_LOCK
             .lock()
@@ -2704,7 +2704,7 @@ mod alloc_integration_tests {
         let int = b.fptosi(wide, TypeId::I32);
         b.ret(&[int]);
         let func = b.finish().expect("build v512 vconst");
-        let cf = FunctionCompiler::new(x86_v12::TargetMachine::new())
+        let cf = FunctionCompiler::new(x86::TargetMachine::new())
             .compile(&func)
             .expect("V512 常量应可降级（修复前：Vconst no matching rule）");
         // EVEX = 62 + P0 P1 P2 + opcode：窗口 [62, P0, P1, P2, opcode, modrm, imm]。
@@ -2743,7 +2743,7 @@ mod alloc_integration_tests {
         let int = b.fptosi(wide, TypeId::I32);
         b.ret(&[int]);
         let func = b.finish().expect("build wide vector slot roundtrip");
-        FunctionCompiler::new(x86_v12::TargetMachine::new()).compile(&func)
+        FunctionCompiler::new(x86::TargetMachine::new()).compile(&func)
     }
 
     /// W3（2026-09-12）：V256（32B）向量的 **IR 层 Load/Store 已可降级**——
@@ -2757,7 +2757,7 @@ mod alloc_integration_tests {
     /// VEX（`C4 P0 P1`），P1 = W=0/vvvv=1111/L=1/pp=00 → `0x7C`（仅 R̄/X̄/B̄ 在 P0）。
     #[test]
     fn test_v256_slot_load_store_is_lowered() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         let cf = compile_wide_slot_roundtrip(8).expect("32B 向量槽往返应可降级（W3）");
         let is_vex256 = |w: &[u8], op: u8| w[0] == 0xC4 && w[2] == 0x7C && w[3] == op;
         assert!(
@@ -2790,7 +2790,7 @@ mod alloc_integration_tests {
     /// 能力"场景）——②由生成级断言守护编码。
     #[test]
     fn test_v512_slot_load_store_requires_avx512() {
-        x86_v12::ensure_registered();
+        x86::ensure_registered();
         // 安全：仅本测试设置该 env（与 D5 用例共用 AVX512_ENV_LOCK 串行化）。
         let _env_guard = crate::AVX512_ENV_LOCK
             .lock()
@@ -2872,8 +2872,8 @@ mod alloc_integration_tests {
     #[test]
     fn test_fpr_spill_width_dispatch() {
         use crate::machine::frame::TargetFrameLowering;
-        x86_v12::ensure_registered();
-        let fl = x86_v12::FrameLowering;
+        x86::ensure_registered();
+        let fl = x86::FrameLowering;
         let emit = |width: u16, is_load: bool| -> Result<Vec<u8>, IrError> {
             let mut sink = crate::pipeline::emit::CodeSink::new();
             if is_load {

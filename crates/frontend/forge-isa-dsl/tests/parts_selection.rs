@@ -2,14 +2,14 @@
 //!
 //! 断言对象是**生成出来的 token 文本**（去空白后做子串匹配）：受限的部件确实
 //! **没有被发射**，而不是"恰好没被用到"。配套的编译级证据在
-//! `forge-codegen/tests/include_v12_tests.rs`（只有一个 `encode` 的模块真的能编过）。
+//! `forge-codegen/tests/include_tests.rs`（只有一个 `encode` 的模块真的能编过）。
 //!
-//! 同一份谱（`include_root_v12.toml`，多文件）在这里也顺带钉住 `include`/`[[override]]`
+//! 同一份谱（`include_root.toml`，多文件）在这里也顺带钉住 `include`/`[[override]]`
 //! 的合并结果。
 
 use forge_isa_dsl::{ExpandOptions, Parts, expand_file};
 
-const SPEC: &str = "crates/backend/forge-codegen/tests/isa/include_root_v12.toml";
+const SPEC: &str = "crates/backend/forge-codegen/tests/isa/include_root.toml";
 
 fn opts(parts: Parts) -> ExpandOptions {
     ExpandOptions {
@@ -113,7 +113,7 @@ fn included_files_are_merged_into_one_module() {
     assert!(t.contains("Isub"), "根文件里的 ISUB 应在");
     assert!(t.contains("18.0-include"), "[[override]] 应覆盖版本");
     // 根文件的 `[meta].name` 覆盖片段的（片段没有 name，故唯一值来自根）。
-    assert!(t.contains("demo_include_v12"), "名字来自根文件");
+    assert!(t.contains("demo_include"), "名字来自根文件");
 }
 
 // ── 4. 参数校验 ──

@@ -7,7 +7,7 @@
 //! 2. **生成形状**（`expand_str`）：四种形态各自发射出对应断言（token 文本级），
 //!    用例名 `spec_vector_<下标>` 与谱里顺序一一对应，条数进 `SPEC_VECTORS`。
 //!
-//! "字节对不对"的证据不在这里：`isa/riscv64_v12.toml` 的 62 条向量由生成物
+//! "字节对不对"的证据不在这里：`isa/riscv64.toml` 的 62 条向量由生成物
 //! `__spec_tests::spec_vector_*` 真跑（`cargo test -p forge-codegen --lib`，
 //! 迁移前后 903 → 965 passed）。
 

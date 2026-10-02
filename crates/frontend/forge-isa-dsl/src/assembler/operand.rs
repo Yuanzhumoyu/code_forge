@@ -2,7 +2,7 @@
 //!
 //! 输入：token 流（[`crate::assembler::lex::Tok`]）+ 寄存器表。每个槽类型的
 //! 解析函数返回**类型化值**，`None` = 不匹配（多形状回退语义）。生成器
-//! (`v12/codegen`) 按此语义在生成模块内发出 `__reg_cls`/`__imm`/`__label`/
+//! (`dsl/codegen`) 按此语义在生成模块内发出 `__reg_cls`/`__imm`/`__label`/
 //! `__cond`/`__mem` 的 std-only 版本。
 
 #![cfg_attr(not(test), allow(dead_code))]
@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::v12::model::RegClass;
+use crate::dsl::model::RegClass;
 use lex::Tok;
 
 use super::lex;
@@ -242,7 +242,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v12::model::RegClass;
+    use crate::dsl::model::RegClass;
 
     fn regs() -> RegTable {
         vec![

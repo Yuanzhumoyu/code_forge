@@ -153,7 +153,7 @@ SysV 返回 `RAX`/`RAX:RDX`，参数从 `RDI` 起。所以内置绑定给出 `re
 ## ② AbiBinding —— (ISA, 约定) 的寄存器绑定
 
 ```toml
-isa = "x86_64_v12"      # 与 [meta].name 一致
+isa = "x86_64"      # 与 [meta].name 一致
 conv = "win64"          # 与 AbiRules::name 一致
 
 [pools]
@@ -422,7 +422,7 @@ riscv 谱原有 `FLD` 指令却**没有 lowering**，已补 `Fload`/`Fstore`，�
 的 `first_offset_slots`（2 → 0：RISC-V 帧基址 = 入口 sp，不 push 返回地址）。
 `aapcs64` 的**数据面**逐格钉住（`abi_target_real::aapcs64_variadic_shape_is_pure_data`），
 **编译面**被 arm64 谱缺的 `Icmp`/`Select`/`StackAddr`/`Sextend`/`Ireduce` lowering 挡住（缺口由
-`arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住）。缺口与接法见
+`arm64_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住）。缺口与接法见
 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)。
 
 ### 无 plan = 编译错误（v20 A6）
@@ -487,7 +487,7 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | 变参 V3 对象物化：`va_start` 建 `va_list` 对象（管线给帧槽）+ win64 穿过对象读回 | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（真跑 `4*10+7 = 47`） |
 | 变参 V4：`va_arg` 取值 + 原地推进（整数类 + `f64` + `f32` 提升，win64） | ✅ | `test_jit_va_arg_reads_unnamed_stack_args`（两次 `va_arg` → 4 / 7）、`test_jit_va_arg_reads_unnamed_float_args`（`4.5 + 7.0 → 11`）、`test_jit_va_arg_narrows_promoted_f32`（`2.5 + 3.25 → 5`） |
 | 栈上的**浮点形参**（第 5+ 个，win64；经 spill 中转按位保留） | ✅ | `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`、`test_jit_stack_float_param_is_received_into_a_register` |
-| 变参：**架构无关矩阵**里的端到端用例（用例 `variadic_va_arg_int_and_float`；x86 真跑 `4*10 + 7 + (i64)2.5 = 49`，其余机器按能力门控 Skip） | ✅ | `jit_matrix_x86_v12` |
+| 变参：**架构无关矩阵**里的端到端用例（用例 `variadic_va_arg_int_and_float`；x86 真跑 `4*10 + 7 + (i64)2.5 = 49`，其余机器按能力门控 Skip） | ✅ | `jit_matrix_x86` |
 | 变参 V3 计划面：`va_list` 字段布局 + 寄存器保存区槽表（四份内置约定的 psABI 数字） | ✅ | `va_object_layout_matches_the_psabi_numbers`、`call_layout_mirrors_the_variadic_shape` |
 | 变参 V3 发射（sysv64）：序言 spill 参数寄存器 + `va_start` 物化对象（真跑读回未命名实参） | ✅ | `test_jit_va_start_materializes_the_sysv64_register_save_area` |
 | 变参 V6：取参规则做成**约定数据**（形状/字段/保存区/规则），管线一套算法通吃四份约定；生成器变参臂与 4 个变参角色删除 | ✅ | `call_layout_mirrors_the_variadic_shape`、`va_object_layout_matches_the_psabi_numbers`、`test_jit_va_arg_reads_unnamed_stack_args`（win64 走 IR 展开） |
@@ -644,9 +644,9 @@ forge-isa abi plan  <谱.toml> --conv <名> --sig "i64, f64 -> i64" [--variadic 
 
 | 谱 | `[meta].name` | 寄存器视图 | 结论 |
 | --- | --- | --- | --- |
-| `isa/x86_v12.toml` | `x86_64_v12` | GPR 16 + FP 16 | `win64` / `sysv64` 各 15 条代表签名**全部可规划**；硬错 0 |
-| `isa/riscv64_v12.toml` | `riscv64_v12` | GPR 32 + FP 32 | `lp64d` 15 条**全部可规划**；链接寄存器 X1 |
-| `isa/arm64_v12.toml` | `arm64_v12` | GPR 32 + **FP 0** | `aapcs64` **6 条缺口**：谱里没有 FPR 寄存器组 ⇒ `float`/`ret_float` 池缺 ⇒ 浮点/HFA 无寄存器可落 |
+| `isa/x86.toml` | `x86_64` | GPR 16 + FP 16 | `win64` / `sysv64` 各 15 条代表签名**全部可规划**；硬错 0 |
+| `isa/riscv64.toml` | `riscv64` | GPR 32 + FP 32 | `lp64d` 15 条**全部可规划**；链接寄存器 X1 |
+| `isa/arm64.toml` | `arm64` | GPR 32 + **FP 0** | `aapcs64` **6 条缺口**：谱里没有 FPR 寄存器组 ⇒ `float`/`ret_float` 池缺 ⇒ 浮点/HFA 无寄存器可落 |
 
 arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在规划期**就说得清楚
 （而不是等到生成/运行）。关闭它属于 A5：谱里加 `[reg.fpr8]`（`V0..V31`）+ 浮点搬运

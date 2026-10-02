@@ -1,8 +1,8 @@
 //! `report` — 面向**工具**（`forge-isa` CLI，v18 S7b）的只读报告层。
 //!
-//! 设计：内部模型（`V12Model`/`V12Error`/`InstInfo`/`diag::Diag`）保持 crate 私有，
+//! 设计：内部模型（`IsaModel`/`DslError`/`InstInfo`/`diag::Diag`）保持 crate 私有，
 //! 本模块把它们**投影成公开的纯数据结构**（可 JSON 化）。这样 CLI 不需要暴露模型
-//! 细节，也不必让 `pub` 泄漏到模型层（`pub enum V12Error` 会连带公开 `diag::Diag`）。
+//! 细节，也不必让 `pub` 泄漏到模型层（`pub enum DslError` 会连带公开 `diag::Diag`）。
 //!
 //! 单一事实源：指令的"生效规格"直接取 `codegen::collect_inst_infos`（form 预设 ⊕
 //! 指令级覆盖的**同一份**判定），CLI 不另写一遍。
@@ -10,9 +10,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::v12::V12Error;
-use crate::v12::codegen::collect_inst_infos;
-use crate::v12::model::{EncodingKind, RegClass, V12Model};
+use crate::dsl::DslError;
+use crate::dsl::codegen::collect_inst_infos;
+use crate::dsl::model::{EncodingKind, IsaModel, RegClass};
 
 /// 一条诊断（渲染与 JSON 都用它）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,14 +42,14 @@ impl DiagLine {
         }
     }
 
-    /// `行:列: 码: 消息`（与 `V12Error` 的 Display 同形，无路径前缀）。
+    /// `行:列: 码: 消息`（与 `DslError` 的 Display 同形，无路径前缀）。
     pub fn render(&self) -> String {
         format!("{}:{}: {}: {}", self.line, self.col, self.code, self.msg)
     }
 }
 
-impl From<&V12Error> for Vec<DiagLine> {
-    fn from(e: &V12Error) -> Self {
+impl From<&DslError> for Vec<DiagLine> {
+    fn from(e: &DslError) -> Self {
         e.diags()
             .into_iter()
             .map(|d| DiagLine {
@@ -66,7 +66,7 @@ impl From<&V12Error> for Vec<DiagLine> {
 
 /// 解析 + 校验，返回全部诊断（空 = 通过）。
 pub fn validate(source: &str) -> Vec<DiagLine> {
-    match crate::v12::parse_and_validate(source) {
+    match crate::dsl::parse_and_validate(source) {
         Ok(_) => Vec::new(),
         Err(e) => Vec::from(&e),
     }
@@ -172,7 +172,7 @@ pub struct Explain {
     pub template: Option<TemplateRow>,
 }
 
-fn summary(m: &V12Model) -> IsaSummary {
+fn summary(m: &IsaModel) -> IsaSummary {
     let widths = match m.encoding.kind {
         EncodingKind::Fixed => m.encoding.bits.into_iter().collect(),
         EncodingKind::Mixed => m.encoding.widths.clone(),
@@ -199,7 +199,7 @@ fn summary(m: &V12Model) -> IsaSummary {
 
 /// 编码键 → `(key, value)` 列表（字典序）。用 serde 把 `EncKeys` 折成 TOML 表，
 /// **不维护第二份键名清单**（新增编码键自动出现在 `insts`/`explain`/`diff` 里）。
-fn enc_pairs(keys: &crate::v12::model::EncKeys) -> Vec<(String, String)> {
+fn enc_pairs(keys: &crate::dsl::model::EncKeys) -> Vec<(String, String)> {
     let Ok(toml::Value::Table(t)) = toml::Value::try_from(keys) else {
         return Vec::new();
     };
@@ -208,7 +208,7 @@ fn enc_pairs(keys: &crate::v12::model::EncKeys) -> Vec<(String, String)> {
     out
 }
 
-fn row_of(m: &V12Model, info: &crate::v12::codegen::InstInfo<'_>) -> InstRow {
+fn row_of(m: &IsaModel, info: &crate::dsl::codegen::InstInfo<'_>) -> InstRow {
     let inst = &info.inst;
     let template_row = inst.from_template.as_ref().and_then(|tname| {
         find_template(m, tname).and_then(|t| {
@@ -249,7 +249,7 @@ pub fn insts_opts(
 
 /// 变体投影报告（v19 V5，对外）：`params` 到底动了什么。
 ///
-/// 与 `v12::validate::Projection`（crate 私有）字段一一对应——模型层保持私有，
+/// 与 `dsl::validate::Projection`（crate 私有）字段一一对应——模型层保持私有，
 /// 工具层只看到这份公开数据结构（同 `RunOpts` ↔ `ValidateOpts` 的分工）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Projection {
@@ -269,7 +269,7 @@ pub fn insts_projected_opts(
     source: &str,
     opts: &RunOpts,
 ) -> Result<(IsaSummary, Vec<InstRow>, Projection), Vec<DiagLine>> {
-    let (m, p) = crate::v12::parse_and_validate_projected(source, &opts.internal())
+    let (m, p) = crate::dsl::parse_and_validate_projected(source, &opts.internal())
         .map_err(|e| Vec::from(&e))?;
     let infos = collect_inst_infos(&m).map_err(|e| vec![DiagLine::plain(&e)])?;
     let rows = infos.iter().map(|i| row_of(&m, i)).collect();
@@ -288,7 +288,7 @@ pub fn insts_projected_opts(
 
 /// 单条指令的完整解释（含来源模板行）。
 pub fn explain(source: &str, name: &str) -> Result<Explain, Vec<DiagLine>> {
-    let m = crate::v12::parse_and_validate(source).map_err(|e| Vec::from(&e))?;
+    let m = crate::dsl::parse_and_validate(source).map_err(|e| Vec::from(&e))?;
     let infos = collect_inst_infos(&m).map_err(|e| vec![DiagLine::plain(&e)])?;
     let info = infos.iter().find(|i| i.inst.name == name).ok_or_else(|| {
         let mut names: Vec<&str> = infos.iter().map(|i| i.inst.name.as_str()).collect();
@@ -330,7 +330,7 @@ pub fn explain(source: &str, name: &str) -> Result<Explain, Vec<DiagLine>> {
 }
 
 /// 按模板名找模板：显式 `name` 优先，缺省时按"首行的 `inst`"（与解析期一致）。
-fn find_template<'a>(m: &'a V12Model, name: &str) -> Option<&'a crate::v12::model::Template> {
+fn find_template<'a>(m: &'a IsaModel, name: &str) -> Option<&'a crate::dsl::model::Template> {
     m.templates.iter().find(|t| match &t.name {
         Some(n) => n == name,
         None => t.rows.first().is_some_and(|r| r.inst == name),
@@ -429,7 +429,7 @@ pub fn validate_file_opts(path: &Path, opts: &RunOpts) -> (Vec<DiagLine>, Option
         }
     };
     let diags = validate_loaded_opts(&spec, opts);
-    let name = crate::v12::parse_and_validate_opts(&spec.text, &opts.internal())
+    let name = crate::dsl::parse_and_validate_opts(&spec.text, &opts.internal())
         .ok()
         .map(|m| m.meta.name);
     (diags, name)
@@ -473,8 +473,8 @@ pub fn validate_loaded_opts(spec: &crate::loader::LoadedSpec, opts: &RunOpts) ->
 
 /// 公开运行档位（CLI / 工具用）：v19 V6b 的严格档 + V5 的变体参数。
 ///
-/// 与内部 `v12::validate::ValidateOpts` 分开：对外只暴露这几个字段，
-/// CLI 不必依赖 `v12` 的内部结构。
+/// 与内部 `dsl::validate::ValidateOpts` 分开：对外只暴露这几个字段，
+/// CLI 不必依赖 `dsl` 的内部结构。
 #[derive(Debug, Clone, Default)]
 pub struct RunOpts {
     /// `validate --strict-overlap`。
@@ -503,8 +503,8 @@ impl RunOpts {
         })
     }
 
-    fn internal(&self) -> crate::v12::validate::ValidateOpts {
-        crate::v12::validate::ValidateOpts {
+    fn internal(&self) -> crate::dsl::validate::ValidateOpts {
+        crate::dsl::validate::ValidateOpts {
             strict_overlap: self.strict_overlap,
             params: self.params.clone(),
         }
@@ -513,7 +513,7 @@ impl RunOpts {
 
 /// 带档位校验源码（供 CLI / 工具用）。
 pub fn validate_opts(source: &str, opts: &RunOpts) -> Vec<DiagLine> {
-    match crate::v12::parse_and_validate_opts(source, &opts.internal()) {
+    match crate::dsl::parse_and_validate_opts(source, &opts.internal()) {
         Ok(_) => Vec::new(),
         Err(e) => Vec::from(&e),
     }

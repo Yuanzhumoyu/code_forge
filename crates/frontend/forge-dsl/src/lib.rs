@@ -56,17 +56,16 @@ mod tests {
     /// 本用例钉的是**宏侧入口**仍然按这套语义工作。
     #[test]
     fn parse_args() {
-        let a =
-            forge_isa_dsl::parse_macro_args(quote::quote! { "isa/x86_v12.toml" }).expect("缺省");
+        let a = forge_isa_dsl::parse_macro_args(quote::quote! { "isa/x86.toml" }).expect("缺省");
         assert!(a.opts.spec_tests, "缺省 = 生成自测（true）");
-        assert_eq!(a.path, "isa/x86_v12.toml");
+        assert_eq!(a.path, "isa/x86.toml");
         let b = forge_isa_dsl::parse_macro_args(quote::quote! {
-            "tests/isa/demo_v12.toml"
+            "tests/isa/demo.toml"
         })
         .expect("显式");
         assert!(b.opts.spec_tests);
         let c = forge_isa_dsl::parse_macro_args(quote::quote! {
-            "tests/isa/demo_v12.toml", spec_tests = false
+            "tests/isa/demo.toml", spec_tests = false
         })
         .expect("两个参数");
         assert!(!c.opts.spec_tests);
@@ -74,7 +73,7 @@ mod tests {
             .expect("尾随逗号");
         assert!(d.opts.spec_tests);
         let e = forge_isa_dsl::parse_macro_args(quote::quote! {
-            "tests/isa/include_root_v12.toml",
+            "tests/isa/include_root.toml",
             spec_tests = false, name = "my_isa",
             parts = ["encode", "decode"]
         })

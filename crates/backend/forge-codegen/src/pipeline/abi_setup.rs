@@ -64,7 +64,7 @@ pub(crate) fn setup_conv<M: TargetMachine>(
                     eprintln!("[abi-plan] {e}");
                 }
                 return Err(forge_ir::IrError::Unsupported(format!(
-                    "v12 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\
+                    "DSL 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\
                  无 plan 不再继续编译（fail-closed）。\n\
                  \x20 怎么修：① 约定数据缺/写错 ⇒ 用 \
                  forge_codegen::pipeline::conv_registry::register_rules_toml / \
@@ -117,7 +117,7 @@ mod tests {
 
     fn setup(func: &Function) -> (LowerCtx, AbiPlan) {
         crate::pipeline_hooks::ensure_registered();
-        let tm = crate::arch::x86_v12::TargetMachine::new();
+        let tm = crate::arch::x86::TargetMachine::new();
         let mut ctx = LowerCtx::new();
         ctx.value_gpr_class =
             crate::machine::target::TargetMachine::reg_info(&tm).value_gpr_class();
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn setup_fail_closes_on_unregistered_convention() {
         crate::pipeline_hooks::ensure_registered();
-        let tm = crate::arch::x86_v12::TargetMachine::new();
+        let tm = crate::arch::x86::TargetMachine::new();
         let mut ctx = LowerCtx::new();
         ctx.value_gpr_class =
             crate::machine::target::TargetMachine::reg_info(&tm).value_gpr_class();
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn setup_records_module_sigs() {
         crate::pipeline_hooks::ensure_registered();
-        let tm = crate::arch::x86_v12::TargetMachine::new();
+        let tm = crate::arch::x86::TargetMachine::new();
         let mut ctx = LowerCtx::new();
         ctx.value_gpr_class =
             crate::machine::target::TargetMachine::reg_info(&tm).value_gpr_class();

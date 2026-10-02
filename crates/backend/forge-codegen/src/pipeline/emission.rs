@@ -187,7 +187,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         }
         // M2：机器码完整后收集函数级 CFI（.debug_frame 行）。经 ISA 的
         // TargetMachine::function_cfi 派发（machine::cfi 按 ISA 名查扫描器）
-        // ——本通用管线不引用任何 ISA 专属代码；x86_64 v12 命中固定 prologue
+        // ——本通用管线不引用任何 ISA 专属代码；x86_64 命中固定 prologue
         // 扫描（字节开头 = Stage 8 的 emit_prologue 最先写 sink），riscv64/
         // demo/未注册 ISA → None（不产 CFI，零回归）。scan 只比较 15 字节
         // 常量前缀，开销可忽略。

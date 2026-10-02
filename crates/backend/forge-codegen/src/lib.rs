@@ -3,7 +3,7 @@
 //! # 架构
 //!
 //! 组件化 trait 体系，通过 [`machine::target::TargetMachine`] 组合成一个完整的 ISA 后端。
-//! DSL (`isa_from_file!`，v12 唯一语法) 从 TOML 文件自动生成所有组件实现。
+//! DSL (`isa_from_file!`，ISA-DSL 唯一语法) 从 TOML 文件自动生成所有组件实现。
 //!
 //! ## 核心组件
 //!
@@ -55,7 +55,7 @@ pub use forge_ir as ir;
 
 // ============================================================
 // ============================================================
-// 编码子系统 (v12 DSL 生成代码内联实现 encode/decode；无需运行时辅助模块)
+// 编码子系统 (DSL 生成代码内联实现 encode/decode；无需运行时辅助模块)
 // ============================================================
 
 // ============================================================
@@ -70,15 +70,15 @@ pub mod pipeline_hooks;
 pub mod runtime;
 
 // ============================================================
-// 架构后端 (DSL 生成；v12 唯一语法)
+// 架构后端 (DSL 生成；ISA-DSL 唯一语法)
 // ============================================================
 // 只有**发行后端**：x86_64 / aarch64 / riscv64。ISA-DSL 的示例谱
-// （demo_v12 / demo8_v12）是测试夹具，在 `tests/isa/` + `tests/common/mod.rs`
+// （demo / demo8）是测试夹具，在 `tests/isa/` + `tests/common/mod.rs`
 // 里用 `isa_from_file!(…)` 生成——不进本 rlib。
 pub mod arch;
-pub use arch::arm64_v12;
-pub use arch::riscv64_v12;
-pub use arch::x86_v12;
+pub use arch::arm64;
+pub use arch::riscv64;
+pub use arch::x86;
 
 // ============================================================
 // Module re-exports (for paths like code_forge::backend::pipeline::...)

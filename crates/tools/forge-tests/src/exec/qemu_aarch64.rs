@@ -322,7 +322,7 @@ mod tests {
             return;
         }
         use code_forge::backend::FunctionCompiler;
-        use code_forge::backend::arm64_v12::TargetMachine;
+        use code_forge::backend::arm64::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("ret_0x12345678", TypeContext::new(), sig);
@@ -348,7 +348,7 @@ mod tests {
             return;
         }
         use code_forge::backend::FunctionCompiler;
-        use code_forge::backend::arm64_v12::TargetMachine;
+        use code_forge::backend::arm64::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut b = FunctionBuilder::new("ret_neg1b", TypeContext::new(), sig);
@@ -373,7 +373,7 @@ mod tests {
     /// cond=false → else 翼 2；end 块 phi 参数承载两翼值。
     fn compile_if_else(cond: bool) -> code_forge::backend::CompiledFunction {
         use code_forge::backend::FunctionCompiler;
-        use code_forge::backend::arm64_v12::TargetMachine;
+        use code_forge::backend::arm64::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("ifelse", TypeContext::new(), sig);

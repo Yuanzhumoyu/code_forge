@@ -25,9 +25,9 @@ default run.
 
 | 生成模块 | 字节 | 行（未格式化 token 串） |
 | --- | ---: | ---: |
-| `forge_gen_x86_v12.rs` | 2,986,514 | 40,317 |
-| `forge_gen_riscv64_v12.rs` | 1,263,470 | 21,638 |
-| `forge_gen_arm64_v12.rs` | 644,018 | 9,241 |
+| `forge_gen_x86.rs` | 2,986,514 | 40,317 |
+| `forge_gen_riscv64.rs` | 1,263,470 | 21,638 |
+| `forge_gen_arm64.rs` | 644,018 | 9,241 |
 | 合计 | **4,894,002** | **71,196** |
 
 | 指标 | 实测 |
@@ -58,8 +58,8 @@ SHA-256 **逐字节相同**；黄金测试与 JIT 矩阵（x86 195/3/0、riscv 1
 | x86 | 3,887 → **3,678（−5.4%）** | 142 → 142 | 11 / 55 | 197 |
 | 合计 | 6,657 → **6,371（−4.3%）** | 215 → 215 | 62 / 187 | 402 |
 
-夹具同步（`crates/backend/forge-codegen/tests/isa/`）：`demo_v12` 279 → 278 行、
-`demo8_v12` 279 → 271、`demo_inst8_v12` 127 → 121（三个文件都只有"删 `[[aliases]]` + 4/2 处
+夹具同步（`crates/backend/forge-codegen/tests/isa/`）：`demo` 279 → 278 行、
+`demo8` 279 → 271、`demo_inst8` 127 → 121（三个文件都只有"删 `[[aliases]]` + 4/2 处
 `ref` 注入"这一处结构变化）。
 
 生成代码（`FGE_DEBUG_GEN=1` dump，**基线取自 HEAD 工作树**——先把 DSL 改动 `git stash`
@@ -78,7 +78,7 @@ riscv 1,263,918 → 1,264,082 B、x86 2,979,650 → 2,977,866 B，两边的差�
 | arm64 | 891 → **936（+5.0%）** | `[conventions.cond]` 16 条件、`#:schema`、宽度三态 |
 | riscv64 | 1,802 → **1,838（+2.0%）** | `[[reloc]]`/`[[pseudo]]`（`li`）、`#:schema` |
 | x86 | 3,678 → **3,693（+0.4%）** | `[[reloc]]`、`prefix_scan` 三态键 |
-| 合计 | 6,371 → **6,467（+1.5%）** | 夹具另加 `include_base/root_v12`（66 行，多文件组合） |
+| 合计 | 6,371 → **6,467（+1.5%）** | 夹具另加 `include_base/root`（66 行，多文件组合） |
 
 **生成代码口径提醒（给 S8 用）**：S0/S2c 两行的字节数取自 `FGE_DEBUG_GEN` dump；S7d 起若改用
 `forge_isa_dsl::expand_file(…).to_string()`（紧凑 token 串、含 S6 的 `__spec_tests`）自采，
@@ -131,13 +131,13 @@ riscv64/arm64 则分别与直接实测的 20,385 / 19,755 B 差 382 B（合并�
 
 > 结论与建议见 `docs/archive/forge-dsl-v18-plan.md` §7「S8 度量结论」。
 
-### S8a 落地度量（2026-09-21；同树 A/B，只切 `v12/codegen/machine.rs`）
+### S8a 落地度量（2026-09-21；同树 A/B，只切 `dsl/codegen/machine.rs`）
 
 **采集命令**（与上一节同一 harness：用 `parts` 开关分别取"全部件 / 无tm / 单件 / tm"，
 `spec_tests` 开关取自测增量，全部 `to_string().len()`）：
 
 ```bash
-# A、B 两轮各跑一次（B = git checkout -- crates/frontend/forge-isa-dsl/src/v12/codegen/machine.rs）
+# A、B 两轮各跑一次（B = git checkout -- crates/frontend/forge-isa-dsl/src/dsl/codegen/machine.rs）
 cargo test -p forge-isa-dsl --test zz_tmp_s8a -- --nocapture
 ```
 
@@ -190,7 +190,7 @@ A = 属性绑定（`let __a_*` + `__attr` 闭包）、B = `when` 分派、C = �
 `gen_lowering_attrs(model)` 本来就**只算一次**，只是被注入到每个 op 臂里（源码侧 `arms.push` 里的
 `#lowering_attrs`）——纯重复，不是"每条规则各有各的属性逻辑"。
 
-### S8b-1 落地度量（2026-09-21；同树 A/B，只切 `v12/codegen/lowering.rs`）
+### S8b-1 落地度量（2026-09-21；同树 A/B，只切 `dsl/codegen/lowering.rs`）
 
 改动 = 把该块从每个 op 臂里移到 `lower_inst` 的 `match op` **之前**发射一次。
 属性求值的**时机与次数都不变**（一次调用仍只算一次；值仍是 `Option<i64>` 局部，
@@ -713,7 +713,7 @@ owner——**无实际泄漏**。`pop_free` 丢弃冲突 preg 为防御性清理
 （with_o1 +31% 与 mem +25% 偏大，但 criterion 同点置信区间宽（+29%~+52%），
 且 codegen_many_ops 在同次运行中一度报 -14%（反向）——判定为负载噪声。
 8/27 之后对运行时的影响源：forge-ir 新增 `KReg` 类（`overlaps()` 多一次
-分支，纳秒级）、forge-dsl 第三轮重构（编译期生成器，影响 x86_v12 生成代码
+分支，纳秒级）、forge-dsl 第三轮重构（编译期生成器，影响 x86 生成代码
 形态，需干净环境复核）。）
 
 ### throughput codegen（µs）

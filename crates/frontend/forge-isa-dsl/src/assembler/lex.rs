@@ -1,10 +1,10 @@
 //! 参考词法器：汇编源码文本 → [`Tok`] 序列。
 //!
-//! 这是 v12 asm 语法的**规范**实现（logos 驱动）。`v12/codegen` 生成器：
+//! 这是 ISA-DSL asm 语法的**规范**实现（logos 驱动）。`dsl/codegen` 生成器：
 //! 1. 在**编译期**用 [`tokenize`] 把 asm 模板的字面段转成 token 列表，用于
 //!    生成逐 token 匹配代码（`__eat_lit`）；
 //! 2. 在**生成模块内**镜像本词法的 token 集合，发出 std-only 手写 `__lex`
-//!    （`v12/codegen::gen_lexer_ts`），两者词法语义必须逐 token 一致。
+//!    （`dsl/codegen::gen_lexer_ts`），两者词法语义必须逐 token 一致。
 //!
 //! 词法要点：
 //! - 空白（含 `\r`）跳过。**注释剥离在 `parse_insts` 行级完成**（注释字符由
@@ -18,7 +18,7 @@
 
 use logos::{Lexer, Logos};
 
-/// 汇编源码 token（v12 规范；生成器镜像此集合发出 `__Tok`）。
+/// 汇编源码 token（ISA-DSL 规范；生成器镜像此集合发出 `__Tok`）。
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\n\f\r]+")]
 pub enum Tok {
