@@ -414,6 +414,144 @@ fn variadic_unnamed_arguments_follow_the_convention() {
     );
 }
 
+/// **未命名实参专属分类**（v20 V7 `variadic_classify`）：psABI 可以说"变参按**另一套**约定传"
+/// ——RISC-V 的 `riscv-cc.adoc` 在浮点调用约定一节写着 *"The remainder of this section applies
+/// only to named arguments. **Variadic arguments are passed according to the integer
+/// calling convention.**"* ⇒ LP64D 上变参的浮点也走整数寄存器。
+///
+/// 这条钉住"两条轴都在、且只影响未命名那些"：① 有 `variadic_classify` 时命名实参仍走
+/// `classify`（浮点进浮点池）、未命名实参走整数池；② 去掉那张表 ⇒ 未命名实参回到普通分类
+/// （证明变化来自**数据**，不是引擎里的某个 ISA 分支）。
+#[test]
+fn variadic_classify_switches_only_the_unnamed_arguments() {
+    let rules_with = r#"
+name = "vswitch"
+classify = [
+  { when = { kind = "float", size_le = 8 }, do = { direct = { pool = "float" } } },
+  { when = { kind = "scalar" },             do = { direct = { pool = "int" } } },
+]
+# 未命名实参按整数约定（浮点也进整数池）——与 RISC-V psABI 同款。
+variadic_classify = [ { when = { kind = "scalar" }, do = { direct = { pool = "int" } } } ]
+# 变参签名要求声明 `va_list` 形状（本用例只关心分类，用最简预置）。
+hidden = { va_list = "win64_stack" }
+"#;
+    let rules_without = rules_with
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("variadic_classify"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let binding = r#"
+isa = "x86_64_v12"
+conv = "vswitch"
+[pools]
+int = ["RDI", "RSI", "RDX"]
+float = ["XMM0", "XMM1"]
+ret_int = ["RAX"]
+"#;
+    // 命名 1 个 f64 + 未命名 1 个 f64。
+    let sig = Signature::new(
+        vec![("p".into(), f64_()), ("v".into(), f64_())],
+        Some(i64_()),
+    )
+    .variadic(1);
+
+    let mut reg = AbiRegistry::new();
+    reg.insert_rules_toml(rules_with).expect("注册规则");
+    reg.insert_binding_toml(binding).expect("注册绑定");
+    let t = target_for("x86_64_v12").expect("合成目标");
+    let p = reg.plan(&t, "vswitch", &sig).expect("plan");
+    assert_eq!(
+        place_reg(&p.args[0].place),
+        "XMM0",
+        "命名实参仍走 classify（浮点池）"
+    );
+    assert_eq!(
+        place_reg(&p.args[1].place),
+        "RDI",
+        "未命名实参走 variadic_classify（整数池）"
+    );
+
+    // 去掉 `variadic_classify` ⇒ 未命名实参回到普通分类（浮点池）。
+    let mut reg = AbiRegistry::new();
+    reg.insert_rules_toml(&rules_without).expect("注册规则");
+    reg.insert_binding_toml(binding).expect("注册绑定");
+    let p = reg.plan(&t, "vswitch", &sig).expect("plan");
+    assert_eq!(
+        place_reg(&p.args[1].place),
+        "XMM1",
+        "没有专属分类时，未命名实参与命名实参同一套"
+    );
+}
+
+/// **保存区可以只收一个类**（v20 V7，`save.float_slot = 0`）：RISC-V 定本说保存区装的是
+/// "**integer argument registers** not used for named arguments"——变参实参一律按整数约定传，
+/// 所以浮点池**不占槽**。这一条很要紧：线性游标要靠"整数寄存器之后紧接栈实参"才成立。
+#[test]
+fn zero_slot_width_keeps_a_class_out_of_the_save_area() {
+    let rules = |float_slot: u32| {
+        format!(
+            r#"
+name = "intsave"
+classify = [ {{ when = {{ kind = "scalar" }}, do = {{ direct = {{ pool = "int" }} }} }} ]
+hidden = {{ va_list = {{ size = 8, align = 8,
+  fields = [ {{ name = "area", offset = 0, size = 8 }} ],
+  save = {{ int_slot = 8, float_slot = {float_slot} }},
+  int_arg = {{ cursor = "area" }},
+  float_arg = {{ cursor = "area", step = 8 }} }} }}
+"#
+        )
+    };
+    let binding = r#"
+isa = "x86_64_v12"
+conv = "intsave"
+[pools]
+int = ["RDI", "RSI"]
+float = ["XMM0", "XMM1"]
+ret_int = ["RAX"]
+"#;
+    let sig = Signature::new(
+        vec![("a".into(), i64_()), ("b".into(), i64_())],
+        Some(i64_()),
+    )
+    .variadic(1);
+    let t = target_for("x86_64_v12").expect("合成目标");
+
+    let mut reg = AbiRegistry::new();
+    reg.insert_rules_toml(&rules(0)).expect("注册规则");
+    reg.insert_binding_toml(binding).expect("注册绑定");
+    let p = reg.plan(&t, "intsave", &sig).expect("plan");
+    let save = p
+        .va_area
+        .as_ref()
+        .and_then(|v| v.save.as_ref())
+        .expect("声明了保存区");
+    assert_eq!(save.slots.len(), 2, "只有整数池的两个寄存器");
+    assert!(
+        save.slots.iter().all(|s| !s.reg.name.starts_with("XMM")),
+        "浮点槽不该出现在保存区里：{:?}",
+        save.slots
+    );
+    assert_eq!(save.size, 16, "保存区 = 2 个整数槽 × 8");
+    assert_eq!(
+        p.va_area.as_ref().unwrap().arg_rules.float.step,
+        8,
+        "浮点取参规则显式给了 step = 8（与整数游标同一条）"
+    );
+
+    // 对照：槽宽非 0 ⇒ 两类都进保存区（旧行为不变）。
+    let mut reg = AbiRegistry::new();
+    reg.insert_rules_toml(&rules(16)).expect("注册规则");
+    reg.insert_binding_toml(binding).expect("注册绑定");
+    let p = reg.plan(&t, "intsave", &sig).expect("plan");
+    let save = p
+        .va_area
+        .as_ref()
+        .and_then(|v| v.save.as_ref())
+        .expect("声明了保存区");
+    assert_eq!(save.slots.len(), 4, "两类都进保存区（2 整数 + 2 浮点）");
+    assert_eq!(save.size, 2 * 8 + 2 * 16);
+}
+
 /// callee-saved 的保存机制来自约定（x86 = push，riscv/arm64 = 存帧内）。
 #[test]
 fn callee_save_mechanism_comes_from_the_convention() {

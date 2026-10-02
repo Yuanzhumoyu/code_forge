@@ -571,6 +571,17 @@ pub struct AbiRules {
     /// 只写一份 `classify` 会把 x8/RCX 的 sret 语义错当成"返回值就是那个指针"。
     #[serde(default)]
     pub ret_classify: Vec<ClassRule>,
+    /// **未命名（变参）实参**专属分类（同序；**空 = 用 `classify`**）。
+    ///
+    /// 为什么必须单独一份：psABI 允许"变参实参按**另一套**约定传"。RISC-V 的 `riscv-cc.adoc`
+    /// 在硬件浮点调用约定一节明确写着 *"The remainder of this section applies only to **named**
+    /// arguments. **Variadic arguments are passed according to the integer calling convention.**"*
+    /// ⇒ LP64D 上变参的**浮点也走整数寄存器**（`double` 的位模式进 a0-a7），这正是"单一线性
+    /// 游标"能成立的前提。用一份分类表表达这件事，而不是在引擎里给某个 ISA 开洞。
+    ///
+    /// 只对**未命名**实参生效（`i >= fixed_count`）；命名实参仍走 `classify`。
+    #[serde(default)]
+    pub variadic_classify: Vec<ClassRule>,
     /// 没有规则命中时的兜底（缺省 = 强制走栈；写不出就 fail-closed）。
     #[serde(default = "fallback_default")]
     pub fallback: ClassAction,
@@ -661,6 +672,7 @@ impl AbiRules {
         for (side, list) in [
             ("classify", &self.classify),
             ("ret_classify", &self.ret_classify),
+            ("variadic_classify", &self.variadic_classify),
         ] {
             for (i, r) in list.iter().enumerate() {
                 if let Some(k) = &r.when.kind
@@ -744,6 +756,9 @@ impl AbiRules {
         }
         if out.ret_classify.is_empty() {
             out.ret_classify = parent.ret_classify.clone();
+        }
+        if out.variadic_classify.is_empty() {
+            out.variadic_classify = parent.variadic_classify.clone();
         }
         if out.fallback == fallback_default() {
             out.fallback = parent.fallback.clone();

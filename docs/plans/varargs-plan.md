@@ -372,8 +372,15 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      要按位搬进 GPR；riscv `fmv.x.d`、x86 `MOVQ`、arm64 `FMOV`）——**2026-10-01 已落地**
      （新角色 `fpr_to_gpr_mov`/`gpr_to_fpr_mov`，调用点与被调方两侧四路分派，缺该角色
      fail-closed；见 `CHANGELOG.md` 的同日条目与 `forge-codegen/tests/bank_mov.rs`）。
-     剩下的是**数据面**：给 `AbiRules` 加"未命名实参按另一套分类"的键（形如
-     `ret_classify` 那样的一张分类表），并让引擎对 `i >= fixed_count` 的实参用它。
+     **同日还落地了数据面的两件**：① 规则键 `AbiRules::variadic_classify`（未命名实参专属分类，
+     空 = 与命名同一套；守卫 `invariants::variadic_classify_switches_only_the_unnamed_arguments`）；
+     ② 保存区槽宽 `0 = 该类不进保存区`（`save = { int_slot = 8, float_slot = 0 }` ⇒ 保存区只装
+     a0-a7，正好是定本要的"integer argument registers"；守卫
+     `invariants::zero_slot_width_keeps_a_class_out_of_the_save_area`）。
+     **剩下两件**：保存区放**帧顶**（`[entry_sp - save_size, entry_sp)`，与调用方栈实参连续——
+     这是"单一线性游标"能继续走进栈实参的前提；需要在形状上新增一条"要求连续"的数据属性，
+     并让帧布局把 ra/fp/callee-saved 保存槽、局部槽、spill 基准整体下移一个 save_size），
+     以及把 `area` 初值改成"保存区起点 + 已用整数寄存器数 × 槽宽"。
      **补强证据（2026-10-01 再测）**：`fpr_mov` 不只是变参要——把 riscv 缺的三条浮点算术
      lowering（`Fadd`/`Fsub`/`Fmul`，谱里 `FADD_S/D` 等指令早就存在）补上后，矩阵里被"缺 Fadd"
      掩盖的三条浮点用例立刻转成**失败**且原因全指向它：

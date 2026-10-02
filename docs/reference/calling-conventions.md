@@ -76,6 +76,7 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
 | `stack` | `slot_bytes` / `first_offset_slots`（被调方第一个栈参数相对 frame_base 的槽数）/ `right_to_left` |
 | `classify` | **参数位**分类规则（顺序即优先级，首条命中者胜） |
 | `ret_classify` | **返回位**分类规则（非空即**独占**，不落回参数位规则） |
+| `variadic_classify` | **未命名（变参）实参**专属分类（空 = 与命名实参同一套）。psABI 允许"变参按另一套约定传"——RISC-V 的 `riscv-cc.adoc`：*"Variadic arguments are passed according to the integer calling convention"* ⇒ LP64D 上变参的浮点也走整数寄存器 |
 | `fallback` | 没命中时的兜底（缺省 `stack {}`） |
 | `callee_saved` | `mechanism`（`none`/`push`/`store_to_frame`）/ `pools` / `includes_fp` / `includes_link` |
 | `callee_pop` | `none` / `sum_stack_args`（stdcall）/ `fixed = 4`（thiscall） |
@@ -516,6 +517,13 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 **它自己没有绑定**——拿 `c` 直接规划时要靠别的约定**整套代答**（三份内置声明
 `aliases = ["c"]`，见上）；一台机器上无人代答、又没有 `(isa, "c")` 绑定时报
 "缺绑定"，这是刻意设计的 fail-closed，而不是让它退回某个"差不多能用"的约定。
+
+> `lp64d` 的"未命名实参走栈"是**已知偏差**（RISC-V psABI 要求走整数寄存器，见
+> `docs/plans/varargs-plan.md` §5）：自洽（我们自己的调用方/被调方按同一份约定对齐），
+> 但与外部编译器编译的变参函数互调会错。修它需要四件一起：① `variadic_stack_only = false`；
+> ② `variadic_classify` 按整数约定分类；③ 保存区紧贴入口 `sp`、与栈上实参连续；④ `area`
+> 指向保存区起点 + 已用整数寄存器数 × 槽宽。其中**数据面**的两件（② 与"保存区只收整数类"）
+> 2026-10-01 已就位，剩下的是帧顶布局（③）。
 
 ## 声明属性（`byval`/`sret`/`inreg`/`zeroext`/`signext`/`align`）
 

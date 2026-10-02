@@ -334,7 +334,7 @@ pub fn plan_fn(
     if sig.rets.len() > 1 {
         let mut regs: Vec<RegRef> = Vec::with_capacity(sig.rets.len());
         for (i, ty) in sig.rets.iter().enumerate() {
-            let action = classify(rules, target, ty, sig.variadic, hooks, ClassDir::Ret)?;
+            let action = classify(rules, target, ty, sig.variadic, false, hooks, ClassDir::Ret)?;
             let (pool, slots) = match &action {
                 ClassAction::Direct { pool, slots } => (pool, slots),
                 other => {
@@ -393,7 +393,7 @@ pub fn plan_fn(
         sig.ret().cloned()
     };
     let ret_action = match &ret_view {
-        Some(ty) => classify(rules, target, ty, sig.variadic, hooks, ClassDir::Ret)?,
+        Some(ty) => classify(rules, target, ty, sig.variadic, false, hooks, ClassDir::Ret)?,
         None => ClassAction::Ignore,
     };
     {
@@ -577,10 +577,21 @@ pub fn plan_fn(
     let mut byval = StackAlloc::new(0);
     let mut args: Vec<ArgLoc> = Vec::with_capacity(sig.params.len());
     for (i, (name, ty)) in sig.params.iter().enumerate() {
-        let action = classify(rules, target, ty, sig.variadic, hooks, ClassDir::Param)?;
-        // 变参的**未命名实参**（`i >= fixed_count`）：`variadic_stack_only` 的约定
-        // （Win64/AAPCS64/RISC-V）强制走栈；SysV 继续按普通规则落寄存器。
+        // 变参的**未命名实参**（`i >= fixed_count`）：先看约定有没有给它一份**专属分类**
+        // （`variadic_classify`，"变参按整数约定传"，见 RISC-V psABI），再谈
+        // `variadic_stack_only` 的"只走栈"；两者都缺 ⇒ 与命名实参同一套。
         let unnamed = sig.variadic && i >= sig.fixed_count;
+        let action = classify(
+            rules,
+            target,
+            ty,
+            sig.variadic,
+            unnamed,
+            hooks,
+            ClassDir::Param,
+        )?;
+        // `variadic_stack_only` 的约定（Win64/AAPCS64/RISC-V 的未命名参数）：强制走栈；
+        // SysV 继续按普通规则落寄存器。
         let attrs = sig.attr(i);
         let place = if attrs.sret {
             // 声明了 `sret`：这就是**间接结果指针**，占约定声明的 hidden 槽
@@ -787,10 +798,14 @@ fn va_area_from_shape(
         })
     };
     // 槽宽：形状声明了保存区就按它的 psABI 槽宽；没有保存区时用机器槽宽（栈槽）。
+    // **槽宽 0 = 该类不进保存区**（v20 V7）：RISC-V LP64D 的保存区**只有整数寄存器**
+    // （定本："fill it with the entry values of all **integer argument registers** not used for
+    // named arguments"——变参实参一律按整数约定传），浮点池因此不占槽；否则线性游标会在
+    // "整数寄存器之后、栈实参之前"读到一批本不该存在的浮点槽。
     let stack_slot = rules.stack.slot_bytes.max(1);
     let (int_slot, float_slot) = shape
         .save
-        .map(|d| (d.int_slot.max(1), d.float_slot.max(1)))
+        .map(|d| (d.int_slot.max(1), d.float_slot))
         .unwrap_or((stack_slot, stack_slot));
     // 保存区槽表：整数池按序在前、浮点池紧随其后（槽序 = "序言要存谁、存到哪"的权威）。
     let (mut n_gp, mut n_fp) = (0u32, 0u32);
@@ -806,6 +821,10 @@ fn va_area_from_shape(
             let Ok(regs) = pools.get(pool) else {
                 continue;
             };
+            // `slot == 0` ⇒ 该类不进保存区（槽表里一条都不出现，`n_*` 保持 0）。
+            if slot == 0 {
+                continue;
+            }
             counts[k] = regs.len() as u32;
             for r in regs {
                 slots.push(VaSaveSlot {
@@ -819,7 +838,7 @@ fn va_area_from_shape(
         (n_gp, n_fp) = (counts[0], counts[1]);
         save = Some(VaSaveArea {
             size: off,
-            align: int_slot.max(float_slot),
+            align: int_slot.max(float_slot).max(1),
             slots,
         });
     }
@@ -884,11 +903,16 @@ pub enum ClassDir {
 
 /// 分类：返回位用 `ret_classify`（**非空即独占**，不再落回参数位规则——返回寄存器与
 /// 参数寄存器不是同一批，混用会把返回值放进参数池）；规则顺序即优先级，未命中走 `fallback`。
+///
+/// 参数位还有第三条轴（v20 V7）：**未命名（变参）实参**可以走 `variadic_classify`
+/// （psABI 的"变参实参按整数约定传"，见 [`AbiRules::variadic_classify`]）——`unnamed`
+/// 只对 `dir == Param` 有意义。
 fn classify(
     rules: &AbiRules,
     _target: &dyn AbiTarget,
     ty: &TyView,
     _variadic: bool,
+    unnamed: bool,
     hooks: Option<&dyn AbiHooks>,
     dir: ClassDir,
 ) -> Result<ClassAction, AbiError> {
@@ -899,6 +923,9 @@ fn classify(
     }
     let list = if dir == ClassDir::Ret && !rules.ret_classify.is_empty() {
         &rules.ret_classify
+    } else if unnamed && !rules.variadic_classify.is_empty() {
+        // **未命名实参专属分类**（空表 = 用普通 `classify`，即"变参与命名实参同一套"）。
+        &rules.variadic_classify
     } else {
         &rules.classify
     };

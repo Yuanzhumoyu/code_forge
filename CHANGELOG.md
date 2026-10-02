@@ -11,6 +11,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参数据面两件：`variadic_classify`（未命名实参专属分类）与"保存区只收一个类"
+
+为 lp64d 的变参修正铺数据面（发射侧的两块能力已就位：fp 位宽表、类间位搬移）。两件都**只加
+能力、不改现有行为**（四份内置约定都没用它们，黄金与矩阵逐字节不变）：
+
+- **`AbiRules::variadic_classify`**（新规则键）：**未命名（变参）实参**专属分类，空 = 与命名
+  实参同一套。psABI 允许"变参按另一套约定传"——RISC-V 的 `riscv-cc.adoc` 在浮点调用约定一节
+  写着 *"The remainder of this section applies only to named arguments. **Variadic arguments are
+  passed according to the integer calling convention.**"* ⇒ LP64D 上变参的浮点也走整数寄存器。
+  用一张分类表表达，而不是在引擎里给某个 ISA 开洞（与既有的 `ret_classify` 同一形状；
+  `merge_parent`/`validate` 一并接上）。
+- **保存区槽宽 `0` = 该类不进保存区**（`VaSaveDecl`）：`save = { int_slot = 8, float_slot = 0 }`
+  ⇒ 保存区只装整数参数寄存器。定本要求保存区装的是 *"**integer argument registers** not used
+  for named arguments"*——浮点池占槽会让线性游标在"整数寄存器之后、栈实参之前"读到一批本不该
+  存在的槽。
+- 守卫：`invariants::variadic_classify_switches_only_the_unnamed_arguments`（命名实参仍走
+  `classify`、未命名走专属表；去掉表 ⇒ 回到普通分类——证明变化来自数据）、
+  `invariants::zero_slot_width_keeps_a_class_out_of_the_save_area`（槽表与 size 逐格核对，
+  并对照 `float_slot = 16` 的旧行为）。
+- 验证：`forge-abi` 27 invariants（+2）全绿、黄金快照未变；x86 矩阵 197/3/0、riscv 矩阵
+  136/64/0、`forge-codegen --lib` 1285、`forge-isa-dsl` 全绿、`forge-isa` 全绿；
+  `clippy -D warnings` 0、`fmt --check` 0、markdownlint 0。
+- **仍未做**（文献与顺序见 `docs/plans/varargs-plan.md` §5）：保存区放**帧顶**（与调用方栈实参
+  连续，需新增一条"要求连续"的形状数据属性 + 帧布局整体下移一个 save_size）、`area` 初值改成
+  "保存区起点 + 已用整数寄存器数 × 槽宽"，然后才能翻 `lp64d.variadic_stack_only = false`。
+
 ### Added (2026-10-01) — 类间位搬移角色：浮点值落在整数寄存器时不再**静默错值**
 
 值的寄存器类与 ABI 落点的类**不同**时，旧实现只看**落点的类**决定用哪条搬移指令：浮点值落在
