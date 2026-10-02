@@ -66,11 +66,13 @@ fn the_guard_can_fail() {
 fn op_gap_matches_section_10_3() {
     let host_ops = host_ops();
     // (ISA, 覆盖, 终结, 宿主管线, 真缺口数)
-    // 宿主管线 7 → 8（2026-10-01）：`VaStart` 由生成器按能力角色发（谱里没有 `[[lowering]]`），
+    // 宿主管线 7 → 8（2026-10-01）：`VaStart` 由**管线**展开成显式 IR（谱里没有 `[[lowering]]`），
     // 归入 `HOST_PIPELINE_OPS`；覆盖数与三谱的真缺口数因此不变。
+    // riscv 覆盖 61 → 63（2026-10-01）：补了 `Fload`/`Fstore` 的 lowering——变参的**浮点支**要在
+    // riscv 上真跑，`va_arg(f64)` 展开出的 `Fload` 必须能降级（真缺口 42 → 40）。
     for (isa, want) in [
         ("x86_v12.toml", (100usize, 6usize, 8usize, 3usize)),
-        ("riscv64_v12.toml", (61, 6, 8, 42)),
+        ("riscv64_v12.toml", (63, 6, 8, 40)),
         ("arm64_v12.toml", (8, 6, 8, 95)),
     ] {
         let cov = coverage(isa, &host_ops);
@@ -200,11 +202,13 @@ fn unassigned_bits_inventory() {
 /// V4d 的"可合并为 `vary` 的族"清单（**opt-in** `--suggest`，只建议、不当门槛）。
 ///
 /// 数字变了 ⇒ 有人合并/拆分了 lowering 族（好事就同步本快照），或新增了同形状的规则。
+/// riscv 22 → 24（2026-10-01）：补 `Fload`/`Fstore` 的 lowering（单/双精度两条同形状，
+/// 与既有 `Load`/`Store` 一样是"建议合并"的候选，不强行 `vary`——宽窄两条写法更直观）。
 #[test]
 fn vary_candidate_inventory() {
     for (isa, want) in [
         ("x86_v12.toml", 55usize),
-        ("riscv64_v12.toml", 22),
+        ("riscv64_v12.toml", 24),
         ("arm64_v12.toml", 7),
     ] {
         let path = root().join("isa").join(isa);

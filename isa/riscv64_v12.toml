@@ -419,6 +419,9 @@ opcode = 0x27
 fields = { funct3 = 3 }
 ops = ["src:fpr", "src2:gpr", "imm:imm12"]
 asm = "fsd {src}, {imm}({src2})"
+# `stack_arg_store`（浮点类）：调用方把**浮点**栈实参写进传出区（变参的未命名浮点实参也走这条）。
+# 与整数版同理：S 形式是"值寄存器 + 基址寄存器 + 位移立即数"，生成器按形状填 sp 与偏移。
+roles = [{ role = "stack_arg_store", class = "fpr" }]
 
 [[instructions]]
 name = "FLW"
@@ -771,6 +774,27 @@ insts = ["SW {0}, {1}, 0"]
 [[lowering]]
 op = "Store"
 insts = ["SD {0}, {1}, 0"]
+
+# Fload/Fstore：浮点访存（v20 V6+）——变参的**浮点支**要 f64 从栈/保存区读出来
+# （`va_arg(ap, f64)` 由管线展开成 `Fload`，见 `forge-codegen/src/pipeline/va_expand.rs`），
+# 此前 riscv 谱里 `FLD`/`FSD` 有指令却没有 lowering ⇒ 浮点变参编不出来。
+[[lowering]]
+op = "Fload"
+when = { eq = ["rd", 32] }
+insts = ["FLW {out}, {0}, 0"]
+
+[[lowering]]
+op = "Fload"
+insts = ["FLD {out}, {0}, 0"]
+
+[[lowering]]
+op = "Fstore"
+when = { eq = ["rs1_width", 32] }
+insts = ["FSW {0}, {1}, 0"]
+
+[[lowering]]
+op = "Fstore"
+insts = ["FSD {0}, {1}, 0"]
 
 [[lowering]]
 op = "StackAddr"

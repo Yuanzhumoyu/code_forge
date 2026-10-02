@@ -3397,12 +3397,14 @@ pub const CASES: &[Case] = &[
             47,
         ),
     },
-    // ② 整数 + 浮点（需要 `Fadd`/`Fptosi`/`Fconst`）：riscv 谱上缺 `Fadd` ⇒ 按能力门控 Skip。
+    // ② 整数 + 浮点（需要 `Fptosi`/`Fconst`）：**两台机器都真跑**——用例本身不做浮点算术
+    //    （`ops` 里曾多写一个 `Fadd`，而 riscv 谱没有它 ⇒ 用例被误判成"能力不足"而 Skip；
+    //    用例实际只在调用点传 `2.5`、被调方 `va_arg(f64)` 之后 `fptosi`）。
     //    被调方：`va_start` 物化 `va_list` 对象 → 两次 `va_arg(i64)` + 一次 `va_arg(f64)`。
     Case {
         name: "variadic_va_arg_int_and_float",
         ops: &[
-            "VaStart", "VaArg", "Call", "Imul", "Iadd", "Fadd", "Fptosi", "Fconst",
+            "VaStart", "VaArg", "Call", "Imul", "Iadd", "Fptosi", "Fconst",
         ],
         kind: CaseKind::Module(
             |m| {

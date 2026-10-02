@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-01) — riscv 浮点支打通：`Fload`/`Fstore` lowering + `FSD` 的浮点栈参数角色（lp64d 变参两条用例都真跑）
+
+上一片让 lp64d 的**整数**变参在 QEMU 上真跑；这一片把**浮点**支也接通——发现两处与变参无关的
+谱面缺口：
+
+- **riscv 谱有 `FLD`/`FSD` 指令，却没有任何 `Fload`/`Fstore` 的 `[[lowering]]`** ⇒ `va_arg(f64)`
+  展开出的 `Fload` 编不出来（矩阵报 `Unsupported("v12 lowering")`）。补上单/双精度各一条
+  （`FLW`/`FLD`、`FSW`/`FSD`）。
+- **浮点栈实参写不出去**：调用方写传出区用 `stack_arg_store`，此前只给整数 `SD` 申报了角色；
+  给 `FSD` 补 `{ role = "stack_arg_store", class = "fpr" }`（S 形式，生成器按形状填 sp + 偏移）。
+- **矩阵用例的 `ops` 多写了一个 `Fadd`**（用例本身不做浮点算术：只在调用点传 `2.5`、被调方
+  `va_arg(f64)` 后 `fptosi`）——riscv 谱没有 `Fadd`，这条**用不到的**能力把用例误判成"能力不足"
+  而 Skip；删掉它，用例两台机器都真跑。
+- **验收**：riscv QEMU 矩阵 **133/67/0**（`variadic_va_arg_int_only` = 47、
+  `variadic_va_arg_int_and_float` = 49，**两条都真跑、无 variadic Skip**），x86 **197/3/0**。
+- **同步的快照**（补 lowering 改变了"能力缺口"口径，按纪律人工复核后同步）：
+  `lint_shipped::op_gap_matches_section_10_3` riscv 覆盖 61 → 63、真缺口 42 → 40；
+  `lint_shipped::vary_candidate_inventory` riscv 22 → 24（新增的两条同形状规则是"可合并"建议，
+  不强行 `vary`）。
+- **验证**：`forge-isa-dsl` 全绿（222 + 各守卫）、`forge-tests` lib 43、矩阵两套、`forge-codegen`
+  lib 1362 + `riscv64_v12_tests` 7 + `riscv64_v12_tm_tests` 5 + `v12_integration_tests` 12、
+  `forge-abi`、`forge-ir` 281、`forge-isa` 24；`clippy -D warnings` 0、`fmt --check` 0。
+
 ### Changed (2026-10-01) — aapcs64 的缺口量到位：arm64 后端**只有 8 个 op 的 lowering**（守卫钉住覆盖度）
 
 上一片说"aapcs64 被 arm64 缺的 lowering 挡住"，这一片把"缺多少"量清楚并钉住——结论是**这不是

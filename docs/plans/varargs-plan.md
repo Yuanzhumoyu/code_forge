@@ -328,18 +328,24 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 
 **下一步（含实测到的缺口，按"离可用还差什么"排序）**：
 
-1. **riscv（lp64d）：已通（真跑）**。两处都补齐（2026-10-01）：
+1. **riscv（lp64d）：已通（真跑，整数 + 浮点两条）**。三处都补齐（2026-10-01）：
    - **调用方**：栈参数写指令按**形状**取——`Reg+Mem`（x86）或 `值Reg+基址Reg+位移Imm`
      （RISC-V S 形式 `SD {src}, {imm}({src2})`）；生成器与 `move_args` 共用
-     `stack_mem_shape`（判据只有一份），riscv 的 `SD` 申报 `roles = ["stack_arg_store"]`。
+     `stack_mem_shape`（判据只有一份），riscv 的 `SD` 申报 `roles = ["stack_arg_store"]`，
+     **`FSD` 申报 `{ role = "stack_arg_store", class = "fpr" }`**（浮点栈实参）。
    - **一个真 bug（与变参无关，被这条路径暴露）**：`lp64d` 的 `first_offset_slots` 写的是 **2**
      （照搬 x86"序言总是 push fp"），而 RISC-V 的帧基址 `X8` = **入口 sp**（不 push 返回地址）
      ⇒ 被调方的 `va_list` 比调用方写的槽**高 16 字节**。实测：QEMU 通道的
      `variadic_va_arg_int_only` 读到 **0**（应 47）；改成 **0** 后对齐。影响面：riscv 上任何
      栈实参（第 9+ 个命名实参、变参未命名实参）都按错位置取——此前**没有用例**走到。
-   - **验收**：QEMU 矩阵 riscv **132/68/0**（`variadic_va_arg_int_only` 真跑 47；浮点那条因
-     riscv 谱缺 `Fadd` 仍按能力门控 Skip），x86 **197/3/0**；`lp64d.plan.txt` 黄金快照
-     `first_arg_off` 16 → 0。
+   - **浮点支**：`va_arg(f64)` 由管线展开成 `Fload`，而 riscv 谱里 `FLD`/`FSW` 有指令却**没有
+     lowering**（`Fload`/`Fstore` 两条都缺）⇒ 补上（单/双精度各一条）。矩阵用例
+     `variadic_va_arg_int_and_float` 的 `ops` 里还曾多写一个 `Fadd`（用例本身不做浮点算术）
+     ⇒ 一并删掉，用例不再被误判成"能力不足"。
+   - **验收**：QEMU 矩阵 riscv **133/67/0**（`variadic_va_arg_int_only` = 47、
+     `variadic_va_arg_int_and_float` = 49 两条都真跑，无 variadic Skip），x86 **197/3/0**；
+     `lp64d.plan.txt` 黄金快照 `first_arg_off` 16 → 0；
+     `lint_shipped` 的两张快照同步（riscv op 覆盖 61 → 63、真缺口 42 → 40、vary 建议 22 → 24）。
 2. **aapcs64：数据面已通；编译面被 arm64 后端的**覆盖度**挡住（不是变参的问题）**。
    实测：把变参函数编到 arm64 报 `Unsupported("v12 lowering")`——**arm64 谱目前只有 8 个 op 的
    lowering**（`Band`/`Bor`/`Bxor`/`Copy`/`Iadd`/`Iconst`/`Imul`/`Isub`，全是算术），而变参展开要用的
