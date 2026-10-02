@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — lp64d 的 psABI 修正**试做后按实测回退**：整数支能过，浮点支卡在"三操作数 fp 搬移"
+
+上一片核出 lp64d 与 RISC-V psABI 定本的偏差（未命名实参应走寄存器）。这一片动手改，并用 QEMU 矩阵
+逐步验证，结论是**必须按顺序做、现在停在第 ② 步之前**：
+
+- **试做的改法**（**不需要**动帧布局）：把 lp64d 换成"两个游标（`gp_offset`/`fp_offset`）+ 保存区
+  指针 + 栈实参指针"的形状 + `variadic_stack_only = false`。理由是定本要求"保存区与栈实参连续"
+  是为了让**单个线性游标**能从保存区走进栈实参；我们的 `va_list` 自带两个指针，因此不必连续。
+- **实测 ①（整数支）**：`variadic_va_arg_int_only` 在 QEMU 上**通过**——未命名实参进 `a1`/`a2`，
+  被调方 spill 进保存区、`va_arg` 按 `gp_offset` 读回 ⇒ 数据驱动的模型**能**表达定本语义。
+- **实测 ②（浮点支）**：`variadic_va_arg_int_and_float` **编译失败**——
+  `v12 call: 浮点/向量实参搬运缺 MOVSS/MOVSD/MOVAPS 角色`：riscv 谱里没有 f64 的 fp→fp 搬移
+  （只有 `FSGNJ_S`，没有 `FSGNJ_D`），且规范化的写法是三操作数 `fsgnj.d rd, rs, rs`；生成器的
+  `fpr_mov` 路径假设两操作数（8 处发射点都在构造 `Inst::<mov>{ dst, src }`）⇒ 直接给三操作数
+  指令申报角色**连生成物都编不过**。
+- **因此回退**（保持绿）：只做形状切换会让 riscv 上任何"传浮点变参"的调用点从"自洽能跑"退化成
+  **编译错误**，比现状更糟。修复顺序写进方案：① 补 `FSGNJ_D` + 角色；② 生成器的 `fpr_mov`
+  发射**按形状**泛化（三操作数时 `src2` 也填源寄存器，与 `StackMemShape` 同一套做法）；
+  ③ 再改 lp64d 的形状。
+- **验证**：回退后 `forge-abi` 7 个 target 全绿（25 条 invariants，含钉住偏差的那条）、
+  `clippy -D warnings` 0、`fmt --check` 0、markdownlint 0；riscv 矩阵仍是 **133/67/0**。
+
 ### Fixed (2026-10-01) — riscv 浮点支打通：`Fload`/`Fstore` lowering + `FSD` 的浮点栈参数角色（lp64d 变参两条用例都真跑）
 
 上一片让 lp64d 的**整数**变参在 QEMU 上真跑；这一片把**浮点**支也接通——发现两处与变参无关的

@@ -341,11 +341,23 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      即**未命名实参走寄存器**（溢出才上栈）——而我们的 lp64d 数据写的是 `variadic_stack_only =
      true` + `area` 指向调用方栈实参区 ⇒ **与定本不符**：自洽（我们自己的调用方/被调方按同一份
      约定对齐，所以 QEMU 矩阵真跑绿），但与**外部编译器**编译的变参函数互调会错。
-     **修复清单（四件一起，半改会静默读错值）**：① `variadic_stack_only = false`；② save area 放
-     **帧顶**（`[X8 - save_size, X8)`，与调用方栈实参连续 ⇒ 前端局部槽整体下移一个 save_size 的
-     `stack_slot_shift`）；③ `area` 初值 = 保存区起点；④ 调用方按正常分类传未命名实参（V1 路径
-     已由 plan 驱动，不需要新代码）。现状由
-     `invariants.rs::lp64d_variadic_stack_only_is_a_documented_deviation` 钉住（谁改这个值都会红）。
+     现状由 `invariants.rs::lp64d_variadic_stack_only_is_a_documented_deviation` 钉住（谁改这个值
+     都会红）。
+     **修过一次、按实测回退（2026-10-01）**，结论对下一步很关键：把 lp64d 换成"两个游标 +
+     保存区指针 + 栈实参指针"的形状（`stack_only = false`；**不需要**保存区与栈实参物理连续——
+     我们的 `va_list` 自带两个指针，不是单个线性游标）之后：
+       - **整数用例真跑通过**（QEMU：未命名实参进 a1/a2，被调方 spill 进保存区、`va_arg` 从
+         `gp_offset` 读回）⇒ 数据驱动的模型能表达定本的语义；
+       - **浮点用例编译失败**：`v12 call: 浮点/向量实参搬运缺 MOVSS/MOVSD/MOVAPS 角色`——
+         riscv 谱里**没有 f64 的 fp→fp 搬移**（只有 `FSGNJ_S`，没有 `FSGNJ_D`），而定本的规范化
+         写法是**三操作数** `fsgnj.d rd, rs, rs`；生成器的 `fpr_mov` 路径假设"两操作数搬移"
+         （8 处发射点都在构造 `Inst::<mov>{ dst, src }` 结构体字面量）⇒ 直接给三操作数指令申报
+         `fpr_mov` **连生成物都编不过**。
+     ⇒ **修复必须按这个顺序**：① 补 `FSGNJ_D` 指令（+ 给 `FSGNJ_S`/`FSGNJ_D` 申报
+     `fpr_mov`（bits 32/64））；② 把生成器的 `fpr_mov` 发射**按形状**泛化（三操作数时把 `src2`
+     也填成源寄存器——与 `StackMemShape` 同一套"按形状发、不按 ISA 发"的做法）；③ 再改 lp64d 的
+     形状（`stack_only = false` + 两个游标 + 保存区/栈实参指针）。**顺序反了会更糟**：只做 ③ 会让
+     riscv 上任何"传浮点变参"的调用点从"自洽能跑"变成**编译错误**。
    - **一个真 bug（与变参无关，被这条路径暴露）**：`lp64d` 的 `first_offset_slots` 写的是 **2**
      （照搬 x86"序言总是 push fp"），而 RISC-V 的帧基址 `X8` = **入口 sp**（不 push 返回地址）
      ⇒ 被调方的 `va_list` 比调用方写的槽**高 16 字节**。实测：QEMU 通道的
