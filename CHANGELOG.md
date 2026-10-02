@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — aapcs64 的缺口量到位：arm64 后端**只有 8 个 op 的 lowering**（守卫钉住覆盖度）
+
+上一片说"aapcs64 被 arm64 缺的 lowering 挡住"，这一片把"缺多少"量清楚并钉住——结论是**这不是
+变参的问题，是 arm64 后端还没成型**：
+
+- 实测：arm64 谱的 `[[lowering]]` 只覆盖 **8 个 op**（`Band`/`Bor`/`Bxor`/`Copy`/`Iadd`/`Iconst`/
+  `Imul`/`Isub`，全是算术）；变参展开要用的 `StackAddr`/`Store`/`Load`/`Icmp`/`Select`/`Sextend`/
+  `Ireduce` **一个都没有**（x86/riscv 有 ⇒ win64/sysv64/lp64d 真跑）。
+- 守卫 `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 现在**两件事一起钉**：
+  ① 变参函数编到 arm64 必须是**明确 Unsupported**（不许静默编错）；② `arm64_v12::SUPPORTED_OPS`
+  里**没有**这些 op——arm64 补上任一条时守卫会红，提醒把 aapcs64 从"数据面"升级成"编得出 + 真跑"。
+- 方案文档（`docs/plans/varargs-plan.md` §5）据此把 aapcs64 一条改成"先补 arm64 后端（独立且大得多的
+  工作）+ 本机无 arm64 执行通道"，不再把它算作变参侧的缺口。
+- 验证：`arm64_v12_tm_tests` 7、`forge-codegen` lib 1362；`clippy -D warnings` 0、`fmt --check` 0。
+
 ### Fixed (2026-10-01) — riscv 栈参数打通：访存指令按**形状**取 + 修掉 `lp64d` 的 `first_offset_slots`（变参在 QEMU 上真跑）
 
 上一片把 lp64d 的缺口钉在"调用方写不出传出区"。这一片补齐，顺带挖出一个与变参无关的真 bug：

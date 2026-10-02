@@ -340,13 +340,18 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
    - **验收**：QEMU 矩阵 riscv **132/68/0**（`variadic_va_arg_int_only` 真跑 47；浮点那条因
      riscv 谱缺 `Fadd` 仍按能力门控 Skip），x86 **197/3/0**；`lp64d.plan.txt` 黄金快照
      `first_arg_off` 16 → 0。
-2. **aapcs64：数据面已通、编译面被 arm64 缺的 lowering 挡住**。实测：把变参函数编到 arm64 报
-   `Unsupported("v12 lowering")` —— 变参展开用的 IR 词汇（`Icmp`/`Select`/`StackAddr`/`Sextend`/
-   `Ireduce`）在 arm64 谱里**一条 lowering 都没有**（x86/riscv 有）。缺口被
-   `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住（补齐时它会红）；
-   此外本机没有 arm64 执行通道。**数据面**（形状/规则/逐字段初值）已由
-   `abi_target_real::aapcs64_variadic_shape_is_pure_data` 逐格钉住：`__gr_offs`/`__vr_offs` 从负值
-   数到 0、两个 top = 保存区基址 + 本类区域字节数（64 / 192）、`__stack` = 未命名区地址。
+2. **aapcs64：数据面已通；编译面被 arm64 后端的**覆盖度**挡住（不是变参的问题）**。
+   实测：把变参函数编到 arm64 报 `Unsupported("v12 lowering")`——**arm64 谱目前只有 8 个 op 的
+   lowering**（`Band`/`Bor`/`Bxor`/`Copy`/`Iadd`/`Iconst`/`Imul`/`Isub`，全是算术），而变参展开要用的
+   IR 词汇（`StackAddr`/`Store`/`Load`/`Icmp`/`Select`/`Sextend`/`Ireduce`）**一个都没有**（x86/riscv
+   有，所以 win64/sysv64/lp64d 真跑）。⇒ **要 aapcs64 变参落地，先得把 arm64 后端补成能用的后端**
+   （访存/比较/选择/扩展/栈地址/分支/调用）——那是一份独立的、比变参大得多的工作；而且本机**没有
+   arm64 执行通道**（补完也只是"编得出"）。覆盖度事实与"现在是明确 Unsupported"由
+   `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住（arm64 补上
+   任一条这些 lowering 时它会红，提醒把 aapcs64 从"数据面"升级成"编得出 + 真跑"）。
+   **数据面**（形状/规则/逐字段初值）已由 `abi_target_real::aapcs64_variadic_shape_is_pure_data`
+   逐格钉住：`__gr_offs`/`__vr_offs` 从负值数到 0、两个 top = 保存区基址 + 本类区域字节数
+   （64 / 192）、`__stack` = 未命名区地址。
 
 其余仍开放：`va_meta`（SysV `%al`）写入、前端产出 `variadic`。
 
