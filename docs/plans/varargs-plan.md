@@ -433,3 +433,43 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
 ③ 有人要接一份"被调方变参"的 ABI 兼容测试。
 
 在此之前，本方案的 §1–§2 就是**当前事实的索引**，`invariants.rs` 的变参守卫保证它不漂移。
+
+### 实施配方：`fpr_mov` 按形状泛化（下一步的机械清单，2026-10-01 盘查后写下）
+
+目标：让生成器能发**三操作数**的浮点搬移（RISC-V `fsgnj.d rd, rs, rs`），从而解掉 riscv 的浮点
+参数/返回、浮点变参，以及 lp64d 与 psABI 一致这三件事。**顺序不能反**：先把 12 处发射点改完，
+**最后**才在谱里申报 `fpr_mov` 角色（先申报会让生成物编不过）。
+
+**判据（每处都一样）**：该 `fpr_mov` 指令的 Reg 槽数 ≥ 3 时，指令字面量要补第三槽（= 源）。
+
+1. `crates/frontend/forge-isa-dsl/src/v12/codegen/lowering.rs`
+   - `gen_lowering`：两处（浮点单值返回 ~285/290、多值浮点返回 ~424/429），字段名是
+     `#fpr_mov_dest`/`#fpr_mov_src`。
+   - `gen_call_lowering`：两处（`fpr_ret_stmt` ~1437/1439、`fp_ret_multi` ~1521/1526，
+     字段名 `#f_dest`/`#f_src`）；它算出 `f_dest`/`f_src` 的地方（~1338）顺手取第三个 Reg 槽名。
+   - `arg_move_loop`（被 `gen_call_lowering` 调用）：两处（~2021/2026，字段名 `#f_dest`/`#f_src`）
+     ——需要把"第三槽名/补字段 token"作为**新参数**传进来。
+2. `crates/frontend/forge-isa-dsl/src/v12/codegen/frame.rs`：`~1228/1233`（字段名 `#f_src`），
+   同一个函数里算字段名的地方取第三槽。
+
+**每处怎么补**（两种情形）：
+
+- **源由 `map_reg_field(vreg, idx, 1u8, ...)` 绑定**（8 处，如 `map_reg_field(__a, __idx, 1u8, false)`）：
+  字段补 `#src2: Reg::from_index(0, __DEFAULT_FPR_CLASS),`，**并且**在紧邻的 map 调用后补
+  `__pack.map_reg_field(vreg, __idx, 2u8, false);`（同一个 vreg 也要落进第三槽）。
+- **源是物理寄存器表达式**（`__src`、或类内 0 号占位 `<Reg as forge_ir::PhysReg>::from_index(0,
+  __DEFAULT_FPR_CLASS)`，4 处）：字段值**照抄源字段的值**即可，不需要额外映射。
+
+**谱面（最后一步）**：给 riscv 加 `FSGNJ_D`（`form = "R"`、opcode 0x53、funct3 = 0、funct7 = 0x11、
+`ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]`），然后给 `FSGNJ_S` 申报
+`roles = [{ role = "fpr_mov", bits = 32 }]`、给 `FSGNJ_D` 申报 `bits = 64`。
+
+**收尾**：改 lp64d 形状（`variadic_stack_only = false` + `gp_offset`/`fp_offset`/`reg_save_area`/
+`stack_arg_area` 四字段 + 两条"游标 + 基址 + 溢出"规则，见上面同节实测），把
+`invariants::lp64d_variadic_stack_only_is_a_documented_deviation` 换成**正向守卫**，并把
+`abi check` 的"可疑组合"告警核对一遍（改对后 lp64d 不再命中）。验收：riscv 矩阵里
+`float_args_two`/`float_args_four_xmm3`/`call_float_roundtrip` 三条从 Skip 转真跑，且
+`variadic_va_arg_int_and_float` 继续绿。
+
+**别做的事**：别用"形式表把同一操作数写进两个位域"的捷径——实测被 `lint --unassigned-bits` 判为
+`rs2` 未覆盖（编码退化成 `fsgnj rd, rs, f0` = 取绝对值），而 encode/decode 往返看不出来。
