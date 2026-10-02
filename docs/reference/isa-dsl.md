@@ -732,6 +732,7 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | `gpr_mov` | 整数寄存器移动（收参 / Copy / 溢出前搬运） |
 | `ret_mov` | 返回值 → 返回寄存器移动 |
 | `fpr_mov` | 标量浮点寄存器移动（**宽度写在声明里**：`bits = N`，任意 N ≥ 1；生成器按位宽表逐档分派，三操作数形态自动填第三槽） |
+| `fpr_to_gpr_mov` / `gpr_to_fpr_mov` | **类间位搬移**（v20 V7）：把一个值的**位模式**从一类寄存器搬到另一类（**不做数值转换**；方向写在角色名里，宽度同样写在声明里）。用于"ABI 落点的寄存器类与**值本身的类**不同"——psABI 的**整数约定收浮点**：RISC-V 变参（定本：变参实参一律按整数约定传）、Zfinx/软浮点约定。riscv `fmv.x.d`/`fmv.d.x`、x86 `MOVQ`/`MOVD`。**缺这条 ⇒ 该落点 fail-closed**（拿同类搬移顶上会把 FPR 的号当 GPR 号用 = 静默错值），守卫 `tests/bank_mov_roles.rs` + `forge-codegen/tests/bank_mov.rs` |
 | `vec_mov` | ≤16B 向量按值全宽移动（x86 MOVAPS） |
 | `call` / `call_indirect` | 直接 / 间接调用 |
 | `ret` / `jump` / `branch` | 返回 / 无条件跳转 / 条件分支 |

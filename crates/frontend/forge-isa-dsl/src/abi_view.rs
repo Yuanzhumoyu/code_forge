@@ -288,6 +288,10 @@ pub fn role_capability(role: Role) -> Option<&'static str> {
     Some(match role {
         Role::GprMov | Role::RetMov => "gpr_mov",
         Role::FprMov => "fpr_mov",
+        // 类间位搬移（v20 V7）：capability 视图里报同一族名字，两个方向分开报——
+        // `abi check` 的"这台机器做不了"清单因此能指出**缺的是哪个方向**。
+        Role::FprToGprMov => "fpr_to_gpr_mov",
+        Role::GprToFprMov => "gpr_to_fpr_mov",
         Role::VecMov => "vec_mov",
         Role::FrameAlloc | Role::FrameFree => "sp_adjust",
         Role::StackArgLoad => "stack_arg_load",

@@ -368,9 +368,12 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      与调用方栈实参连续）——`pipeline/va_expand.rs::plan_abi_slots` 现在把 ABI 槽排在**前端局部槽
      之下**，要按"形状要求与栈实参连续"这条**数据**把局部槽整体下移（`AbiSlots::shift` 机制已在）；
      ③ `area` 初值 = 保存区起点 **+ 已用整数寄存器数 × 槽宽**；④ 变参实参按**整数约定**分类
-     （浮点进整数池）。④ 在发射侧还差一块能力：**类间位搬移**（`f64` 的值在 FPR 里，要按位搬进
-     GPR；riscv `fmv.x.d`、x86 `MOVQ`、arm64 `FMOV`）——角色系统现在只有同类内的
-     `gpr_mov`/`fpr_mov`，这是**通用的**能力缺口（谁按"整数约定"收浮点都要它），不是 riscv 专有。
+     （浮点进整数池）。④ 在发射侧需要的那块**通用**能力——**类间位搬移**（`f64` 的值在 FPR 里，
+     要按位搬进 GPR；riscv `fmv.x.d`、x86 `MOVQ`、arm64 `FMOV`）——**2026-10-01 已落地**
+     （新角色 `fpr_to_gpr_mov`/`gpr_to_fpr_mov`，调用点与被调方两侧四路分派，缺该角色
+     fail-closed；见 `CHANGELOG.md` 的同日条目与 `forge-codegen/tests/bank_mov.rs`）。
+     剩下的是**数据面**：给 `AbiRules` 加"未命名实参按另一套分类"的键（形如
+     `ret_classify` 那样的一张分类表），并让引擎对 `i >= fixed_count` 的实参用它。
      **补强证据（2026-10-01 再测）**：`fpr_mov` 不只是变参要——把 riscv 缺的三条浮点算术
      lowering（`Fadd`/`Fsub`/`Fmul`，谱里 `FADD_S/D` 等指令早就存在）补上后，矩阵里被"缺 Fadd"
      掩盖的三条浮点用例立刻转成**失败**且原因全指向它：

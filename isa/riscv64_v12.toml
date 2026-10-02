@@ -346,6 +346,11 @@ opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x78 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.w.x {dst}, {src}"
+# **类间位搬移**（v20 V7）：GPR 的位模式 → FPR。用于"ABI 落点的寄存器类与值的类**不同**"的
+# 场合——psABI 的**整数约定收浮点**：RISC-V 的变参一律按整数约定传（浮点也不例外，见
+# `docs/plans/varargs-plan.md` §5）、Zfinx/软浮点约定。缺这条角色 ⇒ 那条落点在生成物里
+# fail-closed（拿同类搬移顶上会把 FPR 的号当 GPR 号用 = **静默错值**）。
+roles = [{ role = "gpr_to_fpr_mov", bits = 32 }]
 
 [[instructions]]
 name = "FCVT_W_D_RTZ"
@@ -418,6 +423,7 @@ opcode = 0x53
 fields = { funct3 = 0, funct7 = 0x79 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.d.x {dst}, {src}"
+roles = [{ role = "gpr_to_fpr_mov", bits = 64 }]
 
 [[instructions]]
 name = "FLD"
@@ -1848,8 +1854,9 @@ rows = [
 name = "FMV_X"
 body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr"], asm = "fmv.x.{p.lower} {dst}, {src}" }
 rows = [
-  { inst = "FMV_X_W", p = "W", funct7 = 0x70 },
-  { inst = "FMV_X_D", p = "D", funct7 = 0x71 },
+  # `fpr_to_gpr_mov`：FPR 的位模式 → GPR（类间位搬移，见 `FMV_W_X` 上的注释）。
+  { inst = "FMV_X_W", p = "W", funct7 = 0x70, roles = [{ role = "fpr_to_gpr_mov", bits = 32 }] },
+  { inst = "FMV_X_D", p = "D", funct7 = 0x71, roles = [{ role = "fpr_to_gpr_mov", bits = 64 }] },
 ]
 [[templates]]
 name = "AMOADD"

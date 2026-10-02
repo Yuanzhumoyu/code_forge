@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 类间位搬移角色：浮点值落在整数寄存器时不再**静默错值**
+
+值的寄存器类与 ABI 落点的类**不同**时，旧实现只看**落点的类**决定用哪条搬移指令：浮点值落在
+整数寄存器（`classify` 把浮点判给 `int` 池）时会走 `gpr_mov`，把 FPR 的号当 GPR 号用
+（`Reg::from_index(10, GPR)` = `x10`）——**静默错值**。这个形状不是假想的：psABI 的**整数约定
+收浮点**就是它（RISC-V 变参一律按整数约定传、Zfinx/软浮点约定），而且 lp64d 的变参修正正要
+走到这里。
+
+- **两个新角色**（宽度写在声明里，任意 N ≥ 1，与 `fpr_mov` 同一套位宽表机制）：
+  `fpr_to_gpr_mov`（FPR 的位模式 → GPR）、`gpr_to_fpr_mov`（反向）。方向在角色名里，
+  字段名与 Reg 槽下标按**槽的寄存器类**取（不按操作数位置猜）。
+- **发射侧四路分派**：调用点（`arg_move_loop`）与被调方（`frame.rs` 的收参）都按
+  **落点的类 × 值所在的池**分派；不一致时走类间位搬移，**缺该角色 ⇒ 生成物里明确
+  `Unsupported`**（不退化、不猜）。被调方与调用点的方向**相反**（数据流向相反）。
+- **谱面申报**（指令本来就有，只加角色）：riscv `FMV_X_W`/`FMV_X_D`（f→x 32/64）、
+  `FMV_W_X`/`FMV_D_X`（x→f 32/64）；x86 `MOVD_IREG_FREG`/`MOVD_FREG_IREG`（32）、
+  `MOVQ_R64_XMM`/`MOVQ_XMM_R64`（64）。arm64 暂不申报（AAPCS64 不需要，缺了会 fail-closed）。
+- **验证**：新增 `forge-codegen/tests/bank_mov.rs` 用一个**合成约定**（"浮点判给 int 池"）
+  走真实管线：被调方收到 `fmv.d.x`、调用点发出 `fmv.x.d`，而正常分类（lp64d）仍走同类的
+  `fsgnj.d`（两路不串）；`forge-isa-dsl/tests/bank_mov_roles.rs` 钉住"发行谱申报了四个档"与
+  "把角色删掉后生成物里出现 fail-closed 分支"。回归：x86 矩阵 197/3/0、riscv 136/64/0、
+  `forge-codegen --lib` 1285、`forge-isa-dsl` 全绿、`clippy -D warnings` 0、`fmt --check` 0。
+
 ### Fixed (2026-10-01) — lp64d 的 `va_list` 对象布局对齐定本（`sizeof(va_list)` = 指针宽度），并纠正 §5 的修复配方
 
 按 RISC-V psABI 定本原文重核变参一节时，发现**数据**与**下一步的做法**各错一处：

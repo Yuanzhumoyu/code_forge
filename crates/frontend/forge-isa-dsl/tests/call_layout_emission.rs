@@ -74,7 +74,13 @@ fn move_args_emits_the_layout_driven_receive_path() {
 fn the_layout_path_stays_machine_neutral() {
     let text = text_of("isa/x86_v12.toml");
     let start = text.find("__layout_ok").expect("布局判定");
-    let block = &text[start..text.len().min(start + 4000)];
+    // 扫描**整段布局路径**（到旧路径的 `param_by_ref` 为止），不按固定长度截——生成物
+    // 会随能力增长（v20 V7 的类间位搬移就在这段里），定长窗口会把断言的边界变成"代码有多长"。
+    let end = text[start..]
+        .find("param_by_ref")
+        .map(|o| start + o)
+        .unwrap_or(text.len());
+    let block = &text[start..end];
     for needle in ["is_int ()", "is_fp ()"] {
         assert!(
             block.contains(needle),

@@ -503,6 +503,13 @@ let name = node.get_text("name")?;
   守卫 `crates/frontend/forge-isa-dsl/tests/role_widths.rs`（真实谱变异：16/24 位合法、
   同 (角色,位宽) 冲突必报）与 `tests/fpr_mov_widths.rs`（把 x86 的两档换成 16/128 ⇒ 生成物里
   只该出现这两档，写死的 32/64 一个不留）；角色表见 `docs/reference/isa-dsl.md`。
+- **类间位搬移（v20 V7）**：`fpr_to_gpr_mov` / `gpr_to_fpr_mov`——把一个值的**位模式**从一类
+  寄存器搬到另一类（不做数值转换），用于"ABI 落点的类与**值本身的类**不同"（psABI 的整数约定
+  收浮点：RISC-V 变参、Zfinx/软浮点约定）。发射侧按 **落点的类 × 值所在的池** 四路分派
+  （调用点在 `lowering.rs::arg_move_loop`、被调方在 `frame.rs` 的收参；两侧方向相反）；
+  **缺该角色 ⇒ 生成物里 fail-closed**——旧行为是把 FPR 的号当 GPR 号用（静默错值）。
+  守卫 `crates/frontend/forge-isa-dsl/tests/bank_mov_roles.rs` 与
+  `crates/backend/forge-codegen/tests/bank_mov.rs`（合成约定"浮点判给 int 池"走真实管线）。
 - **谓词属性：按需 + 无名字分派（v18 S8b-1 / S8d）**：`gen_lowering_attrs` 生成的属性源
   在生成物里**只发射一次**（放在 `lower_inst` 的 `match op` 之前；跟着 op 臂走 = 每个
   op 重复一份 2.5 KB，x86 曾 100 份 = 243 KB），并且是

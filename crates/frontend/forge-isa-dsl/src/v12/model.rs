@@ -1686,6 +1686,18 @@ pub enum Role {
     /// （`roles = [{ role = "fpr_mov", bits = 32 }]`；x86 的 MOVSS/MOVSD 共用 `fpr` 槽，
     /// 槽本身分不出 32/64）。
     FprMov,
+    /// **类间位搬移**：FPR 的**位模式** → GPR（不做任何数值转换）。宽度写在声明里。
+    ///
+    /// 用于"值的寄存器类与 ABI 落点的寄存器类**不同**"的场合——psABI 的**整数约定收浮点**：
+    /// RISC-V 变参（`riscv-cc.adoc`：变参实参一律按整数约定传，浮点也不例外）、
+    /// Zfinx/软浮点约定。riscv `fmv.x.d`/`fmv.x.w`、x86 `MOVQ r64, xmm`/`MOVD r32, xmm`。
+    ///
+    /// **缺这条 ⇒ 该落点必须 fail-closed**：拿同类搬移顶上会把 FPR 的号当 GPR 号用
+    /// （把值搬去 `x<fpr号>`）——那是**静默错值**，不是缺个优化。
+    FprToGprMov,
+    /// **类间位搬移**：GPR 的位模式 → FPR（语义同上、方向相反）：
+    /// riscv `fmv.d.x`/`fmv.w.x`、x86 `MOVQ xmm, r64`/`MOVD xmm, r32`。
+    GprToFprMov,
     /// ≤16B 向量按值的**全宽**寄存器移动（x86 MOVAPS；缺则向量 by-value 不支持）。
     VecMov,
     /// 直接调用（函数符号 reloc）。
@@ -1749,6 +1761,8 @@ fn serde_json_name(r: &Role) -> &'static str {
         Role::GprMov => "gpr_mov",
         Role::RetMov => "ret_mov",
         Role::FprMov => "fpr_mov",
+        Role::FprToGprMov => "fpr_to_gpr_mov",
+        Role::GprToFprMov => "gpr_to_fpr_mov",
         Role::VecMov => "vec_mov",
         Role::Call => "call",
         Role::CallIndirect => "call_indirect",

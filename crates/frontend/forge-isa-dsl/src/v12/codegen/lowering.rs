@@ -1352,6 +1352,11 @@ fn gen_call_lowering(
         (format_ident!("dest"), format_ident!("src"))
     };
     let vec_mov_vn = vn(&vec_mov_inst);
+    // **类间位搬移**（v20 V7）：值在 FPR 而落点在 GPR（反之亦然）时用的两张位宽表——
+    // "ABI 落点的类 ≠ 值的类"（psABI 的整数约定收浮点：RISC-V 变参、Zfinx/软浮点约定）。
+    // 缺表 ⇒ 那条路在生成物里 fail-closed（拿同类搬移顶上是**静默错值**）。
+    let fpr_to_gpr = BankMovWidths::collect(infos, Role::FprToGprMov)?;
+    let gpr_to_fpr = BankMovWidths::collect(infos, Role::GprToFprMov)?;
     // S1/S2：宽向量 by-ref/sret 栈拷贝指令——**按语义标签收集**（TOML
     // `tags` 显式声明；不做按指令名/前缀的存在性探测）。缺失任意标签 →
     // 对应 ABI 能力 Unsupported（riscv 等无向量 ISA 天然缺标签）。
@@ -1874,6 +1879,10 @@ fn gen_call_lowering(
         // 浮点搬移按**位宽表**发（v20 V6+）：不再传 32/64 两个变体名。
         &fp_movs,
         has_fpr_mov,
+        // **类间位搬移**（v20 V7）：值的类与 ABI 落点的类不一致时（整数约定收浮点）用的
+        // 两张位宽表；缺表 ⇒ 那条路 fail-closed（拿同类搬移顶上是静默错值）。
+        &fpr_to_gpr,
+        &gpr_to_fpr,
         // ≤16B 向量实参全宽移动（MOVAPS；缺失 → Unsupported 分支）
         &vec_mov_vn,
         &v_dest,
@@ -1988,6 +1997,9 @@ fn arg_move_loop(
     // 浮点搬移的**位宽表**（v20 V6+）：按实参位宽查表发指令，不写死 32/64。
     fp_movs: &FpMovWidths,
     has_fpr_mov: bool,
+    // **类间位搬移**的两张位宽表（v20 V7）：值在 FPR、落点在 GPR（`fpr_to_gpr`）以及反向。
+    fpr_to_gpr: &BankMovWidths,
+    gpr_to_fpr: &BankMovWidths,
     vec_mov_vn: &syn::Ident,
     v_dest: &syn::Ident,
     v_src: &syn::Ident,
@@ -2090,6 +2102,76 @@ fn arg_move_loop(
         quote! {
             return Err(crate::prelude::IrError::Unsupported(
                 "v12 call: 浮点实参搬运既缺 fpr_mov 也缺 vec_mov 角色".into(),
+            ));
+        }
+    };
+    // ── 类间位搬移（v20 V7）──
+    //
+    // 值的寄存器类由它自己的 IR 类型定（浮点标量恒在 FPR 池），而**落点的类由约定定**。
+    // 两者不一致时（psABI 的"整数约定收浮点"：RISC-V 变参、Zfinx/软浮点约定）必须发
+    // **按位的类间搬移**；缺这条能力 ⇒ 明确 `Unsupported`——拿同类搬移顶上会把 FPR 的号
+    // 当 GPR 号用（值搬去 `x<fpr号>`），那是**静默错值**。
+    //
+    // 运行期判据与浮点/向量分派同一套：`is_float(t) || (向量 && ≤16B)` = "值在 FPR 池"。
+    let __val_is_float = quote! {
+        ctx.xreg_types
+            .get(&__a)
+            .is_some_and(|__t| ctx.type_store.as_ref().is_some_and(|__s| __s.is_float(*__t)))
+    };
+    let __val_in_fpr = quote! { #__is_vec || (#__val_is_float) };
+    let __val_bits = quote! { ctx.type_bits_of(&__a).unwrap_or(64) };
+    // 类间搬移体：一侧是布局给的落点（`__dst` 自带落点的类），另一侧填 0 号占位并把**值**
+    // 映射进那个槽。哪一侧是 FPR 由**角色方向**定（`to_fpr`），槽下标按**槽的类**取
+    // （不按操作数位置猜——谱里 `[dst:gpr, src:fpr]` 与 `[dst:fpr, src:gpr]` 都合法）。
+    let bank_mov = |t: &BankMovWidths, role: Role, to_fpr: bool| -> TokenStream {
+        if t.is_empty() {
+            return quote! {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "v12 call: ABI 落点的寄存器类与值的类不同（整数约定收浮点），需要 \
+                     roles = [\"fpr_to_gpr_mov\"]/[\"gpr_to_fpr_mov\"] 的类间位搬移指令\
+                     ——本 ISA 未申报（拿同类搬移顶上是静默错值）"
+                        .into(),
+                ));
+            };
+        }
+        t.dispatch(role, &__val_bits, |a| {
+            let (dest_fid, src_fid, src_cls, src_idx) = if to_fpr {
+                (
+                    &a.fpr_fid,
+                    &a.gpr_fid,
+                    quote! { __DEFAULT_GPR_CLASS },
+                    a.gpr_idx,
+                )
+            } else {
+                (
+                    &a.gpr_fid,
+                    &a.fpr_fid,
+                    quote! { __DEFAULT_FPR_CLASS },
+                    a.fpr_idx,
+                )
+            };
+            let vn = &a.vn;
+            quote! {
+                let __idx = __pack.push_inst(Inst::#vn {
+                    #dest_fid: __dst,
+                    #src_fid: Reg::from_index(0, #src_cls),
+                });
+                __pack.map_reg_field(__a, __idx, #src_idx, false);
+            }
+        })
+    };
+    let fpr_to_gpr_body = bank_mov(fpr_to_gpr, Role::FprToGprMov, false);
+    let gpr_to_fpr_body = bank_mov(gpr_to_fpr, Role::GprToFprMov, true);
+    // 寄存器落点的四路分派（**生成物里**的 if/else）：落点的类在运行期才知道（来自 plan），
+    // 值所在的池由 IR 类型定。`__dst` 自带落点的类，所以两条同类路与两条类间路都正好。
+    let reg_dispatch: TokenStream = quote! {
+        if class.is_int() {
+            if #__val_in_fpr { #fpr_to_gpr_body } else { #int_mov }
+        } else if class.is_fp() {
+            if #__val_in_fpr { #fp_mov } else { #gpr_to_fpr_body }
+        } else {
+            return Err(crate::prelude::IrError::Unsupported(
+                "v12 call: 调用点布局给了未知寄存器类".into(),
             ));
         }
     };
@@ -2217,15 +2299,9 @@ fn arg_move_loop(
             match __place {
                 crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
                     let __dst = Reg::from_index(index, class);
-                    if class.is_int() {
-                        #int_mov
-                    } else if class.is_fp() {
-                        #fp_mov
-                    } else {
-                        return Err(crate::prelude::IrError::Unsupported(
-                            "v12 call: 调用点布局给了未知寄存器类".into(),
-                        ));
-                    }
+                    // 四路（v20 V7）：**落点的类** × **值所在的池**——两者不一致时走类间位搬移，
+                    // 不再把值的号写进另一类的槽（那是静默错值）。判据在运行期（落点来自 plan）。
+                    #reg_dispatch
                 }
                 crate::machine::call_layout::ArgPlace::Indirect {
                     reg: Some((class, index)),
@@ -2466,26 +2542,160 @@ impl FpMovWidths {
         bits_expr: &TokenStream,
         build: impl Fn(&(u16, syn::Ident, syn::Ident, syn::Ident, Option<syn::Ident>)) -> TokenStream,
     ) -> TokenStream {
-        let msg = format!(
-            "v12: 该浮点值的位宽本 ISA 的 roles = [\"fpr_mov\"] 没有声明（已声明位宽：{}）",
-            self.declared()
-        );
-        let mut out = quote! {
-            return Err(crate::prelude::IrError::Unsupported(format!(
-                "{}（需要的位宽 {}）", #msg, #bits_expr
-            )));
+        dispatch_chain(
+            bits_expr,
+            &format!(
+                "v12: 该浮点值的位宽本 ISA 的 roles = [\"fpr_mov\"] 没有声明（已声明位宽：{}）",
+                self.declared()
+            ),
+            self.arms
+                .iter()
+                .map(|a| (a.0, build(a)))
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
+/// **位宽分派链**（`FpMovWidths` / [`BankMovWidths`] 共用）：`if (<位宽>) == b { body } else { … }`，
+/// 末档是明确的 `Unsupported`（消息里列出**已声明档**，不猜、不回退）。
+///
+/// 两侧都折成 `u32` 再比：调用方传进来的位宽表达式类型不统一（`type_bits_of` 在部分路径上是
+/// `u32`、别处会拿到 `u16`），写死某一侧会编译不过；生成物带 `#[allow(warnings)]`，多余的加宽
+/// 转换不影响门禁。
+fn dispatch_chain(
+    bits_expr: &TokenStream,
+    miss_msg: &str,
+    arms: Vec<(u16, TokenStream)>,
+) -> TokenStream {
+    let mut out = quote! {
+        return Err(crate::prelude::IrError::Unsupported(format!(
+            "{}（需要的位宽 {}）", #miss_msg, #bits_expr
+        )));
+    };
+    for (b, body) in arms.into_iter().rev() {
+        out = quote! {
+            if (#bits_expr) as u32 == #b as u32 { #body } else { #out }
         };
-        for arm in self.arms.iter().rev() {
-            let b = arm.0;
-            let body = build(arm);
-            // 两侧都折成 `u32` 再比：调用方传进来的位宽表达式类型不统一（`type_bits_of` 在部分
-            // 路径上是 `u32`、别处会拿到 `u16`），写死某一侧会编译不过；生成物带
-            // `#[allow(warnings)]`，多余的加宽转换不影响门禁。
-            out = quote! {
-                if (#bits_expr) as u32 == #b as u32 { #body } else { #out }
-            };
+    }
+    out
+}
+
+/// **类间位搬移的位宽表**（v20 V7）：把一个值的**位模式**从一类寄存器搬到另一类
+/// （`fpr_to_gpr_mov` / `gpr_to_fpr_mov`——"ABI 落点的类 ≠ 值的类"，见 [`Role::FprToGprMov`]）。
+///
+/// 与 [`FpMovWidths`] 同一套"位宽是数据"的做法（任意 N ≥ 1，生成器按**位宽**查表），差别只有
+/// 一点：两侧**不同类**，所以字段名与 Reg 槽下标都按**槽的寄存器类**取，**不按操作数位置猜**
+/// （谱可以把操作数写成任意顺序——`FMV_X_D` 是 `[dst:gpr, src:fpr]`，x86 的 `MOVQ` 家族同理）。
+pub(crate) struct BankMovWidths {
+    arms: Vec<BankArm>,
+}
+
+/// 类间位搬移的一档：FPR 侧与 GPR 侧各自的字段名 + **Reg 槽下标**（`map_reg_field` 用）。
+pub(crate) struct BankArm {
+    pub(crate) bits: u16,
+    pub(crate) vn: syn::Ident,
+    pub(crate) fpr_fid: syn::Ident,
+    pub(crate) fpr_idx: u8,
+    pub(crate) gpr_fid: syn::Ident,
+    pub(crate) gpr_idx: u8,
+}
+
+impl BankMovWidths {
+    /// 收集某张类间角色表（`role` ∈ {`FprToGprMov`, `GprToFprMov`}）。
+    pub(crate) fn collect(infos: &[InstInfo], role: Role) -> Result<Self, String> {
+        let mut arms = Vec::new();
+        for info in infos {
+            let bits: Vec<u16> = info
+                .inst
+                .roles
+                .iter()
+                .filter(|d| d.is(role))
+                .filter_map(|d| d.bits())
+                .collect();
+            if bits.is_empty() {
+                continue;
+            }
+            // 按**槽的寄存器类**分两侧（不按位置）：FPR 槽一侧、其余（GPR/多类）一侧。
+            let mut fpr: Option<(syn::Ident, u8)> = None;
+            let mut gpr: Option<(syn::Ident, u8)> = None;
+            let mut reg_i = 0u8;
+            for (_, fid, slot, _) in &info.operands {
+                if slot.kind != OperandKind::Reg {
+                    continue;
+                }
+                let idx = reg_i;
+                reg_i += 1;
+                let is_fpr = matches!(slot.class, Some(crate::v12::model::RegClass::FPR(_)));
+                if is_fpr {
+                    fpr.get_or_insert_with(|| ((*fid).clone(), idx));
+                } else {
+                    gpr.get_or_insert_with(|| ((*fid).clone(), idx));
+                }
+            }
+            let (fpr_fid, fpr_idx) = fpr.ok_or_else(|| {
+                format!(
+                    "roles = [\"{role}\"] 的指令 `{}` 缺 FPR 操作数（类间位搬移要一侧 FPR、一侧 GPR；\
+                     槽的类靠 `[[operand_slots]].class` 声明）",
+                    info.inst.name
+                )
+            })?;
+            let (gpr_fid, gpr_idx) = gpr.ok_or_else(|| {
+                format!(
+                    "roles = [\"{role}\"] 的指令 `{}` 缺 GPR 操作数（类间位搬移要一侧 FPR、一侧 GPR）",
+                    info.inst.name
+                )
+            })?;
+            let vn = crate::v12::codegen::pascal_ident(&info.inst.name);
+            for b in bits {
+                arms.push(BankArm {
+                    bits: b,
+                    vn: vn.clone(),
+                    fpr_fid: fpr_fid.clone(),
+                    fpr_idx,
+                    gpr_fid: gpr_fid.clone(),
+                    gpr_idx,
+                });
+            }
         }
-        out
+        arms.sort_by_key(|a| a.bits);
+        arms.dedup_by_key(|a| a.bits);
+        Ok(Self { arms })
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.arms.is_empty()
+    }
+
+    /// 已声明的位宽（诊断/错误消息用）。
+    pub(crate) fn declared(&self) -> String {
+        if self.arms.is_empty() {
+            return "无".to_string();
+        }
+        self.arms
+            .iter()
+            .map(|a| a.bits.to_string())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
+    /// 按位宽生成分派表达式；`build` 拿到这一档的 FPR/GPR 侧字段名与槽下标。
+    pub(crate) fn dispatch(
+        &self,
+        role: Role,
+        bits_expr: &TokenStream,
+        build: impl Fn(&BankArm) -> TokenStream,
+    ) -> TokenStream {
+        dispatch_chain(
+            bits_expr,
+            &format!(
+                "v12: 该值的位宽本 ISA 的 roles = [\"{role}\"] 没有声明（已声明位宽：{}）",
+                self.declared()
+            ),
+            self.arms
+                .iter()
+                .map(|a| (a.bits, build(a)))
+                .collect::<Vec<_>>(),
+        )
     }
 }
 

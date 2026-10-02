@@ -7,7 +7,7 @@
 use super::super::model::*;
 use super::integration::{inst_exists, inst_fids, inst_move_role, inst_reg_imm_fids};
 use super::lowering::{
-    FpMovWidths, inst_by_role_for, reg_mem_fids, role_name, role_name_for_class,
+    BankMovWidths, FpMovWidths, inst_by_role_for, reg_mem_fids, role_name, role_name_for_class,
 };
 use super::{InstInfo, field_ctor_expr, pascal_ident};
 use proc_macro2::TokenStream;
@@ -885,6 +885,57 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
     let mov_vn = crate::v12::codegen::pascal_ident(&move_inst);
     let (m_src, _m_src_idx, m_dest, _m_dest_idx) = inst_move_role(infos, &move_inst)
         .ok_or_else(|| format!("[{move_inst}] must have In(src)/Out|InOut(dest) reg operands"))?;
+    // **类间位搬移**（v20 V7，被调方视角）：落点的类与值所在的池不一致时用的两张位宽表。
+    //
+    // 方向与调用点**相反**，因为数据流向相反：被调方是"落点寄存器（约定给，如 a0）→ 值自己的
+    // FPR"，所以"落点是整数 + 值是浮点"要用 **`gpr_to_fpr_mov`**（`fmv.d.x f<dest>, a0`）。
+    // 缺表 ⇒ 该支明确 `Unsupported`（旧实现把 FPR 的号当 GPR 号用 = 静默错值）。
+    let gpr_to_fpr = BankMovWidths::collect(infos, Role::GprToFprMov)?;
+    let fpr_to_gpr = BankMovWidths::collect(infos, Role::FprToGprMov)?;
+    let cross = |t: &BankMovWidths, role: Role, to_fpr: bool| -> TokenStream {
+        if t.is_empty() {
+            return quote! {
+                return Err(crate::IrError::Unsupported(
+                    "v12 move_args: ABI 落点的寄存器类与值的类不同（整数约定收浮点），需要 \
+                     roles = [\"fpr_to_gpr_mov\"]/[\"gpr_to_fpr_mov\"] 的类间位搬移指令\
+                     ——本 ISA 未申报（拿同类搬移顶上是静默错值）"
+                        .into(),
+                ));
+            };
+        }
+        let bits = quote! { __a.size.wrapping_mul(8) };
+        t.dispatch(role, &bits, |a| {
+            let (dest_fid, src_fid, src_cls) = if to_fpr {
+                (
+                    &a.fpr_fid,
+                    &a.gpr_fid,
+                    quote! { Reg::from_index(*index, *class) },
+                )
+            } else {
+                (
+                    &a.gpr_fid,
+                    &a.fpr_fid,
+                    quote! { Reg::from_index(*index, *class) },
+                )
+            };
+            let dest_cls = if to_fpr {
+                quote! { __DEFAULT_FPR_CLASS }
+            } else {
+                quote! { __DEFAULT_GPR_CLASS }
+            };
+            let vn = &a.vn;
+            quote! {
+                let __bytes = encode(&Inst::#vn {
+                    #dest_fid: Reg::from_index(__dest, #dest_cls),
+                    #src_fid: #src_cls,
+                })
+                .map_err(|e| crate::IrError::Emit(e))?;
+                __sink.put_bytes(&__bytes);
+            }
+        })
+    };
+    let callee_to_fpr = cross(&gpr_to_fpr, Role::GprToFprMov, true);
+    let callee_to_gpr = cross(&fpr_to_gpr, Role::FprToGprMov, false);
     // 栈参数收参指令：**按语义角色**取（`stack_arg_load` / `stack_arg_store`，
     // 角色全 ISA 唯一、validate 保证）。缺角色 → `None`，由下面各调用点给出
     // 生成期的明确错误——**不再用 x86 指令名（Mov64Rm/Mov64Mr + mem/dest/src）
@@ -1385,16 +1436,28 @@ fn gen_arg_receive(infos: &[InstInfo], model: &V12Model) -> Result<TokenStream, 
             {
                 match &__a.place {
                     crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
+                        // 四路（v20 V7）：**落点的类**（约定给）× **值所在的池**（IR 类型给，
+                        // `param_is_float`）——不一致时走**类间位搬移**。旧实现只看落点的类：
+                        // 浮点值落在整数寄存器时把 FPR 的号当 GPR 号用（**静默错值**）。
+                        let __val_fp = __rm.param_is_float.get(__i).copied().unwrap_or(false);
                         if class.is_int() {
                             let __src = Reg::from_index(*index, *class);
-                            let __bytes = encode(&Inst::#mov_vn {
-                                #m_src: __src,
-                                #m_dest: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
-                            })
-                            .map_err(|e| crate::IrError::Emit(e))?;
-                            __sink.put_bytes(&__bytes);
+                            if __val_fp {
+                                #callee_to_fpr
+                            } else {
+                                let __bytes = encode(&Inst::#mov_vn {
+                                    #m_src: __src,
+                                    #m_dest: Reg::from_index(__dest, __DEFAULT_GPR_CLASS),
+                                })
+                                .map_err(|e| crate::IrError::Emit(e))?;
+                                __sink.put_bytes(&__bytes);
+                            }
                         } else if class.is_fp() {
-                            #fp_from_class
+                            if __val_fp {
+                                #fp_from_class
+                            } else {
+                                #callee_to_gpr
+                            }
                         } else {
                             // 既不是整数类也不是浮点/向量类（如掩码寄存器类）——
                             // 本片没有对应的搬运角色，**明确拒绝**而不是当浮点搬。

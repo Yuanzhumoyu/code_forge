@@ -63,17 +63,11 @@ fn arm(bits: u32) -> String {
 #[test]
 fn x86_fpr_mov_widths_follow_the_spec() {
     let (src, _) = read_isa_file("isa/x86_v12.toml").expect("读 x86 谱");
+    // **所有**带位宽的角色声明都改（`fpr_mov` 32/64 与类间位搬移 `fpr_to_gpr_mov`/
+    // `gpr_to_fpr_mov` 32/64）——"位宽是数据"是对整张角色表成立的，不只 `fpr_mov`。
     let mutated = src
-        .replacen(
-            r#"roles = [{ role = "fpr_mov", bits = 32 }]"#,
-            r#"roles = [{ role = "fpr_mov", bits = 16 }]"#,
-            1,
-        )
-        .replacen(
-            r#"roles = [{ role = "fpr_mov", bits = 64 }]"#,
-            r#"roles = [{ role = "fpr_mov", bits = 128 }]"#,
-            1,
-        );
+        .replace("bits = 32 }]", "bits = 16 }]")
+        .replace("bits = 64 }]", "bits = 128 }]");
     assert!(
         mutated.contains("bits = 16 }]") && mutated.contains("bits = 128 }]"),
         "变异没生效"
@@ -86,18 +80,21 @@ fn x86_fpr_mov_widths_follow_the_spec() {
         .collect();
 
     // 两档都在，且各自指向**它自己**那条指令（16 位档 = MOVSS，128 位档 = MOVSD）。
+    //
+    // 注意：类间位搬移（`fpr_to_gpr_mov`/`gpr_to_fpr_mov`）也用同一套位宽分派，所以同一档位宽
+    // 常量在生成物里会出现多次——这里找的是"**有一条**该档的臂发 Movss/Movsd"，不是第一条。
     for (bits, vn) in [(16u32, "Movss"), (128u32, "Movsd")] {
         let arm = arm(bits);
-        let at = t
-            .find(&arm)
-            .unwrap_or_else(|| panic!("缺少 {bits} 位的分派臂 `{arm}`"));
-        assert!(
-            win(&t, at, 0, 260).contains(vn),
-            "`{arm}` 的臂应发 `{vn}`：{}",
-            win(&t, at, 0, 260)
-        );
+        let hit = t
+            .match_indices(&arm)
+            .any(|(at, _)| win(&t, at, 0, 300).contains(vn));
+        assert!(hit, "应有 {bits} 位的 `fpr_mov` 分派臂指向 `{vn}`");
     }
-    // 写死 32/64 就会留下这两个臂——一个都不许有。
+    // **类间位搬移**的两张表也按同一份数据分派（v20 V7）：x86 的 MOVQ 家族。
+    for vn in ["MovqXmmR64", "MovqR64Xmm"] {
+        assert!(t.contains(vn), "类间位搬移的指令 `{vn}` 应参与生成");
+    }
+    // 写死 32/64 就会留下这两个臂——一个都不许有（位宽角色全改过了，所以是全局断言）。
     for hard in [32u32, 64u32] {
         let a = arm(hard);
         assert!(!t.contains(&a), "位宽是谱的数据，不该出现写死的 `{a}`");
@@ -107,11 +104,11 @@ fn x86_fpr_mov_widths_follow_the_spec() {
         t.contains("已声明位宽：16/128"),
         "未声明的位宽必须 fail-closed 且列出已声明档"
     );
-    // 两处生成点（降低侧 + 收参侧）都按表发指令，不是只改一处。
+    // 两处生成点（降低侧 + 收参侧）都按表发指令，不是只改一处：MOVSD 的变体被引用两次以上。
     assert!(
-        t.matches(&arm(128)).count() >= 2,
-        "128 位档应在降低侧与收参侧各出现一次（实测 {}）",
-        t.matches(&arm(128)).count()
+        t.matches("Movsd").count() >= 2,
+        "`fpr_mov` 的 128 位档应在降低侧与收参侧都被引用（实测 {}）",
+        t.matches("Movsd").count()
     );
 }
 

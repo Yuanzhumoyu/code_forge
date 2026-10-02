@@ -716,6 +716,10 @@ opcode = 0x6E
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movd {dst}, {src}"
+# **类间位搬移**（v20 V7）：GPR 的位模式 → FPR。x86 的 SysV64 正常情况下浮点走 XMM，
+# 这条只在"约定的落点是整数寄存器"时需要（`classify` 把浮点判给 int 池：软浮点/Zfinx 式
+# 约定、或调用约定自定义）。缺这条角色 ⇒ 那条落点 fail-closed（不拿同类搬移顶上）。
+roles = [{ role = "gpr_to_fpr_mov", bits = 32 }]
 
 [[instructions]]
 name = "MOVD_IREG_FREG"
@@ -725,6 +729,7 @@ opcode = 0x7E
 fields = { prefix = 0x66, w = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "movd {dst}, {src}"
+roles = [{ role = "fpr_to_gpr_mov", bits = 32 }]
 
 [[instructions]]
 name = "PUNPCKLDQ"
@@ -1772,6 +1777,7 @@ fields = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
+roles = [{ role = "gpr_to_fpr_mov", bits = 64 }]
 
 [[instructions]]
 name = "MOVQ_R64_XMM"
@@ -1782,6 +1788,7 @@ fields = { prefix = 0x66, w = 1 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
+roles = [{ role = "fpr_to_gpr_mov", bits = 64 }]
 
 [[instructions]]
 name = "MOVQ_XMM_FREG"
