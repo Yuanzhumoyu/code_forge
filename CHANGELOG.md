@@ -11,6 +11,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-01) — lp64d 的 `va_list` 对象布局对齐定本（`sizeof(va_list)` = 指针宽度），并纠正 §5 的修复配方
+
+按 RISC-V psABI 定本原文重核变参一节时，发现**数据**与**下一步的做法**各错一处：
+
+- **数据**：`riscv_save_area` 的 `size` 由 **24 改成 8**。定本 `riscv-cc.adoc`（issue #412 之后的
+  "Expand va_list description" 版本）第一句就是 *"The `va_list` type has the same representation as
+  `void*`"* ⇒ LP64D 上 `sizeof(va_list)` = 8；原来的 24 是从 sysv64 抄来的余量（那 16 字节既没有
+  字段也没有读者），它让 `va_copy`／把 `va_list` 交给 `vprintf` 一类**跨编译器**用法在对象布局上
+  就对不上。黄金快照 `lp64d.plan.txt` 随之重刷（只动 `va_area … size=` 两行），§2 文档表同步，
+  `invariants::va_shapes_match_the_documented_table`（逐格比对）与
+  `va_object_layout_matches_the_psabi_numbers`（字段布局）继续钉住。
+- **做法**：`docs/plans/varargs-plan.md` §5 与 `forge-abi/src/builtin.rs` 的注释此前写着"把 lp64d
+  换成 `gp_offset`/`fp_offset`/`reg_save_area`/`stack_arg_area` 四字段 + 两个游标"——那是
+  **SysV AMD64 的 `va_list`**；RISC-V 的 `va_list` 就是一个 `void*`（单线性游标）。同一处还写着
+  "调用方按正常分类传未命名实参"——定本的浮点调用约定一节写着 *"The remainder of this section
+  applies only to **named** arguments. **Variadic arguments are passed according to the integer
+  calling convention.**"* ⇒ LP64D 上**变参的浮点也走整数寄存器**（`double` 的位模式进 a0-a7），
+  "正常分类"会把 `f64` 放进 `fa0`，是另一个错。两处已按定本原文改正，并把完整修复写成
+  **四件一起**（`stack_only = false` / 保存区放帧顶与栈实参连续 / `area` = 保存区起点 +
+  已用整数寄存器数 × 槽宽 / 变参按整数约定分类），其中第 ④ 件在发射侧还缺一块**通用**能力：
+  **类间位搬移**（FPR 的位模式搬进 GPR：riscv `fmv.x.d`、x86 `MOVQ`、arm64 `FMOV`）——角色系统
+  现在只有同类内的 `gpr_mov`/`fpr_mov`。
+- 守卫：`invariants::lp64d_variadic_stack_only_is_a_documented_deviation` 增加**正向**断言
+  （`size`/`align` = 8、字段只有一个 = `void*`），偏差部分继续钉住并写清四件一起的条件。
+- 验证：`forge-abi` 全绿（黄金重刷后）、riscv 矩阵 **136/64/0**（未受影响）、`abi_target_real` 25、
+  `forge-isa` 全绿（`abi check` 仍报 lp64d 的"可疑组合"，对象尺寸已显示 8 字节）。
+- **仍未做**（本条的真正剩余）：把 lp64d 的变参切到寄存器路径——见上面"四件一起"，其中
+  类间位搬移是一块独立的通用能力。
+
 ### Changed (2026-10-01) — 浮点搬移改成**按位宽查表**：不再写死 32/64，riscv 的浮点参数/返回真跑起来
 
 上一片留下的"钥匙"（`fpr_mov` 的三操作数形态）这一片装上了，而且**没有按 ISA 打补丁**：

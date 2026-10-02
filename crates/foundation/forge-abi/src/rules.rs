@@ -418,10 +418,18 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                 },
             ),
             // RISC-V LP64D：`area` 单指针（未命名实参只在栈上）+ 保存区（8×8B GP + 8×8B FP）。
+            //
+            // **`size = 8`（= 一个指针）不是随手写的**：定本 `riscv-cc.adoc` 的
+            // 「`va_list`, `va_start`, and `va_arg`」一节第一句就是 *"The `va_list` type has the
+            // same representation as `void*`"* ⇒ `sizeof(va_list)` = 指针宽度（LP64D = 8）。
+            // 早先这里写 24 是从 sysv64 抄来的余量（那 16 字节既没字段也没人读），但它让
+            // `va_copy`/把 `va_list` 交给 `vprintf` 一类**跨编译器**用法在对象布局上就对不上；
+            // 守卫 `invariants.rs::va_object_layout_matches_the_psabi_numbers` 钉字段布局，
+            // `va_shapes_match_the_documented_table` 钉这里的 size 与文档表逐字一致。
             (
                 "riscv_save_area".to_string(),
                 VaListShape {
-                    size: 24,
+                    size: 8,
                     align: 8,
                     fields: vec![f("area", 0, 8)],
                     save: Some(VaSaveDecl {

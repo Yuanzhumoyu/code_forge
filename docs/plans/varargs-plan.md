@@ -37,8 +37,13 @@
 | `win64` | `win64_stack` | 8 | 8 | 只走栈 | — |
 | `sysv64` | `sysv_reg_save` | 24 | 8 | 继续用寄存器 | `RAX` |
 | `aapcs64` | `aapcs64_struct` | 32 | 8 | 继续用寄存器 | — |
-| `lp64d` | `riscv_save_area` | 24 | 8 | 只走栈 | — |
+| `lp64d` | `riscv_save_area` | 8 | 8 | 只走栈 | — |
 
+> `lp64d` 两处说明：① size 2026-10-01 由 **24 改成 8**——定本说 `va_list` 与 `void*`**同表示**
+> （见 §5 的原文引用），24 是从 sysv64 抄来的余量、没有字段也没有读者；② "只走栈"那一格是
+> **已知偏差**（定本要求未命名实参走整数寄存器），修复清单见 §5。表格这一列的取值是守卫
+> `va_shapes_match_the_documented_table` 逐格比对的字面量，所以偏差说明写在这里、不写进单元格。
+>
 > **形状是数据**（v20 V6）：`hidden.va_list` 写**预置形状名**，或直接写一张**显式形状表**
 > （`{ size, align, fields, save, int_arg, float_arg }`）——字段/保存区/取参规则全在里面，
 > 引擎按数据算（字段名→下标、上限/步长由槽表推），代码里**没有"每份约定一个分支"**。
@@ -334,30 +339,38 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      `stack_mem_shape`（判据只有一份），riscv 的 `SD` 申报 `roles = ["stack_arg_store"]`，
      **`FSD` 申报 `{ role = "stack_arg_store", class = "fpr" }`**（浮点栈实参）。
    - **一处与 psABI 定本的偏差（2026-10-01 核对时发现，现阶段故意钉住现状）**：定本
-     `riscv-cc.adoc` 的「`va_list`, `va_start` and `va_arg`」说——被调方把**用来传变参的寄存器**
-     拷进 vararg save area，该区必须与**栈上传的实参连续**；`va_start` 让 `va_list` 指向该区
-     **起点**，`va_arg` 按类型大小递增（原文经
-     [issue #412](https://github.com/riscv-non-isa/riscv-elf-psabi-doc/issues/412) 引用）。
+     `riscv-cc.adoc` 的「`va_list`, `va_start`, and `va_arg`」说——`va_list` **与 `void*` 同表示**，
+     指向一串"按整数约定格式化的变参"；若还有整数参数寄存器没被命名形参用掉，被调方要在
+     **紧贴入口 `sp` 之下**造一块 vararg save area，把**未被命名形参用掉的那些整数参数寄存器**
+     **按序**存进去，`va_list` 指向该区**起点**，于是它先走完寄存器里的变参、再接着走栈上的变参
+     （原文经 [issue #412](https://github.com/riscv-non-isa/riscv-elf-psabi-doc/issues/412) 的
+     "Expand va_list description" 提交引用；本仓库 2026-10-01 直接核对了该版本原文）。
      即**未命名实参走寄存器**（溢出才上栈）——而我们的 lp64d 数据写的是 `variadic_stack_only =
      true` + `area` 指向调用方栈实参区 ⇒ **与定本不符**：自洽（我们自己的调用方/被调方按同一份
      约定对齐，所以 QEMU 矩阵真跑绿），但与**外部编译器**编译的变参函数互调会错。
      现状由 `invariants.rs::lp64d_variadic_stack_only_is_a_documented_deviation` 钉住（谁改这个值
-     都会红）。
-     **修过一次、按实测回退（2026-10-01）**，结论对下一步很关键：把 lp64d 换成"两个游标 +
-     保存区指针 + 栈实参指针"的形状（`stack_only = false`；**不需要**保存区与栈实参物理连续——
-     我们的 `va_list` 自带两个指针，不是单个线性游标）之后：
-       - **整数用例真跑通过**（QEMU：未命名实参进 a1/a2，被调方 spill 进保存区、`va_arg` 从
-         `gp_offset` 读回）⇒ 数据驱动的模型能表达定本的语义；
-       - **浮点用例编译失败**：`v12 call: 浮点/向量实参搬运缺 MOVSS/MOVSD/MOVAPS 角色`——
-         riscv 谱里**没有 f64 的 fp→fp 搬移**（只有 `FSGNJ_S`，没有 `FSGNJ_D`），而定本的规范化
-         写法是**三操作数** `fsgnj.d rd, rs, rs`；生成器的 `fpr_mov` 路径假设"两操作数搬移"
-         （8 处发射点都在构造 `Inst::<mov>{ dst, src }` 结构体字面量）⇒ 直接给三操作数指令申报
-         `fpr_mov` **连生成物都编不过**。
-     ⇒ **修复必须按这个顺序**：① 补 `FSGNJ_D` 指令（+ 给 `FSGNJ_S`/`FSGNJ_D` 申报
-     `fpr_mov`（bits 32/64））；② 把生成器的 `fpr_mov` 发射**按形状**泛化（三操作数时把 `src2`
-     也填成源寄存器——与 `StackMemShape` 同一套"按形状发、不按 ISA 发"的做法）；③ 再改 lp64d 的
-     形状（`stack_only = false` + 两个游标 + 保存区/栈实参指针）。**顺序反了会更糟**：只做 ③ 会让
-     riscv 上任何"传浮点变参"的调用点从"自洽能跑"变成**编译错误**。
+     都会红；它同时正向钉住"size = 8 = `void*`"这一条已照定本改好的事实）。
+
+     **同日按定本原文重核，纠正上一轮的两个错误设想**（这两条如果不纠正，下一步会做错方向）：
+
+     - ❌ "改成 `gp_offset`/`fp_offset`/`reg_save_area`/`stack_arg_area` 四字段 + 两个游标"——
+       那是 **SysV AMD64 的 `va_list`**。RISC-V 的 `va_list` 就是**一个 `void*`**（单字段、8 字节），
+       线性递增；上一轮"两个游标"的变异版实测能跑整数支，但**它本身就是个非定本形状**，不能作为
+       修复目标。
+     - ❌ "调用方按**正常分类**传未命名实参"——定本在浮点调用约定一节写着
+       *"The remainder of this section applies only to **named** arguments. **Variadic arguments are
+       passed according to the integer calling convention.**"* ⇒ LP64D 上**变参的浮点也走整数寄存器**
+       （`double` 的位模式进 a0–a7）。"正常分类"会把 `f64` 放进 `fa0`，那是**另一个**错。
+       这也解释了为什么"单一线性游标"能成立：变参只有一个寄存器组（整数）。
+
+     **完整修复是四件一起**（半改会静默读错值；顺序随意，但要一起落）：
+     ① `variadic_stack_only = false`；② 保存区放**帧顶**（`[entry_sp - save_size, entry_sp)`，
+     与调用方栈实参连续）——`pipeline/va_expand.rs::plan_abi_slots` 现在把 ABI 槽排在**前端局部槽
+     之下**，要按"形状要求与栈实参连续"这条**数据**把局部槽整体下移（`AbiSlots::shift` 机制已在）；
+     ③ `area` 初值 = 保存区起点 **+ 已用整数寄存器数 × 槽宽**；④ 变参实参按**整数约定**分类
+     （浮点进整数池）。④ 在发射侧还差一块能力：**类间位搬移**（`f64` 的值在 FPR 里，要按位搬进
+     GPR；riscv `fmv.x.d`、x86 `MOVQ`、arm64 `FMOV`）——角色系统现在只有同类内的
+     `gpr_mov`/`fpr_mov`，这是**通用的**能力缺口（谁按"整数约定"收浮点都要它），不是 riscv 专有。
      **补强证据（2026-10-01 再测）**：`fpr_mov` 不只是变参要——把 riscv 缺的三条浮点算术
      lowering（`Fadd`/`Fsub`/`Fmul`，谱里 `FADD_S/D` 等指令早就存在）补上后，矩阵里被"缺 Fadd"
      掩盖的三条浮点用例立刻转成**失败**且原因全指向它：
