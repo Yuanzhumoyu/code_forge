@@ -326,16 +326,25 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
   `va_object_layout_matches_the_psabi_numbers`（四份约定的字段布局与保存区槽表）、
   `va_shapes_match_the_documented_table`（§2 表 ↔ 引擎输出）、黄金快照新增 `va_rule` 行。
 
-**下一步（含本轮实测到的两个真缺口）**：
+**下一步（含实测到的缺口，按"离可用还差什么"排序）**：
 
-1. **riscv（lp64d）的变参调用点接不上**——实测（QEMU 矩阵）：`variadic_va_arg_int_only` 在 riscv 上
-   编译报 `v12 call: 本 ISA 缺 roles = ["stack_arg_store"] 的指令（栈参数写不出去）`。根因不在变参：
-   **调用方把（命名或未命名）实参写进传出区**要 `stack_arg_store` 角色，而生成器要求该角色是
-   **Reg+Mem 形状**；riscv 谱的 `SD` 是 `base+disp` 模板形状（`insts = ["SD {0}, {1}, 0"]`）、
-   没有 Mem 槽。⇒ 这是"非 Mem 形状的栈参数 store"这一条通用能力的缺口（riscv 上任何第 9+ 个
-   命名实参也走不到）。**被调方一侧不依赖它**（物化 + 取值只用 IR op 降级，已就位）。
-   矩阵用伪能力 `va_stack_args` 把受影响的用例门控成 Skip（x86 真跑，riscv Skip）。
-2. **aapcs64 没有执行通道**（本机无 arm64 runner）：形状/规则/黄金快照已就位，真跑要等通道。
+1. **riscv（lp64d）：只差调用方一侧**。实测（本片）：
+   - **被调方编得出**：`va_start` + 两次 `va_arg(i64)` 在真 riscv 后端上走完
+     lowering → regalloc → frame → encode（守卫 `riscv64_v12_tm_tests::tm_compiles_riscv_varargs_callee_side`）；
+   - **调用方接不上**：把（命名或未命名）实参写进传出区要 `stack_arg_store` 角色，而生成器要求该
+     角色是 **Reg+Mem 形状**；riscv 谱的 `SD` 是 `base+disp` 模板形状（`insts = ["SD {0}, {1}, 0"]`）、
+     谱里 `stack_arg_load`/`stack_arg_store` 一个都没有 ⇒ 矩阵用例报
+     `v12 call: 本 ISA 缺 roles = ["stack_arg_store"] 的指令（栈参数写不出去）`，并如实 Skip
+     （伪能力门控 `va_stack_args`）。**这与变参无关**：riscv 上第 9+ 个**命名**栈实参同样走不到。
+     接法两条：① 给 riscv 谱加 Reg+Mem 形状的 load/store（要动编码/向量/条数守卫）；
+     ② 让生成器的栈实参路径接受 base+disp 模板形状（`[spill.*]` 已有同类机制）——②更通用。
+2. **aapcs64：数据面已通、编译面被 arm64 缺的 lowering 挡住**。实测：把变参函数编到 arm64 报
+   `Unsupported("v12 lowering")` —— 变参展开用的 IR 词汇（`Icmp`/`Select`/`StackAddr`/`Sextend`/
+   `Ireduce`）在 arm64 谱里**一条 lowering 都没有**（x86/riscv 有）。缺口被
+   `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住（补齐时它会红）；
+   此外本机没有 arm64 执行通道。**数据面**（形状/规则/逐字段初值）已由
+   `abi_target_real::aapcs64_variadic_shape_is_pure_data` 逐格钉住：`__gr_offs`/`__vr_offs` 从负值
+   数到 0、两个 top = 保存区基址 + 本类区域字节数（64 / 192）、`__stack` = 未命名区地址。
 
 其余仍开放：`va_meta`（SysV `%al`）写入、前端产出 `variadic`。
 

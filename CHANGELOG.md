@@ -11,6 +11,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-01) — 变参：aapcs64/lp64d 的两条**确定性守卫** + 缺口精确到"差什么、怎么接"
+
+V6 之后四份约定的形状/规则都是数据，但 **aapcs64/lp64d 还没有真跑**。这一片把"差什么"实测清楚并
+用守卫钉住，避免后来的人以为它们已经能用：
+
+- **lp64d 的被调方编得出**（新守卫 `riscv64_v12_tm_tests::tm_compiles_riscv_varargs_callee_side`）：
+  `va_start` + 两次 `va_arg(i64)` 在真 riscv 后端上走完 lowering → regalloc → frame → encode，
+  且帧 ≥ 保存区 128 字节。⇒ **riscv 只差调用方一侧**。
+- **lp64d 的调用方接不上（缺口修好前不许静默）**：写传出区要 `stack_arg_store` 角色，而生成器要求
+  它是 **Reg+Mem 形状**；riscv 谱的 `SD` 是 `base+disp` 模板形状、`stack_arg_load`/`stack_arg_store`
+  一个都没有 ⇒ 实测 `v12 call: 本 ISA 缺 roles = ["stack_arg_store"] 的指令（栈参数写不出去）`。
+  **与变参无关**（riscv 上第 9+ 个命名栈实参同样走不到）；矩阵按伪能力 `va_stack_args` 门控 Skip。
+- **aapcs64 的数据面逐格钉住**（新守卫 `abi_target_real::aapcs64_variadic_shape_is_pure_data`）：
+  5 个字段（`__stack`/`__gr_top`/`__vr_top`/`__gr_offs`/`__vr_offs`）、取参规则（**有符号**计数、
+  基准 = 区域顶端、溢出 = `__stack`、步长 8/16）、逐字段初值（`FrameOff(16)` / `SaveOff(64)` /
+  `SaveOff(192)` / `Imm(−8)` / `Imm(0)`）全部逐格断言。
+- **aapcs64 的编译面被 arm64 缺的 lowering 挡住**（新守卫
+  `arm64_v12_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering`）：实测报
+  `Unsupported("v12 lowering")`——变参展开用的 IR 词汇（`Icmp`/`Select`/`StackAddr`/`Sextend`/
+  `Ireduce`）在 arm64 谱里一条 lowering 都没有（x86/riscv 有）。守卫钉"必须是明确 Unsupported"，
+  补齐时会红，提醒改成"编得出 + 真跑"。
+- **验证**：`forge-codegen` lib 1362、`abi_target_real` 25、`arm64_v12_tm_tests` 7、
+  `riscv64_v12_tm_tests` 5、矩阵 x86 197/3/0 与 riscv 131/69/0、`forge-tests` lib 43；
+  `clippy -D warnings` 0、`fmt --check` 0、markdownlint 0。
+
 ### Changed (2026-10-01) — 变参 V6：`va_list` 形状与取参规则做成**约定数据**，管线只剩一套算法（破坏性）
 
 前一片之后管线里还剩两处"为某个 ABI 开洞"：`va_expand` 按 `(有没有保存区, 字段数)` 判"族"

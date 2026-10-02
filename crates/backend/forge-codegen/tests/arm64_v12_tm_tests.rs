@@ -252,3 +252,39 @@ fn tm_decode_roundtrip() {
         assert!(roundtripped >= 6, "{name}: 至少 6 条指令可回环");
     }
 }
+
+/// **aapcs64 变参：计划面已通、编译面被 arm64 缺的 lowering 挡住**（v20 V6，**已知缺口如实钉住**）。
+///
+/// 实测（本片）：把 `va_start` + 两次 `va_arg(i64)` 编到 arm64 会报
+/// `Unsupported("v12 lowering")` —— 变参展开用的 IR 词汇（`Icmp`/`Select`/`StackAddr`/`Sextend`/
+/// `Ireduce`）在 **arm64 谱里还一条 lowering 都没有**（x86 有，所以 win64/sysv64 真跑）。
+/// 与变参数据无关：形状/规则/逐字段初值已经就位并由
+/// `abi_target_real::aapcs64_variadic_shape_is_pure_data` 逐格钉住。
+///
+/// 这条守卫钉的是"**不许静默编错**"：现在必须是**明确 Unsupported**；等 arm64 补齐这些 lowering
+/// （连同执行通道）时它会红，提醒把它改成"编得出 + 真跑"的断言。
+#[test]
+fn tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering() {
+    let sig = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+    let mut b = FunctionBuilder::new("va", TypeContext::new(), sig);
+    let (entry, _params) = b.create_block_with_params(&[(TypeId::I64, "fmt")]);
+    b.switch_to_block(entry);
+    let ap = b.va_start();
+    let a = b.va_arg(ap, TypeId::I64);
+    let c = b.va_arg(ap, TypeId::I64);
+    let s = b.iadd(a, c);
+    b.ret(&[s]);
+    let func = b.finish().expect("build");
+    let compiler = FunctionCompiler::new(forge_codegen::arm64_v12::TargetMachine::new());
+    let err = match compiler.compile_raw(&func) {
+        Ok(_) => panic!(
+            "arm64 谱还没有变参展开要用的 lowering（Icmp/Select/StackAddr/Sextend/Ireduce）——补齐前必须明确 Unsupported，不许编出错码"
+        ),
+        Err(e) => e,
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("lowering") || msg.contains("Unsupported"),
+        "缺口必须是明确 Unsupported（实测：{msg}）"
+    );
+}

@@ -1456,3 +1456,76 @@ fn call_layout_mirrors_the_variadic_shape() {
     let plan = plan_for_signature(&tm, &reg, "win64", &plain).expect("非变参 plan");
     assert!(call_layout(&plan, &tm).va.is_none(), "非变参不该带 va 信息");
 }
+
+/// **aapcs64 的变参数据面**（v20 V6）：形状/规则/逐字段初值在真 arm64 后端的适配器上必须
+/// **一点不差地**折过来——它是"四份约定都只是数据"的可见证据，也是本机**没有 arm64 执行通道**
+/// 时能拿到的最强验证（计划 + 展开 + 编译都在真后端上跑，只是不执行）。
+///
+/// AAPCS64 的 `va_list` 是**有符号计数**式：`__gr_offs`/`__vr_offs` 从负值数到 0，基准是
+/// `__gr_top`/`__vr_top`（区域**顶端**），溢出区是 `__stack`。
+#[test]
+fn aapcs64_variadic_shape_is_pure_data() {
+    use forge_codegen::pipeline::abi_target::{call_layout, plan_for_signature};
+    use forge_isa_runtime::machine::call_layout::VaInitVal;
+
+    let reg = builtin::registry().expect("内置注册表");
+    let tm = forge_codegen::arch::arm64_v12::TargetMachine::new();
+    // 一个命名参数走寄存器（x0），后面是未命名实参。
+    let sig = forge_abi::Signature::new(vec![("fmt".into(), forge_abi::TyView::int(8, 8))], None)
+        .variadic(1);
+    let plan = plan_for_signature(&tm, &reg, "aapcs64", &sig).expect("aapcs64 变参 plan");
+    let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
+
+    assert_eq!(va.shape.as_deref(), Some("aapcs64_struct"));
+    assert_eq!((va.size, va.align), (32, 8));
+    assert!(va.stack_only, "AAPCS64 的未命名实参只走栈");
+    assert_eq!(
+        va.fields
+            .iter()
+            .map(|f| (f.offset, f.size))
+            .collect::<Vec<_>>(),
+        vec![(0, 8), (8, 8), (16, 8), (24, 4), (28, 4)],
+        "对象 = __stack / __gr_top / __vr_top / __gr_offs / __vr_offs"
+    );
+    // 取参规则：两个游标都是**有符号**计数（下标 3/4），基准是**区域顶端**（下标 1/2），
+    // 溢出区是 `__stack`（下标 0），步长 = 一个寄存器槽（GR 8 字节 / VR 16 字节）。
+    assert_eq!(
+        (
+            va.arg_rules.int.cursor,
+            va.arg_rules.int.base,
+            va.arg_rules.int.overflow,
+            va.arg_rules.int.signed_limit,
+            va.arg_rules.int.step,
+            va.arg_rules.int.cursor_counts_down,
+        ),
+        (3, Some(1), Some(0), true, 8, true),
+        "整数类：__gr_offs 从负值数到 0，基准 __gr_top"
+    );
+    assert_eq!(
+        (
+            va.arg_rules.float.cursor,
+            va.arg_rules.float.base,
+            va.arg_rules.float.signed_limit,
+            va.arg_rules.float.step,
+        ),
+        (4, Some(2), true, 16),
+        "浮点类：__vr_offs / __vr_top（V 槽 16 字节）"
+    );
+    // **逐字段初值**（宿主按 plan + 规则算）：`__stack` = 未命名区地址（arm64 的
+    // `first_offset_slots` = 2、`shadow_bytes` = 0 ⇒ 帧相对 16）、两个 top = 保存区基址 + 本类区域
+    // 字节数（GR 区 = 8 槽 × 8 = 64；保存区总长 = 192）、两个 offs = −(步长 × 已用槽数)
+    //（只有 1 个走寄存器的命名参数 ⇒ GR 用掉 1 个、VR 一个没用）。
+    let save_size = va.save.as_ref().expect("aapcs64 有保存区").size;
+    assert_eq!(save_size, 192, "8 个 X 槽（8）+ 8 个 V 槽（16）");
+    assert_eq!(
+        va.init.as_ref().map(|i| i.fields.clone()),
+        Some(vec![
+            VaInitVal::FrameOff(16),
+            VaInitVal::SaveOff(64),
+            VaInitVal::SaveOff(192),
+            VaInitVal::Imm((-8i64) as u64),
+            VaInitVal::Imm(0),
+        ]),
+        "AAPCS64 初值：__stack 地址 / 两个 top / 有符号计数（−8）"
+    );
+}

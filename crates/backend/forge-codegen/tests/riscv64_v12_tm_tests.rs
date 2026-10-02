@@ -173,3 +173,47 @@ fn tm_decode_roundtrip() {
         assert!(roundtripped >= 3, "{name}: 至少 3 条指令可回环");
     }
 }
+
+/// **lp64d 变参的"被调方一侧"编译路径**（v20 V6）：`va_start`（物化 `va_list` 对象）+ 两次
+/// `va_arg(i64)` 由**管线按约定数据**展开成显式 IR，再走 RISC-V 的降级与编码。
+///
+/// 为什么这条守卫重要：riscv 的**调用方一侧**还接不上（把未命名实参写进传出区要
+/// `stack_arg_store` 角色，而生成器要求它是 Reg+Mem 形状、riscv 谱的 `SD` 是 base+disp 模板形状
+/// ——见 `docs/plans/varargs-plan.md`），所以矩阵里的变参用例在 riscv 上 Skip。但**被调方不依赖
+/// 那条能力**：形状（`area` 单指针 + 保存区）/逐字段初值/取值 IR 全在数据里，这里证明它们能
+/// 走完真后端的全部阶段（lowering → regalloc → frame → encode）。
+#[test]
+fn tm_compiles_riscv_varargs_callee_side() {
+    let sig = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+    let mut b = FunctionBuilder::new("va", TypeContext::new(), sig);
+    let (entry, _params) = b.create_block_with_params(&[(TypeId::I64, "fmt")]);
+    b.switch_to_block(entry);
+    let ap = b.va_start();
+    let a = b.va_arg(ap, TypeId::I64);
+    let c = b.va_arg(ap, TypeId::I64);
+    let s = b.iadd(a, c);
+    b.ret(&[s]);
+    let func = b.finish().expect("build");
+    let compiler = FunctionCompiler::new(forge_codegen::riscv64_v12::TargetMachine::new());
+    let cf = compiler
+        .compile_raw(&func)
+        .expect("lp64d 的被调方变参必须编得出（形状/初值/取值 IR 全在数据里）");
+    assert!(!cf.code.is_empty(), "应产出机器码");
+    // 序言 `addi sp, sp, -N`（opcode 0x13、rd = rn = sp = X2）：帧里要装下 `va_list` 对象与
+    // 保存区（8×8 GP + 8×8 FP = 128）——编得出来但帧太小说明数据没走到发射侧。
+    let frame = cf
+        .code
+        .windows(4)
+        .find_map(|c| {
+            let w = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+            let rd = (w >> 7) & 0x1F;
+            let rn = (w >> 15) & 0x1F;
+            let is_addi_sp = (w & 0x7F) == 0x13 && rd == 2 && rn == 2;
+            is_addi_sp.then_some(((w as i32) >> 20) as i64)
+        })
+        .unwrap_or_else(|| panic!("应有序言 addi sp, sp, -N：{:02x?}", cf.code));
+    assert!(
+        frame <= -128,
+        "帧要装下保存区（128 字节）与 va_list 对象（实测 sp += {frame}）"
+    );
+}
