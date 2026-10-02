@@ -27,6 +27,7 @@ lp64d 的 psABI 偏差（未命名实参应走寄存器）此前只写在文档�
 - 守卫：`cli_tests::abi_check_reports_the_variadic_state` 增加断言（riscv 输出必须含
   "可能不符合 psABI 定本"）。
 - 验证：`forge-isa` 9 + 24 全绿；`clippy -D warnings` 0、`fmt --check` 0。
+
 ### Changed (2026-10-01) — 补强证据：riscv 缺的 `fpr_mov` 是"浮点全面落地"的同一把钥匙（实验后回退）
 
 接着上一片的 lp64d psABI 议题往下验证：把 riscv 谱里**早就有指令、却一直没有 lowering** 的三条
