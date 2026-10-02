@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-01) — 补强证据：riscv 缺的 `fpr_mov` 是"浮点全面落地"的同一把钥匙（实验后回退）
+
+接着上一片的 lp64d psABI 议题往下验证：把 riscv 谱里**早就有指令、却一直没有 lowering** 的三条
+浮点算术（`Fadd`/`Fsub`/`Fmul`，各单/双精度两条）补上，看矩阵有什么变化——结果暴露了**同一个**
+根因：
+
+- 补上浮点算术后，原先被"缺 `Fadd`"掩盖的三条浮点用例立刻从 **Skip 变成 Fail**，且原因全指向
+  `fpr_mov`：`float_args_two` / `float_args_four_xmm3`（`v12 float args (MOVSD/MOVSS missing)`）、
+  `call_float_roundtrip`（`v12 float return: 未声明 roles = ["fpr_mov_f64"]/["fpr_mov_f32"]`）。
+- 也就是说 **`fpr_mov`（含 RISC-V 的三操作数 `fsgnj.d rd, rs, rs` 形态）是 riscv 浮点落地的
+  同一把钥匙**：补它一次 → 同时解掉① 浮点变参（lp64d 与 psABI 一致的前提）、② 浮点参数/返回、
+  ③ 上面三条用例的真跑。而"只补浮点算术"会把 Skip 变成 Fail（更差），所以这次实验**已回退**
+  （riscv 矩阵仍是 **133/67/0**），把结论与顺序写进 `docs/plans/varargs-plan.md` §5。
+- 验证（回退后）：riscv 矩阵 133/67/0、x86 197/3/0、`forge-abi` 全绿、markdownlint 0。
+
 ### Changed (2026-10-01) — lp64d 的 psABI 修正**试做后按实测回退**：整数支能过，浮点支卡在"三操作数 fp 搬移"
 
 上一片核出 lp64d 与 RISC-V psABI 定本的偏差（未命名实参应走寄存器）。这一片动手改，并用 QEMU 矩阵

@@ -358,6 +358,14 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
      也填成源寄存器——与 `StackMemShape` 同一套"按形状发、不按 ISA 发"的做法）；③ 再改 lp64d 的
      形状（`stack_only = false` + 两个游标 + 保存区/栈实参指针）。**顺序反了会更糟**：只做 ③ 会让
      riscv 上任何"传浮点变参"的调用点从"自洽能跑"变成**编译错误**。
+     **补强证据（2026-10-01 再测）**：`fpr_mov` 不只是变参要——把 riscv 缺的三条浮点算术
+     lowering（`Fadd`/`Fsub`/`Fmul`，谱里 `FADD_S/D` 等指令早就存在）补上后，矩阵里被"缺 Fadd"
+     掩盖的三条浮点用例立刻转成**失败**且原因全指向它：
+     `float_args_two` / `float_args_four_xmm3`（`v12 float args (MOVSD/MOVSS missing)`）、
+     `call_float_roundtrip`（`v12 float return: 未声明 roles = ["fpr_mov_f64"]/["fpr_mov_f32"]`）。
+     也就是说 **`fpr_mov`（含三操作数形态）是 riscv 浮点全面落地的那把钥匙**：补它一次，
+     同时解掉"浮点变参"、"浮点参数/返回"与"lp64d 与 psABI 一致"三件事。该实验已回退
+     （保持矩阵 133/67/0），留作下一片第一件事。
    - **一个真 bug（与变参无关，被这条路径暴露）**：`lp64d` 的 `first_offset_slots` 写的是 **2**
      （照搬 x86"序言总是 push fp"），而 RISC-V 的帧基址 `X8` = **入口 sp**（不 push 返回地址）
      ⇒ 被调方的 `va_list` 比调用方写的槽**高 16 字节**。实测：QEMU 通道的
