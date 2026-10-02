@@ -326,8 +326,18 @@ promoted double 的低半（静默错值）。验收 `test_jit_va_arg_narrows_pr
   `va_object_layout_matches_the_psabi_numbers`（四份约定的字段布局与保存区槽表）、
   `va_shapes_match_the_documented_table`（§2 表 ↔ 引擎输出）、黄金快照新增 `va_rule` 行。
 
-**下一步**：`aapcs64`/`lp64d` 的**真跑**（数据与规则已就位：arm64 需要执行通道，riscv 走 QEMU
-矩阵的能力门控）、`va_meta`（SysV `%al`）写入、前端产出 `variadic`。
+**下一步（含本轮实测到的两个真缺口）**：
+
+1. **riscv（lp64d）的变参调用点接不上**——实测（QEMU 矩阵）：`variadic_va_arg_int_only` 在 riscv 上
+   编译报 `v12 call: 本 ISA 缺 roles = ["stack_arg_store"] 的指令（栈参数写不出去）`。根因不在变参：
+   **调用方把（命名或未命名）实参写进传出区**要 `stack_arg_store` 角色，而生成器要求该角色是
+   **Reg+Mem 形状**；riscv 谱的 `SD` 是 `base+disp` 模板形状（`insts = ["SD {0}, {1}, 0"]`）、
+   没有 Mem 槽。⇒ 这是"非 Mem 形状的栈参数 store"这一条通用能力的缺口（riscv 上任何第 9+ 个
+   命名实参也走不到）。**被调方一侧不依赖它**（物化 + 取值只用 IR op 降级，已就位）。
+   矩阵用伪能力 `va_stack_args` 把受影响的用例门控成 Skip（x86 真跑，riscv Skip）。
+2. **aapcs64 没有执行通道**（本机无 arm64 runner）：形状/规则/黄金快照已就位，真跑要等通道。
+
+其余仍开放：`va_meta`（SysV `%al`）写入、前端产出 `variadic`。
 
 在此之前 aapcs64/riscv 的 `init` 未算 ⇒ 它们的 `va_start` 也继续 fail-closed。
 

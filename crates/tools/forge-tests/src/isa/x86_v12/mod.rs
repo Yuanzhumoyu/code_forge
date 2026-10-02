@@ -11,7 +11,10 @@
 /// - VaStart/VaArg（v20 变参 V2–V4）：同样是**生成器专用臂**（`va_list` 的形态/落点是约定
 ///   数据，静态模板表达不了），谱里没有也不该有 `[[lowering]]`。声明了它们，变参用例才会
 ///   真跑而不是被能力门控 Skip。
-pub const CAPS_EXTRA: &[&str] = &["Call", "CallIndirect", "GetElementPtr", "VaStart", "VaArg"];
+// `va_stack_args`：调用方把（未命名）实参写进传出区要 `stack_arg_store` 能力，而生成器要求
+// 它是 **Reg+Mem 形状**——x86 的 `STORE_MEM_R` 有；riscv 的 `SD` 是 base+disp 模板形状，还没接
+// （已知缺口，见 `docs/plans/varargs-plan.md`）。矩阵拿它给变参调用点用例做能力门控。
+pub const CAPS_EXTRA: &[&str] = &["Call", "CallIndirect", "GetElementPtr", "va_stack_args"];
 
 /// 运行全部矩阵用例；断言无 Fail（Skip 仅报告）。
 /// P1-15 + 2026-09 修正：x86 矩阵依赖本机 ExecutableMemory 执行 x86 机器码，

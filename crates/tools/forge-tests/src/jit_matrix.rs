@@ -71,10 +71,15 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// **宿主管线自己处理的 op**（不靠 ISA 的 `[[lowering]]` 规则）：`VaStart`/`VaArg` 由管线按
+    /// 约定数据展开成显式 IR（v20 V6），所以**每台机器都有**——不再由各 runner 的 `CAPS_EXTRA`
+    /// 逐台声明（那样等于把"变参能不能跑"重新绑回 ISA）。
+    pub const HOST_PIPELINE_OPS: &'static [&'static str] = &["VaStart", "VaArg"];
+
     pub fn new(supported: &[&'static str]) -> Self {
-        Self {
-            ops: supported.iter().copied().collect(),
-        }
+        let mut ops: std::collections::HashSet<&'static str> = supported.iter().copied().collect();
+        ops.extend(Self::HOST_PIPELINE_OPS.iter().copied());
+        Self { ops }
     }
     /// 用例所需的 op 是否全部支持。
     pub fn supports(&self, ops: &[&'static str]) -> bool {
@@ -3345,13 +3350,57 @@ pub const CASES: &[Case] = &[
             42,
         ),
     },
-    // ══════════════ 变参（v20 V2/V3/V4）：win64 栈式 ══════════════
+    // ══════════════ 变参（v20 V2–V6）：管线按约定数据展开 ══════════════
     //
-    // `VaStart`/`VaArg` 是**生成器专用臂**（没有 `[[lowering]]` 规则），所以能力门控靠
-    // runner 的 `CAPS_EXTRA`——只有申报了这两个 op 的机器会真跑，其余 **Skip("capability")**。
-    // 被调方：`va_start` 物化 `va_list` 对象 → 两次 `va_arg(i64)` + 一次 `va_arg(f64)`。
-    // 调用方（非变参 `main`）多传三个实参 ⇒ 未命名实参按被调方语义进传出栈区
-    // （靠**模块级签名表**：这正是 `JitCompiler::compile_module` 必须装表的那条路径）。
+    // `VaStart`/`VaArg` 由**管线**展开成显式 IR（v20 V6）——它们不属于任何 ISA 的能力，
+    // 所以能力集里由 `Capabilities::HOST_PIPELINE_OPS` 无条件提供（不再逐 runner 声明）。
+    // 用例本身**零 ISA 引用**：同一份用例在 x86（win64/sysv64）与 riscv64（lp64d）上都真跑，
+    // 全靠各自约定的形状数据。
+    //
+    // ① 只有整数：**x86 真跑**；riscv 因"调用方写栈实参"的能力缺口而 Skip（见下）。
+    //    被调方：`va_start` 物化 `va_list` 对象 → 两次 `va_arg(i64)`。
+    //    调用方（非变参 `main`）多传两个实参 ⇒ 未命名实参按被调方语义进传出区
+    //    （靠**模块级签名表**：这正是 `JitCompiler::compile_module` 必须装表的那条路径）。
+    //
+    //    `va_stack_args` 是**能力门控用的伪 op**：把未命名实参写进传出区要 `stack_arg_store`
+    //    角色，而生成器要求该角色是 **Reg+Mem 形状**——今天只有 x86 谱有这个形状；riscv 谱的
+    //    `SD` 是 `base+disp` 模板形状（`insts = ["SD {0}, {1}, 0"]`），所以"调用方一侧"还接不上
+    //    （**已知缺口**，见 `docs/plans/varargs-plan.md`；被调方一侧不依赖它）。
+    Case {
+        name: "variadic_va_arg_int_only",
+        ops: &["VaStart", "VaArg", "Call", "Imul", "Iadd", "va_stack_args"],
+        kind: CaseKind::Module(
+            |m| {
+                // callee(fmt: i64, ...) -> i64：a = va_arg(i64); b = va_arg(i64); ret a*10 + b
+                let sig_c = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64])
+                    .with_variadic(true);
+                let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+                let (blk, _p) = bc.create_block_with_params(&[(TypeId::I64, "fmt")]);
+                bc.switch_to_block(blk);
+                let ap = bc.va_start();
+                let a = bc.va_arg(ap, TypeId::I64);
+                let b = bc.va_arg(ap, TypeId::I64);
+                let ten = bc.iconst_i64(10);
+                let a10 = bc.imul(a, ten);
+                let r = bc.iadd(a10, b);
+                bc.ret(&[r]);
+                let callee_ref = m.add_function(bc.finish().expect("callee"));
+                // main: () -> i64 { callee(0, 4, 7) } = 4*10 + 7 = 47
+                let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+                let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+                bm.create_block_here();
+                let fmt = bm.iconst_i64(0);
+                let x = bm.iconst_i64(4);
+                let y = bm.iconst_i64(7);
+                let got = bm.call(callee_ref, &[fmt, x, y], &[TypeId::I64])[0];
+                bm.ret(&[got]);
+                m.add_function(bm.finish().expect("main"))
+            },
+            47,
+        ),
+    },
+    // ② 整数 + 浮点（需要 `Fadd`/`Fptosi`/`Fconst`）：riscv 谱上缺 `Fadd` ⇒ 按能力门控 Skip。
+    //    被调方：`va_start` 物化 `va_list` 对象 → 两次 `va_arg(i64)` + 一次 `va_arg(f64)`。
     Case {
         name: "variadic_va_arg_int_and_float",
         ops: &[

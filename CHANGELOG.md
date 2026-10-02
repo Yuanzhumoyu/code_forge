@@ -36,11 +36,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   生成器臂的用例（含 `f32` 默认提升）在无生成器臂的情况下继续真跑绿。
 - **`abi check` 的变参一行改成按形状数据说**（形状名 + 是"栈式游标"还是"保存区 + 溢出区" +
   字段表），"自相矛盾"硬错的判据也数据化（游标即地址 ⇒ 必须 `variadic_stack_only`）。
-- **验证**：`forge-codegen` 1362（8 条变参 JIT 全绿）、`abi_target_real` 24、`forge-tests`
-  矩阵 **196/3/0** 与 lib 43、`forge-abi`、`forge-ir` 281、`forge-isa-dsl` 222、`forge-isa`
-  （含 `abi check` 端到端）全绿；`clippy --workspace --exclude forge-rustc --all-targets
-  --all-features -j 1 -- -D warnings` 0、`cargo fmt --all -- --check` 0、markdownlint 0。
-  黄金快照按 `FORGE_ABI_BLESS=1` 重刷（`va_area` 行记形状名 + 新增 `va_rule` 行）。
+- **矩阵：`VaStart`/`VaArg` 升为"宿主管线 op"**（`Capabilities::HOST_PIPELINE_OPS`，每台机器无条件
+  支持）——不再由各 runner 的 `CAPS_EXTRA` 逐台声明（那等于把"变参能不能跑"绑回 ISA）。新增
+  架构无关用例 `variadic_va_arg_int_only`（`4*10+7 = 47`）：x86 真跑（矩阵 **197/3/0**），
+  riscv 因**调用方一侧**的已知缺口 Skip——实测报 `v12 call: 本 ISA 缺 roles =
+  ["stack_arg_store"] 的指令`：生成器要求该角色是 **Reg+Mem 形状**，而 riscv 谱的 `SD` 是
+  `base+disp` 模板形状（与变参无关的通用缺口：riscv 上第 9+ 个命名栈实参同样走不到）。门控用
+  伪能力 `va_stack_args`，缺口与证据记进方案。
+- **验证**：`forge-codegen` 1362（8 条变参 JIT 全绿）+ `abi_target_real` 24、`forge-tests`
+  矩阵 x86 **197/3/0** 与 riscv **131/69/0**（新用例的门控 Skip 可见）、lib 43、`forge-abi`、
+  `forge-ir` 281、`forge-isa-dsl` 222、`forge-isa`（含 `abi check` 端到端）全绿；
+  `clippy --workspace --exclude forge-rustc --all-targets --all-features -j 1 -- -D warnings` 0、
+  `cargo fmt --all -- --check` 0、markdownlint 0。黄金快照按 `FORGE_ABI_BLESS=1` 重刷
+  （`va_area` 行记形状名 + 新增 `va_rule` 行）。
 
 ### Changed (2026-10-01) — 前端局部槽深度扫描抽成唯一实现（`pipeline/frame_slots.rs`）
 
