@@ -685,6 +685,23 @@ fn gen_reg_tables(model: &IsaModel) -> Result<TokenStream, String> {
             // ToString for Reg 的模式分支
             to_str.push(quote! { Reg::#reg_lit => #name });
         }
+        // 别名（`aliases = { a0 = 10 }`）：**解析认、渲染不认**——反汇编仍出主名。
+        // 下标已由 `validate_regs` 校验过（越界/重名在那里报错）。
+        if let Some(aliases) = &g.aliases {
+            for (alias, idx) in aliases {
+                let Some(name) = names.get(*idx as usize) else {
+                    continue;
+                };
+                let reg_lit = syn::Ident::new(name, proc_macro2::Span::call_site());
+                from_str.push(match case_insensitive_regs {
+                    true => {
+                        let alias = alias.to_lowercase();
+                        quote! { #alias => Ok(Reg::#reg_lit) }
+                    }
+                    false => quote! { #alias => Ok(Reg::#reg_lit) },
+                });
+            }
+        }
 
         try_ref.push(quote! {
             RegRef{class,id} if class == #reg_class => match id {

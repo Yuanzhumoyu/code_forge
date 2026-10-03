@@ -119,10 +119,10 @@ pub const SECTIONS: &[Section] = &[
         path: "[reg.<name>]",
         model: "RegGroup",
         required: &[],
-        optional: &["names", "prefix", "base_index", "count"],
+        optional: &["names", "prefix", "base_index", "count", "aliases"],
         flatten: &[],
         additional: false,
-        doc: "寄存器组；组名的数字 = 字节宽（gpr8 = 64 位）",
+        doc: "寄存器组；组名的数字 = 字节宽（gpr8 = 64 位）；aliases = { 别名 = 组内下标 }",
     },
     Section {
         path: "[stack]",

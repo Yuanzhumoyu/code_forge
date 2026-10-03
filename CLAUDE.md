@@ -493,10 +493,10 @@ let name = node.get_text("name")?;
   `disp=8`/`disp=-8`/`index+scale=4`；取值与生成期自测同源 `sample_operands`）——
   宿主侧"全指令编解码往返"**不要再手抄 `all_insts()`**（x86 曾手抄 650 行且谱加指令时不
   自动跟上）；由 `crates/backend/forge-codegen/src/isa_roundtrip_guard.rs` 遍历三谱的
-  819/329/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
+  819/341/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
   按声明序首匹配，本就不成立），仍由各 ISA 测试的"规范指令"小清单守。
   覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
-  x86 221 / riscv64 117 / arm64 110、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
+  x86 221 / riscv64 119 / arm64 110、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
   必须放在 `lib.rs` 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）。
 - **生成物形状表（v18 S8a）**：`impl MachineInst for Inst` 的 8 个查询方法
   （`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/`reg_field`/`set_reg_field`/

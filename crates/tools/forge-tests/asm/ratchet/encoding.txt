@@ -10,8 +10,8 @@ variants = 0
 known = 0
 [isa riscv64]
 cases = 134
-checked = 12
-unparsed = 122
+checked = 72
+unparsed = 62
 dropped = 0
 variants = 0
 known = 0

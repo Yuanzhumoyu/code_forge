@@ -94,10 +94,15 @@ fn undeclared_or_out_of_domain_param_is_an_error() {
 #[test]
 fn riscv_rv32_projection_snapshot() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=32"]);
-    assert_eq!(p.dropped_insts.len(), 12, "丢掉 12 条 RV64 专属指令");
+    assert_eq!(
+        p.dropped_insts.len(),
+        14,
+        "丢掉 14 条 RV64 专属指令（含 v20 V9 补的 LWU/ADDIW）"
+    );
     for name in [
         "LD",
         "SD", // 64 位访存（帧/ABI 结构件的引用虽被整节丢掉，指令本身仍按 xlen 过滤）
+        "LWU", "ADDIW", // v20 V9 补的 RV64 载入/算术
         "ADDW", "SUBW", "MULW", "DIVW", "DIVUW", "REMW", "REMUW", // W 族 R 型
         "SLLW", "SRLW", "SRAW", // W 族移位
     ] {
@@ -133,9 +138,9 @@ fn riscv_rv32_projection_snapshot() {
             p.dropped_decls
         );
     }
-    // 默认档对照：同一份谱不传参数 = 117/122（投影是纯 opt-in）。
+    // 默认档对照：同一份谱不传参数 = 119/122（投影是纯 opt-in）。
     let (_, def_rows, def_p) = insts("riscv64.toml", &[]);
-    assert_eq!(def_rows.len(), 117);
+    assert_eq!(def_rows.len(), 119);
     assert_eq!(def_p.lowering_count, 122);
 }
 
@@ -157,7 +162,7 @@ fn cascade_keeps_unrelated_lowering() {
 #[test]
 fn only_supplied_params_gate() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=64"]);
-    assert_eq!(rows.len(), 117, "xlen=64 是原生视角，一条都不该丢");
+    assert_eq!(rows.len(), 119, "xlen=64 是原生视角，一条都不该丢");
     assert!(p.dropped_insts.is_empty());
     assert_eq!(p.lowering_count, 122);
 }

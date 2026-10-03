@@ -11,6 +11,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-03) — `[reg.*].aliases`：寄存器别名（解析认、渲染出主名）
+
+真实语料里 riscv 几乎全用 ABI 名（`lwu sp, 4(gp)`、`addw a2, a3, a4`），而我们反汇编/黄金输出
+一直用 `x` 名。以前没有别名的位置，只能"再声明一份寄存器组"或改 asm 模板拼名字——都是冗余。
+现在 `[reg.<name>]` 多一个**别名表**：
+
+- `aliases = { a0 = 10, fp = 8, s0 = 8 }`——`别名 = 组内下标`，与主名**位置无关**，
+  同一寄存器允许多个别名（riscv `x8` 既是 `s0` 也是 `fp`）；
+- **解析认别名**（`Reg::from_str`，随 `[meta].case_insensitive_regs` 折叠大小写），
+  **渲染仍用主名**（反汇编输出 `x10`，不是 `a0`）；
+- 校验在 `validate_regs`：下标越界 / 空名 / 与本组主名撞车 / **跨组重名**都报错
+  （跨组重名会让 `Reg::from_str` 静默取第一个）；三方守卫照旧（`schema.rs` ↔ `model.rs` ↔
+  `docs/reference/isa-dsl.md` 键表 + `isa-dsl.schema.json`）。
+
+riscv64 谱据此补上 32 个 ABI 别名（`zero`/`ra`/`sp`/`gp`/`tp`/`t0`–`t6`/`s0`–`s11`/`a0`–`a7`/`fp`）：
+解析档 `parsed` 12 → **72**，编码对拍 12 → **72 条逐字节全等**。
+
+### Fixed (2026-10-03) — `lui`/`auipc` 的立即数口径改成 GAS/LLVM 的字段值（破坏性，无兼容层）
+
+`imm20` 原先是**预移位**位域（`pieces = [{ offset = 12, width = 20, shift = 12 }]`），
+即"立即数写绝对值、编码器负责 `>>12`"。于是 `lui a0, 2` 在我们这里编成 imm20=0
+（上游/规范是 `37 25 00 00` → rd = 8192），`lui t0, 1048575` 更是被截成 255——
+**riscv 语料的字节对拍一接通就抓到 7 条**。现在按标准口径改（`shift = 0`，
+**立即数就是 imm20 字段值**）：
+
+- `codegen/placeholder.rs` 的五个 `*_hi20` 占位符（`{iconst_hi20}`、`{iconst_hi32_hi20}`、
+  `{iconst_lo32_hi20}`、`{fconst_hi32_hi20}`、`{fconst_lo32_hi20}`）改为
+  `((v + 0x800) >> 12) & 0xFFFFF`——原来由编码器的 `shift` 干的活挪到这里，
+  **低位进位/掩码语义逐字节不变**（掩码还顺带把 32 位常量的回绕写清楚）；
+- riscv64 谱：`imm20` 的 `shift = 12` → `0`（于是 `Lui` 的立即数**重新受 0..1048575 值域检查**，
+  以前因为"预移位"整条豁免）；`li` 伪指令的 `lui` 行补 `>> 12`；
+  lowering 里的字面 LUI 立即数（`0x55555000`/`0x33333000`/`0xf0f1000`/`0x0ff0000`/`0x80000`/`0x10000`）
+  改成字段值（`0x55555`/`0x33333`/`0xf0f1`/`0xff0`/`0x80`/`0x10`，行尾注释留绝对值）；
+  谱内 3 条 `lui X1, 4096` 向量改成 `lui X1, 1`（字节不变）；
+- **riscv64 矩阵 136 passed / 64 skipped / 0 failed 不变**（编码字节与运行时行为逐条保持），
+  riscv64 编码对拍 **7 条差异 → 0**。
+
+### Added (2026-10-03) — riscv64 补 RV64I 的 `lwu` / `addiw`
+
+两条纯 ISA 补全（`only_variants = { xlen = [64] }`，不参与 lowering）：解析档 riscv 的
+`NoPrefix` 里少了它们，`insts` 也从 117 → **119** 条。守卫同步：`spec_coverage_guard`
+（riscv 119）、`isa_roundtrip_guard`（riscv 派生条目 329 → **341**）、`variants.rs`
+（RV32 投影丢 14 条、默认档 119）、`forge-isa` CLI 的 `insts` 计数。
+
 ### Fixed (2026-10-03) — 字节 oracle 抓到的 x86 缺陷：ALU 立即数短形式（`83 /n ib`）与 16/32 位目的地
 
 补上真实语料当天，编码对拍档就报出 5 条差异 + 一批"解析不动"，全部是**谱缺形状**而不是语料问题：

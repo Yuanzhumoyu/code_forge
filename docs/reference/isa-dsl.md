@@ -113,7 +113,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
-| `[reg.<name>]` | — | `names` `prefix` `base_index` `count` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位） |
+| `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `aliases` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位）；aliases = { 别名 = 组内下标 } |
 | `[stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（缺省全部派生） |
 | `[types]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射；键 = 类型名（允许额外键） |
 | `[conventions.bitfields.<name>]` | — | `offset` `width` `pieces` | 命名位域：offset/width，或 pieces 列出散布位段 |
@@ -278,7 +278,17 @@ names = ["RAX", "RCX", "..."] # 显式名单；或 count + prefix 生成式声�
 count = 16                    # 与 names 同时给出时必须等长
 prefix = "XMM"                # 生成式：XMM0, XMM1, …
 base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
+aliases = { a0 = 10, fp = 8 } # 别名表：`别名 = 组内下标`（可选）
 ```
+
+**别名（`aliases`，v20 V9）**：真实汇编写法里的 ABI 名（riscv 的 `a0`/`s0`/`fp`…）与
+我们反汇编输出的规范名（`x10`）是**两件事**——别名表就是这件事的唯一位置：
+
+- **解析认别名**（`Reg::from_str`，与主名同样受 `[meta].case_insensitive_regs` 影响），
+  **渲染只出主名**（反汇编 `X10`，不是 `A0`）；
+- 与 `names` 的**位置无关**：`fp = 8, s0 = 8` 允许（同一寄存器多个别名），不必与主名对齐；
+- 校验（`validate_regs`）：下标必须在组内、别名非空、不得与本组主名撞车、
+  **跨组也不得重名**（重名会让 `Reg::from_str` 的 match 静默按声明序取第一个）。
 
 指令字宽**不再**写在 `[meta]`——它是独立的 `[encoding]` 段（见下节）。
 

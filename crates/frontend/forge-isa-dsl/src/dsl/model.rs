@@ -878,6 +878,14 @@ pub struct RegGroup {
     /// 组内寄存器数（仅 `names` 缺省时需要）。
     #[serde(default)]
     pub count: Option<u16>,
+    /// **别名表**：`别名 = 组内下标`（人体工学：别名不必与主名等长对齐，也不再靠下标猜；
+    /// 一个寄存器可以有多个别名——riscv `x8` 既是 `s0` 也是 `fp`）。
+    ///
+    /// 用途单一：**汇编解析认别名**（`Reg::from_str`），**渲染仍用主名**
+    /// （反汇编输出 `x10`，不是 `a0`）。别名与主名一样受
+    /// `[meta].case_insensitive_regs` 影响。
+    #[serde(default)]
+    pub aliases: Option<BTreeMap<String, u32>>,
 }
 
 // ─────────────────────── [conventions.*] ───────────────────────

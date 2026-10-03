@@ -119,10 +119,7 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 这些是语料跑出来的真实差异（红桶 `TailMismatch` 的样例就写在 `asm/ratchet/*.txt` 里），
 不是"语料不对"：
 
-- riscv64：`inc` / `lwu` / `addiw` 三条指令**谱里没有声明**（上游有）——落在 `NoPrefix`；
-- riscv64：`addw a2, a3, a4` 这类**ABI 别名寄存器**（`a2`/`s3`/`t3`）不认，`x` 名可以
-  ——谱里的 asm 只列了 `x` 名，别名没进寄存器表；
-- riscv64：`%lo(2048)(x7)` 这种重定位修饰的立即数形式不支持；
+- riscv64：`%lo(2048)(x7)` 这类**重定位修饰的立即数**写法（`%lo`/`%hi`/`%pcrel_lo`）不支持；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
 - x86：GAS 的 `disp[base]` 内存写法（`0x90909090[eax]`）、`byte ptr` / `dword ptr` /
   `QWORD PTR` 这类**尺寸前缀**、无符号 `imm32`（`0x90909090` 超 `i32::MAX`）都不支持
@@ -132,12 +129,16 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   `movsd XMM5, QWORD PTR [-8]`、`acquire/release lock add …`（锁前缀 + 内存序提示）；
   以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
 
-**已经修掉的**（2026-10-03，字节 oracle 抓出来当天就改，见 `CHANGELOG.md` 的「ALU 立即数」条）：
-`xor/or/cmp/add/adc/sbb` 的 16/32 位目的地、`xor rax, 12` 的**符号扩展 imm8** 短形式
-（原先出 7 字节 imm32，且解码器连 `48 83 /6 ib` 都解不出）、`shl edi, 1`（`D1 /4`）、
-`mov eax, 0x1234`（`B8+r id`）、`ret 8` / `retf` / `retf 8` / `pushf/popf/pushfw/popfw`。
-x86 的字节对拍从「6 条对上 / 5 条已知差异」变成「**26 条对上 / 0 条差异**」，
-解析档 `llvm-mc` 的 `parsed` 从 7 涨到 **31**。
+**已经修掉的**（2026-10-03，字节 oracle 抓出来当天就改，逐条见 `CHANGELOG.md`）：
+
+- x86：`xor/or/cmp/add/adc/sbb` 的 16/32 位目的地、`xor rax, 12` 的**符号扩展 imm8**
+  短形式（原先出 7 字节 imm32，且解码器连 `48 83 /6 ib` 都解不出）、`shl edi, 1`（`D1 /4`）、
+  `mov eax, 0x1234`（`B8+r id`）、`ret 8` / `retf` / `retf 8` / `pushf/popf/pushfw/popfw`；
+  x86 的字节对拍从「6 条对上 / 5 条已知差异」变成「**26 条对上 / 0 条差异**」。
+- riscv64：**ABI 别名寄存器**（`a2`/`s3`/`fp`…，走新的 `[reg.*].aliases`）与 RV64I 的
+  `lwu` / `addiw`；顺带修掉 `lui`/`auipc` 的**立即数口径**（我们以前按"绝对值"解释、
+  编码器再 `>>12`；GAS/LLVM 的立即数就是 **imm20 字段值**——`lui a0, 2` → rd = 8192）；
+  解析档 `parsed` 12 → **72**、编码对拍 12 → **72 条逐字节全等**。
 
 ## 现有语料与计数
 
@@ -148,7 +149,7 @@ x86 的字节对拍从「6 条对上 / 5 条已知差异」变成「**26 条对�
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | 0 | 6 | 55 | 3 | 无（GAS 用例不带期望字节） |
 | x86 | `llvm-mc` | 2 | 447 | **31** | 29 | 51 | 336 | **有**：103 条期望 / **26 条对拍上 / 0 条差异** |
-| riscv64 | `llvm-mc` | 3 | 503 | 12 | 45 | 86 | 360 | **有**：134 条期望 / **12 条逐字节全等** |
+| riscv64 | `llvm-mc` | 3 | 503 | **72** | 38 | 31 | 362 | **有**：134 条期望 / **72 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 
 执行档：x86 3 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=8 skipped=0`）。

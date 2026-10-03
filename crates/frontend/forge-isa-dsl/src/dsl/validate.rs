@@ -623,6 +623,12 @@ fn validate_regs(m: &IsaModel) -> Result<(), String> {
     if m.reg.is_empty() {
         return Err("missing [reg.*] sections: at least one register group is required".into());
     }
+    // 别名全局去重（主名只查组内——x86 的 gpr8/gpr4/gpr2 各有 RAX/EAX/AX，
+    // 它们是**不同的类**，跨组合法；但别名一旦重名，`Reg::from_str` 的 match
+    // 会静默按声明序取第一个 ⇒ 必须报错）。
+    let ci = m.meta.case_insensitive_regs.unwrap_or_default();
+    let fold = |s: &str| if ci { s.to_lowercase() } else { s.to_string() };
+    let mut alias_seen: BTreeMap<String, String> = BTreeMap::new();
     for (gname, g) in &m.reg {
         if gname.width() == 0 {
             return Err(format!("[reg.{gname}].width must be > 0"));
@@ -658,6 +664,37 @@ fn validate_regs(m: &IsaModel) -> Result<(), String> {
                 };
                 if c == 0 {
                     return Err(format!("[reg.{gname}].count must be > 0"));
+                }
+            }
+        }
+        // 别名：下标在组内、名字非空、与主名/别的不重名。
+        if let Some(aliases) = &g.aliases {
+            let count = match &g.names {
+                Some(n) => n.len() as u32,
+                None => g.count.map(u32::from).unwrap_or(0),
+            };
+            for (alias, idx) in aliases {
+                if alias.trim().is_empty() {
+                    return Err(format!("[reg.{gname}].aliases contains an empty name"));
+                }
+                if *idx >= count {
+                    return Err(format!(
+                        "[reg.{gname}].aliases: '{alias}' 指向下标 {idx}，但本组只有 {count} 个寄存器"
+                    ));
+                }
+                let key = fold(alias);
+                if let Some(names) = &g.names
+                    && names.iter().any(|n| fold(n) == key)
+                {
+                    return Err(format!(
+                        "[reg.{gname}].aliases: '{alias}' 与本组主名重名（别名不是新寄存器）"
+                    ));
+                }
+                if let Some(prev) = alias_seen.insert(key, format!("[reg.{gname}]")) {
+                    return Err(format!(
+                        "[reg.{gname}].aliases: '{alias}' 已在 {prev} 里作为别名出现过\
+                         （重名会让 Reg::from_str 静默取第一个）"
+                    ));
                 }
             }
         }

@@ -279,7 +279,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                 quote! {
                     ({ let __v = ctx.constant_pool.as_ref()
                         .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
-                        .unwrap_or(0); __v + 0x800 })
+                        .unwrap_or(0); ((__v + 0x800) >> 12) & 0xFFFFF })
                 }
             }),
         },
@@ -314,7 +314,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                     ({ let __v = ctx.constant_pool.as_ref()
                         .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
-                       ((__v >> 32) as i64) + 0x800 })
+                       ((((__v >> 32) as i64) + 0x800) >> 12) & 0xFFFFF })
                 }
             }),
         },
@@ -350,7 +350,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                     ({ let __v = ctx.constant_pool.as_ref()
                         .and_then(|p| p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
-                       (__v as i64 & 0xFFFFFFFF) + 0x800 })
+                       ((((__v as i64 & 0xFFFFFFFF) + 0x800) >> 12) & 0xFFFFF) })
                 }
             }),
         },
@@ -403,7 +403,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                     ({ let __v = ctx.constant_pool.as_ref()
                         .and_then(|p| p.resolve_float(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
-                       ((__v >> 32) as i64) + 0x800 })
+                       ((((__v >> 32) as i64) + 0x800) >> 12) & 0xFFFFF })
                 }
             }),
         },
@@ -439,7 +439,7 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                     ({ let __v = ctx.constant_pool.as_ref()
                         .and_then(|p| p.resolve_float(crate::prelude::ConstId::from_raw(ctx.current_const_index)))
                         .unwrap_or(0);
-                       (__v as i64 & 0xFFFFFFFF) + 0x800 })
+                       ((((__v as i64 & 0xFFFFFFFF) + 0x800) >> 12) & 0xFFFFF) })
                 }
             }),
         },
