@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-03) — `MemRef.base` 改 `Option<Reg>`：无基址（绝对）寻址（破坏性，无兼容层）
+
+`MemRef.base` 从 `Reg` 改成 `Option<Reg>`，**基址的有无由模板形状声明**：模板里**写了 `{base}`** 就是"这条写法必须有基址"（缺了整条不匹配）；**没写 `{base}`** 就是"这条写法**没有基址**"（`base = None`），此时其余组件一律按**必需**处理（没有基址时位移/索引就是地址本身，否则 `[0]` 会渲染成 `]`）。校验：模板最多一个 `{base}`；无基址模板必须含 `{disp}` 或 `{index}`。这样"要不要基址"只有一处声明，不需要新键，也没有第二个开关可与它矛盾。
+
+- x86 用 `mod=00` + `rm=100` + `SIB.base=101` + disp32 表示无基址（ModRM 的 `mod=00`/`rm=101` 是 RIP 相对，本 DSL 仍明确拒绝）；编解码两侧对称。
+- 顺带**合并两份重复的内存编解码实现**（"无冗余"）：编码侧普通 ModRM 与 VEX 两条**逐字节相同**的 ModRM/SIB/位移发射合成一个 `gen_mem_modrm`（EVEX 的 disp8 要按 `disp_scale` 压缩，另存一份）；解码侧三条（普通/VEX/EVEX）的 SIB+位移解码合成一个 `gen_mem_decode`（用 `memref` / `disp8_scale` 两个参数表达差异）。
+- 只写 `[base]` 的**简写**（`rm = "[槽名]"`，`reg` 槽当基址）表示不了无基址 ⇒ 解码时**显式拒绝**：不拒就会把绝对地址当成 `[RBP]` 解出来、还少读 4 字节 disp32，把真正的 MemRef 形式挤掉（本轮实测 `48 8B 04 25 …` 一度被 `MOV_R_MEM` 抢走，`spec_vector_83` 当场抓到）。
+- x86 谱声明第三条模板 `{size}[{disp}]`，并加一条 `[[vectors]]` 钉住它（`mov RAX, [-8]` → `48 8B 04 25 F8 FF FF FF`）。效果：`llvm-mc` 解析档 32 → **33**；x86 字节对拍 27 → **28 条逐字节全等、0 条差异**——`movsd XMM5, QWORD PTR [-8]` 编出的 `f2 0f 10 2c 25 f8 ff ff ff` 与上游注释里的期望字节一致。"无基址寻址"据此从 `asm/README.md` 的缺口清单移除。
+
 ### Added (2026-10-03) — x86 一元 `inc`/`dec`（`FF /0`、`FF /1`、`FE /0`、`FE /1`）
 
 与 `not`/`neg` 同族（`MRR_EXT_OP`：reg = 固定扩展码、rm = 目的操作数）：16/32/64 位走 `FF /0`、`FF /1`，8 位走 `FE /0`、`FE /1`——`inc`/`dec` 的 16 位短编码（`40+r`..`4F`）在长模式里已经是 REX 前缀，所以只能用 `FF` 这一组。四条指令写成两条 `[[templates]]`（各 2 行）；**不写 `ref`**：IR 的 `+1`/`-1` 走 ADD/SUB 的立即数形式，降级不发射它们，所以候选集与运行期行为不变（JIT 矩阵逐条一致）。

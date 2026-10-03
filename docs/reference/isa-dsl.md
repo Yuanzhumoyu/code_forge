@@ -564,14 +564,22 @@ rows = [
 templates = [
   "{size}[{base}+{index}*{scale}+{disp}]",  # 第 0 条 = 渲染形态（也是解析首选）
   "{size}{disp}[{base}]",                   # 解析专用备选：GAS Intel 的 disp[base]
+  "{size}[{disp}]",                         # **无基址**写法：只写地址（绝对寻址）
 ]
 size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
 ```
 
 - **第 0 条 = 反汇编渲染形态**，其余只参与解析：按列表序逐条试，第一条整条走通的赢。
   同一份 `MemRef` 的几种合法写法各写一条，不必硬塞进同一条模板。列表不能为空。
-- 组件：`{base}`（必需 Reg）、`{index}`（可选 Reg）、`{scale}`（可选，1/2/4/8，**必须
-  紧跟 `{index}`**）、`{disp}`（可选，有符号 i64）、`{size}`（可选，解析专用）。
+- 组件：`{base}`（Reg）、`{index}`（Reg）、`{scale}`（1/2/4/8，**必须紧跟 `{index}`**）、
+  `{disp}`（有符号 i64）、`{size}`（解析专用）。
+- **基址的有无由模板形状声明**（v20 V10）——`MemRef.base` 是 `Option<Reg>`：
+  **写了 `{base}`** ⇒ 这条写法必须有基址（缺了整条不匹配）；**没写 `{base}`** ⇒ 这条
+  写法**没有基址**（`base = None`，x86 `mov rax, [0x1234]` 这类绝对地址），此时其余
+  组件一律按**必需**处理（没有基址时位移/索引就是地址本身，不是可省的附加项，
+  否则 `[0]` 会渲染成 `]`）。"要不要基址"因此只有一处声明，没有第二个开关可与之矛盾；
+  模板最多一个 `{base}`；没写 `{base}` 的模板必须含 `{disp}` 或 `{index}`（否则它只能
+  匹配 `[]`，是漏写而非意图）。
 - 一个紧跟在**可选**组件前的字面量是该组件的"条件前缀"：只在组件出现时发出/消费
   （`{disp}` 的 `+` 前缀额外对非正位移抑制——`-8` 不写成 `+-8`）；紧跟在**必需**组件
   前、或位于末尾的字面量恒发出。**紧邻 `{size}` 的字面量例外**——它不是 `{size}` 的
@@ -582,9 +590,12 @@ size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"
   输出空串，所以 `disassemble → assemble` 仍然闭合。模板里用了 `{size}` 却没声明
   `size_keywords` ⇒ 生成期报错。
 - **缺省**（整节不写）= 单条 `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
-- 表示不了的形态**显式拒绝**，不要"解一半"：`MemRef.base` 是必需字段，所以"无基址"
-  寻址（x86 `[0x1234]`、`mod=00` + `SIB.base=101`）在解码侧 fail-closed——否则会少读
-  4 字节 disp32，还编出一个假的 `[rbp+disp]`。
+- **无基址在 x86 上是 `mod=00` + `rm=100` + `SIB.base=101` + disp32**：ModRM 的
+  `mod=00/rm=101` 是 RIP 相对（本 DSL 仍明确拒绝），`SIB.base=101` 才是"没有基址"。
+  编解码两侧对称（`gen_mem_modrm` / `gen_mem_decode`），测得的字节与上游一致
+  （`movsd XMM5, QWORD PTR [-8]` → `f2 0f 10 2c 25 f8 ff ff ff`）。
+  只写 `[base]` 的**简写**（`rm = "[槽名]"`，`reg` 槽当基址）表示不了无基址，解码时
+  显式拒绝——不拒就会把绝对地址当成 `[RBP]` 解出来、还少读 4 字节 disp32。
 
 ## `[[operand_slots]]` — 操作数槽
 

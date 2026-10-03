@@ -369,7 +369,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                             let __sidx = __pack.push_inst(Inst::#vn {
                                 #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                                 #mem: MemRef {
-                                    base: __sret,
+                                    base: Some(__sret),
                                     disp: 0,
                                     index: None,
                                     scale: 1,
@@ -1545,7 +1545,7 @@ fn gen_call_lowering(
                     let __ridx = __pack.push_inst(Inst::#vn {
                         #dest: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                         #mem: MemRef {
-                            base: #__frame_base,
+                            base: Some(#__frame_base),
                             disp: __sret_off,
                             index: None,
                             scale: 1,
@@ -1808,7 +1808,7 @@ fn gen_call_lowering(
                 let __lidx = __pack.push_inst(Inst::#vn_lea {
                     #f_lea: Reg::from_index(0, __ADDR_CLASS),
                     #m_lea: MemRef {
-                        base: #__frame_base,
+                        base: Some(#__frame_base),
                         disp: __sret_off,
                         index: None,
                         scale: 1,
@@ -1864,7 +1864,7 @@ fn gen_call_lowering(
                         let __vidx = __pack.push_inst(Inst::#vn {
                             #src: Reg::from_index(0, __DEFAULT_FPR_CLASS),
                             #mem: MemRef {
-                                base: #__frame_base,
+                                base: Some(#__frame_base),
                                 disp: __addr,
                                 index: None,
                                 scale: 1,
@@ -1898,7 +1898,7 @@ fn gen_call_lowering(
             let __lidx = __pack.push_inst(Inst::#vn_lea {
                 #f_lea: Reg::from_index(0, __ADDR_CLASS),
                 #m_lea: MemRef {
-                    base: #__frame_base,
+                    base: Some(#__frame_base),
                     disp: __addr,
                     index: None,
                     scale: 1,
@@ -2214,7 +2214,7 @@ fn arg_move_loop(
             StackMemFlavor::Mem(mem) => quote! {
                 let __idx = __pack.push_inst(Inst::#vn {
                     #mem: MemRef {
-                        base: #sp_base,
+                        base: Some(#sp_base),
                         disp: __off,
                         index: None,
                         scale: 1,

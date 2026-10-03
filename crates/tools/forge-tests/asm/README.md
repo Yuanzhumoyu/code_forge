@@ -121,10 +121,6 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 
 - riscv64：`%lo(2048)(x7)` 这类**重定位修饰的立即数**写法（`%lo`/`%hi`/`%pcrel_lo`）不支持；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
-- x86：**无基址寻址**（`[-8]`、`[0x12345678]`）不支持——`MemRef.base` 是必需字段；
-  解码侧对 `mod=00` + `SIB.base=101` 明确 fail-closed（见 `docs/reference/isa-dsl.md`
-  的 `[conventions.mem]` 节）；`intel-syntax-encoding.s:76` 的 `movsd XMM5, QWORD PTR [-8]`
-  就是这一类；
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`cmpltps`（SSE 比较谓词别名）、
   `cmp eax, FOO` / `cmp eax, FOO[eax]`（`.set` 符号进立即数/位移）、
   `acquire/release lock add …`（锁前缀 + 内存序提示）；
@@ -162,18 +158,22 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   而 `add rax, -12` 的文本与字节不变；
   ④ 一元 **`inc`/`dec`**（`FF /0`、`FF /1`、`FE /0`、`FE /1`，4 条）→ **50**：
   `gnu-gas-intel` 的 64 条里现在只剩 7 条红桶（全是 32 位模式专有的段寄存器 push/pop）、
-  4 条 `no_prefix`（`daa`/`das`/`aaa`/`aas`，同样长模式已删）与 3 条 `corpus_only`。
+  4 条 `no_prefix`（`daa`/`das`/`aaa`/`aas`，同样长模式已删）与 3 条 `corpus_only`；
+  ⑤ **无基址（绝对）寻址**：`[conventions.mem]` 的模板**不写 `{base}`** 就是"这条写法
+  没有基址"（`MemRef.base` 改 `Option<Reg>`），x86 用 `mod=00` + `SIB.base=101` + disp32
+  表示它 → `llvm-mc` 解析档 32 → **33**、字节对拍 27 → **28 条逐字节全等**（`known` 仍 0：
+  `movsd XMM5, QWORD PTR [-8]` 与上游 `f2 0f 10 2c 25 f8 ff ff ff` 一致）。
 
 ## 现有语料与计数
 
 （`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
 `asm/ratchet/encoding.txt` 为准。x86 两套是 v20 V10 补完内存模板、内存形式 ALU 族、
-8 位 ALU 族、立即数 `wrap` 与一元 `inc`/`dec` 之后的数）
+8 位 ALU 族、立即数 `wrap`、一元 `inc`/`dec` 与无基址寻址之后的数）
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
-| x86 | `llvm-mc` | 2 | 447 | **32** | 21 | 58 | 336 | **有**：103 条期望 / **27 条对拍上 / 0 条差异** |
+| x86 | `llvm-mc` | 2 | 447 | **33** | 21 | 57 | 336 | **有**：103 条期望 / **28 条对拍上 / 0 条差异** |
 | riscv64 | `llvm-mc` | 3 | 503 | **72** | 38 | 31 | 362 | **有**：134 条期望 / **72 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 

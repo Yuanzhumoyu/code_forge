@@ -10,9 +10,17 @@
 //!   带不带尺寸前缀）就是"同一份数据的多种文本形态"，列表把它们写成并列的几条，
 //!   而不是逼作者把几种写法塞进一条模板。
 //!
-//! 组件：`{base}`（必需 Reg）、`{index}`（可选 Reg）、`{scale}`（可选，乘数
+//! 组件：`{base}`（可选 Reg）、`{index}`（可选 Reg）、`{scale}`（可选，乘数
 //! 1/2/4/8）、`{disp}`（可选，有符号 i64）、`{size}`（可选，尺寸关键字）。
-//! 一个紧随在可选组件之前的字面 token 是该组件的"条件前缀"：仅当组件存在时
+//!
+//! **基址的有无由模板形状声明**（v20 V10）：模板里**写了 `{base}`** ⇒ 这条写法
+//! 必须有基址（缺了整条模板不匹配，与"必须有 `[`"同级）；**没写 `{base}`** ⇒ 它是
+//! **无基址**写法（`base = None`，x86 `mov rax, [0x1234]` 这类绝对地址），且此时
+//! 其余组件一律按**必需**处理——没有基址时，位移/索引本身就是地址，不是可省的附加项
+//! （否则 `[0]` 会渲染成 `]`）。这样"要不要基址"只有一处声明（模板本身），既不需要
+//! 新键，也没有第二个开关可与之矛盾。
+//!
+//! 有基址的模板里，紧跟可选组件的字面 token 是该组件的"条件前缀"：仅当组件存在时
 //! 发出/消费（`{disp}` 的 `+` 前缀额外对非正 disp 抑制——`-8` 不重复出 `+-`）。
 //! 紧随在必需组件之前、或位于末尾的字面 token 恒发出。
 //!
@@ -315,14 +323,21 @@ fn toks_expr(toks: &[LitTok]) -> Vec<TokenStream> {
     toks.iter().map(LitTok::as_tok).collect()
 }
 
-/// 模板结构校验：必须含 `{base}`；`{scale}` 必须紧随 `{index}` 之后。
+/// 模板结构校验（v20 V10）：
+///
+/// - **最多一个 `{base}`**（两个没有意义，第二个只会覆盖第一个）；
+/// - `{scale}` 必须紧随 `{index}` 之后；
+/// - **不写 `{base}` = 无基址写法**（绝对地址）⇒ 模板必须有别的**地址组件**
+///   （`{disp}` 或 `{index}`），否则它只能匹配空文本（`[]`），是作者漏写而非意图。
 pub(crate) fn validate_mem_template(items: &[Item]) -> Result<(), String> {
-    let mut has_base = false;
+    let mut n_base = 0usize;
+    let mut n_addr = 0usize;
     let mut last_comp: Option<Comp> = None;
     for it in items {
         if let Item::Comp(c) = it {
             match c {
-                Comp::Base => has_base = true,
+                Comp::Base => n_base += 1,
+                Comp::Index | Comp::Disp => n_addr += 1,
                 Comp::Scale if last_comp != Some(Comp::Index) => {
                     return Err("`{scale}` 必须跟在 `{index}` 之后".into());
                 }
@@ -331,8 +346,13 @@ pub(crate) fn validate_mem_template(items: &[Item]) -> Result<(), String> {
             last_comp = Some(*c);
         }
     }
-    if !has_base {
-        return Err("必须包含 `{base}` 组件".into());
+    if n_base > 1 {
+        return Err("模板最多只能有一个 `{base}`".into());
+    }
+    if n_base == 0 && n_addr == 0 {
+        return Err(
+            "无基址模板（没写 `{base}`）必须含 `{disp}` 或 `{index}`——空模板只能匹配 `[]`".into(),
+        );
     }
     Ok(())
 }
@@ -343,7 +363,11 @@ fn is_single_plus(toks: &[LitTok]) -> bool {
 }
 
 /// 派生 `__render_mem`（反汇编渲染）。
+///
+/// `required` = 本模板**没有** `{base}`（无基址写法，见模块文档）：此时其余组件
+/// 按必需处理（前缀与值都恒发出，含 `{disp} == 0`），否则保持"可选组件缺省不输出"。
 pub(crate) fn gen_render_mem(items: &[Item]) -> TokenStream {
+    let required = !has_base(items);
     let mut stmts: Vec<TokenStream> = Vec::new();
     let mut i = 0;
     while i < items.len() {
@@ -366,32 +390,49 @@ pub(crate) fn gen_render_mem(items: &[Item]) -> TokenStream {
             },
             Item::Comp(c) => (None, Some(*c)),
         };
+        // 需要的组件里，前缀与值都恒发出；可选的组件里，前缀只在值存在时发出。
+        let hard = required && !matches!(comp.unwrap(), Comp::Base | Comp::Size);
+        let p = prefix_text.map(|p| quote! { s.push_str(#p); });
         match comp.unwrap() {
             Comp::Base => {
-                if let Some(p) = prefix_text {
-                    stmts.push(quote! { s.push_str(#p); });
+                if let Some(t) = prefix_text {
+                    stmts.push(quote! { s.push_str(#t); });
                 }
-                stmts.push(quote! { s.push_str(&base); });
-            }
-            Comp::Index => {
-                let p = prefix_text.map(|p| quote! { s.push_str(#p); });
+                // `base: None` = 无基址写法（本模板没写 `{base}`，走不到这里）。
                 stmts.push(quote! {
-                    if let Some(idx) = &m.index {
-                        let iname = <&'static str as From<Reg>>::from(*idx);
-                        #p
-                        s.push_str(&iname);
+                    if let Some(b) = m.base {
+                        s.push_str(<&'static str as From<Reg>>::from(b));
                     }
                 });
             }
-            Comp::Scale => {
-                let p = prefix_text.map(|p| quote! { s.push_str(#p); });
-                stmts.push(quote! {
-                    if m.index.is_some() && m.scale != 1 {
-                        #p
-                        s.push_str(&format!("{}", m.scale));
-                    }
-                });
-            }
+            Comp::Index if hard => stmts.push(quote! {
+                #p
+                if let Some(idx) = m.index {
+                    s.push_str(<&'static str as From<Reg>>::from(idx));
+                }
+            }),
+            Comp::Index => stmts.push(quote! {
+                if let Some(idx) = &m.index {
+                    let iname = <&'static str as From<Reg>>::from(*idx);
+                    #p
+                    s.push_str(&iname);
+                }
+            }),
+            Comp::Scale if hard => stmts.push(quote! {
+                #p
+                s.push_str(&format!("{}", m.scale));
+            }),
+            Comp::Scale => stmts.push(quote! {
+                if m.index.is_some() && m.scale != 1 {
+                    #p
+                    s.push_str(&format!("{}", m.scale));
+                }
+            }),
+            // 必需（无基址写法）⇒ 位移就是**地址本身**，0 也要印出来。
+            Comp::Disp if hard => stmts.push(quote! {
+                #p
+                s.push_str(&format!("{}", m.disp));
+            }),
             Comp::Disp => match prefix_text {
                 None => stmts.push(quote! {
                     if m.disp != 0 { s.push_str(&format!("{}", m.disp)); }
@@ -417,12 +458,16 @@ pub(crate) fn gen_render_mem(items: &[Item]) -> TokenStream {
     }
     quote! {
         fn __render_mem(m: &MemRef) -> String {
-            let base = <&'static str as From<Reg>>::from(m.base);
             let mut s = String::new();
             #(#stmts)*
             s
         }
     }
+}
+
+/// 模板里是否写了 `{base}`（= 这条写法**要求**基址；不写 = 无基址绝对寻址）。
+pub(crate) fn has_base(items: &[Item]) -> bool {
+    items.iter().any(|it| matches!(it, Item::Comp(Comp::Base)))
 }
 
 /// 派生 `__mem`（汇编解析）与按需的 `__raw_signed_int` / `__eat_size` 辅助。
@@ -498,6 +543,9 @@ pub(crate) fn gen_mem_parser(
 
 /// 单条模板的解析函数体 + 它需要的辅助（返回值 = 是否需要 `__raw_signed_int` /
 /// `__eat_size`）。
+///
+/// `required = !has_base(items)`（无基址写法）：其余组件一律必需——没有基址时，
+/// 位移/索引就是地址本身，`[]` 这种"什么都没写"的形态必须解析失败。
 fn gen_one_mem_try(
     items: &[Item],
     size_kws: &[Vec<LitTok>],
@@ -505,6 +553,7 @@ fn gen_one_mem_try(
     k: usize,
 ) -> (TokenStream, bool, bool) {
     let fname = format_ident!("__mem_try{k}");
+    let required = !has_base(items);
     let mut stmts: Vec<TokenStream> = Vec::new();
     let mut has_signed_disp = false;
     let mut has_size = false;
@@ -534,19 +583,34 @@ fn gen_one_mem_try(
             },
             Item::Comp(c) => (None, Some(*c)),
         };
+        // 必需组件（无基址模板里的非 Base 组件）与"必需基址"走同一套硬失败分支。
+        let hard = required && !matches!(comp.unwrap(), Comp::Base | Comp::Size);
+        let eat_prefix = prefix_toks.map(|t| {
+            let e = toks_expr(t);
+            quote! { if !__eat_lit(it, &[#(#e),*]) { it.pos = save; return None; } }
+        });
         match comp.unwrap() {
             Comp::Base => {
-                if let Some(t) = prefix_toks {
-                    let e = toks_expr(t);
-                    stmts.push(quote! {
-                        if !__eat_lit(it, &[#(#e),*]) { it.pos = save; return None; }
-                    });
+                if let Some(s) = &eat_prefix {
+                    stmts.push(s.clone());
                 }
+                // 模板写了 `{base}` ⇒ 基址必需（缺了整条不匹配），所以这里是 `Some`。
                 stmts.push(quote! {
-                    let base = match __reg_cls(it) {
+                    base = Some(match __reg_cls(it) {
                         Some((r, _)) => r,
                         None => { it.pos = save; return None; }
-                    };
+                    });
+                });
+            }
+            Comp::Index if hard => {
+                if let Some(s) = &eat_prefix {
+                    stmts.push(s.clone());
+                }
+                stmts.push(quote! {
+                    index = Some(match __reg_cls(it) {
+                        Some((r, _)) => r,
+                        None => { it.pos = save; return None; }
+                    });
                 });
             }
             Comp::Index => match prefix_toks {
@@ -580,12 +644,19 @@ fn gen_one_mem_try(
                     };
                     scale = s as u8;
                 };
-                match prefix_toks {
-                    Some(t) => {
-                        let e = toks_expr(t);
-                        stmts.push(quote! { if __eat_lit(it, &[#(#e),*]) { #inner } });
+                if hard {
+                    if let Some(s) = &eat_prefix {
+                        stmts.push(s.clone());
                     }
-                    None => stmts.push(inner),
+                    stmts.push(inner);
+                } else {
+                    match prefix_toks {
+                        Some(t) => {
+                            let e = toks_expr(t);
+                            stmts.push(quote! { if __eat_lit(it, &[#(#e),*]) { #inner } });
+                        }
+                        None => stmts.push(inner),
+                    }
                 }
             }
             Comp::Size => {
@@ -603,6 +674,43 @@ fn gen_one_mem_try(
                         let _ = __eat_size(it, __alts);
                     }
                 });
+            }
+            Comp::Disp if hard => {
+                // 无基址写法：位移就是地址，必须有值（`[+8]`/`[-8]`/`[8]` 都行）。
+                match prefix_toks {
+                    Some(t) if is_single_plus(t) => {
+                        stmts.push(quote! {
+                            if it.eat(&__Tok::Plus) {
+                                let v = match __raw_int(it) {
+                                    Some(v) => v,
+                                    None => { it.pos = save; return None; }
+                                };
+                                disp = v;
+                            } else if it.eat(&__Tok::Minus) {
+                                let v = match __raw_int(it) {
+                                    Some(v) => v,
+                                    None => { it.pos = save; return None; }
+                                };
+                                disp = -v;
+                            } else {
+                                it.pos = save; return None;
+                            }
+                        });
+                    }
+                    _ => {
+                        if let Some(s) = &eat_prefix {
+                            stmts.push(s.clone());
+                        }
+                        stmts.push(quote! {
+                            let v = match __raw_signed_int(it) {
+                                Some(v) => v,
+                                None => { it.pos = save; return None; }
+                            };
+                            disp = v;
+                        });
+                        has_signed_disp = true;
+                    }
+                }
             }
             Comp::Disp => match prefix_toks {
                 Some(t) if is_single_plus(t) => {
@@ -649,10 +757,14 @@ fn gen_one_mem_try(
         #[allow(clippy::all)]
         fn #fname(it: &mut __Iter) -> Option<MemRef> {
             let save = it.pos;
+            // 模板没写 `{base}` ⇒ 这条写法**没有基址**（绝对地址）。
+            let mut base: Option<Reg> = None;
             let mut index: Option<Reg> = None;
             let mut scale: u8 = 1;
             let mut disp: i64 = 0;
             #(#stmts)*
+            // 必需基址的模板一定赋过值；无基址模板保持 None。
+            let base = base;
             // scale 必须伴随 index（模板校验亦强制 `{scale}` 紧随 `{index}`）。
             if scale != 1 && index.is_none() { it.pos = save; return None; }
             Some(MemRef { base, disp, index, scale })

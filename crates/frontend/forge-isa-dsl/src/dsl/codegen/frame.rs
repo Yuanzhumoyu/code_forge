@@ -339,7 +339,7 @@ fn mem_inst_toks(
     match &shape.flavor {
         super::lowering::StackMemFlavor::Mem(m) => quote! {
             Inst::#vn {
-                #m: MemRef { base: #base, disp: #disp, index: None, scale: 1 },
+                #m: MemRef { base: Some(#base), disp: #disp, index: None, scale: 1 },
                 #r: #reg,
             }
         },
@@ -1118,7 +1118,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             let __bytes = encode(&Inst::#vn {
                 #d_fid: Reg::from_index(__dest, __DEFAULT_FPR_CLASS),
                 #m_fid: MemRef {
-                    base: Reg::from_index(__src.to_index(), __ADDR_CLASS),
+                    base: Some(Reg::from_index(__src.to_index(), __ADDR_CLASS)),
                     disp: 0,
                     index: None,
                     scale: 1,
@@ -1652,7 +1652,7 @@ fn gen_spill_stmt(
                 match slot.kind {
                     OperandKind::Reg => field_ctor_expr(slot, quote! { __dst }),
                     OperandKind::Mem => {
-                        quote! { MemRef { base: Reg::#base, disp: __off, index: None, scale: 1 } }
+                        quote! { MemRef { base: Some(Reg::#base), disp: __off, index: None, scale: 1 } }
                     }
                     OperandKind::Imm | OperandKind::Label => {
                         quote! { __off as i64 }

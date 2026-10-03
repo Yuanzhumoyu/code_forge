@@ -18,9 +18,9 @@ corpus_only = 3
 [suite llvm-mc]
 files = 2
 lines = 447
-parsed = 32
+parsed = 33
 no_prefix = 21
-tail_mismatch = 58
+tail_mismatch = 57
 corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:7	mov	r16d, 1	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:13	movsxd	rax, r16d	line 1: no matching instruction
@@ -30,6 +30,5 @@ corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:45	imul	ebx, dword ptr [r16 + rax]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:49	imul	ebx, dword ptr [rax + r16]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:53	imul	r16d, dword ptr [rax + rbx]	line 1: no matching instruction
-# mismatch: intel-syntax-encoding.s:76	movsd   XMM5, QWORD PTR [-8]	line 2: no matching instruction
 # mismatch: intel-syntax-encoding.s:97	cmp eax, FOO	line 2: no matching instruction
 # mismatch: intel-syntax-encoding.s:99	cmp eax, FOO[eax]	line 2: no matching instruction

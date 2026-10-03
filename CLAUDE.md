@@ -416,7 +416,7 @@ let name = node.get_text("name")?;
   截断输入合法）、`{bytes}` 解码正向、`{asm}` **闭环**（只断言编解码/文本闭环稳定，不比字节）。
   形态在解析期校验（`validate_vectors`），用例发射成 `__spec_tests::spec_vector_<下标>`
   （条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表/往返清单**——迁进谱里（三份发行谱共
-  **362 条**：x86 139 / riscv64 134 / arm64 89；迁移前后字节集合的规范化 sha256 相同）。
+  **363 条**：x86 140 / riscv64 134 / arm64 89；迁移前后字节集合的规范化 sha256 相同）。
   校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
   守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs` 与 `tests/determinism.rs`。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint|abi <谱.toml>`——
@@ -503,15 +503,18 @@ let name = node.get_text("name")?;
   必须放在 `lib.rs` 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）。
 - **内存操作数的文本形态（v20 V10）**：`[conventions.mem] templates` 是**列表**——
   **第 0 条 = 反汇编渲染形态**（渲染必须唯一，否则输出会随解析尝试顺序漂移），其余是
-  解析专用备选（按列表序试，第一条整条走通的赢）。组件 `{base}`（必需）`{index}`
+  解析专用备选（按列表序试，第一条整条走通的赢）。组件 `{base}`（写了就必须有基址）`{index}`
   `{scale}` `{disp}` `{size}`；`{size}` 吃 `size_keywords` 里的任一关键字（大小写按
   `[meta].mnemonic_case`），**值不进 `MemRef`**——宽度由槽/`opsize` 决定，尺寸前缀只是
   给人读的冗余提示（`mov QWORD PTR [rsp-16], rax` 与 `mov [rsp-16], rax` 编出同样的
   字节），渲染输出空串所以 `disassemble → assemble` 照旧闭合。**紧邻 `{size}` 的字面量
-  不是它的条件前缀**（否则 `qword ptr [rax]` 的 `[` 会随尺寸消失）。`MemRef.base` 是必需
-  字段 ⇒ "无基址"寻址（x86 `mod=00` + `SIB.base=101`）**解码侧 fail-closed**——不拒就会
-  少读 4 字节 disp32 还编出假的 `[rbp+disp]`（`encoder_fuzz_tests` 的
-  `sub rax, [0x12345678]` 抓到）。规范见 `docs/reference/isa-dsl.md` 的
+  不是它的条件前缀**（否则 `qword ptr [rax]` 的 `[` 会随尺寸消失）。**`MemRef.base` 是 `Option<Reg>`**
+  （v20 V10）：**写了 `{base}` = 这条写法必须有基址**（缺了整条不匹配），**没写 `{base}`
+  = 这条写法没有基址**（`base = None`，绝对地址），此时其余组件按**必需**处理。x86 的
+  无基址是 `mod=00` + `SIB.base=101` + disp32，编解码两侧对称；只写 `[base]` 的简写
+  表示不了无基址 ⇒ 解码显式拒绝（不拒会把绝对地址当 `[RBP]` 解出来还少读 4 字节
+  disp32，把真正的 MemRef 形式挤掉）。`sub rax, [0x12345678]` 的往返由
+  `encoder_fuzz_tests` 覆盖。规范见 `docs/reference/isa-dsl.md` 的
   「`[conventions.mem]` — 内存操作数的文本形态」。
 - **`opsize` 指向 1 字节槽 ⇒ 解码不发守卫（v20 V10）**：`__opsize` 只可能取 2/4/8
   （由 66 前缀与 REX.W 扫描决定），8 位操作数没有 opsize 前缀可查——显式

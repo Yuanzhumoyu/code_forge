@@ -340,9 +340,18 @@ fn gen_mem_support(model: &IsaModel, _infos: &[InstInfo]) -> Result<TokenStream,
     Ok(quote! {
         /// 内存操作数（自包含；base 为物理寄存器索引，disp 为字节位移；
         /// index 为可选索引寄存器（x86 SIB index），scale 为缩放 1/2/4/8）。
+        ///
+        /// `base` 是 **Option**（v20 V10）：Intel 系 ISA 有"没有基址"的写法
+        /// （x86 `mov rax, [0x1234]`），它由 [`[conventions.mem]`] 的模板形状声明
+        /// ——**模板里写了 `{base}` 就是"这条写法必须有基址"**（缺了照样解析失败），
+        /// 不写 `{base}` 的模板产出的就是 `base: None`（绝对地址）。这样"要不要基址"
+        /// 只有一处声明（模板本身），既不需要新键，也没有第二个开关可与之矛盾。
+        ///
+        /// [`[conventions.mem]`]: ../../../docs/reference/isa-dsl.md
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
         pub struct MemRef {
-            pub base: Reg,
+            /// 基址寄存器；`None` = 无基址（绝对地址 / 立即数地址）。
+            pub base: Option<Reg>,
             pub disp: i64,
             /// 索引寄存器（None = 无索引）。
             pub index: Option<Reg>,

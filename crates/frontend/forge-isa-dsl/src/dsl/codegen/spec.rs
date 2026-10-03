@@ -826,7 +826,11 @@ fn sample_operands(
                     proc_macro2::Span::call_site(),
                 );
                 checks.push(quote! {
-                    assert_eq!(<Reg as forge_ir::PhysReg>::to_index((#fid).base), 0u32, #msg_b);
+                    assert_eq!(
+                        (#fid).base.map(<Reg as forge_ir::PhysReg>::to_index),
+                        Some(0u32),
+                        #msg_b
+                    );
                     assert_eq!((#fid).disp, 0i64, #msg_d);
                 });
             }
@@ -843,6 +847,9 @@ fn sample_operands(
 }
 
 /// `MemRef { base, disp, index, scale }` 表达式（`index` = 寄存器索引或 `None`）。
+///
+/// `base` 恒构造为 `Some(...)`（生成期自测与派生枚举器只造"有基址"的样本）；
+/// **无基址**形态由各自的模板派生，不由这里覆盖。
 fn mem_ref_expr(cls: &TokenStream, disp: i64, index: Option<u32>, scale: u8) -> TokenStream {
     let idx = match index {
         Some(i) => {
@@ -854,7 +861,7 @@ fn mem_ref_expr(cls: &TokenStream, disp: i64, index: Option<u32>, scale: u8) -> 
     let disp = Literal::i64_suffixed(disp);
     quote! {
         MemRef {
-            base: <Reg as forge_ir::PhysReg>::from_index(0u32, #cls),
+            base: Some(<Reg as forge_ir::PhysReg>::from_index(0u32, #cls)),
             disp: #disp,
             index: #idx,
             scale: #scale,

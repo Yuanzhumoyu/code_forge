@@ -115,8 +115,14 @@ force_disp_base = [5, 13]
 #   * GAS 的 Intel 方言把位移写在下标**前**（0x90909090[eax]），与 Intel 语法的
 #     [eax+0x90909090] 是同一份数据的两种写法 → 单列第 1 条（{size} 可选，故它同时
 #     覆盖带不带尺寸前缀两种写法）。
+#   * **没写 {base} 的模板 = 无基址写法**（第 2 条）：x86 用它表示绝对地址
+#     （movsd XMM5, [-8] → mod=00 + SIB.base=101 + disp32）。
 [conventions.mem]
-templates = ["{size}[{base}+{index}*{scale}+{disp}]", "{size}{disp}[{base}]"]
+templates = [
+  "{size}[{base}+{index}*{scale}+{disp}]",  # 第 0 条 = 渲染形态
+  "{size}{disp}[{base}]",                   # GAS Intel 的 disp[base]
+  "{size}[{disp}]",                         # **无基址**：只写地址（绝对寻址）
+]
 size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
 
 # v13/v18-S3b：条件码表（**唯一一份**；jcc/setcc/cmovcc 的 cond 槽查它、
@@ -4225,6 +4231,12 @@ bytes = [0x48, 0x8B, 0x45, 0x08]
 [[vectors]]
 asm = "mov RAX, [RBX-8]"
 bytes = [0x48, 0x8B, 0x43, 0xF8]
+
+# 无基址（v20 V10）：模板里**没写 {base}** 就是"这条写法没有基址" ⇒ 绝对地址
+#（mod=00 + rm=100 + SIB.base=101 + disp32）。
+[[vectors]]
+asm = "mov RAX, [-8]"
+bytes = [0x48, 0x8B, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0xFF]
 
 [[vectors]]
 asm = "addsd XMM0, XMM1"

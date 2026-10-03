@@ -938,7 +938,7 @@ pub(crate) fn parse_mem_template(text: &str, ctx: &str) -> Result<TokenStream, S
         }
         None => quote! { 0i64 },
     };
-    Ok(quote! { MemRef { base: #base, disp: #disp, index: None, scale: 1 } })
+    Ok(quote! { MemRef { base: Some(#base), disp: #disp, index: None, scale: 1 } })
 }
 
 /// 从 lowering 模板收集写死的物理寄存器（RAX/RDX 等，非 {占位符}）→

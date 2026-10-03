@@ -37,6 +37,9 @@ struct VlenCtx {
     rm_is_byte: bool,
     /// 内存形式位移表达式（i64；rr/ext 为 None）。
     disp_expr: Option<TokenStream>,
+    /// 内存形式**是否无基址**（`bool` 表达式；只有 memref 有）。`true` = x86 的
+    /// 无基址形态（`mod=00` + `SIB.base=101` + disp32，即绝对地址）。
+    abs_expr: Option<TokenStream>,
     /// 尾部立即数字节数（form.imm / 8）。
     imm_bytes: usize,
     /// VEX 语义（form.vex 存在时）：map/pp/w/l 值表达式（u64）。
@@ -346,9 +349,9 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
         reg: None,
         rm: None,
     };
-    let (modrm, reg_expr, rm_expr, disp_expr, reg_is_byte, rm_is_byte) =
+    let (modrm, reg_expr, rm_expr, disp_expr, abs_expr, reg_is_byte, rm_is_byte) =
         if form.opcode_reg.is_some() || form.modrm_fixed.is_some() {
-            (None, None, None, None, false, false)
+            (None, None, None, None, None, false, false)
         } else {
             let has_reg = info
                 .operands
@@ -362,7 +365,7 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
                 }
             });
             match map {
-                None => (None, None, None, None, false, false),
+                None => (None, None, None, None, None, false, false),
                 Some(modrm_form) => {
                     let modrm = Modrm::resolve(modrm_form, info, &names)?;
                     let fid = |i: usize| -> Result<syn::Ident, String> {
@@ -384,17 +387,28 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
                         }
                     };
                     let rm = fid(modrm.rm)?;
-                    let (rm_expr, disp_expr): (TokenStream, Option<TokenStream>) = if modrm.memref {
-                        // mem 槽：base + disp（index/scale 由 SIB 段单独发射）
+                    let (rm_expr, disp_expr, abs_expr): (
+                        TokenStream,
+                        Option<TokenStream>,
+                        Option<TokenStream>,
+                    ) = if modrm.memref {
+                        // mem 槽：base + disp（index/scale 由 SIB 段单独发射）。
+                        // `base: None` = 无基址（模板里没写 `{base}`）⇒ 绝对地址：
+                        // rm 取 SIB 的"无基址"编码 5，SIB 强制发射。
                         (
-                            quote! { #rm.base.to_index() as u64 },
+                            quote! { #rm.base.map_or(5u64, |b| b.to_index() as u64) },
                             Some(quote! { #rm.disp }),
+                            Some(quote! { #rm.base.is_none() }),
                         )
                     } else if modrm.mem {
                         // reg 槽当基址：仅 [base]，disp 恒 0
-                        (quote! { #rm.to_index() as u64 }, Some(quote! { 0i64 }))
+                        (
+                            quote! { #rm.to_index() as u64 },
+                            Some(quote! { 0i64 }),
+                            None,
+                        )
                     } else {
-                        (quote! { #rm.to_index() as u64 }, None)
+                        (quote! { #rm.to_index() as u64 }, None, None)
                     };
                     // 8 位寄存器标记：索引 4-7（spl/bpl/sil/dil）无 REX 前缀会被解码成
                     // ah/ch/dh/bh，故这类操作数必须强制 REX（即使索引 <8）。内存形式的
@@ -414,6 +428,7 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
                         Some(reg_expr),
                         Some(rm_expr),
                         disp_expr,
+                        abs_expr,
                         reg_is_byte,
                         rm_is_byte,
                     )
@@ -534,6 +549,7 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
         reg_is_byte,
         rm_is_byte,
         disp_expr,
+        abs_expr,
         imm_bytes,
         vex,
         evex,
@@ -703,13 +719,18 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 let force = mem_force_disp(model, info)?;
                 let force_toks: Vec<TokenStream> = force.iter().map(|&b| quote! { #b }).collect();
                 let disp = ctx.disp_expr.as_ref().unwrap();
+                let abs = ctx.abs_expr.clone().unwrap_or_else(|| quote! { false });
                 quote! {
                     let __disp = #disp;
+                    let __abs = #abs;
                     const FORCE_DISP: &[u8] = &[#(#force_toks),*];
                     let __force = FORCE_DISP.contains(&(__rm as u8));
                     // 压缩位移：mod=1 的 disp8 = 实际位移/scale（须整除且缩放后
                     // 在 i8 范围）；mod=2 的 disp32 不缩放（x86 EVEX 规则）。
-                    let __mod: u8 = if __disp == 0 && !__force {
+                    // 无基址形态固定 mod=00 + SIB.base=101 + **不缩放**的 disp32。
+                    let __mod: u8 = if __abs {
+                        0
+                    } else if __disp == 0 && !__force {
                         0
                     } else if __disp % #scale == 0
                         && (-128i64 <= __disp / (#scale as i64)
@@ -719,7 +740,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     } else {
                         2
                     };
-                    let __sib = (__rm & 7) == 4 || __idx != 4;
+                    let __sib = __abs || (__rm & 7) == 4 || __idx != 4;
                     if __sib {
                         __bytes.push((((__mod as u64) << 6) | ((__reg & 7) << 3) | 4) as u8);
                         __bytes.push((((__sc as u64) << 6)
@@ -729,7 +750,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     }
                     if __mod == 1 {
                         __bytes.push((__disp / (#scale as i64)) as u8);
-                    } else if __mod == 2 {
+                    } else if __mod == 2 || __abs {
                         __bytes.extend_from_slice(&(__disp as u32).to_le_bytes());
                     }
                 }
@@ -832,36 +853,14 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             } else {
                 quote! { 0x0F }
             };
-            // VEX 内存形式（mod≠3）：base=rm，mod/disp 与 SIB 逻辑与非 VEX 内存一致。
+            // VEX 内存形式（mod≠3）：base=rm，mod/disp 与 SIB 逻辑与非 VEX 内存**同一份**
+            //（`gen_mem_modrm`，v20 V10 起不再各写一遍）。
             let mem_emit: TokenStream = if ctx.modrm.map(|k| k.is_mem()).unwrap_or(false) {
                 let force = mem_force_disp(model, info)?;
                 let force_toks: Vec<TokenStream> = force.iter().map(|&b| quote! { #b }).collect();
                 let disp = ctx.disp_expr.as_ref().unwrap();
-                quote! {
-                    let __disp = #disp;
-                    const FORCE_DISP: &[u8] = &[#(#force_toks),*];
-                    let __force = FORCE_DISP.contains(&(__rm as u8));
-                    let __mod: u8 = if __disp == 0 && !__force {
-                        0
-                    } else if (-128i64..=127i64).contains(&__disp) {
-                        1
-                    } else {
-                        2
-                    };
-                    let __sib = (__rm & 7) == 4 || __idx != 4;
-                    if __sib {
-                        __bytes.push((((__mod as u64) << 6) | ((__reg & 7) << 3) | 4) as u8);
-                        __bytes.push((((__sc as u64) << 6)
-                            | (((__idx & 7) as u64) << 3) | (__rm & 7)) as u8);
-                    } else {
-                        __bytes.push((((__mod as u64) << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8);
-                    }
-                    if __mod == 1 {
-                        __bytes.push(__disp as u8);
-                    } else if __mod == 2 {
-                        __bytes.extend_from_slice(&(__disp as u32).to_le_bytes());
-                    }
-                }
+                let abs = ctx.abs_expr.clone().unwrap_or_else(|| quote! { false });
+                gen_mem_modrm(disp, &force_toks, &abs)
             } else {
                 quote! { __bytes.push(((3u64 << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8); }
             };
@@ -1050,31 +1049,8 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 let force = mem_force_disp(model, info)?;
                 let force_toks: Vec<TokenStream> = force.iter().map(|&b| quote! { #b }).collect();
                 let disp = ctx.disp_expr.as_ref().unwrap();
-                stmts.push(quote! {
-                    let __disp = #disp;
-                    const FORCE_DISP: &[u8] = &[#(#force_toks),*];
-                    let __force = FORCE_DISP.contains(&(__rm as u8));
-                    let __mod: u8 = if __disp == 0 && !__force {
-                        0
-                    } else if (-128i64..=127i64).contains(&__disp) {
-                        1
-                    } else {
-                        2
-                    };
-                    let __sib = (__rm & 7) == 4 || __idx != 4;
-                    if __sib {
-                        __bytes.push((((__mod as u64) << 6) | ((__reg & 7) << 3) | 4) as u8);
-                        __bytes.push((((__sc as u64) << 6)
-                            | (((__idx & 7) as u64) << 3) | (__rm & 7)) as u8);
-                    } else {
-                        __bytes.push((((__mod as u64) << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8);
-                    }
-                    if __mod == 1 {
-                        __bytes.push(__disp as u8);
-                    } else if __mod == 2 {
-                        __bytes.extend_from_slice(&(__disp as u32).to_le_bytes());
-                    }
-                });
+                let abs = ctx.abs_expr.clone().unwrap_or_else(|| quote! { false });
+                stmts.push(gen_mem_modrm(disp, &force_toks, &abs));
             } else {
                 stmts.push(quote! {
                     __bytes.push(((3u64 << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8);
@@ -1276,7 +1252,13 @@ fn gen_vlen_vex_decode_arm(
                     ));
                 }
                 quote! { MemRef {
-                    base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(__ADDR_CLASS, __base)).unwrap(),
+                    base: if __base_absent {
+                        None
+                    } else {
+                        Some(<Reg as TryFrom<RegRef>>::try_from(
+                            RegRef::new(__ADDR_CLASS, __base),
+                        ).unwrap())
+                    },
                     disp: __disp,
                     index: __index_reg,
                     scale: __scale,
@@ -1308,6 +1290,7 @@ fn gen_vlen_vex_decode_arm(
         quote! { Inst::#vn { #(#ctor_fields),* } }
     };
     // 寄存器形式（mod=11）与内存形式（mod≠3）共用 vex guard；长度不同。
+    let mem_decode = gen_mem_decode(&quote! { __b }, &quote! { __x }, true, None);
     let body: TokenStream = if is_mem {
         quote! {
             let __modrm = bytes[__o + 4];
@@ -1317,54 +1300,7 @@ fn gen_vlen_vex_decode_arm(
                 let __b: u32 = ((!((__vex2 >> 5) & 1)) & 1) as u32;
                 let __x: u32 = ((!((__vex2 >> 6) & 1)) & 1) as u32;
                 let mut __o2 = __o + 5;
-                let mut __base: u32 = ((__modrm & 7) as u32) | (__b << 3);
-                let mut __index_reg: Option<Reg> = None;
-                let mut __scale: u8 = 1;
-                let mut __sib_ok = true;
-                if (__modrm & 7) == 4 {
-                    if __o2 < bytes.len() {
-                        let __sib_byte = bytes[__o2];
-                        __o2 += 1;
-                        let __idx4: u32 = ((__sib_byte >> 3) & 7) as u32;
-                        let __idx_full: u32 = __idx4 | (__x << 3);
-                        let __sc_bits = (__sib_byte >> 6) & 3;
-                        __scale = match __sc_bits { 1 => 2, 2 => 4, 3 => 8, _ => 1 };
-                        __base = ((__sib_byte & 7) as u32) | (__b << 3);
-                        if __idx_full == 4 {
-                            __index_reg = None;
-                        } else {
-                            __index_reg = Some(
-                                <Reg as TryFrom<RegRef>>::try_from(
-                                    RegRef::new(__ADDR_CLASS, __idx_full),
-                                ).unwrap(),
-                            );
-                        }
-                    } else {
-                        __sib_ok = false;
-                    }
-                }
-                let mut __disp: i64 = 0;
-                let mut __disp_ok = true;
-                if __mod == 1 {
-                    if __o2 < bytes.len() {
-                        __disp = (bytes[__o2] as i8) as i64;
-                        __o2 += 1;
-                    } else {
-                        __disp_ok = false;
-                    }
-                } else if __mod == 2 {
-                    if __o2 + 3 < bytes.len() {
-                        __disp = i32::from_le_bytes([
-                            bytes[__o2],
-                            bytes[__o2 + 1],
-                            bytes[__o2 + 2],
-                            bytes[__o2 + 3],
-                        ]) as i64;
-                        __o2 += 4;
-                    } else {
-                        __disp_ok = false;
-                    }
-                }
+                #mem_decode
                 if __sib_ok && __disp_ok {
                     #(#binds)*
                     return Some((#ctor, __o2 + #imm_bytes));
@@ -1503,7 +1439,13 @@ fn gen_vlen_evex_decode_arm(
             }
             OperandKind::Mem => {
                 quote! { MemRef {
-                    base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(__ADDR_CLASS, __base)).unwrap(),
+                    base: if __base_absent {
+                        None
+                    } else {
+                        Some(<Reg as TryFrom<RegRef>>::try_from(
+                            RegRef::new(__ADDR_CLASS, __base),
+                        ).unwrap())
+                    },
                     disp: __disp,
                     index: __index_reg,
                     scale: __scale,
@@ -1535,6 +1477,8 @@ fn gen_vlen_evex_decode_arm(
         quote! { Inst::#vn { #(#ctor_fields),* } }
     };
     // 寄存器形式（mod=11）与内存形式（mod≠3 + SIB + 压缩位移回乘 scale）
+    let __scale_toks = quote! { #scale };
+    let mem_decode = gen_mem_decode(&quote! { __b }, &quote! { __x }, true, Some(&__scale_toks));
     let body: TokenStream = if is_mem {
         quote! {
             let __modrm = bytes[__o + 5];
@@ -1545,55 +1489,7 @@ fn gen_vlen_evex_decode_arm(
                 let __x: u32 = ((!((__p0 >> 6) & 1)) & 1) as u32;
                 let __r4: u32 = ((!((__p0 >> 4) & 1)) & 1) as u32;
                 let mut __o2 = __o + 6;
-                let mut __base: u32 = ((__modrm & 7) as u32) | (__b << 3);
-                let mut __index_reg: Option<Reg> = None;
-                let mut __scale: u8 = 1;
-                let mut __sib_ok = true;
-                if (__modrm & 7) == 4 {
-                    if __o2 < bytes.len() {
-                        let __sib_byte = bytes[__o2];
-                        __o2 += 1;
-                        let __idx4: u32 = ((__sib_byte >> 3) & 7) as u32;
-                        let __idx_full: u32 = __idx4 | (__x << 3);
-                        let __sc_bits = (__sib_byte >> 6) & 3;
-                        __scale = match __sc_bits { 1 => 2, 2 => 4, 3 => 8, _ => 1 };
-                        __base = ((__sib_byte & 7) as u32) | (__b << 3);
-                        if __idx_full == 4 {
-                            __index_reg = None;
-                        } else {
-                            __index_reg = Some(
-                                <Reg as TryFrom<RegRef>>::try_from(
-                                    RegRef::new(__ADDR_CLASS, __idx_full),
-                                ).unwrap(),
-                            );
-                        }
-                    } else {
-                        __sib_ok = false;
-                    }
-                }
-                let mut __disp: i64 = 0;
-                let mut __disp_ok = true;
-                // 压缩位移：mod=1 disp8 × scale；mod=2 disp32 不缩放
-                if __mod == 1 {
-                    if __o2 < bytes.len() {
-                        __disp = ((bytes[__o2] as i8) as i64) * (#scale as i64);
-                        __o2 += 1;
-                    } else {
-                        __disp_ok = false;
-                    }
-                } else if __mod == 2 {
-                    if __o2 + 3 < bytes.len() {
-                        __disp = i32::from_le_bytes([
-                            bytes[__o2],
-                            bytes[__o2 + 1],
-                            bytes[__o2 + 2],
-                            bytes[__o2 + 3],
-                        ]) as i64;
-                        __o2 += 4;
-                    } else {
-                        __disp_ok = false;
-                    }
-                }
+                #mem_decode
                 if __sib_ok && __disp_ok {
                     #(#binds)*
                     return Some((#ctor, __o2 + #imm_bytes));
@@ -1921,9 +1817,22 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 OperandKind::Mem => {
                     let mm = need_modrm()?;
                     if i == mm.rm && mm.memref {
-                        Ok(
-                            quote! { MemRef { base: <Reg as TryFrom<RegRef>>::try_from(RegRef::new(__ADDR_CLASS,__base)).unwrap(),  disp: __disp, index: __index_reg, scale: __scale } },
-                        )
+                        // `base` 是 Option：`__base_absent`（mod=00 + SIB.base=101）
+                        // 就是 x86 的**无基址**绝对地址形态（v20 V10）。
+                        Ok(quote! {
+                            MemRef {
+                                base: if __base_absent {
+                                    None
+                                } else {
+                                    Some(<Reg as TryFrom<RegRef>>::try_from(
+                                        RegRef::new(__ADDR_CLASS, __base),
+                                    ).unwrap())
+                                },
+                                disp: __disp,
+                                index: __index_reg,
+                                scale: __scale,
+                            }
+                        })
                     } else {
                         Err(format!(
                             "[[instructions.{}]]: mem 操作数 {i} 不是 modrm.rm 指向的内存操作数",
@@ -1992,57 +1901,10 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             } else {
                 quote! { __mod != 3 }
             };
-            // MemReg（rm_mem：[base] 仅基址语义）不接受 SIB index——否则会吞掉
-            // MemRefOp 的索引寻址字节（如 8B 04 0B：mov_mem 先于 mov64rm 声明）。
-            let idx_reject: TokenStream = if ctx.modrm.unwrap().memref {
-                quote! {}
-            } else {
-                quote! {
-                    if __index_reg.is_some() {
-                        __sib_ok = false;
-                    }
-                }
-            };
-            let is_mem_not_ref = ctx.modrm.is_some_and(|m| m.mem && !m.memref);
-            let disp_zero_check: TokenStream = if is_mem_not_ref {
-                quote! {
-                    if __mod == 1 {
-                        // P1-18：disp8 读取必须边界检查（越界 → 不匹配而非 panic）
-                        if __o2 < bytes.len() {
-                            __disp = (bytes[__o2] as i8) as i64;
-                            __o2 += 1;
-                            if __disp != 0 {
-                                __disp_ok = false;
-                            }
-                        } else {
-                            __disp_ok = false;
-                        }
-                    }
-                }
-            } else {
-                quote! {
-                    if __mod == 1 {
-                        if __o2 < bytes.len() {
-                            __disp = (bytes[__o2] as i8) as i64;
-                            __o2 += 1;
-                        } else {
-                            __disp_ok = false;
-                        }
-                    } else if __mod == 2 {
-                        if __o2 + 3 < bytes.len() {
-                            __disp = i32::from_le_bytes([
-                                bytes[__o2],
-                                bytes[__o2 + 1],
-                                bytes[__o2 + 2],
-                                bytes[__o2 + 3],
-                            ]) as i64;
-                            __o2 += 4;
-                        } else {
-                            __disp_ok = false;
-                        }
-                    }
-                }
-            };
+            // SIB/位移解码是三条路径（普通/VEX/EVEX）共用的一份；`memref=false`
+            // （`rm = "[reg]"` 的基址简写）由它拒绝索引、且只认 disp8=0。
+            let mem_decode =
+                gen_mem_decode(&quote! { __rex_b }, &quote! { __rex_x }, m.memref, None);
             groups.push((
                 key,
                 quote! {
@@ -2051,48 +1913,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                         let __mod = __modrm >> 6;
                         if #mod_guard && !(__mod == 0 && (__modrm & 7) == 5) {
                             let mut __o2 = __o + #len;
-                            let mut __base: u32 = ((__modrm & 7) as u32) | (__rex_b << 3);
-                            let mut __index_reg: Option<Reg> = None;
-                            let mut __scale: u8 = 1;
-                            let mut __sib_ok = true;
-                            if (__modrm & 7) == 4 {
-                                if __o2 < bytes.len() {
-                                    let __sib_byte = bytes[__o2];
-                                    __o2 += 1;
-                                    let __idx4: u32 = ((__sib_byte >> 3) & 7) as u32;
-                                    let __idx_full: u32 = __idx4 | (__rex_x << 3);
-                                    let __sc_bits = (__sib_byte >> 6) & 3;
-                                    __scale = match __sc_bits { 1 => 2, 2 => 4, 3 => 8, _ => 1 };
-                                    __base = ((__sib_byte & 7) as u32) | (__rex_b << 3);
-                                    // `mod=00` + `SIB.base=101` = **无基址**形态（后面跟着
-                                    // disp32）：`MemRef.base` 是必需字段，表示不了它 ⇒
-                                    // fail-closed 拒绝。不拒就会**少读 4 字节 disp32**、
-                                    // 还把 base 当成 RBP/R13 返回（v20 V10 由
-                                    // `encoder_fuzz_tests` 的 `sub rax, [0x12345678]`
-                                    // 抓到的既有缺陷——那时没有指令占 2B，`decode` 直接
-                                    // Err，缺陷看不见）。编码侧永不产出这个形态
-                                    // （`[conventions.modrm].force_disp_base = [5, 13]`
-                                    // 让 RBP/R13 基址恒走 mod=01 + disp8=0）。
-                                    if __mod == 0 && (__sib_byte & 7) == 5 {
-                                        __sib_ok = false;
-                                    }
-                                    if __idx_full == 4 {
-                                        __index_reg = None;
-                                    } else {
-                                        __index_reg = Some(
-                                            <Reg as TryFrom<RegRef>>::try_from(
-                                                RegRef::new(__ADDR_CLASS, __idx_full),
-                                            ).unwrap(),
-                                        );
-                                    }
-                                } else {
-                                    __sib_ok = false;
-                                }
-                            }
-                            #idx_reject
-                            let mut __disp: i64 = 0;
-                            let mut __disp_ok = true;
-                            #disp_zero_check
+                            #mem_decode
                             if __sib_ok && __disp_ok {
                                 #(#binds)*
                                 return Some((#ctor, __o2));
@@ -2321,6 +2142,175 @@ fn mem_force_disp(model: &IsaModel, info: &InstInfo) -> Result<Vec<u8>, String> 
     }
     let _ = info;
     Ok(Vec::new())
+}
+
+/// 内存形式的 ModRM + SIB + 位移发射（**未压缩位移**：普通 ModRM 与 VEX 两条路径共用；
+/// EVEX 的 disp8 要按 `disp_scale` 压缩，自带一份）。
+///
+/// 前置局部：`__reg`（reg 字段值）、`__rm`（rm/SIB.base 值）、`__idx`（SIB index，4 =
+/// 无）、`__sc`（SIB 的 scale 位）、`__bytes`（输出缓冲）。
+///
+/// `__abs = true` = **无基址**（`MemRef.base` 为 None，模板里没写 `{base}`）：x86 唯一
+/// 能表示"没有基址"的编码是 `mod=00` + `rm=100` + `SIB.base=101` + **disp32**，
+/// 所以此时固定 mod=00、强制发射 SIB、并**总是**写 4 字节位移（disp32 不是可省的
+/// 位移，它就是地址本身）。`__rm` 在无基址时被取成 5（SIB 的"无基址"值）。
+fn gen_mem_modrm(disp: &TokenStream, force_toks: &[TokenStream], abs: &TokenStream) -> TokenStream {
+    quote! {
+        let __disp = #disp;
+        let __abs = #abs;
+        const FORCE_DISP: &[u8] = &[#(#force_toks),*];
+        let __force = FORCE_DISP.contains(&(__rm as u8));
+        let __mod: u8 = if __abs {
+            0
+        } else if __disp == 0 && !__force {
+            0
+        } else if (-128i64..=127i64).contains(&__disp) {
+            1
+        } else {
+            2
+        };
+        let __sib = __abs || (__rm & 7) == 4 || __idx != 4;
+        if __sib {
+            __bytes.push((((__mod as u64) << 6) | ((__reg & 7) << 3) | 4) as u8);
+            __bytes.push((((__sc as u64) << 6)
+                | (((__idx & 7) as u64) << 3) | (__rm & 7)) as u8);
+        } else {
+            __bytes.push((((__mod as u64) << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8);
+        }
+        if __mod == 1 {
+            __bytes.push(__disp as u8);
+        } else if __mod == 2 || __abs {
+            __bytes.extend_from_slice(&(__disp as u32).to_le_bytes());
+        }
+    }
+}
+
+/// 内存形式的 ModRM **解码**（rm/SIB + 位移），三条解码路径（普通 / VEX / EVEX）共用。
+///
+/// 前置局部由调用方提供：`__modrm`（ModRM 字节）、`__mod`、`__o2`（消费游标，
+/// 已指向 ModRM 之后）、`bytes`。本宏发射后面要用到的全部局部：
+/// `__base` / `__base_absent` / `__index_reg` / `__scale` / `__sib_ok` /
+/// `__disp` / `__disp_ok`。
+///
+/// - `b_bit` / `x_bit`：该路径的 B / X 扩展位表达式（普通 = `__rex_b`，VEX/EVEX = 解反后的 `__b`/`__x`）；
+/// - `memref`：`rm` 引用的是 `mem` 槽（true，带 disp/index/scale）还是 `reg` 槽的
+///   `[base]` 简写（false）——简写不接受索引、也不接受 mod=2/disp32；
+/// - `disp8_scale`：EVEX 的 disp8 是**压缩位移**，给 `Some(scale 表达式)` 就按它回乘。
+///
+/// `__base_absent`（v20 V10）= `mod=00` + `SIB.base=101` 且 B=0：x86 的**无基址**
+/// 绝对地址形态（disp32 跟随）——与编码侧的 `gen_mem_modrm` 对称。
+fn gen_mem_decode(
+    b_bit: &TokenStream,
+    x_bit: &TokenStream,
+    memref: bool,
+    disp8_scale: Option<&TokenStream>,
+) -> TokenStream {
+    let disp8 = match disp8_scale {
+        Some(sc) => quote! { ((bytes[__o2] as i8) as i64) * (#sc as i64) },
+        None => quote! { (bytes[__o2] as i8) as i64 },
+    };
+    let base_absent_detect = if memref {
+        quote! {
+            // `mod=00` + `SIB.base=101`（且 B=0）= **无基址**（后跟 disp32）：
+            // 这是 x86 表示绝对地址的形态，因此 `MemRef.base` 可以为 `None`。
+            if __mod == 0 && (__sib_byte & 7) == 5 && #b_bit == 0 {
+                __base_absent = true;
+            }
+        }
+    } else {
+        // `[base]` 简写**表示不了"没有基址"**：不拒就会把 `mod=00` + `SIB.base=101`
+        // 当成 `[RBP]` 解出来，还少读 4 字节 disp32，把真正的 MemRef 形式
+        //（`base = None`）挤掉。
+        quote! {
+            if __mod == 0 && (__sib_byte & 7) == 5 {
+                __sib_ok = false;
+            }
+        }
+    };
+    let after_sib = if memref {
+        quote! {}
+    } else {
+        quote! {
+            // `[base]` 简写不接受 SIB 索引（否则会吞掉 MemRef 形式的索引寻址字节）。
+            if __index_reg.is_some() {
+                __sib_ok = false;
+            }
+        }
+    };
+    let disp_read = if memref {
+        quote! {
+            if __mod == 1 {
+                if __o2 < bytes.len() {
+                    __disp = #disp8;
+                    __o2 += 1;
+                } else {
+                    __disp_ok = false;
+                }
+            } else if __mod == 2 || __base_absent {
+                // disp32：mod=10 的普通位移，或"无基址"形态的**地址本身**。
+                if __o2 + 3 < bytes.len() {
+                    __disp = i32::from_le_bytes([
+                        bytes[__o2],
+                        bytes[__o2 + 1],
+                        bytes[__o2 + 2],
+                        bytes[__o2 + 3],
+                    ]) as i64;
+                    __o2 += 4;
+                } else {
+                    __disp_ok = false;
+                }
+            }
+        }
+    } else {
+        // `[base]` 简写只有 disp8=0 一种位移（mod=1）——非 0 即不是这个形态。
+        quote! {
+            if __mod == 1 {
+                if __o2 < bytes.len() {
+                    __disp = (bytes[__o2] as i8) as i64;
+                    __o2 += 1;
+                    if __disp != 0 {
+                        __disp_ok = false;
+                    }
+                } else {
+                    __disp_ok = false;
+                }
+            }
+        }
+    };
+    quote! {
+        let mut __base: u32 = ((__modrm & 7) as u32) | (#b_bit << 3);
+        let mut __base_absent = false;
+        let mut __index_reg: Option<Reg> = None;
+        let mut __scale: u8 = 1;
+        let mut __sib_ok = true;
+        if (__modrm & 7) == 4 {
+            if __o2 < bytes.len() {
+                let __sib_byte = bytes[__o2];
+                __o2 += 1;
+                let __idx4: u32 = ((__sib_byte >> 3) & 7) as u32;
+                let __idx_full: u32 = __idx4 | (#x_bit << 3);
+                let __sc_bits = (__sib_byte >> 6) & 3;
+                __scale = match __sc_bits { 1 => 2, 2 => 4, 3 => 8, _ => 1 };
+                __base = ((__sib_byte & 7) as u32) | (#b_bit << 3);
+                #base_absent_detect
+                if __idx_full == 4 {
+                    __index_reg = None;
+                } else {
+                    __index_reg = Some(
+                        <Reg as TryFrom<RegRef>>::try_from(
+                            RegRef::new(__ADDR_CLASS, __idx_full),
+                        ).unwrap(),
+                    );
+                }
+            } else {
+                __sib_ok = false;
+            }
+        }
+        #after_sib
+        let mut __disp: i64 = 0;
+        let mut __disp_ok = true;
+        #disp_read
+    }
 }
 
 /// 读取尾部立即数（从 `__o + start` 起读 `bytes` 字节 → u64 原始值）。

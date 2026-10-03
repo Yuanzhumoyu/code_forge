@@ -2969,13 +2969,23 @@ ops = ["dst:g:out"]
 asm = "add {dst}"
 "#;
     parse_and_validate(base).expect("MIPS 模板合法");
-    // 缺 base → 报错
-    let bad = base.replace(
+    // 不写 `{base}` = **无基址写法**（v20 V10）：只要有 {disp}/{index} 就合法。
+    let ok = base.replace(
         r#"templates = ["{disp}({base})"]"#,
         r#"templates = ["{disp}"]"#,
     );
+    parse_and_validate(&ok).expect("无基址模板（只有 {disp}）合法");
+    // 无基址且**没有任何地址组件** → 报错（那只能匹配空文本）
+    let bad = base.replace(r#"templates = ["{disp}({base})"]"#, r#"templates = ["[]"]"#);
     let err = parse_and_validate(&bad).unwrap_err().to_string();
-    assert!(err.contains("base"), "err: {err}");
+    assert!(err.contains("无基址模板"), "err: {err}");
+    // 两个 {base} → 报错
+    let bad = base.replace(
+        r#"templates = ["{disp}({base})"]"#,
+        r#"templates = ["[{base}+{base}]"]"#,
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("最多只能有一个"), "err: {err}");
     // scale 未紧随 index → 报错
     let bad = base.replace(
         r#"templates = ["{disp}({base})"]"#,
