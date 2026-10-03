@@ -1024,8 +1024,10 @@ op = "Iadd"
 insts = ["movrr {out}, {0}", "add {1}, {out}"]
 ```
 
-**指令用助记符引用**：`insts` 里的指令名 = 该指令 asm 的**首词**（助记符，唯一
-事实来源），不再用指令名（PascalCase）。同助记符多形状（如 `add reg,reg` 与
+**指令怎么引用**：`insts` 行首是**该指令的声明名（`[[instructions]].name`）或它声明的
+`ref` 别名**（`ref_to_infos` 按这两个键建表）——**不是** asm 模板的首词：模板可以操作数
+前置（`asm = "{dst} = {src}"`），DSL 也不按空白切词推助记符。发行谱里的 `ref` 只是**恰好**
+取了助记符风格的短名（x86 `ref = "mov"`）。同一引用名多条形状（如 `add reg,reg` 与
 `add reg,imm`）由生成器按**操作数 token 签名**自动消歧（reg/imm/mem/cond/label；
 `[n]` 剥括号为内存基址=reg；数字字面量兼容 imm/cond）；仍多候选时再按**字面段
 一致性**（模板 vs asm 的内存括号）过滤。
