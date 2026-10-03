@@ -1455,6 +1455,26 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
         {
             return Err(format!("{path}: min ({lo}) > max ({hi})"));
         }
+        // `wrap`（字面量按 W 位位模式读）只在 imm 槽上有意义；W ≥ 64 时 i64 已经
+        // 装下两种读数，回绕无从谈起。
+        if s.wrap.unwrap_or(false) {
+            if s.kind != OperandKind::Imm {
+                return Err(format!(
+                    "{path}: `wrap` 只对 kind = \"imm\" 有意义（当前 kind = {}）",
+                    s.kind.kind_name()
+                ));
+            }
+            match s.width {
+                Some(w) if w < 64 => {}
+                Some(w) => {
+                    return Err(format!(
+                        "{path}: `wrap` 需要 width < 64（当前 {w}：i64 已容纳两种读数，无回绕可言）"
+                    ));
+                }
+                // 到不了：imm 槽的 width 必填（上面已查）。
+                None => {}
+            }
+        }
         if let Some(roles) = &s.roles {
             if roles.is_empty() {
                 return Err(format!("{path}: roles must not be empty"));

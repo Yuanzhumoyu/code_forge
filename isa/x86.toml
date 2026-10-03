@@ -246,6 +246,10 @@ name = "imm32"
 kind = "imm"
 signed = true
 width = 32
+# 32 位立即数字段是**位模式**：`0x90909090` 与 `-1869574000` 是同一批字节，GAS/LLVM
+# 两种写法都收。`wrap` 让汇编器额外接受无符号读数并规范化到有符号读数；解码/反汇编
+# 渲染/边界检查仍用规范域（`-2^31..2^31-1`），所以 `add rax, -12` 的文本与字节不变。
+wrap = true
 
 [[operand_slots]]
 name = "mem"
@@ -3949,6 +3953,11 @@ bytes = [0x48, 0x89, 0xD8]
 [[vectors]]
 asm = "add RAX, 42"
 bytes = [0x48, 0x83, 0xC0, 0x2A]
+
+# `wrap`：字面量给的是**无符号读数**（`0x90909090` > `i32::MAX`），规范化后编出 32 位位模式。
+[[vectors]]
+asm = "add EAX, 0x90909090"
+bytes = [0x81, 0xC0, 0x90, 0x90, 0x90, 0x90]
 
 [[vectors]]
 asm = "sub RAX, 42"

@@ -123,7 +123,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
-| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
@@ -604,7 +604,25 @@ signed = true
 width = 32
 min = -2147483648              # 可选：值域约束（缺省按 width/signed 推导）
 max = 2147483647
+wrap = true                    # 可选：字面量按 **32 位位模式**读（见下）
 ```
+
+**立即数字面量的两种读数（`wrap`，v20 V10）**：立即数字段是 W 位**位模式**，
+`0x90909090` 与 `-1869574000` 是同一批字节，两种写法在各家汇编器里都合法。缺省只收
+`signed` 决定的那种读数；`wrap = true` 额外接受另一种读数，并**规范化**到 `signed` 的
+读数再进编码：
+
+| 槽 | 规范值域（`imm_range`） | `wrap` 后接受（`imm_accept_range`） | 规范化 |
+| --- | --- | --- | --- |
+| `signed = true, width = 32` | `-2^31 .. 2^31-1` | 再加 `2^31 .. 2^32-1` | `v > 2^31-1 ⇒ v - 2^32` |
+| `signed` 缺省（无符号）, `width = 8` | `0 .. 255` | 再加 `-128 .. -1` | `v < 0 ⇒ v + 2^8` |
+
+- **规范值域不变**：解码的符号扩展、反汇编渲染、生成期自测的 `min`/`max` 边界检查仍
+  按 `imm_range()`——所以 `add rax, -12` 的文本与字节逐字节不变，打开 `wrap` 只放宽
+  **汇编解析**能收下的字面量（x86 的 `add eax, 0x90909090` 就靠它）。
+- 超出 W 位**仍然报错**（不静默截断/掩码）；`wrap` 只对 `kind = "imm"` 且
+  `width < 64` 有意义（校验期报错）。
+- 候选特异性与类型签名按**接受**值域计（"能接受多少输入"），规范值域只影响解码侧。
 
 `cond` 槽 = 条件码（x86 opcode 低 4 位）。
 

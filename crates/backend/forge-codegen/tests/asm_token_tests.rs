@@ -41,11 +41,26 @@ fn immediate_radixes() {
 
 #[test]
 fn immediate_range_x86() {
-    // imm32 signed：[-2^31, 2^31-1]
+    // imm32 是 **32 位位模式**（槽上 `wrap = true`，v20 V10）：规范值域仍是
+    // [-2^31, 2^31-1]，另收无符号读数——`2^31`（= i32::MIN 的位模式）合法，
+    // 超出 32 位的仍必须报错（不静默截断/掩码）。
     assert!(assemble("add RAX, 2147483647").is_ok());
     assert!(assemble("add RAX, -2147483648").is_ok());
-    assert!(assemble("add RAX, 2147483648").is_err());
+    assert!(assemble("add RAX, 2147483648").is_ok()); // = -2^31 的位模式
+    assert!(assemble("add RAX, 4294967295").is_ok()); // = -1 的位模式
+    assert!(assemble("add RAX, 4294967296").is_err()); // 2^32：超出 32 位
     assert!(assemble("add RAX, -2147483649").is_err());
+    // 规范化发生在**选形式之后**（与 GAS/LLVM 同口径）：`-1` 落进符号扩展 imm8 短形式
+    // （`83 /0 ib`），无符号写法则落 imm32（`81 /0 id`）——两者语义相同、字节不同。
+    use forge_codegen::x86::encode;
+    assert_eq!(
+        encode(&assemble("add RAX, -1").unwrap()).unwrap(),
+        vec![0x48, 0x83, 0xC0, 0xFF]
+    );
+    assert_eq!(
+        encode(&assemble("add RAX, 4294967295").unwrap()).unwrap(),
+        vec![0x48, 0x81, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF]
+    );
 }
 
 #[test]

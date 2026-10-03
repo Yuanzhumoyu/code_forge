@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-03) — 立即数槽 `wrap`：字面量按 W 位位模式读（两种读数都收）
+
+立即数字段是 W 位**位模式**——`0x90909090` 与 `-1869574000` 是同一批字节，各家汇编器两种写法都收。DSL 原先只收 `signed` 决定的那一种读数，于是 x86 的 `add eax, 0x90909090`（`imm32` 是**有符号** 32 位，放不下 `0x90909090`）汇编不了，`gnu-gas-intel` 有 8 行卡在这里。
+
+新槽键 `wrap = true`（声明侧校验：仅 `kind = "imm"` 且 `width < 64`）：
+
+- **接受域**放宽到两种读数的并集（有符号槽多收无符号写法、无符号槽多收负数写法）；
+- 解析后**规范化**回 `signed` 的读数再进编码（`v > 规范上界 ⇒ v - 2^W`、`v < 规范下界 ⇒ v + 2^W`）；
+- **规范值域 `imm_range()` 不变**：解码的符号扩展、反汇编渲染、生成期自测的 `min`/`max` 边界检查照旧——所以 `add rax, -12` 的文本与字节逐字节不变；超出 W 位**仍然报错**（不静默截断/掩码）；
+- 候选特异性（`form_specificity`）与类型签名（`type_signature`）改按**接受**域计（口径是"能接受多少输入"），规范域只影响解码侧。
+
+x86 谱据此给 `imm32` 打开它，并加了一条 `[[vectors]]`（`add EAX, 0x90909090` → `81 C0 90 90 90 90`）：`gnu-gas-intel` 解析档 `parsed` 40 → **48**，红桶只剩 7 条**段寄存器 push/pop**——那些是 **32 位模式专有语法**（长模式下只有 `fs`/`gs` 可 push/pop，`daa`/`das`/`aaa`/`aas` 也已移除），照抄等于给 x86-64 编非法指令，已在 `asm/README.md` 登记为"边界"而非"缺口"。规范见 `docs/reference/isa-dsl.md` 的「立即数字面量的两种读数」。
+
 ### Added (2026-10-03) — x86 8 位 ALU 族（`*_MR_8` / `*_R_MEM_8` / `*_RM8_IMM8` 各 8 条）
 
 x86 的 8 位算术是**独立操作码**（不是同一操作码换宽度前缀）：`00 /r`（r/m8 ← r/m8 op r8）、`02 /r`（r8 ← r8 op r/m8）、`80 /digit ib`（r/m8 ← r/m8 op imm8）——ADD/OR/ADC/SBB/AND/SUB/XOR/CMP 各一条，共 24 条，一条 `[[templates]]` 各 8 行。寄存器槽用 `gpr1b`（class `gpr1` + `byte_reg = true`），并给它补上 `inout`（8 位 ALU 是读改写）。与 16/32/64 位族一样**不写 `ref`**，IR 降级不变（JIT 矩阵 x86 197/3/0、riscv64 136/64/0、arm64 23/177/0 与改动前逐条一致）。

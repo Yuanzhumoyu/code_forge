@@ -4,18 +4,17 @@
 [suite gnu-gas-intel]
 files = 1
 lines = 64
-parsed = 40
+parsed = 48
 no_prefix = 6
-tail_mismatch = 15
+tail_mismatch = 7
 corpus_only = 3
-# mismatch: intel.excerpt.s:9	add    eax, 0x90909090	line 2: no matching instruction
 # mismatch: intel.excerpt.s:10	push   es	line 2: no matching instruction
 # mismatch: intel.excerpt.s:11	pop    es	line 2: no matching instruction
-# mismatch: intel.excerpt.s:17	or     eax, 0x90909090	line 2: no matching instruction
 # mismatch: intel.excerpt.s:18	push   cs	line 2: no matching instruction
-# mismatch: intel.excerpt.s:24	adc    eax, 0x90909090	line 2: no matching instruction
 # mismatch: intel.excerpt.s:25	push   ss	line 2: no matching instruction
 # mismatch: intel.excerpt.s:26	pop    ss	line 2: no matching instruction
+# mismatch: intel.excerpt.s:33	push   ds	line 2: no matching instruction
+# mismatch: intel.excerpt.s:34	pop    ds	line 2: no matching instruction
 [suite llvm-mc]
 files = 2
 lines = 447

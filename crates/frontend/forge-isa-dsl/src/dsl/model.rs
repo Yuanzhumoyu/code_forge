@@ -1128,6 +1128,18 @@ pub struct OperandSlot {
     /// imm：最大值约束（缺省 = 按 width/signed 推导）。
     #[serde(default)]
     pub max: Option<i64>,
+    /// imm：**字面量按 W 位位模式读**（缺省 false）。
+    ///
+    /// 打开后汇编器额外接受"另一种读数"里的字面量（有符号槽收无符号写法、无符号槽
+    /// 收负数写法），并**规范化到 `signed` 指定的那种读数**再进编码。解码、反汇编
+    /// 渲染与生成期自测的边界检查仍用 [`Self::imm_range`] 的**规范**值域——所以
+    /// `add rax, -12` 的文本与字节逐字节不变。
+    ///
+    /// x86 `imm32` 是 32 位位模式：`0x90909090` 与 `-1869574000` 是同一批字节，
+    /// GAS/LLVM 两种写法都收——打开后 `add eax, 0x90909090` 才能汇编。
+    /// 超出 W 位**仍然报错**（不静默截断/掩码）。
+    #[serde(default)]
+    pub wrap: Option<bool>,
     /// 该槽可承担的角色；缺省 ["in"]。"inout" = 读改写（in 且 out）。
     #[serde(default)]
     pub roles: Option<Vec<OperandRole>>,
@@ -1158,6 +1170,34 @@ impl OperandSlot {
             (0, (1i64 << w) - 1)
         };
         Some((self.min.unwrap_or(lo), self.max.unwrap_or(hi)))
+    }
+
+    /// 立即数槽的**接受**值域：`wrap` 打开时 = W 位位模式两种读数的并集。
+    ///
+    /// 用途分开：`imm_range()` 是**规范**值域（解码符号扩展、反汇编渲染、生成期
+    /// 自测的 min/max 边界），本方法只放宽**汇编解析**能收下的字面量；规范化参数见
+    /// [`Self::imm_wrap_modulus`]。未开 `wrap` ⇒ 与 `imm_range()` 相同。
+    pub fn imm_accept_range(&self) -> Option<(i64, i64)> {
+        let (lo, hi) = self.imm_range()?;
+        let Some(m) = self.imm_wrap_modulus() else {
+            return Some((lo, hi));
+        };
+        Some((lo.min(-(m >> 1)), hi.max(m - 1)))
+    }
+
+    /// `wrap` 的回绕模 `2^W`（未开 `wrap`、或宽度 ≥ 64 ⇒ `None` = 不回绕）。
+    ///
+    /// 解析后按它规范化到 `signed` 的读数：`v > 规范上界 ⇒ v - 2^W`、
+    /// `v < 规范下界 ⇒ v + 2^W`。
+    pub fn imm_wrap_modulus(&self) -> Option<i64> {
+        if !self.wrap.unwrap_or(false) {
+            return None;
+        }
+        let w = self.width.unwrap_or(64);
+        if w == 0 || w >= 64 {
+            return None;
+        }
+        Some(1i64 << w)
     }
 }
 

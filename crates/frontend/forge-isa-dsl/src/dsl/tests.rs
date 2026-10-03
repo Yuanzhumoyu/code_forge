@@ -3064,6 +3064,96 @@ fn mem_template_list_and_size_component() {
     );
 }
 
+/// 立即数槽的 `wrap`（v20 V10）：字面量按 **W 位位模式**读——两种读数都收，规范化到
+/// `signed` 的读数；解码/渲染/边界仍用规范值域。
+#[test]
+fn imm_slot_wrap_reads_the_bit_pattern() {
+    use super::model::{OperandKind, OperandSlot};
+    let slot = |kind, signed, width, wrap| OperandSlot {
+        name: "imm".into(),
+        kind,
+        class: None,
+        classes: None,
+        byte_reg: None,
+        width,
+        signed,
+        float: None,
+        min: None,
+        max: None,
+        wrap,
+        roles: None,
+    };
+
+    // 32 位有符号 + wrap：规范域是 i32，接受域多收 `0x90909090` 这类无符号写法。
+    let s = slot(OperandKind::Imm, Some(true), Some(32), Some(true));
+    assert_eq!(s.imm_range(), Some((-2147483648, 2147483647)));
+    assert_eq!(s.imm_accept_range(), Some((-2147483648, 4294967295)));
+    assert_eq!(s.imm_wrap_modulus(), Some(4294967296));
+
+    // 无符号 + wrap：反方向——`add al, -1` 这类负数写法按 2^8 回绕成 255。
+    let u = slot(OperandKind::Imm, None, Some(8), Some(true));
+    assert_eq!(u.imm_range(), Some((0, 255)));
+    assert_eq!(u.imm_accept_range(), Some((-128, 255)));
+
+    // 未开 wrap ⇒ 接受域 = 规范域（现有谱逐字节不变）；宽度 ≥ 64 无从回绕。
+    let plain = slot(OperandKind::Imm, Some(true), Some(32), None);
+    assert_eq!(plain.imm_accept_range(), plain.imm_range());
+    assert_eq!(plain.imm_wrap_modulus(), None);
+    let w64 = slot(OperandKind::Imm, None, Some(64), Some(true));
+    assert_eq!(w64.imm_wrap_modulus(), None);
+    assert_eq!(w64.imm_accept_range(), w64.imm_range());
+}
+
+/// `wrap` 的声明侧校验：只对 imm 槽有意义，且宽度必须 < 64。
+#[test]
+fn imm_slot_wrap_validation() {
+    let base = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 7 }
+rd = { offset = 7, width = 3 }
+imm = { offset = 10, width = 12 }
+[[operand_slots]]
+name = "imm12"
+kind = "imm"
+signed = true
+width = 12
+wrap = true
+[[operand_slots]]
+name = "r"
+kind = "reg"
+class = "gpr4"
+[[forms]]
+name = "I"
+opcode_field = "opcode"
+operand_fields = ["rd", "imm"]
+[[instructions]]
+name = "ADDI"
+form = "I"
+opcode = 0x13
+ops = ["dst:r:out", "imm:imm12"]
+asm = "addi {dst}, {imm}"
+"#;
+    parse_and_validate(base).expect("12 位有符号 + wrap 合法");
+    // wrap 用在 reg 槽 → 报错
+    let bad = base.replace("\nwrap = true", "").replace(
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"",
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"\nwrap = true",
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("wrap"), "err: {err}");
+    // wrap + width 64 → 报错
+    let bad = base.replace("width = 12", "width = 64");
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("width < 64"), "err: {err}");
+}
+
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────
 
 /// 栈参数的**能力申报**是角色（v20 A5-3 起谱面没有 `[abi.stack_args]` 键可写了）：

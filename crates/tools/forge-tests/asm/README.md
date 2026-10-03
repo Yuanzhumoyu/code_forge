@@ -121,18 +121,22 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 
 - riscv64：`%lo(2048)(x7)` 这类**重定位修饰的立即数**写法（`%lo`/`%hi`/`%pcrel_lo`）不支持；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
-- x86：`gnu-gas-intel` 还剩两类——
-  ① **无符号 imm32**（`add eax, 0x90909090`，8 行）：`imm32` 槽是**有符号**的
-  （`−2^31..2^31−1`），放不下 `0x90909090`；放宽会连带影响解码的符号扩展口径
-  （`-12` 与 `0xFFFFFFF4` 是同一批字节），需要"无符号字面量按字段位宽规范化"的设计，未做；
-  ② **段寄存器 push/pop**（`push es` / `pop ds`…，7 行）：`[reg.*]` 里没有 16 位段寄存器组；
 - x86：**无基址寻址**（`[-8]`、`[0x12345678]`）不支持——`MemRef.base` 是必需字段；
   解码侧对 `mod=00` + `SIB.base=101` 明确 fail-closed（见 `docs/reference/isa-dsl.md`
-  的 `[conventions.mem]` 节）；
+  的 `[conventions.mem]` 节）；`intel-syntax-encoding.s:76` 的 `movsd XMM5, QWORD PTR [-8]`
+  就是这一类；
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`cmpltps`（SSE 比较谓词别名）、
   `cmp eax, FOO` / `cmp eax, FOO[eax]`（`.set` 符号进立即数/位移）、
   `acquire/release lock add …`（锁前缀 + 内存序提示）；
-  以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
+  以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）；
+- x86：`inc` / `dec`（`inc eax` → `FF /0`，64 位模式下仍合法）谱里没有声明
+  （`inc eax`/`inc ecx` 两行进 `no_prefix` 桶）。
+
+**不是缺口：`gnu-gas-intel` 余下的是 32 位模式专有语法**（`asm/parse/x86/gnu-gas-intel`
+摘自 GAS 的 32 位 Intel 用例）。`push es` / `pop ds` 这类**段寄存器 push/pop 在 64 位
+模式下不存在**（长模式只留 `fs`/`gs`），`daa`/`das`/`aaa`/`aas` 也已在长模式移除——
+本谱是 `[meta].mode = 64`，**照抄它们等于给 x86-64 编出非法指令**，因此明确不做。
+`gnu-gas-intel` 剩下的 7 条红桶全是这类段寄存器 push/pop，已在此登记为"边界"而非"缺口"。
 
 **已经修掉的**（2026-10-03，字节 oracle 抓出来当天就改，逐条见 `CHANGELOG.md`）：
 
@@ -144,21 +148,24 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   `lwu` / `addiw`；顺带修掉 `lui`/`auipc` 的**立即数口径**（我们以前按"绝对值"解释、
   编码器再 `>>12`；GAS/LLVM 的立即数就是 **imm20 字段值**——`lui a0, 2` → rd = 8192）；
   解析档 `parsed` 12 → **72**、编码对拍 12 → **72 条逐字节全等**。
-- x86（v20 V10，前两批）：**内存操作数的文本模板列表 + 尺寸前缀**（`[conventions.mem]`
-  的 `templates` 列表与 `{size}` 组件）与**内存形式的 ALU 族**（`*_MR` / `*_R_MEM`
-  各 8 条）→ `gnu-gas-intel` 解析档 `parsed` 0 → **16**、`llvm-mc` 31 → **32**；
-  第三批补**8 位 ALU 族**（`*_MR_8` / `*_R_MEM_8` / `*_RM8_IMM8` 各 8 条）→ 再 → **40**，
-  只剩上面的无符号 imm32 与段寄存器两类。
+- x86（v20 V10，四批）：
+  ① **内存操作数的文本模板列表 + 尺寸前缀**（`[conventions.mem]` 的 `templates` 列表与
+  `{size}` 组件）与**内存形式的 ALU 族**（`*_MR` / `*_R_MEM` 各 8 条）→ `parsed` 0 → **16**、
+  `llvm-mc` 31 → **32**；
+  ② **8 位 ALU 族**（`*_MR_8` / `*_R_MEM_8` / `*_RM8_IMM8` 各 8 条）→ **40**；
+  ③ 立即数槽的 **`wrap`**（字面量按 W 位位模式读，见 `docs/reference/isa-dsl.md`
+  的「立即数字面量的两种读数」）→ **48**：`add eax, 0x90909090` 这类无符号写法能汇编，
+  而 `add rax, -12` 的文本与字节不变。
 
 ## 现有语料与计数
 
 （`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
-`asm/ratchet/encoding.txt` 为准。x86 两套是 v20 V10 补完内存模板、内存形式 ALU 族与
-8 位 ALU 族之后的数）
+`asm/ratchet/encoding.txt` 为准。x86 两套是 v20 V10 补完内存模板、内存形式 ALU 族、
+8 位 ALU 族与立即数 `wrap` 之后的数）
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| x86 | `gnu-gas-intel` | 1 | 64 | **40** | 6 | 15 | 3 | 无（GAS 用例不带期望字节） |
+| x86 | `gnu-gas-intel` | 1 | 64 | **48** | 6 | 7 | 3 | 无（GAS 用例不带期望字节） |
 | x86 | `llvm-mc` | 2 | 447 | **32** | 29 | 50 | 336 | **有**：103 条期望 / **27 条对拍上 / 0 条差异** |
 | riscv64 | `llvm-mc` | 3 | 503 | **72** | 38 | 31 | 362 | **有**：134 条期望 / **72 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |

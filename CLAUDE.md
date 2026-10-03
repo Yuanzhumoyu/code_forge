@@ -416,7 +416,7 @@ let name = node.get_text("name")?;
   截断输入合法）、`{bytes}` 解码正向、`{asm}` **闭环**（只断言编解码/文本闭环稳定，不比字节）。
   形态在解析期校验（`validate_vectors`），用例发射成 `__spec_tests::spec_vector_<下标>`
   （条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表/往返清单**——迁进谱里（三份发行谱共
-  **361 条**：x86 138 / riscv64 134 / arm64 89；迁移前后字节集合的规范化 sha256 相同）。
+  **362 条**：x86 139 / riscv64 134 / arm64 89；迁移前后字节集合的规范化 sha256 相同）。
   校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
   守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs` 与 `tests/determinism.rs`。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint|abi <谱.toml>`——
@@ -518,6 +518,13 @@ let name = node.get_text("name")?;
   `opsize = "s0"` 指向单类 1 字节槽时会生成 `__opsize == 1` 的解码守卫，恒假 ⇒ 解码
   永远失败（缺省分支的 `find(|w| *w == 2 || *w == 4 || *w == 8)` 恰好把这类过滤掉了，
   所以以前没暴露）。实测 `00 00`（`add [rax], al`）由 `isa_roundtrip_guard` 抓到。
+- **立即数字面量的两种读数（`wrap`，v20 V10）**：立即数字段是 W 位**位模式**，
+  `0x90909090` 与 `-1869574000` 是同一批字节。槽上写 `wrap = true`（仅 `kind = "imm"`
+  且 `width < 64`，声明期校验）后，汇编器额外接受另一种读数并**规范化**回 `signed` 的
+  读数（`OperandSlot::imm_accept_range` / `imm_wrap_modulus`）；**规范值域 `imm_range()`
+  不变**——解码符号扩展、反汇编渲染、生成期自测的 min/max 边界都照旧，所以
+  `add rax, -12` 的文本与字节逐字节不变。超出 W 位仍然报错。候选特异性与类型签名按
+  **接受**域计（口径 = "能接受多少输入"）。x86 `imm32` 打开它收下 `add eax, 0x90909090`。
 - **生成物形状表（v18 S8a）**：`impl MachineInst for Inst` 的 8 个查询方法
   （`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/`reg_field`/`set_reg_field`/
   `is_reg_field_settable`）在生成物里**不许再逐指令展开**——它们读每变体一行的

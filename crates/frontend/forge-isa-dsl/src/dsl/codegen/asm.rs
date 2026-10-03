@@ -906,9 +906,22 @@ fn operand_parse_tok(
             Ok((elem, pat, cb))
         }
         OperandKind::Imm => {
-            let (min, max) = slot.imm_range().unwrap_or((i64::MIN, i64::MAX));
+            // `wrap` 打开时用**接受**值域收字面量，再规范化回 `signed` 的读数
+            // （`0x90909090` → `-1869574000`）：编码/解码/渲染仍用规范值域。
+            let (min, max) = slot.imm_accept_range().unwrap_or((i64::MIN, i64::MAX));
             let float = slot.float == Some(true);
-            let elem = quote! { __imm(&mut it, #min, #max, #float) };
+            let elem = match (slot.imm_wrap_modulus(), slot.imm_range()) {
+                (Some(m), Some((clo, chi))) => quote! {
+                    {
+                        let __w = __imm(&mut it, #min, #max, #float);
+                        __w.map(|v| {
+                            if v > #chi { v.wrapping_sub(#m) } else { v }
+                        })
+                        .map(|v| if v < #clo { v.wrapping_add(#m) } else { v })
+                    }
+                },
+                _ => quote! { __imm(&mut it, #min, #max, #float) },
+            };
             Ok((elem, quote! { Some(#fid) }, None))
         }
         OperandKind::Label => {
@@ -999,6 +1012,8 @@ fn gen_assemble_try_tok(info: &InstInfo, case_insensitive: bool) -> Result<Token
 ///
 /// - 寄存器槽 = 可接受的**类数**（无 class = 任意类，按 64 计，最不具体）；
 /// - 立即数/标签槽 = 可接受的**取值个数**（`imm8s` 的 257 个值 vs `imm32` 的 2^32+1）；
+///   用 [`crate::dsl::model::OperandSlot::imm_accept_range`]——`wrap` 槽多收另一种读数，
+///   属"能接受多少输入"（规范值域只影响解码/渲染/边界，见 `imm_range`）。
 /// - 内存/条件码槽按 1 计（不参与）。
 ///
 /// 立即数也计入是 v20 V9 修的**真缺陷**：x86 的 `83 /n ib`（符号扩展 imm8）比
@@ -1012,7 +1027,7 @@ fn form_specificity(info: &InstInfo, _model: &IsaModel) -> u64 {
         let n = match slot.kind {
             OperandKind::Reg => slot.classes().map(|c| c.len() as u64).unwrap_or(64).max(1),
             OperandKind::Imm | OperandKind::Label => {
-                let (lo, hi) = slot.imm_range().unwrap_or((i64::MIN, i64::MAX));
+                let (lo, hi) = slot.imm_accept_range().unwrap_or((i64::MIN, i64::MAX));
                 (hi as i128 - lo as i128 + 1).clamp(1, u64::MAX as i128) as u64
             }
             _ => 1,
@@ -1045,7 +1060,7 @@ fn type_signature(info: &InstInfo) -> Result<String, String> {
                 let sig = match slot.kind {
                     OperandKind::Reg => format!("R{:?}", slot.classes().unwrap_or_default()),
                     OperandKind::Imm => {
-                        let (lo, hi) = slot.imm_range().unwrap_or((i64::MIN, i64::MAX));
+                        let (lo, hi) = slot.imm_accept_range().unwrap_or((i64::MIN, i64::MAX));
                         format!("I{lo}:{hi}")
                     }
                     OperandKind::Label => "L".to_string(),
