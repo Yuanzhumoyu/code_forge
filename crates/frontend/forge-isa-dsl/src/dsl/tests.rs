@@ -1293,14 +1293,15 @@ fn pseudo_absent_keeps_assembler_unchanged() {
     assert!(!s.contains("__split_args"), "不该生成切分器：{s}");
 }
 
-/// 伪指令名与指令助记符重名 ⇒ 报错（否则汇编器永远匹配不到它）。
+/// 伪指令名与某条指令模板的**前导字面**重名 ⇒ 报错
+/// （伪指令展开先于指令扫描，这个名字开头的写法会被伪指令吃掉）。
 #[test]
 fn pseudo_name_must_not_shadow_mnemonic() {
     let doc = lowering_doc(
         "[[pseudo]]\nname = \"mov\"\nparams = [\"dst\", \"src\"]\nemit = [\"mov {dst}, {src}\"]",
     );
     let msg = validation_msg(&doc);
-    assert!(msg.contains("与指令助记符重名"), "msg: {msg}");
+    assert!(msg.contains("前导字面重名"), "msg: {msg}");
 }
 
 /// 伪指令名重复 / 参数为空 / 参数重复 ⇒ 报错。
@@ -1322,7 +1323,7 @@ fn pseudo_decl_shape_is_validated() {
     assert!(validation_msg(&dup_param).contains("参数 'a' 重复"));
 }
 
-/// `emit` 的空行/空表、行首词拼错、`{…}` 不是参数、参数没用到 ⇒ 都要报错。
+/// `emit` 的空行/空表、行首接不上任何指令模板、`{…}` 不是参数、参数没用到 ⇒ 都要报错。
 #[test]
 fn pseudo_emit_is_validated() {
     let empty = lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = []");
@@ -1333,7 +1334,7 @@ fn pseudo_emit_is_validated() {
 
     let typo_head =
         lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"moov {a}, {a}\"]");
-    assert!(validation_msg(&typo_head).contains("既不是指令助记符"));
+    assert!(validation_msg(&typo_head).contains("接不到任何指令模板上"));
 
     let typo_ph =
         lowering_doc("[[pseudo]]\nname = \"mv\"\nparams = [\"a\"]\nemit = [\"mov {aa}, {a}\"]");
@@ -1354,6 +1355,56 @@ fn pseudo_may_emit_another_pseudo() {
          [[pseudo]]\nname = \"twice\"\nparams = [\"a\", \"b\"]\nemit = [\"mv {a}\", \"mv {b}\"]",
     );
     parse_and_validate(&doc).expect("emit 引用别的伪指令必须通过");
+}
+
+/// 伪指令校验**不假设"首词 = 助记符"**（v20 V9 修）：v17 起 asm 模板可以操作数前置、
+/// 首段可以是多 token 字面，判定改为比**前导字面的 token**（与扫描器同一份词法）。
+#[test]
+fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
+    // ① 操作数前置的指令（`{dst} = {src}`）+ 行首是参数的 emit：
+    //    旧实现按空白切词（首词 `{dst}`）判定，会把合法的 emit 行判成拼错。
+    let operand_first = lowering_doc("")
+        .replace("asm = \"mov {dst}, {src}\"", "asm = \"{dst} = {src}\"")
+        + "[[pseudo]]\nname = \"assign\"\nparams = [\"a\", \"b\"]\nemit = [\"{a} = {b}\"]\n";
+    parse_and_validate(&operand_first).expect("操作数前置的模板不该被当成助记符表");
+    //    同理，伪指令名不以任何模板的**前导字面**开头 ⇒ 不算重名（首段是操作数，比不了）。
+    let op_first_name = lowering_doc("")
+        .replace("asm = \"mov {dst}, {src}\"", "asm = \"{dst} = {src}\"")
+        + "[[pseudo]]\nname = \"dst\"\nparams = [\"a\"]\nemit = [\"{a} = {a}\"]\n";
+    parse_and_validate(&op_first_name).expect("首段是操作数时，名字不构成遮蔽");
+
+    // ② 多 token 前导字面：`set if …` 的 emit 行以 `set if` 开头 ⇒ 接得上；
+    //    改一个 token（`sett`）⇒ 拼错。旧实现只看首词 `set`，两种情况都放过。
+    let two_tok = lowering_doc("").replace(
+        "asm = \"mov {dst}, {src}\"",
+        "asm = \"set if {dst}, {src}\"",
+    );
+    let ok = two_tok.clone()
+        + "[[pseudo]]\nname = \"si\"\nparams = [\"a\", \"b\"]\nemit = [\"set if {a}, {b}\"]\n";
+    parse_and_validate(&ok).expect("多 token 前导字面的 emit 行必须通过");
+    let bad = two_tok
+        + "[[pseudo]]\nname = \"si\"\nparams = [\"a\", \"b\"]\nemit = [\"sett {a}, {b}\"]\n";
+    assert!(
+        validation_msg(&bad).contains("接不到任何指令模板上"),
+        "多 token 前导字面只有首个 token 相同不算接得上"
+    );
+
+    // ③ 遮蔽检测跟着扫描器的**大小写口径**走：不敏感 ISA（缺省）里 `MOV` 与 `mov` 撞车，
+    //    显式 `mnemonic_case = "sensitive"` 的 ISA 里不撞（`__eat_name` 只在
+    //    不敏感档忽略大小写）。
+    let ci =
+        lowering_doc("[[pseudo]]\nname = \"MOV\"\nparams = [\"a\"]\nemit = [\"mov {a}, {a}\"]");
+    assert!(
+        validation_msg(&ci).contains("前导字面重名"),
+        "大小写不敏感 ISA（缺省）里 MOV 与 mov 是同一个写法"
+    );
+    let cs =
+        lowering_doc("[[pseudo]]\nname = \"MOV\"\nparams = [\"a\"]\nemit = [\"mov {a}, {a}\"]")
+            .replace(
+                "name = \"x\"",
+                "name = \"x\"\nmnemonic_case = \"sensitive\"",
+            );
+    parse_and_validate(&cs).expect("敏感 ISA 里 MOV 与 mov 是两回事");
 }
 
 // ───────────────── 结构完善：asm 完整格式 + 通用模板段 ─────────────────

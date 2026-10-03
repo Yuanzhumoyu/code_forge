@@ -7,6 +7,7 @@
 use super::diag::{DeclIndex, Diags};
 use super::model::*;
 use super::shared::parse_u64;
+use crate::assembler::{Tok, tokenize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// 逐节收集：每节最多一条（节内逐条收集的见 `*_all`）。
@@ -1021,27 +1022,32 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
 ///
 /// 伪指令是**汇编期**行为，编译器看不到它的调用点，因此声明侧必须自洽：
 ///
-/// - 名字非空、唯一、**不得与任何指令助记符重名**（重名会让汇编器永远匹配不到它，
-///   或静默遮蔽——两者都是最难查的一类错）；
+/// - 名字非空、唯一、**不得与任何指令模板的前导字面重名**（伪指令展开先于指令扫描，
+///   重名会让那个名字开头的指令写法被伪指令吃掉——两者都是最难查的一类错）；
 /// - `params` 非空、每项非空、唯一；
-/// - `emit` 非空、每行非空；行首词必须是**已声明指令助记符或别的伪指令名**
-///   （或 `.` 开头的伪指令），否则那是拼错；
+/// - `emit` 非空、每行非空；行首必须**能接到某条指令模板上**（或别的伪指令名、
+///   `[meta].directive_prefix` 开头的伪操作），否则那是拼错；
 /// - 每行的 `{…}` 必须是已声明参数（拼错即报），且**每个参数都至少用一次**
 ///   （没用到的参数几乎总是写错了名字）。
+///
+/// **判定不按空白切词猜助记符**：v17 起 `asm` 模板可以操作数前置（首"词"是操作数）、
+/// 首段可以是多 token 字面（`lock cmpxchg [`），而伪指令的 `emit` 行是**文本**、
+/// 里面的 `{参数}` 要到汇编期才被实参替换。所以这里看的是**前导字面的 token**
+/// （[`leading_literal`]，用的就是扫描器那份词法 `assembler::tokenize`）：
+/// 两边的重叠部分逐 token 相容即算"接得上"，模板以操作数开头（前导为空）则不构成约束。
 fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
     if m.pseudo.is_empty() {
         return Ok(());
     }
-    // 指令助记符（asm 首词）+ 伪指令名（emit 行首的合法取值）
-    let mut mnemonics: BTreeSet<String> = BTreeSet::new();
-    for inst in &m.instructions {
-        if let Some(w) = inst.asm.split_whitespace().next()
-            && !w.is_empty()
-        {
-            mnemonics.insert(w.to_string());
-        }
-    }
+    let ci = matches!(m.meta.mnemonic_case, MnemonicCase::Insensitive);
+    // 每条指令模板的**前导字面** token（空 = 模板以操作数占位开头，不对行首构成约束）。
+    let leads: Vec<Vec<Tok>> = m
+        .instructions
+        .iter()
+        .map(|inst| leading_literal(&inst.asm))
+        .collect();
     let pseudo_names: BTreeSet<&str> = m.pseudo.iter().map(|p| p.name.as_str()).collect();
+    let dir_prefix = m.meta.directive_prefix.as_str();
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     for p in &m.pseudo {
         if p.name.trim().is_empty() {
@@ -1050,9 +1056,10 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
         if !seen.insert(p.name.as_str()) {
             return Err(format!("[[pseudo.{}]]: 伪指令名重复", p.name));
         }
-        if mnemonics.contains(&p.name) {
+        if leads.iter().any(|l| lead_starts_with_ident(l, &p.name, ci)) {
             return Err(format!(
-                "[[pseudo.{}]]: 伪指令名与指令助记符重名——汇编器会先匹配到指令，伪指令永不生效",
+                "[[pseudo.{}]]: 伪指令名与某条指令模板的前导字面重名——伪指令展开先于指令扫描，\
+                 这个名字开头的行会被伪指令吃掉，那条指令从此装配不到；换个名字",
                 p.name
             ));
         }
@@ -1080,11 +1087,15 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
             if l.is_empty() {
                 return Err(format!("[[pseudo.{}]]: emit 里有空行", p.name));
             }
+            // 行首判定：伪操作（`directive_prefix` 开头）/ 别的伪指令名（运行时按**整词**
+            // 命中）/ 能接到某条指令模板上。`head` 只用于报错显示与那两个字符串判定。
             let head = l.split_whitespace().next().unwrap_or("");
-            if !head.starts_with('.') && !mnemonics.contains(head) && !pseudo_names.contains(head) {
+            let lead = leading_literal(l);
+            let reaches_inst = leads.iter().any(|t| lead_compatible(t, &lead, ci));
+            if !head.starts_with(dir_prefix) && !pseudo_names.contains(head) && !reaches_inst {
                 return Err(format!(
-                    "[[pseudo.{}]]: emit 行 '{l}' 的首词 '{head}' 既不是指令助记符、\
-                     也不是别的伪指令名（拼错了？）",
+                    "[[pseudo.{}]]: emit 行 '{l}' 的开头接不到任何指令模板上，\
+                     也不是别的伪指令名、也不是 '{dir_prefix}' 开头的伪操作（拼错了？）",
                     p.name
                 ));
             }
@@ -1110,6 +1121,45 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// asm 模板的**前导字面** token：模板里第一个 `{…}` 占位**之前**的全部字面。
+///
+/// 模板以占位开头（操作数前置）⇒ 空。**不按空白切词**：`fadd.s` 是一个 Ident
+/// （词法允许 `.`），`lock cmpxchg [` 是三个 token。
+fn leading_literal(asm: &str) -> Vec<Tok> {
+    tokenize(asm.split('{').next().unwrap_or("")).unwrap_or_default()
+}
+
+/// 行首字面 `line` 与模板前导字面 `tpl` **重叠部分逐 token 相容**（任一方是对方的前缀）。
+///
+/// 与生成物扫描第一步同口径：扫描要求模板前导字面的每个 token 依次匹配输入，而 `emit`
+/// 行里 `{参数}` 的位置要到汇编期才有文本，所以只比两边都有的那一段；模板前导为空
+/// （操作数前置）或行首就是占位符（无从判定）都算相容——**宁可放过、不误报**。
+fn lead_compatible(tpl: &[Tok], line: &[Tok], ci: bool) -> bool {
+    tpl.iter().zip(line).all(|(a, b)| tok_eq(a, b, ci))
+}
+
+/// 模板前导字面的**首个** token 是否就是这个标识符（伪指令按整词命中，这是唯一的遮蔽途径）。
+fn lead_starts_with_ident(tpl: &[Tok], name: &str, ci: bool) -> bool {
+    matches!(tpl.first(), Some(Tok::Ident(s)) if tok_ident_eq(s, name, ci))
+}
+
+/// 标识符比较：`mnemonic_case = "insensitive"` 时按扫描器的 `__eat_name` 口径忽略大小写。
+fn tok_ident_eq(a: &str, b: &str, ci: bool) -> bool {
+    if ci {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
+/// token 相等（Ident 在大小写不敏感 ISA 上忽略大小写，其余严格）。
+fn tok_eq(a: &Tok, b: &Tok, ci: bool) -> bool {
+    match (a, b) {
+        (Tok::Ident(x), Tok::Ident(y)) => tok_ident_eq(x, y, ci),
+        _ => a == b,
+    }
 }
 
 /// `[[derive]]` 校验（v18 S3f 派生谓词属性）。

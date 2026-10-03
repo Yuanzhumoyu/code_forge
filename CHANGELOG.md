@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-03) — 伪指令校验不再按"首词"猜助记符（与扫描器同口径）
+
+`validate_pseudos`（错误码 `DSL-PSEUDO`）原来把每条指令 `asm` 的**首个空白分隔词**当成助记符集，用它查两件事：伪指令名是否与指令重名、`emit` 行首词是不是一条指令。这正是"首词 = 助记符"那套被废弃的假设，对**操作数前置**的模板（`asm = "{dst} = {src}"`）会把合法的 `emit` 行判成拼错（首词是 `{rd}` 这类占位符）。
+
+- 改为比**前导字面的 token**：用扫描器那份词法（`assembler::tokenize`）取每条模板第一个 `{…}` 之前的前导字面，`emit` 行同样取前导字面，**重叠部分逐 token 相容**（任一方是对方的前缀）即算"接得上"；模板以操作数开头（前导为空）不构成约束。
+- 遮蔽判定的口径同步修正：伪指令展开**先于**指令扫描，所以"重名"只发生在**模板前导字面的首个 token** 就是该名字时（多 token 前导如 `lock cmpxchg [` 只认 `lock`）；大小写按 `[meta].mnemonic_case` 走（不敏感档 `MOV` 与 `mov` 撞车）。旧错误消息"汇编器会先匹配到指令，伪指令永不生效"把顺序写反了，一并改对。
+- `emit` 行首的伪操作判定改用 `[meta].directive_prefix`（不再硬编码 `.`）。
+- 顺带把"按空白切词查助记符"的措辞从 `docs/reference/isa-dsl.md`、`docs/reference/isa-dsl-errors.md` 与 `model.rs` 的 `[[pseudo]]` 文档例里清掉；`docs/archive/**` 与 CHANGELOG 旧条目保持原样。
+- 守卫：`dsl/tests.rs::pseudo_checks_do_not_assume_first_word_is_mnemonic`（操作数前置 + 行首是参数的 emit 必须通过；多 token 前导的 `set if` 通过而 `sett` 报错；大小写不敏感/敏感两档的遮蔽判定）。实测 `forge-isa-dsl --lib` 224、三份发行谱 `validate`/`lint` 零结论、其余计数不变。
+
 ### Added (2026-10-03) — 真实汇编语料测试台（x86 / riscv64 / arm64）+ 线性扫描探针
 
 拿**上游真实汇编语料**（GNU as / LLVM MC 的测试文件）检验生成物的汇编器：能不能读真实写法、编出的字节对不对、编出来的程序真跑不跑得起来。三档各一个测试二进制，全部在 `crates/tools/forge-tests/`：
