@@ -1326,11 +1326,14 @@ epc=0）。
 
 ## asm 模板
 
-asm 完整格式：**首词 = mnemonic**，后续为逗号分隔操作数；支持 `{0}`/`{1}` 位置
-占位（无 `ops` 的旧式）与 `{名字}` 命名占位（有 `ops`），以及通用模板段
-`Seg = Lit | Op`（mnemonic 与模板分离）。操作数形状：simple（寄存器/立即数）、
-memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄存器名大小写
-不敏感（`xmm0` / `XMM0` 等价）。
+asm 完整格式：**整条模板**由字面段与操作数占位交替而成（`Seg = Lit | Op`）。常见形态是
+**首段为助记符字面**（`asm = "addi {dst}, {src}, {src2}"`），但**首字面不是必须的**——
+v17 起允许**操作数前置**（`asm = "{dst} = {src}"`），首段也可以是**多 token 字面**
+（如 x86 的 `lock cmpxchg [`）。因此"哪条指令"由**整模板左→右 token 扫描**判定，
+**没有"取首词当助记符查表"这一步**——新增能力时别再加回按空白切词推断助记符的做法。
+占位支持 `{0}`/`{1}` 位置形态（无 `ops` 的旧式）与 `{名字}` 命名形态（有 `ops`）。
+操作数形状：simple（寄存器/立即数）、memory（`{I}({J})` 基址+位移，如 `8(X2)`）、
+memory0（`({J})`）。寄存器名大小写不敏感（`xmm0` / `XMM0` 等价）。
 
 ## 代码生成输出
 
@@ -1338,7 +1341,10 @@ memory（`{I}({J})` 基址+位移，如 `8(X2)`）、memory0（`({J})`）。寄�
 
 - **自包含部分**：`Reg` 枚举、`Inst` 枚举、`encode(&Inst) -> Result<Vec<u8>, String>`、
   `decode(&[u8]) -> Option<(Inst, usize)>`、`disassemble(&Inst) -> String`、
-  `assemble(&str) -> Result<Inst, String>`——仅依赖 std。
+  `assemble(&str) -> Result<Inst, String>`、`could_be_instruction(&str) -> bool`
+  ——仅依赖 std。最后一个只跑扫描的**第一步**（首段匹配）：`false` ⇒ 这段一定不是本 ISA
+  的指令（**必要条件**，不是"能不能汇编"的判据），供宿主做诊断/分类；`[[pseudo]]` 走
+  `parse_insts` 的展开路径，探针不覆盖伪指令名。
 - **Inst 字段类型化**：寄存器操作数为 `Reg` 枚举（x86 `MovRmR { src: Reg, dst: Reg }`、
   riscv `Add { dst: Reg, src: Reg, src2: Reg }`），opsize → `u8`、cond → `u8`、
   mem → `MemRef`、imm/label → `i64`；**字段名 = `ops` 里声明的操作数名**（v18 S7d，
