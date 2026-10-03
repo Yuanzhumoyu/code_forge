@@ -5,8 +5,8 @@
 files = 1
 lines = 64
 parsed = 0
-no_prefix = 18
-tail_mismatch = 43
+no_prefix = 6
+tail_mismatch = 55
 corpus_only = 3
 # mismatch: intel.excerpt.s:4	add    byte ptr 0x90909090[eax], dl	line 2: no matching instruction
 # mismatch: intel.excerpt.s:5	add    dword ptr 0x90909090[eax], edx	line 2: no matching instruction
@@ -19,9 +19,9 @@ corpus_only = 3
 [suite llvm-mc]
 files = 2
 lines = 447
-parsed = 7
-no_prefix = 41
-tail_mismatch = 63
+parsed = 31
+no_prefix = 29
+tail_mismatch = 51
 corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:7	mov	r16d, 1	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:13	movsxd	rax, r16d	line 1: no matching instruction
@@ -31,7 +31,7 @@ corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:45	imul	ebx, dword ptr [r16 + rax]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:49	imul	ebx, dword ptr [rax + r16]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:53	imul	r16d, dword ptr [rax + rbx]	line 1: no matching instruction
-# mismatch: intel-syntax-encoding.s:4	xor	ax, 12	line 2: no matching instruction
-# mismatch: intel-syntax-encoding.s:6	xor	eax, 12	line 2: no matching instruction
-# mismatch: intel-syntax-encoding.s:11	or	ax, 12	line 2: no matching instruction
-# mismatch: intel-syntax-encoding.s:13	or	eax, 12	line 2: no matching instruction
+# mismatch: intel-syntax-encoding.s:25	mov	QWORD PTR [RSP - 16], RAX	line 2: no matching instruction
+# mismatch: intel-syntax-encoding.s:76	movsd   XMM5, QWORD PTR [-8]	line 2: no matching instruction
+# mismatch: intel-syntax-encoding.s:97	cmp eax, FOO	line 2: no matching instruction
+# mismatch: intel-syntax-encoding.s:99	cmp eax, FOO[eax]	line 2: no matching instruction

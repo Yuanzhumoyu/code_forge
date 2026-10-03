@@ -988,20 +988,39 @@ fn gen_assemble_try_tok(info: &InstInfo, case_insensitive: bool) -> Result<Token
     })
 }
 
-/// form 特异性：槽约束集越小越具体（多 form 同助记符时分发顺序）。
-/// 无 class（任意类）按 64 计（最不具体）。非 reg 槽按 1 计。
+/// form 特异性：候选**能接受的输入越少越先试**（数值越小越靠前）。多 form 同模板时靠它分发。
+///
+/// - 寄存器槽 = 可接受的**类数**（无 class = 任意类，按 64 计，最不具体）；
+/// - 立即数/标签槽 = 可接受的**取值个数**（`imm8s` 的 257 个值 vs `imm32` 的 2^32+1）；
+/// - 内存/条件码槽按 1 计（不参与）。
+///
+/// 立即数也计入是 v20 V9 修的**真缺陷**：x86 的 `83 /n ib`（符号扩展 imm8）比
+/// `81 /n id` 更具体，但它的目的槽是多宽度 `gprx`（3 类）而旧的 `ADD64_R_IMM32` 是
+/// 单类 `gpr8`——"只看寄存器类数"会把后者排前面，于是 `add rax, -12` 编成 7 字节的
+/// imm32 形式，而规范/上游用 4 字节的符号扩展 imm8 形式（字节 oracle 抓到的）。
+/// 两类都计入"能接受多少输入"后，窄值域的形式自然先试，放不进窄值域的立即数照旧落回宽形式。
 fn form_specificity(info: &InstInfo, _model: &IsaModel) -> u64 {
     let mut spec = 1u64;
     for (_, _, slot, _) in &info.operands {
-        if slot.kind == OperandKind::Reg {
-            let n = slot.classes().map(|c| c.len() as u64).unwrap_or(64).max(1);
-            spec = spec.saturating_mul(n);
-        }
+        let n = match slot.kind {
+            OperandKind::Reg => slot.classes().map(|c| c.len() as u64).unwrap_or(64).max(1),
+            OperandKind::Imm | OperandKind::Label => {
+                let (lo, hi) = slot.imm_range().unwrap_or((i64::MIN, i64::MAX));
+                (hi as i128 - lo as i128 + 1).clamp(1, u64::MAX as i128) as u64
+            }
+            _ => 1,
+        };
+        spec = spec.saturating_mul(n);
     }
     spec
 }
 
 /// 类型签名：整条 asm 的字面 token 序列 + 每操作数槽签名（真重复检测）。
+///
+/// 立即数槽的签名带上**值域**（`I{lo}:{hi}`）：x86 的 `83 /n ib`（符号扩展 imm8）与
+/// `81 /n id`（imm32）汇编文本一模一样，但**能接受的立即数范围不同**——它们不是"真重复"，
+/// 去重掉一条会让放不进 imm8 的立即数没候选可匹配（实测：`xor rax, 12` 走短形式，
+/// `xor rax, 0x12345` 必须还能落回 imm32）。带值域后两条都留在候选里，按声明序先试窄的。
 fn type_signature(info: &InstInfo) -> Result<String, String> {
     let segs = parse_template(&info.inst.asm)?;
     validate_segs(&segs, info)?;
@@ -1018,7 +1037,10 @@ fn type_signature(info: &InstInfo) -> Result<String, String> {
                 let slot = &info.operands[*n].2;
                 let sig = match slot.kind {
                     OperandKind::Reg => format!("R{:?}", slot.classes().unwrap_or_default()),
-                    OperandKind::Imm => "I".to_string(),
+                    OperandKind::Imm => {
+                        let (lo, hi) = slot.imm_range().unwrap_or((i64::MIN, i64::MAX));
+                        format!("I{lo}:{hi}")
+                    }
                     OperandKind::Label => "L".to_string(),
                     OperandKind::Mem => "M".to_string(),
                     OperandKind::Cond => "C".to_string(),

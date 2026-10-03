@@ -59,16 +59,17 @@ fn derived_insts_roundtrip_byte_stable() {
     let x86 = roundtrip_of!("x86", crate::arch::x86::x86);
     let riscv = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
     let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
-    assert!(x86 >= 197, "x86 枚举器条目 {x86} < 指令总数 197");
+    assert!(x86 >= 221, "x86 枚举器条目 {x86} < 指令总数 221");
     assert!(riscv >= 117, "riscv64 枚举器条目 {riscv} < 指令总数 117");
     assert!(arm64 >= 110, "arm64 枚举器条目 {arm64} < 指令总数 110");
     // 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **360**——
     // 远多于指令总数（197/117/110），因为每条指令还带宽度视图、立即数边界与内存风味。
     // 数字变了 ⇒ 谱的指令/操作数风味变了（或派生逻辑改了），人工复核后同步本行。
-    // 2026-10-01：riscv 327 → 329（补 `FSGNJ_D`，三个 fpr 槽各带宽度视图）。
+    // 2026-10-01：riscv 327 → 329（补 FSGNJ_D，三个 fpr 槽各带宽度视图）。
+    // 2026-10-03：x86 602 → 819（补 ALU 立即数/移位/ret 族 26 条、删掉 2 条重复的 64 位角色指令）。
     assert_eq!(
         (x86, riscv, arm64),
-        (602, 329, 360),
+        (819, 329, 360),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

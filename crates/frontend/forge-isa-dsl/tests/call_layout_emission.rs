@@ -151,8 +151,10 @@ fn the_receive_lands_after_the_saves_and_before_the_frame_alloc() {
         "收参排在 callee-saved 保存之前（push @ {last_push} > 收参 @ {recv}）——\
          保存的会是实参值而不是调用者的寄存器值"
     );
-    // x86 的 `@frame_alloc` = `SUB64_R_IMM32 RSP, {frame_size}`（在收参之后）。
-    let frame_alloc = body.find("Sub64RImm32").expect("序言里没有帧分配");
+    // x86 的 `@frame_alloc` = `SUB_R_IMM32 RSP, {frame_size}`（在收参之后）。
+    // v20 V9 起 `frame_alloc` 挂在多宽度的 `SUB_R_IMM32` 上——原先另有一条只差
+    // `dst:gpr` 的 `SUB64_R_IMM32`，两条 asm 文本相同，会把短立即数形式（`83 /5 ib`）挤掉。
+    let frame_alloc = body.find("SubRImm32").expect("序言里没有帧分配");
     assert!(
         recv < frame_alloc,
         "收参应排在帧分配之前（收参 @ {recv} > 帧分配 @ {frame_alloc}）"

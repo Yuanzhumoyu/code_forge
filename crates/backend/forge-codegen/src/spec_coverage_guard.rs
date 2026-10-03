@@ -72,7 +72,7 @@ fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 197), ("riscv64", 117), ("arm64", 110)],
+        vec![("x86", 221), ("riscv64", 117), ("arm64", 110)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
@@ -81,8 +81,14 @@ fn spec_coverage_totals_are_pinned() {
 #[test]
 fn spec_text_ambiguity_lists_are_pinned() {
     let x86 = [
-        "ADD64_R_IMM32",
+        "ADC_R_IMM32",
+        "ADC_R_IMM8S",
         "ADD_R_IMM32",
+        "ADD_R_IMM8S",
+        "AND_R_IMM32",
+        "AND_R_IMM8S",
+        "CMP_R_IMM32",
+        "CMP_R_IMM8S",
         "LEA_R64_SIB",
         "LEA_RBP_OFF",
         "MOV64_MR",
@@ -104,14 +110,20 @@ fn spec_text_ambiguity_lists_are_pinned() {
         "MOV_RM8_R64",
         "MOV_RM_R",
         "MOV_R_RM",
-        "SUB64_R_IMM32",
+        "OR_R_IMM32",
+        "OR_R_IMM8S",
+        "SBB_R_IMM32",
+        "SBB_R_IMM8S",
         "SUB_R_IMM32",
+        "SUB_R_IMM8S",
         "VADDPS_ZMM_MASK",
         "VADDPS_ZMM_MASKZ",
         "VMOVUPS_MR",
         "VMOVUPS_RM",
         "VMOVUPS_ZMM_MEM",
         "VMOVUPS_ZMM_MR",
+        "XOR_R_IMM32",
+        "XOR_R_IMM8S",
     ];
     let riscv = ["ADDI", "ADDI_GLOBAL", "AUIPC", "AUIPC_GLOBAL"];
     let pinned: &[(&str, &[&str])] = &[

@@ -124,18 +124,20 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   ——谱里的 asm 只列了 `x` 名，别名没进寄存器表；
 - riscv64：`%lo(2048)(x7)` 这种重定位修饰的立即数形式不支持；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
-- x86：GAS 的 `disp[base]` 内存写法（`0x90909090[eax]`）、`byte ptr` / `dword ptr`
-  尺寸前缀、无符号 `imm32`（`0x90909090` 超 `i32::MAX`）都不支持——这也是
-  `asm/parse/x86/gnu-gas-intel` 当前 `parsed = 0` 的原因。
-- x86（**字节 oracle 抓到的**，2026-10-03 补语料后）：`xor/or/cmp/add/adc/sbb` 的
-  **16/32 位目的地 + 立即数**形式（`xor eax, 12`、`add ax, -12`）完全不解析，
-  只有 64 位 `rax` 的那些能解析；而 `xor rax, 12` 我们出 **imm32 形式**（7 字节
-  `48 81 f0 0c 00 00 00`）而上游/规范用**符号扩展 imm8**（4 字节 `48 83 f0 0c`），
-  并且**我们的解码器连 `48 83 /6 ib` 都解不出**——五条差异逐条挂在
-  `asm/ratchet/encoding.txt` 的 `known` 清单里（新增/消失都会让门禁红）。
-  另外 `pushf/popf/pushfw/popfw`、`retf`、`ret 8`、`shl EDI, 1`、
-  `movsd XMM5, QWORD PTR [-8]`、`cmpltps`、`acquire/release lock add`、
-  `mov QWORD PTR [RSP-16], RAX` 与 APX（`r16d`/REX2）也都不解析。
+- x86：GAS 的 `disp[base]` 内存写法（`0x90909090[eax]`）、`byte ptr` / `dword ptr` /
+  `QWORD PTR` 这类**尺寸前缀**、无符号 `imm32`（`0x90909090` 超 `i32::MAX`）都不支持
+  ——这也是 `asm/parse/x86/gnu-gas-intel` 当前 `parsed = 0` 的原因；
+- x86（余下几条，来自 `intel-syntax-encoding.s`）：`cmpltps`（SSE 比较谓词别名）、
+  `cmp eax, FOO[eax]`（`.set` 符号 + GAS 的 `disp[base]` 写法）、
+  `movsd XMM5, QWORD PTR [-8]`、`acquire/release lock add …`（锁前缀 + 内存序提示）；
+  以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
+
+**已经修掉的**（2026-10-03，字节 oracle 抓出来当天就改，见 `CHANGELOG.md` 的「ALU 立即数」条）：
+`xor/or/cmp/add/adc/sbb` 的 16/32 位目的地、`xor rax, 12` 的**符号扩展 imm8** 短形式
+（原先出 7 字节 imm32，且解码器连 `48 83 /6 ib` 都解不出）、`shl edi, 1`（`D1 /4`）、
+`mov eax, 0x1234`（`B8+r id`）、`ret 8` / `retf` / `retf 8` / `pushf/popf/pushfw/popfw`。
+x86 的字节对拍从「6 条对上 / 5 条已知差异」变成「**26 条对上 / 0 条差异**」，
+解析档 `llvm-mc` 的 `parsed` 从 7 涨到 **31**。
 
 ## 现有语料与计数
 
@@ -144,8 +146,8 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| x86 | `gnu-gas-intel` | 1 | 64 | 0 | 18 | 43 | 3 | 无（GAS 用例不带期望字节） |
-| x86 | `llvm-mc` | 2 | 447 | 7 | 41 | 63 | 336 | **有**：103 条期望 / 6 条对拍上 / 5 条已知差异 |
+| x86 | `gnu-gas-intel` | 1 | 64 | 0 | 6 | 55 | 3 | 无（GAS 用例不带期望字节） |
+| x86 | `llvm-mc` | 2 | 447 | **31** | 29 | 51 | 336 | **有**：103 条期望 / **26 条对拍上 / 0 条差异** |
 | riscv64 | `llvm-mc` | 3 | 503 | 12 | 45 | 86 | 360 | **有**：134 条期望 / **12 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 

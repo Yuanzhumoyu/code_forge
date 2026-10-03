@@ -11,6 +11,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-03) — 字节 oracle 抓到的 x86 缺陷：ALU 立即数短形式（`83 /n ib`）与 16/32 位目的地
+
+补上真实语料当天，编码对拍档就报出 5 条差异 + 一批"解析不动"，全部是**谱缺形状**而不是语料问题：
+
+- **`83 /n ib`（符号扩展 imm8）整族缺失**：`xor rax, 12` 以前编成 7 字节的 imm32 形式
+  （`48 81 f0 0c 00 00 00`），规范/上游用 4 字节的 `48 83 f0 0c`；更糟的是**解码器也不认**
+  `48 83 /6 ib`（往返守卫注释里的"别名撞车"掩盖不了这一点）。现在补 `ADD/OR/AND/SUB/XOR/CMP`
+  的 imm8s 形式 + `ADC/SBB` 的 reg-reg 与 imm 形式（共 16 条），并新增槽
+  `imm8s`（**有符号 8 位**——CPU 会符号扩展到操作数宽度，与给位域用的无符号 `imm8` 不能混用）。
+- **16/32 位目的地**：`xor eax, 12` / `add ax, -12` 完全不解析（原先的 imm32/imm8 形式都只挂
+  `dst:gpr` = 64 位）。imm32 形式的目的/源槽改成多宽度 `gprx`，于是 `66`/无前缀/REX.W
+  按操作数宽度自动选。
+- **同文本两条编码的分派**：imm8s 与 imm32 汇编文本相同，两处得改——
+  ① `type_signature`（asm 扫描的去重键）带上立即数**值域**，否则窄值域那条会把宽值域那条
+  去重掉、放不进 imm8 的立即数就没候选了；② `form_specificity`（候选排序）也把立即数计入
+  "能接受多少输入"，否则 `ADD64_R_IMM32`（单类 `gpr`）会排在 `ADD_R_IMM8S`（多类）前面，
+  `add rax, -12` 又被编成 imm32（这正是修完第一版后**剩下的那一条**差异，靠字节 oracle 的
+  逐条对拍 + `FORGE_ASM_ENCODING_CASES=1` 才定位到）。
+- **顺带删掉两条重复指令**：`ADD64_R_IMM32` / `SUB64_R_IMM32` 与多宽度的 `ADD_R_IMM32` /
+  `SUB_R_IMM32` 只差 `dst:gpr`、asm 文本完全相同（前者专门承载 `frame_free`/`frame_alloc`
+  角色）。角色改挂到多宽度那条上（帧调整传进来的恒是 64 位栈指针 vreg，**编码逐字节不变**，
+  x86 矩阵 197/3/0 与 riscv 136/64/0 全绿可证），两条重复删除。
+- 其余补齐（都是真实语料里的常见写法）：移位立即数 `SHL/SHR/SAR_RM_ONE`（`D1 /n`，`shl edi, 1`）
+  与 `*_RM_IMM8`（`C1 /n ib`）、`MOV_R_IMM32`（`B8+r id`，`mov eax, 0x1234`）、
+  `RET_IMM16`/`RETF`/`RETF_IMM16`、`PUSHF`/`POPF`/`PUSHFW`/`POPFW`（16 位变体走
+  `prefix = "field"` + `fields = { prefix = 0x66 }`——`opsize = 16` 对**无操作数**指令发不出
+  前缀；两条 `*W` 声明在裸形式**之前**，否则 `66 9c` 会先被 `PUSHF` 解掉、往返不字节稳定）。
+  新增槽 `imm16` 与 32 位目的地槽 `gpr4`。
+- **守卫同步**：`spec_coverage_guard` 指令总数 197 → **221**、文本歧义名单 +13（imm8s/imm32 成对、
+  去掉被删的两条）；`isa_roundtrip_guard` 派生条目 602 → **819**；`[[vectors]]` 里 7 条 ALU
+  立即数期望更新为新的规范短形式；`call_layout_emission.rs` 的帧分配断言跟着改名。
+- **实测**：编码对拍 x86 从「6 条对上 / 5 条已知差异」变成「**26 条对上 / 0 条差异**」，
+  riscv64 12 条、aarch64 15 条逐字节全等不变；解析档 x86 `llvm-mc` 的 `parsed` 7 → **31**、
+  GAS 那份 `no_prefix` 18 → 6（`add/adc/sbb` 等族现在认了，剩下的是 `byte ptr`/`disp[base]`
+  这类写法）；`forge-codegen --lib` 1374 全绿、forge-codegen 30 个集成档全绿、
+  `forge-isa-dsl` 全绿（224 + 17 档）、x86 矩阵 **197/3/0**、riscv64 矩阵 **136/64/0**
+  （编译器行为不变）、`forge-abi` 51、`forge-isa` 33、`forge-tests --lib` 50。
+
 ### Added (2026-10-03) — 语料补齐：x86/aarch64 的字节 oracle 接通，编码对拍也上计数棘轮
 
 按 `asm/PROVENANCE.md` 的清单继续补上游语料（本机 shell 无 TLS，走 `web_fetch` 一份份取回），**六份** LLVM MC 用例进仓库，全部逐字落盘并在 `PROVENANCE.md` 记了 URL/ref/许可/sha256：

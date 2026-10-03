@@ -239,11 +239,35 @@ kind = "imm"
 signed = false
 width = 8
 
+# 符号扩展的 8 位立即数（`83 /n ib`）：**必须有符号**——CPU 把它符号扩展到操作数宽度，
+# 所以 `0x80..0xff` 在这里是负数。`imm8`（无符号 8 位）是给位域类立即数用的
+# （SSE `imm8` lane 索引、VEXTRACT 等），不能混用。
+[[operand_slots]]
+name = "imm8s"
+kind = "imm"
+signed = true
+width = 8
+
+# 无符号 16 位立即数（`ret imm16` / `retf imm16`）。
+[[operand_slots]]
+name = "imm16"
+kind = "imm"
+signed = false
+width = 16
+
 [[operand_slots]]
 name = "imm64"
 kind = "imm"
 signed = false
 width = 64
+
+# 32 位寄存器操作数（`mov r32, imm32` 的 `B8+r id`：16/64 位的立即数宽度不同，
+# 不能共用一个多宽度槽）。
+[[operand_slots]]
+name = "gpr4"
+kind = "reg"
+class = "gpr4"
+roles = ["in", "out", "inout"]
 
 [[operand_slots]]
 name = "rel"
@@ -552,14 +576,120 @@ ops = ["dst:gpr:out", "src:gpr"]
 asm = "mov {dst}, {src}"
 effect = ["Move"]
 
+# ── ALU 立即数：`83 /n ib`（符号扩展 imm8）与 `81 /n id`（imm32）──
+#
+# 同一条汇编文本两条编码都合法，但**规范与上游（GAS/LLVM）都取短的**：
+# `xor rax, 12` 是 `48 83 f0 0c`（4 字节）而不是 `48 81 f0 0c 00 00 00`（7 字节）。
+# 两条的汇编文本相同 ⇒ 会撞上生成器的 `type_signature` 去重；签名里带上了立即数**值域**
+# （`dsl/codegen/asm.rs`），因此两条都留在扫描候选里：按**声明序**先试 imm8s，
+# 值放不进 imm8s（超 i8）再落回 imm32。
+#
+# 目的槽用 `gprx`（16/32/64 多宽度）：`xor eax, 12`、`add ax, -12` 这类写法在真实语料里
+# 遍地都是，`81`/`83` 本来就按 opsize 前缀区分宽度。
+#
+# 这些 imm8s 形式**不带 `ref`**：IR 降级的候选集按 `ref` 建表，不给 ref 就不会被降级选中
+# （降级仍走下面那条 `ref = "add"` 的 `ADD_R_IMM32`，编译器行为不变）；汇编文本照样认。
+
+[[instructions]]
+name = "ADD_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 0, rm = "dst" }
+opcode = 0x83
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8s"]
+asm = "add {dst}, {imm}"
+
+[[instructions]]
+name = "OR_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 1, rm = "dst" }
+opcode = 0x83
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8s"]
+asm = "or {dst}, {imm}"
+
+[[instructions]]
+name = "ADC_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 2, rm = "dst" }
+opcode = 0x83
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8s"]
+asm = "adc {dst}, {imm}"
+
+[[instructions]]
+name = "SBB_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 3, rm = "dst" }
+opcode = 0x83
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8s"]
+asm = "sbb {dst}, {imm}"
+
+[[instructions]]
+name = "AND_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 4, rm = "dst" }
+opcode = 0x83
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8s"]
+asm = "and {dst}, {imm}"
+
+[[instructions]]
+name = "SUB_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 5, rm = "dst" }
+opcode = 0x83
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8s"]
+asm = "sub {dst}, {imm}"
+
+[[instructions]]
+name = "XOR_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 6, rm = "dst" }
+opcode = 0x83
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8s"]
+asm = "xor {dst}, {imm}"
+
+[[instructions]]
+name = "CMP_R_IMM8S"
+form = "MRR_EXT"
+modrm = { reg = 7, rm = "src" }
+opcode = 0x83
+imm = 8
+ops = ["src:gprx", "imm:imm8s"]
+asm = "cmp {src}, {imm}"
+
+# ADC/SBB 的寄存器-寄存器形式（`11 /r`、`19 /r`）——与立即数形式配套。
+[[instructions]]
+name = "ADC_RM_R"
+form = "MRR"
+opcode = 0x11
+ops = ["src:gprx", "dst:gprx:inout"]
+asm = "adc {dst}, {src}"
+
+[[instructions]]
+name = "SBB_RM_R"
+form = "MRR"
+opcode = 0x19
+ops = ["src:gprx", "dst:gprx:inout"]
+asm = "sbb {dst}, {src}"
+
 [[instructions]]
 name = "ADD_R_IMM32"
 ref = "add"
 # 地址算术能力（v20 变参 V4）：`dst += imm`——变参游标推进等生成器序列用它。
+# `frame_free` 角色（v20 A4：序/尾声由生成器按角色发射）也挂在它上面——原先另有一条
+# 只差 `dst:gpr`（64 位）的 `ADD64_R_IMM32` 专门承载该角色，两条 asm 文本完全相同，
+# 于是 `add rax, -12` 会被那条排到前面、编成 7 字节 imm32（字节 oracle 抓到的缺陷）。
+# 现在只留这一条多宽度的：帧调整传进来的恒是 64 位栈指针 vreg，编码与原来逐字节一致。
+roles = ["frame_free"]
 form = "MRR_EXT"
 modrm = { reg = 0, rm = "dst" }
 opcode = 0x81
-ops = ["dst:gpr:inout", "imm:imm32"]
+ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "add {dst}, {imm}"
 
 [[instructions]]
@@ -568,8 +698,24 @@ ref = "or"
 form = "MRR_EXT"
 modrm = { reg = 1, rm = "dst" }
 opcode = 0x81
-ops = ["dst:gpr:inout", "imm:imm32"]
+ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "or {dst}, {imm}"
+
+[[instructions]]
+name = "ADC_R_IMM32"
+form = "MRR_EXT"
+modrm = { reg = 2, rm = "dst" }
+opcode = 0x81
+ops = ["dst:gprx:inout", "imm:imm32"]
+asm = "adc {dst}, {imm}"
+
+[[instructions]]
+name = "SBB_R_IMM32"
+form = "MRR_EXT"
+modrm = { reg = 3, rm = "dst" }
+opcode = 0x81
+ops = ["dst:gprx:inout", "imm:imm32"]
+asm = "sbb {dst}, {imm}"
 
 [[instructions]]
 name = "AND_R_IMM32"
@@ -577,16 +723,18 @@ ref = "and"
 form = "MRR_EXT"
 modrm = { reg = 4, rm = "dst" }
 opcode = 0x81
-ops = ["dst:gpr:inout", "imm:imm32"]
+ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "and {dst}, {imm}"
 
 [[instructions]]
 name = "SUB_R_IMM32"
 ref = "sub"
+# 同上：`frame_alloc` 角色挂在多宽度这条上（原来由只差 `dst:gpr` 的 `SUB64_R_IMM32` 承载）。
+roles = ["frame_alloc"]
 form = "MRR_EXT"
 modrm = { reg = 5, rm = "dst" }
 opcode = 0x81
-ops = ["dst:gpr:inout", "imm:imm32"]
+ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "sub {dst}, {imm}"
 
 [[instructions]]
@@ -595,7 +743,7 @@ ref = "xor"
 form = "MRR_EXT"
 modrm = { reg = 6, rm = "dst" }
 opcode = 0x81
-ops = ["dst:gpr:inout", "imm:imm32"]
+ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "xor {dst}, {imm}"
 
 [[instructions]]
@@ -604,7 +752,7 @@ ref = "cmp"
 form = "MRR_EXT"
 modrm = { reg = 7, rm = "src" }
 opcode = 0x81
-ops = ["src:gpr", "imm:imm32"]
+ops = ["src:gprx", "imm:imm32"]
 asm = "cmp {src}, {imm}"
 
 # ── @sse_rr 简单指令（prefix=field, w=0）──
@@ -1484,6 +1632,64 @@ opcode = 0xF7
 ops = ["dst:gpr:inout"]
 asm = "not {dst}"
 
+# ── 移位：按立即数（`D1 /n` 的 1、`C1 /n ib` 的一般计数）──
+#
+# `shl rax, 1` 的规范写法是 `D1 /4`（2 字节）；`C1 /4 01` 也合法但更长。两条模板
+# （字面 `1` vs `{imm}`）不同，不撞 `type_signature`；`D1` 那条**声明在前**，
+# `shl edi, 1` 先命中它（与上游 GAS/LLVM 的规范形式一致）。
+# 目的槽 `gprx`：`shl edi, 1` 这类 32 位写法是真实语料里的常态。
+
+[[instructions]]
+name = "SHL_RM_ONE"
+form = "MRR"
+modrm = { reg = 4, rm = "dst" }
+opcode = 0xD1
+ops = ["dst:gprx:inout"]
+asm = "shl {dst}, 1"
+
+[[instructions]]
+name = "SHR_RM_ONE"
+form = "MRR"
+modrm = { reg = 5, rm = "dst" }
+opcode = 0xD1
+ops = ["dst:gprx:inout"]
+asm = "shr {dst}, 1"
+
+[[instructions]]
+name = "SAR_RM_ONE"
+form = "MRR"
+modrm = { reg = 7, rm = "dst" }
+opcode = 0xD1
+ops = ["dst:gprx:inout"]
+asm = "sar {dst}, 1"
+
+[[instructions]]
+name = "SHL_RM_IMM8"
+form = "MRR_EXT"
+modrm = { reg = 4, rm = "dst" }
+opcode = 0xC1
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8"]
+asm = "shl {dst}, {imm}"
+
+[[instructions]]
+name = "SHR_RM_IMM8"
+form = "MRR_EXT"
+modrm = { reg = 5, rm = "dst" }
+opcode = 0xC1
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8"]
+asm = "shr {dst}, {imm}"
+
+[[instructions]]
+name = "SAR_RM_IMM8"
+form = "MRR_EXT"
+modrm = { reg = 7, rm = "dst" }
+opcode = 0xC1
+imm = 8
+ops = ["dst:gprx:inout", "imm:imm8"]
+asm = "sar {dst}, {imm}"
+
 # ── 移位（D3 /digit，CL 隐式计数；opsize 固定 64 → REX.W）──
 
 [[instructions]]
@@ -1540,27 +1746,6 @@ implicit_regs = ["RAX", "RDX"]
 ops = ["src:gpr"]
 asm = "idiv {src}"
 
-[[instructions]]
-name = "SUB64_R_IMM32"
-ref = "sub"
-roles = ["frame_alloc"]
-modrm = { reg = 5, rm = "dst" }
-opsize = 64
-imm = 0x20
-opcode = 0x81
-ops = ["dst:gpr:inout", "imm:imm32"]
-asm = "sub {dst}, {imm}"
-
-[[instructions]]
-name = "ADD64_R_IMM32"
-ref = "add"
-roles = ["frame_free"]
-modrm = { reg = 0, rm = "dst" }
-opsize = 64
-imm = 0x20
-opcode = 0x81
-ops = ["dst:gpr:inout", "imm:imm32"]
-asm = "add {dst}, {imm}"
 
 [[instructions]]
 name = "PSHUFD"
@@ -1614,6 +1799,18 @@ imm = 0x40
 ops = ["dst:gpr:out", "imm:imm64"]
 asm = "mov {dst}, {imm}"
 
+# `mov r32, imm32`（`B8+r id`）：32 位**不**带 `rex_w`，立即数只需 4 字节
+# （`mov eax, 0x1234` → `b8 34 12 00 00`）。**不给 `data_width`**：搬运表（v20 V8）
+# 仍只认 64 位那条，编译器行为不变——这条补的是**汇编面**（真实语料里的常见写法，
+# 也是 P1 时登记的 `mov eax, 0x1234` 缺口）。
+[[instructions]]
+name = "MOV_R_IMM32"
+opcode_reg = 0xB8
+opsize = 32
+imm = 32
+ops = ["dst:gpr4:out", "imm:imm32"]
+asm = "mov {dst}, {imm}"
+
 [[instructions]]
 name = "BSWAP_R"
 opcode_reg = 0xC8
@@ -1631,6 +1828,53 @@ roles = ["ret"]
 opcode = 0xC3
 effect = ["Ret"]
 asm = "ret"
+
+# `ret imm16` / 远返回族 / 标志位进出：**汇编面**指令（真实语料里有），编译器不发它们，
+# 因此**不申报 `roles`**（`ret` 角色是序/尾声发射用的，不能有两个候选），也不给 effect。
+[[instructions]]
+name = "RET_IMM16"
+opcode = 0xC2
+imm = 16
+ops = ["imm:imm16"]
+asm = "ret {imm}"
+
+[[instructions]]
+name = "RETF"
+opcode = 0xCB
+asm = "retf"
+
+[[instructions]]
+name = "RETF_IMM16"
+opcode = 0xCA
+imm = 16
+ops = ["imm:imm16"]
+asm = "retf {imm}"
+
+[[instructions]]
+name = "PUSHFW"
+opcode = 0x9C
+prefix = "field"
+fields = { prefix = 0x66 }
+asm = "pushfw"
+
+[[instructions]]
+name = "POPFW"
+opcode = 0x9D
+prefix = "field"
+fields = { prefix = 0x66 }
+asm = "popfw"
+[[instructions]]
+name = "PUSHF"
+opcode = 0x9C
+asm = "pushf"
+
+[[instructions]]
+name = "POPF"
+opcode = 0x9D
+asm = "popf"
+
+# 16 位（`66` 前缀）变体。`opsize = 16` 对**无操作数**指令发不出前缀（它按操作数推宽度），
+# 所以显式走 prefix 字段：`prefix = "field"` + `fields = { prefix = 0x66 }`（与 SSE 族同款）。
 
 [[instructions]]
 name = "JMP_REL32"
@@ -3588,31 +3832,31 @@ bytes = [0x48, 0x89, 0xD8]
 
 [[vectors]]
 asm = "add RAX, 42"
-bytes = [0x48, 0x81, 0xC0, 0x2A, 0x00, 0x00, 0x00]
+bytes = [0x48, 0x83, 0xC0, 0x2A]
 
 [[vectors]]
 asm = "sub RAX, 42"
-bytes = [0x48, 0x81, 0xE8, 0x2A, 0x00, 0x00, 0x00]
+bytes = [0x48, 0x83, 0xE8, 0x2A]
 
 [[vectors]]
 asm = "and RAX, 42"
-bytes = [0x48, 0x81, 0xE0, 0x2A, 0x00, 0x00, 0x00]
+bytes = [0x48, 0x83, 0xE0, 0x2A]
 
 [[vectors]]
 asm = "or RAX, 42"
-bytes = [0x48, 0x81, 0xC8, 0x2A, 0x00, 0x00, 0x00]
+bytes = [0x48, 0x83, 0xC8, 0x2A]
 
 [[vectors]]
 asm = "xor RAX, 42"
-bytes = [0x48, 0x81, 0xF0, 0x2A, 0x00, 0x00, 0x00]
+bytes = [0x48, 0x83, 0xF0, 0x2A]
 
 [[vectors]]
 asm = "cmp RAX, 42"
-bytes = [0x48, 0x81, 0xF8, 0x2A, 0x00, 0x00, 0x00]
+bytes = [0x48, 0x83, 0xF8, 0x2A]
 
 [[vectors]]
 asm = "add R8, 42"
-bytes = [0x49, 0x81, 0xC0, 0x2A, 0x00, 0x00, 0x00]
+bytes = [0x49, 0x83, 0xC0, 0x2A]
 
 [[vectors]]
 asm = "xadd [RAX], RBX"
