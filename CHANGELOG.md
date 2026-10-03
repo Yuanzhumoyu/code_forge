@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-03) — x86 一元 `inc`/`dec`（`FF /0`、`FF /1`、`FE /0`、`FE /1`）
+
+与 `not`/`neg` 同族（`MRR_EXT_OP`：reg = 固定扩展码、rm = 目的操作数）：16/32/64 位走 `FF /0`、`FF /1`，8 位走 `FE /0`、`FE /1`——`inc`/`dec` 的 16 位短编码（`40+r`..`4F`）在长模式里已经是 REX 前缀，所以只能用 `FF` 这一组。四条指令写成两条 `[[templates]]`（各 2 行）；**不写 `ref`**：IR 的 `+1`/`-1` 走 ADD/SUB 的立即数形式，降级不发射它们，所以候选集与运行期行为不变（JIT 矩阵逐条一致）。
+
+效果：`gnu-gas-intel` 解析档 `parsed` 48 → **50**、`no_prefix` 6 → **4**，64 条里只剩 7 条红桶（全是 32 位模式专有的段寄存器 push/pop）。
+
+**归因口径变化（不是回归）**：补上 `inc`/`dec` 后，`apx-rex2-format-intel.s` 里 8 行 APX 形态的 `inc`/`dec`（`inc r16d`、`dec dword ptr [rax + r16]`）从 `no_prefix`（"没有候选的首段能对上"）挪进了 `tail_mismatch`（"首段对得上、后面没对上"）——以前连 `inc` 都不认识，现在知道助记符对、错在 APX 操作数。`parsed` 不变，红桶数字变化仅此一项：`llvm-mc` 的 `no_prefix` 29 → **21**、`tail_mismatch` 50 → **58**。
+
 ### Added (2026-10-03) — 立即数槽 `wrap`：字面量按 W 位位模式读（两种读数都收）
 
 立即数字段是 W 位**位模式**——`0x90909090` 与 `-1869574000` 是同一批字节，各家汇编器两种写法都收。DSL 原先只收 `signed` 决定的那一种读数，于是 x86 的 `add eax, 0x90909090`（`imm32` 是**有符号** 32 位，放不下 `0x90909090`）汇编不了，`gnu-gas-intel` 有 8 行卡在这里。

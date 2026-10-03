@@ -493,10 +493,10 @@ let name = node.get_text("name")?;
   `disp=8`/`disp=-8`/`index+scale=4`；取值与生成期自测同源 `sample_operands`）——
   宿主侧"全指令编解码往返"**不要再手抄 `all_insts()`**（x86 曾手抄 650 行且谱加指令时不
   自动跟上）；由 `crates/backend/forge-codegen/src/isa_roundtrip_guard.rs` 遍历三谱的
-  1251/341/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
+  1263/341/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
   按声明序首匹配，本就不成立），仍由各 ISA 测试的"规范指令"小清单守。
   覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
-  x86 261 / riscv64 119 / arm64 110、零跳过、文本歧义名单；v20 V10 起歧义键 = 字面段 +
+  x86 265 / riscv64 119 / arm64 110、零跳过、文本歧义名单；v20 V10 起歧义键 = 字面段 +
   **按模板占位符序、不带操作数序号**的打印描述——只有占位符顺序相反的 `add [mem], r`
   对 `add r, [mem]`，以及"序号不同但渲染文本确实一样"的 `MOV_R_RM` 对 `MOV64_RR`，
   各修掉一类误判；**它是 `#[cfg(test)]` 项，

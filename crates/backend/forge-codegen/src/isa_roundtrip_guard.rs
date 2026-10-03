@@ -52,14 +52,14 @@ macro_rules! roundtrip_of {
 
 /// 三份发行谱：谱里每条指令（含宽度视图/立即数边界/内存风味）编解码闭环。
 ///
-/// 下界钉住的是**枚举器不许退化**：指令总数见 `spec_coverage_guard`（x86 261 /
+/// 下界钉住的是**枚举器不许退化**：指令总数见 `spec_coverage_guard`（x86 265 /
 /// riscv64 119 / arm64 110），枚举器条目只会更多（视图与风味），少于总数就是派生漏了。
 #[test]
 fn derived_insts_roundtrip_byte_stable() {
     let x86 = roundtrip_of!("x86", crate::arch::x86::x86);
     let riscv = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
     let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
-    assert!(x86 >= 261, "x86 枚举器条目 {x86} < 指令总数 261");
+    assert!(x86 >= 265, "x86 枚举器条目 {x86} < 指令总数 265");
     assert!(riscv >= 119, "riscv64 枚举器条目 {riscv} < 指令总数 119");
     assert!(arm64 >= 110, "arm64 枚举器条目 {arm64} < 指令总数 110");
     // 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **360**——
@@ -69,10 +69,12 @@ fn derived_insts_roundtrip_byte_stable() {
     // 2026-10-03：riscv 329 → 341（补 LWU/ADDIW）；x86 602 → 819（补 ALU 立即数/移位/ret 族 26 条、删掉 2 条重复的 64 位角色指令）。
     // 2026-10-03（v20 V10）：x86 819 → 1075（内存形式 ALU 16 条，每条带 gprx 的
     //   2/4/8 字节三个宽度视图 + 高低寄存器视图 + 内存的 disp/index 风味）；
-    //   1075 → **1251**（8 位 ALU 24 条，每条带高低寄存器视图 + 内存/立即数风味）。
+    //   1075 → **1251**（8 位 ALU 24 条，每条带高低寄存器视图 + 内存/立即数风味）；
+    //   1251 → **1263**（一元 `inc`/`dec` 4 条：`INCDEC_RM` 带三个宽度视图 + 高视图，
+    //   `INCDEC_RM_8` 带一个高视图）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1251, 341, 360),
+        (1263, 341, 360),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

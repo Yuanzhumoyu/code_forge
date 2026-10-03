@@ -1744,6 +1744,29 @@ ops = ["src:fpr32", "dst:fpr:out", "imm:imm8"]
 asm = "vextractf32x4 {dst}, {src}, {imm}"
 # ── 收官：@op_rm / @op_rm_imm32 / @sse_rr_imm8 / +r 形式 ──
 
+# ── 一元读改写：`FE /digit`（r/m8）与 `FF /digit`（r/m16/32/64）───────────────
+#
+# 与 NOT/NEG 同族（`MRR_EXT_OP`：reg = 固定扩展码、rm = 目的操作数）。`inc`/`dec` 在
+# 64 位模式下仍合法——只是 16 位的短编码（`40+r`..`4F`）在长模式里成了 REX 前缀，
+# 所以只能用 `FF /0`、`FF /1`（8 位是 `FE /0`、`FE /1`）。
+#
+# 不写 `ref`：IR 降级不用它们（`+1`/`-1` 走 ADD/SUB 的立即数形式），只有汇编器入口需要。
+
+[[templates]]
+name = "INCDEC_RM"
+body = { form = "MRR_EXT_OP", opcode = 0xFF, ops = ["dst:gprx:inout"] }
+rows = [
+  { inst = "INC_RM", modrm = { reg = 0, rm = "dst" }, asm = "inc {dst}" },
+  { inst = "DEC_RM", modrm = { reg = 1, rm = "dst" }, asm = "dec {dst}" },
+]
+
+[[templates]]
+name = "INCDEC_RM_8"
+body = { form = "MRR_EXT_OP", opcode = 0xFE, ops = ["dst:gpr1b:inout"] }
+rows = [
+  { inst = "INC_RM_8", modrm = { reg = 0, rm = "dst" }, asm = "inc {dst}" },
+  { inst = "DEC_RM_8", modrm = { reg = 1, rm = "dst" }, asm = "dec {dst}" },
+]
 [[instructions]]
 name = "NOT_RM"
 form = "MRR_EXT_OP"

@@ -128,9 +128,13 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`cmpltps`（SSE 比较谓词别名）、
   `cmp eax, FOO` / `cmp eax, FOO[eax]`（`.set` 符号进立即数/位移）、
   `acquire/release lock add …`（锁前缀 + 内存序提示）；
-  以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）；
-- x86：`inc` / `dec`（`inc eax` → `FF /0`，64 位模式下仍合法）谱里没有声明
-  （`inc eax`/`inc ecx` 两行进 `no_prefix` 桶）。
+  以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
+
+> **计数口径变化（v20 V10）**：补上一元 `inc`/`dec` 之后，`apx-rex2-format-intel.s` 里
+> 那 8 行 `inc`/`dec`（`inc r16d`、`dec dword ptr [rax + r16]`）从 `no_prefix` 桶
+> （"没有候选的首段能对上"）挪进了 `tail_mismatch` 桶（"首段对得上、后面没对上"）——
+> 它们本来就是 APX 形态（超出本谱范围），只是**归因更准了**：以前连 `inc` 都不认识，
+> 现在知道助记符对、错在 APX 操作数。`parsed` 不变，红桶数字变化仅此一项。
 
 **不是缺口：`gnu-gas-intel` 余下的是 32 位模式专有语法**（`asm/parse/x86/gnu-gas-intel`
 摘自 GAS 的 32 位 Intel 用例）。`push es` / `pop ds` 这类**段寄存器 push/pop 在 64 位
@@ -155,18 +159,21 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   ② **8 位 ALU 族**（`*_MR_8` / `*_R_MEM_8` / `*_RM8_IMM8` 各 8 条）→ **40**；
   ③ 立即数槽的 **`wrap`**（字面量按 W 位位模式读，见 `docs/reference/isa-dsl.md`
   的「立即数字面量的两种读数」）→ **48**：`add eax, 0x90909090` 这类无符号写法能汇编，
-  而 `add rax, -12` 的文本与字节不变。
+  而 `add rax, -12` 的文本与字节不变；
+  ④ 一元 **`inc`/`dec`**（`FF /0`、`FF /1`、`FE /0`、`FE /1`，4 条）→ **50**：
+  `gnu-gas-intel` 的 64 条里现在只剩 7 条红桶（全是 32 位模式专有的段寄存器 push/pop）、
+  4 条 `no_prefix`（`daa`/`das`/`aaa`/`aas`，同样长模式已删）与 3 条 `corpus_only`。
 
 ## 现有语料与计数
 
 （`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
 `asm/ratchet/encoding.txt` 为准。x86 两套是 v20 V10 补完内存模板、内存形式 ALU 族、
-8 位 ALU 族与立即数 `wrap` 之后的数）
+8 位 ALU 族、立即数 `wrap` 与一元 `inc`/`dec` 之后的数）
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| x86 | `gnu-gas-intel` | 1 | 64 | **48** | 6 | 7 | 3 | 无（GAS 用例不带期望字节） |
-| x86 | `llvm-mc` | 2 | 447 | **32** | 29 | 50 | 336 | **有**：103 条期望 / **27 条对拍上 / 0 条差异** |
+| x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
+| x86 | `llvm-mc` | 2 | 447 | **32** | 21 | 58 | 336 | **有**：103 条期望 / **27 条对拍上 / 0 条差异** |
 | riscv64 | `llvm-mc` | 3 | 503 | **72** | 38 | 31 | 362 | **有**：134 条期望 / **72 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 

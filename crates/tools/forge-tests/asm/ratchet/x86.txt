@@ -4,8 +4,8 @@
 [suite gnu-gas-intel]
 files = 1
 lines = 64
-parsed = 48
-no_prefix = 6
+parsed = 50
+no_prefix = 4
 tail_mismatch = 7
 corpus_only = 3
 # mismatch: intel.excerpt.s:10	push   es	line 2: no matching instruction
@@ -19,8 +19,8 @@ corpus_only = 3
 files = 2
 lines = 447
 parsed = 32
-no_prefix = 29
-tail_mismatch = 50
+no_prefix = 21
+tail_mismatch = 58
 corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:7	mov	r16d, 1	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:13	movsxd	rax, r16d	line 1: no matching instruction
