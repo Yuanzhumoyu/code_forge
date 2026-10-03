@@ -105,6 +105,20 @@ names = ["K0","K1","K2","K3","K4","K5","K6","K7"]
 [conventions.modrm]
 force_disp_base = [5, 13]
 
+# v20 V10：内存操作数文本模板**列表**。第 0 条用于反汇编渲染（渲染必须唯一），
+# 其余只在汇编解析时按列表序兜底——同一份 MemRef 的几种合法写法各写一条，
+# 不必硬塞进同一条模板。
+#   * {size} = 解析专用的尺寸前缀（QWORD PTR 之类），值不进 MemRef：宽度由操作数槽
+#     /opsize 决定，前缀只是给人读的冗余提示；渲染时输出空串，所以
+#     disassemble -> assemble 仍然闭合。关键字表见 size_keywords，大小写按
+#     [meta].mnemonic_case（x86 = insensitive，qword ptr / QWORD PTR 都认）。
+#   * GAS 的 Intel 方言把位移写在下标**前**（0x90909090[eax]），与 Intel 语法的
+#     [eax+0x90909090] 是同一份数据的两种写法 → 单列第 1 条（{size} 可选，故它同时
+#     覆盖带不带尺寸前缀两种写法）。
+[conventions.mem]
+templates = ["{size}[{base}+{index}*{scale}+{disp}]", "{size}{disp}[{base}]"]
+size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
+
 # v13/v18-S3b：条件码表（**唯一一份**；jcc/setcc/cmovcc 的 cond 槽查它、
 # 反汇编按码渲染、lowering 的 `{cc}` 按 ir 字段查它）。
 #   键   = 汇编/反汇编可见的条件名（反汇编取同码里字母序最小者）
@@ -369,6 +383,10 @@ escape = [0x0F]
 prefix = "field"
 
 [[forms]]
+name = "MRR_MEMREF_AUTO"  # MemRef 内存（base/index/disp）+ opsize 由首个 Reg 操作数驱动
+opsize = "s0"
+
+[[forms]]
 name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
 opsize = 64
 
@@ -493,6 +511,46 @@ opsize = "max"
 ops = ["src:gprx", "src2:gprx"]
 asm = "test {src2}, {src}"
 
+# ── 内存形式的 ALU 族（v20 V10）─────────────────────────────────────────────
+#
+# 与寄存器版**共用操作码**，区别只在 ModRM 的 mod（=11 走寄存器形式，≠11 走内存
+# 形式）：`ADD_RM_R`（0x01）等只覆盖前者，这里补后者。两种 rm 风味在 x86 谱里早有
+# 先例（`MOV_R_RM`/`MOV_R_MEM`、`MOV_RM_R`/`STORE_MEM_R`），不是新机制。
+#
+# 两族都**不写 `ref`**：IR 降级不发射内存形式的 ALU（目前只有汇编器入口需要它），
+# 所以候选集不变、字节与运行期行为逐字节不动，JIT 矩阵不受影响。
+#
+# 名字用 x86 手册的形态名：`*_MR` = r/m ← r/m op r（目的在内存）；
+# `*_R_MEM` = r ← r op r/m（源在内存）。宽度由旁边的寄存器驱动
+# （`MRR_MEMREF_AUTO` 的 `opsize = "s0"`）——内存操作数自己不携带宽度语义。
+
+[[templates]]
+name = "ALU_MR"
+body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"] }
+rows = [
+  { inst = "ADD_MR",  opcode = 0x01, asm = "add {mem}, {src}" },
+  { inst = "OR_MR",   opcode = 0x09, asm = "or {mem}, {src}" },
+  { inst = "ADC_MR",  opcode = 0x11, asm = "adc {mem}, {src}" },
+  { inst = "SBB_MR",  opcode = 0x19, asm = "sbb {mem}, {src}" },
+  { inst = "AND_MR",  opcode = 0x21, asm = "and {mem}, {src}" },
+  { inst = "SUB_MR",  opcode = 0x29, asm = "sub {mem}, {src}" },
+  { inst = "XOR_MR",  opcode = 0x31, asm = "xor {mem}, {src}" },
+  { inst = "CMP_MR",  opcode = 0x39, asm = "cmp {mem}, {src}", ops = ["src:gprx", "mem:mem"] },
+]
+
+[[templates]]
+name = "ALU_R_MEM"
+body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }
+rows = [
+  { inst = "ADD_R_MEM", opcode = 0x03, asm = "add {dst}, {mem}" },
+  { inst = "OR_R_MEM",  opcode = 0x0B, asm = "or {dst}, {mem}" },
+  { inst = "ADC_R_MEM", opcode = 0x13, asm = "adc {dst}, {mem}" },
+  { inst = "SBB_R_MEM", opcode = 0x1B, asm = "sbb {dst}, {mem}" },
+  { inst = "AND_R_MEM", opcode = 0x23, asm = "and {dst}, {mem}" },
+  { inst = "SUB_R_MEM", opcode = 0x2B, asm = "sub {dst}, {mem}" },
+  { inst = "XOR_R_MEM", opcode = 0x33, asm = "xor {dst}, {mem}" },
+  { inst = "CMP_R_MEM", opcode = 0x3B, asm = "cmp {src}, {mem}", ops = ["src:gprx", "mem:mem"] },
+]
 [[instructions]]
 name = "MOVZX_R8_MEM"
 modrm = { rm = "[src]" }

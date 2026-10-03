@@ -328,10 +328,14 @@ pub fn generate_with_parts(
 }
 
 /// 有 mem 操作数时生成 `MemRef` 结构 + 反汇编渲染 `__render_mem`（自包含）。
-/// `__render_mem` 从 `[conventions.mem] template` 派生（v16）；缺省 = x86 `[...]`。
+/// `__render_mem` 从 `[conventions.mem] templates` 的**第 0 条**派生（v16；v20 V10
+/// 起模板是列表，渲染只用第 0 条——渲染必须唯一）；缺省 = x86 `[...]`。
 fn gen_mem_support(model: &IsaModel, _infos: &[InstInfo]) -> Result<TokenStream, String> {
-    let tpl = mem::effective_template(&model.conventions.mem);
-    let items = mem::parse_mem_template(&tpl)?;
+    let tpls = mem::effective_templates(&model.conventions.mem);
+    let first = tpls
+        .first()
+        .ok_or("[conventions.mem]: `templates` 不能为空".to_string())?;
+    let items = mem::parse_mem_template(first)?;
     let render_mem = mem::gen_render_mem(&items);
     Ok(quote! {
         /// 内存操作数（自包含；base 为物理寄存器索引，disp 为字节位移；

@@ -684,12 +684,19 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
         });
     }
     if has_mem {
-        let mem_items = super::mem::parse_mem_template(&super::mem::effective_template(
-            &model.conventions.mem,
-        ))?;
-        let mem_parser = super::mem::gen_mem_parser(&mem_items);
+        let tpls = super::mem::effective_templates(&model.conventions.mem);
+        let mut parsed: Vec<Vec<super::mem::Item>> = Vec::with_capacity(tpls.len());
+        for (k, t) in tpls.iter().enumerate() {
+            parsed.push(
+                super::mem::parse_mem_template(t)
+                    .map_err(|e| format!("[conventions.mem] templates[{k}]: {e}"))?,
+            );
+        }
+        let kws = super::mem::size_keyword_toks(&model.conventions.mem)?;
+        let ci = matches!(model.meta.mnemonic_case, MnemonicCase::Insensitive);
+        let mem_parser = super::mem::gen_mem_parser(&parsed, &kws, ci);
         out.extend(quote! {
-            /// 内存操作数解析（由 `[conventions.mem] template` 派生；v16）。
+            /// 内存操作数解析（由 `[conventions.mem] templates` 派生；v16/V10）。
             #mem_parser
             fn __raw_int(it: &mut __Iter) -> Option<i64> {
                 let v = match it.toks.get(it.pos)? { __Tok::Num(v) => *v, _ => return None };

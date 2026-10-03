@@ -2916,7 +2916,7 @@ fn mem_template_render_mips_style() {
 fn mem_template_parser_mips_style() {
     use super::codegen::mem::{gen_mem_parser, parse_mem_template};
     let items = parse_mem_template("{disp}({base})").unwrap();
-    let s = gen_mem_parser(&items).to_string();
+    let s = gen_mem_parser(&[items], &[], false).to_string();
     let c = s.replace(' ', "");
     assert!(
         c.contains("__raw_signed_int"),
@@ -2952,7 +2952,7 @@ count = 8
 opcode = { offset = 0, width = 7 }
 rd = { offset = 7, width = 3 }
 [conventions.mem]
-template = "{disp}({base})"
+templates = ["{disp}({base})"]
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -2970,23 +2970,98 @@ asm = "add {dst}"
 "#;
     parse_and_validate(base).expect("MIPS 模板合法");
     // 缺 base → 报错
-    let bad = base.replace(r#"template = "{disp}({base})""#, r#"template = "{disp}""#);
+    let bad = base.replace(
+        r#"templates = ["{disp}({base})"]"#,
+        r#"templates = ["{disp}"]"#,
+    );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("base"), "err: {err}");
     // scale 未紧随 index → 报错
     let bad = base.replace(
-        r#"template = "{disp}({base})""#,
-        r#"template = "[{base}*{scale}]""#,
+        r#"templates = ["{disp}({base})"]"#,
+        r#"templates = ["[{base}*{scale}]"]"#,
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("index"), "err: {err}");
     // 未知占位符 → 报错
     let bad = base.replace(
-        r#"template = "{disp}({base})""#,
-        r#"template = "[{base}+{foo}]""#,
+        r#"templates = ["{disp}({base})"]"#,
+        r#"templates = ["[{base}+{foo}]"]"#,
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("foo"), "err: {err}");
+    // 空列表 → 报错（第 0 条是渲染形态，不能省）
+    let bad = base.replace(r#"templates = ["{disp}({base})"]"#, r#"templates = []"#);
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("templates"), "err: {err}");
+    // 用了 {size} 却没说 size_keywords → 报错
+    let bad = base.replace(
+        r#"templates = ["{disp}({base})"]"#,
+        r#"templates = ["{size}{disp}({base})"]"#,
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("size_keywords"), "err: {err}");
+    // 声明了 size_keywords 但模板里没 {size} → 合法（表只是能力申报）
+    let ok = base.replace(
+        r#"templates = ["{disp}({base})"]"#,
+        "templates = [\"{disp}({base})\"]\nsize_keywords = [\"qword ptr\"]",
+    );
+    parse_and_validate(&ok).expect("多余的 size_keywords 不报错");
+}
+
+/// 内存模板列表（v20 V10）：第 0 条渲染、其余解析专用；`{size}` 关键字表。
+#[test]
+fn mem_template_list_and_size_component() {
+    use super::codegen::mem::{
+        Comp, Item, effective_templates, gen_mem_parser, gen_render_mem, parse_mem_template,
+        size_keyword_toks,
+    };
+    use super::model::MemTemplate;
+
+    // `{size}` 解析：列进 Comp::Size。
+    let items = parse_mem_template("{size}[{base}]").unwrap();
+    assert!(matches!(&items[0], Item::Comp(Comp::Size)), "{items:?}");
+    assert!(matches!(&items[1], Item::Lit { text, .. } if text == "["));
+    assert!(matches!(&items[2], Item::Comp(Comp::Base)));
+
+    // 渲染只用第 0 条：`{size}` 输出空串，紧邻它的 `[` **不**被当条件前缀吞掉。
+    let render = gen_render_mem(&items).to_string().replace(' ', "");
+    assert!(
+        render.contains("\"[\""),
+        "紧邻 {{size}} 的字面量应恒发出：{render}"
+    );
+    assert!(
+        !render.contains("QWORD"),
+        "渲染不该输出尺寸关键字：{render}"
+    );
+
+    // 解析：两条模板 → `__mem_try0`/`__mem_try1`，`__mem` 按序兜底。
+    let t0 = parse_mem_template("{size}[{base}+{disp}]").unwrap();
+    let t1 = parse_mem_template("{disp}[{base}]").unwrap();
+    let kws = size_keyword_toks(&Some(MemTemplate {
+        templates: vec!["{size}[{base}]".into(), "{disp}[{base}]".into()],
+        size_keywords: vec!["qword ptr".into()],
+    }))
+    .unwrap();
+    assert_eq!(kws.len(), 1);
+    assert_eq!(kws[0].len(), 2, "两词关键字 → 两个 token");
+    let parser = gen_mem_parser(&[t0, t1], &kws, true)
+        .to_string()
+        .replace(' ', "");
+    assert!(parser.contains("fn__mem_try0"), "{parser}");
+    assert!(parser.contains("fn__mem_try1"), "{parser}");
+    assert!(parser.contains("fn__eat_size"), "{parser}");
+    assert!(
+        parser.contains("__eat_lit_ci"),
+        "大小写豁免应走 __eat_lit_ci：{parser}"
+    );
+
+    // 生效列表：未声明 → 单条缺省模板。
+    assert_eq!(effective_templates(&None).len(), 1);
+    assert_eq!(
+        effective_templates(&None)[0],
+        super::codegen::mem::DEFAULT_MEM_TEMPLATE
+    );
 }
 
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────

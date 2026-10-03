@@ -2058,6 +2058,18 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                                     let __sc_bits = (__sib_byte >> 6) & 3;
                                     __scale = match __sc_bits { 1 => 2, 2 => 4, 3 => 8, _ => 1 };
                                     __base = ((__sib_byte & 7) as u32) | (__rex_b << 3);
+                                    // `mod=00` + `SIB.base=101` = **无基址**形态（后面跟着
+                                    // disp32）：`MemRef.base` 是必需字段，表示不了它 ⇒
+                                    // fail-closed 拒绝。不拒就会**少读 4 字节 disp32**、
+                                    // 还把 base 当成 RBP/R13 返回（v20 V10 由
+                                    // `encoder_fuzz_tests` 的 `sub rax, [0x12345678]`
+                                    // 抓到的既有缺陷——那时没有指令占 2B，`decode` 直接
+                                    // Err，缺陷看不见）。编码侧永不产出这个形态
+                                    // （`[conventions.modrm].force_disp_base = [5, 13]`
+                                    // 让 RBP/R13 基址恒走 mod=01 + disp8=0）。
+                                    if __mod == 0 && (__sib_byte & 7) == 5 {
+                                        __sib_ok = false;
+                                    }
                                     if __idx_full == 4 {
                                         __index_reg = None;
                                     } else {

@@ -599,54 +599,75 @@ fn views_of(info: &InstInfo) -> Vec<ViewSel> {
 /// 实参描述必须含**具体操作数**（寄存器类 + 索引、立即数值…），不能只写"reg/imm"
 /// 这类槽类型——`add x0, x1, x2` 与 `add w0, w1, w2` 的槽类型一样但文本不同，
 /// 只按槽类型判会把它们误记为歧义（白白放弃强断言）。
+///
+/// 实参**按模板里占位符出现的序**排列，且**不带操作数序号**——键描述的是"这段文本
+/// 打印出来是什么"，不是"操作数声明表长什么样"。两条规则各修掉一类误判：
+///
+/// - 按占位符序：x86 的 `add [mem], r`（`add {1}, {0}`）与 `add r, [mem]`
+///   （`add {0}, {1}`）操作数类型与字面段完全一样，只有占位符顺序相反——按声明序
+///   建键会把这两条**文本明显不同**的指令误判成歧义（v20 V10 实测：16 条新 ALU
+///   内存形式全被误报）；
+/// - 不带序号：`MOV_R_RM`（`mov {0}, {1}`：目的在 reg 字段）与 `MOV64_RR`
+///   （`mov {1}, {0}`：目的在 rm 字段）**渲染出的文本一模一样**（都是 `mov A, B`），
+///   这正是**真歧义**——带上序号反而把它们拆开，让"回到同一字节"的强断言落到
+///   文本本就分不清的指令上（实测 `MOV_R8_RM64[hi]` 因此变红）。
 fn text_key(info: &InstInfo, view: &ViewSel, cond_first: Option<u8>) -> String {
-    let lits: Vec<String> = asm::parse_template(&info.inst.asm)
-        .map(|segs| {
-            segs.iter()
-                .filter_map(|s| match s {
-                    Seg::Lit(l) => Some(l.clone()),
-                    Seg::Op(_) => None,
-                })
-                .collect()
+    let Ok(segs) = asm::parse_template(&info.inst.asm) else {
+        return String::new();
+    };
+    let lits: Vec<String> = segs
+        .iter()
+        .filter_map(|s| match s {
+            Seg::Lit(l) => Some(l.clone()),
+            Seg::Op(_) => None,
         })
-        .unwrap_or_default();
+        .collect();
     // 字段名不入键（文本里看不见字段名——两条指令字段名不同但文本一样时，
     // 汇编器照样分不清）。
-    let args: Vec<String> = info
-        .operands
+    let args: Vec<String> = segs
         .iter()
-        .enumerate()
-        .map(|(j, (_, _, slot, _))| match slot.kind {
-            OperandKind::Reg => {
-                let cls = match view
-                    .forced
-                    .get(j)
-                    .copied()
-                    .flatten()
-                    .and_then(|w| view_class(slot, w))
-                {
-                    Some(c) => format!("{c:?}"),
-                    None => slot
-                        .class
-                        .map(|c| format!("{c:?}"))
-                        .or_else(|| slot.classes.as_ref().map(|cs| format!("{cs:?}")))
-                        .unwrap_or_else(|| "default".into()),
-                };
-                // 索引进键：低/高视图渲染出的寄存器名不同（`rax` vs `r15`），
-                // 不区分会让两条用例互相误判成"文本歧义"。
-                format!("reg{j}:{cls}:{}", if view.high { "hi" } else { "lo" })
-            }
-            OperandKind::Mem => format!("mem{j}"),
-            OperandKind::Imm => {
-                let (lo, hi) = slot.imm_range().unwrap_or((0, 0));
-                let v = if lo <= 0 && 0 <= hi { 0 } else { lo };
-                format!("imm{j}={v}")
-            }
-            OperandKind::Label => format!("label{j}"),
-            OperandKind::Cond => format!("cond{j}={}", cond_first.unwrap_or(0)),
+        .filter_map(|s| match s {
+            Seg::Op(n) => Some(describe_operand(info, view, cond_first, *n)),
+            Seg::Lit(_) => None,
         })
         .collect();
     format!("{lits:?}|{args:?}")
+}
+
+/// 一个操作数**印出来**的样子（寄存器类 + 索引视图、立即数值、槽类别）。
+fn describe_operand(info: &InstInfo, view: &ViewSel, cond_first: Option<u8>, j: usize) -> String {
+    let Some((_, _, slot, _)) = info.operands.get(j) else {
+        return "op?".into();
+    };
+    match slot.kind {
+        OperandKind::Reg => {
+            let cls = match view
+                .forced
+                .get(j)
+                .copied()
+                .flatten()
+                .and_then(|w| view_class(slot, w))
+            {
+                Some(c) => format!("{c:?}"),
+                None => slot
+                    .class
+                    .map(|c| format!("{c:?}"))
+                    .or_else(|| slot.classes.as_ref().map(|cs| format!("{cs:?}")))
+                    .unwrap_or_else(|| "default".into()),
+            };
+            // 低/高视图渲染出的寄存器名不同（`rax` vs `r15`），
+            // 不区分会让两条用例互相误判成"文本歧义"。
+            format!("reg:{cls}:{}", if view.high { "hi" } else { "lo" })
+        }
+        OperandKind::Mem => "mem".to_string(),
+        OperandKind::Imm => {
+            let (lo, hi) = slot.imm_range().unwrap_or((0, 0));
+            let v = if lo <= 0 && 0 <= hi { 0 } else { lo };
+            format!("imm={v}")
+        }
+        OperandKind::Label => "label".to_string(),
+        OperandKind::Cond => format!("cond={}", cond_first.unwrap_or(0)),
+    }
 }
 
 /// 文本不唯一的用例：用例下标 → 同键的**其它指令名**。

@@ -4,24 +4,24 @@
 [suite gnu-gas-intel]
 files = 1
 lines = 64
-parsed = 0
+parsed = 16
 no_prefix = 6
-tail_mismatch = 55
+tail_mismatch = 39
 corpus_only = 3
 # mismatch: intel.excerpt.s:4	add    byte ptr 0x90909090[eax], dl	line 2: no matching instruction
-# mismatch: intel.excerpt.s:5	add    dword ptr 0x90909090[eax], edx	line 2: no matching instruction
 # mismatch: intel.excerpt.s:6	add    dl, byte ptr 0x90909090[eax]	line 2: no matching instruction
-# mismatch: intel.excerpt.s:7	add    edx, dword ptr 0x90909090[eax]	line 2: no matching instruction
 # mismatch: intel.excerpt.s:8	add    al, 0x90	line 2: no matching instruction
 # mismatch: intel.excerpt.s:9	add    eax, 0x90909090	line 2: no matching instruction
 # mismatch: intel.excerpt.s:10	push   es	line 2: no matching instruction
 # mismatch: intel.excerpt.s:11	pop    es	line 2: no matching instruction
+# mismatch: intel.excerpt.s:12	or     [eax+0x90909090], dl	line 2: no matching instruction
+# mismatch: intel.excerpt.s:14	or     dl, [eax+0x90909090]	line 2: no matching instruction
 [suite llvm-mc]
 files = 2
 lines = 447
-parsed = 31
+parsed = 32
 no_prefix = 29
-tail_mismatch = 51
+tail_mismatch = 50
 corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:7	mov	r16d, 1	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:13	movsxd	rax, r16d	line 1: no matching instruction
@@ -31,7 +31,6 @@ corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:45	imul	ebx, dword ptr [r16 + rax]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:49	imul	ebx, dword ptr [rax + r16]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:53	imul	r16d, dword ptr [rax + rbx]	line 1: no matching instruction
-# mismatch: intel-syntax-encoding.s:25	mov	QWORD PTR [RSP - 16], RAX	line 2: no matching instruction
 # mismatch: intel-syntax-encoding.s:76	movsd   XMM5, QWORD PTR [-8]	line 2: no matching instruction
 # mismatch: intel-syntax-encoding.s:97	cmp eax, FOO	line 2: no matching instruction
 # mismatch: intel-syntax-encoding.s:99	cmp eax, FOO[eax]	line 2: no matching instruction

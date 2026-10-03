@@ -38,6 +38,7 @@
     - [最小示例](#最小示例)
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
     - [`[conventions.cond]` — 条件码表（一张表，三处用）](#conventionscond--条件码表一张表三处用)
+    - [`[conventions.mem]` — 内存操作数的文本形态（v20 V10）](#conventionsmem--内存操作数的文本形态v20-v10)
   - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
   - [`[[instructions]]` — 指令](#instructions--指令)
@@ -121,7 +122,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集） |
-| `[conventions.mem]` | `template` | — | 内存操作数文本模板（缺省 x86 `[{base}+{index}*{scale}+{disp}]`） |
+| `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
@@ -501,6 +502,9 @@ eq  = 4                        # 简写 = { code = 4 }，且 ir 取键名（键�
 [[conventions.prefix_scan]]
 byte = 0x66
 effects = ["opsize16"]
+
+[conventions.mem]              # 可选：内存操作数的文本模板列表（见下节；缺省 = x86 `[...]`）
+templates = ["[{base}+{index}*{scale}+{disp}]"]  # 第 0 条 = 渲染形态
 ```
 
 > **S1 删除**：`[conventions.rex]`（`w_opsize`）与 `[conventions.opsize_prefix]`
@@ -549,6 +553,38 @@ rows = [
 位域支持**散布位段**（`pieces`）：立即数分段放置（S/U/B/J 型）。编码
 `word |= ((value >> shift) & mask) << offset`；解码 `value |= ((word >> offset)
 & mask) << shift`（可逆）。
+
+### `[conventions.mem]` — 内存操作数的文本形态（v20 V10）
+
+`kind = "mem"` 的槽要回答两件事：**渲染成什么文本**、**能读哪些写法**。前者必须唯一
+（`disassemble` 的输出不能随解析顺序漂移），后者恰恰常常不止一种。
+
+```toml
+[conventions.mem]
+templates = [
+  "{size}[{base}+{index}*{scale}+{disp}]",  # 第 0 条 = 渲染形态（也是解析首选）
+  "{size}{disp}[{base}]",                   # 解析专用备选：GAS Intel 的 disp[base]
+]
+size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
+```
+
+- **第 0 条 = 反汇编渲染形态**，其余只参与解析：按列表序逐条试，第一条整条走通的赢。
+  同一份 `MemRef` 的几种合法写法各写一条，不必硬塞进同一条模板。列表不能为空。
+- 组件：`{base}`（必需 Reg）、`{index}`（可选 Reg）、`{scale}`（可选，1/2/4/8，**必须
+  紧跟 `{index}`**）、`{disp}`（可选，有符号 i64）、`{size}`（可选，解析专用）。
+- 一个紧跟在**可选**组件前的字面量是该组件的"条件前缀"：只在组件出现时发出/消费
+  （`{disp}` 的 `+` 前缀额外对非正位移抑制——`-8` 不写成 `+-8`）；紧跟在**必需**组件
+  前、或位于末尾的字面量恒发出。**紧邻 `{size}` 的字面量例外**——它不是 `{size}` 的
+  条件前缀（否则 `qword ptr [rax]` 的 `[` 会随尺寸前缀一起消失）。
+- `{size}` 吃掉 `size_keywords` 里的任一关键字（大小写按 `[meta].mnemonic_case`），
+  **值不进 `MemRef`**：操作数宽度由槽 /`opsize` 决定，尺寸前缀只是给人读的冗余提示
+  （`mov QWORD PTR [rsp-16], rax` 与 `mov [rsp-16], rax` 编出同样的字节）。渲染时它
+  输出空串，所以 `disassemble → assemble` 仍然闭合。模板里用了 `{size}` 却没声明
+  `size_keywords` ⇒ 生成期报错。
+- **缺省**（整节不写）= 单条 `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
+- 表示不了的形态**显式拒绝**，不要"解一半"：`MemRef.base` 是必需字段，所以"无基址"
+  寻址（x86 `[0x1234]`、`mod=00` + `SIB.base=101`）在解码侧 fail-closed——否则会少读
+  4 字节 disp32，还编出一个假的 `[rbp+disp]`。
 
 ## `[[operand_slots]]` — 操作数槽
 

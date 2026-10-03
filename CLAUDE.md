@@ -493,11 +493,26 @@ let name = node.get_text("name")?;
   `disp=8`/`disp=-8`/`index+scale=4`；取值与生成期自测同源 `sample_operands`）——
   宿主侧"全指令编解码往返"**不要再手抄 `all_insts()`**（x86 曾手抄 650 行且谱加指令时不
   自动跟上）；由 `crates/backend/forge-codegen/src/isa_roundtrip_guard.rs` 遍历三谱的
-  819/341/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
+  1075/341/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
   按声明序首匹配，本就不成立），仍由各 ISA 测试的"规范指令"小清单守。
   覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
-  x86 221 / riscv64 119 / arm64 110、零跳过、文本歧义名单；**它是 `#[cfg(test)]` 项，
+  x86 237 / riscv64 119 / arm64 110、零跳过、文本歧义名单；v20 V10 起歧义键 = 字面段 +
+  **按模板占位符序、不带操作数序号**的打印描述——只有占位符顺序相反的 `add [mem], r`
+  对 `add r, [mem]`，以及"序号不同但渲染文本确实一样"的 `MOV_R_RM` 对 `MOV64_RR`，
+  各修掉一类误判；**它是 `#[cfg(test)]` 项，
   必须放在 `lib.rs` 末尾**——写死宽度守卫按第一个 `#[cfg(test)]` 截断扫描）。
+- **内存操作数的文本形态（v20 V10）**：`[conventions.mem] templates` 是**列表**——
+  **第 0 条 = 反汇编渲染形态**（渲染必须唯一，否则输出会随解析尝试顺序漂移），其余是
+  解析专用备选（按列表序试，第一条整条走通的赢）。组件 `{base}`（必需）`{index}`
+  `{scale}` `{disp}` `{size}`；`{size}` 吃 `size_keywords` 里的任一关键字（大小写按
+  `[meta].mnemonic_case`），**值不进 `MemRef`**——宽度由槽/`opsize` 决定，尺寸前缀只是
+  给人读的冗余提示（`mov QWORD PTR [rsp-16], rax` 与 `mov [rsp-16], rax` 编出同样的
+  字节），渲染输出空串所以 `disassemble → assemble` 照旧闭合。**紧邻 `{size}` 的字面量
+  不是它的条件前缀**（否则 `qword ptr [rax]` 的 `[` 会随尺寸消失）。`MemRef.base` 是必需
+  字段 ⇒ "无基址"寻址（x86 `mod=00` + `SIB.base=101`）**解码侧 fail-closed**——不拒就会
+  少读 4 字节 disp32 还编出假的 `[rbp+disp]`（`encoder_fuzz_tests` 的
+  `sub rax, [0x12345678]` 抓到）。规范见 `docs/reference/isa-dsl.md` 的
+  「`[conventions.mem]` — 内存操作数的文本形态」。
 - **生成物形状表（v18 S8a）**：`impl MachineInst for Inst` 的 8 个查询方法
   （`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/`reg_field`/`set_reg_field`/
   `is_reg_field_settable`）在生成物里**不许再逐指令展开**——它们读每变体一行的

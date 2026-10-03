@@ -1047,10 +1047,41 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
         }
     }
     if let Some(mt) = &conv.mem {
-        let items = super::codegen::mem::parse_mem_template(&mt.template)
-            .map_err(|e| format!("[conventions.mem]: {e}"))?;
-        super::codegen::mem::validate_mem_template(&items)
-            .map_err(|e| format!("[conventions.mem]: {e}"))?;
+        if mt.templates.is_empty() {
+            return Err(
+                "[conventions.mem]: `templates` 不能为空（第 0 条 = 反汇编渲染形态，不能省）"
+                    .into(),
+            );
+        }
+        let mut used_size = false;
+        for (k, tpl) in mt.templates.iter().enumerate() {
+            let items = super::codegen::mem::parse_mem_template(tpl)
+                .map_err(|e| format!("[conventions.mem] templates[{k}]: {e}"))?;
+            used_size |= items.iter().any(|it| {
+                matches!(
+                    it,
+                    super::codegen::mem::Item::Comp(super::codegen::mem::Comp::Size)
+                )
+            });
+            super::codegen::mem::validate_mem_template(&items)
+                .map_err(|e| format!("[conventions.mem] templates[{k}]: {e}"))?;
+        }
+        if used_size {
+            if mt.size_keywords.is_empty() {
+                return Err(
+                    "[conventions.mem]: 模板里用了 `{size}`，必须声明 `size_keywords`\
+                     （它列出这个 ISA 认的尺寸前缀写法，如 [\"qword ptr\", \"dword ptr\"]）"
+                        .into(),
+                );
+            }
+            for kw in &mt.size_keywords {
+                if kw.trim().is_empty() {
+                    return Err("[conventions.mem] size_keywords: 关键字不能为空".into());
+                }
+                super::codegen::mem::check_literal(kw)
+                    .map_err(|e| format!("[conventions.mem] size_keywords({kw:?}): {e}"))?;
+            }
+        }
     }
     Ok(())
 }

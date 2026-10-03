@@ -190,11 +190,11 @@ pub const SECTIONS: &[Section] = &[
     Section {
         path: "[conventions.mem]",
         model: "MemTemplate",
-        required: &["template"],
-        optional: &[],
+        required: &["templates"],
+        optional: &["size_keywords"],
         flatten: &[],
         additional: false,
-        doc: "内存操作数文本模板（缺省 x86 `[{base}+{index}*{scale}+{disp}]`）",
+        doc: "内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size）",
     },
     Section {
         path: "[[operand_slots]]",

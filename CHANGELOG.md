@@ -11,6 +11,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-03) — `[conventions.mem]` 改成模板**列表** + `{size}` 尺寸前缀（破坏性，无兼容层）
+
+声明从 `template = "…"` 变成 `templates = ["…", …]`：**第 0 条 = 反汇编渲染形态**（渲染必须唯一，否则 `disassemble` 的输出会随解析尝试顺序漂移），其余是**解析专用备选**——按列表序逐条试，第一条整条走通的赢。同一份 `MemRef` 的几种合法写法（x86 的 Intel `[base+disp]` 与 GAS `disp[base]`）各写一条，不必硬塞进同一条模板；空列表报错。
+
+- 新组件 `{size}`：吃掉 `size_keywords` 里的任一关键字（大小写按 `[meta].mnemonic_case`），**值不进 `MemRef`**——宽度由操作数槽/`opsize` 决定，尺寸前缀只是给人读的冗余提示（`mov QWORD PTR [rsp-16], rax` 与 `mov [rsp-16], rax` 编出同样的字节）。渲染输出空串，故 `disassemble → assemble` 照旧闭合；模板里用了 `{size}` 却没声明 `size_keywords` ⇒ 生成期报错。紧邻 `{size}` 的字面量**不是**它的条件前缀（否则 `qword ptr [rax]` 的 `[` 会随尺寸前缀一起消失）。
+- `docs/reference/isa-dsl.md` 新增「`[conventions.mem]` — 内存操作数的文本形态」小节；schema 表 / 签入的 `isa-dsl.schema.json` / 键总览速查表三处同步（`schema_guard` 钉住）。
+- x86 谱据此声明两条模板（`{size}[{base}+{index}*{scale}+{disp}]`、`{size}{disp}[{base}]`）与五个尺寸关键字（`byte/word/dword/qword/xmmword ptr`）：`mov QWORD PTR [RSP - 16], RAX` 这类写法开始能解析。
+
+### Added (2026-10-03) — x86 内存形式的 ALU 族（`*_MR` / `*_R_MEM` 各 8 条）
+
+与寄存器版**共用操作码**，区别只在 ModRM 的 mod（=11 走寄存器形式、≠11 走内存）——`ADD_RM_R`(0x01) 这类只覆盖前者，现在补上后者：目的在内存的 `ADD/OR/ADC/SBB/AND/SUB/XOR/CMP_MR`（0x01/09/11/19/21/29/31/39）与源在内存的 `*_R_MEM`（0x03/0B/13/1B/23/2B/33/3B），一条 `[[templates]]` 各 8 行；新编码形式 `MRR_MEMREF_AUTO`（`opsize = "s0"`：内存操作数自己不携带宽度，宽度由旁边的寄存器驱动）。
+
+全部**不写 `ref`** ⇒ IR 降级不发射它们（目前只有汇编器入口需要），候选集不变、字节与运行期行为逐字节不动（JIT 矩阵 x86 197/3/0、riscv64 136/64/0 与改动前逐条一致）。效果：`gnu-gas-intel` 解析档 `parsed` 0 → **16**、`llvm-mc` 31 → **32**；x86 编码对拍 26 → **27 条逐字节对上、0 条差异**。
+
+### Fixed (2026-10-03) — 生成期自测的文本歧义键漏了「打印出来是什么」
+
+`text_key` 原先按**操作数声明序 + 带操作数序号**建键，两类指令因此被判错：① 只有占位符顺序相反（`add [mem], r` 是 `add {1}, {0}`、`add r, [mem]` 是 `add {0}, {1}`）——文本明显不同却被当同形，白白放弃强断言（本轮的 16 条新 ALU 内存形式全被误报）；② 序号不同但**渲染文本确实一样**（`MOV_R_RM` 目的在 reg 字段、`MOV64_RR` 目的在 rm 字段，都打印 `mov A, B`）——真歧义却被拆开，强断言落到文本分不清的指令上而变红（`MOV_R8_RM64[hi]`）。
+
+现在键 = 字面段序列 + **按模板占位符序、不带序号**的「打印描述」：前者恢复强断言（`disasm → asm → encode` 必须回到同一字节），后者正确留在歧义名单里。x86 文本歧义名单 43 → **37**（`MOV64_MR`/`MOV64_RM`/`MOVSD_MR`/`MOVSD_RM`/`MOVUPS_MR`/`MOVUPS_RM` 实测全部通过强断言），riscv64 / arm64 名单不变。
+
+### Fixed (2026-10-03) — 解码侧「无基址」内存形态少读 4 字节 disp32
+
+`mod=00` + `SIB.base=101` 是 x86 的**无基址**形态（后面跟着 disp32）。解码器原先只按 SIB 取基址、**不读那 4 字节**，于是返回一个假的 `[rbp+disp]` 并少消费字节。`MemRef.base` 是必需字段、表示不了这种形态 ⇒ 现在 fail-closed 拒绝。缺陷一直在，只是没有指令占那条 opcode（0x2B）时 `decode` 直接 `Err`、看不见；补完 ALU 内存族后 `encoder_fuzz_tests` 的 `sub rax, [0x12345678]` 当场抓到。
+
 ### Added (2026-10-03) — `[reg.*].aliases`：寄存器别名（解析认、渲染出主名）
 
 真实语料里 riscv 几乎全用 ABI 名（`lwu sp, 4(gp)`、`addw a2, a3, a4`），而我们反汇编/黄金输出

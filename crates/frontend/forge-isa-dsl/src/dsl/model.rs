@@ -917,17 +917,28 @@ pub struct Conventions {
     /// （"opsize16"/"lock"/"repe"/"repne"/"addr16"/"rex"）。缺省 = x86 扫描集。
     #[serde(default)]
     pub prefix_scan: Option<Vec<PrefixScanEntry>>,
-    /// 内存操作数文本模板（v16）：`{base}`/`{index}`/`{scale}`/`{disp}` 占位符 +
-    /// 字面标点。缺省 = `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
+    /// 内存操作数文本模板（v16；v20 V10 起为**列表**）：
+    /// `{base}`/`{index}`/`{scale}`/`{disp}`/`{size}` 占位符 + 字面标点。
+    /// 第 0 条 = 反汇编渲染形态，其余是解析专用备选（按序尝试）。缺省 =
+    /// 单条 `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
     #[serde(default)]
     pub mem: Option<MemTemplate>,
 }
 
-/// 内存操作数文本模板（v16）：组件占位符序列，同时派生汇编解析器与反汇编渲染器。
+/// 内存操作数文本模板（v16/S9；v20 V10 起为**列表**）：组件占位符序列，同时派生
+/// 汇编解析器与反汇编渲染器（见 `codegen::mem` 模块文档）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemTemplate {
-    pub template: String,
+    /// 模板列表。**第 0 条用于反汇编渲染**（渲染必须唯一）；解析按列表序逐条尝试，
+    /// 第一条整条走通的赢。真实汇编里同一操作数的几种合法写法（`[base+disp]` 与
+    /// `disp[base]`）各写一条，不必塞进同一条模板。
+    pub templates: Vec<String>,
+    /// `{size}` 组件接受的关键字（如 `"qword ptr"`），大小写按 `[meta].mnemonic_case`。
+    /// 解析时吃掉一个（缺席不算错）；**值不进 `MemRef`**——操作数宽度由槽/`opsize`
+    /// 决定，尺寸前缀只是给人读的冗余提示，渲染时输出空串。
+    #[serde(default)]
+    pub size_keywords: Vec<String>,
 }
 
 /// IR 整数条件的规范名（与 `forge_ir::INTCC_NAMES` / `IntCC::mnemonic()` 一一对应）。
