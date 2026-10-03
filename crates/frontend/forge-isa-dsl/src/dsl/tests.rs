@@ -1476,6 +1476,37 @@ asm = "{dst} = {src}"
 }
 
 #[test]
+fn asm_scan_probe_replaces_mnemonic_table() {
+    // 桶判定（"这段是不是本 ISA 的指令"）由**线性扫描的第一步**回答，不再发射
+    // 生成期切词得到的"助记符表"：模板可以操作数前置、首段可以多 token，切词没有意义。
+    let model = gen_min_model(
+        r#"
+[[instructions]]
+name = "ADDI"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 0 }
+ops = ["dst:g:out", "src:g", "src2:i"]
+asm = "addi {dst}, {src}, {src2}"
+"#,
+    );
+    let s = super::codegen::generate(&model).unwrap().to_string();
+    assert!(
+        s.contains("could_be_instruction"),
+        "应发射线性扫描探针 could_be_instruction：{s}"
+    );
+    assert!(
+        !s.contains("mnemonic_table"),
+        "不应再有生成期切词出来的助记符表：{s}"
+    );
+    // 探针里真的跑了首段匹配器（try 一处 + 探针一处）
+    assert!(
+        s.matches("__eat_name").count() >= 3,
+        "探针应复用首段字面匹配（__eat_name）：{s}"
+    );
+}
+
+#[test]
 fn missing_asm_is_parse_error() {
     // asm 必填（v17）：缺省不再自动派生，缺 asm → Parse 错误
     let doc = r#"

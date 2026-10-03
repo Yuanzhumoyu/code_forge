@@ -256,6 +256,8 @@ pub fn generate_with_parts(
     let (disasm_fn, asm_fn) = if parts.asm {
         (
             asm::gen_disassemble(&infos)?,
+            // `gen_assemble` 同时发射线性扫描探针 `could_be_instruction`（给下游 crate 的
+            // "真实汇编语料解析档"用：诊断"这段是不是本 ISA 的指令"，不假设首词 = 助记符）。
             asm::gen_assemble(&infos, model)?,
         )
     } else {

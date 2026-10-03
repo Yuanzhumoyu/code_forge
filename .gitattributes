@@ -1,0 +1,4 @@
+# 强制 LF 检出：vendored 的上游汇编语料要**逐字节**可核（`crates/tools/forge-tests/asm/PROVENANCE.md`
+# 记了 sha256），而 `core.autocrlf` 会在 Windows 上把工作区改成 CRLF，让摘要与"逐字保留上游原文"
+# 都对不上（内容语义不受影响——汇编器把 `\r` 当空白——但可复现性受影响）。故这一棵子树钉 LF。
+crates/tools/forge-tests/asm/** text eol=lf

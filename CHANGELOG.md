@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-03) — 真实汇编语料测试台（x86 / riscv64 / arm64）+ 线性扫描探针
+
+拿**上游真实汇编语料**（GNU as / LLVM MC 的测试文件）检验生成物的汇编器：能不能读真实写法、编出的字节对不对、编出来的程序真跑不跑得起来。三档各一个测试二进制，全部在 `crates/tools/forge-tests/`：
+
+- `tests/asm_parse.rs`：逐行喂 `Assembler::parse_insts`，按四桶归因（`Parsed` / `NoPrefix` / `TailMismatch` / `CorpusOnly`），**门禁 = 计数棘轮** `asm/ratchet/<isa>.txt`（逐项相等，多一个少一个都红；重刷 `$env:FORGE_ASM_WRITE_RATCHET=1`）。实测（2026-10-03）x86 `0/18/43/3`、riscv64 `7/14/10/76`、aarch64 `2/0/1/17`，红桶样例写在棘轮文件里。
+- `tests/asm_encoding.rs`：把上游注释里的 `# CHECK-ASM: encoding: [0x…]` 抽成 `(指令, 上游字节)` 对拍——**外部编码 oracle**（不依赖我们自建黄金表）。riscv64 语料 31 条期望里 7 条能解析，**逐字节全等**；x86/aarch64 的语料暂未带字节期望（P2 补 NASM/XED、LLVM MC X86/AArch64），该档打印 `ASM-ENCODING-SKIP` 说明原因，不假绿。
+- `tests/asm_exec.rs`：`asm/exec/<isa>/*.s` 的**真语法叶函数小程序**汇编 → 装进 `CompiledFunction` → **真跑**（x86 原生、riscv64/aarch64 走 QEMU semihosting），断言返回值；缺通道则 `ASM-EXEC-SKIP` 说明原因。实测 `ran=8 skipped=0`（三架构都真跑通）。
+- 新增生成物公开面 **`could_be_instruction(text) -> bool`**（线性扫描探针）：只跑整模板扫描的**第一步**（首段匹配），是必要性判断（`false` ⇒ 一定不是本 ISA 的指令）。之所以要它：桶判定必须区分"上游有我们没实现的指令"与"有指令但语法对不上"，而**生成期切词得到的"助记符表"不可用**——v17 起 `asm` 模板可以操作数前置（首"词"是操作数）、首段可以是多 token 字面（`lock cmpxchg [`）、空白分词与扫描器的 token 切分也不是一回事（`amoadd.w.aqrl` 是一个 Ident）。探针与 `assemble`/`parse_insts` 共用同一份候选、同一个首段匹配器、同一个 lexer。生成器守卫 = `dsl/tests.rs::asm_scan_probe_replaces_mnemonic_table`（钉"有探针、无助记符表"）。
+- 语料 **vendor 进仓库**（`asm/parse/**` 逐字保留上游原文），出处/ref/许可/摘要见 `asm/PROVENANCE.md`（LLVM MC = `Apache-2.0 WITH LLVM-exception`，GAS = `GPL-3.0-or-later` 且独立目录）；`asm/README.md` 写清边界（只接 Intel 语法、不吃 C 预处理器的 `riscv-tests` 族、不做随机指令执行 smoke）与已跑出的真实缺口（riscv `inc`/`lwu`/`addiw` 未声明、ABI 别名寄存器不认、`%lo(2048)(x7)`；aarch64 `ret lr`；x86 `disp[base]`/`byte ptr`/无符号 `imm32`/`mov eax, imm32`）。`asm/fetch.ps1` 供有 TLS 的机器补齐全量语料（本机 `curl`/`git` 无 TLS，故 P1 只 vendored 三份小样）。
+- **验证**：`forge-isa-dsl` 223（+1 守卫）、`forge-abi` 51、`forge-isa` 33、`forge-isa-runtime` 31、`forge-tests --lib` 44、`isa-host-demo` 9+5、forge-codegen 21 个集成档计数不变（`spec_tests` 36、`demo_tests` 15、`include_tests` 7、`integration_tests` 12、`x86_tests` 5、`riscv64_tests` 7、`arm64_tests` 7、`library_surface` 3 …）；clippy `-D warnings` 0、fmt 0、markdownlint 0。
+
 ### Changed (2026-10-03) — 清除 `v12` 历史命名（破坏性，无兼容层）
 
 文件名与标识符里的 `v12` 是 v12–v17 语法时代的残留，读起来像"当前版本是 v12"（实际现行语法

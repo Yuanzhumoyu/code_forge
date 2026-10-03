@@ -1,0 +1,11 @@
+# 计数棘轮（由 tests/asm_parse.rs 输出；语料或谱一变就要更新本文件）
+# 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
+#       少一个 = 修好了/漏跑。两个方向都红。
+[suite llvm-mc]
+files = 1
+lines = 20
+parsed = 2
+no_prefix = 0
+tail_mismatch = 1
+corpus_only = 17
+# mismatch: arm64-separator.s:18	ret	lr	line 2: no matching instruction

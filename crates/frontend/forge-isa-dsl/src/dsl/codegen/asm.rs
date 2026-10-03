@@ -769,6 +769,90 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
     Ok(out)
 }
 
+/// 一个**字面段**的匹配表达式（布尔；匹配则消费 token 并推进 `it.pos`）。
+///
+/// 首段（`idx == 0`）在 `mnemonic_case = "insensitive"` 时对 Ident token 豁免大小写：
+/// 单 token 字面走 `__eat_name`，多 token 字面走 `__eat_lit_ci`（如 `lock cmpxchg [`）。
+/// **其余字面段严格按 asm 格式匹配**（`__eat_lit`）。
+///
+/// 只说"段"不说"助记符"：v17 起 asm 模板可以**操作数前置**（首段不是字面），
+/// 所以"首段是不是指令名"这件事既不能假设、也不能提取（见 `gen_scan_probe`）。
+fn lit_seg_expr(l: &str, idx: usize, case_insensitive: bool) -> Result<TokenStream, String> {
+    let toks = tokenize(l).map_err(|e| format!("asm template literal '{l}': {e}"))?;
+    let leading_name = if idx == 0 && case_insensitive && toks.len() == 1 {
+        match &toks[0] {
+            Tok::Ident(s) => Some(s.as_str()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    Ok(match leading_name {
+        Some(name) => {
+            let name_lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
+            quote! { __eat_name(&mut it, #name_lit) }
+        }
+        None if idx == 0 && case_insensitive => {
+            let exprs: Vec<_> = toks.iter().map(tok_expr).collect();
+            quote! { __eat_lit_ci(&mut it, &[#(#exprs),*]) }
+        }
+        None => {
+            let exprs: Vec<_> = toks.iter().map(tok_expr).collect();
+            quote! { __eat_lit(&mut it, &[#(#exprs),*]) }
+        }
+    })
+}
+
+/// 线性扫描探针（`could_be_instruction`）：**只跑扫描的第一步**——本 ISA 的候选里
+/// 有没有哪条的**首段**能在这段文本上匹配。
+///
+/// **为什么不能用"助记符表"**（v20 V9 首版的做法，已废弃）：那等于在生成期假设
+/// `asm` 模板的**首个空白分隔词就是助记符**，再拿它当"本 ISA 有哪些指令"的清单。
+/// 三条都不成立——① v17 起模板可以操作数前置（首段是 `{0}`，首"词"是操作数）；
+/// ② 首段可以是多 token 字面（`lock cmpxchg [`），拆词就错；③ 空白分词与扫描器的
+/// token 切分不是一回事（`amoadd.w.aqrl` 是一个 Ident）。
+///
+/// 现在改成**问扫描器自己**：探针与 `__assemble` 用同一份 `infos`、同一个
+/// [`lit_seg_expr`]、同一个 lexer，问的只是"第一步走不走得动"。它是**必要条件**
+/// 而非充分条件：`false` ⇒ 这段文本一定不是本 ISA 的指令；`true` ⇒ 首段对得上，
+/// 后面还得看整条匹配。首段是操作数（或模板为空）的候选**不构成约束**，直接算 `true`。
+fn gen_scan_probe(infos: &[InstInfo], case_insensitive: bool) -> Result<TokenStream, String> {
+    let mut probes: Vec<TokenStream> = Vec::new();
+    for info in infos {
+        let segs = parse_template(&info.inst.asm)?;
+        let first_lit = match segs.first() {
+            Some(Seg::Lit(l)) => Some(l.clone()),
+            _ => None,
+        };
+        probes.push(match first_lit {
+            Some(l) => {
+                let e = lit_seg_expr(&l, 0, case_insensitive)?;
+                quote! {
+                    {
+                        let mut it = __Iter { toks: &__toks, pos: 0 };
+                        if #e { return true; }
+                    }
+                }
+            }
+            // 首段是操作数占位符（或模板为空）：任何文本都可能从这里开始。
+            None => quote! { return true; },
+        });
+    }
+    Ok(quote! {
+        /// 线性扫描探针（**诊断用**）：这段文本能不能作为本 ISA 某条候选指令的扫描起点。
+        ///
+        /// 只判**首段**，是必要性判断：`false` ⇒ 一定不是本 ISA 的指令（本 ISA 没有
+        /// 以这段开头对应的指令）；`true` ⇒ 首段对得上，**不代表整条能汇编**。
+        /// 不假设"首词 = 助记符"（见生成器侧 `gen_scan_probe`），与 `assemble`/
+        /// `parse_insts` 用同一份候选与同一个 lexer。
+        pub fn could_be_instruction(text: &str) -> bool {
+            let Ok(__toks) = __lex(text) else { return false; };
+            #(#probes)*
+            false
+        }
+    })
+}
+
 /// 单操作数的解析表达式 + 匹配模式 + （可选）宽度一致性绑定名。
 /// `wreq`：form opsize = r<宽> 时对全 GPR 槽的固定宽度过滤（位）。
 fn operand_parse_tok(
@@ -848,32 +932,10 @@ fn gen_assemble_try_tok(info: &InstInfo, case_insensitive: bool) -> Result<Token
     for (idx, seg) in segs.iter().enumerate() {
         match seg {
             Seg::Lit(l) => {
-                let toks = tokenize(l).map_err(|e| format!("asm template literal '{l}': {e}"))?;
-                // 前导字面（首段）且大小写豁免且单 Ident token → `__eat_name`（大小写不敏感）
-                let leading_name = if idx == 0 && case_insensitive && toks.len() == 1 {
-                    match &toks[0] {
-                        Tok::Ident(s) => Some(s.as_str()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                match leading_name {
-                    Some(name) => {
-                        let name_lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
-                        elems.push(quote! { __eat_name(&mut it, #name_lit).then_some(()) });
-                    }
-                    None if idx == 0 && case_insensitive => {
-                        // 前导多 token 字面（如 `lock cmpxchg [` 的 LOCK 前缀族）：
-                        // Ident token 大小写豁免、标点/数值严格匹配（`__eat_lit_ci`）。
-                        let exprs: Vec<_> = toks.iter().map(tok_expr).collect();
-                        elems.push(quote! { __eat_lit_ci(&mut it, &[#(#exprs),*]).then_some(()) });
-                    }
-                    None => {
-                        let exprs: Vec<_> = toks.iter().map(tok_expr).collect();
-                        elems.push(quote! { __eat_lit(&mut it, &[#(#exprs),*]).then_some(()) });
-                    }
-                }
+                // 首段（助记符位）在 case_insensitive 下豁免大小写，其余字面段严格匹配；
+                // 判定与扫描探针 `could_be_instruction` 共用 `lit_seg_expr`。
+                let e = lit_seg_expr(l, idx, case_insensitive)?;
+                elems.push(quote! { #e.then_some(()) });
                 pats.push(quote! { Some(()) });
             }
             Seg::Op(n) => {
@@ -978,6 +1040,7 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let lexer = gen_lexer_ts(model)?;
     let primitives = gen_asm_primitives(model, infos)?;
     let case_insensitive = matches!(model.meta.mnemonic_case, MnemonicCase::Insensitive);
+    let scan_probe = gen_scan_probe(infos, case_insensitive)?;
     // 全局特异性排序（窄约束先，声明序稳定）
     let mut cands: Vec<&InstInfo> = infos.iter().collect();
     cands.sort_by_key(|info| form_specificity(info, model));
@@ -1023,6 +1086,7 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     Ok(quote! {
         #lexer
         #primitives
+        #scan_probe
         /// 前导字面（助记符位）大小写豁免匹配（`__eat_name`）。
         #[allow(dead_code)]
         fn __eat_name(it: &mut __Iter, name: &str) -> bool {

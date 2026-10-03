@@ -70,6 +70,12 @@ pub mod coverage;
 /// 执行引擎模块（本机 x86_64 JIT 执行）。
 pub mod exec;
 
+/// **真实汇编语料测试基础设施**（v20 V9）：解析档 / 编码对拍档 / 执行档。
+///
+/// 语料与棘轮在 `crates/tools/forge-tests/asm/`（见那里的 `README.md`）；
+/// 三档入口是 `tests/asm_parse.rs`、`tests/asm_encoding.rs`、`tests/asm_exec.rs`。
+pub mod asm;
+
 /// compile-only 覆盖矩阵宏：对 ops 列表逐个构建最小函数并 compile_raw，
 /// 断言全部编译成功（记录 Unsupported 缺口）。
 ///

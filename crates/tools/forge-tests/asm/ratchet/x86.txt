@@ -1,0 +1,18 @@
+# 计数棘轮（由 tests/asm_parse.rs 输出；语料或谱一变就要更新本文件）
+# 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
+#       少一个 = 修好了/漏跑。两个方向都红。
+[suite gnu-gas-intel]
+files = 1
+lines = 64
+parsed = 0
+no_prefix = 18
+tail_mismatch = 43
+corpus_only = 3
+# mismatch: intel.excerpt.s:4	add    byte ptr 0x90909090[eax], dl	line 2: no matching instruction
+# mismatch: intel.excerpt.s:5	add    dword ptr 0x90909090[eax], edx	line 2: no matching instruction
+# mismatch: intel.excerpt.s:6	add    dl, byte ptr 0x90909090[eax]	line 2: no matching instruction
+# mismatch: intel.excerpt.s:7	add    edx, dword ptr 0x90909090[eax]	line 2: no matching instruction
+# mismatch: intel.excerpt.s:8	add    al, 0x90	line 2: no matching instruction
+# mismatch: intel.excerpt.s:9	add    eax, 0x90909090	line 2: no matching instruction
+# mismatch: intel.excerpt.s:10	push   es	line 2: no matching instruction
+# mismatch: intel.excerpt.s:11	pop    es	line 2: no matching instruction

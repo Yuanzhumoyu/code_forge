@@ -233,9 +233,13 @@ code-forge (root umbrella)
    两条硬约束（RA 只能加载分析开始前存在的文件；`TokenStream::to_string()` 上下文相关）
    见 `docs/guides/rust-analyzer-notes.md` §1 与本文件 Testing Notes。
 
-5. **自包含 asm** — 生成模块内联实现 assemble（表驱动，首词=mnemonic），不再经
+5. **自包含 asm** — 生成模块内联实现 assemble（v17 起**整条 `asm` 模板左→右 token 扫描**，
+   同助记符多 form 按类型签名自动分发；**没有 `match 助记符` 前置分派**），不再经
    lalrpop 语法与 forge-asm 运行时（v11 时代已随语法层删除）。`TargetAssembler` trait
-   （`crate::machine::assembler`）仅要求 `parse_insts`。
+   （`crate::machine::assembler`）仅要求 `parse_insts`。同一份候选还导出一个**诊断探针**
+   `could_be_instruction(text) -> bool`（只跑扫描的第一步 = 首段匹配；`false` ⇒ 一定不是
+   本 ISA 的指令）——**不要**用"取 `asm` 首词当助记符表"这类生成期切词来判断"本 ISA 认不认
+   这条指令"：模板可以操作数前置、首段可以多 token、空白分词 ≠ 扫描器的 token 切分。
 
 6. **调用约定是使用者的数据，ISA 只申报能力**（v20 A1/A2）——`forge-abi` 把这件事拆成
    三层：`AbiRules`（约定，平台无关的 TOML）→ `AbiBinding`（(ISA, 约定) 的寄存器绑定）→
@@ -371,6 +375,17 @@ let name = node.get_text("name")?;
   **两条矩阵是两套能力集，改类表/值池/ABI 必须都跑**（2026-09-13 实测：x86 全绿
   而 riscv 的 7 个 fcmp 错值，正是 riscv 通道抓到的）。
   测试入口：`cargo test -p forge-tests jit_matrix_x86`。
+- **真实汇编语料测试台**（`crates/tools/forge-tests/asm/`，v20 V9）：三档测试二进制
+  `--test asm_parse`（上游语料逐行喂 `parse_insts`）/`--test asm_encoding`（上游注释里的
+  `encoding: [0x…]` 与我们 `encode()` 的字节逐条对拍）/`--test asm_exec`（`asm/exec/**`
+  的真语法叶子函数小程序**真跑**：x86 原生、riscv64/aarch64 走 QEMU，缺通道则
+  `ASM-EXEC-SKIP` 说明原因，不假绿）。解析档按四桶归因（`Parsed`/`NoPrefix`/
+  `TailMismatch`/`CorpusOnly`）；**门禁 = `asm/ratchet/<isa>.txt` 计数棘轮**（逐项相等，
+  两个方向都红；重刷 `$env:FORGE_ASM_WRITE_RATCHET = "1"`，刷完必须看 diff）。
+  桶判定不信"首词 = 助记符"，只问生成物的**线性扫描探针** `could_be_instruction`
+  （见 Key Architecture Rules §5）。事件走 `FORGE_ASM_EVENTS`、记分板落
+  `target/asm-suite/<isa>.json`；语料出处/许可/摘要见 `asm/PROVENANCE.md`，
+  边界与已知缺口见 `asm/README.md`。
 - **rust-analyzer 假阳性（v18 S10d 已修）**：`isa_from_file!` 调用行上曾报成对的
   `expected expression` / `expected R_PAREN`（riscv64 15 对 / arm64 4 对 / 夹具 9、6 对，
   **x86 0**）——那是"整份生成物作为宏展开结果"撑出来的 RA 展开管线问题（生成物用 RA 自己的

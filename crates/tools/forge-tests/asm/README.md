@@ -1,0 +1,139 @@
+# 真实汇编语料测试台（`forge-tests/asm`）
+
+用**上游真实汇编语料**检验生成物的汇编器：能不能读真实世界的写法、编出的字节对不对、
+编出来的程序**真跑**得起来吗。三件事各一个测试二进制，缺陷落在哪一档一目了然。
+
+## 为什么要有它
+
+谱内自测（`[[vectors]]`）与往返守卫只能证明"我们自洽"——它们用的都是**我们自己写的**
+汇编文本。真实语料（GNU as / LLVM MC 的测试文件）是**别人写的**：寄存器别名、内存寻址
+写法、立即数语法、伪指令、大小写习惯全都不一样。这件事只有拿真语料喂才看得见。
+
+## 目录
+
+```text
+asm/
+├── parse/<isa>/<suite>/**    # 上游语料原文（vendored，逐字不改；见 PROVENANCE.md）
+├── exec/<isa>/<名>.s         # 我们写的真语法小程序 + 同名 .expect（args/ret）
+├── ratchet/<isa>.txt         # 计数棘轮（各桶计数 + 人工核过的缺口样例）
+├── fetch.ps1                 # 拉取/刷新语料（需 TLS，见「刷新语料」）
+├── PROVENANCE.md             # 每个语料文件的出处/ref/许可/摘要
+└── README.md                 # 本文件
+```
+
+## 三档测试
+
+| 档 | 二进制 | 命令 | 证明什么 |
+| --- | --- | --- | --- |
+| 解析 | `tests/asm_parse.rs` | `cargo test -p forge-tests --test asm_parse` | 真语料的行能不能被 `Assembler::parse_insts` 吃掉（四桶 + 计数棘轮） |
+| 编码对拍 | `tests/asm_encoding.rs` | `cargo test -p forge-tests --test asm_encoding` | 能解析的那些行，`encode()` 的字节是否与**上游注释里的期望字节**逐字节相等 |
+| 执行 | `tests/asm_exec.rs` | `cargo test -p forge-tests --test asm_exec` | `asm/exec/**` 的小程序汇编→装进 `CompiledFunction`→**真跑**，断言返回值 |
+
+跑一档不够看时加 `-- --nocapture`：`ASM-SUMMARY` / `ASM-ENCODING-SUMMARY` /
+`ASM-EXEC-SUMMARY` / `ASM-*-SKIP` 都在 stdout 上（libtest 只吞**通过**用例的输出，
+所以同时可用 `FORGE_ASM_EVENTS=<文件>` 落盘，见下）。
+
+## 四桶与计数棘轮
+
+每一条候选指令行判进四个桶（判定实现 `src/asm/classify.rs`）：
+
+| 桶 | 判定 | 门禁含义 |
+| --- | --- | --- |
+| `Parsed` | 线性扫描整条命中 | 正常 |
+| `NoPrefix` | 失败，且没有任何候选的**首段**能对上（探针说"不可能"） | 记账（上游比我们全 / 别家方言） |
+| `TailMismatch` | 失败，但某条候选的**首段**对得上——首段之后没对上 | **唯一红桶** |
+| `CorpusOnly` | 失败原因是标签在别处（`UndefinedLabel`） | 记账（上下文不足） |
+
+**桶判定不问"首词是不是助记符"**，而是问扫描器自己：`could_be_instruction`（生成物的线性
+扫描探针）只跑扫描的第一步——"本 ISA 有没有哪条候选的首段能吃掉这段开头"。它是**必要
+条件**：`false` ⇒ 这段一定不是本 ISA 的指令；`true` ⇒ 首段对得上，还得看整条。
+
+> 为什么不用"助记符表"（v20 V9 首版的做法，已废弃）：那等于在生成期假设 `asm` 模板的
+> **首个空白分隔词就是助记符**，再拿它当"本 ISA 有哪些指令"的清单。三条都不成立——v17 起
+> 模板可以**操作数前置**（`asm = "{dst} = {src}"`，首"词"是操作数）、首段可以是**多 token
+> 字面**（`lock cmpxchg [`，拆词就错）、空白分词与扫描器的 token 切分也不是一回事
+> （`amoadd.w.aqrl` 是一个 Ident）。现在探针与 `assemble`/`parse_insts` 共用同一份候选、
+> 同一个首段匹配器、同一个 lexer——**单一事实源就是扫描器**。
+
+门禁 = **计数棘轮**：`asm/ratchet/<isa>.txt` 里的每个计数必须与实测**逐项相等**，
+**两个方向都红**——多一个 = 汇编器出现新缺陷（或换了语料），少一个 = 修好了（该更新棘轮）
+或漏跑了。这样"悄悄变绿"和"悄悄变红"都会拦下。
+
+- 确认差异是预期的（例如换了语料）就重新刷棘轮：
+  `$env:FORGE_ASM_WRITE_RATCHET = "1"; cargo test -p forge-tests --test asm_parse`
+  （刷完**必须看 diff**：棘轮文件里带着红桶样例，那是给人核对的）；
+- 机读记分板：每轮跑都刷新 `target/asm-suite/<isa>.json`；
+- 事件落盘（CI 用）：`$env:FORGE_ASM_EVENTS = "target/asm-events.txt"`。
+
+## 执行档小程序约定
+
+`asm/exec/<isa>/<名>.s` 是**真语法**汇编，写成各机 ABI 的**叶子函数**（不碰栈）；
+同名 `.expect` 给 `args = …` / `ret = …`（`#` 开头的整行是注释）。
+
+| ISA | 实参寄存器 | 返回值 | 结束 | 执行通道 |
+| --- | --- | --- | --- | --- |
+| x86 | `RCX`/`RDX`/`R8`/`R9`（Windows x64） | `RAX` | `ret` | 原生（**仅 windows-x86_64 宿主**） |
+| riscv64 | `x10`…（LP64D） | `x10` | `ret` | QEMU system + semihosting |
+| aarch64 | `x0`…（AAPCS64） | `x0` | `ret` | QEMU system + semihosting |
+
+QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装路径
+（`D:\Program Files\qemu\qemu-system-riscv64.exe` 等）。**缺通道 ⇒ 该 ISA 打印
+`ASM-EXEC-SKIP <原因>` 并只做汇编（仍然要求汇编成功），不假绿**；只有在
+"一条都没真跑成"时用例才红。
+
+## 边界（明确不做，别当成漏做）
+
+- **只接本汇编器支持的那一档方言**：x86 只接 Intel 语法；AT&T 语法（`movl $1, %eax`）
+  不在范围内（这类行按 `NoPrefix`/`CorpusOnly` 记账）；
+- **没有 C 预处理器**：`riscv-tests` / `riscv-arch-test` 的 `.S` 依赖 `cpp` 与子模块
+  环境（`encoding.h`、`link.ld`、`spike`/`tohost`），**不进解析档**——它们的设计是
+  "整程序 + 自检退出码"，与本 crate 的 QEMU semihosting 通道不是一路；
+- **不做"随机指令逐条执行"smoke**：随机字节大概率是 trap/非法指令，噪声远大于信号；
+  执行档只跑**人工写的、语义明确的**小程序；
+- **不改语料、不改谱**：语料的注释前缀/一行多语句（arm64 的 `%%`）由 `src/asm/corpus.rs`
+  的 suite 档案**归一化**，谱侧不动。
+
+## 已知缺口（登记，供后续修谱）
+
+这些是语料跑出来的真实差异（红桶 `TailMismatch` 的样例就写在 `asm/ratchet/*.txt` 里），
+不是"语料不对"：
+
+- riscv64：`inc` / `lwu` / `addiw` 三条指令**谱里没有声明**（上游有）——落在 `NoPrefix`；
+- riscv64：`addw a2, a3, a4` 这类**ABI 别名寄存器**（`a2`/`s3`/`t3`）不认，`x` 名可以
+  ——谱里的 asm 只列了 `x` 名，别名没进寄存器表；
+- riscv64：`%lo(2048)(x7)` 这种重定位修饰的立即数形式不支持；
+- aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
+- x86：GAS 的 `disp[base]` 内存写法（`0x90909090[eax]`）、`byte ptr` / `dword ptr`
+  尺寸前缀、无符号 `imm32`（`0x90909090` 超 `i32::MAX`）、`mov eax, 0x1234`
+  （32 位目的地的立即数搬运）都不支持——这也是 `asm/parse/x86` 当前 `parsed = 0` 的原因。
+
+## 现有语料与计数
+
+（`2026-10-03` 实测；数值以 `asm/ratchet/*.txt` 与 `-- --nocapture` 输出为准）
+
+| ISA | suite | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| x86 | `gnu-gas-intel` | 64 | 0 | 18 | 43 | 3 | 无（P2 补 NASM/XED） |
+| riscv64 | `llvm-mc` | 107 | 7 | 14 | 10 | 76 | **有**（31 条期望，7 条对拍上） |
+| aarch64 | `llvm-mc` | 20 | 2 | 0 | 1 | 17 | 无（P2 补 LLVM MC） |
+
+执行档：x86 3 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=8 skipped=0`）。
+
+## 刷新语料
+
+`asm/fetch.ps1` 按固定 ref 拉取上游文件、算 sha256、回写 `PROVENANCE.md`：
+
+```powershell
+pwsh crates/tools/forge-tests/asm/fetch.ps1 -Isa x86      # 只拉一套
+pwsh crates/tools/forge-tests/asm/fetch.ps1 -List         # 列出各套的来源与固定 ref
+```
+
+**当前机器没有 TLS**（`curl`/`git` 都报 `SEC_E_NO_CREDENTIALS`），所以 P1 只 vendored 了
+三份**小样**（见 `PROVENANCE.md`）；**整套语料**（LLVM MC X86/AArch64/RISCV、XED
+`tests-syntax`/`bulk-tests`、NASM `test/`+`golden`、YASM、GAS 全量 i386/aarch64）有待在
+能联网的机器上跑 `fetch.ps1` 补齐——那是 P2。
+
+新增一套语料的三步：① 在 `src/asm/corpus.rs` 的 `SUITES` 里登记（key/目录/注释前缀/
+许可/来源）；② 把文件放进 `asm/parse/<isa>/<suite>/`；③ 刷棘轮并在 `PROVENANCE.md`
+记一行出处。**许可**：LLVM MC 与 XED = `Apache-2.0 WITH LLVM-exception`，NASM/YASM =
+`BSD-2-Clause`，GAS = `GPL-3.0-or-later`（上游各文件的许可，逐条见 `PROVENANCE.md`）。
