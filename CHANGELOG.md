@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-03) — 语料补齐：x86/aarch64 的字节 oracle 接通，编码对拍也上计数棘轮
+
+按 `asm/PROVENANCE.md` 的清单继续补上游语料（本机 shell 无 TLS，走 `web_fetch` 一份份取回），**六份** LLVM MC 用例进仓库，全部逐字落盘并在 `PROVENANCE.md` 记了 URL/ref/许可/sha256：
+
+- x86：`intel-syntax-encoding.s`、`apx-rex2-format-intel.s`（Intel 语法 + `encoding:` 期望字节——x86 从此有了**字节 oracle**）；
+- aarch64：`arm64-logical-encoding.s`、`arm64-branch-encoding.s`；
+- riscv64：`rv32i-valid.s`、`rv64m-valid.s`。
+- `SUITES` 新增 `x86/llvm-mc` 一套（key = `llvm-mc`），解析档棘轮随之重刷（x86 两套：`0/18/43/3` + `7/41/63/336`）。
+
+编码对拍档（`tests/asm_encoding.rs`）随之加固，**外部 oracle 真的开始报东西了**：
+
+- **期望字节的抽取支持四种上游写法**（同行尾部 / 注释自带汇编文本 / 注释在指令**后** / 注释在指令**前**）；3、4 两种**逐文件声明**（`Suite::encoding_sides`）——同一目录两种风格都有，任何"看第一条推断整篇"的启发式都会在"首条指令没有期望注释"的文件上整体错位一条（实测 `rv32i-valid.s:15` 的 `.Lpcrel_hi0: auipc …`）；前缀被拆开的期望（`acquire lock add` 的 `[0xf2]` + `[0xf0,0x48,0x01,0x00]`）与重定位形式（`[0xeb,A]`）分别"整段丢掉（计入 `dropped`）"与"占位不产 case"，都不猜。
+- **三种结果分开记**：一致（逐字节相等）、`variants`（字节不同但两边喂给**我们自己的解码器**后反汇编文本相同 = 同一指令的另一种合法编码）、`known`（字节不同且不等价）。
+- **`known` 挂进棘轮** `asm/ratchet/encoding.txt`（与解析档同一套"两个方向都红"：新增一条红、少一条也红），避免门禁永久红或静默放过。
+- 实测（2026-10-03）：riscv64 **12 条逐字节全等**、aarch64 **15 条逐字节全等**、x86 6 条对拍上；x86 的 **5 条 `known`** 是真实缺口——`xor rax, 12` 我们出 imm32 形式（7 字节 `48 81 f0 0c 00 00 00`）而上游/规范是符号扩展 imm8（4 字节 `48 83 f0 0c`），且**我们的解码器连 `48 83 /6 ib` 都解不出**；同族 `xor/or/cmp/add/adc/sbb` 的 **16/32 位目的地**形式（`xor eax, 12`、`add ax, -12`）则完全不解析（`README.md` 的「已知缺口」已逐条登记）。
+
 ### Fixed (2026-10-03) — 伪指令校验不再按"首词"猜助记符（与扫描器同口径）
 
 `validate_pseudos`（错误码 `DSL-PSEUDO`）原来把每条指令 `asm` 的**首个空白分隔词**当成助记符集，用它查两件事：伪指令名是否与指令重名、`emit` 行首词是不是一条指令。这正是"首词 = 助记符"那套被废弃的假设，对**操作数前置**的模板（`asm = "{dst} = {src}"`）会把合法的 `emit` 行判成拼错（首词是 `{rd}` 这类占位符）。

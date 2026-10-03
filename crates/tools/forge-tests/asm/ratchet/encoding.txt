@@ -1,0 +1,29 @@
+# 编码对拍棘轮（由 tests/asm_encoding.rs 输出；语料或谱一变就要更新本文件）
+# 判定：计数或下面的 known 清单与实测不一致就红（两个方向）——
+#       known 多一条 = 新出现的字节差异（缺陷或新缺口）；少一条 = 修好了。
+[isa x86]
+cases = 103
+checked = 6
+unparsed = 97
+dropped = 9
+variants = 0
+known = 5
+# known: intel-syntax-encoding.s:8 `xor	rax, 12`：我们 0x48,0x81,0xf0,0x0c,0x00,0x00,0x00 ≠ 上游 0x48,0x83,0xf0,0x0c（我们解出 Ok("xor RAX, 12") / 上游解出 Err("decode 失败（4 字节）")）
+# known: intel-syntax-encoding.s:15 `or	rax, 12`：我们 0x48,0x81,0xc8,0x0c,0x00,0x00,0x00 ≠ 上游 0x48,0x83,0xc8,0x0c（我们解出 Ok("or RAX, 12") / 上游解出 Err("decode 失败（4 字节）")）
+# known: intel-syntax-encoding.s:22 `cmp	rax, 12`：我们 0x48,0x81,0xf8,0x0c,0x00,0x00,0x00 ≠ 上游 0x48,0x83,0xf8,0x0c（我们解出 Ok("cmp RAX, 12") / 上游解出 Err("decode 失败（4 字节）")）
+# known: intel-syntax-encoding.s:32 `add	rax, -12`：我们 0x48,0x81,0xc0,0xf4,0xff,0xff,0xff ≠ 上游 0x48,0x83,0xc0,0xf4（我们解出 Ok("add RAX, -12") / 上游解出 Err("decode 失败（4 字节）")）
+# known: intel-syntax-encoding.s:53 `cmp	rax, -12`：我们 0x48,0x81,0xf8,0xf4,0xff,0xff,0xff ≠ 上游 0x48,0x83,0xf8,0xf4（我们解出 Ok("cmp RAX, -12") / 上游解出 Err("decode 失败（4 字节）")）
+[isa riscv64]
+cases = 134
+checked = 12
+unparsed = 122
+dropped = 0
+variants = 0
+known = 0
+[isa aarch64]
+cases = 119
+checked = 15
+unparsed = 104
+dropped = 0
+variants = 0
+known = 0

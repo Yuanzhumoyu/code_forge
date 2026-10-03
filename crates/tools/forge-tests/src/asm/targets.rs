@@ -80,3 +80,26 @@ pub fn assemble_to_bytes(isa: &str, src: &str) -> Result<Vec<u8>, String> {
         other => Err(format!("未知 ISA `{other}`")),
     }
 }
+
+/// 解一串字节再反汇编（**等价性判定**用：两串字节若解出同一条指令、渲染同一文本，
+/// 就是同一指令的两种合法编码，例如 x86 `xor rax, 12` 的 imm32 形式与符号扩展 imm8 形式）。
+///
+/// 要求 `decode` 把 `bytes` **吃满**（尾部有剩 ⇒ 不是同一条编码）。
+pub fn disassemble_bytes(isa: &str, bytes: &[u8]) -> Result<String, String> {
+    macro_rules! decompile {
+        ($module:ident) => {{
+            let (inst, n) = code_forge::backend::$module::decode(bytes)
+                .ok_or_else(|| format!("decode 失败（{} 字节）", bytes.len()))?;
+            if n != bytes.len() {
+                return Err(format!("decode 只吃掉 {n}/{} 字节", bytes.len()));
+            }
+            Ok(code_forge::backend::$module::disassemble(&inst))
+        }};
+    }
+    match isa {
+        "x86" => decompile!(x86),
+        "riscv64" => decompile!(riscv64),
+        "aarch64" => decompile!(arm64),
+        other => Err(format!("未知 ISA `{other}`")),
+    }
+}

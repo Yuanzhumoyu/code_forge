@@ -31,9 +31,10 @@ asm/
 
 跑一档不够看时加 `-- --nocapture`：`ASM-SUMMARY` / `ASM-ENCODING-SUMMARY` /
 `ASM-EXEC-SUMMARY` / `ASM-*-SKIP` 都在 stdout 上（libtest 只吞**通过**用例的输出，
-所以同时可用 `FORGE_ASM_EVENTS=<文件>` 落盘，见下）。
+所以同时可用 `FORGE_ASM_EVENTS=<文件>` 落盘，见下）。`FORGE_ASM_ENCODING_CASES=1`
+会把编码对拍档**逐条配对结果**（指令文本 = 上游字节 + 判定）打出来——配对规则出错时靠它定位。
 
-## 四桶与计数棘轮
+## 解析档：四桶与计数棘轮
 
 每一条候选指令行判进四个桶（判定实现 `src/asm/classify.rs`）：
 
@@ -64,6 +65,26 @@ asm/
   （刷完**必须看 diff**：棘轮文件里带着红桶样例，那是给人核对的）；
 - 机读记分板：每轮跑都刷新 `target/asm-suite/<isa>.json`；
 - 事件落盘（CI 用）：`$env:FORGE_ASM_EVENTS = "target/asm-events.txt"`。
+
+## 编码对拍档：字节 oracle 与"已知差异"清单
+
+上游注释里的期望字节按**四种写法**抽出（见 `src/asm/encoding.rs` 模块文档）：
+同行尾部、注释自带汇编文本、注释在指令**后**、注释在指令**前**。第四/第三种**逐文件声明**
+（`Suite::encoding_sides`）——同一目录两种风格都有（`arm64-branch-encoding.s` 是"注释在指令后"，
+riscv 与 x86 Intel 用例是"注释在指令前"），**任何"看第一条推断整篇"的启发式都会在
+"首条指令没有期望注释"的文件上整体错位一条**（实测 `rv32i-valid.s` 第 15 行 `.Lpcrel_hi0: auipc …`）。
+
+三种结果分开记（`asm/ratchet/encoding.txt`，与解析档同一套两个方向都红的纪律）：
+
+| 结果 | 含义 | 门禁 |
+| --- | --- | --- |
+| 一致 | 我们编出的字节与上游逐字节相等 | 过 |
+| `variants` | 字节不同，但两边都喂给**我们自己的解码器**后反汇编文本相同（同一指令的两种合法编码） | 记账 |
+| `known` | 字节不同且不满足等价条件（常见于**我们解不出**的上游编码） | **逐条写进棘轮**：新增一条红、少一条也红 |
+
+前缀被拆开的期望（`acquire lock add [rax], rax` 的 `[0xf2]` + `[0xf0,0x48,0x01,0x00]`）与
+重定位形式（`[0xeb,A]`）不猜：前者整段丢掉并计入 `dropped`，后者**占一个配对位**但不产出
+case（否则后面的用例会整体错位）。
 
 ## 执行档小程序约定
 
@@ -104,36 +125,48 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 - riscv64：`%lo(2048)(x7)` 这种重定位修饰的立即数形式不支持；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
 - x86：GAS 的 `disp[base]` 内存写法（`0x90909090[eax]`）、`byte ptr` / `dword ptr`
-  尺寸前缀、无符号 `imm32`（`0x90909090` 超 `i32::MAX`）、`mov eax, 0x1234`
-  （32 位目的地的立即数搬运）都不支持——这也是 `asm/parse/x86` 当前 `parsed = 0` 的原因。
+  尺寸前缀、无符号 `imm32`（`0x90909090` 超 `i32::MAX`）都不支持——这也是
+  `asm/parse/x86/gnu-gas-intel` 当前 `parsed = 0` 的原因。
+- x86（**字节 oracle 抓到的**，2026-10-03 补语料后）：`xor/or/cmp/add/adc/sbb` 的
+  **16/32 位目的地 + 立即数**形式（`xor eax, 12`、`add ax, -12`）完全不解析，
+  只有 64 位 `rax` 的那些能解析；而 `xor rax, 12` 我们出 **imm32 形式**（7 字节
+  `48 81 f0 0c 00 00 00`）而上游/规范用**符号扩展 imm8**（4 字节 `48 83 f0 0c`），
+  并且**我们的解码器连 `48 83 /6 ib` 都解不出**——五条差异逐条挂在
+  `asm/ratchet/encoding.txt` 的 `known` 清单里（新增/消失都会让门禁红）。
+  另外 `pushf/popf/pushfw/popfw`、`retf`、`ret 8`、`shl EDI, 1`、
+  `movsd XMM5, QWORD PTR [-8]`、`cmpltps`、`acquire/release lock add`、
+  `mov QWORD PTR [RSP-16], RAX` 与 APX（`r16d`/REX2）也都不解析。
 
 ## 现有语料与计数
 
-（`2026-10-03` 实测；数值以 `asm/ratchet/*.txt` 与 `-- --nocapture` 输出为准）
+（`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
+`asm/ratchet/encoding.txt` 为准）
 
-| ISA | suite | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| x86 | `gnu-gas-intel` | 64 | 0 | 18 | 43 | 3 | 无（P2 补 NASM/XED） |
-| riscv64 | `llvm-mc` | 107 | 7 | 14 | 10 | 76 | **有**（31 条期望，7 条对拍上） |
-| aarch64 | `llvm-mc` | 20 | 2 | 0 | 1 | 17 | 无（P2 补 LLVM MC） |
+| ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| x86 | `gnu-gas-intel` | 1 | 64 | 0 | 18 | 43 | 3 | 无（GAS 用例不带期望字节） |
+| x86 | `llvm-mc` | 2 | 447 | 7 | 41 | 63 | 336 | **有**：103 条期望 / 6 条对拍上 / 5 条已知差异 |
+| riscv64 | `llvm-mc` | 3 | 503 | 12 | 45 | 86 | 360 | **有**：134 条期望 / **12 条逐字节全等** |
+| aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 
 执行档：x86 3 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=8 skipped=0`）。
 
 ## 刷新语料
 
-`asm/fetch.ps1` 按固定 ref 拉取上游文件、算 sha256、回写 `PROVENANCE.md`：
+`asm/fetch.ps1` 按固定 ref 拉取上游文件、算 sha256、打印可直接粘进 `PROVENANCE.md` 的表格行：
 
 ```powershell
 pwsh crates/tools/forge-tests/asm/fetch.ps1 -Isa x86      # 只拉一套
 pwsh crates/tools/forge-tests/asm/fetch.ps1 -List         # 列出各套的来源与固定 ref
 ```
 
-**当前机器没有 TLS**（`curl`/`git` 都报 `SEC_E_NO_CREDENTIALS`），所以 P1 只 vendored 了
-三份**小样**（见 `PROVENANCE.md`）；**整套语料**（LLVM MC X86/AArch64/RISCV、XED
-`tests-syntax`/`bulk-tests`、NASM `test/`+`golden`、YASM、GAS 全量 i386/aarch64）有待在
-能联网的机器上跑 `fetch.ps1` 补齐——那是 P2。
+**当前机器没有 TLS**（`curl`/`git` 都报 `SEC_E_NO_CREDENTIALS`），网络通道只有 `web_fetch`
+（走 jsDelivr 的文本文件），所以语料是**一份份取回**的（`PROVENANCE.md` 逐条记了 URL 与
+sha256）；`fetch.ps1` 供能联网的机器按目录**批量**补齐全量（LLVM MC X86/AArch64/RISCV 全量、
+XED `tests-syntax`/`bulk-tests`、NASM `test/`+`golden`、YASM、GAS 全量 i386/aarch64）。
 
-新增一套语料的三步：① 在 `src/asm/corpus.rs` 的 `SUITES` 里登记（key/目录/注释前缀/
-许可/来源）；② 把文件放进 `asm/parse/<isa>/<suite>/`；③ 刷棘轮并在 `PROVENANCE.md`
-记一行出处。**许可**：LLVM MC 与 XED = `Apache-2.0 WITH LLVM-exception`，NASM/YASM =
-`BSD-2-Clause`，GAS = `GPL-3.0-or-later`（上游各文件的许可，逐条见 `PROVENANCE.md`）。
+新增语料的三步：① 在 `src/asm/corpus.rs` 的 `SUITES` 里登记（key/目录/注释前缀/许可/来源，
+`encoding:` 注释位置与 suite 缺省不同时再补 `encoding_sides`）；② 把文件放进
+`asm/parse/<isa>/<suite>/`；③ 刷棘轮（解析档与编码档各一次）并在 `PROVENANCE.md` 记出处。
+**许可**：LLVM MC 与 XED = `Apache-2.0 WITH LLVM-exception`，NASM/YASM = `BSD-2-Clause`，
+GAS = `GPL-3.0-or-later`（上游各文件的许可，逐条见 `PROVENANCE.md`）。

@@ -186,6 +186,146 @@ fn parse_ratchet(text: &str) -> std::collections::BTreeMap<String, usize> {
     out
 }
 
+// ─────────────────────── 编码对拍档的记分与棘轮 ───────────────────────
+
+/// 一个 ISA 的编码对拍计数 + **已知差异清单**（`asm/ratchet/encoding.txt`）。
+///
+/// 外部字节 oracle 必然会出现"两边都合法、但我们没选上游那种写法"的差异
+/// （实测：x86 `xor rax, 12` 我们出 imm32 形式，LLVM 出符号扩展 imm8 形式），
+/// 也可能出现"上游用了我们解不出来的编码"。这类差异**逐条记在棘轮里**、必须
+/// 与实测**逐项相等**：新增一条 ⇒ 红（新缺陷/新缺口），少一条 ⇒ 也红（修好了，
+/// 显式更新棘轮并说明）。这样红桶不靠"永久红的门禁"或"静默放过"来维持。
+#[derive(Debug, Clone, Default)]
+pub struct EncodingReport {
+    pub isa: String,
+    pub cases: usize,
+    pub checked: usize,
+    pub unparsed: usize,
+    /// 前缀被拆开的期望注释（一份 case 装不下，不猜）。
+    pub dropped: usize,
+    /// 等价编码（解码后反汇编文本相同）——记账，不算缺陷。
+    pub variants: usize,
+    /// **已知差异**（每条一句话，含文件:行、两边字节与判定原因）。
+    pub known: Vec<String>,
+}
+
+impl EncodingReport {
+    /// 一行摘要（与 `ASM-SUMMARY` 同风格）。
+    pub fn summary_line(&self) -> String {
+        format!(
+            "ASM-ENCODING-SUMMARY {}: cases={} checked={} unparsed={} dropped={} variants={} known={}",
+            self.isa,
+            self.cases,
+            self.checked,
+            self.unparsed,
+            self.dropped,
+            self.variants,
+            self.known.len()
+        )
+    }
+}
+
+/// 三架构的编码对拍棘轮文本（重新刷 = 覆盖 `asm/ratchet/encoding.txt`）。
+pub fn encoding_ratchet(reports: &[EncodingReport]) -> String {
+    let mut out = String::new();
+    out.push_str("# 编码对拍棘轮（由 tests/asm_encoding.rs 输出；语料或谱一变就要更新本文件）\n");
+    out.push_str(
+        "# 判定：计数或下面的 known 清单与实测不一致就红（两个方向）——\n\
+         #       known 多一条 = 新出现的字节差异（缺陷或新缺口）；少一条 = 修好了。\n",
+    );
+    for r in reports {
+        out.push_str(&format!("[isa {}]\n", r.isa));
+        for (k, v) in [
+            ("cases", r.cases),
+            ("checked", r.checked),
+            ("unparsed", r.unparsed),
+            ("dropped", r.dropped),
+            ("variants", r.variants),
+            ("known", r.known.len()),
+        ] {
+            out.push_str(&format!("{k} = {v}\n"));
+        }
+        for k in &r.known {
+            out.push_str(&format!("# known: {}\n", k.replace('\n', " ")));
+        }
+    }
+    out
+}
+
+/// 与棘轮文件比对（计数逐项相等 + `known` 清单逐条相等）。
+pub fn check_encoding_ratchet(reports: &[EncodingReport], path: &Path) -> Result<(), String> {
+    let want_text = std::fs::read_to_string(path).map_err(|e| {
+        format!(
+            "读棘轮文件 {} 失败：{e}——首次使用请把下面这段写进去：\n{}",
+            path.display(),
+            encoding_ratchet(reports)
+        )
+    })?;
+    let got_text = encoding_ratchet(reports);
+    let want = parse_encoding_ratchet(&want_text);
+    let got = parse_encoding_ratchet(&got_text);
+    let mut diffs = Vec::new();
+    for (k, v) in &got.0 {
+        match want.0.get(k) {
+            Some(w) if w == v => {}
+            Some(w) => diffs.push(format!("{k}: 棘轮 {w} → 实测 {v}")),
+            None => diffs.push(format!("{k}: 棘轮缺项 → 实测 {v}")),
+        }
+    }
+    for (k, w) in &want.0 {
+        if !got.0.contains_key(k) {
+            diffs.push(format!("{k}: 棘轮 {w} → 实测缺项"));
+        }
+    }
+    for k in &got.1 {
+        if !want.1.contains(k) {
+            diffs.push(format!("known 新增：{k}"));
+        }
+    }
+    for k in &want.1 {
+        if !got.1.contains(k) {
+            diffs.push(format!("known 已消失（修好了？）：{k}"));
+        }
+    }
+    if diffs.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "ASM-ENCODING-RATCHET-MISMATCH {}：\n  {}\n若确为预期变化，用下面这段覆盖该文件：\n{}",
+        path.display(),
+        diffs.join("\n  "),
+        got_text
+    ))
+}
+
+/// 解析编码对拍棘轮 → （`isa/key -> 计数`, known 清单）。
+fn parse_encoding_ratchet(text: &str) -> (std::collections::BTreeMap<String, usize>, Vec<String>) {
+    let mut counts = std::collections::BTreeMap::new();
+    let mut known = Vec::new();
+    let mut isa = String::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(k) = l.strip_prefix("# known: ") {
+            known.push(k.trim().to_string());
+            continue;
+        }
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = l.strip_prefix("[isa ").and_then(|s| s.strip_suffix(']')) {
+            isa = name.trim().to_string();
+            continue;
+        }
+        if let Some((k, v)) = l.split_once('=')
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            counts.insert(format!("{isa}.{}", k.trim()), n);
+        }
+    }
+    known.sort();
+    (counts, known)
+}
+
 /// 追加事件（`FORGE_ASM_EVENTS=<路径>`；与 JIT 矩阵的 `FORGE_JIT_EVENTS` 同款理由：
 /// libtest 吞掉**通过**用例的 stdout，CI 上就看不见计数与跳过原因）。
 pub fn emit_event(kind: &str, msg: &str) {

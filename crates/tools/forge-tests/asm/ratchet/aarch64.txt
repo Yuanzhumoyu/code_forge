@@ -2,10 +2,21 @@
 # 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
 #       少一个 = 修好了/漏跑。两个方向都红。
 [suite llvm-mc]
-files = 1
-lines = 20
-parsed = 2
-no_prefix = 0
-tail_mismatch = 1
-corpus_only = 17
-# mismatch: arm64-separator.s:18	ret	lr	line 2: no matching instruction
+files = 3
+lines = 420
+parsed = 37
+no_prefix = 45
+tail_mismatch = 71
+corpus_only = 267
+# mismatch: arm64-branch-encoding.s:11	ret x1	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:78	b	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:80	b.lt	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:82	b.cc	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:84	b	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:86	b	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:101	cbz w1,	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:103	cbz     w20,	line 3: no matching instruction
+# mismatch: arm64-logical-encoding.s:8	and   w0, w0,	line 2: no matching instruction
+# mismatch: arm64-logical-encoding.s:9	and   x0, x0,	line 2: no matching instruction
+# mismatch: arm64-logical-encoding.s:10	and   w1, w2,	line 2: no matching instruction
+# mismatch: arm64-logical-encoding.s:11	and   x1, x2,	line 2: no matching instruction

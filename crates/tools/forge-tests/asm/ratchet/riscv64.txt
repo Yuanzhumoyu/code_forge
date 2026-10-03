@@ -2,17 +2,21 @@
 # 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
 #       少一个 = 修好了/漏跑。两个方向都红。
 [suite llvm-mc]
-files = 1
-lines = 107
-parsed = 7
-no_prefix = 14
-tail_mismatch = 10
-corpus_only = 76
+files = 3
+lines = 503
+parsed = 12
+no_prefix = 45
+tail_mismatch = 86
+corpus_only = 360
+# mismatch: rv32i-valid.s:15	auipc a0, %pcrel_hi(foo)	line 2: no matching instruction
+# mismatch: rv32i-valid.s:19	lui a0, 2	line 2: no matching instruction
+# mismatch: rv32i-valid.s:22	lui s11, (0x87000000>>12)	line 2: no matching instruction
+# mismatch: rv32i-valid.s:25	lui a0, %hi(2)	line 2: no matching instruction
+# mismatch: rv32i-valid.s:28	lui s11, (0x87000000>>12)	line 2: no matching instruction
+# mismatch: rv32i-valid.s:31	lui s11, %hi(0x87000000)	line 2: no matching instruction
+# mismatch: rv32i-valid.s:34	lui t0, 1048575	line 2: no matching instruction
+# mismatch: rv32i-valid.s:37	lui gp, 0	line 2: no matching instruction
 # mismatch: rv64i-valid.s:30	ld x12, %lo(2048)(x13)	line 1: no matching instruction
 # mismatch: rv64i-valid.s:40	sd x18, %lo(2048)(x19)	line 1: no matching instruction
 # mismatch: rv64i-valid.s:56	srai x26, x27, CONST	line 1: no matching instruction
 # mismatch: rv64i-valid.s:89	addw a2, a3, a4	line 1: no matching instruction
-# mismatch: rv64i-valid.s:92	addw a5, a6, a7	line 1: no matching instruction
-# mismatch: rv64i-valid.s:95	subw s2, s3, s4	line 1: no matching instruction
-# mismatch: rv64i-valid.s:98	subw s5, s6, s7	line 1: no matching instruction
-# mismatch: rv64i-valid.s:101	sllw s8, s9, s10	line 1: no matching instruction

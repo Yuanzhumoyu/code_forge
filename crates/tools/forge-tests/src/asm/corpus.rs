@@ -6,6 +6,21 @@
 
 use std::path::{Path, PathBuf};
 
+/// `encoding:` 注释相对**指令**的位置（编码对拍档用）。
+///
+/// 上游两种风格都有，且**同一目录里混着来**，所以**逐文件声明、不猜**：
+///
+/// - [`EncodingSide::Before`]：注释在指令**前**（riscv `rv64i-valid.s`、x86 Intel 用例）；
+/// - [`EncodingSide::After`]：注释在指令**后**（`arm64-branch-encoding.s`）。
+///
+/// 声明与文件不符时，编码对拍档会**大声报错**（字节对不上），不会静默放过——照报错
+/// 补一条 [`Suite::encoding_sides`] 即可。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodingSide {
+    Before,
+    After,
+}
+
 /// 一套语料的方言档案。语料文件本身保持上游原文，方言知识写在这里（可评审）。
 pub struct Suite {
     /// 报告与棘轮里用的键。
@@ -21,6 +36,20 @@ pub struct Suite {
     pub source: &'static str,
     /// 许可（SPDX）。
     pub license: &'static str,
+    /// `encoding:` 注释的位置：`(文件名后缀, 位置)`，按序取第一个命中；
+    /// 没命中就按 [`EncodingSide::Before`]（上游多数如此）。逐文件写清楚，别让代码猜。
+    pub encoding_sides: &'static [(&'static str, EncodingSide)],
+}
+
+impl Suite {
+    /// 这份语料文件的 `encoding:` 注释在哪一侧。
+    pub fn encoding_side(&self, file: &str) -> EncodingSide {
+        self.encoding_sides
+            .iter()
+            .find(|(pat, _)| file.ends_with(pat))
+            .map(|(_, side)| *side)
+            .unwrap_or(EncodingSide::Before)
+    }
 }
 
 /// 三份发行谱当前的解析档语料（vendored 集）。
@@ -33,6 +62,18 @@ pub const SUITES: &[Suite] = &[
         stmt_sep: None,
         source: "binutils-gdb gas/testsuite/gas/i386/intel.s（Intel 方言；镜像 ahjragaas/binutils-gdb@master）",
         license: "GPL-3.0-or-later",
+        encoding_sides: &[],
+    },
+    Suite {
+        key: "llvm-mc",
+        isa: "x86",
+        dir: "x86/llvm-mc",
+        comments: &["//", "#"],
+        stmt_sep: None,
+        source: "llvm/llvm-project@llvmorg-19.1.0 llvm/test/MC/X86/（只取 Intel 语法的文件）",
+        license: "Apache-2.0 WITH LLVM-exception",
+        // 两份都是"注释在指令前"：`// CHECK: encoding: [..]` + 指令行。
+        encoding_sides: &[],
     },
     Suite {
         key: "llvm-mc",
@@ -42,6 +83,8 @@ pub const SUITES: &[Suite] = &[
         stmt_sep: None,
         source: "llvm/llvm-project@llvmorg-19.1.0 llvm/test/MC/RISCV/",
         license: "Apache-2.0 WITH LLVM-exception",
+        // `rv*i-valid.s` / `rv*m-valid.s` 全是 `# CHECK-ASM: encoding: [..]` + 指令行。
+        encoding_sides: &[],
     },
     Suite {
         key: "llvm-mc",
@@ -51,6 +94,12 @@ pub const SUITES: &[Suite] = &[
         stmt_sep: Some("%%"),
         source: "llvm/llvm-project@llvmorg-19.1.0 llvm/test/MC/AArch64/",
         license: "Apache-2.0 WITH LLVM-exception",
+        // 这一套两种风格都有，**逐文件**写清楚：
+        // - `arm64-branch-encoding.s`：`ret` 换行后跟 `; CHECK: encoding: [..]` ⇒ After；
+        // - `arm64-logical-encoding.s`：注释自带汇编文本（`; CHECK: and w0, … ; encoding:`）
+        //   且成块放在指令前 ⇒ 位置无所谓（走"注释自带文本"那条路），这里仍标 Before；
+        // - `arm64-separator.s`：没有 `encoding:`。
+        encoding_sides: &[("arm64-branch-encoding.s", EncodingSide::After)],
     },
 ];
 

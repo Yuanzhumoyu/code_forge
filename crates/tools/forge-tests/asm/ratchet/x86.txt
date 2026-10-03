@@ -16,3 +16,22 @@ corpus_only = 3
 # mismatch: intel.excerpt.s:9	add    eax, 0x90909090	line 2: no matching instruction
 # mismatch: intel.excerpt.s:10	push   es	line 2: no matching instruction
 # mismatch: intel.excerpt.s:11	pop    es	line 2: no matching instruction
+[suite llvm-mc]
+files = 2
+lines = 447
+parsed = 7
+no_prefix = 41
+tail_mismatch = 63
+corpus_only = 336
+# mismatch: apx-rex2-format-intel.s:7	mov	r16d, 1	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:13	movsxd	rax, r16d	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:17	movsxd	r16, eax	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:21	movsxd	r17, r16d	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:25	popcnt r17d, r16d	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:45	imul	ebx, dword ptr [r16 + rax]	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:49	imul	ebx, dword ptr [rax + r16]	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:53	imul	r16d, dword ptr [rax + rbx]	line 1: no matching instruction
+# mismatch: intel-syntax-encoding.s:4	xor	ax, 12	line 2: no matching instruction
+# mismatch: intel-syntax-encoding.s:6	xor	eax, 12	line 2: no matching instruction
+# mismatch: intel-syntax-encoding.s:11	or	ax, 12	line 2: no matching instruction
+# mismatch: intel-syntax-encoding.s:13	or	eax, 12	line 2: no matching instruction
