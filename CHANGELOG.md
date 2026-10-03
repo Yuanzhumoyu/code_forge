@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-03) — x86 8 位 ALU 族（`*_MR_8` / `*_R_MEM_8` / `*_RM8_IMM8` 各 8 条）
+
+x86 的 8 位算术是**独立操作码**（不是同一操作码换宽度前缀）：`00 /r`（r/m8 ← r/m8 op r8）、`02 /r`（r8 ← r8 op r/m8）、`80 /digit ib`（r/m8 ← r/m8 op imm8）——ADD/OR/ADC/SBB/AND/SUB/XOR/CMP 各一条，共 24 条，一条 `[[templates]]` 各 8 行。寄存器槽用 `gpr1b`（class `gpr1` + `byte_reg = true`），并给它补上 `inout`（8 位 ALU 是读改写）。与 16/32/64 位族一样**不写 `ref`**，IR 降级不变（JIT 矩阵 x86 197/3/0、riscv64 136/64/0、arm64 23/177/0 与改动前逐条一致）。
+
+顺带给操作数槽 `gpr8` 补了说明注释：它的 `class` 是 **`gpr8`（64 位名字）**，这是**有意的**——`SETCC_RM8 {out}, …` 的降低文本里必须是承接布尔结果的 64 位 vreg 名（`xor {out}, {out}` 先清零，故低字节即结果），把 class 改成 `gpr1` 会让所有 Cmp/Fcmp 降级当场汇编失败。真正的 8 位名字槽是 `gpr1b`。
+
+效果：`gnu-gas-intel` 解析档 `parsed` 16 → **40**、`tail_mismatch` 39 → **15**（只剩「无符号 imm32」与「段寄存器 push/pop」两类）；字节对拍不变（27 条逐字节全等、0 条差异）。
+
+### Fixed (2026-10-03) — 1 字节操作数的 `opsize` 解码守卫恒为假，8 位指令解不出来
+
+`opsize = "s0"`（或操作数名）指向**单类 1 字节槽**时，生成物会写下 `__opsize == 1` 的解码守卫；而 `__opsize` 只可能取 **2/4/8**（由 66 前缀与 REX.W 扫描决定）——8 位操作数**没有** opsize 前缀可查，守卫恒假 ⇒ 该指令**解码永远失败**（实测 `00 00`（`add [rax], al`）解不出来，`isa_roundtrip_guard` 当场红）。以前没暴露是因为缺省分支的 `find(|w| *w == 2 || *w == 4 || *w == 8)` 恰好把 1 字节槽过滤掉了。现在宽度 ∉ {2,4,8} ⇒ **不发守卫**（与缺省分支同一口径）；编码侧不受影响（1 字节本来就不出 66/REX.W）。
+
 ### Changed (2026-10-03) — `[conventions.mem]` 改成模板**列表** + `{size}` 尺寸前缀（破坏性，无兼容层）
 
 声明从 `template = "…"` 变成 `templates = ["…", …]`：**第 0 条 = 反汇编渲染形态**（渲染必须唯一，否则 `disassemble` 的输出会随解析尝试顺序漂移），其余是**解析专用备选**——按列表序逐条试，第一条整条走通的赢。同一份 `MemRef` 的几种合法写法（x86 的 Intel `[base+disp]` 与 GAS `disp[base]`）各写一条，不必硬塞进同一条模板；空列表报错。

@@ -194,6 +194,10 @@ kind = "reg"
 classes = ["gpr2", "gpr4", "gpr8"]
 roles = ["in", "out", "inout"]
 
+# 「8 位**字段**、64 位**名字**」的槽（v20 V10 加注）：SETCC 的 rm 是 8 位寄存器，
+# 但 lowering 用的是承接布尔结果的 64 位 vreg（`xor {out}, {out}` 先清零，故低字节
+# 即结果）——`SETCC_RM8 {out}, …` 的文本里必须是 `RAX` 这类 64 位名，改成 `gpr1`
+# 会让所有 Cmp/Fcmp 降级当场汇编失败。真正的 8 位名字槽是下面的 `gpr1b`。
 [[operand_slots]]
 name = "gpr8"
 kind = "reg"
@@ -216,7 +220,8 @@ kind = "reg"
 # 会被解码为 ah/ch/dh/bh，必须强制 REX（见 codegen REX 条件）。
 class = "gpr1"
 byte_reg = true
-roles = ["in", "out"]
+# `inout` = 8 位 ALU 的读改写（`add al, imm8` / `add byte ptr […], dl`）。
+roles = ["in", "out", "inout"]
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
@@ -551,6 +556,59 @@ rows = [
   { inst = "XOR_R_MEM", opcode = 0x33, asm = "xor {dst}, {mem}" },
   { inst = "CMP_R_MEM", opcode = 0x3B, asm = "cmp {src}, {mem}", ops = ["src:gprx", "mem:mem"] },
 ]
+
+# ── 8 位 ALU 族（v20 V10）───────────────────────────────────────────────────
+#
+# x86 的 8 位算术是**独立操作码**（不是同一操作码换宽度前缀）：`00 /r`（r/m8 ←
+# r/m8 op r8）、`02 /r`（r8 ← r8 op r/m8）、`80 /digit ib`（r/m8 ← r/m8 op imm8）。
+# 寄存器槽用 `gpr1b`（class `gpr1` + `byte_reg = true`：SPL/BPL/SIL/DIL 强制 REX）。
+#
+# 与 16/32/64 位族一样**不写 `ref`**：IR 降级不发射 8 位 ALU（8 位值在 IR 里走显式
+# 扩展），目前只有汇编器入口需要它。名字后缀 `_8` 沿用 `MOV_R_MEM_8` /
+# `STORE_MEM_R_8` 的既有写法。
+
+[[templates]]
+name = "ALU8_MR"
+body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["src:gpr1b", "mem:mem:inout"] }
+rows = [
+  { inst = "ADD_MR_8", opcode = 0x00, asm = "add {mem}, {src}" },
+  { inst = "OR_MR_8",  opcode = 0x08, asm = "or {mem}, {src}" },
+  { inst = "ADC_MR_8", opcode = 0x10, asm = "adc {mem}, {src}" },
+  { inst = "SBB_MR_8", opcode = 0x18, asm = "sbb {mem}, {src}" },
+  { inst = "AND_MR_8", opcode = 0x20, asm = "and {mem}, {src}" },
+  { inst = "SUB_MR_8", opcode = 0x28, asm = "sub {mem}, {src}" },
+  { inst = "XOR_MR_8", opcode = 0x30, asm = "xor {mem}, {src}" },
+  { inst = "CMP_MR_8", opcode = 0x38, asm = "cmp {mem}, {src}", ops = ["src:gpr1b", "mem:mem"] },
+]
+
+[[templates]]
+name = "ALU8_R_MEM"
+body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["dst:gpr1b:out", "mem:mem"] }
+rows = [
+  { inst = "ADD_R_MEM_8", opcode = 0x02, asm = "add {dst}, {mem}" },
+  { inst = "OR_R_MEM_8",  opcode = 0x0A, asm = "or {dst}, {mem}" },
+  { inst = "ADC_R_MEM_8", opcode = 0x12, asm = "adc {dst}, {mem}" },
+  { inst = "SBB_R_MEM_8", opcode = 0x1A, asm = "sbb {dst}, {mem}" },
+  { inst = "AND_R_MEM_8", opcode = 0x22, asm = "and {dst}, {mem}" },
+  { inst = "SUB_R_MEM_8", opcode = 0x2A, asm = "sub {dst}, {mem}" },
+  { inst = "XOR_R_MEM_8", opcode = 0x32, asm = "xor {dst}, {mem}" },
+  { inst = "CMP_R_MEM_8", opcode = 0x3A, asm = "cmp {src}, {mem}", ops = ["src:gpr1b", "mem:mem"] },
+]
+
+[[templates]]
+name = "ALU8_RM_IMM8"
+body = { form = "MRR_EXT", imm = 8, ops = ["dst:gpr1b:inout", "imm:imm8"] }
+rows = [
+  { inst = "ADD_RM8_IMM8", opcode = 0x80, modrm = { reg = 0, rm = "dst" }, asm = "add {dst}, {imm}" },
+  { inst = "OR_RM8_IMM8",  opcode = 0x80, modrm = { reg = 1, rm = "dst" }, asm = "or {dst}, {imm}" },
+  { inst = "ADC_RM8_IMM8", opcode = 0x80, modrm = { reg = 2, rm = "dst" }, asm = "adc {dst}, {imm}" },
+  { inst = "SBB_RM8_IMM8", opcode = 0x80, modrm = { reg = 3, rm = "dst" }, asm = "sbb {dst}, {imm}" },
+  { inst = "AND_RM8_IMM8", opcode = 0x80, modrm = { reg = 4, rm = "dst" }, asm = "and {dst}, {imm}" },
+  { inst = "SUB_RM8_IMM8", opcode = 0x80, modrm = { reg = 5, rm = "dst" }, asm = "sub {dst}, {imm}" },
+  { inst = "XOR_RM8_IMM8", opcode = 0x80, modrm = { reg = 6, rm = "dst" }, asm = "xor {dst}, {imm}" },
+  { inst = "CMP_RM8_IMM8", opcode = 0x80, modrm = { reg = 7, rm = "dst" }, asm = "cmp {dst}, {imm}" },
+]
+
 [[instructions]]
 name = "MOVZX_R8_MEM"
 modrm = { rm = "[src]" }

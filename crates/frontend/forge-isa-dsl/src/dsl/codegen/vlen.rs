@@ -281,6 +281,12 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
                 // 否则无前缀 32 位形态（__opsize=4）被拒（固定 _32 变体
                 // 删除后主指令需自反解 16/32/64——DSL 回填修复对称缺口）。
                 None => (None, false),
+                // **8 位（1 字节）操作数没有 opsize 前缀可查**：66（16 位）与 REX.W
+                // （64 位）都不表示它，`__opsize` 只可能取 2/4/8 —— 要求
+                // `__opsize == 1` 会让解码**永远失败**（v20 V10 加 8 位 ALU 族时实测：
+                // `00 00`（`add [rax], al`）解不出来）。与下面缺省分支的
+                // `find(|w| *w == 2 || *w == 4 || *w == 8)` 同一口径。
+                Some(w) if !matches!(w, 2 | 4 | 8) => (None, false),
                 Some(w) => (Some(w), false),
             },
             // Named 已在 collect_inst_infos 解析（此分支不可达）

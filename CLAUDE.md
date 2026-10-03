@@ -493,10 +493,10 @@ let name = node.get_text("name")?;
   `disp=8`/`disp=-8`/`index+scale=4`；取值与生成期自测同源 `sample_operands`）——
   宿主侧"全指令编解码往返"**不要再手抄 `all_insts()`**（x86 曾手抄 650 行且谱加指令时不
   自动跟上）；由 `crates/backend/forge-codegen/src/isa_roundtrip_guard.rs` 遍历三谱的
-  1075/341/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
+  1251/341/360 条跑字节闭环 + 覆盖清点。`decode(encode(x)) == x` 不在这条守卫里（别名撞车
   按声明序首匹配，本就不成立），仍由各 ISA 测试的"规范指令"小清单守。
   覆盖守卫 = `crates/backend/forge-codegen/src/spec_coverage_guard.rs`（钉死指令总数
-  x86 237 / riscv64 119 / arm64 110、零跳过、文本歧义名单；v20 V10 起歧义键 = 字面段 +
+  x86 261 / riscv64 119 / arm64 110、零跳过、文本歧义名单；v20 V10 起歧义键 = 字面段 +
   **按模板占位符序、不带操作数序号**的打印描述——只有占位符顺序相反的 `add [mem], r`
   对 `add r, [mem]`，以及"序号不同但渲染文本确实一样"的 `MOV_R_RM` 对 `MOV64_RR`，
   各修掉一类误判；**它是 `#[cfg(test)]` 项，
@@ -513,6 +513,11 @@ let name = node.get_text("name")?;
   少读 4 字节 disp32 还编出假的 `[rbp+disp]`（`encoder_fuzz_tests` 的
   `sub rax, [0x12345678]` 抓到）。规范见 `docs/reference/isa-dsl.md` 的
   「`[conventions.mem]` — 内存操作数的文本形态」。
+- **`opsize` 指向 1 字节槽 ⇒ 解码不发守卫（v20 V10）**：`__opsize` 只可能取 2/4/8
+  （由 66 前缀与 REX.W 扫描决定），8 位操作数没有 opsize 前缀可查——显式
+  `opsize = "s0"` 指向单类 1 字节槽时会生成 `__opsize == 1` 的解码守卫，恒假 ⇒ 解码
+  永远失败（缺省分支的 `find(|w| *w == 2 || *w == 4 || *w == 8)` 恰好把这类过滤掉了，
+  所以以前没暴露）。实测 `00 00`（`add [rax], al`）由 `isa_roundtrip_guard` 抓到。
 - **生成物形状表（v18 S8a）**：`impl MachineInst for Inst` 的 8 个查询方法
   （`uses`/`defs`/`use_constraints`/`def_constraints`/`effects`/`reg_field`/`set_reg_field`/
   `is_reg_field_settable`）在生成物里**不许再逐指令展开**——它们读每变体一行的

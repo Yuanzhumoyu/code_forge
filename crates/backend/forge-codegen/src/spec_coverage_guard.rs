@@ -67,13 +67,14 @@ fn generated_spec_tests_cover_every_instruction() {
 
 /// 指令总数钉死（2026-09-20 实测；arm64 自 S3c 加 `b.cond` 16 行模板后 = 104，v20 A5 补浮点搬运 = 110；
 /// riscv64 v20 V6+ 补 `fpr_mov` 的双精度档 `fsgnj.d` 后 = 117。
-/// x86 v20 V10 补内存形式的 ALU 族（`*_MR` / `*_R_MEM` 各 8 条）后 = 221 + 16 = 237）。
+/// x86 v20 V10 补内存形式的 ALU 族（`*_MR` / `*_R_MEM` 各 8 条 → 237）与 8 位 ALU 族
+/// （`*_MR_8` / `*_R_MEM_8` / `*_RM8_IMM8` 各 8 条 → 261）后 = 261）。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 237), ("riscv64", 119), ("arm64", 110)],
+        vec![("x86", 261), ("riscv64", 119), ("arm64", 110)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
