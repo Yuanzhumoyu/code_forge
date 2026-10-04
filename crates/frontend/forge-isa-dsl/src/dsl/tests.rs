@@ -3885,3 +3885,78 @@ asm = "nop"
         "13 位 > 12 位字宽 → 报错：{msg}"
     );
 }
+
+// ─────────── v20 V10：立即数修饰（谱声明的数据） ───────────
+
+/// `[[conventions.imm_fn]]`：**怎么写（text）+ 算成什么值（expr）**两行数据。
+/// 形状非法要在声明期报出来（它是汇编期行为的全部依据，写错不该拖到运行期）。
+#[test]
+fn imm_fn_decl_shape_is_validated() {
+    // 合法：带括号的 GAS 风格、不带括号的前缀风格、纯后缀风格都收
+    for block in [
+        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"({0} + 0x800) >> 12\"",
+        "[[conventions.imm_fn]]\nname = \"lower16\"\ntext = \":lower16:{0}\"\nexpr = \"{0} & 0xffff\"",
+        "[[conventions.imm_fn]]\nname = \"suffix\"\ntext = \"{0}:lo\"\nexpr = \"{0} & 0xff\"",
+    ] {
+        parse_and_validate(&lowering_doc(block)).unwrap_or_else(|e| panic!("{block}: {e:?}"));
+    }
+
+    // text / expr 各必须恰好一个 `{0}`
+    let no_hole =
+        lowering_doc("[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi(x)\"\nexpr = \"{0}\"");
+    assert!(
+        validation_msg(&no_hole).contains("text 必须恰好含一个"),
+        "{}",
+        validation_msg(&no_hole)
+    );
+    let two_holes = lowering_doc(
+        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})-{0}\"\nexpr = \"{0}\"",
+    );
+    assert!(validation_msg(&two_holes).contains("恰好含一个"));
+    let expr_no_hole =
+        lowering_doc("[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"1\"");
+    assert!(validation_msg(&expr_no_hole).contains("expr 必须恰好含一个"));
+
+    // text 光一个 `{0}` = 通配（会吞掉任意表达式）⇒ 拒
+    let bare =
+        lowering_doc("[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"{0}\"\nexpr = \"{0}\"");
+    assert!(
+        validation_msg(&bare).contains("没有任何字面"),
+        "{}",
+        validation_msg(&bare)
+    );
+
+    // name 重复 / 为空
+    let dup = lowering_doc(concat!(
+        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"\n",
+        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%HI({0})\"\nexpr = \"{0}\"",
+    ));
+    assert!(
+        validation_msg(&dup).contains("重复"),
+        "{}",
+        validation_msg(&dup)
+    );
+    let empty =
+        lowering_doc("[[conventions.imm_fn]]\nname = \"\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"");
+    assert!(validation_msg(&empty).contains("name 不能为空"));
+}
+
+/// 没声明 `imm_fn` 的 ISA：生成物里**没有**修饰机制（与引入前逐字相同）——
+/// 这条纪律与 `[[pseudo]]`/`[[conventions.mem]]` 一致：能力按谱数据出现。
+#[test]
+fn imm_fn_absent_keeps_generated_code_unchanged() {
+    let m = parse_and_validate(&lowering_doc("")).expect("合法");
+    let s = super::codegen::generate(&m).unwrap().to_string();
+    assert!(!s.contains("__imm_fn_lit"), "不该生成修饰匹配器：{s}");
+    assert!(!s.contains("__imm_fn0"), "不该生成修饰值函数：{s}");
+
+    let m2 = parse_and_validate(&lowering_doc(
+        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"({0} + 0x800) >> 12\"",
+    ))
+    .expect("合法");
+    let s2 = super::codegen::generate(&m2).unwrap().to_string();
+    assert!(
+        s2.contains("__imm_fn_lit") && s2.contains("__imm_fn0"),
+        "声明了就该有修饰机制：{s2}"
+    );
+}

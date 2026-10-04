@@ -285,3 +285,16 @@ emit = ["mov {dst}, {src}"]
 name = "mv_twice"
 asm = "mv2 {a}, {b}"
 emit = ["mv {a}, {b}", "mv {b}, {a}"]
+
+# ── 立即数修饰（谱声明的数据；夹具这里刻意演**非 RISC-V** 的拼写与语义）──
+# ARM 风格：前缀、**不带括号**，值语义是掩码/右移（不是 riscv 的进位补偿）。
+# 同一套机制、零代码改动——DSL 不认识任何修饰名。
+[[conventions.imm_fn]]
+name = "upper16"
+text = ":upper16:{0}"
+expr = "({0} >> 16) & 0xffff"
+
+[[conventions.imm_fn]]
+name = "lower16"
+text = ":lower16:{0}"
+expr = "{0} & 0xffff"

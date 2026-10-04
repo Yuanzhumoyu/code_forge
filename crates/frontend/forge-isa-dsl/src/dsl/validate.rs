@@ -1085,6 +1085,51 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
             }
         }
     }
+    validate_imm_fns(conv)?;
+    Ok(())
+}
+
+/// `[[conventions.imm_fn]]` 校验：立即数修饰是**谱声明的数据**，声明侧必须自洽
+/// （它决定汇编期怎么认这个写法、算成什么值）。
+///
+/// 规则（都要求"能说清楚"，否则生成期行为不可预测）：
+///
+/// - `name` 非空、唯一（诊断名，不参与文本匹配）；
+/// - `text` 与 `expr` 各含**恰好一个** `{0}`（`text` 里是内层表达式的位置，
+///   `expr` 里是内层值的位置）；
+/// - `text` 必须含**至少一个字面 token**——光一个 `{0}` 会吞掉任意表达式
+///   （它不是修饰，是通配）；
+/// - `text` 的两段与 `expr` 的两段都要能词法化成 token（字面写错当场报，不留到运行期）。
+fn validate_imm_fns(conv: &Conventions) -> Result<(), String> {
+    let Some(defs) = &conv.imm_fn else {
+        return Ok(());
+    };
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for (i, d) in defs.iter().enumerate() {
+        let path = format!("[conventions.imm_fn][{i}]");
+        if d.name.trim().is_empty() {
+            return Err(format!("{path}: name 不能为空"));
+        }
+        if !seen.insert(d.name.as_str()) {
+            return Err(format!("{path}: imm_fn 名字 '{}' 重复", d.name));
+        }
+        let ctx = format!("[conventions.imm_fn.{}]", d.name);
+        let (pre, post) = crate::dsl::codegen::asm::split_hole(&d.text)
+            .ok_or_else(|| format!("{ctx}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）"))?;
+        let (epre, epost) = crate::dsl::codegen::asm::split_hole(&d.expr)
+            .ok_or_else(|| format!("{ctx}: expr 必须恰好含一个 `{{0}}`（内层值）"))?;
+        let pre_toks =
+            tokenize(pre.trim()).map_err(|e| format!("{ctx}: text 前段 '{pre}': {e}"))?;
+        let post_toks =
+            tokenize(post.trim()).map_err(|e| format!("{ctx}: text 后段 '{post}': {e}"))?;
+        if pre_toks.is_empty() && post_toks.is_empty() {
+            return Err(format!(
+                "{ctx}: text 里没有任何字面——只写 `{{0}}` 会吞掉任意表达式（改写作法的拼写）"
+            ));
+        }
+        tokenize(epre.trim()).map_err(|e| format!("{ctx}: expr 前段 '{epre}': {e}"))?;
+        tokenize(epost.trim()).map_err(|e| format!("{ctx}: expr 后段 '{epost}': {e}"))?;
+    }
     Ok(())
 }
 

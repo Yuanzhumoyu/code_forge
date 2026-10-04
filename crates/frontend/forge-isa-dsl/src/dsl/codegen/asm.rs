@@ -577,6 +577,11 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
     // imm/label 操作数"无关。历史实现按 has_imm/has_label 门控定义 → 只有寄存器操作数的
     // ISA（夹具 `demo_inst12`）生成出**引用未定义 helper** 的模块（编译不过）。
     // 未被本 ISA 用到的入口函数加 `#[allow(dead_code)]`。
+    // 立即数修饰（`[[conventions.imm_fn]]`）：**谱声明的数据**——本文件不认识任何具体
+    // 修饰名（`%hi`/`:lower16:` 都只是谱里的两行文本），只按 `text` 的模板匹配、
+    // 按 `expr` 的值语义求值（复用既有表达式求值器）。
+    let (imm_fn_defs, imm_fn_tries) = gen_imm_fns(model)?;
+    out.extend(imm_fn_defs);
     {
         let dollar = model.meta.imm_prefix.as_deref() == Some("$");
         out.extend(quote! {
@@ -669,7 +674,8 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 Some(lhs)
             }
 
-            /// 一元：正负号 / 按位非 / 主元（数字、括号、符号常量）。
+            /// 一元：正负号 / 按位非 / 谱声明的立即数修饰（`[[conventions.imm_fn]]`）/
+            /// 主元（数字、括号、符号常量）。
             fn __unary(it: &mut __Iter, float: bool) -> Option<i64> {
                 let save = it.pos;
                 match it.toks.get(it.pos)? {
@@ -688,7 +694,12 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                         let v = __unary(it, float)?;
                         Some(!v)
                     }
-                    _ => __primary(it, save, float),
+                    // 谱声明的立即数修饰（`%hi(x)`、`:lower16:x`…）：**本文件不认识任何
+                    // 具体修饰名**——文本形态与值语义都来自 `[[conventions.imm_fn]]`。
+                    _ => {
+                        #imm_fn_tries
+                        __primary(it, save, float)
+                    }
                 }
             }
 
@@ -894,8 +905,128 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
     Ok(out)
 }
 
-/// 一个**字面段**的匹配表达式（布尔；匹配则消费 token 并推进 `it.pos`）。
+/// 拆 `text`/`expr` 里的 `{0}`：返回 (前段, 后段)；没有或不止一个 ⇒ None。
 ///
+/// `{0}` 是**唯一**的占位：`text` 里它是"内层表达式"的位置，`expr` 里它是"内层值"。
+pub(crate) fn split_hole(s: &str) -> Option<(&str, &str)> {
+    let (pre, rest) = s.split_once("{0}")?;
+    if rest.contains("{0}") {
+        return None;
+    }
+    Some((pre, rest))
+}
+
+/// 立即数修饰（`[[conventions.imm_fn]]`）的生成：**谱声明的数据**，本文件不认识任何
+/// 具体修饰名（`%hi(x)`、`:lower16:x`、`hi(x)` 都只是谱里的两行文本）。
+///
+/// 每条声明两件事：
+///
+/// - `text`：源文本形态，`{0}` 处是内层表达式；其余按**字面 token** 匹配
+///   （`mnemonic_case = insensitive` 时 Ident token 豁免大小写）；允许前缀/后缀/两侧都有；
+/// - `expr`：值语义，`{0}` 处是内层表达式的**值**。生成期把 `expr` 词法化成 token 流：
+///   运行期把 `{0}` 换成数值 token 再交给**既有表达式求值器** `__expr`——因此任意算术、
+///   任意嵌套（`%hi(%lo(x))`、或某条修饰的 `expr` 里再用别的修饰）都天然成立，
+///   不需要第二套表达式语言，也不需要为某个 ISA 写任何特殊分支。
+///
+/// 返回 `(定义块, __unary 里逐个试的语句)`；谱没声明 → 两者都空（生成物逐字不变）。
+fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
+    let Some(defs) = model.conventions.imm_fn.as_ref().filter(|d| !d.is_empty()) else {
+        return Ok((quote! {}, quote! {}));
+    };
+    let ci = matches!(model.meta.mnemonic_case, MnemonicCase::Insensitive);
+    let mut fns: Vec<TokenStream> = Vec::new();
+    let mut tries: Vec<TokenStream> = Vec::new();
+    for (i, d) in defs.iter().enumerate() {
+        let ctx = || format!("[[conventions.imm_fn.{}]]", d.name);
+        let (pre_txt, post_txt) = split_hole(&d.text)
+            .ok_or_else(|| format!("{}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）", ctx()))?;
+        let (pre_expr, post_expr) = split_hole(&d.expr)
+            .ok_or_else(|| format!("{}: expr 必须恰好含一个 `{{0}}`（内层值）", ctx()))?;
+        let pre_lit = tokenize(pre_txt.trim())
+            .map_err(|e| format!("{}: text 前段 '{pre_txt}': {e}", ctx()))?;
+        let post_lit = tokenize(post_txt.trim())
+            .map_err(|e| format!("{}: text 后段 '{post_txt}': {e}", ctx()))?;
+        if pre_lit.is_empty() && post_lit.is_empty() {
+            return Err(format!(
+                "{}: text 里没有任何字面——光一个 `{{0}}` 会吞掉任意表达式（改写作法的拼写）",
+                ctx()
+            ));
+        }
+        let pre_expr_toks: Vec<TokenStream> = tokenize(pre_expr.trim())
+            .map_err(|e| format!("{}: expr 前段: {e}", ctx()))?
+            .iter()
+            .map(tok_expr)
+            .collect();
+        let post_expr_toks: Vec<TokenStream> = tokenize(post_expr.trim())
+            .map_err(|e| format!("{}: expr 后段: {e}", ctx()))?
+            .iter()
+            .map(tok_expr)
+            .collect();
+        let fname = format_ident!("__imm_fn{i}");
+        fns.push(quote! {
+            /// 立即数修饰的值语义（谱声明；`{0}` 已换成本次的内层值）。
+            #[allow(dead_code)]
+            fn #fname(__x: i64) -> Option<i64> {
+                let __toks: Vec<__Tok> = vec![
+                    #(#pre_expr_toks,)*
+                    __Tok::Num(__x),
+                    #(#post_expr_toks),*
+                ];
+                let mut __it = __Iter { toks: &__toks, pos: 0 };
+                let __v = __expr(&mut __it, false)?;
+                if !__it.eof() { return None; }
+                Some(__v)
+            }
+        });
+        let pre_lits: Vec<TokenStream> = pre_lit.iter().map(tok_expr).collect();
+        let post_lits: Vec<TokenStream> = post_lit.iter().map(tok_expr).collect();
+        let pre_match = if pre_lits.is_empty() {
+            quote! { true }
+        } else {
+            quote! { __imm_fn_lit(it, &[#(#pre_lits),*], #ci) }
+        };
+        let post_match = if post_lits.is_empty() {
+            quote! { true }
+        } else {
+            quote! { __imm_fn_lit(it, &[#(#post_lits),*], #ci) }
+        };
+        tries.push(quote! {
+            {
+                let __msave = it.pos;
+                if #pre_match {
+                    if let Some(__inner) = __expr(it, float) {
+                        if #post_match {
+                            if let Some(__v) = #fname(__inner) { return Some(__v); }
+                        }
+                    }
+                }
+                it.pos = __msave;
+            }
+        });
+    }
+    let helper = quote! {
+        /// 立即数修饰的**字面**匹配（`ci` = Ident token 豁免大小写）。
+        fn __imm_fn_lit(it: &mut __Iter, lit: &[__Tok], ci: bool) -> bool {
+            let mut p = it.pos;
+            for t in lit {
+                match (it.toks.get(p), t) {
+                    (Some(__Tok::Ident(x)), __Tok::Ident(y)) => {
+                        let ok = if ci { x.eq_ignore_ascii_case(y) } else { x == y };
+                        if !ok { return false; }
+                    }
+                    (Some(x), y) => { if x != y { return false; } }
+                    (None, _) => return false,
+                }
+                p += 1;
+            }
+            it.pos = p;
+            true
+        }
+    };
+    Ok((quote! { #helper #(#fns)* }, quote! { #(#tries)* }))
+}
+
+/// 一个**字面段**的匹配表达式（布尔；匹配则消费 token 并推进 `it.pos`）。
 /// 首段（`idx == 0`）在 `mnemonic_case = "insensitive"` 时对 Ident token 豁免大小写：
 /// 单 token 字面走 `__eat_name`，多 token 字面走 `__eat_lit_ci`（如 `lock cmpxchg [`）。
 /// **其余字面段严格按 asm 格式匹配**（`__eat_lit`）。

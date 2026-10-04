@@ -972,6 +972,37 @@ pub struct Conventions {
     /// 单条 `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
     #[serde(default)]
     pub mem: Option<MemTemplate>,
+    /// **立即数修饰函数**（`[[conventions.imm_fn]]`，v20 V10）：谱自己声明的表达式修饰，
+    /// 例 `%hi(x)`、`:lower16:x`、`hi(x)`。DSL 不认识任何具体修饰名——文本形态与值语义
+    /// 全在这张表里（见 [`ImmFnDef`]）。缺省 = 没有任何修饰。
+    #[serde(default)]
+    pub imm_fn: Option<Vec<ImmFnDef>>,
+}
+
+/// 立即数**修饰函数**：汇编期表达式里的一种"包裹写法"
+/// （`[[conventions.imm_fn]]`）。
+///
+/// 一个修饰 = 两行数据：
+///
+/// ```toml
+/// [[conventions.imm_fn]]
+/// name = "hi"                  # 名字（诊断/文档用；不参与文本匹配）
+/// text = "%hi({0})"            # 源文本形态：`{0}` 处是内层表达式
+/// expr = "({0} + 0x800) >> 12" # 值语义：`{0}` 处是内层表达式的**值**
+/// ```
+///
+/// 刻意**不带任何 ISA 知识**：GAS/RISC-V 的 `%hi`/`%lo`、GAS/ARM 的 `:lower16:`、
+/// MIPS 的 `hi(x)` 都只是各自谱里的两行；`text` 允许前缀/后缀/两侧都有字面，
+/// `expr` 用**既有表达式语言**求值（可含任意算术，也可再用别的修饰）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImmFnDef {
+    /// 名字（唯一的诊断名；不参与文本匹配）。
+    pub name: String,
+    /// 源文本形态：`{0}` = 内层表达式的位置（其余是照原样匹配的字面 token）。
+    pub text: String,
+    /// 值语义：`{0}` = 内层表达式的值，按既有表达式语言求值。
+    pub expr: String,
 }
 
 /// 内存操作数文本模板（v16/S9；v20 V10 起为**列表**）：组件占位符序列，同时派生

@@ -122,6 +122,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` |
+| `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
@@ -563,6 +564,42 @@ rows = [
 位域支持**散布位段**（`pieces`）：立即数分段放置（S/U/B/J 型）。编码
 `word |= ((value >> shift) & mask) << offset`；解码 `value |= ((word >> offset)
 & mask) << shift`（可逆）。
+
+### `[[conventions.imm_fn]]` — 立即数修饰（v20 V10）
+
+各家的汇编器都有一批**立即数修饰写法**：GAS/RISC-V 的 `%hi(x)` / `%lo(x)`、GAS/ARM 的
+`:lower16:x` / `:upper16:x`、MIPS 的 `hi(x)` / `lo(x)`……它们不是同一套拼写，值语义也不同
+（带不带进位补偿、掩码多少位、按不按有符号读数）。
+
+**DSL 里没有任何修饰名**——它只知道"有一张表"，每条声明两件事：
+
+```toml
+[[conventions.imm_fn]]
+name = "hi"                  # 名字（唯一的诊断名；不参与文本匹配）
+text = "%hi({0})"            # 源文本形态：`{0}` 处是内层表达式，其余按字面 token 匹配
+expr = "({0} + 0x800) >> 12" # 值语义：`{0}` 处是内层表达式的**值**
+
+[[conventions.imm_fn]]
+name = "lower16"             # 同机制换一种拼写与语义（ARM 风格：无括号、掩码）
+text = ":lower16:{0}"
+expr = "{0} & 0xffff"
+```
+
+| 要点 | 说明 |
+| --- | --- |
+| 匹配 | `text` 的两段是**字面 token**（`mnemonic_case = insensitive` 时 Ident 豁免大小写），中间的 `{0}` 递归解析成一个表达式；前缀/后缀/两侧都有字面都行（`{0}:lo` 也合法） |
+| 求值 | `expr` 用**既有表达式语言**求值：生成期把 `expr` 词法化，运行期把 `{0}` 换成数值 token 再走 `__expr`——任意算术、任意嵌套（`%hi(%lo(x))`、`expr` 里再用别的修饰）都天然成立，**不引入第二套表达式语言** |
+| 作用域 | 只在**前缀位置**参与解析（`__unary`），逐个试、失败回滚；没声明的修饰名 ⇒ 那条写法不匹配（不猜语义、不当常量） |
+| 缺省 | 没声明 `imm_fn` 的谱：生成物里根本没有修饰机制（与引入本能力之前逐字相同） |
+| 校验 | `name` 非空唯一；`text`/`expr` 各含**恰好一个** `{0}`；`text` 必须含**至少一个字面**（光一个 `{0}` 是通配，会吞掉任意表达式） |
+
+> **为什么是数据而不是内置**：把 `%hi`/`%lo` 写进求值器 = 让通用 DSL 变成"为 RISC-V 设计"
+> 的系统。同一机制下，RISC-V 的 `%hi(x)`（带括号、进位补偿）、ARM 的 `:lower16:x`
+> （无括号、掩码）、MIPS 的 `hi(x)` 只是各自谱里的两行；`isa/riscv64.toml` 声明前两者中的
+> 一组，夹具 `demo.toml` 声明另一组，生成器一行都不用改。
+>
+> 未实现（如实记录）：需要**重定位/符号地址**的修饰（`%pcrel_hi(foo)` 且 `foo` 未定义）
+> 仍不支持——那不是"值语义"能表达的，要有重定位记录（assembler 目前只产出具体立即数）。
 
 ### `[conventions.mem]` — 内存操作数的文本形态（v20 V10）
 
@@ -1492,6 +1529,8 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 - **立即数表达式**：`+ - * / % << >> & | ^ ~ ( )` 递归下降求值（一元 `+` 是恒等）；
   label 槽（分支目标）同样支持表达式。**位移与立即数共用这一套**（不再有"位移只认
   字面量"的第二套读数）。
+- **立即数修饰**（`[[conventions.imm_fn]]`，v20 V10）：谱声明的**写法包裹**
+  （`%hi(x)`、`:lower16:x`、`hi(x)`…）——DSL 不认识任何修饰名，见下节。
 - **数据伪指令**：`.word`/`.hword`/`.dword`（按 meta.endian 写多字节）、
   `.ascii "..."`/`.asciz "..."`（`\n \t \r \" \\ \0` 转义）、`.zero n`。
 - **`.macro name params` / `.endm`**：文本宏（参数引用 `\arg` 或 `%arg`；嵌套宏

@@ -188,6 +188,15 @@ pub const SECTIONS: &[Section] = &[
         doc: "变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex`",
     },
     Section {
+        path: "[[conventions.imm_fn]]",
+        model: "ImmFnDef",
+        required: &["name", "text", "expr"],
+        optional: &[],
+        flatten: &[],
+        additional: false,
+        doc: "立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值）",
+    },
+    Section {
         path: "[conventions.mem]",
         model: "MemTemplate",
         required: &["templates"],

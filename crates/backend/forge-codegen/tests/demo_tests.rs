@@ -265,3 +265,28 @@ fn pseudo_name_is_just_an_identifier_and_emit_nests() {
     let msg = format!("{}", asm.parse_insts("mv w1").unwrap_err());
     assert!(msg.contains("伪指令写法 'mv {dst}, {src}'"), "msg: {msg}");
 }
+
+// ─────────────────── 立即数修饰：谱声明的数据，不是 ISA 知识 ───────────────────
+
+/// `[[conventions.imm_fn]]` 把"修饰怎么写、算成什么值"变成**谱里的数据**：
+/// 夹具声明的是 ARM 风格 `:lower16:x`（前缀、无括号、掩码语义），与 riscv 的
+/// `%hi(x)`（带括号、进位补偿）共用同一套生成机制——DSL 里没有任何修饰名。
+#[test]
+fn imm_fn_is_spec_data_not_isa_knowledge() {
+    // 值语义正确（与直接写常量等价）
+    assert_eq!(enc("mov w1, :lower16:0x12345678"), enc("mov w1, 0x5678"));
+    assert_eq!(enc("mov w1, :upper16:0x12345678"), enc("mov w1, 0x1234"));
+    // 修饰可以嵌套（值语义用既有表达式语言，天然支持）：
+    // upper16(0x12345678) = 0x1234，再 lower16(0x1234) = 0x1234
+    assert_eq!(
+        enc("mov w1, :lower16::upper16:0x12345678"),
+        enc("mov w1, 0x1234")
+    );
+    assert_eq!(
+        enc("mov w1, :upper16::lower16:0x12345678"),
+        enc("mov w1, 0")
+    );
+    // 没声明的修饰名 ⇒ 解析失败（不猜、不当常量）
+    assert!(assemble("mov w1, :low16:0x1234").is_err());
+    assert!(assemble("mov w1, %hi(2)").is_err(), "本 ISA 没声明 %hi");
+}
