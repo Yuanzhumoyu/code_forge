@@ -4,9 +4,9 @@
 [suite llvm-mc]
 files = 3
 lines = 503
-parsed = 89
-no_prefix = 38
-tail_mismatch = 15
+parsed = 115
+no_prefix = 14
+tail_mismatch = 13
 corpus_only = 361
 # mismatch: rv32i-valid.s:15	auipc a0, %pcrel_hi(foo)	line 3: no matching instruction
 # mismatch: rv32i-valid.s:42	lui a0, %hi(foo)	line 3: no matching instruction
@@ -14,8 +14,5 @@ corpus_only = 361
 # mismatch: rv32i-valid.s:88	jal a0, a0	line 3: no matching instruction
 # mismatch: rv32i-valid.s:102	jal zero, .	line 3: no matching instruction
 # mismatch: rv32i-valid.s:115	jalr sp, zero, 256	line 3: no matching instruction
-# mismatch: rv32i-valid.s:229	addi ra, sp, %lo(foo)	line 3: no matching instruction
-# mismatch: rv32i-valid.s:256	ori a0, a1, !1	line 3: no matching instruction
-# mismatch: rv64i-valid.s:101	sllw s8, s9, s10	line 2: no matching instruction
-# mismatch: rv64i-valid.s:104	srlw s11, t3, t4	line 2: no matching instruction
-# mismatch: rv64i-valid.s:107	sraw t5, t6, zero	line 2: no matching instruction
+# mismatch: rv32i-valid.s:178	lbu s5, %lo(foo)(s6)	line 3: no matching instruction
+# mismatch: rv32i-valid.s:183	lhu t3, %pcrel_lo(.Lpcrel_hi0)(t3)	line 3: no matching instruction

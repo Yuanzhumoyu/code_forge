@@ -265,13 +265,19 @@ rows = [
   { inst = "BGE", fields = { funct3 = 5 } },
   { inst = "BLTU", fields = { funct3 = 6 } },
 ]
-# ── W 变体 R 型（opcode 0x3B；移位 W 走 SHIFT5 顶层）──
+# ── W 变体 R 型（opcode 0x3B）──
+# 移位的 W 变体（`sllw`/`srlw`/`sraw`）也是 **R 型寄存器移位**（rs2 = 移位量），
+# 与 ADDW…REMUW 同形 ⇒ 同一个模板加三行。**立即数**那条是 0x1B 的
+# `slliw`/`srliw`/`sraiw`（见下方 SHIFT5 三条），两者的操作码不同、别混。
 [[templates]]
 name = "WW"
 body = { only_variants = { xlen = [64] }, form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "ADDW", fields = { funct3 = 0, funct7 = 0x00 } },
   { inst = "SUBW", fields = { funct3 = 0, funct7 = 0x20 } },
+  { inst = "SLLW", fields = { funct3 = 1, funct7 = 0x00 } },
+  { inst = "SRLW", fields = { funct3 = 5, funct7 = 0x00 } },
+  { inst = "SRAW", fields = { funct3 = 5, funct7 = 0x20 } },
   { inst = "MULW", fields = { funct3 = 0, funct7 = 0x01 } },
   { inst = "DIVW", fields = { funct3 = 4, funct7 = 0x01 } },
   { inst = "DIVUW", fields = { funct3 = 5, funct7 = 0x01 } },
@@ -674,34 +680,90 @@ form = "W32"
 opcode = 0x0FF0000F
 asm = "fence"
 
-# ────────────────────── W 变体（RV64 32 位语义；opcode 0x3B）──────────────────────
+# ────────────────────── W 变体（RV64 32 位语义）──────────────────────
+# **立即数**移位的 W 变体是 opcode 0x1B（`slliw`/`srliw`/`sraiw`，shamt 5 位）——
+# 与 0x3B 的寄存器移位（上面 WW 模板）是两条不同的指令，别再混。
+# `shamt_w`（5 位）独立于 `shamt`（6 位）：共用 6 位槽会让 `slliw rd, rs1, 32..63`
+# 静默编成别的位型。
 
 [[instructions]]
-name = "SLLW"
+name = "SLLIW"
 only_variants = { xlen = [64] }
 form = "SHIFT5"
-opcode = 0x3B
+opcode = 0x1B
 fields = { funct3 = 1, funct7 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
-asm = "sllw {dst}, {src}, {imm}"
+asm = "slliw {dst}, {src}, {imm}"
 
 [[instructions]]
-name = "SRLW"
+name = "SRLIW"
 only_variants = { xlen = [64] }
 form = "SHIFT5"
-opcode = 0x3B
+opcode = 0x1B
 fields = { funct3 = 5, funct7 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
-asm = "srlw {dst}, {src}, {imm}"
+asm = "srliw {dst}, {src}, {imm}"
 
 [[instructions]]
-name = "SRAW"
+name = "SRAIW"
 only_variants = { xlen = [64] }
 form = "SHIFT5"
-opcode = 0x3B
+opcode = 0x1B
 fields = { funct3 = 5, funct7 = 0x20 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
-asm = "sraw {dst}, {src}, {imm}"
+asm = "sraiw {dst}, {src}, {imm}"
+
+# ── 字节/半字访存（RV32I/RV64I 基础族；与 lw/sw 同形，只差 funct3）──────────
+# 上游语料里 `lb`/`lh`/`lbu`/`lhu`/`sb`/`sh` 遍地都是，谱里之前只有 32/64 位那几条，
+# 于是整族落进 `no_prefix` 桶（"没有候选的首段能对上"）——字节 oracle 会逐条验编码。
+
+[[instructions]]
+name = "LB"
+form = "I"
+opcode = 0x03
+fields = { funct3 = 0 }
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "lb {dst}, {imm}({src})"
+
+[[instructions]]
+name = "LH"
+form = "I"
+opcode = 0x03
+fields = { funct3 = 1 }
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "lh {dst}, {imm}({src})"
+
+[[instructions]]
+name = "LBU"
+form = "I"
+opcode = 0x03
+fields = { funct3 = 4 }
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "lbu {dst}, {imm}({src})"
+
+[[instructions]]
+name = "LHU"
+form = "I"
+opcode = 0x03
+fields = { funct3 = 5 }
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "lhu {dst}, {imm}({src})"
+
+[[instructions]]
+name = "SB"
+form = "S"
+opcode = 0x23
+fields = { funct3 = 0 }
+ops = ["src:gpr", "src2:gpr", "imm:imm12"]
+asm = "sb {src}, {imm}({src2})"
+
+[[instructions]]
+name = "SH"
+form = "S"
+opcode = 0x23
+fields = { funct3 = 1 }
+ops = ["src:gpr", "src2:gpr", "imm:imm12"]
+asm = "sh {src}, {imm}({src2})"
 
 [[instructions]]
 name = "LW"
@@ -2474,3 +2536,23 @@ bytes = [0x67, 0x85, 0x05, 0x80]
 [[vectors]]
 asm = "lw a0, %lo(97)(a2)"
 bytes = [0x03, 0x25, 0x16, 0x06]
+
+# ── 第十批补的族：字节/半字访存 + W 立即数移位 + 一元 `!` 的字节钉住 ──
+[[vectors]]
+asm = "lb t0, 8(x1)"
+# = 0x00808283：opcode 03、rd=t0(5)、funct3=0、rs1=x1、imm12=8
+bytes = [0x83, 0x82, 0x80, 0x00]
+
+[[vectors]]
+asm = "sh t0, -8(x1)"
+# = 0xFE509C23：opcode 23、funct3=1、rs1=x1、rs2=t0(5)、imm=-8
+bytes = [0x23, 0x9C, 0x50, 0xFE]
+
+[[vectors]]
+asm = "slliw a0, a1, 3"
+bytes = [0x1B, 0x95, 0x35, 0x00]
+
+[[vectors]]
+# 一元 `!` 是**逻辑非**（≠ 按位取反）：上游语料 `lh t1, !1(zero)` 期望位移 0
+asm = "lh t1, !1(zero)"
+bytes = [0x03, 0x13, 0x00, 0x00]

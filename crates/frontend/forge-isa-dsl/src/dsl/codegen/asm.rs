@@ -694,6 +694,16 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                         let v = __unary(it, float)?;
                         Some(!v)
                     }
+                    // 一元 `!` = **逻辑非**（`!x` = x==0 ? 1 : 0），**不是**按位取反——
+                    // 上游语料实证：`lh t1, !1(zero)` 的期望位移是 **0**（`03 13 00 00`），
+                    // `ori a0, a1, !1` 期望 `ori a0, a1, 0`；按位取反那条写的是 `~2047`
+                    // （期望 `-2048`）。这是**表达式运算符**（与 `~` 同类，任何 ISA 都可能
+                    // 出现在立即数里），不是 ISA 知识。
+                    __Tok::Bang => {
+                        it.pos += 1;
+                        let v = __unary(it, float)?;
+                        Some(if v == 0 { 1 } else { 0 })
+                    }
                     // 谱声明的立即数修饰（`%hi(x)`、`:lower16:x`…）：**本文件不认识任何
                     // 具体修饰名**——文本形态与值语义都来自 `[[conventions.imm_fn]]`。
                     _ => {

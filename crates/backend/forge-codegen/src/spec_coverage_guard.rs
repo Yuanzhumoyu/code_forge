@@ -73,13 +73,16 @@ fn generated_spec_tests_cover_every_instruction() {
 /// （`MOV_R_MEM{,_8}_AUTO` / `STORE_MEM_R{,_8}_AUTO` / `MOVSXD_R_MEM` / `XCHG_MEM_R_AUTO`
 /// 6 条 → **271**：8/16/32 位 mov 全部走完整内存模板 + movsxd/xchg 的内存源形式）
 /// 与 **SSE 比较谓词族**（`CMPPS`/`CMPPD`/`CMPSS`/`CMPSD_SCALAR` 4 条 → **275**；经典八谓词
-/// 的 packed 别名是 `[[pseudo]]` 文本展开，不占指令数）后 = 275）。
+/// 的 packed 别名是 `[[pseudo]]` 文本展开，不占指令数）后 = 275。
+/// riscv64 补**字节/半字访存**（`LB`/`LH`/`LBU`/`LHU`/`SB`/`SH` 6 条）与 **W 立即数移位**
+/// （`SLLIW`/`SRLIW`/`SRAIW` 3 条；`SLLW`/`SRLW`/`SRAW` 改成 R 型并进 `WW` 模板行，总数不变）
+/// 后 = **128**）。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 275), ("riscv64", 119), ("arm64", 110)],
+        vec![("x86", 275), ("riscv64", 128), ("arm64", 110)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }

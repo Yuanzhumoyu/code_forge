@@ -60,7 +60,7 @@ fn derived_insts_roundtrip_byte_stable() {
     let riscv = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
     let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
     assert!(x86 >= 275, "x86 枚举器条目 {x86} < 指令总数 275");
-    assert!(riscv >= 119, "riscv64 枚举器条目 {riscv} < 指令总数 119");
+    assert!(riscv >= 128, "riscv64 枚举器条目 {riscv} < 指令总数 128");
     assert!(arm64 >= 110, "arm64 枚举器条目 {arm64} < 指令总数 110");
     // 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **360**——
     // 远多于指令总数（当前 261/119/110），因为每条指令还带宽度视图、立即数边界与内存风味。
@@ -76,12 +76,15 @@ fn derived_insts_roundtrip_byte_stable() {
     //   `MOV_R_MEM_AUTO`/`STORE_MEM_R_AUTO` 带 `gpr24` 的 2/4 字节两个宽度视图 + 高低
     //   寄存器视图 + 内存的 disp/index 风味；`MOV_R_MEM_8_AUTO`/`STORE_MEM_R_8_AUTO`
     //   同理带一个高低视图；`MOVSXD_R_MEM`/`XCHG_MEM_R_AUTO` 各带自己的视图与风味）。
+    // 2026-10-04（v20 V10，第十批）：riscv64 341 → **383**（字节/半字访存 6 条 × 两个视图 +
+    //   内存/立即数风味；W 立即数移位 3 条；`SLLW`/`SRLW`/`SRAW` 从立即数形态改成 R 型，
+    //   视图数变化而已——指令名与总数不变）。
     // 2026-10-04（v20 V10 第八批）：1327 → **1351**（SSE 比较谓词 4 条
     //   `CMPPS`/`CMPPD`/`CMPSS`/`CMPSD_SCALAR`：各带 fpr 槽的宽度视图 + 立即数边界风味；
     //   16 条谓词别名是 `[[pseudo]]` 文本展开，不进枚举器）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1351, 341, 360),
+        (1351, 383, 360),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

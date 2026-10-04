@@ -119,14 +119,12 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 这些是语料跑出来的真实差异（红桶 `TailMismatch` 的样例就写在 `asm/ratchet/*.txt` 里），
 不是"语料不对"：
 
-- riscv64（红桶 15 条，分四类）：
-  ① **需要重定位/符号地址**：`%pcrel_hi(foo)` / `%lo(foo)` / `%pcrel_lo(.Lpcrel_hi0)`
+- riscv64（红桶 13 条，分三类）：
+  ① **需要重定位/符号地址**：`%pcrel_hi(foo)` / `%hi(foo)` / `%lo(foo)` / `%pcrel_lo(.Lpcrel_hi0)`
      （修饰本身已支持，缺的是"未定义符号 → 重定位记录"这件事，assembler 目前只产出具体立即数）；
   ② **`.Lpcrel_hi0`/`.` 这类位置符号**：`jal zero, .`（当前位置）、裸 `.`；
   ③ **两/三寄存器形式的 `jal`/`jalr`**：`jal a0, a0`、`jalr sp, zero, 256`；
-  ④ **缺指令**：RV64 W 族移位（`sllw`/`srlw`/`sraw`/`slliw`/`srliw`/`sraiw`）、
-     半字/字节访存（`lb`/`lh`/`lbu`/`lhu`/`sb`/`sh`）、Zicsr（`csrrw`…）、`fence`/`fence.i`/`fence.tso`、
-     `unimp`；外加一元 `!`（`ori a0, a1, !1`——GAS 的按位取反，我们只认 `~`）；
+  余下 `no_prefix` 14 条：Zicsr（`csrrw`…）、`fence`/`fence.i`/`fence.tso` 与 `unimp`；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；余下 `no_prefix` 是
   `ands`/`bics`（带 S 的变体）、`tbz`/`tbnz`、`b.al` 与系统指令（`brk`/`svc`/`hvc`/`smc`/`hlt`/`eret`/`drps`/`dcps*`）；
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`acquire/release lock add …`（锁前缀 + 内存序提示）；
@@ -227,18 +225,27 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   条逐字节全等**（上游 `lui a0, %hi(2)` = `37 05 00 00`、`jalr a0, %lo(2048)(a1)` = `67 85 05 80`…，
   `known` 仍 0）。
 
+- riscv64（v20 V10，第十批：**字节/半字访存 + W 立即数移位 + 一元 `!`**）：`lb`/`lh`/`lbu`/`lhu`/`sb`/`sh`
+  （与 `lw`/`sw` 同形，只差 `funct3`）与 `slliw`/`srliw`/`sraiw`（opcode 0x1B + `shamt_w`）；
+  顺带修掉一处**编码错误**：`SLLW`/`SRLW`/`SRAW` 原先被声明成**立即数**移位（0x3B + shamt），
+  而 ISA 里它们是 **R 型寄存器**移位——立即数那条是 0x1B 的 `slliw`/`srliw`/`sraiw`。
+  三条改成 `WW` 模板的行（与 `ADDW`…`REMUW` 同形）。另外求值器补一元 `!` = **逻辑非**
+  （上游期望字节实证：`lh t1, !1(zero)` 位移是 **0**，不是按位取反的 -2）。
+  结果：riscv64 解析档 `parsed` 89 → **115**、红桶 15 → **13**、`no_prefix` 38 → **14**，
+  字节对拍 89 → **115 条逐字节全等**（`known` 仍 0——两族新指令的每个字节都与上游注释相同）。
+
 ## 现有语料与计数
 
 （`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
 `asm/ratchet/encoding.txt` 为准。x86 两套是 v20 V10 补完内存模板、内存形式 ALU 族、
 8 位 ALU 族、立即数 `wrap`、一元 `inc`/`dec`、无基址寻址、符号常量/地址尺寸前缀与内存形式
-mov 族之后的数；riscv64 是补完立即数修饰之后的数）
+mov 族之后的数；riscv64 是补完立即数修饰、基础访存族与 W 立即数移位之后的数）
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
 | x86 | `llvm-mc` | 2 | 447 | **35** | 21 | 55 | 336 | **有**：104 条期望 / **30 条对拍上 / 0 条差异** |
-| riscv64 | `llvm-mc` | 3 | 503 | **89** | 38 | 15 | 361 | **有**：134 条期望 / **89 条逐字节全等** |
+| riscv64 | `llvm-mc` | 3 | 503 | **115** | 14 | 13 | 361 | **有**：134 条期望 / **115 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 
 执行档：x86 5 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=10 skipped=0`）。

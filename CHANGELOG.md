@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — riscv64：字节/半字访存、W 立即数移位；修掉 W 寄存器移位的编码错误
+
+从语料的 `no_prefix` 桶（"没有任何候选的首段能对上"= 缺指令）按首词归并出来的清单里，补上最基础的一族，并顺带修掉一处**真编码错误**：
+
+- **补** `LB`/`LH`/`LBU`/`LHU`/`SB`/`SH`（与 `LW`/`SW` 同形，只差 `funct3`）与 `SLLIW`/`SRLIW`/`SRAIW`（opcode 0x1B + `shamt_w`，5 位 shamt 独立于 6 位槽）。
+- **修**：`SLLW`/`SRLW`/`SRAW` 原先被声明成**立即数**移位（0x3B + shamt 槽）——ISA 里它们是 **R 型寄存器**移位（rs2 = 移位量），立即数那条是 0x1B 的 `slliw`/`srliw`/`sraiw`。三条改成 `WW` 模板的行（与 `ADDW`…`REMUW` 同形）；`shamt_w` 槽由新的 `*IW` 三条接着用，不留死声明。
+- **求值器补一元 `!` = 逻辑非**（`!x` = x==0 ? 1 : 0）：上游期望字节实证 `lh t1, !1(zero)` 的位移是 **0**（`03 13 00 00`）而不是按位取反的 -2（那条写的是 `~2047`）。这是**表达式运算符**（与 `~` 同类，任何 ISA 都可能出现在立即数里），不是 ISA 知识。
+
+效果（`asm/ratchet/`）：riscv64 解析档 `parsed` 89 → **115**、红桶 15 → **13**、`no_prefix` 38 → **14**；字节对拍 `checked` 89 → **115 条逐字节全等**，`known` 仍 0——两族新指令的每个字节都与上游注释相同（不是我手算的）。另加 4 条谱内 `[[vectors]]`（`lb`/`sh`/`slliw`/`lh t1, !1(zero)`）把语义钉在谱里；x86 指令总数 275 不变，riscv64 119 → **128**、派生枚举器 341 → **383**（人工复核后就地更新）。
+
+`crates/tools/forge-tests/asm/README.md` 的缺口清单同步收窄：riscv64 红桶只剩三类——需要重定位/符号地址（`%pcrel_hi(foo)` 等）、位置符号（`.`）、寄存器形式的 `jal`/`jalr`；`no_prefix` 只剩 Zicsr、`fence` 族与 `unimp`。
+
 ### Added (2026-10-04) — `[[conventions.imm_fn]]`：立即数修饰改成**谱声明的数据**（DSL 里没有修饰名）
 
 各家的汇编器都有一批**立即数修饰写法**：GAS/RISC-V 的 `%hi(x)` / `%lo(x)`、GAS/ARM 的 `:lower16:x` / `:upper16:x`、MIPS 的 `hi(x)` / `lo(x)`——拼写不同、值语义也不同（带不带进位补偿、掩码几位、按不按有符号读数）。把其中某一种写进求值器，等于让通用 DSL 变成"为那个 ISA 设计"的系统；所以新能力是一张**声明表**，每条两行数据：
