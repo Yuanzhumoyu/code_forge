@@ -11,6 +11,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-04) — 生成物落盘件改写成 prettyplease 规范形（可读 + 编辑器能解析）
+
+`isa_from_file!` 的落盘件（`$OUT_DIR/forge_gen_*.rs`）此前是**紧凑 token 文本**（x86 单行
+1.4 MB）——人排查生成物时读不动，编辑器/rust-analyzer 对这种单行文件也给不出有意义的语法树。
+
+现在正文过一遍 `syn::parse2` + `prettyplease::unparse`（rustfmt 风格），并加了两条不变量
+（守卫 `gen_file::tests::generated_file_is_a_faithful_rust_file`）：
+
+- **规范形**：`unparse(parse(落盘件))` 逐字节等于落盘件 ⇒ 同一份谱每轮生成的字节稳定
+  （否则每轮重写，rustc 每轮重编这个生成模块）；
+- **忠实**：解析回来的程序与生成 token 的规范形逐字节相等。忠实性**不比 token 文本**——
+  prettyplease 会把 `#[doc = r"…"]` 渲染成 `/// …`（解析回来是 `#[doc = "…"]`），是同一个
+  字符串值的两种合法拼写；比 token 文本会误报这处差异。
+
+成本（dev 档实测）：三份发行谱合计 ≈ 0.8 s（x86 parse 0.58 s + unparse 0.20 s，
+arm64/riscv64 各 ≈ 0.3 s），夹具谱可忽略；落盘件体积约为紧凑形的 3 倍。生成物的**对外面**
+不变（`isa-host-demo` 的 `host_surface` 文本级守卫按空白归一化后照旧通过——它按
+`# [doc = r"…"]` 属性形剥散文，规范形把文档渲染成 `/// …` 行注释，两形都已兼容）。
+
+顺带修掉三处**过期快照**（前几批补指令后没同步，与本批功能无关）：`lint_shipped` 的
+arm64 未指定位评审清单 71 → 123；`variants` 的 riscv64 原生/RV32 投影指令数
+119/105 → 137/120（被投影掉的 RV64 专属指令 14 → 17）；`isa/arm64.toml` 的
+`ands`/`bics` 无后缀形态去掉两个没人引用的 `ref`。
+
 ### Fixed (2026-10-04) — 定宽解码位 trie 的 `else if` 链把后一条边变成死代码
 
 **症状**：`bics x0, x1, x2`（以及 `bics` 的移位形态、`bics w0, w1, w2`）**编得出、解不回**——

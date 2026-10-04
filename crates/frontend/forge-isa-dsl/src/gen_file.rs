@@ -228,11 +228,26 @@ fn write_generated_file(
 }
 
 /// 落盘件的正文（头部注释 + lint 门闩 + 生成 token）。
+///
+/// **正文写成 prettyplease 的规范形**（rustfmt 风格）：`$OUT_DIR` 里那份文件既是要人读的
+/// （排查生成物）也是要编辑器解析的（rust-analyzer 对单行 1.4 MB 的 `include!` 目标给不出
+/// 有意义的语法树/符号），紧凑 token 文本在这两件事上都不好用。
+///
+/// 两条不变量（守卫 `generated_file_is_a_faithful_rust_file`）：
+/// ① 规范形 ⇒ **同一份谱每轮生成的字节稳定**（否则每次构建都重写一遍，rustc 每轮重编该模块）；
+/// ② 与生成 token **是同一份程序**——比的是"两边各自的规范形"而不是 token 文本：
+///    prettyplease 会把 `#[doc = r"…"]` 渲染成 `/// …`（解析回来是 `#[doc = "…"]`），
+///    同一个字符串值的两种合法拼写。
+///
+/// 成本（dev 档、本机实测 2026-10-04）：三份发行谱 `syn::parse2` + `prettyplease::unparse`
+/// 合计 ≈ 0.8 s（x86 1.40 MB token → 4.15 MB 文本，parse 0.58 s / unparse 0.20 s；
+/// arm64 0.56 MB → 0.88 MB，0.28 s），11 份夹具谱可忽略；落盘件体积约为紧凑形的 3 倍。
 fn generated_body(path: &str, ts: &proc_macro2::TokenStream) -> String {
     let header = format!(
         "// 由 forge-dsl 的 `isa_from_file!` 生成（v18 S10d）——请勿手工编辑。\n// 源谱：{path}；改谱后重新构建即会重新生成（TOML 由 include_bytes! 登记为编译依赖）。\n"
     );
-    format!("{header}{}", lint_guard(ts))
+    let syntax_tree = syn::parse2(lint_guard(ts)).unwrap();
+    format!("{header}{}", prettyplease::unparse(&syntax_tree))
 }
 
 /// **机器产物的 lint 门闩**：作为宏展开结果时 rustc/clippy 一律不 lint 生成物；
@@ -508,8 +523,15 @@ mod tests {
         );
     }
 
-    /// S10d：落盘件是**合法 Rust 文件**，且 token 层面逐字节等于生成物
-    /// （头部注释与 lint 门闩是文件侧的东西，不参与 token 文本的等价性）。
+    /// S10d：落盘件是**合法 Rust 文件**、是 **prettyplease 的规范形**，且与生成 token
+    /// **是同一份程序**。
+    ///
+    /// 规范形（`unparse(parse(落盘件))` 逐字节等于落盘件）保证**同一份谱每次生成的字节稳定**
+    /// ——否则每次构建都重写一遍，rustc 每轮重编这个生成模块。
+    ///
+    /// 忠实性**不能**直接比 token 文本：prettyplease 会把 `#[doc = r"…"]` 渲染成 `/// …`，
+    /// 解析回来是 `#[doc = "…"]`——同一个字符串值的两种合法拼写（实测差异仅此一处）。
+    /// 故两边都过一遍 `syn::parse_file` + `prettyplease`（即"同一个程序的规范形"）再比。
     #[test]
     fn generated_file_is_a_faithful_rust_file() {
         let dir = tmp_dir("unit");
@@ -528,10 +550,16 @@ mod tests {
         assert!(text.starts_with("// 由 forge-dsl"), "{text}");
         assert!(text.contains("pub mod demo"), "{text}");
         let parsed = syn::parse_file(&text).expect("落盘件必须是合法文件");
+        let body = prettyplease::unparse(&parsed);
+        assert!(
+            text.ends_with(&body),
+            "落盘件正文必须是 prettyplease 的规范形：\n{text}"
+        );
+        let from_tokens: syn::File = syn::parse2(lint_guard(&ts)).expect("生成 token 是合法文件");
         assert_eq!(
-            quote::ToTokens::to_token_stream(&parsed).to_string(),
-            lint_guard(&ts).to_string(),
-            "syn 往返必须逐字节稳定"
+            prettyplease::unparse(&from_tokens),
+            body,
+            "落盘件的程序必须与生成 token 一致（规范化后逐字节相等）"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -120,18 +120,45 @@ fn generated_file_targets_the_runtime_crate_only() {
     }
 }
 
-/// 去掉 `#[doc = r"…"]` 的正文（只留标记本身之外的代码）。
+/// 去掉生成物里的**文档正文**（只留标记之外的代码）。
 ///
 /// 生成物把每条指令/位域的**文档注释**也带出来，它们是散文（会提到 `forge_ir::` 这类
 /// 历史名字）；路径级断言只对代码成立，因此先剥注释体再断言。
+///
+/// **两种落盘形态都要吃**：紧凑 token 文本是属性形 `# [doc = r"…"]`
+/// （`TokenStream::to_string()` 的写法，`#` 与 `[` 之间带空格），而 prettyplease 规范形
+/// 把文档属性渲染成 `/// …` / `//! …` 行注释——只认属性形会让散文整段留下，
+/// 路径断言随即误报（实测：`forge_ir::` 出现在说明文字里）。
 fn strip_doc_attrs(text: &str) -> String {
-    const OPEN: &str = "# [doc = r\"";
+    // ① 规范形的行注释形：整行丢掉。
+    let mut kept = String::new();
+    for line in text.lines() {
+        let t = line.trim_start();
+        if t.starts_with("///") || t.starts_with("//!") {
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    // ② 紧凑形的属性形：连字符串字面量一起剥（同样兼容 `#[doc = r"…"]` 无空格拼写）。
     let mut out = String::new();
-    let mut rest = text;
-    while let Some(i) = rest.find(OPEN) {
+    let mut rest = kept.as_str();
+    loop {
+        let found = rest
+            .find("# [doc = r\"")
+            .or_else(|| rest.find("#[doc = r\""))
+            .or_else(|| rest.find("# [doc = \""));
+        let Some(i) = found else { break };
+        let open_len = if rest[i..].starts_with("# [doc = r\"") {
+            "# [doc = r\"".len()
+        } else if rest[i..].starts_with("#[doc = r\"") {
+            "#[doc = r\"".len()
+        } else {
+            "# [doc = \"".len()
+        };
         out.push_str(&rest[..i]);
         out.push_str("#[doc]");
-        let after = &rest[i + OPEN.len()..];
+        let after = &rest[i + open_len..];
         match after.find("\"]") {
             Some(j) => rest = &after[j + 2..],
             None => return out,

@@ -979,14 +979,14 @@ rows = [
 # `ands`/`bics` 的**无后缀**形态（此前整族都没声明）。
 [[templates]]
 name = "ANDSREG"
-body = { ref = "ands", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "ands {dst}, {src}, {src2}" }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "ands {dst}, {src}, {src2}" }
 rows = [
   { inst = "ANDSREGX", slot = "r64", opcode = 0xEA },
   { inst = "ANDSREGW", slot = "r32", opcode = 0x6A },
 ]
 [[templates]]
 name = "BICSREG"
-body = { ref = "bics", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "bics {dst}, {src}, {src2}", fields = { nbit = 1 } }
+body = { form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "bics {dst}, {src}, {src2}", fields = { nbit = 1 } }
 rows = [
   { inst = "BICSREGX", slot = "r64", opcode = 0xEA },
   { inst = "BICSREGW", slot = "r32", opcode = 0x6A },
