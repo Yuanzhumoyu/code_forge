@@ -1092,11 +1092,15 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
 ///
 /// 伪指令是**汇编期**行为，编译器看不到它的调用点，因此声明侧必须自洽：
 ///
-/// - 名字非空、唯一、**不得与任何指令模板的前导字面重名**（伪指令展开先于指令扫描，
-///   重名会让那个名字开头的指令写法被伪指令吃掉——两者都是最难查的一类错）；
-/// - `asm` 非空、能解析成模板，且**首字面就是 `name`**（伪指令按整词分派）；
-/// - 参数表**从 `asm` 派生**（按首次出现序）——没有第二份清单可以漂移；
-/// - `emit` 非空、每行非空；行首必须**能接到某条指令模板上**（或别的伪指令名、
+/// - `name` 是这条声明的**唯一标识**（诊断/变体门用它）：非空、唯一即可——
+///   它与写法**无关**（`name = "load_imm"` + `asm = "li {rd}, {imm}"` 合法）；
+/// - `asm` 是**写法规范**：必须**字面开头**（分派按模板的前导字面选候选）、
+///   占位符之间要有字面分隔；参数表**从 `asm` 派生**（按首次出现序）——没有第二份
+///   清单可以漂移；
+/// - **分派键**（asm 首段的首词）不得与任何指令模板的前导字面重名（伪指令展开先于
+///   指令扫描，重名会把那条指令的写法吃掉）；两条伪指令的 `asm` 也不能完全相同
+///   （后者永远命中不到）；
+/// - `emit` 非空、每行非空；行首必须**能接到某条指令模板上**（或另一条伪指令的写法、
 ///   `[meta].directive_prefix` 开头的伪操作），否则那是拼错；
 /// - 每行的 `{…}` 必须是 `asm` 声明过的参数（拼错即报），且**每个参数都至少用一次**
 ///   （没用到的参数几乎总是写错了名字）。
@@ -1117,29 +1121,54 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
         .iter()
         .map(|inst| leading_literal(&inst.asm))
         .collect();
-    let pseudo_names: BTreeSet<&str> = m.pseudo.iter().map(|p| p.name.as_str()).collect();
     let dir_prefix = m.meta.directive_prefix.as_str();
+    // 第一遍：name 唯一 + 写法形状 + 分派键的遮蔽/重名。
+    let mut parsed: Vec<(Vec<crate::dsl::codegen::asm::NamedSeg>, Vec<String>, String)> =
+        Vec::new();
     let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut seen_asm: BTreeMap<&str, &str> = BTreeMap::new();
     for p in &m.pseudo {
         if p.name.trim().is_empty() {
             return Err("[[pseudo]]: name 不能为空".into());
         }
         if !seen.insert(p.name.as_str()) {
-            return Err(format!("[[pseudo.{}]]: 伪指令名重复", p.name));
-        }
-        if leads.iter().any(|l| lead_starts_with_ident(l, &p.name, ci)) {
             return Err(format!(
-                "[[pseudo.{}]]: 伪指令名与某条指令模板的前导字面重名——伪指令展开先于指令扫描，\
-                 这个名字开头的行会被伪指令吃掉，那条指令从此装配不到；换个名字",
+                "[[pseudo.{}]]: 伪指令 name 重复（name 只要求唯一）",
                 p.name
             ));
         }
-        // `asm` 是这条伪指令的**书写规范**，也是参数表的唯一来源。
         let segs = crate::dsl::codegen::asm::parse_named_template(&p.asm)
             .map_err(|e| format!("[[pseudo.{}]]: {e}", p.name))?;
-        crate::dsl::codegen::asm::validate_named_template(&segs, &p.name, ci)
+        crate::dsl::codegen::asm::validate_named_template(&segs)
             .map_err(|e| format!("[[pseudo.{}]]: {e}", p.name))?;
+        let key = crate::dsl::codegen::asm::named_dispatch_key(&segs).ok_or_else(|| {
+            format!(
+                "[[pseudo.{}]]: asm '{}' 解析不出分派键（首段必须是字面）",
+                p.name, p.asm
+            )
+        })?;
+        if leads.iter().any(|l| lead_starts_with_ident(l, &key, ci)) {
+            return Err(format!(
+                "[[pseudo.{}]]: 写法 '{}' 的前导字面 '{key}' 与某条指令模板重名——\
+                 伪指令展开先于指令扫描，这个写法开头的行会被伪指令吃掉，\
+                 那条指令从此装配不到；换个写法",
+                p.name, p.asm
+            ));
+        }
+        let norm = p.asm.trim();
+        if let Some(prev) = seen_asm.insert(norm, &p.name) {
+            return Err(format!(
+                "[[pseudo.{prev}]] 与 [[pseudo.{}]] 的 asm 完全相同（'{norm}'）——\
+                 后者永远命中不到，删一条或改写法",
+                p.name
+            ));
+        }
         let params = crate::dsl::codegen::asm::named_params(&segs);
+        parsed.push((segs, params, key));
+    }
+    let keys: Vec<&str> = parsed.iter().map(|(_, _, k)| k.as_str()).collect();
+    // 第二遍：emit 行的可达性与占位符。
+    for ((_, params, _), p) in parsed.iter().zip(m.pseudo.iter()) {
         let pseen: BTreeSet<&str> = params.iter().map(|s| s.as_str()).collect();
         if p.emit.is_empty() {
             return Err(format!(
@@ -1153,15 +1182,22 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
             if l.is_empty() {
                 return Err(format!("[[pseudo.{}]]: emit 里有空行", p.name));
             }
-            // 行首判定：伪操作（`directive_prefix` 开头）/ 别的伪指令名（运行时按**整词**
-            // 命中）/ 能接到某条指令模板上。`head` 只用于报错显示与那两个字符串判定。
+            // 行首判定：伪操作（`directive_prefix` 开头）/ 另一条伪指令的写法（按分派键
+            // 整词命中）/ 能接到某条指令模板上。
             let head = l.split_whitespace().next().unwrap_or("");
             let lead = leading_literal(l);
             let reaches_inst = leads.iter().any(|t| lead_compatible(t, &lead, ci));
-            if !head.starts_with(dir_prefix) && !pseudo_names.contains(head) && !reaches_inst {
+            let reaches_pseudo = keys.iter().any(|k| {
+                if ci {
+                    k.eq_ignore_ascii_case(head)
+                } else {
+                    *k == head
+                }
+            });
+            if !head.starts_with(dir_prefix) && !reaches_pseudo && !reaches_inst {
                 return Err(format!(
                     "[[pseudo.{}]]: emit 行 '{l}' 的开头接不到任何指令模板上，\
-                     也不是别的伪指令名、也不是 '{dir_prefix}' 开头的伪操作（拼错了？）",
+                     也不是别的伪指令的写法、也不是 '{dir_prefix}' 开头的伪操作（拼错了？）",
                     p.name
                 ));
             }
@@ -1178,7 +1214,7 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
                 used.insert(name.to_string());
             }
         }
-        for a in &params {
+        for a in params {
             if !used.contains(a.as_str()) {
                 return Err(format!(
                     "[[pseudo.{}]]: asm 声明的参数 '{a}' 在 emit 里没用到（写错了名字？）",

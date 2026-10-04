@@ -567,10 +567,7 @@ fn pseudo_asm_template_is_matched_and_reported() {
     }
     // 缺分隔符 ⇒ 报错并给出写法
     let msg = format!("{}", asm.parse_insts("li a0").unwrap_err());
-    assert!(
-        msg.contains("伪指令 'li' 的写法是 'li {rd}, {imm}'"),
-        "msg: {msg}"
-    );
+    assert!(msg.contains("伪指令写法 'li {rd}, {imm}'"), "msg: {msg}");
     assert!(msg.contains("缺 ','"), "msg: {msg}");
     // 多一个参数（最后一个实参里多逗号）
     let msg = format!("{}", asm.parse_insts("li x10, 1, 2").unwrap_err());

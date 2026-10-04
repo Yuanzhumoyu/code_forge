@@ -280,7 +280,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["only_variants"],
         flatten: &[],
         additional: false,
-        doc: "汇编器伪指令：文本级多指令展开（v18 S3e）；`asm` 是写法规范，`{名字}` 就是 emit 用的参数",
+        doc: "汇编器伪指令：文本级多指令展开（v18 S3e）；name 只是唯一标识，分派按 asm 的前导字面，`{名字}` 就是 emit 用的参数",
     },
     Section {
         path: "[[lowering]]",

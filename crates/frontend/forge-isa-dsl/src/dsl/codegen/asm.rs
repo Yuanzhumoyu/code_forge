@@ -236,43 +236,35 @@ pub(crate) fn named_params(segs: &[NamedSeg]) -> Vec<String> {
     out
 }
 
-/// 命名模板的形状校验：首段必须是**助记符字面**、字面段非空、占位符之间要有字面分隔。
+/// 模板的**分派键**：首个字面段的首词。伪指令按**写法**选候选（不是按 `name`——
+/// `name` 只是这条声明的标识，唯一即可）。
 ///
-/// `name` = `[[pseudo]].name`（与 `[[instructions]].name` 一样就是这条写法的首字面）；
-/// `ci` = `[meta].mnemonic_case` 是否大小写不敏感。
-pub(crate) fn validate_named_template(
-    segs: &[NamedSeg],
-    name: &str,
-    ci: bool,
-) -> Result<(), String> {
-    let first = match segs.first() {
-        Some(NamedSeg::Lit(l)) => l,
-        _ => {
-            return Err(format!(
-                "asm 模板必须以助记符 '{name}' 开头（模板以占位符开头就没有可匹配的助记符）"
-            ));
-        }
-    };
-    let head = first.split_whitespace().next().unwrap_or("");
-    let eq = if ci {
-        head.eq_ignore_ascii_case(name)
-    } else {
-        head == name
-    };
-    if !eq {
-        return Err(format!(
-            "asm 模板的首字面是 '{head}'，与 name = '{name}' 不一致——\
-             伪指令按 name 分派，两者必须同一个词"
-        ));
+/// 模板必须字面开头（否则没有可判定的前缀，会吞掉别的行）⇒ 恒为 `Some`；
+/// 返回 `None` 表示形状非法（由 [`validate_named_template`] 报错）。
+pub(crate) fn named_dispatch_key(segs: &[NamedSeg]) -> Option<String> {
+    match segs.first() {
+        Some(NamedSeg::Lit(l)) => l.split_whitespace().next().map(str::to_string),
+        _ => None,
     }
-    if first.split_whitespace().nth(1).is_some() {
-        return Err(format!(
-            "asm 模板的首段 '{first}' 在助记符之后还有字面——\
-             伪指令按**整词**分派（首词 = name），首段只能是那个词（其余走占位符/分隔符）"
-        ));
+}
+
+/// 命名模板的形状校验：**字面开头**（分派前缀）、字面段非空、占位符之间要有字面分隔。
+///
+/// 与 `[[instructions]].name` 无关：`name` 只是这条声明的唯一标识，写法由 `asm` 自己
+/// 说清楚——两者不必相同、也不同步（`name = "load_imm"` + `asm = "li {rd}, {imm}"` 合法）。
+pub(crate) fn validate_named_template(segs: &[NamedSeg]) -> Result<(), String> {
+    match segs.first() {
+        Some(NamedSeg::Lit(_)) => {}
+        _ => {
+            return Err(
+                "asm 模板必须以**字面**开头（分派按模板的前导字面；占位符开头的写法\
+                 没有可判定的前缀，会吞掉别的行）"
+                    .into(),
+            );
+        }
     }
     let mut prev_op = false;
-    for seg in segs.iter().skip(1) {
+    for seg in segs {
         match seg {
             NamedSeg::Lit(l) => {
                 if l.is_empty() {

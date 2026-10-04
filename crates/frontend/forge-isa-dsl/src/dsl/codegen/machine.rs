@@ -817,180 +817,137 @@ pub(crate) fn gen_disasm(_infos: &[InstInfo]) -> Result<TokenStream, String> {
 
 // ─────────────────────── TargetAssembler ───────────────────────
 
-/// `[[pseudo]]` 的展开助手（v18 S3e；v20 V10 按 `asm` 模板切实参）。
+/// `[[pseudo]]` 的展开助手（v18 S3e；v20 V10 按 `asm` 模板切实参与分派）。
 ///
-/// 生成两个函数：
+/// 生成两类东西：
 ///
-/// - `__pseudo_expand(line, depth, out)`：行首**整词**命中某个伪指令名 ⇒ 按该伪指令的
-///   `asm` 模板（`li {rd}, {imm}`）切实参、逐行把 `{参数}` 替换成实参文本 push 进 `out`，
-///   返回 `true`；不是伪指令返回 `false`。展开出的行**递归**再判一次（emit 行可以是
-///   别的伪指令），深度上限 16（自引用即报错，不会栈溢出）。
-/// - `__cut` / `__cut_ws` / `__split_args`：模板字面切分用的小助手。
+/// - 每条伪指令一个**捕获函数** `__pseudo_cap<i>(rest)`：按它的 `asm` 模板切出实参、
+///   代入 `emit` 得到展开行。同一条写法（分派键相同）只有一条时失败**硬报**（回显写法
+///   与缺哪个字面）；有多条候选时返回 `Ok(None)` 让兄弟候选继续试（都试不中再一起报）。
+/// - `__pseudo_expand(line, depth, out)`：先按**行首整词**找同分派键的候选（分派键 =
+///   模板首段的首词，**不是 `name`**——`name` 只是声明标识），逐个试捕获函数；
+///   命中就把展开行**递归**再展开一次（emit 行可以是别的伪指令），深度上限 16。
 ///
-/// **切参不是"按逗号位置猜"**：字面段（`, `、`(`、`)`…）是模板写死的，缺一个/多一段/
-/// 尾部多东西都**当场报错并回显写法**（`伪指令 'li' 的写法是 'li {rd}, {imm}'`），
-/// 与 `[[instructions]]` 的 asm 扫描同一套"照模板匹配"的直觉。
-///
-/// 没有 `[[pseudo]]` 的 ISA 返回空 token（生成的代码与引入本能力之前逐字相同）。
+/// 切参不是"按逗号位置猜"：字面段（`, `、`(`、`)`…）是模板写死的，缺一个/多一段/
+/// 尾部多东西都当场报错（或整条不像这条写法），与 `[[instructions]]` 的 asm 扫描同一套
+/// "照模板匹配"的直觉。没有 `[[pseudo]]` 的 ISA 返回空 token（生成物逐字不变）。
 pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
     if model.pseudo.is_empty() {
         return quote! {};
     }
-    let mut arms: Vec<TokenStream> = Vec::new();
-    let mut need_ws = false;
-    for p in &model.pseudo {
-        let name_lit = syn::LitStr::new(&p.name, proc_macro2::Span::call_site());
-        let asm_lit = syn::LitStr::new(&p.asm, proc_macro2::Span::call_site());
-        let segs = match crate::dsl::codegen::asm::parse_named_template(&p.asm) {
-            Ok(s) => s,
-            // 校验期已经报过（这里保持生成不 panic：返回一个"永不命中"的臂）。
-            Err(_) => continue,
-        };
-        let params = crate::dsl::codegen::asm::named_params(&segs);
-        let n = params.len();
-        let params_lit = syn::LitStr::new(&params.join(", "), proc_macro2::Span::call_site());
-        // 段序：[Lit(mnemonic 段)] 之后 交替 占位 / 字面。
-        // 每个占位符的"分隔符" = 紧随其后的字面段（没有 = 吃掉剩下的全部）。
-        let mut ops: Vec<(String, usize, Option<&str>)> = Vec::new();
-        let mut cur: Option<(String, usize)> = None;
-        for seg in segs.iter().skip(1) {
-            match seg {
-                crate::dsl::codegen::asm::NamedSeg::Op(nm) => {
-                    let idx = params.iter().position(|x| x == nm).unwrap_or(0);
-                    cur = Some((nm.clone(), idx));
-                }
-                crate::dsl::codegen::asm::NamedSeg::Lit(l) => {
-                    if let Some((nm, idx)) = cur.take() {
-                        ops.push((nm, idx, Some(l.as_str())));
-                    }
-                }
+    use crate::dsl::codegen::asm::{
+        NamedSeg, named_dispatch_key, named_params, parse_named_template,
+    };
+    let ci = matches!(model.meta.mnemonic_case, MnemonicCase::Insensitive);
+    /// 一条伪指令的生成期视图：声明 + 解析好的模板/参数表/分派键。
+    struct Item<'a> {
+        p: &'a crate::dsl::model::PseudoDef,
+        segs: Vec<NamedSeg>,
+        params: Vec<String>,
+        key: String,
+    }
+    // 解析成条目（形状非法由校验期报过；这里跳过，保持生成不 panic）。
+    let items: Vec<Item> = model
+        .pseudo
+        .iter()
+        .filter_map(|p| {
+            let segs = parse_named_template(&p.asm).ok()?;
+            let key = named_dispatch_key(&segs)?;
+            let params = named_params(&segs);
+            Some(Item {
+                p,
+                segs,
+                params,
+                key,
+            })
+        })
+        .collect();
+    // 按分派键分组（保持声明序）：同键 = 同一个行首词下的多条写法。
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (slot, it) in items.iter().enumerate() {
+        let hit = groups.iter_mut().find(|(k, _)| {
+            if ci {
+                k.eq_ignore_ascii_case(it.key.as_str())
+            } else {
+                k.as_str() == it.key.as_str()
             }
+        });
+        match hit {
+            Some((_, v)) => v.push(slot),
+            None => groups.push((it.key.clone(), vec![slot])),
         }
-        if let Some((nm, idx)) = cur.take() {
-            ops.push((nm, idx, None));
-        }
-        // 捕获代码：每个占位符一段，最后一个若没有分隔符就吃掉剩下的全部。
-        let mut caps: Vec<TokenStream> = Vec::new();
-        let mut bound: Vec<bool> = vec![false; n];
-        for (k, (nm, idx, sep)) in ops.iter().enumerate() {
-            let id = format_ident!("__a{idx}");
-            let is_last = k + 1 == ops.len();
-            let cap = match sep {
-                // 模板末尾还有字面：最后一个占位符在它之前切，之后再校验余量。
-                Some(s) if !s.trim().is_empty() => {
-                    let lit = syn::LitStr::new(s.trim(), proc_macro2::Span::call_site());
-                    quote! {
-                        match __cut(__rest, #lit) {
-                            Some((a, b)) => { __rest = b; a.trim().to_string() }
-                            None => {
-                                return Err(format!(
-                                    "伪指令 '{}' 的写法是 '{}'：缺 '{}'",
-                                    #name_lit, #asm_lit, #lit
-                                ));
-                            }
-                        }
-                    }
+    }
+    // 每条伪指令一个捕获函数（单候选 = 硬报；多候选 = soft）。
+    let cap_fns: Vec<TokenStream> = items
+        .iter()
+        .enumerate()
+        .map(|(slot, it)| {
+            let hard = groups.iter().any(|(_, v)| v.len() == 1 && v[0] == slot);
+            gen_pseudo_capture(slot, it.p, &it.segs, &it.params, hard, ci)
+        })
+        .collect();
+    // 分派臂：行首词命中该组 ⇒ 逐个试。
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (key, slots) in &groups {
+        let key_lit = syn::LitStr::new(key, proc_macro2::Span::call_site());
+        let head_match = if ci {
+            quote! { head.eq_ignore_ascii_case(#key_lit) }
+        } else {
+            quote! { head == #key_lit }
+        };
+        let multi = slots.len() > 1;
+        let cands_decl = if multi {
+            quote! { let mut __cands: Vec<&str> = Vec::new(); }
+        } else {
+            quote! {}
+        };
+        let mut bodies: Vec<TokenStream> = Vec::new();
+        for slot in slots {
+            let cap = format_ident!("__pseudo_cap{slot}");
+            let asm_lit =
+                syn::LitStr::new(items[*slot].p.asm.trim(), proc_macro2::Span::call_site());
+            let expand_lines = quote! {
+                for __r in __l {
+                    if !__pseudo_expand(&__r, depth + 1, out)? { out.push(__r); }
                 }
-                // 纯空白分隔符：按第一段空白切。
-                Some(_) => {
-                    need_ws = true;
-                    quote! {
-                        match __cut_ws(__rest) {
-                            Some((a, b)) => { __rest = b; a.trim().to_string() }
-                            None => {
-                                return Err(format!(
-                                    "伪指令 '{}' 的写法是 '{}'：这里需要空白分隔",
-                                    #name_lit, #asm_lit
-                                ));
-                            }
-                        }
-                    }
-                }
-                // 模板最后一个占位符：吃掉剩下的全部（多一个逗号 = 参数多了）。
-                None => {
-                    if !is_last {
-                        continue;
-                    }
-                    quote! {
-                        {
-                            let __v = __rest.trim().to_string();
-                            __rest = "";
-                            if __split_args(&__v).len() > 1 {
-                                return Err(format!(
-                                    "伪指令 '{}' 需要 {} 个参数（{}），实际多了逗号",
-                                    #name_lit, #n, #params_lit,
-                                ));
-                            }
-                            __v
-                        }
-                    }
-                }
+                return Ok(true);
             };
-            if bound[*idx] {
-                // 同一个名字在模板里出现多次：文本必须一致（`li {x}, {x}` 这种写法）。
-                let dup_lit = syn::LitStr::new(nm, proc_macro2::Span::call_site());
-                caps.push(quote! {
-                    {
-                        let __d = #cap;
-                        if __d != #id {
-                            return Err(format!(
-                                "伪指令 '{}' 的写法是 '{}'：'{}' 前后两次写得不一样（'{}' vs '{}'）",
-                                #name_lit, #asm_lit, #dup_lit, #id, __d,
-                            ));
-                        }
-                    }
+            if multi {
+                bodies.push(quote! {
+                    __cands.push(#asm_lit);
+                    if let Some(__l) = #cap(rest)? { #expand_lines }
                 });
             } else {
-                bound[*idx] = true;
-                caps.push(quote! { let #id = #cap; });
+                bodies.push(quote! {
+                    let __l = #cap(rest)?;
+                    #expand_lines
+                });
             }
         }
-        // 每行 emit：String::from(模板) + 逐个参数 replace（按名字绑定，不依赖位置）。
-        let emits: Vec<TokenStream> = p
-            .emit
-            .iter()
-            .map(|line| {
-                let lit = syn::LitStr::new(line.trim(), proc_macro2::Span::call_site());
-                let reps: Vec<TokenStream> = params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, a)| {
-                        let ph =
-                            syn::LitStr::new(&format!("{{{a}}}"), proc_macro2::Span::call_site());
-                        let id = format_ident!("__a{i}");
-                        quote! { __l = __l.replace(#ph, #id.as_str()); }
-                    })
-                    .collect();
-                quote! {
-                    {
-                        let mut __l = String::from(#lit);
-                        #(#reps)*
-                        out.push(__l);
-                    }
-                }
-            })
-            .collect();
+        let tail = if multi {
+            quote! {
+                return Err(format!(
+                    "伪指令写法 '{}' 不匹配任何已声明写法（可选：{}）",
+                    head, __cands.join(" / "),
+                ));
+            }
+        } else {
+            quote! {}
+        };
         arms.push(quote! {
-            if head == #name_lit {
-                let mut __rest = rest;
-                #(#caps)*
-                if !__rest.trim().is_empty() {
-                    return Err(format!(
-                        "伪指令 '{}' 的写法是 '{}'：尾部多出 '{}'",
-                        #name_lit, #asm_lit, __rest.trim(),
-                    ));
-                }
-                #(#emits)*
-                return Ok(true);
+            if #head_match {
+                #cands_decl
+                #(#bodies)*
+                #tail
             }
         });
     }
-    let cut_ws = if need_ws {
+    let strip_ci = if ci {
         quote! {
-            /// 按**第一段空白**切（模板里纯空白分隔符的形态）。
-            fn __cut_ws(s: &str) -> Option<(&str, &str)> {
-                let i = s.find(char::is_whitespace)?;
-                Some((&s[..i], s[i..].trim_start()))
+            /// 大小写不敏感的前缀剥离（`[meta].mnemonic_case = "insensitive"`）。
+            fn __strip_prefix_ci<'a>(s: &'a str, p: &str) -> Option<&'a str> {
+                let head = s.get(..p.len())?;
+                if head.eq_ignore_ascii_case(p) { s.get(p.len()..) } else { None }
             }
         }
     } else {
@@ -1003,9 +960,15 @@ pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
             Some((&s[..i], &s[i + lit.len()..]))
         }
 
-        #cut_ws
+        /// 按**第一段空白**切（模板里纯空白分隔符的形态）。
+        fn __cut_ws(s: &str) -> Option<(&str, &str)> {
+            let i = s.find(char::is_whitespace)?;
+            Some((&s[..i], s[i..].trim_start()))
+        }
 
-        /// 顶层逗号切分（尊重 `()`/`[]`：`li x1, (a + b)`、`lw x1, [x2, #4]` 都算 2 段）。
+        #strip_ci
+
+        /// 顶层逗号切分（尊重 `()`/`[]`：`li x1, (a + b)` 算一段）。
         /// 只用于"最后一个实参里有没有多逗号"这一个校验。
         fn __split_args(s: &str) -> Vec<String> {
             let mut out: Vec<String> = Vec::new();
@@ -1025,9 +988,11 @@ pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
             out
         }
 
+        #(#cap_fns)*
+
         /// 伪指令展开：`Ok(true)` = 该行是伪指令（展开结果已 push 进 `out`）。
         ///
-        /// 递归展开（emit 行可以是别的伪指令），`depth` 上限 16 防自引用成环。
+        /// 分派按**模板首段的首词**（同一首词下可有多条写法，逐个试）。
         fn __pseudo_expand(line: &str, depth: usize, out: &mut Vec<String>)
             -> Result<bool, String>
         {
@@ -1040,6 +1005,183 @@ pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
             };
             #(#arms)*
             Ok(false)
+        }
+    }
+}
+
+/// 一条伪指令的捕获函数：按 `asm` 模板切实参、代入 `emit` 返回展开行。
+///
+/// `hard = true`（该分派键下只有这一条写法）时，模板不匹配也**报错并回显写法**；
+/// `hard = false` 时返回 `Ok(None)`，让同键的兄弟写法继续试。
+fn gen_pseudo_capture(
+    slot: usize,
+    p: &crate::dsl::model::PseudoDef,
+    segs: &[crate::dsl::codegen::asm::NamedSeg],
+    params: &[String],
+    hard: bool,
+    ci: bool,
+) -> TokenStream {
+    let fname = format_ident!("__pseudo_cap{slot}");
+    let n = params.len();
+    let params_lit = syn::LitStr::new(&params.join(", "), proc_macro2::Span::call_site());
+    // 失败：硬报 = Err(带原因的写法提示)；soft = 整条不像这条写法。
+    let fail = |why: TokenStream| -> TokenStream {
+        if hard {
+            let head = format!("伪指令写法 '{}'：", p.asm.trim());
+            let head_lit = syn::LitStr::new(&head, proc_macro2::Span::call_site());
+            quote! { return Err(format!("{}{}", #head_lit, #why)); }
+        } else {
+            quote! { return Ok(None); }
+        }
+    };
+    let mut stmts: Vec<TokenStream> = Vec::new();
+    // 首段（分派键所在字面）的剩余部分必须原样跟上（`lock add {m}, {r}` 的 ` add`）。
+    if let Some(crate::dsl::codegen::asm::NamedSeg::Lit(first)) = segs.first() {
+        let tail = first
+            .trim_start()
+            .split_once(char::is_whitespace)
+            .map(|(_, t)| t.trim())
+            .unwrap_or("");
+        if !tail.is_empty() {
+            let tail_lit = syn::LitStr::new(tail, proc_macro2::Span::call_site());
+            let strip: TokenStream = if ci {
+                quote! { __strip_prefix_ci(__rest, #tail_lit) }
+            } else {
+                quote! { __rest.strip_prefix(#tail_lit) }
+            };
+            let f = fail(quote! { format!("缺 '{}'", #tail_lit) });
+            stmts.push(quote! {
+                __rest = match #strip {
+                    Some(r) => r.trim_start(),
+                    None => { #f }
+                };
+            });
+        }
+    }
+    // 占位符：每个的"分隔符" = 紧随其后的字面段（没有 = 吃掉剩下的全部）。
+    let mut ops: Vec<(String, usize, Option<&str>)> = Vec::new();
+    let mut cur: Option<(String, usize)> = None;
+    for seg in segs.iter().skip(1) {
+        match seg {
+            crate::dsl::codegen::asm::NamedSeg::Op(nm) => {
+                let idx = params.iter().position(|x| x == nm).unwrap_or(0);
+                cur = Some((nm.clone(), idx));
+            }
+            crate::dsl::codegen::asm::NamedSeg::Lit(l) => {
+                if let Some((nm, idx)) = cur.take() {
+                    ops.push((nm, idx, Some(l.as_str())));
+                }
+            }
+        }
+    }
+    if let Some((nm, idx)) = cur.take() {
+        ops.push((nm, idx, None));
+    }
+    let mut bound: Vec<bool> = vec![false; n];
+    let mut need_ws = false;
+    for (k, (nm, idx, sep)) in ops.iter().enumerate() {
+        let id = format_ident!("__a{idx}");
+        let is_last = k + 1 == ops.len();
+        let cap: TokenStream = match sep {
+            Some(s) if !s.trim().is_empty() => {
+                let lit = syn::LitStr::new(s.trim(), proc_macro2::Span::call_site());
+                let f = fail(quote! { format!("缺 '{}'", #lit) });
+                quote! {
+                    match __cut(__rest, #lit) {
+                        Some((a, b)) => { __rest = b; a.trim().to_string() }
+                        None => { #f }
+                    }
+                }
+            }
+            Some(_) => {
+                need_ws = true;
+                let f = fail(quote! { "这里需要空白分隔".to_string() });
+                quote! {
+                    match __cut_ws(__rest) {
+                        Some((a, b)) => { __rest = b; a.trim().to_string() }
+                        None => { #f }
+                    }
+                }
+            }
+            None if is_last => {
+                let f = fail(quote! {
+                    format!("需要 {} 个参数（{}），实际多了逗号", #n, #params_lit)
+                });
+                quote! {
+                    {
+                        let __v = __rest.trim().to_string();
+                        __rest = "";
+                        if __split_args(&__v).len() > 1 { #f }
+                        __v
+                    }
+                }
+            }
+            None => continue,
+        };
+        if bound[*idx] {
+            // 同一个名字在模板里出现多次：两处实参必须写成一样。
+            let dup_lit = syn::LitStr::new(nm, proc_macro2::Span::call_site());
+            let f = fail(quote! {
+                format!("'{}' 前后两次写得不一样", #dup_lit)
+            });
+            stmts.push(quote! {
+                {
+                    let __d = #cap;
+                    if __d != #id { #f }
+                }
+            });
+        } else {
+            bound[*idx] = true;
+            stmts.push(quote! { let #id = #cap; });
+        }
+    }
+    let _ = need_ws;
+    // 尾部：模板的最后一个字面之后不许再有东西。
+    let f = fail(quote! { format!("尾部多出 '{}'", __rest.trim()) });
+    stmts.push(quote! {
+        if !__rest.trim().is_empty() { #f }
+    });
+    // emit 行：按名字替换（与位置无关）。
+    let emits: Vec<TokenStream> = p
+        .emit
+        .iter()
+        .map(|line| {
+            let lit = syn::LitStr::new(line.trim(), proc_macro2::Span::call_site());
+            let reps: Vec<TokenStream> = params
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let ph = syn::LitStr::new(&format!("{{{a}}}"), proc_macro2::Span::call_site());
+                    let id = format_ident!("__a{i}");
+                    quote! { __l = __l.replace(#ph, #id.as_str()); }
+                })
+                .collect();
+            quote! {
+                {
+                    let mut __l = String::from(#lit);
+                    #(#reps)*
+                    __out.push(__l);
+                }
+            }
+        })
+        .collect();
+    let (ret_ty, ret_val) = if hard {
+        (quote! { Result<Vec<String>, String> }, quote! { Ok(__out) })
+    } else {
+        (
+            quote! { Result<Option<Vec<String>>, String> },
+            quote! { Ok(Some(__out)) },
+        )
+    };
+    quote! {
+        /// 伪指令捕获：按 `asm` 模板切实参 → 代入 `emit` 得展开行。
+        #[allow(clippy::all)]
+        fn #fname(rest: &str) -> #ret_ty {
+            let mut __rest = rest;
+            #(#stmts)*
+            let mut __out: Vec<String> = Vec::new();
+            #(#emits)*
+            #ret_val
         }
     }
 }

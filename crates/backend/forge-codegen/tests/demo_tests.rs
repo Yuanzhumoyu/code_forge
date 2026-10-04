@@ -235,3 +235,33 @@ fn parse_insts_directive_errors() {
     // .global 接受（符号登记，无消费方）
     assert!(asm.parse_insts(".global foo\nnop").is_ok());
 }
+
+// ─────────────────── [[pseudo]]：name 只是标识，写法说了算 ───────────────────
+
+/// `name` 只是声明标识（与写法无关，这里刻意取得不同），分派按 `asm` 的前导字面；
+/// `emit` 行是**另一条伪指令**时真的会递归展开（不是只写在文档里）。
+#[test]
+fn pseudo_name_is_just_an_identifier_and_emit_nests() {
+    use forge_codegen::machine::assembler::TargetAssembler;
+    let asm = common::demo::Assembler;
+    // name = "mv_alias"，写法是 mv {dst}, {src} ⇒ 按 `mv` 分派（name 不参与匹配）
+    let via_pseudo = asm.parse_insts("mv w1, w2").expect("mv 展开");
+    let via_inst = asm.parse_insts("mov w1, w2").expect("mov");
+    assert_eq!(via_pseudo.len(), 1);
+    assert_eq!(
+        encode(&via_pseudo[0]).unwrap(),
+        encode(&via_inst[0]).unwrap()
+    );
+    assert!(
+        asm.parse_insts("mv_alias w1, w2").is_err(),
+        "name 不该被当成写法"
+    );
+    // 嵌套：mv2 → `mv a, b` + `mv b, a`，两条各自再展开成 mov
+    let nested = asm.parse_insts("mv2 w1, w2").expect("嵌套展开");
+    assert_eq!(nested.len(), 2, "{nested:?}");
+    assert_eq!(encode(&nested[0]).unwrap(), enc("mov w1, w2"));
+    assert_eq!(encode(&nested[1]).unwrap(), enc("mov w2, w1"));
+    // 写法不符 ⇒ 报错回显**写法**（不是 name）
+    let msg = format!("{}", asm.parse_insts("mv w1").unwrap_err());
+    assert!(msg.contains("伪指令写法 'mv {dst}, {src}'"), "msg: {msg}");
+}

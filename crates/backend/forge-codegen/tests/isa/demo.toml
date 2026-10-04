@@ -272,3 +272,16 @@ insts = ["mov {out}, {iconst}"]
 [[lowering]]
 op = "Copy"
 insts = ["mov {out}, {0}"]
+
+# ── 伪指令：`name` 只是声明标识（与写法无关），分派按 `asm` 的前导字面；
+#    `emit` 行可以是**另一条伪指令**（展开时递归）。──
+
+[[pseudo]]
+name = "mv_alias"          # 名字与写法刻意不同（钉住"name 只是标识"）
+asm = "mv {dst}, {src}"
+emit = ["mov {dst}, {src}"]
+
+[[pseudo]]
+name = "mv_twice"
+asm = "mv2 {a}, {b}"
+emit = ["mv {a}, {b}", "mv {b}, {a}"]

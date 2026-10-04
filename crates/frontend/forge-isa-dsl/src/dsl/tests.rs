@@ -1305,22 +1305,19 @@ fn pseudo_name_must_not_shadow_mnemonic() {
         "[[pseudo]]\nname = \"mov\"\nasm = \"mov {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]",
     );
     let msg = validation_msg(&doc);
-    assert!(msg.contains("前导字面重名"), "msg: {msg}");
+    assert!(msg.contains("重名"), "msg: {msg}");
 }
 
-/// `asm` 的形状校验：首字面必须是 `name`、不能为空、占位符之间要有字面分隔。
+/// `asm` 的形状校验：**字面开头**（分派前缀）、不能为空、占位符之间要有字面分隔。
+///
+/// `name` **不在**这些规则里：它只是声明的唯一标识，与写法无关。
 #[test]
 fn pseudo_asm_shape_is_validated() {
-    // 首字面与 name 不一致（伪指令按 name 整词分派，两者必须同一个词）
-    let mismatch =
-        lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mov {a}\"\nemit = [\"mov {a}, {a}\"]");
-    let msg = validation_msg(&mismatch);
-    assert!(msg.contains("与 name"), "msg: {msg}");
-
-    // 首段在助记符之后还有字面（分派只看整词）
-    let extra =
-        lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mv now {a}\"\nemit = [\"mov {a}, {a}\"]");
-    assert!(validation_msg(&extra).contains("首段"), "msg: {extra}");
+    // name 与写法可以完全不同（name 只是标识）——合法
+    parse_and_validate(&lowering_doc(
+        "[[pseudo]]\nname = \"load_imm\"\nasm = \"li {a}, {b}\"\nemit = [\"mov {a}, {b}\"]",
+    ))
+    .expect("name 与写法不必相同");
 
     // 空 asm / 模板以占位符开头
     let empty = lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"\"\nemit = [\"mov {a}, {a}\"]");
@@ -1328,19 +1325,46 @@ fn pseudo_asm_shape_is_validated() {
 
     let op_first =
         lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"{a} mv\"\nemit = [\"mov {a}, {a}\"]");
-    assert!(validation_msg(&op_first).contains("必须以助记符"));
+    assert!(validation_msg(&op_first).contains("必须以**字面**开头"));
 
     // 两个占位符相邻（切不开）
     let adjacent =
         lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}{b}\"\nemit = [\"mov {a}, {b}\"]");
     assert!(validation_msg(&adjacent).contains("相邻"));
 
-    // 伪指令名重复
+    // name 重复（name 的唯一要求就是唯一）
     let dup = lowering_doc(
         "[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}\"\nemit = [\"mov {a}, {a}\"]\n\
-         [[pseudo]]\nname = \"mv\"\nasm = \"mv {a}\"\nemit = [\"mov {a}, {a}\"]",
+         [[pseudo]]\nname = \"mv\"\nasm = \"mv2 {a}\"\nemit = [\"mov {a}, {a}\"]",
     );
-    assert!(validation_msg(&dup).contains("伪指令名重复"), "{dup}");
+    assert!(validation_msg(&dup).contains("name 重复"), "{dup}");
+}
+
+/// 分派键（`asm` 首段的首词）与指令模板的前导字面重名 ⇒ 报错（伪指令先于指令扫描）；
+/// 两条伪指令的 `asm` 完全相同 ⇒ 报错（后者永远命中不到）。
+#[test]
+fn pseudo_dispatch_key_and_duplicate_asm_are_validated() {
+    // name 无害，但**写法**首词撞上指令 ⇒ 报错（遮蔽风险在写法上，不在名字上）
+    let shadow = lowering_doc(
+        "[[pseudo]]\nname = \"alias_mov\"\nasm = \"mov {a}, {b}\"\nemit = [\"mov {a}, {b}\"]",
+    );
+    let msg = validation_msg(&shadow);
+    assert!(msg.contains("重名"), "msg: {msg}");
+    assert!(msg.contains("写法"), "msg: {msg}");
+
+    // 同一写法声明两次
+    let dup = lowering_doc(
+        "[[pseudo]]\nname = \"a1\"\nasm = \"mv {x}, {y}\"\nemit = [\"mov {x}, {y}\"]\n\
+         [[pseudo]]\nname = \"a2\"\nasm = \"mv {x}, {y}\"\nemit = [\"mov {y}, {x}\"]",
+    );
+    assert!(validation_msg(&dup).contains("完全相同"), "{dup}");
+
+    // 同一分派键下的**不同**写法合法（运行时按声明序逐个试）
+    parse_and_validate(&lowering_doc(
+        "[[pseudo]]\nname = \"a1\"\nasm = \"mv {x}, {y}\"\nemit = [\"mov {x}, {y}\"]\n\
+         [[pseudo]]\nname = \"a2\"\nasm = \"mv {x}\"\nemit = [\"mov {x}, {x}\"]",
+    ))
+    .expect("同键多条写法合法");
 }
 
 /// **`asm` 就是参数接口**：`emit` 里用了没在 `asm` 声明的名字 ⇒ 报错并回显 asm；
@@ -1444,7 +1468,7 @@ fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
     let ci =
         lowering_doc("[[pseudo]]\nname = \"MOV\"\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]");
     assert!(
-        validation_msg(&ci).contains("前导字面重名"),
+        validation_msg(&ci).contains("重名"),
         "大小写不敏感 ISA（缺省）里 MOV 与 mov 是同一个写法"
     );
     let cs =
